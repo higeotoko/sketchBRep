@@ -71,6 +71,10 @@ void MainWindow::buildUi() {
   measurement_ = new QLineEdit;
   measurement_->setFixedWidth(200);
   measurement_->setPlaceholderText(tr("数値入力"));
+  contextLabel_ = new QLabel;
+  contextLabel_->setStyleSheet(QStringLiteral("QLabel { background: #fff3c4; padding: 0 6px; }"));
+  contextLabel_->hide();
+  statusBar()->addWidget(contextLabel_);
   statusBar()->addWidget(status_, 1);
   statusBar()->addPermanentWidget(measurementLabel_);
   statusBar()->addPermanentWidget(measurement_);
@@ -88,6 +92,10 @@ void MainWindow::buildUi() {
   connect(measurement_, &QLineEdit::textEdited, this, [this] { userTyping_ = true; });
   connect(viewport_, &Viewport::escapePressed, this, [this] {
     userTyping_ = false;
+    if (active_ == selectTool_.get() && !modeler_.activeGroup().empty()) {
+      exitGroup();
+      return;
+    }
     if (active_) {
       active_->cancel();
       active_->activate();
@@ -403,6 +411,25 @@ void MainWindow::setElementSelection(const std::vector<ElementRef>& elements) {
   refreshPanels();
 }
 
+void MainWindow::enterGroup(const doc::ObjectId& groupId) {
+  if (!report(modeler_.setActiveGroup(groupId))) return;
+  const doc::Object* g = modeler_.document().find(groupId);
+  contextLabel_->setText(tr("グループ編集中: %1（Esc で終了）").arg(QString::fromStdString(g->name)));
+  contextLabel_->show();
+  viewport_->setEditContext(groupId);
+  setSelection({});
+}
+
+void MainWindow::exitGroup() {
+  const doc::ObjectId group = modeler_.activeGroup();
+  if (group.empty()) return;
+  modeler_.setActiveGroup({});
+  contextLabel_->hide();
+  viewport_->setEditContext({});
+  setSelection(modeler_.document().find(group) ? std::vector<doc::ObjectId>{group}
+                                               : std::vector<doc::ObjectId>{});
+}
+
 QString MainWindow::elementSummary() const {
   if (elements_.empty()) return {};
   int faces = 0, edges = 0;
@@ -482,8 +509,11 @@ void MainWindow::deleteSelection() {
       const bool whole = std::all_of(all.begin(), all.end(), [this](const ElementRef& e) {
         return std::find(elements_.begin(), elements_.end(), e) != elements_.end();
       });
-      if (!whole) {
-        reportError(tr("面・エッジ単体の削除はまだできません。トリプルクリックでオブジェクト全体を選んでから削除してください"));
+      // A loose profile or curve is a single face/edge: deleting it is natural.
+      const doc::Object* o = modeler_.document().find(id);
+      const bool loose = o && (o->kind() == doc::ObjectKind::Face || o->kind() == doc::ObjectKind::Curve);
+      if (!whole && !loose) {
+        reportError(tr("ソリッドの面・エッジ単体は削除できません。トリプルクリックでオブジェクト全体を選んでから削除してください"));
         return;
       }
     }
@@ -579,6 +609,7 @@ bool MainWindow::maybeSave() {
 void MainWindow::newDocument() {
   if (!maybeSave()) return;
   if (active_) active_->cancel();
+  exitGroup();
   modeler_.newDocument();
   currentPath_.clear();
   setSelection({});
@@ -588,6 +619,7 @@ void MainWindow::newDocument() {
 
 bool MainWindow::openFile(const QString& path) {
   if (active_) active_->cancel();
+  exitGroup();
   std::vector<std::string> warnings;
   const Status s = modeler_.load(utf8(path), &warnings);
   if (!s) {

@@ -141,6 +141,14 @@ std::vector<Object> Modeler::cloneSubtree(const ObjectId& id, const ObjectId& ne
 
 Result<ObjectId> Modeler::addObject(Object object, const std::string& commandName) {
   if (object.id.empty()) object.id = generateObjectId();
+  // New geometry is created in world coordinates; while a group is being
+  // edited it goes into that group with an equivalent placement.
+  if (object.parent.empty() && !activeGroup_.empty()) {
+    if (const Object* group = document_.find(activeGroup_)) {
+      object.parent = activeGroup_;
+      object.transform = document_.worldTransform(*group).Inverted() * object.transform;
+    }
+  }
   const Status built = rebuild(object, document_.regenContext());
   if (!built) return Result<ObjectId>::failure(built.message());
   const ObjectId id = object.id;
@@ -686,6 +694,12 @@ Result<ObjectId> Modeler::boolean(BooleanKind kind, const std::vector<ObjectId>&
   result.id = generateObjectId();
   BooleanFeature feature;
   feature.kind = kind;
+  // The result stays in the operands' group when they share one.
+  ObjectId parent;
+  if (!checkSameParent(unique, parent)) parent.clear();
+  const gp_Trsf toParent =
+      parent.empty() ? gp_Trsf() : document_.worldTransform(*document_.find(parent)).Inverted();
+  result.parent = parent;
   for (const ObjectId& id : unique) {
     const Object* o = document_.find(id);
     if (!o) return Result<ObjectId>::failure("Object not found");
@@ -693,7 +707,7 @@ Result<ObjectId> Modeler::boolean(BooleanKind kind, const std::vector<ObjectId>&
       return Result<ObjectId>::failure("'" + o->name + "' is not a solid");
     }
     feature.operands.push_back(BooleanOperand{std::make_shared<const Recipe>(o->recipe),
-                                              document_.worldTransform(*o), o->name});
+                                              toParent * document_.worldTransform(*o), o->name});
   }
   const Object& first = *document_.find(unique.front());
   result.color = first.color;
@@ -713,6 +727,7 @@ Result<ObjectId> Modeler::boolean(BooleanKind kind, const std::vector<ObjectId>&
 // --- files ----------------------------------------------------------------------
 
 void Modeler::newDocument() {
+  activeGroup_.clear();
   history_.clear();
   document_.clear();
 }
@@ -727,6 +742,7 @@ Status Modeler::load(const std::string& path, std::vector<std::string>* warnings
   Document loaded;
   const Status status = loadDocument(loaded, path, warnings);
   if (!status) return status;
+  activeGroup_.clear();
   history_.clear();
   document_.clear();
   document_.settings() = loaded.settings();
@@ -873,6 +889,17 @@ Status Modeler::setCurvePoints(const ObjectId& id, const std::vector<gp_Pnt>& po
   Object object = *current;
   std::get<InterpolatedCurve>(object.recipe.base).points = points;
   return commitModified(std::move(object), "Edit Curve");
+}
+
+Status Modeler::setActiveGroup(const ObjectId& groupId) {
+  if (groupId.empty()) {
+    activeGroup_.clear();
+    return Status::success();
+  }
+  const Object* group = document_.find(groupId);
+  if (!group || group->kind() != ObjectKind::Group) return Status::failure("Not a group");
+  activeGroup_ = groupId;
+  return Status::success();
 }
 
 }  // namespace sbr::doc

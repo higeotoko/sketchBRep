@@ -89,6 +89,7 @@ class GuiPhase1 : public QObject {
   void drawOnWallAndPushInCutsOpening();
   void tapeMeasureReadsDistance();
   void circleToolTypedRadius();
+  void groupEditModeAndLooseFaceDelete();
 };
 
 namespace {
@@ -587,6 +588,50 @@ void GuiPhase1::circleToolTypedRadius() {
   QVERIFY(std::abs(geom::area(m.document().worldShape(id)) - M_PI * 500 * 500) < 1.0);
   type(f.vp, QStringLiteral("0.6m"));  // re-edit the radius right away
   QVERIFY(std::abs(geom::area(m.document().worldShape(id)) - M_PI * 600 * 600) < 1.0);
+}
+
+void GuiPhase1::groupEditModeAndLooseFaceDelete() {
+  Fixture f;
+  QVERIFY(f.setUp(1000, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId a = f.box(0, 0, 500, 500, 500);
+  const doc::ObjectId b = f.box(1500, 0, 500, 500, 500);
+  auto g = m.group({a, b});
+  QVERIFY(g.ok());
+  QTest::qWait(30);
+  f.window.activateTool(MainWindow::ToolId::Select);
+  const QPoint topB = f.vp->toWidget(gp_Pnt(1750, 250, 500));
+
+  doubleClick(f.vp, topB);  // enter the group
+  QCOMPARE(f.window.editingGroup(), *g);
+  QTest::qWait(500);
+  click(f.vp, topB);  // inside: the face of b, not the group
+  QCOMPARE(f.window.elementSelection().size(), std::size_t(1));
+  QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{b});
+
+  // Geometry drawn now goes into the group.
+  f.window.activateTool(MainWindow::ToolId::Rectangle);
+  click(f.vp, f.vp->toWidget(gp_Pnt(3000, 0, 0)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(3300, 300, 0)));
+  type(f.vp, QStringLiteral("400,400"));
+  const doc::ObjectId rect = m.document().objects().back().id;
+  QCOMPARE(m.document().find(rect)->parent, *g);
+
+  // A loose profile can be deleted from its face selection.
+  f.window.activateTool(MainWindow::ToolId::Select);
+  QTest::qWait(500);
+  click(f.vp, f.vp->toWidget(gp_Pnt(3200, 200, 0)));
+  QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{rect});
+  for (QAction* action : f.window.findChildren<QAction*>()) {
+    if (action->text() == QStringLiteral("削除")) action->trigger();
+  }
+  QTest::qWait(30);
+  QVERIFY(!m.document().find(rect));
+
+  // Esc leaves the group; the group is selected again.
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  QVERIFY(f.window.editingGroup().empty());
+  QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{*g});
 }
 
 QTEST_MAIN(GuiPhase1)

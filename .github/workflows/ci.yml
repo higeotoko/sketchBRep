@@ -76,18 +76,64 @@ jobs:
           New-Item -ItemType Directory -Force $dist | Out-Null
           Copy-Item build\src\app\SketchBRep.exe $dist
           Copy-Item build\tools\phase0\sbr_phase0.exe $dist
-          # All runtime DLLs of the environment (OCCT, Qt, TBB, FreeType, VC runtime, ...).
-          Copy-Item "$env_root\Library\bin\*.dll" $dist
-          Copy-Item "$env_root\*.dll" $dist -ErrorAction SilentlyContinue
-          # Qt plugins: platform integration (required) and styles.
+          # Qt plugins: platform integration (required), styles, image formats.
           foreach ($name in @("platforms", "styles", "imageformats")) {
             $dir = Get-ChildItem -Path $env_root -Recurse -Directory -Filter $name |
                    Where-Object { $_.FullName -match "plugins" } | Select-Object -First 1
             if ($dir) { Copy-Item $dir.FullName "$dist\$name" -Recurse }
           }
+          # Only the DLLs actually needed: walk dependencies (dumpbin) from the
+          # executables and plugins, resolving names inside the environment.
+          $search = @("$env_root\Library\bin", "$env_root")
+          $queue = [System.Collections.Generic.Queue[string]]::new()
+          Get-ChildItem $dist -Recurse -Include *.exe, *.dll | ForEach-Object { $queue.Enqueue($_.FullName) }
+          $seen = @{}
+          while ($queue.Count -gt 0) {
+            $file = $queue.Dequeue()
+            $deps = dumpbin /nologo /dependents $file | Where-Object { $_ -match '^\s+\S+\.dll\s*$' } |
+                    ForEach-Object { $_.Trim() }
+            foreach ($dep in $deps) {
+              $key = $dep.ToLowerInvariant()
+              if ($seen.ContainsKey($key)) { continue }
+              $seen[$key] = $true
+              foreach ($dir in $search) {
+                $candidate = Join-Path $dir $dep
+                if (Test-Path $candidate) {
+                  Copy-Item $candidate $dist
+                  $queue.Enqueue((Join-Path $dist $dep))
+                  break
+                }
+              }
+            }
+          }
+          # TBB's allocator is loaded at run time, not linked.
+          Get-ChildItem "$env_root\Library\bin" -Filter "tbbmalloc*.dll" | Copy-Item -Destination $dist
           if (-not (Test-Path "$dist\platforms\qwindows.dll")) { throw "qwindows.dll not found" }
           Copy-Item README.md $dist
           Copy-Item docs\images\phase2.png $dist
+
+      - name: Check that every DLL dependency in the zip resolves
+        shell: pwsh
+        run: |
+          $dist = "dist\SketchBRep"
+          $missing = @()
+          Get-ChildItem $dist -Recurse -Include *.exe, *.dll | ForEach-Object {
+            $file = $_
+            dumpbin /nologo /dependents $file.FullName | Where-Object { $_ -match '^\s+\S+\.dll\s*$' } |
+              ForEach-Object {
+                $dep = $_.Trim()
+                if ($dep -like "api-ms-win-*" -or $dep -like "ext-ms-*") { return }
+                if (Test-Path (Join-Path $dist $dep)) { return }
+                # The VC++ runtime is present on the runner but not on every PC:
+                # it must ship in the zip.
+                $runtime = $dep -like "vcruntime*" -or $dep -like "msvcp*" -or $dep -like "concrt*"
+                if (-not $runtime -and (Test-Path (Join-Path "C:\Windows\System32" $dep))) { return }
+                $missing += "$($file.Name) -> $dep"
+              }
+          }
+          if ($missing.Count -gt 0) { $missing | ForEach-Object { Write-Host $_ }; throw "missing DLLs" }
+          $size = (Get-ChildItem $dist -Recurse | Measure-Object Length -Sum).Sum / 1MB
+          Write-Host ("Package size: {0:N0} MB" -f $size)
 
       - name: Smoke test packaged app (headless Phase 0 CLI from the zip folder)
         shell: pwsh

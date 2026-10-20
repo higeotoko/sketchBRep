@@ -35,6 +35,9 @@ class MainWindow : public QMainWindow, public ToolHost {
   void setElementSelection(const std::vector<ElementRef>& elements) override;
   std::vector<ElementRef> elementSelection() const override { return elements_; }
   std::vector<doc::ObjectId> selection() const override { return selection_; }
+  doc::ObjectId editingGroup() const override { return modeler_.activeGroup(); }
+  void enterGroup(const doc::ObjectId& groupId) override;
+  void exitGroup() override;
 
   // Used by tests and the command line.
   bool openFile(const QString& path);
@@ -79,6 +82,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   PropertiesPanel* panel_ = nullptr;
   QLabel* status_ = nullptr;
   QLabel* measurementLabel_ = nullptr;
+  QLabel* contextLabel_ = nullptr;
   QLineEdit* measurement_ = nullptr;
   bool userTyping_ = false;
 

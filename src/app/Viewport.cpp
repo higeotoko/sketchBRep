@@ -376,6 +376,12 @@ void Viewport::syncNow() {
       found->second.ais->Attributes()->SetFaceBoundaryAspect(
           new Prs3d_LineAspect(Quantity_NOC_BLACK, Aspect_TOL_SOLID, 1.5));
     }
+    const bool faded =
+        !editContext_.empty() && !modeler_.document().isAncestor(editContext_, o.id);
+    const double transparency = faded ? 0.8 : 0.0;
+    if (std::abs(found->second.ais->Transparency() - transparency) > 1e-6) {
+      found->second.ais->SetTransparency(transparency);
+    }
     context_->Redisplay(found->second.ais, Standard_False);
     snapShapes.push_back(found->second.canonicalWorld);
   }
@@ -652,6 +658,11 @@ void Viewport::setHighlightedElements(const std::vector<ElementRef>& elements) {
     context_->Display(highlightEdges_, AIS_WireFrame, -1, Standard_False);
   }
   redraw();
+}
+
+void Viewport::setEditContext(const doc::ObjectId& groupId) {
+  editContext_ = groupId;
+  syncNow();
 }
 
 void Viewport::setToolCursor(const QCursor& cursor) {

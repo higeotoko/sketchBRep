@@ -44,6 +44,11 @@ class ToolHost {
   virtual void setElementSelection(const std::vector<ElementRef>& elements) = 0;
   virtual std::vector<ElementRef> elementSelection() const = 0;
   virtual std::vector<doc::ObjectId> selection() const = 0;
+  // Group edit mode (double-click a group): picks resolve inside it and new
+  // geometry is created in it.
+  virtual doc::ObjectId editingGroup() const = 0;
+  virtual void enterGroup(const doc::ObjectId& groupId) = 0;
+  virtual void exitGroup() = 0;
 };
 
 class Tool {
@@ -87,6 +92,8 @@ class SelectTool : public Tool {
 
  private:
   void apply(const std::vector<ElementRef>& picked, bool additive);
+  // Object that a click on `leaf` addresses at the current editing level.
+  doc::ObjectId target(const doc::ObjectId& leaf) const;
   QElapsedTimer sinceDoubleClick_;
   QPoint doubleClickPos_;
 };

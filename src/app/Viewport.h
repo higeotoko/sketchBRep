@@ -87,6 +87,8 @@ class Viewport : public QWidget {
   std::vector<ElementRef> allElements(const doc::ObjectId& id) const;
   void setHighlightedElements(const std::vector<ElementRef>& elements);
   void setToolCursor(const QCursor& cursor);
+  // Group edit mode: everything outside the group is faded.
+  void setEditContext(const doc::ObjectId& groupId);
   void clearHover();
 
   // --- transient feedback ---------------------------------------------------
@@ -174,6 +176,7 @@ class Viewport : public QWidget {
   Handle(AIS_Shape) highlightEdges_;
   std::vector<ElementRef> highlighted_;
   QCursor toolCursor_;
+  doc::ObjectId editContext_;
 
   QTimer syncTimer_;
   QSize glSize_;  // native window size the GL view was last resized to

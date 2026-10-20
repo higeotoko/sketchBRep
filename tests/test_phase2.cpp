@@ -504,3 +504,38 @@ TEST(Circles, ExtrudeEditRadiusAndCutRoundOpening) {
   ASSERT_TRUE(deserializeDocument(text, d).ok());
   EXPECT_NE(text.find("\"type\": \"circle\""), std::string::npos);
 }
+
+TEST(GroupEditing, NewGeometryGoesIntoActiveGroupAndKeepsWorldPlacement) {
+  Modeler m;
+  const ObjectId wall = box(m, 0, 0, 0, 4000, 200, 3000, "Wall");
+  auto g = m.group({wall}, "House");
+  ASSERT_TRUE(m.move({*g}, gp_Vec(10000, 0, 0)).ok());
+  ASSERT_TRUE(m.setActiveGroup(*g).ok());
+  EXPECT_FALSE(m.setActiveGroup(wall).ok());  // only groups
+
+  // Door outline drawn in world coordinates on the moved wall.
+  auto door = m.createRectangle(geom::SketchPlane::fromNormal(gp_Pnt(11000, 0, 0), gp_Dir(0, -1, 0)),
+                                900, 2100);
+  ASSERT_TRUE(door.ok());
+  EXPECT_EQ(m.document().find(*door)->parent, *g);
+  test::expectBounds(m.document().worldShape(*door), 11000, 0, 0, 11900, 0, 2100);
+
+  // Pushing it in cuts the wall and the result stays in the group.
+  auto pp = m.pushPull(*door, TopoDS::Face(m.document().worldShape(*door)), -200);
+  ASSERT_TRUE(pp.ok()) << pp.error();
+  EXPECT_EQ(m.document().find(pp->id)->parent, *g);
+  EXPECT_NEAR(worldVolume(m, pp->id), 4000.0 * 200 * 3000 - 900.0 * 2100 * 200, 1e-2);
+  test::expectBounds(m.document().worldShape(pp->id), 10000, 0, 0, 14000, 200, 3000);
+
+  // A Boolean between children keeps them in the group too.
+  const ObjectId slab = box(m, 10000, 0, 3000, 4000, 1000, 200, "Slab");
+  EXPECT_EQ(m.document().find(slab)->parent, *g);
+  auto u = m.boolean(BooleanKind::Union, {pp->id, slab});
+  ASSERT_TRUE(u.ok()) << u.error();
+  EXPECT_EQ(m.document().find(*u)->parent, *g);
+  test::expectBounds(m.document().worldShape(*u), 10000, 0, 0, 14000, 1000, 3200);
+
+  ASSERT_TRUE(m.setActiveGroup({}).ok());
+  auto outside = m.createRectangle(geom::SketchPlane::ground(), 10, 10);
+  EXPECT_TRUE(m.document().find(*outside)->parent.empty());
+}

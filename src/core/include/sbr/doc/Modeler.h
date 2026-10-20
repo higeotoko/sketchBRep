@@ -113,6 +113,11 @@ class Modeler {
   // Replaces the through-points of a NURBS curve object (local coordinates).
   Status setCurvePoints(const ObjectId& id, const std::vector<gp_Pnt>& points);
 
+  // Group being edited ("group edit mode"): objects created from now on are
+  // placed inside it. Empty = top level.
+  Status setActiveGroup(const ObjectId& groupId);
+  const ObjectId& activeGroup() const { return activeGroup_; }
+
   bool undo() { return history_.undo(); }
   bool redo() { return history_.redo(); }
 
@@ -146,6 +151,7 @@ class Modeler {
 
   Document document_;
   CommandStack history_;
+  ObjectId activeGroup_;
 };
 
 }  // namespace sbr::doc

@@ -89,6 +89,23 @@ void SelectTool::apply(const std::vector<ElementRef>& picked, bool additive) {
   host_.setElementSelection(selection);
 }
 
+doc::ObjectId SelectTool::target(const doc::ObjectId& leaf) const {
+  const doc::Document& document = host_.modeler().document();
+  const doc::ObjectId context = host_.editingGroup();
+  if (context.empty()) return document.rootOf(leaf);
+  // Inside a group: the child of the edited group that contains the leaf.
+  doc::ObjectId current = leaf;
+  int guard = 0;
+  while (guard++ < 1000) {
+    const doc::Object* o = document.find(current);
+    if (!o) break;
+    if (o->parent == context) return current;
+    if (o->parent.empty()) break;
+    current = o->parent;
+  }
+  return {};  // outside the edited group
+}
+
 void SelectTool::mousePress(const ToolEvent& e) {
   const bool additive = e.modifiers & Qt::ShiftModifier;
   const auto picked = host_.viewport().pickElement(e.pos);
@@ -96,15 +113,20 @@ void SelectTool::mousePress(const ToolEvent& e) {
     if (!additive) host_.setSelection({});
     return;
   }
+  doc::ObjectId addressed = target(picked->objectId);
+  if (addressed.empty()) {
+    // Clicked outside the edited group: leave it, as in SketchUp.
+    host_.exitGroup();
+    addressed = target(picked->objectId);
+  }
   const doc::Document& document = host_.modeler().document();
-  const doc::ObjectId root = document.rootOf(picked->objectId);
   const doc::Object* owner = document.find(picked->objectId);
   // Groups and components are picked as a whole, like SketchUp.
-  if (root != picked->objectId || (owner && owner->kind() == doc::ObjectKind::Instance)) {
+  if (addressed != picked->objectId || (owner && owner->kind() == doc::ObjectKind::Instance)) {
     std::vector<doc::ObjectId> selection = additive ? host_.selection() : std::vector<doc::ObjectId>{};
-    const auto it = std::find(selection.begin(), selection.end(), root);
+    const auto it = std::find(selection.begin(), selection.end(), addressed);
     if (it == selection.end()) {
-      selection.push_back(root);
+      selection.push_back(addressed);
     } else {
       selection.erase(it);
     }
@@ -126,10 +148,15 @@ bool SelectTool::mouseDoubleClick(const ToolEvent& e) {
   const auto picked = host_.viewport().pickElement(e.pos);
   if (!picked) return false;  // empty space: let the viewport focus/fit
   const doc::Document& document = host_.modeler().document();
-  const doc::Object* owner = document.find(picked->objectId);
-  if (document.rootOf(picked->objectId) != picked->objectId ||
-      (owner && owner->kind() == doc::ObjectKind::Instance)) {
-    return false;  // groups/components: focus on them
+  const doc::ObjectId addressed = target(picked->objectId);
+  if (addressed.empty()) return false;
+  const doc::Object* o = document.find(addressed);
+  if (o && o->kind() == doc::ObjectKind::Group) {
+    host_.enterGroup(addressed);  // edit inside the group
+    return true;
+  }
+  if (addressed != picked->objectId || (o && o->kind() == doc::ObjectKind::Instance)) {
+    return false;  // components: focus on them
   }
   sinceDoubleClick_.start();
   doubleClickPos_ = e.pos;
