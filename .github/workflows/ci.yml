@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build g++ \
+            libocct-foundation-dev libocct-modeling-data-dev libocct-modeling-algorithms-dev \
+            libocct-data-exchange-dev libocct-visualization-dev libocct-ocaf-dev libtbb-dev \
+            qt6-base-dev libgl-dev libgl1-mesa-dri xvfb \
+            nlohmann-json3-dev libgtest-dev libgmock-dev
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test (core, Phase 0 CLI and GUI end-to-end under Xvfb)
+        run: xvfb-run -a -s "-screen 0 1600x1000x24" ctest --test-dir build --output-on-failure

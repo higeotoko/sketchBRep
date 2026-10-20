@@ -1,0 +1,279 @@
+#include "sbr/snap/Inference.h"
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
+#include <BRepAdaptor_Curve.hxx>
+#include <BRepGProp_Face.hxx>
+#include <BRep_Tool.hxx>
+#include <IntCurvesFace_ShapeIntersector.hxx>
+#include <TopExp.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
+#include <TopoDS.hxx>
+#include <gp_Lin.hxx>
+
+namespace sbr::snap {
+
+const char* toString(SnapKind kind) {
+  switch (kind) {
+    case SnapKind::None: return "None";
+    case SnapKind::Endpoint: return "Endpoint";
+    case SnapKind::Midpoint: return "Midpoint";
+    case SnapKind::OnEdge: return "On Edge";
+    case SnapKind::OnFace: return "On Face";
+    case SnapKind::Origin: return "Origin";
+    case SnapKind::AxisX: return "On Red Axis";
+    case SnapKind::AxisY: return "On Green Axis";
+    case SnapKind::AxisZ: return "On Blue Axis";
+    case SnapKind::Locked: return "Locked";
+    case SnapKind::WorkPlane: return "On Plane";
+  }
+  return "None";
+}
+
+gp_Pnt closestPointOnLineToRay(const gp_Pnt& p, const gp_Dir& dir, const Ray& ray) {
+  // Closest points between two lines; returns the point on (p, dir).
+  const gp_Vec u(dir);
+  const gp_Vec v(ray.direction);
+  const gp_Vec w(ray.origin, p);
+  const double b = u.Dot(v);
+  const double d = u.Dot(w);
+  const double e = v.Dot(w);
+  const double denom = 1.0 - b * b;  // |u| = |v| = 1
+  if (std::abs(denom) < 1e-12) return p;
+  const double s = (b * e - d) / denom;
+  return p.Translated(u * s);
+}
+
+struct InferenceEngine::EdgeEntry {
+  int shapeIndex = 0;
+  TopoDS_Edge edge;
+  bool isLine = false;
+  gp_Pnt a, b;                 // ends of straight edges
+  std::vector<gp_Pnt> samples; // samples of curved edges
+};
+
+struct InferenceEngine::Cache {
+  struct PointEntry {
+    gp_Pnt point;
+    SnapKind kind;
+    int shapeIndex;
+  };
+  std::vector<PointEntry> points;
+  std::vector<EdgeEntry> edges;
+  std::vector<std::unique_ptr<IntCurvesFace_ShapeIntersector>> intersectors;
+};
+
+void InferenceEngine::setShapes(const std::vector<TopoDS_Shape>& shapes) {
+  shapes_ = shapes;
+  cache_ = std::make_shared<Cache>();
+  for (int si = 0; si < static_cast<int>(shapes.size()); ++si) {
+    const TopoDS_Shape& shape = shapes[static_cast<std::size_t>(si)];
+    if (shape.IsNull()) {
+      cache_->intersectors.emplace_back();
+      continue;
+    }
+    TopTools_IndexedMapOfShape vertices;
+    TopExp::MapShapes(shape, TopAbs_VERTEX, vertices);
+    for (int i = 1; i <= vertices.Extent(); ++i) {
+      cache_->points.push_back(
+          {BRep_Tool::Pnt(TopoDS::Vertex(vertices(i))), SnapKind::Endpoint, si});
+    }
+    TopTools_IndexedMapOfShape edges;
+    TopExp::MapShapes(shape, TopAbs_EDGE, edges);
+    for (int i = 1; i <= edges.Extent(); ++i) {
+      const TopoDS_Edge edge = TopoDS::Edge(edges(i));
+      if (BRep_Tool::Degenerated(edge)) continue;
+      BRepAdaptor_Curve curve(edge);
+      const double f = curve.FirstParameter();
+      const double l = curve.LastParameter();
+      cache_->points.push_back({curve.Value(0.5 * (f + l)), SnapKind::Midpoint, si});
+      EdgeEntry entry;
+      entry.shapeIndex = si;
+      entry.edge = edge;
+      entry.isLine = curve.GetType() == GeomAbs_Line;
+      entry.a = curve.Value(f);
+      entry.b = curve.Value(l);
+      if (!entry.isLine) {
+        constexpr int kSamples = 64;
+        for (int k = 0; k <= kSamples; ++k) {
+          entry.samples.push_back(curve.Value(f + (l - f) * k / kSamples));
+        }
+      }
+      cache_->edges.push_back(std::move(entry));
+    }
+    auto intersector = std::make_unique<IntCurvesFace_ShapeIntersector>();
+    intersector->Load(shape, 1e-6);
+    cache_->intersectors.push_back(std::move(intersector));
+  }
+}
+
+namespace {
+
+double screenDistance(const Projector& project, const gp_Pnt& p, const ScreenPoint& cursor) {
+  const ScreenPoint s = project(p);
+  return std::hypot(s.x - cursor.x, s.y - cursor.y);
+}
+
+SnapKind axisKind(int axis) {
+  return axis == 0 ? SnapKind::AxisX : (axis == 1 ? SnapKind::AxisY : SnapKind::AxisZ);
+}
+
+std::optional<gp_Pnt> intersectPlane(const Ray& ray, const gp_Pln& plane) {
+  const gp_Dir n = plane.Axis().Direction();
+  const double denom = gp_Vec(ray.direction).Dot(gp_Vec(n));
+  if (std::abs(denom) < 1e-9) return std::nullopt;
+  const double t = gp_Vec(ray.origin, plane.Location()).Dot(gp_Vec(n)) / denom;
+  if (t < 0) return std::nullopt;
+  return ray.origin.Translated(gp_Vec(ray.direction) * t);
+}
+
+}  // namespace
+
+SnapResult InferenceEngine::snap(const SnapQuery& q) const {
+  SnapResult result;
+  const double tol = q.pixelTolerance;
+
+  // 1. Exact points: endpoints, midpoints, origin.
+  std::optional<SnapResult> pointSnap;
+  if (q.snapToGeometry && cache_) {
+    double best = tol;
+    // Endpoints win over midpoints at equal distance.
+    for (const auto& entry : cache_->points) {
+      const double d = screenDistance(q.project, entry.point, q.cursor);
+      const double bias = entry.kind == SnapKind::Endpoint ? 0.0 : 0.5;
+      if (d + bias < best) {
+        best = d + bias;
+        SnapResult r;
+        r.kind = entry.kind;
+        r.point = entry.point;
+        r.shapeIndex = entry.shapeIndex;
+        pointSnap = r;
+      }
+    }
+  }
+  if (!pointSnap && q.snapToGeometry) {
+    const gp_Pnt origin(0, 0, 0);
+    if (screenDistance(q.project, origin, q.cursor) < tol) {
+      SnapResult r;
+      r.kind = SnapKind::Origin;
+      r.point = origin;
+      pointSnap = r;
+    }
+  }
+
+  // Shift lock: constrain to the locked line, using a point snap if present.
+  if (q.lockedDirection && q.anchor) {
+    const gp_Lin line(*q.anchor, *q.lockedDirection);
+    result.kind = SnapKind::Locked;
+    result.axis = *q.lockedDirection;
+    if (pointSnap) {
+      const gp_Vec v(*q.anchor, pointSnap->point);
+      result.point = q.anchor->Translated(gp_Vec(*q.lockedDirection) *
+                                          v.Dot(gp_Vec(*q.lockedDirection)));
+    } else {
+      result.point = closestPointOnLineToRay(*q.anchor, *q.lockedDirection, q.ray);
+    }
+    return result;
+  }
+  if (pointSnap) return *pointSnap;
+
+  // 2. On edge.
+  if (q.snapToGeometry && cache_) {
+    double best = tol;
+    std::optional<SnapResult> edgeSnap;
+    for (const EdgeEntry& e : cache_->edges) {
+      gp_Pnt candidate;
+      if (e.isLine) {
+        const gp_Vec ab(e.a, e.b);
+        const double len = ab.Magnitude();
+        if (len < 1e-9) continue;
+        const gp_Dir dir(ab);
+        gp_Pnt p = closestPointOnLineToRay(e.a, dir, q.ray);
+        double t = gp_Vec(e.a, p).Dot(gp_Vec(dir));
+        t = std::clamp(t, 0.0, len);
+        candidate = e.a.Translated(gp_Vec(dir) * t);
+      } else {
+        double bestSample = std::numeric_limits<double>::max();
+        for (const gp_Pnt& s : e.samples) {
+          const double d = screenDistance(q.project, s, q.cursor);
+          if (d < bestSample) {
+            bestSample = d;
+            candidate = s;
+          }
+        }
+      }
+      const double d = screenDistance(q.project, candidate, q.cursor);
+      if (d < best) {
+        best = d;
+        SnapResult r;
+        r.kind = SnapKind::OnEdge;
+        r.point = candidate;
+        r.shapeIndex = e.shapeIndex;
+        edgeSnap = r;
+      }
+    }
+    if (edgeSnap) return *edgeSnap;
+  }
+
+  // 3. Axis inference from the anchor.
+  if (q.anchor) {
+    double best = tol;
+    std::optional<SnapResult> axisSnap;
+    const gp_Dir axes[3] = {gp_Dir(1, 0, 0), gp_Dir(0, 1, 0), gp_Dir(0, 0, 1)};
+    for (int a = 0; a < 3; ++a) {
+      const gp_Pnt p = closestPointOnLineToRay(*q.anchor, axes[a], q.ray);
+      if (p.Distance(*q.anchor) < 1e-6) continue;
+      const double d = screenDistance(q.project, p, q.cursor);
+      if (d < best) {
+        best = d;
+        SnapResult r;
+        r.kind = axisKind(a);
+        r.point = p;
+        r.axis = axes[a];
+        axisSnap = r;
+      }
+    }
+    if (axisSnap) return *axisSnap;
+  }
+
+  // 4. On face (nearest hit along the ray).
+  if (q.snapToGeometry && cache_) {
+    double bestParam = std::numeric_limits<double>::max();
+    std::optional<SnapResult> faceSnap;
+    const gp_Lin line(q.ray.origin, q.ray.direction);
+    for (std::size_t si = 0; si < cache_->intersectors.size(); ++si) {
+      auto& intersector = cache_->intersectors[si];
+      if (!intersector) continue;
+      intersector->PerformNearest(line, -1e12, 1e12);
+      if (!intersector->IsDone() || intersector->NbPnt() < 1) continue;
+      const double w = intersector->WParameter(1);
+      if (w < bestParam) {
+        bestParam = w;
+        SnapResult r;
+        r.kind = SnapKind::OnFace;
+        r.point = intersector->Pnt(1);
+        r.shapeIndex = static_cast<int>(si);
+        r.face = intersector->Face(1);
+        BRepGProp_Face prop(r.face);
+        gp_Pnt p;
+        gp_Vec n;
+        prop.Normal(intersector->UParameter(1), intersector->VParameter(1), p, n);
+        if (n.Magnitude() > 1e-12) r.faceNormal = gp_Dir(n);
+        faceSnap = r;
+      }
+    }
+    if (faceSnap) return *faceSnap;
+  }
+
+  // 5. Work plane.
+  if (const auto p = intersectPlane(q.ray, q.workPlane)) {
+    result.kind = SnapKind::WorkPlane;
+    result.point = *p;
+    result.faceNormal = q.workPlane.Axis().Direction();
+  }
+  return result;
+}
+
+}  // namespace sbr::snap

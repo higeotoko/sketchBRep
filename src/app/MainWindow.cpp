@@ -1,0 +1,460 @@
+#include "MainWindow.h"
+
+#include <algorithm>
+
+#include <QAction>
+#include <QActionGroup>
+#include <QApplication>
+#include <QCloseEvent>
+#include <QDockWidget>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QLabel>
+#include <QLineEdit>
+#include <QMenuBar>
+#include <QMessageBox>
+#include <QStatusBar>
+#include <QTimer>
+#include <QToolBar>
+
+#include "PropertiesPanel.h"
+#include "Viewport.h"
+
+namespace sbr::app {
+namespace {
+std::string utf8(const QString& s) { return s.toUtf8().toStdString(); }
+}  // namespace
+
+MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
+  selectTool_ = std::make_unique<SelectTool>(*this);
+  lineTool_ = std::make_unique<LineTool>(*this);
+  rectangleTool_ = std::make_unique<RectangleTool>(*this);
+  pushPullTool_ = std::make_unique<PushPullTool>(*this);
+
+  buildUi();
+  buildMenus();
+  modeler_.document().addListener([this] { onDocumentChanged(); });
+  activateTool(ToolId::Rectangle);
+  refreshPanels();
+  updateTitle();
+}
+
+MainWindow::~MainWindow() {
+  // Tools reference the viewport; drop them before child widgets go away.
+  if (active_) active_->deactivate();
+  viewport_->setTool(nullptr);
+}
+
+void MainWindow::buildUi() {
+  viewport_ = new Viewport(modeler_, this);
+  setCentralWidget(viewport_);
+
+  panel_ = new PropertiesPanel;
+  auto* dock = new QDockWidget(tr("オブジェクト / 属性"), this);
+  dock->setObjectName(QStringLiteral("propertiesDock"));
+  dock->setWidget(panel_);
+  dock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
+  addDockWidget(Qt::RightDockWidgetArea, dock);
+  resizeDocks({dock}, {300}, Qt::Horizontal);
+
+  status_ = new QLabel;
+  status_->setMinimumWidth(200);
+  measurementLabel_ = new QLabel;
+  measurement_ = new QLineEdit;
+  measurement_->setFixedWidth(200);
+  measurement_->setPlaceholderText(tr("数値入力"));
+  statusBar()->addWidget(status_, 1);
+  statusBar()->addPermanentWidget(measurementLabel_);
+  statusBar()->addPermanentWidget(measurement_);
+
+  connect(viewport_, &Viewport::measurementChar, this, [this](QChar c) {
+    if (!userTyping_) measurement_->clear();
+    userTyping_ = true;
+    measurement_->insert(QString(c));
+  });
+  connect(viewport_, &Viewport::measurementBackspace, this, [this] {
+    if (userTyping_) measurement_->backspace();
+  });
+  connect(viewport_, &Viewport::measurementCommit, this, &MainWindow::commitMeasurement);
+  connect(measurement_, &QLineEdit::returnPressed, this, &MainWindow::commitMeasurement);
+  connect(measurement_, &QLineEdit::textEdited, this, [this] { userTyping_ = true; });
+  connect(viewport_, &Viewport::escapePressed, this, [this] {
+    userTyping_ = false;
+    if (active_) {
+      active_->cancel();
+      active_->activate();
+    }
+  });
+  connect(viewport_, &Viewport::focusRequested, this, [this](const QPoint&) {
+    if (!focusOnDoubleClick_->isChecked()) return;
+    if (selection_.empty()) {
+      viewport_->fitAll();
+    } else {
+      viewport_->fitObjects(selection_);
+    }
+  });
+
+  connect(panel_, &PropertiesPanel::selectionChanged, this,
+          [this](const std::vector<doc::ObjectId>& ids) { setSelection(ids); });
+  connect(panel_, &PropertiesPanel::parameterEdited, this,
+          [this](const doc::ObjectId& id, const std::string& key, double value) {
+            // Defer so the spin box is not destroyed inside its own signal.
+            QTimer::singleShot(0, this, [this, id, key, value] {
+              const Status s = modeler_.setParameter(id, key, value);
+              if (!s) {
+                reportError(tr("パラメータを変更できません: %1").arg(QString::fromStdString(s.message())));
+                refreshPanels();
+              }
+            });
+          });
+  connect(panel_, &PropertiesPanel::renameRequested, this,
+          [this](const doc::ObjectId& id, const QString& name) {
+            const doc::Object* o = modeler_.document().find(id);
+            if (!o || o->name == utf8(name)) return;
+            QTimer::singleShot(0, this, [this, id, name] { modeler_.rename(id, utf8(name)); });
+          });
+  connect(panel_, &PropertiesPanel::visibilityToggled, this,
+          [this](const doc::ObjectId& id, bool visible) {
+            QTimer::singleShot(0, this, [this, id, visible] { modeler_.setVisible(id, visible); });
+          });
+}
+
+void MainWindow::buildMenus() {
+  // --- File
+  QMenu* file = menuBar()->addMenu(tr("ファイル(&F)"));
+  file->addAction(tr("新規(&N)"), QKeySequence::New, this, &MainWindow::newDocument);
+  file->addAction(tr("開く(&O)..."), QKeySequence::Open, this, &MainWindow::open);
+  file->addAction(tr("保存(&S)"), QKeySequence::Save, this, &MainWindow::save);
+  file->addAction(tr("名前を付けて保存(&A)..."), QKeySequence::SaveAs, this, &MainWindow::saveAs);
+  file->addSeparator();
+  file->addAction(tr("STEP インポート..."), this, &MainWindow::importStep);
+  file->addAction(tr("STEP エクスポート..."), this, &MainWindow::exportStep);
+  file->addSeparator();
+  file->addAction(tr("終了(&X)"), QKeySequence::Quit, this, &QWidget::close);
+
+  // --- Edit
+  QMenu* edit = menuBar()->addMenu(tr("編集(&E)"));
+  undoAction_ = edit->addAction(tr("元に戻す"), QKeySequence::Undo, this, &MainWindow::undo);
+  redoAction_ = edit->addAction(tr("やり直し"), this, &MainWindow::redo);
+  redoAction_->setShortcuts({QKeySequence(tr("Ctrl+Y")), QKeySequence(tr("Ctrl+Shift+Z"))});
+  edit->addSeparator();
+  edit->addAction(tr("削除"), QKeySequence::Delete, this, &MainWindow::deleteSelection);
+  edit->addAction(tr("選択解除"), QKeySequence(tr("Ctrl+T")), this, [this] { setSelection({}); });
+
+  // --- View
+  QMenu* view = menuBar()->addMenu(tr("表示(&V)"));
+  struct ViewEntry {
+    QString label;
+    const char* key;
+    Viewport::StandardView view;
+  };
+  const ViewEntry views[] = {
+      {tr("アイソメ"), "F2", Viewport::StandardView::Iso},
+      {tr("平面 (上)"), "F3", Viewport::StandardView::Top},
+      {tr("正面"), "F4", Viewport::StandardView::Front},
+      {tr("右側面"), "F5", Viewport::StandardView::Right},
+      {tr("背面"), "F6", Viewport::StandardView::Back},
+      {tr("左側面"), "F7", Viewport::StandardView::Left},
+  };
+  for (const ViewEntry& v : views) {
+    const Viewport::StandardView sv = v.view;
+    view->addAction(v.label, QKeySequence(QString::fromLatin1(v.key)), this,
+                    [this, sv] { viewport_->setStandardView(sv); });
+  }
+  view->addAction(tr("全体表示"), QKeySequence(tr("Shift+Z")), this, [this] { viewport_->fitAll(); });
+  view->addSeparator();
+  perspectiveAction_ = view->addAction(tr("透視投影"));
+  perspectiveAction_->setCheckable(true);
+  perspectiveAction_->setChecked(true);
+  perspectiveAction_->setShortcut(QKeySequence(QStringLiteral("F8")));
+  connect(perspectiveAction_, &QAction::toggled, this,
+          [this](bool on) { viewport_->setPerspective(on); });
+  QAction* shaded = view->addAction(tr("シェーディング"));
+  shaded->setCheckable(true);
+  shaded->setChecked(true);
+  connect(shaded, &QAction::toggled, this, [this](bool on) { viewport_->setShaded(on); });
+  focusOnDoubleClick_ = view->addAction(tr("ダブルクリックでフォーカス"));
+  focusOnDoubleClick_->setCheckable(true);
+  focusOnDoubleClick_->setChecked(true);
+
+  QMenu* quality = view->addMenu(tr("表示品質（描画メッシュのみ）"));
+  auto* qualityGroup = new QActionGroup(this);
+  struct QualityEntry {
+    QString label;
+    display::DisplayQuality q;
+  };
+  const QualityEntry qualities[] = {{tr("粗い"), display::DisplayQuality::coarse()},
+                                    {tr("標準"), display::DisplayQuality::normal()},
+                                    {tr("精細"), display::DisplayQuality::fine()}};
+  for (const QualityEntry& e : qualities) {
+    QAction* a = quality->addAction(e.label);
+    a->setCheckable(true);
+    a->setChecked(e.label == tr("標準"));
+    qualityGroup->addAction(a);
+    const display::DisplayQuality q = e.q;
+    connect(a, &QAction::triggered, this, [this, q] { viewport_->setDisplayQuality(q); });
+  }
+
+  // --- Tools (menu + left toolbar)
+  QMenu* tools = menuBar()->addMenu(tr("ツール(&T)"));
+  QToolBar* bar = new QToolBar(tr("ツール"), this);
+  bar->setObjectName(QStringLiteral("toolsBar"));
+  bar->setToolButtonStyle(Qt::ToolButtonTextOnly);
+  bar->setMovable(false);
+  addToolBar(Qt::LeftToolBarArea, bar);
+  toolGroup_ = new QActionGroup(this);
+  struct ToolEntry {
+    QString label;
+    QString key;
+    ToolId id;
+  };
+  const ToolEntry entries[] = {
+      {tr("選択"), QStringLiteral("Space"), ToolId::Select},
+      {tr("線"), QStringLiteral("L"), ToolId::Line},
+      {tr("矩形"), QStringLiteral("R"), ToolId::Rectangle},
+      {tr("プッシュ/プル"), QStringLiteral("P"), ToolId::PushPull},
+  };
+  for (const ToolEntry& e : entries) {
+    QAction* a = new QAction(e.label, this);
+    a->setCheckable(true);
+    a->setShortcut(QKeySequence(e.key));
+    a->setToolTip(QStringLiteral("%1 (%2)").arg(e.label, e.key));
+    const ToolId id = e.id;
+    connect(a, &QAction::triggered, this, [this, id] { activateTool(id); });
+    toolGroup_->addAction(a);
+    tools->addAction(a);
+    bar->addAction(a);
+    toolActions_[static_cast<int>(id)] = a;
+  }
+
+  QMenu* help = menuBar()->addMenu(tr("ヘルプ(&H)"));
+  help->addAction(tr("操作方法"), this, [this] {
+    QMessageBox::information(
+        this, tr("操作方法"),
+        tr("<b>カメラ</b><br>ホイール: ズーム / ホイールドラッグ: オービット / "
+           "Shift+ホイールドラッグ: パン / ダブルクリック: フォーカス<br>"
+           "F2〜F7: 標準ビュー / F8: 透視・平行投影 / Shift+Z: 全体表示<br><br>"
+           "<b>ツール</b><br>Space: 選択 / L: 線 / R: 矩形 / P: プッシュ/プル<br>"
+           "作図中に数値を打って Enter で寸法指定（例: 3000, 4.5m, 3000,4500）<br>"
+           "Shift: 推論方向をロック / →・←・↑: X・Y・Z 軸ロック / ↓: 解除 / Esc: 中止"));
+  });
+}
+
+void MainWindow::activateTool(ToolId id) {
+  if (active_) active_->deactivate();
+  switch (id) {
+    case ToolId::Select: active_ = selectTool_.get(); break;
+    case ToolId::Line: active_ = lineTool_.get(); break;
+    case ToolId::Rectangle: active_ = rectangleTool_.get(); break;
+    case ToolId::PushPull: active_ = pushPullTool_.get(); break;
+  }
+  toolActions_[static_cast<int>(id)]->setChecked(true);
+  viewport_->setTool(active_);
+  userTyping_ = false;
+  active_->activate();
+  viewport_->setFocus();
+}
+
+// --- ToolHost ---------------------------------------------------------------------
+
+void MainWindow::setStatus(const QString& text) { status_->setText(text); }
+
+void MainWindow::setMeasurement(const QString& label, const QString& value) {
+  measurementLabel_->setText(label);
+  if (!userTyping_) measurement_->setText(value);
+}
+
+void MainWindow::reportError(const QString& text) {
+  lastError_ = text;
+  statusBar()->showMessage(text, 6000);
+  QApplication::beep();
+}
+
+void MainWindow::setSelection(const std::vector<doc::ObjectId>& ids) {
+  selection_ = ids;
+  viewport_->setSelection(ids);
+  refreshPanels();
+}
+
+// --- document ---------------------------------------------------------------------
+
+void MainWindow::onDocumentChanged() {
+  viewport_->scheduleSync();
+  if (refreshPending_) return;
+  refreshPending_ = true;
+  QTimer::singleShot(0, this, [this] {
+    refreshPending_ = false;
+    // Drop selected ids that no longer exist.
+    selection_.erase(std::remove_if(selection_.begin(), selection_.end(),
+                                    [this](const doc::ObjectId& id) {
+                                      return modeler_.document().find(id) == nullptr;
+                                    }),
+                     selection_.end());
+    viewport_->setSelection(selection_);
+    refreshPanels();
+    updateTitle();
+  });
+}
+
+void MainWindow::refreshPanels() {
+  panel_->refresh(modeler_, selection_);
+  const auto& h = modeler_.history();
+  undoAction_->setEnabled(h.canUndo());
+  redoAction_->setEnabled(h.canRedo());
+  undoAction_->setText(h.canUndo() ? tr("元に戻す: %1").arg(QString::fromStdString(h.undoName()))
+                                   : tr("元に戻す"));
+  redoAction_->setText(h.canRedo() ? tr("やり直し: %1").arg(QString::fromStdString(h.redoName()))
+                                   : tr("やり直し"));
+}
+
+void MainWindow::updateTitle() {
+  const QString name = currentPath_.isEmpty() ? tr("無題") : QFileInfo(currentPath_).fileName();
+  setWindowTitle(QStringLiteral("%1[*] - SketchBRep").arg(name));
+  setWindowModified(!modeler_.history().isClean());
+}
+
+void MainWindow::commitMeasurement() {
+  const QString text = measurement_->text().trimmed();
+  userTyping_ = false;
+  if (text.isEmpty() || !active_) return;
+  active_->applyMeasurement(text);
+  viewport_->setFocus();
+}
+
+void MainWindow::undo() {
+  if (active_) active_->cancel();
+  modeler_.undo();
+  if (active_) active_->activate();
+}
+
+void MainWindow::redo() {
+  if (active_) active_->cancel();
+  modeler_.redo();
+  if (active_) active_->activate();
+}
+
+void MainWindow::deleteSelection() {
+  if (selection_.empty()) return;
+  const Status s = modeler_.remove(selection_);
+  if (!s) reportError(QString::fromStdString(s.message()));
+  setSelection({});
+}
+
+// --- files ------------------------------------------------------------------------
+
+bool MainWindow::maybeSave() {
+  if (modeler_.history().isClean()) return true;
+  const auto answer = QMessageBox::question(
+      this, tr("SketchBRep"), tr("変更を保存しますか？"),
+      QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+  if (answer == QMessageBox::Cancel) return false;
+  if (answer == QMessageBox::Save) return save();
+  return true;
+}
+
+void MainWindow::newDocument() {
+  if (!maybeSave()) return;
+  if (active_) active_->cancel();
+  modeler_.newDocument();
+  currentPath_.clear();
+  setSelection({});
+  viewport_->setStandardView(Viewport::StandardView::Iso);
+  updateTitle();
+}
+
+bool MainWindow::openFile(const QString& path) {
+  if (active_) active_->cancel();
+  std::vector<std::string> warnings;
+  const Status s = modeler_.load(utf8(path), &warnings);
+  if (!s) {
+    reportError(tr("開けませんでした: %1").arg(QString::fromStdString(s.message())));
+    return false;
+  }
+  currentPath_ = path;
+  setSelection({});
+  viewport_->syncNow();
+  viewport_->restoreCamera(modeler_.document().settings().camera);
+  perspectiveAction_->setChecked(modeler_.document().settings().camera.perspective);
+  if (!warnings.empty()) {
+    QStringList lines;
+    for (const auto& w : warnings) lines << QString::fromStdString(w);
+    QMessageBox::warning(this, tr("読み込み時の警告"), lines.join(QStringLiteral("\n")));
+  }
+  updateTitle();
+  if (active_) active_->activate();
+  return true;
+}
+
+bool MainWindow::saveFile(const QString& path) {
+  viewport_->storeCamera(modeler_.document().settings().camera);
+  const Status s = modeler_.save(utf8(path));
+  if (!s) {
+    reportError(tr("保存できませんでした: %1").arg(QString::fromStdString(s.message())));
+    QMessageBox::critical(this, tr("保存エラー"), QString::fromStdString(s.message()));
+    return false;
+  }
+  currentPath_ = path;
+  updateTitle();
+  statusBar()->showMessage(tr("保存しました: %1").arg(path), 4000);
+  return true;
+}
+
+void MainWindow::open() {
+  if (!maybeSave()) return;
+  const QString path = QFileDialog::getOpenFileName(this, tr("開く"), QString(),
+                                                    tr("SketchBRep (*.sbr)"));
+  if (!path.isEmpty()) openFile(path);
+}
+
+bool MainWindow::save() {
+  if (currentPath_.isEmpty()) return saveAs();
+  return saveFile(currentPath_);
+}
+
+bool MainWindow::saveAs() {
+  QString path = QFileDialog::getSaveFileName(this, tr("名前を付けて保存"), currentPath_,
+                                              tr("SketchBRep (*.sbr)"));
+  if (path.isEmpty()) return false;
+  if (!path.endsWith(QStringLiteral(".sbr"), Qt::CaseInsensitive)) path += QStringLiteral(".sbr");
+  return saveFile(path);
+}
+
+void MainWindow::importStep() {
+  const QString path = QFileDialog::getOpenFileName(this, tr("STEP インポート"), QString(),
+                                                    tr("STEP (*.step *.stp)"));
+  if (path.isEmpty()) return;
+  auto ids = modeler_.importStep(utf8(path));
+  if (!ids) {
+    reportError(QString::fromStdString(ids.error()));
+    return;
+  }
+  setSelection(ids.value());
+  viewport_->syncNow();
+  viewport_->fitAll();
+}
+
+void MainWindow::exportStep() {
+  QString path = QFileDialog::getSaveFileName(this, tr("STEP エクスポート"), QString(),
+                                              tr("STEP (*.step *.stp)"));
+  if (path.isEmpty()) return;
+  if (!path.endsWith(QStringLiteral(".step"), Qt::CaseInsensitive) &&
+      !path.endsWith(QStringLiteral(".stp"), Qt::CaseInsensitive)) {
+    path += QStringLiteral(".step");
+  }
+  const Status s = modeler_.exportStep(utf8(path), selection_);
+  if (!s) {
+    reportError(QString::fromStdString(s.message()));
+  } else {
+    statusBar()->showMessage(tr("STEP を書き出しました: %1").arg(path), 4000);
+  }
+}
+
+void MainWindow::closeEvent(QCloseEvent* event) {
+  if (maybeSave()) {
+    event->accept();
+  } else {
+    event->ignore();
+  }
+}
+
+}  // namespace sbr::app
