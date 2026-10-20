@@ -8,6 +8,7 @@ add_executable(sbr_core_tests
   test_inference.cpp
   test_display.cpp
   test_phase2.cpp
+  test_freeform.cpp
 )
 target_link_libraries(sbr_core_tests PRIVATE sbr::core GTest::gtest_main)
 

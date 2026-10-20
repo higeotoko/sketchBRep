@@ -14,6 +14,7 @@ add_library(sbr_core STATIC
   src/NativeFormat.cpp
   src/Modeler.cpp
   src/Inference.cpp
+  src/Freeform.cpp
 )
 add_library(sbr::core ALIAS sbr_core)
 
