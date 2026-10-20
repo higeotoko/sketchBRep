@@ -40,7 +40,7 @@ build\src\app\Release\SketchBRep.exe
 ### Linux（開発・CI 用。Ubuntu 24.04）
 
 ```bash
-sudo apt install cmake ninja-build g++ libocct-*-dev libtbb-dev qt6-base-dev libgl-dev \
+sudo apt install cmake ninja-build g++ libocct-*-dev libtbb-dev libfontconfig-dev qt6-base-dev libgl-dev \
                  nlohmann-json3-dev libgtest-dev xvfb
 cmake -S . -B build -G Ninja && cmake --build build
 xvfb-run -a ctest --test-dir build --output-on-failure   # GUI テストはディスプレイが必要
