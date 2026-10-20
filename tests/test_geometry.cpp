@@ -1,6 +1,7 @@
 #include <cmath>
 
 #include <TopExp.hxx>
+#include <TopLoc_Location.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
@@ -173,4 +174,15 @@ TEST(ShapeIOTest, StepRoundTripPreservesDimensions) {
 
 TEST(ShapeIOTest, ReadingMissingStepFails) {
   EXPECT_FALSE(readStep(test::tempPath("does_not_exist.step")).ok());
+}
+
+TEST(Geometry, PlaneOfLocatedFaceIncludesPlacement) {
+  auto face = makeRectangleFace(SketchPlane::ground(), 100, 100);
+  gp_Trsf t;
+  t.SetTranslation(gp_Vec(0, 0, 500));
+  const TopoDS_Face moved = TopoDS::Face(face.value().Moved(TopLoc_Location(t)));
+  gp_Pln plane;
+  ASSERT_TRUE(isPlanarFace(moved, &plane));
+  EXPECT_NEAR(plane.Distance(gp_Pnt(50, 50, 500)), 0.0, 1e-9);
+  EXPECT_NEAR(plane.Distance(gp_Pnt(50, 50, 0)), 500.0, 1e-9);
 }

@@ -86,6 +86,7 @@ class GuiPhase1 : public QObject {
   void revolveToolAndTypedAngle();
   void pushPullDoubleClickRepeatsDistance();
   void orbitKeepsPointUnderCursorFixed();
+  void drawOnWallAndPushInCutsOpening();
 };
 
 namespace {
@@ -511,6 +512,45 @@ void GuiPhase1::orbitKeepsPointUnderCursorFixed() {
   // Toolbar shows icons.
   for (QAction* a : f.window.findChildren<QAction*>()) {
     if (a->text() == QStringLiteral("プッシュ/プル")) QVERIFY(!a->icon().isNull());
+  }
+}
+
+void GuiPhase1::drawOnWallAndPushInCutsOpening() {
+  Fixture f;
+  QVERIFY(f.setUp(2000, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId wall = f.box(0, 0, 4000, 200, 3000);
+  const double full = 4000.0 * 200 * 3000;
+
+  // Rectangle tool: first corner on the wall's front (-Y) face.
+  f.window.activateTool(MainWindow::ToolId::Rectangle);
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 0, 300)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(1600, 0, 1500)));
+  type(f.vp, QStringLiteral("900,2100"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), std::size_t(2));
+  // Push/pull the outline into the wall: it becomes an opening.
+  f.window.activateTool(MainWindow::ToolId::PushPull);
+  QTest::qWait(30);
+  click(f.vp, f.vp->toWidget(gp_Pnt(1450, 0, 1350)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(1450, 150, 1350)));
+  type(f.vp, QStringLiteral("200"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  const doc::ObjectId cut = m.document().objects().front().id;
+  QVERIFY(std::abs(geom::volume(m.document().worldShape(cut)) - (full - 900.0 * 2100 * 200)) < 1.0);
+  QVERIFY(!m.document().find(wall));
+
+  // Typing again re-edits the depth (niche of 100 mm).
+  type(f.vp, QStringLiteral("100"));
+  QVERIFY(std::abs(geom::volume(m.document().worldShape(cut)) - (full - 900.0 * 2100 * 100)) < 1.0);
+
+  if (const QString shot = qEnvironmentVariable("SBR_OPENING_SHOT"); !shot.isEmpty()) {
+    type(f.vp, QStringLiteral("200"));
+    f.window.activateTool(MainWindow::ToolId::Select);
+    f.vp->fitAll();
+    QTest::qWait(100);
+    QVERIFY(f.window.screen()->grabWindow(0).copy(f.window.frameGeometry()).save(shot));
   }
 }
 

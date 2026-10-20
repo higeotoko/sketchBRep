@@ -36,6 +36,7 @@
 
 #include "Tools.h"
 #include "sbr/geom/Measure.h"
+#include "sbr/geom/Operations.h"
 
 namespace sbr::app {
 namespace {
@@ -302,6 +303,12 @@ Handle(AIS_Shape) Viewport::makeDisplay(const doc::Object& object, Entry& entry)
   ais->Attributes()->SetFaceBoundaryDraw(Standard_True);
   ais->Attributes()->SetFaceBoundaryAspect(
       new Prs3d_LineAspect(Quantity_NOC_BLACK, Aspect_TOL_SOLID, 1.5));
+  // Profiles often lie on faces of solids (outline drawn on a wall): draw
+  // them in a later layer that shares the depth buffer so they show on top
+  // of coplanar faces without z-fighting, yet stay hidden behind geometry.
+  if (object.kind() == doc::ObjectKind::Face || object.kind() == doc::ObjectKind::Curve) {
+    ais->SetZLayer(Graphic3d_ZLayerId_Top);
+  }
   return ais;
 }
 
@@ -465,6 +472,17 @@ snap::SnapResult Viewport::snap(const QPoint& pos, std::optional<gp_Pnt> anchor,
   return inference_.snap(query);
 }
 
+std::optional<std::pair<gp_Pnt, gp_Dir>> Viewport::faceAt(const QPoint& pos) const {
+  snap::SnapQuery query;
+  query.ray = rayAt(pos);
+  query.cursor = snap::ScreenPoint{static_cast<double>(pos.x()), static_cast<double>(pos.y())};
+  query.project = [this](const gp_Pnt& p) { return project(p); };
+  query.pixelTolerance = 0.0;  // no point/edge snapping: just the face under the cursor
+  const snap::SnapResult r = inference_.snap(query);
+  if (r.kind != snap::SnapKind::OnFace || !r.faceNormal) return std::nullopt;
+  return std::make_pair(r.point, *r.faceNormal);
+}
+
 void Viewport::setPickMode(PickMode mode) {
   if (mode == pickMode_) return;
   pickMode_ = mode;
@@ -487,9 +505,32 @@ std::optional<FacePick> Viewport::pickFace(const QPoint& pos) {
   context_->MoveTo(p.x(), p.y(), view_, Standard_False);
   redraw();
   if (!context_->HasDetected()) return std::nullopt;
-  Handle(StdSelect_BRepOwner) owner = Handle(StdSelect_BRepOwner)::DownCast(context_->DetectedOwner());
-  if (owner.IsNull() || owner->Shape().ShapeType() != TopAbs_FACE) return std::nullopt;
-  const auto id = idOf(context_->DetectedInteractive());
+
+  // Among faces at (nearly) the same depth, prefer bare profiles: a
+  // rectangle drawn on a wall must win over the wall face it lies on.
+  const Handle(StdSelect_ViewerSelector3d)& selector = context_->MainSelector();
+  int chosen = 0;
+  for (int i = 1; i <= selector->NbPicked(); ++i) {
+    Handle(StdSelect_BRepOwner) owner = Handle(StdSelect_BRepOwner)::DownCast(selector->Picked(i));
+    if (owner.IsNull() || owner->Shape().ShapeType() != TopAbs_FACE) continue;
+    if (chosen == 0) {
+      chosen = i;
+      continue;
+    }
+    const auto id = idOf(Handle(AIS_InteractiveObject)::DownCast(owner->Selectable()));
+    const doc::Object* o = id ? modeler_.document().find(*id) : nullptr;
+    gp_Pln plane;
+    // Coplanar with the front-most hit at the cursor: the profile lies on it.
+    if (o && o->kind() == doc::ObjectKind::Face &&
+        geom::isPlanarFace(TopoDS::Face(owner->Shape()), &plane) &&
+        plane.Distance(selector->PickedPoint(chosen)) < 1.0) {
+      chosen = i;
+      break;
+    }
+  }
+  if (chosen == 0) return std::nullopt;
+  Handle(StdSelect_BRepOwner) owner = Handle(StdSelect_BRepOwner)::DownCast(selector->Picked(chosen));
+  const auto id = idOf(Handle(AIS_InteractiveObject)::DownCast(owner->Selectable()));
   if (!id) return std::nullopt;
   const Entry& entry = entries_.at(*id);
   const int index = entry.displayFaces.FindIndex(owner->Shape());
@@ -497,10 +538,9 @@ std::optional<FacePick> Viewport::pickFace(const QPoint& pos) {
 
   FacePick pick;
   pick.objectId = *id;
-  pick.face = TopoDS::Face(entry.canonicalFaces(index));
   // Keep the orientation of the canonical face (outward normal).
-  const Handle(StdSelect_ViewerSelector3d)& selector = context_->MainSelector();
-  pick.point = selector->NbPicked() > 0 ? selector->PickedPoint(1) : gp_Pnt();
+  pick.face = TopoDS::Face(entry.canonicalFaces(index));
+  pick.point = selector->PickedPoint(chosen);
   return pick;
 }
 

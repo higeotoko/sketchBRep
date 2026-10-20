@@ -19,6 +19,7 @@
 #include <ShapeUpgrade_UnifySameDomain.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
 
 #include "sbr/geom/Measure.h"
@@ -28,11 +29,17 @@ namespace sbr::geom {
 
 bool isPlanarFace(const TopoDS_Face& face, gp_Pln* planeOut) {
   if (face.IsNull()) return false;
-  const Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
+  TopLoc_Location location;
+  const Handle(Geom_Surface) surface = BRep_Tool::Surface(face, location);
   if (surface.IsNull()) return false;
   GeomLib_IsPlanarSurface test(surface, tolerance::kLinear);
   if (!test.IsPlanar()) return false;
-  if (planeOut) *planeOut = test.Plan();
+  if (planeOut) {
+    // The surface is stored without the face's placement: apply it.
+    gp_Pln plane = test.Plan();
+    if (!location.IsIdentity()) plane.Transform(location.Transformation());
+    *planeOut = plane;
+  }
   return true;
 }
 

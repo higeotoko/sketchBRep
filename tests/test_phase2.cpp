@@ -423,3 +423,57 @@ TEST(Phase2Files, StepKeepsNamesColorsAndPlacement) {
   EXPECT_NEAR(wall->color.g, 0.2, 1e-3);
   test::expectBounds(other.document().worldShape(*col), 3000, 0, 0, 3500, 500, 500, 1e-5);
 }
+
+// --- Push/pull of profiles drawn on solids ---------------------------------------------
+
+TEST(PushPullOnSolids, RectangleOnWallCutsOpening) {
+  Modeler m;
+  const ObjectId wall = box(m, 0, 0, 0, 4000, 200, 3000, "Wall");
+  // Door outline drawn on the wall's -Y face.
+  auto door = m.createRectangle(geom::SketchPlane::fromNormal(gp_Pnt(1000, 0, 0), gp_Dir(0, -1, 0)),
+                                900, 2100);
+  ASSERT_TRUE(door.ok());
+  const TopoDS_Face face = TopoDS::Face(m.document().worldShape(*door));
+  auto pp = m.pushPull(*door, face, -200);  // into the wall
+  ASSERT_TRUE(pp.ok()) << pp.error();
+  EXPECT_EQ(m.document().objects().size(), 1u);
+  EXPECT_EQ(m.document().find(pp->id)->name, "Wall");
+  EXPECT_EQ(pp->parameterKey, "in1.op0.distance");
+  const double full = 4000.0 * 200 * 3000;
+  EXPECT_NEAR(worldVolume(m, pp->id), full - 900.0 * 2100 * 200, 1e-2);
+
+  // Re-edit the depth: a 100 mm niche instead of an opening.
+  ASSERT_TRUE(m.setParameter(pp->id, pp->parameterKey, -100).ok());
+  EXPECT_NEAR(worldVolume(m, pp->id), full - 900.0 * 2100 * 100, 1e-2);
+
+  // One undo step restores wall and outline.
+  ASSERT_TRUE(m.undo());
+  ASSERT_TRUE(m.undo());
+  EXPECT_EQ(m.document().objects().size(), 2u);
+  EXPECT_TRUE(m.document().find(wall));
+}
+
+TEST(PushPullOnSolids, RectangleOnTopJoins) {
+  Modeler m;
+  box(m, 0, 0, 0, 1000, 1000, 1000);
+  geom::SketchPlane top = geom::SketchPlane::ground();
+  top.origin = gp_Pnt(250, 250, 1000);
+  auto rect = m.createRectangle(top, 500, 500);
+  auto pp = m.pushPull(*rect, TopoDS::Face(m.document().worldShape(*rect)), 500);
+  ASSERT_TRUE(pp.ok()) << pp.error();
+  EXPECT_EQ(m.document().objects().size(), 1u);
+  EXPECT_NEAR(worldVolume(m, pp->id), 1e9 + 500.0 * 500 * 500, 1e-2);
+  EXPECT_TRUE(geom::validateShape(m.document().find(pp->id)->shape, true).valid);
+}
+
+TEST(PushPullOnSolids, ProfileOffTheSolidStaysSeparate) {
+  Modeler m;
+  box(m, 0, 0, 0, 1000, 1000, 1000);
+  geom::SketchPlane plane = geom::SketchPlane::ground();
+  plane.origin = gp_Pnt(800, 800, 1000);  // overhangs the top face
+  auto rect = m.createRectangle(plane, 500, 500);
+  auto pp = m.pushPull(*rect, TopoDS::Face(m.document().worldShape(*rect)), 300);
+  ASSERT_TRUE(pp.ok());
+  EXPECT_EQ(pp->id, *rect);
+  EXPECT_EQ(m.document().objects().size(), 2u);
+}

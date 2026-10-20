@@ -5,6 +5,8 @@
 #include <map>
 #include <set>
 
+#include <BRepClass_FaceClassifier.hxx>
+#include <BRep_Tool.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopLoc_Location.hxx>
 #include <BRepTools.hxx>
@@ -220,6 +222,9 @@ Result<PushPullResult> Modeler::pushPull(const ObjectId& id, const TopoDS_Face& 
     const double sign = profileNormal->Dot(*pickedNormal) >= 0 ? 1.0 : -1.0;
     mods.push_back(ExtrudeOp{distance * sign});
     key = opKey(mods.size() - 1);
+    // A profile drawn on a face of another solid cuts into it or grows it,
+    // as in SketchUp (parametric Boolean, one undo step).
+    if (auto merged = mergeIntoHost(*current, object, key)) return *merged;
   } else if (object.kind() == ObjectKind::Solid) {
     // Pulling the cap of a solid whose last step is an extrusion edits the
     // extrusion distance instead of adding a new operation.
@@ -259,6 +264,73 @@ Result<PushPullResult> Modeler::pushPull(const ObjectId& id, const TopoDS_Face& 
   const Status committed = commitModified(std::move(object), "Push/Pull");
   if (!committed) return Result<PushPullResult>::failure(committed.message());
   return PushPullResult{id, key};
+}
+
+std::optional<Result<PushPullResult>> Modeler::mergeIntoHost(const Object& profileBefore,
+                                                               Object extruded,
+                                                               const std::string& key) {
+  const TopoDS_Shape profile = document_.worldShape(profileBefore);
+  if (profile.IsNull() || profile.ShapeType() != TopAbs_FACE) return std::nullopt;
+  const auto profileNormal = geom::planarFaceNormal(TopoDS::Face(profile));
+  const auto* extrude = std::get_if<ExtrudeOp>(&extruded.recipe.modifiers.back());
+  if (!profileNormal || !extrude) return std::nullopt;
+  const gp_Dir direction = extrude->distance >= 0 ? *profileNormal : profileNormal->Reversed();
+
+  std::vector<gp_Pnt> corners;
+  for (TopExp_Explorer it(profile, TopAbs_VERTEX); it.More(); it.Next()) {
+    corners.push_back(BRep_Tool::Pnt(TopoDS::Vertex(it.Current())));
+  }
+  gp_Pnt centroid;
+  if (!faceCentroid(profile, centroid)) return std::nullopt;
+  corners.push_back(centroid);
+
+  for (const Object& host : document_.objects()) {
+    if (host.id == profileBefore.id || host.parent != profileBefore.parent ||
+        host.kind() != ObjectKind::Solid || !document_.isVisible(host.id)) {
+      continue;
+    }
+    const TopoDS_Shape hostShape = document_.worldShape(host);
+    for (TopExp_Explorer it(hostShape, TopAbs_FACE); it.More(); it.Next()) {
+      const TopoDS_Face face = TopoDS::Face(it.Current());
+      gp_Pln plane;
+      const auto n = geom::planarFaceNormal(face);
+      if (!n || !geom::isPlanarFace(face, &plane) || !n->IsParallel(*profileNormal, 1e-6)) continue;
+      if (plane.Distance(centroid) > 1e-3) continue;
+      const bool inside = std::all_of(corners.begin(), corners.end(), [&](const gp_Pnt& p) {
+        BRepClass_FaceClassifier classifier(face, p, 1e-3);
+        return classifier.State() == TopAbs_IN || classifier.State() == TopAbs_ON;
+      });
+      if (!inside) continue;
+
+      const bool inward = direction.Dot(*n) < 0;
+      Object result;
+      result.id = generateObjectId();
+      result.parent = host.parent;
+      result.name = host.name;
+      result.color = host.color;
+      result.layer = host.layer;
+      BooleanFeature feature;
+      feature.kind = inward ? BooleanKind::Subtract : BooleanKind::Union;
+      // Operands are placed in the common parent's frame.
+      const gp_Trsf toParent = document_.parentTransform(host).Inverted();
+      feature.operands.push_back(BooleanOperand{std::make_shared<const Recipe>(host.recipe),
+                                                toParent * document_.worldTransform(host),
+                                                host.name});
+      feature.operands.push_back(BooleanOperand{std::make_shared<const Recipe>(extruded.recipe),
+                                                toParent * document_.worldTransform(profileBefore),
+                                                profileBefore.name});
+      result.recipe.base = std::move(feature);
+      if (!rebuild(result, document_.regenContext())) return std::nullopt;  // plain extrusion
+
+      ChangeSet changes(document_);
+      changes.erase(host.id);
+      changes.erase(profileBefore.id);
+      changes.add(result);
+      history_.execute(changes.build(inward ? "Push/Pull (cut)" : "Push/Pull (join)"));
+      return Result<PushPullResult>(PushPullResult{result.id, "in1." + key});
+    }
+  }
+  return std::nullopt;
 }
 
 Result<PushPullResult> Modeler::extrude(const ObjectId& id, double distance) {

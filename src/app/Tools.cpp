@@ -473,8 +473,14 @@ void RectangleTool::mousePress(const ToolEvent& e) {
   if (!hasCorner_) {
     const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
     if (!r.valid()) return;
-    const gp_Dir normal =
-        (r.kind == snap::SnapKind::OnFace && r.faceNormal) ? *r.faceNormal : gp::DZ();
+    gp_Dir normal = gp::DZ();
+    if (r.kind == snap::SnapKind::OnFace && r.faceNormal) {
+      normal = *r.faceNormal;
+    } else if (const auto face = host_.viewport().faceAt(e.pos)) {
+      // Starting on an edge or corner of a face: draw on that face's plane
+      // as long as the snapped point lies on it.
+      if (std::abs(gp_Vec(face->first, r.point).Dot(gp_Vec(face->second))) < 1e-6) normal = face->second;
+    }
     plane_ = geom::SketchPlane::fromNormal(r.point, normal);
     hasCorner_ = true;
     lastCreated_.reset();
@@ -627,7 +633,8 @@ void PushPullTool::commit(double distance) {
     if (p.key == result->parameterKey) base = p.value;
   }
   double after = base;
-  for (const auto& p : m.parameters(objectId_)) {
+  // The result may be a different object (profile merged into a host solid).
+  for (const auto& p : m.parameters(result->id)) {
     if (p.key == result->parameterKey) after = p.value;
   }
   lastDistance_ = distance;

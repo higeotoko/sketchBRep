@@ -70,6 +70,23 @@ struct InferenceEngine::Cache {
   std::vector<std::unique_ptr<IntCurvesFace_ShapeIntersector>> intersectors;
 };
 
+bool InferenceEngine::isVisible(const gp_Pnt& p, const Ray& ray) const {
+  if (!cache_) return true;
+  // Sight line from the viewer (ray origin: eye, or far behind the near
+  // plane for orthographic views) to the point.
+  const gp_Vec v(ray.origin, p);
+  const double length = v.Magnitude();
+  if (length < 1e-9) return true;
+  const gp_Lin sight(ray.origin, gp_Dir(v));
+  constexpr double kDepthTolerance = 0.5;  // mm: faces through p do not hide it
+  for (const auto& intersector : cache_->intersectors) {
+    if (!intersector) continue;
+    intersector->PerformNearest(sight, 0.0, length - kDepthTolerance);
+    if (intersector->IsDone() && intersector->NbPnt() > 0) return false;
+  }
+  return true;
+}
+
 void InferenceEngine::setShapes(const std::vector<TopoDS_Shape>& shapes) {
   shapes_ = shapes;
   cache_ = std::make_shared<Cache>();
@@ -140,27 +157,34 @@ SnapResult InferenceEngine::snap(const SnapQuery& q) const {
   SnapResult result;
   const double tol = q.pixelTolerance;
 
-  // 1. Exact points: endpoints, midpoints, origin.
+  // 1. Exact points: endpoints, midpoints, origin. Points hidden behind
+  //    faces are skipped (they may project right next to visible ones).
   std::optional<SnapResult> pointSnap;
   if (q.snapToGeometry && cache_) {
-    double best = tol;
-    // Endpoints win over midpoints at equal distance.
+    std::vector<std::pair<double, SnapResult>> candidates;
     for (const auto& entry : cache_->points) {
       const double d = screenDistance(q.project, entry.point, q.cursor);
+      // Endpoints win over midpoints at equal distance.
       const double bias = entry.kind == SnapKind::Endpoint ? 0.0 : 0.5;
-      if (d + bias < best) {
-        best = d + bias;
-        SnapResult r;
-        r.kind = entry.kind;
-        r.point = entry.point;
-        r.shapeIndex = entry.shapeIndex;
+      if (d + bias >= tol) continue;
+      SnapResult r;
+      r.kind = entry.kind;
+      r.point = entry.point;
+      r.shapeIndex = entry.shapeIndex;
+      candidates.emplace_back(d + bias, r);
+    }
+    std::sort(candidates.begin(), candidates.end(),
+              [](const auto& a, const auto& b) { return a.first < b.first; });
+    for (const auto& [score, r] : candidates) {
+      if (isVisible(r.point, q.ray)) {
         pointSnap = r;
+        break;
       }
     }
   }
   if (!pointSnap && q.snapToGeometry) {
     const gp_Pnt origin(0, 0, 0);
-    if (screenDistance(q.project, origin, q.cursor) < tol) {
+    if (screenDistance(q.project, origin, q.cursor) < tol && isVisible(origin, q.ray)) {
       SnapResult r;
       r.kind = SnapKind::Origin;
       r.point = origin;
@@ -184,10 +208,9 @@ SnapResult InferenceEngine::snap(const SnapQuery& q) const {
   }
   if (pointSnap) return *pointSnap;
 
-  // 2. On edge.
+  // 2. On edge (visible edges only).
   if (q.snapToGeometry && cache_) {
-    double best = tol;
-    std::optional<SnapResult> edgeSnap;
+    std::vector<std::pair<double, SnapResult>> candidates;
     for (const EdgeEntry& e : cache_->edges) {
       gp_Pnt candidate;
       if (e.isLine) {
@@ -210,17 +233,19 @@ SnapResult InferenceEngine::snap(const SnapQuery& q) const {
         }
       }
       const double d = screenDistance(q.project, candidate, q.cursor);
-      if (d < best) {
-        best = d;
-        SnapResult r;
-        r.kind = SnapKind::OnEdge;
-        r.point = candidate;
-        r.shapeIndex = e.shapeIndex;
-        if (e.isLine && e.a.Distance(e.b) > 1e-9) r.edgeDirection = gp_Dir(gp_Vec(e.a, e.b));
-        edgeSnap = r;
-      }
+      if (d >= tol) continue;
+      SnapResult r;
+      r.kind = SnapKind::OnEdge;
+      r.point = candidate;
+      r.shapeIndex = e.shapeIndex;
+      if (e.isLine && e.a.Distance(e.b) > 1e-9) r.edgeDirection = gp_Dir(gp_Vec(e.a, e.b));
+      candidates.emplace_back(d, r);
     }
-    if (edgeSnap) return *edgeSnap;
+    std::sort(candidates.begin(), candidates.end(),
+              [](const auto& a, const auto& b) { return a.first < b.first; });
+    for (const auto& [score, r] : candidates) {
+      if (isVisible(r.point, q.ray)) return r;
+    }
   }
 
   const gp_Dir axes[3] = {gp_Dir(1, 0, 0), gp_Dir(0, 1, 0), gp_Dir(0, 0, 1)};

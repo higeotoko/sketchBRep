@@ -73,6 +73,9 @@ class Viewport : public QWidget {
                         std::optional<gp_Pln> workPlane,
                         const std::vector<gp_Pnt>& trackedPoints = {},
                         const std::vector<gp_Dir>& trackedDirections = {}) const;
+  // Face under the cursor (hit point and outward normal), ignoring point and
+  // edge snaps.
+  std::optional<std::pair<gp_Pnt, gp_Dir>> faceAt(const QPoint& pos) const;
   void setPickMode(PickMode mode);
   std::optional<FacePick> pickFace(const QPoint& pos);
   std::optional<doc::ObjectId> pickObject(const QPoint& pos);

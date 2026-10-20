@@ -80,6 +80,8 @@ class InferenceEngine {
  public:
   void setShapes(const std::vector<TopoDS_Shape>& shapes);
   SnapResult snap(const SnapQuery& query) const;
+  // False when a face lies between the viewer and the point.
+  bool isVisible(const gp_Pnt& point, const Ray& ray) const;
 
  private:
   struct EdgeEntry;

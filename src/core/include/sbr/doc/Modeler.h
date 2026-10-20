@@ -136,6 +136,10 @@ class Modeler {
   std::string uniqueName(const std::string& base) const;
   // Deep copy of a subtree with fresh ids. Returns objects parents-first.
   std::vector<Object> cloneSubtree(const ObjectId& id, const ObjectId& newParent) const;
+  // Push/pull of a profile lying on a face of another solid: returns the
+  // committed cut/join, or nullopt to fall back to a plain extrusion.
+  std::optional<Result<PushPullResult>> mergeIntoHost(const Object& profileBefore, Object extruded,
+                                                      const std::string& key);
   Status checkSameParent(const std::vector<ObjectId>& ids, ObjectId& parent) const;
 
   Document document_;
