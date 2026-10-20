@@ -3,6 +3,7 @@
 #include <cmath>
 #include <sstream>
 
+#include <BRepTools.hxx>
 #include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
 
@@ -69,6 +70,25 @@ Result<TopoDS_Shape> buildBase(const BaseFeature& base, const RegenContext& cont
             }
             return geom::booleanCombine(toGeom(b.kind), shapes);
           },
+          [&](const LoftFeature& l) -> Result<TopoDS_Shape> {
+            std::vector<TopoDS_Wire> wires;
+            for (const BooleanOperand& section : l.sections) {
+              if (!section.recipe) return Result<TopoDS_Shape>::failure("Loft section missing");
+              auto shape = regenerate(*section.recipe, context);
+              if (!shape) {
+                return Result<TopoDS_Shape>::failure("Section '" + section.name + "': " + shape.error());
+              }
+              const TopoDS_Shape placed = shape->Moved(TopLoc_Location(section.placement));
+              if (placed.ShapeType() == TopAbs_FACE) {
+                wires.push_back(BRepTools::OuterWire(TopoDS::Face(placed)));
+              } else if (placed.ShapeType() == TopAbs_WIRE) {
+                wires.push_back(TopoDS::Wire(placed));
+              } else {
+                return Result<TopoDS_Shape>::failure("Loft sections must be faces or curves");
+              }
+            }
+            return geom::loft(wires, l.solid);
+          },
           [](const GroupNode&) -> Result<TopoDS_Shape> { return TopoDS_Shape(); },
           [&](const ComponentInstance& c) -> Result<TopoDS_Shape> {
             if (!context.definitionShape) {
@@ -83,6 +103,16 @@ Result<TopoDS_Shape> buildBase(const BaseFeature& base, const RegenContext& cont
           },
       },
       base);
+}
+
+// Nested recipes of Booleans and lofts.
+const std::vector<BooleanOperand>* operandsOf(const BaseFeature& base) {
+  if (const auto* b = std::get_if<BooleanFeature>(&base)) return &b->operands;
+  if (const auto* l = std::get_if<LoftFeature>(&base)) return &l->sections;
+  return nullptr;
+}
+std::vector<BooleanOperand>* operandsOf(BaseFeature& base) {
+  return const_cast<std::vector<BooleanOperand>*>(operandsOf(static_cast<const BaseFeature&>(base)));
 }
 
 bool isContainer(const BaseFeature& base) {
@@ -150,12 +180,12 @@ std::vector<Parameter> parameters(const Recipe& recipe) {
     out.push_back({"width", "Width", r->width, true});
     out.push_back({"height", "Height", r->height, true});
   }
-  if (const auto* b = std::get_if<BooleanFeature>(&recipe.base)) {
-    for (std::size_t i = 0; i < b->operands.size(); ++i) {
-      if (!b->operands[i].recipe) continue;
-      for (Parameter p : parameters(*b->operands[i].recipe)) {
+  if (const auto* operands = operandsOf(recipe.base)) {
+    for (std::size_t i = 0; i < operands->size(); ++i) {
+      if (!(*operands)[i].recipe) continue;
+      for (Parameter p : parameters(*(*operands)[i].recipe)) {
         p.key = operandPrefix(i) + p.key;
-        p.label = b->operands[i].name + ": " + p.label;
+        p.label = (*operands)[i].name + ": " + p.label;
         out.push_back(std::move(p));
       }
     }
@@ -194,15 +224,15 @@ Status setParameter(Recipe& recipe, const std::string& key, double value) {
       return Status::success();
     }
   }
-  if (auto* b = std::get_if<BooleanFeature>(&recipe.base)) {
-    for (std::size_t i = 0; i < b->operands.size(); ++i) {
+  if (auto* operands = operandsOf(recipe.base)) {
+    for (std::size_t i = 0; i < operands->size(); ++i) {
       const std::string prefix = operandPrefix(i);
-      if (key.rfind(prefix, 0) != 0 || !b->operands[i].recipe) continue;
+      if (key.rfind(prefix, 0) != 0 || !(*operands)[i].recipe) continue;
       // Operand recipes are shared immutable snapshots: copy on write.
-      Recipe copy = *b->operands[i].recipe;
+      Recipe copy = *(*operands)[i].recipe;
       const Status s = setParameter(copy, key.substr(prefix.size()), value);
       if (!s) return s;
-      b->operands[i].recipe = std::make_shared<const Recipe>(std::move(copy));
+      (*operands)[i].recipe = std::make_shared<const Recipe>(std::move(copy));
       return Status::success();
     }
   }
@@ -236,6 +266,7 @@ std::string describe(const Recipe& recipe) {
                    }
                    out << ")";
                  },
+                 [&](const LoftFeature& l) { out << "Loft (" << l.sections.size() << " sections)"; },
                  [&](const GroupNode&) { out << "Group"; },
                  [&](const ComponentInstance&) { out << "Component instance"; },
              },

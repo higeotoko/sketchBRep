@@ -120,3 +120,29 @@ TEST(Freeform, RevolveIsParametricAndSaved) {
   ASSERT_TRUE(loaded.setParameter(*id, "op0.angle", 180).ok());
   EXPECT_NEAR(volume(loaded.document().worldShape(*id)), full / 2, 1.0);
 }
+
+TEST(Freeform, LoftIsParametricAndSaved) {
+  doc::Modeler m;
+  auto base = m.createRectangle(SketchPlane::ground(), 2000, 2000);
+  auto top = m.createRectangle(SketchPlane::ground(), 1000, 1000);
+  ASSERT_TRUE(m.move({*top}, gp_Vec(500, 500, 3000)).ok());  // placement is captured
+  auto loftId = m.loftObjects({*base, *top}, true);
+  ASSERT_TRUE(loftId.ok()) << loftId.error();
+  EXPECT_EQ(m.document().objects().size(), 3u);  // sections are kept
+  auto frustum = [](double a1, double a2) { return 3000.0 / 3 * (a1 + a2 + std::sqrt(a1 * a2)); };
+  EXPECT_NEAR(volume(m.document().worldShape(*loftId)), frustum(4e6, 1e6), 1.0);
+
+  // Section parameters stay editable through the loft: top 1000 -> 2000 square.
+  ASSERT_TRUE(m.setParameter(*loftId, "in1.width", 2000).ok());
+  ASSERT_TRUE(m.setParameter(*loftId, "in1.height", 2000).ok());
+  EXPECT_NEAR(volume(m.document().worldShape(*loftId)), 2000.0 * 2000 * 3000, 1.0);
+
+  const std::string path = test::tempPath("loft.sbr");
+  ASSERT_TRUE(m.save(path).ok());
+  doc::Modeler loaded;
+  std::vector<std::string> warnings;
+  ASSERT_TRUE(loaded.load(path, &warnings).ok());
+  EXPECT_TRUE(warnings.empty());
+  ASSERT_TRUE(loaded.setParameter(*loftId, "in0.width", 1000).ok());
+  EXPECT_TRUE(validateShape(loaded.document().worldShape(*loftId), true).valid);
+}

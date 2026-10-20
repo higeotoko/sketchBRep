@@ -105,6 +105,15 @@ json baseToJson(const BaseFeature& base) {
             }
             return json{{"type", "boolean"}, {"kind", toString(b.kind)}, {"operands", operands}};
           },
+          [](const LoftFeature& l) {
+            json sections = json::array();
+            for (const BooleanOperand& o : l.sections) {
+              sections.push_back({{"name", o.name},
+                                  {"placement", toJson(o.placement)},
+                                  {"recipe", recipeToJson(*o.recipe)}});
+            }
+            return json{{"type", "loft"}, {"solid", l.solid}, {"sections", sections}};
+          },
           [](const GroupNode&) { return json{{"type", "group"}}; },
           [](const ComponentInstance& c) {
             return json{{"type", "instance"}, {"definition", c.definitionId}};
@@ -141,6 +150,16 @@ BaseFeature baseFrom(const json& j) {
                                           o.value("name", std::string())});
     }
     return b;
+  }
+  if (type == "loft") {
+    LoftFeature l;
+    l.solid = j.value("solid", true);
+    for (const json& o : j.at("sections")) {
+      l.sections.push_back(BooleanOperand{std::make_shared<const Recipe>(recipeFrom(o.at("recipe"))),
+                                          trsfFrom(o.at("placement")),
+                                          o.value("name", std::string())});
+    }
+    return l;
   }
   if (type == "group") return GroupNode{};
   if (type == "instance") return ComponentInstance{j.at("definition").get<std::string>()};

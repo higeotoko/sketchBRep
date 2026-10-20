@@ -64,6 +64,13 @@ struct BooleanFeature {
   std::vector<BooleanOperand> operands;
 };
 
+// Parametric loft through section profiles (faces or curves), in order.
+// Sections are snapshots like Boolean operands, editable as "in<i>.<key>".
+struct LoftFeature {
+  std::vector<BooleanOperand> sections;
+  bool solid = true;
+};
+
 // Container node of the object hierarchy. Has no geometry of its own.
 struct GroupNode {};
 
@@ -73,7 +80,7 @@ struct ComponentInstance {
 };
 
 using BaseFeature = std::variant<RectangleProfile, PolygonProfile, PolylineCurve, ImportedShape,
-                                 BooleanFeature, GroupNode, ComponentInstance>;
+                                 BooleanFeature, LoftFeature, GroupNode, ComponentInstance>;
 
 // --- Modifiers ------------------------------------------------------------
 // Extrudes the profile face along its normal. Must be the first modifier.

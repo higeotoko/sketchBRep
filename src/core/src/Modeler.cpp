@@ -740,15 +740,22 @@ Result<ObjectId> Modeler::createCurve(const std::vector<gp_Pnt>& points, bool cl
 }
 
 Result<ObjectId> Modeler::loftObjects(const std::vector<ObjectId>& sections, bool solid) {
-  std::vector<TopoDS_Wire> wires;
+  if (sections.size() < 2) return Result<ObjectId>::failure("Loft needs at least 2 sections");
+  // Sections stay in the document; the loft keeps editable snapshots.
+  LoftFeature loft;
+  loft.solid = solid;
   for (const ObjectId& id : sections) {
-    const auto w = sectionWire(document_, id);
-    if (!w) return Result<ObjectId>::failure("Loft sections must be curves or faces");
-    wires.push_back(*w);
+    const Object* o = document_.find(id);
+    if (!o || (o->kind() != ObjectKind::Face && o->kind() != ObjectKind::Curve)) {
+      return Result<ObjectId>::failure("Loft sections must be curves or faces");
+    }
+    loft.sections.push_back(BooleanOperand{std::make_shared<const Recipe>(o->recipe),
+                                           document_.worldTransform(*o), o->name});
   }
-  auto shape = geom::loft(wires, solid);
-  if (!shape) return Result<ObjectId>::failure(shape.error());
-  return importShape(shape.value(), uniqueName("Loft"), "Loft");
+  Object object;
+  object.name = uniqueName("Loft");
+  object.recipe.base = std::move(loft);
+  return addObject(std::move(object), "Loft");
 }
 
 Result<ObjectId> Modeler::revolveObject(const ObjectId& profile, const gp_Ax1& axis,
