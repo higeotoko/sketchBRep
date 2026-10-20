@@ -32,7 +32,11 @@
 
 依存: C++17 / CMake 3.21+ / Open CASCADE 7.6+ / Qt 6.2+ / nlohmann-json / GoogleTest
 
-### Windows 11（推奨: vcpkg + Visual Studio 2022）
+### Windows 11
+
+**すぐ試す:** PR の CI（Actions）の成果物 `SketchBRep-windows-x64` をダウンロードして展開し、`SketchBRep.exe` を実行（インストール不要のポータブル版。実機で動作確認済み）。
+
+**自分でビルド（vcpkg + Visual Studio 2022）:**
 
 ```powershell
 git clone https://github.com/microsoft/vcpkg C:\vcpkg
