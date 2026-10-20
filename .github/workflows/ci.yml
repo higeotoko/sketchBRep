@@ -45,6 +45,11 @@ jobs:
             occt qt6-main nlohmann_json gtest
           cache-environment: true
 
+      # Qt tools (moc) and tests load the environment's DLLs.
+      - name: Put environment DLLs on PATH
+        shell: pwsh
+        run: Add-Content $env:GITHUB_PATH "${{ steps.mamba.outputs.environment-path }}\Library\bin"
+
       - uses: ilammy/msvc-dev-cmd@v1
 
       - name: Configure
