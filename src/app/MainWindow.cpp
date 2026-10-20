@@ -191,6 +191,41 @@ void MainWindow::buildMenus() {
   solid->addAction(tr("積（共通部分）"), this,
                    [this] { booleanSelection(doc::BooleanKind::Intersect); });
 
+  // --- Freeform (Phase 3)
+  QMenu* freeform = menuBar()->addMenu(tr("曲面(&U)"));
+  freeform->addAction(tr("ロフト（選択順の断面をつなぐ）"), this, [this] {
+    auto id = modeler_.loftObjects(selection_, true);
+    if (!id) {
+      reportError(tr("ロフトに失敗しました: %1").arg(QString::fromStdString(id.error())));
+      return;
+    }
+    setSelection({id.value()});
+  });
+  freeform->addAction(tr("回転体（原点を通る Z 軸まわり 360°）"), this, [this] {
+    if (selection_.size() != 1) {
+      reportError(tr("プロファイルを 1 つ選択してください"));
+      return;
+    }
+    auto id = modeler_.revolveObject(selection_.front(), gp_Ax1(gp_Pnt(0, 0, 0), gp::DZ()), 2 * M_PI);
+    if (!id) {
+      reportError(tr("回転体の作成に失敗しました: %1").arg(QString::fromStdString(id.error())));
+      return;
+    }
+    setSelection({id.value()});
+  });
+  freeform->addAction(tr("スイープ（1 つ目 = 断面、2 つ目 = パス）"), this, [this] {
+    if (selection_.size() != 2) {
+      reportError(tr("断面とパスの 2 つを選択してください"));
+      return;
+    }
+    auto id = modeler_.sweepObject(selection_[0], selection_[1]);
+    if (!id) {
+      reportError(tr("スイープに失敗しました: %1").arg(QString::fromStdString(id.error())));
+      return;
+    }
+    setSelection({id.value()});
+  });
+
   // --- View
   QMenu* view = menuBar()->addMenu(tr("表示(&V)"));
   struct ViewEntry {
