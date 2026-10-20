@@ -58,7 +58,9 @@ class Viewport : public QWidget {
   QPoint toWidget(const gp_Pnt& p) const;
   snap::SnapResult snap(const QPoint& pos, std::optional<gp_Pnt> anchor,
                         std::optional<gp_Dir> lockedDirection,
-                        std::optional<gp_Pln> workPlane) const;
+                        std::optional<gp_Pln> workPlane,
+                        const std::vector<gp_Pnt>& trackedPoints = {},
+                        const std::vector<gp_Dir>& trackedDirections = {}) const;
   void setPickMode(PickMode mode);
   std::optional<FacePick> pickFace(const QPoint& pos);
   std::optional<doc::ObjectId> pickObject(const QPoint& pos);
@@ -66,6 +68,9 @@ class Viewport : public QWidget {
 
   // --- transient feedback ---------------------------------------------------
   void setPreview(const TopoDS_Shape& shape, bool solid = false);
+  // Transparent copy of the objects (and their children) moved by `delta`
+  // in world space. Built from display copies, never from canonical shapes.
+  void setGhost(const std::vector<doc::ObjectId>& ids, const gp_Trsf& delta);
   void clearPreview();
   void showSnap(const snap::SnapResult& result, std::optional<gp_Pnt> anchor);
   void hideSnap();
@@ -107,6 +112,7 @@ class Viewport : public QWidget {
  private:
   struct Entry {
     Handle(AIS_Shape) ais;
+    doc::Color color;
     TopoDS_Shape canonicalWorld;
     TopoDS_Shape displayShape;
     TopTools_IndexedMapOfShape displayFaces;
@@ -138,8 +144,10 @@ class Viewport : public QWidget {
   Handle(AIS_Shape) preview_;
   Handle(AIS_Shape) snapMarker_;
   Handle(AIS_Shape) inferenceLine_;
+  Handle(AIS_Shape) referenceLine_;
 
   QTimer syncTimer_;
+  QSize glSize_;  // native window size the GL view was last resized to
   enum class Drag { None, Orbit, Pan } drag_ = Drag::None;
   QPoint lastDragPos_;
 };

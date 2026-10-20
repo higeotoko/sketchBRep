@@ -3,6 +3,7 @@
 #include <cmath>
 #include <sstream>
 
+#include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
 
 #include "sbr/geom/Operations.h"
@@ -19,8 +20,18 @@ template <class... Ts>
 Overloaded(Ts...) -> Overloaded<Ts...>;
 
 std::string opKey(std::size_t index) { return "op" + std::to_string(index) + ".distance"; }
+std::string operandPrefix(std::size_t index) { return "in" + std::to_string(index) + "."; }
 
-Result<TopoDS_Shape> buildBase(const BaseFeature& base) {
+geom::BooleanOp toGeom(BooleanKind kind) {
+  switch (kind) {
+    case BooleanKind::Union: return geom::BooleanOp::Union;
+    case BooleanKind::Subtract: return geom::BooleanOp::Subtract;
+    case BooleanKind::Intersect: return geom::BooleanOp::Intersect;
+  }
+  return geom::BooleanOp::Union;
+}
+
+Result<TopoDS_Shape> buildBase(const BaseFeature& base, const RegenContext& context) {
   return std::visit(
       Overloaded{
           [](const RectangleProfile& r) -> Result<TopoDS_Shape> {
@@ -42,26 +53,73 @@ Result<TopoDS_Shape> buildBase(const BaseFeature& base) {
             if (s.shape.IsNull()) return Result<TopoDS_Shape>::failure("Imported shape is empty");
             return s.shape;
           },
+          [&](const BooleanFeature& b) -> Result<TopoDS_Shape> {
+            std::vector<TopoDS_Shape> shapes;
+            for (std::size_t i = 0; i < b.operands.size(); ++i) {
+              const BooleanOperand& operand = b.operands[i];
+              if (!operand.recipe) return Result<TopoDS_Shape>::failure("Boolean operand missing");
+              auto shape = regenerate(*operand.recipe, context);
+              if (!shape) {
+                return Result<TopoDS_Shape>::failure("Operand '" + operand.name +
+                                                     "': " + shape.error());
+              }
+              shapes.push_back(shape->Moved(TopLoc_Location(operand.placement)));
+            }
+            return geom::booleanCombine(toGeom(b.kind), shapes);
+          },
+          [](const GroupNode&) -> Result<TopoDS_Shape> { return TopoDS_Shape(); },
+          [&](const ComponentInstance& c) -> Result<TopoDS_Shape> {
+            if (!context.definitionShape) {
+              return Result<TopoDS_Shape>::failure("Component definitions are not available");
+            }
+            auto shape = context.definitionShape(c.definitionId);
+            if (!shape) {
+              return Result<TopoDS_Shape>::failure("Unknown component definition " +
+                                                   c.definitionId);
+            }
+            return *shape;
+          },
       },
       base);
 }
 
+bool isContainer(const BaseFeature& base) {
+  return std::holds_alternative<GroupNode>(base) || std::holds_alternative<ComponentInstance>(base);
+}
+
 }  // namespace
 
-Result<TopoDS_Shape> regenerate(const Recipe& recipe) {
-  auto current = buildBase(recipe.base);
+const char* toString(BooleanKind kind) {
+  switch (kind) {
+    case BooleanKind::Union: return "Union";
+    case BooleanKind::Subtract: return "Subtract";
+    case BooleanKind::Intersect: return "Intersect";
+  }
+  return "Union";
+}
+
+Result<TopoDS_Shape> regenerate(const Recipe& recipe, const RegenContext& context) {
+  auto current = buildBase(recipe.base, context);
   if (!current) return current;
   TopoDS_Shape shape = current.value();
+  if (isContainer(recipe.base) && !recipe.modifiers.empty()) {
+    return Result<TopoDS_Shape>::failure("Groups and components cannot have modifiers");
+  }
 
   for (std::size_t i = 0; i < recipe.modifiers.size(); ++i) {
     const std::string prefix = "Step " + std::to_string(i + 1) + ": ";
+    const bool isFace = !shape.IsNull() && shape.ShapeType() == TopAbs_FACE;
     Result<TopoDS_Shape> next = std::visit(
         Overloaded{
             [&](const ExtrudeOp& op) -> Result<TopoDS_Shape> {
-              if (i != 0 || shape.ShapeType() != TopAbs_FACE) {
-                return Result<TopoDS_Shape>::failure("Extrude requires a profile face");
-              }
+              if (!isFace) return Result<TopoDS_Shape>::failure("Extrude requires a profile face");
               return geom::extrudeFace(TopoDS::Face(shape), op.distance);
+            },
+            [&](const OffsetOp& op) -> Result<TopoDS_Shape> {
+              if (!isFace) return Result<TopoDS_Shape>::failure("Offset requires a profile face");
+              auto face = geom::offsetFace(TopoDS::Face(shape), op.distance);
+              if (!face) return Result<TopoDS_Shape>::failure(face.error());
+              return TopoDS_Shape(face.value());
             },
             [&](const PushPullOp& op) -> Result<TopoDS_Shape> {
               const geom::ValidationReport report = geom::validateShape(shape, true);
@@ -86,6 +144,16 @@ std::vector<Parameter> parameters(const Recipe& recipe) {
     out.push_back({"width", "Width", r->width, true});
     out.push_back({"height", "Height", r->height, true});
   }
+  if (const auto* b = std::get_if<BooleanFeature>(&recipe.base)) {
+    for (std::size_t i = 0; i < b->operands.size(); ++i) {
+      if (!b->operands[i].recipe) continue;
+      for (Parameter p : parameters(*b->operands[i].recipe)) {
+        p.key = operandPrefix(i) + p.key;
+        p.label = b->operands[i].name + ": " + p.label;
+        out.push_back(std::move(p));
+      }
+    }
+  }
   for (std::size_t i = 0; i < recipe.modifiers.size(); ++i) {
     std::visit(Overloaded{
                    [&](const ExtrudeOp& op) {
@@ -94,6 +162,9 @@ std::vector<Parameter> parameters(const Recipe& recipe) {
                    [&](const PushPullOp& op) {
                      out.push_back({opKey(i), "Push/Pull " + std::to_string(i) + " distance",
                                     op.distance, true});
+                   },
+                   [&](const OffsetOp& op) {
+                     out.push_back({opKey(i), "Offset distance", op.distance, true});
                    },
                },
                recipe.modifiers[i]);
@@ -110,6 +181,18 @@ Status setParameter(Recipe& recipe, const std::string& key, double value) {
     }
     if (key == "height") {
       r->height = value;
+      return Status::success();
+    }
+  }
+  if (auto* b = std::get_if<BooleanFeature>(&recipe.base)) {
+    for (std::size_t i = 0; i < b->operands.size(); ++i) {
+      const std::string prefix = operandPrefix(i);
+      if (key.rfind(prefix, 0) != 0 || !b->operands[i].recipe) continue;
+      // Operand recipes are shared immutable snapshots: copy on write.
+      Recipe copy = *b->operands[i].recipe;
+      const Status s = setParameter(copy, key.substr(prefix.size()), value);
+      if (!s) return s;
+      b->operands[i].recipe = std::make_shared<const Recipe>(std::move(copy));
       return Status::success();
     }
   }
@@ -130,12 +213,22 @@ std::string describe(const Recipe& recipe) {
                  [&](const PolygonProfile& p) { out << "Polygon (" << p.points.size() << " pts)"; },
                  [&](const PolylineCurve& p) { out << "Line (" << p.points.size() << " pts)"; },
                  [&](const ImportedShape& s) { out << "Imported (" << s.source << ")"; },
+                 [&](const BooleanFeature& b) {
+                   out << toString(b.kind) << " (";
+                   for (std::size_t i = 0; i < b.operands.size(); ++i) {
+                     out << (i ? ", " : "") << b.operands[i].name;
+                   }
+                   out << ")";
+                 },
+                 [&](const GroupNode&) { out << "Group"; },
+                 [&](const ComponentInstance&) { out << "Component instance"; },
              },
              recipe.base);
   for (const Modifier& m : recipe.modifiers) {
     std::visit(Overloaded{
                    [&](const ExtrudeOp& op) { out << " > Extrude " << op.distance; },
                    [&](const PushPullOp& op) { out << " > Push/Pull " << op.distance; },
+                   [&](const OffsetOp& op) { out << " > Offset " << op.distance; },
                },
                m);
   }

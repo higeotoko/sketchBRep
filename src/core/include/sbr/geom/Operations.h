@@ -1,6 +1,8 @@
 #pragma once
 // Solid modelling operations used by the direct-modelling tools.
 
+#include <vector>
+
 #include <gp_Dir.hxx>
 #include <gp_Pln.hxx>
 #include <gp_Vec.hxx>
@@ -27,5 +29,17 @@ Result<TopoDS_Shape> extrudeFace(const TopoDS_Face& face, double distance);
 // (distance < 0) a prism. Coplanar faces are merged afterwards. Fails without
 // side effects if the result is not a single valid solid.
 Result<TopoDS_Shape> pushPullFace(const TopoDS_Shape& solid, const TopoDS_Face& face, double distance);
+
+// Offsets the outer boundary of a planar face within its plane (positive =
+// outwards, sharp corners as in architectural plans). Inner holes are not
+// supported yet. The face normal is preserved.
+Result<TopoDS_Face> offsetFace(const TopoDS_Face& face, double distance);
+
+enum class BooleanOp { Union, Subtract, Intersect };
+
+// Combines solids: Union/Intersect over all shapes, Subtract removes
+// shapes[1..] from shapes[0]. Coplanar faces are merged. The result may
+// contain several solids (e.g. a wall cut in two) but must not be empty.
+Result<TopoDS_Shape> booleanCombine(BooleanOp op, const std::vector<TopoDS_Shape>& shapes);
 
 }  // namespace sbr::geom

@@ -27,6 +27,12 @@ class PropertiesPanel : public QWidget {
   void parameterEdited(const doc::ObjectId& id, const std::string& key, double value);
   void renameRequested(const doc::ObjectId& id, const QString& name);
   void visibilityToggled(const doc::ObjectId& id, bool visible);
+  void tagEdited(const doc::ObjectId& id, const QString& tag);
+  void colorEdited(const doc::ObjectId& id, const doc::Color& color);
+  void positionEdited(const doc::ObjectId& id, double x, double y, double z);
+  void definitionParameterEdited(const std::string& definitionId, const doc::ObjectId& objectId,
+                                 const std::string& key, double value);
+  void definitionRenamed(const std::string& definitionId, const QString& name);
 
  private:
   void rebuildForm(const doc::Modeler& modeler, const std::vector<doc::ObjectId>& selection);

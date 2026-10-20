@@ -13,6 +13,8 @@
 #include <TopoDS.hxx>
 #include <gp_Lin.hxx>
 
+#include "sbr/Types.h"
+
 namespace sbr::snap {
 
 const char* toString(SnapKind kind) {
@@ -27,6 +29,9 @@ const char* toString(SnapKind kind) {
     case SnapKind::AxisY: return "On Green Axis";
     case SnapKind::AxisZ: return "On Blue Axis";
     case SnapKind::Locked: return "Locked";
+    case SnapKind::Parallel: return "Parallel";
+    case SnapKind::Perpendicular: return "Perpendicular";
+    case SnapKind::FromPoint: return "From Point";
     case SnapKind::WorkPlane: return "On Plane";
   }
   return "None";
@@ -211,17 +216,44 @@ SnapResult InferenceEngine::snap(const SnapQuery& q) const {
         r.kind = SnapKind::OnEdge;
         r.point = candidate;
         r.shapeIndex = e.shapeIndex;
+        if (e.isLine && e.a.Distance(e.b) > 1e-9) r.edgeDirection = gp_Dir(gp_Vec(e.a, e.b));
         edgeSnap = r;
       }
     }
     if (edgeSnap) return *edgeSnap;
   }
 
-  // 3. Axis inference from the anchor.
+  const gp_Dir axes[3] = {gp_Dir(1, 0, 0), gp_Dir(0, 1, 0), gp_Dir(0, 0, 1)};
+
+  // 3. Axis inference from the anchor, preferring points where an anchor
+  //    axis crosses an axis line through a tracked point.
   if (q.anchor) {
     double best = tol;
     std::optional<SnapResult> axisSnap;
-    const gp_Dir axes[3] = {gp_Dir(1, 0, 0), gp_Dir(0, 1, 0), gp_Dir(0, 0, 1)};
+    for (int a = 0; a < 3; ++a) {
+      for (const gp_Pnt& tracked : q.trackedPoints) {
+        for (int b = 0; b < 3; ++b) {
+          if (a == b) continue;
+          // Intersection of (anchor, axes[a]) and (tracked, axes[b]).
+          const gp_Vec w(*q.anchor, tracked);
+          if (std::abs(w.Dot(gp_Vec(axes[a]).Crossed(gp_Vec(axes[b])))) > tolerance::kLinear) continue;
+          const double t = w.Dot(gp_Vec(axes[a]));
+          const gp_Pnt p = q.anchor->Translated(gp_Vec(axes[a]) * t);
+          if (std::abs(t) < 1e-6) continue;
+          const double d = screenDistance(q.project, p, q.cursor);
+          if (d < best) {
+            best = d;
+            SnapResult r;
+            r.kind = axisKind(a);
+            r.point = p;
+            r.axis = axes[a];
+            r.referencePoint = tracked;
+            axisSnap = r;
+          }
+        }
+      }
+    }
+    if (axisSnap) return *axisSnap;
     for (int a = 0; a < 3; ++a) {
       const gp_Pnt p = closestPointOnLineToRay(*q.anchor, axes[a], q.ray);
       if (p.Distance(*q.anchor) < 1e-6) continue;
@@ -236,6 +268,54 @@ SnapResult InferenceEngine::snap(const SnapQuery& q) const {
       }
     }
     if (axisSnap) return *axisSnap;
+
+    // Parallel / perpendicular to tracked edges.
+    const gp_Dir planeNormal = q.workPlane.Axis().Direction();
+    for (const gp_Dir& dir : q.trackedDirections) {
+      std::vector<std::pair<gp_Dir, SnapKind>> candidates = {{dir, SnapKind::Parallel}};
+      const gp_Vec perp = gp_Vec(dir).Crossed(gp_Vec(planeNormal));
+      if (perp.Magnitude() > 1e-9) candidates.push_back({gp_Dir(perp), SnapKind::Perpendicular});
+      for (const auto& [d, kind] : candidates) {
+        bool isAxis = false;
+        for (const gp_Dir& ax : axes) isAxis |= d.IsParallel(ax, 1e-9);
+        if (isAxis) continue;  // already covered by axis inference
+        const gp_Pnt p = closestPointOnLineToRay(*q.anchor, d, q.ray);
+        if (p.Distance(*q.anchor) < 1e-6) continue;
+        const double dist = screenDistance(q.project, p, q.cursor);
+        if (dist < best) {
+          best = dist;
+          SnapResult r;
+          r.kind = kind;
+          r.point = p;
+          r.axis = d;
+          axisSnap = r;
+        }
+      }
+    }
+    if (axisSnap) return *axisSnap;
+  }
+
+  // 3b. Axis lines through tracked points ("from point").
+  if (!q.trackedPoints.empty()) {
+    double best = tol;
+    std::optional<SnapResult> fromPoint;
+    for (const gp_Pnt& tracked : q.trackedPoints) {
+      for (int a = 0; a < 3; ++a) {
+        const gp_Pnt p = closestPointOnLineToRay(tracked, axes[a], q.ray);
+        if (p.Distance(tracked) < 1e-6) continue;
+        const double d = screenDistance(q.project, p, q.cursor);
+        if (d < best) {
+          best = d;
+          SnapResult r;
+          r.kind = SnapKind::FromPoint;
+          r.point = p;
+          r.axis = axes[a];
+          r.referencePoint = tracked;
+          fromPoint = r;
+        }
+      }
+    }
+    if (fromPoint) return *fromPoint;
   }
 
   // 4. On face (nearest hit along the ray).

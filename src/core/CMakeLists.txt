@@ -24,8 +24,9 @@ target_include_directories(sbr_core SYSTEM PUBLIC ${OpenCASCADE_INCLUDE_DIR})
 target_link_libraries(sbr_core
   PUBLIC
     TKernel TKMath TKG2d TKG3d TKGeomBase TKBRep
-    TKGeomAlgo TKTopAlgo TKPrim TKBO TKBool TKShHealing TKMesh
+    TKGeomAlgo TKTopAlgo TKPrim TKBO TKBool TKShHealing TKMesh TKOffset
     TKXSBase TKSTEP TKSTEPBase TKSTEPAttr TKSTEP209
+    TKXDESTEP TKXCAF TKLCAF TKCAF TKVCAF TKService
   PRIVATE
     nlohmann_json::nlohmann_json
 )

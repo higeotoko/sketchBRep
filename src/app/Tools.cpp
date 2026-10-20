@@ -4,8 +4,17 @@
 #include <cmath>
 
 #include <QKeyEvent>
+#include <QRegularExpression>
 
+#include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRepBuilderAPI_MakeVertex.hxx>
+#include <BRepClass_FaceClassifier.hxx>
+#include <BRepExtrema_DistShapeShape.hxx>
+#include <BRepTools.hxx>
+#include <TopoDS_Edge.hxx>
+#include <TopoDS_Vertex.hxx>
+#include <TopoDS_Wire.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 
 #include "Viewport.h"
@@ -34,6 +43,9 @@ QString snapLabel(snap::SnapKind kind) {
     case snap::SnapKind::AxisY: return QObject::tr("緑軸 (Y) 方向");
     case snap::SnapKind::AxisZ: return QObject::tr("青軸 (Z) 方向");
     case snap::SnapKind::Locked: return QObject::tr("方向ロック中");
+    case snap::SnapKind::Parallel: return QObject::tr("エッジに平行");
+    case snap::SnapKind::Perpendicular: return QObject::tr("エッジに垂直");
+    case snap::SnapKind::FromPoint: return QObject::tr("点から");
     case snap::SnapKind::WorkPlane: return QObject::tr("作業平面上");
     case snap::SnapKind::None: break;
   }
@@ -53,7 +65,10 @@ void SelectTool::activate() {
 void SelectTool::mouseMove(const ToolEvent& e) { host_.viewport().pickObject(e.pos); }
 
 void SelectTool::mousePress(const ToolEvent& e) {
-  const auto id = host_.viewport().pickObject(e.pos);
+  // Clicking geometry inside a group selects the top-level group, as in
+  // SketchUp. Children can be selected individually in the object panel.
+  auto id = host_.viewport().pickObject(e.pos);
+  if (id) id = host_.modeler().document().rootOf(*id);
   std::vector<doc::ObjectId> selection = host_.selection();
   if (e.modifiers & Qt::ShiftModifier) {
     if (id) {
@@ -76,9 +91,31 @@ void SelectTool::mousePress(const ToolEvent& e) {
 snap::SnapResult DrawingTool::snapAt(const ToolEvent& e, std::optional<gp_Pnt> anchor,
                                      std::optional<gp_Pln> plane) {
   lastEvent_ = e;
-  last_ = host_.viewport().snap(e.pos, anchor, anchor ? locked_ : std::nullopt, plane);
+  last_ = host_.viewport().snap(e.pos, anchor, anchor ? locked_ : std::nullopt, plane,
+                                trackedPoints_, trackedDirections_);
   host_.viewport().showSnap(last_, anchor);
+
+  // Remember hovered points / edges for later inference (SketchUp tracking).
+  const bool isPoint = last_.kind == snap::SnapKind::Endpoint ||
+                       last_.kind == snap::SnapKind::Midpoint ||
+                       last_.kind == snap::SnapKind::Origin;
+  if (isPoint && (!anchor || anchor->Distance(last_.point) > 1e-6)) {
+    const bool known = std::any_of(trackedPoints_.begin(), trackedPoints_.end(),
+                                   [&](const gp_Pnt& p) { return p.Distance(last_.point) < 1e-6; });
+    if (!known) {
+      trackedPoints_.push_back(last_.point);
+      if (trackedPoints_.size() > 2) trackedPoints_.erase(trackedPoints_.begin());
+    }
+  }
+  if (last_.kind == snap::SnapKind::OnEdge && last_.edgeDirection) {
+    trackedDirections_ = {*last_.edgeDirection};
+  }
   return last_;
+}
+
+void DrawingTool::resetTracking() {
+  trackedPoints_.clear();
+  trackedDirections_.clear();
 }
 
 bool DrawingTool::keyPress(QKeyEvent* event) {
@@ -139,6 +176,7 @@ QString DrawingTool::lockSuffix() const {
 QString LineTool::name() const { return QObject::tr("線"); }
 
 void LineTool::activate() {
+  resetTracking();
   host_.viewport().setPickMode(PickMode::None);
   host_.setMeasurement(QObject::tr("長さ"), QString());
   host_.setStatus(QObject::tr("始点をクリック"));
@@ -262,6 +300,7 @@ void LineTool::applyMeasurement(const QString& text) {
 QString RectangleTool::name() const { return QObject::tr("矩形"); }
 
 void RectangleTool::activate() {
+  resetTracking();
   host_.viewport().setPickMode(PickMode::None);
   host_.setMeasurement(QObject::tr("寸法 (幅,奥行)"), QString());
   host_.setStatus(QObject::tr("最初の角をクリック"));
@@ -477,6 +516,453 @@ void PushPullTool::applyMeasurement(const QString& text) {
   if (last_) {
     const Status s =
         host_.modeler().setParameter(last_->id, last_->key, last_->base + last_->sign * *value);
+    if (!s) host_.reportError(QString::fromStdString(s.message()));
+    return;
+  }
+  host_.reportError(QObject::tr("面をクリックしてから距離を入力してください"));
+}
+
+// --- Arrays -------------------------------------------------------------------------
+
+std::optional<ArrayRequest> parseArrayRequest(const QString& text) {
+  static const QRegularExpression multiply(QStringLiteral("^\\s*(?:[xX*]\\s*(\\d+)|(\\d+)\\s*[xX*])\\s*$"));
+  static const QRegularExpression divide(QStringLiteral("^\\s*(?:/\\s*(\\d+)|(\\d+)\\s*/)\\s*$"));
+  for (const auto& [re, isDivide] : {std::pair{&multiply, false}, std::pair{&divide, true}}) {
+    const QRegularExpressionMatch m = re->match(text);
+    if (!m.hasMatch()) continue;
+    const QString digits = m.captured(1).isEmpty() ? m.captured(2) : m.captured(1);
+    const int n = digits.toInt();
+    if (n < 1 || n > 10000) return std::nullopt;
+    return ArrayRequest{isDivide, n};
+  }
+  return std::nullopt;
+}
+
+// --- Move / Rotate shared ------------------------------------------------------------
+
+bool TransformTool::keyPress(QKeyEvent* event) {
+  if (event->key() == Qt::Key_Control && !event->isAutoRepeat()) {
+    copy_ = !copy_;
+    refresh();
+    return true;
+  }
+  return DrawingTool::keyPress(event);
+}
+
+QString TransformTool::copySuffix() const {
+  return copy_ ? QObject::tr("［コピー］") : QObject::tr("（Ctrl でコピー）");
+}
+
+void TransformTool::commit(const gp_Trsf& delta, int count) {
+  doc::Modeler& m = host_.modeler();
+  if (copy_) {
+    auto created = m.copy(targets_, delta, count);
+    if (!created) {
+      host_.reportError(QString::fromStdString(created.error()));
+      last_.reset();
+      return;
+    }
+    host_.setSelection(created.value());
+  } else {
+    const Status s = m.transform(targets_, delta, name().toStdString());
+    if (!s) {
+      host_.reportError(QString::fromStdString(s.message()));
+      last_.reset();
+      return;
+    }
+  }
+  last_ = Last{targets_, delta, copy_, count, m.history().undoCount()};
+}
+
+bool TransformTool::canReeditLast() const {
+  return last_ && host_.modeler().history().undoCount() == last_->undoCount;
+}
+
+bool TransformTool::redoLast(const gp_Trsf& delta, int count) {
+  if (!canReeditLast()) return false;
+  doc::Modeler& m = host_.modeler();
+  m.undo();
+  targets_ = last_->targets;
+  copy_ = last_->copy;
+  commit(delta, count);
+  copy_ = false;
+  return true;
+}
+
+// --- Move ------------------------------------------------------------------------------
+
+QString MoveTool::name() const { return QObject::tr("移動"); }
+
+void MoveTool::activate() {
+  resetTracking();
+  resetState();
+  host_.viewport().setPickMode(PickMode::Objects);
+  host_.setMeasurement(QObject::tr("距離"), QString());
+  host_.setStatus(QObject::tr("基点をクリック（未選択ならクリックした対象を移動）") + copySuffix());
+}
+
+void MoveTool::resetState() {
+  moving_ = false;
+  copy_ = false;
+  resetLock();
+  host_.viewport().clearPreview();
+  host_.viewport().hideSnap();
+}
+
+void MoveTool::cancel() { resetState(); }
+
+void MoveTool::mouseMove(const ToolEvent& e) {
+  if (!moving_) {
+    host_.viewport().pickObject(e.pos);
+    const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
+    host_.setStatus(QObject::tr("基点をクリック  [%1]").arg(snapLabel(r.kind)) + copySuffix());
+    return;
+  }
+  const snap::SnapResult r = snapAt(e, base_, gp_Pln(base_, gp::DZ()));
+  if (!r.valid()) return;
+  current_ = r.point;
+  gp_Trsf delta;
+  delta.SetTranslation(gp_Vec(base_, current_));
+  host_.viewport().setGhost(targets_, delta);
+  host_.setMeasurement(QObject::tr("距離"), QString::number(base_.Distance(current_), 'f', 1));
+  host_.setStatus(QObject::tr("移動先をクリック、または距離を入力  [%1]").arg(snapLabel(r.kind)) +
+                  lockSuffix() + copySuffix());
+}
+
+void MoveTool::mousePress(const ToolEvent& e) {
+  if (!moving_) {
+    targets_ = host_.selection();
+    if (targets_.empty()) {
+      if (const auto picked = host_.viewport().pickObject(e.pos)) {
+        targets_ = {host_.modeler().document().rootOf(*picked)};
+        host_.setSelection(targets_);
+      }
+    }
+    if (targets_.empty()) {
+      host_.reportError(QObject::tr("移動する対象を選択してください"));
+      return;
+    }
+    const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
+    if (!r.valid()) return;
+    base_ = current_ = r.point;
+    moving_ = true;
+    host_.viewport().clearHover();
+    host_.viewport().setPickMode(PickMode::None);
+    return;
+  }
+  mouseMove(e);
+  gp_Trsf delta;
+  delta.SetTranslation(gp_Vec(base_, current_));
+  if (base_.Distance(current_) > tolerance::kMinDimension) commit(delta);
+  resetState();
+  host_.viewport().setPickMode(PickMode::Objects);
+  host_.setStatus(QObject::tr("基点をクリック（数値で距離変更、コピー後は x3 で配列・/3 で等分割）"));
+}
+
+void MoveTool::applyMeasurement(const QString& text) {
+  if (moving_) {
+    const auto length = units::parseLength(text.toStdString());
+    if (!length) {
+      host_.reportError(QObject::tr("距離を解釈できません: %1").arg(text));
+      return;
+    }
+    if (base_.Distance(current_) < 1e-9) {
+      host_.reportError(QObject::tr("マウスで方向を示してから距離を入力してください"));
+      return;
+    }
+    gp_Trsf delta;
+    delta.SetTranslation(gp_Vec(gp_Dir(gp_Vec(base_, current_))) * *length);
+    commit(delta);
+    resetState();
+    host_.viewport().setPickMode(PickMode::Objects);
+    return;
+  }
+  if (!canReeditLast()) {
+    host_.reportError(QObject::tr("基点をクリックしてから距離を入力してください"));
+    return;
+  }
+  const gp_Vec step = last_->delta.TranslationPart();
+  const gp_Vec total = step * last_->count;
+  if (const auto array = parseArrayRequest(text)) {
+    if (!last_->copy) {
+      host_.reportError(QObject::tr("配列は Ctrl でコピーしたときに使えます"));
+      return;
+    }
+    gp_Trsf delta;
+    // "x3": three copies at the same spacing; "/3": three copies dividing the distance.
+    delta.SetTranslation(array->divide ? total / array->count : step);
+    redoLast(delta, array->count);
+    return;
+  }
+  const auto length = units::parseLength(text.toStdString());
+  if (!length || step.Magnitude() < 1e-9) {
+    host_.reportError(QObject::tr("距離を解釈できません: %1").arg(text));
+    return;
+  }
+  gp_Trsf delta;
+  delta.SetTranslation(gp_Vec(gp_Dir(step)) * *length);
+  redoLast(delta, last_->count);
+}
+
+// --- Rotate ------------------------------------------------------------------------------
+
+QString RotateTool::name() const { return QObject::tr("回転"); }
+
+void RotateTool::activate() {
+  resetTracking();
+  resetState();
+  host_.viewport().setPickMode(PickMode::None);
+  host_.setMeasurement(QObject::tr("角度"), QString());
+  host_.setStatus(QObject::tr("回転の中心をクリック（面上なら面の法線まわり）") + copySuffix());
+}
+
+void RotateTool::resetState() {
+  stage_ = Stage::Center;
+  angle_ = 0.0;
+  copy_ = false;
+  resetLock();
+  host_.viewport().clearPreview();
+  host_.viewport().hideSnap();
+}
+
+void RotateTool::cancel() { resetState(); }
+
+gp_Trsf RotateTool::rotation(double angle) const {
+  gp_Trsf t;
+  t.SetRotation(gp_Ax1(center_, normal_), angle);
+  return t;
+}
+
+std::optional<double> RotateTool::angleAt(const gp_Pnt& p) const {
+  gp_Vec v(center_, p);
+  v -= gp_Vec(normal_) * v.Dot(gp_Vec(normal_));
+  if (v.Magnitude() < 1e-6) return std::nullopt;
+  const gp_Vec ref(reference_);
+  double angle = std::atan2(ref.Crossed(v).Dot(gp_Vec(normal_)), ref.Dot(v));
+  // Protractor snapping to 15 degree steps.
+  const double step = M_PI / 12;
+  const double snapped = std::round(angle / step) * step;
+  if (std::abs(angle - snapped) < M_PI / 90) angle = snapped;
+  return angle;
+}
+
+void RotateTool::mouseMove(const ToolEvent& e) {
+  Viewport& vp = host_.viewport();
+  switch (stage_) {
+    case Stage::Center: {
+      const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
+      host_.setStatus(QObject::tr("回転の中心をクリック  [%1]").arg(snapLabel(r.kind)) + copySuffix());
+      return;
+    }
+    case Stage::Reference: {
+      const snap::SnapResult r = snapAt(e, center_, gp_Pln(center_, normal_));
+      if (!r.valid()) return;
+      if (r.point.Distance(center_) > 1e-6) {
+        vp.setPreview(BRepBuilderAPI_MakeEdge(center_, r.point).Edge());
+      }
+      host_.setStatus(QObject::tr("基準方向をクリック  [%1]").arg(snapLabel(r.kind)));
+      return;
+    }
+    case Stage::Rotating: {
+      const snap::SnapResult r = snapAt(e, center_, gp_Pln(center_, normal_));
+      if (!r.valid()) return;
+      const auto angle = angleAt(r.point);
+      if (!angle) return;
+      angle_ = *angle;
+      vp.setGhost(targets_, rotation(angle_));
+      host_.setMeasurement(QObject::tr("角度"), QString::number(angle_ * 180.0 / M_PI, 'f', 1));
+      host_.setStatus(QObject::tr("クリックで確定、または角度を入力") + copySuffix());
+      return;
+    }
+  }
+}
+
+void RotateTool::mousePress(const ToolEvent& e) {
+  switch (stage_) {
+    case Stage::Center: {
+      targets_ = host_.selection();
+      if (targets_.empty()) {
+        host_.reportError(QObject::tr("先に回転する対象を選択してください"));
+        return;
+      }
+      const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
+      if (!r.valid()) return;
+      center_ = r.point;
+      normal_ = (r.kind == snap::SnapKind::OnFace && r.faceNormal) ? *r.faceNormal : gp::DZ();
+      stage_ = Stage::Reference;
+      return;
+    }
+    case Stage::Reference: {
+      const snap::SnapResult r = snapAt(e, center_, gp_Pln(center_, normal_));
+      gp_Vec v(center_, r.point);
+      v -= gp_Vec(normal_) * v.Dot(gp_Vec(normal_));
+      if (v.Magnitude() < 1e-6) return;
+      reference_ = gp_Dir(v);
+      stage_ = Stage::Rotating;
+      return;
+    }
+    case Stage::Rotating:
+      mouseMove(e);
+      if (std::abs(angle_) > 1e-9) {
+        lastAxis_ = gp_Ax1(center_, normal_);
+        lastAngle_ = angle_;
+        commit(rotation(angle_));
+      }
+      resetState();
+      host_.setStatus(QObject::tr("回転の中心をクリック（数値で角度変更、コピー後は x4 で配列）"));
+      return;
+  }
+}
+
+void RotateTool::applyMeasurement(const QString& text) {
+  if (stage_ == Stage::Rotating) {
+    bool ok = false;
+    const double degrees = text.trimmed().toDouble(&ok);
+    if (!ok) {
+      host_.reportError(QObject::tr("角度を解釈できません: %1").arg(text));
+      return;
+    }
+    const double sign = angle_ < 0 ? -1.0 : 1.0;
+    lastAxis_ = gp_Ax1(center_, normal_);
+    lastAngle_ = sign * degrees * M_PI / 180.0;
+    commit(rotation(lastAngle_));
+    resetState();
+    return;
+  }
+  if (!canReeditLast()) {
+    host_.reportError(QObject::tr("回転してから数値を入力してください"));
+    return;
+  }
+  const double angle = lastAngle_;
+  if (const auto array = parseArrayRequest(text)) {
+    if (!last_->copy) {
+      host_.reportError(QObject::tr("配列は Ctrl でコピーしたときに使えます"));
+      return;
+    }
+    // "x4": four copies at the same angle; "/4": divide the total angle.
+    const double step = array->divide ? angle * last_->count / array->count : angle;
+    gp_Trsf delta;
+    delta.SetRotation(lastAxis_, step);
+    lastAngle_ = step;
+    redoLast(delta, array->count);
+    return;
+  }
+  bool ok = false;
+  const double degrees = text.trimmed().toDouble(&ok);
+  if (!ok) {
+    host_.reportError(QObject::tr("角度を解釈できません: %1").arg(text));
+    return;
+  }
+  lastAngle_ = (angle < 0 ? -1.0 : 1.0) * degrees * M_PI / 180.0;
+  gp_Trsf delta;
+  delta.SetRotation(lastAxis_, lastAngle_);
+  redoLast(delta, last_->count);
+}
+
+// --- Offset ------------------------------------------------------------------------------
+
+namespace {
+
+// Signed distance from a point on the face plane to the outer boundary:
+// negative inside the face, positive outside.
+double signedBoundaryDistance(const TopoDS_Face& face, const gp_Pnt& p) {
+  const TopoDS_Wire outer = BRepTools::OuterWire(face);
+  BRepExtrema_DistShapeShape dist(BRepBuilderAPI_MakeVertex(p).Vertex(), outer);
+  if (!dist.IsDone()) return 0.0;
+  BRepClass_FaceClassifier classifier(face, p, tolerance::kLinear);
+  return classifier.State() == TopAbs_IN ? -dist.Value() : dist.Value();
+}
+
+}  // namespace
+
+QString OffsetTool::name() const { return QObject::tr("オフセット"); }
+
+void OffsetTool::activate() {
+  host_.viewport().setPickMode(PickMode::Faces);
+  host_.setMeasurement(QObject::tr("オフセット距離"), QString());
+  host_.setStatus(QObject::tr("オフセットする面（平面プロファイル）をクリック"));
+}
+
+void OffsetTool::cancel() { reset(); }
+
+void OffsetTool::reset() {
+  dragging_ = false;
+  distance_ = 0.0;
+  face_.Nullify();
+  host_.viewport().clearPreview();
+  host_.viewport().setPickMode(PickMode::Faces);
+}
+
+void OffsetTool::mouseMove(const ToolEvent& e) {
+  Viewport& vp = host_.viewport();
+  if (!dragging_) {
+    vp.pickFace(e.pos);
+    return;
+  }
+  const snap::Ray ray = vp.rayAt(e.pos);
+  const gp_Dir n = plane_.Axis().Direction();
+  const double denom = gp_Vec(ray.direction).Dot(gp_Vec(n));
+  if (std::abs(denom) < 1e-9) return;
+  const double t = gp_Vec(ray.origin, plane_.Location()).Dot(gp_Vec(n)) / denom;
+  const gp_Pnt p = ray.origin.Translated(gp_Vec(ray.direction) * t);
+  distance_ = signedBoundaryDistance(face_, p);
+  host_.setMeasurement(QObject::tr("オフセット距離"), QString::number(distance_, 'f', 1));
+  auto preview = geom::offsetFace(face_, distance_);
+  vp.setPreview(preview ? TopoDS_Shape(BRepTools::OuterWire(preview.value())) : TopoDS_Shape());
+  host_.setStatus(QObject::tr("クリックで確定、または距離を入力（外側が正）"));
+}
+
+void OffsetTool::mousePress(const ToolEvent& e) {
+  if (dragging_) {
+    mouseMove(e);
+    commit(distance_);
+    return;
+  }
+  const auto pick = host_.viewport().pickFace(e.pos);
+  if (!pick) return;
+  const doc::Object* o = host_.modeler().document().find(pick->objectId);
+  if (!o || o->kind() != doc::ObjectKind::Face || !geom::isPlanarFace(pick->face, &plane_)) {
+    host_.reportError(QObject::tr("オフセットできるのは平面プロファイル（押し出し前の面）です"));
+    return;
+  }
+  objectId_ = pick->objectId;
+  face_ = pick->face;
+  distance_ = 0.0;
+  dragging_ = true;
+  host_.viewport().clearHover();
+  host_.viewport().setPickMode(PickMode::None);
+}
+
+void OffsetTool::commit(double distance) {
+  if (std::abs(distance) < tolerance::kMinDimension) {
+    reset();
+    return;
+  }
+  auto result = host_.modeler().offset(objectId_, distance);
+  if (!result) {
+    host_.reportError(QObject::tr("オフセットに失敗しました: %1")
+                          .arg(QString::fromStdString(result.error())));
+  } else {
+    last_ = LastOffset{result->id, result->parameterKey};
+    host_.setSelection({result->id});
+  }
+  reset();
+  host_.setMeasurement(QObject::tr("オフセット距離"), QString::number(distance, 'f', 1));
+}
+
+void OffsetTool::applyMeasurement(const QString& text) {
+  const auto value = units::parseLength(text.toStdString());
+  if (!value) {
+    host_.reportError(QObject::tr("距離を解釈できません: %1").arg(text));
+    return;
+  }
+  if (dragging_) {
+    // Typed values follow the drag side: inside = inwards.
+    commit(distance_ < 0 ? -std::abs(*value) : std::abs(*value));
+    return;
+  }
+  if (last_) {
+    const Status s = host_.modeler().setParameter(last_->id, last_->key, *value);
     if (!s) host_.reportError(QString::fromStdString(s.message()));
     return;
   }

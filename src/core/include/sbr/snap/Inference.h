@@ -30,6 +30,9 @@ enum class SnapKind {
   AxisY,
   AxisZ,
   Locked,
+  Parallel,       // parallel to a tracked edge, from the anchor
+  Perpendicular,  // perpendicular to a tracked edge, from the anchor
+  FromPoint,      // on an axis line through a tracked point
   WorkPlane,
 };
 const char* toString(SnapKind kind);
@@ -55,13 +58,18 @@ struct SnapQuery {
   std::optional<gp_Dir> lockedDirection; // Shift lock: result constrained to anchor + t*dir
   gp_Pln workPlane{gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1)};
   bool snapToGeometry = true;
+  // SketchUp-style tracking: points/edges the cursor recently paused on.
+  std::vector<gp_Pnt> trackedPoints;      // enables "from point" axis inference
+  std::vector<gp_Dir> trackedDirections;  // enables parallel/perpendicular inference
 };
 
 struct SnapResult {
   SnapKind kind = SnapKind::None;
   gp_Pnt point;
   std::optional<gp_Dir> faceNormal;  // OnFace: outward normal at the point
-  std::optional<gp_Dir> axis;        // Axis*/Locked: inferred direction
+  std::optional<gp_Dir> axis;        // Axis*/Locked/Parallel/...: inferred direction
+  std::optional<gp_Pnt> referencePoint;  // FromPoint (and axis intersections): tracked point
+  std::optional<gp_Dir> edgeDirection;   // OnEdge on a straight edge: its direction
   int shapeIndex = -1;               // index into the shapes passed to setShapes
   TopoDS_Face face;                  // OnFace: the hit face
 

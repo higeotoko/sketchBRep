@@ -27,8 +27,12 @@ Overloaded(Ts...) -> Overloaded<Ts...>;
 json toJson(const gp_Pnt& p) { return json::array({p.X(), p.Y(), p.Z()}); }
 json toJson(const gp_Dir& d) { return json::array({d.X(), d.Y(), d.Z()}); }
 
-gp_Pnt pointFrom(const json& j) { return gp_Pnt(j.at(0).get<double>(), j.at(1).get<double>(), j.at(2).get<double>()); }
-gp_Dir dirFrom(const json& j) { return gp_Dir(j.at(0).get<double>(), j.at(1).get<double>(), j.at(2).get<double>()); }
+gp_Pnt pointFrom(const json& j) {
+  return gp_Pnt(j.at(0).get<double>(), j.at(1).get<double>(), j.at(2).get<double>());
+}
+gp_Dir dirFrom(const json& j) {
+  return gp_Dir(j.at(0).get<double>(), j.at(1).get<double>(), j.at(2).get<double>());
+}
 
 json toJson(const gp_Trsf& t) {
   json m = json::array();
@@ -58,7 +62,17 @@ std::vector<gp_Pnt> pointsFrom(const json& j) {
   return out;
 }
 
+BooleanKind booleanKindFrom(const std::string& s) {
+  if (s == "Union") return BooleanKind::Union;
+  if (s == "Subtract") return BooleanKind::Subtract;
+  if (s == "Intersect") return BooleanKind::Intersect;
+  throw std::runtime_error("unknown boolean kind: " + s);
+}
+
 // --- recipe ----------------------------------------------------------------
+json recipeToJson(const Recipe& recipe);
+Recipe recipeFrom(const json& j);
+
 json baseToJson(const BaseFeature& base) {
   return std::visit(
       Overloaded{
@@ -81,6 +95,19 @@ json baseToJson(const BaseFeature& base) {
             return json{{"type", "imported"},
                         {"source", s.source},
                         {"brep", geom::shapeToBRepString(s.shape)}};
+          },
+          [](const BooleanFeature& b) {
+            json operands = json::array();
+            for (const BooleanOperand& o : b.operands) {
+              operands.push_back({{"name", o.name},
+                                  {"placement", toJson(o.placement)},
+                                  {"recipe", recipeToJson(*o.recipe)}});
+            }
+            return json{{"type", "boolean"}, {"kind", toString(b.kind)}, {"operands", operands}};
+          },
+          [](const GroupNode&) { return json{{"type", "group"}}; },
+          [](const ComponentInstance& c) {
+            return json{{"type", "instance"}, {"definition", c.definitionId}};
           },
       },
       base);
@@ -105,6 +132,18 @@ BaseFeature baseFrom(const json& j) {
     if (!shape) throw std::runtime_error(shape.error());
     return ImportedShape{shape.value(), j.value("source", std::string())};
   }
+  if (type == "boolean") {
+    BooleanFeature b;
+    b.kind = booleanKindFrom(j.at("kind").get<std::string>());
+    for (const json& o : j.at("operands")) {
+      b.operands.push_back(BooleanOperand{std::make_shared<const Recipe>(recipeFrom(o.at("recipe"))),
+                                          trsfFrom(o.at("placement")),
+                                          o.value("name", std::string())});
+    }
+    return b;
+  }
+  if (type == "group") return GroupNode{};
+  if (type == "instance") return ComponentInstance{j.at("definition").get<std::string>()};
   throw std::runtime_error("unknown base feature type: " + type);
 }
 
@@ -112,6 +151,7 @@ json modifierToJson(const Modifier& m) {
   return std::visit(
       Overloaded{
           [](const ExtrudeOp& op) { return json{{"type", "extrude"}, {"distance", op.distance}}; },
+          [](const OffsetOp& op) { return json{{"type", "offset"}, {"distance", op.distance}}; },
           [](const PushPullOp& op) {
             return json{{"type", "pushpull"},
                         {"distance", op.distance},
@@ -127,6 +167,7 @@ json modifierToJson(const Modifier& m) {
 Modifier modifierFrom(const json& j) {
   const std::string type = j.at("type").get<std::string>();
   if (type == "extrude") return ExtrudeOp{j.at("distance").get<double>()};
+  if (type == "offset") return OffsetOp{j.at("distance").get<double>()};
   if (type == "pushpull") {
     PushPullOp op;
     op.distance = j.at("distance").get<double>();
@@ -139,7 +180,21 @@ Modifier modifierFrom(const json& j) {
   throw std::runtime_error("unknown modifier type: " + type);
 }
 
+json recipeToJson(const Recipe& recipe) {
+  json mods = json::array();
+  for (const Modifier& m : recipe.modifiers) mods.push_back(modifierToJson(m));
+  return json{{"base", baseToJson(recipe.base)}, {"modifiers", mods}};
+}
+
+Recipe recipeFrom(const json& j) {
+  Recipe recipe;
+  recipe.base = baseFrom(j.at("base"));
+  for (const json& m : j.at("modifiers")) recipe.modifiers.push_back(modifierFrom(m));
+  return recipe;
+}
+
 bool sameGeometry(const TopoDS_Shape& a, const TopoDS_Shape& b) {
+  if (a.IsNull() || b.IsNull()) return a.IsNull() == b.IsNull();
   const double va = geom::volume(a);
   const double vb = geom::volume(b);
   if (std::abs(va - vb) > 1e-6 * std::max(1.0, std::abs(va))) return false;
@@ -166,28 +221,80 @@ CameraState cameraFrom(const json& j) {
   return c;
 }
 
+json objectToJson(const Object& o) {
+  json j = {
+      {"id", o.id},
+      {"name", o.name},
+      {"layer", o.layer},
+      {"visible", o.visible},
+      {"color", {o.color.r, o.color.g, o.color.b}},
+      {"transform", toJson(o.transform)},
+      {"recipe", recipeToJson(o.recipe)},
+  };
+  if (!o.parent.empty()) j["parent"] = o.parent;
+  if (!o.shape.IsNull()) {
+    j["geometry"] = {{"brep", geom::shapeToBRepString(o.shape)}, {"volume", geom::volume(o.shape)}};
+  }
+  return j;
+}
+
+json objectsToJson(const std::vector<Object>& objects) {
+  json arr = json::array();
+  for (const Object& o : objects) arr.push_back(objectToJson(o));
+  return arr;
+}
+
+// Parses an object and resolves its geometry: the recipe is regenerated and
+// compared with the stored BRep; stored geometry wins on any doubt.
+Object objectFrom(const json& j, const RegenContext& context, std::vector<std::string>* warnings) {
+  Object o;
+  o.id = j.at("id").get<std::string>();
+  o.parent = j.value("parent", std::string());
+  o.name = j.value("name", std::string());
+  o.layer = j.value("layer", std::string("Default"));
+  o.visible = j.value("visible", true);
+  if (j.contains("color")) {
+    const json& c = j.at("color");
+    o.color = Color{c.at(0).get<double>(), c.at(1).get<double>(), c.at(2).get<double>()};
+  }
+  if (j.contains("transform")) o.transform = trsfFrom(j.at("transform"));
+  o.recipe = recipeFrom(j.at("recipe"));
+
+  Result<TopoDS_Shape> stored = Result<TopoDS_Shape>::failure("no stored geometry");
+  if (j.contains("geometry")) {
+    stored = geom::shapeFromBRepString(j.at("geometry").at("brep").get<std::string>());
+  }
+  const Result<TopoDS_Shape> regenerated = regenerate(o.recipe, context);
+
+  auto warn = [&](const std::string& message) {
+    if (warnings) warnings->push_back("'" + o.name + "': " + message);
+  };
+  if (regenerated && stored) {
+    o.shape = stored.value();
+    if (!sameGeometry(regenerated.value(), stored.value())) {
+      warn("regenerated geometry differs from saved geometry; saved geometry kept");
+    }
+  } else if (stored) {
+    o.shape = stored.value();
+    warn("recipe could not be regenerated (" + regenerated.error() + "); saved geometry kept");
+  } else if (regenerated) {
+    o.shape = regenerated.value();
+    if (!o.shape.IsNull()) {
+      warn("saved geometry unreadable (" + stored.error() + "); regenerated from recipe");
+    }
+  } else {
+    throw std::runtime_error("Object '" + o.name + "' has no usable geometry: " +
+                             regenerated.error());
+  }
+  return o;
+}
+
 }  // namespace
 
 std::string serializeDocument(const Document& document) {
-  json objects = json::array();
-  for (const Object& o : document.objects()) {
-    objects.push_back({
-        {"id", o.id},
-        {"name", o.name},
-        {"layer", o.layer},
-        {"visible", o.visible},
-        {"color", {o.color.r, o.color.g, o.color.b}},
-        {"transform", toJson(o.transform)},
-        {"recipe",
-         {{"base", baseToJson(o.recipe.base)},
-          {"modifiers", [&] {
-             json mods = json::array();
-             for (const Modifier& m : o.recipe.modifiers) mods.push_back(modifierToJson(m));
-             return mods;
-           }()}}},
-        {"geometry",
-         {{"brep", geom::shapeToBRepString(o.shape)}, {"volume", geom::volume(o.shape)}}},
-    });
+  json definitions = json::array();
+  for (const ComponentDefinition& d : document.definitions()) {
+    definitions.push_back({{"id", d.id}, {"name", d.name}, {"objects", objectsToJson(d.objects)}});
   }
   const DocumentSettings& s = document.settings();
   json root = {
@@ -196,7 +303,8 @@ std::string serializeDocument(const Document& document) {
       {"units", s.units},
       {"linearTolerance", s.linearTolerance},
       {"camera", cameraToJson(s.camera)},
-      {"objects", objects},
+      {"definitions", definitions},
+      {"objects", objectsToJson(document.objects())},
   };
   return root.dump(1);
 }
@@ -220,53 +328,34 @@ Status deserializeDocument(const std::string& text, Document& document,
     s.linearTolerance = root.value("linearTolerance", tolerance::kLinear);
     if (root.contains("camera")) s.camera = cameraFrom(root.at("camera"));
 
-    std::vector<Object> objects;
-    for (const json& j : root.at("objects")) {
-      Object o;
-      o.id = j.at("id").get<std::string>();
-      o.name = j.value("name", std::string());
-      o.layer = j.value("layer", std::string("Default"));
-      o.visible = j.value("visible", true);
-      if (j.contains("color")) {
-        const json& c = j.at("color");
-        o.color = Color{c.at(0).get<double>(), c.at(1).get<double>(), c.at(2).get<double>()};
-      }
-      if (j.contains("transform")) o.transform = trsfFrom(j.at("transform"));
-      const json& recipe = j.at("recipe");
-      o.recipe.base = baseFrom(recipe.at("base"));
-      for (const json& m : recipe.at("modifiers")) o.recipe.modifiers.push_back(modifierFrom(m));
-
-      Result<TopoDS_Shape> stored = Result<TopoDS_Shape>::failure("no stored geometry");
-      if (j.contains("geometry")) {
-        stored = geom::shapeFromBRepString(j.at("geometry").at("brep").get<std::string>());
-      }
-      const Result<TopoDS_Shape> regenerated = regenerate(o.recipe);
-
-      auto warn = [&](const std::string& message) {
-        if (warnings) warnings->push_back("'" + o.name + "': " + message);
-      };
-      if (regenerated && stored) {
-        o.shape = stored.value();
-        if (!sameGeometry(regenerated.value(), stored.value())) {
-          warn("regenerated geometry differs from saved geometry; saved geometry kept");
+    // Definitions first: instances regenerate from their shapes.
+    if (root.contains("definitions")) {
+      for (const json& d : root.at("definitions")) {
+        ComponentDefinition definition;
+        definition.id = d.at("id").get<std::string>();
+        definition.name = d.value("name", std::string());
+        for (const json& o : d.at("objects")) {
+          definition.objects.push_back(objectFrom(o, loaded.regenContext(), warnings));
         }
-      } else if (stored) {
-        o.shape = stored.value();
-        warn("recipe could not be regenerated (" + regenerated.error() +
-             "); saved geometry kept");
-      } else if (regenerated) {
-        o.shape = regenerated.value();
-        warn("saved geometry unreadable (" + stored.error() + "); regenerated from recipe");
-      } else {
-        return Status::failure("Object '" + o.name + "' has no usable geometry: " +
-                               regenerated.error());
+        auto shape = buildDefinitionShape(definition);
+        if (!shape) return Status::failure("Component '" + definition.name + "': " + shape.error());
+        definition.shape = shape.value();
+        loaded.putDefinition(definition);
       }
-      objects.push_back(std::move(o));
+    }
+    for (const json& j : root.at("objects")) {
+      loaded.insert(objectFrom(j, loaded.regenContext(), warnings));
+    }
+    for (const Object& o : loaded.objects()) {
+      if (!o.parent.empty() && !loaded.find(o.parent)) {
+        return Status::failure("Object '" + o.name + "' refers to a missing parent");
+      }
     }
 
     document.clear();
     document.settings() = loaded.settings();
-    for (Object& o : objects) document.insert(std::move(o));
+    for (const ComponentDefinition& d : loaded.definitions()) document.putDefinition(d);
+    for (const Object& o : loaded.objects()) document.insert(o);
     return Status::success();
   } catch (const std::exception& e) {
     return Status::failure(std::string("Corrupt project file: ") + e.what());

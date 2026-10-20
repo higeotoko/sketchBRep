@@ -72,7 +72,141 @@ class GuiPhase1 : public QObject {
  private slots:
   void drawPushPullSaveReopen();
   void lineToolClosesLoopIntoFace();
+  void moveCopyAndArray();
+  void rotateByTypedAngle();
+  void offsetToolInwards();
+  void groupIsSelectedAsAWhole();
 };
+
+namespace {
+
+// Window with a fixed top-down orthographic camera around the origin.
+struct Fixture {
+  MainWindow window;
+  Viewport* vp = nullptr;
+  bool setUp(double cx = 3000, double cy = 3000) {
+    window.resize(1280, 860);
+    window.show();
+    if (!QTest::qWaitForWindowExposed(&window)) return false;
+    vp = &window.viewport();
+    doc::CameraState cam;
+    cam.eye = {cx - 6000, cy - 8000, 9000};
+    cam.target = {cx, cy, 0};
+    cam.up = {0, 0, 1};
+    cam.perspective = false;
+    cam.scale = 16000;
+    vp->restoreCamera(cam);
+    QTest::qWait(50);
+    return true;
+  }
+  doc::ObjectId box(double x, double y, double w, double d, double h) {
+    geom::SketchPlane plane = geom::SketchPlane::ground();
+    plane.origin = gp_Pnt(x, y, 0);
+    auto id = window.modeler().createRectangle(plane, w, d);
+    window.modeler().extrude(*id, h);
+    QTest::qWait(20);
+    return *id;
+  }
+};
+
+}  // namespace
+
+void GuiPhase1::moveCopyAndArray() {
+  Fixture f;
+  QVERIFY(f.setUp());
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId column = f.box(0, 0, 300, 300, 3000);
+  f.window.setSelection({column});
+  f.window.activateTool(MainWindow::ToolId::Move);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));        // base point: column corner
+  QTest::keyClick(f.vp, Qt::Key_Control);                 // copy mode
+  move(f.vp, f.vp->toWidget(gp_Pnt(1500, 0, 0)));      // direction along X
+  type(f.vp, QStringLiteral("3000"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), std::size_t(2));
+  type(f.vp, QStringLiteral("x4"));                       // array of four at 3000 spacing
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), std::size_t(5));
+  Bnd_Box all;
+  for (const doc::Object& o : m.document().objects()) all.Add(geom::exactBounds(m.document().worldShape(o)));
+  QVERIFY(std::abs(all.CornerMax().X() - 12300) < 1e-6);
+  QCOMPARE(m.history().undoName(), std::string("Array"));
+  type(f.vp, QStringLiteral("/4"));                       // divide the 12000 into four
+  all.SetVoid();
+  for (const doc::Object& o : m.document().objects()) all.Add(geom::exactBounds(m.document().worldShape(o)));
+  QVERIFY(std::abs(all.CornerMax().X() - 12300) < 1e-6);
+  QCOMPARE(m.document().objects().size(), std::size_t(5));
+
+  const QString shot = qEnvironmentVariable("SBR_PHASE2_SHOT");
+  if (!shot.isEmpty()) {
+    // Add a wall with a door opening and an offset slab for the screenshot.
+    const doc::ObjectId wall = f.box(-1000, 2000, 14000, 200, 3000);
+    const doc::ObjectId door = f.box(2000, 1900, 900, 400, 2100);
+    auto cut = m.boolean(doc::BooleanKind::Subtract, {wall, door});
+    QVERIFY(cut.ok());
+    geom::SketchPlane plane = geom::SketchPlane::ground();
+    plane.origin = gp_Pnt(-1000, -1000, 0);
+    auto slab = m.createRectangle(plane, 14000, 3200);
+    auto inner = m.offset(*slab, -400);
+    QVERIFY(inner.ok());
+    f.window.setSelection({*cut});
+    f.window.activateTool(MainWindow::ToolId::Select);
+    f.vp->fitAll();
+    QTest::qWait(150);
+    QVERIFY(f.window.screen()->grabWindow(0).copy(f.window.frameGeometry()).save(shot));
+  }
+}
+
+void GuiPhase1::rotateByTypedAngle() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId id = f.box(0, 0, 2000, 500, 500);
+  f.window.setSelection({id});
+  f.window.activateTool(MainWindow::ToolId::Rotate);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));        // centre
+  click(f.vp, f.vp->toWidget(gp_Pnt(2000, 0, 0)));     // reference along +X
+  move(f.vp, f.vp->toWidget(gp_Pnt(1500, 1500, 0)));   // counter-clockwise side
+  type(f.vp, QStringLiteral("90"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  const Bnd_Box b = geom::exactBounds(m.document().worldShape(id));
+  QVERIFY(std::abs(b.CornerMin().X() + 500) < 1e-6);
+  QVERIFY(std::abs(b.CornerMax().Y() - 2000) < 1e-6);
+}
+
+void GuiPhase1::offsetToolInwards() {
+  Fixture f;
+  QVERIFY(f.setUp(1000, 1000));
+  doc::Modeler& m = f.window.modeler();
+  auto rect = m.createRectangle(geom::SketchPlane::ground(), 2000, 2000);
+  QTest::qWait(20);
+  f.window.activateTool(MainWindow::ToolId::Offset);
+  QTest::qWait(20);
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 1000, 0)));  // inside the face
+  move(f.vp, f.vp->toWidget(gp_Pnt(1000, 300, 0)));
+  type(f.vp, QStringLiteral("100"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), std::size_t(2));
+  const doc::Object& offset = m.document().objects().back();
+  QVERIFY(offset.id != *rect);
+  QVERIFY(std::abs(geom::area(offset.shape) - 1800.0 * 1800.0) < 1e-3);
+}
+
+void GuiPhase1::groupIsSelectedAsAWhole() {
+  Fixture f;
+  QVERIFY(f.setUp(1000, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId a = f.box(0, 0, 500, 500, 500);
+  const doc::ObjectId b = f.box(1500, 0, 500, 500, 500);
+  auto g = m.group({a, b});
+  QVERIFY(g.ok());
+  QTest::qWait(30);
+  f.window.activateTool(MainWindow::ToolId::Select);
+  click(f.vp, f.vp->toWidget(gp_Pnt(1750, 250, 500)));  // top of b
+  QCOMPARE(f.window.selection().size(), std::size_t(1));
+  QCOMPARE(f.window.selection().front(), *g);
+}
+
 
 void GuiPhase1::drawPushPullSaveReopen() {
   MainWindow window;

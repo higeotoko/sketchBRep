@@ -30,7 +30,7 @@ TEST(Modeler, RectanglePushPullCreatesParametricExtrusion) {
   ASSERT_TRUE(id.ok()) << id.error();
   EXPECT_EQ(object(m, *id).kind(), ObjectKind::Face);
 
-  const TopoDS_Face face = TopoDS::Face(object(m, *id).worldShape());
+  const TopoDS_Face face = TopoDS::Face(m.document().worldShape(*id));
   auto pp = m.pushPull(*id, face, 3000);
   ASSERT_TRUE(pp.ok()) << pp.error();
   EXPECT_EQ(pp->parameterKey, "op0.distance");
@@ -49,7 +49,7 @@ TEST(Modeler, PullingTopCapEditsExtrusionDistance) {
   Modeler m;
   auto id = m.createRectangle(geom::SketchPlane::ground(), 1000, 1000);
   ASSERT_TRUE(m.extrude(*id, 3000).ok());
-  const TopoDS_Face top = faceWithNormal(object(m, *id).worldShape(), gp_Dir(0, 0, 1));
+  const TopoDS_Face top = faceWithNormal(m.document().worldShape(*id), gp_Dir(0, 0, 1));
   auto pp = m.pushPull(*id, top, 500);
   ASSERT_TRUE(pp.ok()) << pp.error();
   EXPECT_EQ(pp->parameterKey, "op0.distance");
@@ -61,7 +61,7 @@ TEST(Modeler, SideFacePushPullIsRecordedAndReplayed) {
   Modeler m;
   auto id = m.createRectangle(geom::SketchPlane::ground(), 1000, 1000);
   ASSERT_TRUE(m.extrude(*id, 3000).ok());
-  const TopoDS_Face side = faceWithNormal(object(m, *id).worldShape(), gp_Dir(1, 0, 0));
+  const TopoDS_Face side = faceWithNormal(m.document().worldShape(*id), gp_Dir(1, 0, 0));
   auto pp = m.pushPull(*id, side, 250);
   ASSERT_TRUE(pp.ok()) << pp.error();
   EXPECT_EQ(pp->parameterKey, "op1.distance");
@@ -80,7 +80,7 @@ TEST(Modeler, TopologicalNamingFailureIsReportedAndRolledBack) {
   Modeler m;
   auto id = m.createRectangle(geom::SketchPlane::ground(), 1000, 1000);
   ASSERT_TRUE(m.extrude(*id, 1000).ok());
-  const TopoDS_Face side = faceWithNormal(object(m, *id).worldShape(), gp_Dir(1, 0, 0));
+  const TopoDS_Face side = faceWithNormal(m.document().worldShape(*id), gp_Dir(1, 0, 0));
   ASSERT_TRUE(m.pushPull(*id, side, 500).ok());
   const double before = geom::volume(object(m, *id).shape);
   // Widening the profile moves the referenced +X plane: the reference no
@@ -99,7 +99,7 @@ TEST(Modeler, InvalidEditIsRejected) {
   EXPECT_FALSE(m.setParameter(*id, "op0.distance", 0.0).ok());
   EXPECT_FALSE(m.setParameter(*id, "width", 0.0).ok());
   EXPECT_FALSE(m.setParameter(*id, "nope", 1.0).ok());
-  const TopoDS_Face top = faceWithNormal(object(m, *id).worldShape(), gp_Dir(0, 0, 1));
+  const TopoDS_Face top = faceWithNormal(m.document().worldShape(*id), gp_Dir(0, 0, 1));
   EXPECT_FALSE(m.pushPull(*id, top, -1000).ok());  // would collapse the extrusion
   EXPECT_EQ(m.history().undoCount(), undoCount);
   EXPECT_DOUBLE_EQ(geom::volume(object(m, *id).shape), 1e9);
@@ -189,7 +189,7 @@ TEST(Modeler, StepExportImport) {
 
   // Imported solids can still be pushed/pulled.
   const ObjectId first = ids->front();
-  const TopoDS_Face top = faceWithNormal(object(other, first).worldShape(), gp_Dir(0, 0, 1));
+  const TopoDS_Face top = faceWithNormal(other.document().worldShape(first), gp_Dir(0, 0, 1));
   ASSERT_FALSE(top.IsNull());
   EXPECT_TRUE(other.pushPull(first, top, 100).ok());
 }

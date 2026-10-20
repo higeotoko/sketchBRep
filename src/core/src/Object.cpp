@@ -4,7 +4,6 @@
 #include <random>
 
 #include <TopExp_Explorer.hxx>
-#include <TopLoc_Location.hxx>
 
 namespace sbr::doc {
 
@@ -27,12 +26,16 @@ const char* toString(ObjectKind kind) {
     case ObjectKind::Curve: return "Curve";
     case ObjectKind::Face: return "Face";
     case ObjectKind::Solid: return "Solid";
+    case ObjectKind::Group: return "Group";
+    case ObjectKind::Instance: return "Instance";
     case ObjectKind::Other: return "Other";
   }
   return "Other";
 }
 
 ObjectKind Object::kind() const {
+  if (std::holds_alternative<GroupNode>(recipe.base)) return ObjectKind::Group;
+  if (std::holds_alternative<ComponentInstance>(recipe.base)) return ObjectKind::Instance;
   if (shape.IsNull()) return ObjectKind::Empty;
   if (TopExp_Explorer(shape, TopAbs_SOLID).More()) return ObjectKind::Solid;
   if (TopExp_Explorer(shape, TopAbs_FACE).More()) return ObjectKind::Face;
@@ -40,13 +43,8 @@ ObjectKind Object::kind() const {
   return ObjectKind::Other;
 }
 
-TopoDS_Shape Object::worldShape() const {
-  if (shape.IsNull() || transform.Form() == gp_Identity) return shape;
-  return shape.Moved(TopLoc_Location(transform));
-}
-
-Status rebuild(Object& object) {
-  auto result = regenerate(object.recipe);
+Status rebuild(Object& object, const RegenContext& context) {
+  auto result = regenerate(object.recipe, context);
   if (!result) return result.status();
   object.shape = result.value();
   return Status::success();

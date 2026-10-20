@@ -13,7 +13,7 @@
 
 namespace sbr::doc {
 
-constexpr int kNativeFormatVersion = 1;
+constexpr int kNativeFormatVersion = 2;
 constexpr const char* kNativeFormatMagic = "SketchBRep";
 
 std::string serializeDocument(const Document& document);

@@ -2,12 +2,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
+#include <set>
 
-#include <BRep_Builder.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
-#include <TopoDS_Compound.hxx>
 
 #include "sbr/doc/NativeFormat.h"
 #include "sbr/geom/Measure.h"
@@ -26,6 +26,57 @@ bool faceCentroid(const TopoDS_Shape& face, gp_Pnt& centroid) {
   return true;
 }
 
+// Collects object/definition changes and turns them into one undoable
+// command with a delta order that restores indices correctly on undo.
+class ChangeSet {
+ public:
+  explicit ChangeSet(const Document& document) : document_(document) {}
+
+  void modify(const Object& object) {
+    modified_.push_back(
+        ObjectDelta{object.id, *document_.find(object.id), object, document_.indexOf(object.id)});
+  }
+  void add(const Object& object) {
+    added_.push_back(ObjectDelta{object.id, std::nullopt, object, std::nullopt});
+  }
+  void erase(const ObjectId& id) {
+    for (const ObjectDelta& d : removed_) {
+      if (d.id == id) return;
+    }
+    removed_.push_back(ObjectDelta{id, *document_.find(id), std::nullopt, document_.indexOf(id)});
+  }
+  void putDefinition(const ComponentDefinition& definition) {
+    const ComponentDefinition* before = document_.findDefinition(definition.id);
+    definitions_.push_back(DefinitionDelta{
+        definition.id, before ? std::optional<ComponentDefinition>(*before) : std::nullopt,
+        definition});
+  }
+
+  Command build(const std::string& name) {
+    // Undo applies deltas in reverse: removals must come back in ascending
+    // index order, so store them descending.
+    std::sort(removed_.begin(), removed_.end(), [](const ObjectDelta& a, const ObjectDelta& b) {
+      return a.indexBefore.value_or(0) > b.indexBefore.value_or(0);
+    });
+    Command command{name, {}, definitions_};
+    for (auto* list : {&modified_, &added_, &removed_}) {
+      command.deltas.insert(command.deltas.end(), list->begin(), list->end());
+    }
+    return command;
+  }
+
+ private:
+  const Document& document_;
+  std::vector<ObjectDelta> modified_;
+  std::vector<ObjectDelta> added_;
+  std::vector<ObjectDelta> removed_;
+  std::vector<DefinitionDelta> definitions_;
+};
+
+gp_Trsf localDelta(const gp_Trsf& parentWorld, const gp_Trsf& worldDelta) {
+  return parentWorld.Inverted() * worldDelta * parentWorld;
+}
+
 }  // namespace
 
 Modeler::Modeler() : history_(document_) {}
@@ -40,16 +91,56 @@ std::string Modeler::uniqueName(const std::string& base) const {
         break;
       }
     }
+    for (const ComponentDefinition& d : document_.definitions()) {
+      if (d.name == candidate) taken = true;
+    }
     if (!taken) return candidate;
   }
 }
 
+std::vector<ObjectId> Modeler::topmost(const std::vector<ObjectId>& ids) const {
+  std::vector<ObjectId> out;
+  for (const ObjectId& id : ids) {
+    if (!document_.find(id) || std::find(out.begin(), out.end(), id) != out.end()) continue;
+    bool covered = false;
+    for (const ObjectId& other : ids) {
+      if (other != id && document_.isAncestor(other, id)) covered = true;
+    }
+    if (!covered) out.push_back(id);
+  }
+  return out;
+}
+
+Status Modeler::checkSameParent(const std::vector<ObjectId>& ids, ObjectId& parent) const {
+  if (ids.empty()) return Status::failure("Nothing selected");
+  for (std::size_t i = 0; i < ids.size(); ++i) {
+    const Object* o = document_.find(ids[i]);
+    if (!o) return Status::failure("Object not found");
+    if (i == 0) parent = o->parent;
+    if (o->parent != parent) return Status::failure("Objects must be in the same group");
+  }
+  return Status::success();
+}
+
+std::vector<Object> Modeler::cloneSubtree(const ObjectId& id, const ObjectId& newParent) const {
+  std::vector<Object> out;
+  std::map<ObjectId, ObjectId> mapping;
+  for (const ObjectId& old : document_.subtree(id)) {
+    Object c = *document_.find(old);
+    c.id = generateObjectId();
+    mapping[old] = c.id;
+    c.parent = old == id ? newParent : mapping[c.parent];
+    out.push_back(std::move(c));
+  }
+  return out;
+}
+
 Result<ObjectId> Modeler::addObject(Object object, const std::string& commandName) {
   if (object.id.empty()) object.id = generateObjectId();
-  const Status built = rebuild(object);
+  const Status built = rebuild(object, document_.regenContext());
   if (!built) return Result<ObjectId>::failure(built.message());
   const ObjectId id = object.id;
-  history_.execute(Command{commandName, {ObjectDelta{id, std::nullopt, object, std::nullopt}}});
+  history_.execute(Command{commandName, {ObjectDelta{id, std::nullopt, object, std::nullopt}}, {}});
   return id;
 }
 
@@ -57,12 +148,14 @@ Status Modeler::commitModified(Object object, const std::string& commandName) {
   const Object* current = document_.find(object.id);
   if (!current) return Status::failure("Object not found");
   // Regenerate the full recipe; on failure the document is left untouched.
-  const Status built = rebuild(object);
+  const Status built = rebuild(object, document_.regenContext());
   if (!built) return built;
-  history_.execute(Command{commandName,
-                           {ObjectDelta{object.id, *current, object, document_.indexOf(object.id)}}});
+  history_.execute(Command{
+      commandName, {ObjectDelta{object.id, *current, object, document_.indexOf(object.id)}}, {}});
   return Status::success();
 }
+
+// --- creation -----------------------------------------------------------------
 
 Result<ObjectId> Modeler::createRectangle(const geom::SketchPlane& plane, double width,
                                           double height, const std::string& name) {
@@ -95,50 +188,60 @@ Result<ObjectId> Modeler::importShape(const TopoDS_Shape& shape, const std::stri
   return addObject(std::move(o), "Import");
 }
 
+// --- editing --------------------------------------------------------------------
+
 Result<PushPullResult> Modeler::pushPull(const ObjectId& id, const TopoDS_Face& worldFace,
                                          double distance) {
   const Object* current = document_.find(id);
   if (!current) return Result<PushPullResult>::failure("Object not found");
+  if (current->kind() == ObjectKind::Instance) {
+    return Result<PushPullResult>::failure(
+        "Component instances cannot be pushed/pulled; edit the definition or explode it");
+  }
   if (!std::isfinite(distance) || std::abs(distance) < tolerance::kMinDimension) {
     return Result<PushPullResult>::failure("Distance must be non-zero");
   }
   Object object = *current;
-  const TopoDS_Face face =
-      TopoDS::Face(worldFace.Moved(TopLoc_Location(object.transform.Inverted())));
+  const gp_Trsf world = document_.worldTransform(object);
+  const TopoDS_Face face = TopoDS::Face(worldFace.Moved(TopLoc_Location(world.Inverted())));
   const auto pickedNormal = geom::planarFaceNormal(face);
   if (!pickedNormal) return Result<PushPullResult>::failure("Only planar faces can be pushed/pulled");
 
   auto& mods = object.recipe.modifiers;
+  const RegenContext context = document_.regenContext();
   std::string key;
 
-  if (mods.empty() && object.kind() == ObjectKind::Face) {
+  if (object.kind() == ObjectKind::Face) {
     // Profile face -> parametric extrusion.
     const auto profileNormal = geom::planarFaceNormal(TopoDS::Face(object.shape));
     if (!profileNormal) return Result<PushPullResult>::failure("Profile is not planar");
     const double sign = profileNormal->Dot(*pickedNormal) >= 0 ? 1.0 : -1.0;
     mods.push_back(ExtrudeOp{distance * sign});
-    key = opKey(0);
-  } else if (mods.size() == 1 && std::holds_alternative<ExtrudeOp>(mods[0])) {
-    // Pulling the cap of a plain extrusion edits the extrusion distance.
-    auto& extrude = std::get<ExtrudeOp>(mods[0]);
-    Recipe baseOnly{object.recipe.base, {}};
-    const auto profile = regenerate(baseOnly);
-    gp_Pnt profileCentroid, pickedCentroid;
-    std::optional<gp_Dir> profileNormal;
-    if (profile && profile->ShapeType() == TopAbs_FACE) {
-      profileNormal = geom::planarFaceNormal(TopoDS::Face(profile.value()));
-    }
+    key = opKey(mods.size() - 1);
+  } else if (object.kind() == ObjectKind::Solid) {
+    // Pulling the cap of a solid whose last step is an extrusion edits the
+    // extrusion distance instead of adding a new operation.
     bool isCap = false;
-    if (profileNormal && faceCentroid(profile.value(), profileCentroid) &&
-        faceCentroid(face, pickedCentroid)) {
-      const double sign = extrude.distance >= 0 ? 1.0 : -1.0;
-      const gp_Dir capNormal = sign > 0 ? *profileNormal : profileNormal->Reversed();
-      const double offset = gp_Vec(profileCentroid, pickedCentroid).Dot(gp_Vec(*profileNormal));
-      isCap = pickedNormal->Angle(capNormal) < 1e-6 &&
-              std::abs(offset - extrude.distance) < 1e-3;
-      if (isCap) {
-        extrude.distance += sign * distance;
-        key = opKey(0);
+    if (!mods.empty() && std::holds_alternative<ExtrudeOp>(mods.back())) {
+      auto& extrude = std::get<ExtrudeOp>(mods.back());
+      Recipe before{object.recipe.base, {mods.begin(), mods.end() - 1}};
+      const auto profile = regenerate(before, context);
+      gp_Pnt profileCentroid, pickedCentroid;
+      std::optional<gp_Dir> profileNormal;
+      if (profile && !profile->IsNull() && profile->ShapeType() == TopAbs_FACE) {
+        profileNormal = geom::planarFaceNormal(TopoDS::Face(profile.value()));
+      }
+      if (profileNormal && faceCentroid(profile.value(), profileCentroid) &&
+          faceCentroid(face, pickedCentroid)) {
+        const double sign = extrude.distance >= 0 ? 1.0 : -1.0;
+        const gp_Dir capNormal = sign > 0 ? *profileNormal : profileNormal->Reversed();
+        const double offset = gp_Vec(profileCentroid, pickedCentroid).Dot(gp_Vec(*profileNormal));
+        isCap = pickedNormal->Angle(capNormal) < 1e-6 &&
+                std::abs(offset - extrude.distance) < 1e-3;
+        if (isCap) {
+          extrude.distance += sign * distance;
+          key = opKey(mods.size() - 1);
+        }
       }
     }
     if (!isCap) {
@@ -147,11 +250,6 @@ Result<PushPullResult> Modeler::pushPull(const ObjectId& id, const TopoDS_Face& 
       mods.push_back(PushPullOp{ref.value(), distance});
       key = opKey(mods.size() - 1);
     }
-  } else if (object.kind() == ObjectKind::Solid) {
-    auto ref = geom::FaceRef::fromFace(face);
-    if (!ref) return Result<PushPullResult>::failure(ref.error());
-    mods.push_back(PushPullOp{ref.value(), distance});
-    key = opKey(mods.size() - 1);
   } else {
     return Result<PushPullResult>::failure("Push/pull needs a face or a solid");
   }
@@ -164,14 +262,31 @@ Result<PushPullResult> Modeler::pushPull(const ObjectId& id, const TopoDS_Face& 
 Result<PushPullResult> Modeler::extrude(const ObjectId& id, double distance) {
   const Object* current = document_.find(id);
   if (!current) return Result<PushPullResult>::failure("Object not found");
-  if (current->kind() != ObjectKind::Face || !current->recipe.modifiers.empty()) {
+  if (current->kind() != ObjectKind::Face) {
     return Result<PushPullResult>::failure("Only profile faces can be extruded");
   }
   Object object = *current;
   object.recipe.modifiers.push_back(ExtrudeOp{distance});
+  const std::string key = opKey(object.recipe.modifiers.size() - 1);
   const Status committed = commitModified(std::move(object), "Extrude");
   if (!committed) return Result<PushPullResult>::failure(committed.message());
-  return PushPullResult{id, opKey(0)};
+  return PushPullResult{id, key};
+}
+
+Result<PushPullResult> Modeler::offset(const ObjectId& id, double distance) {
+  const Object* current = document_.find(id);
+  if (!current) return Result<PushPullResult>::failure("Object not found");
+  if (current->kind() != ObjectKind::Face) {
+    return Result<PushPullResult>::failure("Only planar profile faces can be offset");
+  }
+  Object object = *current;
+  object.id = generateObjectId();
+  object.name = uniqueName("Offset");
+  object.recipe.modifiers.push_back(OffsetOp{distance});
+  const std::string key = opKey(object.recipe.modifiers.size() - 1);
+  auto added = addObject(std::move(object), "Offset");
+  if (!added) return Result<PushPullResult>::failure(added.error());
+  return PushPullResult{added.value(), key};
 }
 
 Status Modeler::setParameter(const ObjectId& id, const std::string& key, double value) {
@@ -187,37 +302,333 @@ Status Modeler::setParameter(const ObjectId& id, const std::string& key, double 
   return commitModified(std::move(object), "Edit " + label);
 }
 
-Status Modeler::rename(const ObjectId& id, const std::string& name) {
-  const Object* current = document_.find(id);
+namespace {
+template <class Fn>
+Status modifyAttribute(Document& document, CommandStack& history, const ObjectId& id,
+                       const std::string& name, Fn&& fn) {
+  const Object* current = document.find(id);
   if (!current) return Status::failure("Object not found");
-  if (name.empty()) return Status::failure("Name must not be empty");
   Object object = *current;
-  object.name = name;
-  history_.execute(Command{"Rename", {ObjectDelta{id, *current, object, document_.indexOf(id)}}});
+  fn(object);
+  history.execute(Command{name, {ObjectDelta{id, *current, object, document.indexOf(id)}}, {}});
   return Status::success();
+}
+}  // namespace
+
+Status Modeler::rename(const ObjectId& id, const std::string& name) {
+  if (name.empty()) return Status::failure("Name must not be empty");
+  return modifyAttribute(document_, history_, id, "Rename", [&](Object& o) { o.name = name; });
 }
 
 Status Modeler::setVisible(const ObjectId& id, bool visible) {
-  const Object* current = document_.find(id);
-  if (!current) return Status::failure("Object not found");
-  Object object = *current;
-  object.visible = visible;
-  history_.execute(Command{visible ? "Show" : "Hide",
-                           {ObjectDelta{id, *current, object, document_.indexOf(id)}}});
-  return Status::success();
+  return modifyAttribute(document_, history_, id, visible ? "Show" : "Hide",
+                         [&](Object& o) { o.visible = visible; });
+}
+
+Status Modeler::setLayer(const ObjectId& id, const std::string& layer) {
+  if (layer.empty()) return Status::failure("Tag must not be empty");
+  return modifyAttribute(document_, history_, id, "Set Tag", [&](Object& o) { o.layer = layer; });
+}
+
+Status Modeler::setColor(const ObjectId& id, const Color& color) {
+  return modifyAttribute(document_, history_, id, "Set Color", [&](Object& o) { o.color = color; });
 }
 
 Status Modeler::remove(const std::vector<ObjectId>& ids) {
-  Command command{"Delete", {}};
+  ChangeSet changes(document_);
+  bool any = false;
   for (const ObjectId& id : ids) {
-    const Object* current = document_.find(id);
-    if (!current) return Status::failure("Object not found");
-    command.deltas.push_back(ObjectDelta{id, *current, std::nullopt, document_.indexOf(id)});
+    if (!document_.find(id)) return Status::failure("Object not found");
   }
-  if (command.deltas.empty()) return Status::failure("Nothing selected");
-  history_.execute(std::move(command));
+  for (const ObjectId& root : topmost(ids)) {
+    for (const ObjectId& id : document_.subtree(root)) {
+      changes.erase(id);
+      any = true;
+    }
+  }
+  if (!any) return Status::failure("Nothing selected");
+  history_.execute(changes.build("Delete"));
   return Status::success();
 }
+
+// --- placement ------------------------------------------------------------------
+
+Status Modeler::transform(const std::vector<ObjectId>& ids, const gp_Trsf& worldDelta,
+                          const std::string& commandName) {
+  const std::vector<ObjectId> roots = topmost(ids);
+  if (roots.empty()) return Status::failure("Nothing selected");
+  ChangeSet changes(document_);
+  for (const ObjectId& id : roots) {
+    Object o = *document_.find(id);
+    o.transform = localDelta(document_.parentTransform(o), worldDelta) * o.transform;
+    changes.modify(o);
+  }
+  history_.execute(changes.build(commandName));
+  return Status::success();
+}
+
+Status Modeler::move(const std::vector<ObjectId>& ids, const gp_Vec& offset) {
+  gp_Trsf t;
+  t.SetTranslation(offset);
+  return transform(ids, t, "Move");
+}
+
+Status Modeler::rotate(const std::vector<ObjectId>& ids, const gp_Ax1& axis, double angle) {
+  if (!std::isfinite(angle)) return Status::failure("Angle must be finite");
+  gp_Trsf t;
+  t.SetRotation(axis, angle);
+  return transform(ids, t, "Rotate");
+}
+
+Result<std::vector<ObjectId>> Modeler::copy(const std::vector<ObjectId>& ids,
+                                            const gp_Trsf& worldDelta, int count) {
+  if (count < 1 || count > 10000) {
+    return Result<std::vector<ObjectId>>::failure("Copy count must be between 1 and 10000");
+  }
+  const std::vector<ObjectId> roots = topmost(ids);
+  if (roots.empty()) return Result<std::vector<ObjectId>>::failure("Nothing selected");
+
+  ChangeSet changes(document_);
+  std::vector<ObjectId> created;
+  gp_Trsf step;  // worldDelta^k
+  for (int k = 1; k <= count; ++k) {
+    step = worldDelta * step;
+    for (const ObjectId& id : roots) {
+      std::vector<Object> clones = cloneSubtree(id, document_.find(id)->parent);
+      Object& root = clones.front();
+      root.transform = localDelta(document_.parentTransform(root), step) * root.transform;
+      created.push_back(root.id);
+      for (const Object& c : clones) changes.add(c);
+    }
+  }
+  history_.execute(changes.build(count == 1 ? "Copy" : "Array"));
+  return created;
+}
+
+Status Modeler::setPosition(const ObjectId& id, const gp_Vec& translation) {
+  return modifyAttribute(document_, history_, id, "Set Position",
+                         [&](Object& o) { o.transform.SetTranslationPart(translation); });
+}
+
+// --- structure ------------------------------------------------------------------
+
+Result<ObjectId> Modeler::group(const std::vector<ObjectId>& ids, const std::string& name) {
+  const std::vector<ObjectId> roots = topmost(ids);
+  ObjectId parent;
+  const Status same = checkSameParent(roots, parent);
+  if (!same) return Result<ObjectId>::failure(same.message());
+
+  Object groupObject;
+  groupObject.id = generateObjectId();
+  groupObject.parent = parent;
+  groupObject.name = name.empty() ? uniqueName("Group") : name;
+  groupObject.recipe.base = GroupNode{};
+
+  ChangeSet changes(document_);
+  changes.add(groupObject);
+  for (const ObjectId& id : roots) {
+    Object child = *document_.find(id);
+    child.parent = groupObject.id;
+    changes.modify(child);
+  }
+  history_.execute(changes.build("Group"));
+  return groupObject.id;
+}
+
+Status Modeler::ungroup(const ObjectId& groupId) {
+  const Object* g = document_.find(groupId);
+  if (!g || g->kind() != ObjectKind::Group) return Status::failure("Not a group");
+  ChangeSet changes(document_);
+  for (const ObjectId& id : document_.children(groupId)) {
+    Object child = *document_.find(id);
+    child.parent = g->parent;
+    child.transform = g->transform * child.transform;
+    changes.modify(child);
+  }
+  changes.erase(groupId);
+  history_.execute(changes.build("Ungroup"));
+  return Status::success();
+}
+
+Result<ObjectId> Modeler::makeComponent(const std::vector<ObjectId>& ids, const std::string& name) {
+  const std::vector<ObjectId> roots = topmost(ids);
+  ObjectId parent;
+  const Status same = checkSameParent(roots, parent);
+  if (!same) return Result<ObjectId>::failure(same.message());
+
+  Bnd_Box box;
+  for (const ObjectId& root : roots) {
+    for (const ObjectId& id : document_.subtree(root)) {
+      const Object* o = document_.find(id);
+      if (o->kind() == ObjectKind::Instance) {
+        return Result<ObjectId>::failure("Nested components are not supported yet");
+      }
+      box.Add(geom::exactBounds(document_.worldShape(*o)));
+    }
+  }
+  if (box.IsVoid()) return Result<ObjectId>::failure("Selection has no geometry");
+
+  // The component origin is the lower corner of the selection, as in SketchUp.
+  const gp_Trsf parentWorld = parent.empty() ? gp_Trsf() : document_.worldTransform(*document_.find(parent));
+  const gp_Pnt origin = box.CornerMin().Transformed(parentWorld.Inverted());
+  gp_Trsf toOrigin;
+  toOrigin.SetTranslation(gp_Vec(origin.XYZ()).Reversed());
+
+  ComponentDefinition definition;
+  definition.id = generateObjectId();
+  definition.name = name.empty() ? uniqueName("Component") : name;
+  for (const ObjectId& root : roots) {
+    for (const ObjectId& id : document_.subtree(root)) {
+      Object o = *document_.find(id);
+      if (id == root) {
+        o.parent.clear();
+        o.transform = toOrigin * o.transform;
+      }
+      definition.objects.push_back(std::move(o));
+    }
+  }
+  auto shape = buildDefinitionShape(definition);
+  if (!shape) return Result<ObjectId>::failure(shape.error());
+  definition.shape = shape.value();
+
+  Object instance;
+  instance.id = generateObjectId();
+  instance.parent = parent;
+  instance.name = definition.name;
+  instance.transform.SetTranslation(gp_Vec(origin.XYZ()));
+  instance.recipe.base = ComponentInstance{definition.id};
+  instance.shape = definition.shape;
+
+  ChangeSet changes(document_);
+  changes.putDefinition(definition);
+  for (const ObjectId& root : roots) {
+    for (const ObjectId& id : document_.subtree(root)) changes.erase(id);
+  }
+  changes.add(instance);
+  history_.execute(changes.build("Make Component"));
+  return instance.id;
+}
+
+Result<std::vector<ObjectId>> Modeler::explode(const ObjectId& instanceId) {
+  const Object* instance = document_.find(instanceId);
+  if (!instance || instance->kind() != ObjectKind::Instance) {
+    return Result<std::vector<ObjectId>>::failure("Not a component instance");
+  }
+  const auto& ref = std::get<ComponentInstance>(instance->recipe.base);
+  const ComponentDefinition* definition = document_.findDefinition(ref.definitionId);
+  if (!definition) return Result<std::vector<ObjectId>>::failure("Definition not found");
+
+  ChangeSet changes(document_);
+  std::map<ObjectId, ObjectId> mapping;
+  std::vector<ObjectId> roots;
+  for (const Object& source : definition->objects) {
+    Object o = source;
+    o.id = generateObjectId();
+    mapping[source.id] = o.id;
+    if (source.parent.empty()) {
+      o.parent = instance->parent;
+      o.transform = instance->transform * source.transform;
+      roots.push_back(o.id);
+    } else {
+      o.parent = mapping[source.parent];
+    }
+    changes.add(o);
+  }
+  changes.erase(instanceId);
+  history_.execute(changes.build("Explode"));
+  return roots;
+}
+
+std::vector<Parameter> Modeler::definitionParameters(const std::string& definitionId,
+                                                     const ObjectId& objectId) const {
+  const ComponentDefinition* d = document_.findDefinition(definitionId);
+  if (!d) return {};
+  for (const Object& o : d->objects) {
+    if (o.id == objectId) return doc::parameters(o.recipe);
+  }
+  return {};
+}
+
+Status Modeler::setDefinitionParameter(const std::string& definitionId, const ObjectId& objectId,
+                                       const std::string& key, double value) {
+  const ComponentDefinition* current = document_.findDefinition(definitionId);
+  if (!current) return Status::failure("Definition not found");
+  ComponentDefinition definition = *current;
+  bool found = false;
+  for (Object& o : definition.objects) {
+    if (o.id != objectId) continue;
+    found = true;
+    const Status changed = doc::setParameter(o.recipe, key, value);
+    if (!changed) return changed;
+    const Status built = rebuild(o, document_.regenContext());
+    if (!built) return built;
+  }
+  if (!found) return Status::failure("Object not found in definition");
+  auto shape = buildDefinitionShape(definition);
+  if (!shape) return shape.status();
+  definition.shape = shape.value();
+
+  ChangeSet changes(document_);
+  changes.putDefinition(definition);
+  for (const Object& o : document_.objects()) {
+    const auto* c = std::get_if<ComponentInstance>(&o.recipe.base);
+    if (!c || c->definitionId != definitionId) continue;
+    Object updated = o;
+    updated.shape = definition.shape;
+    changes.modify(updated);
+  }
+  history_.execute(changes.build("Edit Component"));
+  return Status::success();
+}
+
+Status Modeler::renameDefinition(const std::string& definitionId, const std::string& name) {
+  const ComponentDefinition* current = document_.findDefinition(definitionId);
+  if (!current) return Status::failure("Definition not found");
+  if (name.empty()) return Status::failure("Name must not be empty");
+  ComponentDefinition definition = *current;
+  definition.name = name;
+  ChangeSet changes(document_);
+  changes.putDefinition(definition);
+  history_.execute(changes.build("Rename Component"));
+  return Status::success();
+}
+
+Result<ObjectId> Modeler::boolean(BooleanKind kind, const std::vector<ObjectId>& ids) {
+  std::vector<ObjectId> unique;
+  for (const ObjectId& id : ids) {
+    if (std::find(unique.begin(), unique.end(), id) == unique.end()) unique.push_back(id);
+  }
+  if (unique.size() < 2) return Result<ObjectId>::failure("Select at least two solids");
+
+  Object result;
+  result.id = generateObjectId();
+  BooleanFeature feature;
+  feature.kind = kind;
+  for (const ObjectId& id : unique) {
+    const Object* o = document_.find(id);
+    if (!o) return Result<ObjectId>::failure("Object not found");
+    if (o->kind() != ObjectKind::Solid) {
+      return Result<ObjectId>::failure("'" + o->name + "' is not a solid");
+    }
+    feature.operands.push_back(BooleanOperand{std::make_shared<const Recipe>(o->recipe),
+                                              document_.worldTransform(*o), o->name});
+  }
+  const Object& first = *document_.find(unique.front());
+  result.color = first.color;
+  result.layer = first.layer;
+  result.name = uniqueName(toString(kind));
+  result.recipe.base = std::move(feature);
+  const Status built = rebuild(result, document_.regenContext());
+  if (!built) return Result<ObjectId>::failure(built.message());
+
+  ChangeSet changes(document_);
+  for (const ObjectId& id : unique) changes.erase(id);
+  changes.add(result);
+  history_.execute(changes.build(std::string("Solid ") + toString(kind)));
+  return result.id;
+}
+
+// --- files ----------------------------------------------------------------------
 
 void Modeler::newDocument() {
   history_.clear();
@@ -237,58 +648,63 @@ Status Modeler::load(const std::string& path, std::vector<std::string>* warnings
   history_.clear();
   document_.clear();
   document_.settings() = loaded.settings();
+  for (const ComponentDefinition& d : loaded.definitions()) document_.putDefinition(d);
   for (const Object& o : loaded.objects()) document_.insert(o);
   return Status::success();
 }
 
 Status Modeler::exportStep(const std::string& path, const std::vector<ObjectId>& ids) const {
-  std::vector<TopoDS_Shape> shapes;
-  for (const Object& o : document_.objects()) {
-    const bool wanted = ids.empty() ? o.visible
-                                    : std::find(ids.begin(), ids.end(), o.id) != ids.end();
-    if (wanted && !o.shape.IsNull()) shapes.push_back(o.worldShape());
+  std::vector<ObjectId> wanted;
+  if (ids.empty()) {
+    for (const Object& o : document_.objects()) wanted.push_back(o.id);
+  } else {
+    for (const ObjectId& root : topmost(ids)) {
+      for (const ObjectId& id : document_.subtree(root)) wanted.push_back(id);
+    }
   }
-  if (shapes.empty()) return Status::failure("Nothing to export");
-  if (shapes.size() == 1) return geom::writeStep(shapes.front(), path);
-  TopoDS_Compound compound;
-  BRep_Builder builder;
-  builder.MakeCompound(compound);
-  for (const TopoDS_Shape& s : shapes) builder.Add(compound, s);
-  return geom::writeStep(compound, path);
+  std::vector<geom::NamedShape> parts;
+  for (const ObjectId& id : wanted) {
+    const Object* o = document_.find(id);
+    if (!o || o->shape.IsNull() || !document_.isVisible(id)) continue;
+    parts.push_back(geom::NamedShape{document_.worldShape(*o), o->name,
+                                     std::array<double, 3>{o->color.r, o->color.g, o->color.b}});
+  }
+  if (parts.empty()) return Status::failure("Nothing to export");
+  return geom::writeStepParts(parts, path);
 }
 
 Result<std::vector<ObjectId>> Modeler::importStep(const std::string& path) {
-  auto shape = geom::readStep(path);
-  if (!shape) return Result<std::vector<ObjectId>>::failure(shape.error());
+  auto parts = geom::readStepParts(path);
+  if (!parts) return Result<std::vector<ObjectId>>::failure(parts.error());
 
-  std::vector<TopoDS_Shape> parts;
-  for (TopExp_Explorer it(shape.value(), TopAbs_SOLID); it.More(); it.Next()) {
-    parts.push_back(it.Current());
-  }
-  if (parts.empty()) parts.push_back(shape.value());
-
-  Command command{"Import STEP", {}};
+  ChangeSet changes(document_);
   std::vector<ObjectId> ids;
-  for (const TopoDS_Shape& part : parts) {
+  std::set<std::string> usedNames;
+  for (const geom::NamedShape& part : parts.value()) {
     Object o;
     o.id = generateObjectId();
-    o.name = uniqueName("Imported");
-    // uniqueName() only sees committed objects; disambiguate within this batch.
-    if (!ids.empty()) o.name += "." + std::to_string(ids.size());
-    o.recipe.base = ImportedShape{part, path};
+    std::string name = part.name.empty() ? uniqueName("Imported") : part.name;
+    // Keep names unique within the batch as well.
+    for (int n = 2; usedNames.count(name); ++n) name = part.name + " (" + std::to_string(n) + ")";
+    usedNames.insert(name);
+    o.name = name;
+    if (part.color) o.color = Color{(*part.color)[0], (*part.color)[1], (*part.color)[2]};
+    o.recipe.base = ImportedShape{part.shape, path};
     const Status built = rebuild(o);
     if (!built) return Result<std::vector<ObjectId>>::failure(built.message());
     ids.push_back(o.id);
-    command.deltas.push_back(ObjectDelta{o.id, std::nullopt, o, std::nullopt});
+    changes.add(o);
   }
-  history_.execute(std::move(command));
+  history_.execute(changes.build("Import STEP"));
   return ids;
 }
+
+// --- queries ----------------------------------------------------------------------
 
 std::vector<ObjectSummary> Modeler::listObjects() const {
   std::vector<ObjectSummary> out;
   for (const Object& o : document_.objects()) {
-    out.push_back({o.id, o.name, o.kind(), describe(o.recipe),
+    out.push_back({o.id, o.parent, o.name, o.kind(), describe(o.recipe),
                    o.kind() == ObjectKind::Solid ? geom::volume(o.shape) : 0.0});
   }
   return out;

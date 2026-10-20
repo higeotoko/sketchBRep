@@ -11,6 +11,8 @@
 #include <Aspect_DisplayConnection.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
+#include <BRep_Builder.hxx>
+#include <TopoDS_Compound.hxx>
 #include <Graphic3d_Camera.hxx>
 #include <OpenGl_GraphicDriver.hxx>
 #include <Prs3d_LineAspect.hxx>
@@ -54,6 +56,18 @@ Quantity_Color snapColor(snap::SnapKind kind) {
     case snap::SnapKind::Locked: return rgb(0.6, 0.1, 0.7);
     default: return rgb(0.3, 0.3, 0.3);
   }
+}
+
+bool sameLocatedShape(const TopoDS_Shape& a, const TopoDS_Shape& b) {
+  if (a.TShape() != b.TShape() || a.Orientation() != b.Orientation()) return false;
+  const gp_Trsf ta = a.Location().Transformation();
+  const gp_Trsf tb = b.Location().Transformation();
+  for (int r = 1; r <= 3; ++r) {
+    for (int c = 1; c <= 4; ++c) {
+      if (std::abs(ta.Value(r, c) - tb.Value(r, c)) > 1e-12) return false;
+    }
+  }
+  return true;
 }
 
 }  // namespace
@@ -145,13 +159,12 @@ void Viewport::showEvent(QShowEvent* event) {
   QWidget::showEvent(event);
   if (view_.IsNull()) {
     initViewer();
+    if (!view_.IsNull()) view_->MustBeResized();
     syncNow();
   }
 }
 
-void Viewport::paintEvent(QPaintEvent*) {
-  if (!view_.IsNull()) view_->Redraw();
-}
+void Viewport::paintEvent(QPaintEvent*) { redraw(); }
 
 void Viewport::resizeEvent(QResizeEvent*) {
   if (!view_.IsNull()) view_->MustBeResized();
@@ -240,7 +253,7 @@ void Viewport::keyPressEvent(QKeyEvent* event) {
   const QString text = event->text();
   if (text.size() == 1) {
     const QChar c = text.at(0);
-    if (c.isDigit() || QStringLiteral(".,;-+ mcMC").contains(c)) {
+    if (c.isDigit() || QStringLiteral(".,;-+ mcMCxX*/").contains(c)) {
       emit measurementChar(c);
       return;
     }
@@ -258,7 +271,7 @@ void Viewport::keyReleaseEvent(QKeyEvent* event) {
 void Viewport::scheduleSync() { syncTimer_.start(); }
 
 Handle(AIS_Shape) Viewport::makeDisplay(const doc::Object& object, Entry& entry) {
-  entry.canonicalWorld = object.worldShape();
+  entry.canonicalWorld = modeler_.document().worldShape(object);
   entry.displayShape = display::makeDisplayCopy(entry.canonicalWorld);
   entry.displayFaces.Clear();
   entry.canonicalFaces.Clear();
@@ -295,8 +308,11 @@ void Viewport::syncNow() {
   // Remove entries for deleted / hidden / changed objects.
   for (auto it = entries_.begin(); it != entries_.end();) {
     const doc::Object* o = modeler_.document().find(it->first);
-    const bool keep = o && o->visible && !o->shape.IsNull() &&
-                      it->second.canonicalWorld.IsEqual(o->worldShape()) == Standard_True;
+    // Shapes are compared by TShape + location: unchanged objects keep their
+    // tessellated display copy.
+    const bool keep = o && modeler_.document().isVisible(o->id) && !o->shape.IsNull() &&
+                      sameLocatedShape(it->second.canonicalWorld,
+                                       modeler_.document().worldShape(*o));
     if (!keep) {
       context_->Remove(it->second.ais, Standard_False);
       it = entries_.erase(it);
@@ -307,7 +323,7 @@ void Viewport::syncNow() {
 
   std::vector<TopoDS_Shape> snapShapes;
   for (const doc::Object& o : objects) {
-    if (!o.visible || o.shape.IsNull()) continue;
+    if (o.shape.IsNull() || !modeler_.document().isVisible(o.id)) continue;
     auto found = entries_.find(o.id);
     if (found == entries_.end()) {
       Entry entry;
@@ -318,8 +334,10 @@ void Viewport::syncNow() {
       applyPickMode(entry.ais);
       found = entries_.emplace(o.id, std::move(entry)).first;
     }
-    const bool selected =
-        std::find(selection_.begin(), selection_.end(), o.id) != selection_.end();
+    bool selected = false;
+    for (const doc::ObjectId& s : selection_) {
+      selected |= s == o.id || modeler_.document().isAncestor(s, o.id);
+    }
     Quantity_Color color = o.kind() == doc::ObjectKind::Curve
                                ? Quantity_Color(Quantity_NOC_BLACK)
                                : rgb(o.color.r, o.color.g, o.color.b);
@@ -403,7 +421,9 @@ QPoint Viewport::toWidget(const gp_Pnt& p) const {
 
 snap::SnapResult Viewport::snap(const QPoint& pos, std::optional<gp_Pnt> anchor,
                                 std::optional<gp_Dir> lockedDirection,
-                                std::optional<gp_Pln> workPlane) const {
+                                std::optional<gp_Pln> workPlane,
+                                const std::vector<gp_Pnt>& trackedPoints,
+                                const std::vector<gp_Dir>& trackedDirections) const {
   snap::SnapQuery query;
   query.ray = rayAt(pos);
   query.cursor = snap::ScreenPoint{static_cast<double>(pos.x()), static_cast<double>(pos.y())};
@@ -412,6 +432,8 @@ snap::SnapResult Viewport::snap(const QPoint& pos, std::optional<gp_Pnt> anchor,
   query.anchor = anchor;
   query.lockedDirection = lockedDirection;
   if (workPlane) query.workPlane = *workPlane;
+  query.trackedPoints = trackedPoints;
+  query.trackedDirections = trackedDirections;
   return inference_.snap(query);
 }
 
@@ -492,12 +514,31 @@ void Viewport::setPreview(const TopoDS_Shape& shape, bool solid) {
 
 void Viewport::clearPreview() { setPreview(TopoDS_Shape()); }
 
+void Viewport::setGhost(const std::vector<doc::ObjectId>& ids, const gp_Trsf& delta) {
+  TopoDS_Compound compound;
+  BRep_Builder builder;
+  builder.MakeCompound(compound);
+  bool any = false;
+  for (const auto& [id, entry] : entries_) {
+    bool wanted = false;
+    for (const doc::ObjectId& root : ids) {
+      wanted |= root == id || modeler_.document().isAncestor(root, id);
+    }
+    if (!wanted) continue;
+    builder.Add(compound, entry.displayShape.Moved(TopLoc_Location(delta)));
+    any = true;
+  }
+  setPreview(any ? TopoDS_Shape(compound) : TopoDS_Shape(), true);
+}
+
 void Viewport::showSnap(const snap::SnapResult& result, std::optional<gp_Pnt> anchor) {
   if (view_.IsNull()) return;
   if (!snapMarker_.IsNull()) context_->Remove(snapMarker_, Standard_False);
   if (!inferenceLine_.IsNull()) context_->Remove(inferenceLine_, Standard_False);
+  if (!referenceLine_.IsNull()) context_->Remove(referenceLine_, Standard_False);
   snapMarker_.Nullify();
   inferenceLine_.Nullify();
+  referenceLine_.Nullify();
   if (result.valid()) {
     const Quantity_Color color = snapColor(result.kind);
     snapMarker_ = new AIS_Shape(BRepBuilderAPI_MakeVertex(result.point).Vertex());
@@ -515,6 +556,15 @@ void Viewport::showSnap(const snap::SnapResult& result, std::optional<gp_Pnt> an
       inferenceLine_->SetZLayer(Graphic3d_ZLayerId_Topmost);
       context_->Display(inferenceLine_, AIS_WireFrame, -1, Standard_False);
     }
+    // "From point" inference: dotted line back to the tracked point.
+    if (result.referencePoint && result.referencePoint->Distance(result.point) > 1e-6) {
+      referenceLine_ =
+          new AIS_Shape(BRepBuilderAPI_MakeEdge(*result.referencePoint, result.point).Edge());
+      referenceLine_->Attributes()->SetWireAspect(
+          new Prs3d_LineAspect(color, Aspect_TOL_DOT, 1.5));
+      referenceLine_->SetZLayer(Graphic3d_ZLayerId_Topmost);
+      context_->Display(referenceLine_, AIS_WireFrame, -1, Standard_False);
+    }
   }
   redraw();
 }
@@ -528,7 +578,18 @@ bool Viewport::dumpImage(const QString& path) {
 }
 
 void Viewport::redraw() {
-  if (!view_.IsNull()) view_->Redraw();
+  if (view_.IsNull()) return;
+  // OCCT talks to the window system through its own connection, which can
+  // see Qt's geometry changes late (e.g. right after show) without another
+  // resize event following. Compare with the real native size on each redraw.
+  view_->Window()->DoResize();
+  Standard_Integer w = 0, h = 0;
+  view_->Window()->Size(w, h);
+  if (QSize(w, h) != glSize_) {
+    glSize_ = QSize(w, h);
+    view_->MustBeResized();
+  }
+  view_->Redraw();
 }
 
 // --- camera --------------------------------------------------------------------
@@ -590,14 +651,15 @@ bool Viewport::isPerspective() const {
 
 void Viewport::fitAll() {
   if (view_.IsNull()) return;
-  if (entries_.empty()) {
-    Bnd_Box box;
+  // Fit to the model only: V3d's own FitAll() would include the long axis
+  // lines and transient previews.
+  Bnd_Box box;
+  for (const auto& [id, entry] : entries_) box.Add(geom::exactBounds(entry.canonicalWorld));
+  if (box.IsVoid()) {
     box.Add(gp_Pnt(-2000, -2000, 0));
     box.Add(gp_Pnt(8000, 8000, 3000));
-    view_->FitAll(box, 0.05, Standard_False);
-  } else {
-    view_->FitAll(0.08, Standard_False);
   }
+  view_->FitAll(box, 0.08, Standard_False);
   view_->ZFitAll();
   redraw();
 }
@@ -606,8 +668,8 @@ void Viewport::fitObjects(const std::vector<doc::ObjectId>& ids) {
   if (view_.IsNull()) return;
   Bnd_Box box;
   for (const auto& id : ids) {
-    if (const doc::Object* o = modeler_.document().find(id)) {
-      box.Add(geom::exactBounds(o->worldShape()));
+    for (const doc::ObjectId& leaf : modeler_.document().subtree(id)) {
+      box.Add(geom::exactBounds(modeler_.document().worldShape(leaf)));
     }
   }
   if (box.IsVoid()) {

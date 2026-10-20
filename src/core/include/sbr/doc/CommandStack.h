@@ -20,9 +20,18 @@ struct ObjectDelta {
   std::optional<std::size_t> indexBefore;
 };
 
+struct DefinitionDelta {
+  std::string id;
+  std::optional<ComponentDefinition> before;
+  std::optional<ComponentDefinition> after;
+};
+
 struct Command {
   std::string name;
   std::vector<ObjectDelta> deltas;
+  // Applied before object deltas on execute/redo and after them on undo, so
+  // instances never refer to a missing definition.
+  std::vector<DefinitionDelta> definitionDeltas;
 };
 
 class CommandStack {

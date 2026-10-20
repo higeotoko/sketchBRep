@@ -30,6 +30,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   lineTool_ = std::make_unique<LineTool>(*this);
   rectangleTool_ = std::make_unique<RectangleTool>(*this);
   pushPullTool_ = std::make_unique<PushPullTool>(*this);
+  moveTool_ = std::make_unique<MoveTool>(*this);
+  rotateTool_ = std::make_unique<RotateTool>(*this);
+  offsetTool_ = std::make_unique<OffsetTool>(*this);
 
   buildUi();
   buildMenus();
@@ -55,7 +58,7 @@ void MainWindow::buildUi() {
   dock->setWidget(panel_);
   dock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
   addDockWidget(Qt::RightDockWidgetArea, dock);
-  resizeDocks({dock}, {300}, Qt::Horizontal);
+  resizeDocks({dock}, {360}, Qt::Horizontal);
 
   status_ = new QLabel;
   status_->setMinimumWidth(200);
@@ -113,6 +116,36 @@ void MainWindow::buildUi() {
             if (!o || o->name == utf8(name)) return;
             QTimer::singleShot(0, this, [this, id, name] { modeler_.rename(id, utf8(name)); });
           });
+  connect(panel_, &PropertiesPanel::tagEdited, this, [this](const doc::ObjectId& id, const QString& tag) {
+    const doc::Object* o = modeler_.document().find(id);
+    if (!o || o->layer == utf8(tag)) return;
+    QTimer::singleShot(0, this, [this, id, tag] { report(modeler_.setLayer(id, utf8(tag))); });
+  });
+  connect(panel_, &PropertiesPanel::colorEdited, this,
+          [this](const doc::ObjectId& id, const doc::Color& color) {
+            QTimer::singleShot(0, this, [this, id, color] { report(modeler_.setColor(id, color)); });
+          });
+  connect(panel_, &PropertiesPanel::positionEdited, this,
+          [this](const doc::ObjectId& id, double x, double y, double z) {
+            QTimer::singleShot(0, this, [this, id, x, y, z] {
+              report(modeler_.setPosition(id, gp_Vec(x, y, z)));
+            });
+          });
+  connect(panel_, &PropertiesPanel::definitionParameterEdited, this,
+          [this](const std::string& defId, const doc::ObjectId& objectId, const std::string& key,
+                 double value) {
+            QTimer::singleShot(0, this, [this, defId, objectId, key, value] {
+              if (!report(modeler_.setDefinitionParameter(defId, objectId, key, value))) refreshPanels();
+            });
+          });
+  connect(panel_, &PropertiesPanel::definitionRenamed, this,
+          [this](const std::string& defId, const QString& name) {
+            const doc::ComponentDefinition* d = modeler_.document().findDefinition(defId);
+            if (!d || d->name == utf8(name)) return;
+            QTimer::singleShot(0, this, [this, defId, name] {
+              report(modeler_.renameDefinition(defId, utf8(name)));
+            });
+          });
   connect(panel_, &PropertiesPanel::visibilityToggled, this,
           [this](const doc::ObjectId& id, bool visible) {
             QTimer::singleShot(0, this, [this, id, visible] { modeler_.setVisible(id, visible); });
@@ -139,7 +172,24 @@ void MainWindow::buildMenus() {
   redoAction_->setShortcuts({QKeySequence(tr("Ctrl+Y")), QKeySequence(tr("Ctrl+Shift+Z"))});
   edit->addSeparator();
   edit->addAction(tr("削除"), QKeySequence::Delete, this, &MainWindow::deleteSelection);
+  edit->addAction(tr("すべて選択"), QKeySequence::SelectAll, this, &MainWindow::selectAll);
   edit->addAction(tr("選択解除"), QKeySequence(tr("Ctrl+T")), this, [this] { setSelection({}); });
+  edit->addSeparator();
+  edit->addAction(tr("グループ化"), QKeySequence(tr("Ctrl+G")), this, &MainWindow::groupSelection);
+  edit->addAction(tr("グループ解除"), QKeySequence(tr("Ctrl+Shift+G")), this,
+                  &MainWindow::ungroupSelection);
+  edit->addAction(tr("コンポーネントを作成"), QKeySequence(tr("Ctrl+K")), this,
+                  &MainWindow::makeComponent);
+  edit->addAction(tr("分解（コンポーネント → 個別オブジェクト）"), this,
+                  &MainWindow::explodeSelection);
+
+  // --- Solid tools
+  QMenu* solid = menuBar()->addMenu(tr("ソリッド(&S)"));
+  solid->addAction(tr("和（結合）"), this, [this] { booleanSelection(doc::BooleanKind::Union); });
+  solid->addAction(tr("差（最初に選択したものから他を引く）"), this,
+                   [this] { booleanSelection(doc::BooleanKind::Subtract); });
+  solid->addAction(tr("積（共通部分）"), this,
+                   [this] { booleanSelection(doc::BooleanKind::Intersect); });
 
   // --- View
   QMenu* view = menuBar()->addMenu(tr("表示(&V)"));
@@ -213,6 +263,9 @@ void MainWindow::buildMenus() {
       {tr("線"), QStringLiteral("L"), ToolId::Line},
       {tr("矩形"), QStringLiteral("R"), ToolId::Rectangle},
       {tr("プッシュ/プル"), QStringLiteral("P"), ToolId::PushPull},
+      {tr("移動"), QStringLiteral("M"), ToolId::Move},
+      {tr("回転"), QStringLiteral("Q"), ToolId::Rotate},
+      {tr("オフセット"), QStringLiteral("F"), ToolId::Offset},
   };
   for (const ToolEntry& e : entries) {
     QAction* a = new QAction(e.label, this);
@@ -235,6 +288,7 @@ void MainWindow::buildMenus() {
            "Shift+ホイールドラッグ: パン / ダブルクリック: フォーカス<br>"
            "F2〜F7: 標準ビュー / F8: 透視・平行投影 / Shift+Z: 全体表示<br><br>"
            "<b>ツール</b><br>Space: 選択 / L: 線 / R: 矩形 / P: プッシュ/プル<br>"
+           "M: 移動 / Q: 回転 / F: オフセット（移動・回転中に Ctrl でコピー、確定後 x3 で配列・/3 で等分割）<br>"
            "作図中に数値を打って Enter で寸法指定（例: 3000, 4.5m, 3000,4500）<br>"
            "Shift: 推論方向をロック / →・←・↑: X・Y・Z 軸ロック / ↓: 解除 / Esc: 中止"));
   });
@@ -247,6 +301,9 @@ void MainWindow::activateTool(ToolId id) {
     case ToolId::Line: active_ = lineTool_.get(); break;
     case ToolId::Rectangle: active_ = rectangleTool_.get(); break;
     case ToolId::PushPull: active_ = pushPullTool_.get(); break;
+    case ToolId::Move: active_ = moveTool_.get(); break;
+    case ToolId::Rotate: active_ = rotateTool_.get(); break;
+    case ToolId::Offset: active_ = offsetTool_.get(); break;
   }
   toolActions_[static_cast<int>(id)]->setChecked(true);
   viewport_->setTool(active_);
@@ -338,6 +395,77 @@ void MainWindow::deleteSelection() {
   const Status s = modeler_.remove(selection_);
   if (!s) reportError(QString::fromStdString(s.message()));
   setSelection({});
+}
+
+bool MainWindow::report(const Status& status) {
+  if (!status) reportError(QString::fromStdString(status.message()));
+  return status.ok();
+}
+
+void MainWindow::selectAll() {
+  std::vector<doc::ObjectId> roots;
+  for (const doc::Object& o : modeler_.document().objects()) {
+    if (o.parent.empty()) roots.push_back(o.id);
+  }
+  setSelection(roots);
+}
+
+void MainWindow::groupSelection() {
+  auto id = modeler_.group(selection_);
+  if (!id) {
+    reportError(tr("グループ化できません: %1").arg(QString::fromStdString(id.error())));
+    return;
+  }
+  setSelection({id.value()});
+}
+
+void MainWindow::ungroupSelection() {
+  std::vector<doc::ObjectId> children;
+  for (const doc::ObjectId& id : selection_) {
+    const doc::Object* o = modeler_.document().find(id);
+    if (!o || o->kind() != doc::ObjectKind::Group) continue;
+    for (const doc::ObjectId& c : modeler_.document().children(id)) children.push_back(c);
+    report(modeler_.ungroup(id));
+  }
+  setSelection(children);
+}
+
+void MainWindow::makeComponent() {
+  auto id = modeler_.makeComponent(selection_);
+  if (!id) {
+    reportError(tr("コンポーネントを作成できません: %1").arg(QString::fromStdString(id.error())));
+    return;
+  }
+  setSelection({id.value()});
+}
+
+void MainWindow::explodeSelection() {
+  std::vector<doc::ObjectId> parts;
+  for (const doc::ObjectId& id : selection_) {
+    const doc::Object* o = modeler_.document().find(id);
+    if (!o) continue;
+    if (o->kind() == doc::ObjectKind::Instance) {
+      auto exploded = modeler_.explode(id);
+      if (!exploded) {
+        reportError(QString::fromStdString(exploded.error()));
+        continue;
+      }
+      parts.insert(parts.end(), exploded->begin(), exploded->end());
+    } else if (o->kind() == doc::ObjectKind::Group) {
+      for (const doc::ObjectId& c : modeler_.document().children(id)) parts.push_back(c);
+      report(modeler_.ungroup(id));
+    }
+  }
+  setSelection(parts);
+}
+
+void MainWindow::booleanSelection(doc::BooleanKind kind) {
+  auto id = modeler_.boolean(kind, selection_);
+  if (!id) {
+    reportError(tr("ソリッド演算に失敗しました: %1").arg(QString::fromStdString(id.error())));
+    return;
+  }
+  setSelection({id.value()});
 }
 
 // --- files ------------------------------------------------------------------------

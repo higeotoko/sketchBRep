@@ -4,11 +4,15 @@
 // The recipe is the editable modelling history stored in the Document layer.
 // Regenerating it yields the canonical B-rep shape (Geometry layer).
 
+#include <functional>
+#include <memory>
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
 
 #include <gp_Pnt.hxx>
+#include <gp_Trsf.hxx>
 #include <TopoDS_Shape.hxx>
 
 #include "sbr/Types.h"
@@ -38,7 +42,37 @@ struct ImportedShape {
   std::string source;
 };
 
-using BaseFeature = std::variant<RectangleProfile, PolygonProfile, PolylineCurve, ImportedShape>;
+struct Recipe;
+
+enum class BooleanKind { Union, Subtract, Intersect };
+const char* toString(BooleanKind kind);
+
+// One input of a Boolean: its own (editable) recipe and its world placement
+// at the time the Boolean was created.
+struct BooleanOperand {
+  std::shared_ptr<const Recipe> recipe;
+  gp_Trsf placement;
+  std::string name;
+};
+
+// Parametric Boolean: operands are regenerated before combining, so editing
+// an operand parameter (e.g. "in1.op0.distance") recomputes the result.
+// Subtract removes operands 1..n from operand 0.
+struct BooleanFeature {
+  BooleanKind kind = BooleanKind::Union;
+  std::vector<BooleanOperand> operands;
+};
+
+// Container node of the object hierarchy. Has no geometry of its own.
+struct GroupNode {};
+
+// Placement of a shared component definition.
+struct ComponentInstance {
+  std::string definitionId;
+};
+
+using BaseFeature = std::variant<RectangleProfile, PolygonProfile, PolylineCurve, ImportedShape,
+                                 BooleanFeature, GroupNode, ComponentInstance>;
 
 // --- Modifiers ------------------------------------------------------------
 // Extrudes the profile face along its normal. Must be the first modifier.
@@ -52,7 +86,12 @@ struct PushPullOp {
   double distance = 0.0;  // signed, along the outward face normal
 };
 
-using Modifier = std::variant<ExtrudeOp, PushPullOp>;
+// Offsets the outline of a planar profile face (positive = outwards).
+struct OffsetOp {
+  double distance = 0.0;
+};
+
+using Modifier = std::variant<ExtrudeOp, PushPullOp, OffsetOp>;
 
 struct Recipe {
   BaseFeature base;
@@ -67,8 +106,14 @@ struct Parameter {
   bool isLength = true;
 };
 
+// Resolves data that lives outside a single recipe (component definitions).
+struct RegenContext {
+  std::function<std::optional<TopoDS_Shape>(const std::string& definitionId)> definitionShape;
+};
+
 // Rebuilds the shape from scratch. Every intermediate result is validated.
-Result<TopoDS_Shape> regenerate(const Recipe& recipe);
+// Group nodes regenerate to a null shape.
+Result<TopoDS_Shape> regenerate(const Recipe& recipe, const RegenContext& context = {});
 
 std::vector<Parameter> parameters(const Recipe& recipe);
 // Changes a parameter in place. Does not regenerate.

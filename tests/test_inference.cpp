@@ -1,3 +1,5 @@
+#include <cmath>
+
 #include <gtest/gtest.h>
 
 #include "sbr/geom/Operations.h"
@@ -125,4 +127,59 @@ TEST(Inference, ClosestPointOnLineToRay) {
   const gp_Pnt p = closestPointOnLineToRay(gp_Pnt(0, 0, 0), gp_Dir(1, 0, 0), ray);
   EXPECT_NEAR(p.X(), 500, 1e-9);
   EXPECT_NEAR(p.Y(), 0, 1e-9);
+}
+
+TEST(Inference, FromTrackedPoint) {
+  InferenceEngine engine;
+  TopView view;
+  SnapQuery q = view.query(203, -150);  // near the Y axis line through (2000, 0)
+  q.trackedPoints = {gp_Pnt(2000, 0, 0)};
+  const SnapResult r = engine.snap(q);
+  EXPECT_EQ(r.kind, SnapKind::FromPoint);
+  EXPECT_NEAR(r.point.X(), 2000, 1e-6);
+  EXPECT_NEAR(r.point.Y(), 1500, 1e-6);
+  ASSERT_TRUE(r.referencePoint);
+}
+
+TEST(Inference, AnchorAxisMeetsTrackedPoint) {
+  InferenceEngine engine;
+  TopView view;
+  // Drawing along X from the origin, aligned with a point at (2500, 1800).
+  SnapQuery q = view.query(252, -3);
+  q.anchor = gp_Pnt(0, 0, 0);
+  q.trackedPoints = {gp_Pnt(2500, 1800, 0)};
+  const SnapResult r = engine.snap(q);
+  EXPECT_EQ(r.kind, SnapKind::AxisX);
+  EXPECT_NEAR(r.point.X(), 2500, 1e-9);
+  EXPECT_NEAR(r.point.Y(), 0, 1e-9);
+  ASSERT_TRUE(r.referencePoint);
+}
+
+TEST(Inference, ParallelAndPerpendicularToTrackedEdge) {
+  InferenceEngine engine;
+  TopView view;
+  const gp_Dir diagonal(1, 1, 0);
+  SnapQuery q = view.query(100, -101);  // on the 45 degree line from the origin
+  q.anchor = gp_Pnt(0, 0, 0);
+  q.trackedDirections = {diagonal};
+  SnapResult r = engine.snap(q);
+  EXPECT_EQ(r.kind, SnapKind::Parallel);
+  EXPECT_NEAR(r.point.X(), r.point.Y(), 1e-6);
+
+  q = view.query(-100, -99);  // on the -45 degree line
+  q.anchor = gp_Pnt(0, 0, 0);
+  q.trackedDirections = {diagonal};
+  r = engine.snap(q);
+  EXPECT_EQ(r.kind, SnapKind::Perpendicular);
+  EXPECT_NEAR(r.point.X(), -r.point.Y(), 1e-6);
+}
+
+TEST(Inference, EdgeSnapReportsDirection) {
+  InferenceEngine engine;
+  engine.setShapes({box()});
+  TopView view;
+  const SnapResult r = engine.snap(view.query(23, 2));
+  ASSERT_EQ(r.kind, SnapKind::OnEdge);
+  ASSERT_TRUE(r.edgeDirection);
+  EXPECT_NEAR(std::abs(r.edgeDirection->X()), 1.0, 1e-12);
 }

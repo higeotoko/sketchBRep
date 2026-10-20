@@ -36,7 +36,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   // Used by tests and the command line.
   bool openFile(const QString& path);
   bool saveFile(const QString& path);
-  enum class ToolId { Select, Line, Rectangle, PushPull };
+  enum class ToolId { Select, Line, Rectangle, PushPull, Move, Rotate, Offset };
   void activateTool(ToolId id);
   Tool* activeTool() const { return active_; }
   QLineEdit* measurementBox() const { return measurement_; }
@@ -60,6 +60,13 @@ class MainWindow : public QMainWindow, public ToolHost {
   void importStep();
   void exportStep();
   void deleteSelection();
+  void selectAll();
+  void groupSelection();
+  void ungroupSelection();
+  void makeComponent();
+  void explodeSelection();
+  void booleanSelection(doc::BooleanKind kind);
+  bool report(const Status& status);
   void undo();
   void redo();
 
@@ -75,9 +82,12 @@ class MainWindow : public QMainWindow, public ToolHost {
   std::unique_ptr<LineTool> lineTool_;
   std::unique_ptr<RectangleTool> rectangleTool_;
   std::unique_ptr<PushPullTool> pushPullTool_;
+  std::unique_ptr<MoveTool> moveTool_;
+  std::unique_ptr<RotateTool> rotateTool_;
+  std::unique_ptr<OffsetTool> offsetTool_;
   Tool* active_ = nullptr;
   QActionGroup* toolGroup_ = nullptr;
-  QAction* toolActions_[4] = {};
+  QAction* toolActions_[7] = {};
   QAction* undoAction_ = nullptr;
   QAction* redoAction_ = nullptr;
   QAction* focusOnDoubleClick_ = nullptr;

@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+#include <gp_Ax1.hxx>
+#include <gp_Vec.hxx>
 #include <TopoDS_Face.hxx>
 
 #include "sbr/doc/CommandStack.h"
@@ -16,6 +18,7 @@ namespace sbr::doc {
 
 struct ObjectSummary {
   ObjectId id;
+  ObjectId parent;
   std::string name;
   ObjectKind kind;
   std::string recipe;
@@ -52,10 +55,48 @@ class Modeler {
   Result<PushPullResult> pushPull(const ObjectId& id, const TopoDS_Face& face, double distance);
   // Extrudes a face/profile object directly (convenience for scripting).
   Result<PushPullResult> extrude(const ObjectId& id, double distance);
+  // Creates a new face object whose outline is offset from a profile face
+  // (positive = outwards). The original is kept, as in SketchUp.
+  Result<PushPullResult> offset(const ObjectId& id, double distance);
   Status setParameter(const ObjectId& id, const std::string& key, double value);
   Status rename(const ObjectId& id, const std::string& name);
   Status setVisible(const ObjectId& id, bool visible);
+  Status setLayer(const ObjectId& id, const std::string& layer);
+  Status setColor(const ObjectId& id, const Color& color);
+  // Deletes objects together with their descendants.
   Status remove(const std::vector<ObjectId>& ids);
+
+  // --- placement ------------------------------------------------------------
+  // Applies a world-space transformation to the objects (and their children).
+  Status transform(const std::vector<ObjectId>& ids, const gp_Trsf& worldDelta,
+                   const std::string& commandName = "Move");
+  Status move(const std::vector<ObjectId>& ids, const gp_Vec& offset);
+  Status rotate(const std::vector<ObjectId>& ids, const gp_Ax1& axis, double angleRadians);
+  // Copies the objects `count` times, copy k placed at worldDelta^k (linear
+  // or polar arrays). Returns the ids of the new top-level copies.
+  Result<std::vector<ObjectId>> copy(const std::vector<ObjectId>& ids, const gp_Trsf& worldDelta,
+                                     int count = 1);
+  // Sets the local translation of an object (position field in the UI).
+  Status setPosition(const ObjectId& id, const gp_Vec& translation);
+
+  // --- structure ------------------------------------------------------------
+  Result<ObjectId> group(const std::vector<ObjectId>& ids, const std::string& name = {});
+  Status ungroup(const ObjectId& groupId);
+  // Turns the objects into a component definition and replaces them by one
+  // instance. Returns the instance id.
+  Result<ObjectId> makeComponent(const std::vector<ObjectId>& ids, const std::string& name = {});
+  // Replaces an instance by independent copies of the definition objects.
+  Result<std::vector<ObjectId>> explode(const ObjectId& instanceId);
+  std::vector<Parameter> definitionParameters(const std::string& definitionId,
+                                              const ObjectId& objectId) const;
+  // Edits a parameter of an object inside a definition: all instances update.
+  Status setDefinitionParameter(const std::string& definitionId, const ObjectId& objectId,
+                                const std::string& key, double value);
+  Status renameDefinition(const std::string& definitionId, const std::string& name);
+
+  // Parametric Boolean of solids. For Subtract, ids[1..] are removed from
+  // ids[0]. The operands are consumed and kept inside the result's recipe.
+  Result<ObjectId> boolean(BooleanKind kind, const std::vector<ObjectId>& ids);
 
   bool undo() { return history_.undo(); }
   bool redo() { return history_.redo(); }
@@ -64,18 +105,25 @@ class Modeler {
   void newDocument();
   Status save(const std::string& path);
   Status load(const std::string& path, std::vector<std::string>* warnings = nullptr);
-  // Exports the given objects (all visible objects when empty) as STEP.
+  // Exports the given objects (all visible objects when empty) as STEP,
+  // keeping object names and colours.
   Status exportStep(const std::string& path, const std::vector<ObjectId>& ids = {}) const;
   Result<std::vector<ObjectId>> importStep(const std::string& path);
 
   // --- queries ------------------------------------------------------------
   std::vector<ObjectSummary> listObjects() const;
   std::vector<Parameter> parameters(const ObjectId& id) const;
+  // Removes ids whose ancestor is also in the list (operating on a group
+  // already covers its children).
+  std::vector<ObjectId> topmost(const std::vector<ObjectId>& ids) const;
 
  private:
   Result<ObjectId> addObject(Object object, const std::string& commandName);
   Status commitModified(Object object, const std::string& commandName);
   std::string uniqueName(const std::string& base) const;
+  // Deep copy of a subtree with fresh ids. Returns objects parents-first.
+  std::vector<Object> cloneSubtree(const ObjectId& id, const ObjectId& newParent) const;
+  Status checkSameParent(const std::vector<ObjectId>& ids, ObjectId& parent) const;
 
   Document document_;
   CommandStack history_;

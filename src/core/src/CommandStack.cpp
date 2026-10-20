@@ -3,6 +3,13 @@
 namespace sbr::doc {
 
 void CommandStack::applyAfter(const Command& command) {
+  for (const DefinitionDelta& d : command.definitionDeltas) {
+    if (d.after) {
+      document_.putDefinition(*d.after);
+    } else {
+      document_.removeDefinition(d.id);
+    }
+  }
   for (const ObjectDelta& d : command.deltas) {
     if (!d.after) {
       document_.remove(d.id);
@@ -23,6 +30,13 @@ void CommandStack::applyBefore(const Command& command) {
       document_.replace(*d.before);
     } else {
       document_.insert(*d.before, d.indexBefore);
+    }
+  }
+  for (auto it = command.definitionDeltas.rbegin(); it != command.definitionDeltas.rend(); ++it) {
+    if (it->before) {
+      document_.putDefinition(*it->before);
+    } else {
+      document_.removeDefinition(it->id);
     }
   }
 }

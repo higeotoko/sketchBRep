@@ -42,17 +42,40 @@
 Recipe = BaseFeature + [Modifier...]
   BaseFeature: RectangleProfile{plane, width, height} | PolygonProfile{points}
              | PolylineCurve{points} | ImportedShape{shape}
-  Modifier:    ExtrudeOp{distance}           （先頭のみ・プロファイル面→ソリッド）
+             | BooleanFeature{kind, [Operand{Recipe, placement, name}]}   ← 入れ子のレシピ
+             | GroupNode{}                    （階層ノード。形状なし）
+             | ComponentInstance{definitionId}（共有定義の配置）
+  Modifier:    ExtrudeOp{distance}           （プロファイル面 → ソリッド）
+             | OffsetOp{distance}            （プロファイル面の輪郭オフセット。面 → 面）
              | PushPullOp{FaceRef, distance} （ソリッドの平面フェースを押し引き）
 ```
 
-- 再計算 `doc::regenerate()` は毎回ゼロから組み立て、各段階で妥当性検証する。
-- 公開パラメータ: `width`, `height`, `op<N>.distance`（UI・数値入力・将来の AI API 共通のキー）。
+- 再計算 `doc::regenerate(recipe, RegenContext)` は毎回ゼロから組み立て、各段階で妥当性検証する。
+  `RegenContext` はレシピの外にあるデータ（コンポーネント定義の形状）を解決する。
+- 公開パラメータ: `width`, `height`, `op<N>.distance`、ブーリアンの入力は `in<i>.` を前置（例: `in1.op0.distance` = 2 番目の入力の押出距離）。UI・数値入力・将来の AI API 共通のキー。
 - Push/Pull の解釈（`Modeler::pushPull`）:
-  1. プロファイル面 → `ExtrudeOp` を追加（パラメトリック押出）
-  2. 押出しただけのソリッドの **上面** → `ExtrudeOp.distance` を直接変更（3000→4500 の再編集と同じ）
+  1. プロファイル面（オフセット後の面を含む）→ `ExtrudeOp` を追加（パラメトリック押出）
+  2. 最後の操作が押出のソリッドの **上面** → その `ExtrudeOp.distance` を直接変更（3000→4500 の再編集と同じ）
   3. それ以外の平面フェース → `PushPullOp` を追加（面は `FaceRef` で幾何参照）
-- 失敗（不正形状・参照面消失・ゼロ寸法）は **ドキュメントを一切変更せず** エラーを返す。
+- 失敗（不正形状・参照面消失・ゼロ寸法・空のブーリアン）は **ドキュメントを一切変更せず** エラーを返す。
+
+### ソリッド演算（Boolean）
+
+入力オブジェクトはドキュメントから取り除かれ、そのレシピとワールド配置が結果のレシピに **コピーとして保存**される。
+結果の再計算は入力レシピの再計算 → 配置 → `BRepAlgoAPI_Fuse/Cut/Common` → `ShapeUpgrade_UnifySameDomain`。
+入力の寸法を後から変えられる（壁 − 開口 の開口高さ変更など）。入れ子（ブーリアンのブーリアン）も同じ仕組みで再帰的に動く。
+結果が複数ソリッド（壁を貫通して二分）でも有効。単一ソリッドのときは後続の Push/Pull が使える。
+
+## 階層・配置・コンポーネント
+
+- `Object::parent` で親（グループ）を持ち、`Object::transform` は **親座標系での配置**。
+  ワールド変換 = 親のワールド変換 × 自身の変換（`Document::worldTransform / worldShape`）。
+- 移動・回転はワールド空間の変換 `D` として与え、親座標へ変換して `local' = P⁻¹·D·P·local` を適用。グループと子を同時に選んでも二重に動かない（`Modeler::topmost`）。
+- コピー / 配列: サブツリーを新しい ID で複製し、k 個目に `Dᵏ` を適用（直線・円形配列を同じ仕組みで扱う）。
+- **コンポーネント定義**（`ComponentDefinition`）: オブジェクト群（定義内で独自の階層を持つ）と、そのリーフ形状のコンパウンドをキャッシュ。
+  インスタンスは `ComponentInstance{definitionId}` を持ち、形状は定義のコンパウンドを共有（OCCT の参照共有でメモリも共有）。
+  定義の原点は選択範囲の最小コーナー。定義のパラメータを変えると、1 つのコマンドで定義と全インスタンスのキャッシュを更新。
+- コマンドは `ObjectDelta` に加えて `DefinitionDelta` を持ち、Undo/Redo で定義の追加・変更・削除も正しく戻る（インスタンスより先に定義を適用し、Undo では後に戻す）。
 
 ### Topological Naming への対処（現段階）
 
@@ -70,17 +93,19 @@ Undo はスナップショットを戻すだけなので、モデリング演算
 
 UUID v4 形式（128bit 乱数）。保存・再読込で保持される。面・稜線などのサブ要素は配列番号を永続 ID にしない（`FaceRef` を使用）。
 
-## ネイティブファイル形式（`.sbr`, version 1）
+## ネイティブファイル形式（`.sbr`, version 2）
 
 UTF-8 JSON。
 
 ```jsonc
 {
-  "format": "SketchBRep", "version": 1,
+  "format": "SketchBRep", "version": 2,
   "units": "mm", "linearTolerance": 0.0001,
   "camera": { "eye": [...], "target": [...], "up": [...], "perspective": true, "scale": 0 },
+  "definitions": [{ "id": "…", "name": "Column C1", "objects": [ /* 下と同じ形式 */ ] }],
   "objects": [{
-    "id": "8f3c…", "name": "Room A", "layer": "Default", "visible": true,
+    "id": "8f3c…", "parent": "<group id、省略時はトップレベル>",
+    "name": "Room A", "layer": "Default", "visible": true,
     "color": [0.86, 0.86, 0.84], "transform": [12 values, row-major 3x4],
     "recipe": { "base": { "type": "rectangle", "plane": {...}, "width": 4000, "height": 6000 },
                 "modifiers": [ { "type": "extrude", "distance": 3000 } ] },
@@ -91,14 +116,30 @@ UTF-8 JSON。
 
 - **保存**: `<path>.tmp` に書き込み → 読み戻してバイト一致とパース可能性を検証 → rename で置換（途中失敗で既存ファイルを壊さない）。
 - **読込**: レシピを再計算し保存済みジオメトリと体積・外接箱で比較。不一致や再計算失敗時は保存済みジオメトリを優先し警告を出す（データを失わない）。
-- バージョンが新しすぎる・形式不正・単位不明は読み込み拒否。
+- バージョンが新しすぎる・形式不正・単位不明・親が存在しない階層は読み込み拒否。version 1 のファイルも読める。
+- 追加のベース形状: `{"type": "boolean", "kind": "Subtract", "operands": [{"name", "placement", "recipe"}]}`、`{"type": "group"}`、`{"type": "instance", "definition": "<id>"}`。追加の修飾: `{"type": "offset", "distance"}`。
+
+## 推論エンジン
+
+スナップ候補は正規形状から評価し、画面距離で判定する（`snap::InferenceEngine`）。優先順位:
+
+1. 端点・中点・原点 → 2. エッジ上 → 3. 起点からの軸推論（追跡点との交点を優先）→ 平行 / 垂直（追跡エッジ）
+→ 4. 追跡点を通る軸線（点から）→ 5. 面上 → 6. 作業平面
+
+「追跡」は SketchUp と同様に、カーソルが通過した端点・中点（最大 2 点）と直線エッジ（1 本）をツールが覚えて `SnapQuery` に渡す。
+
+## STEP 連携
+
+`geom::writeStepParts / readStepParts`（XCAF: `STEPCAFControl_Writer/Reader`）。
+- 書出: オブジェクトごとに 1 製品、名前（UTF-8）と色を付与。グループ・インスタンスの配置はワールド座標で反映。
+- 読込: アセンブリを再帰的にたどり、配置を合成したソリッドに平坦化。製品名・コンポーネント名と面色を引き継ぐ。
 
 ## 将来拡張の差し込み口
 
 | 拡張 | 差し込み口 |
 |---|---|
-| Move / Rotate / Copy | `Object::transform` は既に保存・表示・ピック時の逆変換まで対応済み |
-| Group / Component | `Document` に階層ノードと定義共有（`TopoDS_Shape` 共有 + インスタンス変換）を追加 |
+| コンポーネントの入れ子 | `RegenContext` は定義の再帰解決を想定済み。循環検出と依存更新の伝播を追加する |
+| グループ編集モード | 選択時の「コンテキスト」（現在編集中のグループ）を UI 側に追加 |
 | AI / スクリプト API | `doc::Modeler` を JSON-RPC / Python で公開（GUI と同じ検証・Undo 経路） |
 | 3DM 入出力 | `geom::ShapeIO` に openNURBS 変換を追加 |
 | 独自レンダラ | `display::DisplayMesh` をそのまま GPU バッファへ |
