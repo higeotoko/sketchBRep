@@ -22,12 +22,18 @@ target_include_directories(sbr_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # OCCT headers are third party: keep their warnings out of our build output.
 target_include_directories(sbr_core SYSTEM PUBLIC ${OpenCASCADE_INCLUDE_DIR})
 
+# OCCT 7.8 merged the STEP toolkits into TKDESTEP; 7.6/7.7 use the old split.
+if(TARGET TKDESTEP)
+  set(SBR_OCCT_EXCHANGE TKDE TKXSBase TKDESTEP)
+else()
+  set(SBR_OCCT_EXCHANGE TKXSBase TKSTEP TKSTEPBase TKSTEPAttr TKSTEP209 TKXDESTEP)
+endif()
+
 target_link_libraries(sbr_core
   PUBLIC
     TKernel TKMath TKG2d TKG3d TKGeomBase TKBRep
     TKGeomAlgo TKTopAlgo TKPrim TKBO TKBool TKShHealing TKMesh TKOffset
-    TKXSBase TKSTEP TKSTEPBase TKSTEPAttr TKSTEP209
-    TKXDESTEP TKXCAF TKLCAF TKCAF TKVCAF TKService
+    ${SBR_OCCT_EXCHANGE} TKXCAF TKLCAF TKCAF TKVCAF TKService
   PRIVATE
     nlohmann_json::nlohmann_json
 )

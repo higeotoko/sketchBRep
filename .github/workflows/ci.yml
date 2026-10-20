@@ -29,3 +29,69 @@ jobs:
 
       - name: Test (core, Phase 0 CLI and GUI end-to-end under Xvfb)
         run: xvfb-run -a -s "-screen 0 1600x1000x24" ctest --test-dir build --output-on-failure
+
+  # Windows build + portable zip (exe and all runtime DLLs) for trying the app.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install OCCT / Qt 6 (conda-forge)
+        id: mamba
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: sbr
+          create-args: >-
+            occt qt6-main nlohmann_json gtest
+          cache-environment: true
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          $env_root = "${{ steps.mamba.outputs.environment-path }}"
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release `
+                -DCMAKE_PREFIX_PATH="$env_root\Library"
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test (core + Phase 0 CLI)
+        shell: pwsh
+        run: |
+          $env:PATH = "${{ steps.mamba.outputs.environment-path }}\Library\bin;$env:PATH"
+          ctest --test-dir build --output-on-failure -LE gui
+
+      - name: Package portable zip
+        shell: pwsh
+        run: |
+          $env_root = "${{ steps.mamba.outputs.environment-path }}"
+          $dist = "dist\SketchBRep"
+          New-Item -ItemType Directory -Force $dist | Out-Null
+          Copy-Item build\src\app\SketchBRep.exe $dist
+          Copy-Item build\tools\phase0\sbr_phase0.exe $dist
+          # All runtime DLLs of the environment (OCCT, Qt, TBB, FreeType, VC runtime, ...).
+          Copy-Item "$env_root\Library\bin\*.dll" $dist
+          Copy-Item "$env_root\*.dll" $dist -ErrorAction SilentlyContinue
+          # Qt plugins: platform integration (required) and styles.
+          foreach ($name in @("platforms", "styles", "imageformats")) {
+            $dir = Get-ChildItem -Path $env_root -Recurse -Directory -Filter $name |
+                   Where-Object { $_.FullName -match "plugins" } | Select-Object -First 1
+            if ($dir) { Copy-Item $dir.FullName "$dist\$name" -Recurse }
+          }
+          if (-not (Test-Path "$dist\platforms\qwindows.dll")) { throw "qwindows.dll not found" }
+          Copy-Item README.md $dist
+          Copy-Item docs\images\phase2.png $dist
+
+      - name: Smoke test packaged app (headless Phase 0 CLI from the zip folder)
+        shell: pwsh
+        run: |
+          $env:PATH = "C:\Windows\System32"
+          dist\SketchBRep\sbr_phase0.exe 1000 2000 3000 dist\box.step
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SketchBRep-windows-x64
+          path: dist/SketchBRep
+          retention-days: 30
