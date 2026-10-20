@@ -180,6 +180,25 @@ class RectangleTool : public DrawingTool {
   std::optional<doc::ObjectId> lastCreated_;
 };
 
+// Tape measure: click two points (with inference) to read the distance.
+// Does not change the model.
+class MeasureTool : public DrawingTool {
+ public:
+  using DrawingTool::DrawingTool;
+  QString name() const override;
+  QCursor cursor() const override;
+  void activate() override;
+  void cancel() override;
+  void mousePress(const ToolEvent& e) override;
+  void mouseMove(const ToolEvent& e) override;
+  std::optional<double> lastDistance() const { return lastDistance_; }
+
+ private:
+  void show(const gp_Pnt& a, const gp_Pnt& b, bool final);
+  std::optional<gp_Pnt> start_;
+  std::optional<double> lastDistance_;
+};
+
 // Revolve: click a profile face, then two points of the axis. Creates a
 // full revolution; typing an angle re-edits it (parametric).
 class RevolveTool : public DrawingTool {

@@ -72,6 +72,21 @@ QPixmap draw(CursorKind kind, QPoint& hotspot) {
       hotspot = QPoint(6, 3);
       break;
     }
+    case CursorKind::Measure: {
+      // Tape measure: case with a tape ending at the hotspot.
+      QPainterPath body;
+      body.addRoundedRect(QRectF(12, 4, 16, 16), 4, 4);
+      halo(p, body);
+      QPainterPath tape;
+      tape.moveTo(14, 20);
+      tape.lineTo(3, 29);
+      halo(p, tape);
+      QPainterPath dot;
+      dot.addEllipse(QPointF(20, 12), 2.5, 2.5);
+      halo(p, dot);
+      hotspot = QPoint(3, 29);
+      break;
+    }
     case CursorKind::Revolve: {
       // Profile rectangle and an arc around a dashed axis.
       QPainterPath axis;

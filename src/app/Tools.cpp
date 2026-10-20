@@ -1219,4 +1219,57 @@ void RevolveTool::applyMeasurement(const QString& text) {
   if (!s) host_.reportError(QString::fromStdString(s.message()));
 }
 
+// --- Measure ---------------------------------------------------------------------------
+
+QString MeasureTool::name() const { return QObject::tr("メジャー"); }
+QCursor MeasureTool::cursor() const { return toolCursor(CursorKind::Measure); }
+
+void MeasureTool::activate() {
+  resetTracking();
+  host_.viewport().setPickMode(PickMode::None);
+  host_.setMeasurement(QObject::tr("距離"), QString());
+  host_.setStatus(QObject::tr("測りはじめの点をクリック"));
+}
+
+void MeasureTool::cancel() {
+  start_.reset();
+  resetLock();
+  host_.viewport().clearPreview();
+  host_.viewport().hideSnap();
+}
+
+void MeasureTool::show(const gp_Pnt& a, const gp_Pnt& b, bool final) {
+  const gp_Vec d(a, b);
+  host_.setMeasurement(QObject::tr("距離"), mm(d.Magnitude()));
+  host_.setStatus((final ? QObject::tr("距離 %1 mm") : QObject::tr("距離 %1 mm（クリックで確定）"))
+                      .arg(mm(d.Magnitude())) +
+                  QObject::tr("   ΔX %1 / ΔY %2 / ΔZ %3").arg(mm(d.X()), mm(d.Y()), mm(d.Z())));
+  if (a.Distance(b) > tolerance::kMinDimension) {
+    host_.viewport().setPreview(BRepBuilderAPI_MakeEdge(a, b).Edge());
+  }
+}
+
+void MeasureTool::mouseMove(const ToolEvent& e) {
+  const snap::SnapResult r = snapAt(e, start_, std::nullopt);
+  if (!r.valid()) return;
+  if (start_) {
+    show(*start_, r.point, false);
+  } else {
+    host_.setStatus(QObject::tr("測りはじめの点をクリック  [%1]").arg(snapLabel(r.kind)));
+  }
+}
+
+void MeasureTool::mousePress(const ToolEvent& e) {
+  const snap::SnapResult r = snapAt(e, start_, std::nullopt);
+  if (!r.valid()) return;
+  if (!start_) {
+    start_ = r.point;
+    return;
+  }
+  show(*start_, r.point, true);
+  lastDistance_ = start_->Distance(r.point);
+  start_.reset();
+  resetLock();
+}
+
 }  // namespace sbr::app

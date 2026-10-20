@@ -36,6 +36,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   offsetTool_ = std::make_unique<OffsetTool>(*this);
   curveTool_ = std::make_unique<CurveTool>(*this);
   revolveTool_ = std::make_unique<RevolveTool>(*this);
+  measureTool_ = std::make_unique<MeasureTool>(*this);
 
   buildUi();
   buildMenus();
@@ -309,6 +310,7 @@ void MainWindow::buildMenus() {
       {tr("オフセット"), QStringLiteral("F"), ToolId::Offset, CursorKind::Offset},
       {tr("曲線"), QStringLiteral("C"), ToolId::Curve, CursorKind::Curve},
       {tr("回転体"), QStringLiteral("V"), ToolId::Revolve, CursorKind::Revolve},
+      {tr("メジャー"), QStringLiteral("T"), ToolId::Measure, CursorKind::Measure},
   };
   for (const ToolEntry& e : entries) {
     QAction* a = new QAction(toolIcon(e.icon), e.label, this);
@@ -349,6 +351,7 @@ void MainWindow::activateTool(ToolId id) {
     case ToolId::Offset: active_ = offsetTool_.get(); break;
     case ToolId::Curve: active_ = curveTool_.get(); break;
     case ToolId::Revolve: active_ = revolveTool_.get(); break;
+    case ToolId::Measure: active_ = measureTool_.get(); break;
   }
   toolActions_[static_cast<int>(id)]->setChecked(true);
   viewport_->setTool(active_);

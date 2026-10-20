@@ -87,6 +87,7 @@ class GuiPhase1 : public QObject {
   void pushPullDoubleClickRepeatsDistance();
   void orbitKeepsPointUnderCursorFixed();
   void drawOnWallAndPushInCutsOpening();
+  void tapeMeasureReadsDistance();
 };
 
 namespace {
@@ -552,6 +553,21 @@ void GuiPhase1::drawOnWallAndPushInCutsOpening() {
     QTest::qWait(100);
     QVERIFY(f.window.screen()->grabWindow(0).copy(f.window.frameGeometry()).save(shot));
   }
+}
+
+void GuiPhase1::tapeMeasureReadsDistance() {
+  Fixture f;
+  QVERIFY(f.setUp(500, 500));
+  doc::Modeler& m = f.window.modeler();
+  f.box(0, 0, 1000, 2000, 3000);
+  const std::size_t undo = m.history().undoCount();
+  f.window.activateTool(MainWindow::ToolId::Measure);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 3000)));     // top corner
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 0, 0)));     // visible bottom corner
+  auto* tool = dynamic_cast<MeasureTool*>(f.window.activeTool());
+  QVERIFY(tool && tool->lastDistance());
+  QVERIFY(std::abs(*tool->lastDistance() - std::sqrt(1e6 + 9e6)) < 1e-6);
+  QCOMPARE(m.history().undoCount(), undo);  // the model is untouched
 }
 
 QTEST_MAIN(GuiPhase1)
