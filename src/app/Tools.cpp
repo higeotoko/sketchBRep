@@ -19,6 +19,7 @@
 
 #include "Viewport.h"
 #include "sbr/Units.h"
+#include "sbr/geom/Freeform.h"
 #include "sbr/geom/Operations.h"
 
 namespace sbr::app {
@@ -293,6 +294,90 @@ void LineTool::applyMeasurement(const QString& text) {
   addPoint(points_.back().Translated(gp_Vec(dir) * *length));
   current_ = points_.back();
   updatePreview();
+}
+
+// --- Curve ----------------------------------------------------------------------
+
+QString CurveTool::name() const { return QObject::tr("曲線"); }
+
+void CurveTool::activate() {
+  resetTracking();
+  host_.viewport().setPickMode(PickMode::None);
+  host_.setMeasurement(QString(), QString());
+  host_.setStatus(QObject::tr("曲線が通る点を順にクリック / 始点クリックで閉曲線 / ダブルクリック・Enter で確定"));
+}
+
+void CurveTool::cancel() {
+  points_.clear();
+  current_.reset();
+  host_.viewport().clearPreview();
+  host_.viewport().hideSnap();
+}
+
+void CurveTool::mouseMove(const ToolEvent& e) {
+  std::optional<gp_Pnt> anchor;
+  if (!points_.empty()) anchor = points_.back();
+  const snap::SnapResult r =
+      snapAt(e, anchor, anchor ? std::optional<gp_Pln>(gp_Pln(*anchor, gp::DZ())) : std::nullopt);
+  if (r.valid()) current_ = r.point;
+  updatePreview();
+}
+
+void CurveTool::mousePress(const ToolEvent& e) {
+  mouseMove(e);
+  if (!current_) return;
+  if (points_.size() >= 3) {
+    const snap::ScreenPoint s = host_.viewport().project(points_.front());
+    if (std::hypot(s.x - e.pos.x(), s.y - e.pos.y()) < 10.0) {
+      finish(true);
+      return;
+    }
+  }
+  if (!points_.empty() && current_->Distance(points_.back()) < tolerance::kMinDimension) return;
+  points_.push_back(*current_);
+  updatePreview();
+}
+
+bool CurveTool::mouseDoubleClick(const ToolEvent&) {
+  finish(false);
+  return true;
+}
+
+bool CurveTool::keyPress(QKeyEvent* event) {
+  // Enter finishes the curve even when the measurement box is empty.
+  if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) && !points_.empty()) {
+    finish(false);
+    return true;
+  }
+  return DrawingTool::keyPress(event);
+}
+
+void CurveTool::applyMeasurement(const QString&) { finish(false); }
+
+void CurveTool::finish(bool closed) {
+  if (points_.size() >= 2) {
+    auto id = host_.modeler().createCurve(points_, closed);
+    if (!id) {
+      host_.reportError(QString::fromStdString(id.error()));
+    } else {
+      host_.setSelection({id.value()});
+    }
+  }
+  cancel();
+  activate();
+}
+
+void CurveTool::updatePreview() {
+  std::vector<gp_Pnt> pts = points_;
+  if (current_ && (pts.empty() || current_->Distance(pts.back()) > tolerance::kMinDimension)) {
+    pts.push_back(*current_);
+  }
+  if (pts.size() < 2) {
+    host_.viewport().clearPreview();
+    return;
+  }
+  auto curve = geom::makeInterpolatedCurve(pts, false);
+  host_.viewport().setPreview(curve ? TopoDS_Shape(curve.value()) : TopoDS_Shape());
 }
 
 // --- Rectangle --------------------------------------------------------------------

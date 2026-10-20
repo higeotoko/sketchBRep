@@ -3,6 +3,8 @@
 
 #include <cmath>
 
+#include <BRep_Tool.hxx>
+
 #include <QApplication>
 #include <QDir>
 #include <QLineEdit>
@@ -76,6 +78,7 @@ class GuiPhase1 : public QObject {
   void rotateByTypedAngle();
   void offsetToolInwards();
   void groupIsSelectedAsAWhole();
+  void curveToolOpenAndClosed();
 };
 
 namespace {
@@ -321,6 +324,37 @@ void GuiPhase1::lineToolClosesLoopIntoFace() {
   const doc::Object& face = m.document().objects().front();
   QCOMPARE(face.kind(), doc::ObjectKind::Face);
   QVERIFY(std::abs(geom::area(face.shape) - 2e6) < 1e-6);
+}
+
+void GuiPhase1::curveToolOpenAndClosed() {
+  Fixture f;
+  QVERIFY(f.setUp(2000, 1000));
+  doc::Modeler& m = f.window.modeler();
+  f.window.activateTool(MainWindow::ToolId::Curve);
+  // Open curve through three points, finished with Enter.
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(2000, 1500, 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(4000, 0, 0)));
+  QTest::keyClick(f.vp, Qt::Key_Return);
+  QTest::qWait(30);
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  QCOMPARE(m.document().objects().front().kind(), doc::ObjectKind::Curve);
+  const Bnd_Box open = geom::exactBounds(m.document().objects().front().shape);
+  // The start snaps to the origin exactly; free clicks on the work plane are
+  // quantised to pixels (about 18 mm per pixel at this zoom).
+  QVERIFY(std::abs(open.CornerMin().X()) < 1e-6);
+  QVERIFY(std::abs(open.CornerMax().X() - 4000) < 30.0);
+
+  // Closed curve: click back on the first point.
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 3000, 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 3000, 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(500, 3800, 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 3000, 0)));
+  QTest::qWait(30);
+  QCOMPARE(m.document().objects().size(), std::size_t(2));
+  const TopoDS_Shape closed = m.document().objects().back().shape;
+  QVERIFY(BRep_Tool::IsClosed(closed));
 }
 
 QTEST_MAIN(GuiPhase1)

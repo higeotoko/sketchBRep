@@ -116,6 +116,27 @@ class LineTool : public DrawingTool {
   std::optional<gp_Pnt> current_;
 };
 
+// Clicks control-through points of a NURBS curve; Enter/double-click
+// finishes, clicking the first point closes it (periodic curve).
+class CurveTool : public DrawingTool {
+ public:
+  using DrawingTool::DrawingTool;
+  QString name() const override;
+  void activate() override;
+  void cancel() override;
+  void mousePress(const ToolEvent& e) override;
+  void mouseMove(const ToolEvent& e) override;
+  bool mouseDoubleClick(const ToolEvent& e) override;
+  bool keyPress(QKeyEvent* event) override;
+  void applyMeasurement(const QString& text) override;
+
+ private:
+  void finish(bool closed);
+  void updatePreview();
+  std::vector<gp_Pnt> points_;
+  std::optional<gp_Pnt> current_;
+};
+
 class RectangleTool : public DrawingTool {
  public:
   using DrawingTool::DrawingTool;
