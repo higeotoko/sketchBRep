@@ -7,9 +7,11 @@
 
 #include <TopExp_Explorer.hxx>
 #include <TopLoc_Location.hxx>
+#include <BRepTools.hxx>
 #include <TopoDS.hxx>
 
 #include "sbr/doc/NativeFormat.h"
+#include "sbr/geom/Freeform.h"
 #include "sbr/geom/Measure.h"
 #include "sbr/geom/Operations.h"
 #include "sbr/geom/ShapeIO.h"
@@ -713,6 +715,58 @@ std::vector<ObjectSummary> Modeler::listObjects() const {
 std::vector<Parameter> Modeler::parameters(const ObjectId& id) const {
   const Object* o = document_.find(id);
   return o ? doc::parameters(o->recipe) : std::vector<Parameter>{};
+}
+
+// --- freeform ------------------------------------------------------------------
+
+namespace {
+// Outer wire of a face object or the wire of a curve object, in world space.
+std::optional<TopoDS_Wire> sectionWire(const Document& document, const ObjectId& id) {
+  const TopoDS_Shape shape = document.worldShape(id);
+  if (shape.IsNull()) return std::nullopt;
+  if (shape.ShapeType() == TopAbs_FACE) return BRepTools::OuterWire(TopoDS::Face(shape));
+  if (shape.ShapeType() == TopAbs_WIRE) return TopoDS::Wire(shape);
+  TopExp_Explorer it(shape, TopAbs_WIRE);
+  if (it.More()) return TopoDS::Wire(it.Current());
+  return std::nullopt;
+}
+}  // namespace
+
+Result<ObjectId> Modeler::createCurve(const std::vector<gp_Pnt>& points, bool closed,
+                                      const std::string& name) {
+  auto wire = geom::makeInterpolatedCurve(points, closed);
+  if (!wire) return Result<ObjectId>::failure(wire.error());
+  return importShape(wire.value(), name.empty() ? uniqueName("Curve") : name, "NURBS curve");
+}
+
+Result<ObjectId> Modeler::loftObjects(const std::vector<ObjectId>& sections, bool solid) {
+  std::vector<TopoDS_Wire> wires;
+  for (const ObjectId& id : sections) {
+    const auto w = sectionWire(document_, id);
+    if (!w) return Result<ObjectId>::failure("Loft sections must be curves or faces");
+    wires.push_back(*w);
+  }
+  auto shape = geom::loft(wires, solid);
+  if (!shape) return Result<ObjectId>::failure(shape.error());
+  return importShape(shape.value(), uniqueName("Loft"), "Loft");
+}
+
+Result<ObjectId> Modeler::revolveObject(const ObjectId& profile, const gp_Ax1& axis,
+                                        double angle) {
+  const TopoDS_Shape shape = document_.worldShape(profile);
+  if (shape.IsNull()) return Result<ObjectId>::failure("Profile not found");
+  auto result = geom::revolve(shape, axis, angle);
+  if (!result) return Result<ObjectId>::failure(result.error());
+  return importShape(result.value(), uniqueName("Revolve"), "Revolve");
+}
+
+Result<ObjectId> Modeler::sweepObject(const ObjectId& profile, const ObjectId& spine) {
+  const TopoDS_Shape shape = document_.worldShape(profile);
+  const auto path = sectionWire(document_, spine);
+  if (shape.IsNull() || !path) return Result<ObjectId>::failure("Profile or path not found");
+  auto result = geom::sweep(shape, *path);
+  if (!result) return Result<ObjectId>::failure(result.error());
+  return importShape(result.value(), uniqueName("Sweep"), "Sweep");
 }
 
 }  // namespace sbr::doc

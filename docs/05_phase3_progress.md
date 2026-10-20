@@ -13,7 +13,7 @@
 すべて結果を `validateShape` で検証し、不正な形状は失敗として返す（Phase 0 からの方針どおり）。
 
 ## 未着手（次の作業）
-1. `doc::Recipe` へのベース形状追加（曲線・Loft・Revolve・Sweep をパラメトリックに保持）と `Modeler` API
+1. `doc::Recipe` へのベース形状追加（曲線・Loft・Revolve・Sweep をパラメトリックに保持）。`Modeler` API（`createCurve` / `loftObjects` / `revolveObject` / `sweepObject`、結果は非パラメトリック形状・Undo 可）は実装済み
 2. GUI ツール（曲線ツール、Loft / Revolve / Sweep コマンド）
 3. 3DM 入出力（openNURBS）、トリム曲面、曲面の Push/Pull・オフセット
 4. 複雑形状の描画最適化

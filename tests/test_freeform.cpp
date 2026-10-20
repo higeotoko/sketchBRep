@@ -5,6 +5,7 @@
 #include <TopoDS.hxx>
 
 #include "TestHelpers.h"
+#include "sbr/doc/Modeler.h"
 #include "sbr/geom/Freeform.h"
 #include "sbr/geom/Profile.h"
 #include "sbr/geom/Validation.h"
@@ -52,4 +53,33 @@ TEST(Freeform, SweepAlongCurve) {
   // section is a bit smaller than 100 x 100 along the ~4.2 m spine.
   EXPECT_GT(volume(shape.value()), 3e7);
   EXPECT_TRUE(validateShape(shape.value(), true).valid);
+}
+
+TEST(Freeform, ModelerLoftRevolveSweepAreUndoable) {
+  doc::Modeler m;
+  geom::SketchPlane top = geom::SketchPlane::ground();
+  top.origin = gp_Pnt(250, 250, 3000);
+  auto base = m.createRectangle(geom::SketchPlane::ground(), 1000, 1000);
+  auto cap = m.createRectangle(top, 500, 500);
+  auto lofted = m.loftObjects({*base, *cap}, true);
+  ASSERT_TRUE(lofted.ok()) << lofted.error();
+  EXPECT_GT(volume(m.document().worldShape(*lofted)), 1e9);
+
+  auto curve = m.createCurve({gp_Pnt(0, 0, 0), gp_Pnt(2000, 500, 0), gp_Pnt(4000, 0, 0)}, false);
+  ASSERT_TRUE(curve.ok());
+  SketchPlane yz = SketchPlane::fromNormal(gp_Pnt(0, 0, 0), gp::DX());
+  auto profile = m.createRectangle(yz, 100, 100);
+  auto swept = m.sweepObject(*profile, *curve);
+  ASSERT_TRUE(swept.ok()) << swept.error();
+
+  SketchPlane wall = SketchPlane::fromNormal(gp_Pnt(1000, 0, 0), gp_Dir(0, -1, 0));
+  auto ring = m.createRectangle(wall, 200, 500);
+  auto revolved = m.revolveObject(*ring, gp_Ax1(gp_Pnt(0, 0, 0), gp::DZ()), M_PI);
+  ASSERT_TRUE(revolved.ok()) << revolved.error();
+  EXPECT_TRUE(validateShape(m.document().worldShape(*revolved), true).valid);
+
+  const std::size_t count = m.document().objects().size();
+  ASSERT_TRUE(m.undo());
+  EXPECT_EQ(m.document().objects().size(), count - 1);
+  EXPECT_FALSE(m.loftObjects({*base}, true).ok());
 }

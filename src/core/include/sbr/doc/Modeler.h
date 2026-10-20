@@ -98,6 +98,15 @@ class Modeler {
   // ids[0]. The operands are consumed and kept inside the result's recipe.
   Result<ObjectId> boolean(BooleanKind kind, const std::vector<ObjectId>& ids);
 
+  // --- freeform (Phase 3) ----------------------------------------------------
+  // Results are stored as non-parametric geometry for now.
+  Result<ObjectId> createCurve(const std::vector<gp_Pnt>& points, bool closed,
+                               const std::string& name = {});
+  // Lofts through curve/face objects (their outer wires), in the given order.
+  Result<ObjectId> loftObjects(const std::vector<ObjectId>& sections, bool solid);
+  Result<ObjectId> revolveObject(const ObjectId& profile, const gp_Ax1& axis, double angleRadians);
+  Result<ObjectId> sweepObject(const ObjectId& profile, const ObjectId& spine);
+
   bool undo() { return history_.undo(); }
   bool redo() { return history_.redo(); }
 
