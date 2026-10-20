@@ -114,6 +114,15 @@ json baseToJson(const BaseFeature& base) {
             }
             return json{{"type", "loft"}, {"solid", l.solid}, {"sections", sections}};
           },
+          [](const SweepFeature& f) {
+            json inputs = json::array();
+            for (const BooleanOperand& o : f.inputs) {
+              inputs.push_back({{"name", o.name},
+                                {"placement", toJson(o.placement)},
+                                {"recipe", recipeToJson(*o.recipe)}});
+            }
+            return json{{"type", "sweep"}, {"inputs", inputs}};
+          },
           [](const GroupNode&) { return json{{"type", "group"}}; },
           [](const ComponentInstance& c) {
             return json{{"type", "instance"}, {"definition", c.definitionId}};
@@ -160,6 +169,15 @@ BaseFeature baseFrom(const json& j) {
                                           o.value("name", std::string())});
     }
     return l;
+  }
+  if (type == "sweep") {
+    SweepFeature f;
+    for (const json& o : j.at("inputs")) {
+      f.inputs.push_back(BooleanOperand{std::make_shared<const Recipe>(recipeFrom(o.at("recipe"))),
+                                        trsfFrom(o.at("placement")),
+                                        o.value("name", std::string())});
+    }
+    return f;
   }
   if (type == "group") return GroupNode{};
   if (type == "instance") return ComponentInstance{j.at("definition").get<std::string>()};

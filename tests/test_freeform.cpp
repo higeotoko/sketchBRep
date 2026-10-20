@@ -146,3 +146,24 @@ TEST(Freeform, LoftIsParametricAndSaved) {
   ASSERT_TRUE(loaded.setParameter(*loftId, "in0.width", 1000).ok());
   EXPECT_TRUE(validateShape(loaded.document().worldShape(*loftId), true).valid);
 }
+
+TEST(Freeform, SweepIsParametricAndSaved) {
+  doc::Modeler m;
+  auto path = m.createCurve({gp_Pnt(0, 0, 0), gp_Pnt(2000, 0, 0)}, false);  // straight spline
+  SketchPlane yz = SketchPlane::fromNormal(gp_Pnt(0, 0, 0), gp::DX());
+  auto profile = m.createRectangle(yz, 100, 200);
+  auto id = m.sweepObject(*profile, *path);
+  ASSERT_TRUE(id.ok()) << id.error();
+  EXPECT_NEAR(volume(m.document().worldShape(*id)), 100.0 * 200 * 2000, 1.0);
+  ASSERT_TRUE(m.setParameter(*id, "in0.width", 300).ok());
+  EXPECT_NEAR(volume(m.document().worldShape(*id)), 300.0 * 200 * 2000, 1.0);
+  EXPECT_FALSE(m.sweepObject(*path, *profile).ok());  // path must be a curve
+
+  const std::string file = test::tempPath("sweep.sbr");
+  ASSERT_TRUE(m.save(file).ok());
+  doc::Modeler loaded;
+  std::vector<std::string> warnings;
+  ASSERT_TRUE(loaded.load(file, &warnings).ok());
+  EXPECT_TRUE(warnings.empty());
+  EXPECT_NEAR(volume(loaded.document().worldShape(*id)), 300.0 * 200 * 2000, 1.0);
+}

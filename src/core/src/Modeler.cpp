@@ -719,18 +719,6 @@ std::vector<Parameter> Modeler::parameters(const ObjectId& id) const {
 
 // --- freeform ------------------------------------------------------------------
 
-namespace {
-// Outer wire of a face object or the wire of a curve object, in world space.
-std::optional<TopoDS_Wire> sectionWire(const Document& document, const ObjectId& id) {
-  const TopoDS_Shape shape = document.worldShape(id);
-  if (shape.IsNull()) return std::nullopt;
-  if (shape.ShapeType() == TopAbs_FACE) return BRepTools::OuterWire(TopoDS::Face(shape));
-  if (shape.ShapeType() == TopAbs_WIRE) return TopoDS::Wire(shape);
-  TopExp_Explorer it(shape, TopAbs_WIRE);
-  if (it.More()) return TopoDS::Wire(it.Current());
-  return std::nullopt;
-}
-}  // namespace
 
 Result<ObjectId> Modeler::createCurve(const std::vector<gp_Pnt>& points, bool closed,
                                       const std::string& name) {
@@ -780,12 +768,19 @@ Result<ObjectId> Modeler::revolveObject(const ObjectId& profile, const gp_Ax1& a
 }
 
 Result<ObjectId> Modeler::sweepObject(const ObjectId& profile, const ObjectId& spine) {
-  const TopoDS_Shape shape = document_.worldShape(profile);
-  const auto path = sectionWire(document_, spine);
-  if (shape.IsNull() || !path) return Result<ObjectId>::failure("Profile or path not found");
-  auto result = geom::sweep(shape, *path);
-  if (!result) return Result<ObjectId>::failure(result.error());
-  return importShape(result.value(), uniqueName("Sweep"), "Sweep");
+  const Object* p = document_.find(profile);
+  const Object* path = document_.find(spine);
+  if (!p || !path) return Result<ObjectId>::failure("Profile or path not found");
+  if (path->kind() != ObjectKind::Curve) return Result<ObjectId>::failure("Sweep path must be a curve");
+  SweepFeature feature;
+  for (const Object* o : {p, path}) {
+    feature.inputs.push_back(BooleanOperand{std::make_shared<const Recipe>(o->recipe),
+                                            document_.worldTransform(*o), o->name});
+  }
+  Object object;
+  object.name = uniqueName("Sweep");
+  object.recipe.base = std::move(feature);
+  return addObject(std::move(object), "Sweep");
 }
 
 }  // namespace sbr::doc

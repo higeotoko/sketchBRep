@@ -71,6 +71,11 @@ struct LoftFeature {
   bool solid = true;
 };
 
+// Parametric sweep: inputs[0] = profile (face or curve), inputs[1] = path.
+struct SweepFeature {
+  std::vector<BooleanOperand> inputs;
+};
+
 // Container node of the object hierarchy. Has no geometry of its own.
 struct GroupNode {};
 
@@ -80,7 +85,8 @@ struct ComponentInstance {
 };
 
 using BaseFeature = std::variant<RectangleProfile, PolygonProfile, PolylineCurve, ImportedShape,
-                                 BooleanFeature, LoftFeature, GroupNode, ComponentInstance>;
+                                 BooleanFeature, LoftFeature, SweepFeature, GroupNode,
+                                 ComponentInstance>;
 
 // --- Modifiers ------------------------------------------------------------
 // Extrudes the profile face along its normal. Must be the first modifier.

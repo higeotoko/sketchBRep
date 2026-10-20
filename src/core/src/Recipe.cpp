@@ -5,6 +5,7 @@
 
 #include <BRepTools.hxx>
 #include <TopLoc_Location.hxx>
+#include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 
 #include "sbr/geom/Freeform.h"
@@ -89,6 +90,20 @@ Result<TopoDS_Shape> buildBase(const BaseFeature& base, const RegenContext& cont
             }
             return geom::loft(wires, l.solid);
           },
+          [&](const SweepFeature& f) -> Result<TopoDS_Shape> {
+            if (f.inputs.size() != 2 || !f.inputs[0].recipe || !f.inputs[1].recipe) {
+              return Result<TopoDS_Shape>::failure("Sweep needs a profile and a path");
+            }
+            std::vector<TopoDS_Shape> placed;
+            for (const BooleanOperand& in : f.inputs) {
+              auto shape = regenerate(*in.recipe, context);
+              if (!shape) return Result<TopoDS_Shape>::failure("'" + in.name + "': " + shape.error());
+              placed.push_back(shape->Moved(TopLoc_Location(in.placement)));
+            }
+            TopExp_Explorer path(placed[1], TopAbs_WIRE);
+            if (!path.More()) return Result<TopoDS_Shape>::failure("Sweep path must be a curve");
+            return geom::sweep(placed[0], TopoDS::Wire(path.Current()));
+          },
           [](const GroupNode&) -> Result<TopoDS_Shape> { return TopoDS_Shape(); },
           [&](const ComponentInstance& c) -> Result<TopoDS_Shape> {
             if (!context.definitionShape) {
@@ -109,6 +124,7 @@ Result<TopoDS_Shape> buildBase(const BaseFeature& base, const RegenContext& cont
 const std::vector<BooleanOperand>* operandsOf(const BaseFeature& base) {
   if (const auto* b = std::get_if<BooleanFeature>(&base)) return &b->operands;
   if (const auto* l = std::get_if<LoftFeature>(&base)) return &l->sections;
+  if (const auto* w = std::get_if<SweepFeature>(&base)) return &w->inputs;
   return nullptr;
 }
 std::vector<BooleanOperand>* operandsOf(BaseFeature& base) {
@@ -267,6 +283,7 @@ std::string describe(const Recipe& recipe) {
                    out << ")";
                  },
                  [&](const LoftFeature& l) { out << "Loft (" << l.sections.size() << " sections)"; },
+                 [&](const SweepFeature&) { out << "Sweep"; },
                  [&](const GroupNode&) { out << "Group"; },
                  [&](const ComponentInstance&) { out << "Component instance"; },
              },
