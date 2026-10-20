@@ -428,6 +428,105 @@ void CurveTool::updatePreview() {
   host_.viewport().setPreview(curve ? TopoDS_Shape(curve.value()) : TopoDS_Shape());
 }
 
+// --- Circle ---------------------------------------------------------------------
+
+namespace {
+// Sketch plane for a shape started at `r`: the face under the cursor when
+// the click is on a face (or on one of its edges/corners), else horizontal.
+geom::SketchPlane planeForStart(Viewport& viewport, const QPoint& pos, const snap::SnapResult& r) {
+  gp_Dir normal = gp::DZ();
+  if (r.kind == snap::SnapKind::OnFace && r.faceNormal) {
+    normal = *r.faceNormal;
+  } else if (const auto face = viewport.faceAt(pos)) {
+    if (std::abs(gp_Vec(face->first, r.point).Dot(gp_Vec(face->second))) < 1e-6) normal = face->second;
+  }
+  return geom::SketchPlane::fromNormal(r.point, normal);
+}
+}  // namespace
+
+QString CircleTool::name() const { return QObject::tr("円"); }
+QCursor CircleTool::cursor() const { return toolCursor(CursorKind::Circle); }
+
+void CircleTool::activate() {
+  resetTracking();
+  reset();
+  host_.viewport().setPickMode(PickMode::None);
+  host_.setMeasurement(QObject::tr("半径"), QString());
+  host_.setStatus(QObject::tr("円の中心をクリック（数値を入力すると直前の円の半径を変更）"));
+}
+
+void CircleTool::reset() {
+  hasCentre_ = false;
+  radius_ = 0.0;
+  resetLock();
+  host_.viewport().clearPreview();
+}
+
+void CircleTool::cancel() {
+  reset();
+  host_.viewport().hideSnap();
+}
+
+void CircleTool::mouseMove(const ToolEvent& e) {
+  if (!hasCentre_) {
+    const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
+    host_.setStatus(QObject::tr("円の中心をクリック  [%1]").arg(snapLabel(r.kind)));
+    return;
+  }
+  const snap::SnapResult r = snapAt(e, plane_.origin, plane_.plane());
+  if (!r.valid()) return;
+  double u = 0, v = 0;
+  plane_.toLocal(r.point, u, v);
+  radius_ = std::hypot(u, v);
+  host_.setMeasurement(QObject::tr("半径"), mm(radius_));
+  host_.setStatus(QObject::tr("半径の位置をクリック、または半径を入力  [%1]").arg(snapLabel(r.kind)));
+  auto face = geom::makeCircleFace(plane_, radius_);
+  host_.viewport().setPreview(face ? TopoDS_Shape(BRepTools::OuterWire(face.value())) : TopoDS_Shape());
+}
+
+void CircleTool::mousePress(const ToolEvent& e) {
+  if (!hasCentre_) {
+    const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
+    if (!r.valid()) return;
+    plane_ = planeForStart(host_.viewport(), e.pos, r);
+    hasCentre_ = true;
+    lastCreated_.reset();
+    return;
+  }
+  mouseMove(e);
+  commit(radius_);
+}
+
+void CircleTool::commit(double radius) {
+  if (radius < tolerance::kMinDimension) return;
+  auto id = host_.modeler().createCircle(plane_, radius);
+  if (!id) {
+    host_.reportError(QString::fromStdString(id.error()));
+  } else {
+    lastCreated_ = id.value();
+  }
+  reset();
+  host_.setStatus(QObject::tr("円の中心をクリック（数値を入力すると直前の円の半径を変更）"));
+}
+
+void CircleTool::applyMeasurement(const QString& text) {
+  const auto value = units::parseLength(text.toStdString());
+  if (!value || *value <= 0) {
+    host_.reportError(QObject::tr("半径を解釈できません: %1").arg(text));
+    return;
+  }
+  if (hasCentre_) {
+    commit(*value);
+    return;
+  }
+  if (lastCreated_ && host_.modeler().document().find(*lastCreated_)) {
+    const Status s = host_.modeler().setParameter(*lastCreated_, "radius", *value);
+    if (!s) host_.reportError(QString::fromStdString(s.message()));
+    return;
+  }
+  host_.reportError(QObject::tr("円の中心をクリックしてから半径を入力してください"));
+}
+
 // --- Rectangle --------------------------------------------------------------------
 
 QString RectangleTool::name() const { return QObject::tr("矩形"); }
@@ -473,15 +572,7 @@ void RectangleTool::mousePress(const ToolEvent& e) {
   if (!hasCorner_) {
     const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
     if (!r.valid()) return;
-    gp_Dir normal = gp::DZ();
-    if (r.kind == snap::SnapKind::OnFace && r.faceNormal) {
-      normal = *r.faceNormal;
-    } else if (const auto face = host_.viewport().faceAt(e.pos)) {
-      // Starting on an edge or corner of a face: draw on that face's plane
-      // as long as the snapped point lies on it.
-      if (std::abs(gp_Vec(face->first, r.point).Dot(gp_Vec(face->second))) < 1e-6) normal = face->second;
-    }
-    plane_ = geom::SketchPlane::fromNormal(r.point, normal);
+    plane_ = planeForStart(host_.viewport(), e.pos, r);
     hasCorner_ = true;
     lastCreated_.reset();
     return;

@@ -29,6 +29,11 @@ struct RectangleProfile {
   double height = 0.0;  // along plane.yDir, signed
 };
 
+struct CircleProfile {
+  geom::SketchPlane plane;  // origin = centre
+  double radius = 0.0;
+};
+
 struct PolygonProfile {
   std::vector<gp_Pnt> points;  // closed implicitly
 };
@@ -90,7 +95,7 @@ struct ComponentInstance {
   std::string definitionId;
 };
 
-using BaseFeature = std::variant<RectangleProfile, PolygonProfile, PolylineCurve, InterpolatedCurve,
+using BaseFeature = std::variant<RectangleProfile, CircleProfile, PolygonProfile, PolylineCurve, InterpolatedCurve,
                                  ImportedShape,
                                  BooleanFeature, LoftFeature, SweepFeature, GroupNode,
                                  ComponentInstance>;

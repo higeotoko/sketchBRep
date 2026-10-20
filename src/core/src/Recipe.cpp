@@ -43,6 +43,11 @@ Result<TopoDS_Shape> buildBase(const BaseFeature& base, const RegenContext& cont
             if (!face) return Result<TopoDS_Shape>::failure(face.error());
             return TopoDS_Shape(face.value());
           },
+          [](const CircleProfile& c) -> Result<TopoDS_Shape> {
+            auto face = geom::makeCircleFace(c.plane, c.radius);
+            if (!face) return Result<TopoDS_Shape>::failure(face.error());
+            return TopoDS_Shape(face.value());
+          },
           [](const PolygonProfile& p) -> Result<TopoDS_Shape> {
             auto face = geom::makePolygonFace(p.points);
             if (!face) return Result<TopoDS_Shape>::failure(face.error());
@@ -201,6 +206,9 @@ std::vector<Parameter> parameters(const Recipe& recipe) {
     out.push_back({"width", "Width", r->width, true});
     out.push_back({"height", "Height", r->height, true});
   }
+  if (const auto* c = std::get_if<CircleProfile>(&recipe.base)) {
+    out.push_back({"radius", "Radius", c->radius, true});
+  }
   if (const auto* operands = operandsOf(recipe.base)) {
     for (std::size_t i = 0; i < operands->size(); ++i) {
       if (!(*operands)[i].recipe) continue;
@@ -245,6 +253,10 @@ Status setParameter(Recipe& recipe, const std::string& key, double value) {
       return Status::success();
     }
   }
+  if (auto* c = std::get_if<CircleProfile>(&recipe.base); c && key == "radius") {
+    c->radius = value;
+    return Status::success();
+  }
   if (auto* operands = operandsOf(recipe.base)) {
     for (std::size_t i = 0; i < operands->size(); ++i) {
       const std::string prefix = operandPrefix(i);
@@ -277,6 +289,7 @@ std::string describe(const Recipe& recipe) {
                  [&](const RectangleProfile& r) {
                    out << "Rectangle " << r.width << " x " << r.height;
                  },
+                 [&](const CircleProfile& c) { out << "Circle r=" << c.radius; },
                  [&](const PolygonProfile& p) { out << "Polygon (" << p.points.size() << " pts)"; },
                  [&](const PolylineCurve& p) { out << "Line (" << p.points.size() << " pts)"; },
                  [&](const InterpolatedCurve& c) {

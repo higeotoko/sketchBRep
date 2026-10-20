@@ -158,6 +158,27 @@ class CurveTool : public DrawingTool {
   std::optional<gp_Pnt> current_;
 };
 
+// Circle: centre (on a face or the ground), then radius by mouse or value.
+class CircleTool : public DrawingTool {
+ public:
+  using DrawingTool::DrawingTool;
+  QString name() const override;
+  QCursor cursor() const override;
+  void activate() override;
+  void cancel() override;
+  void mousePress(const ToolEvent& e) override;
+  void mouseMove(const ToolEvent& e) override;
+  void applyMeasurement(const QString& text) override;
+
+ private:
+  void commit(double radius);
+  void reset();
+  bool hasCentre_ = false;
+  geom::SketchPlane plane_;
+  double radius_ = 0.0;
+  std::optional<doc::ObjectId> lastCreated_;
+};
+
 class RectangleTool : public DrawingTool {
  public:
   using DrawingTool::DrawingTool;

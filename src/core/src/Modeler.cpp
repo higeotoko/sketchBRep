@@ -169,6 +169,14 @@ Result<ObjectId> Modeler::createRectangle(const geom::SketchPlane& plane, double
   return addObject(std::move(o), "Rectangle");
 }
 
+Result<ObjectId> Modeler::createCircle(const geom::SketchPlane& plane, double radius,
+                                       const std::string& name) {
+  Object o;
+  o.name = name.empty() ? uniqueName("Circle") : name;
+  o.recipe.base = CircleProfile{plane, radius};
+  return addObject(std::move(o), "Circle");
+}
+
 Result<ObjectId> Modeler::createPolygon(const std::vector<gp_Pnt>& points, const std::string& name) {
   Object o;
   o.name = name.empty() ? uniqueName("Face") : name;

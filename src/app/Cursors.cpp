@@ -72,6 +72,14 @@ QPixmap draw(CursorKind kind, QPoint& hotspot) {
       hotspot = QPoint(6, 3);
       break;
     }
+    case CursorKind::Circle: {
+      halo(p, pencil());
+      QPainterPath circle;
+      circle.addEllipse(QPointF(24, 24), 6, 6);
+      halo(p, circle);
+      hotspot = QPoint(2, 30);
+      break;
+    }
     case CursorKind::Measure: {
       // Tape measure: case with a tape ending at the hotspot.
       QPainterPath body;

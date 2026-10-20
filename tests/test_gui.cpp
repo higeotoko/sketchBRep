@@ -88,6 +88,7 @@ class GuiPhase1 : public QObject {
   void orbitKeepsPointUnderCursorFixed();
   void drawOnWallAndPushInCutsOpening();
   void tapeMeasureReadsDistance();
+  void circleToolTypedRadius();
 };
 
 namespace {
@@ -443,7 +444,8 @@ void GuiPhase1::eachToolHasItsCursor() {
   QCOMPARE(f.vp->cursor().shape(), Qt::ArrowCursor);
   for (auto id : {MainWindow::ToolId::Line, MainWindow::ToolId::Rectangle, MainWindow::ToolId::PushPull,
                   MainWindow::ToolId::Move, MainWindow::ToolId::Rotate, MainWindow::ToolId::Offset,
-                  MainWindow::ToolId::Curve}) {
+                  MainWindow::ToolId::Curve, MainWindow::ToolId::Circle,
+                  MainWindow::ToolId::Measure, MainWindow::ToolId::Revolve}) {
     f.window.activateTool(id);
     QCOMPARE(f.vp->cursor().shape(), Qt::BitmapCursor);
     QVERIFY(!f.vp->cursor().pixmap().isNull());
@@ -568,6 +570,23 @@ void GuiPhase1::tapeMeasureReadsDistance() {
   QVERIFY(tool && tool->lastDistance());
   QVERIFY(std::abs(*tool->lastDistance() - std::sqrt(1e6 + 9e6)) < 1e-6);
   QCOMPARE(m.history().undoCount(), undo);  // the model is untouched
+}
+
+void GuiPhase1::circleToolTypedRadius() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  f.window.activateTool(MainWindow::ToolId::Circle);
+  QCOMPARE(f.vp->cursor().shape(), Qt::BitmapCursor);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));  // centre at the origin
+  move(f.vp, f.vp->toWidget(gp_Pnt(300, 300, 0)));
+  type(f.vp, QStringLiteral("500"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  const doc::ObjectId id = m.document().objects().front().id;
+  QVERIFY(std::abs(geom::area(m.document().worldShape(id)) - M_PI * 500 * 500) < 1.0);
+  type(f.vp, QStringLiteral("0.6m"));  // re-edit the radius right away
+  QVERIFY(std::abs(geom::area(m.document().worldShape(id)) - M_PI * 600 * 600) < 1.0);
 }
 
 QTEST_MAIN(GuiPhase1)

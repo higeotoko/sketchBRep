@@ -45,6 +45,8 @@ class Modeler {
   // --- creation -----------------------------------------------------------
   Result<ObjectId> createRectangle(const geom::SketchPlane& plane, double width, double height,
                                    const std::string& name = {});
+  Result<ObjectId> createCircle(const geom::SketchPlane& plane, double radius,
+                                const std::string& name = {});
   Result<ObjectId> createPolygon(const std::vector<gp_Pnt>& points, const std::string& name = {});
   Result<ObjectId> createPolyline(const std::vector<gp_Pnt>& points, const std::string& name = {});
   Result<ObjectId> importShape(const TopoDS_Shape& shape, const std::string& name,

@@ -477,3 +477,30 @@ TEST(PushPullOnSolids, ProfileOffTheSolidStaysSeparate) {
   EXPECT_EQ(pp->id, *rect);
   EXPECT_EQ(m.document().objects().size(), 2u);
 }
+
+TEST(Circles, ExtrudeEditRadiusAndCutRoundOpening) {
+  Modeler m;
+  geom::SketchPlane plane = geom::SketchPlane::ground();
+  auto column = m.createCircle(plane, 250);
+  ASSERT_TRUE(column.ok()) << column.error();
+  ASSERT_TRUE(m.extrude(*column, 3000).ok());
+  EXPECT_NEAR(worldVolume(m, *column), M_PI * 250 * 250 * 3000, 1.0);
+  ASSERT_TRUE(m.setParameter(*column, "radius", 300).ok());
+  EXPECT_NEAR(worldVolume(m, *column), M_PI * 300 * 300 * 3000, 1.0);
+  EXPECT_FALSE(m.setParameter(*column, "radius", 0).ok());
+
+  // Round window: circle drawn on a wall and pushed through.
+  const ObjectId wall = box(m, 2000, 0, 0, 3000, 200, 3000, "Wall");
+  auto hole = m.createCircle(geom::SketchPlane::fromNormal(gp_Pnt(3500, 0, 1500), gp_Dir(0, -1, 0)), 400);
+  ASSERT_TRUE(hole.ok());
+  auto pp = m.pushPull(*hole, TopoDS::Face(m.document().worldShape(*hole)), -200);
+  ASSERT_TRUE(pp.ok()) << pp.error();
+  EXPECT_NEAR(worldVolume(m, pp->id), 3000.0 * 200 * 3000 - M_PI * 400 * 400 * 200, 1.0);
+  EXPECT_FALSE(m.document().find(wall));
+
+  // Saved and reloaded with its radius.
+  const std::string text = serializeDocument(m.document());
+  Document d;
+  ASSERT_TRUE(deserializeDocument(text, d).ok());
+  EXPECT_NE(text.find("\"type\": \"circle\""), std::string::npos);
+}

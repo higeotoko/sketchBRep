@@ -40,6 +40,9 @@ struct SketchPlane {
 // normal is always plane.normal.
 Result<TopoDS_Face> makeRectangleFace(const SketchPlane& plane, double width, double height);
 
+// Circle centred at plane.origin; face normal = plane.normal.
+Result<TopoDS_Face> makeCircleFace(const SketchPlane& plane, double radius);
+
 // Closed planar polygon (the closing segment is implicit). Fails for
 // non-planar, degenerate or self-intersecting input.
 Result<TopoDS_Face> makePolygonFace(const std::vector<gp_Pnt>& points);

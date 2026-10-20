@@ -2,7 +2,12 @@
 
 #include <cmath>
 
+#include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
+#include <TopoDS_Edge.hxx>
+#include <gp_Ax2.hxx>
+#include <gp_Circ.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <gp_Vec.hxx>
@@ -104,6 +109,21 @@ Result<TopoDS_Face> makeRectangleFace(const SketchPlane& plane, double width, do
 
   BRepBuilderAPI_MakeFace makeFace(plane.plane(), polygon.Wire(), Standard_True);
   if (!makeFace.IsDone()) return Result<TopoDS_Face>::failure("Failed to build rectangle face");
+  TopoDS_Face face = makeFace.Face();
+  const auto n = planarFaceNormal(face);
+  if (n && n->Dot(plane.normal) < 0) face.Reverse();
+  return face;
+}
+
+Result<TopoDS_Face> makeCircleFace(const SketchPlane& plane, double radius) {
+  if (!std::isfinite(radius) || radius < tolerance::kMinDimension) {
+    return Result<TopoDS_Face>::failure("Circle radius must be positive");
+  }
+  const gp_Circ circle(gp_Ax2(plane.origin, plane.normal, plane.xDir), radius);
+  const TopoDS_Edge edge = BRepBuilderAPI_MakeEdge(circle).Edge();
+  const TopoDS_Wire wire = BRepBuilderAPI_MakeWire(edge).Wire();
+  BRepBuilderAPI_MakeFace makeFace(plane.plane(), wire, Standard_True);
+  if (!makeFace.IsDone()) return Result<TopoDS_Face>::failure("Failed to build circle face");
   TopoDS_Face face = makeFace.Face();
   const auto n = planarFaceNormal(face);
   if (n && n->Dot(plane.normal) < 0) face.Reverse();

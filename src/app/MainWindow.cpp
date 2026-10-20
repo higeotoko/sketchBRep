@@ -37,6 +37,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   curveTool_ = std::make_unique<CurveTool>(*this);
   revolveTool_ = std::make_unique<RevolveTool>(*this);
   measureTool_ = std::make_unique<MeasureTool>(*this);
+  circleTool_ = std::make_unique<CircleTool>(*this);
 
   buildUi();
   buildMenus();
@@ -304,11 +305,12 @@ void MainWindow::buildMenus() {
       {tr("選択"), QStringLiteral("Space"), ToolId::Select, CursorKind::Select},
       {tr("線"), QStringLiteral("L"), ToolId::Line, CursorKind::Pencil},
       {tr("矩形"), QStringLiteral("R"), ToolId::Rectangle, CursorKind::Rectangle},
+      {tr("円"), QStringLiteral("C"), ToolId::Circle, CursorKind::Circle},
       {tr("プッシュ/プル"), QStringLiteral("P"), ToolId::PushPull, CursorKind::PushPull},
       {tr("移動"), QStringLiteral("M"), ToolId::Move, CursorKind::Move},
       {tr("回転"), QStringLiteral("Q"), ToolId::Rotate, CursorKind::Rotate},
       {tr("オフセット"), QStringLiteral("F"), ToolId::Offset, CursorKind::Offset},
-      {tr("曲線"), QStringLiteral("C"), ToolId::Curve, CursorKind::Curve},
+      {tr("曲線"), QStringLiteral("N"), ToolId::Curve, CursorKind::Curve},
       {tr("回転体"), QStringLiteral("V"), ToolId::Revolve, CursorKind::Revolve},
       {tr("メジャー"), QStringLiteral("T"), ToolId::Measure, CursorKind::Measure},
   };
@@ -333,6 +335,7 @@ void MainWindow::buildMenus() {
            "Shift+ホイールドラッグ: パン / ダブルクリック: フォーカス<br>"
            "F2〜F7: 標準ビュー / F8: 透視・平行投影 / Shift+Z: 全体表示<br><br>"
            "<b>ツール</b><br>Space: 選択 / L: 線 / R: 矩形 / P: プッシュ/プル<br>"
+           "C: 円 / N: 曲線 / V: 回転体 / T: メジャー<br>"
            "M: 移動 / Q: 回転 / F: オフセット（移動・回転中に Ctrl でコピー、確定後 x3 で配列・/3 で等分割）<br>"
            "作図中に数値を打って Enter で寸法指定（例: 3000, 4.5m, 3000,4500）<br>"
            "Shift: 推論方向をロック / →・←・↑: X・Y・Z 軸ロック / ↓: 解除 / Esc: 中止"));
@@ -352,6 +355,7 @@ void MainWindow::activateTool(ToolId id) {
     case ToolId::Curve: active_ = curveTool_.get(); break;
     case ToolId::Revolve: active_ = revolveTool_.get(); break;
     case ToolId::Measure: active_ = measureTool_.get(); break;
+    case ToolId::Circle: active_ = circleTool_.get(); break;
   }
   toolActions_[static_cast<int>(id)]->setChecked(true);
   viewport_->setTool(active_);

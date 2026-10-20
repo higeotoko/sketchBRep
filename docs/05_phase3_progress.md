@@ -21,7 +21,7 @@
 
 ## 未着手（次の作業）
 1. `doc::Recipe` へのベース形状追加（曲線・Revolve・Loft・Sweep・通過点の数値編集は対応済み。次は通過点をビュー上でドラッグする UI）。`Modeler` API（`createCurve` / `loftObjects` / `revolveObject` / `sweepObject`、結果は非パラメトリック形状・Undo 可）は実装済み
-2. GUI: 「曲面」メニューの Loft / 回転体 / スイープ（選択に対して実行）は実装済み。曲線ツール（C）、回転体ツール（V、回転軸を 2 点で指定）も実装済み
+2. GUI: 「曲面」メニューの Loft / 回転体 / スイープ（選択に対して実行）は実装済み。曲線ツール（N）、回転体ツール（V、回転軸を 2 点で指定）も実装済み
 3. 3DM 入出力（openNURBS）、トリム曲面、曲面の Push/Pull・オフセット
 4. 複雑形状の描画最適化
 5. Windows: CI ビルド・ポータブル zip は完了、実機で起動・Push/Pull・オフセット確認済み。次はインストーラと zip の軽量化（現状約 400MB）

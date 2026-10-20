@@ -85,6 +85,14 @@ json baseToJson(const BaseFeature& base) {
                         {"width", r.width},
                         {"height", r.height}};
           },
+          [](const CircleProfile& c) {
+            return json{{"type", "circle"},
+                        {"plane",
+                         {{"origin", toJson(c.plane.origin)},
+                          {"normal", toJson(c.plane.normal)},
+                          {"xDir", toJson(c.plane.xDir)}}},
+                        {"radius", c.radius}};
+          },
           [](const PolygonProfile& p) {
             return json{{"type", "polygon"}, {"points", pointsToJson(p.points)}};
           },
@@ -145,6 +153,15 @@ BaseFeature baseFrom(const json& j) {
     r.width = j.at("width").get<double>();
     r.height = j.at("height").get<double>();
     return r;
+  }
+  if (type == "circle") {
+    CircleProfile c;
+    const json& plane = j.at("plane");
+    c.plane.origin = pointFrom(plane.at("origin"));
+    c.plane.normal = dirFrom(plane.at("normal"));
+    c.plane.xDir = dirFrom(plane.at("xDir"));
+    c.radius = j.at("radius").get<double>();
+    return c;
   }
   if (type == "polygon") return PolygonProfile{pointsFrom(j.at("points"))};
   if (type == "polyline") return PolylineCurve{pointsFrom(j.at("points"))};
