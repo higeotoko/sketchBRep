@@ -20,7 +20,9 @@ class PropertiesPanel : public QWidget {
  public:
   explicit PropertiesPanel(QWidget* parent = nullptr);
 
-  void refresh(const doc::Modeler& modeler, const std::vector<doc::ObjectId>& selection);
+  // `elementSummary` describes a face/edge selection ("面 1 / エッジ 4").
+  void refresh(const doc::Modeler& modeler, const std::vector<doc::ObjectId>& selection,
+               const QString& elementSummary = {});
 
  signals:
   void selectionChanged(const std::vector<doc::ObjectId>& ids);
@@ -35,12 +37,14 @@ class PropertiesPanel : public QWidget {
   void definitionRenamed(const std::string& definitionId, const QString& name);
 
  private:
-  void rebuildForm(const doc::Modeler& modeler, const std::vector<doc::ObjectId>& selection);
+  void rebuildForm(const doc::Modeler& modeler, const std::vector<doc::ObjectId>& selection,
+                   const QString& elementSummary);
 
   QTreeWidget* tree_ = nullptr;
   QWidget* formHost_ = nullptr;
   QFormLayout* form_ = nullptr;
   bool updating_ = false;
+  bool detailsExpanded_ = false;  // remembered across selections
 };
 
 }  // namespace sbr::app

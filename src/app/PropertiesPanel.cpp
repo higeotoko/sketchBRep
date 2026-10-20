@@ -13,6 +13,7 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QToolButton>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
@@ -113,7 +114,8 @@ PropertiesPanel::PropertiesPanel(QWidget* parent) : QWidget(parent) {
 }
 
 void PropertiesPanel::refresh(const doc::Modeler& modeler,
-                              const std::vector<doc::ObjectId>& selection) {
+                              const std::vector<doc::ObjectId>& selection,
+                              const QString& elementSummary) {
   updating_ = true;
   tree_->clear();
   std::map<doc::ObjectId, QTreeWidgetItem*> items;
@@ -155,14 +157,17 @@ void PropertiesPanel::refresh(const doc::Modeler& modeler,
   }
   tree_->expandAll();
   updating_ = false;
-  rebuildForm(modeler, selection);
+  rebuildForm(modeler, selection, elementSummary);
 }
 
 void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
-                                  const std::vector<doc::ObjectId>& selection) {
+                                  const std::vector<doc::ObjectId>& selection,
+                                  const QString& elementSummary) {
   while (form_->rowCount() > 0) form_->removeRow(0);
   if (selection.size() != 1) {
-    form_->addRow(new QLabel(selection.empty() ? tr("未選択") : tr("%1 個選択").arg(selection.size())));
+    QString text = selection.empty() ? tr("未選択") : tr("%1 個のオブジェクト").arg(selection.size());
+    if (!elementSummary.isEmpty()) text = tr("選択: %1").arg(elementSummary) + QStringLiteral("\n") + text;
+    form_->addRow(new QLabel(text));
     return;
   }
   const doc::Document& document = modeler.document();
@@ -170,19 +175,87 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
   if (!o) return;
   const doc::ObjectId id = o->id;
 
+  // ===== Basic: what you need while modelling =====================================
   auto* name = new QLineEdit(QString::fromStdString(o->name));
   connect(name, &QLineEdit::editingFinished, this, [this, id, name] {
     emit renameRequested(id, name->text());
   });
   form_->addRow(tr("名前"), name);
-  auto* idLabel = new QLabel(QString::fromStdString(o->id));
-  idLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
-  idLabel->setStyleSheet(QStringLiteral("color: gray; font-size: 9pt"));
-  form_->addRow(tr("ID"), idLabel);
+  if (!elementSummary.isEmpty()) form_->addRow(tr("選択"), new QLabel(elementSummary));
 
+  auto addParameter = [&](QFormLayout* target, const doc::Parameter& p) {
+    auto* spin = lengthSpin(p.value);
+    if (!p.isLength) spin->setSuffix(QString());
+    const std::string key = p.key;
+    const double initial = p.value;
+    connect(spin, &QDoubleSpinBox::editingFinished, this, [this, id, key, spin, initial] {
+      if (std::abs(spin->value() - initial) > 1e-9) emit parameterEdited(id, key, spin->value());
+    });
+    target->addRow(parameterLabel(p), spin);
+  };
+
+  // Own dimensions are basic; dimensions of nested inputs (Boolean operands,
+  // loft sections, ...) live in the details.
+  std::vector<doc::Parameter> nested;
+  for (const doc::Parameter& p : modeler.parameters(id)) {
+    if (p.key.rfind("in", 0) == 0) {
+      nested.push_back(p);
+    } else {
+      addParameter(form_, p);
+    }
+  }
+
+  const doc::ComponentDefinition* def = nullptr;
+  if (const auto* ref = std::get_if<doc::ComponentInstance>(&o->recipe.base)) {
+    def = document.findDefinition(ref->definitionId);
+  }
+  if (def) {
+    const std::string defId = def->id;
+    form_->addRow(new QLabel(tr("<b>共通寸法</b>（%1 個のコンポーネントに反映）")
+                                 .arg(document.instanceCount(defId))));
+    for (const doc::Object& child : def->objects) {
+      for (const doc::Parameter& p : modeler.definitionParameters(defId, child.id)) {
+        auto* spin = lengthSpin(p.value);
+        if (!p.isLength) spin->setSuffix(QString());
+        const std::string key = p.key;
+        const doc::ObjectId childId = child.id;
+        const double initial = p.value;
+        connect(spin, &QDoubleSpinBox::editingFinished, this,
+                [this, defId, childId, key, spin, initial] {
+                  if (std::abs(spin->value() - initial) > 1e-9) {
+                    emit definitionParameterEdited(defId, childId, key, spin->value());
+                  }
+                });
+        form_->addRow(QString::fromStdString(child.name) + QStringLiteral(": ") + parameterLabel(p), spin);
+      }
+    }
+  }
+
+  // ===== Details: folded, for reference ===========================================
+  auto* toggle = new QToolButton;
+  toggle->setText(tr("詳細"));
+  toggle->setCheckable(true);
+  toggle->setChecked(detailsExpanded_);
+  toggle->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+  toggle->setArrowType(detailsExpanded_ ? Qt::DownArrow : Qt::RightArrow);
+  toggle->setAutoRaise(true);
+  form_->addRow(toggle);
+
+  auto* details = new QWidget;
+  auto* detailsForm = new QFormLayout(details);
+  detailsForm->setContentsMargins(12, 0, 0, 0);
+  details->setVisible(detailsExpanded_);
+  form_->addRow(details);
+  connect(toggle, &QToolButton::toggled, this, [this, toggle, details](bool on) {
+    detailsExpanded_ = on;
+    toggle->setArrowType(on ? Qt::DownArrow : Qt::RightArrow);
+    details->setVisible(on);
+  });
+
+  detailsForm->addRow(tr("種類"), new QLabel(kindLabel(o->kind())));
   auto* tag = new QLineEdit(QString::fromStdString(o->layer));
   connect(tag, &QLineEdit::editingFinished, this, [this, id, tag] { emit tagEdited(id, tag->text()); });
-  form_->addRow(tr("タグ"), tag);
+  detailsForm->addRow(tr("タグ"), tag);
 
   if (o->kind() != doc::ObjectKind::Group) {
     auto* color = new QPushButton;
@@ -193,10 +266,9 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       const QColor chosen = QColorDialog::getColor(qc, this, tr("マテリアル色"));
       if (chosen.isValid()) emit colorEdited(id, doc::Color{chosen.redF(), chosen.greenF(), chosen.blueF()});
     });
-    form_->addRow(tr("色"), color);
+    detailsForm->addRow(tr("色"), color);
   }
 
-  // Local position (translation part of the placement).
   {
     const gp_XYZ t = o->transform.TranslationPart();
     auto* row = new QWidget;
@@ -214,70 +286,49 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
         }
       });
     }
-    form_->addRow(tr("位置 (mm)"), row);
+    detailsForm->addRow(tr("位置 (mm)"), row);
   }
-
-  form_->addRow(tr("レシピ"), new QLabel(QString::fromStdString(doc::describe(o->recipe))));
 
   switch (o->kind()) {
     case doc::ObjectKind::Solid: {
       const geom::ValidationReport r = geom::validateShape(o->shape, false);
-      form_->addRow(tr("体積"), new QLabel(QString::number(r.volume / 1e9, 'f', 6) + tr(" m³")));
-      form_->addRow(tr("B-rep"), new QLabel(r.valid ? tr("有効 (ソリッド %1 / 面 %2 / 稜線 %3)")
-                                                          .arg(r.solids).arg(r.faces).arg(r.edges)
-                                                    : tr("不正")));
+      detailsForm->addRow(tr("体積"), new QLabel(QString::number(r.volume / 1e9, 'f', 6) + tr(" m³")));
+      detailsForm->addRow(tr("B-rep"), new QLabel(r.valid ? tr("有効 (ソリッド %1 / 面 %2 / 稜線 %3)")
+                                                                .arg(r.solids).arg(r.faces).arg(r.edges)
+                                                          : tr("不正")));
       break;
     }
     case doc::ObjectKind::Face:
-      form_->addRow(tr("面積"), new QLabel(QString::number(geom::area(o->shape) / 1e6, 'f', 6) + tr(" m²")));
+      detailsForm->addRow(tr("面積"), new QLabel(QString::number(geom::area(o->shape) / 1e6, 'f', 6) + tr(" m²")));
       break;
     case doc::ObjectKind::Group:
-      form_->addRow(tr("子要素"), new QLabel(QString::number(document.children(id).size())));
+      detailsForm->addRow(tr("子要素"), new QLabel(QString::number(document.children(id).size())));
       break;
     default:
       break;
   }
 
-  for (const doc::Parameter& p : modeler.parameters(id)) {
-    auto* spin = lengthSpin(p.value);
-    if (!p.isLength) spin->setSuffix(QString());
-    const std::string key = p.key;
-    const double initial = p.value;
-    connect(spin, &QDoubleSpinBox::editingFinished, this, [this, id, key, spin, initial] {
-      if (std::abs(spin->value() - initial) > 1e-9) emit parameterEdited(id, key, spin->value());
-    });
-    form_->addRow(parameterLabel(p), spin);
+  if (!nested.empty()) {
+    detailsForm->addRow(new QLabel(tr("<b>入力の寸法</b>")));
+    for (const doc::Parameter& p : nested) addParameter(detailsForm, p);
   }
 
-  // Component instance: edit the shared definition.
-  if (const auto* ref = std::get_if<doc::ComponentInstance>(&o->recipe.base)) {
-    const doc::ComponentDefinition* def = document.findDefinition(ref->definitionId);
-    if (!def) return;
+  if (def) {
     const std::string defId = def->id;
-    auto* header = new QLabel(tr("<b>コンポーネント定義</b>（%1 インスタンス共通）")
-                                  .arg(document.instanceCount(defId)));
-    form_->addRow(header);
     auto* defName = new QLineEdit(QString::fromStdString(def->name));
     connect(defName, &QLineEdit::editingFinished, this, [this, defId, defName] {
       emit definitionRenamed(defId, defName->text());
     });
-    form_->addRow(tr("定義名"), defName);
-    for (const doc::Object& child : def->objects) {
-      for (const doc::Parameter& p : modeler.definitionParameters(defId, child.id)) {
-        auto* spin = lengthSpin(p.value);
-        const std::string key = p.key;
-        const doc::ObjectId childId = child.id;
-        const double initial = p.value;
-        connect(spin, &QDoubleSpinBox::editingFinished, this,
-                [this, defId, childId, key, spin, initial] {
-                  if (std::abs(spin->value() - initial) > 1e-9) {
-                    emit definitionParameterEdited(defId, childId, key, spin->value());
-                  }
-                });
-        form_->addRow(QString::fromStdString(child.name) + QStringLiteral(": ") + parameterLabel(p), spin);
-      }
-    }
+    detailsForm->addRow(tr("定義名"), defName);
   }
+
+  auto* recipe = new QLabel(QString::fromStdString(doc::describe(o->recipe)));
+  recipe->setWordWrap(true);
+  detailsForm->addRow(tr("履歴"), recipe);
+  auto* idLabel = new QLabel(QString::fromStdString(o->id));
+  idLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  idLabel->setStyleSheet(QStringLiteral("color: gray; font-size: 9pt"));
+  detailsForm->addRow(tr("ID"), idLabel);
 }
 
 }  // namespace sbr::app

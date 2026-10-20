@@ -4,6 +4,8 @@
 #include <optional>
 #include <vector>
 
+#include <QCursor>
+#include <QElapsedTimer>
 #include <QPoint>
 #include <QString>
 
@@ -19,6 +21,7 @@ class QKeyEvent;
 namespace sbr::app {
 
 class Viewport;
+struct ElementRef;
 
 struct ToolEvent {
   QPoint pos;  // widget logical pixels
@@ -34,7 +37,12 @@ class ToolHost {
   virtual void setStatus(const QString& text) = 0;
   virtual void setMeasurement(const QString& label, const QString& value) = 0;
   virtual void reportError(const QString& text) = 0;
+  // Whole-object selection (groups, components, results of commands).
   virtual void setSelection(const std::vector<doc::ObjectId>& ids) = 0;
+  // Face/edge selection; the owning objects become the object selection
+  // (for the panel and for Move/Rotate) without highlighting them whole.
+  virtual void setElementSelection(const std::vector<ElementRef>& elements) = 0;
+  virtual std::vector<ElementRef> elementSelection() const = 0;
   virtual std::vector<doc::ObjectId> selection() const = 0;
 };
 
@@ -44,6 +52,7 @@ class Tool {
   virtual ~Tool() = default;
 
   virtual QString name() const = 0;
+  virtual QCursor cursor() const = 0;
   virtual void activate() = 0;
   virtual void deactivate() { cancel(); }
   virtual void cancel() {}
@@ -63,13 +72,23 @@ class Tool {
 
 QString snapLabel(snap::SnapKind kind);
 
+// Click: face or edge. Double-click: plus its neighbours (face -> bounding
+// edges, edge -> adjacent faces). Triple-click: the whole object. Geometry
+// inside a group or component selects the whole group/component.
 class SelectTool : public Tool {
  public:
   using Tool::Tool;
   QString name() const override;
+  QCursor cursor() const override;
   void activate() override;
   void mousePress(const ToolEvent& e) override;
   void mouseMove(const ToolEvent& e) override;
+  bool mouseDoubleClick(const ToolEvent& e) override;
+
+ private:
+  void apply(const std::vector<ElementRef>& picked, bool additive);
+  QElapsedTimer sinceDoubleClick_;
+  QPoint doubleClickPos_;
 };
 
 // Shared inference handling (Shift lock, arrow-key axis locks).
@@ -99,6 +118,7 @@ class LineTool : public DrawingTool {
  public:
   using DrawingTool::DrawingTool;
   QString name() const override;
+  QCursor cursor() const override;
   void activate() override;
   void cancel() override;
   void mousePress(const ToolEvent& e) override;
@@ -122,6 +142,7 @@ class CurveTool : public DrawingTool {
  public:
   using DrawingTool::DrawingTool;
   QString name() const override;
+  QCursor cursor() const override;
   void activate() override;
   void cancel() override;
   void mousePress(const ToolEvent& e) override;
@@ -141,6 +162,7 @@ class RectangleTool : public DrawingTool {
  public:
   using DrawingTool::DrawingTool;
   QString name() const override;
+  QCursor cursor() const override;
   void activate() override;
   void cancel() override;
   void mousePress(const ToolEvent& e) override;
@@ -162,6 +184,7 @@ class PushPullTool : public Tool {
  public:
   using Tool::Tool;
   QString name() const override;
+  QCursor cursor() const override;
   void activate() override;
   void cancel() override;
   void mousePress(const ToolEvent& e) override;
@@ -229,6 +252,7 @@ class MoveTool : public TransformTool {
  public:
   using TransformTool::TransformTool;
   QString name() const override;
+  QCursor cursor() const override;
   void activate() override;
   void cancel() override;
   void mousePress(const ToolEvent& e) override;
@@ -246,6 +270,7 @@ class RotateTool : public TransformTool {
  public:
   using TransformTool::TransformTool;
   QString name() const override;
+  QCursor cursor() const override;
   void activate() override;
   void cancel() override;
   void mousePress(const ToolEvent& e) override;
@@ -271,6 +296,7 @@ class OffsetTool : public Tool {
  public:
   using Tool::Tool;
   QString name() const override;
+  QCursor cursor() const override;
   void activate() override;
   void cancel() override;
   void mousePress(const ToolEvent& e) override;

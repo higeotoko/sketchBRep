@@ -6,6 +6,7 @@
 #include <QMainWindow>
 
 #include "Tools.h"
+#include "Viewport.h"
 #include "sbr/doc/Modeler.h"
 
 class QAction;
@@ -31,6 +32,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   void setMeasurement(const QString& label, const QString& value) override;
   void reportError(const QString& text) override;
   void setSelection(const std::vector<doc::ObjectId>& ids) override;
+  void setElementSelection(const std::vector<ElementRef>& elements) override;
+  std::vector<ElementRef> elementSelection() const override { return elements_; }
   std::vector<doc::ObjectId> selection() const override { return selection_; }
 
   // Used by tests and the command line.
@@ -67,6 +70,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   void explodeSelection();
   void booleanSelection(doc::BooleanKind kind);
   bool report(const Status& status);
+  QString elementSummary() const;
   void undo();
   void redo();
 
@@ -95,6 +99,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   QAction* perspectiveAction_ = nullptr;
 
   std::vector<doc::ObjectId> selection_;
+  std::vector<ElementRef> elements_;
   QString currentPath_;
   QString lastError_;
   bool refreshPending_ = false;

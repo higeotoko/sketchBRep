@@ -8,6 +8,7 @@
 #include <optional>
 #include <vector>
 
+#include <QCursor>
 #include <QPoint>
 #include <QTimer>
 #include <QWidget>
@@ -32,7 +33,18 @@ struct FacePick {
   gp_Pnt point;      // hit point
 };
 
-enum class PickMode { None, Objects, Faces };
+enum class PickMode { None, Objects, Faces, Elements };
+
+// A face or edge of an object, identified by its index in the object's
+// canonical world shape (TopExp::MapShapes order).
+struct ElementRef {
+  doc::ObjectId objectId;
+  TopAbs_ShapeEnum type = TopAbs_FACE;
+  int index = 0;
+  bool operator==(const ElementRef& o) const {
+    return objectId == o.objectId && type == o.type && index == o.index;
+  }
+};
 
 class Viewport : public QWidget {
   Q_OBJECT
@@ -64,6 +76,14 @@ class Viewport : public QWidget {
   void setPickMode(PickMode mode);
   std::optional<FacePick> pickFace(const QPoint& pos);
   std::optional<doc::ObjectId> pickObject(const QPoint& pos);
+  // Face or edge under the cursor (PickMode::Elements).
+  std::optional<ElementRef> pickElement(const QPoint& pos);
+  // Face -> face + bounding edges; edge -> edge + adjacent faces.
+  std::vector<ElementRef> withNeighbours(const ElementRef& element) const;
+  // Every face and edge of the object.
+  std::vector<ElementRef> allElements(const doc::ObjectId& id) const;
+  void setHighlightedElements(const std::vector<ElementRef>& elements);
+  void setToolCursor(const QCursor& cursor);
   void clearHover();
 
   // --- transient feedback ---------------------------------------------------
@@ -117,6 +137,8 @@ class Viewport : public QWidget {
     TopoDS_Shape displayShape;
     TopTools_IndexedMapOfShape displayFaces;
     TopTools_IndexedMapOfShape canonicalFaces;
+    TopTools_IndexedMapOfShape displayEdges;
+    TopTools_IndexedMapOfShape canonicalEdges;
   };
 
   void initViewer();
@@ -145,6 +167,10 @@ class Viewport : public QWidget {
   Handle(AIS_Shape) snapMarker_;
   Handle(AIS_Shape) inferenceLine_;
   Handle(AIS_Shape) referenceLine_;
+  Handle(AIS_Shape) highlightFaces_;
+  Handle(AIS_Shape) highlightEdges_;
+  std::vector<ElementRef> highlighted_;
+  QCursor toolCursor_;
 
   QTimer syncTimer_;
   QSize glSize_;  // native window size the GL view was last resized to

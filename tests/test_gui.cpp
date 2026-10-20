@@ -8,6 +8,7 @@
 #include <QApplication>
 #include <QDir>
 #include <QLineEdit>
+#include <QAction>
 #include <QMouseEvent>
 #include <QScreen>
 #include <QtTest/QtTest>
@@ -79,6 +80,9 @@ class GuiPhase1 : public QObject {
   void offsetToolInwards();
   void groupIsSelectedAsAWhole();
   void curveToolOpenAndClosed();
+  void selectFacesEdgesAndWholeObject();
+  void pushPullDoesNotSelectWholeObject();
+  void eachToolHasItsCursor();
 };
 
 namespace {
@@ -355,6 +359,96 @@ void GuiPhase1::curveToolOpenAndClosed() {
   QCOMPARE(m.document().objects().size(), std::size_t(2));
   const TopoDS_Shape closed = m.document().objects().back().shape;
   QVERIFY(BRep_Tool::IsClosed(closed));
+}
+
+namespace {
+void doubleClick(QWidget* w, const QPoint& pos) {
+  // Qt order: press, release, double-click, release.
+  click(w, pos);
+  send(w, QEvent::MouseButtonDblClick, pos, Qt::LeftButton, Qt::LeftButton);
+  send(w, QEvent::MouseButtonRelease, pos, Qt::LeftButton, Qt::NoButton);
+}
+}  // namespace
+
+void GuiPhase1::selectFacesEdgesAndWholeObject() {
+  Fixture f;
+  QVERIFY(f.setUp(500, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+  f.window.activateTool(MainWindow::ToolId::Select);
+  const QPoint top = f.vp->toWidget(gp_Pnt(500, 500, 1000));
+
+  click(f.vp, top);  // single click: only the face
+  QCOMPARE(f.window.elementSelection().size(), std::size_t(1));
+  QCOMPARE(f.window.elementSelection().front().type, TopAbs_FACE);
+  QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{box});  // owner for the panel
+
+  doubleClick(f.vp, top);  // face + its 4 edges
+  QCOMPARE(f.window.elementSelection().size(), std::size_t(5));
+  if (const QString shot = qEnvironmentVariable("SBR_SELECT_SHOT"); !shot.isEmpty()) {
+    QTest::qWait(100);
+    QVERIFY(f.window.screen()->grabWindow(0).copy(f.window.frameGeometry()).save(shot));
+  }
+
+  auto deleteAction = [&] {
+    for (QAction* a : f.window.findChildren<QAction*>()) {
+      if (a->text() == QStringLiteral("削除")) return a;
+    }
+    return static_cast<QAction*>(nullptr);
+  }();
+  QVERIFY(deleteAction);
+  // Faces cannot be deleted on their own: the solid stays.
+  deleteAction->trigger();
+  QVERIFY(!f.window.lastError().isEmpty());
+  QVERIFY(m.document().find(box));
+
+  click(f.vp, top);  // third click right after the double-click: whole object
+  QCOMPARE(f.window.elementSelection().size(), std::size_t(6 + 12));
+  deleteAction->trigger();
+  QTest::qWait(30);
+  QVERIFY(!m.document().find(box));
+  QVERIFY(m.undo());
+
+  QTest::qWait(500);  // let the triple-click window expire
+  click(f.vp, f.vp->toWidget(gp_Pnt(5000, 5000, 0)));  // empty space clears
+  QVERIFY(f.window.elementSelection().empty());
+  QVERIFY(f.window.selection().empty());
+}
+
+void GuiPhase1::pushPullDoesNotSelectWholeObject() {
+  Fixture f;
+  QVERIFY(f.setUp(500, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+  f.window.activateTool(MainWindow::ToolId::PushPull);
+  QTest::qWait(30);
+  click(f.vp, f.vp->toWidget(gp_Pnt(500, 500, 1000)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(500, 500, 1500)));
+  type(f.vp, QStringLiteral("500"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QVERIFY(std::abs(geom::exactBounds(m.document().worldShape(box)).CornerMax().Z() - 1500) < 1e-6);
+  QVERIFY(f.window.selection().empty());
+  QVERIFY(f.window.elementSelection().empty());
+}
+
+void GuiPhase1::eachToolHasItsCursor() {
+  Fixture f;
+  QVERIFY(f.setUp());
+  f.window.activateTool(MainWindow::ToolId::Select);
+  QCOMPARE(f.vp->cursor().shape(), Qt::ArrowCursor);
+  for (auto id : {MainWindow::ToolId::Line, MainWindow::ToolId::Rectangle, MainWindow::ToolId::PushPull,
+                  MainWindow::ToolId::Move, MainWindow::ToolId::Rotate, MainWindow::ToolId::Offset,
+                  MainWindow::ToolId::Curve}) {
+    f.window.activateTool(id);
+    QCOMPARE(f.vp->cursor().shape(), Qt::BitmapCursor);
+    QVERIFY(!f.vp->cursor().pixmap().isNull());
+  }
+  // Orbiting shows a grabbing hand and restores the tool cursor afterwards.
+  const QPoint c = f.vp->rect().center();
+  send(f.vp, QEvent::MouseButtonPress, c, Qt::MiddleButton, Qt::MiddleButton);
+  QCOMPARE(f.vp->cursor().shape(), Qt::ClosedHandCursor);
+  send(f.vp, QEvent::MouseButtonRelease, c, Qt::MiddleButton, Qt::NoButton);
+  QCOMPARE(f.vp->cursor().shape(), Qt::BitmapCursor);
 }
 
 QTEST_MAIN(GuiPhase1)

@@ -345,6 +345,7 @@ void MainWindow::activateTool(ToolId id) {
   }
   toolActions_[static_cast<int>(id)]->setChecked(true);
   viewport_->setTool(active_);
+  viewport_->setToolCursor(active_->cursor());
   userTyping_ = false;
   active_->activate();
   viewport_->setFocus();
@@ -367,8 +368,32 @@ void MainWindow::reportError(const QString& text) {
 
 void MainWindow::setSelection(const std::vector<doc::ObjectId>& ids) {
   selection_ = ids;
+  elements_.clear();
+  viewport_->setHighlightedElements({});
   viewport_->setSelection(ids);
   refreshPanels();
+}
+
+void MainWindow::setElementSelection(const std::vector<ElementRef>& elements) {
+  elements_ = elements;
+  // Owners become the object selection (panel, Move/Rotate targets) but are
+  // not highlighted as a whole: only the picked faces/edges are.
+  selection_.clear();
+  for (const ElementRef& e : elements) {
+    if (std::find(selection_.begin(), selection_.end(), e.objectId) == selection_.end()) {
+      selection_.push_back(e.objectId);
+    }
+  }
+  viewport_->setSelection({});
+  viewport_->setHighlightedElements(elements);
+  refreshPanels();
+}
+
+QString MainWindow::elementSummary() const {
+  if (elements_.empty()) return {};
+  int faces = 0, edges = 0;
+  for (const ElementRef& e : elements_) (e.type == TopAbs_FACE ? faces : edges)++;
+  return tr("面 %1 / エッジ %2").arg(faces).arg(edges);
 }
 
 // --- document ---------------------------------------------------------------------
@@ -385,14 +410,19 @@ void MainWindow::onDocumentChanged() {
                                       return modeler_.document().find(id) == nullptr;
                                     }),
                      selection_.end());
-    viewport_->setSelection(selection_);
+    elements_.erase(std::remove_if(elements_.begin(), elements_.end(),
+                                   [this](const ElementRef& e) {
+                                     return modeler_.document().find(e.objectId) == nullptr;
+                                   }),
+                    elements_.end());
+    viewport_->setSelection(elements_.empty() ? selection_ : std::vector<doc::ObjectId>{});
     refreshPanels();
     updateTitle();
   });
 }
 
 void MainWindow::refreshPanels() {
-  panel_->refresh(modeler_, selection_);
+  panel_->refresh(modeler_, selection_, elementSummary());
   const auto& h = modeler_.history();
   undoAction_->setEnabled(h.canUndo());
   redoAction_->setEnabled(h.canRedo());
@@ -430,6 +460,20 @@ void MainWindow::redo() {
 
 void MainWindow::deleteSelection() {
   if (selection_.empty()) return;
+  if (!elements_.empty()) {
+    // Faces/edges cannot be removed from a solid on their own yet; only
+    // delete objects whose geometry is selected completely (triple-click).
+    for (const doc::ObjectId& id : selection_) {
+      const auto all = viewport_->allElements(id);
+      const bool whole = std::all_of(all.begin(), all.end(), [this](const ElementRef& e) {
+        return std::find(elements_.begin(), elements_.end(), e) != elements_.end();
+      });
+      if (!whole) {
+        reportError(tr("面・エッジ単体の削除はまだできません。トリプルクリックでオブジェクト全体を選んでから削除してください"));
+        return;
+      }
+    }
+  }
   const Status s = modeler_.remove(selection_);
   if (!s) reportError(QString::fromStdString(s.message()));
   setSelection({});

@@ -17,6 +17,7 @@
 #include <TopoDS_Wire.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 
+#include "Cursors.h"
 #include "Viewport.h"
 #include "sbr/Units.h"
 #include "sbr/geom/Freeform.h"
@@ -56,35 +57,84 @@ QString snapLabel(snap::SnapKind kind) {
 // --- Select -------------------------------------------------------------------
 
 QString SelectTool::name() const { return QObject::tr("選択"); }
+QCursor SelectTool::cursor() const { return toolCursor(CursorKind::Select); }
 
 void SelectTool::activate() {
-  host_.viewport().setPickMode(PickMode::Objects);
+  host_.viewport().setPickMode(PickMode::Elements);
   host_.setMeasurement(QString(), QString());
-  host_.setStatus(QObject::tr("クリックで選択 / Shift+クリックで追加・解除 / ダブルクリックでフォーカス / Deleteで削除"));
+  host_.setStatus(QObject::tr("クリック: 面・エッジ / ダブルクリック: 隣接も選択 / トリプルクリック: オブジェクト全体 / "
+                              "Shift で追加・解除"));
 }
 
-void SelectTool::mouseMove(const ToolEvent& e) { host_.viewport().pickObject(e.pos); }
+void SelectTool::mouseMove(const ToolEvent& e) { host_.viewport().pickElement(e.pos); }
 
-void SelectTool::mousePress(const ToolEvent& e) {
-  // Clicking geometry inside a group selects the top-level group, as in
-  // SketchUp. Children can be selected individually in the object panel.
-  auto id = host_.viewport().pickObject(e.pos);
-  if (id) id = host_.modeler().document().rootOf(*id);
-  std::vector<doc::ObjectId> selection = host_.selection();
-  if (e.modifiers & Qt::ShiftModifier) {
-    if (id) {
-      const auto it = std::find(selection.begin(), selection.end(), *id);
-      if (it == selection.end()) {
-        selection.push_back(*id);
-      } else {
+void SelectTool::apply(const std::vector<ElementRef>& picked, bool additive) {
+  std::vector<ElementRef> selection = additive ? host_.elementSelection() : std::vector<ElementRef>{};
+  if (additive) {
+    // Shift toggles: remove when everything picked is already selected.
+    const bool allSelected = std::all_of(picked.begin(), picked.end(), [&](const ElementRef& p) {
+      return std::find(selection.begin(), selection.end(), p) != selection.end();
+    });
+    for (const ElementRef& p : picked) {
+      const auto it = std::find(selection.begin(), selection.end(), p);
+      if (allSelected && it != selection.end()) {
         selection.erase(it);
+      } else if (!allSelected && it == selection.end()) {
+        selection.push_back(p);
       }
     }
   } else {
-    selection.clear();
-    if (id) selection.push_back(*id);
+    selection = picked;
   }
-  host_.setSelection(selection);
+  host_.setElementSelection(selection);
+}
+
+void SelectTool::mousePress(const ToolEvent& e) {
+  const bool additive = e.modifiers & Qt::ShiftModifier;
+  const auto picked = host_.viewport().pickElement(e.pos);
+  if (!picked) {
+    if (!additive) host_.setSelection({});
+    return;
+  }
+  const doc::Document& document = host_.modeler().document();
+  const doc::ObjectId root = document.rootOf(picked->objectId);
+  const doc::Object* owner = document.find(picked->objectId);
+  // Groups and components are picked as a whole, like SketchUp.
+  if (root != picked->objectId || (owner && owner->kind() == doc::ObjectKind::Instance)) {
+    std::vector<doc::ObjectId> selection = additive ? host_.selection() : std::vector<doc::ObjectId>{};
+    const auto it = std::find(selection.begin(), selection.end(), root);
+    if (it == selection.end()) {
+      selection.push_back(root);
+    } else {
+      selection.erase(it);
+    }
+    host_.setSelection(selection);
+    return;
+  }
+  // Third click shortly after a double-click: the whole object.
+  const bool triple = sinceDoubleClick_.isValid() && sinceDoubleClick_.elapsed() < 450 &&
+                      (e.pos - doubleClickPos_).manhattanLength() < 6;
+  sinceDoubleClick_.invalidate();
+  if (triple) {
+    apply(host_.viewport().allElements(picked->objectId), additive);
+    return;
+  }
+  apply({*picked}, additive);
+}
+
+bool SelectTool::mouseDoubleClick(const ToolEvent& e) {
+  const auto picked = host_.viewport().pickElement(e.pos);
+  if (!picked) return false;  // empty space: let the viewport focus/fit
+  const doc::Document& document = host_.modeler().document();
+  const doc::Object* owner = document.find(picked->objectId);
+  if (document.rootOf(picked->objectId) != picked->objectId ||
+      (owner && owner->kind() == doc::ObjectKind::Instance)) {
+    return false;  // groups/components: focus on them
+  }
+  sinceDoubleClick_.start();
+  doubleClickPos_ = e.pos;
+  apply(host_.viewport().withNeighbours(*picked), e.modifiers & Qt::ShiftModifier);
+  return true;
 }
 
 // --- Drawing base ---------------------------------------------------------------
@@ -175,6 +225,7 @@ QString DrawingTool::lockSuffix() const {
 // --- Line -----------------------------------------------------------------------
 
 QString LineTool::name() const { return QObject::tr("線"); }
+QCursor LineTool::cursor() const { return toolCursor(CursorKind::Pencil); }
 
 void LineTool::activate() {
   resetTracking();
@@ -299,6 +350,7 @@ void LineTool::applyMeasurement(const QString& text) {
 // --- Curve ----------------------------------------------------------------------
 
 QString CurveTool::name() const { return QObject::tr("曲線"); }
+QCursor CurveTool::cursor() const { return toolCursor(CursorKind::Curve); }
 
 void CurveTool::activate() {
   resetTracking();
@@ -357,11 +409,7 @@ void CurveTool::applyMeasurement(const QString&) { finish(false); }
 void CurveTool::finish(bool closed) {
   if (points_.size() >= 2) {
     auto id = host_.modeler().createCurve(points_, closed);
-    if (!id) {
-      host_.reportError(QString::fromStdString(id.error()));
-    } else {
-      host_.setSelection({id.value()});
-    }
+    if (!id) host_.reportError(QString::fromStdString(id.error()));
   }
   cancel();
   activate();
@@ -383,6 +431,7 @@ void CurveTool::updatePreview() {
 // --- Rectangle --------------------------------------------------------------------
 
 QString RectangleTool::name() const { return QObject::tr("矩形"); }
+QCursor RectangleTool::cursor() const { return toolCursor(CursorKind::Rectangle); }
 
 void RectangleTool::activate() {
   resetTracking();
@@ -442,7 +491,6 @@ void RectangleTool::commit(double u, double v) {
     host_.reportError(QString::fromStdString(id.error()));
   } else {
     lastCreated_ = id.value();
-    host_.setSelection({id.value()});
   }
   reset();
   host_.setStatus(QObject::tr("最初の角をクリック（寸法を入力すると直前の矩形を変更）"));
@@ -479,6 +527,7 @@ void RectangleTool::applyMeasurement(const QString& text) {
 // --- Push/Pull --------------------------------------------------------------------
 
 QString PushPullTool::name() const { return QObject::tr("プッシュ/プル"); }
+QCursor PushPullTool::cursor() const { return toolCursor(CursorKind::PushPull); }
 
 void PushPullTool::activate() {
   host_.viewport().setPickMode(PickMode::Faces);
@@ -557,7 +606,6 @@ void PushPullTool::mousePress(const ToolEvent& e) {
   dragging_ = true;
   host_.viewport().clearHover();
   host_.viewport().setPickMode(PickMode::None);
-  host_.setSelection({objectId_});
 }
 
 void PushPullTool::commit(double distance) {
@@ -677,6 +725,7 @@ bool TransformTool::redoLast(const gp_Trsf& delta, int count) {
 // --- Move ------------------------------------------------------------------------------
 
 QString MoveTool::name() const { return QObject::tr("移動"); }
+QCursor MoveTool::cursor() const { return toolCursor(CursorKind::Move); }
 
 void MoveTool::activate() {
   resetTracking();
@@ -792,6 +841,7 @@ void MoveTool::applyMeasurement(const QString& text) {
 // --- Rotate ------------------------------------------------------------------------------
 
 QString RotateTool::name() const { return QObject::tr("回転"); }
+QCursor RotateTool::cursor() const { return toolCursor(CursorKind::Rotate); }
 
 void RotateTool::activate() {
   resetTracking();
@@ -961,6 +1011,7 @@ double signedBoundaryDistance(const TopoDS_Face& face, const gp_Pnt& p) {
 }  // namespace
 
 QString OffsetTool::name() const { return QObject::tr("オフセット"); }
+QCursor OffsetTool::cursor() const { return toolCursor(CursorKind::Offset); }
 
 void OffsetTool::activate() {
   host_.viewport().setPickMode(PickMode::Faces);
@@ -1029,7 +1080,6 @@ void OffsetTool::commit(double distance) {
                           .arg(QString::fromStdString(result.error())));
   } else {
     last_ = LastOffset{result->id, result->parameterKey};
-    host_.setSelection({result->id});
   }
   reset();
   host_.setMeasurement(QObject::tr("オフセット距離"), QString::number(distance, 'f', 1));

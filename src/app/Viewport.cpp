@@ -22,6 +22,8 @@
 #include <StdSelect_BRepOwner.hxx>
 #include <StdSelect_ViewerSelector3d.hxx>
 #include <TopExp.hxx>
+#include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
+#include <TopTools_ListOfShape.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Vertex.hxx>
@@ -182,6 +184,7 @@ void Viewport::mousePressEvent(QMouseEvent* event) {
   if (event->button() == Qt::MiddleButton) {
     drag_ = (event->modifiers() & Qt::ShiftModifier) ? Drag::Pan : Drag::Orbit;
     lastDragPos_ = event->position().toPoint();
+    setCursor(drag_ == Drag::Pan ? Qt::SizeAllCursor : Qt::ClosedHandCursor);
     return;
   }
   if (event->button() == Qt::LeftButton && tool_) {
@@ -192,6 +195,7 @@ void Viewport::mousePressEvent(QMouseEvent* event) {
 void Viewport::mouseReleaseEvent(QMouseEvent* event) {
   if (event->button() == Qt::MiddleButton) {
     drag_ = Drag::None;
+    setCursor(toolCursor_);
     return;
   }
   if (event->button() == Qt::LeftButton && tool_) {
@@ -277,6 +281,10 @@ Handle(AIS_Shape) Viewport::makeDisplay(const doc::Object& object, Entry& entry)
   entry.canonicalFaces.Clear();
   TopExp::MapShapes(entry.displayShape, TopAbs_FACE, entry.displayFaces);
   TopExp::MapShapes(entry.canonicalWorld, TopAbs_FACE, entry.canonicalFaces);
+  entry.displayEdges.Clear();
+  entry.canonicalEdges.Clear();
+  TopExp::MapShapes(entry.displayShape, TopAbs_EDGE, entry.displayEdges);
+  TopExp::MapShapes(entry.canonicalWorld, TopAbs_EDGE, entry.canonicalEdges);
 
   Handle(AIS_Shape) ais = new AIS_Shape(entry.displayShape);
   if (object.kind() == doc::ObjectKind::Curve) {
@@ -296,6 +304,11 @@ void Viewport::applyPickMode(const Handle(AIS_Shape)& ais) {
   switch (pickMode_) {
     case PickMode::Objects: context_->Activate(ais, 0); break;
     case PickMode::Faces: context_->Activate(ais, AIS_Shape::SelectionMode(TopAbs_FACE)); break;
+    case PickMode::Elements:
+      // Edges first so that thin edges win over the faces they bound.
+      context_->Activate(ais, AIS_Shape::SelectionMode(TopAbs_EDGE));
+      context_->Activate(ais, AIS_Shape::SelectionMode(TopAbs_FACE));
+      break;
     case PickMode::None: break;
   }
 }
@@ -354,7 +367,16 @@ void Viewport::syncNow() {
     snapShapes.push_back(found->second.canonicalWorld);
   }
   inference_.setShapes(snapShapes);
-  redraw();
+  // Display copies may have been rebuilt: refresh the element overlay.
+  std::vector<ElementRef> still;
+  for (const ElementRef& e : highlighted_) {
+    const auto it = entries_.find(e.objectId);
+    if (it == entries_.end()) continue;
+    const int count = e.type == TopAbs_FACE ? it->second.displayFaces.Extent()
+                                            : it->second.displayEdges.Extent();
+    if (e.index <= count) still.push_back(e);
+  }
+  setHighlightedElements(still);
 }
 
 void Viewport::setSelection(const std::vector<doc::ObjectId>& ids) {
@@ -483,6 +505,112 @@ std::optional<doc::ObjectId> Viewport::pickObject(const QPoint& pos) {
   redraw();
   if (!context_->HasDetected()) return std::nullopt;
   return idOf(context_->DetectedInteractive());
+}
+
+std::optional<ElementRef> Viewport::pickElement(const QPoint& pos) {
+  if (view_.IsNull() || pickMode_ != PickMode::Elements) return std::nullopt;
+  const QPoint p = devicePos(pos);
+  context_->MoveTo(p.x(), p.y(), view_, Standard_False);
+  redraw();
+  if (!context_->HasDetected()) return std::nullopt;
+  Handle(StdSelect_BRepOwner) owner = Handle(StdSelect_BRepOwner)::DownCast(context_->DetectedOwner());
+  if (owner.IsNull()) return std::nullopt;
+  const auto id = idOf(context_->DetectedInteractive());
+  if (!id) return std::nullopt;
+  const Entry& entry = entries_.at(*id);
+  const TopAbs_ShapeEnum type = owner->Shape().ShapeType();
+  int index = 0;
+  if (type == TopAbs_FACE) {
+    index = entry.displayFaces.FindIndex(owner->Shape());
+  } else if (type == TopAbs_EDGE) {
+    index = entry.displayEdges.FindIndex(owner->Shape());
+  }
+  if (index < 1) return std::nullopt;
+  return ElementRef{*id, type, index};
+}
+
+std::vector<ElementRef> Viewport::withNeighbours(const ElementRef& element) const {
+  std::vector<ElementRef> out{element};
+  const auto it = entries_.find(element.objectId);
+  if (it == entries_.end()) return out;
+  const Entry& entry = it->second;
+  if (element.type == TopAbs_FACE && element.index <= entry.canonicalFaces.Extent()) {
+    TopTools_IndexedMapOfShape edges;
+    TopExp::MapShapes(entry.canonicalFaces(element.index), TopAbs_EDGE, edges);
+    for (int i = 1; i <= edges.Extent(); ++i) {
+      const int index = entry.canonicalEdges.FindIndex(edges(i));
+      if (index > 0) out.push_back(ElementRef{element.objectId, TopAbs_EDGE, index});
+    }
+  } else if (element.type == TopAbs_EDGE && element.index <= entry.canonicalEdges.Extent()) {
+    TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
+    TopExp::MapShapesAndUniqueAncestors(entry.canonicalWorld, TopAbs_EDGE, TopAbs_FACE, edgeFaces);
+    const TopoDS_Shape& edge = entry.canonicalEdges(element.index);
+    if (edgeFaces.Contains(edge)) {
+      for (const TopoDS_Shape& face : edgeFaces.FindFromKey(edge)) {
+        const int index = entry.canonicalFaces.FindIndex(face);
+        if (index > 0) out.push_back(ElementRef{element.objectId, TopAbs_FACE, index});
+      }
+    }
+  }
+  return out;
+}
+
+std::vector<ElementRef> Viewport::allElements(const doc::ObjectId& id) const {
+  std::vector<ElementRef> out;
+  const auto it = entries_.find(id);
+  if (it == entries_.end()) return out;
+  for (int i = 1; i <= it->second.canonicalFaces.Extent(); ++i) out.push_back({id, TopAbs_FACE, i});
+  for (int i = 1; i <= it->second.canonicalEdges.Extent(); ++i) out.push_back({id, TopAbs_EDGE, i});
+  return out;
+}
+
+void Viewport::setHighlightedElements(const std::vector<ElementRef>& elements) {
+  highlighted_ = elements;
+  if (view_.IsNull()) return;
+  for (Handle(AIS_Shape)* overlay : {&highlightFaces_, &highlightEdges_}) {
+    if (!overlay->IsNull()) context_->Remove(*overlay, Standard_False);
+    overlay->Nullify();
+  }
+  // Built from the display copies (already tessellated), never from the
+  // canonical shapes.
+  TopoDS_Compound faces, edges;
+  BRep_Builder builder;
+  builder.MakeCompound(faces);
+  builder.MakeCompound(edges);
+  bool anyFace = false, anyEdge = false;
+  for (const ElementRef& e : elements) {
+    const auto it = entries_.find(e.objectId);
+    if (it == entries_.end()) continue;
+    const Entry& entry = it->second;
+    if (e.type == TopAbs_FACE && e.index <= entry.displayFaces.Extent()) {
+      builder.Add(faces, entry.displayFaces(e.index));
+      anyFace = true;
+    } else if (e.type == TopAbs_EDGE && e.index <= entry.displayEdges.Extent()) {
+      builder.Add(edges, entry.displayEdges(e.index));
+      anyEdge = true;
+    }
+  }
+  if (anyFace) {
+    highlightFaces_ = new AIS_Shape(faces);
+    highlightFaces_->SetColor(kSelectedColor);
+    highlightFaces_->SetTransparency(0.35);
+    highlightFaces_->Attributes()->SetFaceBoundaryDraw(Standard_False);
+    highlightFaces_->SetZLayer(Graphic3d_ZLayerId_Top);
+    context_->Display(highlightFaces_, AIS_Shaded, -1, Standard_False);
+  }
+  if (anyEdge) {
+    highlightEdges_ = new AIS_Shape(edges);
+    highlightEdges_->SetColor(rgb(0.1, 0.35, 0.95));
+    highlightEdges_->SetWidth(3.0);
+    highlightEdges_->SetZLayer(Graphic3d_ZLayerId_Top);
+    context_->Display(highlightEdges_, AIS_WireFrame, -1, Standard_False);
+  }
+  redraw();
+}
+
+void Viewport::setToolCursor(const QCursor& cursor) {
+  toolCursor_ = cursor;
+  if (drag_ == Drag::None) setCursor(cursor);
 }
 
 void Viewport::clearHover() {
