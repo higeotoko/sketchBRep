@@ -108,6 +108,8 @@ class Modeler {
   // other shapes produce a new non-parametric object.
   Result<ObjectId> revolveObject(const ObjectId& profile, const gp_Ax1& axis, double angleRadians);
   Result<ObjectId> sweepObject(const ObjectId& profile, const ObjectId& spine);
+  // Replaces the through-points of a NURBS curve object (local coordinates).
+  Status setCurvePoints(const ObjectId& id, const std::vector<gp_Pnt>& points);
 
   bool undo() { return history_.undo(); }
   bool redo() { return history_.redo(); }

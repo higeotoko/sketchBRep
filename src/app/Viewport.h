@@ -176,6 +176,7 @@ class Viewport : public QWidget {
   QSize glSize_;  // native window size the GL view was last resized to
   enum class Drag { None, Orbit, Pan } drag_ = Drag::None;
   QPoint lastDragPos_;
+  gp_Pnt orbitPivot_;
 };
 
 }  // namespace sbr::app

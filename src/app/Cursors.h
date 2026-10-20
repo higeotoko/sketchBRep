@@ -3,11 +3,14 @@
 // halo so they read on both dark edges and light faces.
 
 #include <QCursor>
+#include <QIcon>
 
 namespace sbr::app {
 
-enum class CursorKind { Select, Pencil, Rectangle, Curve, PushPull, Move, Rotate, Offset };
+enum class CursorKind { Select, Pencil, Rectangle, Curve, PushPull, Move, Rotate, Offset, Revolve };
 
 QCursor toolCursor(CursorKind kind);
+// Toolbar icon with the same drawing as the cursor.
+QIcon toolIcon(CursorKind kind);
 
 }  // namespace sbr::app

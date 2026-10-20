@@ -630,10 +630,18 @@ void PushPullTool::commit(double distance) {
   for (const auto& p : m.parameters(objectId_)) {
     if (p.key == result->parameterKey) after = p.value;
   }
+  lastDistance_ = distance;
   // Typed values are measured along the drag direction.
   last_ = LastPush{result->id, result->parameterKey, base, (after - base) / std::abs(distance)};
   reset();
   host_.setMeasurement(QObject::tr("距離"), mm(distance));
+}
+
+bool PushPullTool::mouseDoubleClick(const ToolEvent&) {
+  // The first click of the double-click already started a drag on the face.
+  if (!dragging_ || !lastDistance_ || std::abs(distance_) > tolerance::kMinDimension) return false;
+  commit(*lastDistance_);
+  return true;
 }
 
 void PushPullTool::applyMeasurement(const QString& text) {
@@ -1102,6 +1110,106 @@ void OffsetTool::applyMeasurement(const QString& text) {
     return;
   }
   host_.reportError(QObject::tr("面をクリックしてから距離を入力してください"));
+}
+
+// --- Revolve -------------------------------------------------------------------------
+
+QString RevolveTool::name() const { return QObject::tr("回転体"); }
+QCursor RevolveTool::cursor() const { return toolCursor(CursorKind::Revolve); }
+
+void RevolveTool::activate() {
+  resetTracking();
+  reset();
+  host_.setMeasurement(QObject::tr("角度"), QString());
+}
+
+void RevolveTool::reset() {
+  stage_ = Stage::Profile;
+  resetLock();
+  host_.viewport().clearPreview();
+  host_.viewport().hideSnap();
+  host_.viewport().setPickMode(PickMode::Faces);
+  host_.setStatus(QObject::tr("回転させる面（押し出し前のプロファイル）をクリック"));
+}
+
+void RevolveTool::cancel() { reset(); }
+
+void RevolveTool::mouseMove(const ToolEvent& e) {
+  switch (stage_) {
+    case Stage::Profile:
+      host_.viewport().pickFace(e.pos);
+      return;
+    case Stage::AxisStart: {
+      const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
+      host_.setStatus(QObject::tr("回転軸の 1 点目をクリック  [%1]").arg(snapLabel(r.kind)));
+      return;
+    }
+    case Stage::AxisEnd: {
+      const snap::SnapResult r = snapAt(e, axisStart_, std::nullopt);
+      if (r.valid() && r.point.Distance(axisStart_) > tolerance::kMinDimension) {
+        host_.viewport().setPreview(BRepBuilderAPI_MakeEdge(axisStart_, r.point).Edge());
+      }
+      host_.setStatus(QObject::tr("回転軸の 2 点目をクリック  [%1]").arg(snapLabel(r.kind)) + lockSuffix());
+      return;
+    }
+  }
+}
+
+void RevolveTool::mousePress(const ToolEvent& e) {
+  switch (stage_) {
+    case Stage::Profile: {
+      const auto pick = host_.viewport().pickFace(e.pos);
+      if (!pick) return;
+      const doc::Object* o = host_.modeler().document().find(pick->objectId);
+      if (!o || o->kind() != doc::ObjectKind::Face) {
+        host_.reportError(QObject::tr("回転できるのは押し出し前の面（プロファイル）です"));
+        return;
+      }
+      profileId_ = pick->objectId;
+      host_.viewport().clearHover();
+      host_.viewport().setPickMode(PickMode::None);
+      stage_ = Stage::AxisStart;
+      host_.setStatus(QObject::tr("回転軸の 1 点目をクリック"));
+      return;
+    }
+    case Stage::AxisStart: {
+      const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
+      if (!r.valid()) return;
+      axisStart_ = r.point;
+      stage_ = Stage::AxisEnd;
+      return;
+    }
+    case Stage::AxisEnd: {
+      const snap::SnapResult r = snapAt(e, axisStart_, std::nullopt);
+      if (!r.valid() || r.point.Distance(axisStart_) < tolerance::kMinDimension) return;
+      const gp_Ax1 axis(axisStart_, gp_Dir(gp_Vec(axisStart_, r.point)));
+      auto id = host_.modeler().revolveObject(profileId_, axis, 2 * M_PI);
+      if (!id) {
+        host_.reportError(QObject::tr("回転体を作れませんでした: %1").arg(QString::fromStdString(id.error())));
+        reset();
+        return;
+      }
+      last_.reset();
+      for (const doc::Parameter& p : host_.modeler().parameters(*id)) {
+        if (p.key.size() > 6 && p.key.compare(p.key.size() - 6, 6, ".angle") == 0) last_ = {{*id, p.key}};
+      }
+      reset();
+      host_.setMeasurement(QObject::tr("角度"), QStringLiteral("360"));
+      host_.setStatus(QObject::tr("回転体を作成しました（角度を入力すると変更できます）"));
+      return;
+    }
+  }
+}
+
+void RevolveTool::applyMeasurement(const QString& text) {
+  bool ok = false;
+  const double degrees = text.trimmed().toDouble(&ok);
+  if (!ok || !last_) {
+    host_.reportError(QObject::tr("回転体を作ってから角度を入力してください"));
+    return;
+  }
+  const Status s = host_.modeler().setParameter(last_->first, last_->second, degrees);
+  if (!s) host_.reportError(QString::fromStdString(s.message()));
 }
 
 }  // namespace sbr::app

@@ -17,6 +17,7 @@
 #include <QTimer>
 #include <QToolBar>
 
+#include "Cursors.h"
 #include "PropertiesPanel.h"
 #include "Viewport.h"
 
@@ -34,6 +35,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   rotateTool_ = std::make_unique<RotateTool>(*this);
   offsetTool_ = std::make_unique<OffsetTool>(*this);
   curveTool_ = std::make_unique<CurveTool>(*this);
+  revolveTool_ = std::make_unique<RevolveTool>(*this);
 
   buildUi();
   buildMenus();
@@ -147,6 +149,17 @@ void MainWindow::buildUi() {
               report(modeler_.renameDefinition(defId, utf8(name)));
             });
           });
+  connect(panel_, &PropertiesPanel::curvePointEdited, this,
+          [this](const doc::ObjectId& id, int index, double x, double y, double z) {
+            QTimer::singleShot(0, this, [this, id, index, x, y, z] {
+              const doc::Object* o = modeler_.document().find(id);
+              const auto* curve = o ? std::get_if<doc::InterpolatedCurve>(&o->recipe.base) : nullptr;
+              if (!curve || index >= static_cast<int>(curve->points.size())) return;
+              std::vector<gp_Pnt> points = curve->points;
+              points[static_cast<std::size_t>(index)] = gp_Pnt(x, y, z);
+              if (!report(modeler_.setCurvePoints(id, points))) refreshPanels();
+            });
+          });
   connect(panel_, &PropertiesPanel::visibilityToggled, this,
           [this](const doc::ObjectId& id, bool visible) {
             QTimer::singleShot(0, this, [this, id, visible] { modeler_.setVisible(id, visible); });
@@ -202,18 +215,8 @@ void MainWindow::buildMenus() {
     }
     setSelection({id.value()});
   });
-  freeform->addAction(tr("回転体（原点を通る Z 軸まわり 360°）"), this, [this] {
-    if (selection_.size() != 1) {
-      reportError(tr("プロファイルを 1 つ選択してください"));
-      return;
-    }
-    auto id = modeler_.revolveObject(selection_.front(), gp_Ax1(gp_Pnt(0, 0, 0), gp::DZ()), 2 * M_PI);
-    if (!id) {
-      reportError(tr("回転体の作成に失敗しました: %1").arg(QString::fromStdString(id.error())));
-      return;
-    }
-    setSelection({id.value()});
-  });
+  freeform->addAction(tr("回転体（面 → 軸の 2 点をクリック）"), this,
+                      [this] { activateTool(ToolId::Revolve); });
   freeform->addAction(tr("スイープ（1 つ目 = 断面、2 つ目 = パス）"), this, [this] {
     if (selection_.size() != 2) {
       reportError(tr("断面とパスの 2 つを選択してください"));
@@ -285,7 +288,8 @@ void MainWindow::buildMenus() {
   QMenu* tools = menuBar()->addMenu(tr("ツール(&T)"));
   QToolBar* bar = new QToolBar(tr("ツール"), this);
   bar->setObjectName(QStringLiteral("toolsBar"));
-  bar->setToolButtonStyle(Qt::ToolButtonTextOnly);
+  bar->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+  bar->setIconSize(QSize(28, 28));
   bar->setMovable(false);
   addToolBar(Qt::LeftToolBarArea, bar);
   toolGroup_ = new QActionGroup(this);
@@ -293,19 +297,21 @@ void MainWindow::buildMenus() {
     QString label;
     QString key;
     ToolId id;
+    CursorKind icon;
   };
   const ToolEntry entries[] = {
-      {tr("選択"), QStringLiteral("Space"), ToolId::Select},
-      {tr("線"), QStringLiteral("L"), ToolId::Line},
-      {tr("矩形"), QStringLiteral("R"), ToolId::Rectangle},
-      {tr("プッシュ/プル"), QStringLiteral("P"), ToolId::PushPull},
-      {tr("移動"), QStringLiteral("M"), ToolId::Move},
-      {tr("回転"), QStringLiteral("Q"), ToolId::Rotate},
-      {tr("オフセット"), QStringLiteral("F"), ToolId::Offset},
-      {tr("曲線"), QStringLiteral("C"), ToolId::Curve},
+      {tr("選択"), QStringLiteral("Space"), ToolId::Select, CursorKind::Select},
+      {tr("線"), QStringLiteral("L"), ToolId::Line, CursorKind::Pencil},
+      {tr("矩形"), QStringLiteral("R"), ToolId::Rectangle, CursorKind::Rectangle},
+      {tr("プッシュ/プル"), QStringLiteral("P"), ToolId::PushPull, CursorKind::PushPull},
+      {tr("移動"), QStringLiteral("M"), ToolId::Move, CursorKind::Move},
+      {tr("回転"), QStringLiteral("Q"), ToolId::Rotate, CursorKind::Rotate},
+      {tr("オフセット"), QStringLiteral("F"), ToolId::Offset, CursorKind::Offset},
+      {tr("曲線"), QStringLiteral("C"), ToolId::Curve, CursorKind::Curve},
+      {tr("回転体"), QStringLiteral("V"), ToolId::Revolve, CursorKind::Revolve},
   };
   for (const ToolEntry& e : entries) {
-    QAction* a = new QAction(e.label, this);
+    QAction* a = new QAction(toolIcon(e.icon), e.label, this);
     a->setCheckable(true);
     a->setShortcut(QKeySequence(e.key));
     a->setToolTip(QStringLiteral("%1 (%2)").arg(e.label, e.key));
@@ -342,6 +348,7 @@ void MainWindow::activateTool(ToolId id) {
     case ToolId::Rotate: active_ = rotateTool_.get(); break;
     case ToolId::Offset: active_ = offsetTool_.get(); break;
     case ToolId::Curve: active_ = curveTool_.get(); break;
+    case ToolId::Revolve: active_ = revolveTool_.get(); break;
   }
   toolActions_[static_cast<int>(id)]->setChecked(true);
   viewport_->setTool(active_);

@@ -784,4 +784,15 @@ Result<ObjectId> Modeler::sweepObject(const ObjectId& profile, const ObjectId& s
   return addObject(std::move(object), "Sweep");
 }
 
+Status Modeler::setCurvePoints(const ObjectId& id, const std::vector<gp_Pnt>& points) {
+  const Object* current = document_.find(id);
+  if (!current) return Status::failure("Object not found");
+  if (!std::holds_alternative<InterpolatedCurve>(current->recipe.base)) {
+    return Status::failure("Not a NURBS curve");
+  }
+  Object object = *current;
+  std::get<InterpolatedCurve>(object.recipe.base).points = points;
+  return commitModified(std::move(object), "Edit Curve");
+}
+
 }  // namespace sbr::doc

@@ -49,16 +49,48 @@ QPainterPath pencil() {
   return path;
 }
 
-QCursor build(CursorKind kind) {
+QPixmap draw(CursorKind kind, QPoint& hotspot) {
   QPixmap pixmap(kSize, kSize);
   pixmap.fill(Qt::transparent);
   QPainter p(&pixmap);
   p.setRenderHint(QPainter::Antialiasing);
-  QPoint hotspot(kSize / 2, kSize / 2);
+  hotspot = QPoint(kSize / 2, kSize / 2);
 
   switch (kind) {
-    case CursorKind::Select:
-      return QCursor(Qt::ArrowCursor);
+    case CursorKind::Select: {
+      QPainterPath arrow;
+      arrow.moveTo(6, 3);
+      arrow.lineTo(6, 26);
+      arrow.lineTo(12, 20);
+      arrow.lineTo(16, 29);
+      arrow.lineTo(20, 27);
+      arrow.lineTo(16, 18);
+      arrow.lineTo(24, 18);
+      arrow.closeSubpath();
+      p.setBrush(Qt::white);
+      halo(p, arrow);
+      hotspot = QPoint(6, 3);
+      break;
+    }
+    case CursorKind::Revolve: {
+      // Profile rectangle and an arc around a dashed axis.
+      QPainterPath axis;
+      axis.moveTo(6, 2);
+      axis.lineTo(6, 30);
+      p.setPen(QPen(Qt::black, 1.2, Qt::DashLine));
+      p.drawPath(axis);
+      QPainterPath profile;
+      profile.addRect(QRectF(10, 8, 7, 16));
+      halo(p, profile);
+      QPainterPath arc;
+      arc.arcMoveTo(QRectF(-10, 4, 40, 24), 20);
+      arc.arcTo(QRectF(-10, 4, 40, 24), 20, -110);
+      halo(p, arc);
+      const QPointF end = arc.currentPosition();
+      halo(p, arrowHead(end, QPointF(end.x() + 5, end.y() - 3), 5));
+      hotspot = QPoint(4, 4);
+      break;
+    }
     case CursorKind::Pencil:
       halo(p, pencil());
       hotspot = QPoint(2, 30);
@@ -139,11 +171,21 @@ QCursor build(CursorKind kind) {
     }
   }
   p.end();
-  return QCursor(pixmap, hotspot.x(), hotspot.y());
+  return pixmap;
 }
 
 }  // namespace
 
-QCursor toolCursor(CursorKind kind) { return build(kind); }
+QCursor toolCursor(CursorKind kind) {
+  if (kind == CursorKind::Select) return QCursor(Qt::ArrowCursor);
+  QPoint hotspot;
+  const QPixmap pixmap = draw(kind, hotspot);
+  return QCursor(pixmap, hotspot.x(), hotspot.y());
+}
+
+QIcon toolIcon(CursorKind kind) {
+  QPoint hotspot;
+  return QIcon(draw(kind, hotspot));
+}
 
 }  // namespace sbr::app

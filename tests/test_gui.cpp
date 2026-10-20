@@ -83,6 +83,9 @@ class GuiPhase1 : public QObject {
   void selectFacesEdgesAndWholeObject();
   void pushPullDoesNotSelectWholeObject();
   void eachToolHasItsCursor();
+  void revolveToolAndTypedAngle();
+  void pushPullDoubleClickRepeatsDistance();
+  void orbitKeepsPointUnderCursorFixed();
 };
 
 namespace {
@@ -449,6 +452,66 @@ void GuiPhase1::eachToolHasItsCursor() {
   QCOMPARE(f.vp->cursor().shape(), Qt::ClosedHandCursor);
   send(f.vp, QEvent::MouseButtonRelease, c, Qt::MiddleButton, Qt::NoButton);
   QCOMPARE(f.vp->cursor().shape(), Qt::BitmapCursor);
+}
+
+void GuiPhase1::revolveToolAndTypedAngle() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  // Vertical profile x 0..500, z 0..2000 in the XZ plane.
+  auto profile = m.createRectangle(geom::SketchPlane::fromNormal(gp_Pnt(0, 0, 0), gp_Dir(0, -1, 0)), 500, 2000);
+  QVERIFY(profile.ok());
+  QTest::qWait(30);
+  f.window.activateTool(MainWindow::ToolId::Revolve);
+  QTest::qWait(30);
+  click(f.vp, f.vp->toWidget(gp_Pnt(250, 0, 1000)));   // the profile
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));        // axis start (origin snap)
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 2000)));     // axis end (blue axis inference)
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  const double full = M_PI * 500 * 500 * 2000;
+  QVERIFY(std::abs(geom::volume(m.document().worldShape(*profile)) - full) < full * 1e-6);
+  type(f.vp, QStringLiteral("90"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QVERIFY(std::abs(geom::volume(m.document().worldShape(*profile)) - full / 4) < full * 1e-6);
+}
+
+void GuiPhase1::pushPullDoubleClickRepeatsDistance() {
+  Fixture f;
+  QVERIFY(f.setUp(1500, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId a = f.box(0, 0, 1000, 1000, 1000);
+  const doc::ObjectId b = f.box(2000, 0, 1000, 1000, 1000);
+  f.window.activateTool(MainWindow::ToolId::PushPull);
+  QTest::qWait(30);
+  click(f.vp, f.vp->toWidget(gp_Pnt(500, 500, 1000)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(500, 500, 1400)));
+  type(f.vp, QStringLiteral("400"));
+  doubleClick(f.vp, f.vp->toWidget(gp_Pnt(2500, 500, 1000)));
+  QTest::qWait(30);
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QVERIFY(std::abs(geom::exactBounds(m.document().worldShape(a)).CornerMax().Z() - 1400) < 1e-6);
+  QVERIFY(std::abs(geom::exactBounds(m.document().worldShape(b)).CornerMax().Z() - 1400) < 1e-6);
+}
+
+void GuiPhase1::orbitKeepsPointUnderCursorFixed() {
+  Fixture f;
+  QVERIFY(f.setUp(500, 500));
+  f.box(0, 0, 1000, 1000, 1000);
+  const gp_Pnt corner(1000, 0, 1000);
+  const QPoint start = f.vp->toWidget(corner);  // snaps to this vertex
+  send(f.vp, QEvent::MouseButtonPress, start, Qt::MiddleButton, Qt::MiddleButton);
+  for (int i = 1; i <= 10; ++i) {
+    send(f.vp, QEvent::MouseMove, start + QPoint(8 * i, 3 * i), Qt::NoButton, Qt::MiddleButton);
+  }
+  send(f.vp, QEvent::MouseButtonRelease, start + QPoint(80, 30), Qt::MiddleButton, Qt::NoButton);
+  const QPoint after = f.vp->toWidget(corner);
+  QVERIFY2((after - start).manhattanLength() <= 2,
+           qPrintable(QStringLiteral("pivot moved from %1,%2 to %3,%4")
+                          .arg(start.x()).arg(start.y()).arg(after.x()).arg(after.y())));
+  // Toolbar shows icons.
+  for (QAction* a : f.window.findChildren<QAction*>()) {
+    if (a->text() == QStringLiteral("プッシュ/プル")) QVERIFY(!a->icon().isNull());
+  }
 }
 
 QTEST_MAIN(GuiPhase1)

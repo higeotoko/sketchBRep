@@ -180,6 +180,28 @@ class RectangleTool : public DrawingTool {
   std::optional<doc::ObjectId> lastCreated_;
 };
 
+// Revolve: click a profile face, then two points of the axis. Creates a
+// full revolution; typing an angle re-edits it (parametric).
+class RevolveTool : public DrawingTool {
+ public:
+  using DrawingTool::DrawingTool;
+  QString name() const override;
+  QCursor cursor() const override;
+  void activate() override;
+  void cancel() override;
+  void mousePress(const ToolEvent& e) override;
+  void mouseMove(const ToolEvent& e) override;
+  void applyMeasurement(const QString& text) override;
+
+ private:
+  enum class Stage { Profile, AxisStart, AxisEnd };
+  void reset();
+  Stage stage_ = Stage::Profile;
+  doc::ObjectId profileId_;
+  gp_Pnt axisStart_;
+  std::optional<std::pair<doc::ObjectId, std::string>> last_;
+};
+
 class PushPullTool : public Tool {
  public:
   using Tool::Tool;
@@ -190,6 +212,8 @@ class PushPullTool : public Tool {
   void mousePress(const ToolEvent& e) override;
   void mouseMove(const ToolEvent& e) override;
   void applyMeasurement(const QString& text) override;
+  // Double-clicking a face repeats the previous push/pull distance.
+  bool mouseDoubleClick(const ToolEvent& e) override;
 
   bool isDragging() const { return dragging_; }
 
@@ -203,6 +227,7 @@ class PushPullTool : public Tool {
   gp_Pnt origin_;
   gp_Dir normal_;
   double distance_ = 0.0;
+  std::optional<double> lastDistance_;
 
   struct LastPush {
     doc::ObjectId id;

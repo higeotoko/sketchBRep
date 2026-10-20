@@ -185,6 +185,12 @@ void Viewport::mousePressEvent(QMouseEvent* event) {
     drag_ = (event->modifiers() & Qt::ShiftModifier) ? Drag::Pan : Drag::Orbit;
     lastDragPos_ = event->position().toPoint();
     setCursor(drag_ == Drag::Pan ? Qt::SizeAllCursor : Qt::ClosedHandCursor);
+    if (drag_ == Drag::Orbit) {
+      // Orbit around what is under the cursor (geometry or ground), like
+      // SketchUp; fall back to the view centre.
+      const snap::SnapResult r = snap(lastDragPos_, std::nullopt, std::nullopt, std::nullopt);
+      orbitPivot_ = r.valid() ? r.point : view_->Camera()->Center();
+    }
     return;
   }
   if (event->button() == Qt::LeftButton && tool_) {
@@ -723,31 +729,35 @@ void Viewport::redraw() {
 // --- camera --------------------------------------------------------------------
 
 void Viewport::orbit(const QPoint& delta) {
-  // Turntable orbit around the view centre keeping world Z up.
+  // Turntable orbit around orbitPivot_ keeping world Z up. Eye and centre
+  // are rotated together so the pivot stays fixed on screen.
   const Handle(Graphic3d_Camera)& camera = view_->Camera();
-  const gp_Pnt center = camera->Center();
-  gp_Vec toEye(center, camera->Eye());
+  gp_Pnt eye = camera->Eye();
+  gp_Pnt center = camera->Center();
   gp_Dir up = camera->Up();
   const double k = 0.006;
 
   gp_Trsf yaw;
-  yaw.SetRotation(gp_Ax1(center, gp::DZ()), -delta.x() * k);
-  toEye.Transform(yaw);
+  yaw.SetRotation(gp_Ax1(orbitPivot_, gp::DZ()), -delta.x() * k);
+  eye.Transform(yaw);
+  center.Transform(yaw);
   up.Transform(yaw);
 
-  const gp_Vec forward = -toEye;
+  const gp_Vec forward(eye, center);
   const gp_Vec right = forward.Crossed(gp_Vec(up));
   if (right.Magnitude() > 1e-9) {
     gp_Trsf pitch;
-    pitch.SetRotation(gp_Ax1(center, gp_Dir(right)), -delta.y() * k);
-    gp_Vec pitched = toEye.Transformed(pitch);
-    const double elevation = pitched.Angle(gp_Vec(gp::DZ()));
+    pitch.SetRotation(gp_Ax1(orbitPivot_, gp_Dir(right)), -delta.y() * k);
+    const gp_Pnt pitchedEye = eye.Transformed(pitch);
+    const gp_Pnt pitchedCenter = center.Transformed(pitch);
+    const double elevation = gp_Vec(pitchedCenter, pitchedEye).Angle(gp_Vec(gp::DZ()));
     if (elevation > 0.01 && elevation < M_PI - 0.01) {
-      toEye = pitched;
+      eye = pitchedEye;
+      center = pitchedCenter;
       up.Transform(pitch);
     }
   }
-  camera->SetEye(center.Translated(toEye));
+  camera->SetEyeAndCenter(eye, center);
   camera->SetUp(up);
   view_->Invalidate();
 }

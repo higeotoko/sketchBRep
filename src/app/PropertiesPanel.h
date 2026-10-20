@@ -35,6 +35,7 @@ class PropertiesPanel : public QWidget {
   void definitionParameterEdited(const std::string& definitionId, const doc::ObjectId& objectId,
                                  const std::string& key, double value);
   void definitionRenamed(const std::string& definitionId, const QString& name);
+  void curvePointEdited(const doc::ObjectId& id, int index, double x, double y, double z);
 
  private:
   void rebuildForm(const doc::Modeler& modeler, const std::vector<doc::ObjectId>& selection,

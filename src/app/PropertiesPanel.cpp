@@ -308,6 +308,27 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       break;
   }
 
+  if (const auto* curve = std::get_if<doc::InterpolatedCurve>(&o->recipe.base)) {
+    detailsForm->addRow(new QLabel(tr("<b>通過点 (mm)</b>")));
+    for (int i = 0; i < static_cast<int>(curve->points.size()); ++i) {
+      const gp_Pnt pt = curve->points[static_cast<std::size_t>(i)];
+      auto* row = new QWidget;
+      auto* h = new QHBoxLayout(row);
+      h->setContentsMargins(0, 0, 0, 0);
+      QDoubleSpinBox* spins[3] = {lengthSpin(pt.X()), lengthSpin(pt.Y()), lengthSpin(pt.Z())};
+      for (QDoubleSpinBox* spin : spins) {
+        spin->setSuffix(QString());
+        spin->setDecimals(1);
+        h->addWidget(spin);
+        connect(spin, &QDoubleSpinBox::editingFinished, this, [this, id, i, spins, pt] {
+          const double x = spins[0]->value(), y = spins[1]->value(), z = spins[2]->value();
+          if (gp_Pnt(x, y, z).Distance(pt) > 1e-9) emit curvePointEdited(id, i, x, y, z);
+        });
+      }
+      detailsForm->addRow(tr("点 %1").arg(i + 1), row);
+    }
+  }
+
   if (!nested.empty()) {
     detailsForm->addRow(new QLabel(tr("<b>入力の寸法</b>")));
     for (const doc::Parameter& p : nested) addParameter(detailsForm, p);

@@ -8,6 +8,7 @@
 #include "sbr/doc/Modeler.h"
 #include "sbr/doc/NativeFormat.h"
 #include "sbr/geom/Freeform.h"
+#include "sbr/geom/Measure.h"
 #include "sbr/geom/Profile.h"
 #include "sbr/geom/Validation.h"
 
@@ -188,4 +189,19 @@ TEST(Freeform, CurveStoresThroughPoints) {
   ASSERT_TRUE(loaded);
   EXPECT_NEAR(loaded->points[1].Y(), 800, 1e-12);
   EXPECT_FALSE(m.createCurve({gp_Pnt(0, 0, 0), gp_Pnt(0, 0, 0)}, false).ok());
+}
+
+TEST(Freeform, CurvePointsAreEditable) {
+  doc::Modeler m;
+  auto curve = m.createCurve({gp_Pnt(0, 0, 0), gp_Pnt(1000, 0, 0), gp_Pnt(2000, 0, 0)}, false);
+  ASSERT_TRUE(curve.ok());
+  ASSERT_TRUE(m.setCurvePoints(*curve, {gp_Pnt(0, 0, 0), gp_Pnt(1000, 800, 0), gp_Pnt(2000, 0, 0)}).ok());
+  EXPECT_NEAR(geom::exactBounds(m.document().worldShape(*curve)).CornerMax().Y(), 800, 1.0);
+  EXPECT_EQ(m.history().undoName(), "Edit Curve");
+  // Invalid edits are rejected without changing anything.
+  EXPECT_FALSE(m.setCurvePoints(*curve, {gp_Pnt(0, 0, 0)}).ok());
+  ASSERT_TRUE(m.undo());
+  EXPECT_NEAR(geom::exactBounds(m.document().worldShape(*curve)).CornerMax().Y(), 0, 1.0);
+  auto rect = m.createRectangle(SketchPlane::ground(), 10, 10);
+  EXPECT_FALSE(m.setCurvePoints(*rect, {gp_Pnt(0, 0, 0), gp_Pnt(1, 0, 0)}).ok());
 }
