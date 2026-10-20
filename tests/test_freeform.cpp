@@ -78,8 +78,45 @@ TEST(Freeform, ModelerLoftRevolveSweepAreUndoable) {
   ASSERT_TRUE(revolved.ok()) << revolved.error();
   EXPECT_TRUE(validateShape(m.document().worldShape(*revolved), true).valid);
 
-  const std::size_t count = m.document().objects().size();
+  EXPECT_EQ(*revolved, *ring);  // face profiles are revolved in place
   ASSERT_TRUE(m.undo());
+  EXPECT_EQ(m.document().find(*ring)->kind(), doc::ObjectKind::Face);
+  const std::size_t count = m.document().objects().size();
+  ASSERT_TRUE(m.undo());  // the sweep
   EXPECT_EQ(m.document().objects().size(), count - 1);
   EXPECT_FALSE(m.loftObjects({*base}, true).ok());
+}
+
+TEST(Freeform, RevolveIsParametricAndSaved) {
+  doc::Modeler m;
+  SketchPlane wall = SketchPlane::fromNormal(gp_Pnt(0, 0, 0), gp_Dir(0, -1, 0));
+  auto profile = m.createRectangle(wall, 500, 2000);  // x 0..500, z 0..2000
+  ASSERT_TRUE(profile.ok());
+  ASSERT_TRUE(m.move({*profile}, gp_Vec(0, 0, 100)).ok());  // axis given in world space
+  auto id = m.revolveObject(*profile, gp_Ax1(gp_Pnt(0, 0, 0), gp::DZ()), 2 * M_PI);
+  ASSERT_TRUE(id.ok()) << id.error();
+  const double full = M_PI * 500 * 500 * 2000;
+  EXPECT_NEAR(volume(m.document().worldShape(*id)), full, 1.0);
+
+  bool found = false;
+  for (const doc::Parameter& p : m.parameters(*id)) {
+    if (p.key == "op0.angle") {
+      found = true;
+      EXPECT_NEAR(p.value, 360.0, 1e-9);
+      EXPECT_FALSE(p.isLength);
+    }
+  }
+  ASSERT_TRUE(found);
+  ASSERT_TRUE(m.setParameter(*id, "op0.angle", 90).ok());
+  EXPECT_NEAR(volume(m.document().worldShape(*id)), full / 4, 1.0);
+  test::expectBounds(m.document().worldShape(*id), 0, 0, 100, 500, 500, 2100, 1e-6);
+
+  const std::string path = test::tempPath("revolve.sbr");
+  ASSERT_TRUE(m.save(path).ok());
+  doc::Modeler loaded;
+  std::vector<std::string> warnings;
+  ASSERT_TRUE(loaded.load(path, &warnings).ok());
+  EXPECT_TRUE(warnings.empty());
+  ASSERT_TRUE(loaded.setParameter(*id, "op0.angle", 180).ok());
+  EXPECT_NEAR(volume(loaded.document().worldShape(*id)), full / 2, 1.0);
 }

@@ -753,6 +753,18 @@ Result<ObjectId> Modeler::loftObjects(const std::vector<ObjectId>& sections, boo
 
 Result<ObjectId> Modeler::revolveObject(const ObjectId& profile, const gp_Ax1& axis,
                                         double angle) {
+  const Object* source = document_.find(profile);
+  if (!source) return Result<ObjectId>::failure("Profile not found");
+  if (source->kind() == ObjectKind::Face) {
+    // Parametric: the revolve becomes a step of the profile's recipe, so the
+    // angle stays editable ("op<N>.angle", degrees).
+    Object object = *source;
+    const gp_Trsf toLocal = document_.worldTransform(object).Inverted();
+    object.recipe.modifiers.push_back(RevolveOp{axis.Transformed(toLocal), angle});
+    const Status committed = commitModified(object, "Revolve");
+    if (!committed) return Result<ObjectId>::failure(committed.message());
+    return profile;
+  }
   const TopoDS_Shape shape = document_.worldShape(profile);
   if (shape.IsNull()) return Result<ObjectId>::failure("Profile not found");
   auto result = geom::revolve(shape, axis, angle);

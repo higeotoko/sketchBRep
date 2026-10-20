@@ -51,6 +51,8 @@ QString parameterLabel(const doc::Parameter& p) {
     label = QObject::tr("押出距離");
   } else if (tail == "Offset distance") {
     label = QObject::tr("オフセット距離");
+  } else if (tail == "Revolve angle") {
+    label = QObject::tr("回転角 (°)");
   } else if (tail.rfind("Push/Pull", 0) == 0) {
     label = QObject::tr("プッシュ/プル %1").arg(QString::fromStdString(tail.substr(10, tail.find(' ', 10) - 10)));
   } else {

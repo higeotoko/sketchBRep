@@ -6,6 +6,7 @@
 #include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
 
+#include "sbr/geom/Freeform.h"
 #include "sbr/geom/Operations.h"
 #include "sbr/geom/Validation.h"
 
@@ -20,6 +21,7 @@ template <class... Ts>
 Overloaded(Ts...) -> Overloaded<Ts...>;
 
 std::string opKey(std::size_t index) { return "op" + std::to_string(index) + ".distance"; }
+std::string angleKey(std::size_t index) { return "op" + std::to_string(index) + ".angle"; }
 std::string operandPrefix(std::size_t index) { return "in" + std::to_string(index) + "."; }
 
 geom::BooleanOp toGeom(BooleanKind kind) {
@@ -121,6 +123,10 @@ Result<TopoDS_Shape> regenerate(const Recipe& recipe, const RegenContext& contex
               if (!face) return Result<TopoDS_Shape>::failure(face.error());
               return TopoDS_Shape(face.value());
             },
+            [&](const RevolveOp& op) -> Result<TopoDS_Shape> {
+              if (!isFace) return Result<TopoDS_Shape>::failure("Revolve requires a profile face");
+              return geom::revolve(shape, op.axis, op.angle);
+            },
             [&](const PushPullOp& op) -> Result<TopoDS_Shape> {
               const geom::ValidationReport report = geom::validateShape(shape, true);
               if (!report.valid) {
@@ -166,6 +172,10 @@ std::vector<Parameter> parameters(const Recipe& recipe) {
                    [&](const OffsetOp& op) {
                      out.push_back({opKey(i), "Offset distance", op.distance, true});
                    },
+                   [&](const RevolveOp& op) {
+                     // Exposed in degrees for editing.
+                     out.push_back({angleKey(i), "Revolve angle", op.angle * 180.0 / M_PI, false});
+                   },
                },
                recipe.modifiers[i]);
   }
@@ -197,8 +207,14 @@ Status setParameter(Recipe& recipe, const std::string& key, double value) {
     }
   }
   for (std::size_t i = 0; i < recipe.modifiers.size(); ++i) {
+    if (auto* revolve = std::get_if<RevolveOp>(&recipe.modifiers[i])) {
+      if (key != angleKey(i)) continue;
+      revolve->angle = value * M_PI / 180.0;
+      return Status::success();
+    }
     if (key != opKey(i)) continue;
-    std::visit([&](auto& op) { op.distance = value; }, recipe.modifiers[i]);
+    std::visit(Overloaded{[&](RevolveOp&) {}, [&](auto& op) { op.distance = value; }},
+               recipe.modifiers[i]);
     return Status::success();
   }
   return Status::failure("Unknown parameter: " + key);
@@ -229,6 +245,7 @@ std::string describe(const Recipe& recipe) {
                    [&](const ExtrudeOp& op) { out << " > Extrude " << op.distance; },
                    [&](const PushPullOp& op) { out << " > Push/Pull " << op.distance; },
                    [&](const OffsetOp& op) { out << " > Offset " << op.distance; },
+                   [&](const RevolveOp& op) { out << " > Revolve " << op.angle * 180.0 / M_PI << " deg"; },
                },
                m);
   }

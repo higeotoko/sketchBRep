@@ -104,6 +104,8 @@ class Modeler {
                                const std::string& name = {});
   // Lofts through curve/face objects (their outer wires), in the given order.
   Result<ObjectId> loftObjects(const std::vector<ObjectId>& sections, bool solid);
+  // Face profiles are revolved parametrically in place (returns the same id);
+  // other shapes produce a new non-parametric object.
   Result<ObjectId> revolveObject(const ObjectId& profile, const gp_Ax1& axis, double angleRadians);
   Result<ObjectId> sweepObject(const ObjectId& profile, const ObjectId& spine);
 

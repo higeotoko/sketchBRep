@@ -11,6 +11,7 @@
 #include <variant>
 #include <vector>
 
+#include <gp_Ax1.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Trsf.hxx>
 #include <TopoDS_Shape.hxx>
@@ -91,7 +92,13 @@ struct OffsetOp {
   double distance = 0.0;
 };
 
-using Modifier = std::variant<ExtrudeOp, PushPullOp, OffsetOp>;
+// Revolves the profile face around an axis (local coordinates) into a solid.
+struct RevolveOp {
+  gp_Ax1 axis;
+  double angle = 0.0;  // radians, signed
+};
+
+using Modifier = std::variant<ExtrudeOp, PushPullOp, OffsetOp, RevolveOp>;
 
 struct Recipe {
   BaseFeature base;

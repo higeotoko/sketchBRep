@@ -152,6 +152,12 @@ json modifierToJson(const Modifier& m) {
       Overloaded{
           [](const ExtrudeOp& op) { return json{{"type", "extrude"}, {"distance", op.distance}}; },
           [](const OffsetOp& op) { return json{{"type", "offset"}, {"distance", op.distance}}; },
+          [](const RevolveOp& op) {
+            return json{{"type", "revolve"},
+                        {"origin", toJson(op.axis.Location())},
+                        {"direction", toJson(op.axis.Direction())},
+                        {"angle", op.angle}};
+          },
           [](const PushPullOp& op) {
             return json{{"type", "pushpull"},
                         {"distance", op.distance},
@@ -168,6 +174,10 @@ Modifier modifierFrom(const json& j) {
   const std::string type = j.at("type").get<std::string>();
   if (type == "extrude") return ExtrudeOp{j.at("distance").get<double>()};
   if (type == "offset") return OffsetOp{j.at("distance").get<double>()};
+  if (type == "revolve") {
+    return RevolveOp{gp_Ax1(pointFrom(j.at("origin")), dirFrom(j.at("direction"))),
+                     j.at("angle").get<double>()};
+  }
   if (type == "pushpull") {
     PushPullOp op;
     op.distance = j.at("distance").get<double>();
