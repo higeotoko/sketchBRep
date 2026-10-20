@@ -37,6 +37,12 @@ struct PolylineCurve {
   std::vector<gp_Pnt> points;  // open
 };
 
+// Cubic NURBS curve through points (periodic when closed).
+struct InterpolatedCurve {
+  std::vector<gp_Pnt> points;
+  bool closed = false;
+};
+
 // Non-parametric geometry (STEP import, results of future direct edits).
 struct ImportedShape {
   TopoDS_Shape shape;
@@ -84,7 +90,8 @@ struct ComponentInstance {
   std::string definitionId;
 };
 
-using BaseFeature = std::variant<RectangleProfile, PolygonProfile, PolylineCurve, ImportedShape,
+using BaseFeature = std::variant<RectangleProfile, PolygonProfile, PolylineCurve, InterpolatedCurve,
+                                 ImportedShape,
                                  BooleanFeature, LoftFeature, SweepFeature, GroupNode,
                                  ComponentInstance>;
 

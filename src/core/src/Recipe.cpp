@@ -53,6 +53,11 @@ Result<TopoDS_Shape> buildBase(const BaseFeature& base, const RegenContext& cont
             if (!wire) return Result<TopoDS_Shape>::failure(wire.error());
             return TopoDS_Shape(wire.value());
           },
+          [](const InterpolatedCurve& c) -> Result<TopoDS_Shape> {
+            auto wire = geom::makeInterpolatedCurve(c.points, c.closed);
+            if (!wire) return Result<TopoDS_Shape>::failure(wire.error());
+            return TopoDS_Shape(wire.value());
+          },
           [](const ImportedShape& s) -> Result<TopoDS_Shape> {
             if (s.shape.IsNull()) return Result<TopoDS_Shape>::failure("Imported shape is empty");
             return s.shape;
@@ -274,6 +279,9 @@ std::string describe(const Recipe& recipe) {
                  },
                  [&](const PolygonProfile& p) { out << "Polygon (" << p.points.size() << " pts)"; },
                  [&](const PolylineCurve& p) { out << "Line (" << p.points.size() << " pts)"; },
+                 [&](const InterpolatedCurve& c) {
+                   out << "NURBS curve (" << c.points.size() << " pts" << (c.closed ? ", closed" : "") << ")";
+                 },
                  [&](const ImportedShape& s) { out << "Imported (" << s.source << ")"; },
                  [&](const BooleanFeature& b) {
                    out << toString(b.kind) << " (";

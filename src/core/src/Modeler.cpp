@@ -722,9 +722,10 @@ std::vector<Parameter> Modeler::parameters(const ObjectId& id) const {
 
 Result<ObjectId> Modeler::createCurve(const std::vector<gp_Pnt>& points, bool closed,
                                       const std::string& name) {
-  auto wire = geom::makeInterpolatedCurve(points, closed);
-  if (!wire) return Result<ObjectId>::failure(wire.error());
-  return importShape(wire.value(), name.empty() ? uniqueName("Curve") : name, "NURBS curve");
+  Object o;
+  o.name = name.empty() ? uniqueName("Curve") : name;
+  o.recipe.base = InterpolatedCurve{points, closed};
+  return addObject(std::move(o), "Curve");
 }
 
 Result<ObjectId> Modeler::loftObjects(const std::vector<ObjectId>& sections, bool solid) {

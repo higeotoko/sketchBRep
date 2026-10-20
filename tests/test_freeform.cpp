@@ -6,6 +6,7 @@
 
 #include "TestHelpers.h"
 #include "sbr/doc/Modeler.h"
+#include "sbr/doc/NativeFormat.h"
 #include "sbr/geom/Freeform.h"
 #include "sbr/geom/Profile.h"
 #include "sbr/geom/Validation.h"
@@ -166,4 +167,25 @@ TEST(Freeform, SweepIsParametricAndSaved) {
   ASSERT_TRUE(loaded.load(file, &warnings).ok());
   EXPECT_TRUE(warnings.empty());
   EXPECT_NEAR(volume(loaded.document().worldShape(*id)), 300.0 * 200 * 2000, 1.0);
+}
+
+TEST(Freeform, CurveStoresThroughPoints) {
+  doc::Modeler m;
+  const std::vector<gp_Pnt> pts = {gp_Pnt(0, 0, 0), gp_Pnt(1500, 800, 0), gp_Pnt(3000, 0, 500)};
+  auto curve = m.createCurve(pts, false);
+  ASSERT_TRUE(curve.ok()) << curve.error();
+  const doc::Object* o = m.document().find(*curve);
+  ASSERT_EQ(o->kind(), doc::ObjectKind::Curve);
+  const auto* recipe = std::get_if<doc::InterpolatedCurve>(&o->recipe.base);
+  ASSERT_TRUE(recipe);
+  EXPECT_EQ(recipe->points.size(), 3u);
+
+  const std::string text = doc::serializeDocument(m.document());
+  EXPECT_NE(text.find("\"type\": \"curve\""), std::string::npos);
+  doc::Document d;
+  ASSERT_TRUE(doc::deserializeDocument(text, d).ok());
+  const auto* loaded = std::get_if<doc::InterpolatedCurve>(&d.find(*curve)->recipe.base);
+  ASSERT_TRUE(loaded);
+  EXPECT_NEAR(loaded->points[1].Y(), 800, 1e-12);
+  EXPECT_FALSE(m.createCurve({gp_Pnt(0, 0, 0), gp_Pnt(0, 0, 0)}, false).ok());
 }

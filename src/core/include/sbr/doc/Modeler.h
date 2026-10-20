@@ -99,7 +99,7 @@ class Modeler {
   Result<ObjectId> boolean(BooleanKind kind, const std::vector<ObjectId>& ids);
 
   // --- freeform (Phase 3) ----------------------------------------------------
-  // Results are stored as non-parametric geometry for now.
+  // Curves store their through-points; revolve, loft and sweep are parametric.
   Result<ObjectId> createCurve(const std::vector<gp_Pnt>& points, bool closed,
                                const std::string& name = {});
   // Lofts through curve/face objects (their outer wires), in the given order.

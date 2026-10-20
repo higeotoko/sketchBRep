@@ -91,6 +91,9 @@ json baseToJson(const BaseFeature& base) {
           [](const PolylineCurve& p) {
             return json{{"type", "polyline"}, {"points", pointsToJson(p.points)}};
           },
+          [](const InterpolatedCurve& c) {
+            return json{{"type", "curve"}, {"points", pointsToJson(c.points)}, {"closed", c.closed}};
+          },
           [](const ImportedShape& s) {
             return json{{"type", "imported"},
                         {"source", s.source},
@@ -145,6 +148,7 @@ BaseFeature baseFrom(const json& j) {
   }
   if (type == "polygon") return PolygonProfile{pointsFrom(j.at("points"))};
   if (type == "polyline") return PolylineCurve{pointsFrom(j.at("points"))};
+  if (type == "curve") return InterpolatedCurve{pointsFrom(j.at("points")), j.value("closed", false)};
   if (type == "imported") {
     auto shape = geom::shapeFromBRepString(j.at("brep").get<std::string>());
     if (!shape) throw std::runtime_error(shape.error());
