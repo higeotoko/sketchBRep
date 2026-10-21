@@ -90,6 +90,10 @@ class GuiPhase1 : public QObject {
   void tapeMeasureReadsDistance();
   void circleToolTypedRadius();
   void groupEditModeAndLooseFaceDelete();
+  void lineToolStaysOnWallPlane();
+  void offsetToolOnSolidFace();
+  void paintToolAndEyedropper();
+  void moveSelectedFaceStretchesSolid();
 };
 
 namespace {
@@ -632,6 +636,86 @@ void GuiPhase1::groupEditModeAndLooseFaceDelete() {
   QTest::keyClick(f.vp, Qt::Key_Escape);
   QVERIFY(f.window.editingGroup().empty());
   QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{*g});
+}
+
+void GuiPhase1::lineToolStaysOnWallPlane() {
+  Fixture f;
+  QVERIFY(f.setUp(2000, 0));
+  doc::Modeler& m = f.window.modeler();
+  f.box(0, 0, 4000, 200, 3000);
+  f.window.activateTool(MainWindow::ToolId::Line);
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 0, 1000)));  // on the wall's front face
+  click(f.vp, f.vp->toWidget(gp_Pnt(1800, 0, 1000)));
+  // Off the wall (above its top): must stay on the wall's plane y = 0.
+  click(f.vp, f.vp->toWidget(gp_Pnt(1800, 0, 3600)));
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  QTest::qWait(30);
+  const doc::Object& line = m.document().objects().back();
+  QCOMPARE(line.kind(), doc::ObjectKind::Curve);
+  const Bnd_Box b = geom::exactBounds(m.document().worldShape(line));
+  QVERIFY2(std::abs(b.CornerMin().Y()) < 1e-6 && std::abs(b.CornerMax().Y()) < 1e-6,
+           qPrintable(QStringLiteral("y %1..%2").arg(b.CornerMin().Y()).arg(b.CornerMax().Y())));
+  QVERIFY(b.CornerMax().Z() > 3000);
+}
+
+void GuiPhase1::offsetToolOnSolidFace() {
+  Fixture f;
+  QVERIFY(f.setUp(500, 500));
+  doc::Modeler& m = f.window.modeler();
+  f.box(0, 0, 1000, 1000, 1000);
+  f.window.activateTool(MainWindow::ToolId::Offset);
+  QTest::qWait(30);
+  click(f.vp, f.vp->toWidget(gp_Pnt(500, 500, 1000)));  // centre of the top face
+  move(f.vp, f.vp->toWidget(gp_Pnt(500, 300, 1000)));
+  type(f.vp, QStringLiteral("100"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), std::size_t(2));
+  const doc::Object& inset = m.document().objects().back();
+  QCOMPARE(inset.kind(), doc::ObjectKind::Face);
+  QVERIFY(std::abs(geom::area(inset.shape) - 800.0 * 800.0) < 1e-3);
+}
+
+void GuiPhase1::paintToolAndEyedropper() {
+  Fixture f;
+  QVERIFY(f.setUp(1000, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId a = f.box(0, 0, 500, 500, 500);
+  const doc::ObjectId b = f.box(1500, 0, 500, 500, 500);
+  f.window.activateTool(MainWindow::ToolId::Paint);
+  QTest::qWait(30);
+  auto* paint = dynamic_cast<PaintTool*>(f.window.activeTool());
+  QVERIFY(paint);
+  const doc::Color red{0.9, 0.1, 0.1};
+  paint->setColor(red);
+  click(f.vp, f.vp->toWidget(gp_Pnt(250, 250, 500)));
+  QCOMPARE(m.document().find(a)->color, red);
+  // Alt+click picks up b's colour, then painting a with it.
+  const QPoint onB = f.vp->toWidget(gp_Pnt(1750, 250, 500));
+  move(f.vp, onB);
+  send(f.vp, QEvent::MouseButtonPress, onB, Qt::LeftButton, Qt::LeftButton, Qt::AltModifier);
+  send(f.vp, QEvent::MouseButtonRelease, onB, Qt::LeftButton, Qt::NoButton, Qt::AltModifier);
+  QCOMPARE(paint->color(), m.document().find(b)->color);
+  click(f.vp, f.vp->toWidget(gp_Pnt(250, 250, 500)));
+  QCOMPARE(m.document().find(a)->color, m.document().find(b)->color);
+}
+
+void GuiPhase1::moveSelectedFaceStretchesSolid() {
+  Fixture f;
+  QVERIFY(f.setUp(500, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId id = f.box(0, 0, 1000, 1000, 1000);
+  f.window.activateTool(MainWindow::ToolId::Select);
+  const QPoint top = f.vp->toWidget(gp_Pnt(500, 500, 1000));
+  click(f.vp, top);
+  QCOMPARE(f.window.elementSelection().size(), std::size_t(1));
+  f.window.activateTool(MainWindow::ToolId::Move);
+  click(f.vp, top);
+  move(f.vp, f.vp->toWidget(gp_Pnt(500, 500, 1300)));
+  type(f.vp, QStringLiteral("500"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  const Bnd_Box b = geom::exactBounds(m.document().worldShape(id));
+  QVERIFY(std::abs(b.CornerMax().Z() - 1500) < 1e-6);
+  QVERIFY(std::abs(b.CornerMax().X() - 1000) < 1e-6);  // only stretched upwards
 }
 
 QTEST_MAIN(GuiPhase1)

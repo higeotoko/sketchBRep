@@ -72,6 +72,22 @@ QPixmap draw(CursorKind kind, QPoint& hotspot) {
       hotspot = QPoint(6, 3);
       break;
     }
+    case CursorKind::Paint: {
+      // Paint bucket tipping to the lower left (hotspot at the drip).
+      QPainterPath bucket;
+      bucket.moveTo(10, 10);
+      bucket.lineTo(22, 4);
+      bucket.lineTo(29, 17);
+      bucket.lineTo(17, 23);
+      bucket.closeSubpath();
+      halo(p, bucket);
+      QPainterPath drip;
+      drip.moveTo(10, 10);
+      drip.cubicTo(4, 14, 3, 22, 4, 28);
+      halo(p, drip);
+      hotspot = QPoint(4, 28);
+      break;
+    }
     case CursorKind::Circle: {
       halo(p, pencil());
       QPainterPath circle;

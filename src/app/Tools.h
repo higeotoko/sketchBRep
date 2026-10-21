@@ -141,6 +141,7 @@ class LineTool : public DrawingTool {
 
   std::vector<gp_Pnt> points_;
   std::optional<gp_Pnt> current_;
+  std::optional<gp_Pln> drawPlane_;  // plane of the first point (face or horizontal)
 };
 
 // Clicks control-through points of a NURBS curve; Enter/double-click
@@ -206,6 +207,23 @@ class RectangleTool : public DrawingTool {
   double u_ = 0.0;
   double v_ = 0.0;
   std::optional<doc::ObjectId> lastCreated_;
+};
+
+// Paint bucket: click to apply the current colour (groups and components
+// as a whole), Alt+click to pick up the colour of what is clicked.
+class PaintTool : public Tool {
+ public:
+  using Tool::Tool;
+  QString name() const override;
+  QCursor cursor() const override;
+  void activate() override;
+  void mousePress(const ToolEvent& e) override;
+  void mouseMove(const ToolEvent& e) override;
+  void setColor(const doc::Color& color) { color_ = color; }
+  const doc::Color& color() const { return color_; }
+
+ private:
+  doc::Color color_{0.75, 0.55, 0.35};  // warm wood tone by default
 };
 
 // Tape measure: click two points (with inference) to read the distance.
@@ -333,9 +351,13 @@ class MoveTool : public TransformTool {
 
  private:
   void resetState() override;
+  void finish();
   bool moving_ = false;
   gp_Pnt base_;
   gp_Pnt current_;
+  // Moving a single selected face stretches the solid along its normal.
+  std::optional<std::pair<doc::ObjectId, TopoDS_Face>> stretch_;
+  gp_Dir stretchNormal_;
 };
 
 class RotateTool : public TransformTool {

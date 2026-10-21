@@ -60,11 +60,16 @@ class Modeler {
   // Creates a new face object whose outline is offset from a profile face
   // (positive = outwards). The original is kept, as in SketchUp.
   Result<PushPullResult> offset(const ObjectId& id, double distance);
+  // Offsets the outline of a planar face of a solid into a new profile lying
+  // on that face (e.g. an inset to push in for a frame or a recess).
+  Result<ObjectId> offsetSolidFace(const ObjectId& id, const TopoDS_Face& worldFace, double distance);
   Status setParameter(const ObjectId& id, const std::string& key, double value);
   Status rename(const ObjectId& id, const std::string& name);
   Status setVisible(const ObjectId& id, bool visible);
   Status setLayer(const ObjectId& id, const std::string& layer);
   Status setColor(const ObjectId& id, const Color& color);
+  // Paints objects; groups paint all their descendants (one undo step).
+  Status paint(const std::vector<ObjectId>& ids, const Color& color);
   // Deletes objects together with their descendants.
   Status remove(const std::vector<ObjectId>& ids);
 

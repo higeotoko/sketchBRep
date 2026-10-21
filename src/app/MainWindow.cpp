@@ -6,6 +6,7 @@
 #include <QActionGroup>
 #include <QApplication>
 #include <QCloseEvent>
+#include <QColorDialog>
 #include <QDockWidget>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -38,6 +39,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   revolveTool_ = std::make_unique<RevolveTool>(*this);
   measureTool_ = std::make_unique<MeasureTool>(*this);
   circleTool_ = std::make_unique<CircleTool>(*this);
+  paintTool_ = std::make_unique<PaintTool>(*this);
 
   buildUi();
   buildMenus();
@@ -321,6 +323,7 @@ void MainWindow::buildMenus() {
       {tr("曲線"), QStringLiteral("N"), ToolId::Curve, CursorKind::Curve},
       {tr("回転体"), QStringLiteral("V"), ToolId::Revolve, CursorKind::Revolve},
       {tr("メジャー"), QStringLiteral("T"), ToolId::Measure, CursorKind::Measure},
+      {tr("ペイント"), QStringLiteral("B"), ToolId::Paint, CursorKind::Paint},
   };
   for (const ToolEntry& e : entries) {
     QAction* a = new QAction(toolIcon(e.icon), e.label, this);
@@ -328,7 +331,15 @@ void MainWindow::buildMenus() {
     a->setShortcut(QKeySequence(e.key));
     a->setToolTip(QStringLiteral("%1 (%2)").arg(e.label, e.key));
     const ToolId id = e.id;
-    connect(a, &QAction::triggered, this, [this, id] { activateTool(id); });
+    connect(a, &QAction::triggered, this, [this, id] {
+      // Choosing the paint tool (again) opens the colour picker first.
+      if (id == ToolId::Paint) {
+        const doc::Color c = paintTool_->color();
+        const QColor chosen = QColorDialog::getColor(QColor::fromRgbF(c.r, c.g, c.b), this, tr("ペイント色"));
+        if (chosen.isValid()) paintTool_->setColor({chosen.redF(), chosen.greenF(), chosen.blueF()});
+      }
+      activateTool(id);
+    });
     toolGroup_->addAction(a);
     tools->addAction(a);
     bar->addAction(a);
@@ -343,7 +354,7 @@ void MainWindow::buildMenus() {
            "Shift+ホイールドラッグ: パン / ダブルクリック: フォーカス<br>"
            "F2〜F7: 標準ビュー / F8: 透視・平行投影 / Shift+Z: 全体表示<br><br>"
            "<b>ツール</b><br>Space: 選択 / L: 線 / R: 矩形 / P: プッシュ/プル<br>"
-           "C: 円 / N: 曲線 / V: 回転体 / T: メジャー<br>"
+           "C: 円 / N: 曲線 / V: 回転体 / T: メジャー / B: ペイント（Alt+クリックで色を拾う）<br>"
            "M: 移動 / Q: 回転 / F: オフセット（移動・回転中に Ctrl でコピー、確定後 x3 で配列・/3 で等分割）<br>"
            "作図中に数値を打って Enter で寸法指定（例: 3000, 4.5m, 3000,4500）<br>"
            "Shift: 推論方向をロック / →・←・↑: X・Y・Z 軸ロック / ↓: 解除 / Esc: 中止"));
@@ -364,6 +375,7 @@ void MainWindow::activateTool(ToolId id) {
     case ToolId::Revolve: active_ = revolveTool_.get(); break;
     case ToolId::Measure: active_ = measureTool_.get(); break;
     case ToolId::Circle: active_ = circleTool_.get(); break;
+    case ToolId::Paint: active_ = paintTool_.get(); break;
   }
   toolActions_[static_cast<int>(id)]->setChecked(true);
   viewport_->setTool(active_);

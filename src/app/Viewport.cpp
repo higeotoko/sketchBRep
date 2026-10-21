@@ -616,6 +616,14 @@ std::vector<ElementRef> Viewport::allElements(const doc::ObjectId& id) const {
   return out;
 }
 
+TopoDS_Shape Viewport::elementShape(const ElementRef& element) const {
+  const auto it = entries_.find(element.objectId);
+  if (it == entries_.end()) return {};
+  const auto& map = element.type == TopAbs_FACE ? it->second.canonicalFaces : it->second.canonicalEdges;
+  if (element.index < 1 || element.index > map.Extent()) return {};
+  return map(element.index);
+}
+
 void Viewport::setHighlightedElements(const std::vector<ElementRef>& elements) {
   highlighted_ = elements;
   if (view_.IsNull()) return;

@@ -86,6 +86,8 @@ class Viewport : public QWidget {
   // Every face and edge of the object.
   std::vector<ElementRef> allElements(const doc::ObjectId& id) const;
   void setHighlightedElements(const std::vector<ElementRef>& elements);
+  // Canonical world shape of a face/edge (null if no longer valid).
+  TopoDS_Shape elementShape(const ElementRef& element) const;
   void setToolCursor(const QCursor& cursor);
   // Group edit mode: everything outside the group is faded.
   void setEditContext(const doc::ObjectId& groupId);

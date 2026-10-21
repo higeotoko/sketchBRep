@@ -16,6 +16,7 @@
 #include <TopoDS_Vertex.hxx>
 #include <TopoDS_Wire.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
+#include <TopoDS.hxx>
 
 #include "Cursors.h"
 #include "Viewport.h"
@@ -249,6 +250,20 @@ QString DrawingTool::lockSuffix() const {
   return locked_ ? QObject::tr("（方向ロック中・↓で解除）") : QString();
 }
 
+namespace {
+// Sketch plane for a shape started at `r`: the face under the cursor when
+// the click is on a face (or on one of its edges/corners), else horizontal.
+geom::SketchPlane planeForStart(Viewport& viewport, const QPoint& pos, const snap::SnapResult& r) {
+  gp_Dir normal = gp::DZ();
+  if (r.kind == snap::SnapKind::OnFace && r.faceNormal) {
+    normal = *r.faceNormal;
+  } else if (const auto face = viewport.faceAt(pos)) {
+    if (std::abs(gp_Vec(face->first, r.point).Dot(gp_Vec(face->second))) < 1e-6) normal = face->second;
+  }
+  return geom::SketchPlane::fromNormal(r.point, normal);
+}
+}  // namespace
+
 // --- Line -----------------------------------------------------------------------
 
 QString LineTool::name() const { return QObject::tr("線"); }
@@ -271,7 +286,8 @@ std::optional<gp_Pnt> LineTool::pointAt(const ToolEvent& e) {
   std::optional<gp_Pln> plane;
   if (!points_.empty()) {
     anchor = points_.back();
-    plane = gp_Pln(*anchor, gp::DZ());
+    // Stay on the plane the chain started on (a wall face, the ground, ...).
+    plane = drawPlane_ ? *drawPlane_ : gp_Pln(*anchor, gp::DZ());
   }
   snap::SnapResult r = snapAt(e, anchor, plane);
   // Closing the loop: snap to the first point of the chain being drawn.
@@ -303,7 +319,9 @@ void LineTool::mouseMove(const ToolEvent& e) {
 
 void LineTool::mousePress(const ToolEvent& e) {
   const auto p = pointAt(e);
-  if (p) addPoint(*p);
+  if (!p) return;
+  if (points_.empty()) drawPlane_ = planeForStart(host_.viewport(), e.pos, last_).plane();
+  addPoint(*p);
 }
 
 bool LineTool::mouseDoubleClick(const ToolEvent&) {
@@ -324,6 +342,7 @@ void LineTool::addPoint(const gp_Pnt& p) {
       (void)line;
     }
     points_.clear();
+    drawPlane_.reset();
     resetLock();
     updatePreview();
     host_.setStatus(QObject::tr("始点をクリック"));
@@ -341,6 +360,7 @@ void LineTool::finish() {
   }
   points_.clear();
   current_.reset();
+  drawPlane_.reset();
   resetLock();
   host_.viewport().clearPreview();
   host_.setMeasurement(QObject::tr("長さ"), QString());
@@ -457,19 +477,6 @@ void CurveTool::updatePreview() {
 
 // --- Circle ---------------------------------------------------------------------
 
-namespace {
-// Sketch plane for a shape started at `r`: the face under the cursor when
-// the click is on a face (or on one of its edges/corners), else horizontal.
-geom::SketchPlane planeForStart(Viewport& viewport, const QPoint& pos, const snap::SnapResult& r) {
-  gp_Dir normal = gp::DZ();
-  if (r.kind == snap::SnapKind::OnFace && r.faceNormal) {
-    normal = *r.faceNormal;
-  } else if (const auto face = viewport.faceAt(pos)) {
-    if (std::abs(gp_Vec(face->first, r.point).Dot(gp_Vec(face->second))) < 1e-6) normal = face->second;
-  }
-  return geom::SketchPlane::fromNormal(r.point, normal);
-}
-}  // namespace
 
 QString CircleTool::name() const { return QObject::tr("円"); }
 QCursor CircleTool::cursor() const { return toolCursor(CursorKind::Circle); }
@@ -870,6 +877,7 @@ void MoveTool::activate() {
 
 void MoveTool::resetState() {
   moving_ = false;
+  stretch_.reset();
   copy_ = false;
   resetLock();
   host_.viewport().clearPreview();
@@ -888,6 +896,19 @@ void MoveTool::mouseMove(const ToolEvent& e) {
   const snap::SnapResult r = snapAt(e, base_, gp_Pln(base_, gp::DZ()));
   if (!r.valid()) return;
   current_ = r.point;
+  if (stretch_) {
+    // Preview the slab the face sweeps through.
+    const double d = gp_Vec(base_, current_).Dot(gp_Vec(stretchNormal_));
+    host_.setMeasurement(QObject::tr("距離"), mm(d));
+    host_.setStatus(QObject::tr("面を移動（ソリッドを伸縮）: クリックで確定、または距離を入力"));
+    if (std::abs(d) > tolerance::kMinDimension) {
+      BRepPrimAPI_MakePrism prism(stretch_->second, gp_Vec(stretchNormal_) * d, Standard_True);
+      host_.viewport().setPreview(prism.IsDone() ? prism.Shape() : TopoDS_Shape(), true);
+    } else {
+      host_.viewport().clearPreview();
+    }
+    return;
+  }
   gp_Trsf delta;
   delta.SetTranslation(gp_Vec(base_, current_));
   host_.viewport().setGhost(targets_, delta);
@@ -896,8 +917,49 @@ void MoveTool::mouseMove(const ToolEvent& e) {
                   lockSuffix() + copySuffix());
 }
 
+void MoveTool::finish() {
+  if (stretch_) {
+    const double d = gp_Vec(base_, current_).Dot(gp_Vec(stretchNormal_));
+    if (std::abs(d) > tolerance::kMinDimension) {
+      auto result = host_.modeler().pushPull(stretch_->first, stretch_->second, d);
+      if (!result) {
+        host_.reportError(QObject::tr("面を移動できませんでした: %1").arg(QString::fromStdString(result.error())));
+      }
+      // Face indices change with the topology: drop the stale face selection.
+      host_.setSelection({});
+    }
+    last_.reset();
+  } else {
+    gp_Trsf delta;
+    delta.SetTranslation(gp_Vec(base_, current_));
+    if (base_.Distance(current_) > tolerance::kMinDimension) commit(delta);
+  }
+  resetState();
+  host_.viewport().setPickMode(PickMode::Objects);
+}
+
 void MoveTool::mousePress(const ToolEvent& e) {
   if (!moving_) {
+    // A single selected face of a solid or profile: stretch along its normal.
+    const auto elements = host_.elementSelection();
+    if (elements.size() == 1 && elements.front().type == TopAbs_FACE) {
+      const TopoDS_Shape face = host_.viewport().elementShape(elements.front());
+      const doc::Object* owner = host_.modeler().document().find(elements.front().objectId);
+      const auto normal = face.IsNull() ? std::nullopt : geom::planarFaceNormal(TopoDS::Face(face));
+      if (owner && normal &&
+          (owner->kind() == doc::ObjectKind::Solid || owner->kind() == doc::ObjectKind::Face)) {
+        const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
+        if (!r.valid()) return;
+        stretch_ = std::make_pair(owner->id, TopoDS::Face(face));
+        stretchNormal_ = *normal;
+        locked_ = *normal;  // movement constrained to the face normal
+        base_ = current_ = r.point;
+        moving_ = true;
+        host_.viewport().clearHover();
+        host_.viewport().setPickMode(PickMode::None);
+        return;
+      }
+    }
     targets_ = host_.selection();
     if (targets_.empty()) {
       if (const auto picked = host_.viewport().pickObject(e.pos)) {
@@ -918,11 +980,7 @@ void MoveTool::mousePress(const ToolEvent& e) {
     return;
   }
   mouseMove(e);
-  gp_Trsf delta;
-  delta.SetTranslation(gp_Vec(base_, current_));
-  if (base_.Distance(current_) > tolerance::kMinDimension) commit(delta);
-  resetState();
-  host_.viewport().setPickMode(PickMode::Objects);
+  finish();
   host_.setStatus(QObject::tr("基点をクリック（数値で距離変更、コピー後は x3 で配列・/3 で等分割）"));
 }
 
@@ -933,15 +991,18 @@ void MoveTool::applyMeasurement(const QString& text) {
       host_.reportError(QObject::tr("距離を解釈できません: %1").arg(text));
       return;
     }
+    if (stretch_) {
+      const double d = gp_Vec(base_, current_).Dot(gp_Vec(stretchNormal_));
+      current_ = base_.Translated(gp_Vec(stretchNormal_) * (d < 0 ? -*length : *length));
+      finish();
+      return;
+    }
     if (base_.Distance(current_) < 1e-9) {
       host_.reportError(QObject::tr("マウスで方向を示してから距離を入力してください"));
       return;
     }
-    gp_Trsf delta;
-    delta.SetTranslation(gp_Vec(gp_Dir(gp_Vec(base_, current_))) * *length);
-    commit(delta);
-    resetState();
-    host_.viewport().setPickMode(PickMode::Objects);
+    current_ = base_.Translated(gp_Vec(gp_Dir(gp_Vec(base_, current_))) * *length);
+    finish();
     return;
   }
   if (!canReeditLast()) {
@@ -1149,7 +1210,7 @@ QCursor OffsetTool::cursor() const { return toolCursor(CursorKind::Offset); }
 void OffsetTool::activate() {
   host_.viewport().setPickMode(PickMode::Faces);
   host_.setMeasurement(QObject::tr("オフセット距離"), QString());
-  host_.setStatus(QObject::tr("オフセットする面（平面プロファイル）をクリック"));
+  host_.setStatus(QObject::tr("オフセットする面をクリック（ソリッドの面なら面上に内側の輪郭を作成）"));
 }
 
 void OffsetTool::cancel() { reset(); }
@@ -1190,8 +1251,9 @@ void OffsetTool::mousePress(const ToolEvent& e) {
   const auto pick = host_.viewport().pickFace(e.pos);
   if (!pick) return;
   const doc::Object* o = host_.modeler().document().find(pick->objectId);
-  if (!o || o->kind() != doc::ObjectKind::Face || !geom::isPlanarFace(pick->face, &plane_)) {
-    host_.reportError(QObject::tr("オフセットできるのは平面プロファイル（押し出し前の面）です"));
+  const bool usable = o && (o->kind() == doc::ObjectKind::Face || o->kind() == doc::ObjectKind::Solid);
+  if (!usable || !geom::isPlanarFace(pick->face, &plane_)) {
+    host_.reportError(QObject::tr("オフセットできるのは平らな面です"));
     return;
   }
   objectId_ = pick->objectId;
@@ -1207,12 +1269,23 @@ void OffsetTool::commit(double distance) {
     reset();
     return;
   }
-  auto result = host_.modeler().offset(objectId_, distance);
-  if (!result) {
-    host_.reportError(QObject::tr("オフセットに失敗しました: %1")
-                          .arg(QString::fromStdString(result.error())));
+  const doc::Object* owner = host_.modeler().document().find(objectId_);
+  if (owner && owner->kind() == doc::ObjectKind::Solid) {
+    // Face of a solid: a new outline on that face (push it in for a recess).
+    auto created = host_.modeler().offsetSolidFace(objectId_, face_, distance);
+    if (!created) {
+      host_.reportError(QObject::tr("オフセットに失敗しました: %1")
+                            .arg(QString::fromStdString(created.error())));
+    }
+    last_.reset();
   } else {
-    last_ = LastOffset{result->id, result->parameterKey};
+    auto result = host_.modeler().offset(objectId_, distance);
+    if (!result) {
+      host_.reportError(QObject::tr("オフセットに失敗しました: %1")
+                            .arg(QString::fromStdString(result.error())));
+    } else {
+      last_ = LastOffset{result->id, result->parameterKey};
+    }
   }
   reset();
   host_.setMeasurement(QObject::tr("オフセット距離"), QString::number(distance, 'f', 1));
@@ -1388,6 +1461,44 @@ void MeasureTool::mousePress(const ToolEvent& e) {
   lastDistance_ = start_->Distance(r.point);
   start_.reset();
   resetLock();
+}
+
+// --- Paint ---------------------------------------------------------------------------
+
+QString PaintTool::name() const { return QObject::tr("ペイント"); }
+QCursor PaintTool::cursor() const { return toolCursor(CursorKind::Paint); }
+
+void PaintTool::activate() {
+  host_.viewport().setPickMode(PickMode::Objects);
+  host_.setMeasurement(QString(), QString());
+  host_.setStatus(QObject::tr("クリックで塗る / Alt+クリックで色を拾う（色はツールをもう一度選ぶと変更）"));
+}
+
+void PaintTool::mouseMove(const ToolEvent& e) { host_.viewport().pickObject(e.pos); }
+
+void PaintTool::mousePress(const ToolEvent& e) {
+  const auto picked = host_.viewport().pickObject(e.pos);
+  if (!picked) return;
+  const doc::Document& document = host_.modeler().document();
+  if (e.modifiers & Qt::AltModifier) {
+    if (const doc::Object* o = document.find(*picked)) {
+      color_ = o->color;
+      host_.setStatus(QObject::tr("色を拾いました（クリックで塗る）"));
+    }
+    return;
+  }
+  // Paint at the current editing level: a group/component as a whole, or a
+  // single object inside the group being edited.
+  doc::ObjectId target = *picked;
+  const doc::ObjectId context = host_.editingGroup();
+  int guard = 0;
+  while (guard++ < 1000) {
+    const doc::Object* o = document.find(target);
+    if (!o || o->parent.empty() || o->parent == context) break;
+    target = o->parent;
+  }
+  const Status s = host_.modeler().paint({target}, color_);
+  if (!s) host_.reportError(QString::fromStdString(s.message()));
 }
 
 }  // namespace sbr::app

@@ -539,3 +539,33 @@ TEST(GroupEditing, NewGeometryGoesIntoActiveGroupAndKeepsWorldPlacement) {
   auto outside = m.createRectangle(geom::SketchPlane::ground(), 10, 10);
   EXPECT_TRUE(m.document().find(*outside)->parent.empty());
 }
+
+TEST(Offset, FaceOfSolidThenPushInMakesRecess) {
+  Modeler m;
+  const ObjectId block = box(m, 0, 0, 0, 1000, 1000, 1000, "Block");
+  const TopoDS_Face top = faceWithNormal(m.document().worldShape(block), gp::DZ());
+  auto inset = m.offsetSolidFace(block, top, -100);
+  ASSERT_TRUE(inset.ok()) << inset.error();
+  EXPECT_EQ(m.document().find(*inset)->kind(), ObjectKind::Face);
+  test::expectBounds(m.document().worldShape(*inset), 100, 100, 1000, 900, 900, 1000, 1e-6);
+  // Pushing the inset down cuts a recess into the block (one object).
+  auto pp = m.pushPull(*inset, TopoDS::Face(m.document().worldShape(*inset)), -300);
+  ASSERT_TRUE(pp.ok()) << pp.error();
+  EXPECT_EQ(m.document().objects().size(), 1u);
+  EXPECT_NEAR(worldVolume(m, pp->id), 1e9 - 800.0 * 800 * 300, 1e-2);
+  EXPECT_FALSE(m.offsetSolidFace(pp->id, top, -600).ok());  // collapses
+}
+
+TEST(Paint, GroupsPaintTheirChildrenInOneStep) {
+  Modeler m;
+  const ObjectId a = box(m, 0, 0, 0, 10, 10, 10);
+  const ObjectId b = box(m, 20, 0, 0, 10, 10, 10);
+  auto g = m.group({a, b});
+  const Color red{0.9, 0.1, 0.1};
+  ASSERT_TRUE(m.paint({*g}, red).ok());
+  EXPECT_EQ(m.document().find(a)->color, red);
+  EXPECT_EQ(m.document().find(b)->color, red);
+  EXPECT_EQ(m.history().undoName(), "Paint");
+  ASSERT_TRUE(m.undo());
+  EXPECT_FALSE(m.document().find(a)->color == red);
+}

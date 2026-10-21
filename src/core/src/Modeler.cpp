@@ -379,6 +379,27 @@ Result<PushPullResult> Modeler::offset(const ObjectId& id, double distance) {
   return PushPullResult{added.value(), key};
 }
 
+Result<ObjectId> Modeler::offsetSolidFace(const ObjectId& id, const TopoDS_Face& worldFace,
+                                          double distance) {
+  const Object* owner = document_.find(id);
+  if (!owner) return Result<ObjectId>::failure("Object not found");
+  if (owner->kind() != ObjectKind::Solid) return Result<ObjectId>::failure("Not a solid");
+  auto face = geom::offsetFace(worldFace, distance);
+  if (!face) return Result<ObjectId>::failure(face.error());
+  // The new outline lives in the owner's group, expressed in that group's
+  // frame (committed directly: it must not be re-homed into another group).
+  Object o;
+  o.id = generateObjectId();
+  o.name = uniqueName("Offset");
+  o.parent = owner->parent;
+  const gp_Trsf toParent = document_.parentTransform(*owner).Inverted();
+  o.recipe.base = ImportedShape{face->Moved(TopLoc_Location(toParent)), "Offset of " + owner->name};
+  const Status built = rebuild(o, document_.regenContext());
+  if (!built) return Result<ObjectId>::failure(built.message());
+  history_.execute(Command{"Offset", {ObjectDelta{o.id, std::nullopt, o, std::nullopt}}, {}});
+  return o.id;
+}
+
 Status Modeler::setParameter(const ObjectId& id, const std::string& key, double value) {
   const Object* current = document_.find(id);
   if (!current) return Status::failure("Object not found");
@@ -422,6 +443,23 @@ Status Modeler::setLayer(const ObjectId& id, const std::string& layer) {
 
 Status Modeler::setColor(const ObjectId& id, const Color& color) {
   return modifyAttribute(document_, history_, id, "Set Color", [&](Object& o) { o.color = color; });
+}
+
+Status Modeler::paint(const std::vector<ObjectId>& ids, const Color& color) {
+  ChangeSet changes(document_);
+  bool any = false;
+  for (const ObjectId& root : topmost(ids)) {
+    for (const ObjectId& id : document_.subtree(root)) {
+      Object o = *document_.find(id);
+      if (o.kind() == ObjectKind::Group || o.color == color) continue;
+      o.color = color;
+      changes.modify(o);
+      any = true;
+    }
+  }
+  if (!any) return Status::success();
+  history_.execute(changes.build("Paint"));
+  return Status::success();
 }
 
 Status Modeler::remove(const std::vector<ObjectId>& ids) {
