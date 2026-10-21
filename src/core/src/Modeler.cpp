@@ -232,35 +232,112 @@ Status Modeler::setAnnotationText(const ObjectId& id, const std::string& text) {
   return commitModified(std::move(object), "Edit Text");
 }
 
+namespace {
+
+struct SplitCandidate {
+  const Object* object = nullptr;
+  TopoDS_Face face;  // world coordinates
+  bool profile = false;
+};
+
+bool lineCrossesFace(const TopoDS_Face& face, const std::vector<gp_Pnt>& points) {
+  if (!geom::isPlanarFace(face)) return false;
+  for (const gp_Pnt& p : points) {
+    if (!geom::pointOnFace(face, p)) return false;
+  }
+  return geom::pointOnFaceBoundary(face, points.front()) && geom::pointOnFaceBoundary(face, points.back());
+}
+
+// Faces a line could split, in the order to try: loose profiles first (they
+// lie on top of solid faces), then faces of solids.
+std::vector<SplitCandidate> splitCandidates(const Document& document, const ObjectId& context,
+                                            const std::vector<gp_Pnt>& points) {
+  std::vector<SplitCandidate> out;
+  if (points.size() < 2) return out;
+  for (int pass = 0; pass < 2; ++pass) {
+    for (const Object& o : document.objects()) {
+      if (o.parent != context || !document.isVisible(o.id)) continue;
+      const bool profile = o.kind() == ObjectKind::Face;
+      if ((pass == 0) != profile || (!profile && o.kind() != ObjectKind::Solid)) continue;
+      const TopoDS_Shape shape = document.worldShape(o);
+      for (TopExp_Explorer e(shape, TopAbs_FACE); e.More(); e.Next()) {
+        const TopoDS_Face face = TopoDS::Face(e.Current());
+        if (lineCrossesFace(face, points)) out.push_back({&o, face, profile});
+      }
+    }
+  }
+  return out;
+}
+
+}  // namespace
+
+std::optional<ObjectId> Modeler::splitTarget(const std::vector<gp_Pnt>& worldPoints) const {
+  // Cheap test for hover hints: the line runs edge to edge across a face.
+  const auto candidates = splitCandidates(document_, activeGroup_, worldPoints);
+  if (candidates.empty()) return std::nullopt;
+  return candidates.front().object->id;
+}
+
 Result<ObjectId> Modeler::splitWithLine(const std::vector<gp_Pnt>& worldPoints) {
   if (worldPoints.size() < 2) return Result<ObjectId>::failure("Split needs a line");
   std::string lastError = "The line does not cross a face from edge to edge";
-  for (const Object& candidate : document_.objects()) {
-    if (candidate.kind() != ObjectKind::Solid || !document_.isVisible(candidate.id)) continue;
-    const gp_Trsf world = document_.worldTransform(candidate);
-    const TopoDS_Shape worldShape = document_.worldShape(candidate);
-    for (TopExp_Explorer e(worldShape, TopAbs_FACE); e.More(); e.Next()) {
-      const TopoDS_Face face = TopoDS::Face(e.Current());
-      if (!geom::isPlanarFace(face)) continue;
-      bool inside = true;
-      for (const gp_Pnt& p : worldPoints) inside = inside && geom::pointOnFace(face, p);
-      if (!inside || !geom::pointOnFaceBoundary(face, worldPoints.front()) ||
-          !geom::pointOnFaceBoundary(face, worldPoints.back())) {
+  for (const SplitCandidate& c : splitCandidates(document_, activeGroup_, worldPoints)) {
+    // A copy: adding objects below may move the document's storage.
+    const Object candidate = *c.object;
+    if (c.profile) {
+      // Work in the parent's frame, where the profile's placement lives.
+      const gp_Trsf toParent = document_.parentTransform(candidate).Inverted();
+      std::vector<gp_Pnt> line;
+      for (const gp_Pnt& p : worldPoints) line.push_back(p.Transformed(toParent));
+      const TopoDS_Face placed = TopoDS::Face(c.face.Moved(TopLoc_Location(toParent)));
+      auto parts = geom::splitPlanarFace(placed, line);
+      if (!parts) {
+        lastError = parts.error();
         continue;
       }
-      // Record in object coordinates.
-      const gp_Trsf toLocal = world.Inverted();
-      const TopoDS_Face localFace = TopoDS::Face(face.Moved(TopLoc_Location(toLocal)));
-      const auto ref = geom::FaceRef::fromFace(localFace);
-      if (!ref) continue;
-      std::vector<gp_Pnt> local;
-      for (const gp_Pnt& p : worldPoints) local.push_back(p.Transformed(toLocal));
-      Object object = candidate;
-      object.recipe.modifiers.push_back(SplitOp{*ref, local});
-      const Status s = commitModified(std::move(object), "Split Face");
-      if (s) return candidate.id;
-      lastError = s.message();
+      history_.beginGroup("Split Face");
+      std::vector<ObjectId> created;
+      bool ok = true;
+      for (const TopoDS_Face& part : parts.value()) {
+        const auto inside = geom::SurfaceRef::fromFace(part);
+        if (!inside) {
+          ok = false;
+          break;
+        }
+        Object o;
+        o.name = uniqueName(candidate.name);
+        o.parent = candidate.parent;
+        o.layer = candidate.layer;
+        o.color = candidate.color;
+        o.recipe.base = FacePart{{BooleanOperand{std::make_shared<const Recipe>(candidate.recipe),
+                                                 candidate.transform, candidate.name}},
+                                 line, inside->point};
+        auto id = addObject(std::move(o), "Split Face");
+        if (!id) {
+          lastError = id.error();
+          ok = false;
+          break;
+        }
+        created.push_back(*id);
+      }
+      if (ok && remove({candidate.id})) {
+        history_.endGroup();
+        return created.front();
+      }
+      history_.abortGroup();
+      continue;
     }
+    const gp_Trsf toLocal = document_.worldTransform(candidate).Inverted();
+    const TopoDS_Face localFace = TopoDS::Face(c.face.Moved(TopLoc_Location(toLocal)));
+    const auto ref = geom::FaceRef::fromFace(localFace);
+    if (!ref) continue;
+    std::vector<gp_Pnt> local;
+    for (const gp_Pnt& p : worldPoints) local.push_back(p.Transformed(toLocal));
+    Object object = candidate;
+    object.recipe.modifiers.push_back(SplitOp{*ref, local});
+    const Status s = commitModified(std::move(object), "Split Face");
+    if (s) return candidate.id;
+    lastError = s.message();
   }
   return Result<ObjectId>::failure(lastError);
 }
@@ -293,7 +370,8 @@ bool Modeler::isLooseCurveEnd(const gp_Pnt& p) const {
   return false;
 }
 
-Result<ObjectId> Modeler::faceFromLoop(const ObjectId& curveId) {
+Result<ObjectId> Modeler::faceFromLoop(const ObjectId& curveId, bool* loopFound) {
+  if (loopFound) *loopFound = false;
   const Object* start = document_.find(curveId);
   if (!start) return Result<ObjectId>::failure("Object not found");
   const auto startEnds = curveEnds(document_, *start);
@@ -327,6 +405,7 @@ Result<ObjectId> Modeler::faceFromLoop(const ObjectId& curveId) {
     return false;
   };
   if (!search(startEnds->second)) return Result<ObjectId>::failure("The curve does not close a loop");
+  if (loopFound) *loopFound = true;
 
   std::vector<const Object*> members = {start};
   for (int i : path) members.push_back(candidates[static_cast<std::size_t>(i)].object);

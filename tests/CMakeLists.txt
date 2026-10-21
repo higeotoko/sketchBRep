@@ -10,6 +10,7 @@ add_executable(sbr_core_tests
   test_phase2.cpp
   test_freeform.cpp
   test_api.cpp
+  test_ux_gate1.cpp
 )
 target_link_libraries(sbr_core_tests PRIVATE sbr::core nlohmann_json::nlohmann_json GTest::gtest_main)
 

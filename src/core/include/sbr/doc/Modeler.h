@@ -59,11 +59,18 @@ class Modeler {
   // A line (world points) drawn from edge to edge across a planar face of a
   // visible solid splits that face (parametric SplitOp). Returns the solid's
   // id, or a failure if the line does not divide any face.
+  // Profiles (single faces) are divided into separate face objects that keep
+  // the original recipe. Only objects of the current editing context are
+  // considered.
   Result<ObjectId> splitWithLine(const std::vector<gp_Pnt>& worldPoints);
+  // The object a line would split (cheap check for the "split here" hint).
+  std::optional<ObjectId> splitTarget(const std::vector<gp_Pnt>& worldPoints) const;
   // If the curve closes a loop with other loose open curves (lines, arcs,
   // NURBS) in the same group, replaces them by one face bounded by them
   // (parametric: the curves' parameters stay editable). One undo step.
-  Result<ObjectId> faceFromLoop(const ObjectId& curveId);
+  // loopFound (optional) tells "no closed loop" apart from "a loop that cannot
+  // become a face" (not planar, crossing itself).
+  Result<ObjectId> faceFromLoop(const ObjectId& curveId, bool* loopFound = nullptr);
   // True if p is an end point of a loose open curve (where a loop can close).
   bool isLooseCurveEnd(const gp_Pnt& p) const;
   // View state kept in the file but outside the undo history.

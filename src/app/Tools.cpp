@@ -257,6 +257,39 @@ QString DrawingTool::lockSuffix() const {
 namespace {
 // Sketch plane for a shape started at `r`: the face under the cursor when
 // the click is on a face (or on one of its edges/corners), else horizontal.
+// Why a closed loop could not become a face, for the user (F-04/F-06).
+QString loopFailureText(const std::string& error) {
+  if (error.find("not planar") != std::string::npos) {
+    return QObject::tr("輪郭が同じ平面上にないため面にできません。線はそのまま残しました"
+                       "（曲面を張るには曲面メニューのロフトを使います）");
+  }
+  if (error.find("crosses itself") != std::string::npos) {
+    return QObject::tr("輪郭が自分自身と交差しているため面にできません。線はそのまま残しました");
+  }
+  return QObject::tr("輪郭を面にできませんでした（%1）。線はそのまま残しました").arg(QString::fromStdString(error));
+}
+
+// Creates a curve and, if it closes a loop, the face — one undo step (F-08).
+template <class Create>
+void createCurveAndFace(ToolHost& host, Create create, const char* undoName) {
+  doc::Modeler& m = host.modeler();
+  m.history().beginGroup(undoName);
+  auto curve = create();
+  if (!curve) {
+    m.history().abortGroup();
+    host.reportError(QString::fromStdString(curve.error()));
+    return;
+  }
+  bool loopFound = false;
+  auto face = m.faceFromLoop(*curve, &loopFound);
+  m.history().endGroup();
+  if (face) {
+    host.setStatus(QObject::tr("輪郭が閉じたので面を作成しました。そのままプッシュ/プルできます"));
+  } else if (loopFound) {
+    host.reportError(loopFailureText(face.error()));
+  }
+}
+
 geom::SketchPlane planeForStart(Viewport& viewport, const QPoint& pos, const snap::SnapResult& r) {
   gp_Dir normal = gp::DZ();
   if (r.kind == snap::SnapKind::OnFace && r.faceNormal) {
@@ -317,6 +350,16 @@ void LineTool::mouseMove(const ToolEvent& e) {
   current_ = pointAt(e);
   if (!points_.empty() && current_) {
     host_.setMeasurement(QObject::tr("長さ"), mm(points_.back().Distance(*current_)));
+    // Say what clicking here will do (P-05: predictable before commit).
+    std::vector<gp_Pnt> line = points_;
+    line.push_back(*current_);
+    if (points_.size() >= 3 && current_->Distance(points_.front()) < 1e-6) {
+      host_.setStatus(QObject::tr("クリックで閉じて面にします"));
+    } else if (host_.modeler().isLooseCurveEnd(*current_)) {
+      host_.setStatus(QObject::tr("クリックで線・円弧とつなぎます（輪郭が閉じれば面になります）"));
+    } else if (host_.modeler().splitTarget(line)) {
+      host_.setStatus(QObject::tr("クリックで面をこの線で分割します"));
+    }
   }
   updatePreview();
 }
@@ -376,12 +419,8 @@ void LineTool::addPoint(const gp_Pnt& p) {
 
 void LineTool::finish() {
   if (points_.size() >= 2) {
-    auto line = host_.modeler().createPolyline(points_);
-    if (!line) {
-      host_.reportError(QString::fromStdString(line.error()));
-    } else if (host_.modeler().faceFromLoop(*line)) {
-      host_.setStatus(QObject::tr("線と円弧で囲まれた面を作成しました"));
-    }
+    const std::vector<gp_Pnt> pts = points_;
+    createCurveAndFace(host_, [&] { return host_.modeler().createPolyline(pts); }, "Line");
   }
   points_.clear();
   current_.reset();
@@ -912,15 +951,22 @@ void ArcTool::mousePress(const ToolEvent& e) {
 
 void ArcTool::commit(double bulge) {
   if (std::abs(bulge) < tolerance::kMinDimension) return;
-  auto id = host_.modeler().createArc(start_, end_, plane_.normal, bulge, face_);
-  if (!id) {
-    host_.reportError(QString::fromStdString(id.error()));
-  } else if (!face_) {
+  if (!face_) {
     // An open arc closing a loop with lines becomes part of a face.
-    auto loop = host_.modeler().faceFromLoop(*id);
-    lastCreated_ = loop ? std::optional<doc::ObjectId>() : std::optional<doc::ObjectId>(id.value());
+    std::optional<doc::ObjectId> arc;
+    createCurveAndFace(host_, [&] {
+      auto id = host_.modeler().createArc(start_, end_, plane_.normal, bulge, false);
+      if (id) arc = id.value();
+      return id;
+    }, "Arc");
+    lastCreated_ = arc && host_.modeler().document().find(*arc) ? arc : std::nullopt;
   } else {
-    lastCreated_ = id.value();
+    auto id = host_.modeler().createArc(start_, end_, plane_.normal, bulge, true);
+    if (!id) {
+      host_.reportError(QString::fromStdString(id.error()));
+    } else {
+      lastCreated_ = id.value();
+    }
   }
   reset();
   updateStatus();

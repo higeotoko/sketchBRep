@@ -120,6 +120,15 @@ struct LoopProfile {
   std::vector<BooleanOperand> curves;
 };
 
+// One part of a profile face split by a line drawn across it: the original
+// face's recipe (source[0], editable as "in0.<key>"), the split line and a
+// point inside this part (parent coordinates).
+struct FacePart {
+  std::vector<BooleanOperand> source;
+  std::vector<gp_Pnt> line;
+  gp_Pnt inside;
+};
+
 // Container node of the object hierarchy. Has no geometry of its own.
 struct GroupNode {};
 
@@ -130,7 +139,7 @@ struct ComponentInstance {
 
 using BaseFeature = std::variant<RectangleProfile, CircleProfile, PolygonProfile, PolylineCurve, InterpolatedCurve,
                                  ArcCurve, LinearDimension, TextNote, ImportedShape,
-                                 BooleanFeature, LoftFeature, SweepFeature, LoopProfile, GroupNode,
+                                 BooleanFeature, LoftFeature, SweepFeature, LoopProfile, FacePart, GroupNode,
                                  ComponentInstance>;
 
 // --- Modifiers ------------------------------------------------------------

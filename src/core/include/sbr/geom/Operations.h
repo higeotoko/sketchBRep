@@ -43,6 +43,14 @@ Result<TopoDS_Face> offsetFace(const TopoDS_Face& face, double distance);
 Result<TopoDS_Shape> splitFace(const TopoDS_Shape& solid, const TopoDS_Face& face,
                                const std::vector<gp_Pnt>& polyline);
 
+// Same for a single planar face (a profile): returns the parts.
+Result<std::vector<TopoDS_Face>> splitPlanarFace(const TopoDS_Face& face, const std::vector<gp_Pnt>& polyline);
+
+// Like splitPlanarFace, but the line's first and last segments are extended
+// until they cross the boundary (used when the face grew after the split).
+Result<std::vector<TopoDS_Face>> splitPlanarFaceExtended(const TopoDS_Face& face,
+                                                         const std::vector<gp_Pnt>& polyline);
+
 // True if p lies on the face (inside or on its boundary) within tolerance.
 bool pointOnFace(const TopoDS_Face& face, const gp_Pnt& p, double tolerance = 1e-3);
 // True if p lies on the face boundary.

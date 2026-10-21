@@ -27,6 +27,9 @@
 #include <BRepBuilderAPI_MakeSolid.hxx>
 #include <ShapeFix_Solid.hxx>
 #include <GeomAPI_ProjectPointOnSurf.hxx>
+#include <TopoDS_Wire.hxx>
+#include <BRepAlgoAPI_Splitter.hxx>
+#include <TopTools_ListOfShape.hxx>
 #include <ShapeUpgrade_UnifySameDomain.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp_Explorer.hxx>
@@ -272,24 +275,86 @@ bool pointOnFaceBoundary(const TopoDS_Face& face, const gp_Pnt& p, double tolera
   return false;
 }
 
-Result<TopoDS_Shape> splitFace(const TopoDS_Shape& solid, const TopoDS_Face& face,
-                               const std::vector<gp_Pnt>& polyline) {
-  if (polyline.size() < 2) return Result<TopoDS_Shape>::failure("Split needs a line");
+namespace {
+
+Result<TopoDS_Wire> splitWire(const TopoDS_Face& face, const std::vector<gp_Pnt>& polyline) {
+  if (polyline.size() < 2) return Result<TopoDS_Wire>::failure("Split needs a line");
   for (const gp_Pnt& p : polyline) {
-    if (!pointOnFace(face, p)) return Result<TopoDS_Shape>::failure("The line leaves the face");
+    if (!pointOnFace(face, p)) return Result<TopoDS_Wire>::failure("The line leaves the face");
   }
   if (!pointOnFaceBoundary(face, polyline.front()) || !pointOnFaceBoundary(face, polyline.back())) {
-    return Result<TopoDS_Shape>::failure("The line must run from edge to edge of the face");
+    return Result<TopoDS_Wire>::failure("The line must run from edge to edge of the face");
   }
+  BRepBuilderAPI_MakeWire wire;
+  for (std::size_t i = 1; i < polyline.size(); ++i) {
+    if (polyline[i - 1].Distance(polyline[i]) < tolerance::kMinDimension) continue;
+    wire.Add(BRepBuilderAPI_MakeEdge(polyline[i - 1], polyline[i]).Edge());
+  }
+  if (!wire.IsDone()) return Result<TopoDS_Wire>::failure("Invalid split line");
+  return wire.Wire();
+}
+
+}  // namespace
+
+Result<std::vector<TopoDS_Face>> splitPlanarFace(const TopoDS_Face& face, const std::vector<gp_Pnt>& polyline) {
+  if (!isPlanarFace(face)) return Result<std::vector<TopoDS_Face>>::failure("Only planar faces can be split");
+  auto wire = splitWire(face, polyline);
+  if (!wire) return Result<std::vector<TopoDS_Face>>::failure(wire.error());
   try {
-    BRepBuilderAPI_MakeWire wire;
-    for (std::size_t i = 1; i < polyline.size(); ++i) {
-      if (polyline[i - 1].Distance(polyline[i]) < tolerance::kMinDimension) continue;
-      wire.Add(BRepBuilderAPI_MakeEdge(polyline[i - 1], polyline[i]).Edge());
+    BRepFeat_SplitShape split(face);
+    split.Add(wire.value(), face);
+    split.Build();
+    if (!split.IsDone()) return Result<std::vector<TopoDS_Face>>::failure("The face could not be split");
+    std::vector<TopoDS_Face> parts;
+    for (TopExp_Explorer e(split.Shape(), TopAbs_FACE); e.More(); e.Next()) {
+      TopoDS_Face part = TopoDS::Face(e.Current());
+      if (BRepCheck_Analyzer(part).IsValid()) parts.push_back(part);
     }
-    if (!wire.IsDone()) return Result<TopoDS_Shape>::failure("Invalid split line");
+    if (parts.size() < 2) return Result<std::vector<TopoDS_Face>>::failure("The line does not divide the face");
+    return parts;
+  } catch (const Standard_Failure& e) {
+    return Result<std::vector<TopoDS_Face>>::failure(std::string("Split failed: ") + e.GetMessageString());
+  }
+}
+
+Result<std::vector<TopoDS_Face>> splitPlanarFaceExtended(const TopoDS_Face& face,
+                                                         const std::vector<gp_Pnt>& polyline) {
+  if (polyline.size() < 2) return Result<std::vector<TopoDS_Face>>::failure("Split needs a line");
+  const Bnd_Box box = exactBounds(face);
+  const double reach = 2.0 * std::sqrt(box.SquareExtent()) + 1.0;
+  std::vector<gp_Pnt> line = polyline;
+  const gp_Vec first(line[1], line[0]);
+  const gp_Vec last(line[line.size() - 2], line.back());
+  if (first.Magnitude() < 1e-9 || last.Magnitude() < 1e-9) {
+    return Result<std::vector<TopoDS_Face>>::failure("Invalid split line");
+  }
+  line.front().Translate(first.Normalized() * reach);
+  line.back().Translate(last.Normalized() * reach);
+  try {
+    TopTools_ListOfShape arguments, tools;
+    arguments.Append(face);
+    for (std::size_t i = 1; i < line.size(); ++i) tools.Append(BRepBuilderAPI_MakeEdge(line[i - 1], line[i]).Edge());
+    BRepAlgoAPI_Splitter splitter;
+    splitter.SetArguments(arguments);
+    splitter.SetTools(tools);
+    splitter.Build();
+    if (!splitter.IsDone()) return Result<std::vector<TopoDS_Face>>::failure("The face could not be split");
+    std::vector<TopoDS_Face> parts;
+    for (TopExp_Explorer e(splitter.Shape(), TopAbs_FACE); e.More(); e.Next()) parts.push_back(TopoDS::Face(e.Current()));
+    if (parts.size() < 2) return Result<std::vector<TopoDS_Face>>::failure("The line does not divide the face");
+    return parts;
+  } catch (const Standard_Failure& e) {
+    return Result<std::vector<TopoDS_Face>>::failure(std::string("Split failed: ") + e.GetMessageString());
+  }
+}
+
+Result<TopoDS_Shape> splitFace(const TopoDS_Shape& solid, const TopoDS_Face& face,
+                               const std::vector<gp_Pnt>& polyline) {
+  auto wire = splitWire(face, polyline);
+  if (!wire) return Result<TopoDS_Shape>::failure(wire.error());
+  try {
     BRepFeat_SplitShape split(solid);
-    split.Add(wire.Wire(), face);
+    split.Add(wire.value(), face);
     split.Build();
     if (!split.IsDone()) return Result<TopoDS_Shape>::failure("The face could not be split");
     const TopoDS_Shape result = split.Shape();

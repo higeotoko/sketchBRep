@@ -246,9 +246,10 @@ TEST(CommandApi, ArchedOutlineFromArcAndLines) {
   Api a;
   const json r = a.ok("batch", {{"commands",
       {{{"command", "create_arc"}, {"args", {{"start", {0, 0, 0}}, {"end", {1000, 0, 0}}, {"bulge", -500}}}},
-       {{"command", "create_line"}, {"args", {{"points", {{1000, 0, 0}, {1000, 1000, 0}, {0, 1000, 0}, {0, 0, 0}}}}}},
-       {{"command", "face_from_loop"}, {"args", {{"id", "$2.id"}}}}}}});
-  const std::string face = r["results"][2]["result"]["id"];
+       {{"command", "create_line"}, {"args", {{"points", {{1000, 0, 0}, {1000, 1000, 0}, {0, 1000, 0}, {0, 0, 0}}}}}}}}});
+  // Like the line tool, create_line closes the loop into a face by itself.
+  EXPECT_TRUE(r["results"][1]["result"]["face"].get<bool>());
+  const std::string face = r["results"][1]["result"]["id"];
   EXPECT_NEAR(a.ok("get_object", {{"id", face}})["area"].get<double>(), 1e6 + M_PI * 250000 / 2, 1e-2);
   EXPECT_EQ(a.ok("list_objects")["objects"].size(), 1u);
 }

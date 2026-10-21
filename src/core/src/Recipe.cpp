@@ -130,6 +130,22 @@ Result<TopoDS_Shape> buildBase(const BaseFeature& base, const RegenContext& cont
             if (!face) return Result<TopoDS_Shape>::failure(face.error());
             return TopoDS_Shape(face.value());
           },
+          [&](const FacePart& f) -> Result<TopoDS_Shape> {
+            if (f.source.size() != 1 || !f.source[0].recipe) return Result<TopoDS_Shape>::failure("Split face missing");
+            auto shape = regenerate(*f.source[0].recipe, context);
+            if (!shape) return Result<TopoDS_Shape>::failure(shape.error());
+            const TopoDS_Shape placed = shape->Moved(TopLoc_Location(f.source[0].placement));
+            if (placed.ShapeType() != TopAbs_FACE) return Result<TopoDS_Shape>::failure("Split source is not a face");
+            auto parts = geom::splitPlanarFace(TopoDS::Face(placed), f.line);
+            // The original face may have grown since (e.g. a larger width):
+            // the split line then reaches on to its new edges.
+            if (!parts) parts = geom::splitPlanarFaceExtended(TopoDS::Face(placed), f.line);
+            if (!parts) return Result<TopoDS_Shape>::failure(parts.error());
+            for (const TopoDS_Face& part : parts.value()) {
+              if (geom::pointOnFace(part, f.inside)) return TopoDS_Shape(part);
+            }
+            return Result<TopoDS_Shape>::failure("This part of the split face no longer exists");
+          },
           [](const GroupNode&) -> Result<TopoDS_Shape> { return TopoDS_Shape(); },
           [&](const ComponentInstance& c) -> Result<TopoDS_Shape> {
             if (!context.definitionShape) {
@@ -152,6 +168,7 @@ const std::vector<BooleanOperand>* operandsOf(const BaseFeature& base) {
   if (const auto* l = std::get_if<LoftFeature>(&base)) return &l->sections;
   if (const auto* w = std::get_if<SweepFeature>(&base)) return &w->inputs;
   if (const auto* l = std::get_if<LoopProfile>(&base)) return &l->curves;
+  if (const auto* p = std::get_if<FacePart>(&base)) return &p->source;
   return nullptr;
 }
 std::vector<BooleanOperand>* operandsOf(BaseFeature& base) {
@@ -355,6 +372,7 @@ std::string describe(const Recipe& recipe) {
                  [&](const LoftFeature& l) { out << "Loft (" << l.sections.size() << " sections)"; },
                  [&](const SweepFeature&) { out << "Sweep"; },
                  [&](const LoopProfile& l) { out << "Face (" << l.curves.size() << " edges)"; },
+                 [&](const FacePart&) { out << "Face part"; },
                  [&](const GroupNode&) { out << "Group"; },
                  [&](const ComponentInstance&) { out << "Component instance"; },
              },

@@ -120,6 +120,7 @@ class GuiPhase1 : public QObject {
   void sectionPlaneCutsView();
   void sectionToolAndTagsPanel();
   void pushPullCylinderSide();
+  void lineAcrossRectangleSplitsProfile();
 };
 
 namespace {
@@ -991,6 +992,10 @@ void GuiPhase1::arcAndLinesCloseIntoFace() {
   QCOMPARE(face.kind(), doc::ObjectKind::Face);
   const double a = geom::area(m.document().worldShape(face));
   QVERIFY2(std::abs(a - (2000.0 * 2000 + M_PI * 1000 * 1000 / 2)) < 1.0, qPrintable(QString::number(a)));
+  // F-08: the closing line and the face are one undo step.
+  QVERIFY(m.undo());
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  QCOMPARE(m.document().objects().front().kind(), doc::ObjectKind::Curve);
 }
 
 void GuiPhase1::sectionPlaneCutsView() {
@@ -1082,6 +1087,33 @@ void GuiPhase1::pushPullCylinderSide() {
   const auto* circle = std::get_if<doc::CircleProfile>(&m.document().find(*c)->recipe.base);
   QVERIFY(circle);
   QVERIFY2(std::abs(circle->radius - 600) < 1e-6, qPrintable(QString::number(circle->radius)));
+}
+
+void GuiPhase1::lineAcrossRectangleSplitsProfile() {
+  Fixture f;
+  QVERIFY(f.setUp(1000, 500));
+  doc::Modeler& m = f.window.modeler();
+  QVERIFY(m.createRectangle(geom::SketchPlane::ground(), 2000, 1000).ok());
+  QTest::qWait(30);
+  f.window.activateTool(MainWindow::ToolId::Line);
+  // From the midpoint of the front edge to the midpoint of the back edge.
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 0, 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 1000, 0)));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), std::size_t(2));
+  for (const doc::Object& o : m.document().objects()) {
+    QCOMPARE(o.kind(), doc::ObjectKind::Face);
+    QVERIFY(std::abs(geom::area(m.document().worldShape(o)) - 1000.0 * 1000) < 1.0);
+  }
+  // The right half can be pushed up on its own.
+  f.window.activateTool(MainWindow::ToolId::PushPull);
+  click(f.vp, f.vp->toWidget(gp_Pnt(1500, 500, 0)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(1500, 500, 300)));
+  type(f.vp, QStringLiteral("500"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  int solids = 0;
+  for (const doc::Object& o : m.document().objects()) solids += o.kind() == doc::ObjectKind::Solid;
+  QCOMPARE(solids, 1);
 }
 
 QTEST_MAIN(GuiPhase1)

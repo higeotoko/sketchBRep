@@ -375,13 +375,29 @@ const std::vector<CommandDef>& commands() {
        "parameters stay editable as in<i>.<key>. Returns the face id.",
        SCHEMA({"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}),
        [](doc::Modeler& m, const json& a) { return idResult(must(m.faceFromLoop(text(a, "id")))); }},
-      {"create_line", "Create an open polyline (2+ points). Lines ending on other lines/arcs can be closed "
-                      "into a face with face_from_loop.",
+      {"create_line",
+       "Draw an open polyline (2+ points), like the line tool: if it closes a planar loop with other loose "
+       "lines/arcs it becomes a face (auto_face, default true; one undo step) and the result says so. A "
+       "line from edge to edge across a face splits it (use split_face).",
        SCHEMA({"type": "object", "properties": {
          "points": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
-         "name": {"type": "string"}}, "required": ["points"]}),
+         "auto_face": {"type": "boolean"}, "name": {"type": "string"}}, "required": ["points"]}),
        [](doc::Modeler& m, const json& a) {
-         return idResult(must(m.createPolyline(points(a, "points"), textOr(a, "name", {}))));
+         const std::vector<gp_Pnt> pts = points(a, "points");
+         if (!a.value("auto_face", true)) return idResult(must(m.createPolyline(pts, textOr(a, "name", {}))));
+         m.history().beginGroup("Line");
+         auto line = m.createPolyline(pts, textOr(a, "name", {}));
+         if (!line) {
+           m.history().abortGroup();
+           throw ApiError(line.error());
+         }
+         bool loopFound = false;
+         auto face = m.faceFromLoop(*line, &loopFound);
+         m.history().endGroup();
+         if (face) return json{{"id", *face}, {"face", true}};
+         json r = {{"id", *line}, {"face", false}};
+         if (loopFound) r["warning"] = "closed loop could not become a face: " + face.error();
+         return r;
        }},
       {"split_face",
        "Draw a line (2+ points) from edge to edge across a planar face of a solid to split that face, so "

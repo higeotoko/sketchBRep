@@ -145,6 +145,13 @@ json baseToJson(const BaseFeature& base) {
             }
             return json{{"type", "loop"}, {"curves", curves}};
           },
+          [](const FacePart& f) {
+            json source = json::array();
+            for (const BooleanOperand& o : f.source) {
+              source.push_back({{"name", o.name}, {"placement", toJson(o.placement)}, {"recipe", recipeToJson(*o.recipe)}});
+            }
+            return json{{"type", "facepart"}, {"source", source}, {"line", pointsToJson(f.line)}, {"inside", toJson(f.inside)}};
+          },
           [](const SweepFeature& f) {
             json inputs = json::array();
             for (const BooleanOperand& o : f.inputs) {
@@ -232,6 +239,16 @@ BaseFeature baseFrom(const json& j) {
                                         trsfFrom(o.at("placement")), o.value("name", std::string())});
     }
     return l;
+  }
+  if (type == "facepart") {
+    FacePart f;
+    for (const json& o : j.at("source")) {
+      f.source.push_back(BooleanOperand{std::make_shared<const Recipe>(recipeFrom(o.at("recipe"))),
+                                        trsfFrom(o.at("placement")), o.value("name", std::string())});
+    }
+    f.line = pointsFrom(j.at("line"));
+    f.inside = pointFrom(j.at("inside"));
+    return f;
   }
   if (type == "sweep") {
     SweepFeature f;
