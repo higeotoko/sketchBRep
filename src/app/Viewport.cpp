@@ -322,6 +322,19 @@ gp_Dir Viewport::viewDirection() const {
   return view_->Camera()->Direction();
 }
 
+void Viewport::setProposalGhost(const TopoDS_Shape& shape) {
+  if (view_.IsNull()) return;
+  if (!proposalGhost_.IsNull()) context_->Remove(proposalGhost_, Standard_False);
+  proposalGhost_.Nullify();
+  if (!shape.IsNull()) {
+    proposalGhost_ = new AIS_Shape(display::makeDisplayCopy(shape));
+    proposalGhost_->SetColor(Quantity_Color(0.25, 0.5, 1.0, Quantity_TOC_RGB));
+    proposalGhost_->SetTransparency(0.55);
+    context_->Display(proposalGhost_, AIS_Shaded, -1, Standard_False);
+  }
+  redraw();
+}
+
 void Viewport::setRubberBand(const std::optional<QRect>& rect) {
   if (view_.IsNull()) return;
   if (!rect) {

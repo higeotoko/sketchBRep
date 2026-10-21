@@ -20,7 +20,9 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QInputDialog>
+#include <QHBoxLayout>
 #include <QListWidget>
+#include <QPushButton>
 #include <QMenu>
 #include <QStatusBar>
 #include <QTabBar>
@@ -28,6 +30,8 @@
 #include <QTimer>
 #include <QToolBar>
 
+#include <BRep_Builder.hxx>
+#include <TopoDS_Compound.hxx>
 #include <nlohmann/json.hpp>
 
 #include "AiBridge.h"
@@ -133,6 +137,24 @@ void MainWindow::buildUi() {
   contextLabel_->hide();
   statusBar()->addWidget(contextLabel_);
   statusBar()->addWidget(status_, 1);
+  // AI proposal banner: what the AI suggests, with Apply / Reject.
+  proposalBar_ = new QWidget;
+  auto* proposalLayout = new QHBoxLayout(proposalBar_);
+  proposalLayout->setContentsMargins(6, 0, 6, 0);
+  proposalLabel_ = new QLabel;
+  auto* applyButton = new QPushButton(tr("適用"));
+  auto* rejectButton = new QPushButton(tr("却下"));
+  applyButton->setObjectName(QStringLiteral("proposalApply"));
+  rejectButton->setObjectName(QStringLiteral("proposalReject"));
+  proposalLayout->addWidget(proposalLabel_);
+  proposalLayout->addWidget(applyButton);
+  proposalLayout->addWidget(rejectButton);
+  proposalBar_->setStyleSheet(QStringLiteral("QWidget { background: #e8f0ff; }"));
+  proposalBar_->hide();
+  connect(applyButton, &QPushButton::clicked, this, &MainWindow::applyProposal);
+  connect(rejectButton, &QPushButton::clicked, this, &MainWindow::rejectProposal);
+  statusBar()->addPermanentWidget(proposalBar_);
+
   aiLabel_ = new QLabel;
   aiLabel_->setStyleSheet(QStringLiteral("QLabel { background: #dbeafe; padding: 0 6px; }"));
   aiLabel_->hide();
@@ -569,6 +591,44 @@ void MainWindow::buildAiBridge() {
     return json{{"scene", scenes[index].name}}.dump();
   };
 
+  handlers["propose"] = [this](const std::string& args) {
+    const json a = json::parse(args);
+    if (!a.contains("commands") || !a["commands"].is_array()) throw std::runtime_error("'commands' must be an array");
+    // Try it on a copy first: never show a proposal that cannot be applied.
+    doc::Modeler scratch;
+    scratch.copyFrom(modeler_);
+    api::CommandApi tryApi(scratch, api::CommandApi::Options{false});
+    const json tried = json::parse(tryApi.execute(json{{"command", "batch"}, {"args", {{"commands", a["commands"]}}}}.dump()));
+    if (!tried.value("ok", false)) {
+      proposal_ = Proposal{a["commands"].dump(), modeler_.history().revision(), "failed", tried.value("error", std::string())};
+      throw std::runtime_error("the proposal cannot be applied: " + proposal_->error);
+    }
+    // Ghost of everything the proposal adds or changes.
+    BRep_Builder builder;
+    TopoDS_Compound ghost;
+    builder.MakeCompound(ghost);
+    int count = 0;
+    for (const doc::Object& o : scratch.document().objects()) {
+      const doc::Object* old = modeler_.document().find(o.id);
+      if (o.shape.IsNull() || (old && old->shape.IsSame(o.shape) && old->transform.TranslationPart().IsEqual(o.transform.TranslationPart(), 1e-9))) continue;
+      builder.Add(ghost, scratch.document().worldShape(o));
+      ++count;
+    }
+    viewport_->setProposalGhost(ghost);
+    proposal_ = Proposal{a["commands"].dump(), modeler_.history().revision(), "pending", {}};
+    const QString text = QString::fromStdString(a.value("description", std::string()));
+    proposalLabel_->setText(tr("AI の提案: %1").arg(text.isEmpty() ? tr("%1 個の変更").arg(count) : text));
+    proposalBar_->show();
+    setStatus(tr("AI の提案を半透明で表示しています。「適用」か「却下」を選んでください"));
+    return json{{"state", "pending"}, {"revision", proposal_->revision}}.dump();
+  };
+  handlers["proposal_status"] = [this](const std::string&) {
+    if (!proposal_) return json{{"state", "none"}}.dump();
+    json r = {{"state", proposal_->state}};
+    if (!proposal_->error.empty()) r["error"] = proposal_->error;
+    return r.dump();
+  };
+
   std::vector<Extension> ext = api::CommandApi::appCommandSpecs();
   for (Extension& e : ext) e.run = handlers.at(e.name);
   aiBridge_ = std::make_unique<AiBridge>(modeler_, std::move(ext));
@@ -640,6 +700,35 @@ void MainWindow::sceneMenu(int index, const QPoint& globalPos) {
   modeler_.history().markDirty();
   refreshScenes();
   updateTitle();
+}
+
+void MainWindow::applyProposal() {
+  if (!hasPendingProposal()) return;
+  proposalBar_->hide();
+  viewport_->setProposalGhost(TopoDS_Shape());
+  // Same command path as everything else; refused if the model changed.
+  api::CommandApi api(modeler_, api::CommandApi::Options{false});
+  const nlohmann::json request = {
+      {"command", "batch"},
+      {"args", {{"name", "AI proposal"}, {"commands", nlohmann::json::parse(proposal_->commandsJson)},
+                {"expected_revision", proposal_->revision}}}};
+  const auto result = nlohmann::json::parse(api.execute(request.dump()));
+  if (result.value("ok", false)) {
+    proposal_->state = "applied";
+    setStatus(tr("AI の提案を適用しました（Ctrl+Z で元に戻せます）"));
+  } else {
+    proposal_->state = "failed";
+    proposal_->error = result.value("error", std::string());
+    reportError(tr("AI の提案を適用できませんでした: %1").arg(QString::fromStdString(proposal_->error)));
+  }
+}
+
+void MainWindow::rejectProposal() {
+  if (!hasPendingProposal()) return;
+  proposal_->state = "rejected";
+  proposalBar_->hide();
+  viewport_->setProposalGhost(TopoDS_Shape());
+  setStatus(tr("AI の提案を却下しました（モデルは変更されていません）"));
 }
 
 void MainWindow::activateTool(ToolId id) {
@@ -746,6 +835,15 @@ void MainWindow::onDocumentChanged() {
   refreshPending_ = true;
   QTimer::singleShot(0, this, [this] {
     refreshPending_ = false;
+    // A pending AI proposal is based on the model as it was: once the user
+    // edits, it is withdrawn (it would be refused anyway, spec 07 §9.2).
+    if (hasPendingProposal() && modeler_.history().revision() != proposal_->revision) {
+      proposal_->state = "failed";
+      proposal_->error = "the model changed before the proposal was applied";
+      proposalBar_->hide();
+      viewport_->setProposalGhost(TopoDS_Shape());
+      setStatus(tr("モデルが変更されたため AI の提案を取り下げました"));
+    }
     // Drop selected ids that no longer exist.
     selection_.erase(std::remove_if(selection_.begin(), selection_.end(),
                                     [this](const doc::ObjectId& id) {

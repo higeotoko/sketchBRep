@@ -81,6 +81,10 @@ class Modeler {
   // Called by every profile-creating command, in the same undo step.
   void punchHole(const ObjectId& profileId);
 
+  // Replaces this model with a copy of 'other' (for previews: a scratch
+  // model where proposed commands are tried out). History is not copied.
+  void copyFrom(const Modeler& other);
+
   // View state kept in the file but outside the undo history.
   void setTagVisible(const std::string& tag, bool visible);
   std::vector<std::string> tags() const;  // tags in use, sorted

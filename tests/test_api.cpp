@@ -226,7 +226,7 @@ TEST(McpServer, InitializeListAndCallTools) {
 
 TEST(McpServer, AppCommandSpecsAreValidSchemas) {
   const auto specs = CommandApi::appCommandSpecs();
-  EXPECT_EQ(specs.size(), 6u);
+  EXPECT_EQ(specs.size(), 8u);
   for (const auto& s : specs) {
     EXPECT_EQ(json::parse(s.inputSchema)["type"], "object") << s.name;
     EXPECT_FALSE(s.description.empty());
@@ -284,4 +284,43 @@ TEST(CommandApi, DimensionsAndTextNotes) {
   const std::string note = a.ok("create_text", {{"position", {1000, 1000, 0}}, {"text", "LDK 24.0 m²"}})["id"];
   EXPECT_EQ(a.ok("get_object", {{"id", note}})["text"], "LDK 24.0 m²");
   EXPECT_FALSE(a.call("create_text", {{"position", {0, 0, 0}}, {"text", ""}})["ok"]);
+}
+
+// Spec 07 §9.2 / AC-20: AI proposals are previewed on a copy and applied only
+// if the model has not changed since.
+TEST(CommandApi, AC20_PreviewThenApplyWithRevisionCheck) {
+  Api a;
+  const std::string wall =
+      a.ok("create_box", {{"origin", {0, 0, 0}}, {"width", 4000}, {"depth", 200}, {"height", 3000}})["id"];
+  const json proposal = {
+      {{"command", "create_box"}, {"args", {{"origin", {0, 0, 3000}}, {"width", 4000}, {"depth", 1400}, {"height", 150}}}},
+      {{"command", "set_parameter"}, {"args", {{"id", wall}, {"key", "op0.distance"}, {"value", 2800}}}}};
+  const std::size_t steps = a.modeler.history().undoCount();
+  const json preview = a.ok("preview", {{"commands", proposal}});
+  EXPECT_TRUE(preview["would_succeed"].get<bool>());
+  EXPECT_EQ(preview["added"].size(), 1u);
+  ASSERT_EQ(preview["changed"].size(), 1u);
+  EXPECT_EQ(preview["changed"][0]["id"], wall);
+  EXPECT_TRUE(preview["removed"].empty());
+  // Nothing changed for real.
+  EXPECT_EQ(a.modeler.document().objects().size(), 1u);
+  EXPECT_EQ(a.modeler.history().undoCount(), steps);
+  EXPECT_NEAR(a.ok("get_object", {{"id", wall}})["volume"].get<double>(), 4000.0 * 200 * 3000, 1e-3);
+
+  // A failing proposal is reported, still without side effects.
+  const json bad = a.ok("preview", {{"commands", {{{"command", "set_parameter"},
+                                                  {"args", {{"id", wall}, {"key", "op0.distance"}, {"value", 0}}}}}}});
+  EXPECT_FALSE(bad["would_succeed"].get<bool>());
+  EXPECT_FALSE(bad["error"].get<std::string>().empty());
+
+  // Applying with the previewed revision works; after another edit it is refused.
+  const long long revision = preview["revision"];
+  a.ok("batch", {{"commands", proposal}, {"expected_revision", revision}});
+  EXPECT_EQ(a.modeler.document().objects().size(), 2u);
+  a.ok("undo");
+  a.ok("rename", {{"id", wall}, {"name", "Wall"}});
+  const json refused = a.call("batch", {{"commands", proposal}, {"expected_revision", revision}});
+  EXPECT_FALSE(refused["ok"]);
+  EXPECT_NE(refused["error"].get<std::string>().find("preview it again"), std::string::npos);
+  EXPECT_EQ(a.modeler.document().objects().size(), 1u);
 }

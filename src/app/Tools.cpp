@@ -8,6 +8,9 @@
 
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <gp_Ax3.hxx>
+#include <IntAna_IntConicQuad.hxx>
+#include <Precision.hxx>
+#include <gp_Lin.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
@@ -977,8 +980,19 @@ void ArcTool::mouseMove(const ToolEvent& e) {
       return;
     }
     case Stage::Bulge: {
-      const snap::SnapResult r = snapAt(e, std::nullopt, plane_.plane());
+      snap::SnapResult r = snapAt(e, std::nullopt, plane_.plane());
       if (!r.valid()) return;
+      // Only points on the sketch plane can define the bulge: an inference
+      // off the plane (e.g. a vertical axis through a tracked point) would
+      // project to a meaningless value, so use the cursor on the plane.
+      if (plane_.plane().Distance(r.point) > 1e-3) {
+        const snap::Ray ray = host_.viewport().rayAt(e.pos);
+        IntAna_IntConicQuad hit(gp_Lin(ray.origin, ray.direction), plane_.plane(), Precision::Angular());
+        if (!hit.IsDone() || hit.NbPoints() < 1) return;
+        r.point = hit.Point(1);
+        r.kind = snap::SnapKind::WorkPlane;
+        host_.viewport().hideSnap();
+      }
       const gp_Vec chord(start_, end_);
       const gp_Vec side = gp_Vec(plane_.normal).Crossed(chord).Normalized();
       const gp_Pnt mid((start_.XYZ() + end_.XYZ()) / 2.0);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include <QMainWindow>
@@ -53,6 +54,10 @@ class MainWindow : public QMainWindow, public ToolHost {
   QString lastError() const { return lastError_; }
   AiBridge* aiBridge() const { return aiBridge_.get(); }
   void setAiAccess(bool enabled);
+  // AI proposal awaiting the user's decision (spec 07 §9.2).
+  bool hasPendingProposal() const { return proposal_.has_value() && proposal_->state == "pending"; }
+  void applyProposal();
+  void rejectProposal();
   // Saved views ("scenes"), shown as tabs above the viewport.
   void addScene(const QString& name = {});
   bool goToScene(int index);
@@ -136,6 +141,15 @@ class MainWindow : public QMainWindow, public ToolHost {
   QAction* aiAction_ = nullptr;
   QLabel* aiLabel_ = nullptr;
   QTabBar* sceneBar_ = nullptr;
+  struct Proposal {
+    std::string commandsJson;
+    long long revision = 0;
+    std::string state;  // pending / applied / rejected / failed
+    std::string error;
+  };
+  std::optional<Proposal> proposal_;
+  QWidget* proposalBar_ = nullptr;
+  QLabel* proposalLabel_ = nullptr;
   QListWidget* tagList_ = nullptr;
   QAction* sectionVisibleAction_ = nullptr;
 };

@@ -66,6 +66,8 @@ class CommandStack {
   // For edits kept outside the undo history (e.g. saved scenes).
   void markDirty() { cleanMarker_ = -1; }
   bool isClean() const { return cleanMarker_ == revision_; }
+  // Changes with every executed, undone or redone command.
+  long long revision() const { return revision_; }
 
  private:
   void applyAfter(const Command& command);

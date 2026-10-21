@@ -40,6 +40,8 @@ AI 専用の裏口は作らず、GUI のツールと同じ `doc::Modeler` を JS
 - 表示状態: `set_section`（断面。平面図・断面図の切断）, `list_tags`, `set_tag_visible`
 - 履歴・ファイル: `undo`, `redo`, `save`, `open`, `export_step`（**アプリ経由では無効**）
 - アプリ起動中のみ: `get_selection`（ユーザーが選んだ物・面）, `select`, `set_view`, `capture_view`（ビューの PNG を AI に画像で返す）, `list_scenes`, `go_to_scene`（保存ビューの表示・保存）
+- `preview`: コマンド列を一時コピーで試して差分（追加・変更・削除）を返す。本体は無変更。返された `revision` を `batch` の `expected_revision` に渡すと、その間にモデルが変わっていた場合は適用を拒否
+- アプリ起動中のみ `propose` / `proposal_status`: 提案を半透明で表示し、ユーザーが「適用／却下」を選ぶ（AI が勝手に確定しない）
 - `batch`: 複数コマンドを **Undo 1 回分**として実行。既定で原子的（途中で失敗したら全部元に戻す）。`"$1.id"` で 1 番目の結果を後のステップから参照できる
 
 ```jsonc

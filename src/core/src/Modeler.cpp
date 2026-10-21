@@ -1163,6 +1163,15 @@ Status Modeler::save(const std::string& path) {
   return saved;
 }
 
+void Modeler::copyFrom(const Modeler& other) {
+  history_.clear();
+  document_.clear();
+  document_.settings() = other.document_.settings();
+  for (const ComponentDefinition& d : other.document_.definitions()) document_.putDefinition(d);
+  for (const Object& o : other.document_.objects()) document_.insert(o);
+  activeGroup_ = other.activeGroup_;
+}
+
 Status Modeler::load(const std::string& path, std::vector<std::string>* warnings) {
   Document loaded;
   const Status status = loadDocument(loaded, path, warnings);

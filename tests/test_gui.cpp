@@ -10,6 +10,7 @@
 #include <QDir>
 #include <QSettings>
 #include <QListWidget>
+#include <QPushButton>
 #include <QTabBar>
 #include <QStandardPaths>
 #include <QFileInfo>
@@ -124,6 +125,7 @@ class GuiPhase1 : public QObject {
   void lineAcrossRectangleSplitsProfile();
   void gate2InputConsistency();
   void boxSelectionWindowAndCrossing();
+  void aiProposalApplyAndReject();
 };
 
 namespace {
@@ -1252,6 +1254,51 @@ void GuiPhase1::boxSelectionWindowAndCrossing() {
   // A plain click on empty space clears the selection.
   click(f.vp, QPoint(5, 5));
   QVERIFY(f.window.selection().empty());
+}
+
+// Spec 07 §9.2 / AC-20 in the app: the AI proposes, the user decides.
+void GuiPhase1::aiProposalApplyAndReject() {
+  Fixture f;
+  QVERIFY(f.setUp(1000, 1000));
+  doc::Modeler& m = f.window.modeler();
+  AiBridge* bridge = f.window.aiBridge();
+  const std::string proposal =
+      R"({"command": "propose", "args": {"description": "柱 2 本", "commands": [
+         {"command": "create_box", "args": {"origin": [0, 0, 0], "width": 400, "depth": 400, "height": 3000}},
+         {"command": "create_box", "args": {"origin": [3000, 0, 0], "width": 400, "depth": 400, "height": 3000}}]}})";
+  auto call = [&](const std::string& r) { return QJsonDocument::fromJson(QByteArray::fromStdString(bridge->execute(r))).object(); };
+
+  QJsonObject r = call(proposal);
+  QVERIFY2(r.value("ok").toBool(), qPrintable(QJsonDocument(r).toJson()));
+  QVERIFY(f.window.hasPendingProposal());
+  QVERIFY(f.vp->hasProposalGhost());
+  QVERIFY(m.document().objects().empty());  // nothing changed yet
+  f.window.findChild<QPushButton*>(QStringLiteral("proposalReject"))->click();
+  QVERIFY(!f.vp->hasProposalGhost());
+  QVERIFY(m.document().objects().empty());
+  QCOMPARE(call(R"({"command": "proposal_status"})").value("result").toObject().value("state").toString(),
+           QStringLiteral("rejected"));
+
+  call(proposal);
+  f.window.findChild<QPushButton*>(QStringLiteral("proposalApply"))->click();
+  QCOMPARE(m.document().objects().size(), std::size_t(2));
+  QCOMPARE(call(R"({"command": "proposal_status"})").value("result").toObject().value("state").toString(),
+           QStringLiteral("applied"));
+  QVERIFY(m.undo());  // one undo step
+  QVERIFY(m.document().objects().empty());
+
+  // The user edits while a proposal waits: it is withdrawn.
+  call(proposal);
+  QVERIFY(f.window.hasPendingProposal());
+  QVERIFY(m.createRectangle(geom::SketchPlane::ground(), 100, 100).ok());
+  QTest::qWait(30);
+  QVERIFY(!f.window.hasPendingProposal());
+  QVERIFY(!f.vp->hasProposalGhost());
+
+  // A proposal that cannot be applied is refused up front.
+  r = call(R"({"command": "propose", "args": {"commands": [{"command": "extrude", "args": {"id": "nope", "distance": 1}}]}})");
+  QVERIFY(!r.value("ok").toBool());
+  QVERIFY(!f.window.hasPendingProposal());
 }
 
 QTEST_MAIN(GuiPhase1)
