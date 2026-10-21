@@ -7,12 +7,20 @@
 
 #include <QApplication>
 #include <QDir>
+#include <QSettings>
+#include <QStandardPaths>
+#include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLineEdit>
 #include <QAction>
+#include <QLocalSocket>
 #include <QMouseEvent>
 #include <QScreen>
 #include <QtTest/QtTest>
 
+#include "AiBridge.h"
 #include "MainWindow.h"
 #include "Viewport.h"
 #include "sbr/geom/Measure.h"
@@ -73,6 +81,11 @@ QString boxMismatch(const TopoDS_Shape& s, double x, double y, double z) {
 class GuiPhase1 : public QObject {
   Q_OBJECT
  private slots:
+  void initTestCase() {
+    // Keep app settings (e.g. AI access) out of the user's real configuration.
+    QStandardPaths::setTestModeEnabled(true);
+    QSettings().clear();
+  }
   void drawPushPullSaveReopen();
   void lineToolClosesLoopIntoFace();
   void moveCopyAndArray();
@@ -95,6 +108,7 @@ class GuiPhase1 : public QObject {
   void paintToolAndEyedropper();
   void moveSelectedFaceStretchesSolid();
   void eraserDeletesClickedObject();
+  void aiBridgeOverLocalSocket();
 };
 
 namespace {
@@ -732,6 +746,59 @@ void GuiPhase1::eraserDeletesClickedObject() {
   QVERIFY(m.document().find(a));
   QVERIFY(m.undo());
   QVERIFY(m.document().find(b));
+}
+
+void GuiPhase1::aiBridgeOverLocalSocket() {
+  Fixture f;
+  QVERIFY(f.setUp(1000, 0));
+  doc::Modeler& m = f.window.modeler();
+  AiBridge* bridge = f.window.aiBridge();
+  QVERIFY(!bridge->isEnabled());  // off by default
+
+  QLocalSocket refused;
+  refused.connectToServer(bridge->serverName());
+  QVERIFY(!refused.waitForConnected(200));
+
+  f.window.setAiAccess(true);
+  QVERIFY(bridge->isEnabled());
+  QLocalSocket socket;
+  socket.connectToServer(bridge->serverName());
+  QTRY_VERIFY(socket.state() == QLocalSocket::ConnectedState);
+
+  auto request = [&](const QByteArray& line) {
+    socket.write(line + '\n');
+    socket.flush();
+    QByteArray reply;
+    QTest::qWaitFor([&] { return socket.canReadLine(); }, 5000);
+    if (socket.canReadLine()) reply = socket.readLine();
+    return QJsonDocument::fromJson(reply).object();
+  };
+
+  QJsonObject r = request(R"({"command": "create_box", "args": {"origin": [0, 0, 0], "width": 1000, "depth": 1000, "height": 2000}})");
+  QVERIFY2(r.value("ok").toBool(), qPrintable(QJsonDocument(r).toJson()));
+  const doc::ObjectId id = r.value("result").toObject().value("id").toString().toStdString();
+  QVERIFY(m.document().find(id));
+  QCOMPARE(QString::fromStdString(m.history().undoName()), QStringLiteral("Box"));
+
+  // App-only commands: select, then read the selection back.
+  r = request(QByteArray(R"({"command": "select", "args": {"ids": [")") + id.c_str() + R"("]}})");
+  QVERIFY(r.value("ok").toBool());
+  QCOMPARE(f.window.selection().size(), std::size_t(1));
+  r = request(R"({"command": "get_selection"})");
+  QCOMPARE(r.value("result").toObject().value("ids").toArray().first().toString().toStdString(), id);
+  r = request(R"({"command": "capture_view"})");
+  QVERIFY(r.value("ok").toBool());
+  QVERIFY(QFileInfo(r.value("result").toObject().value("image_path").toString()).size() > 0);
+
+  // File commands are not available to the agent; the user's Ctrl+Z undoes AI edits.
+  r = request(R"({"command": "save", "args": {"path": "x.sbr"}})");
+  QVERIFY(!r.value("ok").toBool());
+  QVERIFY(m.undo());
+  QVERIFY(!m.document().find(id));
+
+  f.window.setAiAccess(false);
+  QVERIFY(!bridge->isEnabled());
+  QTRY_VERIFY(socket.state() != QLocalSocket::ConnectedState);
 }
 
 QTEST_MAIN(GuiPhase1)

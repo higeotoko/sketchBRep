@@ -9,8 +9,9 @@ add_executable(sbr_core_tests
   test_display.cpp
   test_phase2.cpp
   test_freeform.cpp
+  test_api.cpp
 )
-target_link_libraries(sbr_core_tests PRIVATE sbr::core GTest::gtest_main)
+target_link_libraries(sbr_core_tests PRIVATE sbr::core nlohmann_json::nlohmann_json GTest::gtest_main)
 
 include(GoogleTest)
 gtest_discover_tests(sbr_core_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
@@ -19,6 +20,29 @@ if(SBR_BUILD_TOOLS)
   add_test(NAME phase0_cli
            COMMAND sbr_phase0 1000 2000 3000 ${CMAKE_CURRENT_BINARY_DIR}/phase0_box.step)
   set_tests_properties(phase0_cli PROPERTIES PASS_REGULAR_EXPRESSION "PHASE 0: PASS")
+
+  # Headless scripting: 1 slab + 4 columns, saved and re-opened.
+  add_test(NAME cli_script
+           COMMAND sbr_cli --save ${CMAKE_CURRENT_BINARY_DIR}/cli_columns.sbr ${CMAKE_CURRENT_SOURCE_DIR}/data/columns.jsonl)
+  add_test(NAME cli_reopen
+           COMMAND ${CMAKE_COMMAND} -DCOMMAND=$<TARGET_FILE:sbr_cli>|--open|${CMAKE_CURRENT_BINARY_DIR}/cli_columns.sbr
+                   -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/data/list_objects.jsonl
+                   "-DEXPECT=\"name\":\"C1\".*\"name\":\"Slab\"|\"name\":\"Slab\".*\"name\":\"C1\""
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/RunWithInput.cmake)
+  set_tests_properties(cli_reopen PROPERTIES DEPENDS cli_script)
+  # MCP over stdio (headless): initialize, list tools, call a tool.
+  add_test(NAME mcp_headless_cli
+           COMMAND ${CMAKE_COMMAND} -DCOMMAND=$<TARGET_FILE:sbr_cli>|--mcp
+                   -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/data/mcp_session.jsonl
+                   "-DEXPECT=\"protocolVersion\":\"2025-06-18\".*create_box.*\"isError\":false"
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/RunWithInput.cmake)
+  if(TARGET sbr_mcp)
+    add_test(NAME mcp_headless
+             COMMAND ${CMAKE_COMMAND} -DCOMMAND=$<TARGET_FILE:sbr_mcp>|--headless
+                     -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/data/mcp_session.jsonl
+                     "-DEXPECT=\"protocolVersion\":\"2025-06-18\".*create_box.*\"isError\":false"
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/RunWithInput.cmake)
+  endif()
 endif()
 
 # End-to-end GUI test (needs a display; run under xvfb-run on headless CI).

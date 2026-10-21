@@ -15,6 +15,8 @@ add_library(sbr_core STATIC
   src/Modeler.cpp
   src/Inference.cpp
   src/Freeform.cpp
+  src/CommandApi.cpp
+  src/McpServer.cpp
 )
 add_library(sbr::core ALIAS sbr_core)
 

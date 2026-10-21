@@ -1,8 +1,13 @@
 #include "MainWindow.h"
 
 #include <algorithm>
+#include <map>
 
 #include <QAction>
+#include <QClipboard>
+#include <QCoreApplication>
+#include <QDir>
+#include <QSettings>
 #include <QActionGroup>
 #include <QApplication>
 #include <QCloseEvent>
@@ -18,6 +23,9 @@
 #include <QTimer>
 #include <QToolBar>
 
+#include <nlohmann/json.hpp>
+
+#include "AiBridge.h"
 #include "Cursors.h"
 #include "PropertiesPanel.h"
 #include "Viewport.h"
@@ -43,9 +51,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   eraserTool_ = std::make_unique<EraserTool>(*this);
 
   buildUi();
+  buildAiBridge();
   buildMenus();
   modeler_.document().addListener([this] { onDocumentChanged(); });
   activateTool(ToolId::Rectangle);
+  if (QSettings().value(QStringLiteral("ai/bridgeEnabled"), false).toBool()) aiAction_->setChecked(true);
   refreshPanels();
   updateTitle();
 }
@@ -79,6 +89,10 @@ void MainWindow::buildUi() {
   contextLabel_->hide();
   statusBar()->addWidget(contextLabel_);
   statusBar()->addWidget(status_, 1);
+  aiLabel_ = new QLabel;
+  aiLabel_->setStyleSheet(QStringLiteral("QLabel { background: #dbeafe; padding: 0 6px; }"));
+  aiLabel_->hide();
+  statusBar()->addPermanentWidget(aiLabel_);
   statusBar()->addPermanentWidget(measurementLabel_);
   statusBar()->addPermanentWidget(measurement_);
 
@@ -348,6 +362,33 @@ void MainWindow::buildMenus() {
     toolActions_[static_cast<int>(id)] = a;
   }
 
+  // --- AI integration (off by default; see docs/06_ai_integration.md)
+  QMenu* ai = menuBar()->addMenu(tr("AI 連携(&A)"));
+  aiAction_ = ai->addAction(tr("外部 AI からの操作を許可"));
+  aiAction_->setCheckable(true);
+  aiAction_->setToolTip(tr("このパソコン上の AI クライアント（MCP: sbr_mcp 経由）がモデルを操作できるようにします"));
+  connect(aiAction_, &QAction::toggled, this, [this](bool on) { setAiAccess(on); });
+  ai->addAction(tr("MCP 接続設定をコピー"), this, [this] {
+    QString exe = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("sbr_mcp"));
+#ifdef Q_OS_WIN
+    exe += QStringLiteral(".exe");
+#endif
+    const nlohmann::json config = {
+        {"mcpServers", {{"sketchbrep", {{"command", QDir::toNativeSeparators(exe).toStdString()}}}}}};
+    QApplication::clipboard()->setText(QString::fromStdString(config.dump(2)));
+    setStatus(tr("MCP 設定をコピーしました（Claude Desktop などの設定ファイルに貼り付け）"));
+  });
+  ai->addAction(tr("AI 連携について"), this, [this] {
+    QMessageBox::information(
+        this, tr("AI 連携"),
+        tr("「外部 AI からの操作を許可」を ON にすると、このパソコン上の AI クライアントが "
+           "sbr_mcp（MCP サーバー）経由でモデルを操作できます。<br><br>"
+           "・AI の操作も GUI と同じコマンドで実行され、形状チェック・失敗時の取り消し・Ctrl+Z が効きます<br>"
+           "・AI はファイルの保存・開く・書き出しはできません（保存はあなたが行います）<br>"
+           "・接続できるのは同じユーザーのローカルプロセスだけです<br><br>"
+           "設定: 「MCP 接続設定をコピー」で Claude Desktop などの設定に貼り付けてください。"));
+  });
+
   QMenu* help = menuBar()->addMenu(tr("ヘルプ(&H)"));
   help->addAction(tr("操作方法"), this, [this] {
     QMessageBox::information(
@@ -360,6 +401,96 @@ void MainWindow::buildMenus() {
            "M: 移動 / Q: 回転 / F: オフセット（移動・回転中に Ctrl でコピー、確定後 x3 で配列・/3 で等分割）<br>"
            "作図中に数値を打って Enter で寸法指定（例: 3000, 4.5m, 3000,4500）<br>"
            "Shift: 推論方向をロック / →・←・↑: X・Y・Z 軸ロック / ↓: 解除 / Esc: 中止"));
+  });
+}
+
+void MainWindow::setAiAccess(bool enabled) {
+  if (aiAction_->isChecked() != enabled) {
+    aiAction_->setChecked(enabled);  // re-enters through toggled
+    return;
+  }
+  if (!aiBridge_->setEnabled(enabled)) {
+    reportError(tr("AI 連携を開始できませんでした: %1").arg(aiBridge_->lastError()));
+    const QSignalBlocker block(aiAction_);
+    aiAction_->setChecked(false);
+    enabled = false;
+  }
+  QSettings().setValue(QStringLiteral("ai/bridgeEnabled"), enabled);
+  aiLabel_->setText(tr("AI 連携 ON"));
+  aiLabel_->setVisible(enabled);
+  setStatus(enabled ? tr("外部 AI からの操作を受け付けています（Ctrl+Z で AI の操作も元に戻せます）")
+                    : tr("AI 連携を停止しました"));
+}
+
+void MainWindow::buildAiBridge() {
+  using nlohmann::json;
+  using Extension = api::CommandApi::Extension;
+  std::map<std::string, std::function<std::string(const std::string&)>> handlers;
+  handlers["get_selection"] = [this](const std::string&) {
+    json elements = json::array();
+    for (const ElementRef& e : elements_) {
+      elements.push_back({{"id", e.objectId},
+                          {"type", e.type == TopAbs_FACE ? "face" : "edge"},
+                          {"index", e.index}});
+    }
+    return json{{"ids", selection_}, {"elements", elements}, {"editing_group", modeler_.activeGroup()}}
+        .dump();
+  };
+  handlers["select"] = [this](const std::string& args) {
+    const json a = json::parse(args);
+    std::vector<doc::ObjectId> ids;
+    for (const json& id : a.at("ids")) {
+      if (!modeler_.document().find(id.get<std::string>())) {
+        throw std::runtime_error("no object with id '" + id.get<std::string>() + "'");
+      }
+      ids.push_back(id.get<std::string>());
+    }
+    setSelection(ids);
+    return json{{"ids", ids}}.dump();
+  };
+  handlers["set_view"] = [this](const std::string& args) {
+    const json a = json::parse(args);
+    const std::string v = a.at("view");
+    using SV = Viewport::StandardView;
+    if (v == "fit") {
+      if (a.contains("ids")) {
+        viewport_->fitObjects(a["ids"].get<std::vector<doc::ObjectId>>());
+      } else {
+        viewport_->fitAll();
+      }
+    } else {
+      static const std::map<std::string, SV> views = {{"iso", SV::Iso},     {"top", SV::Top},
+                                                      {"front", SV::Front}, {"right", SV::Right},
+                                                      {"back", SV::Back},   {"left", SV::Left}};
+      const auto it = views.find(v);
+      if (it == views.end()) throw std::runtime_error("unknown view '" + v + "'");
+      viewport_->setStandardView(it->second);
+    }
+    return json{{"view", v}}.dump();
+  };
+  handlers["capture_view"] = [this](const std::string&) {
+    viewport_->syncNow();
+    const QString path = QDir(QDir::tempPath()).filePath(QStringLiteral("sketchbrep-view.png"));
+    if (!viewport_->dumpImage(path)) throw std::runtime_error("the view could not be captured");
+    return json{{"image_path", QDir::toNativeSeparators(path).toStdString()}}.dump();
+  };
+
+  std::vector<Extension> ext = api::CommandApi::appCommandSpecs();
+  for (Extension& e : ext) e.run = handlers.at(e.name);
+  aiBridge_ = std::make_unique<AiBridge>(modeler_, std::move(ext));
+  // An AI command must not land in the middle of a half-drawn rectangle.
+  aiBridge_->setHooks([this] { if (active_) active_->cancel(); },
+                      [this] { if (active_) active_->activate(); });
+  connect(aiBridge_.get(), &AiBridge::commandExecuted, this,
+          [this](const QString& command, bool ok, const QString& error) {
+            if (ok) {
+              setStatus(tr("AI: %1").arg(command));
+            } else {
+              setStatus(tr("AI: %1 は失敗しました（%2）").arg(command, error));
+            }
+          });
+  connect(aiBridge_.get(), &AiBridge::clientCountChanged, this, [this](int count) {
+    aiLabel_->setText(count > 0 ? tr("AI 接続中") : tr("AI 連携 ON"));
   });
 }
 

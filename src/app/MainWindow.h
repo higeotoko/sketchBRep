@@ -16,6 +16,7 @@ class QLineEdit;
 
 namespace sbr::app {
 
+class AiBridge;
 class PropertiesPanel;
 class Viewport;
 
@@ -47,6 +48,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   Tool* activeTool() const { return active_; }
   QLineEdit* measurementBox() const { return measurement_; }
   QString lastError() const { return lastError_; }
+  AiBridge* aiBridge() const { return aiBridge_.get(); }
+  void setAiAccess(bool enabled);
 
  protected:
   void closeEvent(QCloseEvent* event) override;
@@ -76,6 +79,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   QString elementSummary() const;
   void undo();
   void redo();
+  void buildAiBridge();
 
   doc::Modeler modeler_;
   Viewport* viewport_ = nullptr;
@@ -112,6 +116,10 @@ class MainWindow : public QMainWindow, public ToolHost {
   QString currentPath_;
   QString lastError_;
   bool refreshPending_ = false;
+
+  std::unique_ptr<AiBridge> aiBridge_;
+  QAction* aiAction_ = nullptr;
+  QLabel* aiLabel_ = nullptr;
 };
 
 }  // namespace sbr::app

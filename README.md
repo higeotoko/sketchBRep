@@ -38,6 +38,11 @@
 - プッシュ/プルや作図の後にオブジェクト全体が選択状態にならない
 - 右パネルは「名前・選択・主要寸法」だけを表示し、タグ・色・位置・履歴・ID・入力の寸法などは折りたたみの「詳細」に格納
 
+### AI 連携（MCP）
+- メニュー「AI 連携 > 外部 AI からの操作を許可」（既定 OFF）を ON にすると、Claude Desktop / Claude Code などが `sbr_mcp` 経由で開いているモデルを操作できる（作成・押し出し・寸法変更・配列・ブーリアン・選択の読み取り・ビュー画像など 33 ツール）
+- AI の操作も GUI と同じコマンド基盤: 形状チェック・失敗時に何も変えない・Ctrl+Z で戻せる。まとめて実行（`batch`）は Undo 1 回分で、失敗すれば全部取り消し
+- `sbr_cli` でアプリなしのスクリプト実行（JSON Lines）・ヘッドレス MCP。詳しくは [docs/06_ai_integration.md](docs/06_ai_integration.md)
+
 ## ビルド
 
 依存: C++17 / CMake 3.21+ / Open CASCADE 7.6+ / Qt 6.2+ / nlohmann-json / GoogleTest
@@ -106,6 +111,7 @@ GUI なしでコアだけ検証する場合は `-DSBR_BUILD_APP=OFF`。
 右パネルの「押出距離」を `4500` に変えれば高さが再計算されます。
 
 Phase 0 の CLI 検証: `build/tools/phase0/sbr_phase0 1000 2000 3000 box.step`
+スクリプト実行: `build/tools/cli/sbr_cli --save out.sbr tests/data/columns.jsonl`（コマンド一覧は `sbr_cli --schema`）
 
 ## ドキュメント
 
@@ -113,6 +119,8 @@ Phase 0 の CLI 検証: `build/tools/phase0/sbr_phase0 1000 2000 3000 box.step`
 - [docs/02_architecture.md](docs/02_architecture.md) — アーキテクチャ・データモデル・ファイル形式
 - [docs/03_phase0-1_report.md](docs/03_phase0-1_report.md) — Phase 0〜1 実装報告（確認方法・テスト・既知の制限・次フェーズ課題）
 - [docs/04_phase2_report.md](docs/04_phase2_report.md) — Phase 2 実装報告（確認方法・テスト・既知の制限・Phase 3 への課題）
+- [docs/05_phase3_progress.md](docs/05_phase3_progress.md) — Phase 3 進捗
+- [docs/06_ai_integration.md](docs/06_ai_integration.md) — AI 連携（コマンド API・MCP・安全設計・活用方法・ロードマップ）
 
 ## ライセンスに関する注意
 

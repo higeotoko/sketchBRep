@@ -76,6 +76,8 @@ jobs:
           New-Item -ItemType Directory -Force $dist | Out-Null
           Copy-Item build\src\app\SketchBRep.exe $dist
           Copy-Item build\tools\phase0\sbr_phase0.exe $dist
+          Copy-Item build\tools\cli\sbr_cli.exe $dist
+          Copy-Item build\tools\mcp\sbr_mcp.exe $dist
           # Qt plugins: platform integration (required), styles, image formats.
           foreach ($name in @("platforms", "styles", "imageformats")) {
             $dir = Get-ChildItem -Path $env_root -Recurse -Directory -Filter $name |
@@ -140,6 +142,11 @@ jobs:
         run: |
           $env:PATH = "C:\Windows\System32"
           dist\SketchBRep\sbr_phase0.exe 1000 2000 3000 dist\box.step
+          if ($LASTEXITCODE -ne 0) { throw "sbr_phase0 failed" }
+          # MCP server (headless) from the zip: initialize, list tools, call a tool.
+          $out = Get-Content tests\data\mcp_session.jsonl | dist\SketchBRep\sbr_mcp.exe --headless | Out-String
+          Write-Host $out.Substring(0, [Math]::Min(600, $out.Length))
+          if ($out -notmatch '"isError":false') { throw "sbr_mcp smoke test failed" }
 
       - uses: actions/upload-artifact@v4
         with:

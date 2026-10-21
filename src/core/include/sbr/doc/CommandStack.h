@@ -39,8 +39,18 @@ class CommandStack {
   explicit CommandStack(Document& document, std::size_t limit = 500)
       : document_(document), limit_(limit) {}
 
-  // Applies the command's "after" states and records it.
+  // Applies the command's "after" states and records it. Inside a group the
+  // command is merged into the group's single undo step.
   void execute(Command command);
+
+  // Groups subsequent commands into one undo step (e.g. an AI batch).
+  // Nested calls are counted; the outermost endGroup() records the step.
+  void beginGroup(const std::string& name);
+  void endGroup();
+  // Reverts everything executed since the outermost beginGroup() and
+  // closes the group (all-or-nothing batches).
+  void abortGroup();
+  bool inGroup() const { return groupDepth_ > 0; }
   bool undo();
   bool redo();
   void clear();
@@ -68,6 +78,9 @@ class CommandStack {
   long long nextRevision_ = 1;
   std::vector<long long> undoRevisions_;
   std::vector<long long> redoRevisions_;
+  int groupDepth_ = 0;
+  std::string groupName_;
+  std::optional<Command> group_;
 };
 
 }  // namespace sbr::doc

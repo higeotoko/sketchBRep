@@ -42,6 +42,14 @@ void CommandStack::applyBefore(const Command& command) {
 }
 
 void CommandStack::execute(Command command) {
+  if (groupDepth_ > 0) {
+    applyAfter(command);
+    if (!group_) group_ = Command{groupName_, {}, {}};
+    group_->deltas.insert(group_->deltas.end(), command.deltas.begin(), command.deltas.end());
+    group_->definitionDeltas.insert(group_->definitionDeltas.end(), command.definitionDeltas.begin(),
+                                    command.definitionDeltas.end());
+    return;
+  }
   applyAfter(command);
   undo_.push_back(std::move(command));
   revision_ = nextRevision_++;
@@ -54,8 +62,42 @@ void CommandStack::execute(Command command) {
   }
 }
 
+void CommandStack::beginGroup(const std::string& name) {
+  if (groupDepth_++ == 0) {
+    groupName_ = name;
+    group_.reset();
+  }
+}
+
+void CommandStack::endGroup() {
+  if (groupDepth_ == 0 || --groupDepth_ > 0) return;
+  if (!group_ || (group_->deltas.empty() && group_->definitionDeltas.empty())) {
+    group_.reset();
+    return;
+  }
+  Command command = std::move(*group_);
+  group_.reset();
+  // Already applied: record it without applying again.
+  undo_.push_back(std::move(command));
+  revision_ = nextRevision_++;
+  undoRevisions_.push_back(revision_);
+  redo_.clear();
+  redoRevisions_.clear();
+  if (undo_.size() > limit_) {
+    undo_.erase(undo_.begin());
+    undoRevisions_.erase(undoRevisions_.begin());
+  }
+}
+
+void CommandStack::abortGroup() {
+  if (groupDepth_ == 0) return;
+  groupDepth_ = 0;
+  if (group_) applyBefore(*group_);
+  group_.reset();
+}
+
 bool CommandStack::undo() {
-  if (undo_.empty()) return false;
+  if (undo_.empty() || groupDepth_ > 0) return false;
   Command command = std::move(undo_.back());
   undo_.pop_back();
   const long long rev = undoRevisions_.back();
@@ -68,7 +110,7 @@ bool CommandStack::undo() {
 }
 
 bool CommandStack::redo() {
-  if (redo_.empty()) return false;
+  if (redo_.empty() || groupDepth_ > 0) return false;
   Command command = std::move(redo_.back());
   redo_.pop_back();
   const long long rev = redoRevisions_.back();
@@ -81,6 +123,8 @@ bool CommandStack::redo() {
 }
 
 void CommandStack::clear() {
+  groupDepth_ = 0;
+  group_.reset();
   undo_.clear();
   redo_.clear();
   undoRevisions_.clear();

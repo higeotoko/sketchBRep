@@ -88,6 +88,7 @@ Recipe = BaseFeature + [Modifier...]
 `doc::Modeler` の各操作は `doc::Command{name, [ObjectDelta{before, after}]}` を `CommandStack::execute` に渡す。
 Undo はスナップショットを戻すだけなので、モデリング演算の再実行に依存せず **形状が正確に復元**される。
 `isClean()` で未保存変更を追跡する。
+`beginGroup / endGroup / abortGroup` で複数のコマンドを 1 つの Undo ステップにまとめられる（AI の `batch`、`create_box`）。`abortGroup` は途中までの変更をすべて戻す。
 
 ## オブジェクト ID
 
@@ -140,6 +141,6 @@ UTF-8 JSON。
 |---|---|
 | コンポーネントの入れ子 | `RegenContext` は定義の再帰解決を想定済み。循環検出と依存更新の伝播を追加する |
 | グループ編集モード | 選択時の「コンテキスト」（現在編集中のグループ）を UI 側に追加 |
-| AI / スクリプト API | `doc::Modeler` を JSON-RPC / Python で公開（GUI と同じ検証・Undo 経路） |
+| AI / スクリプト API | **実装済み**: `api::CommandApi`（JSON）+ `api::McpServer`、`sbr_cli` / `sbr_mcp`、アプリ内 `AiBridge`。[06_ai_integration.md](06_ai_integration.md) |
 | 3DM 入出力 | `geom::ShapeIO` に openNURBS 変換を追加 |
 | 独自レンダラ | `display::DisplayMesh` をそのまま GPU バッファへ |
