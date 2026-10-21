@@ -18,6 +18,7 @@ add_library(sbr_core STATIC
   src/CommandApi.cpp
   src/McpServer.cpp
   src/Annotation.cpp
+  src/Rhino3dm.cpp
 )
 add_library(sbr::core ALIAS sbr_core)
 
@@ -40,3 +41,8 @@ target_link_libraries(sbr_core
   PRIVATE
     nlohmann_json::nlohmann_json
 )
+
+if(SBR_WITH_OPENNURBS)
+  target_link_libraries(sbr_core PRIVATE opennurbsStatic)
+  target_compile_definitions(sbr_core PRIVATE SBR_WITH_OPENNURBS ON_CMAKE_BUILD)
+endif()

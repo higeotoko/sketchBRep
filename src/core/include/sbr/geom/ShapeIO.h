@@ -25,6 +25,7 @@ struct NamedShape {
   TopoDS_Shape shape;
   std::string name;
   std::optional<std::array<double, 3>> color;  // RGB 0..1
+  std::string layer;                           // tag / Rhino layer (3DM)
 };
 
 // STEP with names and colours (XCAF). Each part becomes a product.

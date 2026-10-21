@@ -8,9 +8,27 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(SBR_BUILD_APP   "Build the Qt desktop application" ON)
 option(SBR_BUILD_TESTS "Build automated tests" ON)
 option(SBR_BUILD_TOOLS "Build CLI verification tools" ON)
+option(SBR_WITH_OPENNURBS "Rhino .3dm import/export (downloads openNURBS)" ON)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
+endif()
+
+# openNURBS is added before our own compile options so that its sources
+# build with the flags its authors use.
+if(SBR_WITH_OPENNURBS)
+  enable_language(C)  # its bundled zlib
+  include(FetchContent)
+  FetchContent_Declare(opennurbs
+    URL https://github.com/mcneel/opennurbs/archive/eb92af3ba1806b0a34a99aba0d3bda83e3d46083.tar.gz)
+  FetchContent_GetProperties(opennurbs)
+  if(NOT opennurbs_POPULATED)
+    FetchContent_Populate(opennurbs)
+    add_subdirectory(${opennurbs_SOURCE_DIR} ${opennurbs_BINARY_DIR} EXCLUDE_FROM_ALL)
+    # Its zlib calls back into openNURBS for memory (zcalloc/zcfree): declare
+    # the cycle so static linking repeats the libraries in order.
+    target_link_libraries(zlib INTERFACE opennurbsStatic)
+  endif()
 endif()
 
 if(MSVC)

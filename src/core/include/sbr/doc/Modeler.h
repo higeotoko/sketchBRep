@@ -13,6 +13,7 @@
 
 #include "sbr/doc/CommandStack.h"
 #include "sbr/doc/Document.h"
+#include "sbr/geom/ShapeIO.h"
 
 namespace sbr::doc {
 
@@ -191,6 +192,9 @@ class Modeler {
   // keeping object names and colours.
   Status exportStep(const std::string& path, const std::vector<ObjectId>& ids = {}) const;
   Result<std::vector<ObjectId>> importStep(const std::string& path);
+  // Rhino .3dm: exact NURBS Breps with names, colours and tags as layers.
+  Status export3dm(const std::string& path, const std::vector<ObjectId>& ids = {}) const;
+  Result<std::vector<ObjectId>> import3dm(const std::string& path);
 
   // --- queries ------------------------------------------------------------
   std::vector<ObjectSummary> listObjects() const;
@@ -203,6 +207,9 @@ class Modeler {
   Result<ObjectId> addObject(Object object, const std::string& commandName);
   Status commitModified(Object object, const std::string& commandName);
   Result<ObjectId> addProfile(Object object, const std::string& commandName);
+  std::vector<geom::NamedShape> exportParts(const std::vector<ObjectId>& ids) const;
+  Result<std::vector<ObjectId>> addImported(const std::vector<geom::NamedShape>& parts, const std::string& path,
+                                            const std::string& commandName);
   std::string uniqueName(const std::string& base) const;
   // Deep copy of a subtree with fresh ids. Returns objects parents-first.
   std::vector<Object> cloneSubtree(const ObjectId& id, const ObjectId& newParent) const;

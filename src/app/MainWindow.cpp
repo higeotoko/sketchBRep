@@ -278,6 +278,8 @@ void MainWindow::buildMenus() {
   file->addSeparator();
   file->addAction(tr("STEP インポート..."), this, &MainWindow::importStep);
   file->addAction(tr("STEP エクスポート..."), this, &MainWindow::exportStep);
+  file->addAction(tr("Rhino 3DM インポート..."), this, &MainWindow::import3dm);
+  file->addAction(tr("Rhino 3DM エクスポート..."), this, &MainWindow::export3dm);
   file->addSeparator();
   file->addAction(tr("終了(&X)"), QKeySequence::Quit, this, &QWidget::close);
 
@@ -1176,6 +1178,33 @@ void MainWindow::exportStep() {
     reportError(QString::fromStdString(s.message()));
   } else {
     statusBar()->showMessage(tr("STEP を書き出しました: %1").arg(path), 4000);
+  }
+}
+
+void MainWindow::import3dm() {
+  const QString path = QFileDialog::getOpenFileName(this, tr("Rhino 3DM インポート"), QString(),
+                                                    tr("Rhino (*.3dm)"));
+  if (path.isEmpty()) return;
+  auto ids = modeler_.import3dm(utf8(path));
+  if (!ids) {
+    reportError(QString::fromStdString(ids.error()));
+    return;
+  }
+  setSelection(ids.value());
+  viewport_->syncNow();
+  viewport_->fitAll();
+  setStatus(tr("3DM から %1 個を読み込みました（単位は mm に換算、レイヤはタグに）").arg(ids->size()));
+}
+
+void MainWindow::export3dm() {
+  QString path = QFileDialog::getSaveFileName(this, tr("Rhino 3DM エクスポート"), QString(), tr("Rhino (*.3dm)"));
+  if (path.isEmpty()) return;
+  if (!path.endsWith(QStringLiteral(".3dm"), Qt::CaseInsensitive)) path += QStringLiteral(".3dm");
+  const Status s = modeler_.export3dm(utf8(path), selection_);
+  if (!s) {
+    reportError(QString::fromStdString(s.message()));
+  } else {
+    statusBar()->showMessage(tr("3DM を書き出しました（正確な NURBS、タグはレイヤ）: %1").arg(path), 5000);
   }
 }
 

@@ -594,6 +594,16 @@ const std::vector<CommandDef>& commands() {
          must(m.load(text(a, "path")));
          return json{{"objects", m.document().objects().size()}};
        }},
+      {"export_3dm", "Export visible objects (or 'ids') to a Rhino .3dm file: exact NURBS, names, colours, tags as layers.",
+       SCHEMA({"type": "object", "properties": {"path": {"type": "string"},
+               "ids": {"type": "array", "items": {"type": "string"}}}, "required": ["path"]}),
+       [](doc::Modeler& m, const json& a) {
+         must(m.export3dm(text(a, "path"), a.contains("ids") ? ids(a, "ids") : std::vector<ObjectId>{}));
+         return json::object();
+       }},
+      {"import_3dm", "Import the surfaces and solids of a Rhino .3dm file (units converted to mm).",
+       SCHEMA({"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}),
+       [](doc::Modeler& m, const json& a) { return idsResult(must(m.import3dm(text(a, "path")))); }},
       {"export_step", "Export visible objects (or 'ids') to STEP with names and colours.",
        SCHEMA({"type": "object", "properties": {"path": {"type": "string"},
                "ids": {"type": "array", "items": {"type": "string"}}}, "required": ["path"]}),
@@ -608,7 +618,8 @@ const std::vector<CommandDef>& commands() {
 #undef SCHEMA
 
 bool isFileCommand(const std::string& name) {
-  return name == "save" || name == "open" || name == "export_step";
+  return name == "save" || name == "open" || name == "export_step" || name == "export_3dm" ||
+         name == "import_3dm";
 }
 
 struct Context {

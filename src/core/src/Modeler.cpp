@@ -21,6 +21,7 @@
 #include "sbr/geom/Freeform.h"
 #include "sbr/geom/Measure.h"
 #include "sbr/geom/Operations.h"
+#include "sbr/geom/Rhino3dm.h"
 #include "sbr/geom/ShapeIO.h"
 
 namespace sbr::doc {
@@ -1284,7 +1285,7 @@ Status Modeler::load(const std::string& path, std::vector<std::string>* warnings
   return Status::success();
 }
 
-Status Modeler::exportStep(const std::string& path, const std::vector<ObjectId>& ids) const {
+std::vector<geom::NamedShape> Modeler::exportParts(const std::vector<ObjectId>& ids) const {
   std::vector<ObjectId> wanted;
   if (ids.empty()) {
     for (const Object& o : document_.objects()) wanted.push_back(o.id);
@@ -1299,22 +1300,45 @@ Status Modeler::exportStep(const std::string& path, const std::vector<ObjectId>&
     // Annotations are drawing aids, not model geometry.
     if (!o || o->shape.IsNull() || !document_.isVisible(id) || o->kind() == ObjectKind::Annotation) continue;
     parts.push_back(geom::NamedShape{document_.worldShape(*o), o->name,
-                                     std::array<double, 3>{o->color.r, o->color.g, o->color.b}});
+                                     std::array<double, 3>{o->color.r, o->color.g, o->color.b},
+                                     o->layer == "Default" ? std::string() : o->layer});
   }
+  return parts;
+}
+
+Status Modeler::exportStep(const std::string& path, const std::vector<ObjectId>& ids) const {
+  const auto parts = exportParts(ids);
   if (parts.empty()) return Status::failure("Nothing to export");
   return geom::writeStepParts(parts, path);
+}
+
+Status Modeler::export3dm(const std::string& path, const std::vector<ObjectId>& ids) const {
+  const auto parts = exportParts(ids);
+  if (parts.empty()) return Status::failure("Nothing to export");
+  return geom::write3dm(parts, path);
+}
+
+Result<std::vector<ObjectId>> Modeler::import3dm(const std::string& path) {
+  auto parts = geom::read3dm(path);
+  if (!parts) return Result<std::vector<ObjectId>>::failure(parts.error());
+  return addImported(parts.value(), path, "Import 3DM");
 }
 
 Result<std::vector<ObjectId>> Modeler::importStep(const std::string& path) {
   auto parts = geom::readStepParts(path);
   if (!parts) return Result<std::vector<ObjectId>>::failure(parts.error());
+  return addImported(parts.value(), path, "Import STEP");
+}
 
+Result<std::vector<ObjectId>> Modeler::addImported(const std::vector<geom::NamedShape>& parts,
+                                                   const std::string& path, const std::string& commandName) {
   ChangeSet changes(document_);
   std::vector<ObjectId> ids;
   std::set<std::string> usedNames;
-  for (const geom::NamedShape& part : parts.value()) {
+  for (const geom::NamedShape& part : parts) {
     Object o;
     o.id = generateObjectId();
+    if (!part.layer.empty()) o.layer = part.layer;
     std::string name = part.name.empty() ? uniqueName("Imported") : part.name;
     // Keep names unique within the batch as well.
     for (int n = 2; usedNames.count(name); ++n) name = part.name + " (" + std::to_string(n) + ")";
@@ -1327,7 +1351,7 @@ Result<std::vector<ObjectId>> Modeler::importStep(const std::string& path) {
     ids.push_back(o.id);
     changes.add(o);
   }
-  history_.execute(changes.build("Import STEP"));
+  history_.execute(changes.build(commandName));
   return ids;
 }
 

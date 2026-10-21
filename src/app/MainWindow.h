@@ -81,6 +81,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   bool saveAs();
   void importStep();
   void exportStep();
+  void import3dm();
+  void export3dm();
   void deleteSelection();
   void selectAll();
   void groupSelection();

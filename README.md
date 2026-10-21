@@ -27,6 +27,7 @@
 - 推論の強化: 点から（追跡点を通る軸線）、軸と追跡点の交点、エッジに平行・垂直
 - オブジェクト管理: 階層ツリー、タグ、色、位置の数値編集、表示/非表示
 - STEP 連携の安定化: オブジェクト名・色を保持（XCAF）、グループ配置を反映、アセンブリ読込の平坦化
+- **Rhino 3DM 入出力**（ファイルメニュー）: 正確な NURBS のポリサーフェスとして書き出し（名前・色・タグ→レイヤ）。3DM のサーフェス・ソリッドを読み込み（単位は mm に換算）
 
 ### 操作感（実機フィードバック反映）
 - **面の上に描いて押し込むと穴・開口、引き出すと増築**: 壁に矩形を描いてプッシュ/プルで押し込むと開口になる（1 オブジェクトのまま、深さは後から変更可、Undo 1 回で元通り）
@@ -77,7 +78,7 @@ xvfb-run -a ctest --test-dir build --output-on-failure   # GUI テストはデ�
 ./build/src/app/SketchBRep
 ```
 
-CMake オプション: `SBR_BUILD_APP`（GUI）, `SBR_BUILD_TESTS`, `SBR_BUILD_TOOLS`（すべて既定 ON）。
+CMake オプション: `SBR_BUILD_APP`（GUI）, `SBR_BUILD_TESTS`, `SBR_BUILD_TOOLS`, `SBR_WITH_OPENNURBS`（3DM。構成時に openNURBS の固定コミットを取得）（すべて既定 ON）。オフラインでは `-DFETCHCONTENT_SOURCE_DIR_OPENNURBS=<openNURBS のソース>` を指定。
 GUI なしでコアだけ検証する場合は `-DSBR_BUILD_APP=OFF`。
 
 ## 使い方
@@ -139,5 +140,5 @@ Phase 0 の CLI 検証: `build/tools/phase0/sbr_phase0 1000 2000 3000 box.step`
 
 ## ライセンスに関する注意
 
-Open CASCADE Technology は LGPL 2.1（+ 例外）、Qt 6 は LGPL 3 / 商用のデュアルライセンスです。
+Open CASCADE Technology は LGPL 2.1（+ 例外）、Qt 6 は LGPL 3 / 商用のデュアルライセンス、openNURBS（3DM）は MIT 系の openNURBS ライセンス（同梱の zlib・freetype を含む）です。
 配布形態（動的リンク・再リンク可能性の確保など）は [docs/01_feasibility.md](docs/01_feasibility.md#ライセンス) を参照してください。
