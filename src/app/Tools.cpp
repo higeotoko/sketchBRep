@@ -1463,6 +1463,43 @@ void MeasureTool::mousePress(const ToolEvent& e) {
   resetLock();
 }
 
+// --- Eraser --------------------------------------------------------------------------
+
+namespace {
+// The object a click on `leaf` addresses at the current editing level.
+doc::ObjectId addressedAtLevel(const doc::Document& document, doc::ObjectId leaf,
+                               const doc::ObjectId& context) {
+  int guard = 0;
+  while (guard++ < 1000) {
+    const doc::Object* o = document.find(leaf);
+    if (!o || o->parent.empty() || o->parent == context) break;
+    leaf = o->parent;
+  }
+  return leaf;
+}
+}  // namespace
+
+QString EraserTool::name() const { return QObject::tr("消しゴム"); }
+QCursor EraserTool::cursor() const { return toolCursor(CursorKind::Eraser); }
+
+void EraserTool::activate() {
+  host_.viewport().setPickMode(PickMode::Objects);
+  host_.setMeasurement(QString(), QString());
+  host_.setStatus(QObject::tr("クリックで削除（グループ・コンポーネントは丸ごと）"));
+}
+
+void EraserTool::mouseMove(const ToolEvent& e) { host_.viewport().pickObject(e.pos); }
+
+void EraserTool::mousePress(const ToolEvent& e) {
+  const auto picked = host_.viewport().pickObject(e.pos);
+  if (!picked) return;
+  const doc::ObjectId target =
+      addressedAtLevel(host_.modeler().document(), *picked, host_.editingGroup());
+  const Status s = host_.modeler().remove({target});
+  if (!s) host_.reportError(QString::fromStdString(s.message()));
+  host_.viewport().clearHover();
+}
+
 // --- Paint ---------------------------------------------------------------------------
 
 QString PaintTool::name() const { return QObject::tr("ペイント"); }
@@ -1489,14 +1526,7 @@ void PaintTool::mousePress(const ToolEvent& e) {
   }
   // Paint at the current editing level: a group/component as a whole, or a
   // single object inside the group being edited.
-  doc::ObjectId target = *picked;
-  const doc::ObjectId context = host_.editingGroup();
-  int guard = 0;
-  while (guard++ < 1000) {
-    const doc::Object* o = document.find(target);
-    if (!o || o->parent.empty() || o->parent == context) break;
-    target = o->parent;
-  }
+  const doc::ObjectId target = addressedAtLevel(document, *picked, host_.editingGroup());
   const Status s = host_.modeler().paint({target}, color_);
   if (!s) host_.reportError(QString::fromStdString(s.message()));
 }

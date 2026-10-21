@@ -40,6 +40,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   measureTool_ = std::make_unique<MeasureTool>(*this);
   circleTool_ = std::make_unique<CircleTool>(*this);
   paintTool_ = std::make_unique<PaintTool>(*this);
+  eraserTool_ = std::make_unique<EraserTool>(*this);
 
   buildUi();
   buildMenus();
@@ -324,6 +325,7 @@ void MainWindow::buildMenus() {
       {tr("回転体"), QStringLiteral("V"), ToolId::Revolve, CursorKind::Revolve},
       {tr("メジャー"), QStringLiteral("T"), ToolId::Measure, CursorKind::Measure},
       {tr("ペイント"), QStringLiteral("B"), ToolId::Paint, CursorKind::Paint},
+      {tr("消しゴム"), QStringLiteral("E"), ToolId::Eraser, CursorKind::Eraser},
   };
   for (const ToolEntry& e : entries) {
     QAction* a = new QAction(toolIcon(e.icon), e.label, this);
@@ -354,7 +356,7 @@ void MainWindow::buildMenus() {
            "Shift+ホイールドラッグ: パン / ダブルクリック: フォーカス<br>"
            "F2〜F7: 標準ビュー / F8: 透視・平行投影 / Shift+Z: 全体表示<br><br>"
            "<b>ツール</b><br>Space: 選択 / L: 線 / R: 矩形 / P: プッシュ/プル<br>"
-           "C: 円 / N: 曲線 / V: 回転体 / T: メジャー / B: ペイント（Alt+クリックで色を拾う）<br>"
+           "C: 円 / N: 曲線 / V: 回転体 / T: メジャー / B: ペイント（Alt+クリックで色を拾う）/ E: 消しゴム<br>"
            "M: 移動 / Q: 回転 / F: オフセット（移動・回転中に Ctrl でコピー、確定後 x3 で配列・/3 で等分割）<br>"
            "作図中に数値を打って Enter で寸法指定（例: 3000, 4.5m, 3000,4500）<br>"
            "Shift: 推論方向をロック / →・←・↑: X・Y・Z 軸ロック / ↓: 解除 / Esc: 中止"));
@@ -376,6 +378,7 @@ void MainWindow::activateTool(ToolId id) {
     case ToolId::Measure: active_ = measureTool_.get(); break;
     case ToolId::Circle: active_ = circleTool_.get(); break;
     case ToolId::Paint: active_ = paintTool_.get(); break;
+    case ToolId::Eraser: active_ = eraserTool_.get(); break;
   }
   toolActions_[static_cast<int>(id)]->setChecked(true);
   viewport_->setTool(active_);

@@ -42,7 +42,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   // Used by tests and the command line.
   bool openFile(const QString& path);
   bool saveFile(const QString& path);
-  enum class ToolId { Select, Line, Rectangle, PushPull, Move, Rotate, Offset, Curve, Revolve, Measure, Circle, Paint };
+  enum class ToolId { Select, Line, Rectangle, PushPull, Move, Rotate, Offset, Curve, Revolve, Measure, Circle, Paint, Eraser };
   void activateTool(ToolId id);
   Tool* activeTool() const { return active_; }
   QLineEdit* measurementBox() const { return measurement_; }
@@ -98,9 +98,10 @@ class MainWindow : public QMainWindow, public ToolHost {
   std::unique_ptr<MeasureTool> measureTool_;
   std::unique_ptr<CircleTool> circleTool_;
   std::unique_ptr<PaintTool> paintTool_;
+  std::unique_ptr<EraserTool> eraserTool_;
   Tool* active_ = nullptr;
   QActionGroup* toolGroup_ = nullptr;
-  QAction* toolActions_[12] = {};
+  QAction* toolActions_[13] = {};
   QAction* undoAction_ = nullptr;
   QAction* redoAction_ = nullptr;
   QAction* focusOnDoubleClick_ = nullptr;

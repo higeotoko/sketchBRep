@@ -209,6 +209,18 @@ class RectangleTool : public DrawingTool {
   std::optional<doc::ObjectId> lastCreated_;
 };
 
+// Eraser: click deletes what is clicked (a group/component as a whole, or
+// a single object inside the group being edited).
+class EraserTool : public Tool {
+ public:
+  using Tool::Tool;
+  QString name() const override;
+  QCursor cursor() const override;
+  void activate() override;
+  void mousePress(const ToolEvent& e) override;
+  void mouseMove(const ToolEvent& e) override;
+};
+
 // Paint bucket: click to apply the current colour (groups and components
 // as a whole), Alt+click to pick up the colour of what is clicked.
 class PaintTool : public Tool {

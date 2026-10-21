@@ -94,6 +94,7 @@ class GuiPhase1 : public QObject {
   void offsetToolOnSolidFace();
   void paintToolAndEyedropper();
   void moveSelectedFaceStretchesSolid();
+  void eraserDeletesClickedObject();
 };
 
 namespace {
@@ -716,6 +717,21 @@ void GuiPhase1::moveSelectedFaceStretchesSolid() {
   const Bnd_Box b = geom::exactBounds(m.document().worldShape(id));
   QVERIFY(std::abs(b.CornerMax().Z() - 1500) < 1e-6);
   QVERIFY(std::abs(b.CornerMax().X() - 1000) < 1e-6);  // only stretched upwards
+}
+
+void GuiPhase1::eraserDeletesClickedObject() {
+  Fixture f;
+  QVERIFY(f.setUp(1000, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId a = f.box(0, 0, 500, 500, 500);
+  const doc::ObjectId b = f.box(1500, 0, 500, 500, 500);
+  f.window.activateTool(MainWindow::ToolId::Eraser);
+  QTest::qWait(30);
+  click(f.vp, f.vp->toWidget(gp_Pnt(1750, 250, 500)));
+  QVERIFY(!m.document().find(b));
+  QVERIFY(m.document().find(a));
+  QVERIFY(m.undo());
+  QVERIFY(m.document().find(b));
 }
 
 QTEST_MAIN(GuiPhase1)

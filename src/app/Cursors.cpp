@@ -72,6 +72,22 @@ QPixmap draw(CursorKind kind, QPoint& hotspot) {
       hotspot = QPoint(6, 3);
       break;
     }
+    case CursorKind::Eraser: {
+      // Tilted eraser block, hotspot at its lower-left corner.
+      QPainterPath block;
+      block.moveTo(4, 26);
+      block.lineTo(18, 8);
+      block.lineTo(28, 16);
+      block.lineTo(14, 30);
+      block.closeSubpath();
+      halo(p, block);
+      QPainterPath band;
+      band.moveTo(10, 18);
+      band.lineTo(20, 26);
+      halo(p, band);
+      hotspot = QPoint(6, 27);
+      break;
+    }
     case CursorKind::Paint: {
       // Paint bucket tipping to the lower left (hotspot at the drip).
       QPainterPath bucket;
