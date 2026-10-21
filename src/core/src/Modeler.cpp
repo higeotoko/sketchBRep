@@ -218,6 +218,23 @@ Result<ObjectId> Modeler::createText(const gp_Pnt& position, const std::optional
   return addObject(std::move(o), "Text");
 }
 
+Result<ObjectId> Modeler::createGuide(const gp_Pnt& point, const gp_Dir& direction) {
+  Object o;
+  o.name = uniqueName("Guide");
+  o.layer = "Guides";
+  o.recipe.base = GuideLine{point, direction};
+  return addObject(std::move(o), "Guide");
+}
+
+Status Modeler::clearGuides() {
+  std::vector<ObjectId> guides;
+  for (const Object& o : document_.objects()) {
+    if (o.kind() == ObjectKind::Guide) guides.push_back(o.id);
+  }
+  if (guides.empty()) return Status::failure("There are no guides");
+  return remove(guides);
+}
+
 Status Modeler::setAnnotationText(const ObjectId& id, const std::string& text) {
   const Object* current = document_.find(id);
   if (!current) return Status::failure("Object not found");
@@ -1332,7 +1349,10 @@ std::vector<geom::NamedShape> Modeler::exportParts(const std::vector<ObjectId>& 
   for (const ObjectId& id : wanted) {
     const Object* o = document_.find(id);
     // Annotations are drawing aids, not model geometry.
-    if (!o || o->shape.IsNull() || !document_.isVisible(id) || o->kind() == ObjectKind::Annotation) continue;
+    if (!o || o->shape.IsNull() || !document_.isVisible(id) || o->kind() == ObjectKind::Annotation ||
+        o->kind() == ObjectKind::Guide) {
+      continue;
+    }
     parts.push_back(geom::NamedShape{document_.worldShape(*o), o->name,
                                      std::array<double, 3>{o->color.r, o->color.g, o->color.b},
                                      o->layer == "Default" ? std::string() : o->layer});

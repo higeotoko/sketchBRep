@@ -293,6 +293,21 @@ const std::vector<CommandDef>& commands() {
          return idResult(must(m.createDimension(point(a, "start"), point(a, "end"), gp_Vec(offset),
                                                 textOr(a, "text", {}))));
        }},
+      {"create_guide",
+       "Add a construction line (guide) through 'point' along 'direction': drawing snaps to it. Guides are "
+       "not exported and can be hidden with the 'Guides' tag.",
+       SCHEMA({"type": "object", "properties": {
+         "point": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+         "direction": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3}},
+         "required": ["point", "direction"]}),
+       [](doc::Modeler& m, const json& a) {
+         return idResult(must(m.createGuide(point(a, "point"), direction(a, "direction", gp::DX()))));
+       }},
+      {"clear_guides", "Delete all guides (one undo step).", SCHEMA({"type": "object", "properties": {}}),
+       [](doc::Modeler& m, const json&) {
+         must(m.clearGuides());
+         return json::object();
+       }},
       {"create_text",
        "Add a text note at 'position' (e.g. a room name or area), with a leader line from 'target' if given.",
        SCHEMA({"type": "object", "properties": {

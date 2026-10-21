@@ -31,6 +31,7 @@ QString kindLabel(doc::ObjectKind kind) {
     case doc::ObjectKind::Group: return QObject::tr("グループ");
     case doc::ObjectKind::Instance: return QObject::tr("コンポーネント");
     case doc::ObjectKind::Annotation: return QObject::tr("注記");
+    case doc::ObjectKind::Guide: return QObject::tr("ガイド");
     case doc::ObjectKind::Empty: return QObject::tr("空");
     case doc::ObjectKind::Other: break;
   }

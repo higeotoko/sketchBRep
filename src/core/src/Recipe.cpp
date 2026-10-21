@@ -3,9 +3,11 @@
 #include <cmath>
 #include <sstream>
 
+#include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepTools.hxx>
 #include <TopLoc_Location.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopoDS_Edge.hxx>
 #include <TopoDS.hxx>
 
 #include "sbr/geom/Annotation.h"
@@ -67,6 +69,12 @@ Result<TopoDS_Shape> buildBase(const BaseFeature& base, const RegenContext& cont
           [](const ArcCurve& a) { return geom::makeArc(a.start, a.end, a.normal, a.bulge, a.closed); },
           [](const LinearDimension& d) { return geom::makeDimensionShape(d.start, d.end, d.offset); },
           [](const TextNote& t) { return geom::makeTextNoteShape(t.position, t.target); },
+          [](const GuideLine& g) -> Result<TopoDS_Shape> {
+            // "Infinite": 100 m each way is beyond any building.
+            const gp_Vec reach = gp_Vec(g.direction) * 100000.0;
+            return TopoDS_Shape(
+                BRepBuilderAPI_MakeEdge(g.point.Translated(-reach), g.point.Translated(reach)).Edge());
+          },
           [](const ImportedShape& s) -> Result<TopoDS_Shape> {
             if (s.shape.IsNull()) return Result<TopoDS_Shape>::failure("Imported shape is empty");
             return s.shape;
@@ -377,6 +385,7 @@ std::string describe(const Recipe& recipe) {
                  },
                  [&](const LinearDimension& d) { out << "Dimension " << d.start.Distance(d.end); },
                  [&](const TextNote& t) { out << "Text \"" << t.text << "\""; },
+                 [&](const GuideLine&) { out << "Guide"; },
                  [&](const ImportedShape& s) { out << "Imported (" << s.source << ")"; },
                  [&](const BooleanFeature& b) {
                    out << toString(b.kind) << " (";

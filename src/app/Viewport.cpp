@@ -302,6 +302,9 @@ Handle(AIS_Shape) Viewport::makeDisplay(const doc::Object& object, Entry& entry)
   } else if (object.kind() == doc::ObjectKind::Annotation) {
     ais->SetColor(Quantity_NOC_GRAY20);
     ais->SetWidth(1.0);
+  } else if (object.kind() == doc::ObjectKind::Guide) {
+    ais->SetColor(Quantity_NOC_GRAY50);
+    ais->Attributes()->SetWireAspect(new Prs3d_LineAspect(Quantity_NOC_GRAY50, Aspect_TOL_DASH, 1.0));
   } else {
     ais->SetColor(rgb(object.color.r, object.color.g, object.color.b));
   }
@@ -523,6 +526,7 @@ void Viewport::syncNow() {
     }
     Quantity_Color color = o.kind() == doc::ObjectKind::Curve        ? Quantity_Color(Quantity_NOC_BLACK)
                            : o.kind() == doc::ObjectKind::Annotation ? Quantity_Color(Quantity_NOC_GRAY20)
+                           : o.kind() == doc::ObjectKind::Guide      ? Quantity_Color(Quantity_NOC_GRAY50)
                                : rgb(o.color.r, o.color.g, o.color.b);
     if (selected) color = kSelectedColor;
     Quantity_Color current;
@@ -1013,7 +1017,12 @@ void Viewport::fitAll() {
   // Fit to the model only: V3d's own FitAll() would include the long axis
   // lines and transient previews.
   Bnd_Box box;
-  for (const auto& [id, entry] : entries_) box.Add(geom::exactBounds(entry.canonicalWorld));
+  for (const auto& [id, entry] : entries_) {
+    // Guides are 200 m long: they would zoom far out.
+    const doc::Object* o = modeler_.document().find(id);
+    if (o && o->kind() == doc::ObjectKind::Guide) continue;
+    box.Add(geom::exactBounds(entry.canonicalWorld));
+  }
   if (box.IsVoid()) {
     box.Add(gp_Pnt(-2000, -2000, 0));
     box.Add(gp_Pnt(8000, 8000, 3000));

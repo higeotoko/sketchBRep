@@ -68,6 +68,13 @@ struct TextNote {
   std::string text;
 };
 
+// Construction line (SketchUp "guide"): an infinite line to snap to while
+// drawing. Not model geometry: excluded from exports and from "fit all".
+struct GuideLine {
+  gp_Pnt point;
+  gp_Dir direction = gp::DX();
+};
+
 // Cubic NURBS curve through points (periodic when closed).
 struct InterpolatedCurve {
   std::vector<gp_Pnt> points;
@@ -148,7 +155,7 @@ struct ComponentInstance {
 };
 
 using BaseFeature = std::variant<RectangleProfile, CircleProfile, PolygonProfile, PolylineCurve, InterpolatedCurve,
-                                 ArcCurve, LinearDimension, TextNote, ImportedShape,
+                                 ArcCurve, LinearDimension, TextNote, GuideLine, ImportedShape,
                                  BooleanFeature, LoftFeature, SweepFeature, LoopProfile, FacePart, GroupNode,
                                  ComponentInstance>;
 

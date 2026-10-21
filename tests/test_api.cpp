@@ -336,3 +336,13 @@ TEST(CommandApi, FollowMeAlongAndAround) {
   EXPECT_GT(a.ok("get_object", {{"id", ring}})["volume"].get<double>(), 0.0);
   EXPECT_FALSE(a.call("get_object", {{"id", profile}})["ok"]);  // consumed
 }
+
+TEST(CommandApi, GuidesAreCreatedAndCleared) {
+  Api a;
+  const std::string guide = a.ok("create_guide", {{"point", {0, 900, 0}}, {"direction", {0, 0, 1}}})["id"];
+  EXPECT_EQ(a.ok("get_object", {{"id", guide}})["kind"], "Guide");
+  EXPECT_FALSE(a.call("create_guide", {{"point", {0, 0, 0}}, {"direction", {0, 0, 0}}})["ok"]);
+  a.ok("clear_guides");
+  EXPECT_TRUE(a.modeler.document().objects().empty());
+  EXPECT_FALSE(a.call("clear_guides")["ok"]);
+}

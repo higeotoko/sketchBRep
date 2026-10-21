@@ -297,6 +297,10 @@ void MainWindow::buildMenus() {
   edit->addSeparator();
   edit->addAction(tr("削除"), QKeySequence::Delete, this, &MainWindow::deleteSelection);
   edit->addAction(tr("すべて選択"), QKeySequence::SelectAll, this, &MainWindow::selectAll);
+  edit->addAction(tr("ガイドをすべて削除"), this, [this] {
+    const Status s = modeler_.clearGuides();
+    if (!s) reportError(QString::fromStdString(s.message()));
+  });
   edit->addAction(tr("選択解除"), QKeySequence(tr("Ctrl+T")), this, [this] { setSelection({}); });
   edit->addSeparator();
   edit->addAction(tr("グループ化"), QKeySequence(tr("Ctrl+G")), this, &MainWindow::groupSelection);

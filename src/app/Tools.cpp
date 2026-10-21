@@ -17,6 +17,8 @@
 #include <BRepClass_FaceClassifier.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <BRepTools.hxx>
+#include <BRep_Builder.hxx>
+#include <TopoDS_Compound.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Vertex.hxx>
 #include <TopoDS_Wire.hxx>
@@ -2057,6 +2059,8 @@ void MeasureTool::activate() {
 
 void MeasureTool::cancel() {
   start_.reset();
+  guideDir_.reset();
+  guideOffset_ = gp_Vec();
   resetLock();
   host_.viewport().clearPreview();
   host_.viewport().hideSnap();
@@ -2073,13 +2077,50 @@ void MeasureTool::show(const gp_Pnt& a, const gp_Pnt& b, bool final) {
   }
 }
 
+gp_Vec MeasureTool::guideOffset(const gp_Pnt& p) const {
+  const gp_Vec v(*start_, p);
+  const gp_Vec along = gp_Vec(*guideDir_) * v.Dot(gp_Vec(*guideDir_));
+  return v - along;
+}
+
+void MeasureTool::showGuide(const gp_Pnt& p) {
+  guideOffset_ = guideOffset(p);
+  const double d = guideOffset_.Magnitude();
+  host_.setMeasurement(QObject::tr("オフセット"), mm(d));
+  host_.setStatus(QObject::tr("ガイド: エッジから %1 mm（クリックで配置、数値入力で距離指定）").arg(mm(d)));
+  if (d <= tolerance::kMinDimension) {
+    host_.viewport().clearPreview();
+    return;
+  }
+  // Offset tick from the edge plus a stretch of the guide around the cursor.
+  const gp_Pnt foot = p.Translated(-guideOffset_);
+  const gp_Vec reach = gp_Vec(*guideDir_) * std::max(2000.0, 4.0 * d);
+  BRep_Builder builder;
+  TopoDS_Compound preview;
+  builder.MakeCompound(preview);
+  builder.Add(preview, BRepBuilderAPI_MakeEdge(foot, p).Edge());
+  builder.Add(preview, BRepBuilderAPI_MakeEdge(p.Translated(-reach), p.Translated(reach)).Edge());
+  host_.viewport().setPreview(preview);
+}
+
+void MeasureTool::placeGuide(const gp_Vec& offset) {
+  auto id = host_.modeler().createGuide(start_->Translated(offset), *guideDir_);
+  if (!id) host_.reportError(QString::fromStdString(id.error()));
+  lastDistance_ = offset.Magnitude();
+  cancel();
+  host_.setStatus(QObject::tr("ガイドを配置しました（%1 mm）").arg(mm(offset.Magnitude())));
+}
+
 void MeasureTool::mouseMove(const ToolEvent& e) {
   const snap::SnapResult r = snapAt(e, start_, std::nullopt);
   if (!r.valid()) return;
-  if (start_) {
+  if (start_ && guideDir_) {
+    showGuide(r.point);
+  } else if (start_) {
     show(*start_, r.point, false);
   } else {
-    host_.setStatus(QObject::tr("測りはじめの点をクリック  [%1]").arg(snapLabel(r.kind)));
+    host_.setStatus(QObject::tr("測りはじめの点をクリック（直線エッジ上から始めるとガイド）  [%1]")
+                        .arg(snapLabel(r.kind)));
   }
 }
 
@@ -2088,12 +2129,35 @@ void MeasureTool::mousePress(const ToolEvent& e) {
   if (!r.valid()) return;
   if (!start_) {
     start_ = r.point;
+    // Starting on the middle of a straight edge pulls a parallel guide off
+    // it (SketchUp); starting on a point measures.
+    if (r.kind == snap::SnapKind::OnEdge && r.edgeDirection) guideDir_ = *r.edgeDirection;
+    return;
+  }
+  if (guideDir_) {
+    const gp_Vec offset = guideOffset(r.point);
+    if (offset.Magnitude() <= tolerance::kMinDimension) return;  // still on the edge
+    placeGuide(offset);
     return;
   }
   show(*start_, r.point, true);
   lastDistance_ = start_->Distance(r.point);
   start_.reset();
   resetLock();
+}
+
+void MeasureTool::applyMeasurement(const QString& text) {
+  if (!start_ || !guideDir_) return;  // measuring: nothing to apply
+  const auto value = units::parseLength(text.toStdString());
+  if (!value || *value <= 0) {
+    host_.reportError(QObject::tr("長さを解釈できません: %1").arg(text));
+    return;
+  }
+  if (guideOffset_.Magnitude() <= tolerance::kMinDimension) {
+    host_.reportError(QObject::tr("マウスでガイドを出す側を示してから入力してください"));
+    return;
+  }
+  placeGuide(guideOffset_.Normalized() * *value);
 }
 
 // --- Eraser --------------------------------------------------------------------------

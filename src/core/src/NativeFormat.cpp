@@ -110,6 +110,9 @@ json baseToJson(const BaseFeature& base) {
             return json{{"type", "dimension"}, {"start", toJson(d.start)}, {"end", toJson(d.end)},
                         {"offset", json::array({d.offset.X(), d.offset.Y(), d.offset.Z()})}, {"text", d.text}};
           },
+          [](const GuideLine& g) {
+            return json{{"type", "guide"}, {"point", toJson(g.point)}, {"direction", toJson(g.direction)}};
+          },
           [](const TextNote& t) {
             json j = {{"type", "text"}, {"position", toJson(t.position)}, {"text", t.text}};
             if (t.target) j["target"] = toJson(*t.target);
@@ -212,6 +215,7 @@ BaseFeature baseFrom(const json& j) {
     return LinearDimension{pointFrom(j.at("start")), pointFrom(j.at("end")), gp_Vec(offset.XYZ()),
                            j.value("text", std::string())};
   }
+  if (type == "guide") return GuideLine{pointFrom(j.at("point")), dirFrom(j.at("direction"))};
   if (type == "text") {
     TextNote t{pointFrom(j.at("position")), std::nullopt, j.value("text", std::string())};
     if (j.contains("target")) t.target = pointFrom(j.at("target"));

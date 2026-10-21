@@ -378,11 +378,19 @@ class MeasureTool : public DrawingTool {
   void cancel() override;
   void mousePress(const ToolEvent& e) override;
   void mouseMove(const ToolEvent& e) override;
+  void applyMeasurement(const QString& text) override;
   std::optional<double> lastDistance() const { return lastDistance_; }
 
  private:
   void show(const gp_Pnt& a, const gp_Pnt& b, bool final);
+  // Guide mode (started on a straight edge): perpendicular offset from the
+  // edge's line to `p`, and its preview.
+  gp_Vec guideOffset(const gp_Pnt& p) const;
+  void showGuide(const gp_Pnt& p);
+  void placeGuide(const gp_Vec& offset);
   std::optional<gp_Pnt> start_;
+  std::optional<gp_Dir> guideDir_;  // set while pulling a guide off an edge
+  gp_Vec guideOffset_;
   std::optional<double> lastDistance_;
 };
 

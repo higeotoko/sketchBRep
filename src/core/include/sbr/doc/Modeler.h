@@ -58,6 +58,9 @@ class Modeler {
                                    const std::string& text = {});
   Result<ObjectId> createText(const gp_Pnt& position, const std::optional<gp_Pnt>& target, const std::string& text);
   Status setAnnotationText(const ObjectId& id, const std::string& text);
+  // Construction lines (tag "Guides"), and removing them all at once.
+  Result<ObjectId> createGuide(const gp_Pnt& point, const gp_Dir& direction);
+  Status clearGuides();
   // A line (world points) drawn from edge to edge across a planar face of a
   // visible solid splits that face (parametric SplitOp). Returns the solid's
   // id, or a failure if the line does not divide any face.

@@ -84,3 +84,34 @@ TEST(NativeFormat, FailedSaveKeepsPreviousFile) {
   EXPECT_FALSE(m.save(dir).ok());
   EXPECT_FALSE(m.history().isClean());
 }
+
+TEST(NativeFormat, GuidesRoundTripAndStayOutOfExports) {
+  Modeler m;
+  auto box = m.createRectangle(geom::SketchPlane::ground(), 1000, 1000);
+  ASSERT_TRUE(box.ok() && m.extrude(*box, 1000).ok());
+  auto guide = m.createGuide(gp_Pnt(0, 600, 0), gp::DX());
+  ASSERT_TRUE(guide.ok()) << guide.error();
+  EXPECT_EQ(m.document().find(*guide)->kind(), ObjectKind::Guide);
+  EXPECT_EQ(m.document().find(*guide)->layer, "Guides");
+  // Guides are drawing aids: a model of only guides has nothing to export.
+  Modeler only;
+  ASSERT_TRUE(only.createGuide(gp_Pnt(0, 0, 0), gp::DY()).ok());
+  EXPECT_FALSE(only.exportStep(test::tempPath("guides.step"), {}).ok());
+
+  const std::string path = test::tempPath("guides.sbr");
+  ASSERT_TRUE(m.save(path).ok());
+  Modeler loaded;
+  ASSERT_TRUE(loaded.load(path).ok());
+  const Object* g = loaded.document().find(*guide);
+  ASSERT_TRUE(g);
+  ASSERT_EQ(g->kind(), ObjectKind::Guide);
+  const auto& line = std::get<GuideLine>(g->recipe.base);
+  EXPECT_NEAR(line.point.Distance(gp_Pnt(0, 600, 0)), 0.0, 1e-9);
+  EXPECT_TRUE(line.direction.IsParallel(gp::DX(), 1e-12));
+
+  ASSERT_TRUE(loaded.clearGuides().ok());
+  EXPECT_EQ(loaded.document().objects().size(), 1u);
+  EXPECT_FALSE(loaded.clearGuides().ok());  // nothing left to clear
+  loaded.undo();
+  EXPECT_EQ(loaded.document().objects().size(), 2u);
+}

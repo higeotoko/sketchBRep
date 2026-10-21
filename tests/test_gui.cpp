@@ -106,6 +106,7 @@ class GuiPhase1 : public QObject {
   void orbitKeepsPointUnderCursorFixed();
   void drawOnWallAndPushInCutsOpening();
   void tapeMeasureReadsDistance();
+  void tapeMeasurePullsGuideOffEdge();
   void circleToolTypedRadius();
   void groupEditModeAndLooseFaceDelete();
   void lineToolStaysOnWallPlane();
@@ -610,6 +611,41 @@ void GuiPhase1::tapeMeasureReadsDistance() {
   QVERIFY(tool && tool->lastDistance());
   QVERIFY(std::abs(*tool->lastDistance() - std::sqrt(1e6 + 9e6)) < 1e-6);
   QCOMPARE(m.history().undoCount(), undo);  // the model is untouched
+}
+
+void GuiPhase1::tapeMeasurePullsGuideOffEdge() {
+  Fixture f;
+  QVERIFY(f.setUp(500, 500));
+  doc::Modeler& m = f.window.modeler();
+  f.box(0, 0, 6000, 2000, 3000);
+  f.window.activateTool(MainWindow::ToolId::Measure);
+  // Start on the middle of the top front edge (along X), click on the top
+  // face: a guide parallel to the edge at the clicked offset.
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 0, 3000)));  // mid-edge, away from the midpoint
+  move(f.vp, f.vp->toWidget(gp_Pnt(1100, 700, 3000)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(1100, 700, 3000)));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  std::vector<doc::GuideLine> guides;
+  for (const doc::Object& o : m.document().objects()) {
+    if (o.kind() == doc::ObjectKind::Guide) guides.push_back(std::get<doc::GuideLine>(o.recipe.base));
+  }
+  QCOMPARE(guides.size(), std::size_t(1));
+  QVERIFY(guides[0].direction.IsParallel(gp::DX(), 1e-9));
+  QVERIFY2(std::abs(guides[0].point.Y() - 700) < 100.0, qPrintable(QString::number(guides[0].point.Y())));
+  QVERIFY(std::abs(guides[0].point.Z() - 3000) < 1e-6);
+
+  // Typed offset: start on the same edge, show the side, type the distance.
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 0, 3000)));  // mid-edge, away from the midpoint
+  move(f.vp, f.vp->toWidget(gp_Pnt(2500, 600, 3000)));
+  type(f.vp, QStringLiteral("1200"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  const doc::Object& last = m.document().objects().back();
+  QCOMPARE(last.kind(), doc::ObjectKind::Guide);
+  const gp_Pnt& p = std::get<doc::GuideLine>(last.recipe.base).point;
+  QVERIFY2(std::abs(p.Y() - 1200) < 1e-6 && std::abs(p.Z() - 3000) < 1e-6, qPrintable(QString("%1 %2").arg(p.Y()).arg(p.Z())));
+
+  QVERIFY(m.clearGuides().ok());
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
 }
 
 void GuiPhase1::circleToolTypedRadius() {
