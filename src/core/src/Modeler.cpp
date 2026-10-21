@@ -1472,6 +1472,49 @@ Result<ObjectId> Modeler::sweepObject(const ObjectId& profile, const ObjectId& s
   return addObject(std::move(object), "Sweep");
 }
 
+Result<ObjectId> Modeler::followMeAlong(const ObjectId& profileId, const BooleanOperand& path) {
+  const Object* profile = document_.find(profileId);
+  if (!profile || profile->kind() != ObjectKind::Face) {
+    return Result<ObjectId>::failure("Follow Me needs a face to sweep");
+  }
+  SweepFeature feature;
+  feature.inputs.push_back(BooleanOperand{std::make_shared<const Recipe>(profile->recipe),
+                                          document_.worldTransform(*profile), profile->name});
+  feature.inputs.push_back(path);
+  Object object;
+  object.name = uniqueName("Follow Me");
+  object.color = profile->color;
+  object.layer = profile->layer;
+  object.recipe.base = std::move(feature);
+  // The swept solid replaces its profile, as in SketchUp: one undo step.
+  history_.beginGroup("Follow Me");
+  auto id = addObject(std::move(object), "Follow Me");
+  if (!id) {
+    history_.abortGroup();
+    return id;
+  }
+  if (const Status removed = remove({profileId}); !removed) {
+    history_.abortGroup();
+    return Result<ObjectId>::failure(removed.message());
+  }
+  history_.endGroup();
+  return id;
+}
+
+Result<ObjectId> Modeler::followMe(const ObjectId& profileId, const ObjectId& pathId) {
+  const Object* path = document_.find(pathId);
+  if (!path || path->kind() != ObjectKind::Curve) return Result<ObjectId>::failure("Sweep path must be a curve");
+  return followMeAlong(profileId, BooleanOperand{std::make_shared<const Recipe>(path->recipe),
+                                                 document_.worldTransform(*path), path->name});
+}
+
+Result<ObjectId> Modeler::followMe(const ObjectId& profileId, const TopoDS_Wire& worldPath) {
+  if (worldPath.IsNull()) return Result<ObjectId>::failure("Sweep path must be a curve");
+  Recipe path;
+  path.base = ImportedShape{worldPath, "Follow Me path"};
+  return followMeAlong(profileId, BooleanOperand{std::make_shared<const Recipe>(path), gp_Trsf(), "Path"});
+}
+
 Status Modeler::setCurvePoints(const ObjectId& id, const std::vector<gp_Pnt>& points) {
   const Object* current = document_.find(id);
   if (!current) return Status::failure("Object not found");

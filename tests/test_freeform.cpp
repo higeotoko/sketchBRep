@@ -1,6 +1,7 @@
 #include <cmath>
 
 #include <BRepAdaptor_Surface.hxx>
+#include <BRepTools.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
@@ -339,4 +340,41 @@ TEST(Freeform, PushPullCurvedFaceOfComplexSolidIsParametric) {
   doc::Document d;
   ASSERT_TRUE(doc::deserializeDocument(doc::serializeDocument(m.document()), d).ok());
   EXPECT_NEAR(volume(d.worldShape(*d.find(*u))), volume(m.document().worldShape(*u)), 1e-3);
+}
+
+TEST(Freeform, FollowMeSweepsAndConsumesTheProfile) {
+  doc::Modeler m;
+  // A 100 x 200 profile standing at the start of a 3 m path along X.
+  auto profile = m.createRectangle(SketchPlane::fromNormal(gp_Pnt(0, 0, 0), gp::DX()), 100, 200);
+  ASSERT_TRUE(profile.ok());
+  auto path = m.createPolyline({gp_Pnt(0, 0, 0), gp_Pnt(3000, 0, 0)});
+  ASSERT_TRUE(path.ok());
+  const std::size_t steps = m.history().undoCount();
+  auto swept = m.followMe(*profile, *path);
+  ASSERT_TRUE(swept.ok()) << swept.error();
+  EXPECT_EQ(m.history().undoCount(), steps + 1);
+  EXPECT_FALSE(m.document().find(*profile));  // consumed
+  EXPECT_TRUE(m.document().find(*path));
+  EXPECT_NEAR(volume(m.document().worldShape(*swept)), 100.0 * 200 * 3000, 1.0);
+  // Still parametric in the profile.
+  ASSERT_TRUE(m.setParameter(*swept, "in0.width", 150).ok());
+  EXPECT_NEAR(volume(m.document().worldShape(*swept)), 150.0 * 200 * 3000, 1.0);
+  ASSERT_TRUE(m.undo());
+  ASSERT_TRUE(m.undo());
+  EXPECT_TRUE(m.document().find(*profile));
+
+  // Along the outline of a box's top face (e.g. a cornice).
+  auto box = m.createRectangle(SketchPlane::ground(), 2000, 1000);
+  ASSERT_TRUE(m.extrude(*box, 500).ok());
+  TopoDS_Face top;
+  for (TopExp_Explorer e(m.document().worldShape(*box), TopAbs_FACE); e.More(); e.Next()) {
+    const auto n = planarFaceNormal(TopoDS::Face(e.Current()));
+    if (n && n->Z() > 0.99) top = TopoDS::Face(e.Current());
+  }
+  auto cornice = m.createRectangle(SketchPlane::fromNormal(gp_Pnt(0, 0, 500), gp::DX()), 100, 100);
+  ASSERT_TRUE(cornice.ok());
+  auto ring = m.followMe(*cornice, BRepTools::OuterWire(top));
+  ASSERT_TRUE(ring.ok()) << ring.error();
+  EXPECT_TRUE(validateShape(m.document().worldShape(*ring), true).valid);
+  EXPECT_GT(volume(m.document().worldShape(*ring)), 0.0);
 }

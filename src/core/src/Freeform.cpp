@@ -7,6 +7,10 @@
 #include <GC_MakeArcOfCircle.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepOffsetAPI_MakePipe.hxx>
+#include <ShapeFix_Solid.hxx>
+#include <BRepTools.hxx>
+#include <BRepBuilderAPI_MakeSolid.hxx>
+#include <BRepOffsetAPI_MakePipeShell.hxx>
 #include <BRepOffsetAPI_ThruSections.hxx>
 #include <BRepPrimAPI_MakeRevol.hxx>
 #include <GeomAPI_Interpolate.hxx>
@@ -147,14 +151,54 @@ Result<TopoDS_Shape> revolve(const TopoDS_Shape& profile, const gp_Ax1& axis, do
   }
 }
 
+namespace {
+
+// Sweep with mitred corners (like moulding around a room): the profile's
+// outline is swept as a pipe shell and capped into a solid.
+Result<TopoDS_Shape> mitredSweep(const TopoDS_Shape& profile, const TopoDS_Wire& spine) {
+  if (profile.ShapeType() != TopAbs_FACE) return Result<TopoDS_Shape>::failure("Profile is not a face");
+  const TopoDS_Face face = TopoDS::Face(profile);
+  BRepOffsetAPI_MakePipeShell shell(spine);
+  shell.SetMode(Standard_False);  // corrected Frenet: keeps the profile upright
+  shell.SetTransitionMode(BRepBuilderAPI_RightCorner);
+  shell.Add(BRepTools::OuterWire(face));
+  shell.Build();
+  if (!shell.IsDone()) return Result<TopoDS_Shape>::failure("Sweep failed");
+  if (!BRep_Tool::IsClosed(spine)) shell.MakeSolid();
+  TopoDS_Shape result = shell.Shape();
+  // A closed path gives a closed shell (a ring): make it a solid.
+  if (BRep_Tool::IsClosed(spine)) {
+    TopExp_Explorer sx(result, TopAbs_SHELL);
+    if (sx.More()) {
+      BRepBuilderAPI_MakeSolid solid(TopoDS::Shell(sx.Current()));
+      if (solid.IsDone()) {
+        ShapeFix_Solid fix(solid.Solid());
+        fix.Perform();
+        result = fix.Solid();
+      }
+    }
+  }
+  return checked(result, "Sweep");
+}
+
+}  // namespace
+
 Result<TopoDS_Shape> sweep(const TopoDS_Shape& profile, const TopoDS_Wire& spine) {
   try {
     BRepOffsetAPI_MakePipe maker(spine, profile);
     maker.Build();
-    if (!maker.IsDone()) return Result<TopoDS_Shape>::failure("Sweep failed");
-    return checked(maker.Shape(), "Sweep");
+    if (maker.IsDone()) {
+      auto result = checked(maker.Shape(), "Sweep");
+      if (result) return result;
+    }
+    // Paths with corners: mitre them instead.
+    return mitredSweep(profile, spine);
   } catch (const Standard_Failure& e) {
-    return Result<TopoDS_Shape>::failure(std::string("Sweep failed: ") + e.GetMessageString());
+    try {
+      return mitredSweep(profile, spine);
+    } catch (const Standard_Failure&) {
+      return Result<TopoDS_Shape>::failure(std::string("Sweep failed: ") + e.GetMessageString());
+    }
   }
 }
 

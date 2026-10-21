@@ -10,6 +10,7 @@
 #include <gp_Ax1.hxx>
 #include <gp_Vec.hxx>
 #include <TopoDS_Face.hxx>
+#include <TopoDS_Wire.hxx>
 
 #include "sbr/doc/CommandStack.h"
 #include "sbr/doc/Document.h"
@@ -91,6 +92,12 @@ class Modeler {
   // The component-editing group containing 'id' (or 'id' itself), if any.
   std::optional<ObjectId> componentEditGroup(const ObjectId& id) const;
   int instanceCount(const std::string& definitionId) const;
+
+  // SketchUp's Follow Me: the profile face is swept along a path (a curve
+  // object, or the outline of a face picked on a solid) and consumed. The
+  // result stays parametric in the profile (in0.<key>). One undo step.
+  Result<ObjectId> followMe(const ObjectId& profileId, const ObjectId& pathId);
+  Result<ObjectId> followMe(const ObjectId& profileId, const TopoDS_Wire& worldPath);
 
   // Replaces this model with a copy of 'other' (for previews: a scratch
   // model where proposed commands are tried out). History is not copied.
@@ -207,6 +214,7 @@ class Modeler {
   Result<ObjectId> addObject(Object object, const std::string& commandName);
   Status commitModified(Object object, const std::string& commandName);
   Result<ObjectId> addProfile(Object object, const std::string& commandName);
+  Result<ObjectId> followMeAlong(const ObjectId& profileId, const BooleanOperand& path);
   // True if a profile lying on a solid's face points into that solid.
   bool facesIntoSolid(const TopoDS_Face& worldFace, const ObjectId& parent) const;
   std::vector<geom::NamedShape> exportParts(const std::vector<ObjectId>& ids) const;
