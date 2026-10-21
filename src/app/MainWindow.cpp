@@ -801,23 +801,55 @@ void MainWindow::setElementSelection(const std::vector<ElementRef>& elements) {
   refreshPanels();
 }
 
-void MainWindow::enterGroup(const doc::ObjectId& groupId) {
-  if (!report(modeler_.setActiveGroup(groupId))) return;
+void MainWindow::enterGroup(const doc::ObjectId& id) {
+  doc::ObjectId groupId = id;
+  const doc::Object* target = modeler_.document().find(id);
+  if (target && target->kind() == doc::ObjectKind::Instance) {
+    // Components are edited in place; the change reaches every instance.
+    if (active_) active_->cancel();
+    auto group = modeler_.beginComponentEdit(id);
+    if (!group) {
+      reportError(QString::fromStdString(group.error()));
+      return;
+    }
+    groupId = *group;
+  } else if (!report(modeler_.setActiveGroup(groupId))) {
+    return;
+  }
   const doc::Object* g = modeler_.document().find(groupId);
-  contextLabel_->setText(tr("グループ編集中: %1（Esc で終了）").arg(QString::fromStdString(g->name)));
+  const auto* node = g ? std::get_if<doc::GroupNode>(&g->recipe.base) : nullptr;
+  if (node && !node->editingDefinition.empty()) {
+    // Make the scope visible: every instance changes (spec 07 §6.2).
+    const int count = modeler_.instanceCount(node->editingDefinition) + 1;
+    contextLabel_->setText(tr("コンポーネント編集中: %1（終了すると %2 個すべてに反映 / Esc で終了）")
+                               .arg(QString::fromStdString(g->name))
+                               .arg(count));
+    contextLabel_->setStyleSheet(QStringLiteral("QLabel { background: #ffd9b3; padding: 0 6px; }"));
+  } else {
+    contextLabel_->setText(tr("グループ編集中: %1（Esc で終了）").arg(QString::fromStdString(g->name)));
+    contextLabel_->setStyleSheet(QStringLiteral("QLabel { background: #fff3c4; padding: 0 6px; }"));
+  }
   contextLabel_->show();
   viewport_->setEditContext(groupId);
   setSelection({});
+  if (active_) active_->activate();
 }
 
 void MainWindow::exitGroup() {
   const doc::ObjectId group = modeler_.activeGroup();
   if (group.empty()) return;
+  doc::ObjectId select = group;
+  if (const auto editing = modeler_.componentEditGroup(group)) {
+    const auto* node = std::get_if<doc::GroupNode>(&modeler_.document().find(*editing)->recipe.base);
+    const doc::ObjectId instance = node->editingInstance;
+    if (!report(modeler_.endComponentEdit(*editing))) return;  // stay inside, nothing lost
+    select = instance;
+  }
   modeler_.setActiveGroup({});
   contextLabel_->hide();
   viewport_->setEditContext({});
-  setSelection(modeler_.document().find(group) ? std::vector<doc::ObjectId>{group}
-                                               : std::vector<doc::ObjectId>{});
+  setSelection(modeler_.document().find(select) ? std::vector<doc::ObjectId>{select}
+                                                : std::vector<doc::ObjectId>{});
 }
 
 QString MainWindow::elementSummary() const {
@@ -919,13 +951,24 @@ void MainWindow::commitMeasurement() {
 void MainWindow::undo() {
   if (active_) active_->cancel();
   modeler_.undo();
+  syncEditContext();
   if (active_) active_->activate();
 }
 
 void MainWindow::redo() {
   if (active_) active_->cancel();
   modeler_.redo();
+  syncEditContext();
   if (active_) active_->activate();
+}
+
+void MainWindow::syncEditContext() {
+  // Undo/redo can remove the group being edited (e.g. entering a component).
+  const doc::ObjectId group = modeler_.activeGroup();
+  if (group.empty() || modeler_.document().find(group)) return;
+  modeler_.setActiveGroup({});
+  contextLabel_->hide();
+  viewport_->setEditContext({});
 }
 
 void MainWindow::deleteSelection() {

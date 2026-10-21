@@ -212,3 +212,76 @@ TEST(Gate3, F05_TouchingOrOtherPlaneDoesNotCut) {
   ASSERT_TRUE(m.createCircle(up, 300).ok());
   EXPECT_NEAR(geom::area(m.document().worldShape(*floor)), 12e6 - M_PI * 300 * 300, 1e-2);
 }
+
+// ---- AC-22 / §6.2: editing a component in place -----------------------------------------
+
+TEST(Gate3, AC22_EditComponentInPlaceUpdatesAllInstances) {
+  doc::Modeler m;
+  auto column = m.createRectangle(geom::SketchPlane::ground(), 400, 400);
+  ASSERT_TRUE(m.extrude(*column, 3000).ok());
+  auto first = m.makeComponent({*column}, "Column");
+  ASSERT_TRUE(first.ok()) << first.error();
+  gp_Trsf step;
+  step.SetTranslation(gp_Vec(3000, 0, 0));
+  ASSERT_TRUE(m.copy({*first}, step, 2).ok());
+  ASSERT_EQ(m.document().objects().size(), 3u);
+  const auto* inst = std::get_if<doc::ComponentInstance>(&m.document().find(*first)->recipe.base);
+  ASSERT_TRUE(inst);
+  const std::string definitionId = inst->definitionId;
+  EXPECT_EQ(m.instanceCount(definitionId), 3);
+
+  // Enter: the instance is replaced by an editable group in the same place.
+  auto group = m.beginComponentEdit(*first);
+  ASSERT_TRUE(group.ok()) << group.error();
+  EXPECT_EQ(m.activeGroup(), *group);
+  EXPECT_FALSE(m.document().find(*first));
+  EXPECT_EQ(m.componentEditGroup(*group), *group);
+  // Edit the column inside: make it taller.
+  doc::ObjectId inner;
+  for (const doc::Object& o : m.document().objects()) {
+    if (o.parent == *group) inner = o.id;
+  }
+  ASSERT_FALSE(inner.empty());
+  EXPECT_EQ(m.componentEditGroup(inner), *group);
+  ASSERT_TRUE(m.setParameter(inner, "op0.distance", 3500).ok());
+
+  // Leave: the definition and every instance update; the instance is back.
+  ASSERT_TRUE(m.endComponentEdit(*group).ok());
+  EXPECT_TRUE(m.activeGroup().empty());
+  ASSERT_TRUE(m.document().find(*first));
+  EXPECT_EQ(m.document().objects().size(), 3u);
+  for (const doc::Object& o : m.document().objects()) {
+    EXPECT_NEAR(geom::exactBounds(m.document().worldShape(o)).CornerMax().Z(), 3500, 1e-6) << o.name;
+  }
+  EXPECT_EQ(m.instanceCount(definitionId), 3);
+
+  // Saved and reloaded with the new definition.
+  doc::Document d;
+  ASSERT_TRUE(doc::deserializeDocument(doc::serializeDocument(m.document()), d).ok());
+  EXPECT_NEAR(geom::exactBounds(d.worldShape(*d.find(*first))).CornerMax().Z(), 3500, 1e-6);
+
+  // Undo: leaving, the edit, entering — each one step, back to 3000.
+  ASSERT_TRUE(m.undo());
+  ASSERT_TRUE(m.undo());
+  ASSERT_TRUE(m.undo());
+  ASSERT_TRUE(m.document().find(*first));
+  for (const doc::Object& o : m.document().objects()) {
+    EXPECT_NEAR(geom::exactBounds(m.document().worldShape(o)).CornerMax().Z(), 3000, 1e-6);
+  }
+}
+
+TEST(Gate3, AC22_EmptiedComponentIsNotSaved) {
+  doc::Modeler m;
+  auto box = m.createRectangle(geom::SketchPlane::ground(), 100, 100);
+  ASSERT_TRUE(m.extrude(*box, 100).ok());
+  auto c = m.makeComponent({*box}, "Box");
+  auto group = m.beginComponentEdit(*c);
+  ASSERT_TRUE(group.ok());
+  std::vector<doc::ObjectId> inside;
+  for (const doc::Object& o : m.document().objects()) {
+    if (o.parent == *group) inside.push_back(o.id);
+  }
+  ASSERT_TRUE(m.remove(inside).ok());
+  EXPECT_FALSE(m.endComponentEdit(*group).ok());
+  EXPECT_TRUE(m.document().find(*group));  // still editing; nothing lost
+}

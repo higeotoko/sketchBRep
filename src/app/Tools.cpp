@@ -216,9 +216,11 @@ bool SelectTool::mouseDoubleClick(const ToolEvent& e) {
     host_.enterGroup(addressed);  // edit inside the group
     return true;
   }
-  if (addressed != picked->objectId || (o && o->kind() == doc::ObjectKind::Instance)) {
-    return false;  // components: focus on them
+  if (o && o->kind() == doc::ObjectKind::Instance) {
+    host_.enterGroup(addressed);  // edit the component's definition in place
+    return true;
   }
+  if (addressed != picked->objectId) return false;
   sinceDoubleClick_.start();
   doubleClickPos_ = e.pos;
   apply(host_.viewport().withNeighbours(*picked), e.modifiers & Qt::ShiftModifier);

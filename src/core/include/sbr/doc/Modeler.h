@@ -81,6 +81,16 @@ class Modeler {
   // Called by every profile-creating command, in the same undo step.
   void punchHole(const ObjectId& profileId);
 
+  // Component editing in place (double-click an instance): the instance is
+  // replaced by a group holding the definition's objects, edited like any
+  // group; ending puts them back into the definition, so every instance
+  // updates. Both ends are single undo steps.
+  Result<ObjectId> beginComponentEdit(const ObjectId& instanceId);
+  Status endComponentEdit(const ObjectId& editGroupId);
+  // The component-editing group containing 'id' (or 'id' itself), if any.
+  std::optional<ObjectId> componentEditGroup(const ObjectId& id) const;
+  int instanceCount(const std::string& definitionId) const;
+
   // Replaces this model with a copy of 'other' (for previews: a scratch
   // model where proposed commands are tried out). History is not copied.
   void copyFrom(const Modeler& other);

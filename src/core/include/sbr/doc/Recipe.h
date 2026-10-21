@@ -130,7 +130,14 @@ struct FacePart {
 };
 
 // Container node of the object hierarchy. Has no geometry of its own.
-struct GroupNode {};
+struct GroupNode {
+  // Set while this group is a component being edited in place (spec 07
+  // §6.2): the definition's objects are its children until editing ends,
+  // then they become the definition again and the instance comes back.
+  std::string editingDefinition;
+  std::string editingInstance;      // id of the instance replaced meanwhile
+  std::string editingInstanceName;
+};
 
 // Placement of a shared component definition.
 struct ComponentInstance {

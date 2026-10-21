@@ -126,6 +126,7 @@ class GuiPhase1 : public QObject {
   void gate2InputConsistency();
   void boxSelectionWindowAndCrossing();
   void aiProposalApplyAndReject();
+  void componentEditInPlace();
 };
 
 namespace {
@@ -1299,6 +1300,52 @@ void GuiPhase1::aiProposalApplyAndReject() {
   r = call(R"({"command": "propose", "args": {"commands": [{"command": "extrude", "args": {"id": "nope", "distance": 1}}]}})");
   QVERIFY(!r.value("ok").toBool());
   QVERIFY(!f.window.hasPendingProposal());
+}
+
+// AC-22: double-click a component, push/pull inside, Esc: every copy follows.
+void GuiPhase1::componentEditInPlace() {
+  Fixture f;
+  QVERIFY(f.setUp(2000, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+  auto component = m.makeComponent({box}, "Block");
+  QVERIFY(component.ok());
+  gp_Trsf step;
+  step.SetTranslation(gp_Vec(2500, 0, 0));
+  QVERIFY(m.copy({*component}, step, 1).ok());
+  QTest::qWait(30);
+  f.window.activateTool(MainWindow::ToolId::Select);
+  doubleClick(f.vp, f.vp->toWidget(gp_Pnt(500, 500, 1000)));
+  QTest::qWait(30);
+  const doc::ObjectId group = m.activeGroup();
+  QVERIFY(!group.empty());
+  QVERIFY(m.componentEditGroup(group).has_value());
+
+  // Push the top face up by 500 inside the component.
+  f.window.activateTool(MainWindow::ToolId::PushPull);
+  click(f.vp, f.vp->toWidget(gp_Pnt(500, 500, 1000)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(500, 500, 1300)));
+  type(f.vp, QStringLiteral("500"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+
+  // Esc twice: back to the select tool's context, then leave the component.
+  f.window.activateTool(MainWindow::ToolId::Select);
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  QTest::qWait(30);
+  QVERIFY(m.activeGroup().empty());
+  QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{*component});
+  QCOMPARE(m.document().objects().size(), std::size_t(2));
+  for (const doc::Object& o : m.document().objects()) {
+    QVERIFY(std::abs(geom::exactBounds(m.document().worldShape(o)).CornerMax().Z() - 1500) < 1e-6);
+  }
+  // Leaving, the push/pull and entering are one undo step each.
+  QVERIFY(m.undo());
+  QVERIFY(m.undo());
+  QVERIFY(m.undo());
+  QCOMPARE(m.document().objects().size(), std::size_t(2));
+  for (const doc::Object& o : m.document().objects()) {
+    QVERIFY(std::abs(geom::exactBounds(m.document().worldShape(o)).CornerMax().Z() - 1000) < 1e-6);
+  }
 }
 
 QTEST_MAIN(GuiPhase1)

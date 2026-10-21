@@ -161,7 +161,15 @@ json baseToJson(const BaseFeature& base) {
             }
             return json{{"type", "sweep"}, {"inputs", inputs}};
           },
-          [](const GroupNode&) { return json{{"type", "group"}}; },
+          [](const GroupNode& g) {
+            json j = {{"type", "group"}};
+            if (!g.editingDefinition.empty()) {
+              j["editing"] = {{"definition", g.editingDefinition},
+                              {"instance", g.editingInstance},
+                              {"instanceName", g.editingInstanceName}};
+            }
+            return j;
+          },
           [](const ComponentInstance& c) {
             return json{{"type", "instance"}, {"definition", c.definitionId}};
           },
@@ -259,7 +267,16 @@ BaseFeature baseFrom(const json& j) {
     }
     return f;
   }
-  if (type == "group") return GroupNode{};
+  if (type == "group") {
+    GroupNode g;
+    if (j.contains("editing")) {
+      const json& e = j.at("editing");
+      g.editingDefinition = e.value("definition", std::string());
+      g.editingInstance = e.value("instance", std::string());
+      g.editingInstanceName = e.value("instanceName", std::string());
+    }
+    return g;
+  }
   if (type == "instance") return ComponentInstance{j.at("definition").get<std::string>()};
   throw std::runtime_error("unknown base feature type: " + type);
 }

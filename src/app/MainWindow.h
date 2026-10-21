@@ -93,6 +93,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   void undo();
   void redo();
   void buildAiBridge();
+  void syncEditContext();
   void refreshScenes();
   void refreshTags();
   void sceneMenu(int index, const QPoint& globalPos);

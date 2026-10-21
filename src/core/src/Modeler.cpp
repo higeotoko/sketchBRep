@@ -1163,6 +1163,105 @@ Status Modeler::save(const std::string& path) {
   return saved;
 }
 
+Result<ObjectId> Modeler::beginComponentEdit(const ObjectId& instanceId) {
+  const Object* instance = document_.find(instanceId);
+  const auto* ref = instance ? std::get_if<ComponentInstance>(&instance->recipe.base) : nullptr;
+  if (!ref) return Result<ObjectId>::failure("Not a component instance");
+  const ComponentDefinition* definition = document_.findDefinition(ref->definitionId);
+  if (!definition) return Result<ObjectId>::failure("Definition not found");
+
+  Object group;
+  group.id = generateObjectId();
+  group.name = definition->name;
+  group.parent = instance->parent;
+  group.transform = instance->transform;
+  group.layer = instance->layer;
+  group.color = instance->color;
+  group.recipe.base = GroupNode{definition->id, instance->id, instance->name};
+
+  ChangeSet changes(document_);
+  changes.add(group);
+  // Fresh ids for the copies; parents follow, top-level ones go into the group.
+  std::map<ObjectId, ObjectId> ids;
+  for (const Object& o : definition->objects) ids[o.id] = generateObjectId();
+  for (const Object& o : definition->objects) {
+    Object copy = o;
+    copy.id = ids[o.id];
+    copy.parent = o.parent.empty() ? group.id : ids[o.parent];
+    changes.add(copy);
+  }
+  changes.erase(instanceId);
+  history_.execute(changes.build("Edit Component"));
+  activeGroup_ = group.id;
+  return group.id;
+}
+
+Status Modeler::endComponentEdit(const ObjectId& editGroupId) {
+  const Object* group = document_.find(editGroupId);
+  const auto* node = group ? std::get_if<GroupNode>(&group->recipe.base) : nullptr;
+  if (!node || node->editingDefinition.empty()) return Status::failure("Not a component being edited");
+  const ComponentDefinition* current = document_.findDefinition(node->editingDefinition);
+  if (!current) return Status::failure("Definition not found");
+
+  ComponentDefinition definition = *current;
+  definition.objects.clear();
+  for (const ObjectId& id : document_.subtree(editGroupId)) {
+    if (id == editGroupId) continue;
+    Object o = *document_.find(id);
+    if (o.parent == editGroupId) o.parent.clear();
+    definition.objects.push_back(o);
+  }
+  if (definition.objects.empty()) {
+    return Status::failure("The component would be empty; delete the instance instead");
+  }
+  auto shape = buildDefinitionShape(definition, document_.regenContext());
+  if (!shape) return shape.status();
+  definition.shape = shape.value();
+
+  Object instance;
+  instance.id = node->editingInstance.empty() ? generateObjectId() : node->editingInstance;
+  instance.name = node->editingInstanceName.empty() ? definition.name : node->editingInstanceName;
+  instance.parent = group->parent;
+  instance.transform = group->transform;
+  instance.layer = group->layer;
+  instance.color = group->color;
+  instance.recipe.base = ComponentInstance{definition.id};
+  instance.shape = definition.shape;
+
+  ChangeSet changes(document_);
+  changes.putDefinition(definition);
+  for (const ObjectId& id : document_.subtree(editGroupId)) changes.erase(id);
+  changes.add(instance);
+  for (const Object& o : document_.objects()) {
+    const auto* c = std::get_if<ComponentInstance>(&o.recipe.base);
+    if (!c || c->definitionId != definition.id) continue;
+    Object updated = o;
+    updated.shape = definition.shape;
+    changes.modify(updated);
+  }
+  history_.execute(changes.build("Edit Component"));
+  if (activeGroup_ == editGroupId || document_.find(activeGroup_) == nullptr) activeGroup_.clear();
+  return Status::success();
+}
+
+std::optional<ObjectId> Modeler::componentEditGroup(const ObjectId& id) const {
+  for (const Object* o = document_.find(id); o; o = document_.find(o->parent)) {
+    const auto* node = std::get_if<GroupNode>(&o->recipe.base);
+    if (node && !node->editingDefinition.empty()) return o->id;
+    if (o->parent.empty()) break;
+  }
+  return std::nullopt;
+}
+
+int Modeler::instanceCount(const std::string& definitionId) const {
+  int n = 0;
+  for (const Object& o : document_.objects()) {
+    const auto* c = std::get_if<ComponentInstance>(&o.recipe.base);
+    n += c && c->definitionId == definitionId;
+  }
+  return n;
+}
+
 void Modeler::copyFrom(const Modeler& other) {
   history_.clear();
   document_.clear();
