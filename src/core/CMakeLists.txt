@@ -19,6 +19,7 @@ add_library(sbr_core STATIC
   src/McpServer.cpp
   src/Annotation.cpp
   src/Rhino3dm.cpp
+  src/Progress.cpp
 )
 add_library(sbr::core ALIAS sbr_core)
 

@@ -36,6 +36,7 @@
 
 #include "AiBridge.h"
 #include "Messages.h"
+#include "ProgressDialog.h"
 #include "Cursors.h"
 #include "PropertiesPanel.h"
 #include "Viewport.h"
@@ -65,6 +66,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   sectionTool_ = std::make_unique<SectionTool>(*this);
 
   buildUi();
+  // Long Booleans / push-pulls show a cancellable progress dialog.
+  progress_ = new GuiProgress(this);
+  geom::setProgressIndicator(progress_);
   buildAiBridge();
   buildMenus();
   modeler_.document().addListener([this] { onDocumentChanged(); });
@@ -75,6 +79,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 }
 
 MainWindow::~MainWindow() {
+  geom::setProgressIndicator(nullptr);
   // Tools reference the viewport; drop them before child widgets go away.
   if (active_) active_->deactivate();
   viewport_->setTool(nullptr);
@@ -774,6 +779,7 @@ void MainWindow::setMeasurement(const QString& label, const QString& value) {
 }
 
 void MainWindow::reportError(const QString& raw) {
+  static_cast<GuiProgress*>(progress_.get())->finish();
   const QString text = userMessage(raw);
   lastError_ = text;
   statusBar()->showMessage(text, 8000);
@@ -864,6 +870,7 @@ QString MainWindow::elementSummary() const {
 // --- document ---------------------------------------------------------------------
 
 void MainWindow::onDocumentChanged() {
+  static_cast<GuiProgress*>(progress_.get())->finish();
   viewport_->scheduleSync();
   if (refreshPending_) return;
   refreshPending_ = true;

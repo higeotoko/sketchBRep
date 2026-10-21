@@ -13,6 +13,7 @@ struct Entry {
 
 // Ordered: more specific phrases first.
 const Entry kEntries[] = {
+    {"Cancelled by the user", "計算を中止しました"},
     {"Operation would split the solid", "この操作ではソリッドが分断されてしまいます。距離を小さくするか、貫通させたい場合は開口として面に描いた形を押し込んでください"},
     {"Push/pull requires a valid solid", "ソリッドが閉じていないためプッシュ/プルできません"},
     {"Only planar faces of profiles can be pushed/pulled", "曲面のプッシュ/プルはソリッドの面だけでできます"},

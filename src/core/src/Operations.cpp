@@ -39,6 +39,7 @@
 #include <TopoDS.hxx>
 
 #include "sbr/geom/Measure.h"
+#include "sbr/geom/Progress.h"
 #include "sbr/geom/Validation.h"
 
 namespace sbr::geom {
@@ -176,13 +177,15 @@ Result<TopoDS_Shape> pushPullFace(const TopoDS_Shape& solid, const TopoDS_Face& 
 
     TopoDS_Shape combined;
     if (distance > 0) {
-      BRepAlgoAPI_Fuse fuse(solid, prism.Shape());
+      BRepAlgoAPI_Fuse fuse(solid, prism.Shape(), progressRange());
+      if (cancelled()) return Result<TopoDS_Shape>::failure(kCancelledMessage);
       if (!fuse.IsDone() || fuse.HasErrors()) {
         return Result<TopoDS_Shape>::failure("Push/pull: boolean union failed");
       }
       combined = fuse.Shape();
     } else {
-      BRepAlgoAPI_Cut cut(solid, prism.Shape());
+      BRepAlgoAPI_Cut cut(solid, prism.Shape(), progressRange());
+      if (cancelled()) return Result<TopoDS_Shape>::failure(kCancelledMessage);
       if (!cut.IsDone() || cut.HasErrors()) {
         return Result<TopoDS_Shape>::failure("Push/pull: boolean subtraction failed");
       }
@@ -262,12 +265,13 @@ Result<TopoDS_Shape> booleanCombine(BooleanOp op, const std::vector<TopoDS_Shape
     for (std::size_t i = 1; i < shapes.size(); ++i) {
       std::unique_ptr<BRepAlgoAPI_BooleanOperation> algo;
       switch (op) {
-        case BooleanOp::Union: algo = std::make_unique<BRepAlgoAPI_Fuse>(current, shapes[i]); break;
-        case BooleanOp::Subtract: algo = std::make_unique<BRepAlgoAPI_Cut>(current, shapes[i]); break;
+        case BooleanOp::Union: algo = std::make_unique<BRepAlgoAPI_Fuse>(current, shapes[i], progressRange()); break;
+        case BooleanOp::Subtract: algo = std::make_unique<BRepAlgoAPI_Cut>(current, shapes[i], progressRange()); break;
         case BooleanOp::Intersect:
-          algo = std::make_unique<BRepAlgoAPI_Common>(current, shapes[i]);
+          algo = std::make_unique<BRepAlgoAPI_Common>(current, shapes[i], progressRange());
           break;
       }
+      if (cancelled()) return Result<TopoDS_Shape>::failure(kCancelledMessage);
       if (!algo->IsDone() || algo->HasErrors()) {
         return Result<TopoDS_Shape>::failure("Boolean operation failed");
       }
@@ -430,7 +434,8 @@ Result<TopoDS_Shape> offsetSolidFace(const TopoDS_Shape& solid, const TopoDS_Fac
     maker.Initialize(solid, 0.0, 1e-4, BRepOffset_Skin, Standard_False, Standard_False, GeomAbs_Intersection,
                      Standard_False);
     maker.SetOffsetOnFace(face, distance);
-    maker.MakeOffsetShape();
+    maker.MakeOffsetShape(progressRange());
+    if (cancelled()) return Result<TopoDS_Shape>::failure(kCancelledMessage);
     if (!maker.IsDone()) return Result<TopoDS_Shape>::failure("The face could not be moved");
     TopoDS_Shape result = maker.Shape();
     if (result.ShapeType() == TopAbs_SHELL) {

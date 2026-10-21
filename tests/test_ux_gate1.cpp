@@ -310,3 +310,44 @@ TEST(Gate3, SplitLineSurvivesLaterPushPull) {
   EXPECT_GE(front, 2);
   EXPECT_NEAR(geom::volume(m.document().worldShape(*wall)), 4500.0 * 200 * 3000, 1e-2);
 }
+
+// ---- AC-19: long operations can be cancelled without side effects --------------------------
+
+#include "sbr/geom/Progress.h"
+
+namespace {
+class AlwaysCancel : public geom::CancellableProgress {
+ protected:
+  Standard_Boolean UserBreak() override { return Standard_True; }
+  void Show(const Message_ProgressScope&, const Standard_Boolean) override {}
+};
+}  // namespace
+
+TEST(Gate3, AC19_CancelledOperationsLeaveTheModelUnchanged) {
+  doc::Modeler m;
+  auto a = m.createRectangle(geom::SketchPlane::ground(), 1000, 1000);
+  ASSERT_TRUE(m.extrude(*a, 1000).ok());
+  geom::SketchPlane p = geom::SketchPlane::ground();
+  p.origin = gp_Pnt(500, 500, 0);
+  auto b = m.createRectangle(p, 1000, 1000);
+  ASSERT_TRUE(m.extrude(*b, 1000).ok());
+  const std::size_t steps = m.history().undoCount();
+  const double va = geom::volume(m.document().worldShape(*a));
+
+  geom::setProgressIndicator(new AlwaysCancel());
+  auto u = m.boolean(doc::BooleanKind::Union, {*a, *b});
+  EXPECT_FALSE(u.ok());
+  EXPECT_NE(u.error().find(geom::kCancelledMessage), std::string::npos) << u.error();
+  TopoDS_Face side;
+  for (TopExp_Explorer e(m.document().worldShape(*a), TopAbs_FACE); e.More(); e.Next()) {
+    const auto n = geom::planarFaceNormal(TopoDS::Face(e.Current()));
+    if (n && n->Y() < -0.99) side = TopoDS::Face(e.Current());
+  }
+  EXPECT_FALSE(m.pushPull(*a, side, 300).ok());
+  EXPECT_EQ(m.history().undoCount(), steps);
+  EXPECT_EQ(m.document().objects().size(), 2u);
+  EXPECT_NEAR(geom::volume(m.document().worldShape(*a)), va, 1e-6);
+
+  geom::setProgressIndicator(nullptr);
+  EXPECT_TRUE(m.boolean(doc::BooleanKind::Union, {*a, *b}).ok());
+}

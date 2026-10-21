@@ -7,6 +7,7 @@
 #include <QMainWindow>
 
 #include "Tools.h"
+#include "sbr/geom/Progress.h"
 #include "Viewport.h"
 #include "sbr/doc/Modeler.h"
 
@@ -152,6 +153,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   };
   std::optional<Proposal> proposal_;
   QWidget* proposalBar_ = nullptr;
+  Handle(geom::CancellableProgress) progress_;
   QLabel* proposalLabel_ = nullptr;
   QListWidget* tagList_ = nullptr;
   QAction* sectionVisibleAction_ = nullptr;
