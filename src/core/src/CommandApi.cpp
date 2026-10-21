@@ -264,6 +264,20 @@ const std::vector<CommandDef>& commands() {
          const auto plane = geom::SketchPlane::fromNormal(point(a, "center"), direction(a, "normal", gp::DZ()));
          return idResult(must(m.createCircle(plane, number(a, "radius"), textOr(a, "name", {}))));
        }},
+      {"create_arc",
+       "Create an exact circular arc from start to end. bulge = signed distance of the arc's apex from "
+       "the chord midpoint (half the chord = semicircle), on the side normal x (end - start). normal = "
+       "plane normal (default +Z). closed = segment face (arc + chord) that can be extruded.",
+       SCHEMA({"type": "object", "properties": {
+         "start": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+         "end": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+         "normal": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+         "bulge": {"type": "number"}, "closed": {"type": "boolean"}, "name": {"type": "string"}},
+         "required": ["start", "end", "bulge"]}),
+       [](doc::Modeler& m, const json& a) {
+         return idResult(must(m.createArc(point(a, "start"), point(a, "end"), direction(a, "normal", gp::DZ()),
+                                          number(a, "bulge"), a.value("closed", false), textOr(a, "name", {}))));
+       }},
       {"create_polygon", "Create a planar polygon profile from 3+ coplanar points (closed implicitly).",
        SCHEMA({"type": "object", "properties": {
          "points": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
@@ -641,6 +655,13 @@ std::vector<CommandApi::Extension> CommandApi::appCommandSpecs() {
        nullptr},
       {"capture_view", "Capture the current 3D view as a PNG image so you can look at the model.",
        R"({"type": "object", "properties": {}})", nullptr},
+      {"list_scenes", "List the saved views (scenes) of the model.", R"({"type": "object", "properties": {}})",
+       nullptr},
+      {"go_to_scene", "Show a saved view by name or 0-based index; with 'save': true, save the current view "
+                      "as a new scene named 'name' instead.",
+       R"({"type": "object", "properties": {"name": {"type": "string"}, "index": {"type": "integer"},
+           "save": {"type": "boolean"}}})",
+       nullptr},
   };
 }
 

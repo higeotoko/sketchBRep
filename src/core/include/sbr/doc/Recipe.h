@@ -11,7 +11,9 @@
 #include <variant>
 #include <vector>
 
+#include <gp.hxx>
 #include <gp_Ax1.hxx>
+#include <gp_Dir.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Trsf.hxx>
 #include <TopoDS_Shape.hxx>
@@ -40,6 +42,15 @@ struct PolygonProfile {
 
 struct PolylineCurve {
   std::vector<gp_Pnt> points;  // open
+};
+
+// Exact circular arc (2-point arc + bulge). closed = segment face.
+struct ArcCurve {
+  gp_Pnt start;
+  gp_Pnt end;
+  gp_Dir normal = gp::DZ();  // plane of the arc
+  double bulge = 0.0;        // signed sagitta, see geom::makeArc
+  bool closed = false;
 };
 
 // Cubic NURBS curve through points (periodic when closed).
@@ -96,7 +107,7 @@ struct ComponentInstance {
 };
 
 using BaseFeature = std::variant<RectangleProfile, CircleProfile, PolygonProfile, PolylineCurve, InterpolatedCurve,
-                                 ImportedShape,
+                                 ArcCurve, ImportedShape,
                                  BooleanFeature, LoftFeature, SweepFeature, GroupNode,
                                  ComponentInstance>;
 

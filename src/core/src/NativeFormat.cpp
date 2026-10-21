@@ -102,6 +102,10 @@ json baseToJson(const BaseFeature& base) {
           [](const InterpolatedCurve& c) {
             return json{{"type", "curve"}, {"points", pointsToJson(c.points)}, {"closed", c.closed}};
           },
+          [](const ArcCurve& a) {
+            return json{{"type", "arc"},       {"start", toJson(a.start)}, {"end", toJson(a.end)},
+                        {"normal", toJson(a.normal)}, {"bulge", a.bulge},  {"closed", a.closed}};
+          },
           [](const ImportedShape& s) {
             return json{{"type", "imported"},
                         {"source", s.source},
@@ -166,6 +170,10 @@ BaseFeature baseFrom(const json& j) {
   if (type == "polygon") return PolygonProfile{pointsFrom(j.at("points"))};
   if (type == "polyline") return PolylineCurve{pointsFrom(j.at("points"))};
   if (type == "curve") return InterpolatedCurve{pointsFrom(j.at("points")), j.value("closed", false)};
+  if (type == "arc") {
+    return ArcCurve{pointFrom(j.at("start")), pointFrom(j.at("end")), dirFrom(j.at("normal")),
+                    j.at("bulge").get<double>(), j.value("closed", false)};
+  }
   if (type == "imported") {
     auto shape = geom::shapeFromBRepString(j.at("brep").get<std::string>());
     if (!shape) throw std::runtime_error(shape.error());
@@ -365,12 +373,15 @@ std::string serializeDocument(const Document& document) {
     definitions.push_back({{"id", d.id}, {"name", d.name}, {"objects", objectsToJson(d.objects)}});
   }
   const DocumentSettings& s = document.settings();
+  json scenes = json::array();
+  for (const Scene& scene : s.scenes) scenes.push_back({{"name", scene.name}, {"camera", cameraToJson(scene.camera)}});
   json root = {
       {"format", kNativeFormatMagic},
       {"version", kNativeFormatVersion},
       {"units", s.units},
       {"linearTolerance", s.linearTolerance},
       {"camera", cameraToJson(s.camera)},
+      {"scenes", scenes},
       {"definitions", definitions},
       {"objects", objectsToJson(document.objects())},
   };
@@ -395,6 +406,11 @@ Status deserializeDocument(const std::string& text, Document& document,
     if (s.units != "mm") return Status::failure("Unsupported units: " + s.units);
     s.linearTolerance = root.value("linearTolerance", tolerance::kLinear);
     if (root.contains("camera")) s.camera = cameraFrom(root.at("camera"));
+    if (root.contains("scenes")) {
+      for (const json& scene : root.at("scenes")) {
+        s.scenes.push_back({scene.value("name", std::string()), cameraFrom(scene.at("camera"))});
+      }
+    }
 
     // Definitions first: instances regenerate from their shapes.
     if (root.contains("definitions")) {

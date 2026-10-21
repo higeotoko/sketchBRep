@@ -50,6 +50,8 @@ QString parameterLabel(const doc::Parameter& p) {
     label = QObject::tr("奥行");
   } else if (tail == "Radius") {
     label = QObject::tr("半径");
+  } else if (tail == "Bulge") {
+    label = QObject::tr("膨らみ");
   } else if (tail == "Extrude distance") {
     label = QObject::tr("押出距離");
   } else if (tail == "Offset distance") {

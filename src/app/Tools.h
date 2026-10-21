@@ -166,6 +166,34 @@ class CurveTool : public DrawingTool {
   std::optional<gp_Pnt> current_;
 };
 
+// 2-point arc: start, end, then the bulge (snaps to a semicircle). Makes a
+// segment face that can be pushed/pulled; Ctrl toggles "arc only" (curve).
+class ArcTool : public DrawingTool {
+ public:
+  using DrawingTool::DrawingTool;
+  QString name() const override;
+  QCursor cursor() const override;
+  void activate() override;
+  void cancel() override;
+  void mousePress(const ToolEvent& e) override;
+  void mouseMove(const ToolEvent& e) override;
+  bool keyPress(QKeyEvent* event) override;
+  void applyMeasurement(const QString& text) override;
+  bool makesFace() const { return face_; }
+
+ private:
+  void commit(double bulge);
+  void reset();
+  void updateStatus(const QString& snap = {});
+  enum class Stage { Start, End, Bulge } stage_ = Stage::Start;
+  geom::SketchPlane plane_;
+  gp_Pnt start_, end_;
+  double bulge_ = 0.0;
+  bool semicircle_ = false;
+  bool face_ = true;
+  std::optional<doc::ObjectId> lastCreated_;
+};
+
 // Circle: centre (on a face or the ground), then radius by mouse or value.
 class CircleTool : public DrawingTool {
  public:

@@ -7,7 +7,7 @@
 
 namespace sbr::app {
 
-enum class CursorKind { Select, Pencil, Rectangle, Curve, PushPull, Move, Rotate, Offset, Revolve, Measure, Circle, Paint, Eraser };
+enum class CursorKind { Select, Pencil, Rectangle, Curve, PushPull, Move, Rotate, Offset, Revolve, Measure, Circle, Paint, Eraser, Arc };
 
 QCursor toolCursor(CursorKind kind);
 // Toolbar icon with the same drawing as the cursor.

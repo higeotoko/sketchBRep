@@ -9,6 +9,7 @@
 #include "sbr/doc/NativeFormat.h"
 #include "sbr/geom/Freeform.h"
 #include "sbr/geom/Measure.h"
+#include "sbr/geom/Operations.h"
 #include "sbr/geom/Profile.h"
 #include "sbr/geom/Validation.h"
 
@@ -204,4 +205,50 @@ TEST(Freeform, CurvePointsAreEditable) {
   EXPECT_NEAR(geom::exactBounds(m.document().worldShape(*curve)).CornerMax().Y(), 0, 1.0);
   auto rect = m.createRectangle(SketchPlane::ground(), 10, 10);
   EXPECT_FALSE(m.setCurvePoints(*rect, {gp_Pnt(0, 0, 0), gp_Pnt(1, 0, 0)}).ok());
+}
+
+TEST(Freeform, ExactArcAndSegmentFace) {
+  // Semicircle of radius 1000 in the ground plane, bulging towards +Y.
+  auto arc = makeArc(gp_Pnt(0, 0, 0), gp_Pnt(2000, 0, 0), gp::DZ(), 1000, false);
+  ASSERT_TRUE(arc.ok()) << arc.error();
+  const Bnd_Box b = exactBounds(arc.value());
+  EXPECT_NEAR(b.CornerMax().Y(), 1000, 1e-6);
+  EXPECT_NEAR(b.CornerMin().Y(), 0, 1e-6);
+  // Negative bulge flips the side.
+  EXPECT_NEAR(exactBounds(makeArc(gp_Pnt(0, 0, 0), gp_Pnt(2000, 0, 0), gp::DZ(), -300, false).value())
+                  .CornerMin().Y(), -300, 1e-6);
+
+  auto segment = makeArc(gp_Pnt(0, 0, 0), gp_Pnt(2000, 0, 0), gp::DZ(), 1000, true);
+  ASSERT_TRUE(segment.ok());
+  EXPECT_NEAR(area(segment.value()), M_PI * 1000 * 1000 / 2, 1e-3);
+  const auto n = planarFaceNormal(TopoDS::Face(segment.value()));
+  ASSERT_TRUE(n);
+  EXPECT_GT(n->Z(), 0.99);
+
+  EXPECT_FALSE(makeArc(gp_Pnt(0, 0, 0), gp_Pnt(0, 0, 0), gp::DZ(), 10, false).ok());
+  EXPECT_FALSE(makeArc(gp_Pnt(0, 0, 0), gp_Pnt(1000, 0, 0), gp::DZ(), 0, false).ok());
+  EXPECT_FALSE(makeArc(gp_Pnt(0, 0, 0), gp_Pnt(0, 0, 1000), gp::DZ(), 10, false).ok());  // chord off-plane
+}
+
+TEST(Freeform, ArchedOpeningFromSegmentIsParametric) {
+  doc::Modeler m;
+  // A segment profile on a vertical plane (facing -Y), extruded into a solid.
+  auto id = m.createArc(gp_Pnt(0, 0, 2000), gp_Pnt(1000, 0, 2000), -gp::DY(), 300, true);
+  ASSERT_TRUE(id.ok()) << id.error();
+  const doc::Object* o = m.document().find(*id);
+  EXPECT_EQ(o->kind(), doc::ObjectKind::Face);
+  EXPECT_GT(exactBounds(o->shape).CornerMax().Z(), 2299.0);  // bulges upwards
+  const auto r = m.pushPull(*id, TopoDS::Face(o->shape), 200);
+  ASSERT_TRUE(r.ok()) << r.error();
+  const double v1 = volume(m.document().worldShape(*id));
+  ASSERT_TRUE(m.setParameter(*id, "bulge", 500).ok());
+  EXPECT_GT(volume(m.document().worldShape(*id)), v1);
+
+  const std::string text = doc::serializeDocument(m.document());
+  doc::Document d;
+  ASSERT_TRUE(doc::deserializeDocument(text, d).ok());
+  const auto* loaded = std::get_if<doc::ArcCurve>(&d.find(*id)->recipe.base);
+  ASSERT_TRUE(loaded);
+  EXPECT_DOUBLE_EQ(loaded->bulge, 500);
+  EXPECT_TRUE(loaded->closed);
 }

@@ -47,6 +47,10 @@ class Modeler {
                                    const std::string& name = {});
   Result<ObjectId> createCircle(const geom::SketchPlane& plane, double radius,
                                 const std::string& name = {});
+  // 2-point arc with a signed bulge (sagitta) in the plane with 'normal';
+  // closed = segment face (can be pushed/pulled).
+  Result<ObjectId> createArc(const gp_Pnt& start, const gp_Pnt& end, const gp_Dir& normal, double bulge,
+                             bool closed = false, const std::string& name = {});
   Result<ObjectId> createPolygon(const std::vector<gp_Pnt>& points, const std::string& name = {});
   Result<ObjectId> createPolyline(const std::vector<gp_Pnt>& points, const std::string& name = {});
   Result<ObjectId> importShape(const TopoDS_Shape& shape, const std::string& name,

@@ -3,6 +3,8 @@
 #include <cmath>
 
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <GC_MakeArcOfCircle.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepOffsetAPI_MakePipe.hxx>
 #include <BRepOffsetAPI_ThruSections.hxx>
@@ -13,6 +15,7 @@
 #include <TColgp_HArray1OfPnt.hxx>
 #include <TopExp_Explorer.hxx>
 
+#include "sbr/geom/Operations.h"
 #include "sbr/geom/Validation.h"
 
 namespace sbr::geom {
@@ -26,6 +29,39 @@ Result<TopoDS_Shape> checked(const TopoDS_Shape& shape, const char* what) {
   return shape;
 }
 }  // namespace
+
+gp_Pnt arcApex(const gp_Pnt& start, const gp_Pnt& end, const gp_Dir& normal, double bulge) {
+  const gp_Vec chord(start, end);
+  const gp_Pnt mid((start.XYZ() + end.XYZ()) / 2.0);
+  const gp_Vec side = gp_Vec(normal).Crossed(chord);
+  if (side.Magnitude() < 1e-12) return mid;
+  return mid.Translated(side.Normalized() * bulge);
+}
+
+Result<TopoDS_Shape> makeArc(const gp_Pnt& start, const gp_Pnt& end, const gp_Dir& normal, double bulge,
+                             bool closed) {
+  const gp_Vec chord(start, end);
+  if (chord.Magnitude() < tolerance::kMinDimension) return Result<TopoDS_Shape>::failure("Arc ends coincide");
+  if (std::abs(gp_Vec(normal).Dot(chord.Normalized())) > 1e-6) {
+    return Result<TopoDS_Shape>::failure("Arc chord must lie in the plane");
+  }
+  if (std::abs(bulge) < tolerance::kMinDimension) return Result<TopoDS_Shape>::failure("Arc is flat");
+  try {
+    GC_MakeArcOfCircle arc(start, arcApex(start, end, normal, bulge), end);
+    if (!arc.IsDone()) return Result<TopoDS_Shape>::failure("Arc could not be built");
+    const TopoDS_Edge edge = BRepBuilderAPI_MakeEdge(arc.Value());
+    if (!closed) return TopoDS_Shape(BRepBuilderAPI_MakeWire(edge).Wire());
+    BRepBuilderAPI_MakeWire wire(edge, BRepBuilderAPI_MakeEdge(end, start));
+    BRepBuilderAPI_MakeFace face(wire.Wire(), true);
+    if (!face.IsDone()) return Result<TopoDS_Shape>::failure("Arc segment face could not be built");
+    TopoDS_Face f = face.Face();
+    // Profiles face along their plane normal, so extrusion goes that way.
+    if (const auto n = planarFaceNormal(f); n && n->Dot(normal) < 0) f.Reverse();
+    return TopoDS_Shape(f);
+  } catch (const Standard_Failure& e) {
+    return Result<TopoDS_Shape>::failure(std::string("Arc failed: ") + e.GetMessageString());
+  }
+}
 
 Result<TopoDS_Wire> makeInterpolatedCurve(const std::vector<gp_Pnt>& points, bool closed) {
   if (points.size() < 2) return Result<TopoDS_Wire>::failure("A curve needs at least 2 points");

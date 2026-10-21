@@ -63,6 +63,8 @@ class CommandStack {
 
   // Modification tracking for "unsaved changes" prompts.
   void markClean() { cleanMarker_ = revision_; }
+  // For edits kept outside the undo history (e.g. saved scenes).
+  void markDirty() { cleanMarker_ = -1; }
   bool isClean() const { return cleanMarker_ == revision_; }
 
  private:

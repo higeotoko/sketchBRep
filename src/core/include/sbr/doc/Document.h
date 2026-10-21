@@ -18,10 +18,17 @@ struct CameraState {
   double scale = 0.0;  // view scale; 0 = fit on load
 };
 
+// A saved view (SketchUp "scene"): named camera.
+struct Scene {
+  std::string name;
+  CameraState camera;
+};
+
 struct DocumentSettings {
   std::string units = "mm";
   double linearTolerance = tolerance::kLinear;
   CameraState camera;
+  std::vector<Scene> scenes;
 };
 
 // Shared geometry of a component. Its objects form a small hierarchy of their

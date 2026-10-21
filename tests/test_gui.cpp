@@ -8,6 +8,7 @@
 #include <QApplication>
 #include <QDir>
 #include <QSettings>
+#include <QTabBar>
 #include <QStandardPaths>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -109,6 +110,8 @@ class GuiPhase1 : public QObject {
   void moveSelectedFaceStretchesSolid();
   void eraserDeletesClickedObject();
   void aiBridgeOverLocalSocket();
+  void arcToolSemicircleAndBulgeEdit();
+  void scenesSaveRestoreAndPersist();
 };
 
 namespace {
@@ -465,7 +468,8 @@ void GuiPhase1::eachToolHasItsCursor() {
   for (auto id : {MainWindow::ToolId::Line, MainWindow::ToolId::Rectangle, MainWindow::ToolId::PushPull,
                   MainWindow::ToolId::Move, MainWindow::ToolId::Rotate, MainWindow::ToolId::Offset,
                   MainWindow::ToolId::Curve, MainWindow::ToolId::Circle,
-                  MainWindow::ToolId::Measure, MainWindow::ToolId::Revolve}) {
+                  MainWindow::ToolId::Measure, MainWindow::ToolId::Revolve, MainWindow::ToolId::Arc,
+                  MainWindow::ToolId::Paint, MainWindow::ToolId::Eraser}) {
     f.window.activateTool(id);
     QCOMPARE(f.vp->cursor().shape(), Qt::BitmapCursor);
     QVERIFY(!f.vp->cursor().pixmap().isNull());
@@ -799,6 +803,80 @@ void GuiPhase1::aiBridgeOverLocalSocket() {
   f.window.setAiAccess(false);
   QVERIFY(!bridge->isEnabled());
   QTRY_VERIFY(socket.state() != QLocalSocket::ConnectedState);
+}
+
+void GuiPhase1::arcToolSemicircleAndBulgeEdit() {
+  Fixture f;
+  QVERIFY(f.setUp(1000, 0));
+  doc::Modeler& m = f.window.modeler();
+  f.window.activateTool(MainWindow::ToolId::Arc);
+  QCOMPARE(f.vp->cursor().shape(), Qt::BitmapCursor);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));        // start at the origin
+  move(f.vp, f.vp->toWidget(gp_Pnt(1200, 0, 0)));      // direction along X
+  type(f.vp, QStringLiteral("2000"));                   // chord length
+  move(f.vp, f.vp->toWidget(gp_Pnt(1000, 990, 0)));    // near a semicircle: snaps to it
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 990, 0)));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  const doc::ObjectId id = m.document().objects().front().id;
+  QCOMPARE(m.document().find(id)->kind(), doc::ObjectKind::Face);  // segment face by default
+  QVERIFY(std::abs(geom::area(m.document().worldShape(id)) - M_PI * 1000 * 1000 / 2) < 1.0);
+
+  type(f.vp, QStringLiteral("500"));  // re-edit the bulge right away
+  const Bnd_Box b = geom::exactBounds(m.document().worldShape(id));
+  QVERIFY(std::abs(b.CornerMax().Y() - 500) < 1e-6);
+
+  // Ctrl: arc only (a curve), drawn on the other side with a typed bulge.
+  QTest::keyClick(f.vp, Qt::Key_Control);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, -2000, 0)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(1000, -2000, 0)));
+  type(f.vp, QStringLiteral("2000"));
+  move(f.vp, f.vp->toWidget(gp_Pnt(1000, -2300, 0)));
+  type(f.vp, QStringLiteral("300"));
+  QCOMPARE(m.document().objects().size(), std::size_t(2));
+  const doc::ObjectId arc = m.document().objects().back().id;
+  QCOMPARE(m.document().find(arc)->kind(), doc::ObjectKind::Curve);
+  const Bnd_Box ab = geom::exactBounds(m.document().worldShape(arc));
+  // The start click is free (no snap), so check the exact typed sizes.
+  QVERIFY(std::abs(ab.CornerMax().X() - ab.CornerMin().X() - 2000) < 1e-6);
+  QVERIFY(std::abs(ab.CornerMax().Y() - ab.CornerMin().Y() - 300) < 1e-6);
+  const auto* recipe = std::get_if<doc::ArcCurve>(&m.document().find(arc)->recipe.base);
+  QVERIFY(recipe && recipe->bulge < 0);  // on the -Y side, where the mouse was
+}
+
+void GuiPhase1::scenesSaveRestoreAndPersist() {
+  Fixture f;
+  QVERIFY(f.setUp(1000, 0));
+  f.box(0, 0, 1000, 1000, 1000);
+  doc::CameraState a;
+  f.vp->storeCamera(a);
+  f.window.addScene(QStringLiteral("外観"));
+  QCOMPARE(f.window.sceneBar()->count(), 1);
+  QVERIFY(f.window.isWindowModified());
+
+  f.window.viewport().setStandardView(Viewport::StandardView::Top);
+  doc::CameraState top;
+  f.vp->storeCamera(top);
+  QVERIFY(std::abs(top.eye[2] - a.eye[2]) > 1.0 || std::abs(top.eye[0] - a.eye[0]) > 1.0);
+  QVERIFY(f.window.goToScene(0));
+  doc::CameraState back;
+  f.vp->storeCamera(back);
+  for (int i = 0; i < 3; ++i) QVERIFY(std::abs(back.eye[i] - a.eye[i]) < 1e-3);
+
+  // Scenes are saved with the file; AI clients can use them too.
+  const QString path = QDir(QDir::tempPath()).filePath(QStringLiteral("sbr_scenes_test.sbr"));
+  QVERIFY(f.window.saveFile(path));
+  MainWindow other;
+  other.show();
+  QVERIFY(QTest::qWaitForWindowExposed(&other));
+  QVERIFY(other.openFile(path));
+  QCOMPARE(other.sceneBar()->count(), 1);
+  QCOMPARE(other.sceneBar()->tabText(0), QStringLiteral("外観"));
+  const auto r = QJsonDocument::fromJson(QByteArray::fromStdString(
+                     other.aiBridge()->execute(R"({"command": "go_to_scene", "args": {"name": "外観"}})")))
+                     .object();
+  QVERIFY2(r.value("ok").toBool(), qPrintable(QJsonDocument(r).toJson()));
+  QFile::remove(path);
 }
 
 QTEST_MAIN(GuiPhase1)

@@ -13,6 +13,7 @@ class QAction;
 class QActionGroup;
 class QLabel;
 class QLineEdit;
+class QTabBar;
 
 namespace sbr::app {
 
@@ -43,13 +44,17 @@ class MainWindow : public QMainWindow, public ToolHost {
   // Used by tests and the command line.
   bool openFile(const QString& path);
   bool saveFile(const QString& path);
-  enum class ToolId { Select, Line, Rectangle, PushPull, Move, Rotate, Offset, Curve, Revolve, Measure, Circle, Paint, Eraser };
+  enum class ToolId { Select, Line, Rectangle, PushPull, Move, Rotate, Offset, Curve, Revolve, Measure, Circle, Paint, Eraser, Arc };
   void activateTool(ToolId id);
   Tool* activeTool() const { return active_; }
   QLineEdit* measurementBox() const { return measurement_; }
   QString lastError() const { return lastError_; }
   AiBridge* aiBridge() const { return aiBridge_.get(); }
   void setAiAccess(bool enabled);
+  // Saved views ("scenes"), shown as tabs above the viewport.
+  void addScene(const QString& name = {});
+  bool goToScene(int index);
+  QTabBar* sceneBar() const { return sceneBar_; }
 
  protected:
   void closeEvent(QCloseEvent* event) override;
@@ -80,6 +85,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   void undo();
   void redo();
   void buildAiBridge();
+  void refreshScenes();
+  void sceneMenu(int index, const QPoint& globalPos);
 
   doc::Modeler modeler_;
   Viewport* viewport_ = nullptr;
@@ -103,9 +110,10 @@ class MainWindow : public QMainWindow, public ToolHost {
   std::unique_ptr<CircleTool> circleTool_;
   std::unique_ptr<PaintTool> paintTool_;
   std::unique_ptr<EraserTool> eraserTool_;
+  std::unique_ptr<ArcTool> arcTool_;
   Tool* active_ = nullptr;
   QActionGroup* toolGroup_ = nullptr;
-  QAction* toolActions_[13] = {};
+  QAction* toolActions_[14] = {};
   QAction* undoAction_ = nullptr;
   QAction* redoAction_ = nullptr;
   QAction* focusOnDoubleClick_ = nullptr;
@@ -120,6 +128,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   std::unique_ptr<AiBridge> aiBridge_;
   QAction* aiAction_ = nullptr;
   QLabel* aiLabel_ = nullptr;
+  QTabBar* sceneBar_ = nullptr;
 };
 
 }  // namespace sbr::app

@@ -475,6 +475,177 @@ void CurveTool::updatePreview() {
   host_.viewport().setPreview(curve ? TopoDS_Shape(curve.value()) : TopoDS_Shape());
 }
 
+// --- Arc --------------------------------------------------------------------------
+
+QString ArcTool::name() const { return QObject::tr("円弧"); }
+QCursor ArcTool::cursor() const { return toolCursor(CursorKind::Arc); }
+
+void ArcTool::activate() {
+  resetTracking();
+  reset();
+  host_.viewport().setPickMode(PickMode::None);
+  updateStatus();
+}
+
+void ArcTool::reset() {
+  stage_ = Stage::Start;
+  bulge_ = 0.0;
+  semicircle_ = false;
+  resetLock();
+  host_.viewport().clearPreview();
+}
+
+void ArcTool::cancel() {
+  reset();
+  host_.viewport().hideSnap();
+}
+
+void ArcTool::updateStatus(const QString& snap) {
+  const QString mode = face_ ? QObject::tr("弓形の面") : QObject::tr("円弧の線");
+  const QString suffix = snap.isEmpty() ? QString() : QStringLiteral("  [%1]").arg(snap);
+  switch (stage_) {
+    case Stage::Start:
+      host_.setMeasurement(QObject::tr("膨らみ"), QString());
+      host_.setStatus(QObject::tr("円弧の始点をクリック（%1 / Ctrl で切替。数値で直前の円弧の膨らみを変更）%2")
+                          .arg(mode, suffix));
+      break;
+    case Stage::End:
+      host_.setStatus(QObject::tr("終点をクリック、または弦の長さを入力%1").arg(suffix));
+      break;
+    case Stage::Bulge:
+      host_.setStatus(QObject::tr("膨らみをクリック、または数値を入力（%1 / Ctrl で切替）%2")
+                          .arg(mode, semicircle_ ? QObject::tr("  [半円]") : suffix));
+      break;
+  }
+}
+
+bool ArcTool::keyPress(QKeyEvent* event) {
+  if (event->key() == Qt::Key_Control && !event->isAutoRepeat()) {
+    face_ = !face_;
+    if (lastEvent_) mouseMove(*lastEvent_);
+    updateStatus();
+    return true;
+  }
+  return DrawingTool::keyPress(event);
+}
+
+void ArcTool::mouseMove(const ToolEvent& e) {
+  lastEvent_ = e;
+  switch (stage_) {
+    case Stage::Start: {
+      const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
+      updateStatus(snapLabel(r.kind));
+      return;
+    }
+    case Stage::End: {
+      const snap::SnapResult r = snapAt(e, start_, plane_.plane());
+      if (!r.valid()) return;
+      end_ = r.point;
+      host_.setMeasurement(QObject::tr("弦の長さ"), mm(start_.Distance(end_)));
+      host_.viewport().setPreview(start_.Distance(end_) > tolerance::kMinDimension
+                                      ? TopoDS_Shape(BRepBuilderAPI_MakeEdge(start_, end_).Edge())
+                                      : TopoDS_Shape());
+      updateStatus(snapLabel(r.kind));
+      return;
+    }
+    case Stage::Bulge: {
+      const snap::SnapResult r = snapAt(e, std::nullopt, plane_.plane());
+      if (!r.valid()) return;
+      const gp_Vec chord(start_, end_);
+      const gp_Vec side = gp_Vec(plane_.normal).Crossed(chord).Normalized();
+      const gp_Pnt mid((start_.XYZ() + end_.XYZ()) / 2.0);
+      // Project onto the sketch plane before measuring the bulge.
+      gp_Vec offset(mid, r.point);
+      offset -= gp_Vec(plane_.normal) * offset.Dot(gp_Vec(plane_.normal));
+      bulge_ = offset.Dot(side);
+      const double half = chord.Magnitude() / 2.0;
+      semicircle_ = std::abs(std::abs(bulge_) - half) < 0.04 * half;
+      if (semicircle_) bulge_ = std::copysign(half, bulge_);
+      host_.setMeasurement(QObject::tr("膨らみ"), mm(std::abs(bulge_)));
+      auto arc = geom::makeArc(start_, end_, plane_.normal, bulge_, face_);
+      host_.viewport().setPreview(arc ? arc.value() : TopoDS_Shape(), face_);
+      updateStatus(snapLabel(r.kind));
+      return;
+    }
+  }
+}
+
+void ArcTool::mousePress(const ToolEvent& e) {
+  switch (stage_) {
+    case Stage::Start: {
+      const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
+      if (!r.valid()) return;
+      plane_ = planeForStart(host_.viewport(), e.pos, r);
+      start_ = r.point;
+      stage_ = Stage::End;
+      lastCreated_.reset();
+      updateStatus();
+      return;
+    }
+    case Stage::End:
+      mouseMove(e);
+      if (start_.Distance(end_) < tolerance::kMinDimension) return;
+      stage_ = Stage::Bulge;
+      resetLock();
+      updateStatus();
+      return;
+    case Stage::Bulge:
+      mouseMove(e);
+      commit(bulge_);
+      return;
+  }
+}
+
+void ArcTool::commit(double bulge) {
+  if (std::abs(bulge) < tolerance::kMinDimension) return;
+  auto id = host_.modeler().createArc(start_, end_, plane_.normal, bulge, face_);
+  if (!id) {
+    host_.reportError(QString::fromStdString(id.error()));
+  } else {
+    lastCreated_ = id.value();
+  }
+  reset();
+  updateStatus();
+}
+
+void ArcTool::applyMeasurement(const QString& text) {
+  const auto value = units::parseLength(text.toStdString());
+  if (!value || *value <= 0) {
+    host_.reportError(QObject::tr("長さを解釈できません: %1").arg(text));
+    return;
+  }
+  switch (stage_) {
+    case Stage::End: {
+      // Chord length along the current direction.
+      const gp_Vec dir(start_, end_);
+      if (dir.Magnitude() < tolerance::kMinDimension) {
+        host_.reportError(QObject::tr("マウスで方向を示してから長さを入力してください"));
+        return;
+      }
+      end_ = start_.Translated(dir.Normalized() * *value);
+      stage_ = Stage::Bulge;
+      resetLock();
+      updateStatus();
+      return;
+    }
+    case Stage::Bulge:
+      // The typed value keeps the side the mouse is on.
+      commit(std::copysign(*value, bulge_ == 0.0 ? 1.0 : bulge_));
+      return;
+    case Stage::Start:
+      if (lastCreated_ && host_.modeler().document().find(*lastCreated_)) {
+        const auto* o = host_.modeler().document().find(*lastCreated_);
+        const auto* arc = std::get_if<doc::ArcCurve>(&o->recipe.base);
+        const double sign = arc && arc->bulge < 0 ? -1.0 : 1.0;
+        const Status s = host_.modeler().setParameter(*lastCreated_, "bulge", sign * *value);
+        if (!s) host_.reportError(QString::fromStdString(s.message()));
+        return;
+      }
+      host_.reportError(QObject::tr("円弧の始点をクリックしてから入力してください"));
+      return;
+  }
+}
+
 // --- Circle ---------------------------------------------------------------------
 
 

@@ -4,6 +4,7 @@
 #include <vector>
 
 #include <gp_Ax1.hxx>
+#include <gp_Dir.hxx>
 #include <gp_Pnt.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Shape.hxx>
@@ -12,6 +13,14 @@
 #include "sbr/Types.h"
 
 namespace sbr::geom {
+
+// Exact circular arc from start to end. The apex lies 'bulge' away from the
+// chord's midpoint, on the side normal x (end - start) (negative = other
+// side). closed = segment face (arc + chord), oriented along 'normal'.
+Result<TopoDS_Shape> makeArc(const gp_Pnt& start, const gp_Pnt& end, const gp_Dir& normal, double bulge,
+                             bool closed);
+// Apex of that arc (for previews and snapping).
+gp_Pnt arcApex(const gp_Pnt& start, const gp_Pnt& end, const gp_Dir& normal, double bulge);
 
 // Cubic B-spline (NURBS) curve through the points (closed = periodic).
 Result<TopoDS_Wire> makeInterpolatedCurve(const std::vector<gp_Pnt>& points, bool closed);

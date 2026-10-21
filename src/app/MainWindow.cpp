@@ -19,7 +19,11 @@
 #include <QLineEdit>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QInputDialog>
+#include <QMenu>
 #include <QStatusBar>
+#include <QTabBar>
+#include <QToolButton>
 #include <QTimer>
 #include <QToolBar>
 
@@ -49,6 +53,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   circleTool_ = std::make_unique<CircleTool>(*this);
   paintTool_ = std::make_unique<PaintTool>(*this);
   eraserTool_ = std::make_unique<EraserTool>(*this);
+  arcTool_ = std::make_unique<ArcTool>(*this);
 
   buildUi();
   buildAiBridge();
@@ -69,6 +74,27 @@ MainWindow::~MainWindow() {
 void MainWindow::buildUi() {
   viewport_ = new Viewport(modeler_, this);
   setCentralWidget(viewport_);
+
+  // Scene tabs (saved views) above the viewport.
+  QToolBar* scenes = new QToolBar(tr("シーン"), this);
+  scenes->setObjectName(QStringLiteral("scenesBar"));
+  scenes->setMovable(false);
+  auto* addSceneButton = new QToolButton;
+  addSceneButton->setText(tr("＋ シーン"));
+  addSceneButton->setToolTip(tr("今のビューをシーンとして保存"));
+  connect(addSceneButton, &QToolButton::clicked, this, [this] { addScene(); });
+  sceneBar_ = new QTabBar;
+  sceneBar_->setDrawBase(false);
+  sceneBar_->setExpanding(false);
+  sceneBar_->setContextMenuPolicy(Qt::CustomContextMenu);
+  connect(sceneBar_, &QTabBar::tabBarClicked, this, [this](int index) { goToScene(index); });
+  connect(sceneBar_, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+    const int index = sceneBar_->tabAt(pos);
+    if (index >= 0) sceneMenu(index, sceneBar_->mapToGlobal(pos));
+  });
+  scenes->addWidget(sceneBar_);
+  scenes->addWidget(addSceneButton);
+  addToolBar(Qt::TopToolBarArea, scenes);
 
   panel_ = new PropertiesPanel;
   auto* dock = new QDockWidget(tr("オブジェクト / 属性"), this);
@@ -331,6 +357,7 @@ void MainWindow::buildMenus() {
       {tr("線"), QStringLiteral("L"), ToolId::Line, CursorKind::Pencil},
       {tr("矩形"), QStringLiteral("R"), ToolId::Rectangle, CursorKind::Rectangle},
       {tr("円"), QStringLiteral("C"), ToolId::Circle, CursorKind::Circle},
+      {tr("円弧"), QStringLiteral("A"), ToolId::Arc, CursorKind::Arc},
       {tr("プッシュ/プル"), QStringLiteral("P"), ToolId::PushPull, CursorKind::PushPull},
       {tr("移動"), QStringLiteral("M"), ToolId::Move, CursorKind::Move},
       {tr("回転"), QStringLiteral("Q"), ToolId::Rotate, CursorKind::Rotate},
@@ -397,7 +424,7 @@ void MainWindow::buildMenus() {
            "Shift+ホイールドラッグ: パン / ダブルクリック: フォーカス<br>"
            "F2〜F7: 標準ビュー / F8: 透視・平行投影 / Shift+Z: 全体表示<br><br>"
            "<b>ツール</b><br>Space: 選択 / L: 線 / R: 矩形 / P: プッシュ/プル<br>"
-           "C: 円 / N: 曲線 / V: 回転体 / T: メジャー / B: ペイント（Alt+クリックで色を拾う）/ E: 消しゴム<br>"
+           "C: 円 / A: 円弧（始点 → 終点 → 膨らみ。Ctrl で面/線）/ N: 曲線 / V: 回転体 / T: メジャー / B: ペイント（Alt+クリックで色を拾う）/ E: 消しゴム<br>"
            "M: 移動 / Q: 回転 / F: オフセット（移動・回転中に Ctrl でコピー、確定後 x3 で配列・/3 で等分割）<br>"
            "作図中に数値を打って Enter で寸法指定（例: 3000, 4.5m, 3000,4500）<br>"
            "Shift: 推論方向をロック / →・←・↑: X・Y・Z 軸ロック / ↓: 解除 / Esc: 中止"));
@@ -475,6 +502,28 @@ void MainWindow::buildAiBridge() {
     return json{{"image_path", QDir::toNativeSeparators(path).toStdString()}}.dump();
   };
 
+  handlers["list_scenes"] = [this](const std::string&) {
+    json list = json::array();
+    for (const doc::Scene& s : modeler_.document().settings().scenes) list.push_back(s.name);
+    return json{{"scenes", list}}.dump();
+  };
+  handlers["go_to_scene"] = [this](const std::string& args) {
+    const json a = json::parse(args);
+    if (a.value("save", false)) {
+      addScene(QString::fromStdString(a.value("name", std::string())));
+      return json{{"saved", modeler_.document().settings().scenes.back().name}}.dump();
+    }
+    const auto& scenes = modeler_.document().settings().scenes;
+    int index = a.value("index", -1);
+    if (a.contains("name")) {
+      for (std::size_t i = 0; i < scenes.size(); ++i) {
+        if (scenes[i].name == a["name"].get<std::string>()) index = static_cast<int>(i);
+      }
+    }
+    if (!goToScene(index)) throw std::runtime_error("no such scene");
+    return json{{"scene", scenes[index].name}}.dump();
+  };
+
   std::vector<Extension> ext = api::CommandApi::appCommandSpecs();
   for (Extension& e : ext) e.run = handlers.at(e.name);
   aiBridge_ = std::make_unique<AiBridge>(modeler_, std::move(ext));
@@ -494,6 +543,60 @@ void MainWindow::buildAiBridge() {
   });
 }
 
+void MainWindow::refreshScenes() {
+  const QSignalBlocker block(sceneBar_);
+  while (sceneBar_->count() > 0) sceneBar_->removeTab(0);
+  for (const doc::Scene& s : modeler_.document().settings().scenes) {
+    sceneBar_->addTab(QString::fromStdString(s.name));
+  }
+}
+
+void MainWindow::addScene(const QString& name) {
+  auto& scenes = modeler_.document().settings().scenes;
+  doc::Scene scene;
+  scene.name = name.isEmpty() ? tr("シーン %1").arg(scenes.size() + 1).toStdString() : name.toStdString();
+  viewport_->storeCamera(scene.camera);
+  scenes.push_back(scene);
+  modeler_.history().markDirty();
+  refreshScenes();
+  sceneBar_->setCurrentIndex(sceneBar_->count() - 1);
+  updateTitle();
+  setStatus(tr("シーン「%1」を保存しました（右クリックで更新・名前変更・削除）").arg(QString::fromStdString(scene.name)));
+}
+
+bool MainWindow::goToScene(int index) {
+  const auto& scenes = modeler_.document().settings().scenes;
+  if (index < 0 || index >= static_cast<int>(scenes.size())) return false;
+  viewport_->restoreCamera(scenes[index].camera);
+  perspectiveAction_->setChecked(scenes[index].camera.perspective);
+  sceneBar_->setCurrentIndex(index);
+  return true;
+}
+
+void MainWindow::sceneMenu(int index, const QPoint& globalPos) {
+  auto& scenes = modeler_.document().settings().scenes;
+  QMenu menu(this);
+  QAction* update = menu.addAction(tr("今のビューで更新"));
+  QAction* rename = menu.addAction(tr("名前の変更..."));
+  QAction* remove = menu.addAction(tr("削除"));
+  QAction* chosen = menu.exec(globalPos);
+  if (!chosen || index >= static_cast<int>(scenes.size())) return;
+  if (chosen == update) {
+    viewport_->storeCamera(scenes[index].camera);
+  } else if (chosen == rename) {
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, tr("シーン名"), tr("名前"), QLineEdit::Normal,
+                                               QString::fromStdString(scenes[index].name), &ok);
+    if (!ok || name.trimmed().isEmpty()) return;
+    scenes[index].name = name.trimmed().toStdString();
+  } else if (chosen == remove) {
+    scenes.erase(scenes.begin() + index);
+  }
+  modeler_.history().markDirty();
+  refreshScenes();
+  updateTitle();
+}
+
 void MainWindow::activateTool(ToolId id) {
   if (active_) active_->deactivate();
   switch (id) {
@@ -508,6 +611,7 @@ void MainWindow::activateTool(ToolId id) {
     case ToolId::Revolve: active_ = revolveTool_.get(); break;
     case ToolId::Measure: active_ = measureTool_.get(); break;
     case ToolId::Circle: active_ = circleTool_.get(); break;
+    case ToolId::Arc: active_ = arcTool_.get(); break;
     case ToolId::Paint: active_ = paintTool_.get(); break;
     case ToolId::Eraser: active_ = eraserTool_.get(); break;
   }
@@ -760,6 +864,7 @@ void MainWindow::newDocument() {
   currentPath_.clear();
   setSelection({});
   viewport_->setStandardView(Viewport::StandardView::Iso);
+  refreshScenes();
   updateTitle();
 }
 
@@ -777,6 +882,7 @@ bool MainWindow::openFile(const QString& path) {
   viewport_->syncNow();
   viewport_->restoreCamera(modeler_.document().settings().camera);
   perspectiveAction_->setChecked(modeler_.document().settings().camera.perspective);
+  refreshScenes();
   if (!warnings.empty()) {
     QStringList lines;
     for (const auto& w : warnings) lines << QString::fromStdString(w);

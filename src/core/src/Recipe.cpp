@@ -63,6 +63,7 @@ Result<TopoDS_Shape> buildBase(const BaseFeature& base, const RegenContext& cont
             if (!wire) return Result<TopoDS_Shape>::failure(wire.error());
             return TopoDS_Shape(wire.value());
           },
+          [](const ArcCurve& a) { return geom::makeArc(a.start, a.end, a.normal, a.bulge, a.closed); },
           [](const ImportedShape& s) -> Result<TopoDS_Shape> {
             if (s.shape.IsNull()) return Result<TopoDS_Shape>::failure("Imported shape is empty");
             return s.shape;
@@ -209,6 +210,9 @@ std::vector<Parameter> parameters(const Recipe& recipe) {
   if (const auto* c = std::get_if<CircleProfile>(&recipe.base)) {
     out.push_back({"radius", "Radius", c->radius, true});
   }
+  if (const auto* a = std::get_if<ArcCurve>(&recipe.base)) {
+    out.push_back({"bulge", "Bulge", a->bulge, true});
+  }
   if (const auto* operands = operandsOf(recipe.base)) {
     for (std::size_t i = 0; i < operands->size(); ++i) {
       if (!(*operands)[i].recipe) continue;
@@ -257,6 +261,10 @@ Status setParameter(Recipe& recipe, const std::string& key, double value) {
     c->radius = value;
     return Status::success();
   }
+  if (auto* a = std::get_if<ArcCurve>(&recipe.base); a && key == "bulge") {
+    a->bulge = value;
+    return Status::success();
+  }
   if (auto* operands = operandsOf(recipe.base)) {
     for (std::size_t i = 0; i < operands->size(); ++i) {
       const std::string prefix = operandPrefix(i);
@@ -294,6 +302,9 @@ std::string describe(const Recipe& recipe) {
                  [&](const PolylineCurve& p) { out << "Line (" << p.points.size() << " pts)"; },
                  [&](const InterpolatedCurve& c) {
                    out << "NURBS curve (" << c.points.size() << " pts" << (c.closed ? ", closed" : "") << ")";
+                 },
+                 [&](const ArcCurve& a) {
+                   out << "Arc " << a.start.Distance(a.end) << " bulge " << a.bulge << (a.closed ? " (segment)" : "");
                  },
                  [&](const ImportedShape& s) { out << "Imported (" << s.source << ")"; },
                  [&](const BooleanFeature& b) {

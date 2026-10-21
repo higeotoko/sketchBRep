@@ -185,6 +185,14 @@ Result<ObjectId> Modeler::createCircle(const geom::SketchPlane& plane, double ra
   return addObject(std::move(o), "Circle");
 }
 
+Result<ObjectId> Modeler::createArc(const gp_Pnt& start, const gp_Pnt& end, const gp_Dir& normal,
+                                    double bulge, bool closed, const std::string& name) {
+  Object o;
+  o.name = name.empty() ? uniqueName("Arc") : name;
+  o.recipe.base = ArcCurve{start, end, normal, bulge, closed};
+  return addObject(std::move(o), "Arc");
+}
+
 Result<ObjectId> Modeler::createPolygon(const std::vector<gp_Pnt>& points, const std::string& name) {
   Object o;
   o.name = name.empty() ? uniqueName("Face") : name;

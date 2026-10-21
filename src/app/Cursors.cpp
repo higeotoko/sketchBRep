@@ -112,6 +112,15 @@ QPixmap draw(CursorKind kind, QPoint& hotspot) {
       hotspot = QPoint(2, 30);
       break;
     }
+    case CursorKind::Arc: {
+      halo(p, pencil());
+      QPainterPath arc;
+      arc.moveTo(16, 28);
+      arc.quadTo(23, 12, 30, 28);
+      halo(p, arc);
+      hotspot = QPoint(2, 30);
+      break;
+    }
     case CursorKind::Measure: {
       // Tape measure: case with a tape ending at the hotspot.
       QPainterPath body;
