@@ -2,6 +2,9 @@
 
 #include <gtest/gtest.h>
 
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <TopoDS_Edge.hxx>
+
 #include "sbr/geom/Operations.h"
 #include "sbr/geom/Profile.h"
 #include "sbr/snap/Inference.h"
@@ -182,4 +185,21 @@ TEST(Inference, EdgeSnapReportsDirection) {
   ASSERT_EQ(r.kind, SnapKind::OnEdge);
   ASSERT_TRUE(r.edgeDirection);
   EXPECT_NEAR(std::abs(r.edgeDirection->X()), 1.0, 1e-12);
+}
+
+// Spec 07 §5.1: nearby candidates do not flicker.
+TEST(Inference, StickyPointHysteresis) {
+  InferenceEngine engine;
+  // Two end points 12 px apart on screen.
+  // (Their edges run far away, so no midpoint is near.)
+  engine.setShapes({TopoDS_Shape(BRepBuilderAPI_MakeEdge(gp_Pnt(2000, 0, 0), gp_Pnt(2000, 3000, 0)).Edge()),
+                    TopoDS_Shape(BRepBuilderAPI_MakeEdge(gp_Pnt(2120, 0, 0), gp_Pnt(2120, 3000, 0)).Edge())});
+  TopView view;
+  SnapQuery q = view.query(207, 0);  // 7 px from A, 5 px from B
+  EXPECT_NEAR(engine.snap(q).point.X(), 2120, 1e-6);
+  q.stickyPoint = gp_Pnt(2000, 0, 0);  // A was the previous result
+  EXPECT_NEAR(engine.snap(q).point.X(), 2000, 1e-6);
+  SnapQuery far = view.query(213, 0);  // beyond 1.5x tolerance of A
+  far.stickyPoint = gp_Pnt(2000, 0, 0);
+  EXPECT_NEAR(engine.snap(far).point.X(), 2120, 1e-6);
 }

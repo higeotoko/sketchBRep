@@ -10,6 +10,7 @@ add_library(sbr_ui STATIC
   Viewport.cpp Viewport.h
   Cursors.cpp Cursors.h
   AiBridge.cpp AiBridge.h
+  Messages.cpp Messages.h
 )
 target_include_directories(sbr_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(sbr_ui PUBLIC sbr::core Qt6::Widgets Qt6::Network TKService TKV3d TKOpenGl

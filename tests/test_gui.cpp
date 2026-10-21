@@ -26,6 +26,7 @@
 #include "AiBridge.h"
 #include "MainWindow.h"
 #include "Viewport.h"
+#include "sbr/api/CommandApi.h"
 #include "sbr/geom/Measure.h"
 #include "sbr/geom/Validation.h"
 
@@ -121,6 +122,8 @@ class GuiPhase1 : public QObject {
   void sectionToolAndTagsPanel();
   void pushPullCylinderSide();
   void lineAcrossRectangleSplitsProfile();
+  void gate2InputConsistency();
+  void boxSelectionWindowAndCrossing();
 };
 
 namespace {
@@ -1114,6 +1117,141 @@ void GuiPhase1::lineAcrossRectangleSplitsProfile() {
   int solids = 0;
   for (const doc::Object& o : m.document().objects()) solids += o.kind() == doc::ObjectKind::Solid;
   QCOMPARE(solids, 1);
+}
+
+namespace {
+void orbitBy(Viewport* vp, const QPoint& from, const QPoint& delta) {
+  send(vp, QEvent::MouseButtonPress, from, Qt::MiddleButton, Qt::MiddleButton);
+  for (int i = 1; i <= 5; ++i) send(vp, QEvent::MouseMove, from + delta * i / 5, Qt::NoButton, Qt::MiddleButton);
+  send(vp, QEvent::MouseButtonRelease, from + delta, Qt::MiddleButton, Qt::NoButton);
+  QTest::qWait(20);
+}
+}  // namespace
+
+// Spec 07 Gate 2: AC-05, AC-11, AC-14, AC-15, AC-16 and failure wording (§10).
+void GuiPhase1::gate2InputConsistency() {
+  Fixture f;
+  QVERIFY(f.setUp(1000, 1000));
+  doc::Modeler& m = f.window.modeler();
+
+  // AC-15: orbit in the middle of drawing a rectangle; the first corner and
+  // the typed size still apply.
+  f.window.activateTool(MainWindow::ToolId::Rectangle);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));
+  orbitBy(f.vp, f.vp->rect().center(), QPoint(60, 20));
+  move(f.vp, f.vp->toWidget(gp_Pnt(800, 600, 0)));
+  type(f.vp, QStringLiteral("2000,1000"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  const Bnd_Box rb = geom::exactBounds(m.document().worldShape(m.document().objects().front()));
+  QVERIFY(std::abs(rb.CornerMin().X()) < 1e-6 && std::abs(rb.CornerMax().X() - 2000) < 1e-6);
+  QVERIFY(std::abs(rb.CornerMax().Y() - 1000) < 1e-6);
+  QVERIFY(m.undo());
+
+  // AC-11: an X lock survives orbiting; the typed length goes along X.
+  f.window.activateTool(MainWindow::ToolId::Line);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));
+  QTest::keyClick(f.vp, Qt::Key_Right);
+  orbitBy(f.vp, f.vp->rect().center(), QPoint(-50, 30));
+  move(f.vp, f.vp->toWidget(gp_Pnt(700, 400, 0)));
+  type(f.vp, QStringLiteral("1500"));
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  const Bnd_Box lb = geom::exactBounds(m.document().worldShape(m.document().objects().front()));
+  QVERIFY2(std::abs(lb.CornerMax().X() - 1500) < 1e-6 && std::abs(lb.CornerMax().Y()) < 1e-6,
+           qPrintable(QStringLiteral("%1 %2").arg(lb.CornerMax().X()).arg(lb.CornerMax().Y())));
+
+  // AC-05: while drawing lines, the open ends of the loose line are marked.
+  QTest::qWait(30);
+  QCOMPARE(f.vp->openEndCount(), 2);
+  f.window.activateTool(MainWindow::ToolId::Select);
+  QTest::qWait(30);
+  QCOMPARE(f.vp->openEndCount(), 0);
+  QVERIFY(m.undo());
+
+  // AC-14: Esc goes back one stage (arc bulge -> end point), then cancels;
+  // nothing is recorded in the history.
+  const std::size_t steps = m.history().undoCount();
+  f.window.activateTool(MainWindow::ToolId::Arc);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 0, 0)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(500, 300, 0)));
+  QTest::keyClick(f.vp, Qt::Key_Escape);  // back to choosing the end point
+  click(f.vp, f.vp->toWidget(gp_Pnt(2000, 0, 0)));
+  type(f.vp, QStringLiteral("400"));
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  const Bnd_Box ab = geom::exactBounds(m.document().worldShape(m.document().objects().front()));
+  // The end point was picked again (free click on the ground: pixel accuracy).
+  QVERIFY2(std::abs(ab.CornerMax().X() - 2000) < 20.0, qPrintable(QString::number(ab.CornerMax().X())));
+  QVERIFY(m.undo());
+  QCOMPARE(m.history().undoCount(), steps);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  QCOMPARE(m.history().undoCount(), steps);
+  QVERIFY(m.document().objects().empty());
+
+  // AC-16: GUI rectangle + push/pull 3000 equals the API's create_box.
+  f.window.activateTool(MainWindow::ToolId::Rectangle);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(800, 600, 0)));
+  type(f.vp, QStringLiteral("1200,900"));
+  f.window.activateTool(MainWindow::ToolId::PushPull);
+  click(f.vp, f.vp->toWidget(gp_Pnt(600, 450, 0)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(600, 450, 500)));
+  type(f.vp, QStringLiteral("3000"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  const TopoDS_Shape gui = m.document().worldShape(m.document().objects().front());
+  doc::Modeler other;
+  api::CommandApi api(other);
+  const auto r = QJsonDocument::fromJson(QByteArray::fromStdString(api.execute(
+      R"({"command": "create_box", "args": {"origin": [0,0,0], "width": 1200, "depth": 900, "height": 3000}})")));
+  QVERIFY(r.object().value("ok").toBool());
+  const TopoDS_Shape apiShape = other.document().worldShape(other.document().objects().front());
+  QVERIFY(std::abs(geom::volume(gui) - geom::volume(apiShape)) < 1e-6);
+  QVERIFY(geom::exactBounds(gui).CornerMax().Distance(geom::exactBounds(apiShape).CornerMax()) < 1e-6);
+  QCOMPARE(QString::fromStdString(doc::describe(m.document().objects().front().recipe)),
+           QString::fromStdString(doc::describe(other.document().objects().front().recipe)));
+
+  // §10: failures say why, that the model is unchanged, in Japanese.
+  f.window.reportError(QStringLiteral("Distance must be non-zero"));
+  QVERIFY(f.window.lastError().contains(QStringLiteral("距離が 0")));
+  QVERIFY(f.window.lastError().contains(QStringLiteral("モデルは変更されていません")));
+}
+
+void GuiPhase1::boxSelectionWindowAndCrossing() {
+  Fixture f;
+  QVERIFY(f.setUp(1000, 0));
+  const doc::ObjectId a = f.box(0, 0, 500, 500, 500);
+  const doc::ObjectId b = f.box(1500, 0, 500, 500, 500);
+  f.window.activateTool(MainWindow::ToolId::Select);
+  QTest::qWait(30);
+  auto drag = [&](const QPoint& from, const QPoint& to) {
+    send(f.vp, QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
+    for (int i = 1; i <= 4; ++i) send(f.vp, QEvent::MouseMove, from + (to - from) * i / 4, Qt::NoButton, Qt::LeftButton);
+    send(f.vp, QEvent::MouseButtonRelease, to, Qt::LeftButton, Qt::NoButton);
+    QTest::qWait(20);
+  };
+  // Footprints on screen.
+  QRect ra, rb;
+  for (int i = 0; i < 8; ++i) {
+    ra = ra.united(QRect(f.vp->toWidget(gp_Pnt(i & 1 ? 500 : 0, i & 2 ? 500 : 0, i & 4 ? 500 : 0)), QSize(1, 1)));
+    rb = rb.united(QRect(f.vp->toWidget(gp_Pnt(i & 1 ? 2000 : 1500, i & 2 ? 500 : 0, i & 4 ? 500 : 0)), QSize(1, 1)));
+  }
+  const int top = std::min(ra.top(), rb.top()) - 20;
+  const int bottom = std::max(ra.bottom(), rb.bottom()) + 20;
+  // Left to right around A only: window selection, A fully inside.
+  drag(QPoint(ra.left() - 20, top), QPoint(ra.right() + 5, bottom));
+  QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{a});
+  // Left to right covering half of B: B is not fully inside -> nothing.
+  drag(QPoint(rb.left() - 5, top), QPoint(rb.center().x(), bottom));
+  QVERIFY(f.window.selection().empty());
+  // Right to left over half of B: crossing selects B.
+  drag(QPoint(rb.center().x(), bottom), QPoint(rb.left() - 5, top));
+  QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{b});
+  // A plain click on empty space clears the selection.
+  click(f.vp, QPoint(5, 5));
+  QVERIFY(f.window.selection().empty());
 }
 
 QTEST_MAIN(GuiPhase1)

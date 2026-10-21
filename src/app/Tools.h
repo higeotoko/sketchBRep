@@ -66,6 +66,9 @@ class Tool {
   virtual void activate() = 0;
   virtual void deactivate() { cancel(); }
   virtual void cancel() {}
+  // Esc: go back one stage of a multi-step input (spec 07 §2.2). Returns
+  // false when there is no earlier stage, and Esc then cancels it all.
+  virtual bool stepBack() { return false; }
   virtual void mousePress(const ToolEvent&) {}
   virtual void mouseMove(const ToolEvent&) {}
   virtual void mouseRelease(const ToolEvent&) {}
@@ -94,9 +97,16 @@ class SelectTool : public Tool {
   void mousePress(const ToolEvent& e) override;
   void mouseMove(const ToolEvent& e) override;
   bool mouseDoubleClick(const ToolEvent& e) override;
+  void mouseRelease(const ToolEvent& e) override;
+  void cancel() override;
 
  private:
   void apply(const std::vector<ElementRef>& picked, bool additive);
+  // Rectangle selection from empty space (spec 07 §6.1): dragged left to
+  // right selects what is fully inside, right to left what it touches.
+  void boxSelect(const QRect& rect, bool crossing, bool additive);
+  std::optional<QPoint> boxStart_;
+  bool boxAdditive_ = false;
   // Object that a click on `leaf` addresses at the current editing level.
   doc::ObjectId target(const doc::ObjectId& leaf) const;
   QElapsedTimer sinceDoubleClick_;
@@ -185,6 +195,7 @@ class ArcTool : public DrawingTool {
   bool keyPress(QKeyEvent* event) override;
   void applyMeasurement(const QString& text) override;
   bool makesFace() const { return face_; }
+  bool stepBack() override;
 
  private:
   void commit(double bulge);
@@ -211,6 +222,7 @@ class DimensionTool : public DrawingTool {
   void mousePress(const ToolEvent& e) override;
   void mouseMove(const ToolEvent& e) override;
   void applyMeasurement(const QString& text) override;
+  bool stepBack() override;
 
  private:
   void commit();

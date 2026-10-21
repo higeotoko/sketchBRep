@@ -370,6 +370,24 @@ bool Modeler::isLooseCurveEnd(const gp_Pnt& p) const {
   return false;
 }
 
+std::vector<gp_Pnt> Modeler::openCurveEnds() const {
+  std::vector<gp_Pnt> ends;
+  for (const Object& o : document_.objects()) {
+    if (o.parent != activeGroup_) continue;
+    if (const auto e = curveEnds(document_, o)) {
+      ends.push_back(e->first);
+      ends.push_back(e->second);
+    }
+  }
+  std::vector<gp_Pnt> open;
+  for (std::size_t i = 0; i < ends.size(); ++i) {
+    int shared = 0;
+    for (std::size_t j = 0; j < ends.size(); ++j) shared += ends[i].Distance(ends[j]) < 1e-3;
+    if (shared == 1) open.push_back(ends[i]);
+  }
+  return open;
+}
+
 Result<ObjectId> Modeler::faceFromLoop(const ObjectId& curveId, bool* loopFound) {
   if (loopFound) *loopFound = false;
   const Object* start = document_.find(curveId);

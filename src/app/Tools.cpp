@@ -71,7 +71,11 @@ void SelectTool::activate() {
                               "Shift で追加・解除"));
 }
 
-void SelectTool::mouseMove(const ToolEvent& e) { host_.viewport().pickElement(e.pos); }
+void SelectTool::mouseMove(const ToolEvent& e) {
+  if (boxStart_) {
+    host_.viewport().setRubberBand(QRect(*boxStart_, e.pos).normalized());
+    return;
+  } host_.viewport().pickElement(e.pos); }
 
 void SelectTool::apply(const std::vector<ElementRef>& picked, bool additive) {
   std::vector<ElementRef> selection = additive ? host_.elementSelection() : std::vector<ElementRef>{};
@@ -115,7 +119,9 @@ void SelectTool::mousePress(const ToolEvent& e) {
   const bool additive = e.modifiers & Qt::ShiftModifier;
   const auto picked = host_.viewport().pickElement(e.pos);
   if (!picked) {
-    if (!additive) host_.setSelection({});
+    // Empty space: a click clears the selection, a drag selects a box.
+    boxStart_ = e.pos;
+    boxAdditive_ = additive;
     return;
   }
   doc::ObjectId addressed = target(picked->objectId);
@@ -149,6 +155,53 @@ void SelectTool::mousePress(const ToolEvent& e) {
   apply({*picked}, additive);
 }
 
+void SelectTool::cancel() {
+  boxStart_.reset();
+  host_.viewport().setRubberBand(std::nullopt);
+}
+
+void SelectTool::mouseRelease(const ToolEvent& e) {
+  if (!boxStart_) return;
+  const QPoint start = *boxStart_;
+  boxStart_.reset();
+  host_.viewport().setRubberBand(std::nullopt);
+  if ((e.pos - start).manhattanLength() < 5) {
+    if (!boxAdditive_) host_.setSelection({});
+    return;
+  }
+  boxSelect(QRect(start, e.pos).normalized(), e.pos.x() < start.x(), boxAdditive_);
+}
+
+void SelectTool::boxSelect(const QRect& rect, bool crossing, bool additive) {
+  const doc::Document& document = host_.modeler().document();
+  const doc::ObjectId context = host_.editingGroup();
+  std::vector<doc::ObjectId> selection = additive ? host_.selection() : std::vector<doc::ObjectId>{};
+  for (const doc::Object& o : document.objects()) {
+    if (o.parent != context || !document.isVisible(o.id)) continue;
+    // Screen footprint from the exact bounds of the object (and its children).
+    Bnd_Box box;
+    for (const doc::ObjectId& id : document.subtree(o.id)) {
+      const doc::Object* leaf = document.find(id);
+      if (!leaf || leaf->shape.IsNull() || !document.isVisible(id)) continue;
+      box.Add(geom::exactBounds(document.worldShape(*leaf)));
+    }
+    if (box.IsVoid()) continue;
+    double x0, y0, z0, x1, y1, z1;
+    box.Get(x0, y0, z0, x1, y1, z1);
+    QRect footprint;
+    bool allInside = true;
+    for (int i = 0; i < 8; ++i) {
+      const QPoint p = host_.viewport().toWidget(gp_Pnt(i & 1 ? x1 : x0, i & 2 ? y1 : y0, i & 4 ? z1 : z0));
+      allInside = allInside && rect.contains(p);
+      footprint = footprint.isNull() ? QRect(p, QSize(1, 1)) : footprint.united(QRect(p, QSize(1, 1)));
+    }
+    const bool hit = crossing ? rect.intersects(footprint) : allInside;
+    if (hit && std::find(selection.begin(), selection.end(), o.id) == selection.end()) selection.push_back(o.id);
+  }
+  host_.setSelection(selection);
+  host_.setStatus(QObject::tr("%1 個を選択（左→右: 完全に囲んだ物 / 右→左: 触れた物）").arg(selection.size()));
+}
+
 bool SelectTool::mouseDoubleClick(const ToolEvent& e) {
   const auto picked = host_.viewport().pickElement(e.pos);
   if (!picked) return false;  // empty space: let the viewport focus/fit
@@ -174,8 +227,13 @@ bool SelectTool::mouseDoubleClick(const ToolEvent& e) {
 snap::SnapResult DrawingTool::snapAt(const ToolEvent& e, std::optional<gp_Pnt> anchor,
                                      std::optional<gp_Pln> plane) {
   lastEvent_ = e;
+  std::optional<gp_Pnt> sticky;
+  if (last_.kind == snap::SnapKind::Endpoint || last_.kind == snap::SnapKind::Midpoint ||
+      last_.kind == snap::SnapKind::Origin) {
+    sticky = last_.point;
+  }
   last_ = host_.viewport().snap(e.pos, anchor, anchor ? locked_ : std::nullopt, plane,
-                                trackedPoints_, trackedDirections_);
+                                trackedPoints_, trackedDirections_, sticky);
   host_.viewport().showSnap(last_, anchor);
 
   // Remember hovered points / edges for later inference (SketchUp tracking).
@@ -631,6 +689,14 @@ void DimensionTool::mousePress(const ToolEvent& e) {
   }
 }
 
+bool DimensionTool::stepBack() {
+  if (stage_ != Stage::Offset) return false;
+  stage_ = Stage::End;
+  offset_ = gp_Vec();
+  if (lastEvent_) mouseMove(*lastEvent_);
+  return true;
+}
+
 void DimensionTool::commit() {
   auto id = host_.modeler().createDimension(start_, end_, offset_);
   if (!id) {
@@ -870,6 +936,15 @@ void ArcTool::updateStatus(const QString& snap) {
                           .arg(mode, semicircle_ ? QObject::tr("  [半円]") : suffix));
       break;
   }
+}
+
+bool ArcTool::stepBack() {
+  if (stage_ != Stage::Bulge) return false;
+  stage_ = Stage::End;  // keep the start, pick the end again
+  bulge_ = 0.0;
+  if (lastEvent_) mouseMove(*lastEvent_);
+  updateStatus();
+  return true;
 }
 
 bool ArcTool::keyPress(QKeyEvent* event) {

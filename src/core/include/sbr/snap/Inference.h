@@ -61,6 +61,10 @@ struct SnapQuery {
   // SketchUp-style tracking: points/edges the cursor recently paused on.
   std::vector<gp_Pnt> trackedPoints;      // enables "from point" axis inference
   std::vector<gp_Dir> trackedDirections;  // enables parallel/perpendicular inference
+  // Hysteresis: the point snapped last time stays the result while the
+  // cursor is within 1.5x the tolerance of it, so nearby candidates do not
+  // flicker (spec 07 §5.1).
+  std::optional<gp_Pnt> stickyPoint;
 };
 
 struct SnapResult {

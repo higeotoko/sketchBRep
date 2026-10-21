@@ -14,6 +14,7 @@
 #include <BRep_Builder.hxx>
 #include <TopoDS_Compound.hxx>
 #include <Graphic3d_Camera.hxx>
+#include <Graphic3d_TransformPers.hxx>
 #include <OpenGl_GraphicDriver.hxx>
 #include <Prs3d_LineAspect.hxx>
 #include <Prs3d_PointAspect.hxx>
@@ -321,6 +322,63 @@ gp_Dir Viewport::viewDirection() const {
   return view_->Camera()->Direction();
 }
 
+void Viewport::setRubberBand(const std::optional<QRect>& rect) {
+  if (view_.IsNull()) return;
+  if (!rect) {
+    if (!rubberBand_.IsNull()) context_->Remove(rubberBand_, Standard_False);
+    rubberBand_.Nullify();
+    redraw();
+    return;
+  }
+  if (rubberBand_.IsNull()) {
+    rubberBand_ = new AIS_RubberBand(Quantity_Color(0.2, 0.4, 0.9, Quantity_TOC_RGB), Aspect_TOL_DASH,
+                                     Quantity_Color(0.2, 0.4, 0.9, Quantity_TOC_RGB), 0.85, 1.0);
+    rubberBand_->SetFilling(Standard_True);
+    rubberBand_->SetDisplayMode(0);
+    rubberBand_->SetZLayer(Graphic3d_ZLayerId_TopOSD);
+    rubberBand_->SetTransformPersistence(new Graphic3d_TransformPers(Graphic3d_TMF_2d, Aspect_TOTP_LEFT_LOWER));
+  }
+  // OCCT's 2D overlay counts pixels from the bottom-left corner.
+  const QPoint a = devicePos(rect->topLeft());
+  const QPoint b = devicePos(rect->bottomRight());
+  const int h = glSize_.height() > 0 ? glSize_.height() : static_cast<int>(height() * devicePixelRatioF());
+  rubberBand_->SetRectangle(std::min(a.x(), b.x()), h - std::max(a.y(), b.y()), std::max(a.x(), b.x()),
+                            h - std::min(a.y(), b.y()));
+  if (context_->IsDisplayed(rubberBand_)) {
+    context_->Redisplay(rubberBand_, Standard_False);
+  } else {
+    context_->Display(rubberBand_, 0, -1, Standard_False);
+  }
+  redraw();
+}
+
+void Viewport::setShowOpenEnds(bool show) {
+  if (show == showOpenEnds_) return;
+  showOpenEnds_ = show;
+  scheduleSync();
+}
+
+void Viewport::syncOpenEnds() {
+  if (!openEnds_.IsNull()) {
+    context_->Remove(openEnds_, Standard_False);
+    openEnds_.Nullify();
+  }
+  openEndCount_ = 0;
+  if (!showOpenEnds_) return;
+  const std::vector<gp_Pnt> ends = modeler_.openCurveEnds();
+  if (ends.empty()) return;
+  BRep_Builder builder;
+  TopoDS_Compound compound;
+  builder.MakeCompound(compound);
+  for (const gp_Pnt& p : ends) builder.Add(compound, BRepBuilderAPI_MakeVertex(p).Vertex());
+  openEnds_ = new AIS_Shape(compound);
+  openEnds_->Attributes()->SetPointAspect(
+      new Prs3d_PointAspect(Aspect_TOM_O_POINT, Quantity_Color(0.85, 0.2, 0.15, Quantity_TOC_RGB), 2.0));
+  openEnds_->SetZLayer(Graphic3d_ZLayerId_Topmost);
+  context_->Display(openEnds_, AIS_WireFrame, -1, Standard_False);
+  openEndCount_ = static_cast<int>(ends.size());
+}
+
 void Viewport::syncSection() {
   const doc::SectionPlane* active = nullptr;
   for (const doc::SectionPlane& p : modeler_.document().settings().sections) {
@@ -461,6 +519,7 @@ void Viewport::syncNow() {
   inference_.setShapes(snapShapes);
   syncLabels();
   syncSection();
+  syncOpenEnds();
   // Display copies may have been rebuilt: refresh the element overlay.
   std::vector<ElementRef> still;
   for (const ElementRef& e : highlighted_) {
@@ -539,8 +598,10 @@ snap::SnapResult Viewport::snap(const QPoint& pos, std::optional<gp_Pnt> anchor,
                                 std::optional<gp_Dir> lockedDirection,
                                 std::optional<gp_Pln> workPlane,
                                 const std::vector<gp_Pnt>& trackedPoints,
-                                const std::vector<gp_Dir>& trackedDirections) const {
+                                const std::vector<gp_Dir>& trackedDirections,
+                                std::optional<gp_Pnt> stickyPoint) const {
   snap::SnapQuery query;
+  query.stickyPoint = stickyPoint;
   query.ray = rayAt(pos);
   query.cursor = snap::ScreenPoint{static_cast<double>(pos.x()), static_cast<double>(pos.y())};
   query.project = [this](const gp_Pnt& p) { return project(p); };

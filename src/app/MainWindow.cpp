@@ -31,6 +31,7 @@
 #include <nlohmann/json.hpp>
 
 #include "AiBridge.h"
+#include "Messages.h"
 #include "Cursors.h"
 #include "PropertiesPanel.h"
 #include "Viewport.h"
@@ -156,6 +157,7 @@ void MainWindow::buildUi() {
       exitGroup();
       return;
     }
+    if (active_ && active_->stepBack()) return;  // one stage back first
     if (active_) {
       active_->cancel();
       active_->activate();
@@ -642,6 +644,8 @@ void MainWindow::sceneMenu(int index, const QPoint& globalPos) {
 
 void MainWindow::activateTool(ToolId id) {
   if (active_) active_->deactivate();
+  // While drawing outlines, show where loose lines/arcs are still open.
+  viewport_->setShowOpenEnds(id == ToolId::Line || id == ToolId::Arc || id == ToolId::Curve);
   switch (id) {
     case ToolId::Select: active_ = selectTool_.get(); break;
     case ToolId::Line: active_ = lineTool_.get(); break;
@@ -678,9 +682,10 @@ void MainWindow::setMeasurement(const QString& label, const QString& value) {
   if (!userTyping_) measurement_->setText(value);
 }
 
-void MainWindow::reportError(const QString& text) {
+void MainWindow::reportError(const QString& raw) {
+  const QString text = userMessage(raw);
   lastError_ = text;
-  statusBar()->showMessage(text, 6000);
+  statusBar()->showMessage(text, 8000);
   QApplication::beep();
 }
 

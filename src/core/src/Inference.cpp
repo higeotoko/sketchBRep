@@ -179,6 +179,15 @@ SnapResult InferenceEngine::snap(const SnapQuery& q) const {
     std::vector<std::pair<double, SnapResult>> candidates;
     for (const auto& entry : cache_->points) {
       const double d = screenDistance(q.project, entry.point, q.cursor);
+      const bool sticky = q.stickyPoint && q.stickyPoint->Distance(entry.point) < 1e-6;
+      if (sticky && d < 1.5 * tol) {
+        SnapResult r;
+        r.kind = entry.kind;
+        r.point = entry.point;
+        r.shapeIndex = entry.shapeIndex;
+        candidates.emplace_back(-1.0, r);  // keeps first place
+        continue;
+      }
       // Endpoints win over midpoints at equal distance.
       const double bias = entry.kind == SnapKind::Endpoint ? 0.0 : 0.5;
       if (d + bias >= tol) continue;

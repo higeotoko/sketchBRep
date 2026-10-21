@@ -73,6 +73,9 @@ class Modeler {
   Result<ObjectId> faceFromLoop(const ObjectId& curveId, bool* loopFound = nullptr);
   // True if p is an end point of a loose open curve (where a loop can close).
   bool isLooseCurveEnd(const gp_Pnt& p) const;
+  // Ends of loose open curves in the current editing context that no other
+  // curve continues from: where an outline is still open (AC-05).
+  std::vector<gp_Pnt> openCurveEnds() const;
   // View state kept in the file but outside the undo history.
   void setTagVisible(const std::string& tag, bool visible);
   std::vector<std::string> tags() const;  // tags in use, sorted
