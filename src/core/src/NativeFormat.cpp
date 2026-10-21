@@ -275,6 +275,12 @@ json modifierToJson(const Modifier& m) {
                         {"direction", toJson(op.axis.Direction())},
                         {"angle", op.angle}};
           },
+          [](const HoleOp& op) {
+            return json{{"type", "hole"},
+                        {"name", op.outline.name},
+                        {"placement", toJson(op.outline.placement)},
+                        {"recipe", recipeToJson(*op.outline.recipe)}};
+          },
           [](const OffsetFaceOp& op) {
             return json{{"type", "offsetface"},
                         {"distance", op.distance},
@@ -319,6 +325,10 @@ Modifier modifierFrom(const json& j) {
     op.face.centroid = pointFrom(f.at("centroid"));
     op.face.area = f.value("area", 0.0);
     return op;
+  }
+  if (type == "hole") {
+    return HoleOp{BooleanOperand{std::make_shared<const Recipe>(recipeFrom(j.at("recipe"))),
+                                 trsfFrom(j.at("placement")), j.value("name", std::string())}};
   }
   if (type == "offsetface") {
     OffsetFaceOp op;

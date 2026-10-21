@@ -64,6 +64,11 @@ std::optional<gp_Dir> faceNormalAt(const TopoDS_Face& face, const gp_Pnt& p);
 // are extended or trimmed to meet it. Fails without side effects.
 Result<TopoDS_Shape> offsetSolidFace(const TopoDS_Shape& solid, const TopoDS_Face& face, double distance);
 
+// Face with 'hole' (a face strictly inside it, same plane) cut out.
+Result<TopoDS_Face> cutHole(const TopoDS_Face& face, const TopoDS_Face& hole);
+// True if 'inner' lies in the plane of 'outer' and strictly inside it.
+bool faceInsideFace(const TopoDS_Face& inner, const TopoDS_Face& outer);
+
 enum class BooleanOp { Union, Subtract, Intersect };
 
 // Combines solids: Union/Intersect over all shapes, Subtract removes

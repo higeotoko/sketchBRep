@@ -178,7 +178,14 @@ struct OffsetFaceOp {
   double distance = 0.0;
 };
 
-using Modifier = std::variant<ExtrudeOp, PushPullOp, OffsetOp, RevolveOp, SplitOp, OffsetFaceOp>;
+// A hole in a profile face: an outline drawn inside it (F-05). The outline's
+// recipe is kept (placement in this object's coordinates), so the face and
+// the hole regenerate together.
+struct HoleOp {
+  BooleanOperand outline;
+};
+
+using Modifier = std::variant<ExtrudeOp, PushPullOp, OffsetOp, RevolveOp, SplitOp, OffsetFaceOp, HoleOp>;
 
 struct Recipe {
   BaseFeature base;

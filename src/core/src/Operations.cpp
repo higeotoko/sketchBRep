@@ -30,6 +30,8 @@
 #include <TopoDS_Wire.hxx>
 #include <BRepAlgoAPI_Splitter.hxx>
 #include <TopTools_ListOfShape.hxx>
+#include <BRepAdaptor_Curve.hxx>
+#include <TopoDS_Edge.hxx>
 #include <ShapeUpgrade_UnifySameDomain.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp_Explorer.hxx>
@@ -416,6 +418,44 @@ Result<TopoDS_Shape> offsetSolidFace(const TopoDS_Shape& solid, const TopoDS_Fac
     return result;
   } catch (const Standard_Failure& e) {
     return Result<TopoDS_Shape>::failure(std::string("Offset failed: ") + e.GetMessageString());
+  }
+}
+
+bool faceInsideFace(const TopoDS_Face& inner, const TopoDS_Face& outer) {
+  gp_Pln a, b;
+  if (!isPlanarFace(inner, &a) || !isPlanarFace(outer, &b)) return false;
+  if (!a.Axis().Direction().IsParallel(b.Axis().Direction(), 1e-9) || b.Distance(a.Location()) > 1e-3) {
+    return false;
+  }
+  // Every vertex and edge midpoint strictly inside (not touching the boundary).
+  for (TopExp_Explorer e(inner, TopAbs_EDGE); e.More(); e.Next()) {
+    BRepAdaptor_Curve curve(TopoDS::Edge(e.Current()));
+    for (double t : {0.0, 0.25, 0.5, 0.75, 1.0}) {
+      const gp_Pnt p = curve.Value(curve.FirstParameter() + t * (curve.LastParameter() - curve.FirstParameter()));
+      BRepClass_FaceClassifier classifier(outer, p, 1e-4);
+      if (classifier.State() != TopAbs_IN || pointOnFaceBoundary(outer, p)) return false;
+    }
+  }
+  return true;
+}
+
+Result<TopoDS_Face> cutHole(const TopoDS_Face& face, const TopoDS_Face& hole) {
+  try {
+    BRepAlgoAPI_Cut cut(face, hole);
+    if (!cut.IsDone()) return Result<TopoDS_Face>::failure("The hole could not be cut");
+    TopExp_Explorer only(cut.Shape(), TopAbs_FACE);
+    if (!only.More()) return Result<TopoDS_Face>::failure("The hole removes the whole face");
+    TopoDS_Face result = TopoDS::Face(only.Current());
+    only.Next();
+    if (only.More()) return Result<TopoDS_Face>::failure("The hole splits the face");
+    if (!BRepCheck_Analyzer(result).IsValid()) return Result<TopoDS_Face>::failure("Invalid face with hole");
+    // Keep the profile's orientation.
+    const auto n0 = planarFaceNormal(face);
+    const auto n1 = planarFaceNormal(result);
+    if (n0 && n1 && n0->Dot(*n1) < 0) result.Reverse();
+    return result;
+  } catch (const Standard_Failure& e) {
+    return Result<TopoDS_Face>::failure(std::string("Hole failed: ") + e.GetMessageString());
   }
 }
 

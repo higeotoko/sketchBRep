@@ -179,7 +179,7 @@ Result<ObjectId> Modeler::createRectangle(const geom::SketchPlane& plane, double
   Object o;
   o.name = name.empty() ? uniqueName("Rectangle") : name;
   o.recipe.base = RectangleProfile{plane, width, height};
-  return addObject(std::move(o), "Rectangle");
+  return addProfile(std::move(o), "Rectangle");
 }
 
 Result<ObjectId> Modeler::createCircle(const geom::SketchPlane& plane, double radius,
@@ -187,7 +187,7 @@ Result<ObjectId> Modeler::createCircle(const geom::SketchPlane& plane, double ra
   Object o;
   o.name = name.empty() ? uniqueName("Circle") : name;
   o.recipe.base = CircleProfile{plane, radius};
-  return addObject(std::move(o), "Circle");
+  return addProfile(std::move(o), "Circle");
 }
 
 Result<ObjectId> Modeler::createArc(const gp_Pnt& start, const gp_Pnt& end, const gp_Dir& normal,
@@ -195,7 +195,7 @@ Result<ObjectId> Modeler::createArc(const gp_Pnt& start, const gp_Pnt& end, cons
   Object o;
   o.name = name.empty() ? uniqueName("Arc") : name;
   o.recipe.base = ArcCurve{start, end, normal, bulge, closed};
-  return addObject(std::move(o), "Arc");
+  return closed ? addProfile(std::move(o), "Arc") : addObject(std::move(o), "Arc");
 }
 
 Result<ObjectId> Modeler::createDimension(const gp_Pnt& start, const gp_Pnt& end, const gp_Vec& offset,
@@ -276,6 +276,49 @@ std::optional<ObjectId> Modeler::splitTarget(const std::vector<gp_Pnt>& worldPoi
   const auto candidates = splitCandidates(document_, activeGroup_, worldPoints);
   if (candidates.empty()) return std::nullopt;
   return candidates.front().object->id;
+}
+
+Result<ObjectId> Modeler::addProfile(Object object, const std::string& commandName) {
+  history_.beginGroup(commandName);
+  auto id = addObject(std::move(object), commandName);
+  if (!id) {
+    history_.abortGroup();
+    return id;
+  }
+  punchHole(*id);
+  history_.endGroup();
+  return id;
+}
+
+void Modeler::punchHole(const ObjectId& profileId) {
+  const Object* inner = document_.find(profileId);
+  if (!inner || inner->kind() != ObjectKind::Face) return;
+  const TopoDS_Shape innerShape = document_.worldShape(*inner);
+  if (innerShape.ShapeType() != TopAbs_FACE) return;
+  // The smallest coplanar profile around it is the one to cut.
+  const Object* host = nullptr;
+  double hostArea = 0.0;
+  for (const Object& o : document_.objects()) {
+    if (o.id == profileId || o.parent != inner->parent || o.kind() != ObjectKind::Face ||
+        !document_.isVisible(o.id)) {
+      continue;
+    }
+    const TopoDS_Shape outer = document_.worldShape(o);
+    if (outer.ShapeType() != TopAbs_FACE) continue;
+    if (!geom::faceInsideFace(TopoDS::Face(innerShape), TopoDS::Face(outer))) continue;
+    const double a = geom::area(outer);
+    if (!host || a < hostArea) {
+      host = &o;
+      hostArea = a;
+    }
+  }
+  if (!host) return;
+  Object cut = *host;
+  // The outline's placement in the host's own coordinates.
+  const gp_Trsf placement = host->transform.Inverted() * inner->transform;
+  cut.recipe.modifiers.push_back(
+      HoleOp{BooleanOperand{std::make_shared<const Recipe>(inner->recipe), placement, inner->name}});
+  commitModified(std::move(cut), "Hole");  // on failure the host stays as it was
 }
 
 Result<ObjectId> Modeler::splitWithLine(const std::vector<gp_Pnt>& worldPoints) {
@@ -443,6 +486,7 @@ Result<ObjectId> Modeler::faceFromLoop(const ObjectId& curveId, bool* loopFound)
     history_.abortGroup();
     return id;
   }
+  punchHole(*id);
   if (const Status removed = remove(ids); !removed) {
     history_.abortGroup();
     return Result<ObjectId>::failure(removed.message());
@@ -510,7 +554,7 @@ Result<ObjectId> Modeler::createPolygon(const std::vector<gp_Pnt>& points, const
   Object o;
   o.name = name.empty() ? uniqueName("Face") : name;
   o.recipe.base = PolygonProfile{points};
-  return addObject(std::move(o), "Face");
+  return addProfile(std::move(o), "Face");
 }
 
 Result<ObjectId> Modeler::createPolyline(const std::vector<gp_Pnt>& points,

@@ -76,6 +76,11 @@ class Modeler {
   // Ends of loose open curves in the current editing context that no other
   // curve continues from: where an outline is still open (AC-05).
   std::vector<gp_Pnt> openCurveEnds() const;
+  // F-05: a profile drawn strictly inside another coplanar profile (same
+  // group) cuts a hole into it; the new profile stays as the island.
+  // Called by every profile-creating command, in the same undo step.
+  void punchHole(const ObjectId& profileId);
+
   // View state kept in the file but outside the undo history.
   void setTagVisible(const std::string& tag, bool visible);
   std::vector<std::string> tags() const;  // tags in use, sorted
@@ -183,6 +188,7 @@ class Modeler {
  private:
   Result<ObjectId> addObject(Object object, const std::string& commandName);
   Status commitModified(Object object, const std::string& commandName);
+  Result<ObjectId> addProfile(Object object, const std::string& commandName);
   std::string uniqueName(const std::string& base) const;
   // Deep copy of a subtree with fresh ids. Returns objects parents-first.
   std::vector<Object> cloneSubtree(const ObjectId& id, const ObjectId& newParent) const;

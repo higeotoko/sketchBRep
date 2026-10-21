@@ -1,6 +1,8 @@
 // Spec 07 (docs/07_ux_principles.md) Gate 1 acceptance tests: draw -> face -> solid.
 // Test names carry the acceptance criterion ids (AC-xx) and requirement ids (F-xx).
 
+#include <cmath>
+
 #include <gtest/gtest.h>
 
 #include <TopExp_Explorer.hxx>
@@ -160,4 +162,53 @@ TEST(Gate1, AC09_LoopsDoNotCloseAcrossEditingContexts) {
   ASSERT_TRUE(m.setActiveGroup(*group).ok());
   EXPECT_FALSE(m.splitWithLine({gp_Pnt(800, 0, 0), gp_Pnt(800, 1000, 0)}).ok());
   EXPECT_TRUE(m.document().find(*rect));
+}
+
+// ---- Gate 3: F-05 faces with holes ---------------------------------------------------
+
+TEST(Gate3, F05_ProfileInsideProfileCutsAHole) {
+  doc::Modeler m;
+  auto floor = m.createRectangle(geom::SketchPlane::ground(), 4000, 3000);
+  ASSERT_TRUE(floor.ok());
+  geom::SketchPlane at = geom::SketchPlane::ground();
+  at.origin = gp_Pnt(1000, 1000, 0);
+  const std::size_t steps = m.history().undoCount();
+  auto opening = m.createRectangle(at, 1000, 800);  // e.g. a stair opening
+  ASSERT_TRUE(opening.ok());
+  EXPECT_EQ(m.history().undoCount(), steps + 1);  // drawing + hole: one step
+  EXPECT_NEAR(geom::area(m.document().worldShape(*floor)), 4000.0 * 3000 - 1000.0 * 800, 1e-3);
+  EXPECT_NEAR(geom::area(m.document().worldShape(*opening)), 1000.0 * 800, 1e-3);
+
+  // The slab keeps its hole when extruded and when its size changes.
+  ASSERT_TRUE(m.extrude(*floor, 200).ok());
+  EXPECT_NEAR(geom::volume(m.document().worldShape(*floor)), (12e6 - 0.8e6) * 200, 1.0);
+  ASSERT_TRUE(m.setParameter(*floor, "width", 5000).ok());
+  EXPECT_NEAR(geom::volume(m.document().worldShape(*floor)), (15e6 - 0.8e6) * 200, 1.0);
+
+  doc::Document d;
+  ASSERT_TRUE(doc::deserializeDocument(doc::serializeDocument(m.document()), d).ok());
+  EXPECT_NEAR(geom::volume(d.worldShape(*d.find(*floor))), (15e6 - 0.8e6) * 200, 1.0);
+
+  ASSERT_TRUE(m.undo());
+  ASSERT_TRUE(m.undo());
+  ASSERT_TRUE(m.undo());  // the opening and its hole go together
+  EXPECT_EQ(m.document().objects().size(), 1u);
+  EXPECT_NEAR(geom::area(m.document().worldShape(*floor)), 4000.0 * 3000, 1e-3);
+}
+
+TEST(Gate3, F05_TouchingOrOtherPlaneDoesNotCut) {
+  doc::Modeler m;
+  auto floor = m.createRectangle(geom::SketchPlane::ground(), 4000, 3000);
+  // Shares the floor's corner: not strictly inside.
+  ASSERT_TRUE(m.createRectangle(geom::SketchPlane::ground(), 1000, 1000).ok());
+  EXPECT_NEAR(geom::area(m.document().worldShape(*floor)), 12e6, 1e-3);
+  // Inside in plan but 10 mm higher: a different plane.
+  geom::SketchPlane up = geom::SketchPlane::ground();
+  up.origin = gp_Pnt(2000, 1000, 10);
+  ASSERT_TRUE(m.createCircle(up, 300).ok());
+  EXPECT_NEAR(geom::area(m.document().worldShape(*floor)), 12e6, 1e-3);
+  // A circle strictly inside cuts a round hole.
+  up.origin = gp_Pnt(3000, 1500, 0);
+  ASSERT_TRUE(m.createCircle(up, 300).ok());
+  EXPECT_NEAR(geom::area(m.document().worldShape(*floor)), 12e6 - M_PI * 300 * 300, 1e-2);
 }
