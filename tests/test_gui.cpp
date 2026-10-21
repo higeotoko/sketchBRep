@@ -1274,6 +1274,7 @@ void GuiPhase1::aiProposalApplyAndReject() {
   QVERIFY(f.window.hasPendingProposal());
   QVERIFY(f.vp->hasProposalGhost());
   QVERIFY(m.document().objects().empty());  // nothing changed yet
+  QCOMPARE(r.value("result").toObject().value("added").toInt(), 2);
   f.window.findChild<QPushButton*>(QStringLiteral("proposalReject"))->click();
   QVERIFY(!f.vp->hasProposalGhost());
   QVERIFY(m.document().objects().empty());
@@ -1295,6 +1296,15 @@ void GuiPhase1::aiProposalApplyAndReject() {
   QTest::qWait(30);
   QVERIFY(!f.window.hasPendingProposal());
   QVERIFY(!f.vp->hasProposalGhost());
+
+  // A proposal that deletes something says so (and shows it in red).
+  QVERIFY(f.window.hasPendingProposal() == false);
+  const std::string victim = m.document().objects().front().id;
+  r = call(std::string(R"({"command": "propose", "args": {"commands": [{"command": "delete", "args": {"ids": [")") + victim + R"("]}}]}})");
+  QVERIFY2(r.value("ok").toBool(), qPrintable(QJsonDocument(r).toJson()));
+  QCOMPARE(r.value("result").toObject().value("removed").toInt(), 1);
+  f.window.findChild<QPushButton*>(QStringLiteral("proposalReject"))->click();
+  QVERIFY(m.document().find(victim));
 
   // A proposal that cannot be applied is refused up front.
   r = call(R"({"command": "propose", "args": {"commands": [{"command": "extrude", "args": {"id": "nope", "distance": 1}}]}})");

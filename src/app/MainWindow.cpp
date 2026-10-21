@@ -610,24 +610,45 @@ void MainWindow::buildAiBridge() {
       proposal_ = Proposal{a["commands"].dump(), modeler_.history().revision(), "failed", tried.value("error", std::string())};
       throw std::runtime_error("the proposal cannot be applied: " + proposal_->error);
     }
-    // Ghost of everything the proposal adds or changes.
+    // What the proposal adds or changes (blue ghost) and removes (red ghost).
     BRep_Builder builder;
-    TopoDS_Compound ghost;
+    TopoDS_Compound ghost, removedGhost;
     builder.MakeCompound(ghost);
-    int count = 0;
+    builder.MakeCompound(removedGhost);
+    QStringList added, changed, removed;
     for (const doc::Object& o : scratch.document().objects()) {
       const doc::Object* old = modeler_.document().find(o.id);
-      if (o.shape.IsNull() || (old && old->shape.IsSame(o.shape) && old->transform.TranslationPart().IsEqual(o.transform.TranslationPart(), 1e-9))) continue;
-      builder.Add(ghost, scratch.document().worldShape(o));
-      ++count;
+      const bool same = old && old->shape.IsSame(o.shape) &&
+                        old->transform.TranslationPart().IsEqual(o.transform.TranslationPart(), 1e-9) &&
+                        doc::describe(old->recipe) == doc::describe(o.recipe);
+      if (same) continue;
+      (old ? changed : added) << QString::fromStdString(o.name);
+      if (!o.shape.IsNull()) builder.Add(ghost, scratch.document().worldShape(o));
     }
-    viewport_->setProposalGhost(ghost);
+    for (const doc::Object& o : modeler_.document().objects()) {
+      if (scratch.document().find(o.id)) continue;
+      removed << QString::fromStdString(o.name);
+      if (!o.shape.IsNull()) builder.Add(removedGhost, modeler_.document().worldShape(o));
+    }
+    viewport_->setProposalGhost(ghost, removedGhost);
     proposal_ = Proposal{a["commands"].dump(), modeler_.history().revision(), "pending", {}};
     const QString text = QString::fromStdString(a.value("description", std::string()));
-    proposalLabel_->setText(tr("AI の提案: %1").arg(text.isEmpty() ? tr("%1 個の変更").arg(count) : text));
+    const QString counts = tr("追加 %1 / 変更 %2 / 削除 %3").arg(added.size()).arg(changed.size()).arg(removed.size());
+    proposalLabel_->setText(text.isEmpty() ? tr("AI の提案: %1").arg(counts)
+                                           : tr("AI の提案: %1（%2）").arg(text, counts));
+    QStringList details;
+    if (!added.isEmpty()) details << tr("追加: %1").arg(added.join(QStringLiteral(", ")));
+    if (!changed.isEmpty()) details << tr("変更: %1").arg(changed.join(QStringLiteral(", ")));
+    if (!removed.isEmpty()) details << tr("削除: %1").arg(removed.join(QStringLiteral(", ")));
+    proposalLabel_->setToolTip(details.join(QStringLiteral("\n")));
     proposalBar_->show();
-    setStatus(tr("AI の提案を半透明で表示しています。「適用」か「却下」を選んでください"));
-    return json{{"state", "pending"}, {"revision", proposal_->revision}}.dump();
+    setStatus(tr("AI の提案を表示しています（青: 追加・変更、赤: 削除）。「適用」か「却下」を選んでください"));
+    return json{{"state", "pending"},
+                {"revision", proposal_->revision},
+                {"added", added.size()},
+                {"changed", changed.size()},
+                {"removed", removed.size()}}
+        .dump();
   };
   handlers["proposal_status"] = [this](const std::string&) {
     if (!proposal_) return json{{"state", "none"}}.dump();

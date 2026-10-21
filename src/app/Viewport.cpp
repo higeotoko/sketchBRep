@@ -23,6 +23,7 @@
 #include <StdSelect_BRepOwner.hxx>
 #include <StdSelect_ViewerSelector3d.hxx>
 #include <TopExp.hxx>
+#include <TopExp_Explorer.hxx>
 #include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
 #include <TopTools_ListOfShape.hxx>
 #include <TopoDS.hxx>
@@ -322,10 +323,22 @@ gp_Dir Viewport::viewDirection() const {
   return view_->Camera()->Direction();
 }
 
-void Viewport::setProposalGhost(const TopoDS_Shape& shape) {
+void Viewport::setProposalGhost(const TopoDS_Shape& shape, const TopoDS_Shape& removed) {
   if (view_.IsNull()) return;
   if (!proposalGhost_.IsNull()) context_->Remove(proposalGhost_, Standard_False);
   proposalGhost_.Nullify();
+  if (!proposalRemoved_.IsNull()) context_->Remove(proposalRemoved_, Standard_False);
+  proposalRemoved_.Nullify();
+  // Objects the proposal deletes: red, drawn over the model.
+  bool anyRemoved = false;
+  for (TopExp_Explorer e(removed, TopAbs_EDGE); e.More() && !anyRemoved; e.Next()) anyRemoved = true;
+  if (!removed.IsNull() && anyRemoved) {
+    proposalRemoved_ = new AIS_Shape(display::makeDisplayCopy(removed));
+    proposalRemoved_->SetColor(Quantity_Color(0.9, 0.2, 0.15, Quantity_TOC_RGB));
+    proposalRemoved_->SetTransparency(0.4);
+    proposalRemoved_->SetZLayer(Graphic3d_ZLayerId_Top);
+    context_->Display(proposalRemoved_, AIS_Shaded, -1, Standard_False);
+  }
   if (!shape.IsNull()) {
     proposalGhost_ = new AIS_Shape(display::makeDisplayCopy(shape));
     proposalGhost_->SetColor(Quantity_Color(0.25, 0.5, 1.0, Quantity_TOC_RGB));

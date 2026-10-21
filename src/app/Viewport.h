@@ -127,7 +127,7 @@ class Viewport : public QWidget {
   // Selection rectangle overlay (widget coordinates); empty hides it.
   void setRubberBand(const std::optional<QRect>& rect);
   // Translucent ghost of an AI proposal (independent of tool previews).
-  void setProposalGhost(const TopoDS_Shape& shape);
+  void setProposalGhost(const TopoDS_Shape& shape, const TopoDS_Shape& removed = TopoDS_Shape());
   bool hasProposalGhost() const { return !proposalGhost_.IsNull(); }
   int openEndCount() const { return openEndCount_; }
   // Writes the current view to an image file (PNG etc.).
@@ -190,6 +190,7 @@ class Viewport : public QWidget {
   Handle(AIS_Shape) openEnds_;
   Handle(AIS_RubberBand) rubberBand_;
   Handle(AIS_Shape) proposalGhost_;
+  Handle(AIS_Shape) proposalRemoved_;
   std::array<double, 6> sectionKey_{};  // origin + normal of section_
   std::vector<doc::ObjectId> selection_;
   snap::InferenceEngine inference_;
