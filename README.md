@@ -137,6 +137,7 @@ Phase 0 の CLI 検証: `build/tools/phase0/sbr_phase0 1000 2000 3000 box.step`
 - [docs/06_ai_integration.md](docs/06_ai_integration.md) — AI 連携（コマンド API・MCP・安全設計・活用方法・ロードマップ）
 - [docs/07_ux_principles.md](docs/07_ux_principles.md) — **設計思想・インタラクション原則（全開発で遵守する基準）**
 - [docs/08_ux_gap_analysis.md](docs/08_ux_gap_analysis.md) — 07 と現行実装のギャップ分析・優先順位・実施状況
+- [docs/09_ci.md](docs/09_ci.md) — CI の構成と実行時間の節約（節約モードの切り替え）
 
 ## ライセンスに関する注意
 
