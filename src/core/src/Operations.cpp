@@ -23,6 +23,10 @@
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <TopoDS_Vertex.hxx>
+#include <BRepOffset_MakeOffset.hxx>
+#include <BRepBuilderAPI_MakeSolid.hxx>
+#include <ShapeFix_Solid.hxx>
+#include <GeomAPI_ProjectPointOnSurf.hxx>
 #include <ShapeUpgrade_UnifySameDomain.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp_Explorer.hxx>
@@ -298,6 +302,55 @@ Result<TopoDS_Shape> splitFace(const TopoDS_Shape& solid, const TopoDS_Face& fac
     return result;
   } catch (const Standard_Failure& e) {
     return Result<TopoDS_Shape>::failure(std::string("Split failed: ") + e.GetMessageString());
+  }
+}
+
+std::optional<gp_Dir> faceNormalAt(const TopoDS_Face& face, const gp_Pnt& p) {
+  try {
+    const Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
+    if (surface.IsNull()) return std::nullopt;
+    GeomAPI_ProjectPointOnSurf project(p, surface);
+    if (project.NbPoints() < 1) return std::nullopt;
+    double u = 0, v = 0;
+    project.LowerDistanceParameters(u, v);
+    BRepGProp_Face prop(face);  // takes the face orientation into account
+    gp_Pnt at;
+    gp_Vec n;
+    prop.Normal(u, v, at, n);
+    if (n.Magnitude() < 1e-12) return std::nullopt;
+    return gp_Dir(n);
+  } catch (const Standard_Failure&) {
+    return std::nullopt;
+  }
+}
+
+Result<TopoDS_Shape> offsetSolidFace(const TopoDS_Shape& solid, const TopoDS_Face& face, double distance) {
+  if (std::abs(distance) < tolerance::kMinDimension) return Result<TopoDS_Shape>::failure("Distance must be non-zero");
+  try {
+    BRepOffset_MakeOffset maker;
+    maker.Initialize(solid, 0.0, 1e-4, BRepOffset_Skin, Standard_False, Standard_False, GeomAbs_Intersection,
+                     Standard_False);
+    maker.SetOffsetOnFace(face, distance);
+    maker.MakeOffsetShape();
+    if (!maker.IsDone()) return Result<TopoDS_Shape>::failure("The face could not be moved");
+    TopoDS_Shape result = maker.Shape();
+    if (result.ShapeType() == TopAbs_SHELL) {
+      BRepBuilderAPI_MakeSolid makeSolid(TopoDS::Shell(result));
+      if (!makeSolid.IsDone()) return Result<TopoDS_Shape>::failure("The result is not closed");
+      result = makeSolid.Solid();
+      ShapeFix_Solid fix(TopoDS::Solid(result));
+      fix.Perform();
+      result = fix.Solid();
+    } else if (result.ShapeType() == TopAbs_COMPOUND) {
+      TopExp_Explorer only(result, TopAbs_SOLID);
+      if (!only.More()) return Result<TopoDS_Shape>::failure("The result is not a solid");
+      result = only.Current();
+    }
+    const ValidationReport report = validateShape(result, true);
+    if (!report.valid) return Result<TopoDS_Shape>::failure("Moving the face gives an invalid solid");
+    return result;
+  } catch (const Standard_Failure& e) {
+    return Result<TopoDS_Shape>::failure(std::string("Offset failed: ") + e.GetMessageString());
   }
 }
 

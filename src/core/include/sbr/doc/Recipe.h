@@ -163,7 +163,13 @@ struct SplitOp {
   std::vector<gp_Pnt> points;
 };
 
-using Modifier = std::variant<ExtrudeOp, PushPullOp, OffsetOp, RevolveOp, SplitOp>;
+// Push/pull of a curved face: offset along its normal, neighbours adapt.
+struct OffsetFaceOp {
+  geom::SurfaceRef face;
+  double distance = 0.0;
+};
+
+using Modifier = std::variant<ExtrudeOp, PushPullOp, OffsetOp, RevolveOp, SplitOp, OffsetFaceOp>;
 
 struct Recipe {
   BaseFeature base;

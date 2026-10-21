@@ -119,6 +119,7 @@ class GuiPhase1 : public QObject {
   void arcAndLinesCloseIntoFace();
   void sectionPlaneCutsView();
   void sectionToolAndTagsPanel();
+  void pushPullCylinderSide();
 };
 
 namespace {
@@ -1064,6 +1065,23 @@ void GuiPhase1::sectionToolAndTagsPanel() {
   QCOMPARE(loaded.document().settings().sections.size(), std::size_t(1));
   QVERIFY(loaded.document().settings().hiddenTags.count("Annotations"));
   QFile::remove(path);
+}
+
+void GuiPhase1::pushPullCylinderSide() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  auto c = m.createCircle(geom::SketchPlane::ground(), 500);
+  QVERIFY(m.extrude(*c, 1000).ok());
+  QTest::qWait(30);
+  f.window.activateTool(MainWindow::ToolId::PushPull);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, -500, 500)));  // the side, facing the camera
+  move(f.vp, f.vp->toWidget(gp_Pnt(0, -560, 500)));
+  type(f.vp, QStringLiteral("100"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  const auto* circle = std::get_if<doc::CircleProfile>(&m.document().find(*c)->recipe.base);
+  QVERIFY(circle);
+  QVERIFY2(std::abs(circle->radius - 600) < 1e-6, qPrintable(QString::number(circle->radius)));
 }
 
 QTEST_MAIN(GuiPhase1)

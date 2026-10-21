@@ -3,6 +3,15 @@
 #include <cmath>
 #include <limits>
 
+#include <BRepAdaptor_Surface.hxx>
+#include <BRepBuilderAPI_MakeVertex.hxx>
+#include <BRepClass_FaceClassifier.hxx>
+#include <BRepExtrema_DistShapeShape.hxx>
+#include <BRepGProp_Face.hxx>
+#include <BRepTools.hxx>
+#include <TopoDS_Vertex.hxx>
+#include <gp_Pnt2d.hxx>
+#include <optional>
 #include <BRepGProp.hxx>
 #include <GProp_GProps.hxx>
 #include <TopExp_Explorer.hxx>
@@ -72,6 +81,60 @@ FaceRef FaceRef::transformed(const gp_Trsf& trsf) const {
   const double s = std::abs(trsf.ScaleFactor());
   out.area = area * s * s;
   return out;
+}
+
+namespace {
+
+// A point strictly inside the face (UV centre or a nearby grid point).
+std::optional<std::pair<gp_Pnt, gp_Dir>> interiorPoint(const TopoDS_Face& face) {
+  double u0, u1, v0, v1;
+  BRepTools::UVBounds(face, u0, u1, v0, v1);
+  BRepGProp_Face prop(face);
+  for (double fu : {0.5, 0.25, 0.75}) {
+    for (double fv : {0.5, 0.25, 0.75}) {
+      const gp_Pnt2d uv(u0 + (u1 - u0) * fu, v0 + (v1 - v0) * fv);
+      BRepClass_FaceClassifier classifier(face, uv, 1e-7);
+      if (classifier.State() != TopAbs_IN) continue;
+      gp_Pnt p;
+      gp_Vec n;
+      prop.Normal(uv.X(), uv.Y(), p, n);
+      if (n.Magnitude() < 1e-12) continue;
+      return std::make_pair(p, gp_Dir(n));
+    }
+  }
+  return std::nullopt;
+}
+
+}  // namespace
+
+Result<SurfaceRef> SurfaceRef::fromFace(const TopoDS_Face& face) {
+  const auto inside = interiorPoint(face);
+  if (!inside) return Result<SurfaceRef>::failure("Face has no interior point");
+  SurfaceRef ref;
+  ref.point = inside->first;
+  ref.normal = inside->second;
+  ref.surfaceType = static_cast<int>(BRepAdaptor_Surface(face).GetType());
+  return ref;
+}
+
+Result<TopoDS_Face> SurfaceRef::resolve(const TopoDS_Shape& shape) const {
+  TopoDS_Face best;
+  double bestDistance = std::numeric_limits<double>::max();
+  const TopoDS_Vertex v = BRepBuilderAPI_MakeVertex(point);
+  for (TopExp_Explorer e(shape, TopAbs_FACE); e.More(); e.Next()) {
+    const TopoDS_Face face = TopoDS::Face(e.Current());
+    if (static_cast<int>(BRepAdaptor_Surface(face).GetType()) != surfaceType) continue;
+    BRepExtrema_DistShapeShape dist(v, face);
+    if (!dist.IsDone() || dist.NbSolution() < 1) continue;
+    const auto n = faceNormalAt(face, dist.PointOnShape2(1));
+    if (!n || n->Angle(normal) > M_PI / 4) continue;  // must face the same way
+    if (dist.Value() < bestDistance) {
+      bestDistance = dist.Value();
+      best = face;
+    }
+  }
+  if (best.IsNull()) return Result<TopoDS_Face>::failure("Referenced curved face no longer exists");
+  return best;
 }
 
 }  // namespace sbr::geom

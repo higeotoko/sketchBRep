@@ -400,6 +400,7 @@ class PushPullTool : public Tool {
   void reset();
 
   bool dragging_ = false;
+  bool curved_ = false;
   doc::ObjectId objectId_;
   TopoDS_Face face_;
   gp_Pnt origin_;

@@ -357,7 +357,8 @@ const std::vector<CommandDef>& commands() {
        }},
       {"push_pull",
        "Push/pull a planar face. face = index from get_object, or {\"normal\": [x,y,z]} for the outermost "
-       "face facing that way. Positive distance moves the face outwards. A profile lying on another "
+       "face facing that way (planar faces only; curved faces by index, e.g. a cylinder side changes its "
+       "radius). Positive distance moves the face outwards. A profile lying on another "
        "solid's face cuts into it (negative) or joins it (positive); the merged object gets a new "
        "id, so always continue with the returned id.",
        SCHEMA({"type": "object", "properties": {"id": {"type": "string"},

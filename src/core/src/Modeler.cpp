@@ -11,6 +11,7 @@
 #include <TopoDS_Vertex.hxx>
 #include <TopoDS_Wire.hxx>
 #include <functional>
+#include <BRepAdaptor_Surface.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopLoc_Location.hxx>
 #include <BRepTools.hxx>
@@ -448,7 +449,29 @@ Result<PushPullResult> Modeler::pushPull(const ObjectId& id, const TopoDS_Face& 
   const gp_Trsf world = document_.worldTransform(object);
   const TopoDS_Face face = TopoDS::Face(worldFace.Moved(TopLoc_Location(world.Inverted())));
   const auto pickedNormal = geom::planarFaceNormal(face);
-  if (!pickedNormal) return Result<PushPullResult>::failure("Only planar faces can be pushed/pulled");
+  if (!pickedNormal) {
+    if (object.kind() != ObjectKind::Solid) {
+      return Result<PushPullResult>::failure("Only planar faces of profiles can be pushed/pulled");
+    }
+    std::string curvedKey;
+    // An extruded circle's side: change the radius (stays a clean parameter).
+    if (auto* circle = std::get_if<CircleProfile>(&object.recipe.base);
+        circle && object.recipe.modifiers.size() == 1 &&
+        std::holds_alternative<ExtrudeOp>(object.recipe.modifiers.front()) &&
+        BRepAdaptor_Surface(face).GetType() == GeomAbs_Cylinder) {
+      circle->radius += distance;
+      curvedKey = "radius";
+    } else {
+      // Any other curved face: parametric offset of that face.
+      const auto ref = geom::SurfaceRef::fromFace(face);
+      if (!ref) return Result<PushPullResult>::failure(ref.error());
+      object.recipe.modifiers.push_back(OffsetFaceOp{ref.value(), distance});
+      curvedKey = opKey(object.recipe.modifiers.size() - 1);
+    }
+    const Status committed = commitModified(object, "Push/Pull");
+    if (!committed) return Result<PushPullResult>::failure(committed.message());
+    return PushPullResult{id, curvedKey};
+  }
 
   auto& mods = object.recipe.modifiers;
   const RegenContext context = document_.regenContext();

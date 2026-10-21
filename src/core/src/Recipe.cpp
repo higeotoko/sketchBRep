@@ -200,6 +200,11 @@ Result<TopoDS_Shape> regenerate(const Recipe& recipe, const RegenContext& contex
               if (!isFace) return Result<TopoDS_Shape>::failure("Revolve requires a profile face");
               return geom::revolve(shape, op.axis, op.angle);
             },
+            [&](const OffsetFaceOp& op) -> Result<TopoDS_Shape> {
+              auto face = op.face.resolve(shape);
+              if (!face) return Result<TopoDS_Shape>::failure(face.error());
+              return geom::offsetSolidFace(shape, face.value(), op.distance);
+            },
             [&](const SplitOp& op) -> Result<TopoDS_Shape> {
               auto face = op.face.resolve(shape);
               if (!face) return Result<TopoDS_Shape>::failure(face.error());
@@ -261,6 +266,10 @@ std::vector<Parameter> parameters(const Recipe& recipe) {
                      out.push_back({angleKey(i), "Revolve angle", op.angle * 180.0 / M_PI, false});
                    },
                    [&](const SplitOp&) {},
+                   [&](const OffsetFaceOp& op) {
+                     out.push_back({opKey(i), "Push/Pull " + std::to_string(i) + " distance",
+                                    op.distance, true});
+                   },
                },
                recipe.modifiers[i]);
   }
@@ -355,6 +364,7 @@ std::string describe(const Recipe& recipe) {
                    [&](const ExtrudeOp& op) { out << " > Extrude " << op.distance; },
                    [&](const PushPullOp& op) { out << " > Push/Pull " << op.distance; },
                    [&](const SplitOp&) { out << " > Split face"; },
+                   [&](const OffsetFaceOp& op) { out << " > Push/Pull (curved) " << op.distance; },
                    [&](const OffsetOp& op) { out << " > Offset " << op.distance; },
                    [&](const RevolveOp& op) { out << " > Revolve " << op.angle * 180.0 / M_PI << " deg"; },
                },

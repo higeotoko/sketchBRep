@@ -1,5 +1,6 @@
 #include <cmath>
 
+#include <BRepAdaptor_Surface.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
@@ -288,4 +289,54 @@ TEST(Freeform, LinesAndArcCloseIntoParametricFace) {
   ASSERT_TRUE(m.undo());
   ASSERT_TRUE(m.undo());  // face creation undone in one step: the curves are back
   EXPECT_EQ(m.document().objects().size(), 2u);
+}
+
+namespace {
+TopoDS_Face firstFaceOfType(const TopoDS_Shape& shape, GeomAbs_SurfaceType type) {
+  for (TopExp_Explorer e(shape, TopAbs_FACE); e.More(); e.Next()) {
+    if (BRepAdaptor_Surface(TopoDS::Face(e.Current())).GetType() == type) return TopoDS::Face(e.Current());
+  }
+  return {};
+}
+}  // namespace
+
+TEST(Freeform, PushPullCylinderSideChangesRadius) {
+  doc::Modeler m;
+  auto c = m.createCircle(SketchPlane::ground(), 500);
+  ASSERT_TRUE(m.extrude(*c, 1000).ok());
+  const TopoDS_Face side = firstFaceOfType(m.document().worldShape(*c), GeomAbs_Cylinder);
+  ASSERT_FALSE(side.IsNull());
+  auto r = m.pushPull(*c, side, 100);
+  ASSERT_TRUE(r.ok()) << r.error();
+  EXPECT_EQ(r->parameterKey, "radius");
+  EXPECT_NEAR(volume(m.document().worldShape(*c)), M_PI * 600 * 600 * 1000, 1.0);
+}
+
+TEST(Freeform, PushPullCurvedFaceOfComplexSolidIsParametric) {
+  doc::Modeler m;
+  // A slab with a round column on it (union): the column's side is pushed out.
+  auto slab = m.createRectangle(SketchPlane::ground(), 2000, 2000);
+  ASSERT_TRUE(m.extrude(*slab, 500).ok());
+  SketchPlane top = SketchPlane::ground();
+  top.origin = gp_Pnt(1000, 1000, 500);
+  auto column = m.createCircle(top, 300);
+  ASSERT_TRUE(m.extrude(*column, 1000).ok());
+  auto u = m.boolean(doc::BooleanKind::Union, {*slab, *column});
+  ASSERT_TRUE(u.ok()) << u.error();
+  const double v0 = volume(m.document().worldShape(*u));
+  const TopoDS_Face side = firstFaceOfType(m.document().worldShape(*u), GeomAbs_Cylinder);
+  ASSERT_FALSE(side.IsNull());
+  auto r = m.pushPull(*u, side, 50);
+  ASSERT_TRUE(r.ok()) << r.error();
+  EXPECT_NEAR(volume(m.document().worldShape(*u)) - v0, M_PI * (350.0 * 350 - 300.0 * 300) * 1000, 10.0);
+
+  // Editing the column height upstream keeps the pushed radius.
+  ASSERT_TRUE(m.setParameter(*u, "in1.op0.distance", 2000).ok());
+  EXPECT_NEAR(volume(m.document().worldShape(*u)), 2000.0 * 2000 * 500 + M_PI * 350 * 350 * 2000, 50.0);
+  ASSERT_TRUE(m.setParameter(*u, r->parameterKey, -100).ok());
+  EXPECT_NEAR(volume(m.document().worldShape(*u)), 2000.0 * 2000 * 500 + M_PI * 200 * 200 * 2000, 50.0);
+
+  doc::Document d;
+  ASSERT_TRUE(doc::deserializeDocument(doc::serializeDocument(m.document()), d).ok());
+  EXPECT_NEAR(volume(d.worldShape(*d.find(*u))), volume(m.document().worldShape(*u)), 1e-3);
 }

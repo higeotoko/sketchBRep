@@ -28,4 +28,16 @@ struct FaceRef {
   FaceRef transformed(const gp_Trsf& trsf) const;
 };
 
+// Reference to a curved face: a point inside it, the outward normal there
+// and the surface type. Resolves to the face of the same type and facing
+// whose surface passes closest to the point.
+struct SurfaceRef {
+  gp_Pnt point;
+  gp_Dir normal{0, 0, 1};
+  int surfaceType = 0;  // GeomAbs_SurfaceType
+
+  static Result<SurfaceRef> fromFace(const TopoDS_Face& face);
+  Result<TopoDS_Face> resolve(const TopoDS_Shape& shape) const;
+};
+
 }  // namespace sbr::geom

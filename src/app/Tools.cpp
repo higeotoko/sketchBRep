@@ -1197,7 +1197,13 @@ void PushPullTool::mouseMove(const ToolEvent& e) {
   host_.setStatus(QObject::tr("クリックで確定、または距離を入力して Enter") +
                   (pointSnap ? QStringLiteral("  [") + snapLabel(s.kind) + QStringLiteral("]")
                              : QString()));
-  if (std::abs(distance_) > tolerance::kMinDimension) {
+  if (std::abs(distance_) > tolerance::kMinDimension && curved_) {
+    // Preview the whole solid with the face moved.
+    const doc::Object* o = host_.modeler().document().find(objectId_);
+    auto moved = o ? geom::offsetSolidFace(host_.modeler().document().worldShape(*o), face_, distance_)
+                   : Result<TopoDS_Shape>::failure("");
+    vp.setPreview(moved ? moved.value() : TopoDS_Shape(), true);
+  } else if (std::abs(distance_) > tolerance::kMinDimension) {
     BRepPrimAPI_MakePrism prism(face_, gp_Vec(normal_) * distance_, Standard_True);
     vp.setPreview(prism.IsDone() ? prism.Shape() : TopoDS_Shape(), true);
   } else {
@@ -1213,11 +1219,12 @@ void PushPullTool::mousePress(const ToolEvent& e) {
   }
   const auto pick = host_.viewport().pickFace(e.pos);
   if (!pick) return;
-  const auto normal = geom::planarFaceNormal(pick->face);
-  if (!normal) {
-    host_.reportError(QObject::tr("現在は平面のみプッシュ/プルできます"));
-    return;
-  }
+  auto normal = geom::planarFaceNormal(pick->face);
+  curved_ = !normal;
+  // Curved faces (cylinders, swept/lofted surfaces) move along their
+  // normal at the picked point.
+  if (!normal) normal = geom::faceNormalAt(pick->face, pick->point);
+  if (!normal) return;
   objectId_ = pick->objectId;
   face_ = pick->face;
   origin_ = pick->point;

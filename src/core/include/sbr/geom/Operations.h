@@ -48,6 +48,14 @@ bool pointOnFace(const TopoDS_Face& face, const gp_Pnt& p, double tolerance = 1e
 // True if p lies on the face boundary.
 bool pointOnFaceBoundary(const TopoDS_Face& face, const gp_Pnt& p, double tolerance = 1e-3);
 
+// Outward normal of a (possibly curved) face at the point nearest to p.
+std::optional<gp_Dir> faceNormalAt(const TopoDS_Face& face, const gp_Pnt& p);
+
+// Push/pull of a curved face (cylinder side, swept or lofted surface): the
+// face is offset by 'distance' along its normal and the neighbouring faces
+// are extended or trimmed to meet it. Fails without side effects.
+Result<TopoDS_Shape> offsetSolidFace(const TopoDS_Shape& solid, const TopoDS_Face& face, double distance);
+
 enum class BooleanOp { Union, Subtract, Intersect };
 
 // Combines solids: Union/Intersect over all shapes, Subtract removes
