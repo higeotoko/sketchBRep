@@ -28,6 +28,7 @@ const char* toString(ObjectKind kind) {
     case ObjectKind::Solid: return "Solid";
     case ObjectKind::Group: return "Group";
     case ObjectKind::Instance: return "Instance";
+    case ObjectKind::Annotation: return "Annotation";
     case ObjectKind::Other: return "Other";
   }
   return "Other";
@@ -36,6 +37,7 @@ const char* toString(ObjectKind kind) {
 ObjectKind Object::kind() const {
   if (std::holds_alternative<GroupNode>(recipe.base)) return ObjectKind::Group;
   if (std::holds_alternative<ComponentInstance>(recipe.base)) return ObjectKind::Instance;
+  if (isAnnotation(recipe)) return ObjectKind::Annotation;
   if (shape.IsNull()) return ObjectKind::Empty;
   if (TopExp_Explorer(shape, TopAbs_SOLID).More()) return ObjectKind::Solid;
   if (TopExp_Explorer(shape, TopAbs_FACE).More()) return ObjectKind::Face;

@@ -40,11 +40,12 @@ class MainWindow : public QMainWindow, public ToolHost {
   doc::ObjectId editingGroup() const override { return modeler_.activeGroup(); }
   void enterGroup(const doc::ObjectId& groupId) override;
   void exitGroup() override;
+  void beginTextEntry(const QString& label, const QString& text) override;
 
   // Used by tests and the command line.
   bool openFile(const QString& path);
   bool saveFile(const QString& path);
-  enum class ToolId { Select, Line, Rectangle, PushPull, Move, Rotate, Offset, Curve, Revolve, Measure, Circle, Paint, Eraser, Arc };
+  enum class ToolId { Select, Line, Rectangle, PushPull, Move, Rotate, Offset, Curve, Revolve, Measure, Circle, Paint, Eraser, Arc, Dimension, Text };
   void activateTool(ToolId id);
   Tool* activeTool() const { return active_; }
   QLineEdit* measurementBox() const { return measurement_; }
@@ -111,9 +112,11 @@ class MainWindow : public QMainWindow, public ToolHost {
   std::unique_ptr<PaintTool> paintTool_;
   std::unique_ptr<EraserTool> eraserTool_;
   std::unique_ptr<ArcTool> arcTool_;
+  std::unique_ptr<DimensionTool> dimensionTool_;
+  std::unique_ptr<TextTool> textTool_;
   Tool* active_ = nullptr;
   QActionGroup* toolGroup_ = nullptr;
-  QAction* toolActions_[14] = {};
+  QAction* toolActions_[16] = {};
   QAction* undoAction_ = nullptr;
   QAction* redoAction_ = nullptr;
   QAction* focusOnDoubleClick_ = nullptr;

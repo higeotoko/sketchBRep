@@ -51,6 +51,11 @@ class Modeler {
   // closed = segment face (can be pushed/pulled).
   Result<ObjectId> createArc(const gp_Pnt& start, const gp_Pnt& end, const gp_Dir& normal, double bulge,
                              bool closed = false, const std::string& name = {});
+  // Annotations. Dimension text empty = measured length.
+  Result<ObjectId> createDimension(const gp_Pnt& start, const gp_Pnt& end, const gp_Vec& offset,
+                                   const std::string& text = {});
+  Result<ObjectId> createText(const gp_Pnt& position, const std::optional<gp_Pnt>& target, const std::string& text);
+  Status setAnnotationText(const ObjectId& id, const std::string& text);
   Result<ObjectId> createPolygon(const std::vector<gp_Pnt>& points, const std::string& name = {});
   Result<ObjectId> createPolyline(const std::vector<gp_Pnt>& points, const std::string& name = {});
   Result<ObjectId> importShape(const TopoDS_Shape& shape, const std::string& name,

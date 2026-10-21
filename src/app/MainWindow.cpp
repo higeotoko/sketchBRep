@@ -54,6 +54,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   paintTool_ = std::make_unique<PaintTool>(*this);
   eraserTool_ = std::make_unique<EraserTool>(*this);
   arcTool_ = std::make_unique<ArcTool>(*this);
+  dimensionTool_ = std::make_unique<DimensionTool>(*this);
+  textTool_ = std::make_unique<TextTool>(*this);
 
   buildUi();
   buildAiBridge();
@@ -172,6 +174,14 @@ void MainWindow::buildUi() {
             if (!o || o->name == utf8(name)) return;
             QTimer::singleShot(0, this, [this, id, name] { modeler_.rename(id, utf8(name)); });
           });
+  connect(panel_, &PropertiesPanel::annotationTextEdited, this, [this](const doc::ObjectId& id, const QString& text) {
+    const doc::Object* o = modeler_.document().find(id);
+    const auto label = o ? doc::annotationLabel(o->recipe) : std::nullopt;
+    if (!label) return;
+    const auto* d = std::get_if<doc::LinearDimension>(&o->recipe.base);
+    if ((d && d->text == utf8(text)) || (!d && label->text == utf8(text))) return;
+    QTimer::singleShot(0, this, [this, id, text] { report(modeler_.setAnnotationText(id, utf8(text))); });
+  });
   connect(panel_, &PropertiesPanel::tagEdited, this, [this](const doc::ObjectId& id, const QString& tag) {
     const doc::Object* o = modeler_.document().find(id);
     if (!o || o->layer == utf8(tag)) return;
@@ -365,6 +375,8 @@ void MainWindow::buildMenus() {
       {tr("曲線"), QStringLiteral("N"), ToolId::Curve, CursorKind::Curve},
       {tr("回転体"), QStringLiteral("V"), ToolId::Revolve, CursorKind::Revolve},
       {tr("メジャー"), QStringLiteral("T"), ToolId::Measure, CursorKind::Measure},
+      {tr("寸法"), QStringLiteral("D"), ToolId::Dimension, CursorKind::Dimension},
+      {tr("テキスト"), QStringLiteral("Shift+T"), ToolId::Text, CursorKind::Text},
       {tr("ペイント"), QStringLiteral("B"), ToolId::Paint, CursorKind::Paint},
       {tr("消しゴム"), QStringLiteral("E"), ToolId::Eraser, CursorKind::Eraser},
   };
@@ -424,6 +436,7 @@ void MainWindow::buildMenus() {
            "Shift+ホイールドラッグ: パン / ダブルクリック: フォーカス<br>"
            "F2〜F7: 標準ビュー / F8: 透視・平行投影 / Shift+Z: 全体表示<br><br>"
            "<b>ツール</b><br>Space: 選択 / L: 線 / R: 矩形 / P: プッシュ/プル<br>"
+           "D: 寸法（2 点 → 寸法線の位置）/ Shift+T: テキスト（面をクリックすると面積）<br>"
            "C: 円 / A: 円弧（始点 → 終点 → 膨らみ。Ctrl で面/線）/ N: 曲線 / V: 回転体 / T: メジャー / B: ペイント（Alt+クリックで色を拾う）/ E: 消しゴム<br>"
            "M: 移動 / Q: 回転 / F: オフセット（移動・回転中に Ctrl でコピー、確定後 x3 で配列・/3 で等分割）<br>"
            "作図中に数値を打って Enter で寸法指定（例: 3000, 4.5m, 3000,4500）<br>"
@@ -612,6 +625,8 @@ void MainWindow::activateTool(ToolId id) {
     case ToolId::Measure: active_ = measureTool_.get(); break;
     case ToolId::Circle: active_ = circleTool_.get(); break;
     case ToolId::Arc: active_ = arcTool_.get(); break;
+    case ToolId::Dimension: active_ = dimensionTool_.get(); break;
+    case ToolId::Text: active_ = textTool_.get(); break;
     case ToolId::Paint: active_ = paintTool_.get(); break;
     case ToolId::Eraser: active_ = eraserTool_.get(); break;
   }
@@ -727,6 +742,14 @@ void MainWindow::updateTitle() {
   const QString name = currentPath_.isEmpty() ? tr("無題") : QFileInfo(currentPath_).fileName();
   setWindowTitle(QStringLiteral("%1[*] - SketchBRep").arg(name));
   setWindowModified(!modeler_.history().isClean());
+}
+
+void MainWindow::beginTextEntry(const QString& label, const QString& text) {
+  userTyping_ = false;
+  setMeasurement(label, text);
+  userTyping_ = true;  // keep the text while the user edits it
+  measurement_->setFocus();
+  measurement_->selectAll();
 }
 
 void MainWindow::commitMeasurement() {

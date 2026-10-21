@@ -112,6 +112,30 @@ QPixmap draw(CursorKind kind, QPoint& hotspot) {
       hotspot = QPoint(2, 30);
       break;
     }
+    case CursorKind::Dimension: {
+      halo(p, pencil());
+      QPainterPath dim;
+      dim.moveTo(14, 26);
+      dim.lineTo(30, 26);
+      dim.moveTo(14, 21);
+      dim.lineTo(14, 31);
+      dim.moveTo(30, 21);
+      dim.lineTo(30, 31);
+      halo(p, dim);
+      hotspot = QPoint(2, 30);
+      break;
+    }
+    case CursorKind::Text: {
+      halo(p, pencil());
+      QPainterPath t;
+      t.moveTo(15, 16);
+      t.lineTo(29, 16);
+      t.moveTo(22, 16);
+      t.lineTo(22, 30);
+      halo(p, t);
+      hotspot = QPoint(2, 30);
+      break;
+    }
     case CursorKind::Arc: {
       halo(p, pencil());
       QPainterPath arc;

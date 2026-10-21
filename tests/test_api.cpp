@@ -230,3 +230,16 @@ TEST(McpServer, AppCommandSpecsAreValidSchemas) {
     EXPECT_FALSE(s.description.empty());
   }
 }
+
+TEST(CommandApi, DimensionsAndTextNotes) {
+  Api a;
+  const std::string dim = a.ok("create_dimension", {{"start", {0, 0, 0}}, {"end", {7200, 0, 0}},
+                                                    {"offset", {0, -800, 0}}})["id"];
+  EXPECT_EQ(a.ok("get_object", {{"id", dim}})["text"], "7,200");
+  a.ok("set_text", {{"id", dim}, {"text", "X1-X3"}});
+  EXPECT_EQ(a.ok("get_object", {{"id", dim}})["kind"], "Annotation");
+  EXPECT_EQ(a.ok("get_object", {{"id", dim}})["text"], "X1-X3");
+  const std::string note = a.ok("create_text", {{"position", {1000, 1000, 0}}, {"text", "LDK 24.0 m²"}})["id"];
+  EXPECT_EQ(a.ok("get_object", {{"id", note}})["text"], "LDK 24.0 m²");
+  EXPECT_FALSE(a.call("create_text", {{"position", {0, 0, 0}}, {"text", ""}})["ok"]);
+}

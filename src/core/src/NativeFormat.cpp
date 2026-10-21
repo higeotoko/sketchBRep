@@ -106,6 +106,15 @@ json baseToJson(const BaseFeature& base) {
             return json{{"type", "arc"},       {"start", toJson(a.start)}, {"end", toJson(a.end)},
                         {"normal", toJson(a.normal)}, {"bulge", a.bulge},  {"closed", a.closed}};
           },
+          [](const LinearDimension& d) {
+            return json{{"type", "dimension"}, {"start", toJson(d.start)}, {"end", toJson(d.end)},
+                        {"offset", json::array({d.offset.X(), d.offset.Y(), d.offset.Z()})}, {"text", d.text}};
+          },
+          [](const TextNote& t) {
+            json j = {{"type", "text"}, {"position", toJson(t.position)}, {"text", t.text}};
+            if (t.target) j["target"] = toJson(*t.target);
+            return j;
+          },
           [](const ImportedShape& s) {
             return json{{"type", "imported"},
                         {"source", s.source},
@@ -173,6 +182,16 @@ BaseFeature baseFrom(const json& j) {
   if (type == "arc") {
     return ArcCurve{pointFrom(j.at("start")), pointFrom(j.at("end")), dirFrom(j.at("normal")),
                     j.at("bulge").get<double>(), j.value("closed", false)};
+  }
+  if (type == "dimension") {
+    const gp_Pnt offset = pointFrom(j.at("offset"));
+    return LinearDimension{pointFrom(j.at("start")), pointFrom(j.at("end")), gp_Vec(offset.XYZ()),
+                           j.value("text", std::string())};
+  }
+  if (type == "text") {
+    TextNote t{pointFrom(j.at("position")), std::nullopt, j.value("text", std::string())};
+    if (j.contains("target")) t.target = pointFrom(j.at("target"));
+    return t;
   }
   if (type == "imported") {
     auto shape = geom::shapeFromBRepString(j.at("brep").get<std::string>());

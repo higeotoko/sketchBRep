@@ -112,6 +112,7 @@ class GuiPhase1 : public QObject {
   void aiBridgeOverLocalSocket();
   void arcToolSemicircleAndBulgeEdit();
   void scenesSaveRestoreAndPersist();
+  void dimensionAndTextTools();
 };
 
 namespace {
@@ -877,6 +878,56 @@ void GuiPhase1::scenesSaveRestoreAndPersist() {
                      .object();
   QVERIFY2(r.value("ok").toBool(), qPrintable(QJsonDocument(r).toJson()));
   QFile::remove(path);
+}
+
+void GuiPhase1::dimensionAndTextTools() {
+  Fixture f;
+  QVERIFY(f.setUp(1000, 0));
+  doc::Modeler& m = f.window.modeler();
+  f.box(0, 0, 2000, 1000, 1000);
+
+  // Dimension: two corners, then the offset typed after showing the side.
+  f.window.activateTool(MainWindow::ToolId::Dimension);
+  QCOMPARE(f.vp->cursor().shape(), Qt::BitmapCursor);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(2000, 0, 0)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(1000, -400, 0)));
+  type(f.vp, QStringLiteral("600"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  const doc::Object* dim = nullptr;
+  for (const doc::Object& o : m.document().objects()) {
+    if (o.kind() == doc::ObjectKind::Annotation) dim = &o;
+  }
+  QVERIFY(dim);
+  const doc::ObjectId dimId = dim->id;
+  const auto* recipe = std::get_if<doc::LinearDimension>(&dim->recipe.base);
+  QVERIFY(recipe);
+  QVERIFY(std::abs(recipe->offset.Y() + 600) < 1e-6);
+  QTest::qWait(30);
+  QCOMPARE(f.vp->annotationText(dimId), QStringLiteral("2,000"));
+
+  // Typing right after replaces the text.
+  f.window.measurementBox()->setText(QStringLiteral("2,000 (芯々)"));
+  emit f.window.measurementBox()->returnPressed();
+  QTest::qWait(30);
+  QCOMPARE(f.vp->annotationText(dimId), QStringLiteral("2,000 (芯々)"));
+
+  // Text on the top face: its area is the default, then replaced (IME text box).
+  f.window.activateTool(MainWindow::ToolId::Text);
+  const QPoint top = f.vp->toWidget(gp_Pnt(1000, 500, 1000));
+  click(f.vp, top);
+  click(f.vp, top);  // same spot: no leader
+  QCOMPARE(f.window.measurementBox()->text(), QStringLiteral("2.00 m²"));
+  QCOMPARE(f.window.focusWidget(), static_cast<QWidget*>(f.window.measurementBox()));
+  const doc::ObjectId note = m.document().objects().back().id;
+  QVERIFY(std::get_if<doc::TextNote>(&m.document().find(note)->recipe.base));
+  f.window.measurementBox()->setText(QStringLiteral("会議室 2.00 m²"));
+  emit f.window.measurementBox()->returnPressed();
+  QTest::qWait(30);
+  QCOMPARE(f.vp->annotationText(note), QStringLiteral("会議室 2.00 m²"));
+  QVERIFY(m.undo());
+  QTest::qWait(30);
+  QCOMPARE(f.vp->annotationText(note), QStringLiteral("2.00 m²"));
 }
 
 QTEST_MAIN(GuiPhase1)

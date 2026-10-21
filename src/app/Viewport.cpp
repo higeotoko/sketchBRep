@@ -297,6 +297,9 @@ Handle(AIS_Shape) Viewport::makeDisplay(const doc::Object& object, Entry& entry)
   if (object.kind() == doc::ObjectKind::Curve) {
     ais->SetColor(Quantity_NOC_BLACK);
     ais->SetWidth(2.0);
+  } else if (object.kind() == doc::ObjectKind::Annotation) {
+    ais->SetColor(Quantity_NOC_GRAY20);
+    ais->SetWidth(1.0);
   } else {
     ais->SetColor(rgb(object.color.r, object.color.g, object.color.b));
   }
@@ -306,10 +309,46 @@ Handle(AIS_Shape) Viewport::makeDisplay(const doc::Object& object, Entry& entry)
   // Profiles often lie on faces of solids (outline drawn on a wall): draw
   // them in a later layer that shares the depth buffer so they show on top
   // of coplanar faces without z-fighting, yet stay hidden behind geometry.
-  if (object.kind() == doc::ObjectKind::Face || object.kind() == doc::ObjectKind::Curve) {
+  if (object.kind() == doc::ObjectKind::Face || object.kind() == doc::ObjectKind::Curve ||
+      object.kind() == doc::ObjectKind::Annotation) {
     ais->SetZLayer(Graphic3d_ZLayerId_Top);
   }
   return ais;
+}
+
+gp_Dir Viewport::viewDirection() const {
+  if (view_.IsNull()) return -gp::DZ();
+  return view_->Camera()->Direction();
+}
+
+void Viewport::syncLabels() {
+  for (auto& [id, label] : labels_) context_->Remove(label, Standard_False);
+  labels_.clear();
+  for (const doc::Object& o : modeler_.document().objects()) {
+    if (o.kind() != doc::ObjectKind::Annotation || !modeler_.document().isVisible(o.id)) continue;
+    const auto label = doc::annotationLabel(o.recipe);
+    if (!label || label->text.empty()) continue;
+    bool selected = false;
+    for (const doc::ObjectId& s : selection_) selected |= s == o.id || modeler_.document().isAncestor(s, o.id);
+    Handle(AIS_TextLabel) text = new AIS_TextLabel();
+    text->SetText(TCollection_ExtendedString(label->text.c_str(), Standard_True));  // UTF-8
+    text->SetPosition(label->position.Transformed(modeler_.document().worldTransform(o)));
+    text->SetHeight(15);
+    text->SetColor(selected ? kSelectedColor : Quantity_Color(Quantity_NOC_BLACK));
+    text->SetHJustification(Graphic3d_HTA_CENTER);
+    text->SetVJustification(Graphic3d_VTA_BOTTOM);
+    text->SetZLayer(Graphic3d_ZLayerId_TopOSD);
+    // Selection mode -1: labels are not pickable; their lines are.
+    context_->Display(text, 0, -1, Standard_False);
+    labels_.emplace(o.id, text);
+  }
+}
+
+QString Viewport::annotationText(const doc::ObjectId& id) const {
+  const auto it = labels_.find(id);
+  if (it == labels_.end()) return {};
+  return QString::fromUtf16(reinterpret_cast<const char16_t*>(it->second->Text().ToExtString()),
+                            it->second->Text().Length());
 }
 
 void Viewport::applyPickMode(const Handle(AIS_Shape)& ais) {
@@ -364,8 +403,8 @@ void Viewport::syncNow() {
     for (const doc::ObjectId& s : selection_) {
       selected |= s == o.id || modeler_.document().isAncestor(s, o.id);
     }
-    Quantity_Color color = o.kind() == doc::ObjectKind::Curve
-                               ? Quantity_Color(Quantity_NOC_BLACK)
+    Quantity_Color color = o.kind() == doc::ObjectKind::Curve        ? Quantity_Color(Quantity_NOC_BLACK)
+                           : o.kind() == doc::ObjectKind::Annotation ? Quantity_Color(Quantity_NOC_GRAY20)
                                : rgb(o.color.r, o.color.g, o.color.b);
     if (selected) color = kSelectedColor;
     Quantity_Color current;
@@ -386,6 +425,7 @@ void Viewport::syncNow() {
     snapShapes.push_back(found->second.canonicalWorld);
   }
   inference_.setShapes(snapShapes);
+  syncLabels();
   // Display copies may have been rebuilt: refresh the element overlay.
   std::vector<ElementRef> still;
   for (const ElementRef& e : highlighted_) {

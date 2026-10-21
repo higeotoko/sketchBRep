@@ -21,7 +21,9 @@
 #include "Cursors.h"
 #include "Viewport.h"
 #include "sbr/Units.h"
+#include "sbr/geom/Annotation.h"
 #include "sbr/geom/Freeform.h"
+#include "sbr/geom/Measure.h"
 #include "sbr/geom/Operations.h"
 
 namespace sbr::app {
@@ -473,6 +475,216 @@ void CurveTool::updatePreview() {
   }
   auto curve = geom::makeInterpolatedCurve(pts, false);
   host_.viewport().setPreview(curve ? TopoDS_Shape(curve.value()) : TopoDS_Shape());
+}
+
+// --- Dimension --------------------------------------------------------------------
+
+QString DimensionTool::name() const { return QObject::tr("寸法"); }
+QCursor DimensionTool::cursor() const { return toolCursor(CursorKind::Dimension); }
+
+void DimensionTool::activate() {
+  resetTracking();
+  reset();
+  host_.viewport().setPickMode(PickMode::None);
+  host_.setMeasurement(QObject::tr("寸法"), QString());
+  host_.setStatus(QObject::tr("測る始点をクリック（直後に文字を入力すると寸法の文字を置き換え）"));
+}
+
+void DimensionTool::reset() {
+  stage_ = Stage::Start;
+  offset_ = gp_Vec();
+  resetLock();
+  host_.viewport().clearPreview();
+}
+
+void DimensionTool::cancel() {
+  reset();
+  host_.viewport().hideSnap();
+}
+
+// Horizontal segments are dimensioned in their horizontal plane (plans);
+// others in the plane through the segment that faces the camera most.
+gp_Pln DimensionTool::offsetPlane() const {
+  const gp_Vec chord(start_, end_);
+  if (std::abs(chord.Normalized().Z()) < 1e-6) return gp_Pln(start_, gp::DZ());
+  gp_Vec normal = chord.Crossed(gp_Vec(host_.viewport().viewDirection()).Crossed(chord));
+  if (normal.Magnitude() < 1e-9) normal = chord.Crossed(gp_Vec(1, 0, 0));
+  return gp_Pln(start_, gp_Dir(normal));
+}
+
+void DimensionTool::mouseMove(const ToolEvent& e) {
+  lastEvent_ = e;
+  switch (stage_) {
+    case Stage::Start: {
+      const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
+      host_.setStatus(QObject::tr("測る始点をクリック  [%1]").arg(snapLabel(r.kind)));
+      return;
+    }
+    case Stage::End: {
+      const snap::SnapResult r = snapAt(e, start_, std::nullopt);
+      if (!r.valid()) return;
+      end_ = r.point;
+      host_.setMeasurement(QObject::tr("長さ"), mm(start_.Distance(end_)));
+      host_.viewport().setPreview(start_.Distance(end_) > tolerance::kMinDimension
+                                      ? TopoDS_Shape(BRepBuilderAPI_MakeEdge(start_, end_).Edge())
+                                      : TopoDS_Shape());
+      host_.setStatus(QObject::tr("終点をクリック  [%1]").arg(snapLabel(r.kind)));
+      return;
+    }
+    case Stage::Offset: {
+      const snap::SnapResult r = snapAt(e, std::nullopt, offsetPlane());
+      if (!r.valid()) return;
+      const gp_Dir dir(gp_Vec(start_, end_));
+      gp_Vec v(start_, r.point);
+      offset_ = v - gp_Vec(dir) * v.Dot(gp_Vec(dir));
+      host_.setMeasurement(QObject::tr("離れ"), mm(offset_.Magnitude()));
+      auto shape = geom::makeDimensionShape(start_, end_, offset_);
+      host_.viewport().setPreview(shape ? shape.value() : TopoDS_Shape());
+      host_.setStatus(QObject::tr("寸法線の位置をクリック、または離れを入力"));
+      return;
+    }
+  }
+}
+
+void DimensionTool::mousePress(const ToolEvent& e) {
+  switch (stage_) {
+    case Stage::Start: {
+      const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
+      if (!r.valid()) return;
+      start_ = r.point;
+      stage_ = Stage::End;
+      lastCreated_.reset();
+      return;
+    }
+    case Stage::End:
+      mouseMove(e);
+      if (start_.Distance(end_) < tolerance::kMinDimension) return;
+      stage_ = Stage::Offset;
+      resetLock();
+      return;
+    case Stage::Offset:
+      mouseMove(e);
+      commit();
+      return;
+  }
+}
+
+void DimensionTool::commit() {
+  auto id = host_.modeler().createDimension(start_, end_, offset_);
+  if (!id) {
+    host_.reportError(QString::fromStdString(id.error()));
+  } else {
+    lastCreated_ = id.value();
+  }
+  reset();
+  host_.setStatus(QObject::tr("測る始点をクリック（直後に文字を入力すると寸法の文字を置き換え）"));
+}
+
+void DimensionTool::applyMeasurement(const QString& text) {
+  if (stage_ == Stage::Offset) {
+    const auto value = units::parseLength(text.toStdString());
+    if (!value || *value < 0) {
+      host_.reportError(QObject::tr("長さを解釈できません: %1").arg(text));
+      return;
+    }
+    if (offset_.Magnitude() < tolerance::kMinDimension) {
+      host_.reportError(QObject::tr("マウスで寸法線を出す側を示してから入力してください"));
+      return;
+    }
+    offset_ = offset_.Normalized() * *value;
+    commit();
+    return;
+  }
+  if (stage_ == Stage::Start && lastCreated_ && host_.modeler().document().find(*lastCreated_)) {
+    // "-" puts the measured value back.
+    const std::string replacement = text == QStringLiteral("-") ? std::string() : text.toStdString();
+    const Status s = host_.modeler().setAnnotationText(*lastCreated_, replacement);
+    if (!s) host_.reportError(QString::fromStdString(s.message()));
+    return;
+  }
+  host_.reportError(QObject::tr("寸法を描いてから入力してください"));
+}
+
+// --- Text -----------------------------------------------------------------------------
+
+QString TextTool::name() const { return QObject::tr("テキスト"); }
+QCursor TextTool::cursor() const { return toolCursor(CursorKind::Text); }
+
+void TextTool::activate() {
+  resetTracking();
+  reset();
+  host_.viewport().setPickMode(PickMode::None);
+  host_.setMeasurement(QObject::tr("テキスト"), QString());
+  host_.setStatus(QObject::tr("指し示す点か面をクリック（面なら面積が入ります）"));
+}
+
+void TextTool::reset() {
+  hasTarget_ = false;
+  plane_.reset();
+  resetLock();
+  host_.viewport().clearPreview();
+}
+
+void TextTool::cancel() {
+  reset();
+  host_.viewport().hideSnap();
+}
+
+void TextTool::mouseMove(const ToolEvent& e) {
+  lastEvent_ = e;
+  if (!hasTarget_) {
+    const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
+    host_.setStatus(QObject::tr("指し示す点か面をクリック  [%1]").arg(snapLabel(r.kind)));
+    return;
+  }
+  const snap::SnapResult r = snapAt(e, std::nullopt, plane_);
+  if (!r.valid()) return;
+  const bool leader = (e.pos - targetPos_).manhattanLength() > 4;
+  host_.viewport().setPreview(leader && r.point.Distance(target_) > tolerance::kMinDimension
+                                  ? TopoDS_Shape(BRepBuilderAPI_MakeEdge(target_, r.point).Edge())
+                                  : TopoDS_Shape());
+  host_.setStatus(QObject::tr("文字の位置をクリック（同じ場所なら引き出し線なし）"));
+}
+
+void TextTool::mousePress(const ToolEvent& e) {
+  if (!hasTarget_) {
+    const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
+    if (!r.valid()) return;
+    target_ = r.point;
+    targetPos_ = e.pos;
+    defaultText_ = QObject::tr("テキスト");
+    // A face: its area is the useful default (room labels).
+    if (r.kind == snap::SnapKind::OnFace && !r.face.IsNull()) {
+      defaultText_ = QStringLiteral("%1 m²").arg(geom::area(r.face) / 1e6, 0, 'f', 2);
+    }
+    // The text stays in the plane through the target facing the camera.
+    plane_ = gp_Pln(target_, -host_.viewport().viewDirection());
+    hasTarget_ = true;
+    lastCreated_.reset();
+    return;
+  }
+  const snap::SnapResult r = snapAt(e, std::nullopt, plane_);
+  const bool leader = r.valid() && (e.pos - targetPos_).manhattanLength() > 4;
+  const gp_Pnt position = leader ? r.point : target_;
+  auto id = host_.modeler().createText(position, leader ? std::optional<gp_Pnt>(target_) : std::nullopt,
+                                       defaultText_.toStdString());
+  reset();
+  if (!id) {
+    host_.reportError(QString::fromStdString(id.error()));
+    return;
+  }
+  lastCreated_ = id.value();
+  host_.setStatus(QObject::tr("文字を入力して Enter で置き換え（次の注記はクリック）"));
+  host_.beginTextEntry(QObject::tr("テキスト"), defaultText_);
+}
+
+void TextTool::applyMeasurement(const QString& text) {
+  if (!lastCreated_ || !host_.modeler().document().find(*lastCreated_)) {
+    host_.reportError(QObject::tr("先に注記を置いてください"));
+    return;
+  }
+  const Status s = host_.modeler().setAnnotationText(*lastCreated_, text.toStdString());
+  if (!s) host_.reportError(QString::fromStdString(s.message()));
 }
 
 // --- Arc --------------------------------------------------------------------------

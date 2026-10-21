@@ -16,6 +16,7 @@
 #include <gp_Dir.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Trsf.hxx>
+#include <gp_Vec.hxx>
 #include <TopoDS_Shape.hxx>
 
 #include "sbr/Types.h"
@@ -51,6 +52,20 @@ struct ArcCurve {
   gp_Dir normal = gp::DZ();  // plane of the arc
   double bulge = 0.0;        // signed sagitta, see geom::makeArc
   bool closed = false;
+};
+
+// Annotations. Text empty = automatic (measured length).
+struct LinearDimension {
+  gp_Pnt start;
+  gp_Pnt end;
+  gp_Vec offset;  // moves the dimension line away from the measured points
+  std::string text;
+};
+
+struct TextNote {
+  gp_Pnt position;              // where the text sits
+  std::optional<gp_Pnt> target; // leader start (a point on the model)
+  std::string text;
 };
 
 // Cubic NURBS curve through points (periodic when closed).
@@ -107,7 +122,7 @@ struct ComponentInstance {
 };
 
 using BaseFeature = std::variant<RectangleProfile, CircleProfile, PolygonProfile, PolylineCurve, InterpolatedCurve,
-                                 ArcCurve, ImportedShape,
+                                 ArcCurve, LinearDimension, TextNote, ImportedShape,
                                  BooleanFeature, LoftFeature, SweepFeature, GroupNode,
                                  ComponentInstance>;
 
@@ -163,5 +178,13 @@ std::vector<Parameter> parameters(const Recipe& recipe);
 Status setParameter(Recipe& recipe, const std::string& key, double value);
 
 std::string describe(const Recipe& recipe);
+
+// Text of an annotation recipe and where it goes (recipe coordinates).
+struct AnnotationLabel {
+  gp_Pnt position;
+  std::string text;
+};
+std::optional<AnnotationLabel> annotationLabel(const Recipe& recipe);
+bool isAnnotation(const Recipe& recipe);
 
 }  // namespace sbr::doc

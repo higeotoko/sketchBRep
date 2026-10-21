@@ -193,6 +193,40 @@ Result<ObjectId> Modeler::createArc(const gp_Pnt& start, const gp_Pnt& end, cons
   return addObject(std::move(o), "Arc");
 }
 
+Result<ObjectId> Modeler::createDimension(const gp_Pnt& start, const gp_Pnt& end, const gp_Vec& offset,
+                                          const std::string& text) {
+  Object o;
+  o.name = uniqueName("Dimension");
+  o.layer = "Annotations";
+  o.recipe.base = LinearDimension{start, end, offset, text};
+  return addObject(std::move(o), "Dimension");
+}
+
+Result<ObjectId> Modeler::createText(const gp_Pnt& position, const std::optional<gp_Pnt>& target,
+                                     const std::string& text) {
+  if (text.empty()) return Result<ObjectId>::failure("Text must not be empty");
+  Object o;
+  o.name = uniqueName("Text");
+  o.layer = "Annotations";
+  o.recipe.base = TextNote{position, target, text};
+  return addObject(std::move(o), "Text");
+}
+
+Status Modeler::setAnnotationText(const ObjectId& id, const std::string& text) {
+  const Object* current = document_.find(id);
+  if (!current) return Status::failure("Object not found");
+  Object object = *current;
+  if (auto* d = std::get_if<LinearDimension>(&object.recipe.base)) {
+    d->text = text;  // empty = back to the measured length
+  } else if (auto* t = std::get_if<TextNote>(&object.recipe.base)) {
+    if (text.empty()) return Status::failure("Text must not be empty");
+    t->text = text;
+  } else {
+    return Status::failure("Not an annotation");
+  }
+  return commitModified(std::move(object), "Edit Text");
+}
+
 Result<ObjectId> Modeler::createPolygon(const std::vector<gp_Pnt>& points, const std::string& name) {
   Object o;
   o.name = name.empty() ? uniqueName("Face") : name;
@@ -809,7 +843,8 @@ Status Modeler::exportStep(const std::string& path, const std::vector<ObjectId>&
   std::vector<geom::NamedShape> parts;
   for (const ObjectId& id : wanted) {
     const Object* o = document_.find(id);
-    if (!o || o->shape.IsNull() || !document_.isVisible(id)) continue;
+    // Annotations are drawing aids, not model geometry.
+    if (!o || o->shape.IsNull() || !document_.isVisible(id) || o->kind() == ObjectKind::Annotation) continue;
     parts.push_back(geom::NamedShape{document_.worldShape(*o), o->name,
                                      std::array<double, 3>{o->color.r, o->color.g, o->color.b}});
   }

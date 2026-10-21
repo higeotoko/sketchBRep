@@ -17,6 +17,7 @@ add_library(sbr_core STATIC
   src/Freeform.cpp
   src/CommandApi.cpp
   src/McpServer.cpp
+  src/Annotation.cpp
 )
 add_library(sbr::core ALIAS sbr_core)
 

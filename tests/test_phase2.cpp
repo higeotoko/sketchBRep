@@ -8,7 +8,10 @@
 #include "TestHelpers.h"
 #include "sbr/doc/Modeler.h"
 #include "sbr/doc/NativeFormat.h"
+#include "sbr/geom/Annotation.h"
+#include "sbr/geom/Measure.h"
 #include "sbr/geom/Operations.h"
+#include "sbr/geom/ShapeIO.h"
 #include "sbr/geom/Validation.h"
 
 using namespace sbr;
@@ -568,4 +571,61 @@ TEST(Paint, GroupsPaintTheirChildrenInOneStep) {
   EXPECT_EQ(m.history().undoName(), "Paint");
   ASSERT_TRUE(m.undo());
   EXPECT_FALSE(m.document().find(a)->color == red);
+}
+
+// ---- Annotations (dimensions, text) ---------------------------------------------------
+
+
+TEST(Annotations, DimensionGeometryTextAndFile) {
+  doc::Modeler m;
+  auto id = m.createDimension(gp_Pnt(0, 0, 0), gp_Pnt(3600, 0, 0), gp_Vec(0, -600, 0));
+  ASSERT_TRUE(id.ok()) << id.error();
+  const doc::Object* o = m.document().find(*id);
+  EXPECT_EQ(o->kind(), doc::ObjectKind::Annotation);
+  EXPECT_EQ(o->layer, "Annotations");
+  auto label = doc::annotationLabel(o->recipe);
+  ASSERT_TRUE(label);
+  EXPECT_EQ(label->text, "3,600");
+  EXPECT_NEAR(label->position.Y(), -600, 1e-9);
+  // The dimension line sits at the offset (bounds reach y = -600 and beyond with ticks).
+  const Bnd_Box b = geom::exactBounds(o->shape);
+  EXPECT_LT(b.CornerMin().Y(), -599.0);
+  EXPECT_GT(b.CornerMax().X(), 3600.0);
+
+  ASSERT_TRUE(m.setAnnotationText(*id, "W 3,600").ok());
+  EXPECT_EQ(doc::annotationLabel(m.document().find(*id)->recipe)->text, "W 3,600");
+  ASSERT_TRUE(m.setAnnotationText(*id, "").ok());  // back to the measured value
+  EXPECT_EQ(doc::annotationLabel(m.document().find(*id)->recipe)->text, "3,600");
+  EXPECT_FALSE(m.createDimension(gp_Pnt(0, 0, 0), gp_Pnt(0, 0, 0), gp_Vec()).ok());
+
+  auto note = m.createText(gp_Pnt(500, 500, 0), gp_Pnt(100, 100, 0), "居間 12.00 m²");
+  ASSERT_TRUE(note.ok());
+  EXPECT_FALSE(m.createText(gp_Pnt(), std::nullopt, "").ok());
+  EXPECT_FALSE(m.setAnnotationText(*note, "").ok());
+
+  // Saved and reloaded with UTF-8 text; moving keeps the measured length.
+  const std::string text = doc::serializeDocument(m.document());
+  doc::Document d;
+  ASSERT_TRUE(doc::deserializeDocument(text, d).ok());
+  EXPECT_EQ(doc::annotationLabel(d.find(*note)->recipe)->text, "居間 12.00 m²");
+  ASSERT_TRUE(std::get_if<doc::TextNote>(&d.find(*note)->recipe.base)->target.has_value());
+  ASSERT_TRUE(m.move({*id}, gp_Vec(1000, 0, 0)).ok());
+  EXPECT_EQ(doc::annotationLabel(m.document().find(*id)->recipe)->text, "3,600");
+}
+
+TEST(Annotations, NotExportedToStep) {
+  doc::Modeler m;
+  geom::SketchPlane plane = geom::SketchPlane::ground();
+  auto box = m.createRectangle(plane, 1000, 1000);
+  ASSERT_TRUE(m.extrude(*box, 1000).ok());
+  ASSERT_TRUE(m.createDimension(gp_Pnt(0, 0, 0), gp_Pnt(1000, 0, 0), gp_Vec(0, -300, 0)).ok());
+  const std::string path = ::testing::TempDir() + "annotations.step";
+  ASSERT_TRUE(m.exportStep(path).ok());
+  auto parts = geom::readStepParts(path);
+  ASSERT_TRUE(parts.ok());
+  EXPECT_EQ(parts->size(), 1u);
+  // Only annotations: nothing to export.
+  doc::Modeler only;
+  ASSERT_TRUE(only.createText(gp_Pnt(), std::nullopt, "note").ok());
+  EXPECT_FALSE(only.exportStep(path).ok());
 }

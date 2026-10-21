@@ -21,7 +21,7 @@ struct Color {
   bool operator==(const Color& o) const { return r == o.r && g == o.g && b == o.b; }
 };
 
-enum class ObjectKind { Empty, Curve, Face, Solid, Group, Instance, Other };
+enum class ObjectKind { Empty, Curve, Face, Solid, Group, Instance, Annotation, Other };
 const char* toString(ObjectKind kind);
 
 struct Object {

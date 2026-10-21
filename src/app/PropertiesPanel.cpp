@@ -30,6 +30,7 @@ QString kindLabel(doc::ObjectKind kind) {
     case doc::ObjectKind::Curve: return QObject::tr("線");
     case doc::ObjectKind::Group: return QObject::tr("グループ");
     case doc::ObjectKind::Instance: return QObject::tr("コンポーネント");
+    case doc::ObjectKind::Annotation: return QObject::tr("注記");
     case doc::ObjectKind::Empty: return QObject::tr("空");
     case doc::ObjectKind::Other: break;
   }
@@ -186,6 +187,19 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
   });
   form_->addRow(tr("名前"), name);
   if (!elementSummary.isEmpty()) form_->addRow(tr("選択"), new QLabel(elementSummary));
+  if (o->kind() == doc::ObjectKind::Annotation) {
+    // Dimensions: empty = measured value.
+    const bool dimension = std::holds_alternative<doc::LinearDimension>(o->recipe.base);
+    const auto* d = std::get_if<doc::LinearDimension>(&o->recipe.base);
+    const auto* t = std::get_if<doc::TextNote>(&o->recipe.base);
+    auto* text = new QLineEdit(QString::fromStdString(d ? d->text : t ? t->text : std::string()));
+    if (dimension) {
+      const auto label = doc::annotationLabel(o->recipe);
+      text->setPlaceholderText(label ? tr("自動: %1").arg(QString::fromStdString(label->text)) : QString());
+    }
+    connect(text, &QLineEdit::editingFinished, this, [this, id, text] { emit annotationTextEdited(id, text->text()); });
+    form_->addRow(tr("テキスト"), text);
+  }
 
   auto addParameter = [&](QFormLayout* target, const doc::Parameter& p) {
     auto* spin = lengthSpin(p.value);

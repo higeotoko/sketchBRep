@@ -138,6 +138,7 @@ json describeObject(const doc::Modeler& m, const doc::Object& o, bool withFaces)
   if (!o.parent.empty()) j["parent"] = o.parent;
   if (o.kind() == doc::ObjectKind::Solid) j["volume"] = geom::volume(world);
   if (o.kind() == doc::ObjectKind::Face) j["area"] = geom::area(world);
+  if (const auto label = doc::annotationLabel(o.recipe)) j["text"] = label->text;
   json params = json::array();
   for (const doc::Parameter& p : m.parameters(o.id)) {
     params.push_back({{"key", p.key}, {"label", p.label}, {"value", p.value},
@@ -277,6 +278,37 @@ const std::vector<CommandDef>& commands() {
        [](doc::Modeler& m, const json& a) {
          return idResult(must(m.createArc(point(a, "start"), point(a, "end"), direction(a, "normal", gp::DZ()),
                                           number(a, "bulge"), a.value("closed", false), textOr(a, "name", {}))));
+       }},
+      {"create_dimension",
+       "Add a linear dimension between two points. offset = vector moving the dimension line away from "
+       "the measured points (e.g. [0, -600, 0]). text overrides the measured value (optional).",
+       SCHEMA({"type": "object", "properties": {
+         "start": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+         "end": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+         "offset": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+         "text": {"type": "string"}}, "required": ["start", "end"]}),
+       [](doc::Modeler& m, const json& a) {
+         const gp_XYZ offset = a.contains("offset") ? xyz(a.at("offset"), "offset") : gp_XYZ(0, 0, 0);
+         return idResult(must(m.createDimension(point(a, "start"), point(a, "end"), gp_Vec(offset),
+                                                textOr(a, "text", {}))));
+       }},
+      {"create_text",
+       "Add a text note at 'position' (e.g. a room name or area), with a leader line from 'target' if given.",
+       SCHEMA({"type": "object", "properties": {
+         "position": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+         "target": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+         "text": {"type": "string"}}, "required": ["position", "text"]}),
+       [](doc::Modeler& m, const json& a) {
+         std::optional<gp_Pnt> target;
+         if (a.contains("target")) target = point(a, "target");
+         return idResult(must(m.createText(point(a, "position"), target, text(a, "text"))));
+       }},
+      {"set_text", "Change the text of a dimension (empty = measured value) or a text note.",
+       SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "text": {"type": "string"}},
+               "required": ["id", "text"]}),
+       [](doc::Modeler& m, const json& a) {
+         must(m.setAnnotationText(text(a, "id"), text(a, "text")));
+         return idResult(text(a, "id"));
        }},
       {"create_polygon", "Create a planar polygon profile from 3+ coplanar points (closed implicitly).",
        SCHEMA({"type": "object", "properties": {

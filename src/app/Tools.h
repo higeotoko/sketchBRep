@@ -49,6 +49,11 @@ class ToolHost {
   virtual doc::ObjectId editingGroup() const = 0;
   virtual void enterGroup(const doc::ObjectId& groupId) = 0;
   virtual void exitGroup() = 0;
+  // Puts 'text' into the measurement box with keyboard focus (IME capable)
+  // so the user can type a replacement and press Enter.
+  virtual void beginTextEntry(const QString& label, const QString& text) {
+    setMeasurement(label, text);
+  }
 };
 
 class Tool {
@@ -191,6 +196,52 @@ class ArcTool : public DrawingTool {
   double bulge_ = 0.0;
   bool semicircle_ = false;
   bool face_ = true;
+  std::optional<doc::ObjectId> lastCreated_;
+};
+
+// Linear dimension: two points, then drag the dimension line out (or type
+// the offset). Typing right after replaces the text ("" = measured value).
+class DimensionTool : public DrawingTool {
+ public:
+  using DrawingTool::DrawingTool;
+  QString name() const override;
+  QCursor cursor() const override;
+  void activate() override;
+  void cancel() override;
+  void mousePress(const ToolEvent& e) override;
+  void mouseMove(const ToolEvent& e) override;
+  void applyMeasurement(const QString& text) override;
+
+ private:
+  void commit();
+  void reset();
+  gp_Pln offsetPlane() const;
+  enum class Stage { Start, End, Offset } stage_ = Stage::Start;
+  gp_Pnt start_, end_;
+  gp_Vec offset_;
+  std::optional<doc::ObjectId> lastCreated_;
+};
+
+// Text: click a point or face (faces get their area as default text), then
+// where the text goes (same spot = no leader). Type to replace the text.
+class TextTool : public DrawingTool {
+ public:
+  using DrawingTool::DrawingTool;
+  QString name() const override;
+  QCursor cursor() const override;
+  void activate() override;
+  void cancel() override;
+  void mousePress(const ToolEvent& e) override;
+  void mouseMove(const ToolEvent& e) override;
+  void applyMeasurement(const QString& text) override;
+
+ private:
+  void reset();
+  bool hasTarget_ = false;
+  QPoint targetPos_;
+  gp_Pnt target_;
+  QString defaultText_;
+  std::optional<gp_Pln> plane_;
   std::optional<doc::ObjectId> lastCreated_;
 };
 

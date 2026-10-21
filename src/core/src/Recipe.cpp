@@ -8,6 +8,7 @@
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 
+#include "sbr/geom/Annotation.h"
 #include "sbr/geom/Freeform.h"
 #include "sbr/geom/Operations.h"
 #include "sbr/geom/Validation.h"
@@ -64,6 +65,8 @@ Result<TopoDS_Shape> buildBase(const BaseFeature& base, const RegenContext& cont
             return TopoDS_Shape(wire.value());
           },
           [](const ArcCurve& a) { return geom::makeArc(a.start, a.end, a.normal, a.bulge, a.closed); },
+          [](const LinearDimension& d) { return geom::makeDimensionShape(d.start, d.end, d.offset); },
+          [](const TextNote& t) { return geom::makeTextNoteShape(t.position, t.target); },
           [](const ImportedShape& s) -> Result<TopoDS_Shape> {
             if (s.shape.IsNull()) return Result<TopoDS_Shape>::failure("Imported shape is empty");
             return s.shape;
@@ -306,6 +309,8 @@ std::string describe(const Recipe& recipe) {
                  [&](const ArcCurve& a) {
                    out << "Arc " << a.start.Distance(a.end) << " bulge " << a.bulge << (a.closed ? " (segment)" : "");
                  },
+                 [&](const LinearDimension& d) { out << "Dimension " << d.start.Distance(d.end); },
+                 [&](const TextNote& t) { out << "Text \"" << t.text << "\""; },
                  [&](const ImportedShape& s) { out << "Imported (" << s.source << ")"; },
                  [&](const BooleanFeature& b) {
                    out << toString(b.kind) << " (";
@@ -330,6 +335,35 @@ std::string describe(const Recipe& recipe) {
                m);
   }
   return out.str();
+}
+
+namespace {
+
+// Architectural style: millimetres without a unit, thousands separated
+// ("3,000"); one decimal only when needed.
+std::string dimensionText(double mm) {
+  const double rounded = std::round(mm * 10.0) / 10.0;
+  const bool whole = std::abs(rounded - std::round(rounded)) < 1e-9;
+  const long long integer = static_cast<long long>(std::floor(std::abs(rounded) + (whole ? 0.5 : 0.0)));
+  std::string digits = std::to_string(integer);
+  for (int i = static_cast<int>(digits.size()) - 3; i > 0; i -= 3) digits.insert(static_cast<std::size_t>(i), ",");
+  if (!whole) digits += "." + std::to_string(static_cast<int>(std::round((std::abs(rounded) - integer) * 10.0)));
+  return (rounded < 0 ? "-" : "") + digits;
+}
+
+}  // namespace
+
+bool isAnnotation(const Recipe& recipe) {
+  return std::holds_alternative<LinearDimension>(recipe.base) || std::holds_alternative<TextNote>(recipe.base);
+}
+
+std::optional<AnnotationLabel> annotationLabel(const Recipe& recipe) {
+  if (const auto* d = std::get_if<LinearDimension>(&recipe.base)) {
+    const std::string text = d->text.empty() ? dimensionText(d->start.Distance(d->end)) : d->text;
+    return AnnotationLabel{geom::dimensionTextPoint(d->start, d->end, d->offset), text};
+  }
+  if (const auto* t = std::get_if<TextNote>(&recipe.base)) return AnnotationLabel{t->position, t->text};
+  return std::nullopt;
 }
 
 }  // namespace sbr::doc

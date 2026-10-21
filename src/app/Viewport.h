@@ -15,6 +15,7 @@
 
 #include <AIS_InteractiveContext.hxx>
 #include <AIS_Shape.hxx>
+#include <AIS_TextLabel.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <V3d_View.hxx>
 #include <V3d_Viewer.hxx>
@@ -78,6 +79,8 @@ class Viewport : public QWidget {
   std::optional<std::pair<gp_Pnt, gp_Dir>> faceAt(const QPoint& pos) const;
   void setPickMode(PickMode mode);
   std::optional<FacePick> pickFace(const QPoint& pos);
+  // Direction the camera looks in.
+  gp_Dir viewDirection() const;
   std::optional<doc::ObjectId> pickObject(const QPoint& pos);
   // Face or edge under the cursor (PickMode::Elements).
   std::optional<ElementRef> pickElement(const QPoint& pos);
@@ -114,6 +117,8 @@ class Viewport : public QWidget {
   void restoreCamera(const doc::CameraState& state);
 
   bool isInitialized() const { return !view_.IsNull(); }
+  // Text drawn for an annotation (empty if none is shown).
+  QString annotationText(const doc::ObjectId& id) const;
   // Writes the current view to an image file (PNG etc.).
   bool dumpImage(const QString& path);
 
@@ -151,6 +156,7 @@ class Viewport : public QWidget {
   void initViewer();
   void displayAxes();
   void applyPickMode(const Handle(AIS_Shape)& ais);
+  void syncLabels();
   Handle(AIS_Shape) makeDisplay(const doc::Object& object, Entry& entry);
   QPoint devicePos(const QPoint& logical) const;
   void orbit(const QPoint& delta);
@@ -164,6 +170,7 @@ class Viewport : public QWidget {
   Handle(AIS_InteractiveContext) context_;
 
   std::map<doc::ObjectId, Entry> entries_;
+  std::map<doc::ObjectId, Handle(AIS_TextLabel)> labels_;  // annotation texts
   std::vector<doc::ObjectId> selection_;
   snap::InferenceEngine inference_;
   display::DisplayQuality quality_ = display::DisplayQuality::normal();
