@@ -118,6 +118,9 @@ struct SweepFeature {
 // ("in<i>.bulge").
 struct LoopProfile {
   std::vector<BooleanOperand> curves;
+  // Faces away from the default (+Z / +Y / +X) side, e.g. to face outwards
+  // when the outline was drawn on a solid's face.
+  bool reversed = false;
 };
 
 // One part of a profile face split by a line drawn across it: the original

@@ -351,3 +351,21 @@ TEST(Gate3, AC19_CancelledOperationsLeaveTheModelUnchanged) {
   geom::setProgressIndicator(nullptr);
   EXPECT_TRUE(m.boolean(doc::BooleanKind::Union, {*a, *b}).ok());
 }
+
+// Outlines drawn on a solid's face face outwards, whatever order the points
+// were clicked in, so pushing in always cuts (spec 07 §4.1).
+TEST(Gate1, OutlineOnSolidFaceFacesOutwards) {
+  doc::Modeler m;
+  auto wall = m.createRectangle(geom::SketchPlane::ground(), 4000, 300);
+  ASSERT_TRUE(m.extrude(*wall, 3000).ok());
+  // Points on the -Y face, ordered so that their own normal would be +Y.
+  auto window = m.createPolygon({gp_Pnt(1000, 0, 1000), gp_Pnt(1000, 0, 2000), gp_Pnt(2000, 0, 2000),
+                                 gp_Pnt(2000, 0, 1000)});
+  ASSERT_TRUE(window.ok()) << window.error();
+  const auto n = geom::planarFaceNormal(TopoDS::Face(m.document().worldShape(*window)));
+  ASSERT_TRUE(n);
+  EXPECT_LT(n->Y(), -0.99);
+  auto cut = m.pushPull(*window, TopoDS::Face(m.document().worldShape(*window)), -300);
+  ASSERT_TRUE(cut.ok()) << cut.error();
+  EXPECT_NEAR(geom::volume(m.document().worldShape(cut->id)), 4000.0 * 300 * 3000 - 1000.0 * 1000 * 300, 1.0);
+}

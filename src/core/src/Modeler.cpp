@@ -405,6 +405,21 @@ std::optional<std::pair<gp_Pnt, gp_Pnt>> curveEnds(const Document& document, con
 
 }  // namespace
 
+bool Modeler::facesIntoSolid(const TopoDS_Face& worldFace, const ObjectId& parent) const {
+  const auto n = geom::planarFaceNormal(worldFace);
+  const auto inside = geom::SurfaceRef::fromFace(worldFace);
+  if (!n || !inside) return false;
+  for (const Object& o : document_.objects()) {
+    if (o.kind() != ObjectKind::Solid || o.parent != parent || !document_.isVisible(o.id)) continue;
+    for (TopExp_Explorer e(document_.worldShape(o), TopAbs_FACE); e.More(); e.Next()) {
+      const TopoDS_Face host = TopoDS::Face(e.Current());
+      const auto hn = geom::planarFaceNormal(host);
+      if (hn && hn->IsParallel(*n, 1e-6) && geom::pointOnFace(host, inside->point)) return hn->Dot(*n) < 0;
+    }
+  }
+  return false;
+}
+
 bool Modeler::isLooseCurveEnd(const gp_Pnt& p) const {
   for (const Object& o : document_.objects()) {
     if (const auto ends = curveEnds(document_, o)) {
@@ -476,6 +491,19 @@ Result<ObjectId> Modeler::faceFromLoop(const ObjectId& curveId, bool* loopFound)
   for (const Object* o : members) {
     loop.curves.push_back(BooleanOperand{std::make_shared<const Recipe>(o->recipe), o->transform, o->name});
     ids.push_back(o->id);
+  }
+  // Drawn on a face of a solid: face outwards like it (as profiles drawn
+  // with the rectangle tool do), so pushing in cuts and pulling out adds.
+  {
+    std::vector<TopoDS_Shape> placed;
+    for (const BooleanOperand& c : loop.curves) {
+      auto shape = regenerate(*c.recipe, document_.regenContext());
+      if (!shape) break;
+      placed.push_back(shape->Moved(TopLoc_Location(document_.parentTransform(*start) * c.placement)));
+    }
+    auto candidate = placed.size() == loop.curves.size() ? geom::faceFromCurves(placed)
+                                                          : Result<TopoDS_Face>::failure("");
+    if (candidate) loop.reversed = facesIntoSolid(candidate.value(), start->parent);
   }
   Object face;
   face.name = uniqueName("Face");
@@ -554,7 +582,13 @@ void Modeler::setSection(const std::optional<SectionPlane>& plane) {
 Result<ObjectId> Modeler::createPolygon(const std::vector<gp_Pnt>& points, const std::string& name) {
   Object o;
   o.name = name.empty() ? uniqueName("Face") : name;
-  o.recipe.base = PolygonProfile{points};
+  // On a solid's face, face outwards like it (see faceFromLoop).
+  std::vector<gp_Pnt> pts = points;
+  if (auto face = geom::makePolygonFace(pts);
+      face && facesIntoSolid(face.value(), activeGroup_)) {
+    std::reverse(pts.begin(), pts.end());
+  }
+  o.recipe.base = PolygonProfile{pts};
   return addProfile(std::move(o), "Face");
 }
 

@@ -143,7 +143,9 @@ json baseToJson(const BaseFeature& base) {
             for (const BooleanOperand& o : l.curves) {
               curves.push_back({{"name", o.name}, {"placement", toJson(o.placement)}, {"recipe", recipeToJson(*o.recipe)}});
             }
-            return json{{"type", "loop"}, {"curves", curves}};
+            json j = {{"type", "loop"}, {"curves", curves}};
+            if (l.reversed) j["reversed"] = true;
+            return j;
           },
           [](const FacePart& f) {
             json source = json::array();
@@ -242,6 +244,7 @@ BaseFeature baseFrom(const json& j) {
   }
   if (type == "loop") {
     LoopProfile l;
+    l.reversed = j.value("reversed", false);
     for (const json& o : j.at("curves")) {
       l.curves.push_back(BooleanOperand{std::make_shared<const Recipe>(recipeFrom(o.at("recipe"))),
                                         trsfFrom(o.at("placement")), o.value("name", std::string())});

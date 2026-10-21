@@ -2,6 +2,8 @@
 
 対象: `docs/07_ux_principles.md`（追加仕様書 07）／調査時点の HEAD `0162a5b`（仕様書が参照した `a2b7b1f` 以降に、面分割・輪郭の面化・断面・タグ・曲面プッシュ/プルを追加済み）。
 
+> 表 §2〜§3 は分析時点の状態に、その後の実施結果を反映して更新している（各 Gate の実施状況は §6.5 以降）。
+
 凡例: **済** = 実装・自動テストあり / **部分** = 一部ケースのみ・テスト不足 / **未** = 未実装 / **リスク** = 技術的に難しい・設計判断が必要
 
 ## 1. 守るべき資産の確認（§0.1）
@@ -38,9 +40,9 @@
 | AC-02 面に描いて押し込み開口 | 済 | `drawOnWallAndPushInCutsOpening`、`CommandApi.WallWithOpeningViaProfileOnFace` |
 | AC-03 線分をつないで閉じる → 面 | 済 | `lineToolClosesLoopIntoFace`、`CommandApi.ArchedOutlineFromArcAndLines` |
 | AC-04 直線＋円弧の輪郭 → 正確な円弧の面 | 済 | `arcAndLinesCloseIntoFace`、`Freeform.LinesAndArcCloseIntoParametricFace`（面積が解析値と一致） |
-| AC-05 許容差超過の隙間 → 修正しない・可視化 | 部分: 勝手に閉じない | **未**: 未閉合の可視化（開いた端点の表示）→ Gate 2 |
+| AC-05 許容差超過の隙間 → 修正しない・可視化 | **済** | `Gate1.AC05_*`、`gui: gate2InputConsistency`（開いた端点の表示） |
 | AC-06 自己交差閉路 → 拒否・保全・理由表示 | 部分: 検証で拒否 | **未**: 理由の表示、自己交差のテスト → Gate 1 で追加 |
-| AC-07 既存面を横断する線 → 分割 | 部分: ソリッドの平面のみ | **未**: 単独の面オブジェクトの分割 → Gate 1 |
+| AC-07 既存面を横断する線 → 分割 | **済**（ソリッドの平面・単独の面） | `Gate1.AC07_*`、`gui: lineAcrossRectangleSplitsProfile` |
 | AC-08 ソリッドの面に閉輪郭 → 他を改変しない | 済（面上に別の面オブジェクトとして載る。押し引きした時だけホストへ合成） | テストを AC 名で追加 |
 | AC-09 グループ編集中に閉じる → 外と統合しない | 済（同じ親の中だけ探す） | **未**: テスト → Gate 1 |
 | AC-10 背面の辺に吸着しない | 済 | `lineToolStaysOnWallPlane` ほか |
@@ -52,10 +54,10 @@
 | AC-16 GUI と API の等価性 | 部分 | 押出・配列の同値テストを追加 → Gate 2 |
 | AC-17 batch 途中の不正値で全巻き戻し | 済 | `CommandApi.FailedAtomicBatchRevertsEverything` |
 | AC-18 AI 連携 OFF・ファイル操作禁止 | 済 | `aiBridgeOverLocalSocket` |
-| AC-19 長時間演算のキャンセル | **未**（同期実行） | リスク: OCCT の `Message_ProgressRange` による中断。Gate 3 以降 |
-| AC-20 AI 提案プレビュー | **未** | Gate 4。下記 §6 の境界設計を先に |
+| AC-19 長時間演算のキャンセル | **済**（進捗ダイアログの「中止」） | `Gate3.AC19_*` |
+| AC-20 AI 提案プレビュー | **済** | `CommandApi.AC20_*`、`gui: aiProposalApplyAndReject` |
 | AC-21 表示品質で幾何不変 | 済 | `DisplayMesh.QualityChangesMeshButNotGeometry` |
-| AC-22 面選択/グループ/コンポーネント編集の交互 | 部分 | コンポーネント編集モード未。テスト追加 |
+| AC-22 面選択/グループ/コンポーネント編集の交互 | **済** | `Gate3.AC22_*`、`gui: componentEditInPlace` |
 
 ## 4. 重点 3 テーマの技術的課題と方針
 
@@ -126,7 +128,7 @@ Phase 3 の残り（3DM 入出力）は Gate と独立なので、Gate 1 の後�
 | 単独の面オブジェクトの線分割（`FacePart`、元の寸法を保持、1 Undo、元の面が大きくなっても分割線を延長） | **済** | `Gate1.AC07_*`、`gui: lineAcrossRectangleSplitsProfile` |
 | 編集コンテキスト外の線・面と統合／分割しない | **済** | `Gate1.AC09_*` |
 | ソリッドの面に描いた閉輪郭はソリッドを変えない | **済** | `Gate1.AC08_*` |
-| AC-05 未閉合端点の可視化、F-05 穴 | 未（Gate 2/3） | — |
+| AC-05 未閉合端点の可視化、F-05 穴 | 済（Gate 2/3 の表を参照） | — |
 
 ## 6.6 実施状況（Gate 2）
 
@@ -140,7 +142,7 @@ Phase 3 の残り（3DM 入出力）は Gate と独立なので、Gate 1 の後�
 | AC-16 GUI（矩形＋プッシュ/プル）と API（`create_box`）が同じ形状・同じレシピ | **済** | 同上 |
 | §10 失敗の伝え方: 主なコアのエラーを日本語の理由＋次の手＋「モデルは変更されていません」に | **済** | 同上 |
 | §6.1 囲み選択（左→右: 完全包含、右→左: 交差）、空クリックで解除 | **済** | `gui: boxSelectionWindowAndCrossing` |
-| AC-22 コンポーネント編集モード | 未（Gate 3） | — |
+| AC-22 コンポーネント編集モード | 済（Gate 3 の表を参照） | — |
 
 ## 6.7 実施状況（Gate 3）
 
@@ -160,6 +162,20 @@ Phase 3 の残り（3DM 入出力）は Gate と独立なので、Gate 1 の後�
 | `batch` の `expected_revision`: プレビュー後にモデルが変わっていれば適用を拒否 | **済** | 同上 |
 | アプリ: `propose` で提案を半透明のゴーストと「適用／却下」バーで表示。適用は 1 Undo、却下は無変更、ユーザーが先に編集したら提案を取り下げ。適用できない提案は最初から拒否 | **済** | `gui: aiProposalApplyAndReject` |
 | 差分の詳しい表示（主要寸法・削除対象のハイライト） | 未 | — |
+
+## 6.9 建築シナリオ（§11.1）の自動化
+
+Case A〜E をコマンド基盤経由の通しテストにした（`tests/test_scenarios.cpp`）。録画による操作比較（クリック数・迷い）は手動評価として別途行う。
+
+| Case | 内容 | テスト |
+|---|---|---|
+| A 小規模建物 | 床 8,000×12,000、外壁 3,000、900×2,100 の開口（Undo 1 回）、1,200 の庇、開口高さの後編集 | `Scenario.A_SmallBuilding` |
+| B 柱割り | 400 角柱をコンポーネント化して配列、定義の高さ変更で全数更新、Undo | `Scenario.B_ColumnGrid` |
+| C 曲線開口 | 線＋円弧の輪郭を壁に描き面化、押し込んでアーチ開口 | `Scenario.C_ArchedOpening` |
+| D 自由曲面 | 2 断面のロフト屋根、断面寸法の後編集 | `Scenario.D_LoftedRoof` |
+| E 人間＋AI | AI の提案をプレビュー → リビジョン確認付き適用 → Undo | `Scenario.E_HumanAndAi` |
+
+シナリオ C で見つかった不具合: 壁の面に描いた線＋円弧の輪郭が内向きの面になり、押し込むと出っ張っていた。→ ソリッドの面上に描いた輪郭（ループ・多角形）はその面の外向きにそろえる規則を追加（`Gate1.OutlineOnSolidFaceFacesOutwards`）。
 
 ## 7. 判断が必要な論点（§13 への現時点の回答）
 

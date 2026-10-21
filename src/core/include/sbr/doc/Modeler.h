@@ -207,6 +207,8 @@ class Modeler {
   Result<ObjectId> addObject(Object object, const std::string& commandName);
   Status commitModified(Object object, const std::string& commandName);
   Result<ObjectId> addProfile(Object object, const std::string& commandName);
+  // True if a profile lying on a solid's face points into that solid.
+  bool facesIntoSolid(const TopoDS_Face& worldFace, const ObjectId& parent) const;
   std::vector<geom::NamedShape> exportParts(const std::vector<ObjectId>& ids) const;
   Result<std::vector<ObjectId>> addImported(const std::vector<geom::NamedShape>& parts, const std::string& path,
                                             const std::string& commandName);

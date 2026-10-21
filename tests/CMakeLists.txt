@@ -12,6 +12,7 @@ add_executable(sbr_core_tests
   test_api.cpp
   test_ux_gate1.cpp
   test_rhino3dm.cpp
+  test_scenarios.cpp
 )
 target_link_libraries(sbr_core_tests PRIVATE sbr::core nlohmann_json::nlohmann_json GTest::gtest_main)
 

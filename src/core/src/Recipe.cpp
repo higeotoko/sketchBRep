@@ -128,7 +128,9 @@ Result<TopoDS_Shape> buildBase(const BaseFeature& base, const RegenContext& cont
             }
             auto face = geom::faceFromCurves(curves);
             if (!face) return Result<TopoDS_Shape>::failure(face.error());
-            return TopoDS_Shape(face.value());
+            TopoDS_Face f = face.value();
+            if (l.reversed) f.Reverse();
+            return TopoDS_Shape(f);
           },
           [&](const FacePart& f) -> Result<TopoDS_Shape> {
             if (f.source.size() != 1 || !f.source[0].recipe) return Result<TopoDS_Shape>::failure("Split face missing");
