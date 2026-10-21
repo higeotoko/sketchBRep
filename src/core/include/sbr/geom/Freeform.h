@@ -22,6 +22,10 @@ Result<TopoDS_Shape> makeArc(const gp_Pnt& start, const gp_Pnt& end, const gp_Di
 // Apex of that arc (for previews and snapping).
 gp_Pnt arcApex(const gp_Pnt& start, const gp_Pnt& end, const gp_Dir& normal, double bulge);
 
+// Planar face bounded by curves (lines, arcs, NURBS) that chain into one
+// closed loop, in any order and direction. Faces upwards / towards +Y / +X.
+Result<TopoDS_Face> faceFromCurves(const std::vector<TopoDS_Shape>& curves);
+
 // Cubic B-spline (NURBS) curve through the points (closed = periodic).
 Result<TopoDS_Wire> makeInterpolatedCurve(const std::vector<gp_Pnt>& points, bool closed);
 // Loft through section wires; solid = closed sections capped into a solid.

@@ -11,6 +11,12 @@
 #include <BRepPrimAPI_MakeRevol.hxx>
 #include <GeomAPI_Interpolate.hxx>
 #include <Geom_BSplineCurve.hxx>
+#include <ShapeAnalysis_FreeBounds.hxx>
+#include <ShapeFix_Face.hxx>
+#include <BRepCheck_Analyzer.hxx>
+#include <BRep_Tool.hxx>
+#include <TopTools_HSequenceOfShape.hxx>
+#include <TopoDS.hxx>
 #include <Standard_Failure.hxx>
 #include <TColgp_HArray1OfPnt.hxx>
 #include <TopExp_Explorer.hxx>
@@ -60,6 +66,38 @@ Result<TopoDS_Shape> makeArc(const gp_Pnt& start, const gp_Pnt& end, const gp_Di
     return TopoDS_Shape(f);
   } catch (const Standard_Failure& e) {
     return Result<TopoDS_Shape>::failure(std::string("Arc failed: ") + e.GetMessageString());
+  }
+}
+
+Result<TopoDS_Face> faceFromCurves(const std::vector<TopoDS_Shape>& curves) {
+  Handle(TopTools_HSequenceOfShape) edges = new TopTools_HSequenceOfShape;
+  for (const TopoDS_Shape& c : curves) {
+    for (TopExp_Explorer e(c, TopAbs_EDGE); e.More(); e.Next()) edges->Append(e.Current());
+  }
+  if (edges->Length() < 1) return Result<TopoDS_Face>::failure("No edges");
+  try {
+    Handle(TopTools_HSequenceOfShape) wires;
+    ShapeAnalysis_FreeBounds::ConnectEdgesToWires(edges, 1e-3, Standard_False, wires);
+    if (wires.IsNull() || wires->Length() != 1) {
+      return Result<TopoDS_Face>::failure("The curves do not form a single loop");
+    }
+    const TopoDS_Wire wire = TopoDS::Wire(wires->Value(1));
+    if (!BRep_Tool::IsClosed(wire)) return Result<TopoDS_Face>::failure("The loop is not closed");
+    BRepBuilderAPI_MakeFace maker(wire, Standard_True);
+    if (!maker.IsDone()) return Result<TopoDS_Face>::failure("The loop is not planar");
+    TopoDS_Face face = maker.Face();
+    ShapeFix_Face fix(face);
+    fix.Perform();
+    face = fix.Face();
+    if (const auto n = planarFaceNormal(face)) {
+      const double key = std::abs(n->Z()) > 1e-6 ? n->Z() : std::abs(n->Y()) > 1e-6 ? n->Y() : n->X();
+      if (key < 0) face.Reverse();
+    }
+    BRepCheck_Analyzer check(face);
+    if (!check.IsValid()) return Result<TopoDS_Face>::failure("The loop crosses itself");
+    return face;
+  } catch (const Standard_Failure& e) {
+    return Result<TopoDS_Face>::failure(std::string("Face failed: ") + e.GetMessageString());
   }
 }
 

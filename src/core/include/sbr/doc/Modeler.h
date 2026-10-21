@@ -60,6 +60,12 @@ class Modeler {
   // visible solid splits that face (parametric SplitOp). Returns the solid's
   // id, or a failure if the line does not divide any face.
   Result<ObjectId> splitWithLine(const std::vector<gp_Pnt>& worldPoints);
+  // If the curve closes a loop with other loose open curves (lines, arcs,
+  // NURBS) in the same group, replaces them by one face bounded by them
+  // (parametric: the curves' parameters stay editable). One undo step.
+  Result<ObjectId> faceFromLoop(const ObjectId& curveId);
+  // True if p is an end point of a loose open curve (where a loop can close).
+  bool isLooseCurveEnd(const gp_Pnt& p) const;
   Result<ObjectId> createPolygon(const std::vector<gp_Pnt>& points, const std::string& name = {});
   Result<ObjectId> createPolyline(const std::vector<gp_Pnt>& points, const std::string& name = {});
   Result<ObjectId> importShape(const TopoDS_Shape& shape, const std::string& name,

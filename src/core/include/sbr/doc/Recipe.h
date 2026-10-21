@@ -113,6 +113,13 @@ struct SweepFeature {
   std::vector<BooleanOperand> inputs;
 };
 
+// Face bounded by curves (lines, arcs, NURBS) chained into a closed loop.
+// The curves are snapshots, so e.g. an arc's bulge stays editable
+// ("in<i>.bulge").
+struct LoopProfile {
+  std::vector<BooleanOperand> curves;
+};
+
 // Container node of the object hierarchy. Has no geometry of its own.
 struct GroupNode {};
 
@@ -123,7 +130,7 @@ struct ComponentInstance {
 
 using BaseFeature = std::variant<RectangleProfile, CircleProfile, PolygonProfile, PolylineCurve, InterpolatedCurve,
                                  ArcCurve, LinearDimension, TextNote, ImportedShape,
-                                 BooleanFeature, LoftFeature, SweepFeature, GroupNode,
+                                 BooleanFeature, LoftFeature, SweepFeature, LoopProfile, GroupNode,
                                  ComponentInstance>;
 
 // --- Modifiers ------------------------------------------------------------

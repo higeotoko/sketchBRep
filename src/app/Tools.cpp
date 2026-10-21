@@ -362,6 +362,12 @@ void LineTool::addPoint(const gp_Pnt& p) {
     host_.setStatus(QObject::tr("面を分割しました。分かれた面をプッシュ/プルできます"));
     return;
   }
+  // Reaching the end of another loose line or arc: finish here so the loop
+  // can close into a face.
+  if (points_.size() >= 2 && host_.modeler().isLooseCurveEnd(p)) {
+    finish();
+    return;
+  }
   resetLock();
   updatePreview();
 }
@@ -369,7 +375,11 @@ void LineTool::addPoint(const gp_Pnt& p) {
 void LineTool::finish() {
   if (points_.size() >= 2) {
     auto line = host_.modeler().createPolyline(points_);
-    if (!line) host_.reportError(QString::fromStdString(line.error()));
+    if (!line) {
+      host_.reportError(QString::fromStdString(line.error()));
+    } else if (host_.modeler().faceFromLoop(*line)) {
+      host_.setStatus(QObject::tr("線と円弧で囲まれた面を作成しました"));
+    }
   }
   points_.clear();
   current_.reset();
@@ -824,6 +834,10 @@ void ArcTool::commit(double bulge) {
   auto id = host_.modeler().createArc(start_, end_, plane_.normal, bulge, face_);
   if (!id) {
     host_.reportError(QString::fromStdString(id.error()));
+  } else if (!face_) {
+    // An open arc closing a loop with lines becomes part of a face.
+    auto loop = host_.modeler().faceFromLoop(*id);
+    lastCreated_ = loop ? std::optional<doc::ObjectId>() : std::optional<doc::ObjectId>(id.value());
   } else {
     lastCreated_ = id.value();
   }

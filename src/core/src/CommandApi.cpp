@@ -368,6 +368,20 @@ const std::vector<CommandDef>& commands() {
          const auto r = must(m.pushPull(id, selectFace(m, id, arg(a, "face")), number(a, "distance")));
          return json{{"id", r.id}, {"parameter", r.parameterKey}};
        }},
+      {"face_from_loop",
+       "Turn loose open curves (lines from create_polyline-like drawing, open arcs, NURBS) that chain into a "
+       "closed planar loop with the given curve into one face (e.g. an arched window outline). The curves' "
+       "parameters stay editable as in<i>.<key>. Returns the face id.",
+       SCHEMA({"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}),
+       [](doc::Modeler& m, const json& a) { return idResult(must(m.faceFromLoop(text(a, "id")))); }},
+      {"create_line", "Create an open polyline (2+ points). Lines ending on other lines/arcs can be closed "
+                      "into a face with face_from_loop.",
+       SCHEMA({"type": "object", "properties": {
+         "points": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
+         "name": {"type": "string"}}, "required": ["points"]}),
+       [](doc::Modeler& m, const json& a) {
+         return idResult(must(m.createPolyline(points(a, "points"), textOr(a, "name", {}))));
+       }},
       {"split_face",
        "Draw a line (2+ points) from edge to edge across a planar face of a solid to split that face, so "
        "each part can be pushed/pulled separately (e.g. a band at 1 m on a wall). Returns the solid's id.",

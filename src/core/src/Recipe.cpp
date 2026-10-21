@@ -118,6 +118,18 @@ Result<TopoDS_Shape> buildBase(const BaseFeature& base, const RegenContext& cont
             if (!path.More()) return Result<TopoDS_Shape>::failure("Sweep path must be a curve");
             return geom::sweep(placed[0], TopoDS::Wire(path.Current()));
           },
+          [&](const LoopProfile& l) -> Result<TopoDS_Shape> {
+            std::vector<TopoDS_Shape> curves;
+            for (const BooleanOperand& c : l.curves) {
+              if (!c.recipe) return Result<TopoDS_Shape>::failure("Loop curve missing");
+              auto shape = regenerate(*c.recipe, context);
+              if (!shape) return Result<TopoDS_Shape>::failure("'" + c.name + "': " + shape.error());
+              curves.push_back(shape->Moved(TopLoc_Location(c.placement)));
+            }
+            auto face = geom::faceFromCurves(curves);
+            if (!face) return Result<TopoDS_Shape>::failure(face.error());
+            return TopoDS_Shape(face.value());
+          },
           [](const GroupNode&) -> Result<TopoDS_Shape> { return TopoDS_Shape(); },
           [&](const ComponentInstance& c) -> Result<TopoDS_Shape> {
             if (!context.definitionShape) {
@@ -139,6 +151,7 @@ const std::vector<BooleanOperand>* operandsOf(const BaseFeature& base) {
   if (const auto* b = std::get_if<BooleanFeature>(&base)) return &b->operands;
   if (const auto* l = std::get_if<LoftFeature>(&base)) return &l->sections;
   if (const auto* w = std::get_if<SweepFeature>(&base)) return &w->inputs;
+  if (const auto* l = std::get_if<LoopProfile>(&base)) return &l->curves;
   return nullptr;
 }
 std::vector<BooleanOperand>* operandsOf(BaseFeature& base) {
@@ -332,6 +345,7 @@ std::string describe(const Recipe& recipe) {
                  },
                  [&](const LoftFeature& l) { out << "Loft (" << l.sections.size() << " sections)"; },
                  [&](const SweepFeature&) { out << "Sweep"; },
+                 [&](const LoopProfile& l) { out << "Face (" << l.curves.size() << " edges)"; },
                  [&](const GroupNode&) { out << "Group"; },
                  [&](const ComponentInstance&) { out << "Component instance"; },
              },

@@ -252,3 +252,40 @@ TEST(Freeform, ArchedOpeningFromSegmentIsParametric) {
   EXPECT_DOUBLE_EQ(loaded->bulge, 500);
   EXPECT_TRUE(loaded->closed);
 }
+
+TEST(Freeform, LinesAndArcCloseIntoParametricFace) {
+  doc::Modeler m;
+  // Arched window outline on a vertical plane facing -Y: arc on top, lines below.
+  auto arc = m.createArc(gp_Pnt(0, 0, 2000), gp_Pnt(1000, 0, 2000), -gp::DY(), 500, false);
+  ASSERT_TRUE(arc.ok()) << arc.error();
+  EXPECT_FALSE(m.faceFromLoop(*arc).ok());  // not closed yet
+  auto lines = m.createPolyline({gp_Pnt(1000, 0, 2000), gp_Pnt(1000, 0, 0), gp_Pnt(0, 0, 0), gp_Pnt(0, 0, 2000)});
+  ASSERT_TRUE(lines.ok());
+  EXPECT_TRUE(m.isLooseCurveEnd(gp_Pnt(0, 0, 2000)));
+  const std::size_t steps = m.history().undoCount();
+
+  auto face = m.faceFromLoop(*lines);
+  ASSERT_TRUE(face.ok()) << face.error();
+  EXPECT_EQ(m.document().objects().size(), 1u);  // the curves became the face's edges
+  EXPECT_EQ(m.history().undoCount(), steps + 1);
+  const doc::Object* o = m.document().find(*face);
+  EXPECT_EQ(o->kind(), doc::ObjectKind::Face);
+  EXPECT_NEAR(area(o->shape), 1000.0 * 2000 + M_PI * 500 * 500 / 2, 1e-2);
+
+  // The arc stays parametric inside the face.
+  ASSERT_TRUE(m.setParameter(*face, "in1.bulge", 300).ok());
+  EXPECT_NEAR(exactBounds(m.document().worldShape(*face)).CornerMax().Z(), 2300, 1e-6);
+  // Push/pull it into a solid (an arched opening cutter).
+  const auto r = m.pushPull(*face, TopoDS::Face(m.document().find(*face)->shape), 200);
+  ASSERT_TRUE(r.ok()) << r.error();
+  EXPECT_GT(volume(m.document().worldShape(*face)), 1000.0 * 2000 * 200);
+
+  doc::Document d;
+  ASSERT_TRUE(doc::deserializeDocument(doc::serializeDocument(m.document()), d).ok());
+  EXPECT_NEAR(volume(d.worldShape(*d.find(*face))), volume(m.document().worldShape(*face)), 1e-3);
+
+  ASSERT_TRUE(m.undo());
+  ASSERT_TRUE(m.undo());
+  ASSERT_TRUE(m.undo());  // face creation undone in one step: the curves are back
+  EXPECT_EQ(m.document().objects().size(), 2u);
+}

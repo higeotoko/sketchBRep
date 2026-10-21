@@ -138,6 +138,13 @@ json baseToJson(const BaseFeature& base) {
             }
             return json{{"type", "loft"}, {"solid", l.solid}, {"sections", sections}};
           },
+          [](const LoopProfile& l) {
+            json curves = json::array();
+            for (const BooleanOperand& o : l.curves) {
+              curves.push_back({{"name", o.name}, {"placement", toJson(o.placement)}, {"recipe", recipeToJson(*o.recipe)}});
+            }
+            return json{{"type", "loop"}, {"curves", curves}};
+          },
           [](const SweepFeature& f) {
             json inputs = json::array();
             for (const BooleanOperand& o : f.inputs) {
@@ -215,6 +222,14 @@ BaseFeature baseFrom(const json& j) {
       l.sections.push_back(BooleanOperand{std::make_shared<const Recipe>(recipeFrom(o.at("recipe"))),
                                           trsfFrom(o.at("placement")),
                                           o.value("name", std::string())});
+    }
+    return l;
+  }
+  if (type == "loop") {
+    LoopProfile l;
+    for (const json& o : j.at("curves")) {
+      l.curves.push_back(BooleanOperand{std::make_shared<const Recipe>(recipeFrom(o.at("recipe"))),
+                                        trsfFrom(o.at("placement")), o.value("name", std::string())});
     }
     return l;
   }

@@ -22,7 +22,7 @@ AI 専用の裏口は作らず、GUI のツールと同じ `doc::Modeler` を JS
 
 | 部品 | 場所 | 役割 |
 |---|---|---|
-| `api::CommandApi` | `src/core/.../api/CommandApi.h` | `{"command", "args"}` → `{"ok", "result" \| "error"}`。36 コマンド + `batch` + `describe`。Qt 非依存 |
+| `api::CommandApi` | `src/core/.../api/CommandApi.h` | `{"command", "args"}` → `{"ok", "result" \| "error"}`。38 コマンド + `batch` + `describe`。Qt 非依存 |
 | `api::McpServer` | `src/core/.../api/McpServer.h` | MCP の `initialize` / `tools/list` / `tools/call` / `ping` を CommandApi に変換。通信路に依存しない |
 | `sbr_cli` | `tools/cli` | ヘッドレス実行。JSON Lines のスクリプト、`--schema`、`--mcp`（ヘッドレス MCP） |
 | `sbr_mcp` | `tools/mcp` | MCP サーバー。起動中のアプリへ転送（`--headless` でアプリなし） |
@@ -33,7 +33,7 @@ AI 専用の裏口は作らず、GUI のツールと同じ `doc::Modeler` を JS
 `sbr_cli --schema` で JSON Schema 付きの一覧が出る（そのまま LLM の tool 定義になる）。
 
 - 調べる: `list_objects`, `get_object`（面の番号・法線・重心・面積、パラメータ一覧つき）
-- 作る: `create_rectangle`, `create_circle`, `create_arc`（正確な円弧・弓形の面）, `create_polygon`, `create_curve`, `create_box`
+- 作る: `create_line`, `face_from_loop`（線・円弧で囲んだ輪郭を面に）, `create_rectangle`, `create_circle`, `create_arc`（正確な円弧・弓形の面）, `create_polygon`, `create_curve`, `create_box`
 - 注記: `create_dimension`, `create_text`, `set_text`（寸法・部屋名や面積のラベル。`get_object` で文字も読める）
 - 編集: `split_face`（面を線で分割）, `extrude`, `push_pull`（面は番号か `{"normal": [0,0,1]}`）, `set_parameter`, `offset`, `move`, `rotate`, `copy_array`（直線・円形）, `boolean`, `revolve`, `loft`, `sweep`
 - 構造・属性: `group`, `ungroup`, `make_component`, `set_definition_parameter`, `rename`, `set_tag`, `paint`, `delete`

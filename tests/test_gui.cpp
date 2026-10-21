@@ -115,6 +115,7 @@ class GuiPhase1 : public QObject {
   void scenesSaveRestoreAndPersist();
   void dimensionAndTextTools();
   void lineAcrossWallSplitsFace();
+  void arcAndLinesCloseIntoFace();
 };
 
 namespace {
@@ -956,6 +957,36 @@ void GuiPhase1::lineAcrossWallSplitsFace() {
   QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
   const double v = geom::volume(m.document().worldShape(*m.document().find(wall)));
   QVERIFY2(std::abs(v - (4000.0 * 200 * 3000 + 4000.0 * 1500 * 300)) < 1.0, qPrintable(QString::number(v)));
+}
+
+void GuiPhase1::arcAndLinesCloseIntoFace() {
+  Fixture f;
+  QVERIFY(f.setUp(1000, 1000));
+  doc::Modeler& m = f.window.modeler();
+  // An open semicircle (Ctrl = arc only) bulging to -Y...
+  f.window.activateTool(MainWindow::ToolId::Arc);
+  QTest::keyClick(f.vp, Qt::Key_Control);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(1200, 0, 0)));
+  type(f.vp, QStringLiteral("2000"));
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, -990, 0)));
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  QCOMPARE(m.document().objects().front().kind(), doc::ObjectKind::Curve);
+
+  // ...closed by three lines back to the arc's start: becomes one face.
+  f.window.activateTool(MainWindow::ToolId::Line);
+  click(f.vp, f.vp->toWidget(gp_Pnt(2000, 0, 0)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(2000, 1200, 0)));
+  type(f.vp, QStringLiteral("2000"));
+  move(f.vp, f.vp->toWidget(gp_Pnt(800, 2000, 0)));
+  type(f.vp, QStringLiteral("2000"));
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  const doc::Object& face = m.document().objects().front();
+  QCOMPARE(face.kind(), doc::ObjectKind::Face);
+  const double a = geom::area(m.document().worldShape(face));
+  QVERIFY2(std::abs(a - (2000.0 * 2000 + M_PI * 1000 * 1000 / 2)) < 1.0, qPrintable(QString::number(a)));
 }
 
 QTEST_MAIN(GuiPhase1)

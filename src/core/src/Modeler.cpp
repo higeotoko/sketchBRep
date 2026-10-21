@@ -7,6 +7,10 @@
 
 #include <BRepClass_FaceClassifier.hxx>
 #include <BRep_Tool.hxx>
+#include <TopExp.hxx>
+#include <TopoDS_Vertex.hxx>
+#include <TopoDS_Wire.hxx>
+#include <functional>
 #include <TopExp_Explorer.hxx>
 #include <TopLoc_Location.hxx>
 #include <BRepTools.hxx>
@@ -258,6 +262,95 @@ Result<ObjectId> Modeler::splitWithLine(const std::vector<gp_Pnt>& worldPoints) 
     }
   }
   return Result<ObjectId>::failure(lastError);
+}
+
+namespace {
+
+// End points of an open curve object (world), if it is one.
+std::optional<std::pair<gp_Pnt, gp_Pnt>> curveEnds(const Document& document, const Object& o) {
+  if (o.kind() != ObjectKind::Curve || !document.isVisible(o.id)) return std::nullopt;
+  const TopoDS_Shape shape = document.worldShape(o);
+  TopExp_Explorer w(shape, TopAbs_WIRE);
+  if (!w.More()) return std::nullopt;
+  const TopoDS_Wire wire = TopoDS::Wire(w.Current());
+  TopoDS_Vertex a, b;
+  TopExp::Vertices(wire, a, b);
+  if (a.IsNull() || b.IsNull()) return std::nullopt;
+  const gp_Pnt pa = BRep_Tool::Pnt(a), pb = BRep_Tool::Pnt(b);
+  if (pa.Distance(pb) < 1e-3) return std::nullopt;  // already closed
+  return std::make_pair(pa, pb);
+}
+
+}  // namespace
+
+bool Modeler::isLooseCurveEnd(const gp_Pnt& p) const {
+  for (const Object& o : document_.objects()) {
+    if (const auto ends = curveEnds(document_, o)) {
+      if (ends->first.Distance(p) < 1e-3 || ends->second.Distance(p) < 1e-3) return true;
+    }
+  }
+  return false;
+}
+
+Result<ObjectId> Modeler::faceFromLoop(const ObjectId& curveId) {
+  const Object* start = document_.find(curveId);
+  if (!start) return Result<ObjectId>::failure("Object not found");
+  const auto startEnds = curveEnds(document_, *start);
+  if (!startEnds) return Result<ObjectId>::failure("Not an open curve");
+  struct Candidate {
+    const Object* object;
+    gp_Pnt a, b;
+  };
+  std::vector<Candidate> candidates;
+  for (const Object& o : document_.objects()) {
+    if (o.id == curveId || o.parent != start->parent) continue;
+    if (const auto ends = curveEnds(document_, o)) candidates.push_back({&o, ends->first, ends->second});
+  }
+  // Depth-first search for a chain from the curve's end back to its start.
+  std::vector<int> path;
+  std::vector<bool> used(candidates.size(), false);
+  std::function<bool(const gp_Pnt&)> search = [&](const gp_Pnt& at) -> bool {
+    if (!path.empty() && at.Distance(startEnds->first) < 1e-3) return true;
+    if (path.size() > 32) return false;
+    for (std::size_t i = 0; i < candidates.size(); ++i) {
+      if (used[i]) continue;
+      const bool fromA = candidates[i].a.Distance(at) < 1e-3;
+      const bool fromB = candidates[i].b.Distance(at) < 1e-3;
+      if (!fromA && !fromB) continue;
+      used[i] = true;
+      path.push_back(static_cast<int>(i));
+      if (search(fromA ? candidates[i].b : candidates[i].a)) return true;
+      path.pop_back();
+      used[i] = false;
+    }
+    return false;
+  };
+  if (!search(startEnds->second)) return Result<ObjectId>::failure("The curve does not close a loop");
+
+  std::vector<const Object*> members = {start};
+  for (int i : path) members.push_back(candidates[static_cast<std::size_t>(i)].object);
+  LoopProfile loop;
+  std::vector<ObjectId> ids;
+  for (const Object* o : members) {
+    loop.curves.push_back(BooleanOperand{std::make_shared<const Recipe>(o->recipe), o->transform, o->name});
+    ids.push_back(o->id);
+  }
+  Object face;
+  face.name = uniqueName("Face");
+  face.parent = start->parent;
+  face.recipe.base = std::move(loop);
+  history_.beginGroup("Face");
+  auto id = addObject(std::move(face), "Face");
+  if (!id) {
+    history_.abortGroup();
+    return id;
+  }
+  if (const Status removed = remove(ids); !removed) {
+    history_.abortGroup();
+    return Result<ObjectId>::failure(removed.message());
+  }
+  history_.endGroup();
+  return id;
 }
 
 Result<ObjectId> Modeler::createPolygon(const std::vector<gp_Pnt>& points, const std::string& name) {

@@ -1,5 +1,7 @@
 // CommandApi: the JSON command layer shared by the CLI, the MCP server and the in-app bridge.
 
+#include <cmath>
+
 #include <gtest/gtest.h>
 
 #include <nlohmann/json.hpp>
@@ -238,6 +240,17 @@ TEST(CommandApi, SplitFaceThenPushPart) {
   a.ok("split_face", {{"points", {{0, 0, 1000}, {4000, 0, 1000}}}});
   EXPECT_EQ(a.ok("get_object", {{"id", wall}})["faces"].size(), 7u);
   EXPECT_FALSE(a.call("split_face", {{"points", {{100, 0, 100}, {200, 0, 200}}}})["ok"]);
+}
+
+TEST(CommandApi, ArchedOutlineFromArcAndLines) {
+  Api a;
+  const json r = a.ok("batch", {{"commands",
+      {{{"command", "create_arc"}, {"args", {{"start", {0, 0, 0}}, {"end", {1000, 0, 0}}, {"bulge", -500}}}},
+       {{"command", "create_line"}, {"args", {{"points", {{1000, 0, 0}, {1000, 1000, 0}, {0, 1000, 0}, {0, 0, 0}}}}}},
+       {{"command", "face_from_loop"}, {"args", {{"id", "$2.id"}}}}}}});
+  const std::string face = r["results"][2]["result"]["id"];
+  EXPECT_NEAR(a.ok("get_object", {{"id", face}})["area"].get<double>(), 1e6 + M_PI * 250000 / 2, 1e-2);
+  EXPECT_EQ(a.ok("list_objects")["objects"].size(), 1u);
 }
 
 TEST(CommandApi, DimensionsAndTextNotes) {
