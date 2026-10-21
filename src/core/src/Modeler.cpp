@@ -227,6 +227,39 @@ Status Modeler::setAnnotationText(const ObjectId& id, const std::string& text) {
   return commitModified(std::move(object), "Edit Text");
 }
 
+Result<ObjectId> Modeler::splitWithLine(const std::vector<gp_Pnt>& worldPoints) {
+  if (worldPoints.size() < 2) return Result<ObjectId>::failure("Split needs a line");
+  std::string lastError = "The line does not cross a face from edge to edge";
+  for (const Object& candidate : document_.objects()) {
+    if (candidate.kind() != ObjectKind::Solid || !document_.isVisible(candidate.id)) continue;
+    const gp_Trsf world = document_.worldTransform(candidate);
+    const TopoDS_Shape worldShape = document_.worldShape(candidate);
+    for (TopExp_Explorer e(worldShape, TopAbs_FACE); e.More(); e.Next()) {
+      const TopoDS_Face face = TopoDS::Face(e.Current());
+      if (!geom::isPlanarFace(face)) continue;
+      bool inside = true;
+      for (const gp_Pnt& p : worldPoints) inside = inside && geom::pointOnFace(face, p);
+      if (!inside || !geom::pointOnFaceBoundary(face, worldPoints.front()) ||
+          !geom::pointOnFaceBoundary(face, worldPoints.back())) {
+        continue;
+      }
+      // Record in object coordinates.
+      const gp_Trsf toLocal = world.Inverted();
+      const TopoDS_Face localFace = TopoDS::Face(face.Moved(TopLoc_Location(toLocal)));
+      const auto ref = geom::FaceRef::fromFace(localFace);
+      if (!ref) continue;
+      std::vector<gp_Pnt> local;
+      for (const gp_Pnt& p : worldPoints) local.push_back(p.Transformed(toLocal));
+      Object object = candidate;
+      object.recipe.modifiers.push_back(SplitOp{*ref, local});
+      const Status s = commitModified(std::move(object), "Split Face");
+      if (s) return candidate.id;
+      lastError = s.message();
+    }
+  }
+  return Result<ObjectId>::failure(lastError);
+}
+
 Result<ObjectId> Modeler::createPolygon(const std::vector<gp_Pnt>& points, const std::string& name) {
   Object o;
   o.name = name.empty() ? uniqueName("Face") : name;

@@ -187,6 +187,11 @@ Result<TopoDS_Shape> regenerate(const Recipe& recipe, const RegenContext& contex
               if (!isFace) return Result<TopoDS_Shape>::failure("Revolve requires a profile face");
               return geom::revolve(shape, op.axis, op.angle);
             },
+            [&](const SplitOp& op) -> Result<TopoDS_Shape> {
+              auto face = op.face.resolve(shape);
+              if (!face) return Result<TopoDS_Shape>::failure(face.error());
+              return geom::splitFace(shape, face.value(), op.points);
+            },
             [&](const PushPullOp& op) -> Result<TopoDS_Shape> {
               const geom::ValidationReport report = geom::validateShape(shape, true);
               if (!report.valid) {
@@ -242,6 +247,7 @@ std::vector<Parameter> parameters(const Recipe& recipe) {
                      // Exposed in degrees for editing.
                      out.push_back({angleKey(i), "Revolve angle", op.angle * 180.0 / M_PI, false});
                    },
+                   [&](const SplitOp&) {},
                },
                recipe.modifiers[i]);
   }
@@ -287,9 +293,14 @@ Status setParameter(Recipe& recipe, const std::string& key, double value) {
       return Status::success();
     }
     if (key != opKey(i)) continue;
-    std::visit(Overloaded{[&](RevolveOp&) {}, [&](auto& op) { op.distance = value; }},
+    bool found = false;
+    std::visit(Overloaded{[&](RevolveOp&) {}, [&](SplitOp&) {},
+                          [&](auto& op) {
+                            op.distance = value;
+                            found = true;
+                          }},
                recipe.modifiers[i]);
-    return Status::success();
+    if (found) return Status::success();
   }
   return Status::failure("Unknown parameter: " + key);
 }
@@ -329,6 +340,7 @@ std::string describe(const Recipe& recipe) {
     std::visit(Overloaded{
                    [&](const ExtrudeOp& op) { out << " > Extrude " << op.distance; },
                    [&](const PushPullOp& op) { out << " > Push/Pull " << op.distance; },
+                   [&](const SplitOp&) { out << " > Split face"; },
                    [&](const OffsetOp& op) { out << " > Offset " << op.distance; },
                    [&](const RevolveOp& op) { out << " > Revolve " << op.angle * 180.0 / M_PI << " deg"; },
                },

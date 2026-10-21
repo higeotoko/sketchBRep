@@ -149,7 +149,14 @@ struct RevolveOp {
   double angle = 0.0;  // radians, signed
 };
 
-using Modifier = std::variant<ExtrudeOp, PushPullOp, OffsetOp, RevolveOp>;
+// A line drawn across a planar face of the solid splits that face
+// (points in object coordinates, ends on the face boundary).
+struct SplitOp {
+  geom::FaceRef face;
+  std::vector<gp_Pnt> points;
+};
+
+using Modifier = std::variant<ExtrudeOp, PushPullOp, OffsetOp, RevolveOp, SplitOp>;
 
 struct Recipe {
   BaseFeature base;

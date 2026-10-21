@@ -243,6 +243,14 @@ json modifierToJson(const Modifier& m) {
                         {"direction", toJson(op.axis.Direction())},
                         {"angle", op.angle}};
           },
+          [](const SplitOp& op) {
+            return json{{"type", "split"},
+                        {"points", pointsToJson(op.points)},
+                        {"face",
+                         {{"normal", toJson(op.face.normal)},
+                          {"centroid", toJson(op.face.centroid)},
+                          {"area", op.face.area}}}};
+          },
           [](const PushPullOp& op) {
             return json{{"type", "pushpull"},
                         {"distance", op.distance},
@@ -266,6 +274,15 @@ Modifier modifierFrom(const json& j) {
   if (type == "pushpull") {
     PushPullOp op;
     op.distance = j.at("distance").get<double>();
+    const json& f = j.at("face");
+    op.face.normal = dirFrom(f.at("normal"));
+    op.face.centroid = pointFrom(f.at("centroid"));
+    op.face.area = f.value("area", 0.0);
+    return op;
+  }
+  if (type == "split") {
+    SplitOp op;
+    op.points = pointsFrom(j.at("points"));
     const json& f = j.at("face");
     op.face.normal = dirFrom(f.at("normal"));
     op.face.centroid = pointFrom(f.at("centroid"));

@@ -351,6 +351,17 @@ void LineTool::addPoint(const gp_Pnt& p) {
     return;
   }
   points_.push_back(p);
+  // Edge to edge across a face of a solid: the face is split right away
+  // (SketchUp-style) and the line ends there.
+  if (points_.size() >= 2 && host_.modeler().splitWithLine(points_)) {
+    points_.clear();
+    current_.reset();
+    drawPlane_.reset();
+    resetLock();
+    host_.viewport().clearPreview();
+    host_.setStatus(QObject::tr("面を分割しました。分かれた面をプッシュ/プルできます"));
+    return;
+  }
   resetLock();
   updatePreview();
 }

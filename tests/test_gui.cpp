@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include <BRep_Tool.hxx>
+#include <TopExp_Explorer.hxx>
 
 #include <QApplication>
 #include <QDir>
@@ -113,6 +114,7 @@ class GuiPhase1 : public QObject {
   void arcToolSemicircleAndBulgeEdit();
   void scenesSaveRestoreAndPersist();
   void dimensionAndTextTools();
+  void lineAcrossWallSplitsFace();
 };
 
 namespace {
@@ -928,6 +930,32 @@ void GuiPhase1::dimensionAndTextTools() {
   QVERIFY(m.undo());
   QTest::qWait(30);
   QCOMPARE(f.vp->annotationText(note), QStringLiteral("2.00 m²"));
+}
+
+void GuiPhase1::lineAcrossWallSplitsFace() {
+  Fixture f;
+  QVERIFY(f.setUp(2000, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId wall = f.box(0, 0, 4000, 200, 3000);
+  f.window.activateTool(MainWindow::ToolId::Line);
+  // From the left edge to the right edge of the front face, at mid height.
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 1500)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(4000, 0, 1500)));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), std::size_t(1));  // no separate line object
+  int faces = 0;
+  for (TopExp_Explorer e(m.document().worldShape(*m.document().find(wall)), TopAbs_FACE); e.More(); e.Next()) ++faces;
+  QCOMPARE(faces, 7);
+  QCOMPARE(QString::fromStdString(m.history().undoName()), QStringLiteral("Split Face"));
+
+  // Push/pull the upper half of the front face outwards.
+  f.window.activateTool(MainWindow::ToolId::PushPull);
+  click(f.vp, f.vp->toWidget(gp_Pnt(2000, 0, 2500)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(2000, -300, 2500)));
+  type(f.vp, QStringLiteral("300"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  const double v = geom::volume(m.document().worldShape(*m.document().find(wall)));
+  QVERIFY2(std::abs(v - (4000.0 * 200 * 3000 + 4000.0 * 1500 * 300)) < 1.0, qPrintable(QString::number(v)));
 }
 
 QTEST_MAIN(GuiPhase1)

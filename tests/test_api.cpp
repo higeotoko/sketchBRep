@@ -231,6 +231,15 @@ TEST(McpServer, AppCommandSpecsAreValidSchemas) {
   }
 }
 
+TEST(CommandApi, SplitFaceThenPushPart) {
+  Api a;
+  const std::string wall =
+      a.ok("create_box", {{"origin", {0, 0, 0}}, {"width", 4000}, {"depth", 200}, {"height", 3000}})["id"];
+  a.ok("split_face", {{"points", {{0, 0, 1000}, {4000, 0, 1000}}}});
+  EXPECT_EQ(a.ok("get_object", {{"id", wall}})["faces"].size(), 7u);
+  EXPECT_FALSE(a.call("split_face", {{"points", {{100, 0, 100}, {200, 0, 200}}}})["ok"]);
+}
+
 TEST(CommandApi, DimensionsAndTextNotes) {
   Api a;
   const std::string dim = a.ok("create_dimension", {{"start", {0, 0, 0}}, {"end", {7200, 0, 0}},

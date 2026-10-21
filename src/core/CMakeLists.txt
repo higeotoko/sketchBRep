@@ -35,7 +35,7 @@ endif()
 target_link_libraries(sbr_core
   PUBLIC
     TKernel TKMath TKG2d TKG3d TKGeomBase TKBRep
-    TKGeomAlgo TKTopAlgo TKPrim TKBO TKBool TKShHealing TKMesh TKOffset
+    TKGeomAlgo TKTopAlgo TKPrim TKBO TKBool TKShHealing TKMesh TKOffset TKFeat
     ${SBR_OCCT_EXCHANGE} TKXCAF TKLCAF TKCAF TKVCAF TKService
   PRIVATE
     nlohmann_json::nlohmann_json

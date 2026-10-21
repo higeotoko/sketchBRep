@@ -16,6 +16,13 @@
 #include <BRep_Tool.hxx>
 #include <GeomLib_IsPlanarSurface.hxx>
 #include <Geom_Surface.hxx>
+#include <BRepFeat_SplitShape.hxx>
+#include <BRepClass_FaceClassifier.hxx>
+#include <BRepExtrema_DistShapeShape.hxx>
+#include <BRepBuilderAPI_MakeVertex.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <TopoDS_Vertex.hxx>
 #include <ShapeUpgrade_UnifySameDomain.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp_Explorer.hxx>
@@ -241,6 +248,56 @@ Result<TopoDS_Shape> booleanCombine(BooleanOp op, const std::vector<TopoDS_Shape
     return result;
   } catch (const Standard_Failure& e) {
     return Result<TopoDS_Shape>::failure(std::string("Boolean failed: ") + e.GetMessageString());
+  }
+}
+
+bool pointOnFace(const TopoDS_Face& face, const gp_Pnt& p, double tolerance) {
+  gp_Pln plane;
+  if (!isPlanarFace(face, &plane) || plane.Distance(p) > tolerance) return false;
+  BRepClass_FaceClassifier classifier(face, p, tolerance);
+  return classifier.State() == TopAbs_IN || classifier.State() == TopAbs_ON;
+}
+
+bool pointOnFaceBoundary(const TopoDS_Face& face, const gp_Pnt& p, double tolerance) {
+  if (!pointOnFace(face, p, tolerance)) return false;
+  const TopoDS_Vertex v = BRepBuilderAPI_MakeVertex(p);
+  for (TopExp_Explorer e(face, TopAbs_EDGE); e.More(); e.Next()) {
+    BRepExtrema_DistShapeShape dist(v, e.Current());
+    if (dist.IsDone() && dist.Value() <= tolerance) return true;
+  }
+  return false;
+}
+
+Result<TopoDS_Shape> splitFace(const TopoDS_Shape& solid, const TopoDS_Face& face,
+                               const std::vector<gp_Pnt>& polyline) {
+  if (polyline.size() < 2) return Result<TopoDS_Shape>::failure("Split needs a line");
+  for (const gp_Pnt& p : polyline) {
+    if (!pointOnFace(face, p)) return Result<TopoDS_Shape>::failure("The line leaves the face");
+  }
+  if (!pointOnFaceBoundary(face, polyline.front()) || !pointOnFaceBoundary(face, polyline.back())) {
+    return Result<TopoDS_Shape>::failure("The line must run from edge to edge of the face");
+  }
+  try {
+    BRepBuilderAPI_MakeWire wire;
+    for (std::size_t i = 1; i < polyline.size(); ++i) {
+      if (polyline[i - 1].Distance(polyline[i]) < tolerance::kMinDimension) continue;
+      wire.Add(BRepBuilderAPI_MakeEdge(polyline[i - 1], polyline[i]).Edge());
+    }
+    if (!wire.IsDone()) return Result<TopoDS_Shape>::failure("Invalid split line");
+    BRepFeat_SplitShape split(solid);
+    split.Add(wire.Wire(), face);
+    split.Build();
+    if (!split.IsDone()) return Result<TopoDS_Shape>::failure("The face could not be split");
+    const TopoDS_Shape result = split.Shape();
+    int before = 0, after = 0;
+    for (TopExp_Explorer e(solid, TopAbs_FACE); e.More(); e.Next()) ++before;
+    for (TopExp_Explorer e(result, TopAbs_FACE); e.More(); e.Next()) ++after;
+    if (after <= before) return Result<TopoDS_Shape>::failure("The line does not divide the face");
+    const ValidationReport report = validateShape(result, true);
+    if (!report.valid) return Result<TopoDS_Shape>::failure("Split produced an invalid solid");
+    return result;
+  } catch (const Standard_Failure& e) {
+    return Result<TopoDS_Shape>::failure(std::string("Split failed: ") + e.GetMessageString());
   }
 }
 

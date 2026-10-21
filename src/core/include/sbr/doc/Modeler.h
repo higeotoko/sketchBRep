@@ -56,6 +56,10 @@ class Modeler {
                                    const std::string& text = {});
   Result<ObjectId> createText(const gp_Pnt& position, const std::optional<gp_Pnt>& target, const std::string& text);
   Status setAnnotationText(const ObjectId& id, const std::string& text);
+  // A line (world points) drawn from edge to edge across a planar face of a
+  // visible solid splits that face (parametric SplitOp). Returns the solid's
+  // id, or a failure if the line does not divide any face.
+  Result<ObjectId> splitWithLine(const std::vector<gp_Pnt>& worldPoints);
   Result<ObjectId> createPolygon(const std::vector<gp_Pnt>& points, const std::string& name = {});
   Result<ObjectId> createPolyline(const std::vector<gp_Pnt>& points, const std::string& name = {});
   Result<ObjectId> importShape(const TopoDS_Shape& shape, const std::string& name,

@@ -629,3 +629,85 @@ TEST(Annotations, NotExportedToStep) {
   ASSERT_TRUE(only.createText(gp_Pnt(), std::nullopt, "note").ok());
   EXPECT_FALSE(only.exportStep(path).ok());
 }
+
+// ---- Splitting faces with a line ----------------------------------------------------
+
+namespace {
+
+TopoDS_Face faceWithCentroid(const TopoDS_Shape& shape, const gp_Dir& normal, const gp_Pnt& near) {
+  TopoDS_Face best;
+  double bestDistance = 1e300;
+  for (TopExp_Explorer e(shape, TopAbs_FACE); e.More(); e.Next()) {
+    const TopoDS_Face f = TopoDS::Face(e.Current());
+    const auto ref = geom::FaceRef::fromFace(f);
+    if (!ref || ref->normal.Angle(normal) > 1e-6) continue;
+    if (ref->centroid.Distance(near) < bestDistance) {
+      bestDistance = ref->centroid.Distance(near);
+      best = f;
+    }
+  }
+  return best;
+}
+
+int faceCount(const TopoDS_Shape& shape) {
+  int n = 0;
+  for (TopExp_Explorer e(shape, TopAbs_FACE); e.More(); e.Next()) ++n;
+  return n;
+}
+
+}  // namespace
+
+TEST(SplitFace, LineAcrossWallThenPushUpperPart) {
+  doc::Modeler m;
+  auto wall = m.createRectangle(geom::SketchPlane::ground(), 4000, 200);
+  ASSERT_TRUE(m.extrude(*wall, 3000).ok());
+  const double v0 = 4000.0 * 200 * 3000;
+
+  // A horizontal line across the front (-Y) face at 1 m.
+  auto split = m.splitWithLine({gp_Pnt(0, 0, 1000), gp_Pnt(4000, 0, 1000)});
+  ASSERT_TRUE(split.ok()) << split.error();
+  EXPECT_EQ(*split, *wall);
+  const TopoDS_Shape s1 = m.document().worldShape(*wall);
+  EXPECT_EQ(faceCount(s1), 7);
+  EXPECT_NEAR(geom::volume(s1), v0, 1e-3);
+  EXPECT_EQ(m.history().undoName(), "Split Face");
+
+  // Push the upper part out by 300 (the lower part stays).
+  const TopoDS_Face upper = faceWithCentroid(s1, -gp::DY(), gp_Pnt(2000, 0, 2000));
+  ASSERT_FALSE(upper.IsNull());
+  EXPECT_NEAR(geom::area(upper), 4000.0 * 2000, 1e-3);
+  ASSERT_TRUE(m.pushPull(*wall, upper, 300).ok());
+  EXPECT_NEAR(geom::volume(m.document().worldShape(*wall)), v0 + 4000.0 * 2000 * 300, 1e-2);
+
+  // Parametric: raising the wall keeps the split at 1 m and the pushed part.
+  ASSERT_TRUE(m.setParameter(*wall, "op0.distance", 3500).ok());
+  EXPECT_NEAR(geom::volume(m.document().worldShape(*wall)), 4000.0 * 200 * 3500 + 4000.0 * 2500 * 300, 1e-2);
+
+  // Saved and reloaded.
+  doc::Document d;
+  ASSERT_TRUE(doc::deserializeDocument(doc::serializeDocument(m.document()), d).ok());
+  EXPECT_NEAR(geom::volume(d.worldShape(*d.find(*wall))), 4000.0 * 200 * 3500 + 4000.0 * 2500 * 300, 1e-2);
+
+  // Undo back to the unsplit wall.
+  ASSERT_TRUE(m.undo());
+  ASSERT_TRUE(m.undo());
+  ASSERT_TRUE(m.undo());
+  EXPECT_EQ(faceCount(m.document().worldShape(*wall)), 6);
+}
+
+TEST(SplitFace, RejectsLinesThatDoNotDivideAFace) {
+  doc::Modeler m;
+  auto box = m.createRectangle(geom::SketchPlane::ground(), 1000, 1000);
+  ASSERT_TRUE(m.extrude(*box, 1000).ok());
+  // Ends inside the face (not on its boundary).
+  EXPECT_FALSE(m.splitWithLine({gp_Pnt(200, 200, 1000), gp_Pnt(800, 800, 1000)}).ok());
+  // Not on any face.
+  EXPECT_FALSE(m.splitWithLine({gp_Pnt(0, 0, 5000), gp_Pnt(1000, 0, 5000)}).ok());
+  // Along an existing edge: does not divide.
+  EXPECT_FALSE(m.splitWithLine({gp_Pnt(0, 0, 1000), gp_Pnt(1000, 0, 1000)}).ok());
+  EXPECT_EQ(m.history().undoCount(), 2u);
+  // An L-shaped polyline from one edge to an adjacent one (corner cut) works.
+  auto ok = m.splitWithLine({gp_Pnt(300, 0, 1000), gp_Pnt(300, 300, 1000), gp_Pnt(0, 300, 1000)});
+  ASSERT_TRUE(ok.ok()) << ok.error();
+  EXPECT_EQ(faceCount(m.document().worldShape(*box)), 7);
+}

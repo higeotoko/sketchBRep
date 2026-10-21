@@ -368,6 +368,13 @@ const std::vector<CommandDef>& commands() {
          const auto r = must(m.pushPull(id, selectFace(m, id, arg(a, "face")), number(a, "distance")));
          return json{{"id", r.id}, {"parameter", r.parameterKey}};
        }},
+      {"split_face",
+       "Draw a line (2+ points) from edge to edge across a planar face of a solid to split that face, so "
+       "each part can be pushed/pulled separately (e.g. a band at 1 m on a wall). Returns the solid's id.",
+       SCHEMA({"type": "object", "properties": {
+         "points": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}}},
+         "required": ["points"]}),
+       [](doc::Modeler& m, const json& a) { return idResult(must(m.splitWithLine(points(a, "points")))); }},
       {"set_parameter", "Change a parameter (see get_object.parameters), e.g. op0.distance or width.",
        SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "key": {"type": "string"},
                "value": {"type": "number"}}, "required": ["id", "key", "value"]}),

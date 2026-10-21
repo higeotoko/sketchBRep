@@ -4,6 +4,7 @@
 #include <vector>
 
 #include <gp_Dir.hxx>
+#include <gp_Pnt.hxx>
 #include <gp_Pln.hxx>
 #include <gp_Vec.hxx>
 #include <TopoDS_Face.hxx>
@@ -34,6 +35,18 @@ Result<TopoDS_Shape> pushPullFace(const TopoDS_Shape& solid, const TopoDS_Face& 
 // outwards, sharp corners as in architectural plans). Inner holes are not
 // supported yet. The face normal is preserved.
 Result<TopoDS_Face> offsetFace(const TopoDS_Face& face, double distance);
+
+// SketchUp-style "draw a line across a face": splits a planar face of a
+// solid with a polyline whose ends lie on the face boundary. The solid keeps
+// its volume; the face becomes two (or more) faces that can be pushed/pulled
+// separately. Fails if the line does not cut the face.
+Result<TopoDS_Shape> splitFace(const TopoDS_Shape& solid, const TopoDS_Face& face,
+                               const std::vector<gp_Pnt>& polyline);
+
+// True if p lies on the face (inside or on its boundary) within tolerance.
+bool pointOnFace(const TopoDS_Face& face, const gp_Pnt& p, double tolerance = 1e-3);
+// True if p lies on the face boundary.
+bool pointOnFaceBoundary(const TopoDS_Face& face, const gp_Pnt& p, double tolerance = 1e-3);
 
 enum class BooleanOp { Union, Subtract, Intersect };
 
