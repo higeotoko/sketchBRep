@@ -29,7 +29,11 @@ Result<TopoDS_Shape> extrudeFace(const TopoDS_Face& face, double distance);
 // `distance` along its outward normal by fusing (distance > 0) or cutting
 // (distance < 0) a prism. Coplanar faces are merged afterwards. Fails without
 // side effects if the result is not a single valid solid.
-Result<TopoDS_Shape> pushPullFace(const TopoDS_Shape& solid, const TopoDS_Face& face, double distance);
+// keepLines: segments of lines that split faces earlier (SplitOp); edges on
+// them are kept, so coplanar parts are not merged back together.
+using Segment = std::pair<gp_Pnt, gp_Pnt>;
+Result<TopoDS_Shape> pushPullFace(const TopoDS_Shape& solid, const TopoDS_Face& face, double distance,
+                                  const std::vector<Segment>& keepLines = {});
 
 // Offsets the outer boundary of a planar face within its plane (positive =
 // outwards, sharp corners as in architectural plans). Inner holes are not

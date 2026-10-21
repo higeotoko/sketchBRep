@@ -116,8 +116,39 @@ Result<TopoDS_Shape> extrudeFace(const TopoDS_Face& face, double distance) {
   }
 }
 
-Result<TopoDS_Shape> pushPullFace(const TopoDS_Shape& solid, const TopoDS_Face& face,
-                                  double distance) {
+namespace {
+
+// Edges lying on one of the segments (both ends on its line, within it).
+void keepEdgesOn(ShapeUpgrade_UnifySameDomain& unify, const TopoDS_Shape& shape,
+                 const std::vector<Segment>& lines) {
+  if (lines.empty()) return;
+  auto onSegment = [](const gp_Pnt& p, const Segment& s) {
+    const gp_Vec d(s.first, s.second);
+    const double len = d.Magnitude();
+    if (len < 1e-9) return false;
+    const gp_Vec v(s.first, p);
+    const double t = v.Dot(d) / (len * len);
+    if (t < -1e-6 || t > 1 + 1e-6) return false;
+    return v.Crossed(d).Magnitude() / len < 1e-3;
+  };
+  for (TopExp_Explorer e(shape, TopAbs_EDGE); e.More(); e.Next()) {
+    BRepAdaptor_Curve curve(TopoDS::Edge(e.Current()));
+    if (curve.GetType() != GeomAbs_Line) continue;
+    const gp_Pnt a = curve.Value(curve.FirstParameter());
+    const gp_Pnt b = curve.Value(curve.LastParameter());
+    for (const Segment& s : lines) {
+      if (onSegment(a, s) && onSegment(b, s)) {
+        unify.KeepShape(e.Current());
+        break;
+      }
+    }
+  }
+}
+
+}  // namespace
+
+Result<TopoDS_Shape> pushPullFace(const TopoDS_Shape& solid, const TopoDS_Face& face, double distance,
+                                  const std::vector<Segment>& keepLines) {
   if (!std::isfinite(distance) || std::abs(distance) < tolerance::kMinDimension) {
     return Result<TopoDS_Shape>::failure("Push/pull distance must be non-zero");
   }
@@ -159,6 +190,7 @@ Result<TopoDS_Shape> pushPullFace(const TopoDS_Shape& solid, const TopoDS_Face& 
     }
 
     ShapeUpgrade_UnifySameDomain unify(combined, Standard_True, Standard_True, Standard_False);
+    keepEdgesOn(unify, combined, keepLines);
     unify.Build();
     const auto extracted = singleSolid(unify.Shape());
     if (!extracted) return extracted;

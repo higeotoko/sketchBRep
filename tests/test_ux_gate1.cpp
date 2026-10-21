@@ -285,3 +285,28 @@ TEST(Gate3, AC22_EmptiedComponentIsNotSaved) {
   EXPECT_FALSE(m.endComponentEdit(*group).ok());
   EXPECT_TRUE(m.document().find(*group));  // still editing; nothing lost
 }
+
+// §3.3: a split line stays a real edge after later, unrelated push/pulls.
+TEST(Gate3, SplitLineSurvivesLaterPushPull) {
+  doc::Modeler m;
+  auto wall = m.createRectangle(geom::SketchPlane::ground(), 4000, 200);
+  ASSERT_TRUE(m.extrude(*wall, 3000).ok());
+  ASSERT_TRUE(m.splitWithLine({gp_Pnt(0, 0, 1000), gp_Pnt(4000, 0, 1000)}).ok());
+  EXPECT_EQ(faceCount(m.document().worldShape(*wall)), 7);
+  // Push the +X end face out: the front face grows but stays split.
+  TopoDS_Face side;
+  for (TopExp_Explorer e(m.document().worldShape(*wall), TopAbs_FACE); e.More(); e.Next()) {
+    const auto n = geom::planarFaceNormal(TopoDS::Face(e.Current()));
+    if (n && n->X() > 0.99) side = TopoDS::Face(e.Current());
+  }
+  ASSERT_FALSE(side.IsNull());
+  ASSERT_TRUE(m.pushPull(*wall, side, 500).ok());
+  // The front stays divided at 1 m (the new 500 mm piece is its own face).
+  int front = 0;
+  for (TopExp_Explorer e(m.document().worldShape(*wall), TopAbs_FACE); e.More(); e.Next()) {
+    const auto n = geom::planarFaceNormal(TopoDS::Face(e.Current()));
+    front += n && n->Y() < -0.99;
+  }
+  EXPECT_GE(front, 2);
+  EXPECT_NEAR(geom::volume(m.document().worldShape(*wall)), 4500.0 * 200 * 3000, 1e-2);
+}

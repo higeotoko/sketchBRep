@@ -198,6 +198,7 @@ Result<TopoDS_Shape> regenerate(const Recipe& recipe, const RegenContext& contex
     return Result<TopoDS_Shape>::failure("Groups and components cannot have modifiers");
   }
 
+  std::vector<geom::Segment> splitLines;  // kept through later push/pulls
   for (std::size_t i = 0; i < recipe.modifiers.size(); ++i) {
     const std::string prefix = "Step " + std::to_string(i + 1) + ": ";
     const bool isFace = !shape.IsNull() && shape.ShapeType() == TopAbs_FACE;
@@ -236,6 +237,7 @@ Result<TopoDS_Shape> regenerate(const Recipe& recipe, const RegenContext& contex
             [&](const SplitOp& op) -> Result<TopoDS_Shape> {
               auto face = op.face.resolve(shape);
               if (!face) return Result<TopoDS_Shape>::failure(face.error());
+              for (std::size_t k = 1; k < op.points.size(); ++k) splitLines.emplace_back(op.points[k - 1], op.points[k]);
               return geom::splitFace(shape, face.value(), op.points);
             },
             [&](const PushPullOp& op) -> Result<TopoDS_Shape> {
@@ -245,7 +247,7 @@ Result<TopoDS_Shape> regenerate(const Recipe& recipe, const RegenContext& contex
               }
               auto face = op.face.resolve(shape);
               if (!face) return Result<TopoDS_Shape>::failure(face.error());
-              return geom::pushPullFace(shape, face.value(), op.distance);
+              return geom::pushPullFace(shape, face.value(), op.distance, splitLines);
             },
         },
         recipe.modifiers[i]);
