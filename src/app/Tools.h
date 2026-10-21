@@ -334,6 +334,22 @@ class EraserTool : public Tool {
   void mouseMove(const ToolEvent& e) override;
 };
 
+// Follow Me: click the face to sweep (a profile), then the path: a line /
+// arc / curve, or a face of a solid to run around its outline.
+class FollowMeTool : public Tool {
+ public:
+  using Tool::Tool;
+  QString name() const override;
+  QCursor cursor() const override;
+  void activate() override;
+  void cancel() override;
+  void mousePress(const ToolEvent& e) override;
+  void mouseMove(const ToolEvent& e) override;
+
+ private:
+  std::optional<doc::ObjectId> profile_;
+};
+
 // Paint bucket: click to apply the current colour (groups and components
 // as a whole), Alt+click to pick up the colour of what is clicked.
 class PaintTool : public Tool {

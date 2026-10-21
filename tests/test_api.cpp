@@ -324,3 +324,15 @@ TEST(CommandApi, AC20_PreviewThenApplyWithRevisionCheck) {
   EXPECT_NE(refused["error"].get<std::string>().find("preview it again"), std::string::npos);
   EXPECT_EQ(a.modeler.document().objects().size(), 1u);
 }
+
+TEST(CommandApi, FollowMeAlongAndAround) {
+  Api a;
+  const std::string box =
+      a.ok("create_box", {{"origin", {0, 0, 0}}, {"width", 2000}, {"depth", 1000}, {"height", 500}})["id"];
+  const std::string profile =
+      a.ok("create_rectangle", {{"origin", {0, 0, 500}}, {"normal", {1, 0, 0}}, {"width", 100}, {"height", 100}})["id"];
+  const std::string ring =
+      a.ok("follow_me", {{"profile", profile}, {"around", {{"id", box}, {"face", {{"normal", {0, 0, 1}}}}}}})["id"];
+  EXPECT_GT(a.ok("get_object", {{"id", ring}})["volume"].get<double>(), 0.0);
+  EXPECT_FALSE(a.call("get_object", {{"id", profile}})["ok"]);  // consumed
+}

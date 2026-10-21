@@ -136,6 +136,19 @@ QPixmap draw(CursorKind kind, QPoint& hotspot) {
       hotspot = QPoint(2, 30);
       break;
     }
+    case CursorKind::FollowMe: {
+      // A small profile riding along a bent path.
+      QPainterPath path;
+      path.moveTo(4, 28);
+      path.lineTo(20, 28);
+      path.lineTo(28, 12);
+      halo(p, path);
+      QPainterPath profile;
+      profile.addRect(QRectF(15, 18, 7, 7));
+      halo(p, profile);
+      hotspot = QPoint(4, 28);
+      break;
+    }
     case CursorKind::Section: {
       // A plane seen at an angle with its normal arrow.
       QPainterPath plane;

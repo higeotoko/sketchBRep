@@ -64,6 +64,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   dimensionTool_ = std::make_unique<DimensionTool>(*this);
   textTool_ = std::make_unique<TextTool>(*this);
   sectionTool_ = std::make_unique<SectionTool>(*this);
+  followMeTool_ = std::make_unique<FollowMeTool>(*this);
 
   buildUi();
   // Long Booleans / push-pulls show a cancellable progress dialog.
@@ -434,6 +435,7 @@ void MainWindow::buildMenus() {
       {tr("オフセット"), QStringLiteral("F"), ToolId::Offset, CursorKind::Offset},
       {tr("曲線"), QStringLiteral("N"), ToolId::Curve, CursorKind::Curve},
       {tr("回転体"), QStringLiteral("V"), ToolId::Revolve, CursorKind::Revolve},
+      {tr("フォローミー"), QStringLiteral("Shift+F"), ToolId::FollowMe, CursorKind::FollowMe},
       {tr("メジャー"), QStringLiteral("T"), ToolId::Measure, CursorKind::Measure},
       {tr("寸法"), QStringLiteral("D"), ToolId::Dimension, CursorKind::Dimension},
       {tr("テキスト"), QStringLiteral("Shift+T"), ToolId::Text, CursorKind::Text},
@@ -779,6 +781,7 @@ void MainWindow::activateTool(ToolId id) {
     case ToolId::Dimension: active_ = dimensionTool_.get(); break;
     case ToolId::Text: active_ = textTool_.get(); break;
     case ToolId::Section: active_ = sectionTool_.get(); break;
+    case ToolId::FollowMe: active_ = followMeTool_.get(); break;
     case ToolId::Paint: active_ = paintTool_.get(); break;
     case ToolId::Eraser: active_ = eraserTool_.get(); break;
   }

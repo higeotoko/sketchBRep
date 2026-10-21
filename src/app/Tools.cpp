@@ -2133,6 +2133,74 @@ void EraserTool::mousePress(const ToolEvent& e) {
   host_.viewport().clearHover();
 }
 
+// --- Follow Me ---------------------------------------------------------------------
+
+QString FollowMeTool::name() const { return QObject::tr("フォローミー"); }
+QCursor FollowMeTool::cursor() const { return toolCursor(CursorKind::FollowMe); }
+
+void FollowMeTool::activate() {
+  profile_.reset();
+  host_.viewport().setPickMode(PickMode::Elements);
+  host_.setMeasurement(QString(), QString());
+  host_.setStatus(QObject::tr("沿わせる形（断面の面）をクリック"));
+}
+
+void FollowMeTool::cancel() {
+  profile_.reset();
+  host_.viewport().setHighlightedElements({});
+}
+
+void FollowMeTool::mouseMove(const ToolEvent& e) {
+  const auto picked = host_.viewport().pickElement(e.pos);
+  const doc::Object* o = picked ? host_.modeler().document().find(picked->objectId) : nullptr;
+  if (!profile_) {
+    host_.setStatus(o && o->kind() == doc::ObjectKind::Face ? QObject::tr("この面を断面にします")
+                                                            : QObject::tr("沿わせる形（断面の面）をクリック"));
+    return;
+  }
+  if (o && o->kind() == doc::ObjectKind::Curve) {
+    host_.setStatus(QObject::tr("この線に沿わせます"));
+  } else if (o && o->kind() == doc::ObjectKind::Solid && picked->type == TopAbs_FACE) {
+    host_.setStatus(QObject::tr("この面の輪郭を一周させます（巾木・笠木など）"));
+  } else {
+    host_.setStatus(QObject::tr("パスにする線・円弧、またはソリッドの面をクリック（Esc で中止）"));
+  }
+}
+
+void FollowMeTool::mousePress(const ToolEvent& e) {
+  const auto picked = host_.viewport().pickElement(e.pos);
+  if (!picked) return;
+  doc::Modeler& m = host_.modeler();
+  const doc::Object* o = m.document().find(picked->objectId);
+  if (!o) return;
+  if (!profile_) {
+    if (o->kind() != doc::ObjectKind::Face) {
+      host_.reportError(QObject::tr("断面には面（押し出す前の形）を選んでください"));
+      return;
+    }
+    profile_ = o->id;
+    host_.viewport().setHighlightedElements({*picked});
+    host_.setStatus(QObject::tr("パスにする線・円弧、またはソリッドの面をクリック（Esc で中止）"));
+    return;
+  }
+  Result<doc::ObjectId> swept = Result<doc::ObjectId>::failure("");
+  if (o->kind() == doc::ObjectKind::Curve) {
+    swept = m.followMe(*profile_, o->id);
+  } else if (picked->type == TopAbs_FACE) {
+    const TopoDS_Shape face = host_.viewport().elementShape(*picked);
+    swept = m.followMe(*profile_, BRepTools::OuterWire(TopoDS::Face(face)));
+  } else {
+    host_.reportError(QObject::tr("パスには線・円弧・曲線か、ソリッドの面を選んでください"));
+    return;
+  }
+  cancel();
+  if (!swept) {
+    host_.reportError(QObject::tr("フォローミーに失敗しました: %1").arg(QString::fromStdString(swept.error())));
+    return;
+  }
+  host_.setStatus(QObject::tr("断面を沿わせました（断面の寸法はパネルで変更できます）"));
+}
+
 // --- Paint ---------------------------------------------------------------------------
 
 QString PaintTool::name() const { return QObject::tr("ペイント"); }

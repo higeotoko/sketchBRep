@@ -127,6 +127,7 @@ class GuiPhase1 : public QObject {
   void boxSelectionWindowAndCrossing();
   void aiProposalApplyAndReject();
   void componentEditInPlace();
+  void followMeAroundTopFace();
 };
 
 namespace {
@@ -1356,6 +1357,29 @@ void GuiPhase1::componentEditInPlace() {
   for (const doc::Object& o : m.document().objects()) {
     QVERIFY(std::abs(geom::exactBounds(m.document().worldShape(o)).CornerMax().Z() - 1000) < 1e-6);
   }
+}
+
+void GuiPhase1::followMeAroundTopFace() {
+  Fixture f;
+  QVERIFY(f.setUp(1000, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 2000, 1000, 500);
+  // A 100 x 100 cornice profile standing on the box's corner.
+  auto profile = m.createRectangle(geom::SketchPlane::fromNormal(gp_Pnt(0, 0, 500), gp::DX()), 100, 100);
+  QVERIFY(profile.ok());
+  QTest::qWait(30);
+  f.window.activateTool(MainWindow::ToolId::FollowMe);
+  QCOMPARE(f.vp->cursor().shape(), Qt::BitmapCursor);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 50, 550)));       // the profile
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 500, 500)));    // around the top face
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QVERIFY(!m.document().find(*profile));
+  QCOMPARE(m.document().objects().size(), std::size_t(2));
+  const doc::Object& ring = m.document().objects().back();
+  QVERIFY(ring.id != box);
+  QVERIFY(geom::validateShape(m.document().worldShape(ring), true).valid);
+  QVERIFY(m.undo());
+  QVERIFY(m.document().find(*profile));
 }
 
 QTEST_MAIN(GuiPhase1)

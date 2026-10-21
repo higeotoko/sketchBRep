@@ -8,6 +8,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <BRepTools.hxx>
 #include <TopExp.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
@@ -475,6 +476,19 @@ const std::vector<CommandDef>& commands() {
                "solid": {"type": "boolean"}}, "required": ["ids"]}),
        [](doc::Modeler& m, const json& a) {
          return idResult(must(m.loftObjects(ids(a, "ids"), a.value("solid", true))));
+       }},
+      {"follow_me",
+       "SketchUp's Follow Me: sweep the profile face along 'path' (a curve object) or around the outline of "
+       "a solid's face ('around': {\"id\": solid, \"face\": index or {\"normal\": [...]}}). The profile is "
+       "consumed; its dimensions stay editable on the result (in0.<key>).",
+       SCHEMA({"type": "object", "properties": {"profile": {"type": "string"}, "path": {"type": "string"},
+               "around": {"type": "object"}}, "required": ["profile"]}),
+       [](doc::Modeler& m, const json& a) {
+         if (a.contains("path")) return idResult(must(m.followMe(text(a, "profile"), text(a, "path"))));
+         const json& around = arg(a, "around");
+         const ObjectId solid = text(around, "id");
+         const TopoDS_Face face = selectFace(m, solid, arg(around, "face"));
+         return idResult(must(m.followMe(text(a, "profile"), BRepTools::OuterWire(face))));
        }},
       {"sweep", "Sweep a profile along a path curve. Parametric.",
        SCHEMA({"type": "object", "properties": {"profile": {"type": "string"}, "path": {"type": "string"}},
