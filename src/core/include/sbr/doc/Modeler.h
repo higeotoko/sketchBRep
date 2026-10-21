@@ -71,6 +71,10 @@ class Modeler {
   std::vector<std::string> tags() const;  // tags in use, sorted
   // Adds an active section plane (others are deactivated); empty = none.
   void setSection(const std::optional<SectionPlane>& plane);
+  // Shows the most recent section again (true) or none (false).
+  void setSectionVisible(bool visible);
+  bool sectionVisible() const;
+  void clearSections();
   Result<ObjectId> createPolygon(const std::vector<gp_Pnt>& points, const std::string& name = {});
   Result<ObjectId> createPolyline(const std::vector<gp_Pnt>& points, const std::string& name = {});
   Result<ObjectId> importShape(const TopoDS_Shape& shape, const std::string& name,

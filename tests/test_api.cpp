@@ -253,6 +253,25 @@ TEST(CommandApi, ArchedOutlineFromArcAndLines) {
   EXPECT_EQ(a.ok("list_objects")["objects"].size(), 1u);
 }
 
+TEST(CommandApi, SectionsAndTags) {
+  Api a;
+  const std::string box =
+      a.ok("create_box", {{"origin", {0, 0, 0}}, {"width", 1000}, {"depth", 1000}, {"height", 1000}})["id"];
+  a.ok("create_dimension", {{"start", {0, 0, 0}}, {"end", {1000, 0, 0}}, {"offset", {0, -300, 0}}});
+  a.ok("set_section", {{"origin", {0, 0, 500}}, {"normal", {0, 0, 1}}});
+  EXPECT_TRUE(a.modeler.sectionVisible());
+  a.ok("set_section");
+  EXPECT_FALSE(a.modeler.sectionVisible());
+  const json tags = a.ok("list_tags")["tags"];
+  EXPECT_EQ(tags.size(), 2u);
+  a.ok("set_tag_visible", {{"tag", "Annotations"}, {"visible", false}});
+  EXPECT_EQ(a.modeler.document().settings().hiddenTags.count("Annotations"), 1u);
+  EXPECT_TRUE(a.modeler.document().isVisible(box));
+  a.ok("set_tag_visible", {{"tag", "Default"}, {"visible", false}});
+  EXPECT_FALSE(a.modeler.document().isVisible(box));
+  EXPECT_FALSE(a.call("set_tag_visible", {{"tag", "Default"}, {"visible", "no"}})["ok"]);
+}
+
 TEST(CommandApi, DimensionsAndTextNotes) {
   Api a;
   const std::string dim = a.ok("create_dimension", {{"start", {0, 0, 0}}, {"end", {7200, 0, 0}},

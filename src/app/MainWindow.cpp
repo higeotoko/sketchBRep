@@ -20,6 +20,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QInputDialog>
+#include <QListWidget>
 #include <QMenu>
 #include <QStatusBar>
 #include <QTabBar>
@@ -56,6 +57,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   arcTool_ = std::make_unique<ArcTool>(*this);
   dimensionTool_ = std::make_unique<DimensionTool>(*this);
   textTool_ = std::make_unique<TextTool>(*this);
+  sectionTool_ = std::make_unique<SectionTool>(*this);
 
   buildUi();
   buildAiBridge();
@@ -105,6 +107,19 @@ void MainWindow::buildUi() {
   dock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
   addDockWidget(Qt::RightDockWidgetArea, dock);
   resizeDocks({dock}, {360}, Qt::Horizontal);
+
+  // Tags: tick to show / hide everything with that tag (SketchUp's Tags panel).
+  tagList_ = new QListWidget;
+  auto* tagDock = new QDockWidget(tr("タグ"), this);
+  tagDock->setObjectName(QStringLiteral("tagsDock"));
+  tagDock->setWidget(tagList_);
+  tagDock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable |
+                       QDockWidget::DockWidgetClosable);
+  addDockWidget(Qt::RightDockWidgetArea, tagDock);
+  connect(tagList_, &QListWidget::itemChanged, this, [this](QListWidgetItem* item) {
+    modeler_.setTagVisible(utf8(item->data(Qt::UserRole).toString()), item->checkState() == Qt::Checked);
+    updateTitle();
+  });
 
   status_ = new QLabel;
   status_->setMinimumWidth(200);
@@ -295,6 +310,20 @@ void MainWindow::buildMenus() {
 
   // --- View
   QMenu* view = menuBar()->addMenu(tr("表示(&V)"));
+  QMenu* sections = view->addMenu(tr("断面"));
+  sections->addAction(tr("断面ツール (Shift+S)"), this, [this] { activateTool(ToolId::Section); });
+  sectionVisibleAction_ = sections->addAction(tr("断面で切って表示"));
+  sectionVisibleAction_->setCheckable(true);
+  sectionVisibleAction_->setEnabled(false);
+  connect(sectionVisibleAction_, &QAction::toggled, this, [this](bool on) {
+    modeler_.setSectionVisible(on);
+    updateTitle();
+  });
+  sections->addAction(tr("断面をすべて削除"), this, [this] {
+    modeler_.clearSections();
+    updateTitle();
+  });
+  view->addSeparator();
   struct ViewEntry {
     QString label;
     const char* key;
@@ -377,6 +406,7 @@ void MainWindow::buildMenus() {
       {tr("メジャー"), QStringLiteral("T"), ToolId::Measure, CursorKind::Measure},
       {tr("寸法"), QStringLiteral("D"), ToolId::Dimension, CursorKind::Dimension},
       {tr("テキスト"), QStringLiteral("Shift+T"), ToolId::Text, CursorKind::Text},
+      {tr("断面"), QStringLiteral("Shift+S"), ToolId::Section, CursorKind::Section},
       {tr("ペイント"), QStringLiteral("B"), ToolId::Paint, CursorKind::Paint},
       {tr("消しゴム"), QStringLiteral("E"), ToolId::Eraser, CursorKind::Eraser},
   };
@@ -627,6 +657,7 @@ void MainWindow::activateTool(ToolId id) {
     case ToolId::Arc: active_ = arcTool_.get(); break;
     case ToolId::Dimension: active_ = dimensionTool_.get(); break;
     case ToolId::Text: active_ = textTool_.get(); break;
+    case ToolId::Section: active_ = sectionTool_.get(); break;
     case ToolId::Paint: active_ = paintTool_.get(); break;
     case ToolId::Eraser: active_ = eraserTool_.get(); break;
   }
@@ -727,7 +758,29 @@ void MainWindow::onDocumentChanged() {
   });
 }
 
+void MainWindow::refreshTags() {
+  const QSignalBlocker block(tagList_);
+  tagList_->clear();
+  const auto& hidden = modeler_.document().settings().hiddenTags;
+  for (const std::string& tag : modeler_.tags()) {
+    const QString name = QString::fromStdString(tag);
+    auto* item = new QListWidgetItem(name == QStringLiteral("Default")       ? tr("標準 (Default)")
+                                     : name == QStringLiteral("Annotations") ? tr("注記 (Annotations)")
+                                                                             : name);
+    item->setData(Qt::UserRole, name);
+    item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+    item->setCheckState(hidden.count(tag) ? Qt::Unchecked : Qt::Checked);
+    tagList_->addItem(item);
+  }
+  if (sectionVisibleAction_) {
+    const QSignalBlocker blockAction(sectionVisibleAction_);
+    sectionVisibleAction_->setEnabled(!modeler_.document().settings().sections.empty());
+    sectionVisibleAction_->setChecked(modeler_.sectionVisible());
+  }
+}
+
 void MainWindow::refreshPanels() {
+  refreshTags();
   panel_->refresh(modeler_, selection_, elementSummary());
   const auto& h = modeler_.history();
   undoAction_->setEnabled(h.canUndo());

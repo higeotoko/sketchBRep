@@ -521,6 +521,45 @@ const std::vector<CommandDef>& commands() {
          return json::object();
        }},
 
+      // ---- view state (kept in the file, not in undo)
+      {"set_section",
+       "Show the model cut by a section plane through 'origin'; the side 'normal' points to is removed "
+       "(e.g. origin [0,0,1200], normal [0,0,1] = floor plan at 1.2 m). Omit both to remove the section.",
+       SCHEMA({"type": "object", "properties": {
+         "origin": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+         "normal": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3}}}),
+       [](doc::Modeler& m, const json& a) {
+         if (!a.contains("origin")) {
+           m.setSection(std::nullopt);
+           return json{{"section", nullptr}};
+         }
+         doc::SectionPlane plane;
+         const gp_Pnt o = point(a, "origin");
+         const gp_Dir n = direction(a, "normal", gp::DZ());
+         plane.origin = {o.X(), o.Y(), o.Z()};
+         plane.normal = {n.X(), n.Y(), n.Z()};
+         m.setSection(plane);
+         return json{{"section", {{"origin", toJson(o)}, {"normal", toJson(n.XYZ())}}}};
+       }},
+      {"list_tags", "List tags (layers) in use and whether each is visible.",
+       SCHEMA({"type": "object", "properties": {}}),
+       [](doc::Modeler& m, const json&) {
+         json list = json::array();
+         for (const std::string& t : m.tags()) {
+           list.push_back({{"tag", t}, {"visible", !m.document().settings().hiddenTags.count(t)}});
+         }
+         return json{{"tags", list}};
+       }},
+      {"set_tag_visible", "Show or hide every object with a tag (e.g. hide 'Annotations').",
+       SCHEMA({"type": "object", "properties": {"tag": {"type": "string"}, "visible": {"type": "boolean"}},
+               "required": ["tag", "visible"]}),
+       [](doc::Modeler& m, const json& a) {
+         const json& v = arg(a, "visible");
+         if (!v.is_boolean()) throw ApiError("'visible' must be true or false");
+         m.setTagVisible(text(a, "tag"), v.get<bool>());
+         return json::object();
+       }},
+
       // ---- history & files
       {"undo", "Undo the last step.", SCHEMA({"type": "object", "properties": {}}),
        [](doc::Modeler& m, const json&) { return json{{"undone", m.undo()}}; }},

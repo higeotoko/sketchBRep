@@ -365,6 +365,29 @@ void Modeler::setTagVisible(const std::string& tag, bool visible) {
   document_.notify();
 }
 
+void Modeler::setSectionVisible(bool visible) {
+  auto& sections = document_.settings().sections;
+  if (sections.empty() || visible == sectionVisible()) return;
+  for (SectionPlane& p : sections) p.active = false;
+  if (visible) sections.back().active = true;
+  history_.markDirty();
+  document_.notify();
+}
+
+bool Modeler::sectionVisible() const {
+  for (const SectionPlane& p : document_.settings().sections) {
+    if (p.active) return true;
+  }
+  return false;
+}
+
+void Modeler::clearSections() {
+  if (document_.settings().sections.empty()) return;
+  document_.settings().sections.clear();
+  history_.markDirty();
+  document_.notify();
+}
+
 std::vector<std::string> Modeler::tags() const {
   std::set<std::string> all;
   for (const Object& o : document_.objects()) all.insert(o.layer);

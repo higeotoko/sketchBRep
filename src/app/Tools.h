@@ -245,6 +245,28 @@ class TextTool : public DrawingTool {
   std::optional<doc::ObjectId> lastCreated_;
 };
 
+// Section plane: click a face, then move inwards (or type the depth). The
+// model is shown cut there, the side the face looks at removed.
+class SectionTool : public Tool {
+ public:
+  using Tool::Tool;
+  QString name() const override;
+  QCursor cursor() const override;
+  void activate() override;
+  void cancel() override;
+  void mousePress(const ToolEvent& e) override;
+  void mouseMove(const ToolEvent& e) override;
+  void applyMeasurement(const QString& text) override;
+
+ private:
+  void commit(double depth);
+  void preview(double depth);
+  bool placing_ = false;
+  gp_Pnt origin_;
+  gp_Dir normal_;
+  double depth_ = 0.0;
+};
+
 // Circle: centre (on a face or the ground), then radius by mouse or value.
 class CircleTool : public DrawingTool {
  public:

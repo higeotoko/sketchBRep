@@ -136,6 +136,25 @@ QPixmap draw(CursorKind kind, QPoint& hotspot) {
       hotspot = QPoint(2, 30);
       break;
     }
+    case CursorKind::Section: {
+      // A plane seen at an angle with its normal arrow.
+      QPainterPath plane;
+      plane.moveTo(6, 14);
+      plane.lineTo(20, 8);
+      plane.lineTo(20, 26);
+      plane.lineTo(6, 30);
+      plane.closeSubpath();
+      halo(p, plane);
+      QPainterPath arrow;
+      arrow.moveTo(13, 19);
+      arrow.lineTo(29, 19);
+      arrow.moveTo(25, 15);
+      arrow.lineTo(29, 19);
+      arrow.lineTo(25, 23);
+      halo(p, arrow);
+      hotspot = QPoint(13, 19);
+      break;
+    }
     case CursorKind::Arc: {
       halo(p, pencil());
       QPainterPath arc;

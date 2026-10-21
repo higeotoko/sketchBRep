@@ -14,6 +14,7 @@ class QActionGroup;
 class QLabel;
 class QLineEdit;
 class QTabBar;
+class QListWidget;
 
 namespace sbr::app {
 
@@ -45,7 +46,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   // Used by tests and the command line.
   bool openFile(const QString& path);
   bool saveFile(const QString& path);
-  enum class ToolId { Select, Line, Rectangle, PushPull, Move, Rotate, Offset, Curve, Revolve, Measure, Circle, Paint, Eraser, Arc, Dimension, Text };
+  enum class ToolId { Select, Line, Rectangle, PushPull, Move, Rotate, Offset, Curve, Revolve, Measure, Circle, Paint, Eraser, Arc, Dimension, Text, Section };
   void activateTool(ToolId id);
   Tool* activeTool() const { return active_; }
   QLineEdit* measurementBox() const { return measurement_; }
@@ -56,6 +57,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   void addScene(const QString& name = {});
   bool goToScene(int index);
   QTabBar* sceneBar() const { return sceneBar_; }
+  QListWidget* tagList() const { return tagList_; }
 
  protected:
   void closeEvent(QCloseEvent* event) override;
@@ -87,6 +89,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   void redo();
   void buildAiBridge();
   void refreshScenes();
+  void refreshTags();
   void sceneMenu(int index, const QPoint& globalPos);
 
   doc::Modeler modeler_;
@@ -114,9 +117,10 @@ class MainWindow : public QMainWindow, public ToolHost {
   std::unique_ptr<ArcTool> arcTool_;
   std::unique_ptr<DimensionTool> dimensionTool_;
   std::unique_ptr<TextTool> textTool_;
+  std::unique_ptr<SectionTool> sectionTool_;
   Tool* active_ = nullptr;
   QActionGroup* toolGroup_ = nullptr;
-  QAction* toolActions_[16] = {};
+  QAction* toolActions_[17] = {};
   QAction* undoAction_ = nullptr;
   QAction* redoAction_ = nullptr;
   QAction* focusOnDoubleClick_ = nullptr;
@@ -132,6 +136,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   QAction* aiAction_ = nullptr;
   QLabel* aiLabel_ = nullptr;
   QTabBar* sceneBar_ = nullptr;
+  QListWidget* tagList_ = nullptr;
+  QAction* sectionVisibleAction_ = nullptr;
 };
 
 }  // namespace sbr::app

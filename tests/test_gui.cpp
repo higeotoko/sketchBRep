@@ -9,6 +9,7 @@
 #include <QApplication>
 #include <QDir>
 #include <QSettings>
+#include <QListWidget>
 #include <QTabBar>
 #include <QStandardPaths>
 #include <QFileInfo>
@@ -117,6 +118,7 @@ class GuiPhase1 : public QObject {
   void lineAcrossWallSplitsFace();
   void arcAndLinesCloseIntoFace();
   void sectionPlaneCutsView();
+  void sectionToolAndTagsPanel();
 };
 
 namespace {
@@ -1017,6 +1019,51 @@ void GuiPhase1::sectionPlaneCutsView() {
   QTest::qWait(50);
   hit = f.vp->faceAt(top);
   QVERIFY(hit && std::abs(hit->first.Z() - 2000) < 1.0);
+}
+
+void GuiPhase1::sectionToolAndTagsPanel() {
+  Fixture f;
+  QVERIFY(f.setUp(1000, 1000));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 2000, 2000, 2000);
+  QVERIFY(m.createDimension(gp_Pnt(0, 0, 0), gp_Pnt(2000, 0, 0), gp_Vec(0, -500, 0)).ok());
+  QTest::qWait(30);
+
+  // Section tool: click the top face, cut 800 below it.
+  f.window.activateTool(MainWindow::ToolId::Section);
+  QCOMPARE(f.vp->cursor().shape(), Qt::BitmapCursor);
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 1000, 2000)));
+  type(f.vp, QStringLiteral("800"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().settings().sections.size(), std::size_t(1));
+  const auto& plane = m.document().settings().sections.front();
+  QVERIFY(std::abs(plane.origin[2] - 1200) < 1e-6);
+  QVERIFY(std::abs(plane.normal[2] - 1) < 1e-9);
+  QVERIFY(m.sectionVisible());
+  QVERIFY(f.window.isWindowModified());
+
+  // Tags panel lists Default and Annotations; unticking hides the dimension.
+  QTest::qWait(30);
+  QListWidget* tags = f.window.tagList();
+  QCOMPARE(tags->count(), 2);
+  QListWidgetItem* annotations = nullptr;
+  for (int i = 0; i < tags->count(); ++i) {
+    if (tags->item(i)->data(Qt::UserRole).toString() == QStringLiteral("Annotations")) annotations = tags->item(i);
+  }
+  QVERIFY(annotations);
+  annotations->setCheckState(Qt::Unchecked);
+  QTest::qWait(30);
+  QVERIFY(m.document().settings().hiddenTags.count("Annotations"));
+  QVERIFY(m.document().isVisible(box));
+
+  // Saved and reopened with the section and hidden tag.
+  const QString path = QDir(QDir::tempPath()).filePath(QStringLiteral("sbr_section_test.sbr"));
+  QVERIFY(f.window.saveFile(path));
+  doc::Modeler loaded;
+  QVERIFY(loaded.load(path.toStdString()).ok());
+  QCOMPARE(loaded.document().settings().sections.size(), std::size_t(1));
+  QVERIFY(loaded.document().settings().hiddenTags.count("Annotations"));
+  QFile::remove(path);
 }
 
 QTEST_MAIN(GuiPhase1)

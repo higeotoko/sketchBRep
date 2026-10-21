@@ -6,6 +6,8 @@
 #include <QKeyEvent>
 #include <QRegularExpression>
 
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <gp_Ax3.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
@@ -706,6 +708,85 @@ void TextTool::applyMeasurement(const QString& text) {
   }
   const Status s = host_.modeler().setAnnotationText(*lastCreated_, text.toStdString());
   if (!s) host_.reportError(QString::fromStdString(s.message()));
+}
+
+// --- Section ----------------------------------------------------------------------
+
+QString SectionTool::name() const { return QObject::tr("断面"); }
+QCursor SectionTool::cursor() const { return toolCursor(CursorKind::Section); }
+
+void SectionTool::activate() {
+  cancel();
+  host_.viewport().setPickMode(PickMode::None);
+  host_.setMeasurement(QObject::tr("奥行き"), QString());
+  host_.setStatus(QObject::tr("切りたい向きの面をクリック（例: 外壁→立面の断面、屋根→平面図）"));
+}
+
+void SectionTool::cancel() {
+  placing_ = false;
+  depth_ = 0.0;
+  host_.viewport().clearPreview();
+}
+
+void SectionTool::preview(double depth) {
+  const gp_Pnt at = origin_.Translated(-gp_Vec(normal_) * depth);
+  // A large square showing where the cut goes.
+  const double half = 20000.0;
+  const gp_Ax3 frame(at, normal_);
+  const TopoDS_Face square = BRepBuilderAPI_MakeFace(gp_Pln(frame), -half, half, -half, half).Face();
+  host_.viewport().setPreview(BRepTools::OuterWire(square));
+}
+
+void SectionTool::mouseMove(const ToolEvent& e) {
+  if (!placing_) {
+    const auto hit = host_.viewport().faceAt(e.pos);
+    host_.setStatus(hit ? QObject::tr("この面と平行に切ります。クリックして奥行きを決める")
+                        : QObject::tr("切りたい向きの面をクリック（例: 外壁→立面の断面、屋根→平面図）"));
+    return;
+  }
+  const gp_Pnt p = snap::closestPointOnLineToRay(origin_, normal_, host_.viewport().rayAt(e.pos));
+  depth_ = gp_Vec(p, origin_).Dot(gp_Vec(normal_));
+  host_.setMeasurement(QObject::tr("奥行き"), mm(depth_));
+  preview(depth_);
+}
+
+void SectionTool::mousePress(const ToolEvent& e) {
+  if (!placing_) {
+    const auto hit = host_.viewport().faceAt(e.pos);
+    if (!hit) return;
+    origin_ = hit->first;
+    normal_ = hit->second;
+    placing_ = true;
+    depth_ = 0.0;
+    preview(0.0);
+    host_.setStatus(QObject::tr("奥へ動かしてクリック、または奥行きを入力（例: 1200）"));
+    return;
+  }
+  mouseMove(e);
+  commit(depth_);
+}
+
+void SectionTool::commit(double depth) {
+  doc::SectionPlane plane;
+  const gp_Pnt at = origin_.Translated(-gp_Vec(normal_) * depth);
+  plane.origin = {at.X(), at.Y(), at.Z()};
+  plane.normal = {normal_.X(), normal_.Y(), normal_.Z()};
+  host_.modeler().setSection(plane);
+  cancel();
+  host_.setStatus(QObject::tr("断面を作成しました（表示メニュー > 断面 で表示切替・解除）"));
+}
+
+void SectionTool::applyMeasurement(const QString& text) {
+  const auto value = units::parseLength(text.toStdString());
+  if (!value) {
+    host_.reportError(QObject::tr("奥行きを解釈できません: %1").arg(text));
+    return;
+  }
+  if (!placing_) {
+    host_.reportError(QObject::tr("先に面をクリックしてください"));
+    return;
+  }
+  commit(*value);
 }
 
 // --- Arc --------------------------------------------------------------------------
