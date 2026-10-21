@@ -426,6 +426,10 @@ std::string serializeDocument(const Document& document) {
   const DocumentSettings& s = document.settings();
   json scenes = json::array();
   for (const Scene& scene : s.scenes) scenes.push_back({{"name", scene.name}, {"camera", cameraToJson(scene.camera)}});
+  json sections = json::array();
+  for (const SectionPlane& p : s.sections) {
+    sections.push_back({{"name", p.name}, {"origin", p.origin}, {"normal", p.normal}, {"active", p.active}});
+  }
   json root = {
       {"format", kNativeFormatMagic},
       {"version", kNativeFormatVersion},
@@ -433,6 +437,8 @@ std::string serializeDocument(const Document& document) {
       {"linearTolerance", s.linearTolerance},
       {"camera", cameraToJson(s.camera)},
       {"scenes", scenes},
+      {"sections", sections},
+      {"hiddenTags", s.hiddenTags},
       {"definitions", definitions},
       {"objects", objectsToJson(document.objects())},
   };
@@ -457,6 +463,17 @@ Status deserializeDocument(const std::string& text, Document& document,
     if (s.units != "mm") return Status::failure("Unsupported units: " + s.units);
     s.linearTolerance = root.value("linearTolerance", tolerance::kLinear);
     if (root.contains("camera")) s.camera = cameraFrom(root.at("camera"));
+    if (root.contains("sections")) {
+      for (const json& p : root.at("sections")) {
+        SectionPlane plane;
+        plane.name = p.value("name", std::string());
+        plane.origin = p.at("origin").get<std::array<double, 3>>();
+        plane.normal = p.at("normal").get<std::array<double, 3>>();
+        plane.active = p.value("active", true);
+        s.sections.push_back(plane);
+      }
+    }
+    if (root.contains("hiddenTags")) s.hiddenTags = root.at("hiddenTags").get<std::set<std::string>>();
     if (root.contains("scenes")) {
       for (const json& scene : root.at("scenes")) {
         s.scenes.push_back({scene.value("name", std::string()), cameraFrom(scene.at("camera"))});

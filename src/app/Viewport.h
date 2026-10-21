@@ -16,6 +16,7 @@
 #include <AIS_InteractiveContext.hxx>
 #include <AIS_Shape.hxx>
 #include <AIS_TextLabel.hxx>
+#include <Graphic3d_ClipPlane.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <V3d_View.hxx>
 #include <V3d_Viewer.hxx>
@@ -157,6 +158,7 @@ class Viewport : public QWidget {
   void displayAxes();
   void applyPickMode(const Handle(AIS_Shape)& ais);
   void syncLabels();
+  void syncSection();
   Handle(AIS_Shape) makeDisplay(const doc::Object& object, Entry& entry);
   QPoint devicePos(const QPoint& logical) const;
   void orbit(const QPoint& delta);
@@ -171,6 +173,8 @@ class Viewport : public QWidget {
 
   std::map<doc::ObjectId, Entry> entries_;
   std::map<doc::ObjectId, Handle(AIS_TextLabel)> labels_;  // annotation texts
+  Handle(Graphic3d_ClipPlane) section_;
+  std::array<double, 6> sectionKey_{};  // origin + normal of section_
   std::vector<doc::ObjectId> selection_;
   snap::InferenceEngine inference_;
   display::DisplayQuality quality_ = display::DisplayQuality::normal();

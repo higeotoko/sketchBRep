@@ -1,8 +1,10 @@
 #pragma once
 // The document: object hierarchy, component definitions and settings.
 
+#include <array>
 #include <functional>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -24,11 +26,22 @@ struct Scene {
   CameraState camera;
 };
 
+// Section plane: hides the half-space the normal points to, so the model is
+// seen cut open (plans and sections).
+struct SectionPlane {
+  std::string name;
+  std::array<double, 3> origin{0, 0, 0};
+  std::array<double, 3> normal{0, 0, -1};
+  bool active = true;
+};
+
 struct DocumentSettings {
   std::string units = "mm";
   double linearTolerance = tolerance::kLinear;
   CameraState camera;
   std::vector<Scene> scenes;
+  std::vector<SectionPlane> sections;
+  std::set<std::string> hiddenTags;  // objects with these tags are hidden
 };
 
 // Shared geometry of a component. Its objects form a small hierarchy of their

@@ -116,6 +116,7 @@ class GuiPhase1 : public QObject {
   void dimensionAndTextTools();
   void lineAcrossWallSplitsFace();
   void arcAndLinesCloseIntoFace();
+  void sectionPlaneCutsView();
 };
 
 namespace {
@@ -987,6 +988,35 @@ void GuiPhase1::arcAndLinesCloseIntoFace() {
   QCOMPARE(face.kind(), doc::ObjectKind::Face);
   const double a = geom::area(m.document().worldShape(face));
   QVERIFY2(std::abs(a - (2000.0 * 2000 + M_PI * 1000 * 1000 / 2)) < 1.0, qPrintable(QString::number(a)));
+}
+
+void GuiPhase1::sectionPlaneCutsView() {
+  Fixture f;
+  QVERIFY(f.setUp(1000, 1000));
+  doc::Modeler& m = f.window.modeler();
+  f.box(0, 0, 2000, 2000, 2000);
+  QTest::qWait(30);
+  const QPoint top = f.vp->toWidget(gp_Pnt(1000, 1000, 2000));
+  auto hit = f.vp->faceAt(top);
+  QVERIFY(hit && std::abs(hit->first.Z() - 2000) < 1.0);
+
+  // Cut away everything above 1 m: picking now reaches inside the box.
+  doc::SectionPlane plane;
+  plane.origin = {0, 0, 1000};
+  plane.normal = {0, 0, 1};
+  m.setSection(plane);
+  QTest::qWait(50);
+  f.vp->redraw();
+  if (qEnvironmentVariableIsSet("SBR_SCREENSHOT_DIR")) {
+    f.vp->dumpImage(QDir(qEnvironmentVariable("SBR_SCREENSHOT_DIR")).filePath(QStringLiteral("section.png")));
+  }
+  hit = f.vp->faceAt(top);
+  QVERIFY2(!hit || hit->first.Z() < 1000.0 + 1.0, hit ? qPrintable(QString::number(hit->first.Z())) : "");
+
+  m.setSection(std::nullopt);
+  QTest::qWait(50);
+  hit = f.vp->faceAt(top);
+  QVERIFY(hit && std::abs(hit->first.Z() - 2000) < 1.0);
 }
 
 QTEST_MAIN(GuiPhase1)

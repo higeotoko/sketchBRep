@@ -102,7 +102,7 @@ bool Document::isVisible(const ObjectId& id) const {
   const Object* o = find(id);
   int guard = 0;
   while (o && guard++ < 1000) {
-    if (!o->visible) return false;
+    if (!o->visible || settings_.hiddenTags.count(o->layer)) return false;
     if (o->parent.empty()) return true;
     o = find(o->parent);
   }

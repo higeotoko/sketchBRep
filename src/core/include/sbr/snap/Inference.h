@@ -80,14 +80,19 @@ class InferenceEngine {
  public:
   void setShapes(const std::vector<TopoDS_Shape>& shapes);
   SnapResult snap(const SnapQuery& query) const;
-  // False when a face lies between the viewer and the point.
+  // False when a face lies between the viewer and the point, or the point
+  // is cut away by the section plane.
   bool isVisible(const gp_Pnt& point, const Ray& ray) const;
+  // Section plane: geometry on the side its normal points to is ignored.
+  void setClip(const std::optional<gp_Pln>& removedSide) { clip_ = removedSide; }
+  bool isClipped(const gp_Pnt& point) const;
 
  private:
   struct EdgeEntry;
   struct Cache;
   std::vector<TopoDS_Shape> shapes_;
   std::shared_ptr<Cache> cache_;
+  std::optional<gp_Pln> clip_;
 };
 
 // Closest point on the infinite line (p, dir) to the ray.

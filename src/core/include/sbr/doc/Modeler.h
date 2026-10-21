@@ -66,6 +66,11 @@ class Modeler {
   Result<ObjectId> faceFromLoop(const ObjectId& curveId);
   // True if p is an end point of a loose open curve (where a loop can close).
   bool isLooseCurveEnd(const gp_Pnt& p) const;
+  // View state kept in the file but outside the undo history.
+  void setTagVisible(const std::string& tag, bool visible);
+  std::vector<std::string> tags() const;  // tags in use, sorted
+  // Adds an active section plane (others are deactivated); empty = none.
+  void setSection(const std::optional<SectionPlane>& plane);
   Result<ObjectId> createPolygon(const std::vector<gp_Pnt>& points, const std::string& name = {});
   Result<ObjectId> createPolyline(const std::vector<gp_Pnt>& points, const std::string& name = {});
   Result<ObjectId> importShape(const TopoDS_Shape& shape, const std::string& name,

@@ -321,6 +321,40 @@ gp_Dir Viewport::viewDirection() const {
   return view_->Camera()->Direction();
 }
 
+void Viewport::syncSection() {
+  const doc::SectionPlane* active = nullptr;
+  for (const doc::SectionPlane& p : modeler_.document().settings().sections) {
+    if (p.active) active = &p;
+  }
+  std::array<double, 6> key{};
+  if (active) {
+    key = {active->origin[0], active->origin[1], active->origin[2],
+           active->normal[0], active->normal[1], active->normal[2]};
+  }
+  if (active) {
+    inference_.setClip(gp_Pln(gp_Pnt(key[0], key[1], key[2]), gp_Dir(key[3], key[4], key[5])));
+  } else {
+    inference_.setClip(std::nullopt);
+  }
+  if (!section_.IsNull() && active && key == sectionKey_) return;
+  if (!section_.IsNull()) {
+    view_->RemoveClipPlane(section_);
+    section_.Nullify();
+  }
+  if (!active) return;
+  // OCCT keeps the side the plane normal points to; ours names the side
+  // that is cut away, hence the flip.
+  const gp_Pnt origin(key[0], key[1], key[2]);
+  const gp_Dir normal(key[3], key[4], key[5]);
+  section_ = new Graphic3d_ClipPlane(gp_Pln(origin, normal.Reversed()));
+  section_->SetCapping(Standard_True);
+  Graphic3d_MaterialAspect material(Graphic3d_NameOfMaterial_Plastified);
+  material.SetColor(Quantity_Color(0.25, 0.25, 0.28, Quantity_TOC_RGB));
+  section_->SetCappingMaterial(material);
+  view_->AddClipPlane(section_);
+  sectionKey_ = key;
+}
+
 void Viewport::syncLabels() {
   for (auto& [id, label] : labels_) context_->Remove(label, Standard_False);
   labels_.clear();
@@ -426,6 +460,7 @@ void Viewport::syncNow() {
   }
   inference_.setShapes(snapShapes);
   syncLabels();
+  syncSection();
   // Display copies may have been rebuilt: refresh the element overlay.
   std::vector<ElementRef> still;
   for (const ElementRef& e : highlighted_) {

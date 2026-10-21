@@ -70,7 +70,13 @@ struct InferenceEngine::Cache {
   std::vector<std::unique_ptr<IntCurvesFace_ShapeIntersector>> intersectors;
 };
 
+bool InferenceEngine::isClipped(const gp_Pnt& p) const {
+  if (!clip_) return false;
+  return gp_Vec(clip_->Location(), p).Dot(gp_Vec(clip_->Axis().Direction())) > 1e-3;
+}
+
 bool InferenceEngine::isVisible(const gp_Pnt& p, const Ray& ray) const {
+  if (isClipped(p)) return false;
   if (!cache_) return true;
   // Sight line from the viewer (ray origin: eye, or far behind the near
   // plane for orthographic views) to the point.
@@ -81,8 +87,17 @@ bool InferenceEngine::isVisible(const gp_Pnt& p, const Ray& ray) const {
   constexpr double kDepthTolerance = 0.5;  // mm: faces through p do not hide it
   for (const auto& intersector : cache_->intersectors) {
     if (!intersector) continue;
-    intersector->PerformNearest(sight, 0.0, length - kDepthTolerance);
-    if (intersector->IsDone() && intersector->NbPnt() > 0) return false;
+    if (!clip_) {
+      intersector->PerformNearest(sight, 0.0, length - kDepthTolerance);
+      if (intersector->IsDone() && intersector->NbPnt() > 0) return false;
+      continue;
+    }
+    // With a section, faces cut away do not hide anything.
+    intersector->Perform(sight, 0.0, length - kDepthTolerance);
+    if (!intersector->IsDone()) continue;
+    for (int i = 1; i <= intersector->NbPnt(); ++i) {
+      if (!isClipped(intersector->Pnt(i))) return false;
+    }
   }
   return true;
 }
@@ -351,20 +366,35 @@ SnapResult InferenceEngine::snap(const SnapQuery& q) const {
     for (std::size_t si = 0; si < cache_->intersectors.size(); ++si) {
       auto& intersector = cache_->intersectors[si];
       if (!intersector) continue;
-      intersector->PerformNearest(line, -1e12, 1e12);
-      if (!intersector->IsDone() || intersector->NbPnt() < 1) continue;
-      const double w = intersector->WParameter(1);
+      int hit = 0;
+      if (!clip_) {
+        intersector->PerformNearest(line, -1e12, 1e12);
+        if (!intersector->IsDone() || intersector->NbPnt() < 1) continue;
+        hit = 1;
+      } else {
+        // Nearest hit that the section does not cut away.
+        intersector->Perform(line, -1e12, 1e12);
+        if (!intersector->IsDone()) continue;
+        double nearest = std::numeric_limits<double>::max();
+        for (int i = 1; i <= intersector->NbPnt(); ++i) {
+          if (isClipped(intersector->Pnt(i)) || intersector->WParameter(i) >= nearest) continue;
+          nearest = intersector->WParameter(i);
+          hit = i;
+        }
+        if (hit == 0) continue;
+      }
+      const double w = intersector->WParameter(hit);
       if (w < bestParam) {
         bestParam = w;
         SnapResult r;
         r.kind = SnapKind::OnFace;
-        r.point = intersector->Pnt(1);
+        r.point = intersector->Pnt(hit);
         r.shapeIndex = static_cast<int>(si);
-        r.face = intersector->Face(1);
+        r.face = intersector->Face(hit);
         BRepGProp_Face prop(r.face);
         gp_Pnt p;
         gp_Vec n;
-        prop.Normal(intersector->UParameter(1), intersector->VParameter(1), p, n);
+        prop.Normal(intersector->UParameter(hit), intersector->VParameter(hit), p, n);
         if (n.Magnitude() > 1e-12) r.faceNormal = gp_Dir(n);
         faceSnap = r;
       }

@@ -353,6 +353,38 @@ Result<ObjectId> Modeler::faceFromLoop(const ObjectId& curveId) {
   return id;
 }
 
+void Modeler::setTagVisible(const std::string& tag, bool visible) {
+  auto& hidden = document_.settings().hiddenTags;
+  if (visible == !hidden.count(tag)) return;
+  if (visible) {
+    hidden.erase(tag);
+  } else {
+    hidden.insert(tag);
+  }
+  history_.markDirty();
+  document_.notify();
+}
+
+std::vector<std::string> Modeler::tags() const {
+  std::set<std::string> all;
+  for (const Object& o : document_.objects()) all.insert(o.layer);
+  for (const std::string& t : document_.settings().hiddenTags) all.insert(t);
+  return {all.begin(), all.end()};
+}
+
+void Modeler::setSection(const std::optional<SectionPlane>& plane) {
+  auto& sections = document_.settings().sections;
+  for (SectionPlane& p : sections) p.active = false;
+  if (plane) {
+    SectionPlane p = *plane;
+    if (p.name.empty()) p.name = "Section " + std::to_string(sections.size() + 1);
+    p.active = true;
+    sections.push_back(p);
+  }
+  history_.markDirty();
+  document_.notify();
+}
+
 Result<ObjectId> Modeler::createPolygon(const std::vector<gp_Pnt>& points, const std::string& name) {
   Object o;
   o.name = name.empty() ? uniqueName("Face") : name;
