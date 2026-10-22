@@ -1171,6 +1171,46 @@ gp_Pnt openingPoint(const gp_Trsf& hostWorld, const OpeningRef& o, double u, dou
   return o.rect->plane.toWorld(u, v).Transformed(hostWorld * o.placement);
 }
 
+// Where an opening sits on its wall: along u = Z x normal and in Z.
+struct OpeningExtent {
+  std::size_t index;
+  gp_Dir normal;
+  double u0, u1, z0, z1;
+};
+
+std::vector<OpeningExtent> openingExtents(const Object& host, const gp_Trsf& hostWorld) {
+  std::vector<OpeningExtent> out;
+  for (const OpeningRef& o : rectangularOpenings(host)) {
+    const gp_Dir n = gp_Dir(o.rect->plane.normal).Transformed(hostWorld * o.placement);
+    if (std::abs(n.Z()) > 1e-6) continue;  // only openings in vertical faces
+    const gp_Vec u(gp::DZ().Crossed(n));
+    OpeningExtent e{o.index, n, 1e300, -1e300, 1e300, -1e300};
+    for (double a : {0.0, o.rect->width}) {
+      for (double b : {0.0, o.rect->height}) {
+        const gp_Pnt p = openingPoint(hostWorld, o, a, b);
+        const double d = gp_Vec(p.XYZ()).Dot(u);
+        e.u0 = std::min(e.u0, d);
+        e.u1 = std::max(e.u1, d);
+        e.z0 = std::min(e.z0, p.Z());
+        e.z1 = std::max(e.z1, p.Z());
+      }
+    }
+    out.push_back(e);
+  }
+  return out;
+}
+
+// Positive-area overlap of two rectangles on the same (or the opposite)
+// side of a wall; touching edges are fine. u is measured along Z x n, so
+// for an opening seen from the other side it runs the other way.
+bool openingsOverlap(const OpeningExtent& a, const gp_Dir& n, double u0, double u1, double z0, double z1) {
+  const double along = a.normal.Dot(n);
+  if (std::abs(along) < 1.0 - 1e-6) return false;
+  const double a0 = along > 0 ? a.u0 : -a.u1, a1 = along > 0 ? a.u1 : -a.u0;
+  return std::min(a1, u1) - std::max(a0, u0) > tolerance::kLinear &&
+         std::min(a.z1, z1) - std::max(a.z0, z0) > tolerance::kLinear;
+}
+
 // Replaces the operand recipe at `path` (copy on write along the way).
 void replaceOperand(Recipe& recipe, const std::vector<std::size_t>& path, std::size_t depth, Recipe replacement) {
   auto& boolean = std::get<BooleanFeature>(recipe.base);
@@ -1199,9 +1239,18 @@ Result<std::vector<Modeler::OpeningInfo>> Modeler::openings(const ObjectId& host
     info.height = std::abs(o.rect->height);
     info.center = openingPoint(world, o, o.rect->width / 2, o.rect->height / 2);
     info.bottom = std::numeric_limits<double>::max();
+    info.normal = gp_Dir(o.rect->plane.normal).Transformed(world * o.placement);
+    const gp_Vec along = std::abs(info.normal.Z()) < 1.0 - 1e-9 ? gp_Vec(gp::DZ().Crossed(info.normal)) : gp_Vec();
+    double a0 = 1e300, a1 = -1e300;
     for (double u : {0.0, o.rect->width}) {
-      for (double v : {0.0, o.rect->height}) info.bottom = std::min(info.bottom, openingPoint(world, o, u, v).Z());
+      for (double v : {0.0, o.rect->height}) {
+        const gp_Pnt p = openingPoint(world, o, u, v);
+        info.bottom = std::min(info.bottom, p.Z());
+        a0 = std::min(a0, gp_Vec(p.XYZ()).Dot(along));
+        a1 = std::max(a1, gp_Vec(p.XYZ()).Dot(along));
+      }
     }
+    info.along = a1 - a0;
     out.push_back(info);
   }
   return out;
@@ -1245,6 +1294,18 @@ Status Modeler::setOpeningSize(const ObjectId& hostId, const std::vector<std::si
     rect.width = w;
     rect.height = h;
     replaceOperand(object.recipe, o.path, 0, std::move(recipe));
+  }
+  // Grown openings must not run into each other (holes would merge).
+  const std::vector<OpeningExtent> extents = openingExtents(object, world);
+  for (std::size_t i = 0; i < extents.size(); ++i) {
+    for (std::size_t j = i + 1; j < extents.size(); ++j) {
+      const OpeningExtent& b = extents[j];
+      if ((wanted.empty() || wanted.count(extents[i].index) || wanted.count(b.index)) &&
+          openingsOverlap(extents[i], b.normal, b.u0, b.u1, b.z0, b.z1)) {
+        return Status::failure("Openings " + std::to_string(extents[i].index) + " and " +
+                               std::to_string(b.index) + " would overlap");
+      }
+    }
   }
   return commitModified(std::move(object), "Opening Size");
 }
@@ -1510,7 +1571,16 @@ Result<ObjectId> Modeler::cutOpenings(const ObjectId& hostId, const gp_Dir& face
     if (gap < tolerance::kMinDimension) return R::failure("The openings do not fit along the wall");
     for (int k = 0; k < count; ++k) centres.push_back(u0 + gap * (k + 1) + width * (k + 0.5));
   }
-  // A point on the face plane to place the profiles on.
+  // Openings already in the wall must not be cut into again.
+  const std::vector<OpeningExtent> existing = openingExtents(*host, document_.worldTransform(*host));
+  for (double c : centres) {
+    for (const OpeningExtent& e : existing) {
+      if (openingsOverlap(e, faceNormal, c - width / 2, c + width / 2, z0 + sill, z0 + sill + height)) {
+        return R::failure("The opening would overlap opening " + std::to_string(e.index));
+      }
+    }
+  }
+    // A point on the face plane to place the profiles on.
   const auto ref = geom::FaceRef::fromFace(*face);
   const double planeOffset = gp_Vec(ref->centroid.XYZ()).Dot(gp_Vec(faceNormal));
   history_.beginGroup("Openings");

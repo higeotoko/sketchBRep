@@ -55,6 +55,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   Tool* activeTool() const { return active_; }
   QLineEdit* measurementBox() const { return measurement_; }
   QString lastError() const { return lastError_; }
+  QString statusText() const;
   AiBridge* aiBridge() const { return aiBridge_.get(); }
   void setAiAccess(bool enabled);
   // AI proposal awaiting the user's decision (spec 07 §9.2).

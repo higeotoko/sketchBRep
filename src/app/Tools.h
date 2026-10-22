@@ -249,7 +249,8 @@ class SlabTool : public PlanPolylineTool {
 
 // Openings (O): hover a vertical face of a wall to see the window / door
 // there (width x height, sill above the face's bottom; snaps to the
-// face's middle), click to cut it through. Typing "w,h" or "w,h,sill"
+// face's middle and ends, and next to / in line with / between openings
+// already there), click to cut it through. Typing "w,h" or "w,h,sill"
 // sets the size, and right after a click redoes that opening at the new
 // size. Same as place_openings with 'at'.
 class OpeningTool : public Tool {
@@ -276,7 +277,9 @@ class OpeningTool : public Tool {
     doc::ObjectId host;
     gp_Dir normal;
     gp_Pnt at;
-    bool centred = false;
+    QString snap;  // what it snapped to, if anything
+    double fromStart = 0.0, toEnd = 0.0;  // clear distance to the face's ends
+    bool overlaps = false;                // with an opening already there
   };
   std::optional<Target> targetAt(const ToolEvent& e);
   bool place(const Target& t);

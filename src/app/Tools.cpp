@@ -775,21 +775,73 @@ std::optional<OpeningTool::Target> OpeningTool::targetAt(const ToolEvent& e) {
   if (!pick) return std::nullopt;
   const auto ref = geom::FaceRef::fromFace(pick->face);
   if (!ref || std::abs(ref->normal.Z()) > 1e-6) return std::nullopt;
-  Target t{pick->objectId, ref->normal, pick->point, false};
-  // Snap to the middle of the face along the wall when near it.
-  const gp_Dir u = gp::DZ().Crossed(t.normal);
+  Target t{pick->objectId, ref->normal, pick->point, {}};
+  // Positions along the wall it snaps to: the face's middle, flush with
+  // its ends, next to / in line with openings already in this wall, and
+  // the middle of each gap between them.
+  const gp_Vec u(gp::DZ().Crossed(t.normal));
   double u0 = 1e300, u1 = -1e300;
   for (TopExp_Explorer v(pick->face, TopAbs_VERTEX); v.More(); v.Next()) {
-    const double d = gp_Vec(BRep_Tool::Pnt(TopoDS::Vertex(v.Current())).XYZ()).Dot(gp_Vec(u));
+    const double d = gp_Vec(BRep_Tool::Pnt(TopoDS::Vertex(v.Current())).XYZ()).Dot(u);
     u0 = std::min(u0, d);
     u1 = std::max(u1, d);
   }
-  const double c = gp_Vec(t.at.XYZ()).Dot(gp_Vec(u));
-  const gp_Pnt middle = t.at.Translated(gp_Vec(u) * (0.5 * (u0 + u1) - c));
-  const snap::ScreenPoint s = vp.project(middle);
-  if (std::hypot(s.x - e.pos.x(), s.y - e.pos.y()) < 12.0) {
-    t.at = middle;
-    t.centred = true;
+  const double w = settings_.width;
+  struct Candidate {
+    double centre;
+    QString label;
+  };
+  std::vector<Candidate> candidates{{0.5 * (u0 + u1), QObject::tr("面の中央")},
+                                    {u0 + w / 2, QObject::tr("壁の端に揃う")},
+                                    {u1 - w / 2, QObject::tr("壁の端に揃う")}};
+  std::vector<std::pair<double, double>> taken;  // existing openings along u
+  const auto existing = host_.modeler().openings(t.host);
+  if (existing) {
+    for (const doc::Modeler::OpeningInfo& o : *existing) {
+      if (std::abs(o.normal.Dot(t.normal)) < 1.0 - 1e-6) continue;  // another face
+      const double c = gp_Vec(o.center.XYZ()).Dot(u);
+      taken.emplace_back(c - o.along / 2, c + o.along / 2);
+      candidates.push_back({c, QObject::tr("開口と中心が揃う")});
+      candidates.push_back({c - o.along / 2 - w / 2, QObject::tr("開口に接する")});
+      candidates.push_back({c + o.along / 2 + w / 2, QObject::tr("開口に接する")});
+    }
+  }
+  std::sort(taken.begin(), taken.end());
+  double from = u0;
+  for (const auto& [a, b] : taken) {
+    if (a > from + w) candidates.push_back({0.5 * (from + a), QObject::tr("間の中央")});
+    from = std::max(from, b);
+  }
+  if (!taken.empty() && u1 > from + w) candidates.push_back({0.5 * (from + u1), QObject::tr("間の中央")});
+  const double here = gp_Vec(t.at.XYZ()).Dot(u);
+  double best = 12.0;  // pixels
+  for (const Candidate& c : candidates) {
+    const gp_Pnt p = t.at.Translated(u * (c.centre - here));
+    const snap::ScreenPoint s = vp.project(p);
+    const double d = std::hypot(s.x - e.pos.x(), s.y - e.pos.y());
+    if (d < best) {
+      best = d;
+      t.at = p;
+      t.snap = c.label;
+    }
+  }
+  // Clear distances to the wall's ends, for the status line.
+  const double c = gp_Vec(t.at.XYZ()).Dot(u);
+  t.fromStart = c - w / 2 - u0;
+  t.toEnd = u1 - (c + w / 2);
+  // Would it run into one already there? (Placing it would be refused.)
+  double z0 = 1e300;
+  for (TopExp_Explorer v(pick->face, TopAbs_VERTEX); v.More(); v.Next()) {
+    z0 = std::min(z0, BRep_Tool::Pnt(TopoDS::Vertex(v.Current())).Z());
+  }
+  const double b0 = z0 + settings_.sill, b1 = b0 + settings_.height;
+  for (const doc::Modeler::OpeningInfo& o : existing ? *existing : std::vector<doc::Modeler::OpeningInfo>{}) {
+    if (std::abs(o.normal.Dot(t.normal)) < 1.0 - 1e-6) continue;
+    const double oc = gp_Vec(o.center.XYZ()).Dot(u);
+    if (std::min(oc + o.along / 2, c + w / 2) - std::max(oc - o.along / 2, c - w / 2) > tolerance::kLinear &&
+        std::min(o.bottom + o.height, b1) - std::max(o.bottom, b0) > tolerance::kLinear) {
+      t.overlaps = true;
+    }
   }
   return t;
 }
@@ -800,6 +852,11 @@ void OpeningTool::mouseMove(const ToolEvent& e) {
   if (!hover_) {
     vp.clearPreview();
     host_.setStatus(QObject::tr("壁の縦の面にカーソルを合わせてください（%1）").arg(settingsText()));
+    return;
+  }
+  if (hover_->overlaps) {
+    vp.clearPreview();
+    host_.setStatus(QObject::tr("ここでは既にある開口と重なります（%1）").arg(settingsText()));
     return;
   }
   // The opening's box through the host, as it would be cut.
@@ -826,8 +883,9 @@ void OpeningTool::mouseMove(const ToolEvent& e) {
     vp.setPreview(BRepPrimAPI_MakePrism(face.value(), gp_Vec(hover_->normal) * -(atN - n0)).Shape(),
                   true);
   }
-  host_.setStatus(QObject::tr("クリックで開口をあける（%1）").arg(settingsText()) +
-                  (hover_->centred ? QObject::tr("  [面の中央]") : QString()));
+  host_.setStatus(QObject::tr("クリックで開口をあける（%1）  端から %2 / %3")
+                      .arg(settingsText(), mm(hover_->fromStart), mm(hover_->toEnd)) +
+                  (hover_->snap.isEmpty() ? QString() : QStringLiteral("  [") + hover_->snap + QStringLiteral("]")));
 }
 
 bool OpeningTool::place(const Target& t) {

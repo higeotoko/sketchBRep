@@ -545,4 +545,20 @@ TEST(Transactions, GridWallsSlabAndEvenlyPlacedOpenings) {
   EXPECT_NEAR(three[2]["sill"].get<double>(), 0, 1e-6);
   EXPECT_FALSE(a.call("place_openings", {{"host", door}, {"face_normal", {0, -1, 0}}, {"at", {6000, 0, 0}},
                                          {"width", 900}, {"height", 2100}})["ok"]);
+  // Openings never run into each other (the holes would merge): not by
+  // placing one over another (also from the other side of the wall), not
+  // by growing one; touching is fine.
+  const std::size_t kept = a.modeler.history().undoCount();
+  const json over = a.call("place_openings", {{"host", door}, {"face_normal", {0, -1, 0}}, {"at", {4300, 0, 0}},
+                                              {"width", 900}, {"height", 2100}});
+  EXPECT_FALSE(over["ok"]);
+  EXPECT_NE(over["error"].get<std::string>().find("overlap opening 2"), std::string::npos) << over.dump();
+  EXPECT_FALSE(a.call("place_openings", {{"host", door}, {"face_normal", {0, 1, 0}}, {"at", {4300, 0, 0}},
+                                         {"width", 900}, {"height", 2100}})["ok"]);
+  EXPECT_FALSE(a.call("set_opening_size", {{"host", door}, {"openings", {2}}, {"width", 2800}})["ok"]);
+  EXPECT_EQ(a.modeler.history().undoCount(), kept);
+  a.ok("set_opening_size", {{"host", door}, {"openings", {2}}, {"width", 1600}});  // 3200 .. 4800
+  // Above an opening with a gap in height is fine.
+  a.ok("place_openings", {{"host", door}, {"face_normal", {0, -1, 0}}, {"at", {2200, 0, 0}}, {"width", 800},
+                          {"height", 500}, {"sill", 2300}});
 }

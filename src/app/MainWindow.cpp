@@ -929,6 +929,8 @@ void MainWindow::activateTool(ToolId id) {
 
 void MainWindow::setStatus(const QString& text) { status_->setText(text); }
 
+QString MainWindow::statusText() const { return status_->text(); }
+
 void MainWindow::setMeasurement(const QString& label, const QString& value) {
   measurementLabel_->setText(label);
   if (!userTyping_) measurement_->setText(value);

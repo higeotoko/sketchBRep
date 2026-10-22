@@ -1033,7 +1033,8 @@ const std::vector<CommandDef>& commands() {
            json openings = json::array();
            for (const auto& o : found) {
              openings.push_back({{"index", o.index}, {"name", o.name}, {"width", o.width}, {"height", o.height},
-                                 {"center", toJson(o.center)}, {"sill", o.bottom}});
+                                 {"center", toJson(o.center)}, {"sill", o.bottom},
+                                 {"normal", toJson(o.normal.XYZ())}});
            }
            list.push_back({{"host", h}, {"name", object(m, h).name}, {"openings", openings}});
          }

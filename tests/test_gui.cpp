@@ -1894,8 +1894,8 @@ void GuiPhase1::slabToolAndOpeningTool() {
   const doc::ObjectId wall = f.box(0, 0, 4000, 200, 3000);
   f.window.activateTool(MainWindow::ToolId::Opening);
   QTest::qWait(30);
-  move(f.vp, f.vp->toWidget(gp_Pnt(700, 0, 1500)));
-  click(f.vp, f.vp->toWidget(gp_Pnt(700, 0, 1500)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(1100, 0, 1500)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(1100, 0, 1500)));
   QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
   QVERIFY(!m.document().find(wall));
   doc::ObjectId host;
@@ -1904,11 +1904,11 @@ void GuiPhase1::slabToolAndOpeningTool() {
   }
   auto openings = m.openings(host);
   QVERIFY(openings && openings->size() == 1);
-  QVERIFY2(std::abs(openings->front().center.X() - 700) < 20, qPrintable(QString::number(openings->front().center.X())));
+  QVERIFY2(std::abs(openings->front().center.X() - 1100) < 20, qPrintable(QString::number(openings->front().center.X())));
   QVERIFY(std::abs(openings->front().width - 900) < 1e-6 && std::abs(openings->front().bottom) < 1e-6);
   // Typing right after redoes that opening at the new size (one undo step).
   const std::size_t steps = m.history().undoCount();
-  type(f.vp, QStringLiteral("1200,1000,800"));
+  type(f.vp, QStringLiteral("800,1000,800"));
   QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
   QCOMPARE(m.history().undoCount(), steps);
   for (const doc::Object& o : m.document().objects()) {
@@ -1916,7 +1916,7 @@ void GuiPhase1::slabToolAndOpeningTool() {
   }
   openings = m.openings(host);
   QVERIFY(openings && openings->size() == 1);
-  QVERIFY(std::abs(openings->front().width - 1200) < 1e-6 && std::abs(openings->front().height - 1000) < 1e-6);
+  QVERIFY(std::abs(openings->front().width - 800) < 1e-6 && std::abs(openings->front().height - 1000) < 1e-6);
   QVERIFY(std::abs(openings->front().bottom - 800) < 1e-6);
   // Near the face's middle it snaps there exactly.
   click(f.vp, f.vp->toWidget(gp_Pnt(2003, 0, 1500)));
@@ -1927,6 +1927,26 @@ void GuiPhase1::slabToolAndOpeningTool() {
   openings = m.openings(host);
   QVERIFY(openings && openings->size() == 2);
   QVERIFY2(std::abs(openings->back().center.X() - 2000) < 1e-6, qPrintable(QString::number(openings->back().center.X())));
+  // Next to the second opening (it snaps there), in line with the first
+  // one (above it), and refused where it would run into one.
+  click(f.vp, f.vp->toWidget(gp_Pnt(2810, 0, 1500)));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  for (const doc::Object& o : m.document().objects()) {
+    if (o.id != slabId) host = o.id;
+  }
+  openings = m.openings(host);
+  QVERIFY(openings && openings->size() == 3);
+  QVERIFY2(std::abs(openings->back().center.X() - 2800) < 1e-6, qPrintable(QString::number(openings->back().center.X())));
+  f.window.openingTool().setSettings({600, 500, 2200});
+  move(f.vp, f.vp->toWidget(gp_Pnt(openings->front().center.X() + 8, 0, 2400)));
+  QVERIFY2(f.window.statusText().contains(QStringLiteral("中心が揃う")), qPrintable(f.window.statusText()));
+  f.window.openingTool().setSettings({900, 2100, 0});
+  move(f.vp, f.vp->toWidget(gp_Pnt(2050, 0, 400)));
+  QVERIFY2(f.window.statusText().contains(QStringLiteral("重なります")), qPrintable(f.window.statusText()));
+  const std::size_t before = m.history().undoCount();
+  click(f.vp, f.vp->toWidget(gp_Pnt(2050, 0, 400)));
+  QVERIFY(!f.window.lastError().isEmpty());
+  QCOMPARE(m.history().undoCount(), before);
   // Clicking the ground (not a wall face) does nothing.
   const std::size_t count = m.history().undoCount();
   click(f.vp, f.vp->toWidget(gp_Pnt(6000, 3000, 0)));

@@ -60,6 +60,18 @@ const Entry kEntries[] = {
     {"Nothing selected", "何も選択されていません"},
     {"Nothing to export", "書き出す物がありません"},
     {"Unknown parameter", "その寸法は見つかりません"},
+    {"would overlap", "既にある開口と重なります。位置か大きさを変えてください（穴がつながって 1 つになるのを防いでいます）"},
+    {"The openings do not fit along the wall", "壁の長さに収まりません。個数・幅・間隔を小さくしてください"},
+    {"The opening does not fit on the wall there", "その位置では壁からはみ出します。壁の内側寄りに置くか、幅を小さくしてください"},
+    {"The openings are taller than the wall", "腰の高さ＋開口の高さが壁の高さを超えています"},
+    {"Openings go into a vertical face", "開口は壁の縦の面に入れてください"},
+    {"No face of this object faces that way", "その向きの面がありません"},
+    {"The opening did not cut the wall", "壁を貫通できませんでした"},
+    {"Opening sizes must be positive", "開口の幅・高さは正の値、腰は 0 以上にしてください"},
+    {"This object has no rectangular openings", "この物には開口がありません"},
+    {"A slab needs at least three corners", "スラブには角が 3 つ以上必要です"},
+    {"The slab outline has no area", "スラブの輪郭の面積が 0 です"},
+    {"Slab thickness must be positive", "スラブの厚さは正の値にしてください"},
     {"Object not found", "対象が見つかりません"},
 };
 

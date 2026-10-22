@@ -185,6 +185,8 @@ class Modeler {
     double width = 0.0, height = 0.0;  // absolute
     gp_Pnt center;                     // world
     double bottom = 0.0;               // world Z of the sill / lowest edge
+    gp_Dir normal;                     // of the face it was cut from (world)
+    double along = 0.0;                // horizontal extent along the wall (Z x normal)
   };
   Result<std::vector<OpeningInfo>> openings(const ObjectId& host) const;
   // Resizes openings (all when `indices` is empty) keeping the horizontal
