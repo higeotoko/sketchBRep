@@ -206,6 +206,23 @@ class Modeler {
   // bounds' min / max / centre (edge -1 / 1 / 0) lie at `value`, or at
   // those of the first object when no value is given. One undo step.
   Status align(const std::vector<ObjectId>& ids, int axis, int edge, std::optional<double> value = std::nullopt);
+  // Walls along a plan polyline (points at the base height; closed when the
+  // last equals the first): one parametric wall per segment (rectangle of
+  // length x thickness extruded by height), corners butt-joined (exact for
+  // right angles). justification: -1 = wall left of the line (looking
+  // along it), 0 = centred, 1 = right. Attribute kind = wall. One undo step.
+  Result<std::vector<ObjectId>> createWalls(std::vector<gp_Pnt> points, double thickness, double height,
+                                            int justification = 0);
+  // A floor slab: plan polygon (any winding) with its top at `top`,
+  // `thickness` below. Attribute kind = slab. One undo step.
+  Result<ObjectId> createSlab(const std::vector<gp_Pnt>& outline, double top, double thickness);
+  // Cuts `count` equal rectangular openings through a wall's face (the
+  // outermost planar face facing `faceNormal`), evenly spread along it, or
+  // `spacing` apart (centre to centre) around the face's middle. sill =
+  // height of the lower edge above the face's bottom. Goes through the
+  // same push/pull as drawing them by hand; returns the host's new id.
+  Result<ObjectId> placeOpenings(const ObjectId& host, const gp_Dir& faceNormal, int count, double width,
+                                 double height, double sill, std::optional<double> spacing = std::nullopt);
   // Copies the objects `count` times, copy k placed at worldDelta^k (linear
   // or polar arrays). Returns the ids of the new top-level copies.
   Result<std::vector<ObjectId>> copy(const std::vector<ObjectId>& ids, const gp_Trsf& worldDelta,

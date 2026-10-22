@@ -526,6 +526,59 @@ json changesSince(const doc::Modeler& m, const json& a) {
 
 json runPlaceOnGrid(doc::Modeler& m, const json& args);
 
+// Named grid lines (from create_grid): lines and their crossings. The same
+// name twice is ambiguous and refused rather than guessed.
+struct GridLookup {
+  const doc::Document& d;
+  std::map<std::string, const doc::Object*> lines;
+  std::set<std::string> duplicated;
+
+  explicit GridLookup(const doc::Document& document) : d(document) {
+    for (const doc::Object& o : d.objects()) {
+      if (o.kind() != doc::ObjectKind::Guide) continue;
+      if (!lines.emplace(o.name, &o).second) duplicated.insert(o.name);
+    }
+  }
+  std::vector<std::string> named(char prefix) const {
+    std::vector<std::string> names;
+    for (const auto& [name, o] : lines) {
+      if (!name.empty() && name[0] == prefix && o->layer == "Grid") names.push_back(name);
+    }
+    if (names.empty()) throw ApiError(std::string("no grid lines ") + prefix + "1.. (create_grid first)");
+    return names;
+  }
+  gp_Lin line(const std::string& name) const {
+    if (duplicated.count(name)) throw ApiError("grid line name '" + name + "' is ambiguous (used twice)");
+    const auto it = lines.find(name);
+    if (it == lines.end()) throw ApiError("no grid line named '" + name + "'");
+    const auto& g = std::get<doc::GuideLine>(it->second->recipe.base);
+    const gp_Trsf t = d.worldTransform(*it->second);
+    return gp_Lin(g.point.Transformed(t), g.direction.Transformed(t));
+  }
+  // Crossing in plan, at the height of the first line.
+  gp_Pnt crossing(const std::string& a, const std::string& b) const {
+    const gp_Lin xl = line(a), yl = line(b);
+    const gp_Dir u = xl.Direction(), v = yl.Direction();
+    const double det = u.X() * v.Y() - u.Y() * v.X();
+    if (std::abs(det) < 1e-9) throw ApiError("grid lines '" + a + "' and '" + b + "' are parallel");
+    const gp_Vec w(xl.Location(), yl.Location());
+    const double s = (w.X() * v.Y() - w.Y() * v.X()) / det;
+    return xl.Location().Translated(gp_Vec(u) * s);
+  }
+  // A plan point: [x, y(, z)] or a crossing name "X1/Y2"; z = base.
+  gp_Pnt point(const json& v, double base) const {
+    if (v.is_string()) {
+      const std::string s = v.get<std::string>();
+      const auto slash = s.find('/');
+      if (slash == std::string::npos) throw ApiError("a grid point is written like \"X1/Y2\"");
+      const gp_Pnt p = crossing(s.substr(0, slash), s.substr(slash + 1));
+      return gp_Pnt(p.X(), p.Y(), base);
+    }
+    if (!v.is_array() || v.size() < 2) throw ApiError("a point is [x, y] or a grid crossing \"X1/Y2\"");
+    return gp_Pnt(v.at(0).get<double>(), v.at(1).get<double>(), base);
+  }
+};
+
 // --- command table ---------------------------------------------------------------------
 
 using Handler = std::function<json(doc::Modeler&, const json&)>;
@@ -1050,6 +1103,78 @@ const std::vector<CommandDef>& commands() {
          must(m.setAttribute(ids(a, "ids"), text(a, "key"), text(a, "value")));
          return json::object();
        }},
+      {"create_wall",
+       "Walls along a plan polyline: 'points' are [x, y] (mm) or grid crossings like \"X1/Y1\"; repeat the "
+       "first point at the end for a closed outline. One wall per segment, corners butt-joined (exact at "
+       "right angles), 'thickness' and 'height' (mm) from 'base' (default 0). 'justification': center "
+       "(default), left or right of the line, looking along it. Length, thickness and height stay editable "
+       "(width / height / op0.distance). Walls get attribute kind=wall. One undo step.",
+       SCHEMA({"type": "object", "properties": {
+         "points": {"type": "array"}, "thickness": {"type": "number"}, "height": {"type": "number"},
+         "base": {"type": "number"}, "justification": {"enum": ["center", "left", "right"]}},
+         "required": ["points", "thickness", "height"]}),
+       [](doc::Modeler& m, const json& a) {
+         const GridLookup grid(m.document());
+         const double base = numberOr(a, "base", 0.0);
+         std::vector<gp_Pnt> pts;
+         const json& list = arg(a, "points");
+         if (!list.is_array()) throw ApiError("'points' must be an array");
+         for (const json& p : list) pts.push_back(grid.point(p, base));
+         const std::string j = textOr(a, "justification", "center");
+         if (j != "center" && j != "left" && j != "right") throw ApiError("justification: center, left or right");
+         return idsResult(must(m.createWalls(pts, number(a, "thickness"), number(a, "height"),
+                                             j == "left" ? -1 : j == "right" ? 1 : 0)));
+       }},
+      {"create_slab",
+       "A floor slab: 'outline' of plan points ([x, y] or \"X1/Y1\") or 'grid' {x: [\"X1\", \"X4\"], y: "
+       "[\"Y1\", \"Y3\"]} for the rectangle between those lines, widened by 'overhang' (mm). Its top is "
+       "at 'top' (default 0), 'thickness' below. Attribute kind=slab. One undo step.",
+       SCHEMA({"type": "object", "properties": {
+         "outline": {"type": "array"}, "grid": {"type": "object"}, "overhang": {"type": "number"},
+         "top": {"type": "number"}, "thickness": {"type": "number"}}, "required": ["thickness"]}),
+       [](doc::Modeler& m, const json& a) {
+         const GridLookup grid(m.document());
+         std::vector<gp_Pnt> pts;
+         if (a.contains("grid")) {
+           const json& g = a.at("grid");
+           const auto xs = ObjectFilter::strings(g, "x"), ys = ObjectFilter::strings(g, "y");
+           if (xs.size() != 2 || ys.size() != 2) throw ApiError("'grid' needs two x and two y line names");
+           const double over = numberOr(a, "overhang", 0.0);
+           double x0 = 1e300, x1 = -1e300, y0 = 1e300, y1 = -1e300;
+           for (const std::string& xn : xs) {
+             for (const std::string& yn : ys) {
+               const gp_Pnt p = grid.crossing(xn, yn);
+               x0 = std::min(x0, p.X()), x1 = std::max(x1, p.X()), y0 = std::min(y0, p.Y()), y1 = std::max(y1, p.Y());
+             }
+           }
+           pts = {gp_Pnt(x0 - over, y0 - over, 0), gp_Pnt(x1 + over, y0 - over, 0), gp_Pnt(x1 + over, y1 + over, 0),
+                  gp_Pnt(x0 - over, y1 + over, 0)};
+         } else {
+           const json& list = arg(a, "outline");
+           if (!list.is_array()) throw ApiError("'outline' must be an array");
+           for (const json& p : list) pts.push_back(grid.point(p, 0.0));
+         }
+         return idResult(must(m.createSlab(pts, numberOr(a, "top", 0.0), number(a, "thickness"))));
+       }},
+      {"place_openings",
+       "Cut 'count' equal openings ('width' x 'height', lower edge 'sill' above the face's bottom, mm) "
+       "through a wall 'host', on its face facing 'face_normal' (horizontal, e.g. [0, -1, 0]), evenly "
+       "spread along it or 'spacing' apart centre to centre around its middle. Same as drawing them on the "
+       "face and pushing them through; one undo step. Returns the wall's new id (use it afterwards).",
+       SCHEMA({"type": "object", "properties": {
+         "host": {"type": "string"}, "face_normal": {"type": "array", "items": {"type": "number"}},
+         "count": {"type": "integer"}, "width": {"type": "number"}, "height": {"type": "number"},
+         "sill": {"type": "number"}, "spacing": {"type": "number"}},
+         "required": ["host", "face_normal", "count", "width", "height"]}),
+       [](doc::Modeler& m, const json& a) {
+         const json& count = arg(a, "count");
+         if (!count.is_number_integer()) throw ApiError("'count' must be an integer");
+         return idResult(must(m.placeOpenings(text(a, "host"), direction(a, "face_normal", gp::DY()),
+                                              count.get<int>(), number(a, "width"), number(a, "height"),
+                                              numberOr(a, "sill", 0.0),
+                                              a.contains("spacing") ? std::optional<double>(number(a, "spacing"))
+                                                                    : std::nullopt)));
+       }},
       {"place_on_grid",
        "Copy 'source' (e.g. a column) to crossings of grid lines (from create_grid): 'x' and 'y' are line "
        "names like [\"X1\", \"X3\"] or \"all\" (default); 'skip' lists crossings like \"X2/Y1\". The "
@@ -1331,32 +1456,12 @@ json runPlaceOnGrid(doc::Modeler& m, const json& args) {
   // document's storage under a reference.
   const ObjectId sourceId = object(m, text(args, "source")).id;
   const doc::Document& d = m.document();
-  // Grid lines by name; the same name twice is ambiguous and refused.
-  std::map<std::string, const doc::Object*> lines;
-  std::set<std::string> duplicated;
-  for (const doc::Object& o : d.objects()) {
-    if (o.kind() != doc::ObjectKind::Guide) continue;
-    if (!lines.emplace(o.name, &o).second) duplicated.insert(o.name);
-  }
+  const GridLookup grid(d);
   auto pick = [&](const char* key, char prefix) {
+    if (!args.contains(key) || args.at(key) == "all") return grid.named(prefix);
     std::vector<std::string> names;
-    if (!args.contains(key) || args.at(key) == "all") {
-      for (const auto& [name, o] : lines) {
-        if (!name.empty() && name[0] == prefix && o->layer == "Grid") names.push_back(name);
-      }
-      if (names.empty()) throw ApiError(std::string("no grid lines ") + prefix + "1.. (create_grid first)");
-      return names;
-    }
     for (const std::string& n : ObjectFilter::strings(args, key)) names.push_back(n);
     return names;
-  };
-  auto line = [&](const std::string& name) {
-    if (duplicated.count(name)) throw ApiError("grid line name '" + name + "' is ambiguous (used twice)");
-    const auto it = lines.find(name);
-    if (it == lines.end()) throw ApiError("no grid line named '" + name + "'");
-    const auto& g = std::get<doc::GuideLine>(it->second->recipe.base);
-    const gp_Trsf t = d.worldTransform(*it->second);
-    return gp_Lin(g.point.Transformed(t), g.direction.Transformed(t));
   };
   const std::set<std::string> skip = ObjectFilter::strings(args, "skip");
   const json b = worldBounds(d, object(m, sourceId));
@@ -1366,17 +1471,9 @@ json runPlaceOnGrid(doc::Modeler& m, const json& args) {
 
   std::vector<std::pair<std::string, gp_Pnt>> spots;
   for (const std::string& xn : pick("x", 'X')) {
-    const gp_Lin xl = line(xn);
     for (const std::string& yn : pick("y", 'Y')) {
       if (skip.count(xn + "/" + yn)) continue;
-      const gp_Lin yl = line(yn);
-      // Crossing in plan (the lines lie at the grid's level).
-      const gp_Dir u = xl.Direction(), v = yl.Direction();
-      const double det = u.X() * v.Y() - u.Y() * v.X();
-      if (std::abs(det) < 1e-9) throw ApiError("grid lines '" + xn + "' and '" + yn + "' are parallel");
-      const gp_Vec w(xl.Location(), yl.Location());
-      const double s = (w.X() * v.Y() - w.Y() * v.X()) / det;
-      const gp_Pnt p = xl.Location().Translated(gp_Vec(u) * s);
+      const gp_Pnt p = grid.crossing(xn, yn);
       spots.emplace_back(xn + "/" + yn, gp_Pnt(p.X(), p.Y(), reference.Z()));
     }
   }

@@ -44,6 +44,7 @@ AI 専用の裏口は作らず、GUI のツールと同じ `doc::Modeler` を JS
 - 履歴・ファイル: `undo`, `redo`, `save`, `open`, `export_step`（**アプリ経由では無効**）
 - アプリ起動中のみ: `get_selection`（ユーザーが選んだ物・面）, `select`, `set_view`, `capture_view`（ビューの PNG を AI に画像で返す）, `list_scenes`, `go_to_scene`（保存ビューの表示・保存）
 - 意味の属性: `set_attribute`（`kind=wall`、`level=2F` などのキーと値。複数対象を Undo 1 回で）。`query_objects` / `edit_each` の `attributes` 条件（`"*"` はキーがあれば何でも）と、`aggregate` の `group_by: "attribute:level"` で使える。形状には影響せず、名前や AI の推測を事実扱いしないための「明示的な意味」
+- 建築の要素: `create_wall`（点列 `[x, y]` か通り芯の交点 `"X1/Y1"` を結ぶ壁。厚さ・高さ・芯の位置 center/left/right。角は突き付け（直角で正確）、長さ・厚さ・高さはパラメータで後から変更可、`kind=wall`）, `create_slab`（多角形か通り芯の範囲＋はね出しで床スラブ、天端と厚さ、`kind=slab`）, `place_openings`（壁の面に同じ開口を等間隔、または中心間隔 `spacing` で中央振り分け。手で描いて押し抜くのと同じ処理、Undo 1 回）
 - 建築の意図: `list_openings`（壁などの開口一覧：番号・幅・高さ・中心・窓台の高さ）, `set_opening_size`（開口の幅・高さを変更。既定は横の中心と窓台を保ち、`keep: "center"` で中心を保つ。パラメトリックのまま。全部の壁なら `edit_each` で `host: "$id"`）, `assign_levels`（`levels: [{name, elevation}]` から各オブジェクトの一番下の高さで `level` 属性を付ける。どの階より下の物は返すだけで変えない）, `align`（外接箱の min/max/center を x/y/z 方向で値か最初の物にそろえる）
 - まとめて編集: `edit_each`（`where` に query_objects と同じ条件、`commands` の中の `"$id"` が各対象・`"$index"` が順番。`expect_count` で「何個のつもりか」を渡すと、ずれていたら何も変えずに拒否。全体で Undo 1 回、1 件でも失敗したら全部戻す。preview / propose の中でも使える）, `place_on_grid`（柱などを通り芯 X*/Y* の交点にコピー。`x`・`y`・`skip` で範囲指定、同じ名前の通り芯が 2 本あれば曖昧として拒否）
 - `preview`: コマンド列を一時コピーで試して差分（追加・変更・削除）を返す。本体は無変更。返された `revision` を `batch` の `expected_revision` に渡すと、その間にモデルが変わっていた場合は適用を拒否

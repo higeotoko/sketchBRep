@@ -439,3 +439,100 @@ TEST(Transactions, LevelsFromHeightsAndAlignment) {
   EXPECT_FALSE(a.call("align", {{"ids", {ground}}, {"axis", "w"}, {"edge", "min"}})["ok"]);
   EXPECT_FALSE(a.call("assign_levels", {{"levels", json::array()}})["ok"]);
 }
+
+// Walls, slabs and openings for architecture (AI and scripts).
+TEST(Transactions, WallsJoinExactlyAtCorners) {
+  Api a;
+  auto totalVolume = [&](const json& ids) {
+    double v = 0;
+    for (const json& id : ids) v += a.ok("get_object", {{"id", id}})["volume"].get<double>();
+    return v;
+  };
+  const json loop = {{0, 0}, {6000, 0}, {6000, 4000}, {0, 4000}, {0, 0}};  // counter-clockwise
+  // Centred: the band straddles the line, corners neither overlap nor gap.
+  json walls = a.ok("create_wall", {{"points", loop}, {"thickness", 200}, {"height", 3000}})["ids"];
+  ASSERT_EQ(walls.size(), 4u);
+  EXPECT_NEAR(totalVolume(walls), (6200.0 * 4200 - 5800.0 * 3800) * 3000, 1.0);
+  EXPECT_EQ(a.ok("get_object", {{"id", walls[0]}})["attributes"]["kind"], "wall");
+  EXPECT_EQ(a.modeler.history().undoCount(), 1u);
+  a.ok("undo");
+  EXPECT_TRUE(a.modeler.document().objects().empty());
+  // Left of a counter-clockwise loop = inside: the line is the outer face.
+  walls = a.ok("create_wall", {{"points", loop}, {"thickness", 200}, {"height", 3000}, {"justification", "left"}})["ids"];
+  EXPECT_NEAR(totalVolume(walls), (6000.0 * 4000 - 5600.0 * 3600) * 3000, 1.0);
+  const json all = a.ok("query_objects", {{"attributes", {{"kind", "wall"}}}, {"fields", "bounds"}});
+  double x0 = 1e9, x1 = -1e9;
+  for (const json& o : all["objects"]) {
+    x0 = std::min(x0, o["bounds"]["min"][0].get<double>());
+    x1 = std::max(x1, o["bounds"]["max"][0].get<double>());
+  }
+  EXPECT_NEAR(x0, 0, 1e-6);
+  EXPECT_NEAR(x1, 6000, 1e-6);
+  a.ok("undo");
+  // Open L, right of the line (outside of a left turn): the outer corner
+  // is filled by the first wall.
+  walls = a.ok("create_wall", {{"points", {{0, 0}, {5000, 0}, {5000, 3000}}}, {"thickness", 250},
+                               {"height", 2800}, {"justification", "right"}, {"base", 100}})["ids"];
+  ASSERT_EQ(walls.size(), 2u);
+  EXPECT_NEAR(totalVolume(walls), (5250.0 * 250 + 3000.0 * 250) * 2800, 1.0);
+  EXPECT_NEAR(a.ok("get_object", {{"id", walls[1]}})["bounds"]["min"][2].get<double>(), 100, 1e-6);
+  // Parametric afterwards: taller by editing the extrusion.
+  a.ok("set_parameter", {{"id", walls[0]}, {"key", "op0.distance"}, {"value", 3000}});
+  EXPECT_NEAR(a.ok("get_object", {{"id", walls[0]}})["bounds"]["max"][2].get<double>(), 3100, 1e-6);
+
+  EXPECT_FALSE(a.call("create_wall", {{"points", {{0, 0}}}, {"thickness", 200}, {"height", 3000}})["ok"]);
+  EXPECT_FALSE(a.call("create_wall", {{"points", {{0, 0}, {0, 0}}}, {"thickness", 200}, {"height", 3000}})["ok"]);
+  EXPECT_FALSE(a.call("create_wall", {{"points", {{0, 0}, {10, 0}}}, {"thickness", -1}, {"height", 3000}})["ok"]);
+}
+
+TEST(Transactions, GridWallsSlabAndEvenlyPlacedOpenings) {
+  Api a;
+  a.ok("create_grid", {{"x_spacings", {6000}}, {"y_spacings", {4000}}});
+  const json walls = a.ok("create_wall", {{"points", {"X1/Y1", "X2/Y1", "X2/Y2", "X1/Y2", "X1/Y1"}},
+                                          {"thickness", 200}, {"height", 3000}})["ids"];
+  ASSERT_EQ(walls.size(), 4u);
+  const json slab = a.ok("create_slab", {{"grid", {{"x", {"X1", "X2"}}, {"y", {"Y1", "Y2"}}}}, {"overhang", 100},
+                                         {"top", 0}, {"thickness", 150}});
+  const json s = a.ok("get_object", {{"id", slab["id"]}});
+  EXPECT_NEAR(s["volume"].get<double>(), 6200.0 * 4200 * 150, 1.0);
+  EXPECT_NEAR(s["bounds"]["max"][2].get<double>(), 0, 1e-6);
+  EXPECT_EQ(s["attributes"]["kind"], "slab");
+  // Clockwise outline works the same.
+  const json cw = a.ok("create_slab", {{"outline", {{0, 0}, {0, 1000}, {1000, 1000}, {1000, 0}}}, {"top", 3150},
+                                       {"thickness", 150}});
+  EXPECT_NEAR(a.ok("get_object", {{"id", cw["id"]}})["bounds"]["min"][2].get<double>(), 3000, 1e-6);
+
+  // Three windows evenly along the south wall (its -Y face).
+  const std::string south = walls[0];
+  const std::size_t steps = a.modeler.history().undoCount();
+  const std::string host = a.ok("place_openings", {{"host", south}, {"face_normal", {0, -1, 0}}, {"count", 3},
+                                                   {"width", 900}, {"height", 1200}, {"sill", 900}})["id"];
+  EXPECT_EQ(a.modeler.history().undoCount(), steps + 1);
+  const json openings = a.ok("list_openings", {{"ids", {host}}})["hosts"][0]["openings"];
+  ASSERT_EQ(openings.size(), 3u);
+  // The south wall runs x 100 .. 6100: the corner square at its start
+  // belongs to the west wall (butt joint), the one at its end to itself.
+  const double length = 6000, gap = (length - 3 * 900) / 4;
+  for (int k = 0; k < 3; ++k) {
+    EXPECT_NEAR(openings[k]["center"][0].get<double>(), 100 + gap * (k + 1) + 900 * (k + 0.5), 1e-6) << k;
+    EXPECT_NEAR(openings[k]["sill"].get<double>(), 900, 1e-6);
+    EXPECT_NEAR(openings[k]["width"].get<double>(), 900, 1e-9);
+  }
+  EXPECT_NEAR(a.ok("get_object", {{"id", host}})["volume"].get<double>(),
+              (6000.0 * 200 * 3000) - 3 * 900.0 * 200 * 1200, 1.0);
+  a.ok("undo");
+  // Spacing around the middle; too many / too tall are refused unchanged.
+  const std::string spaced = a.ok("place_openings", {{"host", south}, {"face_normal", {0, -1, 0}}, {"count", 2},
+                                                     {"width", 800}, {"height", 2000}, {"spacing", 1800}})["id"];
+  const json two = a.ok("list_openings", {{"ids", {spaced}}})["hosts"][0]["openings"];
+  EXPECT_NEAR(two[0]["center"][0].get<double>(), 3100 - 900, 1e-6);  // around the wall's middle
+  EXPECT_NEAR(two[1]["center"][0].get<double>(), 3100 + 900, 1e-6);
+  const std::size_t before = a.modeler.history().undoCount();
+  EXPECT_FALSE(a.call("place_openings", {{"host", spaced}, {"face_normal", {0, -1, 0}}, {"count", 9},
+                                         {"width", 900}, {"height", 1000}})["ok"]);
+  EXPECT_FALSE(a.call("place_openings", {{"host", spaced}, {"face_normal", {0, -1, 0}}, {"count", 1},
+                                         {"width", 900}, {"height", 2800}, {"sill", 900}})["ok"]);
+  EXPECT_FALSE(a.call("place_openings", {{"host", spaced}, {"face_normal", {0, 0, 1}}, {"count", 1},
+                                         {"width", 900}, {"height", 1000}})["ok"]);
+  EXPECT_EQ(a.modeler.history().undoCount(), before);
+}

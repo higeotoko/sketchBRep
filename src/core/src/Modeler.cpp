@@ -1341,6 +1341,188 @@ Status Modeler::align(const std::vector<ObjectId>& ids, int axis, int edge, std:
   return Status::success();
 }
 
+Result<std::vector<ObjectId>> Modeler::createWalls(std::vector<gp_Pnt> points, double thickness, double height,
+                                                  int justification) {
+  using R = Result<std::vector<ObjectId>>;
+  if (points.size() < 2) return R::failure("A wall needs at least two points");
+  if (!(thickness > tolerance::kMinDimension) || !(height > tolerance::kMinDimension)) {
+    return R::failure("Wall thickness and height must be positive");
+  }
+  const double base = points.front().Z();
+  for (gp_Pnt& p : points) {
+    if (std::abs(p.Z() - base) > tolerance::kLinear) return R::failure("Wall points must be at one height");
+    p.SetZ(base);
+  }
+  const bool closed = points.size() > 3 && points.front().Distance(points.back()) < tolerance::kLinear;
+  if (closed) points.pop_back();
+  const std::size_t segments = closed ? points.size() : points.size() - 1;
+  std::vector<gp_Dir> dirs;
+  for (std::size_t i = 0; i < segments; ++i) {
+    const gp_Vec v(points[i], points[(i + 1) % points.size()]);
+    if (v.Magnitude() < tolerance::kMinDimension) return R::failure("Two wall points coincide");
+    dirs.emplace_back(v);
+  }
+  // The wall's band, measured to the left of its line: [o, o + thickness].
+  const double o = justification < 0 ? 0.0 : justification > 0 ? -thickness : -thickness / 2;
+  // Butt joints (exact for right angles): at a corner the incoming wall
+  // runs on to the far side of the corner square, the outgoing one starts
+  // after it. turn = +1 left, -1 right, 0 straight on.
+  auto turn = [&](std::size_t in, std::size_t out) {
+    const double z = gp_Vec(dirs[in]).Crossed(gp_Vec(dirs[out])).Z();
+    return std::abs(z) < 1e-9 ? 0 : (z > 0 ? 1 : -1);
+  };
+  history_.beginGroup("Walls");
+  std::vector<ObjectId> walls;
+  for (std::size_t i = 0; i < segments; ++i) {
+    const gp_Pnt a = points[i], b = points[(i + 1) % points.size()];
+    const double length = a.Distance(b);
+    double startCut = 0.0, endRun = 0.0;
+    if (closed || i > 0) {
+      const int t = turn((i + segments - 1) % segments, i);
+      startCut = t > 0 ? o + thickness : t < 0 ? -o : 0.0;
+    }
+    if (closed || i + 1 < segments) {
+      const int t = turn(i, (i + 1) % segments);
+      endRun = t > 0 ? -o : t < 0 ? o + thickness : 0.0;
+    }
+    const gp_Dir& dir = dirs[i];
+    const gp_Dir left = gp::DZ().Crossed(dir);
+    geom::SketchPlane plane;
+    plane.normal = gp::DZ();
+    plane.xDir = dir;  // the rectangle spans +thickness to the left of its origin line
+    plane.origin = a.Translated(gp_Vec(dir) * startCut + gp_Vec(left) * o);
+    const double wallLength = length - startCut + endRun;
+    if (wallLength < tolerance::kMinDimension) {
+      history_.abortGroup();
+      return R::failure("A wall segment is shorter than the wall is thick");
+    }
+    auto id = createRectangle(plane, wallLength, thickness, uniqueName("Wall"));
+    if (!id || !extrude(*id, height)) {
+      history_.abortGroup();
+      return R::failure(id ? "Wall could not be extruded" : id.error());
+    }
+    walls.push_back(*id);
+  }
+  const Status tagged = setAttribute(walls, "kind", "wall");
+  if (!tagged) {
+    history_.abortGroup();
+    return R::failure(tagged.message());
+  }
+  history_.endGroup();
+  return walls;
+}
+
+Result<ObjectId> Modeler::createSlab(const std::vector<gp_Pnt>& outline, double top, double thickness) {
+  if (outline.size() < 3) return Result<ObjectId>::failure("A slab needs at least three corners");
+  if (!(thickness > tolerance::kMinDimension)) return Result<ObjectId>::failure("Slab thickness must be positive");
+  std::vector<gp_Pnt> pts;
+  for (const gp_Pnt& p : outline) pts.emplace_back(p.X(), p.Y(), top - thickness);
+  if (pts.size() > 3 && pts.front().Distance(pts.back()) < tolerance::kLinear) pts.pop_back();
+  // Counter-clockwise in plan so that extruding goes up.
+  double twiceArea = 0.0;
+  for (std::size_t i = 0; i < pts.size(); ++i) {
+    const gp_Pnt& p = pts[i];
+    const gp_Pnt& q = pts[(i + 1) % pts.size()];
+    twiceArea += p.X() * q.Y() - q.X() * p.Y();
+  }
+  if (std::abs(twiceArea) < tolerance::kMinDimension) return Result<ObjectId>::failure("The slab outline has no area");
+  if (twiceArea < 0) std::reverse(pts.begin(), pts.end());
+  history_.beginGroup("Slab");
+  auto id = createPolygon(pts, uniqueName("Slab"));
+  if (!id || !extrude(*id, thickness) || !setAttribute({*id}, "kind", "slab")) {
+    history_.abortGroup();
+    return Result<ObjectId>::failure(id ? "Slab could not be extruded" : id.error());
+  }
+  history_.endGroup();
+  return id;
+}
+
+Result<ObjectId> Modeler::placeOpenings(const ObjectId& hostId, const gp_Dir& faceNormal, int count, double width,
+                                        double height, double sill, std::optional<double> spacing) {
+  using R = Result<ObjectId>;
+  if (count < 1 || count > 200) return R::failure("Give 1 to 200 openings");
+  if (!(width > tolerance::kMinDimension) || !(height > tolerance::kMinDimension) || sill < 0) {
+    return R::failure("Opening sizes must be positive");
+  }
+  if (std::abs(faceNormal.Z()) > 1e-6) return R::failure("Openings go into a vertical face");
+  const Object* host = document_.find(hostId);
+  if (!host || host->shape.IsNull()) return R::failure("Object not found");
+  const TopoDS_Shape world = document_.worldShape(*host);
+  // The outermost planar face facing that way.
+  std::optional<TopoDS_Face> face;
+  double best = -std::numeric_limits<double>::max();
+  for (TopExp_Explorer e(world, TopAbs_FACE); e.More(); e.Next()) {
+    const TopoDS_Face f = TopoDS::Face(e.Current());
+    const auto ref = geom::FaceRef::fromFace(f);
+    if (!ref || !ref->normal.IsEqual(faceNormal, 1e-6)) continue;
+    const double out = gp_Vec(ref->centroid.XYZ()).Dot(gp_Vec(faceNormal));
+    if (out > best) {
+      best = out;
+      face = f;
+    }
+  }
+  if (!face) return R::failure("No face of this object faces that way");
+  // Face extent: along the wall (u, horizontal) and up; thickness along
+  // the normal from the whole shape.
+  const gp_Dir u = gp::DZ().Crossed(faceNormal);  // with the normal, gives an upward plane
+  double u0 = 1e300, u1 = -1e300, z0 = 1e300, z1 = -1e300, n0 = 1e300, n1 = -1e300;
+  for (TopExp_Explorer v(*face, TopAbs_VERTEX); v.More(); v.Next()) {
+    const gp_Pnt p = BRep_Tool::Pnt(TopoDS::Vertex(v.Current()));
+    u0 = std::min(u0, gp_Vec(p.XYZ()).Dot(gp_Vec(u)));
+    u1 = std::max(u1, gp_Vec(p.XYZ()).Dot(gp_Vec(u)));
+    z0 = std::min(z0, p.Z());
+    z1 = std::max(z1, p.Z());
+  }
+  for (TopExp_Explorer v(world, TopAbs_VERTEX); v.More(); v.Next()) {
+    const double d = gp_Vec(BRep_Tool::Pnt(TopoDS::Vertex(v.Current())).XYZ()).Dot(gp_Vec(faceNormal));
+    n0 = std::min(n0, d);
+    n1 = std::max(n1, d);
+  }
+  const double length = u1 - u0, depth = n1 - n0;
+  if (sill + height > z1 - z0 + tolerance::kLinear) return R::failure("The openings are taller than the wall");
+  std::vector<double> centres;
+  if (spacing) {
+    if (!(*spacing >= width)) return R::failure("Spacing must be at least the opening width");
+    const double mid = 0.5 * (u0 + u1), start = mid - 0.5 * (count - 1) * *spacing;
+    for (int k = 0; k < count; ++k) centres.push_back(start + k * *spacing);
+    if (centres.front() - width / 2 < u0 - tolerance::kLinear || centres.back() + width / 2 > u1 + tolerance::kLinear) {
+      return R::failure("The openings do not fit along the wall");
+    }
+  } else {
+    const double gap = (length - count * width) / (count + 1);
+    if (gap < tolerance::kMinDimension) return R::failure("The openings do not fit along the wall");
+    for (int k = 0; k < count; ++k) centres.push_back(u0 + gap * (k + 1) + width * (k + 0.5));
+  }
+  // A point on the face plane to place the profiles on.
+  const auto ref = geom::FaceRef::fromFace(*face);
+  const double planeOffset = gp_Vec(ref->centroid.XYZ()).Dot(gp_Vec(faceNormal));
+  history_.beginGroup("Openings");
+  ObjectId current = hostId;
+  for (double c : centres) {
+    geom::SketchPlane plane;
+    plane.normal = faceNormal;
+    plane.xDir = u;  // u = Z x n keeps yDir (= n x xDir) pointing up
+    gp_XYZ origin = gp_Vec(faceNormal).XYZ() * planeOffset + gp_Vec(u).XYZ() * (c - width / 2);
+    origin.SetZ(z0 + sill);
+    plane.origin = gp_Pnt(origin);
+    auto profile = createRectangle(plane, width, height, uniqueName("Opening"));
+    if (!profile) {
+      history_.abortGroup();
+      return R::failure(profile.error());
+    }
+    const TopoDS_Shape shape = document_.worldShape(*profile);
+    TopExp_Explorer f(shape, TopAbs_FACE);
+    auto cut = f.More() ? pushPull(*profile, TopoDS::Face(f.Current()), -depth) : Result<PushPullResult>::failure("no face");
+    if (!cut || cut->id == *profile) {
+      history_.abortGroup();
+      return R::failure(cut ? "The opening did not cut the wall" : cut.error());
+    }
+    current = cut->id;
+  }
+  history_.endGroup();
+  return current;
+}
+
 Status Modeler::move(const std::vector<ObjectId>& ids, const gp_Vec& offset) {
   gp_Trsf t;
   t.SetTranslation(offset);
