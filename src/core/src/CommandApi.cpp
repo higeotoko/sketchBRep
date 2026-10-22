@@ -961,6 +961,85 @@ const std::vector<CommandDef>& commands() {
          m.setSection(plane);
          return json{{"section", {{"origin", toJson(o)}, {"normal", toJson(n.XYZ())}}}};
        }},
+      {"list_openings",
+       "Rectangular openings (doors, windows pushed through) of the given objects (all objects when 'ids' is "
+       "omitted): index (for set_opening_size), name, width, height, centre and the world height of the "
+       "lowest edge (sill). mm.",
+       SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}}}}),
+       [](doc::Modeler& m, const json& a) {
+         std::vector<ObjectId> hosts;
+         if (a.contains("ids")) {
+           hosts = ids(a, "ids");
+         } else {
+           for (const doc::Object& o : m.document().objects()) hosts.push_back(o.id);
+         }
+         json list = json::array();
+         for (const ObjectId& h : hosts) {
+           const auto found = must(m.openings(h));
+           if (found.empty()) continue;
+           json openings = json::array();
+           for (const auto& o : found) {
+             openings.push_back({{"index", o.index}, {"name", o.name}, {"width", o.width}, {"height", o.height},
+                                 {"center", toJson(o.center)}, {"sill", o.bottom}});
+           }
+           list.push_back({{"host", h}, {"name", object(m, h).name}, {"openings", openings}});
+         }
+         return json{{"hosts", list}};
+       }},
+      {"set_opening_size",
+       "Resize the rectangular openings of 'host' ('openings': indices from list_openings, default all) to "
+       "'width' and/or 'height' (mm). The horizontal centre and the sill stay put ('keep': \"sill\", "
+       "default) or the centre stays ('keep': \"center\"). Stays parametric; one undo step. For many walls "
+       "use edit_each with host \"$id\".",
+       SCHEMA({"type": "object", "properties": {"host": {"type": "string"},
+               "openings": {"type": "array", "items": {"type": "integer"}}, "width": {"type": "number"},
+               "height": {"type": "number"}, "keep": {"enum": ["sill", "center"]}}, "required": ["host"]}),
+       [](doc::Modeler& m, const json& a) {
+         std::vector<std::size_t> which;
+         if (a.contains("openings")) {
+           for (const json& i : a.at("openings")) {
+             if (!i.is_number_integer() || i.get<long long>() < 1) throw ApiError("'openings' must be indices >= 1");
+             which.push_back(i.get<std::size_t>());
+           }
+         }
+         const std::string keep = textOr(a, "keep", "sill");
+         if (keep != "sill" && keep != "center") throw ApiError("'keep' must be sill or center");
+         const std::optional<double> w = a.contains("width") ? std::optional<double>(number(a, "width")) : std::nullopt;
+         const std::optional<double> h = a.contains("height") ? std::optional<double>(number(a, "height")) : std::nullopt;
+         must(m.setOpeningSize(text(a, "host"), which, w, h, keep == "center"));
+         return json::object();
+       }},
+      {"assign_levels",
+       "Give objects (topmost of 'ids', or all top-level objects) the attribute 'key' (default \"level\") "
+       "= the name of the highest level at or below their lowest point. 'levels': [{name, elevation}] in mm "
+       "(e.g. 1F 0, 2F 3000). Returns objects below every level (left unchanged). One undo step.",
+       SCHEMA({"type": "object", "properties": {
+         "levels": {"type": "array", "items": {"type": "object"}}, "ids": {"type": "array", "items": {"type": "string"}},
+         "key": {"type": "string"}}, "required": ["levels"]}),
+       [](doc::Modeler& m, const json& a) {
+         std::vector<doc::Modeler::Level> levels;
+         const json& list = arg(a, "levels");
+         if (!list.is_array()) throw ApiError("'levels' must be an array");
+         for (const json& l : list) levels.push_back({text(l, "name"), number(l, "elevation")});
+         const auto below = must(m.assignLevels(a.contains("ids") ? ids(a, "ids") : std::vector<ObjectId>{}, levels,
+                                                textOr(a, "key", "level")));
+         return json{{"below_all_levels", below}};
+       }},
+      {"align",
+       "Line objects up along a world 'axis' (x, y or z): their bounds' 'edge' (min, max or center) is moved "
+       "to 'value' (mm), or to that of the first object. One undo step.",
+       SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}},
+               "axis": {"enum": ["x", "y", "z"]}, "edge": {"enum": ["min", "max", "center"]},
+               "value": {"type": "number"}}, "required": ["ids", "axis", "edge"]}),
+       [](doc::Modeler& m, const json& a) {
+         const std::string axis = text(a, "axis"), edge = text(a, "edge");
+         const int ax = axis == "x" ? 0 : axis == "y" ? 1 : axis == "z" ? 2 : -1;
+         const int ed = edge == "min" ? -1 : edge == "max" ? 1 : edge == "center" ? 0 : 2;
+         if (ax < 0 || ed == 2) throw ApiError("axis must be x/y/z and edge min/max/center");
+         must(m.align(ids(a, "ids"), ax, ed, a.contains("value") ? std::optional<double>(number(a, "value"))
+                                                                 : std::nullopt));
+         return json::object();
+       }},
       {"set_attribute",
        "Give objects a meaning attribute (e.g. key \"kind\" value \"wall\", key \"level\" value \"2F\") "
        "to find them later with query_objects / edit_each (attributes filter) or aggregate "
@@ -1072,7 +1151,8 @@ bool isFileCommand(const std::string& name) {
 CommandApi::Effect builtinEffect(const std::string& name) {
   using E = CommandApi::Effect;
   if (name == "list_objects" || name == "get_object" || name == "list_tags" || name == "describe" ||
-      name == "preview" || name == "query_objects" || name == "aggregate" || name == "get_changes") {
+      name == "preview" || name == "query_objects" || name == "aggregate" || name == "get_changes" ||
+      name == "list_openings") {
     return E::Read;
   }
   if (isFileCommand(name)) return E::ExternalIo;

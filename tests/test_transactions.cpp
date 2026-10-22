@@ -341,3 +341,101 @@ TEST(Transactions, AttributesAddressObjectsByMeaning) {
   b.ok("open", {{"path", path}});
   EXPECT_EQ(b.ok("query_objects", {{"attributes", {{"level", "3F"}}}})["total"], 2);
 }
+
+// Architectural intents shared by GUI and AI: openings keep their centre
+// and sill when resized, levels come from heights, alignment by bounds.
+TEST(Transactions, OpeningsResizeAroundCentreAndSill) {
+  Api a;
+  auto wallWithOpenings = [&](double y) {
+    const std::string wall =
+        a.ok("create_box", {{"origin", {0, y, 0}}, {"width", 6000}, {"depth", 200}, {"height", 3000}})["id"];
+    std::string host = wall;
+    for (const auto& [x, z, w, h] : {std::array<double, 4>{1000, 0, 900, 2100}, std::array<double, 4>{3500, 900, 1600, 1200}}) {
+      const std::string profile = a.ok("create_rectangle", {{"origin", {x, y, z}}, {"normal", {0, -1, 0}},
+                                                            {"width", w}, {"height", h}})["id"];
+      host = a.ok("push_pull", {{"id", profile}, {"face", 1}, {"distance", -200}})["id"];
+    }
+    return host;
+  };
+  const std::string north = wallWithOpenings(0);
+  const std::string south = wallWithOpenings(5000);
+
+  json list = a.ok("list_openings", {{"ids", {north}}})["hosts"];
+  ASSERT_EQ(list.size(), 1u);
+  const json windowBefore = list[0]["openings"][1];
+  EXPECT_NEAR(windowBefore["width"].get<double>(), 1600, 1e-9);
+  EXPECT_NEAR(windowBefore["sill"].get<double>(), 900, 1e-6);
+  const double centreX = windowBefore["center"][0];
+
+  // Window only, wider and taller: centre x and sill stay.
+  const std::size_t window = windowBefore["index"];
+  a.ok("set_opening_size", {{"host", north}, {"openings", {window}}, {"width", 2000}, {"height", 1500}});
+  json after = a.ok("list_openings", {{"ids", {north}}})["hosts"][0]["openings"];
+  EXPECT_NEAR(after[1]["width"].get<double>(), 2000, 1e-9);
+  EXPECT_NEAR(after[1]["center"][0].get<double>(), centreX, 1e-6);
+  EXPECT_NEAR(after[1]["sill"].get<double>(), 900, 1e-6);
+  EXPECT_NEAR(after[0]["width"].get<double>(), 900, 1e-9);  // the door is untouched
+  EXPECT_NEAR(a.ok("get_object", {{"id", north}})["volume"].get<double>(),
+              6000.0 * 200 * 3000 - 900.0 * 200 * 2100 - 2000.0 * 200 * 1500, 1.0);
+  // Keeping the centre instead moves the sill.
+  a.ok("set_opening_size", {{"host", north}, {"openings", {window}}, {"height", 1300}, {"keep", "center"}});
+  after = a.ok("list_openings", {{"ids", {north}}})["hosts"][0]["openings"];
+  EXPECT_NEAR(after[1]["sill"].get<double>(), 900 + 100, 1e-6);
+
+  // Every opening of every wall at once, one undo step; still parametric.
+  const std::size_t steps = a.modeler.history().undoCount();
+  a.ok("edit_each", {{"where", {{"kind", "Solid"}}},
+                     {"commands", {step("set_opening_size", {{"host", "$id"}, {"width", 1200}})}},
+                     {"expect_count", 2}});
+  EXPECT_EQ(a.modeler.history().undoCount(), steps + 1);
+  const json all = a.ok("list_openings");
+  for (const json& host : all["hosts"]) {
+    for (const json& o : host["openings"]) EXPECT_NEAR(o["width"].get<double>(), 1200, 1e-9);
+  }
+  bool found = false;
+  const json southWall = a.ok("get_object", {{"id", south}});
+  for (const json& p : southWall["parameters"]) {
+    found = found || (p["key"] == "in1.width" && std::abs(p["value"].get<double>() - 1200) < 1e-9);
+  }
+  EXPECT_TRUE(found);
+  a.ok("undo");
+  EXPECT_NEAR(a.ok("list_openings", {{"ids", {south}}})["hosts"][0]["openings"][1]["width"].get<double>(), 1600, 1e-9);
+
+  EXPECT_FALSE(a.call("set_opening_size", {{"host", north}, {"openings", {7}}, {"width", 1000}})["ok"]);
+  EXPECT_FALSE(a.call("set_opening_size", {{"host", north}, {"width", -5}})["ok"]);
+  EXPECT_FALSE(a.call("set_opening_size", {{"host", a.box(20000)}, {"width", 1000}})["ok"]);
+}
+
+TEST(Transactions, LevelsFromHeightsAndAlignment) {
+  Api a;
+  auto boxAt = [&](double x, double z) {
+    return a.ok("create_box", {{"origin", {x, 0, z}}, {"width", 1000}, {"depth", 1000}, {"height", 500}})["id"]
+        .get<std::string>();
+  };
+  const std::string ground = boxAt(0, 0), first = boxAt(2000, 3000), second = boxAt(4000, 6150), pit = boxAt(6000, -800);
+  const std::size_t steps = a.modeler.history().undoCount();
+  const json r = a.ok("assign_levels", {{"levels", {{{"name", "2F"}, {"elevation", 3000}},
+                                                    {{"name", "1F"}, {"elevation", 0}},
+                                                    {{"name", "3F"}, {"elevation", 6000}}}}});
+  EXPECT_EQ(r["below_all_levels"], json::array({pit}));
+  EXPECT_EQ(a.modeler.history().undoCount(), steps + 1);
+  EXPECT_EQ(a.ok("get_object", {{"id", ground}})["attributes"]["level"], "1F");
+  EXPECT_EQ(a.ok("get_object", {{"id", first}})["attributes"]["level"], "2F");
+  EXPECT_EQ(a.ok("get_object", {{"id", second}})["attributes"]["level"], "3F");
+  EXPECT_EQ(a.ok("aggregate", {{"attributes", {{"level", "2F"}}}})["count"], 1);
+  // Assigning again changes nothing: no empty undo step.
+  a.ok("assign_levels", {{"levels", {{{"name", "1F"}, {"elevation", 0}}, {{"name", "2F"}, {"elevation", 3000}},
+                                     {{"name", "3F"}, {"elevation", 6000}}}}});
+  EXPECT_EQ(a.modeler.history().undoCount(), steps + 1);
+
+  // Align the bottoms to the first one, then the right edges to a value.
+  a.ok("align", {{"ids", {ground, first, second}}, {"axis", "z"}, {"edge", "min"}});
+  for (const std::string& id : {first, second}) {
+    EXPECT_NEAR(a.ok("get_object", {{"id", id}})["bounds"]["min"][2].get<double>(), 0, 1e-6);
+  }
+  a.ok("align", {{"ids", {ground, first}}, {"axis", "x"}, {"edge", "max"}, {"value", 9000}});
+  EXPECT_NEAR(a.ok("get_object", {{"id", ground}})["bounds"]["max"][0].get<double>(), 9000, 1e-6);
+  EXPECT_NEAR(a.ok("get_object", {{"id", first}})["bounds"]["max"][0].get<double>(), 9000, 1e-6);
+  EXPECT_FALSE(a.call("align", {{"ids", {ground}}, {"axis", "w"}, {"edge", "min"}})["ok"]);
+  EXPECT_FALSE(a.call("assign_levels", {{"levels", json::array()}})["ok"]);
+}

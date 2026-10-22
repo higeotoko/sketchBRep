@@ -52,6 +52,8 @@ void CommandStack::applyBefore(const Command& command) {
 }
 
 void CommandStack::execute(Command command) {
+  // A step that changes nothing is not worth an undo (or a new revision).
+  if (command.deltas.empty() && command.definitionDeltas.empty() && !command.settings) return;
   if (groupDepth_ > 0) {
     applyAfter(command);
     if (!group_) group_ = Command{groupName_, {}, {}, std::nullopt};

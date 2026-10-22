@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <set>
 
@@ -1123,6 +1124,220 @@ Status Modeler::scale(const std::vector<ObjectId>& ids, const gp_Pnt& center, do
     }
   }
   history_.execute(changes.build("Scale"));
+  return Status::success();
+}
+
+namespace {
+
+struct OpeningRef {
+  std::size_t index;                // 1, 2, ... in the order they were cut
+  std::vector<std::size_t> path;    // operand indices from the host's recipe down
+  gp_Trsf placement;                // profile frame -> host local
+  const BooleanOperand* operand;
+  const RectangleProfile* rect;
+};
+
+// Walls with several openings nest Subtracts (each cut wraps the previous
+// result as operand 0): collect the rectangles at every level, oldest first.
+void collectOpenings(const Recipe& recipe, std::vector<std::size_t> path, const gp_Trsf& placement,
+                     std::vector<OpeningRef>& out) {
+  const auto* boolean = std::get_if<BooleanFeature>(&recipe.base);
+  if (!boolean || boolean->kind != BooleanKind::Subtract || boolean->operands.empty()) return;
+  const BooleanOperand& base = boolean->operands.front();
+  if (base.recipe && base.recipe->modifiers.empty()) {
+    std::vector<std::size_t> inner = path;
+    inner.push_back(0);
+    collectOpenings(*base.recipe, inner, placement * base.placement, out);
+  }
+  for (std::size_t i = 1; i < boolean->operands.size(); ++i) {
+    const BooleanOperand& op = boolean->operands[i];
+    if (!op.recipe) continue;
+    if (const auto* rect = std::get_if<RectangleProfile>(&op.recipe->base)) {
+      std::vector<std::size_t> at = path;
+      at.push_back(i);
+      out.push_back({out.size() + 1, at, placement * op.placement, &op, rect});
+    }
+  }
+}
+
+std::vector<OpeningRef> rectangularOpenings(const Object& host) {
+  std::vector<OpeningRef> out;
+  if (host.recipe.modifiers.empty()) collectOpenings(host.recipe, {}, gp_Trsf(), out);
+  return out;
+}
+
+// World position of a point given in an opening's profile plane.
+gp_Pnt openingPoint(const gp_Trsf& hostWorld, const OpeningRef& o, double u, double v) {
+  return o.rect->plane.toWorld(u, v).Transformed(hostWorld * o.placement);
+}
+
+// Replaces the operand recipe at `path` (copy on write along the way).
+void replaceOperand(Recipe& recipe, const std::vector<std::size_t>& path, std::size_t depth, Recipe replacement) {
+  auto& boolean = std::get<BooleanFeature>(recipe.base);
+  BooleanOperand& op = boolean.operands[path[depth]];
+  if (depth + 1 == path.size()) {
+    op.recipe = std::make_shared<const Recipe>(std::move(replacement));
+    return;
+  }
+  Recipe inner = *op.recipe;
+  replaceOperand(inner, path, depth + 1, std::move(replacement));
+  op.recipe = std::make_shared<const Recipe>(std::move(inner));
+}
+
+}  // namespace
+
+Result<std::vector<Modeler::OpeningInfo>> Modeler::openings(const ObjectId& hostId) const {
+  const Object* host = document_.find(hostId);
+  if (!host) return Result<std::vector<OpeningInfo>>::failure("Object not found");
+  const gp_Trsf world = document_.worldTransform(*host);
+  std::vector<OpeningInfo> out;
+  for (const OpeningRef& o : rectangularOpenings(*host)) {
+    OpeningInfo info;
+    info.index = o.index;
+    info.name = o.operand->name;
+    info.width = std::abs(o.rect->width);
+    info.height = std::abs(o.rect->height);
+    info.center = openingPoint(world, o, o.rect->width / 2, o.rect->height / 2);
+    info.bottom = std::numeric_limits<double>::max();
+    for (double u : {0.0, o.rect->width}) {
+      for (double v : {0.0, o.rect->height}) info.bottom = std::min(info.bottom, openingPoint(world, o, u, v).Z());
+    }
+    out.push_back(info);
+  }
+  return out;
+}
+
+Status Modeler::setOpeningSize(const ObjectId& hostId, const std::vector<std::size_t>& indices,
+                               std::optional<double> width, std::optional<double> height, bool keepCenter) {
+  for (const std::optional<double>& d : {width, height}) {
+    if (d && (!std::isfinite(*d) || *d < tolerance::kMinDimension)) {
+      return Status::failure("Opening sizes must be positive");
+    }
+  }
+  if (!width && !height) return Status::failure("Give a width or a height");
+  const Object* current = document_.find(hostId);
+  if (!current) return Status::failure("Object not found");
+  const std::vector<OpeningRef> found = rectangularOpenings(*current);
+  if (found.empty()) return Status::failure("This object has no rectangular openings");
+  std::set<std::size_t> wanted(indices.begin(), indices.end());
+  for (std::size_t i : wanted) {
+    bool known = false;
+    for (const OpeningRef& o : found) known |= o.index == i;
+    if (!known) return Status::failure("No opening " + std::to_string(i) + " in this object");
+  }
+  const gp_Trsf world = document_.worldTransform(*current);
+  Object object = *current;
+  for (const OpeningRef& o : found) {
+    if (!wanted.empty() && !wanted.count(o.index)) continue;
+    Recipe recipe = *o.operand->recipe;  // operands are shared snapshots: copy on write
+    auto& rect = std::get<RectangleProfile>(recipe.base);
+    // Keep the sign (direction) of each side, change its length.
+    const double w = width ? std::copysign(*width, rect.width) : rect.width;
+    const double h = height ? std::copysign(*height, rect.height) : rect.height;
+    // Anchor in the plane: horizontal centre, and the lower edge (sill) or
+    // the centre vertically. "Lower" is decided in world coordinates.
+    const gp_Vec up = gp_Vec(rect.plane.yDir()).Transformed(world * o.placement);
+    double fv = 0.5;
+    if (!keepCenter && std::abs(up.Z()) > 1e-6) fv = (up.Z() * rect.height > 0) ? 0.0 : 1.0;
+    const double fu = 0.5;
+    rect.plane.origin.Translate(gp_Vec(rect.plane.xDir) * (fu * (rect.width - w)) +
+                                gp_Vec(rect.plane.yDir()) * (fv * (rect.height - h)));
+    rect.width = w;
+    rect.height = h;
+    replaceOperand(object.recipe, o.path, 0, std::move(recipe));
+  }
+  return commitModified(std::move(object), "Opening Size");
+}
+
+Result<std::vector<ObjectId>> Modeler::assignLevels(const std::vector<ObjectId>& ids, std::vector<Level> levels,
+                                                    const std::string& key) {
+  if (levels.empty()) return Result<std::vector<ObjectId>>::failure("Give at least one level");
+  if (key.empty()) return Result<std::vector<ObjectId>>::failure("Attribute name must not be empty");
+  std::sort(levels.begin(), levels.end(), [](const Level& a, const Level& b) { return a.elevation < b.elevation; });
+  std::vector<ObjectId> targets;
+  if (ids.empty()) {
+    for (const Object& o : document_.objects()) {
+      if (o.parent.empty()) targets.push_back(o.id);
+    }
+  } else {
+    targets = topmost(ids);
+  }
+  ChangeSet changes(document_);
+  std::vector<ObjectId> below;
+  for (const ObjectId& id : targets) {
+    const Object* o = document_.find(id);
+    if (!o) return Result<std::vector<ObjectId>>::failure("Object not found");
+    TopoDS_Shape world = document_.worldShape(*o);
+    if (o->isContainer()) {
+      // A group's extent is that of its contents.
+      BRep_Builder builder;
+      TopoDS_Compound all;
+      builder.MakeCompound(all);
+      for (const ObjectId& c : document_.subtree(id)) {
+        const Object* child = document_.find(c);
+        if (child && !child->shape.IsNull()) builder.Add(all, document_.worldShape(*child));
+      }
+      world = all;
+    }
+    if (world.IsNull()) continue;
+    const Bnd_Box box = geom::exactBounds(world);
+    if (box.IsVoid()) continue;
+    const double bottom = box.CornerMin().Z() + tolerance::kLinear;  // a slab top at the level counts
+    const Level* level = nullptr;
+    for (const Level& l : levels) {
+      if (l.elevation <= bottom + 1.0) level = &l;  // 1 mm: drawn "on" the level
+    }
+    if (!level) {
+      below.push_back(id);
+      continue;
+    }
+    if (const auto it = o->attributes.find(key); it != o->attributes.end() && it->second == level->name) continue;
+    Object changed = *o;
+    changed.attributes[key] = level->name;
+    changes.modify(changed);
+  }
+  history_.execute(changes.build("Assign Levels"));
+  return below;
+}
+
+Status Modeler::align(const std::vector<ObjectId>& ids, int axis, int edge, std::optional<double> value) {
+  if (axis < 0 || axis > 2) return Status::failure("Axis must be x, y or z");
+  const std::vector<ObjectId> roots = topmost(ids);
+  if (roots.empty()) return Status::failure("Nothing selected");
+  auto coordinate = [&](const ObjectId& id) -> std::optional<double> {
+    BRep_Builder builder;
+    TopoDS_Compound all;
+    builder.MakeCompound(all);
+    bool any = false;
+    for (const ObjectId& c : document_.subtree(id)) {
+      const Object* o = document_.find(c);
+      if (o && !o->shape.IsNull()) {
+        builder.Add(all, document_.worldShape(*o));
+        any = true;
+      }
+    }
+    if (!any) return std::nullopt;
+    const Bnd_Box box = geom::exactBounds(all);
+    if (box.IsVoid()) return std::nullopt;
+    const double lo = box.CornerMin().Coord(axis + 1), hi = box.CornerMax().Coord(axis + 1);
+    return edge < 0 ? lo : edge > 0 ? hi : 0.5 * (lo + hi);
+  };
+  std::optional<double> target = value;
+  if (!target) target = coordinate(roots.front());
+  if (!target) return Status::failure("The first object has no geometry");
+  ChangeSet changes(document_);
+  for (const ObjectId& id : roots) {
+    const auto at = coordinate(id);
+    if (!at || std::abs(*at - *target) < 1e-9) continue;
+    gp_Vec v(0, 0, 0);
+    v.SetCoord(axis + 1, *target - *at);
+    gp_Trsf delta;
+    delta.SetTranslation(v);
+    Object o = *document_.find(id);
+    o.transform = localDelta(document_.parentTransform(o), delta) * o.transform;
+    changes.modify(o);
+  }
+  history_.execute(changes.build("Align"));
   return Status::success();
 }
 

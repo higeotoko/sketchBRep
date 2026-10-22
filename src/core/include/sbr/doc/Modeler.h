@@ -175,6 +175,37 @@ class Modeler {
   // guides and annotations have their points scaled. Groups scale all their
   // contents; components are refused (edit the definition instead).
   Status scale(const std::vector<ObjectId>& ids, const gp_Pnt& center, double factor);
+  // --- architectural intents (shared by GUI and AI) -----------------------
+  // Openings: rectangular profiles subtracted from a host (a wall with a
+  // door / window pushed through), numbered 1, 2, ... in the order they
+  // were cut (also through nested Subtracts).
+  struct OpeningInfo {
+    std::size_t index = 0;
+    std::string name;
+    double width = 0.0, height = 0.0;  // absolute
+    gp_Pnt center;                     // world
+    double bottom = 0.0;               // world Z of the sill / lowest edge
+  };
+  Result<std::vector<OpeningInfo>> openings(const ObjectId& host) const;
+  // Resizes openings (all when `indices` is empty) keeping the horizontal
+  // centre and the sill (keepCenter = false) or the centre (true) in place.
+  // One undo step; the parameters stay editable.
+  Status setOpeningSize(const ObjectId& host, const std::vector<std::size_t>& indices,
+                        std::optional<double> width, std::optional<double> height, bool keepCenter = false);
+  // Levels (floors): each object (topmost of `ids`, all top-level objects
+  // when empty) gets attribute `key` = the name of the highest level whose
+  // elevation is at or below its lowest point. Objects below every level
+  // are left as they are and returned. One undo step.
+  struct Level {
+    std::string name;
+    double elevation = 0.0;
+  };
+  Result<std::vector<ObjectId>> assignLevels(const std::vector<ObjectId>& ids, std::vector<Level> levels,
+                                             const std::string& key = "level");
+  // Moves each object along a world axis (0 x, 1 y, 2 z) so that its
+  // bounds' min / max / centre (edge -1 / 1 / 0) lie at `value`, or at
+  // those of the first object when no value is given. One undo step.
+  Status align(const std::vector<ObjectId>& ids, int axis, int edge, std::optional<double> value = std::nullopt);
   // Copies the objects `count` times, copy k placed at worldDelta^k (linear
   // or polar arrays). Returns the ids of the new top-level copies.
   Result<std::vector<ObjectId>> copy(const std::vector<ObjectId>& ids, const gp_Trsf& worldDelta,
