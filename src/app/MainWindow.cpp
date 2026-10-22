@@ -76,6 +76,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   polygonTool_ = std::make_unique<PolygonTool>(*this);
   scaleTool_ = std::make_unique<ScaleTool>(*this);
   wallTool_ = std::make_unique<WallTool>(*this);
+  slabTool_ = std::make_unique<SlabTool>(*this);
+  openingTool_ = std::make_unique<OpeningTool>(*this);
   pasteTool_->setClipboard(&clipboard_);
   pasteTool_->setOnPlaced([this](const std::vector<doc::ObjectId>&) {
     // Leave the paste tool after the current event has been handled.
@@ -497,6 +499,8 @@ void MainWindow::buildMenus() {
       {tr("線"), QStringLiteral("L"), ToolId::Line, CursorKind::Pencil},
       {tr("矩形"), QStringLiteral("R"), ToolId::Rectangle, CursorKind::Rectangle},
       {tr("壁"), QStringLiteral("W"), ToolId::Wall, CursorKind::Wall},
+      {tr("スラブ"), QStringLiteral("Shift+W"), ToolId::Slab, CursorKind::Slab},
+      {tr("開口"), QStringLiteral("O"), ToolId::Opening, CursorKind::Opening},
       {tr("円"), QStringLiteral("C"), ToolId::Circle, CursorKind::Circle},
       {tr("円弧"), QStringLiteral("A"), ToolId::Arc, CursorKind::Arc},
       {tr("多角形"), QStringLiteral("Shift+C"), ToolId::Polygon, CursorKind::Polygon},
@@ -540,6 +544,8 @@ void MainWindow::buildMenus() {
   tools->addSeparator();
   tools->addAction(tr("通り芯を作成..."), this, &MainWindow::showGridDialog);
   tools->addAction(tr("壁の設定..."), this, &MainWindow::showWallSettingsDialog);
+  tools->addAction(tr("スラブの設定..."), this, &MainWindow::showSlabSettingsDialog);
+  tools->addAction(tr("開口の設定..."), this, &MainWindow::showOpeningSettingsDialog);
   tools->addAction(tr("開口を等間隔に配置..."), this, &MainWindow::showOpeningsDialog);
   tools->addAction(tr("階を割り当て..."), this, &MainWindow::showLevelsDialog);
   QMenu* alignMenu = tools->addMenu(tr("整列（最初に選んだ物に揃える）"));
@@ -900,6 +906,8 @@ void MainWindow::activateTool(ToolId id) {
     case ToolId::Polygon: active_ = polygonTool_.get(); break;
     case ToolId::Scale: active_ = scaleTool_.get(); break;
     case ToolId::Wall: active_ = wallTool_.get(); break;
+    case ToolId::Slab: active_ = slabTool_.get(); break;
+    case ToolId::Opening: active_ = openingTool_.get(); break;
     case ToolId::Count: return;
   }
   // Tools without a toolbar button (paste) leave the toolbar unchecked.
@@ -1215,6 +1223,62 @@ void MainWindow::showWallSettingsDialog() {
   setStatus(wallTool_->settingsText());
 }
 
+void MainWindow::showSlabSettingsDialog() {
+  bool ok = false;
+  const QString text = QInputDialog::getText(this, tr("スラブの設定"), tr("厚さ（天端はクリックした高さ。単位 m も可）"),
+                                             QLineEdit::Normal,
+                                             QString::fromStdString(units::formatLength(slabTool_->thickness(), 0)), &ok);
+  if (!ok) return;
+  const auto t = units::parseLength(text.toStdString());
+  if (!t || *t <= 0) {
+    reportError(tr("厚さは正の長さで入力してください"));
+    return;
+  }
+  slabTool_->setThickness(*t);
+  setStatus(slabTool_->settingsText());
+}
+
+void MainWindow::showOpeningSettingsDialog() {
+  QDialog dialog(this);
+  dialog.setWindowTitle(tr("開口の設定"));
+  auto* form = new QFormLayout(&dialog);
+  const OpeningTool::Settings current = openingTool_->settings();
+  auto field = [&](double v) {
+    return new QLineEdit(QString::fromStdString(units::formatLength(v, 0)), &dialog);
+  };
+  auto* width = field(current.width);
+  auto* height = field(current.height);
+  auto* sill = field(current.sill);
+  auto* preset = new QComboBox(&dialog);
+  preset->addItems({tr("（そのまま）"), tr("ドア 900×2100"), tr("引き戸 1600×2100"), tr("腰窓 1600×1100・腰 900"),
+                    tr("掃き出し窓 1600×2000")});
+  connect(preset, &QComboBox::currentIndexChanged, &dialog, [=](int i) {
+    const double sizes[][3] = {{0, 0, 0}, {900, 2100, 0}, {1600, 2100, 0}, {1600, 1100, 900}, {1600, 2000, 0}};
+    if (i < 1 || i > 4) return;
+    width->setText(QString::number(sizes[i][0]));
+    height->setText(QString::number(sizes[i][1]));
+    sill->setText(QString::number(sizes[i][2]));
+  });
+  form->addRow(tr("よく使う大きさ"), preset);
+  form->addRow(tr("幅"), width);
+  form->addRow(tr("高さ"), height);
+  form->addRow(tr("床からの高さ（腰）"), sill);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+  form->addRow(buttons);
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  if (dialog.exec() != QDialog::Accepted) return;
+  const auto w = units::parseLength(width->text().toStdString());
+  const auto h = units::parseLength(height->text().toStdString());
+  const auto s = units::parseLength(sill->text().toStdString());
+  if (!w || !h || !s || *w <= 0 || *h <= 0 || *s < 0) {
+    reportError(tr("幅・高さは正の長さ、腰は 0 以上で入力してください"));
+    return;
+  }
+  openingTool_->setSettings({*w, *h, *s});
+  setStatus(openingTool_->settingsText());
+}
+
 bool MainWindow::placeOpeningsOnSelection(int count, double width, double height, double sill,
                                           std::optional<double> spacing) {
   if (selection_.size() != 1) {
@@ -1362,10 +1426,10 @@ void MainWindow::commitMeasurement() {
   const bool typed = userTyping_;
   const QString text = measurement_->text().trimmed();
   userTyping_ = false;
-  // Enter without typing finishes a wall run (the box only shows the
-  // current length then).
-  if (!typed && active_ == wallTool_.get()) {
-    wallTool_->applyMeasurement(QString());
+  // Enter without typing finishes a wall run / slab outline (the box only
+  // shows the current length then).
+  if (!typed && (active_ == wallTool_.get() || active_ == slabTool_.get())) {
+    active_->applyMeasurement(QString());
     viewport_->setFocus();
     return;
   }

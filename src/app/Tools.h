@@ -159,20 +159,12 @@ class LineTool : public DrawingTool {
   std::optional<gp_Pln> drawPlane_;  // plane of the first point (face or horizontal)
 };
 
-// Walls (W): click points like the line tool (inference, typed lengths);
-// clicking the first point closes the outline, double-click / Enter ends
-// an open run, Esc takes the last point back. Thickness, height and
-// justification come from the wall settings. Same as create_wall.
-class WallTool : public DrawingTool {
+// Points clicked on one level like the line tool (inference, typed
+// lengths); clicking the first point closes the outline, double-click /
+// Enter ends, Esc takes the last point back. Walls and slabs build on it.
+class PlanPolylineTool : public DrawingTool {
  public:
-  struct Settings {
-    double thickness = 200.0;
-    double height = 3000.0;
-    int justification = 0;  // -1 left of the line, 0 centred, 1 right
-  };
   using DrawingTool::DrawingTool;
-  QString name() const override;
-  QCursor cursor() const override;
   void activate() override;
   void deactivate() override;
   void cancel() override;
@@ -180,10 +172,21 @@ class WallTool : public DrawingTool {
   void mousePress(const ToolEvent& e) override;
   void mouseMove(const ToolEvent& e) override;
   bool mouseDoubleClick(const ToolEvent& e) override;
+  // Empty text (Enter without typing) finishes; a length places the next
+  // point in the direction shown.
   void applyMeasurement(const QString& text) override;
-  void setSettings(const Settings& s) { settings_ = s; }
-  const Settings& settings() const { return settings_; }
-  QString settingsText() const;
+  virtual QString settingsText() const = 0;
+
+ protected:
+  virtual QString startText() const = 0;
+  virtual QString finishedText(std::size_t created) const = 0;
+  // Creates the elements; `closed` when the outline came back to its start.
+  virtual Result<std::size_t> commit(const std::vector<gp_Pnt>& points, bool closed) = 0;
+  // Preview shape for the points so far (+ the cursor point).
+  virtual TopoDS_Shape previewShape(const std::vector<gp_Pnt>& points) const = 0;
+  virtual bool closesOnFinish() const { return false; }
+
+  std::vector<gp_Pnt> points_;
 
  private:
   std::optional<gp_Pnt> pointAt(const ToolEvent& e);
@@ -191,9 +194,100 @@ class WallTool : public DrawingTool {
   void finish(bool closed);
   void updatePreview();
 
-  Settings settings_;
-  std::vector<gp_Pnt> points_;
   std::optional<gp_Pnt> current_;
+};
+
+// Walls (W): one parametric wall per segment, corners butt-joined.
+// Thickness, height and justification come from the wall settings. Same
+// as create_wall.
+class WallTool : public PlanPolylineTool {
+ public:
+  struct Settings {
+    double thickness = 200.0;
+    double height = 3000.0;
+    int justification = 0;  // -1 left of the line, 0 centred, 1 right
+  };
+  using PlanPolylineTool::PlanPolylineTool;
+  QString name() const override;
+  QCursor cursor() const override;
+  void setSettings(const Settings& s) { settings_ = s; }
+  const Settings& settings() const { return settings_; }
+  QString settingsText() const override;
+
+ protected:
+  QString startText() const override;
+  QString finishedText(std::size_t created) const override;
+  Result<std::size_t> commit(const std::vector<gp_Pnt>& points, bool closed) override;
+  TopoDS_Shape previewShape(const std::vector<gp_Pnt>& points) const override;
+
+ private:
+  Settings settings_;
+};
+
+// Floor slabs (Shift+W): click the outline's corners on the level of the
+// slab's top (the ground, or the top of walls); the slab hangs `thickness`
+// below. Enter closes the outline. Same as create_slab.
+class SlabTool : public PlanPolylineTool {
+ public:
+  using PlanPolylineTool::PlanPolylineTool;
+  QString name() const override;
+  QCursor cursor() const override;
+  void setThickness(double t) { thickness_ = t; }
+  double thickness() const { return thickness_; }
+  QString settingsText() const override;
+
+ protected:
+  QString startText() const override;
+  QString finishedText(std::size_t created) const override;
+  Result<std::size_t> commit(const std::vector<gp_Pnt>& points, bool closed) override;
+  TopoDS_Shape previewShape(const std::vector<gp_Pnt>& points) const override;
+  bool closesOnFinish() const override { return true; }
+
+ private:
+  double thickness_ = 200.0;
+};
+
+// Openings (O): hover a vertical face of a wall to see the window / door
+// there (width x height, sill above the face's bottom; snaps to the
+// face's middle), click to cut it through. Typing "w,h" or "w,h,sill"
+// sets the size, and right after a click redoes that opening at the new
+// size. Same as place_openings with 'at'.
+class OpeningTool : public Tool {
+ public:
+  struct Settings {
+    double width = 900.0;
+    double height = 2100.0;
+    double sill = 0.0;
+  };
+  using Tool::Tool;
+  QString name() const override;
+  QCursor cursor() const override;
+  void activate() override;
+  void cancel() override;
+  void mousePress(const ToolEvent& e) override;
+  void mouseMove(const ToolEvent& e) override;
+  void applyMeasurement(const QString& text) override;
+  void setSettings(const Settings& s) { settings_ = s; }
+  const Settings& settings() const { return settings_; }
+  QString settingsText() const;
+
+ private:
+  struct Target {
+    doc::ObjectId host;
+    gp_Dir normal;
+    gp_Pnt at;
+    bool centred = false;
+  };
+  std::optional<Target> targetAt(const ToolEvent& e);
+  bool place(const Target& t);
+
+  Settings settings_;
+  std::optional<Target> hover_;
+  struct Last {
+    Target target;               // as clicked (the host before the cut)
+    std::uint64_t sequence = 0;  // document state right after placing
+  };
+  std::optional<Last> last_;
 };
 
 // Clicks control-through points of a NURBS curve; Enter/double-click

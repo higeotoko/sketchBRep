@@ -150,6 +150,7 @@ class GuiPhase1 : public QObject {
   void componentEditInPlace();
   void followMeAroundTopFace();
   void wallToolAndArchitectureMenus();
+  void slabToolAndOpeningTool();
 };
 
 namespace {
@@ -508,7 +509,8 @@ void GuiPhase1::eachToolHasItsCursor() {
                   MainWindow::ToolId::Curve, MainWindow::ToolId::Circle,
                   MainWindow::ToolId::Measure, MainWindow::ToolId::Revolve, MainWindow::ToolId::Arc,
                   MainWindow::ToolId::Paint, MainWindow::ToolId::Eraser, MainWindow::ToolId::Protractor,
-                  MainWindow::ToolId::Polygon, MainWindow::ToolId::Scale, MainWindow::ToolId::Wall}) {
+                  MainWindow::ToolId::Polygon, MainWindow::ToolId::Scale, MainWindow::ToolId::Wall,
+                  MainWindow::ToolId::Slab, MainWindow::ToolId::Opening}) {
     f.window.activateTool(id);
     QCOMPARE(f.vp->cursor().shape(), Qt::BitmapCursor);
     QVERIFY(!f.vp->cursor().pixmap().isNull());
@@ -1857,6 +1859,78 @@ void GuiPhase1::wallToolAndArchitectureMenus() {
   m.undo();
   geom::exactBounds(m.document().worldShape(*m.document().find(*slab))).Get(x0, y0, z0, x1, y1, z1);
   QVERIFY(std::abs(z0 + 700) < 1e-6);
+}
+
+void GuiPhase1::slabToolAndOpeningTool() {
+  Fixture f;
+  QVERIFY(f.setUp(2000, 0));
+  doc::Modeler& m = f.window.modeler();
+
+  // Slab: corners on the ground, Enter closes; top at the clicked level.
+  f.window.slabTool().setThickness(150);
+  f.window.activateTool(MainWindow::ToolId::Slab);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, -3000, 0)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(2000, -3000, 0)));
+  type(f.vp, QStringLiteral("4000"));
+  move(f.vp, f.vp->toWidget(gp_Pnt(4000, -1500, 0)));
+  type(f.vp, QStringLiteral("2000"));
+  move(f.vp, f.vp->toWidget(gp_Pnt(2000, -1000, 0)));
+  type(f.vp, QStringLiteral("4000"));
+  QCOMPARE(m.document().objects().size(), std::size_t(0));  // still drawing
+  QTest::keyClick(f.vp, Qt::Key_Return);
+  QTest::qWait(30);
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  const doc::Object& slab = m.document().objects().front();
+  const doc::ObjectId slabId = slab.id;
+  QCOMPARE(QString::fromStdString(slab.attributes.at("kind")), QStringLiteral("slab"));
+  QVERIFY2(std::abs(geom::volume(slab.shape) - 4000.0 * 2000 * 150) < 1.0,
+           qPrintable(QString::number(geom::volume(slab.shape))));
+  double x0, y0, z0, x1, y1, z1;
+  geom::exactBounds(slab.shape).Get(x0, y0, z0, x1, y1, z1);
+  QVERIFY(std::abs(z1) < 1e-6 && std::abs(z0 + 150) < 1e-6);
+
+  // Opening tool: hover the wall's front face, click: a door where clicked.
+  const doc::ObjectId wall = f.box(0, 0, 4000, 200, 3000);
+  f.window.activateTool(MainWindow::ToolId::Opening);
+  QTest::qWait(30);
+  move(f.vp, f.vp->toWidget(gp_Pnt(700, 0, 1500)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(700, 0, 1500)));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QVERIFY(!m.document().find(wall));
+  doc::ObjectId host;
+  for (const doc::Object& o : m.document().objects()) {
+    if (o.id != slabId) host = o.id;
+  }
+  auto openings = m.openings(host);
+  QVERIFY(openings && openings->size() == 1);
+  QVERIFY2(std::abs(openings->front().center.X() - 700) < 20, qPrintable(QString::number(openings->front().center.X())));
+  QVERIFY(std::abs(openings->front().width - 900) < 1e-6 && std::abs(openings->front().bottom) < 1e-6);
+  // Typing right after redoes that opening at the new size (one undo step).
+  const std::size_t steps = m.history().undoCount();
+  type(f.vp, QStringLiteral("1200,1000,800"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.history().undoCount(), steps);
+  for (const doc::Object& o : m.document().objects()) {
+    if (o.id != slabId) host = o.id;
+  }
+  openings = m.openings(host);
+  QVERIFY(openings && openings->size() == 1);
+  QVERIFY(std::abs(openings->front().width - 1200) < 1e-6 && std::abs(openings->front().height - 1000) < 1e-6);
+  QVERIFY(std::abs(openings->front().bottom - 800) < 1e-6);
+  // Near the face's middle it snaps there exactly.
+  click(f.vp, f.vp->toWidget(gp_Pnt(2003, 0, 1500)));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  for (const doc::Object& o : m.document().objects()) {
+    if (o.id != slabId) host = o.id;
+  }
+  openings = m.openings(host);
+  QVERIFY(openings && openings->size() == 2);
+  QVERIFY2(std::abs(openings->back().center.X() - 2000) < 1e-6, qPrintable(QString::number(openings->back().center.X())));
+  // Clicking the ground (not a wall face) does nothing.
+  const std::size_t count = m.history().undoCount();
+  click(f.vp, f.vp->toWidget(gp_Pnt(6000, 3000, 0)));
+  QCOMPARE(m.history().undoCount(), count);
 }
 
 QTEST_MAIN(GuiPhase1)

@@ -223,6 +223,44 @@ QPixmap draw(CursorKind kind, QPoint& hotspot) {
       hotspot = QPoint(2, 30);
       break;
     }
+    case CursorKind::Slab: {
+      // Pencil with a slab seen at an angle.
+      halo(p, pencil());
+      QPainterPath slab;
+      slab.moveTo(14, 18);
+      slab.lineTo(22, 13);
+      slab.lineTo(31, 17);
+      slab.lineTo(23, 22);
+      slab.closeSubpath();
+      slab.moveTo(14, 18);
+      slab.lineTo(14, 21);
+      slab.lineTo(23, 25);
+      slab.lineTo(31, 20);
+      slab.lineTo(31, 17);
+      slab.moveTo(23, 22);
+      slab.lineTo(23, 25);
+      halo(p, slab);
+      hotspot = QPoint(2, 30);
+      break;
+    }
+    case CursorKind::Opening: {
+      // Crosshair with a window (frame and mullion) to its lower right.
+      QPainterPath cross;
+      cross.moveTo(8, 1);
+      cross.lineTo(8, 15);
+      cross.moveTo(1, 8);
+      cross.lineTo(15, 8);
+      halo(p, cross);
+      QPainterPath window;
+      window.addRect(QRectF(15, 13, 15, 17));
+      window.moveTo(22.5, 13);
+      window.lineTo(22.5, 30);
+      window.moveTo(15, 21);
+      window.lineTo(30, 21);
+      halo(p, window);
+      hotspot = QPoint(8, 8);
+      break;
+    }
     case CursorKind::Scale: {
       // Small and large squares sharing a corner, with a diagonal arrow.
       QPainterPath small;

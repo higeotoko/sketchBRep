@@ -535,4 +535,14 @@ TEST(Transactions, GridWallsSlabAndEvenlyPlacedOpenings) {
   EXPECT_FALSE(a.call("place_openings", {{"host", spaced}, {"face_normal", {0, 0, 1}}, {"count", 1},
                                          {"width", 900}, {"height", 1000}})["ok"]);
   EXPECT_EQ(a.modeler.history().undoCount(), before);
+  // One door where it was clicked (only the position along the wall counts);
+  // off the end of the wall is refused.
+  const std::string door = a.ok("place_openings", {{"host", spaced}, {"face_normal", {0, -1, 0}},
+                                                   {"at", {5500, -700, 1234}}, {"width", 900}, {"height", 2100}})["id"];
+  const json three = a.ok("list_openings", {{"ids", {door}}})["hosts"][0]["openings"];
+  ASSERT_EQ(three.size(), 3u);
+  EXPECT_NEAR(three[2]["center"][0].get<double>(), 5500, 1e-6);
+  EXPECT_NEAR(three[2]["sill"].get<double>(), 0, 1e-6);
+  EXPECT_FALSE(a.call("place_openings", {{"host", door}, {"face_normal", {0, -1, 0}}, {"at", {6000, 0, 0}},
+                                         {"width", 900}, {"height", 2100}})["ok"]);
 }

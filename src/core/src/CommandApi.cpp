@@ -1159,14 +1159,22 @@ const std::vector<CommandDef>& commands() {
       {"place_openings",
        "Cut 'count' equal openings ('width' x 'height', lower edge 'sill' above the face's bottom, mm) "
        "through a wall 'host', on its face facing 'face_normal' (horizontal, e.g. [0, -1, 0]), evenly "
-       "spread along it or 'spacing' apart centre to centre around its middle. Same as drawing them on the "
-       "face and pushing them through; one undo step. Returns the wall's new id (use it afterwards).",
+       "spread along it or 'spacing' apart centre to centre around its middle; or a single one centred on "
+       "the point 'at' ([x, y, z], its position along the face; count is then ignored). Same as drawing "
+       "them on the face and pushing them through; one undo step. Returns the wall's new id (use it "
+       "afterwards).",
        SCHEMA({"type": "object", "properties": {
          "host": {"type": "string"}, "face_normal": {"type": "array", "items": {"type": "number"}},
          "count": {"type": "integer"}, "width": {"type": "number"}, "height": {"type": "number"},
-         "sill": {"type": "number"}, "spacing": {"type": "number"}},
-         "required": ["host", "face_normal", "count", "width", "height"]}),
+         "sill": {"type": "number"}, "spacing": {"type": "number"},
+         "at": {"type": "array", "items": {"type": "number"}}},
+         "required": ["host", "face_normal", "width", "height"]}),
        [](doc::Modeler& m, const json& a) {
+         if (a.contains("at")) {
+           return idResult(must(m.placeOpeningAt(text(a, "host"), direction(a, "face_normal", gp::DY()),
+                                                 point(a, "at"), number(a, "width"), number(a, "height"),
+                                                 numberOr(a, "sill", 0.0))));
+         }
          const json& count = arg(a, "count");
          if (!count.is_number_integer()) throw ApiError("'count' must be an integer");
          return idResult(must(m.placeOpenings(text(a, "host"), direction(a, "face_normal", gp::DY()),

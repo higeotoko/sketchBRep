@@ -1439,6 +1439,17 @@ Result<ObjectId> Modeler::createSlab(const std::vector<gp_Pnt>& outline, double 
 
 Result<ObjectId> Modeler::placeOpenings(const ObjectId& hostId, const gp_Dir& faceNormal, int count, double width,
                                         double height, double sill, std::optional<double> spacing) {
+  return cutOpenings(hostId, faceNormal, count, width, height, sill, spacing, std::nullopt);
+}
+
+Result<ObjectId> Modeler::placeOpeningAt(const ObjectId& hostId, const gp_Dir& faceNormal, const gp_Pnt& at,
+                                         double width, double height, double sill) {
+  return cutOpenings(hostId, faceNormal, 1, width, height, sill, std::nullopt, at);
+}
+
+Result<ObjectId> Modeler::cutOpenings(const ObjectId& hostId, const gp_Dir& faceNormal, int count, double width,
+                                      double height, double sill, std::optional<double> spacing,
+                                      std::optional<gp_Pnt> at) {
   using R = Result<ObjectId>;
   if (count < 1 || count > 200) return R::failure("Give 1 to 200 openings");
   if (!(width > tolerance::kMinDimension) || !(height > tolerance::kMinDimension) || sill < 0) {
@@ -1481,7 +1492,13 @@ Result<ObjectId> Modeler::placeOpenings(const ObjectId& hostId, const gp_Dir& fa
   const double length = u1 - u0, depth = n1 - n0;
   if (sill + height > z1 - z0 + tolerance::kLinear) return R::failure("The openings are taller than the wall");
   std::vector<double> centres;
-  if (spacing) {
+  if (at) {
+    const double c = gp_Vec(at->XYZ()).Dot(gp_Vec(u));
+    if (c - width / 2 < u0 - tolerance::kLinear || c + width / 2 > u1 + tolerance::kLinear) {
+      return R::failure("The opening does not fit on the wall there");
+    }
+    centres.push_back(c);
+  } else if (spacing) {
     if (!(*spacing >= width)) return R::failure("Spacing must be at least the opening width");
     const double mid = 0.5 * (u0 + u1), start = mid - 0.5 * (count - 1) * *spacing;
     for (int k = 0; k < count; ++k) centres.push_back(start + k * *spacing);

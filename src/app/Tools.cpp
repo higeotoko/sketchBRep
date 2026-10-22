@@ -24,13 +24,17 @@
 #include <TopoDS_Wire.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <TopoDS.hxx>
+#include <BRep_Tool.hxx>
+#include <TopExp_Explorer.hxx>
 
 #include "Cursors.h"
 #include "Viewport.h"
 #include "sbr/Units.h"
 #include "sbr/geom/Annotation.h"
 #include "sbr/geom/Freeform.h"
+#include "sbr/geom/FaceRef.h"
 #include "sbr/geom/Measure.h"
+#include "sbr/geom/Profile.h"
 #include "sbr/geom/Operations.h"
 
 namespace sbr::app {
@@ -526,24 +530,16 @@ void LineTool::applyMeasurement(const QString& text) {
 
 // --- Wall ------------------------------------------------------------------------
 
-QString WallTool::name() const { return QObject::tr("壁"); }
-QCursor WallTool::cursor() const { return toolCursor(CursorKind::Wall); }
+// --- Plan polylines (walls, slabs) ------------------------------------------
 
-QString WallTool::settingsText() const {
-  const QString just = settings_.justification < 0   ? QObject::tr("線の左")
-                       : settings_.justification > 0 ? QObject::tr("線の右")
-                                                      : QObject::tr("中心");
-  return QObject::tr("厚さ %1 / 高さ %2 / %3").arg(mm(settings_.thickness), mm(settings_.height), just);
-}
-
-void WallTool::activate() {
+void PlanPolylineTool::activate() {
   resetTracking();
   host_.viewport().setPickMode(PickMode::None);
   host_.setMeasurement(QObject::tr("長さ"), QString());
-  host_.setStatus(QObject::tr("壁の始点をクリック（%1。ツール > 壁の設定で変更）").arg(settingsText()));
+  host_.setStatus(startText() + QStringLiteral("（") + settingsText() + QStringLiteral("）"));
 }
 
-void WallTool::cancel() {
+void PlanPolylineTool::cancel() {
   points_.clear();
   current_.reset();
   resetLock();
@@ -551,27 +547,27 @@ void WallTool::cancel() {
   host_.viewport().hideSnap();
 }
 
-void WallTool::deactivate() {
+void PlanPolylineTool::deactivate() {
   // Switching tools keeps what was drawn (like the line tool).
   finish(false);
   cancel();
 }
 
-bool WallTool::stepBack() {
+bool PlanPolylineTool::stepBack() {
   if (points_.empty()) return false;
   points_.pop_back();
   resetLock();
   updatePreview();
-  host_.setStatus(points_.empty() ? QObject::tr("壁の始点をクリック") : QObject::tr("最後の点を取り消しました"));
+  host_.setStatus(points_.empty() ? startText() : QObject::tr("最後の点を取り消しました"));
   return true;
 }
 
-std::optional<gp_Pnt> WallTool::pointAt(const ToolEvent& e) {
+std::optional<gp_Pnt> PlanPolylineTool::pointAt(const ToolEvent& e) {
   std::optional<gp_Pnt> anchor;
   std::optional<gp_Pln> plane;
   if (!points_.empty()) {
     anchor = points_.back();
-    plane = gp_Pln(points_.front(), gp::DZ());  // walls stand on one level
+    plane = gp_Pln(points_.front(), gp::DZ());  // one level
   }
   snap::SnapResult r = snapAt(e, anchor, plane);
   if (points_.size() >= 2 && !locked_) {
@@ -587,35 +583,35 @@ std::optional<gp_Pnt> WallTool::pointAt(const ToolEvent& e) {
   if (!r.valid()) return std::nullopt;
   gp_Pnt p = r.point;
   if (!points_.empty()) p.SetZ(points_.front().Z());
-  host_.setStatus((points_.empty() ? QObject::tr("壁の始点をクリック")
+  host_.setStatus((points_.empty() ? startText()
                                    : QObject::tr("次の点 / 始点で閉じる / ダブルクリック・Enter で確定 / "
                                                  "Esc で 1 点戻す")) +
                   QStringLiteral("  [") + snapLabel(r.kind) + QStringLiteral("]  ") + settingsText() + lockSuffix());
   return p;
 }
 
-void WallTool::mouseMove(const ToolEvent& e) {
+void PlanPolylineTool::mouseMove(const ToolEvent& e) {
   current_ = pointAt(e);
   if (!points_.empty() && current_) {
     host_.setMeasurement(QObject::tr("長さ"), mm(points_.back().Distance(*current_)));
     if (points_.size() >= 2 && current_->Distance(points_.front()) < 1e-6) {
-      host_.setStatus(QObject::tr("クリックで閉じて壁を作成します"));
+      host_.setStatus(QObject::tr("クリックで閉じて作成します"));
     }
   }
   updatePreview();
 }
 
-void WallTool::mousePress(const ToolEvent& e) {
+void PlanPolylineTool::mousePress(const ToolEvent& e) {
   const auto p = pointAt(e);
   if (p) addPoint(*p);
 }
 
-bool WallTool::mouseDoubleClick(const ToolEvent&) {
-  finish(false);
+bool PlanPolylineTool::mouseDoubleClick(const ToolEvent&) {
+  finish(closesOnFinish());
   return true;
 }
 
-void WallTool::addPoint(const gp_Pnt& p) {
+void PlanPolylineTool::addPoint(const gp_Pnt& p) {
   if (!points_.empty() && p.Distance(points_.back()) < tolerance::kMinDimension) return;
   if (points_.size() >= 3 && p.Distance(points_.front()) < 1e-6) {
     finish(true);
@@ -626,15 +622,13 @@ void WallTool::addPoint(const gp_Pnt& p) {
   updatePreview();
 }
 
-void WallTool::finish(bool closed) {
-  if (points_.size() >= 2) {
-    std::vector<gp_Pnt> pts = points_;
-    if (closed) pts.push_back(points_.front());
-    auto walls = host_.modeler().createWalls(pts, settings_.thickness, settings_.height, settings_.justification);
-    if (!walls) {
-      host_.reportError(QString::fromStdString(walls.error()));
+void PlanPolylineTool::finish(bool closed) {
+  if (points_.size() >= (closed ? 3u : 2u)) {
+    const auto created = commit(points_, closed);
+    if (!created) {
+      host_.reportError(QString::fromStdString(created.error()));
     } else {
-      host_.setStatus(QObject::tr("壁を %1 枚作成しました（Ctrl+Z で戻せます）").arg(walls->size()));
+      host_.setStatus(finishedText(created.value()));
     }
   }
   points_.clear();
@@ -644,13 +638,64 @@ void WallTool::finish(bool closed) {
   host_.setMeasurement(QObject::tr("長さ"), QString());
 }
 
-void WallTool::updatePreview() {
+void PlanPolylineTool::updatePreview() {
   std::vector<gp_Pnt> pts = points_;
   if (current_ && !pts.empty()) pts.push_back(*current_);
-  if (pts.size() < 2) {
+  const TopoDS_Shape preview = pts.size() >= 2 ? previewShape(pts) : TopoDS_Shape();
+  if (preview.IsNull()) {
     host_.viewport().clearPreview();
+  } else {
+    host_.viewport().setPreview(preview, true);
+  }
+}
+
+void PlanPolylineTool::applyMeasurement(const QString& text) {
+  if (text.trimmed().isEmpty()) {  // Enter: done
+    finish(closesOnFinish());
     return;
   }
+  const auto length = parseOne(text);
+  if (!length || *length <= 0) {
+    host_.reportError(QObject::tr("長さを解釈できません: %1").arg(text));
+    return;
+  }
+  if (points_.empty() || !current_ || current_->Distance(points_.back()) < 1e-9) {
+    host_.reportError(QObject::tr("始点をクリックし、方向を示してから長さを入力してください"));
+    return;
+  }
+  const gp_Dir dir(gp_Vec(points_.back(), *current_));
+  addPoint(points_.back().Translated(gp_Vec(dir) * *length));
+  current_ = points_.empty() ? std::nullopt : std::optional<gp_Pnt>(points_.back());
+  updatePreview();
+}
+
+// --- Walls ----------------------------------------------------------------------
+
+QString WallTool::name() const { return QObject::tr("壁"); }
+QCursor WallTool::cursor() const { return toolCursor(CursorKind::Wall); }
+
+QString WallTool::settingsText() const {
+  const QString just = settings_.justification < 0   ? QObject::tr("線の左")
+                       : settings_.justification > 0 ? QObject::tr("線の右")
+                                                      : QObject::tr("中心");
+  return QObject::tr("厚さ %1 / 高さ %2 / %3").arg(mm(settings_.thickness), mm(settings_.height), just);
+}
+
+QString WallTool::startText() const { return QObject::tr("壁の始点をクリック（ツール > 壁の設定で寸法を変更）"); }
+
+QString WallTool::finishedText(std::size_t created) const {
+  return QObject::tr("壁を %1 枚作成しました（Ctrl+Z で戻せます）").arg(created);
+}
+
+Result<std::size_t> WallTool::commit(const std::vector<gp_Pnt>& points, bool closed) {
+  std::vector<gp_Pnt> pts = points;
+  if (closed) pts.push_back(points.front());
+  auto walls = host_.modeler().createWalls(pts, settings_.thickness, settings_.height, settings_.justification);
+  if (!walls) return Result<std::size_t>::failure(walls.error());
+  return walls->size();
+}
+
+TopoDS_Shape WallTool::previewShape(const std::vector<gp_Pnt>& pts) const {
   // Each segment's band raised to the wall height (joints are worked out
   // on commit; this shows where the walls go).
   BRep_Builder builder;
@@ -669,27 +714,168 @@ void WallTool::updatePreview() {
     if (!band) continue;
     builder.Add(preview, BRepPrimAPI_MakePrism(band.value(), gp_Vec(0, 0, settings_.height)).Shape());
   }
-  host_.viewport().setPreview(preview, true);
+  return preview;
 }
 
-void WallTool::applyMeasurement(const QString& text) {
-  if (text.trimmed().isEmpty()) {  // Enter: done
-    finish(false);
+// --- Slabs ----------------------------------------------------------------------
+
+QString SlabTool::name() const { return QObject::tr("スラブ"); }
+QCursor SlabTool::cursor() const { return toolCursor(CursorKind::Slab); }
+
+QString SlabTool::settingsText() const { return QObject::tr("厚さ %1（天端がクリックした高さ）").arg(mm(thickness_)); }
+
+QString SlabTool::startText() const {
+  return QObject::tr("スラブの角をクリック（地面、または壁の上端で 2 階の床）");
+}
+
+QString SlabTool::finishedText(std::size_t) const { return QObject::tr("スラブを作成しました（Ctrl+Z で戻せます）"); }
+
+Result<std::size_t> SlabTool::commit(const std::vector<gp_Pnt>& points, bool) {
+  auto slab = host_.modeler().createSlab(points, points.front().Z(), thickness_);
+  if (!slab) return Result<std::size_t>::failure(slab.error());
+  return std::size_t(1);
+}
+
+TopoDS_Shape SlabTool::previewShape(const std::vector<gp_Pnt>& pts) const {
+  if (pts.size() == 2) {  // just the first side for now
+    BRepBuilderAPI_MakeEdge edge(pts[0], pts[1]);
+    return edge.IsDone() ? TopoDS_Shape(edge.Edge()) : TopoDS_Shape();
+  }
+  std::vector<gp_Pnt> below;
+  for (const gp_Pnt& p : pts) below.emplace_back(p.X(), p.Y(), p.Z() - thickness_);
+  auto face = geom::makePolygonFace(below);
+  if (!face) return {};
+  return BRepPrimAPI_MakePrism(face.value(), gp_Vec(0, 0, thickness_)).Shape();
+}
+
+// --- Openings -------------------------------------------------------------------
+
+QString OpeningTool::name() const { return QObject::tr("開口"); }
+QCursor OpeningTool::cursor() const { return toolCursor(CursorKind::Opening); }
+
+QString OpeningTool::settingsText() const {
+  return QObject::tr("幅 %1 × 高さ %2・腰 %3").arg(mm(settings_.width), mm(settings_.height), mm(settings_.sill));
+}
+
+void OpeningTool::activate() {
+  host_.viewport().setPickMode(PickMode::Faces);
+  host_.setMeasurement(QObject::tr("幅,高さ[,腰]"), QString());
+  host_.setStatus(QObject::tr("壁の縦の面にカーソルを合わせてクリック（%1。「1600,1100,900」のように入力で変更）")
+                      .arg(settingsText()));
+}
+
+void OpeningTool::cancel() {
+  hover_.reset();
+  host_.viewport().clearPreview();
+}
+
+std::optional<OpeningTool::Target> OpeningTool::targetAt(const ToolEvent& e) {
+  Viewport& vp = host_.viewport();
+  const auto pick = vp.pickFace(e.pos);
+  if (!pick) return std::nullopt;
+  const auto ref = geom::FaceRef::fromFace(pick->face);
+  if (!ref || std::abs(ref->normal.Z()) > 1e-6) return std::nullopt;
+  Target t{pick->objectId, ref->normal, pick->point, false};
+  // Snap to the middle of the face along the wall when near it.
+  const gp_Dir u = gp::DZ().Crossed(t.normal);
+  double u0 = 1e300, u1 = -1e300;
+  for (TopExp_Explorer v(pick->face, TopAbs_VERTEX); v.More(); v.Next()) {
+    const double d = gp_Vec(BRep_Tool::Pnt(TopoDS::Vertex(v.Current())).XYZ()).Dot(gp_Vec(u));
+    u0 = std::min(u0, d);
+    u1 = std::max(u1, d);
+  }
+  const double c = gp_Vec(t.at.XYZ()).Dot(gp_Vec(u));
+  const gp_Pnt middle = t.at.Translated(gp_Vec(u) * (0.5 * (u0 + u1) - c));
+  const snap::ScreenPoint s = vp.project(middle);
+  if (std::hypot(s.x - e.pos.x(), s.y - e.pos.y()) < 12.0) {
+    t.at = middle;
+    t.centred = true;
+  }
+  return t;
+}
+
+void OpeningTool::mouseMove(const ToolEvent& e) {
+  hover_ = targetAt(e);
+  Viewport& vp = host_.viewport();
+  if (!hover_) {
+    vp.clearPreview();
+    host_.setStatus(QObject::tr("壁の縦の面にカーソルを合わせてください（%1）").arg(settingsText()));
     return;
   }
-  const auto length = parseOne(text);
-  if (!length || *length <= 0) {
-    host_.reportError(QObject::tr("長さを解釈できません: %1").arg(text));
+  // The opening's box through the host, as it would be cut.
+  const doc::Object* o = host_.modeler().document().find(hover_->host);
+  if (!o) return;
+  const TopoDS_Shape world = host_.modeler().document().worldShape(*o);
+  const gp_Dir u = gp::DZ().Crossed(hover_->normal);
+  double z0 = 1e300, n0 = 1e300, n1 = -1e300;
+  for (TopExp_Explorer v(world, TopAbs_VERTEX); v.More(); v.Next()) {
+    const gp_Pnt p = BRep_Tool::Pnt(TopoDS::Vertex(v.Current()));
+    const double d = gp_Vec(p.XYZ()).Dot(gp_Vec(hover_->normal));
+    n0 = std::min(n0, d);
+    z0 = std::min(z0, p.Z());
+  }
+  geom::SketchPlane plane;
+  plane.normal = hover_->normal;
+  plane.xDir = u;
+  const double atN = gp_Vec(hover_->at.XYZ()).Dot(gp_Vec(hover_->normal));
+  gp_Pnt origin = hover_->at.Translated(gp_Vec(u) * (-settings_.width / 2));
+  origin.SetZ(z0 + settings_.sill);
+  plane.origin = origin;
+  auto face = geom::makeRectangleFace(plane, settings_.width, settings_.height);
+  if (face) {
+    vp.setPreview(BRepPrimAPI_MakePrism(face.value(), gp_Vec(hover_->normal) * -(atN - n0)).Shape(),
+                  true);
+  }
+  host_.setStatus(QObject::tr("クリックで開口をあける（%1）").arg(settingsText()) +
+                  (hover_->centred ? QObject::tr("  [面の中央]") : QString()));
+}
+
+bool OpeningTool::place(const Target& t) {
+  auto r = host_.modeler().placeOpeningAt(t.host, t.normal, t.at, settings_.width, settings_.height, settings_.sill);
+  if (!r) {
+    host_.reportError(QString::fromStdString(r.error()));
+    return false;
+  }
+  host_.viewport().clearPreview();
+  last_ = Last{t, host_.modeler().document().sequence()};
+  host_.setStatus(QObject::tr("開口をあけました（%1）。続けて入力するとこの開口の大きさを変更").arg(settingsText()));
+  return true;
+}
+
+void OpeningTool::mousePress(const ToolEvent& e) {
+  const auto t = targetAt(e);
+  if (!t) {
+    host_.setStatus(QObject::tr("壁の縦の面をクリックしてください"));
     return;
   }
-  if (points_.empty() || !current_ || current_->Distance(points_.back()) < 1e-9) {
-    host_.reportError(QObject::tr("始点をクリックし、方向を示してから長さを入力してください"));
+  place(*t);
+}
+
+void OpeningTool::applyMeasurement(const QString& text) {
+  const auto values = units::parseLengthList(text.toStdString());
+  if (!values || values->size() < 2 || values->size() > 3 || (*values)[0] <= 0 || (*values)[1] <= 0 ||
+      (values->size() == 3 && (*values)[2] < 0)) {
+    host_.reportError(QObject::tr("「幅,高さ」か「幅,高さ,腰」で入力してください: %1").arg(text));
     return;
   }
-  const gp_Dir dir(gp_Vec(points_.back(), *current_));
-  addPoint(points_.back().Translated(gp_Vec(dir) * *length));
-  current_ = points_.back();
-  updatePreview();
+  const Settings previous = settings_;
+  settings_.width = (*values)[0];
+  settings_.height = (*values)[1];
+  if (values->size() == 3) settings_.sill = (*values)[2];
+  // Right after placing one: redo it at the new size (undo brings the
+  // host back under its old id).
+  doc::Modeler& m = host_.modeler();
+  if (last_ && m.document().sequence() == last_->sequence) {
+    const Target again = last_->target;
+    last_.reset();
+    m.undo();
+    if (!place(again)) {
+      settings_ = previous;
+      m.redo();
+    }
+    return;
+  }
+  host_.setStatus(QObject::tr("開口の大きさ: %1").arg(settingsText()));
 }
 
 // --- Curve ----------------------------------------------------------------------

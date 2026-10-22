@@ -223,6 +223,10 @@ class Modeler {
   // same push/pull as drawing them by hand; returns the host's new id.
   Result<ObjectId> placeOpenings(const ObjectId& host, const gp_Dir& faceNormal, int count, double width,
                                  double height, double sill, std::optional<double> spacing = std::nullopt);
+  // One such opening centred (along the wall) on the world point `at`
+  // (only its position along the face counts), e.g. where the user clicked.
+  Result<ObjectId> placeOpeningAt(const ObjectId& host, const gp_Dir& faceNormal, const gp_Pnt& at, double width,
+                                  double height, double sill);
   // Copies the objects `count` times, copy k placed at worldDelta^k (linear
   // or polar arrays). Returns the ids of the new top-level copies.
   Result<std::vector<ObjectId>> copy(const std::vector<ObjectId>& ids, const gp_Trsf& worldDelta,
@@ -307,6 +311,9 @@ class Modeler {
   std::vector<ObjectId> topmost(const std::vector<ObjectId>& ids) const;
 
  private:
+  Result<ObjectId> cutOpenings(const ObjectId& host, const gp_Dir& faceNormal, int count, double width,
+                               double height, double sill, std::optional<double> spacing,
+                               std::optional<gp_Pnt> at);
   Result<ObjectId> addObject(Object object, const std::string& commandName);
   Status commitModified(Object object, const std::string& commandName);
   Result<ObjectId> addProfile(Object object, const std::string& commandName);
