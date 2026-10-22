@@ -607,8 +607,9 @@ TEST(Transactions, MaterialOfAFaceOnAllWallsAndRollback) {
 
   const std::size_t steps = a.modeler.history().undoCount();
   const json where = {{"attributes", {{"kind", "wall"}}}};
-  const json commands = {step("assign_material", {{"ids", {"$id"}}, {"material", at["material"]}})};
-  const json preview = a.ok("preview", {{"commands", {step("edit_each", {{"where", where}, {"commands", commands}})}}});
+  const json commands = json::array({step("assign_material", {{"ids", {"$id"}}, {"material", at["material"]}})});
+  const json preview = a.ok(
+      "preview", {{"commands", json::array({step("edit_each", {{"where", where}, {"commands", commands}})})}});
   ASSERT_TRUE(preview["would_succeed"].get<bool>()) << preview.dump();
   ASSERT_EQ(preview["changes"]["modified"].size(), 4u);
   EXPECT_TRUE(hasAspect(preview["changes"]["modified"][0], "material"));
@@ -638,7 +639,8 @@ TEST(Transactions, MaterialOfAFaceOnAllWallsAndRollback) {
   for (const auto& mat : a.modeler.document().materials()) EXPECT_NE(mat.name, "杉板");
   EXPECT_TRUE(a.modeler.document().find(walls[0].get<std::string>())->material.empty());
   // Material edits are part of the change set.
-  const json renamed = a.ok("preview", {{"commands", {step("update_material", {{"material", brick}, {"name", "赤レンガ"}})}}});
+  const json renamed = a.ok(
+      "preview", {{"commands", json::array({step("update_material", {{"material", brick}, {"name", "赤レンガ"}})})}});
   EXPECT_EQ(renamed["changes"]["materials"], json::array({brick}));
 }
 
