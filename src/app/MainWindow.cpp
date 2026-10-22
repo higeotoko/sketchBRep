@@ -304,6 +304,12 @@ void MainWindow::buildMenus() {
   file->addAction(tr("STEP エクスポート..."), this, &MainWindow::exportStep);
   file->addAction(tr("Rhino 3DM インポート..."), this, &MainWindow::import3dm);
   file->addAction(tr("Rhino 3DM エクスポート..."), this, &MainWindow::export3dm);
+  file->addAction(tr("画像エクスポート (PNG)..."), this, [this] {
+    QString path = QFileDialog::getSaveFileName(this, tr("画像エクスポート"), QString(), tr("PNG 画像 (*.png)"));
+    if (path.isEmpty()) return;
+    if (!path.endsWith(QStringLiteral(".png"), Qt::CaseInsensitive)) path += QStringLiteral(".png");
+    exportImage(path);
+  });
   file->addSeparator();
   file->addAction(tr("終了(&X)"), QKeySequence::Quit, this, &QWidget::close);
 
@@ -1032,6 +1038,17 @@ void MainWindow::beginTextEntry(const QString& label, const QString& text) {
   userTyping_ = true;  // keep the text while the user edits it
   measurement_->setFocus();
   measurement_->selectAll();
+}
+
+bool MainWindow::exportImage(const QString& path) {
+  viewport_->hideSnap();
+  viewport_->syncNow();
+  if (!viewport_->dumpImage(path)) {
+    reportError(tr("画像を書き出せませんでした: %1").arg(path));
+    return false;
+  }
+  statusBar()->showMessage(tr("画像を書き出しました: %1").arg(path), 5000);
+  return true;
 }
 
 bool MainWindow::copySelection() {

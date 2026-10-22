@@ -69,6 +69,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   bool createGrid(const QString& xSpacings, const QString& ySpacings);
   // Clipboard (inside this window): copy / cut the selection, paste with the
   // paste tool (follows the cursor) or in place.
+  // The current view as shown (without the snap marker) as a PNG.
+  bool exportImage(const QString& path);
   bool copySelection();
   bool cutSelection();
   void paste();

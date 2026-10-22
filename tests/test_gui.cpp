@@ -10,6 +10,8 @@
 
 #include <QApplication>
 #include <QDir>
+#include <QFile>
+#include <QImage>
 #include <QSettings>
 #include <QListWidget>
 #include <QPushButton>
@@ -113,6 +115,7 @@ class GuiPhase1 : public QObject {
   void gridLinesSnapAtCrossings();
   void copyPasteFollowsCursor();
   void polygonToolSidesAndRadius();
+  void exportImageWritesPng();
   void circleToolTypedRadius();
   void groupEditModeAndLooseFaceDelete();
   void lineToolStaysOnWallPlane();
@@ -766,6 +769,18 @@ void GuiPhase1::polygonToolSidesAndRadius() {
   QVERIFY(std::abs(geom::area(m.document().worldShape(id)) - 2.0e6) < 1e-3);
   type(f.vp, QStringLiteral("2s"));
   QVERIFY(!f.window.lastError().isEmpty());
+}
+
+void GuiPhase1::exportImageWritesPng() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  f.box(0, 0, 1000, 1000, 1000);
+  const QString path = QDir(QDir::tempPath()).filePath(QStringLiteral("sbr-export-test.png"));
+  QFile::remove(path);
+  QVERIFY2(f.window.exportImage(path), qPrintable(f.window.lastError()));
+  QImage image(path);
+  QVERIFY(!image.isNull());
+  QVERIFY(image.width() > 100 && image.height() > 100);
 }
 
 void GuiPhase1::circleToolTypedRadius() {
