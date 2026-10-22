@@ -139,3 +139,65 @@ TEST(NativeFormat, RegularPolygonStaysParametric) {
   ASSERT_TRUE(loaded.setParameter(*hex, "radius", 500).ok());
   EXPECT_NEAR(geom::volume(loaded.document().find(*hex)->shape), 2.0 * 500 * 500 * 300, 1e-3);
 }
+
+// Format 3: geometry shared by component placements is written once and
+// shared again after loading (so the viewport keeps one display copy).
+TEST(NativeFormat, SharedGeometryIsStoredOnceAndStaysShared) {
+  Modeler m;
+  auto box = m.createRectangle(geom::SketchPlane::ground(), 1000, 1000);
+  ASSERT_TRUE(box.ok() && m.extrude(*box, 1000).ok());
+  auto instance = m.makeComponent({*box});
+  ASSERT_TRUE(instance.ok());
+  gp_Trsf dx;
+  dx.SetTranslation(gp_Vec(2000, 0, 0));
+  ASSERT_TRUE(m.copy({*instance}, dx, 9).ok());
+  const std::string text = serializeDocument(m.document());
+  std::size_t breps = 0;
+  for (std::size_t p = text.find("\"brep\""); p != std::string::npos; p = text.find("\"brep\"", p + 1)) ++breps;
+  EXPECT_EQ(breps, 2u);  // the definition's box and the placements' shape
+
+  const std::string path = test::tempPath("shared.sbr");
+  ASSERT_TRUE(m.save(path).ok());
+  Modeler loaded;
+  std::vector<std::string> warnings;
+  ASSERT_TRUE(loaded.load(path, &warnings).ok());
+  EXPECT_TRUE(warnings.empty()) << warnings.front();
+  std::vector<const Object*> placements;
+  for (const Object& o : loaded.document().objects()) {
+    if (o.kind() == ObjectKind::Instance) placements.push_back(&o);
+  }
+  ASSERT_EQ(placements.size(), 10u);
+  for (const Object* o : placements) EXPECT_TRUE(o->shape.IsSame(placements.front()->shape));
+  test::expectBounds(loaded.document().worldShape(*placements.back()), 18000, 0, 0, 19000, 1000, 1000);
+}
+
+// Fast open: stored geometry only, the same recipe problems are then found
+// by the background verification (a slice at a time).
+TEST(NativeFormat, FastLoadThenVerifyRecipesInSlices) {
+  Modeler m;
+  for (int i = 0; i < 5; ++i) {
+    geom::SketchPlane plane = geom::SketchPlane::ground();
+    plane.origin = gp_Pnt(i * 2000.0, 0, 0);
+    auto id = m.createRectangle(plane, 1000, 1000);
+    ASSERT_TRUE(id.ok() && m.extrude(*id, 1000 + i).ok());
+  }
+  std::string text = serializeDocument(m.document());
+  const auto pos = text.find("\"distance\": 1003.0");  // break the 4th recipe
+  ASSERT_NE(pos, std::string::npos);
+  text.replace(pos, std::string("\"distance\": 1003.0").size(), "\"distance\": 0.0");
+  const std::string path = test::tempPath("verify.sbr");
+  std::ofstream(path, std::ios::binary) << text;
+
+  Modeler loaded;
+  std::vector<std::string> warnings;
+  ASSERT_TRUE(loaded.load(path, &warnings, false).ok());
+  EXPECT_TRUE(warnings.empty());  // nothing checked yet
+  EXPECT_EQ(loaded.document().objects().size(), 5u);
+  std::size_t cursor = 0;
+  std::vector<std::string> found;
+  while (cursor < loaded.document().objects().size()) {
+    for (const std::string& w : loaded.verifyRecipes(cursor, 2)) found.push_back(w);
+  }
+  ASSERT_EQ(found.size(), 1u);
+  EXPECT_NE(found.front().find("could not be regenerated"), std::string::npos) << found.front();
+}

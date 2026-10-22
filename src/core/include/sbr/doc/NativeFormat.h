@@ -6,6 +6,7 @@
 // compared against the stored geometry; on mismatch or failure the stored
 // geometry wins and a warning is reported.
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -13,16 +14,25 @@
 
 namespace sbr::doc {
 
-constexpr int kNativeFormatVersion = 2;
+// 3: geometry shared by several objects (component placements) is stored
+// once in a "shapes" table and referenced; versions 1 and 2 are still read.
+constexpr int kNativeFormatVersion = 3;
 constexpr const char* kNativeFormatMagic = "SketchBRep";
 
 std::string serializeDocument(const Document& document);
+// regenerate = false skips re-running the recipes (stored geometry is
+// used as is): a structural check of a file just written.
 Status deserializeDocument(const std::string& text, Document& document,
-                           std::vector<std::string>* warnings = nullptr);
+                           std::vector<std::string>* warnings = nullptr, bool regenerate = true);
+
+// Whether a recipe still regenerates the stored geometry; a warning text
+// (like the ones loading reports) if not. Used to verify recipes after a
+// fast load, a few objects at a time.
+std::optional<std::string> checkRecipe(const Object& object, const RegenContext& context);
 
 // Atomic save: writes "<path>.tmp", verifies it parses, then renames.
 Status saveDocument(const Document& document, const std::string& path);
 Status loadDocument(Document& document, const std::string& path,
-                    std::vector<std::string>* warnings = nullptr);
+                    std::vector<std::string>* warnings = nullptr, bool regenerate = true);
 
 }  // namespace sbr::doc

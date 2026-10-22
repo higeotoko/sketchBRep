@@ -15,6 +15,7 @@
 #include <QDockWidget>
 #include <QFileDialog>
 #include <QDialog>
+#include <QElapsedTimer>
 #include <QDialogButtonBox>
 #include <QFileInfo>
 #include <QFormLayout>
@@ -1309,11 +1310,14 @@ bool MainWindow::openFile(const QString& path) {
   if (active_) active_->cancel();
   exitGroup();
   std::vector<std::string> warnings;
-  const Status s = modeler_.load(utf8(path), &warnings);
+  // Stored geometry first (quick even for large models); the recipes are
+  // checked afterwards in the background.
+  const Status s = modeler_.load(utf8(path), &warnings, false);
   if (!s) {
     reportError(tr("開けませんでした: %1").arg(QString::fromStdString(s.message())));
     return false;
   }
+  startRecipeVerification();
   currentPath_ = path;
   setSelection({});
   viewport_->syncNow();
@@ -1328,6 +1332,35 @@ bool MainWindow::openFile(const QString& path) {
   updateTitle();
   if (active_) active_->activate();
   return true;
+}
+
+void MainWindow::startRecipeVerification() {
+  if (!verifyTimer_) {
+    verifyTimer_ = new QTimer(this);
+    verifyTimer_->setInterval(0);
+    connect(verifyTimer_, &QTimer::timeout, this, [this] {
+      // ~15 ms of checking per idle moment keeps the window responsive.
+      QElapsedTimer slice;
+      slice.start();
+      const std::size_t total = modeler_.document().objects().size();
+      while (verifyCursor_ < total && slice.elapsed() < 15) {
+        for (const std::string& w : modeler_.verifyRecipes(verifyCursor_, 8)) {
+          recipeWarnings_ << QString::fromStdString(w);
+        }
+      }
+      if (verifyCursor_ < total) return;
+      verifyTimer_->stop();
+      if (!recipeWarnings_.isEmpty()) {
+        statusBar()->showMessage(tr("レシピの確認で %1 件の注意（保存された形状を使っています）")
+                                     .arg(recipeWarnings_.size()),
+                                 15000);
+        statusBar()->setToolTip(recipeWarnings_.join(QStringLiteral("\n")));
+      }
+    });
+  }
+  verifyCursor_ = 0;
+  recipeWarnings_.clear();
+  verifyTimer_->start();
 }
 
 bool MainWindow::saveFile(const QString& path) {

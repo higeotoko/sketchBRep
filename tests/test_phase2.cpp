@@ -393,9 +393,9 @@ TEST(Phase2Files, ReadsVersion1Files) {
   Modeler m;
   auto id = m.createRectangle(geom::SketchPlane::ground(), 100, 100);
   std::string text = serializeDocument(m.document());
-  const auto pos = text.find("\"version\": 2");
+  const auto pos = text.find("\"version\": 3");
   ASSERT_NE(pos, std::string::npos);
-  text.replace(pos, std::string("\"version\": 2").size(), "\"version\": 1");
+  text.replace(pos, std::string("\"version\": 3").size(), "\"version\": 1");
   Document d;
   ASSERT_TRUE(deserializeDocument(text, d).ok());
   EXPECT_TRUE(d.find(*id));

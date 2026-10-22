@@ -439,7 +439,53 @@ CameraState cameraFrom(const json& j) {
   return c;
 }
 
-json objectToJson(const Object& o) {
+// Geometry written once per distinct shape (placements of a component share
+// theirs), referenced by index; read back once and shared again on load.
+struct ShapeTable {
+  json entries = json::array();
+  std::map<std::pair<const void*, int>, std::size_t> index;
+
+  json reference(const TopoDS_Shape& shape) {
+    if (!shape.Location().IsIdentity()) {
+      return {{"brep", geom::shapeToBRepString(shape)}, {"volume", geom::volume(shape)}};
+    }
+    const auto key = std::make_pair(static_cast<const void*>(shape.TShape().get()),
+                                    static_cast<int>(shape.Orientation()));
+    auto it = index.find(key);
+    if (it == index.end()) {
+      it = index.emplace(key, entries.size()).first;
+      entries.push_back({{"brep", geom::shapeToBRepString(shape)}, {"volume", geom::volume(shape)}});
+    }
+    return {{"shape", it->second}, {"volume", entries[it->second]["volume"]}};
+  }
+};
+
+struct ShapeReader {
+  const json* entries = nullptr;
+  std::vector<std::optional<Result<TopoDS_Shape>>> parsed;
+  // Placements compare the same pair of shapes: once is enough.
+  std::map<std::pair<const void*, const void*>, bool> same;
+
+  bool sameAs(const TopoDS_Shape& regenerated, const TopoDS_Shape& stored) {
+    if (regenerated.IsNull() || stored.IsNull()) return sameGeometry(regenerated, stored);
+    const auto key = std::make_pair(static_cast<const void*>(regenerated.TShape().get()),
+                                    static_cast<const void*>(stored.TShape().get()));
+    const auto it = same.find(key);
+    if (it != same.end()) return it->second;
+    return same[key] = sameGeometry(regenerated, stored);
+  }
+
+  Result<TopoDS_Shape> read(const json& geometry) {
+    if (geometry.contains("brep")) return geom::shapeFromBRepString(geometry.at("brep").get<std::string>());
+    const std::size_t i = geometry.at("shape").get<std::size_t>();
+    if (!entries || i >= entries->size()) return Result<TopoDS_Shape>::failure("missing shared shape");
+    if (parsed.size() < entries->size()) parsed.resize(entries->size());
+    if (!parsed[i]) parsed[i] = geom::shapeFromBRepString((*entries)[i].at("brep").get<std::string>());
+    return *parsed[i];
+  }
+};
+
+json objectToJson(const Object& o, ShapeTable& shapes) {
   json j = {
       {"id", o.id},
       {"name", o.name},
@@ -451,21 +497,20 @@ json objectToJson(const Object& o) {
   };
   if (!o.parent.empty()) j["parent"] = o.parent;
   if (!o.attributes.empty()) j["attributes"] = o.attributes;
-  if (!o.shape.IsNull()) {
-    j["geometry"] = {{"brep", geom::shapeToBRepString(o.shape)}, {"volume", geom::volume(o.shape)}};
-  }
+  if (!o.shape.IsNull()) j["geometry"] = shapes.reference(o.shape);
   return j;
 }
 
-json objectsToJson(const std::vector<Object>& objects) {
+json objectsToJson(const std::vector<Object>& objects, ShapeTable& shapes) {
   json arr = json::array();
-  for (const Object& o : objects) arr.push_back(objectToJson(o));
+  for (const Object& o : objects) arr.push_back(objectToJson(o, shapes));
   return arr;
 }
 
 // Parses an object and resolves its geometry: the recipe is regenerated and
 // compared with the stored BRep; stored geometry wins on any doubt.
-Object objectFrom(const json& j, const RegenContext& context, std::vector<std::string>* warnings) {
+Object objectFrom(const json& j, const RegenContext& context, std::vector<std::string>* warnings,
+                  ShapeReader& shapes, bool regenerate) {
   Object o;
   o.id = j.at("id").get<std::string>();
   o.parent = j.value("parent", std::string());
@@ -481,17 +526,19 @@ Object objectFrom(const json& j, const RegenContext& context, std::vector<std::s
   o.recipe = recipeFrom(j.at("recipe"));
 
   Result<TopoDS_Shape> stored = Result<TopoDS_Shape>::failure("no stored geometry");
-  if (j.contains("geometry")) {
-    stored = geom::shapeFromBRepString(j.at("geometry").at("brep").get<std::string>());
+  if (j.contains("geometry")) stored = shapes.read(j.at("geometry"));
+  if (!regenerate && stored) {
+    o.shape = stored.value();
+    return o;
   }
-  const Result<TopoDS_Shape> regenerated = regenerate(o.recipe, context);
+  const Result<TopoDS_Shape> regenerated = doc::regenerate(o.recipe, context);
 
   auto warn = [&](const std::string& message) {
     if (warnings) warnings->push_back("'" + o.name + "': " + message);
   };
   if (regenerated && stored) {
     o.shape = stored.value();
-    if (!sameGeometry(regenerated.value(), stored.value())) {
+    if (!shapes.sameAs(regenerated.value(), stored.value())) {
       warn("regenerated geometry differs from saved geometry; saved geometry kept");
     }
   } else if (stored) {
@@ -512,10 +559,12 @@ Object objectFrom(const json& j, const RegenContext& context, std::vector<std::s
 }  // namespace
 
 std::string serializeDocument(const Document& document) {
+  ShapeTable shapes;
   json definitions = json::array();
   for (const ComponentDefinition& d : document.definitions()) {
-    definitions.push_back({{"id", d.id}, {"name", d.name}, {"objects", objectsToJson(d.objects)}});
+    definitions.push_back({{"id", d.id}, {"name", d.name}, {"objects", objectsToJson(d.objects, shapes)}});
   }
+  json objects = objectsToJson(document.objects(), shapes);
   const DocumentSettings& s = document.settings();
   json scenes = json::array();
   for (const Scene& scene : s.scenes) scenes.push_back({{"name", scene.name}, {"camera", cameraToJson(scene.camera)}});
@@ -532,14 +581,15 @@ std::string serializeDocument(const Document& document) {
       {"scenes", scenes},
       {"sections", sections},
       {"hiddenTags", s.hiddenTags},
+      {"shapes", shapes.entries},
       {"definitions", definitions},
-      {"objects", objectsToJson(document.objects())},
+      {"objects", objects},
   };
   return root.dump(1);
 }
 
 Status deserializeDocument(const std::string& text, Document& document,
-                           std::vector<std::string>* warnings) {
+                           std::vector<std::string>* warnings, bool regenerate) {
   try {
     const json root = json::parse(text);
     if (root.value("format", std::string()) != kNativeFormatMagic) {
@@ -573,6 +623,8 @@ Status deserializeDocument(const std::string& text, Document& document,
       }
     }
 
+    ShapeReader shapes;
+    if (root.contains("shapes")) shapes.entries = &root.at("shapes");
     // Definitions first: instances regenerate from their shapes.
     if (root.contains("definitions")) {
       for (const json& d : root.at("definitions")) {
@@ -580,7 +632,7 @@ Status deserializeDocument(const std::string& text, Document& document,
         definition.id = d.at("id").get<std::string>();
         definition.name = d.value("name", std::string());
         for (const json& o : d.at("objects")) {
-          definition.objects.push_back(objectFrom(o, loaded.regenContext(), warnings));
+          definition.objects.push_back(objectFrom(o, loaded.regenContext(), warnings, shapes, regenerate));
         }
         auto shape = buildDefinitionShape(definition);
         if (!shape) return Status::failure("Component '" + definition.name + "': " + shape.error());
@@ -589,7 +641,7 @@ Status deserializeDocument(const std::string& text, Document& document,
       }
     }
     for (const json& j : root.at("objects")) {
-      loaded.insert(objectFrom(j, loaded.regenContext(), warnings));
+      loaded.insert(objectFrom(j, loaded.regenContext(), warnings, shapes, regenerate));
     }
     for (const Object& o : loaded.objects()) {
       if (!o.parent.empty() && !loaded.find(o.parent)) {
@@ -629,8 +681,10 @@ Status saveDocument(const Document& document, const std::string& path) {
       fs::remove(temp, ec);
       return Status::failure("Verification of saved data failed");
     }
+    // Structure and stored geometry read back; recipes are not re-run here
+    // (that is what loading does), so saving a large model stays quick.
     Document check;
-    const Status parsed = deserializeDocument(buffer.str(), check);
+    const Status parsed = deserializeDocument(buffer.str(), check, nullptr, false);
     if (!parsed) {
       std::error_code ec;
       fs::remove(temp, ec);
@@ -643,13 +697,25 @@ Status saveDocument(const Document& document, const std::string& path) {
   return Status::success();
 }
 
+std::optional<std::string> checkRecipe(const Object& object, const RegenContext& context) {
+  const Result<TopoDS_Shape> regenerated = regenerate(object.recipe, context);
+  if (!regenerated) {
+    return "'" + object.name + "': recipe could not be regenerated (" + regenerated.error() +
+           "); saved geometry kept";
+  }
+  if (!sameGeometry(regenerated.value(), object.shape)) {
+    return "'" + object.name + "': regenerated geometry differs from saved geometry; saved geometry kept";
+  }
+  return std::nullopt;
+}
+
 Status loadDocument(Document& document, const std::string& path,
-                    std::vector<std::string>* warnings) {
+                    std::vector<std::string>* warnings, bool regenerate) {
   std::ifstream in(fs::u8path(path), std::ios::binary);
   if (!in) return Status::failure("Cannot open " + path);
   std::stringstream buffer;
   buffer << in.rdbuf();
-  return deserializeDocument(buffer.str(), document, warnings);
+  return deserializeDocument(buffer.str(), document, warnings, regenerate);
 }
 
 }  // namespace sbr::doc

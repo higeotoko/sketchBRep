@@ -1580,9 +1580,30 @@ void Modeler::copyFrom(const Modeler& other) {
   activeGroup_ = other.activeGroup_;
 }
 
-Status Modeler::load(const std::string& path, std::vector<std::string>* warnings) {
+std::vector<std::string> Modeler::verifyRecipes(std::size_t& cursor, std::size_t budget) const {
+  std::vector<std::string> warnings;
+  const auto& objects = document_.objects();
+  const RegenContext context = document_.regenContext();
+  if (cursor == 0) {
+    // Component definitions once: placements only reference them.
+    for (const ComponentDefinition& d : document_.definitions()) {
+      for (const Object& o : d.objects) {
+        if (o.shape.IsNull() || o.isContainer()) continue;
+        if (auto w = checkRecipe(o, context)) warnings.push_back(d.name + ": " + *w);
+      }
+    }
+  }
+  for (std::size_t end = std::min(objects.size(), cursor + budget); cursor < end; ++cursor) {
+    const Object& o = objects[cursor];
+    if (o.shape.IsNull() || o.isContainer() || std::holds_alternative<ComponentInstance>(o.recipe.base)) continue;
+    if (auto w = checkRecipe(o, context)) warnings.push_back(*w);
+  }
+  return warnings;
+}
+
+Status Modeler::load(const std::string& path, std::vector<std::string>* warnings, bool verifyRecipes) {
   Document loaded;
-  const Status status = loadDocument(loaded, path, warnings);
+  const Status status = loadDocument(loaded, path, warnings, verifyRecipes);
   if (!status) return status;
   activeGroup_.clear();
   history_.clear();

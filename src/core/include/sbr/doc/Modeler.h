@@ -237,7 +237,12 @@ class Modeler {
   // --- files --------------------------------------------------------------
   void newDocument();
   Status save(const std::string& path);
-  Status load(const std::string& path, std::vector<std::string>* warnings = nullptr);
+  // verifyRecipes = false opens with the stored geometry only (fast for
+  // large models); verify later with verifyRecipes(cursor, budget).
+  Status load(const std::string& path, std::vector<std::string>* warnings = nullptr, bool verifyRecipes = true);
+  // Checks up to `budget` objects from `cursor` on (advanced); returns the
+  // warnings found. Done when cursor reaches the object count.
+  std::vector<std::string> verifyRecipes(std::size_t& cursor, std::size_t budget) const;
   // Exports the given objects (all visible objects when empty) as STEP,
   // keeping object names and colours.
   Status exportStep(const std::string& path, const std::vector<ObjectId>& ids = {}) const;

@@ -5,6 +5,8 @@
 #include <vector>
 
 #include <QMainWindow>
+#include <QStringList>
+#include <QTimer>
 
 #include "Tools.h"
 #include "sbr/geom/Progress.h"
@@ -67,6 +69,10 @@ class MainWindow : public QMainWindow, public ToolHost {
   // Structural grid from typed spacings ("3600*3, 2700"); false + error
   // message when the text cannot be read or the grid fails.
   bool createGrid(const QString& xSpacings, const QString& ySpacings);
+  // After opening, recipes are verified in the background (a few objects
+  // per idle moment); true while that is still running.
+  bool verifyingRecipes() const { return verifyTimer_ && verifyTimer_->isActive(); }
+  const QStringList& recipeWarnings() const { return recipeWarnings_; }
   // Clipboard (inside this window): copy / cut the selection, paste with the
   // paste tool (follows the cursor) or in place.
   // The current view as shown (without the snap marker) as a PNG.
@@ -137,6 +143,10 @@ class MainWindow : public QMainWindow, public ToolHost {
   std::unique_ptr<PolygonTool> polygonTool_;
   std::unique_ptr<ScaleTool> scaleTool_;
   doc::Modeler::Clipboard clipboard_;
+  QTimer* verifyTimer_ = nullptr;
+  std::size_t verifyCursor_ = 0;
+  QStringList recipeWarnings_;
+  void startRecipeVerification();
   std::unique_ptr<CircleTool> circleTool_;
   std::unique_ptr<PaintTool> paintTool_;
   std::unique_ptr<EraserTool> eraserTool_;

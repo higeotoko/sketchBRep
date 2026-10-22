@@ -148,6 +148,15 @@ json measure(const std::string& fixture, int n) {
     if (!m.save(path)) std::exit(4);
   });
   r["file_bytes"] = std::filesystem::file_size(path);
+  doc::Modeler loaded;
+  r["load_ms"] = millis([&] {
+    if (!loaded.load(path)) std::exit(4);
+  });
+  // The app's open: stored geometry now, recipes verified in the background.
+  doc::Modeler fast;
+  r["load_fast_ms"] = millis([&] {
+    if (!fast.load(path, nullptr, false)) std::exit(4);
+  });
   std::filesystem::remove(path);
   return r;
 }
@@ -178,7 +187,7 @@ int main(int argc, char** argv) {
   }
   const char* columns[] = {"build_ms",     "find_all_ms", "world_shapes_ms",  "snap_index_ms",
                            "snap_query_ms", "edit_reindex_query_ms", "move_one_ms", "undo_ms",          "list_objects_ms", "query_ids_ms", "aggregate_ms",
-                           "save_ms"};
+                           "save_ms", "load_ms", "load_fast_ms"};
   json all = json::array();
   std::printf("%-10s %6s", "fixture", "n");
   for (const char* c : columns) std::printf(" %15s", c);
