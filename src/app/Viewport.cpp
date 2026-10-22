@@ -634,15 +634,18 @@ std::vector<std::pair<int, std::array<double, 3>>> Viewport::faceColorsOf(const 
   };
   if (const auto* ref = std::get_if<doc::ComponentInstance>(&object.recipe.base)) {
     const doc::ComponentDefinition* def = document.findDefinition(ref->definitionId);
-    if (!def || def->shape.IsNull()) return out;
-    DefinitionColors& cached = definitionColors_[def->id];
-    if (cached.shape != def->shape.TShape().get() || cached.sequence != document.sequence()) {
-      cached = DefinitionColors{def->shape.TShape().get(), document.sequence(), {}};
+    if (!def || def->shape.IsNull() || object.shape.IsNull()) return out;
+    // A placement with its own parameters or mirror has a variant of the
+    // definition's compound: same leaves in the same order.
+    const TopoDS_Shape& shape = ref->plain() ? def->shape : object.shape;
+    DefinitionColors& cached = definitionColors_[ref->plain() ? def->id : def->id + "/" + object.id];
+    if (cached.shape != shape.TShape().get() || cached.sequence != document.sequence()) {
+      cached = DefinitionColors{shape.TShape().get(), document.sequence(), {}};
       // The definition's compound holds its leaves in order (see
       // buildDefinitionShape); a leaf with a material of its own (or inside
       // a group of the definition that has one) keeps it on every placement.
       TopTools_IndexedMapOfShape all;
-      TopExp::MapShapes(def->shape, TopAbs_FACE, all);
+      TopExp::MapShapes(shape, TopAbs_FACE, all);
       auto ownMaterial = [&](const doc::Object& leaf) {
         for (const doc::Object* o = &leaf; o;) {
           if (!o->material.empty()) return o->material;
@@ -654,7 +657,7 @@ std::vector<std::pair<int, std::array<double, 3>>> Viewport::faceColorsOf(const 
         }
         return std::string();
       };
-      TopoDS_Iterator part(def->shape);
+      TopoDS_Iterator part(shape);
       for (const doc::Object& leaf : def->objects) {
         if (leaf.shape.IsNull()) continue;
         if (!part.More()) break;

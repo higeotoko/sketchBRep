@@ -158,6 +158,17 @@ struct FacePart {
   gp_Pnt inside;
 };
 
+// A parameter of one object of a component definition, changed for one
+// placement only (a door twice as wide, the same component otherwise).
+struct ParameterOverride {
+  std::string object;  // object id inside the definition
+  std::string key;     // parameter key of that object
+  double value = 0.0;
+  bool operator==(const ParameterOverride& o) const {
+    return object == o.object && key == o.key && value == o.value;
+  }
+};
+
 // Container node of the object hierarchy. Has no geometry of its own.
 struct GroupNode {
   // Set while this group is a component being edited in place (spec 07
@@ -166,11 +177,21 @@ struct GroupNode {
   std::string editingDefinition;
   std::string editingInstance;      // id of the instance replaced meanwhile
   std::string editingInstanceName;
+  // The placement's own settings, given back when editing ends.
+  std::vector<ParameterOverride> editingOverrides;
+  bool editingMirrored = false;
 };
 
 // Placement of a shared component definition.
 struct ComponentInstance {
   std::string definitionId;
+  std::vector<ParameterOverride> overrides;
+  // Mirrored across the definition's YZ plane (its red axis flips). The
+  // mirror lives in the geometry, never in the placement transform: OCCT
+  // locations stay rigid.
+  bool mirrored = false;
+  // Uses the definition's shape as it is (shared display and meshes).
+  bool plain() const { return overrides.empty() && !mirrored; }
 };
 
 using BaseFeature = std::variant<RectangleProfile, CircleProfile, PolygonProfile, PolylineCurve, InterpolatedCurve,
@@ -260,6 +281,9 @@ struct Parameter {
 // Resolves data that lives outside a single recipe (component definitions).
 struct RegenContext {
   std::function<std::optional<TopoDS_Shape>(const std::string& definitionId)> definitionShape;
+  // Shape of a placement with its own parameters or mirror (cached by the
+  // document); a plain placement only needs definitionShape.
+  std::function<Result<TopoDS_Shape>(const ComponentInstance& instance)> instanceShape;
 };
 
 // Rebuilds the shape from scratch. Every intermediate result is validated.

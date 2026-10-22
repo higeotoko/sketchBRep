@@ -495,7 +495,11 @@ json objectFields(const doc::Modeler& m, const doc::Object& o, const std::set<st
     } else if (f == "area") {
       if (o.kind() == doc::ObjectKind::Face) j["area"] = measuresOf(o.shape).areaValue();
     } else if (f == "definition") {
-      if (const auto* c = std::get_if<doc::ComponentInstance>(&o.recipe.base)) j["definition"] = c->definitionId;
+      if (const auto* c = std::get_if<doc::ComponentInstance>(&o.recipe.base)) {
+        j["definition"] = c->definitionId;
+        if (c->mirrored) j["mirrored"] = true;
+        if (!c->overrides.empty()) j["own_parameters"] = c->overrides.size();
+      }
     } else if (f == "history") {
       j["history"] = doc::describe(o.recipe);
     } else if (f == "parameters") {
@@ -1109,6 +1113,74 @@ const std::vector<CommandDef>& commands() {
                                        number(a, "value")));
          return json::object();
        }},
+      {"placement_parameters",
+       "Parameters of a component placement: for each object of its definition, key, value as this placement "
+       "shows it, the shared (definition) value, and own=true where only this placement differs. Also the "
+       "definition, how many placements share it, and whether this one is mirrored.",
+       SCHEMA({"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}),
+       [](doc::Modeler& m, const json& a) {
+         const doc::Object* o = m.document().find(text(a, "id"));
+         const auto* c = o ? std::get_if<doc::ComponentInstance>(&o->recipe.base) : nullptr;
+         if (!c) throw ApiError("'" + text(a, "id") + "' is not a component placement");
+         json list = json::array();
+         for (const auto& p : m.placementParameters(o->id)) {
+           list.push_back({{"object", p.object}, {"object_name", p.objectName}, {"key", p.parameter.key},
+                           {"value", p.parameter.value}, {"shared", p.shared}, {"own", p.own}});
+         }
+         return json{{"definition", c->definitionId},
+                     {"placements", m.document().instanceCount(c->definitionId)},
+                     {"mirrored", c->mirrored},
+                     {"parameters", list}};
+       }},
+      {"set_placement_parameter",
+       "Change a parameter of a component for ONE placement only (e.g. one door wider); the other placements "
+       "keep the shared value, and later shared edits do not touch this one. Setting the shared value again "
+       "removes the placement's own value. Use set_definition_parameter to change every placement.",
+       SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "object": {"type": "string"},
+               "key": {"type": "string"}, "value": {"type": "number"}},
+               "required": ["id", "object", "key", "value"]}),
+       [](doc::Modeler& m, const json& a) {
+         must(m.setPlacementParameter(text(a, "id"), text(a, "object"), text(a, "key"), number(a, "value")));
+         return idResult(text(a, "id"));
+       }},
+      {"clear_placement_parameters", "Give a component placement the shared values again (drop its own ones).",
+       SCHEMA({"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}),
+       [](doc::Modeler& m, const json& a) {
+         must(m.clearPlacementParameters(text(a, "id")));
+         return idResult(text(a, "id"));
+       }},
+      {"make_unique",
+       "Give one component placement a definition of its own (a copy with its own parameters written in); "
+       "the other placements are unaffected. Returns the new definition id.",
+       SCHEMA({"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}),
+       [](doc::Modeler& m, const json& a) {
+         return json{{"id", text(a, "id")}, {"definition", must(m.makeUnique(text(a, "id")))}};
+       }},
+      {"mirror_placement",
+       "Mirror component placements in place across their own axis: red (x), green (y) or blue (z). Bounds stay; "
+       "the geometry is a mirrored copy of the definition (the placement transform stays rigid).",
+       SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}},
+               "axis": {"type": "string", "enum": ["red", "green", "blue", "x", "y", "z"]}},
+               "required": ["ids"]}),
+       [](doc::Modeler& m, const json& a) {
+         const std::string axis = textOr(a, "axis", "red");
+         const int index = axis == "red" || axis == "x" ? 0 : axis == "green" || axis == "y" ? 1
+                         : axis == "blue" || axis == "z" ? 2 : -1;
+         if (index < 0) throw ApiError("axis must be red, green or blue");
+         for (const std::string& id : ids(a, "ids")) must(m.mirrorPlacement(id, index));
+         return idsResult(ids(a, "ids"));
+       }},
+      {"set_component_axes",
+       "Move a component's origin to a world point and optionally turn its red axis toward x_axis (about its "
+       "blue axis). No placement moves; all placements of the definition are adjusted.",
+       SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "origin": {"type": "array"},
+               "x_axis": {"type": "array"}}, "required": ["id", "origin"]}),
+       [](doc::Modeler& m, const json& a) {
+         std::optional<gp_Dir> red;
+         if (a.contains("x_axis")) red = direction(a, "x_axis", gp::DX());
+         must(m.setComponentOrigin(text(a, "id"), point(a, "origin"), red));
+         return idResult(text(a, "id"));
+       }},
       {"rename", "Rename an object.",
        SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "name": {"type": "string"}},
                "required": ["id", "name"]}),
@@ -1526,7 +1598,8 @@ CommandApi::Effect builtinEffect(const std::string& name) {
   using E = CommandApi::Effect;
   if (name == "list_objects" || name == "get_object" || name == "list_tags" || name == "describe" ||
       name == "preview" || name == "query_objects" || name == "aggregate" || name == "get_changes" ||
-      name == "list_openings" || name == "list_materials" || name == "material_at") {
+      name == "list_openings" || name == "list_materials" || name == "material_at" ||
+      name == "placement_parameters") {
     return E::Read;
   }
   if (isFileCommand(name)) return E::ExternalIo;

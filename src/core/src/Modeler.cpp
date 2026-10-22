@@ -20,9 +20,11 @@
 #include <TopoDS_Vertex.hxx>
 #include <TopoDS_Wire.hxx>
 #include <functional>
+#include <sstream>
 #include <BRepAdaptor_Surface.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopLoc_Location.hxx>
+#include <gp_Ax2.hxx>
 #include <BRepTools.hxx>
 #include <TopoDS.hxx>
 
@@ -2269,6 +2271,58 @@ Status Modeler::ungroup(const ObjectId& groupId) {
   return Status::success();
 }
 
+namespace {
+
+// Every placement of `definition` (about to replace the stored one) gets its
+// geometry again: plain ones share the definition's shape, the others are
+// rebuilt with their own parameters / mirror. Overrides of objects or keys
+// gone from the definition are dropped.
+Status updatePlacements(const Document& document, ChangeSet& changes, const ComponentDefinition& definition,
+                        const std::function<void(Object&)>& adjust = {}) {
+  std::map<std::string, TopoDS_Shape> shared;
+  for (const Object& o : document.objects()) {
+    const auto* c = std::get_if<ComponentInstance>(&o.recipe.base);
+    if (!c || c->definitionId != definition.id) continue;
+    Object updated = o;
+    auto& ref = std::get<ComponentInstance>(updated.recipe.base);
+    if (!ref.overrides.empty()) {
+      std::vector<ParameterOverride> dropped;
+      auto variant = applyOverrides(definition, ref.overrides, document.regenContext(), &dropped);
+      if (!variant) return Status::failure("'" + o.name + "': " + variant.error());
+      ref.overrides.erase(std::remove_if(ref.overrides.begin(), ref.overrides.end(),
+        [&](const ParameterOverride& p) {
+          return std::find(dropped.begin(), dropped.end(), p) != dropped.end();
+        }),
+        ref.overrides.end());
+    }
+    // Placements with the same settings share one shape (and display mesh).
+    std::ostringstream key;
+    key.precision(17);
+    key << ref.mirrored;
+    for (const ParameterOverride& p : ref.overrides) key << '|' << p.object << '/' << p.key << '=' << p.value;
+    auto known = shared.find(key.str());
+    if (known == shared.end()) {
+      auto shape = buildInstanceShape(definition, ref, document.regenContext());
+      if (!shape) return Status::failure("'" + o.name + "': " + shape.error());
+      known = shared.emplace(key.str(), shape.value()).first;
+    }
+    updated.shape = known->second;
+    if (adjust) adjust(updated);
+    changes.modify(updated);
+  }
+  return Status::success();
+}
+
+// A rigid transform from its matrix (drops the scale sign two mirrors leave).
+gp_Trsf rigid(const gp_Trsf& t) {
+  gp_Trsf r;
+  r.SetValues(t.Value(1, 1), t.Value(1, 2), t.Value(1, 3), t.Value(1, 4), t.Value(2, 1), t.Value(2, 2),
+              t.Value(2, 3), t.Value(2, 4), t.Value(3, 1), t.Value(3, 2), t.Value(3, 3), t.Value(3, 4));
+  return r;
+}
+
+}  // namespace
+
 Result<ObjectId> Modeler::makeComponent(const std::vector<ObjectId>& ids, const std::string& name) {
   const std::vector<ObjectId> roots = topmost(ids);
   ObjectId parent;
@@ -2315,7 +2369,7 @@ Result<ObjectId> Modeler::makeComponent(const std::vector<ObjectId>& ids, const 
   instance.parent = parent;
   instance.name = definition.name;
   instance.transform.SetTranslation(gp_Vec(origin.XYZ()));
-  instance.recipe.base = ComponentInstance{definition.id};
+  instance.recipe.base = ComponentInstance{definition.id, {}, false};
   instance.shape = definition.shape;
 
   ChangeSet changes(document_);
@@ -2334,13 +2388,19 @@ Result<std::vector<ObjectId>> Modeler::explode(const ObjectId& instanceId) {
     return Result<std::vector<ObjectId>>::failure("Not a component instance");
   }
   const auto& ref = std::get<ComponentInstance>(instance->recipe.base);
-  const ComponentDefinition* definition = document_.findDefinition(ref.definitionId);
-  if (!definition) return Result<std::vector<ObjectId>>::failure("Definition not found");
+  const ComponentDefinition* stored = document_.findDefinition(ref.definitionId);
+  if (!stored) return Result<std::vector<ObjectId>>::failure("Definition not found");
+  if (ref.mirrored) {
+    // Its pieces would need mirrored placements, which stay rigid here.
+    return Result<std::vector<ObjectId>>::failure("A mirrored component cannot be exploded; mirror it back first");
+  }
+  auto definition = applyOverrides(*stored, ref.overrides, document_.regenContext());
+  if (!definition) return Result<std::vector<ObjectId>>::failure(definition.error());
 
   ChangeSet changes(document_);
   std::map<ObjectId, ObjectId> mapping;
   std::vector<ObjectId> roots;
-  for (const Object& source : definition->objects) {
+  for (const Object& source : definition.value().objects) {
     Object o = source;
     o.id = generateObjectId();
     mapping[source.id] = o.id;
@@ -2389,13 +2449,8 @@ Status Modeler::setDefinitionParameter(const std::string& definitionId, const Ob
 
   ChangeSet changes(document_);
   changes.putDefinition(definition);
-  for (const Object& o : document_.objects()) {
-    const auto* c = std::get_if<ComponentInstance>(&o.recipe.base);
-    if (!c || c->definitionId != definitionId) continue;
-    Object updated = o;
-    updated.shape = definition.shape;
-    changes.modify(updated);
-  }
+  const Status placed = updatePlacements(document_, changes, definition);
+  if (!placed) return placed;
   history_.execute(changes.build("Edit Component"));
   return Status::success();
 }
@@ -2488,13 +2543,15 @@ Result<ObjectId> Modeler::beginComponentEdit(const ObjectId& instanceId) {
   group.layer = instance->layer;
   group.color = instance->color;
   group.material = instance->material;
-  group.recipe.base = GroupNode{definition->id, instance->id, instance->name};
+  group.recipe.base = GroupNode{definition->id, instance->id, instance->name, ref->overrides, ref->mirrored};
 
   ChangeSet changes(document_);
   changes.add(group);
-  // Fresh ids for the copies; parents follow, top-level ones go into the group.
+  // The copies keep the definition's ids (placements' own parameters name
+  // them); only an id already taken in the document gets a fresh one.
+  // Parents follow, top-level ones go into the group.
   std::map<ObjectId, ObjectId> ids;
-  for (const Object& o : definition->objects) ids[o.id] = generateObjectId();
+  for (const Object& o : definition->objects) ids[o.id] = document_.find(o.id) ? generateObjectId() : o.id;
   for (const Object& o : definition->objects) {
     Object copy = o;
     copy.id = ids[o.id];
@@ -2537,20 +2594,28 @@ Status Modeler::endComponentEdit(const ObjectId& editGroupId) {
   instance.layer = group->layer;
   instance.color = group->color;
   instance.material = group->material;
-  instance.recipe.base = ComponentInstance{definition.id};
-  instance.shape = definition.shape;
+  ComponentInstance ref{definition.id, node->editingOverrides, node->editingMirrored};
+  std::vector<ParameterOverride> dropped;
+  if (!ref.overrides.empty()) {
+    auto variant = applyOverrides(definition, ref.overrides, document_.regenContext(), &dropped);
+    if (!variant) return Status::failure("'" + instance.name + "': " + variant.error());
+    ref.overrides.erase(std::remove_if(ref.overrides.begin(), ref.overrides.end(),
+      [&](const ParameterOverride& p) {
+        return std::find(dropped.begin(), dropped.end(), p) != dropped.end();
+      }),
+      ref.overrides.end());
+  }
+  auto own = buildInstanceShape(definition, ref, document_.regenContext());
+  if (!own) return own.status();
+  instance.recipe.base = ref;
+  instance.shape = own.value();
 
   ChangeSet changes(document_);
   changes.putDefinition(definition);
+  const Status placed = updatePlacements(document_, changes, definition);
+  if (!placed) return placed;
   for (const ObjectId& id : document_.subtree(editGroupId)) changes.erase(id);
   changes.add(instance);
-  for (const Object& o : document_.objects()) {
-    const auto* c = std::get_if<ComponentInstance>(&o.recipe.base);
-    if (!c || c->definitionId != definition.id) continue;
-    Object updated = o;
-    updated.shape = definition.shape;
-    changes.modify(updated);
-  }
   history_.execute(changes.build("Edit Component"));
   if (activeGroup_ == editGroupId || document_.find(activeGroup_) == nullptr) activeGroup_.clear();
   return Status::success();
@@ -2572,6 +2637,194 @@ int Modeler::instanceCount(const std::string& definitionId) const {
     n += c && c->definitionId == definitionId;
   }
   return n;
+}
+
+std::vector<Modeler::PlacementParameter> Modeler::placementParameters(const ObjectId& instanceId) const {
+  std::vector<PlacementParameter> out;
+  const Object* instance = document_.find(instanceId);
+  const auto* ref = instance ? std::get_if<ComponentInstance>(&instance->recipe.base) : nullptr;
+  const ComponentDefinition* d = ref ? document_.findDefinition(ref->definitionId) : nullptr;
+  if (!d) return out;
+  for (const Object& o : d->objects) {
+    for (const Parameter& p : doc::parameters(o.recipe)) {
+      PlacementParameter row{o.id, o.name, p, p.value, false};
+      for (const ParameterOverride& own : ref->overrides) {
+        if (own.object == o.id && own.key == p.key) {
+          row.parameter.value = own.value;
+          row.own = true;
+        }
+      }
+      out.push_back(row);
+    }
+  }
+  return out;
+}
+
+namespace {
+
+// Replaces the placement's settings and rebuilds its geometry.
+Status changePlacement(Document& document, CommandStack& history, const Object& instance, ComponentInstance ref,
+                       const std::string& name) {
+  auto shape = doc::regenerate(Recipe{ref}, document.regenContext());
+  if (!shape) return shape.status();
+  Object updated = instance;
+  updated.recipe.base = std::move(ref);
+  updated.shape = shape.value();
+  ChangeSet changes(document);
+  changes.modify(updated);
+  history.execute(changes.build(name));
+  return Status::success();
+}
+
+}  // namespace
+
+Status Modeler::setPlacementParameter(const ObjectId& instanceId, const ObjectId& objectId, const std::string& key,
+                                      double value) {
+  const Object* instance = document_.find(instanceId);
+  const auto* current = instance ? std::get_if<ComponentInstance>(&instance->recipe.base) : nullptr;
+  if (!current) return Status::failure("Not a component instance");
+  if (instance->locked) return Status::failure("The object is locked");
+  std::optional<double> shared;
+  for (const PlacementParameter& p : placementParameters(instanceId)) {
+    if (p.object == objectId && p.parameter.key == key) shared = p.shared;
+  }
+  if (!shared) return Status::failure("The component has no parameter '" + key + "' on that object");
+  ComponentInstance ref = *current;
+  ref.overrides.erase(std::remove_if(ref.overrides.begin(), ref.overrides.end(),
+                                     [&](const ParameterOverride& p) { return p.object == objectId && p.key == key; }),
+                      ref.overrides.end());
+  if (std::abs(value - *shared) > 1e-9) ref.overrides.push_back({objectId, key, value});
+  return changePlacement(document_, history_, *instance, std::move(ref), "Edit Placement");
+}
+
+Status Modeler::clearPlacementParameters(const ObjectId& instanceId) {
+  const Object* instance = document_.find(instanceId);
+  const auto* current = instance ? std::get_if<ComponentInstance>(&instance->recipe.base) : nullptr;
+  if (!current) return Status::failure("Not a component instance");
+  if (current->overrides.empty()) return Status::success();
+  ComponentInstance ref = *current;
+  ref.overrides.clear();
+  return changePlacement(document_, history_, *instance, std::move(ref), "Reset Placement");
+}
+
+Result<std::string> Modeler::makeUnique(const ObjectId& instanceId) {
+  using R = Result<std::string>;
+  const Object* instance = document_.find(instanceId);
+  const auto* ref = instance ? std::get_if<ComponentInstance>(&instance->recipe.base) : nullptr;
+  if (!ref) return R::failure("Not a component instance");
+  const ComponentDefinition* stored = document_.findDefinition(ref->definitionId);
+  if (!stored) return R::failure("Definition not found");
+  if (document_.instanceCount(stored->id) < 2) return R::failure("This is already the only placement of the component");
+  auto written = applyOverrides(*stored, ref->overrides, document_.regenContext());
+  if (!written) return R::failure(written.error());
+
+  ComponentDefinition definition = written.value();
+  definition.id = generateObjectId();
+  // "Door" -> "Door #2", the first free number.
+  for (int n = 2;; ++n) {
+    const std::string name = stored->name + " #" + std::to_string(n);
+    bool taken = false;
+    for (const ComponentDefinition& d : document_.definitions()) taken = taken || d.name == name;
+    if (!taken) {
+      definition.name = name;
+      break;
+    }
+  }
+  std::map<ObjectId, ObjectId> ids;
+  for (const Object& o : definition.objects) ids[o.id] = generateObjectId();
+  for (Object& o : definition.objects) {
+    o.id = ids[o.id];
+    if (!o.parent.empty()) o.parent = ids[o.parent];
+  }
+
+  Object updated = *instance;
+  ComponentInstance own{definition.id, {}, ref->mirrored};
+  auto shape = buildInstanceShape(definition, own, document_.regenContext());
+  if (!shape) return R::failure(shape.error());
+  updated.recipe.base = own;
+  updated.shape = shape.value();
+  if (updated.name == stored->name) updated.name = definition.name;
+
+  ChangeSet changes(document_);
+  changes.putDefinition(definition);
+  changes.modify(updated);
+  history_.execute(changes.build("Make Unique"));
+  return definition.id;
+}
+
+Status Modeler::mirrorPlacement(const ObjectId& instanceId, int axis) {
+  const Object* instance = document_.find(instanceId);
+  const auto* current = instance ? std::get_if<ComponentInstance>(&instance->recipe.base) : nullptr;
+  if (!current) return Status::failure("Not a component instance");
+  if (axis < 0 || axis > 2) return Status::failure("Axis must be 0 (red), 1 (green) or 2 (blue)");
+  if (instance->locked) return Status::failure("The object is locked");
+  // In the parent's frame: mirror across the plane through the placement's
+  // centre, normal to its axis. The new placement is that mirror composed
+  // with the old one and the definition mirror, which is rigid again.
+  const gp_Trsf& placement = instance->transform;
+  const Bnd_Box box = geom::exactBounds(instance->shape.Moved(TopLoc_Location(placement)));
+  if (box.IsVoid()) return Status::failure("The component has no geometry");
+  const gp_Pnt center((box.CornerMin().XYZ() + box.CornerMax().XYZ()) / 2.0);
+  const gp_Dir normal = gp_Dir(axis == 0 ? gp::DX() : axis == 1 ? gp::DY() : gp::DZ()).Transformed(placement);
+  gp_Trsf across;
+  across.SetMirror(gp_Ax2(center, normal));
+
+  ComponentInstance ref = *current;
+  ref.mirrored = !ref.mirrored;
+  auto shape = doc::regenerate(Recipe{ref}, document_.regenContext());
+  if (!shape) return shape.status();
+  Object updated = *instance;
+  updated.transform = rigid(across * placement * componentMirror());
+  updated.recipe.base = ref;
+  updated.shape = shape.value();
+  ChangeSet changes(document_);
+  changes.modify(updated);
+  history_.execute(changes.build("Mirror"));
+  return Status::success();
+}
+
+Status Modeler::setComponentOrigin(const ObjectId& instanceId, const gp_Pnt& worldOrigin,
+                                   const std::optional<gp_Dir>& xDirection) {
+  const Object* instance = document_.find(instanceId);
+  const auto* ref = instance ? std::get_if<ComponentInstance>(&instance->recipe.base) : nullptr;
+  if (!ref) return Status::failure("Not a component instance");
+  const ComponentDefinition* stored = document_.findDefinition(ref->definitionId);
+  if (!stored) return Status::failure("Definition not found");
+
+  // The new frame in definition coordinates: T maps it to the old one.
+  gp_Trsf toDefinition = document_.worldTransform(*instance).Inverted();
+  if (ref->mirrored) toDefinition = componentMirror() * toDefinition;
+  const gp_Pnt origin = worldOrigin.Transformed(toDefinition);
+  gp_Trsf frame;
+  if (xDirection) {
+    const gp_Vec x = gp_Vec(*xDirection).Transformed(toDefinition);
+    if (std::hypot(x.X(), x.Y()) < 1e-9) return Status::failure("The red axis must not point along the blue axis");
+    frame.SetRotation(gp_Ax1(gp::Origin(), gp::DZ()), std::atan2(x.Y(), x.X()));
+  }
+  gp_Trsf shift;
+  shift.SetTranslation(gp_Vec(origin.XYZ()));
+  frame = rigid(shift * frame);
+
+  ComponentDefinition definition = *stored;
+  const gp_Trsf back = frame.Inverted();
+  for (Object& o : definition.objects) {
+    if (o.parent.empty()) o.transform = back * o.transform;
+  }
+  auto shape = buildDefinitionShape(definition, document_.regenContext());
+  if (!shape) return shape.status();
+  definition.shape = shape.value();
+
+  ChangeSet changes(document_);
+  changes.putDefinition(definition);
+  // Placements move by the frame (seen through their mirror) so nothing moves.
+  const Status placed = updatePlacements(document_, changes, definition, [&](Object& o) {
+    const bool mirrored = std::get<ComponentInstance>(o.recipe.base).mirrored;
+    o.transform = mirrored ? rigid(o.transform * componentMirror() * frame * componentMirror())
+                           : rigid(o.transform * frame);
+  });
+  if (!placed) return placed;
+  history_.execute(changes.build("Set Component Axes"));
+  return Status::success();
 }
 
 void Modeler::copyFrom(const Modeler& other) {

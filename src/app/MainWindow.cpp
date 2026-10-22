@@ -82,6 +82,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   pasteTool_ = std::make_unique<PasteTool>(*this);
   polygonTool_ = std::make_unique<PolygonTool>(*this);
   scaleTool_ = std::make_unique<ScaleTool>(*this);
+  componentAxesTool_ = std::make_unique<ComponentAxesTool>(*this);
   wallTool_ = std::make_unique<WallTool>(*this);
   slabTool_ = std::make_unique<SlabTool>(*this);
   openingTool_ = std::make_unique<OpeningTool>(*this);
@@ -329,6 +330,17 @@ void MainWindow::buildUi() {
               if (!report(modeler_.setDefinitionParameter(defId, objectId, key, value))) refreshPanels();
             });
           });
+  connect(panel_, &PropertiesPanel::placementParameterEdited, this,
+          [this](const doc::ObjectId& instanceId, const doc::ObjectId& objectId, const std::string& key,
+                 double value) {
+            QTimer::singleShot(0, this, [this, instanceId, objectId, key, value] {
+              if (!report(modeler_.setPlacementParameter(instanceId, objectId, key, value))) refreshPanels();
+            });
+          });
+  connect(panel_, &PropertiesPanel::placementAction, this,
+          [this](const doc::ObjectId& instanceId, const QString& action) {
+            QTimer::singleShot(0, this, [this, instanceId, action] { placementAction({instanceId}, action); });
+          });
   connect(panel_, &PropertiesPanel::definitionRenamed, this,
           [this](const std::string& defId, const QString& name) {
             const doc::ComponentDefinition* d = modeler_.document().findDefinition(defId);
@@ -444,6 +456,16 @@ void MainWindow::buildMenus() {
                   &MainWindow::makeComponent);
   edit->addAction(tr("分解（コンポーネント → 個別オブジェクト）"), this,
                   &MainWindow::explodeSelection);
+  QMenu* placement = edit->addMenu(tr("コンポーネントの配置"));
+  placement->addAction(tr("この配置だけ独立"), this, [this] { placementAction(selection_, QStringLiteral("unique")); });
+  placement->addAction(tr("この配置だけの寸法を戻す"), this,
+                       [this] { placementAction(selection_, QStringLiteral("reset")); });
+  placement->addSeparator();
+  placement->addAction(tr("鏡像: 赤軸方向"), this, [this] { placementAction(selection_, QStringLiteral("mirror0")); });
+  placement->addAction(tr("鏡像: 緑軸方向"), this, [this] { placementAction(selection_, QStringLiteral("mirror1")); });
+  placement->addAction(tr("鏡像: 青軸方向"), this, [this] { placementAction(selection_, QStringLiteral("mirror2")); });
+  placement->addSeparator();
+  placement->addAction(tr("軸を変更（原点・赤軸）"), this, [this] { placementAction(selection_, QStringLiteral("axes")); });
 
   // --- Solid tools
   QMenu* solid = menuBar()->addMenu(tr("ソリッド(&S)"));
@@ -976,6 +998,7 @@ void MainWindow::activateTool(ToolId id) {
     case ToolId::Paint: active_ = paintTool_.get(); break;
     case ToolId::Eraser: active_ = eraserTool_.get(); break;
     case ToolId::Paste: active_ = pasteTool_.get(); break;
+    case ToolId::ComponentAxes: active_ = componentAxesTool_.get(); break;
     case ToolId::Polygon: active_ = polygonTool_.get(); break;
     case ToolId::Scale: active_ = scaleTool_.get(); break;
     case ToolId::Wall: active_ = wallTool_.get(); break;
@@ -1073,9 +1096,14 @@ void MainWindow::enterGroup(const doc::ObjectId& id) {
   if (node && !node->editingDefinition.empty()) {
     // Make the scope visible: every instance changes (spec 07 §6.2).
     const int count = modeler_.instanceCount(node->editingDefinition) + 1;
-    contextLabel_->setText(tr("コンポーネント編集中: %1（終了すると %2 個すべてに反映 / Esc で終了）")
-                               .arg(QString::fromStdString(g->name))
-                               .arg(count));
+    QString text = tr("コンポーネント編集中: %1（終了すると %2 個すべてに反映 / Esc で終了）")
+                       .arg(QString::fromStdString(g->name))
+                       .arg(count);
+    // The definition is edited as stored; this placement's own settings come back afterwards.
+    if (!node->editingOverrides.empty() || node->editingMirrored) {
+      text += tr("　※この配置だけの寸法・鏡像は元の形で表示中、終了後も保たれます");
+    }
+    contextLabel_->setText(text);
     contextLabel_->setStyleSheet(QStringLiteral("QLabel { background: #ffd9b3; padding: 0 6px; }"));
   } else {
     contextLabel_->setText(tr("グループ編集中: %1（Esc で終了）").arg(QString::fromStdString(g->name)));
@@ -1987,6 +2015,39 @@ void MainWindow::explodeSelection() {
     }
   }
   setSelection(parts);
+}
+
+void MainWindow::placementAction(const std::vector<doc::ObjectId>& ids, const QString& action) {
+  std::vector<doc::ObjectId> instances;
+  for (const doc::ObjectId& id : ids) {
+    const doc::Object* o = modeler_.document().find(id);
+    if (o && o->kind() == doc::ObjectKind::Instance) instances.push_back(id);
+  }
+  if (instances.empty()) {
+    reportError(tr("コンポーネントの配置を選んでください"));
+    return;
+  }
+  if (action == QStringLiteral("axes")) {
+    setSelection({instances.front()});
+    activateTool(ToolId::ComponentAxes);
+    return;
+  }
+  for (const doc::ObjectId& id : instances) {
+    if (action == QStringLiteral("unique")) {
+      const auto unique = modeler_.makeUnique(id);
+      if (!unique) {
+        reportError(QString::fromStdString(unique.error()));
+        continue;
+      }
+      setStatus(tr("この配置を「%1」として独立させました")
+                           .arg(QString::fromStdString(modeler_.document().findDefinition(*unique)->name)));
+    } else if (action == QStringLiteral("reset")) {
+      report(modeler_.clearPlacementParameters(id));
+    } else if (action.startsWith(QStringLiteral("mirror"))) {
+      report(modeler_.mirrorPlacement(id, action.back().digitValue()));
+    }
+  }
+  setSelection(instances);
 }
 
 void MainWindow::booleanSelection(doc::BooleanKind kind) {

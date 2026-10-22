@@ -10,6 +10,10 @@
 #include <gp_Lin.hxx>
 
 #include <QApplication>
+#include <QComboBox>
+#include <QDoubleSpinBox>
+#include <QFormLayout>
+#include <QLabel>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
@@ -36,6 +40,7 @@
 #include "AiBridge.h"
 #include "MainWindow.h"
 #include "MaterialsPanel.h"
+#include "PropertiesPanel.h"
 #include "sbr/geom/FaceRef.h"
 #include "Viewport.h"
 #include "sbr/api/CommandApi.h"
@@ -153,6 +158,7 @@ class GuiPhase1 : public QObject {
   void boxSelectionWindowAndCrossing();
   void aiProposalApplyAndReject();
   void componentEditInPlace();
+  void componentPlacementOwnSizeMirrorAndAxes();
   void followMeAroundTopFace();
   void wallToolAndArchitectureMenus();
   void slabToolAndOpeningTool();
@@ -2350,6 +2356,81 @@ void GuiPhase1::imageUnderlayCalibrateLockTrace() {
   const doc::Object* back = m.document().find(image);
   QVERIFY(back && back->locked);
   QVERIFY(m.document().findImage(std::get<doc::ImageUnderlay>(back->recipe.base).image));
+}
+
+// Components step 4: one placement's own size from the panel ("この配置だけ"),
+// mirror from the menu command, and the axes tool (origin + red axis by
+// clicks). Placements with the same settings keep sharing one display.
+void GuiPhase1::componentPlacementOwnSizeMirrorAndAxes() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 1000, 200, 2000);
+  auto first = m.makeComponent({box}, "Panel");
+  QVERIFY(first.ok());
+  gp_Trsf dx;
+  dx.SetTranslation(gp_Vec(3000, 0, 0));
+  auto copies = m.copy({*first}, dx, 2);
+  QVERIFY(copies.ok());
+  const doc::ObjectId second = (*copies)[0], third = (*copies)[1];
+
+  // The panel: switch to "this placement only" and widen.
+  f.window.setSelection({second});
+  auto* panel = f.window.findChild<PropertiesPanel*>();
+  QVERIFY(panel);
+  QComboBox* scope = nullptr;
+  for (QComboBox* c : panel->findChildren<QComboBox*>()) {
+    if (c->count() == 2 && c->itemText(1).contains(QStringLiteral("この配置だけ"))) scope = c;
+  }
+  QVERIFY(scope);
+  QVERIFY(scope->itemText(0).contains(QStringLiteral("3 個")));  // the affected count
+  scope->setCurrentIndex(1);
+  QTest::qWait(20);
+  QDoubleSpinBox* width = nullptr;
+  for (QFormLayout* form : panel->findChildren<QFormLayout*>()) {
+    for (QDoubleSpinBox* spin : panel->findChildren<QDoubleSpinBox*>()) {
+      auto* label = qobject_cast<QLabel*>(form->labelForField(spin));
+      if (label && label->text().endsWith(QStringLiteral("幅"))) width = spin;
+    }
+  }
+  QVERIFY(width);
+  width->setValue(1500);
+  emit width->editingFinished();
+  QTest::qWait(20);
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(geom::exactBounds(m.document().worldShape(second)).CornerMax().X(), 4500.0);
+  QCOMPARE(geom::exactBounds(m.document().worldShape(third)).CornerMax().X(), 7000.0);
+
+  // The same own width on the third: the two share one display again.
+  const auto& ref = std::get<doc::ComponentInstance>(m.document().find(second)->recipe.base);
+  QVERIFY(m.setPlacementParameter(third, ref.overrides.front().object, "width", 1500).ok());
+  f.vp->syncNow();
+  QCOMPARE(f.vp->sharedDisplayCount(), std::size_t(2));  // plain + widened
+
+  // Mirror from the command, in place.
+  f.window.placementAction({second}, QStringLiteral("mirror0"));
+  QVERIFY(std::get<doc::ComponentInstance>(m.document().find(second)->recipe.base).mirrored);
+  const Bnd_Box b = geom::exactBounds(m.document().worldShape(second));
+  QCOMPARE(b.CornerMin().X(), 3000.0);
+  QCOMPARE(b.CornerMax().X(), 4500.0);
+
+  // Axes tool: origin on the first panel's far corner, red axis toward +y.
+  f.window.placementAction({*first}, QStringLiteral("axes"));
+  QCOMPARE(f.window.activeTool()->name(), QStringLiteral("コンポーネントの軸"));
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 0, 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 2500, 0)));  // away from the geometry
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  const gp_Trsf& t = m.document().find(*first)->transform;
+  QVERIFY(std::abs(t.TranslationPart().X() - 1000) < 1e-6);
+  QVERIFY(gp_Dir(1, 0, 0).Transformed(t).IsEqual(gp::DY(), 1e-6));
+  QCOMPARE(geom::exactBounds(m.document().worldShape(*first)).CornerMax().X(), 1000.0);
+  QCOMPARE(geom::exactBounds(m.document().worldShape(second)).CornerMax().X(), 4500.0);
+
+  // Make unique from the menu command: the others keep the shared component.
+  f.window.placementAction({third}, QStringLiteral("unique"));
+  const auto& own = std::get<doc::ComponentInstance>(m.document().find(third)->recipe.base);
+  QVERIFY(own.definitionId != ref.definitionId);
+  QCOMPARE(m.instanceCount(ref.definitionId), 2);
 }
 
 QTEST_MAIN(GuiPhase1)

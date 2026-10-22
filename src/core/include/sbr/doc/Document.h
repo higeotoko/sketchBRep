@@ -89,6 +89,19 @@ struct ComponentDefinition {
 // Builds the compound of all leaf geometry of a definition.
 Result<TopoDS_Shape> buildDefinitionShape(const ComponentDefinition& definition,
                                           const RegenContext& context = {});
+// The definition with a placement's own parameters written into its objects
+// (rebuilt). Overrides naming objects or keys that no longer exist are
+// skipped; `dropped` receives them.
+Result<ComponentDefinition> applyOverrides(const ComponentDefinition& definition,
+                                           const std::vector<ParameterOverride>& overrides,
+                                           const RegenContext& context = {},
+                                           std::vector<ParameterOverride>* dropped = nullptr);
+// The mirror of a placement: across the definition's YZ plane.
+gp_Trsf componentMirror();
+// Geometry of a placement: the definition's shape, or, for a placement with
+// its own parameters or mirror, that variant built from the definition.
+Result<TopoDS_Shape> buildInstanceShape(const ComponentDefinition& definition, const ComponentInstance& instance,
+                                        const RegenContext& context = {});
 
 class Document {
  public:
@@ -186,6 +199,14 @@ class Document {
   mutable std::unordered_map<ObjectId, std::size_t> index_;
   mutable std::unordered_map<ObjectId, std::vector<ObjectId>> children_;
   mutable bool indexValid_ = false;
+  // Variant shapes of placements with their own parameters / mirror, by
+  // definition and settings; an entry is valid while the definition's shape
+  // is the one it was built from.
+  struct VariantEntry {
+    TopoDS_Shape definitionShape;
+    TopoDS_Shape shape;
+  };
+  mutable std::map<std::string, VariantEntry> variants_;
 
   struct LogEntry {
     std::uint64_t sequence;

@@ -4,7 +4,11 @@
 
 #include <algorithm>
 
+#include <sstream>
+
+#include <BRepBuilderAPI_Transform.hxx>
 #include <BRep_Builder.hxx>
+#include <gp_Ax2.hxx>
 #include <TopLoc_Location.hxx>
 #include <TopoDS_Compound.hxx>
 
@@ -50,6 +54,60 @@ Result<TopoDS_Shape> buildDefinitionShape(const ComponentDefinition& definition,
   }
   if (count == 0) return Result<TopoDS_Shape>::failure("Component definition is empty");
   return TopoDS_Shape(compound);
+}
+
+Result<ComponentDefinition> applyOverrides(const ComponentDefinition& definition,
+                                           const std::vector<ParameterOverride>& overrides,
+                                           const RegenContext& context,
+                                           std::vector<ParameterOverride>* dropped) {
+  ComponentDefinition result = definition;
+  std::vector<std::string> touched;
+  for (const ParameterOverride& p : overrides) {
+    Object* target = nullptr;
+    for (Object& o : result.objects) {
+      if (o.id == p.object) target = &o;
+    }
+    if (!target || !setParameter(target->recipe, p.key, p.value)) {
+      if (dropped) dropped->push_back(p);
+      continue;
+    }
+    if (std::find(touched.begin(), touched.end(), p.object) == touched.end()) touched.push_back(p.object);
+  }
+  for (Object& o : result.objects) {
+    if (std::find(touched.begin(), touched.end(), o.id) == touched.end()) continue;
+    const Status built = rebuild(o, context);
+    if (!built) return Result<ComponentDefinition>::failure("'" + o.name + "': " + built.message());
+  }
+  if (!touched.empty()) {
+    auto shape = buildDefinitionShape(result, context);
+    if (!shape) return Result<ComponentDefinition>::failure(shape.error());
+    result.shape = shape.value();
+  }
+  return result;
+}
+
+gp_Trsf componentMirror() {
+  gp_Trsf m;
+  m.SetMirror(gp_Ax2(gp::Origin(), gp::DX()));
+  return m;
+}
+
+Result<TopoDS_Shape> buildInstanceShape(const ComponentDefinition& definition, const ComponentInstance& instance,
+                                        const RegenContext& context) {
+  if (definition.shape.IsNull()) return Result<TopoDS_Shape>::failure("Component definition is empty");
+  TopoDS_Shape shape = definition.shape;
+  if (!instance.overrides.empty()) {
+    auto variant = applyOverrides(definition, instance.overrides, context);
+    if (!variant) return Result<TopoDS_Shape>::failure(variant.error());
+    shape = variant.value().shape;
+  }
+  if (instance.mirrored) {
+    // A copy, so the geometry itself is mirrored (faces stay outward).
+    BRepBuilderAPI_Transform mirror(shape, componentMirror(), true);
+    if (!mirror.IsDone()) return Result<TopoDS_Shape>::failure("The component could not be mirrored");
+    shape = mirror.Shape();
+  }
+  return shape;
 }
 
 void Document::invalidateIndex() const {
@@ -179,6 +237,25 @@ RegenContext Document::regenContext() const {
     const ComponentDefinition* d = findDefinition(id);
     if (!d || d->shape.IsNull()) return std::nullopt;
     return d->shape;
+  };
+  context.instanceShape = [this](const ComponentInstance& instance) -> Result<TopoDS_Shape> {
+    const ComponentDefinition* d = findDefinition(instance.definitionId);
+    if (!d) return Result<TopoDS_Shape>::failure("Unknown component definition " + instance.definitionId);
+    std::ostringstream key;
+    key.precision(17);
+    key << instance.definitionId << '|' << instance.mirrored;
+    for (const ParameterOverride& p : instance.overrides) key << '|' << p.object << '/' << p.key << '=' << p.value;
+    auto it = variants_.find(key.str());
+    if (it != variants_.end() && it->second.definitionShape.IsSame(d->shape)) return it->second.shape;
+    RegenContext plain;
+    plain.definitionShape = [this](const std::string& id) -> std::optional<TopoDS_Shape> {
+      const ComponentDefinition* def = findDefinition(id);
+      if (!def || def->shape.IsNull()) return std::nullopt;
+      return def->shape;
+    };
+    auto shape = buildInstanceShape(*d, instance, plain);
+    if (shape) variants_[key.str()] = VariantEntry{d->shape, shape.value()};
+    return shape;
   };
   return context;
 }
@@ -329,6 +406,7 @@ void Document::clear() {
   definitions_.clear();
   materials_.clear();
   images_.clear();
+  variants_.clear();
   settings_ = DocumentSettings{};
   invalidateIndex();
   log_.clear();

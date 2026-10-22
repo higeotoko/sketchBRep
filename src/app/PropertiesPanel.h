@@ -44,6 +44,11 @@ class PropertiesPanel : public QWidget {
   // Opening (window/door cut) `index` of a host resized.
   void openingSizeEdited(const doc::ObjectId& id, int index, double width, double height);
   void lockToggled(const doc::ObjectId& id, bool locked);
+  // A component placement's own dimension (only this placement changes).
+  void placementParameterEdited(const doc::ObjectId& instanceId, const doc::ObjectId& objectId,
+                                const std::string& key, double value);
+  // "unique", "reset", "mirror0".."mirror2" or "axes".
+  void placementAction(const doc::ObjectId& instanceId, const QString& action);
 
  private:
   void rebuildForm(const doc::Modeler& modeler, const std::vector<doc::ObjectId>& selection,
@@ -59,6 +64,7 @@ class PropertiesPanel : public QWidget {
   QFormLayout* form_ = nullptr;
   bool updating_ = false;
   bool detailsExpanded_ = false;  // remembered across selections
+  bool placementOnly_ = false;    // component dimensions: this placement only
 };
 
 }  // namespace sbr::app

@@ -314,6 +314,33 @@ class Modeler {
                                 const std::string& key, double value);
   Status renameDefinition(const std::string& definitionId, const std::string& name);
 
+  // --- one placement of a component ----------------------------------------
+  // Parameters of the definition's objects as this placement shows them.
+  struct PlacementParameter {
+    ObjectId object;  // inside the definition
+    std::string objectName;
+    Parameter parameter;  // this placement's value
+    double shared = 0.0;  // the definition's value
+    bool own = false;     // set for this placement only
+  };
+  std::vector<PlacementParameter> placementParameters(const ObjectId& instanceId) const;
+  // Changes a parameter for this placement only (the others keep the
+  // definition's value). Setting the definition's value again removes it.
+  Status setPlacementParameter(const ObjectId& instanceId, const ObjectId& objectId, const std::string& key,
+                               double value);
+  Status clearPlacementParameters(const ObjectId& instanceId);
+  // Gives this placement a definition of its own: a copy with the
+  // placement's parameters written in. Returns the new definition id.
+  Result<std::string> makeUnique(const ObjectId& instanceId);
+  // Flips the placement across its own axis (0 red, 1 green, 2 blue), in
+  // place: its bounds stay where they are.
+  Status mirrorPlacement(const ObjectId& instanceId, int axis);
+  // Moves the definition's origin to a world point and, with xDirection,
+  // turns its red axis toward it (about its blue axis). Every placement
+  // stays where it is.
+  Status setComponentOrigin(const ObjectId& instanceId, const gp_Pnt& worldOrigin,
+                            const std::optional<gp_Dir>& xDirection = std::nullopt);
+
   // Parametric Boolean of solids. For Subtract, ids[1..] are removed from
   // ids[0]. The operands are consumed and kept inside the result's recipe.
   Result<ObjectId> boolean(BooleanKind kind, const std::vector<ObjectId>& ids);

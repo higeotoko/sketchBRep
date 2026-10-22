@@ -2872,6 +2872,107 @@ void MeasureTool::applyMeasurement(const QString& text) {
   placeGuide(guideOffset_.Normalized() * *value);
 }
 
+// --- Component axes ---------------------------------------------------------------------
+
+QString ComponentAxesTool::name() const { return QObject::tr("コンポーネントの軸"); }
+QCursor ComponentAxesTool::cursor() const { return toolCursor(CursorKind::Move); }
+
+void ComponentAxesTool::activate() {
+  resetTracking();
+  cancel();
+  instance_.clear();
+  host_.viewport().setPickMode(PickMode::None);
+  const auto selection = host_.selection();
+  const doc::Object* o = selection.size() == 1 ? host_.modeler().document().find(selection.front()) : nullptr;
+  if (!o || o->kind() != doc::ObjectKind::Instance) {
+    host_.setStatus(QObject::tr("コンポーネントを 1 つ選んでから使ってください"));
+    return;
+  }
+  instance_ = o->id;
+  host_.setMeasurement(QObject::tr("原点"), QString());
+  host_.setStatus(QObject::tr("新しい原点をクリック"));
+}
+
+void ComponentAxesTool::cancel() {
+  origin_.reset();
+  resetLock();
+  host_.viewport().clearPreview();
+  host_.viewport().hideSnap();
+}
+
+bool ComponentAxesTool::stepBack() {
+  if (!origin_) return false;
+  origin_.reset();
+  host_.viewport().clearPreview();
+  host_.setStatus(QObject::tr("新しい原点をクリック"));
+  return true;
+}
+
+std::optional<gp_Pln> ComponentAxesTool::workingPlane() const {
+  const doc::Object* o = host_.modeler().document().find(instance_);
+  if (!origin_ || !o) return std::nullopt;
+  // The red axis turns about the placement's blue axis.
+  const gp_Dir blue = gp::DZ().Transformed(host_.modeler().document().worldTransform(*o));
+  return gp_Pln(*origin_, blue);
+}
+
+QString ComponentAxesTool::targetText() const {
+  const doc::Object* o = host_.modeler().document().find(instance_);
+  if (!o) return {};
+  const auto& ref = std::get<doc::ComponentInstance>(o->recipe.base);
+  return QObject::tr("%1（配置 %2 個）")
+      .arg(QString::fromStdString(o->name))
+      .arg(host_.modeler().instanceCount(ref.definitionId));
+}
+
+void ComponentAxesTool::mouseMove(const ToolEvent& e) {
+  if (instance_.empty()) return;
+  const snap::SnapResult r = snapAt(e, origin_, workingPlane());
+  if (!r.valid()) return;
+  if (!origin_) {
+    host_.setStatus(QObject::tr("新しい原点をクリック  [%1]").arg(snapLabel(r.kind)));
+    return;
+  }
+  if (origin_->Distance(r.point) > tolerance::kMinDimension) {
+    host_.viewport().setPreview(BRepBuilderAPI_MakeEdge(*origin_, r.point).Edge());
+  }
+  host_.setStatus(QObject::tr("赤軸を向ける点をクリック（Enter: 向きはそのまま / Esc: 原点を選び直す）"));
+}
+
+void ComponentAxesTool::mousePress(const ToolEvent& e) {
+  if (instance_.empty()) return;
+  const snap::SnapResult r = snapAt(e, origin_, workingPlane());
+  if (!r.valid()) return;
+  if (!origin_) {
+    origin_ = r.point;
+    return;
+  }
+  if (origin_->Distance(r.point) <= tolerance::kMinDimension) return;
+  finish(gp_Dir(gp_Vec(*origin_, r.point)));
+}
+
+bool ComponentAxesTool::keyPress(QKeyEvent* event) {
+  if (origin_ && (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter)) {
+    finish(std::nullopt);
+    return true;
+  }
+  return DrawingTool::keyPress(event);
+}
+
+void ComponentAxesTool::finish(const std::optional<gp_Dir>& red) {
+  const doc::ObjectId id = instance_;
+  const Status s = host_.modeler().setComponentOrigin(id, *origin_, red);
+  cancel();
+  if (!s) {
+    host_.reportError(QString::fromStdString(s.message()));
+    return;
+  }
+  host_.setSelection({id});
+  const auto& ref = std::get<doc::ComponentInstance>(host_.modeler().document().find(id)->recipe.base);
+  host_.setStatus(QObject::tr("軸を変更しました（配置 %1 個、どれも動いていません）")
+                      .arg(host_.modeler().instanceCount(ref.definitionId)));
+}
+
 // --- Paste ------------------------------------------------------------------------------
 
 QString PasteTool::name() const { return QObject::tr("貼り付け"); }

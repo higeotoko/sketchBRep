@@ -14,6 +14,12 @@ struct Entry {
 // Ordered: more specific phrases first.
 const Entry kEntries[] = {
     {"Cancelled by the user", "計算を中止しました"},
+    {"A mirrored component cannot be exploded", "鏡像の配置は分解できません。先に同じ向きでもう一度「鏡像」にして元に戻してから分解してください"},
+    {"This is already the only placement of the component", "この配置しかないコンポーネントなので、独立させる必要はありません"},
+    {"The component has no parameter", "このコンポーネントにはその寸法がありません"},
+    {"The red axis must not point along the blue axis", "赤軸は青軸と同じ向きにはできません。横方向の点をクリックしてください"},
+    {"Axis must be 0 (red), 1 (green) or 2 (blue)", "軸は 赤(0)・緑(1)・青(2) のどれかで指定してください"},
+    {"The component could not be mirrored", "このコンポーネントは鏡像にできませんでした"},
     {"Operation would split the solid", "この操作ではソリッドが分断されてしまいます。距離を小さくするか、貫通させたい場合は開口として面に描いた形を押し込んでください"},
     {"Push/pull requires a valid solid", "ソリッドが閉じていないためプッシュ/プルできません"},
     {"Only planar faces of profiles can be pushed/pulled", "曲面のプッシュ/プルはソリッドの面だけでできます"},

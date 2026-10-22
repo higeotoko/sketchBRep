@@ -184,6 +184,12 @@ Result<TopoDS_Shape> buildBase(const BaseFeature& base, const RegenContext& cont
           },
           [](const GroupNode&) -> Result<TopoDS_Shape> { return TopoDS_Shape(); },
           [&](const ComponentInstance& c) -> Result<TopoDS_Shape> {
+            if (!c.plain()) {
+              if (!context.instanceShape) {
+                return Result<TopoDS_Shape>::failure("Component definitions are not available");
+              }
+              return context.instanceShape(c);
+            }
             if (!context.definitionShape) {
               return Result<TopoDS_Shape>::failure("Component definitions are not available");
             }

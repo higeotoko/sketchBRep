@@ -106,6 +106,20 @@ BooleanKind booleanKindFrom(const std::string& s) {
 json recipeToJson(const Recipe& recipe);
 Recipe recipeFrom(const json& j);
 
+json overridesToJson(const std::vector<ParameterOverride>& overrides) {
+  json list = json::array();
+  for (const ParameterOverride& p : overrides) list.push_back({{"object", p.object}, {"key", p.key}, {"value", p.value}});
+  return list;
+}
+
+std::vector<ParameterOverride> overridesFrom(const json& j) {
+  std::vector<ParameterOverride> out;
+  for (const json& p : j) {
+    out.push_back({p.at("object").get<std::string>(), p.at("key").get<std::string>(), p.at("value").get<double>()});
+  }
+  return out;
+}
+
 json baseToJson(const BaseFeature& base) {
   return std::visit(
       Overloaded{
@@ -225,11 +239,16 @@ json baseToJson(const BaseFeature& base) {
               j["editing"] = {{"definition", g.editingDefinition},
                               {"instance", g.editingInstance},
                               {"instanceName", g.editingInstanceName}};
+              if (!g.editingOverrides.empty()) j["editing"]["overrides"] = overridesToJson(g.editingOverrides);
+              if (g.editingMirrored) j["editing"]["mirrored"] = true;
             }
             return j;
           },
           [](const ComponentInstance& c) {
-            return json{{"type", "instance"}, {"definition", c.definitionId}};
+            json j = {{"type", "instance"}, {"definition", c.definitionId}};
+            if (!c.overrides.empty()) j["overrides"] = overridesToJson(c.overrides);
+            if (c.mirrored) j["mirrored"] = true;
+            return j;
           },
       },
       base);
@@ -356,10 +375,18 @@ BaseFeature baseFrom(const json& j) {
       g.editingDefinition = e.value("definition", std::string());
       g.editingInstance = e.value("instance", std::string());
       g.editingInstanceName = e.value("instanceName", std::string());
+      if (e.contains("overrides")) g.editingOverrides = overridesFrom(e.at("overrides"));
+      g.editingMirrored = e.value("mirrored", false);
     }
     return g;
   }
-  if (type == "instance") return ComponentInstance{j.at("definition").get<std::string>()};
+  if (type == "instance") {
+    ComponentInstance c;
+    c.definitionId = j.at("definition").get<std::string>();
+    if (j.contains("overrides")) c.overrides = overridesFrom(j.at("overrides"));
+    c.mirrored = j.value("mirrored", false);
+    return c;
+  }
   throw std::runtime_error("unknown base feature type: " + type);
 }
 

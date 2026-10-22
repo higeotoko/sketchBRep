@@ -623,6 +623,32 @@ class MeasureTool : public DrawingTool {
   std::optional<double> lastDistance_;
 };
 
+// The selected component's origin and red axis (SketchUp's Change Axes):
+// click the new origin, then a point the red axis should point toward
+// (turning about the blue axis). Enter after the origin keeps the
+// directions. Nothing moves; every placement of the component follows.
+class ComponentAxesTool : public DrawingTool {
+ public:
+  using DrawingTool::DrawingTool;
+  QString name() const override;
+  QCursor cursor() const override;
+  void activate() override;
+  void cancel() override;
+  bool stepBack() override;
+  void mousePress(const ToolEvent& e) override;
+  void mouseMove(const ToolEvent& e) override;
+  bool keyPress(QKeyEvent* event) override;
+
+ protected:
+  std::optional<gp_Pln> workingPlane() const override;
+  QString targetText() const override;
+
+ private:
+  void finish(const std::optional<gp_Dir>& red);
+  doc::ObjectId instance_;
+  std::optional<gp_Pnt> origin_;
+};
+
 // Uniform scale of the selection: click the fixed point, a reference point,
 // then where the reference should go (or type a factor like "1.5", or a
 // length like "3000mm" for the new reference distance). Typing again right

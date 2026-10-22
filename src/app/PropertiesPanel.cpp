@@ -5,6 +5,8 @@
 #include <map>
 
 #include <QColorDialog>
+#include <QComboBox>
+#include <QTimer>
 #include <QDoubleSpinBox>
 #include <QCheckBox>
 #include <QFormLayout>
@@ -287,25 +289,78 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
   }
   if (def) {
     const std::string defId = def->id;
-    form_->addRow(new QLabel(tr("<b>共通寸法</b>（%1 個のコンポーネントに反映）")
-                                 .arg(document.instanceCount(defId))));
-    for (const doc::Object& child : def->objects) {
-      for (const doc::Parameter& p : modeler.definitionParameters(defId, child.id)) {
-        auto* spin = lengthSpin(p.value);
-        if (!p.isLength) spin->setSuffix(QString());
-        adjustForKey(spin, p.key);
-        const std::string key = p.key;
-        const doc::ObjectId childId = child.id;
-        const double initial = p.value;
-        connect(spin, &QDoubleSpinBox::editingFinished, this,
-                [this, defId, childId, key, spin, initial] {
-                  if (std::abs(spin->value() - initial) > 1e-9) {
-                    emit definitionParameterEdited(defId, childId, key, spin->value());
-                  }
-                });
-        form_->addRow(QString::fromStdString(child.name) + QStringLiteral(": ") + parameterLabel(p), spin);
+    const doc::ObjectId instanceId = o->id;
+    const auto& ref = std::get<doc::ComponentInstance>(o->recipe.base);
+    const int count = static_cast<int>(document.instanceCount(defId));
+    form_->addRow(new QLabel(tr("<b>コンポーネント「%1」</b>（配置 %2 個）")
+                                 .arg(QString::fromStdString(def->name).toHtmlEscaped())
+                                 .arg(count)));
+    // What a dimension edit reaches: every placement, or only this one.
+    auto* scope = new QComboBox;
+    scope->addItem(tr("すべての配置（%1 個）に反映").arg(count));
+    scope->addItem(tr("この配置だけ変更"));
+    scope->setCurrentIndex(placementOnly_ ? 1 : 0);
+    const doc::Modeler* source = &modeler;
+    const std::vector<doc::ObjectId> selected = selection;
+    connect(scope, qOverload<int>(&QComboBox::currentIndexChanged), this, [this, source, selected](int index) {
+      placementOnly_ = index == 1;
+      QTimer::singleShot(0, this, [this, source, selected] { refresh(*source, selected); });
+    });
+    form_->addRow(tr("寸法の変更"), scope);
+    int own = 0;
+    for (const doc::Modeler::PlacementParameter& p : modeler.placementParameters(instanceId)) {
+      own += p.own;
+      const double shown = placementOnly_ ? p.parameter.value : p.shared;
+      auto* spin = lengthSpin(shown);
+      if (!p.parameter.isLength) spin->setSuffix(QString());
+      adjustForKey(spin, p.parameter.key);
+      const std::string key = p.parameter.key;
+      const doc::ObjectId childId = p.object;
+      const bool only = placementOnly_;
+      connect(spin, &QDoubleSpinBox::editingFinished, this,
+              [this, defId, instanceId, childId, key, spin, shown, only] {
+                if (std::abs(spin->value() - shown) <= 1e-9) return;
+                if (only) {
+                  emit placementParameterEdited(instanceId, childId, key, spin->value());
+                } else {
+                  emit definitionParameterEdited(defId, childId, key, spin->value());
+                }
+              });
+      QString label = QString::fromStdString(p.objectName) + QStringLiteral(": ") + parameterLabel(p.parameter);
+      if (p.own) {
+        // Marked in both modes: a shared edit does not reach this placement.
+        label += tr(" ＊");
+        spin->setToolTip(tr("この配置だけ %1（共通は %2）")
+                             .arg(QString::number(p.parameter.value), QString::number(p.shared)));
       }
+      form_->addRow(label, spin);
     }
+    if (own > 0) {
+      auto* note = new QLabel(tr("＊ この配置だけの寸法 %1 件（共通寸法を変えてもこの配置は変わりません）").arg(own));
+      note->setWordWrap(true);
+      note->setStyleSheet(QStringLiteral("color: #8a5a00; font-size: 9pt"));
+      form_->addRow(note);
+    }
+    if (ref.mirrored) form_->addRow(new QLabel(tr("この配置は鏡像です")));
+
+    auto* actions = new QWidget;
+    auto* h = new QHBoxLayout(actions);
+    h->setContentsMargins(0, 0, 0, 0);
+    auto addAction = [&](const QString& text, const QString& tip, const QString& action, bool enabled = true) {
+      auto* b = new QToolButton;
+      b->setText(text);
+      b->setToolTip(tip);
+      b->setEnabled(enabled);
+      connect(b, &QToolButton::clicked, this, [this, instanceId, action] { emit placementAction(instanceId, action); });
+      h->addWidget(b);
+    };
+    addAction(tr("独立"), tr("この配置だけ別のコンポーネントにする（ほかの %1 個はそのまま）").arg(count - 1),
+              QStringLiteral("unique"), count > 1);
+    addAction(tr("寸法を戻す"), tr("この配置だけの寸法をやめて共通寸法に戻す"), QStringLiteral("reset"), own > 0);
+    addAction(tr("鏡像"), tr("赤軸方向に反転（その場で）"), QStringLiteral("mirror0"));
+    addAction(tr("軸…"), tr("原点と赤軸の向きを決め直す（どの配置も動きません）"), QStringLiteral("axes"));
+    h->addStretch();
+    form_->addRow(actions);
   }
 
   // Openings cut into this object (walls): width x height, editable.

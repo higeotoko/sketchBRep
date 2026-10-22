@@ -55,8 +55,11 @@ class MainWindow : public QMainWindow, public ToolHost {
   // Used by tests and the command line.
   bool openFile(const QString& path);
   bool saveFile(const QString& path);
-  enum class ToolId { Select, Line, Rectangle, PushPull, Move, Rotate, Offset, Curve, Revolve, Measure, Circle, Paint, Eraser, Arc, Dimension, Text, Section, FollowMe, Protractor, Polygon, Scale, Wall, Slab, Opening, Paste, Count };
+  enum class ToolId { Select, Line, Rectangle, PushPull, Move, Rotate, Offset, Curve, Revolve, Measure, Circle, Paint, Eraser, Arc, Dimension, Text, Section, FollowMe, Protractor, Polygon, Scale, Wall, Slab, Opening, Paste, ComponentAxes, Count };
   void activateTool(ToolId id);
+  // Component placement commands on the instances among `ids`: "unique",
+  // "reset", "mirror0".."mirror2" (red / green / blue) or "axes" (tool).
+  void placementAction(const std::vector<doc::ObjectId>& ids, const QString& action);
   Tool* activeTool() const { return active_; }
   QLineEdit* measurementBox() const { return measurement_; }
   QString lastError() const { return lastError_; }
@@ -223,6 +226,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   std::unique_ptr<PasteTool> pasteTool_;
   std::unique_ptr<PolygonTool> polygonTool_;
   std::unique_ptr<ScaleTool> scaleTool_;
+  std::unique_ptr<ComponentAxesTool> componentAxesTool_;
   std::unique_ptr<WallTool> wallTool_;
   std::unique_ptr<SlabTool> slabTool_;
   std::unique_ptr<OpeningTool> openingTool_;
