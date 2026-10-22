@@ -43,6 +43,7 @@ AI 専用の裏口は作らず、GUI のツールと同じ `doc::Modeler` を JS
 - 3DM: `export_3dm` / `import_3dm`（ファイル系なのでアプリ経由では無効、`sbr_cli` 等で使用）
 - 履歴・ファイル: `undo`, `redo`, `save`, `open`, `export_step`（**アプリ経由では無効**）
 - アプリ起動中のみ: `get_selection`（ユーザーが選んだ物・面）, `select`, `set_view`, `capture_view`（ビューの PNG を AI に画像で返す）, `list_scenes`, `go_to_scene`（保存ビューの表示・保存）
+- まとめて編集: `edit_each`（`where` に query_objects と同じ条件、`commands` の中の `"$id"` が各対象・`"$index"` が順番。`expect_count` で「何個のつもりか」を渡すと、ずれていたら何も変えずに拒否。全体で Undo 1 回、1 件でも失敗したら全部戻す。preview / propose の中でも使える）, `place_on_grid`（柱などを通り芯 X*/Y* の交点にコピー。`x`・`y`・`skip` で範囲指定、同じ名前の通り芯が 2 本あれば曖昧として拒否）
 - `preview`: コマンド列を一時コピーで試して差分（追加・変更・削除）を返す。本体は無変更。返された `revision` を `batch` の `expected_revision` に渡すと、その間にモデルが変わっていた場合は適用を拒否
 - アプリ起動中のみ `propose` / `proposal_status`: 提案を半透明で表示し、ユーザーが「適用／却下」を選ぶ（AI が勝手に確定しない）
 - `batch`: 複数コマンドを **Undo 1 回分**として実行。既定で原子的（途中で失敗したら全部元に戻す）。`"$1.id"` で 1 番目の結果を後のステップから参照できる
@@ -63,6 +64,12 @@ AI 専用の裏口は作らず、GUI のツールと同じ `doc::Modeler` を JS
 - **作図を消さない**: アプリ側は `model_write` / `external_io` のときだけ作図途中のツールを中断する。読み取り・`preview`・視点変更では、ユーザーが置いた始点や入力中の数値はそのまま
 - **設定も原子的**: タグの表示・断面・シーンは Undo 履歴に載る（1 操作 = 1 Undo）。`batch` が途中で失敗すると、形状と一緒にこれらも実行前に戻り、未保存フラグ・Undo 数・`revision` も変わらない
 - **変更セット**: `batch` の結果の `changes` と `preview` の `changes` は、実行で記録された Undo 1 手分の差分そのもの（`added` / `removed` / `modified[{id, aspects}]` / `definitions` / `settings`）。aspects は `geometry` / `placement`（回転を含む全行列）/ `visibility` / `attributes`（名前・タグ・色）/ `hierarchy`。提案（`propose`）のゴーストと件数も同じ変更セットから作り、適用時に結果と照合する
+
+### 太い編集の流れ（例：「2 階の窓を全部青く、1 つずつ 10 mm 上げて」）
+
+1. `query_objects`（`name` / `tag` / `within` / `region` など）で対象を探し、`total` で件数を確認（必要なら `select` でユーザーに見せる）
+2. `preview` に `edit_each`（`where` と同じ条件、`expect_count` = 件数）を入れて、変更セットを確認。アプリなら `propose` でゴースト表示
+3. 同じ内容を `batch`（`expected_revision` つき）で確定 → Undo 1 回で全部戻せる。人は直後に GUI で数値を直せる
 
 ## 使い方
 

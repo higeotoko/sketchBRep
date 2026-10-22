@@ -227,3 +227,77 @@ TEST(Transactions, EffectClassification) {
     if (tool["name"] == "batch") EXPECT_EQ(tool["effect"], "model_write");
   }
 }
+
+// Review §8: one instruction edits a whole set of objects, refuses when the
+// set is not what was meant, and is one undo step that fails as a whole.
+TEST(Transactions, EditEachIsGuardedAtomicAndPreviewable) {
+  Api a;
+  std::vector<std::string> windows;
+  for (int i = 0; i < 4; ++i) {
+    const std::string w = a.box(i * 2000.0);
+    a.ok("rename", {{"id", w}, {"name", "Window " + std::to_string(i + 1)}});
+    windows.push_back(w);
+  }
+  const std::string wall = a.box(20000);
+  a.ok("rename", {{"id", wall}, {"name", "Wall"}});
+  const std::size_t steps = a.modeler.history().undoCount();
+  const json where = {{"name", "Window"}};
+  const json paint = step("paint", {{"ids", {"$id"}}, {"color", "#3366cc"}});
+
+  // Wrong expectation: refused before anything changes.
+  const json refused = a.call("edit_each", {{"where", where}, {"commands", {paint}}, {"expect_count", 3}});
+  EXPECT_FALSE(refused["ok"]);
+  EXPECT_NE(refused["error"].get<std::string>().find("matches 4"), std::string::npos);
+  EXPECT_EQ(a.modeler.history().undoCount(), steps);
+  EXPECT_FALSE(a.call("edit_each", {{"where", {{"name", "Door"}}}, {"commands", {paint}}})["ok"]);
+
+  // Preview, then commit with the same change set; "$index" staggers.
+  const json commands = {paint, step("move", {{"ids", {"$id"}}, {"vector", {0, 0, "$index"}}})};
+  const json edit = step("edit_each", {{"where", where}, {"commands", commands}, {"expect_count", 4}});
+  const json preview = a.ok("preview", {{"commands", {edit}}});
+  ASSERT_TRUE(preview["would_succeed"].get<bool>()) << preview.dump();
+  EXPECT_EQ(preview["changes"]["modified"].size(), 4u);
+  const json done = a.ok("edit_each", {{"where", where}, {"commands", commands}, {"expect_count", 4}});
+  EXPECT_EQ(done["targets"].size(), 4u);
+  EXPECT_EQ(done["changes"], preview["changes"]);
+  EXPECT_EQ(a.modeler.history().undoCount(), steps + 1);
+  const auto* last = a.modeler.document().find(windows[3]);
+  EXPECT_NEAR(last->transform.TranslationPart().Z(), 3.0, 1e-9);
+  EXPECT_NEAR(last->color.b, 0.8, 1e-9);
+  EXPECT_NEAR(a.modeler.document().find(wall)->color.b, sbr::doc::Color{}.b, 1e-12);  // untouched
+
+  // A failure on any target reverts every target.
+  a.ok("undo");
+  a.ok("delete", {{"ids", {windows[2]}}});
+  const json bad = a.call("edit_each", {{"where", where},
+                                        {"commands", {step("set_parameter", {{"id", "$id"}, {"key", "op0.distance"},
+                                                                             {"value", "$index"}})}}});
+  EXPECT_FALSE(bad["ok"]);  // the first window would get distance 0
+  EXPECT_NEAR(a.ok("get_object", {{"id", windows[1]}})["volume"].get<double>(), 1e9, 1e-3);
+}
+
+// Columns on a structural grid: one undo step, refuses ambiguous names.
+TEST(Transactions, PlaceOnGridPutsCopiesOnCrossings) {
+  Api a;
+  a.ok("create_grid", {{"x_spacings", {3600, 3600, 3600}}, {"y_spacings", {6000, 6000}}});
+  const std::string column =
+      a.ok("create_box", {{"origin", {-5000, -5000, 0}}, {"width", 400}, {"depth", 400}, {"height", 3000}})["id"];
+  const std::size_t steps = a.modeler.history().undoCount();
+  const json r = a.ok("place_on_grid", {{"source", column}, {"skip", {"X4/Y3"}}});
+  EXPECT_EQ(r["count"], 11);  // 4 x 3 crossings, one skipped
+  const std::string at = r["placed"]["X3/Y2"];
+  const json b = a.ok("get_object", {{"id", at}})["bounds"];
+  EXPECT_NEAR(b["min"][0].get<double>(), 7200 - 200, 1e-6);
+  EXPECT_NEAR(b["min"][1].get<double>(), 6000 - 200, 1e-6);
+  EXPECT_NEAR(b["min"][2].get<double>(), 0, 1e-6);
+  EXPECT_EQ(a.modeler.history().undoCount(), steps + 1);
+  a.ok("undo");
+  EXPECT_FALSE(a.call("get_object", {{"id", at}})["ok"]);
+
+  const json some = a.ok("place_on_grid", {{"source", column}, {"x", {"X1", "X2"}}, {"y", "Y1"}});
+  EXPECT_EQ(some["count"], 2);
+  EXPECT_FALSE(a.call("place_on_grid", {{"source", column}, {"x", {"X9"}}})["ok"]);
+  // A second grid reuses the names: refused instead of guessing.
+  a.ok("create_grid", {{"origin", {50000, 0, 0}}, {"x_spacings", {3000}}});
+  EXPECT_FALSE(a.call("place_on_grid", {{"source", column}, {"x", {"X1"}}, {"y", {"Y1"}}})["ok"]);
+}

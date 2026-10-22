@@ -503,6 +503,8 @@ json changesSince(const doc::Modeler& m, const json& a) {
   return result;
 }
 
+json runPlaceOnGrid(doc::Modeler& m, const json& args);
+
 // --- command table ---------------------------------------------------------------------
 
 using Handler = std::function<json(doc::Modeler&, const json&)>;
@@ -938,6 +940,14 @@ const std::vector<CommandDef>& commands() {
          m.setSection(plane);
          return json{{"section", {{"origin", toJson(o)}, {"normal", toJson(n.XYZ())}}}};
        }},
+      {"place_on_grid",
+       "Copy 'source' (e.g. a column) to crossings of grid lines (from create_grid): 'x' and 'y' are line "
+       "names like [\"X1\", \"X3\"] or \"all\" (default); 'skip' lists crossings like \"X2/Y1\". The "
+       "bottom centre of the source lands on each crossing (its height is kept). One undo step; returns "
+       "the new ids by crossing. Lines with the same name twice are refused as ambiguous.",
+       SCHEMA({"type": "object", "properties": {"source": {"type": "string"}, "x": {}, "y": {}, "skip": {}},
+               "required": ["source"]}),
+       [](doc::Modeler& m, const json& a) { return runPlaceOnGrid(m, a); }},
       {"query_objects",
        "Find objects without reading the whole model: filters (all optional, combined with AND) kind, tag, "
        "ids (string or list), name (substring), parent (direct parent id, \"\" = top level), within "
@@ -1128,6 +1138,151 @@ json runBatch(const Context& c, const json& args, int depth) {
   return json{{"results", results}, {"changes", changesJson(changes)}};
 }
 
+// "$id" / "$index" in a step become the current target's id / position.
+json substituteTarget(const json& v, const std::string& id, std::size_t index) {
+  if (v.is_string()) {
+    if (v == "$id") return id;
+    if (v == "$index") return index;
+    return v;
+  }
+  if (v.is_array() || v.is_object()) {
+    json out = v;
+    for (auto it = out.begin(); it != out.end(); ++it) *it = substituteTarget(*it, id, index);
+    return out;
+  }
+  return v;
+}
+
+doc::ChangeSummary committedChanges(doc::Modeler& m, long long before) {
+  if (m.history().revision() == before || !m.history().lastCommand()) return {};
+  return doc::summarize(*m.history().lastCommand());
+}
+
+// The set-based edit (performance step 5 / review §8): find the targets
+// with the query_objects filter, check how many were meant, run the steps
+// for each, all as one undo step that is reverted entirely on any failure.
+json runEditEach(const Context& c, const json& args, int depth) {
+  doc::Modeler& m = c.modeler;
+  const ObjectFilter filter(arg(args, "where"));
+  const json& steps = arg(args, "commands");
+  if (!steps.is_array() || steps.empty()) throw ApiError("'commands' must be a non-empty array");
+  std::vector<ObjectId> targets;
+  for (const doc::Object& o : m.document().objects()) {
+    if (filter.matches(m.document(), o)) targets.push_back(o.id);
+  }
+  // Nested objects are reached through their group: only the topmost.
+  const std::set<ObjectId> matched(targets.begin(), targets.end());
+  std::vector<ObjectId> topmost;
+  for (const ObjectId& id : targets) {
+    bool nested = false;
+    const doc::Object* o = m.document().find(id);
+    for (int guard = 0; o && !o->parent.empty() && guard < 1000; ++guard) {
+      if (matched.count(o->parent)) {
+        nested = true;
+        break;
+      }
+      o = m.document().find(o->parent);
+    }
+    if (!nested) topmost.push_back(id);
+  }
+  if (topmost.empty()) throw ApiError("no object matches 'where' (check it with query_objects)");
+  if (args.contains("expect_count")) {
+    const json& expected = args.at("expect_count");
+    if (!expected.is_number_integer()) throw ApiError("'expect_count' must be an integer");
+    if (expected.get<std::size_t>() != topmost.size()) {
+      throw ApiError("'where' matches " + std::to_string(topmost.size()) + " objects, expected " +
+                     std::to_string(expected.get<long long>()) + "; nothing was changed");
+    }
+  }
+  if (topmost.size() > 10000) throw ApiError("more than 10000 targets: narrow 'where'");
+  const long long before = m.history().revision();
+  m.history().beginGroup(args.value("name", std::string("Edit each")));
+  for (std::size_t i = 0; i < topmost.size(); ++i) {
+    for (std::size_t k = 0; k < steps.size(); ++k) {
+      const json r = run(c, substituteTarget(steps[k], topmost[i], i), depth + 1);
+      if (!r.value("ok", false)) {
+        m.history().abortGroup();
+        const doc::Object* o = m.document().find(topmost[i]);
+        throw ApiError("step " + std::to_string(k + 1) + " failed on '" + (o ? o->name : topmost[i]) +
+                       "': " + r.value("error", std::string()) + " (nothing was changed)");
+      }
+    }
+  }
+  m.history().endGroup();
+  return json{{"targets", topmost}, {"changes", changesJson(committedChanges(m, before))}};
+}
+
+// Column grids: copies of 'source' at the crossings of named grid lines,
+// its reference point (bottom centre of its bounds) on each crossing.
+json runPlaceOnGrid(doc::Modeler& m, const json& args) {
+  const doc::Object& source = object(m, text(args, "source"));
+  const doc::Document& d = m.document();
+  // Grid lines by name; the same name twice is ambiguous and refused.
+  std::map<std::string, const doc::Object*> lines;
+  std::set<std::string> duplicated;
+  for (const doc::Object& o : d.objects()) {
+    if (o.kind() != doc::ObjectKind::Guide) continue;
+    if (!lines.emplace(o.name, &o).second) duplicated.insert(o.name);
+  }
+  auto pick = [&](const char* key, char prefix) {
+    std::vector<std::string> names;
+    if (!args.contains(key) || args.at(key) == "all") {
+      for (const auto& [name, o] : lines) {
+        if (!name.empty() && name[0] == prefix && o->layer == "Grid") names.push_back(name);
+      }
+      if (names.empty()) throw ApiError(std::string("no grid lines ") + prefix + "1.. (create_grid first)");
+      return names;
+    }
+    for (const std::string& n : ObjectFilter::strings(args, key)) names.push_back(n);
+    return names;
+  };
+  auto line = [&](const std::string& name) {
+    if (duplicated.count(name)) throw ApiError("grid line name '" + name + "' is ambiguous (used twice)");
+    const auto it = lines.find(name);
+    if (it == lines.end()) throw ApiError("no grid line named '" + name + "'");
+    const auto& g = std::get<doc::GuideLine>(it->second->recipe.base);
+    const gp_Trsf t = d.worldTransform(*it->second);
+    return gp_Lin(g.point.Transformed(t), g.direction.Transformed(t));
+  };
+  const std::set<std::string> skip = ObjectFilter::strings(args, "skip");
+  const json b = worldBounds(d, source);
+  if (b.is_null()) throw ApiError("the source has no geometry");
+  const gp_Pnt lo(xyz(b["min"], "min")), hi(xyz(b["max"], "max"));
+  const gp_Pnt reference(0.5 * (lo.X() + hi.X()), 0.5 * (lo.Y() + hi.Y()), lo.Z());
+
+  std::vector<std::pair<std::string, gp_Pnt>> spots;
+  for (const std::string& xn : pick("x", 'X')) {
+    const gp_Lin xl = line(xn);
+    for (const std::string& yn : pick("y", 'Y')) {
+      if (skip.count(xn + "/" + yn)) continue;
+      const gp_Lin yl = line(yn);
+      // Crossing in plan (the lines lie at the grid's level).
+      const gp_Dir u = xl.Direction(), v = yl.Direction();
+      const double det = u.X() * v.Y() - u.Y() * v.X();
+      if (std::abs(det) < 1e-9) throw ApiError("grid lines '" + xn + "' and '" + yn + "' are parallel");
+      const gp_Vec w(xl.Location(), yl.Location());
+      const double s = (w.X() * v.Y() - w.Y() * v.X()) / det;
+      const gp_Pnt p = xl.Location().Translated(gp_Vec(u) * s);
+      spots.emplace_back(xn + "/" + yn, gp_Pnt(p.X(), p.Y(), reference.Z()));
+    }
+  }
+  if (spots.empty()) throw ApiError("no crossings left to place at");
+  json placed = json::object();
+  m.history().beginGroup("Place on grid");
+  for (const auto& [where, p] : spots) {
+    gp_Trsf delta;
+    delta.SetTranslation(reference, p);
+    auto copy = m.copy({source.id}, delta);
+    if (!copy) {
+      m.history().abortGroup();
+      throw ApiError("could not place at " + where + ": " + copy.error());
+    }
+    placed[where] = copy->front();
+  }
+  m.history().endGroup();
+  return json{{"placed", placed}, {"count", spots.size()}};
+}
+
 // Runs a batch on a scratch copy of the model and reports what it would
 // change; the real model is untouched (spec 07 §9.2).
 json runPreview(const Context& c, const json& args) {
@@ -1166,6 +1321,7 @@ json run(const Context& c, const json& request, int depth) {
       return json{{"ok", true}, {"result", runBatch(c, args, depth)}};
     }
     if (name == "describe") return json{{"ok", true}, {"result", json::parse(c.api.schemaJson())}};
+    if (name == "edit_each") return json{{"ok", true}, {"result", runEditEach(c, args, depth)}};
     if (name == "preview") {
       if (depth > 0) throw ApiError("preview cannot be nested");
       return json{{"ok", true}, {"result", runPreview(c, args)}};
@@ -1262,6 +1418,22 @@ std::string CommandApi::schemaJson() const {
                    {{"type", "object"},
                     {"properties", {{"commands", {{"type", "array"}, {"items", {{"type", "object"}}}}}}},
                     {"required", {"commands"}}}}});
+  list.push_back({{"name", "edit_each"},
+                  {"effect", "model_write"},
+                  {"description",
+                   "Apply 'commands' to every object matching 'where' (the filters of query_objects; nested "
+                   "matches are reached through their topmost matching group). In the commands \"$id\" is "
+                   "the current target and \"$index\" its position (0, 1, ...). Give 'expect_count' (from a "
+                   "query_objects total) so a wider or narrower match than intended is refused. One undo "
+                   "step; any failure reverts everything. Works inside preview / propose."},
+                  {"input_schema",
+                   {{"type", "object"},
+                    {"properties",
+                     {{"where", {{"type", "object"}}},
+                      {"commands", {{"type", "array"}, {"items", {{"type", "object"}}}}},
+                      {"expect_count", {{"type", "integer"}}},
+                      {"name", {{"type", "string"}}}}},
+                    {"required", {"where", "commands"}}}}});
   list.push_back({{"name", "batch"},
                   {"effect", "model_write"},
                   {"description",
