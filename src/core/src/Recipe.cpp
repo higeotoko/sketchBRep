@@ -7,6 +7,7 @@
 #include <BRepTools.hxx>
 #include <TopLoc_Location.hxx>
 #include <TopExp_Explorer.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS.hxx>
 
@@ -27,6 +28,7 @@ Overloaded(Ts...) -> Overloaded<Ts...>;
 
 std::string opKey(std::size_t index) { return "op" + std::to_string(index) + ".distance"; }
 std::string angleKey(std::size_t index) { return "op" + std::to_string(index) + ".angle"; }
+std::string scaleKey(std::size_t index) { return "op" + std::to_string(index) + ".scale"; }
 std::string operandPrefix(std::size_t index) { return "in" + std::to_string(index) + "."; }
 
 geom::BooleanOp toGeom(BooleanKind kind) {
@@ -265,6 +267,20 @@ Result<TopoDS_Shape> regenerate(const Recipe& recipe, const RegenContext& contex
               for (std::size_t k = 1; k < op.points.size(); ++k) splitLines.emplace_back(op.points[k - 1], op.points[k]);
               return geom::splitFace(shape, face.value(), op.points);
             },
+            [&](const ScaleOp& op) -> Result<TopoDS_Shape> {
+              if (!std::isfinite(op.factor) || op.factor < 1e-6) {
+                return Result<TopoDS_Shape>::failure("Scale factor must be positive");
+              }
+              gp_Trsf t;
+              t.SetScale(op.center, op.factor);
+              BRepBuilderAPI_Transform scaled(shape, t, true);
+              if (!scaled.IsDone()) return Result<TopoDS_Shape>::failure("Scaling failed");
+              for (geom::Segment& s : splitLines) {
+                s.first.Transform(t);
+                s.second.Transform(t);
+              }
+              return scaled.Shape();
+            },
             [&](const PushPullOp& op) -> Result<TopoDS_Shape> {
               const geom::ValidationReport report = geom::validateShape(shape, true);
               if (!report.valid) {
@@ -326,6 +342,7 @@ std::vector<Parameter> parameters(const Recipe& recipe) {
                    },
                    [&](const SplitOp&) {},
                    [&](const HoleOp&) {},
+                   [&](const ScaleOp& op) { out.push_back({scaleKey(i), "Scale", op.factor, false}); },
                    [&](const OffsetFaceOp& op) {
                      out.push_back({opKey(i), "Push/Pull " + std::to_string(i) + " distance",
                                     op.distance, true});
@@ -387,9 +404,15 @@ Status setParameter(Recipe& recipe, const std::string& key, double value) {
       revolve->angle = value * M_PI / 180.0;
       return Status::success();
     }
+    if (auto* scale = std::get_if<ScaleOp>(&recipe.modifiers[i])) {
+      if (key != scaleKey(i)) continue;
+      if (!(value > 1e-6)) return Status::failure("Scale factor must be positive");
+      scale->factor = value;
+      return Status::success();
+    }
     if (key != opKey(i)) continue;
     bool found = false;
-    std::visit(Overloaded{[&](RevolveOp&) {}, [&](SplitOp&) {}, [&](HoleOp&) {},
+    std::visit(Overloaded{[&](RevolveOp&) {}, [&](SplitOp&) {}, [&](HoleOp&) {}, [&](ScaleOp&) {},
                           [&](auto& op) {
                             op.distance = value;
                             found = true;
@@ -440,6 +463,7 @@ std::string describe(const Recipe& recipe) {
                    [&](const ExtrudeOp& op) { out << " > Extrude " << op.distance; },
                    [&](const PushPullOp& op) { out << " > Push/Pull " << op.distance; },
                    [&](const SplitOp&) { out << " > Split face"; },
+                   [&](const ScaleOp& op) { out << " > Scale x" << op.factor; },
                    [&](const HoleOp&) { out << " > Hole"; },
                    [&](const OffsetFaceOp& op) { out << " > Push/Pull (curved) " << op.distance; },
                    [&](const OffsetOp& op) { out << " > Offset " << op.distance; },

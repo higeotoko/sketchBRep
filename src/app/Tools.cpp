@@ -2316,6 +2316,158 @@ void PasteTool::mousePress(const ToolEvent& e) {
   if (onPlaced_) onPlaced_(*ids);
 }
 
+// --- Scale ------------------------------------------------------------------------------
+
+QString ScaleTool::name() const { return QObject::tr("尺度"); }
+QCursor ScaleTool::cursor() const { return toolCursor(CursorKind::Scale); }
+
+void ScaleTool::activate() {
+  resetTracking();
+  cancel();
+  host_.viewport().setPickMode(PickMode::None);
+  host_.setMeasurement(QObject::tr("倍率"), QString());
+  host_.setStatus(QObject::tr("拡大縮小の基準（動かない点）をクリック。先に対象を選択しておきます"));
+}
+
+void ScaleTool::cancel() {
+  stage_ = Stage::Fixed;
+  factor_ = 1.0;
+  resetLock();
+  host_.viewport().clearPreview();
+  host_.viewport().hideSnap();
+}
+
+bool ScaleTool::stepBack() {
+  if (stage_ == Stage::Fixed) return false;
+  stage_ = stage_ == Stage::Scaling ? Stage::Reference : Stage::Fixed;
+  host_.viewport().clearPreview();
+  return true;
+}
+
+std::optional<double> ScaleTool::factorAt(const gp_Pnt& p) const {
+  const gp_Vec ref(fixed_, reference_);
+  const double d0 = ref.Magnitude();
+  if (d0 < tolerance::kMinDimension) return std::nullopt;
+  // Distance along the reference direction: moving past the fixed point
+  // does not mirror.
+  const double d = gp_Vec(fixed_, p).Dot(ref / d0);
+  if (d < tolerance::kMinDimension) return std::nullopt;
+  double f = d / d0;
+  const double snapped = std::round(f * 20.0) / 20.0;  // 0.05 steps when close
+  if (std::abs(f - snapped) < 0.005) f = snapped;
+  return f;
+}
+
+void ScaleTool::commit(double factor) {
+  const Status s = host_.modeler().scale(targets_, fixed_, factor);
+  if (!s) {
+    host_.reportError(QString::fromStdString(s.message()));
+  } else {
+    last_ = Last{targets_, fixed_, fixed_.Distance(reference_), host_.modeler().history().undoCount()};
+    host_.setStatus(QObject::tr("%1 倍にしました（続けて数値を入力すると倍率を変更）").arg(factor));
+  }
+  stage_ = Stage::Fixed;
+  resetLock();
+  host_.viewport().clearPreview();
+}
+
+void ScaleTool::mouseMove(const ToolEvent& e) {
+  Viewport& vp = host_.viewport();
+  switch (stage_) {
+    case Stage::Fixed: {
+      const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
+      host_.setStatus(QObject::tr("基準（動かない点）をクリック  [%1]").arg(snapLabel(r.kind)));
+      return;
+    }
+    case Stage::Reference: {
+      const snap::SnapResult r = snapAt(e, fixed_, std::nullopt);
+      if (!r.valid()) return;
+      if (r.point.Distance(fixed_) > 1e-6) vp.setPreview(BRepBuilderAPI_MakeEdge(fixed_, r.point).Edge());
+      host_.setStatus(QObject::tr("基準の長さを測る点をクリック  [%1]").arg(snapLabel(r.kind)));
+      return;
+    }
+    case Stage::Scaling: {
+      const snap::SnapResult r = snapAt(e, fixed_, std::nullopt);
+      if (!r.valid()) return;
+      const auto f = factorAt(r.point);
+      if (!f) return;
+      factor_ = *f;
+      gp_Trsf t;
+      t.SetScale(fixed_, factor_);
+      vp.setGhost(targets_, t);
+      host_.setMeasurement(QObject::tr("倍率"), QString::number(factor_, 'g', 4));
+      host_.setStatus(QObject::tr("クリックで確定、または倍率（1.5）か長さ（3000mm）を入力"));
+      return;
+    }
+  }
+}
+
+void ScaleTool::mousePress(const ToolEvent& e) {
+  switch (stage_) {
+    case Stage::Fixed: {
+      targets_ = host_.selection();
+      if (targets_.empty()) {
+        host_.reportError(QObject::tr("先に拡大縮小する対象を選択してください"));
+        return;
+      }
+      const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
+      if (!r.valid()) return;
+      fixed_ = r.point;
+      stage_ = Stage::Reference;
+      return;
+    }
+    case Stage::Reference: {
+      const snap::SnapResult r = snapAt(e, fixed_, std::nullopt);
+      if (!r.valid() || r.point.Distance(fixed_) < tolerance::kMinDimension) return;
+      reference_ = r.point;
+      stage_ = Stage::Scaling;
+      return;
+    }
+    case Stage::Scaling:
+      mouseMove(e);
+      if (std::abs(factor_ - 1.0) > 1e-12) commit(factor_);
+      return;
+  }
+}
+
+void ScaleTool::applyMeasurement(const QString& text) {
+  const QString t = text.trimmed();
+  // A unit makes it a length (new reference distance), otherwise a factor.
+  const bool isLength = t.contains(QRegularExpression(QStringLiteral("[a-zA-Z]")));
+  double referenceDistance = 0.0;
+  if (stage_ == Stage::Scaling) {
+    referenceDistance = fixed_.Distance(reference_);
+  } else if (last_ && host_.modeler().history().undoCount() == last_->undoCount) {
+    referenceDistance = last_->referenceDistance;
+  } else {
+    host_.reportError(QObject::tr("基準と参照点をクリックしてから倍率を入力してください"));
+    return;
+  }
+  double factor = 0.0;
+  if (isLength) {
+    const auto length = units::parseLength(t.toStdString());
+    if (!length || *length <= 0 || referenceDistance < tolerance::kMinDimension) {
+      host_.reportError(QObject::tr("長さを解釈できません: %1").arg(text));
+      return;
+    }
+    factor = *length / referenceDistance;
+  } else {
+    bool ok = false;
+    factor = t.toDouble(&ok);
+    if (!ok || factor <= 0) {
+      host_.reportError(QObject::tr("倍率を解釈できません: %1").arg(text));
+      return;
+    }
+  }
+  if (stage_ != Stage::Scaling) {  // re-edit the last scale
+    host_.modeler().undo();
+    targets_ = last_->targets;
+    fixed_ = last_->fixed;
+    reference_ = fixed_.Translated(gp_Vec(1, 0, 0) * last_->referenceDistance);
+  }
+  commit(factor);
+}
+
 // --- Protractor -----------------------------------------------------------------------
 
 QString ProtractorTool::name() const { return QObject::tr("分度器"); }

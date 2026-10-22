@@ -36,7 +36,7 @@ AI 専用の裏口は作らず、GUI のツールと同じ `doc::Modeler` を JS
 - 作る: `create_line`, `face_from_loop`（線・円弧で囲んだ輪郭を面に）, `create_rectangle`, `create_circle`, `create_regular_polygon`（正多角形。半径・辺の数を後から変更可）, `create_arc`（正確な円弧・弓形の面）, `create_polygon`, `create_curve`, `create_box`
 - 注記: `create_dimension`, `create_text`, `set_text`（寸法・部屋名や面積のラベル。`get_object` で文字も読める）
 - 補助: `create_guide`（点と方向で無限長のガイド線。作図の吸着先、出力対象外）, `clear_guides`（通り芯は残す）, `create_grid`（通り芯 X1.. / Y1.. を符号・スパン寸法つきで一括作成。Undo 1 回。結果の `lines` で「X3」のように名前から ID を引ける）
-- 編集: `split_face`（面を線で分割）, `extrude`, `push_pull`（面は番号か `{"normal": [0,0,1]}`）, `set_parameter`, `offset`, `move`, `rotate`, `copy_array`（直線・円形）, `boolean`, `revolve`, `loft`, `sweep`
+- 編集: `split_face`（面を線で分割）, `extrude`, `push_pull`（面は番号か `{"normal": [0,0,1]}`）, `set_parameter`, `offset`, `move`, `rotate`, `scale`（等倍・パラメトリック）, `copy_array`（直線・円形）, `boolean`, `revolve`, `loft`, `sweep`
 - 構造・属性: `group`, `ungroup`, `make_component`, `set_definition_parameter`, `rename`, `set_tag`, `paint`, `delete`
 - 表示状態: `hide` / `unhide_all`（非表示は描画・吸着・出力の対象外）, `set_section`（断面。平面図・断面図の切断）, `list_tags`, `set_tag_visible`
 - 3DM: `export_3dm` / `import_3dm`（ファイル系なのでアプリ経由では無効、`sbr_cli` 等で使用）

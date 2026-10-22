@@ -210,7 +210,14 @@ struct HoleOp {
   BooleanOperand outline;
 };
 
-using Modifier = std::variant<ExtrudeOp, PushPullOp, OffsetOp, RevolveOp, SplitOp, OffsetFaceOp, HoleOp>;
+// Uniform scale about a point (object coordinates). Exact: planes stay
+// planes, so later push/pulls keep working. The factor stays editable.
+struct ScaleOp {
+  gp_Pnt center;
+  double factor = 1.0;
+};
+
+using Modifier = std::variant<ExtrudeOp, PushPullOp, OffsetOp, RevolveOp, SplitOp, OffsetFaceOp, HoleOp, ScaleOp>;
 
 struct Recipe {
   BaseFeature base;

@@ -57,7 +57,10 @@ class Viewport : public QWidget {
 
   QPaintEngine* paintEngine() const override { return nullptr; }
 
-  void setTool(Tool* tool) { tool_ = tool; }
+  void setTool(Tool* tool) {
+    tool_ = tool;
+    typing_ = false;
+  }
 
   // --- document display ---------------------------------------------------
   void scheduleSync();
@@ -154,6 +157,8 @@ class Viewport : public QWidget {
   void mouseDoubleClickEvent(QMouseEvent* event) override;
   void wheelEvent(QWheelEvent* event) override;
   void keyPressEvent(QKeyEvent* event) override;
+  // Keeps letters typed as units ("3m", "8s") from triggering tool shortcuts.
+  bool event(QEvent* event) override;
   void keyReleaseEvent(QKeyEvent* event) override;
 
  private:
@@ -201,6 +206,7 @@ class Viewport : public QWidget {
   display::DisplayQuality quality_ = display::DisplayQuality::normal();
   bool shaded_ = true;
   bool xRay_ = false;
+  bool typing_ = false;  // a value is being typed into the measurement box
   PickMode pickMode_ = PickMode::None;
 
   Handle(AIS_Shape) preview_;

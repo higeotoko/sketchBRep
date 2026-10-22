@@ -340,6 +340,9 @@ json modifierToJson(const Modifier& m) {
                           {"centroid", toJson(op.face.centroid)},
                           {"area", op.face.area}}}};
           },
+          [](const ScaleOp& op) {
+            return json{{"type", "scale"}, {"center", toJson(op.center)}, {"factor", op.factor}};
+          },
           [](const PushPullOp& op) {
             return json{{"type", "pushpull"},
                         {"distance", op.distance},
@@ -382,6 +385,7 @@ Modifier modifierFrom(const json& j) {
     op.face.surfaceType = f.value("surfaceType", 0);
     return op;
   }
+  if (type == "scale") return ScaleOp{pointFrom(j.at("center")), j.at("factor").get<double>()};
   if (type == "split") {
     SplitOp op;
     op.points = pointsFrom(j.at("points"));

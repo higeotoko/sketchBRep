@@ -1057,6 +1057,47 @@ Status Modeler::transform(const std::vector<ObjectId>& ids, const gp_Trsf& world
   return Status::success();
 }
 
+Status Modeler::scale(const std::vector<ObjectId>& ids, const gp_Pnt& center, double factor) {
+  if (!std::isfinite(factor) || factor < 1e-6) return Status::failure("Scale factor must be positive");
+  const std::vector<ObjectId> roots = topmost(ids);
+  if (roots.empty()) return Status::failure("Nothing selected");
+  ChangeSet changes(document_);
+  const RegenContext context = document_.regenContext();
+  for (const ObjectId& root : roots) {
+    for (const ObjectId& id : document_.subtree(root)) {
+      const Object* current = document_.find(id);
+      if (!current || std::holds_alternative<GroupNode>(current->recipe.base)) continue;
+      if (std::holds_alternative<ComponentInstance>(current->recipe.base)) {
+        return Status::failure("Components cannot be scaled");
+      }
+      Object o = *current;
+      // The fixed point in this object's own coordinates.
+      const gp_Pnt c = center.Transformed(document_.worldTransform(o).Inverted());
+      auto scalePoint = [&](gp_Pnt& p) { p = c.Translated(gp_Vec(c, p) * factor); };
+      if (auto* g = std::get_if<GuideLine>(&o.recipe.base)) {
+        scalePoint(g->point);
+      } else if (auto* d = std::get_if<LinearDimension>(&o.recipe.base)) {
+        scalePoint(d->start);
+        scalePoint(d->end);
+        d->offset *= factor;
+      } else if (auto* t = std::get_if<TextNote>(&o.recipe.base)) {
+        scalePoint(t->position);
+        if (t->target) scalePoint(*t->target);
+      } else if (auto* last = o.recipe.modifiers.empty() ? nullptr : std::get_if<ScaleOp>(&o.recipe.modifiers.back());
+                 last && last->center.Distance(c) < tolerance::kLinear) {
+        last->factor *= factor;
+      } else {
+        o.recipe.modifiers.push_back(ScaleOp{c, factor});
+      }
+      const Status built = rebuild(o, context);
+      if (!built) return built;
+      changes.modify(o);
+    }
+  }
+  history_.execute(changes.build("Scale"));
+  return Status::success();
+}
+
 Status Modeler::move(const std::vector<ObjectId>& ids, const gp_Vec& offset) {
   gp_Trsf t;
   t.SetTranslation(offset);

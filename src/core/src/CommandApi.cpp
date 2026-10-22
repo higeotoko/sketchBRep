@@ -519,6 +519,17 @@ const std::vector<CommandDef>& commands() {
                        number(a, "angle") * kDegree));
          return idsResult(ids(a, "ids"));
        }},
+      {"scale",
+       "Scale objects uniformly by 'factor' about the world point 'center' (parametric: the factor stays "
+       "editable as op<N>.scale). Groups scale their contents; components cannot be scaled.",
+       SCHEMA({"type": "object", "properties": {
+         "ids": {"type": "array", "items": {"type": "string"}},
+         "center": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+         "factor": {"type": "number"}}, "required": ["ids", "center", "factor"]}),
+       [](doc::Modeler& m, const json& a) {
+         must(m.scale(ids(a, "ids"), point(a, "center"), number(a, "factor")));
+         return json::object();
+       }},
       {"copy_array",
        "Copy objects 'count' times. Linear: give 'vector' (step). Polar: give axis_origin, "
        "axis_direction and 'angle' (step, degrees).",

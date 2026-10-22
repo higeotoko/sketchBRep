@@ -166,6 +166,11 @@ class Modeler {
                    const std::string& commandName = "Move");
   Status move(const std::vector<ObjectId>& ids, const gp_Vec& offset);
   Status rotate(const std::vector<ObjectId>& ids, const gp_Ax1& axis, double angleRadians);
+  // Uniform scale about a world point (one undo step). Solids, faces and
+  // curves get a parametric ScaleOp (merged with a directly preceding one);
+  // guides and annotations have their points scaled. Groups scale all their
+  // contents; components are refused (edit the definition instead).
+  Status scale(const std::vector<ObjectId>& ids, const gp_Pnt& center, double factor);
   // Copies the objects `count` times, copy k placed at worldDelta^k (linear
   // or polar arrays). Returns the ids of the new top-level copies.
   Result<std::vector<ObjectId>> copy(const std::vector<ObjectId>& ids, const gp_Trsf& worldDelta,

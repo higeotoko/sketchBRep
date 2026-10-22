@@ -37,6 +37,8 @@ const Entry kEntries[] = {
     {"Rectangle dimensions must be non-zero", "幅と奥行きは 0 にできません"},
     {"Circle radius must be positive", "半径は正の値にしてください"},
     {"Nothing is hidden", "非表示の物はありません（タグで隠した物はタグ一覧で表示を切り替えてください）"},
+    {"Components cannot be scaled", "コンポーネントは拡大縮小できません。定義の寸法を変えるか、分解してから拡大縮小してください"},
+    {"Scale factor must be positive", "倍率は正の値にしてください"},
     {"A polygon needs 3 to 256 sides", "多角形の辺の数は 3〜256 にしてください"},
     {"Polygon radius must be positive", "半径は正の値にしてください"},
     {"Grid spacings must be positive", "通り芯の間隔は正の値にしてください"},

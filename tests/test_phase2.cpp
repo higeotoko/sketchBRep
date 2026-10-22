@@ -2,6 +2,7 @@
 
 #include <cmath>
 
+#include <BRepAdaptor_Surface.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 
@@ -772,4 +773,65 @@ TEST(Clipboard, PasteGoesIntoTheEditedGroup) {
   const Object* p = m.document().find(pasted->front());
   EXPECT_EQ(p->parent, *g);
   test::expectBounds(m.document().worldShape(*p), 0, 0, 0, 300, 300, 0, 1e-6);  // same world place
+}
+
+TEST(Scale, UniformScaleIsParametricAndExact) {
+  Modeler m;
+  auto box = m.createRectangle(geom::SketchPlane::ground(), 1000, 2000);
+  ASSERT_TRUE(box.ok() && m.extrude(*box, 500).ok());
+  ASSERT_TRUE(m.move({*box}, gp_Vec(1000, 0, 0)).ok());
+  ASSERT_TRUE(m.scale({*box}, gp_Pnt(1000, 0, 0), 2.0).ok());
+  test::expectBounds(m.document().worldShape(*box), 1000, 0, 0, 3000, 4000, 1000, 1e-6);
+  // Twice in a row about the same point: one ScaleOp with the product.
+  ASSERT_TRUE(m.scale({*box}, gp_Pnt(1000, 0, 0), 1.5).ok());
+  const Object* o = m.document().find(*box);
+  ASSERT_EQ(o->recipe.modifiers.size(), 2u);
+  EXPECT_NEAR(std::get<ScaleOp>(o->recipe.modifiers.back()).factor, 3.0, 1e-12);
+  // Planes stay planes: push/pull still works afterwards.
+  for (TopExp_Explorer e(o->shape, TopAbs_FACE); e.More(); e.Next()) {
+    EXPECT_EQ(BRepAdaptor_Surface(TopoDS::Face(e.Current())).GetType(), GeomAbs_Plane);
+  }
+  ASSERT_TRUE(m.setParameter(*box, "op1.scale", 0.5).ok());
+  test::expectBounds(m.document().worldShape(*box), 1000, 0, 0, 1500, 1000, 250, 1e-6);
+  ASSERT_TRUE(m.setParameter(*box, "op0.distance", 1000).ok());  // the original height, scaled
+  test::expectBounds(m.document().worldShape(*box), 1000, 0, 0, 1500, 1000, 500, 1e-6);
+  EXPECT_FALSE(m.setParameter(*box, "op1.scale", 0).ok());
+  EXPECT_FALSE(m.scale({*box}, gp_Pnt(), -1).ok());
+  m.undo();
+  m.undo();
+  m.undo();
+  m.undo();
+  test::expectBounds(m.document().worldShape(*box), 1000, 0, 0, 2000, 2000, 500, 1e-6);
+}
+
+TEST(Scale, GroupsGuidesAndComponents) {
+  Modeler m;
+  auto a = m.createRectangle(geom::SketchPlane::ground(), 1000, 1000);
+  ASSERT_TRUE(a.ok() && m.extrude(*a, 1000).ok());
+  auto b = m.createRectangle(geom::SketchPlane::ground(), 1000, 1000);
+  ASSERT_TRUE(b.ok() && m.extrude(*b, 1000).ok());
+  ASSERT_TRUE(m.move({*b}, gp_Vec(2000, 0, 0)).ok());
+  auto guide = m.createGuide(gp_Pnt(3000, 0, 0), gp::DY());
+  ASSERT_TRUE(guide.ok());
+  auto g = m.group({*a, *b, *guide});
+  ASSERT_TRUE(g.ok());
+  ASSERT_TRUE(m.move({*g}, gp_Vec(0, 0, 100)).ok());
+  const std::size_t steps = m.history().undoCount();
+  ASSERT_TRUE(m.scale({*g}, gp_Pnt(0, 0, 100), 2.0).ok());
+  EXPECT_EQ(m.history().undoCount(), steps + 1);
+  test::expectBounds(m.document().worldShape(*a), 0, 0, 100, 2000, 2000, 2100, 1e-6);
+  test::expectBounds(m.document().worldShape(*b), 4000, 0, 100, 6000, 2000, 2100, 1e-6);
+  const auto& line = std::get<GuideLine>(m.document().find(*guide)->recipe.base);
+  EXPECT_NEAR(line.point.X(), 6000, 1e-6);
+
+  // Saved and loaded with the scale.
+  const std::string path = test::tempPath("scaled.sbr");
+  ASSERT_TRUE(m.save(path).ok());
+  Modeler loaded;
+  ASSERT_TRUE(loaded.load(path).ok());
+  test::expectBounds(loaded.document().worldShape(*b), 4000, 0, 100, 6000, 2000, 2100, 1e-6);
+
+  auto component = m.makeComponent({*g});
+  ASSERT_TRUE(component.ok()) << component.error();
+  EXPECT_FALSE(m.scale({*component}, gp_Pnt(), 2.0).ok());
 }

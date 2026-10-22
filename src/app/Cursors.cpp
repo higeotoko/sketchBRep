@@ -206,6 +206,24 @@ QPixmap draw(CursorKind kind, QPoint& hotspot) {
       hotspot = QPoint(2, 30);
       break;
     }
+    case CursorKind::Scale: {
+      // Small and large squares sharing a corner, with a diagonal arrow.
+      QPainterPath small;
+      small.addRect(QRectF(3, 19, 10, 10));
+      halo(p, small);
+      QPainterPath large;
+      large.addRect(QRectF(3, 7, 22, 22));
+      halo(p, large);
+      QPainterPath arrow;
+      arrow.moveTo(13, 19);
+      arrow.lineTo(28, 4);
+      arrow.moveTo(21, 4);
+      arrow.lineTo(28, 4);
+      arrow.lineTo(28, 11);
+      halo(p, arrow);
+      hotspot = QPoint(3, 29);
+      break;
+    }
     case CursorKind::Protractor: {
       // Half disc on its base line, with an angled ray from the centre.
       QPainterPath arc;

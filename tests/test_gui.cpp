@@ -116,6 +116,8 @@ class GuiPhase1 : public QObject {
   void copyPasteFollowsCursor();
   void polygonToolSidesAndRadius();
   void exportImageWritesPng();
+  void typedUnitsDoNotTriggerShortcuts();
+  void scaleToolFactorAndLength();
   void circleToolTypedRadius();
   void groupEditModeAndLooseFaceDelete();
   void lineToolStaysOnWallPlane();
@@ -496,7 +498,7 @@ void GuiPhase1::eachToolHasItsCursor() {
                   MainWindow::ToolId::Curve, MainWindow::ToolId::Circle,
                   MainWindow::ToolId::Measure, MainWindow::ToolId::Revolve, MainWindow::ToolId::Arc,
                   MainWindow::ToolId::Paint, MainWindow::ToolId::Eraser, MainWindow::ToolId::Protractor,
-                  MainWindow::ToolId::Polygon}) {
+                  MainWindow::ToolId::Polygon, MainWindow::ToolId::Scale}) {
     f.window.activateTool(id);
     QCOMPARE(f.vp->cursor().shape(), Qt::BitmapCursor);
     QVERIFY(!f.vp->cursor().pixmap().isNull());
@@ -781,6 +783,47 @@ void GuiPhase1::exportImageWritesPng() {
   QImage image(path);
   QVERIFY(!image.isNull());
   QVERIFY(image.width() > 100 && image.height() > 100);
+}
+
+void GuiPhase1::typedUnitsDoNotTriggerShortcuts() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  f.window.activateWindow();  // shortcuts only fire in the active window
+  QTest::qWait(50);
+  QVERIFY(f.window.isActiveWindow());
+  f.window.activateTool(MainWindow::ToolId::Circle);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(300, 300, 0)));
+  type(f.vp, QStringLiteral("0.5m"));  // "m" must not pick the move tool
+  QVERIFY(dynamic_cast<CircleTool*>(f.window.activeTool()));
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  QVERIFY(std::abs(geom::area(m.document().objects().front().shape) - M_PI * 500 * 500) < 1.0);
+  // A lone letter still switches tools.
+  QTest::keyClick(f.vp, Qt::Key_M);
+  QTest::qWait(30);
+  QVERIFY(dynamic_cast<MoveTool*>(f.window.activeTool()));
+}
+
+void GuiPhase1::scaleToolFactorAndLength() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+  f.window.activateTool(MainWindow::ToolId::Scale);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));  // nothing selected yet
+  QVERIFY(!f.window.lastError().isEmpty());
+  f.window.setSelection({box});
+  const std::size_t steps = m.history().undoCount();
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));     // fixed point: origin
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 0, 0)));  // reference: bottom corner
+  move(f.vp, f.vp->toWidget(gp_Pnt(1800, 0, 0)));
+  type(f.vp, QStringLiteral("2"));
+  QCOMPARE(boxMismatch(m.document().worldShape(box), 2000, 2000, 2000), QString());
+  type(f.vp, QStringLiteral("3m"));  // re-edit: reference length becomes 3 m
+  QCOMPARE(boxMismatch(m.document().worldShape(box), 3000, 3000, 3000), QString());
+  QCOMPARE(m.history().undoCount(), steps + 1);
+  QVERIFY(dynamic_cast<ScaleTool*>(f.window.activeTool()));
 }
 
 void GuiPhase1::circleToolTypedRadius() {

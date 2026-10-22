@@ -420,6 +420,41 @@ class MeasureTool : public DrawingTool {
   std::optional<double> lastDistance_;
 };
 
+// Uniform scale of the selection: click the fixed point, a reference point,
+// then where the reference should go (or type a factor like "1.5", or a
+// length like "3000mm" for the new reference distance). Typing again right
+// after re-edits the last scale.
+class ScaleTool : public DrawingTool {
+ public:
+  using DrawingTool::DrawingTool;
+  QString name() const override;
+  QCursor cursor() const override;
+  void activate() override;
+  void cancel() override;
+  bool stepBack() override;
+  void mousePress(const ToolEvent& e) override;
+  void mouseMove(const ToolEvent& e) override;
+  void applyMeasurement(const QString& text) override;
+
+ private:
+  enum class Stage { Fixed, Reference, Scaling };
+  std::optional<double> factorAt(const gp_Pnt& p) const;
+  void commit(double factor);
+
+  Stage stage_ = Stage::Fixed;
+  std::vector<doc::ObjectId> targets_;
+  gp_Pnt fixed_;
+  gp_Pnt reference_;
+  double factor_ = 1.0;
+  struct Last {
+    std::vector<doc::ObjectId> targets;
+    gp_Pnt fixed;
+    double referenceDistance = 0.0;
+    std::size_t undoCount = 0;
+  };
+  std::optional<Last> last_;
+};
+
 // Protractor: click the centre (on a face: in its plane, else horizontal),
 // a base direction, then the angle (15 degree steps, or typed) to place a
 // guide line through the centre.

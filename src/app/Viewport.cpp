@@ -256,6 +256,7 @@ void Viewport::wheelEvent(QWheelEvent* event) {
 
 void Viewport::keyPressEvent(QKeyEvent* event) {
   if (event->key() == Qt::Key_Escape) {
+    typing_ = false;
     emit escapePressed();
     return;
   }
@@ -263,18 +264,41 @@ void Viewport::keyPressEvent(QKeyEvent* event) {
   switch (event->key()) {
     case Qt::Key_Backspace: emit measurementBackspace(); return;
     case Qt::Key_Return:
-    case Qt::Key_Enter: emit measurementCommit(); return;
+    case Qt::Key_Enter:
+      typing_ = false;
+      emit measurementCommit();
+      return;
     default: break;
   }
   const QString text = event->text();
   if (text.size() == 1) {
     const QChar c = text.at(0);
     if (c.isDigit() || QStringLiteral(".,;-+ mcMCxX*/sS").contains(c)) {
+      typing_ = true;
       emit measurementChar(c);
       return;
     }
   }
   QWidget::keyPressEvent(event);
+}
+
+bool Viewport::event(QEvent* event) {
+  if (event->type() == QEvent::ShortcutOverride) {
+    auto* key = static_cast<QKeyEvent*>(event);
+    const QString text = key->text();
+    const bool plain = !(key->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier));
+    if (plain && text.size() == 1) {
+      const QChar c = text.at(0);
+      // Digits and signs always go to the value; letters only after a digit
+      // (a lone "M" still picks the move tool).
+      if (c.isDigit() || QStringLiteral(".,;-+*/").contains(c) ||
+          (typing_ && QStringLiteral(" mcMCxXsS").contains(c))) {
+        event->accept();
+        return true;
+      }
+    }
+  }
+  return QWidget::event(event);
 }
 
 void Viewport::keyReleaseEvent(QKeyEvent* event) {
@@ -894,6 +918,7 @@ void Viewport::setPreview(const TopoDS_Shape& shape, bool solid) {
 void Viewport::clearPreview() { setPreview(TopoDS_Shape()); }
 
 void Viewport::setGhost(const std::vector<doc::ObjectId>& ids, const gp_Trsf& delta) {
+  const bool scaled = std::abs(delta.ScaleFactor() - 1.0) > 1e-12;
   TopoDS_Compound compound;
   BRep_Builder builder;
   builder.MakeCompound(compound);
@@ -904,10 +929,16 @@ void Viewport::setGhost(const std::vector<doc::ObjectId>& ids, const gp_Trsf& de
       wanted |= root == id || modeler_.document().isAncestor(root, id);
     }
     if (!wanted) continue;
-    builder.Add(compound, entry.displayShape.Moved(TopLoc_Location(delta)));
+    // Shapes cannot carry a scaled location: scaling ghosts (scale tool)
+    // are moved as a whole by the presentation's transformation instead.
+    builder.Add(compound, scaled ? entry.displayShape : entry.displayShape.Moved(TopLoc_Location(delta)));
     any = true;
   }
   setPreview(any ? TopoDS_Shape(compound) : TopoDS_Shape(), true);
+  if (scaled && !preview_.IsNull()) {
+    context_->SetLocation(preview_, TopLoc_Location(delta));
+    redraw();
+  }
 }
 
 void Viewport::showSnap(const snap::SnapResult& result, std::optional<gp_Pnt> anchor) {

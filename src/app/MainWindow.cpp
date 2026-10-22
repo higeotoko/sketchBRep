@@ -64,6 +64,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   protractorTool_ = std::make_unique<ProtractorTool>(*this);
   pasteTool_ = std::make_unique<PasteTool>(*this);
   polygonTool_ = std::make_unique<PolygonTool>(*this);
+  scaleTool_ = std::make_unique<ScaleTool>(*this);
   pasteTool_->setClipboard(&clipboard_);
   pasteTool_->setOnPlaced([this](const std::vector<doc::ObjectId>&) {
     // Leave the paste tool after the current event has been handled.
@@ -484,6 +485,7 @@ void MainWindow::buildMenus() {
       {tr("プッシュ/プル"), QStringLiteral("P"), ToolId::PushPull, CursorKind::PushPull},
       {tr("移動"), QStringLiteral("M"), ToolId::Move, CursorKind::Move},
       {tr("回転"), QStringLiteral("Q"), ToolId::Rotate, CursorKind::Rotate},
+      {tr("尺度"), QStringLiteral("S"), ToolId::Scale, CursorKind::Scale},
       {tr("オフセット"), QStringLiteral("F"), ToolId::Offset, CursorKind::Offset},
       {tr("曲線"), QStringLiteral("N"), ToolId::Curve, CursorKind::Curve},
       {tr("回転体"), QStringLiteral("V"), ToolId::Revolve, CursorKind::Revolve},
@@ -843,6 +845,7 @@ void MainWindow::activateTool(ToolId id) {
     case ToolId::Eraser: active_ = eraserTool_.get(); break;
     case ToolId::Paste: active_ = pasteTool_.get(); break;
     case ToolId::Polygon: active_ = polygonTool_.get(); break;
+    case ToolId::Scale: active_ = scaleTool_.get(); break;
     case ToolId::Count: return;
   }
   // Tools without a toolbar button (paste) leave the toolbar unchecked.
