@@ -393,6 +393,10 @@ void MainWindow::buildMenus() {
   edit->addAction(tr("貼り付け"), QKeySequence::Paste, this, &MainWindow::paste);
   edit->addAction(tr("同じ位置に貼り付け"), QKeySequence(tr("Ctrl+Shift+V")), this, &MainWindow::pasteInPlace);
   edit->addAction(tr("削除"), QKeySequence::Delete, this, &MainWindow::deleteSelection);
+  edit->addAction(tr("穴をふさぐ（開いた形状をソリッドに）"), this, [this] {
+    if (report(modeler_.fillHoles(selection_))) setStatus(tr("穴をふさぎました"));
+  });
+  edit->addAction(tr("面の向きを反転（表裏）"), this, [this] { report(modeler_.reverseFaces(selection_)); });
   edit->addAction(tr("すべて選択"), QKeySequence::SelectAll, this, &MainWindow::selectAll);
   edit->addAction(tr("選択を非表示"), QKeySequence(tr("Ctrl+H")), this, [this] {
     const std::vector<doc::ObjectId> ids = selection();
@@ -1831,6 +1835,26 @@ void MainWindow::deleteSelection() {
     modeler_.history().endGroup();
     setSelection({});
     return;
+  }
+  // Only faces of one solid / open shape: delete those faces (it stays open).
+  const bool onlyFaces = !elements_.empty() && std::all_of(elements_.begin(), elements_.end(), [](const ElementRef& e) {
+    return e.type == TopAbs_FACE;
+  });
+  if (onlyFaces && single && (single->kind() == doc::ObjectKind::Solid || single->kind() == doc::ObjectKind::Shell)) {
+    const auto all = viewport_->allElements(single->id);
+    const long faceCount = std::count_if(all.begin(), all.end(), [](const ElementRef& e) { return e.type == TopAbs_FACE; });
+    if (static_cast<long>(elements_.size()) < faceCount) {
+      std::vector<TopoDS_Face> faces;
+      for (const ElementRef& e : elements_) {
+        const TopoDS_Shape face = viewport_->elementShape(e);
+        if (!face.IsNull()) faces.push_back(TopoDS::Face(face));
+      }
+      if (report(modeler_.removeFaces(single->id, faces))) {
+        setSelection({});
+        setStatus(tr("面を消しました（開いた形状。編集 > 穴をふさぐ でソリッドに戻せます）"));
+      }
+      return;
+    }
   }
   if (!elements_.empty()) {
     // Faces/edges cannot be removed from a solid on their own yet; only

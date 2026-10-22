@@ -1,5 +1,19 @@
 #include "sbr/geom/Operations.h"
 
+#include <TopoDS_Shell.hxx>
+
+#include <TopoDS_Compound.hxx>
+
+#include <BRepGProp.hxx>
+
+#include <GProp_GProps.hxx>
+
+#include <Precision.hxx>
+
+#include <BRepBuilderAPI_Sewing.hxx>
+
+#include <ShapeAnalysis_FreeBounds.hxx>
+
 #include <cmath>
 #include <memory>
 
@@ -494,6 +508,39 @@ Result<TopoDS_Face> cutHole(const TopoDS_Face& face, const TopoDS_Face& hole) {
   } catch (const Standard_Failure& e) {
     return Result<TopoDS_Face>::failure(std::string("Hole failed: ") + e.GetMessageString());
   }
+}
+
+Result<TopoDS_Shape> capHoles(const TopoDS_Shape& shell) {
+  using R = Result<TopoDS_Shape>;
+  ShapeAnalysis_FreeBounds bounds(shell, Precision::Confusion() * 10, Standard_False, Standard_False);
+  const TopoDS_Compound wires = bounds.GetClosedWires();
+  BRepBuilderAPI_Sewing sewing(1e-6);
+  for (TopExp_Explorer f(shell, TopAbs_FACE); f.More(); f.Next()) sewing.Add(f.Current());
+  int holes = 0;
+  for (TopExp_Explorer w(wires, TopAbs_WIRE); w.More(); w.Next()) {
+    BRepBuilderAPI_MakeFace cap(TopoDS::Wire(w.Current()), Standard_True);
+    if (!cap.IsDone()) return R::failure("A hole is not flat; it cannot be filled with one face");
+    sewing.Add(cap.Face());
+    ++holes;
+  }
+  if (holes == 0) return R::failure("There are no holes to fill");
+  sewing.Perform();
+  const TopoDS_Shape sewn = sewing.SewedShape();
+  for (TopExp_Explorer s(sewn, TopAbs_SHELL); s.More(); s.Next()) {
+    const TopoDS_Shell closed = TopoDS::Shell(s.Current());
+    if (!BRep_Tool::IsClosed(closed)) continue;
+    BRepBuilderAPI_MakeSolid make(closed);
+    if (!make.IsDone()) continue;
+    ShapeFix_Solid fix(make.Solid());
+    fix.Perform();
+    TopoDS_Shape solid = fix.Solid();
+    // Outward: a negative volume means the shell came out inside out.
+    GProp_GProps props;
+    BRepGProp::VolumeProperties(solid, props);
+    if (props.Mass() < 0) solid.Reverse();
+    return solid;
+  }
+  return sewn;  // still open somewhere
 }
 
 }  // namespace sbr::geom

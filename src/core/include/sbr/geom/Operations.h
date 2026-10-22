@@ -14,6 +14,11 @@
 
 namespace sbr::geom {
 
+// Fills every free boundary (hole) of an open shell that is a flat loop with
+// a face and sews them in; a shell closed that way becomes a solid. Holes
+// that are not flat are refused.
+Result<TopoDS_Shape> capHoles(const TopoDS_Shape& shell);
+
 // True if the face lies on a plane; optionally returns the plane.
 bool isPlanarFace(const TopoDS_Face& face, gp_Pln* planeOut = nullptr);
 

@@ -17,6 +17,12 @@ struct ValidationReport {
   int vertices = 0;
   bool closed = false;  // every edge shared by exactly two faces
   double volume = 0.0;
+  // Two levels, whatever was expected: sound as drawing geometry (B-rep
+  // topology and geometry check out; open shapes may be) and sound as a
+  // solid (that, plus one closed solid with positive volume).
+  bool drawingValid = false;
+  bool solidValid = false;
+  int freeEdges = 0;  // edges on an open border (one face only)
   std::vector<std::string> issues;
 
   std::string summary() const;

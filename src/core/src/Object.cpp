@@ -26,6 +26,7 @@ const char* toString(ObjectKind kind) {
     case ObjectKind::Curve: return "Curve";
     case ObjectKind::Face: return "Face";
     case ObjectKind::Solid: return "Solid";
+    case ObjectKind::Shell: return "Shell";
     case ObjectKind::Group: return "Group";
     case ObjectKind::Instance: return "Instance";
     case ObjectKind::Annotation: return "Annotation";
@@ -42,6 +43,11 @@ ObjectKind Object::kind() const {
   if (std::holds_alternative<GuideLine>(recipe.base)) return ObjectKind::Guide;
   if (shape.IsNull()) return ObjectKind::Empty;
   if (TopExp_Explorer(shape, TopAbs_SOLID).More()) return ObjectKind::Solid;
+  if (TopExp_Explorer(shape, TopAbs_SHELL).More()) {
+    int faces = 0;
+    for (TopExp_Explorer f(shape, TopAbs_FACE); f.More() && faces < 2; f.Next()) ++faces;
+    if (faces >= 2) return ObjectKind::Shell;
+  }
   if (TopExp_Explorer(shape, TopAbs_FACE).More()) return ObjectKind::Face;
   if (TopExp_Explorer(shape, TopAbs_EDGE).More()) return ObjectKind::Curve;
   return ObjectKind::Other;

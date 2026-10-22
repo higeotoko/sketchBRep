@@ -320,6 +320,20 @@ void Viewport::keyReleaseEvent(QKeyEvent* event) {
 
 // --- document display ---------------------------------------------------------
 
+namespace {
+// Open shapes and single faces show their back in another colour (as in
+// SketchUp), so front and back can be told before painting.
+const Quantity_Color kBackColor = rgb(0.56, 0.62, 0.78);
+
+void showBackSide(const Handle(AIS_Shape)& ais, doc::ObjectKind kind) {
+  if (kind != doc::ObjectKind::Shell && kind != doc::ObjectKind::Face) return;
+  Handle(Prs3d_ShadingAspect) shading = ais->Attributes()->ShadingAspect();
+  if (shading.IsNull()) return;
+  shading->Aspect()->SetDistinguish(Standard_True);
+  shading->SetColor(kBackColor, Aspect_TOFM_BACK_SIDE);
+}
+}  // namespace
+
 void Viewport::scheduleSync() { syncTimer_.start(); }
 
 void Viewport::releaseProto(const Entry& entry) {
@@ -372,6 +386,7 @@ Handle(AIS_Shape) Viewport::makeDisplay(const doc::Object& object, Entry& entry)
   } else {
     const doc::Color c = modeler_.document().displayColor(object);
     ais->SetColor(rgb(c.r, c.g, c.b));
+    showBackSide(ais, object.kind());
   }
   ais->Attributes()->SetFaceBoundaryDraw(Standard_True);
   ais->Attributes()->SetFaceBoundaryAspect(
@@ -698,6 +713,7 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
     }
     entry.faceColors = std::move(faceColors);
     entry.shownSelected = selected;
+    showBackSide(entry.ais, o->kind());
     // SetColor() also recolours the face boundaries; keep them black.
     entry.ais->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(Quantity_NOC_BLACK, Aspect_TOL_SOLID, 1.5));
     restyled = true;

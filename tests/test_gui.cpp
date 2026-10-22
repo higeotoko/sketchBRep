@@ -159,6 +159,7 @@ class GuiPhase1 : public QObject {
   void typedRevisionOnlyRightAfter();
   void escStepsBackAndConstraintsShow();
   void autosaveRecoveryAndBackups();
+  void deleteFaceLeavesOpenShape();
 };
 
 namespace {
@@ -2242,6 +2243,38 @@ void GuiPhase1::autosaveRecoveryAndBackups() {
   // A normal end leaves nothing behind.
   QVERIFY(QDir(recovery.path()).entryList({QStringLiteral("*.sbr")}, QDir::Files).isEmpty());
   qunsetenv("SBR_RECOVERY_DIR");
+}
+
+// Select a face, Delete: only that face goes and the shape stays open
+// (shown with its back side); filling the hole closes it again.
+void GuiPhase1::deleteFaceLeavesOpenShape() {
+  Fixture f;
+  QVERIFY(f.setUp(500, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId id = f.box(0, 0, 1000, 1000, 1000);
+  f.window.activateWindow();
+  QTest::qWait(50);
+  f.window.activateTool(MainWindow::ToolId::Select);
+  click(f.vp, f.vp->toWidget(gp_Pnt(500, 500, 1000)));  // the top face
+  QCOMPARE(f.window.elementSelection().size(), std::size_t(1));
+  QTest::keyClick(f.vp, Qt::Key_Delete);
+  QTest::qWait(30);
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().find(id)->kind(), doc::ObjectKind::Shell);
+  QVERIFY(f.window.statusText().contains(QStringLiteral("穴をふさぐ")));
+  if (const QString shot = qEnvironmentVariable("SBR_SHELL_SHOT"); !shot.isEmpty()) {
+    f.window.setSelection({});
+    f.vp->syncNow();
+    QTest::qWait(100);
+    QVERIFY(f.vp->dumpImage(shot));
+  }
+  // Fill again (the Edit menu action): a solid.
+  f.window.setSelection({id});
+  QVERIFY(m.fillHoles({id}).ok());
+  QCOMPARE(m.document().find(id)->kind(), doc::ObjectKind::Solid);
+  QVERIFY(m.undo());
+  QVERIFY(m.undo());
+  QCOMPARE(m.document().find(id)->kind(), doc::ObjectKind::Solid);
 }
 
 QTEST_MAIN(GuiPhase1)

@@ -19,7 +19,10 @@ using ObjectId = std::string;
 ObjectId generateObjectId();
 
 
-enum class ObjectKind { Empty, Curve, Face, Solid, Group, Instance, Annotation, Guide, Other };
+// Shell: an open surface of several faces (a solid with faces deleted, an
+// open loft). Drawn on, painted and filled again, but not pushed/pulled or
+// combined with Booleans until it is closed.
+enum class ObjectKind { Empty, Curve, Face, Solid, Shell, Group, Instance, Annotation, Guide, Other };
 const char* toString(ObjectKind kind);
 
 struct Object {

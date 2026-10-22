@@ -92,6 +92,13 @@ class Modeler {
   // changes; an edge that is a real corner is refused. Returns the object
   // that holds the merged face.
   Result<ObjectId> eraseEdge(const ObjectId& id, const TopoDS_Edge& worldEdge);
+  // Faces taken out of a solid (or an open shell): it becomes / stays an
+  // open shell (one undo step). Taking out every face is refused.
+  Status removeFaces(const ObjectId& id, const std::vector<TopoDS_Face>& worldFaces);
+  // Fills the flat holes of open shells; closed again they are solids.
+  Status fillHoles(const std::vector<ObjectId>& ids);
+  // Turns the faces of open shells / profiles over (front <-> back).
+  Status reverseFaces(const std::vector<ObjectId>& ids);
   // The object a line would split (cheap check for the "split here" hint).
   std::optional<ObjectId> splitTarget(const std::vector<gp_Pnt>& worldPoints) const;
   // If the curve closes a loop with other loose open curves (lines, arcs,

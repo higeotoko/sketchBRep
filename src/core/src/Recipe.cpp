@@ -1,5 +1,9 @@
 #include "sbr/doc/Recipe.h"
 
+#include <BRep_Builder.hxx>
+
+#include <TopoDS_Shell.hxx>
+
 #include <cmath>
 #include <sstream>
 
@@ -281,6 +285,32 @@ Result<TopoDS_Shape> regenerate(const Recipe& recipe, const RegenContext& contex
               }
               return scaled.Shape();
             },
+            [&](const RemoveFaceOp& op) -> Result<TopoDS_Shape> {
+              auto face = op.plane ? op.plane->resolve(shape, splitLines)
+                          : op.surface ? op.surface->resolve(shape)
+                                       : Result<TopoDS_Face>::failure("No face to delete");
+              if (!face && op.plane) {
+                // The deleted face moved with an earlier parameter (e.g. the
+                // height): the one face carrying it on, if unambiguous.
+                const std::vector<TopoDS_Face> moved = op.plane->continuations(shape);
+                if (moved.size() == 1) face = moved.front();
+              }
+              if (!face) return Result<TopoDS_Shape>::failure(face.error());
+              BRep_Builder builder;
+              TopoDS_Shell shell;
+              builder.MakeShell(shell);
+              int kept = 0;
+              for (TopExp_Explorer e(shape, TopAbs_FACE); e.More(); e.Next()) {
+                if (e.Current().IsSame(face.value())) continue;
+                builder.Add(shell, e.Current());
+                ++kept;
+              }
+              if (kept == 0) return Result<TopoDS_Shape>::failure("Nothing would be left");
+              shell.Closed(Standard_False);
+              return TopoDS_Shape(shell);
+            },
+            [&](const CapHolesOp&) -> Result<TopoDS_Shape> { return geom::capHoles(shape); },
+            [&](const ReverseOp&) -> Result<TopoDS_Shape> { return shape.Reversed(); },
             [&](const PushPullOp& op) -> Result<TopoDS_Shape> {
               const geom::ValidationReport report = geom::validateShape(shape, true);
               if (!report.valid) {
@@ -342,6 +372,9 @@ std::vector<Parameter> parameters(const Recipe& recipe) {
                    },
                    [&](const SplitOp&) {},
                    [&](const HoleOp&) {},
+                   [&](const RemoveFaceOp&) {},
+                   [&](const CapHolesOp&) {},
+                   [&](const ReverseOp&) {},
                    [&](const ScaleOp& op) { out.push_back({scaleKey(i), "Scale", op.factor, false}); },
                    [&](const OffsetFaceOp& op) {
                      out.push_back({opKey(i), "Push/Pull " + std::to_string(i) + " distance",
@@ -413,6 +446,7 @@ Status setParameter(Recipe& recipe, const std::string& key, double value) {
     if (key != opKey(i)) continue;
     bool found = false;
     std::visit(Overloaded{[&](RevolveOp&) {}, [&](SplitOp&) {}, [&](HoleOp&) {}, [&](ScaleOp&) {},
+                          [&](RemoveFaceOp&) {}, [&](CapHolesOp&) {}, [&](ReverseOp&) {},
                           [&](auto& op) {
                             op.distance = value;
                             found = true;
@@ -465,6 +499,9 @@ std::string describe(const Recipe& recipe) {
                    [&](const SplitOp&) { out << " > Split face"; },
                    [&](const ScaleOp& op) { out << " > Scale x" << op.factor; },
                    [&](const HoleOp&) { out << " > Hole"; },
+                   [&](const RemoveFaceOp&) { out << " > Delete face"; },
+                   [&](const CapHolesOp&) { out << " > Fill holes"; },
+                   [&](const ReverseOp&) { out << " > Reverse faces"; },
                    [&](const OffsetFaceOp& op) { out << " > Push/Pull (curved) " << op.distance; },
                    [&](const OffsetOp& op) { out << " > Offset " << op.distance; },
                    [&](const RevolveOp& op) { out << " > Revolve " << op.angle * 180.0 / M_PI << " deg"; },

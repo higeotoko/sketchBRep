@@ -931,6 +931,36 @@ const std::vector<CommandDef>& commands() {
          "points": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}}},
          "required": ["points"]}),
        [](doc::Modeler& m, const json& a) { return idResult(must(m.splitWithLine(points(a, "points")))); }},
+      {"delete_faces",
+       "Delete faces of a solid (or of an open shape) on their own, like selecting a face and pressing Delete: "
+       "it becomes an open shape (kind Shell) that can still be drawn on, painted and have more faces "
+       "deleted; push/pull and Booleans need it closed again (fill_holes). faces = list of selectors (index, "
+       "{\"normal\": [...], \"near\": [...]}). One undo step.",
+       SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "faces": {"type": "array"}},
+               "required": ["id", "faces"]}),
+       [](doc::Modeler& m, const json& a) {
+         const ObjectId id = text(a, "id");
+         const json& list = arg(a, "faces");
+         if (!list.is_array() || list.empty()) throw ApiError("'faces' must be a non-empty list");
+         std::vector<TopoDS_Face> faces;
+         for (const json& f : list) faces.push_back(selectFace(m, id, f));
+         must(m.removeFaces(id, faces));
+         return idResult(id);
+       }},
+      {"fill_holes", "Fill the flat holes of open shapes with faces; closed again they are solids. One undo step.",
+       SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}}},
+               "required": ["ids"]}),
+       [](doc::Modeler& m, const json& a) {
+         must(m.fillHoles(ids(a, "ids")));
+         return idsResult(ids(a, "ids"));
+       }},
+      {"reverse_faces", "Turn the faces of open shapes / single faces over (front <-> back). Solids always face out.",
+       SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}}},
+               "required": ["ids"]}),
+       [](doc::Modeler& m, const json& a) {
+         must(m.reverseFaces(ids(a, "ids")));
+         return idsResult(ids(a, "ids"));
+       }},
       {"erase_edge",
        "The eraser on a line: a line dividing a flat face (made by split_face, or a line drawn across a "
        "loose profile) is taken away and the face is one again; the shape itself does not change. A real "

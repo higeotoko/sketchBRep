@@ -217,7 +217,21 @@ struct ScaleOp {
   double factor = 1.0;
 };
 
-using Modifier = std::variant<ExtrudeOp, PushPullOp, OffsetOp, RevolveOp, SplitOp, OffsetFaceOp, HoleOp, ScaleOp>;
+// A face taken out (SketchUp: select a face, Delete): the solid becomes an
+// open shell that can still be drawn on, painted and filled again.
+struct RemoveFaceOp {
+  std::optional<geom::FaceRef> plane;
+  std::optional<geom::SurfaceRef> surface;
+};
+
+// Every flat hole of an open shell gets a face; closed again, it is a solid.
+struct CapHolesOp {};
+
+// All faces turned over (front <-> back) - for open shells and profiles.
+struct ReverseOp {};
+
+using Modifier = std::variant<ExtrudeOp, PushPullOp, OffsetOp, RevolveOp, SplitOp, OffsetFaceOp, HoleOp, ScaleOp,
+                              RemoveFaceOp, CapHolesOp, ReverseOp>;
 
 struct Recipe {
   BaseFeature base;

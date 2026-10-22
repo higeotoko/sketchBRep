@@ -52,7 +52,7 @@ const Entry kEntries[] = {
     {"Name must not be empty", "名前が空です"},
     {"Offset produced an invalid face", "このオフセット距離では輪郭がつぶれてしまいます"},
     {"Faces with holes cannot be offset yet", "穴のある面はまだオフセットできません"},
-    {"Boolean operands must be solids", "ソリッド演算はソリッド同士でのみできます"},
+    {"Boolean operands must be solids", "ソリッド演算はソリッド同士でのみできます（開いた形状は穴をふさいでから）"},
     {"Select at least two solids", "ソリッドを 2 つ以上選んでください"},
     {"Boolean result is empty", "演算結果が空になります（重なっていない可能性があります）"},
     {"Objects must be in the same group", "異なるグループの物はまとめられません"},
@@ -77,6 +77,14 @@ const Entry kEntries[] = {
     {"This edge is a corner of the shape", "この辺は形の角なので消せません（形が壊れるため）。部材ごと消すには面をクリックしてください"},
     {"This line cannot be erased on its own", "この線だけは消せません（面を分けた線ではないか、後の編集がこの線に頼っています）"},
     {"The other part of this face is gone", "分けたもう片方の面が押し出し・削除されているため、一枚に戻せません"},
+    {"Open shapes cannot be pushed/pulled", "開いた形状（面を消したもの）はプッシュ/プルできません。編集 > 穴をふさぐ でソリッドに戻してください"},
+    {"A hole is not flat", "平らでない穴は一枚の面でふさげません"},
+    {"There are no holes to fill", "ふさぐ穴がありません"},
+    {"Select an open shape", "穴をふさぐ開いた形状（面を消したもの）を選んでください"},
+    {"Solids always face outwards", "ソリッドの面はいつも外向きです。反転できるのは開いた形状と単独の面です"},
+    {"Nothing would be left", "すべての面は消せません（部材ごと消すには部材を選んで削除）"},
+    {"Only faces of solids and open shells", "面だけを消せるのはソリッドと開いた形状です"},
+    {"is not a solid", "ソリッドではありません（開いた形状は 編集 > 穴をふさぐ でソリッドに戻せます）"},
     {"Object not found", "対象が見つかりません"},
 };
 

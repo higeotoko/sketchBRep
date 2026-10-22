@@ -7,6 +7,9 @@
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
+#include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
+#include <TopTools_ListOfShape.hxx>
+#include <BRep_Tool.hxx>
 #include <TopoDS.hxx>
 
 #include "sbr/Types.h"
@@ -18,7 +21,7 @@ std::string ValidationReport::summary() const {
   std::ostringstream out;
   out << (valid ? "valid" : "INVALID") << " solids=" << solids << " shells=" << shells
       << " faces=" << faces << " edges=" << edges << " vertices=" << vertices
-      << " closed=" << (closed ? "yes" : "no") << " volume=" << volume;
+      << " closed=" << (closed ? "yes" : "no") << " free_edges=" << freeEdges << " volume=" << volume;
   for (const std::string& issue : issues) out << "; " << issue;
   return out.str();
 }
@@ -57,6 +60,16 @@ ValidationReport validateShape(const TopoDS_Shape& shape, bool expectSolid) {
   }
 
   if (report.solids > 0) report.volume = volume(shape);
+  TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
+  TopExp::MapShapesAndAncestors(shape, TopAbs_EDGE, TopAbs_FACE, edgeFaces);
+  for (int i = 1; i <= edgeFaces.Extent(); ++i) {
+    if (edgeFaces(i).Extent() == 1 && !BRep_Tool::Degenerated(TopoDS::Edge(edgeFaces.FindKey(i)))) {
+      ++report.freeEdges;
+    }
+  }
+  report.drawingValid = analyzer.IsValid();
+  report.solidValid = report.drawingValid && report.solids == 1 && report.closed &&
+                      report.volume > tolerance::kMinDimension * tolerance::kMinDimension * tolerance::kMinDimension;
 
   if (expectSolid) {
     if (report.solids != 1) {

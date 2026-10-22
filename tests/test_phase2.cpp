@@ -842,6 +842,66 @@ TEST(SplitFace, ErasingTheLineOnAProfileJoinsItsParts) {
   EXPECT_EQ(m.document().objects().size(), 2u);
 }
 
+// Deleting a face leaves an open shape that work goes on with; filling the
+// hole makes it a solid again.
+TEST(OpenShells, DeleteFaceKeepWorkingAndFillAgain) {
+  doc::Modeler m;
+  auto box = m.createRectangle(geom::SketchPlane::ground(), 2000, 1000);
+  ASSERT_TRUE(m.extrude(*box, 1500).ok());
+  const double v0 = worldVolume(m, *box);
+  const TopoDS_Face top = faceWithCentroid(m.document().worldShape(*box), gp::DZ(), gp_Pnt(1000, 500, 1500));
+  ASSERT_TRUE(m.removeFaces(*box, {top}).ok());
+  const doc::Object* o = m.document().find(*box);
+  EXPECT_EQ(o->kind(), doc::ObjectKind::Shell);
+  EXPECT_EQ(faceCount(o->shape), 5);
+  const geom::ValidationReport r = geom::validateShape(o->shape, false);
+  EXPECT_TRUE(r.drawingValid) << r.summary();
+  EXPECT_FALSE(r.solidValid);
+  EXPECT_EQ(r.freeEdges, 4);
+  EXPECT_EQ(m.history().undoName(), "Delete Face");
+
+  // Still workable: paint a face, change the height (the deleted top stays
+  // deleted), save and reload.
+  const std::string wood = *m.createMaterial("木", {0.7, 0.5, 0.3});
+  ASSERT_TRUE(m.paintFaces(*box, {faceWithCentroid(o->shape, -gp::DY(), gp_Pnt(1000, 0, 750))}, wood).ok());
+  ASSERT_TRUE(m.setParameter(*box, "op0.distance", 2500).ok());
+  EXPECT_EQ(faceCount(m.document().find(*box)->shape), 5);
+  EXPECT_EQ(doc::resolveFaceMaterials(*m.document().find(*box)).faces.size(), 1u);
+  doc::Document d;
+  ASSERT_TRUE(doc::deserializeDocument(doc::serializeDocument(m.document()), d).ok());
+  EXPECT_EQ(d.find(*box)->kind(), doc::ObjectKind::Shell);
+
+  // Solid-only operations say so instead of failing oddly.
+  EXPECT_FALSE(m.pushPull(*box, faceWithCentroid(m.document().worldShape(*box), -gp::DY(), gp_Pnt(1000, 0, 1250)),
+                          100).ok());
+  const doc::ObjectId other = *m.createRectangle(geom::SketchPlane::ground(), 100, 100);
+  ASSERT_TRUE(m.extrude(other, 100).ok());
+  EXPECT_FALSE(m.boolean(doc::BooleanKind::Union, {*box, other}).ok());
+
+  // Front / back: open shapes can be turned over (twice = as before).
+  const TopoDS_Shape before = m.document().find(*box)->shape;
+  ASSERT_TRUE(m.reverseFaces({*box}).ok());
+  EXPECT_NE(m.document().find(*box)->shape.Orientation(), before.Orientation());
+  ASSERT_TRUE(m.reverseFaces({*box}).ok());
+  EXPECT_EQ(m.document().find(*box)->shape.Orientation(), before.Orientation());
+  EXPECT_FALSE(std::holds_alternative<doc::ReverseOp>(m.document().find(*box)->recipe.modifiers.back()));
+  EXPECT_FALSE(m.reverseFaces({other}).ok());  // solids always face out
+
+  // Fill the hole: a solid again, and push/pull works.
+  ASSERT_TRUE(m.fillHoles({*box}).ok());
+  EXPECT_EQ(m.document().find(*box)->kind(), doc::ObjectKind::Solid);
+  EXPECT_NEAR(worldVolume(m, *box), 2000.0 * 1000 * 2500, 1e-3);
+  EXPECT_TRUE(geom::validateShape(m.document().find(*box)->shape, true).solidValid);
+  ASSERT_TRUE(m.pushPull(*box, faceWithCentroid(m.document().worldShape(*box), gp::DZ(), gp_Pnt(1000, 500, 2500)),
+                         500).ok());
+  EXPECT_NEAR(worldVolume(m, *box), 2000.0 * 1000 * 3000, 1e-2);
+  (void)v0;
+  // Undo walks back through it all.
+  ASSERT_TRUE(m.undo());
+  ASSERT_TRUE(m.undo());
+  EXPECT_EQ(m.document().find(*box)->kind(), doc::ObjectKind::Shell);
+}
+
 TEST(SplitFace, RejectsLinesThatDoNotDivideAFace) {
   doc::Modeler m;
   auto box = m.createRectangle(geom::SketchPlane::ground(), 1000, 1000);

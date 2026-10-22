@@ -27,6 +27,7 @@ QString kindLabel(doc::ObjectKind kind) {
   switch (kind) {
     case doc::ObjectKind::Solid: return QObject::tr("ソリッド");
     case doc::ObjectKind::Face: return QObject::tr("面");
+    case doc::ObjectKind::Shell: return QObject::tr("開いた形状");
     case doc::ObjectKind::Curve: return QObject::tr("線");
     case doc::ObjectKind::Group: return QObject::tr("グループ");
     case doc::ObjectKind::Instance: return QObject::tr("コンポーネント");
@@ -206,6 +207,13 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
   });
   form_->addRow(tr("名前"), name);
   if (!elementSummary.isEmpty()) form_->addRow(tr("選択"), new QLabel(elementSummary));
+  if (o->kind() == doc::ObjectKind::Shell) {
+    auto* hint = new QLabel(tr("開いた形状です（面を消した状態）。描く・塗る・面を消すはそのまま続けられます。"
+                               "押し出し・ブール演算は「編集 > 穴をふさぐ」でソリッドに戻してから"));
+    hint->setWordWrap(true);
+    hint->setStyleSheet(QStringLiteral("QLabel { color: #8a5a00; }"));
+    form_->addRow(hint);
+  }
   // Material: own, else where it comes from; faces painted on their own.
   {
     auto nameOf = [&](const std::string& mid) {
@@ -389,9 +397,17 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
     case doc::ObjectKind::Solid: {
       const geom::ValidationReport r = geom::validateShape(o->shape, false);
       detailsForm->addRow(tr("体積"), new QLabel(QString::number(r.volume / 1e9, 'f', 6) + tr(" m³")));
-      detailsForm->addRow(tr("B-rep"), new QLabel(r.valid ? tr("有効 (ソリッド %1 / 面 %2 / 稜線 %3)")
-                                                                .arg(r.solids).arg(r.faces).arg(r.edges)
-                                                          : tr("不正")));
+      detailsForm->addRow(tr("B-rep"), new QLabel(r.solidValid ? tr("ソリッドとして有効 (ソリッド %1 / 面 %2 / 稜線 %3)")
+                                                                     .arg(r.solids).arg(r.faces).arg(r.edges)
+                                                               : r.drawingValid ? tr("作図として有効（ソリッドとしては不完全）")
+                                                                                : tr("不正")));
+      break;
+    }
+    case doc::ObjectKind::Shell: {
+      const geom::ValidationReport r = geom::validateShape(o->shape, false);
+      detailsForm->addRow(tr("B-rep"), new QLabel(r.drawingValid ? tr("作図として有効・開いた形状（面 %1 / 開いた縁 %2 本）")
+                                                                       .arg(r.faces).arg(r.freeEdges)
+                                                                 : tr("不正")));
       break;
     }
     case doc::ObjectKind::Face:

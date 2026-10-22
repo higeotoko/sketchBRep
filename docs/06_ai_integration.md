@@ -45,6 +45,7 @@ AI 専用の裏口は作らず、GUI のツールと同じ `doc::Modeler` を JS
 - アプリ起動中のみ: `get_selection`（ユーザーが選んだ物・面）, `select`, `set_view`, `capture_view`（ビューの PNG を AI に画像で返す）, `list_scenes`, `go_to_scene`（保存ビューの表示・保存）
 - 意味の属性: `set_attribute`（`kind=wall`、`level=2F` などのキーと値。複数対象を Undo 1 回で）。`query_objects` / `edit_each` の `attributes` 条件（`"*"` はキーがあれば何でも）と、`aggregate` の `group_by: "attribute:level"` で使える。形状には影響せず、名前や AI の推測を事実扱いしないための「明示的な意味」
 - 消しゴム: `erase_edge {id, edge: 番号 か {near: [x,y,z]}}`（split_face や線で分けた面の境の線を消して一枚に戻す。形は変わらない。角の辺は拒否）
+- 開いた形状: `delete_faces {id, faces}`（面だけ消す → kind Shell）, `fill_holes {ids}`（平らな穴をふさいでソリッドに）, `reverse_faces {ids}`（開いた形状・単独の面の表裏）
 - 素材: `list_materials`, `create_material`, `update_material`, `delete_material`, `assign_material`（部材全体、"" で継承）, `paint_faces`（面ごと）, `clear_face_materials`, `material_at`（面の素材と由来＝スポイト）。`query_objects` / `edit_each` の `material` 条件、`aggregate` の `group_by: "material"`。「この面と同じ素材を壁全部に」は material_at → edit_each（preview → batch、1 Undo）。詳細は docs/11_materials.md
 - 建築の要素: `create_wall`（点列 `[x, y]` か通り芯の交点 `"X1/Y1"` を結ぶ壁。厚さ・高さ・芯の位置 center/left/right。角は突き付け（直角で正確）、長さ・厚さ・高さはパラメータで後から変更可、`kind=wall`）, `create_slab`（多角形か通り芯の範囲＋はね出しで床スラブ、天端と厚さ、`kind=slab`）, `place_openings`（壁の面に同じ開口を等間隔、または中心間隔 `spacing` で中央振り分け、`at` で指定位置に 1 つ。既にある開口と重なる配置・大きさ変更は断る（穴がつながるのを防ぐ）。`list_openings` は各開口の面の向き `normal` も返す。手で描いて押し抜くのと同じ処理、Undo 1 回）
   - 同じ操作は GUI からも使える: 壁ツール（`W`）、スラブツール（`Shift+W`）、開口ツール（`O`）、ツール > 開口を等間隔に配置 / 階を割り当て / 整列、プロパティパネルの開口サイズ。AI が作った壁を人が手で直す・その逆が同じ Modeler 経由で混ざっても Undo の順序は 1 本

@@ -605,6 +605,79 @@ int faceCount(const TopoDS_Shape& shape) {
 
 }  // namespace
 
+Status Modeler::removeFaces(const ObjectId& id, const std::vector<TopoDS_Face>& worldFaces) {
+  const Object* current = document_.find(id);
+  if (!current || current->shape.IsNull()) return Status::failure("Object not found");
+  if (current->kind() != ObjectKind::Solid && current->kind() != ObjectKind::Shell) {
+    return Status::failure("Only faces of solids and open shells are deleted on their own");
+  }
+  Object object = *current;
+  const gp_Trsf toLocal = document_.worldTransform(object).Inverted();
+  TopTools_IndexedMapOfShape faces;
+  TopExp::MapShapes(object.shape, TopAbs_FACE, faces);
+  for (const TopoDS_Face& world : worldFaces) {
+    int index = faces.FindIndex(world.Moved(TopLoc_Location(toLocal)));
+    for (int i = 1; i <= faces.Extent() && index == 0; ++i) {
+      if (faces(i).TShape() == world.TShape()) index = i;
+    }
+    if (index == 0) return Status::failure("The face is not part of this object");
+    const TopoDS_Face local = TopoDS::Face(faces(index));
+    RemoveFaceOp op;
+    if (auto plane = geom::FaceRef::identify(local)) {
+      op.plane = plane.value();
+    } else if (auto surface = geom::SurfaceRef::fromFace(local)) {
+      op.surface = surface.value();
+    } else {
+      return Status::failure("This face cannot be deleted on its own");
+    }
+    object.recipe.modifiers.push_back(std::move(op));
+  }
+  return commitModified(std::move(object), "Delete Face");
+}
+
+Status Modeler::fillHoles(const std::vector<ObjectId>& ids) {
+  ChangeSet changes(document_);
+  bool any = false;
+  for (const ObjectId& id : ids) {
+    const Object* current = document_.find(id);
+    if (!current) return Status::failure("Object not found");
+    if (current->kind() != ObjectKind::Shell) continue;
+    Object object = *current;
+    object.recipe.modifiers.push_back(CapHolesOp{});
+    const Status built = rebuild(object, document_.regenContext());
+    if (!built) return built;
+    changes.modify(object);
+    any = true;
+  }
+  if (!any) return Status::failure("Select an open shape (with deleted faces) to fill");
+  history_.execute(changes.build("Fill Holes"));
+  return Status::success();
+}
+
+Status Modeler::reverseFaces(const std::vector<ObjectId>& ids) {
+  ChangeSet changes(document_);
+  bool any = false;
+  for (const ObjectId& id : ids) {
+    const Object* current = document_.find(id);
+    if (!current) return Status::failure("Object not found");
+    if (current->kind() != ObjectKind::Shell && current->kind() != ObjectKind::Face) continue;
+    Object object = *current;
+    // Reversing twice is no reversal: drop the earlier one instead.
+    if (!object.recipe.modifiers.empty() && std::holds_alternative<ReverseOp>(object.recipe.modifiers.back())) {
+      object.recipe.modifiers.pop_back();
+    } else {
+      object.recipe.modifiers.push_back(ReverseOp{});
+    }
+    const Status built = rebuild(object, document_.regenContext());
+    if (!built) return built;
+    changes.modify(object);
+    any = true;
+  }
+  if (!any) return Status::failure("Solids always face outwards; reverse open shapes or single faces");
+  history_.execute(changes.build("Reverse Faces"));
+  return Status::success();
+}
+
 Result<ObjectId> Modeler::eraseEdge(const ObjectId& id, const TopoDS_Edge& worldEdge) {
   using R = Result<ObjectId>;
   const Object* current = document_.find(id);
@@ -919,6 +992,9 @@ Result<PushPullResult> Modeler::pushPull(const ObjectId& id, const TopoDS_Face& 
   if (current->kind() == ObjectKind::Instance) {
     return Result<PushPullResult>::failure(
         "Component instances cannot be pushed/pulled; edit the definition or explode it");
+  }
+  if (current->kind() == ObjectKind::Shell) {
+    return Result<PushPullResult>::failure("Open shapes cannot be pushed/pulled; fill their holes first");
   }
   if (!std::isfinite(distance) || std::abs(distance) < tolerance::kMinDimension) {
     return Result<PushPullResult>::failure("Distance must be non-zero");

@@ -155,3 +155,13 @@ UTF-8 JSON。
 | AI / スクリプト API | **実装済み**: `api::CommandApi`（JSON）+ `api::McpServer`、`sbr_cli` / `sbr_mcp`、アプリ内 `AiBridge`。[06_ai_integration.md](06_ai_integration.md) |
 | 3DM 入出力 | `geom::ShapeIO` に openNURBS 変換を追加 |
 | 独自レンダラ | `display::DisplayMesh` をそのまま GPU バッファへ |
+
+## 開いた形状（作業途中の形）
+
+面を消すと閉じたソリッドでなくなるが、作業は続けられる（SketchUp のように）。
+
+- `RemoveFaceOp`（消した面の同一性を記録。パラメータで面が平行移動しても一意ならそれ）→ 結果は Shell、`ObjectKind::Shell`
+- `CapHolesOp`：平らな穴を面でふさぎ、閉じたらソリッド（向きは外向きに直す）。`ReverseOp`：開いた形状・単独の面の表裏
+- 検証は 2 段階：`ValidationReport::drawingValid`（B-rep として成立。開いていてよい）と `solidValid`（閉じた 1 ソリッドで体積が正）。`freeEdges` は開いた縁の数
+- できること：描く（面分割）・塗る・さらに面を消す・保存。できないこと（理由を表示）：プッシュ/プル、ブール演算、開口
+- 表示：開いた形状と単独の面は裏面を別色（青みのグレー）で表示して表裏を見分ける

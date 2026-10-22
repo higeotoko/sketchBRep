@@ -53,6 +53,19 @@ geom::FaceRef faceRefFrom(const json& f) {
   return ref;
 }
 
+json surfaceRefToJson(const geom::SurfaceRef& f) {
+  return {{"point", toJson(f.point)}, {"normal", toJson(f.normal)}, {"surfaceType", f.surfaceType}};
+}
+
+geom::SurfaceRef surfaceRefFrom(const json& f) {
+  geom::SurfaceRef ref;
+  ref.point = pointFrom(f.at("point"));
+  ref.normal = dirFrom(f.at("normal"));
+  ref.surfaceType = f.value("surfaceType", 0);
+  return ref;
+}
+
+
 json toJson(const gp_Trsf& t) {
   json m = json::array();
   for (int r = 1; r <= 3; ++r) {
@@ -359,6 +372,14 @@ json modifierToJson(const Modifier& m) {
           [](const ScaleOp& op) {
             return json{{"type", "scale"}, {"center", toJson(op.center)}, {"factor", op.factor}};
           },
+          [](const RemoveFaceOp& op) {
+            json j = {{"type", "removeface"}};
+            if (op.plane) j["face"] = faceRefToJson(*op.plane);
+            if (op.surface) j["surface"] = surfaceRefToJson(*op.surface);
+            return j;
+          },
+          [](const CapHolesOp&) { return json{{"type", "capholes"}}; },
+          [](const ReverseOp&) { return json{{"type", "reverse"}}; },
           [](const PushPullOp& op) {
             return json{{"type", "pushpull"},
                         {"distance", op.distance},
@@ -397,6 +418,14 @@ Modifier modifierFrom(const json& j) {
     return op;
   }
   if (type == "scale") return ScaleOp{pointFrom(j.at("center")), j.at("factor").get<double>()};
+  if (type == "removeface") {
+    RemoveFaceOp op;
+    if (j.contains("face")) op.plane = faceRefFrom(j.at("face"));
+    if (j.contains("surface")) op.surface = surfaceRefFrom(j.at("surface"));
+    return op;
+  }
+  if (type == "capholes") return CapHolesOp{};
+  if (type == "reverse") return ReverseOp{};
   if (type == "split") {
     SplitOp op;
     op.points = pointsFrom(j.at("points"));
@@ -493,18 +522,6 @@ struct ShapeReader {
     return *parsed[i];
   }
 };
-
-json surfaceRefToJson(const geom::SurfaceRef& f) {
-  return {{"point", toJson(f.point)}, {"normal", toJson(f.normal)}, {"surfaceType", f.surfaceType}};
-}
-
-geom::SurfaceRef surfaceRefFrom(const json& f) {
-  geom::SurfaceRef ref;
-  ref.point = pointFrom(f.at("point"));
-  ref.normal = dirFrom(f.at("normal"));
-  ref.surfaceType = f.value("surfaceType", 0);
-  return ref;
-}
 
 json colorToJson(const Color& c) { return json::array({c.r, c.g, c.b}); }
 
