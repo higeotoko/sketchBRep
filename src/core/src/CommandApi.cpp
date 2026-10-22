@@ -13,6 +13,7 @@
 #include <nlohmann/json.hpp>
 
 #include <BRepTools.hxx>
+#include <BRep_Tool.hxx>
 #include <TopExp.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
@@ -985,6 +986,32 @@ const std::vector<CommandDef>& commands() {
        [](doc::Modeler& m, const json& a) {
          const ObjectId id = text(a, "id");
          return idResult(must(m.eraseEdge(id, selectEdge(m, id, arg(a, "edge")))));
+       }},
+      {"move_vertices",
+       "Reshape a solid, face or open shape by moving corners (world points on its vertices) by delta, "
+       "keeping every face flat: two corners = an edge (e.g. lift the top edge of a box into a roof slope), "
+       "all corners of a face = the face (any direction, unlike push/pull). Refused when a face would bend "
+       "or fold, or the solid would cross itself; nothing changes then. Or pass edge (index or "
+       "{\"near\": [x,y,z]}) instead of points to move that edge. One undo step; the distance becomes a "
+       "parameter (opN.distance).",
+       SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "points": {"type": "array"},
+               "edge": {}, "delta": {"type": "array"}}, "required": ["id", "delta"]}),
+       [](doc::Modeler& m, const json& a) {
+         const ObjectId id = text(a, "id");
+         std::vector<gp_Pnt> corners;
+         if (a.contains("edge")) {
+           const TopoDS_Edge edge = selectEdge(m, id, a.at("edge"));
+           TopoDS_Vertex v1, v2;
+           TopExp::Vertices(edge, v1, v2);
+           corners = {BRep_Tool::Pnt(v1), BRep_Tool::Pnt(v2)};
+         }
+         if (a.contains("points")) {
+           const std::vector<gp_Pnt> more = points(a, "points");
+           corners.insert(corners.end(), more.begin(), more.end());
+         }
+         if (corners.empty()) throw ApiError("give points or edge");
+         must(m.moveVertices(id, corners, gp_Vec(xyz(arg(a, "delta"), "delta"))));
+         return idResult(id);
        }},
       {"set_parameter", "Change a parameter (see get_object.parameters), e.g. op0.distance or width.",
        SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "key": {"type": "string"},

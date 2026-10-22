@@ -159,6 +159,7 @@ class GuiPhase1 : public QObject {
   void aiProposalApplyAndReject();
   void componentEditInPlace();
   void componentPlacementOwnSizeMirrorAndAxes();
+  void moveToolReshapesCornersAndEdges();
   void followMeAroundTopFace();
   void wallToolAndArchitectureMenus();
   void slabToolAndOpeningTool();
@@ -2431,6 +2432,48 @@ void GuiPhase1::componentPlacementOwnSizeMirrorAndAxes() {
   const auto& own = std::get<doc::ComponentInstance>(m.document().find(third)->recipe.base);
   QVERIFY(own.definitionId != ref.definitionId);
   QCOMPARE(m.instanceCount(ref.definitionId), 2);
+}
+
+// Step 5: the Move tool reshapes with faces kept flat. Alt+click grabs an
+// edge (or corner / face) under the cursor; selected edges move too; a move
+// that would bend a face is refused with a reason and changes nothing.
+void GuiPhase1::moveToolReshapesCornersAndEdges() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+  f.vp->syncNow();
+  auto volume = [&] { return geom::volume(m.document().worldShape(box)); };
+
+  f.window.activateTool(MainWindow::ToolId::Move);
+  // Alt+click the middle of the front top edge, then type the distance up.
+  const QPoint grab = f.vp->toWidget(gp_Pnt(500, 0, 1000));
+  move(f.vp, grab);
+  send(f.vp, QEvent::MouseButtonPress, grab, Qt::LeftButton, Qt::LeftButton, Qt::AltModifier);
+  send(f.vp, QEvent::MouseButtonRelease, grab, Qt::LeftButton, Qt::NoButton, Qt::AltModifier);
+  QTest::qWait(20);
+  QTest::keyClick(f.vp, Qt::Key_Up);  // lock the blue axis
+  move(f.vp, f.vp->toWidget(gp_Pnt(500, 0, 3500)));  // clear of other snap points
+  QVERIFY2(f.window.constraintText().contains(QStringLiteral("辺")), qPrintable(f.window.constraintText()));
+  type(f.vp, QStringLiteral("500"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QVERIFY2(std::abs(volume() - 1.25e9) < 1.0, qPrintable(QString::number(volume())));
+  QCOMPARE(m.document().find(box)->kind(), doc::ObjectKind::Solid);
+
+  // Alt+click a corner of the back top edge: moving it alone up would bend faces.
+  const std::size_t steps = m.history().undoCount();
+  const QPoint corner = f.vp->toWidget(gp_Pnt(1000, 1000, 1000));
+  move(f.vp, corner);
+  send(f.vp, QEvent::MouseButtonPress, corner, Qt::LeftButton, Qt::LeftButton, Qt::AltModifier);
+  send(f.vp, QEvent::MouseButtonRelease, corner, Qt::LeftButton, Qt::NoButton, Qt::AltModifier);
+  QTest::qWait(20);
+  QTest::keyClick(f.vp, Qt::Key_Up);
+  move(f.vp, f.vp->toWidget(gp_Pnt(1000, 1000, 3500)));
+  QVERIFY2(f.window.statusText().contains(QStringLiteral("動かせません")), qPrintable(f.window.statusText()));
+  type(f.vp, QStringLiteral("300"));
+  QVERIFY(!f.window.lastError().isEmpty());
+  QCOMPARE(m.history().undoCount(), steps);
+  QVERIFY(std::abs(volume() - 1.25e9) < 1.0);
 }
 
 QTEST_MAIN(GuiPhase1)

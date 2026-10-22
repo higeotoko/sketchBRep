@@ -849,6 +849,15 @@ class MoveTool : public TransformTool {
   // Moving a single selected face stretches the solid along its normal.
   std::optional<std::pair<doc::ObjectId, TopoDS_Face>> stretch_;
   gp_Dir stretchNormal_;
+  // Moving corners (selected edges, or Alt+click on a corner / edge /
+  // face): the shape is reshaped with its faces kept flat.
+  bool grabCorners(const ToolEvent& e);
+  struct Corners {
+    doc::ObjectId object;
+    std::vector<gp_Pnt> points;  // world
+    QString what;                // "角" / "辺" / "面" / "辺 3 本"
+  };
+  std::optional<Corners> corners_;
 };
 
 class RotateTool : public TransformTool {

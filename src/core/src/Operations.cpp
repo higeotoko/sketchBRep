@@ -1,5 +1,14 @@
 #include "sbr/geom/Operations.h"
 
+#include <BOPAlgo_ArgumentAnalyzer.hxx>
+#include <BRepAdaptor_Curve.hxx>
+#include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRepBuilderAPI_MakeSolid.hxx>
+#include <BRepTools_WireExplorer.hxx>
+#include <ShapeFix_Face.hxx>
+#include <TopExp.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
+
 #include <TopoDS_Shell.hxx>
 
 #include <TopoDS_Compound.hxx>
@@ -541,6 +550,142 @@ Result<TopoDS_Shape> capHoles(const TopoDS_Shape& shell) {
     return solid;
   }
   return sewn;  // still open somewhere
+}
+
+
+namespace {
+
+// Newell's normal of a closed polygon (not normalised; zero when degenerate).
+gp_Vec newellNormal(const std::vector<gp_Pnt>& loop) {
+  gp_Vec n;
+  for (std::size_t i = 0; i < loop.size(); ++i) {
+    const gp_Pnt& a = loop[i];
+    const gp_Pnt& b = loop[(i + 1) % loop.size()];
+    n += gp_Vec((a.Y() - b.Y()) * (a.Z() + b.Z()), (a.Z() - b.Z()) * (a.X() + b.X()),
+                (a.X() - b.X()) * (a.Y() + b.Y()));
+  }
+  return n * 0.5;
+}
+
+}  // namespace
+
+Result<TopoDS_Shape> moveVertices(const TopoDS_Shape& shape, const std::vector<gp_Pnt>& points, const gp_Vec& delta) {
+  using R = Result<TopoDS_Shape>;
+  if (shape.IsNull()) return R::failure("Nothing to reshape");
+  if (points.empty()) return R::failure("No points to move");
+  if (delta.Magnitude() < Precision::Confusion()) return R::failure("Distance must be non-zero");
+  constexpr double kMatch = 1e-3;  // mm: points come snapped from the shape itself
+  constexpr double kFlat = 1e-3;   // mm: how far a corner may sit off its face's plane
+
+  TopTools_IndexedMapOfShape vertices;
+  TopExp::MapShapes(shape, TopAbs_VERTEX, vertices);
+  std::vector<bool> moved(vertices.Extent() + 1, false);
+  for (const gp_Pnt& p : points) {
+    bool found = false;
+    for (int i = 1; i <= vertices.Extent(); ++i) {
+      if (BRep_Tool::Pnt(TopoDS::Vertex(vertices(i))).Distance(p) < kMatch) {
+        moved[i] = true;
+        found = true;
+      }
+    }
+    if (!found) return R::failure("The point to move is not a corner of the shape (any more)");
+  }
+  auto position = [&](const TopoDS_Vertex& v) {
+    const gp_Pnt p = BRep_Tool::Pnt(v);
+    return moved[vertices.FindIndex(v)] ? p.Translated(delta) : p;
+  };
+
+  bool solid = false;
+  for (TopExp_Explorer e(shape, TopAbs_SOLID); e.More(); e.Next()) solid = true;
+  bool loneFace = shape.ShapeType() == TopAbs_FACE;
+
+  std::vector<TopoDS_Face> rebuilt;
+  for (TopExp_Explorer e(shape, TopAbs_FACE); e.More(); e.Next()) {
+    const TopoDS_Face face = TopoDS::Face(e.Current());
+    if (!isPlanarFace(face)) return R::failure("Only shapes with flat faces can be reshaped by moving corners");
+    for (TopExp_Explorer ed(face, TopAbs_EDGE); ed.More(); ed.Next()) {
+      if (BRepAdaptor_Curve(TopoDS::Edge(ed.Current())).GetType() != GeomAbs_Line) {
+        return R::failure("Only shapes with straight edges can be reshaped by moving corners");
+      }
+    }
+    // Loops in order: the outer one first.
+    const TopoDS_Wire outer = BRepTools::OuterWire(face);
+    std::vector<TopoDS_Wire> wires{outer};
+    for (TopExp_Explorer w(face, TopAbs_WIRE); w.More(); w.Next()) {
+      if (!w.Current().IsSame(outer)) wires.push_back(TopoDS::Wire(w.Current()));
+    }
+    std::vector<std::vector<gp_Pnt>> before, after;
+    for (const TopoDS_Wire& wire : wires) {
+      std::vector<gp_Pnt> b, a;
+      for (BRepTools_WireExplorer x(wire, face); x.More(); x.Next()) {
+        b.push_back(BRep_Tool::Pnt(x.CurrentVertex()));
+        a.push_back(position(x.CurrentVertex()));
+      }
+      if (a.size() < 3) return R::failure("Only shapes with straight edges can be reshaped by moving corners");
+      for (std::size_t i = 0; i < a.size(); ++i) {
+        if (a[i].Distance(a[(i + 1) % a.size()]) < kMatch) return R::failure("Two corners would meet; an edge would vanish");
+      }
+      before.push_back(std::move(b));
+      after.push_back(std::move(a));
+    }
+    const gp_Vec n0 = newellNormal(before.front());
+    const gp_Vec n1 = newellNormal(after.front());
+    if (n1.Magnitude() < 1e-9) return R::failure("A face would collapse");
+    if (n0.Dot(n1) <= 0) return R::failure("A face would fold over (turn inside out)");
+    gp_XYZ centre;
+    for (const gp_Pnt& p : after.front()) centre += p.XYZ();
+    centre /= static_cast<double>(after.front().size());
+    const gp_Pln plane{gp_Pnt(centre), gp_Dir(n1)};
+    for (const auto& loop : after) {
+      for (const gp_Pnt& p : loop) {
+        if (plane.Distance(p) > kFlat) {
+          return R::failure("A face would no longer be flat; move a whole edge or face, or split the face first");
+        }
+      }
+    }
+    // Flat faces again, from the moved corners.
+    auto polygon = [](const std::vector<gp_Pnt>& loop) {
+      BRepBuilderAPI_MakePolygon make;
+      for (const gp_Pnt& p : loop) make.Add(p);
+      make.Close();
+      return make.Wire();
+    };
+    BRepBuilderAPI_MakeFace make(plane, polygon(after.front()), Standard_True);
+    for (std::size_t i = 1; i < after.size(); ++i) make.Add(polygon(after[i]));
+    if (!make.IsDone()) return R::failure("A face could not be rebuilt");
+    ShapeFix_Face fix(make.Face());
+    fix.FixOrientation();
+    fix.Perform();
+    rebuilt.push_back(TopoDS::Face(fix.Face()));
+  }
+  if (loneFace) return TopoDS_Shape(rebuilt.front());
+
+  BRepBuilderAPI_Sewing sewing(1e-6);
+  for (const TopoDS_Face& f : rebuilt) sewing.Add(f);
+  sewing.Perform();
+  const TopoDS_Shape sewn = sewing.SewedShape();
+  if (!solid) return sewn;
+  TopoDS_Shell shell;
+  int shells = 0;
+  for (TopExp_Explorer s(sewn, TopAbs_SHELL); s.More(); s.Next(), ++shells) shell = TopoDS::Shell(s.Current());
+  if (shells != 1 || !BRep_Tool::IsClosed(shell)) return R::failure("The solid would come apart");
+  BRepBuilderAPI_MakeSolid makeSolid(shell);
+  if (!makeSolid.IsDone()) return R::failure("The solid would come apart");
+  ShapeFix_Solid fixSolid(makeSolid.Solid());
+  fixSolid.Perform();
+  TopoDS_Shape result = fixSolid.Solid();
+  GProp_GProps props;
+  BRepGProp::VolumeProperties(result, props);
+  if (props.Mass() < 0) result.Reverse();
+  if (std::abs(props.Mass()) < 1e-6) return R::failure("The solid would have no volume");
+  if (!BRepCheck_Analyzer(result).IsValid()) return R::failure("The moved shape would not be a valid solid");
+  // Faces passing through each other are not caught by the checker.
+  BOPAlgo_ArgumentAnalyzer analyzer;
+  analyzer.SetShape1(result);
+  analyzer.SelfInterMode() = Standard_True;
+  analyzer.Perform();
+  if (analyzer.HasFaulty()) return R::failure("The solid would cross itself");
+  return result;
 }
 
 }  // namespace sbr::geom

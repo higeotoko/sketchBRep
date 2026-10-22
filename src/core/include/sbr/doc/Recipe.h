@@ -256,6 +256,15 @@ struct RemoveFaceOp {
   std::optional<geom::SurfaceRef> surface;
 };
 
+// Moves the corners of the shape at `points` (local coordinates, before the
+// move) by direction * distance, keeping every face flat (geom::moveVertices).
+// An edge move is its two corners, a face move all of its corners.
+struct MoveVerticesOp {
+  std::vector<gp_Pnt> points;
+  gp_Dir direction;
+  double distance = 0.0;
+};
+
 // Every flat hole of an open shell gets a face; closed again, it is a solid.
 struct CapHolesOp {};
 
@@ -263,7 +272,7 @@ struct CapHolesOp {};
 struct ReverseOp {};
 
 using Modifier = std::variant<ExtrudeOp, PushPullOp, OffsetOp, RevolveOp, SplitOp, OffsetFaceOp, HoleOp, ScaleOp,
-                              RemoveFaceOp, CapHolesOp, ReverseOp>;
+                              RemoveFaceOp, CapHolesOp, ReverseOp, MoveVerticesOp>;
 
 struct Recipe {
   BaseFeature base;

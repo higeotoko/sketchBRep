@@ -712,6 +712,86 @@ Status Modeler::reverseFaces(const std::vector<ObjectId>& ids) {
   return Status::success();
 }
 
+namespace {
+
+// Corners of a face, in no particular order.
+std::vector<gp_Pnt> cornersOf(const TopoDS_Face& face) {
+  std::vector<gp_Pnt> out;
+  TopTools_IndexedMapOfShape vertices;
+  TopExp::MapShapes(face, TopAbs_VERTEX, vertices);
+  for (int i = 1; i <= vertices.Extent(); ++i) out.push_back(BRep_Tool::Pnt(TopoDS::Vertex(vertices(i))));
+  return out;
+}
+
+bool sameCorners(std::vector<gp_Pnt> a, const std::vector<gp_Pnt>& b) {
+  if (a.size() != b.size()) return false;
+  for (const gp_Pnt& p : b) {
+    auto it = std::find_if(a.begin(), a.end(), [&](const gp_Pnt& q) { return q.Distance(p) < 1e-3; });
+    if (it == a.end()) return false;
+    a.erase(it);
+  }
+  return true;
+}
+
+}  // namespace
+
+Status Modeler::moveVertices(const ObjectId& id, const std::vector<gp_Pnt>& worldPoints, const gp_Vec& worldDelta) {
+  const Object* current = document_.find(id);
+  if (!current || current->shape.IsNull()) return Status::failure("Object not found");
+  if (current->locked) return Status::failure("The object is locked");
+  const ObjectKind kind = current->kind();
+  if (kind == ObjectKind::Instance) {
+    return Status::failure("Component instances cannot be reshaped directly; edit the component (double-click)");
+  }
+  if (kind != ObjectKind::Solid && kind != ObjectKind::Face && kind != ObjectKind::Shell) {
+    return Status::failure("Only solids, faces and open shapes can be reshaped by moving corners");
+  }
+  if (worldDelta.Magnitude() < tolerance::kMinDimension) return Status::failure("Distance must be non-zero");
+  const gp_Trsf toLocal = document_.worldTransform(*current).Inverted();
+  MoveVerticesOp op;
+  for (gp_Pnt p : worldPoints) {
+    p.Transform(toLocal);
+    if (std::none_of(op.points.begin(), op.points.end(), [&](const gp_Pnt& q) { return q.Distance(p) < 1e-6; })) {
+      op.points.push_back(p);
+    }
+  }
+  const gp_Vec delta = worldDelta.Transformed(toLocal);
+  op.direction = gp_Dir(delta);
+  op.distance = delta.Magnitude();
+
+  Object object = *current;
+  object.recipe.modifiers.push_back(op);
+  const Status built = rebuild(object, document_.regenContext());
+  if (!built) return built;
+
+  // Painted faces: the face rebuilt from the same corners (moved ones moved).
+  if (!current->faceMaterials.empty()) {
+    TopTools_IndexedMapOfShape before;
+    TopExp::MapShapes(current->shape, TopAbs_FACE, before);
+    std::vector<TopoDS_Face> after;
+    for (TopExp_Explorer e(object.shape, TopAbs_FACE); e.More(); e.Next()) after.push_back(TopoDS::Face(e.Current()));
+    std::vector<FaceMaterial> carried;
+    for (const auto& [index, material] : resolveFaceMaterials(*current).faces) {
+      std::vector<gp_Pnt> corners = cornersOf(TopoDS::Face(before(index)));
+      for (gp_Pnt& c : corners) {
+        if (std::any_of(op.points.begin(), op.points.end(), [&](const gp_Pnt& q) { return q.Distance(c) < 1e-3; })) {
+          c.Translate(delta);
+        }
+      }
+      for (const TopoDS_Face& f : after) {
+        if (!sameCorners(cornersOf(f), corners)) continue;
+        if (auto fm = FaceMaterial::of(f, material)) carried.push_back(*fm);
+        break;
+      }
+    }
+    object.faceMaterials = std::move(carried);
+  }
+  history_.execute(Command{
+      op.points.size() == 1 ? "Move Corner" : "Move Edge",
+      {ObjectDelta{object.id, *current, object, document_.indexOf(object.id)}}, {}});
+  return Status::success();
+}
+
 Result<ObjectId> Modeler::eraseEdge(const ObjectId& id, const TopoDS_Edge& worldEdge) {
   using R = Result<ObjectId>;
   const Object* current = document_.find(id);

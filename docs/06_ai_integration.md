@@ -40,6 +40,7 @@ AI 専用の裏口は作らず、GUI のツールと同じ `doc::Modeler` を JS
 - 編集: `split_face`（面を線で分割）, `extrude`, `push_pull`（面は番号か `{"normal": [0,0,1]}`）, `set_parameter`, `offset`, `move`, `rotate`, `scale`（等倍・パラメトリック）, `copy_array`（直線・円形）, `boolean`, `revolve`, `loft`, `sweep`
 - 構造・属性: `group`, `ungroup`, `make_component`, `set_definition_parameter`, `rename`, `set_tag`, `paint`, `delete`
 - コンポーネントの配置: `placement_parameters`（読み取り）, `set_placement_parameter`, `clear_placement_parameters`, `make_unique`, `mirror_placement {ids, axis}`, `set_component_axes {id, origin, x_axis?}`（docs/14_components.md）
+- 形の変形: `move_vertices {id, points | edge, delta}`（面を平らに保てない動きは拒否、docs/15_reshape.md）
 - 表示状態: `hide` / `unhide_all`（非表示は描画・吸着・出力の対象外）, `set_section`（断面。平面図・断面図の切断）, `list_tags`, `set_tag_visible`
 - 3DM: `export_3dm` / `import_3dm`（ファイル系なのでアプリ経由では無効、`sbr_cli` 等で使用）
 - 履歴・ファイル: `undo`, `redo`, `save`, `open`, `export_step`（**アプリ経由では無効**）

@@ -19,6 +19,12 @@ namespace sbr::geom {
 // that are not flat are refused.
 Result<TopoDS_Shape> capHoles(const TopoDS_Shape& shell);
 
+// Moves the vertices of a polyhedral shape (flat faces, straight edges) found
+// at `points` by `delta`, keeping every face flat (SketchUp's move of an
+// edge or corner, without the hidden triangulation). Refused when a face
+// would bend, fold over, collapse, or the solid would cross itself.
+Result<TopoDS_Shape> moveVertices(const TopoDS_Shape& shape, const std::vector<gp_Pnt>& points, const gp_Vec& delta);
+
 // True if the face lies on a plane; optionally returns the plane.
 bool isPlanarFace(const TopoDS_Face& face, gp_Pln* planeOut = nullptr);
 

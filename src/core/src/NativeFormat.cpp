@@ -431,6 +431,12 @@ json modifierToJson(const Modifier& m) {
           },
           [](const CapHolesOp&) { return json{{"type", "capholes"}}; },
           [](const ReverseOp&) { return json{{"type", "reverse"}}; },
+          [](const MoveVerticesOp& op) {
+            return json{{"type", "movevertices"},
+                        {"points", pointsToJson(op.points)},
+                        {"direction", toJson(op.direction)},
+                        {"distance", op.distance}};
+          },
           [](const PushPullOp& op) {
             return json{{"type", "pushpull"},
                         {"distance", op.distance},
@@ -477,6 +483,13 @@ Modifier modifierFrom(const json& j) {
   }
   if (type == "capholes") return CapHolesOp{};
   if (type == "reverse") return ReverseOp{};
+  if (type == "movevertices") {
+    MoveVerticesOp op;
+    for (const json& p : j.at("points")) op.points.push_back(pointFrom(p));
+    op.direction = dirFrom(j.at("direction"));
+    op.distance = j.at("distance").get<double>();
+    return op;
+  }
   if (type == "split") {
     SplitOp op;
     op.points = pointsFrom(j.at("points"));

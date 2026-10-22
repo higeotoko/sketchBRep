@@ -109,6 +109,12 @@ class Modeler {
   Status fillHoles(const std::vector<ObjectId>& ids);
   // Turns the faces of open shells / profiles over (front <-> back).
   Status reverseFaces(const std::vector<ObjectId>& ids);
+  // Moves corners of a solid, face or open shape (world points, as snapped
+  // on its vertices) by a world vector, keeping every face flat: an edge
+  // is its two corners, a face all of its corners (SketchUp's move of an
+  // edge / corner). Refused when a face would bend or fold, or the solid
+  // would cross itself. Painted faces keep their materials.
+  Status moveVertices(const ObjectId& id, const std::vector<gp_Pnt>& worldPoints, const gp_Vec& worldDelta);
   // The object a line would split (cheap check for the "split here" hint).
   std::optional<ObjectId> splitTarget(const std::vector<gp_Pnt>& worldPoints) const;
   // If the curve closes a loop with other loose open curves (lines, arcs,

@@ -1,5 +1,7 @@
 #include "Tools.h"
 
+#include "Messages.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -434,6 +436,7 @@ QString RotateTool::targetText() const {
 QString MoveTool::targetText() const {
   if (!moving_) return {};
   if (stretch_) return QObject::tr("%1 の面（法線方向に伸縮）").arg(objectName(host_, stretch_->first));
+  if (corners_) return QObject::tr("%1 の%2（面は平らなまま）").arg(objectName(host_, corners_->object), corners_->what);
   return targets_.size() == 1 ? objectName(host_, targets_.front()) : QObject::tr("%1 個").arg(targets_.size());
 }
 
@@ -2184,12 +2187,14 @@ void MoveTool::activate() {
   resetState();
   host_.viewport().setPickMode(PickMode::Objects);
   host_.setMeasurement(QObject::tr("距離"), QString());
-  host_.setStatus(QObject::tr("基点をクリック（未選択ならクリックした対象を移動）") + copySuffix());
+  host_.setStatus(QObject::tr("基点をクリック（未選択ならクリックした対象を移動、Alt+クリックで角・辺・面をつかんで形を変える）") +
+                  copySuffix());
 }
 
 void MoveTool::resetState() {
   moving_ = false;
   stretch_.reset();
+  corners_.reset();
   copy_ = false;
   resetLock();
   host_.viewport().clearPreview();
@@ -2205,7 +2210,10 @@ void MoveTool::mouseMove(const ToolEvent& e) {
     host_.setStatus(QObject::tr("基点をクリック  [%1]").arg(snapLabel(r.kind)) + copySuffix());
     return;
   }
-  const snap::SnapResult r = snapAt(e, base_, gp_Pln(base_, gp::DZ()));
+  // Reshaping often goes up (a roof edge): an axis lock then wins over the
+  // ground-parallel plane the move is otherwise held to.
+  const bool free = corners_ && locked_;
+  const snap::SnapResult r = snapAt(e, base_, free ? std::nullopt : std::optional<gp_Pln>(gp_Pln(base_, gp::DZ())));
   if (!r.valid()) return;
   current_ = r.point;
   if (stretch_) {
@@ -2221,6 +2229,27 @@ void MoveTool::mouseMove(const ToolEvent& e) {
     }
     return;
   }
+  if (corners_) {
+    const gp_Vec d(base_, current_);
+    host_.setMeasurement(QObject::tr("距離"), mm(d.Magnitude()));
+    const doc::Object* o = host_.modeler().document().find(corners_->object);
+    if (!o || d.Magnitude() <= tolerance::kMinDimension) {
+      host_.viewport().clearPreview();
+      return;
+    }
+    // Preview the reshaped shape; say why when it cannot be done.
+    auto moved = geom::moveVertices(host_.modeler().document().worldShape(*o), corners_->points, d);
+    if (moved) {
+      host_.viewport().setPreview(moved.value(), true);
+      host_.setStatus(QObject::tr("%1を移動: クリックで確定、または距離を入力  [%2]")
+                          .arg(corners_->what, snapLabel(r.kind)) + lockSuffix());
+    } else {
+      host_.viewport().clearPreview();
+      host_.setStatus(QObject::tr("ここには動かせません: %1").arg(userMessage(QString::fromStdString(moved.error()))) +
+                      lockSuffix());
+    }
+    return;
+  }
   gp_Trsf delta;
   delta.SetTranslation(gp_Vec(base_, current_));
   host_.viewport().setGhost(targets_, delta);
@@ -2230,6 +2259,18 @@ void MoveTool::mouseMove(const ToolEvent& e) {
 }
 
 void MoveTool::finish() {
+  if (corners_) {
+    const gp_Vec d(base_, current_);
+    if (d.Magnitude() > tolerance::kMinDimension) {
+      const Status s = host_.modeler().moveVertices(corners_->object, corners_->points, d);
+      if (!s) host_.reportError(QObject::tr("形を変えられませんでした: %1").arg(QString::fromStdString(s.message())));
+      host_.setSelection({});  // face / edge indices change with the shape
+    }
+    last_.reset();
+    resetState();
+    host_.viewport().setPickMode(PickMode::Objects);
+    return;
+  }
   if (stretch_) {
     const double d = gp_Vec(base_, current_).Dot(gp_Vec(stretchNormal_));
     if (std::abs(d) > tolerance::kMinDimension) {
@@ -2250,8 +2291,63 @@ void MoveTool::finish() {
   host_.viewport().setPickMode(PickMode::Objects);
 }
 
+bool MoveTool::grabCorners(const ToolEvent& e) {
+  const doc::Document& document = host_.modeler().document();
+  auto reshapeable = [&](const doc::ObjectId& id) {
+    const doc::Object* o = document.find(id);
+    return o && (o->kind() == doc::ObjectKind::Solid || o->kind() == doc::ObjectKind::Face ||
+                 o->kind() == doc::ObjectKind::Shell);
+  };
+  auto cornersOf = [](const TopoDS_Shape& s, std::vector<gp_Pnt>& out) {
+    for (TopExp_Explorer v(s, TopAbs_VERTEX); v.More(); v.Next()) {
+      const gp_Pnt p = BRep_Tool::Pnt(TopoDS::Vertex(v.Current()));
+      if (std::none_of(out.begin(), out.end(), [&](const gp_Pnt& q) { return q.Distance(p) < 1e-6; })) out.push_back(p);
+    }
+  };
+  const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
+  if (!r.valid()) return false;
+  Corners grabbed;
+  if (e.modifiers & Qt::AltModifier) {
+    // What is under the cursor: a corner (endpoint snap), else the edge or face.
+    host_.viewport().setPickMode(PickMode::Elements);
+    const auto element = host_.viewport().pickElement(e.pos);
+    host_.viewport().setPickMode(PickMode::Objects);
+    if (!element || !reshapeable(element->objectId)) return false;
+    grabbed.object = element->objectId;
+    if (r.kind == snap::SnapKind::Endpoint) {
+      grabbed.points = {r.point};
+      grabbed.what = QObject::tr("角");
+    } else {
+      cornersOf(host_.viewport().elementShape(*element), grabbed.points);
+      grabbed.what = element->type == TopAbs_EDGE ? QObject::tr("辺") : QObject::tr("面");
+    }
+  } else {
+    // Selected edges (and faces) of one object: their corners.
+    const auto elements = host_.elementSelection();
+    const bool anyEdge = std::any_of(elements.begin(), elements.end(),
+                                     [](const ElementRef& el) { return el.type == TopAbs_EDGE; });
+    if (elements.empty() || (!anyEdge && elements.size() < 2)) return false;
+    grabbed.object = elements.front().objectId;
+    for (const ElementRef& el : elements) {
+      if (el.objectId != grabbed.object) return false;
+      cornersOf(host_.viewport().elementShape(el), grabbed.points);
+    }
+    if (!reshapeable(grabbed.object)) return false;
+    grabbed.what = elements.size() == 1 ? QObject::tr("辺") : QObject::tr("選んだ %1 要素").arg(elements.size());
+  }
+  if (grabbed.points.empty()) return false;
+  corners_ = std::move(grabbed);
+  base_ = current_ = r.point;
+  last_ = {};  // the grabbed point itself must not stay sticky
+  moving_ = true;
+  host_.viewport().clearHover();
+  host_.viewport().setPickMode(PickMode::None);
+  return true;
+}
+
 void MoveTool::mousePress(const ToolEvent& e) {
   if (!moving_) {
+    if (grabCorners(e)) return;
     // A single selected face of a solid or profile: stretch along its normal.
     const auto elements = host_.elementSelection();
     if (elements.size() == 1 && elements.front().type == TopAbs_FACE) {

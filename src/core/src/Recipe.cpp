@@ -322,6 +322,9 @@ Result<TopoDS_Shape> regenerate(const Recipe& recipe, const RegenContext& contex
             },
             [&](const CapHolesOp&) -> Result<TopoDS_Shape> { return geom::capHoles(shape); },
             [&](const ReverseOp&) -> Result<TopoDS_Shape> { return shape.Reversed(); },
+            [&](const MoveVerticesOp& op) -> Result<TopoDS_Shape> {
+              return geom::moveVertices(shape, op.points, gp_Vec(op.direction) * op.distance);
+            },
             [&](const PushPullOp& op) -> Result<TopoDS_Shape> {
               const geom::ValidationReport report = geom::validateShape(shape, true);
               if (!report.valid) {
@@ -389,6 +392,9 @@ std::vector<Parameter> parameters(const Recipe& recipe) {
                    [&](const RemoveFaceOp&) {},
                    [&](const CapHolesOp&) {},
                    [&](const ReverseOp&) {},
+                   [&](const MoveVerticesOp& op) {
+                     out.push_back({opKey(i), "Move " + std::to_string(i) + " distance", op.distance, true});
+                   },
                    [&](const ScaleOp& op) { out.push_back({scaleKey(i), "Scale", op.factor, false}); },
                    [&](const OffsetFaceOp& op) {
                      out.push_back({opKey(i), "Push/Pull " + std::to_string(i) + " distance",
@@ -523,6 +529,10 @@ std::string describe(const Recipe& recipe) {
                    [&](const RemoveFaceOp&) { out << " > Delete face"; },
                    [&](const CapHolesOp&) { out << " > Fill holes"; },
                    [&](const ReverseOp&) { out << " > Reverse faces"; },
+                   [&](const MoveVerticesOp& op) {
+                     out << " > Move " << op.points.size() << (op.points.size() == 1 ? " corner " : " corners ")
+                         << op.distance;
+                   },
                    [&](const OffsetFaceOp& op) { out << " > Push/Pull (curved) " << op.distance; },
                    [&](const OffsetOp& op) { out << " > Offset " << op.distance; },
                    [&](const RevolveOp& op) { out << " > Revolve " << op.angle * 180.0 / M_PI << " deg"; },

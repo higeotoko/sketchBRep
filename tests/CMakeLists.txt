@@ -13,6 +13,7 @@ add_executable(sbr_core_tests
   test_transactions.cpp
   test_materials.cpp
   test_components.cpp
+  test_reshape.cpp
   test_ux_gate1.cpp
   test_rhino3dm.cpp
   test_scenarios.cpp
