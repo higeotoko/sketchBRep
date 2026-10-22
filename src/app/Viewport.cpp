@@ -744,6 +744,7 @@ snap::SnapResult Viewport::snap(const QPoint& pos, std::optional<gp_Pnt> anchor,
   query.cursor = snap::ScreenPoint{static_cast<double>(pos.x()), static_cast<double>(pos.y())};
   query.project = [this](const gp_Pnt& p) { return project(p); };
   query.pixelTolerance = 10.0;
+  query.viewDirection = viewDirection();  // perspective-safe culling
   query.anchor = anchor;
   query.lockedDirection = lockedDirection;
   if (workPlane) query.workPlane = *workPlane;

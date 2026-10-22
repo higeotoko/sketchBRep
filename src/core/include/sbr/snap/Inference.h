@@ -56,6 +56,11 @@ struct SnapQuery {
   ScreenPoint cursor;
   Projector project;
   double pixelTolerance = 10.0;
+  // Camera looking direction. With a perspective projector it must be given
+  // so that shapes can be culled by screen position (points behind the
+  // camera plane do not project); without it the ray direction is used,
+  // which is exact for orthographic views.
+  std::optional<gp_Dir> viewDirection;
   std::optional<gp_Pnt> anchor;          // enables axis inference
   std::optional<gp_Dir> lockedDirection; // Shift lock: result constrained to anchor + t*dir
   gp_Pln workPlane{gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1)};

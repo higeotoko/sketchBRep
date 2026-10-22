@@ -4,6 +4,7 @@
 #include <cmath>
 #include <limits>
 #include <unordered_map>
+#include <functional>
 
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepBndLib.hxx>
@@ -88,11 +89,134 @@ struct InferenceEngine::Slot {
   }
 };
 
+// Bounding volume hierarchy over the slots' boxes, rebuilt lazily after
+// changes, so a query visits only shapes near the cursor or the ray
+// (performance step 3) instead of every shape in the model.
+struct BvhNode {
+  Bnd_Box box;
+  int left = -1, right = -1;  // children; -1 = leaf
+  std::size_t first = 0, count = 0;  // leaf range in Cache::order
+};
+
 struct InferenceEngine::Cache {
   std::vector<Slot> slots;
   std::vector<std::size_t> freeSlots;
   std::unordered_map<std::string, std::size_t> byKey;
+
+  std::vector<BvhNode> nodes;
+  std::vector<std::size_t> order;      // slot indices, grouped by leaf
+  std::vector<std::size_t> unbounded;  // live slots without a box: always visited
+  bool bvhDirty = true;
+
+  void buildBvh() {
+    bvhDirty = false;
+    nodes.clear();
+    order.clear();
+    unbounded.clear();
+    for (std::size_t i = 0; i < slots.size(); ++i) {
+      if (!slots[i].alive) continue;
+      (slots[i].box.IsVoid() ? unbounded : order).push_back(i);
+    }
+    if (!order.empty()) build(0, order.size());
+  }
+
+  int build(std::size_t first, std::size_t last) {
+    const int index = static_cast<int>(nodes.size());
+    nodes.emplace_back();
+    Bnd_Box box;
+    for (std::size_t i = first; i < last; ++i) box.Add(slots[order[i]].box);
+    nodes[index].box = box;
+    constexpr std::size_t kLeafSize = 8;
+    if (last - first <= kLeafSize) {
+      nodes[index].first = first;
+      nodes[index].count = last - first;
+      return index;
+    }
+    // Split at the median along the longest axis of the box.
+    double x0, y0, z0, x1, y1, z1;
+    box.Get(x0, y0, z0, x1, y1, z1);
+    const double ext[3] = {x1 - x0, y1 - y0, z1 - z0};
+    const int axis = ext[0] >= ext[1] && ext[0] >= ext[2] ? 0 : (ext[1] >= ext[2] ? 1 : 2);
+    auto centre = [&](std::size_t slot) {
+      double a0, b0, c0, a1, b1, c1;
+      slots[slot].box.Get(a0, b0, c0, a1, b1, c1);
+      return axis == 0 ? a0 + a1 : axis == 1 ? b0 + b1 : c0 + c1;
+    };
+    const std::size_t mid = first + (last - first) / 2;
+    std::nth_element(order.begin() + static_cast<std::ptrdiff_t>(first), order.begin() + static_cast<std::ptrdiff_t>(mid),
+                     order.begin() + static_cast<std::ptrdiff_t>(last),
+                     [&](std::size_t a, std::size_t b) { return centre(a) < centre(b); });
+    const int left = build(first, mid);
+    const int right = build(mid, last);
+    nodes[index].left = left;
+    nodes[index].right = right;
+    return index;
+  }
+
+  using Slots = std::vector<std::reference_wrapper<const Slot>>;
+  // Live slots whose box the line passes through / that may lie under the
+  // cursor (defined below).
+  Slots along(const gp_Lin& line);
+  Slots nearCursor(const SnapQuery& q, double tolerance);
+
+  // Visits the live slots whose box passes `test` (also applied to nodes).
+  template <typename Test, typename Visit>
+  void query(const Test& test, const Visit& visit) {
+    if (bvhDirty) buildBvh();
+    for (std::size_t i : unbounded) visit(slots[i]);
+    if (nodes.empty()) return;
+    std::vector<int> stack{0};
+    while (!stack.empty()) {
+      const BvhNode& node = nodes[static_cast<std::size_t>(stack.back())];
+      stack.pop_back();
+      if (!test(node.box)) continue;
+      if (node.left < 0) {
+        for (std::size_t i = node.first; i < node.first + node.count; ++i) visit(slots[order[i]]);
+      } else {
+        stack.push_back(node.left);
+        stack.push_back(node.right);
+      }
+    }
+  }
 };
+
+namespace {
+
+// Could the cursor (with `tolerance` pixels) be over something in `box`?
+// Conservative: boxes reaching behind the viewer are never rejected.
+bool nearCursor(const Bnd_Box& box, const SnapQuery& q, double tolerance) {
+  double x0, y0, z0, x1, y1, z1;
+  box.Get(x0, y0, z0, x1, y1, z1);
+  double minX = 1e300, minY = 1e300, maxX = -1e300, maxY = -1e300;
+  const gp_Vec forward(q.viewDirection.value_or(q.ray.direction));
+  for (int k = 0; k < 8; ++k) {
+    const gp_Pnt c(k & 1 ? x1 : x0, k & 2 ? y1 : y0, k & 4 ? z1 : z0);
+    if (gp_Vec(q.ray.origin, c).Dot(forward) <= 1e-6) return true;
+    const ScreenPoint p = q.project(c);
+    minX = std::min(minX, p.x);
+    maxX = std::max(maxX, p.x);
+    minY = std::min(minY, p.y);
+    maxY = std::max(maxY, p.y);
+  }
+  return q.cursor.x >= minX - tolerance && q.cursor.x <= maxX + tolerance && q.cursor.y >= minY - tolerance &&
+         q.cursor.y <= maxY + tolerance;
+}
+
+}  // namespace
+
+InferenceEngine::Cache::Slots InferenceEngine::Cache::along(const gp_Lin& line) {
+  Slots out;
+  query([&](const Bnd_Box& b) { return b.IsVoid() || !b.IsOut(line); },
+        [&](const Slot& slot) { out.emplace_back(slot); });
+  return out;
+}
+
+InferenceEngine::Cache::Slots InferenceEngine::Cache::nearCursor(const SnapQuery& q, double tolerance) {
+  Slots out;
+  query([&](const Bnd_Box& b) { return b.IsVoid() || snap::nearCursor(b, q, tolerance); },
+        [&](const Slot& slot) { out.emplace_back(slot); });
+  return out;
+}
 
 namespace {
 
@@ -149,8 +273,7 @@ bool InferenceEngine::isVisible(const gp_Pnt& p, const Ray& ray) const {
   if (length < 1e-9) return true;
   const gp_Lin sight(ray.origin, gp_Dir(v));
   constexpr double kDepthTolerance = 0.5;  // mm: faces through p do not hide it
-  for (const Slot& slot : cache_->slots) {
-    if (!slot.alive || slot.box.IsOut(sight)) continue;
+  for (const Slot& slot : cache_->along(sight)) {
     IntCurvesFace_ShapeIntersector& intersector = slot.faces();
     if (!clip_) {
       intersector.PerformNearest(sight, 0.0, length - kDepthTolerance);
@@ -173,6 +296,7 @@ void InferenceEngine::setShapes(const std::vector<TopoDS_Shape>& shapes) {
   for (std::size_t i = 0; i < shapes.size(); ++i) {
     if (!shapes[i].IsNull()) indexShape(cache_->slots[i], shapes[i], static_cast<int>(i));
   }
+  cache_->bvhDirty = true;
   guidePointsDirty_ = true;
 }
 
@@ -195,6 +319,7 @@ void InferenceEngine::setShape(const std::string& key, const TopoDS_Shape& shape
   }
   c.byKey[key] = slot;
   indexShape(c.slots[slot], shape, static_cast<int>(slot));
+  c.bvhDirty = true;
   guidePointsDirty_ = true;
 }
 
@@ -206,6 +331,7 @@ void InferenceEngine::removeShape(const std::string& key) {
   c.slots[it->second] = Slot{};
   c.freeSlots.push_back(it->second);
   c.byKey.erase(it);
+  c.bvhDirty = true;
   guidePointsDirty_ = true;
 }
 
@@ -292,13 +418,16 @@ SnapResult InferenceEngine::snap(const SnapQuery& q) const {
   if (guidePointsDirty_) rebuildGuidePoints();
   SnapResult result;
   const double tol = q.pixelTolerance;
+  // Shapes that can have a point or edge under the cursor (sticky points
+  // are kept within 1.5x the tolerance).
+  const Cache::Slots nearby = cache_ ? cache_->nearCursor(q, 1.5 * tol) : Cache::Slots{};
 
   // 1. Exact points: endpoints, midpoints, origin. Points hidden behind
   //    faces are skipped (they may project right next to visible ones).
   std::optional<SnapResult> pointSnap;
   if (q.snapToGeometry && cache_) {
     std::vector<std::pair<double, SnapResult>> candidates;
-    for (const Slot& slot : cache_->slots)
+    for (const Slot& slot : nearby)
     for (const auto& entry : slot.points) {
       const double d = screenDistance(q.project, entry.point, q.cursor);
       const bool sticky = q.stickyPoint && q.stickyPoint->Distance(entry.point) < 1e-6;
@@ -365,7 +494,7 @@ SnapResult InferenceEngine::snap(const SnapQuery& q) const {
   // 2. On edge (visible edges only).
   if (q.snapToGeometry && cache_) {
     std::vector<std::pair<double, SnapResult>> candidates;
-    for (const Slot& slot : cache_->slots)
+    for (const Slot& slot : nearby)
     for (const EdgeEntry& e : slot.edges) {
       gp_Pnt candidate;
       if (e.isLine) {
@@ -513,8 +642,7 @@ SnapResult InferenceEngine::snap(const SnapQuery& q) const {
     double bestParam = std::numeric_limits<double>::max();
     std::optional<SnapResult> faceSnap;
     const gp_Lin line(q.ray.origin, q.ray.direction);
-    for (const Slot& slot : cache_->slots) {
-      if (!slot.alive || slot.box.IsOut(line)) continue;
+    for (const Slot& slot : cache_->along(line)) {
       IntCurvesFace_ShapeIntersector* intersector = &slot.faces();
       int hit = 0;
       if (!clip_) {

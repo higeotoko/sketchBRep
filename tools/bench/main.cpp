@@ -118,6 +118,16 @@ json measure(const std::string& fixture, int n) {
                        }) /
                        kQueries;
 
+  // The viewport's path: shapes indexed by key, one changed, then a query
+  // (includes the lazy rebuild of the bounding volume hierarchy).
+  snap::InferenceEngine keyed;
+  for (std::size_t i = 0; i < world.size(); ++i) keyed.setShape(std::to_string(i), world[i]);
+  keyed.snap(topQuery(0, 0));
+  r["edit_reindex_query_ms"] = millis([&] {
+    keyed.setShape("0", world.back());
+    keyed.snap(topQuery(100, 100));
+  });
+
   // A small edit on one object: commit, then undo.
   const doc::ObjectId target = ids.back();
   r["move_one_ms"] = millis([&] { m.move({target}, gp_Vec(10, 0, 0)); });
@@ -162,7 +172,7 @@ int main(int argc, char** argv) {
     }
   }
   const char* columns[] = {"build_ms",     "find_all_ms", "world_shapes_ms",  "snap_index_ms",
-                           "snap_query_ms", "move_one_ms", "undo_ms",          "list_objects_ms",
+                           "snap_query_ms", "edit_reindex_query_ms", "move_one_ms", "undo_ms",          "list_objects_ms",
                            "save_ms"};
   json all = json::array();
   std::printf("%-10s %6s", "fixture", "n");

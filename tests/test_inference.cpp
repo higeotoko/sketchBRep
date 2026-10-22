@@ -271,3 +271,54 @@ TEST(Inference, KeyedShapesUpdateIncrementally) {
   // Hidden-point test still sees the (lazily indexed) faces.
   EXPECT_FALSE(engine.isVisible(gp_Pnt(500, 500, 0), Ray{gp_Pnt(500, 500, 100000), gp_Dir(0, 0, -1)}));
 }
+
+// Performance step 3: the bounding volume hierarchy must find exactly what
+// a full scan finds, in a large grid and with shapes behind a perspective eye.
+TEST(Inference, HierarchyFindsTheSameSnapsInLargeModels) {
+  InferenceEngine engine;
+  constexpr int kSide = 30;  // 900 boxes, 1000 mm apart
+  for (int i = 0; i < kSide; ++i) {
+    for (int j = 0; j < kSide; ++j) {
+      gp_Trsf t;
+      t.SetTranslation(gp_Vec(i * 2000.0, j * 2000.0, 0));
+      engine.setShape(std::to_string(i) + "/" + std::to_string(j), box().Moved(TopLoc_Location(t)));
+    }
+  }
+  TopView view;
+  for (int i = 0; i < kSide; i += 7) {
+    for (int j = 0; j < kSide; j += 5) {
+      // In a top view a box's upper and lower corners coincide on screen;
+      // what matters is that the right box's corner is found.
+      const gp_Pnt corner(i * 2000.0 + 1000, j * 2000.0 + 1000, 500);
+      const SnapResult r = engine.snap(view.query(corner.X() / 10 + 2, -corner.Y() / 10 - 1));
+      ASSERT_EQ(r.kind, SnapKind::Endpoint) << i << "," << j;
+      EXPECT_NEAR(r.point.X(), corner.X(), 1e-9);
+      EXPECT_NEAR(r.point.Y(), corner.Y(), 1e-9);
+    }
+  }
+  // Removing and re-adding keeps the index consistent.
+  engine.removeShape("0/0");
+  EXPECT_NE(engine.snap(view.query(100 + 2, -100 - 1)).kind, SnapKind::Endpoint);
+  engine.setShape("0/0", box());
+  EXPECT_EQ(engine.snap(view.query(100 + 2, -100 - 1)).kind, SnapKind::Endpoint);
+
+  // Perspective from inside the grid: boxes behind the eye are not culled
+  // wrongly (and do not break the query); a box in front is found.
+  const gp_Pnt eye(30000, 30000, 1500);
+  const gp_Dir forward(1, 0, 0);
+  SnapQuery q;
+  const double f = 800;  // focal length in pixels
+  q.project = [&](const gp_Pnt& p) {
+    const gp_Vec v(eye, p);
+    const double depth = v.Dot(gp_Vec(forward));
+    return ScreenPoint{f * v.Y() / depth, -f * v.Z() / depth};
+  };
+  const gp_Pnt corner(35000, 31000, 500);
+  q.cursor = q.project(corner);
+  q.ray = Ray{eye, gp_Dir(gp_Vec(eye, corner))};
+  q.pixelTolerance = 8;
+  q.viewDirection = forward;
+  const SnapResult r = engine.snap(q);
+  EXPECT_EQ(r.kind, SnapKind::Endpoint);
+  EXPECT_NEAR(r.point.Distance(corner), 0, 1e-9);
+}
