@@ -300,6 +300,32 @@ class CircleTool : public DrawingTool {
   std::optional<doc::ObjectId> lastCreated_;
 };
 
+// Regular polygon: click the centre, then a corner (the polygon turns with
+// the mouse). Typing "8s" sets the number of sides, a length the radius;
+// both re-edit the last polygon when nothing is being drawn.
+class PolygonTool : public DrawingTool {
+ public:
+  using DrawingTool::DrawingTool;
+  QString name() const override;
+  QCursor cursor() const override;
+  void activate() override;
+  void cancel() override;
+  void mousePress(const ToolEvent& e) override;
+  void mouseMove(const ToolEvent& e) override;
+  void applyMeasurement(const QString& text) override;
+  int sides() const { return sides_; }
+
+ private:
+  void commit(double radius);
+  void reset();
+  QString prompt() const;
+  bool hasCentre_ = false;
+  geom::SketchPlane plane_;  // xDir points at the first corner
+  double radius_ = 0.0;
+  int sides_ = 6;
+  std::optional<doc::ObjectId> lastCreated_;
+};
+
 class RectangleTool : public DrawingTool {
  public:
   using DrawingTool::DrawingTool;

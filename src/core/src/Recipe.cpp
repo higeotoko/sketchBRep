@@ -51,6 +51,21 @@ Result<TopoDS_Shape> buildBase(const BaseFeature& base, const RegenContext& cont
             if (!face) return Result<TopoDS_Shape>::failure(face.error());
             return TopoDS_Shape(face.value());
           },
+          [](const RegularPolygonProfile& p) -> Result<TopoDS_Shape> {
+            if (p.sides < 3 || p.sides > 256) return Result<TopoDS_Shape>::failure("A polygon needs 3 to 256 sides");
+            if (!(p.radius > tolerance::kMinDimension)) {
+              return Result<TopoDS_Shape>::failure("Polygon radius must be positive");
+            }
+            std::vector<gp_Pnt> corners;
+            const gp_Vec x(p.plane.xDir), y(p.plane.yDir());
+            for (int k = 0; k < p.sides; ++k) {
+              const double a = 2.0 * M_PI * k / p.sides;
+              corners.push_back(p.plane.origin.Translated(p.radius * (std::cos(a) * x + std::sin(a) * y)));
+            }
+            auto face = geom::makePolygonFace(corners);
+            if (!face) return Result<TopoDS_Shape>::failure(face.error());
+            return TopoDS_Shape(face.value());
+          },
           [](const PolygonProfile& p) -> Result<TopoDS_Shape> {
             auto face = geom::makePolygonFace(p.points);
             if (!face) return Result<TopoDS_Shape>::failure(face.error());
@@ -276,6 +291,10 @@ std::vector<Parameter> parameters(const Recipe& recipe) {
   if (const auto* c = std::get_if<CircleProfile>(&recipe.base)) {
     out.push_back({"radius", "Radius", c->radius, true});
   }
+  if (const auto* p = std::get_if<RegularPolygonProfile>(&recipe.base)) {
+    out.push_back({"radius", "Radius", p->radius, true});
+    out.push_back({"sides", "Sides", static_cast<double>(p->sides), false});
+  }
   if (const auto* a = std::get_if<ArcCurve>(&recipe.base)) {
     out.push_back({"bulge", "Bulge", a->bulge, true});
   }
@@ -333,6 +352,19 @@ Status setParameter(Recipe& recipe, const std::string& key, double value) {
     c->radius = value;
     return Status::success();
   }
+  if (auto* p = std::get_if<RegularPolygonProfile>(&recipe.base)) {
+    if (key == "radius") {
+      p->radius = value;
+      return Status::success();
+    }
+    if (key == "sides") {
+      if (std::abs(value - std::round(value)) > 1e-9 || value < 3 || value > 256) {
+        return Status::failure("A polygon needs 3 to 256 sides");
+      }
+      p->sides = static_cast<int>(std::lround(value));
+      return Status::success();
+    }
+  }
   if (auto* a = std::get_if<ArcCurve>(&recipe.base); a && key == "bulge") {
     a->bulge = value;
     return Status::success();
@@ -376,6 +408,7 @@ std::string describe(const Recipe& recipe) {
                  },
                  [&](const CircleProfile& c) { out << "Circle r=" << c.radius; },
                  [&](const PolygonProfile& p) { out << "Polygon (" << p.points.size() << " pts)"; },
+                 [&](const RegularPolygonProfile& p) { out << p.sides << "-gon r=" << p.radius; },
                  [&](const PolylineCurve& p) { out << "Line (" << p.points.size() << " pts)"; },
                  [&](const InterpolatedCurve& c) {
                    out << "NURBS curve (" << c.points.size() << " pts" << (c.closed ? ", closed" : "") << ")";

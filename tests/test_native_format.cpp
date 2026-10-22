@@ -4,6 +4,7 @@
 #include "TestHelpers.h"
 #include "sbr/doc/Modeler.h"
 #include "sbr/doc/NativeFormat.h"
+#include "sbr/geom/Measure.h"
 #include "sbr/geom/ShapeIO.h"
 
 using namespace sbr;
@@ -114,4 +115,27 @@ TEST(NativeFormat, GuidesRoundTripAndStayOutOfExports) {
   EXPECT_FALSE(loaded.clearGuides().ok());  // nothing left to clear
   loaded.undo();
   EXPECT_EQ(loaded.document().objects().size(), 2u);
+}
+
+TEST(NativeFormat, RegularPolygonStaysParametric) {
+  Modeler m;
+  auto hex = m.createRegularPolygon(geom::SketchPlane::ground(), 1000, 6);
+  ASSERT_TRUE(hex.ok()) << hex.error();
+  const double hexArea = 1.5 * std::sqrt(3.0) * 1000 * 1000;
+  EXPECT_NEAR(geom::area(m.document().find(*hex)->shape), hexArea, 1e-6);
+  ASSERT_TRUE(m.extrude(*hex, 300).ok());
+  ASSERT_TRUE(m.setParameter(*hex, "sides", 4).ok());
+  EXPECT_NEAR(geom::volume(m.document().find(*hex)->shape), 2.0 * 1000 * 1000 * 300, 1e-3);
+  EXPECT_FALSE(m.setParameter(*hex, "sides", 2.5).ok());
+  EXPECT_FALSE(m.setParameter(*hex, "sides", 2).ok());
+  EXPECT_FALSE(m.createRegularPolygon(geom::SketchPlane::ground(), 1000, 2).ok());
+
+  const std::string path = test::tempPath("polygon.sbr");
+  ASSERT_TRUE(m.save(path).ok());
+  Modeler loaded;
+  ASSERT_TRUE(loaded.load(path).ok());
+  const auto& p = std::get<RegularPolygonProfile>(loaded.document().find(*hex)->recipe.base);
+  EXPECT_EQ(p.sides, 4);
+  ASSERT_TRUE(loaded.setParameter(*hex, "radius", 500).ok());
+  EXPECT_NEAR(geom::volume(loaded.document().find(*hex)->shape), 2.0 * 500 * 500 * 300, 1e-3);
 }

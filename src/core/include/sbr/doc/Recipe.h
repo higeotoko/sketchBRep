@@ -37,6 +37,14 @@ struct CircleProfile {
   double radius = 0.0;
 };
 
+// Regular polygon: 'sides' corners on a circle of 'radius' (the first one
+// along plane.xDir). Radius and sides stay editable.
+struct RegularPolygonProfile {
+  geom::SketchPlane plane;  // origin = centre
+  double radius = 0.0;
+  int sides = 6;
+};
+
 struct PolygonProfile {
   std::vector<gp_Pnt> points;  // closed implicitly
 };
@@ -157,7 +165,7 @@ struct ComponentInstance {
 using BaseFeature = std::variant<RectangleProfile, CircleProfile, PolygonProfile, PolylineCurve, InterpolatedCurve,
                                  ArcCurve, LinearDimension, TextNote, GuideLine, ImportedShape,
                                  BooleanFeature, LoftFeature, SweepFeature, LoopProfile, FacePart, GroupNode,
-                                 ComponentInstance>;
+                                 ComponentInstance, RegularPolygonProfile>;
 
 // --- Modifiers ------------------------------------------------------------
 // Extrudes the profile face along its normal. Must be the first modifier.

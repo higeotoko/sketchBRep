@@ -192,6 +192,20 @@ QPixmap draw(CursorKind kind, QPoint& hotspot) {
       hotspot = QPoint(3, 29);
       break;
     }
+    case CursorKind::Polygon: {
+      // Pencil with a small hexagon.
+      halo(p, pencil());
+      QPainterPath hex;
+      for (int k = 0; k < 6; ++k) {
+        const double a = M_PI / 3 * k;
+        const QPointF c(23 + 7 * std::cos(a), 22 + 7 * std::sin(a));
+        if (k == 0) hex.moveTo(c); else hex.lineTo(c);
+      }
+      hex.closeSubpath();
+      halo(p, hex);
+      hotspot = QPoint(2, 30);
+      break;
+    }
     case CursorKind::Protractor: {
       // Half disc on its base line, with an angled ray from the centre.
       QPainterPath arc;

@@ -278,6 +278,28 @@ const std::vector<CommandDef>& commands() {
          const auto plane = geom::SketchPlane::fromNormal(point(a, "center"), direction(a, "normal", gp::DZ()));
          return idResult(must(m.createCircle(plane, number(a, "radius"), textOr(a, "name", {}))));
        }},
+      {"create_regular_polygon",
+       "Create a regular polygon profile: 'sides' corners on a circle of 'radius' around 'center' (first corner "
+       "along 'x_direction', default +X or the plane's horizontal). Radius and sides stay editable parameters.",
+       SCHEMA({"type": "object", "properties": {
+         "center": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+         "normal": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+         "x_direction": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+         "radius": {"type": "number"}, "sides": {"type": "integer"}, "name": {"type": "string"}},
+         "required": ["center", "radius", "sides"]}),
+       [](doc::Modeler& m, const json& a) {
+         auto plane = geom::SketchPlane::fromNormal(point(a, "center"), direction(a, "normal", gp::DZ()));
+         if (a.contains("x_direction")) {
+           gp_Vec x(direction(a, "x_direction", plane.xDir));
+           x -= gp_Vec(plane.normal) * x.Dot(gp_Vec(plane.normal));
+           if (x.Magnitude() < 1e-9) throw ApiError("'x_direction' must not be along the normal");
+           plane.xDir = gp_Dir(x);
+         }
+         const json& sides = arg(a, "sides");
+         if (!sides.is_number_integer()) throw ApiError("'sides' must be an integer");
+         return idResult(must(m.createRegularPolygon(plane, number(a, "radius"), sides.get<int>(),
+                                                     textOr(a, "name", {}))));
+       }},
       {"create_arc",
        "Create an exact circular arc from start to end. bulge = signed distance of the arc's apex from "
        "the chord midpoint (half the chord = semicircle), on the side normal x (end - start). normal = "

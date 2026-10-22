@@ -269,7 +269,7 @@ void Viewport::keyPressEvent(QKeyEvent* event) {
   const QString text = event->text();
   if (text.size() == 1) {
     const QChar c = text.at(0);
-    if (c.isDigit() || QStringLiteral(".,;-+ mcMCxX*/").contains(c)) {
+    if (c.isDigit() || QStringLiteral(".,;-+ mcMCxX*/sS").contains(c)) {
       emit measurementChar(c);
       return;
     }

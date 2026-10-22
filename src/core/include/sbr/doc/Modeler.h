@@ -49,6 +49,9 @@ class Modeler {
                                    const std::string& name = {});
   Result<ObjectId> createCircle(const geom::SketchPlane& plane, double radius,
                                 const std::string& name = {});
+  // Regular polygon centred on plane.origin, first corner along plane.xDir.
+  Result<ObjectId> createRegularPolygon(const geom::SketchPlane& plane, double radius, int sides,
+                                        const std::string& name = {});
   // 2-point arc with a signed bulge (sagitta) in the plane with 'normal';
   // closed = segment face (can be pushed/pulled).
   Result<ObjectId> createArc(const gp_Pnt& start, const gp_Pnt& end, const gp_Dir& normal, double bulge,

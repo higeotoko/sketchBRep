@@ -389,3 +389,12 @@ TEST(CommandApi, HideAndUnhide) {
   a.ok("unhide_all");
   EXPECT_TRUE(a.modeler.document().isVisible(box));
 }
+
+TEST(CommandApi, RegularPolygon) {
+  Api a;
+  const std::string oct = a.ok("create_regular_polygon", {{"center", {0, 0, 0}}, {"radius", 500}, {"sides", 8},
+                                                         {"x_direction", {0, 1, 0}}})["id"];
+  EXPECT_NEAR(a.ok("get_object", {{"id", oct}})["area"].get<double>(), 2.0 * std::sqrt(2.0) * 500 * 500, 1e-6);
+  EXPECT_FALSE(a.call("create_regular_polygon", {{"center", {0, 0, 0}}, {"radius", 500}, {"sides", 6.5}})["ok"]);
+  a.ok("set_parameter", {{"id", oct}, {"key", "sides"}, {"value", 3}});
+}

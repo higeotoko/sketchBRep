@@ -1190,6 +1190,118 @@ void CircleTool::applyMeasurement(const QString& text) {
   host_.reportError(QObject::tr("円の中心をクリックしてから半径を入力してください"));
 }
 
+// --- Polygon --------------------------------------------------------------------------
+
+QString PolygonTool::name() const { return QObject::tr("多角形"); }
+QCursor PolygonTool::cursor() const { return toolCursor(CursorKind::Polygon); }
+
+QString PolygonTool::prompt() const {
+  return QObject::tr("%1 角形の中心をクリック（「8s」で辺の数、数値で直前の多角形の半径を変更）").arg(sides_);
+}
+
+void PolygonTool::activate() {
+  resetTracking();
+  reset();
+  host_.viewport().setPickMode(PickMode::None);
+  host_.setMeasurement(QObject::tr("半径"), QString());
+  host_.setStatus(prompt());
+}
+
+void PolygonTool::reset() {
+  hasCentre_ = false;
+  radius_ = 0.0;
+  resetLock();
+  host_.viewport().clearPreview();
+}
+
+void PolygonTool::cancel() {
+  reset();
+  host_.viewport().hideSnap();
+}
+
+void PolygonTool::mouseMove(const ToolEvent& e) {
+  if (!hasCentre_) {
+    const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
+    host_.setStatus(prompt() + QStringLiteral("  [") + snapLabel(r.kind) + QStringLiteral("]"));
+    return;
+  }
+  const snap::SnapResult r = snapAt(e, plane_.origin, plane_.plane());
+  if (!r.valid()) return;
+  gp_Vec v(plane_.origin, r.point);
+  v -= gp_Vec(plane_.normal) * v.Dot(gp_Vec(plane_.normal));
+  radius_ = v.Magnitude();
+  if (radius_ > tolerance::kMinDimension) plane_.xDir = gp_Dir(v);  // first corner under the mouse
+  host_.setMeasurement(QObject::tr("半径"), mm(radius_));
+  host_.setStatus(QObject::tr("角の位置をクリック、または半径を入力  [%1]").arg(snapLabel(r.kind)));
+  std::vector<gp_Pnt> corners;
+  const gp_Vec x(plane_.xDir), y(plane_.yDir());
+  for (int k = 0; k < sides_; ++k) {
+    const double a = 2.0 * M_PI * k / sides_;
+    corners.push_back(plane_.origin.Translated(radius_ * (std::cos(a) * x + std::sin(a) * y)));
+  }
+  auto face = radius_ > tolerance::kMinDimension ? geom::makePolygonFace(corners) : Result<TopoDS_Face>::failure("");
+  host_.viewport().setPreview(face ? TopoDS_Shape(BRepTools::OuterWire(face.value())) : TopoDS_Shape());
+}
+
+void PolygonTool::mousePress(const ToolEvent& e) {
+  if (!hasCentre_) {
+    const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
+    if (!r.valid()) return;
+    plane_ = planeForStart(host_.viewport(), e.pos, r);
+    hasCentre_ = true;
+    lastCreated_.reset();
+    return;
+  }
+  mouseMove(e);
+  commit(radius_);
+}
+
+void PolygonTool::commit(double radius) {
+  if (radius < tolerance::kMinDimension) return;
+  auto id = host_.modeler().createRegularPolygon(plane_, radius, sides_);
+  if (!id) {
+    host_.reportError(QString::fromStdString(id.error()));
+  } else {
+    lastCreated_ = id.value();
+  }
+  reset();
+  host_.setStatus(prompt());
+}
+
+void PolygonTool::applyMeasurement(const QString& text) {
+  const QString t = text.trimmed();
+  if (t.endsWith(QLatin1Char('s'), Qt::CaseInsensitive)) {
+    bool ok = false;
+    const int n = t.chopped(1).trimmed().toInt(&ok);
+    if (!ok || n < 3 || n > 256) {
+      host_.reportError(QObject::tr("辺の数は 3〜256 で入力してください（例: 8s）"));
+      return;
+    }
+    sides_ = n;
+    if (!hasCentre_ && lastCreated_ && host_.modeler().document().find(*lastCreated_)) {
+      const Status s = host_.modeler().setParameter(*lastCreated_, "sides", n);
+      if (!s) host_.reportError(QString::fromStdString(s.message()));
+    }
+    host_.setStatus(prompt());
+    return;
+  }
+  const auto value = units::parseLength(t.toStdString());
+  if (!value || *value <= 0) {
+    host_.reportError(QObject::tr("半径を解釈できません: %1").arg(text));
+    return;
+  }
+  if (hasCentre_) {
+    commit(*value);
+    return;
+  }
+  if (lastCreated_ && host_.modeler().document().find(*lastCreated_)) {
+    const Status s = host_.modeler().setParameter(*lastCreated_, "radius", *value);
+    if (!s) host_.reportError(QString::fromStdString(s.message()));
+    return;
+  }
+  host_.reportError(QObject::tr("多角形の中心をクリックしてから半径を入力してください"));
+}
+
 // --- Rectangle --------------------------------------------------------------------
 
 QString RectangleTool::name() const { return QObject::tr("矩形"); }

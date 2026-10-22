@@ -195,6 +195,14 @@ Result<ObjectId> Modeler::createCircle(const geom::SketchPlane& plane, double ra
   return addProfile(std::move(o), "Circle");
 }
 
+Result<ObjectId> Modeler::createRegularPolygon(const geom::SketchPlane& plane, double radius, int sides,
+                                               const std::string& name) {
+  Object o;
+  o.name = name.empty() ? uniqueName("Polygon") : name;
+  o.recipe.base = RegularPolygonProfile{plane, radius, sides};
+  return addProfile(std::move(o), "Polygon");
+}
+
 Result<ObjectId> Modeler::createArc(const gp_Pnt& start, const gp_Pnt& end, const gp_Dir& normal,
                                     double bulge, bool closed, const std::string& name) {
   Object o;

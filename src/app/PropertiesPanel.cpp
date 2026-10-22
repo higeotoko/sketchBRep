@@ -52,6 +52,8 @@ QString parameterLabel(const doc::Parameter& p) {
     label = QObject::tr("奥行");
   } else if (tail == "Radius") {
     label = QObject::tr("半径");
+  } else if (tail == "Sides") {
+    label = QObject::tr("辺の数");
   } else if (tail == "Bulge") {
     label = QObject::tr("膨らみ");
   } else if (tail == "Extrude distance") {
@@ -66,6 +68,14 @@ QString parameterLabel(const doc::Parameter& p) {
     label = QString::fromStdString(tail);
   }
   return head + label;
+}
+
+// Whole-number parameters (polygon sides, also inside boolean operands).
+void adjustForKey(QDoubleSpinBox* spin, const std::string& key) {
+  if (key.size() >= 5 && key.compare(key.size() - 5, 5, "sides") == 0) {
+    spin->setDecimals(0);
+    spin->setRange(3, 256);
+  }
 }
 
 QDoubleSpinBox* lengthSpin(double value) {
@@ -205,6 +215,7 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
   auto addParameter = [&](QFormLayout* target, const doc::Parameter& p) {
     auto* spin = lengthSpin(p.value);
     if (!p.isLength) spin->setSuffix(QString());
+    adjustForKey(spin, p.key);
     const std::string key = p.key;
     const double initial = p.value;
     connect(spin, &QDoubleSpinBox::editingFinished, this, [this, id, key, spin, initial] {
@@ -236,6 +247,7 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       for (const doc::Parameter& p : modeler.definitionParameters(defId, child.id)) {
         auto* spin = lengthSpin(p.value);
         if (!p.isLength) spin->setSuffix(QString());
+        adjustForKey(spin, p.key);
         const std::string key = p.key;
         const doc::ObjectId childId = child.id;
         const double initial = p.value;

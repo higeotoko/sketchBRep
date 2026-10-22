@@ -112,6 +112,7 @@ class GuiPhase1 : public QObject {
   void protractorPlacesAngledGuide();
   void gridLinesSnapAtCrossings();
   void copyPasteFollowsCursor();
+  void polygonToolSidesAndRadius();
   void circleToolTypedRadius();
   void groupEditModeAndLooseFaceDelete();
   void lineToolStaysOnWallPlane();
@@ -491,7 +492,8 @@ void GuiPhase1::eachToolHasItsCursor() {
                   MainWindow::ToolId::Move, MainWindow::ToolId::Rotate, MainWindow::ToolId::Offset,
                   MainWindow::ToolId::Curve, MainWindow::ToolId::Circle,
                   MainWindow::ToolId::Measure, MainWindow::ToolId::Revolve, MainWindow::ToolId::Arc,
-                  MainWindow::ToolId::Paint, MainWindow::ToolId::Eraser, MainWindow::ToolId::Protractor}) {
+                  MainWindow::ToolId::Paint, MainWindow::ToolId::Eraser, MainWindow::ToolId::Protractor,
+                  MainWindow::ToolId::Polygon}) {
     f.window.activateTool(id);
     QCOMPARE(f.vp->cursor().shape(), Qt::BitmapCursor);
     QVERIFY(!f.vp->cursor().pixmap().isNull());
@@ -743,6 +745,27 @@ void GuiPhase1::copyPasteFollowsCursor() {
   QCOMPARE(m.document().objects().size(), std::size_t(2));
   QVERIFY(m.undo());
   QCOMPARE(m.document().objects().size(), std::size_t(1));
+}
+
+void GuiPhase1::polygonToolSidesAndRadius() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  f.window.activateTool(MainWindow::ToolId::Polygon);
+  type(f.vp, QStringLiteral("8s"));
+  auto* tool = dynamic_cast<PolygonTool*>(f.window.activeTool());
+  QVERIFY(tool && tool->sides() == 8);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(300, 300, 0)));
+  type(f.vp, QStringLiteral("1000"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  const doc::ObjectId id = m.document().objects().front().id;
+  QVERIFY(std::abs(geom::area(m.document().worldShape(id)) - 2.0 * std::sqrt(2.0) * 1e6) < 1e-3);
+  type(f.vp, QStringLiteral("4s"));  // re-edit the last polygon
+  QVERIFY(std::abs(geom::area(m.document().worldShape(id)) - 2.0e6) < 1e-3);
+  type(f.vp, QStringLiteral("2s"));
+  QVERIFY(!f.window.lastError().isEmpty());
 }
 
 void GuiPhase1::circleToolTypedRadius() {
