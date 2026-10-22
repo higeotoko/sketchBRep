@@ -62,6 +62,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   revolveTool_ = std::make_unique<RevolveTool>(*this);
   measureTool_ = std::make_unique<MeasureTool>(*this);
   protractorTool_ = std::make_unique<ProtractorTool>(*this);
+  pasteTool_ = std::make_unique<PasteTool>(*this);
+  pasteTool_->setClipboard(&clipboard_);
+  pasteTool_->setOnPlaced([this](const std::vector<doc::ObjectId>&) {
+    // Leave the paste tool after the current event has been handled.
+    QTimer::singleShot(0, this, [this] {
+      if (active_ == pasteTool_.get()) activateTool(ToolId::Select);
+    });
+  });
   circleTool_ = std::make_unique<CircleTool>(*this);
   paintTool_ = std::make_unique<PaintTool>(*this);
   eraserTool_ = std::make_unique<EraserTool>(*this);
@@ -191,6 +199,10 @@ void MainWindow::buildUi() {
       return;
     }
     if (active_ && active_->stepBack()) return;  // one stage back first
+    if (active_ == pasteTool_.get()) {  // nothing pasted: back to selecting
+      activateTool(ToolId::Select);
+      return;
+    }
     if (active_) {
       active_->cancel();
       active_->activate();
@@ -300,6 +312,11 @@ void MainWindow::buildMenus() {
   redoAction_ = edit->addAction(tr("やり直し"), this, &MainWindow::redo);
   redoAction_->setShortcuts({QKeySequence(tr("Ctrl+Y")), QKeySequence(tr("Ctrl+Shift+Z"))});
   edit->addSeparator();
+  edit->addSeparator();
+  edit->addAction(tr("切り取り"), QKeySequence::Cut, this, &MainWindow::cutSelection);
+  edit->addAction(tr("コピー"), QKeySequence::Copy, this, &MainWindow::copySelection);
+  edit->addAction(tr("貼り付け"), QKeySequence::Paste, this, &MainWindow::paste);
+  edit->addAction(tr("同じ位置に貼り付け"), QKeySequence(tr("Ctrl+Shift+V")), this, &MainWindow::pasteInPlace);
   edit->addAction(tr("削除"), QKeySequence::Delete, this, &MainWindow::deleteSelection);
   edit->addAction(tr("すべて選択"), QKeySequence::SelectAll, this, &MainWindow::selectAll);
   edit->addAction(tr("ガイドをすべて削除"), this, [this] {
@@ -798,8 +815,17 @@ void MainWindow::activateTool(ToolId id) {
     case ToolId::FollowMe: active_ = followMeTool_.get(); break;
     case ToolId::Paint: active_ = paintTool_.get(); break;
     case ToolId::Eraser: active_ = eraserTool_.get(); break;
+    case ToolId::Paste: active_ = pasteTool_.get(); break;
+    case ToolId::Count: return;
   }
-  toolActions_[static_cast<int>(id)]->setChecked(true);
+  // Tools without a toolbar button (paste) leave the toolbar unchecked.
+  if (QAction* a = toolActions_[static_cast<int>(id)]) {
+    a->setChecked(true);
+  } else if (QAction* checked = toolGroup_->checkedAction()) {
+    toolGroup_->setExclusionPolicy(QActionGroup::ExclusionPolicy::ExclusiveOptional);
+    checked->setChecked(false);
+    toolGroup_->setExclusionPolicy(QActionGroup::ExclusionPolicy::Exclusive);
+  }
   viewport_->setTool(active_);
   viewport_->setToolCursor(active_->cursor());
   userTyping_ = false;
@@ -985,6 +1011,51 @@ void MainWindow::beginTextEntry(const QString& label, const QString& text) {
   userTyping_ = true;  // keep the text while the user edits it
   measurement_->setFocus();
   measurement_->selectAll();
+}
+
+bool MainWindow::copySelection() {
+  auto clip = modeler_.copyToClipboard(selection());
+  if (!clip) {
+    reportError(tr("コピーする物を選択してください"));
+    return false;
+  }
+  clipboard_ = std::move(clip.value());
+  setStatus(tr("%1 個をコピーしました（Ctrl+V で貼り付け）").arg(selection().size()));
+  return true;
+}
+
+bool MainWindow::cutSelection() {
+  const std::vector<doc::ObjectId> ids = selection();
+  if (!copySelection()) return false;
+  const Status s = modeler_.remove(ids);
+  if (!s) {
+    reportError(QString::fromStdString(s.message()));
+    return false;
+  }
+  setSelection({});
+  return true;
+}
+
+void MainWindow::paste() {
+  if (clipboard_.empty()) {
+    reportError(tr("貼り付ける物がありません。先にコピーしてください"));
+    return;
+  }
+  activateTool(ToolId::Paste);
+}
+
+bool MainWindow::pasteInPlace() {
+  if (clipboard_.empty()) {
+    reportError(tr("貼り付ける物がありません。先にコピーしてください"));
+    return false;
+  }
+  auto ids = modeler_.paste(clipboard_);
+  if (!ids) {
+    reportError(QString::fromStdString(ids.error()));
+    return false;
+  }
+  setSelection(*ids);
+  return true;
 }
 
 bool MainWindow::createGrid(const QString& xSpacings, const QString& ySpacings) {

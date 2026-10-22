@@ -48,7 +48,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   // Used by tests and the command line.
   bool openFile(const QString& path);
   bool saveFile(const QString& path);
-  enum class ToolId { Select, Line, Rectangle, PushPull, Move, Rotate, Offset, Curve, Revolve, Measure, Circle, Paint, Eraser, Arc, Dimension, Text, Section, FollowMe, Protractor };
+  enum class ToolId { Select, Line, Rectangle, PushPull, Move, Rotate, Offset, Curve, Revolve, Measure, Circle, Paint, Eraser, Arc, Dimension, Text, Section, FollowMe, Protractor, Paste, Count };
   void activateTool(ToolId id);
   Tool* activeTool() const { return active_; }
   QLineEdit* measurementBox() const { return measurement_; }
@@ -67,6 +67,12 @@ class MainWindow : public QMainWindow, public ToolHost {
   // Structural grid from typed spacings ("3600*3, 2700"); false + error
   // message when the text cannot be read or the grid fails.
   bool createGrid(const QString& xSpacings, const QString& ySpacings);
+  // Clipboard (inside this window): copy / cut the selection, paste with the
+  // paste tool (follows the cursor) or in place.
+  bool copySelection();
+  bool cutSelection();
+  void paste();
+  bool pasteInPlace();
 
  protected:
   void closeEvent(QCloseEvent* event) override;
@@ -125,6 +131,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   std::unique_ptr<RevolveTool> revolveTool_;
   std::unique_ptr<MeasureTool> measureTool_;
   std::unique_ptr<ProtractorTool> protractorTool_;
+  std::unique_ptr<PasteTool> pasteTool_;
+  doc::Modeler::Clipboard clipboard_;
   std::unique_ptr<CircleTool> circleTool_;
   std::unique_ptr<PaintTool> paintTool_;
   std::unique_ptr<EraserTool> eraserTool_;
@@ -135,7 +143,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   std::unique_ptr<FollowMeTool> followMeTool_;
   Tool* active_ = nullptr;
   QActionGroup* toolGroup_ = nullptr;
-  QAction* toolActions_[18] = {};
+  QAction* toolActions_[static_cast<int>(ToolId::Count)] = {};
   QAction* undoAction_ = nullptr;
   QAction* redoAction_ = nullptr;
   QAction* focusOnDoubleClick_ = nullptr;

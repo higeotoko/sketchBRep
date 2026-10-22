@@ -422,6 +422,26 @@ class ProtractorTool : public DrawingTool {
   double angle_ = 0.0;
 };
 
+// Paste: the copied objects follow the cursor (their lowest corner snaps to
+// the inferred point); a click places them and hands back to selection.
+class PasteTool : public DrawingTool {
+ public:
+  using DrawingTool::DrawingTool;
+  QString name() const override;
+  QCursor cursor() const override;
+  void setClipboard(const doc::Modeler::Clipboard* clipboard) { clipboard_ = clipboard; }
+  // Called with the new ids after placing (the host switches tools).
+  void setOnPlaced(std::function<void(const std::vector<doc::ObjectId>&)> f) { onPlaced_ = std::move(f); }
+  void activate() override;
+  void cancel() override;
+  void mousePress(const ToolEvent& e) override;
+  void mouseMove(const ToolEvent& e) override;
+
+ private:
+  const doc::Modeler::Clipboard* clipboard_ = nullptr;
+  std::function<void(const std::vector<doc::ObjectId>&)> onPlaced_;
+};
+
 // Revolve: click a profile face, then two points of the axis. Creates a
 // full revolution; typing an angle re-edits it (parametric).
 class RevolveTool : public DrawingTool {

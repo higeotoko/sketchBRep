@@ -711,3 +711,65 @@ TEST(SplitFace, RejectsLinesThatDoNotDivideAFace) {
   ASSERT_TRUE(ok.ok()) << ok.error();
   EXPECT_EQ(faceCount(m.document().worldShape(*box)), 7);
 }
+
+TEST(Clipboard, CopyPasteKeepsRecipesAndSurvivesDeletion) {
+  Modeler m;
+  auto a = m.createRectangle(geom::SketchPlane::ground(), 1000, 2000);
+  ASSERT_TRUE(a.ok() && m.extrude(*a, 3000).ok());
+  auto b = m.createRectangle(geom::SketchPlane::ground(), 500, 500);
+  ASSERT_TRUE(b.ok() && m.extrude(*b, 500).ok());
+  ASSERT_TRUE(m.move({*b}, gp_Vec(2000, 0, 0)).ok());
+  auto g = m.group({*a, *b});
+  ASSERT_TRUE(g.ok());
+  ASSERT_TRUE(m.move({*g}, gp_Vec(0, 0, 100)).ok());
+
+  auto clip = m.copyToClipboard({*g});
+  ASSERT_TRUE(clip.ok());
+  EXPECT_EQ(clip->objects.size(), 3u);
+  EXPECT_NEAR(clip->anchor.Distance(gp_Pnt(0, 0, 100)), 0.0, 1e-6);
+  ASSERT_TRUE(m.remove({*g}).ok());  // cut
+  EXPECT_TRUE(m.document().objects().empty());
+
+  gp_Trsf delta;
+  delta.SetTranslation(gp_Vec(5000, 0, -100));
+  const std::size_t steps = m.history().undoCount();
+  auto pasted = m.paste(*clip, delta);
+  ASSERT_TRUE(pasted.ok()) << pasted.error();
+  ASSERT_EQ(pasted->size(), 1u);
+  EXPECT_EQ(m.history().undoCount(), steps + 1);
+  EXPECT_EQ(m.document().objects().size(), 3u);
+  EXPECT_NE(pasted->front(), *g);  // fresh ids
+  const auto children = m.document().children(pasted->front());
+  ASSERT_EQ(children.size(), 2u);
+  test::expectBounds(m.document().worldShape(children[0]), 5000, 0, 0, 6000, 2000, 3000, 1e-6);
+  // Still parametric: re-edit the pasted height.
+  ASSERT_TRUE(m.setParameter(children[0], "op0.distance", 2400).ok());
+  test::expectBounds(m.document().worldShape(children[0]), 5000, 0, 0, 6000, 2000, 2400, 1e-6);
+
+  // A second paste is independent of the first.
+  auto again = m.paste(*clip);
+  ASSERT_TRUE(again.ok());
+  EXPECT_EQ(m.document().objects().size(), 6u);
+  m.undo();
+  EXPECT_EQ(m.document().objects().size(), 3u);
+  EXPECT_FALSE(m.paste(Modeler::Clipboard{}).ok());
+}
+
+TEST(Clipboard, PasteGoesIntoTheEditedGroup) {
+  Modeler m;
+  auto a = m.createRectangle(geom::SketchPlane::ground(), 1000, 1000);
+  ASSERT_TRUE(a.ok() && m.extrude(*a, 1000).ok());
+  auto g = m.group({*a});
+  ASSERT_TRUE(g.ok());
+  ASSERT_TRUE(m.move({*g}, gp_Vec(10000, 0, 0)).ok());
+  auto loose = m.createRectangle(geom::SketchPlane::ground(), 300, 300);
+  ASSERT_TRUE(loose.ok());
+  auto clip = m.copyToClipboard({*loose});
+  ASSERT_TRUE(clip.ok());
+  ASSERT_TRUE(m.setActiveGroup(*g).ok());
+  auto pasted = m.paste(*clip);
+  ASSERT_TRUE(pasted.ok());
+  const Object* p = m.document().find(pasted->front());
+  EXPECT_EQ(p->parent, *g);
+  test::expectBounds(m.document().worldShape(*p), 0, 0, 0, 300, 300, 0, 1e-6);  // same world place
+}

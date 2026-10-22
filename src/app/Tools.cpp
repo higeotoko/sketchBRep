@@ -2161,6 +2161,49 @@ void MeasureTool::applyMeasurement(const QString& text) {
   placeGuide(guideOffset_.Normalized() * *value);
 }
 
+// --- Paste ------------------------------------------------------------------------------
+
+QString PasteTool::name() const { return QObject::tr("貼り付け"); }
+QCursor PasteTool::cursor() const { return toolCursor(CursorKind::Move); }
+
+void PasteTool::activate() {
+  resetTracking();
+  host_.viewport().setPickMode(PickMode::None);
+  host_.setStatus(QObject::tr("貼り付ける位置をクリック（コピーした物の左下手前の角が吸着点に来ます、Esc で中止）"));
+}
+
+void PasteTool::cancel() {
+  resetLock();
+  host_.viewport().clearPreview();
+  host_.viewport().hideSnap();
+}
+
+void PasteTool::mouseMove(const ToolEvent& e) {
+  if (!clipboard_ || clipboard_->empty()) return;
+  const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
+  if (!r.valid()) return;
+  gp_Trsf delta;
+  delta.SetTranslation(clipboard_->anchor, r.point);
+  host_.viewport().setPreview(clipboard_->preview.Moved(TopLoc_Location(delta)), true);
+  host_.setStatus(QObject::tr("貼り付ける位置をクリック  [%1]").arg(snapLabel(r.kind)));
+}
+
+void PasteTool::mousePress(const ToolEvent& e) {
+  if (!clipboard_ || clipboard_->empty()) return;
+  const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
+  if (!r.valid()) return;
+  gp_Trsf delta;
+  delta.SetTranslation(clipboard_->anchor, r.point);
+  auto ids = host_.modeler().paste(*clipboard_, delta);
+  cancel();
+  if (!ids) {
+    host_.reportError(QString::fromStdString(ids.error()));
+    return;
+  }
+  host_.setSelection(*ids);
+  if (onPlaced_) onPlaced_(*ids);
+}
+
 // --- Protractor -----------------------------------------------------------------------
 
 QString ProtractorTool::name() const { return QObject::tr("分度器"); }

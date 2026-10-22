@@ -111,6 +111,7 @@ class GuiPhase1 : public QObject {
   void tapeMeasurePullsGuideOffEdge();
   void protractorPlacesAngledGuide();
   void gridLinesSnapAtCrossings();
+  void copyPasteFollowsCursor();
   void circleToolTypedRadius();
   void groupEditModeAndLooseFaceDelete();
   void lineToolStaysOnWallPlane();
@@ -703,6 +704,45 @@ void GuiPhase1::gridLinesSnapAtCrossings() {
   QVERIFY(std::abs(geom::area(m.document().worldShape(room)) - 3600.0 * 3600.0) < 1e-3);
   QVERIFY(!f.window.createGrid(QStringLiteral("3600*a"), QString()));
   QVERIFY(!f.window.lastError().isEmpty());
+}
+
+void GuiPhase1::copyPasteFollowsCursor() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+  f.window.paste();  // nothing copied yet
+  QVERIFY(!f.window.lastError().isEmpty());
+  f.window.setSelection({box});
+  QVERIFY(f.window.copySelection());
+  f.window.paste();
+  QVERIFY(dynamic_cast<PasteTool*>(f.window.activeTool()));
+  move(f.vp, f.vp->toWidget(gp_Pnt(2500, 0, 0)));
+  QTest::keyClick(f.vp, Qt::Key_Escape);  // changed my mind
+  QVERIFY(dynamic_cast<SelectTool*>(f.window.activeTool()));
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+
+  f.window.paste();
+  // Onto the box's top corner (endpoint snap): stacked exactly.
+  move(f.vp, f.vp->toWidget(gp_Pnt(1000, 0, 1000)) + QPoint(2, 1));
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 0, 1000)) + QPoint(2, 1));
+  QTest::qWait(30);
+  QCOMPARE(m.document().objects().size(), std::size_t(2));
+  const doc::ObjectId copy = m.document().objects().back().id;
+  QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{copy});
+  QVERIFY(dynamic_cast<SelectTool*>(f.window.activeTool()));
+  const Bnd_Box b = geom::exactBounds(m.document().worldShape(copy));
+  double x0, y0, z0, x1, y1, z1;
+  b.Get(x0, y0, z0, x1, y1, z1);
+  QVERIFY2(std::abs(x0 - 1000) < 1e-6 && std::abs(y0) < 1e-6 && std::abs(z0 - 1000) < 1e-6, qPrintable(QString("%1 %2 %3").arg(x0).arg(y0).arg(z0)));
+
+  // Cut + paste in place: same spot, one undo brings the cut back.
+  QVERIFY(f.window.cutSelection());
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  QVERIFY(f.window.pasteInPlace());
+  QCOMPARE(m.document().objects().size(), std::size_t(2));
+  QVERIFY(m.undo());
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
 }
 
 void GuiPhase1::circleToolTypedRadius() {

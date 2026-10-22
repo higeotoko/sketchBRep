@@ -164,6 +164,18 @@ class Modeler {
   // or polar arrays). Returns the ids of the new top-level copies.
   Result<std::vector<ObjectId>> copy(const std::vector<ObjectId>& ids, const gp_Trsf& worldDelta,
                                      int count = 1);
+  // Clipboard: a snapshot of the objects (with their subtrees) that stays
+  // valid while the model changes. Roots carry their world placement.
+  struct Clipboard {
+    std::vector<Object> objects;  // parents first; roots have no parent
+    TopoDS_Shape preview;         // world geometry at copy time
+    gp_Pnt anchor;                // lowest corner of the bounding box
+    bool empty() const { return objects.empty(); }
+  };
+  Result<Clipboard> copyToClipboard(const std::vector<ObjectId>& ids) const;
+  // Adds a fresh copy (new ids) into the current editing context, moved by
+  // worldDelta from where it was copied. Returns the new top-level ids.
+  Result<std::vector<ObjectId>> paste(const Clipboard& clipboard, const gp_Trsf& worldDelta = {});
   // Sets the local translation of an object (position field in the UI).
   Status setPosition(const ObjectId& id, const gp_Vec& translation);
 

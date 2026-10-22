@@ -5,7 +5,11 @@
 #include <map>
 #include <set>
 
+#include <BRepBndLib.hxx>
 #include <BRepClass_FaceClassifier.hxx>
+#include <BRep_Builder.hxx>
+#include <Bnd_Box.hxx>
+#include <TopoDS_Compound.hxx>
 #include <BRep_Tool.hxx>
 #include <TopExp.hxx>
 #include <TopoDS_Vertex.hxx>
@@ -1050,6 +1054,71 @@ Result<std::vector<ObjectId>> Modeler::copy(const std::vector<ObjectId>& ids,
     }
   }
   history_.execute(changes.build(count == 1 ? "Copy" : "Array"));
+  return created;
+}
+
+Result<Modeler::Clipboard> Modeler::copyToClipboard(const std::vector<ObjectId>& ids) const {
+  const std::vector<ObjectId> roots = topmost(ids);
+  if (roots.empty()) return Result<Clipboard>::failure("Nothing selected");
+  Clipboard clip;
+  BRep_Builder builder;
+  TopoDS_Compound preview;
+  builder.MakeCompound(preview);
+  Bnd_Box box;
+  for (const ObjectId& root : roots) {
+    const Object* r = document_.find(root);
+    if (!r) return Result<Clipboard>::failure("Object not found");
+    std::vector<Object> clones = cloneSubtree(root, {});
+    clones.front().transform = document_.worldTransform(*r);
+    for (const ObjectId& id : document_.subtree(root)) {
+      const Object* o = document_.find(id);
+      if (!o || o->isContainer() || o->shape.IsNull()) continue;
+      const TopoDS_Shape world = document_.worldShape(*o);
+      builder.Add(preview, world);
+      BRepBndLib::Add(world, box);
+    }
+    for (Object& c : clones) clip.objects.push_back(std::move(c));
+  }
+  clip.preview = preview;
+  if (!box.IsVoid()) {
+    double x0, y0, z0, x1, y1, z1;
+    box.Get(x0, y0, z0, x1, y1, z1);
+    clip.anchor = gp_Pnt(x0, y0, z0);
+  }
+  return clip;
+}
+
+Result<std::vector<ObjectId>> Modeler::paste(const Clipboard& clipboard, const gp_Trsf& worldDelta) {
+  if (clipboard.empty()) return Result<std::vector<ObjectId>>::failure("The clipboard is empty");
+  // Instances need their definition (it may have been purged since).
+  for (const Object& o : clipboard.objects) {
+    if (const auto* instance = std::get_if<ComponentInstance>(&o.recipe.base)) {
+      if (!document_.findDefinition(instance->definitionId)) {
+        return Result<std::vector<ObjectId>>::failure("The copied component no longer exists");
+      }
+    }
+  }
+  gp_Trsf parentWorld;
+  if (!activeGroup_.empty()) {
+    if (const Object* group = document_.find(activeGroup_)) parentWorld = document_.worldTransform(*group);
+  }
+  ChangeSet changes(document_);
+  std::map<ObjectId, ObjectId> mapping;
+  std::vector<ObjectId> created;
+  for (const Object& source : clipboard.objects) {
+    Object o = source;
+    o.id = generateObjectId();
+    mapping[source.id] = o.id;
+    if (source.parent.empty()) {
+      o.parent = activeGroup_;
+      o.transform = parentWorld.Inverted() * worldDelta * source.transform;
+      created.push_back(o.id);
+    } else {
+      o.parent = mapping[source.parent];
+    }
+    changes.add(o);
+  }
+  history_.execute(changes.build("Paste"));
   return created;
 }
 
