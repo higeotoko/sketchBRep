@@ -310,9 +310,29 @@ void Viewport::keyReleaseEvent(QKeyEvent* event) {
 
 void Viewport::scheduleSync() { syncTimer_.start(); }
 
+void Viewport::releaseProto(const Entry& entry) {
+  if (!entry.proto) return;
+  const auto it = protos_.find(*entry.proto);
+  if (it != protos_.end() && --it->second.users <= 0) protos_.erase(it);
+}
+
 Handle(AIS_Shape) Viewport::makeDisplay(const doc::Object& object, Entry& entry) {
   entry.canonicalWorld = modeler_.document().worldShape(object);
-  entry.displayShape = display::makeDisplayCopy(entry.canonicalWorld);
+  const TopoDS_Shape& local = object.shape;
+  if (local.Location().IsIdentity()) {
+    // Same local shape (e.g. every placement of a component): one display
+    // copy and tessellation, placed per entry.
+    const ProtoKey key{local.TShape().get(), static_cast<int>(local.Orientation())};
+    Proto& proto = protos_[key];
+    if (proto.display.IsNull()) proto.display = display::makeDisplayCopy(local);
+    ++proto.users;
+    entry.proto = key;
+    const gp_Trsf world = modeler_.document().worldTransform(object);
+    entry.displayShape =
+        world.Form() == gp_Identity ? proto.display : proto.display.Moved(TopLoc_Location(world));
+  } else {
+    entry.displayShape = display::makeDisplayCopy(entry.canonicalWorld);
+  }
   entry.displayFaces.Clear();
   entry.canonicalFaces.Clear();
   TopExp::MapShapes(entry.displayShape, TopAbs_FACE, entry.displayFaces);
@@ -524,6 +544,7 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
   if (found != entries_.end() &&
       (!wanted || !sameLocatedShape(found->second.canonicalWorld, document.worldShape(*o)))) {
     context_->Remove(found->second.ais, Standard_False);
+    releaseProto(found->second);
     entries_.erase(found);
     inference_.removeShape(id);
     guidesChanged = guideLines_.erase(id) > 0;
@@ -652,6 +673,7 @@ void Viewport::setDisplayQuality(const display::DisplayQuality& quality) {
   // Re-tessellate fresh display copies; canonical shapes are untouched.
   for (auto& [id, entry] : entries_) context_->Remove(entry.ais, Standard_False);
   entries_.clear();
+  protos_.clear();  // re-tessellate at the new quality
   inference_.setShapes({});
   guideLines_.clear();
   fullSync_ = true;

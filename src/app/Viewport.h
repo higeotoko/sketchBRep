@@ -77,6 +77,8 @@ class Viewport : public QWidget {
   // snapped to.
   void setXRay(bool on);
   bool xRay() const { return xRay_; }
+  // Shared display copies in use (one per distinct local shape; tests).
+  std::size_t sharedDisplayCount() const { return protos_.size(); }
 
   // --- picking / inference (positions in widget logical pixels) -----------
   snap::Ray rayAt(const QPoint& pos) const;
@@ -168,8 +170,23 @@ class Viewport : public QWidget {
   void keyReleaseEvent(QKeyEvent* event) override;
 
  private:
+  // Display copies shared by every object with the same local canonical
+  // shape (component placements): copied and tessellated once, each entry
+  // only adds its placement (performance step 2, GPU instancing later).
+  struct ProtoKey {
+    const void* tshape = nullptr;
+    int orientation = 0;
+    bool operator<(const ProtoKey& o) const {
+      return tshape != o.tshape ? tshape < o.tshape : orientation < o.orientation;
+    }
+  };
+  struct Proto {
+    TopoDS_Shape display;  // local coordinates
+    int users = 0;
+  };
   struct Entry {
     Handle(AIS_Shape) ais;
+    std::optional<ProtoKey> proto;
     doc::Color color;
     TopoDS_Shape canonicalWorld;
     TopoDS_Shape displayShape;
@@ -201,6 +218,8 @@ class Viewport : public QWidget {
   Handle(AIS_InteractiveContext) context_;
 
   std::map<doc::ObjectId, Entry> entries_;
+  std::map<ProtoKey, Proto> protos_;
+  void releaseProto(const Entry& entry);
   std::map<doc::ObjectId, Handle(AIS_TextLabel)> labels_;  // annotation texts
   Handle(Graphic3d_ClipPlane) section_;
   bool showOpenEnds_ = false;

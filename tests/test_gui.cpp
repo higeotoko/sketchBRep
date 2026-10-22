@@ -126,6 +126,7 @@ class GuiPhase1 : public QObject {
   void proposalShowsRotationAndHide();
   void benchViewportSync();
   void incrementalSyncFollowsGroupsAndUndo();
+  void componentPlacementsShareOneDisplay();
   void circleToolTypedRadius();
   void groupEditModeAndLooseFaceDelete();
   void lineToolStaysOnWallPlane();
@@ -987,6 +988,37 @@ void GuiPhase1::incrementalSyncFollowsGroupsAndUndo() {
   f.vp->syncNow();
   QVERIFY(!snapsTo(gp_Pnt(3000, 0, 1000)));
   QVERIFY(snapsTo(gp_Pnt(1000, 0, 1000)));
+}
+
+// Performance step 2: placements of one component share a display copy;
+// editing the definition replaces it for all of them.
+void GuiPhase1::componentPlacementsShareOneDisplay() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+  auto instance = m.makeComponent({box}, "Window");
+  QVERIFY(instance.ok());
+  gp_Trsf dx;
+  dx.SetTranslation(gp_Vec(2000, 0, 0));
+  QVERIFY(m.copy({*instance}, dx, 3).ok());
+  f.vp->syncNow();
+  QCOMPARE(f.vp->sharedDisplayCount(), std::size_t(1));
+  auto snapsTo = [&](const gp_Pnt& p) {
+    const snap::SnapResult r = f.vp->snap(f.vp->toWidget(p), std::nullopt, std::nullopt, std::nullopt);
+    return r.kind == snap::SnapKind::Endpoint && r.point.Distance(p) < 1e-6;
+  };
+  QVERIFY(snapsTo(gp_Pnt(7000, 0, 1000)));  // corner of the last placement
+
+  const auto& placed = std::get<doc::ComponentInstance>(m.document().find(*instance)->recipe.base);
+  const std::string child = m.document().findDefinition(placed.definitionId)->objects.front().id;
+  QVERIFY(m.setDefinitionParameter(placed.definitionId, child, "op0.distance", 2000).ok());
+  f.vp->syncNow();
+  QCOMPARE(f.vp->sharedDisplayCount(), std::size_t(1));  // the old copy is released
+  QVERIFY(snapsTo(gp_Pnt(7000, 0, 2000)));
+  QVERIFY(m.remove({*instance}).ok());
+  f.vp->syncNow();
+  QCOMPARE(f.vp->sharedDisplayCount(), std::size_t(1));  // three placements left
 }
 
 void GuiPhase1::circleToolTypedRadius() {
