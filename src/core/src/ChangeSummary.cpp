@@ -1,0 +1,92 @@
+#include "sbr/doc/ChangeSummary.h"
+
+#include <map>
+#include <utility>
+
+namespace sbr::doc {
+
+namespace {
+
+bool sameTransform(const gp_Trsf& a, const gp_Trsf& b) {
+  for (int r = 1; r <= 3; ++r) {
+    for (int c = 1; c <= 4; ++c) {
+      if (a.Value(r, c) != b.Value(r, c)) return false;
+    }
+  }
+  return true;
+}
+
+}  // namespace
+
+unsigned compareObjects(const Object& before, const Object& after) {
+  unsigned aspects = 0;
+  if (!before.shape.IsSame(after.shape) || before.shape.Orientation() != after.shape.Orientation()) {
+    aspects |= kGeometry;
+  }
+  if (!sameTransform(before.transform, after.transform)) aspects |= kPlacement;
+  if (before.visible != after.visible) aspects |= kVisibility;
+  if (before.name != after.name || before.layer != after.layer || before.color.r != after.color.r ||
+      before.color.g != after.color.g || before.color.b != after.color.b) {
+    aspects |= kAttributes;
+  }
+  if (before.parent != after.parent) aspects |= kHierarchy;
+  return aspects;
+}
+
+ChangeSummary summarize(const Command& command) {
+  struct Net {
+    const std::optional<Object>* before = nullptr;
+    const std::optional<Object>* after = nullptr;
+  };
+  std::vector<ObjectId> order;
+  std::map<ObjectId, Net> net;
+  for (const ObjectDelta& d : command.deltas) {
+    auto [it, inserted] = net.try_emplace(d.id);
+    if (inserted) {
+      order.push_back(d.id);
+      it->second.before = &d.before;
+    }
+    it->second.after = &d.after;
+  }
+  ChangeSummary summary;
+  for (const ObjectId& id : order) {
+    const Net& n = net.at(id);
+    const bool existed = n.before->has_value();
+    const bool exists = n.after->has_value();
+    if (!existed && exists) {
+      summary.added.push_back(id);
+    } else if (existed && !exists) {
+      summary.removed.push_back(id);
+    } else if (existed && exists) {
+      if (const unsigned aspects = compareObjects(**n.before, **n.after)) summary.modified.push_back({id, aspects});
+    }
+  }
+  for (const DefinitionDelta& d : command.definitionDeltas) {
+    bool seen = false;
+    for (const std::string& id : summary.definitions) seen |= id == d.id;
+    if (!seen) summary.definitions.push_back(d.id);
+  }
+  if (command.settings) {
+    const PersistentSettings& a = command.settings->before;
+    const PersistentSettings& b = command.settings->after;
+    if (a.scenes != b.scenes) summary.settings.push_back("scenes");
+    if (a.sections != b.sections) summary.settings.push_back("sections");
+    if (a.hiddenTags != b.hiddenTags) summary.settings.push_back("tags");
+  }
+  return summary;
+}
+
+std::vector<std::string> aspectNames(unsigned aspects) {
+  static const std::pair<unsigned, const char*> names[] = {{kGeometry, "geometry"},
+                                                           {kPlacement, "placement"},
+                                                           {kVisibility, "visibility"},
+                                                           {kAttributes, "attributes"},
+                                                           {kHierarchy, "hierarchy"}};
+  std::vector<std::string> out;
+  for (const auto& [bit, name] : names) {
+    if (aspects & bit) out.push_back(name);
+  }
+  return out;
+}
+
+}  // namespace sbr::doc

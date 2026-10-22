@@ -670,33 +670,44 @@ void MainWindow::buildAiBridge() {
       proposal_ = Proposal{a["commands"].dump(), modeler_.history().revision(), "failed", tried.value("error", std::string())};
       throw std::runtime_error("the proposal cannot be applied: " + proposal_->error);
     }
-    // What the proposal adds or changes (blue ghost) and removes (red ghost).
+    // What the proposal adds or changes (blue ghost) and removes or hides
+    // (red ghost), from the change set its trial run recorded: the same one
+    // preview reports and the commit records (review B).
+    const json& changes = tried["result"]["changes"];
     BRep_Builder builder;
     TopoDS_Compound ghost, removedGhost;
     builder.MakeCompound(ghost);
     builder.MakeCompound(removedGhost);
     QStringList added, changed, removed;
-    for (const doc::Object& o : scratch.document().objects()) {
-      const doc::Object* old = modeler_.document().find(o.id);
-      const bool same = old && old->shape.IsSame(o.shape) &&
-                        old->transform.TranslationPart().IsEqual(o.transform.TranslationPart(), 1e-9) &&
-                        doc::describe(old->recipe) == doc::describe(o.recipe);
-      if (same) continue;
-      (old ? changed : added) << QString::fromStdString(o.name);
-      if (!o.shape.IsNull()) builder.Add(ghost, scratch.document().worldShape(o));
+    auto addGhost = [&](TopoDS_Compound& into, const doc::Modeler& from, const doc::ObjectId& id) {
+      const doc::Object* o = from.document().find(id);
+      if (o && !o->shape.IsNull() && from.document().isVisible(id)) builder.Add(into, from.document().worldShape(*o));
+    };
+    for (const json& id : changes["added"]) {
+      added << QString::fromStdString(scratch.document().find(id.get<std::string>())->name);
+      addGhost(ghost, scratch, id.get<std::string>());
     }
-    for (const doc::Object& o : modeler_.document().objects()) {
-      if (scratch.document().find(o.id)) continue;
-      removed << QString::fromStdString(o.name);
-      if (!o.shape.IsNull()) builder.Add(removedGhost, modeler_.document().worldShape(o));
+    for (const json& m : changes["modified"]) {
+      const doc::ObjectId id = m["id"];
+      changed << QString::fromStdString(scratch.document().find(id)->name);
+      if (scratch.document().isVisible(id)) {
+        addGhost(ghost, scratch, id);
+      } else {
+        addGhost(removedGhost, modeler_, id);  // about to be hidden
+      }
+    }
+    for (const json& id : changes["removed"]) {
+      removed << QString::fromStdString(modeler_.document().find(id.get<std::string>())->name);
+      addGhost(removedGhost, modeler_, id.get<std::string>());
     }
     viewport_->setProposalGhost(ghost, removedGhost);
-    proposal_ = Proposal{a["commands"].dump(), modeler_.history().revision(), "pending", {}};
+    proposal_ = Proposal{a["commands"].dump(), modeler_.history().revision(), "pending", {}, changes.dump()};
     const QString text = QString::fromStdString(a.value("description", std::string()));
     const QString counts = tr("追加 %1 / 変更 %2 / 削除 %3").arg(added.size()).arg(changed.size()).arg(removed.size());
     proposalLabel_->setText(text.isEmpty() ? tr("AI の提案: %1").arg(counts)
                                            : tr("AI の提案: %1（%2）").arg(text, counts));
     QStringList details;
+    if (!changes["settings"].empty()) details << tr("表示設定（タグ・断面・シーン）も変わります");
     if (!added.isEmpty()) details << tr("追加: %1").arg(added.join(QStringLiteral(", ")));
     if (!changed.isEmpty()) details << tr("変更: %1").arg(changed.join(QStringLiteral(", ")));
     if (!removed.isEmpty()) details << tr("削除: %1").arg(removed.join(QStringLiteral(", ")));
@@ -707,7 +718,8 @@ void MainWindow::buildAiBridge() {
                 {"revision", proposal_->revision},
                 {"added", added.size()},
                 {"changed", changed.size()},
-                {"removed", removed.size()}}
+                {"removed", removed.size()},
+                {"changes", changes}}
         .dump();
   };
   handlers["proposal_status"] = [this](const std::string&) {
@@ -803,6 +815,17 @@ void MainWindow::applyProposal() {
   const auto result = nlohmann::json::parse(api.execute(request.dump()));
   if (result.value("ok", false)) {
     proposal_->state = "applied";
+    // What was committed must be what was shown (ids of new objects differ
+    // between the trial copy and the model, so those are compared by count).
+    auto comparable = [](nlohmann::json c) {
+      c["added"] = c["added"].size();
+      return c;
+    };
+    const nlohmann::json committed = result["result"]["changes"];
+    if (comparable(committed) != comparable(nlohmann::json::parse(proposal_->changesJson))) {
+      setStatus(tr("AI の提案を適用しましたが、表示した内容と結果が異なります。確認してください（Ctrl+Z で元に戻せます）"));
+      return;
+    }
     setStatus(tr("AI の提案を適用しました（Ctrl+Z で元に戻せます）"));
   } else {
     proposal_->state = "failed";

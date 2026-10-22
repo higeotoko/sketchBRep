@@ -26,6 +26,16 @@ class CommandApi {
     bool allowFileCommands = true;
   };
 
+  // What a command may touch (review C). Ordered: a batch has the largest
+  // effect of its steps.
+  enum class Effect {
+    Read,        // reads the model or app state only (also preview: a scratch copy)
+    ViewWrite,   // camera, selection, proposal display: not the model
+    ModelWrite,  // the document (geometry, attributes, persistent settings)
+    ExternalIo,  // files outside the model
+  };
+  static const char* toString(Effect effect);
+
   // Host-specific command (e.g. the GUI's selection or view capture).
   // The handler receives the "args" object as JSON text and returns the
   // result as JSON text; throw std::exception to report an error.
@@ -34,6 +44,7 @@ class CommandApi {
     std::string description;
     std::string inputSchema;  // JSON Schema of "args"
     std::function<std::string(const std::string& argsJson)> run;
+    Effect effect = Effect::ModelWrite;  // when unsure, assume it writes
   };
 
   explicit CommandApi(doc::Modeler& modeler) : modeler_(modeler) {}
@@ -43,6 +54,11 @@ class CommandApi {
 
   // Executes one request (or a "batch"). Never throws.
   std::string execute(const std::string& requestJson);
+
+  // The effect a request would have, without running it. Unknown or
+  // malformed requests count as ModelWrite. Hosts use it to leave a
+  // half-finished user input alone while an agent only reads.
+  Effect effectOf(const std::string& requestJson) const;
 
   // JSON array of {name, description, input_schema} for every available
   // command: usable as tool definitions for LLM tool use / MCP.

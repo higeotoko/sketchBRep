@@ -18,12 +18,18 @@ struct CameraState {
   std::array<double, 3> up{0, 0, 1};
   bool perspective = true;
   double scale = 0.0;  // view scale; 0 = fit on load
+
+  bool operator==(const CameraState& o) const {
+    return eye == o.eye && target == o.target && up == o.up && perspective == o.perspective && scale == o.scale;
+  }
 };
 
 // A saved view (SketchUp "scene"): named camera.
 struct Scene {
   std::string name;
   CameraState camera;
+
+  bool operator==(const Scene& o) const { return name == o.name && camera == o.camera; }
 };
 
 // Section plane: hides the half-space the normal points to, so the model is
@@ -33,6 +39,10 @@ struct SectionPlane {
   std::array<double, 3> origin{0, 0, 0};
   std::array<double, 3> normal{0, 0, -1};
   bool active = true;
+
+  bool operator==(const SectionPlane& o) const {
+    return name == o.name && origin == o.origin && normal == o.normal && active == o.active;
+  }
 };
 
 struct DocumentSettings {
@@ -42,6 +52,25 @@ struct DocumentSettings {
   std::vector<Scene> scenes;
   std::vector<SectionPlane> sections;
   std::set<std::string> hiddenTags;  // objects with these tags are hidden
+};
+
+// The part of the settings that belongs to the model's state (saved, undone
+// and rolled back with it). The live camera is view state and stays out.
+struct PersistentSettings {
+  std::vector<Scene> scenes;
+  std::vector<SectionPlane> sections;
+  std::set<std::string> hiddenTags;
+
+  static PersistentSettings of(const DocumentSettings& s) { return {s.scenes, s.sections, s.hiddenTags}; }
+  void applyTo(DocumentSettings& s) const {
+    s.scenes = scenes;
+    s.sections = sections;
+    s.hiddenTags = hiddenTags;
+  }
+  bool operator==(const PersistentSettings& o) const {
+    return scenes == o.scenes && sections == o.sections && hiddenTags == o.hiddenTags;
+  }
+  bool operator!=(const PersistentSettings& o) const { return !(*this == o); }
 };
 
 // Shared geometry of a component. Its objects form a small hierarchy of their

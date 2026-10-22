@@ -1,5 +1,6 @@
 #include "sbr/api/CommandApi.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <functional>
@@ -13,6 +14,7 @@
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
 
+#include "sbr/doc/ChangeSummary.h"
 #include "sbr/geom/FaceRef.h"
 #include "sbr/geom/Measure.h"
 #include "sbr/geom/Operations.h"
@@ -725,6 +727,16 @@ bool isFileCommand(const std::string& name) {
          name == "import_3dm";
 }
 
+CommandApi::Effect builtinEffect(const std::string& name) {
+  using E = CommandApi::Effect;
+  if (name == "list_objects" || name == "get_object" || name == "list_tags" || name == "describe" ||
+      name == "preview") {
+    return E::Read;
+  }
+  if (isFileCommand(name)) return E::ExternalIo;
+  return E::ModelWrite;
+}
+
 struct Context {
   doc::Modeler& modeler;
   const CommandApi::Options& options;
@@ -770,6 +782,16 @@ json resolveRefs(const json& v, const json& results) {
   return v;
 }
 
+json changesJson(const doc::ChangeSummary& s) {
+  json modified = json::array();
+  for (const auto& m : s.modified) modified.push_back({{"id", m.id}, {"aspects", doc::aspectNames(m.aspects)}});
+  return json{{"added", s.added},
+              {"removed", s.removed},
+              {"modified", modified},
+              {"definitions", s.definitions},
+              {"settings", s.settings}};
+}
+
 json runBatch(const Context& c, const json& args, int depth) {
   doc::Modeler& m = c.modeler;
   // Applying a previewed proposal: refuse if the model changed meanwhile.
@@ -796,8 +818,14 @@ json runBatch(const Context& c, const json& args, int depth) {
     }
     results.push_back(std::move(r));
   }
+  const long long before = m.history().revision();
   m.history().endGroup();
-  return json{{"results", results}};
+  // What this batch committed, from its own undo step (empty if nothing).
+  doc::ChangeSummary changes;
+  if (m.history().revision() != before && m.history().lastCommand()) {
+    changes = doc::summarize(*m.history().lastCommand());
+  }
+  return json{{"results", results}, {"changes", changesJson(changes)}};
 }
 
 // Runs a batch on a scratch copy of the model and reports what it would
@@ -808,27 +836,20 @@ json runPreview(const Context& c, const json& args) {
   CommandApi api(scratch, c.options);
   json batch = {{"command", "batch"}, {"args", {{"commands", arg(args, "commands")}}}};
   const json outcome = json::parse(api.execute(batch.dump()));
+  // The change set recorded by the trial run is the one the commit records.
+  const json changes = outcome.value("ok", false) ? outcome["result"]["changes"]
+                                                  : changesJson(doc::ChangeSummary{});
   json added = json::array(), removed = json::array(), changed = json::array();
-  const doc::Document& before = c.modeler.document();
-  const doc::Document& after = scratch.document();
-  for (const doc::Object& o : after.objects()) {
-    const doc::Object* old = before.find(o.id);
-    if (!old) {
-      added.push_back(describeObject(scratch, o, false));
-    } else if (!old->shape.IsSame(o.shape) || doc::describe(old->recipe) != doc::describe(o.recipe) ||
-               old->name != o.name || old->layer != o.layer || old->parent != o.parent ||
-               old->color.r != o.color.r || old->color.g != o.color.g || old->color.b != o.color.b ||
-               !old->transform.TranslationPart().IsEqual(o.transform.TranslationPart(), 1e-9)) {
-      changed.push_back(describeObject(scratch, o, false));
-    }
+  for (const json& id : changes["added"]) added.push_back(describeObject(scratch, *scratch.document().find(id), false));
+  for (const json& m : changes["modified"]) {
+    changed.push_back(describeObject(scratch, *scratch.document().find(m["id"].get<std::string>()), false));
   }
-  for (const doc::Object& o : before.objects()) {
-    if (!after.find(o.id)) removed.push_back(o.id);
-  }
+  for (const json& id : changes["removed"]) removed.push_back(id);
   json result = {{"would_succeed", outcome.value("ok", false)},
                  {"added", added},
                  {"changed", changed},
                  {"removed", removed},
+                 {"changes", changes},
                  {"revision", c.modeler.history().revision()}};
   if (!outcome.value("ok", false)) result["error"] = outcome.value("error", std::string());
   return result;
@@ -880,16 +901,59 @@ std::string CommandApi::execute(const std::string& requestJson) {
   return run(Context{modeler_, options_, extensions_, *this}, request, 0).dump();
 }
 
+const char* CommandApi::toString(Effect effect) {
+  switch (effect) {
+    case Effect::Read: return "read";
+    case Effect::ViewWrite: return "view_write";
+    case Effect::ModelWrite: return "model_write";
+    case Effect::ExternalIo: return "external_io";
+  }
+  return "model_write";
+}
+
+CommandApi::Effect CommandApi::effectOf(const std::string& requestJson) const {
+  const json request = json::parse(requestJson, nullptr, false);
+  if (!request.is_object() || !request.contains("command") || !request["command"].is_string()) {
+    return Effect::ModelWrite;
+  }
+  const std::string name = request["command"].get<std::string>();
+  if (name == "batch") {
+    const json args = request.value("args", json::object());
+    if (!args.is_object() || !args.contains("commands") || !args["commands"].is_array()) return Effect::ModelWrite;
+    Effect most = Effect::Read;
+    for (const json& step : args["commands"]) {
+      if (step.is_object() && step.value("command", std::string()) == "batch") return Effect::ModelWrite;
+      most = std::max(most, effectOf(step.dump()));
+    }
+    return most;
+  }
+  for (const Extension& e : extensions_) {
+    if (e.name == name) return e.effect;
+  }
+  for (const CommandDef& def : commands()) {
+    if (name == def.name) return builtinEffect(name);
+  }
+  if (name == "describe" || name == "preview") return Effect::Read;
+  return Effect::ModelWrite;
+}
+
 std::string CommandApi::schemaJson() const {
   json list = json::array();
   for (const CommandDef& c : commands()) {
     if (isFileCommand(c.name) && !options_.allowFileCommands) continue;
-    list.push_back({{"name", c.name}, {"description", c.description}, {"input_schema", json::parse(c.schema)}});
+    list.push_back({{"name", c.name},
+                    {"description", c.description},
+                    {"input_schema", json::parse(c.schema)},
+                    {"effect", toString(builtinEffect(c.name))}});
   }
   for (const Extension& e : extensions_) {
-    list.push_back({{"name", e.name}, {"description", e.description}, {"input_schema", json::parse(e.inputSchema)}});
+    list.push_back({{"name", e.name},
+                    {"description", e.description},
+                    {"input_schema", json::parse(e.inputSchema)},
+                    {"effect", toString(e.effect)}});
   }
   list.push_back({{"name", "preview"},
+                  {"effect", "read"},
                   {"description",
                    "Try 'commands' (as in batch) on a scratch copy and report what they would add, change "
                    "and remove, without touching the model. To apply, send the same commands to batch with "
@@ -899,6 +963,7 @@ std::string CommandApi::schemaJson() const {
                     {"properties", {{"commands", {{"type", "array"}, {"items", {{"type", "object"}}}}}}},
                     {"required", {"commands"}}}}});
   list.push_back({{"name", "batch"},
+                  {"effect", "model_write"},
                   {"description",
                    "Run several commands as ONE undo step. atomic (default true): if a step fails, every "
                    "step is reverted. A string \"$N.field\" in a later step is replaced by that field of "
@@ -919,34 +984,34 @@ std::vector<CommandApi::Extension> CommandApi::appCommandSpecs() {
       {"get_selection",
        "What the user has selected in the app: object ids, picked faces/edges (index as in get_object) and "
        "the group being edited. Use it for requests like 'make this taller'.",
-       R"({"type": "object", "properties": {}})", nullptr},
+       R"({"type": "object", "properties": {}})", nullptr, Effect::Read},
       {"select", "Select objects in the app (shows the user what you mean).",
        R"({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}}},
            "required": ["ids"]})",
-       nullptr},
+       nullptr, Effect::ViewWrite},
       {"set_view", "Change the camera: iso, top, front, right, back, left, or fit (optionally to 'ids').",
        R"({"type": "object", "properties": {
            "view": {"enum": ["iso", "top", "front", "right", "back", "left", "fit"]},
            "ids": {"type": "array", "items": {"type": "string"}}}, "required": ["view"]})",
-       nullptr},
+       nullptr, Effect::ViewWrite},
       {"capture_view", "Capture the current 3D view as a PNG image so you can look at the model.",
-       R"({"type": "object", "properties": {}})", nullptr},
+       R"({"type": "object", "properties": {}})", nullptr, Effect::Read},
       {"list_scenes", "List the saved views (scenes) of the model.", R"({"type": "object", "properties": {}})",
-       nullptr},
+       nullptr, Effect::Read},
       {"propose",
        "Show the user a proposal instead of changing the model: 'commands' (as in batch) are tried on a "
        "copy, the result is drawn as a ghost with Apply / Reject buttons, and nothing changes until the user "
        "applies it. Returns at once; poll proposal_status. 'description' is shown to the user.",
        R"({"type": "object", "properties": {"commands": {"type": "array", "items": {"type": "object"}},
            "description": {"type": "string"}}, "required": ["commands"]})",
-       nullptr},
+       nullptr, Effect::ViewWrite},
       {"proposal_status", "State of the last proposal: pending, applied, rejected or failed (with error).",
-       R"({"type": "object", "properties": {}})", nullptr},
+       R"({"type": "object", "properties": {}})", nullptr, Effect::Read},
       {"go_to_scene", "Show a saved view by name or 0-based index; with 'save': true, save the current view "
                       "as a new scene named 'name' instead.",
        R"({"type": "object", "properties": {"name": {"type": "string"}, "index": {"type": "integer"},
            "save": {"type": "boolean"}}})",
-       nullptr},
+       nullptr, Effect::ModelWrite},
   };
 }
 

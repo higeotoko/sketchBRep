@@ -66,9 +66,15 @@ void AiBridge::onReadyRead(QLocalSocket* socket) {
 }
 
 std::string AiBridge::execute(const std::string& requestJson) {
-  if (before_) before_();
+  // Only requests that change the model (or files) interrupt what the user
+  // is drawing; reads, preview and view changes leave the tool's state alone
+  // (review C).
+  using Effect = api::CommandApi::Effect;
+  const Effect effect = api_.effectOf(requestJson);
+  const bool interrupts = effect == Effect::ModelWrite || effect == Effect::ExternalIo;
+  if (interrupts && before_) before_();
   const std::string response = api_.execute(requestJson);
-  if (after_) after_();
+  if (interrupts && after_) after_();
   const auto request = nlohmann::json::parse(requestJson, nullptr, false);
   const auto result = nlohmann::json::parse(response, nullptr, false);
   const QString command =

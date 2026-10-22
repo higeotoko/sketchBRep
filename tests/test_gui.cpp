@@ -11,6 +11,8 @@
 #include <QApplication>
 #include <QDir>
 #include <QFile>
+
+#include <nlohmann/json.hpp>
 #include <QImage>
 #include <QSettings>
 #include <QListWidget>
@@ -32,6 +34,7 @@
 #include "MainWindow.h"
 #include "Viewport.h"
 #include "sbr/api/CommandApi.h"
+#include "sbr/doc/ChangeSummary.h"
 #include "sbr/geom/Measure.h"
 #include "sbr/geom/Validation.h"
 
@@ -118,6 +121,8 @@ class GuiPhase1 : public QObject {
   void exportImageWritesPng();
   void typedUnitsDoNotTriggerShortcuts();
   void scaleToolFactorAndLength();
+  void aiReadsKeepDrawingInProgress();
+  void proposalShowsRotationAndHide();
   void circleToolTypedRadius();
   void groupEditModeAndLooseFaceDelete();
   void lineToolStaysOnWallPlane();
@@ -824,6 +829,82 @@ void GuiPhase1::scaleToolFactorAndLength() {
   QCOMPARE(boxMismatch(m.document().worldShape(box), 3000, 3000, 3000), QString());
   QCOMPARE(m.history().undoCount(), steps + 1);
   QVERIFY(dynamic_cast<ScaleTool*>(f.window.activeTool()));
+}
+
+// Review C / R04: AI requests that only read must not reset a half-drawn
+// shape; model writes still interrupt it (cleanly, before running).
+void GuiPhase1::aiReadsKeepDrawingInProgress() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(3000, 3000, 500, 500, 500);
+  AiBridge* bridge = f.window.aiBridge();
+  f.window.activateTool(MainWindow::ToolId::Rectangle);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));  // first corner placed
+  const std::size_t steps = m.history().undoCount();
+  const std::string reads[] = {
+      R"({"command": "list_objects"})",
+      R"({"command": "get_object", "args": {"id": ")" + box + R"("}})",
+      R"({"command": "describe"})",
+      R"({"command": "get_selection"})",
+      R"({"command": "list_scenes"})",
+      R"({"command": "proposal_status"})",
+      R"({"command": "preview", "args": {"commands": [{"command": "delete", "args": {"ids": [")" + box + R"("]}}]}})",
+  };
+  for (const std::string& r : reads) {
+    const auto reply = nlohmann::json::parse(bridge->execute(r));
+    QVERIFY2(reply.value("ok", false), r.c_str());
+  }
+  QCOMPARE(m.history().undoCount(), steps);
+  // The rectangle started before the reads is finished with typed sizes.
+  move(f.vp, f.vp->toWidget(gp_Pnt(2000, 1000, 0)));
+  type(f.vp, QStringLiteral("2000,1000"));
+  QCOMPARE(m.history().undoCount(), steps + 1);
+  const doc::Object& rect = m.document().objects().back();
+  QCOMPARE(rect.kind(), doc::ObjectKind::Face);
+  const double area = geom::area(m.document().worldShape(rect));
+  QVERIFY2(std::abs(area - 2000.0 * 1000.0) < 1.0, qPrintable(QString::number(area)));
+
+  // A write interrupts the drawing first: the next click starts anew.
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 2000, 0)));
+  const auto reply = nlohmann::json::parse(bridge->execute(
+      R"({"command": "create_box", "args": {"origin": [6000, 0, 0], "width": 100, "depth": 100, "height": 100}})"));
+  QVERIFY(reply.value("ok", false));
+  const std::size_t afterWrite = m.history().undoCount();
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 3000, 0)));  // only a first corner now
+  QCOMPARE(m.history().undoCount(), afterWrite);
+}
+
+// Review B / R03: a proposal is summarised from the change set its trial
+// run recorded, so a rotation about the origin or a hide is not lost, and
+// applying it commits the same change set.
+void GuiPhase1::proposalShowsRotationAndHide() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+  const doc::ObjectId other = f.box(3000, 0, 500, 500, 500);
+  AiBridge* bridge = f.window.aiBridge();
+  const std::string request =
+      R"({"command": "propose", "args": {"commands": [
+           {"command": "rotate", "args": {"ids": [")" + box + R"("], "axis_origin": [0, 0, 0], "angle": 90}},
+           {"command": "hide", "args": {"ids": [")" + other + R"("]}}]}})";
+  const auto reply = nlohmann::json::parse(bridge->execute(request));
+  QVERIFY2(reply.value("ok", false), reply.dump().c_str());
+  const auto& result = reply["result"];
+  QCOMPARE(result["changed"].get<int>(), 2);
+  QVERIFY(f.window.hasPendingProposal());
+  QVERIFY(f.vp->hasProposalGhost());
+  QCOMPARE(m.document().find(box)->visible, true);  // nothing applied yet
+
+  f.window.applyProposal();
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QVERIFY(!m.document().find(other)->visible);
+  QVERIFY(m.history().lastCommand());
+  const doc::ChangeSummary committed = doc::summarize(*m.history().lastCommand());
+  QCOMPARE(committed.modified.size(), std::size_t(2));
+  QVERIFY(committed.modified[0].aspects & doc::kPlacement);
+  QVERIFY(committed.modified[1].aspects & doc::kVisibility);
 }
 
 void GuiPhase1::circleToolTypedRadius() {

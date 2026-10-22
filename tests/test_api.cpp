@@ -203,6 +203,10 @@ TEST(McpServer, InitializeListAndCallTools) {
   for (const json& t : r["result"]["tools"]) {
     EXPECT_TRUE(t.contains("inputSchema"));
     found = found || t["name"] == "create_box";
+    // Read-only tools are marked so clients can call them without asking.
+    const bool readOnly = t.contains("annotations") && t["annotations"].value("readOnlyHint", false);
+    if (t["name"] == "list_objects" || t["name"] == "preview") EXPECT_TRUE(readOnly) << t["name"];
+    if (t["name"] == "create_box" || t["name"] == "batch") EXPECT_FALSE(readOnly) << t["name"];
   }
   EXPECT_TRUE(found);
 

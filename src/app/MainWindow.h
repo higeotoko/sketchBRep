@@ -168,6 +168,7 @@ class MainWindow : public QMainWindow, public ToolHost {
     long long revision = 0;
     std::string state;  // pending / applied / rejected / failed
     std::string error;
+    std::string changesJson;  // the change set shown to the user
   };
   std::optional<Proposal> proposal_;
   QWidget* proposalBar_ = nullptr;

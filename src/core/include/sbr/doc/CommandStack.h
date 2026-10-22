@@ -26,12 +26,20 @@ struct DefinitionDelta {
   std::optional<ComponentDefinition> after;
 };
 
+struct SettingsDelta {
+  PersistentSettings before;
+  PersistentSettings after;
+};
+
 struct Command {
   std::string name;
   std::vector<ObjectDelta> deltas;
   // Applied before object deltas on execute/redo and after them on undo, so
   // instances never refer to a missing definition.
   std::vector<DefinitionDelta> definitionDeltas;
+  // Tag visibility, sections, scenes (review A: part of the undo step and
+  // of atomic rollback like geometry).
+  std::optional<SettingsDelta> settings;
 };
 
 class CommandStack {
@@ -45,6 +53,8 @@ class CommandStack {
 
   // Groups subsequent commands into one undo step (e.g. an AI batch).
   // Nested calls are counted; the outermost endGroup() records the step.
+  // Persistent settings changed in between (also directly, e.g. a saved
+  // scene) become part of that step, and abortGroup() restores them.
   void beginGroup(const std::string& name);
   void endGroup();
   // Reverts everything executed since the outermost beginGroup() and
@@ -60,6 +70,8 @@ class CommandStack {
   std::string undoName() const { return canUndo() ? undo_.back().name : std::string(); }
   std::string redoName() const { return canRedo() ? redo_.back().name : std::string(); }
   std::size_t undoCount() const { return undo_.size(); }
+  // The most recent undo step (e.g. what a batch just committed).
+  const Command* lastCommand() const { return undo_.empty() ? nullptr : &undo_.back(); }
 
   // Modification tracking for "unsaved changes" prompts.
   void markClean() { cleanMarker_ = revision_; }
@@ -85,6 +97,7 @@ class CommandStack {
   int groupDepth_ = 0;
   std::string groupName_;
   std::optional<Command> group_;
+  PersistentSettings groupSettings_;  // at the outermost beginGroup()
 };
 
 }  // namespace sbr::doc

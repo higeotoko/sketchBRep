@@ -120,7 +120,10 @@ std::optional<std::string> McpServer::handle(const std::string& message) {
     }
     json tools = json::array();
     for (const json& t : described["result"]) {
-      tools.push_back({{"name", t["name"]}, {"description", t["description"]}, {"inputSchema", t["input_schema"]}});
+      json tool = {{"name", t["name"]}, {"description", t["description"]}, {"inputSchema", t["input_schema"]}};
+      // MCP tool annotations: clients may run read-only tools without asking.
+      if (t.value("effect", std::string()) == "read") tool["annotations"] = {{"readOnlyHint", true}};
+      tools.push_back(std::move(tool));
     }
     return rpcResult(id, {{"tools", tools}}).dump();
   }

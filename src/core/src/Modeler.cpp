@@ -634,25 +634,35 @@ Result<ObjectId> Modeler::faceFromLoop(const ObjectId& curveId, bool* loopFound)
   return id;
 }
 
+namespace {
+// Records a change of the persistent settings as one undo step (review A),
+// or nothing if `edit` leaves them as they are.
+void editSettings(Document& document, CommandStack& history, const std::string& name,
+                  const std::function<void(PersistentSettings&)>& edit) {
+  const PersistentSettings before = PersistentSettings::of(document.settings());
+  PersistentSettings after = before;
+  edit(after);
+  if (after == before) return;
+  history.execute(Command{name, {}, {}, SettingsDelta{before, after}});
+}
+}  // namespace
+
 void Modeler::setTagVisible(const std::string& tag, bool visible) {
-  auto& hidden = document_.settings().hiddenTags;
-  if (visible == !hidden.count(tag)) return;
-  if (visible) {
-    hidden.erase(tag);
-  } else {
-    hidden.insert(tag);
-  }
-  history_.markDirty();
-  document_.notify();
+  editSettings(document_, history_, visible ? "Show Tag" : "Hide Tag", [&](PersistentSettings& s) {
+    if (visible) {
+      s.hiddenTags.erase(tag);
+    } else {
+      s.hiddenTags.insert(tag);
+    }
+  });
 }
 
 void Modeler::setSectionVisible(bool visible) {
-  auto& sections = document_.settings().sections;
-  if (sections.empty() || visible == sectionVisible()) return;
-  for (SectionPlane& p : sections) p.active = false;
-  if (visible) sections.back().active = true;
-  history_.markDirty();
-  document_.notify();
+  if (document_.settings().sections.empty() || visible == sectionVisible()) return;
+  editSettings(document_, history_, visible ? "Show Section" : "Hide Section", [&](PersistentSettings& s) {
+    for (SectionPlane& p : s.sections) p.active = false;
+    if (visible) s.sections.back().active = true;
+  });
 }
 
 bool Modeler::sectionVisible() const {
@@ -663,10 +673,7 @@ bool Modeler::sectionVisible() const {
 }
 
 void Modeler::clearSections() {
-  if (document_.settings().sections.empty()) return;
-  document_.settings().sections.clear();
-  history_.markDirty();
-  document_.notify();
+  editSettings(document_, history_, "Clear Sections", [](PersistentSettings& s) { s.sections.clear(); });
 }
 
 std::vector<std::string> Modeler::tags() const {
@@ -677,16 +684,15 @@ std::vector<std::string> Modeler::tags() const {
 }
 
 void Modeler::setSection(const std::optional<SectionPlane>& plane) {
-  auto& sections = document_.settings().sections;
-  for (SectionPlane& p : sections) p.active = false;
-  if (plane) {
-    SectionPlane p = *plane;
-    if (p.name.empty()) p.name = "Section " + std::to_string(sections.size() + 1);
-    p.active = true;
-    sections.push_back(p);
-  }
-  history_.markDirty();
-  document_.notify();
+  editSettings(document_, history_, plane ? "Section" : "Hide Section", [&](PersistentSettings& s) {
+    for (SectionPlane& p : s.sections) p.active = false;
+    if (plane) {
+      SectionPlane p = *plane;
+      if (p.name.empty()) p.name = "Section " + std::to_string(s.sections.size() + 1);
+      p.active = true;
+      s.sections.push_back(p);
+    }
+  });
 }
 
 Result<ObjectId> Modeler::createPolygon(const std::vector<gp_Pnt>& points, const std::string& name) {

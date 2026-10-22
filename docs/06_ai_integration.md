@@ -56,6 +56,13 @@ AI 専用の裏口は作らず、GUI のツールと同じ `doc::Modeler` を JS
 
 単位は mm・度、Z が上。数値はすべて CAD の正確な値で扱い、表示メッシュは使わない。
 
+## 効果分類と変更セット（設計レビュー A/B/C 対応）
+
+- **効果分類**: 各コマンドは `read`（読むだけ。`preview` も一時コピーなので read）/ `view_write`（視点・選択・提案表示）/ `model_write`（モデルと永続設定）/ `external_io`（ファイル）に分類され、`describe` の各要素の `effect` と MCP の `annotations.readOnlyHint` で分かる。`batch` は手順の中で一番強い効果。不明なコマンドは `model_write` 扱い
+- **作図を消さない**: アプリ側は `model_write` / `external_io` のときだけ作図途中のツールを中断する。読み取り・`preview`・視点変更では、ユーザーが置いた始点や入力中の数値はそのまま
+- **設定も原子的**: タグの表示・断面・シーンは Undo 履歴に載る（1 操作 = 1 Undo）。`batch` が途中で失敗すると、形状と一緒にこれらも実行前に戻り、未保存フラグ・Undo 数・`revision` も変わらない
+- **変更セット**: `batch` の結果の `changes` と `preview` の `changes` は、実行で記録された Undo 1 手分の差分そのもの（`added` / `removed` / `modified[{id, aspects}]` / `definitions` / `settings`）。aspects は `geometry` / `placement`（回転を含む全行列）/ `visibility` / `attributes`（名前・タグ・色）/ `hierarchy`。提案（`propose`）のゴーストと件数も同じ変更セットから作り、適用時に結果と照合する
+
 ## 使い方
 
 ### 1. Claude Desktop / Claude Code から、開いているモデルを操作する
@@ -108,9 +115,11 @@ sbr_cli --open out.sbr --mcp                        # ヘッドレス MCP サー
 
 | テスト | 内容 |
 |---|---|
+| `Transactions.*` | 失敗した batch で設定・未保存フラグ・Undo 数・revision が戻る、設定変更が 1 Undo、preview と commit の変更セット一致（回転・非表示・塗り・名前・グループ・パラメータ・定義）、効果分類 |
 | `CommandApi.*`（7 件） | 箱 → 面の押し出し → パラメータ再編集 → Undo、エラー時に何も変えない、`batch` が Undo 1 回・`$N` 参照、失敗した `batch` の全ロールバック、壁に描いたドアの押し込み、スキーマ、拡張コマンドとファイル系の無効化 |
 | `McpServer.*`（2 件） | initialize・通知・tools/list・tools/call（成功・失敗は `isError`）・未知メソッド・パースエラー・ping、アプリ専用コマンドのスキーマ |
 | `cli_script` / `cli_reopen` | スクリプトでスラブ + 柱 4 本を作って保存 → 開き直して確認 |
 | `mcp_headless` / `mcp_headless_cli` | 実バイナリに MCP セッションを標準入力で流す |
+| `gui_phase1: aiReadsKeepDrawingInProgress` / `proposalShowsRotationAndHide` | 矩形の 1 点目を置いたまま AI が読み取り・preview をしても続きを描ける（書き込みは中断する）、提案が回転と非表示を拾い、適用結果と一致 |
 | `gui_phase1: aiBridgeOverLocalSocket` | 既定 OFF で接続拒否 → ON にして実ソケットで作成・選択・選択読み出し・ビュー画像、保存は拒否、Ctrl+Z 相当で AI の操作を戻せる、OFF で切断 |
 | Windows CI | zip に `sbr_cli.exe` / `sbr_mcp.exe` を同梱し、zip のフォルダから MCP セッションを実行 |

@@ -27,7 +27,8 @@ class AiBridge : public QObject {
            QObject* parent = nullptr);
   ~AiBridge() override;
 
-  // Called around each request (e.g. to cancel an unfinished drawing tool).
+  // Called around each request that writes the model or files (e.g. to
+  // cancel an unfinished drawing tool); reads and view changes skip them.
   void setHooks(std::function<void()> before, std::function<void()> after);
 
   bool setEnabled(bool enabled);  // false if the server could not listen

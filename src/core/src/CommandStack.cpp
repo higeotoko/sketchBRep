@@ -2,6 +2,14 @@
 
 namespace sbr::doc {
 
+namespace {
+void applySettings(Document& document, const PersistentSettings& settings) {
+  if (PersistentSettings::of(document.settings()) == settings) return;
+  settings.applyTo(document.settings());
+  document.notify();
+}
+}  // namespace
+
 void CommandStack::applyAfter(const Command& command) {
   for (const DefinitionDelta& d : command.definitionDeltas) {
     if (d.after) {
@@ -19,9 +27,11 @@ void CommandStack::applyAfter(const Command& command) {
       document_.insert(*d.after);
     }
   }
+  if (command.settings) applySettings(document_, command.settings->after);
 }
 
 void CommandStack::applyBefore(const Command& command) {
+  if (command.settings) applySettings(document_, command.settings->before);
   for (auto it = command.deltas.rbegin(); it != command.deltas.rend(); ++it) {
     const ObjectDelta& d = *it;
     if (!d.before) {
@@ -44,7 +54,7 @@ void CommandStack::applyBefore(const Command& command) {
 void CommandStack::execute(Command command) {
   if (groupDepth_ > 0) {
     applyAfter(command);
-    if (!group_) group_ = Command{groupName_, {}, {}};
+    if (!group_) group_ = Command{groupName_, {}, {}, std::nullopt};
     group_->deltas.insert(group_->deltas.end(), command.deltas.begin(), command.deltas.end());
     group_->definitionDeltas.insert(group_->definitionDeltas.end(), command.definitionDeltas.begin(),
                                     command.definitionDeltas.end());
@@ -66,12 +76,18 @@ void CommandStack::beginGroup(const std::string& name) {
   if (groupDepth_++ == 0) {
     groupName_ = name;
     group_.reset();
+    groupSettings_ = PersistentSettings::of(document_.settings());
   }
 }
 
 void CommandStack::endGroup() {
   if (groupDepth_ == 0 || --groupDepth_ > 0) return;
-  if (!group_ || (group_->deltas.empty() && group_->definitionDeltas.empty())) {
+  const PersistentSettings now = PersistentSettings::of(document_.settings());
+  if (now != groupSettings_) {
+    if (!group_) group_ = Command{groupName_, {}, {}, std::nullopt};
+    group_->settings = SettingsDelta{groupSettings_, now};
+  }
+  if (!group_ || (group_->deltas.empty() && group_->definitionDeltas.empty() && !group_->settings)) {
     group_.reset();
     return;
   }
@@ -92,8 +108,12 @@ void CommandStack::endGroup() {
 void CommandStack::abortGroup() {
   if (groupDepth_ == 0) return;
   groupDepth_ = 0;
-  if (group_) applyBefore(*group_);
+  if (group_) {
+    group_->settings.reset();  // restored below from the snapshot
+    applyBefore(*group_);
+  }
   group_.reset();
+  applySettings(document_, groupSettings_);
 }
 
 bool CommandStack::undo() {

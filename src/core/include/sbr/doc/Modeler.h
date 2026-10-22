@@ -122,7 +122,8 @@ class Modeler {
   // model where proposed commands are tried out). History is not copied.
   void copyFrom(const Modeler& other);
 
-  // View state kept in the file but outside the undo history.
+  // Persistent display settings: each change is one undo step (and part of
+  // an enclosing batch, so a failed atomic batch restores it).
   void setTagVisible(const std::string& tag, bool visible);
   std::vector<std::string> tags() const;  // tags in use, sorted
   // Adds an active section plane (others are deactivated); empty = none.
