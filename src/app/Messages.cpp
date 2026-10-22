@@ -22,6 +22,8 @@ const Entry kEntries[] = {
     {"Push/pull distance must be non-zero", "距離が 0 です"},
     {"Extrusion distance must be non-zero", "押出距離が 0 です"},
     {"Component instances cannot be pushed/pulled", "コンポーネントは直接プッシュ/プルできません。定義の寸法をパネルで変えるか、分解してから編集してください"},
+    {"Referenced face is ambiguous", "編集の基準にしていた面が、前の編集で 2 つ以上に分かれ、どれのことか決められません（違う面を編集しないよう中止しました）。面を選び直してください"},
+    {"Referenced curved face is ambiguous", "編集の基準にしていた曲面がどれか決められません（違う面を編集しないよう中止しました）。面を選び直してください"},
     {"Referenced face no longer exists (topology changed by an earlier edit)", "編集の基準にしていた面が、前の編集で形が変わったため見つかりません（取り違えて別の面を編集しないよう中止しました）。面を選び直してください"},
     {"Referenced face no longer exists", "編集の基準にしていた面が見つからなくなりました（取り違えて別の面を編集しないよう中止しました）。面を選び直してください"},
     {"Referenced curved face no longer exists", "編集の基準にしていた曲面が見つからなくなりました。面を選び直してください"},

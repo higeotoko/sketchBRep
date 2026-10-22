@@ -262,7 +262,7 @@ Result<TopoDS_Shape> regenerate(const Recipe& recipe, const RegenContext& contex
               return geom::offsetSolidFace(shape, face.value(), op.distance);
             },
             [&](const SplitOp& op) -> Result<TopoDS_Shape> {
-              auto face = op.face.resolve(shape);
+              auto face = op.face.resolve(shape, splitLines);
               if (!face) return Result<TopoDS_Shape>::failure(face.error());
               for (std::size_t k = 1; k < op.points.size(); ++k) splitLines.emplace_back(op.points[k - 1], op.points[k]);
               return geom::splitFace(shape, face.value(), op.points);
@@ -286,7 +286,7 @@ Result<TopoDS_Shape> regenerate(const Recipe& recipe, const RegenContext& contex
               if (!report.valid) {
                 return Result<TopoDS_Shape>::failure("Push/pull requires a valid solid");
               }
-              auto face = op.face.resolve(shape);
+              auto face = op.face.resolve(shape, splitLines);
               if (!face) return Result<TopoDS_Shape>::failure(face.error());
               return geom::pushPullFace(shape, face.value(), op.distance, splitLines);
             },

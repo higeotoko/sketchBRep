@@ -696,6 +696,85 @@ TEST(SplitFace, LineAcrossWallThenPushUpperPart) {
   EXPECT_EQ(faceCount(m.document().worldShape(*wall)), 6);
 }
 
+// Review §5: a face is found again by its plane plus a point inside it,
+// not by the nearest centroid. Widening the wall moves the right part's
+// centroid far away; the nearest one is then the left part's, and
+// regenerating used to push the wrong part (silently "valid").
+TEST(SplitFace, PushedPartStaysTheSameAfterResizing) {
+  doc::Modeler m;
+  auto wall = m.createRectangle(geom::SketchPlane::ground(), 4000, 200);
+  ASSERT_TRUE(m.extrude(*wall, 3000).ok());
+  ASSERT_TRUE(m.splitWithLine({gp_Pnt(600, 0, 0), gp_Pnt(600, 0, 3000)}).ok());
+  const TopoDS_Face right = faceWithCentroid(m.document().worldShape(*wall), -gp::DY(), gp_Pnt(2300, 0, 1500));
+  ASSERT_FALSE(right.IsNull());
+  ASSERT_TRUE(m.pushPull(*wall, right, 300).ok());
+  ASSERT_TRUE(m.setParameter(*wall, "width", 10000).ok());
+  EXPECT_NEAR(worldVolume(m, *wall), 10000.0 * 200 * 3000 + 9400.0 * 3000 * 300, 1e-2);
+}
+
+// Narrowing the wall past the remembered point: the right part still
+// overlaps where it was (the left one only touches it) — still the right.
+TEST(SplitFace, ShrunkPartIsStillFound) {
+  doc::Modeler m;
+  auto wall = m.createRectangle(geom::SketchPlane::ground(), 4000, 200);
+  ASSERT_TRUE(m.extrude(*wall, 3000).ok());
+  ASSERT_TRUE(m.splitWithLine({gp_Pnt(2000, 0, 0), gp_Pnt(2000, 0, 3000)}).ok());
+  const TopoDS_Face right = faceWithCentroid(m.document().worldShape(*wall), -gp::DY(), gp_Pnt(3000, 0, 1500));
+  ASSERT_FALSE(right.IsNull());
+  ASSERT_TRUE(m.pushPull(*wall, right, 300).ok());
+  ASSERT_TRUE(m.setParameter(*wall, "width", 2500).ok());
+  EXPECT_NEAR(worldVolume(m, *wall), 2500.0 * 200 * 3000 + 500.0 * 3000 * 300, 1e-2);
+}
+
+// The pushed top face is cut in two by a tunnel raised through it, with
+// the remembered point in the gap: either half could be meant, so the
+// edit is refused (pick again) instead of one being guessed.
+TEST(SplitFace, AmbiguousFaceIsRefusedNotGuessed) {
+  doc::Modeler m;
+  auto block = m.createRectangle(geom::SketchPlane::ground(), 3000, 1000);
+  ASSERT_TRUE(m.extrude(*block, 1000).ok());
+  geom::SketchPlane plane = geom::SketchPlane::ground();
+  plane.origin = gp_Pnt(1400, -100, 300);  // through the side; the bottom keeps it one solid
+  auto tunnel = m.createRectangle(plane, 200, 1200);
+  ASSERT_TRUE(m.extrude(*tunnel, 500).ok());
+  auto host = m.boolean(doc::BooleanKind::Subtract, {*block, *tunnel});
+  ASSERT_TRUE(host.ok()) << host.error();
+  const TopoDS_Face top = faceWithCentroid(m.document().worldShape(*host), gp::DZ(), gp_Pnt(1500, 500, 1000));
+  ASSERT_FALSE(top.IsNull());
+  ASSERT_TRUE(m.pushPull(*host, top, 500).ok());
+  const double before = worldVolume(m, *host);
+  std::string key;
+  for (const doc::Parameter& p : m.parameters(*host)) {
+    if (p.key.rfind("in", 0) == 0 && p.key.find("distance") != std::string::npos && std::abs(p.value - 500) < 1e-9) key = p.key;
+  }
+  ASSERT_FALSE(key.empty());
+  const Status s = m.setParameter(*host, key, 1000);  // now out through the top
+  EXPECT_FALSE(s.ok());
+  EXPECT_NE(s.message().find("ambiguous"), std::string::npos) << s.message();
+  EXPECT_NEAR(worldVolume(m, *host), before, 1e-6);  // unchanged
+}
+
+// References keep their identity through save / load.
+TEST(SplitFace, IdentitySurvivesSaveAndLoad) {
+  doc::Modeler m;
+  auto wall = m.createRectangle(geom::SketchPlane::ground(), 4000, 200);
+  ASSERT_TRUE(m.extrude(*wall, 3000).ok());
+  ASSERT_TRUE(m.splitWithLine({gp_Pnt(600, 0, 0), gp_Pnt(600, 0, 3000)}).ok());
+  ASSERT_TRUE(m.pushPull(*wall, faceWithCentroid(m.document().worldShape(*wall), -gp::DY(), gp_Pnt(2300, 0, 1500)), 300).ok());
+  doc::Document d;
+  ASSERT_TRUE(doc::deserializeDocument(doc::serializeDocument(m.document()), d).ok());
+  const auto* push = std::get_if<doc::PushPullOp>(&d.find(*wall)->recipe.modifiers.back());
+  ASSERT_TRUE(push);
+  ASSERT_TRUE(push->face.inside && push->face.extent);
+  EXPECT_NEAR(push->face.extent->first.X(), 600, 1e-3);
+  const std::string path = test::tempPath("identity.sbr");
+  ASSERT_TRUE(m.save(path).ok());
+  doc::Modeler reloaded;
+  ASSERT_TRUE(reloaded.load(path).ok());
+  ASSERT_TRUE(reloaded.setParameter(*wall, "width", 10000).ok());
+  EXPECT_NEAR(worldVolume(reloaded, *wall), 10000.0 * 200 * 3000 + 9400.0 * 3000 * 300, 1e-2);
+}
+
 TEST(SplitFace, RejectsLinesThatDoNotDivideAFace) {
   doc::Modeler m;
   auto box = m.createRectangle(geom::SketchPlane::ground(), 1000, 1000);

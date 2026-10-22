@@ -484,7 +484,7 @@ Result<ObjectId> Modeler::splitWithLine(const std::vector<gp_Pnt>& worldPoints) 
     }
     const gp_Trsf toLocal = document_.worldTransform(candidate).Inverted();
     const TopoDS_Face localFace = TopoDS::Face(c.face.Moved(TopLoc_Location(toLocal)));
-    const auto ref = geom::FaceRef::fromFace(localFace);
+    const auto ref = geom::FaceRef::identify(localFace);
     if (!ref) continue;
     std::vector<gp_Pnt> local;
     for (const gp_Pnt& p : worldPoints) local.push_back(p.Transformed(toLocal));
@@ -807,7 +807,7 @@ Result<PushPullResult> Modeler::pushPull(const ObjectId& id, const TopoDS_Face& 
       }
     }
     if (!isCap) {
-      auto ref = geom::FaceRef::fromFace(face);
+      auto ref = geom::FaceRef::identify(face);
       if (!ref) return Result<PushPullResult>::failure(ref.error());
       mods.push_back(PushPullOp{ref.value(), distance});
       key = opKey(mods.size() - 1);
@@ -1520,25 +1520,33 @@ Result<ObjectId> Modeler::cutOpenings(const ObjectId& hostId, const gp_Dir& face
   const Object* host = document_.find(hostId);
   if (!host || host->shape.IsNull()) return R::failure("Object not found");
   const TopoDS_Shape world = document_.worldShape(*host);
-  // The outermost planar face facing that way.
-  std::optional<TopoDS_Face> face;
-  double best = -std::numeric_limits<double>::max();
+  // The outermost plane facing that way: all its faces together (a wall
+  // face split by a drawn line is still one wall side).
+  std::vector<std::pair<double, TopoDS_Face>> facing;
   for (TopExp_Explorer e(world, TopAbs_FACE); e.More(); e.Next()) {
     const TopoDS_Face f = TopoDS::Face(e.Current());
     const auto ref = geom::FaceRef::fromFace(f);
     if (!ref || !ref->normal.IsEqual(faceNormal, 1e-6)) continue;
-    const double out = gp_Vec(ref->centroid.XYZ()).Dot(gp_Vec(faceNormal));
-    if (out > best) {
-      best = out;
-      face = f;
-    }
+    facing.emplace_back(gp_Vec(ref->centroid.XYZ()).Dot(gp_Vec(faceNormal)), f);
   }
-  if (!face) return R::failure("No face of this object faces that way");
+  if (facing.empty()) return R::failure("No face of this object faces that way");
+  const double best =
+      std::max_element(facing.begin(), facing.end(), [](const auto& a, const auto& b) { return a.first < b.first; })
+          ->first;
+  BRep_Builder sideBuilder;
+  TopoDS_Compound side;
+  sideBuilder.MakeCompound(side);
+  std::optional<TopoDS_Face> face;
+  for (const auto& [out, f] : facing) {
+    if (out < best - tolerance::kLinear) continue;
+    sideBuilder.Add(side, f);
+    if (!face) face = f;
+  }
   // Face extent: along the wall (u, horizontal) and up; thickness along
   // the normal from the whole shape.
   const gp_Dir u = gp::DZ().Crossed(faceNormal);  // with the normal, gives an upward plane
   double u0 = 1e300, u1 = -1e300, z0 = 1e300, z1 = -1e300, n0 = 1e300, n1 = -1e300;
-  for (TopExp_Explorer v(*face, TopAbs_VERTEX); v.More(); v.Next()) {
+  for (TopExp_Explorer v(side, TopAbs_VERTEX); v.More(); v.Next()) {
     const gp_Pnt p = BRep_Tool::Pnt(TopoDS::Vertex(v.Current()));
     u0 = std::min(u0, gp_Vec(p.XYZ()).Dot(gp_Vec(u)));
     u1 = std::max(u1, gp_Vec(p.XYZ()).Dot(gp_Vec(u)));

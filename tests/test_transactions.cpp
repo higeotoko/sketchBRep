@@ -562,3 +562,29 @@ TEST(Transactions, GridWallsSlabAndEvenlyPlacedOpenings) {
   a.ok("place_openings", {{"host", door}, {"face_normal", {0, -1, 0}}, {"at", {2200, 0, 0}}, {"width", 800},
                           {"height", 500}, {"sill", 2300}});
 }
+
+// Review §5: choosing a face by its direction never picks one of several
+// equally good candidates silently; "near" says which one is meant.
+TEST(Transactions, FaceByNormalRefusesTiesAndTakesNear) {
+  Api a;
+  const std::string wall = a.ok("create_box", {{"origin", {0, 0, 0}}, {"width", 4000}, {"depth", 200},
+                                               {"height", 3000}})["id"];
+  a.ok("split_face", {{"points", {{2000, 0, 0}, {2000, 0, 3000}}}});  // front face in two
+  const json tie = a.call("push_pull", {{"id", wall}, {"face", {{"normal", {0, -1, 0}}}}, {"distance", 100}});
+  EXPECT_FALSE(tie["ok"]);
+  EXPECT_NE(tie["error"].get<std::string>().find("ambiguous face"), std::string::npos) << tie.dump();
+  const double before = a.ok("get_object", {{"id", wall}})["volume"];
+  a.ok("push_pull", {{"id", wall}, {"face", {{"normal", {0, -1, 0}}, {"near", {3000, 0, 1500}}}}, {"distance", 100}});
+  const json pushed = a.ok("get_object", {{"id", wall}});
+  EXPECT_NEAR(pushed["volume"].get<double>() - before, 2000.0 * 3000 * 100, 1.0);
+  EXPECT_NEAR(pushed["bounds"]["min"][1].get<double>(), -100, 1e-6);
+  // Openings still go along the whole back side when it is split too.
+  a.ok("split_face", {{"points", {{1000, 200, 0}, {1000, 200, 3000}}}});
+  const std::string host = a.ok("place_openings", {{"host", wall}, {"face_normal", {0, 1, 0}}, {"count", 2},
+                                                   {"width", 900}, {"height", 1200}, {"sill", 900}})["id"];
+  const json two = a.ok("list_openings", {{"ids", {host}}})["hosts"][0]["openings"];
+  ASSERT_EQ(two.size(), 2u);
+  const double gap = (4000.0 - 2 * 900) / 3;
+  EXPECT_NEAR(two[0]["center"][0].get<double>() + two[1]["center"][0].get<double>(), 4000, 1e-6);
+  EXPECT_NEAR(std::abs(two[0]["center"][0].get<double>() - two[1]["center"][0].get<double>()), gap + 900, 1e-6);
+}

@@ -34,6 +34,23 @@ gp_Dir dirFrom(const json& j) {
   return gp_Dir(j.at(0).get<double>(), j.at(1).get<double>(), j.at(2).get<double>());
 }
 
+json faceRefToJson(const geom::FaceRef& f) {
+  json j = {{"normal", toJson(f.normal)}, {"centroid", toJson(f.centroid)}, {"area", f.area}};
+  if (f.inside) j["inside"] = toJson(*f.inside);
+  if (f.extent) j["extent"] = json::array({toJson(f.extent->first), toJson(f.extent->second)});
+  return j;
+}
+
+geom::FaceRef faceRefFrom(const json& f) {
+  geom::FaceRef ref;
+  ref.normal = dirFrom(f.at("normal"));
+  ref.centroid = pointFrom(f.at("centroid"));
+  ref.area = f.value("area", 0.0);
+  if (f.contains("inside")) ref.inside = pointFrom(f.at("inside"));
+  if (f.contains("extent")) ref.extent = std::make_pair(pointFrom(f.at("extent").at(0)), pointFrom(f.at("extent").at(1)));
+  return ref;
+}
+
 json toJson(const gp_Trsf& t) {
   json m = json::array();
   for (int r = 1; r <= 3; ++r) {
@@ -335,10 +352,7 @@ json modifierToJson(const Modifier& m) {
           [](const SplitOp& op) {
             return json{{"type", "split"},
                         {"points", pointsToJson(op.points)},
-                        {"face",
-                         {{"normal", toJson(op.face.normal)},
-                          {"centroid", toJson(op.face.centroid)},
-                          {"area", op.face.area}}}};
+                        {"face", faceRefToJson(op.face)}};
           },
           [](const ScaleOp& op) {
             return json{{"type", "scale"}, {"center", toJson(op.center)}, {"factor", op.factor}};
@@ -346,10 +360,7 @@ json modifierToJson(const Modifier& m) {
           [](const PushPullOp& op) {
             return json{{"type", "pushpull"},
                         {"distance", op.distance},
-                        {"face",
-                         {{"normal", toJson(op.face.normal)},
-                          {"centroid", toJson(op.face.centroid)},
-                          {"area", op.face.area}}}};
+                        {"face", faceRefToJson(op.face)}};
           },
       },
       m);
@@ -367,9 +378,7 @@ Modifier modifierFrom(const json& j) {
     PushPullOp op;
     op.distance = j.at("distance").get<double>();
     const json& f = j.at("face");
-    op.face.normal = dirFrom(f.at("normal"));
-    op.face.centroid = pointFrom(f.at("centroid"));
-    op.face.area = f.value("area", 0.0);
+    op.face = faceRefFrom(f);
     return op;
   }
   if (type == "hole") {
@@ -390,9 +399,7 @@ Modifier modifierFrom(const json& j) {
     SplitOp op;
     op.points = pointsFrom(j.at("points"));
     const json& f = j.at("face");
-    op.face.normal = dirFrom(f.at("normal"));
-    op.face.centroid = pointFrom(f.at("centroid"));
-    op.face.area = f.value("area", 0.0);
+    op.face = faceRefFrom(f);
     return op;
   }
   throw std::runtime_error("unknown modifier type: " + type);

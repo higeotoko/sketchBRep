@@ -18,6 +18,8 @@
 #include <TopoDS.hxx>
 
 #include "sbr/doc/ChangeSummary.h"
+#include <BRepExtrema_DistShapeShape.hxx>
+#include <BRepBuilderAPI_MakeVertex.hxx>
 #include "sbr/geom/FaceRef.h"
 #include "sbr/geom/Measure.h"
 #include "sbr/geom/Operations.h"
@@ -249,8 +251,11 @@ const doc::Object& object(const doc::Modeler& m, const ObjectId& id) {
   return *o;
 }
 
-// Face selection: {"face": 3} (index from get_object) or
-// {"face": {"normal": [0,0,1]}} (the outermost planar face with that normal).
+// Face selection: {"face": 3} (index from get_object),
+// {"face": {"normal": [0,0,1]}} (the outermost planar face with that
+// normal) or {"face": {"normal": [...], "near": [x,y,z]}} (of those facing
+// that way, the one closest to the point). Ties are refused with the
+// candidates' indices rather than one being picked arbitrarily.
 TopoDS_Face selectFace(const doc::Modeler& m, const ObjectId& id, const json& selector) {
   const TopoDS_Shape world = m.document().worldShape(object(m, id));
   TopTools_IndexedMapOfShape faces;
@@ -262,22 +267,37 @@ TopoDS_Face selectFace(const doc::Modeler& m, const ObjectId& id, const json& se
   }
   if (selector.is_object() && selector.contains("normal")) {
     const gp_Dir wanted(xyz(selector.at("normal"), "normal"));
-    TopoDS_Face best;
-    double bestOffset = -1e300;
+    const std::optional<gp_Pnt> near =
+        selector.contains("near") ? std::optional<gp_Pnt>(gp_Pnt(xyz(selector.at("near"), "near"))) : std::nullopt;
+    // Score: outermost (largest offset along the normal) or closest to the point.
+    std::vector<std::pair<double, int>> scored;
     for (int i = 1; i <= faces.Extent(); ++i) {
       const TopoDS_Face face = TopoDS::Face(faces(i));
       const auto ref = geom::FaceRef::fromFace(face);
       if (!ref || ref->normal.Angle(wanted) > 1e-6) continue;
-      const double offset = gp_Vec(ref->centroid.XYZ()).Dot(gp_Vec(wanted));
-      if (offset > bestOffset) {
-        bestOffset = offset;
-        best = face;
+      double score = -gp_Vec(ref->centroid.XYZ()).Dot(gp_Vec(wanted));
+      if (near) {
+        BRepExtrema_DistShapeShape dist(BRepBuilderAPI_MakeVertex(*near).Vertex(), face);
+        if (!dist.IsDone()) continue;
+        score = dist.Value();
       }
+      scored.emplace_back(score, i);
     }
-    if (best.IsNull()) throw ApiError("no planar face with that normal");
-    return best;
+    if (scored.empty()) throw ApiError("no planar face with that normal");
+    std::sort(scored.begin(), scored.end());
+    std::vector<int> tied;
+    for (const auto& [score, index] : scored) {
+      if (score - scored.front().first < 1e-3) tied.push_back(index);
+    }
+    if (tied.size() > 1) {
+      std::string list;
+      for (int i : tied) list += (list.empty() ? "" : ", ") + std::to_string(i);
+      throw ApiError("ambiguous face: faces " + list + (near ? " are equally close to 'near'" : " are equally outermost") +
+                     "; give the face index or add 'near': [x, y, z] (a point on the face you mean)");
+    }
+    return TopoDS::Face(faces(scored.front().second));
   }
-  throw ApiError("'face' must be an index or {\"normal\": [x, y, z]}");
+  throw ApiError("'face' must be an index or {\"normal\": [x, y, z], \"near\": [x, y, z]}");
 }
 
 doc::BooleanKind booleanKind(const std::string& s) {
@@ -789,12 +809,14 @@ const std::vector<CommandDef>& commands() {
        }},
       {"push_pull",
        "Push/pull a planar face. face = index from get_object, or {\"normal\": [x,y,z]} for the outermost "
-       "face facing that way (planar faces only; curved faces by index, e.g. a cylinder side changes its "
-       "radius). Positive distance moves the face outwards. A profile lying on another "
+       "face facing that way, plus \"near\": [x,y,z] for the one of those closest to a point (several "
+       "equally outermost / close are refused, listing them). Planar faces only; curved faces by index, "
+       "e.g. a cylinder side changes its radius. Positive distance moves the face outwards. A profile lying on another "
        "solid's face cuts into it (negative) or joins it (positive); the merged object gets a new "
        "id, so always continue with the returned id.",
        SCHEMA({"type": "object", "properties": {"id": {"type": "string"},
-         "face": {"oneOf": [{"type": "integer"}, {"type": "object", "properties": {"normal": {"type": "array"}}}]},
+         "face": {"oneOf": [{"type": "integer"}, {"type": "object", "properties": {"normal": {"type": "array"},
+                                                                                   "near": {"type": "array"}}}]},
          "distance": {"type": "number"}}, "required": ["id", "face", "distance"]}),
        [](doc::Modeler& m, const json& a) {
          const ObjectId id = text(a, "id");

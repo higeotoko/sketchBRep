@@ -6,6 +6,10 @@
 // its geometry (outward normal, supporting plane and centroid) and resolved
 // against the regenerated shape by geometric matching.
 
+#include <optional>
+#include <utility>
+#include <vector>
+
 #include <gp_Dir.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Trsf.hxx>
@@ -20,17 +24,31 @@ struct FaceRef {
   gp_Dir normal{0, 0, 1};  // outward normal
   gp_Pnt centroid;         // lies on the supporting plane
   double area = 0.0;
+  // Identity of an edited face (absent in files from before): a point
+  // strictly inside it and its bounding box when it was picked.
+  std::optional<gp_Pnt> inside;
+  std::optional<std::pair<gp_Pnt, gp_Pnt>> extent;  // box min / max
 
+  // Plane and centroid only (cheap; for looking at faces).
   static Result<FaceRef> fromFace(const TopoDS_Face& face);
-  // Finds the planar face of `shape` with the same supporting plane and
-  // orientation whose centroid is closest to the stored one.
-  Result<TopoDS_Face> resolve(const TopoDS_Shape& shape) const;
+  // Also records the identity: use for references stored in a recipe.
+  static Result<FaceRef> identify(const TopoDS_Face& face);
+  // Finds the same face among those of `shape` on the same supporting plane
+  // and facing the same way: the one holding the remembered point, else the
+  // only one still overlapping the remembered box, else the one on the same
+  // side of every split line (`splitLines`) on that plane. Anything else is
+  // refused as ambiguous rather than guessed: a valid edit of the wrong
+  // face is worse than a failed one. References without the identity
+  // (older files) take the face with the closest centroid.
+  Result<TopoDS_Face> resolve(const TopoDS_Shape& shape,
+                              const std::vector<std::pair<gp_Pnt, gp_Pnt>>& splitLines = {}) const;
   FaceRef transformed(const gp_Trsf& trsf) const;
 };
 
 // Reference to a curved face: a point inside it, the outward normal there
 // and the surface type. Resolves to the face of the same type and facing
-// whose surface passes closest to the point.
+// whose surface passes closest to the point; two equally close are refused
+// as ambiguous.
 struct SurfaceRef {
   gp_Pnt point;
   gp_Dir normal{0, 0, 1};
