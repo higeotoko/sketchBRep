@@ -36,6 +36,8 @@ const Entry kEntries[] = {
     {"The line does not cross a face from edge to edge", "面を辺から辺まで横切る線ではありません"},
     {"Rectangle dimensions must be non-zero", "幅と奥行きは 0 にできません"},
     {"Circle radius must be positive", "半径は正の値にしてください"},
+    {"Grid spacings must be positive", "通り芯の間隔は正の値にしてください"},
+    {"There are no guides", "削除するガイドがありません（通り芯は「Grid」タグで表示を切り替えるか、選択して削除してください）"},
     {"Arc is flat", "円弧の膨らみが 0 です"},
     {"Arc ends coincide", "円弧の始点と終点が同じです"},
     {"Dimension points coincide", "寸法の 2 点が同じ位置です"},

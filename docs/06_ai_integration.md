@@ -35,7 +35,7 @@ AI 専用の裏口は作らず、GUI のツールと同じ `doc::Modeler` を JS
 - 調べる: `list_objects`, `get_object`（面の番号・法線・重心・面積、パラメータ一覧つき）
 - 作る: `create_line`, `face_from_loop`（線・円弧で囲んだ輪郭を面に）, `create_rectangle`, `create_circle`, `create_arc`（正確な円弧・弓形の面）, `create_polygon`, `create_curve`, `create_box`
 - 注記: `create_dimension`, `create_text`, `set_text`（寸法・部屋名や面積のラベル。`get_object` で文字も読める）
-- 補助: `create_guide`（点と方向で無限長のガイド線。作図の吸着先、出力対象外）, `clear_guides`
+- 補助: `create_guide`（点と方向で無限長のガイド線。作図の吸着先、出力対象外）, `clear_guides`（通り芯は残す）, `create_grid`（通り芯 X1.. / Y1.. を符号・スパン寸法つきで一括作成。Undo 1 回。結果の `lines` で「X3」のように名前から ID を引ける）
 - 編集: `split_face`（面を線で分割）, `extrude`, `push_pull`（面は番号か `{"normal": [0,0,1]}`）, `set_parameter`, `offset`, `move`, `rotate`, `copy_array`（直線・円形）, `boolean`, `revolve`, `loft`, `sweep`
 - 構造・属性: `group`, `ungroup`, `make_component`, `set_definition_parameter`, `rename`, `set_tag`, `paint`, `delete`
 - 表示状態: `set_section`（断面。平面図・断面図の切断）, `list_tags`, `set_tag_visible`
@@ -99,7 +99,7 @@ sbr_cli --open out.sbr --mcp                        # ヘッドレス MCP サー
 |---|---|
 | 次 | **アプリ内 AI パネル**: Claude API の tool use で同じスキーマ（`schemaJson()`）をそのまま渡すチャット欄。API キーはユーザー設定、モデルは最新の Claude を既定に |
 | 次 | **提案プレビュー**: AI の `batch` をまず半透明のゴーストで表示し、「適用 / 却下」を選べるモード（Undo に頼らない確認フロー） |
-| 次 | 寸法線・通り芯・レベルなど建築要素のコマンド化（AI が「通り芯 X3」のような言葉で参照できるように） |
+| 済 | 寸法線・通り芯のコマンド化（`create_grid` の `lines` で「通り芯 X3」を ID に引ける）。レベル（階高）は次 |
 | 中期 | 面・エッジの **意味的な名前**（「上面」「押出 2 の側面 3」）。TNP 強化と合わせて、番号より壊れにくい参照に |
 | 中期 | マクロ記録: GUI 操作を JSON Lines に記録 → AI が一般化して再利用 |
 | 中期 | MCP の resources（モデル概要・選択状態の購読）と、変更通知 |

@@ -47,6 +47,18 @@ double numberOr(const json& args, const char* key, double fallback) {
   return args.contains(key) ? number(args, key) : fallback;
 }
 
+std::vector<double> numbersOr(const json& args, const char* key) {
+  std::vector<double> out;
+  if (!args.contains(key)) return out;
+  const json& v = args.at(key);
+  if (!v.is_array()) throw ApiError(std::string("'") + key + "' must be an array of numbers");
+  for (const json& n : v) {
+    if (!n.is_number()) throw ApiError(std::string("'") + key + "' must be an array of numbers");
+    out.push_back(n.get<double>());
+  }
+  return out;
+}
+
 std::string text(const json& args, const char* key) {
   const json& v = arg(args, key);
   if (!v.is_string()) throw ApiError(std::string("'") + key + "' must be a string");
@@ -302,6 +314,23 @@ const std::vector<CommandDef>& commands() {
          "required": ["point", "direction"]}),
        [](doc::Modeler& m, const json& a) {
          return idResult(must(m.createGuide(point(a, "point"), direction(a, "direction", gp::DX()))));
+       }},
+      {"create_grid",
+       "Structural grid (通り芯) on the ground: lines X1.. (along Y) at the cumulative 'x_spacings' from "
+       "'origin', lines Y1.. (along X) at 'y_spacings', with labels and chained spacing dimensions, all on the "
+       "'Grid' tag. Drawing snaps to the lines and their crossings. Returns line ids by name.",
+       SCHEMA({"type": "object", "properties": {
+         "origin": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+         "x_spacings": {"type": "array", "items": {"type": "number"}},
+         "y_spacings": {"type": "array", "items": {"type": "number"}},
+         "label_offset": {"type": "number"}}}),
+       [](doc::Modeler& m, const json& a) {
+         const gp_Pnt origin = a.contains("origin") ? point(a, "origin") : gp::Origin();
+         const auto grid = must(m.createGridLines(origin, numbersOr(a, "x_spacings"), numbersOr(a, "y_spacings"),
+                                                  numberOr(a, "label_offset", 1500.0)));
+         json lines = json::object();
+         for (const ObjectId& id : grid.lines) lines[m.document().find(id)->name] = id;
+         return json{{"lines", lines}, {"labels", grid.labels}, {"dimensions", grid.dimensions}};
        }},
       {"clear_guides", "Delete all guides (one undo step).", SCHEMA({"type": "object", "properties": {}}),
        [](doc::Modeler& m, const json&) {

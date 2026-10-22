@@ -75,6 +75,37 @@ std::optional<std::vector<double>> parseLengthList(std::string_view text) {
   return values;
 }
 
+std::optional<std::vector<double>> parseSpacingList(std::string_view text) {
+  std::vector<double> values;
+  if (text.find_first_not_of(" \t") == std::string_view::npos) return values;
+  std::size_t start = 0;
+  while (start <= text.size()) {
+    std::size_t end = text.find_first_of(",;", start);
+    if (end == std::string_view::npos) end = text.size();
+    std::string_view item = text.substr(start, end - start);
+    int repeat = 1;
+    const std::size_t times = item.find_first_of("*x");
+    if (times != std::string_view::npos) {
+      const std::string count(item.substr(times + 1));
+      std::size_t used = 0;
+      int n = 0;
+      try {
+        n = std::stoi(count, &used);
+      } catch (...) {
+        return std::nullopt;
+      }
+      if (count.find_first_not_of(" \t", used) != std::string::npos || n < 1 || n > 1000) return std::nullopt;
+      repeat = n;
+      item = item.substr(0, times);
+    }
+    const auto value = parseLength(item);
+    if (!value) return std::nullopt;
+    values.insert(values.end(), static_cast<std::size_t>(repeat), *value);
+    start = end + 1;
+  }
+  return values;
+}
+
 std::string formatLength(double mm, int decimals) {
   std::ostringstream stream;
   stream.imbue(std::locale::classic());

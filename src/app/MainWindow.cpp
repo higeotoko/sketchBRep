@@ -14,7 +14,10 @@
 #include <QColorDialog>
 #include <QDockWidget>
 #include <QFileDialog>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QFileInfo>
+#include <QFormLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenuBar>
@@ -40,6 +43,7 @@
 #include "Cursors.h"
 #include "PropertiesPanel.h"
 #include "Viewport.h"
+#include "sbr/Units.h"
 
 namespace sbr::app {
 namespace {
@@ -469,6 +473,9 @@ void MainWindow::buildMenus() {
     bar->addAction(a);
     toolActions_[static_cast<int>(id)] = a;
   }
+
+  tools->addSeparator();
+  tools->addAction(tr("通り芯を作成..."), this, &MainWindow::showGridDialog);
 
   // --- AI integration (off by default; see docs/06_ai_integration.md)
   QMenu* ai = menuBar()->addMenu(tr("AI 連携(&A)"));
@@ -978,6 +985,39 @@ void MainWindow::beginTextEntry(const QString& label, const QString& text) {
   userTyping_ = true;  // keep the text while the user edits it
   measurement_->setFocus();
   measurement_->selectAll();
+}
+
+bool MainWindow::createGrid(const QString& xSpacings, const QString& ySpacings) {
+  const auto xs = units::parseSpacingList(xSpacings.toStdString());
+  const auto ys = units::parseSpacingList(ySpacings.toStdString());
+  if (!xs || !ys) {
+    reportError(tr("間隔を解釈できません（例: 3600*3, 2700）"));
+    return false;
+  }
+  auto grid = modeler_.createGridLines(gp::Origin(), *xs, *ys);
+  if (!grid) {
+    reportError(QString::fromStdString(grid.error()));
+    return false;
+  }
+  setStatus(tr("通り芯を作成しました（X %1 本・Y %2 本）").arg(xs->size() + 1).arg(ys->size() + 1));
+  return true;
+}
+
+void MainWindow::showGridDialog() {
+  QDialog dialog(this);
+  dialog.setWindowTitle(tr("通り芯を作成"));
+  auto* form = new QFormLayout(&dialog);
+  auto* xEdit = new QLineEdit(QStringLiteral("3600*3"), &dialog);
+  auto* yEdit = new QLineEdit(QStringLiteral("3600*2"), &dialog);
+  xEdit->setPlaceholderText(tr("例: 3600*3, 2700"));
+  form->addRow(tr("X 方向の間隔 (mm)"), xEdit);
+  form->addRow(tr("Y 方向の間隔 (mm)"), yEdit);
+  form->addRow(new QLabel(tr("原点から並べます。「3600*3」で 3 スパン。単位 m も可"), &dialog));
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+  form->addRow(buttons);
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  if (dialog.exec() == QDialog::Accepted) createGrid(xEdit->text(), yEdit->text());
 }
 
 void MainWindow::commitMeasurement() {

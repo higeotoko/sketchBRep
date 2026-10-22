@@ -58,9 +58,22 @@ class Modeler {
                                    const std::string& text = {});
   Result<ObjectId> createText(const gp_Pnt& position, const std::optional<gp_Pnt>& target, const std::string& text);
   Status setAnnotationText(const ObjectId& id, const std::string& text);
-  // Construction lines (tag "Guides"), and removing them all at once.
-  Result<ObjectId> createGuide(const gp_Pnt& point, const gp_Dir& direction);
+  // Construction lines (tag "Guides"), and removing them all at once
+  // (grid lines on the "Grid" tag are kept).
+  Result<ObjectId> createGuide(const gp_Pnt& point, const gp_Dir& direction, const std::string& name = {},
+                               const std::string& layer = "Guides");
   Status clearGuides();
+  // Structural grid (通り芯) on the ground plane: lines X1.. along Y at the
+  // cumulative x spacings from 'origin', Y1.. along X, each labelled at its
+  // start 'labelOffset' outside the grid, with chained spacing dimensions.
+  // Everything goes on the "Grid" tag; one undo step.
+  struct GridLines {
+    std::vector<ObjectId> lines;   // X1..Xn, then Y1..Ym
+    std::vector<ObjectId> labels;  // same order
+    std::vector<ObjectId> dimensions;
+  };
+  Result<GridLines> createGridLines(const gp_Pnt& origin, const std::vector<double>& xSpacings,
+                                    const std::vector<double>& ySpacings, double labelOffset = 1500.0);
   // A line (world points) drawn from edge to edge across a planar face of a
   // visible solid splits that face (parametric SplitOp). Returns the solid's
   // id, or a failure if the line does not divide any face.

@@ -346,3 +346,28 @@ TEST(CommandApi, GuidesAreCreatedAndCleared) {
   EXPECT_TRUE(a.modeler.document().objects().empty());
   EXPECT_FALSE(a.call("clear_guides")["ok"]);
 }
+
+TEST(CommandApi, StructuralGridIsOneUndoStep) {
+  Api a;
+  const json grid = a.ok("create_grid", {{"x_spacings", {3600, 3600, 2700}}, {"y_spacings", {4500, 4500}}});
+  ASSERT_EQ(grid["lines"].size(), 7u);  // X1..X4, Y1..Y3
+  const json x4 = a.ok("get_object", {{"id", grid["lines"]["X4"]}});
+  EXPECT_EQ(x4["kind"], "Guide");
+  EXPECT_EQ(x4["tag"], "Grid");
+  EXPECT_EQ(grid["labels"].size(), 7u);
+  ASSERT_EQ(grid["dimensions"].size(), 5u);
+  EXPECT_EQ(a.ok("get_object", {{"id", grid["dimensions"][2]}})["text"], "2,700");
+  EXPECT_EQ(a.ok("get_object", {{"id", grid["labels"][3]}})["text"], "X4");
+
+  // "Delete all guides" keeps the grid.
+  a.ok("create_guide", {{"point", {0, 0, 0}}, {"direction", {1, 1, 0}}});
+  a.ok("clear_guides");
+  EXPECT_EQ(a.modeler.document().objects().size(), 19u);
+
+  a.ok("undo");  // the guide comes back
+  a.ok("undo");  // and its creation
+  a.ok("undo");  // the whole grid in one step
+  EXPECT_TRUE(a.modeler.document().objects().empty());
+  EXPECT_FALSE(a.call("create_grid", {{"x_spacings", {3600, -1}}})["ok"]);
+  EXPECT_TRUE(a.modeler.document().objects().empty());
+}

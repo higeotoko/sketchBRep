@@ -218,10 +218,11 @@ Result<ObjectId> Modeler::createText(const gp_Pnt& position, const std::optional
   return addObject(std::move(o), "Text");
 }
 
-Result<ObjectId> Modeler::createGuide(const gp_Pnt& point, const gp_Dir& direction) {
+Result<ObjectId> Modeler::createGuide(const gp_Pnt& point, const gp_Dir& direction, const std::string& name,
+                                      const std::string& layer) {
   Object o;
-  o.name = uniqueName("Guide");
-  o.layer = "Guides";
+  o.name = name.empty() ? uniqueName("Guide") : name;
+  o.layer = layer;
   o.recipe.base = GuideLine{point, direction};
   return addObject(std::move(o), "Guide");
 }
@@ -229,10 +230,90 @@ Result<ObjectId> Modeler::createGuide(const gp_Pnt& point, const gp_Dir& directi
 Status Modeler::clearGuides() {
   std::vector<ObjectId> guides;
   for (const Object& o : document_.objects()) {
-    if (o.kind() == ObjectKind::Guide) guides.push_back(o.id);
+    if (o.kind() == ObjectKind::Guide && o.layer == "Guides") guides.push_back(o.id);
   }
   if (guides.empty()) return Status::failure("There are no guides");
   return remove(guides);
+}
+
+Result<Modeler::GridLines> Modeler::createGridLines(const gp_Pnt& origin, const std::vector<double>& xSpacings,
+                                                    const std::vector<double>& ySpacings, double labelOffset) {
+  for (double s : xSpacings) {
+    if (!(s > tolerance::kMinDimension)) return Result<GridLines>::failure("Grid spacings must be positive");
+  }
+  for (double s : ySpacings) {
+    if (!(s > tolerance::kMinDimension)) return Result<GridLines>::failure("Grid spacings must be positive");
+  }
+  if (!(labelOffset > 0)) return Result<GridLines>::failure("Label offset must be positive");
+  // Positions of the lines along each axis (a single line when no spacing).
+  auto positions = [](double start, const std::vector<double>& spacings) {
+    std::vector<double> p{start};
+    for (double s : spacings) p.push_back(p.back() + s);
+    return p;
+  };
+  const std::vector<double> xs = positions(origin.X(), xSpacings);
+  const std::vector<double> ys = positions(origin.Y(), ySpacings);
+  const double z = origin.Z();
+  const double dimOffset = labelOffset / 2;
+
+  GridLines grid;
+  history_.beginGroup("Grid Lines");
+  auto fail = [&](const std::string& message) {
+    history_.abortGroup();
+    return Result<GridLines>::failure(message);
+  };
+  auto addText = [&](const gp_Pnt& at, const std::string& text) -> Status {
+    Object o;
+    o.name = "Grid " + text;
+    o.layer = "Grid";
+    o.recipe.base = TextNote{at, std::nullopt, text};
+    auto id = addObject(std::move(o), "Grid Lines");
+    if (!id) return Status::failure(id.error());
+    grid.labels.push_back(*id);
+    return Status::success();
+  };
+  for (std::size_t i = 0; i < xs.size(); ++i) {
+    const std::string name = "X" + std::to_string(i + 1);
+    auto id = createGuide(gp_Pnt(xs[i], ys.front(), z), gp::DY(), name, "Grid");
+    if (!id) return fail(id.error());
+    grid.lines.push_back(*id);
+  }
+  for (std::size_t i = 0; i < ys.size(); ++i) {
+    const std::string name = "Y" + std::to_string(i + 1);
+    auto id = createGuide(gp_Pnt(xs.front(), ys[i], z), gp::DX(), name, "Grid");
+    if (!id) return fail(id.error());
+    grid.lines.push_back(*id);
+  }
+  for (std::size_t i = 0; i < xs.size(); ++i) {
+    const Status s = addText(gp_Pnt(xs[i], ys.front() - labelOffset, z), "X" + std::to_string(i + 1));
+    if (!s) return fail(s.message());
+  }
+  for (std::size_t i = 0; i < ys.size(); ++i) {
+    const Status s = addText(gp_Pnt(xs.front() - labelOffset, ys[i], z), "Y" + std::to_string(i + 1));
+    if (!s) return fail(s.message());
+  }
+  auto addDimension = [&](const gp_Pnt& from, const gp_Pnt& to, const gp_Vec& offset) -> Status {
+    Object o;
+    o.name = uniqueName("Grid Dimension");
+    o.layer = "Grid";
+    o.recipe.base = LinearDimension{from, to, offset, {}};
+    auto id = addObject(std::move(o), "Grid Lines");
+    if (!id) return Status::failure(id.error());
+    grid.dimensions.push_back(*id);
+    return Status::success();
+  };
+  for (std::size_t i = 0; i + 1 < xs.size(); ++i) {
+    const Status s = addDimension(gp_Pnt(xs[i], ys.front(), z), gp_Pnt(xs[i + 1], ys.front(), z),
+                                  gp_Vec(0, -dimOffset, 0));
+    if (!s) return fail(s.message());
+  }
+  for (std::size_t i = 0; i + 1 < ys.size(); ++i) {
+    const Status s = addDimension(gp_Pnt(xs.front(), ys[i], z), gp_Pnt(xs.front(), ys[i + 1], z),
+                                  gp_Vec(-dimOffset, 0, 0));
+    if (!s) return fail(s.message());
+  }
+  history_.endGroup();
+  return grid;
 }
 
 Status Modeler::setAnnotationText(const ObjectId& id, const std::string& text) {

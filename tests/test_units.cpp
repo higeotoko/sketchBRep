@@ -37,3 +37,18 @@ TEST(Units, FormatsIndependentlyOfModelPrecision) {
   EXPECT_EQ(formatLength(3000.04, 1), "3000.0 mm");
   EXPECT_EQ(formatLength(1234.5678, 2), "1234.57 mm");
 }
+
+TEST(Units, SpacingListsRepeatBays) {
+  using sbr::units::parseSpacingList;
+  auto v = parseSpacingList("3600*3, 2.7m");
+  ASSERT_TRUE(v);
+  EXPECT_EQ(*v, (std::vector<double>{3600, 3600, 3600, 2700}));
+  v = parseSpacingList("910x2");
+  ASSERT_TRUE(v);
+  EXPECT_EQ(*v, (std::vector<double>{910, 910}));
+  ASSERT_TRUE(parseSpacingList("  "));
+  EXPECT_TRUE(parseSpacingList("")->empty());
+  EXPECT_FALSE(parseSpacingList("3600*0"));
+  EXPECT_FALSE(parseSpacingList("3600*a"));
+  EXPECT_FALSE(parseSpacingList("3600,,"));
+}

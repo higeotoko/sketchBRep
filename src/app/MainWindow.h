@@ -64,6 +64,9 @@ class MainWindow : public QMainWindow, public ToolHost {
   bool goToScene(int index);
   QTabBar* sceneBar() const { return sceneBar_; }
   QListWidget* tagList() const { return tagList_; }
+  // Structural grid from typed spacings ("3600*3, 2700"); false + error
+  // message when the text cannot be read or the grid fails.
+  bool createGrid(const QString& xSpacings, const QString& ySpacings);
 
  protected:
   void closeEvent(QCloseEvent* event) override;
@@ -76,6 +79,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   void updateTitle();
   bool maybeSave();
   void commitMeasurement();
+  void showGridDialog();
   void newDocument();
   void open();
   bool save();

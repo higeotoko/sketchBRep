@@ -110,6 +110,7 @@ class GuiPhase1 : public QObject {
   void tapeMeasureReadsDistance();
   void tapeMeasurePullsGuideOffEdge();
   void protractorPlacesAngledGuide();
+  void gridLinesSnapAtCrossings();
   void circleToolTypedRadius();
   void groupEditModeAndLooseFaceDelete();
   void lineToolStaysOnWallPlane();
@@ -684,6 +685,24 @@ void GuiPhase1::protractorPlacesAngledGuide() {
     }
   }
   QVERIFY(touches);
+}
+
+void GuiPhase1::gridLinesSnapAtCrossings() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  QVERIFY2(f.window.createGrid(QStringLiteral("3600*2"), QStringLiteral("3.6m")), qPrintable(f.window.lastError()));
+  QTest::qWait(30);
+  // A rectangle from crossing X2/Y1 to crossing X3/Y2, clicked a little off.
+  f.window.activateTool(MainWindow::ToolId::Rectangle);
+  click(f.vp, f.vp->toWidget(gp_Pnt(3600, 0, 0)) + QPoint(2, -2));
+  click(f.vp, f.vp->toWidget(gp_Pnt(7200, 3600, 0)) + QPoint(-2, 2));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  const doc::Object& room = m.document().objects().back();
+  QCOMPARE(room.kind(), doc::ObjectKind::Face);
+  QVERIFY(std::abs(geom::area(m.document().worldShape(room)) - 3600.0 * 3600.0) < 1e-3);
+  QVERIFY(!f.window.createGrid(QStringLiteral("3600*a"), QString()));
+  QVERIFY(!f.window.lastError().isEmpty());
 }
 
 void GuiPhase1::circleToolTypedRadius() {
