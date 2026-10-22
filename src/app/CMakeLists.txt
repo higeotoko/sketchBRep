@@ -6,6 +6,7 @@ set(CMAKE_AUTOMOC ON)
 add_library(sbr_ui STATIC
   MainWindow.cpp MainWindow.h
   PropertiesPanel.cpp PropertiesPanel.h
+  MaterialsPanel.cpp MaterialsPanel.h
   Tools.cpp Tools.h
   Viewport.cpp Viewport.h
   Cursors.cpp Cursors.h

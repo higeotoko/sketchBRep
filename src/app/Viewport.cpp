@@ -1,5 +1,8 @@
 #include "Viewport.h"
 
+#include <AIS_ColoredShape.hxx>
+#include <TopoDS_Iterator.hxx>
+
 #include <algorithm>
 #include <cmath>
 
@@ -351,7 +354,12 @@ Handle(AIS_Shape) Viewport::makeDisplay(const doc::Object& object, Entry& entry)
   TopExp::MapShapes(entry.displayShape, TopAbs_EDGE, entry.displayEdges);
   TopExp::MapShapes(entry.canonicalWorld, TopAbs_EDGE, entry.canonicalEdges);
 
-  Handle(AIS_Shape) ais = new AIS_Shape(entry.displayShape);
+  // Coloured shapes take per-face colours on the shared display copy: the
+  // tessellation stays shared between placements whatever they are painted.
+  // Only objects with faces painted on their own need it (plain ones stay
+  // the cheaper AIS_Shape).
+  Handle(AIS_Shape) ais = !faceColorsOf(object).empty() ? Handle(AIS_Shape)(new AIS_ColoredShape(entry.displayShape))
+                                                        : new AIS_Shape(entry.displayShape);
   if (object.kind() == doc::ObjectKind::Curve) {
     ais->SetColor(Quantity_NOC_BLACK);
     ais->SetWidth(2.0);
@@ -362,7 +370,8 @@ Handle(AIS_Shape) Viewport::makeDisplay(const doc::Object& object, Entry& entry)
     ais->SetColor(Quantity_NOC_GRAY50);
     ais->Attributes()->SetWireAspect(new Prs3d_LineAspect(Quantity_NOC_GRAY50, Aspect_TOL_DASH, 1.0));
   } else {
-    ais->SetColor(rgb(object.color.r, object.color.g, object.color.b));
+    const doc::Color c = modeler_.document().displayColor(object);
+    ais->SetColor(rgb(c.r, c.g, c.b));
   }
   ais->Attributes()->SetFaceBoundaryDraw(Standard_True);
   ais->Attributes()->SetFaceBoundaryAspect(
@@ -542,6 +551,81 @@ void Viewport::applyPickMode(const Handle(AIS_Shape)& ais) {
   }
 }
 
+std::vector<std::pair<int, std::array<double, 3>>> Viewport::faceColorsOf(const doc::Object& object) {
+  const doc::Document& document = modeler_.document();
+  std::vector<std::pair<int, std::array<double, 3>>> out;
+  auto colorOf = [&](const std::string& material, const doc::Color& fallback) {
+    const doc::Color c = document.materialColor(material, fallback);
+    return std::array<double, 3>{c.r, c.g, c.b};
+  };
+  if (const auto* ref = std::get_if<doc::ComponentInstance>(&object.recipe.base)) {
+    const doc::ComponentDefinition* def = document.findDefinition(ref->definitionId);
+    if (!def || def->shape.IsNull()) return out;
+    DefinitionColors& cached = definitionColors_[def->id];
+    if (cached.shape != def->shape.TShape().get() || cached.sequence != document.sequence()) {
+      cached = DefinitionColors{def->shape.TShape().get(), document.sequence(), {}};
+      // The definition's compound holds its leaves in order (see
+      // buildDefinitionShape); a leaf with a material of its own (or inside
+      // a group of the definition that has one) keeps it on every placement.
+      TopTools_IndexedMapOfShape all;
+      TopExp::MapShapes(def->shape, TopAbs_FACE, all);
+      auto ownMaterial = [&](const doc::Object& leaf) {
+        for (const doc::Object* o = &leaf; o;) {
+          if (!o->material.empty()) return o->material;
+          const doc::Object* parent = nullptr;
+          for (const doc::Object& c : def->objects) {
+            if (c.id == o->parent) parent = &c;
+          }
+          o = parent;
+        }
+        return std::string();
+      };
+      TopoDS_Iterator part(def->shape);
+      for (const doc::Object& leaf : def->objects) {
+        if (leaf.shape.IsNull()) continue;
+        if (!part.More()) break;
+        const TopoDS_Shape placed = part.Value();
+        part.Next();
+        TopTools_IndexedMapOfShape faces;
+        TopExp::MapShapes(placed, TopAbs_FACE, faces);
+        std::map<int, std::string> own;
+        for (const auto& [i, m] : doc::resolveFaceMaterials(leaf).faces) own[i] = m;
+        const std::string base = ownMaterial(leaf);
+        for (int i = 1; i <= faces.Extent(); ++i) {
+          const auto it = own.find(i);
+          const std::string material = it != own.end() ? it->second : base;
+          if (material.empty()) continue;
+          if (const int k = all.FindIndex(faces(i)); k > 0) cached.faces.emplace_back(k, material);
+        }
+      }
+    }
+    for (const auto& [index, material] : cached.faces) out.emplace_back(index, colorOf(material, object.color));
+    return out;
+  }
+  for (const auto& [index, material] : doc::resolveFaceMaterials(object).faces) {
+    out.emplace_back(index, colorOf(material, object.color));
+  }
+  return out;
+}
+
+std::optional<std::array<double, 3>> Viewport::shownFaceColor(const doc::ObjectId& id,
+                                                              const TopoDS_Face& worldFace) const {
+  const auto it = entries_.find(id);
+  if (it == entries_.end()) return std::nullopt;
+  const Entry& e = it->second;
+  int index = e.canonicalFaces.FindIndex(worldFace);
+  for (int i = 1; i <= e.canonicalFaces.Extent() && index == 0; ++i) {
+    if (e.canonicalFaces(i).TShape() == worldFace.TShape()) index = i;
+  }
+  if (index == 0) return std::nullopt;
+  for (const auto& [i, c] : e.faceColors) {
+    if (i == index) return c;
+  }
+  Quantity_Color base;
+  e.ais->Color(base);
+  return std::array<double, 3>{base.Red(), base.Green(), base.Blue()};
+}
+
 bool Viewport::syncObject(const doc::ObjectId& id) {
   const doc::Document& document = modeler_.document();
   const doc::Object* o = document.find(id);
@@ -550,8 +634,12 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
   auto found = entries_.find(id);
   // Shapes are compared by TShape + location: unchanged objects keep their
   // tessellated display copy and their snap index.
+  // An object whose faces got (or lost every) own colour needs the other
+  // kind of display object.
+  const bool needsFaceColors = wanted && !faceColorsOf(*o).empty();
   if (found != entries_.end() &&
-      (!wanted || !sameLocatedShape(found->second.canonicalWorld, document.worldShape(*o)))) {
+      (!wanted || !sameLocatedShape(found->second.canonicalWorld, document.worldShape(*o)) ||
+       needsFaceColors != (dynamic_cast<AIS_ColoredShape*>(found->second.ais.get()) != nullptr))) {
     context_->Remove(found->second.ais, Standard_False);
     releaseProto(found->second);
     entries_.erase(found);
@@ -586,19 +674,32 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
   }
   bool selected = false;
   for (const doc::ObjectId& s : selection_) selected |= s == id || document.isAncestor(s, id);
+  const doc::Color shown = document.displayColor(*o);
   Quantity_Color color = o->kind() == doc::ObjectKind::Curve        ? Quantity_Color(Quantity_NOC_BLACK)
                          : o->kind() == doc::ObjectKind::Annotation ? Quantity_Color(Quantity_NOC_GRAY20)
                          : o->kind() == doc::ObjectKind::Guide      ? Quantity_Color(Quantity_NOC_GRAY50)
-                                                                    : rgb(o->color.r, o->color.g, o->color.b);
+                                                                    : rgb(shown.r, shown.g, shown.b);
   if (selected) color = kSelectedColor;
   bool restyled = false;
   Quantity_Color current;
   found->second.ais->Color(current);
-  if (!current.IsEqual(color)) {
-    found->second.ais->SetColor(color);
+  Entry& entry = found->second;
+  auto faceColors = selected ? decltype(entry.faceColors){} : faceColorsOf(*o);
+  const bool facesChanged = faceColors != entry.faceColors || selected != entry.shownSelected;
+  if (!current.IsEqual(color) || facesChanged) {
+    entry.ais->SetColor(color);
+    if (auto* colored = dynamic_cast<AIS_ColoredShape*>(entry.ais.get()); colored && facesChanged) {
+      colored->ClearCustomAspects();
+      for (const auto& [index, rgbValue] : faceColors) {
+        if (index >= 1 && index <= entry.displayFaces.Extent()) {
+          colored->SetCustomColor(entry.displayFaces(index), rgb(rgbValue[0], rgbValue[1], rgbValue[2]));
+        }
+      }
+    }
+    entry.faceColors = std::move(faceColors);
+    entry.shownSelected = selected;
     // SetColor() also recolours the face boundaries; keep them black.
-    found->second.ais->Attributes()->SetFaceBoundaryAspect(
-        new Prs3d_LineAspect(Quantity_NOC_BLACK, Aspect_TOL_SOLID, 1.5));
+    entry.ais->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(Quantity_NOC_BLACK, Aspect_TOL_SOLID, 1.5));
     restyled = true;
   }
   const bool faded = !editContext_.empty() && !document.isAncestor(editContext_, id);

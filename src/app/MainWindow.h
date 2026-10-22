@@ -14,6 +14,7 @@
 #include "sbr/doc/Modeler.h"
 
 class QAction;
+class QDockWidget;
 class QActionGroup;
 class QLabel;
 class QLineEdit;
@@ -23,6 +24,7 @@ class QListWidget;
 namespace sbr::app {
 
 class AiBridge;
+class MaterialsPanel;
 class PropertiesPanel;
 class Viewport;
 
@@ -46,6 +48,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   void enterGroup(const doc::ObjectId& groupId) override;
   void exitGroup() override;
   void beginTextEntry(const QString& label, const QString& text) override;
+  void materialPicked(const std::string& id) override;
 
   // Used by tests and the command line.
   bool openFile(const QString& path);
@@ -84,6 +87,14 @@ class MainWindow : public QMainWindow, public ToolHost {
   bool cutSelection();
   void paste();
   bool pasteInPlace();
+  // Materials (panel actions; also used by tests).
+  MaterialsPanel* materialsPanel() const { return materialsPanel_; }
+  PaintTool& paintTool() { return *paintTool_; }
+  // Makes `id` the paint material and switches to the paint tool.
+  void chooseMaterial(const std::string& id);
+  std::optional<std::string> addPresetMaterial(int index);
+  // The selected faces (or else the selected objects) take `id`.
+  bool applyMaterialToSelection(const std::string& id);
   // Architectural helpers behind the Tools menu (also used by tests).
   WallTool& wallTool() { return *wallTool_; }
   SlabTool& slabTool() { return *slabTool_; }
@@ -113,6 +124,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   bool maybeSave();
   void commitMeasurement();
   void showGridDialog();
+  void editMaterialDialog(const std::string& id);  // "" = new material
   void refreshConstraints();
   void showWallSettingsDialog();
   void showSlabSettingsDialog();
@@ -147,6 +159,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   doc::Modeler modeler_;
   Viewport* viewport_ = nullptr;
   PropertiesPanel* panel_ = nullptr;
+  MaterialsPanel* materialsPanel_ = nullptr;
+  QDockWidget* materialsDock_ = nullptr;
   QLabel* status_ = nullptr;
   QLabel* measurementLabel_ = nullptr;
   QLabel* constraintLabel_ = nullptr;

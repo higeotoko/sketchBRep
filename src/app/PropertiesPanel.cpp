@@ -206,6 +206,26 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
   });
   form_->addRow(tr("名前"), name);
   if (!elementSummary.isEmpty()) form_->addRow(tr("選択"), new QLabel(elementSummary));
+  // Material: own, else where it comes from; faces painted on their own.
+  {
+    auto nameOf = [&](const std::string& mid) {
+      const doc::Material* mat = document.findMaterial(mid);
+      return mat ? QString::fromStdString(mat->name) : QString();
+    };
+    const std::string shown = document.inheritedMaterial(*o);
+    QString text = !o->material.empty() ? nameOf(o->material)
+                   : !shown.empty()     ? tr("%1（グループ・配置から）").arg(nameOf(shown))
+                                        : tr("なし");
+    if (!o->faceMaterials.empty()) {
+      const doc::FaceMaterialMap faces = doc::resolveFaceMaterials(*o);
+      text += tr(" ／ 面ごと %1").arg(faces.faces.size());
+      if (faces.unresolved) text += tr("（%1 件は形の変更で面を特定できず未適用）").arg(faces.unresolved);
+    }
+    auto* label = new QLabel(text);
+    label->setObjectName(QStringLiteral("materialLabel"));
+    label->setToolTip(tr("ペイントツール（B）と「素材」パネルで変更。面の素材が部材全体より優先されます"));
+    form_->addRow(tr("素材"), label);
+  }
   if (o->kind() == doc::ObjectKind::Annotation) {
     // Dimensions: empty = measured value.
     const bool dimension = std::holds_alternative<doc::LinearDimension>(o->recipe.base);

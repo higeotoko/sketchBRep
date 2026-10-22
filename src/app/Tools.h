@@ -56,6 +56,8 @@ class ToolHost {
   virtual void beginTextEntry(const QString& label, const QString& text) {
     setMeasurement(label, text);
   }
+  // The paint tool picked up a material (Alt+click): the panel follows.
+  virtual void materialPicked(const std::string&) {}
 };
 
 // The edit a tool has just committed, which a value typed right after may
@@ -573,6 +575,11 @@ class FollowMeTool : public Tool {
 
 // Paint bucket: click to apply the current colour (groups and components
 // as a whole), Alt+click to pick up the colour of what is clicked.
+// Paint (B), with the material chosen in the materials panel: click a face
+// to paint that face; a group or component at the current editing level is
+// painted as a whole; Ctrl+click paints the whole object. Alt+click picks
+// up the material shown there. With "inherit" (no material) the click takes
+// the face's / object's own material away.
 class PaintTool : public Tool {
  public:
   using Tool::Tool;
@@ -581,11 +588,12 @@ class PaintTool : public Tool {
   void activate() override;
   void mousePress(const ToolEvent& e) override;
   void mouseMove(const ToolEvent& e) override;
-  void setColor(const doc::Color& color) { color_ = color; }
-  const doc::Color& color() const { return color_; }
+  void setMaterial(const std::string& id) { material_ = id; }
+  const std::string& material() const { return material_; }
 
  private:
-  doc::Color color_{0.75, 0.55, 0.35};  // warm wood tone by default
+  QString materialName() const;
+  std::string material_;
 };
 
 // Tape measure: click two points (with inference) to read the distance.

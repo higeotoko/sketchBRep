@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include <BRep_Tool.hxx>
+#include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <gp_Lin.hxx>
@@ -33,6 +34,8 @@
 
 #include "AiBridge.h"
 #include "MainWindow.h"
+#include "MaterialsPanel.h"
+#include "sbr/geom/FaceRef.h"
 #include "Viewport.h"
 #include "sbr/api/CommandApi.h"
 #include "sbr/doc/ChangeSummary.h"
@@ -1129,28 +1132,100 @@ void GuiPhase1::offsetToolOnSolidFace() {
   QVERIFY(std::abs(geom::area(inset.shape) - 800.0 * 800.0) < 1e-3);
 }
 
+// Materials with the paint tool (docs/11_materials.md): pick from the panel,
+// click a face / Ctrl+click the object / Alt+click to pick up, "inherit"
+// takes a face's own material away; groups paint as a whole; undo, saving
+// and component placements keep their shared display.
 void GuiPhase1::paintToolAndEyedropper() {
   Fixture f;
   QVERIFY(f.setUp(1000, 0));
   doc::Modeler& m = f.window.modeler();
   const doc::ObjectId a = f.box(0, 0, 500, 500, 500);
   const doc::ObjectId b = f.box(1500, 0, 500, 500, 500);
-  f.window.activateTool(MainWindow::ToolId::Paint);
+  auto faceOf = [&](const doc::ObjectId& id, const gp_Dir& n, const gp_Pnt& p) {
+    for (TopExp_Explorer e(m.document().worldShape(id), TopAbs_FACE); e.More(); e.Next()) {
+      const TopoDS_Face face = TopoDS::Face(e.Current());
+      const auto ref = geom::FaceRef::fromFace(face);
+      if (ref && ref->normal.Angle(n) < 1e-6 && gp_Pln(p, n).Distance(ref->centroid) < 1e-6) return face;
+    }
+    return TopoDS_Face();
+  };
+  auto shows = [&](const doc::ObjectId& id, const gp_Dir& n, const gp_Pnt& p) {
+    f.vp->syncNow();
+    const auto c = f.vp->shownFaceColor(id, faceOf(id, n, p));
+    return c ? QColor::fromRgbF((*c)[0], (*c)[1], (*c)[2]).name() : QStringLiteral("none");
+  };
+  auto hex = [](const doc::Color& c) { return QColor::fromRgbF(c.r, c.g, c.b).name(); };
+  const QString grey = hex(doc::Color{});
+
+  // A ready-made material: one click adds it and switches to painting.
+  const auto wood = f.window.addPresetMaterial(0);
+  QVERIFY(wood);
+  QVERIFY(dynamic_cast<PaintTool*>(f.window.activeTool()));
   QTest::qWait(30);
-  auto* paint = dynamic_cast<PaintTool*>(f.window.activeTool());
-  QVERIFY(paint);
-  const doc::Color red{0.9, 0.1, 0.1};
-  paint->setColor(red);
-  click(f.vp, f.vp->toWidget(gp_Pnt(250, 250, 500)));
-  QCOMPARE(m.document().find(a)->color, red);
-  // Alt+click picks up b's colour, then painting a with it.
-  const QPoint onB = f.vp->toWidget(gp_Pnt(1750, 250, 500));
-  move(f.vp, onB);
-  send(f.vp, QEvent::MouseButtonPress, onB, Qt::LeftButton, Qt::LeftButton, Qt::AltModifier);
-  send(f.vp, QEvent::MouseButtonRelease, onB, Qt::LeftButton, Qt::NoButton, Qt::AltModifier);
-  QCOMPARE(paint->color(), m.document().find(b)->color);
-  click(f.vp, f.vp->toWidget(gp_Pnt(250, 250, 500)));
-  QCOMPARE(m.document().find(a)->color, m.document().find(b)->color);
+  const QString woodHex = hex(m.document().findMaterial(*wood)->color);
+  const QPoint topA = f.vp->toWidget(gp_Pnt(250, 250, 500));
+  click(f.vp, topA);  // the top face only
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(shows(a, gp::DZ(), gp_Pnt(0, 0, 500)), woodHex);
+  QCOMPARE(shows(a, -gp::DY(), gp_Pnt(0, 0, 0)), grey);
+  // Ctrl+click: the whole object; the face painted on its own stays.
+  const auto plaster = f.window.addPresetMaterial(2);
+  const QPoint frontA = f.vp->toWidget(gp_Pnt(250, 0, 250));
+  move(f.vp, frontA);
+  send(f.vp, QEvent::MouseButtonPress, frontA, Qt::LeftButton, Qt::LeftButton, Qt::ControlModifier);
+  send(f.vp, QEvent::MouseButtonRelease, frontA, Qt::LeftButton, Qt::NoButton, Qt::ControlModifier);
+  QCOMPARE(m.document().find(a)->material, *plaster);
+  QCOMPARE(shows(a, -gp::DY(), gp_Pnt(0, 0, 0)), hex(m.document().findMaterial(*plaster)->color));
+  QCOMPARE(shows(a, gp::DZ(), gp_Pnt(0, 0, 500)), woodHex);
+  // Alt+click picks up what a face shows; the panel follows.
+  move(f.vp, topA);
+  send(f.vp, QEvent::MouseButtonPress, topA, Qt::LeftButton, Qt::LeftButton, Qt::AltModifier);
+  send(f.vp, QEvent::MouseButtonRelease, topA, Qt::LeftButton, Qt::NoButton, Qt::AltModifier);
+  QCOMPARE(f.window.paintTool().material(), *wood);
+  QCOMPARE(f.window.materialsPanel()->list()->currentItem()->data(Qt::UserRole).toString().toStdString(), *wood);
+  click(f.vp, f.vp->toWidget(gp_Pnt(1750, 250, 500)));  // b's top
+  QCOMPARE(shows(b, gp::DZ(), gp_Pnt(1500, 0, 500)), woodHex);
+  // "Inherit" takes a's top back to the object's plaster.
+  f.window.chooseMaterial({});
+  click(f.vp, topA);
+  QCOMPARE(shows(a, gp::DZ(), gp_Pnt(0, 0, 500)), hex(m.document().findMaterial(*plaster)->color));
+  QVERIFY(m.undo());
+  QCOMPARE(shows(a, gp::DZ(), gp_Pnt(0, 0, 500)), woodHex);
+
+  // A group at the top level is painted as a whole: what has no material
+  // of its own shows the group's.
+  auto g = m.group({a, b});
+  QVERIFY(g);
+  const auto tile = f.window.addPresetMaterial(6);
+  click(f.vp, f.vp->toWidget(gp_Pnt(1750, 0, 250)));  // b's front, inside the group
+  QCOMPARE(m.document().find(*g)->material, *tile);
+  QCOMPARE(shows(b, -gp::DY(), gp_Pnt(1500, 0, 0)), hex(m.document().findMaterial(*tile)->color));
+  QCOMPARE(shows(a, -gp::DY(), gp_Pnt(0, 0, 0)), hex(m.document().findMaterial(*plaster)->color));
+  QCOMPARE(shows(b, gp::DZ(), gp_Pnt(1500, 0, 500)), woodHex);
+
+  // Saved and opened again: the same look.
+  const QString path = QDir::temp().filePath(QStringLiteral("sbr_gui_materials.sbr"));
+  QVERIFY(f.window.saveFile(path));
+  QVERIFY(f.window.openFile(path));
+  QCOMPARE(shows(a, gp::DZ(), gp_Pnt(0, 0, 500)), woodHex);
+  QCOMPARE(shows(b, -gp::DY(), gp_Pnt(1500, 0, 0)), hex(m.document().findMaterial(*tile)->color));
+  QCOMPARE(f.window.materialsPanel()->list()->count(), 4);  // inherit + 3
+
+  // Painting one component placement keeps the shared display.
+  const doc::ObjectId c = f.box(4000, 0, 500, 500, 500);
+  auto instance = m.makeComponent({c}, "Unit");
+  QVERIFY(instance);
+  gp_Trsf dx;
+  dx.SetTranslation(gp_Vec(1000, 0, 0));
+  QVERIFY(m.copy({*instance}, dx, 3).ok());
+  f.vp->syncNow();
+  const std::size_t shared = f.vp->sharedDisplayCount();
+  f.window.chooseMaterial(*wood);
+  click(f.vp, f.vp->toWidget(gp_Pnt(4250, 250, 500)));
+  QCOMPARE(m.document().find(*instance)->material, *wood);
+  f.vp->syncNow();
+  QCOMPARE(f.vp->sharedDisplayCount(), shared);
 }
 
 void GuiPhase1::moveSelectedFaceStretchesSolid() {

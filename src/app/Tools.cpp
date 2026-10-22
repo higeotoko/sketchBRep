@@ -3315,29 +3315,53 @@ void FollowMeTool::mousePress(const ToolEvent& e) {
 QString PaintTool::name() const { return QObject::tr("ペイント"); }
 QCursor PaintTool::cursor() const { return toolCursor(CursorKind::Paint); }
 
-void PaintTool::activate() {
-  host_.viewport().setPickMode(PickMode::Objects);
-  host_.setMeasurement(QString(), QString());
-  host_.setStatus(QObject::tr("クリックで塗る / Alt+クリックで色を拾う（色はツールをもう一度選ぶと変更）"));
+QString PaintTool::materialName() const {
+  const doc::Material* m = host_.modeler().document().findMaterial(material_);
+  return m ? QStringLiteral("「%1」").arg(QString::fromStdString(m->name)) : QObject::tr("素材なし（継承に戻す）");
 }
 
-void PaintTool::mouseMove(const ToolEvent& e) { host_.viewport().pickObject(e.pos); }
+void PaintTool::activate() {
+  host_.viewport().setPickMode(PickMode::Faces);
+  host_.setMeasurement(QString(), QString());
+  host_.setStatus(QObject::tr("%1：クリックで面に / Ctrl+クリックで部材全体 / Alt+クリックで素材を拾う"
+                              "（素材は右の「素材」パネルで選ぶ）")
+                      .arg(materialName()));
+}
+
+void PaintTool::mouseMove(const ToolEvent& e) {
+  const auto pick = host_.viewport().pickFace(e.pos);
+  if (!pick) return;
+  const doc::Document& document = host_.modeler().document();
+  const doc::ObjectId target = addressedAtLevel(document, pick->objectId, host_.editingGroup());
+  const doc::Object* t = document.find(target);
+  const bool whole = target != pick->objectId || (t && t->kind() == doc::ObjectKind::Instance) ||
+                     (e.modifiers & Qt::ControlModifier);
+  const QString what = whole ? QObject::tr("「%1」全体").arg(t ? QString::fromStdString(t->name) : QString())
+                             : QObject::tr("この面");
+  host_.setStatus(QObject::tr("クリックで%1を %2 に（Ctrl：部材全体 / Alt：拾う）").arg(what, materialName()));
+}
 
 void PaintTool::mousePress(const ToolEvent& e) {
-  const auto picked = host_.viewport().pickObject(e.pos);
-  if (!picked) return;
-  const doc::Document& document = host_.modeler().document();
+  const auto pick = host_.viewport().pickFace(e.pos);
+  if (!pick) return;
+  doc::Modeler& m = host_.modeler();
+  const doc::Document& document = m.document();
   if (e.modifiers & Qt::AltModifier) {
-    if (const doc::Object* o = document.find(*picked)) {
-      color_ = o->color;
-      host_.setStatus(QObject::tr("色を拾いました（クリックで塗る）"));
-    }
+    const auto at = m.materialAt(pick->objectId, pick->face);
+    if (!at) return;
+    material_ = at->material;
+    host_.materialPicked(material_);
+    host_.setStatus(QObject::tr("%1 を拾いました（クリックで塗る）").arg(materialName()));
     return;
   }
-  // Paint at the current editing level: a group/component as a whole, or a
-  // single object inside the group being edited.
-  const doc::ObjectId target = addressedAtLevel(document, *picked, host_.editingGroup());
-  const Status s = host_.modeler().paint({target}, color_);
+  // At the current editing level: a group / component as a whole, an
+  // object's single face, or (Ctrl) the whole object.
+  const doc::ObjectId target = addressedAtLevel(document, pick->objectId, host_.editingGroup());
+  const doc::Object* t = document.find(target);
+  if (!t) return;
+  const bool whole =
+      target != pick->objectId || t->kind() == doc::ObjectKind::Instance || (e.modifiers & Qt::ControlModifier);
+  const Status s = whole ? m.assignMaterial({target}, material_) : m.paintFaces(target, {pick->face}, material_);
   if (!s) host_.reportError(QString::fromStdString(s.message()));
 }
 

@@ -79,6 +79,8 @@ class Viewport : public QWidget {
   bool xRay() const { return xRay_; }
   // Shared display copies in use (one per distinct local shape; tests).
   std::size_t sharedDisplayCount() const { return protos_.size(); }
+  // Colour the viewport shows on one face (RGB 0..1; tests, eyedropper).
+  std::optional<std::array<double, 3>> shownFaceColor(const doc::ObjectId& id, const TopoDS_Face& worldFace) const;
 
   // --- picking / inference (positions in widget logical pixels) -----------
   snap::Ray rayAt(const QPoint& pos) const;
@@ -190,6 +192,10 @@ class Viewport : public QWidget {
     Handle(AIS_Shape) ais;
     std::optional<ProtoKey> proto;
     doc::Color color;
+    // Faces painted on their own as shown (index in displayFaces -> RGB),
+    // and whether the object is shown selected (no face colours then).
+    std::vector<std::pair<int, std::array<double, 3>>> faceColors;
+    bool shownSelected = false;
     TopoDS_Shape canonicalWorld;
     TopoDS_Shape displayShape;
     TopTools_IndexedMapOfShape displayFaces;
@@ -221,6 +227,16 @@ class Viewport : public QWidget {
 
   std::map<doc::ObjectId, Entry> entries_;
   std::map<ProtoKey, Proto> protos_;
+  // Colours faces show on their own: own face materials, or for a component
+  // placement those coming from inside its definition (computed once per
+  // definition and document state).
+  std::vector<std::pair<int, std::array<double, 3>>> faceColorsOf(const doc::Object& object);
+  struct DefinitionColors {
+    const void* shape = nullptr;
+    std::uint64_t sequence = 0;
+    std::vector<std::pair<int, std::string>> faces;  // compound face index -> material ("" = placement's)
+  };
+  std::map<std::string, DefinitionColors> definitionColors_;
   void releaseProto(const Entry& entry);
   std::map<doc::ObjectId, Handle(AIS_TextLabel)> labels_;  // annotation texts
   Handle(Graphic3d_ClipPlane) section_;

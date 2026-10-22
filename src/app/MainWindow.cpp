@@ -49,6 +49,7 @@
 #include "Messages.h"
 #include "ProgressDialog.h"
 #include "Cursors.h"
+#include "MaterialsPanel.h"
 #include "PropertiesPanel.h"
 #include "Viewport.h"
 #include "sbr/Units.h"
@@ -159,6 +160,33 @@ void MainWindow::buildUi() {
     modeler_.setTagVisible(utf8(item->data(Qt::UserRole).toString()), item->checkState() == Qt::Checked);
     updateTitle();
   });
+
+  // Materials: pick one to paint with (SketchUp's Materials panel).
+  materialsPanel_ = new MaterialsPanel;
+  materialsDock_ = new QDockWidget(tr("素材"), this);
+  materialsDock_->setObjectName(QStringLiteral("materialsDock"));
+  materialsDock_->setWidget(materialsPanel_);
+  materialsDock_->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable |
+                              QDockWidget::DockWidgetClosable);
+  addDockWidget(Qt::RightDockWidgetArea, materialsDock_);
+  tabifyDockWidget(tagDock, materialsDock_);
+  materialsDock_->raise();
+  connect(materialsPanel_, &MaterialsPanel::materialChosen, this, [this](const std::string& id) { chooseMaterial(id); });
+  connect(materialsPanel_, &MaterialsPanel::presetRequested, this, [this](int i) { addPresetMaterial(i); });
+  connect(materialsPanel_, &MaterialsPanel::createRequested, this, [this] { editMaterialDialog({}); });
+  connect(materialsPanel_, &MaterialsPanel::editRequested, this, [this](const std::string& id) { editMaterialDialog(id); });
+  connect(materialsPanel_, &MaterialsPanel::deleteRequested, this, [this](const std::string& id) {
+    const doc::Material* m = modeler_.document().findMaterial(id);
+    if (!m) return;
+    if (QMessageBox::question(this, tr("素材を削除"),
+                              tr("「%1」を削除しますか？使っている面・部材は継承に戻ります（元に戻すで復元できます）")
+                                  .arg(QString::fromStdString(m->name))) != QMessageBox::Yes) {
+      return;
+    }
+    if (report(modeler_.deleteMaterial(id)) && paintTool_->material() == id) chooseMaterial({});
+  });
+  connect(materialsPanel_, &MaterialsPanel::applyRequested, this,
+          [this](const std::string& id) { applyMaterialToSelection(id); });
 
   status_ = new QLabel;
   status_->setMinimumWidth(200);
@@ -538,11 +566,10 @@ void MainWindow::buildMenus() {
     a->setToolTip(QStringLiteral("%1 (%2)").arg(e.label, e.key));
     const ToolId id = e.id;
     connect(a, &QAction::triggered, this, [this, id] {
-      // Choosing the paint tool (again) opens the colour picker first.
-      if (id == ToolId::Paint) {
-        const doc::Color c = paintTool_->color();
-        const QColor chosen = QColorDialog::getColor(QColor::fromRgbF(c.r, c.g, c.b), this, tr("ペイント色"));
-        if (chosen.isValid()) paintTool_->setColor({chosen.redF(), chosen.greenF(), chosen.blueF()});
+      // Painting goes with the materials panel: bring it up.
+      if (id == ToolId::Paint && materialsDock_) {
+        materialsDock_->show();
+        materialsDock_->raise();
       }
       activateTool(id);
     });
@@ -1110,6 +1137,7 @@ void MainWindow::refreshTags() {
 
 void MainWindow::refreshPanels() {
   refreshTags();
+  if (materialsPanel_) materialsPanel_->refresh(modeler_.document(), paintTool_->material());
   panel_->refresh(modeler_, selection_, elementSummary());
   const auto& h = modeler_.history();
   undoAction_->setEnabled(h.canUndo());
@@ -1306,6 +1334,97 @@ void MainWindow::showOpeningSettingsDialog() {
   }
   openingTool_->setSettings({*w, *h, *s});
   setStatus(openingTool_->settingsText());
+}
+
+void MainWindow::materialPicked(const std::string& id) {
+  if (materialsPanel_) materialsPanel_->refresh(modeler_.document(), id);
+}
+
+void MainWindow::chooseMaterial(const std::string& id) {
+  paintTool_->setMaterial(id);
+  if (materialsPanel_) materialsPanel_->refresh(modeler_.document(), id);
+  if (active_ == paintTool_.get()) {
+    paintTool_->activate();  // status shows the new material
+  } else {
+    activateTool(ToolId::Paint);
+  }
+}
+
+std::optional<std::string> MainWindow::addPresetMaterial(int index) {
+  const auto& presets = MaterialsPanel::presets();
+  if (index < 0 || index >= static_cast<int>(presets.size())) return std::nullopt;
+  const auto& p = presets[static_cast<std::size_t>(index)];
+  auto id = modeler_.createMaterial(p.name, p.color);
+  if (!id) {
+    reportError(QString::fromStdString(id.error()));
+    return std::nullopt;
+  }
+  chooseMaterial(id.value());
+  return id.value();
+}
+
+void MainWindow::editMaterialDialog(const std::string& id) {
+  const doc::Material* current = modeler_.document().findMaterial(id);
+  QDialog dialog(this);
+  dialog.setWindowTitle(current ? tr("素材を変更") : tr("新しい素材"));
+  auto* form = new QFormLayout(&dialog);
+  auto* name = new QLineEdit(current ? QString::fromStdString(current->name)
+                                     : tr("素材 %1").arg(modeler_.document().materials().size() + 1),
+                             &dialog);
+  QColor color = current ? QColor::fromRgbF(current->color.r, current->color.g, current->color.b) : QColor(200, 170, 130);
+  auto* pick = new QPushButton(&dialog);
+  auto showColor = [pick, &color] {
+    pick->setText(color.name());
+    pick->setStyleSheet(QStringLiteral("QPushButton { background: %1; }").arg(color.name()));
+  };
+  showColor();
+  connect(pick, &QPushButton::clicked, &dialog, [&] {
+    const QColor chosen = QColorDialog::getColor(color, &dialog, tr("素材の色"));
+    if (chosen.isValid()) color = chosen;
+    showColor();
+  });
+  form->addRow(tr("名前"), name);
+  form->addRow(tr("色"), pick);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+  form->addRow(buttons);
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  if (dialog.exec() != QDialog::Accepted) return;
+  const doc::Color c{color.redF(), color.greenF(), color.blueF()};
+  if (current) {
+    report(modeler_.updateMaterial(id, name->text().trimmed().toStdString(), c));
+    return;
+  }
+  auto created = modeler_.createMaterial(name->text().trimmed().toStdString(), c);
+  if (!created) {
+    reportError(QString::fromStdString(created.error()));
+    return;
+  }
+  chooseMaterial(created.value());
+}
+
+bool MainWindow::applyMaterialToSelection(const std::string& id) {
+  if (selection_.empty()) {
+    reportError(tr("素材を割り当てる部材（または面）を選んでください"));
+    return false;
+  }
+  // Faces selected: those faces; otherwise the selected objects as a whole.
+  std::map<doc::ObjectId, std::vector<TopoDS_Face>> faces;
+  for (const ElementRef& e : elements_) {
+    if (e.type != TopAbs_FACE) continue;
+    const TopoDS_Shape f = viewport_->elementShape(e);
+    if (!f.IsNull()) faces[e.objectId].push_back(TopoDS::Face(f));
+  }
+  if (faces.empty()) return report(modeler_.assignMaterial(selection_, id));
+  modeler_.history().beginGroup("Paint Faces");
+  for (const auto& [object, list] : faces) {
+    if (!report(modeler_.paintFaces(object, list, id))) {
+      modeler_.history().abortGroup();
+      return false;
+    }
+  }
+  modeler_.history().endGroup();
+  return true;
 }
 
 bool MainWindow::placeOpeningsOnSelection(int count, double width, double height, double sill,
