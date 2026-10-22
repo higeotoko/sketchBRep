@@ -879,7 +879,10 @@ void MainWindow::rejectProposal() {
 }
 
 void MainWindow::activateTool(ToolId id) {
-  if (active_) active_->deactivate();
+  if (active_) {
+    active_->deactivate();
+    active_->recentEdit().clear();  // typing after switching tools changes nothing earlier
+  }
   // While drawing outlines, show where loose lines/arcs are still open.
   viewport_->setShowOpenEnds(id == ToolId::Line || id == ToolId::Arc || id == ToolId::Curve);
   switch (id) {

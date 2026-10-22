@@ -1,5 +1,7 @@
 #include "sbr/doc/CommandStack.h"
 
+#include <algorithm>
+
 namespace sbr::doc {
 
 namespace {
@@ -63,11 +65,53 @@ void CommandStack::execute(Command command) {
     return;
   }
   applyAfter(command);
-  undo_.push_back(std::move(command));
-  revision_ = nextRevision_++;
-  undoRevisions_.push_back(revision_);
+  record(std::move(command));
+}
+
+void CommandStack::record(Command command) {
   redo_.clear();
   redoRevisions_.clear();
+  revision_ = nextRevision_++;
+  if (amending_ && !undo_.empty()) {
+    Command& last = undo_.back();
+    for (ObjectDelta& d : command.deltas) {
+      auto it = std::find_if(last.deltas.begin(), last.deltas.end(), [&](const ObjectDelta& e) { return e.id == d.id; });
+      if (it == last.deltas.end()) {
+        last.deltas.push_back(std::move(d));
+      } else {
+        it->after = std::move(d.after);
+      }
+    }
+    // Created and removed again within the step: nothing to restore.
+    last.deltas.erase(std::remove_if(last.deltas.begin(), last.deltas.end(),
+                                     [](const ObjectDelta& e) { return !e.before && !e.after; }),
+                      last.deltas.end());
+    for (DefinitionDelta& d : command.definitionDeltas) {
+      auto it = std::find_if(last.definitionDeltas.begin(), last.definitionDeltas.end(),
+                             [&](const DefinitionDelta& e) { return e.id == d.id; });
+      if (it == last.definitionDeltas.end()) {
+        last.definitionDeltas.push_back(std::move(d));
+      } else {
+        it->after = std::move(d.after);
+      }
+    }
+    if (command.settings) {
+      if (last.settings) {
+        last.settings->after = command.settings->after;
+      } else {
+        last.settings = command.settings;
+      }
+    }
+    if (last.deltas.empty() && last.definitionDeltas.empty() && !last.settings) {
+      undo_.pop_back();  // amended back to nothing: no step left to undo
+      undoRevisions_.pop_back();
+    } else {
+      undoRevisions_.back() = revision_;
+    }
+    return;
+  }
+  undo_.push_back(std::move(command));
+  undoRevisions_.push_back(revision_);
   if (undo_.size() > limit_) {
     undo_.erase(undo_.begin());
     undoRevisions_.erase(undoRevisions_.begin());
@@ -96,15 +140,7 @@ void CommandStack::endGroup() {
   Command command = std::move(*group_);
   group_.reset();
   // Already applied: record it without applying again.
-  undo_.push_back(std::move(command));
-  revision_ = nextRevision_++;
-  undoRevisions_.push_back(revision_);
-  redo_.clear();
-  redoRevisions_.clear();
-  if (undo_.size() > limit_) {
-    undo_.erase(undo_.begin());
-    undoRevisions_.erase(undoRevisions_.begin());
-  }
+  record(std::move(command));
 }
 
 void CommandStack::abortGroup() {
@@ -146,6 +182,7 @@ bool CommandStack::redo() {
 
 void CommandStack::clear() {
   groupDepth_ = 0;
+  amending_ = false;
   group_.reset();
   undo_.clear();
   redo_.clear();

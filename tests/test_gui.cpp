@@ -151,6 +151,7 @@ class GuiPhase1 : public QObject {
   void followMeAroundTopFace();
   void wallToolAndArchitectureMenus();
   void slabToolAndOpeningTool();
+  void typedRevisionOnlyRightAfter();
 };
 
 namespace {
@@ -325,11 +326,16 @@ void GuiPhase1::drawPushPullSaveReopen() {
   EXPECT_BOX(m.document().find(id)->shape, 4000, 6000, 3000);
   QVERIFY(geom::validateShape(m.document().find(id)->shape, true).valid);
 
-  // 3. Typing again right after the push edits the same operation (VCB re-edit).
+  // 3. Typing again right after the push edits the same operation (VCB
+  // re-edit); it stays one undo step with the push itself.
+  const std::size_t steps = m.history().undoCount();
   type(&vp, QStringLiteral("3500"));
   EXPECT_BOX(m.document().find(id)->shape, 4000, 6000, 3500);
+  QCOMPARE(m.history().undoCount(), steps);
   QVERIFY(m.undo());
-  EXPECT_BOX(m.document().find(id)->shape, 4000, 6000, 3000);
+  QCOMPARE(m.document().find(id)->kind(), doc::ObjectKind::Face);
+  QVERIFY(m.redo());
+  EXPECT_BOX(m.document().find(id)->shape, 4000, 6000, 3500);
 
   QTest::qWait(100);
   const QString shot = qEnvironmentVariable("SBR_SCREENSHOT");
@@ -342,7 +348,7 @@ void GuiPhase1::drawPushPullSaveReopen() {
     QVERIFY(window.screen()->grabWindow(0).copy(window.frameGeometry()).save(windowShot));
   }
 
-  // 4. Save, reopen, and re-edit the extrusion parametrically (3000 -> 4500).
+  // 4. Save, reopen, and re-edit the extrusion parametrically (3500 -> 4500).
   const QString path = QDir::temp().filePath(QStringLiteral("sbr_gui_test.sbr"));
   QVERIFY(window.saveFile(path));
   QVERIFY(!window.isWindowModified());
@@ -355,7 +361,7 @@ void GuiPhase1::drawPushPullSaveReopen() {
   doc::Modeler& m2 = reopened.modeler();
   QCOMPARE(m2.document().objects().size(), std::size_t(1));
   QCOMPARE(m2.document().objects().front().id, id);
-  EXPECT_BOX(m2.document().objects().front().shape, 4000, 6000, 3000);
+  EXPECT_BOX(m2.document().objects().front().shape, 4000, 6000, 3500);
   QVERIFY(m2.setParameter(id, "op0.distance", 4500).ok());
   EXPECT_BOX(m2.document().find(id)->shape, 4000, 6000, 4500);
   QTest::qWait(50);
@@ -1352,9 +1358,10 @@ void GuiPhase1::dimensionAndTextTools() {
   emit f.window.measurementBox()->returnPressed();
   QTest::qWait(30);
   QCOMPARE(f.vp->annotationText(note), QStringLiteral("会議室 2.00 m²"));
+  // Placing and retyping the note is one undo step.
   QVERIFY(m.undo());
   QTest::qWait(30);
-  QCOMPARE(f.vp->annotationText(note), QStringLiteral("2.00 m²"));
+  QVERIFY(!m.document().find(note));
 }
 
 void GuiPhase1::lineAcrossWallSplitsFace() {
@@ -1951,6 +1958,63 @@ void GuiPhase1::slabToolAndOpeningTool() {
   const std::size_t count = m.history().undoCount();
   click(f.vp, f.vp->toWidget(gp_Pnt(6000, 3000, 0)));
   QCOMPARE(m.history().undoCount(), count);
+}
+
+// Common contract for "type right after to change it" (review §7): it
+// survives camera moves and AI reads, ends with any other model change or
+// a tool switch, and the edit with all its revisions is one undo step.
+void GuiPhase1::typedRevisionOnlyRightAfter() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  auto radiusOf = [&](const doc::ObjectId& id) {
+    return std::sqrt(geom::area(m.document().find(id)->shape) / M_PI);
+  };
+  f.window.activateTool(MainWindow::ToolId::Circle);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(300, 0, 0)));
+  type(f.vp, QStringLiteral("400"));
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  const doc::ObjectId circle = m.document().objects().front().id;
+  const std::size_t steps = m.history().undoCount();
+  type(f.vp, QStringLiteral("500"));
+  QVERIFY(std::abs(radiusOf(circle) - 500) < 1e-6);
+  // Orbiting and an AI reading the model keep it revisable.
+  doc::CameraState cam;
+  f.vp->storeCamera(cam);
+  cam.eye = {3000, -9000, 6000};
+  f.vp->restoreCamera(cam);
+  QTest::qWait(30);
+  sbr::api::CommandApi reader(m);
+  reader.execute(R"({"command": "list_objects"})");
+  type(f.vp, QStringLiteral("600"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QVERIFY(std::abs(radiusOf(circle) - 600) < 1e-6);
+  QCOMPARE(m.history().undoCount(), steps);  // still the circle's one step
+  // Another change in between (here: an AI edit) ends it.
+  geom::SketchPlane away = geom::SketchPlane::ground();
+  away.origin = gp_Pnt(-5000, -5000, 0);
+  auto other = m.createRectangle(away, 100, 100);
+  QVERIFY(other);
+  type(f.vp, QStringLiteral("700"));
+  QVERIFY(!f.window.lastError().isEmpty());
+  QVERIFY(std::abs(radiusOf(circle) - 600) < 1e-6);
+  // So does switching tools.
+  click(f.vp, f.vp->toWidget(gp_Pnt(3000, 0, 0)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(3300, 0, 0)));
+  type(f.vp, QStringLiteral("200"));
+  const doc::ObjectId second = m.document().objects().back().id;
+  f.window.activateTool(MainWindow::ToolId::Line);
+  f.window.activateTool(MainWindow::ToolId::Circle);
+  type(f.vp, QStringLiteral("900"));
+  QVERIFY(std::abs(radiusOf(second) - 200) < 1e-6);
+  // Undo: the second circle, the rectangle, then the first circle with
+  // all its retypes at once.
+  QVERIFY(m.undo());
+  QVERIFY(m.undo());
+  QVERIFY(m.document().find(circle));
+  QVERIFY(m.undo());
+  QVERIFY(!m.document().find(circle));
 }
 
 QTEST_MAIN(GuiPhase1)

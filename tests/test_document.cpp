@@ -239,3 +239,31 @@ TEST(Document, IndexAndChangeLogStayConsistent) {
   EXPECT_FALSE(d.changedSince(afterSettings));
   EXPECT_EQ(d.find("g"), nullptr);
 }
+
+// Revising the edit just made ("type right after") stays in its undo step.
+TEST(Modeler, AmendMergesIntoTheLastUndoStep) {
+  Modeler m;
+  auto box = m.createRectangle(geom::SketchPlane::ground(), 1000, 1000);
+  ASSERT_TRUE(m.extrude(*box, 1000).ok());
+  const std::size_t steps = m.history().undoCount();
+  m.history().beginAmend();
+  ASSERT_TRUE(m.setParameter(*box, "op0.distance", 2000).ok());
+  ASSERT_TRUE(m.setParameter(*box, "width", 500).ok());
+  m.history().endAmend();
+  EXPECT_EQ(m.history().undoCount(), steps);
+  EXPECT_NEAR(geom::volume(m.document().find(*box)->shape), 500.0 * 1000 * 2000, 1e-3);
+  ASSERT_TRUE(m.undo());  // before the extrusion: the plain face
+  EXPECT_EQ(m.document().find(*box)->kind(), ObjectKind::Face);
+  ASSERT_TRUE(m.redo());
+  EXPECT_NEAR(geom::volume(m.document().find(*box)->shape), 500.0 * 1000 * 2000, 1e-3);
+
+  // Something made and removed again within the step leaves nothing behind.
+  auto extra = m.createRectangle(geom::SketchPlane::ground(), 100, 100);
+  m.history().beginAmend();
+  ASSERT_TRUE(m.remove({*extra}).ok());
+  m.history().endAmend();
+  EXPECT_FALSE(m.document().find(*extra));
+  EXPECT_EQ(m.history().undoCount(), steps);
+  ASSERT_TRUE(m.undo());
+  EXPECT_EQ(m.document().find(*box)->kind(), ObjectKind::Face);
+}

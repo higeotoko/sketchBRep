@@ -48,6 +48,34 @@ std::optional<double> parseOne(const QString& text) {
 
 }  // namespace
 
+void RecentEdit::mark(doc::Modeler& m) { token_ = Token{m.history().revision(), m.document().sequence()}; }
+
+bool RecentEdit::fresh(doc::Modeler& m) const {
+  return token_ && token_->revision == m.history().revision() && token_->sequence == m.document().sequence();
+}
+
+Status RecentEdit::revise(doc::Modeler& m, const std::function<Status()>& edit) {
+  if (!fresh(m)) return Status::failure("Nothing to change: the last edit is no longer the most recent one");
+  m.history().beginAmend();
+  const Status s = edit();
+  m.history().endAmend();
+  if (s) mark(m);
+  return s;
+}
+
+Status RecentEdit::replace(doc::Modeler& m, const std::function<Status()>& edit) {
+  if (!fresh(m)) return Status::failure("Nothing to change: the last edit is no longer the most recent one");
+  m.undo();
+  const Status s = edit();
+  if (!s) {
+    m.redo();  // the original edit again
+    mark(m);
+    return s;
+  }
+  mark(m);
+  return s;
+}
+
 QString snapLabel(snap::SnapKind kind) {
   switch (kind) {
     case snap::SnapKind::Endpoint: return QObject::tr("端点");
@@ -895,7 +923,8 @@ bool OpeningTool::place(const Target& t) {
     return false;
   }
   host_.viewport().clearPreview();
-  last_ = Last{t, host_.modeler().document().sequence()};
+  last_ = t;
+  recent_.mark(host_.modeler());
   host_.setStatus(QObject::tr("開口をあけました（%1）。続けて入力するとこの開口の大きさを変更").arg(settingsText()));
   return true;
 }
@@ -923,13 +952,12 @@ void OpeningTool::applyMeasurement(const QString& text) {
   // Right after placing one: redo it at the new size (undo brings the
   // host back under its old id).
   doc::Modeler& m = host_.modeler();
-  if (last_ && m.document().sequence() == last_->sequence) {
-    const Target again = last_->target;
-    last_.reset();
-    m.undo();
-    if (!place(again)) {
+  if (last_ && recent_.fresh(m)) {
+    const Target again = *last_;
+    const Status s = recent_.replace(m, [&] { return place(again) ? Status::success() : Status::failure(""); });
+    if (!s) {
       settings_ = previous;
-      m.redo();
+      last_ = again;
     }
     return;
   }
@@ -1123,6 +1151,7 @@ void DimensionTool::commit() {
     host_.reportError(QString::fromStdString(id.error()));
   } else {
     lastCreated_ = id.value();
+    recent_.mark(host_.modeler());
   }
   reset();
   host_.setStatus(QObject::tr("測る始点をクリック（直後に文字を入力すると寸法の文字を置き換え）"));
@@ -1143,10 +1172,10 @@ void DimensionTool::applyMeasurement(const QString& text) {
     commit();
     return;
   }
-  if (stage_ == Stage::Start && lastCreated_ && host_.modeler().document().find(*lastCreated_)) {
+  if (stage_ == Stage::Start && lastCreated_ && recent_.fresh(host_.modeler())) {
     // "-" puts the measured value back.
     const std::string replacement = text == QStringLiteral("-") ? std::string() : text.toStdString();
-    const Status s = host_.modeler().setAnnotationText(*lastCreated_, replacement);
+    const Status s = recent_.revise(host_.modeler(), [&] { return host_.modeler().setAnnotationText(*lastCreated_, replacement); });
     if (!s) host_.reportError(QString::fromStdString(s.message()));
     return;
   }
@@ -1222,16 +1251,17 @@ void TextTool::mousePress(const ToolEvent& e) {
     return;
   }
   lastCreated_ = id.value();
+  recent_.mark(host_.modeler());
   host_.setStatus(QObject::tr("文字を入力して Enter で置き換え（次の注記はクリック）"));
   host_.beginTextEntry(QObject::tr("テキスト"), defaultText_);
 }
 
 void TextTool::applyMeasurement(const QString& text) {
-  if (!lastCreated_ || !host_.modeler().document().find(*lastCreated_)) {
+  if (!lastCreated_ || !recent_.fresh(host_.modeler())) {
     host_.reportError(QObject::tr("先に注記を置いてください"));
     return;
   }
-  const Status s = host_.modeler().setAnnotationText(*lastCreated_, text.toStdString());
+  const Status s = recent_.revise(host_.modeler(), [&] { return host_.modeler().setAnnotationText(*lastCreated_, text.toStdString()); });
   if (!s) host_.reportError(QString::fromStdString(s.message()));
 }
 
@@ -1466,12 +1496,14 @@ void ArcTool::commit(double bulge) {
       return id;
     }, "Arc");
     lastCreated_ = arc && host_.modeler().document().find(*arc) ? arc : std::nullopt;
+    if (lastCreated_) recent_.mark(host_.modeler());
   } else {
     auto id = host_.modeler().createArc(start_, end_, plane_.normal, bulge, true);
     if (!id) {
       host_.reportError(QString::fromStdString(id.error()));
     } else {
       lastCreated_ = id.value();
+      recent_.mark(host_.modeler());
     }
   }
   reset();
@@ -1503,11 +1535,11 @@ void ArcTool::applyMeasurement(const QString& text) {
       commit(std::copysign(*value, bulge_ == 0.0 ? 1.0 : bulge_));
       return;
     case Stage::Start:
-      if (lastCreated_ && host_.modeler().document().find(*lastCreated_)) {
+      if (lastCreated_ && recent_.fresh(host_.modeler())) {
         const auto* o = host_.modeler().document().find(*lastCreated_);
         const auto* arc = std::get_if<doc::ArcCurve>(&o->recipe.base);
         const double sign = arc && arc->bulge < 0 ? -1.0 : 1.0;
-        const Status s = host_.modeler().setParameter(*lastCreated_, "bulge", sign * *value);
+        const Status s = recent_.revise(host_.modeler(), [&] { return host_.modeler().setParameter(*lastCreated_, "bulge", sign * *value); });
         if (!s) host_.reportError(QString::fromStdString(s.message()));
         return;
       }
@@ -1579,6 +1611,7 @@ void CircleTool::commit(double radius) {
     host_.reportError(QString::fromStdString(id.error()));
   } else {
     lastCreated_ = id.value();
+    recent_.mark(host_.modeler());
   }
   reset();
   host_.setStatus(QObject::tr("円の中心をクリック（数値を入力すると直前の円の半径を変更）"));
@@ -1594,8 +1627,8 @@ void CircleTool::applyMeasurement(const QString& text) {
     commit(*value);
     return;
   }
-  if (lastCreated_ && host_.modeler().document().find(*lastCreated_)) {
-    const Status s = host_.modeler().setParameter(*lastCreated_, "radius", *value);
+  if (lastCreated_ && recent_.fresh(host_.modeler())) {
+    const Status s = recent_.revise(host_.modeler(), [&] { return host_.modeler().setParameter(*lastCreated_, "radius", *value); });
     if (!s) host_.reportError(QString::fromStdString(s.message()));
     return;
   }
@@ -1675,6 +1708,7 @@ void PolygonTool::commit(double radius) {
     host_.reportError(QString::fromStdString(id.error()));
   } else {
     lastCreated_ = id.value();
+    recent_.mark(host_.modeler());
   }
   reset();
   host_.setStatus(prompt());
@@ -1690,8 +1724,8 @@ void PolygonTool::applyMeasurement(const QString& text) {
       return;
     }
     sides_ = n;
-    if (!hasCentre_ && lastCreated_ && host_.modeler().document().find(*lastCreated_)) {
-      const Status s = host_.modeler().setParameter(*lastCreated_, "sides", n);
+    if (!hasCentre_ && lastCreated_ && recent_.fresh(host_.modeler())) {
+      const Status s = recent_.revise(host_.modeler(), [&] { return host_.modeler().setParameter(*lastCreated_, "sides", n); });
       if (!s) host_.reportError(QString::fromStdString(s.message()));
     }
     host_.setStatus(prompt());
@@ -1706,8 +1740,8 @@ void PolygonTool::applyMeasurement(const QString& text) {
     commit(*value);
     return;
   }
-  if (lastCreated_ && host_.modeler().document().find(*lastCreated_)) {
-    const Status s = host_.modeler().setParameter(*lastCreated_, "radius", *value);
+  if (lastCreated_ && recent_.fresh(host_.modeler())) {
+    const Status s = recent_.revise(host_.modeler(), [&] { return host_.modeler().setParameter(*lastCreated_, "radius", *value); });
     if (!s) host_.reportError(QString::fromStdString(s.message()));
     return;
   }
@@ -1775,6 +1809,7 @@ void RectangleTool::commit(double u, double v) {
     host_.reportError(QString::fromStdString(id.error()));
   } else {
     lastCreated_ = id.value();
+    recent_.mark(host_.modeler());
   }
   reset();
   host_.setStatus(QObject::tr("最初の角をクリック（寸法を入力すると直前の矩形を変更）"));
@@ -1793,14 +1828,17 @@ void RectangleTool::applyMeasurement(const QString& text) {
     return;
   }
   // Re-edit the rectangle that was just drawn (parametric, keeps direction).
-  if (lastCreated_) {
+  if (lastCreated_ && recent_.fresh(host_.modeler())) {
     const doc::Object* o = host_.modeler().document().find(*lastCreated_);
     const auto* r = o ? std::get_if<doc::RectangleProfile>(&o->recipe.base) : nullptr;
     if (r) {
       const double newW = r->width < 0 ? -w : w;
       const double newH = r->height < 0 ? -h : h;
-      Status s = host_.modeler().setParameter(*lastCreated_, "width", newW);
-      if (s) s = host_.modeler().setParameter(*lastCreated_, "height", newH);
+      const Status s = recent_.revise(host_.modeler(), [&] {
+        Status t = host_.modeler().setParameter(*lastCreated_, "width", newW);
+        if (t) t = host_.modeler().setParameter(*lastCreated_, "height", newH);
+        return t;
+      });
       if (!s) host_.reportError(QString::fromStdString(s.message()));
       return;
     }
@@ -1925,6 +1963,7 @@ void PushPullTool::commit(double distance) {
   lastDistance_ = distance;
   // Typed values are measured along the drag direction.
   last_ = LastPush{result->id, result->parameterKey, base, (after - base) / std::abs(distance)};
+  recent_.mark(host_.modeler());
   reset();
   host_.setMeasurement(QObject::tr("距離"), mm(distance));
 }
@@ -1946,9 +1985,10 @@ void PushPullTool::applyMeasurement(const QString& text) {
     commit(distance_ < -tolerance::kMinDimension ? -*value : *value);
     return;
   }
-  if (last_) {
-    const Status s =
-        host_.modeler().setParameter(last_->id, last_->key, last_->base + last_->sign * *value);
+  if (last_ && recent_.fresh(host_.modeler())) {
+    const Status s = recent_.revise(host_.modeler(), [&] {
+      return host_.modeler().setParameter(last_->id, last_->key, last_->base + last_->sign * *value);
+    });
     if (!s) host_.reportError(QString::fromStdString(s.message()));
     return;
   }
@@ -1986,14 +2026,14 @@ QString TransformTool::copySuffix() const {
   return copy_ ? QObject::tr("［コピー］") : QObject::tr("（Ctrl でコピー）");
 }
 
-void TransformTool::commit(const gp_Trsf& delta, int count) {
+bool TransformTool::commit(const gp_Trsf& delta, int count) {
   doc::Modeler& m = host_.modeler();
   if (copy_) {
     auto created = m.copy(targets_, delta, count);
     if (!created) {
       host_.reportError(QString::fromStdString(created.error()));
       last_.reset();
-      return;
+      return false;
     }
     host_.setSelection(created.value());
   } else {
@@ -2001,23 +2041,26 @@ void TransformTool::commit(const gp_Trsf& delta, int count) {
     if (!s) {
       host_.reportError(QString::fromStdString(s.message()));
       last_.reset();
-      return;
+      return false;
     }
   }
-  last_ = Last{targets_, delta, copy_, count, m.history().undoCount()};
+  last_ = Last{targets_, delta, copy_, count};
+  recent_.mark(m);
+  return true;
 }
 
-bool TransformTool::canReeditLast() const {
-  return last_ && host_.modeler().history().undoCount() == last_->undoCount;
-}
+bool TransformTool::canReeditLast() { return last_ && recent_.fresh(host_.modeler()); }
 
 bool TransformTool::redoLast(const gp_Trsf& delta, int count) {
   if (!canReeditLast()) return false;
-  doc::Modeler& m = host_.modeler();
-  m.undo();
-  targets_ = last_->targets;
-  copy_ = last_->copy;
-  commit(delta, count);
+  const Last previous = *last_;
+  recent_.replace(host_.modeler(), [&] {
+    targets_ = previous.targets;
+    copy_ = previous.copy;
+    if (commit(delta, count)) return Status::success();
+    last_ = previous;  // the original comes back
+    return Status::failure("");
+  });
   copy_ = false;
   return true;
 }
@@ -2445,6 +2488,7 @@ void OffsetTool::commit(double distance) {
                             .arg(QString::fromStdString(result.error())));
     } else {
       last_ = LastOffset{result->id, result->parameterKey};
+      recent_.mark(host_.modeler());
     }
   }
   reset();
@@ -2462,8 +2506,9 @@ void OffsetTool::applyMeasurement(const QString& text) {
     commit(distance_ < 0 ? -std::abs(*value) : std::abs(*value));
     return;
   }
-  if (last_) {
-    const Status s = host_.modeler().setParameter(last_->id, last_->key, *value);
+  if (last_ && recent_.fresh(host_.modeler())) {
+    const Status s =
+        recent_.revise(host_.modeler(), [&] { return host_.modeler().setParameter(last_->id, last_->key, *value); });
     if (!s) host_.reportError(QString::fromStdString(s.message()));
     return;
   }
@@ -2551,6 +2596,7 @@ void RevolveTool::mousePress(const ToolEvent& e) {
       for (const doc::Parameter& p : host_.modeler().parameters(*id)) {
         if (p.key.size() > 6 && p.key.compare(p.key.size() - 6, 6, ".angle") == 0) last_ = {{*id, p.key}};
       }
+      recent_.mark(host_.modeler());
       reset();
       host_.setMeasurement(QObject::tr("角度"), QStringLiteral("360"));
       host_.setStatus(QObject::tr("回転体を作成しました（角度を入力すると変更できます）"));
@@ -2562,11 +2608,12 @@ void RevolveTool::mousePress(const ToolEvent& e) {
 void RevolveTool::applyMeasurement(const QString& text) {
   bool ok = false;
   const double degrees = text.trimmed().toDouble(&ok);
-  if (!ok || !last_) {
+  if (!ok || !last_ || !recent_.fresh(host_.modeler())) {
     host_.reportError(QObject::tr("回転体を作ってから角度を入力してください"));
     return;
   }
-  const Status s = host_.modeler().setParameter(last_->first, last_->second, degrees);
+  const Status s =
+      recent_.revise(host_.modeler(), [&] { return host_.modeler().setParameter(last_->first, last_->second, degrees); });
   if (!s) host_.reportError(QString::fromStdString(s.message()));
 }
 
@@ -2770,17 +2817,19 @@ std::optional<double> ScaleTool::factorAt(const gp_Pnt& p) const {
   return f;
 }
 
-void ScaleTool::commit(double factor) {
+bool ScaleTool::commit(double factor) {
   const Status s = host_.modeler().scale(targets_, fixed_, factor);
   if (!s) {
     host_.reportError(QString::fromStdString(s.message()));
   } else {
-    last_ = Last{targets_, fixed_, fixed_.Distance(reference_), host_.modeler().history().undoCount()};
+    last_ = Last{targets_, fixed_, fixed_.Distance(reference_)};
+    recent_.mark(host_.modeler());
     host_.setStatus(QObject::tr("%1 倍にしました（続けて数値を入力すると倍率を変更）").arg(factor));
   }
   stage_ = Stage::Fixed;
   resetLock();
   host_.viewport().clearPreview();
+  return s.ok();
 }
 
 void ScaleTool::mouseMove(const ToolEvent& e) {
@@ -2849,7 +2898,7 @@ void ScaleTool::applyMeasurement(const QString& text) {
   double referenceDistance = 0.0;
   if (stage_ == Stage::Scaling) {
     referenceDistance = fixed_.Distance(reference_);
-  } else if (last_ && host_.modeler().history().undoCount() == last_->undoCount) {
+  } else if (last_ && recent_.fresh(host_.modeler())) {
     referenceDistance = last_->referenceDistance;
   } else {
     host_.reportError(QObject::tr("基準と参照点をクリックしてから倍率を入力してください"));
@@ -2872,10 +2921,16 @@ void ScaleTool::applyMeasurement(const QString& text) {
     }
   }
   if (stage_ != Stage::Scaling) {  // re-edit the last scale
-    host_.modeler().undo();
-    targets_ = last_->targets;
-    fixed_ = last_->fixed;
-    reference_ = fixed_.Translated(gp_Vec(1, 0, 0) * last_->referenceDistance);
+    const Last previous = *last_;
+    recent_.replace(host_.modeler(), [&] {
+      targets_ = previous.targets;
+      fixed_ = previous.fixed;
+      reference_ = fixed_.Translated(gp_Vec(1, 0, 0) * previous.referenceDistance);
+      if (commit(factor)) return Status::success();
+      last_ = previous;
+      return Status::failure("");
+    });
+    return;
   }
   commit(factor);
 }

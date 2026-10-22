@@ -1,6 +1,8 @@
 #pragma once
 // Interactive modelling tools (SketchUp-style direct manipulation).
 
+#include <cstdint>
+#include <functional>
 #include <optional>
 #include <vector>
 
@@ -56,6 +58,35 @@ class ToolHost {
   }
 };
 
+// The edit a tool has just committed, which a value typed right after may
+// revise ("type to change it", spec 07 / review §7). Common contract:
+// - it is "recent" only while nothing else has touched the model since (no
+//   other edit, undo or redo, by the user or an AI) and the tool stayed
+//   active; camera moves, selection and AI reads keep it;
+// - a revision stays in the same undo step as the edit, however often it
+//   is retyped: one Ctrl+Z takes the edit and all its revisions back.
+class RecentEdit {
+ public:
+  // Right after the tool committed an edit.
+  void mark(doc::Modeler& m);
+  void clear() { token_.reset(); }
+  bool fresh(doc::Modeler& m) const;
+  // Changes the recent edit in place (e.g. a parameter): what `edit` does
+  // is merged into the edit's undo step. Still recent afterwards.
+  Status revise(doc::Modeler& m, const std::function<Status()>& edit);
+  // Takes the recent edit back and does `edit` instead (e.g. placing it
+  // again with other values), as the same single undo step; when `edit`
+  // fails the original comes back.
+  Status replace(doc::Modeler& m, const std::function<Status()>& edit);
+
+ private:
+  struct Token {
+    long long revision;
+    std::uint64_t sequence;
+  };
+  std::optional<Token> token_;
+};
+
 class Tool {
  public:
   explicit Tool(ToolHost& host) : host_(host) {}
@@ -78,9 +109,12 @@ class Tool {
   virtual bool keyRelease(QKeyEvent*) { return false; }
   // Value typed into the measurement box (VCB) and confirmed with Enter.
   virtual void applyMeasurement(const QString&) {}
+  // What a value typed right after may still change (see RecentEdit).
+  RecentEdit& recentEdit() { return recent_; }
 
  protected:
   ToolHost& host_;
+  RecentEdit recent_;
 };
 
 QString snapLabel(snap::SnapKind kind);
@@ -286,11 +320,7 @@ class OpeningTool : public Tool {
 
   Settings settings_;
   std::optional<Target> hover_;
-  struct Last {
-    Target target;               // as clicked (the host before the cut)
-    std::uint64_t sequence = 0;  // document state right after placing
-  };
-  std::optional<Last> last_;
+  std::optional<Target> last_;  // as clicked (the host before the cut)
 };
 
 // Clicks control-through points of a NURBS curve; Enter/double-click
@@ -573,7 +603,7 @@ class ScaleTool : public DrawingTool {
  private:
   enum class Stage { Fixed, Reference, Scaling };
   std::optional<double> factorAt(const gp_Pnt& p) const;
-  void commit(double factor);
+  bool commit(double factor);
 
   Stage stage_ = Stage::Fixed;
   std::vector<doc::ObjectId> targets_;
@@ -584,7 +614,6 @@ class ScaleTool : public DrawingTool {
     std::vector<doc::ObjectId> targets;
     gp_Pnt fixed;
     double referenceDistance = 0.0;
-    std::size_t undoCount = 0;
   };
   std::optional<Last> last_;
 };
@@ -712,10 +741,10 @@ class TransformTool : public DrawingTool {
 
  protected:
   // Applies `delta` (count copies when copying) and remembers it.
-  void commit(const gp_Trsf& delta, int count = 1);
+  bool commit(const gp_Trsf& delta, int count = 1);
   // Re-runs the last operation with a different transform / count.
   bool redoLast(const gp_Trsf& delta, int count);
-  bool canReeditLast() const;
+  bool canReeditLast();
   virtual void resetState() = 0;
   QString copySuffix() const;
 
@@ -726,7 +755,6 @@ class TransformTool : public DrawingTool {
     gp_Trsf delta;
     bool copy = false;
     int count = 1;
-    std::size_t undoCount = 0;
   };
   std::optional<Last> last_;
 };

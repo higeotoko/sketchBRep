@@ -61,6 +61,13 @@ class CommandStack {
   // closes the group (all-or-nothing batches).
   void abortGroup();
   bool inGroup() const { return groupDepth_ > 0; }
+  // While amending, the next recorded step (a command, or a whole group)
+  // is merged into the most recent undo step instead of becoming its own:
+  // revising what was just done ("type right after to change it") stays
+  // one undo step. Each object keeps its state from before the original
+  // step and gets the newest one after.
+  void beginAmend() { amending_ = true; }
+  void endAmend() { amending_ = false; }
   bool undo();
   bool redo();
   void clear();
@@ -84,6 +91,8 @@ class CommandStack {
  private:
   void applyAfter(const Command& command);
   void applyBefore(const Command& command);
+  // Records an applied command: new undo step, or merged while amending.
+  void record(Command command);
 
   Document& document_;
   std::size_t limit_;
@@ -95,6 +104,7 @@ class CommandStack {
   std::vector<long long> undoRevisions_;
   std::vector<long long> redoRevisions_;
   int groupDepth_ = 0;
+  bool amending_ = false;
   std::string groupName_;
   std::optional<Command> group_;
   PersistentSettings groupSettings_;  // at the outermost beginGroup()
