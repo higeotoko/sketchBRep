@@ -960,6 +960,36 @@ Status Modeler::setVisible(const ObjectId& id, bool visible) {
                          [&](Object& o) { o.visible = visible; });
 }
 
+Status Modeler::hide(const std::vector<ObjectId>& ids) {
+  if (ids.empty()) return Status::failure("Nothing selected");
+  ChangeSet changes(document_);
+  for (const ObjectId& id : topmost(ids)) {
+    const Object* o = document_.find(id);
+    if (!o) return Status::failure("Object not found");
+    if (!o->visible) continue;
+    Object changed = *o;
+    changed.visible = false;
+    changes.modify(changed);
+  }
+  history_.execute(changes.build("Hide"));
+  return Status::success();
+}
+
+Status Modeler::unhideAll() {
+  ChangeSet changes(document_);
+  bool any = false;
+  for (const Object& o : document_.objects()) {
+    if (o.visible) continue;
+    Object changed = o;
+    changed.visible = true;
+    changes.modify(changed);
+    any = true;
+  }
+  if (!any) return Status::failure("Nothing is hidden");
+  history_.execute(changes.build("Unhide All"));
+  return Status::success();
+}
+
 Status Modeler::setLayer(const ObjectId& id, const std::string& layer) {
   if (layer.empty()) return Status::failure("Tag must not be empty");
   return modifyAttribute(document_, history_, id, "Set Tag", [&](Object& o) { o.layer = layer; });

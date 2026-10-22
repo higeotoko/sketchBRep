@@ -543,7 +543,7 @@ void Viewport::syncNow() {
     }
     const bool faded =
         !editContext_.empty() && !modeler_.document().isAncestor(editContext_, o.id);
-    const double transparency = faded ? 0.8 : 0.0;
+    const double transparency = faded ? 0.8 : (xRay_ ? 0.5 : 0.0);
     if (std::abs(found->second.ais->Transparency() - transparency) > 1e-6) {
       found->second.ais->SetTransparency(transparency);
     }
@@ -590,6 +590,12 @@ void Viewport::setDisplayQuality(const display::DisplayQuality& quality) {
   // Re-tessellate fresh display copies; canonical shapes are untouched.
   for (auto& [id, entry] : entries_) context_->Remove(entry.ais, Standard_False);
   entries_.clear();
+  syncNow();
+}
+
+void Viewport::setXRay(bool on) {
+  xRay_ = on;
+  inference_.setSeeThrough(on);
   syncNow();
 }
 

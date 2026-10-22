@@ -147,6 +147,9 @@ class Modeler {
   Status setParameter(const ObjectId& id, const std::string& key, double value);
   Status rename(const ObjectId& id, const std::string& name);
   Status setVisible(const ObjectId& id, bool visible);
+  // Hides the objects (one undo step) / shows every hidden object again.
+  Status hide(const std::vector<ObjectId>& ids);
+  Status unhideAll();
   Status setLayer(const ObjectId& id, const std::string& layer);
   Status setColor(const ObjectId& id, const Color& color);
   // Paints objects; groups paint all their descendants (one undo step).

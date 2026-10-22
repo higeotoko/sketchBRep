@@ -66,6 +66,10 @@ class Viewport : public QWidget {
   void setDisplayQuality(const display::DisplayQuality& quality);
   const display::DisplayQuality& displayQuality() const { return quality_; }
   void setShaded(bool shaded);
+  // X-ray: solids drawn see-through, and hidden edges and points can be
+  // snapped to.
+  void setXRay(bool on);
+  bool xRay() const { return xRay_; }
 
   // --- picking / inference (positions in widget logical pixels) -----------
   snap::Ray rayAt(const QPoint& pos) const;
@@ -196,6 +200,7 @@ class Viewport : public QWidget {
   snap::InferenceEngine inference_;
   display::DisplayQuality quality_ = display::DisplayQuality::normal();
   bool shaded_ = true;
+  bool xRay_ = false;
   PickMode pickMode_ = PickMode::None;
 
   Handle(AIS_Shape) preview_;

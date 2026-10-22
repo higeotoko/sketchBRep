@@ -332,6 +332,18 @@ const std::vector<CommandDef>& commands() {
          for (const ObjectId& id : grid.lines) lines[m.document().find(id)->name] = id;
          return json{{"lines", lines}, {"labels", grid.labels}, {"dimensions", grid.dimensions}};
        }},
+      {"hide", "Hide objects (one undo step). Hidden objects are not drawn, snapped to or exported.",
+       SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}}},
+               "required": ["ids"]}),
+       [](doc::Modeler& m, const json& a) {
+         must(m.hide(ids(a, "ids")));
+         return json::object();
+       }},
+      {"unhide_all", "Show every hidden object again (one undo step).", SCHEMA({"type": "object", "properties": {}}),
+       [](doc::Modeler& m, const json&) {
+         must(m.unhideAll());
+         return json::object();
+       }},
       {"clear_guides", "Delete all guides (one undo step).", SCHEMA({"type": "object", "properties": {}}),
        [](doc::Modeler& m, const json&) {
          must(m.clearGuides());

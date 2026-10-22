@@ -319,6 +319,20 @@ void MainWindow::buildMenus() {
   edit->addAction(tr("同じ位置に貼り付け"), QKeySequence(tr("Ctrl+Shift+V")), this, &MainWindow::pasteInPlace);
   edit->addAction(tr("削除"), QKeySequence::Delete, this, &MainWindow::deleteSelection);
   edit->addAction(tr("すべて選択"), QKeySequence::SelectAll, this, &MainWindow::selectAll);
+  edit->addAction(tr("選択を非表示"), QKeySequence(tr("Ctrl+H")), this, [this] {
+    const std::vector<doc::ObjectId> ids = selection();
+    if (ids.empty()) {
+      reportError(tr("隠す物を選択してください"));
+      return;
+    }
+    const Status s = modeler_.hide(ids);
+    if (!s) reportError(QString::fromStdString(s.message()));
+    setSelection({});
+  });
+  edit->addAction(tr("すべて表示"), QKeySequence(tr("Ctrl+Shift+H")), this, [this] {
+    const Status s = modeler_.unhideAll();
+    if (!s) reportError(QString::fromStdString(s.message()));
+  });
   edit->addAction(tr("ガイドをすべて削除"), this, [this] {
     const Status s = modeler_.clearGuides();
     if (!s) reportError(QString::fromStdString(s.message()));
@@ -412,6 +426,10 @@ void MainWindow::buildMenus() {
   shaded->setCheckable(true);
   shaded->setChecked(true);
   connect(shaded, &QAction::toggled, this, [this](bool on) { viewport_->setShaded(on); });
+  QAction* xray = view->addAction(tr("X 線（透かして表示・裏の点にも吸着）"));
+  xray->setCheckable(true);
+  xray->setShortcut(QKeySequence(tr("Alt+X")));
+  connect(xray, &QAction::toggled, this, [this](bool on) { viewport_->setXRay(on); });
   focusOnDoubleClick_ = view->addAction(tr("ダブルクリックでフォーカス"));
   focusOnDoubleClick_->setCheckable(true);
   focusOnDoubleClick_->setChecked(true);

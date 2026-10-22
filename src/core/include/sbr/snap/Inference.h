@@ -92,6 +92,8 @@ class InferenceEngine {
   // False when a face lies between the viewer and the point, or the point
   // is cut away by the section plane.
   bool isVisible(const gp_Pnt& point, const Ray& ray) const;
+  // X-ray: faces no longer hide points behind them.
+  void setSeeThrough(bool on) { seeThrough_ = on; }
   // Section plane: geometry on the side its normal points to is ignored.
   void setClip(const std::optional<gp_Pln>& removedSide) { clip_ = removedSide; }
   bool isClipped(const gp_Pnt& point) const;
@@ -105,6 +107,7 @@ class InferenceEngine {
   std::vector<gp_Lin> guides_;
   std::vector<gp_Pnt> guidePoints_;
   std::optional<gp_Pln> clip_;
+  bool seeThrough_ = false;
 };
 
 // Closest point on the infinite line (p, dir) to the ray.

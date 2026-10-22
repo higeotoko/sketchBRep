@@ -78,7 +78,7 @@ bool InferenceEngine::isClipped(const gp_Pnt& p) const {
 
 bool InferenceEngine::isVisible(const gp_Pnt& p, const Ray& ray) const {
   if (isClipped(p)) return false;
-  if (!cache_) return true;
+  if (!cache_ || seeThrough_) return true;
   // Sight line from the viewer (ray origin: eye, or far behind the near
   // plane for orthographic views) to the point.
   const gp_Vec v(ray.origin, p);

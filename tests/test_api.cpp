@@ -371,3 +371,21 @@ TEST(CommandApi, StructuralGridIsOneUndoStep) {
   EXPECT_FALSE(a.call("create_grid", {{"x_spacings", {3600, -1}}})["ok"]);
   EXPECT_TRUE(a.modeler.document().objects().empty());
 }
+
+TEST(CommandApi, HideAndUnhide) {
+  Api a;
+  const std::string box =
+      a.ok("create_box", {{"origin", {0, 0, 0}}, {"width", 1000}, {"depth", 1000}, {"height", 1000}})["id"];
+  const std::string other =
+      a.ok("create_box", {{"origin", {2000, 0, 0}}, {"width", 1000}, {"depth", 1000}, {"height", 1000}})["id"];
+  EXPECT_FALSE(a.call("unhide_all")["ok"]);
+  a.ok("hide", {{"ids", {box, other}}});
+  EXPECT_FALSE(a.modeler.document().isVisible(box));
+  EXPECT_FALSE(a.modeler.document().isVisible(other));
+  a.ok("undo");  // both back in one step
+  EXPECT_TRUE(a.modeler.document().isVisible(box));
+  EXPECT_TRUE(a.modeler.document().isVisible(other));
+  a.ok("hide", {{"ids", {box}}});
+  a.ok("unhide_all");
+  EXPECT_TRUE(a.modeler.document().isVisible(box));
+}

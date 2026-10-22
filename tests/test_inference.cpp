@@ -232,3 +232,15 @@ TEST(Inference, GuidesSnapAlongTheirWholeLengthAndAtCrossings) {
   engine.setGuides({});
   EXPECT_NE(engine.snap(view.query(502, -298)).kind, SnapKind::Intersection);
 }
+
+TEST(Inference, XRaySeesThroughFaces) {
+  InferenceEngine engine;
+  engine.setShapes({box()});
+  const Ray down{gp_Pnt(500, 500, 100000), gp_Dir(0, 0, -1)};
+  const gp_Pnt bottom(500, 500, 0);  // under the top face
+  EXPECT_FALSE(engine.isVisible(bottom, down));
+  engine.setSeeThrough(true);
+  EXPECT_TRUE(engine.isVisible(bottom, down));
+  engine.setClip(gp_Pln(gp_Pnt(0, 0, -1), gp::DZ()));  // a section still cuts
+  EXPECT_FALSE(engine.isVisible(bottom, down));
+}
