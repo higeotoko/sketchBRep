@@ -154,6 +154,8 @@ class Viewport : public QWidget {
   void measurementCommit();
   void escapePressed();
   void focusRequested(const QPoint& pos);
+  // A click / key went to the tool (its state may have changed).
+  void toolInput();
 
  protected:
   void showEvent(QShowEvent* event) override;

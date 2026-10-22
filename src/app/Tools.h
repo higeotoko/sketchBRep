@@ -111,6 +111,10 @@ class Tool {
   virtual void applyMeasurement(const QString&) {}
   // What a value typed right after may still change (see RecentEdit).
   RecentEdit& recentEdit() { return recent_; }
+  // The constraints in force right now, for the status bar (review §7:
+  // show the current lock / working plane / target): e.g. "方向: X 軸に
+  // 固定 ｜ 作業面: 地面". Empty when nothing is fixed.
+  virtual QString constraintText() const { return {}; }
 
  protected:
   ToolHost& host_;
@@ -153,8 +157,14 @@ class DrawingTool : public Tool {
   using Tool::Tool;
   bool keyPress(QKeyEvent* event) override;
   bool keyRelease(QKeyEvent* event) override;
+  // Target, working plane and direction lock.
+  QString constraintText() const override;
 
  protected:
+  // The plane the input is held to while drawing, if any.
+  virtual std::optional<gp_Pln> workingPlane() const { return std::nullopt; }
+  // What the operation acts on (e.g. "3 個"), if anything yet.
+  virtual QString targetText() const { return {}; }
   snap::SnapResult snapAt(const ToolEvent& e, std::optional<gp_Pnt> anchor,
                           std::optional<gp_Pln> plane);
   void resetLock();
@@ -170,6 +180,8 @@ class DrawingTool : public Tool {
   std::optional<ToolEvent> lastEvent_;
 };
 
+// Like SketchUp, Esc ends the chain and keeps what was clicked (the one
+// exception to "Esc takes back one point": line users press Esc to stop).
 class LineTool : public DrawingTool {
  public:
   using DrawingTool::DrawingTool;
@@ -181,6 +193,9 @@ class LineTool : public DrawingTool {
   void mouseMove(const ToolEvent& e) override;
   bool mouseDoubleClick(const ToolEvent& e) override;
   void applyMeasurement(const QString& text) override;
+
+ protected:
+  std::optional<gp_Pln> workingPlane() const override;
 
  private:
   std::optional<gp_Pnt> pointAt(const ToolEvent& e);
@@ -219,8 +234,10 @@ class PlanPolylineTool : public DrawingTool {
   // Preview shape for the points so far (+ the cursor point).
   virtual TopoDS_Shape previewShape(const std::vector<gp_Pnt>& points) const = 0;
   virtual bool closesOnFinish() const { return false; }
+  std::optional<gp_Pln> workingPlane() const override;
 
   std::vector<gp_Pnt> points_;
+
 
  private:
   std::optional<gp_Pnt> pointAt(const ToolEvent& e);
@@ -295,6 +312,7 @@ class OpeningTool : public Tool {
     double sill = 0.0;
   };
   using Tool::Tool;
+  QString constraintText() const override;
   QString name() const override;
   QCursor cursor() const override;
   void activate() override;
@@ -332,6 +350,7 @@ class CurveTool : public DrawingTool {
   QCursor cursor() const override;
   void activate() override;
   void cancel() override;
+  bool stepBack() override;
   void mousePress(const ToolEvent& e) override;
   void mouseMove(const ToolEvent& e) override;
   bool mouseDoubleClick(const ToolEvent& e) override;
@@ -360,6 +379,9 @@ class ArcTool : public DrawingTool {
   void applyMeasurement(const QString& text) override;
   bool makesFace() const { return face_; }
   bool stepBack() override;
+
+ protected:
+  std::optional<gp_Pln> workingPlane() const override;
 
  private:
   void commit(double bulge);
@@ -455,6 +477,9 @@ class CircleTool : public DrawingTool {
   void mouseMove(const ToolEvent& e) override;
   void applyMeasurement(const QString& text) override;
 
+ protected:
+  std::optional<gp_Pln> workingPlane() const override;
+
  private:
   void commit(double radius);
   void reset();
@@ -479,6 +504,9 @@ class PolygonTool : public DrawingTool {
   void applyMeasurement(const QString& text) override;
   int sides() const { return sides_; }
 
+ protected:
+  std::optional<gp_Pln> workingPlane() const override;
+
  private:
   void commit(double radius);
   void reset();
@@ -500,6 +528,9 @@ class RectangleTool : public DrawingTool {
   void mousePress(const ToolEvent& e) override;
   void mouseMove(const ToolEvent& e) override;
   void applyMeasurement(const QString& text) override;
+
+ protected:
+  std::optional<gp_Pln> workingPlane() const override;
 
  private:
   void commit(double u, double v);
@@ -675,6 +706,7 @@ class RevolveTool : public DrawingTool {
   QCursor cursor() const override;
   void activate() override;
   void cancel() override;
+  bool stepBack() override;
   void mousePress(const ToolEvent& e) override;
   void mouseMove(const ToolEvent& e) override;
   void applyMeasurement(const QString& text) override;
@@ -691,6 +723,7 @@ class RevolveTool : public DrawingTool {
 class PushPullTool : public Tool {
  public:
   using Tool::Tool;
+  QString constraintText() const override;
   QString name() const override;
   QCursor cursor() const override;
   void activate() override;
@@ -770,6 +803,9 @@ class MoveTool : public TransformTool {
   void mouseMove(const ToolEvent& e) override;
   void applyMeasurement(const QString& text) override;
 
+ protected:
+  QString targetText() const override;
+
  private:
   void resetState() override;
   void finish();
@@ -788,9 +824,14 @@ class RotateTool : public TransformTool {
   QCursor cursor() const override;
   void activate() override;
   void cancel() override;
+  bool stepBack() override;
   void mousePress(const ToolEvent& e) override;
   void mouseMove(const ToolEvent& e) override;
   void applyMeasurement(const QString& text) override;
+
+ protected:
+  std::optional<gp_Pln> workingPlane() const override;
+  QString targetText() const override;
 
  private:
   enum class Stage { Center, Reference, Rotating };

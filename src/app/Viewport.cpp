@@ -201,6 +201,7 @@ void Viewport::mousePressEvent(QMouseEvent* event) {
   }
   if (event->button() == Qt::LeftButton && tool_) {
     tool_->mousePress(ToolEvent{event->position().toPoint(), event->modifiers()});
+    emit toolInput();
   }
 }
 
@@ -212,6 +213,7 @@ void Viewport::mouseReleaseEvent(QMouseEvent* event) {
   }
   if (event->button() == Qt::LeftButton && tool_) {
     tool_->mouseRelease(ToolEvent{event->position().toPoint(), event->modifiers()});
+    emit toolInput();
   }
 }
 
@@ -237,6 +239,7 @@ void Viewport::mouseDoubleClickEvent(QMouseEvent* event) {
   const QPoint pos = event->position().toPoint();
   if (event->button() == Qt::LeftButton && tool_ &&
       tool_->mouseDoubleClick(ToolEvent{pos, event->modifiers()})) {
+    emit toolInput();
     return;
   }
   if (event->button() == Qt::LeftButton || event->button() == Qt::MiddleButton) {
@@ -260,7 +263,10 @@ void Viewport::keyPressEvent(QKeyEvent* event) {
     emit escapePressed();
     return;
   }
-  if (tool_ && tool_->keyPress(event)) return;
+  if (tool_ && tool_->keyPress(event)) {
+    emit toolInput();
+    return;
+  }
   switch (event->key()) {
     case Qt::Key_Backspace: emit measurementBackspace(); return;
     case Qt::Key_Return:
@@ -302,7 +308,10 @@ bool Viewport::event(QEvent* event) {
 }
 
 void Viewport::keyReleaseEvent(QKeyEvent* event) {
-  if (tool_ && tool_->keyRelease(event)) return;
+  if (tool_ && tool_->keyRelease(event)) {
+    emit toolInput();
+    return;
+  }
   QWidget::keyReleaseEvent(event);
 }
 

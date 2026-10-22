@@ -348,6 +348,105 @@ void DrawingTool::refresh() {
   if (lastEvent_) mouseMove(*lastEvent_);
 }
 
+namespace {
+
+QString axisText(const gp_Dir& d) {
+  if (d.IsParallel(gp::DX(), 1e-9)) return QObject::tr("X 軸（赤）");
+  if (d.IsParallel(gp::DY(), 1e-9)) return QObject::tr("Y 軸（緑）");
+  if (d.IsParallel(gp::DZ(), 1e-9)) return QObject::tr("Z 軸（青）");
+  return QObject::tr("推論した方向");
+}
+
+QString planeText(const gp_Pln& p) {
+  const gp_Dir n = p.Axis().Direction();
+  if (n.IsParallel(gp::DZ(), 1e-9)) {
+    const double z = p.Location().Z();
+    return std::abs(z) < 1e-6 ? QObject::tr("地面") : QObject::tr("高さ %1 の水平面").arg(QString::number(z, 'f', 0));
+  }
+  if (std::abs(n.Z()) < 1e-9) {
+    const QString facing = n.IsParallel(gp::DX(), 1e-9)   ? QObject::tr("X 方向を向いた")
+                           : n.IsParallel(gp::DY(), 1e-9) ? QObject::tr("Y 方向を向いた")
+                                                          : QObject::tr("斜めを向いた");
+    return QObject::tr("%1縦の面").arg(facing);
+  }
+  return QObject::tr("傾いた面");
+}
+
+QString objectName(ToolHost& host, const doc::ObjectId& id) {
+  const doc::Object* o = host.modeler().document().find(id);
+  return o ? QString::fromStdString(o->name) : QString();
+}
+
+}  // namespace
+
+QString DrawingTool::constraintText() const {
+  QStringList parts;
+  if (const QString t = targetText(); !t.isEmpty()) parts << QObject::tr("対象: %1").arg(t);
+  if (const auto plane = workingPlane()) parts << QObject::tr("作業面: %1").arg(planeText(*plane));
+  if (locked_) {
+    parts << (shiftLock_ ? QObject::tr("方向: %1 に固定（Shift を離すと解除）")
+                         : QObject::tr("方向: %1 に固定（↓で解除）"))
+                 .arg(axisText(*locked_));
+  }
+  return parts.join(QStringLiteral(" ｜ "));
+}
+
+std::optional<gp_Pln> LineTool::workingPlane() const {
+  if (points_.empty()) return std::nullopt;
+  return drawPlane_ ? *drawPlane_ : gp_Pln(points_.front(), gp::DZ());
+}
+
+std::optional<gp_Pln> PlanPolylineTool::workingPlane() const {
+  if (points_.empty()) return std::nullopt;
+  return gp_Pln(points_.front(), gp::DZ());
+}
+
+std::optional<gp_Pln> ArcTool::workingPlane() const {
+  if (stage_ == Stage::Start) return std::nullopt;
+  return gp_Pln(plane_.origin, plane_.normal);
+}
+
+std::optional<gp_Pln> CircleTool::workingPlane() const {
+  if (!hasCentre_) return std::nullopt;
+  return gp_Pln(plane_.origin, plane_.normal);
+}
+
+std::optional<gp_Pln> PolygonTool::workingPlane() const {
+  if (!hasCentre_) return std::nullopt;
+  return gp_Pln(plane_.origin, plane_.normal);
+}
+
+std::optional<gp_Pln> RectangleTool::workingPlane() const {
+  if (!hasCorner_) return std::nullopt;
+  return gp_Pln(plane_.origin, plane_.normal);
+}
+
+std::optional<gp_Pln> RotateTool::workingPlane() const {
+  if (stage_ == Stage::Center) return std::nullopt;
+  return gp_Pln(center_, normal_);
+}
+
+QString RotateTool::targetText() const {
+  if (stage_ == Stage::Center) return {};
+  return targets_.size() == 1 ? objectName(host_, targets_.front()) : QObject::tr("%1 個").arg(targets_.size());
+}
+
+QString MoveTool::targetText() const {
+  if (!moving_) return {};
+  if (stretch_) return QObject::tr("%1 の面（法線方向に伸縮）").arg(objectName(host_, stretch_->first));
+  return targets_.size() == 1 ? objectName(host_, targets_.front()) : QObject::tr("%1 個").arg(targets_.size());
+}
+
+QString PushPullTool::constraintText() const {
+  if (!dragging_) return {};
+  return QObject::tr("対象: %1 の面 ｜ 方向: 面の法線に固定").arg(objectName(host_, objectId_));
+}
+
+QString OpeningTool::constraintText() const {
+  if (!hover_) return {};
+  return QObject::tr("対象: %1 ｜ 作業面: %2").arg(objectName(host_, hover_->host), planeText(gp_Pln(hover_->at, hover_->normal)));
+}
+
 QString DrawingTool::lockSuffix() const {
   return locked_ ? QObject::tr("（方向ロック中・↓で解除）") : QString();
 }
@@ -415,6 +514,7 @@ void LineTool::cancel() {
   finish();
   host_.viewport().hideSnap();
 }
+
 
 std::optional<gp_Pnt> LineTool::pointAt(const ToolEvent& e) {
   std::optional<gp_Pnt> anchor;
@@ -981,6 +1081,15 @@ void CurveTool::cancel() {
   current_.reset();
   host_.viewport().clearPreview();
   host_.viewport().hideSnap();
+}
+
+bool CurveTool::stepBack() {
+  if (points_.empty()) return false;
+  points_.pop_back();
+  resetLock();
+  updatePreview();
+  host_.setStatus(QObject::tr("最後の点を取り消しました"));
+  return true;
 }
 
 void CurveTool::mouseMove(const ToolEvent& e) {
@@ -2259,6 +2368,21 @@ void RotateTool::resetState() {
 
 void RotateTool::cancel() { resetState(); }
 
+bool RotateTool::stepBack() {
+  switch (stage_) {
+    case Stage::Center: return false;
+    case Stage::Reference: stage_ = Stage::Center; break;
+    case Stage::Rotating:
+      stage_ = Stage::Reference;
+      angle_ = 0.0;
+      host_.viewport().clearPreview();
+      break;
+  }
+  resetLock();
+  if (lastEvent_) mouseMove(*lastEvent_);
+  return true;
+}
+
 gp_Trsf RotateTool::rotation(double angle) const {
   gp_Trsf t;
   t.SetRotation(gp_Ax1(center_, normal_), angle);
@@ -2536,6 +2660,22 @@ void RevolveTool::reset() {
 }
 
 void RevolveTool::cancel() { reset(); }
+
+bool RevolveTool::stepBack() {
+  switch (stage_) {
+    case Stage::Profile: return false;
+    case Stage::AxisStart:
+      reset();
+      return true;
+    case Stage::AxisEnd:
+      stage_ = Stage::AxisStart;
+      resetLock();
+      host_.viewport().clearPreview();
+      host_.setStatus(QObject::tr("回転軸の 1 点目をクリック"));
+      return true;
+  }
+  return false;
+}
 
 void RevolveTool::mouseMove(const ToolEvent& e) {
   switch (stage_) {

@@ -193,6 +193,12 @@ void MainWindow::buildUi() {
   aiLabel_->setStyleSheet(QStringLiteral("QLabel { background: #dbeafe; padding: 0 6px; }"));
   aiLabel_->hide();
   statusBar()->addPermanentWidget(aiLabel_);
+  constraintLabel_ = new QLabel;
+  constraintLabel_->setObjectName(QStringLiteral("constraintLabel"));
+  constraintLabel_->setStyleSheet(QStringLiteral("QLabel { color: #1a5fb4; padding: 0 6px; }"));
+  constraintLabel_->setToolTip(tr("今かかっている固定（対象・作業面・方向ロック）"));
+  constraintLabel_->hide();
+  statusBar()->addPermanentWidget(constraintLabel_);
   statusBar()->addPermanentWidget(measurementLabel_);
   statusBar()->addPermanentWidget(measurement_);
 
@@ -205,6 +211,7 @@ void MainWindow::buildUi() {
     if (userTyping_) measurement_->backspace();
   });
   connect(viewport_, &Viewport::measurementCommit, this, &MainWindow::commitMeasurement);
+  connect(viewport_, &Viewport::toolInput, this, &MainWindow::refreshConstraints);
   connect(measurement_, &QLineEdit::returnPressed, this, &MainWindow::commitMeasurement);
   connect(measurement_, &QLineEdit::textEdited, this, [this] { userTyping_ = true; });
   connect(viewport_, &Viewport::escapePressed, this, [this] {
@@ -213,7 +220,10 @@ void MainWindow::buildUi() {
       exitGroup();
       return;
     }
-    if (active_ && active_->stepBack()) return;  // one stage back first
+    if (active_ && active_->stepBack()) {  // one stage back first
+      refreshConstraints();
+      return;
+    }
     if (active_ == pasteTool_.get()) {  // nothing pasted: back to selecting
       activateTool(ToolId::Select);
       return;
@@ -222,6 +232,7 @@ void MainWindow::buildUi() {
       active_->cancel();
       active_->activate();
     }
+    refreshConstraints();
   });
   connect(viewport_, &Viewport::focusRequested, this, [this](const QPoint&) {
     if (!focusOnDoubleClick_->isChecked()) return;
@@ -925,12 +936,25 @@ void MainWindow::activateTool(ToolId id) {
   viewport_->setToolCursor(active_->cursor());
   userTyping_ = false;
   active_->activate();
+  refreshConstraints();
   viewport_->setFocus();
 }
 
 // --- ToolHost ---------------------------------------------------------------------
 
-void MainWindow::setStatus(const QString& text) { status_->setText(text); }
+void MainWindow::setStatus(const QString& text) {
+  status_->setText(text);
+  refreshConstraints();  // tools report on (nearly) every input
+}
+
+void MainWindow::refreshConstraints() {
+  if (!constraintLabel_) return;
+  const QString text = active_ ? active_->constraintText() : QString();
+  constraintLabel_->setText(text);
+  constraintLabel_->setVisible(!text.isEmpty());
+}
+
+QString MainWindow::constraintText() const { return constraintLabel_ ? constraintLabel_->text() : QString(); }
 
 QString MainWindow::statusText() const { return status_->text(); }
 
@@ -1440,6 +1464,7 @@ void MainWindow::commitMeasurement() {
   }
   if (text.isEmpty() || !active_) return;
   active_->applyMeasurement(text);
+  refreshConstraints();
   viewport_->setFocus();
 }
 

@@ -152,6 +152,7 @@ class GuiPhase1 : public QObject {
   void wallToolAndArchitectureMenus();
   void slabToolAndOpeningTool();
   void typedRevisionOnlyRightAfter();
+  void escStepsBackAndConstraintsShow();
 };
 
 namespace {
@@ -2015,6 +2016,75 @@ void GuiPhase1::typedRevisionOnlyRightAfter() {
   QVERIFY(m.document().find(circle));
   QVERIFY(m.undo());
   QVERIFY(!m.document().find(circle));
+}
+
+// Interaction contract (review §7): Esc goes back exactly one stage in
+// every multi-step tool, the camera does not lose the input, and the
+// status bar shows what is fixed (target / working plane / direction).
+void GuiPhase1::escStepsBackAndConstraintsShow() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  auto esc = [&] {
+    QTest::keyClick(f.vp, Qt::Key_Escape);
+    QTest::qWait(20);
+  };
+
+  // Rectangle: working plane after the first corner, arrow-key lock shown.
+  f.window.activateTool(MainWindow::ToolId::Rectangle);
+  QVERIFY(f.window.constraintText().isEmpty());
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(500, 300, 0)));
+  QVERIFY2(f.window.constraintText().contains(QStringLiteral("作業面: 地面")), qPrintable(f.window.constraintText()));
+  esc();
+  QVERIFY(f.window.constraintText().isEmpty());
+
+  // Curve: Esc takes back one clicked point at a time; orbiting meanwhile
+  // keeps the input. (Lines end with Esc, like SketchUp.)
+  f.window.activateTool(MainWindow::ToolId::Curve);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 0, 0)));
+  doc::CameraState cam;
+  f.vp->storeCamera(cam);
+  cam.eye = {4000, -7000, 5000};
+  f.vp->restoreCamera(cam);
+  QTest::qWait(30);
+  click(f.vp, f.vp->toWidget(gp_Pnt(1500, 1000, 0)));
+  esc();
+  QCOMPARE(f.window.statusText(), QStringLiteral("最後の点を取り消しました"));
+  QTest::keyClick(f.vp, Qt::Key_Return);  // finish with the two points left
+  QTest::qWait(30);
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  QCOMPARE(std::get<doc::InterpolatedCurve>(m.document().objects().front().recipe.base).points.size(), std::size_t(2));
+
+  // Line: arrow-key lock shown and released; Esc ends the chain, keeping it.
+  f.window.activateTool(MainWindow::ToolId::Line);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 2000, 0)));
+  QVERIFY(f.window.constraintText().contains(QStringLiteral("作業面")));
+  QTest::keyClick(f.vp, Qt::Key_Right);  // lock to X
+  QTest::qWait(20);
+  QVERIFY2(f.window.constraintText().contains(QStringLiteral("X 軸")), qPrintable(f.window.constraintText()));
+  QTest::keyClick(f.vp, Qt::Key_Down);
+  QTest::qWait(20);
+  QVERIFY(!f.window.constraintText().contains(QStringLiteral("方向")));
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 2000, 0)));
+  esc();
+  QCOMPARE(m.document().objects().size(), std::size_t(2));
+  QVERIFY(f.window.constraintText().isEmpty());
+
+  // Rotate: centre -> reference -> rotating, and back the same way.
+  const doc::ObjectId box = f.box(2000, 2000, 1000, 1000, 1000);
+  f.window.setSelection({box});
+  f.window.activateTool(MainWindow::ToolId::Rotate);
+  click(f.vp, f.vp->toWidget(gp_Pnt(2000, 2000, 0)));
+  QVERIFY2(f.window.constraintText().contains(QStringLiteral("対象:")), qPrintable(f.window.constraintText()));
+  click(f.vp, f.vp->toWidget(gp_Pnt(3000, 2000, 0)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(2000, 3000, 0)));
+  esc();  // back to choosing the reference
+  QVERIFY(f.window.constraintText().contains(QStringLiteral("作業面")));
+  esc();  // back to choosing the centre
+  QVERIFY(f.window.constraintText().isEmpty());
+  QCOMPARE(m.history().undoName(), std::string("Extrude"));  // nothing rotated
 }
 
 QTEST_MAIN(GuiPhase1)

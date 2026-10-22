@@ -56,6 +56,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   QLineEdit* measurementBox() const { return measurement_; }
   QString lastError() const { return lastError_; }
   QString statusText() const;
+  // Constraints shown in the status bar (lock / working plane / target).
+  QString constraintText() const;
   AiBridge* aiBridge() const { return aiBridge_.get(); }
   void setAiAccess(bool enabled);
   // AI proposal awaiting the user's decision (spec 07 §9.2).
@@ -111,6 +113,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   bool maybeSave();
   void commitMeasurement();
   void showGridDialog();
+  void refreshConstraints();
   void showWallSettingsDialog();
   void showSlabSettingsDialog();
   void showOpeningSettingsDialog();
@@ -146,6 +149,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   PropertiesPanel* panel_ = nullptr;
   QLabel* status_ = nullptr;
   QLabel* measurementLabel_ = nullptr;
+  QLabel* constraintLabel_ = nullptr;
   QLabel* contextLabel_ = nullptr;
   QLineEdit* measurement_ = nullptr;
   bool userTyping_ = false;
