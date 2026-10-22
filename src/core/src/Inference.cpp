@@ -33,6 +33,7 @@ const char* toString(SnapKind kind) {
     case SnapKind::Perpendicular: return "Perpendicular";
     case SnapKind::FromPoint: return "From Point";
     case SnapKind::WorkPlane: return "On Plane";
+    case SnapKind::Intersection: return "Intersection";
   }
   return "None";
 }
@@ -144,6 +145,52 @@ void InferenceEngine::setShapes(const std::vector<TopoDS_Shape>& shapes) {
     intersector->Load(shape, 1e-6);
     cache_->intersectors.push_back(std::move(intersector));
   }
+  rebuildGuidePoints();
+}
+
+void InferenceEngine::setGuides(const std::vector<gp_Lin>& guides) {
+  guides_ = guides;
+  rebuildGuidePoints();
+}
+
+namespace {
+// Crossing point of the line (p, u) with (q, v) as parameters along each,
+// or nothing when they are parallel or skew.
+std::optional<std::pair<double, double>> crossing(const gp_Pnt& p, const gp_Dir& u, const gp_Pnt& q,
+                                                  const gp_Dir& v) {
+  const gp_Vec uv(u), vv(v), w(q, p);
+  const double b = uv.Dot(vv);
+  const double denom = 1.0 - b * b;
+  if (std::abs(denom) < 1e-12) return std::nullopt;
+  const double d = uv.Dot(w), e = vv.Dot(w);
+  const double s = (b * e - d) / denom;
+  const double t = (e - b * d) / denom;
+  if (p.Translated(uv * s).Distance(q.Translated(vv * t)) > tolerance::kLinear) return std::nullopt;
+  return std::make_pair(s, t);
+}
+}  // namespace
+
+void InferenceEngine::rebuildGuidePoints() {
+  guidePoints_.clear();
+  for (std::size_t i = 0; i < guides_.size(); ++i) {
+    const gp_Lin& g = guides_[i];
+    for (std::size_t j = i + 1; j < guides_.size(); ++j) {
+      const gp_Lin& h = guides_[j];
+      if (auto c = crossing(g.Location(), g.Direction(), h.Location(), h.Direction())) {
+        guidePoints_.push_back(g.Location().Translated(gp_Vec(g.Direction()) * c->first));
+      }
+    }
+    if (!cache_) continue;
+    for (const EdgeEntry& e : cache_->edges) {
+      if (!e.isLine) continue;
+      const gp_Vec ab(e.a, e.b);
+      const double len = ab.Magnitude();
+      if (len < 1e-9) continue;
+      auto c = crossing(g.Location(), g.Direction(), e.a, gp_Dir(ab));
+      if (!c || c->second < -tolerance::kLinear || c->second > len + tolerance::kLinear) continue;
+      guidePoints_.push_back(g.Location().Translated(gp_Vec(g.Direction()) * c->first));
+    }
+  }
 }
 
 namespace {
@@ -196,6 +243,14 @@ SnapResult InferenceEngine::snap(const SnapQuery& q) const {
       r.point = entry.point;
       r.shapeIndex = entry.shapeIndex;
       candidates.emplace_back(d + bias, r);
+    }
+    for (const gp_Pnt& p : guidePoints_) {
+      const double d = screenDistance(q.project, p, q.cursor) + 0.25;
+      if (d >= tol) continue;
+      SnapResult r;
+      r.kind = SnapKind::Intersection;
+      r.point = p;
+      candidates.emplace_back(d, r);
     }
     std::sort(candidates.begin(), candidates.end(),
               [](const auto& a, const auto& b) { return a.first < b.first; });
@@ -263,6 +318,16 @@ SnapResult InferenceEngine::snap(const SnapQuery& q) const {
       r.point = candidate;
       r.shapeIndex = e.shapeIndex;
       if (e.isLine && e.a.Distance(e.b) > 1e-9) r.edgeDirection = gp_Dir(gp_Vec(e.a, e.b));
+      candidates.emplace_back(d, r);
+    }
+    for (const gp_Lin& g : guides_) {
+      const gp_Pnt p = closestPointOnLineToRay(g.Location(), g.Direction(), q.ray);
+      const double d = screenDistance(q.project, p, q.cursor);
+      if (d >= tol) continue;
+      SnapResult r;
+      r.kind = SnapKind::OnEdge;
+      r.point = p;
+      r.edgeDirection = g.Direction();
       candidates.emplace_back(d, r);
     }
     std::sort(candidates.begin(), candidates.end(),

@@ -23,6 +23,8 @@
 #include <StdSelect_BRepOwner.hxx>
 #include <StdSelect_ViewerSelector3d.hxx>
 #include <TopExp.hxx>
+#include <BRepAdaptor_Curve.hxx>
+#include <gp_Lin.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
 #include <TopTools_ListOfShape.hxx>
@@ -59,6 +61,7 @@ Quantity_Color snapColor(snap::SnapKind kind) {
     case snap::SnapKind::AxisY: return kAxisColors[1];
     case snap::SnapKind::AxisZ: return kAxisColors[2];
     case snap::SnapKind::Locked: return rgb(0.6, 0.1, 0.7);
+    case snap::SnapKind::Intersection: return rgb(0.0, 0.55, 0.3);
     default: return rgb(0.3, 0.3, 0.3);
   }
 }
@@ -508,6 +511,7 @@ void Viewport::syncNow() {
   }
 
   std::vector<TopoDS_Shape> snapShapes;
+  std::vector<gp_Lin> guideLines;
   for (const doc::Object& o : objects) {
     if (o.shape.IsNull() || !modeler_.document().isVisible(o.id)) continue;
     auto found = entries_.find(o.id);
@@ -544,9 +548,19 @@ void Viewport::syncNow() {
       found->second.ais->SetTransparency(transparency);
     }
     context_->Redisplay(found->second.ais, Standard_False);
+    if (o.kind() == doc::ObjectKind::Guide) {
+      // Guides snap as infinite lines, not as their long stand-in edge.
+      TopExp_Explorer edge(found->second.canonicalWorld, TopAbs_EDGE);
+      if (edge.More()) {
+        BRepAdaptor_Curve curve(TopoDS::Edge(edge.Current()));
+        if (curve.GetType() == GeomAbs_Line) guideLines.push_back(curve.Line());
+      }
+      continue;
+    }
     snapShapes.push_back(found->second.canonicalWorld);
   }
   inference_.setShapes(snapShapes);
+  inference_.setGuides(guideLines);
   syncLabels();
   syncSection();
   syncOpenEnds();

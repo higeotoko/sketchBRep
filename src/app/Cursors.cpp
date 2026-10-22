@@ -192,6 +192,20 @@ QPixmap draw(CursorKind kind, QPoint& hotspot) {
       hotspot = QPoint(3, 29);
       break;
     }
+    case CursorKind::Protractor: {
+      // Half disc on its base line, with an angled ray from the centre.
+      QPainterPath arc;
+      arc.moveTo(4, 26);
+      arc.arcTo(QRectF(4, 8, 24, 36), 180, -180);
+      arc.closeSubpath();
+      halo(p, arc);
+      QPainterPath ray;
+      ray.moveTo(16, 26);
+      ray.lineTo(25, 13);
+      halo(p, ray);
+      hotspot = QPoint(16, 26);
+      break;
+    }
     case CursorKind::Revolve: {
       // Profile rectangle and an arc around a dashed axis.
       QPainterPath axis;

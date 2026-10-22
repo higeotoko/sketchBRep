@@ -59,6 +59,7 @@ QString snapLabel(snap::SnapKind kind) {
     case snap::SnapKind::Perpendicular: return QObject::tr("エッジに垂直");
     case snap::SnapKind::FromPoint: return QObject::tr("点から");
     case snap::SnapKind::WorkPlane: return QObject::tr("作業平面上");
+    case snap::SnapKind::Intersection: return QObject::tr("交点");
     case snap::SnapKind::None: break;
   }
   return {};
@@ -2158,6 +2159,136 @@ void MeasureTool::applyMeasurement(const QString& text) {
     return;
   }
   placeGuide(guideOffset_.Normalized() * *value);
+}
+
+// --- Protractor -----------------------------------------------------------------------
+
+QString ProtractorTool::name() const { return QObject::tr("分度器"); }
+QCursor ProtractorTool::cursor() const { return toolCursor(CursorKind::Protractor); }
+
+void ProtractorTool::activate() {
+  resetTracking();
+  cancel();
+  host_.viewport().setPickMode(PickMode::None);
+  host_.setMeasurement(QObject::tr("角度"), QString());
+  host_.setStatus(QObject::tr("分度器の中心をクリック（面上なら面の平面で、それ以外は水平）"));
+}
+
+void ProtractorTool::cancel() {
+  stage_ = Stage::Center;
+  angle_ = 0.0;
+  resetLock();
+  host_.viewport().clearPreview();
+  host_.viewport().hideSnap();
+}
+
+bool ProtractorTool::stepBack() {
+  if (stage_ == Stage::Center) return false;
+  stage_ = stage_ == Stage::Angle ? Stage::Base : Stage::Center;
+  host_.viewport().clearPreview();
+  return true;
+}
+
+std::optional<double> ProtractorTool::angleAt(const gp_Pnt& p) const {
+  gp_Vec v(center_, p);
+  v -= gp_Vec(normal_) * v.Dot(gp_Vec(normal_));
+  if (v.Magnitude() < 1e-6) return std::nullopt;
+  const gp_Vec ref(base_);
+  double angle = std::atan2(ref.Crossed(v).Dot(gp_Vec(normal_)), ref.Dot(v));
+  const double step = M_PI / 12;  // 15 degree steps, as on the rotate tool
+  const double snapped = std::round(angle / step) * step;
+  if (std::abs(angle - snapped) < M_PI / 90) angle = snapped;
+  return angle;
+}
+
+gp_Dir ProtractorTool::guideDirection(double angle) const {
+  return base_.Rotated(gp_Ax1(gp::Origin(), normal_), angle);
+}
+
+void ProtractorTool::place(double angle) {
+  auto id = host_.modeler().createGuide(center_, guideDirection(angle));
+  if (!id) host_.reportError(QString::fromStdString(id.error()));
+  const double degrees = angle * 180.0 / M_PI;
+  cancel();
+  host_.setStatus(QObject::tr("ガイドを配置しました（%1°）").arg(QString::number(degrees, 'f', 1)));
+}
+
+void ProtractorTool::mouseMove(const ToolEvent& e) {
+  Viewport& vp = host_.viewport();
+  switch (stage_) {
+    case Stage::Center: {
+      const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
+      host_.setStatus(QObject::tr("分度器の中心をクリック  [%1]").arg(snapLabel(r.kind)));
+      return;
+    }
+    case Stage::Base: {
+      const snap::SnapResult r = snapAt(e, center_, gp_Pln(center_, normal_));
+      if (!r.valid()) return;
+      if (r.point.Distance(center_) > 1e-6) vp.setPreview(BRepBuilderAPI_MakeEdge(center_, r.point).Edge());
+      host_.setStatus(QObject::tr("基準の方向をクリック  [%1]").arg(snapLabel(r.kind)));
+      return;
+    }
+    case Stage::Angle: {
+      const snap::SnapResult r = snapAt(e, center_, gp_Pln(center_, normal_));
+      if (!r.valid()) return;
+      const auto angle = angleAt(r.point);
+      if (!angle) return;
+      angle_ = *angle;
+      const double reach = std::max(1000.0, 2.0 * center_.Distance(r.point));
+      BRep_Builder builder;
+      TopoDS_Compound preview;
+      builder.MakeCompound(preview);
+      builder.Add(preview, BRepBuilderAPI_MakeEdge(center_, center_.Translated(gp_Vec(base_) * reach)).Edge());
+      const gp_Vec along = gp_Vec(guideDirection(angle_)) * reach;
+      builder.Add(preview, BRepBuilderAPI_MakeEdge(center_.Translated(-along), center_.Translated(along)).Edge());
+      vp.setPreview(preview);
+      host_.setMeasurement(QObject::tr("角度"), QString::number(angle_ * 180.0 / M_PI, 'f', 1));
+      host_.setStatus(QObject::tr("クリックでガイドを配置、または角度を入力"));
+      return;
+    }
+  }
+}
+
+void ProtractorTool::mousePress(const ToolEvent& e) {
+  switch (stage_) {
+    case Stage::Center: {
+      const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
+      if (!r.valid()) return;
+      center_ = r.point;
+      normal_ = (r.kind == snap::SnapKind::OnFace && r.faceNormal) ? *r.faceNormal : gp::DZ();
+      stage_ = Stage::Base;
+      return;
+    }
+    case Stage::Base: {
+      const snap::SnapResult r = snapAt(e, center_, gp_Pln(center_, normal_));
+      gp_Vec v(center_, r.point);
+      v -= gp_Vec(normal_) * v.Dot(gp_Vec(normal_));
+      if (v.Magnitude() < 1e-6) return;
+      base_ = gp_Dir(v);
+      stage_ = Stage::Angle;
+      return;
+    }
+    case Stage::Angle:
+      mouseMove(e);
+      place(angle_);
+      return;
+  }
+}
+
+void ProtractorTool::applyMeasurement(const QString& text) {
+  if (stage_ != Stage::Angle) {
+    host_.reportError(QObject::tr("中心と基準の方向をクリックしてから角度を入力してください"));
+    return;
+  }
+  bool ok = false;
+  const double degrees = text.trimmed().toDouble(&ok);
+  if (!ok) {
+    host_.reportError(QObject::tr("角度を解釈できません: %1").arg(text));
+    return;
+  }
+  // The side the mouse shows decides the sign, as on the rotate tool.
+  const double sign = angle_ < 0 && degrees > 0 ? -1.0 : 1.0;
+  place(sign * degrees * M_PI / 180.0);
 }
 
 // --- Eraser --------------------------------------------------------------------------

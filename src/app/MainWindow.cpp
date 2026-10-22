@@ -57,6 +57,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   curveTool_ = std::make_unique<CurveTool>(*this);
   revolveTool_ = std::make_unique<RevolveTool>(*this);
   measureTool_ = std::make_unique<MeasureTool>(*this);
+  protractorTool_ = std::make_unique<ProtractorTool>(*this);
   circleTool_ = std::make_unique<CircleTool>(*this);
   paintTool_ = std::make_unique<PaintTool>(*this);
   eraserTool_ = std::make_unique<EraserTool>(*this);
@@ -441,6 +442,7 @@ void MainWindow::buildMenus() {
       {tr("回転体"), QStringLiteral("V"), ToolId::Revolve, CursorKind::Revolve},
       {tr("フォローミー"), QStringLiteral("Shift+F"), ToolId::FollowMe, CursorKind::FollowMe},
       {tr("メジャー"), QStringLiteral("T"), ToolId::Measure, CursorKind::Measure},
+      {tr("分度器"), QStringLiteral("Shift+P"), ToolId::Protractor, CursorKind::Protractor},
       {tr("寸法"), QStringLiteral("D"), ToolId::Dimension, CursorKind::Dimension},
       {tr("テキスト"), QStringLiteral("Shift+T"), ToolId::Text, CursorKind::Text},
       {tr("断面"), QStringLiteral("Shift+S"), ToolId::Section, CursorKind::Section},
@@ -780,6 +782,7 @@ void MainWindow::activateTool(ToolId id) {
     case ToolId::Curve: active_ = curveTool_.get(); break;
     case ToolId::Revolve: active_ = revolveTool_.get(); break;
     case ToolId::Measure: active_ = measureTool_.get(); break;
+    case ToolId::Protractor: active_ = protractorTool_.get(); break;
     case ToolId::Circle: active_ = circleTool_.get(); break;
     case ToolId::Arc: active_ = arcTool_.get(); break;
     case ToolId::Dimension: active_ = dimensionTool_.get(); break;

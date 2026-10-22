@@ -12,6 +12,7 @@
 #include <vector>
 
 #include <gp_Dir.hxx>
+#include <gp_Lin.hxx>
 #include <gp_Pln.hxx>
 #include <gp_Pnt.hxx>
 #include <TopoDS_Face.hxx>
@@ -34,6 +35,7 @@ enum class SnapKind {
   Perpendicular,  // perpendicular to a tracked edge, from the anchor
   FromPoint,      // on an axis line through a tracked point
   WorkPlane,
+  Intersection,   // where a guide crosses another guide or an edge
 };
 const char* toString(SnapKind kind);
 
@@ -83,6 +85,9 @@ struct SnapResult {
 class InferenceEngine {
  public:
   void setShapes(const std::vector<TopoDS_Shape>& shapes);
+  // Guides: infinite construction lines. They snap along their whole length
+  // (no end or mid points) and where they cross each other or an edge.
+  void setGuides(const std::vector<gp_Lin>& guides);
   SnapResult snap(const SnapQuery& query) const;
   // False when a face lies between the viewer and the point, or the point
   // is cut away by the section plane.
@@ -94,8 +99,11 @@ class InferenceEngine {
  private:
   struct EdgeEntry;
   struct Cache;
+  void rebuildGuidePoints();
   std::vector<TopoDS_Shape> shapes_;
   std::shared_ptr<Cache> cache_;
+  std::vector<gp_Lin> guides_;
+  std::vector<gp_Pnt> guidePoints_;
   std::optional<gp_Pln> clip_;
 };
 

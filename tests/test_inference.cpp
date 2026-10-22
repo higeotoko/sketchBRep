@@ -203,3 +203,32 @@ TEST(Inference, StickyPointHysteresis) {
   far.stickyPoint = gp_Pnt(2000, 0, 0);
   EXPECT_NEAR(engine.snap(far).point.X(), 2120, 1e-6);
 }
+
+TEST(Inference, GuidesSnapAlongTheirWholeLengthAndAtCrossings) {
+  InferenceEngine engine;
+  engine.setShapes({box()});
+  engine.setGuides({gp_Lin(gp_Pnt(0, 3000, 0), gp::DX()), gp_Lin(gp_Pnt(5000, 0, 0), gp::DY()),
+                    gp_Lin(gp_Pnt(300, -2000, 500), gp::DY())});
+  TopView view;
+
+  // Far out along a guide: no end, still on it, with its direction.
+  SnapResult r = engine.snap(view.query(2000, -302));
+  EXPECT_EQ(r.kind, SnapKind::OnEdge);
+  EXPECT_NEAR(r.point.Y(), 3000, 1e-6);
+  ASSERT_TRUE(r.edgeDirection);
+  EXPECT_TRUE(r.edgeDirection->IsParallel(gp::DX(), 1e-9));
+
+  // Two guides crossing.
+  r = engine.snap(view.query(502, -298));
+  EXPECT_EQ(r.kind, SnapKind::Intersection);
+  EXPECT_NEAR(r.point.Distance(gp_Pnt(5000, 3000, 0)), 0, 1e-6);
+
+  // A guide crossing a model edge (top front edge of the box).
+  r = engine.snap(view.query(31, 1));
+  EXPECT_EQ(r.kind, SnapKind::Intersection);
+  EXPECT_NEAR(r.point.Distance(gp_Pnt(300, 0, 500)), 0, 1e-6);
+
+  // Guides go away again.
+  engine.setGuides({});
+  EXPECT_NE(engine.snap(view.query(502, -298)).kind, SnapKind::Intersection);
+}

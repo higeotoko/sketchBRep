@@ -5,6 +5,8 @@
 
 #include <BRep_Tool.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopoDS.hxx>
+#include <gp_Lin.hxx>
 
 #include <QApplication>
 #include <QDir>
@@ -107,6 +109,7 @@ class GuiPhase1 : public QObject {
   void drawOnWallAndPushInCutsOpening();
   void tapeMeasureReadsDistance();
   void tapeMeasurePullsGuideOffEdge();
+  void protractorPlacesAngledGuide();
   void circleToolTypedRadius();
   void groupEditModeAndLooseFaceDelete();
   void lineToolStaysOnWallPlane();
@@ -486,7 +489,7 @@ void GuiPhase1::eachToolHasItsCursor() {
                   MainWindow::ToolId::Move, MainWindow::ToolId::Rotate, MainWindow::ToolId::Offset,
                   MainWindow::ToolId::Curve, MainWindow::ToolId::Circle,
                   MainWindow::ToolId::Measure, MainWindow::ToolId::Revolve, MainWindow::ToolId::Arc,
-                  MainWindow::ToolId::Paint, MainWindow::ToolId::Eraser}) {
+                  MainWindow::ToolId::Paint, MainWindow::ToolId::Eraser, MainWindow::ToolId::Protractor}) {
     f.window.activateTool(id);
     QCOMPARE(f.vp->cursor().shape(), Qt::BitmapCursor);
     QVERIFY(!f.vp->cursor().pixmap().isNull());
@@ -646,6 +649,41 @@ void GuiPhase1::tapeMeasurePullsGuideOffEdge() {
 
   QVERIFY(m.clearGuides().ok());
   QCOMPARE(m.document().objects().size(), std::size_t(1));
+}
+
+void GuiPhase1::protractorPlacesAngledGuide() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  f.window.activateTool(MainWindow::ToolId::Protractor);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));     // centre: origin
+  click(f.vp, f.vp->toWidget(gp_Pnt(2000, 0, 0)));  // base: red axis
+  move(f.vp, f.vp->toWidget(gp_Pnt(1500, 900, 0))); // counter-clockwise side
+  type(f.vp, QStringLiteral("30"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  const doc::Object& g = m.document().objects().front();
+  QCOMPARE(g.kind(), doc::ObjectKind::Guide);
+  const auto& line = std::get<doc::GuideLine>(g.recipe.base);
+  QVERIFY(line.point.Distance(gp::Origin()) < 1e-6);
+  QVERIFY(line.direction.IsParallel(gp_Dir(std::cos(M_PI / 6), std::sin(M_PI / 6), 0), 1e-9));
+
+  // The line tool snaps onto the guide, also far from where it was placed.
+  QTest::qWait(30);
+  f.window.activateTool(MainWindow::ToolId::Line);
+  const gp_Pnt onGuide = gp::Origin().Translated(gp_Vec(line.direction) * 3000);
+  const gp_Lin guideLine(line.point, line.direction);
+  click(f.vp, f.vp->toWidget(onGuide) + QPoint(1, 1));
+  click(f.vp, f.vp->toWidget(gp_Pnt(3000, -1000, 0)));
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  bool touches = false;
+  for (const doc::Object& o : m.document().objects()) {
+    if (o.kind() != doc::ObjectKind::Curve) continue;
+    for (TopExp_Explorer v(m.document().worldShape(o), TopAbs_VERTEX); v.More(); v.Next()) {
+      touches |= guideLine.Distance(BRep_Tool::Pnt(TopoDS::Vertex(v.Current()))) < 1e-6;
+    }
+  }
+  QVERIFY(touches);
 }
 
 void GuiPhase1::circleToolTypedRadius() {

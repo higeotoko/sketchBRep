@@ -394,6 +394,34 @@ class MeasureTool : public DrawingTool {
   std::optional<double> lastDistance_;
 };
 
+// Protractor: click the centre (on a face: in its plane, else horizontal),
+// a base direction, then the angle (15 degree steps, or typed) to place a
+// guide line through the centre.
+class ProtractorTool : public DrawingTool {
+ public:
+  using DrawingTool::DrawingTool;
+  QString name() const override;
+  QCursor cursor() const override;
+  void activate() override;
+  void cancel() override;
+  bool stepBack() override;
+  void mousePress(const ToolEvent& e) override;
+  void mouseMove(const ToolEvent& e) override;
+  void applyMeasurement(const QString& text) override;
+
+ private:
+  enum class Stage { Center, Base, Angle };
+  std::optional<double> angleAt(const gp_Pnt& p) const;
+  gp_Dir guideDirection(double angle) const;
+  void place(double angle);
+
+  Stage stage_ = Stage::Center;
+  gp_Pnt center_;
+  gp_Dir normal_{0, 0, 1};
+  gp_Dir base_{1, 0, 0};
+  double angle_ = 0.0;
+};
+
 // Revolve: click a profile face, then two points of the axis. Creates a
 // full revolution; typing an angle re-edits it (parametric).
 class RevolveTool : public DrawingTool {
