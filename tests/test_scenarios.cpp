@@ -82,12 +82,16 @@ TEST(Scenario, B_ColumnGrid) {
   ASSERT_TRUE(def);
   s.ok("set_definition_parameter",
        {{"definition", ref->definitionId}, {"object", def->objects.front().id}, {"key", "op0.distance"}, {"value", 3600}});
-  for (const json& o : s.ok("list_objects")["objects"]) {
+  // Keep the reply alive: a range-for over a member of a temporary would
+  // iterate freed memory.
+  const json grown = s.ok("list_objects");
+  for (const json& o : grown["objects"]) {
     EXPECT_NEAR(o["bounds"]["max"][2].get<double>(), 3600, 1e-6);
   }
   s.ok("undo");
   EXPECT_EQ(s.steps(), steps);
-  for (const json& o : s.ok("list_objects")["objects"]) {
+  const json restored = s.ok("list_objects");
+  for (const json& o : restored["objects"]) {
     EXPECT_NEAR(o["bounds"]["max"][2].get<double>(), 3000, 1e-6);
   }
 }
