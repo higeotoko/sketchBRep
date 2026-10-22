@@ -402,3 +402,64 @@ TEST(CommandApi, RegularPolygon) {
   EXPECT_FALSE(a.call("create_regular_polygon", {{"center", {0, 0, 0}}, {"radius", 500}, {"sides", 6.5}})["ok"]);
   a.ok("set_parameter", {{"id", oct}, {"key", "sides"}, {"value", 3}});
 }
+
+// Performance step 5: agents read large models selectively.
+TEST(CommandApi, QueryAggregateAndChanges) {
+  Api a;
+  const std::string wall =
+      a.ok("create_box", {{"origin", {0, 0, 0}}, {"width", 4000}, {"depth", 200}, {"height", 3000}})["id"];
+  a.ok("set_tag", {{"id", wall}, {"tag", "Walls"}});
+  const std::string window =
+      a.ok("create_box", {{"origin", {0, 0, 0}}, {"width", 1200}, {"depth", 100}, {"height", 1500}})["id"];
+  const std::string instance = a.ok("make_component", {{"ids", {window}}, {"name", "Window"}})["id"];
+  a.ok("copy_array", {{"ids", {instance}}, {"vector", {2000, 0, 0}}, {"count", 4}});
+  const std::string definition =
+      std::get<sbr::doc::ComponentInstance>(a.modeler.document().find(instance)->recipe.base).definitionId;
+
+  // Filters and fields.
+  json r = a.ok("query_objects", {{"definition", definition}, {"fields", {"id", "bounds"}}});
+  EXPECT_EQ(r["total"], 5);
+  ASSERT_EQ(r["objects"].size(), 5u);
+  EXPECT_FALSE(r["objects"][0].contains("name"));
+  EXPECT_NEAR(r["objects"][4]["bounds"]["min"][0].get<double>(), 8000.0, 1e-6);
+  r = a.ok("query_objects", {{"tag", "Walls"}, {"fields", "volume"}});
+  ASSERT_EQ(r["objects"].size(), 1u);
+  EXPECT_NEAR(r["objects"][0]["volume"].get<double>(), 4000.0 * 200 * 3000, 1e-3);
+  r = a.ok("query_objects", {{"region", {{"min", {5000, -10, 0}}, {"max", {7000, 10, 10}}}}});
+  EXPECT_EQ(r["total"], 2);  // windows at x 4000..5200 and 6000..7200
+  EXPECT_FALSE(a.call("query_objects", {{"fields", {"nonsense"}}})["ok"]);
+
+  // Paging covers every match exactly once.
+  std::set<std::string> seen;
+  json page = a.ok("query_objects", {{"limit", 2}});
+  const int total = page["total"];
+  while (true) {
+    for (const json& o : page["objects"]) EXPECT_TRUE(seen.insert(o["id"]).second);
+    if (!page.contains("next_cursor")) break;
+    page = a.ok("query_objects", {{"limit", 2}, {"cursor", page["next_cursor"]}});
+  }
+  EXPECT_EQ(static_cast<int>(seen.size()), total);
+
+  // Aggregates (volume of placements counted once per placement).
+  r = a.ok("aggregate", {{"group_by", "tag"}});
+  EXPECT_EQ(r["count"], total);
+  EXPECT_NEAR(r["volume"].get<double>(), 4000.0 * 200 * 3000 + 5 * 1200.0 * 100 * 1500, 1e-2);
+  bool walls = false;
+  for (const json& g : r["groups"]) walls = walls || (g["key"] == "Walls" && g["count"] == 1);
+  EXPECT_TRUE(walls);
+  EXPECT_FALSE(a.call("aggregate", {{"group_by", "colour"}})["ok"]);
+
+  // Change feed.
+  const auto since = a.ok("query_objects", {{"limit", 1}})["sequence"].get<std::uint64_t>();
+  a.ok("rename", {{"id", wall}, {"name", "North wall"}});
+  a.ok("delete", {{"ids", {instance}}});
+  r = a.ok("get_changes", {{"since", since}});
+  EXPECT_FALSE(r["full"]);
+  EXPECT_EQ(r["changed"], json::array({wall}));
+  EXPECT_EQ(r["removed"], json::array({instance}));
+  r = a.ok("get_changes", {{"since", r["sequence"]}});
+  EXPECT_TRUE(r["changed"].empty());
+  a.ok("set_tag_visible", {{"tag", "Walls"}, {"visible", false}});
+  EXPECT_TRUE(a.ok("get_changes", {{"since", r["sequence"]}})["full"]);
+  EXPECT_EQ(a.api.effectOf(json{{"command", "query_objects"}}.dump()), CommandApi::Effect::Read);
+}

@@ -19,7 +19,9 @@ using namespace sbr;
 namespace {
 
 void expectRoundTrip(const TopoDS_Shape& shape, const char* what) {
-  const std::string path = ::testing::TempDir() + "roundtrip.3dm";
+  // One file per test: ctest runs the tests of this suite in parallel.
+  const std::string path = ::testing::TempDir() + "roundtrip_" +
+                           ::testing::UnitTest::GetInstance()->current_test_info()->name() + ".3dm";
   geom::NamedShape part{shape, what, std::array<double, 3>{0.8, 0.2, 0.1}, "Walls"};
   const Status written = geom::write3dm({part}, path);
   ASSERT_TRUE(written.ok()) << what << ": " << written.message();

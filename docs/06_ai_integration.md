@@ -33,6 +33,7 @@ AI 専用の裏口は作らず、GUI のツールと同じ `doc::Modeler` を JS
 `sbr_cli --schema` で JSON Schema 付きの一覧が出る（そのまま LLM の tool 定義になる）。
 
 - 調べる: `list_objects`, `get_object`（面の番号・法線・重心・面積、パラメータ一覧つき）
+- 大きいモデルを読む: `query_objects`（種類・タグ・名前・親・グループ配下・部品定義・可視・範囲で絞り込み、`fields` で返す項目を指定、`limit` と `next_cursor` でページ分け）, `aggregate`（件数・体積・面積の合計、`group_by` で種類・タグ・定義ごと）, `get_changes`（`sequence` 以降に変わった／消えた ID。`full: true` なら読み直し）。体積・面積・外接箱は形状ごとにキャッシュし、同じ部品の配置では 1 回だけ計算
 - 作る: `create_line`, `face_from_loop`（線・円弧で囲んだ輪郭を面に）, `create_rectangle`, `create_circle`, `create_regular_polygon`（正多角形。半径・辺の数を後から変更可）, `create_arc`（正確な円弧・弓形の面）, `create_polygon`, `create_curve`, `create_box`
 - 注記: `create_dimension`, `create_text`, `set_text`（寸法・部屋名や面積のラベル。`get_object` で文字も読める）
 - 補助: `create_guide`（点と方向で無限長のガイド線。作図の吸着先、出力対象外）, `clear_guides`（通り芯は残す）, `create_grid`（通り芯 X1.. / Y1.. を符号・スパン寸法つきで一括作成。Undo 1 回。結果の `lines` で「X3」のように名前から ID を引ける）

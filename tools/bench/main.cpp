@@ -138,6 +138,11 @@ json measure(const std::string& fixture, int n) {
   r["list_objects_ms"] = millis([&] { bytes = api.execute(R"({"command": "list_objects"})").size(); });
   r["list_objects_bytes"] = bytes;
 
+  r["query_ids_ms"] = millis([&] {
+    api.execute(R"({"command": "query_objects", "args": {"fields": "id", "limit": 5000}})");
+  });
+  r["aggregate_ms"] = millis([&] { api.execute(R"({"command": "aggregate", "args": {"group_by": "kind"}})"); });
+
   const std::string path = (std::filesystem::temp_directory_path() / "sbr_bench.sbr").string();
   r["save_ms"] = millis([&] {
     if (!m.save(path)) std::exit(4);
@@ -172,7 +177,7 @@ int main(int argc, char** argv) {
     }
   }
   const char* columns[] = {"build_ms",     "find_all_ms", "world_shapes_ms",  "snap_index_ms",
-                           "snap_query_ms", "edit_reindex_query_ms", "move_one_ms", "undo_ms",          "list_objects_ms",
+                           "snap_query_ms", "edit_reindex_query_ms", "move_one_ms", "undo_ms",          "list_objects_ms", "query_ids_ms", "aggregate_ms",
                            "save_ms"};
   json all = json::array();
   std::printf("%-10s %6s", "fixture", "n");

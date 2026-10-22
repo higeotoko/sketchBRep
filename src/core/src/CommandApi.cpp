@@ -5,6 +5,9 @@
 #include <cmath>
 #include <functional>
 #include <map>
+#include <optional>
+#include <set>
+#include <unordered_map>
 #include <stdexcept>
 
 #include <nlohmann/json.hpp>
@@ -139,6 +142,63 @@ json bounds(const TopoDS_Shape& shape) {
   return json{{"min", toJson(box.CornerMin())}, {"max", toJson(box.CornerMax())}};
 }
 
+// Volume, area and bounds of local canonical shapes, computed once per
+// shape: every placement of a component shares its shape, and unchanged
+// objects keep theirs (the cache holds the shape, so entries never refer
+// to a freed one). Bounded: cleared when it grows too large.
+struct Measures {
+  TopoDS_Shape shape;
+  std::optional<double> volume, area;
+  std::optional<Bnd_Box> box;  // exact, local coordinates
+
+  double volumeValue() {
+    if (!volume) volume = geom::volume(shape);
+    return *volume;
+  }
+  double areaValue() {
+    if (!area) area = geom::area(shape);
+    return *area;
+  }
+  const Bnd_Box& boxValue() {
+    if (!box) box = geom::exactBounds(shape);
+    return *box;
+  }
+};
+
+Measures& measuresOf(const TopoDS_Shape& local) {
+  struct Key {
+    const void* tshape;
+    int orientation;
+    bool operator==(const Key& o) const { return tshape == o.tshape && orientation == o.orientation; }
+  };
+  struct Hash {
+    std::size_t operator()(const Key& k) const { return std::hash<const void*>()(k.tshape) ^ k.orientation; }
+  };
+  static std::unordered_map<Key, Measures, Hash> cache;
+  const Key key{local.TShape().get(), static_cast<int>(local.Orientation())};
+  auto it = cache.find(key);
+  if (it != cache.end() && it->second.shape.Location().IsEqual(local.Location())) return it->second;
+  if (cache.size() > 50000) cache.clear();
+  Measures& m = cache[key];
+  m = Measures{};
+  m.shape = local;
+  return m;
+}
+
+// Exact world bounds: shifted from the cached local box when the placement
+// is a pure translation, recomputed otherwise.
+json worldBounds(const doc::Document& d, const doc::Object& o) {
+  if (o.shape.IsNull()) return nullptr;
+  const gp_Trsf t = d.worldTransform(o);
+  if (t.Form() == gp_Identity || t.Form() == gp_Translation) {
+    const Bnd_Box& box = measuresOf(o.shape).boxValue();
+    if (box.IsVoid()) return nullptr;
+    const gp_Vec v = t.TranslationPart();
+    return json{{"min", toJson(box.CornerMin().Translated(v))}, {"max", toJson(box.CornerMax().Translated(v))}};
+  }
+  return bounds(d.worldShape(o));
+}
+
 json describeObject(const doc::Modeler& m, const doc::Object& o, bool withFaces) {
   const doc::Document& d = m.document();
   const TopoDS_Shape world = d.worldShape(o);
@@ -149,10 +209,11 @@ json describeObject(const doc::Modeler& m, const doc::Object& o, bool withFaces)
             {"visible", o.visible},
             {"color", {o.color.r, o.color.g, o.color.b}},
             {"history", doc::describe(o.recipe)},
-            {"bounds", bounds(world)}};
+            {"bounds", worldBounds(d, o)}};
   if (!o.parent.empty()) j["parent"] = o.parent;
-  if (o.kind() == doc::ObjectKind::Solid) j["volume"] = geom::volume(world);
-  if (o.kind() == doc::ObjectKind::Face) j["area"] = geom::area(world);
+  // Rigid placements keep volume and area: measured on the local shape.
+  if (o.kind() == doc::ObjectKind::Solid) j["volume"] = measuresOf(o.shape).volumeValue();
+  if (o.kind() == doc::ObjectKind::Face) j["area"] = measuresOf(o.shape).areaValue();
   if (const auto label = doc::annotationLabel(o.recipe)) j["text"] = label->text;
   json params = json::array();
   for (const doc::Parameter& p : m.parameters(o.id)) {
@@ -227,6 +288,220 @@ doc::BooleanKind booleanKind(const std::string& s) {
 
 json idResult(const ObjectId& id) { return json{{"id", id}}; }
 json idsResult(const std::vector<ObjectId>& v) { return json{{"ids", v}}; }
+
+// --- queries for agents on large models -------------------------------------------------
+
+// Filter shared by query_objects and aggregate. Cheap tests run first;
+// bounds are only computed for objects that pass them.
+struct ObjectFilter {
+  std::set<std::string> kinds, tags, ids;
+  std::optional<std::string> name, parent, within, definition;
+  std::optional<bool> visible;
+  std::optional<Bnd_Box> region;
+
+  static std::set<std::string> strings(const json& a, const char* key) {
+    std::set<std::string> out;
+    if (!a.contains(key)) return out;
+    const json& v = a.at(key);
+    if (v.is_string()) {
+      out.insert(v.get<std::string>());
+    } else if (v.is_array()) {
+      for (const json& s : v) {
+        if (!s.is_string()) throw ApiError(std::string("'") + key + "' must be a string or strings");
+        out.insert(s.get<std::string>());
+      }
+    } else {
+      throw ApiError(std::string("'") + key + "' must be a string or strings");
+    }
+    return out;
+  }
+
+  explicit ObjectFilter(const json& a) {
+    kinds = strings(a, "kind");
+    tags = strings(a, "tag");
+    ids = strings(a, "ids");
+    if (a.contains("name")) name = text(a, "name");
+    if (a.contains("parent")) parent = text(a, "parent");
+    if (a.contains("within")) within = text(a, "within");
+    if (a.contains("definition")) definition = text(a, "definition");
+    if (a.contains("visible")) {
+      if (!a.at("visible").is_boolean()) throw ApiError("'visible' must be true or false");
+      visible = a.at("visible").get<bool>();
+    }
+    if (a.contains("region")) {
+      const json& r = a.at("region");
+      Bnd_Box box;
+      box.Add(gp_Pnt(xyz(arg(r, "min"), "min")));
+      box.Add(gp_Pnt(xyz(arg(r, "max"), "max")));
+      region = box;
+    }
+  }
+
+  bool matches(const doc::Document& d, const doc::Object& o) const {
+    if (!ids.empty() && !ids.count(o.id)) return false;
+    if (!kinds.empty() && !kinds.count(doc::toString(o.kind()))) return false;
+    if (!tags.empty() && !tags.count(o.layer)) return false;
+    if (name && o.name.find(*name) == std::string::npos) return false;
+    if (parent && o.parent != *parent) return false;
+    if (within && !d.isAncestor(*within, o.id)) return false;
+    if (definition) {
+      const auto* c = std::get_if<doc::ComponentInstance>(&o.recipe.base);
+      if (!c || c->definitionId != *definition) return false;
+    }
+    if (visible && d.isVisible(o.id) != *visible) return false;
+    if (region) {
+      const json b = worldBounds(d, o);
+      if (b.is_null()) return false;
+      Bnd_Box box;
+      box.Add(gp_Pnt(xyz(b["min"], "min")));
+      box.Add(gp_Pnt(xyz(b["max"], "max")));
+      if (box.IsOut(*region)) return false;
+    }
+    return true;
+  }
+};
+
+// Only the requested fields: an agent listing 10,000 windows by name does
+// not pay for volumes and parameters.
+json objectFields(const doc::Modeler& m, const doc::Object& o, const std::set<std::string>& fields) {
+  if (fields.count("all")) return describeObject(m, o, false);
+  const doc::Document& d = m.document();
+  json j = json::object();
+  for (const std::string& f : fields) {
+    if (f == "id") {
+      j["id"] = o.id;
+    } else if (f == "name") {
+      j["name"] = o.name;
+    } else if (f == "kind") {
+      j["kind"] = doc::toString(o.kind());
+    } else if (f == "tag") {
+      j["tag"] = o.layer;
+    } else if (f == "visible") {
+      j["visible"] = d.isVisible(o.id);
+    } else if (f == "parent") {
+      j["parent"] = o.parent;
+    } else if (f == "color") {
+      j["color"] = {o.color.r, o.color.g, o.color.b};
+    } else if (f == "bounds") {
+      j["bounds"] = worldBounds(d, o);
+    } else if (f == "volume") {
+      if (o.kind() == doc::ObjectKind::Solid || o.kind() == doc::ObjectKind::Instance) {
+        j["volume"] = measuresOf(o.shape).volumeValue();
+      }
+    } else if (f == "area") {
+      if (o.kind() == doc::ObjectKind::Face) j["area"] = measuresOf(o.shape).areaValue();
+    } else if (f == "definition") {
+      if (const auto* c = std::get_if<doc::ComponentInstance>(&o.recipe.base)) j["definition"] = c->definitionId;
+    } else if (f == "history") {
+      j["history"] = doc::describe(o.recipe);
+    } else if (f == "parameters") {
+      json params = json::array();
+      for (const doc::Parameter& p : m.parameters(o.id)) params.push_back({{"key", p.key}, {"value", p.value}});
+      j["parameters"] = params;
+    } else if (f == "text") {
+      if (const auto label = doc::annotationLabel(o.recipe)) j["text"] = label->text;
+    } else {
+      throw ApiError("unknown field '" + f + "'");
+    }
+  }
+  return j;
+}
+
+json queryObjects(const doc::Modeler& m, const json& a) {
+  const ObjectFilter filter(a);
+  std::set<std::string> fields = ObjectFilter::strings(a, "fields");
+  if (fields.empty()) fields = {"id", "name", "kind", "tag"};
+  const std::size_t limit = static_cast<std::size_t>(std::clamp(numberOr(a, "limit", 200), 1.0, 5000.0));
+  std::size_t start = 0;
+  if (a.contains("cursor")) {
+    const std::string c = text(a, "cursor");
+    try {
+      start = std::stoul(c);
+    } catch (...) {
+      throw ApiError("bad cursor");
+    }
+  }
+  json objects = json::array();
+  std::size_t matched = 0;
+  std::optional<std::size_t> next;
+  for (const doc::Object& o : m.document().objects()) {
+    if (!filter.matches(m.document(), o)) continue;
+    if (matched++ < start) continue;
+    if (objects.size() == limit) {
+      if (!next) next = start + limit;
+      continue;  // keep counting the total
+    }
+    objects.push_back(objectFields(m, o, fields));
+  }
+  json result = {{"objects", objects}, {"total", matched}, {"sequence", m.document().sequence()}};
+  if (next) result["next_cursor"] = std::to_string(*next);
+  return result;
+}
+
+json aggregateObjects(const doc::Modeler& m, const json& a) {
+  const ObjectFilter filter(a);
+  const std::string by = a.contains("group_by") ? text(a, "group_by") : std::string();
+  if (!by.empty() && by != "kind" && by != "tag" && by != "definition" && by != "name" && by != "parent") {
+    throw ApiError("group_by must be kind, tag, definition, name or parent");
+  }
+  struct Sum {
+    std::size_t count = 0;
+    double volume = 0.0, area = 0.0;
+  };
+  std::map<std::string, Sum> groups;
+  Sum total;
+  for (const doc::Object& o : m.document().objects()) {
+    if (!filter.matches(m.document(), o)) continue;
+    std::string key;
+    if (by == "kind") key = doc::toString(o.kind());
+    if (by == "tag") key = o.layer;
+    if (by == "name") key = o.name;
+    if (by == "parent") key = o.parent;
+    if (by == "definition") {
+      const auto* c = std::get_if<doc::ComponentInstance>(&o.recipe.base);
+      key = c ? c->definitionId : std::string();
+    }
+    Sum add;
+    add.count = 1;
+    // Component placements count with their definition's volume.
+    if (o.kind() == doc::ObjectKind::Solid || o.kind() == doc::ObjectKind::Instance) {
+      add.volume = measuresOf(o.shape).volumeValue();
+    }
+    if (o.kind() == doc::ObjectKind::Face) add.area = measuresOf(o.shape).areaValue();
+    for (Sum* s : {&groups[key], &total}) {
+      s->count += add.count;
+      s->volume += add.volume;
+      s->area += add.area;
+    }
+  }
+  json result = {{"count", total.count}, {"volume", total.volume}, {"area", total.area}};
+  if (!by.empty()) {
+    json list = json::array();
+    for (const auto& [key, s] : groups) {
+      list.push_back({{"key", key}, {"count", s.count}, {"volume", s.volume}, {"area", s.area}});
+    }
+    result["groups"] = list;
+  }
+  return result;
+}
+
+json changesSince(const doc::Modeler& m, const json& a) {
+  const json& since = arg(a, "since");
+  if (!since.is_number_integer() || since.get<long long>() < 0) throw ApiError("'since' must be a sequence number");
+  const doc::Document& d = m.document();
+  const auto changed = d.changedSince(since.get<std::uint64_t>());
+  json result = {{"sequence", d.sequence()}};
+  if (!changed) {
+    result["full"] = true;  // re-read what you need (model reloaded, tags changed, ...)
+    return result;
+  }
+  json present = json::array(), removed = json::array();
+  for (const doc::ObjectId& id : *changed) (d.find(id) ? present : removed).push_back(id);
+  result["full"] = false;
+  result["changed"] = present;
+  result["removed"] = removed;
+  return result;
+}
 
 // --- command table ---------------------------------------------------------------------
 
@@ -663,6 +938,31 @@ const std::vector<CommandDef>& commands() {
          m.setSection(plane);
          return json{{"section", {{"origin", toJson(o)}, {"normal", toJson(n.XYZ())}}}};
        }},
+      {"query_objects",
+       "Find objects without reading the whole model: filters (all optional, combined with AND) kind, tag, "
+       "ids (string or list), name (substring), parent (direct parent id, \"\" = top level), within "
+       "(any ancestor group), definition (component instances of it), visible, region {min, max} (bounds "
+       "overlap). 'fields' picks what to return (default id, name, kind, tag; also visible, parent, color, "
+       "bounds, volume, area, definition, history, parameters, text, or all). Paged: limit (default 200) "
+       "and next_cursor -> cursor. 'sequence' is for get_changes.",
+       SCHEMA({"type": "object", "properties": {
+         "kind": {}, "tag": {}, "ids": {}, "name": {"type": "string"}, "parent": {"type": "string"},
+         "within": {"type": "string"}, "definition": {"type": "string"}, "visible": {"type": "boolean"},
+         "region": {"type": "object"}, "fields": {}, "limit": {"type": "integer"}, "cursor": {"type": "string"}}}),
+       [](doc::Modeler& m, const json& a) { return queryObjects(m, a); }},
+      {"aggregate",
+       "Count objects and sum volumes of solids and component placements (mm3) and face areas (mm2), with the same filters as "
+       "query_objects, optionally per group_by: kind, tag, definition, name or parent.",
+       SCHEMA({"type": "object", "properties": {
+         "kind": {}, "tag": {}, "ids": {}, "name": {"type": "string"}, "parent": {"type": "string"},
+         "within": {"type": "string"}, "definition": {"type": "string"}, "visible": {"type": "boolean"},
+         "region": {"type": "object"}, "group_by": {"type": "string"}}}),
+       [](doc::Modeler& m, const json& a) { return aggregateObjects(m, a); }},
+      {"get_changes",
+       "Objects changed or removed since a 'sequence' (from query_objects or an earlier get_changes), so "
+       "an agent can keep its picture of a large model current. full: true means re-query.",
+       SCHEMA({"type": "object", "properties": {"since": {"type": "integer"}}, "required": ["since"]}),
+       [](doc::Modeler& m, const json& a) { return changesSince(m, a); }},
       {"list_tags", "List tags (layers) in use and whether each is visible.",
        SCHEMA({"type": "object", "properties": {}}),
        [](doc::Modeler& m, const json&) {
@@ -730,7 +1030,7 @@ bool isFileCommand(const std::string& name) {
 CommandApi::Effect builtinEffect(const std::string& name) {
   using E = CommandApi::Effect;
   if (name == "list_objects" || name == "get_object" || name == "list_tags" || name == "describe" ||
-      name == "preview") {
+      name == "preview" || name == "query_objects" || name == "aggregate" || name == "get_changes") {
     return E::Read;
   }
   if (isFileCommand(name)) return E::ExternalIo;
