@@ -13,6 +13,7 @@
 #include <TopoDS_Compound.hxx>
 #include <BRep_Tool.hxx>
 #include <TopExp.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS_Vertex.hxx>
 #include <TopoDS_Wire.hxx>
 #include <functional>

@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <set>
 #include <sstream>
 
 #include <nlohmann/json.hpp>
