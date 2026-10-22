@@ -32,6 +32,12 @@ std::optional<std::string> checkRecipe(const Object& object, const RegenContext&
 
 // Atomic save: writes "<path>.tmp", verifies it parses, then renames.
 Status saveDocument(const Document& document, const std::string& path);
+// Before overwriting `path`: keeps the previous `generations` versions as
+// "<path>.bak1" (newest) .. "<path>.bakN". Nothing to do when `path` does
+// not exist yet. The current file is copied, not moved, so a failing save
+// still leaves it in place.
+Status rotateBackups(const std::string& path, int generations);
+std::string backupPath(const std::string& path, int generation);
 Status loadDocument(Document& document, const std::string& path,
                     std::vector<std::string>* warnings = nullptr, bool regenerate = true);
 

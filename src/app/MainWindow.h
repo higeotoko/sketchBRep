@@ -4,6 +4,8 @@
 #include <optional>
 #include <vector>
 
+#include <QDateTime>
+#include <QLockFile>
 #include <QMainWindow>
 #include <QStringList>
 #include <QTimer>
@@ -87,6 +89,32 @@ class MainWindow : public QMainWindow, public ToolHost {
   bool cutSelection();
   void paste();
   bool pasteInPlace();
+  // --- autosave and recovery (docs/12_recovery.md) ------------------------
+  // Unsaved work is written every few minutes to a recovery file of this
+  // session; a session that did not end normally leaves it behind and the
+  // next start offers it back. SBR_RECOVERY_DIR overrides the folder.
+  static QString recoveryDir();
+  struct Recoverable {
+    QString file;          // the recovery model
+    QString originalPath;  // the file it was being edited as ("" = untitled)
+    QDateTime saved;
+  };
+  // Recovery files of sessions that are no longer running (newest first).
+  static std::vector<Recoverable> findRecoverable();
+  static void discardRecovery(const Recoverable& r);
+  // Opens it as unsaved changes to its original file (or untitled).
+  bool recover(const Recoverable& r);
+  // Startup: asks whether to recover what an earlier session left.
+  void offerRecovery();
+  bool autosaveNow();
+  QString recoveryFile() const { return recoveryFile_; }
+  // Minutes between autosaves (0 = off) and backup generations kept on save.
+  void setAutosaveMinutes(int minutes);
+  int autosaveMinutes() const { return autosaveMinutes_; }
+  void setBackupGenerations(int n) { backupGenerations_ = n; }
+  // Ends the session the way a crash would (files stay, the lock goes): tests.
+  void abandonSessionForTest();
+
   // Materials (panel actions; also used by tests).
   MaterialsPanel* materialsPanel() const { return materialsPanel_; }
   PaintTool& paintTool() { return *paintTool_; }
@@ -125,6 +153,9 @@ class MainWindow : public QMainWindow, public ToolHost {
   void commitMeasurement();
   void showGridDialog();
   void editMaterialDialog(const std::string& id);  // "" = new material
+  void startSession();
+  void clearRecovery();
+  void showAutosaveDialog();
   void refreshConstraints();
   void showWallSettingsDialog();
   void showSlabSettingsDialog();
@@ -161,6 +192,12 @@ class MainWindow : public QMainWindow, public ToolHost {
   PropertiesPanel* panel_ = nullptr;
   MaterialsPanel* materialsPanel_ = nullptr;
   QDockWidget* materialsDock_ = nullptr;
+  QTimer* autosaveTimer_ = nullptr;
+  std::unique_ptr<QLockFile> sessionLock_;
+  QString recoveryFile_;
+  std::uint64_t autosavedSequence_ = 0;
+  int autosaveMinutes_ = 5;
+  int backupGenerations_ = 3;
   QLabel* status_ = nullptr;
   QLabel* measurementLabel_ = nullptr;
   QLabel* constraintLabel_ = nullptr;

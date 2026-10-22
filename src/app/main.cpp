@@ -19,6 +19,10 @@ int main(int argc, char** argv) {
   window.show();
 
   const QStringList args = QApplication::arguments();
-  if (args.size() > 1) window.openFile(args.at(1));
+  if (args.size() > 1) {
+    window.openFile(args.at(1));
+  } else {
+    window.offerRecovery();  // work left by a session that did not end normally
+  }
   return QApplication::exec();
 }

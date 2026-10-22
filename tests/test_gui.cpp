@@ -20,6 +20,7 @@
 #include <QListWidget>
 #include <QPushButton>
 #include <QTabBar>
+#include <QTemporaryDir>
 #include <QStandardPaths>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -38,6 +39,7 @@
 #include "sbr/geom/FaceRef.h"
 #include "Viewport.h"
 #include "sbr/api/CommandApi.h"
+#include "sbr/doc/NativeFormat.h"
 #include "sbr/doc/ChangeSummary.h"
 #include "sbr/geom/Measure.h"
 #include "sbr/geom/Validation.h"
@@ -156,6 +158,7 @@ class GuiPhase1 : public QObject {
   void slabToolAndOpeningTool();
   void typedRevisionOnlyRightAfter();
   void escStepsBackAndConstraintsShow();
+  void autosaveRecoveryAndBackups();
 };
 
 namespace {
@@ -2160,6 +2163,65 @@ void GuiPhase1::escStepsBackAndConstraintsShow() {
   esc();  // back to choosing the centre
   QVERIFY(f.window.constraintText().isEmpty());
   QCOMPARE(m.history().undoName(), std::string("Extrude"));  // nothing rotated
+}
+
+// Unsaved work survives a crash (docs/12_recovery.md): autosave to a
+// recovery file of the session, offered back only once that session is
+// gone, opened as unsaved changes to the original file; saving keeps
+// previous versions as .bak1 ...
+void GuiPhase1::autosaveRecoveryAndBackups() {
+  QTemporaryDir recovery;
+  qputenv("SBR_RECOVERY_DIR", recovery.path().toUtf8());
+  QTemporaryDir work;
+  const QString path = QDir(work.path()).filePath(QStringLiteral("house.sbr"));
+  doc::ObjectId first;
+  {
+    Fixture f;
+    QVERIFY(f.setUp());
+    first = f.box(0, 0, 1000, 1000, 1000);
+    QVERIFY(f.window.saveFile(path));
+    QVERIFY(f.window.autosaveNow());
+    QVERIFY(!QFileInfo::exists(f.window.recoveryFile()));  // saved: nothing to recover
+    f.box(2000, 0, 500, 500, 500);  // unsaved change
+    QVERIFY(f.window.autosaveNow());
+    QVERIFY(QFileInfo::exists(f.window.recoveryFile()));
+    // While this session runs, its file is not offered to others.
+    QVERIFY(MainWindow::findRecoverable().empty());
+    f.window.abandonSessionForTest();  // as if it crashed now
+  }
+  const auto found = MainWindow::findRecoverable();
+  QCOMPARE(found.size(), std::size_t(1));
+  QCOMPARE(found.front().originalPath, path);
+  {
+    Fixture f;
+    QVERIFY(f.setUp());
+    QVERIFY(f.window.recover(found.front()));
+    QCOMPARE(f.window.modeler().document().objects().size(), std::size_t(2));
+    QVERIFY(f.window.isWindowModified());           // still to be saved
+    QVERIFY(MainWindow::findRecoverable().empty());  // taken over by this session
+    // Saving writes the original file and keeps the previous version.
+    QVERIFY(f.window.saveFile(path));
+    QVERIFY(QFileInfo::exists(doc::backupPath(path.toStdString(), 1).c_str()));
+    doc::Document previous;
+    QVERIFY(doc::loadDocument(previous, doc::backupPath(path.toStdString(), 1)).ok());
+    QCOMPARE(previous.objects().size(), std::size_t(1));
+    QVERIFY(!QFileInfo::exists(f.window.recoveryFile()));
+    // Generations: newest first, at most the set number.
+    f.window.setBackupGenerations(2);
+    f.box(4000, 0, 500, 500, 500);
+    QVERIFY(f.window.saveFile(path));
+    f.box(6000, 0, 500, 500, 500);
+    QVERIFY(f.window.saveFile(path));
+    doc::Document b1, b2;
+    QVERIFY(doc::loadDocument(b1, doc::backupPath(path.toStdString(), 1)).ok());
+    QVERIFY(doc::loadDocument(b2, doc::backupPath(path.toStdString(), 2)).ok());
+    QCOMPARE(b1.objects().size(), std::size_t(3));
+    QCOMPARE(b2.objects().size(), std::size_t(2));
+    QVERIFY(!QFileInfo::exists(doc::backupPath(path.toStdString(), 3).c_str()));
+  }
+  // A normal end leaves nothing behind.
+  QVERIFY(QDir(recovery.path()).entryList({QStringLiteral("*.sbr")}, QDir::Files).isEmpty());
+  qunsetenv("SBR_RECOVERY_DIR");
 }
 
 QTEST_MAIN(GuiPhase1)

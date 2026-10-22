@@ -782,6 +782,24 @@ Status saveDocument(const Document& document, const std::string& path) {
   return Status::success();
 }
 
+std::string backupPath(const std::string& path, int generation) {
+  return path + ".bak" + std::to_string(generation);
+}
+
+Status rotateBackups(const std::string& path, int generations) {
+  const fs::path current = fs::u8path(path);
+  std::error_code ec;
+  if (generations <= 0 || !fs::exists(current, ec)) return Status::success();
+  fs::remove(fs::u8path(backupPath(path, generations)), ec);
+  for (int k = generations - 1; k >= 1; --k) {
+    const fs::path from = fs::u8path(backupPath(path, k));
+    if (fs::exists(from, ec)) fs::rename(from, fs::u8path(backupPath(path, k + 1)), ec);
+  }
+  fs::copy_file(current, fs::u8path(backupPath(path, 1)), fs::copy_options::overwrite_existing, ec);
+  if (ec) return Status::failure("Cannot keep a backup of " + path + ": " + ec.message());
+  return Status::success();
+}
+
 std::optional<std::string> checkRecipe(const Object& object, const RegenContext& context) {
   const Result<TopoDS_Shape> regenerated = regenerate(object.recipe, context);
   if (!regenerated) {

@@ -8,6 +8,10 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QSettings>
+#include <QFile>
+#include <QLocale>
+#include <QStandardPaths>
+#include <QUuid>
 #include <QRegularExpression>
 #include <QActionGroup>
 #include <QApplication>
@@ -53,6 +57,7 @@
 #include "PropertiesPanel.h"
 #include "Viewport.h"
 #include "sbr/Units.h"
+#include "sbr/doc/NativeFormat.h"
 #include "sbr/geom/FaceRef.h"
 #include "sbr/geom/Measure.h"
 
@@ -106,10 +111,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   if (QSettings().value(QStringLiteral("ai/bridgeEnabled"), false).toBool()) aiAction_->setChecked(true);
   refreshPanels();
   updateTitle();
+  startSession();
 }
 
 MainWindow::~MainWindow() {
   geom::setProgressIndicator(nullptr);
+  // A normal end leaves no recovery file behind (a crash does).
+  if (sessionLock_) clearRecovery();
   // Tools reference the viewport; drop them before child widgets go away.
   if (active_) active_->deactivate();
   viewport_->setTool(nullptr);
@@ -370,6 +378,7 @@ void MainWindow::buildMenus() {
     exportImage(path);
   });
   file->addSeparator();
+  file->addAction(tr("自動保存とバックアップの設定..."), this, &MainWindow::showAutosaveDialog);
   file->addAction(tr("終了(&X)"), QKeySequence::Quit, this, &QWidget::close);
 
   // --- Edit
@@ -1427,6 +1436,191 @@ bool MainWindow::applyMaterialToSelection(const std::string& id) {
   return true;
 }
 
+// --- autosave and recovery ------------------------------------------------------
+
+QString MainWindow::recoveryDir() {
+  const QString overridden = qEnvironmentVariable("SBR_RECOVERY_DIR");
+  QString dir = !overridden.isEmpty() ? overridden
+                                      : QDir(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation))
+                                            .filePath(QStringLiteral("recovery"));
+  QDir().mkpath(dir);
+  return dir;
+}
+
+void MainWindow::startSession() {
+  const QSettings settings;
+  autosaveMinutes_ = settings.value(QStringLiteral("autosave/minutes"), 5).toInt();
+  backupGenerations_ = settings.value(QStringLiteral("backup/generations"), 3).toInt();
+  const QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+  const QDir dir(recoveryDir());
+  // The lock says "this session is running": its recovery file is not
+  // offered to other windows while it is held.
+  sessionLock_ = std::make_unique<QLockFile>(dir.filePath(id + QStringLiteral(".lock")));
+  sessionLock_->setStaleLockTime(0);
+  sessionLock_->tryLock(0);
+  recoveryFile_ = dir.filePath(id + QStringLiteral(".sbr"));
+  autosavedSequence_ = modeler_.document().sequence();
+  autosaveTimer_ = new QTimer(this);
+  connect(autosaveTimer_, &QTimer::timeout, this, [this] { autosaveNow(); });
+  setAutosaveMinutes(autosaveMinutes_);
+}
+
+void MainWindow::setAutosaveMinutes(int minutes) {
+  autosaveMinutes_ = std::max(0, minutes);
+  if (!autosaveTimer_) return;
+  if (autosaveMinutes_ == 0) {
+    autosaveTimer_->stop();
+  } else {
+    autosaveTimer_->start(autosaveMinutes_ * 60 * 1000);
+  }
+}
+
+bool MainWindow::autosaveNow() {
+  if (recoveryFile_.isEmpty()) return false;
+  const doc::Document& document = modeler_.document();
+  if (modeler_.history().isClean()) {  // nothing that is not in a file
+    clearRecovery();
+    return true;
+  }
+  if (document.sequence() == autosavedSequence_ && QFileInfo::exists(recoveryFile_)) return true;
+  viewport_->storeCamera(modeler_.document().settings().camera);
+  const Status s = doc::saveDocument(document, utf8(recoveryFile_));
+  if (!s) {
+    statusBar()->showMessage(tr("自動保存できませんでした: %1").arg(QString::fromStdString(s.message())), 8000);
+    return false;
+  }
+  QFile meta(recoveryFile_.chopped(4) + QStringLiteral(".json"));
+  if (meta.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+    const nlohmann::json j = {{"original", utf8(currentPath_)},
+                              {"saved", QDateTime::currentDateTime().toString(Qt::ISODate).toStdString()}};
+    meta.write(QByteArray::fromStdString(j.dump()));
+  }
+  autosavedSequence_ = document.sequence();
+  statusBar()->showMessage(tr("自動保存しました（復旧用）"), 2500);
+  return true;
+}
+
+void MainWindow::clearRecovery() {
+  if (recoveryFile_.isEmpty()) return;
+  QFile::remove(recoveryFile_);
+  QFile::remove(recoveryFile_.chopped(4) + QStringLiteral(".json"));
+  autosavedSequence_ = modeler_.document().sequence();
+}
+
+void MainWindow::abandonSessionForTest() {
+  if (autosaveTimer_) autosaveTimer_->stop();
+  sessionLock_.reset();  // unlocks; the recovery files stay as after a crash
+  recoveryFile_.clear();
+}
+
+std::vector<MainWindow::Recoverable> MainWindow::findRecoverable() {
+  std::vector<Recoverable> out;
+  const QDir dir(recoveryDir());
+  for (const QFileInfo& model : dir.entryInfoList({QStringLiteral("*.sbr")}, QDir::Files)) {
+    const QString base = model.completeBaseName();
+    // A session still running holds its lock.
+    QLockFile lock(dir.filePath(base + QStringLiteral(".lock")));
+    lock.setStaleLockTime(0);
+    if (!lock.tryLock(0)) continue;
+    lock.unlock();
+    Recoverable r{model.absoluteFilePath(), QString(), model.lastModified()};
+    QFile meta(dir.filePath(base + QStringLiteral(".json")));
+    if (meta.open(QIODevice::ReadOnly)) {
+      try {
+        const nlohmann::json j = nlohmann::json::parse(meta.readAll().toStdString());
+        r.originalPath = QString::fromStdString(j.value("original", std::string()));
+      } catch (...) {
+      }
+    }
+    out.push_back(r);
+  }
+  std::sort(out.begin(), out.end(), [](const Recoverable& a, const Recoverable& b) { return a.saved > b.saved; });
+  return out;
+}
+
+void MainWindow::discardRecovery(const Recoverable& r) {
+  QFile::remove(r.file);
+  QFile::remove(r.file.chopped(4) + QStringLiteral(".json"));
+}
+
+bool MainWindow::recover(const Recoverable& r) {
+  if (active_) active_->cancel();
+  exitGroup();
+  std::vector<std::string> warnings;
+  const Status s = modeler_.load(utf8(r.file), &warnings, false);
+  if (!s) {
+    reportError(tr("復旧できませんでした: %1").arg(QString::fromStdString(s.message())));
+    return false;
+  }
+  startRecipeVerification();
+  currentPath_ = r.originalPath;
+  modeler_.history().markDirty();  // not saved to its file yet
+  setSelection({});
+  viewport_->syncNow();
+  viewport_->restoreCamera(modeler_.document().settings().camera);
+  refreshScenes();
+  updateTitle();
+  // This session keeps it safe from now on; the old file can go.
+  autosavedSequence_ = 0;
+  autosaveNow();
+  discardRecovery(r);
+  setStatus(tr("前回の作業を復旧しました。保存すると %1 に書き込みます")
+                .arg(r.originalPath.isEmpty() ? tr("新しいファイル") : r.originalPath));
+  return true;
+}
+
+void MainWindow::offerRecovery() {
+  const std::vector<Recoverable> found = findRecoverable();
+  if (found.empty()) return;
+  const Recoverable& newest = found.front();
+  const QString what = newest.originalPath.isEmpty() ? tr("無題のモデル") : QFileInfo(newest.originalPath).fileName();
+  QMessageBox box(QMessageBox::Question, tr("作業の復旧"),
+                  tr("前回、正しく終了しなかった作業があります。\n%1（%2 に自動保存）\n\n復旧しますか？")
+                      .arg(what, QLocale().toString(newest.saved, QLocale::ShortFormat)),
+                  QMessageBox::NoButton, this);
+  QPushButton* restore = box.addButton(tr("復旧する"), QMessageBox::AcceptRole);
+  QPushButton* discard = box.addButton(tr("破棄する"), QMessageBox::DestructiveRole);
+  box.addButton(tr("あとで"), QMessageBox::RejectRole);
+  if (found.size() > 1) box.setInformativeText(tr("ほかに %1 件あります（次回の起動でも確認できます）").arg(found.size() - 1));
+  box.exec();
+  if (box.clickedButton() == restore) {
+    recover(newest);
+  } else if (box.clickedButton() == discard) {
+    discardRecovery(newest);
+  }
+}
+
+void MainWindow::showAutosaveDialog() {
+  QDialog dialog(this);
+  dialog.setWindowTitle(tr("自動保存とバックアップ"));
+  auto* form = new QFormLayout(&dialog);
+  auto* minutes = new QSpinBox(&dialog);
+  minutes->setRange(0, 60);
+  minutes->setSuffix(tr(" 分ごと"));
+  minutes->setSpecialValueText(tr("しない"));
+  minutes->setValue(autosaveMinutes_);
+  auto* generations = new QSpinBox(&dialog);
+  generations->setRange(0, 20);
+  generations->setSuffix(tr(" 世代"));
+  generations->setSpecialValueText(tr("残さない"));
+  generations->setValue(backupGenerations_);
+  form->addRow(tr("自動保存（復旧用）"), minutes);
+  form->addRow(tr("保存時に前の版を残す"), generations);
+  form->addRow(new QLabel(tr("自動保存は元のファイルを書き換えません（復旧用の別ファイル）。\n"
+                             "前の版は「ファイル名.sbr.bak1」（新しい順）として同じフォルダに残ります。"),
+                          &dialog));
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+  form->addRow(buttons);
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  if (dialog.exec() != QDialog::Accepted) return;
+  setAutosaveMinutes(minutes->value());
+  backupGenerations_ = generations->value();
+  QSettings settings;
+  settings.setValue(QStringLiteral("autosave/minutes"), autosaveMinutes_);
+  settings.setValue(QStringLiteral("backup/generations"), backupGenerations_);
+}
+
 bool MainWindow::placeOpeningsOnSelection(int count, double width, double height, double sill,
                                           std::optional<double> spacing) {
   if (selection_.size() != 1) {
@@ -1723,6 +1917,7 @@ void MainWindow::newDocument() {
   exitGroup();
   modeler_.newDocument();
   currentPath_.clear();
+  clearRecovery();
   setSelection({});
   viewport_->setStandardView(Viewport::StandardView::Iso);
   refreshScenes();
@@ -1788,6 +1983,10 @@ void MainWindow::startRecipeVerification() {
 
 bool MainWindow::saveFile(const QString& path) {
   viewport_->storeCamera(modeler_.document().settings().camera);
+  // Previous versions of the file stay as .bak1 .. .bakN.
+  if (const Status kept = doc::rotateBackups(utf8(path), backupGenerations_); !kept) {
+    reportError(QString::fromStdString(kept.message()));
+  }
   const Status s = modeler_.save(utf8(path));
   if (!s) {
     reportError(tr("保存できませんでした: %1").arg(QString::fromStdString(s.message())));
@@ -1796,6 +1995,7 @@ bool MainWindow::saveFile(const QString& path) {
   }
   currentPath_ = path;
   updateTitle();
+  clearRecovery();  // the work is in its file now
   statusBar()->showMessage(tr("保存しました: %1").arg(path), 4000);
   return true;
 }
