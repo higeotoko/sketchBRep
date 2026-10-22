@@ -1247,7 +1247,9 @@ json runEditEach(const Context& c, const json& args, int depth) {
 // Column grids: copies of 'source' at the crossings of named grid lines,
 // its reference point (bottom centre of its bounds) on each crossing.
 json runPlaceOnGrid(doc::Modeler& m, const json& args) {
-  const doc::Object& source = object(m, text(args, "source"));
+  // Copy what is needed: copying below adds objects, which can move the
+  // document's storage under a reference.
+  const ObjectId sourceId = object(m, text(args, "source")).id;
   const doc::Document& d = m.document();
   // Grid lines by name; the same name twice is ambiguous and refused.
   std::map<std::string, const doc::Object*> lines;
@@ -1277,7 +1279,7 @@ json runPlaceOnGrid(doc::Modeler& m, const json& args) {
     return gp_Lin(g.point.Transformed(t), g.direction.Transformed(t));
   };
   const std::set<std::string> skip = ObjectFilter::strings(args, "skip");
-  const json b = worldBounds(d, source);
+  const json b = worldBounds(d, object(m, sourceId));
   if (b.is_null()) throw ApiError("the source has no geometry");
   const gp_Pnt lo(xyz(b["min"], "min")), hi(xyz(b["max"], "max"));
   const gp_Pnt reference(0.5 * (lo.X() + hi.X()), 0.5 * (lo.Y() + hi.Y()), lo.Z());
@@ -1304,7 +1306,7 @@ json runPlaceOnGrid(doc::Modeler& m, const json& args) {
   for (const auto& [where, p] : spots) {
     gp_Trsf delta;
     delta.SetTranslation(reference, p);
-    auto copy = m.copy({source.id}, delta);
+    auto copy = m.copy({sourceId}, delta);
     if (!copy) {
       m.history().abortGroup();
       throw ApiError("could not place at " + where + ": " + copy.error());
