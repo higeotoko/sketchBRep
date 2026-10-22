@@ -1009,6 +1009,28 @@ Status Modeler::setLayer(const ObjectId& id, const std::string& layer) {
   return modifyAttribute(document_, history_, id, "Set Tag", [&](Object& o) { o.layer = layer; });
 }
 
+Status Modeler::setAttribute(const std::vector<ObjectId>& ids, const std::string& key, const std::string& value) {
+  if (key.empty()) return Status::failure("Attribute name must not be empty");
+  if (ids.empty()) return Status::failure("Nothing selected");
+  ChangeSet changes(document_);
+  bool any = false;
+  for (const ObjectId& id : ids) {
+    const Object* current = document_.find(id);
+    if (!current) return Status::failure("Object not found");
+    Object o = *current;
+    if (value.empty()) {
+      o.attributes.erase(key);
+    } else {
+      o.attributes[key] = value;
+    }
+    if (o.attributes == current->attributes) continue;
+    changes.modify(o);
+    any = true;
+  }
+  if (any) history_.execute(changes.build("Set Attribute"));
+  return Status::success();
+}
+
 Status Modeler::setColor(const ObjectId& id, const Color& color) {
   return modifyAttribute(document_, history_, id, "Set Color", [&](Object& o) { o.color = color; });
 }

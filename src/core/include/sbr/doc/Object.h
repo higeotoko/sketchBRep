@@ -2,6 +2,7 @@
 // Document layer object.
 
 #include <array>
+#include <map>
 #include <string>
 
 #include <gp_Trsf.hxx>
@@ -32,6 +33,9 @@ struct Object {
   bool visible = true;
   Color color;
   gp_Trsf transform;  // local -> parent placement
+  // Optional meaning ("kind": "wall", "level": "2F", "grid": "X3"), set by
+  // people or agents and used to find objects. Geometry never depends on it.
+  std::map<std::string, std::string> attributes;
 
   Recipe recipe;
   TopoDS_Shape shape;  // canonical shape in local coordinates (cached result of recipe)

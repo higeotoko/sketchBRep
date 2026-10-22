@@ -301,3 +301,43 @@ TEST(Transactions, PlaceOnGridPutsCopiesOnCrossings) {
   a.ok("create_grid", {{"origin", {50000, 0, 0}}, {"x_spacings", {3000}}});
   EXPECT_FALSE(a.call("place_on_grid", {{"source", column}, {"x", {"X1"}}, {"y", {"Y1"}}})["ok"]);
 }
+
+// Meaning attributes: set in bulk, found by filters, grouped, saved.
+TEST(Transactions, AttributesAddressObjectsByMeaning) {
+  Api a;
+  std::vector<std::string> ids;
+  for (int i = 0; i < 6; ++i) ids.push_back(a.box(i * 2000.0));
+  a.ok("set_attribute", {{"ids", {ids[0], ids[1], ids[2]}}, {"key", "level"}, {"value", "1F"}});
+  a.ok("set_attribute", {{"ids", {ids[3], ids[4]}}, {"key", "level"}, {"value", "2F"}});
+  a.ok("set_attribute", {{"ids", {ids[4]}}, {"key", "kind"}, {"value", "window"}});
+  const std::size_t steps = a.modeler.history().undoCount();
+  a.ok("set_attribute", {{"ids", {ids[0]}}, {"key", "level"}, {"value", "1F"}});  // no change
+  EXPECT_EQ(a.modeler.history().undoCount(), steps);
+
+  EXPECT_EQ(a.ok("query_objects", {{"attributes", {{"level", "2F"}}}})["total"], 2);
+  EXPECT_EQ(a.ok("query_objects", {{"attributes", {{"level", "2F"}, {"kind", "window"}}}})["total"], 1);
+  EXPECT_EQ(a.ok("query_objects", {{"attributes", {{"level", "*"}}}})["total"], 5);
+  const json groups = a.ok("aggregate", {{"group_by", "attribute:level"}})["groups"];
+  ASSERT_EQ(groups.size(), 3u);  // "", 1F, 2F
+  EXPECT_EQ(groups[1]["key"], "1F");
+  EXPECT_EQ(groups[1]["count"], 3);
+
+  // Bulk edit by meaning; the attribute change is in the change set.
+  const json done = a.ok("edit_each", {{"where", {{"attributes", {{"level", "2F"}}}}},
+                                       {"commands", {step("set_attribute", {{"ids", {"$id"}}, {"key", "level"},
+                                                                            {"value", "3F"}})}},
+                                       {"expect_count", 2}});
+  EXPECT_EQ(done["changes"]["modified"].size(), 2u);
+  EXPECT_EQ(done["changes"]["modified"][0]["aspects"], json::array({"attributes"}));
+  EXPECT_EQ(a.ok("get_object", {{"id", ids[3]}})["attributes"]["level"], "3F");
+  a.ok("set_attribute", {{"ids", {ids[4]}}, {"key", "kind"}, {"value", ""}});  // removes
+  EXPECT_FALSE(a.ok("get_object", {{"id", ids[4]}})["attributes"].contains("kind"));
+  EXPECT_FALSE(a.call("set_attribute", {{"ids", {ids[0]}}, {"key", ""}, {"value", "x"}})["ok"]);
+
+  // Saved with the model.
+  const std::string path = ::testing::TempDir() + "attributes.sbr";
+  a.ok("save", {{"path", path}});
+  Api b;
+  b.ok("open", {{"path", path}});
+  EXPECT_EQ(b.ok("query_objects", {{"attributes", {{"level", "3F"}}}})["total"], 2);
+}

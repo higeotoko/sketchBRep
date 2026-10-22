@@ -17,7 +17,7 @@ enum ChangeAspect : unsigned {
   kGeometry = 1u << 0,    // shape (recipe / parameters)
   kPlacement = 1u << 1,   // full transform, rotation included
   kVisibility = 1u << 2,  // hidden / shown
-  kAttributes = 1u << 3,  // name, tag, colour
+  kAttributes = 1u << 3,  // name, tag, colour, meaning attributes
   kHierarchy = 1u << 4,   // parent group
 };
 

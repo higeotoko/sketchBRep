@@ -450,6 +450,7 @@ json objectToJson(const Object& o) {
       {"recipe", recipeToJson(o.recipe)},
   };
   if (!o.parent.empty()) j["parent"] = o.parent;
+  if (!o.attributes.empty()) j["attributes"] = o.attributes;
   if (!o.shape.IsNull()) {
     j["geometry"] = {{"brep", geom::shapeToBRepString(o.shape)}, {"volume", geom::volume(o.shape)}};
   }
@@ -476,6 +477,7 @@ Object objectFrom(const json& j, const RegenContext& context, std::vector<std::s
     o.color = Color{c.at(0).get<double>(), c.at(1).get<double>(), c.at(2).get<double>()};
   }
   if (j.contains("transform")) o.transform = trsfFrom(j.at("transform"));
+  if (j.contains("attributes")) o.attributes = j.at("attributes").get<std::map<std::string, std::string>>();
   o.recipe = recipeFrom(j.at("recipe"));
 
   Result<TopoDS_Shape> stored = Result<TopoDS_Shape>::failure("no stored geometry");

@@ -211,6 +211,7 @@ json describeObject(const doc::Modeler& m, const doc::Object& o, bool withFaces)
             {"history", doc::describe(o.recipe)},
             {"bounds", worldBounds(d, o)}};
   if (!o.parent.empty()) j["parent"] = o.parent;
+  if (!o.attributes.empty()) j["attributes"] = o.attributes;
   // Rigid placements keep volume and area: measured on the local shape.
   if (o.kind() == doc::ObjectKind::Solid) j["volume"] = measuresOf(o.shape).volumeValue();
   if (o.kind() == doc::ObjectKind::Face) j["area"] = measuresOf(o.shape).areaValue();
@@ -298,6 +299,7 @@ struct ObjectFilter {
   std::optional<std::string> name, parent, within, definition;
   std::optional<bool> visible;
   std::optional<Bnd_Box> region;
+  std::map<std::string, std::string> attributes;  // all must match ("*" = has the key)
 
   static std::set<std::string> strings(const json& a, const char* key) {
     std::set<std::string> out;
@@ -328,6 +330,14 @@ struct ObjectFilter {
       if (!a.at("visible").is_boolean()) throw ApiError("'visible' must be true or false");
       visible = a.at("visible").get<bool>();
     }
+    if (a.contains("attributes")) {
+      const json& at = a.at("attributes");
+      if (!at.is_object()) throw ApiError("'attributes' must be an object of strings");
+      for (auto it = at.begin(); it != at.end(); ++it) {
+        if (!it.value().is_string()) throw ApiError("'attributes' must be an object of strings");
+        attributes[it.key()] = it.value().get<std::string>();
+      }
+    }
     if (a.contains("region")) {
       const json& r = a.at("region");
       Bnd_Box box;
@@ -349,6 +359,10 @@ struct ObjectFilter {
       if (!c || c->definitionId != *definition) return false;
     }
     if (visible && d.isVisible(o.id) != *visible) return false;
+    for (const auto& [key, value] : attributes) {
+      const auto it = o.attributes.find(key);
+      if (it == o.attributes.end() || (value != "*" && it->second != value)) return false;
+    }
     if (region) {
       const json b = worldBounds(d, o);
       if (b.is_null()) return false;
@@ -398,6 +412,8 @@ json objectFields(const doc::Modeler& m, const doc::Object& o, const std::set<st
       json params = json::array();
       for (const doc::Parameter& p : m.parameters(o.id)) params.push_back({{"key", p.key}, {"value", p.value}});
       j["parameters"] = params;
+    } else if (f == "attributes") {
+      j["attributes"] = o.attributes;
     } else if (f == "text") {
       if (const auto label = doc::annotationLabel(o.recipe)) j["text"] = label->text;
     } else {
@@ -441,8 +457,9 @@ json queryObjects(const doc::Modeler& m, const json& a) {
 json aggregateObjects(const doc::Modeler& m, const json& a) {
   const ObjectFilter filter(a);
   const std::string by = a.contains("group_by") ? text(a, "group_by") : std::string();
-  if (!by.empty() && by != "kind" && by != "tag" && by != "definition" && by != "name" && by != "parent") {
-    throw ApiError("group_by must be kind, tag, definition, name or parent");
+  if (!by.empty() && by != "kind" && by != "tag" && by != "definition" && by != "name" && by != "parent" &&
+      by.rfind("attribute:", 0) != 0) {
+    throw ApiError("group_by must be kind, tag, definition, name, parent or attribute:<key>");
   }
   struct Sum {
     std::size_t count = 0;
@@ -457,6 +474,10 @@ json aggregateObjects(const doc::Modeler& m, const json& a) {
     if (by == "tag") key = o.layer;
     if (by == "name") key = o.name;
     if (by == "parent") key = o.parent;
+    if (by.rfind("attribute:", 0) == 0) {
+      const auto it = o.attributes.find(by.substr(10));
+      key = it == o.attributes.end() ? std::string() : it->second;
+    }
     if (by == "definition") {
       const auto* c = std::get_if<doc::ComponentInstance>(&o.recipe.base);
       key = c ? c->definitionId : std::string();
@@ -940,6 +961,16 @@ const std::vector<CommandDef>& commands() {
          m.setSection(plane);
          return json{{"section", {{"origin", toJson(o)}, {"normal", toJson(n.XYZ())}}}};
        }},
+      {"set_attribute",
+       "Give objects a meaning attribute (e.g. key \"kind\" value \"wall\", key \"level\" value \"2F\") "
+       "to find them later with query_objects / edit_each (attributes filter) or aggregate "
+       "(group_by \"attribute:level\"). An empty value removes the key. One undo step.",
+       SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}},
+               "key": {"type": "string"}, "value": {"type": "string"}}, "required": ["ids", "key", "value"]}),
+       [](doc::Modeler& m, const json& a) {
+         must(m.setAttribute(ids(a, "ids"), text(a, "key"), text(a, "value")));
+         return json::object();
+       }},
       {"place_on_grid",
        "Copy 'source' (e.g. a column) to crossings of grid lines (from create_grid): 'x' and 'y' are line "
        "names like [\"X1\", \"X3\"] or \"all\" (default); 'skip' lists crossings like \"X2/Y1\". The "
@@ -952,21 +983,22 @@ const std::vector<CommandDef>& commands() {
        "Find objects without reading the whole model: filters (all optional, combined with AND) kind, tag, "
        "ids (string or list), name (substring), parent (direct parent id, \"\" = top level), within "
        "(any ancestor group), definition (component instances of it), visible, region {min, max} (bounds "
-       "overlap). 'fields' picks what to return (default id, name, kind, tag; also visible, parent, color, "
-       "bounds, volume, area, definition, history, parameters, text, or all). Paged: limit (default 200) "
+       "overlap), attributes {key: value, or \"*\" for any value}. 'fields' picks what to return (default id, name, kind, tag; also visible, parent, color, "
+       "bounds, volume, area, definition, history, parameters, attributes, text, or all). Paged: limit (default 200) "
        "and next_cursor -> cursor. 'sequence' is for get_changes.",
        SCHEMA({"type": "object", "properties": {
          "kind": {}, "tag": {}, "ids": {}, "name": {"type": "string"}, "parent": {"type": "string"},
          "within": {"type": "string"}, "definition": {"type": "string"}, "visible": {"type": "boolean"},
-         "region": {"type": "object"}, "fields": {}, "limit": {"type": "integer"}, "cursor": {"type": "string"}}}),
+         "region": {"type": "object"}, "attributes": {"type": "object"}, "fields": {}, "limit": {"type": "integer"},
+         "cursor": {"type": "string"}}}),
        [](doc::Modeler& m, const json& a) { return queryObjects(m, a); }},
       {"aggregate",
        "Count objects and sum volumes of solids and component placements (mm3) and face areas (mm2), with the same filters as "
-       "query_objects, optionally per group_by: kind, tag, definition, name or parent.",
+       "query_objects, optionally per group_by: kind, tag, definition, name, parent or attribute:<key>.",
        SCHEMA({"type": "object", "properties": {
          "kind": {}, "tag": {}, "ids": {}, "name": {"type": "string"}, "parent": {"type": "string"},
          "within": {"type": "string"}, "definition": {"type": "string"}, "visible": {"type": "boolean"},
-         "region": {"type": "object"}, "group_by": {"type": "string"}}}),
+         "region": {"type": "object"}, "attributes": {"type": "object"}, "group_by": {"type": "string"}}}),
        [](doc::Modeler& m, const json& a) { return aggregateObjects(m, a); }},
       {"get_changes",
        "Objects changed or removed since a 'sequence' (from query_objects or an earlier get_changes), so "

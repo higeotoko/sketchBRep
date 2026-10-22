@@ -292,6 +292,16 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
   });
 
   detailsForm->addRow(tr("種類"), new QLabel(kindLabel(o->kind())));
+  if (!o->attributes.empty()) {
+    // Meaning attributes (set by people or agents, e.g. level = 2F).
+    QStringList pairs;
+    for (const auto& [key, value] : o->attributes) {
+      pairs << QStringLiteral("%1 = %2").arg(QString::fromStdString(key), QString::fromStdString(value));
+    }
+    auto* label = new QLabel(pairs.join(QStringLiteral("\n")));
+    label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    detailsForm->addRow(tr("属性"), label);
+  }
   auto* tag = new QLineEdit(QString::fromStdString(o->layer));
   connect(tag, &QLineEdit::editingFinished, this, [this, id, tag] { emit tagEdited(id, tag->text()); });
   detailsForm->addRow(tr("タグ"), tag);

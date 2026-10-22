@@ -155,6 +155,9 @@ class Modeler {
   Status hide(const std::vector<ObjectId>& ids);
   Status unhideAll();
   Status setLayer(const ObjectId& id, const std::string& layer);
+  // Meaning attributes on several objects in one undo step; an empty value
+  // removes the key.
+  Status setAttribute(const std::vector<ObjectId>& ids, const std::string& key, const std::string& value);
   Status setColor(const ObjectId& id, const Color& color);
   // Paints objects; groups paint all their descendants (one undo step).
   Status paint(const std::vector<ObjectId>& ids, const Color& color);

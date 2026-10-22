@@ -26,7 +26,7 @@ unsigned compareObjects(const Object& before, const Object& after) {
   if (!sameTransform(before.transform, after.transform)) aspects |= kPlacement;
   if (before.visible != after.visible) aspects |= kVisibility;
   if (before.name != after.name || before.layer != after.layer || before.color.r != after.color.r ||
-      before.color.g != after.color.g || before.color.b != after.color.b) {
+      before.color.g != after.color.g || before.color.b != after.color.b || before.attributes != after.attributes) {
     aspects |= kAttributes;
   }
   if (before.parent != after.parent) aspects |= kHierarchy;
