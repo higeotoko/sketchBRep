@@ -5,7 +5,10 @@
 #include <map>
 #include <string>
 
+#include <optional>
+
 #include <gp_Trsf.hxx>
+#include <TopoDS_Edge.hxx>
 #include <TopoDS_Shape.hxx>
 
 #include "sbr/doc/Material.h"
@@ -25,6 +28,16 @@ ObjectId generateObjectId();
 enum class ObjectKind { Empty, Curve, Face, Solid, Shell, Group, Instance, Annotation, Guide, Image, Other };
 const char* toString(ObjectKind kind);
 
+// An edge drawn without its line (SketchUp's hidden edge): the faces on
+// both sides stay split, only the line is not shown. Found again by a point
+// on the edge and its direction there (local coordinates), so it survives
+// regeneration and an edge that grew along its line.
+struct EdgeMark {
+  gp_Pnt point;
+  gp_Dir direction;
+};
+std::optional<EdgeMark> edgeMark(const TopoDS_Edge& localEdge);
+
 struct Object {
   ObjectId id;
   ObjectId parent;  // empty: top level; otherwise a Group object
@@ -39,6 +52,7 @@ struct Object {
   // faces painted on their own (these win).
   std::string material;
   std::vector<FaceMaterial> faceMaterials;
+  std::vector<EdgeMark> hiddenEdges;
   gp_Trsf transform;  // local -> parent placement
   // Optional meaning ("kind": "wall", "level": "2F", "grid": "X3"), set by
   // people or agents and used to find objects. Geometry never depends on it.
@@ -67,5 +81,8 @@ struct FaceMaterialMap {
   std::size_t unresolved = 0;
 };
 FaceMaterialMap resolveFaceMaterials(const Object& object);
+// Hidden edges of the current shape: 1-based indices in
+// TopExp::MapShapes(shape, EDGE) order.
+std::vector<int> hiddenEdgeIndices(const Object& object);
 
 }  // namespace sbr::doc

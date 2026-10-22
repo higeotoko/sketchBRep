@@ -5,7 +5,9 @@
 #include <BRepGProp.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <GProp_GProps.hxx>
+#include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
 
 #include <nlohmann/json.hpp>
@@ -189,4 +191,45 @@ TEST(Reshape, AiCommand) {
   r = call({{"id", box}, {"points", json::array({json::array({1000, 1000, 1000})})}, {"delta", {0, 0, 100}}});
   EXPECT_FALSE(r.value("ok", true));
   EXPECT_NEAR(volume(m, box), 1.25e9, 1e-3);
+}
+
+TEST(HiddenEdges, HideKeepsFacesAndSurvivesEdits) {
+  Modeler m;
+  const ObjectId box = cube(m);
+  // A vertical corner edge of the box.
+  TopoDS_Edge vertical;
+  for (TopExp_Explorer e(m.document().worldShape(box), TopAbs_EDGE); e.More(); e.Next()) {
+    const Bnd_Box b = geom::exactBounds(e.Current());
+    if (b.CornerMax().X() < 1 && b.CornerMax().Y() < 1 && b.CornerMax().Z() - b.CornerMin().Z() > 999) {
+      vertical = TopoDS::Edge(e.Current());
+    }
+  }
+  ASSERT_FALSE(vertical.IsNull());
+  const int faces = faceCount(m.document().worldShape(box));
+  ASSERT_TRUE(m.setEdgesHidden(box, {vertical}, true).ok());
+  EXPECT_EQ(hiddenEdgeIndices(*m.document().find(box)).size(), 1u);
+  EXPECT_EQ(faceCount(m.document().worldShape(box)), faces);  // display only
+
+  // The edge grows with the box: still hidden.
+  ASSERT_TRUE(m.setParameter(box, "op0.distance", 1500).ok());
+  EXPECT_EQ(hiddenEdgeIndices(*m.document().find(box)).size(), 1u);
+  // Scaled with the object, saved and reloaded.
+  ASSERT_TRUE(m.scale({box}, gp_Pnt(0, 0, 0), 2.0).ok());
+  EXPECT_EQ(hiddenEdgeIndices(*m.document().find(box)).size(), 1u);
+  const std::string path = test::tempPath("hidden_edges.sbr");
+  ASSERT_TRUE(m.save(path).ok());
+  Modeler loaded;
+  ASSERT_TRUE(loaded.load(path).ok());
+  EXPECT_EQ(hiddenEdgeIndices(*loaded.document().find(box)).size(), 1u);
+
+  // Show again: by the edge, or everything; undo brings it back.
+  ASSERT_TRUE(m.showHiddenEdges({box}).ok());
+  EXPECT_TRUE(m.document().find(box)->hiddenEdges.empty());
+  ASSERT_TRUE(m.undo());
+  EXPECT_EQ(hiddenEdgeIndices(*m.document().find(box)).size(), 1u);
+  TopTools_IndexedMapOfShape edges;
+  TopExp::MapShapes(m.document().worldShape(box), TopAbs_EDGE, edges);
+  const int index = hiddenEdgeIndices(*m.document().find(box)).front();
+  ASSERT_TRUE(m.setEdgesHidden(box, {TopoDS::Edge(edges(index))}, false).ok());
+  EXPECT_TRUE(m.document().find(box)->hiddenEdges.empty());
 }

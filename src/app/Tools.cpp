@@ -3444,7 +3444,7 @@ void EraserTool::mouseMove(const ToolEvent& e) {
   const doc::Object* o = document.find(picked->objectId);
   const bool line = picked->type == TopAbs_EDGE && target == picked->objectId && o &&
                     (o->kind() == doc::ObjectKind::Solid || o->kind() == doc::ObjectKind::Face);
-  host_.setStatus(line ? QObject::tr("クリックでこの線を消す（面を分けた線なら一枚に戻る）")
+  host_.setStatus(line ? QObject::tr("クリックでこの線を消す（面を分けた線なら一枚に戻る）／ Shift+クリックで線を隠す（面は分かれたまま）")
                        : QObject::tr("クリックで削除"));
 }
 
@@ -3459,6 +3459,13 @@ void EraserTool::mousePress(const ToolEvent& e) {
       (o->kind() == doc::ObjectKind::Solid || o->kind() == doc::ObjectKind::Face)) {
     const TopoDS_Shape edge = host_.viewport().elementShape(*picked);
     if (edge.IsNull()) return;
+    if (e.modifiers & Qt::ShiftModifier) {
+      // SketchUp: Shift with the eraser hides the line instead.
+      const Status s = m.setEdgesHidden(picked->objectId, {TopoDS::Edge(edge)}, true);
+      if (!s) host_.reportError(QString::fromStdString(s.message()));
+      host_.viewport().clearHover();
+      return;
+    }
     const auto r = m.eraseEdge(picked->objectId, TopoDS::Edge(edge));
     if (!r) host_.reportError(QString::fromStdString(r.error()));
     host_.viewport().clearHover();

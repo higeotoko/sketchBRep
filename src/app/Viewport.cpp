@@ -445,7 +445,22 @@ Handle(AIS_Shape) Viewport::makeDisplay(const doc::Object& object, Entry& entry)
     ais->SetColor(rgb(c.r, c.g, c.b));
     showBackSide(ais, object.kind());
   }
-  ais->Attributes()->SetFaceBoundaryDraw(Standard_True);
+  entry.hiddenEdges = doc::hiddenEdgeIndices(object);
+  ais->Attributes()->SetFaceBoundaryDraw(entry.hiddenEdges.empty() ? Standard_True : Standard_False);
+  entry.edgeOverlay.Nullify();
+  if (!entry.hiddenEdges.empty()) {
+    BRep_Builder builder;
+    TopoDS_Compound shown;
+    builder.MakeCompound(shown);
+    for (int i = 1; i <= entry.displayEdges.Extent(); ++i) {
+      if (std::find(entry.hiddenEdges.begin(), entry.hiddenEdges.end(), i) == entry.hiddenEdges.end()) {
+        builder.Add(shown, entry.displayEdges(i));
+      }
+    }
+    entry.edgeOverlay = new AIS_Shape(shown);
+    entry.edgeOverlay->SetColor(Quantity_NOC_BLACK);
+    entry.edgeOverlay->SetWidth(1.5);
+  }
   if (const auto* image = std::get_if<doc::ImageUnderlay>(&object.recipe.base)) showImage(ais, *image);
   ais->Attributes()->SetFaceBoundaryAspect(
       new Prs3d_LineAspect(Quantity_NOC_BLACK, Aspect_TOL_SOLID, 1.5));
@@ -455,8 +470,14 @@ Handle(AIS_Shape) Viewport::makeDisplay(const doc::Object& object, Entry& entry)
   if (object.kind() == doc::ObjectKind::Face || object.kind() == doc::ObjectKind::Curve ||
       object.kind() == doc::ObjectKind::Annotation) {
     ais->SetZLayer(Graphic3d_ZLayerId_Top);
+    if (!entry.edgeOverlay.IsNull()) entry.edgeOverlay->SetZLayer(Graphic3d_ZLayerId_Top);
   }
   return ais;
+}
+
+void Viewport::removeDisplay(Entry& entry) {
+  context_->Remove(entry.ais, Standard_False);
+  if (!entry.edgeOverlay.IsNull()) context_->Remove(entry.edgeOverlay, Standard_False);
 }
 
 gp_Dir Viewport::viewDirection() const {
@@ -716,8 +737,9 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
   const bool needsFaceColors = wanted && !faceColorsOf(*o).empty();
   if (found != entries_.end() &&
       (!wanted || !sameLocatedShape(found->second.canonicalWorld, document.worldShape(*o)) ||
-       needsFaceColors != (dynamic_cast<AIS_ColoredShape*>(found->second.ais.get()) != nullptr))) {
-    context_->Remove(found->second.ais, Standard_False);
+       needsFaceColors != (dynamic_cast<AIS_ColoredShape*>(found->second.ais.get()) != nullptr) ||
+       (o->hiddenEdges.empty() ? std::vector<int>() : doc::hiddenEdgeIndices(*o)) != found->second.hiddenEdges)) {
+    removeDisplay(found->second);
     releaseProto(found->second);
     entries_.erase(found);
     inference_.removeShape(id);
@@ -732,6 +754,7 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
     // Selection mode -1 would make the object permanently unselectable in
     // OCCT 7.6, so display with mode 0 and then apply the tool's pick mode.
     context_->Display(entry.ais, shaded_ ? AIS_Shaded : AIS_WireFrame, 0, Standard_False);
+    if (!entry.edgeOverlay.IsNull()) context_->Display(entry.edgeOverlay, AIS_WireFrame, -1, Standard_False);
     entry.locked = o->locked;
     applyPickMode(entry.ais, entry.locked);
     found = entries_.emplace(id, std::move(entry)).first;
@@ -789,6 +812,10 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
   const double transparency = faded ? 0.8 : (xRay_ ? 0.5 : 0.0);
   if (std::abs(found->second.ais->Transparency() - transparency) > 1e-6) {
     found->second.ais->SetTransparency(transparency);
+    if (!found->second.edgeOverlay.IsNull()) {
+      found->second.edgeOverlay->SetTransparency(transparency);
+      context_->Redisplay(found->second.edgeOverlay, Standard_False);
+    }
     restyled = true;
   }
   // Only what changed is presented again (was: every object on every sync).
@@ -864,7 +891,7 @@ void Viewport::setDisplayQuality(const display::DisplayQuality& quality) {
   drawer->SetMaximalChordialDeviation(quality.linearDeflection);
   drawer->SetDeviationAngle(quality.angularDeflection);
   // Re-tessellate fresh display copies; canonical shapes are untouched.
-  for (auto& [id, entry] : entries_) context_->Remove(entry.ais, Standard_False);
+  for (auto& [id, entry] : entries_) removeDisplay(entry);
   entries_.clear();
   protos_.clear();  // re-tessellate at the new quality
   inference_.setShapes({});

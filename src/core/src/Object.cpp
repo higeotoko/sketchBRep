@@ -3,7 +3,11 @@
 #include <cstdio>
 #include <random>
 
+#include <BRepAdaptor_Curve.hxx>
+#include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
+#include <TopoDS.hxx>
 
 namespace sbr::doc {
 
@@ -60,6 +64,47 @@ Status rebuild(Object& object, const RegenContext& context) {
   if (!result) return result.status();
   object.shape = result.value();
   return Status::success();
+}
+
+std::optional<EdgeMark> edgeMark(const TopoDS_Edge& localEdge) {
+  if (localEdge.IsNull()) return std::nullopt;
+  BRepAdaptor_Curve curve(localEdge);
+  gp_Pnt p;
+  gp_Vec d;
+  curve.D1((curve.FirstParameter() + curve.LastParameter()) / 2.0, p, d);
+  if (d.Magnitude() < 1e-12) return std::nullopt;
+  return EdgeMark{p, gp_Dir(d)};
+}
+
+std::vector<int> hiddenEdgeIndices(const Object& object) {
+  std::vector<int> out;
+  if (object.hiddenEdges.empty() || object.shape.IsNull()) return out;
+  TopTools_IndexedMapOfShape edges;
+  TopExp::MapShapes(object.shape, TopAbs_EDGE, edges);
+  for (int i = 1; i <= edges.Extent(); ++i) {
+    const TopoDS_Edge edge = TopoDS::Edge(edges(i));
+    const auto own = edgeMark(edge);
+    if (!own) continue;
+    BRepAdaptor_Curve curve(edge);
+    const bool straight = curve.GetType() == GeomAbs_Line;
+    for (const EdgeMark& mark : object.hiddenEdges) {
+      if (!own->direction.IsParallel(mark.direction, 1e-6)) continue;
+      bool same = own->point.Distance(mark.point) < 1e-3;
+      if (!same && straight) {
+        // The mark lies on this segment (the edge grew or shrank along its line).
+        const gp_Pnt a = curve.Value(curve.FirstParameter());
+        const gp_Pnt b = curve.Value(curve.LastParameter());
+        const gp_Vec ab(a, b);
+        const double t = gp_Vec(a, mark.point).Dot(ab) / ab.SquareMagnitude();
+        same = t > 0 && t < 1 && a.Translated(ab * t).Distance(mark.point) < 1e-3;
+      }
+      if (same) {
+        out.push_back(i);
+        break;
+      }
+    }
+  }
+  return out;
 }
 
 }  // namespace sbr::doc

@@ -1013,6 +1013,26 @@ const std::vector<CommandDef>& commands() {
          must(m.moveVertices(id, corners, gp_Vec(xyz(arg(a, "delta"), "delta"))));
          return idResult(id);
        }},
+      {"set_edges_hidden",
+       "Hide (hidden=true, default) or show again the lines of edges of a solid, face or open shape. Display "
+       "only: the faces on both sides stay split (e.g. keep a wall divided for two materials without the "
+       "line showing). edges = list of index or {\"near\": [x,y,z]}. One undo step; saved.",
+       SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "edges": {"type": "array"},
+               "hidden": {"type": "boolean"}}, "required": ["id", "edges"]}),
+       [](doc::Modeler& m, const json& a) {
+         const ObjectId id = text(a, "id");
+         std::vector<TopoDS_Edge> edges;
+         for (const json& e : arg(a, "edges")) edges.push_back(selectEdge(m, id, e));
+         must(m.setEdgesHidden(id, edges, a.value("hidden", true)));
+         return json{{"id", id}, {"hidden_edges", m.document().find(id)->hiddenEdges.size()}};
+       }},
+      {"show_hidden_edges", "Show every hidden edge line of the objects (and of what they contain).",
+       SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}}},
+               "required": ["ids"]}),
+       [](doc::Modeler& m, const json& a) {
+         must(m.showHiddenEdges(ids(a, "ids")));
+         return idsResult(ids(a, "ids"));
+       }},
       {"set_parameter", "Change a parameter (see get_object.parameters), e.g. op0.distance or width.",
        SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "key": {"type": "string"},
                "value": {"type": "number"}}, "required": ["id", "key", "value"]}),

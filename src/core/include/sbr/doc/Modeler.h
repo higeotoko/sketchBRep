@@ -115,6 +115,12 @@ class Modeler {
   // edge / corner). Refused when a face would bend or fold, or the solid
   // would cross itself. Painted faces keep their materials.
   Status moveVertices(const ObjectId& id, const std::vector<gp_Pnt>& worldPoints, const gp_Vec& worldDelta);
+  // Hides (or shows again) the lines of edges of a solid, face or open
+  // shape: display only, the faces stay split (SketchUp's hidden edge,
+  // e.g. the line that divides a wall for two materials). One undo step.
+  Status setEdgesHidden(const ObjectId& id, const std::vector<TopoDS_Edge>& worldEdges, bool hidden);
+  // Shows every hidden edge of the objects (and of what they contain).
+  Status showHiddenEdges(const std::vector<ObjectId>& ids);
   // The object a line would split (cheap check for the "split here" hint).
   std::optional<ObjectId> splitTarget(const std::vector<gp_Pnt>& worldPoints) const;
   // If the curve closes a loop with other loose open curves (lines, arcs,

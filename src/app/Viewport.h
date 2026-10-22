@@ -79,6 +79,11 @@ class Viewport : public QWidget {
   bool xRay() const { return xRay_; }
   // Shared display copies in use (one per distinct local shape; tests).
   std::size_t sharedDisplayCount() const { return protos_.size(); }
+  // Edges drawn without their line for an object (tests / status).
+  std::size_t hiddenEdgeCount(const doc::ObjectId& id) const {
+    const auto it = entries_.find(id);
+    return it == entries_.end() || it->second.edgeOverlay.IsNull() ? 0 : it->second.hiddenEdges.size();
+  }
   // Colour the viewport shows on one face (RGB 0..1; tests, eyedropper).
   std::optional<std::array<double, 3>> shownFaceColor(const doc::ObjectId& id, const TopoDS_Face& worldFace) const;
 
@@ -203,6 +208,10 @@ class Viewport : public QWidget {
     TopTools_IndexedMapOfShape canonicalFaces;
     TopTools_IndexedMapOfShape displayEdges;
     TopTools_IndexedMapOfShape canonicalEdges;
+    // Objects with hidden edges draw no face boundaries; their other edges
+    // are this line overlay instead (not pickable).
+    std::vector<int> hiddenEdges;
+    Handle(AIS_Shape) edgeOverlay;
   };
 
   void initViewer();
@@ -217,6 +226,7 @@ class Viewport : public QWidget {
   void syncSection();
   void syncOpenEnds();
   Handle(AIS_Shape) makeDisplay(const doc::Object& object, Entry& entry);
+  void removeDisplay(Entry& entry);
   QPoint devicePos(const QPoint& logical) const;
   void orbit(const QPoint& delta);
   std::optional<doc::ObjectId> idOf(const Handle(AIS_InteractiveObject)& object) const;

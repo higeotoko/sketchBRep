@@ -614,6 +614,11 @@ json objectToJson(const Object& o, const Color& shown, ShapeTable& shapes) {
     }
     j["faceMaterials"] = faces;
   }
+  if (!o.hiddenEdges.empty()) {
+    json edges = json::array();
+    for (const EdgeMark& e : o.hiddenEdges) edges.push_back({{"point", toJson(e.point)}, {"direction", toJson(e.direction)}});
+    j["hiddenEdges"] = edges;
+  }
   if (!o.attributes.empty()) j["attributes"] = o.attributes;
   if (!o.shape.IsNull()) j["geometry"] = shapes.reference(o.shape);
   return j;
@@ -649,6 +654,9 @@ Object objectFrom(const json& j, const RegenContext& context, std::vector<std::s
       if (f.contains("surface")) fm.surface = surfaceRefFrom(f.at("surface"));
       o.faceMaterials.push_back(std::move(fm));
     }
+  }
+  if (j.contains("hiddenEdges")) {
+    for (const json& e : j.at("hiddenEdges")) o.hiddenEdges.push_back({pointFrom(e.at("point")), dirFrom(e.at("direction"))});
   }
   if (j.contains("transform")) o.transform = trsfFrom(j.at("transform"));
   if (j.contains("attributes")) o.attributes = j.at("attributes").get<std::map<std::string, std::string>>();

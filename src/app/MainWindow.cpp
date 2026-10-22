@@ -428,6 +428,32 @@ void MainWindow::buildMenus() {
     if (report(modeler_.fillHoles(selection_))) setStatus(tr("穴をふさぎました"));
   });
   edit->addAction(tr("面の向きを反転（表裏）"), this, [this] { report(modeler_.reverseFaces(selection_)); });
+  edit->addAction(tr("選んだ辺の線を隠す"), this, [this] {
+    // Selected edges keep their faces split; only the line goes (消しゴム Shift+クリックと同じ).
+    std::map<doc::ObjectId, std::vector<TopoDS_Edge>> byObject;
+    for (const ElementRef& el : elementSelection()) {
+      if (el.type != TopAbs_EDGE) continue;
+      const TopoDS_Shape edge = viewport_->elementShape(el);
+      if (!edge.IsNull()) byObject[el.objectId].push_back(TopoDS::Edge(edge));
+    }
+    if (byObject.empty()) {
+      reportError(tr("隠す辺を選択ツールで選んでください"));
+      return;
+    }
+    for (const auto& [id, edges] : byObject) {
+      if (!report(modeler_.setEdgesHidden(id, edges, true))) return;
+    }
+    setSelection({});
+  });
+  edit->addAction(tr("隠した線をすべて表示"), this, [this] {
+    std::vector<doc::ObjectId> ids = selection_;
+    if (ids.empty()) {
+      for (const doc::Object& o : modeler_.document().objects()) {
+        if (o.parent.empty()) ids.push_back(o.id);
+      }
+    }
+    report(modeler_.showHiddenEdges(ids));
+  });
   edit->addAction(tr("すべて選択"), QKeySequence::SelectAll, this, &MainWindow::selectAll);
   edit->addAction(tr("選択を非表示"), QKeySequence(tr("Ctrl+H")), this, [this] {
     const std::vector<doc::ObjectId> ids = selection();

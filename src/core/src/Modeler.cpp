@@ -792,6 +792,68 @@ Status Modeler::moveVertices(const ObjectId& id, const std::vector<gp_Pnt>& worl
   return Status::success();
 }
 
+Status Modeler::setEdgesHidden(const ObjectId& id, const std::vector<TopoDS_Edge>& worldEdges, bool hidden) {
+  const Object* current = document_.find(id);
+  if (!current || current->shape.IsNull()) return Status::failure("Object not found");
+  const ObjectKind kind = current->kind();
+  if (kind != ObjectKind::Solid && kind != ObjectKind::Face && kind != ObjectKind::Shell) {
+    return Status::failure("Edges are hidden on solids, faces and open shapes (inside a group or component, edit it)");
+  }
+  Object o = *current;
+  const gp_Trsf toLocal = document_.worldTransform(o).Inverted();
+  TopTools_IndexedMapOfShape edges;
+  TopExp::MapShapes(o.shape, TopAbs_EDGE, edges);
+  bool changed = false;
+  for (const TopoDS_Edge& world : worldEdges) {
+    const TopoDS_Shape moved = world.Moved(TopLoc_Location(toLocal));
+    int index = edges.FindIndex(moved);
+    for (int i = 1; i <= edges.Extent() && index == 0; ++i) {
+      if (edges(i).TShape() == world.TShape()) index = i;
+    }
+    if (index == 0) return Status::failure("The edge is not part of this object");
+    const std::vector<int> before = hiddenEdgeIndices(o);
+    const bool isHidden = std::find(before.begin(), before.end(), index) != before.end();
+    if (hidden == isHidden) continue;
+    if (hidden) {
+      const auto mark = edgeMark(TopoDS::Edge(edges(index)));
+      if (!mark) return Status::failure("This edge cannot be hidden");
+      o.hiddenEdges.push_back(*mark);
+    } else {
+      // Every mark that finds this edge goes.
+      std::vector<EdgeMark> kept;
+      for (const EdgeMark& mark : o.hiddenEdges) {
+        Object probe = o;
+        probe.hiddenEdges = {mark};
+        const std::vector<int> on = hiddenEdgeIndices(probe);
+        if (std::find(on.begin(), on.end(), index) == on.end()) kept.push_back(mark);
+      }
+      o.hiddenEdges = std::move(kept);
+    }
+    changed = true;
+  }
+  if (!changed) return Status::success();
+  history_.execute(Command{hidden ? "Hide Edge" : "Show Edge",
+                           {ObjectDelta{o.id, *current, o, document_.indexOf(o.id)}}, {}});
+  return Status::success();
+}
+
+Status Modeler::showHiddenEdges(const std::vector<ObjectId>& ids) {
+  ChangeSet changes(document_);
+  bool any = false;
+  for (const ObjectId& root : ids) {
+    for (const ObjectId& id : document_.subtree(root)) {
+      const Object* current = document_.find(id);
+      if (!current || current->hiddenEdges.empty()) continue;
+      Object o = *current;
+      o.hiddenEdges.clear();
+      changes.modify(o);
+      any = true;
+    }
+  }
+  if (any) history_.execute(changes.build("Show Hidden Edges"));
+  return Status::success();
+}
+
 Result<ObjectId> Modeler::eraseEdge(const ObjectId& id, const TopoDS_Edge& worldEdge) {
   using R = Result<ObjectId>;
   const Object* current = document_.find(id);
@@ -1703,6 +1765,7 @@ Status Modeler::scale(const std::vector<ObjectId>& ids, const gp_Pnt& center, do
         if (fm.plane) fm.plane = fm.plane->transformed(scaling);
         if (fm.surface) fm.surface->point.Transform(scaling);
       }
+      for (EdgeMark& mark : o.hiddenEdges) mark.point.Transform(scaling);
       const Status built = rebuild(o, context);
       if (!built) return built;
       changes.modify(o);

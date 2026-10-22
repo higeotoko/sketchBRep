@@ -160,6 +160,7 @@ class GuiPhase1 : public QObject {
   void componentEditInPlace();
   void componentPlacementOwnSizeMirrorAndAxes();
   void moveToolReshapesCornersAndEdges();
+  void eraserShiftHidesEdgeLine();
   void followMeAroundTopFace();
   void wallToolAndArchitectureMenus();
   void slabToolAndOpeningTool();
@@ -2474,6 +2475,38 @@ void GuiPhase1::moveToolReshapesCornersAndEdges() {
   QVERIFY(!f.window.lastError().isEmpty());
   QCOMPARE(m.history().undoCount(), steps);
   QVERIFY(std::abs(volume() - 1.25e9) < 1.0);
+}
+
+// Step 5: Shift+click with the eraser hides an edge's line (faces stay as
+// they are); the viewport draws the object without it.
+void GuiPhase1::eraserShiftHidesEdgeLine() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+  f.vp->syncNow();
+  QCOMPARE(f.vp->hiddenEdgeCount(box), std::size_t(0));
+  f.window.activateTool(MainWindow::ToolId::Eraser);
+  const QPoint edge = f.vp->toWidget(gp_Pnt(0, 0, 500));  // front left vertical edge
+  move(f.vp, edge);
+  send(f.vp, QEvent::MouseButtonPress, edge, Qt::LeftButton, Qt::LeftButton, Qt::ShiftModifier);
+  send(f.vp, QEvent::MouseButtonRelease, edge, Qt::LeftButton, Qt::NoButton, Qt::ShiftModifier);
+  QTest::qWait(20);
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QVERIFY(m.document().find(box));  // not erased
+  QCOMPARE(m.document().find(box)->hiddenEdges.size(), std::size_t(1));
+  f.vp->syncNow();
+  QCOMPARE(f.vp->hiddenEdgeCount(box), std::size_t(1));
+  if (const QString dir = qEnvironmentVariable("SBR_SHOT_DIR"); !dir.isEmpty()) {
+    QVERIFY(m.moveVertices(box, {gp_Pnt(0, 0, 1000), gp_Pnt(1000, 0, 1000)}, gp_Vec(0, 0, 600)).ok());
+    f.vp->syncNow();
+    f.vp->fitAll();
+    f.vp->dumpImage(dir + QStringLiteral("/hidden_edge.png"));
+    QVERIFY(m.undo());
+  }
+  QVERIFY(m.undo());
+  f.vp->syncNow();
+  QCOMPARE(f.vp->hiddenEdgeCount(box), std::size_t(0));
 }
 
 QTEST_MAIN(GuiPhase1)
