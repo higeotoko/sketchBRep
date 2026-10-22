@@ -6,7 +6,8 @@
 #include <Image_PixMap.hxx>
 #include <Graphic3d_AspectFillArea3d.hxx>
 #include <Graphic3d_TextureParams.hxx>
-#include <Graphic3d_Texture2Dmanual.hxx>
+#include <Graphic3d_Texture2D.hxx>
+#include <Standard_Version.hxx>
 #include <TopoDS_Iterator.hxx>
 
 #include <algorithm>
@@ -340,6 +341,20 @@ void showBackSide(const Handle(AIS_Shape)& ais, doc::ObjectKind kind) {
 }
 }  // namespace
 
+namespace {
+// A 2D texture from pixels in memory (OCCT keeps that constructor
+// protected, and its "manual" convenience class is gone in 8.0).
+class PixmapTexture : public Graphic3d_Texture2D {
+ public:
+  explicit PixmapTexture(const Handle(Image_PixMap)& pixels)
+#if OCC_VERSION_HEX >= 0x070700
+      : Graphic3d_Texture2D(pixels, Graphic3d_TypeOfTexture_2D) {}
+#else
+      : Graphic3d_Texture2D(pixels, Graphic3d_TOT_2D) {}
+#endif
+};
+}  // namespace
+
 void Viewport::showImage(const Handle(AIS_Shape)& ais, const doc::ImageUnderlay& underlay) {
   ais->SetColor(Quantity_NOC_WHITE);
   const doc::Document::Image* stored = modeler_.document().findImage(underlay.image);
@@ -363,7 +378,7 @@ void Viewport::showImage(const Handle(AIS_Shape)& ais, const doc::ImageUnderlay&
     std::memcpy(pixels->ChangeRow(static_cast<Standard_Size>(row)), picture.constScanLine(row),
                 static_cast<std::size_t>(picture.width()) * 4);
   }
-  Handle(Graphic3d_Texture2Dmanual) texture = new Graphic3d_Texture2Dmanual(pixels);
+  Handle(Graphic3d_Texture2D) texture = new PixmapTexture(pixels);
   texture->GetParams()->SetModulate(Standard_False);
   texture->GetParams()->SetRepeat(Standard_False);
   ais->Attributes()->SetupOwnShadingAspect();
