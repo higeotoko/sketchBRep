@@ -2,6 +2,7 @@
 
 #include <cmath>
 
+#include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
@@ -775,6 +776,70 @@ TEST(SplitFace, IdentitySurvivesSaveAndLoad) {
   ASSERT_TRUE(reloaded.load(path).ok());
   ASSERT_TRUE(reloaded.setParameter(*wall, "width", 10000).ok());
   EXPECT_NEAR(worldVolume(reloaded, *wall), 10000.0 * 200 * 3000 + 9400.0 * 3000 * 300, 1e-2);
+}
+
+namespace {
+// The edge of `shape` whose middle is closest to `p`.
+TopoDS_Edge edgeNear(const TopoDS_Shape& shape, const gp_Pnt& p) {
+  TopoDS_Edge best;
+  double bestD = 1e300;
+  for (TopExp_Explorer e(shape, TopAbs_EDGE); e.More(); e.Next()) {
+    BRepAdaptor_Curve c(TopoDS::Edge(e.Current()));
+    const gp_Pnt mid = c.Value(0.5 * (c.FirstParameter() + c.LastParameter()));
+    if (mid.Distance(p) < bestD) {
+      bestD = mid.Distance(p);
+      best = TopoDS::Edge(e.Current());
+    }
+  }
+  return best;
+}
+}  // namespace
+
+// The eraser on a dividing line merges the face again; on a real corner it
+// refuses (the shape never changes).
+TEST(SplitFace, ErasingTheLineMergesTheFaceAgain) {
+  doc::Modeler m;
+  auto wall = m.createRectangle(geom::SketchPlane::ground(), 4000, 200);
+  ASSERT_TRUE(m.extrude(*wall, 3000).ok());
+  const double v0 = worldVolume(m, *wall);
+  ASSERT_TRUE(m.splitWithLine({gp_Pnt(0, 0, 1000), gp_Pnt(4000, 0, 1000)}).ok());
+  ASSERT_EQ(faceCount(m.document().worldShape(*wall)), 7);
+  auto erased = m.eraseEdge(*wall, edgeNear(m.document().worldShape(*wall), gp_Pnt(2000, 0, 1000)));
+  ASSERT_TRUE(erased) << erased.error();
+  EXPECT_EQ(*erased, *wall);
+  EXPECT_EQ(faceCount(m.document().worldShape(*wall)), 6);
+  EXPECT_NEAR(worldVolume(m, *wall), v0, 1e-3);
+  EXPECT_EQ(m.history().undoName(), "Erase Line");
+  ASSERT_TRUE(m.undo());
+  EXPECT_EQ(faceCount(m.document().worldShape(*wall)), 7);
+
+  // A real corner (top edge) is refused, unchanged.
+  const std::size_t steps = m.history().undoCount();
+  EXPECT_FALSE(m.eraseEdge(*wall, edgeNear(m.document().worldShape(*wall), gp_Pnt(2000, 0, 3000))).ok());
+  // After pushing the upper part out, the line is a step, not a division.
+  const TopoDS_Face upper = faceWithCentroid(m.document().worldShape(*wall), -gp::DY(), gp_Pnt(2000, 0, 2000));
+  ASSERT_TRUE(m.pushPull(*wall, upper, 300).ok());
+  EXPECT_FALSE(m.eraseEdge(*wall, edgeNear(m.document().worldShape(*wall), gp_Pnt(2000, 0, 1000))).ok());
+  EXPECT_EQ(m.history().undoCount(), steps + 1);  // only the push
+}
+
+TEST(SplitFace, ErasingTheLineOnAProfileJoinsItsParts) {
+  doc::Modeler m;
+  auto profile = m.createRectangle(geom::SketchPlane::ground(), 2000, 1000);
+  ASSERT_TRUE(profile);
+  ASSERT_TRUE(m.splitWithLine({gp_Pnt(800, 0, 0), gp_Pnt(800, 1000, 0)}).ok());
+  ASSERT_EQ(m.document().objects().size(), 2u);
+  const doc::ObjectId part = m.document().objects().front().id;
+  auto merged = m.eraseEdge(part, edgeNear(m.document().worldShape(part), gp_Pnt(800, 500, 0)));
+  ASSERT_TRUE(merged) << merged.error();
+  ASSERT_EQ(m.document().objects().size(), 1u);
+  EXPECT_NEAR(geom::area(m.document().worldShape(*merged)), 2000.0 * 1000, 1e-3);
+  // Still the rectangle: its width parameter edits it.
+  ASSERT_TRUE(m.setParameter(*merged, "width", 3000).ok());
+  EXPECT_NEAR(geom::area(m.document().worldShape(*merged)), 3000.0 * 1000, 1e-3);
+  ASSERT_TRUE(m.undo());
+  ASSERT_TRUE(m.undo());
+  EXPECT_EQ(m.document().objects().size(), 2u);
 }
 
 TEST(SplitFace, RejectsLinesThatDoNotDivideAFace) {

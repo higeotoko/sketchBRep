@@ -74,6 +74,9 @@ const Entry kEntries[] = {
     {"A slab needs at least three corners", "スラブには角が 3 つ以上必要です"},
     {"The slab outline has no area", "スラブの輪郭の面積が 0 です"},
     {"Slab thickness must be positive", "スラブの厚さは正の値にしてください"},
+    {"This edge is a corner of the shape", "この辺は形の角なので消せません（形が壊れるため）。部材ごと消すには面をクリックしてください"},
+    {"This line cannot be erased on its own", "この線だけは消せません（面を分けた線ではないか、後の編集がこの線に頼っています）"},
+    {"The other part of this face is gone", "分けたもう片方の面が押し出し・削除されているため、一枚に戻せません"},
     {"Object not found", "対象が見つかりません"},
 };
 

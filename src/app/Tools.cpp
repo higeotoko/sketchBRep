@@ -3225,19 +3225,41 @@ QString EraserTool::name() const { return QObject::tr("消しゴム"); }
 QCursor EraserTool::cursor() const { return toolCursor(CursorKind::Eraser); }
 
 void EraserTool::activate() {
-  host_.viewport().setPickMode(PickMode::Objects);
+  host_.viewport().setPickMode(PickMode::Elements);
   host_.setMeasurement(QString(), QString());
-  host_.setStatus(QObject::tr("クリックで削除（グループ・コンポーネントは丸ごと）"));
+  host_.setStatus(QObject::tr("面を分けた線をクリックで消して面を一枚に戻す / 面をクリックで部材ごと削除"
+                              "（グループ・コンポーネントは丸ごと）"));
 }
 
-void EraserTool::mouseMove(const ToolEvent& e) { host_.viewport().pickObject(e.pos); }
+void EraserTool::mouseMove(const ToolEvent& e) {
+  const auto picked = host_.viewport().pickElement(e.pos);
+  if (!picked) return;
+  const doc::Document& document = host_.modeler().document();
+  const doc::ObjectId target = addressedAtLevel(document, picked->objectId, host_.editingGroup());
+  const doc::Object* o = document.find(picked->objectId);
+  const bool line = picked->type == TopAbs_EDGE && target == picked->objectId && o &&
+                    (o->kind() == doc::ObjectKind::Solid || o->kind() == doc::ObjectKind::Face);
+  host_.setStatus(line ? QObject::tr("クリックでこの線を消す（面を分けた線なら一枚に戻る）")
+                       : QObject::tr("クリックで削除"));
+}
 
 void EraserTool::mousePress(const ToolEvent& e) {
-  const auto picked = host_.viewport().pickObject(e.pos);
+  const auto picked = host_.viewport().pickElement(e.pos);
   if (!picked) return;
-  const doc::ObjectId target =
-      addressedAtLevel(host_.modeler().document(), *picked, host_.editingGroup());
-  const Status s = host_.modeler().remove({target});
+  doc::Modeler& m = host_.modeler();
+  const doc::ObjectId target = addressedAtLevel(m.document(), picked->objectId, host_.editingGroup());
+  const doc::Object* o = m.document().find(picked->objectId);
+  // An edge of a solid / profile at this level: erase that line only.
+  if (picked->type == TopAbs_EDGE && target == picked->objectId && o &&
+      (o->kind() == doc::ObjectKind::Solid || o->kind() == doc::ObjectKind::Face)) {
+    const TopoDS_Shape edge = host_.viewport().elementShape(*picked);
+    if (edge.IsNull()) return;
+    const auto r = m.eraseEdge(picked->objectId, TopoDS::Edge(edge));
+    if (!r) host_.reportError(QString::fromStdString(r.error()));
+    host_.viewport().clearHover();
+    return;
+  }
+  const Status s = m.remove({target});
   if (!s) host_.reportError(QString::fromStdString(s.message()));
   host_.viewport().clearHover();
 }

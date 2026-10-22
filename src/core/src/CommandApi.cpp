@@ -332,6 +332,35 @@ TopoDS_Face selectFace(const doc::Modeler& m, const ObjectId& id, const json& se
   throw ApiError("'face' must be an index or {\"normal\": [x, y, z], \"near\": [x, y, z]}");
 }
 
+// Edge selection: {"edge": 3} (index in the object's edge map, 1-based) or
+// {"edge": {"near": [x, y, z]}} (the edge closest to the point; ties refused).
+TopoDS_Edge selectEdge(const doc::Modeler& m, const ObjectId& id, const json& selector) {
+  const TopoDS_Shape world = m.document().worldShape(object(m, id));
+  TopTools_IndexedMapOfShape edges;
+  TopExp::MapShapes(world, TopAbs_EDGE, edges);
+  if (selector.is_number_integer()) {
+    const int index = selector.get<int>();
+    if (index < 1 || index > edges.Extent()) throw ApiError("edge index out of range");
+    return TopoDS::Edge(edges(index));
+  }
+  if (!selector.is_object() || !selector.contains("near")) {
+    throw ApiError("'edge' must be an index or {\"near\": [x, y, z]}");
+  }
+  const TopoDS_Vertex v = BRepBuilderAPI_MakeVertex(gp_Pnt(xyz(selector.at("near"), "near"))).Vertex();
+  std::vector<std::pair<double, int>> scored;
+  for (int i = 1; i <= edges.Extent(); ++i) {
+    BRepExtrema_DistShapeShape d(v, edges(i));
+    if (d.IsDone()) scored.emplace_back(d.Value(), i);
+  }
+  if (scored.empty()) throw ApiError("the object has no edges");
+  std::sort(scored.begin(), scored.end());
+  if (scored.size() > 1 && scored[1].first - scored[0].first < 1e-3) {
+    throw ApiError("ambiguous edge: edges " + std::to_string(scored[0].second) + " and " +
+                   std::to_string(scored[1].second) + " are equally close; move 'near' onto the edge you mean");
+  }
+  return TopoDS::Edge(edges(scored.front().second));
+}
+
 doc::BooleanKind booleanKind(const std::string& s) {
   if (s == "union") return doc::BooleanKind::Union;
   if (s == "subtract") return doc::BooleanKind::Subtract;
@@ -902,6 +931,16 @@ const std::vector<CommandDef>& commands() {
          "points": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}}},
          "required": ["points"]}),
        [](doc::Modeler& m, const json& a) { return idResult(must(m.splitWithLine(points(a, "points")))); }},
+      {"erase_edge",
+       "The eraser on a line: a line dividing a flat face (made by split_face, or a line drawn across a "
+       "loose profile) is taken away and the face is one again; the shape itself does not change. A real "
+       "corner of the shape is refused. edge = index or {\"near\": [x,y,z]} (a point on the line). Returns "
+       "the object holding the merged face (a loose profile's parts become one new object).",
+       SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "edge": {}}, "required": ["id", "edge"]}),
+       [](doc::Modeler& m, const json& a) {
+         const ObjectId id = text(a, "id");
+         return idResult(must(m.eraseEdge(id, selectEdge(m, id, arg(a, "edge")))));
+       }},
       {"set_parameter", "Change a parameter (see get_object.parameters), e.g. op0.distance or width.",
        SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "key": {"type": "string"},
                "value": {"type": "number"}}, "required": ["id", "key", "value"]}),

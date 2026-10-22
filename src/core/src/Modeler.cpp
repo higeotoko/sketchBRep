@@ -13,6 +13,9 @@
 #include <TopoDS_Compound.hxx>
 #include <BRep_Tool.hxx>
 #include <TopExp.hxx>
+#include <TopTools_ListOfShape.hxx>
+#include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
+#include <BRepAdaptor_Curve.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS_Vertex.hxx>
 #include <TopoDS_Wire.hxx>
@@ -568,6 +571,115 @@ Result<ObjectId> Modeler::splitWithLine(const std::vector<gp_Pnt>& worldPoints) 
     lastError = s.message();
   }
   return Result<ObjectId>::failure(lastError);
+}
+
+namespace {
+
+double distanceToPolyline(const gp_Pnt& p, const std::vector<gp_Pnt>& line) {
+  double best = std::numeric_limits<double>::max();
+  for (std::size_t k = 1; k < line.size(); ++k) {
+    const gp_Vec ab(line[k - 1], line[k]);
+    const double len2 = ab.SquareMagnitude();
+    double t = len2 > 0 ? gp_Vec(line[k - 1], p).Dot(ab) / len2 : 0.0;
+    t = std::clamp(t, 0.0, 1.0);
+    best = std::min(best, p.Distance(line[k - 1].Translated(ab * t)));
+  }
+  return best;
+}
+
+// The edge lies along the polyline (both ends and the middle).
+bool edgeOnLine(const TopoDS_Edge& edge, const std::vector<gp_Pnt>& line) {
+  BRepAdaptor_Curve c(edge);
+  for (double f : {0.0, 0.5, 1.0}) {
+    const gp_Pnt p = c.Value(c.FirstParameter() + f * (c.LastParameter() - c.FirstParameter()));
+    if (distanceToPolyline(p, line) > 1e-3) return false;
+  }
+  return true;
+}
+
+int faceCount(const TopoDS_Shape& shape) {
+  TopTools_IndexedMapOfShape faces;
+  TopExp::MapShapes(shape, TopAbs_FACE, faces);
+  return faces.Extent();
+}
+
+}  // namespace
+
+Result<ObjectId> Modeler::eraseEdge(const ObjectId& id, const TopoDS_Edge& worldEdge) {
+  using R = Result<ObjectId>;
+  const Object* current = document_.find(id);
+  if (!current || current->shape.IsNull()) return R::failure("Object not found");
+  const R corner = R::failure("This edge is a corner of the shape, not a line dividing a face; "
+                              "erase the whole object by clicking a face");
+  // Loose profile split in parts: put them back together.
+  if (const auto* part = std::get_if<FacePart>(&current->recipe.base); part && current->recipe.modifiers.empty()) {
+    const TopoDS_Edge inParent = TopoDS::Edge(worldEdge.Moved(TopLoc_Location(document_.parentTransform(*current).Inverted())));
+    if (part->source.empty() || !edgeOnLine(inParent, part->line)) return corner;
+    std::vector<ObjectId> parts;
+    for (const Object& o : document_.objects()) {
+      const auto* other = std::get_if<FacePart>(&o.recipe.base);
+      if (!other || o.parent != current->parent || !o.recipe.modifiers.empty() || other->source.empty()) continue;
+      if (other->line.size() != part->line.size()) continue;
+      bool same = other->source.front().name == part->source.front().name;
+      for (std::size_t k = 0; same && k < part->line.size(); ++k) same = other->line[k].Distance(part->line[k]) < 1e-9;
+      if (same) parts.push_back(o.id);
+    }
+    if (parts.size() < 2) return R::failure("The other part of this face is gone (extruded or deleted); cannot merge");
+    const BooleanOperand& source = part->source.front();
+    Object merged;
+    merged.id = generateObjectId();
+    merged.name = source.name.empty() ? current->name : source.name;
+    merged.parent = current->parent;
+    merged.layer = current->layer;
+    merged.color = current->color;
+    merged.material = current->material;
+    merged.transform = source.placement;
+    merged.recipe = *source.recipe;
+    if (!rebuild(merged, document_.regenContext())) return R::failure("The original face could not be rebuilt");
+    ChangeSet changes(document_);
+    for (const ObjectId& p : parts) changes.erase(p);
+    changes.add(merged);
+    history_.execute(changes.build("Erase Line"));
+    return merged.id;
+  }
+  if (current->kind() != ObjectKind::Solid && current->kind() != ObjectKind::Face) return corner;
+  // Solids: the two faces beside the edge must lie in one plane.
+  const gp_Trsf toLocal = document_.worldTransform(*current).Inverted();
+  const TopoDS_Edge local = TopoDS::Edge(worldEdge.Moved(TopLoc_Location(toLocal)));
+  TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
+  TopExp::MapShapesAndAncestors(current->shape, TopAbs_EDGE, TopAbs_FACE, edgeFaces);
+  int index = edgeFaces.FindIndex(local);
+  for (int i = 1; i <= edgeFaces.Extent() && index == 0; ++i) {
+    if (edgeFaces.FindKey(i).TShape() == worldEdge.TShape()) index = i;
+  }
+  if (index == 0) return R::failure("The edge is not part of this object");
+  const TopTools_ListOfShape& beside = edgeFaces(index);
+  if (beside.Extent() != 2) return corner;
+  const auto a = geom::FaceRef::fromFace(TopoDS::Face(beside.First()));
+  const auto b = geom::FaceRef::fromFace(TopoDS::Face(beside.Last()));
+  if (!a || !b || a->normal.Angle(b->normal) > 1e-6 ||
+      std::abs(gp_Vec(a->centroid, b->centroid).Dot(gp_Vec(a->normal))) > 1e-3) {
+    return corner;
+  }
+  // The split that drew this line: dropping it must merge faces and change
+  // nothing else (same volume, fewer faces).
+  const double volume = geom::volume(current->shape);
+  const int faces = faceCount(current->shape);
+  const TopoDS_Edge edge = TopoDS::Edge(edgeFaces.FindKey(index));
+  for (std::size_t k = current->recipe.modifiers.size(); k-- > 0;) {
+    const auto* split = std::get_if<SplitOp>(&current->recipe.modifiers[k]);
+    if (!split || !edgeOnLine(edge, split->points)) continue;
+    Object object = *current;
+    object.recipe.modifiers.erase(object.recipe.modifiers.begin() + static_cast<std::ptrdiff_t>(k));
+    if (!rebuild(object, document_.regenContext())) continue;
+    const double after = geom::volume(object.shape);
+    if (std::abs(after - volume) > 1e-6 * std::max(1.0, std::abs(volume)) || faceCount(object.shape) >= faces) continue;
+    const Status s = commitModified(std::move(object), "Erase Line");
+    if (!s) return R::failure(s.message());
+    return id;
+  }
+  return R::failure("This line cannot be erased on its own (it does not come from a drawn split, or later edits "
+                    "depend on it)");
 }
 
 namespace {

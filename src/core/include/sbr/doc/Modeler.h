@@ -9,6 +9,7 @@
 
 #include <gp_Ax1.hxx>
 #include <gp_Vec.hxx>
+#include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Wire.hxx>
 
@@ -84,6 +85,13 @@ class Modeler {
   // the original recipe. Only objects of the current editing context are
   // considered.
   Result<ObjectId> splitWithLine(const std::vector<gp_Pnt>& worldPoints);
+  // The eraser on an edge (SketchUp): a line that divides a flat face
+  // (drawn with splitWithLine) is taken away and the parts become one face
+  // again - on a solid by dropping that split from its history, on a loose
+  // profile by putting its parts back together. The shape itself never
+  // changes; an edge that is a real corner is refused. Returns the object
+  // that holds the merged face.
+  Result<ObjectId> eraseEdge(const ObjectId& id, const TopoDS_Edge& worldEdge);
   // The object a line would split (cheap check for the "split here" hint).
   std::optional<ObjectId> splitTarget(const std::vector<gp_Pnt>& worldPoints) const;
   // If the curve closes a loop with other loose open curves (lines, arcs,

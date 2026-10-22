@@ -1263,6 +1263,26 @@ void GuiPhase1::eraserDeletesClickedObject() {
   QVERIFY(m.document().find(a));
   QVERIFY(m.undo());
   QVERIFY(m.document().find(b));
+
+  // On a line that divides a face, the eraser takes just the line away:
+  // the face is one again and the object stays.
+  const doc::ObjectId wall = f.box(0, 1500, 3000, 200, 2000);
+  QVERIFY(m.splitWithLine({gp_Pnt(0, 1500, 800), gp_Pnt(3000, 1500, 800)}).ok());
+  auto faces = [&] {
+    int n = 0;
+    for (TopExp_Explorer e(m.document().worldShape(wall), TopAbs_FACE); e.More(); e.Next()) ++n;
+    return n;
+  };
+  QCOMPARE(faces(), 7);
+  QTest::qWait(30);
+  click(f.vp, f.vp->toWidget(gp_Pnt(1500, 1500, 800)));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QVERIFY(m.document().find(wall));
+  QCOMPARE(faces(), 6);
+  // A corner edge is refused with an explanation; nothing changes.
+  click(f.vp, f.vp->toWidget(gp_Pnt(1500, 1500, 2000)));
+  QVERIFY(!f.window.lastError().isEmpty());
+  QCOMPARE(faces(), 6);
 }
 
 void GuiPhase1::aiBridgeOverLocalSocket() {

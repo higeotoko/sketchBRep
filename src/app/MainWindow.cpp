@@ -1806,6 +1806,32 @@ void MainWindow::syncEditContext() {
 
 void MainWindow::deleteSelection() {
   if (selection_.empty()) return;
+  // Only edges selected (dividing lines): erase them, merging their faces.
+  const bool onlyEdges = !elements_.empty() && std::all_of(elements_.begin(), elements_.end(), [](const ElementRef& e) {
+    return e.type == TopAbs_EDGE;
+  });
+  const doc::Object* single = selection_.size() == 1 ? modeler_.document().find(selection_.front()) : nullptr;
+  if (onlyEdges && single && (single->kind() == doc::ObjectKind::Solid || single->kind() == doc::ObjectKind::Face)) {
+    std::vector<TopoDS_Edge> edges;
+    for (const ElementRef& e : elements_) {
+      const TopoDS_Shape edge = viewport_->elementShape(e);
+      if (!edge.IsNull()) edges.push_back(TopoDS::Edge(edge));
+    }
+    modeler_.history().beginGroup("Erase Line");
+    doc::ObjectId id = selection_.front();
+    for (const TopoDS_Edge& edge : edges) {
+      const auto r = modeler_.eraseEdge(id, edge);
+      if (!r) {
+        modeler_.history().abortGroup();
+        reportError(QString::fromStdString(r.error()));
+        return;
+      }
+      id = r.value();
+    }
+    modeler_.history().endGroup();
+    setSelection({});
+    return;
+  }
   if (!elements_.empty()) {
     // Faces/edges cannot be removed from a solid on their own yet; only
     // delete objects whose geometry is selected completely (triple-click).
@@ -1818,7 +1844,8 @@ void MainWindow::deleteSelection() {
       const doc::Object* o = modeler_.document().find(id);
       const bool loose = o && (o->kind() == doc::ObjectKind::Face || o->kind() == doc::ObjectKind::Curve);
       if (!whole && !loose) {
-        reportError(tr("ソリッドの面・エッジ単体は削除できません。トリプルクリックでオブジェクト全体を選んでから削除してください"));
+        reportError(tr("ソリッドの面だけは削除できません（面を分けた線は選んで Delete か消しゴムで消せます）。"
+                       "トリプルクリックでオブジェクト全体を選んでから削除してください"));
         return;
       }
     }

@@ -641,3 +641,15 @@ TEST(Transactions, MaterialOfAFaceOnAllWallsAndRollback) {
   const json renamed = a.ok("preview", {{"commands", {step("update_material", {{"material", brick}, {"name", "赤レンガ"}})}}});
   EXPECT_EQ(renamed["changes"]["materials"], json::array({brick}));
 }
+
+// The eraser through the API: dividing lines go, corners stay.
+TEST(Transactions, EraseEdgeMergesSplitFaces) {
+  Api a;
+  const std::string wall = a.ok("create_box", {{"origin", {0, 0, 0}}, {"width", 4000}, {"depth", 200},
+                                               {"height", 3000}})["id"];
+  a.ok("split_face", {{"points", {{0, 0, 1000}, {4000, 0, 1000}}}});
+  EXPECT_EQ(a.ok("get_object", {{"id", wall}})["faces"].size(), 7u);
+  a.ok("erase_edge", {{"id", wall}, {"edge", {{"near", {2000, 0, 1000}}}}});
+  EXPECT_EQ(a.ok("get_object", {{"id", wall}})["faces"].size(), 6u);
+  EXPECT_FALSE(a.call("erase_edge", {{"id", wall}, {"edge", {{"near", {2000, 0, 3000}}}}})["ok"]);
+}
