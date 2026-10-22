@@ -50,7 +50,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   // Used by tests and the command line.
   bool openFile(const QString& path);
   bool saveFile(const QString& path);
-  enum class ToolId { Select, Line, Rectangle, PushPull, Move, Rotate, Offset, Curve, Revolve, Measure, Circle, Paint, Eraser, Arc, Dimension, Text, Section, FollowMe, Protractor, Polygon, Scale, Paste, Count };
+  enum class ToolId { Select, Line, Rectangle, PushPull, Move, Rotate, Offset, Curve, Revolve, Measure, Circle, Paint, Eraser, Arc, Dimension, Text, Section, FollowMe, Protractor, Polygon, Scale, Wall, Paste, Count };
   void activateTool(ToolId id);
   Tool* activeTool() const { return active_; }
   QLineEdit* measurementBox() const { return measurement_; }
@@ -81,6 +81,20 @@ class MainWindow : public QMainWindow, public ToolHost {
   bool cutSelection();
   void paste();
   bool pasteInPlace();
+  // Architectural helpers behind the Tools menu (also used by tests).
+  WallTool& wallTool() { return *wallTool_; }
+  // Openings into the selected wall: the face picked (face selection) or the
+  // object's largest vertical face.
+  bool placeOpeningsOnSelection(int count, double width, double height, double sill,
+                                std::optional<double> spacing = std::nullopt);
+  // "1F=0, 2F=3000" (units allowed) -> attribute level on the selection
+  // (everything when nothing is selected).
+  bool assignLevelsFromText(const QString& text);
+  // Aligns the selection on a world axis (0 x / 1 y / 2 z) to the first
+  // selected object's min (-1) / centre (0) / max (1).
+  bool alignSelection(int axis, int edge);
+  // Opening `index` (1, 2, ... as in Modeler::openings) of a host.
+  bool resizeOpening(const doc::ObjectId& host, int index, double width, double height);
 
  protected:
   void closeEvent(QCloseEvent* event) override;
@@ -94,6 +108,9 @@ class MainWindow : public QMainWindow, public ToolHost {
   bool maybeSave();
   void commitMeasurement();
   void showGridDialog();
+  void showWallSettingsDialog();
+  void showOpeningsDialog();
+  void showLevelsDialog();
   void newDocument();
   void open();
   bool save();
@@ -142,6 +159,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   std::unique_ptr<PasteTool> pasteTool_;
   std::unique_ptr<PolygonTool> polygonTool_;
   std::unique_ptr<ScaleTool> scaleTool_;
+  std::unique_ptr<WallTool> wallTool_;
   doc::Modeler::Clipboard clipboard_;
   QTimer* verifyTimer_ = nullptr;
   std::size_t verifyCursor_ = 0;

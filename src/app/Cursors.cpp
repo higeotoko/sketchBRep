@@ -206,6 +206,23 @@ QPixmap draw(CursorKind kind, QPoint& hotspot) {
       hotspot = QPoint(2, 30);
       break;
     }
+    case CursorKind::Wall: {
+      // Pencil with a wall block (two courses of bricks).
+      halo(p, pencil());
+      QPainterPath wall;
+      wall.addRect(QRectF(16, 14, 14, 12));
+      wall.moveTo(16, 20);
+      wall.lineTo(30, 20);
+      wall.moveTo(23, 14);
+      wall.lineTo(23, 20);
+      wall.moveTo(19, 20);
+      wall.lineTo(19, 26);
+      wall.moveTo(27, 20);
+      wall.lineTo(27, 26);
+      halo(p, wall);
+      hotspot = QPoint(2, 30);
+      break;
+    }
     case CursorKind::Scale: {
       // Small and large squares sharing a corner, with a diagonal arrow.
       QPainterPath small;

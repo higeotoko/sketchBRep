@@ -149,6 +149,7 @@ class GuiPhase1 : public QObject {
   void aiProposalApplyAndReject();
   void componentEditInPlace();
   void followMeAroundTopFace();
+  void wallToolAndArchitectureMenus();
 };
 
 namespace {
@@ -507,7 +508,7 @@ void GuiPhase1::eachToolHasItsCursor() {
                   MainWindow::ToolId::Curve, MainWindow::ToolId::Circle,
                   MainWindow::ToolId::Measure, MainWindow::ToolId::Revolve, MainWindow::ToolId::Arc,
                   MainWindow::ToolId::Paint, MainWindow::ToolId::Eraser, MainWindow::ToolId::Protractor,
-                  MainWindow::ToolId::Polygon, MainWindow::ToolId::Scale}) {
+                  MainWindow::ToolId::Polygon, MainWindow::ToolId::Scale, MainWindow::ToolId::Wall}) {
     f.window.activateTool(id);
     QCOMPARE(f.vp->cursor().shape(), Qt::BitmapCursor);
     QVERIFY(!f.vp->cursor().pixmap().isNull());
@@ -1789,6 +1790,73 @@ void GuiPhase1::followMeAroundTopFace() {
   QVERIFY(geom::validateShape(m.document().worldShape(ring), true).valid);
   QVERIFY(m.undo());
   QVERIFY(m.document().find(*profile));
+}
+
+void GuiPhase1::wallToolAndArchitectureMenus() {
+  Fixture f;
+  QVERIFY(f.setUp(2000, 1500));
+  doc::Modeler& m = f.window.modeler();
+  f.window.wallTool().setSettings({200.0, 3000.0, 0});
+  f.window.activateTool(MainWindow::ToolId::Wall);
+  // Start, show the direction, type the length.
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(2500, 0, 0)));
+  type(f.vp, QStringLiteral("4000"));
+  // A wrong point, taken back with Esc.
+  click(f.vp, f.vp->toWidget(gp_Pnt(4000, 2000, 0)));
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  QTest::qWait(20);
+  QCOMPARE(m.document().objects().size(), std::size_t(0));
+  click(f.vp, f.vp->toWidget(gp_Pnt(4000, 3000, 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 3000, 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));  // back at the start: closes the run
+  std::vector<doc::ObjectId> walls;
+  double volume = 0;
+  for (const doc::Object& o : m.document().objects()) {
+    const auto k = o.attributes.find("kind");
+    if (k != o.attributes.end() && k->second == "wall") {
+      walls.push_back(o.id);
+      volume += geom::volume(m.document().worldShape(o));
+    }
+  }
+  QCOMPARE(walls.size(), std::size_t(4));
+  // Ring 4200 x 3200 outside, 3800 x 2800 inside, 3 m high (clicked
+  // points are within a pixel).
+  QVERIFY2(std::abs(volume - 2.8e6 * 3000) < 0.005 * 2.8e6 * 3000, qPrintable(QString::number(volume)));
+
+  // Two windows into the first wall (along X; its largest vertical face).
+  f.window.activateTool(MainWindow::ToolId::Select);
+  f.window.setSelection({walls.front()});
+  QVERIFY(f.window.placeOpeningsOnSelection(2, 900, 1200, 900));
+  const doc::ObjectId host = f.window.selection().front();
+  auto openings = m.openings(host);
+  QVERIFY(openings && openings->size() == 2);
+  QTest::qWait(30);
+  QVERIFY(f.window.findChild<QWidget*>(QStringLiteral("opening2")));  // editable in the panel
+  QVERIFY2(f.window.resizeOpening(host, 1, 1000, 1300), qPrintable(f.window.lastError()));
+  openings = m.openings(host);
+  QVERIFY(std::abs(openings->at(0).width - 1000) < 1e-6 && std::abs(openings->at(0).height - 1300) < 1e-6);
+  QVERIFY(std::abs(openings->at(1).width - 900) < 1e-6);
+
+  // Levels for everything (nothing selected), bad text refused.
+  f.window.setSelection({});
+  QVERIFY(!f.window.assignLevelsFromText(QStringLiteral("1F")));
+  QVERIFY(f.window.assignLevelsFromText(QStringLiteral("1F=0, 2F=3m")));
+  QCOMPARE(QString::fromStdString(m.document().find(host)->attributes.at("level")), QStringLiteral("1F"));
+
+  // Align a slab below the walls' base to it.
+  auto slab = m.createSlab({gp_Pnt(0, 0, 0), gp_Pnt(4000, 0, 0), gp_Pnt(4000, 3000, 0), gp_Pnt(0, 3000, 0)}, -500, 200);
+  QVERIFY(slab);
+  f.window.setSelection({host, *slab});
+  QVERIFY(f.window.alignSelection(2, -1));
+  const Bnd_Box b = geom::exactBounds(m.document().worldShape(*m.document().find(*slab)));
+  double x0, y0, z0, x1, y1, z1;
+  b.Get(x0, y0, z0, x1, y1, z1);
+  QVERIFY2(std::abs(z0) < 1e-6, qPrintable(QString::number(z0)));
+  // Undo takes the align back as one step.
+  m.undo();
+  geom::exactBounds(m.document().worldShape(*m.document().find(*slab))).Get(x0, y0, z0, x1, y1, z1);
+  QVERIFY(std::abs(z0 + 700) < 1e-6);
 }
 
 QTEST_MAIN(GuiPhase1)

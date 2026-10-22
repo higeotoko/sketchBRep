@@ -270,6 +270,33 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
     }
   }
 
+  // Openings cut into this object (walls): width x height, editable.
+  if (const auto openings = modeler.openings(id); openings && !openings->empty()) {
+    form_->addRow(new QLabel(tr("<b>開口</b>（幅 × 高さ）")));
+    for (const doc::Modeler::OpeningInfo& op : *openings) {
+      auto* row = new QWidget;
+      auto* h = new QHBoxLayout(row);
+      h->setContentsMargins(0, 0, 0, 0);
+      auto* w = lengthSpin(op.width);
+      auto* ht = lengthSpin(op.height);
+      w->setRange(1, 1e9);
+      ht->setRange(1, 1e9);
+      h->addWidget(w);
+      h->addWidget(ht);
+      const int index = static_cast<int>(op.index);
+      const double w0 = op.width, h0 = op.height;
+      auto commit = [this, id, index, w, ht, w0, h0] {
+        if (std::abs(w->value() - w0) > 1e-9 || std::abs(ht->value() - h0) > 1e-9) {
+          emit openingSizeEdited(id, index, w->value(), ht->value());
+        }
+      };
+      connect(w, &QDoubleSpinBox::editingFinished, this, commit);
+      connect(ht, &QDoubleSpinBox::editingFinished, this, commit);
+      row->setObjectName(QStringLiteral("opening%1").arg(index));
+      form_->addRow(tr("開口 %1").arg(index), row);
+    }
+  }
+
   // ===== Details: folded, for reference ===========================================
   auto* toggle = new QToolButton;
   toggle->setText(tr("詳細"));

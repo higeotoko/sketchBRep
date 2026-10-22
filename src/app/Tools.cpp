@@ -524,6 +524,174 @@ void LineTool::applyMeasurement(const QString& text) {
   updatePreview();
 }
 
+// --- Wall ------------------------------------------------------------------------
+
+QString WallTool::name() const { return QObject::tr("壁"); }
+QCursor WallTool::cursor() const { return toolCursor(CursorKind::Wall); }
+
+QString WallTool::settingsText() const {
+  const QString just = settings_.justification < 0   ? QObject::tr("線の左")
+                       : settings_.justification > 0 ? QObject::tr("線の右")
+                                                      : QObject::tr("中心");
+  return QObject::tr("厚さ %1 / 高さ %2 / %3").arg(mm(settings_.thickness), mm(settings_.height), just);
+}
+
+void WallTool::activate() {
+  resetTracking();
+  host_.viewport().setPickMode(PickMode::None);
+  host_.setMeasurement(QObject::tr("長さ"), QString());
+  host_.setStatus(QObject::tr("壁の始点をクリック（%1。ツール > 壁の設定で変更）").arg(settingsText()));
+}
+
+void WallTool::cancel() {
+  points_.clear();
+  current_.reset();
+  resetLock();
+  host_.viewport().clearPreview();
+  host_.viewport().hideSnap();
+}
+
+void WallTool::deactivate() {
+  // Switching tools keeps what was drawn (like the line tool).
+  finish(false);
+  cancel();
+}
+
+bool WallTool::stepBack() {
+  if (points_.empty()) return false;
+  points_.pop_back();
+  resetLock();
+  updatePreview();
+  host_.setStatus(points_.empty() ? QObject::tr("壁の始点をクリック") : QObject::tr("最後の点を取り消しました"));
+  return true;
+}
+
+std::optional<gp_Pnt> WallTool::pointAt(const ToolEvent& e) {
+  std::optional<gp_Pnt> anchor;
+  std::optional<gp_Pln> plane;
+  if (!points_.empty()) {
+    anchor = points_.back();
+    plane = gp_Pln(points_.front(), gp::DZ());  // walls stand on one level
+  }
+  snap::SnapResult r = snapAt(e, anchor, plane);
+  if (points_.size() >= 2 && !locked_) {
+    const snap::ScreenPoint s = host_.viewport().project(points_.front());
+    if (std::hypot(s.x - e.pos.x(), s.y - e.pos.y()) < 10.0) {
+      r.kind = snap::SnapKind::Endpoint;
+      r.point = points_.front();
+      r.axis.reset();
+      last_ = r;
+      host_.viewport().showSnap(r, anchor);
+    }
+  }
+  if (!r.valid()) return std::nullopt;
+  gp_Pnt p = r.point;
+  if (!points_.empty()) p.SetZ(points_.front().Z());
+  host_.setStatus((points_.empty() ? QObject::tr("壁の始点をクリック")
+                                   : QObject::tr("次の点 / 始点で閉じる / ダブルクリック・Enter で確定 / "
+                                                 "Esc で 1 点戻す")) +
+                  QStringLiteral("  [") + snapLabel(r.kind) + QStringLiteral("]  ") + settingsText() + lockSuffix());
+  return p;
+}
+
+void WallTool::mouseMove(const ToolEvent& e) {
+  current_ = pointAt(e);
+  if (!points_.empty() && current_) {
+    host_.setMeasurement(QObject::tr("長さ"), mm(points_.back().Distance(*current_)));
+    if (points_.size() >= 2 && current_->Distance(points_.front()) < 1e-6) {
+      host_.setStatus(QObject::tr("クリックで閉じて壁を作成します"));
+    }
+  }
+  updatePreview();
+}
+
+void WallTool::mousePress(const ToolEvent& e) {
+  const auto p = pointAt(e);
+  if (p) addPoint(*p);
+}
+
+bool WallTool::mouseDoubleClick(const ToolEvent&) {
+  finish(false);
+  return true;
+}
+
+void WallTool::addPoint(const gp_Pnt& p) {
+  if (!points_.empty() && p.Distance(points_.back()) < tolerance::kMinDimension) return;
+  if (points_.size() >= 3 && p.Distance(points_.front()) < 1e-6) {
+    finish(true);
+    return;
+  }
+  points_.push_back(p);
+  resetLock();
+  updatePreview();
+}
+
+void WallTool::finish(bool closed) {
+  if (points_.size() >= 2) {
+    std::vector<gp_Pnt> pts = points_;
+    if (closed) pts.push_back(points_.front());
+    auto walls = host_.modeler().createWalls(pts, settings_.thickness, settings_.height, settings_.justification);
+    if (!walls) {
+      host_.reportError(QString::fromStdString(walls.error()));
+    } else {
+      host_.setStatus(QObject::tr("壁を %1 枚作成しました（Ctrl+Z で戻せます）").arg(walls->size()));
+    }
+  }
+  points_.clear();
+  current_.reset();
+  resetLock();
+  host_.viewport().clearPreview();
+  host_.setMeasurement(QObject::tr("長さ"), QString());
+}
+
+void WallTool::updatePreview() {
+  std::vector<gp_Pnt> pts = points_;
+  if (current_ && !pts.empty()) pts.push_back(*current_);
+  if (pts.size() < 2) {
+    host_.viewport().clearPreview();
+    return;
+  }
+  // Each segment's band raised to the wall height (joints are worked out
+  // on commit; this shows where the walls go).
+  BRep_Builder builder;
+  TopoDS_Compound preview;
+  builder.MakeCompound(preview);
+  const double t = settings_.thickness;
+  const double o = settings_.justification < 0 ? 0.0 : settings_.justification > 0 ? -t : -t / 2;
+  for (std::size_t i = 0; i + 1 < pts.size(); ++i) {
+    const gp_Vec along(pts[i], pts[i + 1]);
+    if (along.Magnitude() < tolerance::kMinDimension) continue;
+    geom::SketchPlane plane;
+    plane.normal = gp::DZ();
+    plane.xDir = gp_Dir(along);
+    plane.origin = pts[i].Translated(gp_Vec(gp::DZ().Crossed(plane.xDir)) * o);
+    auto band = geom::makeRectangleFace(plane, along.Magnitude(), t);
+    if (!band) continue;
+    builder.Add(preview, BRepPrimAPI_MakePrism(band.value(), gp_Vec(0, 0, settings_.height)).Shape());
+  }
+  host_.viewport().setPreview(preview, true);
+}
+
+void WallTool::applyMeasurement(const QString& text) {
+  if (text.trimmed().isEmpty()) {  // Enter: done
+    finish(false);
+    return;
+  }
+  const auto length = parseOne(text);
+  if (!length || *length <= 0) {
+    host_.reportError(QObject::tr("長さを解釈できません: %1").arg(text));
+    return;
+  }
+  if (points_.empty() || !current_ || current_->Distance(points_.back()) < 1e-9) {
+    host_.reportError(QObject::tr("始点をクリックし、方向を示してから長さを入力してください"));
+    return;
+  }
+  const gp_Dir dir(gp_Vec(points_.back(), *current_));
+  addPoint(points_.back().Translated(gp_Vec(dir) * *length));
+  current_ = points_.back();
+  updatePreview();
+}
+
 // --- Curve ----------------------------------------------------------------------
 
 QString CurveTool::name() const { return QObject::tr("曲線"); }

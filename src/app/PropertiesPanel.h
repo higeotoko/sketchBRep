@@ -41,6 +41,8 @@ class PropertiesPanel : public QWidget {
   void definitionRenamed(const std::string& definitionId, const QString& name);
   void annotationTextEdited(const doc::ObjectId& id, const QString& text);
   void curvePointEdited(const doc::ObjectId& id, int index, double x, double y, double z);
+  // Opening (window/door cut) `index` of a host resized.
+  void openingSizeEdited(const doc::ObjectId& id, int index, double width, double height);
 
  private:
   void rebuildForm(const doc::Modeler& modeler, const std::vector<doc::ObjectId>& selection,

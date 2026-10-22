@@ -8,6 +8,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QSettings>
+#include <QRegularExpression>
 #include <QActionGroup>
 #include <QApplication>
 #include <QCloseEvent>
@@ -35,6 +36,12 @@
 #include <QToolBar>
 
 #include <BRep_Builder.hxx>
+#include <QComboBox>
+#include <QDoubleSpinBox>
+#include <QSpinBox>
+#include <QPlainTextEdit>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
 #include <nlohmann/json.hpp>
 
@@ -45,6 +52,8 @@
 #include "PropertiesPanel.h"
 #include "Viewport.h"
 #include "sbr/Units.h"
+#include "sbr/geom/FaceRef.h"
+#include "sbr/geom/Measure.h"
 
 namespace sbr::app {
 namespace {
@@ -66,6 +75,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   pasteTool_ = std::make_unique<PasteTool>(*this);
   polygonTool_ = std::make_unique<PolygonTool>(*this);
   scaleTool_ = std::make_unique<ScaleTool>(*this);
+  wallTool_ = std::make_unique<WallTool>(*this);
   pasteTool_->setClipboard(&clipboard_);
   pasteTool_->setOnPlaced([this](const std::vector<doc::ObjectId>&) {
     // Leave the paste tool after the current event has been handled.
@@ -288,6 +298,12 @@ void MainWindow::buildUi() {
               if (!report(modeler_.setCurvePoints(id, points))) refreshPanels();
             });
           });
+  connect(panel_, &PropertiesPanel::openingSizeEdited, this,
+          [this](const doc::ObjectId& id, int index, double width, double height) {
+            QTimer::singleShot(0, this, [this, id, index, width, height] {
+              if (!resizeOpening(id, index, width, height)) refreshPanels();
+            });
+          });
   connect(panel_, &PropertiesPanel::visibilityToggled, this,
           [this](const doc::ObjectId& id, bool visible) {
             QTimer::singleShot(0, this, [this, id, visible] { modeler_.setVisible(id, visible); });
@@ -480,6 +496,7 @@ void MainWindow::buildMenus() {
       {tr("選択"), QStringLiteral("Space"), ToolId::Select, CursorKind::Select},
       {tr("線"), QStringLiteral("L"), ToolId::Line, CursorKind::Pencil},
       {tr("矩形"), QStringLiteral("R"), ToolId::Rectangle, CursorKind::Rectangle},
+      {tr("壁"), QStringLiteral("W"), ToolId::Wall, CursorKind::Wall},
       {tr("円"), QStringLiteral("C"), ToolId::Circle, CursorKind::Circle},
       {tr("円弧"), QStringLiteral("A"), ToolId::Arc, CursorKind::Arc},
       {tr("多角形"), QStringLiteral("Shift+C"), ToolId::Polygon, CursorKind::Polygon},
@@ -522,6 +539,18 @@ void MainWindow::buildMenus() {
 
   tools->addSeparator();
   tools->addAction(tr("通り芯を作成..."), this, &MainWindow::showGridDialog);
+  tools->addAction(tr("壁の設定..."), this, &MainWindow::showWallSettingsDialog);
+  tools->addAction(tr("開口を等間隔に配置..."), this, &MainWindow::showOpeningsDialog);
+  tools->addAction(tr("階を割り当て..."), this, &MainWindow::showLevelsDialog);
+  QMenu* alignMenu = tools->addMenu(tr("整列（最初に選んだ物に揃える）"));
+  const char* axisNames[] = {"X", "Y", "Z"};
+  for (int axis = 0; axis < 3; ++axis) {
+    const QString a = QString::fromLatin1(axisNames[axis]);
+    alignMenu->addAction(tr("%1 最小").arg(a), this, [this, axis] { alignSelection(axis, -1); });
+    alignMenu->addAction(tr("%1 中心").arg(a), this, [this, axis] { alignSelection(axis, 0); });
+    alignMenu->addAction(tr("%1 最大").arg(a), this, [this, axis] { alignSelection(axis, 1); });
+    if (axis < 2) alignMenu->addSeparator();
+  }
 
   // --- AI integration (off by default; see docs/06_ai_integration.md)
   QMenu* ai = menuBar()->addMenu(tr("AI 連携(&A)"));
@@ -870,6 +899,7 @@ void MainWindow::activateTool(ToolId id) {
     case ToolId::Paste: active_ = pasteTool_.get(); break;
     case ToolId::Polygon: active_ = polygonTool_.get(); break;
     case ToolId::Scale: active_ = scaleTool_.get(); break;
+    case ToolId::Wall: active_ = wallTool_.get(); break;
     case ToolId::Count: return;
   }
   // Tools without a toolbar button (paste) leave the toolbar unchecked.
@@ -1156,9 +1186,189 @@ void MainWindow::showGridDialog() {
   if (dialog.exec() == QDialog::Accepted) createGrid(xEdit->text(), yEdit->text());
 }
 
+void MainWindow::showWallSettingsDialog() {
+  QDialog dialog(this);
+  dialog.setWindowTitle(tr("壁の設定"));
+  auto* form = new QFormLayout(&dialog);
+  const WallTool::Settings current = wallTool_->settings();
+  auto* thickness = new QLineEdit(QString::fromStdString(units::formatLength(current.thickness, 0)), &dialog);
+  auto* height = new QLineEdit(QString::fromStdString(units::formatLength(current.height, 0)), &dialog);
+  auto* justification = new QComboBox(&dialog);
+  justification->addItems({tr("線の左に寄せる"), tr("線を中心にする"), tr("線の右に寄せる")});
+  justification->setCurrentIndex(current.justification + 1);
+  form->addRow(tr("厚さ"), thickness);
+  form->addRow(tr("高さ"), height);
+  form->addRow(tr("基準線"), justification);
+  form->addRow(new QLabel(tr("進む向きに見て左右。単位 m も可"), &dialog));
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+  form->addRow(buttons);
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  if (dialog.exec() != QDialog::Accepted) return;
+  const auto t = units::parseLength(thickness->text().toStdString());
+  const auto h = units::parseLength(height->text().toStdString());
+  if (!t || !h || *t <= 0 || *h <= 0) {
+    reportError(tr("厚さと高さは正の長さで入力してください"));
+    return;
+  }
+  wallTool_->setSettings({*t, *h, justification->currentIndex() - 1});
+  setStatus(wallTool_->settingsText());
+}
+
+bool MainWindow::placeOpeningsOnSelection(int count, double width, double height, double sill,
+                                          std::optional<double> spacing) {
+  if (selection_.size() != 1) {
+    reportError(tr("開口を入れる壁を 1 つ選んでください（面を選ぶとその面に入ります）"));
+    return false;
+  }
+  const doc::ObjectId host = selection_.front();
+  // The face picked, else the largest vertical planar face of the object.
+  std::optional<gp_Dir> normal;
+  for (const ElementRef& e : elements_) {
+    if (e.objectId != host || e.type != TopAbs_FACE) continue;
+    const TopoDS_Shape f = viewport_->elementShape(e);
+    if (f.IsNull()) continue;
+    if (const auto ref = geom::FaceRef::fromFace(TopoDS::Face(f)); ref && std::abs(ref->normal.Z()) < 1e-6) {
+      normal = ref->normal;
+      break;
+    }
+  }
+  if (!normal) {
+    const doc::Object* o = modeler_.document().find(host);
+    if (!o || o->shape.IsNull()) return false;
+    double best = 0;
+    for (TopExp_Explorer x(modeler_.document().worldShape(*o), TopAbs_FACE); x.More(); x.Next()) {
+      const TopoDS_Face f = TopoDS::Face(x.Current());
+      const auto ref = geom::FaceRef::fromFace(f);
+      if (!ref || std::abs(ref->normal.Z()) > 1e-6) continue;
+      const double a = geom::area(f);
+      if (a > best + 1e-6) {
+        best = a;
+        normal = ref->normal;
+      }
+    }
+  }
+  if (!normal) {
+    reportError(tr("この物には縦の平らな面がありません"));
+    return false;
+  }
+  const auto r = modeler_.placeOpenings(host, *normal, count, width, height, sill, spacing);
+  if (!r) {
+    reportError(QString::fromStdString(r.error()));
+    return false;
+  }
+  elements_.clear();
+  setSelection({r.value()});
+  setStatus(tr("開口を %1 か所あけました（サイズはプロパティで変更できます）").arg(count));
+  return true;
+}
+
+void MainWindow::showOpeningsDialog() {
+  QDialog dialog(this);
+  dialog.setWindowTitle(tr("開口を等間隔に配置"));
+  auto* form = new QFormLayout(&dialog);
+  auto* count = new QSpinBox(&dialog);
+  count->setRange(1, 200);
+  count->setValue(3);
+  auto* width = new QLineEdit(QStringLiteral("1600"), &dialog);
+  auto* height = new QLineEdit(QStringLiteral("1100"), &dialog);
+  auto* sill = new QLineEdit(QStringLiteral("900"), &dialog);
+  auto* spacing = new QLineEdit(&dialog);
+  spacing->setPlaceholderText(tr("空欄なら面に均等"));
+  form->addRow(tr("個数"), count);
+  form->addRow(tr("幅"), width);
+  form->addRow(tr("高さ"), height);
+  form->addRow(tr("床からの高さ（腰）"), sill);
+  form->addRow(tr("中心の間隔"), spacing);
+  form->addRow(new QLabel(tr("選んだ壁の面（面を選んでいなければ一番大きい縦の面）に開けます"), &dialog));
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+  form->addRow(buttons);
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  if (dialog.exec() != QDialog::Accepted) return;
+  const auto w = units::parseLength(width->text().toStdString());
+  const auto h = units::parseLength(height->text().toStdString());
+  const auto s = units::parseLength(sill->text().toStdString());
+  std::optional<double> gap;
+  if (!spacing->text().trimmed().isEmpty()) {
+    gap = units::parseLength(spacing->text().toStdString());
+    if (!gap) {
+      reportError(tr("間隔を長さとして読めません"));
+      return;
+    }
+  }
+  if (!w || !h || !s) {
+    reportError(tr("幅・高さ・腰の高さを長さで入力してください"));
+    return;
+  }
+  placeOpeningsOnSelection(count->value(), *w, *h, *s, gap);
+}
+
+bool MainWindow::resizeOpening(const doc::ObjectId& host, int index, double width, double height) {
+  if (index < 1) return false;  // numbered from 1
+  const Status s = modeler_.setOpeningSize(host, {static_cast<std::size_t>(index)}, width, height);
+  if (!s) {
+    reportError(tr("開口のサイズを変更できません: %1").arg(QString::fromStdString(s.message())));
+    return false;
+  }
+  return true;
+}
+
+bool MainWindow::assignLevelsFromText(const QString& text) {
+  std::vector<doc::Modeler::Level> levels;
+  for (const QString& part : text.split(QRegularExpression(QStringLiteral("[,\\n、]")), Qt::SkipEmptyParts)) {
+    const int eq = part.indexOf(QLatin1Char('='));
+    const QString name = part.left(eq).trimmed();
+    const auto z = eq > 0 ? units::parseLength(part.mid(eq + 1).trimmed().toStdString()) : std::nullopt;
+    if (name.isEmpty() || !z) {
+      reportError(tr("「%1」を読めません（例: 1F=0, 2F=3000）").arg(part.trimmed()));
+      return false;
+    }
+    levels.push_back({name.toStdString(), *z});
+  }
+  if (levels.empty()) {
+    reportError(tr("階を 1 つ以上入力してください（例: 1F=0, 2F=3000）"));
+    return false;
+  }
+  const auto r = modeler_.assignLevels(selection_, levels);
+  if (!r) {
+    reportError(QString::fromStdString(r.error()));
+    return false;
+  }
+  setStatus(tr("%1 個に階を割り当てました（属性 level）").arg(r.value().size()));
+  return true;
+}
+
+void MainWindow::showLevelsDialog() {
+  bool ok = false;
+  const QString text = QInputDialog::getText(
+      this, tr("階を割り当て"),
+      tr("階の名前と床の高さ（例: 1F=0, 2F=3000, RF=6000）\n選んだ物（なければ全体）の一番低い点で決めます"),
+      QLineEdit::Normal, QStringLiteral("1F=0, 2F=3000"), &ok);
+  if (ok) assignLevelsFromText(text);
+}
+
+bool MainWindow::alignSelection(int axis, int edge) {
+  if (selection_.size() < 2) {
+    reportError(tr("2 つ以上選んでください（最初に選んだ物に揃えます）"));
+    return false;
+  }
+  if (!report(modeler_.align(selection_, axis, edge))) return false;
+  setStatus(tr("%1 個を整列しました").arg(selection_.size() - 1));
+  return true;
+}
+
 void MainWindow::commitMeasurement() {
+  const bool typed = userTyping_;
   const QString text = measurement_->text().trimmed();
   userTyping_ = false;
+  // Enter without typing finishes a wall run (the box only shows the
+  // current length then).
+  if (!typed && active_ == wallTool_.get()) {
+    wallTool_->applyMeasurement(QString());
+    viewport_->setFocus();
+    return;
+  }
   if (text.isEmpty() || !active_) return;
   active_->applyMeasurement(text);
   viewport_->setFocus();

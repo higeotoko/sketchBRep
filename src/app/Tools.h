@@ -159,6 +159,43 @@ class LineTool : public DrawingTool {
   std::optional<gp_Pln> drawPlane_;  // plane of the first point (face or horizontal)
 };
 
+// Walls (W): click points like the line tool (inference, typed lengths);
+// clicking the first point closes the outline, double-click / Enter ends
+// an open run, Esc takes the last point back. Thickness, height and
+// justification come from the wall settings. Same as create_wall.
+class WallTool : public DrawingTool {
+ public:
+  struct Settings {
+    double thickness = 200.0;
+    double height = 3000.0;
+    int justification = 0;  // -1 left of the line, 0 centred, 1 right
+  };
+  using DrawingTool::DrawingTool;
+  QString name() const override;
+  QCursor cursor() const override;
+  void activate() override;
+  void deactivate() override;
+  void cancel() override;
+  bool stepBack() override;
+  void mousePress(const ToolEvent& e) override;
+  void mouseMove(const ToolEvent& e) override;
+  bool mouseDoubleClick(const ToolEvent& e) override;
+  void applyMeasurement(const QString& text) override;
+  void setSettings(const Settings& s) { settings_ = s; }
+  const Settings& settings() const { return settings_; }
+  QString settingsText() const;
+
+ private:
+  std::optional<gp_Pnt> pointAt(const ToolEvent& e);
+  void addPoint(const gp_Pnt& p);
+  void finish(bool closed);
+  void updatePreview();
+
+  Settings settings_;
+  std::vector<gp_Pnt> points_;
+  std::optional<gp_Pnt> current_;
+};
+
 // Clicks control-through points of a NURBS curve; Enter/double-click
 // finishes, clicking the first point closes it (periodic curve).
 class CurveTool : public DrawingTool {
