@@ -4,7 +4,11 @@
 // The viewport only ever displays *copies* of canonical shapes (display
 // layer). Picking results are mapped back to canonical faces by index.
 
+#include <cstdint>
 #include <map>
+#include <set>
+
+#include <gp_Lin.hxx>
 #include <optional>
 #include <vector>
 
@@ -114,7 +118,9 @@ class Viewport : public QWidget {
   void clearPreview();
   void showSnap(const snap::SnapResult& result, std::optional<gp_Pnt> anchor);
   void hideSnap();
+  // Schedules a repaint (coalesced); renderNow() draws immediately.
   void redraw();
+  void renderNow();
 
   // --- camera -------------------------------------------------------------
   enum class StandardView { Iso, Top, Front, Right, Back, Left };
@@ -176,6 +182,9 @@ class Viewport : public QWidget {
   void initViewer();
   void displayAxes();
   void applyPickMode(const Handle(AIS_Shape)& ais);
+  // Brings one object's display entry and snap index up to date (created,
+  // replaced, recoloured or removed). Returns true if a guide changed.
+  bool syncObject(const doc::ObjectId& id);
   void syncLabels();
   void syncSection();
   void syncOpenEnds();
@@ -203,6 +212,12 @@ class Viewport : public QWidget {
   std::array<double, 6> sectionKey_{};  // origin + normal of section_
   std::vector<doc::ObjectId> selection_;
   snap::InferenceEngine inference_;
+  std::map<doc::ObjectId, gp_Lin> guideLines_;
+  // Incremental sync: the document sequence last synchronised, and objects
+  // whose appearance (selection, context) must be refreshed regardless.
+  std::uint64_t syncedSequence_ = 0;
+  bool fullSync_ = true;
+  std::set<doc::ObjectId> appearanceDirty_;
   display::DisplayQuality quality_ = display::DisplayQuality::normal();
   bool shaded_ = true;
   bool xRay_ = false;

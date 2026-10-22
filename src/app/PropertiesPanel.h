@@ -1,4 +1,7 @@
 #pragma once
+
+#include <cstdint>
+#include <map>
 // Right-hand panel: object list and parameter editor.
 
 #include <vector>
@@ -11,6 +14,7 @@ class QFormLayout;
 class QLabel;
 class QLineEdit;
 class QTreeWidget;
+class QTreeWidgetItem;
 class QWidget;
 
 namespace sbr::app {
@@ -43,6 +47,11 @@ class PropertiesPanel : public QWidget {
                    const QString& elementSummary);
 
   QTreeWidget* tree_ = nullptr;
+  // The tree is rebuilt only when the document changed (sequence); a
+  // selection change just moves the highlight.
+  std::map<doc::ObjectId, QTreeWidgetItem*> treeItems_;
+  std::uint64_t treeSequence_ = 0;
+  const doc::Document* treeDocument_ = nullptr;
   QWidget* formHost_ = nullptr;
   QFormLayout* form_ = nullptr;
   bool updating_ = false;

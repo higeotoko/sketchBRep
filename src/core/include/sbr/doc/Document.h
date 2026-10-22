@@ -2,10 +2,12 @@
 // The document: object hierarchy, component definitions and settings.
 
 #include <array>
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "sbr/doc/Object.h"
@@ -129,11 +131,41 @@ class Document {
   void addListener(Listener listener) { listeners_.push_back(std::move(listener)); }
   void notify() const;
 
+  // --- change tracking (incremental display / snap updates) ----------------
+  // Every insert / replace / remove gets a new sequence number. Consumers
+  // remember the sequence they last saw and ask what changed since; nullopt
+  // means "everything may have changed" (cleared document, persistent
+  // settings such as hidden tags changed, or the log no longer reaches back
+  // that far): resynchronise fully.
+  std::uint64_t sequence() const { return sequence_; }
+  std::optional<std::vector<ObjectId>> changedSince(std::uint64_t sequence) const;
+  // Persistent settings (tag visibility, sections, scenes) were changed in
+  // place: forces a full resynchronisation and notifies listeners.
+  void settingsChanged();
+
  private:
+  void touch(const ObjectId& id);
+  void invalidateIndex() const;
+  void ensureIndex() const;
+
   std::vector<Object> objects_;
   std::vector<ComponentDefinition> definitions_;
   DocumentSettings settings_;
   std::vector<Listener> listeners_;
+
+  // Lookup indexes, rebuilt lazily after changes that move objects in the
+  // ordered list. Order of objects_ (display / file order) is unchanged.
+  mutable std::unordered_map<ObjectId, std::size_t> index_;
+  mutable std::unordered_map<ObjectId, std::vector<ObjectId>> children_;
+  mutable bool indexValid_ = false;
+
+  struct LogEntry {
+    std::uint64_t sequence;
+    ObjectId id;
+  };
+  std::vector<LogEntry> log_;
+  std::uint64_t sequence_ = 0;
+  std::uint64_t fullChangeSequence_ = 0;  // last change that affects everything
 };
 
 }  // namespace sbr::doc

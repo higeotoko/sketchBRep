@@ -6,7 +6,7 @@ namespace {
 void applySettings(Document& document, const PersistentSettings& settings) {
   if (PersistentSettings::of(document.settings()) == settings) return;
   settings.applyTo(document.settings());
-  document.notify();
+  document.settingsChanged();
 }
 }  // namespace
 

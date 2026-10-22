@@ -84,7 +84,13 @@ struct SnapResult {
 
 class InferenceEngine {
  public:
+  // All shapes at once (shapeIndex = position), replacing any keyed ones.
   void setShapes(const std::vector<TopoDS_Shape>& shapes);
+  // Incremental updates: one entry per key (e.g. object id). Only the given
+  // shape is (re)indexed, so a small edit does not rebuild the whole model.
+  void setShape(const std::string& key, const TopoDS_Shape& shape);
+  void removeShape(const std::string& key);
+  std::size_t shapeCount() const;
   // Guides: infinite construction lines. They snap along their whole length
   // (no end or mid points) and where they cross each other or an edge.
   void setGuides(const std::vector<gp_Lin>& guides);
@@ -100,12 +106,13 @@ class InferenceEngine {
 
  private:
   struct EdgeEntry;
+  struct Slot;
   struct Cache;
-  void rebuildGuidePoints();
-  std::vector<TopoDS_Shape> shapes_;
+  void rebuildGuidePoints() const;
   std::shared_ptr<Cache> cache_;
   std::vector<gp_Lin> guides_;
-  std::vector<gp_Pnt> guidePoints_;
+  mutable std::vector<gp_Pnt> guidePoints_;
+  mutable bool guidePointsDirty_ = false;
   std::optional<gp_Pln> clip_;
   bool seeThrough_ = false;
 };

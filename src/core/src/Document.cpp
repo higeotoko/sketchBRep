@@ -50,21 +50,42 @@ Result<TopoDS_Shape> buildDefinitionShape(const ComponentDefinition& definition,
   return TopoDS_Shape(compound);
 }
 
-const Object* Document::find(const ObjectId& id) const { return findIn(objects_, id); }
+void Document::invalidateIndex() const {
+  indexValid_ = false;
+  index_.clear();
+  children_.clear();
+}
+
+void Document::ensureIndex() const {
+  if (indexValid_) return;
+  index_.clear();
+  children_.clear();
+  index_.reserve(objects_.size());
+  for (std::size_t i = 0; i < objects_.size(); ++i) {
+    index_.emplace(objects_[i].id, i);
+    if (!objects_[i].parent.empty()) children_[objects_[i].parent].push_back(objects_[i].id);
+  }
+  indexValid_ = true;
+}
+
+const Object* Document::find(const ObjectId& id) const {
+  const auto i = indexOf(id);
+  return i ? &objects_[*i] : nullptr;
+}
 
 std::optional<std::size_t> Document::indexOf(const ObjectId& id) const {
-  for (std::size_t i = 0; i < objects_.size(); ++i) {
-    if (objects_[i].id == id) return i;
-  }
-  return std::nullopt;
+  if (id.empty()) return std::nullopt;
+  ensureIndex();
+  const auto it = index_.find(id);
+  if (it == index_.end()) return std::nullopt;
+  return it->second;
 }
 
 std::vector<ObjectId> Document::children(const ObjectId& id) const {
-  std::vector<ObjectId> out;
-  for (const Object& o : objects_) {
-    if (o.parent == id && !id.empty()) out.push_back(o.id);
-  }
-  return out;
+  if (id.empty()) return {};
+  ensureIndex();
+  const auto it = children_.find(id);
+  return it == children_.end() ? std::vector<ObjectId>{} : it->second;
 }
 
 std::vector<ObjectId> Document::subtree(const ObjectId& id) const {
@@ -114,7 +135,16 @@ gp_Trsf Document::parentTransform(const Object& object) const {
   return parent ? worldTransform(*parent) : gp_Trsf();
 }
 
-gp_Trsf Document::worldTransform(const Object& object) const { return worldIn(objects_, object); }
+gp_Trsf Document::worldTransform(const Object& object) const {
+  gp_Trsf t = object.transform;
+  const Object* parent = find(object.parent);
+  int guard = 0;
+  while (parent && guard++ < 1000) {
+    t = parent->transform * t;
+    parent = find(parent->parent);
+  }
+  return t;
+}
 
 TopoDS_Shape Document::worldShape(const Object& object) const {
   return placed(object.shape, worldTransform(object));
@@ -153,25 +183,62 @@ RegenContext Document::regenContext() const {
 
 void Document::insert(Object object, std::optional<std::size_t> index) {
   const std::size_t at = std::min(index.value_or(objects_.size()), objects_.size());
+  const ObjectId id = object.id;
+  const ObjectId parent = object.parent;
+  if (at == objects_.size() && indexValid_) {
+    // Appending keeps the indexes valid (children stay in list order).
+    index_[id] = objects_.size();
+    if (!parent.empty()) children_[parent].push_back(id);
+  } else {
+    invalidateIndex();
+  }
   objects_.insert(objects_.begin() + static_cast<std::ptrdiff_t>(at), std::move(object));
+  touch(id);
   notify();
 }
 
 void Document::replace(const Object& object) {
-  for (Object& o : objects_) {
-    if (o.id == object.id) {
-      o = object;
-      notify();
-      return;
-    }
-  }
+  const auto i = indexOf(object.id);
+  if (!i) return;
+  Object& o = objects_[*i];
+  if (o.parent != object.parent) invalidateIndex();
+  o = object;
+  touch(object.id);
+  notify();
 }
 
 void Document::remove(const ObjectId& id) {
-  const auto it = std::remove_if(objects_.begin(), objects_.end(),
-                                 [&](const Object& o) { return o.id == id; });
-  if (it == objects_.end()) return;
-  objects_.erase(it, objects_.end());
+  const auto i = indexOf(id);
+  if (!i) return;
+  objects_.erase(objects_.begin() + static_cast<std::ptrdiff_t>(*i));
+  invalidateIndex();
+  touch(id);
+  notify();
+}
+
+void Document::touch(const ObjectId& id) {
+  ++sequence_;
+  log_.push_back({sequence_, id});
+  // Bound the log: consumers further behind resynchronise fully.
+  constexpr std::size_t kMaxLog = 1 << 16;
+  if (log_.size() > kMaxLog) log_.erase(log_.begin(), log_.begin() + kMaxLog / 2);
+}
+
+std::optional<std::vector<ObjectId>> Document::changedSince(std::uint64_t sequence) const {
+  if (sequence < fullChangeSequence_) return std::nullopt;
+  if (sequence >= sequence_) return std::vector<ObjectId>{};
+  if (log_.empty() || log_.front().sequence > sequence + 1) return std::nullopt;
+  std::vector<ObjectId> ids;
+  auto it = std::lower_bound(log_.begin(), log_.end(), sequence + 1,
+                             [](const LogEntry& e, std::uint64_t s) { return e.sequence < s; });
+  for (; it != log_.end(); ++it) ids.push_back(it->id);
+  std::sort(ids.begin(), ids.end());
+  ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+  return ids;
+}
+
+void Document::settingsChanged() {
+  fullChangeSequence_ = ++sequence_;
   notify();
 }
 
@@ -199,6 +266,9 @@ void Document::clear() {
   objects_.clear();
   definitions_.clear();
   settings_ = DocumentSettings{};
+  invalidateIndex();
+  log_.clear();
+  fullChangeSequence_ = ++sequence_;
   notify();
 }
 

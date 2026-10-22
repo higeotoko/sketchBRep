@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <TopLoc_Location.hxx>
 #include <TopoDS_Edge.hxx>
 
 #include "sbr/geom/Operations.h"
@@ -243,4 +244,30 @@ TEST(Inference, XRaySeesThroughFaces) {
   EXPECT_TRUE(engine.isVisible(bottom, down));
   engine.setClip(gp_Pln(gp_Pnt(0, 0, -1), gp::DZ()));  // a section still cuts
   EXPECT_FALSE(engine.isVisible(bottom, down));
+}
+
+TEST(Inference, KeyedShapesUpdateIncrementally) {
+  InferenceEngine engine;
+  TopView view;
+  // Guides alone (no shapes yet) are snapped to.
+  engine.setGuides({gp_Lin(gp_Pnt(0, 3000, 0), gp::DX())});
+  EXPECT_EQ(engine.snap(view.query(2000, -302)).kind, SnapKind::OnEdge);
+
+  engine.setShape("a", box());
+  EXPECT_EQ(engine.shapeCount(), 1u);
+  EXPECT_EQ(engine.snap(view.query(100, -100)).kind, SnapKind::Endpoint);  // corner (1000, 1000)
+  // Replacing the shape under the same key re-indexes only it.
+  gp_Trsf t;
+  t.SetTranslation(gp_Vec(5000, 0, 0));
+  engine.setShape("a", box().Moved(TopLoc_Location(t)));
+  EXPECT_EQ(engine.shapeCount(), 1u);
+  EXPECT_NE(engine.snap(view.query(100, -100)).kind, SnapKind::Endpoint);
+  EXPECT_EQ(engine.snap(view.query(600, -100)).kind, SnapKind::Endpoint);
+  engine.setShape("b", box());
+  engine.removeShape("a");
+  EXPECT_EQ(engine.shapeCount(), 1u);
+  EXPECT_NE(engine.snap(view.query(600, -100)).kind, SnapKind::Endpoint);
+  EXPECT_EQ(engine.snap(view.query(100, -100)).kind, SnapKind::Endpoint);
+  // Hidden-point test still sees the (lazily indexed) faces.
+  EXPECT_FALSE(engine.isVisible(gp_Pnt(500, 500, 0), Ray{gp_Pnt(500, 500, 100000), gp_Dir(0, 0, -1)}));
 }

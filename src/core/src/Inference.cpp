@@ -3,8 +3,11 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <unordered_map>
 
 #include <BRepAdaptor_Curve.hxx>
+#include <BRepBndLib.hxx>
+#include <Bnd_Box.hxx>
 #include <BRepGProp_Face.hxx>
 #include <BRep_Tool.hxx>
 #include <IntCurvesFace_ShapeIntersector.hxx>
@@ -60,16 +63,76 @@ struct InferenceEngine::EdgeEntry {
   std::vector<gp_Pnt> samples; // samples of curved edges
 };
 
-struct InferenceEngine::Cache {
+// Index data of one shape. The face intersector is built on first use, and
+// only for shapes whose bounds the sight line or ray actually crosses.
+struct InferenceEngine::Slot {
   struct PointEntry {
     gp_Pnt point;
     SnapKind kind;
     int shapeIndex;
   };
+  bool alive = false;
+  int shapeIndex = -1;
+  TopoDS_Shape shape;
+  Bnd_Box box;
   std::vector<PointEntry> points;
   std::vector<EdgeEntry> edges;
-  std::vector<std::unique_ptr<IntCurvesFace_ShapeIntersector>> intersectors;
+  mutable std::unique_ptr<IntCurvesFace_ShapeIntersector> intersector;
+
+  IntCurvesFace_ShapeIntersector& faces() const {
+    if (!intersector) {
+      intersector = std::make_unique<IntCurvesFace_ShapeIntersector>();
+      intersector->Load(shape, 1e-6);
+    }
+    return *intersector;
+  }
 };
+
+struct InferenceEngine::Cache {
+  std::vector<Slot> slots;
+  std::vector<std::size_t> freeSlots;
+  std::unordered_map<std::string, std::size_t> byKey;
+};
+
+namespace {
+
+template <typename Slot>
+void indexShape(Slot& slot, const TopoDS_Shape& shape, int shapeIndex) {
+  slot = Slot{};
+  slot.alive = true;
+  slot.shapeIndex = shapeIndex;
+  slot.shape = shape;
+  BRepBndLib::Add(shape, slot.box);
+  slot.box.Enlarge(1.0);
+  TopTools_IndexedMapOfShape vertices;
+  TopExp::MapShapes(shape, TopAbs_VERTEX, vertices);
+  for (int i = 1; i <= vertices.Extent(); ++i) {
+    slot.points.push_back({BRep_Tool::Pnt(TopoDS::Vertex(vertices(i))), SnapKind::Endpoint, shapeIndex});
+  }
+  TopTools_IndexedMapOfShape edges;
+  TopExp::MapShapes(shape, TopAbs_EDGE, edges);
+  for (int i = 1; i <= edges.Extent(); ++i) {
+    const TopoDS_Edge edge = TopoDS::Edge(edges(i));
+    if (BRep_Tool::Degenerated(edge)) continue;
+    BRepAdaptor_Curve curve(edge);
+    const double f = curve.FirstParameter();
+    const double l = curve.LastParameter();
+    slot.points.push_back({curve.Value(0.5 * (f + l)), SnapKind::Midpoint, shapeIndex});
+    typename decltype(slot.edges)::value_type entry;
+    entry.shapeIndex = shapeIndex;
+    entry.edge = edge;
+    entry.isLine = curve.GetType() == GeomAbs_Line;
+    entry.a = curve.Value(f);
+    entry.b = curve.Value(l);
+    if (!entry.isLine) {
+      constexpr int kSamples = 64;
+      for (int k = 0; k <= kSamples; ++k) entry.samples.push_back(curve.Value(f + (l - f) * k / kSamples));
+    }
+    slot.edges.push_back(std::move(entry));
+  }
+}
+
+}  // namespace
 
 bool InferenceEngine::isClipped(const gp_Pnt& p) const {
   if (!clip_) return false;
@@ -86,71 +149,77 @@ bool InferenceEngine::isVisible(const gp_Pnt& p, const Ray& ray) const {
   if (length < 1e-9) return true;
   const gp_Lin sight(ray.origin, gp_Dir(v));
   constexpr double kDepthTolerance = 0.5;  // mm: faces through p do not hide it
-  for (const auto& intersector : cache_->intersectors) {
-    if (!intersector) continue;
+  for (const Slot& slot : cache_->slots) {
+    if (!slot.alive || slot.box.IsOut(sight)) continue;
+    IntCurvesFace_ShapeIntersector& intersector = slot.faces();
     if (!clip_) {
-      intersector->PerformNearest(sight, 0.0, length - kDepthTolerance);
-      if (intersector->IsDone() && intersector->NbPnt() > 0) return false;
+      intersector.PerformNearest(sight, 0.0, length - kDepthTolerance);
+      if (intersector.IsDone() && intersector.NbPnt() > 0) return false;
       continue;
     }
     // With a section, faces cut away do not hide anything.
-    intersector->Perform(sight, 0.0, length - kDepthTolerance);
-    if (!intersector->IsDone()) continue;
-    for (int i = 1; i <= intersector->NbPnt(); ++i) {
-      if (!isClipped(intersector->Pnt(i))) return false;
+    intersector.Perform(sight, 0.0, length - kDepthTolerance);
+    if (!intersector.IsDone()) continue;
+    for (int i = 1; i <= intersector.NbPnt(); ++i) {
+      if (!isClipped(intersector.Pnt(i))) return false;
     }
   }
   return true;
 }
 
 void InferenceEngine::setShapes(const std::vector<TopoDS_Shape>& shapes) {
-  shapes_ = shapes;
   cache_ = std::make_shared<Cache>();
-  for (int si = 0; si < static_cast<int>(shapes.size()); ++si) {
-    const TopoDS_Shape& shape = shapes[static_cast<std::size_t>(si)];
-    if (shape.IsNull()) {
-      cache_->intersectors.emplace_back();
-      continue;
-    }
-    TopTools_IndexedMapOfShape vertices;
-    TopExp::MapShapes(shape, TopAbs_VERTEX, vertices);
-    for (int i = 1; i <= vertices.Extent(); ++i) {
-      cache_->points.push_back(
-          {BRep_Tool::Pnt(TopoDS::Vertex(vertices(i))), SnapKind::Endpoint, si});
-    }
-    TopTools_IndexedMapOfShape edges;
-    TopExp::MapShapes(shape, TopAbs_EDGE, edges);
-    for (int i = 1; i <= edges.Extent(); ++i) {
-      const TopoDS_Edge edge = TopoDS::Edge(edges(i));
-      if (BRep_Tool::Degenerated(edge)) continue;
-      BRepAdaptor_Curve curve(edge);
-      const double f = curve.FirstParameter();
-      const double l = curve.LastParameter();
-      cache_->points.push_back({curve.Value(0.5 * (f + l)), SnapKind::Midpoint, si});
-      EdgeEntry entry;
-      entry.shapeIndex = si;
-      entry.edge = edge;
-      entry.isLine = curve.GetType() == GeomAbs_Line;
-      entry.a = curve.Value(f);
-      entry.b = curve.Value(l);
-      if (!entry.isLine) {
-        constexpr int kSamples = 64;
-        for (int k = 0; k <= kSamples; ++k) {
-          entry.samples.push_back(curve.Value(f + (l - f) * k / kSamples));
-        }
-      }
-      cache_->edges.push_back(std::move(entry));
-    }
-    auto intersector = std::make_unique<IntCurvesFace_ShapeIntersector>();
-    intersector->Load(shape, 1e-6);
-    cache_->intersectors.push_back(std::move(intersector));
+  cache_->slots.resize(shapes.size());
+  for (std::size_t i = 0; i < shapes.size(); ++i) {
+    if (!shapes[i].IsNull()) indexShape(cache_->slots[i], shapes[i], static_cast<int>(i));
   }
-  rebuildGuidePoints();
+  guidePointsDirty_ = true;
+}
+
+void InferenceEngine::setShape(const std::string& key, const TopoDS_Shape& shape) {
+  if (shape.IsNull()) {
+    removeShape(key);
+    return;
+  }
+  if (!cache_) cache_ = std::make_shared<Cache>();
+  Cache& c = *cache_;
+  std::size_t slot;
+  if (const auto it = c.byKey.find(key); it != c.byKey.end()) {
+    slot = it->second;
+  } else if (!c.freeSlots.empty()) {
+    slot = c.freeSlots.back();
+    c.freeSlots.pop_back();
+  } else {
+    slot = c.slots.size();
+    c.slots.emplace_back();
+  }
+  c.byKey[key] = slot;
+  indexShape(c.slots[slot], shape, static_cast<int>(slot));
+  guidePointsDirty_ = true;
+}
+
+void InferenceEngine::removeShape(const std::string& key) {
+  if (!cache_) return;
+  Cache& c = *cache_;
+  const auto it = c.byKey.find(key);
+  if (it == c.byKey.end()) return;
+  c.slots[it->second] = Slot{};
+  c.freeSlots.push_back(it->second);
+  c.byKey.erase(it);
+  guidePointsDirty_ = true;
+}
+
+std::size_t InferenceEngine::shapeCount() const {
+  if (!cache_) return 0;
+  std::size_t n = 0;
+  for (const Slot& slot : cache_->slots) n += slot.alive;
+  return n;
 }
 
 void InferenceEngine::setGuides(const std::vector<gp_Lin>& guides) {
+  if (!cache_) cache_ = std::make_shared<Cache>();  // guides snap without any shape
   guides_ = guides;
-  rebuildGuidePoints();
+  guidePointsDirty_ = true;
 }
 
 namespace {
@@ -170,7 +239,8 @@ std::optional<std::pair<double, double>> crossing(const gp_Pnt& p, const gp_Dir&
 }
 }  // namespace
 
-void InferenceEngine::rebuildGuidePoints() {
+void InferenceEngine::rebuildGuidePoints() const {
+  guidePointsDirty_ = false;
   guidePoints_.clear();
   for (std::size_t i = 0; i < guides_.size(); ++i) {
     const gp_Lin& g = guides_[i];
@@ -181,7 +251,9 @@ void InferenceEngine::rebuildGuidePoints() {
       }
     }
     if (!cache_) continue;
-    for (const EdgeEntry& e : cache_->edges) {
+    for (const Slot& slot : cache_->slots) {
+      if (!slot.alive) continue;
+      for (const EdgeEntry& e : slot.edges) {
       if (!e.isLine) continue;
       const gp_Vec ab(e.a, e.b);
       const double len = ab.Magnitude();
@@ -189,6 +261,7 @@ void InferenceEngine::rebuildGuidePoints() {
       auto c = crossing(g.Location(), g.Direction(), e.a, gp_Dir(ab));
       if (!c || c->second < -tolerance::kLinear || c->second > len + tolerance::kLinear) continue;
       guidePoints_.push_back(g.Location().Translated(gp_Vec(g.Direction()) * c->first));
+      }
     }
   }
 }
@@ -216,6 +289,7 @@ std::optional<gp_Pnt> intersectPlane(const Ray& ray, const gp_Pln& plane) {
 }  // namespace
 
 SnapResult InferenceEngine::snap(const SnapQuery& q) const {
+  if (guidePointsDirty_) rebuildGuidePoints();
   SnapResult result;
   const double tol = q.pixelTolerance;
 
@@ -224,7 +298,8 @@ SnapResult InferenceEngine::snap(const SnapQuery& q) const {
   std::optional<SnapResult> pointSnap;
   if (q.snapToGeometry && cache_) {
     std::vector<std::pair<double, SnapResult>> candidates;
-    for (const auto& entry : cache_->points) {
+    for (const Slot& slot : cache_->slots)
+    for (const auto& entry : slot.points) {
       const double d = screenDistance(q.project, entry.point, q.cursor);
       const bool sticky = q.stickyPoint && q.stickyPoint->Distance(entry.point) < 1e-6;
       if (sticky && d < 1.5 * tol) {
@@ -290,7 +365,8 @@ SnapResult InferenceEngine::snap(const SnapQuery& q) const {
   // 2. On edge (visible edges only).
   if (q.snapToGeometry && cache_) {
     std::vector<std::pair<double, SnapResult>> candidates;
-    for (const EdgeEntry& e : cache_->edges) {
+    for (const Slot& slot : cache_->slots)
+    for (const EdgeEntry& e : slot.edges) {
       gp_Pnt candidate;
       if (e.isLine) {
         const gp_Vec ab(e.a, e.b);
@@ -437,9 +513,9 @@ SnapResult InferenceEngine::snap(const SnapQuery& q) const {
     double bestParam = std::numeric_limits<double>::max();
     std::optional<SnapResult> faceSnap;
     const gp_Lin line(q.ray.origin, q.ray.direction);
-    for (std::size_t si = 0; si < cache_->intersectors.size(); ++si) {
-      auto& intersector = cache_->intersectors[si];
-      if (!intersector) continue;
+    for (const Slot& slot : cache_->slots) {
+      if (!slot.alive || slot.box.IsOut(line)) continue;
+      IntCurvesFace_ShapeIntersector* intersector = &slot.faces();
       int hit = 0;
       if (!clip_) {
         intersector->PerformNearest(line, -1e12, 1e12);
@@ -463,7 +539,7 @@ SnapResult InferenceEngine::snap(const SnapQuery& q) const {
         SnapResult r;
         r.kind = SnapKind::OnFace;
         r.point = intersector->Pnt(hit);
-        r.shapeIndex = static_cast<int>(si);
+        r.shapeIndex = slot.shapeIndex;
         r.face = intersector->Face(hit);
         BRepGProp_Face prop(r.face);
         gp_Pnt p;

@@ -10,6 +10,7 @@
 
 #include <QApplication>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 
 #include <nlohmann/json.hpp>
@@ -123,6 +124,8 @@ class GuiPhase1 : public QObject {
   void scaleToolFactorAndLength();
   void aiReadsKeepDrawingInProgress();
   void proposalShowsRotationAndHide();
+  void benchViewportSync();
+  void incrementalSyncFollowsGroupsAndUndo();
   void circleToolTypedRadius();
   void groupEditModeAndLooseFaceDelete();
   void lineToolStaysOnWallPlane();
@@ -905,6 +908,85 @@ void GuiPhase1::proposalShowsRotationAndHide() {
   QCOMPARE(committed.modified.size(), std::size_t(2));
   QVERIFY(committed.modified[0].aspects & doc::kPlacement);
   QVERIFY(committed.modified[1].aspects & doc::kVisibility);
+}
+
+// Performance plan step 0: viewport cost of a model with many placements.
+// Skipped unless SBR_BENCH_N is set (e.g. SBR_BENCH_N=1000); prints timings.
+void GuiPhase1::benchViewportSync() {
+  const int n = qEnvironmentVariableIntValue("SBR_BENCH_N");
+  if (n <= 0) QSKIP("set SBR_BENCH_N to run the viewport benchmark");
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId window = f.box(0, 0, 1200, 150, 1500);
+  auto instance = m.makeComponent({window}, "Window");
+  QVERIFY(instance.ok());
+  const int columns = static_cast<int>(std::ceil(std::sqrt(static_cast<double>(n))));
+  gp_Trsf dx, dy;
+  dx.SetTranslation(gp_Vec(1800, 0, 0));
+  dy.SetTranslation(gp_Vec(0, 3000, 0));
+  auto row = m.copy({*instance}, dx, columns - 1);
+  QVERIFY(row.ok());
+  std::vector<doc::ObjectId> firstRow{*instance};
+  firstRow.insert(firstRow.end(), row->begin(), row->end());
+  QVERIFY(m.copy(firstRow, dy, (n + columns - 1) / columns - 1).ok());
+  auto timed = [](const std::function<void()>& fn) {
+    QElapsedTimer t;
+    t.start();
+    fn();
+    return t.nsecsElapsed() / 1e6;
+  };
+  const double initial = timed([&] { f.vp->syncNow(); });
+  const doc::ObjectId last = m.document().objects().back().id;
+  const double moveCommit = timed([&] { m.move({last}, gp_Vec(10, 0, 0)); });
+  const double moveSync = timed([&] { f.vp->syncNow(); });
+  const double afterMove = moveCommit + moveSync;
+  const double selectViewport = timed([&] { f.vp->setSelection({last}); });
+  const double afterSelect = timed([&] { f.window.setSelection({}); });
+  const double repaint = timed([&] { f.vp->repaint(); });
+  qInfo("bench detail move_commit_ms=%.1f move_sync_ms=%.1f select_viewport_ms=%.1f repaint_ms=%.1f", moveCommit,
+        moveSync, selectViewport, repaint);
+  const double redraw = timed([&] {
+    f.vp->fitAll();
+    QCoreApplication::processEvents();
+  });
+  qInfo("bench viewport n=%d objects=%zu initial_sync_ms=%.1f move_one_sync_ms=%.1f select_ms=%.1f fit_redraw_ms=%.1f",
+        n, m.document().objects().size(), initial, afterMove, afterSelect, redraw);
+}
+
+// Performance step 2: the viewport only updates changed objects; moving a
+// group must still move what its children show and snap to, and undo,
+// hiding a tag and deleting must come back exactly.
+void GuiPhase1::incrementalSyncFollowsGroupsAndUndo() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId a = f.box(0, 0, 1000, 1000, 1000);
+  const doc::ObjectId b = f.box(2000, 0, 1000, 1000, 1000);
+  auto g = m.group({a, b});
+  QVERIFY(g.ok());
+  f.vp->syncNow();
+  auto snapsTo = [&](const gp_Pnt& p) {
+    const snap::SnapResult r = f.vp->snap(f.vp->toWidget(p), std::nullopt, std::nullopt, std::nullopt);
+    return r.kind == snap::SnapKind::Endpoint && r.point.Distance(p) < 1e-6;
+  };
+  QVERIFY(snapsTo(gp_Pnt(3000, 0, 1000)));
+  QVERIFY(m.move({*g}, gp_Vec(0, 0, 500)).ok());  // only the group changes
+  f.vp->syncNow();
+  QVERIFY(snapsTo(gp_Pnt(3000, 0, 1500)));
+  QVERIFY(!snapsTo(gp_Pnt(3000, 0, 1000)));
+  QVERIFY(m.undo());
+  f.vp->syncNow();
+  QVERIFY(snapsTo(gp_Pnt(3000, 0, 1000)));
+  // Tag visibility is a full resync; deleting removes from the snap index.
+  m.setTagVisible("Default", false);
+  f.vp->syncNow();
+  QVERIFY(!snapsTo(gp_Pnt(3000, 0, 1000)));
+  m.setTagVisible("Default", true);
+  QVERIFY(m.remove({b}).ok());
+  f.vp->syncNow();
+  QVERIFY(!snapsTo(gp_Pnt(3000, 0, 1000)));
+  QVERIFY(snapsTo(gp_Pnt(1000, 0, 1000)));
 }
 
 void GuiPhase1::circleToolTypedRadius() {

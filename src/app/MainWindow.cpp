@@ -667,7 +667,7 @@ void MainWindow::buildAiBridge() {
     api::CommandApi tryApi(scratch, api::CommandApi::Options{false});
     const json tried = json::parse(tryApi.execute(json{{"command", "batch"}, {"args", {{"commands", a["commands"]}}}}.dump()));
     if (!tried.value("ok", false)) {
-      proposal_ = Proposal{a["commands"].dump(), modeler_.history().revision(), "failed", tried.value("error", std::string())};
+      proposal_ = Proposal{a["commands"].dump(), modeler_.history().revision(), "failed", tried.value("error", std::string()), {}};
       throw std::runtime_error("the proposal cannot be applied: " + proposal_->error);
     }
     // What the proposal adds or changes (blue ghost) and removes or hides

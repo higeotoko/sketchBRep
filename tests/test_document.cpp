@@ -193,3 +193,49 @@ TEST(Modeler, StepExportImport) {
   ASSERT_FALSE(top.IsNull());
   EXPECT_TRUE(other.pushPull(first, top, 100).ok());
 }
+
+// Performance step 2: lookups are indexed and changes are logged so views
+// update incrementally; the results must stay exactly those of a scan.
+TEST(Document, IndexAndChangeLogStayConsistent) {
+  Document d;
+  auto make = [](const std::string& id, const std::string& parent = {}) {
+    Object o;
+    o.id = id;
+    o.parent = parent;
+    o.recipe.base = GroupNode{};
+    return o;
+  };
+  d.insert(make("g"));
+  d.insert(make("a", "g"));
+  d.insert(make("b", "g"));
+  const std::uint64_t start = d.sequence();
+  d.insert(make("c"), 0);  // insert in front: positions shift
+  EXPECT_EQ(d.indexOf("c"), 0u);
+  EXPECT_EQ(d.indexOf("b"), 3u);
+  EXPECT_EQ(d.children("g"), (std::vector<ObjectId>{"a", "b"}));
+
+  Object moved = *d.find("b");
+  moved.parent = "c";
+  d.replace(moved);
+  EXPECT_EQ(d.children("g"), (std::vector<ObjectId>{"a"}));
+  EXPECT_EQ(d.children("c"), (std::vector<ObjectId>{"b"}));
+  d.remove("a");
+  EXPECT_EQ(d.find("a"), nullptr);
+  EXPECT_TRUE(d.children("g").empty());
+  EXPECT_EQ(d.indexOf("g"), 1u);
+
+  const auto changed = d.changedSince(start);
+  ASSERT_TRUE(changed);
+  EXPECT_EQ(*changed, (std::vector<ObjectId>{"a", "b", "c"}));
+  EXPECT_TRUE(d.changedSince(d.sequence())->empty());
+
+  // Settings changes and clearing force a full resync.
+  const std::uint64_t before = d.sequence();
+  d.settingsChanged();
+  EXPECT_FALSE(d.changedSince(before));
+  const std::uint64_t afterSettings = d.sequence();
+  EXPECT_TRUE(d.changedSince(afterSettings));
+  d.clear();
+  EXPECT_FALSE(d.changedSince(afterSettings));
+  EXPECT_EQ(d.find("g"), nullptr);
+}

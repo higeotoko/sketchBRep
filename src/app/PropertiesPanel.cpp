@@ -133,45 +133,53 @@ void PropertiesPanel::refresh(const doc::Modeler& modeler,
                               const std::vector<doc::ObjectId>& selection,
                               const QString& elementSummary) {
   updating_ = true;
-  tree_->clear();
-  std::map<doc::ObjectId, QTreeWidgetItem*> items;
-  const auto& objects = modeler.document().objects();
-  // Parents may appear after their children in the list: create in passes.
-  std::vector<const doc::Object*> pending;
-  for (const doc::Object& o : objects) pending.push_back(&o);
-  while (!pending.empty()) {
-    std::vector<const doc::Object*> next;
-    for (const doc::Object* o : pending) {
-      QTreeWidgetItem* parentItem = nullptr;
-      if (!o->parent.empty()) {
-        const auto it = items.find(o->parent);
-        if (it == items.end()) {
-          if (modeler.document().find(o->parent)) {
-            next.push_back(o);
-            continue;
+  const bool rebuild = treeDocument_ != &modeler.document() || treeSequence_ != modeler.document().sequence() ||
+                       modeler.document().sequence() == 0;
+  if (rebuild) {
+    treeDocument_ = &modeler.document();
+    treeSequence_ = modeler.document().sequence();
+    tree_->clear();
+    treeItems_.clear();
+    std::map<doc::ObjectId, QTreeWidgetItem*>& items = treeItems_;
+    const auto& objects = modeler.document().objects();
+    // Parents may appear after their children in the list: create in passes.
+    std::vector<const doc::Object*> pending;
+    for (const doc::Object& o : objects) pending.push_back(&o);
+    while (!pending.empty()) {
+      std::vector<const doc::Object*> next;
+      for (const doc::Object* o : pending) {
+        QTreeWidgetItem* parentItem = nullptr;
+        if (!o->parent.empty()) {
+          const auto it = items.find(o->parent);
+          if (it == items.end()) {
+            if (modeler.document().find(o->parent)) {
+              next.push_back(o);
+              continue;
+            }
+          } else {
+            parentItem = it->second;
           }
-        } else {
-          parentItem = it->second;
         }
+        auto* item = parentItem ? new QTreeWidgetItem(parentItem) : new QTreeWidgetItem(tree_);
+        item->setText(0, QString::fromStdString(o->name));
+        item->setText(1, kindLabel(o->kind()));
+        item->setText(2, QString::fromStdString(o->layer));
+        item->setData(0, Qt::UserRole, QString::fromStdString(o->id));
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        item->setCheckState(0, o->visible ? Qt::Checked : Qt::Unchecked);
+        item->setToolTip(0, tr("チェックで表示/非表示"));
+        items[o->id] = item;
       }
-      auto* item = parentItem ? new QTreeWidgetItem(parentItem) : new QTreeWidgetItem(tree_);
-      item->setText(0, QString::fromStdString(o->name));
-      item->setText(1, kindLabel(o->kind()));
-      item->setText(2, QString::fromStdString(o->layer));
-      item->setData(0, Qt::UserRole, QString::fromStdString(o->id));
-      item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
-      item->setCheckState(0, o->visible ? Qt::Checked : Qt::Unchecked);
-      item->setToolTip(0, tr("チェックで表示/非表示"));
-      items[o->id] = item;
+      if (next.size() == pending.size()) break;  // broken hierarchy: stop
+      pending = std::move(next);
     }
-    if (next.size() == pending.size()) break;  // broken hierarchy: stop
-    pending = std::move(next);
+    tree_->expandAll();
   }
+  tree_->clearSelection();
   for (const doc::ObjectId& id : selection) {
-    const auto it = items.find(id);
-    if (it != items.end()) it->second->setSelected(true);
+    const auto it = treeItems_.find(id);
+    if (it != treeItems_.end()) it->second->setSelected(true);
   }
-  tree_->expandAll();
   updating_ = false;
   rebuildForm(modeler, selection, elementSummary);
 }

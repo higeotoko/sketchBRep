@@ -46,6 +46,7 @@ add_subdirectory(src/core)
 if(SBR_BUILD_TOOLS)
   add_subdirectory(tools/phase0)
   add_subdirectory(tools/cli)
+  add_subdirectory(tools/bench)
   if(SBR_BUILD_APP)
     add_subdirectory(tools/mcp)  # talks to the app over Qt's local socket
   endif()

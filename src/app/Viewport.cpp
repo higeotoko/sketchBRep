@@ -172,7 +172,7 @@ void Viewport::showEvent(QShowEvent* event) {
   }
 }
 
-void Viewport::paintEvent(QPaintEvent*) { redraw(); }
+void Viewport::paintEvent(QPaintEvent*) { renderNow(); }
 
 void Viewport::resizeEvent(QResizeEvent*) {
   if (!view_.IsNull()) view_->MustBeResized();
@@ -513,78 +513,110 @@ void Viewport::applyPickMode(const Handle(AIS_Shape)& ais) {
   }
 }
 
-void Viewport::syncNow() {
-  syncTimer_.stop();
-  if (view_.IsNull()) return;
-
-  const auto& objects = modeler_.document().objects();
-  // Remove entries for deleted / hidden / changed objects.
-  for (auto it = entries_.begin(); it != entries_.end();) {
-    const doc::Object* o = modeler_.document().find(it->first);
-    // Shapes are compared by TShape + location: unchanged objects keep their
-    // tessellated display copy.
-    const bool keep = o && modeler_.document().isVisible(o->id) && !o->shape.IsNull() &&
-                      sameLocatedShape(it->second.canonicalWorld,
-                                       modeler_.document().worldShape(*o));
-    if (!keep) {
-      context_->Remove(it->second.ais, Standard_False);
-      it = entries_.erase(it);
-    } else {
-      ++it;
-    }
+bool Viewport::syncObject(const doc::ObjectId& id) {
+  const doc::Document& document = modeler_.document();
+  const doc::Object* o = document.find(id);
+  const bool wanted = o && !o->shape.IsNull() && document.isVisible(id);
+  bool guidesChanged = false;
+  auto found = entries_.find(id);
+  // Shapes are compared by TShape + location: unchanged objects keep their
+  // tessellated display copy and their snap index.
+  if (found != entries_.end() &&
+      (!wanted || !sameLocatedShape(found->second.canonicalWorld, document.worldShape(*o)))) {
+    context_->Remove(found->second.ais, Standard_False);
+    entries_.erase(found);
+    inference_.removeShape(id);
+    guidesChanged = guideLines_.erase(id) > 0;
+    found = entries_.end();
   }
-
-  std::vector<TopoDS_Shape> snapShapes;
-  std::vector<gp_Lin> guideLines;
-  for (const doc::Object& o : objects) {
-    if (o.shape.IsNull() || !modeler_.document().isVisible(o.id)) continue;
-    auto found = entries_.find(o.id);
-    if (found == entries_.end()) {
-      Entry entry;
-      entry.ais = makeDisplay(o, entry);
-      // Selection mode -1 would make the object permanently unselectable in
-      // OCCT 7.6, so display with mode 0 and then apply the tool's pick mode.
-      context_->Display(entry.ais, shaded_ ? AIS_Shaded : AIS_WireFrame, 0, Standard_False);
-      applyPickMode(entry.ais);
-      found = entries_.emplace(o.id, std::move(entry)).first;
-    }
-    bool selected = false;
-    for (const doc::ObjectId& s : selection_) {
-      selected |= s == o.id || modeler_.document().isAncestor(s, o.id);
-    }
-    Quantity_Color color = o.kind() == doc::ObjectKind::Curve        ? Quantity_Color(Quantity_NOC_BLACK)
-                           : o.kind() == doc::ObjectKind::Annotation ? Quantity_Color(Quantity_NOC_GRAY20)
-                           : o.kind() == doc::ObjectKind::Guide      ? Quantity_Color(Quantity_NOC_GRAY50)
-                               : rgb(o.color.r, o.color.g, o.color.b);
-    if (selected) color = kSelectedColor;
-    Quantity_Color current;
-    found->second.ais->Color(current);
-    if (!current.IsEqual(color)) {
-      found->second.ais->SetColor(color);
-      // SetColor() also recolours the face boundaries; keep them black.
-      found->second.ais->Attributes()->SetFaceBoundaryAspect(
-          new Prs3d_LineAspect(Quantity_NOC_BLACK, Aspect_TOL_SOLID, 1.5));
-    }
-    const bool faded =
-        !editContext_.empty() && !modeler_.document().isAncestor(editContext_, o.id);
-    const double transparency = faded ? 0.8 : (xRay_ ? 0.5 : 0.0);
-    if (std::abs(found->second.ais->Transparency() - transparency) > 1e-6) {
-      found->second.ais->SetTransparency(transparency);
-    }
-    context_->Redisplay(found->second.ais, Standard_False);
-    if (o.kind() == doc::ObjectKind::Guide) {
+  if (!wanted) return guidesChanged;
+  bool created = false;
+  if (found == entries_.end()) {
+    Entry entry;
+    entry.ais = makeDisplay(*o, entry);
+    // Selection mode -1 would make the object permanently unselectable in
+    // OCCT 7.6, so display with mode 0 and then apply the tool's pick mode.
+    context_->Display(entry.ais, shaded_ ? AIS_Shaded : AIS_WireFrame, 0, Standard_False);
+    applyPickMode(entry.ais);
+    found = entries_.emplace(id, std::move(entry)).first;
+    created = true;
+    if (o->kind() == doc::ObjectKind::Guide) {
       // Guides snap as infinite lines, not as their long stand-in edge.
       TopExp_Explorer edge(found->second.canonicalWorld, TopAbs_EDGE);
       if (edge.More()) {
         BRepAdaptor_Curve curve(TopoDS::Edge(edge.Current()));
-        if (curve.GetType() == GeomAbs_Line) guideLines.push_back(curve.Line());
+        if (curve.GetType() == GeomAbs_Line) {
+          guideLines_[id] = curve.Line();
+          guidesChanged = true;
+        }
       }
-      continue;
+    } else {
+      inference_.setShape(id, found->second.canonicalWorld);
     }
-    snapShapes.push_back(found->second.canonicalWorld);
   }
-  inference_.setShapes(snapShapes);
-  inference_.setGuides(guideLines);
+  bool selected = false;
+  for (const doc::ObjectId& s : selection_) selected |= s == id || document.isAncestor(s, id);
+  Quantity_Color color = o->kind() == doc::ObjectKind::Curve        ? Quantity_Color(Quantity_NOC_BLACK)
+                         : o->kind() == doc::ObjectKind::Annotation ? Quantity_Color(Quantity_NOC_GRAY20)
+                         : o->kind() == doc::ObjectKind::Guide      ? Quantity_Color(Quantity_NOC_GRAY50)
+                                                                    : rgb(o->color.r, o->color.g, o->color.b);
+  if (selected) color = kSelectedColor;
+  bool restyled = false;
+  Quantity_Color current;
+  found->second.ais->Color(current);
+  if (!current.IsEqual(color)) {
+    found->second.ais->SetColor(color);
+    // SetColor() also recolours the face boundaries; keep them black.
+    found->second.ais->Attributes()->SetFaceBoundaryAspect(
+        new Prs3d_LineAspect(Quantity_NOC_BLACK, Aspect_TOL_SOLID, 1.5));
+    restyled = true;
+  }
+  const bool faded = !editContext_.empty() && !document.isAncestor(editContext_, id);
+  const double transparency = faded ? 0.8 : (xRay_ ? 0.5 : 0.0);
+  if (std::abs(found->second.ais->Transparency() - transparency) > 1e-6) {
+    found->second.ais->SetTransparency(transparency);
+    restyled = true;
+  }
+  // Only what changed is presented again (was: every object on every sync).
+  if (restyled || created) context_->Redisplay(found->second.ais, Standard_False);
+  return guidesChanged;
+}
+
+void Viewport::syncNow() {
+  syncTimer_.stop();
+  if (view_.IsNull()) return;
+  const doc::Document& document = modeler_.document();
+
+  // Objects to look at: those changed since the last sync (plus everything
+  // below a changed group, whose placement they inherit), or everything.
+  std::optional<std::vector<doc::ObjectId>> changed;
+  if (!fullSync_) changed = document.changedSince(syncedSequence_);
+  syncedSequence_ = document.sequence();
+  bool guidesChanged = false;
+  if (!changed) {
+    for (auto it = entries_.begin(); it != entries_.end();) {
+      const doc::ObjectId id = (it++)->first;  // syncObject may erase it
+      if (!document.find(id)) guidesChanged |= syncObject(id);
+    }
+    for (const doc::Object& o : document.objects()) guidesChanged |= syncObject(o.id);
+  } else {
+    std::set<doc::ObjectId> ids(appearanceDirty_.begin(), appearanceDirty_.end());
+    for (const doc::ObjectId& id : *changed) {
+      ids.insert(id);
+      const doc::Object* o = document.find(id);
+      if (o && o->isContainer()) {
+        for (const doc::ObjectId& c : document.subtree(id)) ids.insert(c);
+      }
+    }
+    for (const doc::ObjectId& id : ids) guidesChanged |= syncObject(id);
+  }
+  fullSync_ = false;
+  appearanceDirty_.clear();
+  if (guidesChanged) {
+    std::vector<gp_Lin> lines;
+    for (const auto& [id, line] : guideLines_) lines.push_back(line);
+    inference_.setGuides(lines);
+  }
   syncLabels();
   syncSection();
   syncOpenEnds();
@@ -601,6 +633,12 @@ void Viewport::syncNow() {
 }
 
 void Viewport::setSelection(const std::vector<doc::ObjectId>& ids) {
+  // Only objects entering or leaving the selection change colour.
+  for (const std::vector<doc::ObjectId>* list : {static_cast<const std::vector<doc::ObjectId>*>(&selection_), &ids}) {
+    for (const doc::ObjectId& id : *list) {
+      for (const doc::ObjectId& c : modeler_.document().subtree(id)) appearanceDirty_.insert(c);
+    }
+  }
   selection_ = ids;
   syncNow();
 }
@@ -614,12 +652,16 @@ void Viewport::setDisplayQuality(const display::DisplayQuality& quality) {
   // Re-tessellate fresh display copies; canonical shapes are untouched.
   for (auto& [id, entry] : entries_) context_->Remove(entry.ais, Standard_False);
   entries_.clear();
+  inference_.setShapes({});
+  guideLines_.clear();
+  fullSync_ = true;
   syncNow();
 }
 
 void Viewport::setXRay(bool on) {
   xRay_ = on;
   inference_.setSeeThrough(on);
+  fullSync_ = true;  // every transparency changes
   syncNow();
 }
 
@@ -880,6 +922,7 @@ void Viewport::setHighlightedElements(const std::vector<ElementRef>& elements) {
 
 void Viewport::setEditContext(const doc::ObjectId& groupId) {
   editContext_ = groupId;
+  fullSync_ = true;  // fading inside / outside the context
   syncNow();
 }
 
@@ -983,11 +1026,17 @@ void Viewport::hideSnap() { showSnap(snap::SnapResult{}, std::nullopt); }
 
 bool Viewport::dumpImage(const QString& path) {
   if (view_.IsNull()) return false;
-  view_->Redraw();
+  renderNow();
   return view_->Dump(path.toUtf8().constData()) == Standard_True;
 }
 
 void Viewport::redraw() {
+  // Several changes in one event (sync, selection, highlight, snap marker)
+  // become one frame: the view is rendered when Qt paints.
+  update();
+}
+
+void Viewport::renderNow() {
   if (view_.IsNull()) return;
   // OCCT talks to the window system through its own connection, which can
   // see Qt's geometry changes late (e.g. right after show) without another
