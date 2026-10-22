@@ -124,6 +124,26 @@ doc::Color color(const json& args, const char* key) {
 }
 
 json toJson(const gp_Pnt& p) { return json::array({p.X(), p.Y(), p.Z()}); }
+
+// A material named by its id or its (unique) name; "" = inherit.
+std::string materialRef(const doc::Document& d, const json& args, const char* key) {
+  const std::string v = text(args, key);
+  if (v.empty() || d.findMaterial(v)) return v;
+  std::string found;
+  for (const doc::Material& m : d.materials()) {
+    if (m.name != v) continue;
+    if (!found.empty()) throw ApiError("several materials are named '" + v + "'; use the id");
+    found = m.id;
+  }
+  if (found.empty()) throw ApiError("no material '" + v + "' (see list_materials)");
+  return found;
+}
+
+json materialJson(const doc::Document& d, const std::string& id) {
+  const doc::Material* m = d.findMaterial(id);
+  if (!m) return nullptr;
+  return json{{"id", m->id}, {"name", m->name}, {"color", {m->color.r, m->color.g, m->color.b}}};
+}
 json toJson(const gp_XYZ& p) { return json::array({p.X(), p.Y(), p.Z()}); }
 
 template <class T>
@@ -209,11 +229,23 @@ json describeObject(const doc::Modeler& m, const doc::Object& o, bool withFaces)
             {"kind", doc::toString(o.kind())},
             {"tag", o.layer},
             {"visible", o.visible},
-            {"color", {o.color.r, o.color.g, o.color.b}},
+            {"color", [&] {
+               const doc::Color c = d.displayColor(o);
+               return json::array({c.r, c.g, c.b});
+             }()},
             {"history", doc::describe(o.recipe)},
             {"bounds", worldBounds(d, o)}};
   if (!o.parent.empty()) j["parent"] = o.parent;
   if (!o.attributes.empty()) j["attributes"] = o.attributes;
+  j["material"] = o.material.empty() ? json(nullptr) : json(o.material);
+  if (const std::string shown = d.inheritedMaterial(o); shown != o.material) j["inherited_material"] = shown;
+  if (!o.faceMaterials.empty()) {
+    const doc::FaceMaterialMap faces = doc::resolveFaceMaterials(o);
+    json list = json::array();
+    for (const auto& [index, material] : faces.faces) list.push_back({{"face", index}, {"material", material}});
+    j["face_materials"] = list;
+    if (faces.unresolved) j["unresolved_face_materials"] = faces.unresolved;
+  }
   // Rigid placements keep volume and area: measured on the local shape.
   if (o.kind() == doc::ObjectKind::Solid) j["volume"] = measuresOf(o.shape).volumeValue();
   if (o.kind() == doc::ObjectKind::Face) j["area"] = measuresOf(o.shape).areaValue();
@@ -316,7 +348,7 @@ json idsResult(const std::vector<ObjectId>& v) { return json{{"ids", v}}; }
 // bounds are only computed for objects that pass them.
 struct ObjectFilter {
   std::set<std::string> kinds, tags, ids;
-  std::optional<std::string> name, parent, within, definition;
+  std::optional<std::string> name, parent, within, definition, material;
   std::optional<bool> visible;
   std::optional<Bnd_Box> region;
   std::map<std::string, std::string> attributes;  // all must match ("*" = has the key)
@@ -346,6 +378,7 @@ struct ObjectFilter {
     if (a.contains("parent")) parent = text(a, "parent");
     if (a.contains("within")) within = text(a, "within");
     if (a.contains("definition")) definition = text(a, "definition");
+    if (a.contains("material")) material = text(a, "material");
     if (a.contains("visible")) {
       if (!a.at("visible").is_boolean()) throw ApiError("'visible' must be true or false");
       visible = a.at("visible").get<bool>();
@@ -379,6 +412,11 @@ struct ObjectFilter {
       if (!c || c->definitionId != *definition) return false;
     }
     if (visible && d.isVisible(o.id) != *visible) return false;
+    if (material) {  // what the object shows as a whole (own or inherited); id or name
+      const std::string shown = d.inheritedMaterial(o);
+      const doc::Material* mat = d.findMaterial(shown);
+      if (shown != *material && !(mat && mat->name == *material)) return false;
+    }
     for (const auto& [key, value] : attributes) {
       const auto it = o.attributes.find(key);
       if (it == o.attributes.end() || (value != "*" && it->second != value)) return false;
@@ -415,7 +453,10 @@ json objectFields(const doc::Modeler& m, const doc::Object& o, const std::set<st
     } else if (f == "parent") {
       j["parent"] = o.parent;
     } else if (f == "color") {
-      j["color"] = {o.color.r, o.color.g, o.color.b};
+      const doc::Color c = d.displayColor(o);
+      j["color"] = {c.r, c.g, c.b};
+    } else if (f == "material") {
+      j["material"] = d.inheritedMaterial(o);
     } else if (f == "bounds") {
       j["bounds"] = worldBounds(d, o);
     } else if (f == "volume") {
@@ -478,8 +519,8 @@ json aggregateObjects(const doc::Modeler& m, const json& a) {
   const ObjectFilter filter(a);
   const std::string by = a.contains("group_by") ? text(a, "group_by") : std::string();
   if (!by.empty() && by != "kind" && by != "tag" && by != "definition" && by != "name" && by != "parent" &&
-      by.rfind("attribute:", 0) != 0) {
-    throw ApiError("group_by must be kind, tag, definition, name, parent or attribute:<key>");
+      by != "material" && by.rfind("attribute:", 0) != 0) {
+    throw ApiError("group_by must be kind, tag, definition, name, parent, material or attribute:<key>");
   }
   struct Sum {
     std::size_t count = 0;
@@ -494,6 +535,7 @@ json aggregateObjects(const doc::Modeler& m, const json& a) {
     if (by == "tag") key = o.layer;
     if (by == "name") key = o.name;
     if (by == "parent") key = o.parent;
+    if (by == "material") key = m.document().inheritedMaterial(o);
     if (by.rfind("attribute:", 0) == 0) {
       const auto it = o.attributes.find(by.substr(10));
       key = it == o.attributes.end() ? std::string() : it->second;
@@ -1001,12 +1043,108 @@ const std::vector<CommandDef>& commands() {
          must(m.setLayer(text(a, "id"), text(a, "tag")));
          return idResult(text(a, "id"));
        }},
-      {"paint", "Paint objects (groups paint their contents). color: [r,g,b] 0..1 or \"#rrggbb\".",
+      {"paint", "Paint objects with a plain colour ([r,g,b] 0..1 or \"#rrggbb\"): the material made from that "
+                "colour is assigned (created when missing). Groups colour their contents. Prefer named "
+                "materials (create_material / assign_material).",
        SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}},
                "color": {}}, "required": ["ids", "color"]}),
        [](doc::Modeler& m, const json& a) {
          must(m.paint(ids(a, "ids"), color(a, "color")));
          return idsResult(ids(a, "ids"));
+       }},
+      {"list_materials",
+       "The material library: id (stable), name, color, and how many objects (as a whole) and faces use it.",
+       SCHEMA({"type": "object", "properties": {}}),
+       [](doc::Modeler& m, const json&) {
+         std::map<std::string, std::pair<int, int>> users;  // objects, faces
+         auto count = [&](const doc::Object& o) {
+           if (!o.material.empty()) ++users[o.material].first;
+           for (const doc::FaceMaterial& f : o.faceMaterials) ++users[f.material].second;
+         };
+         for (const doc::Object& o : m.document().objects()) count(o);
+         for (const doc::ComponentDefinition& d : m.document().definitions()) {
+           for (const doc::Object& o : d.objects) count(o);
+         }
+         json list = json::array();
+         for (const doc::Material& mat : m.document().materials()) {
+           json j = materialJson(m.document(), mat.id);
+           j["objects"] = users[mat.id].first;
+           j["faces"] = users[mat.id].second;
+           list.push_back(j);
+         }
+         return json{{"materials", list}};
+       }},
+      {"create_material",
+       "Add a named solid-colour material to the library (color [r,g,b] 0..1 or \"#rrggbb\"). Returns its "
+       "stable id; refer to materials by id (or by a unique name).",
+       SCHEMA({"type": "object", "properties": {"name": {"type": "string"}, "color": {}},
+               "required": ["name", "color"]}),
+       [](doc::Modeler& m, const json& a) { return idResult(must(m.createMaterial(text(a, "name"), color(a, "color")))); }},
+      {"update_material",
+       "Rename a material and/or change its colour; everything using it changes with it. One undo step.",
+       SCHEMA({"type": "object", "properties": {"material": {"type": "string"}, "name": {"type": "string"},
+               "color": {}}, "required": ["material"]}),
+       [](doc::Modeler& m, const json& a) {
+         const std::string id = materialRef(m.document(), a, "material");
+         if (id.empty()) throw ApiError("'material' must name a material");
+         must(m.updateMaterial(id, a.contains("name") ? std::optional<std::string>(text(a, "name")) : std::nullopt,
+                               a.contains("color") ? std::optional<doc::Color>(color(a, "color")) : std::nullopt));
+         return materialJson(m.document(), id);
+       }},
+      {"delete_material",
+       "Remove a material from the library; objects and faces using it inherit again (same undo step).",
+       SCHEMA({"type": "object", "properties": {"material": {"type": "string"}}, "required": ["material"]}),
+       [](doc::Modeler& m, const json& a) {
+         const std::string id = materialRef(m.document(), a, "material");
+         if (id.empty()) throw ApiError("'material' must name a material");
+         must(m.deleteMaterial(id));
+         return json::object();
+       }},
+      {"assign_material",
+       "Give whole objects a material (id or unique name; \"\" = inherit from the containing group / "
+       "component placement again). A group or component placement colours everything inside without a "
+       "material of its own; faces painted on their own keep theirs. One undo step. For all walls: "
+       "edit_each with where {attributes: {kind: wall}} and ids [\"$id\"].",
+       SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}},
+               "material": {"type": "string"}}, "required": ["ids", "material"]}),
+       [](doc::Modeler& m, const json& a) {
+         must(m.assignMaterial(ids(a, "ids"), materialRef(m.document(), a, "material")));
+         return idsResult(ids(a, "ids"));
+       }},
+      {"paint_faces",
+       "Paint single faces of an object: 'faces' is a list of face selectors (index from get_object, "
+       "{\"normal\": [x,y,z]} with optional \"near\"); material \"\" removes their own material (back to the "
+       "object's). The paint follows the face through later edits (push/pull, parameters, splits); a face "
+       "that cannot be told apart afterwards is left unpainted, never moved to another face.",
+       SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "faces": {"type": "array"},
+               "material": {"type": "string"}}, "required": ["id", "faces", "material"]}),
+       [](doc::Modeler& m, const json& a) {
+         const ObjectId id = text(a, "id");
+         const json& list = arg(a, "faces");
+         if (!list.is_array() || list.empty()) throw ApiError("'faces' must be a non-empty list");
+         std::vector<TopoDS_Face> faces;
+         for (const json& f : list) faces.push_back(selectFace(m, id, f));
+         must(m.paintFaces(id, faces, materialRef(m.document(), a, "material")));
+         return idResult(id);
+       }},
+      {"clear_face_materials", "Remove the faces' own materials of objects (they show the object's again).",
+       SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}}},
+               "required": ["ids"]}),
+       [](doc::Modeler& m, const json& a) {
+         must(m.clearFaceMaterials(ids(a, "ids")));
+         return idsResult(ids(a, "ids"));
+       }},
+      {"material_at",
+       "What one face shows and why (source: face, object, container, none): the eyedropper. Use it to "
+       "apply \"the same material as this face\" elsewhere.",
+       SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "face": {}}, "required": ["id", "face"]}),
+       [](doc::Modeler& m, const json& a) {
+         const ObjectId id = text(a, "id");
+         const auto at = must(m.materialAt(id, selectFace(m, id, arg(a, "face"))));
+         return json{{"material", at.material},
+                     {"name", at.material.empty() ? json(nullptr) : materialJson(m.document(), at.material)["name"]},
+                     {"source", at.source},
+                     {"color", {at.color.r, at.color.g, at.color.b}}};
        }},
       {"delete", "Delete objects (with their children).",
        SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}}},
@@ -1218,21 +1356,21 @@ const std::vector<CommandDef>& commands() {
        "Find objects without reading the whole model: filters (all optional, combined with AND) kind, tag, "
        "ids (string or list), name (substring), parent (direct parent id, \"\" = top level), within "
        "(any ancestor group), definition (component instances of it), visible, region {min, max} (bounds "
-       "overlap), attributes {key: value, or \"*\" for any value}. 'fields' picks what to return (default id, name, kind, tag; also visible, parent, color, "
+       "overlap), attributes {key: value, or \"*\" for any value}, material (what it shows as a whole: id or name). 'fields' picks what to return (default id, name, kind, tag; also visible, parent, color, material, "
        "bounds, volume, area, definition, history, parameters, attributes, text, or all). Paged: limit (default 200) "
        "and next_cursor -> cursor. 'sequence' is for get_changes.",
        SCHEMA({"type": "object", "properties": {
          "kind": {}, "tag": {}, "ids": {}, "name": {"type": "string"}, "parent": {"type": "string"},
-         "within": {"type": "string"}, "definition": {"type": "string"}, "visible": {"type": "boolean"},
+         "within": {"type": "string"}, "definition": {"type": "string"}, "visible": {"type": "boolean"}, "material": {"type": "string"},
          "region": {"type": "object"}, "attributes": {"type": "object"}, "fields": {}, "limit": {"type": "integer"},
          "cursor": {"type": "string"}}}),
        [](doc::Modeler& m, const json& a) { return queryObjects(m, a); }},
       {"aggregate",
        "Count objects and sum volumes of solids and component placements (mm3) and face areas (mm2), with the same filters as "
-       "query_objects, optionally per group_by: kind, tag, definition, name, parent or attribute:<key>.",
+       "query_objects, optionally per group_by: kind, tag, definition, name, parent, material or attribute:<key>.",
        SCHEMA({"type": "object", "properties": {
          "kind": {}, "tag": {}, "ids": {}, "name": {"type": "string"}, "parent": {"type": "string"},
-         "within": {"type": "string"}, "definition": {"type": "string"}, "visible": {"type": "boolean"},
+         "within": {"type": "string"}, "definition": {"type": "string"}, "visible": {"type": "boolean"}, "material": {"type": "string"},
          "region": {"type": "object"}, "attributes": {"type": "object"}, "group_by": {"type": "string"}}}),
        [](doc::Modeler& m, const json& a) { return aggregateObjects(m, a); }},
       {"get_changes",
@@ -1308,7 +1446,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
   using E = CommandApi::Effect;
   if (name == "list_objects" || name == "get_object" || name == "list_tags" || name == "describe" ||
       name == "preview" || name == "query_objects" || name == "aggregate" || name == "get_changes" ||
-      name == "list_openings") {
+      name == "list_openings" || name == "list_materials" || name == "material_at") {
     return E::Read;
   }
   if (isFileCommand(name)) return E::ExternalIo;
@@ -1367,6 +1505,7 @@ json changesJson(const doc::ChangeSummary& s) {
               {"removed", s.removed},
               {"modified", modified},
               {"definitions", s.definitions},
+              {"materials", s.materials},
               {"settings", s.settings}};
 }
 

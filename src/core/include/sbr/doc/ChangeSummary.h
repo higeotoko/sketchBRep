@@ -19,6 +19,7 @@ enum ChangeAspect : unsigned {
   kVisibility = 1u << 2,  // hidden / shown
   kAttributes = 1u << 3,  // name, tag, colour, meaning attributes
   kHierarchy = 1u << 4,   // parent group
+  kMaterial = 1u << 5,    // object / face materials assigned
 };
 
 struct ChangeSummary {
@@ -30,10 +31,12 @@ struct ChangeSummary {
   std::vector<ObjectId> removed;
   std::vector<Modified> modified;
   std::vector<std::string> definitions;  // component definitions changed
+  std::vector<std::string> materials;    // library materials created / changed / removed
   std::vector<std::string> settings;     // "scenes", "sections", "tags"
 
   bool empty() const {
-    return added.empty() && removed.empty() && modified.empty() && definitions.empty() && settings.empty();
+    return added.empty() && removed.empty() && modified.empty() && definitions.empty() && materials.empty() &&
+           settings.empty();
   }
 };
 

@@ -13,6 +13,13 @@ void applySettings(Document& document, const PersistentSettings& settings) {
 }  // namespace
 
 void CommandStack::applyAfter(const Command& command) {
+  for (const MaterialDelta& d : command.materialDeltas) {
+    if (d.after) {
+      document_.putMaterial(*d.after);
+    } else {
+      document_.removeMaterial(d.id);
+    }
+  }
   for (const DefinitionDelta& d : command.definitionDeltas) {
     if (d.after) {
       document_.putDefinition(*d.after);
@@ -51,17 +58,62 @@ void CommandStack::applyBefore(const Command& command) {
       document_.removeDefinition(it->id);
     }
   }
+  for (auto it = command.materialDeltas.rbegin(); it != command.materialDeltas.rend(); ++it) {
+    if (it->before) {
+      document_.putMaterial(*it->before);
+    } else {
+      document_.removeMaterial(it->id);
+    }
+  }
 }
 
+namespace {
+
+bool reshaped(const Object* before, const Object& after) {
+  return !before || !before->shape.IsSame(after.shape) || before->shape.Orientation() != after.shape.Orientation();
+}
+
+// Painted faces follow shape changes, whoever made them (tools, AI,
+// batches): each new state finds its faces again (docs/11_materials.md).
+// Recorded steps are already consistent, so undo / redo skip this.
+void reanchorMaterials(Command& command) {
+  for (ObjectDelta& d : command.deltas) {
+    if (d.after && !d.after->faceMaterials.empty() && reshaped(d.before ? &*d.before : nullptr, *d.after)) {
+      reanchorFaceMaterials(*d.after);
+    }
+  }
+  for (DefinitionDelta& d : command.definitionDeltas) {
+    if (!d.after) continue;
+    for (Object& o : d.after->objects) {
+      if (o.faceMaterials.empty()) continue;
+      const Object* before = nullptr;
+      if (d.before) {
+        for (const Object& b : d.before->objects) {
+          if (b.id == o.id) before = &b;
+        }
+      }
+      if (reshaped(before, o)) reanchorFaceMaterials(o);
+    }
+  }
+}
+
+}  // namespace
+
 void CommandStack::execute(Command command) {
+  reanchorMaterials(command);
   // A step that changes nothing is not worth an undo (or a new revision).
-  if (command.deltas.empty() && command.definitionDeltas.empty() && !command.settings) return;
+  if (command.deltas.empty() && command.definitionDeltas.empty() && command.materialDeltas.empty() &&
+      !command.settings) {
+    return;
+  }
   if (groupDepth_ > 0) {
     applyAfter(command);
-    if (!group_) group_ = Command{groupName_, {}, {}, std::nullopt};
+    if (!group_) group_ = Command{groupName_, {}, {}, {}, std::nullopt};
     group_->deltas.insert(group_->deltas.end(), command.deltas.begin(), command.deltas.end());
     group_->definitionDeltas.insert(group_->definitionDeltas.end(), command.definitionDeltas.begin(),
                                     command.definitionDeltas.end());
+    group_->materialDeltas.insert(group_->materialDeltas.end(), command.materialDeltas.begin(),
+                                  command.materialDeltas.end());
     return;
   }
   applyAfter(command);
@@ -95,6 +147,15 @@ void CommandStack::record(Command command) {
         it->after = std::move(d.after);
       }
     }
+    for (MaterialDelta& d : command.materialDeltas) {
+      auto it = std::find_if(last.materialDeltas.begin(), last.materialDeltas.end(),
+                             [&](const MaterialDelta& e) { return e.id == d.id; });
+      if (it == last.materialDeltas.end()) {
+        last.materialDeltas.push_back(std::move(d));
+      } else {
+        it->after = std::move(d.after);
+      }
+    }
     if (command.settings) {
       if (last.settings) {
         last.settings->after = command.settings->after;
@@ -102,7 +163,7 @@ void CommandStack::record(Command command) {
         last.settings = command.settings;
       }
     }
-    if (last.deltas.empty() && last.definitionDeltas.empty() && !last.settings) {
+    if (last.deltas.empty() && last.definitionDeltas.empty() && last.materialDeltas.empty() && !last.settings) {
       undo_.pop_back();  // amended back to nothing: no step left to undo
       undoRevisions_.pop_back();
     } else {
@@ -130,10 +191,11 @@ void CommandStack::endGroup() {
   if (groupDepth_ == 0 || --groupDepth_ > 0) return;
   const PersistentSettings now = PersistentSettings::of(document_.settings());
   if (now != groupSettings_) {
-    if (!group_) group_ = Command{groupName_, {}, {}, std::nullopt};
+    if (!group_) group_ = Command{groupName_, {}, {}, {}, std::nullopt};
     group_->settings = SettingsDelta{groupSettings_, now};
   }
-  if (!group_ || (group_->deltas.empty() && group_->definitionDeltas.empty() && !group_->settings)) {
+  if (!group_ || (group_->deltas.empty() && group_->definitionDeltas.empty() && group_->materialDeltas.empty() &&
+                  !group_->settings)) {
     group_.reset();
     return;
   }

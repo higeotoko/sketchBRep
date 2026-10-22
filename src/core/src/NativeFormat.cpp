@@ -3,6 +3,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <sstream>
 
 #include <nlohmann/json.hpp>
@@ -492,25 +493,55 @@ struct ShapeReader {
   }
 };
 
-json objectToJson(const Object& o, ShapeTable& shapes) {
+json surfaceRefToJson(const geom::SurfaceRef& f) {
+  return {{"point", toJson(f.point)}, {"normal", toJson(f.normal)}, {"surfaceType", f.surfaceType}};
+}
+
+geom::SurfaceRef surfaceRefFrom(const json& f) {
+  geom::SurfaceRef ref;
+  ref.point = pointFrom(f.at("point"));
+  ref.normal = dirFrom(f.at("normal"));
+  ref.surfaceType = f.value("surfaceType", 0);
+  return ref;
+}
+
+json colorToJson(const Color& c) { return json::array({c.r, c.g, c.b}); }
+
+Color colorFrom(const json& c) { return Color{c.at(0).get<double>(), c.at(1).get<double>(), c.at(2).get<double>()}; }
+
+json objectToJson(const Object& o, const Color& shown, ShapeTable& shapes) {
   json j = {
       {"id", o.id},
       {"name", o.name},
       {"layer", o.layer},
       {"visible", o.visible},
-      {"color", {o.color.r, o.color.g, o.color.b}},
+      {"color", colorToJson(shown)},  // what older versions show
       {"transform", toJson(o.transform)},
       {"recipe", recipeToJson(o.recipe)},
   };
   if (!o.parent.empty()) j["parent"] = o.parent;
+  if (!o.material.empty()) j["material"] = o.material;
+  if (!o.faceMaterials.empty()) {
+    json faces = json::array();
+    for (const FaceMaterial& fm : o.faceMaterials) {
+      json f = {{"material", fm.material}};
+      if (fm.plane) f["face"] = faceRefToJson(*fm.plane);
+      if (fm.surface) f["surface"] = surfaceRefToJson(*fm.surface);
+      faces.push_back(f);
+    }
+    j["faceMaterials"] = faces;
+  }
   if (!o.attributes.empty()) j["attributes"] = o.attributes;
   if (!o.shape.IsNull()) j["geometry"] = shapes.reference(o.shape);
   return j;
 }
 
-json objectsToJson(const std::vector<Object>& objects, ShapeTable& shapes) {
+// `shownColor` gives the colour each object shows (written for older
+// versions, which only know colours).
+json objectsToJson(const std::vector<Object>& objects, ShapeTable& shapes,
+                   const std::function<Color(const Object&)>& shownColor) {
   json arr = json::array();
-  for (const Object& o : objects) arr.push_back(objectToJson(o, shapes));
+  for (const Object& o : objects) arr.push_back(objectToJson(o, shownColor(o), shapes));
   return arr;
 }
 
@@ -524,9 +555,16 @@ Object objectFrom(const json& j, const RegenContext& context, std::vector<std::s
   o.name = j.value("name", std::string());
   o.layer = j.value("layer", std::string("Default"));
   o.visible = j.value("visible", true);
-  if (j.contains("color")) {
-    const json& c = j.at("color");
-    o.color = Color{c.at(0).get<double>(), c.at(1).get<double>(), c.at(2).get<double>()};
+  if (j.contains("color")) o.color = colorFrom(j.at("color"));
+  o.material = j.value("material", std::string());
+  if (j.contains("faceMaterials")) {
+    for (const json& f : j.at("faceMaterials")) {
+      FaceMaterial fm;
+      fm.material = f.at("material").get<std::string>();
+      if (f.contains("face")) fm.plane = faceRefFrom(f.at("face"));
+      if (f.contains("surface")) fm.surface = surfaceRefFrom(f.at("surface"));
+      o.faceMaterials.push_back(std::move(fm));
+    }
   }
   if (j.contains("transform")) o.transform = trsfFrom(j.at("transform"));
   if (j.contains("attributes")) o.attributes = j.at("attributes").get<std::map<std::string, std::string>>();
@@ -569,9 +607,18 @@ std::string serializeDocument(const Document& document) {
   ShapeTable shapes;
   json definitions = json::array();
   for (const ComponentDefinition& d : document.definitions()) {
-    definitions.push_back({{"id", d.id}, {"name", d.name}, {"objects", objectsToJson(d.objects, shapes)}});
+    definitions.push_back({{"id", d.id},
+                           {"name", d.name},
+                           {"objects", objectsToJson(d.objects, shapes, [&](const Object& o) {
+                              return document.materialColor(o.material, o.color);
+                            })}});
   }
-  json objects = objectsToJson(document.objects(), shapes);
+  json objects =
+      objectsToJson(document.objects(), shapes, [&](const Object& o) { return document.displayColor(o); });
+  json materials = json::array();
+  for (const Material& m : document.materials()) {
+    materials.push_back({{"id", m.id}, {"name", m.name}, {"color", colorToJson(m.color)}});
+  }
   const DocumentSettings& s = document.settings();
   json scenes = json::array();
   for (const Scene& scene : s.scenes) scenes.push_back({{"name", scene.name}, {"camera", cameraToJson(scene.camera)}});
@@ -589,6 +636,7 @@ std::string serializeDocument(const Document& document) {
       {"sections", sections},
       {"hiddenTags", s.hiddenTags},
       {"shapes", shapes.entries},
+      {"materials", materials},
       {"definitions", definitions},
       {"objects", objects},
   };
@@ -656,8 +704,37 @@ Status deserializeDocument(const std::string& text, Document& document,
       }
     }
 
+    // Materials. Files from before materials only have colours: each colour
+    // other than the default becomes the material made from it (same
+    // colour, same material), assigned to the object.
+    std::vector<Material> library;
+    if (root.contains("materials")) {
+      for (const json& m : root.at("materials")) {
+        library.push_back({m.at("id").get<std::string>(), m.value("name", std::string()), colorFrom(m.at("color"))});
+      }
+    } else {
+      std::set<std::string> known;
+      auto adopt = [&](Object& o) {
+        if (o.color == Color{} || o.isContainer()) return;
+        const Material m = colorMaterial(o.color);
+        o.material = m.id;
+        if (known.insert(m.id).second) library.push_back(m);
+      };
+      std::vector<ComponentDefinition> definitions = loaded.definitions();
+      for (ComponentDefinition& d : definitions) {
+        for (Object& o : d.objects) adopt(o);
+        loaded.putDefinition(d);
+      }
+      std::vector<Object> objects = loaded.objects();
+      for (Object& o : objects) {
+        adopt(o);
+        loaded.replace(o);
+      }
+    }
+
     document.clear();
     document.settings() = loaded.settings();
+    for (const Material& m : library) document.putMaterial(m);
     for (const ComponentDefinition& d : loaded.definitions()) document.putDefinition(d);
     for (const Object& o : loaded.objects()) document.insert(o);
     return Status::success();

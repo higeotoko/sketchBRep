@@ -567,11 +567,13 @@ TEST(Paint, GroupsPaintTheirChildrenInOneStep) {
   auto g = m.group({a, b});
   const Color red{0.9, 0.1, 0.1};
   ASSERT_TRUE(m.paint({*g}, red).ok());
-  EXPECT_EQ(m.document().find(a)->color, red);
-  EXPECT_EQ(m.document().find(b)->color, red);
+  // The group's material colours its children (they have none of their own).
+  EXPECT_EQ(m.document().displayColor(*m.document().find(a)), red);
+  EXPECT_EQ(m.document().displayColor(*m.document().find(b)), red);
   EXPECT_EQ(m.history().undoName(), "Paint");
   ASSERT_TRUE(m.undo());
-  EXPECT_FALSE(m.document().find(a)->color == red);
+  EXPECT_FALSE(m.document().displayColor(*m.document().find(a)) == red);
+  EXPECT_TRUE(m.document().materials().empty());  // the colour's material came with the step
 }
 
 // ---- Annotations (dimensions, text) ---------------------------------------------------

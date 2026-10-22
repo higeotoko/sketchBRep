@@ -111,6 +111,17 @@ class Document {
   TopoDS_Shape worldShape(const Object& object) const;
   TopoDS_Shape worldShape(const ObjectId& id) const;
 
+  // --- materials (shared library, stable ids) ------------------------------
+  const std::vector<Material>& materials() const { return materials_; }
+  const Material* findMaterial(const std::string& id) const;
+  // Material a face of `object` without its own material shows: the
+  // object's, else the nearest container's; "" when none applies.
+  std::string inheritedMaterial(const Object& object) const;
+  // Colour of a material id ("" or unknown: `fallback`).
+  Color materialColor(const std::string& id, const Color& fallback) const;
+  // Colour of the object where no face says otherwise.
+  Color displayColor(const Object& object) const;
+
   // --- component definitions ----------------------------------------------
   const std::vector<ComponentDefinition>& definitions() const { return definitions_; }
   const ComponentDefinition* findDefinition(const std::string& id) const;
@@ -123,6 +134,10 @@ class Document {
   void remove(const ObjectId& id);
   void putDefinition(const ComponentDefinition& definition);
   void removeDefinition(const std::string& id);
+  // Material edits change how many objects look: like settings, they ask
+  // consumers for a full (appearance) resync.
+  void putMaterial(const Material& material);
+  void removeMaterial(const std::string& id);
   void clear();
 
   DocumentSettings& settings() { return settings_; }
@@ -150,6 +165,7 @@ class Document {
 
   std::vector<Object> objects_;
   std::vector<ComponentDefinition> definitions_;
+  std::vector<Material> materials_;
   DocumentSettings settings_;
   std::vector<Listener> listeners_;
 

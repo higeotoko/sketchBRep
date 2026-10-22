@@ -8,6 +8,7 @@
 #include <gp_Trsf.hxx>
 #include <TopoDS_Shape.hxx>
 
+#include "sbr/doc/Material.h"
 #include "sbr/doc/Recipe.h"
 
 namespace sbr::doc {
@@ -17,10 +18,6 @@ using ObjectId = std::string;
 // Generates a random 128-bit identifier in canonical UUID text form.
 ObjectId generateObjectId();
 
-struct Color {
-  double r = 0.86, g = 0.86, b = 0.84;
-  bool operator==(const Color& o) const { return r == o.r && g == o.g && b == o.b; }
-};
 
 enum class ObjectKind { Empty, Curve, Face, Solid, Group, Instance, Annotation, Guide, Other };
 const char* toString(ObjectKind kind);
@@ -31,7 +28,11 @@ struct Object {
   std::string name;
   std::string layer = "Default";  // tag
   bool visible = true;
-  Color color;
+  Color color;  // legacy colour, shown only where no material applies
+  // Material of the whole object ("" = inherit from the container), and
+  // faces painted on their own (these win).
+  std::string material;
+  std::vector<FaceMaterial> faceMaterials;
   gp_Trsf transform;  // local -> parent placement
   // Optional meaning ("kind": "wall", "level": "2F", "grid": "X3"), set by
   // people or agents and used to find objects. Geometry never depends on it.
@@ -46,5 +47,19 @@ struct Object {
 
 // Regenerates `object.shape` from `object.recipe`.
 Status rebuild(Object& object, const RegenContext& context = {});
+
+// After `object.shape` changed: finds each painted face again on the new
+// shape and re-identifies it there (pieces of a split face each keep the
+// material). Assignments whose face cannot be told stay unapplied rather
+// than move to another face.
+void reanchorFaceMaterials(Object& object);
+// Faces painted on their own: 1-based index in TopExp::MapShapes(shape,
+// FACE) order -> material id; `unresolved` counts assignments applied to
+// no face.
+struct FaceMaterialMap {
+  std::vector<std::pair<int, std::string>> faces;
+  std::size_t unresolved = 0;
+};
+FaceMaterialMap resolveFaceMaterials(const Object& object);
 
 }  // namespace sbr::doc

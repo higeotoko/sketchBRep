@@ -26,6 +26,12 @@ struct DefinitionDelta {
   std::optional<ComponentDefinition> after;
 };
 
+struct MaterialDelta {
+  std::string id;
+  std::optional<Material> before;
+  std::optional<Material> after;
+};
+
 struct SettingsDelta {
   PersistentSettings before;
   PersistentSettings after;
@@ -37,6 +43,9 @@ struct Command {
   // Applied before object deltas on execute/redo and after them on undo, so
   // instances never refer to a missing definition.
   std::vector<DefinitionDelta> definitionDeltas;
+  // Library edits; applied first (objects never refer to a missing
+  // material) and undone last.
+  std::vector<MaterialDelta> materialDeltas;
   // Tag visibility, sections, scenes (review A: part of the undo step and
   // of atomic rollback like geometry).
   std::optional<SettingsDelta> settings;

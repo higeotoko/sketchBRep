@@ -131,7 +131,7 @@ TEST(Transactions, R03_PreviewAndCommitReportTheSameChanges) {
        [](Api&, const std::string& box, const std::string&) {
          return json::array({step("paint", {{"ids", {box}}, {"color", {1, 0, 0}}})});
        },
-       "attributes"},
+       "material"},
       {"rename",
        [](Api&, const std::string& box, const std::string&) {
          return json::array({step("rename", {{"id", box}, {"name", "Wall"}})});
@@ -263,8 +263,9 @@ TEST(Transactions, EditEachIsGuardedAtomicAndPreviewable) {
   EXPECT_EQ(a.modeler.history().undoCount(), steps + 1);
   const auto* last = a.modeler.document().find(windows[3]);
   EXPECT_NEAR(last->transform.TranslationPart().Z(), 3.0, 1e-9);
-  EXPECT_NEAR(last->color.b, 0.8, 1e-9);
-  EXPECT_NEAR(a.modeler.document().find(wall)->color.b, sbr::doc::Color{}.b, 1e-12);  // untouched
+  EXPECT_NEAR(a.modeler.document().displayColor(*last).b, 0.8, 1e-9);
+  EXPECT_NEAR(a.modeler.document().displayColor(*a.modeler.document().find(wall)).b, sbr::doc::Color{}.b,
+              1e-12);  // untouched
 
   // A failure on any target reverts every target.
   a.ok("undo");
@@ -587,4 +588,56 @@ TEST(Transactions, FaceByNormalRefusesTiesAndTakesNear) {
   const double gap = (4000.0 - 2 * 900) / 3;
   EXPECT_NEAR(two[0]["center"][0].get<double>() + two[1]["center"][0].get<double>(), 4000, 1e-6);
   EXPECT_NEAR(std::abs(two[0]["center"][0].get<double>() - two[1]["center"][0].get<double>()), gap + 900, 1e-6);
+}
+
+// Materials on the common edit path: "the material of this face on every
+// wall" = material_at + edit_each (preview / commit report the same change
+// set, one undo step); a failing batch takes back the library edit too.
+TEST(Transactions, MaterialOfAFaceOnAllWallsAndRollback) {
+  Api a;
+  const json walls = a.ok("create_wall", {{"points", {{0, 0}, {6000, 0}, {6000, 4000}, {0, 4000}, {0, 0}}},
+                                          {"thickness", 200}, {"height", 2800}})["ids"];
+  const std::string brick = a.ok("create_material", {{"name", "レンガ"}, {"color", "#a0522d"}})["id"];
+  const std::string sample = a.box(9000);
+  a.ok("paint_faces", {{"id", sample}, {"faces", {{{"normal", {0, 0, 1}}}}}, {"material", "レンガ"}});
+  const json at = a.ok("material_at", {{"id", sample}, {"face", {{"normal", {0, 0, 1}}}}});
+  EXPECT_EQ(at["material"], brick);
+  EXPECT_EQ(at["source"], "face");
+  EXPECT_EQ(a.ok("material_at", {{"id", sample}, {"face", {{"normal", {1, 0, 0}}}}})["source"], "none");
+
+  const std::size_t steps = a.modeler.history().undoCount();
+  const json where = {{"attributes", {{"kind", "wall"}}}};
+  const json commands = {step("assign_material", {{"ids", {"$id"}}, {"material", at["material"]}})};
+  const json preview = a.ok("preview", {{"commands", {step("edit_each", {{"where", where}, {"commands", commands}})}}});
+  ASSERT_TRUE(preview["would_succeed"].get<bool>()) << preview.dump();
+  ASSERT_EQ(preview["changes"]["modified"].size(), 4u);
+  EXPECT_TRUE(hasAspect(preview["changes"]["modified"][0], "material"));
+  EXPECT_EQ(a.modeler.history().undoCount(), steps);  // preview changed nothing
+  const json done = a.ok("edit_each", {{"where", where}, {"commands", commands}});
+  EXPECT_EQ(done["changes"], preview["changes"]);
+  EXPECT_EQ(a.modeler.history().undoCount(), steps + 1);
+  const json painted = a.ok("query_objects", {{"material", "レンガ"}, {"fields", {"id"}}});
+  EXPECT_EQ(painted["objects"].size(), 4u);  // the walls (the sample only has a painted face)
+  const json counts = a.ok("aggregate", {{"attributes", {{"kind", "wall"}}}, {"group_by", "material"}});
+  ASSERT_EQ(counts["groups"].size(), 1u) << counts.dump();
+  EXPECT_EQ(counts["groups"][0]["key"], brick);
+  EXPECT_EQ(counts["groups"][0]["count"].get<int>(), 4);
+  a.ok("undo");
+  EXPECT_TRUE(a.ok("query_objects", {{"material", brick}, {"fields", {"id"}}})["objects"].empty());
+
+  // A new material, assigned, then a failure: everything goes back,
+  // including the library entry.
+  const std::size_t before = a.modeler.history().undoCount();
+  const json batch = a.call(
+      "batch", {{"commands",
+                 {step("create_material", {{"name", "杉板"}, {"color", {0.8, 0.6, 0.4}}}),
+                  step("assign_material", {{"ids", {walls[0]}}, {"material", "杉板"}}),
+                  step("assign_material", {{"ids", {"no-such-object"}}, {"material", "杉板"}})}}});
+  EXPECT_FALSE(batch["ok"]);
+  EXPECT_EQ(a.modeler.history().undoCount(), before);
+  for (const auto& mat : a.modeler.document().materials()) EXPECT_NE(mat.name, "杉板");
+  EXPECT_TRUE(a.modeler.document().find(walls[0].get<std::string>())->material.empty());
+  // Material edits are part of the change set.
+  const json renamed = a.ok("preview", {{"commands", {step("update_material", {{"material", brick}, {"name", "赤レンガ"}})}}});
+  EXPECT_EQ(renamed["changes"]["materials"], json::array({brick}));
 }

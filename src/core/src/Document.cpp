@@ -262,9 +262,59 @@ void Document::removeDefinition(const std::string& id) {
   notify();
 }
 
+const Material* Document::findMaterial(const std::string& id) const {
+  if (id.empty()) return nullptr;
+  for (const Material& m : materials_) {
+    if (m.id == id) return &m;
+  }
+  return nullptr;
+}
+
+std::string Document::inheritedMaterial(const Object& object) const {
+  if (!object.material.empty()) return object.material;
+  for (ObjectId p = object.parent; !p.empty();) {
+    const Object* parent = find(p);
+    if (!parent) break;
+    if (!parent->material.empty()) return parent->material;
+    p = parent->parent;
+  }
+  return {};
+}
+
+Color Document::materialColor(const std::string& id, const Color& fallback) const {
+  const Material* m = findMaterial(id);
+  return m ? m->color : fallback;
+}
+
+Color Document::displayColor(const Object& object) const {
+  return materialColor(inheritedMaterial(object), object.color);
+}
+
+void Document::putMaterial(const Material& material) {
+  bool found = false;
+  for (Material& m : materials_) {
+    if (m.id == material.id) {
+      m = material;
+      found = true;
+    }
+  }
+  if (!found) materials_.push_back(material);
+  fullChangeSequence_ = ++sequence_;
+  notify();
+}
+
+void Document::removeMaterial(const std::string& id) {
+  const auto it = std::remove_if(materials_.begin(), materials_.end(), [&](const Material& m) { return m.id == id; });
+  if (it == materials_.end()) return;
+  materials_.erase(it, materials_.end());
+  fullChangeSequence_ = ++sequence_;
+  notify();
+}
+
 void Document::clear() {
   objects_.clear();
   definitions_.clear();
+  materials_.clear();
   settings_ = DocumentSettings{};
   invalidateIndex();
   log_.clear();

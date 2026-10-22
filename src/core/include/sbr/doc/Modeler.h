@@ -158,9 +158,35 @@ class Modeler {
   // Meaning attributes on several objects in one undo step; an empty value
   // removes the key.
   Status setAttribute(const std::vector<ObjectId>& ids, const std::string& key, const std::string& value);
+  // Plain colours go through materials: the material made from that colour
+  // (colorMaterial) is created when needed and assigned to the objects.
   Status setColor(const ObjectId& id, const Color& color);
-  // Paints objects; groups paint all their descendants (one undo step).
   Status paint(const std::vector<ObjectId>& ids, const Color& color);
+
+  // --- materials (docs/11_materials.md) -----------------------------------
+  // A new named material with a fresh stable id (one undo step).
+  Result<std::string> createMaterial(const std::string& name, const Color& color);
+  Status updateMaterial(const std::string& id, std::optional<std::string> name, std::optional<Color> color);
+  // Objects and faces using it fall back to inheriting (same undo step).
+  Status deleteMaterial(const std::string& id);
+  // Whole objects take `material` ("" = inherit from the container again).
+  // A group or component placement colours what inside has no material of
+  // its own. Unknown ids are refused. One undo step.
+  Status assignMaterial(const std::vector<ObjectId>& ids, const std::string& material);
+  // Faces of one object (world faces of its shape, e.g. picked) take
+  // `material`; "" removes their own material (back to the object's).
+  // One undo step.
+  Status paintFaces(const ObjectId& id, const std::vector<TopoDS_Face>& worldFaces, const std::string& material);
+  // Faces' own materials removed on these objects (all faces).
+  Status clearFaceMaterials(const std::vector<ObjectId>& ids);
+  // What a face of an object shows and why ("face", "object", "container"
+  // or "none" with the legacy colour).
+  struct MaterialAt {
+    std::string material;
+    std::string source;
+    Color color;
+  };
+  Result<MaterialAt> materialAt(const ObjectId& id, const TopoDS_Face& worldFace) const;
   // Deletes objects together with their descendants.
   Status remove(const std::vector<ObjectId>& ids);
 

@@ -11,6 +11,7 @@ add_executable(sbr_core_tests
   test_freeform.cpp
   test_api.cpp
   test_transactions.cpp
+  test_materials.cpp
   test_ux_gate1.cpp
   test_rhino3dm.cpp
   test_scenarios.cpp

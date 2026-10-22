@@ -16,6 +16,18 @@ bool sameTransform(const gp_Trsf& a, const gp_Trsf& b) {
   return true;
 }
 
+bool samePoint(const gp_Pnt& a, const gp_Pnt& b) { return a.Distance(b) < 1e-9; }
+
+bool sameFaceMaterials(const std::vector<FaceMaterial>& a, const std::vector<FaceMaterial>& b) {
+  if (a.size() != b.size()) return false;
+  for (std::size_t i = 0; i < a.size(); ++i) {
+    if (a[i].material != b[i].material || a[i].plane.has_value() != b[i].plane.has_value()) return false;
+    if (a[i].plane && !samePoint(a[i].plane->centroid, b[i].plane->centroid)) return false;
+    if (a[i].surface && b[i].surface && !samePoint(a[i].surface->point, b[i].surface->point)) return false;
+  }
+  return true;
+}
+
 }  // namespace
 
 unsigned compareObjects(const Object& before, const Object& after) {
@@ -30,6 +42,9 @@ unsigned compareObjects(const Object& before, const Object& after) {
     aspects |= kAttributes;
   }
   if (before.parent != after.parent) aspects |= kHierarchy;
+  if (before.material != after.material || !sameFaceMaterials(before.faceMaterials, after.faceMaterials)) {
+    aspects |= kMaterial;
+  }
   return aspects;
 }
 
@@ -66,6 +81,12 @@ ChangeSummary summarize(const Command& command) {
     for (const std::string& id : summary.definitions) seen |= id == d.id;
     if (!seen) summary.definitions.push_back(d.id);
   }
+  for (const MaterialDelta& d : command.materialDeltas) {
+    if (d.before && d.after && *d.before == *d.after) continue;
+    bool seen = false;
+    for (const std::string& id : summary.materials) seen |= id == d.id;
+    if (!seen) summary.materials.push_back(d.id);
+  }
   if (command.settings) {
     const PersistentSettings& a = command.settings->before;
     const PersistentSettings& b = command.settings->after;
@@ -81,7 +102,8 @@ std::vector<std::string> aspectNames(unsigned aspects) {
                                                            {kPlacement, "placement"},
                                                            {kVisibility, "visibility"},
                                                            {kAttributes, "attributes"},
-                                                           {kHierarchy, "hierarchy"}};
+                                                           {kHierarchy, "hierarchy"},
+                                                           {kMaterial, "material"}};
   std::vector<std::string> out;
   for (const auto& [bit, name] : names) {
     if (aspects & bit) out.push_back(name);

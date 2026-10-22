@@ -43,6 +43,12 @@ struct FaceRef {
   Result<TopoDS_Face> resolve(const TopoDS_Shape& shape,
                               const std::vector<std::pair<gp_Pnt, gp_Pnt>>& splitLines = {}) const;
   FaceRef transformed(const gp_Trsf& trsf) const;
+  // For finishes (appearance), which may spread but must not jump: the
+  // faces on the same plane lying within the remembered box (the face, or
+  // all its pieces after a split); else the one face facing the same way
+  // that overlaps the box when moved onto its plane (pushed / regenerated
+  // face). Empty when neither identifies anything unambiguously.
+  std::vector<TopoDS_Face> continuations(const TopoDS_Shape& shape) const;
 };
 
 // Reference to a curved face: a point inside it, the outward normal there

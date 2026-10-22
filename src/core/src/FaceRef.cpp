@@ -197,6 +197,59 @@ Result<TopoDS_Face> FaceRef::resolve(const TopoDS_Shape& shape,
                     " faces on that plane could be it); pick the face again");
 }
 
+std::vector<TopoDS_Face> FaceRef::continuations(const TopoDS_Shape& shape) const {
+  const double planeTolerance = 1e-3;
+  if (!extent) {  // no identity: the face resolve() would edit
+    auto face = resolve(shape);
+    return face ? std::vector<TopoDS_Face>{face.value()} : std::vector<TopoDS_Face>{};
+  }
+  const gp_Vec n(normal);
+  const double offset = gp_Vec(centroid.XYZ()).Dot(n);
+  std::vector<TopoDS_Face> onPlane, grown;
+  std::vector<std::pair<TopoDS_Face, double>> facing;  // other planes: (face, its offset)
+  for (TopExp_Explorer it(shape, TopAbs_FACE); it.More(); it.Next()) {
+    const TopoDS_Face face = TopoDS::Face(it.Current());
+    const auto fn = planarFaceNormal(face);
+    if (!fn || fn->Angle(normal) > 1e-6) continue;
+    gp_Pnt c;
+    double a = 0;
+    if (!faceCentroid(face, c, a)) continue;
+    const double o = gp_Vec(c.XYZ()).Dot(n);
+    if (std::abs(o - offset) <= planeTolerance) {
+      // On the plane: counts when a point inside it lies in the old box.
+      const auto p = interiorPoint(face);
+      const gp_Pnt inner = p ? p->first : c;
+      Bnd_Box box;
+      box.Add(extent->first);
+      box.Add(extent->second);
+      box.Enlarge(planeTolerance);
+      if (!box.IsOut(inner)) {
+        onPlane.push_back(face);
+      } else if (boxesOverlap(faceBox(face), extent->first, extent->second, planeTolerance)) {
+        grown.push_back(face);  // still covers where it was, now larger
+      }
+    } else {
+      facing.emplace_back(face, o);
+    }
+  }
+  if (!onPlane.empty()) return onPlane;
+  if (grown.size() == 1) return grown;
+  if (!grown.empty()) return {};
+  // Moved parallel to itself: compare boxes after bringing it onto the
+  // remembered plane.
+  std::vector<TopoDS_Face> moved;
+  for (const auto& [face, o] : facing) {
+    const gp_Vec back = n * (offset - o);
+    const Bnd_Box box = faceBox(face);
+    if (box.IsVoid()) continue;
+    if (boxesOverlap(box, extent->first.Translated(-back), extent->second.Translated(-back), planeTolerance)) {
+      moved.push_back(face);
+    }
+  }
+  if (moved.size() == 1) return moved;
+  return {};
+}
+
 FaceRef FaceRef::transformed(const gp_Trsf& trsf) const {
   FaceRef out = *this;
   out.normal = normal.Transformed(trsf);

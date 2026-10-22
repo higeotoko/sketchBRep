@@ -23,6 +23,7 @@
 #include <TopoDS.hxx>
 
 #include "sbr/doc/NativeFormat.h"
+#include "sbr/doc/ChangeSummary.h"
 #include "sbr/geom/Freeform.h"
 #include "sbr/geom/Measure.h"
 #include "sbr/geom/Operations.h"
@@ -67,13 +68,30 @@ class ChangeSet {
         definition});
   }
 
+  void putMaterial(const Material& material) {
+    const Material* before = document_.findMaterial(material.id);
+    materials_.push_back(MaterialDelta{material.id, before ? std::optional<Material>(*before) : std::nullopt, material});
+  }
+  void removeMaterial(const std::string& id) {
+    const Material* before = document_.findMaterial(id);
+    if (before) materials_.push_back(MaterialDelta{id, *before, std::nullopt});
+  }
+  // The material made from a plain colour, added to the library if missing.
+  std::string colorMaterialFor(const Color& color) {
+    const Material m = colorMaterial(color);
+    bool known = document_.findMaterial(m.id) != nullptr;
+    for (const MaterialDelta& d : materials_) known |= d.id == m.id && d.after.has_value();
+    if (!known) putMaterial(m);
+    return m.id;
+  }
+
   Command build(const std::string& name) {
     // Undo applies deltas in reverse: removals must come back in ascending
     // index order, so store them descending.
     std::sort(removed_.begin(), removed_.end(), [](const ObjectDelta& a, const ObjectDelta& b) {
       return a.indexBefore.value_or(0) > b.indexBefore.value_or(0);
     });
-    Command command{name, {}, definitions_};
+    Command command{name, {}, definitions_, materials_};
     for (auto* list : {&modified_, &added_, &removed_}) {
       command.deltas.insert(command.deltas.end(), list->begin(), list->end());
     }
@@ -86,7 +104,59 @@ class ChangeSet {
   std::vector<ObjectDelta> added_;
   std::vector<ObjectDelta> removed_;
   std::vector<DefinitionDelta> definitions_;
+  std::vector<MaterialDelta> materials_;
 };
+
+// Materials through Booleans (docs/11_materials.md): the result takes the
+// first input's material; a face of the result lying on a face of an input
+// (same plane, same facing) keeps what that face showed when it differs
+// from the result's material. Faces made by cutting face the other way and
+// inherit the result's.
+void carryMaterials(Object& result, const std::vector<std::pair<const Object*, gp_Trsf>>& inputs) {
+  if (inputs.empty() || result.shape.IsNull()) return;
+  result.material = inputs.front().first->material;
+  struct Source {
+    TopoDS_Face face;
+    gp_Dir normal;
+    gp_Pnt point;  // on its plane
+    std::string material;
+  };
+  std::vector<Source> sources;
+  for (const auto& [o, placement] : inputs) {
+    if (o->shape.IsNull()) continue;
+    std::map<int, std::string> own;
+    for (const auto& [i, m] : resolveFaceMaterials(*o).faces) own[i] = m;
+    TopTools_IndexedMapOfShape faces;
+    TopExp::MapShapes(o->shape, TopAbs_FACE, faces);
+    for (int i = 1; i <= faces.Extent(); ++i) {
+      const auto it = own.find(i);
+      const std::string material = it != own.end() ? it->second : o->material;
+      if (material.empty() || material == result.material) continue;
+      const TopoDS_Face placed = TopoDS::Face(faces(i).Moved(TopLoc_Location(placement)));
+      const auto ref = geom::FaceRef::fromFace(placed);
+      if (!ref) continue;
+      sources.push_back({placed, ref->normal, ref->centroid, material});
+    }
+  }
+  if (sources.empty()) return;
+  TopTools_IndexedMapOfShape faces;
+  TopExp::MapShapes(result.shape, TopAbs_FACE, faces);
+  for (int i = 1; i <= faces.Extent(); ++i) {
+    const TopoDS_Face face = TopoDS::Face(faces(i));
+    auto mine = FaceMaterial::of(face, std::string());
+    if (!mine || !mine->plane || !mine->plane->inside) continue;
+    const gp_Pnt p = *mine->plane->inside;
+    for (const Source& src : sources) {
+      if (src.normal.Angle(mine->plane->normal) > 1e-6) continue;
+      if (std::abs(gp_Vec(src.point, p).Dot(gp_Vec(src.normal))) > 1e-3) continue;
+      BRepClass_FaceClassifier classifier(src.face, p, 1e-6);
+      if (classifier.State() != TopAbs_IN) continue;
+      mine->material = src.material;
+      result.faceMaterials.push_back(std::move(*mine));
+      break;
+    }
+  }
+}
 
 gp_Trsf localDelta(const gp_Trsf& parentWorld, const gp_Trsf& worldDelta) {
   return parentWorld.Inverted() * worldDelta * parentWorld;
@@ -464,6 +534,8 @@ Result<ObjectId> Modeler::splitWithLine(const std::vector<gp_Pnt>& worldPoints) 
         o.parent = candidate.parent;
         o.layer = candidate.layer;
         o.color = candidate.color;
+        o.material = candidate.material;
+        o.faceMaterials = candidate.faceMaterials;  // found again on each part
         o.recipe.base = FacePart{{BooleanOperand{std::make_shared<const Recipe>(candidate.recipe),
                                                  candidate.transform, candidate.name}},
                                  line, inside->point};
@@ -644,7 +716,7 @@ void editSettings(Document& document, CommandStack& history, const std::string& 
   PersistentSettings after = before;
   edit(after);
   if (after == before) return;
-  history.execute(Command{name, {}, {}, SettingsDelta{before, after}});
+  history.execute(Command{name, {}, {}, {}, SettingsDelta{before, after}});
 }
 }  // namespace
 
@@ -766,6 +838,19 @@ Result<PushPullResult> Modeler::pushPull(const ObjectId& id, const TopoDS_Face& 
     return PushPullResult{id, curvedKey};
   }
 
+  // A face painted on its own moves with it (docs/11_materials.md).
+  {
+    gp_Trsf shift;
+    shift.SetTranslation(gp_Vec(*pickedNormal) * distance);
+    for (FaceMaterial& fm : object.faceMaterials) {
+      if (!fm.plane) continue;
+      const std::vector<TopoDS_Face> on = fm.facesIn(object.shape);
+      if (std::any_of(on.begin(), on.end(), [&](const TopoDS_Face& f) { return f.TShape() == face.TShape(); })) {
+        fm.plane = fm.plane->transformed(shift);
+      }
+    }
+  }
+
   auto& mods = object.recipe.modifiers;
   const RegenContext context = document_.regenContext();
   std::string key;
@@ -876,6 +961,8 @@ std::optional<Result<PushPullResult>> Modeler::mergeIntoHost(const Object& profi
                                                 profileBefore.name});
       result.recipe.base = std::move(feature);
       if (!rebuild(result, document_.regenContext())) return std::nullopt;  // plain extrusion
+      carryMaterials(result, {{&host, toParent * document_.worldTransform(host)},
+                              {&profileBefore, toParent * document_.worldTransform(profileBefore)}});
 
       ChangeSet changes(document_);
       changes.erase(host.id);
@@ -1032,25 +1119,202 @@ Status Modeler::setAttribute(const std::vector<ObjectId>& ids, const std::string
   return Status::success();
 }
 
-Status Modeler::setColor(const ObjectId& id, const Color& color) {
-  return modifyAttribute(document_, history_, id, "Set Color", [&](Object& o) { o.color = color; });
-}
+Status Modeler::setColor(const ObjectId& id, const Color& color) { return paint({id}, color); }
 
 Status Modeler::paint(const std::vector<ObjectId>& ids, const Color& color) {
+  for (const ObjectId& id : ids) {
+    if (!document_.find(id)) return Status::failure("Object not found");
+  }
   ChangeSet changes(document_);
+  const std::string material = changes.colorMaterialFor(color);
   bool any = false;
-  for (const ObjectId& root : topmost(ids)) {
-    for (const ObjectId& id : document_.subtree(root)) {
-      Object o = *document_.find(id);
-      if (o.kind() == ObjectKind::Group || o.color == color) continue;
-      o.color = color;
-      changes.modify(o);
-      any = true;
-    }
+  for (const ObjectId& id : topmost(ids)) {
+    const Object* current = document_.find(id);
+    if (!current) return Status::failure("Object not found");
+    if (current->material == material) continue;
+    Object o = *current;
+    o.material = material;
+    changes.modify(o);
+    any = true;
   }
   if (!any) return Status::success();
   history_.execute(changes.build("Paint"));
   return Status::success();
+}
+
+// --- materials ---------------------------------------------------------------------
+
+Result<std::string> Modeler::createMaterial(const std::string& name, const Color& color) {
+  if (name.empty()) return Result<std::string>::failure("Name must not be empty");
+  Material m{"mat-" + generateObjectId(), name, color};
+  ChangeSet changes(document_);
+  changes.putMaterial(m);
+  history_.execute(changes.build("New Material"));
+  return m.id;
+}
+
+Status Modeler::updateMaterial(const std::string& id, std::optional<std::string> name, std::optional<Color> color) {
+  const Material* current = document_.findMaterial(id);
+  if (!current) return Status::failure("Unknown material " + id);
+  Material m = *current;
+  if (name) {
+    if (name->empty()) return Status::failure("Name must not be empty");
+    m.name = *name;
+  }
+  if (color) m.color = *color;
+  if (m == *current) return Status::success();
+  ChangeSet changes(document_);
+  changes.putMaterial(m);
+  history_.execute(changes.build("Edit Material"));
+  return Status::success();
+}
+
+Status Modeler::deleteMaterial(const std::string& id) {
+  if (!document_.findMaterial(id)) return Status::failure("Unknown material " + id);
+  ChangeSet changes(document_);
+  auto strip = [&](Object& o) {
+    bool changed = false;
+    if (o.material == id) {
+      o.material.clear();
+      changed = true;
+    }
+    const auto end = std::remove_if(o.faceMaterials.begin(), o.faceMaterials.end(),
+                                    [&](const FaceMaterial& f) { return f.material == id; });
+    changed |= end != o.faceMaterials.end();
+    o.faceMaterials.erase(end, o.faceMaterials.end());
+    return changed;
+  };
+  for (const Object& current : document_.objects()) {
+    Object o = current;
+    if (strip(o)) changes.modify(o);
+  }
+  for (const ComponentDefinition& current : document_.definitions()) {
+    ComponentDefinition d = current;
+    bool changed = false;
+    for (Object& o : d.objects) changed |= strip(o);
+    if (changed) changes.putDefinition(d);
+  }
+  changes.removeMaterial(id);
+  history_.execute(changes.build("Delete Material"));
+  return Status::success();
+}
+
+Status Modeler::assignMaterial(const std::vector<ObjectId>& ids, const std::string& material) {
+  if (!material.empty() && !document_.findMaterial(material)) return Status::failure("Unknown material " + material);
+  for (const ObjectId& id : ids) {
+    if (!document_.find(id)) return Status::failure("Object not found");
+  }
+  ChangeSet changes(document_);
+  bool any = false;
+  for (const ObjectId& id : topmost(ids)) {
+    const Object* current = document_.find(id);
+    if (!current) return Status::failure("Object not found");
+    if (current->material == material) continue;
+    Object o = *current;
+    o.material = material;
+    changes.modify(o);
+    any = true;
+  }
+  if (any) history_.execute(changes.build(material.empty() ? "Inherit Material" : "Paint"));
+  return Status::success();
+}
+
+Status Modeler::paintFaces(const ObjectId& id, const std::vector<TopoDS_Face>& worldFaces,
+                           const std::string& material) {
+  if (!material.empty() && !document_.findMaterial(material)) return Status::failure("Unknown material " + material);
+  const Object* current = document_.find(id);
+  if (!current || current->shape.IsNull()) return Status::failure("Object not found");
+  if (current->isContainer() || current->kind() == ObjectKind::Instance) {
+    return Status::failure("Faces of a group or component are painted inside it (or paint it as a whole)");
+  }
+  Object o = *current;
+  const gp_Trsf toLocal = document_.worldTransform(o).Inverted();
+  TopTools_IndexedMapOfShape faces;
+  TopExp::MapShapes(o.shape, TopAbs_FACE, faces);
+  bool any = false;
+  for (const TopoDS_Face& world : worldFaces) {
+    // The picked face as a face of the object's own shape.
+    const TopoDS_Shape moved = world.Moved(TopLoc_Location(toLocal));
+    int index = faces.FindIndex(moved);
+    if (index == 0) {
+      for (int i = 1; i <= faces.Extent() && index == 0; ++i) {
+        if (faces(i).TShape() == world.TShape()) index = i;
+      }
+    }
+    if (index == 0) return Status::failure("The face is not part of this object");
+    const TopoDS_Face local = TopoDS::Face(faces(index));
+    // Whatever painted this face before gives way.
+    std::vector<FaceMaterial> kept;
+    for (FaceMaterial& fm : o.faceMaterials) {
+      const std::vector<TopoDS_Face> on = fm.facesIn(o.shape);
+      const bool here = std::any_of(on.begin(), on.end(), [&](const TopoDS_Face& f) { return f.IsSame(local); });
+      if (!here) {
+        kept.push_back(std::move(fm));
+        continue;
+      }
+      // Pieces of a split face keep it on their other parts.
+      for (const TopoDS_Face& f : on) {
+        if (f.IsSame(local)) continue;
+        if (auto rest = FaceMaterial::of(f, fm.material)) kept.push_back(std::move(*rest));
+      }
+    }
+    o.faceMaterials = std::move(kept);
+    if (!material.empty()) {
+      auto assigned = FaceMaterial::of(local, material);
+      if (!assigned) return Status::failure("This face cannot be painted on its own");
+      o.faceMaterials.push_back(std::move(*assigned));
+    }
+    any = true;
+  }
+  if (!any) return Status::success();
+  if (compareObjects(*current, o) == 0) return Status::success();
+  ChangeSet changes(document_);
+  changes.modify(o);
+  history_.execute(changes.build(material.empty() ? "Inherit Material" : "Paint Face"));
+  return Status::success();
+}
+
+Status Modeler::clearFaceMaterials(const std::vector<ObjectId>& ids) {
+  ChangeSet changes(document_);
+  bool any = false;
+  for (const ObjectId& id : ids) {
+    const Object* current = document_.find(id);
+    if (!current) return Status::failure("Object not found");
+    if (current->faceMaterials.empty()) continue;
+    Object o = *current;
+    o.faceMaterials.clear();
+    changes.modify(o);
+    any = true;
+  }
+  if (any) history_.execute(changes.build("Inherit Material"));
+  return Status::success();
+}
+
+Result<Modeler::MaterialAt> Modeler::materialAt(const ObjectId& id, const TopoDS_Face& worldFace) const {
+  const Object* o = document_.find(id);
+  if (!o) return Result<MaterialAt>::failure("Object not found");
+  MaterialAt out;
+  if (!o->faceMaterials.empty() && !o->shape.IsNull()) {
+    TopTools_IndexedMapOfShape faces;
+    TopExp::MapShapes(o->shape, TopAbs_FACE, faces);
+    const TopoDS_Shape local = worldFace.Moved(TopLoc_Location(document_.worldTransform(*o).Inverted()));
+    int index = faces.FindIndex(local);
+    for (int i = 1; i <= faces.Extent() && index == 0; ++i) {
+      if (faces(i).TShape() == worldFace.TShape()) index = i;
+    }
+    for (const auto& [i, material] : resolveFaceMaterials(*o).faces) {
+      if (i == index) {
+        out.material = material;
+        out.source = "face";
+      }
+    }
+  }
+  if (out.source.empty()) {
+    out.material = document_.inheritedMaterial(*o);
+    out.source = out.material.empty() ? "none" : o->material.empty() ? "container" : "object";
+  }
+  out.color = document_.materialColor(out.material, o->color);
+  return out;
 }
 
 Status Modeler::remove(const std::vector<ObjectId>& ids) {
@@ -1117,6 +1381,12 @@ Status Modeler::scale(const std::vector<ObjectId>& ids, const gp_Pnt& center, do
         last->factor *= factor;
       } else {
         o.recipe.modifiers.push_back(ScaleOp{c, factor});
+      }
+      gp_Trsf scaling;
+      scaling.SetScale(c, factor);
+      for (FaceMaterial& fm : o.faceMaterials) {  // painted faces scale with the object
+        if (fm.plane) fm.plane = fm.plane->transformed(scaling);
+        if (fm.surface) fm.surface->point.Transform(scaling);
       }
       const Status built = rebuild(o, context);
       if (!built) return built;
@@ -1942,6 +2212,12 @@ Result<ObjectId> Modeler::boolean(BooleanKind kind, const std::vector<ObjectId>&
   result.recipe.base = std::move(feature);
   const Status built = rebuild(result, document_.regenContext());
   if (!built) return Result<ObjectId>::failure(built.message());
+  std::vector<std::pair<const Object*, gp_Trsf>> inputs;
+  for (const ObjectId& id : unique) {
+    const Object* o = document_.find(id);
+    inputs.emplace_back(o, toParent * document_.worldTransform(*o));
+  }
+  carryMaterials(result, inputs);
 
   ChangeSet changes(document_);
   for (const ObjectId& id : unique) changes.erase(id);
@@ -1978,6 +2254,7 @@ Result<ObjectId> Modeler::beginComponentEdit(const ObjectId& instanceId) {
   group.transform = instance->transform;
   group.layer = instance->layer;
   group.color = instance->color;
+  group.material = instance->material;
   group.recipe.base = GroupNode{definition->id, instance->id, instance->name};
 
   ChangeSet changes(document_);
@@ -2026,6 +2303,7 @@ Status Modeler::endComponentEdit(const ObjectId& editGroupId) {
   instance.transform = group->transform;
   instance.layer = group->layer;
   instance.color = group->color;
+  instance.material = group->material;
   instance.recipe.base = ComponentInstance{definition.id};
   instance.shape = definition.shape;
 
@@ -2067,6 +2345,7 @@ void Modeler::copyFrom(const Modeler& other) {
   history_.clear();
   document_.clear();
   document_.settings() = other.document_.settings();
+  for (const Material& mat : other.document_.materials()) document_.putMaterial(mat);
   for (const ComponentDefinition& d : other.document_.definitions()) document_.putDefinition(d);
   for (const Object& o : other.document_.objects()) document_.insert(o);
   activeGroup_ = other.activeGroup_;
@@ -2101,6 +2380,7 @@ Status Modeler::load(const std::string& path, std::vector<std::string>* warnings
   history_.clear();
   document_.clear();
   document_.settings() = loaded.settings();
+  for (const Material& mat : loaded.materials()) document_.putMaterial(mat);
   for (const ComponentDefinition& d : loaded.definitions()) document_.putDefinition(d);
   for (const Object& o : loaded.objects()) document_.insert(o);
   return Status::success();
@@ -2124,7 +2404,10 @@ std::vector<geom::NamedShape> Modeler::exportParts(const std::vector<ObjectId>& 
       continue;
     }
     parts.push_back(geom::NamedShape{document_.worldShape(*o), o->name,
-                                     std::array<double, 3>{o->color.r, o->color.g, o->color.b},
+                                     [&] {
+                                       const Color c = document_.displayColor(*o);  // per-face colours: not yet
+                                       return std::array<double, 3>{c.r, c.g, c.b};
+                                     }(),
                                      o->layer == "Default" ? std::string() : o->layer});
   }
   return parts;
@@ -2168,7 +2451,10 @@ Result<std::vector<ObjectId>> Modeler::addImported(const std::vector<geom::Named
     for (int n = 2; usedNames.count(name); ++n) name = part.name + " (" + std::to_string(n) + ")";
     usedNames.insert(name);
     o.name = name;
-    if (part.color) o.color = Color{(*part.color)[0], (*part.color)[1], (*part.color)[2]};
+    if (part.color) {
+      o.color = Color{(*part.color)[0], (*part.color)[1], (*part.color)[2]};
+      o.material = changes.colorMaterialFor(o.color);  // imported colours become materials
+    }
     o.recipe.base = ImportedShape{part.shape, path};
     const Status built = rebuild(o);
     if (!built) return Result<std::vector<ObjectId>>::failure(built.message());
@@ -2274,6 +2560,7 @@ Result<ObjectId> Modeler::followMeAlong(const ObjectId& profileId, const Boolean
   Object object;
   object.name = uniqueName("Follow Me");
   object.color = profile->color;
+  object.material = profile->material;
   object.layer = profile->layer;
   object.recipe.base = std::move(feature);
   // The swept solid replaces its profile, as in SketchUp: one undo step.
