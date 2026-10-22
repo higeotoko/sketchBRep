@@ -18,7 +18,9 @@ add_executable(sbr_core_tests
 target_link_libraries(sbr_core_tests PRIVATE sbr::core nlohmann_json::nlohmann_json GTest::gtest_main)
 
 include(GoogleTest)
-gtest_discover_tests(sbr_core_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+# Listing the tests starts the executable; on Windows runners loading the
+# OCCT / Qt DLLs can exceed the 5 s default, so allow more time.
+gtest_discover_tests(sbr_core_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR} DISCOVERY_TIMEOUT 120)
 
 if(SBR_BUILD_TOOLS)
   add_test(NAME phase0_cli
