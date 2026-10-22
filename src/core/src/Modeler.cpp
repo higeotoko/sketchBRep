@@ -314,6 +314,38 @@ Result<ObjectId> Modeler::createGuide(const gp_Pnt& point, const gp_Dir& directi
   return addObject(std::move(o), "Guide");
 }
 
+Result<ObjectId> Modeler::addImageUnderlay(const std::string& bytes, const std::string& name, int pixelWidth,
+                                          int pixelHeight, const geom::SketchPlane& plane, double width) {
+  if (bytes.empty() || pixelWidth <= 0 || pixelHeight <= 0) return Result<ObjectId>::failure("Not an image");
+  if (!(width > tolerance::kMinDimension)) return Result<ObjectId>::failure("Width must be positive");
+  ImageUnderlay u;
+  u.image = document_.addImage(bytes, name);
+  u.plane = plane;
+  u.width = width;
+  u.height = width * pixelHeight / pixelWidth;
+  Object o;
+  o.name = uniqueName(name.empty() ? "Image" : name);
+  o.layer = "Images";
+  o.recipe.base = u;
+  return addObject(std::move(o), "Import Image");
+}
+
+Status Modeler::setLocked(const std::vector<ObjectId>& ids, bool locked) {
+  ChangeSet changes(document_);
+  bool any = false;
+  for (const ObjectId& id : ids) {
+    const Object* current = document_.find(id);
+    if (!current) return Status::failure("Object not found");
+    if (current->locked == locked) continue;
+    Object o = *current;
+    o.locked = locked;
+    changes.modify(o);
+    any = true;
+  }
+  if (any) history_.execute(changes.build(locked ? "Lock" : "Unlock"));
+  return Status::success();
+}
+
 Status Modeler::clearGuides() {
   std::vector<ObjectId> guides;
   for (const Object& o : document_.objects()) {
@@ -1510,7 +1542,9 @@ Status Modeler::remove(const std::vector<ObjectId>& ids) {
   ChangeSet changes(document_);
   bool any = false;
   for (const ObjectId& id : ids) {
-    if (!document_.find(id)) return Status::failure("Object not found");
+    const Object* o = document_.find(id);
+    if (!o) return Status::failure("Object not found");
+    if (o->locked) return Status::failure("'" + o->name + "' is locked");
   }
   for (const ObjectId& root : topmost(ids)) {
     for (const ObjectId& id : document_.subtree(root)) {
@@ -1529,6 +1563,9 @@ Status Modeler::transform(const std::vector<ObjectId>& ids, const gp_Trsf& world
                           const std::string& commandName) {
   const std::vector<ObjectId> roots = topmost(ids);
   if (roots.empty()) return Status::failure("Nothing selected");
+  for (const ObjectId& id : roots) {
+    if (const Object* o = document_.find(id); o && o->locked) return Status::failure("'" + o->name + "' is locked");
+  }
   ChangeSet changes(document_);
   for (const ObjectId& id : roots) {
     Object o = *document_.find(id);
@@ -1543,6 +1580,9 @@ Status Modeler::scale(const std::vector<ObjectId>& ids, const gp_Pnt& center, do
   if (!std::isfinite(factor) || factor < 1e-6) return Status::failure("Scale factor must be positive");
   const std::vector<ObjectId> roots = topmost(ids);
   if (roots.empty()) return Status::failure("Nothing selected");
+  for (const ObjectId& id : roots) {
+    if (const Object* o = document_.find(id); o && o->locked) return Status::failure("'" + o->name + "' is locked");
+  }
   ChangeSet changes(document_);
   const RegenContext context = document_.regenContext();
   for (const ObjectId& root : roots) {
@@ -1565,6 +1605,10 @@ Status Modeler::scale(const std::vector<ObjectId>& ids, const gp_Pnt& center, do
       } else if (auto* t = std::get_if<TextNote>(&o.recipe.base)) {
         scalePoint(t->position);
         if (t->target) scalePoint(*t->target);
+      } else if (auto* u = std::get_if<ImageUnderlay>(&o.recipe.base)) {
+        scalePoint(u->plane.origin);  // calibrating an image: two points and the real distance
+        u->width *= factor;
+        u->height *= factor;
       } else if (auto* last = o.recipe.modifiers.empty() ? nullptr : std::get_if<ScaleOp>(&o.recipe.modifiers.back());
                  last && last->center.Distance(c) < tolerance::kLinear) {
         last->factor *= factor;
@@ -2535,6 +2579,7 @@ void Modeler::copyFrom(const Modeler& other) {
   document_.clear();
   document_.settings() = other.document_.settings();
   for (const Material& mat : other.document_.materials()) document_.putMaterial(mat);
+  for (const auto& [hash, image] : other.document_.images()) document_.addImage(image.bytes, image.name);
   for (const ComponentDefinition& d : other.document_.definitions()) document_.putDefinition(d);
   for (const Object& o : other.document_.objects()) document_.insert(o);
   activeGroup_ = other.activeGroup_;
@@ -2570,6 +2615,7 @@ Status Modeler::load(const std::string& path, std::vector<std::string>* warnings
   document_.clear();
   document_.settings() = loaded.settings();
   for (const Material& mat : loaded.materials()) document_.putMaterial(mat);
+  for (const auto& [hash, image] : loaded.images()) document_.addImage(image.bytes, image.name);
   for (const ComponentDefinition& d : loaded.definitions()) document_.putDefinition(d);
   for (const Object& o : loaded.objects()) document_.insert(o);
   return Status::success();

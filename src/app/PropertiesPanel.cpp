@@ -6,6 +6,7 @@
 
 #include <QColorDialog>
 #include <QDoubleSpinBox>
+#include <QCheckBox>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -28,6 +29,7 @@ QString kindLabel(doc::ObjectKind kind) {
     case doc::ObjectKind::Solid: return QObject::tr("ソリッド");
     case doc::ObjectKind::Face: return QObject::tr("面");
     case doc::ObjectKind::Shell: return QObject::tr("開いた形状");
+    case doc::ObjectKind::Image: return QObject::tr("画像（下敷き）");
     case doc::ObjectKind::Curve: return QObject::tr("線");
     case doc::ObjectKind::Group: return QObject::tr("グループ");
     case doc::ObjectKind::Instance: return QObject::tr("コンポーネント");
@@ -213,6 +215,14 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
     hint->setWordWrap(true);
     hint->setStyleSheet(QStringLiteral("QLabel { color: #8a5a00; }"));
     form_->addRow(hint);
+  }
+  // Lock: shown first for images (calibrate, then lock to trace over).
+  {
+    auto* lock = new QCheckBox(tr("ロック（選択・移動・削除しない。吸着はする）"));
+    lock->setObjectName(QStringLiteral("lockCheck"));
+    lock->setChecked(o->locked);
+    connect(lock, &QCheckBox::toggled, this, [this, id](bool on) { emit lockToggled(id, on); });
+    form_->addRow(tr("ロック"), lock);
   }
   // Material: own, else where it comes from; faces painted on their own.
   {

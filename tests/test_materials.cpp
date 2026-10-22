@@ -12,6 +12,7 @@
 #include <nlohmann/json.hpp>
 
 #include "TestHelpers.h"
+#include "sbr/Codec.h"
 #include "sbr/doc/Modeler.h"
 #include "sbr/doc/NativeFormat.h"
 #include "sbr/geom/Operations.h"
@@ -247,4 +248,73 @@ TEST(Materials, BooleansKeepEachInputsLook) {
   EXPECT_EQ(shown(w, *host, -gp::DY(), gp_Pnt(500, 0, 500)), paint);
   EXPECT_EQ(shown(w, *host, gp::DY(), gp_Pnt(500, 200, 500)), plaster);
   EXPECT_EQ(shown(w, *host, gp::DZ(), gp_Pnt(2000, 100, 900)), plaster);  // sill reveal
+}
+
+// Image underlays (docs/13): embedded by content hash, calibrated by scale,
+// locked against accidental edits, carried by the file.
+TEST(Underlay, CodecBasics) {
+  EXPECT_EQ(sbr::codec::sha256Hex("abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+  EXPECT_EQ(sbr::codec::sha256Hex(""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+  const std::string bytes("\x89PNG\r\n\x1a\n\0\x01\xff", 11);
+  EXPECT_EQ(sbr::codec::base64Decode(sbr::codec::base64Encode(bytes)), bytes);
+  EXPECT_EQ(sbr::codec::base64Encode("Man"), "TWFu");
+}
+
+TEST(Underlay, PlaceCalibrateLockSaveAndReload) {
+  Modeler m;
+  const std::string bytes = "pretend-png-bytes";
+  auto id = m.addImageUnderlay(bytes, "plan.png", 2000, 1000, geom::SketchPlane::ground(), 10000);
+  ASSERT_TRUE(id) << id.error();
+  const Object* o = m.document().find(*id);
+  EXPECT_EQ(o->kind(), ObjectKind::Image);
+  const auto& u = std::get<ImageUnderlay>(o->recipe.base);
+  EXPECT_NEAR(u.height, 5000, 1e-9);
+  ASSERT_TRUE(m.document().findImage(u.image));
+  EXPECT_EQ(m.document().findImage(u.image)->bytes, bytes);
+  // Not a profile: push/pull and painting leave it alone.
+  EXPECT_FALSE(m.extrude(*id, 100).ok());
+
+  // Calibrate: the distance between two marks drawn 4 m apart on the plan
+  // measures 2 m on screen, so scale x2 about the first mark.
+  ASSERT_TRUE(m.scale({*id}, gp_Pnt(1000, 1000, 0), 2.0).ok());
+  const auto& scaled = std::get<ImageUnderlay>(m.document().find(*id)->recipe.base);
+  EXPECT_NEAR(scaled.width, 20000, 1e-9);
+  EXPECT_NEAR(scaled.height, 10000, 1e-9);
+  EXPECT_NEAR(scaled.plane.origin.X(), -1000, 1e-9);  // the mark stays put
+  // The width parameter keeps the proportions.
+  ASSERT_TRUE(m.setParameter(*id, "width", 30000).ok());
+  EXPECT_NEAR(std::get<ImageUnderlay>(m.document().find(*id)->recipe.base).height, 15000, 1e-9);
+
+  // Locked: no moving, scaling or erasing (also from the API).
+  ASSERT_TRUE(m.setLocked({*id}, true).ok());
+  gp_Trsf t;
+  t.SetTranslation(gp_Vec(100, 0, 0));
+  EXPECT_FALSE(m.transform({*id}, t, "Move").ok());
+  EXPECT_FALSE(m.scale({*id}, gp::Origin(), 2.0).ok());
+  EXPECT_FALSE(m.remove({*id}).ok());
+
+  // Saved with the image; reloaded intact; an image nothing shows is dropped.
+  const std::string path = test::tempPath("underlay.sbr");
+  ASSERT_TRUE(m.save(path).ok());
+  Modeler r;
+  ASSERT_TRUE(r.load(path).ok());
+  const Object* back = r.document().find(*id);
+  ASSERT_TRUE(back);
+  EXPECT_TRUE(back->locked);
+  EXPECT_EQ(r.document().findImage(std::get<ImageUnderlay>(back->recipe.base).image)->bytes, bytes);
+  ASSERT_TRUE(r.setLocked({*id}, false).ok());
+  ASSERT_TRUE(r.remove({*id}).ok());
+  const nlohmann::json saved = nlohmann::json::parse(serializeDocument(r.document()));
+  EXPECT_TRUE(saved["images"].empty());
+
+  // A damaged embedded image is reported, not shown as something else.
+  nlohmann::json broken = nlohmann::json::parse(serializeDocument(m.document()));
+  for (auto it = broken["images"].begin(); it != broken["images"].end(); ++it) {
+    it.value()["data"] = sbr::codec::base64Encode("other bytes");
+  }
+  Document d;
+  std::vector<std::string> warnings;
+  ASSERT_TRUE(deserializeDocument(broken.dump(), d, &warnings).ok());
+  EXPECT_TRUE(d.images().empty());
+  EXPECT_FALSE(warnings.empty());
 }

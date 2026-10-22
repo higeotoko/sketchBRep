@@ -1,5 +1,7 @@
 #include "sbr/doc/Document.h"
 
+#include "sbr/Codec.h"
+
 #include <algorithm>
 
 #include <BRep_Builder.hxx>
@@ -262,6 +264,17 @@ void Document::removeDefinition(const std::string& id) {
   notify();
 }
 
+std::string Document::addImage(const std::string& bytes, const std::string& name) {
+  const std::string hash = codec::sha256Hex(bytes);
+  images_.try_emplace(hash, Image{name, bytes});
+  return hash;
+}
+
+const Document::Image* Document::findImage(const std::string& hash) const {
+  const auto it = images_.find(hash);
+  return it == images_.end() ? nullptr : &it->second;
+}
+
 const Material* Document::findMaterial(const std::string& id) const {
   if (id.empty()) return nullptr;
   for (const Material& m : materials_) {
@@ -315,6 +328,7 @@ void Document::clear() {
   objects_.clear();
   definitions_.clear();
   materials_.clear();
+  images_.clear();
   settings_ = DocumentSettings{};
   invalidateIndex();
   log_.clear();

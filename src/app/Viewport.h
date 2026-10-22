@@ -196,6 +196,7 @@ class Viewport : public QWidget {
     // and whether the object is shown selected (no face colours then).
     std::vector<std::pair<int, std::array<double, 3>>> faceColors;
     bool shownSelected = false;
+    bool locked = false;  // not pickable
     TopoDS_Shape canonicalWorld;
     TopoDS_Shape displayShape;
     TopTools_IndexedMapOfShape displayFaces;
@@ -206,7 +207,9 @@ class Viewport : public QWidget {
 
   void initViewer();
   void displayAxes();
-  void applyPickMode(const Handle(AIS_Shape)& ais);
+  void applyPickMode(const Handle(AIS_Shape)& ais, bool locked = false);
+  // A picture laid on its rectangle (texture over the face, unlit).
+  void showImage(const Handle(AIS_Shape)& ais, const doc::ImageUnderlay& underlay);
   // Brings one object's display entry and snap index up to date (created,
   // replaced, recoloured or removed). Returns true if a guide changed.
   bool syncObject(const doc::ObjectId& id);

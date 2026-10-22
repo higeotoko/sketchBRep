@@ -31,6 +31,7 @@ const char* toString(ObjectKind kind) {
     case ObjectKind::Instance: return "Instance";
     case ObjectKind::Annotation: return "Annotation";
     case ObjectKind::Guide: return "Guide";
+    case ObjectKind::Image: return "Image";
     case ObjectKind::Other: return "Other";
   }
   return "Other";
@@ -41,6 +42,7 @@ ObjectKind Object::kind() const {
   if (std::holds_alternative<ComponentInstance>(recipe.base)) return ObjectKind::Instance;
   if (isAnnotation(recipe)) return ObjectKind::Annotation;
   if (std::holds_alternative<GuideLine>(recipe.base)) return ObjectKind::Guide;
+  if (std::holds_alternative<ImageUnderlay>(recipe.base)) return ObjectKind::Image;
   if (shape.IsNull()) return ObjectKind::Empty;
   if (TopExp_Explorer(shape, TopAbs_SOLID).More()) return ObjectKind::Solid;
   if (TopExp_Explorer(shape, TopAbs_SHELL).More()) {

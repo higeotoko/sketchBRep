@@ -8,6 +8,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QSettings>
+#include <QImage>
 #include <QFile>
 #include <QLocale>
 #include <QStandardPaths>
@@ -353,6 +354,9 @@ void MainWindow::buildUi() {
               if (!resizeOpening(id, index, width, height)) refreshPanels();
             });
           });
+  connect(panel_, &PropertiesPanel::lockToggled, this, [this](const doc::ObjectId& id, bool locked) {
+    QTimer::singleShot(0, this, [this, id, locked] { report(modeler_.setLocked({id}, locked)); });
+  });
   connect(panel_, &PropertiesPanel::visibilityToggled, this,
           [this](const doc::ObjectId& id, bool visible) {
             QTimer::singleShot(0, this, [this, id, visible] { modeler_.setVisible(id, visible); });
@@ -367,6 +371,11 @@ void MainWindow::buildMenus() {
   file->addAction(tr("保存(&S)"), QKeySequence::Save, this, &MainWindow::save);
   file->addAction(tr("名前を付けて保存(&A)..."), QKeySequence::SaveAs, this, &MainWindow::saveAs);
   file->addSeparator();
+  file->addAction(tr("画像を下敷きとして読み込む..."), this, [this] {
+    const QString path = QFileDialog::getOpenFileName(this, tr("下敷きの画像"), QString(),
+                                                      tr("画像 (*.png *.jpg *.jpeg *.bmp *.gif)"));
+    if (!path.isEmpty()) importUnderlay(path);
+  });
   file->addAction(tr("STEP インポート..."), this, &MainWindow::importStep);
   file->addAction(tr("STEP エクスポート..."), this, &MainWindow::exportStep);
   file->addAction(tr("Rhino 3DM インポート..."), this, &MainWindow::import3dm);
@@ -393,6 +402,16 @@ void MainWindow::buildMenus() {
   edit->addAction(tr("貼り付け"), QKeySequence::Paste, this, &MainWindow::paste);
   edit->addAction(tr("同じ位置に貼り付け"), QKeySequence(tr("Ctrl+Shift+V")), this, &MainWindow::pasteInPlace);
   edit->addAction(tr("削除"), QKeySequence::Delete, this, &MainWindow::deleteSelection);
+  edit->addAction(tr("ロック"), QKeySequence(tr("Ctrl+L")), this, [this] {
+    if (report(modeler_.setLocked(selection_, true))) setSelection({});
+  });
+  edit->addAction(tr("ロックをすべて解除"), this, [this] {
+    std::vector<doc::ObjectId> locked;
+    for (const doc::Object& o : modeler_.document().objects()) {
+      if (o.locked) locked.push_back(o.id);
+    }
+    report(modeler_.setLocked(locked, false));
+  });
   edit->addAction(tr("穴をふさぐ（開いた形状をソリッドに）"), this, [this] {
     if (report(modeler_.fillHoles(selection_))) setStatus(tr("穴をふさぎました"));
   });
@@ -1623,6 +1642,35 @@ void MainWindow::showAutosaveDialog() {
   QSettings settings;
   settings.setValue(QStringLiteral("autosave/minutes"), autosaveMinutes_);
   settings.setValue(QStringLiteral("backup/generations"), backupGenerations_);
+}
+
+bool MainWindow::importUnderlay(const QString& path) {
+  QFile file(path);
+  if (!file.open(QIODevice::ReadOnly)) {
+    reportError(tr("画像を開けませんでした: %1").arg(path));
+    return false;
+  }
+  const QByteArray bytes = file.readAll();
+  QImage picture;
+  if (!picture.loadFromData(bytes)) {
+    reportError(tr("画像として読めませんでした: %1").arg(path));
+    return false;
+  }
+  if (active_) active_->cancel();
+  const auto id = modeler_.addImageUnderlay(bytes.toStdString(), utf8(QFileInfo(path).fileName()), picture.width(),
+                                            picture.height(), geom::SketchPlane::ground(), 10000.0);
+  if (!id) {
+    reportError(QString::fromStdString(id.error()));
+    return false;
+  }
+  setSelection({id.value()});
+  viewport_->fitAll();
+  // Straight into the calibration: two points on the picture, then the
+  // real distance between them.
+  activateTool(ToolId::Scale);
+  setStatus(tr("実寸合わせ：画像の上で寸法の分かる 2 点をクリックし、その実際の距離を入力（例: 7280 か 7.28m）。"
+               "合わせたら 編集 > ロック（Ctrl+L）で固定して、上からなぞれます"));
+  return true;
 }
 
 bool MainWindow::placeOpeningsOnSelection(int count, double width, double height, double sill,

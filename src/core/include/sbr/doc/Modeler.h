@@ -67,6 +67,16 @@ class Modeler {
   Result<ObjectId> createGuide(const gp_Pnt& point, const gp_Dir& direction, const std::string& name = {},
                                const std::string& layer = "Guides");
   Status clearGuides();
+  // An image to draw over (a plan, an elevation), laid on `plane` with its
+  // lower-left corner at the plane's origin, `width` mm wide and as high as
+  // its pixel proportions say. The file's bytes are kept in the document
+  // (by content hash) and saved with it. Calibrate it with scale (two
+  // points and the real distance), then lock it.
+  Result<ObjectId> addImageUnderlay(const std::string& bytes, const std::string& name, int pixelWidth,
+                                    int pixelHeight, const geom::SketchPlane& plane, double width);
+  // Locked objects cannot be picked, moved or erased (still shown and
+  // snapped to). One undo step.
+  Status setLocked(const std::vector<ObjectId>& ids, bool locked);
   // Structural grid (通り芯) on the ground plane: lines X1.. along Y at the
   // cumulative x spacings from 'origin', Y1.. along X, each labelled at its
   // start 'labelOffset' outside the grid, with chained spacing dimensions.

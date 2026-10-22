@@ -1,6 +1,12 @@
 #include "Viewport.h"
 
 #include <AIS_ColoredShape.hxx>
+#include <cstring>
+#include <QImage>
+#include <Image_PixMap.hxx>
+#include <Graphic3d_AspectFillArea3d.hxx>
+#include <Graphic3d_TextureParams.hxx>
+#include <Graphic3d_Texture2Dmanual.hxx>
 #include <TopoDS_Iterator.hxx>
 
 #include <algorithm>
@@ -334,6 +340,42 @@ void showBackSide(const Handle(AIS_Shape)& ais, doc::ObjectKind kind) {
 }
 }  // namespace
 
+void Viewport::showImage(const Handle(AIS_Shape)& ais, const doc::ImageUnderlay& underlay) {
+  ais->SetColor(Quantity_NOC_WHITE);
+  const doc::Document::Image* stored = modeler_.document().findImage(underlay.image);
+  QImage picture;
+  if (!stored || !picture.loadFromData(reinterpret_cast<const uchar*>(stored->bytes.data()),
+                                       static_cast<int>(stored->bytes.size()))) {
+    ais->SetColor(Quantity_Color(0.9, 0.85, 0.85, Quantity_TOC_RGB));  // missing picture: a pale stand-in
+    return;
+  }
+  // The texture maps over the face's parameter range: u along the plane's
+  // x direction (the picture's width), v along its y direction; the rows go
+  // in as stored (top row first), which puts the picture's top at +y.
+  picture = picture.convertToFormat(QImage::Format_RGBA8888);
+  Handle(Image_PixMap) pixels = new Image_PixMap();
+  if (!pixels->InitTrash(Image_Format_RGBA, static_cast<Standard_Size>(picture.width()),
+                         static_cast<Standard_Size>(picture.height()))) {
+    return;
+  }
+  pixels->SetTopDown(false);
+  for (int row = 0; row < picture.height(); ++row) {
+    std::memcpy(pixels->ChangeRow(static_cast<Standard_Size>(row)), picture.constScanLine(row),
+                static_cast<std::size_t>(picture.width()) * 4);
+  }
+  Handle(Graphic3d_Texture2Dmanual) texture = new Graphic3d_Texture2Dmanual(pixels);
+  texture->GetParams()->SetModulate(Standard_False);
+  texture->GetParams()->SetRepeat(Standard_False);
+  ais->Attributes()->SetupOwnShadingAspect();
+  const Handle(Graphic3d_AspectFillArea3d)& aspect = ais->Attributes()->ShadingAspect()->Aspect();
+  aspect->SetTextureMap(texture);
+  aspect->SetTextureMapOn();
+  aspect->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);
+  // Slightly behind whatever is drawn on it (traced outlines, floors).
+  aspect->SetPolygonOffsets(Aspect_POM_Fill, 1.0f, 4.0f);
+  if (underlay.opacity < 1.0) ais->SetTransparency(1.0 - underlay.opacity);
+}
+
 void Viewport::scheduleSync() { syncTimer_.start(); }
 
 void Viewport::releaseProto(const Entry& entry) {
@@ -389,6 +431,7 @@ Handle(AIS_Shape) Viewport::makeDisplay(const doc::Object& object, Entry& entry)
     showBackSide(ais, object.kind());
   }
   ais->Attributes()->SetFaceBoundaryDraw(Standard_True);
+  if (const auto* image = std::get_if<doc::ImageUnderlay>(&object.recipe.base)) showImage(ais, *image);
   ais->Attributes()->SetFaceBoundaryAspect(
       new Prs3d_LineAspect(Quantity_NOC_BLACK, Aspect_TOL_SOLID, 1.5));
   // Profiles often lie on faces of solids (outline drawn on a wall): draw
@@ -552,8 +595,9 @@ QString Viewport::annotationText(const doc::ObjectId& id) const {
                             it->second->Text().Length());
 }
 
-void Viewport::applyPickMode(const Handle(AIS_Shape)& ais) {
+void Viewport::applyPickMode(const Handle(AIS_Shape)& ais, bool locked) {
   context_->Deactivate(ais);
+  if (locked) return;  // shown and snapped to, never picked
   switch (pickMode_) {
     case PickMode::Objects: context_->Activate(ais, 0); break;
     case PickMode::Faces: context_->Activate(ais, AIS_Shape::SelectionMode(TopAbs_FACE)); break;
@@ -670,7 +714,8 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
     // Selection mode -1 would make the object permanently unselectable in
     // OCCT 7.6, so display with mode 0 and then apply the tool's pick mode.
     context_->Display(entry.ais, shaded_ ? AIS_Shaded : AIS_WireFrame, 0, Standard_False);
-    applyPickMode(entry.ais);
+    entry.locked = o->locked;
+    applyPickMode(entry.ais, entry.locked);
     found = entries_.emplace(id, std::move(entry)).first;
     created = true;
     if (o->kind() == doc::ObjectKind::Guide) {
@@ -717,6 +762,10 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
     // SetColor() also recolours the face boundaries; keep them black.
     entry.ais->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(Quantity_NOC_BLACK, Aspect_TOL_SOLID, 1.5));
     restyled = true;
+  }
+  if (found->second.locked != o->locked) {
+    found->second.locked = o->locked;
+    applyPickMode(found->second.ais, o->locked);
   }
   const bool faded = !editContext_.empty() && !document.isAncestor(editContext_, id);
   const double transparency = faded ? 0.8 : (xRay_ ? 0.5 : 0.0);
@@ -895,7 +944,7 @@ void Viewport::setPickMode(PickMode mode) {
   pickMode_ = mode;
   if (view_.IsNull()) return;
   context_->ClearDetected(Standard_False);
-  for (auto& [id, entry] : entries_) applyPickMode(entry.ais);
+  for (auto& [id, entry] : entries_) applyPickMode(entry.ais, entry.locked);
   redraw();
 }
 

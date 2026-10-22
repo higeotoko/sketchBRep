@@ -11,6 +11,7 @@ add_library(sbr_core STATIC
   src/Object.cpp
   src/Document.cpp
   src/Material.cpp
+  src/Codec.cpp
   src/ChangeSummary.cpp
   src/CommandStack.cpp
   src/NativeFormat.cpp

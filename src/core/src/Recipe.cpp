@@ -90,6 +90,11 @@ Result<TopoDS_Shape> buildBase(const BaseFeature& base, const RegenContext& cont
           [](const ArcCurve& a) { return geom::makeArc(a.start, a.end, a.normal, a.bulge, a.closed); },
           [](const LinearDimension& d) { return geom::makeDimensionShape(d.start, d.end, d.offset); },
           [](const TextNote& t) { return geom::makeTextNoteShape(t.position, t.target); },
+          [](const ImageUnderlay& u) -> Result<TopoDS_Shape> {
+            auto face = geom::makeRectangleFace(u.plane, u.width, u.height);
+            if (!face) return Result<TopoDS_Shape>::failure(face.error());
+            return TopoDS_Shape(face.value());
+          },
           [](const GuideLine& g) -> Result<TopoDS_Shape> {
             // "Infinite": 100 m each way is beyond any building.
             const gp_Vec reach = gp_Vec(g.direction) * 100000.0;
@@ -337,6 +342,9 @@ std::vector<Parameter> parameters(const Recipe& recipe) {
   if (const auto* c = std::get_if<CircleProfile>(&recipe.base)) {
     out.push_back({"radius", "Radius", c->radius, true});
   }
+  if (const auto* u = std::get_if<ImageUnderlay>(&recipe.base)) {
+    out.push_back({"width", "Width", u->width, true});  // the height follows (same proportions)
+  }
   if (const auto* p = std::get_if<RegularPolygonProfile>(&recipe.base)) {
     out.push_back({"radius", "Radius", p->radius, true});
     out.push_back({"sides", "Sides", static_cast<double>(p->sides), false});
@@ -388,6 +396,12 @@ std::vector<Parameter> parameters(const Recipe& recipe) {
 
 Status setParameter(Recipe& recipe, const std::string& key, double value) {
   if (!std::isfinite(value)) return Status::failure("Value must be finite");
+  if (auto* u = std::get_if<ImageUnderlay>(&recipe.base); u && key == "width") {
+    if (!(value > 0)) return Status::failure("Width must be positive");
+    u->height *= value / u->width;
+    u->width = value;
+    return Status::success();
+  }
   if (auto* r = std::get_if<RectangleProfile>(&recipe.base)) {
     if (key == "width") {
       r->width = value;
@@ -476,6 +490,7 @@ std::string describe(const Recipe& recipe) {
                  [&](const LinearDimension& d) { out << "Dimension " << d.start.Distance(d.end); },
                  [&](const TextNote& t) { out << "Text \"" << t.text << "\""; },
                  [&](const GuideLine&) { out << "Guide"; },
+                 [&](const ImageUnderlay&) { out << "Image"; },
                  [&](const ImportedShape& s) { out << "Imported (" << s.source << ")"; },
                  [&](const BooleanFeature& b) {
                    out << toString(b.kind) << " (";

@@ -22,7 +22,7 @@ ObjectId generateObjectId();
 // Shell: an open surface of several faces (a solid with faces deleted, an
 // open loft). Drawn on, painted and filled again, but not pushed/pulled or
 // combined with Booleans until it is closed.
-enum class ObjectKind { Empty, Curve, Face, Solid, Shell, Group, Instance, Annotation, Guide, Other };
+enum class ObjectKind { Empty, Curve, Face, Solid, Shell, Group, Instance, Annotation, Guide, Image, Other };
 const char* toString(ObjectKind kind);
 
 struct Object {
@@ -31,6 +31,9 @@ struct Object {
   std::string name;
   std::string layer = "Default";  // tag
   bool visible = true;
+  // Locked: cannot be picked, moved or erased (still drawn and snapped to);
+  // e.g. an image traced over. Unlock from the object list.
+  bool locked = false;
   Color color;  // legacy colour, shown only where no material applies
   // Material of the whole object ("" = inherit from the container), and
   // faces painted on their own (these win).

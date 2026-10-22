@@ -160,6 +160,7 @@ class GuiPhase1 : public QObject {
   void escStepsBackAndConstraintsShow();
   void autosaveRecoveryAndBackups();
   void deleteFaceLeavesOpenShape();
+  void imageUnderlayCalibrateLockTrace();
 };
 
 namespace {
@@ -2275,6 +2276,80 @@ void GuiPhase1::deleteFaceLeavesOpenShape() {
   QVERIFY(m.undo());
   QVERIFY(m.undo());
   QCOMPARE(m.document().find(id)->kind(), doc::ObjectKind::Solid);
+}
+
+// A plan picture to draw over (docs/13): import, two-point calibration with
+// the scale tool, lock, then trace on it; saved inside the file.
+void GuiPhase1::imageUnderlayCalibrateLockTrace() {
+  QTemporaryDir dir;
+  QImage picture(200, 100, QImage::Format_RGB32);
+  picture.fill(Qt::blue);
+  for (int y = 0; y < 100; ++y) {
+    for (int x = 0; x < 100; ++x) picture.setPixel(x, y, qRgb(220, 30, 30));  // left half red
+  }
+  for (int y = 0; y < 15; ++y) {
+    for (int x = 0; x < 200; ++x) picture.setPixel(x, y, qRgb(255, 255, 255));  // white strip at the top
+  }
+  const QString png = QDir(dir.path()).filePath(QStringLiteral("plan.png"));
+  QVERIFY(picture.save(png));
+
+  Fixture f;
+  QVERIFY(f.setUp(5000, 2500));
+  doc::Modeler& m = f.window.modeler();
+  QVERIFY(f.window.importUnderlay(png));
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  const doc::ObjectId image = m.document().objects().front().id;
+  QCOMPARE(m.document().find(image)->kind(), doc::ObjectKind::Image);
+  QVERIFY(dynamic_cast<ScaleTool*>(f.window.activeTool()));  // straight into calibration
+  // Restore the test camera (import fits the view).
+  doc::CameraState cam;
+  cam.eye = {5000 - 6000, 2500 - 8000, 9000};
+  cam.target = {5000, 2500, 0};
+  cam.perspective = false;
+  cam.scale = 16000;
+  f.vp->restoreCamera(cam);
+  QTest::qWait(50);
+  if (const QString shot = qEnvironmentVariable("SBR_UNDERLAY_SHOT"); !shot.isEmpty()) {
+    f.window.setSelection({});
+    f.vp->syncNow();
+    QTest::qWait(100);
+    QVERIFY(f.vp->dumpImage(shot));
+    f.window.setSelection({image});
+  }
+  // Two marks 5 m apart on the 10 m wide picture are really 2.5 m apart.
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 1000, 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(6000, 1000, 0)));
+  type(f.vp, QStringLiteral("2500"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  const auto& u = std::get<doc::ImageUnderlay>(m.document().find(image)->recipe.base);
+  QVERIFY2(std::abs(u.width - 5000) < 50, qPrintable(QString::number(u.width)));
+  QVERIFY(std::abs(u.height - 2500) < 25);
+  QVERIFY(std::abs(u.plane.origin.X() - 500) < 20);
+
+  // Locked: picks go through it; the line tool still traces on it.
+  f.window.activateWindow();
+  QTest::qWait(30);
+  QTest::keyClick(f.vp, Qt::Key_L, Qt::ControlModifier);
+  QTest::qWait(30);
+  QVERIFY(m.document().find(image)->locked);
+  f.window.activateTool(MainWindow::ToolId::Select);
+  click(f.vp, f.vp->toWidget(gp_Pnt(2000, 1000, 0)));
+  QVERIFY(f.window.selection().empty());
+  f.window.activateTool(MainWindow::ToolId::Line);
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 500, 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(3000, 500, 0)));
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  QTest::qWait(30);
+  QCOMPARE(m.document().objects().size(), std::size_t(2));
+  QVERIFY(std::abs(geom::exactBounds(m.document().worldShape(m.document().objects().back())).CornerMax().Z()) < 1e-6);
+
+  // In the file, and back.
+  const QString path = QDir(dir.path()).filePath(QStringLiteral("traced.sbr"));
+  QVERIFY(f.window.saveFile(path));
+  QVERIFY(f.window.openFile(path));
+  const doc::Object* back = m.document().find(image);
+  QVERIFY(back && back->locked);
+  QVERIFY(m.document().findImage(std::get<doc::ImageUnderlay>(back->recipe.base).image));
 }
 
 QTEST_MAIN(GuiPhase1)

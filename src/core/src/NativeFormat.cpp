@@ -9,6 +9,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "sbr/Codec.h"
 #include "sbr/geom/Measure.h"
 #include "sbr/geom/ShapeIO.h"
 
@@ -154,6 +155,17 @@ json baseToJson(const BaseFeature& base) {
           [](const GuideLine& g) {
             return json{{"type", "guide"}, {"point", toJson(g.point)}, {"direction", toJson(g.direction)}};
           },
+          [](const ImageUnderlay& u) {
+            return json{{"type", "image"},
+                        {"image", u.image},
+                        {"plane",
+                         {{"origin", toJson(u.plane.origin)},
+                          {"normal", toJson(u.plane.normal)},
+                          {"xDir", toJson(u.plane.xDir)}}},
+                        {"width", u.width},
+                        {"height", u.height},
+                        {"opacity", u.opacity}};
+          },
           [](const TextNote& t) {
             json j = {{"type", "text"}, {"position", toJson(t.position)}, {"text", t.text}};
             if (t.target) j["target"] = toJson(*t.target);
@@ -267,6 +279,18 @@ BaseFeature baseFrom(const json& j) {
                            j.value("text", std::string())};
   }
   if (type == "guide") return GuideLine{pointFrom(j.at("point")), dirFrom(j.at("direction"))};
+  if (type == "image") {
+    ImageUnderlay u;
+    u.image = j.at("image").get<std::string>();
+    const json& plane = j.at("plane");
+    u.plane.origin = pointFrom(plane.at("origin"));
+    u.plane.normal = dirFrom(plane.at("normal"));
+    u.plane.xDir = dirFrom(plane.at("xDir"));
+    u.width = j.at("width").get<double>();
+    u.height = j.at("height").get<double>();
+    u.opacity = j.value("opacity", 1.0);
+    return u;
+  }
   if (type == "text") {
     TextNote t{pointFrom(j.at("position")), std::nullopt, j.value("text", std::string())};
     if (j.contains("target")) t.target = pointFrom(j.at("target"));
@@ -539,6 +563,7 @@ json objectToJson(const Object& o, const Color& shown, ShapeTable& shapes) {
   };
   if (!o.parent.empty()) j["parent"] = o.parent;
   if (!o.material.empty()) j["material"] = o.material;
+  if (o.locked) j["locked"] = true;
   if (!o.faceMaterials.empty()) {
     json faces = json::array();
     for (const FaceMaterial& fm : o.faceMaterials) {
@@ -575,6 +600,7 @@ Object objectFrom(const json& j, const RegenContext& context, std::vector<std::s
   o.visible = j.value("visible", true);
   if (j.contains("color")) o.color = colorFrom(j.at("color"));
   o.material = j.value("material", std::string());
+  o.locked = j.value("locked", false);
   if (j.contains("faceMaterials")) {
     for (const json& f : j.at("faceMaterials")) {
       FaceMaterial fm;
@@ -633,6 +659,22 @@ std::string serializeDocument(const Document& document) {
   }
   json objects =
       objectsToJson(document.objects(), shapes, [&](const Object& o) { return document.displayColor(o); });
+  // Embedded images that something still shows (by content hash), so
+  // the file carries them wherever it is copied.
+  std::set<std::string> used;
+  auto collect = [&](const Object& o) {
+    if (const auto* u = std::get_if<ImageUnderlay>(&o.recipe.base)) used.insert(u->image);
+  };
+  for (const Object& o : document.objects()) collect(o);
+  for (const ComponentDefinition& d : document.definitions()) {
+    for (const Object& o : d.objects) collect(o);
+  }
+  json images = json::object();
+  for (const std::string& hash : used) {
+    if (const Document::Image* image = document.findImage(hash)) {
+      images[hash] = {{"name", image->name}, {"data", codec::base64Encode(image->bytes)}};
+    }
+  }
   json materials = json::array();
   for (const Material& m : document.materials()) {
     materials.push_back({{"id", m.id}, {"name", m.name}, {"color", colorToJson(m.color)}});
@@ -655,6 +697,7 @@ std::string serializeDocument(const Document& document) {
       {"hiddenTags", s.hiddenTags},
       {"shapes", shapes.entries},
       {"materials", materials},
+      {"images", images},
       {"definitions", definitions},
       {"objects", objects},
   };
@@ -750,9 +793,23 @@ Status deserializeDocument(const std::string& text, Document& document,
       }
     }
 
+    std::vector<std::pair<std::string, Document::Image>> images;
+    if (root.contains("images")) {
+      for (auto it = root.at("images").begin(); it != root.at("images").end(); ++it) {
+        Document::Image image{it.value().value("name", std::string()),
+                              codec::base64Decode(it.value().at("data").get<std::string>())};
+        if (codec::sha256Hex(image.bytes) != it.key()) {
+          if (warnings) warnings->push_back("embedded image '" + image.name + "' is damaged");
+          continue;
+        }
+        images.emplace_back(it.key(), std::move(image));
+      }
+    }
+
     document.clear();
     document.settings() = loaded.settings();
     for (const Material& m : library) document.putMaterial(m);
+    for (const auto& [hash, image] : images) document.addImage(image.bytes, image.name);
     for (const ComponentDefinition& d : loaded.definitions()) document.putDefinition(d);
     for (const Object& o : loaded.objects()) document.insert(o);
     return Status::success();

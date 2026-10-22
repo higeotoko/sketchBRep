@@ -961,6 +961,17 @@ const std::vector<CommandDef>& commands() {
          must(m.reverseFaces(ids(a, "ids")));
          return idsResult(ids(a, "ids"));
        }},
+      {"set_locked",
+       "Lock objects (true) so that nobody moves, scales or deletes them by accident - e.g. an image underlay "
+       "traced over (kind Image) - or unlock them (false). Locked objects are still shown and snapped to.",
+       SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}},
+               "locked": {"type": "boolean"}}, "required": ["ids", "locked"]}),
+       [](doc::Modeler& m, const json& a) {
+         const json& locked = arg(a, "locked");
+         if (!locked.is_boolean()) throw ApiError("'locked' must be true or false");
+         must(m.setLocked(ids(a, "ids"), locked.get<bool>()));
+         return idsResult(ids(a, "ids"));
+       }},
       {"erase_edge",
        "The eraser on a line: a line dividing a flat face (made by split_face, or a line drawn across a "
        "loose profile) is taken away and the face is one again; the shape itself does not change. A real "

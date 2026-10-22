@@ -115,6 +115,10 @@ class MainWindow : public QMainWindow, public ToolHost {
   // Ends the session the way a crash would (files stay, the lock goes): tests.
   void abandonSessionForTest();
 
+  // Image underlay: lays the picture on the ground (10 m wide to start),
+  // selects it and starts the scale tool for the two-point calibration.
+  bool importUnderlay(const QString& path);
+
   // Materials (panel actions; also used by tests).
   MaterialsPanel* materialsPanel() const { return materialsPanel_; }
   PaintTool& paintTool() { return *paintTool_; }

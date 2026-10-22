@@ -85,6 +85,8 @@ const Entry kEntries[] = {
     {"Nothing would be left", "すべての面は消せません（部材ごと消すには部材を選んで削除）"},
     {"Only faces of solids and open shells", "面だけを消せるのはソリッドと開いた形状です"},
     {"is not a solid", "ソリッドではありません（開いた形状は 編集 > 穴をふさぐ でソリッドに戻せます）"},
+    {"is locked", "ロックされています（オブジェクト一覧で選んで、プロパティの「ロック」を外すと編集できます）"},
+    {"Not an image", "画像を読み込めませんでした"},
     {"Object not found", "対象が見つかりません"},
 };
 

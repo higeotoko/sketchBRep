@@ -4,6 +4,7 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <optional>
 #include <set>
 #include <string>
@@ -111,6 +112,16 @@ class Document {
   TopoDS_Shape worldShape(const Object& object) const;
   TopoDS_Shape worldShape(const ObjectId& id) const;
 
+  // --- embedded images (by content hash; never edited, only added) ------
+  struct Image {
+    std::string name;   // original file name, a hint only
+    std::string bytes;  // the file as it was (PNG, JPEG, ...)
+  };
+  // Adds the image if new; returns its sha-256 (the id objects use).
+  std::string addImage(const std::string& bytes, const std::string& name);
+  const Image* findImage(const std::string& hash) const;
+  const std::map<std::string, Image>& images() const { return images_; }
+
   // --- materials (shared library, stable ids) ------------------------------
   const std::vector<Material>& materials() const { return materials_; }
   const Material* findMaterial(const std::string& id) const;
@@ -166,6 +177,7 @@ class Document {
   std::vector<Object> objects_;
   std::vector<ComponentDefinition> definitions_;
   std::vector<Material> materials_;
+  std::map<std::string, Image> images_;
   DocumentSettings settings_;
   std::vector<Listener> listeners_;
 

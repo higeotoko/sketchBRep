@@ -83,6 +83,17 @@ struct GuideLine {
   gp_Dir direction = gp::DX();
 };
 
+// A picture laid on a plane to draw over (a plan, an elevation): the
+// image is held by the document (content hash), the object is the
+// rectangle it covers. Kept apart from profiles: not extruded or painted.
+struct ImageUnderlay {
+  std::string image;        // sha-256 of the image file's bytes
+  geom::SketchPlane plane;  // lower-left corner, normal, image x direction
+  double width = 1000.0;    // mm
+  double height = 1000.0;   // mm
+  double opacity = 1.0;
+};
+
 // Cubic NURBS curve through points (periodic when closed).
 struct InterpolatedCurve {
   std::vector<gp_Pnt> points;
@@ -163,7 +174,7 @@ struct ComponentInstance {
 };
 
 using BaseFeature = std::variant<RectangleProfile, CircleProfile, PolygonProfile, PolylineCurve, InterpolatedCurve,
-                                 ArcCurve, LinearDimension, TextNote, GuideLine, ImportedShape,
+                                 ArcCurve, LinearDimension, TextNote, GuideLine, ImageUnderlay, ImportedShape,
                                  BooleanFeature, LoftFeature, SweepFeature, LoopProfile, FacePart, GroupNode,
                                  ComponentInstance, RegularPolygonProfile>;
 

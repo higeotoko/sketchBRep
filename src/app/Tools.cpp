@@ -215,7 +215,7 @@ void SelectTool::boxSelect(const QRect& rect, bool crossing, bool additive) {
   const doc::ObjectId context = host_.editingGroup();
   std::vector<doc::ObjectId> selection = additive ? host_.selection() : std::vector<doc::ObjectId>{};
   for (const doc::Object& o : document.objects()) {
-    if (o.parent != context || !document.isVisible(o.id)) continue;
+    if (o.parent != context || !document.isVisible(o.id) || o.locked) continue;
     // Screen footprint from the exact bounds of the object (and its children).
     Bnd_Box box;
     for (const doc::ObjectId& id : document.subtree(o.id)) {
@@ -3034,7 +3034,15 @@ void ScaleTool::mousePress(const ToolEvent& e) {
 void ScaleTool::applyMeasurement(const QString& text) {
   const QString t = text.trimmed();
   // A unit makes it a length (new reference distance), otherwise a factor.
-  const bool isLength = t.contains(QRegularExpression(QStringLiteral("[a-zA-Z]")));
+  // Images are scaled to calibrate them: there a plain number is the real
+  // distance (mm) between the two points.
+  const doc::Document& document = host_.modeler().document();
+  const auto& subjects = stage_ == Stage::Scaling ? targets_ : (last_ ? last_->targets : targets_);
+  const bool images = !subjects.empty() && std::all_of(subjects.begin(), subjects.end(), [&](const doc::ObjectId& id) {
+    const doc::Object* o = document.find(id);
+    return o && o->kind() == doc::ObjectKind::Image;
+  });
+  const bool isLength = images || t.contains(QRegularExpression(QStringLiteral("[a-zA-Z]")));
   double referenceDistance = 0.0;
   if (stage_ == Stage::Scaling) {
     referenceDistance = fixed_.Distance(reference_);
