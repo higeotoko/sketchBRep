@@ -11,6 +11,7 @@
 
 #include <BRepGProp.hxx>
 #include <TopExp.hxx>
+#include <TopoDS_Vertex.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <gp_Lin.hxx>
@@ -165,6 +166,7 @@ class GuiPhase1 : public QObject {
   void typedUnitsDoNotTriggerShortcuts();
   void scaleToolFactorAndLength();
   void scaleGripsStretchEachDirection();
+  void snapTipNamesTheAdoptedPoint();
   void aiReadsKeepDrawingInProgress();
   void proposalShowsRotationAndHide();
   void benchViewportSync();
@@ -1128,6 +1130,83 @@ void GuiPhase1::scaleGripsStretchEachDirection() {
   QVERIFY2(std::abs(d.CornerMax().Y() - 1000) < 15 && std::abs(d.CornerMin().Y()) < 1e-6 &&
                std::abs(d.CornerMax().X() - 1000) < 1e-6,
            qPrintable(QStringLiteral("%1 %2").arg(d.CornerMin().Y()).arg(d.CornerMax().Y())));
+}
+
+// ScreenTip: the label beside the cursor names the snap the tool takes
+// (端点, 中点, エッジ上, 面上, 作業平面上), and the point it names is the
+// one committed; it covers neither the cursor nor the point, stays in the
+// view, and goes away on Esc, a tool change, leaving the view and in the
+// select tool.
+void GuiPhase1::snapTipNamesTheAdoptedPoint() {
+  Fixture f;
+  QVERIFY(f.setUp(500, 500));
+  doc::CameraState cam;
+  cam.eye = {500 - 6000, 500 - 8000, 9000};
+  cam.target = {500, 500, 0};
+  cam.up = {0, 0, 1};
+  cam.perspective = false;
+  cam.scale = 5000;
+  f.vp->restoreCamera(cam);
+  QTest::qWait(30);
+  doc::Modeler& m = f.window.modeler();
+  f.box(0, 0, 1000, 1000, 1000);
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::Line);
+  auto tipAt = [&](const gp_Pnt& p) {
+    const QPoint at = f.vp->toWidget(p);
+    move(f.vp, at);
+    const QRect r = f.vp->snapTipRect();
+    const QPoint marker = f.vp->toWidget(f.vp->snapTipPoint());
+    if (!f.vp->snapTip().isEmpty()) {
+      if (r.contains(at) || r.contains(marker)) return QStringLiteral("covers the cursor or the point");
+      if (!f.vp->rect().contains(r)) return QStringLiteral("outside the view");
+    }
+    return f.vp->snapTip();
+  };
+  QCOMPARE(tipAt(gp_Pnt(1000, 0, 1000)), QStringLiteral("端点"));
+  QVERIFY(f.vp->snapTipPoint().Distance(gp_Pnt(1000, 0, 1000)) < 1e-6);
+  QCOMPARE(tipAt(gp_Pnt(500, 0, 1000)), QStringLiteral("中点"));
+  QCOMPARE(tipAt(gp_Pnt(250, 0, 1000)), QStringLiteral("エッジ上"));
+  QCOMPARE(tipAt(gp_Pnt(400, 600, 1000)), QStringLiteral("面上"));
+  QCOMPARE(tipAt(gp_Pnt(2500, -1000, 0)), QStringLiteral("作業平面上"));
+
+  // What the label named is where the line goes.
+  QCOMPARE(tipAt(gp_Pnt(500, 0, 1000)), QStringLiteral("中点"));
+  const gp_Pnt start = f.vp->snapTipPoint();
+  click(f.vp, f.vp->toWidget(gp_Pnt(500, 0, 1000)));
+  QCOMPARE(tipAt(gp_Pnt(2500, -1000, 0)), QStringLiteral("作業平面上"));
+  const gp_Pnt end = f.vp->snapTipPoint();
+  click(f.vp, f.vp->toWidget(gp_Pnt(2500, -1000, 0)));
+  QTest::keyClick(f.vp, Qt::Key_Escape);  // the line is made; the tip goes
+  QVERIFY(f.vp->snapTip().isEmpty());
+  // An edge from exactly the one point to the other (the line may have
+  // joined the box it starts on).
+  bool startFound = false, endFound = false;
+  for (const doc::Object& o : m.document().objects()) {
+    for (TopExp_Explorer e(m.document().worldShape(o), TopAbs_EDGE); e.More(); e.Next()) {
+      const TopoDS_Edge edge = TopoDS::Edge(e.Current());
+      const gp_Pnt a = BRep_Tool::Pnt(TopExp::FirstVertex(edge)), b = BRep_Tool::Pnt(TopExp::LastVertex(edge));
+      if ((a.Distance(start) < 1e-6 && b.Distance(end) < 1e-6) || (b.Distance(start) < 1e-6 && a.Distance(end) < 1e-6)) {
+        startFound = endFound = true;
+      }
+    }
+  }
+  QVERIFY(startFound && endFound);
+
+  // Gone when leaving the view, on a tool change, in select.
+  QCOMPARE(tipAt(gp_Pnt(1000, 0, 1000)), QStringLiteral("端点"));
+  QEvent leave(QEvent::Leave);
+  QApplication::sendEvent(f.vp, &leave);
+  QVERIFY(f.vp->snapTip().isEmpty());
+  QCOMPARE(tipAt(gp_Pnt(1000, 0, 1000)), QStringLiteral("端点"));
+  f.window.activateTool(MainWindow::ToolId::Select);
+  QVERIFY(f.vp->snapTip().isEmpty());
+  QCOMPARE(tipAt(gp_Pnt(1000, 0, 1000)), QString());
+  // Other snapping tools show it the same way.
+  f.window.activateTool(MainWindow::ToolId::Rectangle);
+  QCOMPARE(tipAt(gp_Pnt(500, 0, 1000)), QStringLiteral("中点"));
+  f.window.activateTool(MainWindow::ToolId::Move);
+  QCOMPARE(tipAt(gp_Pnt(1000, 0, 1000)), QStringLiteral("端点"));
 }
 
 // Review C / R04: AI requests that only read must not reset a half-drawn

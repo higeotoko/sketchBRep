@@ -20,6 +20,7 @@
 #include <QPoint>
 #include <QTimer>
 #include <QWidget>
+#include <QLabel>
 
 #include <AIS_InteractiveContext.hxx>
 #include <AIS_InteractiveObject.hxx>
@@ -139,8 +140,15 @@ class Viewport : public QWidget {
   // in world space. Built from display copies, never from canonical shapes.
   void setGhost(const std::vector<doc::ObjectId>& ids, const gp_Trsf& delta);
   void clearPreview();
+  // The marker, guide lines and a small label next to the cursor naming
+  // what the point snapped to (SketchUp's ScreenTip), all from `result`.
   void showSnap(const snap::SnapResult& result, std::optional<gp_Pnt> anchor);
   void hideSnap();
+  // The label shown (empty when none), where (logical pixels) and the point
+  // it names.
+  QString snapTip() const { return snapTipText_; }
+  QRect snapTipRect() const { return snapTipRect_; }
+  gp_Pnt snapTipPoint() const { return snapTipPoint_; }
   // Schedules a repaint (coalesced); renderNow() draws immediately.
   void redraw();
   void renderNow();
@@ -211,8 +219,11 @@ class Viewport : public QWidget {
   // Keeps letters typed as units ("3m", "8s") from triggering tool shortcuts.
   bool event(QEvent* event) override;
   void keyReleaseEvent(QKeyEvent* event) override;
+  void leaveEvent(QEvent* event) override;
 
  private:
+  QRect placeSnapTip(const QSize& size, const QPoint& marker, std::optional<QPoint> anchor) const;
+  void hideSnapTip();
   // Display copies shared by every object with the same local canonical
   // shape (component placements): copied and tessellated once, each entry
   // only adds its placement (performance step 2, GPU instancing later).
@@ -321,6 +332,11 @@ class Viewport : public QWidget {
   Handle(AIS_Shape) snapMarker_;
   Handle(AIS_Shape) inferenceLine_;
   Handle(AIS_Shape) referenceLine_;
+  QLabel* snapTip_ = nullptr;  // a tooltip window letting the mouse through
+  QString snapTipText_;
+  QRect snapTipRect_;
+  gp_Pnt snapTipPoint_;
+  mutable QPoint snapCursor_;  // the cursor of the last snap() query
   Handle(AIS_Shape) highlightFaces_;
   Handle(AIS_Shape) highlightEdges_;
   std::vector<ElementRef> highlighted_;

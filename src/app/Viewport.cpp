@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include <QGuiApplication>
 #include <QKeyEvent>
 #include <QMessageBox>
 #include <QMouseEvent>
@@ -341,6 +342,7 @@ void Viewport::paintEvent(QPaintEvent*) { renderNow(); }
 
 void Viewport::resizeEvent(QResizeEvent*) {
   if (!view_.IsNull()) view_->MustBeResized();
+  hideSnapTip();  // placed for the old size; back on the next move
 }
 
 QPoint Viewport::devicePos(const QPoint& logical) const {
@@ -1415,6 +1417,7 @@ snap::SnapResult Viewport::snap(const QPoint& pos, std::optional<gp_Pnt> anchor,
   query.stickyPoint = stickyPoint;
   query.ray = rayAt(pos);
   query.cursor = snap::ScreenPoint{static_cast<double>(pos.x()), static_cast<double>(pos.y())};
+  snapCursor_ = pos;
   query.project = [this](const gp_Pnt& p) { return project(p); };
   query.pixelTolerance = 10.0;
   query.viewDirection = viewDirection();  // perspective-safe culling
@@ -1726,10 +1729,98 @@ void Viewport::showSnap(const snap::SnapResult& result, std::optional<gp_Pnt> an
       context_->Display(referenceLine_, AIS_WireFrame, -1, Standard_False);
     }
   }
+  // The label: the name of this very result, next to the cursor.
+  const QString text = result.valid() ? snapLabel(result.kind) : QString();
+  if (text.isEmpty()) {
+    hideSnapTip();
+  } else {
+    if (!snapTip_) {
+      // A tooltip window: above the OpenGL view on every platform, drawn by
+      // Qt (fonts, DPI), never takes the mouse, the focus or the picking.
+      snapTip_ = new QLabel(this, Qt::ToolTip | Qt::FramelessWindowHint | Qt::WindowTransparentForInput |
+                                      Qt::WindowDoesNotAcceptFocus);
+      snapTip_->setAttribute(Qt::WA_TransparentForMouseEvents);
+      snapTip_->setAttribute(Qt::WA_ShowWithoutActivating);
+      snapTip_->setStyleSheet(QStringLiteral(
+          "QLabel { background: #fffbe6; color: #202020; border: 1px solid #a89f7a; padding: 1px 5px; }"));
+      // Not left floating over other applications.
+      connect(qApp, &QGuiApplication::applicationStateChanged, snapTip_, [this](Qt::ApplicationState state) {
+        if (state != Qt::ApplicationActive) hideSnapTip();
+      });
+    }
+    if (snapTip_->text() != text) {
+      snapTip_->setText(text);
+      snapTip_->adjustSize();
+    }
+    const QPoint marker = toWidget(result.point);
+    std::optional<QPoint> from;
+    if (anchor) from = toWidget(*anchor);
+    snapTipRect_ = placeSnapTip(snapTip_->size(), marker, from);
+    snapTipText_ = text;
+    snapTipPoint_ = result.point;
+    snapTip_->move(mapToGlobal(snapTipRect_.topLeft()));
+    if (!snapTip_->isVisible() && isVisible()) snapTip_->show();
+  }
   redraw();
 }
 
 void Viewport::hideSnap() { showSnap(snap::SnapResult{}, std::nullopt); }
+
+void Viewport::hideSnapTip() {
+  if (snapTip_) snapTip_->hide();
+  snapTipText_.clear();
+  snapTipRect_ = QRect();
+}
+
+// Beside the cursor, away from the line being drawn, covering neither the
+// cursor nor the snapped point nor that line, inside the view.
+QRect Viewport::placeSnapTip(const QSize& size, const QPoint& marker, std::optional<QPoint> anchor) const {
+  const QPoint c = snapCursor_;
+  const int gx = 16, gy = 18;  // clear of the cursor's tip and a crosshair
+  std::vector<QRect> candidates = {
+      QRect(QPoint(c.x() + gx, c.y() + gy), size),                                  // below right
+      QRect(QPoint(c.x() + gx, c.y() - gy - size.height()), size),                  // above right
+      QRect(QPoint(c.x() - gx - size.width(), c.y() + gy), size),                   // below left
+      QRect(QPoint(c.x() - gx - size.width(), c.y() - gy - size.height()), size)};  // above left
+  // Facing away from where the line comes from first.
+  if (anchor) {
+    const QPointF back(anchor->x() - marker.x(), anchor->y() - marker.y());
+    std::stable_sort(candidates.begin(), candidates.end(), [&](const QRect& a, const QRect& b) {
+      const QPointF da = QPointF(a.center()) - QPointF(c), db = QPointF(b.center()) - QPointF(c);
+      return da.x() * back.x() + da.y() * back.y() < db.x() * back.x() + db.y() * back.y();
+    });
+  }
+  auto blocks = [&](const QRect& r) {
+    const QRect around = r.adjusted(-4, -4, 4, 4);
+    if (around.contains(c) || around.contains(marker)) return true;
+    if (anchor) {
+      for (int i = 0; i <= 32; ++i) {
+        const double t = i / 32.0;
+        const QPoint p(static_cast<int>(std::lround(anchor->x() + t * (marker.x() - anchor->x()))),
+                       static_cast<int>(std::lround(anchor->y() + t * (marker.y() - anchor->y()))));
+        if (r.contains(p)) return true;
+      }
+    }
+    return false;
+  };
+  for (const QRect& r : candidates) {
+    if (rect().contains(r) && !blocks(r)) return r;
+  }
+  for (const QRect& r : candidates) {
+    if (rect().contains(r)) return r;
+  }
+  // A view smaller than usual: kept inside it.
+  QRect r = candidates.front();
+  r.moveLeft(std::clamp(r.left(), 0, std::max(0, width() - size.width())));
+  r.moveTop(std::clamp(r.top(), 0, std::max(0, height() - size.height())));
+  return r;
+}
+
+void Viewport::leaveEvent(QEvent* event) {
+  hideSnapTip();
+  redraw();
+  QWidget::leaveEvent(event);
+}
 
 bool Viewport::dumpImage(const QString& path) {
   if (view_.IsNull()) return false;
