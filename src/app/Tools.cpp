@@ -3470,8 +3470,10 @@ namespace {
 // The point of the edge under the cursor (closest to the view ray).
 gp_Pnt pointOnEdgeAt(Viewport& vp, const QPoint& pos, const TopoDS_Edge& edge) {
   const snap::Ray ray = vp.rayAt(pos);
-  const gp_Pnt far = ray.origin.Translated(gp_Vec(ray.direction) * 1e8);
-  BRepExtrema_DistShapeShape d(edge, BRepBuilderAPI_MakeEdge(ray.origin.Translated(gp_Vec(ray.direction) * -1e8), far).Edge());
+  // (Not "far"/"near": windows.h defines them as macros.)
+  const gp_Pnt ahead = ray.origin.Translated(gp_Vec(ray.direction) * 1e8);
+  const gp_Pnt behind = ray.origin.Translated(gp_Vec(ray.direction) * -1e8);
+  BRepExtrema_DistShapeShape d(edge, BRepBuilderAPI_MakeEdge(behind, ahead).Edge());
   if (d.IsDone() && d.NbSolution() > 0) return d.PointOnShape1(1);
   BRepAdaptor_Curve c(edge);
   return c.Value(0.5 * (c.FirstParameter() + c.LastParameter()));
