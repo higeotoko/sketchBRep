@@ -601,6 +601,10 @@ class FollowMeTool : public Tool {
 
  private:
   std::optional<doc::ObjectId> profile_;
+  // SketchUp order: the path's edges selected before the tool (lines,
+  // arcs, edges of faces / solids, possibly of several objects); then one
+  // click on the profile runs it.
+  std::vector<TopoDS_Edge> path_;
 };
 
 // Paint bucket: click to apply the current colour (groups and components

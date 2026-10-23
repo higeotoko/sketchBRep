@@ -1174,13 +1174,30 @@ const std::vector<CommandDef>& commands() {
          return idResult(must(m.loftObjects(ids(a, "ids"), a.value("solid", true))));
        }},
       {"follow_me",
-       "SketchUp's Follow Me: sweep the profile face along 'path' (a curve object) or around the outline of "
-       "a solid's face ('around': {\"id\": solid, \"face\": index or {\"normal\": [...]}}). The profile is "
-       "consumed; its dimensions stay editable on the result (in0.<key>).",
+       "SketchUp's Follow Me: sweep the profile face along 'path' (a curve object), along 'path_edges' (edges "
+       "selected first, possibly of several objects: a list of {\"id\": object} for all its edges or "
+       "{\"id\": object, \"edge\": index or {\"near\": [x,y,z]}}; joined into one path whatever their order; "
+       "branches, gaps and duplicates are refused with the reason), or around the outline of a solid's face "
+       "('around': {\"id\": solid, \"face\": index or {\"normal\": [...]}}). The profile is consumed; its "
+       "dimensions stay editable on the result (in0.<key>).",
        SCHEMA({"type": "object", "properties": {"profile": {"type": "string"}, "path": {"type": "string"},
-               "around": {"type": "object"}}, "required": ["profile"]}),
+               "path_edges": {"type": "array"}, "around": {"type": "object"}}, "required": ["profile"]}),
        [](doc::Modeler& m, const json& a) {
          if (a.contains("path")) return idResult(must(m.followMe(text(a, "profile"), text(a, "path"))));
+         if (a.contains("path_edges")) {
+           std::vector<TopoDS_Edge> edges;
+           for (const json& item : arg(a, "path_edges")) {
+             const ObjectId owner = text(item, "id");
+             if (item.contains("edge")) {
+               edges.push_back(selectEdge(m, owner, item.at("edge")));
+               continue;
+             }
+             TopTools_IndexedMapOfShape all;
+             TopExp::MapShapes(m.document().worldShape(object(m, owner)), TopAbs_EDGE, all);
+             for (int i = 1; i <= all.Extent(); ++i) edges.push_back(TopoDS::Edge(all(i)));
+           }
+           return idResult(must(m.followMe(text(a, "profile"), edges)));
+         }
          const json& around = arg(a, "around");
          const ObjectId solid = text(around, "id");
          const TopoDS_Face face = selectFace(m, solid, arg(around, "face"));

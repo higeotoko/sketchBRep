@@ -1,6 +1,10 @@
 #include "sbr/geom/Freeform.h"
 
 #include <cmath>
+#include <cstdio>
+
+#include <BRepAdaptor_Curve.hxx>
+#include <TopExp.hxx>
 
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
@@ -158,6 +162,13 @@ namespace {
 Result<TopoDS_Shape> mitredSweep(const TopoDS_Shape& profile, const TopoDS_Wire& spine) {
   if (profile.ShapeType() != TopAbs_FACE) return Result<TopoDS_Shape>::failure("Profile is not a face");
   const TopoDS_Face face = TopoDS::Face(profile);
+  // Only the outer outline goes through this corner sweep: a profile with
+  // holes would come out filled, so it is refused instead (FM-04).
+  int wires = 0;
+  for (TopExp_Explorer w(face, TopAbs_WIRE); w.More(); w.Next()) ++wires;
+  if (wires > 1) {
+    return Result<TopoDS_Shape>::failure("A profile with holes cannot yet be swept around sharp corners of the path");
+  }
   BRepOffsetAPI_MakePipeShell shell(spine);
   shell.SetMode(Standard_False);  // corrected Frenet: keeps the profile upright
   shell.SetTransitionMode(BRepBuilderAPI_RightCorner);
@@ -200,6 +211,99 @@ Result<TopoDS_Shape> sweep(const TopoDS_Shape& profile, const TopoDS_Wire& spine
       return Result<TopoDS_Shape>::failure(std::string("Sweep failed: ") + e.GetMessageString());
     }
   }
+}
+
+Result<TopoDS_Wire> pathFromEdges(const std::vector<TopoDS_Edge>& input, const gp_Pnt& near) {
+  using R = Result<TopoDS_Wire>;
+  constexpr double kJoin = 1e-4;
+  if (input.empty()) return R::failure("No edges for the path");
+  // Distinct edges (the same edge picked twice, or two copies on top of
+  // each other, cannot be told apart in a path).
+  std::vector<TopoDS_Edge> edges;
+  auto ends = [](const TopoDS_Edge& e) {
+    return std::make_pair(BRep_Tool::Pnt(TopExp::FirstVertex(e, true)), BRep_Tool::Pnt(TopExp::LastVertex(e, true)));
+  };
+  auto midpoint = [](const TopoDS_Edge& e) {
+    BRepAdaptor_Curve c(e);
+    return c.Value(0.5 * (c.FirstParameter() + c.LastParameter()));
+  };
+  for (const TopoDS_Edge& e : input) {
+    if (e.IsNull() || BRep_Tool::Degenerated(e)) continue;
+    const auto [a, b] = ends(e);
+    const gp_Pnt m = midpoint(e);
+    for (const TopoDS_Edge& o : edges) {
+      const auto [c, d] = ends(o);
+      const bool sameEnds = (a.Distance(c) < kJoin && b.Distance(d) < kJoin) || (a.Distance(d) < kJoin && b.Distance(c) < kJoin);
+      if (sameEnds && m.Distance(midpoint(o)) < kJoin) return R::failure("An edge is selected twice (or two lines lie on top of each other)");
+    }
+    edges.push_back(e);
+  }
+  // Vertices joined within the tolerance, and how many edges meet at each.
+  std::vector<gp_Pnt> nodes;
+  auto node = [&](const gp_Pnt& p) {
+    for (std::size_t i = 0; i < nodes.size(); ++i) {
+      if (nodes[i].Distance(p) < kJoin) return i;
+    }
+    nodes.push_back(p);
+    return nodes.size() - 1;
+  };
+  std::vector<std::pair<std::size_t, std::size_t>> links;
+  for (const TopoDS_Edge& e : edges) {
+    const auto [a, b] = ends(e);
+    links.emplace_back(node(a), node(b));
+  }
+  std::vector<int> degree(nodes.size(), 0);
+  for (const auto& [a, b] : links) {
+    ++degree[a];
+    ++degree[b];
+  }
+  for (std::size_t i = 0; i < nodes.size(); ++i) {
+    if (degree[i] > 2) {
+      char where[128];
+      std::snprintf(where, sizeof where, "(%.1f, %.1f, %.1f)", nodes[i].X(), nodes[i].Y(), nodes[i].Z());
+      return R::failure(std::string("The selected edges branch at ") + where + "; select one path without branches");
+    }
+  }
+  std::vector<std::size_t> openEnds;
+  for (std::size_t i = 0; i < nodes.size(); ++i) {
+    if (degree[i] == 1) openEnds.push_back(i);
+  }
+  // Start: the open end nearer the profile, or on a loop the vertex nearest it.
+  std::size_t start = 0;
+  if (!openEnds.empty()) {
+    start = openEnds.front();
+    for (std::size_t i : openEnds) {
+      if (nodes[i].Distance(near) < nodes[start].Distance(near)) start = i;
+    }
+  } else {
+    for (std::size_t i = 0; i < nodes.size(); ++i) {
+      if (nodes[i].Distance(near) < nodes[start].Distance(near)) start = i;
+    }
+  }
+  // Walk the chain.
+  std::vector<bool> used(edges.size(), false);
+  BRepBuilderAPI_MakeWire wire;
+  std::size_t at = start;
+  std::size_t walked = 0;
+  for (bool moved = true; moved;) {
+    moved = false;
+    for (std::size_t k = 0; k < edges.size(); ++k) {
+      if (used[k] || (links[k].first != at && links[k].second != at)) continue;
+      const bool forward = links[k].first == at;
+      wire.Add(forward ? edges[k] : TopoDS::Edge(edges[k].Reversed()));
+      if (!wire.IsDone()) return R::failure("The selected edges do not join into one path");
+      used[k] = true;
+      at = forward ? links[k].second : links[k].first;
+      ++walked;
+      moved = true;
+      break;
+    }
+  }
+  if (walked != edges.size()) {
+    return R::failure("The selected edges are not connected (" + std::to_string(edges.size() - walked) +
+                      " of them lie apart from the path); select one connected path");
+  }
+  return wire.Wire();
 }
 
 }  // namespace sbr::geom

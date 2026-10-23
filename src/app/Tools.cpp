@@ -3772,13 +3772,42 @@ QCursor FollowMeTool::cursor() const { return toolCursor(CursorKind::FollowMe); 
 
 void FollowMeTool::activate() {
   profile_.reset();
-  host_.viewport().setPickMode(PickMode::Elements);
+  path_.clear();
+  // Edges selected before (SketchUp): they are the path. Whole lines /
+  // arcs selected as objects count with all their edges.
+  const doc::Document& document = host_.modeler().document();
+  Viewport& vp = host_.viewport();
+  std::vector<ElementRef> shown;
+  for (const ElementRef& e : host_.elementSelection()) {
+    if (e.type != TopAbs_EDGE) continue;
+    const TopoDS_Shape edge = vp.elementShape(e);
+    if (edge.IsNull()) continue;
+    path_.push_back(TopoDS::Edge(edge));
+    shown.push_back(e);
+  }
+  if (path_.empty()) {
+    for (const doc::ObjectId& id : host_.selection()) {
+      const doc::Object* o = document.find(id);
+      if (!o || o->kind() != doc::ObjectKind::Curve) continue;
+      for (const ElementRef& e : vp.allElements(id)) {
+        if (e.type != TopAbs_EDGE) continue;
+        const TopoDS_Shape edge = vp.elementShape(e);
+        if (edge.IsNull()) continue;
+        path_.push_back(TopoDS::Edge(edge));
+        shown.push_back(e);
+      }
+    }
+  }
+  vp.setPickMode(PickMode::Elements);
+  vp.setHighlightedElements(shown);
   host_.setMeasurement(QString(), QString());
-  host_.setStatus(QObject::tr("沿わせる形（断面の面）をクリック"));
+  host_.setStatus(path_.empty() ? QObject::tr("沿わせる形（断面の面）をクリック")
+                                : QObject::tr("選んだ %1 本の辺に沿わせます。断面の面をクリック").arg(path_.size()));
 }
 
 void FollowMeTool::cancel() {
   profile_.reset();
+  path_.clear();
   host_.viewport().setHighlightedElements({});
 }
 
@@ -3786,8 +3815,9 @@ void FollowMeTool::mouseMove(const ToolEvent& e) {
   const auto picked = host_.viewport().pickElement(e.pos);
   const doc::Object* o = picked ? host_.modeler().document().find(picked->objectId) : nullptr;
   if (!profile_) {
-    host_.setStatus(o && o->kind() == doc::ObjectKind::Face ? QObject::tr("この面を断面にします")
-                                                            : QObject::tr("沿わせる形（断面の面）をクリック"));
+    const QString pick = path_.empty() ? QObject::tr("沿わせる形（断面の面）をクリック")
+                                       : QObject::tr("選んだ %1 本の辺に沿わせます。断面の面をクリック").arg(path_.size());
+    host_.setStatus(o && o->kind() == doc::ObjectKind::Face ? QObject::tr("この面を断面にします") : pick);
     return;
   }
   if (o && o->kind() == doc::ObjectKind::Curve) {
@@ -3808,6 +3838,18 @@ void FollowMeTool::mousePress(const ToolEvent& e) {
   if (!profile_) {
     if (o->kind() != doc::ObjectKind::Face) {
       host_.reportError(QObject::tr("断面には面（押し出す前の形）を選んでください"));
+      return;
+    }
+    if (!path_.empty()) {
+      // The path was selected first: run now.
+      const auto swept = m.followMe(o->id, path_);
+      if (!swept) {
+        // Profile and path stay as they were; the user can pick another face.
+        host_.reportError(QObject::tr("フォローミーに失敗しました: %1").arg(QString::fromStdString(swept.error())));
+        return;
+      }
+      cancel();
+      host_.setStatus(QObject::tr("断面を沿わせました（断面の寸法はパネルで変更できます）"));
       return;
     }
     profile_ = o->id;

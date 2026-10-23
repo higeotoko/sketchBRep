@@ -15,6 +15,7 @@ add_executable(sbr_core_tests
   test_components.cpp
   test_reshape.cpp
   test_delete.cpp
+  test_followme_edges.cpp
   test_ux_gate1.cpp
   test_rhino3dm.cpp
   test_scenarios.cpp

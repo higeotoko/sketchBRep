@@ -24,6 +24,8 @@
 #include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
+#include <GProp_GProps.hxx>
+#include <BRepGProp.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS_Vertex.hxx>
 #include <TopoDS_Wire.hxx>
@@ -3892,6 +3894,34 @@ Result<ObjectId> Modeler::followMe(const ObjectId& profileId, const TopoDS_Wire&
   Recipe path;
   path.base = ImportedShape{worldPath, "Follow Me path"};
   return followMeAlong(profileId, BooleanOperand{std::make_shared<const Recipe>(path), gp_Trsf(), "Path"});
+}
+
+Result<ObjectId> Modeler::followMe(const ObjectId& profileId, const std::vector<TopoDS_Edge>& worldEdges) {
+  const Object* profile = document_.find(profileId);
+  if (!profile || profile->kind() != ObjectKind::Face) {
+    return Result<ObjectId>::failure("Follow Me needs a face to sweep");
+  }
+  // The profile's own outline is not part of the path (it may have been
+  // swept up with a selection).
+  const TopoDS_Shape profileShape = document_.worldShape(*profile);
+  TopTools_IndexedMapOfShape own;
+  TopExp::MapShapes(profileShape, TopAbs_EDGE, own);
+  std::vector<TopoDS_Edge> path;
+  for (const TopoDS_Edge& e : worldEdges) {
+    bool mine = false;
+    for (int i = 1; i <= own.Extent() && !mine; ++i) mine = own(i).IsSame(e) || own(i).TShape() == e.TShape();
+    if (!mine) path.push_back(e);
+  }
+  if (path.empty()) return Result<ObjectId>::failure("Select the edges of the path first (not the profile's own)");
+  gp_Pnt centre;
+  {
+    GProp_GProps props;
+    BRepGProp::SurfaceProperties(profileShape, props);
+    centre = props.CentreOfMass();
+  }
+  auto wire = geom::pathFromEdges(path, centre);
+  if (!wire) return Result<ObjectId>::failure(wire.error());
+  return followMe(profileId, wire.value());
 }
 
 Status Modeler::setCurvePoints(const ObjectId& id, const std::vector<gp_Pnt>& points) {

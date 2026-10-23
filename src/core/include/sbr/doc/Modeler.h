@@ -188,6 +188,10 @@ class Modeler {
   // result stays parametric in the profile (in0.<key>). One undo step.
   Result<ObjectId> followMe(const ObjectId& profileId, const ObjectId& pathId);
   Result<ObjectId> followMe(const ObjectId& profileId, const TopoDS_Wire& worldPath);
+  // Along edges picked one by one, possibly of several objects (lines,
+  // arcs, edges of faces or solids): joined into one path whatever their
+  // order (geom::pathFromEdges; the profile's own edges are left out).
+  Result<ObjectId> followMe(const ObjectId& profileId, const std::vector<TopoDS_Edge>& worldEdges);
 
   // Replaces this model with a copy of 'other' (for previews: a scratch
   // model where proposed commands are tried out). History is not copied.

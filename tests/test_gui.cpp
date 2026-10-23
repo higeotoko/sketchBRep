@@ -205,6 +205,7 @@ class GuiPhase1 : public QObject {
   void brandingResourcesLoad();
   void paintNeedsAMaterialAndPresetsAddOnClick();
   void followMeAroundTopFace();
+  void followMeAlongSelectedEdges();
   void wallToolAndArchitectureMenus();
   void slabToolAndOpeningTool();
   void typedRevisionOnlyRightAfter();
@@ -2040,6 +2041,36 @@ void GuiPhase1::followMeAroundTopFace() {
   QVERIFY(geom::validateShape(m.document().worldShape(ring), true).valid);
   QVERIFY(m.undo());
   QVERIFY(m.document().find(*profile));
+}
+
+// Request T3 / FM-01: edges of two separate lines selected first, then the
+// Follow Me tool, then one click on the profile: swept along both.
+void GuiPhase1::followMeAlongSelectedEdges() {
+  Fixture f;
+  QVERIFY(f.setUp(1000, 1000));
+  doc::Modeler& m = f.window.modeler();
+  auto a = m.createPolyline({gp_Pnt(0, 0, 0), gp_Pnt(2000, 0, 0)});
+  auto b = m.createPolyline({gp_Pnt(2000, 0, 0), gp_Pnt(2000, 2000, 0)});
+  auto profile = m.createRectangle(geom::SketchPlane::fromNormal(gp_Pnt(0, -100, 0), gp::DX()), 200, 200);
+  QVERIFY(a.ok() && b.ok() && profile.ok());
+  f.vp->syncNow();
+  std::vector<ElementRef> path;
+  for (const doc::ObjectId& id : {*b, *a}) {
+    for (const ElementRef& e : f.vp->allElements(id)) {
+      if (e.type == TopAbs_EDGE) path.push_back(e);
+    }
+  }
+  f.window.setElementSelection(path);
+  f.window.activateTool(MainWindow::ToolId::FollowMe);
+  QVERIFY2(f.window.statusText().contains(QStringLiteral("2 本")), qPrintable(f.window.statusText()));
+  const std::size_t steps = m.history().undoCount();
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 100)));  // the profile
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QVERIFY(!m.document().find(*profile));
+  QCOMPARE(m.history().undoCount(), steps + 1);
+  const doc::Object& swept = m.document().objects().back();
+  QCOMPARE(swept.kind(), doc::ObjectKind::Solid);
+  QVERIFY(std::abs(geom::volume(m.document().worldShape(swept)) - 200.0 * 200 * 4000) < 0.02 * 200.0 * 200 * 4000);
 }
 
 void GuiPhase1::wallToolAndArchitectureMenus() {
