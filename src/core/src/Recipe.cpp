@@ -328,7 +328,7 @@ Result<TopoDS_Shape> regenerate(const Recipe& recipe, const RegenContext& contex
             [&](const CapHolesOp&) -> Result<TopoDS_Shape> { return geom::capHoles(shape); },
             [&](const ReverseOp&) -> Result<TopoDS_Shape> { return shape.Reversed(); },
             [&](const MoveVerticesOp& op) -> Result<TopoDS_Shape> {
-              return geom::moveVertices(shape, op.points, gp_Vec(op.direction) * op.distance);
+              return geom::moveVertices(shape, op.points, gp_Vec(op.direction) * op.distance, op.autofold);
             },
             [&](const PushPullOp& op) -> Result<TopoDS_Shape> {
               const geom::ValidationReport report = geom::validateShape(shape, true);

@@ -2270,11 +2270,18 @@ void MoveTool::mouseMove(const ToolEvent& e) {
       return;
     }
     // Preview the reshaped shape; say why when it cannot be done.
-    auto moved = geom::moveVertices(host_.modeler().document().worldShape(*o), corners_->points, d);
+    const TopoDS_Shape shape = host_.modeler().document().worldShape(*o);
+    auto moved = geom::moveVertices(shape, corners_->points, d, /*autofold=*/true);
     if (moved) {
       host_.viewport().setPreview(moved.value(), true);
+      // Autofold: say when faces are divided to stay flat.
+      int before = 0, after = 0;
+      for (TopExp_Explorer f(shape, TopAbs_FACE); f.More(); f.Next()) ++before;
+      for (TopExp_Explorer f(moved.value(), TopAbs_FACE); f.More(); f.Next()) ++after;
+      const QString folds = after > before ? QObject::tr("（平らに保つため面を %1 枚に分けます）").arg(after - before + 1)
+                                           : QString();
       host_.setStatus(QObject::tr("%1を移動: クリックで確定、または距離を入力  [%2]")
-                          .arg(corners_->what, snapLabel(r.kind)) + lockSuffix());
+                          .arg(corners_->what, snapLabel(r.kind)) + folds + lockSuffix());
     } else {
       host_.viewport().clearPreview();
       host_.setStatus(QObject::tr("ここには動かせません: %1").arg(userMessage(QString::fromStdString(moved.error()))) +

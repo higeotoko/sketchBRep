@@ -263,6 +263,7 @@ struct MoveVerticesOp {
   std::vector<gp_Pnt> points;
   gp_Dir direction;
   double distance = 0.0;
+  bool autofold = false;  // faces that cannot stay flat are divided into flat pieces
 };
 
 // Every flat hole of an open shell gets a face; closed again, it is a solid.

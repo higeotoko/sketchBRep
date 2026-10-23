@@ -189,6 +189,7 @@ class GuiPhase1 : public QObject {
   void componentEditInPlace();
   void componentPlacementOwnSizeMirrorAndAxes();
   void moveToolReshapesCornersAndEdges();
+  void moveToolLiftsRidgeIntoGable();
   void eraserShiftHidesEdgeLine();
   void openingToolOverEverything();
   void lineToolCrossingLinesMakeFace();
@@ -2652,7 +2653,9 @@ void GuiPhase1::moveToolReshapesCornersAndEdges() {
   QVERIFY2(std::abs(volume() - 1.25e9) < 1.0, qPrintable(QString::number(volume())));
   QCOMPARE(m.document().find(box)->kind(), doc::ObjectKind::Solid);
 
-  // Alt+click a corner of the back top edge: moving it alone up would bend faces.
+  // Alt+click a corner of the back top edge: moving it alone up would bend
+  // the top, so the top is folded (Autofold, request T5) and the preview
+  // says so; still a valid solid, one undo step.
   const std::size_t steps = m.history().undoCount();
   const QPoint corner = f.vp->toWidget(gp_Pnt(1000, 1000, 1000));
   move(f.vp, corner);
@@ -2661,11 +2664,42 @@ void GuiPhase1::moveToolReshapesCornersAndEdges() {
   QTest::qWait(20);
   QTest::keyClick(f.vp, Qt::Key_Up);
   move(f.vp, f.vp->toWidget(gp_Pnt(1000, 1000, 3500)));
-  QVERIFY2(f.window.statusText().contains(QStringLiteral("動かせません")), qPrintable(f.window.statusText()));
+  QVERIFY2(f.window.statusText().contains(QStringLiteral("分けます")), qPrintable(f.window.statusText()));
   type(f.vp, QStringLiteral("300"));
-  QVERIFY(!f.window.lastError().isEmpty());
-  QCOMPARE(m.history().undoCount(), steps);
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.history().undoCount(), steps + 1);
+  QCOMPARE(m.document().find(box)->kind(), doc::ObjectKind::Solid);
+  QVERIFY(geom::validateShape(m.document().worldShape(box), true).valid);
+  QVERIFY(volume() > 1.25e9);
+  QVERIFY(m.undo());
   QVERIFY(std::abs(volume() - 1.25e9) < 1.0);
+}
+
+// Request T5, first acceptance task in the GUI: a 6000 x 4000 x 3000 box,
+// its top split down the middle, the ridge Alt+grabbed and lifted 1500 with
+// the blue axis locked: a gable house, one undo step.
+void GuiPhase1::moveToolLiftsRidgeIntoGable() {
+  Fixture f;
+  QVERIFY(f.setUp(3000, 2000));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 6000, 4000, 3000);
+  QVERIFY(m.splitWithLine({gp_Pnt(0, 2000, 3000), gp_Pnt(6000, 2000, 3000)}).ok());
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::Move);
+  const std::size_t steps = m.history().undoCount();
+  const QPoint grab = f.vp->toWidget(gp_Pnt(3000, 2000, 3000));
+  move(f.vp, grab);
+  send(f.vp, QEvent::MouseButtonPress, grab, Qt::LeftButton, Qt::LeftButton, Qt::AltModifier);
+  send(f.vp, QEvent::MouseButtonRelease, grab, Qt::LeftButton, Qt::NoButton, Qt::AltModifier);
+  QTest::qWait(20);
+  QTest::keyClick(f.vp, Qt::Key_Up);
+  move(f.vp, f.vp->toWidget(gp_Pnt(3000, 2000, 8000)));
+  type(f.vp, QStringLiteral("1500"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.history().undoCount(), steps + 1);
+  const double v = geom::volume(m.document().worldShape(box));
+  QVERIFY2(std::abs(v - (6000.0 * 4000 * 3000 + 0.5 * 4000 * 1500 * 6000)) < 10.0, qPrintable(QString::number(v)));
+  QCOMPARE(m.document().find(box)->kind(), doc::ObjectKind::Solid);
 }
 
 // Step 5: Shift+click with the eraser hides an edge's line (faces stay as

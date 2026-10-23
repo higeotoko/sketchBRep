@@ -594,7 +594,8 @@ gp_Vec newellNormal(const std::vector<gp_Pnt>& loop) {
 
 }  // namespace
 
-Result<TopoDS_Shape> moveVertices(const TopoDS_Shape& shape, const std::vector<gp_Pnt>& points, const gp_Vec& delta) {
+Result<TopoDS_Shape> moveVertices(const TopoDS_Shape& shape, const std::vector<gp_Pnt>& points, const gp_Vec& delta,
+                                  bool autofold) {
   using R = Result<TopoDS_Shape>;
   if (shape.IsNull()) return R::failure("Nothing to reshape");
   if (points.empty()) return R::failure("No points to move");
@@ -655,26 +656,113 @@ Result<TopoDS_Shape> moveVertices(const TopoDS_Shape& shape, const std::vector<g
     }
     const gp_Vec n0 = newellNormal(before.front());
     const gp_Vec n1 = newellNormal(after.front());
-    if (n1.Magnitude() < 1e-9) return R::failure("A face would collapse");
-    if (n0.Dot(n1) <= 0) return R::failure("A face would fold over (turn inside out)");
-    gp_XYZ centre;
-    for (const gp_Pnt& p : after.front()) centre += p.XYZ();
-    centre /= static_cast<double>(after.front().size());
-    const gp_Pln plane{gp_Pnt(centre), gp_Dir(n1)};
-    for (const auto& loop : after) {
-      for (const gp_Pnt& p : loop) {
-        if (plane.Distance(p) > kFlat) {
-          return R::failure("A face would no longer be flat; move a whole edge or face, or split the face first");
-        }
-      }
-    }
-    // Flat faces again, from the moved corners.
     auto polygon = [](const std::vector<gp_Pnt>& loop) {
       BRepBuilderAPI_MakePolygon make;
       for (const gp_Pnt& p : loop) make.Add(p);
       make.Close();
       return make.Wire();
     };
+    auto flat = [&](const std::vector<gp_Pnt>& loop, gp_Pln* out) {
+      const gp_Vec n = newellNormal(loop);
+      if (n.Magnitude() < 1e-9) return false;
+      gp_XYZ c;
+      for (const gp_Pnt& p : loop) c += p.XYZ();
+      c /= static_cast<double>(loop.size());
+      const gp_Pln pln{gp_Pnt(c), gp_Dir(n)};
+      for (const gp_Pnt& p : loop) {
+        if (pln.Distance(p) > kFlat) return false;
+      }
+      if (out) *out = pln;
+      return true;
+    };
+    gp_Pln plane;
+    bool isFlat = true;
+    if (n1.Magnitude() < 1e-9) {
+      isFlat = false;  // collapsed as a whole: only folding could still make sense of it
+    } else {
+      gp_XYZ c;
+      for (const gp_Pnt& p : after.front()) c += p.XYZ();
+      c /= static_cast<double>(after.front().size());
+      plane = gp_Pln{gp_Pnt(c), gp_Dir(n1)};
+      for (const auto& loop : after) {
+        for (const gp_Pnt& p : loop) isFlat = isFlat && plane.Distance(p) <= kFlat;
+      }
+    }
+    if (isFlat && n0.Dot(n1) <= 0) return R::failure("A face would fold over (turn inside out)");
+    if (!isFlat && !autofold && n1.Magnitude() < 1e-9) return R::failure("A face would collapse");
+    if (!isFlat) {
+      if (!autofold) {
+        return R::failure("A face would no longer be flat; move a whole edge or face, or split the face first");
+      }
+      // Autofold: divide this face into flat pieces.
+      if (after.size() > 1) return R::failure("A face with holes would have to be folded; split it first");
+      const std::vector<gp_Pnt>& b = before.front();
+      const std::vector<gp_Pnt>& a = after.front();
+      const std::size_t n = a.size();
+      for (std::size_t i = 0; i < n; ++i) {
+        const gp_Vec turn = gp_Vec(b[i], b[(i + 1) % n]).Crossed(gp_Vec(b[(i + 1) % n], b[(i + 2) % n]));
+        if (turn.Magnitude() > 1e-9 && turn.Dot(n0) < 0) {
+          return R::failure("A concave face would have to be folded; split it first");
+        }
+      }
+      std::vector<std::size_t> still;
+      for (std::size_t i = 0; i < n; ++i) {
+        if (a[i].Distance(b[i]) < kMatch) still.push_back(i);
+      }
+      std::vector<std::vector<gp_Pnt>> pieces;
+      // Triangles of a fan from `loop.front()`, joined while they stay flat.
+      auto fold = [&](const std::vector<gp_Pnt>& loop) {
+        std::vector<gp_Pnt> piece{loop[0], loop[1]};
+        for (std::size_t k = 2; k < loop.size(); ++k) {
+          std::vector<gp_Pnt> grown = piece;
+          grown.push_back(loop[k]);
+          if (piece.size() < 3 || flat(grown, nullptr)) {
+            piece = std::move(grown);
+            continue;
+          }
+          pieces.push_back(piece);
+          piece = {loop[0], loop[k - 1], loop[k]};
+        }
+        pieces.push_back(piece);
+      };
+      std::vector<gp_Pnt> core;
+      for (std::size_t i : still) core.push_back(a[i]);
+      if (still.size() >= 3 && newellNormal(core).Magnitude() > 1e-9) {
+        // The corners that stay put keep their face on the old plane; each
+        // run of moved corners between two of them becomes its own pieces.
+        pieces.push_back(core);
+        for (std::size_t k = 0; k < still.size(); ++k) {
+          const std::size_t from = still[k], to = still[(k + 1) % still.size()];
+          if ((from + 1) % n == to) continue;
+          std::vector<gp_Pnt> run;
+          for (std::size_t i = from;; i = (i + 1) % n) {
+            run.push_back(a[i]);
+            if (i == to) break;
+          }
+          fold(run);
+        }
+      } else {
+        fold(a);
+      }
+      for (const auto& piece : pieces) {
+        gp_Pln pln;
+        if (piece.size() < 3 || !flat(piece, &pln)) return R::failure("A face could not be folded into flat pieces");
+        // A piece may lean past upright (an overhang); turned right round
+        // it would lie folded back onto the face. Solids are checked as a
+        // whole below (valid, not crossing itself, with volume).
+        if (gp_Dir(newellNormal(piece)).Dot(gp_Dir(n0)) < -0.99) {
+          return R::failure("A face would fold over (turn inside out)");
+        }
+        BRepBuilderAPI_MakeFace make(pln, polygon(piece), Standard_True);
+        if (!make.IsDone()) return R::failure("A folded face could not be built");
+        ShapeFix_Face fix(make.Face());
+        fix.FixOrientation();
+        fix.Perform();
+        rebuilt.push_back(TopoDS::Face(fix.Face()));
+      }
+      loneFace = false;  // a folded lone face is an open shell
+      continue;
+    }
     BRepBuilderAPI_MakeFace make(plane, polygon(after.front()), Standard_True);
     for (std::size_t i = 1; i < after.size(); ++i) make.Add(polygon(after[i]));
     if (!make.IsDone()) return R::failure("A face could not be rebuilt");

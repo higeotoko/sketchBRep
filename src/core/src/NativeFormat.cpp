@@ -435,10 +435,12 @@ json modifierToJson(const Modifier& m) {
           [](const CapHolesOp&) { return json{{"type", "capholes"}}; },
           [](const ReverseOp&) { return json{{"type", "reverse"}}; },
           [](const MoveVerticesOp& op) {
-            return json{{"type", "movevertices"},
-                        {"points", pointsToJson(op.points)},
-                        {"direction", toJson(op.direction)},
-                        {"distance", op.distance}};
+            json j{{"type", "movevertices"},
+                   {"points", pointsToJson(op.points)},
+                   {"direction", toJson(op.direction)},
+                   {"distance", op.distance}};
+            if (op.autofold) j["autofold"] = true;
+            return j;
           },
           [](const PushPullOp& op) {
             return json{{"type", "pushpull"},
@@ -491,6 +493,7 @@ Modifier modifierFrom(const json& j) {
     for (const json& p : j.at("points")) op.points.push_back(pointFrom(p));
     op.direction = dirFrom(j.at("direction"));
     op.distance = j.at("distance").get<double>();
+    op.autofold = j.value("autofold", false);
     return op;
   }
   if (type == "inset") {

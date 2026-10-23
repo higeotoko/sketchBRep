@@ -21,9 +21,15 @@ Result<TopoDS_Shape> capHoles(const TopoDS_Shape& shell);
 
 // Moves the vertices of a polyhedral shape (flat faces, straight edges) found
 // at `points` by `delta`, keeping every face flat (SketchUp's move of an
-// edge or corner, without the hidden triangulation). Refused when a face
-// would bend, fold over, collapse, or the solid would cross itself.
-Result<TopoDS_Shape> moveVertices(const TopoDS_Shape& shape, const std::vector<gp_Pnt>& points, const gp_Vec& delta);
+// edge or corner). A face that would bend is refused, or with `autofold`
+// divided into flat pieces along new edges (SketchUp's Autofold): the part
+// whose corners stay put remains one face on its old plane and the moved
+// part is cut into as few flat pieces as possible (triangles where
+// needed); faces that stay flat are not divided. Only convex faces without
+// holes are folded (others are refused with the reason). Refused anyway
+// when a face would fold over, collapse, or the solid would cross itself.
+Result<TopoDS_Shape> moveVertices(const TopoDS_Shape& shape, const std::vector<gp_Pnt>& points, const gp_Vec& delta,
+                                  bool autofold = false);
 
 // True if the face lies on a plane; optionally returns the plane.
 bool isPlanarFace(const TopoDS_Face& face, gp_Pln* planeOut = nullptr);

@@ -122,9 +122,16 @@ class Modeler {
   // Moves corners of a solid, face or open shape (world points, as snapped
   // on its vertices) by a world vector, keeping every face flat: an edge
   // is its two corners, a face all of its corners (SketchUp's move of an
-  // edge / corner). Refused when a face would bend or fold, or the solid
-  // would cross itself. Painted faces keep their materials.
-  Status moveVertices(const ObjectId& id, const std::vector<gp_Pnt>& worldPoints, const gp_Vec& worldDelta);
+  // edge / corner). Faces, shells and solids beside it in the same group
+  // that share an edge with it (e.g. the other half of a split face) move
+  // their corners at those points too, in the same undo step. A face that
+  // cannot stay flat is folded (Autofold: divided into flat pieces along
+  // new edges) when `autofold`, else the move is refused; refused anyway
+  // when a face would fold over or collapse, a face with holes or a
+  // concave one would need folding, or the solid would cross itself.
+  // Painted faces keep their materials (both pieces of a folded one).
+  Status moveVertices(const ObjectId& id, const std::vector<gp_Pnt>& worldPoints, const gp_Vec& worldDelta,
+                      bool autofold = true);
   // Hides (or shows again) the lines of edges of a solid, face or open
   // shape: display only, the faces stay split (SketchUp's hidden edge,
   // e.g. the line that divides a wall for two materials). One undo step.
@@ -459,6 +466,9 @@ class Modeler {
   std::vector<ObjectId> topmost(const std::vector<ObjectId>& ids) const;
 
  private:
+  // The object with a MoveVerticesOp for these world points (not committed).
+  Result<Object> movedVertices(const Object& current, const std::vector<gp_Pnt>& worldPoints,
+                               const gp_Vec& worldDelta, bool autofold) const;
   Result<ObjectId> cutOpenings(const ObjectId& host, const gp_Dir& faceNormal, int count, double width,
                                double height, double sill, std::optional<double> spacing,
                                std::optional<gp_Pnt> at);

@@ -777,19 +777,19 @@ bool sameCorners(std::vector<gp_Pnt> a, const std::vector<gp_Pnt>& b) {
 
 }  // namespace
 
-Status Modeler::moveVertices(const ObjectId& id, const std::vector<gp_Pnt>& worldPoints, const gp_Vec& worldDelta) {
-  const Object* current = document_.find(id);
-  if (!current || current->shape.IsNull()) return Status::failure("Object not found");
-  if (current->locked) return Status::failure("The object is locked");
-  const ObjectKind kind = current->kind();
+Result<Object> Modeler::movedVertices(const Object& current, const std::vector<gp_Pnt>& worldPoints,
+                                      const gp_Vec& worldDelta, bool autofold) const {
+  using R = Result<Object>;
+  if (current.shape.IsNull()) return R::failure("Object not found");
+  if (current.locked) return R::failure("The object is locked");
+  const ObjectKind kind = current.kind();
   if (kind == ObjectKind::Instance) {
-    return Status::failure("Component instances cannot be reshaped directly; edit the component (double-click)");
+    return R::failure("Component instances cannot be reshaped directly; edit the component (double-click)");
   }
   if (kind != ObjectKind::Solid && kind != ObjectKind::Face && kind != ObjectKind::Shell) {
-    return Status::failure("Only solids, faces and open shapes can be reshaped by moving corners");
+    return R::failure("Only solids, faces and open shapes can be reshaped by moving corners");
   }
-  if (worldDelta.Magnitude() < tolerance::kMinDimension) return Status::failure("Distance must be non-zero");
-  const gp_Trsf toLocal = document_.worldTransform(*current).Inverted();
+  const gp_Trsf toLocal = document_.worldTransform(current).Inverted();
   MoveVerticesOp op;
   for (gp_Pnt p : worldPoints) {
     p.Transform(toLocal);
@@ -800,20 +800,22 @@ Status Modeler::moveVertices(const ObjectId& id, const std::vector<gp_Pnt>& worl
   const gp_Vec delta = worldDelta.Transformed(toLocal);
   op.direction = gp_Dir(delta);
   op.distance = delta.Magnitude();
+  op.autofold = autofold;
 
-  Object object = *current;
+  Object object = current;
   object.recipe.modifiers.push_back(op);
   const Status built = rebuild(object, document_.regenContext());
-  if (!built) return built;
+  if (!built) return R::failure(built.message());
 
   // Painted faces: the face rebuilt from the same corners (moved ones moved).
-  if (!current->faceMaterials.empty()) {
+  // A face folded in two keeps its material on both pieces.
+  if (!current.faceMaterials.empty()) {
     TopTools_IndexedMapOfShape before;
-    TopExp::MapShapes(current->shape, TopAbs_FACE, before);
+    TopExp::MapShapes(current.shape, TopAbs_FACE, before);
     std::vector<TopoDS_Face> after;
     for (TopExp_Explorer e(object.shape, TopAbs_FACE); e.More(); e.Next()) after.push_back(TopoDS::Face(e.Current()));
     std::vector<FaceMaterial> carried;
-    for (const auto& [index, material] : resolveFaceMaterials(*current).faces) {
+    for (const auto& [index, material] : resolveFaceMaterials(current).faces) {
       std::vector<gp_Pnt> corners = cornersOf(TopoDS::Face(before(index)));
       for (gp_Pnt& c : corners) {
         if (std::any_of(op.points.begin(), op.points.end(), [&](const gp_Pnt& q) { return q.Distance(c) < 1e-3; })) {
@@ -821,16 +823,84 @@ Status Modeler::moveVertices(const ObjectId& id, const std::vector<gp_Pnt>& worl
         }
       }
       for (const TopoDS_Face& f : after) {
-        if (!sameCorners(cornersOf(f), corners)) continue;
+        const std::vector<gp_Pnt> mine = cornersOf(f);
+        const bool same = sameCorners(mine, corners);
+        // A piece of a folded face: all its corners are corners of the face.
+        const bool piece = !same && std::all_of(mine.begin(), mine.end(), [&](const gp_Pnt& c) {
+          return std::any_of(corners.begin(), corners.end(), [&](const gp_Pnt& d) { return c.Distance(d) < 1e-3; });
+        });
+        if (!same && !piece) continue;
         if (auto fm = FaceMaterial::of(f, material)) carried.push_back(*fm);
-        break;
+        if (same) break;
       }
     }
     object.faceMaterials = std::move(carried);
   }
-  history_.execute(Command{
-      op.points.size() == 1 ? "Move Corner" : "Move Edge",
-      {ObjectDelta{object.id, *current, object, document_.indexOf(object.id)}}, {}});
+  return object;
+}
+
+Status Modeler::moveVertices(const ObjectId& id, const std::vector<gp_Pnt>& worldPoints, const gp_Vec& worldDelta,
+                             bool autofold) {
+  const Object* current = document_.find(id);
+  if (!current || current->shape.IsNull()) return Status::failure("Object not found");
+  if (worldDelta.Magnitude() < tolerance::kMinDimension) return Status::failure("Distance must be non-zero");
+  auto moved = movedVertices(*current, worldPoints, worldDelta, autofold);
+  if (!moved) return moved.status();
+  ChangeSet changes(document_);
+  changes.modify(moved.value());
+
+  // Shared boundaries follow (SketchUp): a face, shell or solid beside it in
+  // the same group that shares an edge with it (the other half of a split
+  // face, a neighbouring profile) moves its corners at those points too.
+  // Coordinates alone are not enough: without a shared edge nothing else
+  // moves.
+  const TopoDS_Shape source = document_.worldShape(*current);
+  TopTools_IndexedMapOfShape sourceEdges;
+  TopExp::MapShapes(source, TopAbs_EDGE, sourceEdges);
+  auto endsOf = [](const TopoDS_Shape& e) {
+    return std::make_pair(BRep_Tool::Pnt(TopExp::FirstVertex(TopoDS::Edge(e))),
+                          BRep_Tool::Pnt(TopExp::LastVertex(TopoDS::Edge(e))));
+  };
+  auto sameEdge = [](const std::pair<gp_Pnt, gp_Pnt>& a, const std::pair<gp_Pnt, gp_Pnt>& b) {
+    return (a.first.Distance(b.first) < 1e-3 && a.second.Distance(b.second) < 1e-3) ||
+           (a.first.Distance(b.second) < 1e-3 && a.second.Distance(b.first) < 1e-3);
+  };
+  std::vector<std::pair<gp_Pnt, gp_Pnt>> sourceEnds;
+  for (int i = 1; i <= sourceEdges.Extent(); ++i) sourceEnds.push_back(endsOf(sourceEdges(i)));
+  int followers = 0;
+  for (const Object& o : document_.objects()) {
+    if (o.id == id || o.parent != current->parent || o.locked || !document_.isVisible(o.id)) continue;
+    const ObjectKind k = o.kind();
+    if (k != ObjectKind::Face && k != ObjectKind::Shell && k != ObjectKind::Solid) continue;
+    const TopoDS_Shape world = document_.worldShape(o);
+    TopTools_IndexedMapOfShape edges;
+    TopExp::MapShapes(world, TopAbs_EDGE, edges);
+    bool connected = false;
+    for (int i = 1; i <= edges.Extent() && !connected; ++i) {
+      const auto ends = endsOf(edges(i));
+      connected = std::any_of(sourceEnds.begin(), sourceEnds.end(), [&](const auto& s) { return sameEdge(s, ends); });
+    }
+    if (!connected) continue;
+    TopTools_IndexedMapOfShape vertices;
+    TopExp::MapShapes(world, TopAbs_VERTEX, vertices);
+    std::vector<gp_Pnt> mine;
+    for (const gp_Pnt& p : worldPoints) {
+      for (int i = 1; i <= vertices.Extent(); ++i) {
+        if (BRep_Tool::Pnt(TopoDS::Vertex(vertices(i))).Distance(p) < 1e-3) {
+          mine.push_back(p);
+          break;
+        }
+      }
+    }
+    if (mine.empty()) continue;
+    auto follow = movedVertices(o, mine, worldDelta, autofold);
+    if (!follow) {
+      return Status::failure("'" + o.name + "' shares this edge and cannot follow: " + follow.error());
+    }
+    changes.modify(follow.value());
+    ++followers;
+  }
+  history_.execute(changes.build(worldPoints.size() == 1 ? "Move Corner" : "Move Edge"));
   return Status::success();
 }
 

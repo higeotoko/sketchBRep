@@ -6,6 +6,8 @@
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepGProp.hxx>
 #include <BRepCheck_Analyzer.hxx>
+#include <Bnd_Box.hxx>
+#include <BRepBndLib.hxx>
 #include <GProp_GProps.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp.hxx>
@@ -92,11 +94,11 @@ TEST(Reshape, MovesThatWouldBendOrFoldAreRefused) {
   Modeler m;
   const ObjectId box = cube(m);
   const std::size_t steps = m.history().undoCount();
-  // One corner up: three faces would bend.
-  const Status corner = m.moveVertices(box, {gp_Pnt(0, 0, 1000)}, gp_Vec(0, 0, 300));
+  // One corner up without Autofold: three faces would bend.
+  const Status corner = m.moveVertices(box, {gp_Pnt(0, 0, 1000)}, gp_Vec(0, 0, 300), false);
   EXPECT_FALSE(corner.ok());
   EXPECT_NE(corner.message().find("no longer be flat"), std::string::npos) << corner.message();
-  // The top edge pushed through the bottom.
+  // The top edge pushed through the bottom (with Autofold too).
   EXPECT_FALSE(m.moveVertices(box, {gp_Pnt(0, 0, 1000), gp_Pnt(1000, 0, 1000)}, gp_Vec(0, 0, -1500)).ok());
   // Not a corner.
   EXPECT_FALSE(m.moveVertices(box, {gp_Pnt(500, 0, 1000)}, gp_Vec(0, 0, 100)).ok());
@@ -118,7 +120,7 @@ TEST(Reshape, ShearTheTopFaceAndKeepItsPaint) {
   EXPECT_EQ(m.materialAt(box, topFace(m, box))->material, *red);
 
   // After the shear, lifting only the front edge would bend the side faces.
-  EXPECT_FALSE(m.moveVertices(box, {gp_Pnt(300, 0, 1000), gp_Pnt(1300, 0, 1000)}, gp_Vec(0, 0, 400)).ok());
+  EXPECT_FALSE(m.moveVertices(box, {gp_Pnt(300, 0, 1000), gp_Pnt(1300, 0, 1000)}, gp_Vec(0, 0, 400), false).ok());
 
   // A tilted face keeps its paint too.
   const ObjectId other = cube(m);
@@ -140,7 +142,7 @@ TEST(Reshape, MovedObjectsAndFlatProfiles) {
   ASSERT_TRUE(face.ok());
   ASSERT_TRUE(m.moveVertices(*face, {gp_Pnt(1000, 1000, 0)}, gp_Vec(500, 0, 0)).ok());
   EXPECT_NEAR(geom::area(m.document().worldShape(*face)), 1000.0 * 1000 + 0.5 * 500 * 1000, 1e-3);
-  EXPECT_FALSE(m.moveVertices(*face, {gp_Pnt(0, 0, 0)}, gp_Vec(0, 0, 100)).ok());
+  EXPECT_FALSE(m.moveVertices(*face, {gp_Pnt(0, 0, 0)}, gp_Vec(0, 0, 100), false).ok());
 }
 
 TEST(Reshape, GeometryOperationAlone) {
@@ -190,10 +192,15 @@ TEST(Reshape, AiCommand) {
   json r = call({{"id", box}, {"edge", {{"near", {500, 0, 1000}}}}, {"delta", {0, 0, 500}}});
   EXPECT_TRUE(r.value("ok", false)) << r.dump();
   EXPECT_NEAR(volume(m, box), 1.25e9, 1e-3);
-  // A single corner would bend faces: refused, nothing changes.
-  r = call({{"id", box}, {"points", json::array({json::array({1000, 1000, 1000})})}, {"delta", {0, 0, 100}}});
+  // A single corner would bend faces: without Autofold refused, nothing changes.
+  r = call({{"id", box}, {"points", json::array({json::array({1000, 1000, 1000})})}, {"delta", {0, 0, 100}},
+            {"autofold", false}});
   EXPECT_FALSE(r.value("ok", true));
   EXPECT_NEAR(volume(m, box), 1.25e9, 1e-3);
+  // With it (the default) the faces fold.
+  r = call({{"id", box}, {"points", json::array({json::array({1000, 1000, 1000})})}, {"delta", {0, 0, 100}}});
+  EXPECT_TRUE(r.value("ok", false)) << r.dump();
+  EXPECT_GT(faceCount(m.document().worldShape(box)), 6);
 }
 
 TEST(HiddenEdges, HideKeepsFacesAndSurvivesEdits) {
@@ -427,4 +434,137 @@ TEST(EraseLines, CornerEdgeOfABoxTakesItsTwoFaces) {
   EXPECT_EQ(faceCount(m.document().worldShape(box)), 4);
   ASSERT_TRUE(m.undo());
   EXPECT_EQ(m.document().find(box)->kind(), ObjectKind::Solid);
+}
+
+// Request T5 / MOV-02, first acceptance task: a 6000 x 4000 x 3000 box, its
+// top split down the middle, the ridge lifted 1500: a gable roof. Both roof
+// faces and both end walls follow (gables), nothing opens or overlaps.
+TEST(Roof, RidgeOfASplitTopMakesAGable) {
+  Modeler m;
+  auto base = m.createRectangle(geom::SketchPlane::ground(), 6000, 4000);
+  ASSERT_TRUE(m.extrude(*base, 3000).ok());
+  const ObjectId box = *base;
+  auto split = m.splitWithLine({gp_Pnt(0, 2000, 3000), gp_Pnt(6000, 2000, 3000)});
+  ASSERT_TRUE(split.ok()) << split.error();
+  const std::size_t steps = m.history().undoCount();
+  const Status lifted = m.moveVertices(box, {gp_Pnt(0, 2000, 3000), gp_Pnt(6000, 2000, 3000)}, gp_Vec(0, 0, 1500));
+  ASSERT_TRUE(lifted.ok()) << lifted.message();
+  EXPECT_EQ(m.history().undoCount(), steps + 1);
+  const TopoDS_Shape s = m.document().worldShape(box);
+  EXPECT_TRUE(BRepCheck_Analyzer(s).IsValid());
+  EXPECT_EQ(m.document().find(box)->kind(), ObjectKind::Solid);
+  EXPECT_EQ(faceCount(s), 7);  // 4 walls (2 of them gables), 2 roof faces, floor
+  EXPECT_NEAR(volume(m, box), 6000.0 * 4000 * 3000 + 0.5 * 4000 * 1500 * 6000, 1.0);
+  test::expectBounds(s, 0, 0, 0, 6000, 4000, 4500);
+  ASSERT_TRUE(m.undo());
+  EXPECT_NEAR(volume(m, box), 6000.0 * 4000 * 3000, 1.0);
+}
+
+// Autofold (request T5): one corner of a box lifted. The top folds along the
+// diagonal through the corners that stay (one half keeps the old plane);
+// the side faces at that corner stay flat (the corner moves within their
+// planes), so they are not divided. A solid, valid, its paint kept on both
+// halves; one undo step; saved and reloaded.
+TEST(Roof, AutofoldOneCornerUp) {
+  Modeler m;
+  const ObjectId box = cube(m);
+  auto red = m.createMaterial("Red", {1, 0, 0});
+  ASSERT_TRUE(m.paintFaces(box, {topFace(m, box)}, *red).ok());
+  const std::size_t steps = m.history().undoCount();
+  const Status s = m.moveVertices(box, {gp_Pnt(0, 0, 1000)}, gp_Vec(0, 0, 300));
+  ASSERT_TRUE(s.ok()) << s.message();
+  EXPECT_EQ(m.history().undoCount(), steps + 1);
+  const TopoDS_Shape shape = m.document().worldShape(box);
+  EXPECT_TRUE(BRepCheck_Analyzer(shape).IsValid());
+  EXPECT_EQ(m.document().find(box)->kind(), ObjectKind::Solid);
+  EXPECT_EQ(faceCount(shape), 7);  // only the top is divided
+  EXPECT_NEAR(volume(m, box), 1e9 + 1000.0 * 1000 * 300 / 6, 1e-3);
+  // The part of the top whose corners stayed is still flat at 1000.
+  int level = 0, painted = 0;
+  for (TopExp_Explorer e(shape, TopAbs_FACE); e.More(); e.Next()) {
+    const TopoDS_Face f = TopoDS::Face(e.Current());
+    const auto n = geom::planarFaceNormal(f);
+    if (n && n->Z() > 1 - 1e-9) ++level;
+    auto at = m.materialAt(box, f);
+    if (at && at->material == *red) ++painted;
+  }
+  EXPECT_EQ(level, 1);
+  EXPECT_EQ(painted, 2);
+  const std::string path = ::testing::TempDir() + "autofold.sbr";
+  ASSERT_TRUE(m.save(path).ok());
+  Modeler back;
+  ASSERT_TRUE(back.load(path).ok());
+  EXPECT_NEAR(volume(back, box), 1e9 + 1000.0 * 1000 * 300 / 6, 1e-3);
+  ASSERT_TRUE(m.undo());
+  EXPECT_EQ(faceCount(m.document().worldShape(box)), 6);
+}
+
+// Request T5 / DRAW-02: a loose rectangle split down the middle is two
+// faces (separate objects); lifting the middle line moves both halves,
+// which stay joined along it (an open gable), in one undo step. A face
+// that only touches the line at a corner, without sharing an edge, stays.
+TEST(Roof, SharedEdgeOfSplitFacesFollows) {
+  Modeler m;
+  auto face = m.createRectangle(geom::SketchPlane::ground(), 6000, 4000);
+  ASSERT_TRUE(face.ok());
+  auto split = m.splitWithLine({gp_Pnt(0, 2000, 0), gp_Pnt(6000, 2000, 0)});
+  ASSERT_TRUE(split.ok()) << split.error();
+  ASSERT_EQ(m.document().objects().size(), 2u);
+  geom::SketchPlane aside = geom::SketchPlane::ground();
+  aside.origin = gp_Pnt(6000, 2000, 0);  // touches the ridge's end corner only
+  auto other = m.createRectangle(aside, 1000, 1000);
+  ASSERT_TRUE(other.ok());
+  const TopoDS_Shape otherBefore = m.document().worldShape(*m.document().find(*other));
+  const ObjectId first = m.document().objects().front().id;
+  const std::size_t steps = m.history().undoCount();
+  const Status s = m.moveVertices(first, {gp_Pnt(0, 2000, 0), gp_Pnt(6000, 2000, 0)}, gp_Vec(0, 0, 1500));
+  ASSERT_TRUE(s.ok()) << s.message();
+  EXPECT_EQ(m.history().undoCount(), steps + 1);
+  int lifted = 0;
+  for (const Object& o : m.document().objects()) {
+    if (o.id == *other) continue;
+    Bnd_Box box;
+    BRepBndLib::Add(m.document().worldShape(o), box);
+    if (std::abs(box.CornerMax().Z() - 1500) < 1e-6) ++lifted;
+    EXPECT_NEAR(geom::area(m.document().worldShape(o)), 6000.0 * std::hypot(2000.0, 1500.0), 1e-3);
+  }
+  EXPECT_EQ(lifted, 2);
+  EXPECT_TRUE(m.document().worldShape(*m.document().find(*other)).IsSame(otherBefore) ||
+              std::abs(geom::area(m.document().worldShape(*m.document().find(*other))) - 1e6) < 1e-6);
+  Bnd_Box otherBox;
+  BRepBndLib::Add(m.document().worldShape(*m.document().find(*other)), otherBox);
+  EXPECT_NEAR(otherBox.CornerMax().Z(), 0.0, 1e-6);
+  ASSERT_TRUE(m.undo());
+  for (const Object& o : m.document().objects()) {
+    Bnd_Box box;
+    BRepBndLib::Add(m.document().worldShape(o), box);
+    EXPECT_NEAR(box.CornerMax().Z(), 0.0, 1e-6);
+  }
+}
+
+// A corner pulled sideways and up: the side faces would bend too and fold
+// as well; faces that stay flat are not divided.
+TEST(Roof, AutofoldOnlyWhereNeeded) {
+  Modeler m;
+  const ObjectId box = cube(m);
+  const Status s = m.moveVertices(box, {gp_Pnt(0, 0, 1000)}, gp_Vec(-200, -200, 300));
+  ASSERT_TRUE(s.ok()) << s.message();
+  const TopoDS_Shape shape = m.document().worldShape(box);
+  EXPECT_TRUE(BRepCheck_Analyzer(shape).IsValid());
+  EXPECT_EQ(faceCount(shape), 9);  // top and the two sides at the corner each in two
+  EXPECT_EQ(m.document().find(box)->kind(), ObjectKind::Solid);
+}
+
+// Autofold stays within what it can do safely: a face with a hole or a
+// concave face that would need folding is refused, nothing changes.
+TEST(Roof, AutofoldRefusesHolesAndConcaveFaces) {
+  Modeler m;
+  auto l = m.createPolygon({gp_Pnt(0, 0, 0), gp_Pnt(2000, 0, 0), gp_Pnt(2000, 1000, 0), gp_Pnt(1000, 1000, 0),
+                            gp_Pnt(1000, 2000, 0), gp_Pnt(0, 2000, 0)});
+  ASSERT_TRUE(l.ok());
+  const std::size_t steps = m.history().undoCount();
+  const Status concave = m.moveVertices(*l, {gp_Pnt(2000, 0, 0)}, gp_Vec(0, 0, 500));
+  ASSERT_FALSE(concave.ok());
+  EXPECT_NE(concave.message().find("concave"), std::string::npos) << concave.message();
+  EXPECT_EQ(m.history().undoCount(), steps);
 }

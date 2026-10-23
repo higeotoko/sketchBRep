@@ -1017,12 +1017,16 @@ const std::vector<CommandDef>& commands() {
       {"move_vertices",
        "Reshape a solid, face or open shape by moving corners (world points on its vertices) by delta, "
        "keeping every face flat: two corners = an edge (e.g. lift the top edge of a box into a roof slope), "
-       "all corners of a face = the face (any direction, unlike push/pull). Refused when a face would bend "
-       "or fold, or the solid would cross itself; nothing changes then. Or pass edge (index or "
+       "all corners of a face = the face (any direction, unlike push/pull). Faces beside it in the same group "
+       "that share an edge with it (the other half of a split face) follow. A face that cannot stay flat is "
+       "folded into flat pieces along new edges (SketchUp Autofold; only where needed, convex faces without "
+       "holes) unless autofold is false, then the move is refused. Refused when a face would turn over or "
+       "collapse, or the solid would cross itself; nothing changes then. Or pass edge (index or "
        "{\"near\": [x,y,z]}) instead of points to move that edge. One undo step; the distance becomes a "
        "parameter (opN.distance).",
        SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "points": {"type": "array"},
-               "edge": {}, "delta": {"type": "array"}}, "required": ["id", "delta"]}),
+               "edge": {}, "delta": {"type": "array"}, "autofold": {"type": "boolean"}},
+               "required": ["id", "delta"]}),
        [](doc::Modeler& m, const json& a) {
          const ObjectId id = text(a, "id");
          std::vector<gp_Pnt> corners;
@@ -1037,7 +1041,7 @@ const std::vector<CommandDef>& commands() {
            corners.insert(corners.end(), more.begin(), more.end());
          }
          if (corners.empty()) throw ApiError("give points or edge");
-         must(m.moveVertices(id, corners, gp_Vec(xyz(arg(a, "delta"), "delta"))));
+         must(m.moveVertices(id, corners, gp_Vec(xyz(arg(a, "delta"), "delta")), a.value("autofold", true)));
          return idResult(id);
        }},
       {"set_edges_hidden",
