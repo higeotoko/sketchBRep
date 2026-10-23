@@ -174,6 +174,7 @@ class GuiPhase1 : public QObject {
   void scaleToolFactorAndLength();
   void scaleGripsStretchEachDirection();
   void scaleGripsOnComponentsAndGroups();
+  void rectangleStandsUpLikeSketchUp();
   void lockedObjectsSelectableNotEditable();
   void groupEditShowsDottedBox();
   void snapTipNamesTheAdoptedPoint();
@@ -736,6 +737,61 @@ void GuiPhase1::polarArrayFullCircleAndCtrlMidMove() {
 // (it has no shape of its own). The placement grows alone (its own scale;
 // the other placement and the definition stay); the group grows with what
 // is in it, by the corner or along one direction.
+// Rectangles are not only drawn on the ground: towards a corner above the
+// start they stand up (the axis plane through both), and the arrow keys
+// hold them to the plane across red / green / blue.
+void GuiPhase1::rectangleStandsUpLikeSketchUp() {
+  Fixture f;
+  QVERIFY(f.setUp(1500, 0));
+  doc::Modeler& m = f.window.modeler();
+  f.box(0, 0, 1000, 1000, 1000);
+  f.vp->syncNow();
+  auto newest = [&]() -> Bnd_Box {
+    Bnd_Box b;
+    const auto& objects = m.document().objects();
+    if (!objects.empty()) b.Add(geom::exactBounds(m.document().worldShape(objects.back())));
+    return b;
+  };
+  const std::size_t before = m.document().objects().size();
+  f.window.activateTool(MainWindow::ToolId::Rectangle);
+  // From the ground in front of the box up to its top corner: upright,
+  // across green (y = 0), 2000 wide and 1000 high.
+  click(f.vp, f.vp->toWidget(gp_Pnt(3000, 0, 0)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(1000, 0, 1000)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 0, 1000)));
+  QCOMPARE(m.document().objects().size(), before + 1);
+  Bnd_Box up = newest();
+  QVERIFY(std::abs(up.CornerMax().Y() - up.CornerMin().Y()) < 1e-6);
+  QVERIFY(std::abs(up.CornerMax().Z() - 1000) < 1e-6 && std::abs(up.CornerMin().Z()) < 1e-6);
+  QVERIFY(std::abs(up.CornerMax().X() - up.CornerMin().X() - 2000) < 50);  // corner clicked in free space
+
+  // Without a point above: on the ground as before.
+  click(f.vp, f.vp->toWidget(gp_Pnt(3000, -2000, 0)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(4000, -3000, 0)));
+  type(f.vp, QStringLiteral("1000,500"));
+  Bnd_Box ground = newest();
+  QVERIFY(std::abs(ground.CornerMax().Z()) < 1e-6 && std::abs(ground.CornerMin().Z()) < 1e-6);
+
+  // → holds it across red: a wall facing X, sized by typing.
+  QTest::keyClick(f.vp, Qt::Key_Right);
+  click(f.vp, f.vp->toWidget(gp_Pnt(3000, -4000, 0)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(3000, -5000, 0)));
+  type(f.vp, QStringLiteral("1500,800"));
+  Bnd_Box wall = newest();
+  QVERIFY(std::abs(wall.CornerMax().X() - wall.CornerMin().X()) < 1e-6);
+  QVERIFY(std::abs(wall.CornerMax().Y() - wall.CornerMin().Y() - 1500) < 1e-6);
+  QVERIFY(std::abs(wall.CornerMax().Z() - wall.CornerMin().Z() - 800) < 1e-6);
+  // The lock was for that rectangle; ↑ after → and ↓ let go too.
+  QTest::keyClick(f.vp, Qt::Key_Up);
+  QTest::keyClick(f.vp, Qt::Key_Down);
+  click(f.vp, f.vp->toWidget(gp_Pnt(5000, -2000, 0)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(6000, -3000, 0)));
+  type(f.vp, QStringLiteral("700,700"));
+  Bnd_Box flat = newest();
+  QVERIFY(std::abs(flat.CornerMax().Z() - flat.CornerMin().Z()) < 1e-6);
+  QCOMPARE(m.document().objects().size(), before + 4);
+}
+
 void GuiPhase1::scaleGripsOnComponentsAndGroups() {
   Fixture f;
   QVERIFY(f.setUp(1500, 0));
@@ -1700,6 +1756,17 @@ void GuiPhase1::snapTipNamesTheAdoptedPoint() {
       const gp_Pnt a = BRep_Tool::Pnt(TopExp::FirstVertex(edge)), b = BRep_Tool::Pnt(TopExp::LastVertex(edge));
       if ((a.Distance(start) < 1e-6 && b.Distance(end) < 1e-6) || (b.Distance(start) < 1e-6 && a.Distance(end) < 1e-6)) {
         startFound = endFound = true;
+      }
+    }
+  }
+  if (!startFound) {
+    // Which edges there are instead (to tell what became of the line).
+    qWarning("start (%g,%g,%g) end (%g,%g,%g)", start.X(), start.Y(), start.Z(), end.X(), end.Y(), end.Z());
+    for (const doc::Object& o : m.document().objects()) {
+      for (TopExp_Explorer e(m.document().worldShape(o), TopAbs_EDGE); e.More(); e.Next()) {
+        const TopoDS_Edge edge = TopoDS::Edge(e.Current());
+        const gp_Pnt a = BRep_Tool::Pnt(TopExp::FirstVertex(edge)), b = BRep_Tool::Pnt(TopExp::LastVertex(edge));
+        qWarning("%s: (%g,%g,%g)-(%g,%g,%g)", o.name.c_str(), a.X(), a.Y(), a.Z(), b.X(), b.Y(), b.Z());
       }
     }
   }

@@ -542,6 +542,7 @@ class RectangleTool : public DrawingTool {
   void cancel() override;
   void mousePress(const ToolEvent& e) override;
   void mouseMove(const ToolEvent& e) override;
+  bool keyPress(QKeyEvent* event) override;
   void applyMeasurement(const QString& text) override;
 
  protected:
@@ -550,9 +551,16 @@ class RectangleTool : public DrawingTool {
  private:
   void commit(double u, double v);
   void reset();
+  // The plane the rectangle is drawn on for this cursor point: the locked
+  // one, else the upright one through the corner and a point of the model
+  // off the start plane (SketchUp-style vertical rectangles), else the
+  // start plane.
+  geom::SketchPlane planeFor(const ToolEvent& e);
 
   bool hasCorner_ = false;
-  geom::SketchPlane plane_;
+  geom::SketchPlane start_;  // from the first click (face or ground)
+  geom::SketchPlane plane_;  // the one drawn on now
+  std::optional<gp_Dir> planeLock_;  // arrow keys: normal of the plane
   double u_ = 0.0;
   double v_ = 0.0;
   std::optional<doc::ObjectId> lastCreated_;

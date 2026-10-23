@@ -1946,23 +1946,52 @@ void RectangleTool::cancel() {
 void RectangleTool::reset() {
   hasCorner_ = false;
   u_ = v_ = 0.0;
+  planeLock_.reset();
   resetLock();
   host_.viewport().clearPreview();
+}
+
+geom::SketchPlane RectangleTool::planeFor(const ToolEvent& e) {
+  if (planeLock_) {
+    return start_.normal.IsParallel(*planeLock_, 1e-9) ? start_ : geom::SketchPlane::fromNormal(start_.origin, *planeLock_);
+  }
+  // A point of the model (a corner, an edge, a guide through a tracked
+  // point) beside the corner in an upright axis plane: the rectangle stands
+  // up to it. Face points do not count (a wall behind the ground would
+  // tip every rectangle drawn in front of it).
+  const snap::SnapResult r = snapAt(e, start_.origin, std::nullopt);
+  using K = snap::SnapKind;
+  const bool model = r.kind == K::Endpoint || r.kind == K::Midpoint || r.kind == K::OnEdge ||
+                     r.kind == K::Origin || r.kind == K::Intersection || r.kind == K::FromPoint;
+  if (!model) return start_;
+  const gp_Vec d(start_.origin, r.point);
+  if (std::abs(d.Dot(gp_Vec(start_.normal))) < tolerance::kMinDimension) return start_;
+  // The axis plane the corner and the point nearly share (a corner clicked
+  // in free space is never exactly in line); the point is projected onto it.
+  const gp_Dir axes[] = {gp::DX(), gp::DY(), gp::DZ()};
+  double size[3];
+  for (int i = 0; i < 3; ++i) size[i] = std::abs(d.Dot(gp_Vec(axes[i])));
+  const int least = static_cast<int>(std::min_element(size, size + 3) - size);
+  const double others = std::min(size[(least + 1) % 3], size[(least + 2) % 3]);
+  if (others < tolerance::kMinDimension || size[least] > 0.25 * others) return start_;
+  return geom::SketchPlane::fromNormal(start_.origin, axes[least]);
 }
 
 void RectangleTool::mouseMove(const ToolEvent& e) {
   if (!hasCorner_) {
     const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
-    host_.setStatus(QObject::tr("最初の角をクリック  [%1]").arg(snapLabel(r.kind)));
+    host_.setStatus(QObject::tr("最初の角をクリック（矢印キーで面の向きを固定）  [%1]").arg(snapLabel(r.kind)));
     return;
   }
+  plane_ = planeFor(e);
   const snap::SnapResult r = snapAt(e, plane_.origin, plane_.plane());
   if (!r.valid()) return;
   plane_.toLocal(r.point, u_, v_);
   host_.setMeasurement(QObject::tr("寸法 (幅,奥行)"), mm(std::abs(u_)) + QStringLiteral(", ") +
                                                         mm(std::abs(v_)));
+  const QString lock = planeLock_ ? QObject::tr("（面の向きを固定中、↓で解除）") : QString();
   host_.setStatus(QObject::tr("対角の点をクリック、または寸法を入力して Enter  [%1]")
-                      .arg(snapLabel(r.kind)) + lockSuffix());
+                      .arg(snapLabel(r.kind)) + lock + lockSuffix());
   auto face = geom::makeRectangleFace(plane_, u_, v_);
   host_.viewport().setPreview(face ? TopoDS_Shape(face.value()) : TopoDS_Shape());
 }
@@ -1971,13 +2000,35 @@ void RectangleTool::mousePress(const ToolEvent& e) {
   if (!hasCorner_) {
     const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
     if (!r.valid()) return;
-    plane_ = planeForStart(host_.viewport(), e.pos, r);
+    start_ = planeForStart(host_.viewport(), e.pos, r);
+    plane_ = planeLock_ ? geom::SketchPlane::fromNormal(r.point, *planeLock_) : start_;
     hasCorner_ = true;
     lastCreated_.reset();
     return;
   }
   mouseMove(e);
   commit(u_, v_);
+}
+
+bool RectangleTool::keyPress(QKeyEvent* event) {
+  // Like SketchUp: the arrow keys hold the rectangle to the plane across
+  // that axis (→ red, ← green, ↑ blue); again or ↓ lets go.
+  std::optional<gp_Dir> axis;
+  switch (event->key()) {
+    case Qt::Key_Right: axis = gp::DX(); break;
+    case Qt::Key_Left: axis = gp::DY(); break;
+    case Qt::Key_Up: axis = gp::DZ(); break;
+    case Qt::Key_Down: break;
+    default: return DrawingTool::keyPress(event);
+  }
+  if (event->isAutoRepeat()) return true;
+  if (!axis || (planeLock_ && planeLock_->IsParallel(*axis, 1e-9))) {
+    planeLock_.reset();
+  } else {
+    planeLock_ = axis;
+  }
+  refresh();
+  return true;
 }
 
 void RectangleTool::commit(double u, double v) {
