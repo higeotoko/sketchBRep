@@ -44,6 +44,10 @@ class PropertiesPanel : public QWidget {
   // Opening (window/door cut) `index` of a host resized.
   void openingSizeEdited(const doc::ObjectId& id, int index, double width, double height);
   void lockToggled(const doc::ObjectId& id, bool locked);
+  // The object's material picked from the library ("" = inherit).
+  void materialAssigned(const doc::ObjectId& id, const std::string& materialId);
+  // Edit that material ("" = make a new one).
+  void materialEditRequested(const std::string& materialId);
   // A component placement's own dimension (only this placement changes).
   void placementParameterEdited(const doc::ObjectId& instanceId, const doc::ObjectId& objectId,
                                 const std::string& key, double value);

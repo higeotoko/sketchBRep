@@ -3,6 +3,7 @@
 // one makes it the paint material (and switches to the paint tool); the
 // first entry, "inherit", takes faces' / objects' own materials away.
 
+#include <optional>
 #include <string>
 
 #include <QWidget>
@@ -20,8 +21,10 @@ class MaterialsPanel : public QWidget {
  public:
   explicit MaterialsPanel(QWidget* parent = nullptr);
 
-  // Rebuilds the list (when the library changed) and marks `current`.
-  void refresh(const doc::Document& document, const std::string& current);
+  // Rebuilds the list (when the library changed) and marks `current`
+  // (nullopt: nothing picked yet). Ready-made materials not yet in the
+  // library follow, one click adds and picks one.
+  void refresh(const doc::Document& document, const std::optional<std::string>& current);
   QListWidget* list() const { return list_; }
 
   // Ready-made materials offered for one-click adding.

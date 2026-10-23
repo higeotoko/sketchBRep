@@ -58,6 +58,8 @@ class ToolHost {
   }
   // The paint tool picked up a material (Alt+click): the panel follows.
   virtual void materialPicked(const std::string&) {}
+  // Brings the material library into view (paint tool without a material).
+  virtual void showMaterials() {}
 };
 
 // The edit a tool has just committed, which a value typed right after may
@@ -600,12 +602,19 @@ class PaintTool : public Tool {
   void activate() override;
   void mousePress(const ToolEvent& e) override;
   void mouseMove(const ToolEvent& e) override;
-  void setMaterial(const std::string& id) { material_ = id; }
+  void setMaterial(const std::string& id) {
+    material_ = id;
+    chosen_ = true;
+  }
   const std::string& material() const { return material_; }
+  // False until a material (or "none") was picked: clicking then asks for one
+  // instead of silently painting "none".
+  bool hasMaterial() const { return chosen_; }
 
  private:
   QString materialName() const;
   std::string material_;
+  bool chosen_ = false;
 };
 
 // Tape measure: click two points (with inference) to read the distance.

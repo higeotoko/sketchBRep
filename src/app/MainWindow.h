@@ -51,6 +51,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   void exitGroup() override;
   void beginTextEntry(const QString& label, const QString& text) override;
   void materialPicked(const std::string& id) override;
+  void showMaterials() override;
 
   // Used by tests and the command line.
   bool openFile(const QString& path);
@@ -60,6 +61,9 @@ class MainWindow : public QMainWindow, public ToolHost {
   // Component placement commands on the instances among `ids`: "unique",
   // "reset", "mirror0".."mirror2" (red / green / blue) or "axes" (tool).
   void placementAction(const std::vector<doc::ObjectId>& ids, const QString& action);
+  // The right-click menu for what is at `pos` (selecting it first if it is
+  // not selected), as SketchUp. Built separately so it can be inspected.
+  QMenu* buildContextMenu(const QPoint& pos);
   Tool* activeTool() const { return active_; }
   QLineEdit* measurementBox() const { return measurement_; }
   QString lastError() const { return lastError_; }

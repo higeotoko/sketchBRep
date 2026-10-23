@@ -198,6 +198,10 @@ QPoint Viewport::devicePos(const QPoint& logical) const {
 void Viewport::mousePressEvent(QMouseEvent* event) {
   setFocus();
   if (view_.IsNull()) return;
+  if (event->button() == Qt::RightButton) {
+    emit contextMenuRequested(event->position().toPoint());
+    return;
+  }
   if (event->button() == Qt::MiddleButton) {
     drag_ = (event->modifiers() & Qt::ShiftModifier) ? Drag::Pan : Drag::Orbit;
     lastDragPos_ = event->position().toPoint();
@@ -1083,6 +1087,14 @@ std::optional<doc::ObjectId> Viewport::pickObject(const QPoint& pos) {
   redraw();
   if (!context_->HasDetected()) return std::nullopt;
   return idOf(context_->DetectedInteractive());
+}
+
+std::optional<ElementRef> Viewport::elementAt(const QPoint& pos) {
+  const PickMode before = pickMode_;
+  setPickMode(PickMode::Elements);
+  const auto picked = pickElement(pos);
+  setPickMode(before);
+  return picked;
 }
 
 std::optional<ElementRef> Viewport::pickElement(const QPoint& pos) {

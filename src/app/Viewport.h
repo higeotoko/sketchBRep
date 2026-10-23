@@ -108,6 +108,9 @@ class Viewport : public QWidget {
   std::optional<doc::ObjectId> pickObject(const QPoint& pos);
   // Face or edge under the cursor (PickMode::Elements).
   std::optional<ElementRef> pickElement(const QPoint& pos);
+  // Face or edge under the cursor whatever the tool's pick mode (the
+  // right-click menu); the mode is left as it was.
+  std::optional<ElementRef> elementAt(const QPoint& pos);
   // Face -> face + bounding edges; edge -> edge + adjacent faces.
   std::vector<ElementRef> withNeighbours(const ElementRef& element) const;
   // Every face and edge of the object.
@@ -169,6 +172,8 @@ class Viewport : public QWidget {
   void toolInput();
   // The tool hit a geometry error and was reset (message from the kernel).
   void toolFailed(const QString& message);
+  // Right button released without dragging: the context menu.
+  void contextMenuRequested(const QPoint& pos);
 
  protected:
   void showEvent(QShowEvent* event) override;

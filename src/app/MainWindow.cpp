@@ -173,7 +173,7 @@ void MainWindow::buildUi() {
 
   // Materials: pick one to paint with (SketchUp's Materials panel).
   materialsPanel_ = new MaterialsPanel;
-  materialsDock_ = new QDockWidget(tr("素材"), this);
+  materialsDock_ = new QDockWidget(tr("マテリアル（素材）"), this);
   materialsDock_->setObjectName(QStringLiteral("materialsDock"));
   materialsDock_->setWidget(materialsPanel_);
   materialsDock_->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable |
@@ -250,6 +250,11 @@ void MainWindow::buildUi() {
   });
   connect(viewport_, &Viewport::measurementCommit, this, &MainWindow::commitMeasurement);
   connect(viewport_, &Viewport::toolInput, this, &MainWindow::refreshConstraints);
+  connect(viewport_, &Viewport::contextMenuRequested, this, [this](const QPoint& pos) {
+    QMenu* menu = buildContextMenu(pos);
+    menu->exec(viewport_->mapToGlobal(pos));
+    menu->deleteLater();
+  });
   connect(viewport_, &Viewport::toolFailed, this, [this](const QString& message) {
     reportError(tr("形の計算でエラーが起きたので、操作をやり直せる状態に戻しました（モデルは変わっていません）%1")
                     .arg(message.isEmpty() ? QString() : QStringLiteral("： ") + message));
@@ -334,6 +339,12 @@ void MainWindow::buildUi() {
               if (!report(modeler_.setDefinitionParameter(defId, objectId, key, value))) refreshPanels();
             });
           });
+  connect(panel_, &PropertiesPanel::materialAssigned, this, [this](const doc::ObjectId& id, const std::string& mid) {
+    QTimer::singleShot(0, this, [this, id, mid] { report(modeler_.assignMaterial({id}, mid)); });
+  });
+  connect(panel_, &PropertiesPanel::materialEditRequested, this, [this](const std::string& mid) {
+    QTimer::singleShot(0, this, [this, mid] { editMaterialDialog(mid); });
+  });
   connect(panel_, &PropertiesPanel::placementParameterEdited, this,
           [this](const doc::ObjectId& instanceId, const doc::ObjectId& objectId, const std::string& key,
                  double value) {
@@ -1227,7 +1238,11 @@ void MainWindow::refreshTags() {
 
 void MainWindow::refreshPanels() {
   refreshTags();
-  if (materialsPanel_) materialsPanel_->refresh(modeler_.document(), paintTool_->material());
+  if (materialsPanel_) {
+    materialsPanel_->refresh(modeler_.document(), paintTool_->hasMaterial()
+                                                      ? std::optional<std::string>(paintTool_->material())
+                                                      : std::nullopt);
+  }
   panel_->refresh(modeler_, selection_, elementSummary());
   const auto& h = modeler_.history();
   undoAction_->setEnabled(h.canUndo());
@@ -1428,6 +1443,12 @@ void MainWindow::showOpeningSettingsDialog() {
 
 void MainWindow::materialPicked(const std::string& id) {
   if (materialsPanel_) materialsPanel_->refresh(modeler_.document(), id);
+}
+
+void MainWindow::showMaterials() {
+  if (!materialsDock_) return;
+  materialsDock_->show();
+  materialsDock_->raise();
 }
 
 void MainWindow::chooseMaterial(const std::string& id) {
@@ -2045,6 +2066,101 @@ void MainWindow::explodeSelection() {
     }
   }
   setSelection(parts);
+}
+
+QMenu* MainWindow::buildContextMenu(const QPoint& pos) {
+  auto* menu = new QMenu(this);
+  const doc::Document& document = modeler_.document();
+  // What was right-clicked, at the level being edited (a group / component
+  // as a whole from outside it); selected first unless already selected.
+  if (const auto element = viewport_->elementAt(pos)) {
+    doc::ObjectId target = element->objectId;
+    const doc::ObjectId level = modeler_.activeGroup();
+    for (const doc::Object* o = document.find(target); o && !o->parent.empty() && o->parent != level;
+         o = document.find(o->parent)) {
+      target = o->parent;
+    }
+    const bool selected = std::find(selection_.begin(), selection_.end(), target) != selection_.end();
+    const bool elementSelected = std::find(elements_.begin(), elements_.end(), *element) != elements_.end();
+    if (!selected && !elementSelected) setSelection({target});
+  }
+  const std::vector<doc::ObjectId> ids = selection_;
+  const doc::Object* single = ids.size() == 1 ? document.find(ids.front()) : nullptr;
+
+  if (ids.empty()) {
+    menu->addAction(tr("貼り付け"), this, &MainWindow::paste);
+    menu->addAction(tr("すべて選択"), this, &MainWindow::selectAll);
+  } else {
+    menu->addAction(tr("削除"), this, &MainWindow::deleteSelection);
+    menu->addAction(tr("切り取り"), this, [this] { cutSelection(); });
+    menu->addAction(tr("コピー"), this, [this] { copySelection(); });
+    menu->addSeparator();
+    // Groups and components.
+    menu->addAction(tr("グループ化"), this, &MainWindow::groupSelection);
+    menu->addAction(tr("コンポーネントを作成"), this, &MainWindow::makeComponent);
+    if (single && single->kind() == doc::ObjectKind::Group) {
+      const doc::ObjectId id = single->id;
+      menu->addAction(tr("グループを編集（中に入る）"), this, [this, id] { enterGroup(id); });
+      menu->addAction(tr("グループ解除"), this, &MainWindow::ungroupSelection);
+    }
+    if (single && single->kind() == doc::ObjectKind::Instance) {
+      const doc::ObjectId id = single->id;
+      const auto& ref = std::get<doc::ComponentInstance>(single->recipe.base);
+      menu->addAction(tr("コンポーネントを編集（%1 個すべてに反映）").arg(modeler_.instanceCount(ref.definitionId)),
+                      this, [this, id] { enterGroup(id); });
+      menu->addAction(tr("分解"), this, &MainWindow::explodeSelection);
+      QMenu* placement = menu->addMenu(tr("この配置"));
+      placement->addAction(tr("この配置だけ独立"), this, [this, id] { placementAction({id}, QStringLiteral("unique")); });
+      placement->addAction(tr("この配置だけの寸法を戻す"), this,
+                           [this, id] { placementAction({id}, QStringLiteral("reset")); });
+      placement->addAction(tr("鏡像: 赤軸方向"), this, [this, id] { placementAction({id}, QStringLiteral("mirror0")); });
+      placement->addAction(tr("鏡像: 緑軸方向"), this, [this, id] { placementAction({id}, QStringLiteral("mirror1")); });
+      placement->addAction(tr("鏡像: 青軸方向"), this, [this, id] { placementAction({id}, QStringLiteral("mirror2")); });
+      placement->addAction(tr("軸を変更（原点・赤軸）"), this, [this, id] { placementAction({id}, QStringLiteral("axes")); });
+    }
+    menu->addSeparator();
+    // Materials of the selection as a whole (faces: the paint tool).
+    QMenu* materials = menu->addMenu(tr("マテリアル"));
+    for (const doc::Material& mat : document.materials()) {
+      QPixmap swatch(16, 12);
+      swatch.fill(QColor::fromRgbF(mat.color.r, mat.color.g, mat.color.b));
+      const std::string mid = mat.id;
+      materials->addAction(QIcon(swatch), QString::fromStdString(mat.name), this,
+                           [this, mid] { applyMaterialToSelection(mid); });
+    }
+    materials->addAction(tr("（なし：継承に戻す）"), this, [this] { applyMaterialToSelection({}); });
+    materials->addSeparator();
+    materials->addAction(tr("マテリアルパネルを開く..."), this, [this] { showMaterials(); });
+    materials->addAction(tr("新しいマテリアル..."), this, [this] { editMaterialDialog({}); });
+    const bool anyEdge =
+        std::any_of(elements_.begin(), elements_.end(), [](const ElementRef& el) { return el.type == TopAbs_EDGE; });
+    if (anyEdge) {
+      menu->addAction(tr("選んだ辺の線を隠す"), this, [this] {
+        std::map<doc::ObjectId, std::vector<TopoDS_Edge>> byObject;
+        for (const ElementRef& el : elementSelection()) {
+          if (el.type != TopAbs_EDGE) continue;
+          const TopoDS_Shape edge = viewport_->elementShape(el);
+          if (!edge.IsNull()) byObject[el.objectId].push_back(TopoDS::Edge(edge));
+        }
+        for (const auto& [id, edges] : byObject) report(modeler_.setEdgesHidden(id, edges, true));
+      });
+    }
+    if (single && single->kind() == doc::ObjectKind::Shell) {
+      menu->addAction(tr("穴をふさぐ（ソリッドに戻す）"), this, [this] { report(modeler_.fillHoles(selection_)); });
+    }
+    menu->addAction(tr("非表示"), this, [this] {
+      const std::vector<doc::ObjectId> hide = selection_;
+      setSelection({});
+      report(modeler_.hide(hide));
+    });
+    menu->addAction(tr("ロック"), this, [this] {
+      if (report(modeler_.setLocked(selection_, true))) setSelection({});
+    });
+  }
+  menu->addSeparator();
+  if (!modeler_.activeGroup().empty()) menu->addAction(tr("グループ・コンポーネントの編集を終了"), this, [this] { exitGroup(); });
+  menu->addAction(tr("全体表示"), this, [this] { viewport_->fitAll(); });
+  return menu;
 }
 
 void MainWindow::placementAction(const std::vector<doc::ObjectId>& ids, const QString& action) {

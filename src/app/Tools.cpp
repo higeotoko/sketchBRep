@@ -3640,6 +3640,7 @@ QString PaintTool::name() const { return QObject::tr("ペイント"); }
 QCursor PaintTool::cursor() const { return toolCursor(CursorKind::Paint); }
 
 QString PaintTool::materialName() const {
+  if (!chosen_) return QObject::tr("マテリアル未選択");
   const doc::Material* m = host_.modeler().document().findMaterial(material_);
   return m ? QStringLiteral("「%1」").arg(QString::fromStdString(m->name)) : QObject::tr("素材なし（継承に戻す）");
 }
@@ -3647,8 +3648,14 @@ QString PaintTool::materialName() const {
 void PaintTool::activate() {
   host_.viewport().setPickMode(PickMode::Faces);
   host_.setMeasurement(QString(), QString());
+  if (!chosen_) {
+    host_.showMaterials();
+    host_.setStatus(QObject::tr("右の「マテリアル」パネルで色・素材をクリックして選んでから、面をクリックして塗ります"
+                                "（定番から選ぶとそのまま追加されます）"));
+    return;
+  }
   host_.setStatus(QObject::tr("%1：クリックで面に / Ctrl+クリックで部材全体 / Alt+クリックで素材を拾う"
-                              "（素材は右の「素材」パネルで選ぶ）")
+                              "（素材は右の「マテリアル」パネルで選ぶ）")
                       .arg(materialName()));
 }
 
@@ -3674,8 +3681,14 @@ void PaintTool::mousePress(const ToolEvent& e) {
     const auto at = m.materialAt(pick->objectId, pick->face);
     if (!at) return;
     material_ = at->material;
+    chosen_ = true;
     host_.materialPicked(material_);
     host_.setStatus(QObject::tr("%1 を拾いました（クリックで塗る）").arg(materialName()));
+    return;
+  }
+  if (!chosen_) {
+    host_.showMaterials();
+    host_.reportError(QObject::tr("先に右の「マテリアル」パネルで塗る素材を選んでください"));
     return;
   }
   // At the current editing level: a group / component as a whole, an

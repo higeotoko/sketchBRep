@@ -13,6 +13,9 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
+#include <QIcon>
+#include <QPixmap>
+#include <QMenu>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QScrollArea>
@@ -241,10 +244,37 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       text += tr(" ／ 面ごと %1").arg(faces.faces.size());
       if (faces.unresolved) text += tr("（%1 件は形の変更で面を特定できず未適用）").arg(faces.unresolved);
     }
-    auto* label = new QLabel(text);
-    label->setObjectName(QStringLiteral("materialLabel"));
-    label->setToolTip(tr("ペイントツール（B）と「素材」パネルで変更。面の素材が部材全体より優先されます"));
-    form_->addRow(tr("素材"), label);
+    // Pressing it offers the library: assign to this object, edit, or new.
+    auto* button = new QToolButton;
+    button->setObjectName(QStringLiteral("materialButton"));
+    button->setText(text + QStringLiteral(" ▾"));
+    button->setPopupMode(QToolButton::InstantPopup);
+    button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    button->setToolTip(tr("部材全体のマテリアルを選ぶ・編集する。面ごとに塗るときはペイントツール（B）。面の素材が部材全体より優先されます"));
+    if (const doc::Material* mat = document.findMaterial(o->material)) {
+      QPixmap swatch(16, 12);
+      swatch.fill(QColor::fromRgbF(mat->color.r, mat->color.g, mat->color.b));
+      button->setIcon(QIcon(swatch));
+    }
+    auto* menu = new QMenu(button);
+    for (const doc::Material& mat : document.materials()) {
+      QPixmap swatch(16, 12);
+      swatch.fill(QColor::fromRgbF(mat.color.r, mat.color.g, mat.color.b));
+      const std::string mid = mat.id;
+      QAction* a = menu->addAction(QIcon(swatch), QString::fromStdString(mat.name),
+                                   this, [this, id, mid] { emit materialAssigned(id, mid); });
+      a->setCheckable(true);
+      a->setChecked(mid == o->material);
+    }
+    menu->addAction(tr("（なし：グループ・配置から継承）"), this, [this, id] { emit materialAssigned(id, {}); });
+    menu->addSeparator();
+    if (!o->material.empty()) {
+      const std::string mid = o->material;
+      menu->addAction(tr("このマテリアルの名前・色を変更..."), this, [this, mid] { emit materialEditRequested(mid); });
+    }
+    menu->addAction(tr("新しいマテリアル..."), this, [this] { emit materialEditRequested({}); });
+    button->setMenu(menu);
+    form_->addRow(tr("マテリアル"), button);
   }
   if (o->kind() == doc::ObjectKind::Annotation) {
     // Dimensions: empty = measured value.

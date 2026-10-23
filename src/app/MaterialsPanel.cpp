@@ -1,5 +1,7 @@
 #include "MaterialsPanel.h"
 
+#include <algorithm>
+
 #include <QHBoxLayout>
 #include <QListWidget>
 #include <QMenu>
@@ -10,6 +12,8 @@
 
 namespace sbr::app {
 namespace {
+
+constexpr int kPresetRole = Qt::UserRole + 1;  // index into presets()
 
 QIcon swatch(const doc::Color& c, bool inherit = false) {
   QPixmap pixmap(28, 20);
@@ -46,7 +50,8 @@ MaterialsPanel::MaterialsPanel(QWidget* parent) : QWidget(parent) {
   list_ = new QListWidget;
   list_->setObjectName(QStringLiteral("materialList"));
   list_->setIconSize(QSize(28, 20));
-  list_->setToolTip(tr("クリックで塗る素材に（ペイントツールに切り替え）。ダブルクリックで名前・色を変更"));
+  list_->setToolTip(tr("クリックで塗る素材に（ペイントツールに切り替え）。ダブルクリック・右クリックで名前・色を変更"));
+  list_->setContextMenuPolicy(Qt::CustomContextMenu);
   layout->addWidget(list_);
   auto* row = new QHBoxLayout;
   auto* add = new QPushButton(tr("＋ 新規"));
@@ -78,10 +83,30 @@ MaterialsPanel::MaterialsPanel(QWidget* parent) : QWidget(parent) {
   });
   connect(apply_, &QPushButton::clicked, this, [this] { emit applyRequested(currentId()); });
   connect(list_, &QListWidget::currentRowChanged, this, [this](int) {
+    const QListWidgetItem* item = list_->currentItem();
+    if (item && item->data(kPresetRole).isValid()) {
+      // A ready-made one: add it to the library and pick it.
+      if (!updating_) emit presetRequested(item->data(kPresetRole).toInt());
+      return;
+    }
     const bool real = !currentId().empty();
     edit_->setEnabled(real);
     remove_->setEnabled(real);
-    if (!updating_) emit materialChosen(currentId());
+    if (!updating_ && item) emit materialChosen(currentId());
+  });
+  connect(list_, &QListWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+    QListWidgetItem* item = list_->itemAt(pos);
+    if (!item || item->data(kPresetRole).isValid()) return;
+    const std::string id = item->data(Qt::UserRole).toString().toStdString();
+    QMenu menu(this);
+    if (!id.empty()) {
+      menu.addAction(tr("名前・色を変更..."), this, [this, id] { emit editRequested(id); });
+      menu.addAction(tr("選択中の部材・面に適用"), this, [this, id] { emit applyRequested(id); });
+      menu.addAction(tr("削除"), this, [this, id] { emit deleteRequested(id); });
+    } else {
+      menu.addAction(tr("選択中の部材・面の素材を外す"), this, [this] { emit applyRequested({}); });
+    }
+    menu.exec(list_->viewport()->mapToGlobal(pos));
   });
   connect(list_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem*) {
     if (!currentId().empty()) emit editRequested(currentId());
@@ -93,7 +118,7 @@ std::string MaterialsPanel::currentId() const {
   return item ? item->data(Qt::UserRole).toString().toStdString() : std::string();
 }
 
-void MaterialsPanel::refresh(const doc::Document& document, const std::string& current) {
+void MaterialsPanel::refresh(const doc::Document& document, const std::optional<std::string>& current) {
   updating_ = true;
   if (document.materials() != shown_ || list_->count() == 0) {
     shown_ = document.materials();
@@ -107,9 +132,32 @@ void MaterialsPanel::refresh(const doc::Document& document, const std::string& c
       item->setData(Qt::UserRole, QString::fromStdString(m.id));
       list_->addItem(item);
     }
+    // Ready-made ones not in the document yet.
+    bool header = false;
+    for (int i = 0; i < static_cast<int>(presets().size()); ++i) {
+      const Preset& p = presets()[static_cast<std::size_t>(i)];
+      const bool have = std::any_of(shown_.begin(), shown_.end(),
+                                    [&](const doc::Material& m) { return m.name == p.name; });
+      if (have) continue;
+      if (!header) {
+        auto* title = new QListWidgetItem(tr("― 定番（クリックで追加して塗る） ―"));
+        title->setFlags(Qt::NoItemFlags);
+        list_->addItem(title);
+        header = true;
+      }
+      auto* item = new QListWidgetItem(swatch(p.color), QString::fromUtf8(p.name));
+      item->setData(kPresetRole, i);
+      item->setForeground(QColor(110, 110, 110));
+      list_->addItem(item);
+    }
   }
-  for (int i = 0; i < list_->count(); ++i) {
-    if (list_->item(i)->data(Qt::UserRole).toString().toStdString() == current) list_->setCurrentRow(i);
+  list_->setCurrentRow(-1);
+  for (int i = 0; i < list_->count() && current; ++i) {
+    const QListWidgetItem* item = list_->item(i);
+    if (!item->data(kPresetRole).isValid() && (item->flags() & Qt::ItemIsSelectable) &&
+        item->data(Qt::UserRole).toString().toStdString() == *current) {
+      list_->setCurrentRow(i);
+    }
   }
   const bool real = !currentId().empty();
   edit_->setEnabled(real);

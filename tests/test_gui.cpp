@@ -13,6 +13,7 @@
 
 #include <QApplication>
 #include <QComboBox>
+#include <QMenu>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QLabel>
@@ -166,6 +167,8 @@ class GuiPhase1 : public QObject {
   void openingToolOverEverything();
   void lineToolCrossingLinesMakeFace();
   void eraserWorksOnLines();
+  void rightClickMenuFollowsTheSelection();
+  void paintNeedsAMaterialAndPresetsAddOnClick();
   void followMeAroundTopFace();
   void wallToolAndArchitectureMenus();
   void slabToolAndOpeningTool();
@@ -1228,7 +1231,12 @@ void GuiPhase1::paintToolAndEyedropper() {
   QVERIFY(f.window.openFile(path));
   QCOMPARE(shows(a, gp::DZ(), gp_Pnt(0, 0, 500)), woodHex);
   QCOMPARE(shows(b, -gp::DY(), gp_Pnt(1500, 0, 0)), hex(m.document().findMaterial(*tile)->color));
-  QCOMPARE(f.window.materialsPanel()->list()->count(), 4);  // inherit + 3
+  int library = 0;  // inherit + the document's materials (ready-made ones follow, not counted)
+  for (int i = 0; i < f.window.materialsPanel()->list()->count(); ++i) {
+    const QListWidgetItem* item = f.window.materialsPanel()->list()->item(i);
+    library += (item->flags() & Qt::ItemIsSelectable) && !item->data(Qt::UserRole + 1).isValid();
+  }
+  QCOMPARE(library, 4);  // inherit + 3
 
   // Painting one component placement keeps the shared display.
   const doc::ObjectId c = f.box(4000, 0, 500, 500, 500);
@@ -2634,6 +2642,92 @@ void GuiPhase1::eraserWorksOnLines() {
   click(f.vp, edge);
   QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
   QCOMPARE(m.document().find(box)->kind(), doc::ObjectKind::Shell);
+}
+
+// Right-click: what is under the cursor gets selected (a group or component
+// as a whole) and the menu offers what applies to it.
+void GuiPhase1::rightClickMenuFollowsTheSelection() {
+  Fixture f;
+  QVERIFY(f.setUp(1500, 1500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+  const doc::ObjectId inGroup = f.box(2000, 0, 1000, 1000, 1000);
+  auto group = m.group({inGroup});
+  QVERIFY(group.ok());
+  const doc::ObjectId part = f.box(0, 2000, 1000, 1000, 1000);
+  auto instance = m.makeComponent({part}, "Unit");
+  QVERIFY(instance.ok());
+  f.vp->syncNow();
+  auto texts = [](QMenu* menu) {
+    QStringList out;
+    for (QAction* a : menu->actions()) out << a->text();
+    return out;
+  };
+  f.window.activateTool(MainWindow::ToolId::Select);
+  QMenu* menu = f.window.buildContextMenu(f.vp->toWidget(gp_Pnt(500, 0, 500)));
+  QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{box});
+  QVERIFY(texts(menu).contains(QStringLiteral("グループ化")));
+  QVERIFY(texts(menu).contains(QStringLiteral("コンポーネントを作成")));
+  QVERIFY(texts(menu).contains(QStringLiteral("マテリアル")));
+  delete menu;
+
+  menu = f.window.buildContextMenu(f.vp->toWidget(gp_Pnt(2500, 0, 500)));
+  QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{*group});
+  QVERIFY(texts(menu).contains(QStringLiteral("グループを編集（中に入る）")));
+  delete menu;
+
+  menu = f.window.buildContextMenu(f.vp->toWidget(gp_Pnt(500, 2000, 500)));
+  QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{*instance});
+  bool edit = false;
+  for (const QString& t : texts(menu)) edit = edit || t.startsWith(QStringLiteral("コンポーネントを編集"));
+  QVERIFY(edit);
+  QVERIFY(texts(menu).contains(QStringLiteral("この配置")));
+  // A material from the menu goes onto the selection.
+  auto red = m.createMaterial("赤", {1, 0, 0});
+  QVERIFY(red.ok());
+  delete menu;
+  menu = f.window.buildContextMenu(f.vp->toWidget(gp_Pnt(500, 0, 500)));
+  QMenu* materials = nullptr;
+  for (QAction* a : menu->actions()) {
+    if (a->text() == QStringLiteral("マテリアル")) materials = a->menu();
+  }
+  QVERIFY(materials);
+  for (QAction* a : materials->actions()) {
+    if (a->text() == QStringLiteral("赤")) a->trigger();
+  }
+  QCOMPARE(m.document().find(box)->material, *red);
+  delete menu;
+}
+
+// The paint tool starts with no material: clicking asks for one instead of
+// silently painting "none"; a ready-made one in the panel is added and
+// picked with one click, then clicking a face paints it.
+void GuiPhase1::paintNeedsAMaterialAndPresetsAddOnClick() {
+  Fixture f;
+  QVERIFY(f.setUp(500, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::Paint);
+  const QPoint face = f.vp->toWidget(gp_Pnt(500, 0, 500));
+  click(f.vp, face);
+  QVERIFY(f.window.lastError().contains(QStringLiteral("マテリアル")));
+  QVERIFY(m.document().materials().empty());
+
+  auto* panel = f.window.findChild<MaterialsPanel*>();
+  QVERIFY(panel);
+  int preset = -1;
+  for (int i = 0; i < panel->list()->count(); ++i) {
+    if (panel->list()->item(i)->text() == QStringLiteral("レンガ")) preset = i;
+  }
+  QVERIFY(preset > 0);
+  panel->list()->setCurrentRow(preset);
+  QTest::qWait(20);
+  QCOMPARE(m.document().materials().size(), std::size_t(1));
+  QCOMPARE(QString::fromStdString(m.document().materials().front().name), QStringLiteral("レンガ"));
+  click(f.vp, face);
+  QCOMPARE(m.document().find(box)->faceMaterials.size(), std::size_t(1));
+  QCOMPARE(m.document().find(box)->faceMaterials.front().material, m.document().materials().front().id);
 }
 
 QTEST_MAIN(GuiPhase1)
