@@ -22,6 +22,7 @@
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRep_Builder.hxx>
+#include <Standard_Failure.hxx>
 #include <TopoDS_Compound.hxx>
 #include <Graphic3d_Camera.hxx>
 #include <Graphic3d_TransformPers.hxx>
@@ -210,9 +211,32 @@ void Viewport::mousePressEvent(QMouseEvent* event) {
     return;
   }
   if (event->button() == Qt::LeftButton && tool_) {
-    tool_->mousePress(ToolEvent{event->position().toPoint(), event->modifiers()});
+    toolCall([&] { tool_->mousePress(ToolEvent{event->position().toPoint(), event->modifiers()}); });
     emit toolInput();
   }
+}
+
+bool Viewport::toolCall(const std::function<void()>& call) {
+  // A geometry kernel exception inside a tool (a degenerate preview, an
+  // unexpected shape) must not take the program and the model down with
+  // it: the tool starts over and the user is told. Model edits are applied
+  // whole at the end of an operation, so the document stays as it was.
+  QString failure;
+  try {
+    call();
+    return true;
+  } catch (const Standard_Failure& e) {
+    failure = QString::fromUtf8(e.GetMessageString());
+  } catch (const std::exception& e) {
+    failure = QString::fromUtf8(e.what());
+  }
+  try {
+    if (tool_) tool_->cancel();
+  } catch (...) {
+  }
+  clearPreview();
+  emit toolFailed(failure);
+  return false;
 }
 
 void Viewport::mouseReleaseEvent(QMouseEvent* event) {
@@ -222,7 +246,7 @@ void Viewport::mouseReleaseEvent(QMouseEvent* event) {
     return;
   }
   if (event->button() == Qt::LeftButton && tool_) {
-    tool_->mouseRelease(ToolEvent{event->position().toPoint(), event->modifiers()});
+    toolCall([&] { tool_->mouseRelease(ToolEvent{event->position().toPoint(), event->modifiers()}); });
     emit toolInput();
   }
 }
@@ -242,13 +266,16 @@ void Viewport::mouseMoveEvent(QMouseEvent* event) {
     redraw();
     return;
   }
-  if (tool_) tool_->mouseMove(ToolEvent{pos, event->modifiers()});
+  if (tool_) toolCall([&] { tool_->mouseMove(ToolEvent{pos, event->modifiers()}); });
 }
 
 void Viewport::mouseDoubleClickEvent(QMouseEvent* event) {
   const QPoint pos = event->position().toPoint();
-  if (event->button() == Qt::LeftButton && tool_ &&
-      tool_->mouseDoubleClick(ToolEvent{pos, event->modifiers()})) {
+  bool consumed = false;
+  if (event->button() == Qt::LeftButton && tool_) {
+    toolCall([&] { consumed = tool_->mouseDoubleClick(ToolEvent{pos, event->modifiers()}); });
+  }
+  if (consumed) {
     emit toolInput();
     return;
   }
@@ -273,7 +300,9 @@ void Viewport::keyPressEvent(QKeyEvent* event) {
     emit escapePressed();
     return;
   }
-  if (tool_ && tool_->keyPress(event)) {
+  bool consumed = false;
+  if (tool_) toolCall([&] { consumed = tool_->keyPress(event); });
+  if (consumed) {
     emit toolInput();
     return;
   }
@@ -318,7 +347,9 @@ bool Viewport::event(QEvent* event) {
 }
 
 void Viewport::keyReleaseEvent(QKeyEvent* event) {
-  if (tool_ && tool_->keyRelease(event)) {
+  bool consumed = false;
+  if (tool_) toolCall([&] { consumed = tool_->keyRelease(event); });
+  if (consumed) {
     emit toolInput();
     return;
   }

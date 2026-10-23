@@ -906,6 +906,9 @@ std::optional<OpeningTool::Target> OpeningTool::targetAt(const ToolEvent& e) {
   if (!pick) return std::nullopt;
   const auto ref = geom::FaceRef::fromFace(pick->face);
   if (!ref || std::abs(ref->normal.Z()) > 1e-6) return std::nullopt;
+  // Openings go through walls: solids only (a flat face has no thickness).
+  const doc::Object* owner = host_.modeler().document().find(pick->objectId);
+  if (!owner || owner->kind() != doc::ObjectKind::Solid) return std::nullopt;
   Target t{pick->objectId, ref->normal, pick->point, {}};
   // Positions along the wall it snaps to: the face's middle, flush with
   // its ends, next to / in line with openings already in this wall, and
@@ -982,7 +985,7 @@ void OpeningTool::mouseMove(const ToolEvent& e) {
   Viewport& vp = host_.viewport();
   if (!hover_) {
     vp.clearPreview();
-    host_.setStatus(QObject::tr("壁の縦の面にカーソルを合わせてください（%1）").arg(settingsText()));
+    host_.setStatus(QObject::tr("壁（厚みのあるソリッド）の縦の面にカーソルを合わせてください（%1）").arg(settingsText()));
     return;
   }
   if (hover_->overlaps) {
@@ -1002,17 +1005,31 @@ void OpeningTool::mouseMove(const ToolEvent& e) {
     n0 = std::min(n0, d);
     z0 = std::min(z0, p.Z());
   }
+  double z1 = -1e300;
+  for (TopExp_Explorer v(world, TopAbs_VERTEX); v.More(); v.Next()) {
+    z1 = std::max(z1, BRep_Tool::Pnt(TopoDS::Vertex(v.Current())).Z());
+  }
+  const double atN = gp_Vec(hover_->at.XYZ()).Dot(gp_Vec(hover_->normal));
+  const auto kind = o->attributes.find("kind");
+  if ((kind != o->attributes.end() && kind->second == "slab") || atN - n0 > z1 - z0 + tolerance::kLinear) {
+    // The edge of a slab: the cut would tunnel through all of it (refused).
+    vp.clearPreview();
+    host_.setStatus(QObject::tr("スラブやブロックの側面には開口をあけられません（床の開口は上の面に矩形を描いてプッシュ/プルで抜いてください）"));
+    return;
+  }
   geom::SketchPlane plane;
   plane.normal = hover_->normal;
   plane.xDir = u;
-  const double atN = gp_Vec(hover_->at.XYZ()).Dot(gp_Vec(hover_->normal));
   gp_Pnt origin = hover_->at.Translated(gp_Vec(u) * (-settings_.width / 2));
   origin.SetZ(z0 + settings_.sill);
   plane.origin = origin;
   auto face = geom::makeRectangleFace(plane, settings_.width, settings_.height);
-  if (face) {
-    vp.setPreview(BRepPrimAPI_MakePrism(face.value(), gp_Vec(hover_->normal) * -(atN - n0)).Shape(),
-                  true);
+  const double depth = atN - n0;
+  if (face && depth > tolerance::kMinDimension) {
+    BRepPrimAPI_MakePrism prism(face.value(), gp_Vec(hover_->normal) * -depth);
+    if (prism.IsDone()) vp.setPreview(prism.Shape(), true);
+  } else if (face) {
+    vp.setPreview(face.value(), true);
   }
   host_.setStatus(QObject::tr("クリックで開口をあける（%1）  端から %2 / %3")
                       .arg(settingsText(), mm(hover_->fromStart), mm(hover_->toEnd)) +

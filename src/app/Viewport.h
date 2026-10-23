@@ -5,6 +5,7 @@
 // layer). Picking results are mapped back to canonical faces by index.
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <set>
 
@@ -154,6 +155,9 @@ class Viewport : public QWidget {
   int openEndCount() const { return openEndCount_; }
   // Writes the current view to an image file (PNG etc.).
   bool dumpImage(const QString& path);
+  // Runs a tool callback; an exception resets the tool (toolFailed) instead
+  // of ending the program. Returns false then.
+  bool toolCall(const std::function<void()>& call);
 
  signals:
   void measurementChar(QChar c);
@@ -163,6 +167,8 @@ class Viewport : public QWidget {
   void focusRequested(const QPoint& pos);
   // A click / key went to the tool (its state may have changed).
   void toolInput();
+  // The tool hit a geometry error and was reset (message from the kernel).
+  void toolFailed(const QString& message);
 
  protected:
   void showEvent(QShowEvent* event) override;

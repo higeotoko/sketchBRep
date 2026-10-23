@@ -250,6 +250,10 @@ void MainWindow::buildUi() {
   });
   connect(viewport_, &Viewport::measurementCommit, this, &MainWindow::commitMeasurement);
   connect(viewport_, &Viewport::toolInput, this, &MainWindow::refreshConstraints);
+  connect(viewport_, &Viewport::toolFailed, this, [this](const QString& message) {
+    reportError(tr("形の計算でエラーが起きたので、操作をやり直せる状態に戻しました（モデルは変わっていません）%1")
+                    .arg(message.isEmpty() ? QString() : QStringLiteral("： ") + message));
+  });
   connect(measurement_, &QLineEdit::returnPressed, this, &MainWindow::commitMeasurement);
   connect(measurement_, &QLineEdit::textEdited, this, [this] { userTyping_ = true; });
   connect(viewport_, &Viewport::escapePressed, this, [this] {
@@ -1877,12 +1881,12 @@ void MainWindow::commitMeasurement() {
   // Enter without typing finishes a wall run / slab outline (the box only
   // shows the current length then).
   if (!typed && (active_ == wallTool_.get() || active_ == slabTool_.get())) {
-    active_->applyMeasurement(QString());
+    viewport_->toolCall([&] { active_->applyMeasurement(QString()); });
     viewport_->setFocus();
     return;
   }
   if (text.isEmpty() || !active_) return;
-  active_->applyMeasurement(text);
+  viewport_->toolCall([&] { active_->applyMeasurement(text); });
   refreshConstraints();
   viewport_->setFocus();
 }

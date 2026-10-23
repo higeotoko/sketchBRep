@@ -5,6 +5,7 @@
 #include <BRepGProp.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <GProp_GProps.hxx>
+#include <Standard_Failure.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
@@ -232,4 +233,42 @@ TEST(HiddenEdges, HideKeepsFacesAndSurvivesEdits) {
   const int index = hiddenEdgeIndices(*m.document().find(box)).front();
   ASSERT_TRUE(m.setEdgesHidden(box, {TopoDS::Edge(edges(index))}, false).ok());
   EXPECT_TRUE(m.document().find(box)->hiddenEdges.empty());
+}
+
+// Openings go through a wall's thickness: from a slab's edge the cut would
+// tunnel through all of it, and no opening may split its host.
+TEST(Openings, RefusedOnSlabEdgesAndWhenSplitting) {
+  Modeler m;
+  auto slab = m.createSlab({gp_Pnt(0, 0, 0), gp_Pnt(4000, 0, 0), gp_Pnt(4000, 3000, 0), gp_Pnt(0, 3000, 0)}, 0, 200);
+  ASSERT_TRUE(slab.ok());
+  const std::size_t steps = m.history().undoCount();
+  for (const auto& [h, sill] : std::vector<std::pair<double, double>>{{100, 0}, {200, 0}, {100, 50}}) {
+    const auto r = m.placeOpeningAt(*slab, gp_Dir(0, -1, 0), gp_Pnt(2000, 0, -100), 900, h, sill);
+    EXPECT_FALSE(r.ok());
+    EXPECT_NE(r.error().find("edge of a slab"), std::string::npos) << r.error();
+  }
+  EXPECT_EQ(m.history().undoCount(), steps);
+  EXPECT_NEAR(volume(m, *slab), 4000.0 * 3000 * 200, 1e-3);
+
+  // A block (no slab attribute) deeper than it is tall: refused the same way.
+  auto block = m.createRectangle(geom::SketchPlane::ground(), 4000, 3000);
+  ASSERT_TRUE(m.extrude(*block, 200).ok());
+  EXPECT_FALSE(m.placeOpeningAt(*block, gp_Dir(0, -1, 0), gp_Pnt(2000, 0, 100), 900, 100, 0).ok());
+
+  // A real wall still takes its opening, in one piece.
+  auto walls = m.createWalls({gp_Pnt(0, 5000, 0), gp_Pnt(4000, 5000, 0)}, 200, 2500);
+  ASSERT_TRUE(walls.ok());
+  const auto cut = m.placeOpeningAt(walls->front(), gp_Dir(0, -1, 0), gp_Pnt(2000, 4900, 1000), 900, 2100, 0);
+  ASSERT_TRUE(cut.ok()) << cut.error();
+  int solids = 0;
+  for (TopExp_Explorer e(m.document().worldShape(*cut), TopAbs_SOLID); e.More(); e.Next()) ++solids;
+  EXPECT_EQ(solids, 1);
+
+  // Full height: the wall would fall into two pieces; refused, nothing changes.
+  const std::size_t before = m.history().undoCount();
+  const auto split = m.placeOpeningAt(*cut, gp_Dir(0, -1, 0), gp_Pnt(800, 4900, 1000), 600, 2500, 0);
+  EXPECT_FALSE(split.ok());
+  EXPECT_NE(split.error().find("in two"), std::string::npos) << split.error();
+  EXPECT_EQ(m.history().undoCount(), before);
+  EXPECT_TRUE(m.document().find(*cut));
 }

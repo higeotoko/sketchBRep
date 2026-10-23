@@ -161,6 +161,7 @@ class GuiPhase1 : public QObject {
   void componentPlacementOwnSizeMirrorAndAxes();
   void moveToolReshapesCornersAndEdges();
   void eraserShiftHidesEdgeLine();
+  void openingToolOverEverything();
   void followMeAroundTopFace();
   void wallToolAndArchitectureMenus();
   void slabToolAndOpeningTool();
@@ -2507,6 +2508,50 @@ void GuiPhase1::eraserShiftHidesEdgeLine() {
   QVERIFY(m.undo());
   f.vp->syncNow();
   QCOMPARE(f.vp->hiddenEdgeCount(box), std::size_t(0));
+}
+
+// The opening tool must not crash wherever it is pointed or clicked: walls,
+// thin vertical faces, boxes, groups, components, sloped and hidden-edge
+// solids, guides and dimensions.
+void GuiPhase1::openingToolOverEverything() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  QVERIFY(m.createSlab({gp_Pnt(0, 0, 0), gp_Pnt(4000, 0, 0), gp_Pnt(4000, 3000, 0), gp_Pnt(0, 3000, 0)}, 0, 200).ok());
+  QVERIFY(m.createWalls({gp_Pnt(0, 0, 0), gp_Pnt(4000, 0, 0), gp_Pnt(4000, 3000, 0)}, 200, 2500).ok());
+  auto face = m.createRectangle(geom::SketchPlane::fromNormal(gp_Pnt(-2000, -1000, 0), gp::DY()), 1500, 2000);
+  QVERIFY(face.ok());
+  const doc::ObjectId box = f.box(-3000, 1000, 1000, 1000, 1000);
+  QVERIFY(m.moveVertices(box, {gp_Pnt(-3000, 1000, 1000), gp_Pnt(-2000, 1000, 1000)}, gp_Vec(0, 0, 500)).ok());
+  const doc::ObjectId grouped = f.box(1000, -3000, 1000, 1000, 1000);
+  QVERIFY(m.group({grouped}).ok());
+  const doc::ObjectId part = f.box(-1000, -3000, 1000, 300, 2000);
+  QVERIFY(m.makeComponent({part}).ok());
+  QVERIFY(m.createGuide(gp_Pnt(0, -500, 0), gp::DX()).ok());
+  f.vp->fitAll();
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::Opening);
+  const QSize size = f.vp->size();
+  QStringList failures;
+  auto check = [&](const QPoint& p) {
+    const QString e = f.window.lastError();
+    if (e.contains(QStringLiteral("形の計算でエラー")) && !failures.contains(e)) {
+      failures << QStringLiteral("(%1,%2) ").arg(p.x()).arg(p.y()) + e;
+    }
+  };
+  for (int y = 10; y < size.height(); y += 25) {
+    for (int x = 10; x < size.width(); x += 25) {
+      move(f.vp, QPoint(x, y));
+      check(QPoint(x, y));
+    }
+  }
+  for (int y = 20; y < size.height(); y += 60) {
+    for (int x = 20; x < size.width(); x += 60) {
+      click(f.vp, QPoint(x, y));
+      check(QPoint(x, y));
+    }
+  }
+  QVERIFY2(failures.isEmpty(), qPrintable(failures.join(QStringLiteral("\n"))));
 }
 
 QTEST_MAIN(GuiPhase1)

@@ -14,6 +14,8 @@ struct Entry {
 // Ordered: more specific phrases first.
 const Entry kEntries[] = {
     {"Cancelled by the user", "計算を中止しました"},
+    {"Openings go through the side of a wall", "開口は壁の側面にあけるものです。ここはスラブやブロックの縁なので、あけると奥まで全部くり抜いてしまいます。床の開口は上の面に矩形を描いてプッシュ/プルで抜いてください"},
+    {"The opening would cut the wall in two", "この開口だと壁が 2 つに分かれてしまうので中止しました。高さか腰の高さを見直してください"},
     {"A face would no longer be flat", "面が平らでなくなるので動かせません。辺ごと・面ごと動かすか、先に線を引いて面を分けてください"},
     {"A face would fold over", "面が裏返ってしまうので動かせません。動かす量を小さくしてください"},
     {"A face would collapse", "面がつぶれてしまうので動かせません"},

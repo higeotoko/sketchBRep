@@ -2207,6 +2207,16 @@ Result<ObjectId> Modeler::cutOpenings(const ObjectId& hostId, const gp_Dir& face
     n1 = std::max(n1, d);
   }
   const double length = u1 - u0, depth = n1 - n0;
+  // Openings go through a wall's thickness. From the edge of a slab (or a
+  // block deeper than it is tall) the cut would tunnel through the whole
+  // object instead.
+  const auto kindAttribute = host->attributes.find("kind");
+  if ((kindAttribute != host->attributes.end() && kindAttribute->second == "slab") ||
+      depth > (z1 - z0) + tolerance::kLinear) {
+    return R::failure("Openings go through the side of a wall; this face is the edge of a slab or a block, and the "
+                      "cut would run through all of it. For a floor opening, draw a rectangle on the top and "
+                      "push it through");
+  }
   if (sill + height > z1 - z0 + tolerance::kLinear) return R::failure("The openings are taller than the wall");
   std::vector<double> centres;
   if (at) {
@@ -2261,6 +2271,16 @@ Result<ObjectId> Modeler::cutOpenings(const ObjectId& hostId, const gp_Dir& face
       return R::failure(cut ? "The opening did not cut the wall" : cut.error());
     }
     current = cut->id;
+  }
+  // An opening must leave the wall in one piece.
+  auto solids = [](const TopoDS_Shape& s) {
+    int n = 0;
+    for (TopExp_Explorer e(s, TopAbs_SOLID); e.More(); e.Next()) ++n;
+    return n;
+  };
+  if (solids(document_.worldShape(current)) > solids(world)) {
+    history_.abortGroup();
+    return R::failure("The opening would cut the wall in two");
   }
   history_.endGroup();
   return current;
