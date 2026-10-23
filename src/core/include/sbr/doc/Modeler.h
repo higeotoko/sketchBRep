@@ -434,6 +434,16 @@ class Modeler {
     bool empty() const { return objects.empty(); }
   };
   Result<Clipboard> copyToClipboard(const std::vector<ObjectId>& ids) const;
+  // What is selected (the same targets as deleteSelection): whole objects
+  // as above; faces and edges picked on an object copy just those, never
+  // the object they belong to: each face as a face of its own (holes kept,
+  // its material), edges not bounding a copied face as loose lines (exact
+  // arcs and curves).
+  Result<Clipboard> copyToClipboard(const std::vector<DeleteTarget>& targets) const;
+  // Move + Ctrl on such a selection: `count` copies, copy k at worldDelta^k
+  // (an array), one undo step; returns the new ids.
+  Result<std::vector<ObjectId>> copyElements(const std::vector<DeleteTarget>& targets, const gp_Trsf& worldDelta,
+                                             int count = 1);
   // Adds a fresh copy (new ids) into the current editing context, moved by
   // worldDelta from where it was copied. Returns the new top-level ids.
   Result<std::vector<ObjectId>> paste(const Clipboard& clipboard, const gp_Trsf& worldDelta = {});

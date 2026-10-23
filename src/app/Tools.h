@@ -46,6 +46,11 @@ class ToolHost {
   virtual void setElementSelection(const std::vector<ElementRef>& elements) = 0;
   virtual std::vector<ElementRef> elementSelection() const = 0;
   virtual std::vector<doc::ObjectId> selection() const = 0;
+  // What is selected, resolved now, the one meaning shared by Delete,
+  // copy / cut and Move / Rotate copies: per object, the faces and edges
+  // picked on it, or the object as a whole (picked whole, or every face and
+  // edge of it picked).
+  virtual std::vector<doc::DeleteTarget> selectionTargets() const = 0;
   // Group edit mode (double-click a group): picks resolve inside it and new
   // geometry is created in it.
   virtual doc::ObjectId editingGroup() const = 0;
@@ -903,14 +908,24 @@ class TransformTool : public DrawingTool {
   virtual void resetState() = 0;
   QString copySuffix() const;
 
+  // Called when Ctrl switches copying on or off.
+  virtual void copyToggled() {}
+  // The selection at the start: whole objects (targets_), and faces /
+  // edges picked on their own (elementTargets_; edgeTargets_ when only
+  // edges). A copy copies just those elements, never their whole owner.
+  void captureTargets();
+  bool partialSelection() const { return !elementTargets_.empty(); }
+
   std::vector<doc::ObjectId> targets_;
   // Edges selected on their own (one edge of a line, a face or a solid):
   // a copy copies just them, as lines (Modeler::copyEdges).
   std::vector<TopoDS_Edge> edgeTargets_;
+  std::vector<doc::DeleteTarget> elementTargets_;
   bool copy_ = false;
   struct Last {
     std::vector<doc::ObjectId> targets;
     std::vector<TopoDS_Edge> edges;
+    std::vector<doc::DeleteTarget> elements;
     gp_Trsf delta;
     bool copy = false;
     int count = 1;
@@ -934,6 +949,7 @@ class MoveTool : public TransformTool {
 
  private:
   void resetState() override;
+  void copyToggled() override;
   void finish();
   bool moving_ = false;
   gp_Pnt base_;

@@ -146,6 +146,7 @@ class GuiPhase1 : public QObject {
   void copySelectedEdgeArrays();
   void copyOntoEdgeThenDivideKeepsSolid();
   void typedLengthSplitsOrClosesSafely();
+  void cutCopyAndMoveCopyTakeOnlyPickedElements();
   void rotateByTypedAngle();
   void offsetToolInwards();
   void groupIsSelectedAsAWhole();
@@ -443,6 +444,87 @@ void GuiPhase1::typedLengthSplitsOrClosesSafely() {
   QCOMPARE(m.document().objects().size(), before + 1);
   QCOMPARE(m.document().objects().back().kind(), doc::ObjectKind::Face);
   QVERIFY(std::abs(geom::area(m.document().worldShape(m.document().objects().back())) - 1e6) < 1.0);
+}
+
+// W1 / CLIP-01/02, SEL-01, SC18: a face or an edge picked on a box is what
+// Ctrl+C / Ctrl+X / Move+Ctrl take, never the whole box; grouping only part
+// of an object is refused rather than grouping all of it.
+void GuiPhase1::cutCopyAndMoveCopyTakeOnlyPickedElements() {
+  Fixture f;
+  QVERIFY(f.setUp(1500, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+  f.vp->syncNow();
+  auto kinds = [&](doc::ObjectKind k) {
+    int n = 0;
+    for (const doc::Object& o : m.document().objects()) n += o.kind() == k;
+    return n;
+  };
+  auto faces = [&](const doc::ObjectId& id) {
+    int n = 0;
+    for (TopExp_Explorer e(m.document().worldShape(*m.document().find(id)), TopAbs_FACE); e.More(); e.Next()) ++n;
+    return n;
+  };
+  f.window.activateTool(MainWindow::ToolId::Select);
+  const std::size_t steps = m.history().undoCount();
+
+  // Ctrl+X on the top face: that face goes (the box opens), the rest stays.
+  click(f.vp, f.vp->toWidget(gp_Pnt(500, 500, 1000)));
+  QCOMPARE(f.window.elementSelection().size(), std::size_t(1));
+  QVERIFY(f.window.cutSelection());
+  QVERIFY(m.document().find(box));
+  QCOMPARE(faces(box), 5);
+  QCOMPARE(m.history().undoCount(), steps + 1);
+  // Pasted where it was: one face of its own.
+  QVERIFY(f.window.pasteInPlace());
+  QCOMPARE(kinds(doc::ObjectKind::Face), 1);
+  QVERIFY(m.undo());
+  QVERIFY(m.undo());
+  QCOMPARE(faces(box), 6);
+  QVERIFY(std::abs(geom::volume(m.document().worldShape(*m.document().find(box))) - 1e9) < 1.0);
+
+  // Ctrl+C on one edge, pasted elsewhere: a line; the box as it was.
+  f.vp->syncNow();
+  click(f.vp, f.vp->toWidget(gp_Pnt(3000, -3000, 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(500, 0, 1000)));
+  QCOMPARE(f.window.elementSelection().size(), std::size_t(1));
+  QVERIFY(f.window.copySelection());
+  f.window.activateTool(MainWindow::ToolId::Paste);
+  click(f.vp, f.vp->toWidget(gp_Pnt(2500, -2000, 0)));
+  QCOMPARE(kinds(doc::ObjectKind::Curve), 1);
+  QCOMPARE(kinds(doc::ObjectKind::Solid), 1);
+  QCOMPARE(faces(box), 6);
+
+  // Move + Ctrl on the top face: a copy of that face, the box unchanged.
+  f.window.activateTool(MainWindow::ToolId::Select);
+  click(f.vp, f.vp->toWidget(gp_Pnt(3000, -3000, 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(500, 500, 1000)));
+  QCOMPARE(f.window.elementSelection().size(), std::size_t(1));
+  f.window.activateTool(MainWindow::ToolId::Move);
+  click(f.vp, f.vp->toWidget(gp_Pnt(500, 500, 1000)));
+  QTest::keyClick(f.vp, Qt::Key_Control);
+  move(f.vp, f.vp->toWidget(gp_Pnt(500, 2000, 1000)));
+  type(f.vp, QStringLiteral("2000"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(kinds(doc::ObjectKind::Face), 1);
+  QCOMPARE(kinds(doc::ObjectKind::Solid), 1);
+  QVERIFY(std::abs(geom::volume(m.document().worldShape(*m.document().find(box))) - 1e9) < 1.0);
+
+  // Grouping just a face of the box: refused, nothing changes.
+  f.window.activateTool(MainWindow::ToolId::Select);
+  click(f.vp, f.vp->toWidget(gp_Pnt(3000, -3000, 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(500, 0, 500)));
+  QCOMPARE(f.window.elementSelection().size(), std::size_t(1));
+  const std::size_t objects = m.document().objects().size();
+  f.window.clearLastError();
+  for (QAction* a : f.window.findChildren<QAction*>()) {
+    if (a->text() == QStringLiteral("グループ化")) {
+      a->trigger();
+      break;
+    }
+  }
+  QVERIFY(!f.window.lastError().isEmpty());
+  QCOMPARE(m.document().objects().size(), objects);
 }
 
 void GuiPhase1::moveCopyAndArray() {

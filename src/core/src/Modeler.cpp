@@ -1526,19 +1526,19 @@ std::vector<TopoDS_Edge> chainOf(const TopoDS_Shape& shape) {
   return out;
 }
 
-// Turns edges (in order, world coordinates) back into loose lines: runs of
-// straight edges -> one polyline, circular -> arc, others -> a curve
-// through points on them.
-Status recreateCurves(Modeler& m, const std::vector<TopoDS_Edge>& run, std::vector<ObjectId>& made) {
+// Loose-line recipes (world coordinates) for edges in order: runs of
+// straight edges -> one polyline, circular -> arc, others -> the curve as it
+// is (exact, never a polyline through points on it).
+std::vector<std::pair<Recipe, std::string>> curveRecipes(const std::vector<TopoDS_Edge>& run) {
+  std::vector<std::pair<Recipe, std::string>> out;
   std::vector<gp_Pnt> polyline;
-  auto flush = [&]() -> Status {
+  auto flush = [&] {
     if (polyline.size() >= 2) {
-      auto id = m.createPolyline(polyline);
-      if (!id) return id.status();
-      made.push_back(*id);
+      Recipe r;
+      r.base = PolylineCurve{polyline};
+      out.emplace_back(std::move(r), "Line");
     }
     polyline.clear();
-    return Status::success();
   };
   for (const TopoDS_Edge& edge : run) {
     const gp_Pnt a = BRep_Tool::Pnt(TopExp::FirstVertex(edge, true));
@@ -1546,31 +1546,48 @@ Status recreateCurves(Modeler& m, const std::vector<TopoDS_Edge>& run, std::vect
     BRepAdaptor_Curve c(edge);
     if (c.GetType() == GeomAbs_Line) {
       if (polyline.empty() || polyline.back().Distance(a) > 1e-6) {
-        if (const Status s = flush(); !s) return s;
+        flush();
         polyline.push_back(a);
       }
       polyline.push_back(b);
       continue;
     }
-    if (const Status s = flush(); !s) return s;
+    flush();
     const gp_Pnt mid = c.Value(0.5 * (c.FirstParameter() + c.LastParameter()));
+    Recipe r;
     if (c.GetType() == GeomAbs_Circle && a.Distance(b) > tolerance::kMinDimension) {
       const gp_Dir normal = c.Circle().Axis().Direction();
       const gp_Vec chord(a, b);
       const gp_Vec side = gp_Vec(normal).Crossed(chord);
       const gp_Pnt chordMid((a.XYZ() + b.XYZ()) / 2.0);
-      auto id = m.createArc(a, b, normal, gp_Vec(chordMid, mid).Dot(side.Normalized()));
-      if (!id) return id.status();
-      made.push_back(*id);
+      r.base = ArcCurve{a, b, normal, gp_Vec(chordMid, mid).Dot(side.Normalized()), false};
+      out.emplace_back(std::move(r), "Arc");
       continue;
     }
     // A whole circle, an ellipse, a spline: kept exactly as it is.
-    auto id = m.importShape(BRepBuilderAPI_Copy(edge).Shape(), c.GetType() == GeomAbs_Circle ? "Circle" : "Curve",
-                            "line");
+    r.base = ImportedShape{BRepBuilderAPI_Copy(edge).Shape(), "line"};
+    out.emplace_back(std::move(r), c.GetType() == GeomAbs_Circle ? "Circle" : "Curve");
+  }
+  flush();
+  return out;
+}
+
+// Turns edges (in order, world coordinates) back into loose lines (see
+// curveRecipes).
+Status recreateCurves(Modeler& m, const std::vector<TopoDS_Edge>& run, std::vector<ObjectId>& made) {
+  for (auto& [recipe, kind] : curveRecipes(run)) {
+    Result<ObjectId> id = Result<ObjectId>::failure("");
+    if (const auto* line = std::get_if<PolylineCurve>(&recipe.base)) {
+      id = m.createPolyline(line->points);
+    } else if (const auto* arc = std::get_if<ArcCurve>(&recipe.base)) {
+      id = m.createArc(arc->start, arc->end, arc->normal, arc->bulge, false);
+    } else {
+      id = m.importShape(std::get<ImportedShape>(recipe.base).shape, kind, "line");
+    }
     if (!id) return id.status();
     made.push_back(*id);
   }
-  return flush();
+  return Status::success();
 }
 
 }  // namespace
@@ -4063,6 +4080,104 @@ Result<Modeler::Clipboard> Modeler::copyToClipboard(const std::vector<ObjectId>&
     clip.anchor = gp_Pnt(x0, y0, z0);
   }
   return clip;
+}
+
+Result<Modeler::Clipboard> Modeler::copyToClipboard(const std::vector<DeleteTarget>& targets) const {
+  using R = Result<Clipboard>;
+  std::vector<ObjectId> whole;
+  for (const DeleteTarget& t : targets) {
+    if (t.whole) whole.push_back(t.id);
+  }
+  Clipboard clip;
+  if (!whole.empty()) {
+    auto objects = copyToClipboard(whole);
+    if (!objects) return objects;
+    clip = std::move(objects.value());
+  }
+  BRep_Builder builder;
+  TopoDS_Compound preview;
+  builder.MakeCompound(preview);
+  Bnd_Box box;
+  if (!clip.preview.IsNull()) {
+    builder.Add(preview, clip.preview);
+    BRepBndLib::Add(clip.preview, box);
+  }
+  int counter = 0;
+  auto add = [&](Object o, const TopoDS_Shape& world) -> Status {
+    o.id = "clip-" + std::to_string(++counter);
+    if (const Status built = rebuild(o, document_.regenContext()); !built) return built;
+    builder.Add(preview, world);
+    BRepBndLib::Add(world, box);
+    clip.objects.push_back(std::move(o));
+    return Status::success();
+  };
+  for (const DeleteTarget& t : targets) {
+    if (t.whole || (t.faces.empty() && t.edges.empty())) continue;
+    const Object* owner = document_.find(t.id);
+    if (!owner) return R::failure("Object not found");
+    // Faces: each its own face, in world coordinates, with its material.
+    TopTools_IndexedMapOfShape faceEdges;
+    for (const TopoDS_Face& face : t.faces) {
+      TopExp::MapShapes(face, TopAbs_EDGE, faceEdges);
+      Object o;
+      o.name = owner->name + " (face)";
+      o.layer = owner->layer;
+      o.color = owner->color;
+      if (auto m = materialAt(t.id, face)) o.material = m->material;
+      const TopoDS_Shape copy = BRepBuilderAPI_Copy(face).Shape();
+      o.recipe.base = ImportedShape{copy, "Face of " + owner->name};
+      if (const Status s = add(std::move(o), copy); !s) return R::failure(s.message());
+    }
+    // Edges on their own (not an edge of a copied face): loose lines.
+    std::vector<TopoDS_Edge> loose;
+    for (const TopoDS_Edge& e : t.edges) {
+      bool bounding = false;
+      for (int i = 1; i <= faceEdges.Extent() && !bounding; ++i) bounding = faceEdges(i).IsSame(e);
+      if (!bounding) loose.push_back(e);
+    }
+    for (const auto& run : chainRuns(loose)) {
+      for (auto& [recipe, kind] : curveRecipes(run)) {
+        Object o;
+        o.name = kind;
+        o.layer = owner->layer;
+        o.color = owner->color;
+        o.recipe = std::move(recipe);
+        Object probe = o;
+        if (const Status built = rebuild(probe, document_.regenContext()); !built) return R::failure(built.message());
+        if (const Status s = add(std::move(o), probe.shape); !s) return R::failure(s.message());
+      }
+    }
+  }
+  if (clip.objects.empty()) return R::failure("Nothing selected");
+  clip.preview = preview;
+  if (!box.IsVoid()) {
+    double x0, y0, z0, x1, y1, z1;
+    box.Get(x0, y0, z0, x1, y1, z1);
+    clip.anchor = gp_Pnt(x0, y0, z0);
+  }
+  return clip;
+}
+
+Result<std::vector<ObjectId>> Modeler::copyElements(const std::vector<DeleteTarget>& targets,
+                                                    const gp_Trsf& worldDelta, int count) {
+  using R = Result<std::vector<ObjectId>>;
+  if (count < 1 || count > 10000) return R::failure("Copy count must be between 1 and 10000");
+  auto clip = copyToClipboard(targets);
+  if (!clip) return R::failure(clip.error());
+  history_.beginGroup(count == 1 ? "Copy" : "Array");
+  std::vector<ObjectId> made;
+  gp_Trsf at;
+  for (int k = 1; k <= count; ++k) {
+    at = worldDelta * at;
+    auto ids = paste(*clip, at);
+    if (!ids) {
+      history_.abortGroup();
+      return R::failure(ids.error());
+    }
+    made.insert(made.end(), ids->begin(), ids->end());
+  }
+  history_.endGroup();
+  return made;
 }
 
 Result<std::vector<ObjectId>> Modeler::paste(const Clipboard& clipboard, const gp_Trsf& worldDelta) {

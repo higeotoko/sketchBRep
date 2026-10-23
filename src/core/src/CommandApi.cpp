@@ -379,6 +379,30 @@ TopoDS_Edge selectEdge(const doc::Modeler& m, const ObjectId& id, const json& se
   return TopoDS::Edge(edges(scored.front().second));
 }
 
+// The selection as the GUI holds it ('ids' whole, 'elements' = faces /
+// edges picked on an object), shared by delete and copy.
+std::vector<doc::DeleteTarget> selectionTargets(const doc::Modeler& m, const json& a) {
+  std::vector<doc::DeleteTarget> targets;
+  if (a.contains("ids")) {
+    for (const ObjectId& id : ids(a, "ids")) targets.push_back(doc::DeleteTarget{id, true, {}, {}});
+  }
+  if (a.contains("elements")) {
+    for (const json& item : arg(a, "elements")) {
+      doc::DeleteTarget t;
+      t.id = text(item, "id");
+      if (item.contains("faces")) {
+        for (const json& f : item.at("faces")) t.faces.push_back(selectFace(m, t.id, f));
+      }
+      if (item.contains("edges")) {
+        for (const json& e : item.at("edges")) t.edges.push_back(selectEdge(m, t.id, e));
+      }
+      targets.push_back(std::move(t));
+    }
+  }
+  if (targets.empty()) throw ApiError("give ids or elements");
+  return targets;
+}
+
 doc::BooleanKind booleanKind(const std::string& s) {
   if (s == "union") return doc::BooleanKind::Union;
   if (s == "subtract") return doc::BooleanKind::Subtract;
@@ -1176,9 +1200,11 @@ const std::vector<CommandDef>& commands() {
        "it, a copy on an existing edge is not made twice) 'count' times. Linear: give 'vector'; it is the step "
        "between copies, or with 'divide': true the whole distance divided into 'count' steps (SketchUp '/3'). "
        "Polar: give axis_origin, axis_direction and 'angle' (step, degrees; 'divide' divides it too). "
-       "One undo step.",
+       "'elements' (as in delete: faces / edges picked on an object) copies just those faces (each a face of "
+       "its own) and edges (lines), never the object they belong to. One undo step.",
        SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}},
-               "edges": {"type": "array"}, "count": {"type": "integer"}, "vector": {"type": "array"},
+               "edges": {"type": "array"}, "elements": {"type": "array"}, "count": {"type": "integer"},
+               "vector": {"type": "array"},
                "divide": {"type": "boolean"}, "axis_origin": {"type": "array"},
                "axis_direction": {"type": "array"}, "angle": {"type": "number"}}}),
        [](doc::Modeler& m, const json& a) {
@@ -1197,6 +1223,7 @@ const std::vector<CommandDef>& commands() {
            for (const json& item : arg(a, "edges")) edges.push_back(selectEdge(m, text(item, "id"), arg(item, "edge")));
            return idsResult(must(m.copyEdges(edges, step, count)));
          }
+         if (a.contains("elements")) return idsResult(must(m.copyElements(selectionTargets(m, a), step, count)));
          return idsResult(must(m.copy(ids(a, "ids"), step, count)));
        }},
       {"boolean", "Solid union / subtract (first minus the others) / intersect. Parametric.",
@@ -1527,24 +1554,7 @@ const std::vector<CommandDef>& commands() {
        SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}},
                "elements": {"type": "array"}}}),
        [](doc::Modeler& m, const json& a) {
-         std::vector<doc::DeleteTarget> targets;
-         if (a.contains("ids")) {
-           for (const ObjectId& id : ids(a, "ids")) targets.push_back(doc::DeleteTarget{id, true, {}, {}});
-         }
-         if (a.contains("elements")) {
-           for (const json& item : arg(a, "elements")) {
-             doc::DeleteTarget t;
-             t.id = text(item, "id");
-             if (item.contains("faces")) {
-               for (const json& f : item.at("faces")) t.faces.push_back(selectFace(m, t.id, f));
-             }
-             if (item.contains("edges")) {
-               for (const json& e : item.at("edges")) t.edges.push_back(selectEdge(m, t.id, e));
-             }
-             targets.push_back(std::move(t));
-           }
-         }
-         if (targets.empty()) throw ApiError("give ids or elements");
+         const std::vector<doc::DeleteTarget> targets = selectionTargets(m, a);
          const doc::DeleteOutcome out = must(m.deleteSelection(targets));
          return json{{"removed", out.removed}, {"lines", out.lines}, {"merged", out.merged}};
        }},

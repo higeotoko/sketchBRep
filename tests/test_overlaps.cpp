@@ -329,3 +329,65 @@ TEST(Overlaps, CopiedOutlineBecomesAFace) {
   EXPECT_EQ(count(m, ObjectKind::Face), 2);  // one of them pushed into a solid
   EXPECT_EQ(facesOver(m, gp_Pnt(500, 500, 0)), 1);
 }
+
+// CLIP-01 / SEL-01: faces and edges picked on a box copy just those, never
+// the box: an edge as a line, a face as a face of its own (material kept);
+// the box is unchanged. The API copies the same.
+TEST(SelectionTargets, ElementsCopyOnlyThemselves) {
+  Modeler m;
+  auto box = m.createRectangle(at(0, 0), 1000, 1000);
+  ASSERT_TRUE(m.extrude(*box, 1000).ok());
+  auto red = m.createMaterial("Red", {1, 0, 0});
+  TopoDS_Face top;
+  TopoDS_Edge edge;
+  for (TopExp_Explorer f(m.document().worldShape(*m.document().find(*box)), TopAbs_FACE); f.More(); f.Next()) {
+    const auto n = geom::planarFaceNormal(TopoDS::Face(f.Current()));
+    if (n && n->Z() > 0.99) top = TopoDS::Face(f.Current());
+  }
+  ASSERT_TRUE(m.paintFaces(*box, {top}, *red).ok());
+  for (TopExp_Explorer f(m.document().worldShape(*m.document().find(*box)), TopAbs_FACE); f.More(); f.Next()) {
+    const auto n = geom::planarFaceNormal(TopoDS::Face(f.Current()));
+    if (n && n->Z() > 0.99) top = TopoDS::Face(f.Current());
+  }
+  for (TopExp_Explorer e(m.document().worldShape(*m.document().find(*box)), TopAbs_EDGE); e.More(); e.Next()) {
+    BRepAdaptor_Curve c(TopoDS::Edge(e.Current()));
+    if (c.Value(0.5 * (c.FirstParameter() + c.LastParameter())).Distance(gp_Pnt(500, 0, 0)) < 1e-6) {
+      edge = TopoDS::Edge(e.Current());
+    }
+  }
+  ASSERT_FALSE(top.IsNull());
+  ASSERT_FALSE(edge.IsNull());
+  // An edge: one line.
+  auto clip = m.copyToClipboard(std::vector<DeleteTarget>{{*box, false, {}, {edge}}});
+  ASSERT_TRUE(clip.ok()) << clip.error();
+  ASSERT_EQ(clip->objects.size(), 1u);
+  gp_Trsf away;
+  away.SetTranslation(gp_Vec(0, -3000, 0));
+  auto pasted = m.paste(*clip, away);
+  ASSERT_TRUE(pasted.ok());
+  EXPECT_EQ(m.document().find(pasted->front())->kind(), ObjectKind::Curve);
+  EXPECT_NEAR(geom::volume(m.document().worldShape(*m.document().find(*box))), 1e9, 1e-2);
+  // A face: a face, red, 1000 x 1000.
+  auto copied = m.copyElements({DeleteTarget{*box, false, {top}, {}}}, away, 2);
+  ASSERT_TRUE(copied.ok()) << copied.error();
+  ASSERT_EQ(copied->size(), 2u);
+  for (const ObjectId& id : *copied) {
+    const Object* o = m.document().find(id);
+    EXPECT_EQ(o->kind(), ObjectKind::Face);
+    EXPECT_EQ(o->material, *red);
+    EXPECT_NEAR(geom::area(m.document().worldShape(*o)), 1e6, 1e-3);
+  }
+  EXPECT_EQ(count(m, ObjectKind::Solid), 1);
+  EXPECT_NEAR(geom::volume(m.document().worldShape(*m.document().find(*box))), 1e9, 1e-2);
+  ASSERT_TRUE(m.undo());  // the two copies, one step
+  EXPECT_EQ(count(m, ObjectKind::Face), 0);
+  // The API, with the same targets.
+  api::CommandApi api(m);
+  const auto r = nlohmann::json::parse(api.execute(nlohmann::json{
+      {"command", "copy_array"},
+      {"args", {{"elements", {{{"id", *box}, {"faces", {{{"normal", {0, 0, 1}}}}}}}},
+                {"vector", {0, 0, 2000}}, {"count", 1}}}}.dump()));
+  ASSERT_TRUE(r["ok"].get<bool>()) << r.dump();
+  EXPECT_EQ(count(m, ObjectKind::Face), 1);
+  EXPECT_EQ(count(m, ObjectKind::Solid), 1);
+}

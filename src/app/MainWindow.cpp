@@ -1361,22 +1361,33 @@ bool MainWindow::exportImage(const QString& path) {
 }
 
 bool MainWindow::copySelection() {
-  auto clip = modeler_.copyToClipboard(selection());
+  // Faces / edges picked on their own copy just those (CLIP-01), whole
+  // objects copy whole: the same targets as Delete.
+  const std::vector<doc::DeleteTarget> targets = selectionTargets();
+  auto clip = targets.empty() ? Result<doc::Modeler::Clipboard>::failure("Nothing selected")
+                              : modeler_.copyToClipboard(targets);
   if (!clip) {
     reportError(tr("コピーする物を選択してください"));
     return false;
   }
   clipboard_ = std::move(clip.value());
-  setStatus(tr("%1 個をコピーしました（Ctrl+V で貼り付け）").arg(selection().size()));
+  const bool partial = std::any_of(targets.begin(), targets.end(), [](const doc::DeleteTarget& t) { return !t.whole; });
+  setStatus(partial ? tr("選んだ面・辺をコピーしました（Ctrl+V で貼り付け）")
+                    : tr("%1 個をコピーしました（Ctrl+V で貼り付け）").arg(targets.size()));
   return true;
 }
 
 bool MainWindow::cutSelection() {
-  const std::vector<doc::ObjectId> ids = selection();
+  // Copy, then the same Delete as the Delete key (CLIP-02): a face cut
+  // from a box takes that face only; refused, nothing changes and the
+  // clipboard keeps what it had.
+  const std::vector<doc::DeleteTarget> targets = selectionTargets();
+  doc::Modeler::Clipboard previous = clipboard_;
   if (!copySelection()) return false;
-  const Status s = modeler_.remove(ids);
-  if (!s) {
-    reportError(QString::fromStdString(s.message()));
+  const auto outcome = modeler_.deleteSelection(targets);
+  if (!outcome) {
+    clipboard_ = std::move(previous);
+    reportError(tr("切り取れませんでした: %1").arg(userMessage(QString::fromStdString(outcome.error()))));
     return false;
   }
   setSelection({});
@@ -2076,12 +2087,9 @@ void MainWindow::syncEditContext() {
   viewport_->setEditContext({});
 }
 
-void MainWindow::deleteSelection() {
-  if (selection_.empty()) return;
-  // What is selected, per object, resolved now: the faces and edges picked
-  // on it, or the whole object (picked as an object: group, component,
-  // triple-click, box selection). One shared Modeler call (also the API's
-  // "delete"): one undo step, all or nothing, the reason when refused.
+std::vector<doc::DeleteTarget> MainWindow::selectionTargets() const {
+  // Per object: the faces and edges picked on it, or the whole object
+  // (picked as an object: group, component, triple-click, box selection).
   std::map<doc::ObjectId, doc::DeleteTarget> byObject;
   for (const ElementRef& e : elements_) {
     const TopoDS_Shape shape = viewport_->elementShape(e);
@@ -2106,9 +2114,23 @@ void MainWindow::deleteSelection() {
     const bool complete = !all.empty() && std::all_of(all.begin(), all.end(), [this](const ElementRef& el) {
       return std::find(elements_.begin(), elements_.end(), el) != elements_.end();
     });
-    if (complete) it->second.whole = true;
+    if (complete) it->second = doc::DeleteTarget{id, true, {}, {}};
     targets.push_back(it->second);
   }
+  return targets;
+}
+
+bool MainWindow::partOfObjectsSelected() const {
+  const auto targets = selectionTargets();
+  return std::any_of(targets.begin(), targets.end(), [](const doc::DeleteTarget& t) { return !t.whole; });
+}
+
+void MainWindow::deleteSelection() {
+  if (selection_.empty()) return;
+  // What is selected, resolved now (selectionTargets). One shared Modeler
+  // call (also the API's "delete"): one undo step, all or nothing, the
+  // reason when refused.
+  const std::vector<doc::DeleteTarget> targets = selectionTargets();
   const auto outcome = modeler_.deleteSelection(targets);
   if (!outcome) {
     reportError(tr("削除できませんでした: %1").arg(userMessage(QString::fromStdString(outcome.error()))));
@@ -2141,6 +2163,10 @@ void MainWindow::selectAll() {
 }
 
 void MainWindow::groupSelection() {
+  if (partOfObjectsSelected()) {
+    reportError(tr("選んだ面・辺だけをグループにすることはまだできません。オブジェクト全体を選んでください（トリプルクリック）"));
+    return;
+  }
   auto id = modeler_.group(selection_);
   if (!id) {
     reportError(tr("グループ化できません: %1").arg(QString::fromStdString(id.error())));
@@ -2161,6 +2187,10 @@ void MainWindow::ungroupSelection() {
 }
 
 void MainWindow::makeComponent() {
+  if (partOfObjectsSelected()) {
+    reportError(tr("選んだ面・辺だけをコンポーネントにすることはまだできません。オブジェクト全体を選んでください（トリプルクリック）"));
+    return;
+  }
   auto id = modeler_.makeComponent(selection_);
   if (!id) {
     reportError(tr("コンポーネントを作成できません: %1").arg(QString::fromStdString(id.error())));

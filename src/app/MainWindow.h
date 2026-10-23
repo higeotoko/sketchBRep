@@ -48,6 +48,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   void setElementSelection(const std::vector<ElementRef>& elements) override;
   std::vector<ElementRef> elementSelection() const override { return elements_; }
   std::vector<doc::ObjectId> selection() const override { return selection_; }
+  std::vector<doc::DeleteTarget> selectionTargets() const override;
   doc::ObjectId editingGroup() const override { return modeler_.activeGroup(); }
   void enterGroup(const doc::ObjectId& groupId) override;
   void exitGroup() override;
@@ -197,6 +198,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   void import3dm();
   void export3dm();
   void deleteSelection();
+  // Faces / edges of some object picked without the whole object.
+  bool partOfObjectsSelected() const;
   void selectAll();
   void groupSelection();
   void ungroupSelection();

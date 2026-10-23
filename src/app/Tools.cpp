@@ -2191,9 +2191,33 @@ std::optional<ArrayRequest> parseArrayRequest(const QString& text) {
 
 // --- Move / Rotate shared ------------------------------------------------------------
 
+void TransformTool::captureTargets() {
+  targets_ = host_.selection();
+  edgeTargets_.clear();
+  elementTargets_.clear();
+  for (const doc::DeleteTarget& t : host_.selectionTargets()) {
+    if (t.whole) continue;
+    elementTargets_.push_back(t);
+  }
+  if (elementTargets_.empty()) return;
+  // Some objects partly: the whole ones go along as whole targets.
+  std::vector<doc::ObjectId> whole;
+  for (const doc::DeleteTarget& t : host_.selectionTargets()) {
+    if (t.whole) whole.push_back(t.id);
+  }
+  for (const doc::ObjectId& id : whole) elementTargets_.push_back(doc::DeleteTarget{id, true, {}, {}});
+  const bool edgesOnly = std::all_of(elementTargets_.begin(), elementTargets_.end(), [](const doc::DeleteTarget& t) {
+    return !t.whole && t.faces.empty();
+  });
+  if (edgesOnly) {
+    for (const doc::DeleteTarget& t : elementTargets_) edgeTargets_.insert(edgeTargets_.end(), t.edges.begin(), t.edges.end());
+  }
+}
+
 bool TransformTool::keyPress(QKeyEvent* event) {
   if (event->key() == Qt::Key_Control && !event->isAutoRepeat()) {
     copy_ = !copy_;
+    copyToggled();
     refresh();
     return true;
   }
@@ -2207,15 +2231,24 @@ QString TransformTool::copySuffix() const {
 bool TransformTool::commit(const gp_Trsf& delta, int count) {
   doc::Modeler& m = host_.modeler();
   recent_.begin(m);  // a copy landing on what is there records nothing
-  if (copy_ && !edgeTargets_.empty()) {
-    // Just the selected edges, as lines (the faces / solids stay as they are).
-    auto created = m.copyEdges(edgeTargets_, delta, count);
+  if (copy_ && !elementTargets_.empty()) {
+    // Just the selected faces / edges (the faces / solids they belong to
+    // stay as they are): edges alone as lines that may divide faces,
+    // otherwise the elements as faces and lines of their own.
+    auto created = !edgeTargets_.empty() ? m.copyEdges(edgeTargets_, delta, count)
+                                         : m.copyElements(elementTargets_, delta, count);
     if (!created) {
       host_.reportError(QString::fromStdString(created.error()));
       last_.reset();
       return false;
     }
     host_.setSelection(created.value());
+  } else if (!elementTargets_.empty()) {
+    // Faces / edges of an object picked on their own are not the object.
+    host_.reportError(QObject::tr("選んだ面・辺だけを%1することはできません（Ctrl でコピー、全体はトリプルクリックで選択）")
+                          .arg(name()));
+    last_.reset();
+    return false;
   } else if (copy_) {
     auto created = m.copy(targets_, delta, count);
     if (!created) {
@@ -2232,7 +2265,7 @@ bool TransformTool::commit(const gp_Trsf& delta, int count) {
       return false;
     }
   }
-  last_ = Last{targets_, edgeTargets_, delta, copy_, count};
+  last_ = Last{targets_, edgeTargets_, elementTargets_, delta, copy_, count};
   recent_.mark(m);
   return true;
 }
@@ -2245,6 +2278,7 @@ bool TransformTool::redoLast(const gp_Trsf& delta, int count) {
   const Status replaced = recent_.replace(host_.modeler(), [&] {
     targets_ = previous.targets;
     edgeTargets_ = previous.edges;
+    elementTargets_ = previous.elements;
     copy_ = previous.copy;
     if (commit(delta, count)) return Status::success();
     last_ = previous;  // the original comes back
@@ -2293,6 +2327,19 @@ void MoveTool::mouseMove(const ToolEvent& e) {
   const snap::SnapResult r = snapAt(e, base_, free ? std::nullopt : std::optional<gp_Pln>(gp_Pln(base_, gp::DZ())));
   if (!r.valid()) return;
   current_ = r.point;
+  if (copy_ && !elementTargets_.empty() && edgeTargets_.empty()) {
+    // Copying selected faces (and edges): the copies follow the cursor.
+    const gp_Vec d(base_, current_);
+    host_.setMeasurement(QObject::tr("距離"), mm(d.Magnitude()));
+    if (d.Magnitude() > tolerance::kMinDimension) {
+      previewEdgeCopy(d);
+    } else {
+      host_.viewport().clearPreview();
+    }
+    host_.setStatus(QObject::tr("選んだ面・辺をコピー: クリックで確定、または距離を入力  [%1]").arg(snapLabel(r.kind)) +
+                    lockSuffix() + copySuffix());
+    return;
+  }
   if (stretch_) {
     // Preview the slab the face sweeps through.
     const double d = gp_Vec(base_, current_).Dot(gp_Vec(stretchNormal_));
@@ -2357,9 +2404,11 @@ void MoveTool::mouseMove(const ToolEvent& e) {
 }
 
 void MoveTool::finish() {
-  if (corners_ && copy_ && !edgeTargets_.empty()) {
-    // Ctrl: the selected edges are copied, the shape is not reshaped.
+  if ((corners_ || stretch_) && copy_ && !elementTargets_.empty()) {
+    // Ctrl: the selected faces / edges are copied, the shape is not
+    // reshaped or stretched.
     corners_.reset();
+    stretch_.reset();
   }
   if (corners_) {
     const gp_Vec d(base_, current_);
@@ -2396,6 +2445,17 @@ void MoveTool::finish() {
   host_.viewport().setPickMode(PickMode::Objects);
 }
 
+void MoveTool::copyToggled() {
+  // A face being moved along its normal: a copy of it goes anywhere.
+  if (stretch_ && !elementTargets_.empty()) {
+    if (copy_) {
+      resetLock();
+    } else {
+      locked_ = stretchNormal_;
+    }
+  }
+}
+
 void MoveTool::previewEdgeCopy(const gp_Vec& d) {
   TopoDS_Compound copies;
   BRep_Builder builder;
@@ -2403,6 +2463,12 @@ void MoveTool::previewEdgeCopy(const gp_Vec& d) {
   gp_Trsf t;
   t.SetTranslation(d);
   for (const TopoDS_Edge& e : edgeTargets_) builder.Add(copies, e.Moved(TopLoc_Location(t)));
+  if (edgeTargets_.empty()) {
+    for (const doc::DeleteTarget& target : elementTargets_) {
+      for (const TopoDS_Face& f : target.faces) builder.Add(copies, f.Moved(TopLoc_Location(t)));
+      for (const TopoDS_Edge& e : target.edges) builder.Add(copies, e.Moved(TopLoc_Location(t)));
+    }
+  }
   host_.viewport().setPreview(copies, false);
 }
 
@@ -2462,16 +2528,9 @@ bool MoveTool::grabCorners(const ToolEvent& e) {
 
 void MoveTool::mousePress(const ToolEvent& e) {
   if (!moving_) {
-    // Edges selected on their own: what a Ctrl copy copies (ARR-01).
-    edgeTargets_.clear();
-    const auto picked = host_.elementSelection();
-    if (!picked.empty() &&
-        std::all_of(picked.begin(), picked.end(), [](const ElementRef& el) { return el.type == TopAbs_EDGE; })) {
-      for (const ElementRef& el : picked) {
-        const TopoDS_Shape edge = host_.viewport().elementShape(el);
-        if (!edge.IsNull()) edgeTargets_.push_back(TopoDS::Edge(edge));
-      }
-    }
+    // Faces / edges selected on their own: what a Ctrl copy copies
+    // (ARR-01, SEL-01); the owners are not moved or copied whole.
+    captureTargets();
     if (grabCorners(e)) return;
     // A single selected face of a solid or profile: stretch along its normal.
     const auto elements = host_.elementSelection();
@@ -2664,7 +2723,7 @@ void RotateTool::mouseMove(const ToolEvent& e) {
 void RotateTool::mousePress(const ToolEvent& e) {
   switch (stage_) {
     case Stage::Center: {
-      targets_ = host_.selection();
+      captureTargets();
       if (targets_.empty()) {
         host_.reportError(QObject::tr("先に回転する対象を選択してください"));
         return;
