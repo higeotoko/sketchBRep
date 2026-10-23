@@ -1,6 +1,7 @@
 #include "sbr/doc/Document.h"
 
 #include "sbr/Codec.h"
+#include "sbr/geom/Operations.h"
 
 #include <algorithm>
 
@@ -107,7 +108,26 @@ Result<TopoDS_Shape> buildInstanceShape(const ComponentDefinition& definition, c
     if (!mirror.IsDone()) return Result<TopoDS_Shape>::failure("The component could not be mirrored");
     shape = mirror.Shape();
   }
+  for (const StretchOp& op : instance.stretches) {
+    auto stretched =
+        geom::stretchShape(shape, geom::stretchTransform(op.center, op.xDir, op.yDir, op.fx, op.fy, op.fz));
+    if (!stretched) return Result<TopoDS_Shape>::failure("The placement could not be stretched: " + stretched.error());
+    shape = stretched.value();
+  }
   return shape;
+}
+
+std::string placementKey(const ComponentInstance& instance) {
+  std::ostringstream key;
+  key.precision(17);
+  key << instance.mirrored;
+  for (const ParameterOverride& p : instance.overrides) key << '|' << p.object << '/' << p.key << '=' << p.value;
+  for (const StretchOp& op : instance.stretches) {
+    key << "|s" << op.center.X() << ',' << op.center.Y() << ',' << op.center.Z() << ',' << op.xDir.X() << ','
+        << op.xDir.Y() << ',' << op.xDir.Z() << ',' << op.yDir.X() << ',' << op.yDir.Y() << ',' << op.yDir.Z() << ','
+        << op.fx << ',' << op.fy << ',' << op.fz;
+  }
+  return key.str();
 }
 
 void Document::invalidateIndex() const {
@@ -242,9 +262,7 @@ RegenContext Document::regenContext() const {
     const ComponentDefinition* d = findDefinition(instance.definitionId);
     if (!d) return Result<TopoDS_Shape>::failure("Unknown component definition " + instance.definitionId);
     std::ostringstream key;
-    key.precision(17);
-    key << instance.definitionId << '|' << instance.mirrored;
-    for (const ParameterOverride& p : instance.overrides) key << '|' << p.object << '/' << p.key << '=' << p.value;
+    key << instance.definitionId << '|' << placementKey(instance);
     auto it = variants_.find(key.str());
     if (it != variants_.end() && it->second.definitionShape.IsSame(d->shape)) return it->second.shape;
     RegenContext plain;

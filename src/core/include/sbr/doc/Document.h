@@ -102,6 +102,9 @@ gp_Trsf componentMirror();
 // its own parameters or mirror, that variant built from the definition.
 Result<TopoDS_Shape> buildInstanceShape(const ComponentDefinition& definition, const ComponentInstance& instance,
                                         const RegenContext& context = {});
+// What makes a placement's shape differ from the definition's (mirror,
+// overrides, its own stretches): placements with the same key share it.
+std::string placementKey(const ComponentInstance& instance);
 
 class Document {
  public:

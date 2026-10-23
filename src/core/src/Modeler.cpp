@@ -3444,8 +3444,17 @@ Status Modeler::stretch(const std::vector<ObjectId>& ids, const gp_Pnt& worldCen
       const Object* current = document_.find(id);
       if (!current || std::holds_alternative<GroupNode>(current->recipe.base)) continue;
       if (std::holds_alternative<ComponentInstance>(current->recipe.base)) {
-        return Status::failure("Component placements cannot be stretched on their own (all placements share the "
-                               "definition); make it unique first");
+        // This placement alone: its own stretch, in its own coordinates
+        // (the placement transform stays rigid); the definition and the
+        // other placements stay as they are.
+        Object o = *current;
+        const gp_Trsf toLocal = document_.worldTransform(o).Inverted();
+        std::get<ComponentInstance>(o.recipe.base)
+            .stretches.push_back(StretchOp{worldCenter.Transformed(toLocal), xDir.Transformed(toLocal),
+                                           yDir.Transformed(toLocal), fx, fy, fz});
+        if (const Status built = rebuild(o, context); !built) return built;
+        changes.modify(o);
+        continue;
       }
       if (std::holds_alternative<ImageUnderlay>(current->recipe.base)) {
         return Status::failure("Images are scaled uniformly only");
@@ -4309,15 +4318,12 @@ Status updatePlacements(const Document& document, ChangeSet& changes, const Comp
         ref.overrides.end());
     }
     // Placements with the same settings share one shape (and display mesh).
-    std::ostringstream key;
-    key.precision(17);
-    key << ref.mirrored;
-    for (const ParameterOverride& p : ref.overrides) key << '|' << p.object << '/' << p.key << '=' << p.value;
-    auto known = shared.find(key.str());
+    const std::string key = placementKey(ref);
+    auto known = shared.find(key);
     if (known == shared.end()) {
       auto shape = buildInstanceShape(definition, ref, document.regenContext());
       if (!shape) return Status::failure("'" + o.name + "': " + shape.error());
-      known = shared.emplace(key.str(), shape.value()).first;
+      known = shared.emplace(key, shape.value()).first;
     }
     updated.shape = known->second;
     if (adjust) adjust(updated);
@@ -4406,6 +4412,10 @@ Result<std::vector<ObjectId>> Modeler::explode(const ObjectId& instanceId) {
   if (ref.mirrored) {
     // Its pieces would need mirrored placements, which stay rigid here.
     return Result<std::vector<ObjectId>>::failure("A mirrored component cannot be exploded; mirror it back first");
+  }
+  if (!ref.stretches.empty()) {
+    return Result<std::vector<ObjectId>>::failure(
+        "This placement is stretched on its own; it cannot be exploded yet (undo the stretch first)");
   }
   auto definition = applyOverrides(*stored, ref.overrides, document_.regenContext());
   if (!definition) return Result<std::vector<ObjectId>>::failure(definition.error());
@@ -4547,6 +4557,12 @@ Result<ObjectId> Modeler::beginComponentEdit(const ObjectId& instanceId) {
   if (!ref) return Result<ObjectId>::failure("Not a component instance");
   const ComponentDefinition* definition = document_.findDefinition(ref->definitionId);
   if (!definition) return Result<ObjectId>::failure("Definition not found");
+  if (!ref->stretches.empty()) {
+    // Editing shows the shared definition; this placement differs from it.
+    return Result<ObjectId>::failure(
+        "This placement is stretched on its own; edit the component from another placement (the edit applies to "
+        "this one too) or undo the stretch first");
+  }
 
   Object group;
   group.id = generateObjectId();
@@ -4751,7 +4767,7 @@ Result<std::string> Modeler::makeUnique(const ObjectId& instanceId) {
   }
 
   Object updated = *instance;
-  ComponentInstance own{definition.id, {}, ref->mirrored};
+  ComponentInstance own{definition.id, {}, ref->mirrored, ref->stretches};
   auto shape = buildInstanceShape(definition, own, document_.regenContext());
   if (!shape) return R::failure(shape.error());
   updated.recipe.base = own;

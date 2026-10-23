@@ -1,7 +1,7 @@
 // Scale per direction (SketchUp's scale grips): width, depth or height on
 // their own, exact B-rep (a circle becomes an ellipse), painted faces and
-// holes kept, saved, undone; rotated objects along their own axes;
-// component placements refused; the API does the same.
+// holes kept, saved, undone; rotated objects along their own axes; one
+// component placement on its own; the API does the same.
 
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
@@ -141,20 +141,52 @@ TEST(Stretch, AlongARotatedObjectsOwnAxis) {
   EXPECT_NEAR(b.CornerMax().Y(), (2000.0 + 1000.0) / std::sqrt(2.0), 1e-3);
 }
 
-// A component placement is not stretched on its own (it would change every
-// placement); refused, nothing changes. Mirroring (a negative factor) is
-// refused too.
-TEST(Stretch, ComponentsAndMirroringRefused) {
+// XFORM-05, SC10: one of two placements of the same component made wider
+// on its own: that placement only; the other and the shared definition
+// stay; saved and reloaded; one undo step. Editing the component in place
+// from the stretched placement is refused (it shows the shared shape);
+// mirroring (a negative factor) is refused.
+TEST(Stretch, OnePlacementOnItsOwn) {
   Modeler m;
   const ObjectId box = cube(m);
   auto component = m.makeComponent({box});
   ASSERT_TRUE(component.ok());
+  gp_Trsf away;
+  away.SetTranslation(gp_Vec(3000, 0, 0));
+  auto copies = m.copy({*component}, away, 1);
+  ASSERT_TRUE(copies.ok());
+  const ObjectId other = copies->front();
+  const std::string definition = std::get<ComponentInstance>(m.document().find(*component)->recipe.base).definitionId;
+  const double definitionVolume = geom::volume(m.document().findDefinition(definition)->shape);
   const std::size_t steps = m.history().undoCount();
   const Status s = m.stretch({*component}, gp_Pnt(0, 0, 0), gp::DX(), gp::DY(), 2.0, 1.0, 1.0);
-  EXPECT_FALSE(s.ok());
-  EXPECT_NE(s.message().find("unique"), std::string::npos) << s.message();
+  ASSERT_TRUE(s.ok()) << s.message();
+  EXPECT_EQ(m.history().undoCount(), steps + 1);
+  Bnd_Box b = boundsOf(m, *component);
+  EXPECT_NEAR(b.CornerMax().X() - b.CornerMin().X(), 2000, 1e-6);
+  EXPECT_NEAR(b.CornerMax().Y() - b.CornerMin().Y(), 1000, 1e-6);
+  Bnd_Box o = boundsOf(m, other);
+  EXPECT_NEAR(o.CornerMax().X() - o.CornerMin().X(), 1000, 1e-6);
+  EXPECT_NEAR(geom::volume(m.document().findDefinition(definition)->shape), definitionVolume, 1e-6);
+  EXPECT_EQ(std::get<ComponentInstance>(m.document().find(other)->recipe.base).definitionId, definition);
+  // In the file, and back.
+  const std::string path = ::testing::TempDir() + "stretch_placement.sbr";
+  ASSERT_TRUE(m.save(path).ok());
+  Modeler back;
+  ASSERT_TRUE(back.load(path).ok());
+  b = boundsOf(back, *component);
+  EXPECT_NEAR(b.CornerMax().X() - b.CornerMin().X(), 2000, 1e-6);
+  o = boundsOf(back, other);
+  EXPECT_NEAR(o.CornerMax().X() - o.CornerMin().X(), 1000, 1e-6);
+  // Edited in place from the stretched one: refused with the reason.
+  auto edit = m.beginComponentEdit(*component);
+  EXPECT_FALSE(edit.ok());
+  // Mirroring stays a separate operation.
   EXPECT_FALSE(m.stretch({box}, gp_Pnt(0, 0, 0), gp::DX(), gp::DY(), -1.0, 1.0, 1.0).ok());
-  EXPECT_EQ(m.history().undoCount(), steps);
+  ASSERT_TRUE(m.undo());
+  b = boundsOf(m, *component);
+  EXPECT_NEAR(b.CornerMax().X() - b.CornerMin().X(), 1000, 1e-6);
+  EXPECT_TRUE(std::get<ComponentInstance>(m.document().find(*component)->recipe.base).plain());
 }
 
 TEST(Stretch, Api) {

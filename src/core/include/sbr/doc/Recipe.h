@@ -182,6 +182,18 @@ struct GroupNode {
   bool editingMirrored = false;
 };
 
+// Scale along three directions of a frame (object coordinates), each by its
+// own factor, about `center` (SketchUp's scale grips: width, depth or
+// height alone, or several). Exact: the B-rep geometry is transformed
+// (planes stay planes, circles become ellipses as exact NURBS). Factors
+// are positive (mirroring is a separate operation).
+struct StretchOp {
+  gp_Pnt center;
+  gp_Dir xDir{1, 0, 0};
+  gp_Dir yDir{0, 1, 0};  // zDir = xDir x yDir
+  double fx = 1.0, fy = 1.0, fz = 1.0;
+};
+
 // Placement of a shared component definition.
 struct ComponentInstance {
   std::string definitionId;
@@ -190,8 +202,12 @@ struct ComponentInstance {
   // mirror lives in the geometry, never in the placement transform: OCCT
   // locations stay rigid.
   bool mirrored = false;
+  // This placement alone stretched (width only, height only, ...), in the
+  // placement's own coordinates, applied in order after the mirror. The
+  // definition, and every other placement, stay as they are (XFORM-05).
+  std::vector<StretchOp> stretches;
   // Uses the definition's shape as it is (shared display and meshes).
-  bool plain() const { return overrides.empty() && !mirrored; }
+  bool plain() const { return overrides.empty() && !mirrored && stretches.empty(); }
 };
 
 using BaseFeature = std::variant<RectangleProfile, CircleProfile, PolygonProfile, PolylineCurve, InterpolatedCurve,
@@ -247,18 +263,6 @@ struct HoleOp {
 struct ScaleOp {
   gp_Pnt center;
   double factor = 1.0;
-};
-
-// Scale along three directions of a frame (object coordinates), each by its
-// own factor, about `center` (SketchUp's scale grips: width, depth or
-// height alone, or several). Exact: the B-rep geometry is transformed
-// (planes stay planes, circles become ellipses as exact NURBS). Factors
-// are positive (mirroring is a separate operation).
-struct StretchOp {
-  gp_Pnt center;
-  gp_Dir xDir{1, 0, 0};
-  gp_Dir yDir{0, 1, 0};  // zDir = xDir x yDir
-  double fx = 1.0, fy = 1.0, fz = 1.0;
 };
 
 // A face taken out (SketchUp: select a face, Delete): the solid becomes an

@@ -248,6 +248,14 @@ json baseToJson(const BaseFeature& base) {
             json j = {{"type", "instance"}, {"definition", c.definitionId}};
             if (!c.overrides.empty()) j["overrides"] = overridesToJson(c.overrides);
             if (c.mirrored) j["mirrored"] = true;
+            if (!c.stretches.empty()) {
+              json list = json::array();
+              for (const StretchOp& op : c.stretches) {
+                list.push_back({{"center", toJson(op.center)}, {"x", toJson(op.xDir)}, {"y", toJson(op.yDir)},
+                                {"factors", {op.fx, op.fy, op.fz}}});
+              }
+              j["stretches"] = list;
+            }
             return j;
           },
       },
@@ -385,6 +393,19 @@ BaseFeature baseFrom(const json& j) {
     c.definitionId = j.at("definition").get<std::string>();
     if (j.contains("overrides")) c.overrides = overridesFrom(j.at("overrides"));
     c.mirrored = j.value("mirrored", false);
+    if (j.contains("stretches")) {
+      for (const json& item : j.at("stretches")) {
+        StretchOp op;
+        op.center = pointFrom(item.at("center"));
+        op.xDir = dirFrom(item.at("x"));
+        op.yDir = dirFrom(item.at("y"));
+        const json& f = item.at("factors");
+        op.fx = f.at(0).get<double>();
+        op.fy = f.at(1).get<double>();
+        op.fz = f.at(2).get<double>();
+        c.stretches.push_back(op);
+      }
+    }
     return c;
   }
   throw std::runtime_error("unknown base feature type: " + type);
