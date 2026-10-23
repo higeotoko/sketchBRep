@@ -4,6 +4,12 @@
 #include <cstring>
 #include <QImage>
 #include <Image_PixMap.hxx>
+#include <PrsMgr_PresentationManager.hxx>
+#include <SelectMgr_Selection.hxx>
+#include <Prs3d_Presentation.hxx>
+#include <AIS_InteractiveObject.hxx>
+#include <Graphic3d_Group.hxx>
+#include <Graphic3d_ArrayOfTriangles.hxx>
 #include <Graphic3d_AspectFillArea3d.hxx>
 #include <Graphic3d_TextureParams.hxx>
 #include <Graphic3d_Texture2D.hxx>
@@ -54,6 +60,64 @@
 #include "sbr/geom/Operations.h"
 
 namespace sbr::app {
+
+namespace {
+// Sky above the horizon, ground below (SketchUp's default style), drawn in
+// screen pixels behind everything. `horizon` counts rows from the top.
+class Backdrop : public AIS_InteractiveObject {
+ public:
+  Backdrop(int width, int height, int horizon, bool under)
+      : width_(width), height_(height), horizon_(horizon), under_(under) {}
+  void Compute(const Handle(PrsMgr_PresentationManager)&, const Handle(Prs3d_Presentation)& prs,
+               const Standard_Integer) override {
+    const Quantity_Color skyTop(0.82, 0.85, 0.87, Quantity_TOC_sRGB), skyLow(0.95, 0.95, 0.96, Quantity_TOC_sRGB),
+        ground(0.80, 0.80, 0.78, Quantity_TOC_sRGB);
+    Handle(Graphic3d_ArrayOfTriangles) tris = new Graphic3d_ArrayOfTriangles(12, 0, Graphic3d_ArrayFlags_VertexColor);
+    auto band = [&](double y0, double y1, const Quantity_Color& c0, const Quantity_Color& c1) {
+      if (y1 - y0 < 0.5) return;
+      const double w = width_;
+      tris->AddVertex(gp_Pnt(0, y0, 0), c0);
+      tris->AddVertex(gp_Pnt(w, y0, 0), c0);
+      tris->AddVertex(gp_Pnt(w, y1, 0), c1);
+      tris->AddVertex(gp_Pnt(0, y0, 0), c0);
+      tris->AddVertex(gp_Pnt(w, y1, 0), c1);
+      tris->AddVertex(gp_Pnt(0, y1, 0), c1);
+    };
+    // Screen y from the bottom: the horizon line and the bands either side.
+    const double h = height_, line = std::clamp(h - horizon_, 0.0, h);
+    if (!under_) {
+      band(0, line, ground, ground);
+      band(line, h, skyLow, skyTop);
+    } else {
+      band(0, line, skyTop, skyLow);
+      band(line, h, ground, ground);
+    }
+    if (tris->VertexNumber() == 0) return;
+    Handle(Graphic3d_AspectFillArea3d) aspect = new Graphic3d_AspectFillArea3d();
+    aspect->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);
+    aspect->SetInteriorStyle(Aspect_IS_SOLID);
+    Handle(Graphic3d_Group) group = prs->NewGroup();
+    group->SetGroupPrimitivesAspect(aspect);
+    group->AddPrimitiveArray(tris);
+  }
+  void ComputeSelection(const Handle(SelectMgr_Selection)&, const Standard_Integer) override {}
+
+ private:
+  int width_, height_, horizon_;
+  bool under_;
+};
+
+// A texture from pixels in memory (pictures, the sky / ground background).
+class PixmapTexture : public Graphic3d_Texture2D {
+ public:
+  explicit PixmapTexture(const Handle(Image_PixMap)& pixels)
+#if OCC_VERSION_HEX >= 0x070700
+      : Graphic3d_Texture2D(pixels, Graphic3d_TypeOfTexture_2D) {}
+#else
+      : Graphic3d_Texture2D(pixels, Graphic3d_TOT_2D) {}
+#endif
+};
+}  // namespace
 namespace {
 
 Quantity_Color rgb(double r, double g, double b) { return Quantity_Color(r, g, b, Quantity_TOC_RGB); }
@@ -131,7 +195,7 @@ void Viewport::initViewer() {
     return;
   }
 
-  view_->SetBgGradientColors(rgb(0.96, 0.97, 0.99), rgb(0.80, 0.84, 0.89), Aspect_GFM_VER);
+  view_->SetBackgroundColor(rgb(0.95, 0.95, 0.96));  // behind the sky / ground backdrop
   view_->TriedronDisplay(Aspect_TOTP_LEFT_LOWER, Quantity_NOC_GRAY20, 0.08, V3d_ZBUFFER);
   view_->ChangeRenderingParams().IsAntialiasingEnabled = Standard_True;
   view_->ChangeRenderingParams().NbMsaaSamples = 4;
@@ -379,15 +443,7 @@ void showBackSide(const Handle(AIS_Shape)& ais, doc::ObjectKind kind) {
 namespace {
 // A 2D texture from pixels in memory (OCCT keeps that constructor
 // protected, and its "manual" convenience class is gone in 8.0).
-class PixmapTexture : public Graphic3d_Texture2D {
- public:
-  explicit PixmapTexture(const Handle(Image_PixMap)& pixels)
-#if OCC_VERSION_HEX >= 0x070700
-      : Graphic3d_Texture2D(pixels, Graphic3d_TypeOfTexture_2D) {}
-#else
-      : Graphic3d_Texture2D(pixels, Graphic3d_TOT_2D) {}
-#endif
-};
+
 }  // namespace
 
 void Viewport::showImage(const Handle(AIS_Shape)& ais, const doc::ImageUnderlay& underlay) {
@@ -1334,7 +1390,39 @@ void Viewport::renderNow() {
     glSize_ = QSize(w, h);
     view_->MustBeResized();
   }
+  updateSkyAndGround();
   view_->Redraw();
+}
+
+void Viewport::updateSkyAndGround() {
+  const int rows = std::max(glSize_.height(), 2);
+  const Handle(Graphic3d_Camera)& camera = view_->Camera();
+  // The horizon is where horizontal planes vanish: a point far away in the
+  // looking direction, levelled. Above the screen when looking down in a
+  // parallel view (all ground), below it when looking up (all sky).
+  const gp_Dir d = camera->Direction();
+  const gp_Vec level(d.X(), d.Y(), 0.0);
+  double fromTop;  // horizon position, 0 = top edge, 1 = bottom edge
+  if (level.Magnitude() < 1e-9) {
+    fromTop = d.Z() < 0 ? -1.0 : 2.0;
+  } else {
+    const gp_Pnt distant = camera->Eye().Translated(level.Normalized() * (1e6 * std::max(camera->Distance(), 1.0)));
+    const double y = camera->Project(distant).Y();  // normalised device coordinates, +1 = top
+    fromTop = std::isfinite(y) ? (1.0 - y) / 2.0 : (d.Z() < 0 ? -1.0 : 2.0);
+  }
+  const int horizon = static_cast<int>(std::lround(std::clamp(fromTop, -1.0, 2.0) * rows));
+  const bool under = camera->Eye().Z() < 0;
+  if (horizon == horizonRow_ && rows == backgroundRows_ && under == underGround_ && !backdrop_.IsNull()) return;
+  horizonRow_ = horizon;
+  backdropWidth_ = std::max(glSize_.width(), 2);
+  backgroundRows_ = rows;
+  underGround_ = under;
+  if (!backdrop_.IsNull()) context_->Remove(backdrop_, Standard_False);
+  backdrop_ = new Backdrop(backdropWidth_, rows, horizon, under);
+  backdrop_->SetZLayer(Graphic3d_ZLayerId_BotOSD);
+  backdrop_->SetInfiniteState(true);  // not part of "fit all"
+  backdrop_->SetTransformPersistence(new Graphic3d_TransformPers(Graphic3d_TMF_2d, Aspect_TOTP_LEFT_LOWER));
+  context_->Display(backdrop_, 0, -1, Standard_False);
 }
 
 // --- camera --------------------------------------------------------------------

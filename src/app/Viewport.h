@@ -19,6 +19,7 @@
 #include <QWidget>
 
 #include <AIS_InteractiveContext.hxx>
+#include <AIS_InteractiveObject.hxx>
 #include <AIS_Shape.hxx>
 #include <AIS_RubberBand.hxx>
 #include <AIS_TextLabel.hxx>
@@ -297,6 +298,14 @@ class Viewport : public QWidget {
 
   QTimer syncTimer_;
   QSize glSize_;  // native window size the GL view was last resized to
+  // Sky above the horizon, ground below (SketchUp): screen-space bands
+  // behind everything, rebuilt only when the horizon moves on screen.
+  void updateSkyAndGround();
+  Handle(AIS_InteractiveObject) backdrop_;
+  int backdropWidth_ = 0;
+  int horizonRow_ = -1000000;
+  int backgroundRows_ = 0;
+  bool underGround_ = false;
   enum class Drag { None, Orbit, Pan } drag_ = Drag::None;
   QPoint lastDragPos_;
   gp_Pnt orbitPivot_;

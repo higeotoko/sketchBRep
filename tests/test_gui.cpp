@@ -168,6 +168,7 @@ class GuiPhase1 : public QObject {
   void lineToolCrossingLinesMakeFace();
   void eraserWorksOnLines();
   void rightClickMenuFollowsTheSelection();
+  void skyAndGroundFollowTheHorizon();
   void paintNeedsAMaterialAndPresetsAddOnClick();
   void followMeAroundTopFace();
   void wallToolAndArchitectureMenus();
@@ -2728,6 +2729,33 @@ void GuiPhase1::paintNeedsAMaterialAndPresetsAddOnClick() {
   click(f.vp, face);
   QCOMPARE(m.document().find(box)->faceMaterials.size(), std::size_t(1));
   QCOMPARE(m.document().find(box)->faceMaterials.front().material, m.document().materials().front().id);
+}
+
+// Sky above the horizon, ground below (SketchUp): in perspective the
+// horizon is where horizontal planes vanish; looking down from above in a
+// parallel view it is all ground. SBR_SHOT_DIR saves the pictures.
+void GuiPhase1::skyAndGroundFollowTheHorizon() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  f.box(0, 0, 1000, 1000, 1500);
+  doc::CameraState cam;
+  cam.eye = {-6000, -8000, 1700};
+  cam.target = {1000, 1000, 600};
+  cam.up = {0, 0, 1};
+  cam.perspective = true;
+  f.vp->restoreCamera(cam);
+  f.vp->syncNow();
+  const QString dir = qEnvironmentVariable("SBR_SHOT_DIR");
+  const QString path = (dir.isEmpty() ? QDir::tempPath() : dir) + QStringLiteral("/sky_ground.png");
+  QVERIFY(f.vp->dumpImage(path));
+  const QImage shot(path);
+  QVERIFY(!shot.isNull());
+  // Top: sky (bluish grey, lighter than the ground); bottom: ground.
+  const QColor top = shot.pixelColor(shot.width() - 5, 5);
+  const QColor bottom = shot.pixelColor(shot.width() - 5, shot.height() - 5);
+  QVERIFY2(top.blue() > top.red(), qPrintable(top.name()));
+  QVERIFY2(bottom.red() >= bottom.blue(), qPrintable(bottom.name()));
+  QVERIFY2(top != bottom, qPrintable(top.name() + bottom.name()));
 }
 
 QTEST_MAIN(GuiPhase1)
