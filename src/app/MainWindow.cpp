@@ -1070,6 +1070,7 @@ void MainWindow::activateTool(ToolId id) {
     active_->recentEdit().clear();  // typing after switching tools changes nothing earlier
   }
   viewport_->hideSnap();  // no marker or label left from the previous tool
+  viewport_->clearGrips();
   // While drawing outlines, show where loose lines/arcs are still open.
   viewport_->setShowOpenEnds(id == ToolId::Line || id == ToolId::Arc || id == ToolId::Curve);
   switch (id) {

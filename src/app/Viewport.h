@@ -21,6 +21,7 @@
 #include <QTimer>
 #include <QWidget>
 #include <QLabel>
+#include <gp_Ax3.hxx>
 
 #include <AIS_InteractiveContext.hxx>
 #include <AIS_InteractiveObject.hxx>
@@ -144,6 +145,11 @@ class Viewport : public QWidget {
   // what the point snapped to (SketchUp's ScreenTip), all from `result`.
   void showSnap(const snap::SnapResult& result, std::optional<gp_Pnt> anchor);
   void hideSnap();
+  // Scale grips: small cubes along `frame`, the same size on screen at any
+  // zoom, the `hot` one (index, -1 = none) marked; `outline` the box.
+  void showGrips(const std::vector<gp_Pnt>& grips, int hot, const gp_Ax3& frame, const TopoDS_Shape& outline);
+  void clearGrips() { showGrips({}, -1, gp_Ax3(), TopoDS_Shape()); }
+  std::size_t gripCount() const { return grips_.size(); }
   // The label shown (empty when none), where (logical pixels) and the point
   // it names.
   QString snapTip() const { return snapTipText_; }
@@ -332,6 +338,8 @@ class Viewport : public QWidget {
   Handle(AIS_Shape) snapMarker_;
   Handle(AIS_Shape) inferenceLine_;
   Handle(AIS_Shape) referenceLine_;
+  std::vector<Handle(AIS_Shape)> grips_;
+  Handle(AIS_Shape) gripOutline_;
   QLabel* snapTip_ = nullptr;  // a tooltip window letting the mouse through
   QString snapTipText_;
   QRect snapTipRect_;

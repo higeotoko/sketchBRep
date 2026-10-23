@@ -36,6 +36,7 @@
 
 #include <Aspect_DisplayConnection.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRep_Builder.hxx>
 #include <Standard_Failure.hxx>
@@ -1765,6 +1766,41 @@ void Viewport::showSnap(const snap::SnapResult& result, std::optional<gp_Pnt> an
 }
 
 void Viewport::hideSnap() { showSnap(snap::SnapResult{}, std::nullopt); }
+
+void Viewport::showGrips(const std::vector<gp_Pnt>& grips, int hot, const gp_Ax3& frame,
+                         const TopoDS_Shape& outline) {
+  if (view_.IsNull()) return;
+  for (const Handle(AIS_Shape)& g : grips_) context_->Remove(g, Standard_False);
+  grips_.clear();
+  if (!gripOutline_.IsNull()) context_->Remove(gripOutline_, Standard_False);
+  gripOutline_.Nullify();
+  if (!outline.IsNull()) {
+    gripOutline_ = new AIS_Shape(outline);
+    gripOutline_->SetColor(rgb(0.95, 0.85, 0.05));
+    gripOutline_->SetWidth(2.0);
+    gripOutline_->SetZLayer(Graphic3d_ZLayerId_Topmost);
+    context_->Display(gripOutline_, AIS_WireFrame, -1, Standard_False);
+  }
+  if (!grips.empty()) {
+    // One cube around the origin, in pixels: zoom persistence keeps its
+    // size on screen and places it at each grip.
+    const double side = 9.0 * devicePixelRatioF();
+    const gp_XYZ half = (frame.XDirection().XYZ() + frame.YDirection().XYZ() + frame.Direction().XYZ()) * (side / 2);
+    const TopoDS_Shape cube =
+        BRepPrimAPI_MakeBox(gp_Ax2(gp_Pnt(half.Reversed()), frame.Direction(), frame.XDirection()), side, side, side).Shape();
+    for (std::size_t i = 0; i < grips.size(); ++i) {
+      Handle(AIS_Shape) g = new AIS_Shape(cube);
+      g->SetColor(static_cast<int>(i) == hot ? rgb(0.9, 0.15, 0.1) : rgb(0.2, 0.85, 0.2));
+      g->Attributes()->SetFaceBoundaryDraw(Standard_True);
+      g->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(Quantity_NOC_BLACK, Aspect_TOL_SOLID, 1.0));
+      g->SetTransformPersistence(new Graphic3d_TransformPers(Graphic3d_TMF_ZoomPers, grips[i]));
+      g->SetZLayer(Graphic3d_ZLayerId_Topmost);
+      context_->Display(g, AIS_Shaded, -1, Standard_False);  // -1: never picked
+      grips_.push_back(g);
+    }
+  }
+  redraw();
+}
 
 void Viewport::hideSnapTip() {
   if (snapTip_) snapTip_->hide();

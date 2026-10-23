@@ -1090,6 +1090,7 @@ void GuiPhase1::scaleGripsStretchEachDirection() {
     tool = dynamic_cast<ScaleTool*>(f.window.activeTool());
   }
   QVERIFY(tool && tool->hasGrips());
+  QCOMPARE(f.vp->gripCount(), std::size_t(26));  // small cubes
   const std::size_t steps = m.history().undoCount();
   auto drag = [&](int sx, int sy, int sz, const QString& typed) {
     const gp_Pnt g = *tool->gripPoint(sx, sy, sz);
@@ -1130,6 +1131,12 @@ void GuiPhase1::scaleGripsStretchEachDirection() {
   QVERIFY2(std::abs(d.CornerMax().Y() - 1000) < 15 && std::abs(d.CornerMin().Y()) < 1e-6 &&
                std::abs(d.CornerMax().X() - 1000) < 1e-6,
            qPrintable(QStringLiteral("%1 %2").arg(d.CornerMin().Y()).arg(d.CornerMax().Y())));
+  QCOMPARE(f.vp->gripCount(), std::size_t(26));
+  // Another tool: no grips or box left behind.
+  f.window.activateTool(MainWindow::ToolId::Select);
+  QCOMPARE(f.vp->gripCount(), std::size_t(0));
+  f.window.activateTool(MainWindow::ToolId::Line);
+  QCOMPARE(f.vp->gripCount(), std::size_t(0));
 }
 
 // ScreenTip: the label beside the cursor names the snap the tool takes

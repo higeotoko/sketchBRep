@@ -701,6 +701,7 @@ class ScaleTool : public DrawingTool {
   QCursor cursor() const override;
   void activate() override;
   void cancel() override;
+  void deactivate() override;
   bool stepBack() override;
   void mousePress(const ToolEvent& e) override;
   void mouseMove(const ToolEvent& e) override;

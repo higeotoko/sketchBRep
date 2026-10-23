@@ -3263,6 +3263,17 @@ void ScaleTool::cancel() {
     buildBox();  // the shapes may have changed
     if (box_) showBox(std::nullopt);
   }
+  if (!box_) host_.viewport().clearGrips();
+}
+
+// Leaving the tool: the box and its grips go with it (cancel would show
+// them again).
+void ScaleTool::deactivate() {
+  cancel();
+  box_.reset();
+  hot_.reset();
+  host_.viewport().clearPreview();
+  host_.viewport().clearGrips();
 }
 
 // --- scale grips ---------------------------------------------------------------
@@ -3320,9 +3331,30 @@ std::optional<gp_Pnt> ScaleTool::gripPoint(int sx, int sy, int sz) const {
 
 void ScaleTool::showBox(const std::optional<Grip>& hot) {
   if (!box_) return;
-  TopoDS_Compound c;
+  // While a grip is dragged the box follows the stretched shape.
+  Box shown = *box_;
+  if (stage_ == Stage::Grip) {
+    const gp_XYZ a = anchor_.XYZ() - box_->frame.Location().XYZ();
+    const gp_Dir axes[] = {box_->frame.XDirection(), box_->frame.YDirection(), box_->frame.Direction()};
+    for (int i = 0; i < 3; ++i) {
+      const double c = a.Dot(axes[i].XYZ());
+      shown.lo.SetCoord(i + 1, c + (box_->lo.Coord(i + 1) - c) * factors_[i]);
+      shown.hi.SetCoord(i + 1, c + (box_->hi.Coord(i + 1) - c) * factors_[i]);
+    }
+  }
+  auto at = [&](const Grip& g) {
+    gp_XYZ p;
+    for (int i = 0; i < 3; ++i) {
+      const double lo = shown.lo.Coord(i + 1), hi = shown.hi.Coord(i + 1);
+      p.SetCoord(i + 1, g.s[i] < 0 ? lo : g.s[i] > 0 ? hi : 0.5 * (lo + hi));
+    }
+    const gp_Ax3& f = shown.frame;
+    return gp_Pnt(f.Location().XYZ() + p.X() * f.XDirection().XYZ() + p.Y() * f.YDirection().XYZ() +
+                  p.Z() * f.Direction().XYZ());
+  };
+  TopoDS_Compound outline;
   BRep_Builder b;
-  b.MakeCompound(c);
+  b.MakeCompound(outline);
   // The box's 12 edges.
   for (int axis = 0; axis < 3; ++axis) {
     for (int u : {-1, 1}) {
@@ -3332,17 +3364,14 @@ void ScaleTool::showBox(const std::optional<Grip>& hot) {
         z.s[axis] = 1;
         a.s[(axis + 1) % 3] = z.s[(axis + 1) % 3] = u;
         a.s[(axis + 2) % 3] = z.s[(axis + 2) % 3] = v;
-        const gp_Pnt pa = gripWorld(a), pz = gripWorld(z);
-        if (pa.Distance(pz) > 1e-6) b.Add(c, BRepBuilderAPI_MakeEdge(pa, pz).Edge());
+        const gp_Pnt pa = at(a), pz = at(z);
+        if (pa.Distance(pz) > 1e-6) b.Add(outline, BRepBuilderAPI_MakeEdge(pa, pz).Edge());
       }
     }
   }
-  // Grips: small squares facing the viewer (bigger under the cursor).
-  const gp_Vec diagonal(local(box_->lo), local(box_->hi));
-  const double size = std::max(diagonal.Magnitude() * 0.015, 1.0);
-  const gp_Dir view = host_.viewport().viewDirection();
-  const gp_Dir right = std::abs(view.Z()) < 0.99 ? gp_Dir(view.Crossed(gp::DZ())) : gp::DX();
-  const gp_Dir up = gp_Dir(right.Crossed(view));
+  // The grips: small cubes, the one under the cursor (or held) marked.
+  std::vector<gp_Pnt> grips;
+  int hotIndex = -1;
   for (int sx = -1; sx <= 1; ++sx) {
     for (int sy = -1; sy <= 1; ++sy) {
       for (int sz = -1; sz <= 1; ++sz) {
@@ -3351,19 +3380,12 @@ void ScaleTool::showBox(const std::optional<Grip>& hot) {
         g.s[0] = sx;
         g.s[1] = sy;
         g.s[2] = sz;
-        const bool isHot = hot && hot->s[0] == sx && hot->s[1] == sy && hot->s[2] == sz;
-        const double h = isHot ? 2.0 * size : size;
-        const gp_Pnt p = gripWorld(g);
-        BRepBuilderAPI_MakePolygon square;
-        for (const auto& [a, d] : {std::pair{-1, -1}, std::pair{1, -1}, std::pair{1, 1}, std::pair{-1, 1}}) {
-          square.Add(p.Translated(gp_Vec(right) * (a * h) + gp_Vec(up) * (d * h)));
-        }
-        square.Close();
-        b.Add(c, square.Wire());
+        if (hot && hot->s[0] == sx && hot->s[1] == sy && hot->s[2] == sz) hotIndex = static_cast<int>(grips.size());
+        grips.push_back(at(g));
       }
     }
   }
-  host_.viewport().setPreview(c, false);
+  host_.viewport().showGrips(grips, hotIndex, shown.frame, outline);
 }
 
 std::optional<ScaleTool::Grip> ScaleTool::gripAt(const QPoint& pos) const {
@@ -3473,6 +3495,7 @@ void ScaleTool::updateGripDrag(const QPoint& pos) {
     if (auto stretched = geom::stretchShape(shape, g)) b.Add(c, stretched.value());
   }
   vp.setPreview(c, true);
+  showBox(active_);
   QStringList parts;
   for (int i = 0; i < 3; ++i) {
     if (std::abs(f[i] - 1.0) < 1e-12 && !gripUniform()) continue;
@@ -3525,6 +3548,7 @@ bool ScaleTool::stepBack() {
   if (stage_ == Stage::Grip) {
     stage_ = Stage::Fixed;
     factors_ = {1, 1, 1};
+    host_.viewport().clearPreview();
     showBox(std::nullopt);
     return true;
   }
@@ -3625,6 +3649,7 @@ void ScaleTool::mousePress(const ToolEvent& e) {
       }
       stage_ = Stage::Fixed;
       factors_ = {1, 1, 1};
+      host_.viewport().clearPreview();
       buildBox();
       showBox(std::nullopt);
       return;
@@ -3725,6 +3750,7 @@ void ScaleTool::applyMeasurement(const QString& text) {
       });
       if (!s) host_.reportError(QString::fromStdString(s.message()));
     }
+    host_.viewport().clearPreview();
     buildBox();
     showBox(std::nullopt);
     return;
