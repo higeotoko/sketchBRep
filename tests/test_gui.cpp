@@ -220,6 +220,7 @@ class GuiPhase1 : public QObject {
   void deleteFaceLeavesOpenShape();
   void deleteLooseFaceKeepsItsOutline();
   void deleteMixedSelection();
+  void pushPullOnOpenShape();
   void imageUnderlayCalibrateLockTrace();
 };
 
@@ -2645,6 +2646,34 @@ void GuiPhase1::deleteMixedSelection() {
   QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
   QVERIFY(!m.document().find(l3));
   QVERIFY(m.document().find(cube));
+}
+
+// Push/pull with the tool on a face of an open box (its top deleted): a new
+// volume is made from that face; the box stays open with its other faces.
+void GuiPhase1::pushPullOnOpenShape() {
+  Fixture f;
+  QVERIFY(f.setUp(500, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+  TopoDS_Face top;
+  for (TopExp_Explorer e(m.document().worldShape(box), TopAbs_FACE); e.More(); e.Next()) {
+    const auto n = geom::planarFaceNormal(TopoDS::Face(e.Current()));
+    if (n && n->Z() > 0.99) top = TopoDS::Face(e.Current());
+  }
+  QVERIFY(m.deleteFaces(box, {top}).ok());
+  QCOMPARE(m.document().find(box)->kind(), doc::ObjectKind::Shell);
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::PushPull);
+  QTest::qWait(30);
+  click(f.vp, f.vp->toWidget(gp_Pnt(500, 0, 500)));  // the front face (y = 0)
+  move(f.vp, f.vp->toWidget(gp_Pnt(500, -600, 500)));
+  type(f.vp, QStringLiteral("400"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), std::size_t(2));
+  QCOMPARE(m.document().find(box)->kind(), doc::ObjectKind::Shell);
+  const doc::Object& volume = m.document().objects().back();
+  QCOMPARE(volume.kind(), doc::ObjectKind::Solid);
+  QVERIFY(std::abs(geom::volume(m.document().worldShape(volume)) - 1000.0 * 1000 * 400) < 1.0);
 }
 
 void GuiPhase1::deleteFaceLeavesOpenShape() {

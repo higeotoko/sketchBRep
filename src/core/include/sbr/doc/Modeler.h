@@ -502,6 +502,10 @@ class Modeler {
   std::vector<ObjectId> topmost(const std::vector<ObjectId>& ids) const;
 
  private:
+  // Push/pull of a flat face of an open shape: a new solid from that face
+  // (its own object, distance editable), the face taken out of the open
+  // shape (no duplicate faces), nothing else changed or filled.
+  Result<PushPullResult> volumeFromOpenFace(const ObjectId& id, const TopoDS_Face& worldFace, double distance);
   // The object with a MoveVerticesOp for these world points (not committed).
   Result<Object> movedVertices(const Object& current, const std::vector<gp_Pnt>& worldPoints,
                                const gp_Vec& worldDelta, bool autofold) const;

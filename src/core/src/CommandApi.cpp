@@ -906,7 +906,9 @@ const std::vector<CommandDef>& commands() {
        "equally outermost / close are refused, listing them). Planar faces only; curved faces by index, "
        "e.g. a cylinder side changes its radius. Positive distance moves the face outwards. A profile lying on another "
        "solid's face cuts into it (negative) or joins it (positive); the merged object gets a new "
-       "id, so always continue with the returned id.",
+       "id, so always continue with the returned id. A flat face of an open shape (faces deleted) gives a new "
+       "solid of its own from that face (returned id), the face is taken out of the open shape, which stays "
+       "open.",
        SCHEMA({"type": "object", "properties": {"id": {"type": "string"},
          "face": {"oneOf": [{"type": "integer"}, {"type": "object", "properties": {"normal": {"type": "array"},
                                                                                    "near": {"type": "array"}}}]},

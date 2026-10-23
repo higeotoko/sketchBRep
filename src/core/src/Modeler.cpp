@@ -2167,11 +2167,14 @@ Result<PushPullResult> Modeler::pushPull(const ObjectId& id, const TopoDS_Face& 
     return Result<PushPullResult>::failure(
         "Component instances cannot be pushed/pulled; edit the definition or explode it");
   }
-  if (current->kind() == ObjectKind::Shell) {
-    return Result<PushPullResult>::failure("Open shapes cannot be pushed/pulled; fill their holes first");
-  }
   if (!std::isfinite(distance) || std::abs(distance) < tolerance::kMinDimension) {
     return Result<PushPullResult>::failure("Distance must be non-zero");
+  }
+  // An open shape (faces deleted, kept open while modelling): the face
+  // gives a new volume of its own; Booleans with a solid are not involved.
+  if (current->kind() == ObjectKind::Shell ||
+      (current->kind() == ObjectKind::Face && current->shape.ShapeType() != TopAbs_FACE)) {
+    return volumeFromOpenFace(id, worldFace, distance);
   }
   Object object = *current;
   const gp_Trsf world = document_.worldTransform(object);
@@ -2267,6 +2270,76 @@ Result<PushPullResult> Modeler::pushPull(const ObjectId& id, const TopoDS_Face& 
   const Status committed = commitModified(std::move(object), "Push/Pull");
   if (!committed) return Result<PushPullResult>::failure(committed.message());
   return PushPullResult{id, key};
+}
+
+Result<PushPullResult> Modeler::volumeFromOpenFace(const ObjectId& id, const TopoDS_Face& worldFace,
+                                                   double distance) {
+  using R = Result<PushPullResult>;
+  const Object* shell = document_.find(id);
+  if (!shell) return R::failure("Object not found");
+  if (shell->locked) return R::failure("The object is locked");
+  const auto normal = geom::planarFaceNormal(worldFace);
+  if (!normal) {
+    return R::failure("Only flat faces of an open shape can be pushed/pulled into a volume (this face is curved)");
+  }
+  // The face as it is in the open shape (its orientation is the shape's
+  // outside): the volume grows that way for a positive distance.
+  TopTools_IndexedMapOfShape faces;
+  TopExp::MapShapes(document_.worldShape(*shell), TopAbs_FACE, faces);
+  int index = faces.FindIndex(worldFace);
+  for (int i = 1; i <= faces.Extent() && index == 0; ++i) {
+    if (faces(i).TShape() == worldFace.TShape()) index = i;
+  }
+  if (index == 0) return R::failure("The face is not part of this open shape (select it again)");
+  const TopoDS_Face face = TopoDS::Face(faces(index));
+  const auto outward = geom::planarFaceNormal(face);
+  if (!outward) return R::failure("The face is not flat");
+
+  // The new volume: a profile from the face, extruded (the distance stays
+  // editable, as for any push/pull). It is an object of its own beside the
+  // open shape: a solid, the shape stays open.
+  Object volume;
+  volume.id = generateObjectId();
+  volume.name = uniqueName("Volume");
+  volume.parent = shell->parent;
+  volume.layer = shell->layer;
+  volume.color = shell->color;
+  volume.material = shell->material;
+  const gp_Trsf toParent = document_.parentTransform(*shell).Inverted();
+  TopoDS_Face profile = TopoDS::Face(BRepBuilderAPI_Copy(face).Shape());
+  profile = TopoDS::Face(profile.Moved(TopLoc_Location(toParent)));
+  volume.recipe.base = ImportedShape{profile, "Face of " + shell->name};
+  // The profile's own normal decides the extrusion side: follow the face's
+  // outside for a positive distance.
+  const auto profileNormal = geom::planarFaceNormal(profile);
+  const double sign = profileNormal && profileNormal->Transformed(document_.parentTransform(*shell)).Dot(*outward) < 0
+                          ? -1.0
+                          : 1.0;
+  volume.recipe.modifiers.push_back(ExtrudeOp{distance * sign});
+  const std::string key = opKey(volume.recipe.modifiers.size() - 1);
+  if (const Status built = rebuild(volume, document_.regenContext()); !built) {
+    return R::failure("No volume can be made from this face: " + built.message());
+  }
+  if (volume.kind() != ObjectKind::Solid) return R::failure("No closed volume can be made from this face");
+
+  // The face itself becomes the volume's face: taken out of the open shape
+  // so that no two faces lie on top of each other. The shape keeps all its
+  // other faces and stays open (nothing is filled).
+  history_.beginGroup("Push/Pull");
+  ChangeSet changes(document_);
+  changes.add(volume);
+  history_.execute(changes.build("Push/Pull"));
+  if (faces.Extent() > 1) {
+    if (const Status s = removeFaces(id, {worldFace}); !s) {
+      history_.abortGroup();
+      return R::failure(s.message());
+    }
+  } else if (const Status s = remove({id}); !s) {  // it was that face alone
+    history_.abortGroup();
+    return R::failure(s.message());
+  }
+  history_.endGroup();
+  return PushPullResult{volume.id, key};
 }
 
 std::optional<Result<PushPullResult>> Modeler::mergeIntoHost(const Object& profileBefore,

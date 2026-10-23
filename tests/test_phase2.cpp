@@ -930,9 +930,14 @@ TEST(OpenShells, DeleteFaceKeepWorkingAndFillAgain) {
   ASSERT_TRUE(doc::deserializeDocument(doc::serializeDocument(m.document()), d).ok());
   EXPECT_EQ(d.find(*box)->kind(), doc::ObjectKind::Shell);
 
+  // Push/pull of one of its faces makes a volume of its own from that face
+  // (the shape stays open); taken back for what follows.
+  auto pulled = m.pushPull(*box, faceWithCentroid(m.document().worldShape(*box), -gp::DY(), gp_Pnt(1000, 0, 1250)), 100);
+  ASSERT_TRUE(pulled.ok()) << pulled.error();
+  EXPECT_EQ(m.document().find(pulled->id)->kind(), doc::ObjectKind::Solid);
+  EXPECT_EQ(m.document().find(*box)->kind(), doc::ObjectKind::Shell);
+  ASSERT_TRUE(m.undo());
   // Solid-only operations say so instead of failing oddly.
-  EXPECT_FALSE(m.pushPull(*box, faceWithCentroid(m.document().worldShape(*box), -gp::DY(), gp_Pnt(1000, 0, 1250)),
-                          100).ok());
   const doc::ObjectId other = *m.createRectangle(geom::SketchPlane::ground(), 100, 100);
   ASSERT_TRUE(m.extrude(other, 100).ok());
   EXPECT_FALSE(m.boolean(doc::BooleanKind::Union, {*box, other}).ok());
