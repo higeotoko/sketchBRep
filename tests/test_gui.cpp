@@ -210,6 +210,7 @@ class GuiPhase1 : public QObject {
   void escStepsBackAndConstraintsShow();
   void autosaveRecoveryAndBackups();
   void deleteFaceLeavesOpenShape();
+  void deleteLooseFaceKeepsItsOutline();
   void imageUnderlayCalibrateLockTrace();
 };
 
@@ -530,11 +531,20 @@ void GuiPhase1::selectFacesEdgesAndWholeObject() {
     return static_cast<QAction*>(nullptr);
   }();
   QVERIFY(deleteAction);
-  // Faces cannot be deleted on their own: the solid stays.
+  // The face with its edges (SketchUp): the top and the sides it held go;
+  // the bottom stays (open shape) and the 4 vertical edges stay as lines.
   deleteAction->trigger();
-  QVERIFY(!f.window.lastError().isEmpty());
-  QVERIFY(m.document().find(box));
+  QTest::qWait(30);
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().find(box)->kind(), doc::ObjectKind::Face);  // the bottom is left
+  QCOMPARE(m.document().objects().size(), std::size_t(1 + 4));
+  QVERIFY(m.undo());
+  QCOMPARE(m.document().find(box)->kind(), doc::ObjectKind::Solid);
+  f.vp->syncNow();
+  QTest::qWait(500);  // a fresh click series
 
+  click(f.vp, top);
+  doubleClick(f.vp, top);
   click(f.vp, top);  // third click right after the double-click: whole object
   QCOMPARE(f.window.elementSelection().size(), std::size_t(6 + 12));
   deleteAction->trigger();
@@ -2342,6 +2352,34 @@ void GuiPhase1::autosaveRecoveryAndBackups() {
 
 // Select a face, Delete: only that face goes and the shape stays open
 // (shown with its back side); filling the hole closes it again.
+// Request T1 / DEL-01: a drawn rectangle, its face clicked once and
+// deleted: the 4 lines stay (one undo step).
+void GuiPhase1::deleteLooseFaceKeepsItsOutline() {
+  Fixture f;
+  QVERIFY(f.setUp(500, 500));
+  doc::Modeler& m = f.window.modeler();
+  auto face = m.createRectangle(geom::SketchPlane::ground(), 1000, 1000);
+  QVERIFY(face.ok());
+  f.vp->syncNow();
+  f.window.activateWindow();
+  QTest::qWait(50);
+  f.window.activateTool(MainWindow::ToolId::Select);
+  click(f.vp, f.vp->toWidget(gp_Pnt(500, 500, 0)));
+  QCOMPARE(f.window.elementSelection().size(), std::size_t(1));
+  QCOMPARE(f.window.elementSelection().front().type, TopAbs_FACE);
+  const std::size_t steps = m.history().undoCount();
+  QTest::keyClick(f.vp, Qt::Key_Delete);
+  QTest::qWait(30);
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QVERIFY(!m.document().find(*face));
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  QCOMPARE(m.document().objects().front().kind(), doc::ObjectKind::Curve);
+  QCOMPARE(m.history().undoCount(), steps + 1);
+  QVERIFY(f.window.statusText().contains(QStringLiteral("線として残")));
+  QVERIFY(m.undo());
+  QCOMPARE(m.document().find(*face)->kind(), doc::ObjectKind::Face);
+}
+
 void GuiPhase1::deleteFaceLeavesOpenShape() {
   Fixture f;
   QVERIFY(f.setUp(500, 500));

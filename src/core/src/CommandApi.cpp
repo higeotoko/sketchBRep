@@ -954,20 +954,30 @@ const std::vector<CommandDef>& commands() {
          "required": ["points"]}),
        [](doc::Modeler& m, const json& a) { return idResult(must(m.splitWithLine(points(a, "points")))); }},
       {"delete_faces",
-       "Delete faces of a solid (or of an open shape) on their own, like selecting a face and pressing Delete: "
-       "it becomes an open shape (kind Shell) that can still be drawn on, painted and have more faces "
-       "deleted; push/pull and Booleans need it closed again (fill_holes). faces = list of selectors (index, "
-       "{\"normal\": [...], \"near\": [...]}). One undo step.",
-       SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "faces": {"type": "array"}},
+       "Delete faces on their own, like selecting faces and pressing Delete (SketchUp): the faces go, their "
+       "edges stay as lines unless still used by a face that is left. A loose profile leaves its outline; a "
+       "solid becomes an open shape (kind Shell) that can still be drawn on, painted and have more faces "
+       "deleted (push/pull and Booleans need it closed again: fill_holes); all faces of an object leave all "
+       "its edges as lines. 'edges' (optional) are taken away too, with the faces they bound. faces = list of "
+       "selectors (index, {\"normal\": [...], \"near\": [...]}); edges = edge selectors as for erase_line. "
+       "Returns the object's id (absent when nothing of it is left) and the lines made. One undo step.",
+       SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "faces": {"type": "array"},
+               "edges": {"type": "array"}},
                "required": ["id", "faces"]}),
        [](doc::Modeler& m, const json& a) {
          const ObjectId id = text(a, "id");
          const json& list = arg(a, "faces");
-         if (!list.is_array() || list.empty()) throw ApiError("'faces' must be a non-empty list");
+         if (!list.is_array()) throw ApiError("'faces' must be a list");
          std::vector<TopoDS_Face> faces;
          for (const json& f : list) faces.push_back(selectFace(m, id, f));
-         must(m.removeFaces(id, faces));
-         return idResult(id);
+         std::vector<TopoDS_Edge> edges;
+         if (a.contains("edges")) {
+           for (const json& e : arg(a, "edges")) edges.push_back(selectEdge(m, id, e));
+         }
+         const auto lines = must(m.deleteFaces(id, faces, edges));
+         json out{{"lines", lines}};
+         if (m.document().find(id)) out["id"] = id;
+         return out;
        }},
       {"fill_holes", "Fill the flat holes of open shapes with faces; closed again they are solids. One undo step.",
        SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}}},

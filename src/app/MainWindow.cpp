@@ -2074,40 +2074,75 @@ void MainWindow::deleteSelection() {
     setSelection({});
     return;
   }
-  // Only faces of one solid / open shape: delete those faces (it stays open).
-  const bool onlyFaces = !elements_.empty() && std::all_of(elements_.begin(), elements_.end(), [](const ElementRef& e) {
-    return e.type == TopAbs_FACE;
-  });
-  if (onlyFaces && single && (single->kind() == doc::ObjectKind::Solid || single->kind() == doc::ObjectKind::Shell)) {
-    const auto all = viewport_->allElements(single->id);
-    const long faceCount = std::count_if(all.begin(), all.end(), [](const ElementRef& e) { return e.type == TopAbs_FACE; });
-    if (static_cast<long>(elements_.size()) < faceCount) {
-      std::vector<TopoDS_Face> faces;
-      for (const ElementRef& e : elements_) {
-        const TopoDS_Shape face = viewport_->elementShape(e);
-        if (!face.IsNull()) faces.push_back(TopoDS::Face(face));
+  // Faces selected (SketchUp Delete): the faces go and their edges stay as
+  // lines, unless the edges are selected too (then the faces they bound go
+  // with them). Several objects at once, one undo step. Objects selected as
+  // a whole (no faces or edges of theirs picked) are removed as before.
+  const bool anyFace = std::any_of(elements_.begin(), elements_.end(),
+                                   [](const ElementRef& e) { return e.type == TopAbs_FACE; });
+  if (anyFace) {
+    std::map<doc::ObjectId, std::pair<std::vector<TopoDS_Face>, std::vector<TopoDS_Edge>>> picked;
+    for (const ElementRef& e : elements_) {
+      const TopoDS_Shape shape = viewport_->elementShape(e);  // resolved before anything changes
+      if (shape.IsNull()) continue;
+      auto& [faces, edges] = picked[e.objectId];
+      if (e.type == TopAbs_FACE) {
+        faces.push_back(TopoDS::Face(shape));
+      } else {
+        edges.push_back(TopoDS::Edge(shape));
       }
-      if (report(modeler_.removeFaces(single->id, faces))) {
-        setSelection({});
-        setStatus(tr("面を消しました（開いた形状。編集 > 穴をふさぐ でソリッドに戻せます）"));
-      }
-      return;
     }
+    std::vector<doc::ObjectId> whole;
+    for (const doc::ObjectId& id : selection_) {
+      const doc::Object* o = modeler_.document().find(id);
+      const bool shaped = o && (o->kind() == doc::ObjectKind::Face || o->kind() == doc::ObjectKind::Solid ||
+                                o->kind() == doc::ObjectKind::Shell);
+      if (!picked.count(id) || !shaped) whole.push_back(id);
+    }
+    modeler_.history().beginGroup("Delete");
+    std::size_t lines = 0;
+    for (const auto& [id, elements] : picked) {
+      if (std::find(whole.begin(), whole.end(), id) != whole.end()) continue;
+      const auto r = modeler_.deleteFaces(id, elements.first, elements.second);
+      if (!r) {
+        modeler_.history().abortGroup();
+        reportError(QString::fromStdString(r.error()));
+        return;
+      }
+      lines += r->size();
+    }
+    if (!whole.empty()) {
+      if (const Status s = modeler_.remove(whole); !s) {
+        modeler_.history().abortGroup();
+        reportError(QString::fromStdString(s.message()));
+        return;
+      }
+    }
+    modeler_.history().endGroup();
+    setSelection({});
+    bool opened = false;
+    for (const auto& [id, elements] : picked) {
+      const doc::Object* o = modeler_.document().find(id);
+      opened |= o && o->kind() == doc::ObjectKind::Shell;
+    }
+    QString status = lines > 0 ? tr("面を消しました（輪郭は線として残っています）") : tr("面を消しました");
+    if (opened) status += tr("。開いた形状は 編集 > 穴をふさぐ でソリッドに戻せます");
+    setStatus(status);
+    return;
   }
   if (!elements_.empty()) {
-    // Faces/edges cannot be removed from a solid on their own yet; only
-    // delete objects whose geometry is selected completely (triple-click).
+    // Only edges of several objects: a solid goes only if all of it is
+    // selected (triple-click); loose lines and profiles go as a whole.
     for (const doc::ObjectId& id : selection_) {
       const auto all = viewport_->allElements(id);
-      const bool whole = std::all_of(all.begin(), all.end(), [this](const ElementRef& e) {
+      const bool complete = std::all_of(all.begin(), all.end(), [this](const ElementRef& e) {
         return std::find(elements_.begin(), elements_.end(), e) != elements_.end();
       });
-      // A loose profile or curve is a single face/edge: deleting it is natural.
       const doc::Object* o = modeler_.document().find(id);
       const bool loose = o && (o->kind() == doc::ObjectKind::Face || o->kind() == doc::ObjectKind::Curve);
-      if (!whole && !loose) {
-        reportError(tr("ソリッドの面だけは削除できません（面を分けた線は選んで Delete か消しゴムで消せます）。"
-                       "トリプルクリックでオブジェクト全体を選んでから削除してください"));
+      if (!complete && !loose) {
+        reportError(tr("ソリッドの辺は 1 つの立体ずつ消してください（面を分けた線は選んで Delete か消しゴムで）。"
+                       "トリプルクリックでオブジェクト全体を選ぶと丸ごと削除できます"));
         return;
       }
     }

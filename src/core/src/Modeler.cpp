@@ -1,6 +1,7 @@
 #include "sbr/doc/Modeler.h"
 
 #include <algorithm>
+#include <deque>
 #include <cmath>
 #include <limits>
 #include <map>
@@ -22,6 +23,7 @@
 #include <TopTools_ListOfShape.hxx>
 #include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
 #include <BRepAdaptor_Curve.hxx>
+#include <BRepBuilderAPI_Copy.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS_Vertex.hxx>
 #include <TopoDS_Wire.hxx>
@@ -1317,14 +1319,9 @@ Status recreateCurves(Modeler& m, const std::vector<TopoDS_Edge>& run, std::vect
       made.push_back(*id);
       continue;
     }
-    std::vector<gp_Pnt> samples;
-    const bool reversed = edge.Orientation() == TopAbs_REVERSED;
-    for (int k = 0; k <= 12; ++k) {
-      const double t = c.FirstParameter() + (c.LastParameter() - c.FirstParameter()) * k / 12.0;
-      samples.push_back(c.Value(t));
-    }
-    if (reversed) std::reverse(samples.begin(), samples.end());
-    auto id = m.createCurve(samples, false);
+    // A whole circle, an ellipse, a spline: kept exactly as it is.
+    auto id = m.importShape(BRepBuilderAPI_Copy(edge).Shape(), c.GetType() == GeomAbs_Circle ? "Circle" : "Curve",
+                            "line");
     if (!id) return id.status();
     made.push_back(*id);
   }
@@ -1452,6 +1449,135 @@ Result<std::vector<ObjectId>> Modeler::eraseLinePiece(const ObjectId& id, const 
   for (const auto& run : runs) {
     if (run.empty()) continue;
     if (const Status s = recreateCurves(*this, run, made); !s) {
+      history_.abortGroup();
+      return R::failure(s.message());
+    }
+  }
+  history_.endGroup();
+  return made;
+}
+
+namespace {
+
+// Edges joined end to end into runs (each oriented along its run), so that
+// lines come back as polylines rather than one object per edge.
+std::vector<std::vector<TopoDS_Edge>> chainRuns(std::vector<TopoDS_Edge> edges) {
+  auto first = [](const TopoDS_Edge& e) { return BRep_Tool::Pnt(TopExp::FirstVertex(e, true)); };
+  auto last = [](const TopoDS_Edge& e) { return BRep_Tool::Pnt(TopExp::LastVertex(e, true)); };
+  std::vector<std::vector<TopoDS_Edge>> runs;
+  std::vector<bool> used(edges.size(), false);
+  for (std::size_t s = 0; s < edges.size(); ++s) {
+    if (used[s]) continue;
+    used[s] = true;
+    std::deque<TopoDS_Edge> run{edges[s]};
+    for (bool grown = true; grown;) {
+      grown = false;
+      for (std::size_t k = 0; k < edges.size() && !grown; ++k) {
+        if (used[k]) continue;
+        const TopoDS_Edge e = edges[k];
+        if (first(e).Distance(last(run.back())) < 1e-6) {
+          run.push_back(e);
+        } else if (last(e).Distance(last(run.back())) < 1e-6) {
+          run.push_back(TopoDS::Edge(e.Reversed()));
+        } else if (last(e).Distance(first(run.front())) < 1e-6) {
+          run.push_front(e);
+        } else if (first(e).Distance(first(run.front())) < 1e-6) {
+          run.push_front(TopoDS::Edge(e.Reversed()));
+        } else {
+          continue;
+        }
+        used[k] = true;
+        grown = true;
+      }
+    }
+    runs.emplace_back(run.begin(), run.end());
+  }
+  return runs;
+}
+
+bool containsEdge(const std::vector<TopoDS_Edge>& list, const TopoDS_Edge& e) {
+  return std::any_of(list.begin(), list.end(),
+                     [&](const TopoDS_Edge& x) { return x.IsSame(e) || x.TShape() == e.TShape(); });
+}
+
+}  // namespace
+
+Result<std::vector<ObjectId>> Modeler::deleteFaces(const ObjectId& id, const std::vector<TopoDS_Face>& worldFaces,
+                                                   const std::vector<TopoDS_Edge>& droppedEdges) {
+  using R = Result<std::vector<ObjectId>>;
+  const Object* o = document_.find(id);
+  if (!o || o->shape.IsNull()) return R::failure("Object not found");
+  if (o->locked) return R::failure("The object is locked");
+  const ObjectKind kind = o->kind();
+  if (kind != ObjectKind::Face && kind != ObjectKind::Solid && kind != ObjectKind::Shell) {
+    return R::failure("Only faces of profiles, solids and open shapes are deleted on their own");
+  }
+  if (worldFaces.empty() && droppedEdges.empty()) return R::failure("No face to delete");
+  if (o->parent != activeGroup_) return R::failure("Open the group to delete faces inside it");
+  const TopoDS_Shape world = document_.worldShape(*o);
+  TopTools_IndexedMapOfShape allFaces;
+  TopExp::MapShapes(world, TopAbs_FACE, allFaces);
+  TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
+  TopExp::MapShapesAndAncestors(world, TopAbs_EDGE, TopAbs_FACE, edgeFaces);
+  // The faces that go: those asked for, and those an edge taken away bounds.
+  auto indexOf = [&](const TopoDS_Shape& f) {
+    int index = allFaces.FindIndex(f);
+    for (int i = 1; i <= allFaces.Extent() && index == 0; ++i) {
+      if (allFaces(i).TShape() == f.TShape()) index = i;
+    }
+    return index;
+  };
+  std::set<int> going;
+  for (const TopoDS_Face& f : worldFaces) {
+    const int index = indexOf(f);
+    if (index == 0) return R::failure("The face is not part of this object");
+    going.insert(index);
+  }
+  std::vector<TopoDS_Edge> dropped;
+  for (const TopoDS_Edge& e : droppedEdges) {
+    int index = edgeFaces.FindIndex(e);
+    for (int i = 1; i <= edgeFaces.Extent() && index == 0; ++i) {
+      if (edgeFaces.FindKey(i).TShape() == e.TShape()) index = i;
+    }
+    if (index == 0) return R::failure("The edge is not part of this object");
+    dropped.push_back(TopoDS::Edge(edgeFaces.FindKey(index)));
+    for (const TopoDS_Shape& f : edgeFaces(index)) going.insert(indexOf(f));
+  }
+  // Lines left: edges of the faces that go which no remaining face uses.
+  std::vector<TopoDS_Edge> lines;
+  for (int i = 1; i <= edgeFaces.Extent(); ++i) {
+    const TopoDS_Edge edge = TopoDS::Edge(edgeFaces.FindKey(i));
+    if (BRep_Tool::Degenerated(edge) || containsEdge(dropped, edge)) continue;
+    bool byGoing = false, byStaying = false;
+    for (const TopoDS_Shape& f : edgeFaces(i)) (going.count(indexOf(f)) ? byGoing : byStaying) = true;
+    if (byGoing && !byStaying) lines.push_back(edge);
+  }
+  const bool everything = static_cast<int>(going.size()) == allFaces.Extent();
+  const std::string layer = o->layer;
+  history_.beginGroup("Delete");
+  if (everything) {
+    if (const Status s = remove({id}); !s) {
+      history_.abortGroup();
+      return R::failure(s.message());
+    }
+  } else {
+    std::vector<TopoDS_Face> faces;
+    for (int index : going) faces.push_back(TopoDS::Face(allFaces(index)));
+    if (const Status s = removeFaces(id, faces); !s) {
+      history_.abortGroup();
+      return R::failure(s.message());
+    }
+  }
+  std::vector<ObjectId> made;
+  for (const auto& run : chainRuns(lines)) {
+    if (const Status s = recreateCurves(*this, run, made); !s) {
+      history_.abortGroup();
+      return R::failure(s.message());
+    }
+  }
+  for (const ObjectId& line : made) {
+    if (layer.empty()) continue;
+    if (const Status s = setLayer(line, layer); !s) {
       history_.abortGroup();
       return R::failure(s.message());
     }

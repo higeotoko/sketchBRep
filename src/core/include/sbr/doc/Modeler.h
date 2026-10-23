@@ -106,6 +106,15 @@ class Modeler {
   // Faces taken out of a solid (or an open shell): it becomes / stays an
   // open shell (one undo step). Taking out every face is refused.
   Status removeFaces(const ObjectId& id, const std::vector<TopoDS_Face>& worldFaces);
+  // Delete (SketchUp): the faces go, their edges stay as lines unless they
+  // are in `droppedEdges` or still bound a face that is left. A loose face
+  // leaves its outline (and holes); a solid / shell keeps its other faces
+  // (open shell) and the edges only the deleted faces used become lines;
+  // all faces of an object leave all its edges as lines. One undo step;
+  // returns the lines made. Faces bounded by `droppedEdges` go as well
+  // (an edge taken away cannot leave its faces).
+  Result<std::vector<ObjectId>> deleteFaces(const ObjectId& id, const std::vector<TopoDS_Face>& worldFaces,
+                                            const std::vector<TopoDS_Edge>& droppedEdges = {});
   // Fills the flat holes of open shells; closed again they are solids.
   Status fillHoles(const std::vector<ObjectId>& ids);
   // Turns the faces of open shells / profiles over (front <-> back).
