@@ -199,18 +199,23 @@ TEST(Gate3, F05_ProfileInsideProfileCutsAHole) {
 TEST(Gate3, F05_TouchingOrOtherPlaneDoesNotCut) {
   doc::Modeler m;
   auto floor = m.createRectangle(geom::SketchPlane::ground(), 4000, 3000);
-  // Shares the floor's corner: not strictly inside.
-  ASSERT_TRUE(m.createRectangle(geom::SketchPlane::ground(), 1000, 1000).ok());
-  EXPECT_NEAR(geom::area(m.document().worldShape(*floor)), 12e6, 1e-3);
+  // Shares the floor's corner: no hole, but not stacked either: the floor
+  // is divided there (overlap rule), the corner is a region of its own.
+  auto corner = m.createRectangle(geom::SketchPlane::ground(), 1000, 1000);
+  ASSERT_TRUE(corner.ok());
+  EXPECT_NE(*corner, *floor);
+  EXPECT_NEAR(geom::area(m.document().worldShape(*floor)), 11e6, 1e-3);
+  EXPECT_NEAR(geom::area(m.document().worldShape(*m.document().find(*corner))), 1e6, 1e-3);
+  EXPECT_EQ(m.document().objects().size(), 2u);
   // Inside in plan but 10 mm higher: a different plane.
   geom::SketchPlane up = geom::SketchPlane::ground();
   up.origin = gp_Pnt(2000, 1000, 10);
   ASSERT_TRUE(m.createCircle(up, 300).ok());
-  EXPECT_NEAR(geom::area(m.document().worldShape(*floor)), 12e6, 1e-3);
+  EXPECT_NEAR(geom::area(m.document().worldShape(*floor)), 11e6, 1e-3);
   // A circle strictly inside cuts a round hole.
   up.origin = gp_Pnt(3000, 1500, 0);
   ASSERT_TRUE(m.createCircle(up, 300).ok());
-  EXPECT_NEAR(geom::area(m.document().worldShape(*floor)), 12e6 - M_PI * 300 * 300, 1e-2);
+  EXPECT_NEAR(geom::area(m.document().worldShape(*floor)), 11e6 - M_PI * 300 * 300, 1e-2);
 }
 
 // ---- AC-22 / §6.2: editing a component in place -----------------------------------------

@@ -129,8 +129,10 @@ TEST(Freeform, RevolveIsParametricAndSaved) {
 TEST(Freeform, LoftIsParametricAndSaved) {
   doc::Modeler m;
   auto base = m.createRectangle(SketchPlane::ground(), 2000, 2000);
-  auto top = m.createRectangle(SketchPlane::ground(), 1000, 1000);
-  ASSERT_TRUE(m.move({*top}, gp_Vec(500, 500, 3000)).ok());  // placement is captured
+  SketchPlane aside = SketchPlane::ground();
+  aside.origin = gp_Pnt(5000, 5000, 0);  // not on the base (it would divide it)
+  auto top = m.createRectangle(aside, 1000, 1000);
+  ASSERT_TRUE(m.move({*top}, gp_Vec(-4500, -4500, 3000)).ok());  // placement is captured
   auto loftId = m.loftObjects({*base, *top}, true);
   ASSERT_TRUE(loftId.ok()) << loftId.error();
   EXPECT_EQ(m.document().objects().size(), 3u);  // sections are kept

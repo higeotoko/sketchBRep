@@ -8,6 +8,9 @@
 #include <set>
 
 #include <BRepBndLib.hxx>
+#include <memory>
+#include <BRepAlgoAPI_Cut.hxx>
+#include <BRepAlgoAPI_Common.hxx>
 #include <BRepClass_FaceClassifier.hxx>
 #include <BRep_Builder.hxx>
 #include <Bnd_Box.hxx>
@@ -520,8 +523,15 @@ Result<ObjectId> Modeler::addProfile(Object object, const std::string& commandNa
     return id;
   }
   punchHole(*id);
+  // Drawn where a face already is: not stacked twice.
+  auto settled = settleOverlaps({*id});
+  if (!settled) {
+    history_.abortGroup();
+    return Result<ObjectId>::failure(settled.error());
+  }
   history_.endGroup();
-  return id;
+  const std::vector<ObjectId> now = settledIds({*id}, *settled);
+  return now.empty() ? *id : now.front();
 }
 
 void Modeler::punchHole(const ObjectId& profileId) {
@@ -1164,6 +1174,12 @@ Result<ObjectId> Modeler::faceFromLoop(const ObjectId& curveId, bool* loopFound)
     auto candidate = placed.size() == loop.curves.size() ? geom::faceFromCurves(placed)
                                                           : Result<TopoDS_Face>::failure("");
     if (candidate) loop.reversed = facesIntoSolid(candidate.value(), start->parent);
+    // There and back along the same line (e.g. a line drawn again over one
+    // already there): no area, not a loop.
+    if (candidate && geom::area(candidate.value()) < tolerance::kMinDimension * tolerance::kMinDimension) {
+      if (loopFound) *loopFound = false;
+      return Result<ObjectId>::failure("The curve does not close a loop");
+    }
   }
   Object face;
   face.name = uniqueName("Face");
@@ -2055,6 +2071,16 @@ Result<std::vector<ObjectId>> Modeler::copyEdges(const std::vector<TopoDS_Edge>&
       if (straight) {
         std::vector<gp_Pnt> points{BRep_Tool::Pnt(TopExp::FirstVertex(run.front(), true))};
         for (const TopoDS_Edge& e : run) points.push_back(BRep_Tool::Pnt(TopExp::LastVertex(e, true)));
+        // A closed flat outline (e.g. a face's edges copied): a face, as
+        // drawing it would make (SketchUp).
+        if (points.size() >= 4 && points.front().Distance(points.back()) < 1e-6) {
+          points.pop_back();
+          if (auto face = createPolygon(points)) {
+            made.push_back(*face);
+            continue;
+          }
+          points.push_back(points.front());
+        }
         if (splitWithLine(points)) continue;
       }
       if (const Status s = recreateCurves(*this, run, made); !s) {
@@ -2063,8 +2089,396 @@ Result<std::vector<ObjectId>> Modeler::copyEdges(const std::vector<TopoDS_Edge>&
       }
     }
   }
+  // Partly on lines already there: only the new pieces stay.
+  auto settled = settleOverlaps(made);
+  if (!settled) {
+    history_.abortGroup();
+    return R::failure(settled.error());
+  }
   history_.endGroup();
-  return made;
+  return settledIds(made, *settled);
+}
+
+// --- overlaps -----------------------------------------------------------------------
+
+namespace {
+
+struct Segment {
+  gp_Pnt a, b;
+};
+
+void collectEdges(const TopoDS_Shape& world, std::vector<Segment>& straight, std::vector<TopoDS_Edge>& curved) {
+  TopTools_IndexedMapOfShape edges;
+  TopExp::MapShapes(world, TopAbs_EDGE, edges);
+  for (int i = 1; i <= edges.Extent(); ++i) {
+    const TopoDS_Edge e = TopoDS::Edge(edges(i));
+    if (BRep_Tool::Degenerated(e)) continue;
+    if (BRepAdaptor_Curve(e).GetType() == GeomAbs_Line) {
+      straight.push_back({BRep_Tool::Pnt(TopExp::FirstVertex(e)), BRep_Tool::Pnt(TopExp::LastVertex(e))});
+    } else {
+      curved.push_back(e);
+    }
+  }
+}
+
+gp_Pnt midOf(const TopoDS_Edge& e) {
+  BRepAdaptor_Curve c(e);
+  return c.Value(0.5 * (c.FirstParameter() + c.LastParameter()));
+}
+
+// The same curved edge (ends either way round and the middle).
+bool sameCurvedEdge(const TopoDS_Edge& x, const TopoDS_Edge& y, double tol) {
+  const gp_Pnt a = BRep_Tool::Pnt(TopExp::FirstVertex(x)), b = BRep_Tool::Pnt(TopExp::LastVertex(x));
+  const gp_Pnt c = BRep_Tool::Pnt(TopExp::FirstVertex(y)), d = BRep_Tool::Pnt(TopExp::LastVertex(y));
+  const bool ends = (a.Distance(c) < tol && b.Distance(d) < tol) || (a.Distance(d) < tol && b.Distance(c) < tol);
+  return ends && midOf(x).Distance(midOf(y)) < tol;
+}
+
+// The parts of [0, length] no interval in `covers` takes (each > tol).
+std::vector<std::pair<double, double>> uncovered(double length, std::vector<std::pair<double, double>> covers,
+                                                 double tol) {
+  std::sort(covers.begin(), covers.end());
+  std::vector<std::pair<double, double>> out;
+  double at = 0.0;
+  for (const auto& [lo, hi] : covers) {
+    if (lo - at > tol) out.emplace_back(at, lo);
+    at = std::max(at, hi);
+  }
+  if (length - at > tol) out.emplace_back(at, length);
+  return out;
+}
+
+// The one flat face of a shape (a face object), else null.
+TopoDS_Face lonePlanarFace(const TopoDS_Shape& shape, gp_Pln* plane) {
+  TopTools_IndexedMapOfShape faces;
+  TopExp::MapShapes(shape, TopAbs_FACE, faces);
+  if (faces.Extent() != 1) return {};
+  const TopoDS_Face face = TopoDS::Face(faces(1));
+  if (!geom::isPlanarFace(face, plane)) return {};
+  return face;
+}
+
+// Faces of a boolean result worth keeping, turned to face along `normal`.
+std::vector<TopoDS_Face> regionsOf(const TopoDS_Shape& shape, const gp_Dir& normal, double minArea) {
+  std::vector<TopoDS_Face> out;
+  if (shape.IsNull()) return out;
+  for (TopExp_Explorer f(shape, TopAbs_FACE); f.More(); f.Next()) {
+    TopoDS_Face face = TopoDS::Face(f.Current());
+    if (geom::area(face) < minArea) continue;
+    const auto n = geom::planarFaceNormal(face);
+    if (n && n->Dot(normal) < 0) face = TopoDS::Face(face.Reversed());
+    out.push_back(TopoDS::Face(BRepBuilderAPI_Copy(face).Shape()));
+  }
+  return out;
+}
+
+TopoDS_Shape faceBoolean(bool common, const TopoDS_Shape& a, const TopoDS_Shape& b) {
+  TopTools_ListOfShape args, tools;
+  args.Append(a);
+  tools.Append(b);
+  std::unique_ptr<BRepAlgoAPI_BooleanOperation> op;
+  if (common) {
+    op = std::make_unique<BRepAlgoAPI_Common>();
+  } else {
+    op = std::make_unique<BRepAlgoAPI_Cut>();
+  }
+  op->SetArguments(args);
+  op->SetTools(tools);
+  op->SetFuzzyValue(tolerance::kMinDimension);
+  op->Build();
+  if (!op->IsDone() || op->HasErrors()) return {};
+  return op->Shape();
+}
+
+}  // namespace
+
+std::vector<ObjectId> Modeler::settledIds(const std::vector<ObjectId>& ids, const Settled& settled) {
+  std::vector<ObjectId> out;
+  auto add = [&](const ObjectId& id) {
+    if (std::find(out.begin(), out.end(), id) == out.end()) out.push_back(id);
+  };
+  for (const ObjectId& id : ids) {
+    const auto it = settled.became.find(id);
+    if (it == settled.became.end()) {
+      add(id);
+    } else {
+      for (const ObjectId& now : it->second) add(now);
+    }
+  }
+  return out;
+}
+
+Result<Modeler::Settled> Modeler::settleOverlaps(const std::vector<ObjectId>& ids) {
+  using R = Result<Settled>;
+  Settled out;
+  if (settling_) return out;
+  settling_ = true;
+  struct Reset {
+    bool& flag;
+    ~Reset() { flag = false; }
+  } reset{settling_};
+  history_.beginGroup("Tidy");
+  for (const ObjectId& id : ids) {
+    const Object* o = document_.find(id);
+    if (!o || o->locked || !document_.isVisible(id)) continue;
+    const ObjectKind kind = o->kind();
+    Status s = Status::success();
+    if (kind == ObjectKind::Curve) s = settleLine(id, out);
+    if (kind == ObjectKind::Face) s = settleFace(id, out);
+    if (!s) {
+      history_.abortGroup();
+      return R::failure(s.message());
+    }
+  }
+  history_.endGroup();
+  return out;
+}
+
+Status Modeler::settleLine(const ObjectId& id, Settled& out) {
+  constexpr double tol = tolerance::kMinDimension;
+  const Object line = *document_.find(id);
+  const TopoDS_Shape world = document_.worldShape(line);
+  Bnd_Box reach;
+  BRepBndLib::Add(world, reach);
+  reach.Enlarge(10 * tol);
+  // Edges already there nearby: lines, and faces' / solids' edges.
+  std::vector<Segment> straight;
+  std::vector<TopoDS_Edge> curved;
+  std::vector<ObjectId> loose;
+  for (const Object& o : document_.objects()) {
+    if (o.id == id || o.parent != line.parent || !document_.isVisible(o.id) || o.shape.IsNull()) continue;
+    const ObjectKind k = o.kind();
+    if (k != ObjectKind::Curve && k != ObjectKind::Face && k != ObjectKind::Shell && k != ObjectKind::Solid) continue;
+    const TopoDS_Shape shape = document_.worldShape(o);
+    Bnd_Box box;
+    BRepBndLib::Add(shape, box);
+    if (box.IsOut(reach)) continue;
+    collectEdges(shape, straight, curved);
+    if (k == ObjectKind::Curve && !o.locked) loose.push_back(o.id);
+  }
+  // The pieces of the line not lying on one of them.
+  std::vector<TopoDS_Edge> kept;
+  bool trimmed = false;
+  for (const TopoDS_Edge& e : chainOf(world)) {
+    const gp_Pnt a = BRep_Tool::Pnt(TopExp::FirstVertex(e, true));
+    const gp_Pnt b = BRep_Tool::Pnt(TopExp::LastVertex(e, true));
+    if (BRepAdaptor_Curve(e).GetType() != GeomAbs_Line) {
+      if (std::any_of(curved.begin(), curved.end(), [&](const TopoDS_Edge& c) { return sameCurvedEdge(e, c, tol); })) {
+        trimmed = true;
+      } else {
+        kept.push_back(e);
+      }
+      continue;
+    }
+    const double length = a.Distance(b);
+    if (length < tol) continue;
+    const gp_Dir d(gp_Vec(a, b));
+    const gp_Lin axis(a, d);
+    std::vector<std::pair<double, double>> covers;
+    for (const Segment& s : straight) {
+      if (axis.Distance(s.a) > tol || axis.Distance(s.b) > tol) continue;
+      const double t0 = gp_Vec(a, s.a).Dot(gp_Vec(d)), t1 = gp_Vec(a, s.b).Dot(gp_Vec(d));
+      const double lo = std::max(0.0, std::min(t0, t1)), hi = std::min(length, std::max(t0, t1));
+      if (hi - lo > tol) covers.emplace_back(lo, hi);
+    }
+    if (covers.empty()) {
+      kept.push_back(e);
+      continue;
+    }
+    trimmed = true;
+    for (const auto& [t0, t1] : uncovered(length, covers, tol)) {
+      kept.push_back(BRepBuilderAPI_MakeEdge(a.Translated(gp_Vec(d) * t0), a.Translated(gp_Vec(d) * t1)).Edge());
+    }
+  }
+  std::vector<ObjectId> now{id};
+  if (trimmed) {
+    if (const Status s = remove({id}); !s) return s;
+    now.clear();
+    for (const auto& run : chainRuns(kept)) {
+      if (const Status s = recreateCurves(*this, run, now); !s) return s;
+    }
+    for (const ObjectId& n : now) {
+      Object o = *document_.find(n);
+      o.layer = line.layer;
+      o.material = line.material;
+      o.color = line.color;
+      o.attributes = line.attributes;
+      if (const Status s = commitModified(std::move(o), "Tidy"); !s) return s;
+    }
+    out.became[id] = now;
+    ++out.linesTrimmed;
+  }
+  // Where the line ends on another loose line, that one gets a vertex.
+  std::vector<gp_Pnt> ends;
+  for (const ObjectId& n : now) {
+    TopTools_IndexedMapOfShape vertices;
+    TopExp::MapShapes(document_.worldShape(*document_.find(n)), TopAbs_VERTEX, vertices);
+    for (int i = 1; i <= vertices.Extent(); ++i) ends.push_back(BRep_Tool::Pnt(TopoDS::Vertex(vertices(i))));
+  }
+  for (const ObjectId& other : loose) {
+    const Object* o = document_.find(other);
+    if (!o) continue;
+    const Object before = *o;
+    std::vector<TopoDS_Edge> pieces;
+    bool split = false;
+    for (const TopoDS_Edge& e : chainOf(document_.worldShape(before))) {
+      const gp_Pnt a = BRep_Tool::Pnt(TopExp::FirstVertex(e, true));
+      const gp_Pnt b = BRep_Tool::Pnt(TopExp::LastVertex(e, true));
+      if (BRepAdaptor_Curve(e).GetType() != GeomAbs_Line || a.Distance(b) < tol) {
+        pieces.push_back(e);
+        continue;
+      }
+      const double length = a.Distance(b);
+      const gp_Dir d(gp_Vec(a, b));
+      const gp_Lin axis(a, d);
+      std::vector<double> cuts;
+      for (const gp_Pnt& p : ends) {
+        const double t = gp_Vec(a, p).Dot(gp_Vec(d));
+        if (t > tol && t < length - tol && axis.Distance(p) < tol) cuts.push_back(t);
+      }
+      if (cuts.empty()) {
+        pieces.push_back(e);
+        continue;
+      }
+      split = true;
+      std::sort(cuts.begin(), cuts.end());
+      double from = 0.0;
+      cuts.push_back(length);
+      for (double t : cuts) {
+        if (t - from > tol) {
+          pieces.push_back(
+              BRepBuilderAPI_MakeEdge(a.Translated(gp_Vec(d) * from), a.Translated(gp_Vec(d) * t)).Edge());
+        }
+        from = t;
+      }
+    }
+    if (!split) continue;
+    if (const Status s = remove({other}); !s) return s;
+    std::vector<ObjectId> made;
+    for (const auto& run : chainRuns(pieces)) {
+      // Each piece a line of its own: the vertex is where they meet.
+      for (const TopoDS_Edge& e : run) {
+        if (const Status s = recreateCurves(*this, {e}, made); !s) return s;
+      }
+    }
+    for (const ObjectId& n : made) {
+      Object m = *document_.find(n);
+      m.layer = before.layer;
+      m.material = before.material;
+      m.color = before.color;
+      m.attributes = before.attributes;
+      if (const Status s = commitModified(std::move(m), "Tidy"); !s) return s;
+    }
+    ++out.linesSplit;
+  }
+  return Status::success();
+}
+
+Result<std::vector<ObjectId>> Modeler::replaceByFaces(const Object& base, const std::vector<TopoDS_Face>& worldFaces) {
+  using R = Result<std::vector<ObjectId>>;
+  std::vector<ObjectId> ids;
+  const gp_Trsf toLocal = document_.worldTransform(base).Inverted();
+  // A face painted on its own is the whole object here: its material goes
+  // onto each region.
+  std::string material = base.material;
+  for (const auto& [index, id] : resolveFaceMaterials(base).faces) {
+    if (index == 1) material = id;
+  }
+  for (std::size_t i = 0; i < worldFaces.size(); ++i) {
+    Object o = base;
+    o.recipe = Recipe{};
+    o.recipe.base = ImportedShape{worldFaces[i].Moved(TopLoc_Location(toLocal)), "Region of " + base.name};
+    o.material = material;
+    o.faceMaterials.clear();
+    o.hiddenEdges.clear();
+    if (i == 0) {
+      if (const Status s = commitModified(o, "Tidy"); !s) return R::failure(s.message());
+      ids.push_back(o.id);
+    } else {
+      o.id = generateObjectId();
+      o.name = uniqueName(base.name);
+      auto added = addObject(std::move(o), "Tidy");
+      if (!added) return R::failure(added.error());
+      ids.push_back(*added);
+    }
+  }
+  return ids;
+}
+
+Status Modeler::settleFace(const ObjectId& id, Settled& out) {
+  constexpr double tol = tolerance::kMinDimension;
+  const Object fresh = *document_.find(id);
+  gp_Pln plane;
+  const TopoDS_Face face = lonePlanarFace(document_.worldShape(fresh), &plane);
+  if (face.IsNull()) return Status::success();
+  const auto normal = geom::planarFaceNormal(face);
+  if (!normal) return Status::success();
+  const double minArea = tol * tol;
+  Bnd_Box reach;
+  BRepBndLib::Add(face, reach);
+  reach.Enlarge(tol);
+  // Faces already there on the same plane (either side), nearby.
+  std::vector<ObjectId> others;
+  for (const Object& o : document_.objects()) {
+    if (o.id == id || o.parent != fresh.parent || !document_.isVisible(o.id) || o.kind() != ObjectKind::Face) continue;
+    gp_Pln on;
+    const TopoDS_Face f = lonePlanarFace(document_.worldShape(o), &on);
+    if (f.IsNull() || !on.Axis().Direction().IsParallel(plane.Axis().Direction(), 1e-9) ||
+        plane.Distance(on.Location()) > tol) {
+      continue;
+    }
+    Bnd_Box box;
+    BRepBndLib::Add(f, box);
+    if (!box.IsOut(reach)) others.push_back(o.id);
+  }
+  std::vector<TopoDS_Face> parts{face};
+  std::vector<ObjectId> takenBy;
+  bool overlapped = false;
+  for (const ObjectId& otherId : others) {
+    const Object* other = document_.find(otherId);
+    if (!other) continue;
+    const Object existing = *other;
+    const TopoDS_Face there = lonePlanarFace(document_.worldShape(existing), nullptr);
+    if (there.IsNull()) continue;
+    if (geom::area(faceBoolean(true, face, there)) < minArea) continue;  // touching at most
+    overlapped = true;
+    // The new face loses what is already there.
+    std::vector<TopoDS_Face> rest;
+    for (const TopoDS_Face& p : parts) {
+      if (geom::area(faceBoolean(true, p, there)) < minArea) {
+        rest.push_back(p);
+        continue;
+      }
+      for (const TopoDS_Face& r : regionsOf(faceBoolean(false, p, there), *normal, minArea)) rest.push_back(r);
+    }
+    parts = rest;
+    // The face there is divided along the new outline (keeping its side);
+    // its regions under the new face are what the new face became.
+    const auto thereNormal = geom::planarFaceNormal(there);
+    std::vector<TopoDS_Face> regions;
+    if (!existing.locked && thereNormal) regions = regionsOf(faceBoolean(false, there, face), *thereNormal, minArea);
+    if (regions.empty()) {  // all of it under the new one (or locked): stays whole
+      takenBy.push_back(otherId);
+      continue;
+    }
+    const std::size_t outside = regions.size();
+    for (const TopoDS_Face& r : regionsOf(faceBoolean(true, there, face), *thereNormal, minArea)) regions.push_back(r);
+    auto replaced = replaceByFaces(existing, regions);
+    if (!replaced) return replaced.status();
+    takenBy.insert(takenBy.end(), replaced->begin() + static_cast<std::ptrdiff_t>(outside), replaced->end());
+    ++out.facesDivided;
+  }
+  if (!overlapped) return Status::success();
+  if (parts.empty()) {
+    if (const Status s = remove({id}); !s) return s;
+    out.became[id] = takenBy;  // what was there takes its place
+    return Status::success();
+  }
+  auto replaced = replaceByFaces(fresh, parts);
+  if (!replaced) return replaced.status();
+  out.became[id] = *replaced;
+  ++out.facesDivided;
+  return Status::success();
 }
 
 namespace {
@@ -2446,6 +2860,10 @@ Result<PushPullResult> Modeler::offset(const ObjectId& id, double distance) {
     return Result<PushPullResult>::failure(added.error());
   }
   punchHole(distance < 0 ? added.value() : id);
+  if (auto settled = settleOverlaps({added.value()}); !settled) {
+    history_.abortGroup();
+    return Result<PushPullResult>::failure(settled.error());
+  }
   history_.endGroup();
   return PushPullResult{added.value(), key};
 }
@@ -2910,7 +3328,14 @@ Status Modeler::transform(const std::vector<ObjectId>& ids, const gp_Trsf& world
     o.transform = localDelta(document_.parentTransform(o), worldDelta) * o.transform;
     changes.modify(o);
   }
+  history_.beginGroup(commandName);
   history_.execute(changes.build(commandName));
+  // Moved onto lines or faces already there: not stacked twice.
+  if (auto settled = settleOverlaps(roots); !settled) {
+    history_.abortGroup();
+    return Status::failure(settled.error());
+  }
+  history_.endGroup();
   return Status::success();
 }
 
@@ -3598,8 +4023,15 @@ Result<std::vector<ObjectId>> Modeler::copy(const std::vector<ObjectId>& ids,
       for (const Object& c : clones) changes.add(c);
     }
   }
+  history_.beginGroup(count == 1 ? "Copy" : "Array");
   history_.execute(changes.build(count == 1 ? "Copy" : "Array"));
-  return created;
+  auto settled = settleOverlaps(created);
+  if (!settled) {
+    history_.abortGroup();
+    return Result<std::vector<ObjectId>>::failure(settled.error());
+  }
+  history_.endGroup();
+  return settledIds(created, *settled);
 }
 
 Result<Modeler::Clipboard> Modeler::copyToClipboard(const std::vector<ObjectId>& ids) const {
@@ -3663,8 +4095,15 @@ Result<std::vector<ObjectId>> Modeler::paste(const Clipboard& clipboard, const g
     }
     changes.add(o);
   }
+  history_.beginGroup("Paste");
   history_.execute(changes.build("Paste"));
-  return created;
+  auto settled = settleOverlaps(created);
+  if (!settled) {
+    history_.abortGroup();
+    return Result<std::vector<ObjectId>>::failure(settled.error());
+  }
+  history_.endGroup();
+  return settledIds(created, *settled);
 }
 
 Status Modeler::setPosition(const ObjectId& id, const gp_Vec& translation) {

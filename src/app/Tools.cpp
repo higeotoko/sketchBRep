@@ -55,7 +55,11 @@ std::optional<double> parseOne(const QString& text) {
 
 }  // namespace
 
-void RecentEdit::mark(doc::Modeler& m) { token_ = Token{m.history().revision(), m.document().sequence()}; }
+void RecentEdit::mark(doc::Modeler& m) {
+  const bool empty = begun_ && *begun_ == m.history().revision();
+  begun_.reset();
+  token_ = Token{m.history().revision(), m.document().sequence(), empty};
+}
 
 bool RecentEdit::fresh(doc::Modeler& m) const {
   return token_ && token_->revision == m.history().revision() && token_->sequence == m.document().sequence();
@@ -63,20 +67,28 @@ bool RecentEdit::fresh(doc::Modeler& m) const {
 
 Status RecentEdit::revise(doc::Modeler& m, const std::function<Status()>& edit) {
   if (!fresh(m)) return Status::failure("Nothing to change: the last edit is no longer the most recent one");
-  m.history().beginAmend();
+  // No step of its own: amending would change the step before it.
+  const bool empty = token_->empty;
+  if (!empty) m.history().beginAmend();
+  begin(m);
   const Status s = edit();
-  m.history().endAmend();
+  if (!empty) m.history().endAmend();
   if (s) mark(m);
   return s;
 }
 
 Status RecentEdit::replace(doc::Modeler& m, const std::function<Status()>& edit) {
   if (!fresh(m)) return Status::failure("Nothing to change: the last edit is no longer the most recent one");
-  m.undo();
+  // An edit that recorded nothing (all of it was already there) has no
+  // step to take back: undoing would take the one before it.
+  const bool empty = token_->empty;
+  if (!empty) m.undo();
+  begin(m);
   const Status s = edit();
   if (!s) {
-    m.redo();  // the original edit again
-    mark(m);
+    if (!empty) m.redo();  // the original edit again
+    begun_.reset();
+    token_ = Token{m.history().revision(), m.document().sequence(), empty};
     return s;
   }
   mark(m);
@@ -497,6 +509,14 @@ void createCurveAndFace(ToolHost& host, Create create, const char* undoName) {
   // Not closed end to end: crossing other lines (or itself) may still close areas.
   std::optional<Result<std::vector<doc::ObjectId>>> crossed;
   if (!face && !loopFound) crossed = m.facesFromCrossings(*curve);
+  // Lines or faces on top of ones already there: not stacked twice.
+  std::vector<doc::ObjectId> made{face ? *face : *curve};
+  if (crossed && *crossed) made.insert(made.end(), (*crossed)->begin(), (*crossed)->end());
+  if (auto settled = m.settleOverlaps(made); !settled) {
+    m.history().abortGroup();
+    host.reportError(QString::fromStdString(settled.error()));
+    return;
+  }
   m.history().endGroup();
   if (face) {
     host.setStatus(QObject::tr("輪郭が閉じたので面を作成しました。そのままプッシュ/プルできます"));
@@ -2179,6 +2199,7 @@ QString TransformTool::copySuffix() const {
 
 bool TransformTool::commit(const gp_Trsf& delta, int count) {
   doc::Modeler& m = host_.modeler();
+  recent_.begin(m);  // a copy landing on what is there records nothing
   if (copy_ && !edgeTargets_.empty()) {
     // Just the selected edges, as lines (the faces / solids stay as they are).
     auto created = m.copyEdges(edgeTargets_, delta, count);

@@ -391,6 +391,30 @@ class Modeler {
                                   double height, double sill);
   // Copies the objects `count` times, copy k placed at worldDelta^k (linear
   // or polar arrays). Returns the ids of the new top-level copies.
+  // What was just drawn, moved, copied, pasted or offset (`ids`) against
+  // what is already there in the same edit context (same parent; never
+  // other groups, components or solids' own faces), from the 3D shapes and
+  // the geometric tolerance, so nothing is stacked twice:
+  //  - lines: pieces lying on an edge already there (a line, a face's or a
+  //    solid's edge) are dropped, the rest kept with their connection
+  //    points; a loose line another one ends on gets a vertex there;
+  //  - flat faces on the same plane (either side): the overlap is kept
+  //    once, by the face already there (its material, attributes and
+  //    side); each face is divided along the other's outline (holes kept),
+  //    and every region is a face of its own (select, paint, push/pull).
+  // Only those objects and their neighbours change. Part of the caller's
+  // undo step. `became`: what each id is now (empty = it went: everything
+  // already there; an id of an existing object = it took the place).
+  struct Settled {
+    std::map<ObjectId, std::vector<ObjectId>> became;
+    int linesTrimmed = 0;
+    int linesSplit = 0;
+    int facesDivided = 0;
+  };
+  Result<Settled> settleOverlaps(const std::vector<ObjectId>& ids);
+  // The ids after settling (in order, without repeats).
+  static std::vector<ObjectId> settledIds(const std::vector<ObjectId>& ids, const Settled& settled);
+
   // Copies only these edges (world; edges of lines, faces or solids picked
   // one by one) `count` times, copy k at worldDelta^k, as lines of their own
   // (exact: straight runs as polylines, arcs as arcs, other curves as they
@@ -524,6 +548,12 @@ class Modeler {
                                std::optional<gp_Pnt> at);
   Result<ObjectId> addObject(Object object, const std::string& commandName);
   Status commitModified(Object object, const std::string& commandName);
+  // settleOverlaps' two halves (one object each).
+  Status settleLine(const ObjectId& id, Settled& out);
+  Status settleFace(const ObjectId& id, Settled& out);
+  // `base` replaced by these world faces (the first keeps its id), with its
+  // material, tag and attributes; returns the ids.
+  Result<std::vector<ObjectId>> replaceByFaces(const Object& base, const std::vector<TopoDS_Face>& worldFaces);
   Result<ObjectId> addProfile(Object object, const std::string& commandName);
   Result<ObjectId> followMeAlong(const ObjectId& profileId, const BooleanOperand& path);
   // True if a profile lying on a solid's face points into that solid.
@@ -543,6 +573,7 @@ class Modeler {
   Document document_;
   CommandStack history_;
   ObjectId activeGroup_;
+  bool settling_ = false;
 };
 
 }  // namespace sbr::doc

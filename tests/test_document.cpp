@@ -146,7 +146,9 @@ TEST(Modeler, DeleteAndUndoRestoresOrder) {
 TEST(Modeler, ObjectIdsAreUniqueAndNamesIncrement) {
   Modeler m;
   auto a = m.createRectangle(geom::SketchPlane::ground(), 100, 100);
-  auto b = m.createRectangle(geom::SketchPlane::ground(), 100, 100);
+  geom::SketchPlane apart = geom::SketchPlane::ground();
+  apart.origin = gp_Pnt(500, 0, 0);  // the same place would not be drawn twice
+  auto b = m.createRectangle(apart, 100, 100);
   EXPECT_NE(*a, *b);
   EXPECT_EQ(a->size(), 36u);
   EXPECT_EQ(object(m, *a).name, "Rectangle 1");

@@ -926,8 +926,10 @@ const std::vector<CommandDef>& commands() {
        [](doc::Modeler& m, const json& a) { return idResult(must(m.faceFromLoop(text(a, "id")))); }},
       {"create_line",
        "Draw an open polyline (2+ points), like the line tool: if it closes a planar loop with other loose "
-       "lines/arcs it becomes a face (auto_face, default true; one undo step) and the result says so. A "
-       "line from edge to edge across a face splits it (use split_face).",
+       "lines/arcs it becomes a face (auto_face, default true; one undo step) and the result says so; lines "
+       "crossing so that areas close make those faces too. Pieces lying on an edge already there (same "
+       "group) are not drawn twice ('ids': the lines left; empty when all was there). A line from edge to "
+       "edge across a face splits it (use split_face).",
        SCHEMA({"type": "object", "properties": {
          "points": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
          "auto_face": {"type": "boolean"}, "name": {"type": "string"}}, "required": ["points"]}),
@@ -942,9 +944,23 @@ const std::vector<CommandDef>& commands() {
          }
          bool loopFound = false;
          auto face = m.faceFromLoop(*line, &loopFound);
+         // As the line tool: faces from crossings, then nothing stacked twice.
+         std::vector<doc::ObjectId> made{face ? *face : *line};
+         if (!face && !loopFound) {
+           if (auto crossed = m.facesFromCrossings(*line); crossed) {
+             made.insert(made.end(), crossed->begin(), crossed->end());
+           }
+         }
+         auto settled = m.settleOverlaps(made);
+         if (!settled) {
+           m.history().abortGroup();
+           throw ApiError(settled.error());
+         }
          m.history().endGroup();
-         if (face) return json{{"id", *face}, {"face", true}};
-         json r = {{"id", *line}, {"face", false}};
+         const std::vector<doc::ObjectId> now = doc::Modeler::settledIds(made, *settled);
+         if (face) return json{{"id", now.empty() ? *face : now.front()}, {"face", true}};
+         json r = {{"id", now.empty() || !m.document().find(now.front()) ? std::string() : now.front()},
+                   {"face", false}, {"ids", now}};
          if (loopFound) r["warning"] = "closed loop could not become a face: " + face.error();
          return r;
        }},

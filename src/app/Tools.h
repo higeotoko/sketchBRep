@@ -71,6 +71,10 @@ class ToolHost {
 //   is retyped: one Ctrl+Z takes the edit and all its revisions back.
 class RecentEdit {
  public:
+  // Before the tool commits an edit (optional): if the edit then records
+  // nothing (e.g. a copy landing on what is there), mark() remembers that
+  // there is no step of its own to take back.
+  void begin(doc::Modeler& m) { begun_ = m.history().revision(); }
   // Right after the tool committed an edit.
   void mark(doc::Modeler& m);
   void clear() { token_.reset(); }
@@ -87,8 +91,10 @@ class RecentEdit {
   struct Token {
     long long revision;
     std::uint64_t sequence;
+    bool empty = false;  // the edit recorded no undo step
   };
   std::optional<Token> token_;
+  std::optional<long long> begun_;
 };
 
 class Tool {

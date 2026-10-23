@@ -144,6 +144,7 @@ class GuiPhase1 : public QObject {
   void lineToolClosesLoopIntoFace();
   void moveCopyAndArray();
   void copySelectedEdgeArrays();
+  void copyOntoEdgeThenDivideKeepsSolid();
   void rotateByTypedAngle();
   void offsetToolInwards();
   void groupIsSelectedAsAWhole();
@@ -331,6 +332,54 @@ void GuiPhase1::copySelectedEdgeArrays() {
   QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
   QVERIFY(std::abs(geom::volume(m.document().worldShape(box)) - volume) < 1e-6);
   QCOMPARE(m.document().objects().size(), std::size_t(3));  // line, box, the copied edge
+}
+
+// Report: a line copied with Move + Ctrl to the far edge of a box side,
+// then "/3": the box went back to a flat face and picking stopped. The copy
+// on the far edge records nothing (the edge is there), so typing "/3" must
+// not take back the step before it (the box's push/pull).
+void GuiPhase1::copyOntoEdgeThenDivideKeepsSolid() {
+  Fixture f;
+  QVERIFY(f.setUp(1500, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 3000, 1000, 1000);
+  f.vp->syncNow();
+  const std::size_t steps = m.history().undoCount();
+  f.window.activateTool(MainWindow::ToolId::Select);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 500)));  // the front's left edge
+  QCOMPARE(f.window.elementSelection().size(), std::size_t(1));
+  f.window.activateTool(MainWindow::ToolId::Move);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 500)));
+  QTest::keyClick(f.vp, Qt::Key_Control);
+  move(f.vp, f.vp->toWidget(gp_Pnt(1500, 0, 500)));
+  type(f.vp, QStringLiteral("3000"));  // onto the right edge: nothing new
+  QCOMPARE(m.history().undoCount(), steps);
+  type(f.vp, QStringLiteral("/3"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  const TopoDS_Shape solid = m.document().worldShape(*m.document().find(box));
+  QVERIFY(std::abs(geom::volume(solid) - 3e9) < 1.0);
+  int faces = 0;
+  for (TopExp_Explorer e(solid, TopAbs_FACE); e.More(); e.Next()) ++faces;
+  QCOMPARE(faces, 8);  // the front in three
+  QCOMPARE(m.history().undoCount(), steps + 1);
+  // Everything is picked again: the front's parts, the top, the side.
+  f.window.activateTool(MainWindow::ToolId::Select);
+  for (const gp_Pnt& p : {gp_Pnt(500, 0, 500), gp_Pnt(1500, 0, 500), gp_Pnt(1500, 500, 1000), gp_Pnt(3000, 500, 500)}) {
+    click(f.vp, f.vp->toWidget(gp_Pnt(6000, -3000, 0)));
+    click(f.vp, f.vp->toWidget(p));
+    QVERIFY2(f.window.elementSelection().size() == 1,
+             qPrintable(QStringLiteral("nothing picked at %1 %2 %3").arg(p.X()).arg(p.Y()).arg(p.Z())));
+  }
+  // The middle part pushed out on its own.
+  f.window.activateTool(MainWindow::ToolId::PushPull);
+  click(f.vp, f.vp->toWidget(gp_Pnt(1500, 0, 500)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(1500, -300, 500)));
+  type(f.vp, QStringLiteral("500"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QVERIFY(std::abs(geom::volume(m.document().worldShape(*m.document().find(box))) - 3.5e9) < 1.0);
+  QVERIFY(m.undo());
+  QVERIFY(m.undo());
+  QVERIFY(std::abs(geom::volume(m.document().worldShape(*m.document().find(box))) - 3e9) < 1.0);
 }
 
 void GuiPhase1::moveCopyAndArray() {
