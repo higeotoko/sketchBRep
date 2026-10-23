@@ -547,14 +547,26 @@ class RectangleTool : public DrawingTool {
 
 // Eraser: click deletes what is clicked (a group/component as a whole, or
 // a single object inside the group being edited).
+// SketchUp's eraser works on lines: a loose line loses the piece between
+// its neighbouring crossings, a flat face's outline edge takes the face
+// (its other edges stay as lines), a line dividing a flat face merges the
+// two, and a corner edge of a solid takes the two faces meeting there (the
+// shape stays open). Shift+click hides the line; clicking a face erases
+// the object.
 class EraserTool : public Tool {
  public:
   using Tool::Tool;
   QString name() const override;
   QCursor cursor() const override;
   void activate() override;
+  void cancel() override;
   void mousePress(const ToolEvent& e) override;
   void mouseMove(const ToolEvent& e) override;
+
+ private:
+  enum class EdgeAction { None, Piece, FaceOutline, Merge, Corner };
+  // What clicking this edge would do.
+  EdgeAction actionFor(const ElementRef& picked, const TopoDS_Edge& edge) const;
 };
 
 // Follow Me: click the face to sweep (a profile), then the path: a line /

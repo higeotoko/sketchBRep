@@ -42,6 +42,7 @@ AI 専用の裏口は作らず、GUI のツールと同じ `doc::Modeler` を JS
 - コンポーネントの配置: `placement_parameters`（読み取り）, `set_placement_parameter`, `clear_placement_parameters`, `make_unique`, `mirror_placement {ids, axis}`, `set_component_axes {id, origin, x_axis?}`（docs/14_components.md）
 - 形の変形: `move_vertices {id, points | edge, delta}`（面を平らに保てない動きは拒否、docs/15_reshape.md）
 - 線の非表示: `set_edges_hidden {id, edges, hidden}`, `show_hidden_edges {ids}`（表示だけ、面は分かれたまま）
+- 消しゴム（線）: `erase_line {id, edge}`（区間だけ消す / 面の外周なら面を消して線を残す / ソリッドの角なら 2 面を消して開いた形に）
 - 表示状態: `hide` / `unhide_all`（非表示は描画・吸着・出力の対象外）, `set_section`（断面。平面図・断面図の切断）, `list_tags`, `set_tag_visible`
 - 3DM: `export_3dm` / `import_3dm`（ファイル系なのでアプリ経由では無効、`sbr_cli` 等で使用）
 - 履歴・ファイル: `undo`, `redo`, `save`, `open`, `export_step`（**アプリ経由では無効**）

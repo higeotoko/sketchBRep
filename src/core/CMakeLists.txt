@@ -2,6 +2,7 @@ add_library(sbr_core STATIC
   src/Units.cpp
   src/Profile.cpp
   src/Operations.cpp
+  src/Arrangement.cpp
   src/Validation.cpp
   src/Measure.cpp
   src/ShapeIO.cpp

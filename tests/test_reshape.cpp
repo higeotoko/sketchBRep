@@ -2,6 +2,8 @@
 // is refused, the solid stays valid, painted faces keep their material, and
 // the move is a parametric step (re-editable, saved, undone).
 
+#include <BRepExtrema_DistShapeShape.hxx>
+#include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepGProp.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <GProp_GProps.hxx>
@@ -271,4 +273,158 @@ TEST(Openings, RefusedOnSlabEdgesAndWhenSplitting) {
   EXPECT_NE(split.error().find("in two"), std::string::npos) << split.error();
   EXPECT_EQ(m.history().undoCount(), before);
   EXPECT_TRUE(m.document().find(*cut));
+}
+
+// SketchUp: lines that cross close areas into faces, not only end to end.
+namespace {
+int countKind(const Modeler& m, ObjectKind kind) {
+  int n = 0;
+  for (const Object& o : m.document().objects()) n += o.kind() == kind;
+  return n;
+}
+}  // namespace
+
+TEST(CrossingLines, HashMakesTheMiddleSquareAndKeepsTails) {
+  Modeler m;
+  ASSERT_TRUE(m.createPolyline({gp_Pnt(-500, 0, 0), gp_Pnt(1500, 0, 0)}).ok());
+  ASSERT_TRUE(m.createPolyline({gp_Pnt(-500, 1000, 0), gp_Pnt(1500, 1000, 0)}).ok());
+  ASSERT_TRUE(m.createPolyline({gp_Pnt(0, -500, 0), gp_Pnt(0, 1500, 0)}).ok());
+  EXPECT_FALSE(m.closesByCrossing({gp_Pnt(-1000, 2000, 0), gp_Pnt(2000, 2000, 0)}));  // crosses nothing
+  EXPECT_TRUE(m.closesByCrossing({gp_Pnt(1000, -500, 0), gp_Pnt(1000, 1500, 0)}));
+  auto last = m.createPolyline({gp_Pnt(1000, -500, 0), gp_Pnt(1000, 1500, 0)});
+  ASSERT_TRUE(last.ok());
+  const std::size_t steps = m.history().undoCount();
+  auto faces = m.facesFromCrossings(*last);
+  ASSERT_TRUE(faces.ok()) << faces.error();
+  ASSERT_EQ(faces->size(), 1u);
+  EXPECT_NEAR(geom::area(m.document().worldShape(faces->front())), 1e6, 1e-3);
+  // Normal up, like faces drawn with the rectangle tool.
+  const auto n = geom::planarFaceNormal(TopoDS::Face(m.document().worldShape(faces->front())));
+  ASSERT_TRUE(n);
+  EXPECT_GT(n->Z(), 0.99);
+  EXPECT_EQ(countKind(m, ObjectKind::Curve), 8);  // two tails per line
+  EXPECT_EQ(m.history().undoCount(), steps + 1);
+  ASSERT_TRUE(m.undo());
+  EXPECT_EQ(countKind(m, ObjectKind::Curve), 4);
+  EXPECT_EQ(countKind(m, ObjectKind::Face), 0);
+}
+
+TEST(CrossingLines, ChainCrossingItselfAndThreeSeparateLines) {
+  Modeler m;
+  // A chain that comes back across its own first segment.
+  auto chain = m.createPolyline({gp_Pnt(0, 0, 0), gp_Pnt(1000, 0, 0), gp_Pnt(1000, 1000, 0), gp_Pnt(500, 1000, 0),
+                                 gp_Pnt(500, -500, 0)});
+  ASSERT_TRUE(chain.ok());
+  auto faces = m.facesFromCrossings(*chain);
+  ASSERT_TRUE(faces.ok()) << faces.error();
+  ASSERT_EQ(faces->size(), 1u);
+  EXPECT_NEAR(geom::area(m.document().worldShape(faces->front())), 500.0 * 1000, 1e-3);
+  EXPECT_EQ(countKind(m, ObjectKind::Curve), 2);  // the two tails
+
+  // Three lines, each crossing the others: a triangle.
+  Modeler t;
+  ASSERT_TRUE(t.createPolyline({gp_Pnt(5000, 0, 0), gp_Pnt(7000, 0, 0)}).ok());
+  ASSERT_TRUE(t.createPolyline({gp_Pnt(5500, -500, 0), gp_Pnt(5500, 1500, 0)}).ok());
+  auto third = t.createPolyline({gp_Pnt(6700, -200, 0), gp_Pnt(5300, 1200, 0)});
+  ASSERT_TRUE(third.ok());
+  auto tri = t.facesFromCrossings(*third);
+  ASSERT_TRUE(tri.ok()) << tri.error();
+  ASSERT_EQ(tri->size(), 1u);
+  EXPECT_NEAR(geom::area(t.document().worldShape(tri->front())), 0.5 * 1000 * 1000, 1e-3);
+
+  // Lines that do not close anything: nothing changes.
+  Modeler n;
+  ASSERT_TRUE(n.createPolyline({gp_Pnt(0, 0, 0), gp_Pnt(1000, 0, 0)}).ok());
+  auto x = n.createPolyline({gp_Pnt(500, -500, 0), gp_Pnt(500, 500, 0)});
+  const std::size_t steps = n.history().undoCount();
+  auto none = n.facesFromCrossings(*x);
+  ASSERT_TRUE(none.ok());
+  EXPECT_TRUE(none->empty());
+  EXPECT_EQ(n.history().undoCount(), steps);
+  EXPECT_EQ(countKind(n, ObjectKind::Curve), 2);
+}
+
+// The eraser works on lines (SketchUp): docs/15_reshape.md.
+namespace {
+TopoDS_Edge edgeNear(const Modeler& m, const ObjectId& id, const gp_Pnt& p) {
+  TopoDS_Edge best;
+  double d = 1e300;
+  for (TopExp_Explorer e(m.document().worldShape(id), TopAbs_EDGE); e.More(); e.Next()) {
+    BRepExtrema_DistShapeShape dist(BRepBuilderAPI_MakeVertex(p).Vertex(), e.Current());
+    if (dist.IsDone() && dist.Value() < d) {
+      d = dist.Value();
+      best = TopoDS::Edge(e.Current());
+    }
+  }
+  return best;
+}
+}  // namespace
+
+TEST(EraseLines, RoundedCornerFromAnLAndAnArc) {
+  Modeler m;
+  auto l = m.createPolyline({gp_Pnt(0, 1000, 0), gp_Pnt(0, 0, 0), gp_Pnt(1000, 0, 0)});
+  ASSERT_TRUE(l.ok());
+  // Fillet arc (radius 300) touching both legs.
+  auto arc = m.createArc(gp_Pnt(0, 300, 0), gp_Pnt(300, 0, 0), gp::DZ(), -(300 - 300 / std::sqrt(2.0)));
+  ASSERT_TRUE(arc.ok()) << arc.error();
+  // The corner part of the vertical leg: from the corner to where the arc ends.
+  auto first = m.eraseLinePiece(*l, edgeNear(m, *l, gp_Pnt(0, 100, 0)), gp_Pnt(0, 100, 0));
+  ASSERT_TRUE(first.ok()) << first.error();
+  ASSERT_EQ(first->size(), 2u);  // the leg above the arc, and the other leg
+  ObjectId other;
+  for (const ObjectId& id : *first) {
+    if (geom::exactBounds(m.document().worldShape(id)).CornerMax().X() > 500) other = id;
+  }
+  ASSERT_FALSE(other.empty());
+  auto second = m.eraseLinePiece(other, edgeNear(m, other, gp_Pnt(100, 0, 0)), gp_Pnt(100, 0, 0));
+  ASSERT_TRUE(second.ok()) << second.error();
+  // Left: the leg (0,300)-(0,1000), the arc, the leg (300,0)-(1000,0).
+  int curves = 0;
+  double length = 0;
+  for (const Object& o : m.document().objects()) {
+    if (o.kind() != ObjectKind::Curve) continue;
+    ++curves;
+    GProp_GProps props;
+    BRepGProp::LinearProperties(m.document().worldShape(o), props);
+    length += props.Mass();
+  }
+  EXPECT_EQ(curves, 3);
+  EXPECT_NEAR(length, 700 + 700 + M_PI / 2 * 300, 1e-3);
+  // Two undo steps bring the L back.
+  ASSERT_TRUE(m.undo());
+  ASSERT_TRUE(m.undo());
+  EXPECT_TRUE(m.document().find(*l));
+}
+
+TEST(EraseLines, FaceOutlineEdgeLeavesTheOtherSides) {
+  Modeler m;
+  auto rect = m.createRectangle(geom::SketchPlane::ground(), 1000, 500);
+  ASSERT_TRUE(rect.ok());
+  auto left = m.eraseLinePiece(*rect, edgeNear(m, *rect, gp_Pnt(500, 0, 0)), gp_Pnt(500, 0, 0));
+  ASSERT_TRUE(left.ok()) << left.error();
+  EXPECT_FALSE(m.document().find(*rect));
+  ASSERT_EQ(left->size(), 1u);  // one line round the three other sides
+  GProp_GProps props;
+  BRepGProp::LinearProperties(m.document().worldShape(left->front()), props);
+  EXPECT_NEAR(props.Mass(), 500 + 1000 + 500, 1e-3);
+
+  // An arc segment face: erasing its chord leaves the arc.
+  auto seg = m.createArc(gp_Pnt(3000, 0, 0), gp_Pnt(4000, 0, 0), gp::DZ(), 300, true);
+  ASSERT_TRUE(seg.ok());
+  auto arcLeft = m.eraseLinePiece(*seg, edgeNear(m, *seg, gp_Pnt(3500, 0, 0)), gp_Pnt(3500, 0, 0));
+  ASSERT_TRUE(arcLeft.ok()) << arcLeft.error();
+  ASSERT_EQ(arcLeft->size(), 1u);
+  EXPECT_TRUE(std::holds_alternative<ArcCurve>(m.document().find(arcLeft->front())->recipe.base));
+}
+
+TEST(EraseLines, CornerEdgeOfABoxTakesItsTwoFaces) {
+  Modeler m;
+  const ObjectId box = cube(m);
+  const TopoDS_Edge corner = edgeNear(m, box, gp_Pnt(500, 0, 1000));  // front top edge
+  ASSERT_EQ(m.facesAtEdge(box, corner).size(), 2u);
+  ASSERT_TRUE(m.eraseCornerEdge(box, corner).ok());
+  EXPECT_EQ(m.document().find(box)->kind(), ObjectKind::Shell);
+  EXPECT_EQ(faceCount(m.document().worldShape(box)), 4);
+  ASSERT_TRUE(m.undo());
+  EXPECT_EQ(m.document().find(box)->kind(), ObjectKind::Solid);
 }

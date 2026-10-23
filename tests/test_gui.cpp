@@ -4,6 +4,8 @@
 #include <cmath>
 
 #include <BRep_Tool.hxx>
+#include <GProp_GProps.hxx>
+#include <BRepGProp.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
@@ -162,6 +164,8 @@ class GuiPhase1 : public QObject {
   void moveToolReshapesCornersAndEdges();
   void eraserShiftHidesEdgeLine();
   void openingToolOverEverything();
+  void lineToolCrossingLinesMakeFace();
+  void eraserWorksOnLines();
   void followMeAroundTopFace();
   void wallToolAndArchitectureMenus();
   void slabToolAndOpeningTool();
@@ -1290,10 +1294,11 @@ void GuiPhase1::eraserDeletesClickedObject() {
   QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
   QVERIFY(m.document().find(wall));
   QCOMPARE(faces(), 6);
-  // A corner edge is refused with an explanation; nothing changes.
+  // A corner edge (SketchUp): the two faces meeting there go, the shape stays open.
   click(f.vp, f.vp->toWidget(gp_Pnt(1500, 1500, 2000)));
-  QVERIFY(!f.window.lastError().isEmpty());
-  QCOMPARE(faces(), 6);
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(faces(), 4);
+  QCOMPARE(m.document().find(wall)->kind(), doc::ObjectKind::Shell);
 }
 
 void GuiPhase1::aiBridgeOverLocalSocket() {
@@ -2552,6 +2557,83 @@ void GuiPhase1::openingToolOverEverything() {
     }
   }
   QVERIFY2(failures.isEmpty(), qPrintable(failures.join(QStringLiteral("\n"))));
+}
+
+// SketchUp: draw a # with four lines; the fourth closes the middle square
+// into a face the moment it crosses the others (no end-to-end snapping).
+void GuiPhase1::lineToolCrossingLinesMakeFace() {
+  Fixture f;
+  QVERIFY(f.setUp(2000, 2000));
+  doc::Modeler& m = f.window.modeler();
+  f.window.activateTool(MainWindow::ToolId::Line);
+  auto line = [&](const gp_Pnt& a, const gp_Pnt& b, bool end) {
+    click(f.vp, f.vp->toWidget(a));
+    click(f.vp, f.vp->toWidget(b));
+    if (end) QTest::keyClick(f.vp, Qt::Key_Escape);  // ends the chain, keeps the line
+    QTest::qWait(20);
+  };
+  line(gp_Pnt(500, 1000, 0), gp_Pnt(3500, 1000, 0), true);
+  line(gp_Pnt(500, 3000, 0), gp_Pnt(3500, 3000, 0), true);
+  line(gp_Pnt(1000, 500, 0), gp_Pnt(1000, 3500, 0), true);
+  QCOMPARE(m.document().objects().size(), std::size_t(3));
+  line(gp_Pnt(3000, 500, 0), gp_Pnt(3000, 3500, 0), false);  // ends by itself: an area closed
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  int faces = 0, curves = 0;
+  double area = 0;
+  for (const doc::Object& o : m.document().objects()) {
+    if (o.kind() == doc::ObjectKind::Face) {
+      ++faces;
+      area = geom::area(m.document().worldShape(o));
+    }
+    curves += o.kind() == doc::ObjectKind::Curve;
+  }
+  QCOMPARE(faces, 1);
+  // Clicks land on pixel-rounded ground points: within a percent.
+  QVERIFY2(std::abs(area - 2000.0 * 2000) < 0.01 * 2000.0 * 2000, qPrintable(QString::number(area)));
+  QCOMPARE(curves, 8);
+  QVERIFY(f.window.statusText().contains(QStringLiteral("面")));
+  // One undo takes back the fourth line and its face together.
+  QVERIFY(m.undo());
+  QCOMPARE(m.document().objects().size(), std::size_t(3));
+}
+
+// The eraser works on lines like SketchUp: the corner part of an L between
+// the corner and an arc's end, then a box's corner edge (its two faces go,
+// highlighted first).
+void GuiPhase1::eraserWorksOnLines() {
+  Fixture f;
+  QVERIFY(f.setUp(3000, 3000));
+  doc::Modeler& m = f.window.modeler();
+  auto l = m.createPolyline({gp_Pnt(500, 7500, 0), gp_Pnt(500, 500, 0), gp_Pnt(7500, 500, 0)});
+  QVERIFY(l.ok());
+  QVERIFY(m.createArc(gp_Pnt(500, 2300, 0), gp_Pnt(2300, 500, 0), gp::DZ(), -(1800 - 1800 / std::sqrt(2.0))).ok());
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::Eraser);
+  click(f.vp, f.vp->toWidget(gp_Pnt(500, 900, 0)));  // vertical leg, between the corner and the arc
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  click(f.vp, f.vp->toWidget(gp_Pnt(900, 500, 0)));  // horizontal leg, the same
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  double length = 0;
+  int curves = 0;
+  for (const doc::Object& o : m.document().objects()) {
+    if (o.kind() != doc::ObjectKind::Curve) continue;
+    ++curves;
+    GProp_GProps props;
+    BRepGProp::LinearProperties(m.document().worldShape(o), props);
+    length += props.Mass();
+  }
+  QCOMPARE(curves, 3);
+  QVERIFY2(std::abs(length - (5200 + 5200 + M_PI / 2 * 1800)) < 1e-3, qPrintable(QString::number(length)));
+
+  // A box's front top edge: hovering says what goes, clicking opens the box.
+  const doc::ObjectId box = f.box(9000, 0, 2000, 2000, 2000);
+  f.vp->syncNow();
+  const QPoint edge = f.vp->toWidget(gp_Pnt(10000, 0, 2000));
+  move(f.vp, edge);
+  QVERIFY2(f.window.statusText().contains(QStringLiteral("開いたまま")), qPrintable(f.window.statusText()));
+  click(f.vp, edge);
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().find(box)->kind(), doc::ObjectKind::Shell);
 }
 
 QTEST_MAIN(GuiPhase1)

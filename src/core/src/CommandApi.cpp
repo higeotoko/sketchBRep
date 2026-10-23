@@ -13,6 +13,7 @@
 #include <nlohmann/json.hpp>
 
 #include <BRepTools.hxx>
+#include <BRepAdaptor_Curve.hxx>
 #include <BRep_Tool.hxx>
 #include <TopExp.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
@@ -1032,6 +1033,34 @@ const std::vector<CommandDef>& commands() {
        [](doc::Modeler& m, const json& a) {
          must(m.showHiddenEdges(ids(a, "ids")));
          return idsResult(ids(a, "ids"));
+       }},
+      {"erase_line",
+       "The eraser on a line, as in SketchUp: on a loose line / arc only the piece between its neighbouring "
+       "crossings or touching ends goes (the rest stays as lines); on the outline of a flat face the face goes "
+       "and its other edges stay as lines; on a line dividing a flat face of a solid the faces merge; on a "
+       "corner edge of a solid the faces meeting there go and the shape stays open. edge = index or "
+       "{\"near\": [x,y,z]} (a point on the line, also choosing the piece). Returns the lines left.",
+       SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "edge": {}}, "required": ["id", "edge"]}),
+       [](doc::Modeler& m, const json& a) {
+         const ObjectId id = text(a, "id");
+         const json& selector = arg(a, "edge");
+         const TopoDS_Edge edge = selectEdge(m, id, selector);
+         gp_Pnt at;
+         if (selector.is_object() && selector.contains("near")) {
+           at = gp_Pnt(xyz(selector.at("near"), "near"));
+         } else {
+           BRepAdaptor_Curve c(edge);
+           at = c.Value(0.5 * (c.FirstParameter() + c.LastParameter()));
+         }
+         const doc::ObjectKind kind = object(m, id).kind();
+         if (kind == doc::ObjectKind::Curve) return json{{"lines", must(m.eraseLinePiece(id, edge, at))}};
+         if (kind == doc::ObjectKind::Face) {
+           if (m.eraseEdge(id, edge)) return json{{"id", id}};
+           return json{{"lines", must(m.eraseLinePiece(id, edge, at))}};
+         }
+         if (auto merged = m.eraseEdge(id, edge)) return json{{"id", *merged}};
+         must(m.eraseCornerEdge(id, edge));
+         return json{{"id", id}, {"open", true}};
        }},
       {"set_parameter", "Change a parameter (see get_object.parameters), e.g. op0.distance or width.",
        SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "key": {"type": "string"},

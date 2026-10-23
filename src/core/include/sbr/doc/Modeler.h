@@ -129,6 +129,30 @@ class Modeler {
   // loopFound (optional) tells "no closed loop" apart from "a loop that cannot
   // become a face" (not planar, crossing itself).
   Result<ObjectId> faceFromLoop(const ObjectId& curveId, bool* loopFound = nullptr);
+  // SketchUp-style: where the line crosses other loose straight lines (or
+  // itself) in the same plane and group and so closes areas, those areas
+  // become faces. The lines are cut at the crossings; pieces bounding a new
+  // face go into it, the rest (tails) stay as lines. Returns the new faces
+  // (none: nothing changed). Use after faceFromLoop found no loop.
+  Result<std::vector<ObjectId>> facesFromCrossings(const ObjectId& curveId);
+  // Whether a chain being drawn (world points) would close an area that way
+  // (the line tool ends the chain there).
+  bool closesByCrossing(const std::vector<gp_Pnt>& chain) const;
+  // The eraser on a line (SketchUp): only the piece of the edge between
+  // its neighbouring break points (its own corners, where other lines or
+  // face outlines cross or end on it) goes. On a loose line / arc / curve
+  // the rest stays as lines; on the outline of a flat face (not a solid)
+  // the face goes and its other edges stay as lines (a rectangle leaves
+  // three sides). `worldPoint` says which piece. One undo step; returns
+  // the lines left.
+  Result<std::vector<ObjectId>> eraseLinePiece(const ObjectId& id, const TopoDS_Edge& worldEdge,
+                                               const gp_Pnt& worldPoint);
+  // The eraser on a corner edge of a solid / open shape (SketchUp): the
+  // faces meeting at that edge go with it and the shape stays open (a box
+  // loses two faces). A line dividing a flat face is eraseEdge instead.
+  Status eraseCornerEdge(const ObjectId& id, const TopoDS_Edge& worldEdge);
+  // Faces of the object that meet at the edge (world).
+  std::vector<TopoDS_Face> facesAtEdge(const ObjectId& id, const TopoDS_Edge& worldEdge) const;
   // True if p is an end point of a loose open curve (where a loop can close).
   bool isLooseCurveEnd(const gp_Pnt& p) const;
   // Ends of loose open curves in the current editing context that no other

@@ -27,6 +27,7 @@
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <TopoDS.hxx>
 #include <BRep_Tool.hxx>
+#include <BRepAdaptor_Curve.hxx>
 #include <TopExp_Explorer.hxx>
 
 #include "Cursors.h"
@@ -482,11 +483,19 @@ void createCurveAndFace(ToolHost& host, Create create, const char* undoName) {
   }
   bool loopFound = false;
   auto face = m.faceFromLoop(*curve, &loopFound);
+  // Not closed end to end: crossing other lines (or itself) may still close areas.
+  std::optional<Result<std::vector<doc::ObjectId>>> crossed;
+  if (!face && !loopFound) crossed = m.facesFromCrossings(*curve);
   m.history().endGroup();
   if (face) {
     host.setStatus(QObject::tr("輪郭が閉じたので面を作成しました。そのままプッシュ/プルできます"));
   } else if (loopFound) {
     host.reportError(loopFailureText(face.error()));
+  } else if (crossed && *crossed && !(*crossed)->empty()) {
+    host.setStatus(QObject::tr("線が交差して囲んだところを面にしました（%1 面）。はみ出した線は残しています")
+                       .arg((*crossed)->size()));
+  } else if (crossed && !*crossed) {
+    host.reportError(loopFailureText((*crossed).error()));
   }
 }
 
@@ -558,6 +567,8 @@ void LineTool::mouseMove(const ToolEvent& e) {
       host_.setStatus(QObject::tr("クリックで閉じて面にします"));
     } else if (host_.modeler().isLooseCurveEnd(*current_)) {
       host_.setStatus(QObject::tr("クリックで線・円弧とつなぎます（輪郭が閉じれば面になります）"));
+    } else if (host_.modeler().closesByCrossing(line)) {
+      host_.setStatus(QObject::tr("クリックで、線が交差して囲んだところを面にします"));
     } else if (host_.modeler().splitTarget(line)) {
       host_.setStatus(QObject::tr("クリックで面をこの線で分割します"));
     }
@@ -608,9 +619,9 @@ void LineTool::addPoint(const gp_Pnt& p) {
     host_.setStatus(QObject::tr("面を分割しました。分かれた面をプッシュ/プルできます"));
     return;
   }
-  // Reaching the end of another loose line or arc: finish here so the loop
-  // can close into a face.
-  if (points_.size() >= 2 && host_.modeler().isLooseCurveEnd(p)) {
+  // Reaching the end of another loose line or arc, or crossing lines (or
+  // itself) so that an area closes: finish here so it becomes a face.
+  if (points_.size() >= 2 && (host_.modeler().isLooseCurveEnd(p) || host_.modeler().closesByCrossing(points_))) {
     finish();
     return;
   }
@@ -3449,48 +3460,108 @@ QCursor EraserTool::cursor() const { return toolCursor(CursorKind::Eraser); }
 void EraserTool::activate() {
   host_.viewport().setPickMode(PickMode::Elements);
   host_.setMeasurement(QString(), QString());
-  host_.setStatus(QObject::tr("面を分けた線をクリックで消して面を一枚に戻す / 面をクリックで部材ごと削除"
-                              "（グループ・コンポーネントは丸ごと）"));
+  host_.setStatus(QObject::tr("線をクリックで消す（交点から交点まで）/ 面をクリックで部材ごと削除 / Shift+クリックで線を隠す"));
+}
+
+void EraserTool::cancel() { host_.viewport().setHighlightedElements({}); }
+
+namespace {
+
+// The point of the edge under the cursor (closest to the view ray).
+gp_Pnt pointOnEdgeAt(Viewport& vp, const QPoint& pos, const TopoDS_Edge& edge) {
+  const snap::Ray ray = vp.rayAt(pos);
+  const gp_Pnt far = ray.origin.Translated(gp_Vec(ray.direction) * 1e8);
+  BRepExtrema_DistShapeShape d(edge, BRepBuilderAPI_MakeEdge(ray.origin.Translated(gp_Vec(ray.direction) * -1e8), far).Edge());
+  if (d.IsDone() && d.NbSolution() > 0) return d.PointOnShape1(1);
+  BRepAdaptor_Curve c(edge);
+  return c.Value(0.5 * (c.FirstParameter() + c.LastParameter()));
+}
+
+bool sameFlatPlane(const std::vector<TopoDS_Face>& faces) {
+  if (faces.size() != 2) return false;
+  const auto a = geom::FaceRef::fromFace(faces[0]);
+  const auto b = geom::FaceRef::fromFace(faces[1]);
+  return a && b && a->normal.Angle(b->normal) < 1e-6 &&
+         std::abs(gp_Vec(a->centroid, b->centroid).Dot(gp_Vec(a->normal))) < 1e-3;
+}
+
+}  // namespace
+
+EraserTool::EdgeAction EraserTool::actionFor(const ElementRef& picked, const TopoDS_Edge& edge) const {
+  const doc::Object* o = host_.modeler().document().find(picked.objectId);
+  if (!o || edge.IsNull()) return EdgeAction::None;
+  switch (o->kind()) {
+    case doc::ObjectKind::Curve: return EdgeAction::Piece;
+    case doc::ObjectKind::Face: return EdgeAction::FaceOutline;  // (a dividing line merges, see mousePress)
+    case doc::ObjectKind::Solid:
+    case doc::ObjectKind::Shell:
+      return sameFlatPlane(host_.modeler().facesAtEdge(picked.objectId, edge)) ? EdgeAction::Merge : EdgeAction::Corner;
+    default: return EdgeAction::None;
+  }
 }
 
 void EraserTool::mouseMove(const ToolEvent& e) {
-  const auto picked = host_.viewport().pickElement(e.pos);
+  Viewport& vp = host_.viewport();
+  const auto picked = vp.pickElement(e.pos);
+  vp.setHighlightedElements({});
   if (!picked) return;
   const doc::Document& document = host_.modeler().document();
   const doc::ObjectId target = addressedAtLevel(document, picked->objectId, host_.editingGroup());
-  const doc::Object* o = document.find(picked->objectId);
-  const bool line = picked->type == TopAbs_EDGE && target == picked->objectId && o &&
-                    (o->kind() == doc::ObjectKind::Solid || o->kind() == doc::ObjectKind::Face);
-  host_.setStatus(line ? QObject::tr("クリックでこの線を消す（面を分けた線なら一枚に戻る）／ Shift+クリックで線を隠す（面は分かれたまま）")
-                       : QObject::tr("クリックで削除"));
+  if (picked->type != TopAbs_EDGE || target != picked->objectId) {
+    host_.setStatus(QObject::tr("クリックで削除"));
+    return;
+  }
+  const TopoDS_Shape shape = vp.elementShape(*picked);
+  const EdgeAction action = actionFor(*picked, shape.IsNull() ? TopoDS_Edge() : TopoDS::Edge(shape));
+  const QString hide = QObject::tr("／ Shift+クリックで線を隠す");
+  switch (action) {
+    case EdgeAction::Piece:
+      host_.setStatus(QObject::tr("クリックでこの線を消す（交点・接点から次の交点・接点まで）"));
+      break;
+    case EdgeAction::FaceOutline:
+      host_.setStatus(QObject::tr("クリックでこの辺を消す（面は消え、ほかの辺は線として残ります）") + hide);
+      break;
+    case EdgeAction::Merge:
+      host_.setStatus(QObject::tr("クリックでこの線を消す（面が一枚に戻ります）") + hide);
+      break;
+    case EdgeAction::Corner:
+      // Say (and show) what goes with it before it happens.
+      vp.setHighlightedElements(vp.withNeighbours(*picked));
+      host_.setStatus(QObject::tr("クリックでこの辺と、ここで接する面（強調表示）を消します。形は開いたままになります") + hide);
+      break;
+    case EdgeAction::None: host_.setStatus(QObject::tr("クリックで削除")); break;
+  }
 }
 
 void EraserTool::mousePress(const ToolEvent& e) {
-  const auto picked = host_.viewport().pickElement(e.pos);
+  Viewport& vp = host_.viewport();
+  const auto picked = vp.pickElement(e.pos);
+  vp.setHighlightedElements({});
   if (!picked) return;
   doc::Modeler& m = host_.modeler();
   const doc::ObjectId target = addressedAtLevel(m.document(), picked->objectId, host_.editingGroup());
-  const doc::Object* o = m.document().find(picked->objectId);
-  // An edge of a solid / profile at this level: erase that line only.
-  if (picked->type == TopAbs_EDGE && target == picked->objectId && o &&
-      (o->kind() == doc::ObjectKind::Solid || o->kind() == doc::ObjectKind::Face)) {
-    const TopoDS_Shape edge = host_.viewport().elementShape(*picked);
-    if (edge.IsNull()) return;
-    if (e.modifiers & Qt::ShiftModifier) {
-      // SketchUp: Shift with the eraser hides the line instead.
-      const Status s = m.setEdgesHidden(picked->objectId, {TopoDS::Edge(edge)}, true);
-      if (!s) host_.reportError(QString::fromStdString(s.message()));
-      host_.viewport().clearHover();
-      return;
+  const TopoDS_Shape shape = picked->type == TopAbs_EDGE ? vp.elementShape(*picked) : TopoDS_Shape();
+  const TopoDS_Edge edge = shape.IsNull() ? TopoDS_Edge() : TopoDS::Edge(shape);
+  const EdgeAction action = target == picked->objectId ? actionFor(*picked, edge) : EdgeAction::None;
+  auto fail = [&](const std::string& message) { host_.reportError(QString::fromStdString(message)); };
+  if (action != EdgeAction::None && (e.modifiers & Qt::ShiftModifier) && action != EdgeAction::Piece) {
+    // SketchUp: Shift with the eraser hides the line instead.
+    if (const Status s = m.setEdgesHidden(picked->objectId, {edge}, true); !s) fail(s.message());
+  } else if (action == EdgeAction::Piece) {
+    if (auto r = m.eraseLinePiece(picked->objectId, edge, pointOnEdgeAt(vp, e.pos, edge)); !r) fail(r.error());
+  } else if (action == EdgeAction::FaceOutline) {
+    // A line dividing a loose face merges its parts; an outline edge opens it.
+    if (!m.eraseEdge(picked->objectId, edge)) {
+      if (auto r = m.eraseLinePiece(picked->objectId, edge, pointOnEdgeAt(vp, e.pos, edge)); !r) fail(r.error());
     }
-    const auto r = m.eraseEdge(picked->objectId, TopoDS::Edge(edge));
-    if (!r) host_.reportError(QString::fromStdString(r.error()));
-    host_.viewport().clearHover();
-    return;
+  } else if (action == EdgeAction::Merge) {
+    if (auto r = m.eraseEdge(picked->objectId, edge); !r) fail(r.error());
+  } else if (action == EdgeAction::Corner) {
+    if (const Status s = m.eraseCornerEdge(picked->objectId, edge); !s) fail(s.message());
+  } else if (const Status s = m.remove({target}); !s) {
+    fail(s.message());
   }
-  const Status s = m.remove({target});
-  if (!s) host_.reportError(QString::fromStdString(s.message()));
-  host_.viewport().clearHover();
+  vp.clearHover();
 }
 
 // --- Follow Me ---------------------------------------------------------------------

@@ -12,6 +12,12 @@
 #include <Bnd_Box.hxx>
 #include <TopoDS_Compound.hxx>
 #include <BRep_Tool.hxx>
+#include <Geom_Curve.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepExtrema_DistShapeShape.hxx>
+#include <GCPnts_AbscissaPoint.hxx>
+#include <GeomAPI_ProjectPointOnCurve.hxx>
+#include <BRepTools_WireExplorer.hxx>
 #include <TopExp.hxx>
 #include <TopTools_ListOfShape.hxx>
 #include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
@@ -32,6 +38,7 @@
 #include "sbr/doc/ChangeSummary.h"
 #include "sbr/geom/Freeform.h"
 #include "sbr/geom/Measure.h"
+#include "sbr/geom/Arrangement.h"
 #include "sbr/geom/Operations.h"
 #include "sbr/geom/Rhino3dm.h"
 #include "sbr/geom/ShapeIO.h"
@@ -639,6 +646,37 @@ int faceCount(const TopoDS_Shape& shape) {
 
 }  // namespace
 
+std::vector<TopoDS_Face> Modeler::facesAtEdge(const ObjectId& id, const TopoDS_Edge& worldEdge) const {
+  std::vector<TopoDS_Face> out;
+  const Object* o = document_.find(id);
+  if (!o || o->shape.IsNull()) return out;
+  const TopoDS_Shape world = document_.worldShape(*o);
+  TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
+  TopExp::MapShapesAndAncestors(world, TopAbs_EDGE, TopAbs_FACE, edgeFaces);
+  int index = edgeFaces.FindIndex(worldEdge);
+  for (int i = 1; i <= edgeFaces.Extent() && index == 0; ++i) {
+    if (edgeFaces.FindKey(i).TShape() == worldEdge.TShape()) index = i;
+  }
+  if (index == 0) return out;
+  for (const TopoDS_Shape& f : edgeFaces(index)) {
+    const TopoDS_Face face = TopoDS::Face(f);
+    if (std::none_of(out.begin(), out.end(), [&](const TopoDS_Face& g) { return g.IsSame(face); })) out.push_back(face);
+  }
+  return out;
+}
+
+Status Modeler::eraseCornerEdge(const ObjectId& id, const TopoDS_Edge& worldEdge) {
+  const Object* o = document_.find(id);
+  if (!o || o->shape.IsNull()) return Status::failure("Object not found");
+  if (o->locked) return Status::failure("The object is locked");
+  if (o->kind() != ObjectKind::Solid && o->kind() != ObjectKind::Shell) {
+    return Status::failure("Only edges of solids and open shapes take their faces with them");
+  }
+  const std::vector<TopoDS_Face> faces = facesAtEdge(id, worldEdge);
+  if (faces.empty()) return Status::failure("The edge is not part of this object");
+  return removeFaces(id, faces);
+}
+
 Status Modeler::removeFaces(const ObjectId& id, const std::vector<TopoDS_Face>& worldFaces) {
   const Object* current = document_.find(id);
   if (!current || current->shape.IsNull()) return Status::failure("Object not found");
@@ -1067,6 +1105,359 @@ Result<ObjectId> Modeler::faceFromLoop(const ObjectId& curveId, bool* loopFound)
   }
   history_.endGroup();
   return id;
+}
+
+namespace {
+
+// The loose straight lines a chain can close areas with: same group, same
+// plane, visible. Segments of `chain` come first (fresh).
+struct CrossingSetup {
+  gp_Pln plane;
+  std::vector<std::pair<gp_Pnt, gp_Pnt>> segments;
+  std::vector<bool> fresh;
+  std::vector<std::pair<const Object*, std::size_t>> owners;  // (object, segment index in it), null = chain
+};
+
+std::vector<gp_Pnt> worldPolyline(const Document& document, const Object& o) {
+  std::vector<gp_Pnt> out;
+  const auto* line = std::get_if<PolylineCurve>(&o.recipe.base);
+  if (!line || !o.recipe.modifiers.empty()) return out;
+  const gp_Trsf world = document.worldTransform(o);
+  for (const gp_Pnt& p : line->points) out.push_back(p.Transformed(world));
+  return out;
+}
+
+std::optional<CrossingSetup> crossingSetup(const Document& document, const std::vector<gp_Pnt>& chain,
+                                           const ObjectId& parent, const ObjectId& skip) {
+  constexpr double kTol = 1e-4;
+  if (chain.size() < 2) return std::nullopt;
+  std::vector<const Object*> others;
+  for (const Object& o : document.objects()) {
+    if (o.id == skip || o.parent != parent || o.kind() != ObjectKind::Curve || !document.isVisible(o.id)) continue;
+    if (worldPolyline(document, o).size() >= 2) others.push_back(&o);
+  }
+  // The plane: the chain's own, else the chain's line with a line it crosses.
+  std::optional<gp_Pln> plane;
+  const gp_Vec d(chain.front(), chain.back());
+  for (std::size_t i = 1; i + 1 < chain.size() && !plane; ++i) {
+    const gp_Vec n = gp_Vec(chain.front(), chain[i]).Crossed(gp_Vec(chain.front(), chain.back()));
+    if (n.Magnitude() > 1e-6 * d.SquareMagnitude() + 1e-9) plane = gp_Pln(chain.front(), gp_Dir(n));
+  }
+  for (std::size_t k = 1; k < chain.size() && !plane; ++k) {
+    const gp_Vec dk(chain[k - 1], chain[k]);
+    if (dk.Magnitude() < kTol) continue;
+    for (const Object* o : others) {
+      const std::vector<gp_Pnt> pts = worldPolyline(document, *o);
+      for (std::size_t j = 1; j < pts.size() && !plane; ++j) {
+        const gp_Vec e(pts[j - 1], pts[j]);
+        const gp_Vec n = dk.Crossed(e);
+        if (n.Magnitude() < 1e-9 * dk.Magnitude() * e.Magnitude()) continue;
+        const gp_Pln candidate(chain[k - 1], gp_Dir(n));
+        if (candidate.Distance(pts[j - 1]) < kTol) plane = candidate;  // they meet (same plane)
+      }
+    }
+  }
+  if (!plane) return std::nullopt;
+  // Faces drawn on the ground look up; vertical ones keep the plane's side.
+  if (plane->Axis().Direction().Z() < -1e-9) plane = gp_Pln(plane->Location(), plane->Axis().Direction().Reversed());
+  for (const gp_Pnt& p : chain) {
+    if (plane->Distance(p) > kTol) return std::nullopt;  // not flat: no faces
+  }
+  CrossingSetup setup;
+  setup.plane = *plane;
+  for (std::size_t k = 1; k < chain.size(); ++k) {
+    setup.segments.emplace_back(chain[k - 1], chain[k]);
+    setup.fresh.push_back(true);
+    setup.owners.emplace_back(nullptr, k - 1);
+  }
+  for (const Object* o : others) {
+    const std::vector<gp_Pnt> pts = worldPolyline(document, *o);
+    if (std::any_of(pts.begin(), pts.end(), [&](const gp_Pnt& p) { return plane->Distance(p) > kTol; })) continue;
+    for (std::size_t k = 1; k < pts.size(); ++k) {
+      setup.segments.emplace_back(pts[k - 1], pts[k]);
+      setup.fresh.push_back(false);
+      setup.owners.emplace_back(o, k - 1);
+    }
+  }
+  return setup;
+}
+
+}  // namespace
+
+bool Modeler::closesByCrossing(const std::vector<gp_Pnt>& chain) const {
+  const auto setup = crossingSetup(document_, chain, activeGroup_, {});
+  if (!setup || setup->segments.size() < 3) return false;
+  return !geom::arrangeLines(setup->segments, setup->fresh, setup->plane).regions.empty();
+}
+
+Result<std::vector<ObjectId>> Modeler::facesFromCrossings(const ObjectId& curveId) {
+  using R = Result<std::vector<ObjectId>>;
+  const Object* start = document_.find(curveId);
+  if (!start) return R::failure("Object not found");
+  const std::vector<gp_Pnt> chain = worldPolyline(document_, *start);
+  if (chain.size() < 2) return std::vector<ObjectId>{};
+  const auto setup = crossingSetup(document_, chain, start->parent, curveId);
+  if (!setup || setup->segments.size() < 3) return std::vector<ObjectId>{};
+  const geom::LineArrangement arrangement = geom::arrangeLines(setup->segments, setup->fresh, setup->plane);
+  if (arrangement.regions.empty()) return std::vector<ObjectId>{};
+
+  // Lines with a piece bounding a new face are replaced: their other pieces
+  // (tails) come back as lines, in order.
+  std::vector<const Object*> touched{start};
+  for (const geom::LineArrangement::Piece& piece : arrangement.pieces) {
+    const Object* owner = setup->owners[static_cast<std::size_t>(piece.segment)].first;
+    if (piece.bounding && owner && std::find(touched.begin(), touched.end(), owner) == touched.end()) {
+      touched.push_back(owner);
+    }
+  }
+  std::vector<std::vector<gp_Pnt>> leftovers;
+  for (const Object* o : touched) {
+    std::vector<gp_Pnt> run;
+    for (const geom::LineArrangement::Piece& piece : arrangement.pieces) {
+      const Object* owner = setup->owners[static_cast<std::size_t>(piece.segment)].first;
+      if ((owner ? owner : start) != o) continue;
+      if (piece.bounding || (!run.empty() && run.back().Distance(piece.a) > 1e-6)) {
+        if (run.size() >= 2) leftovers.push_back(run);
+        run.clear();
+      }
+      if (piece.bounding) continue;
+      if (run.empty()) run.push_back(piece.a);
+      run.push_back(piece.b);
+    }
+    if (run.size() >= 2) leftovers.push_back(run);
+  }
+
+  history_.beginGroup("Faces");
+  std::vector<ObjectId> faces;
+  std::vector<ObjectId> removed;
+  for (const Object* o : touched) removed.push_back(o->id);
+  if (const Status s = remove(removed); !s) {
+    history_.abortGroup();
+    return R::failure(s.message());
+  }
+  for (const std::vector<gp_Pnt>& region : arrangement.regions) {
+    auto face = createPolygon(region);
+    if (!face) {
+      history_.abortGroup();
+      return R::failure(face.error());
+    }
+    faces.push_back(*face);
+  }
+  for (const std::vector<gp_Pnt>& run : leftovers) {
+    if (auto line = createPolyline(run); !line) {
+      history_.abortGroup();
+      return R::failure(line.error());
+    }
+  }
+  history_.endGroup();
+  return faces;
+}
+
+namespace {
+
+// A sub-edge of `edge` between curve parameters (null when too short).
+TopoDS_Edge subEdge(const TopoDS_Edge& edge, double t0, double t1) {
+  if (t1 - t0 < 1e-9) return {};
+  double f, l;
+  const Handle(Geom_Curve) curve = BRep_Tool::Curve(edge, f, l);
+  if (curve.IsNull()) return {};
+  BRepBuilderAPI_MakeEdge make(curve, t0, t1);
+  if (!make.IsDone()) return {};
+  const TopoDS_Edge piece = make.Edge();
+  if (GCPnts_AbscissaPoint::Length(BRepAdaptor_Curve(piece)) < tolerance::kMinDimension) return {};
+  return piece;
+}
+
+// Edges of a wire / curve shape in drawing order.
+std::vector<TopoDS_Edge> chainOf(const TopoDS_Shape& shape) {
+  std::vector<TopoDS_Edge> out;
+  for (TopExp_Explorer w(shape, TopAbs_WIRE); w.More(); w.Next()) {
+    for (BRepTools_WireExplorer e(TopoDS::Wire(w.Current())); e.More(); e.Next()) out.push_back(e.Current());
+    return out;
+  }
+  for (TopExp_Explorer e(shape, TopAbs_EDGE); e.More(); e.Next()) out.push_back(TopoDS::Edge(e.Current()));
+  return out;
+}
+
+// Turns edges (in order, world coordinates) back into loose lines: runs of
+// straight edges -> one polyline, circular -> arc, others -> a curve
+// through points on them.
+Status recreateCurves(Modeler& m, const std::vector<TopoDS_Edge>& run, std::vector<ObjectId>& made) {
+  std::vector<gp_Pnt> polyline;
+  auto flush = [&]() -> Status {
+    if (polyline.size() >= 2) {
+      auto id = m.createPolyline(polyline);
+      if (!id) return id.status();
+      made.push_back(*id);
+    }
+    polyline.clear();
+    return Status::success();
+  };
+  for (const TopoDS_Edge& edge : run) {
+    const gp_Pnt a = BRep_Tool::Pnt(TopExp::FirstVertex(edge, true));
+    const gp_Pnt b = BRep_Tool::Pnt(TopExp::LastVertex(edge, true));
+    BRepAdaptor_Curve c(edge);
+    if (c.GetType() == GeomAbs_Line) {
+      if (polyline.empty() || polyline.back().Distance(a) > 1e-6) {
+        if (const Status s = flush(); !s) return s;
+        polyline.push_back(a);
+      }
+      polyline.push_back(b);
+      continue;
+    }
+    if (const Status s = flush(); !s) return s;
+    const gp_Pnt mid = c.Value(0.5 * (c.FirstParameter() + c.LastParameter()));
+    if (c.GetType() == GeomAbs_Circle && a.Distance(b) > tolerance::kMinDimension) {
+      const gp_Dir normal = c.Circle().Axis().Direction();
+      const gp_Vec chord(a, b);
+      const gp_Vec side = gp_Vec(normal).Crossed(chord);
+      const gp_Pnt chordMid((a.XYZ() + b.XYZ()) / 2.0);
+      auto id = m.createArc(a, b, normal, gp_Vec(chordMid, mid).Dot(side.Normalized()));
+      if (!id) return id.status();
+      made.push_back(*id);
+      continue;
+    }
+    std::vector<gp_Pnt> samples;
+    const bool reversed = edge.Orientation() == TopAbs_REVERSED;
+    for (int k = 0; k <= 12; ++k) {
+      const double t = c.FirstParameter() + (c.LastParameter() - c.FirstParameter()) * k / 12.0;
+      samples.push_back(c.Value(t));
+    }
+    if (reversed) std::reverse(samples.begin(), samples.end());
+    auto id = m.createCurve(samples, false);
+    if (!id) return id.status();
+    made.push_back(*id);
+  }
+  return flush();
+}
+
+}  // namespace
+
+Result<std::vector<ObjectId>> Modeler::eraseLinePiece(const ObjectId& id, const TopoDS_Edge& worldEdge,
+                                                      const gp_Pnt& worldPoint) {
+  using R = Result<std::vector<ObjectId>>;
+  const Object* o = document_.find(id);
+  if (!o || o->shape.IsNull()) return R::failure("Object not found");
+  if (o->locked) return R::failure("The object is locked");
+  const ObjectKind kind = o->kind();
+  if (kind != ObjectKind::Curve && kind != ObjectKind::Face) {
+    return R::failure("Lines are erased piece by piece on loose lines and flat faces");
+  }
+  const TopoDS_Shape world = document_.worldShape(*o);
+  // The chains of edges: one for a line; each loop of a face (outer first).
+  std::vector<std::vector<TopoDS_Edge>> chains;
+  std::vector<bool> closed;
+  if (kind == ObjectKind::Curve) {
+    chains.push_back(chainOf(world));
+    closed.push_back(false);
+  } else {
+    if (world.ShapeType() != TopAbs_FACE) return R::failure("Lines are erased piece by piece on flat faces only");
+    const TopoDS_Face face = TopoDS::Face(world);
+    const TopoDS_Wire outer = BRepTools::OuterWire(face);
+    std::vector<TopoDS_Wire> wires{outer};
+    for (TopExp_Explorer w(face, TopAbs_WIRE); w.More(); w.Next()) {
+      if (!w.Current().IsSame(outer)) wires.push_back(TopoDS::Wire(w.Current()));
+    }
+    for (const TopoDS_Wire& w : wires) {
+      std::vector<TopoDS_Edge> chain;
+      for (BRepTools_WireExplorer e(w, face); e.More(); e.Next()) chain.push_back(e.Current());
+      chains.push_back(chain);
+      closed.push_back(true);
+    }
+  }
+  std::size_t ci = 0, ei = 0;
+  bool found = false;
+  for (std::size_t c = 0; c < chains.size() && !found; ++c) {
+    for (std::size_t e = 0; e < chains[c].size() && !found; ++e) {
+      if (chains[c][e].IsSame(worldEdge) || chains[c][e].TShape() == worldEdge.TShape()) {
+        ci = c;
+        ei = e;
+        found = true;
+      }
+    }
+  }
+  if (!found) return R::failure("The edge is not part of this object");
+  const TopoDS_Edge edge = chains[ci][ei];
+
+  // Break points on it: where lines or face outlines of the same group (and
+  // the object's other edges) cross or end on it.
+  double f, l;
+  const Handle(Geom_Curve) curve = BRep_Tool::Curve(edge, f, l);
+  if (curve.IsNull()) return R::failure("This line cannot be erased piece by piece");
+  std::vector<double> cuts{f, l};
+  std::vector<TopoDS_Shape> others;
+  for (const Object& other : document_.objects()) {
+    if (other.id == id || other.parent != o->parent || !document_.isVisible(other.id)) continue;
+    if (other.kind() == ObjectKind::Curve || other.kind() == ObjectKind::Face) others.push_back(document_.worldShape(other));
+  }
+  for (const auto& chain : chains) {
+    for (const TopoDS_Edge& e : chain) {
+      if (!e.IsSame(edge)) others.push_back(e);
+    }
+  }
+  for (const TopoDS_Shape& other : others) {
+    for (TopExp_Explorer oe(other, TopAbs_EDGE); oe.More(); oe.Next()) {
+      BRepExtrema_DistShapeShape d(edge, oe.Current());
+      if (!d.IsDone() || d.Value() > 1e-3) continue;
+      for (int k = 1; k <= d.NbSolution(); ++k) {
+        GeomAPI_ProjectPointOnCurve on(d.PointOnShape1(k), curve, f, l);
+        if (on.NbPoints() > 0 && on.LowerDistance() < 1e-3) cuts.push_back(on.LowerDistanceParameter());
+      }
+    }
+  }
+  std::sort(cuts.begin(), cuts.end());
+  GeomAPI_ProjectPointOnCurve click(worldPoint, curve, f, l);
+  const double t = click.NbPoints() > 0 ? click.LowerDistanceParameter() : 0.5 * (f + l);
+  double ta = f, tb = l;
+  for (double c : cuts) {
+    if (c <= t) ta = std::max(ta, c);
+    if (c >= t) tb = std::min(tb, c);
+  }
+  if (tb - ta < 1e-12) return R::failure("Click on the line piece to erase");
+  // The pieces of the edge before and after the erased one, in chain order.
+  const bool reversed = edge.Orientation() == TopAbs_REVERSED;
+  TopoDS_Edge low = subEdge(edge, f, ta), high = subEdge(edge, tb, l);
+  if (reversed) {
+    if (!low.IsNull()) low.Reverse();
+    if (!high.IsNull()) high.Reverse();
+    std::swap(low, high);
+  }
+  std::vector<std::vector<TopoDS_Edge>> runs;
+  const std::vector<TopoDS_Edge>& chain = chains[ci];
+  if (closed[ci]) {
+    std::vector<TopoDS_Edge> run;
+    if (!high.IsNull()) run.push_back(high);
+    for (std::size_t k = 1; k < chain.size(); ++k) run.push_back(chain[(ei + k) % chain.size()]);
+    if (!low.IsNull()) run.push_back(low);
+    runs.push_back(run);
+  } else {
+    std::vector<TopoDS_Edge> before(chain.begin(), chain.begin() + static_cast<std::ptrdiff_t>(ei));
+    if (!low.IsNull()) before.push_back(low);
+    std::vector<TopoDS_Edge> after;
+    if (!high.IsNull()) after.push_back(high);
+    after.insert(after.end(), chain.begin() + static_cast<std::ptrdiff_t>(ei) + 1, chain.end());
+    runs.push_back(before);
+    runs.push_back(after);
+  }
+  for (std::size_t c = 0; c < chains.size(); ++c) {
+    if (c != ci) runs.push_back(chains[c]);  // a face's holes stay as lines
+  }
+
+  history_.beginGroup("Erase Line");
+  if (const Status removed = remove({id}); !removed) {
+    history_.abortGroup();
+    return R::failure(removed.message());
+  }
+  std::vector<ObjectId> made;
+  for (const auto& run : runs) {
+    if (run.empty()) continue;
+    if (const Status s = recreateCurves(*this, run, made); !s) {
+      history_.abortGroup();
+      return R::failure(s.message());
+    }
+  }
+  history_.endGroup();
+  return made;
 }
 
 namespace {
