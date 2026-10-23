@@ -459,8 +459,9 @@ void MainWindow::buildMenus() {
   edit->addAction(tr("同じ位置に貼り付け"), QKeySequence(tr("Ctrl+Shift+V")), this, &MainWindow::pasteInPlace);
   edit->addAction(tr("削除"), QKeySequence::Delete, this, &MainWindow::deleteSelection);
   edit->addAction(tr("ロック"), QKeySequence(tr("Ctrl+L")), this, [this] {
-    if (report(modeler_.setLocked(selection_, true))) setSelection({});
+    report(modeler_.setLocked(selection_, true));  // stays selected, shown red
   });
+  edit->addAction(tr("ロック解除"), this, [this] { report(modeler_.setLocked(selection_, false)); });
   edit->addAction(tr("ロックをすべて解除"), this, [this] {
     std::vector<doc::ObjectId> locked;
     for (const doc::Object& o : modeler_.document().objects()) {
@@ -620,7 +621,7 @@ void MainWindow::buildMenus() {
   xray->setCheckable(true);
   xray->setShortcut(QKeySequence(tr("Alt+X")));
   connect(xray, &QAction::toggled, this, [this](bool on) { viewport_->setXRay(on); });
-  focusOnDoubleClick_ = view->addAction(tr("ダブルクリックでフォーカス"));
+  focusOnDoubleClick_ = view->addAction(tr("中ボタンのダブルクリックでフォーカス"));
   focusOnDoubleClick_->setCheckable(true);
   focusOnDoubleClick_->setChecked(true);
   view->addAction(tr("ホイールズームの設定..."), this, &MainWindow::showWheelZoomDialog);
@@ -2210,6 +2211,12 @@ QMenu* MainWindow::buildContextMenu(const QPoint& pos) {
   if (ids.empty()) {
     menu->addAction(tr("貼り付け"), this, &MainWindow::paste);
     menu->addAction(tr("すべて選択"), this, &MainWindow::selectAll);
+  } else if (std::all_of(ids.begin(), ids.end(), [&](const doc::ObjectId& id) {
+               const doc::Object* o = document.find(id);
+               return o && o->locked;
+             })) {
+    // Locked (SketchUp): selected and shown red, only unlocked from here.
+    menu->addAction(tr("ロック解除"), this, [this] { report(modeler_.setLocked(selection_, false)); });
   } else {
     menu->addAction(tr("削除"), this, &MainWindow::deleteSelection);
     menu->addAction(tr("切り取り"), this, [this] { cutSelection(); });
@@ -2273,9 +2280,13 @@ QMenu* MainWindow::buildContextMenu(const QPoint& pos) {
       setSelection({});
       report(modeler_.hide(hide));
     });
-    menu->addAction(tr("ロック"), this, [this] {
-      if (report(modeler_.setLocked(selection_, true))) setSelection({});
-    });
+    menu->addAction(tr("ロック"), this, [this] { report(modeler_.setLocked(selection_, true)); });
+    if (std::any_of(ids.begin(), ids.end(), [&](const doc::ObjectId& id) {
+          const doc::Object* o = document.find(id);
+          return o && o->locked;
+        })) {
+      menu->addAction(tr("ロック解除"), this, [this] { report(modeler_.setLocked(selection_, false)); });
+    }
   }
   menu->addSeparator();
   if (!modeler_.activeGroup().empty()) menu->addAction(tr("グループ・コンポーネントの編集を終了"), this, [this] { exitGroup(); });

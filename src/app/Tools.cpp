@@ -178,7 +178,10 @@ void SelectTool::mousePress(const ToolEvent& e) {
   const doc::Document& document = host_.modeler().document();
   const doc::Object* owner = document.find(picked->objectId);
   // Groups and components are picked as a whole, like SketchUp.
-  if (addressed != picked->objectId || (owner && owner->kind() == doc::ObjectKind::Instance)) {
+  // Locked ones too: selected whole (shown red), never their faces or edges.
+  const doc::Object* addressedObject = document.find(addressed);
+  if (addressed != picked->objectId || (owner && owner->kind() == doc::ObjectKind::Instance) ||
+      (addressedObject && addressedObject->locked)) {
     std::vector<doc::ObjectId> selection = additive ? host_.selection() : std::vector<doc::ObjectId>{};
     const auto it = std::find(selection.begin(), selection.end(), addressed);
     if (it == selection.end()) {
@@ -222,7 +225,7 @@ void SelectTool::boxSelect(const QRect& rect, bool crossing, bool additive) {
   const doc::ObjectId context = host_.editingGroup();
   std::vector<doc::ObjectId> selection = additive ? host_.selection() : std::vector<doc::ObjectId>{};
   for (const doc::Object& o : document.objects()) {
-    if (o.parent != context || !document.isVisible(o.id) || o.locked) continue;
+    if (o.parent != context || !document.isVisible(o.id)) continue;
     // Screen footprint from the exact bounds of the object (and its children).
     Bnd_Box box;
     for (const doc::ObjectId& id : document.subtree(o.id)) {
@@ -249,11 +252,15 @@ void SelectTool::boxSelect(const QRect& rect, bool crossing, bool additive) {
 
 bool SelectTool::mouseDoubleClick(const ToolEvent& e) {
   const auto picked = host_.viewport().pickElement(e.pos);
-  if (!picked) return false;  // empty space: let the viewport focus/fit
+  if (!picked) return false;  // empty space: nothing
   const doc::Document& document = host_.modeler().document();
   const doc::ObjectId addressed = target(picked->objectId);
   if (addressed.empty()) return false;
   const doc::Object* o = document.find(addressed);
+  if (o && o->locked) {  // not opened, its faces not picked
+    host_.reportError(QObject::tr("ロックされています（右クリック > ロック解除 で編集できます）"));
+    return true;
+  }
   if (o && o->kind() == doc::ObjectKind::Group) {
     host_.enterGroup(addressed);  // edit inside the group
     return true;

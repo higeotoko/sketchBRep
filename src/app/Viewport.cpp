@@ -37,6 +37,8 @@
 #include <Aspect_DisplayConnection.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
+#include <BRepBndLib.hxx>
+#include <Bnd_Box.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRep_Builder.hxx>
 #include <Standard_Failure.hxx>
@@ -200,6 +202,7 @@ Quantity_Color rgb(double r, double g, double b) { return Quantity_Color(r, g, b
 const Quantity_Color kAxisColors[3] = {rgb(0.85, 0.1, 0.1), rgb(0.1, 0.65, 0.1), rgb(0.1, 0.2, 0.9)};
 const Quantity_Color kSelectedColor = rgb(0.45, 0.62, 0.95);
 const Quantity_Color kSelectedEdgeColor = rgb(0.05, 0.15, 0.80);
+const Quantity_Color kLockedColor = rgb(0.9, 0.05, 0.05);
 
 Quantity_Color snapColor(snap::SnapKind kind) {
   switch (kind) {
@@ -440,9 +443,9 @@ void Viewport::mouseDoubleClickEvent(QMouseEvent* event) {
     emit toolInput();
     return;
   }
-  if (event->button() == Qt::LeftButton || event->button() == Qt::MiddleButton) {
-    emit focusRequested(pos);
-  }
+  // Only the middle button: a left double-click that hits nothing (a miss,
+  // empty space) must not jump the view.
+  if (event->button() == Qt::MiddleButton) emit focusRequested(pos);
 }
 
 void Viewport::wheelEvent(QWheelEvent* event) {
@@ -943,7 +946,8 @@ QString Viewport::annotationText(const doc::ObjectId& id) const {
 
 void Viewport::applyPickMode(const Handle(AIS_Shape)& ais, bool locked) {
   context_->Deactivate(ais);
-  if (locked) return;  // shown and snapped to, never picked
+  // Locked: still selectable (as a whole, shown red) but no face to push.
+  if (locked && pickMode_ == PickMode::Faces) return;
   switch (pickMode_) {
     case PickMode::Objects: context_->Activate(ais, 0); break;
     case PickMode::Faces: context_->Activate(ais, AIS_Shape::SelectionMode(TopAbs_FACE)); break;
@@ -1210,6 +1214,11 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
   }
   bool selected = false;
   for (const doc::ObjectId& s : selection_) selected |= s == id || document.isAncestor(s, id);
+  // Locked itself or inside a locked group: shown red when selected.
+  bool locked = false;
+  for (const doc::Object* a = o; a && !locked; a = a->parent.empty() ? nullptr : document.find(a->parent)) {
+    locked = a->locked;
+  }
   const doc::Color shown = document.displayColor(*o);
   Quantity_Color color = o->kind() == doc::ObjectKind::Curve        ? Quantity_Color(Quantity_NOC_BLACK)
                          : o->kind() == doc::ObjectKind::Annotation ? Quantity_Color(Quantity_NOC_GRAY20)
@@ -1219,13 +1228,14 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
   // their colours under blue dots, with blue edges (SketchUp).
   const bool hasFaces = o->kind() != doc::ObjectKind::Curve && o->kind() != doc::ObjectKind::Annotation &&
                         o->kind() != doc::ObjectKind::Guide;
-  if (selected && !hasFaces) color = kSelectedColor;
+  if (selected && !hasFaces) color = locked ? kLockedColor : kSelectedColor;
   bool restyled = false;
   Quantity_Color current;
   found->second.ais->Color(current);
   Entry& entry = found->second;
   auto faceColors = faceColorsOf(*o);
-  const bool facesChanged = faceColors != entry.faceColors || selected != entry.shownSelected;
+  const bool facesChanged =
+      faceColors != entry.faceColors || selected != entry.shownSelected || locked != entry.shownLocked;
   if (!current.IsEqual(color) || facesChanged) {
     entry.ais->SetColor(color);
     if (auto* colored = dynamic_cast<AIS_ColoredShape*>(entry.ais.get()); colored && facesChanged) {
@@ -1239,9 +1249,13 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
     }
     entry.faceColors = std::move(faceColors);
     entry.shownSelected = selected;
+    entry.shownLocked = locked;
     showBackSide(entry.ais, o->kind());
-    // SetColor() also recolours the face boundaries; black, or blue when selected.
-    const Quantity_Color line = selected ? kSelectedEdgeColor : Quantity_Color(Quantity_NOC_BLACK);
+    // SetColor() also recolours the face boundaries; black, or blue when
+    // selected (red when locked: selected but not to be edited).
+    const Quantity_Color line = !selected  ? Quantity_Color(Quantity_NOC_BLACK)
+                                : locked    ? kLockedColor
+                                            : kSelectedEdgeColor;
     entry.ais->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(line, Aspect_TOL_SOLID, 1.5));
     if (!entry.edgeOverlay.IsNull()) {
       entry.edgeOverlay->SetColor(line);
@@ -1250,7 +1264,7 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
     // The dots over the faces of a selected object.
     if (!entry.selectionDots.IsNull()) context_->Remove(entry.selectionDots, Standard_False);
     entry.selectionDots.Nullify();
-    if (selected && hasFaces) {
+    if (selected && hasFaces && !locked) {
       entry.selectionDots = makeSelectionDots(entry.displayShape);
       entry.selectionDots->SetZLayer(entry.ais->ZLayer());
       context_->Display(entry.selectionDots, AIS_Shaded, -1, Standard_False);
@@ -1317,6 +1331,7 @@ void Viewport::syncNow() {
   syncLabels();
   syncSection();
   syncOpenEnds();
+  syncEditBox();
   // Display copies may have been rebuilt: refresh the element overlay.
   std::vector<ElementRef> still;
   for (const ElementRef& e : highlighted_) {
@@ -1635,6 +1650,49 @@ void Viewport::setEditContext(const doc::ObjectId& groupId) {
   editContext_ = groupId;
   fullSync_ = true;  // fading inside / outside the context
   syncNow();
+}
+
+void Viewport::syncEditBox() {
+  const doc::Document& document = modeler_.document();
+  const std::pair<doc::ObjectId, std::uint64_t> key{editContext_, document.sequence()};
+  if (key == editBoxKey_) return;
+  editBoxKey_ = key;
+  if (!editBox_.IsNull()) context_->Remove(editBox_, Standard_False);
+  editBox_.Nullify();
+  const doc::Object* group = editContext_.empty() ? nullptr : document.find(editContext_);
+  if (!group) return;
+  // Along the group's own axes, around everything in it, a little apart.
+  const gp_Trsf t = document.worldTransform(*group);
+  const gp_Ax3 frame(gp_Pnt(0, 0, 0).Transformed(t), gp::DZ().Transformed(t), gp::DX().Transformed(t));
+  gp_Trsf toFrame;
+  toFrame.SetTransformation(frame);
+  Bnd_Box bounds;
+  for (const doc::ObjectId& id : document.subtree(editContext_)) {
+    const doc::Object* o = document.find(id);
+    if (!o || o->shape.IsNull()) continue;
+    BRepBndLib::Add(document.worldShape(*o).Moved(TopLoc_Location(toFrame)), bounds);
+  }
+  if (bounds.IsVoid()) return;
+  const double margin = std::max(0.03 * std::sqrt(bounds.SquareExtent()), 10.0);
+  bounds.Enlarge(margin);
+  double x[2], y[2], z[2];
+  bounds.Get(x[0], y[0], z[0], x[1], y[1], z[1]);
+  const gp_Trsf fromFrame = toFrame.Inverted();
+  auto corner = [&](int i, int j, int k) { return gp_Pnt(x[i], y[j], z[k]).Transformed(fromFrame); };
+  TopoDS_Compound edges;
+  BRep_Builder b;
+  b.MakeCompound(edges);
+  for (int u = 0; u < 2; ++u) {
+    for (int v = 0; v < 2; ++v) {
+      b.Add(edges, BRepBuilderAPI_MakeEdge(corner(0, u, v), corner(1, u, v)).Edge());
+      b.Add(edges, BRepBuilderAPI_MakeEdge(corner(u, 0, v), corner(u, 1, v)).Edge());
+      b.Add(edges, BRepBuilderAPI_MakeEdge(corner(u, v, 0), corner(u, v, 1)).Edge());
+    }
+  }
+  editBox_ = new AIS_Shape(edges);
+  editBox_->SetColor(rgb(0.25, 0.25, 0.25));
+  editBox_->Attributes()->SetWireAspect(new Prs3d_LineAspect(rgb(0.25, 0.25, 0.25), Aspect_TOL_DOT, 1.5));
+  context_->Display(editBox_, AIS_WireFrame, -1, Standard_False);  // -1: never picked
 }
 
 void Viewport::setToolCursor(const QCursor& cursor) {

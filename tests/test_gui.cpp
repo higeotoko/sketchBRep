@@ -166,6 +166,8 @@ class GuiPhase1 : public QObject {
   void typedUnitsDoNotTriggerShortcuts();
   void scaleToolFactorAndLength();
   void scaleGripsStretchEachDirection();
+  void lockedObjectsSelectableNotEditable();
+  void groupEditShowsDottedBox();
   void snapTipNamesTheAdoptedPoint();
   void aiReadsKeepDrawingInProgress();
   void proposalShowsRotationAndHide();
@@ -1214,6 +1216,101 @@ void GuiPhase1::snapTipNamesTheAdoptedPoint() {
   QCOMPARE(tipAt(gp_Pnt(500, 0, 1000)), QStringLiteral("中点"));
   f.window.activateTool(MainWindow::ToolId::Move);
   QCOMPARE(tipAt(gp_Pnt(1000, 0, 1000)), QStringLiteral("端点"));
+}
+
+// SketchUp's lock: a locked object is still clicked and selected (whole,
+// shown red), but not edited: delete and push/pull are refused with the
+// reason, double-click does not open it; right-click locks and unlocks.
+void GuiPhase1::lockedObjectsSelectableNotEditable() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+  f.vp->syncNow();
+  auto action = [](QMenu* menu, const QString& text) -> QAction* {
+    for (QAction* a : menu->actions()) {
+      if (a->text() == text) return a;
+    }
+    return nullptr;
+  };
+  f.window.activateTool(MainWindow::ToolId::Select);
+  const QPoint side = f.vp->toWidget(gp_Pnt(500, 0, 500));
+  QMenu* menu = f.window.buildContextMenu(side);
+  QAction* lock = action(menu, QStringLiteral("ロック"));
+  QVERIFY(lock);
+  lock->trigger();
+  delete menu;
+  QVERIFY(m.document().find(box)->locked);
+  QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{box});  // stays selected, shown red
+
+  // Clicked: the whole object, not a face.
+  click(f.vp, f.vp->toWidget(gp_Pnt(3000, 3000, 0)));
+  QVERIFY(f.window.selection().empty());
+  click(f.vp, side);
+  QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{box});
+  QVERIFY(f.window.elementSelection().empty());
+  // Double-click does not open it or pick its faces, nor move the view;
+  // neither does a double-click on empty space.
+  doc::CameraState before, after;
+  f.vp->storeCamera(before);
+  QTest::mouseDClick(f.vp, Qt::LeftButton, Qt::NoModifier, side);
+  QTest::qWait(30);
+  QVERIFY(f.window.elementSelection().empty());
+  QTest::mouseDClick(f.vp, Qt::LeftButton, Qt::NoModifier, f.vp->toWidget(gp_Pnt(5000, -5000, 0)));
+  QTest::qWait(30);
+  f.vp->storeCamera(after);
+  QVERIFY(gap(before, after) < 1e-9);
+  click(f.vp, side);
+
+  // Not edited: delete is refused with the reason, nothing changes.
+  const std::size_t steps = m.history().undoCount();
+  f.window.clearLastError();
+  menu = f.window.buildContextMenu(side);
+  QVERIFY(!action(menu, QStringLiteral("削除")));  // only unlocking is offered
+  QAction* unlock = action(menu, QStringLiteral("ロック解除"));
+  QVERIFY(unlock);
+  delete menu;
+  QAction* erase = nullptr;
+  for (QAction* a : f.window.findChildren<QAction*>()) {
+    if (a->text() == QStringLiteral("削除")) erase = a;
+  }
+  QVERIFY(erase);
+  erase->trigger();
+  QTest::qWait(30);
+  QVERIFY(m.document().find(box));
+  QVERIFY(f.window.lastError().contains(QStringLiteral("ロック")));
+  QCOMPARE(m.history().undoCount(), steps);
+
+  // Unlocked from the right-click menu: editable again.
+  menu = f.window.buildContextMenu(side);
+  action(menu, QStringLiteral("ロック解除"))->trigger();
+  delete menu;
+  QVERIFY(!m.document().find(box)->locked);
+  click(f.vp, side);
+  QCOMPARE(f.window.elementSelection().size(), std::size_t(1));  // a face again
+}
+
+// Inside a group (double-click): a dotted box around it shows where one is
+// working (SketchUp); it follows the group's contents and goes on leaving.
+void GuiPhase1::groupEditShowsDottedBox() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+  auto group = m.group({box}, "G");
+  QVERIFY(group.ok());
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::Select);
+  QVERIFY(!f.vp->hasEditBox());
+  doubleClick(f.vp, f.vp->toWidget(gp_Pnt(500, 500, 1000)));
+  QTest::qWait(30);
+  QCOMPARE(m.activeGroup(), *group);
+  QVERIFY(f.vp->hasEditBox());
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  QTest::qWait(30);
+  QVERIFY(m.activeGroup().empty());
+  QVERIFY(!f.vp->hasEditBox());
 }
 
 // Review C / R04: AI requests that only read must not reset a half-drawn
@@ -2286,6 +2383,7 @@ void GuiPhase1::componentEditInPlace() {
   const doc::ObjectId group = m.activeGroup();
   QVERIFY(!group.empty());
   QVERIFY(m.componentEditGroup(group).has_value());
+  QVERIFY(f.vp->hasEditBox());  // dotted box: working inside
 
   // Push the top face up by 500 inside the component.
   f.window.activateTool(MainWindow::ToolId::PushPull);
@@ -2299,6 +2397,7 @@ void GuiPhase1::componentEditInPlace() {
   QTest::keyClick(f.vp, Qt::Key_Escape);
   QTest::qWait(30);
   QVERIFY(m.activeGroup().empty());
+  QVERIFY(!f.vp->hasEditBox());
   QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{*component});
   QCOMPARE(m.document().objects().size(), std::size_t(2));
   for (const doc::Object& o : m.document().objects()) {
@@ -2901,7 +3000,8 @@ void GuiPhase1::imageUnderlayCalibrateLockTrace() {
   QVERIFY(std::abs(u.height - 2500) < 25);
   QVERIFY(std::abs(u.plane.origin.X() - 500) < 20);
 
-  // Locked: picks go through it; the line tool still traces on it.
+  // Locked: clicked, it is selected whole (shown red) but not edited; the
+  // line tool still traces on it.
   f.window.activateWindow();
   QTest::qWait(30);
   QTest::keyClick(f.vp, Qt::Key_L, Qt::ControlModifier);
@@ -2909,7 +3009,8 @@ void GuiPhase1::imageUnderlayCalibrateLockTrace() {
   QVERIFY(m.document().find(image)->locked);
   f.window.activateTool(MainWindow::ToolId::Select);
   click(f.vp, f.vp->toWidget(gp_Pnt(2000, 1000, 0)));
-  QVERIFY(f.window.selection().empty());
+  QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{image});
+  QVERIFY(f.window.elementSelection().empty());
   f.window.activateTool(MainWindow::ToolId::Line);
   click(f.vp, f.vp->toWidget(gp_Pnt(1000, 500, 0)));
   click(f.vp, f.vp->toWidget(gp_Pnt(3000, 500, 0)));

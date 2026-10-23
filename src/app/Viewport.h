@@ -150,6 +150,7 @@ class Viewport : public QWidget {
   void showGrips(const std::vector<gp_Pnt>& grips, int hot, const gp_Ax3& frame, const TopoDS_Shape& outline);
   void clearGrips() { showGrips({}, -1, gp_Ax3(), TopoDS_Shape()); }
   std::size_t gripCount() const { return grips_.size(); }
+  bool hasEditBox() const { return !editBox_.IsNull(); }
   // The label shown (empty when none), where (logical pixels) and the point
   // it names.
   QString snapTip() const { return snapTipText_; }
@@ -252,6 +253,7 @@ class Viewport : public QWidget {
     // and whether the object is shown selected (no face colours then).
     std::vector<std::pair<int, std::array<double, 4>>> faceColors;  // RGB + opacity
     bool shownSelected = false;
+    bool shownLocked = false;
     bool locked = false;  // not pickable
     TopoDS_Shape canonicalWorld;
     TopoDS_Shape displayShape;
@@ -279,6 +281,8 @@ class Viewport : public QWidget {
   void syncLabels();
   void syncSection();
   void syncOpenEnds();
+  // Editing inside a group or component: a dotted box around it (SketchUp).
+  void syncEditBox();
   Handle(AIS_Shape) makeDisplay(const doc::Object& object, Entry& entry);
   void removeDisplay(Entry& entry);
   QPoint devicePos(const QPoint& logical) const;
@@ -350,6 +354,8 @@ class Viewport : public QWidget {
   std::vector<ElementRef> highlighted_;
   QCursor toolCursor_;
   doc::ObjectId editContext_;
+  Handle(AIS_Shape) editBox_;
+  std::pair<doc::ObjectId, std::uint64_t> editBoxKey_;  // context and document state shown
 
   QTimer syncTimer_;
   QSize glSize_;  // native window size the GL view was last resized to
