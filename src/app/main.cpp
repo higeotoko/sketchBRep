@@ -1,4 +1,5 @@
 #include <QApplication>
+#include <QIcon>
 #include <QByteArray>
 #include <QStringList>
 
@@ -52,6 +53,12 @@ int main(int argc, char** argv) {
   QApplication::setApplicationName(QStringLiteral("SketchBRep"));
   QApplication::setOrganizationName(QStringLiteral("SketchBRep"));
   QApplication::setApplicationVersion(QStringLiteral(SBR_VERSION));
+  // Title bar, taskbar and Alt+Tab (assets/branding; the .exe icon itself
+  // comes from the Windows resource).
+  QIcon icon;
+  icon.addFile(QStringLiteral(":/branding/app-icon-256.png"));
+  icon.addFile(QStringLiteral(":/branding/app-icon-1024.png"));
+  QApplication::setWindowIcon(icon);
 
   sbr::app::MainWindow window;
   window.resize(1400, 900);

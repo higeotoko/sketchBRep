@@ -16,6 +16,7 @@
 #include <QComboBox>
 #include <QSlider>
 #include <QMenu>
+#include <QMessageBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QLabel>
@@ -175,6 +176,7 @@ class GuiPhase1 : public QObject {
   void selectionDotsKeepTheMaterialColour();
   void eraserDragErasesCrossedLines();
   void materialEditorColourTextureOpacityDuplicate();
+  void brandingResourcesLoad();
   void paintNeedsAMaterialAndPresetsAddOnClick();
   void followMeAroundTopFace();
   void wallToolAndArchitectureMenus();
@@ -2879,6 +2881,33 @@ void GuiPhase1::materialEditorColourTextureOpacityDuplicate() {
   QCOMPARE(m.document().materials().size(), count + 1);
   QVERIFY(editor->materialId() != *brick);
   QCOMPARE(m.document().findMaterial(editor->materialId())->name, std::string("レンガ 2"));
+}
+
+// The logo set (assets/branding) is built in: window icon and About box.
+void GuiPhase1::brandingResourcesLoad() {
+  const QPixmap icon(QStringLiteral(":/branding/app-icon-256.png"));
+  QCOMPARE(icon.size(), QSize(256, 256));
+  const QPixmap big(QStringLiteral(":/branding/app-icon-1024.png"));
+  QCOMPARE(big.size(), QSize(1024, 1024));
+  const QPixmap wordmark(QStringLiteral(":/branding/wordmark.png"));
+  QVERIFY(!wordmark.isNull());
+  QVERIFY(wordmark.hasAlphaChannel());
+  QVERIFY(QFile::exists(QStringLiteral(SBR_SOURCE_DIR "/assets/branding/05-windows/sketchbrep.ico")));
+  // The About box shows the wordmark (and closes again).
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  bool shown = false;
+  QTimer::singleShot(300, [&] {
+    auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+    if (!box) return;
+    shown = box->iconPixmap().width() > 100;
+    if (const QString dir = qEnvironmentVariable("SBR_SHOT_DIR"); !dir.isEmpty()) {
+      box->grab().save(dir + QStringLiteral("/about.png"));
+    }
+    box->accept();
+  });
+  f.window.showAbout();
+  QVERIFY(shown);
 }
 
 QTEST_MAIN(GuiPhase1)

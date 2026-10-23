@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/branding/06-readme/sketchbrep-readme.svg" alt="SketchBRep" width="560"></p>
+
 # SketchBRep（仮称）
 
 建築設計向けハイブリッド 3D モデラー。
@@ -166,3 +168,7 @@ Phase 0 の CLI 検証: `build/tools/phase0/sbr_phase0 1000 2000 3000 box.step`
 
 Open CASCADE Technology は LGPL 2.1（+ 例外）、Qt 6 は LGPL 3 / 商用のデュアルライセンス、openNURBS（3DM）は MIT 系の openNURBS ライセンス（同梱の zlib・freetype を含む）です。
 配布形態（動的リンク・再リンク可能性の確保など）は [docs/01_feasibility.md](docs/01_feasibility.md#ライセンス) を参照してください。
+
+## ロゴ
+
+ロゴ一式は [assets/branding](assets/branding)（編集用 SVG、アウトライン SVG、アプリアイコン、透過 PNG、Windows 用 ICO、README 用横長ロゴ。説明は [README-ja.md](assets/branding/README-ja.md)）。アプリでは Windows の実行ファイルのアイコン（ICO・バージョン情報つき）、ウィンドウのアイコン、「ヘルプ > SketchBRep について」に使っています。

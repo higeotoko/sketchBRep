@@ -9,6 +9,8 @@
 #include <QDir>
 #include <QSettings>
 #include <QImage>
+
+#include <Standard_Version.hxx>
 #include <QFile>
 #include <QLocale>
 #include <QStandardPaths>
@@ -756,6 +758,24 @@ void MainWindow::buildMenus() {
            "作図中に数値を打って Enter で寸法指定（例: 3000, 4.5m, 3000,4500）<br>"
            "Shift: 推論方向をロック / →・←・↑: X・Y・Z 軸ロック / ↓: 解除 / Esc: 中止"));
   });
+  help->addSeparator();
+  help->addAction(tr("SketchBRep について"), this, &MainWindow::showAbout);
+}
+
+void MainWindow::showAbout() {
+  QMessageBox box(this);
+  box.setWindowTitle(tr("SketchBRep について"));
+  // The wordmark from assets/branding (a resource of the application).
+  const QPixmap wordmark(QStringLiteral(":/branding/wordmark.png"));
+  if (!wordmark.isNull()) {
+    box.setIconPixmap(wordmark.scaledToWidth(360, Qt::SmoothTransformation));
+  }
+  box.setText(tr("<b>SketchBRep</b> %1").arg(QApplication::applicationVersion()));
+  box.setInformativeText(tr("建築設計向けハイブリッド 3D モデラー。<br>"
+                            "操作は SketchUp のように気軽に、形状は B-rep（Open CASCADE %1）で正確に。<br><br>"
+                            "Qt %2").arg(QStringLiteral(OCC_VERSION_COMPLETE), QString::fromLatin1(qVersion())));
+  box.setStandardButtons(QMessageBox::Ok);
+  box.exec();
 }
 
 void MainWindow::setAiAccess(bool enabled) {

@@ -64,6 +64,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   // The right-click menu for what is at `pos` (selecting it first if it is
   // not selected), as SketchUp. Built separately so it can be inspected.
   QMenu* buildContextMenu(const QPoint& pos);
+  // Help > About: logo, version, what it is built on.
+  void showAbout();
   Tool* activeTool() const { return active_; }
   QLineEdit* measurementBox() const { return measurement_; }
   QString lastError() const { return lastError_; }
