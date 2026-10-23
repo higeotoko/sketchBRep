@@ -1,6 +1,7 @@
 // CommandApi: the JSON command layer shared by the CLI, the MCP server and the in-app bridge.
 
 #include <cmath>
+#include <filesystem>
 
 #include <gtest/gtest.h>
 
@@ -462,4 +463,33 @@ TEST(CommandApi, QueryAggregateAndChanges) {
   a.ok("set_tag_visible", {{"tag", "Walls"}, {"visible", false}});
   EXPECT_TRUE(a.ok("get_changes", {{"since", r["sequence"]}})["full"]);
   EXPECT_EQ(a.api.effectOf(json{{"command", "query_objects"}}.dump()), CommandApi::Effect::Read);
+}
+
+// Review P0-02: a preview never touches files, and an atomic batch does
+// not mix files with model edits (a written file could not be undone).
+TEST(CommandApi, PreviewAndAtomicBatchNeverTouchFiles) {
+  Api a;
+  const std::string path = (std::filesystem::temp_directory_path() / "sbr_p002.sbr").string();
+  std::filesystem::remove(path);
+  json r = a.call("preview", {{"commands", json::array({json{{"command", "create_box"},
+                                                             {"args", {{"origin", {0, 0, 0}},
+                                                                       {"width", 100},
+                                                                       {"depth", 100},
+                                                                       {"height", 100}}}},
+                                                        json{{"command", "save"}, {"args", {{"path", path}}}}})}});
+  EXPECT_FALSE(r.value("ok", true)) << r.dump();
+  EXPECT_FALSE(std::filesystem::exists(path));
+  r = a.call("batch", {{"commands", json::array({json{{"command", "create_box"},
+                                                      {"args", {{"origin", {0, 0, 0}},
+                                                                {"width", 100},
+                                                                {"depth", 100},
+                                                                {"height", 100}}}},
+                                                 json{{"command", "save"}, {"args", {{"path", path}}}}})}});
+  EXPECT_FALSE(r.value("ok", true)) << r.dump();
+  EXPECT_FALSE(std::filesystem::exists(path));
+  EXPECT_TRUE(a.modeler.document().objects().empty());  // refused before anything ran
+  // Non-atomic batches and plain commands still save.
+  r = a.call("save", {{"path", path}});
+  EXPECT_TRUE(r.value("ok", false)) << r.dump();
+  EXPECT_TRUE(std::filesystem::exists(path));
 }

@@ -1814,6 +1814,18 @@ json runBatch(const Context& c, const json& args, int depth) {
   const json& list = arg(args, "commands");
   if (!list.is_array()) throw ApiError("'commands' must be an array");
   const bool atomic = args.value("atomic", true);
+  // All-or-nothing only holds for the model: a file written by an earlier
+  // step stays written when a later one fails. Files are read / written
+  // outside atomic batches, on a committed model (review P0-02).
+  if (atomic) {
+    for (std::size_t i = 0; i < list.size(); ++i) {
+      if (c.api.effectOf(list[i].dump()) == CommandApi::Effect::ExternalIo) {
+        throw ApiError("step " + std::to_string(i + 1) + " ('" + list[i].value("command", std::string()) +
+                       "') reads or writes files, which an atomic batch could not undo; run it on its own "
+                       "after the batch (or use atomic: false)");
+      }
+    }
+  }
   m.history().beginGroup(args.value("name", std::string("AI batch")));
   json results = json::array();
   for (std::size_t i = 0; i < list.size(); ++i) {
@@ -1962,9 +1974,21 @@ json runPlaceOnGrid(doc::Modeler& m, const json& args) {
 // Runs a batch on a scratch copy of the model and reports what it would
 // change; the real model is untouched (spec 07 §9.2).
 json runPreview(const Context& c, const json& args) {
+  // A preview only tries: no file is read or written, whatever the options.
+  const json& steps = arg(args, "commands");
+  if (steps.is_array()) {
+    for (std::size_t i = 0; i < steps.size(); ++i) {
+      if (c.api.effectOf(steps[i].dump()) == CommandApi::Effect::ExternalIo) {
+        throw ApiError("step " + std::to_string(i + 1) + " ('" + steps[i].value("command", std::string()) +
+                       "') reads or writes files; previews never touch files");
+      }
+    }
+  }
   doc::Modeler scratch;
   scratch.copyFrom(c.modeler);
-  CommandApi api(scratch, c.options);
+  CommandApi::Options trial = c.options;
+  trial.allowFileCommands = false;
+  CommandApi api(scratch, trial);
   json batch = {{"command", "batch"}, {"args", {{"commands", arg(args, "commands")}}}};
   const json outcome = json::parse(api.execute(batch.dump()));
   // The change set recorded by the trial run is the one the commit records.
