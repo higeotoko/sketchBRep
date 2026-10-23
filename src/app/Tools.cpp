@@ -2172,7 +2172,16 @@ QString TransformTool::copySuffix() const {
 
 bool TransformTool::commit(const gp_Trsf& delta, int count) {
   doc::Modeler& m = host_.modeler();
-  if (copy_) {
+  if (copy_ && !edgeTargets_.empty()) {
+    // Just the selected edges, as lines (the faces / solids stay as they are).
+    auto created = m.copyEdges(edgeTargets_, delta, count);
+    if (!created) {
+      host_.reportError(QString::fromStdString(created.error()));
+      last_.reset();
+      return false;
+    }
+    host_.setSelection(created.value());
+  } else if (copy_) {
     auto created = m.copy(targets_, delta, count);
     if (!created) {
       host_.reportError(QString::fromStdString(created.error()));
@@ -2188,7 +2197,7 @@ bool TransformTool::commit(const gp_Trsf& delta, int count) {
       return false;
     }
   }
-  last_ = Last{targets_, delta, copy_, count};
+  last_ = Last{targets_, edgeTargets_, delta, copy_, count};
   recent_.mark(m);
   return true;
 }
@@ -2198,15 +2207,16 @@ bool TransformTool::canReeditLast() { return last_ && recent_.fresh(host_.modele
 bool TransformTool::redoLast(const gp_Trsf& delta, int count) {
   if (!canReeditLast()) return false;
   const Last previous = *last_;
-  recent_.replace(host_.modeler(), [&] {
+  const Status replaced = recent_.replace(host_.modeler(), [&] {
     targets_ = previous.targets;
+    edgeTargets_ = previous.edges;
     copy_ = previous.copy;
     if (commit(delta, count)) return Status::success();
     last_ = previous;  // the original comes back
     return Status::failure("");
   });
   copy_ = false;
-  return true;
+  return replaced.ok();
 }
 
 // --- Move ------------------------------------------------------------------------------
@@ -2261,6 +2271,20 @@ void MoveTool::mouseMove(const ToolEvent& e) {
     }
     return;
   }
+  if (copy_ && !edgeTargets_.empty()) {
+    // Copying selected edges: the copies follow the cursor.
+    const gp_Vec d(base_, current_);
+    host_.setMeasurement(QObject::tr("距離"), mm(d.Magnitude()));
+    if (d.Magnitude() > tolerance::kMinDimension) {
+      previewEdgeCopy(d);
+    } else {
+      host_.viewport().clearPreview();
+    }
+    host_.setStatus(QObject::tr("選んだ辺 %1 本をコピー: クリックで確定、または距離を入力  [%2]")
+                        .arg(edgeTargets_.size())
+                        .arg(snapLabel(r.kind)) + lockSuffix() + copySuffix());
+    return;
+  }
   if (corners_) {
     const gp_Vec d(base_, current_);
     host_.setMeasurement(QObject::tr("距離"), mm(d.Magnitude()));
@@ -2298,6 +2322,10 @@ void MoveTool::mouseMove(const ToolEvent& e) {
 }
 
 void MoveTool::finish() {
+  if (corners_ && copy_ && !edgeTargets_.empty()) {
+    // Ctrl: the selected edges are copied, the shape is not reshaped.
+    corners_.reset();
+  }
   if (corners_) {
     const gp_Vec d(base_, current_);
     if (d.Magnitude() > tolerance::kMinDimension) {
@@ -2324,10 +2352,23 @@ void MoveTool::finish() {
   } else {
     gp_Trsf delta;
     delta.SetTranslation(gp_Vec(base_, current_));
-    if (base_.Distance(current_) > tolerance::kMinDimension) commit(delta);
+    if (base_.Distance(current_) > tolerance::kMinDimension && commit(delta)) {
+      reference_ = gp_Vec(base_, current_);
+      divided_ = false;
+    }
   }
   resetState();
   host_.viewport().setPickMode(PickMode::Objects);
+}
+
+void MoveTool::previewEdgeCopy(const gp_Vec& d) {
+  TopoDS_Compound copies;
+  BRep_Builder builder;
+  builder.MakeCompound(copies);
+  gp_Trsf t;
+  t.SetTranslation(d);
+  for (const TopoDS_Edge& e : edgeTargets_) builder.Add(copies, e.Moved(TopLoc_Location(t)));
+  host_.viewport().setPreview(copies, false);
 }
 
 bool MoveTool::grabCorners(const ToolEvent& e) {
@@ -2386,6 +2427,16 @@ bool MoveTool::grabCorners(const ToolEvent& e) {
 
 void MoveTool::mousePress(const ToolEvent& e) {
   if (!moving_) {
+    // Edges selected on their own: what a Ctrl copy copies (ARR-01).
+    edgeTargets_.clear();
+    const auto picked = host_.elementSelection();
+    if (!picked.empty() &&
+        std::all_of(picked.begin(), picked.end(), [](const ElementRef& el) { return el.type == TopAbs_EDGE; })) {
+      for (const ElementRef& el : picked) {
+        const TopoDS_Shape edge = host_.viewport().elementShape(el);
+        if (!edge.IsNull()) edgeTargets_.push_back(TopoDS::Edge(edge));
+      }
+    }
     if (grabCorners(e)) return;
     // A single selected face of a solid or profile: stretch along its normal.
     const auto elements = host_.elementSelection();
@@ -2456,27 +2507,34 @@ void MoveTool::applyMeasurement(const QString& text) {
     host_.reportError(QObject::tr("基点をクリックしてから距離を入力してください"));
     return;
   }
-  const gp_Vec step = last_->delta.TranslationPart();
-  const gp_Vec total = step * last_->count;
+  // Everything is measured from the first placement the user gave
+  // (reference_), never from an earlier array's result (ARR-02,
+  // provisional: SketchUp's handling of a second entry is to be compared).
   if (const auto array = parseArrayRequest(text)) {
     if (!last_->copy) {
-      host_.reportError(QObject::tr("配列は Ctrl でコピーしたときに使えます"));
+      host_.reportError(QObject::tr("配列は Ctrl でコピーしてから数量を入力してください"));
       return;
     }
     gp_Trsf delta;
-    // "x3": three copies at the same spacing; "/3": three copies dividing the distance.
-    delta.SetTranslation(array->divide ? total / array->count : step);
-    redoLast(delta, array->count);
+    // "*5": five copies at the first spacing; "/3": the first distance divided in three.
+    delta.SetTranslation(array->divide ? reference_ / array->count : reference_);
+    if (redoLast(delta, array->count)) {
+      divided_ = array->divide;
+      host_.setStatus(array->divide
+                          ? QObject::tr("%1 等分しました（コピー %1 本／元を含め %2 本）").arg(array->count).arg(array->count + 1)
+                          : QObject::tr("コピー %1 本（元を含め %2 本）").arg(array->count).arg(array->count + 1));
+    }
     return;
   }
   const auto length = units::parseLength(text.toStdString());
-  if (!length || step.Magnitude() < 1e-9) {
+  if (!length || *length <= 0 || reference_.Magnitude() < 1e-9) {
     host_.reportError(QObject::tr("距離を解釈できません: %1").arg(text));
     return;
   }
+  const gp_Vec reference = gp_Vec(gp_Dir(reference_)) * *length;
   gp_Trsf delta;
-  delta.SetTranslation(gp_Vec(gp_Dir(step)) * *length);
-  redoLast(delta, last_->count);
+  delta.SetTranslation(divided_ ? reference / last_->count : reference);
+  if (redoLast(delta, last_->count)) reference_ = reference;
 }
 
 // --- Rotate ------------------------------------------------------------------------------

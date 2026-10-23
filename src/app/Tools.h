@@ -857,9 +857,13 @@ class TransformTool : public DrawingTool {
   QString copySuffix() const;
 
   std::vector<doc::ObjectId> targets_;
+  // Edges selected on their own (one edge of a line, a face or a solid):
+  // a copy copies just them, as lines (Modeler::copyEdges).
+  std::vector<TopoDS_Edge> edgeTargets_;
   bool copy_ = false;
   struct Last {
     std::vector<doc::ObjectId> targets;
+    std::vector<TopoDS_Edge> edges;
     gp_Trsf delta;
     bool copy = false;
     int count = 1;
@@ -899,6 +903,12 @@ class MoveTool : public TransformTool {
     QString what;                // "角" / "辺" / "面" / "辺 3 本"
   };
   std::optional<Corners> corners_;
+  // The copy's first placement as the user gave it: arrays ("*5") repeat
+  // it, divisions ("/3") divide it, a typed distance replaces it; never
+  // the result of an earlier array (ARR-02).
+  gp_Vec reference_;
+  bool divided_ = false;
+  void previewEdgeCopy(const gp_Vec& d);
 };
 
 class RotateTool : public TransformTool {

@@ -1142,20 +1142,33 @@ const std::vector<CommandDef>& commands() {
          return json::object();
        }},
       {"copy_array",
-       "Copy objects 'count' times. Linear: give 'vector' (step). Polar: give axis_origin, "
-       "axis_direction and 'angle' (step, degrees).",
+       "Copy objects ('ids') or only some edges ('edges': [{\"id\": object, \"edge\": index or "
+       "{\"near\": [x,y,z]}}], copied as lines; a straight copy lying across a face from edge to edge divides "
+       "it, a copy on an existing edge is not made twice) 'count' times. Linear: give 'vector'; it is the step "
+       "between copies, or with 'divide': true the whole distance divided into 'count' steps (SketchUp '/3'). "
+       "Polar: give axis_origin, axis_direction and 'angle' (step, degrees; 'divide' divides it too). "
+       "One undo step.",
        SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}},
-               "count": {"type": "integer"}, "vector": {"type": "array"}, "axis_origin": {"type": "array"},
-               "axis_direction": {"type": "array"}, "angle": {"type": "number"}}, "required": ["ids"]}),
+               "edges": {"type": "array"}, "count": {"type": "integer"}, "vector": {"type": "array"},
+               "divide": {"type": "boolean"}, "axis_origin": {"type": "array"},
+               "axis_direction": {"type": "array"}, "angle": {"type": "number"}}}),
        [](doc::Modeler& m, const json& a) {
+         const int count = a.value("count", 1);
+         if (count < 1 || count > 10000) throw ApiError("count must be between 1 and 10000");
+         const double share = a.value("divide", false) ? 1.0 / count : 1.0;
          gp_Trsf step;
          if (a.contains("vector")) {
-           step.SetTranslation(gp_Vec(xyz(a.at("vector"), "vector")));
+           step.SetTranslation(gp_Vec(xyz(a.at("vector"), "vector")) * share);
          } else {
            step.SetRotation(gp_Ax1(point(a, "axis_origin"), direction(a, "axis_direction", gp::DZ())),
-                            number(a, "angle") * kDegree);
+                            number(a, "angle") * kDegree * share);
          }
-         return idsResult(must(m.copy(ids(a, "ids"), step, a.value("count", 1))));
+         if (a.contains("edges")) {
+           std::vector<TopoDS_Edge> edges;
+           for (const json& item : arg(a, "edges")) edges.push_back(selectEdge(m, text(item, "id"), arg(item, "edge")));
+           return idsResult(must(m.copyEdges(edges, step, count)));
+         }
+         return idsResult(must(m.copy(ids(a, "ids"), step, count)));
        }},
       {"boolean", "Solid union / subtract (first minus the others) / intersect. Parametric.",
        SCHEMA({"type": "object", "properties": {"operation": {"enum": ["union", "subtract", "intersect"]},

@@ -7,6 +7,8 @@
 #include <GProp_GProps.hxx>
 #include <QWheelEvent>
 
+#include <set>
+
 #include <BRepGProp.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
@@ -140,6 +142,7 @@ class GuiPhase1 : public QObject {
   void drawPushPullSaveReopen();
   void lineToolClosesLoopIntoFace();
   void moveCopyAndArray();
+  void copySelectedEdgeArrays();
   void rotateByTypedAngle();
   void offsetToolInwards();
   void groupIsSelectedAsAWhole();
@@ -252,6 +255,77 @@ struct Fixture {
 
 }  // namespace
 
+// Request "線の移動コピー・等間隔配列・等分割": a selected line copied with
+// Move + Ctrl and a typed distance, then "*5", "*3", "/3", "/5" typed right
+// after; one edge of a solid copied without changing the solid; the left
+// edge of a face copied to its right edge and "/3" divides the face.
+void GuiPhase1::copySelectedEdgeArrays() {
+  Fixture f;
+  QVERIFY(f.setUp(1500, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId line = *m.createPolyline({gp_Pnt(0, 0, 0), gp_Pnt(0, 1000, 0)});
+  f.vp->syncNow();
+  auto xs = [&] {
+    std::multiset<long> out;
+    for (const doc::Object& o : m.document().objects()) {
+      if (o.kind() != doc::ObjectKind::Curve) continue;
+      Bnd_Box b = geom::exactBounds(m.document().worldShape(o));
+      out.insert(std::lround(b.CornerMin().X()));
+    }
+    return out;
+  };
+  auto copyBy = [&](const gp_Pnt& on, double distance, const gp_Pnt& towards) {
+    f.window.activateTool(MainWindow::ToolId::Select);
+    click(f.vp, f.vp->toWidget(on));
+    QCOMPARE(f.window.elementSelection().size(), std::size_t(1));
+    f.window.activateTool(MainWindow::ToolId::Move);
+    click(f.vp, f.vp->toWidget(on));
+    QTest::keyClick(f.vp, Qt::Key_Control);
+    move(f.vp, f.vp->toWidget(towards));
+    type(f.vp, QString::number(distance));
+  };
+  // A01, A03: 600 then *5 (6 lines), then *3 replaces it (4 lines).
+  const std::size_t steps = m.history().undoCount();
+  copyBy(gp_Pnt(0, 500, 0), 600, gp_Pnt(1200, 700, 0));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  type(f.vp, QStringLiteral("*5"));
+  QCOMPARE(xs(), (std::multiset<long>{0, 600, 1200, 1800, 2400, 3000}));
+  QVERIFY2(f.window.statusText().contains(QStringLiteral("元を含め 6")), qPrintable(f.window.statusText()));
+  type(f.vp, QStringLiteral("3*"));
+  QCOMPARE(xs(), (std::multiset<long>{0, 600, 1200, 1800}));
+  // /3 divides the first 600; /5 too, not what *3 made.
+  type(f.vp, QStringLiteral("/3"));
+  QCOMPARE(xs(), (std::multiset<long>{0, 200, 400, 600}));
+  type(f.vp, QStringLiteral("x5"));
+  QCOMPARE(xs(), (std::multiset<long>{0, 600, 1200, 1800, 2400, 3000}));
+  // A12: nonsense keeps what is there.
+  type(f.vp, QStringLiteral("/0"));
+  QVERIFY(!f.window.lastError().isEmpty());
+  QCOMPARE(xs(), (std::multiset<long>{0, 600, 1200, 1800, 2400, 3000}));
+  f.window.clearLastError();
+  QCOMPARE(m.history().undoCount(), steps + 1);  // one step all along
+  QVERIFY(m.undo());
+  QCOMPARE(xs(), (std::multiset<long>{0}));
+
+  // A02 / A04: 3000 then /3, then /5: the same 3000 in five.
+  copyBy(gp_Pnt(0, 500, 0), 3000, gp_Pnt(1200, 700, 0));
+  type(f.vp, QStringLiteral("/3"));
+  QCOMPARE(xs(), (std::multiset<long>{0, 1000, 2000, 3000}));
+  type(f.vp, QStringLiteral("5/"));
+  QCOMPARE(xs(), (std::multiset<long>{0, 600, 1200, 1800, 2400, 3000}));
+  QVERIFY(m.undo());
+  QVERIFY(m.document().find(line));
+
+  // A07: one edge of a solid: copied as a line, the solid unchanged.
+  const doc::ObjectId box = f.box(5000, 0, 1000, 1000, 1000);
+  f.vp->syncNow();
+  const double volume = geom::volume(m.document().worldShape(box));
+  copyBy(gp_Pnt(5500, 0, 1000), 2000, gp_Pnt(5500, -1500, 1000));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QVERIFY(std::abs(geom::volume(m.document().worldShape(box)) - volume) < 1e-6);
+  QCOMPARE(m.document().objects().size(), std::size_t(3));  // line, box, the copied edge
+}
+
 void GuiPhase1::moveCopyAndArray() {
   Fixture f;
   QVERIFY(f.setUp());
@@ -272,10 +346,12 @@ void GuiPhase1::moveCopyAndArray() {
   for (const doc::Object& o : m.document().objects()) all.Add(geom::exactBounds(m.document().worldShape(o)));
   QVERIFY(std::abs(all.CornerMax().X() - 12300) < 1e-6);
   QCOMPARE(m.history().undoName(), std::string("Array"));
-  type(f.vp, QStringLiteral("/4"));                       // divide the 12000 into four
+  // "/4" divides the first distance the user gave (3000), not the array's
+  // 12000 (ARR-02, provisional until compared with SketchUp).
+  type(f.vp, QStringLiteral("/4"));
   all.SetVoid();
   for (const doc::Object& o : m.document().objects()) all.Add(geom::exactBounds(m.document().worldShape(o)));
-  QVERIFY(std::abs(all.CornerMax().X() - 12300) < 1e-6);
+  QVERIFY(std::abs(all.CornerMax().X() - 3300) < 1e-6);
   QCOMPARE(m.document().objects().size(), std::size_t(5));
 
   const QString shot = qEnvironmentVariable("SBR_PHASE2_SHOT");

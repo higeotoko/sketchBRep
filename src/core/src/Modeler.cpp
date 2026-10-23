@@ -24,6 +24,7 @@
 #include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
 #include <gp_Ax3.hxx>
 #include <gp_Pnt2d.hxx>
 #include <GProp_GProps.hxx>
@@ -1808,6 +1809,62 @@ Result<std::vector<ObjectId>> Modeler::deleteFaces(const ObjectId& id, const std
     if (const Status s = setLayer(line, layer); !s) {
       history_.abortGroup();
       return R::failure(s.message());
+    }
+  }
+  history_.endGroup();
+  return made;
+}
+
+Result<std::vector<ObjectId>> Modeler::copyEdges(const std::vector<TopoDS_Edge>& worldEdges,
+                                                 const gp_Trsf& worldDelta, int count) {
+  using R = Result<std::vector<ObjectId>>;
+  if (worldEdges.empty()) return R::failure("No edges to copy");
+  if (count < 1 || count > 10000) return R::failure("Count must be between 1 and 10000");
+  // Straight edges already there (this group, shown): a copy landing on one
+  // is not made again.
+  auto onExisting = [&](const TopoDS_Edge& e) {
+    if (BRepAdaptor_Curve(e).GetType() != GeomAbs_Line) return false;
+    const gp_Pnt a = BRep_Tool::Pnt(TopExp::FirstVertex(e)), b = BRep_Tool::Pnt(TopExp::LastVertex(e));
+    for (const Object& o : document_.objects()) {
+      if (o.parent != activeGroup_ || !document_.isVisible(o.id) || o.shape.IsNull()) continue;
+      const ObjectKind k = o.kind();
+      if (k != ObjectKind::Curve && k != ObjectKind::Face && k != ObjectKind::Shell && k != ObjectKind::Solid) continue;
+      TopTools_IndexedMapOfShape edges;
+      TopExp::MapShapes(document_.worldShape(o), TopAbs_EDGE, edges);
+      for (int i = 1; i <= edges.Extent(); ++i) {
+        const TopoDS_Edge x = TopoDS::Edge(edges(i));
+        const gp_Pnt c = BRep_Tool::Pnt(TopExp::FirstVertex(x)), d = BRep_Tool::Pnt(TopExp::LastVertex(x));
+        if ((a.Distance(c) < 1e-6 && b.Distance(d) < 1e-6) || (a.Distance(d) < 1e-6 && b.Distance(c) < 1e-6)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+  history_.beginGroup("Copy");
+  std::vector<ObjectId> made;
+  gp_Trsf at;
+  for (int k = 1; k <= count; ++k) {
+    at = worldDelta * at;
+    std::vector<TopoDS_Edge> moved;
+    for (const TopoDS_Edge& e : worldEdges) {
+      const TopoDS_Edge copy = TopoDS::Edge(BRepBuilderAPI_Transform(e, at, Standard_True).Shape());
+      if (!onExisting(copy)) moved.push_back(copy);
+    }
+    for (const auto& run : chainRuns(moved)) {
+      // A straight run across a face divides it (no line of its own then).
+      const bool straight = std::all_of(run.begin(), run.end(), [](const TopoDS_Edge& e) {
+        return BRepAdaptor_Curve(e).GetType() == GeomAbs_Line;
+      });
+      if (straight) {
+        std::vector<gp_Pnt> points{BRep_Tool::Pnt(TopExp::FirstVertex(run.front(), true))};
+        for (const TopoDS_Edge& e : run) points.push_back(BRep_Tool::Pnt(TopExp::LastVertex(e, true)));
+        if (splitWithLine(points)) continue;
+      }
+      if (const Status s = recreateCurves(*this, run, made); !s) {
+        history_.abortGroup();
+        return R::failure(s.message());
+      }
     }
   }
   history_.endGroup();

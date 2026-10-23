@@ -353,6 +353,14 @@ class Modeler {
                                   double height, double sill);
   // Copies the objects `count` times, copy k placed at worldDelta^k (linear
   // or polar arrays). Returns the ids of the new top-level copies.
+  // Copies only these edges (world; edges of lines, faces or solids picked
+  // one by one) `count` times, copy k at worldDelta^k, as lines of their own
+  // (exact: straight runs as polylines, arcs as arcs, other curves as they
+  // are). A straight copy lying across a face of the current group from
+  // edge to edge divides that face instead (SketchUp); a copy on top of an
+  // existing edge is not made twice. One undo step; returns the new lines.
+  Result<std::vector<ObjectId>> copyEdges(const std::vector<TopoDS_Edge>& worldEdges, const gp_Trsf& worldDelta,
+                                          int count = 1);
   Result<std::vector<ObjectId>> copy(const std::vector<ObjectId>& ids, const gp_Trsf& worldDelta,
                                      int count = 1);
   // Clipboard: a snapshot of the objects (with their subtrees) that stays

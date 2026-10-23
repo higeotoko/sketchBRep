@@ -71,6 +71,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   Tool* activeTool() const { return active_; }
   QLineEdit* measurementBox() const { return measurement_; }
   QString lastError() const { return lastError_; }
+  void clearLastError() { lastError_.clear(); }
   QString statusText() const;
   // Constraints shown in the status bar (lock / working plane / target).
   QString constraintText() const;
