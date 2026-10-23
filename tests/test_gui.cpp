@@ -3197,7 +3197,10 @@ void GuiPhase1::wheelZoomKeepsDrawing() {
   f.window.activateTool(MainWindow::ToolId::Line);
   click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));
   for (int k = 0; k < 3; ++k) wheelAt(f.vp, f.vp->toWidget(gp_Pnt(1000, 0, 0)), QPoint(0, 120));
-  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 0, 0)));
+  // The direction from the new view, the length typed (pixel positions
+  // after the zoom are not exact enough to click the end itself).
+  move(f.vp, f.vp->toWidget(gp_Pnt(700, 0, 0)));
+  type(f.vp, QStringLiteral("1000"));
   QTest::keyClick(f.vp, Qt::Key_Escape);
   QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
   QCOMPARE(m.document().objects().size(), std::size_t(1));
