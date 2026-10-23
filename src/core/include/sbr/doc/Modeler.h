@@ -36,6 +36,21 @@ struct PushPullResult {
   std::string parameterKey;
 };
 
+// What Delete takes away from one object: the whole object, or the faces /
+// edges picked on it (world shapes, as shown when they were picked).
+struct DeleteTarget {
+  ObjectId id;
+  bool whole = false;
+  std::vector<TopoDS_Face> faces;
+  std::vector<TopoDS_Edge> edges;
+};
+
+struct DeleteOutcome {
+  std::vector<ObjectId> removed;  // objects that are gone
+  std::vector<ObjectId> lines;    // lines left by deleted faces / pieces of lines
+  int merged = 0;                 // dividing lines taken away (faces joined)
+};
+
 class Modeler {
  public:
   Modeler();
@@ -115,6 +130,19 @@ class Modeler {
   // (an edge taken away cannot leave its faces).
   Result<std::vector<ObjectId>> deleteFaces(const ObjectId& id, const std::vector<TopoDS_Face>& worldFaces,
                                             const std::vector<TopoDS_Edge>& droppedEdges = {});
+  // Delete of a selection (GUI Delete key, API delete): everything is
+  // located before anything changes, then per object:
+  //  - whole: the object goes (with its children);
+  //  - a line's edges: just those edges go, the rest stays as lines;
+  //  - a line dividing a flat face (same plane both sides): the faces join;
+  //  - other edges of faces / solids: the faces they bound go (deleteFaces),
+  //    edges no face uses any more stay as lines;
+  //  - faces: they go, their edges stay as lines.
+  // Elements are found again by their geometry at their turn, so an earlier
+  // step changing ids or indices cannot make a later one hit the wrong
+  // thing. One undo step; on any failure nothing changes and the reason is
+  // returned.
+  Result<DeleteOutcome> deleteSelection(const std::vector<DeleteTarget>& targets);
   // Fills the flat holes of open shells; closed again they are solids.
   Status fillHoles(const std::vector<ObjectId>& ids);
   // Turns the faces of open shells / profiles over (front <-> back).

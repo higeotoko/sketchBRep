@@ -1488,12 +1488,36 @@ const std::vector<CommandDef>& commands() {
                      {"source", at.source},
                      {"color", {at.color.r, at.color.g, at.color.b}}};
        }},
-      {"delete", "Delete objects (with their children).",
-       SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}}},
-               "required": ["ids"]}),
+      {"delete",
+       "Delete, like the Delete key on a selection: 'ids' go as whole objects (with their children); "
+       "'elements' = [{\"id\": object, \"faces\": [face selectors], \"edges\": [edge selectors]}] delete "
+       "only those faces / edges: a line's edges go alone (the rest of the line stays), a line dividing a flat "
+       "face joins the faces, other edges take the faces they bound with them, faces go and leave their edges "
+       "as lines. All is located first, then done as one undo step; on a failure nothing changes. Returns "
+       "removed, lines, merged.",
+       SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}},
+               "elements": {"type": "array"}}}),
        [](doc::Modeler& m, const json& a) {
-         must(m.remove(ids(a, "ids")));
-         return json::object();
+         std::vector<doc::DeleteTarget> targets;
+         if (a.contains("ids")) {
+           for (const ObjectId& id : ids(a, "ids")) targets.push_back(doc::DeleteTarget{id, true, {}, {}});
+         }
+         if (a.contains("elements")) {
+           for (const json& item : arg(a, "elements")) {
+             doc::DeleteTarget t;
+             t.id = text(item, "id");
+             if (item.contains("faces")) {
+               for (const json& f : item.at("faces")) t.faces.push_back(selectFace(m, t.id, f));
+             }
+             if (item.contains("edges")) {
+               for (const json& e : item.at("edges")) t.edges.push_back(selectEdge(m, t.id, e));
+             }
+             targets.push_back(std::move(t));
+           }
+         }
+         if (targets.empty()) throw ApiError("give ids or elements");
+         const doc::DeleteOutcome out = must(m.deleteSelection(targets));
+         return json{{"removed", out.removed}, {"lines", out.lines}, {"merged", out.merged}};
        }},
 
       // ---- view state (kept in the file, not in undo)

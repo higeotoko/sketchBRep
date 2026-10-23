@@ -219,6 +219,7 @@ class GuiPhase1 : public QObject {
   void autosaveRecoveryAndBackups();
   void deleteFaceLeavesOpenShape();
   void deleteLooseFaceKeepsItsOutline();
+  void deleteMixedSelection();
   void imageUnderlayCalibrateLockTrace();
 };
 
@@ -2590,6 +2591,60 @@ void GuiPhase1::deleteLooseFaceKeepsItsOutline() {
   QVERIFY(f.window.statusText().contains(QStringLiteral("線として残")));
   QVERIFY(m.undo());
   QCOMPARE(m.document().find(*face)->kind(), doc::ObjectKind::Face);
+}
+
+// Delete of a mixed selection in the window: five faces of a cube (not the
+// top) and two of three loose lines; the top and the third line stay. A
+// lone line clicked and deleted goes alone. One undo step each.
+void GuiPhase1::deleteMixedSelection() {
+  Fixture f;
+  QVERIFY(f.setUp(1500, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId cube = f.box(0, 0, 1000, 1000, 1000);
+  const doc::ObjectId l1 = *m.createPolyline({gp_Pnt(3000, 0, 0), gp_Pnt(4000, 0, 0)});
+  const doc::ObjectId l2 = *m.createPolyline({gp_Pnt(3000, 500, 0), gp_Pnt(4000, 500, 0)});
+  const doc::ObjectId l3 = *m.createPolyline({gp_Pnt(3000, 1000, 0), gp_Pnt(4000, 1000, 0)});
+  f.vp->syncNow();
+  std::vector<ElementRef> selection;
+  for (const ElementRef& e : f.vp->allElements(cube)) {
+    if (e.type != TopAbs_FACE) continue;
+    const auto n = geom::planarFaceNormal(TopoDS::Face(f.vp->elementShape(e)));
+    if (n && n->Z() < 0.99) selection.push_back(e);
+  }
+  QCOMPARE(selection.size(), std::size_t(5));
+  for (const doc::ObjectId& id : {l1, l2}) {
+    for (const ElementRef& e : f.vp->allElements(id)) selection.push_back(e);
+  }
+  f.window.activateWindow();
+  f.window.activateTool(MainWindow::ToolId::Select);
+  f.window.setElementSelection(selection);
+  QCOMPARE(f.window.elementSelection().size(), std::size_t(7));
+  QAction* deleteAction = nullptr;
+  for (QAction* a : f.window.findChildren<QAction*>()) {
+    if (a->text() == QStringLiteral("削除")) deleteAction = a;
+  }
+  QVERIFY(deleteAction);
+  const std::size_t steps = m.history().undoCount();
+  deleteAction->trigger();
+  QTest::qWait(30);
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QVERIFY(m.document().find(cube));
+  int faces = 0;
+  for (TopExp_Explorer e(m.document().worldShape(*m.document().find(cube)), TopAbs_FACE); e.More(); e.Next()) ++faces;
+  QCOMPARE(faces, 1);
+  QVERIFY(!m.document().find(l1) && !m.document().find(l2));
+  QVERIFY(m.document().find(l3));
+  QCOMPARE(m.history().undoCount(), steps + 1);
+
+  // A lone line clicked and deleted.
+  f.vp->syncNow();
+  click(f.vp, f.vp->toWidget(gp_Pnt(3500, 1000, 0)));
+  QCOMPARE(f.window.elementSelection().size(), std::size_t(1));
+  QTest::keyClick(f.vp, Qt::Key_Delete);
+  QTest::qWait(30);
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QVERIFY(!m.document().find(l3));
+  QVERIFY(m.document().find(cube));
 }
 
 void GuiPhase1::deleteFaceLeavesOpenShape() {

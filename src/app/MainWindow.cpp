@@ -2075,108 +2075,53 @@ void MainWindow::syncEditContext() {
 
 void MainWindow::deleteSelection() {
   if (selection_.empty()) return;
-  // Only edges selected (dividing lines): erase them, merging their faces.
-  const bool onlyEdges = !elements_.empty() && std::all_of(elements_.begin(), elements_.end(), [](const ElementRef& e) {
-    return e.type == TopAbs_EDGE;
-  });
-  const doc::Object* single = selection_.size() == 1 ? modeler_.document().find(selection_.front()) : nullptr;
-  if (onlyEdges && single && (single->kind() == doc::ObjectKind::Solid || single->kind() == doc::ObjectKind::Face)) {
-    std::vector<TopoDS_Edge> edges;
-    for (const ElementRef& e : elements_) {
-      const TopoDS_Shape edge = viewport_->elementShape(e);
-      if (!edge.IsNull()) edges.push_back(TopoDS::Edge(edge));
+  // What is selected, per object, resolved now: the faces and edges picked
+  // on it, or the whole object (picked as an object: group, component,
+  // triple-click, box selection). One shared Modeler call (also the API's
+  // "delete"): one undo step, all or nothing, the reason when refused.
+  std::map<doc::ObjectId, doc::DeleteTarget> byObject;
+  for (const ElementRef& e : elements_) {
+    const TopoDS_Shape shape = viewport_->elementShape(e);
+    if (shape.IsNull()) continue;
+    doc::DeleteTarget& t = byObject[e.objectId];
+    t.id = e.objectId;
+    if (e.type == TopAbs_FACE) {
+      t.faces.push_back(TopoDS::Face(shape));
+    } else {
+      t.edges.push_back(TopoDS::Edge(shape));
     }
-    modeler_.history().beginGroup("Erase Line");
-    doc::ObjectId id = selection_.front();
-    for (const TopoDS_Edge& edge : edges) {
-      const auto r = modeler_.eraseEdge(id, edge);
-      if (!r) {
-        modeler_.history().abortGroup();
-        reportError(QString::fromStdString(r.error()));
-        return;
-      }
-      id = r.value();
+  }
+  std::vector<doc::DeleteTarget> targets;
+  for (const doc::ObjectId& id : selection_) {
+    auto it = byObject.find(id);
+    if (it == byObject.end()) {
+      targets.push_back(doc::DeleteTarget{id, true, {}, {}});
+      continue;
     }
-    modeler_.history().endGroup();
-    setSelection({});
+    // Every face and edge picked: the object as a whole.
+    const auto all = viewport_->allElements(id);
+    const bool complete = !all.empty() && std::all_of(all.begin(), all.end(), [this](const ElementRef& el) {
+      return std::find(elements_.begin(), elements_.end(), el) != elements_.end();
+    });
+    if (complete) it->second.whole = true;
+    targets.push_back(it->second);
+  }
+  const auto outcome = modeler_.deleteSelection(targets);
+  if (!outcome) {
+    reportError(tr("削除できませんでした: %1").arg(userMessage(QString::fromStdString(outcome.error()))));
     return;
   }
-  // Faces selected (SketchUp Delete): the faces go and their edges stay as
-  // lines, unless the edges are selected too (then the faces they bound go
-  // with them). Several objects at once, one undo step. Objects selected as
-  // a whole (no faces or edges of theirs picked) are removed as before.
-  const bool anyFace = std::any_of(elements_.begin(), elements_.end(),
-                                   [](const ElementRef& e) { return e.type == TopAbs_FACE; });
-  if (anyFace) {
-    std::map<doc::ObjectId, std::pair<std::vector<TopoDS_Face>, std::vector<TopoDS_Edge>>> picked;
-    for (const ElementRef& e : elements_) {
-      const TopoDS_Shape shape = viewport_->elementShape(e);  // resolved before anything changes
-      if (shape.IsNull()) continue;
-      auto& [faces, edges] = picked[e.objectId];
-      if (e.type == TopAbs_FACE) {
-        faces.push_back(TopoDS::Face(shape));
-      } else {
-        edges.push_back(TopoDS::Edge(shape));
-      }
-    }
-    std::vector<doc::ObjectId> whole;
-    for (const doc::ObjectId& id : selection_) {
-      const doc::Object* o = modeler_.document().find(id);
-      const bool shaped = o && (o->kind() == doc::ObjectKind::Face || o->kind() == doc::ObjectKind::Solid ||
-                                o->kind() == doc::ObjectKind::Shell);
-      if (!picked.count(id) || !shaped) whole.push_back(id);
-    }
-    modeler_.history().beginGroup("Delete");
-    std::size_t lines = 0;
-    for (const auto& [id, elements] : picked) {
-      if (std::find(whole.begin(), whole.end(), id) != whole.end()) continue;
-      const auto r = modeler_.deleteFaces(id, elements.first, elements.second);
-      if (!r) {
-        modeler_.history().abortGroup();
-        reportError(QString::fromStdString(r.error()));
-        return;
-      }
-      lines += r->size();
-    }
-    if (!whole.empty()) {
-      if (const Status s = modeler_.remove(whole); !s) {
-        modeler_.history().abortGroup();
-        reportError(QString::fromStdString(s.message()));
-        return;
-      }
-    }
-    modeler_.history().endGroup();
-    setSelection({});
-    bool opened = false;
-    for (const auto& [id, elements] : picked) {
-      const doc::Object* o = modeler_.document().find(id);
-      opened |= o && o->kind() == doc::ObjectKind::Shell;
-    }
-    QString status = lines > 0 ? tr("面を消しました（輪郭は線として残っています）") : tr("面を消しました");
-    if (opened) status += tr("。開いた形状は 編集 > 穴をふさぐ でソリッドに戻せます");
-    setStatus(status);
-    return;
-  }
-  if (!elements_.empty()) {
-    // Only edges of several objects: a solid goes only if all of it is
-    // selected (triple-click); loose lines and profiles go as a whole.
-    for (const doc::ObjectId& id : selection_) {
-      const auto all = viewport_->allElements(id);
-      const bool complete = std::all_of(all.begin(), all.end(), [this](const ElementRef& e) {
-        return std::find(elements_.begin(), elements_.end(), e) != elements_.end();
-      });
-      const doc::Object* o = modeler_.document().find(id);
-      const bool loose = o && (o->kind() == doc::ObjectKind::Face || o->kind() == doc::ObjectKind::Curve);
-      if (!complete && !loose) {
-        reportError(tr("ソリッドの辺は 1 つの立体ずつ消してください（面を分けた線は選んで Delete か消しゴムで）。"
-                       "トリプルクリックでオブジェクト全体を選ぶと丸ごと削除できます"));
-        return;
-      }
-    }
-  }
-  const Status s = modeler_.remove(selection_);
-  if (!s) reportError(QString::fromStdString(s.message()));
   setSelection({});
+  bool opened = false;
+  for (const doc::DeleteTarget& t : targets) {
+    const doc::Object* o = modeler_.document().find(t.id);
+    opened |= o && o->kind() == doc::ObjectKind::Shell;
+  }
+  QString status = tr("削除しました");
+  if (!outcome->lines.empty()) status += tr("（面の輪郭は線として残っています）");
+  if (outcome->merged > 0) status += tr("（%1 本の線を消して面をつなげました）").arg(outcome->merged);
+  if (opened) status += tr("。開いた形状はそのまま編集を続けられます（編集 > 穴をふさぐ でソリッドに戻すこともできます）");
+  setStatus(status);
 }
 
 bool MainWindow::report(const Status& status) {

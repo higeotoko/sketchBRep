@@ -1815,6 +1815,202 @@ Result<std::vector<ObjectId>> Modeler::deleteFaces(const ObjectId& id, const std
   return made;
 }
 
+namespace {
+
+// An edge recognised by its geometry: both ends and its middle.
+struct EdgeKey {
+  gp_Pnt a, b, mid;
+  static EdgeKey of(const TopoDS_Edge& e) {
+    BRepAdaptor_Curve c(e);
+    return {BRep_Tool::Pnt(TopExp::FirstVertex(e)), BRep_Tool::Pnt(TopExp::LastVertex(e)),
+            c.Value(0.5 * (c.FirstParameter() + c.LastParameter()))};
+  }
+  bool matches(const TopoDS_Edge& e) const {
+    const EdgeKey k = of(e);
+    const bool ends = (a.Distance(k.a) < 1e-6 && b.Distance(k.b) < 1e-6) || (a.Distance(k.b) < 1e-6 && b.Distance(k.a) < 1e-6);
+    return ends && mid.Distance(k.mid) < 1e-6;
+  }
+};
+
+// A face recognised by a point strictly inside it and its plane's normal.
+struct FaceKey {
+  gp_Pnt inside;
+  gp_Dir normal;
+  bool matches(const TopoDS_Face& f) const {
+    const auto n = geom::planarFaceNormal(f);
+    if (n && n->Angle(normal) > 1e-6) return false;
+    return BRepClass_FaceClassifier(f, inside, 1e-6).State() == TopAbs_IN;
+  }
+};
+
+}  // namespace
+
+Result<DeleteOutcome> Modeler::deleteSelection(const std::vector<DeleteTarget>& targets) {
+  using R = Result<DeleteOutcome>;
+  if (targets.empty()) return R::failure("Nothing selected to delete");
+  // 1. Everything located and described before anything changes.
+  struct Plan {
+    ObjectId id;
+    ObjectId parent;
+    std::string name;
+    std::vector<FaceKey> faces;
+    std::vector<EdgeKey> edges;
+  };
+  std::vector<ObjectId> whole;
+  std::vector<Plan> plans;
+  for (const DeleteTarget& t : targets) {
+    const Object* o = document_.find(t.id);
+    if (!o) return R::failure("Something selected no longer exists; select again");
+    if (o->locked) return R::failure("'" + o->name + "' is locked");
+    if (t.whole || (t.faces.empty() && t.edges.empty())) {
+      whole.push_back(t.id);
+      continue;
+    }
+    const ObjectKind kind = o->kind();
+    if (kind != ObjectKind::Curve && kind != ObjectKind::Face && kind != ObjectKind::Shell && kind != ObjectKind::Solid) {
+      return R::failure("Faces and edges of '" + o->name + "' cannot be deleted on their own; delete the whole object");
+    }
+    Plan plan{t.id, o->parent, o->name, {}, {}};
+    for (const TopoDS_Face& f : t.faces) {
+      auto ref = geom::FaceRef::identify(f);
+      if (!ref || !ref->inside) return R::failure("A selected face of '" + o->name + "' is not flat; delete the whole object");
+      plan.faces.push_back({*ref->inside, ref->normal});
+    }
+    for (const TopoDS_Edge& e : t.edges) plan.edges.push_back(EdgeKey::of(e));
+    plans.push_back(std::move(plan));
+  }
+  // Parts of objects that go as a whole anyway.
+  plans.erase(std::remove_if(plans.begin(), plans.end(), [&](const Plan& p) {
+                return std::any_of(whole.begin(), whole.end(), [&](const ObjectId& w) {
+                  return w == p.id || document_.isAncestor(w, p.id);
+                });
+              }),
+              plans.end());
+
+  // Finds an element again, in its object or (after a merge made a new
+  // object) among the objects beside it.
+  auto candidates = [&](const Plan& p) {
+    std::vector<const Object*> out;
+    if (const Object* o = document_.find(p.id)) out.push_back(o);
+    for (const Object& o : document_.objects()) {
+      if (o.id != p.id && o.parent == p.parent && !o.shape.IsNull() && document_.isVisible(o.id)) out.push_back(&o);
+    }
+    return out;
+  };
+  auto findEdge = [&](const Plan& p, const EdgeKey& key) -> std::optional<std::pair<ObjectId, TopoDS_Edge>> {
+    for (const Object* o : candidates(p)) {
+      TopTools_IndexedMapOfShape edges;
+      TopExp::MapShapes(document_.worldShape(*o), TopAbs_EDGE, edges);
+      for (int i = 1; i <= edges.Extent(); ++i) {
+        if (key.matches(TopoDS::Edge(edges(i)))) return std::make_pair(o->id, TopoDS::Edge(edges(i)));
+      }
+    }
+    return std::nullopt;
+  };
+  auto findFace = [&](const Plan& p, const FaceKey& key) -> std::optional<std::pair<ObjectId, TopoDS_Face>> {
+    for (const Object* o : candidates(p)) {
+      for (TopExp_Explorer f(document_.worldShape(*o), TopAbs_FACE); f.More(); f.Next()) {
+        if (key.matches(TopoDS::Face(f.Current()))) return std::make_pair(o->id, TopoDS::Face(f.Current()));
+      }
+    }
+    return std::nullopt;
+  };
+
+  DeleteOutcome outcome;
+  history_.beginGroup("Delete");
+  auto fail = [&](const std::string& why) {
+    history_.abortGroup();
+    return R::failure(why);
+  };
+  if (!whole.empty()) {
+    if (const Status s = remove(whole); !s) return fail(s.message());
+    outcome.removed = whole;
+  }
+  for (const Plan& plan : plans) {
+    const Object* o = document_.find(plan.id);
+    // 2. Lines: just the selected edges go; the rest stays as lines.
+    if (o && o->kind() == ObjectKind::Curve) {
+      TopTools_IndexedMapOfShape edges;
+      TopExp::MapShapes(document_.worldShape(*o), TopAbs_EDGE, edges);
+      std::vector<TopoDS_Edge> rest;
+      int hit = 0;
+      for (int i = 1; i <= edges.Extent(); ++i) {
+        const TopoDS_Edge e = TopoDS::Edge(edges(i));
+        const bool chosen =
+            std::any_of(plan.edges.begin(), plan.edges.end(), [&](const EdgeKey& k) { return k.matches(e); });
+        hit += chosen;
+        if (!chosen) rest.push_back(e);
+      }
+      if (hit == 0) return fail("The selected line of '" + plan.name + "' was not found any more; select again");
+      const std::string layer = o->layer;
+      if (const Status s = remove({plan.id}); !s) return fail(s.message());
+      outcome.removed.push_back(plan.id);
+      std::vector<ObjectId> made;
+      for (const auto& run : chainRuns(rest)) {
+        if (const Status s = recreateCurves(*this, run, made); !s) return fail(s.message());
+      }
+      for (const ObjectId& line : made) {
+        if (!layer.empty()) {
+          if (const Status s = setLayer(line, layer); !s) return fail(s.message());
+        }
+      }
+      outcome.lines.insert(outcome.lines.end(), made.begin(), made.end());
+      continue;
+    }
+    // 3. Lines dividing a flat face: the faces join (if that is all the
+    //    edge does; a selected face beside it goes below instead).
+    std::vector<EdgeKey> bounding;
+    for (const EdgeKey& key : plan.edges) {
+      auto found = findEdge(plan, key);
+      if (!found) continue;  // went with an earlier one
+      const auto beside = facesAtEdge(found->first, found->second);
+      const bool besideSelected = std::any_of(beside.begin(), beside.end(), [&](const TopoDS_Face& f) {
+        return std::any_of(plan.faces.begin(), plan.faces.end(), [&](const FaceKey& k) { return k.matches(f); });
+      });
+      bool dividing = false;
+      if (beside.size() == 2 && !besideSelected) {
+        const auto n0 = geom::planarFaceNormal(beside[0]);
+        const auto n1 = geom::planarFaceNormal(beside[1]);
+        dividing = n0 && n1 && n0->Angle(*n1) < 1e-6;
+      }
+      const Object* owner = document_.find(found->first);
+      const bool facePart = owner && std::holds_alternative<FacePart>(owner->recipe.base);
+      if (dividing || (facePart && !besideSelected)) {
+        auto merged = eraseEdge(found->first, found->second);
+        if (merged) {
+          ++outcome.merged;
+          continue;
+        }
+        // Taking it away as a boundary would delete both faces: refused.
+        if (dividing) return fail("'" + plan.name + "': " + merged.error());
+      }
+      bounding.push_back(key);
+    }
+    // 4. Faces, and the faces that selected edges bound.
+    if (plan.faces.empty() && bounding.empty()) continue;
+    std::map<ObjectId, std::pair<std::vector<TopoDS_Face>, std::vector<TopoDS_Edge>>> work;
+    for (const FaceKey& key : plan.faces) {
+      auto found = findFace(plan, key);
+      if (!found) continue;  // went with an earlier one
+      work[found->first].first.push_back(found->second);
+    }
+    for (const EdgeKey& key : bounding) {
+      auto found = findEdge(plan, key);
+      if (!found) continue;
+      work[found->first].second.push_back(found->second);
+    }
+    for (const auto& [id, elements] : work) {
+      const bool existed = document_.find(id) != nullptr;
+      auto lines = deleteFaces(id, elements.first, elements.second);
+      if (!lines) return fail("'" + plan.name + "': " + lines.error());
+      outcome.lines.insert(outcome.lines.end(), lines->begin(), lines->end());
+      if (existed && !document_.find(id)) outcome.removed.push_back(id);
+    }
+  }
+  history_.endGroup();
+  return outcome;
+}
+
 Result<std::vector<ObjectId>> Modeler::copyEdges(const std::vector<TopoDS_Edge>& worldEdges,
                                                  const gp_Trsf& worldDelta, int count) {
   using R = Result<std::vector<ObjectId>>;
