@@ -1133,13 +1133,24 @@ const std::vector<CommandDef>& commands() {
          return idsResult(ids(a, "ids"));
        }},
       {"scale",
-       "Scale objects uniformly by 'factor' about the world point 'center' (parametric: the factor stays "
-       "editable as op<N>.scale). Groups scale their contents; components cannot be scaled.",
+       "Scale objects about the world point 'center'. Uniformly by 'factor' (parametric: stays editable as "
+       "op<N>.scale), or per direction with 'factors': [fx, fy, fz] along 'x_axis' / 'y_axis' (world, "
+       "perpendicular; default the world axes; z = x cross y), e.g. a 1000 box twice as wide: factors [2,1,1] "
+       "about its min corner. Exact B-rep (circles become ellipses). Factors must be positive. Groups scale "
+       "their contents; components and images (per direction) are refused. One undo step.",
        SCHEMA({"type": "object", "properties": {
          "ids": {"type": "array", "items": {"type": "string"}},
          "center": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
-         "factor": {"type": "number"}}, "required": ["ids", "center", "factor"]}),
+         "factor": {"type": "number"},
+         "factors": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+         "x_axis": {"type": "array"}, "y_axis": {"type": "array"}}, "required": ["ids", "center"]}),
        [](doc::Modeler& m, const json& a) {
+         if (a.contains("factors")) {
+           const gp_XYZ f = xyz(a.at("factors"), "factors");
+           must(m.stretch(ids(a, "ids"), point(a, "center"), direction(a, "x_axis", gp::DX()),
+                          direction(a, "y_axis", gp::DY()), f.X(), f.Y(), f.Z()));
+           return json::object();
+         }
          must(m.scale(ids(a, "ids"), point(a, "center"), number(a, "factor")));
          return json::object();
        }},

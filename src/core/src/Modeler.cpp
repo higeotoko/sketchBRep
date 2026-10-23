@@ -2969,6 +2969,90 @@ Status Modeler::scale(const std::vector<ObjectId>& ids, const gp_Pnt& center, do
   return Status::success();
 }
 
+Status Modeler::stretch(const std::vector<ObjectId>& ids, const gp_Pnt& worldCenter, const gp_Dir& xDir,
+                        const gp_Dir& yDir, double fx, double fy, double fz) {
+  for (double f : {fx, fy, fz}) {
+    if (!std::isfinite(f) || f < 1e-6) return Status::failure("Scale factors must be positive (mirroring is separate)");
+  }
+  if (std::abs(xDir.Dot(yDir)) > 1e-9) return Status::failure("The scale directions must be perpendicular");
+  if (std::abs(fx - fy) < 1e-12 && std::abs(fy - fz) < 1e-12) return scale(ids, worldCenter, fx);
+  const std::vector<ObjectId> roots = topmost(ids);
+  if (roots.empty()) return Status::failure("Nothing selected");
+  for (const ObjectId& id : roots) {
+    if (const Object* o = document_.find(id); o && o->locked) return Status::failure("'" + o->name + "' is locked");
+  }
+  ChangeSet changes(document_);
+  const RegenContext context = document_.regenContext();
+  for (const ObjectId& root : roots) {
+    for (const ObjectId& id : document_.subtree(root)) {
+      const Object* current = document_.find(id);
+      if (!current || std::holds_alternative<GroupNode>(current->recipe.base)) continue;
+      if (std::holds_alternative<ComponentInstance>(current->recipe.base)) {
+        return Status::failure("Component placements cannot be stretched on their own (all placements share the "
+                               "definition); make it unique first");
+      }
+      if (std::holds_alternative<ImageUnderlay>(current->recipe.base)) {
+        return Status::failure("Images are scaled uniformly only");
+      }
+      Object o = *current;
+      // The frame in this object's own coordinates.
+      const gp_Trsf toLocal = document_.worldTransform(o).Inverted();
+      StretchOp op{worldCenter.Transformed(toLocal), xDir.Transformed(toLocal), yDir.Transformed(toLocal), fx, fy, fz};
+      const gp_GTrsf g = geom::stretchTransform(op.center, op.xDir, op.yDir, fx, fy, fz);
+      auto apply = [&](gp_Pnt& p) {
+        gp_XYZ xyz = p.XYZ();
+        g.Transforms(xyz);
+        p = gp_Pnt(xyz);
+      };
+      if (auto* guide = std::get_if<GuideLine>(&o.recipe.base)) {
+        gp_Pnt a = guide->point, b = guide->point.Translated(gp_Vec(guide->direction) * 1000.0);
+        apply(a);
+        apply(b);
+        guide->point = a;
+        if (a.Distance(b) > 1e-9) guide->direction = gp_Dir(gp_Vec(a, b));
+      } else if (auto* d = std::get_if<LinearDimension>(&o.recipe.base)) {
+        gp_Pnt tip = d->start.Translated(d->offset);
+        apply(d->start);
+        apply(d->end);
+        apply(tip);
+        d->offset = gp_Vec(d->start, tip);
+      } else if (auto* t = std::get_if<TextNote>(&o.recipe.base)) {
+        apply(t->position);
+        if (t->target) apply(*t->target);
+      } else {
+        o.recipe.modifiers.push_back(op);
+      }
+      const Status built = rebuild(o, context);
+      if (!built) return built;
+      // Painted faces and hidden lines: the transform keeps the topology,
+      // so face / edge k of the old shape is face / edge k of the new one.
+      if (!current->faceMaterials.empty() && !current->shape.IsNull()) {
+        TopTools_IndexedMapOfShape after;
+        TopExp::MapShapes(o.shape, TopAbs_FACE, after);
+        std::vector<FaceMaterial> carried;
+        for (const auto& [index, material] : resolveFaceMaterials(*current).faces) {
+          if (index < 1 || index > after.Extent()) continue;
+          if (auto fm = FaceMaterial::of(TopoDS::Face(after(index)), material)) carried.push_back(*fm);
+        }
+        o.faceMaterials = std::move(carried);
+      }
+      if (!current->hiddenEdges.empty()) {
+        TopTools_IndexedMapOfShape after;
+        TopExp::MapShapes(o.shape, TopAbs_EDGE, after);
+        std::vector<EdgeMark> marks;
+        for (int index : hiddenEdgeIndices(*current)) {
+          if (index < 1 || index > after.Extent()) continue;
+          if (auto mark = edgeMark(TopoDS::Edge(after(index)))) marks.push_back(*mark);
+        }
+        o.hiddenEdges = std::move(marks);
+      }
+      changes.modify(o);
+    }
+  }
+  history_.execute(changes.build("Scale"));
+  return Status::success();
+}
+
 namespace {
 
 struct OpeningRef {

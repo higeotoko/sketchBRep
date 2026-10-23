@@ -423,6 +423,10 @@ json modifierToJson(const Modifier& m) {
                         {"points", pointsToJson(op.points)},
                         {"face", faceRefToJson(op.face)}};
           },
+          [](const StretchOp& op) {
+            return json{{"type", "stretch"}, {"center", toJson(op.center)}, {"x", toJson(op.xDir)},
+                        {"y", toJson(op.yDir)}, {"factors", {op.fx, op.fy, op.fz}}};
+          },
           [](const ScaleOp& op) {
             return json{{"type", "scale"}, {"center", toJson(op.center)}, {"factor", op.factor}};
           },
@@ -480,6 +484,17 @@ Modifier modifierFrom(const json& j) {
     return op;
   }
   if (type == "scale") return ScaleOp{pointFrom(j.at("center")), j.at("factor").get<double>()};
+  if (type == "stretch") {
+    StretchOp op;
+    op.center = pointFrom(j.at("center"));
+    op.xDir = dirFrom(j.at("x"));
+    op.yDir = dirFrom(j.at("y"));
+    const json& f = j.at("factors");
+    op.fx = f.at(0).get<double>();
+    op.fy = f.at(1).get<double>();
+    op.fz = f.at(2).get<double>();
+    return op;
+  }
   if (type == "removeface") {
     RemoveFaceOp op;
     if (j.contains("face")) op.plane = faceRefFrom(j.at("face"));

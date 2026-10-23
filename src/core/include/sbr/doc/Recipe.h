@@ -249,6 +249,18 @@ struct ScaleOp {
   double factor = 1.0;
 };
 
+// Scale along three directions of a frame (object coordinates), each by its
+// own factor, about `center` (SketchUp's scale grips: width, depth or
+// height alone, or several). Exact: the B-rep geometry is transformed
+// (planes stay planes, circles become ellipses as exact NURBS). Factors
+// are positive (mirroring is a separate operation).
+struct StretchOp {
+  gp_Pnt center;
+  gp_Dir xDir{1, 0, 0};
+  gp_Dir yDir{0, 1, 0};  // zDir = xDir x yDir
+  double fx = 1.0, fy = 1.0, fz = 1.0;
+};
+
 // A face taken out (SketchUp: select a face, Delete): the solid becomes an
 // open shell that can still be drawn on, painted and filled again.
 struct RemoveFaceOp {
@@ -282,7 +294,7 @@ struct InsetOp {
 };
 
 using Modifier = std::variant<ExtrudeOp, PushPullOp, OffsetOp, RevolveOp, SplitOp, OffsetFaceOp, HoleOp, ScaleOp,
-                              RemoveFaceOp, CapHolesOp, ReverseOp, MoveVerticesOp, InsetOp>;
+                              RemoveFaceOp, CapHolesOp, ReverseOp, MoveVerticesOp, InsetOp, StretchOp>;
 
 struct Recipe {
   BaseFeature base;

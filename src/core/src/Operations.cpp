@@ -30,6 +30,23 @@
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepOffsetAPI_MakeOffset.hxx>
+#include <BRepBuilderAPI_GTransform.hxx>
+#include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
+#include <TopTools_MapOfShape.hxx>
+#include <Geom_BSplineCurve.hxx>
+#include <Geom_BSplineSurface.hxx>
+#include <BRepBuilderAPI_NurbsConvert.hxx>
+#include <gp_Lin.hxx>
+#include <Geom2dConvert.hxx>
+#include <Geom2d_BSplineCurve.hxx>
+#include <Geom2d_TrimmedCurve.hxx>
+#include <Geom2d_Line.hxx>
+#include <Geom_TrimmedCurve.hxx>
+#include <Geom_Line.hxx>
+#include <Geom_Plane.hxx>
+#include <BRepLib.hxx>
+#include <BRepTools_Modifier.hxx>
+#include <BRepTools_GTrsfModification.hxx>
 #include <BRepTools.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepCheck_Analyzer.hxx>
@@ -406,6 +423,181 @@ Result<std::vector<TopoDS_Face>> splitPlanarFaceExtended(const TopoDS_Face& face
     return parts;
   } catch (const Standard_Failure& e) {
     return Result<std::vector<TopoDS_Face>>::failure(std::string("Split failed: ") + e.GetMessageString());
+  }
+}
+
+gp_GTrsf stretchTransform(const gp_Pnt& center, const gp_Dir& xDir, const gp_Dir& yDir, double fx, double fy,
+                          double fz) {
+  const gp_Dir zDir = xDir.Crossed(yDir);
+  const gp_Dir y = zDir.Crossed(xDir);  // made exactly perpendicular
+  // M = R diag(f) R^T with R's columns the frame's axes.
+  const gp_Mat r(xDir.XYZ(), y.XYZ(), zDir.XYZ());
+  gp_Mat d;
+  d.SetDiagonal(fx, fy, fz);
+  const gp_Mat m = r * d * r.Transposed();
+  gp_GTrsf t;
+  t.SetVectorialPart(m);
+  t.SetTranslationPart(center.XYZ() - m * center.XYZ());
+  return t;
+}
+
+namespace {
+
+// OCCT's general transform works on NURBS only: the shape is converted to
+// NURBS first, transformed, and what an affine map keeps flat or straight
+// comes back as an exact plane / line (flat faces stay flat for push/pull,
+// snapping and reshaping); the rest (circles -> ellipses, cylinders,
+// splines) stays exact NURBS. Lines on curved faces stay NURBS too, so that
+// their parameters keep matching those faces' curves.
+class StretchModification : public BRepTools_GTrsfModification {
+ public:
+  StretchModification(const gp_GTrsf& g, const TopoDS_Shape& nurbs) : BRepTools_GTrsfModification(g), g_(g) {
+    TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
+    TopExp::MapShapesAndAncestors(nurbs, TopAbs_EDGE, TopAbs_FACE, edgeFaces);
+    for (int i = 1; i <= edgeFaces.Extent(); ++i) {
+      for (const TopoDS_Shape& f : edgeFaces(i)) {
+        if (!planeFrame(TopoDS::Face(f))) onCurved_.Add(edgeFaces.FindKey(i));
+      }
+    }
+  }
+
+  Standard_Boolean NewSurface(const TopoDS_Face& F, Handle(Geom_Surface)& S, TopLoc_Location& L, Standard_Real& Tol,
+                              Standard_Boolean& RevWires, Standard_Boolean& RevFace) override {
+    const auto frame = planeFrame(F);
+    if (!frame) return BRepTools_GTrsfModification::NewSurface(F, S, L, Tol, RevWires, RevFace);
+    S = new Geom_Plane(mapped(*frame));
+    L = TopLoc_Location();
+    Tol = BRep_Tool::Tolerance(F);
+    RevWires = Standard_False;
+    RevFace = Standard_False;
+    return Standard_True;
+  }
+
+  Standard_Boolean NewCurve(const TopoDS_Edge& E, Handle(Geom_Curve)& C, TopLoc_Location& L,
+                            Standard_Real& Tol) override {
+    const auto line = lineOf(E);
+    if (!line) return BRepTools_GTrsfModification::NewCurve(E, C, L, Tol);
+    gp_XYZ origin = line->first.XYZ();
+    g_.Transforms(origin);
+    C = new Geom_Line(gp_Pnt(origin), gp_Dir(g_.VectorialPart() * line->second));
+    L = TopLoc_Location();
+    Tol = BRep_Tool::Tolerance(E);
+    return Standard_True;
+  }
+
+  Standard_Boolean NewParameter(const TopoDS_Vertex& V, const TopoDS_Edge& E, Standard_Real& P,
+                                Standard_Real& Tol) override {
+    const auto line = lineOf(E);
+    if (!line) return BRepTools_GTrsfModification::NewParameter(V, E, P, Tol);
+    // p(t) = a + t d becomes G(a) + t M d: unit speed again on the new line.
+    P = BRep_Tool::Parameter(V, E) * (g_.VectorialPart() * line->second).Modulus();
+    Tol = BRep_Tool::Tolerance(V);
+    return Standard_True;
+  }
+
+  Standard_Boolean NewCurve2d(const TopoDS_Edge& E, const TopoDS_Face& F, const TopoDS_Edge& NewE,
+                              const TopoDS_Face& NewF, Handle(Geom2d_Curve)& C, Standard_Real& Tol) override {
+    const auto frame = planeFrame(F);
+    if (!frame) return BRepTools_GTrsfModification::NewCurve2d(E, F, NewE, NewF, C, Tol);
+    const gp_Ax3 to = mapped(*frame);
+    // Plane coordinates map linearly: (u, v) -> A (u, v).
+    const gp_Mat& m = g_.VectorialPart();
+    const gp_XYZ mx = m * frame->xu, my = m * frame->yv;
+    const gp_XYZ X = to.XDirection().XYZ(), Y = to.YDirection().XYZ();
+    const double a11 = mx.Dot(X), a12 = my.Dot(X), a21 = mx.Dot(Y), a22 = my.Dot(Y);
+    auto map = [&](const gp_XY& uv) { return gp_XY(a11 * uv.X() + a12 * uv.Y(), a21 * uv.X() + a22 * uv.Y()); };
+    double f = 0, l = 0;
+    const Handle(Geom2d_Curve) old = BRep_Tool::CurveOnSurface(E, F, f, l);
+    if (old.IsNull()) return Standard_False;
+    Handle(Geom2d_BSplineCurve) spline = Handle(Geom2d_BSplineCurve)::DownCast(old);
+    if (spline.IsNull()) spline = Geom2dConvert::CurveToBSplineCurve(old);
+    if (lineOf(E) && spline->Degree() == 1 && spline->NbPoles() == 2) {
+      // The edge became a line (unit speed): so does its pcurve.
+      const double k0 = spline->Knot(1), k1 = spline->Knot(spline->NbKnots());
+      const gp_XY d = (spline->Pole(2).XY() - spline->Pole(1).XY()) / (k1 - k0);
+      const gp_XY a = spline->Pole(1).XY() - k0 * d;
+      C = new Geom2d_Line(gp_Pnt2d(map(a)), gp_Dir2d(map(d)));
+    } else {
+      spline = Handle(Geom2d_BSplineCurve)::DownCast(spline->Copy());
+      for (int i = 1; i <= spline->NbPoles(); ++i) spline->SetPole(i, gp_Pnt2d(map(spline->Pole(i).XY())));
+      C = spline;
+    }
+    Tol = BRep_Tool::Tolerance(E);
+    return Standard_True;
+  }
+
+ private:
+  // A flat face's surface as o + u xu + v yv (NURBS planes are bilinear).
+  struct Frame {
+    gp_XYZ o, xu, yv;
+  };
+  static std::optional<Frame> planeFrame(const TopoDS_Face& F) {
+    TopLoc_Location loc;
+    const Handle(Geom_Surface) s = BRep_Tool::Surface(F, loc);
+    if (s.IsNull()) return std::nullopt;
+    const Handle(Geom_BSplineSurface) b = Handle(Geom_BSplineSurface)::DownCast(s);
+    if (b.IsNull() || b->UDegree() != 1 || b->VDegree() != 1 || b->NbUPoles() != 2 || b->NbVPoles() != 2 ||
+        b->IsURational() || b->IsVRational()) {
+      return std::nullopt;
+    }
+    if (!GeomLib_IsPlanarSurface(b, 1e-9).IsPlanar()) return std::nullopt;
+    double u0, u1, v0, v1;
+    b->Bounds(u0, u1, v0, v1);
+    gp_Pnt p;
+    gp_Vec du, dv;
+    b->D1(u0, v0, p, du, dv);
+    if (!loc.IsIdentity()) {
+      p.Transform(loc.Transformation());
+      du.Transform(loc.Transformation());
+      dv.Transform(loc.Transformation());
+    }
+    return Frame{p.XYZ() - u0 * du.XYZ() - v0 * dv.XYZ(), du.XYZ(), dv.XYZ()};
+  }
+
+  gp_Ax3 mapped(const Frame& f) const {
+    gp_XYZ o = f.o;
+    g_.Transforms(o);
+    const gp_Mat& m = g_.VectorialPart();
+    const gp_XYZ x = m * f.xu, y = m * f.yv;
+    return gp_Ax3(gp_Pnt(o), gp_Dir(x.Crossed(y)), gp_Dir(x));
+  }
+
+  // A straight edge on flat faces only: p(t) = a + t d.
+  std::optional<std::pair<gp_Pnt, gp_XYZ>> lineOf(const TopoDS_Edge& E) const {
+    if (BRep_Tool::Degenerated(E) || onCurved_.Contains(E)) return std::nullopt;
+    TopLoc_Location loc;
+    double f = 0, l = 0;
+    const Handle(Geom_BSplineCurve) b = Handle(Geom_BSplineCurve)::DownCast(BRep_Tool::Curve(E, loc, f, l));
+    if (b.IsNull() || b->Degree() != 1 || b->NbPoles() != 2 || b->IsRational()) return std::nullopt;
+    const double k0 = b->Knot(1), k1 = b->Knot(b->NbKnots());
+    gp_Pnt p0 = b->Pole(1), p1 = b->Pole(2);
+    if (!loc.IsIdentity()) {
+      p0.Transform(loc.Transformation());
+      p1.Transform(loc.Transformation());
+    }
+    const gp_XYZ d = (p1.XYZ() - p0.XYZ()) / (k1 - k0);
+    return std::make_pair(gp_Pnt(p0.XYZ() - k0 * d), d);
+  }
+
+  gp_GTrsf g_;
+  TopTools_MapOfShape onCurved_;
+};
+
+}  // namespace
+
+Result<TopoDS_Shape> stretchShape(const TopoDS_Shape& shape, const gp_GTrsf& transform) {
+  try {
+    BRepBuilderAPI_NurbsConvert nurbs(shape, Standard_True);
+    if (!nurbs.IsDone()) return Result<TopoDS_Shape>::failure("The shape could not be stretched");
+    const TopoDS_Shape converted = nurbs.Shape();
+    Handle(StretchModification) modification = new StretchModification(transform, converted);
+    BRepTools_Modifier modifier(converted, modification);
+    if (!modifier.IsDone()) return Result<TopoDS_Shape>::failure("The shape could not be stretched");
+    TopoDS_Shape result = modifier.ModifiedShape(converted);
+    BRepLib::SameParameter(result, 1e-6, Standard_True);
+    return result;
+  } catch (const Standard_Failure& e) {
+    return Result<TopoDS_Shape>::failure(std::string("Stretch failed: ") + e.GetMessageString());
   }
 }
 

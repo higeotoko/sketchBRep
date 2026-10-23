@@ -18,6 +18,7 @@ add_executable(sbr_core_tests
   test_followme_edges.cpp
   test_arrays.cpp
   test_open_pushpull.cpp
+  test_stretch.cpp
   test_ux_gate1.cpp
   test_rhino3dm.cpp
   test_scenarios.cpp

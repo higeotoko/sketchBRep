@@ -287,6 +287,20 @@ Result<TopoDS_Shape> regenerate(const Recipe& recipe, const RegenContext& contex
               for (std::size_t k = 1; k < op.points.size(); ++k) splitLines.emplace_back(op.points[k - 1], op.points[k]);
               return geom::splitFace(shape, face.value(), op.points);
             },
+            [&](const StretchOp& op) -> Result<TopoDS_Shape> {
+              if (!(op.fx > 1e-6 && op.fy > 1e-6 && op.fz > 1e-6) || !std::isfinite(op.fx) ||
+                  !std::isfinite(op.fy) || !std::isfinite(op.fz)) {
+                return Result<TopoDS_Shape>::failure("Scale factors must be positive");
+              }
+              const gp_GTrsf t = geom::stretchTransform(op.center, op.xDir, op.yDir, op.fx, op.fy, op.fz);
+              for (geom::Segment& seg : splitLines) {
+                gp_XYZ a = seg.first.XYZ(), b = seg.second.XYZ();
+                t.Transforms(a);
+                t.Transforms(b);
+                seg = {gp_Pnt(a), gp_Pnt(b)};
+              }
+              return geom::stretchShape(shape, t);
+            },
             [&](const ScaleOp& op) -> Result<TopoDS_Shape> {
               if (!std::isfinite(op.factor) || op.factor < 1e-6) {
                 return Result<TopoDS_Shape>::failure("Scale factor must be positive");
@@ -404,6 +418,7 @@ std::vector<Parameter> parameters(const Recipe& recipe) {
                      out.push_back({opKey(i), "Move " + std::to_string(i) + " distance", op.distance, true});
                    },
                    [&](const ScaleOp& op) { out.push_back({scaleKey(i), "Scale", op.factor, false}); },
+                   [&](const StretchOp&) {},
                    [&](const OffsetFaceOp& op) {
                      out.push_back({opKey(i), "Push/Pull " + std::to_string(i) + " distance",
                                     op.distance, true});
@@ -479,7 +494,7 @@ Status setParameter(Recipe& recipe, const std::string& key, double value) {
     }
     if (key != opKey(i)) continue;
     bool found = false;
-    std::visit(Overloaded{[&](RevolveOp&) {}, [&](SplitOp&) {}, [&](HoleOp&) {}, [&](ScaleOp&) {},
+    std::visit(Overloaded{[&](RevolveOp&) {}, [&](SplitOp&) {}, [&](HoleOp&) {}, [&](ScaleOp&) {}, [&](StretchOp&) {},
                           [&](RemoveFaceOp&) {}, [&](CapHolesOp&) {}, [&](ReverseOp&) {},
                           [&](auto& op) {
                             op.distance = value;
@@ -533,6 +548,7 @@ std::string describe(const Recipe& recipe) {
                    [&](const PushPullOp& op) { out << " > Push/Pull " << op.distance; },
                    [&](const SplitOp&) { out << " > Split face"; },
                    [&](const ScaleOp& op) { out << " > Scale x" << op.factor; },
+                   [&](const StretchOp& op) { out << " > Scale " << op.fx << " x " << op.fy << " x " << op.fz; },
                    [&](const HoleOp&) { out << " > Hole"; },
                    [&](const RemoveFaceOp&) { out << " > Delete face"; },
                    [&](const CapHolesOp&) { out << " > Fill holes"; },

@@ -325,6 +325,16 @@ class Modeler {
   // guides and annotations have their points scaled. Groups scale all their
   // contents; components are refused (edit the definition instead).
   Status scale(const std::vector<ObjectId>& ids, const gp_Pnt& center, double factor);
+  // Non-uniform scale (SketchUp's scale grips): along the world directions
+  // xDir, yDir and xDir x yDir by fx, fy, fz about worldCenter. The B-rep
+  // geometry is transformed exactly (a recipe step, StretchOp), painted
+  // faces and hidden lines follow. Equal factors are the uniform scale.
+  // Factors must be positive (no mirroring here). Groups stretch their
+  // contents; component placements are refused (they would change the
+  // shared definition; make it unique first); images too (uniform only).
+  // One undo step.
+  Status stretch(const std::vector<ObjectId>& ids, const gp_Pnt& worldCenter, const gp_Dir& xDir, const gp_Dir& yDir,
+                 double fx, double fy, double fz);
   // --- architectural intents (shared by GUI and AI) -----------------------
   // Openings: rectangular profiles subtracted from a host (a wall with a
   // door / window pushed through), numbered 1, 2, ... in the order they

@@ -3,6 +3,8 @@
 
 #include <vector>
 
+#include <gp_GTrsf.hxx>
+
 #include <gp_Dir.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Pln.hxx>
@@ -61,6 +63,14 @@ Result<TopoDS_Face> offsetFace(const TopoDS_Face& face, double distance);
 // solid with a polyline whose ends lie on the face boundary. The solid keeps
 // its volume; the face becomes two (or more) faces that can be pushed/pulled
 // separately. Fails if the line does not cut the face.
+// The non-uniform scale of StretchOp: p -> center + M (p - center), with M
+// scaling by fx / fy / fz along xDir / yDir / xDir x yDir.
+gp_GTrsf stretchTransform(const gp_Pnt& center, const gp_Dir& xDir, const gp_Dir& yDir, double fx, double fy,
+                          double fz);
+// Applies it to a shape (exact geometry; curves and surfaces that do not
+// keep their kind become NURBS).
+Result<TopoDS_Shape> stretchShape(const TopoDS_Shape& shape, const gp_GTrsf& transform);
+
 // Draws `face`'s outline offset by `distance` (negative: inwards; outwards
 // would leave the face and is refused) onto the face of `solid`, dividing
 // it into a frame and the inner face. The solid stays valid and closed.

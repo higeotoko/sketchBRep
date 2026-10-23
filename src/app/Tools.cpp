@@ -3239,18 +3239,295 @@ void ScaleTool::activate() {
   cancel();
   host_.viewport().setPickMode(PickMode::None);
   host_.setMeasurement(QObject::tr("倍率"), QString());
-  host_.setStatus(QObject::tr("拡大縮小の基準（動かない点）をクリック。先に対象を選択しておきます"));
+  buildBox();
+  if (box_) {
+    showBox(std::nullopt);
+    host_.setStatus(QObject::tr("グリップをクリックして伸縮（面の中央 = 1 方向、辺の中央 = 2 方向、角 = 全体）。"
+                                "Shift で比率保持の切替、Ctrl で中心基準。グリップ以外をクリックすると基準点を使う拡大縮小"));
+  } else {
+    host_.setStatus(QObject::tr("拡大縮小の基準（動かない点）をクリック。先に対象を選択しておきます"));
+  }
 }
 
 void ScaleTool::cancel() {
   stage_ = Stage::Fixed;
   factor_ = 1.0;
+  factors_ = {1, 1, 1};
+  flipUniform_ = false;
+  aboutCentre_ = false;
+  hot_.reset();
   resetLock();
   host_.viewport().clearPreview();
   host_.viewport().hideSnap();
+  if (box_) {
+    buildBox();  // the shapes may have changed
+    if (box_) showBox(std::nullopt);
+  }
+}
+
+// --- scale grips ---------------------------------------------------------------
+
+void ScaleTool::buildBox() {
+  box_.reset();
+  targets_ = host_.selection();
+  if (targets_.empty()) return;
+  const doc::Document& document = host_.modeler().document();
+  // One object (or group): its own axes; several: the world's.
+  gp_Ax3 frame;
+  if (targets_.size() == 1) {
+    if (const doc::Object* o = document.find(targets_.front())) {
+      const gp_Trsf t = document.worldTransform(*o);
+      frame = gp_Ax3(gp_Pnt(0, 0, 0).Transformed(t), gp::DZ().Transformed(t), gp::DX().Transformed(t));
+    }
+  }
+  gp_Trsf toFrame;
+  toFrame.SetTransformation(frame);  // world -> frame
+  Bnd_Box bounds;
+  for (const doc::ObjectId& id : targets_) {
+    const doc::Object* o = document.find(id);
+    if (!o) continue;
+    const TopoDS_Shape shape = document.worldShape(*o);
+    if (shape.IsNull()) continue;
+    bounds.Add(geom::exactBounds(shape.Moved(TopLoc_Location(toFrame))));
+  }
+  if (bounds.IsVoid()) return;
+  box_ = Box{frame, bounds.CornerMin().XYZ(), bounds.CornerMax().XYZ()};
+}
+
+gp_Pnt ScaleTool::local(const gp_XYZ& p) const {
+  const gp_Ax3& f = box_->frame;
+  return gp_Pnt(f.Location().XYZ() + p.X() * f.XDirection().XYZ() + p.Y() * f.YDirection().XYZ() +
+                p.Z() * f.Direction().XYZ());
+}
+
+gp_Pnt ScaleTool::gripWorld(const Grip& g) const {
+  gp_XYZ p;
+  for (int i = 0; i < 3; ++i) {
+    const double lo = box_->lo.Coord(i + 1), hi = box_->hi.Coord(i + 1);
+    p.SetCoord(i + 1, g.s[i] < 0 ? lo : g.s[i] > 0 ? hi : 0.5 * (lo + hi));
+  }
+  return local(p);
+}
+
+std::optional<gp_Pnt> ScaleTool::gripPoint(int sx, int sy, int sz) const {
+  if (!box_) return std::nullopt;
+  Grip g;
+  g.s[0] = sx;
+  g.s[1] = sy;
+  g.s[2] = sz;
+  return gripWorld(g);
+}
+
+void ScaleTool::showBox(const std::optional<Grip>& hot) {
+  if (!box_) return;
+  TopoDS_Compound c;
+  BRep_Builder b;
+  b.MakeCompound(c);
+  // The box's 12 edges.
+  for (int axis = 0; axis < 3; ++axis) {
+    for (int u : {-1, 1}) {
+      for (int v : {-1, 1}) {
+        Grip a, z;
+        a.s[axis] = -1;
+        z.s[axis] = 1;
+        a.s[(axis + 1) % 3] = z.s[(axis + 1) % 3] = u;
+        a.s[(axis + 2) % 3] = z.s[(axis + 2) % 3] = v;
+        const gp_Pnt pa = gripWorld(a), pz = gripWorld(z);
+        if (pa.Distance(pz) > 1e-6) b.Add(c, BRepBuilderAPI_MakeEdge(pa, pz).Edge());
+      }
+    }
+  }
+  // Grips: small squares facing the viewer (bigger under the cursor).
+  const gp_Vec diagonal(local(box_->lo), local(box_->hi));
+  const double size = std::max(diagonal.Magnitude() * 0.015, 1.0);
+  const gp_Dir view = host_.viewport().viewDirection();
+  const gp_Dir right = std::abs(view.Z()) < 0.99 ? gp_Dir(view.Crossed(gp::DZ())) : gp::DX();
+  const gp_Dir up = gp_Dir(right.Crossed(view));
+  for (int sx = -1; sx <= 1; ++sx) {
+    for (int sy = -1; sy <= 1; ++sy) {
+      for (int sz = -1; sz <= 1; ++sz) {
+        if (sx == 0 && sy == 0 && sz == 0) continue;
+        Grip g;
+        g.s[0] = sx;
+        g.s[1] = sy;
+        g.s[2] = sz;
+        const bool isHot = hot && hot->s[0] == sx && hot->s[1] == sy && hot->s[2] == sz;
+        const double h = isHot ? 2.0 * size : size;
+        const gp_Pnt p = gripWorld(g);
+        BRepBuilderAPI_MakePolygon square;
+        for (const auto& [a, d] : {std::pair{-1, -1}, std::pair{1, -1}, std::pair{1, 1}, std::pair{-1, 1}}) {
+          square.Add(p.Translated(gp_Vec(right) * (a * h) + gp_Vec(up) * (d * h)));
+        }
+        square.Close();
+        b.Add(c, square.Wire());
+      }
+    }
+  }
+  host_.viewport().setPreview(c, false);
+}
+
+std::optional<ScaleTool::Grip> ScaleTool::gripAt(const QPoint& pos) const {
+  if (!box_) return std::nullopt;
+  std::optional<Grip> best;
+  double bestDistance = 12.0;  // logical pixels
+  for (int sx = -1; sx <= 1; ++sx) {
+    for (int sy = -1; sy <= 1; ++sy) {
+      for (int sz = -1; sz <= 1; ++sz) {
+        if (sx == 0 && sy == 0 && sz == 0) continue;
+        Grip g;
+        g.s[0] = sx;
+        g.s[1] = sy;
+        g.s[2] = sz;
+        const snap::ScreenPoint p = host_.viewport().project(gripWorld(g));
+        const double d = std::hypot(p.x - pos.x(), p.y - pos.y());
+        if (d < bestDistance) {
+          bestDistance = d;
+          best = g;
+        }
+      }
+    }
+  }
+  return best;
+}
+
+bool ScaleTool::gripUniform() const {
+  const int axes = std::abs(active_.s[0]) + std::abs(active_.s[1]) + std::abs(active_.s[2]);
+  // Corners keep the proportions, edge and face grips do not; Shift swaps.
+  return (axes == 3) != flipUniform_;
+}
+
+QString ScaleTool::axisName(int axis) const {
+  const gp_Dir d = axis == 0 ? box_->frame.XDirection() : axis == 1 ? box_->frame.YDirection() : box_->frame.Direction();
+  static const char* names[] = {"赤", "緑", "青"};
+  const gp_Dir world[] = {gp::DX(), gp::DY(), gp::DZ()};
+  for (int i = 0; i < 3; ++i) {
+    if (d.IsParallel(world[i], 1e-9)) return QObject::tr("%1軸方向").arg(QString::fromUtf8(names[i]));
+  }
+  // A rotated object: its own axes.
+  static const char* own[] = {"X", "Y", "Z"};
+  return QObject::tr("オブジェクトの %1 方向").arg(QString::fromLatin1(own[axis]));
+}
+
+void ScaleTool::updateGripDrag(const QPoint& pos) {
+  Viewport& vp = host_.viewport();
+  const gp_Pnt grip = gripWorld(active_);
+  const gp_Dir axes[] = {box_->frame.XDirection(), box_->frame.YDirection(), box_->frame.Direction()};
+  std::vector<int> active;
+  for (int i = 0; i < 3; ++i) {
+    if (active_.s[i] != 0) active.push_back(i);
+  }
+  // Where the cursor points: on the grip's line (one direction), else on
+  // the plane of the grip's directions (two), else facing the viewer.
+  const snap::Ray ray = vp.rayAt(pos);
+  gp_Pnt p;
+  if (active.size() == 1) {
+    // Closest point of the grip's line (grip + s b) to the cursor's ray.
+    const gp_Vec w(ray.origin, grip);
+    const gp_Vec a(ray.direction), b(axes[active.front()]);
+    const double ab = a.Dot(b), denom = 1.0 - ab * ab;
+    if (denom < 1e-9) return;  // looking along the line
+    p = grip.Translated(b * ((ab * a.Dot(w) - b.Dot(w)) / denom));
+  } else {
+    const gp_Dir normal = active.size() == 2 ? gp_Dir(gp_Vec(axes[active[0]]).Crossed(gp_Vec(axes[active[1]])))
+                                             : vp.viewDirection();
+    const double along = gp_Vec(ray.direction).Dot(gp_Vec(normal));
+    if (std::abs(along) < 1e-9) return;
+    const double t = gp_Vec(ray.origin, grip).Dot(gp_Vec(normal)) / along;
+    p = ray.origin.Translated(gp_Vec(ray.direction) * t);
+  }
+  std::array<double, 3> f{1, 1, 1};
+  if (gripUniform()) {
+    const gp_Vec diagonal(anchor_, grip);
+    const double d0 = diagonal.Magnitude();
+    if (d0 < 1e-9) return;
+    const double u = gp_Vec(anchor_, p).Dot(diagonal) / (d0 * d0);
+    f = {u, u, u};
+  } else {
+    for (int i : active) {
+      const double d0 = gp_Vec(anchor_, grip).Dot(gp_Vec(axes[i]));
+      if (std::abs(d0) < 1e-9) return;
+      f[i] = gp_Vec(anchor_, p).Dot(gp_Vec(axes[i])) / d0;
+    }
+  }
+  for (double& v : f) {
+    const double snapped = std::round(v * 20.0) / 20.0;  // 0.05 steps when close
+    if (std::abs(v - snapped) < 0.005) v = snapped;
+  }
+  if (std::any_of(f.begin(), f.end(), [](double v) { return v < 0.01; })) {
+    host_.setStatus(QObject::tr("反対側を越えて反転させることはできません（鏡像は別の操作）"));
+    vp.clearPreview();
+    return;
+  }
+  factors_ = f;
+  // Preview: the shapes as they will be (exact transform, not the display).
+  const doc::Document& document = host_.modeler().document();
+  const gp_GTrsf g = geom::stretchTransform(anchor_, axes[0], axes[1], f[0], f[1], f[2]);
+  TopoDS_Compound c;
+  BRep_Builder b;
+  b.MakeCompound(c);
+  for (const doc::ObjectId& id : targets_) {
+    const doc::Object* o = document.find(id);
+    if (!o) continue;
+    const TopoDS_Shape shape = document.worldShape(*o);
+    if (shape.IsNull()) continue;
+    if (auto stretched = geom::stretchShape(shape, g)) b.Add(c, stretched.value());
+  }
+  vp.setPreview(c, true);
+  QStringList parts;
+  for (int i = 0; i < 3; ++i) {
+    if (std::abs(f[i] - 1.0) < 1e-12 && !gripUniform()) continue;
+    const double size = (box_->hi.Coord(i + 1) - box_->lo.Coord(i + 1)) * f[i];
+    parts << QObject::tr("%1 %2 倍（%3）").arg(axisName(i)).arg(f[i], 0, 'g', 4).arg(mm(size));
+  }
+  host_.setMeasurement(QObject::tr("倍率"), gripUniform() ? QString::number(f[0], 'g', 4)
+                                                          : QStringList([&] {
+                                                              QStringList v;
+                                                              for (int i : active) v << QString::number(f[i], 'g', 4);
+                                                              return v;
+                                                            }()).join(QLatin1Char(',')));
+  host_.setStatus(parts.join(QStringLiteral("、")) +
+                  QObject::tr("  クリックで確定、または倍率（2）・寸法（2000mm）を入力。%1、%2")
+                      .arg(gripUniform() ? QObject::tr("比率保持") : QObject::tr("方向ごと"),
+                           aboutCentre_ ? QObject::tr("中心基準") : QObject::tr("反対側固定")));
+}
+
+bool ScaleTool::commitGrip(const std::array<double, 3>& f) {
+  const gp_Dir x = box_->frame.XDirection(), y = box_->frame.YDirection();
+  const Status s = host_.modeler().stretch(targets_, anchor_, x, y, f[0], f[1], f[2]);
+  if (!s) {
+    host_.reportError(QString::fromStdString(s.message()));
+    return false;
+  }
+  lastGrip_ = LastGrip{targets_, *box_, active_, anchor_, gripUniform()};
+  recent_.mark(host_.modeler());
+  return true;
+}
+
+bool ScaleTool::keyPress(QKeyEvent* event) {
+  if (stage_ == Stage::Grip && !event->isAutoRepeat()) {
+    if (event->key() == Qt::Key_Shift) {
+      flipUniform_ = !flipUniform_;
+      return true;
+    }
+    if (event->key() == Qt::Key_Control) {
+      aboutCentre_ = !aboutCentre_;
+      // The fixed point: the box centre, or the side opposite the grip.
+      Grip opposite;
+      for (int i = 0; i < 3; ++i) opposite.s[i] = aboutCentre_ ? 0 : -active_.s[i];
+      anchor_ = aboutCentre_ ? local((box_->lo + box_->hi) * 0.5) : gripWorld(opposite);
+      return true;
+    }
+  }
+  return DrawingTool::keyPress(event);
 }
 
 bool ScaleTool::stepBack() {
+  if (stage_ == Stage::Grip) {
+    stage_ = Stage::Fixed;
+    factors_ = {1, 1, 1};
+    showBox(std::nullopt);
+    return true;
+  }
   if (stage_ == Stage::Fixed) return false;
   stage_ = stage_ == Stage::Scaling ? Stage::Reference : Stage::Fixed;
   host_.viewport().clearPreview();
@@ -3290,10 +3567,32 @@ void ScaleTool::mouseMove(const ToolEvent& e) {
   Viewport& vp = host_.viewport();
   switch (stage_) {
     case Stage::Fixed: {
+      if (box_) {
+        const auto hot = gripAt(e.pos);
+        const bool changed = hot.has_value() != hot_.has_value() ||
+                             (hot && (hot->s[0] != hot_->s[0] || hot->s[1] != hot_->s[1] || hot->s[2] != hot_->s[2]));
+        if (changed) showBox(hot);
+        hot_ = hot;
+        if (hot) {
+          QStringList dirs;
+          for (int i = 0; i < 3; ++i) {
+            if (hot->s[i] != 0) dirs << axisName(i);
+          }
+          const int axes = static_cast<int>(dirs.size());
+          host_.setStatus(axes == 3 ? QObject::tr("角のグリップ: 比率を保って全体を拡大縮小（Shift で方向ごと）")
+                                    : QObject::tr("%1のグリップ: %2 に伸縮（Shift で比率保持）")
+                                          .arg(axes == 1 ? QObject::tr("面の中央") : QObject::tr("辺の中央"),
+                                               dirs.join(QStringLiteral("・"))));
+          return;
+        }
+      }
       const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
       host_.setStatus(QObject::tr("基準（動かない点）をクリック  [%1]").arg(snapLabel(r.kind)));
       return;
     }
+    case Stage::Grip:
+      updateGripDrag(e.pos);
+      return;
     case Stage::Reference: {
       const snap::SnapResult r = snapAt(e, fixed_, std::nullopt);
       if (!r.valid()) return;
@@ -3319,7 +3618,29 @@ void ScaleTool::mouseMove(const ToolEvent& e) {
 
 void ScaleTool::mousePress(const ToolEvent& e) {
   switch (stage_) {
+    case Stage::Grip:
+      updateGripDrag(e.pos);
+      if (commitGrip(factors_)) {
+        host_.setStatus(QObject::tr("伸縮しました（続けて倍率や寸法を入力すると変更）"));
+      }
+      stage_ = Stage::Fixed;
+      factors_ = {1, 1, 1};
+      buildBox();
+      showBox(std::nullopt);
+      return;
     case Stage::Fixed: {
+      if (const auto grip = box_ ? gripAt(e.pos) : std::nullopt) {
+        active_ = *grip;
+        flipUniform_ = (e.modifiers & Qt::ShiftModifier) != 0;
+        aboutCentre_ = (e.modifiers & Qt::ControlModifier) != 0;
+        Grip opposite;
+        for (int i = 0; i < 3; ++i) opposite.s[i] = aboutCentre_ ? 0 : -active_.s[i];
+        anchor_ = aboutCentre_ ? local((box_->lo + box_->hi) * 0.5) : gripWorld(opposite);
+        factors_ = {1, 1, 1};
+        stage_ = Stage::Grip;
+        updateGripDrag(e.pos);
+        return;
+      }
       targets_ = host_.selection();
       if (targets_.empty()) {
         host_.reportError(QObject::tr("先に拡大縮小する対象を選択してください"));
@@ -3347,6 +3668,67 @@ void ScaleTool::mousePress(const ToolEvent& e) {
 
 void ScaleTool::applyMeasurement(const QString& text) {
   const QString t = text.trimmed();
+  // Grips: a factor ("2"), a size ("2000mm"), or one per direction
+  // ("2,3" / "2000mm,3000mm"), during the drag or right after it.
+  const bool dragging = stage_ == Stage::Grip;
+  if (dragging || (lastGrip_ && recent_.fresh(host_.modeler()))) {
+    const Box box = dragging ? *box_ : lastGrip_->box;
+    const Grip grip = dragging ? active_ : lastGrip_->grip;
+    const bool uniform = dragging ? gripUniform() : lastGrip_->uniform;
+    std::vector<int> active;
+    for (int i = 0; i < 3; ++i) {
+      if (grip.s[i] != 0) active.push_back(i);
+    }
+    const QStringList values = t.split(QRegularExpression(QStringLiteral("[,;]")), Qt::SkipEmptyParts);
+    std::array<double, 3> f{1, 1, 1};
+    const std::size_t wanted = uniform ? 1 : active.size();
+    if (values.isEmpty() || static_cast<std::size_t>(values.size()) > wanted) {
+      host_.reportError(QObject::tr("倍率か寸法を %1 つまで入力してください: %2").arg(wanted).arg(text));
+      return;
+    }
+    for (int k = 0; k < values.size(); ++k) {
+      const QString v = values[k].trimmed();
+      const int axis = active[static_cast<std::size_t>(k)];
+      double factor = 0.0;
+      if (v.contains(QRegularExpression(QStringLiteral("[a-zA-Z]")))) {
+        const auto length = units::parseLength(v.toStdString());
+        const double size = box.hi.Coord(axis + 1) - box.lo.Coord(axis + 1);
+        if (!length || *length <= 0 || size < tolerance::kMinDimension) {
+          host_.reportError(QObject::tr("寸法を解釈できません: %1").arg(v));
+          return;
+        }
+        factor = *length / size;
+      } else {
+        bool ok = false;
+        factor = v.toDouble(&ok);
+        if (!ok || factor <= 0) {
+          host_.reportError(QObject::tr("倍率を解釈できません（正の数）: %1").arg(v));
+          return;
+        }
+      }
+      if (uniform) {
+        f = {factor, factor, factor};
+      } else {
+        f[axis] = factor;
+      }
+    }
+    if (dragging) {
+      factors_ = f;
+      commitGrip(f);
+      stage_ = Stage::Fixed;
+      factors_ = {1, 1, 1};
+    } else {
+      const LastGrip previous = *lastGrip_;
+      const Status s = recent_.replace(host_.modeler(), [&] {
+        return host_.modeler().stretch(previous.targets, previous.anchor, previous.box.frame.XDirection(),
+                                       previous.box.frame.YDirection(), f[0], f[1], f[2]);
+      });
+      if (!s) host_.reportError(QString::fromStdString(s.message()));
+    }
+    buildBox();
+    showBox(std::nullopt);
+    return;
+  }
   // A unit makes it a length (new reference distance), otherwise a factor.
   // Images are scaled to calibrate them: there a plain number is the real
   // distance (mm) between the two points.

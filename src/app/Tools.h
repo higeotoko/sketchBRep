@@ -704,10 +704,50 @@ class ScaleTool : public DrawingTool {
   bool stepBack() override;
   void mousePress(const ToolEvent& e) override;
   void mouseMove(const ToolEvent& e) override;
+  bool keyPress(QKeyEvent* event) override;
   void applyMeasurement(const QString& text) override;
 
+  // --- grips (SketchUp): a box around the selection, grips at its corners
+  // (uniform), edge middles (two directions) and face centres (one) --------
+  // The box frame: the object's own axes for one object / group, else the
+  // world axes. Exposed for tests.
+  struct Grip {
+    int s[3] = {0, 0, 0};  // -1 / 0 / +1 along the frame's x, y, z
+  };
+  bool hasGrips() const { return box_.has_value(); }
+  std::optional<gp_Pnt> gripPoint(int sx, int sy, int sz) const;
+  gp_Ax3 gripFrame() const { return box_ ? box_->frame : gp_Ax3(); }
+
  private:
-  enum class Stage { Fixed, Reference, Scaling };
+  enum class Stage { Fixed, Reference, Scaling, Grip };
+  struct Box {
+    gp_Ax3 frame;
+    gp_XYZ lo, hi;  // in the frame
+  };
+  void buildBox();
+  void showBox(const std::optional<Grip>& hot);
+  std::optional<Grip> gripAt(const QPoint& pos) const;
+  gp_Pnt local(const gp_XYZ& p) const;  // frame coordinates -> world
+  gp_Pnt gripWorld(const Grip& g) const;
+  bool gripUniform() const;
+  void updateGripDrag(const QPoint& pos);
+  bool commitGrip(const std::array<double, 3>& factors);
+  QString axisName(int axis) const;
+  std::optional<Box> box_;
+  std::optional<Grip> hot_;
+  Grip active_;
+  bool flipUniform_ = false;  // Shift
+  bool aboutCentre_ = false;  // Ctrl
+  gp_Pnt anchor_;
+  std::array<double, 3> factors_{1, 1, 1};
+  struct LastGrip {
+    std::vector<doc::ObjectId> targets;
+    Box box;
+    Grip grip;
+    gp_Pnt anchor;
+    bool uniform = false;
+  };
+  std::optional<LastGrip> lastGrip_;
   std::optional<double> factorAt(const gp_Pnt& p) const;
   bool commit(double factor);
 

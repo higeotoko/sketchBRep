@@ -164,6 +164,7 @@ class GuiPhase1 : public QObject {
   void exportImageWritesPng();
   void typedUnitsDoNotTriggerShortcuts();
   void scaleToolFactorAndLength();
+  void scaleGripsStretchEachDirection();
   void aiReadsKeepDrawingInProgress();
   void proposalShowsRotationAndHide();
   void benchViewportSync();
@@ -1067,6 +1068,66 @@ void GuiPhase1::scaleToolFactorAndLength() {
   QCOMPARE(boxMismatch(m.document().worldShape(box), 3000, 3000, 3000), QString());
   QCOMPARE(m.history().undoCount(), steps + 1);
   QVERIFY(dynamic_cast<ScaleTool*>(f.window.activeTool()));
+}
+
+// SketchUp's scale grips: the +X face grip makes the 1000 cube 2000 wide
+// only, the top grip 3000 high only (the opposite side stays); a corner
+// keeps the proportions; Ctrl scales about the centre. One undo each.
+void GuiPhase1::scaleGripsStretchEachDirection() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+  f.window.setSelection({box});
+  f.window.activateTool(MainWindow::ToolId::Scale);
+  f.window.setSelection({box});
+  auto* tool = dynamic_cast<ScaleTool*>(f.window.activeTool());
+  QVERIFY(tool);
+  if (!tool->hasGrips()) {  // the selection came after activation
+    f.window.activateTool(MainWindow::ToolId::Scale);
+    tool = dynamic_cast<ScaleTool*>(f.window.activeTool());
+  }
+  QVERIFY(tool && tool->hasGrips());
+  const std::size_t steps = m.history().undoCount();
+  auto drag = [&](int sx, int sy, int sz, const QString& typed) {
+    const gp_Pnt g = *tool->gripPoint(sx, sy, sz);
+    click(f.vp, f.vp->toWidget(g));
+    move(f.vp, f.vp->toWidget(g.Translated(gp_Vec(sx, sy, sz) * 200)));
+    type(f.vp, typed);
+  };
+  drag(1, 0, 0, QStringLiteral("2000mm"));
+  EXPECT_BOX(m.document().worldShape(box), 2000, 1000, 1000);
+  drag(0, 0, 1, QStringLiteral("3000mm"));
+  EXPECT_BOX(m.document().worldShape(box), 2000, 1000, 3000);
+  QCOMPARE(m.history().undoCount(), steps + 2);
+  // Typed again right after: the last stretch is changed, not stacked.
+  type(f.vp, QStringLiteral("2"));
+  EXPECT_BOX(m.document().worldShape(box), 2000, 1000, 2000);
+  QCOMPARE(m.history().undoCount(), steps + 2);
+  // A corner: everything by the same factor, the opposite corner fixed.
+  drag(1, 1, 1, QStringLiteral("0.5"));
+  EXPECT_BOX(m.document().worldShape(box), 1000, 500, 1000);
+  // Ctrl: about the centre (both sides move).
+  const gp_Pnt g = *tool->gripPoint(1, 0, 0);
+  QTest::keyPress(f.vp, Qt::Key_Control);
+  send(f.vp, QEvent::MouseButtonPress, f.vp->toWidget(g), Qt::LeftButton, Qt::LeftButton,
+       Qt::ControlModifier);
+  QTest::keyRelease(f.vp, Qt::Key_Control);
+  type(f.vp, QStringLiteral("3"));
+  const Bnd_Box b = geom::exactBounds(m.document().worldShape(box));
+  QVERIFY2(std::abs(b.CornerMin().X() + 1000) < 1e-6 && std::abs(b.CornerMax().X() - 2000) < 1e-6,
+           qPrintable(QStringLiteral("%1 %2").arg(b.CornerMin().X()).arg(b.CornerMax().X())));
+  QVERIFY(m.undo());
+  EXPECT_BOX(m.document().worldShape(box), 1000, 500, 1000);
+  // By the mouse alone: the +Y face grip dragged 500 further, then clicked.
+  tool->cancel();
+  const gp_Pnt y = *tool->gripPoint(0, 1, 0);
+  click(f.vp, f.vp->toWidget(y));
+  click(f.vp, f.vp->toWidget(y.Translated(gp_Vec(0, 500, 0))));
+  const Bnd_Box d = geom::exactBounds(m.document().worldShape(box));
+  QVERIFY2(std::abs(d.CornerMax().Y() - 1000) < 15 && std::abs(d.CornerMin().Y()) < 1e-6 &&
+               std::abs(d.CornerMax().X() - 1000) < 1e-6,
+           qPrintable(QStringLiteral("%1 %2").arg(d.CornerMin().Y()).arg(d.CornerMax().Y())));
 }
 
 // Review C / R04: AI requests that only read must not reset a half-drawn
