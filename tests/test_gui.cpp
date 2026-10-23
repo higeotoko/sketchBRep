@@ -61,6 +61,7 @@
 #include "sbr/doc/NativeFormat.h"
 #include "sbr/doc/ChangeSummary.h"
 #include "sbr/geom/Measure.h"
+#include "sbr/geom/Operations.h"
 #include "sbr/geom/Validation.h"
 
 using namespace sbr;
@@ -326,6 +327,13 @@ void GuiPhase1::offsetToolInwards() {
   const doc::Object& offset = m.document().objects().back();
   QVERIFY(offset.id != *rect);
   QVERIFY(std::abs(geom::area(offset.shape) - 1800.0 * 1800.0) < 1e-3);
+  // Request T2 / OFF-01: the original is now the frame around it, and a
+  // typed value right after moves the frame's hole along.
+  QVERIFY(std::abs(geom::area(m.document().find(*rect)->shape) - (2000.0 * 2000.0 - 1800.0 * 1800.0)) < 1e-3);
+  type(f.vp, QStringLiteral("300"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), std::size_t(2));
+  QVERIFY(std::abs(geom::area(m.document().find(*rect)->shape) - (2000.0 * 2000.0 - 1400.0 * 1400.0)) < 1e-3);
 }
 
 void GuiPhase1::groupIsSelectedAsAWhole() {
@@ -1191,10 +1199,38 @@ void GuiPhase1::offsetToolOnSolidFace() {
   move(f.vp, f.vp->toWidget(gp_Pnt(500, 300, 1000)));
   type(f.vp, QStringLiteral("100"));
   QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
-  QCOMPARE(m.document().objects().size(), std::size_t(2));
-  const doc::Object& inset = m.document().objects().back();
-  QCOMPARE(inset.kind(), doc::ObjectKind::Face);
-  QVERIFY(std::abs(geom::area(inset.shape) - 800.0 * 800.0) < 1e-3);
+  // Request T2 / OFF-02: drawn onto the face, which becomes frame + inner
+  // face of the same solid.
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  const doc::ObjectId block = m.document().objects().front().id;
+  auto topFaces = [&] {
+    std::vector<double> areas;
+    for (TopExp_Explorer e(m.document().worldShape(block), TopAbs_FACE); e.More(); e.Next()) {
+      const auto n = geom::planarFaceNormal(TopoDS::Face(e.Current()));
+      if (n && n->Z() > 0.99) areas.push_back(geom::area(e.Current()));
+    }
+    std::sort(areas.begin(), areas.end());
+    return areas;
+  };
+  QCOMPARE(topFaces().size(), std::size_t(2));
+  QVERIFY(std::abs(topFaces()[1] - 800.0 * 800.0) < 1e-3 || std::abs(topFaces()[0] - 800.0 * 800.0) < 1e-3);
+  // Typed right after: the distance changes in the same step.
+  const std::size_t steps = m.history().undoCount();
+  type(f.vp, QStringLiteral("200"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.history().undoCount(), steps);
+  QVERIFY(std::abs(topFaces()[0] - 600.0 * 600.0) < 1e-3 || std::abs(topFaces()[1] - 600.0 * 600.0) < 1e-3);
+  // The frame alone pushed up with the push/pull tool: a rim, centre open.
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::PushPull);
+  QTest::qWait(30);
+  click(f.vp, f.vp->toWidget(gp_Pnt(100, 500, 1000)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(100, 500, 1300)));
+  type(f.vp, QStringLiteral("500"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  const double rim = 1e6 - 600.0 * 600.0;
+  QVERIFY2(std::abs(geom::volume(m.document().worldShape(block)) - (1e9 + rim * 500)) < 1.0,
+           qPrintable(QString::number(geom::volume(m.document().worldShape(block)))));
 }
 
 // Materials with the paint tool (docs/11_materials.md): pick from the panel,

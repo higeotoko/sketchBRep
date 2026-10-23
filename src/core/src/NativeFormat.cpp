@@ -415,6 +415,9 @@ json modifierToJson(const Modifier& m) {
                           {"normal", toJson(op.face.normal)},
                           {"surfaceType", op.face.surfaceType}}}};
           },
+          [](const InsetOp& op) {
+            return json{{"type", "inset"}, {"distance", op.distance}, {"face", faceRefToJson(op.face)}};
+          },
           [](const SplitOp& op) {
             return json{{"type", "split"},
                         {"points", pointsToJson(op.points)},
@@ -488,6 +491,12 @@ Modifier modifierFrom(const json& j) {
     for (const json& p : j.at("points")) op.points.push_back(pointFrom(p));
     op.direction = dirFrom(j.at("direction"));
     op.distance = j.at("distance").get<double>();
+    return op;
+  }
+  if (type == "inset") {
+    InsetOp op;
+    op.distance = j.at("distance").get<double>();
+    op.face = faceRefFrom(j.at("face"));
     return op;
   }
   if (type == "split") {

@@ -14,6 +14,9 @@
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <BRepGProp_Face.hxx>
 #include <BRepTools.hxx>
+#include <gp_Vec2d.hxx>
+#include <BRep_Tool.hxx>
+#include <Geom2d_Curve.hxx>
 #include <TopoDS_Vertex.hxx>
 #include <gp_Pnt2d.hxx>
 #include <optional>
@@ -51,6 +54,32 @@ std::optional<std::pair<gp_Pnt, gp_Dir>> interiorPoint(const TopoDS_Face& face) 
       prop.Normal(uv.X(), uv.Y(), p, n);
       if (n.Magnitude() < 1e-12) continue;
       return std::make_pair(p, gp_Dir(n));
+    }
+  }
+  // A thin face (a frame around a hole, a narrow strip): just inside the
+  // middle of one of its edges.
+  const double span = std::max(u1 - u0, v1 - v0);
+  for (TopExp_Explorer e(face, TopAbs_EDGE); e.More(); e.Next()) {
+    const TopoDS_Edge edge = TopoDS::Edge(e.Current());
+    double f = 0, l = 0;
+    const Handle(Geom2d_Curve) pcurve = BRep_Tool::CurveOnSurface(edge, face, f, l);
+    if (pcurve.IsNull()) continue;
+    gp_Pnt2d at;
+    gp_Vec2d tangent;
+    pcurve->D1(0.5 * (f + l), at, tangent);
+    if (tangent.Magnitude() < 1e-12) continue;
+    const gp_Vec2d across = gp_Vec2d(-tangent.Y(), tangent.X()).Normalized();
+    for (double step : {1e-2, 1e-3}) {
+      for (double side : {1.0, -1.0}) {
+        const gp_Pnt2d uv = at.Translated(across * (side * step * span));
+        BRepClass_FaceClassifier classifier(face, uv, 1e-7);
+        if (classifier.State() != TopAbs_IN) continue;
+        gp_Pnt p;
+        gp_Vec n;
+        prop.Normal(uv.X(), uv.Y(), p, n);
+        if (n.Magnitude() < 1e-12) continue;
+        return std::make_pair(p, gp_Dir(n));
+      }
     }
   }
   return std::nullopt;

@@ -409,6 +409,31 @@ Result<std::vector<TopoDS_Face>> splitPlanarFaceExtended(const TopoDS_Face& face
   }
 }
 
+Result<TopoDS_Shape> imprintOffset(const TopoDS_Shape& solid, const TopoDS_Face& face, double distance) {
+  if (!(distance < 0.0)) {
+    return Result<TopoDS_Shape>::failure("On a face of a solid the offset goes inwards (outwards it would leave the face)");
+  }
+  auto inner = offsetFace(face, distance);
+  if (!inner) return Result<TopoDS_Shape>::failure(inner.error());
+  try {
+    const TopoDS_Wire loop = BRepTools::OuterWire(inner.value());
+    BRepFeat_SplitShape split(solid);
+    split.Add(loop, face);
+    split.Build();
+    if (!split.IsDone()) return Result<TopoDS_Shape>::failure("The offset could not be drawn on the face");
+    const TopoDS_Shape result = split.Shape();
+    int before = 0, after = 0;
+    for (TopExp_Explorer e(solid, TopAbs_FACE); e.More(); e.Next()) ++before;
+    for (TopExp_Explorer e(result, TopAbs_FACE); e.More(); e.Next()) ++after;
+    if (after != before + 1) return Result<TopoDS_Shape>::failure("The offset does not divide the face");
+    const ValidationReport report = validateShape(result, true);
+    if (!report.valid) return Result<TopoDS_Shape>::failure("The offset made an invalid solid");
+    return result;
+  } catch (const Standard_Failure& e) {
+    return Result<TopoDS_Shape>::failure(std::string("Offset failed: ") + e.GetMessageString());
+  }
+}
+
 Result<TopoDS_Shape> splitFace(const TopoDS_Shape& solid, const TopoDS_Face& face,
                                const std::vector<gp_Pnt>& polyline) {
   auto wire = splitWire(face, polyline);

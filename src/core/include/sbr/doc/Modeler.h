@@ -214,10 +214,15 @@ class Modeler {
   // Extrudes a face/profile object directly (convenience for scripting).
   Result<PushPullResult> extrude(const ObjectId& id, double distance);
   // Creates a new face object whose outline is offset from a profile face
-  // (positive = outwards). The original is kept, as in SketchUp.
+  // (positive = outwards). The original is kept, as in SketchUp, and the two
+  // outlines divide the plane: inwards the original becomes the frame (a
+  // hole where the new face is), outwards the new face is the frame. One
+  // undo step.
   Result<PushPullResult> offset(const ObjectId& id, double distance);
-  // Offsets the outline of a planar face of a solid into a new profile lying
-  // on that face (e.g. an inset to push in for a frame or a recess).
+  // Offset on a planar face of a solid. Inwards (distance < 0) the outline
+  // is drawn onto the face, dividing it into a frame and an inner face of
+  // the solid (parametric; returns the solid). Outwards it leaves the face:
+  // a new profile on its plane (returns that).
   Result<ObjectId> offsetSolidFace(const ObjectId& id, const TopoDS_Face& worldFace, double distance);
   Status setParameter(const ObjectId& id, const std::string& key, double value);
   Status rename(const ObjectId& id, const std::string& name);

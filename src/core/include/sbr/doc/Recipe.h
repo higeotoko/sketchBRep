@@ -271,8 +271,17 @@ struct CapHolesOp {};
 // All faces turned over (front <-> back) - for open shells and profiles.
 struct ReverseOp {};
 
+// Offset on a face of a solid (SketchUp): the face's outline offset by
+// `distance` (negative: inwards) is drawn onto the face, which is divided
+// into the frame between the two outlines and the inner face; each can then
+// be pushed / pulled or painted on its own. The distance stays editable.
+struct InsetOp {
+  geom::FaceRef face;
+  double distance = 0.0;
+};
+
 using Modifier = std::variant<ExtrudeOp, PushPullOp, OffsetOp, RevolveOp, SplitOp, OffsetFaceOp, HoleOp, ScaleOp,
-                              RemoveFaceOp, CapHolesOp, ReverseOp, MoveVerticesOp>;
+                              RemoveFaceOp, CapHolesOp, ReverseOp, MoveVerticesOp, InsetOp>;
 
 struct Recipe {
   BaseFeature base;

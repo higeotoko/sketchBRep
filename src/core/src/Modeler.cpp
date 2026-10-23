@@ -1882,8 +1882,17 @@ Result<PushPullResult> Modeler::offset(const ObjectId& id, double distance) {
   object.name = uniqueName("Offset");
   object.recipe.modifiers.push_back(OffsetOp{distance});
   const std::string key = opKey(object.recipe.modifiers.size() - 1);
+  // The two outlines divide the plane (SketchUp): inwards, the original
+  // face becomes the frame around the new one; outwards, the new face is
+  // the frame around the original. Either can be pushed / pulled alone.
+  history_.beginGroup("Offset");
   auto added = addObject(std::move(object), "Offset");
-  if (!added) return Result<PushPullResult>::failure(added.error());
+  if (!added) {
+    history_.abortGroup();
+    return Result<PushPullResult>::failure(added.error());
+  }
+  punchHole(distance < 0 ? added.value() : id);
+  history_.endGroup();
   return PushPullResult{added.value(), key};
 }
 
@@ -1892,10 +1901,24 @@ Result<ObjectId> Modeler::offsetSolidFace(const ObjectId& id, const TopoDS_Face&
   const Object* owner = document_.find(id);
   if (!owner) return Result<ObjectId>::failure("Object not found");
   if (owner->kind() != ObjectKind::Solid) return Result<ObjectId>::failure("Not a solid");
+  if (distance < 0) {
+    // Inwards: drawn onto the face, which is divided into frame and inner
+    // face (parametric InsetOp on the solid; the distance stays editable).
+    const TopoDS_Face local =
+        TopoDS::Face(worldFace.Moved(TopLoc_Location(document_.worldTransform(*owner).Inverted())));
+    auto ref = geom::FaceRef::identify(local);
+    if (!ref) return Result<ObjectId>::failure(ref.error());
+    Object object = *owner;
+    object.recipe.modifiers.push_back(InsetOp{ref.value(), distance});
+    const Status s = commitModified(std::move(object), "Offset");
+    if (!s) return Result<ObjectId>::failure(s.message());
+    return id;
+  }
   auto face = geom::offsetFace(worldFace, distance);
   if (!face) return Result<ObjectId>::failure(face.error());
-  // The new outline lives in the owner's group, expressed in that group's
-  // frame (committed directly: it must not be re-homed into another group).
+  // Outwards the outline leaves the face: a new face of its own in the
+  // owner's group, expressed in that group's frame (committed directly: it
+  // must not be re-homed into another group).
   Object o;
   o.id = generateObjectId();
   o.name = uniqueName("Offset");
@@ -1918,7 +1941,36 @@ Status Modeler::setParameter(const ObjectId& id, const std::string& key, double 
   }
   const Status changed = doc::setParameter(object.recipe, key, value);
   if (!changed) return changed;
-  return commitModified(std::move(object), "Edit " + label);
+  const Status built = rebuild(object, document_.regenContext());
+  if (!built) return built;
+  // A profile that cuts a hole into a face around it (drawn inside it, or
+  // offset inwards): the hole follows its new size, in the same step.
+  ChangeSet changes(document_);
+  if (current->kind() == ObjectKind::Face) {
+    const std::string before = describe(current->recipe);
+    for (const Object& o : document_.objects()) {
+      if (o.id == id || o.parent != current->parent) continue;
+      Object host = o;
+      bool follows = false;
+      for (Modifier& m : host.recipe.modifiers) {
+        auto* hole = std::get_if<HoleOp>(&m);
+        if (!hole || hole->outline.name != current->name || !hole->outline.recipe ||
+            describe(*hole->outline.recipe) != before) {
+          continue;
+        }
+        hole->outline.recipe = std::make_shared<const Recipe>(object.recipe);
+        follows = true;
+      }
+      if (!follows) continue;
+      if (const Status s = rebuild(host, document_.regenContext()); !s) {
+        return Status::failure("The face around it cannot take the new size: " + s.message());
+      }
+      changes.modify(host);
+    }
+  }
+  changes.modify(object);
+  history_.execute(changes.build("Edit " + label));
+  return Status::success();
 }
 
 namespace {

@@ -276,6 +276,11 @@ Result<TopoDS_Shape> regenerate(const Recipe& recipe, const RegenContext& contex
               if (!face) return Result<TopoDS_Shape>::failure(face.error());
               return geom::offsetSolidFace(shape, face.value(), op.distance);
             },
+            [&](const InsetOp& op) -> Result<TopoDS_Shape> {
+              auto face = op.face.resolve(shape, splitLines);
+              if (!face) return Result<TopoDS_Shape>::failure(face.error());
+              return geom::imprintOffset(shape, face.value(), op.distance);
+            },
             [&](const SplitOp& op) -> Result<TopoDS_Shape> {
               auto face = op.face.resolve(shape, splitLines);
               if (!face) return Result<TopoDS_Shape>::failure(face.error());
@@ -382,6 +387,9 @@ std::vector<Parameter> parameters(const Recipe& recipe) {
                    },
                    [&](const OffsetOp& op) {
                      out.push_back({opKey(i), "Offset distance", op.distance, true});
+                   },
+                   [&](const InsetOp& op) {
+                     out.push_back({opKey(i), "Offset " + std::to_string(i) + " distance", op.distance, true});
                    },
                    [&](const RevolveOp& op) {
                      // Exposed in degrees for editing.
@@ -535,6 +543,7 @@ std::string describe(const Recipe& recipe) {
                    },
                    [&](const OffsetFaceOp& op) { out << " > Push/Pull (curved) " << op.distance; },
                    [&](const OffsetOp& op) { out << " > Offset " << op.distance; },
+                   [&](const InsetOp& op) { out << " > Offset on face " << op.distance; },
                    [&](const RevolveOp& op) { out << " > Revolve " << op.angle * 180.0 / M_PI << " deg"; },
                },
                m);

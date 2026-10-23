@@ -1095,8 +1095,12 @@ const std::vector<CommandDef>& commands() {
          must(m.setParameter(text(a, "id"), text(a, "key"), number(a, "value")));
          return idResult(text(a, "id"));
        }},
-      {"offset", "Offset a profile's outline (new object; positive = outwards), or a solid's face "
-                 "when 'face' is given (new profile on that face).",
+      {"offset",
+       "Offset a profile's outline (new object; positive = outwards). The two outlines divide the plane as in "
+       "SketchUp: inwards the original becomes the frame around the new face, outwards the new face is the "
+       "frame; either can be pushed/pulled alone. With 'face' (a solid's planar face) and a negative distance "
+       "the outline is drawn onto that face, dividing it into frame and inner face of the solid (returns the "
+       "solid; the distance is its last opN.distance parameter); outwards it is a new profile on that plane.",
        SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "distance": {"type": "number"},
                "face": {"oneOf": [{"type": "integer"}, {"type": "object"}]}}, "required": ["id", "distance"]}),
        [](doc::Modeler& m, const json& a) {

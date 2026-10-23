@@ -318,20 +318,51 @@ TEST(Booleans, ResultCanBePushedAndMovedOperandsKeepPlacement) {
 TEST(Offset, OutwardsInwardsAndExtrude) {
   Modeler m;
   auto rect = m.createRectangle(geom::SketchPlane::ground(), 1000, 2000);
+  // Outwards the new face is the frame around the original (SketchUp).
   auto out = m.offset(*rect, 100);
   ASSERT_TRUE(out.ok()) << out.error();
   EXPECT_NE(out->id, *rect);
-  EXPECT_NEAR(geom::area(m.document().find(out->id)->shape), 1200.0 * 2200, 1e-3);
-  ASSERT_TRUE(m.setParameter(out->id, out->parameterKey, -100).ok());
-  EXPECT_NEAR(geom::area(m.document().find(out->id)->shape), 800.0 * 1800, 1e-3);
+  EXPECT_NEAR(geom::area(m.document().find(out->id)->shape), 1200.0 * 2200 - 1000.0 * 2000, 1e-3);
+  EXPECT_NEAR(geom::area(m.document().find(*rect)->shape), 1000.0 * 2000, 1e-3);
+  ASSERT_TRUE(m.setParameter(out->id, out->parameterKey, 200).ok());
+  EXPECT_NEAR(geom::area(m.document().find(out->id)->shape), 1400.0 * 2400 - 1000.0 * 2000, 1e-3);
   EXPECT_FALSE(m.setParameter(out->id, out->parameterKey, -600).ok());  // collapses
 
-  // The offset face is a normal profile: push/pull extrudes it upwards.
+  // The frame is a normal profile: push/pull extrudes it upwards.
   const TopoDS_Face face = TopoDS::Face(m.document().worldShape(out->id));
   auto pp = m.pushPull(out->id, face, 300);
   ASSERT_TRUE(pp.ok()) << pp.error();
-  test::expectBounds(m.document().worldShape(out->id), 100, 100, 0, 900, 1900, 300);
-  EXPECT_EQ(pp->parameterKey, "op1.distance");
+  test::expectBounds(m.document().worldShape(out->id), -200, -200, 0, 1200, 2200, 300);
+  EXPECT_NEAR(geom::volume(m.document().worldShape(out->id)), (1400.0 * 2400 - 1000.0 * 2000) * 300, 1e-1);
+}
+
+// Request T2 / OFF-01: a 4000 x 3000 face offset 200 inwards becomes the
+// frame around the new inner face; the frame pushed up 1000 is a frame
+// (the centre is not filled), the inner face stays as it was.
+TEST(Offset, InwardsTheOriginalBecomesTheFrame) {
+  Modeler m;
+  auto rect = m.createRectangle(geom::SketchPlane::ground(), 4000, 3000);
+  const std::size_t steps = m.history().undoCount();
+  auto in = m.offset(*rect, -200);
+  ASSERT_TRUE(in.ok()) << in.error();
+  EXPECT_EQ(m.history().undoCount(), steps + 1);
+  EXPECT_NEAR(geom::area(m.document().find(*rect)->shape), 2640000.0, 1e-3);
+  EXPECT_NEAR(geom::area(m.document().find(in->id)->shape), 3600.0 * 2600, 1e-3);
+  // The hole follows a new distance.
+  ASSERT_TRUE(m.setParameter(in->id, in->parameterKey, -300).ok());
+  EXPECT_NEAR(geom::area(m.document().find(*rect)->shape), 12e6 - 3400.0 * 2400, 1e-3);
+  ASSERT_TRUE(m.undo());
+  EXPECT_NEAR(geom::area(m.document().find(*rect)->shape), 2640000.0, 1e-3);
+
+  auto pp = m.pushPull(*rect, TopoDS::Face(m.document().worldShape(*rect)), 1000);
+  ASSERT_TRUE(pp.ok()) << pp.error();
+  EXPECT_NEAR(geom::volume(m.document().worldShape(*rect)), 2.64e9, 1.0);
+  EXPECT_EQ(m.document().find(in->id)->kind(), ObjectKind::Face);
+  EXPECT_NEAR(geom::area(m.document().find(in->id)->shape), 3600.0 * 2600, 1e-3);
+  ASSERT_TRUE(m.undo());
+  ASSERT_TRUE(m.undo());
+  EXPECT_NEAR(geom::area(m.document().find(*rect)->shape), 12e6, 1e-3);
+  EXPECT_FALSE(m.document().find(in->id));
 }
 
 TEST(Offset, PolygonOffsetAndRejections) {
@@ -545,20 +576,48 @@ TEST(GroupEditing, NewGeometryGoesIntoActiveGroupAndKeepsWorldPlacement) {
   EXPECT_TRUE(m.document().find(*outside)->parent.empty());
 }
 
+// Request T2 / OFF-02: inwards on a face of a solid the outline is drawn
+// onto the face, dividing it into frame and inner face of the same solid;
+// each is pushed / pulled on its own; the distance stays editable.
 TEST(Offset, FaceOfSolidThenPushInMakesRecess) {
   Modeler m;
   const ObjectId block = box(m, 0, 0, 0, 1000, 1000, 1000, "Block");
   const TopoDS_Face top = faceWithNormal(m.document().worldShape(block), gp::DZ());
   auto inset = m.offsetSolidFace(block, top, -100);
   ASSERT_TRUE(inset.ok()) << inset.error();
-  EXPECT_EQ(m.document().find(*inset)->kind(), ObjectKind::Face);
-  test::expectBounds(m.document().worldShape(*inset), 100, 100, 1000, 900, 900, 1000, 1e-6);
-  // Pushing the inset down cuts a recess into the block (one object).
-  auto pp = m.pushPull(*inset, TopoDS::Face(m.document().worldShape(*inset)), -300);
+  EXPECT_EQ(*inset, block);
+  EXPECT_EQ(m.document().objects().size(), 1u);
+  const Object& b = *m.document().find(block);
+  EXPECT_EQ(b.kind(), ObjectKind::Solid);
+  int faces = 0;
+  TopoDS_Face inner, frame;
+  for (TopExp_Explorer e(m.document().worldShape(b), TopAbs_FACE); e.More(); e.Next()) {
+    ++faces;
+    const TopoDS_Face f = TopoDS::Face(e.Current());
+    const auto n = geom::planarFaceNormal(f);
+    if (!n || n->Z() < 0.99) continue;
+    (std::abs(geom::area(f) - 800.0 * 800) < 1e-3 ? inner : frame) = f;
+  }
+  EXPECT_EQ(faces, 7);
+  ASSERT_FALSE(inner.IsNull());
+  ASSERT_FALSE(frame.IsNull());
+  EXPECT_NEAR(geom::area(frame), 1e6 - 800.0 * 800, 1e-3);
+  EXPECT_NEAR(geom::volume(m.document().worldShape(b)), 1e9, 1e-2);
+  // Pushing the inner face down cuts a recess (one object).
+  auto pp = m.pushPull(block, inner, -300);
   ASSERT_TRUE(pp.ok()) << pp.error();
   EXPECT_EQ(m.document().objects().size(), 1u);
-  EXPECT_NEAR(worldVolume(m, pp->id), 1e9 - 800.0 * 800 * 300, 1e-2);
-  EXPECT_FALSE(m.offsetSolidFace(pp->id, top, -600).ok());  // collapses
+  EXPECT_NEAR(geom::volume(m.document().worldShape(block)), 1e9 - 800.0 * 800 * 300, 1e-2);
+  // The distance is a parameter of the block.
+  ASSERT_TRUE(m.setParameter(block, "op1.distance", -200).ok());
+  EXPECT_NEAR(geom::volume(m.document().worldShape(block)), 1e9 - 600.0 * 600 * 300, 1e-2);
+  ASSERT_TRUE(m.undo());
+  ASSERT_TRUE(m.undo());
+  // The frame pulled up instead: a rim.
+  auto rim = m.pushPull(block, frame, 500);
+  ASSERT_TRUE(rim.ok()) << rim.error();
+  EXPECT_NEAR(geom::volume(m.document().worldShape(block)), 1e9 + (1e6 - 800.0 * 800) * 500, 1e-2);
+  EXPECT_FALSE(m.offsetSolidFace(block, top, -600).ok());  // collapses
 }
 
 TEST(Paint, GroupsPaintTheirChildrenInOneStep) {

@@ -951,6 +951,8 @@ class OffsetTool : public Tool {
   struct LastOffset {
     doc::ObjectId id;
     std::string key;
+    doc::ObjectId source;  // a loose face: offset again from it (the hole follows)
+    bool inwards = false;
   };
   std::optional<LastOffset> last_;
 };

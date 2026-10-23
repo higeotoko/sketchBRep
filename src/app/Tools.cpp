@@ -2728,18 +2728,23 @@ void OffsetTool::commit(double distance) {
   if (owner && owner->kind() == doc::ObjectKind::Solid) {
     // Face of a solid: a new outline on that face (push it in for a recess).
     auto created = host_.modeler().offsetSolidFace(objectId_, face_, distance);
+    last_.reset();
     if (!created) {
       host_.reportError(QObject::tr("オフセットに失敗しました: %1")
                             .arg(QString::fromStdString(created.error())));
+    } else if (*created == objectId_) {
+      // Drawn onto the face: its distance is the solid's last step.
+      const doc::Object* solid = host_.modeler().document().find(objectId_);
+      last_ = LastOffset{objectId_, "op" + std::to_string(solid->recipe.modifiers.size() - 1) + ".distance", {}, true};
+      recent_.mark(host_.modeler());
     }
-    last_.reset();
   } else {
     auto result = host_.modeler().offset(objectId_, distance);
     if (!result) {
       host_.reportError(QObject::tr("オフセットに失敗しました: %1")
                             .arg(QString::fromStdString(result.error())));
     } else {
-      last_ = LastOffset{result->id, result->parameterKey};
+      last_ = LastOffset{result->id, result->parameterKey, objectId_, distance < 0};
       recent_.mark(host_.modeler());
     }
   }
@@ -2759,8 +2764,23 @@ void OffsetTool::applyMeasurement(const QString& text) {
     return;
   }
   if (last_ && recent_.fresh(host_.modeler())) {
-    const Status s =
-        recent_.revise(host_.modeler(), [&] { return host_.modeler().setParameter(last_->id, last_->key, *value); });
+    const double signedValue = last_->inwards ? -std::abs(*value) : std::abs(*value);
+    Status s = Status::success();
+    if (last_->source.empty()) {
+      s = recent_.revise(host_.modeler(),
+                         [&] { return host_.modeler().setParameter(last_->id, last_->key, signedValue); });
+    } else {
+      // A loose face: the offset is made again, so that the frame's hole
+      // follows the new size (same single undo step).
+      std::optional<doc::PushPullResult> again;
+      s = recent_.replace(host_.modeler(), [&] {
+        auto r = host_.modeler().offset(last_->source, signedValue);
+        if (!r) return r.status();
+        again = r.value();
+        return Status::success();
+      });
+      if (s && again) last_ = LastOffset{again->id, again->parameterKey, last_->source, last_->inwards};
+    }
     if (!s) host_.reportError(QString::fromStdString(s.message()));
     return;
   }
