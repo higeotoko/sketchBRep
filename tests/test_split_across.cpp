@@ -229,3 +229,56 @@ TEST(SplitAcross, CopiedAcrossAllStrips) {
   EXPECT_EQ(faces(m, box), 14);  // each strip in three
   EXPECT_TRUE(geom::validateShape(m.document().worldShape(*m.document().find(box)), true).valid);
 }
+
+// Report: the 4 top edges of a cube copied down to the bottom and divided
+// by /4 drew the lines, but each side stayed one face.
+TEST(SplitAcross, TopEdgesCopiedDownDivideEverySide) {
+  for (int n : {3, 4, 5}) {
+    for (bool all : {true, false}) {
+      Modeler m;
+      auto base = m.createRectangle(at(0, 0), 1000, 1000);
+      ASSERT_TRUE(m.extrude(*base, 1000).ok());
+      const ObjectId box = *base;
+      const double volume = volumeOf(m, box);
+      std::vector<TopoDS_Edge> top;
+      for (TopExp_Explorer e(m.document().worldShape(*m.document().find(box)), TopAbs_EDGE); e.More(); e.Next()) {
+        const TopoDS_Edge edge = TopoDS::Edge(e.Current());
+        const gp_Pnt a = BRep_Tool::Pnt(TopExp::FirstVertex(edge)), b = BRep_Tool::Pnt(TopExp::LastVertex(edge));
+        const bool known = std::any_of(top.begin(), top.end(), [&](const TopoDS_Edge& t) { return t.IsSame(edge); });
+        if (!known && std::abs(a.Z() - 1000) < 1e-6 && std::abs(b.Z() - 1000) < 1e-6) top.push_back(edge);
+      }
+      ASSERT_EQ(top.size(), 4u);
+      if (!all) top.resize(1);
+      gp_Trsf step;
+      step.SetTranslation(gp_Vec(0, 0, -1000.0 / n));
+      ASSERT_TRUE(m.copyEdges(top, step, n).ok()) << n;
+      // 4 sides (or the 1 side) in n strips, top and bottom.
+      EXPECT_EQ(faces(m, box), all ? 4 * n + 2 : 3 + n + 2) << n << " " << all;
+      EXPECT_NEAR(volumeOf(m, box), volume, 1e-3);
+      EXPECT_TRUE(geom::validateShape(m.document().worldShape(*m.document().find(box)), true).valid);
+      EXPECT_EQ(count(m, ObjectKind::Curve), 0) << n << " " << all;
+      EXPECT_EQ(count(m, ObjectKind::Face), 0) << n << " " << all;
+      const int divided = faces(m, box);
+      // One undo step; redo divides again.
+      ASSERT_TRUE(m.undo());
+      EXPECT_EQ(faces(m, box), 6);
+      ASSERT_TRUE(m.redo());
+      EXPECT_EQ(faces(m, box), divided);
+      // Saved and reloaded: still divided.
+      const std::string path = ::testing::TempDir() + "split_top_edges.sbr";
+      ASSERT_TRUE(m.save(path).ok());
+      Modeler back;
+      std::vector<std::string> warnings;
+      ASSERT_TRUE(back.load(path, &warnings).ok());
+      EXPECT_EQ(faces(back, box), divided);
+      // One strip of the front (y = 0) on its own: the lowest one, out by 300.
+      const TopoDS_Face strip = frontFaceAt(m, box, gp_Pnt(500, 0, 500.0 / n));
+      ASSERT_FALSE(strip.IsNull());
+      const Bnd_Box b = geom::exactBounds(strip);
+      EXPECT_NEAR(b.CornerMax().Z() - b.CornerMin().Z(), 1000.0 / n, 1e-6);
+      ASSERT_TRUE(m.pushPull(box, strip, 300).ok());
+      EXPECT_NEAR(volumeOf(m, box), volume + 1000.0 * 300 * 1000.0 / n, 1e-3);
+      EXPECT_TRUE(geom::validateShape(m.document().worldShape(*m.document().find(box)), true).valid);
+    }
+  }
+}

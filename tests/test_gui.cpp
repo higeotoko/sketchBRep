@@ -175,6 +175,7 @@ class GuiPhase1 : public QObject {
   void scaleGripsStretchEachDirection();
   void scaleGripsOnComponentsAndGroups();
   void rectangleStandsUpLikeSketchUp();
+  void topEdgesCopiedDownDivideTheSides();
   void lockedObjectsSelectableNotEditable();
   void groupEditShowsDottedBox();
   void snapTipNamesTheAdoptedPoint();
@@ -790,6 +791,54 @@ void GuiPhase1::rectangleStandsUpLikeSketchUp() {
   Bnd_Box flat = newest();
   QVERIFY(std::abs(flat.CornerMax().Z() - flat.CornerMin().Z()) < 1e-6);
   QCOMPARE(m.document().objects().size(), before + 4);
+}
+
+// Report: the 4 edges round a cube's top, copied down to the bottom with
+// the Move tool and /4, drew lines but left each side one face.
+void GuiPhase1::topEdgesCopiedDownDivideTheSides() {
+  Fixture f;
+  QVERIFY(f.setUp(500, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+  f.vp->syncNow();
+  const double volume = geom::volume(m.document().worldShape(box));
+  auto faces = [&] {
+    int n = 0;
+    for (TopExp_Explorer e(m.document().worldShape(box), TopAbs_FACE); e.More(); e.Next()) ++n;
+    return n;
+  };
+  f.window.activateTool(MainWindow::ToolId::Select);
+  click(f.vp, f.vp->toWidget(gp_Pnt(500, 0, 1000)));
+  for (const gp_Pnt& p : {gp_Pnt(1000, 500, 1000), gp_Pnt(500, 1000, 1000), gp_Pnt(0, 500, 1000)}) {
+    const QPoint at = f.vp->toWidget(p);
+    move(f.vp, at);
+    send(f.vp, QEvent::MouseButtonPress, at, Qt::LeftButton, Qt::LeftButton, Qt::ShiftModifier);
+    send(f.vp, QEvent::MouseButtonRelease, at, Qt::LeftButton, Qt::NoButton, Qt::ShiftModifier);
+    QTest::qWait(20);
+  }
+  QCOMPARE(f.window.elementSelection().size(), std::size_t(4));
+  for (const ElementRef& e : f.window.elementSelection()) QCOMPARE(e.type, TopAbs_EDGE);
+  f.window.activateTool(MainWindow::ToolId::Move);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 1000)));
+  QTest::keyClick(f.vp, Qt::Key_Control);
+  move(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));  // onto the bottom
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(faces(), 6);  // on the bottom edges: nothing new
+  type(f.vp, QStringLiteral("/4"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(faces(), 4 * 4 + 2);  // each side in 4 strips
+  type(f.vp, QStringLiteral("/3"));
+  QCOMPARE(faces(), 4 * 3 + 2);
+  QVERIFY(std::abs(geom::volume(m.document().worldShape(box)) - volume) < 1e-3);
+  for (const doc::Object& o : m.document().objects()) QCOMPARE(o.id, box);  // no lines, no loose faces
+  // A strip is picked on its own (not the whole side).
+  f.window.activateTool(MainWindow::ToolId::Select);
+  click(f.vp, f.vp->toWidget(gp_Pnt(500, 0, 500)));
+  QCOMPARE(f.window.elementSelection().size(), std::size_t(1));
+  QCOMPARE(f.window.elementSelection().front().type, TopAbs_FACE);
+  const Bnd_Box picked = geom::exactBounds(f.vp->elementShape(f.window.elementSelection().front()));
+  QVERIFY(std::abs(picked.CornerMax().Z() - picked.CornerMin().Z() - 1000.0 / 3) < 1e-6);
 }
 
 void GuiPhase1::scaleGripsOnComponentsAndGroups() {

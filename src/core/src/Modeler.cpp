@@ -2105,8 +2105,32 @@ Result<std::vector<ObjectId>> Modeler::copyEdges(const std::vector<TopoDS_Edge>&
         std::vector<gp_Pnt> points{BRep_Tool::Pnt(TopExp::FirstVertex(run.front(), true))};
         for (const TopoDS_Edge& e : run) points.push_back(BRep_Tool::Pnt(TopExp::LastVertex(e, true)));
         // A closed flat outline (e.g. a face's edges copied): a face, as
-        // drawing it would make (SketchUp).
+        // drawing it would make (SketchUp) - unless its sides run across
+        // faces there (a top face's edges copied down a box): then they
+        // divide those faces, side by side, and no face fills the outline.
         if (points.size() >= 4 && points.front().Distance(points.back()) < 1e-6) {
+          int divided = 0;
+          std::vector<std::vector<gp_Pnt>> rest;
+          for (std::size_t i = 1; i < points.size(); ++i) {
+            auto d = splitAcross({points[i - 1], points[i]});
+            if (!d) {
+              history_.abortGroup();
+              return R::failure(d.error());
+            }
+            divided += d->faces;
+            rest.insert(rest.end(), d->rest.begin(), d->rest.end());
+          }
+          if (divided > 0) {
+            for (const std::vector<gp_Pnt>& part : rest) {
+              auto id = createPolyline(part);
+              if (!id) {
+                history_.abortGroup();
+                return R::failure(id.error());
+              }
+              made.push_back(*id);
+            }
+            continue;
+          }
           points.pop_back();
           if (auto face = createPolygon(points)) {
             made.push_back(*face);
