@@ -24,6 +24,8 @@
 #include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
+#include <gp_Ax3.hxx>
+#include <gp_Pnt2d.hxx>
 #include <GProp_GProps.hxx>
 #include <BRepGProp.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
@@ -1190,6 +1192,8 @@ struct CrossingSetup {
   std::vector<std::pair<gp_Pnt, gp_Pnt>> segments;
   std::vector<bool> fresh;
   std::vector<std::pair<const Object*, std::size_t>> owners;  // (object, segment index in it), null = chain
+  std::vector<bool> fixed;               // an edge of a solid: bounds faces, never replaced
+  std::vector<TopoDS_Face> existing;     // faces of those solids on the plane (already faces)
 };
 
 std::vector<gp_Pnt> worldPolyline(const Document& document, const Object& o) {
@@ -1202,7 +1206,8 @@ std::vector<gp_Pnt> worldPolyline(const Document& document, const Object& o) {
 }
 
 std::optional<CrossingSetup> crossingSetup(const Document& document, const std::vector<gp_Pnt>& chain,
-                                           const ObjectId& parent, const ObjectId& skip) {
+                                           const ObjectId& parent, const ObjectId& skip,
+                                           std::optional<gp_Pln> forced = std::nullopt) {
   constexpr double kTol = 1e-4;
   if (chain.size() < 2) return std::nullopt;
   std::vector<const Object*> others;
@@ -1211,7 +1216,7 @@ std::optional<CrossingSetup> crossingSetup(const Document& document, const std::
     if (worldPolyline(document, o).size() >= 2) others.push_back(&o);
   }
   // The plane: the chain's own, else the chain's line with a line it crosses.
-  std::optional<gp_Pln> plane;
+  std::optional<gp_Pln> plane = forced;
   const gp_Vec d(chain.front(), chain.back());
   for (std::size_t i = 1; i + 1 < chain.size() && !plane; ++i) {
     const gp_Vec n = gp_Vec(chain.front(), chain[i]).Crossed(gp_Vec(chain.front(), chain.back()));
@@ -1253,15 +1258,165 @@ std::optional<CrossingSetup> crossingSetup(const Document& document, const std::
       setup.owners.emplace_back(o, k - 1);
     }
   }
+  setup.fixed.assign(setup.segments.size(), false);
   return setup;
+}
+
+// Ungrouped solids and open shells beside the chain (same group, visible)
+// whose bounding box reaches it: their faces can close areas with it.
+std::vector<const Object*> solidsNear(const Document& document, const std::vector<gp_Pnt>& chain,
+                                      const ObjectId& parent) {
+  Bnd_Box reach;
+  for (const gp_Pnt& p : chain) reach.Add(p);
+  reach.Enlarge(1e-3);
+  std::vector<const Object*> out;
+  for (const Object& o : document.objects()) {
+    if (o.parent != parent || !document.isVisible(o.id)) continue;
+    if (o.kind() != ObjectKind::Solid && o.kind() != ObjectKind::Shell) continue;
+    Bnd_Box box;
+    BRepBndLib::Add(document.worldShape(o), box);
+    if (!box.IsOut(reach)) out.push_back(&o);
+  }
+  return out;
+}
+
+// The setups on planes of solid faces that hold the whole chain: the chain,
+// loose lines on that plane, and the straight edges of those solids lying on
+// it (fixed: they bound new faces but stay as they are).
+std::vector<CrossingSetup> solidSetups(const Document& document, const std::vector<gp_Pnt>& chain,
+                                       const ObjectId& parent, const ObjectId& skip) {
+  constexpr double kTol = 1e-4;
+  std::vector<CrossingSetup> out;
+  const std::vector<const Object*> solids = solidsNear(document, chain, parent);
+  if (solids.empty()) return out;
+  std::vector<gp_Pln> planes;
+  for (const Object* o : solids) {
+    for (TopExp_Explorer f(document.worldShape(*o), TopAbs_FACE); f.More(); f.Next()) {
+      gp_Pln pln;
+      if (!geom::isPlanarFace(TopoDS::Face(f.Current()), &pln)) continue;
+      if (std::any_of(chain.begin(), chain.end(), [&](const gp_Pnt& p) { return pln.Distance(p) > kTol; })) continue;
+      const bool known = std::any_of(planes.begin(), planes.end(), [&](const gp_Pln& q) {
+        return q.Axis().Direction().IsParallel(pln.Axis().Direction(), 1e-9) && q.Distance(pln.Location()) < kTol;
+      });
+      if (!known) planes.push_back(pln);
+    }
+  }
+  for (const gp_Pln& pln : planes) {
+    auto setup = crossingSetup(document, chain, parent, skip, pln);
+    if (!setup) continue;
+    for (const Object* o : solids) {
+      const TopoDS_Shape world = document.worldShape(*o);
+      for (TopExp_Explorer f(world, TopAbs_FACE); f.More(); f.Next()) {
+        gp_Pln on;
+        const TopoDS_Face face = TopoDS::Face(f.Current());
+        if (geom::isPlanarFace(face, &on) && on.Axis().Direction().IsParallel(pln.Axis().Direction(), 1e-9) &&
+            on.Distance(pln.Location()) < kTol) {
+          setup->existing.push_back(face);
+        }
+      }
+      TopTools_IndexedMapOfShape edges;
+      TopExp::MapShapes(world, TopAbs_EDGE, edges);
+      for (int i = 1; i <= edges.Extent(); ++i) {
+        const TopoDS_Edge edge = TopoDS::Edge(edges(i));
+        if (BRep_Tool::Degenerated(edge) || BRepAdaptor_Curve(edge).GetType() != GeomAbs_Line) continue;
+        const gp_Pnt a = BRep_Tool::Pnt(TopExp::FirstVertex(edge));
+        const gp_Pnt b = BRep_Tool::Pnt(TopExp::LastVertex(edge));
+        if (pln.Distance(a) > kTol || pln.Distance(b) > kTol) continue;
+        setup->segments.emplace_back(a, b);
+        setup->fresh.push_back(false);
+        setup->owners.emplace_back(nullptr, 0);
+        setup->fixed.push_back(true);
+      }
+    }
+    out.push_back(std::move(*setup));
+  }
+  return out;
+}
+
+// A point strictly inside a simple polygon lying in `plane`.
+std::optional<gp_Pnt> insidePolygon(const std::vector<gp_Pnt>& polygon, const gp_Pln& plane) {
+  const gp_Ax3 frame = plane.Position();
+  auto uv = [&](const gp_Pnt& p) {
+    const gp_Vec d(frame.Location(), p);
+    return gp_Pnt2d(d.Dot(gp_Vec(frame.XDirection())), d.Dot(gp_Vec(frame.YDirection())));
+  };
+  std::vector<gp_Pnt2d> pts;
+  for (const gp_Pnt& p : polygon) pts.push_back(uv(p));
+  auto inside = [&](const gp_Pnt2d& q) {
+    bool in = false;
+    for (std::size_t i = 0, j = pts.size() - 1; i < pts.size(); j = i++) {
+      if ((pts[i].Y() > q.Y()) != (pts[j].Y() > q.Y()) &&
+          q.X() < (pts[j].X() - pts[i].X()) * (q.Y() - pts[i].Y()) / (pts[j].Y() - pts[i].Y()) + pts[i].X()) {
+        in = !in;
+      }
+    }
+    return in;
+  };
+  const std::size_t n = pts.size();
+  if (n < 3) return std::nullopt;
+  std::vector<gp_Pnt2d> tries;
+  gp_XY c(0, 0);
+  for (const gp_Pnt2d& p : pts) c += p.XY();
+  tries.emplace_back(c / static_cast<double>(n));
+  for (std::size_t i = 0; i < n; ++i) {  // centres of corner triangles
+    tries.emplace_back((pts[(i + n - 1) % n].XY() + pts[i].XY() + pts[(i + 1) % n].XY()) / 3.0);
+  }
+  for (const gp_Pnt2d& q : tries) {
+    if (!inside(q)) continue;
+    return gp_Pnt(frame.Location().XYZ() + q.X() * frame.XDirection().XYZ() + q.Y() * frame.YDirection().XYZ());
+  }
+  return std::nullopt;
+}
+
+// Regions of an arrangement that are not already faces of the solids, and
+// which pieces bound them.
+void keepNewRegions(const CrossingSetup& setup, geom::LineArrangement& arrangement) {
+  if (setup.existing.empty()) return;
+  std::vector<std::vector<gp_Pnt>> kept;
+  for (const auto& region : arrangement.regions) {
+    const auto at = insidePolygon(region, setup.plane);
+    if (!at) continue;
+    const bool covered = std::any_of(setup.existing.begin(), setup.existing.end(), [&](const TopoDS_Face& f) {
+      return BRepClass_FaceClassifier(f, *at, 1e-6).State() == TopAbs_IN;
+    });
+    if (!covered) kept.push_back(region);
+  }
+  arrangement.regions = kept;
+  for (auto& piece : arrangement.pieces) {
+    piece.bounding = false;
+    for (const auto& region : kept) {
+      for (std::size_t i = 0; i < region.size() && !piece.bounding; ++i) {
+        const gp_Pnt& a = region[i];
+        const gp_Pnt& b = region[(i + 1) % region.size()];
+        piece.bounding = (a.Distance(piece.a) < 1e-6 && b.Distance(piece.b) < 1e-6) ||
+                         (a.Distance(piece.b) < 1e-6 && b.Distance(piece.a) < 1e-6);
+      }
+    }
+  }
+}
+
+// The first setup (the chain's own plane, else a solid face's plane through
+// it) whose arrangement closes new areas.
+std::optional<std::pair<CrossingSetup, geom::LineArrangement>> closingSetup(const Document& document,
+                                                                            const std::vector<gp_Pnt>& chain,
+                                                                            const ObjectId& parent,
+                                                                            const ObjectId& skip) {
+  std::vector<CrossingSetup> setups;
+  if (auto own = crossingSetup(document, chain, parent, skip)) setups.push_back(std::move(*own));
+  for (CrossingSetup& s : solidSetups(document, chain, parent, skip)) setups.push_back(std::move(s));
+  for (CrossingSetup& setup : setups) {
+    if (setup.segments.size() < 3) continue;
+    geom::LineArrangement arrangement = geom::arrangeLines(setup.segments, setup.fresh, setup.plane);
+    keepNewRegions(setup, arrangement);
+    if (!arrangement.regions.empty()) return std::make_pair(std::move(setup), std::move(arrangement));
+  }
+  return std::nullopt;
 }
 
 }  // namespace
 
 bool Modeler::closesByCrossing(const std::vector<gp_Pnt>& chain) const {
-  const auto setup = crossingSetup(document_, chain, activeGroup_, {});
-  if (!setup || setup->segments.size() < 3) return false;
-  return !geom::arrangeLines(setup->segments, setup->fresh, setup->plane).regions.empty();
+  return closingSetup(document_, chain, activeGroup_, {}).has_value();
 }
 
 Result<std::vector<ObjectId>> Modeler::facesFromCrossings(const ObjectId& curveId) {
@@ -1270,10 +1425,10 @@ Result<std::vector<ObjectId>> Modeler::facesFromCrossings(const ObjectId& curveI
   if (!start) return R::failure("Object not found");
   const std::vector<gp_Pnt> chain = worldPolyline(document_, *start);
   if (chain.size() < 2) return std::vector<ObjectId>{};
-  const auto setup = crossingSetup(document_, chain, start->parent, curveId);
-  if (!setup || setup->segments.size() < 3) return std::vector<ObjectId>{};
-  const geom::LineArrangement arrangement = geom::arrangeLines(setup->segments, setup->fresh, setup->plane);
-  if (arrangement.regions.empty()) return std::vector<ObjectId>{};
+  auto closing = closingSetup(document_, chain, start->parent, curveId);
+  if (!closing) return std::vector<ObjectId>{};
+  const CrossingSetup* setup = &closing->first;
+  const geom::LineArrangement& arrangement = closing->second;
 
   // Lines with a piece bounding a new face are replaced: their other pieces
   // (tails) come back as lines, in order.
@@ -1288,6 +1443,7 @@ Result<std::vector<ObjectId>> Modeler::facesFromCrossings(const ObjectId& curveI
   for (const Object* o : touched) {
     std::vector<gp_Pnt> run;
     for (const geom::LineArrangement::Piece& piece : arrangement.pieces) {
+      if (setup->fixed[static_cast<std::size_t>(piece.segment)]) continue;  // a solid's edge
       const Object* owner = setup->owners[static_cast<std::size_t>(piece.segment)].first;
       if ((owner ? owner : start) != o) continue;
       if (piece.bounding || (!run.empty() && run.back().Distance(piece.a) > 1e-6)) {

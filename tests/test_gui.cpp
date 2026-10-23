@@ -191,6 +191,7 @@ class GuiPhase1 : public QObject {
   void componentPlacementOwnSizeMirrorAndAxes();
   void moveToolReshapesCornersAndEdges();
   void moveToolLiftsRidgeIntoGable();
+  void lineAgainstVolumeMakesFace();
   void eraserShiftHidesEdgeLine();
   void openingToolOverEverything();
   void lineToolCrossingLinesMakeFace();
@@ -2745,6 +2746,36 @@ void GuiPhase1::moveToolReshapesCornersAndEdges() {
 // Request T5, first acceptance task in the GUI: a 6000 x 4000 x 3000 box,
 // its top split down the middle, the ridge Alt+grabbed and lifted 1500 with
 // the blue axis locked: a gable house, one undo step.
+// A line drawn with the line tool on the side of an L-shaped volume, from
+// the top of the tall part to the corner of the step, closes the notch:
+// a face is made there.
+void GuiPhase1::lineAgainstVolumeMakesFace() {
+  Fixture f;
+  QVERIFY(f.setUp(1000, 0));
+  doc::Modeler& m = f.window.modeler();
+  auto profile = m.createPolygon({gp_Pnt(0, 0, 0), gp_Pnt(2000, 0, 0), gp_Pnt(2000, 0, 1000), gp_Pnt(1000, 0, 1000),
+                                  gp_Pnt(1000, 0, 2000), gp_Pnt(0, 0, 2000)});
+  QVERIFY(profile.ok());
+  QVERIFY(m.extrude(*profile, 1000).ok());
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::Line);
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 0, 2000)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(2000, 0, 1000)));
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  QTest::qWait(30);
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  int faces = 0, lines = 0;
+  for (const doc::Object& o : m.document().objects()) {
+    if (o.kind() == doc::ObjectKind::Face) {
+      ++faces;
+      QVERIFY(std::abs(geom::area(m.document().worldShape(o)) - 0.5e6) < 1.0);
+    }
+    lines += o.kind() == doc::ObjectKind::Curve;
+  }
+  QCOMPARE(faces, 1);
+  QCOMPARE(lines, 0);
+}
+
 void GuiPhase1::moveToolLiftsRidgeIntoGable() {
   Fixture f;
   QVERIFY(f.setUp(3000, 2000));

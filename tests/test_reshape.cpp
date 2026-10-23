@@ -568,3 +568,72 @@ TEST(Roof, AutofoldRefusesHolesAndConcaveFaces) {
   EXPECT_NE(concave.message().find("concave"), std::string::npos) << concave.message();
   EXPECT_EQ(m.history().undoCount(), steps);
 }
+
+namespace {
+// An L-shaped volume (side profile in the plane y = 0, 1000 deep along y):
+// 2000 long and 1000 high, with a 1000 x 1000 part rising to 2000 on the left.
+ObjectId lShape(Modeler& m) {
+  auto profile = m.createPolygon({gp_Pnt(0, 0, 0), gp_Pnt(2000, 0, 0), gp_Pnt(2000, 0, 1000), gp_Pnt(1000, 0, 1000),
+                                  gp_Pnt(1000, 0, 2000), gp_Pnt(0, 0, 2000)});
+  EXPECT_TRUE(profile.ok());
+  auto solid = m.extrude(*profile, 1000);
+  EXPECT_TRUE(solid.ok());
+  Bnd_Box box;
+  BRepBndLib::Add(m.document().worldShape(*profile), box);
+  if (box.CornerMin().Y() < -1) {  // extruded the other way: keep the test simple
+    EXPECT_TRUE(m.undo());
+    EXPECT_TRUE(m.extrude(*profile, -1000).ok());
+  }
+  return *profile;
+}
+}  // namespace
+
+// A line drawn on the side of an ungrouped volume that closes an area with
+// its edges makes a face there (SketchUp), in one undo step; the volume
+// stays as it is and the line is the face's edge now.
+TEST(LinesOnSolids, LineClosingAgainstEdgesMakesAFace) {
+  Modeler m;
+  const ObjectId solid = lShape(m);
+  const double volume = geom::volume(m.document().worldShape(solid));
+  const std::size_t steps = m.history().undoCount();
+  m.history().beginGroup("Line");
+  auto line = m.createPolyline({gp_Pnt(1000, 0, 2000), gp_Pnt(2000, 0, 1000)});
+  ASSERT_TRUE(line.ok());
+  auto faces = m.facesFromCrossings(*line);
+  m.history().endGroup();
+  ASSERT_TRUE(faces.ok()) << faces.error();
+  ASSERT_EQ(faces->size(), 1u);
+  EXPECT_NEAR(geom::area(m.document().worldShape(*m.document().find(faces->front()))), 0.5 * 1000 * 1000, 1e-3);
+  EXPECT_EQ(countKind(m, ObjectKind::Curve), 0);  // the line became the face's edge
+  EXPECT_NEAR(geom::volume(m.document().worldShape(solid)), volume, 1e-3);
+  EXPECT_EQ(m.history().undoCount(), steps + 1);
+  ASSERT_TRUE(m.undo());
+  EXPECT_EQ(countKind(m, ObjectKind::Face), 0);
+}
+
+// The line of the picture: from the top corner across the side to the
+// step's corner. Only the part outside the existing side face closes a new
+// face (the triangle in the notch); no face is made again over the side.
+TEST(LinesOnSolids, OnlyAreasThatAreNotFacesYet) {
+  Modeler m;
+  lShape(m);
+  auto line = m.createPolyline({gp_Pnt(0, 0, 2000), gp_Pnt(2000, 0, 1000)});
+  ASSERT_TRUE(line.ok());
+  auto faces = m.facesFromCrossings(*line);
+  ASSERT_TRUE(faces.ok()) << faces.error();
+  ASSERT_EQ(faces->size(), 1u);
+  EXPECT_NEAR(geom::area(m.document().worldShape(*m.document().find(faces->front()))), 0.5 * 1000 * 500, 1e-3);
+  EXPECT_EQ(countKind(m, ObjectKind::Curve), 1);  // the part over the side face stays a line
+}
+
+// Inside a group the volume is not touched from outside: the line stays a line.
+TEST(LinesOnSolids, GroupedVolumesAreLeftAlone) {
+  Modeler m;
+  const ObjectId solid = lShape(m);
+  ASSERT_TRUE(m.group({solid}).ok());
+  auto line = m.createPolyline({gp_Pnt(1000, 0, 2000), gp_Pnt(2000, 0, 1000)});
+  auto faces = m.facesFromCrossings(*line);
+  ASSERT_TRUE(faces.ok());
+  EXPECT_TRUE(faces->empty());
+  EXPECT_EQ(countKind(m, ObjectKind::Curve), 1);
+}
