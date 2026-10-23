@@ -99,7 +99,7 @@
 
 ホイールと SnapTip は、既存の `wheelZoom*` と `snapTipNamesTheAdoptedPoint` で回帰を確認した（すべて通過）。
 
-### W4：MOVE-04、ARRAY-03、XFORM-02
+### W4：MOVE-04、ARRAY-03、XFORM-02（a95f946）
 
 **原因**：
 - 回転配列の「/n」は、その時点の配列全体の角度を割っていた。Move の「最初に置いた距離を基準にする」決まり（ARR-02）と食い違っていた。
@@ -123,6 +123,28 @@
 - `Overlaps.CopiesAndMoves`：その場コピーは何も作らない（重複しない）。この新しい規則に合わせて期待値を変えた
 
 **暫定**（ARRAY-04、実機で比べる）：記法を続けて変えたときの基準（最初の配置か、直前の結果か）。
+
+### W5：一続きの造形（SC01、SC07、SC08、SC13、SC19）
+
+**目的**：作る→直す→保存→再読込→さらに編集、を端から端まで通す。
+
+**テスト**：`tests/test_flows.cpp`
+- `Flows.SC01_FrameWall`
+  - 4000×3000 の面を内側に 200 オフセットし、枠を 3000 押し出す
+  - 枠の面積 2,640,000 mm²、体積 7,920,000,000 mm³
+  - 中央は埋めずに、面のまま残る
+- `Flows.SC07_SC08_SC19_EditSaveReloadEdit`
+  - SC07：箱の上面を消して、前面に厚み 200 を付ける。残りは開いた形状のまま
+  - SC08：6000×4000×3000 の上面を塗って中央で分割し、棟を 1500 上げる。両方の屋根面が塗装を保つ
+  - コピーした線で床を 3 分割する
+  - 正確な円弧
+  - SC19：保存して再読込しても、種類・体積・塗装・円弧が同じ。その後、分割した中央を押し出せる
+- `Flows.SC13_HollowSectionAlongLineAndArc`：中空の断面を、直線＋接する円弧に沿ってスイープする。選ぶ順を逆にしても同じで、穴は貫通する
+- `Flows.SC13_HollowSectionAroundASharpCorner`：中空の断面で直角の角を回る
+
+**修正**（PATH-05）：
+- 角のある経路の予備スイープは、穴のある断面を拒否していた。
+- 外周と各内周を別々に留め継ぎでスイープし、内周の分をくり抜くようにした。中空のまま作れる。
 
 ## 108 項目
 
@@ -220,10 +242,10 @@
 | ID | 状態 | 根拠・残り |
 |---|---|---|
 | PULL-01 | 検証待ち | |
-| PULL-02 | 自動確認済 | `Offset.*`（枠の押し出し、内周を保つ） |
+| PULL-02 | 自動確認済 | `Offset.*`、`Flows.SC01_FrameWall` |
 | PULL-03 | 検証待ち | |
 | PULL-04 | 検証待ち | 同じ量の繰り返しはあり（`pushPullDoubleClickRepeatsDistance`）。開始面を残す操作はない |
-| PULL-05 | 自動確認済 | `OpenPushPull.*`、`pushPullOnOpenShape` |
+| PULL-05 | 自動確認済 | `OpenPushPull.*`、`pushPullOnOpenShape`、`Flows.SC07_*` |
 | PULL-06 | 検証待ち | |
 
 ### 11. オフセット・フォローミー
@@ -232,8 +254,8 @@
 | PATH-01 | 自動確認済 | `Offset.*`、`offsetToolInwards` |
 | PATH-02 | 後回し | |
 | PATH-03 | 検証待ち | 制限あり（理由は表示する） |
-| PATH-04 | 自動確認済 | `FollowMeEdges.*` |
-| PATH-05 | 検証待ち | |
+| PATH-04 | 自動確認済 | `FollowMeEdges.*`、`Flows.SC13_*`（選ぶ順を逆にしても同じ） |
+| PATH-05 | 自動確認済 | W5：中空の断面を、直線＋円弧と直角の角で（`Flows.SC13_*`）。断面の向きの案内表示はまだ |
 | PATH-06 | 後回し | |
 
 ### 12. グループ・コンポーネント
@@ -271,7 +293,7 @@
 |---|---|---|
 | LOOK-01 | 自動確認済 | `paintToolAndEyedropper`、`Materials.*` |
 | LOOK-02 | 自動確認済 | 同上 |
-| LOOK-03 | 検証待ち | 伸縮と重なりの整理では材質を保つ（`Stretch.*`、`Overlaps.*`）。屋根はまだ |
+| LOOK-03 | 自動確認済 | `Stretch.*`、`Overlaps.*`、屋根（`Flows.SC07_SC08_SC19_*`、両方の屋根面が塗装を保つ） |
 | LOOK-04 | 検証待ち | |
 | LOOK-05 | 後回し | |
 | LOOK-06 | 検証待ち | |
@@ -291,7 +313,7 @@
 |---|---|---|
 | STATE-01 | 自動確認済 | `escStepsBackAndConstraintsShow` |
 | STATE-02 | 自動確認済 | 各テストの Undo 回数 |
-| STATE-03 | 検証待ち | |
+| STATE-03 | 検証待ち | 保存と再読込は `Flows.SC07_SC08_SC19_*`。作図の途中で保存したときはまだ確認していない |
 | STATE-04 | 後回し | 非同期の演算はまだない |
 | STATE-05 | 検証待ち | 実機 |
 | STATE-06 | 検証待ち | |

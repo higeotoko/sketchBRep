@@ -14,6 +14,7 @@
 #include <ShapeFix_Solid.hxx>
 #include <BRepTools.hxx>
 #include <BRepBuilderAPI_MakeSolid.hxx>
+#include <BRepAlgoAPI_Cut.hxx>
 #include <BRepOffsetAPI_MakePipeShell.hxx>
 #include <BRepOffsetAPI_ThruSections.hxx>
 #include <BRepPrimAPI_MakeRevol.hxx>
@@ -157,22 +158,12 @@ Result<TopoDS_Shape> revolve(const TopoDS_Shape& profile, const gp_Ax1& axis, do
 
 namespace {
 
-// Sweep with mitred corners (like moulding around a room): the profile's
-// outline is swept as a pipe shell and capped into a solid.
-Result<TopoDS_Shape> mitredSweep(const TopoDS_Shape& profile, const TopoDS_Wire& spine) {
-  if (profile.ShapeType() != TopAbs_FACE) return Result<TopoDS_Shape>::failure("Profile is not a face");
-  const TopoDS_Face face = TopoDS::Face(profile);
-  // Only the outer outline goes through this corner sweep: a profile with
-  // holes would come out filled, so it is refused instead (FM-04).
-  int wires = 0;
-  for (TopExp_Explorer w(face, TopAbs_WIRE); w.More(); w.Next()) ++wires;
-  if (wires > 1) {
-    return Result<TopoDS_Shape>::failure("A profile with holes cannot yet be swept around sharp corners of the path");
-  }
+// One outline swept with mitred corners and closed into a solid.
+Result<TopoDS_Shape> mitredOutline(const TopoDS_Wire& outline, const TopoDS_Wire& spine) {
   BRepOffsetAPI_MakePipeShell shell(spine);
   shell.SetMode(Standard_False);  // corrected Frenet: keeps the profile upright
   shell.SetTransitionMode(BRepBuilderAPI_RightCorner);
-  shell.Add(BRepTools::OuterWire(face));
+  shell.Add(outline);
   shell.Build();
   if (!shell.IsDone()) return Result<TopoDS_Shape>::failure("Sweep failed");
   if (!BRep_Tool::IsClosed(spine)) shell.MakeSolid();
@@ -188,6 +179,29 @@ Result<TopoDS_Shape> mitredSweep(const TopoDS_Shape& profile, const TopoDS_Wire&
         result = fix.Solid();
       }
     }
+  }
+  return checked(result, "Sweep");
+}
+
+// Sweep with mitred corners (like moulding around a room): the profile's
+// outline is swept as a pipe shell and capped into a solid; each hole is
+// swept the same way and taken out, so a hollow section stays hollow
+// (never filled).
+Result<TopoDS_Shape> mitredSweep(const TopoDS_Shape& profile, const TopoDS_Wire& spine) {
+  if (profile.ShapeType() != TopAbs_FACE) return Result<TopoDS_Shape>::failure("Profile is not a face");
+  const TopoDS_Face face = TopoDS::Face(profile);
+  const TopoDS_Wire outer = BRepTools::OuterWire(face);
+  auto body = mitredOutline(outer, spine);
+  if (!body) return body;
+  TopoDS_Shape result = body.value();
+  for (TopExp_Explorer w(face, TopAbs_WIRE); w.More(); w.Next()) {
+    const TopoDS_Wire wire = TopoDS::Wire(w.Current());
+    if (wire.IsSame(outer)) continue;
+    auto hole = mitredOutline(wire, spine);
+    if (!hole) return Result<TopoDS_Shape>::failure("The hole of the profile could not be swept: " + hole.error());
+    BRepAlgoAPI_Cut cut(result, hole.value());
+    if (!cut.IsDone() || cut.HasErrors()) return Result<TopoDS_Shape>::failure("The hole of the profile could not be cut through");
+    result = cut.Shape();
   }
   return checked(result, "Sweep");
 }
