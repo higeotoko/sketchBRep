@@ -73,6 +73,9 @@ AI 専用の裏口は作らず、GUI のツールと同じ `doc::Modeler` を JS
 ## 効果分類と変更セット（設計レビュー A/B/C 対応）
 
 - **効果分類**: 各コマンドは `read`（読むだけ。`preview` も一時コピーなので read）/ `view_write`（視点・選択・提案表示）/ `model_write`（モデルと永続設定）/ `external_io`（ファイル）に分類され、`describe` の各要素の `effect` と MCP の `annotations.readOnlyHint` で分かる。`batch` は手順の中で一番強い効果。不明なコマンドは `model_write` 扱い
+- **ファイルは試さない・巻き戻さない**: `preview` と `batch`（`atomic`、既定）は、`external_io` の手順（save / open / import_* / export_* / set_material_texture など）を含むと**何も実行せずに**拒否する。一時コピーやロールバックではファイルの読み書きを取り消せないため。ファイル操作は単独で、または `atomic: false` の batch で行う（review 2026-10-23 P0-02）
+- **3DM の部分読込は明示**: `import_3dm` はメッシュ・点・曲線・変換失敗・面やトリムの欠落があると、何が欠けるかを並べて拒否する（何も読まない）。`allow_partial: true` で読めた分だけ読み込み、結果の `report`（objects / imported / failed / partial / skipped_faces / skipped_trims / unsupported / units / complete）で内訳が分かる（P0-03）
+- **長い演算の途中には書かない**: アプリで長い形状計算（進捗ダイアログ）が走っている間、AI の要求はソケットで順番待ちになり、終わってから順に実行される。直接呼び出しの書き込みは `busy` で拒否、自動保存も終わってから（P0-04）
 - **作図を消さない**: アプリ側は `model_write` / `external_io` のときだけ作図途中のツールを中断する。読み取り・`preview`・視点変更では、ユーザーが置いた始点や入力中の数値はそのまま
 - **設定も原子的**: タグの表示・断面・シーンは Undo 履歴に載る（1 操作 = 1 Undo）。`batch` が途中で失敗すると、形状と一緒にこれらも実行前に戻り、未保存フラグ・Undo 数・`revision` も変わらない
 - **変更セット**: `batch` の結果の `changes` と `preview` の `changes` は、実行で記録された Undo 1 手分の差分そのもの（`added` / `removed` / `modified[{id, aspects}]` / `definitions` / `settings`）。aspects は `geometry` / `placement`（回転を含む全行列）/ `visibility` / `attributes`（名前・タグ・色）/ `hierarchy`。提案（`propose`）のゴーストと件数も同じ変更セットから作り、適用時に結果と照合する

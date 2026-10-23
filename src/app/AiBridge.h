@@ -11,6 +11,7 @@
 #include <vector>
 
 #include <QObject>
+#include <QSet>
 #include <QString>
 
 #include "sbr/api/CommandApi.h"
@@ -50,6 +51,8 @@ class AiBridge : public QObject {
   api::CommandApi api_;
   std::unique_ptr<QLocalServer> server_;
   std::function<void()> before_, after_;
+  static constexpr int kBusyRetryMs = 100;
+  QSet<QLocalSocket*> retryPending_;  // sockets waiting for a long operation
   int clients_ = 0;
   QString lastError_;
 };

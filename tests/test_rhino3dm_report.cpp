@@ -27,7 +27,7 @@ ON_Brep* box(double x0) {
 // A file with 2 whole boxes, 1 box missing a trimming curve, 1 box whose
 // surfaces are all gone, a mesh, a point and a curve.
 std::string writeMixedFixture() {
-  (void)geom::read3dm(::testing::TempDir() + "none.3dm");  // starts openNURBS
+  (void)geom::read3dm(::testing::TempDir() + "missing_fixture.3dm");  // starts openNURBS
   ONX_Model model;
   model.m_settings.m_ModelUnitsAndTolerances.m_unit_system = ON_UnitSystem(ON::LengthUnitSystem::Meters);
   model.AddDefaultLayer(nullptr, ON_Color::UnsetColor);
@@ -47,7 +47,9 @@ std::string writeMixedFixture() {
   model.AddManagedModelGeometryComponent(mesh, nullptr);
   model.AddManagedModelGeometryComponent(new ON_Point(ON_3dPoint(5, 5, 5)), nullptr);
   model.AddManagedModelGeometryComponent(new ON_LineCurve(ON_3dPoint(0, 0, 0), ON_3dPoint(0, 0, 5)), nullptr);
-  const std::string path = ::testing::TempDir() + "mixed.3dm";
+  // One file per test: ctest runs the tests of this suite in parallel.
+  const std::string path = ::testing::TempDir() + "mixed_" +
+                           ::testing::UnitTest::GetInstance()->current_test_info()->name() + ".3dm";
   EXPECT_TRUE(model.Write(path.c_str(), 0, nullptr));
   return path;
 }

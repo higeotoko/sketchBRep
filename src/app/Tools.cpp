@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
+#include <set>
 
 #include <QKeyEvent>
 #include <QRegularExpression>
@@ -28,7 +30,9 @@
 #include <TopoDS.hxx>
 #include <BRep_Tool.hxx>
 #include <BRepAdaptor_Curve.hxx>
+#include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
 
 #include "Cursors.h"
 #include "Viewport.h"
@@ -3582,44 +3586,92 @@ void EraserTool::mouseRelease(const ToolEvent& e) {
   (void)e;
   if (marked_.empty()) return;
   // One undo step for the whole stroke. Each line is found again by its
-  // point: erasing one can rebuild the object the next one belongs to.
+  // point, because erasing one can rebuild the object the next one belongs
+  // to; the search stays within what the marked object became (its
+  // lineage: itself, or what an erase made of it), never other objects
+  // that happen to have a line there (review 2026-10-23 P0-01).
   doc::Modeler& m = host_.modeler();
   const bool hide = press.modifiers & Qt::ShiftModifier;
+  auto objectIds = [&m] {
+    std::set<doc::ObjectId> ids;
+    for (const doc::Object& o : m.document().objects()) ids.insert(o.id);
+    return ids;
+  };
+  std::map<doc::ObjectId, std::set<doc::ObjectId>> lineage;
+  for (const Mark& mark : marked_) lineage[mark.object] = {mark.object};
   m.history().beginGroup(hide ? "Hide Lines" : "Erase Lines");
   std::string firstError;
-  int done = 0;
+  int done = 0, ambiguous = 0;
   for (const Mark& mark : marked_) {
-    std::optional<std::pair<doc::ObjectId, TopoDS_Edge>> found;
-    double best = 1e-3;
-    for (const doc::Object& o : m.document().objects()) {
-      if (!m.document().isVisible(o.id) || o.shape.IsNull()) continue;
-      const doc::Object* hinted = m.document().find(mark.object);
-      if (hinted && o.parent != hinted->parent && o.id != mark.object) continue;
-      Bnd_Box box = geom::exactBounds(m.document().worldShape(o));
+    // The lines of the lineage through the mark's point.
+    constexpr double kTolerance = 1e-3;
+    struct Candidate {
+      double distance;
+      doc::ObjectId object;
+      TopoDS_Edge edge;
+      bool atEnd;  // touches the point at its end (where lines meet), not along it
+    };
+    std::vector<Candidate> candidates;
+    for (const doc::ObjectId& id : lineage[mark.object]) {
+      const doc::Object* o = m.document().find(id);
+      if (!o || o->shape.IsNull()) continue;
+      const TopoDS_Shape world = m.document().worldShape(*o);
+      Bnd_Box box = geom::exactBounds(world);
       if (box.IsVoid()) continue;
       box.Enlarge(1e-2);
       if (box.IsOut(mark.point)) continue;
-      for (TopExp_Explorer x(m.document().worldShape(o), TopAbs_EDGE); x.More(); x.Next()) {
-        BRepExtrema_DistShapeShape d(BRepBuilderAPI_MakeVertex(mark.point).Vertex(), x.Current());
-        if (d.IsDone() && d.Value() < best) {
-          best = d.Value();
-          found = std::make_pair(o.id, TopoDS::Edge(x.Current()));
-        }
+      TopTools_IndexedMapOfShape edges;
+      TopExp::MapShapes(world, TopAbs_EDGE, edges);
+      for (int i = 1; i <= edges.Extent(); ++i) {
+        const TopoDS_Edge edge = TopoDS::Edge(edges(i));
+        BRepExtrema_DistShapeShape d(BRepBuilderAPI_MakeVertex(mark.point).Vertex(), edge);
+        if (!d.IsDone() || d.Value() >= kTolerance) continue;
+        const bool atEnd = mark.point.Distance(BRep_Tool::Pnt(TopExp::FirstVertex(edge))) < kTolerance ||
+                           mark.point.Distance(BRep_Tool::Pnt(TopExp::LastVertex(edge))) < kTolerance;
+        candidates.push_back({d.Value(), o->id, edge, atEnd});
       }
     }
-    if (!found) continue;  // already gone with an earlier one
-    const std::string error = eraseLine(found->first, found->second, mark.point, hide);
+    if (candidates.empty()) continue;  // already gone with an earlier one
+    std::sort(candidates.begin(), candidates.end(),
+              [](const Candidate& x, const Candidate& y) { return x.distance < y.distance; });
+    const Candidate& nearest = candidates.front();
+    const bool overlapping =
+        !nearest.atEnd && std::any_of(candidates.begin() + 1, candidates.end(), [&](const Candidate& c) {
+          return !c.atEnd && c.distance - nearest.distance < 1e-7;
+        });
+    if (overlapping) {
+      // Two lines along the same place: which one was meant cannot be
+      // told, so neither is touched.
+      ++ambiguous;
+      continue;
+    }
+    const auto found = std::make_pair(nearest.object, nearest.edge);
+    const std::set<doc::ObjectId> before = objectIds();
+    const std::string error = eraseLine(found.first, found.second, mark.point, hide);
     if (error.empty()) {
       ++done;
     } else if (firstError.empty()) {
       firstError = error;
+    }
+    // What the erase made of the object is where its other marks are now.
+    const std::set<doc::ObjectId> after = objectIds();
+    std::set<doc::ObjectId> made;
+    for (const doc::ObjectId& id : after) {
+      if (!before.count(id)) made.insert(id);
+    }
+    if (made.empty()) continue;
+    for (auto& [origin, ids] : lineage) {
+      if (!ids.count(found.first)) continue;
+      ids.insert(made.begin(), made.end());
     }
   }
   m.history().endGroup();
   marked_.clear();
   vp.clearHover();
   if (!firstError.empty()) host_.reportError(QString::fromStdString(firstError));
-  host_.setStatus(hide ? QObject::tr("%1 本の線を隠しました").arg(done) : QObject::tr("%1 本の線を消しました").arg(done));
+  QString status = hide ? QObject::tr("%1 本の線を隠しました").arg(done) : QObject::tr("%1 本の線を消しました").arg(done);
+  if (ambiguous > 0) status += QObject::tr("（%1 本は線が重なっていて特定できないため残しました）").arg(ambiguous);
+  host_.setStatus(status);
 }
 
 void EraserTool::markAt(const QPoint& pos) {

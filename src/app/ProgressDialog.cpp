@@ -5,6 +5,8 @@
 
 namespace sbr::app {
 
+int GuiProgress::pumping_ = 0;
+
 void GuiProgress::Reset() {
   Message_ProgressIndicator::Reset();
   elapsed_.start();
@@ -25,13 +27,15 @@ void GuiProgress::Show(const Message_ProgressScope&, const Standard_Boolean) {
     dialog_->setAutoClose(false);
   }
   if (dialog_) {
-    dialog_->setValue(static_cast<int>(position * 100));
+    const Pumping pumping;
+    dialog_->setValue(static_cast<int>(position * 100));  // a modal dialog's setValue pumps too
     QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
   }
 }
 
 Standard_Boolean GuiProgress::UserBreak() {
   if (dialog_) {
+    const Pumping pumping;
     QCoreApplication::processEvents();  // the dialog is modal: only "中止" reacts
     cancelled_ = cancelled_ || dialog_->wasCanceled();
   }

@@ -1646,6 +1646,11 @@ void MainWindow::setAutosaveMinutes(int minutes) {
 
 bool MainWindow::autosaveNow() {
   if (recoveryFile_.isEmpty()) return false;
+  if (GuiProgress::busy()) {
+    // In the middle of a long operation: save once it is over (P0-04).
+    QTimer::singleShot(2000, this, [this] { autosaveNow(); });
+    return false;
+  }
   const doc::Document& document = modeler_.document();
   if (modeler_.history().isClean()) {  // nothing that is not in a file
     clearRecovery();

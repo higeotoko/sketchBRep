@@ -43,7 +43,11 @@
 #include <QScreen>
 #include <QtTest/QtTest>
 
+#include <BRepGProp.hxx>
+#include <GProp_GProps.hxx>
+
 #include "AiBridge.h"
+#include "ProgressDialog.h"
 #include "MainWindow.h"
 #include "MaterialEditor.h"
 #include "MaterialsPanel.h"
@@ -152,6 +156,7 @@ class GuiPhase1 : public QObject {
   void moveSelectedFaceStretchesSolid();
   void eraserDeletesClickedObject();
   void aiBridgeOverLocalSocket();
+  void aiWaitsForLongOperation();
   void arcToolSemicircleAndBulgeEdit();
   void scenesSaveRestoreAndPersist();
   void dimensionAndTextTools();
@@ -175,6 +180,7 @@ class GuiPhase1 : public QObject {
   void skyAndGroundFollowTheHorizon();
   void selectionDotsKeepTheMaterialColour();
   void eraserDragErasesCrossedLines();
+  void eraserDragFollowsWhatTheLineBecame();
   void materialEditorColourTextureOpacityDuplicate();
   void brandingResourcesLoad();
   void paintNeedsAMaterialAndPresetsAddOnClick();
@@ -1316,6 +1322,44 @@ void GuiPhase1::eraserDeletesClickedObject() {
   QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
   QCOMPARE(faces(), 4);
   QCOMPARE(m.document().find(wall)->kind(), doc::ObjectKind::Shell);
+}
+
+// Review 2026-10-23 P0-04: while a long operation hands events out (its
+// progress dialog), AI requests wait in the socket and autosave waits, so
+// nothing writes the model in the middle of it.
+void GuiPhase1::aiWaitsForLongOperation() {
+  Fixture f;
+  QVERIFY(f.setUp(1000, 0));
+  doc::Modeler& m = f.window.modeler();
+  f.window.setAiAccess(true);
+  QLocalSocket socket;
+  socket.connectToServer(f.window.aiBridge()->serverName());
+  QTRY_VERIFY(socket.state() == QLocalSocket::ConnectedState);
+  const std::size_t before = m.listObjects().size();
+  {
+    const GuiProgress::Pumping operation;  // as inside a long Boolean
+    socket.write(R"({"command": "create_box", "args": {"origin": [0, 0, 0], "width": 100, "depth": 100, "height": 100}})"
+                 "\n");
+    socket.flush();
+    QTest::qWait(400);
+    QVERIFY(!socket.canReadLine());  // waiting, not run
+    QCOMPARE(m.listObjects().size(), before);
+    // A direct write is refused rather than run inside the operation.
+    const auto direct = QJsonDocument::fromJson(QByteArray::fromStdString(f.window.aiBridge()->execute(
+        R"({"command": "create_box", "args": {"origin": [0, 0, 0], "width": 100, "depth": 100, "height": 100}})")));
+    QVERIFY(!direct.object().value("ok").toBool());
+    QVERIFY(direct.object().value("error").toString().contains("busy"));
+    // Reads still answer.
+    const auto read = QJsonDocument::fromJson(
+        QByteArray::fromStdString(f.window.aiBridge()->execute(R"({"command": "list_objects"})")));
+    QVERIFY(read.object().value("ok").toBool());
+    QCOMPARE(m.listObjects().size(), before);
+  }
+  // Over: the waiting request runs.
+  QTRY_VERIFY_WITH_TIMEOUT(socket.canReadLine(), 3000);
+  QVERIFY(QJsonDocument::fromJson(socket.readLine()).object().value("ok").toBool());
+  QCOMPARE(m.listObjects().size(), before + 1);
+  f.window.setAiAccess(false);
 }
 
 void GuiPhase1::aiBridgeOverLocalSocket() {
@@ -2821,6 +2865,45 @@ void GuiPhase1::eraserDragErasesCrossedLines() {
   QCOMPARE(m.history().undoCount(), steps + 1);
   QVERIFY(m.undo());
   QCOMPARE(m.document().objects().size(), std::size_t(4));
+}
+
+// Review 2026-10-23 P0-01: one stroke across two legs of the same polyline.
+// Erasing the first leg rebuilds the object (new ids); the second is found
+// in what the first erase made of it, and nothing outside it is touched: a
+// separate line elsewhere through the second leg's point stays.
+void GuiPhase1::eraserDragFollowsWhatTheLineBecame() {
+  Fixture f;
+  QVERIFY(f.setUp(1500, 1500));
+  doc::Modeler& m = f.window.modeler();
+  auto u = m.createPolyline({gp_Pnt(500, 1000, 0), gp_Pnt(2500, 1000, 0), gp_Pnt(2500, 2000, 0), gp_Pnt(500, 2000, 0)});
+  QVERIFY(u.ok());
+  // A separate line crossing the stroke's path far from it (not crossed).
+  auto other = m.createPolyline({gp_Pnt(500, 3500, 0), gp_Pnt(2500, 3500, 0)});
+  QVERIFY(other.ok());
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::Eraser);
+  const std::size_t steps = m.history().undoCount();
+  const QPoint from = f.vp->toWidget(gp_Pnt(1500, 700, 0)), to = f.vp->toWidget(gp_Pnt(1500, 2300, 0));
+  move(f.vp, from);
+  send(f.vp, QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
+  for (int k = 1; k <= 10; ++k) {
+    send(f.vp, QEvent::MouseMove, from + (to - from) * k / 10, Qt::NoButton, Qt::LeftButton);
+  }
+  send(f.vp, QEvent::MouseButtonRelease, to, Qt::LeftButton, Qt::NoButton);
+  QTest::qWait(20);
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QVERIFY2(f.window.statusText().contains(QStringLiteral("2 本")), qPrintable(f.window.statusText()));
+  QCOMPARE(m.history().undoCount(), steps + 1);
+  // Left: the right leg of the U, and the other line untouched.
+  QVERIFY(m.document().find(*other));
+  double length = 0;
+  for (const doc::Object& o : m.document().objects()) {
+    if (o.id == *other) continue;
+    GProp_GProps props;
+    BRepGProp::LinearProperties(m.document().worldShape(o), props);
+    length += props.Mass();
+  }
+  QVERIFY2(std::abs(length - 1000.0) < 1e-3, qPrintable(QString::number(length)));
 }
 
 // The material editor (SketchUp's 編集 tab): the colour is adjusted after

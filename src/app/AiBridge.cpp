@@ -2,9 +2,12 @@
 
 #include <QLocalServer>
 #include <QLocalSocket>
+#include <QPointer>
+#include <QTimer>
 
 #include <nlohmann/json.hpp>
 
+#include "ProgressDialog.h"
 #include "sbr/api/McpServer.h"
 
 namespace sbr::app {
@@ -57,6 +60,20 @@ void AiBridge::onConnection() {
 }
 
 void AiBridge::onReadyRead(QLocalSocket* socket) {
+  if (GuiProgress::busy()) {
+    // A long operation is running and handing events out: requests wait
+    // in the socket, in order, until it is over (P0-04).
+    if (!retryPending_.contains(socket)) {
+      retryPending_.insert(socket);
+      QPointer<QLocalSocket> guard(socket);
+      QTimer::singleShot(kBusyRetryMs, this, [this, guard] {
+        if (!guard) return;
+        retryPending_.remove(guard.data());
+        onReadyRead(guard.data());
+      });
+    }
+    return;
+  }
   while (socket->canReadLine()) {
     const QByteArray line = socket->readLine().trimmed();
     if (line.isEmpty()) continue;
@@ -72,6 +89,14 @@ std::string AiBridge::execute(const std::string& requestJson) {
   using Effect = api::CommandApi::Effect;
   const Effect effect = api_.effectOf(requestJson);
   const bool interrupts = effect == Effect::ModelWrite || effect == Effect::ExternalIo;
+  if (interrupts && GuiProgress::busy()) {
+    // Never inside another operation (the socket path waits instead).
+    const std::string busy = nlohmann::json{
+        {"ok", false},
+        {"error", "The model is busy with a long operation; send the request again when it is over"}}.dump();
+    emit commandExecuted(QString(), false, QStringLiteral("busy"));
+    return busy;
+  }
   if (interrupts && before_) before_();
   const std::string response = api_.execute(requestJson);
   if (interrupts && after_) after_();
