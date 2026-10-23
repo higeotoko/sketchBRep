@@ -145,6 +145,9 @@ class Document {
   Color materialColor(const std::string& id, const Color& fallback) const;
   // Colour of the object where no face says otherwise.
   Color displayColor(const Object& object) const;
+  // Opacity of a material id (1 for "" or unknown) / of the object's look.
+  double materialOpacity(const std::string& id) const;
+  double displayOpacity(const Object& object) const;
 
   // --- component definitions ----------------------------------------------
   const std::vector<ComponentDefinition>& definitions() const { return definitions_; }

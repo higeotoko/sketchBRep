@@ -12,7 +12,9 @@
 #include <gp_Lin.hxx>
 
 #include <QApplication>
+#include <QColorDialog>
 #include <QComboBox>
+#include <QSlider>
 #include <QMenu>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
@@ -42,6 +44,7 @@
 
 #include "AiBridge.h"
 #include "MainWindow.h"
+#include "MaterialEditor.h"
 #include "MaterialsPanel.h"
 #include "PropertiesPanel.h"
 #include "sbr/geom/FaceRef.h"
@@ -171,6 +174,7 @@ class GuiPhase1 : public QObject {
   void skyAndGroundFollowTheHorizon();
   void selectionDotsKeepTheMaterialColour();
   void eraserDragErasesCrossedLines();
+  void materialEditorColourTextureOpacityDuplicate();
   void paintNeedsAMaterialAndPresetsAddOnClick();
   void followMeAroundTopFace();
   void wallToolAndArchitectureMenus();
@@ -2815,6 +2819,66 @@ void GuiPhase1::eraserDragErasesCrossedLines() {
   QCOMPARE(m.history().undoCount(), steps + 1);
   QVERIFY(m.undo());
   QCOMPARE(m.document().objects().size(), std::size_t(4));
+}
+
+// The material editor (SketchUp's 編集 tab): the colour is adjusted after
+// painting (name and id stay, a drag is one undo step), a picture tiles the
+// faces at its real size, opacity shows, and a copy edits separately.
+void GuiPhase1::materialEditorColourTextureOpacityDuplicate() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(-1000, -1000, 2000, 2000, 2000);
+  auto brick = m.createMaterial("レンガ", {0.63, 0.32, 0.22});
+  QVERIFY(brick.ok());
+  QVERIFY(m.assignMaterial({box}, *brick).ok());
+  f.window.chooseMaterial(*brick);
+  auto* panel = f.window.findChild<MaterialsPanel*>();
+  QVERIFY(panel);
+  panel->openEditor();
+  MaterialEditor* editor = panel->editor();
+  QCOMPARE(editor->materialId(), *brick);
+
+  // Colour dragged in the picker: name and id stay, one undo step.
+  const std::size_t steps = m.history().undoCount();
+  auto* picker = editor->findChild<QColorDialog*>(QStringLiteral("materialColor"));
+  QVERIFY(picker);
+  for (int r : {120, 140, 160}) picker->setCurrentColor(QColor(r, 60, 40));
+  QCOMPARE(m.history().undoCount(), steps + 1);
+  QCOMPARE(m.document().findMaterial(*brick)->name, std::string("レンガ"));
+  QVERIFY(std::abs(m.document().findMaterial(*brick)->color.r - 160 / 255.0) < 1e-3);
+
+  // A picture: a 2 x 2 checker of red and white, 500 mm per tile.
+  QImage checker(2, 2, QImage::Format_RGB32);
+  checker.setPixel(0, 0, qRgb(220, 30, 30));
+  checker.setPixel(1, 1, qRgb(220, 30, 30));
+  checker.setPixel(1, 0, qRgb(255, 255, 255));
+  checker.setPixel(0, 1, qRgb(255, 255, 255));
+  const QString png = QDir::temp().filePath(QStringLiteral("sbr_checker.png"));
+  QVERIFY(checker.save(png));
+  QVERIFY(f.window.setMaterialTexture(*brick, png));
+  const doc::Material* withPicture = m.document().findMaterial(*brick);
+  QVERIFY(withPicture->texture);
+  QCOMPARE(withPicture->texture->width, 1000.0);
+  QCOMPARE(withPicture->texture->height, 1000.0);  // square picture: square tile
+  f.vp->syncNow();
+  QVERIFY(f.vp->showsTexture(box));
+  if (const QString dir = qEnvironmentVariable("SBR_SHOT_DIR"); !dir.isEmpty()) {
+    f.vp->dumpImage(dir + QStringLiteral("/texture.png"));
+  }
+
+  // Opacity from the slider.
+  auto sliders = editor->findChildren<QSlider*>();
+  QVERIFY(!sliders.isEmpty());
+  sliders.front()->setValue(40);  // the first slider is opacity
+  QVERIFY(std::abs(m.document().findMaterial(*brick)->opacity - 0.4) < 1e-9);
+
+  // Duplicate: a separate copy to change.
+  const std::size_t count = m.document().materials().size();
+  QVERIFY(QMetaObject::invokeMethod(editor, "duplicateRequested", Q_ARG(std::string, *brick)));
+  QCOMPARE(m.document().materials().size(), count + 1);
+  QVERIFY(editor->materialId() != *brick);
+  QCOMPARE(m.document().findMaterial(editor->materialId())->name, std::string("レンガ 2"));
 }
 
 QTEST_MAIN(GuiPhase1)

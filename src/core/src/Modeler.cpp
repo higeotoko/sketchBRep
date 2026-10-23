@@ -1902,11 +1902,82 @@ Status Modeler::paint(const std::vector<ObjectId>& ids, const Color& color) {
 
 Result<std::string> Modeler::createMaterial(const std::string& name, const Color& color) {
   if (name.empty()) return Result<std::string>::failure("Name must not be empty");
-  Material m{"mat-" + generateObjectId(), name, color};
+  Material m;
+  m.id = "mat-" + generateObjectId();
+  m.name = name;
+  m.color = color;
   ChangeSet changes(document_);
   changes.putMaterial(m);
   history_.execute(changes.build("New Material"));
   return m.id;
+}
+
+namespace {
+
+Status checkMaterial(const Document& document, const Material& m) {
+  if (m.name.empty()) return Status::failure("Name must not be empty");
+  auto unit = [](double v) { return std::isfinite(v) && v >= 0.0 && v <= 1.0; };
+  if (!unit(m.color.r) || !unit(m.color.g) || !unit(m.color.b)) return Status::failure("Colour components go from 0 to 1");
+  if (!unit(m.opacity)) return Status::failure("Opacity goes from 0 to 1");
+  if (!unit(m.metallic) || !unit(m.roughness) || !unit(m.reflectance)) {
+    return Status::failure("Metallic, roughness and reflectance go from 0 to 1");
+  }
+  if (m.texture) {
+    if (!document.findImage(m.texture->image)) return Status::failure("The texture picture is not in the document");
+    if (!(m.texture->width > tolerance::kMinDimension) || !(m.texture->height > tolerance::kMinDimension)) {
+      return Status::failure("The texture size must be positive");
+    }
+  }
+  return Status::success();
+}
+
+}  // namespace
+
+Status Modeler::editMaterial(const Material& changed, bool continuing) {
+  const Material* current = document_.findMaterial(changed.id);
+  if (!current) return Status::failure("Unknown material " + changed.id);
+  if (const Status ok = checkMaterial(document_, changed); !ok) return ok;
+  if (changed == *current) return Status::success();
+  // Dragging a colour slider is one undo step: further edits of the same
+  // material right after merge into it.
+  const Command* last = history_.lastCommand();
+  const bool amend = continuing && last && last->name == "Edit Material" && last->deltas.empty() &&
+                     last->materialDeltas.size() == 1 && last->materialDeltas.front().id == changed.id;
+  ChangeSet changes(document_);
+  changes.putMaterial(changed);
+  if (amend) history_.beginAmend();
+  history_.execute(changes.build("Edit Material"));
+  if (amend) history_.endAmend();
+  return Status::success();
+}
+
+Result<std::string> Modeler::duplicateMaterial(const std::string& id, const std::string& name) {
+  using R = Result<std::string>;
+  const Material* current = document_.findMaterial(id);
+  if (!current) return R::failure("Unknown material " + id);
+  Material copy = *current;
+  copy.id = "mat-" + generateObjectId();
+  copy.name = name;
+  if (copy.name.empty()) {
+    // "Brick" -> "Brick 2", the first free number.
+    for (int n = 2;; ++n) {
+      const std::string candidate = current->name + " " + std::to_string(n);
+      const auto& all = document_.materials();
+      if (std::none_of(all.begin(), all.end(), [&](const Material& m) { return m.name == candidate; })) {
+        copy.name = candidate;
+        break;
+      }
+    }
+  }
+  if (const Status ok = checkMaterial(document_, copy); !ok) return R::failure(ok.message());
+  ChangeSet changes(document_);
+  changes.putMaterial(copy);
+  history_.execute(changes.build("Duplicate Material"));
+  return copy.id;
+}
+
+std::string Modeler::addTextureImage(const std::string& bytes, const std::string& name) {
+  return document_.addImage(bytes, name);
 }
 
 Status Modeler::updateMaterial(const std::string& id, std::optional<std::string> name, std::optional<Color> color) {

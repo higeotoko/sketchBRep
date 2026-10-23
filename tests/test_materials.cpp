@@ -318,3 +318,68 @@ TEST(Underlay, PlaceCalibrateLockSaveAndReload) {
   EXPECT_TRUE(d.images().empty());
   EXPECT_FALSE(warnings.empty());
 }
+
+// Stage 2 (docs/11_materials.md): editing keeps the id and name, slider
+// drags are one undo step, copies are separate, textures / opacity /
+// rendering values are saved.
+TEST(Materials, EditDuplicateTextureAndSave) {
+  Modeler m;
+  auto plaster = m.createMaterial("Plaster", {0.9, 0.88, 0.85});
+  ASSERT_TRUE(plaster.ok());
+  const ObjectId b = box(m, 0, 0, 1000, 1000, 1000);
+  ASSERT_TRUE(m.assignMaterial({b}, *plaster).ok());
+
+  // A colour dragged in three steps: one undo step, same id and name.
+  const std::size_t steps = m.history().undoCount();
+  Material edit = *m.document().findMaterial(*plaster);
+  for (double r : {0.8, 0.7, 0.6}) {
+    edit.color.r = r;
+    ASSERT_TRUE(m.editMaterial(edit, true).ok());
+  }
+  EXPECT_EQ(m.history().undoCount(), steps + 1);
+  EXPECT_EQ(m.document().findMaterial(*plaster)->name, "Plaster");
+  EXPECT_DOUBLE_EQ(m.document().displayColor(*m.document().find(b)).r, 0.6);
+  ASSERT_TRUE(m.undo());
+  EXPECT_DOUBLE_EQ(m.document().findMaterial(*plaster)->color.r, 0.9);
+
+  // Opacity, a texture at real size, rendering values.
+  const std::string png = "\\x89PNG fake bytes for the content hash";
+  const std::string hash = m.addTextureImage(png, "plaster.png");
+  edit = *m.document().findMaterial(*plaster);
+  edit.opacity = 0.4;
+  edit.texture = MaterialTexture{hash, 600, 300, true};
+  edit.metallic = 0.1;
+  edit.roughness = 0.8;
+  edit.reflectance = 0.3;
+  ASSERT_TRUE(m.editMaterial(edit).ok());
+  EXPECT_DOUBLE_EQ(m.document().displayOpacity(*m.document().find(b)), 0.4);
+  Material bad = edit;
+  bad.texture->image = "no-such-picture";
+  EXPECT_FALSE(m.editMaterial(bad).ok());
+  bad = edit;
+  bad.opacity = 1.5;
+  EXPECT_FALSE(m.editMaterial(bad).ok());
+
+  // A copy to change separately.
+  auto copy = m.duplicateMaterial(*plaster);
+  ASSERT_TRUE(copy.ok());
+  EXPECT_NE(*copy, *plaster);
+  EXPECT_EQ(m.document().findMaterial(*copy)->name, "Plaster 2");
+  EXPECT_EQ(m.document().findMaterial(*copy)->texture, edit.texture);
+  Material other = *m.document().findMaterial(*copy);
+  other.color = {0.2, 0.2, 0.2};
+  ASSERT_TRUE(m.editMaterial(other).ok());
+  EXPECT_DOUBLE_EQ(m.document().findMaterial(*plaster)->color.g, 0.88);
+
+  const std::string path = test::tempPath("materials_stage2.sbr");
+  ASSERT_TRUE(m.save(path).ok());
+  Modeler loaded;
+  std::vector<std::string> warnings;
+  ASSERT_TRUE(loaded.load(path, &warnings).ok());
+  EXPECT_TRUE(warnings.empty()) << warnings.front();
+  const Material* back = loaded.document().findMaterial(*plaster);
+  ASSERT_TRUE(back);
+  EXPECT_EQ(*back, *m.document().findMaterial(*plaster));
+  ASSERT_TRUE(loaded.document().findImage(hash));
+  EXPECT_EQ(loaded.document().findImage(hash)->bytes, png);
+}

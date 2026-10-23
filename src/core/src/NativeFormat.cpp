@@ -717,6 +717,9 @@ std::string serializeDocument(const Document& document) {
   for (const ComponentDefinition& d : document.definitions()) {
     for (const Object& o : d.objects) collect(o);
   }
+  for (const Material& m : document.materials()) {
+    if (m.texture) used.insert(m.texture->image);
+  }
   json images = json::object();
   for (const std::string& hash : used) {
     if (const Document::Image* image = document.findImage(hash)) {
@@ -725,7 +728,16 @@ std::string serializeDocument(const Document& document) {
   }
   json materials = json::array();
   for (const Material& m : document.materials()) {
-    materials.push_back({{"id", m.id}, {"name", m.name}, {"color", colorToJson(m.color)}});
+    json j = {{"id", m.id}, {"name", m.name}, {"color", colorToJson(m.color)}};
+    if (m.opacity != 1.0) j["opacity"] = m.opacity;
+    if (m.texture) {
+      j["texture"] = {{"image", m.texture->image},
+                      {"width", m.texture->width},
+                      {"height", m.texture->height},
+                      {"colorize", m.texture->colorize}};
+    }
+    j["pbr"] = {{"metallic", m.metallic}, {"roughness", m.roughness}, {"reflectance", m.reflectance}};
+    materials.push_back(j);
   }
   const DocumentSettings& s = document.settings();
   json scenes = json::array();
@@ -819,7 +831,23 @@ Status deserializeDocument(const std::string& text, Document& document,
     std::vector<Material> library;
     if (root.contains("materials")) {
       for (const json& m : root.at("materials")) {
-        library.push_back({m.at("id").get<std::string>(), m.value("name", std::string()), colorFrom(m.at("color"))});
+        Material mat;
+        mat.id = m.at("id").get<std::string>();
+        mat.name = m.value("name", std::string());
+        mat.color = colorFrom(m.at("color"));
+        mat.opacity = m.value("opacity", 1.0);
+        if (m.contains("texture")) {
+          const json& t = m.at("texture");
+          mat.texture = MaterialTexture{t.at("image").get<std::string>(), t.value("width", 1000.0),
+                                        t.value("height", 1000.0), t.value("colorize", false)};
+        }
+        if (m.contains("pbr")) {
+          const json& p = m.at("pbr");
+          mat.metallic = p.value("metallic", 0.0);
+          mat.roughness = p.value("roughness", 0.5);
+          mat.reflectance = p.value("reflectance", 0.5);
+        }
+        library.push_back(mat);
       }
     } else {
       std::set<std::string> known;
@@ -854,6 +882,15 @@ Status deserializeDocument(const std::string& text, Document& document,
       }
     }
 
+    // A texture whose picture did not come through: the material keeps its colour.
+    for (Material& m : library) {
+      if (!m.texture) continue;
+      const bool present = std::any_of(images.begin(), images.end(), [&](const auto& i) { return i.first == m.texture->image; });
+      if (!present) {
+        if (warnings) warnings->push_back("material '" + m.name + "': texture picture missing; colour only");
+        m.texture.reset();
+      }
+    }
     document.clear();
     document.settings() = loaded.settings();
     for (const Material& m : library) document.putMaterial(m);

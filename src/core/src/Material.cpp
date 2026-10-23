@@ -26,7 +26,13 @@ std::string hex(const Color& c) {
 
 std::string colorMaterialId(const Color& color) { return "rgb-" + hex(color); }
 
-Material colorMaterial(const Color& color) { return Material{colorMaterialId(color), "#" + hex(color), color}; }
+Material colorMaterial(const Color& color) {
+  Material m;
+  m.id = colorMaterialId(color);
+  m.name = "#" + hex(color);
+  m.color = color;
+  return m;
+}
 
 std::optional<FaceMaterial> FaceMaterial::of(const TopoDS_Face& localFace, const std::string& material) {
   FaceMaterial out;

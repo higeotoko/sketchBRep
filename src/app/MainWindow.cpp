@@ -54,6 +54,7 @@
 #include "Messages.h"
 #include "ProgressDialog.h"
 #include "Cursors.h"
+#include "MaterialEditor.h"
 #include "MaterialsPanel.h"
 #include "PropertiesPanel.h"
 #include "Viewport.h"
@@ -184,7 +185,22 @@ void MainWindow::buildUi() {
   connect(materialsPanel_, &MaterialsPanel::materialChosen, this, [this](const std::string& id) { chooseMaterial(id); });
   connect(materialsPanel_, &MaterialsPanel::presetRequested, this, [this](int i) { addPresetMaterial(i); });
   connect(materialsPanel_, &MaterialsPanel::createRequested, this, [this] { editMaterialDialog({}); });
-  connect(materialsPanel_, &MaterialsPanel::editRequested, this, [this](const std::string& id) { editMaterialDialog(id); });
+  connect(materialsPanel_->editor(), &MaterialEditor::edited, this, [this](const doc::Material& m, bool continuing) {
+    report(modeler_.editMaterial(m, continuing));
+  });
+  connect(materialsPanel_->editor(), &MaterialEditor::duplicateRequested, this, [this](const std::string& id) {
+    auto copy = modeler_.duplicateMaterial(id);
+    if (!copy) {
+      reportError(QString::fromStdString(copy.error()));
+      return;
+    }
+    chooseMaterial(*copy);
+    materialsPanel_->openEditor();
+    setStatus(tr("「%1」として複製しました。名前を変えて編集できます")
+                  .arg(QString::fromStdString(modeler_.document().findMaterial(*copy)->name)));
+  });
+  connect(materialsPanel_->editor(), &MaterialEditor::textureFileChosen, this,
+          [this](const std::string& id, const QString& path) { setMaterialTexture(id, path); });
   connect(materialsPanel_, &MaterialsPanel::deleteRequested, this, [this](const std::string& id) {
     const doc::Material* m = modeler_.document().findMaterial(id);
     if (!m) return;
@@ -343,7 +359,15 @@ void MainWindow::buildUi() {
     QTimer::singleShot(0, this, [this, id, mid] { report(modeler_.assignMaterial({id}, mid)); });
   });
   connect(panel_, &PropertiesPanel::materialEditRequested, this, [this](const std::string& mid) {
-    QTimer::singleShot(0, this, [this, mid] { editMaterialDialog(mid); });
+    QTimer::singleShot(0, this, [this, mid] {
+      if (mid.empty() || !modeler_.document().findMaterial(mid)) {
+        editMaterialDialog({});
+        return;
+      }
+      chooseMaterial(mid);
+      showMaterials();
+      materialsPanel_->openEditor();
+    });
   });
   connect(panel_, &PropertiesPanel::placementParameterEdited, this,
           [this](const doc::ObjectId& instanceId, const doc::ObjectId& objectId, const std::string& key,
@@ -1512,6 +1536,29 @@ void MainWindow::editMaterialDialog(const std::string& id) {
     return;
   }
   chooseMaterial(created.value());
+}
+
+bool MainWindow::setMaterialTexture(const std::string& id, const QString& path) {
+  QFile file(path);
+  if (!file.open(QIODevice::ReadOnly)) {
+    reportError(tr("画像を読み込めません: %1").arg(path));
+    return false;
+  }
+  const QByteArray bytes = file.readAll();
+  const QImage picture = QImage::fromData(bytes);
+  if (picture.isNull()) {
+    reportError(tr("画像として読めません: %1").arg(QFileInfo(path).fileName()));
+    return false;
+  }
+  const doc::Material* current = modeler_.document().findMaterial(id);
+  if (!current) return false;
+  doc::Material changed = *current;
+  // Keep a size already set; a new texture starts 1 m wide, in proportion.
+  const double width = current->texture ? current->texture->width : 1000.0;
+  changed.texture = doc::MaterialTexture{
+      modeler_.addTextureImage(bytes.toStdString(), QFileInfo(path).fileName().toStdString()), width,
+      width * picture.height() / std::max(1, picture.width()), current->texture && current->texture->colorize};
+  return report(modeler_.editMaterial(changed));
 }
 
 bool MainWindow::applyMaterialToSelection(const std::string& id) {

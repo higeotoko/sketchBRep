@@ -143,3 +143,4 @@ sbr_cli --open out.sbr --mcp                        # ヘッドレス MCP サー
 | `gui_phase1: aiReadsKeepDrawingInProgress` / `proposalShowsRotationAndHide` | 矩形の 1 点目を置いたまま AI が読み取り・preview をしても続きを描ける（書き込みは中断する）、提案が回転と非表示を拾い、適用結果と一致 |
 | `gui_phase1: aiBridgeOverLocalSocket` | 既定 OFF で接続拒否 → ON にして実ソケットで作成・選択・選択読み出し・ビュー画像、保存は拒否、Ctrl+Z 相当で AI の操作を戻せる、OFF で切断 |
 | Windows CI | zip に `sbr_cli.exe` / `sbr_mcp.exe` を同梱し、zip のフォルダから MCP セッションを実行 |
+- マテリアル第 2 段: `update_material` に `opacity` / `texture` / `metallic` / `roughness` / `reflectance`、`duplicate_material`、`set_material_texture {material, file, width, height, colorize}`（docs/11_materials.md）

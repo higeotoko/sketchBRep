@@ -134,6 +134,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   std::optional<std::string> addPresetMaterial(int index);
   // The selected faces (or else the selected objects) take `id`.
   bool applyMaterialToSelection(const std::string& id);
+  // Gives the material the picture in `path` as its texture (embedded).
+  bool setMaterialTexture(const std::string& id, const QString& path);
   // Architectural helpers behind the Tools menu (also used by tests).
   WallTool& wallTool() { return *wallTool_; }
   SlabTool& slabTool() { return *slabTool_; }

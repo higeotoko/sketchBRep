@@ -23,15 +23,35 @@ struct Color {
   bool operator!=(const Color& o) const { return !(*this == o); }
 };
 
+// An image on a material, at its real size: one tile covers width x height
+// (mm) of a face, repeated. The picture lives in Document::images.
+struct MaterialTexture {
+  std::string image;     // sha-256 of the picture (Document::images)
+  double width = 1000.0;  // mm per tile
+  double height = 1000.0;
+  bool colorize = false;  // tinted by the material colour
+  bool operator==(const MaterialTexture& o) const {
+    return image == o.image && width == o.width && height == o.height && colorize == o.colorize;
+  }
+  bool operator!=(const MaterialTexture& o) const { return !(*this == o); }
+};
+
 struct Material {
   std::string id;    // stable: never reused or renamed; objects refer to it
   std::string name;  // what people see (may change)
   Color color;
-  // Next stages (docs/11_materials.md): an image texture with its real
-  // size, rotation and offset, kept in the material; per-face placement
-  // goes on FaceMaterial.
+  double opacity = 1.0;  // 1 = opaque, 0 = invisible
+  std::optional<MaterialTexture> texture;
+  // Physically based values for rendering (docs/11_materials.md): kept and
+  // edited now, used by a renderer later; the modelling view ignores them.
+  double metallic = 0.0;     // 0 dielectric .. 1 metal
+  double roughness = 0.5;    // 0 mirror .. 1 matte
+  double reflectance = 0.5;  // specular strength of dielectrics (0.5 = 4 %)
 
-  bool operator==(const Material& o) const { return id == o.id && name == o.name && color == o.color; }
+  bool operator==(const Material& o) const {
+    return id == o.id && name == o.name && color == o.color && opacity == o.opacity && texture == o.texture &&
+           metallic == o.metallic && roughness == o.roughness && reflectance == o.reflectance;
+  }
   bool operator!=(const Material& o) const { return !(*this == o); }
 };
 

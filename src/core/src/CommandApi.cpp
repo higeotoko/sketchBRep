@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <iterator>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <map>
 #include <optional>
@@ -144,7 +147,20 @@ std::string materialRef(const doc::Document& d, const json& args, const char* ke
 json materialJson(const doc::Document& d, const std::string& id) {
   const doc::Material* m = d.findMaterial(id);
   if (!m) return nullptr;
-  return json{{"id", m->id}, {"name", m->name}, {"color", {m->color.r, m->color.g, m->color.b}}};
+  json j = {{"id", m->id},
+            {"name", m->name},
+            {"color", {m->color.r, m->color.g, m->color.b}},
+            {"opacity", m->opacity},
+            {"metallic", m->metallic},
+            {"roughness", m->roughness},
+            {"reflectance", m->reflectance}};
+  if (m->texture) {
+    j["texture"] = {{"image", m->texture->image},
+                    {"width", m->texture->width},
+                    {"height", m->texture->height},
+                    {"colorize", m->texture->colorize}};
+  }
+  return j;
 }
 json toJson(const gp_XYZ& p) { return json::array({p.X(), p.Y(), p.Z()}); }
 
@@ -1309,14 +1325,64 @@ const std::vector<CommandDef>& commands() {
                "required": ["name", "color"]}),
        [](doc::Modeler& m, const json& a) { return idResult(must(m.createMaterial(text(a, "name"), color(a, "color")))); }},
       {"update_material",
-       "Rename a material and/or change its colour; everything using it changes with it. One undo step.",
+       "Change a material; everything using it changes with it, its id stays. Any of: name, color, opacity "
+       "(0..1), texture {width, height (mm per tile), colorize} for its picture or null to remove it, and the "
+       "rendering values metallic / roughness / reflectance (0..1; kept for rendering, not shown while "
+       "modelling). One undo step. A new picture comes from set_material_texture.",
        SCHEMA({"type": "object", "properties": {"material": {"type": "string"}, "name": {"type": "string"},
-               "color": {}}, "required": ["material"]}),
+               "color": {}, "opacity": {"type": "number"}, "texture": {}, "metallic": {"type": "number"},
+               "roughness": {"type": "number"}, "reflectance": {"type": "number"}}, "required": ["material"]}),
        [](doc::Modeler& m, const json& a) {
          const std::string id = materialRef(m.document(), a, "material");
          if (id.empty()) throw ApiError("'material' must name a material");
-         must(m.updateMaterial(id, a.contains("name") ? std::optional<std::string>(text(a, "name")) : std::nullopt,
-                               a.contains("color") ? std::optional<doc::Color>(color(a, "color")) : std::nullopt));
+         doc::Material changed = *m.document().findMaterial(id);
+         if (a.contains("name")) changed.name = text(a, "name");
+         if (a.contains("color")) changed.color = color(a, "color");
+         if (a.contains("opacity")) changed.opacity = number(a, "opacity");
+         if (a.contains("metallic")) changed.metallic = number(a, "metallic");
+         if (a.contains("roughness")) changed.roughness = number(a, "roughness");
+         if (a.contains("reflectance")) changed.reflectance = number(a, "reflectance");
+         if (a.contains("texture")) {
+           const json& t = a.at("texture");
+           if (t.is_null()) {
+             changed.texture.reset();
+           } else {
+             if (!changed.texture) throw ApiError("the material has no texture picture yet (set_material_texture)");
+             changed.texture->width = t.value("width", changed.texture->width);
+             changed.texture->height = t.value("height", changed.texture->height);
+             changed.texture->colorize = t.value("colorize", changed.texture->colorize);
+           }
+         }
+         must(m.editMaterial(changed));
+         return materialJson(m.document(), id);
+       }},
+      {"duplicate_material",
+       "Copy a material under a new id (and name, default \"<name> 2\") to change it separately.",
+       SCHEMA({"type": "object", "properties": {"material": {"type": "string"}, "name": {"type": "string"}},
+               "required": ["material"]}),
+       [](doc::Modeler& m, const json& a) {
+         const std::string id = materialRef(m.document(), a, "material");
+         if (id.empty()) throw ApiError("'material' must name a material");
+         return materialJson(m.document(), must(m.duplicateMaterial(id, textOr(a, "name", {}))));
+       }},
+      {"set_material_texture",
+       "Give a material a picture (PNG / JPEG file, embedded in the document) shown at its real size: one tile "
+       "covers width x height mm (default 1000 x 1000). colorize tints it with the material colour.",
+       SCHEMA({"type": "object", "properties": {"material": {"type": "string"}, "file": {"type": "string"},
+               "width": {"type": "number"}, "height": {"type": "number"}, "colorize": {"type": "boolean"}},
+               "required": ["material", "file"]}),
+       [](doc::Modeler& m, const json& a) {
+         const std::string id = materialRef(m.document(), a, "material");
+         if (id.empty()) throw ApiError("'material' must name a material");
+         const std::string path = text(a, "file");
+         std::ifstream in(path, std::ios::binary);
+         if (!in) throw ApiError("cannot read " + path);
+         const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+         const std::string name = std::filesystem::path(path).filename().string();
+         doc::Material changed = *m.document().findMaterial(id);
+         changed.texture = doc::MaterialTexture{m.addTextureImage(bytes, name), a.value("width", 1000.0),
+                                                a.value("height", 1000.0), a.value("colorize", false)};
+         must(m.editMaterial(changed));
          return materialJson(m.document(), id);
        }},
       {"delete_material",
@@ -1667,7 +1733,7 @@ const std::vector<CommandDef>& commands() {
 
 bool isFileCommand(const std::string& name) {
   return name == "save" || name == "open" || name == "export_step" || name == "export_3dm" ||
-         name == "import_3dm";
+         name == "import_3dm" || name == "set_material_texture";
 }
 
 CommandApi::Effect builtinEffect(const std::string& name) {

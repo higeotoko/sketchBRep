@@ -4,6 +4,10 @@
 #include <cstring>
 #include <QImage>
 #include <Image_PixMap.hxx>
+#include <TopLoc_Location.hxx>
+#include <gp_Pnt2d.hxx>
+#include <Graphic3d_MaterialAspect.hxx>
+#include <Poly_Triangulation.hxx>
 #include <Graphic3d_ShaderObject.hxx>
 #include <Graphic3d_ShaderProgram.hxx>
 #include <PrsMgr_PresentationManager.hxx>
@@ -139,6 +143,39 @@ Handle(AIS_Shape) makeSelectionDots(const TopoDS_Shape& faces) {
   aspect->SetPolygonOffsets(Aspect_POM_Fill, -1.0f, -2.0f);  // in front of the face it marks
   return dots;
 }
+
+// Faces with a picture material: the picture tiled over them (texel
+// coordinates in tiles), lit like the faces, drawn just in front of them.
+class TexturedFaces : public AIS_InteractiveObject {
+ public:
+  struct Layer {
+    Handle(Graphic3d_Texture2D) texture;
+    Handle(Graphic3d_ArrayOfTriangles) triangles;
+    double opacity = 1.0;
+  };
+  std::vector<Layer> layers;
+  void Compute(const Handle(PrsMgr_PresentationManager)&, const Handle(Prs3d_Presentation)& prs,
+               const Standard_Integer) override {
+    for (const Layer& layer : layers) {
+      Graphic3d_MaterialAspect material(Graphic3d_NameOfMaterial_Plastified);
+      material.SetColor(Quantity_NOC_WHITE);
+      if (layer.opacity < 1.0) material.SetTransparency(static_cast<float>(1.0 - layer.opacity));
+      Handle(Graphic3d_AspectFillArea3d) aspect = new Graphic3d_AspectFillArea3d();
+      aspect->SetInteriorStyle(Aspect_IS_SOLID);
+      aspect->SetInteriorColor(Quantity_NOC_WHITE);
+      aspect->SetFrontMaterial(material);
+      aspect->SetBackMaterial(material);
+      aspect->SetDistinguishOff();
+      aspect->SetTextureMap(layer.texture);
+      aspect->SetTextureMapOn();
+      aspect->SetPolygonOffsets(Aspect_POM_Fill, -0.5f, -1.0f);  // over the plain face
+      Handle(Graphic3d_Group) group = prs->NewGroup();
+      group->SetGroupPrimitivesAspect(aspect);
+      group->AddPrimitiveArray(layer.triangles);
+    }
+  }
+  void ComputeSelection(const Handle(SelectMgr_Selection)&, const Standard_Integer) override {}
+};
 
 // A texture from pixels in memory (pictures, the sky / ground background).
 class PixmapTexture : public Graphic3d_Texture2D {
@@ -602,6 +639,7 @@ Handle(AIS_Shape) Viewport::makeDisplay(const doc::Object& object, Entry& entry)
 
 void Viewport::removeDisplay(Entry& entry) {
   context_->Remove(entry.ais, Standard_False);
+  if (!entry.textureOverlay.IsNull()) context_->Remove(entry.textureOverlay, Standard_False);
   if (!entry.selectionDots.IsNull()) context_->Remove(entry.selectionDots, Standard_False);
   if (!entry.edgeOverlay.IsNull()) context_->Remove(entry.edgeOverlay, Standard_False);
 }
@@ -772,13 +810,9 @@ void Viewport::applyPickMode(const Handle(AIS_Shape)& ais, bool locked) {
   }
 }
 
-std::vector<std::pair<int, std::array<double, 3>>> Viewport::faceColorsOf(const doc::Object& object) {
+std::vector<std::pair<int, std::string>> Viewport::faceMaterialIdsOf(const doc::Object& object) {
   const doc::Document& document = modeler_.document();
-  std::vector<std::pair<int, std::array<double, 3>>> out;
-  auto colorOf = [&](const std::string& material, const doc::Color& fallback) {
-    const doc::Color c = document.materialColor(material, fallback);
-    return std::array<double, 3>{c.r, c.g, c.b};
-  };
+  std::vector<std::pair<int, std::string>> out;
   if (const auto* ref = std::get_if<doc::ComponentInstance>(&object.recipe.base)) {
     const doc::ComponentDefinition* def = document.findDefinition(ref->definitionId);
     if (!def || def->shape.IsNull() || object.shape.IsNull()) return out;
@@ -823,13 +857,142 @@ std::vector<std::pair<int, std::array<double, 3>>> Viewport::faceColorsOf(const 
         }
       }
     }
-    for (const auto& [index, material] : cached.faces) out.emplace_back(index, colorOf(material, object.color));
-    return out;
+    return cached.faces;
   }
-  for (const auto& [index, material] : doc::resolveFaceMaterials(object).faces) {
-    out.emplace_back(index, colorOf(material, object.color));
+  return doc::resolveFaceMaterials(object).faces;
+}
+
+std::vector<std::pair<int, std::array<double, 4>>> Viewport::faceColorsOf(const doc::Object& object) {
+  const doc::Document& document = modeler_.document();
+  std::vector<std::pair<int, std::array<double, 4>>> out;
+  for (const auto& [index, material] : faceMaterialIdsOf(object)) {
+    const doc::Color c = document.materialColor(material, object.color);
+    out.emplace_back(index, std::array<double, 4>{c.r, c.g, c.b, document.materialOpacity(material)});
   }
   return out;
+}
+
+Handle(Graphic3d_Texture2D) Viewport::materialTexture(const doc::Material& material) {
+  // One decoded picture per (picture, tint): shared by every face using it.
+  const std::string key = material.texture->image +
+                          (material.texture->colorize ? "/" + std::to_string(material.color.r) + "," +
+                                                            std::to_string(material.color.g) + "," +
+                                                            std::to_string(material.color.b)
+                                                      : std::string());
+  if (const auto it = textures_.find(key); it != textures_.end()) return it->second;
+  const doc::Document::Image* stored = modeler_.document().findImage(material.texture->image);
+  QImage picture;
+  if (!stored || !picture.loadFromData(reinterpret_cast<const uchar*>(stored->bytes.data()),
+                                       static_cast<int>(stored->bytes.size()))) {
+    return {};
+  }
+  picture = picture.convertToFormat(QImage::Format_RGBA8888);
+  if (material.texture->colorize) {
+    // The picture's light and dark, in the material's colour.
+    for (int y = 0; y < picture.height(); ++y) {
+      uchar* row = picture.scanLine(y);
+      for (int x = 0; x < picture.width(); ++x) {
+        const double v = (0.299 * row[4 * x] + 0.587 * row[4 * x + 1] + 0.114 * row[4 * x + 2]) / 255.0;
+        row[4 * x] = static_cast<uchar>(std::lround(255 * material.color.r * v));
+        row[4 * x + 1] = static_cast<uchar>(std::lround(255 * material.color.g * v));
+        row[4 * x + 2] = static_cast<uchar>(std::lround(255 * material.color.b * v));
+      }
+    }
+  }
+  Handle(Image_PixMap) pixels = new Image_PixMap();
+  if (!pixels->InitTrash(Image_Format_RGBA, static_cast<Standard_Size>(picture.width()),
+                         static_cast<Standard_Size>(picture.height()))) {
+    return {};
+  }
+  pixels->SetTopDown(false);
+  for (int row = 0; row < picture.height(); ++row) {
+    std::memcpy(pixels->ChangeRow(static_cast<Standard_Size>(row)), picture.constScanLine(row),
+                static_cast<std::size_t>(picture.width()) * 4);
+  }
+  Handle(Graphic3d_Texture2D) texture = new PixmapTexture(pixels);
+  texture->GetParams()->SetModulate(Standard_True);  // lit like the faces
+  texture->GetParams()->SetRepeat(Standard_True);    // tiles
+  texture->GetParams()->SetFilter(Graphic3d_TOTF_TRILINEAR);
+  textures_[key] = texture;
+  return texture;
+}
+
+void Viewport::updateTextures(const doc::Object& object, Entry& entry) {
+  // Faces whose material has a picture get it laid over them at its real
+  // size: a tile per width x height mm, on the face's plane (horizontal
+  // rows along the face).
+  const doc::Document& document = modeler_.document();
+  std::map<int, std::string> own;
+  for (const auto& [i, m] : faceMaterialIdsOf(object)) own[i] = m;
+  const std::string base = document.inheritedMaterial(object);
+  std::map<std::string, std::vector<int>> byMaterial;
+  for (int i = 1; i <= entry.displayFaces.Extent(); ++i) {
+    const auto it = own.find(i);
+    const std::string id = it != own.end() ? it->second : base;
+    const doc::Material* m = document.findMaterial(id);
+    if (m && m->texture) byMaterial[id].push_back(i);
+  }
+  // What it shows, to rebuild only on a change.
+  std::string key;
+  for (const auto& [id, faces] : byMaterial) {
+    const doc::Material& m = *document.findMaterial(id);
+    key += id + ":" + m.texture->image + std::to_string(m.texture->width) + "x" + std::to_string(m.texture->height) +
+           (m.texture->colorize ? "c" + std::to_string(m.color.r + 2 * m.color.g + 4 * m.color.b) : "") + "o" +
+           std::to_string(m.opacity) + "[" + std::to_string(faces.size()) + "]";
+  }
+  if (key == entry.textureKey) return;
+  entry.textureKey = key;
+  if (!entry.textureOverlay.IsNull()) context_->Remove(entry.textureOverlay, Standard_False);
+  entry.textureOverlay.Nullify();
+  if (byMaterial.empty()) return;
+  Handle(TexturedFaces) overlay = new TexturedFaces();
+  for (const auto& [id, faces] : byMaterial) {
+    const doc::Material& m = *document.findMaterial(id);
+    const Handle(Graphic3d_Texture2D) texture = materialTexture(m);
+    if (texture.IsNull()) continue;
+    std::vector<gp_Pnt> nodes;
+    std::vector<gp_Dir> normals;
+    std::vector<gp_Pnt2d> uvs;
+    std::vector<std::array<int, 3>> triangles;
+    for (int index : faces) {
+      const TopoDS_Face face = TopoDS::Face(entry.displayFaces(index));
+      TopLoc_Location loc;
+      const Handle(Poly_Triangulation) mesh = BRep_Tool::Triangulation(face, loc);
+      if (mesh.IsNull()) continue;
+      const gp_Trsf t = loc.Transformation();
+      // The face's plane: rows run horizontally on walls, along x on floors.
+      gp_Dir n = gp::DZ();
+      if (const auto pn = geom::planarFaceNormal(face)) n = *pn;
+      const gp_Dir u = std::abs(n.Z()) > 0.9 ? gp::DX() : gp_Dir(gp::DZ().Crossed(n));
+      const gp_Dir v = n.Crossed(u);
+      const int first = static_cast<int>(nodes.size());
+      for (int k = 1; k <= mesh->NbNodes(); ++k) {
+        const gp_Pnt p = mesh->Node(k).Transformed(t);
+        nodes.push_back(p);
+        normals.push_back(n);
+        uvs.emplace_back(gp_Vec(p.XYZ()).Dot(gp_Vec(u)) / m.texture->width,
+                         gp_Vec(p.XYZ()).Dot(gp_Vec(v)) / m.texture->height);
+      }
+      const bool reversed = face.Orientation() == TopAbs_REVERSED;
+      for (int k = 1; k <= mesh->NbTriangles(); ++k) {
+        int a, b, c;
+        mesh->Triangle(k).Get(a, b, c);
+        if (reversed) std::swap(b, c);
+        triangles.push_back({first + a, first + b, first + c});
+      }
+    }
+    if (triangles.empty()) continue;
+    Handle(Graphic3d_ArrayOfTriangles) array = new Graphic3d_ArrayOfTriangles(
+        static_cast<int>(nodes.size()), static_cast<int>(3 * triangles.size()),
+        Graphic3d_ArrayFlags_VertexNormal | Graphic3d_ArrayFlags_VertexTexel);
+    for (std::size_t k = 0; k < nodes.size(); ++k) array->AddVertex(nodes[k], normals[k], uvs[k]);
+    for (const auto& tri : triangles) array->AddEdges(tri[0], tri[1], tri[2]);
+    overlay->layers.push_back({texture, array, m.opacity});
+  }
+  if (overlay->layers.empty()) return;
+  overlay->SetZLayer(entry.ais->ZLayer());
+  entry.textureOverlay = overlay;
+  context_->Display(entry.textureOverlay, 0, -1, Standard_False);
 }
 
 std::optional<std::array<double, 3>> Viewport::shownFaceColor(const doc::ObjectId& id,
@@ -843,7 +1006,7 @@ std::optional<std::array<double, 3>> Viewport::shownFaceColor(const doc::ObjectI
   }
   if (index == 0) return std::nullopt;
   for (const auto& [i, c] : e.faceColors) {
-    if (i == index) return c;
+    if (i == index) return std::array<double, 3>{c[0], c[1], c[2]};
   }
   Quantity_Color base;
   e.ais->Color(base);
@@ -924,6 +1087,7 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
       for (const auto& [index, rgbValue] : faceColors) {
         if (index >= 1 && index <= entry.displayFaces.Extent()) {
           colored->SetCustomColor(entry.displayFaces(index), rgb(rgbValue[0], rgbValue[1], rgbValue[2]));
+          if (rgbValue[3] < 1.0) colored->SetCustomTransparency(entry.displayFaces(index), 1.0 - rgbValue[3]);
         }
       }
     }
@@ -947,12 +1111,15 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
     }
     restyled = true;
   }
+  if (hasFaces) updateTextures(*o, entry);
   if (found->second.locked != o->locked) {
     found->second.locked = o->locked;
     applyPickMode(found->second.ais, o->locked);
   }
   const bool faded = !editContext_.empty() && !document.isAncestor(editContext_, id);
-  const double transparency = faded ? 0.8 : (xRay_ ? 0.5 : 0.0);
+  // A see-through material shows through (glass), whatever else applies.
+  const double own = hasFaces ? 1.0 - document.displayOpacity(*o) : 0.0;
+  const double transparency = std::max(own, faded ? 0.8 : (xRay_ ? 0.5 : 0.0));
   if (std::abs(found->second.ais->Transparency() - transparency) > 1e-6) {
     found->second.ais->SetTransparency(transparency);
     if (!found->second.edgeOverlay.IsNull()) {

@@ -20,6 +20,7 @@
 
 #include <AIS_InteractiveContext.hxx>
 #include <AIS_InteractiveObject.hxx>
+#include <Graphic3d_Texture2D.hxx>
 #include <AIS_Shape.hxx>
 #include <AIS_RubberBand.hxx>
 #include <AIS_TextLabel.hxx>
@@ -81,6 +82,11 @@ class Viewport : public QWidget {
   bool xRay() const { return xRay_; }
   // Shared display copies in use (one per distinct local shape; tests).
   std::size_t sharedDisplayCount() const { return protos_.size(); }
+  // Whether an object's faces show a material picture (tests).
+  bool showsTexture(const doc::ObjectId& id) const {
+    const auto it = entries_.find(id);
+    return it != entries_.end() && !it->second.textureOverlay.IsNull();
+  }
   // Edges drawn without their line for an object (tests / status).
   std::size_t hiddenEdgeCount(const doc::ObjectId& id) const {
     const auto it = entries_.find(id);
@@ -211,7 +217,7 @@ class Viewport : public QWidget {
     doc::Color color;
     // Faces painted on their own as shown (index in displayFaces -> RGB),
     // and whether the object is shown selected (no face colours then).
-    std::vector<std::pair<int, std::array<double, 3>>> faceColors;
+    std::vector<std::pair<int, std::array<double, 4>>> faceColors;  // RGB + opacity
     bool shownSelected = false;
     bool locked = false;  // not pickable
     TopoDS_Shape canonicalWorld;
@@ -225,6 +231,8 @@ class Viewport : public QWidget {
     std::vector<int> hiddenEdges;
     Handle(AIS_Shape) edgeOverlay;
     Handle(AIS_Shape) selectionDots;  // shown while the object is selected
+    Handle(AIS_InteractiveObject) textureOverlay;  // faces with a picture material
+    std::string textureKey;                        // what the overlay shows
   };
 
   void initViewer();
@@ -256,7 +264,13 @@ class Viewport : public QWidget {
   // Colours faces show on their own: own face materials, or for a component
   // placement those coming from inside its definition (computed once per
   // definition and document state).
-  std::vector<std::pair<int, std::array<double, 3>>> faceColorsOf(const doc::Object& object);
+  std::vector<std::pair<int, std::array<double, 4>>> faceColorsOf(const doc::Object& object);  // RGB + opacity
+  // Faces with a material of their own: index -> material id.
+  std::vector<std::pair<int, std::string>> faceMaterialIdsOf(const doc::Object& object);
+  // Pictures of materials on their faces (rebuilt when what they show changes).
+  void updateTextures(const doc::Object& object, Entry& entry);
+  Handle(Graphic3d_Texture2D) materialTexture(const doc::Material& material);
+  std::map<std::string, Handle(Graphic3d_Texture2D)> textures_;
   struct DefinitionColors {
     const void* shape = nullptr;
     std::uint64_t sequence = 0;

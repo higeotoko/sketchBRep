@@ -380,6 +380,13 @@ Color Document::displayColor(const Object& object) const {
   return materialColor(inheritedMaterial(object), object.color);
 }
 
+double Document::materialOpacity(const std::string& id) const {
+  const Material* m = findMaterial(id);
+  return m ? m->opacity : 1.0;
+}
+
+double Document::displayOpacity(const Object& object) const { return materialOpacity(inheritedMaterial(object)); }
+
 void Document::putMaterial(const Material& material) {
   bool found = false;
   for (Material& m : materials_) {

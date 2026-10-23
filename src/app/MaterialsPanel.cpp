@@ -1,5 +1,7 @@
 #include "MaterialsPanel.h"
 
+#include "MaterialEditor.h"
+
 #include <algorithm>
 
 #include <QHBoxLayout>
@@ -8,6 +10,8 @@
 #include <QPainter>
 #include <QPixmap>
 #include <QPushButton>
+#include <QScrollArea>
+#include <QTabWidget>
 #include <QVBoxLayout>
 
 namespace sbr::app {
@@ -45,18 +49,29 @@ const std::vector<MaterialsPanel::Preset>& MaterialsPanel::presets() {
 }
 
 MaterialsPanel::MaterialsPanel(QWidget* parent) : QWidget(parent) {
-  auto* layout = new QVBoxLayout(this);
+  auto* outer = new QVBoxLayout(this);
+  outer->setContentsMargins(0, 0, 0, 0);
+  tabs_ = new QTabWidget;
+  outer->addWidget(tabs_);
+  auto* choose = new QWidget;
+  tabs_->addTab(choose, tr("選択"));
+  editor_ = new MaterialEditor;
+  auto* scroll = new QScrollArea;
+  scroll->setWidget(editor_);
+  scroll->setWidgetResizable(true);
+  tabs_->addTab(scroll, tr("編集"));
+  auto* layout = new QVBoxLayout(choose);
   layout->setContentsMargins(4, 4, 4, 4);
   list_ = new QListWidget;
   list_->setObjectName(QStringLiteral("materialList"));
   list_->setIconSize(QSize(28, 20));
-  list_->setToolTip(tr("クリックで塗る素材に（ペイントツールに切り替え）。ダブルクリック・右クリックで名前・色を変更"));
+  list_->setToolTip(tr("クリックで塗る素材に（ペイントツールに切り替え）。ダブルクリックで「編集」タブ"));
   list_->setContextMenuPolicy(Qt::CustomContextMenu);
   layout->addWidget(list_);
   auto* row = new QHBoxLayout;
   auto* add = new QPushButton(tr("＋ 新規"));
   auto* presets = new QPushButton(tr("定番 ▾"));
-  edit_ = new QPushButton(tr("変更"));
+  edit_ = new QPushButton(tr("編集"));
   remove_ = new QPushButton(tr("削除"));
   row->addWidget(add);
   row->addWidget(presets);
@@ -76,7 +91,7 @@ MaterialsPanel::MaterialsPanel(QWidget* parent) : QWidget(parent) {
 
   connect(add, &QPushButton::clicked, this, [this] { emit createRequested(); });
   connect(edit_, &QPushButton::clicked, this, [this] {
-    if (!currentId().empty()) emit editRequested(currentId());
+    if (!currentId().empty()) openEditor();
   });
   connect(remove_, &QPushButton::clicked, this, [this] {
     if (!currentId().empty()) emit deleteRequested(currentId());
@@ -100,7 +115,10 @@ MaterialsPanel::MaterialsPanel(QWidget* parent) : QWidget(parent) {
     const std::string id = item->data(Qt::UserRole).toString().toStdString();
     QMenu menu(this);
     if (!id.empty()) {
-      menu.addAction(tr("名前・色を変更..."), this, [this, id] { emit editRequested(id); });
+      menu.addAction(tr("編集（色・テクスチャ・不透明度）"), this, [this, item] {
+        list_->setCurrentItem(item);
+        openEditor();
+      });
       menu.addAction(tr("選択中の部材・面に適用"), this, [this, id] { emit applyRequested(id); });
       menu.addAction(tr("削除"), this, [this, id] { emit deleteRequested(id); });
     } else {
@@ -109,7 +127,7 @@ MaterialsPanel::MaterialsPanel(QWidget* parent) : QWidget(parent) {
     menu.exec(list_->viewport()->mapToGlobal(pos));
   });
   connect(list_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem*) {
-    if (!currentId().empty()) emit editRequested(currentId());
+    if (!currentId().empty()) openEditor();
   });
 }
 
@@ -128,7 +146,8 @@ void MaterialsPanel::refresh(const doc::Document& document, const std::optional<
     inherit->setToolTip(tr("塗ると面・部材の個別の素材を外し、部材全体・グループの素材に戻します"));
     list_->addItem(inherit);
     for (const doc::Material& m : shown_) {
-      auto* item = new QListWidgetItem(swatch(m.color), QString::fromStdString(m.name));
+      auto* item = new QListWidgetItem(QIcon(MaterialEditor::swatch(document, m, QSize(28, 20))),
+                                       QString::fromStdString(m.name));
       item->setData(Qt::UserRole, QString::fromStdString(m.id));
       list_->addItem(item);
     }
@@ -162,7 +181,10 @@ void MaterialsPanel::refresh(const doc::Document& document, const std::optional<
   const bool real = !currentId().empty();
   edit_->setEnabled(real);
   remove_->setEnabled(real);
+  editor_->showMaterial(document, real ? document.findMaterial(currentId()) : nullptr);
   updating_ = false;
 }
+
+void MaterialsPanel::openEditor() { tabs_->setCurrentIndex(1); }
 
 }  // namespace sbr::app

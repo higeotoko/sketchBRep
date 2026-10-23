@@ -228,6 +228,15 @@ class Modeler {
   // A new named material with a fresh stable id (one undo step).
   Result<std::string> createMaterial(const std::string& name, const Color& color);
   Status updateMaterial(const std::string& id, std::optional<std::string> name, std::optional<Color> color);
+  // Replaces a material's settings (name, colour, opacity, texture,
+  // rendering values); objects using it change look, the id stays. With
+  // `continuing`, an edit right after an edit of the same material merges
+  // into its undo step (a colour slider being dragged).
+  Status editMaterial(const Material& changed, bool continuing = false);
+  // A copy with a new id, to edit separately ("" name: "<name> 2", ...).
+  Result<std::string> duplicateMaterial(const std::string& id, const std::string& name = {});
+  // Stores a picture for a texture (by content); returns its hash.
+  std::string addTextureImage(const std::string& bytes, const std::string& name);
   // Objects and faces using it fall back to inheriting (same undo step).
   Status deleteMaterial(const std::string& id);
   // Whole objects take `material` ("" = inherit from the container again).
