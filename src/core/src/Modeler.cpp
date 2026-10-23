@@ -3538,9 +3538,20 @@ Status Modeler::export3dm(const std::string& path, const std::vector<ObjectId>& 
   return geom::write3dm(parts, path);
 }
 
-Result<std::vector<ObjectId>> Modeler::import3dm(const std::string& path) {
-  auto parts = geom::read3dm(path);
-  if (!parts) return Result<std::vector<ObjectId>>::failure(parts.error());
+Result<std::vector<ObjectId>> Modeler::import3dm(const std::string& path, bool allowPartial,
+                                                 geom::Import3dmReport* report) {
+  geom::Import3dmReport local;
+  geom::Import3dmReport& found = report ? *report : local;
+  auto parts = geom::read3dm(path, &found);
+  if (!parts) {
+    if (found.objects == 0) return Result<std::vector<ObjectId>>::failure(parts.error());
+    return Result<std::vector<ObjectId>>::failure(parts.error() + " (" + found.summary() + ")");
+  }
+  if (found.incomplete() && !allowPartial) {
+    return Result<std::vector<ObjectId>>::failure(
+        "The 3DM file did not come through whole (" + found.summary() +
+        "); nothing was imported. Import again allowing a partial import to take what could be read");
+  }
   return addImported(parts.value(), path, "Import 3DM");
 }
 

@@ -1715,9 +1715,22 @@ const std::vector<CommandDef>& commands() {
          must(m.export3dm(text(a, "path"), a.contains("ids") ? ids(a, "ids") : std::vector<ObjectId>{}));
          return json::object();
        }},
-      {"import_3dm", "Import the surfaces and solids of a Rhino .3dm file (units converted to mm).",
-       SCHEMA({"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}),
-       [](doc::Modeler& m, const json& a) { return idsResult(must(m.import3dm(text(a, "path")))); }},
+      {"import_3dm",
+       "Import the surfaces and solids of a Rhino .3dm file (units converted to mm). A file that does not "
+       "come through whole (meshes, points, curves, failed or partial conversions) is refused with what was "
+       "found, unless 'allow_partial'; the result's 'report' counts everything either way.",
+       SCHEMA({"type": "object", "properties": {"path": {"type": "string"}, "allow_partial": {"type": "boolean"}},
+               "required": ["path"]}),
+       [](doc::Modeler& m, const json& a) {
+         geom::Import3dmReport report;
+         json out = idsResult(must(m.import3dm(text(a, "path"), a.value("allow_partial", false), &report)));
+         out["report"] = {{"objects", report.objects}, {"imported", report.imported}, {"failed", report.failed},
+                          {"partial", report.partial}, {"skipped_faces", report.skippedFaces},
+                          {"skipped_trims", report.skippedTrims}, {"unsupported", report.unsupported},
+                          {"units", report.units}, {"scale_to_mm", report.scaleToMm},
+                          {"complete", !report.incomplete()}, {"summary", report.summary()}};
+         return out;
+       }},
       {"export_step", "Export visible objects (or 'ids') to STEP with names and colours.",
        SCHEMA({"type": "object", "properties": {"path": {"type": "string"},
                "ids": {"type": "array", "items": {"type": "string"}}}, "required": ["path"]}),

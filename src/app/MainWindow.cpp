@@ -2427,15 +2427,62 @@ void MainWindow::import3dm() {
   const QString path = QFileDialog::getOpenFileName(this, tr("Rhino 3DM インポート"), QString(),
                                                     tr("Rhino (*.3dm)"));
   if (path.isEmpty()) return;
-  auto ids = modeler_.import3dm(utf8(path));
+  import3dmFile(path);
+}
+
+QString MainWindow::describe3dmReport(const geom::Import3dmReport& r) {
+  static const std::map<std::string, QString> kinds = {
+      {"mesh", tr("メッシュ")}, {"subd", tr("SubD")}, {"point", tr("点")}, {"curve", tr("曲線")},
+      {"annotation", tr("注釈")}, {"block", tr("ブロック")}, {"surface", tr("サーフェス")}, {"other", tr("その他")}};
+  QStringList lines;
+  lines << tr("オブジェクト %1 個のうち、読み込めるのは %2 個").arg(r.objects).arg(r.imported);
+  if (r.partial > 0) {
+    lines << tr("・%1 個は一部が欠けます（面 %2 枚・トリム %3 本を変換できず）")
+                 .arg(r.partial).arg(r.skippedFaces).arg(r.skippedTrims);
+  }
+  if (r.failed > 0) lines << tr("・%1 個は変換に失敗しました").arg(r.failed);
+  if (r.unsupportedCount() > 0) {
+    QStringList parts;
+    for (const auto& [kind, count] : r.unsupported) {
+      const auto k = kinds.find(kind);
+      parts << tr("%1 %2 個").arg(k != kinds.end() ? k->second : QString::fromStdString(kind)).arg(count);
+    }
+    lines << tr("・未対応の種類（読み込みません）：%1").arg(parts.join(tr("、")));
+  }
+  return lines.join(QLatin1Char('\n'));
+}
+
+void MainWindow::import3dmFile(const QString& path) {
+  geom::Import3dmReport report;
+  auto ids = modeler_.import3dm(utf8(path), false, &report);
+  if (!ids && report.incomplete() && report.imported > 0) {
+    // Not everything came through: say what, and let the user decide.
+    const auto answer = QMessageBox::question(
+        this, tr("Rhino 3DM インポート"),
+        tr("このファイルは一部を読み込めませんでした。\n\n%1\n\n読めた分だけ読み込みますか？")
+            .arg(describe3dmReport(report)),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (answer != QMessageBox::Yes) {
+      setStatus(tr("3DM の読み込みを取りやめました"));
+      return;
+    }
+    ids = modeler_.import3dm(utf8(path), true, &report);
+  }
   if (!ids) {
-    reportError(QString::fromStdString(ids.error()));
+    QString message = QString::fromStdString(ids.error());
+    if (report.objects > 0) message = describe3dmReport(report) + QLatin1Char('\n') + message;
+    reportError(message);
     return;
   }
   setSelection(ids.value());
   viewport_->syncNow();
   viewport_->fitAll();
-  setStatus(tr("3DM から %1 個を読み込みました（単位は mm に換算、レイヤはタグに）").arg(ids->size()));
+  if (report.incomplete()) {
+    setStatus(tr("3DM から %1 個を読み込みました（一部欠落あり：%2 個は読み込めず）")
+                  .arg(ids->size()).arg(report.objects - report.imported));
+  } else {
+    setStatus(tr("3DM から %1 個を読み込みました（単位は mm に換算、レイヤはタグに）").arg(ids->size()));
+  }
 }
 
 void MainWindow::export3dm() {

@@ -1,5 +1,39 @@
 #include "sbr/geom/Rhino3dm.h"
 
+#include <sstream>
+
+namespace sbr::geom {
+
+int Import3dmReport::unsupportedCount() const {
+  int n = 0;
+  for (const auto& [kind, count] : unsupported) n += count;
+  return n;
+}
+
+std::string Import3dmReport::summary() const {
+  std::ostringstream out;
+  out << objects << (objects == 1 ? " object" : " objects") << ": " << imported << " imported";
+  if (partial > 0) {
+    out << " (" << partial << " partially:";
+    if (skippedFaces > 0) out << " " << skippedFaces << (skippedFaces == 1 ? " face" : " faces") << " dropped";
+    if (skippedFaces > 0 && skippedTrims > 0) out << ",";
+    if (skippedTrims > 0) out << " " << skippedTrims << (skippedTrims == 1 ? " trim" : " trims") << " dropped";
+    out << ")";
+  }
+  if (failed > 0) out << "; " << failed << " failed to convert";
+  if (!unsupported.empty()) {
+    out << "; not supported:";
+    bool first = true;
+    for (const auto& [kind, count] : unsupported) {
+      out << (first ? " " : ", ") << kind << " " << count;
+      first = false;
+    }
+  }
+  return out.str();
+}
+
+}  // namespace sbr::geom
+
 #ifndef SBR_WITH_OPENNURBS
 
 namespace sbr::geom {
@@ -10,7 +44,7 @@ Status write3dm(const std::vector<NamedShape>&, const std::string&) {
   return Status::failure("This build has no 3DM support (SBR_WITH_OPENNURBS=OFF)");
 }
 
-Result<std::vector<NamedShape>> read3dm(const std::string&) {
+Result<std::vector<NamedShape>> read3dm(const std::string&, Import3dmReport*) {
   return Result<std::vector<NamedShape>>::failure("This build has no 3DM support (SBR_WITH_OPENNURBS=OFF)");
 }
 
@@ -353,26 +387,40 @@ Handle(Geom_BSplineSurface) toOcct(const ON_NurbsSurface& s) {
 
 // Faces from trims (2D curves on the face's surface), then sewn into a shell
 // or solid; scale converts the file's units to millimetres.
-Result<TopoDS_Shape> fromOnBrep(const ON_Brep& brep, double scale) {
+// What a Brep lost on the way in.
+struct BrepLosses {
+  int faces = 0;
+  int trims = 0;
+};
+
+Result<TopoDS_Shape> fromOnBrep(const ON_Brep& brep, double scale, BrepLosses& lost) {
   BRepBuilderAPI_Sewing sewing(1e-3);
   int faces = 0;
   for (int fi = 0; fi < brep.m_F.Count(); ++fi) {
     const ON_BrepFace& of = brep.m_F[fi];
     ON_NurbsSurface ns;
-    if (!of.SurfaceOf() || !of.SurfaceOf()->GetNurbForm(ns)) continue;
+    if (!of.SurfaceOf() || !of.SurfaceOf()->GetNurbForm(ns)) {
+      ++lost.faces;
+      continue;
+    }
     const Handle(Geom_BSplineSurface) surface = toOcct(ns);
     TopoDS_Face face;
     BRep_Builder builder;
     bool first = true;
     for (int l = 0; l < of.LoopCount(); ++l) {
       const ON_BrepLoop* loop = of.Loop(l);
-      if (!loop) continue;
+      if (!loop) {
+        ++lost.trims;
+        continue;
+      }
       BRepBuilderAPI_MakeWire wire;
       for (int t = 0; t < loop->TrimCount(); ++t) {
         const ON_BrepTrim* trim = loop->Trim(t);
-        if (!trim) continue;
         ON_NurbsCurve nc;
-        if (!trim->TrimCurveOf() || !trim->TrimCurveOf()->GetNurbForm(nc)) continue;
+        if (!trim || !trim->TrimCurveOf() || !trim->TrimCurveOf()->GetNurbForm(nc)) {
+          ++lost.trims;
+          continue;
+        }
         const ON_Interval d = trim->Domain();
         Handle(Geom2d_BSplineCurve) c2 = toOcct2d(nc);
         if (trim->m_type == ON_BrepTrim::singular) {
@@ -390,9 +438,17 @@ Result<TopoDS_Shape> fromOnBrep(const ON_Brep& brep, double scale) {
           continue;
         }
         BRepBuilderAPI_MakeEdge edge(c2, surface, d[0], d[1]);
-        if (edge.IsDone()) wire.Add(edge.Edge());
+        if (edge.IsDone()) {
+          wire.Add(edge.Edge());
+        } else {
+          ++lost.trims;
+        }
       }
-      if (!wire.IsDone()) continue;
+      if (!wire.IsDone()) {
+        if (first) break;  // no outer boundary: the face is lost
+        ++lost.trims;      // a hole is lost
+        continue;
+      }
       if (first) {
         BRepBuilderAPI_MakeFace make(surface, wire.Wire(), Standard_True);
         if (!make.IsDone()) break;
@@ -402,7 +458,10 @@ Result<TopoDS_Shape> fromOnBrep(const ON_Brep& brep, double scale) {
         builder.Add(face, wire.Wire());
       }
     }
-    if (face.IsNull()) continue;
+    if (face.IsNull()) {
+      ++lost.faces;
+      continue;
+    }
     BRepLib::BuildCurves3d(face);
     ShapeFix_Face fix(face);
     fix.Perform();
@@ -463,6 +522,30 @@ std::string toUtf8(const ON_wString& s) {
   return utf8.Array() ? std::string(utf8.Array()) : std::string();
 }
 
+std::string unitName(ON::LengthUnitSystem u) {
+  switch (u) {
+    case ON::LengthUnitSystem::Millimeters: return "millimeters";
+    case ON::LengthUnitSystem::Centimeters: return "centimeters";
+    case ON::LengthUnitSystem::Meters: return "meters";
+    case ON::LengthUnitSystem::Kilometers: return "kilometers";
+    case ON::LengthUnitSystem::Inches: return "inches";
+    case ON::LengthUnitSystem::Feet: return "feet";
+    case ON::LengthUnitSystem::None: return "none";
+    default: return "other";
+  }
+}
+
+// What a geometry object that is not a surface or solid is, for the report.
+std::string geometryKind(const ON_Geometry& g) {
+  if (ON_Mesh::Cast(&g) || ON_SubD::Cast(&g)) return ON_SubD::Cast(&g) ? "subd" : "mesh";
+  if (ON_Point::Cast(&g) || ON_PointCloud::Cast(&g)) return "point";
+  if (ON_Curve::Cast(&g)) return "curve";
+  if (ON_Annotation::Cast(&g) || ON_TextDot::Cast(&g)) return "annotation";
+  if (ON_InstanceRef::Cast(&g)) return "block";
+  if (ON_Surface::Cast(&g)) return "surface";  // one without a Brep form
+  return "other";
+}
+
 }  // namespace
 
 bool rhino3dmAvailable() { return true; }
@@ -512,7 +595,10 @@ Status write3dm(const std::vector<NamedShape>& parts, const std::string& path) {
   }
 }
 
-Result<std::vector<NamedShape>> read3dm(const std::string& path) {
+Result<std::vector<NamedShape>> read3dm(const std::string& path, Import3dmReport* report) {
+  Import3dmReport local;
+  Import3dmReport& found = report ? *report : local;
+  found = Import3dmReport{};
   initOpenNurbs();
   try {
     ONX_Model model;
@@ -523,6 +609,8 @@ Result<std::vector<NamedShape>> read3dm(const std::string& path) {
     }
     const double metersPerUnit = model.m_settings.m_ModelUnitsAndTolerances.m_unit_system.MetersPerUnit(1.0);
     const double scale = std::isfinite(metersPerUnit) && metersPerUnit > 0 ? metersPerUnit * 1000.0 : 1.0;
+    found.scaleToMm = scale;
+    found.units = unitName(model.m_settings.m_ModelUnitsAndTolerances.m_unit_system.UnitSystem());
     std::vector<NamedShape> out;
     ONX_ModelComponentIterator it(model, ON_ModelComponent::Type::ModelGeometry);
     for (const ON_ModelComponent* c = it.FirstComponent(); c; c = it.NextComponent()) {
@@ -531,6 +619,7 @@ Result<std::vector<NamedShape>> read3dm(const std::string& path) {
       const ON_Geometry* geometry = component->Geometry(nullptr);
       const ON_3dmObjectAttributes* attributes = component->Attributes(nullptr);
       if (!geometry) continue;
+      ++found.objects;
       std::unique_ptr<ON_Brep> owned;
       const ON_Brep* brep = ON_Brep::Cast(geometry);
       if (!brep) {
@@ -538,9 +627,22 @@ Result<std::vector<NamedShape>> read3dm(const std::string& path) {
         owned.reset(geometry->BrepForm());
         brep = owned.get();
       }
-      if (!brep) continue;  // meshes, points, annotations: not B-rep geometry
-      auto shape = fromOnBrep(*brep, scale);
-      if (!shape) continue;
+      if (!brep) {  // meshes, points, curves, annotations: not B-rep geometry
+        ++found.unsupported[geometryKind(*geometry)];
+        continue;
+      }
+      BrepLosses lost;
+      auto shape = fromOnBrep(*brep, scale, lost);
+      if (!shape) {
+        ++found.failed;
+        continue;
+      }
+      if (lost.faces > 0 || lost.trims > 0) {
+        ++found.partial;
+        found.skippedFaces += lost.faces;
+        found.skippedTrims += lost.trims;
+      }
+      ++found.imported;
       NamedShape part;
       part.shape = shape.value();
       if (attributes) {

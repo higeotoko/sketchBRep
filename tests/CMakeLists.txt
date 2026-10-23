@@ -19,6 +19,12 @@ add_executable(sbr_core_tests
   test_scenarios.cpp
 )
 target_link_libraries(sbr_core_tests PRIVATE sbr::core nlohmann_json::nlohmann_json GTest::gtest_main)
+if(SBR_WITH_OPENNURBS)
+  # The 3DM import report tests write their fixture with openNURBS itself.
+  target_sources(sbr_core_tests PRIVATE test_rhino3dm_report.cpp)
+  target_link_libraries(sbr_core_tests PRIVATE opennurbsStatic)
+  target_compile_definitions(sbr_core_tests PRIVATE ON_CMAKE_BUILD)
+endif()
 
 include(GoogleTest)
 # Listing the tests starts the executable; on Windows runners loading the

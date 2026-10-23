@@ -15,6 +15,7 @@
 
 #include "sbr/doc/CommandStack.h"
 #include "sbr/doc/Document.h"
+#include "sbr/geom/Rhino3dm.h"
 #include "sbr/geom/ShapeIO.h"
 
 namespace sbr::doc {
@@ -426,7 +427,11 @@ class Modeler {
   Result<std::vector<ObjectId>> importStep(const std::string& path);
   // Rhino .3dm: exact NURBS Breps with names, colours and tags as layers.
   Status export3dm(const std::string& path, const std::vector<ObjectId>& ids = {}) const;
-  Result<std::vector<ObjectId>> import3dm(const std::string& path);
+  // Refuses a file that does not come through whole (unsupported objects,
+  // failed or partial conversions; the error says what) unless
+  // `allowPartial`; `report` (optional) says what was found either way.
+  Result<std::vector<ObjectId>> import3dm(const std::string& path, bool allowPartial = false,
+                                          geom::Import3dmReport* report = nullptr);
 
   // --- queries ------------------------------------------------------------
   std::vector<ObjectSummary> listObjects() const;

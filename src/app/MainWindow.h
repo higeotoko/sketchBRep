@@ -155,6 +155,11 @@ class MainWindow : public QMainWindow, public ToolHost {
   // Opening `index` (1, 2, ... as in Modeler::openings) of a host.
   bool resizeOpening(const doc::ObjectId& host, int index, double width, double height);
 
+  // Imports a .3dm file; when it does not come through whole, asks before
+  // taking what could be read.
+  void import3dmFile(const QString& path);
+  static QString describe3dmReport(const geom::Import3dmReport& report);
+
  protected:
   void closeEvent(QCloseEvent* event) override;
 
