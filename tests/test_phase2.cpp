@@ -1101,7 +1101,14 @@ TEST(Scale, GroupsGuidesAndComponents) {
   ASSERT_TRUE(loaded.load(path).ok());
   test::expectBounds(loaded.document().worldShape(*b), 4000, 0, 100, 6000, 2000, 2100, 1e-6);
 
+  // A component placement scales on its own (XFORM-05); its definition
+  // stays as it was.
   auto component = m.makeComponent({*g});
   ASSERT_TRUE(component.ok()) << component.error();
-  EXPECT_FALSE(m.scale({*component}, gp_Pnt(), 2.0).ok());
+  const auto& ref = std::get<ComponentInstance>(m.document().find(*component)->recipe.base);
+  const double definitionVolume = geom::volume(m.document().findDefinition(ref.definitionId)->shape);
+  const double before = geom::volume(m.document().worldShape(*m.document().find(*component)));
+  ASSERT_TRUE(m.scale({*component}, gp_Pnt(), 2.0).ok());
+  EXPECT_NEAR(geom::volume(m.document().worldShape(*m.document().find(*component))), 8 * before, 1e-6 * before);
+  EXPECT_NEAR(geom::volume(m.document().findDefinition(ref.definitionId)->shape), definitionVolume, 1e-6);
 }

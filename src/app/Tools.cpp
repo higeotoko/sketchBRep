@@ -3420,12 +3420,15 @@ void ScaleTool::buildBox() {
   gp_Trsf toFrame;
   toFrame.SetTransformation(frame);  // world -> frame
   Bnd_Box bounds;
-  for (const doc::ObjectId& id : targets_) {
-    const doc::Object* o = document.find(id);
-    if (!o) continue;
-    const TopoDS_Shape shape = document.worldShape(*o);
-    if (shape.IsNull()) continue;
-    bounds.Add(geom::exactBounds(shape.Moved(TopLoc_Location(toFrame))));
+  for (const doc::ObjectId& target : targets_) {
+    // A group has no shape of its own: what is in it.
+    for (const doc::ObjectId& id : document.subtree(target)) {
+      const doc::Object* o = document.find(id);
+      if (!o || o->isContainer()) continue;
+      const TopoDS_Shape shape = document.worldShape(*o);
+      if (shape.IsNull()) continue;
+      bounds.Add(geom::exactBounds(shape.Moved(TopLoc_Location(toFrame))));
+    }
   }
   if (bounds.IsVoid()) return;
   box_ = Box{frame, bounds.CornerMin().XYZ(), bounds.CornerMax().XYZ()};
@@ -3613,12 +3616,14 @@ void ScaleTool::updateGripDrag(const QPoint& pos) {
   TopoDS_Compound c;
   BRep_Builder b;
   b.MakeCompound(c);
-  for (const doc::ObjectId& id : targets_) {
-    const doc::Object* o = document.find(id);
-    if (!o) continue;
-    const TopoDS_Shape shape = document.worldShape(*o);
-    if (shape.IsNull()) continue;
-    if (auto stretched = geom::stretchShape(shape, g)) b.Add(c, stretched.value());
+  for (const doc::ObjectId& target : targets_) {
+    for (const doc::ObjectId& id : document.subtree(target)) {
+      const doc::Object* o = document.find(id);
+      if (!o || o->isContainer()) continue;
+      const TopoDS_Shape shape = document.worldShape(*o);
+      if (shape.IsNull()) continue;
+      if (auto stretched = geom::stretchShape(shape, g)) b.Add(c, stretched.value());
+    }
   }
   vp.setPreview(c, true);
   showBox(active_);

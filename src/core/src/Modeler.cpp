@@ -3384,7 +3384,14 @@ Status Modeler::scale(const std::vector<ObjectId>& ids, const gp_Pnt& center, do
       const Object* current = document_.find(id);
       if (!current || std::holds_alternative<GroupNode>(current->recipe.base)) continue;
       if (std::holds_alternative<ComponentInstance>(current->recipe.base)) {
-        return Status::failure("Components cannot be scaled");
+        // This placement alone, like its own stretch (XFORM-05): the
+        // definition and the other placements stay as they are.
+        Object o = *current;
+        const gp_Pnt c = center.Transformed(document_.worldTransform(o).Inverted());
+        std::get<ComponentInstance>(o.recipe.base).stretches.push_back(StretchOp{c, gp::DX(), gp::DY(), factor, factor, factor});
+        if (const Status built = rebuild(o, context); !built) return built;
+        changes.modify(o);
+        continue;
       }
       Object o = *current;
       // The fixed point in this object's own coordinates.

@@ -172,6 +172,7 @@ class GuiPhase1 : public QObject {
   void typedUnitsDoNotTriggerShortcuts();
   void scaleToolFactorAndLength();
   void scaleGripsStretchEachDirection();
+  void scaleGripsOnComponentsAndGroups();
   void lockedObjectsSelectableNotEditable();
   void groupEditShowsDottedBox();
   void snapTipNamesTheAdoptedPoint();
@@ -727,6 +728,70 @@ void GuiPhase1::polarArrayFullCircleAndCtrlMidMove() {
   QCOMPARE(m.history().undoCount(), before + 1);
   const double v = geom::volume(m.document().worldShape(*m.document().find(block)));
   QVERIFY2(std::abs(v - 2000.0 * 2000 * 1250) < 1.0, qPrintable(QString::number(v)));
+}
+
+// Report: the corner grip (and a typed factor) did nothing on a component
+// placement (uniform scale refused placements), and a group showed no grips
+// (it has no shape of its own). The placement grows alone (its own scale;
+// the other placement and the definition stay); the group grows with what
+// is in it, by the corner or along one direction.
+void GuiPhase1::scaleGripsOnComponentsAndGroups() {
+  Fixture f;
+  QVERIFY(f.setUp(1500, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+  auto component = m.makeComponent({box});
+  QVERIFY(component.ok());
+  gp_Trsf away;
+  away.SetTranslation(gp_Vec(3000, 0, 0));
+  auto other = m.copy({*component}, away, 1);
+  QVERIFY(other.ok());
+  f.vp->syncNow();
+  auto size = [&](const doc::ObjectId& id) {
+    Bnd_Box b;
+    for (const doc::ObjectId& leaf : m.document().subtree(id)) {
+      const doc::Object* o = m.document().find(leaf);
+      if (o && !o->isContainer() && !o->shape.IsNull()) b.Add(geom::exactBounds(m.document().worldShape(*o)));
+    }
+    return b.CornerMax().X() - b.CornerMin().X();
+  };
+  auto grab = [&](ScaleTool* tool, int sx, int sy, int sz, const QString& typed) {
+    const gp_Pnt g = *tool->gripPoint(sx, sy, sz);
+    click(f.vp, f.vp->toWidget(g));
+    move(f.vp, f.vp->toWidget(g.Translated(gp_Vec(sx, sy, sz) * 300)));
+    type(f.vp, typed);
+  };
+  // The component: corner grip, typed factor.
+  f.window.activateTool(MainWindow::ToolId::Select);
+  f.window.setSelection({*component});
+  f.window.activateTool(MainWindow::ToolId::Scale);
+  auto* tool = dynamic_cast<ScaleTool*>(f.window.activeTool());
+  QVERIFY(tool && tool->hasGrips());
+  grab(tool, 1, 1, 1, QStringLiteral("2"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QVERIFY2(std::abs(size(*component) - 2000) < 1e-6, qPrintable(QString::number(size(*component))));
+  QVERIFY(std::abs(size(other->front()) - 1000) < 1e-6);
+  QVERIFY(m.undo());
+  QVERIFY(std::abs(size(*component) - 1000) < 1e-6);
+
+  // A group: grips around what is in it; one direction, then the corner.
+  const doc::ObjectId a = f.box(0, 3000, 1000, 1000, 1000);
+  const doc::ObjectId b = f.box(1500, 3000, 500, 1000, 1000);
+  auto group = m.group({a, b});
+  QVERIFY(group.ok());
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::Select);
+  f.window.setSelection({*group});
+  f.window.activateTool(MainWindow::ToolId::Scale);
+  tool = dynamic_cast<ScaleTool*>(f.window.activeTool());
+  QVERIFY(tool && tool->hasGrips());
+  QVERIFY(std::abs(size(*group) - 2000) < 1e-6);
+  grab(tool, 1, 0, 0, QStringLiteral("4000mm"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QVERIFY2(std::abs(size(*group) - 4000) < 1e-6, qPrintable(QString::number(size(*group))));
+  grab(tool, 1, 1, 1, QStringLiteral("0.5"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QVERIFY2(std::abs(size(*group) - 2000) < 1e-6, qPrintable(QString::number(size(*group))));
 }
 
 void GuiPhase1::moveCopyAndArray() {
