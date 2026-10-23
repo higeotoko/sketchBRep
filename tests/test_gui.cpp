@@ -1747,19 +1747,27 @@ void GuiPhase1::snapTipNamesTheAdoptedPoint() {
   click(f.vp, f.vp->toWidget(gp_Pnt(2500, -1000, 0)));
   QTest::keyClick(f.vp, Qt::Key_Escape);  // the line is made; the tip goes
   QVERIFY(f.vp->snapTip().isEmpty());
-  // An edge from exactly the one point to the other (the line may have
-  // joined the box it starts on).
+  // The line runs from exactly the one point to the other. It may be in
+  // pieces: it may have joined the box it starts on, and on the box's
+  // front face plane (which face an edge pixel picks depends on the
+  // display) it divides that face on its way.
+  const gp_Vec along(start, end);
+  auto onLine = [&](const gp_Pnt& p) {
+    const gp_Vec v(start, p);
+    return v.Crossed(along).Magnitude() < 1e-6 * along.Magnitude() && v.Dot(along) > -1e-6 &&
+           v.Dot(along) < along.SquareMagnitude() + 1e-6;
+  };
   bool startFound = false, endFound = false;
   for (const doc::Object& o : m.document().objects()) {
     for (TopExp_Explorer e(m.document().worldShape(o), TopAbs_EDGE); e.More(); e.Next()) {
       const TopoDS_Edge edge = TopoDS::Edge(e.Current());
       const gp_Pnt a = BRep_Tool::Pnt(TopExp::FirstVertex(edge)), b = BRep_Tool::Pnt(TopExp::LastVertex(edge));
-      if ((a.Distance(start) < 1e-6 && b.Distance(end) < 1e-6) || (b.Distance(start) < 1e-6 && a.Distance(end) < 1e-6)) {
-        startFound = endFound = true;
-      }
+      if (a.Distance(b) < 1e-6 || !onLine(a) || !onLine(b)) continue;
+      if (a.Distance(start) < 1e-6 || b.Distance(start) < 1e-6) startFound = true;
+      if (a.Distance(end) < 1e-6 || b.Distance(end) < 1e-6) endFound = true;
     }
   }
-  if (!startFound) {
+  if (!startFound || !endFound) {
     // Which edges there are instead (to tell what became of the line).
     qWarning("start (%g,%g,%g) end (%g,%g,%g)", start.X(), start.Y(), start.Z(), end.X(), end.Y(), end.Z());
     for (const doc::Object& o : m.document().objects()) {
