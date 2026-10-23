@@ -1,5 +1,7 @@
 #include "Viewport.h"
 
+#include "WheelZoom.h"
+
 #include <AIS_ColoredShape.hxx>
 #include <cstring>
 #include <QImage>
@@ -28,6 +30,7 @@
 #include <QKeyEvent>
 #include <QMessageBox>
 #include <QMouseEvent>
+#include <QPointingDevice>
 #include <QWheelEvent>
 
 #include <Aspect_DisplayConnection.hxx>
@@ -226,7 +229,8 @@ bool sameLocatedShape(const TopoDS_Shape& a, const TopoDS_Shape& b) {
 
 }  // namespace
 
-Viewport::Viewport(doc::Modeler& modeler, QWidget* parent) : QWidget(parent), modeler_(modeler) {
+Viewport::Viewport(doc::Modeler& modeler, QWidget* parent)
+    : QWidget(parent), modeler_(modeler), wheelRatio_(wheel::kDefaultRatioPerNotch) {
   setAttribute(Qt::WA_PaintOnScreen);
   setAttribute(Qt::WA_NoSystemBackground);
   setAttribute(Qt::WA_NativeWindow);
@@ -238,6 +242,16 @@ Viewport::Viewport(doc::Modeler& modeler, QWidget* parent) : QWidget(parent), mo
   syncTimer_.setSingleShot(true);
   syncTimer_.setInterval(0);
   connect(&syncTimer_, &QTimer::timeout, this, &Viewport::syncNow);
+  wheelClock_.start();
+  if (const QString log = qEnvironmentVariable("SBR_WHEEL_LOG"); !log.isEmpty()) {
+    wheelLog_ = std::make_unique<QFile>(log);
+    if (wheelLog_->open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
+      wheelLog_->write("ms\tdevice\tangle_x\tangle_y\tpixel_x\tpixel_y\tinverted\tphase\tx\ty\tdpr\tnotches"
+                       "\tprojection\tfov\teye\tcenter\tscale\tanchor\tsource\n");
+    } else {
+      wheelLog_.reset();
+    }
+  }
 }
 
 Viewport::~Viewport() = default;
@@ -424,13 +438,137 @@ void Viewport::mouseDoubleClickEvent(QMouseEvent* event) {
 }
 
 void Viewport::wheelEvent(QWheelEvent* event) {
+  event->accept();
   if (view_.IsNull()) return;
-  const QPoint p = devicePos(event->position().toPoint());
-  const int delta = event->angleDelta().y() / 4;
-  if (delta == 0) return;
-  view_->StartZoomAtPoint(p.x(), p.y());
-  view_->ZoomAtPoint(p.x(), p.y(), p.x() + delta, p.y() + delta);
+  const double q = wheel::notches(event->angleDelta(), event->pixelDelta()) * (wheelInverted_ ? -1.0 : 1.0);
+  if (q != 0.0) zoomWheel(event->position(), q);
+  logWheel(event, q);
+  if (q == 0.0) return;
+  // The drawing in progress stays; its preview follows the new view (the
+  // cursor now points at another place of the model).
+  if (tool_ && drag_ == Drag::None) {
+    toolCall([&] { tool_->mouseMove(ToolEvent{event->position().toPoint(), event->modifiers()}); });
+  }
+}
+
+void Viewport::setWheelZoom(double ratioPerNotch, bool inverted) {
+  wheelRatio_ = std::clamp(ratioPerNotch, 1.01, 4.0);
+  wheelInverted_ = inverted;
+}
+
+std::optional<gp_Pnt> Viewport::lastWheelAnchor() const {
+  if (!wheel_.active) return std::nullopt;
+  return wheel_.anchor;
+}
+
+void Viewport::acquireWheelAnchor(const QPointF& pos) {
+  // What is under the cursor: a face of the model (as shown: hidden objects,
+  // guides and previews are not in the snap index) or else the ground.
+  // Nothing there: a point on the cursor's ray at the depth of the last
+  // anchor on something, or of the camera's focus, so the zoom never jumps
+  // to the world origin or the model's centre.
+  const Handle(Graphic3d_Camera)& camera = view_->Camera();
+  const QPoint p = pos.toPoint();
+  const snap::Ray ray = rayAt(p);
+  const gp_Dir forward = camera->Direction();
+  const gp_Pnt eye = camera->Eye();
+  wheel_.virtualAnchor = false;
+  if (const auto face = faceAt(p)) {
+    wheel_.anchor = face->first;
+    wheel_.source = "face";
+    wheel_.lastSolid = wheel_.anchor;
+    return;
+  }
+  double depth = eye.Distance(camera->Center());
+  wheel_.source = "focus";
+  if (wheel_.lastSolid) {
+    const double last = gp_Vec(eye, *wheel_.lastSolid).Dot(gp_Vec(forward));
+    if (last > wheel::kMinDistance) {
+      depth = last;
+      wheel_.source = "depth";
+    }
+  }
+  if (std::abs(ray.direction.Z()) > 1e-9) {
+    const double t = -ray.origin.Z() / ray.direction.Z();
+    const gp_Pnt ground = ray.origin.Translated(gp_Vec(ray.direction) * t);
+    const double groundDepth = gp_Vec(eye, ground).Dot(gp_Vec(forward));
+    // Near the horizon the ground is far away; past a few times the usual
+    // depth it would make one notch a huge step, so it is not used there.
+    if (t > 0 && groundDepth > 0 && (camera->IsOrthographic() || groundDepth <= 3.0 * depth)) {
+      wheel_.anchor = ground;
+      wheel_.source = "ground";
+      wheel_.lastSolid = ground;
+      return;
+    }
+  }
+  const double along = ray.direction.Dot(forward);
+  if (camera->IsOrthographic() || along < 1e-6) {
+    // Across the view the depth does not matter; take the focus plane.
+    const double t = gp_Vec(ray.origin, camera->Center()).Dot(gp_Vec(ray.direction));
+    wheel_.anchor = ray.origin.Translated(gp_Vec(ray.direction) * t);
+  } else {
+    wheel_.anchor = ray.origin.Translated(gp_Vec(ray.direction) * (std::max(depth, wheel::kMinVirtualDepth) / along));
+  }
+  wheel_.virtualAnchor = true;
+}
+
+void Viewport::zoomWheel(const QPointF& pos, double notches) {
+  if (view_.IsNull() || notches == 0.0) return;
+  const Handle(Graphic3d_Camera)& camera = view_->Camera();
+  const qint64 now = wheelClock_.elapsed();
+  // Same gesture: close in time, the cursor (nearly) still, and the camera
+  // as the last step left it (no orbit or view change in between).
+  const QPointF moved = pos - wheel_.pos;
+  const bool sameGesture = wheel_.active && now - wheel_.lastMs <= wheel::kGestureGapMs &&
+                           std::abs(moved.x()) + std::abs(moved.y()) <= wheel::kGestureMovePx &&
+                           camera->Eye().Distance(wheel_.eyeAfter) < 1e-6 &&
+                           std::abs(camera->Scale() - wheel_.scaleAfter) <= 1e-9 * wheel_.scaleAfter;
+  if (!sameGesture) acquireWheelAnchor(pos);
+  wheel_.active = true;
+  wheel_.lastMs = now;
+  wheel_.pos = pos;
+  const double ratio = std::pow(wheelRatio_, notches);
+  if (camera->IsOrthographic()) {
+    const wheel::Pose pose = wheel::zoomOrthographic(camera->Eye(), camera->Center(), camera->Direction(),
+                                                     camera->Scale(), wheel_.anchor, ratio);
+    camera->SetEyeAndCenter(pose.eye, pose.center);
+    camera->SetScale(pose.scale);
+  } else {
+    if (wheel_.virtualAnchor && notches > 0) {
+      // An anchor in empty space keeps ahead (along the cursor's ray, so it
+      // stays under the cursor): flying through empty space never stalls.
+      const gp_Vec ahead(camera->Eye(), wheel_.anchor);
+      const double distance = ahead.Magnitude();
+      if (distance < wheel::kMinVirtualDepth && distance > 1e-9) {
+        wheel_.anchor = camera->Eye().Translated(ahead * (wheel::kMinVirtualDepth / distance));
+      }
+    }
+    const wheel::Pose pose = wheel::zoomPerspective(camera->Eye(), camera->Center(), wheel_.anchor, ratio);
+    camera->SetEyeAndCenter(pose.eye, pose.center);
+  }
+  wheel_.eyeAfter = camera->Eye();
+  wheel_.scaleAfter = camera->Scale();
+  view_->Invalidate();
   redraw();
+}
+
+void Viewport::logWheel(const QWheelEvent* event, double notches) {
+  if (!wheelLog_) return;
+  const Handle(Graphic3d_Camera)& c = view_->Camera();
+  auto point = [](const gp_Pnt& p) { return QStringLiteral("%1,%2,%3").arg(p.X()).arg(p.Y()).arg(p.Z()); };
+  const QStringList fields = {
+      QString::number(wheelClock_.elapsed()),
+      event->pointingDevice() ? event->pointingDevice()->name() : QString(),
+      QString::number(event->angleDelta().x()), QString::number(event->angleDelta().y()),
+      QString::number(event->pixelDelta().x()), QString::number(event->pixelDelta().y()),
+      QString::number(event->inverted() ? 1 : 0), QString::number(static_cast<int>(event->phase())),
+      QString::number(event->position().x()), QString::number(event->position().y()),
+      QString::number(devicePixelRatioF()), QString::number(notches, 'g', 9),
+      c->IsOrthographic() ? QStringLiteral("ortho") : QStringLiteral("persp"), QString::number(c->FOVy()),
+      point(c->Eye()), point(c->Center()), QString::number(c->Scale(), 'g', 9),
+      wheel_.active ? point(wheel_.anchor) : QString(), QString::fromLatin1(wheel_.source)};
+  wheelLog_->write((fields.join(QLatin1Char('\t')) + QLatin1Char('\n')).toUtf8());
+  wheelLog_->flush();
 }
 
 void Viewport::keyPressEvent(QKeyEvent* event) {

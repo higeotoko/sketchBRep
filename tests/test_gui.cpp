@@ -5,6 +5,8 @@
 
 #include <BRep_Tool.hxx>
 #include <GProp_GProps.hxx>
+#include <QWheelEvent>
+
 #include <BRepGProp.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
@@ -48,6 +50,7 @@
 
 #include "AiBridge.h"
 #include "ProgressDialog.h"
+#include "WheelZoom.h"
 #include "MainWindow.h"
 #include "MaterialEditor.h"
 #include "MaterialsPanel.h"
@@ -80,6 +83,19 @@ void click(QWidget* w, const QPoint& pos) {
   send(w, QEvent::MouseButtonPress, pos, Qt::LeftButton, Qt::LeftButton);
   send(w, QEvent::MouseButtonRelease, pos, Qt::LeftButton, Qt::NoButton);
   QTest::qWait(20);
+}
+
+void wheelAt(QWidget* w, const QPoint& pos, const QPoint& angle, const QPoint& pixel = QPoint(),
+             Qt::ScrollPhase phase = Qt::NoScrollPhase) {
+  QWheelEvent event(QPointF(pos), QPointF(w->mapToGlobal(pos)), pixel, angle, Qt::NoButton, Qt::NoModifier, phase,
+                    false);
+  QApplication::sendEvent(w, &event);
+}
+
+double gap(const doc::CameraState& a, const doc::CameraState& b) {
+  double d = 0;
+  for (int i = 0; i < 3; ++i) d = std::max({d, std::abs(a.eye[i] - b.eye[i]), std::abs(a.target[i] - b.target[i])});
+  return std::max(d, std::abs(a.scale - b.scale));
 }
 
 void type(QWidget* w, const QString& text) {
@@ -181,6 +197,9 @@ class GuiPhase1 : public QObject {
   void selectionDotsKeepTheMaterialColour();
   void eraserDragErasesCrossedLines();
   void eraserDragFollowsWhatTheLineBecame();
+  void wheelZoomIsConsistentAndReversible();
+  void wheelZoomEmptySpaceAndLimits();
+  void wheelZoomKeepsDrawing();
   void materialEditorColourTextureOpacityDuplicate();
   void brandingResourcesLoad();
   void paintNeedsAMaterialAndPresetsAddOnClick();
@@ -2904,6 +2923,149 @@ void GuiPhase1::eraserDragFollowsWhatTheLineBecame() {
     length += props.Mass();
   }
   QVERIFY2(std::abs(length - 1000.0) < 1e-3, qPrintable(QString::number(length)));
+}
+
+// Wheel zoom (docs/17_wheel_zoom.md, request Z02 Z05 Z06 Z07 Z11): one
+// notch divides the distance to the point under the cursor by the ratio;
+// that point stays under the cursor; however the same total input is
+// split, the camera ends up the same; the opposite input goes back; empty
+// begin/end events do nothing; pixel-only input works and is never added
+// to angle input.
+void GuiPhase1::wheelZoomIsConsistentAndReversible() {
+  Fixture f;
+  QVERIFY(f.setUp(4000, 6000));
+  f.box(0, 0, 8000, 12000, 3000);  // the request's building outline
+  f.vp->syncNow();
+  for (bool perspective : {true, false}) {
+    doc::CameraState start;
+    start.eye = {-4000, -8000, 12000};
+    start.target = {4000, 6000, 3000};
+    start.perspective = perspective;
+    start.scale = 20000;
+    f.vp->restoreCamera(start);
+    f.vp->storeCamera(start);  // as the view really is
+    const QPoint cursor = f.vp->toWidget(gp_Pnt(6500, 9000, 3000));  // off-centre, on the roof
+    const double ratio = f.vp->wheelRatioPerNotch();
+
+    // One notch.
+    wheelAt(f.vp, cursor, QPoint(0, 120));
+    doc::CameraState one;
+    f.vp->storeCamera(one);
+    const auto anchor = f.vp->lastWheelAnchor();
+    QVERIFY(anchor);
+    QCOMPARE(f.vp->lastWheelAnchorSource(), QStringLiteral("face"));
+    QVERIFY2(std::abs(anchor->Z() - 3000) < 1.0, qPrintable(QString::number(anchor->Z())));
+    const snap::ScreenPoint shown = f.vp->project(*anchor);
+    QVERIFY2(std::hypot(shown.x - cursor.x(), shown.y - cursor.y()) <= 2.0,
+             qPrintable(QStringLiteral("%1,%2 vs %3,%4").arg(shown.x).arg(shown.y).arg(cursor.x()).arg(cursor.y())));
+    if (perspective) {
+      const gp_Pnt eye0(start.eye[0], start.eye[1], start.eye[2]), eye1(one.eye[0], one.eye[1], one.eye[2]);
+      QVERIFY(std::abs(eye0.Distance(*anchor) / eye1.Distance(*anchor) - ratio) < 1e-9);
+    } else {
+      QVERIFY(std::abs(start.scale / one.scale - ratio) < 1e-9);
+    }
+
+    // The same 120 split in other ways, and the pixel-only / mixed forms.
+    const double tolerance = 1e-6 * 20000;
+    const std::vector<std::vector<std::pair<QPoint, QPoint>>> splits = {
+        std::vector<std::pair<QPoint, QPoint>>(2, {QPoint(0, 60), QPoint()}),
+        std::vector<std::pair<QPoint, QPoint>>(4, {QPoint(0, 30), QPoint()}),
+        std::vector<std::pair<QPoint, QPoint>>(120, {QPoint(0, 1), QPoint()}),
+        std::vector<std::pair<QPoint, QPoint>>{{QPoint(0, 0), QPoint()}, {QPoint(0, 120), QPoint(0, 999)},
+                                               {QPoint(0, 0), QPoint()}},
+        std::vector<std::pair<QPoint, QPoint>>{{QPoint(), QPoint(0, 50)}}};
+    for (const auto& split : splits) {
+      f.vp->restoreCamera(start);
+      for (const auto& [angle, pixel] : split) wheelAt(f.vp, cursor, angle, pixel);
+      doc::CameraState after;
+      f.vp->storeCamera(after);
+      QVERIFY2(gap(after, one) < tolerance, qPrintable(QStringLiteral("split of %1: %2").arg(split.size()).arg(gap(after, one))));
+    }
+    // An empty begin / end does nothing.
+    f.vp->restoreCamera(start);
+    wheelAt(f.vp, cursor, QPoint(), QPoint(), Qt::ScrollBegin);
+    wheelAt(f.vp, cursor, QPoint(), QPoint(), Qt::ScrollEnd);
+    doc::CameraState still;
+    f.vp->storeCamera(still);
+    QVERIFY(gap(still, start) < tolerance);
+
+    // Five in, five out: back where it started.
+    for (int k = 0; k < 5; ++k) wheelAt(f.vp, cursor, QPoint(0, 120));
+    for (int k = 0; k < 5; ++k) wheelAt(f.vp, cursor, QPoint(0, -120));
+    doc::CameraState back;
+    f.vp->storeCamera(back);
+    QVERIFY2(gap(back, start) < tolerance, qPrintable(QString::number(gap(back, start))));
+  }
+}
+
+// Request Z04 Z10: pointing at the sky zooms at the depth last used (no
+// jump to the origin), keeps moving through empty space, and zooming into
+// a face stops short of it: no flip, no NaN.
+void GuiPhase1::wheelZoomEmptySpaceAndLimits() {
+  Fixture f;
+  QVERIFY(f.setUp(4000, 6000));
+  f.box(0, 0, 8000, 12000, 3000);
+  f.vp->syncNow();
+  doc::CameraState start;
+  start.eye = {4000, -20000, 2000};
+  start.target = {4000, 6000, 1500};
+  start.perspective = true;
+  start.scale = 20000;
+  f.vp->restoreCamera(start);
+  const QPoint wall = f.vp->toWidget(gp_Pnt(4000, 0, 1500));
+  wheelAt(f.vp, wall, QPoint(0, 120));
+  QCOMPARE(f.vp->lastWheelAnchorSource(), QStringLiteral("face"));
+  const gp_Pnt onWall = *f.vp->lastWheelAnchor();
+
+  // To the sky: the depth of the wall, still under the cursor.
+  const QPoint sky(f.vp->width() / 2, 10);
+  wheelAt(f.vp, sky, QPoint(0, 120));
+  QCOMPARE(f.vp->lastWheelAnchorSource(), QStringLiteral("depth"));
+  const auto inSky = f.vp->lastWheelAnchor();
+  const snap::ScreenPoint shown = f.vp->project(*inSky);
+  QVERIFY(std::hypot(shown.x - sky.x(), shown.y - sky.y()) <= 2.0);
+  QVERIFY2(std::abs(inSky->Y() - onWall.Y()) < 0.25 * std::abs(onWall.Y() - start.eye[1]),
+           qPrintable(QString::number(inSky->Y())));
+  // Empty space never stalls.
+  for (int k = 0; k < 40; ++k) {
+    doc::CameraState before, after;
+    f.vp->storeCamera(before);
+    wheelAt(f.vp, sky, QPoint(0, 120));
+    f.vp->storeCamera(after);
+    QVERIFY(gap(before, after) > 1.0);
+  }
+
+  // Into the wall: stops short of it, stays in front, all finite.
+  f.vp->restoreCamera(start);
+  for (int k = 0; k < 200; ++k) wheelAt(f.vp, wall, QPoint(0, 120));
+  doc::CameraState close;
+  f.vp->storeCamera(close);
+  for (double v : close.eye) QVERIFY(std::isfinite(v));
+  QVERIFY2(close.eye[1] < 0 && close.eye[1] > -wheel::kMinDistance - 1.0, qPrintable(QString::number(close.eye[1])));
+  // And out again.
+  for (int k = 0; k < 200; ++k) wheelAt(f.vp, wall, QPoint(0, -120));
+  doc::CameraState away;
+  f.vp->storeCamera(away);
+  QVERIFY2(away.eye[1] < start.eye[1] + 1.0, qPrintable(QString::number(away.eye[1])));
+}
+
+// Request Z09: the wheel does not end a line in progress; the next click
+// still finishes it from the first point.
+void GuiPhase1::wheelZoomKeepsDrawing() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  f.window.activateTool(MainWindow::ToolId::Line);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));
+  for (int k = 0; k < 3; ++k) wheelAt(f.vp, f.vp->toWidget(gp_Pnt(1000, 0, 0)), QPoint(0, 120));
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 0, 0)));
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  const Bnd_Box box = geom::exactBounds(m.document().worldShape(m.document().objects().front()));
+  double x0, y0, z0, x1, y1, z1;
+  box.Get(x0, y0, z0, x1, y1, z1);
+  QVERIFY2(std::abs(x0) < 1.0 && std::abs(x1 - 1000) < 1.0, qPrintable(QStringLiteral("%1 %2").arg(x0).arg(x1)));
 }
 
 // The material editor (SketchUp's 編集 tab): the colour is adjusted after

@@ -23,6 +23,7 @@
 #include <QDockWidget>
 #include <QFileDialog>
 #include <QDialog>
+#include <QCheckBox>
 #include <QElapsedTimer>
 #include <QDialogButtonBox>
 #include <QFileInfo>
@@ -55,6 +56,7 @@
 #include "AiBridge.h"
 #include "Messages.h"
 #include "ProgressDialog.h"
+#include "WheelZoom.h"
 #include "Cursors.h"
 #include "MaterialEditor.h"
 #include "MaterialsPanel.h"
@@ -620,6 +622,12 @@ void MainWindow::buildMenus() {
   focusOnDoubleClick_ = view->addAction(tr("ダブルクリックでフォーカス"));
   focusOnDoubleClick_->setCheckable(true);
   focusOnDoubleClick_->setChecked(true);
+  view->addAction(tr("ホイールズームの設定..."), this, &MainWindow::showWheelZoomDialog);
+  {
+    const QSettings settings;
+    viewport_->setWheelZoom(settings.value(QStringLiteral("view/wheelZoomRatio"), wheel::kDefaultRatioPerNotch).toDouble(),
+                            settings.value(QStringLiteral("view/wheelZoomInverted"), false).toBool());
+  }
 
   QMenu* quality = view->addMenu(tr("表示品質（描画メッシュのみ）"));
   auto* qualityGroup = new QActionGroup(this);
@@ -1614,6 +1622,37 @@ QString MainWindow::recoveryDir() {
                                             .filePath(QStringLiteral("recovery"));
   QDir().mkpath(dir);
   return dir;
+}
+
+void MainWindow::showWheelZoomDialog() {
+  QDialog dialog(this);
+  dialog.setWindowTitle(tr("ホイールズームの設定"));
+  auto* form = new QFormLayout(&dialog);
+  auto* ratio = new QDoubleSpinBox(&dialog);
+  ratio->setRange(1.05, 2.0);
+  ratio->setSingleStep(0.05);
+  ratio->setDecimals(2);
+  ratio->setValue(viewport_->wheelRatioPerNotch());
+  ratio->setToolTip(tr("1 ノッチで、カーソルの下の点までの距離を何分の 1 にするか（既定 %1）")
+                        .arg(wheel::kDefaultRatioPerNotch));
+  form->addRow(tr("1 ノッチの寄り（距離 ÷）"), ratio);
+  auto* inverted = new QCheckBox(tr("ホイールの向きを逆にする"), &dialog);
+  inverted->setChecked(viewport_->wheelInverted());
+  form->addRow(inverted);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel | QDialogButtonBox::RestoreDefaults,
+                                       &dialog);
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  connect(buttons->button(QDialogButtonBox::RestoreDefaults), &QPushButton::clicked, &dialog, [&] {
+    ratio->setValue(wheel::kDefaultRatioPerNotch);
+    inverted->setChecked(false);
+  });
+  form->addRow(buttons);
+  if (dialog.exec() != QDialog::Accepted) return;
+  viewport_->setWheelZoom(ratio->value(), inverted->isChecked());
+  QSettings settings;
+  settings.setValue(QStringLiteral("view/wheelZoomRatio"), viewport_->wheelRatioPerNotch());
+  settings.setValue(QStringLiteral("view/wheelZoomInverted"), viewport_->wheelInverted());
 }
 
 void MainWindow::startSession() {

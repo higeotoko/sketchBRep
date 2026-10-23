@@ -10,6 +10,7 @@ add_library(sbr_ui STATIC
   MaterialEditor.cpp MaterialEditor.h
   Tools.cpp Tools.h
   Viewport.cpp Viewport.h
+  WheelZoom.cpp WheelZoom.h
   Cursors.cpp Cursors.h
   AiBridge.cpp AiBridge.h
   Messages.cpp Messages.h

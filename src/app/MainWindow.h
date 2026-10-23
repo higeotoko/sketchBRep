@@ -176,6 +176,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   void startSession();
   void clearRecovery();
   void showAutosaveDialog();
+  void showWheelZoomDialog();
   void refreshConstraints();
   void showWallSettingsDialog();
   void showSlabSettingsDialog();

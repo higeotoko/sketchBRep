@@ -14,6 +14,9 @@
 #include <vector>
 
 #include <QCursor>
+#include <QElapsedTimer>
+#include <QFile>
+#include <memory>
 #include <QPoint>
 #include <QTimer>
 #include <QWidget>
@@ -148,6 +151,19 @@ class Viewport : public QWidget {
   void setPerspective(bool perspective);
   bool isPerspective() const;
   void fitAll();
+
+  // --- wheel zoom (WheelZoom.h, docs/17_wheel_zoom.md) ----------------------
+  // Zooms by `notches` (positive: in) at the cursor position `pos`
+  // (logical pixels), as one wheel event does.
+  void zoomWheel(const QPointF& pos, double notches);
+  // Distance ratio per notch (> 1) and an explicit direction reversal.
+  void setWheelZoom(double ratioPerNotch, bool inverted);
+  double wheelRatioPerNotch() const { return wheelRatio_; }
+  bool wheelInverted() const { return wheelInverted_; }
+  // The point the last wheel step zoomed at, and where it came from
+  // ("face", "ground", "depth": the last depth in empty space, "focus").
+  std::optional<gp_Pnt> lastWheelAnchor() const;
+  QString lastWheelAnchorSource() const { return QString::fromLatin1(wheel_.source); }
   void fitObjects(const std::vector<doc::ObjectId>& ids);
   void storeCamera(doc::CameraState& state) const;
   void restoreCamera(const doc::CameraState& state);
@@ -324,6 +340,27 @@ class Viewport : public QWidget {
   enum class Drag { None, Orbit, Pan } drag_ = Drag::None;
   QPoint lastDragPos_;
   gp_Pnt orbitPivot_;
+
+  // Wheel zoom: one anchor per gesture (events close in time while the
+  // cursor stays), so a run of notches zooms at one point.
+  struct WheelGesture {
+    bool active = false;
+    qint64 lastMs = 0;
+    QPointF pos;
+    gp_Pnt anchor;
+    const char* source = "";
+    bool virtualAnchor = false;  // in empty space (no face or ground there)
+    gp_Pnt eyeAfter;             // the camera as this zoom left it
+    double scaleAfter = 0.0;
+    std::optional<gp_Pnt> lastSolid;  // the last anchor on something: depth for empty space
+  };
+  void acquireWheelAnchor(const QPointF& pos);
+  void logWheel(const class QWheelEvent* event, double notches);
+  WheelGesture wheel_;
+  QElapsedTimer wheelClock_;
+  double wheelRatio_;
+  bool wheelInverted_ = false;
+  std::unique_ptr<QFile> wheelLog_;  // SBR_WHEEL_LOG=<file>: diagnostics, off by default
 };
 
 }  // namespace sbr::app
