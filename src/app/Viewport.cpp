@@ -264,6 +264,11 @@ void Viewport::initViewer() {
     viewer_->SetDefaultLights();
     viewer_->SetLightOn();
     context_ = new AIS_InteractiveContext(viewer_);
+    // No pre-highlight under the cursor (SketchUp): what the tools point at
+    // is detected only; selections are drawn by setHighlightedElements /
+    // setSelection. A pre-highlight could also stay drawn on geometry that
+    // an edit had already replaced.
+    context_->SetAutomaticHilight(Standard_False);
 
     view_ = viewer_->CreateView();
 #ifdef _WIN32
@@ -1513,12 +1518,18 @@ std::optional<ElementRef> Viewport::elementAt(const QPoint& pos) {
 std::optional<ElementRef> Viewport::pickElement(const QPoint& pos) {
   if (view_.IsNull() || pickMode_ != PickMode::Elements) return std::nullopt;
   const QPoint p = devicePos(pos);
-  context_->MoveTo(p.x(), p.y(), view_, Standard_False);
-  redraw();
-  if (!context_->HasDetected()) return std::nullopt;
-  Handle(StdSelect_BRepOwner) owner = Handle(StdSelect_BRepOwner)::DownCast(context_->DetectedOwner());
+  // Detection only: pointing at a face or an edge shows nothing (SketchUp);
+  // selected elements are shown by setHighlightedElements.
+  if (context_->HasDetected()) {
+    context_->ClearDetected(Standard_False);
+    redraw();
+  }
+  const Handle(StdSelect_ViewerSelector3d)& selector = context_->MainSelector();
+  selector->Pick(p.x(), p.y(), view_);
+  if (selector->NbPicked() < 1) return std::nullopt;
+  Handle(StdSelect_BRepOwner) owner = Handle(StdSelect_BRepOwner)::DownCast(selector->Picked(1));
   if (owner.IsNull()) return std::nullopt;
-  const auto id = idOf(context_->DetectedInteractive());
+  const auto id = idOf(Handle(AIS_InteractiveObject)::DownCast(owner->Selectable()));
   if (!id) return std::nullopt;
   const Entry& entry = entries_.at(*id);
   const TopAbs_ShapeEnum type = owner->Shape().ShapeType();

@@ -145,6 +145,7 @@ class GuiPhase1 : public QObject {
   void groupIsSelectedAsAWhole();
   void curveToolOpenAndClosed();
   void selectFacesEdgesAndWholeObject();
+  void hoverDoesNotHighlightAndEdgeSelectionStays();
   void pushPullDoesNotSelectWholeObject();
   void eachToolHasItsCursor();
   void revolveToolAndTypedAngle();
@@ -566,6 +567,72 @@ void GuiPhase1::selectFacesEdgesAndWholeObject() {
   click(f.vp, f.vp->toWidget(gp_Pnt(5000, 5000, 0)));  // empty space clears
   QVERIFY(f.window.elementSelection().empty());
   QVERIFY(f.window.selection().empty());
+}
+
+// Pointing at a face or an edge shows nothing (no yellow pre-highlight);
+// a selected edge stays shown as selected when the cursor moves on.
+void GuiPhase1::hoverDoesNotHighlightAndEdgeSelectionStays() {
+  Fixture f;
+  QVERIFY(f.setUp(500, 500));
+  f.box(0, 0, 1000, 1000, 1000);
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::Select);
+  const QPoint empty = f.vp->toWidget(gp_Pnt(4000, 4000, 0));
+  const QPoint top = f.vp->toWidget(gp_Pnt(500, 500, 1000));
+  const gp_Pnt edgeMid(500, 0, 1000);
+  const QPoint edge = f.vp->toWidget(edgeMid);
+  auto shot = [&] {
+    move(f.vp, empty);  // nothing under the cursor first
+    f.vp->renderNow();
+    const QString path = QDir::temp().filePath(QStringLiteral("sbr_hover.png"));
+    f.vp->dumpImage(path);
+    return QImage(path);
+  };
+  auto pixelsDiffer = [](const QImage& a, const QImage& b) {
+    int n = 0;
+    for (int y = 0; y < std::min(a.height(), b.height()); y += 2) {
+      for (int x = 0; x < std::min(a.width(), b.width()); x += 2) n += a.pixel(x, y) != b.pixel(x, y);
+    }
+    return n;
+  };
+  const QImage plain = shot();
+  // Hovering the top face, then an edge: the picture stays the same.
+  for (const QPoint& at : {top, edge}) {
+    move(f.vp, at);
+    f.vp->renderNow();
+    const QString path = QDir::temp().filePath(QStringLiteral("sbr_hover_at.png"));
+    f.vp->dumpImage(path);
+    QVERIFY2(pixelsDiffer(plain, QImage(path)) < 20, qPrintable(QString::number(pixelsDiffer(plain, QImage(path)))));
+  }
+  // Click the edge: selected; moving away keeps it selected and shown.
+  click(f.vp, edge);
+  QCOMPARE(f.window.elementSelection().size(), std::size_t(1));
+  QCOMPARE(f.window.elementSelection().front().type, TopAbs_EDGE);
+  const QImage selected = shot();
+  QCOMPARE(f.window.elementSelection().size(), std::size_t(1));
+  QVERIFY2(pixelsDiffer(plain, selected) > 20, "the selected edge is not shown");
+  move(f.vp, top);
+  QTest::qWait(30);
+  QCOMPARE(f.window.elementSelection().size(), std::size_t(1));
+  const QImage still = shot();
+  QVERIFY2(pixelsDiffer(selected, still) < 20, qPrintable(QString::number(pixelsDiffer(selected, still))));
+
+  // The shape changes (here pushed up): the selected edge no longer exists
+  // as it was, so it is let go and nothing stays drawn where it was.
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = m.document().objects().front().id;
+  TopoDS_Face topFace;
+  for (TopExp_Explorer e(m.document().worldShape(box), TopAbs_FACE); e.More(); e.Next()) {
+    const auto n = geom::planarFaceNormal(TopoDS::Face(e.Current()));
+    if (n && n->Z() > 0.99) topFace = TopoDS::Face(e.Current());
+  }
+  QVERIFY(m.pushPull(box, topFace, 500).ok());
+  QTest::qWait(50);
+  QVERIFY(f.window.elementSelection().empty());
+  const QImage after = shot();
+  f.vp->setHighlightedElements({});
+  const QImage clean = shot();
+  QVERIFY2(pixelsDiffer(after, clean) < 5, qPrintable(QString::number(pixelsDiffer(after, clean))));
 }
 
 void GuiPhase1::pushPullDoesNotSelectWholeObject() {

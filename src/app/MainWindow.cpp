@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <map>
 
 #include <QAction>
@@ -1154,8 +1155,23 @@ void MainWindow::setSelection(const std::vector<doc::ObjectId>& ids) {
   refreshPanels();
 }
 
+// What a selected face / edge index refers to: the object's shape and where
+// it is. When either changes the index means something else (or nothing).
+std::string MainWindow::elementBasis(const doc::ObjectId& id) const {
+  const doc::Object* o = modeler_.document().find(id);
+  if (!o) return {};
+  const gp_Trsf t = modeler_.document().worldTransform(*o);
+  std::string key = std::to_string(reinterpret_cast<std::uintptr_t>(o->shape.TShape().get()));
+  for (int r = 1; r <= 3; ++r) {
+    for (int c = 1; c <= 4; ++c) key += "," + std::to_string(t.Value(r, c));
+  }
+  return key;
+}
+
 void MainWindow::setElementSelection(const std::vector<ElementRef>& elements) {
   elements_ = elements;
+  elementBases_.clear();
+  for (const ElementRef& e : elements_) elementBases_[e.objectId] = elementBasis(e.objectId);
   // Owners become the object selection (panel, Move/Rotate targets) but are
   // not highlighted as a whole: only the picked faces/edges are.
   selection_.clear();
@@ -1256,11 +1272,22 @@ void MainWindow::onDocumentChanged() {
                                       return modeler_.document().find(id) == nullptr;
                                     }),
                      selection_.end());
+    // Selected faces / edges of objects that are gone or changed shape or
+    // place (push/pull, move, reshape...) are dropped: their highlight
+    // would stay drawn where the geometry was (a stale line).
+    const std::size_t before = elements_.size();
     elements_.erase(std::remove_if(elements_.begin(), elements_.end(),
                                    [this](const ElementRef& e) {
-                                     return modeler_.document().find(e.objectId) == nullptr;
+                                     const auto basis = elementBases_.find(e.objectId);
+                                     return modeler_.document().find(e.objectId) == nullptr ||
+                                            basis == elementBases_.end() ||
+                                            basis->second != elementBasis(e.objectId);
                                    }),
                     elements_.end());
+    if (elements_.size() != before) {
+      viewport_->syncNow();
+      viewport_->setHighlightedElements(elements_);
+    }
     viewport_->setSelection(elements_.empty() ? selection_ : std::vector<doc::ObjectId>{});
     refreshPanels();
     updateTitle();

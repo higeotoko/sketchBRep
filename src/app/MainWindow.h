@@ -1,6 +1,8 @@
 #pragma once
 
+#include <map>
 #include <memory>
+#include <string>
 #include <optional>
 #include <vector>
 
@@ -164,6 +166,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   void closeEvent(QCloseEvent* event) override;
 
  private:
+  std::string elementBasis(const doc::ObjectId& id) const;
+  std::map<doc::ObjectId, std::string> elementBases_;  // per object of elements_, when selected
   void buildUi();
   void buildMenus();
   void onDocumentChanged();
