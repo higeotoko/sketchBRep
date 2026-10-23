@@ -368,6 +368,7 @@ class Viewport : public QWidget {
   int backgroundRows_ = 0;
   bool underGround_ = false;
   enum class Drag { None, Orbit, Pan } drag_ = Drag::None;
+  bool leftInCameraDrag_ = false;  // left pressed during a middle-button drag
   QPoint lastDragPos_;
   gp_Pnt orbitPivot_;
 

@@ -146,6 +146,7 @@ class GuiPhase1 : public QObject {
   void copySelectedEdgeArrays();
   void copyOntoEdgeThenDivideKeepsSolid();
   void typedLengthSplitsOrClosesSafely();
+  void middleLeftPanAddsNoPoint();
   void rectangleOneSideSignsAndReentry();
   void cutCopyAndMoveCopyTakeOnlyPickedElements();
   void rotateByTypedAngle();
@@ -620,6 +621,45 @@ void GuiPhase1::rectangleOneSideSignsAndReentry() {
   QVERIFY(!f.window.lastError().isEmpty());
   x1 = geom::exactBounds(m.document().worldShape(*m.document().find(moved))).CornerMin().X();
   QVERIFY(std::abs((x1 - x0) + 800) < 1.0);
+}
+
+// W3 / CAM-01, SC17: while the middle button orbits, pressing the left
+// one pans; neither press nor release reaches the line tool (no stray
+// point), and the start point, direction and typed length carry on.
+void GuiPhase1::middleLeftPanAddsNoPoint() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  f.window.activateTool(MainWindow::ToolId::Line);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(800, 0, 0)));
+  doc::CameraState before, after;
+  f.vp->storeCamera(before);
+  const QPoint a = f.vp->toWidget(gp_Pnt(800, 0, 0));
+  const QPoint b = a + QPoint(120, 60);
+  send(f.vp, QEvent::MouseButtonPress, a, Qt::MiddleButton, Qt::MiddleButton);
+  send(f.vp, QEvent::MouseButtonPress, a, Qt::LeftButton, Qt::MiddleButton | Qt::LeftButton);
+  send(f.vp, QEvent::MouseMove, b, Qt::NoButton, Qt::MiddleButton | Qt::LeftButton);
+  send(f.vp, QEvent::MouseButtonDblClick, b, Qt::LeftButton, Qt::MiddleButton | Qt::LeftButton);
+  send(f.vp, QEvent::MouseButtonRelease, b, Qt::LeftButton, Qt::MiddleButton);
+  send(f.vp, QEvent::MouseButtonRelease, b, Qt::MiddleButton, Qt::NoButton);
+  QTest::qWait(30);
+  f.vp->storeCamera(after);
+  QVERIFY(gap(before, after) > 1.0);  // the view moved
+  QCOMPARE(m.document().objects().size(), std::size_t(0));
+  // The line goes on from its start: point the way again and type.
+  move(f.vp, f.vp->toWidget(gp_Pnt(800, 0, 0)));
+  type(f.vp, QStringLiteral("1500"));
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  QTest::qWait(30);
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  const TopoDS_Shape line = m.document().worldShape(m.document().objects().front());
+  int edges = 0;
+  for (TopExp_Explorer e(line, TopAbs_EDGE); e.More(); e.Next()) ++edges;
+  QCOMPARE(edges, 1);
+  const Bnd_Box box = geom::exactBounds(line);
+  QVERIFY2(std::abs(box.CornerMax().X() - box.CornerMin().X() - 1500) < 1e-6 && std::abs(box.CornerMin().X()) < 1e-6,
+           qPrintable(QStringLiteral("%1 %2").arg(box.CornerMin().X()).arg(box.CornerMax().X())));
 }
 
 void GuiPhase1::moveCopyAndArray() {

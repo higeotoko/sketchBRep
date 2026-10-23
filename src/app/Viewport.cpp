@@ -374,6 +374,14 @@ void Viewport::mousePressEvent(QMouseEvent* event) {
     }
     return;
   }
+  // Middle held, then left (CAM-01): a pan, never a click of the tool (no
+  // stray point); its release and a double-click are the camera's too.
+  if (event->button() == Qt::LeftButton && drag_ != Drag::None) {
+    drag_ = Drag::Pan;
+    leftInCameraDrag_ = true;
+    setCursor(Qt::SizeAllCursor);
+    return;
+  }
   if (event->button() == Qt::LeftButton && tool_) {
     toolCall([&] { tool_->mousePress(ToolEvent{event->position().toPoint(), event->modifiers()}); });
     emit toolInput();
@@ -409,6 +417,14 @@ void Viewport::mouseReleaseEvent(QMouseEvent* event) {
     setCursor(toolCursor_);
     return;
   }
+  if (event->button() == Qt::LeftButton && leftInCameraDrag_) {
+    leftInCameraDrag_ = false;
+    if (drag_ == Drag::Pan && (event->buttons() & Qt::MiddleButton)) {
+      drag_ = (event->modifiers() & Qt::ShiftModifier) ? Drag::Pan : Drag::Orbit;  // back to the middle's own
+      setCursor(drag_ == Drag::Pan ? Qt::SizeAllCursor : Qt::ClosedHandCursor);
+    }
+    return;
+  }
   if (event->button() == Qt::LeftButton && tool_) {
     toolCall([&] { tool_->mouseRelease(ToolEvent{event->position().toPoint(), event->modifiers()}); });
     emit toolInput();
@@ -435,6 +451,7 @@ void Viewport::mouseMoveEvent(QMouseEvent* event) {
 
 void Viewport::mouseDoubleClickEvent(QMouseEvent* event) {
   const QPoint pos = event->position().toPoint();
+  if (event->button() == Qt::LeftButton && (drag_ != Drag::None || leftInCameraDrag_)) return;
   bool consumed = false;
   if (event->button() == Qt::LeftButton && tool_) {
     toolCall([&] { consumed = tool_->mouseDoubleClick(ToolEvent{pos, event->modifiers()}); });
