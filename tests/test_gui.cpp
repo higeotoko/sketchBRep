@@ -170,6 +170,7 @@ class GuiPhase1 : public QObject {
   void rightClickMenuFollowsTheSelection();
   void skyAndGroundFollowTheHorizon();
   void selectionDotsKeepTheMaterialColour();
+  void eraserDragErasesCrossedLines();
   void paintNeedsAMaterialAndPresetsAddOnClick();
   void followMeAroundTopFace();
   void wallToolAndArchitectureMenus();
@@ -2787,6 +2788,33 @@ void GuiPhase1::selectionDotsKeepTheMaterialColour() {
   }
   QVERIFY2(reddish > 128, qPrintable(QString("red %1 blue %2").arg(reddish).arg(blue)));
   QVERIFY2(blue >= 4, qPrintable(QString("red %1 blue %2").arg(reddish).arg(blue)));
+}
+
+// SketchUp: hold the eraser down and sweep across lines; they are marked
+// and go together on release (one undo step). A click still erases one.
+void GuiPhase1::eraserDragErasesCrossedLines() {
+  Fixture f;
+  QVERIFY(f.setUp(1500, 1500));
+  doc::Modeler& m = f.window.modeler();
+  for (double y : {1000.0, 1500.0, 2000.0}) QVERIFY(m.createPolyline({gp_Pnt(500, y, 0), gp_Pnt(2500, y, 0)}).ok());
+  QVERIFY(m.createPolyline({gp_Pnt(500, 3000, 0), gp_Pnt(2500, 3000, 0)}).ok());  // not crossed
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::Eraser);
+  const std::size_t steps = m.history().undoCount();
+  const QPoint from = f.vp->toWidget(gp_Pnt(1500, 700, 0)), to = f.vp->toWidget(gp_Pnt(1500, 2300, 0));
+  move(f.vp, from);
+  send(f.vp, QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
+  for (int k = 1; k <= 10; ++k) {
+    send(f.vp, QEvent::MouseMove, from + (to - from) * k / 10, Qt::NoButton, Qt::LeftButton);
+  }
+  QVERIFY2(f.window.statusText().contains(QStringLiteral("3 本")), qPrintable(f.window.statusText()));
+  send(f.vp, QEvent::MouseButtonRelease, to, Qt::LeftButton, Qt::NoButton);
+  QTest::qWait(20);
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), std::size_t(1));  // only the line not crossed
+  QCOMPARE(m.history().undoCount(), steps + 1);
+  QVERIFY(m.undo());
+  QCOMPARE(m.document().objects().size(), std::size_t(4));
 }
 
 QTEST_MAIN(GuiPhase1)

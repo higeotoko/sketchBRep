@@ -3463,7 +3463,12 @@ void EraserTool::activate() {
   host_.setStatus(QObject::tr("線をクリックで消す（交点から交点まで）/ 面をクリックで部材ごと削除 / Shift+クリックで線を隠す"));
 }
 
-void EraserTool::cancel() { host_.viewport().setHighlightedElements({}); }
+void EraserTool::cancel() {
+  press_.reset();
+  dragging_ = false;
+  marked_.clear();
+  host_.viewport().setHighlightedElements({});
+}
 
 namespace {
 
@@ -3504,6 +3509,28 @@ EraserTool::EdgeAction EraserTool::actionFor(const ElementRef& picked, const Top
 
 void EraserTool::mouseMove(const ToolEvent& e) {
   Viewport& vp = host_.viewport();
+  if (press_) {
+    // Held down: once it moves, every line crossed is marked (also between
+    // two mouse positions, so a quick stroke misses none).
+    if (!dragging_ && (e.pos - press_->pos).manhattanLength() > 4) {
+      dragging_ = true;
+      markAt(press_->pos);
+      last_ = press_->pos;
+    }
+    if (dragging_) {
+      const QPoint delta = e.pos - last_;
+      const int steps = std::max(1, delta.manhattanLength() / 4);
+      for (int k = 1; k <= steps; ++k) markAt(last_ + delta * k / steps);
+      last_ = e.pos;
+      std::vector<ElementRef> shown;
+      for (const Mark& m : marked_) shown.push_back(ElementRef{m.object, TopAbs_EDGE, m.edgeIndex});
+      vp.setHighlightedElements(shown);
+      host_.setStatus((press_->modifiers & Qt::ShiftModifier)
+                          ? QObject::tr("なぞった線 %1 本を隠します（離すと確定、Esc で取りやめ）").arg(marked_.size())
+                          : QObject::tr("なぞった線 %1 本を消します（離すと確定、Esc で取りやめ）").arg(marked_.size()));
+    }
+    return;
+  }
   const auto picked = vp.pickElement(e.pos);
   vp.setHighlightedElements({});
   if (!picked) return;
@@ -3536,6 +3563,117 @@ void EraserTool::mouseMove(const ToolEvent& e) {
 }
 
 void EraserTool::mousePress(const ToolEvent& e) {
+  press_ = e;
+  dragging_ = false;
+  marked_.clear();
+}
+
+void EraserTool::mouseRelease(const ToolEvent& e) {
+  if (!press_) return;
+  const ToolEvent press = *press_;
+  press_.reset();
+  Viewport& vp = host_.viewport();
+  vp.setHighlightedElements({});
+  if (!dragging_) {
+    clickAt(press);
+    return;
+  }
+  dragging_ = false;
+  (void)e;
+  if (marked_.empty()) return;
+  // One undo step for the whole stroke. Each line is found again by its
+  // point: erasing one can rebuild the object the next one belongs to.
+  doc::Modeler& m = host_.modeler();
+  const bool hide = press.modifiers & Qt::ShiftModifier;
+  m.history().beginGroup(hide ? "Hide Lines" : "Erase Lines");
+  std::string firstError;
+  int done = 0;
+  for (const Mark& mark : marked_) {
+    std::optional<std::pair<doc::ObjectId, TopoDS_Edge>> found;
+    double best = 1e-3;
+    for (const doc::Object& o : m.document().objects()) {
+      if (!m.document().isVisible(o.id) || o.shape.IsNull()) continue;
+      const doc::Object* hinted = m.document().find(mark.object);
+      if (hinted && o.parent != hinted->parent && o.id != mark.object) continue;
+      Bnd_Box box = geom::exactBounds(m.document().worldShape(o));
+      if (box.IsVoid()) continue;
+      box.Enlarge(1e-2);
+      if (box.IsOut(mark.point)) continue;
+      for (TopExp_Explorer x(m.document().worldShape(o), TopAbs_EDGE); x.More(); x.Next()) {
+        BRepExtrema_DistShapeShape d(BRepBuilderAPI_MakeVertex(mark.point).Vertex(), x.Current());
+        if (d.IsDone() && d.Value() < best) {
+          best = d.Value();
+          found = std::make_pair(o.id, TopoDS::Edge(x.Current()));
+        }
+      }
+    }
+    if (!found) continue;  // already gone with an earlier one
+    const std::string error = eraseLine(found->first, found->second, mark.point, hide);
+    if (error.empty()) {
+      ++done;
+    } else if (firstError.empty()) {
+      firstError = error;
+    }
+  }
+  m.history().endGroup();
+  marked_.clear();
+  vp.clearHover();
+  if (!firstError.empty()) host_.reportError(QString::fromStdString(firstError));
+  host_.setStatus(hide ? QObject::tr("%1 本の線を隠しました").arg(done) : QObject::tr("%1 本の線を消しました").arg(done));
+}
+
+void EraserTool::markAt(const QPoint& pos) {
+  Viewport& vp = host_.viewport();
+  const auto picked = vp.pickElement(pos);
+  if (!picked || picked->type != TopAbs_EDGE) return;
+  const doc::Document& document = host_.modeler().document();
+  if (addressedAtLevel(document, picked->objectId, host_.editingGroup()) != picked->objectId) return;
+  for (const Mark& m : marked_) {
+    if (m.object == picked->objectId && m.edgeIndex == picked->index) return;
+  }
+  const TopoDS_Shape shape = vp.elementShape(*picked);
+  if (shape.IsNull()) return;
+  const TopoDS_Edge edge = TopoDS::Edge(shape);
+  if (actionFor(*picked, edge) == EdgeAction::None) return;
+  marked_.push_back({picked->objectId, picked->index, pointOnEdgeAt(vp, pos, edge)});
+}
+
+std::string EraserTool::eraseLine(const doc::ObjectId& object, const TopoDS_Edge& edge, const gp_Pnt& point,
+                                  bool hide) {
+  doc::Modeler& m = host_.modeler();
+  const doc::Object* o = m.document().find(object);
+  if (!o) return "Object not found";
+  ElementRef ref{object, TopAbs_EDGE, 0};
+  const EdgeAction action = actionFor(ref, edge);
+  if (action == EdgeAction::None) return {};
+  if (hide && action != EdgeAction::Piece) {
+    const Status s = m.setEdgesHidden(object, {edge}, true);
+    return s ? std::string() : s.message();
+  }
+  switch (action) {
+    case EdgeAction::Piece: {
+      auto r = m.eraseLinePiece(object, edge, point);
+      return r ? std::string() : r.error();
+    }
+    case EdgeAction::FaceOutline: {
+      if (m.eraseEdge(object, edge)) return {};
+      auto r = m.eraseLinePiece(object, edge, point);
+      return r ? std::string() : r.error();
+    }
+    case EdgeAction::Merge: {
+      auto r = m.eraseEdge(object, edge);
+      return r ? std::string() : r.error();
+    }
+    case EdgeAction::Corner: {
+      const Status s = m.eraseCornerEdge(object, edge);
+      return s ? std::string() : s.message();
+    }
+    case EdgeAction::None: break;
+  }
+  return {};
+}
+
+void EraserTool::clickAt(const ToolEvent& e) {
   Viewport& vp = host_.viewport();
   const auto picked = vp.pickElement(e.pos);
   vp.setHighlightedElements({});
@@ -3545,23 +3683,12 @@ void EraserTool::mousePress(const ToolEvent& e) {
   const TopoDS_Shape shape = picked->type == TopAbs_EDGE ? vp.elementShape(*picked) : TopoDS_Shape();
   const TopoDS_Edge edge = shape.IsNull() ? TopoDS_Edge() : TopoDS::Edge(shape);
   const EdgeAction action = target == picked->objectId ? actionFor(*picked, edge) : EdgeAction::None;
-  auto fail = [&](const std::string& message) { host_.reportError(QString::fromStdString(message)); };
-  if (action != EdgeAction::None && (e.modifiers & Qt::ShiftModifier) && action != EdgeAction::Piece) {
-    // SketchUp: Shift with the eraser hides the line instead.
-    if (const Status s = m.setEdgesHidden(picked->objectId, {edge}, true); !s) fail(s.message());
-  } else if (action == EdgeAction::Piece) {
-    if (auto r = m.eraseLinePiece(picked->objectId, edge, pointOnEdgeAt(vp, e.pos, edge)); !r) fail(r.error());
-  } else if (action == EdgeAction::FaceOutline) {
-    // A line dividing a loose face merges its parts; an outline edge opens it.
-    if (!m.eraseEdge(picked->objectId, edge)) {
-      if (auto r = m.eraseLinePiece(picked->objectId, edge, pointOnEdgeAt(vp, e.pos, edge)); !r) fail(r.error());
-    }
-  } else if (action == EdgeAction::Merge) {
-    if (auto r = m.eraseEdge(picked->objectId, edge); !r) fail(r.error());
-  } else if (action == EdgeAction::Corner) {
-    if (const Status s = m.eraseCornerEdge(picked->objectId, edge); !s) fail(s.message());
+  if (action != EdgeAction::None) {
+    const bool hide = (e.modifiers & Qt::ShiftModifier) && action != EdgeAction::Piece;
+    const std::string error = eraseLine(picked->objectId, edge, pointOnEdgeAt(vp, e.pos, edge), hide);
+    if (!error.empty()) host_.reportError(QString::fromStdString(error));
   } else if (const Status s = m.remove({target}); !s) {
-    fail(s.message());
+    host_.reportError(QString::fromStdString(s.message()));
   }
   vp.clearHover();
 }

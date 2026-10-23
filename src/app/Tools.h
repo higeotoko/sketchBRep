@@ -564,11 +564,27 @@ class EraserTool : public Tool {
   void cancel() override;
   void mousePress(const ToolEvent& e) override;
   void mouseMove(const ToolEvent& e) override;
+  void mouseRelease(const ToolEvent& e) override;
 
  private:
   enum class EdgeAction { None, Piece, FaceOutline, Merge, Corner };
   // What clicking this edge would do.
   EdgeAction actionFor(const ElementRef& picked, const TopoDS_Edge& edge) const;
+  // A click: the line (or object) under the cursor.
+  void clickAt(const ToolEvent& e);
+  // Erases (or hides) the line through `point` on `object`; "" or the reason.
+  std::string eraseLine(const doc::ObjectId& object, const TopoDS_Edge& edge, const gp_Pnt& point, bool hide);
+  // Dragging (SketchUp): lines crossed are marked, erased together on release.
+  void markAt(const QPoint& pos);
+  struct Mark {
+    doc::ObjectId object;
+    int edgeIndex = 0;  // as picked (for the highlight)
+    gp_Pnt point;       // on the line, to find it again after earlier erasures
+  };
+  std::vector<Mark> marked_;
+  std::optional<ToolEvent> press_;
+  QPoint last_;
+  bool dragging_ = false;
 };
 
 // Follow Me: click the face to sweep (a profile), then the path: a line /
