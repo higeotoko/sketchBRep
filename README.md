@@ -164,6 +164,7 @@ Phase 0 の CLI 検証: `build/tools/phase0/sbr_phase0 1000 2000 3000 box.step`
 - [docs/08_ux_gap_analysis.md](docs/08_ux_gap_analysis.md) — 07 と現行実装のギャップ分析・優先順位・実施状況
 - [docs/09_ci.md](docs/09_ci.md) — CI の構成と実行時間の節約（節約モードの切り替え）
 - [docs/19_edge_arrays.md](docs/19_edge_arrays.md) — 選んだ辺の移動コピー、`*5`（等間隔配列）・`/3`（等分割）、面の分割
+- [docs/20_ux_integration_status.md](docs/20_ux_integration_status.md) — 操作感の統合（108項目）の管理表と、W0〜の作業記録
 - [docs/18_sketchup_diffs.md](docs/18_sketchup_diffs.md) — SketchUp 操作差分表（2026-10-23）への対応：面だけ削除、オフセットの枠、選択辺のフォローミー、棟上げ屋根
 - [docs/17_wheel_zoom.md](docs/17_wheel_zoom.md) — ホイールズーム（カーソルの下の点へ一定の比率で寄る）の原因・設計・テスト・SketchUp 実機比較の手順
 - [docs/16_review_2026-10-23.md](docs/16_review_2026-10-23.md) — 外部レビュー（2026-10-23）の改善案 15 件の採否と対応状況（P0 は実装済み）

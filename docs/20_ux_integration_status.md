@@ -1,0 +1,282 @@
+# 操作感の統合：108項目の管理表
+
+基準：`docs/reviews/2026-10-23_ux_integration_108.md`（指示書、固定 HEAD e3c3124）。
+この表は、指示書 §8 の「要修正／検証待ち／自動確認済／実機確認済／後回し」で各項目の状態を記録する。
+
+## 状態の意味
+
+| 状態 | 意味 |
+|---|---|
+| 自動確認済 | 自動テスト（Linux CI、Xvfb 上の GUI テストを含む）で、行の要件の中心を確かめた。操作感の最終評価ではない |
+| 検証待ち | 実装の経路はあるが、行の要件全体をまだ自動確認していない。または実機で比べる必要がある |
+| 要修正 | 要件と違う動きを確認した（直すまで残す） |
+| 後回し | P2・設計が先の項目。今は手を付けない |
+| 実機確認済 | Windows の実機で人が確かめた（**現時点では 0 件**） |
+
+**実機の操作確認はまだしていない。**
+- 自動テストは、Linux の Xvfb 上で動く合成イベントによるもの。
+- DPI の確認は、`QT_SCALE_FACTOR` で倍率を変えたスクリーンショットを見ただけ。
+
+## 作業単位の記録
+
+### W0：LINE-05、NUM-05（968d532）
+
+**原因**：
+- 数値で長さを打つと、`LineTool::applyMeasurement` は `addPoint` の後で `points_.back()` を読んでいた。
+- ところが `addPoint` は、面を分割したときや閉路を閉じたときに `points_` を空にする。空の配列の末尾を読むのは未定義動作。
+- `_GLIBCXX_ASSERTIONS` を有効にした状態で、アサーションが落ちることを確かめて再現した。
+
+**修正**：
+- 線が終わったら、その後は何も読まないようにした。
+- Linux ビルドで `_GLIBCXX_ASSERTIONS` を常に有効にした。今後、同じ種類の誤りはテストで止まる。
+
+**テスト**：`typedLengthSplitsOrClosesSafely`
+- SC03：箱の上面とばらの面を、数値で分割する
+- 数値の 4 辺で閉じる
+- 線が終わった後の数値入力は、何も作らない
+
+### W1：CLIP-01、CLIP-02、SEL-01、GROUP-05、AI-01（5088cee）
+
+**原因**：
+- Ctrl+C / Ctrl+X は、選んだ面や辺を持つオブジェクトの ID を渡していた。そのため、面 1 枚・辺 1 本のつもりでも、オブジェクト全体をコピー・切り取りしていた。
+- Move + Ctrl で面を選んでいると、コピーではなく面の押し出しになっていた。
+
+**修正**：
+- 選択対象を 1 つの表現にした（`ToolHost::selectionTargets`）。オブジェクトごとに「選んだ面・辺」か「オブジェクト全体」かを持ち、Delete で使っていたものと同じ。
+- コピー・切り取り・Move / Rotate のコピーは、すべてこの選択対象を使う。
+- `Modeler::copyToClipboard(targets)`：面は独立した面としてコピーする（穴と材質を保つ）。辺は正確な線としてコピーする（円弧や曲線はそのまま）。
+- `Modeler::copyElements`：配列コピー。
+- 切り取りは「コピー＋共通の `deleteSelection`」。削除が断られたときは、クリップボードを元に戻す。
+- オブジェクトの一部だけを選んだときは、全体に広げず、理由を出して断る：
+  - 移動・回転（角や面の変形として扱えるものを除く）
+  - グループ化・コンポーネント化
+- API の `copy_array` は、`delete` と同じ `elements` 指定を受け取る。
+
+**テスト**：
+- `cutCopyAndMoveCopyTakeOnlyPickedElements`
+  - SC18：上面を Ctrl+X すると、箱は 5 面の開いた形状になる。同位置に貼り付け、Undo
+  - 辺 1 本を Ctrl+C / Ctrl+V すると線になる
+  - 面を Move + Ctrl すると面のコピーになる
+  - 一部だけのグループ化は断られる
+- `SelectionTargets.ElementsCopyOnlyThemselves`（材質、配列、Undo、API）
+- SC06 は既存の `DeleteSelection.*` と `deleteMixedSelection` で確認済み
+
+### W2：NUM-02、NUM-03、NUM-04、NUM-05（NUM-06 の一部）（5868478）
+
+**原因**：
+- 矩形は 2 つの値が必須で、`abs` を取って符号を捨てていた。
+- 移動を直後に再入力するとき、負の値を受け付けていなかった。
+- IME で入力した全角数字が読めなかった。
+
+**修正**：
+- 矩形：
+  - 片方だけの入力：`3000,` は幅だけ、`,1500` は奥行きだけ。もう一方の辺と最初の角はそのまま（`units::parseLengthSlots`）。
+  - 負の値は、その辺の向きを反転する。
+  - 0 や解釈できない入力は断り、何も変えない。
+- 移動：負の距離は逆向き。直後の再入力でも、マウスで示した向きを基準に読む。0 は断る。
+- IME：全角の数字・記号・単位と「、」を半角として読む。注釈などの文章は、入力したまま残す。
+
+**テスト**：
+- `rectangleOneSideSignsAndReentry`
+  - SC02
+  - 単位、テンキー、全角
+  - 不正な値
+  - 負の値
+  - Undo が 1 回で戻ること
+  - 移動の負の値（入力中と直後の再入力）
+- `Units.LengthSlotsMayBeEmpty`
+
+### W3：CAM-01（0e6edf8）
+
+**原因**：中ボタンで回転している間に左ボタンを押すと、左の押下が作図ツールに届き、線ツールに余計な点が入っていた。修正前のビルドで、テストが落ちることを確かめた。
+
+**修正**：
+- 中ボタンのドラッグ中に左を押したら、パンに切り替える。
+- その離しとダブルクリックは、カメラの操作として扱う。
+- 始点・方向・入力中の値は、そのまま続く。
+
+**テスト**：`middleLeftPanAddsNoPoint`（SC17）
+
+ホイールと SnapTip は、既存の `wheelZoom*` と `snapTipNamesTheAdoptedPoint` で回帰を確認した（すべて通過）。
+
+## 108 項目
+
+### 1. 選択・範囲・右クリック
+| ID | 状態 | 根拠・残り |
+|---|---|---|
+| SEL-01 | 自動確認済 | W1。一部だけの移動・回転・グループ化は断る。ポリラインの 1 辺だけを移動する操作は、まだできない |
+| SEL-02 | 要修正 | Shift での追加・解除だけ。Ctrl で追加、Ctrl+Shift で除外は未実装 |
+| SEL-03 | 検証待ち | `selectFacesEdgesAndWholeObject`。OS のダブルクリック間隔との整合は実機で確認する |
+| SEL-04 | 要修正 | 範囲選択はオブジェクトのバウンディングボックス単位（`boxSelectionWindowAndCrossing`）。面・辺単位の判定はない |
+| SEL-05 | 自動確認済 | `rightClickMenuFollowsTheSelection`、ロック時のメニュー |
+| SEL-06 | 検証待ち | ホバーで強調しない／選択は青／ロックは赤。透明面・重なった面の確認はまだ |
+
+### 2. 削除・消しゴム
+| ID | 状態 | 根拠・残り |
+|---|---|---|
+| DEL-01 | 自動確認済 | `DeleteFaces.*`、`deleteLooseFaceKeepsItsOutline` |
+| DEL-02 | 自動確認済 | `DeleteSelection.*`（上面の境界を含む場合と含まない場合） |
+| DEL-03 | 自動確認済 | `DeleteSelection.*`、`EraseLines.*`、`eraserWorksOnLines` |
+| DEL-04 | 自動確認済 | `eraserDragErasesCrossedLines`、`eraserDragFollowsWhatTheLineBecame` |
+| DEL-05 | 自動確認済 | `eraserShiftHidesEdgeLine`、`HiddenEdges` |
+| DEL-06 | 自動確認済 | `DeleteSelection`（ロック対象を含むと全体が戻る） |
+
+### 3. 吸着・推論
+| ID | 状態 | 根拠・残り |
+|---|---|---|
+| SNAP-01 | 自動確認済 | `snapTipNamesTheAdoptedPoint`（表示した点＝確定した点） |
+| SNAP-02 | 検証待ち | 実機で、密集した部分を横切って確認する |
+| SNAP-03 | 検証待ち | `Inference.*` に追跡のテストあり。古い参照の扱いはまだ確認していない |
+| SNAP-04 | 検証待ち | 矢印キーで軸、Shift で固定はある。下キーの意味は公式の操作と照合する |
+| SNAP-05 | 自動確認済 | ラベルがビューの中に収まり、カーソルと点を隠さないことを確認。DPI はスクリーンショットだけ |
+| SNAP-06 | 後回し | 円の中心・接線などの推論 |
+
+### 4. 寸法入力
+| ID | 状態 | 根拠・残り |
+|---|---|---|
+| NUM-01 | 自動確認済 | `typedUnitsDoNotTriggerShortcuts`、テンキー（W2） |
+| NUM-02 | 自動確認済 | W2（矩形）。円・多角形には該当しない |
+| NUM-03 | 自動確認済 | W2（矩形・移動）。そのほかのツールの符号は、まだ全部は見ていない |
+| NUM-04 | 自動確認済 | `typedRevisionOnlyRightAfter`、`rectangleOneSideSignsAndReentry`、`pushPullDoubleClickRepeatsDistance`、`scaleToolFactorAndLength` |
+| NUM-05 | 自動確認済 | 線・矩形・移動（W0 / W2）。そのほかのツールは検証待ち |
+| NUM-06 | 後回し | 座標入力・英米単位。IME の全角は W2 で対応した |
+
+### 5. 線
+| ID | 状態 | 根拠・残り |
+|---|---|---|
+| LINE-01 | 自動確認済 | `escStepsBackAndConstraintsShow`（Esc で確定済みの線は残る） |
+| LINE-02 | 検証待ち | 単独の線への T 字接続は、接続点を作る（`Overlaps.Lines`）。面の辺の途中への接続はまだ |
+| LINE-03 | 検証待ち | 閉じる前の案内あり。隙間のある輪郭はまだ確認していない |
+| LINE-04 | 自動確認済 | `lineAcrossRectangleSplitsProfile`、`lineAcrossWallSplitsFace` |
+| LINE-05 | 自動確認済 | W0 |
+| LINE-06 | 自動確認済 | `lineAgainstVolumeMakesFace` |
+
+### 6. 矩形・円・円弧
+| ID | 状態 | 根拠・残り |
+|---|---|---|
+| SHAPE-01 | 検証待ち | `lineToolStaysOnWallPlane`。描いている途中の Orbit はまだ確認していない |
+| SHAPE-02 | 後回し | |
+| SHAPE-03 | 後回し | |
+| SHAPE-04 | 自動確認済 | `circleToolTypedRadius` |
+| SHAPE-05 | 自動確認済 | `arcToolSemicircleAndBulgeEdit`、`escStepsBackAndConstraintsShow` |
+| SHAPE-06 | 後回し | |
+
+### 7. 移動
+| ID | 状態 | 根拠・残り |
+|---|---|---|
+| MOVE-01 | 検証待ち | |
+| MOVE-02 | 検証待ち | 後から選ぶ場合は、オブジェクト全体を掴む |
+| MOVE-03 | 検証待ち | |
+| MOVE-04 | 自動確認済 | `copySelectedEdgeArrays`、W1（面のコピー） |
+| MOVE-05 | 要修正 | 面は法線方向にしか動かせない（`moveSelectedFaceStretchesSolid`）。横方向への移動は未対応 |
+| MOVE-06 | 自動確認済 | `moveToolLiftsRidgeIntoGable`、`Roof.*` |
+
+### 8. 線コピー・配列
+| ID | 状態 | 根拠・残り |
+|---|---|---|
+| ARRAY-01 | 自動確認済 | `copySelectedEdgeArrays`、`moveCopyAndArray` |
+| ARRAY-02 | 自動確認済 | 同上 |
+| ARRAY-03 | 自動確認済 | 同上（Undo 1 回） |
+| ARRAY-04 | 検証待ち | 暫定仕様。SketchUp の実機と比べてから決める |
+| ARRAY-05 | 自動確認済 | `copyOntoEdgeThenDivideKeepsSolid`、`EdgeArrays.DividingAFace` |
+| ARRAY-06 | 検証待ち | 円弧は円弧のまま（`EdgeArrays.ArcsStayArcs`）。グループ単位はまだ |
+
+### 9. 回転・尺度・鏡像
+| ID | 状態 | 根拠・残り |
+|---|---|---|
+| XFORM-01 | 検証待ち | `rotateByTypedAngle` |
+| XFORM-02 | 検証待ち | 360 度で重なるコピーの規則が未決定 |
+| XFORM-03 | 自動確認済 | `scaleGripsStretchEachDirection`、`Stretch.*` |
+| XFORM-04 | 自動確認済 | 同上 |
+| XFORM-05 | 要修正 | コンポーネントの 1 配置だけの非一様尺度は断る（理由は表示する） |
+| XFORM-06 | 後回し | |
+
+### 10. Push/Pull
+| ID | 状態 | 根拠・残り |
+|---|---|---|
+| PULL-01 | 検証待ち | |
+| PULL-02 | 自動確認済 | `Offset.*`（枠の押し出し、内周を保つ） |
+| PULL-03 | 検証待ち | |
+| PULL-04 | 検証待ち | 同じ量の繰り返しはあり（`pushPullDoubleClickRepeatsDistance`）。開始面を残す操作はない |
+| PULL-05 | 自動確認済 | `OpenPushPull.*`、`pushPullOnOpenShape` |
+| PULL-06 | 検証待ち | |
+
+### 11. オフセット・フォローミー
+| ID | 状態 | 根拠・残り |
+|---|---|---|
+| PATH-01 | 自動確認済 | `Offset.*`、`offsetToolInwards` |
+| PATH-02 | 後回し | |
+| PATH-03 | 検証待ち | 制限あり（理由は表示する） |
+| PATH-04 | 自動確認済 | `FollowMeEdges.*` |
+| PATH-05 | 検証待ち | |
+| PATH-06 | 後回し | |
+
+### 12. グループ・コンポーネント
+| ID | 状態 | 根拠・残り |
+|---|---|---|
+| GROUP-01 | 自動確認済 | `groupEditModeAndLooseFaceDelete`、`groupEditShowsDottedBox` |
+| GROUP-02 | 検証待ち | 重なりの整理はグループの境界を越えない（`Overlaps.OtherGroupsSolidsAndHeightsStayApart`） |
+| GROUP-03 | 検証待ち | 編集中は点線の箱を表示。階層の表示はまだ |
+| GROUP-04 | 自動確認済 | `componentEditInPlace`、`Components.*` |
+| GROUP-05 | 自動確認済 | W1（一部だけは断る）。部分選択から作るグループはまだない |
+| GROUP-06 | 自動確認済 | `lockedObjectsSelectableNotEditable`、`imageUnderlayCalibrateLockTrace` |
+
+### 13. コピー・切り取り・貼り付け
+| ID | 状態 | 根拠・残り |
+|---|---|---|
+| CLIP-01 | 自動確認済 | W1 |
+| CLIP-02 | 自動確認済 | W1 |
+| CLIP-03 | 自動確認済 | `copyPasteFollowsCursor` |
+| CLIP-04 | 検証待ち | 回転したグループの中から外への貼り付けは、まだ確認していない |
+| CLIP-05 | 検証待ち | |
+| CLIP-06 | 検証待ち | `Clipboard.*` |
+
+### 14. メジャー・補助線
+| ID | 状態 | 根拠・残り |
+|---|---|---|
+| GUIDE-01 | 自動確認済 | `tapeMeasureReadsDistance`、`tapeMeasurePullsGuideOffEdge` |
+| GUIDE-02 | 自動確認済 | `gridLinesSnapAtCrossings` |
+| GUIDE-03 | 検証待ち | |
+| GUIDE-04 | 自動確認済 | `protractorPlacesAngledGuide` |
+| GUIDE-05 | 後回し | 下絵の較正はある（`imageUnderlayCalibrateLockTrace`） |
+| GUIDE-06 | 検証待ち | |
+
+### 15. 材質・表示
+| ID | 状態 | 根拠・残り |
+|---|---|---|
+| LOOK-01 | 自動確認済 | `paintToolAndEyedropper`、`Materials.*` |
+| LOOK-02 | 自動確認済 | 同上 |
+| LOOK-03 | 検証待ち | 伸縮と重なりの整理では材質を保つ（`Stretch.*`、`Overlaps.*`）。屋根はまだ |
+| LOOK-04 | 検証待ち | |
+| LOOK-05 | 後回し | |
+| LOOK-06 | 検証待ち | |
+
+### 16. カメラ
+| ID | 状態 | 根拠・残り |
+|---|---|---|
+| CAM-01 | 自動確認済 | W3、`wheelZoomKeepsDrawing` |
+| CAM-02 | 自動確認済 | `wheelZoom*`。速さの感じ方は実機で確認する |
+| CAM-03 | 検証待ち | 実機 |
+| CAM-04 | 検証待ち | 左ダブルクリックでの全体表示はやめた（中ボタンだけ） |
+| CAM-05 | 検証待ち | |
+| CAM-06 | 検証待ち | 実機 |
+
+### 17. 中断・履歴・保存
+| ID | 状態 | 根拠・残り |
+|---|---|---|
+| STATE-01 | 自動確認済 | `escStepsBackAndConstraintsShow` |
+| STATE-02 | 自動確認済 | 各テストの Undo 回数 |
+| STATE-03 | 検証待ち | |
+| STATE-04 | 後回し | 非同期の演算はまだない |
+| STATE-05 | 検証待ち | 実機 |
+| STATE-06 | 検証待ち | |
+
+### 18. 人間と AI
+| ID | 状態 | 根拠・残り |
+|---|---|---|
+| AI-01 | 自動確認済 | `delete` と `copy_array` の `elements`（W1）。`select` は ID のみ |
+| AI-02 | 自動確認済 | `aiProposalApplyAndReject` |
+| AI-03 | 自動確認済 | `aiReadsKeepDrawingInProgress` |
+| AI-04 | 検証待ち | FaceRef は曖昧なときに拒否する（`FaceRefTest`） |
+| AI-05 | 自動確認済 | `Transactions.*`、`aiWaitsForLongOperation` |
+| AI-06 | 検証待ち | |
