@@ -544,24 +544,24 @@ void GuiPhase1::rectangleOneSideSignsAndReentry() {
   auto bounds = [&] {
     return geom::exactBounds(m.document().worldShape(m.document().objects().back()));
   };
-  auto near = [](double a, double b) { return std::abs(a - b) < 1e-6; };
+  auto same = [](double a, double b) { return std::abs(a - b) < 1e-6; };
   click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));
   move(f.vp, f.vp->toWidget(gp_Pnt(1500, 800, 0)));
   type(f.vp, QStringLiteral("2000,1000"));
   QCOMPARE(m.document().objects().size(), std::size_t(1));
   Bnd_Box b = bounds();
-  QVERIFY(near(b.CornerMax().X(), 2000) && near(b.CornerMax().Y(), 1000));
+  QVERIFY(same(b.CornerMax().X(), 2000) && same(b.CornerMax().Y(), 1000));
   type(f.vp, QStringLiteral("3000,"));
   b = bounds();
-  QVERIFY2(near(b.CornerMin().X(), 0) && near(b.CornerMax().X(), 3000) && near(b.CornerMax().Y(), 1000),
+  QVERIFY2(same(b.CornerMin().X(), 0) && same(b.CornerMax().X(), 3000) && same(b.CornerMax().Y(), 1000),
            qPrintable(QStringLiteral("%1 %2").arg(b.CornerMax().X()).arg(b.CornerMax().Y())));
   type(f.vp, QStringLiteral(",1500"));
   b = bounds();
-  QVERIFY(near(b.CornerMax().X(), 3000) && near(b.CornerMax().Y(), 1500) && near(b.CornerMin().Y(), 0));
+  QVERIFY(same(b.CornerMax().X(), 3000) && same(b.CornerMax().Y(), 1500) && same(b.CornerMin().Y(), 0));
   // Units.
   type(f.vp, QStringLiteral("300cm,1.5m"));
   b = bounds();
-  QVERIFY(near(b.CornerMax().X(), 3000) && near(b.CornerMax().Y(), 1500));
+  QVERIFY(same(b.CornerMax().X(), 3000) && same(b.CornerMax().Y(), 1500));
   // Garbage and zero: nothing changes.
   type(f.vp, QStringLiteral("3000,abc"));
   QVERIFY(!f.window.lastError().isEmpty());
@@ -570,11 +570,11 @@ void GuiPhase1::rectangleOneSideSignsAndReentry() {
   QVERIFY(!f.window.lastError().isEmpty());
   f.window.clearLastError();
   b = bounds();
-  QVERIFY(near(b.CornerMax().X(), 3000) && near(b.CornerMax().Y(), 1500));
+  QVERIFY(same(b.CornerMax().X(), 3000) && same(b.CornerMax().Y(), 1500));
   // A negative width: the other side of the first corner.
   type(f.vp, QStringLiteral("-3000,"));
   b = bounds();
-  QVERIFY2(near(b.CornerMin().X(), -3000) && near(b.CornerMax().X(), 0),
+  QVERIFY2(same(b.CornerMin().X(), -3000) && same(b.CornerMax().X(), 0),
            qPrintable(QStringLiteral("%1 %2").arg(b.CornerMin().X()).arg(b.CornerMax().X())));
   QCOMPARE(m.history().undoCount(), steps + 1);  // one step all along
   QCOMPARE(m.document().objects().size(), std::size_t(1));
@@ -589,14 +589,14 @@ void GuiPhase1::rectangleOneSideSignsAndReentry() {
   QTest::qWait(50);
   QCOMPARE(m.document().objects().size(), std::size_t(2));
   b = bounds();
-  QVERIFY2(near(b.CornerMax().X() - b.CornerMin().X(), 2500) && b.CornerMax().Y() > 5000 + 100,
+  QVERIFY2(same(b.CornerMax().X() - b.CornerMin().X(), 2500) && b.CornerMax().Y() > 5000 + 100,
            qPrintable(QStringLiteral("%1 %2").arg(b.CornerMax().X()).arg(b.CornerMax().Y())));
   // An IME's full-width entry in the box.
   f.window.measurementBox()->setText(QStringLiteral("３０００，１０００"));
   QTest::keyClick(f.window.measurementBox(), Qt::Key_Return);
   QTest::qWait(50);
   b = bounds();
-  QVERIFY2(near(b.CornerMax().X() - b.CornerMin().X(), 3000) && near(b.CornerMax().Y() - b.CornerMin().Y(), 1000),
+  QVERIFY2(same(b.CornerMax().X() - b.CornerMin().X(), 3000) && same(b.CornerMax().Y() - b.CornerMin().Y(), 1000),
            qPrintable(QStringLiteral("%1 %2 %3").arg(b.CornerMax().X()).arg(b.CornerMax().Y()).arg(f.window.lastError())));
   // Undo: the second rectangle (with its revisions) in one step.
   QVERIFY(m.undo());

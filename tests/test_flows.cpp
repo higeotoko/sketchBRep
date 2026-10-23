@@ -26,14 +26,14 @@ geom::SketchPlane at(double x, double y, double z = 0) {
   return p;
 }
 
-TopoDS_Face faceFacing(const Modeler& m, const ObjectId& id, const gp_Dir& d, std::optional<gp_Pnt> near = {}) {
+TopoDS_Face faceFacing(const Modeler& m, const ObjectId& id, const gp_Dir& d, std::optional<gp_Pnt> closeTo = {}) {
   TopoDS_Face best;
   double bestDistance = 1e300;
   for (TopExp_Explorer f(m.document().worldShape(*m.document().find(id)), TopAbs_FACE); f.More(); f.Next()) {
     const TopoDS_Face face = TopoDS::Face(f.Current());
     const auto n = geom::planarFaceNormal(face);
     if (!n || n->Angle(d) > 1e-6) continue;
-    const double distance = near ? geom::exactBounds(face).CornerMin().Distance(*near) : 0.0;
+    const double distance = closeTo ? geom::exactBounds(face).CornerMin().Distance(*closeTo) : 0.0;
     if (distance < bestDistance) {
       bestDistance = distance;
       best = face;
