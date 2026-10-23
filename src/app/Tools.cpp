@@ -2772,7 +2772,8 @@ void RotateTool::mousePress(const ToolEvent& e) {
       mouseMove(e);
       if (std::abs(angle_) > 1e-9) {
         lastAxis_ = gp_Ax1(center_, normal_);
-        lastAngle_ = angle_;
+        lastAngle_ = referenceAngle_ = angle_;
+        divided_ = false;
         commit(rotation(angle_));
       }
       resetState();
@@ -2791,7 +2792,8 @@ void RotateTool::applyMeasurement(const QString& text) {
     }
     const double sign = angle_ < 0 ? -1.0 : 1.0;
     lastAxis_ = gp_Ax1(center_, normal_);
-    lastAngle_ = sign * degrees * M_PI / 180.0;
+    lastAngle_ = referenceAngle_ = sign * degrees * M_PI / 180.0;
+    divided_ = false;
     commit(rotation(lastAngle_));
     resetState();
     return;
@@ -2800,30 +2802,36 @@ void RotateTool::applyMeasurement(const QString& text) {
     host_.reportError(QObject::tr("回転してから数値を入力してください"));
     return;
   }
-  const double angle = lastAngle_;
   if (const auto array = parseArrayRequest(text)) {
     if (!last_->copy) {
       host_.reportError(QObject::tr("配列は Ctrl でコピーしたときに使えます"));
       return;
     }
-    // "x4": four copies at the same angle; "/4": divide the total angle.
-    const double step = array->divide ? angle * last_->count / array->count : angle;
+    // "x4": four copies at the angle given; "/4": that angle divided in four.
+    const double step = array->divide ? referenceAngle_ / array->count : referenceAngle_;
     gp_Trsf delta;
     delta.SetRotation(lastAxis_, step);
-    lastAngle_ = step;
-    redoLast(delta, array->count);
+    if (redoLast(delta, array->count)) {
+      lastAngle_ = step;
+      divided_ = array->divide;
+    }
     return;
   }
   bool ok = false;
   const double degrees = text.trimmed().toDouble(&ok);
-  if (!ok) {
+  if (!ok || std::abs(degrees) < 1e-9) {
     host_.reportError(QObject::tr("角度を解釈できません: %1").arg(text));
     return;
   }
-  lastAngle_ = (angle < 0 ? -1.0 : 1.0) * degrees * M_PI / 180.0;
+  // A negative angle turns the other way round (NUM-03).
+  const double reference = (referenceAngle_ < 0 ? -1.0 : 1.0) * degrees * M_PI / 180.0;
+  const double step = divided_ ? reference / last_->count : reference;
   gp_Trsf delta;
-  delta.SetRotation(lastAxis_, lastAngle_);
-  redoLast(delta, last_->count);
+  delta.SetRotation(lastAxis_, step);
+  if (redoLast(delta, last_->count)) {
+    lastAngle_ = step;
+    referenceAngle_ = reference;
+  }
 }
 
 // --- Offset ------------------------------------------------------------------------------

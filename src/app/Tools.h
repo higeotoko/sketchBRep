@@ -1007,6 +1007,11 @@ class RotateTool : public TransformTool {
   double angle_ = 0.0;
   gp_Ax1 lastAxis_;
   double lastAngle_ = 0.0;
+  // The angle the user gave (the rotation, or typed after it): arrays
+  // count from it ("*5" five times it, "/5" it divided in five), never
+  // from an earlier array's result (as Move's distance, ARR-02).
+  double referenceAngle_ = 0.0;
+  bool divided_ = false;
 };
 
 class OffsetTool : public Tool {

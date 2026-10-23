@@ -150,6 +150,7 @@ class GuiPhase1 : public QObject {
   void rectangleOneSideSignsAndReentry();
   void cutCopyAndMoveCopyTakeOnlyPickedElements();
   void rotateByTypedAngle();
+  void polarArrayFullCircleAndCtrlMidMove();
   void offsetToolInwards();
   void groupIsSelectedAsAWhole();
   void curveToolOpenAndClosed();
@@ -660,6 +661,72 @@ void GuiPhase1::middleLeftPanAddsNoPoint() {
   const Bnd_Box box = geom::exactBounds(line);
   QVERIFY2(std::abs(box.CornerMax().X() - box.CornerMin().X() - 1500) < 1e-6 && std::abs(box.CornerMin().X()) < 1e-6,
            qPrintable(QStringLiteral("%1 %2").arg(box.CornerMin().X()).arg(box.CornerMax().X())));
+}
+
+// W4 / XFORM-02, ARRAY-03, MOVE-04: a 30 degree rotated copy then "*12"
+// goes round once: 11 copies, the twelfth would lie on the original and is
+// not made; "/3" divides the angle given (as Move divides its distance);
+// one undo step. Ctrl switched on and off while reshaping: the shape is
+// only changed by what is finally clicked.
+void GuiPhase1::polarArrayFullCircleAndCtrlMidMove() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId id = f.box(1000, -100, 400, 200, 200);
+  f.window.setSelection({id});
+  f.window.activateTool(MainWindow::ToolId::Rotate);
+  f.window.setSelection({id});
+  const std::size_t steps = m.history().undoCount();
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));     // centre
+  click(f.vp, f.vp->toWidget(gp_Pnt(1500, 0, 0)));  // reference along +X
+  QTest::keyClick(f.vp, Qt::Key_Control);           // copy
+  move(f.vp, f.vp->toWidget(gp_Pnt(1500, 900, 0)));
+  type(f.vp, QStringLiteral("30"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), std::size_t(2));
+  type(f.vp, QStringLiteral("*12"));
+  QCOMPARE(m.document().objects().size(), std::size_t(12));  // 11 copies + the original
+  // No copy on top of the original.
+  int onOriginal = 0;
+  const Bnd_Box original = geom::exactBounds(m.document().worldShape(*m.document().find(id)));
+  for (const doc::Object& o : m.document().objects()) {
+    if (o.id == id) continue;
+    const Bnd_Box b = geom::exactBounds(m.document().worldShape(o));
+    onOriginal += b.CornerMin().Distance(original.CornerMin()) < 1e-3 && b.CornerMax().Distance(original.CornerMax()) < 1e-3;
+  }
+  QCOMPARE(onOriginal, 0);
+  type(f.vp, QStringLiteral("/3"));  // 30 degrees in three: copies at 10, 20, 30
+  QCOMPARE(m.document().objects().size(), std::size_t(4));
+  QCOMPARE(m.history().undoCount(), steps + 1);
+  QVERIFY(m.undo());
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+
+  // MOVE-04: grab the top edge, start lifting it, Ctrl on (copy), Ctrl off
+  // again, type: the edge is lifted (reshape), no copy, one step.
+  const doc::ObjectId block = f.box(-4000, -4000, 2000, 2000, 1000);
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::Select);
+  click(f.vp, f.vp->toWidget(gp_Pnt(3000, 3000, 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(-3000, -4000, 1000)));
+  QCOMPARE(f.window.elementSelection().size(), std::size_t(1));
+  f.window.activateTool(MainWindow::ToolId::Move);
+  const std::size_t before = m.history().undoCount();
+  const std::size_t objects = m.document().objects().size();
+  click(f.vp, f.vp->toWidget(gp_Pnt(-3000, -4000, 1000)));
+  QTest::keyClick(f.vp, Qt::Key_Up);  // blue axis
+  move(f.vp, f.vp->toWidget(gp_Pnt(-3000, -4000, 3000)));
+  QTest::keyClick(f.vp, Qt::Key_Control);
+  move(f.vp, f.vp->toWidget(gp_Pnt(-3000, -4000, 3500)));
+  QCOMPARE(m.document().objects().size(), objects);  // nothing committed yet
+  QCOMPARE(m.history().undoCount(), before);
+  QTest::keyClick(f.vp, Qt::Key_Control);
+  move(f.vp, f.vp->toWidget(gp_Pnt(-3000, -4000, 3000)));
+  type(f.vp, QStringLiteral("500"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), objects);
+  QCOMPARE(m.history().undoCount(), before + 1);
+  const double v = geom::volume(m.document().worldShape(*m.document().find(block)));
+  QVERIFY2(std::abs(v - 2000.0 * 2000 * 1250) < 1.0, qPrintable(QString::number(v)));
 }
 
 void GuiPhase1::moveCopyAndArray() {

@@ -99,6 +99,31 @@
 
 ホイールと SnapTip は、既存の `wheelZoom*` と `snapTipNamesTheAdoptedPoint` で回帰を確認した（すべて通過）。
 
+### W4：MOVE-04、ARRAY-03、XFORM-02
+
+**原因**：
+- 回転配列の「/n」は、その時点の配列全体の角度を割っていた。Move の「最初に置いた距離を基準にする」決まり（ARR-02）と食い違っていた。
+- 30°で `*12` にすると、12 個目が元の位置にぴったり重なって二重になっていた。
+
+**修正**：
+- 回転は、与えた角度（回転した角度、またはその後に入力した角度）を基準にする。
+  - `*n` は、その角度を n 回。
+  - `/n` は、その角度を n 等分。
+  - 入力し直した角度は、分割中なら分割を保つ。
+  - 負の角度は逆回り、0 は断る。
+- コピー・配列（`copy`、`copyEdges`、`copyElements`）では、元と同じ位置に戻るコピー（一周した回転や、移動量ゼロ）は作らない。
+
+**テスト**：
+- `polarArrayFullCircleAndCtrlMidMove`
+  - 30°×12 で、コピー 11 個（元を含め 12）
+  - `/3` で 3 個（10°刻み）
+  - Undo が 1 回で戻ること
+  - MOVE-04：変形の途中で Ctrl をオン／オフしても、確定するまで何も変わらない。最後は変形として 1 段で確定する
+- `SelectionTargets.PolarArrayFullCircleSkipsTheOriginal`
+- `Overlaps.CopiesAndMoves`：その場コピーは何も作らない（重複しない）。この新しい規則に合わせて期待値を変えた
+
+**暫定**（ARRAY-04、実機で比べる）：記法を続けて変えたときの基準（最初の配置か、直前の結果か）。
+
 ## 108 項目
 
 ### 1. 選択・範囲・右クリック
@@ -167,7 +192,7 @@
 | MOVE-01 | 検証待ち | |
 | MOVE-02 | 検証待ち | 後から選ぶ場合は、オブジェクト全体を掴む |
 | MOVE-03 | 検証待ち | |
-| MOVE-04 | 自動確認済 | `copySelectedEdgeArrays`、W1（面のコピー） |
+| MOVE-04 | 自動確認済 | `copySelectedEdgeArrays`、W1（面のコピー）、W4（変形中の Ctrl 切替） |
 | MOVE-05 | 要修正 | 面は法線方向にしか動かせない（`moveSelectedFaceStretchesSolid`）。横方向への移動は未対応 |
 | MOVE-06 | 自動確認済 | `moveToolLiftsRidgeIntoGable`、`Roof.*` |
 
@@ -176,7 +201,7 @@
 |---|---|---|
 | ARRAY-01 | 自動確認済 | `copySelectedEdgeArrays`、`moveCopyAndArray` |
 | ARRAY-02 | 自動確認済 | 同上 |
-| ARRAY-03 | 自動確認済 | 同上（Undo 1 回） |
+| ARRAY-03 | 自動確認済 | 同上（Undo 1 回）、回転も同じ規則（W4） |
 | ARRAY-04 | 検証待ち | 暫定仕様。SketchUp の実機と比べてから決める |
 | ARRAY-05 | 自動確認済 | `copyOntoEdgeThenDivideKeepsSolid`、`EdgeArrays.DividingAFace` |
 | ARRAY-06 | 検証待ち | 円弧は円弧のまま（`EdgeArrays.ArcsStayArcs`）。グループ単位はまだ |
@@ -185,7 +210,7 @@
 | ID | 状態 | 根拠・残り |
 |---|---|---|
 | XFORM-01 | 検証待ち | `rotateByTypedAngle` |
-| XFORM-02 | 検証待ち | 360 度で重なるコピーの規則が未決定 |
+| XFORM-02 | 自動確認済 | W4：一周して元に戻るコピーは作らない。`/n` は与えた角度を割る |
 | XFORM-03 | 自動確認済 | `scaleGripsStretchEachDirection`、`Stretch.*` |
 | XFORM-04 | 自動確認済 | 同上 |
 | XFORM-05 | 要修正 | コンポーネントの 1 配置だけの非一様尺度は断る（理由は表示する） |

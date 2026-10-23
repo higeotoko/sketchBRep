@@ -280,11 +280,10 @@ TEST(Overlaps, CopiesAndMoves) {
   Modeler m;
   auto a = m.createRectangle(at(0, 0), 1000, 1000);
   gp_Trsf none;
-  auto copied = m.copy({*a}, none, 1);  // copied onto itself
+  auto copied = m.copy({*a}, none, 1);  // copied onto itself: not made at all
   ASSERT_TRUE(copied.ok());
   EXPECT_EQ(count(m, ObjectKind::Face), 1);
-  ASSERT_EQ(copied->size(), 1u);
-  EXPECT_EQ(copied->front(), *a);
+  EXPECT_TRUE(copied->empty());
   // Moved half onto another face: divided like a drawn one.
   auto b = m.createRectangle(at(3000, 0), 1000, 1000);
   ASSERT_TRUE(m.move({*b}, gp_Vec(-2500, 0, 0)).ok());
@@ -390,4 +389,17 @@ TEST(SelectionTargets, ElementsCopyOnlyThemselves) {
   ASSERT_TRUE(r["ok"].get<bool>()) << r.dump();
   EXPECT_EQ(count(m, ObjectKind::Face), 1);
   EXPECT_EQ(count(m, ObjectKind::Solid), 1);
+}
+
+// XFORM-02: a polar array going full circle does not double the original.
+TEST(SelectionTargets, PolarArrayFullCircleSkipsTheOriginal) {
+  Modeler m;
+  auto box = m.createRectangle(at(1000, -100), 400, 200);
+  ASSERT_TRUE(m.extrude(*box, 200).ok());
+  gp_Trsf step;
+  step.SetRotation(gp_Ax1(gp_Pnt(0, 0, 0), gp::DZ()), M_PI / 6);
+  auto made = m.copy({*box}, step, 12);
+  ASSERT_TRUE(made.ok());
+  EXPECT_EQ(made->size(), 11u);
+  EXPECT_EQ(count(m, ObjectKind::Solid), 12);
 }

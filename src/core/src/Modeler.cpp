@@ -2044,6 +2044,19 @@ Result<DeleteOutcome> Modeler::deleteSelection(const std::vector<DeleteTarget>& 
   return outcome;
 }
 
+namespace {
+
+// The transform maps everything onto itself (a whole number of turns,
+// no shift), within the model tolerance at 100 m from the axis.
+bool landsOnItself(const gp_Trsf& t) {
+  for (const gp_Pnt& p : {gp_Pnt(0, 0, 0), gp_Pnt(1e5, 0, 0), gp_Pnt(0, 1e5, 0), gp_Pnt(0, 0, 1e5)}) {
+    if (p.Transformed(t).Distance(p) > tolerance::kMinDimension) return false;
+  }
+  return true;
+}
+
+}  // namespace
+
 Result<std::vector<ObjectId>> Modeler::copyEdges(const std::vector<TopoDS_Edge>& worldEdges,
                                                  const gp_Trsf& worldDelta, int count) {
   using R = Result<std::vector<ObjectId>>;
@@ -2075,6 +2088,7 @@ Result<std::vector<ObjectId>> Modeler::copyEdges(const std::vector<TopoDS_Edge>&
   gp_Trsf at;
   for (int k = 1; k <= count; ++k) {
     at = worldDelta * at;
+    if (landsOnItself(at)) continue;
     std::vector<TopoDS_Edge> moved;
     for (const TopoDS_Edge& e : worldEdges) {
       const TopoDS_Edge copy = TopoDS::Edge(BRepBuilderAPI_Transform(e, at, Standard_True).Shape());
@@ -4032,6 +4046,9 @@ Result<std::vector<ObjectId>> Modeler::copy(const std::vector<ObjectId>& ids,
   gp_Trsf step;  // worldDelta^k
   for (int k = 1; k <= count; ++k) {
     step = worldDelta * step;
+    // A copy landing back on the original (a polar array going full
+    // circle, e.g. 30 degrees x 12) is not made: it would only double it.
+    if (landsOnItself(step)) continue;
     for (const ObjectId& id : roots) {
       std::vector<Object> clones = cloneSubtree(id, document_.find(id)->parent);
       Object& root = clones.front();
@@ -4169,6 +4186,7 @@ Result<std::vector<ObjectId>> Modeler::copyElements(const std::vector<DeleteTarg
   gp_Trsf at;
   for (int k = 1; k <= count; ++k) {
     at = worldDelta * at;
+    if (landsOnItself(at)) continue;
     auto ids = paste(*clip, at);
     if (!ids) {
       history_.abortGroup();
