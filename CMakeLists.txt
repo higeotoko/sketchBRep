@@ -36,6 +36,9 @@ if(MSVC)
   add_compile_definitions(_USE_MATH_DEFINES NOMINMAX WNT)
 else()
   add_compile_options(-Wall -Wextra)
+  # Checked standard containers (e.g. back() on an empty vector traps
+  # instead of reading garbage), so such mistakes fail the tests.
+  add_compile_definitions(_GLIBCXX_ASSERTIONS)
 endif()
 
 find_package(OpenCASCADE REQUIRED)

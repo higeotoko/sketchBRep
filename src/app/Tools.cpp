@@ -696,8 +696,15 @@ void LineTool::applyMeasurement(const QString& text) {
     return;
   }
   const gp_Dir dir(gp_Vec(points_.back(), *current_));
-  addPoint(points_.back().Translated(gp_Vec(dir) * *length));
-  current_ = points_.back();
+  const gp_Pnt end = points_.back().Translated(gp_Vec(dir) * *length);
+  addPoint(end);
+  // The point may have finished the chain (a face divided, a loop closed):
+  // then there is nothing left to follow.
+  if (points_.empty()) {
+    current_.reset();
+    return;
+  }
+  current_ = end;
   updatePreview();
 }
 

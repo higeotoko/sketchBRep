@@ -145,6 +145,7 @@ class GuiPhase1 : public QObject {
   void moveCopyAndArray();
   void copySelectedEdgeArrays();
   void copyOntoEdgeThenDivideKeepsSolid();
+  void typedLengthSplitsOrClosesSafely();
   void rotateByTypedAngle();
   void offsetToolInwards();
   void groupIsSelectedAsAWhole();
@@ -380,6 +381,68 @@ void GuiPhase1::copyOntoEdgeThenDivideKeepsSolid() {
   QVERIFY(m.undo());
   QVERIFY(m.undo());
   QVERIFY(std::abs(geom::volume(m.document().worldShape(*m.document().find(box))) - 3e9) < 1.0);
+}
+
+// W0 / LINE-05, SC03: a line started on an edge and given its length by
+// typing reaches the opposite edge and divides the face (the chain ends
+// there); typing the closing side closes the loop. Nothing reads the
+// finished chain afterwards, no stray rubber band, one undo step each.
+void GuiPhase1::typedLengthSplitsOrClosesSafely() {
+  Fixture f;
+  QVERIFY(f.setUp(1500, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 3000, 1000, 1000);
+  f.vp->syncNow();
+  auto faceCount = [&](const doc::ObjectId& id) {
+    int n = 0;
+    for (TopExp_Explorer e(m.document().worldShape(*m.document().find(id)), TopAbs_FACE); e.More(); e.Next()) ++n;
+    return n;
+  };
+  f.window.activateTool(MainWindow::ToolId::Line);
+  const std::size_t steps = m.history().undoCount();
+  click(f.vp, f.vp->toWidget(gp_Pnt(1500, 0, 1000)));  // the top's front edge
+  move(f.vp, f.vp->toWidget(gp_Pnt(1500, 600, 1000)));  // across the top
+  type(f.vp, QStringLiteral("1000"));                    // to the back edge
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(faceCount(box), 7);  // the top in two
+  QCOMPARE(m.history().undoCount(), steps + 1);
+  // The chain ended: moving and typing again start nothing by themselves.
+  move(f.vp, f.vp->toWidget(gp_Pnt(2500, 600, 1000)));
+  type(f.vp, QStringLiteral("500"));
+  QCOMPARE(m.history().undoCount(), steps + 1);
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  QVERIFY(!f.window.lastError().isEmpty());  // says to click a start first
+  f.window.clearLastError();
+
+  // A loose face divided the same way (its own object per part).
+  const auto face = m.createRectangle(geom::SketchPlane::ground(), 2000, 1000);
+  QVERIFY(face.ok());
+  f.vp->syncNow();
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 0, 0)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(1000, 400, 0)));
+  type(f.vp, QStringLiteral("1000"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  int faces = 0;
+  for (const doc::Object& o : m.document().objects()) faces += o.kind() == doc::ObjectKind::Face;
+  QCOMPARE(faces, 2);
+
+  // Typed sides closing a loop: a face, and the chain is done.
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  const std::size_t before = m.document().objects().size();
+  click(f.vp, f.vp->toWidget(gp_Pnt(5000, 0, 0)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(5400, 0, 0)));
+  type(f.vp, QStringLiteral("1000"));
+  move(f.vp, f.vp->toWidget(gp_Pnt(6000, 400, 0)));
+  type(f.vp, QStringLiteral("1000"));
+  move(f.vp, f.vp->toWidget(gp_Pnt(5600, 1000, 0)));
+  type(f.vp, QStringLiteral("1000"));
+  move(f.vp, f.vp->toWidget(gp_Pnt(5000, 600, 0)));
+  type(f.vp, QStringLiteral("1000"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), before + 1);
+  QCOMPARE(m.document().objects().back().kind(), doc::ObjectKind::Face);
+  QVERIFY(std::abs(geom::area(m.document().worldShape(m.document().objects().back())) - 1e6) < 1.0);
 }
 
 void GuiPhase1::moveCopyAndArray() {
