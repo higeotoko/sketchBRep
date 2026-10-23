@@ -146,6 +146,7 @@ class GuiPhase1 : public QObject {
   void copySelectedEdgeArrays();
   void copyOntoEdgeThenDivideKeepsSolid();
   void typedLengthSplitsOrClosesSafely();
+  void rectangleOneSideSignsAndReentry();
   void cutCopyAndMoveCopyTakeOnlyPickedElements();
   void rotateByTypedAngle();
   void offsetToolInwards();
@@ -525,6 +526,100 @@ void GuiPhase1::cutCopyAndMoveCopyTakeOnlyPickedElements() {
   }
   QVERIFY(!f.window.lastError().isEmpty());
   QCOMPARE(m.document().objects().size(), objects);
+}
+
+// W2 / NUM-02..05, SC02: a rectangle typed 2000,1000, then "3000," (width
+// only), ",1500" (depth only) keeps its first corner and the other side;
+// a negative value turns that side over; units, the keypad and an IME's
+// full-width digits read the same; garbage changes nothing; all of it one
+// undo step.
+void GuiPhase1::rectangleOneSideSignsAndReentry() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  f.window.activateTool(MainWindow::ToolId::Rectangle);
+  const std::size_t steps = m.history().undoCount();
+  auto bounds = [&] {
+    return geom::exactBounds(m.document().worldShape(m.document().objects().back()));
+  };
+  auto near = [](double a, double b) { return std::abs(a - b) < 1e-6; };
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(1500, 800, 0)));
+  type(f.vp, QStringLiteral("2000,1000"));
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  Bnd_Box b = bounds();
+  QVERIFY(near(b.CornerMax().X(), 2000) && near(b.CornerMax().Y(), 1000));
+  type(f.vp, QStringLiteral("3000,"));
+  b = bounds();
+  QVERIFY2(near(b.CornerMin().X(), 0) && near(b.CornerMax().X(), 3000) && near(b.CornerMax().Y(), 1000),
+           qPrintable(QStringLiteral("%1 %2").arg(b.CornerMax().X()).arg(b.CornerMax().Y())));
+  type(f.vp, QStringLiteral(",1500"));
+  b = bounds();
+  QVERIFY(near(b.CornerMax().X(), 3000) && near(b.CornerMax().Y(), 1500) && near(b.CornerMin().Y(), 0));
+  // Units.
+  type(f.vp, QStringLiteral("300cm,1.5m"));
+  b = bounds();
+  QVERIFY(near(b.CornerMax().X(), 3000) && near(b.CornerMax().Y(), 1500));
+  // Garbage and zero: nothing changes.
+  type(f.vp, QStringLiteral("3000,abc"));
+  QVERIFY(!f.window.lastError().isEmpty());
+  f.window.clearLastError();
+  type(f.vp, QStringLiteral("0,"));
+  QVERIFY(!f.window.lastError().isEmpty());
+  f.window.clearLastError();
+  b = bounds();
+  QVERIFY(near(b.CornerMax().X(), 3000) && near(b.CornerMax().Y(), 1500));
+  // A negative width: the other side of the first corner.
+  type(f.vp, QStringLiteral("-3000,"));
+  b = bounds();
+  QVERIFY2(near(b.CornerMin().X(), -3000) && near(b.CornerMax().X(), 0),
+           qPrintable(QStringLiteral("%1 %2").arg(b.CornerMin().X()).arg(b.CornerMax().X())));
+  QCOMPARE(m.history().undoCount(), steps + 1);  // one step all along
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+
+  // The keypad, while drawing: one side typed, the other from the cursor.
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 5000, 0)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(1200, 5600, 0)));
+  for (const char c : std::string("2500,")) {
+    QTest::keyClick(f.vp, c, c == ',' ? Qt::NoModifier : Qt::KeypadModifier);
+  }
+  QTest::keyClick(f.vp, Qt::Key_Enter, Qt::KeypadModifier);
+  QTest::qWait(50);
+  QCOMPARE(m.document().objects().size(), std::size_t(2));
+  b = bounds();
+  QVERIFY2(near(b.CornerMax().X() - b.CornerMin().X(), 2500) && b.CornerMax().Y() > 5000 + 100,
+           qPrintable(QStringLiteral("%1 %2").arg(b.CornerMax().X()).arg(b.CornerMax().Y())));
+  // An IME's full-width entry in the box.
+  f.window.measurementBox()->setText(QStringLiteral("３０００，１０００"));
+  QTest::keyClick(f.window.measurementBox(), Qt::Key_Return);
+  QTest::qWait(50);
+  b = bounds();
+  QVERIFY2(near(b.CornerMax().X() - b.CornerMin().X(), 3000) && near(b.CornerMax().Y() - b.CornerMin().Y(), 1000),
+           qPrintable(QStringLiteral("%1 %2 %3").arg(b.CornerMax().X()).arg(b.CornerMax().Y()).arg(f.window.lastError())));
+  // Undo: the second rectangle (with its revisions) in one step.
+  QVERIFY(m.undo());
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+
+  // Move: a negative distance goes the other way, typed while moving or
+  // right after; zero changes nothing.
+  const doc::ObjectId moved = m.document().objects().front().id;
+  f.window.setSelection({moved});
+  f.window.activateTool(MainWindow::ToolId::Move);
+  f.window.setSelection({moved});
+  const double x0 = geom::exactBounds(m.document().worldShape(*m.document().find(moved))).CornerMin().X();
+  click(f.vp, f.vp->toWidget(gp_Pnt(-3000, 0, 0)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(-2000, 0, 0)));
+  type(f.vp, QStringLiteral("-500"));
+  double x1 = geom::exactBounds(m.document().worldShape(*m.document().find(moved))).CornerMin().X();
+  QVERIFY2(std::abs((x1 - x0) + 500) < 1.0, qPrintable(QString::number(x1 - x0)));
+  type(f.vp, QStringLiteral("-800"));  // re-entered: still the other way
+  x1 = geom::exactBounds(m.document().worldShape(*m.document().find(moved))).CornerMin().X();
+  QVERIFY2(std::abs((x1 - x0) + 800) < 1.0, qPrintable(QString::number(x1 - x0)));
+  f.window.clearLastError();
+  type(f.vp, QStringLiteral("0"));
+  QVERIFY(!f.window.lastError().isEmpty());
+  x1 = geom::exactBounds(m.document().worldShape(*m.document().find(moved))).CornerMin().X();
+  QVERIFY(std::abs((x1 - x0) + 800) < 1.0);
 }
 
 void GuiPhase1::moveCopyAndArray() {

@@ -52,3 +52,22 @@ TEST(Units, SpacingListsRepeatBays) {
   EXPECT_FALSE(parseSpacingList("3600*a"));
   EXPECT_FALSE(parseSpacingList("3600,,"));
 }
+
+// NUM-02: one side only; an empty item keeps that value.
+TEST(Units, LengthSlotsMayBeEmpty) {
+  auto a = parseLengthSlots("3000,");
+  ASSERT_TRUE(a);
+  ASSERT_EQ(a->size(), 2u);
+  EXPECT_DOUBLE_EQ(*(*a)[0], 3000.0);
+  EXPECT_FALSE((*a)[1]);
+  auto b = parseLengthSlots(" , 1.5m");
+  ASSERT_TRUE(b);
+  EXPECT_FALSE((*b)[0]);
+  EXPECT_DOUBLE_EQ(*(*b)[1], 1500.0);
+  auto c = parseLengthSlots("-300cm,1000");
+  ASSERT_TRUE(c);
+  EXPECT_DOUBLE_EQ(*(*c)[0], -3000.0);
+  EXPECT_FALSE(parseLengthSlots(","));        // nothing given
+  EXPECT_FALSE(parseLengthSlots("3000,abc"));  // garbage is not "empty"
+  EXPECT_FALSE(parseLengthSlots(""));
+}

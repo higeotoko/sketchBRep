@@ -970,6 +970,10 @@ class MoveTool : public TransformTool {
   // it, divisions ("/3") divide it, a typed distance replaces it; never
   // the result of an earlier array (ARR-02).
   gp_Vec reference_;
+  // A typed negative distance went against the direction shown with the
+  // mouse: a value typed again is read against that same direction.
+  double referenceSign_ = 1.0;
+  double typedSign_ = 1.0;
   bool divided_ = false;
   void previewEdgeCopy(const gp_Vec& d);
 };

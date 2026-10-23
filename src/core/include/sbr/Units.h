@@ -16,6 +16,11 @@ std::optional<double> parseLength(std::string_view text);
 // "3m; 4.5m". Returns std::nullopt if any element fails to parse.
 std::optional<std::vector<double>> parseLengthList(std::string_view text);
 
+// Like parseLengthList, but an item may be left empty to keep that value
+// as it is: "3000," = the first only, ",1500" = the second only. Empty
+// slots are std::nullopt; at least one item has a value.
+std::optional<std::vector<std::optional<double>>> parseLengthSlots(std::string_view text);
+
 // Grid spacings: a length list where an item may repeat, "3600*3" or
 // "3600x3" (three bays of 3600). Empty text = no spacings. The repeat
 // count must be a whole number from 1 to 1000.

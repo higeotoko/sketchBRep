@@ -1994,24 +1994,40 @@ void RectangleTool::commit(double u, double v) {
 }
 
 void RectangleTool::applyMeasurement(const QString& text) {
-  const auto values = units::parseLengthList(text.toStdString());
-  if (!values || values->size() != 2) {
-    host_.reportError(QObject::tr("「幅,奥行」の形式で入力してください: %1").arg(text));
+  // "3000,1000", or one side only ("3000," / ",1500": the other stays as
+  // it is). A negative value turns that side the other way round.
+  const auto sides = units::parseLengthSlots(text.toStdString());
+  if (!sides || sides->size() != 2) {
+    host_.reportError(QObject::tr("「幅,奥行」の形式で入力してください（片方だけなら 3000, や ,1500）: %1").arg(text));
     return;
   }
-  const double w = std::abs((*values)[0]);
-  const double h = std::abs((*values)[1]);
+  for (const auto& v : *sides) {
+    if (v && std::abs(*v) < tolerance::kMinDimension) {
+      host_.reportError(QObject::tr("寸法を 0 にはできません: %1").arg(text));
+      return;
+    }
+  }
+  // The side as typed, along the way it goes now (u: drawn or current).
+  auto side = [](const std::optional<double>& typed, double now) {
+    if (!typed) return now;
+    return now < 0 ? -*typed : *typed;
+  };
   if (hasCorner_) {
-    commit(u_ < 0 ? -w : w, v_ < 0 ? -h : h);
+    const double w = side((*sides)[0], u_), h = side((*sides)[1], v_);
+    if (std::abs(w) < tolerance::kMinDimension || std::abs(h) < tolerance::kMinDimension) {
+      host_.reportError(QObject::tr("もう一方の寸法も入力するか、カーソルで示してください: %1").arg(text));
+      return;
+    }
+    commit(w, h);
     return;
   }
-  // Re-edit the rectangle that was just drawn (parametric, keeps direction).
+  // Re-edit the rectangle that was just drawn (parametric, keeps the corner).
   if (lastCreated_ && recent_.fresh(host_.modeler())) {
     const doc::Object* o = host_.modeler().document().find(*lastCreated_);
     const auto* r = o ? std::get_if<doc::RectangleProfile>(&o->recipe.base) : nullptr;
     if (r) {
-      const double newW = r->width < 0 ? -w : w;
-      const double newH = r->height < 0 ? -h : h;
+      const double newW = side((*sides)[0], r->width);
+      const double newH = side((*sides)[1], r->height);
       const Status s = recent_.revise(host_.modeler(), [&] {
         Status t = host_.modeler().setParameter(*lastCreated_, "width", newW);
         if (t) t = host_.modeler().setParameter(*lastCreated_, "height", newH);
@@ -2438,6 +2454,7 @@ void MoveTool::finish() {
     delta.SetTranslation(gp_Vec(base_, current_));
     if (base_.Distance(current_) > tolerance::kMinDimension && commit(delta)) {
       reference_ = gp_Vec(base_, current_);
+      referenceSign_ = typedSign_;
       divided_ = false;
     }
   }
@@ -2579,7 +2596,7 @@ void MoveTool::mousePress(const ToolEvent& e) {
 void MoveTool::applyMeasurement(const QString& text) {
   if (moving_) {
     const auto length = units::parseLength(text.toStdString());
-    if (!length) {
+    if (!length || std::abs(*length) < tolerance::kMinDimension) {
       host_.reportError(QObject::tr("距離を解釈できません: %1").arg(text));
       return;
     }
@@ -2594,7 +2611,9 @@ void MoveTool::applyMeasurement(const QString& text) {
       return;
     }
     current_ = base_.Translated(gp_Vec(gp_Dir(gp_Vec(base_, current_))) * *length);
+    typedSign_ = *length < 0 ? -1.0 : 1.0;
     finish();
+    typedSign_ = 1.0;
     return;
   }
   if (!canReeditLast()) {
@@ -2620,15 +2639,20 @@ void MoveTool::applyMeasurement(const QString& text) {
     }
     return;
   }
+  // A negative distance: the other way along the same line (as while
+  // moving); zero is refused (NUM-03/05).
   const auto length = units::parseLength(text.toStdString());
-  if (!length || *length <= 0 || reference_.Magnitude() < 1e-9) {
+  if (!length || std::abs(*length) < tolerance::kMinDimension || reference_.Magnitude() < 1e-9) {
     host_.reportError(QObject::tr("距離を解釈できません: %1").arg(text));
     return;
   }
-  const gp_Vec reference = gp_Vec(gp_Dir(reference_)) * *length;
+  const gp_Vec reference = gp_Vec(gp_Dir(reference_)) * (referenceSign_ * *length);
   gp_Trsf delta;
   delta.SetTranslation(divided_ ? reference / last_->count : reference);
-  if (redoLast(delta, last_->count)) reference_ = reference;
+  if (redoLast(delta, last_->count)) {
+    reference_ = reference;
+    referenceSign_ = *length < 0 ? -1.0 : 1.0;
+  }
 }
 
 // --- Rotate ------------------------------------------------------------------------------

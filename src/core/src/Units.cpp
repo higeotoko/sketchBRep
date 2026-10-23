@@ -75,6 +75,28 @@ std::optional<std::vector<double>> parseLengthList(std::string_view text) {
   return values;
 }
 
+std::optional<std::vector<std::optional<double>>> parseLengthSlots(std::string_view text) {
+  std::vector<std::optional<double>> values;
+  bool any = false;
+  std::size_t start = 0;
+  while (start <= text.size()) {
+    std::size_t end = text.find_first_of(",;", start);
+    if (end == std::string_view::npos) end = text.size();
+    const std::string_view item = trim(text.substr(start, end - start));
+    if (item.empty()) {
+      values.emplace_back();
+    } else {
+      const auto value = parseLength(item);
+      if (!value) return std::nullopt;
+      values.emplace_back(*value);
+      any = true;
+    }
+    start = end + 1;
+  }
+  if (!any) return std::nullopt;
+  return values;
+}
+
 std::optional<std::vector<double>> parseSpacingList(std::string_view text) {
   std::vector<double> values;
   if (text.find_first_not_of(" \t") == std::string_view::npos) return values;

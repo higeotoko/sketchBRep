@@ -2049,7 +2049,20 @@ bool MainWindow::alignSelection(int axis, int edge) {
 
 void MainWindow::commitMeasurement() {
   const bool typed = userTyping_;
-  const QString text = measurement_->text().trimmed();
+  QString text = measurement_->text().trimmed();
+  // Typed with a Japanese IME: full-width digits, signs and unit letters
+  // and the ideographic comma read as the plain ones ("３０００，" =
+  // "3000,"); only for values (a note's text stays as typed).
+  QString plain = text;
+  for (QChar& c : plain) {
+    const char16_t u = c.unicode();
+    if (u >= 0xFF01 && u <= 0xFF5E) c = QChar(u - 0xFEE0);
+    if (u == 0x3000) c = QLatin1Char(' ');
+    if (u == 0x3001) c = QLatin1Char(',');  // 、
+    if (u == 0x2212) c = QLatin1Char('-');  // − minus sign
+  }
+  static const QRegularExpression value(QStringLiteral("^[0-9\\s.,;+\\-*/xXmMcCsS]*$"));
+  if (plain != text && value.match(plain).hasMatch()) text = plain;
   userTyping_ = false;
   // Enter without typing finishes a wall run / slab outline (the box only
   // shows the current length then).
