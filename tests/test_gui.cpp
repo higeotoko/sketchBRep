@@ -145,6 +145,7 @@ class GuiPhase1 : public QObject {
   void moveCopyAndArray();
   void copySelectedEdgeArrays();
   void copyOntoEdgeThenDivideKeepsSolid();
+  void lineAcrossStripsInAGroupDividesEach();
   void typedLengthSplitsOrClosesSafely();
   void middleLeftPanAddsNoPoint();
   void rectangleOneSideSignsAndReentry();
@@ -792,6 +793,47 @@ void GuiPhase1::scaleGripsOnComponentsAndGroups() {
   grab(tool, 1, 1, 1, QStringLiteral("0.5"));
   QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
   QVERIFY2(std::abs(size(*group) - 2000) < 1e-6, qPrintable(QString::number(size(*group))));
+}
+
+// Report (screenshot): inside a group, a wall front in vertical strips; a
+// horizontal line drawn across all of them (from outside to outside) lay on
+// top without dividing: selecting picked the whole strip. Each strip is now
+// divided; a part is picked alone and pushed on its own.
+void GuiPhase1::lineAcrossStripsInAGroupDividesEach() {
+  Fixture f;
+  QVERIFY(f.setUp(1500, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 3000, 1000, 3000);
+  QVERIFY(m.splitWithLine({gp_Pnt(1000, 0, 0), gp_Pnt(1000, 0, 3000)}).ok());
+  QVERIFY(m.splitWithLine({gp_Pnt(2000, 0, 0), gp_Pnt(2000, 0, 3000)}).ok());
+  auto group = m.group({box});
+  QVERIFY(group.ok());
+  f.vp->syncNow();
+  f.window.enterGroup(*group);
+  auto faces = [&] {
+    int n = 0;
+    for (TopExp_Explorer e(m.document().worldShape(*m.document().find(box)), TopAbs_FACE); e.More(); e.Next()) ++n;
+    return n;
+  };
+  QCOMPARE(faces(), 8);
+  f.window.activateTool(MainWindow::ToolId::Line);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 1200)));  // on the left edge
+  QTest::keyClick(f.vp, Qt::Key_Right);              // along X
+  move(f.vp, f.vp->toWidget(gp_Pnt(2000, 0, 1200)));
+  type(f.vp, QStringLiteral("3600"));                // past the right edge
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  QTest::qWait(30);
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(faces(), 11);
+  // A lower part of the middle strip is picked alone.
+  f.window.activateTool(MainWindow::ToolId::Select);
+  click(f.vp, f.vp->toWidget(gp_Pnt(1500, 0, 500)));
+  QCOMPARE(f.window.elementSelection().size(), std::size_t(1));
+  const TopoDS_Shape picked = f.vp->elementShape(f.window.elementSelection().front());
+  // The part below the line (its start was snapped on the edge near 1200),
+  // not the whole 3000 high strip.
+  const double area = geom::area(picked);
+  QVERIFY2(area > 1000.0 * 1100 && area < 1000.0 * 1300, qPrintable(QString::number(area)));
 }
 
 void GuiPhase1::moveCopyAndArray() {

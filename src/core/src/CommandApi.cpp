@@ -989,12 +989,20 @@ const std::vector<CommandDef>& commands() {
          return r;
        }},
       {"split_face",
-       "Draw a line (2+ points) from edge to edge across a planar face of a solid to split that face, so "
-       "each part can be pushed/pulled separately (e.g. a band at 1 m on a wall). Returns the solid's id.",
+       "Draw a line (2+ points) across planar faces to split them, so each part can be pushed/pulled "
+       "separately (e.g. a band at 1 m on a wall). The line may start and end outside the faces and run "
+       "across several faces side by side; each part running across a face from edge to edge divides it "
+       "(a part stopping inside a face does not). Returns the number of faces divided.",
        SCHEMA({"type": "object", "properties": {
          "points": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}}},
          "required": ["points"]}),
-       [](doc::Modeler& m, const json& a) { return idResult(must(m.splitWithLine(points(a, "points")))); }},
+       [](doc::Modeler& m, const json& a) {
+         // As drawing it: a line across several faces side by side, or
+         // starting / ending outside them, divides each face it runs across.
+         const doc::Modeler::Divided d = must(m.splitAcross(points(a, "points")));
+         if (d.faces == 0) throw ApiError("The line does not cross a face from edge to edge");
+         return json{{"faces", d.faces}};
+       }},
       {"delete_faces",
        "Delete faces on their own, like selecting faces and pressing Delete (SketchUp): the faces go, their "
        "edges stay as lines unless still used by a face that is left. A loose profile leaves its outline; a "

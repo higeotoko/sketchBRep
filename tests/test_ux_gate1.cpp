@@ -157,10 +157,15 @@ TEST(Gate1, AC09_LoopsDoNotCloseAcrossEditingContexts) {
   EXPECT_FALSE(m.faceFromLoop(*inside, &loopFound).ok());
   EXPECT_FALSE(loopFound);
   // Nor does a line in the group split a profile outside it.
+  // (Away from the outside line, which divides a face drawn over it.)
   ASSERT_TRUE(m.setActiveGroup({}).ok());
-  auto rect = m.createRectangle(geom::SketchPlane::ground(), 2000, 1000);
+  geom::SketchPlane apart = geom::SketchPlane::ground();
+  apart.origin = gp_Pnt(3000, 0, 0);
+  auto rect = m.createRectangle(apart, 2000, 1000);
+  ASSERT_TRUE(m.document().find(*rect));
   ASSERT_TRUE(m.setActiveGroup(*group).ok());
-  EXPECT_FALSE(m.splitWithLine({gp_Pnt(800, 0, 0), gp_Pnt(800, 1000, 0)}).ok());
+  EXPECT_FALSE(m.splitWithLine({gp_Pnt(3800, 0, 0), gp_Pnt(3800, 1000, 0)}).ok());
+  EXPECT_FALSE(m.splitAcross({gp_Pnt(3800, -100, 0), gp_Pnt(3800, 1100, 0)})->faces);
   EXPECT_TRUE(m.document().find(*rect));
 }
 

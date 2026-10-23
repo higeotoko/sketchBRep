@@ -217,7 +217,7 @@
 | LINE-01 | 自動確認済 | `escStepsBackAndConstraintsShow`（Esc で確定済みの線は残る） |
 | LINE-02 | 検証待ち | 単独の線への T 字接続は、接続点を作る（`Overlaps.Lines`）。面の辺の途中への接続はまだ |
 | LINE-03 | 検証待ち | 閉じる前の案内あり。隙間のある輪郭はまだ確認していない |
-| LINE-04 | 自動確認済 | `lineAcrossRectangleSplitsProfile`、`lineAcrossWallSplitsFace` |
+| LINE-04 | 自動確認済 | `lineAcrossRectangleSplitsProfile`、`lineAcrossWallSplitsFace`、`SplitAcross.*`（はみ出した線、複数の面、コピー、後から描いた面、穴）、`lineAcrossStripsInAGroupDividesEach` |
 | LINE-05 | 自動確認済 | W0 |
 | LINE-06 | 自動確認済 | `lineAgainstVolumeMakesFace` |
 

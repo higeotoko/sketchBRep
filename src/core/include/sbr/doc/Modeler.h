@@ -111,6 +111,18 @@ class Modeler {
   // the original recipe. Only objects of the current editing context are
   // considered.
   Result<ObjectId> splitWithLine(const std::vector<gp_Pnt>& worldPoints);
+  // A straight line (polyline, world) lying on flat faces of the current
+  // group: every part of it that runs across a face from edge to edge
+  // divides that face, so one line can divide several faces side by side
+  // and may start and end outside them. Parts that stop inside a face are
+  // not extended, lines only touching a face (crossing its plane) or a
+  // little off it do not divide it. `rest`: the parts not used (to keep as
+  // lines). Part of the caller's undo step.
+  struct Divided {
+    int faces = 0;
+    std::vector<std::vector<gp_Pnt>> rest;
+  };
+  Result<Divided> splitAcross(const std::vector<gp_Pnt>& worldPoints);
   // The eraser on an edge (SketchUp): a line that divides a flat face
   // (drawn with splitWithLine) is taken away and the parts become one face
   // again - on a solid by dropping that split from its history, on a loose
@@ -560,6 +572,12 @@ class Modeler {
   Status commitModified(Object object, const std::string& commandName);
   // settleOverlaps' two halves (one object each).
   Status settleLine(const ObjectId& id, Settled& out);
+  // A loose line dividing the faces it runs across (splitAcross); the line
+  // is replaced by its unused parts. `now`: what the line became.
+  Status divideWithLine(const ObjectId& lineId, std::vector<ObjectId>& now);
+  // Loose lines of `parent` lying on this face (world) and its plane
+  // divide it (lines drawn first, the face after).
+  Status divideWithLinesOn(const ObjectId& parent, const TopoDS_Face& face, const gp_Pln& plane);
   Status settleFace(const ObjectId& id, Settled& out);
   // `base` replaced by these world faces (the first keeps its id), with its
   // material, tag and attributes; returns the ids.

@@ -578,6 +578,8 @@ Result<ObjectId> Modeler::splitWithLine(const std::vector<gp_Pnt>& worldPoints) 
       for (const gp_Pnt& p : worldPoints) line.push_back(p.Transformed(toParent));
       const TopoDS_Face placed = TopoDS::Face(c.face.Moved(TopLoc_Location(toParent)));
       auto parts = geom::splitPlanarFace(placed, line);
+      // As the part regenerates (FacePart): e.g. a line across a hole.
+      if (!parts) parts = geom::splitPlanarFaceExtended(placed, line);
       if (!parts) {
         lastError = parts.error();
         continue;
@@ -2223,6 +2225,157 @@ TopoDS_Shape faceBoolean(bool common, const TopoDS_Shape& a, const TopoDS_Shape&
 
 }  // namespace
 
+Result<Modeler::Divided> Modeler::splitAcross(const std::vector<gp_Pnt>& worldPoints) {
+  constexpr double tol = tolerance::kMinDimension;
+  Divided out;
+  if (worldPoints.size() < 2) return out;
+  history_.beginGroup("Split Face");
+  // The whole line on one face, from edge to edge: as before.
+  if (splitWithLine(worldPoints)) {
+    out.faces = 1;
+    history_.endGroup();
+    return out;
+  }
+  std::vector<gp_Pnt> rest;
+  auto flushRest = [&] {
+    if (rest.size() >= 2) out.rest.push_back(rest);
+    rest.clear();
+  };
+  auto keep = [&](const gp_Pnt& p, const gp_Pnt& q) {
+    if (p.Distance(q) < tol) return;
+    if (rest.empty() || rest.back().Distance(p) > 1e-6) {
+      flushRest();
+      rest.push_back(p);
+    }
+    rest.push_back(q);
+  };
+  for (std::size_t k = 1; k < worldPoints.size(); ++k) {
+    const gp_Pnt a = worldPoints[k - 1], b = worldPoints[k];
+    const double length = a.Distance(b);
+    if (length < tol) continue;
+    const gp_Dir d(gp_Vec(a, b));
+    const TopoDS_Edge segment = BRepBuilderAPI_MakeEdge(a, b).Edge();
+    Bnd_Box reach;
+    BRepBndLib::Add(segment, reach);
+    reach.Enlarge(tol);
+    // The parts of the segment running across a face of this group from
+    // edge to edge, on the face's own plane (found first, then applied one
+    // at a time: dividing changes the shapes).
+    std::vector<std::pair<double, double>> portions;
+    for (int pass = 0; pass < 2; ++pass) {
+      for (const Object& o : document_.objects()) {
+        if (o.parent != activeGroup_ || !document_.isVisible(o.id) || o.locked) continue;
+        const bool profile = o.kind() == ObjectKind::Face;
+        if ((pass == 0) != profile || (!profile && o.kind() != ObjectKind::Solid)) continue;
+        const TopoDS_Shape shape = document_.worldShape(o);
+        Bnd_Box box;
+        BRepBndLib::Add(shape, box);
+        if (box.IsOut(reach)) continue;
+        for (TopExp_Explorer e(shape, TopAbs_FACE); e.More(); e.Next()) {
+          const TopoDS_Face face = TopoDS::Face(e.Current());
+          gp_Pln plane;
+          if (!geom::isPlanarFace(face, &plane) || plane.Distance(a) > tol || plane.Distance(b) > tol) continue;
+          BRepAlgoAPI_Common common(segment, face);
+          common.SetFuzzyValue(tol);
+          common.Build();
+          if (!common.IsDone() || common.HasErrors()) continue;
+          for (TopExp_Explorer pe(common.Shape(), TopAbs_EDGE); pe.More(); pe.Next()) {
+            const TopoDS_Edge piece = TopoDS::Edge(pe.Current());
+            const gp_Pnt p0 = BRep_Tool::Pnt(TopExp::FirstVertex(piece)), p1 = BRep_Tool::Pnt(TopExp::LastVertex(piece));
+            double t0 = gp_Vec(a, p0).Dot(gp_Vec(d)), t1 = gp_Vec(a, p1).Dot(gp_Vec(d));
+            if (t0 > t1) std::swap(t0, t1);
+            if (t1 - t0 < tol) continue;
+            const gp_Pnt mid = a.Translated(gp_Vec(d) * (0.5 * (t0 + t1)));
+            // Across the face (not along its edge), and from edge to edge
+            // (a part stopping inside the face is not extended).
+            if (geom::pointOnFaceBoundary(face, mid) || !geom::pointOnFaceBoundary(face, p0) ||
+                !geom::pointOnFaceBoundary(face, p1)) {
+              continue;
+            }
+            const bool known = std::any_of(portions.begin(), portions.end(), [&](const auto& q) {
+              return std::abs(q.first - t0) < tol && std::abs(q.second - t1) < tol;
+            });
+            if (!known) portions.emplace_back(t0, t1);
+          }
+        }
+      }
+    }
+    std::sort(portions.begin(), portions.end());
+    std::vector<std::pair<double, double>> used, failed;
+    auto at = [&](double t) { return a.Translated(gp_Vec(d) * t); };
+    for (const auto& [t0, t1] : portions) {
+      if (splitWithLine({at(t0), at(t1)})) {
+        used.emplace_back(t0, t1);
+        ++out.faces;
+      } else {
+        failed.emplace_back(t0, t1);
+      }
+    }
+    // Parts that divide nothing alone, of one and the same face (on both
+    // sides of a hole): together they do, as one line across the hole.
+    auto faceAt = [&](const gp_Pnt& p) -> std::pair<ObjectId, TopoDS_Face> {
+      for (const Object& o : document_.objects()) {
+        if (o.parent != activeGroup_ || !document_.isVisible(o.id) || o.locked) continue;
+        if (o.kind() != ObjectKind::Face && o.kind() != ObjectKind::Solid) continue;
+        for (TopExp_Explorer e(document_.worldShape(o), TopAbs_FACE); e.More(); e.Next()) {
+          const TopoDS_Face f = TopoDS::Face(e.Current());
+          if (geom::pointOnFace(f, p) && !geom::pointOnFaceBoundary(f, p)) return {o.id, f};
+        }
+      }
+      return {};
+    };
+    for (std::size_t i = 0; i + 1 < failed.size(); ++i) {
+      const auto first = faceAt(at(0.5 * (failed[i].first + failed[i].second)));
+      const auto second = faceAt(at(0.5 * (failed[i + 1].first + failed[i + 1].second)));
+      if (first.first.empty() || first.first != second.first || !first.second.IsSame(second.second)) continue;
+      if (splitWithLine({at(failed[i].first), at(failed[i + 1].second)})) {
+        used.emplace_back(failed[i].first, failed[i].second);
+        used.emplace_back(failed[i + 1].first, failed[i + 1].second);
+        ++out.faces;
+        ++i;
+      }
+    }
+    if (used.empty()) {
+      keep(a, b);
+      continue;
+    }
+    for (const auto& [s0, s1] : uncovered(length, used, tol)) {
+      keep(a.Translated(gp_Vec(d) * s0), a.Translated(gp_Vec(d) * s1));
+    }
+  }
+  flushRest();
+  // Nothing divided: nothing was done either. (abortGroup would take back
+  // the caller's whole step, this group being inside it.)
+  history_.endGroup();
+  if (out.faces == 0) out.rest = {worldPoints};
+  return out;
+}
+
+Status Modeler::divideWithLine(const ObjectId& lineId, std::vector<ObjectId>& now) {
+  const Object* found = document_.find(lineId);
+  if (!found) return Status::success();
+  const Object line = *found;
+  const std::vector<gp_Pnt> points = worldPolyline(document_, line);
+  if (points.size() < 2) return Status::success();
+  auto divided = splitAcross(points);
+  if (!divided) return divided.status();
+  if (divided->faces == 0) return Status::success();
+  if (const Status s = remove({lineId}); !s) return s;
+  now.erase(std::remove(now.begin(), now.end(), lineId), now.end());
+  for (const std::vector<gp_Pnt>& part : divided->rest) {
+    auto id = createPolyline(part);
+    if (!id) return id.status();
+    Object o = *document_.find(*id);
+    o.layer = line.layer;
+    o.material = line.material;
+    o.color = line.color;
+    o.attributes = line.attributes;
+    if (const Status s = commitModified(std::move(o), "Split Face"); !s) return s;
+    now.push_back(*id);
+  }
+  return Status::success();
+}
+
 std::vector<ObjectId> Modeler::settledIds(const std::vector<ObjectId>& ids, const Settled& settled) {
   std::vector<ObjectId> out;
   auto add = [&](const ObjectId& id) {
@@ -2338,6 +2491,16 @@ Status Modeler::settleLine(const ObjectId& id, Settled& out) {
     }
     out.became[id] = now;
     ++out.linesTrimmed;
+  }
+  // Running across faces of this group from edge to edge: they are divided
+  // there (as drawing it across them does), whatever made the line (drawn,
+  // copied, moved, pasted); only the parts not used stay a line.
+  {
+    const std::vector<ObjectId> before = now;
+    for (const ObjectId& n : before) {
+      if (const Status s = divideWithLine(n, now); !s) return s;
+    }
+    if (now != before) out.became[id] = now;
   }
   // Where the line ends on another loose line, that one gets a vertex.
   std::vector<gp_Pnt> ends;
@@ -2499,7 +2662,7 @@ Status Modeler::settleFace(const ObjectId& id, Settled& out) {
     takenBy.insert(takenBy.end(), replaced->begin() + static_cast<std::ptrdiff_t>(outside), replaced->end());
     ++out.facesDivided;
   }
-  if (!overlapped) return Status::success();
+  if (!overlapped) return divideWithLinesOn(fresh.parent, face, plane);
   if (parts.empty()) {
     if (const Status s = remove({id}); !s) return s;
     out.became[id] = takenBy;  // what was there takes its place
@@ -2509,6 +2672,30 @@ Status Modeler::settleFace(const ObjectId& id, Settled& out) {
   if (!replaced) return replaced.status();
   out.became[id] = *replaced;
   ++out.facesDivided;
+  return divideWithLinesOn(fresh.parent, face, plane);
+}
+
+Status Modeler::divideWithLinesOn(const ObjectId& parent, const TopoDS_Face& face, const gp_Pln& plane) {
+  // Lines drawn first, the face after: loose lines lying on it across it
+  // divide it the same way.
+  constexpr double tol = tolerance::kMinDimension;
+  Bnd_Box reach;
+  BRepBndLib::Add(face, reach);
+  reach.Enlarge(tol);
+  std::vector<ObjectId> lines;
+  for (const Object& o : document_.objects()) {
+    if (o.parent != parent || o.kind() != ObjectKind::Curve || o.locked || !document_.isVisible(o.id)) continue;
+    const std::vector<gp_Pnt> points = worldPolyline(document_, o);
+    if (points.size() < 2) continue;
+    if (std::any_of(points.begin(), points.end(), [&](const gp_Pnt& p) { return plane.Distance(p) > tol; })) continue;
+    Bnd_Box box;
+    for (const gp_Pnt& p : points) box.Add(p);
+    if (!box.IsOut(reach)) lines.push_back(o.id);
+  }
+  for (const ObjectId& line : lines) {
+    std::vector<ObjectId> now{line};
+    if (const Status s = divideWithLine(line, now); !s) return s;
+  }
   return Status::success();
 }
 
