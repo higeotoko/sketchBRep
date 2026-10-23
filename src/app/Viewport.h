@@ -224,6 +224,7 @@ class Viewport : public QWidget {
     // are this line overlay instead (not pickable).
     std::vector<int> hiddenEdges;
     Handle(AIS_Shape) edgeOverlay;
+    Handle(AIS_Shape) selectionDots;  // shown while the object is selected
   };
 
   void initViewer();

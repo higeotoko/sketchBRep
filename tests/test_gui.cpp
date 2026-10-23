@@ -169,6 +169,7 @@ class GuiPhase1 : public QObject {
   void eraserWorksOnLines();
   void rightClickMenuFollowsTheSelection();
   void skyAndGroundFollowTheHorizon();
+  void selectionDotsKeepTheMaterialColour();
   void paintNeedsAMaterialAndPresetsAddOnClick();
   void followMeAroundTopFace();
   void wallToolAndArchitectureMenus();
@@ -2756,6 +2757,36 @@ void GuiPhase1::skyAndGroundFollowTheHorizon() {
   QVERIFY2(top.blue() > top.red(), qPrintable(top.name()));
   QVERIFY2(bottom.red() >= bottom.blue(), qPrintable(bottom.name()));
   QVERIFY2(top != bottom, qPrintable(top.name() + bottom.name()));
+}
+
+// Selected faces keep their own colour under blue dots (SketchUp), so a
+// material stays recognisable while selected.
+void GuiPhase1::selectionDotsKeepTheMaterialColour() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(-1000, -1000, 2000, 2000, 2000);
+  auto red = m.createMaterial("Red", {0.9, 0.1, 0.1});
+  QVERIFY(red.ok());
+  QVERIFY(m.assignMaterial({box}, *red).ok());
+  f.window.setSelection({box});
+  f.vp->syncNow();
+  const QString dir = qEnvironmentVariable("SBR_SHOT_DIR");
+  const QString path = (dir.isEmpty() ? QDir::tempPath() : dir) + QStringLiteral("/selection_dots.png");
+  QVERIFY(f.vp->dumpImage(path));
+  const QImage shot(path);
+  // Around the middle of the front face: mostly the red material, some blue dots.
+  const QPoint c = f.vp->toWidget(gp_Pnt(0, -1000, 1000));
+  int reddish = 0, blue = 0;
+  for (int dy = -8; dy < 8; ++dy) {
+    for (int dx = -8; dx < 8; ++dx) {
+      const QColor px = shot.pixelColor(c.x() + dx, c.y() + dy);
+      if (px.red() > 2 * px.blue() && px.red() > 100) ++reddish;
+      if (px.blue() > px.red() + 60) ++blue;
+    }
+  }
+  QVERIFY2(reddish > 128, qPrintable(QString("red %1 blue %2").arg(reddish).arg(blue)));
+  QVERIFY2(blue >= 4, qPrintable(QString("red %1 blue %2").arg(reddish).arg(blue)));
 }
 
 QTEST_MAIN(GuiPhase1)

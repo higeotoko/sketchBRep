@@ -4,6 +4,8 @@
 #include <cstring>
 #include <QImage>
 #include <Image_PixMap.hxx>
+#include <Graphic3d_ShaderObject.hxx>
+#include <Graphic3d_ShaderProgram.hxx>
 #include <PrsMgr_PresentationManager.hxx>
 #include <SelectMgr_Selection.hxx>
 #include <Prs3d_Presentation.hxx>
@@ -107,6 +109,37 @@ class Backdrop : public AIS_InteractiveObject {
   bool under_;
 };
 
+// Selected faces as SketchUp shows them: blue dots over the face's own
+// colour (a material stays recognisable), a fixed pixel pattern whatever
+// the zoom, drawn just in front of the face.
+Handle(Graphic3d_ShaderProgram) selectionDotsProgram() {
+  static Handle(Graphic3d_ShaderProgram) program;
+  if (!program.IsNull()) return program;
+  program = new Graphic3d_ShaderProgram();
+  program->AttachShader(Graphic3d_ShaderObject::CreateFromSource(
+      Graphic3d_TOS_VERTEX,
+      "void main() { gl_Position = occProjectionMatrix * occWorldViewMatrix * occModelWorldMatrix * occVertex; }"));
+  program->AttachShader(Graphic3d_ShaderObject::CreateFromSource(
+      Graphic3d_TOS_FRAGMENT,
+      "void main() {\n"
+      "  vec2 cell = mod(floor(gl_FragCoord.xy), 4.0);\n"
+      "  if (cell.x != 0.0 || cell.y != 0.0) discard;\n"
+      "  occSetFragColor(vec4(0.05, 0.15, 0.80, 1.0));\n"
+      "}"));
+  return program;
+}
+
+Handle(AIS_Shape) makeSelectionDots(const TopoDS_Shape& faces) {
+  Handle(AIS_Shape) dots = new AIS_Shape(faces);
+  const Handle(Prs3d_Drawer)& drawer = dots->Attributes();
+  drawer->SetFaceBoundaryDraw(Standard_False);
+  drawer->SetupOwnShadingAspect();
+  const Handle(Graphic3d_AspectFillArea3d)& aspect = drawer->ShadingAspect()->Aspect();
+  aspect->SetShaderProgram(selectionDotsProgram());
+  aspect->SetPolygonOffsets(Aspect_POM_Fill, -1.0f, -2.0f);  // in front of the face it marks
+  return dots;
+}
+
 // A texture from pixels in memory (pictures, the sky / ground background).
 class PixmapTexture : public Graphic3d_Texture2D {
  public:
@@ -124,6 +157,7 @@ Quantity_Color rgb(double r, double g, double b) { return Quantity_Color(r, g, b
 
 const Quantity_Color kAxisColors[3] = {rgb(0.85, 0.1, 0.1), rgb(0.1, 0.65, 0.1), rgb(0.1, 0.2, 0.9)};
 const Quantity_Color kSelectedColor = rgb(0.45, 0.62, 0.95);
+const Quantity_Color kSelectedEdgeColor = rgb(0.05, 0.15, 0.80);
 
 Quantity_Color snapColor(snap::SnapKind kind) {
   switch (kind) {
@@ -568,6 +602,7 @@ Handle(AIS_Shape) Viewport::makeDisplay(const doc::Object& object, Entry& entry)
 
 void Viewport::removeDisplay(Entry& entry) {
   context_->Remove(entry.ais, Standard_False);
+  if (!entry.selectionDots.IsNull()) context_->Remove(entry.selectionDots, Standard_False);
   if (!entry.edgeOverlay.IsNull()) context_->Remove(entry.edgeOverlay, Standard_False);
 }
 
@@ -871,12 +906,16 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
                          : o->kind() == doc::ObjectKind::Annotation ? Quantity_Color(Quantity_NOC_GRAY20)
                          : o->kind() == doc::ObjectKind::Guide      ? Quantity_Color(Quantity_NOC_GRAY50)
                                                                     : rgb(shown.r, shown.g, shown.b);
-  if (selected) color = kSelectedColor;
+  // Selected: lines (curves, notes) turn blue; objects with faces keep
+  // their colours under blue dots, with blue edges (SketchUp).
+  const bool hasFaces = o->kind() != doc::ObjectKind::Curve && o->kind() != doc::ObjectKind::Annotation &&
+                        o->kind() != doc::ObjectKind::Guide;
+  if (selected && !hasFaces) color = kSelectedColor;
   bool restyled = false;
   Quantity_Color current;
   found->second.ais->Color(current);
   Entry& entry = found->second;
-  auto faceColors = selected ? decltype(entry.faceColors){} : faceColorsOf(*o);
+  auto faceColors = faceColorsOf(*o);
   const bool facesChanged = faceColors != entry.faceColors || selected != entry.shownSelected;
   if (!current.IsEqual(color) || facesChanged) {
     entry.ais->SetColor(color);
@@ -891,8 +930,21 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
     entry.faceColors = std::move(faceColors);
     entry.shownSelected = selected;
     showBackSide(entry.ais, o->kind());
-    // SetColor() also recolours the face boundaries; keep them black.
-    entry.ais->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(Quantity_NOC_BLACK, Aspect_TOL_SOLID, 1.5));
+    // SetColor() also recolours the face boundaries; black, or blue when selected.
+    const Quantity_Color line = selected ? kSelectedEdgeColor : Quantity_Color(Quantity_NOC_BLACK);
+    entry.ais->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(line, Aspect_TOL_SOLID, 1.5));
+    if (!entry.edgeOverlay.IsNull()) {
+      entry.edgeOverlay->SetColor(line);
+      context_->Redisplay(entry.edgeOverlay, Standard_False);
+    }
+    // The dots over the faces of a selected object.
+    if (!entry.selectionDots.IsNull()) context_->Remove(entry.selectionDots, Standard_False);
+    entry.selectionDots.Nullify();
+    if (selected && hasFaces) {
+      entry.selectionDots = makeSelectionDots(entry.displayShape);
+      entry.selectionDots->SetZLayer(entry.ais->ZLayer());
+      context_->Display(entry.selectionDots, AIS_Shaded, -1, Standard_False);
+    }
     restyled = true;
   }
   if (found->second.locked != o->locked) {
@@ -1245,10 +1297,7 @@ void Viewport::setHighlightedElements(const std::vector<ElementRef>& elements) {
     }
   }
   if (anyFace) {
-    highlightFaces_ = new AIS_Shape(faces);
-    highlightFaces_->SetColor(kSelectedColor);
-    highlightFaces_->SetTransparency(0.35);
-    highlightFaces_->Attributes()->SetFaceBoundaryDraw(Standard_False);
+    highlightFaces_ = makeSelectionDots(faces);
     highlightFaces_->SetZLayer(Graphic3d_ZLayerId_Top);
     context_->Display(highlightFaces_, AIS_Shaded, -1, Standard_False);
   }
