@@ -298,6 +298,14 @@ TEST(Transactions, PlaceOnGridPutsCopiesOnCrossings) {
   const json some = a.ok("place_on_grid", {{"source", column}, {"x", {"X1", "X2"}}, {"y", "Y1"}});
   EXPECT_EQ(some["count"], 2);
   EXPECT_FALSE(a.call("place_on_grid", {{"source", column}, {"x", {"X9"}}})["ok"]);
+  // A source standing on a crossing already: it stays the one there
+  // (this used to crash the CLI).
+  const std::string onGrid =
+      a.ok("create_box", {{"origin", {-200, -200, 0}}, {"width", 400}, {"depth", 400}, {"height", 3000}})["id"];
+  const std::size_t before = a.modeler.document().objects().size();
+  const json own = a.ok("place_on_grid", {{"source", onGrid}, {"x", {"X1", "X2"}}, {"y", "Y1"}});
+  EXPECT_EQ(own["placed"]["X1/Y1"], onGrid);
+  EXPECT_EQ(a.modeler.document().objects().size(), before + 1);
   // A second grid reuses the names: refused instead of guessing.
   a.ok("create_grid", {{"origin", {50000, 0, 0}}, {"x_spacings", {3000}}});
   EXPECT_FALSE(a.call("place_on_grid", {{"source", column}, {"x", {"X1"}}, {"y", {"Y1"}}})["ok"]);

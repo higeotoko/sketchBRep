@@ -1764,7 +1764,7 @@ const std::vector<CommandDef>& commands() {
        "Copy 'source' (e.g. a column) to crossings of grid lines (from create_grid): 'x' and 'y' are line "
        "names like [\"X1\", \"X3\"] or \"all\" (default); 'skip' lists crossings like \"X2/Y1\". The "
        "bottom centre of the source lands on each crossing (its height is kept). One undo step; returns "
-       "the new ids by crossing. Lines with the same name twice are refused as ambiguous.",
+       "the new ids by crossing (the source itself where it already stands on one; null where the same thing stands there already). Lines with the same name twice are refused as ambiguous.",
        SCHEMA({"type": "object", "properties": {"source": {"type": "string"}, "x": {}, "y": {}, "skip": {}},
                "required": ["source"]}),
        [](doc::Modeler& m, const json& a) { return runPlaceOnGrid(m, a); }},
@@ -2095,12 +2095,19 @@ json runPlaceOnGrid(doc::Modeler& m, const json& args) {
   for (const auto& [where, p] : spots) {
     gp_Trsf delta;
     delta.SetTranslation(reference, p);
+    // The source standing on a crossing already is the one there (a copy
+    // onto it would be the same object twice, which copy does not make).
+    if (reference.Distance(p) < tolerance::kLinear) {
+      placed[where] = sourceId;
+      continue;
+    }
     auto copy = m.copy({sourceId}, delta);
     if (!copy) {
       m.history().abortGroup();
       throw ApiError("could not place at " + where + ": " + copy.error());
     }
-    placed[where] = copy->front();
+    // Nothing new when the same thing stands there already: that one.
+    placed[where] = copy->empty() ? json(nullptr) : json(copy->front());
   }
   m.history().endGroup();
   return json{{"placed", placed}, {"count", spots.size()}};
