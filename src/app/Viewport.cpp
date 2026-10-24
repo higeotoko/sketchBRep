@@ -2,6 +2,7 @@
 
 #include "WheelZoom.h"
 
+#include <AIS_ColoredDrawer.hxx>
 #include <AIS_ColoredShape.hxx>
 #include <AIS_ConnectedInteractive.hxx>
 #include <cstring>
@@ -1130,6 +1131,11 @@ Handle(Graphic3d_Texture2D) Viewport::materialTexture(const doc::Material& mater
   texture->GetParams()->SetModulate(Standard_True);  // lit like the faces
   texture->GetParams()->SetRepeat(Standard_True);    // tiles
   texture->GetParams()->SetFilter(Graphic3d_TOTF_TRILINEAR);
+  // Pictures no face shows any more (a tint dragged through many colours
+  // makes one each) are let go: only this cache still holds them.
+  for (auto it = textures_.begin(); it != textures_.end();) {
+    it = it->second->GetRefCount() == 1 ? textures_.erase(it) : std::next(it);
+  }
   textures_[key] = texture;
   return texture;
 }
@@ -1346,8 +1352,33 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
   const bool stateChanged = selected != entry.shownSelected || locked != entry.shownLocked;
   if (created || colorChanged || faceColorsChanged || stateChanged) {
     entry.ais->SetColor(color);
-    if (auto* colored = dynamic_cast<AIS_ColoredShape*>(entry.ais.get());
-        colored && (created || colorChanged || faceColorsChanged)) {
+    auto sameFaces = [&] {
+      // The same faces painted, see-through the same way: only colours differ.
+      if (entry.faceColors.size() != faceColors.size()) return false;
+      for (std::size_t k = 0; k < faceColors.size(); ++k) {
+        if (faceColors[k].first != entry.faceColors[k].first ||
+            (faceColors[k].second[3] < 1.0) != (entry.faceColors[k].second[3] < 1.0)) {
+          return false;
+        }
+      }
+      return true;
+    };
+    auto* colored = dynamic_cast<AIS_ColoredShape*>(entry.ais.get());
+    if (colored && !created && !colorChanged && faceColorsChanged && sameFaces()) {
+      // A material's colour being edited: the faces' aspects change in
+      // place (SynchronizeAspects below), the presentation is kept.
+      for (const auto& [index, rgbValue] : faceColors) {
+        if (index < 1 || index > entry.displayFaces.Extent()) continue;
+        const Handle(AIS_ColoredDrawer)& drawer = colored->CustomAspects(entry.displayFaces(index));
+        const Quantity_Color c = rgb(rgbValue[0], rgbValue[1], rgbValue[2]);
+        drawer->SetOwnColor(c);
+        drawer->ShadingAspect()->SetColor(c);
+        if (rgbValue[3] < 1.0) {
+          drawer->SetOwnTransparency(1.0 - rgbValue[3]);
+          drawer->ShadingAspect()->SetTransparency(1.0 - rgbValue[3]);
+        }
+      }
+    } else if (colored && (created || colorChanged || faceColorsChanged)) {
       recompute = true;
       colored->ClearCustomAspects();
       for (const auto& [index, rgbValue] : faceColors) {

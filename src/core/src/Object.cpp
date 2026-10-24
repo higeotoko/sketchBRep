@@ -88,6 +88,15 @@ std::optional<EdgeMark> edgeMark(const TopoDS_Edge& localEdge) {
 std::vector<int> hiddenEdgeIndices(const Object& object) {
   std::vector<int> out;
   if (object.hiddenEdges.empty() || object.shape.IsNull()) return out;
+  // Asked on every restyle of the display: kept until the shape or the
+  // marks change.
+  std::vector<double> key;
+  key.reserve(6 * object.hiddenEdges.size());
+  for (const EdgeMark& mark : object.hiddenEdges) {
+    key.insert(key.end(), {mark.point.X(), mark.point.Y(), mark.point.Z(), mark.direction.X(), mark.direction.Y(),
+                           mark.direction.Z()});
+  }
+  if (object.hiddenEdgesShape.IsSame(object.shape) && object.hiddenEdgesKey == key) return object.hiddenEdgesFound;
   TopTools_IndexedMapOfShape edges;
   TopExp::MapShapes(object.shape, TopAbs_EDGE, edges);
   for (int i = 1; i <= edges.Extent(); ++i) {
@@ -113,6 +122,9 @@ std::vector<int> hiddenEdgeIndices(const Object& object) {
       }
     }
   }
+  object.hiddenEdgesShape = object.shape;
+  object.hiddenEdgesKey = std::move(key);
+  object.hiddenEdgesFound = out;
   return out;
 }
 

@@ -13,6 +13,8 @@
 #include <BRepGProp.hxx>
 #include <TopExp.hxx>
 #include <TopoDS_Vertex.hxx>
+#include <BRepBndLib.hxx>
+#include <Bnd_Box.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <gp_Lin.hxx>
@@ -208,6 +210,7 @@ class GuiPhase1 : public QObject {
   void benchMoreSlowPatterns();
   void benchPerOperationAtScale();
   void benchSuspiciousShapes();
+  void benchPaintAndViews();
   void groupEditFadesTheRest();
   void componentEditUpdatesPlacementsInSlices();
   void incrementalSyncFollowsGroupsAndUndo();
@@ -246,6 +249,7 @@ class GuiPhase1 : public QObject {
   void skyAndGroundFollowTheHorizon();
   void selectionDotsKeepTheMaterialColour();
   void selectionDotsOnOnePlacementOnly();
+  void paintedFaceFollowsItsMaterial();
   void movedObjectsPickWhereTheyAre();
   void openingKeepsTheWindowResponsive();
   void shownAgainPicksAndSnaps();
@@ -3625,6 +3629,167 @@ void GuiPhase1::benchSuspiciousShapes() {
   qInfo("%s", qPrintable(text));
 }
 
+// Painted faces, live material edits, section planes and scenes on many
+// objects. Skipped unless SBR_BENCH_N is set; prints timings.
+void GuiPhase1::benchPaintAndViews() {
+  const int n = qEnvironmentVariableIntValue("SBR_BENCH_N");
+  if (n <= 0) QSKIP("set SBR_BENCH_N to run the benchmark");
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  std::vector<std::pair<std::string, double>> times;
+  QElapsedTimer t;
+  auto timed = [&](const char* name, const std::function<void()>& fn) {
+    t.start();
+    fn();
+    f.vp->syncNow();
+    QCoreApplication::processEvents();
+    f.vp->redraw();
+    times.emplace_back(name, t.nsecsElapsed() / 1e6);
+  };
+  const int columns = static_cast<int>(std::ceil(std::sqrt(static_cast<double>(n))));
+  auto red = m.createMaterial("Red", doc::Color{0.8, 0.1, 0.1});
+  QVERIFY(red.ok());
+  const auto brick = f.window.addPresetMaterial(5);
+  QVERIFY(brick);
+  const doc::ObjectId first = f.box(0, 0, 1000, 1000, 1000);
+  {
+    // Two faces of the box painted: the top red, one side brick.
+    std::vector<TopoDS_Face> top, side;
+    for (TopExp_Explorer e(m.document().find(first)->shape, TopAbs_FACE); e.More(); e.Next()) {
+      const TopoDS_Face face = TopoDS::Face(e.Current());
+      Bnd_Box b;
+      BRepBndLib::Add(face, b);
+      double x0, y0, z0, x1, y1, z1;
+      b.Get(x0, y0, z0, x1, y1, z1);
+      if (z1 - z0 < 1 && z0 > 500) top.push_back(face);
+      if (x1 - x0 < 1 && x0 < 500 && side.empty()) side.push_back(face);
+    }
+    QCOMPARE(top.size(), size_t(1));
+    QVERIFY(m.paintFaces(first, top, *red).ok());
+    QVERIFY(m.paintFaces(first, side, *brick).ok());
+  }
+  std::vector<doc::ObjectId> boxes{first};
+  timed("painted_copy_and_show", [&] {
+    gp_Trsf dx, dy;
+    dx.SetTranslation(gp_Vec(1500, 0, 0));
+    dy.SetTranslation(gp_Vec(0, 1500, 0));
+    auto row = m.copy({first}, dx, columns - 1);
+    boxes.insert(boxes.end(), row->begin(), row->end());
+    auto rest = m.copy(boxes, dy, (n + columns - 1) / columns - 1);
+    if (rest.ok()) boxes.insert(boxes.end(), rest->begin(), rest->end());
+  });
+  f.vp->fitAll();
+  timed("painted_select_all", [&] { f.window.setSelection(boxes); });
+  timed("painted_move_all", [&] { QVERIFY(m.move(boxes, gp_Vec(0, 0, 100)).ok()); });
+  timed("painted_deselect", [&] { f.window.setSelection({}); });
+  // A colour slider dragged: ten live steps of the red material.
+  timed("red_colour_drag_10", [&] {
+    doc::Material changed = *m.document().findMaterial(*red);
+    for (int k = 0; k < 10; ++k) {
+      changed.color.g = 0.05 * k;
+      QVERIFY(m.editMaterial(changed, k > 0).ok());
+      f.vp->syncNow();
+      QCoreApplication::processEvents();
+    }
+  });
+  timed("brick_tint_drag_10", [&] {
+    doc::Material changed = *m.document().findMaterial(*brick);
+    for (int k = 0; k < 10; ++k) {
+      changed.color.b = 0.05 * k;
+      QVERIFY(m.editMaterial(changed, k > 0).ok());
+      f.vp->syncNow();
+      QCoreApplication::processEvents();
+    }
+  });
+  timed("red_opacity_drag_10", [&] {
+    doc::Material changed = *m.document().findMaterial(*red);
+    for (int k = 0; k < 10; ++k) {
+      changed.opacity = 1.0 - 0.05 * k;
+      QVERIFY(m.editMaterial(changed, k > 0).ok());
+      f.vp->syncNow();
+      QCoreApplication::processEvents();
+    }
+  });
+  timed("undo_material_drags", [&] {
+    for (int k = 0; k < 3; ++k) QVERIFY(m.undo());
+  });
+  // Section plane: on, moved ten times, off.
+  timed("section_on", [&] {
+    doc::SectionPlane plane;
+    plane.origin = {0, 0, 500};
+    m.setSection(plane);
+  });
+  timed("section_move_10", [&] {
+    for (int k = 0; k < 10; ++k) {
+      doc::SectionPlane plane;
+      plane.origin = {0, 0, 300.0 + 40 * k};
+      m.setSection(plane);
+      f.vp->syncNow();
+      f.vp->redraw();
+    }
+  });
+  timed("section_off", [&] { m.setSectionVisible(false); });
+  timed("xray_on_off", [&] {
+    f.vp->setXRay(true);
+    f.vp->redraw();
+    f.vp->setXRay(false);
+  });
+  // Scenes: two saved views and switching between them.
+  f.window.addScene(QStringLiteral("A"));
+  f.vp->fitAll();
+  f.window.addScene(QStringLiteral("B"));
+  timed("scene_switch_10", [&] {
+    for (int k = 0; k < 10; ++k) {
+      QVERIFY(f.window.goToScene(k % 2));
+      QCoreApplication::processEvents();
+    }
+  });
+  {
+    // One drag step and one section step: the step, the display update, painting.
+    QElapsedTimer part;
+    doc::Material changed = *m.document().findMaterial(*red);
+    changed.color.g = 0.9;
+    part.start();
+    QVERIFY(m.editMaterial(changed).ok());
+    const double step = part.nsecsElapsed() / 1e6;
+    part.restart();
+    f.vp->syncNow();
+    const double sync = part.nsecsElapsed() / 1e6;
+    part.restart();
+    QCoreApplication::processEvents();
+    const double events = part.nsecsElapsed() / 1e6;
+    part.restart();
+    f.vp->redraw();
+    const double redraw = part.nsecsElapsed() / 1e6;
+    part.restart();
+    f.vp->redraw();
+    const double redrawAgain = part.nsecsElapsed() / 1e6;
+    qInfo("bench split material step_ms=%.1f sync_ms=%.1f events_ms=%.1f redraw_ms=%.1f redraw_again_ms=%.1f", step, sync,
+          events, redraw, redrawAgain);
+    doc::SectionPlane plane;
+    plane.origin = {0, 0, 600};
+    part.restart();
+    m.setSection(plane);
+    const double sstep = part.nsecsElapsed() / 1e6;
+    part.restart();
+    f.vp->syncNow();
+    const double ssync = part.nsecsElapsed() / 1e6;
+    part.restart();
+    f.vp->redraw();
+    const double sredraw = part.nsecsElapsed() / 1e6;
+    part.restart();
+    f.vp->redraw();
+    const double sredrawAgain = part.nsecsElapsed() / 1e6;
+    qInfo("bench split section step_ms=%.1f sync_ms=%.1f redraw_ms=%.1f redraw_again_ms=%.1f", sstep, ssync, sredraw,
+          sredrawAgain);
+    m.setSectionVisible(false);
+  }
+  QString text = QStringLiteral("bench paint n=%1 objects=%2").arg(n).arg(m.document().objects().size());
+  for (const auto& [name, ms] : times) text += QStringLiteral(" %1=%2").arg(QString::fromStdString(name)).arg(ms, 0, 'f', 1);
+  qInfo("%s", qPrintable(text));
+}
+
 // Performance plan step 0: viewport cost of a model with many placements.
 // Skipped unless SBR_BENCH_N is set (e.g. SBR_BENCH_N=1000); prints timings.
 void GuiPhase1::benchViewportSync() {
@@ -5793,6 +5958,62 @@ void GuiPhase1::selectionDotsOnOnePlacementOnly() {
   f.window.setSelection({*instance});
   QVERIFY(blueAt(original) >= 4);
   QCOMPARE(blueAt(copied), 0);
+}
+
+// A painted face shows its material's colour as it is edited (the face's
+// aspect changes in place), when it is undone, and when another face is
+// painted too.
+void GuiPhase1::paintedFaceFollowsItsMaterial() {
+  Fixture f;
+  QVERIFY(f.setUp(1500, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(-1000, -1000, 2000, 2000, 2000);
+  auto red = m.createMaterial("Red", doc::Color{0.9, 0.05, 0.05});
+  QVERIFY(red.ok());
+  auto faceAt = [&](double y) {
+    for (TopExp_Explorer e(m.document().find(box)->shape, TopAbs_FACE); e.More(); e.Next()) {
+      Bnd_Box b;
+      BRepBndLib::Add(e.Current(), b);
+      double x0, y0, z0, x1, y1, z1;
+      b.Get(x0, y0, z0, x1, y1, z1);
+      if (y1 - y0 < 1 && std::abs(y0 - y) < 1) return TopoDS::Face(e.Current());
+    }
+    return TopoDS_Face();
+  };
+  QVERIFY(m.paintFaces(box, {faceAt(-1000)}, *red).ok());
+  auto colourAt = [&](const gp_Pnt& p) {
+    f.vp->syncNow();
+    const QString path = QDir(QDir::tempPath()).filePath(QStringLiteral("sbr_painted.png"));
+    if (!f.vp->dumpImage(path)) return QColor();
+    return QImage(path).pixelColor(f.vp->toWidget(p));
+  };
+  const gp_Pnt front(0, -1000, 1000);
+  QColor c = colourAt(front);
+  QVERIFY2(c.red() > c.blue() + 80, qPrintable(c.name()));
+  doc::Material changed = *m.document().findMaterial(*red);
+  for (int k = 1; k <= 5; ++k) {
+    changed.color = doc::Color{0.9 - 0.17 * k, 0.05, 0.05 + 0.17 * k};
+    QVERIFY(m.editMaterial(changed, k > 1).ok());
+    f.vp->syncNow();
+  }
+  c = colourAt(front);
+  QVERIFY2(c.blue() > c.red() + 80, qPrintable(c.name()));
+  // Half see-through, still blue.
+  changed.opacity = 0.5;
+  QVERIFY(m.editMaterial(changed).ok());
+  c = colourAt(front);
+  QVERIFY2(c.blue() > c.red() + 30, qPrintable(c.name()));
+  QVERIFY(m.undo());
+  QVERIFY(m.undo());
+  c = colourAt(front);
+  QVERIFY2(c.red() > c.blue() + 80, qPrintable(c.name()));
+  // The back face painted as well: the front keeps its red.
+  QVERIFY(m.paintFaces(box, {faceAt(1000)}, *red).ok());
+  changed = *m.document().findMaterial(*red);
+  changed.color = doc::Color{0.05, 0.8, 0.05};
+  QVERIFY(m.editMaterial(changed).ok());
+  c = colourAt(front);
+  QVERIFY2(c.green() > c.red() + 80 && c.green() > c.blue() + 80, qPrintable(c.name()));
 }
 
 // A moved object keeps its display (only placed anew): picks, snaps,

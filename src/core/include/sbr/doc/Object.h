@@ -67,6 +67,16 @@ struct Object {
   mutable TopoDS_Shape boundsShape;
   mutable std::array<double, 12> boundsPlacement{};
   mutable Bnd_Box bounds;
+  // Faces painted on their own as last resolved (resolveFaceMaterials) and
+  // what for (the shape, the assignments); a cache, never saved.
+  mutable TopoDS_Shape faceMaterialsShape;
+  mutable std::string faceMaterialsKey;
+  mutable std::vector<std::pair<int, std::string>> faceMaterialsFaces;
+  mutable std::size_t faceMaterialsUnresolved = 0;
+  // The same for hidden edges (hiddenEdgeIndices).
+  mutable TopoDS_Shape hiddenEdgesShape;
+  mutable std::vector<double> hiddenEdgesKey;
+  mutable std::vector<int> hiddenEdgesFound;
 
   ObjectKind kind() const;
   bool isContainer() const { return kind() == ObjectKind::Group; }

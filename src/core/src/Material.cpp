@@ -77,6 +77,44 @@ void reanchorFaceMaterials(Object& object) {
 FaceMaterialMap resolveFaceMaterials(const Object& object) {
   FaceMaterialMap out;
   if (object.faceMaterials.empty() || object.shape.IsNull()) return out;
+  // Looking the faces up is geometry work; the display asks on every
+  // restyle (a material edited, a section moved), so the answer is kept
+  // until the shape or the assignments change.
+  std::string key;
+  auto add = [&key](double v) { key.append(reinterpret_cast<const char*>(&v), sizeof v); };
+  auto addPoint = [&add](const gp_XYZ& p) {
+    add(p.X());
+    add(p.Y());
+    add(p.Z());
+  };
+  for (const FaceMaterial& fm : object.faceMaterials) {
+    key += fm.material;
+    key += '\0';
+    if (fm.plane) {
+      key += 'p';
+      addPoint(fm.plane->normal.XYZ());
+      addPoint(fm.plane->centroid.XYZ());
+      add(fm.plane->area);
+      if (fm.plane->inside) addPoint(fm.plane->inside->XYZ());
+      key += '|';
+      if (fm.plane->extent) {
+        addPoint(fm.plane->extent->first.XYZ());
+        addPoint(fm.plane->extent->second.XYZ());
+      }
+    }
+    if (fm.surface) {
+      key += 's';
+      addPoint(fm.surface->point.XYZ());
+      addPoint(fm.surface->normal.XYZ());
+      add(fm.surface->surfaceType);
+    }
+    key += ';';
+  }
+  if (object.faceMaterialsShape.IsSame(object.shape) && object.faceMaterialsKey == key) {
+    out.faces = object.faceMaterialsFaces;
+    out.unresolved = object.faceMaterialsUnresolved;
+    return out;
+  }
   TopTools_IndexedMapOfShape faces;
   TopExp::MapShapes(object.shape, TopAbs_FACE, faces);
   std::map<int, std::string> byIndex;  // later assignments win
@@ -89,6 +127,10 @@ FaceMaterialMap resolveFaceMaterials(const Object& object) {
     }
   }
   out.faces.assign(byIndex.begin(), byIndex.end());
+  object.faceMaterialsShape = object.shape;
+  object.faceMaterialsKey = std::move(key);
+  object.faceMaterialsFaces = out.faces;
+  object.faceMaterialsUnresolved = out.unresolved;
   return out;
 }
 
