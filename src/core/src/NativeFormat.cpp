@@ -199,6 +199,13 @@ json baseToJson(const BaseFeature& base) {
             }
             return json{{"type", "boolean"}, {"kind", toString(b.kind)}, {"operands", operands}};
           },
+          [](const SewnFeature& s) {
+            json faces = json::array();
+            for (const BooleanOperand& o : s.faces) {
+              faces.push_back({{"name", o.name}, {"placement", toJson(o.placement)}, {"recipe", recipeToJson(*o.recipe)}});
+            }
+            return json{{"type", "sewn"}, {"faces", faces}};
+          },
           [](const LoftFeature& l) {
             json sections = json::array();
             for (const BooleanOperand& o : l.sections) {
@@ -347,6 +354,14 @@ BaseFeature baseFrom(const json& j) {
                                           o.value("name", std::string())});
     }
     return l;
+  }
+  if (type == "sewn") {
+    SewnFeature s;
+    for (const json& o : j.at("faces")) {
+      s.faces.push_back(BooleanOperand{std::make_shared<const Recipe>(recipeFrom(o.at("recipe"))),
+                                       trsfFrom(o.at("placement")), o.value("name", std::string())});
+    }
+    return s;
   }
   if (type == "loop") {
     LoopProfile l;

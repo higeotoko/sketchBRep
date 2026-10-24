@@ -176,6 +176,7 @@ class GuiPhase1 : public QObject {
   void scaleGripsOnComponentsAndGroups();
   void rectangleStandsUpLikeSketchUp();
   void topEdgesCopiedDownDivideTheSides();
+  void boxSelectionTakesFacesAndEdges();
   void lockedObjectsSelectableNotEditable();
   void groupEditShowsDottedBox();
   void snapTipNamesTheAdoptedPoint();
@@ -482,9 +483,11 @@ void GuiPhase1::cutCopyAndMoveCopyTakeOnlyPickedElements() {
   QVERIFY(m.document().find(box));
   QCOMPARE(faces(box), 5);
   QCOMPARE(m.history().undoCount(), steps + 1);
-  // Pasted where it was: one face of its own.
+  // Pasted where it was: it closes the box again (one solid, no loose face).
   QVERIFY(f.window.pasteInPlace());
-  QCOMPARE(kinds(doc::ObjectKind::Face), 1);
+  QCOMPARE(kinds(doc::ObjectKind::Face), 0);
+  QCOMPARE(kinds(doc::ObjectKind::Solid), 1);
+  QCOMPARE(kinds(doc::ObjectKind::Shell), 0);
   QVERIFY(m.undo());
   QVERIFY(m.undo());
   QCOMPARE(faces(box), 6);
@@ -839,6 +842,103 @@ void GuiPhase1::topEdgesCopiedDownDivideTheSides() {
   QCOMPARE(f.window.elementSelection().front().type, TopAbs_FACE);
   const Bnd_Box picked = geom::exactBounds(f.vp->elementShape(f.window.elementSelection().front()));
   QVERIFY(std::abs(picked.CornerMax().Z() - picked.CornerMin().Z() - 1000.0 / 3) < 1e-6);
+}
+
+// Report: a selection box round one face of a box and its 4 edges, or
+// round lines only, took the whole box / nothing. Raw geometry is taken
+// face by face and edge by edge; a group as one.
+void GuiPhase1::boxSelectionTakesFacesAndEdges() {
+  Fixture f;
+  QVERIFY(f.setUp(1500, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+  const doc::ObjectId line = *m.createPolyline({gp_Pnt(2500, -1500, 0), gp_Pnt(3500, -1500, 0), gp_Pnt(3500, -2500, 0)});
+  const doc::ObjectId inner = f.box(5000, 0, 500, 500, 500);
+  const doc::ObjectId group = *m.group({inner});
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::Select);
+  auto drag = [&](const QPoint& from, const QPoint& to) {
+    send(f.vp, QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
+    for (int i = 1; i <= 4; ++i) send(f.vp, QEvent::MouseMove, from + (to - from) * i / 4, Qt::NoButton, Qt::LeftButton);
+    send(f.vp, QEvent::MouseButtonRelease, to, Qt::LeftButton, Qt::NoButton);
+    QTest::qWait(20);
+  };
+  auto around = [&](std::initializer_list<gp_Pnt> points, int margin) {
+    QRect r;
+    for (const gp_Pnt& p : points) r = r.united(QRect(f.vp->toWidget(p), QSize(1, 1)));
+    return r.adjusted(-margin, -margin, margin, margin);
+  };
+  auto counts = [&] {
+    int faces = 0, edges = 0;
+    for (const ElementRef& e : f.window.elementSelection()) (e.type == TopAbs_FACE ? faces : edges)++;
+    return std::pair<int, int>(faces, edges);
+  };
+  // Window round the front face (y = 0) and its 4 edges: just those.
+  const QRect front = around({gp_Pnt(0, 0, 0), gp_Pnt(1000, 0, 0), gp_Pnt(1000, 0, 1000), gp_Pnt(0, 0, 1000)}, 3);
+  drag(front.topLeft(), front.bottomRight());
+  // The face and its 4 edges; anything else taken lies inside the box too
+  // (here the box's bottom edge behind, seen through: a window takes what
+  // it holds, hidden or not).
+  QCOMPARE(counts().first, 1);
+  int frontEdges = 0;
+  for (const ElementRef& e : f.window.elementSelection()) {
+    const TopoDS_Shape shape = f.vp->elementShape(e);
+    for (TopExp_Explorer v(shape, TopAbs_VERTEX); v.More(); v.Next()) {
+      QVERIFY(front.contains(f.vp->toWidget(BRep_Tool::Pnt(TopoDS::Vertex(v.Current())))));
+    }
+    const Bnd_Box b = geom::exactBounds(shape);
+    if (e.type == TopAbs_EDGE && std::abs(b.CornerMin().Y()) < 1e-6 && std::abs(b.CornerMax().Y()) < 1e-6) ++frontEdges;
+  }
+  QCOMPARE(frontEdges, 4);
+  const auto targets = f.window.selectionTargets();
+  QCOMPARE(targets.size(), std::size_t(1));
+  QCOMPARE(targets.front().id, box);
+  QVERIFY(!targets.front().whole);  // not read as the whole box
+  QCOMPARE(targets.front().faces.size(), std::size_t(1));
+  // Lines only: their edges, nothing else.
+  const QRect lines = around({gp_Pnt(2500, -1500, 0), gp_Pnt(3500, -1500, 0), gp_Pnt(3500, -2500, 0)}, 5);
+  drag(lines.topLeft(), lines.bottomRight());
+  QCOMPARE(counts(), std::make_pair(0, 2));
+  QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{line});
+  // Crossing (right to left) inside the top face (no edge under it, the
+  // back face behind): that face only; in X-ray the back face too.
+  const QPoint mid = f.vp->toWidget(gp_Pnt(300, 300, 1000));
+  drag(mid + QPoint(3, 3), mid - QPoint(3, 3));
+  QCOMPARE(counts(), std::make_pair(1, 0));
+  const Bnd_Box picked = geom::exactBounds(f.vp->elementShape(f.window.elementSelection().front()));
+  QVERIFY(std::abs(picked.CornerMin().Z() - 1000) < 1e-6);
+  f.vp->setXRay(true);
+  drag(mid + QPoint(3, 3), mid - QPoint(3, 3));
+  QCOMPARE(counts(), std::make_pair(2, 0));
+  f.vp->setXRay(false);
+  // A window round the whole box: every face and edge (the box whole).
+  const QRect all = around({gp_Pnt(0, 0, 0), gp_Pnt(1000, 0, 0), gp_Pnt(1000, 1000, 0), gp_Pnt(0, 1000, 0),
+                            gp_Pnt(0, 0, 1000), gp_Pnt(1000, 0, 1000), gp_Pnt(1000, 1000, 1000), gp_Pnt(0, 1000, 1000)},
+                           5);
+  drag(all.topLeft(), all.bottomRight());
+  QCOMPARE(counts(), std::make_pair(6, 12));
+  QVERIFY(f.window.selectionTargets().front().whole);
+  // The group: one unit, never its faces.
+  const QRect g = around({gp_Pnt(5000, 0, 0), gp_Pnt(5500, 500, 500), gp_Pnt(5500, 0, 0), gp_Pnt(5000, 500, 500),
+                          gp_Pnt(5000, 0, 500), gp_Pnt(5500, 500, 0)},
+                         5);
+  drag(g.topLeft(), g.bottomRight());
+  QVERIFY(f.window.elementSelection().empty());
+  QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{group});
+  // Shift adds: the group and then the front face with its edges, mixed.
+  const QPoint from = front.topLeft(), to = front.bottomRight();
+  send(f.vp, QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton, Qt::ShiftModifier);
+  for (int i = 1; i <= 4; ++i) {
+    send(f.vp, QEvent::MouseMove, from + (to - from) * i / 4, Qt::NoButton, Qt::LeftButton, Qt::ShiftModifier);
+  }
+  send(f.vp, QEvent::MouseButtonRelease, to, Qt::LeftButton, Qt::NoButton, Qt::ShiftModifier);
+  QTest::qWait(20);
+  QCOMPARE(counts().first, 1);  // the front face (and its edges, as above)
+  const auto mixed = f.window.selectionTargets();
+  QCOMPARE(mixed.size(), std::size_t(2));
+  const bool groupWhole = std::any_of(mixed.begin(), mixed.end(), [&](const doc::DeleteTarget& t) { return t.id == group && t.whole; });
+  const bool boxPart = std::any_of(mixed.begin(), mixed.end(), [&](const doc::DeleteTarget& t) { return t.id == box && !t.whole; });
+  QVERIFY(groupWhole && boxPart);
 }
 
 void GuiPhase1::scaleGripsOnComponentsAndGroups() {
@@ -2926,9 +3026,12 @@ void GuiPhase1::boxSelectionWindowAndCrossing() {
   // Left to right around A only: window selection, A fully inside.
   drag(QPoint(ra.left() - 20, top), QPoint(ra.right() + 5, bottom));
   QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{a});
-  // Left to right covering half of B: B is not fully inside -> nothing.
+  // Left to right covering half of B: B is not fully inside -> not B as a
+  // whole; only its faces / edges that are (its left side).
   drag(QPoint(rb.left() - 5, top), QPoint(rb.center().x(), bottom));
-  QVERIFY(f.window.selection().empty());
+  QVERIFY(!f.window.elementSelection().empty());
+  QCOMPARE(f.window.selectionTargets().size(), std::size_t(1));
+  QVERIFY(!f.window.selectionTargets().front().whole);
   // Right to left over half of B: crossing selects B.
   drag(QPoint(rb.center().x(), bottom), QPoint(rb.left() - 5, top));
   QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{b});

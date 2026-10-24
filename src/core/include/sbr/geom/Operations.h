@@ -21,6 +21,15 @@ namespace sbr::geom {
 // that are not flat are refused.
 Result<TopoDS_Shape> capHoles(const TopoDS_Shape& shell);
 
+// Faces (and open shells) meeting edge to edge round a volume, joined into
+// one closed solid facing outwards. Refused - with the reason - when there
+// is a gap (an edge with one face), an edge shared by three faces or more
+// (a face twice, a fin), more than one piece, faces passing through each
+// other or no volume. `tolerance` is how far apart matching edges may be:
+// kept tiny, so a gap meant to be there is never closed.
+constexpr double kSewTolerance = 1e-4;  // mm
+Result<TopoDS_Shape> sewIntoSolid(const std::vector<TopoDS_Shape>& pieces, double tolerance = kSewTolerance);
+
 // Moves the vertices of a polyhedral shape (flat faces, straight edges) found
 // at `points` by `delta`, keeping every face flat (SketchUp's move of an
 // edge or corner). A face that would bend is refused, or with `autofold`

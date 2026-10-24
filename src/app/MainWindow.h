@@ -46,6 +46,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   void reportError(const QString& text) override;
   void setSelection(const std::vector<doc::ObjectId>& ids) override;
   void setElementSelection(const std::vector<ElementRef>& elements) override;
+  void setMixedSelection(const std::vector<ElementRef>& elements, const std::vector<doc::ObjectId>& whole) override;
   std::vector<ElementRef> elementSelection() const override { return elements_; }
   std::vector<doc::ObjectId> selection() const override { return selection_; }
   std::vector<doc::DeleteTarget> selectionTargets() const override;
@@ -169,6 +170,7 @@ class MainWindow : public QMainWindow, public ToolHost {
 
  private:
   std::string elementBasis(const doc::ObjectId& id) const;
+  std::vector<doc::ObjectId> wholeSelection() const;
   std::map<doc::ObjectId, std::string> elementBases_;  // per object of elements_, when selected
   void buildUi();
   void buildMenus();

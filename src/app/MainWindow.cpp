@@ -1188,6 +1188,29 @@ void MainWindow::setElementSelection(const std::vector<ElementRef>& elements) {
   refreshPanels();
 }
 
+void MainWindow::setMixedSelection(const std::vector<ElementRef>& elements, const std::vector<doc::ObjectId>& whole) {
+  if (elements.empty()) {
+    setSelection(whole);
+    return;
+  }
+  setElementSelection(elements);
+  for (const doc::ObjectId& id : whole) {
+    if (std::find(selection_.begin(), selection_.end(), id) == selection_.end()) selection_.push_back(id);
+  }
+  viewport_->setSelection(wholeSelection());
+  refreshPanels();
+}
+
+// Selected objects taken whole (none of their faces / edges picked).
+std::vector<doc::ObjectId> MainWindow::wholeSelection() const {
+  std::vector<doc::ObjectId> out;
+  for (const doc::ObjectId& id : selection_) {
+    const bool parts = std::any_of(elements_.begin(), elements_.end(), [&](const ElementRef& e) { return e.objectId == id; });
+    if (!parts) out.push_back(id);
+  }
+  return out;
+}
+
 void MainWindow::enterGroup(const doc::ObjectId& id) {
   doc::ObjectId groupId = id;
   const doc::Object* target = modeler_.document().find(id);
@@ -1291,7 +1314,7 @@ void MainWindow::onDocumentChanged() {
       viewport_->syncNow();
       viewport_->setHighlightedElements(elements_);
     }
-    viewport_->setSelection(elements_.empty() ? selection_ : std::vector<doc::ObjectId>{});
+    viewport_->setSelection(wholeSelection());
     refreshPanels();
     updateTitle();
   });

@@ -8,6 +8,8 @@
 #include <set>
 
 #include <QKeyEvent>
+#include <QLineF>
+#include <QPolygonF>
 #include <QRegularExpression>
 
 #include <BRepBuilderAPI_MakeFace.hxx>
@@ -130,7 +132,9 @@ void SelectTool::activate() {
 
 void SelectTool::mouseMove(const ToolEvent& e) {
   if (boxStart_) {
-    host_.viewport().setRubberBand(QRect(*boxStart_, e.pos).normalized());
+    if (!boxOverElement_ || (e.pos - *boxStart_).manhattanLength() >= 5) {
+      host_.viewport().setRubberBand(QRect(*boxStart_, e.pos).normalized());
+    }
     return;
   } host_.viewport().pickElement(e.pos); }
 
@@ -179,8 +183,20 @@ void SelectTool::mousePress(const ToolEvent& e) {
     // Empty space: a click clears the selection, a drag selects a box.
     boxStart_ = e.pos;
     boxAdditive_ = additive;
+    boxOverElement_ = false;
     return;
   }
+  // A drag from here draws a box all the same.
+  beforeElements_ = host_.elementSelection();
+  beforeWhole_.clear();
+  for (const doc::ObjectId& id : host_.selection()) {
+    const bool parts = std::any_of(beforeElements_.begin(), beforeElements_.end(),
+                                   [&](const ElementRef& el) { return el.objectId == id; });
+    if (!parts) beforeWhole_.push_back(id);
+  }
+  boxStart_ = e.pos;
+  boxAdditive_ = additive;
+  boxOverElement_ = true;
   doc::ObjectId addressed = target(picked->objectId);
   if (addressed.empty()) {
     // Clicked outside the edited group: leave it, as in SketchUp.
@@ -226,40 +242,142 @@ void SelectTool::mouseRelease(const ToolEvent& e) {
   boxStart_.reset();
   host_.viewport().setRubberBand(std::nullopt);
   if ((e.pos - start).manhattanLength() < 5) {
-    if (!boxAdditive_) host_.setSelection({});
+    if (!boxAdditive_ && !boxOverElement_) host_.setSelection({});
     return;
   }
+  if (boxOverElement_) host_.setMixedSelection(beforeElements_, beforeWhole_);  // the press only began the box
   boxSelect(QRect(start, e.pos).normalized(), e.pos.x() < start.x(), boxAdditive_);
 }
 
+namespace {
+
+// An element's outline on screen: polylines through points along its edges.
+std::vector<std::vector<QPointF>> screenOutline(Viewport& viewport, const TopoDS_Shape& element) {
+  std::vector<std::vector<QPointF>> out;
+  TopTools_IndexedMapOfShape edges;
+  TopExp::MapShapes(element, TopAbs_EDGE, edges);
+  for (int i = 1; i <= edges.Extent(); ++i) {
+    const TopoDS_Edge edge = TopoDS::Edge(edges(i));
+    if (BRep_Tool::Degenerated(edge)) continue;
+    BRepAdaptor_Curve c(edge);
+    const int steps = c.GetType() == GeomAbs_Line ? 1 : 24;
+    std::vector<QPointF> line;
+    for (int k = 0; k <= steps; ++k) {
+      const double t = c.FirstParameter() + (c.LastParameter() - c.FirstParameter()) * k / steps;
+      line.push_back(QPointF(viewport.toWidget(c.Value(t))));
+    }
+    out.push_back(std::move(line));
+  }
+  return out;
+}
+
+bool segmentMeetsRect(const QPointF& a, const QPointF& b, const QRectF& r) {
+  if (r.contains(a) || r.contains(b)) return true;
+  const QLineF ab(a, b);
+  const QLineF sides[] = {QLineF(r.topLeft(), r.topRight()), QLineF(r.topRight(), r.bottomRight()),
+                          QLineF(r.bottomRight(), r.bottomLeft()), QLineF(r.bottomLeft(), r.topLeft())};
+  for (const QLineF& side : sides) {
+    if (ab.intersects(side, nullptr) == QLineF::BoundedIntersection) return true;
+  }
+  return false;
+}
+
+// Window (left to right): the whole element inside. Crossing (right to
+// left): any of it inside or touched - for a face also a box lying inside
+// the face, when `inside` allows it (only the front face there, unless
+// X-ray shows them all).
+bool elementInBox(Viewport& viewport, const TopoDS_Shape& element, const QRectF& rect, bool crossing, bool inside) {
+  const auto outline = screenOutline(viewport, element);
+  if (outline.empty()) return false;
+  if (!crossing) {
+    for (const auto& line : outline) {
+      for (const QPointF& p : line) {
+        if (!rect.contains(p)) return false;
+      }
+    }
+    return true;
+  }
+  for (const auto& line : outline) {
+    for (std::size_t k = 1; k < line.size(); ++k) {
+      if (segmentMeetsRect(line[k - 1], line[k], rect)) return true;
+    }
+  }
+  if (element.ShapeType() != TopAbs_FACE || !inside) return false;
+  // The box inside the face (outer outline round its centre, not in a hole).
+  QPolygonF outer;
+  for (TopExp_Explorer e(BRepTools::OuterWire(TopoDS::Face(element)), TopAbs_EDGE); e.More(); e.Next()) {
+    for (const auto& line : screenOutline(viewport, e.Current())) {
+      for (const QPointF& p : line) outer << p;
+    }
+  }
+  return outer.containsPoint(rect.center(), Qt::OddEvenFill);
+}
+
+}  // namespace
+
 void SelectTool::boxSelect(const QRect& rect, bool crossing, bool additive) {
+  // Like SketchUp: raw geometry of the current context is taken face by
+  // face and edge by edge; groups, components (and locked objects) as one.
   const doc::Document& document = host_.modeler().document();
   const doc::ObjectId context = host_.editingGroup();
-  std::vector<doc::ObjectId> selection = additive ? host_.selection() : std::vector<doc::ObjectId>{};
+  Viewport& viewport = host_.viewport();
+  const QRectF box(rect);
+  std::vector<ElementRef> elements = additive ? host_.elementSelection() : std::vector<ElementRef>{};
+  std::vector<doc::ObjectId> whole;
+  if (additive) {
+    for (const doc::ObjectId& id : host_.selection()) {
+      const bool parts = std::any_of(elements.begin(), elements.end(), [&](const ElementRef& e) { return e.objectId == id; });
+      if (!parts) whole.push_back(id);
+    }
+  }
+  // A box lying inside faces only: the front one (X-ray: every one there).
+  const std::optional<ElementRef> front =
+      viewport.xRay() || !crossing ? std::nullopt : viewport.pickElement(box.center().toPoint());
+  auto addElement = [&](const ElementRef& e) {
+    if (std::find(elements.begin(), elements.end(), e) == elements.end()) elements.push_back(e);
+  };
   for (const doc::Object& o : document.objects()) {
     if (o.parent != context || !document.isVisible(o.id)) continue;
-    // Screen footprint from the exact bounds of the object (and its children).
-    Bnd_Box box;
+    const doc::ObjectKind kind = o.kind();
+    const bool raw = !o.locked && (kind == doc::ObjectKind::Curve || kind == doc::ObjectKind::Face ||
+                                   kind == doc::ObjectKind::Shell || kind == doc::ObjectKind::Solid);
+    if (raw) {
+      const std::vector<int> hidden = doc::hiddenEdgeIndices(o);
+      for (const ElementRef& e : viewport.allElements(o.id)) {
+        if (e.type == TopAbs_EDGE && std::find(hidden.begin(), hidden.end(), e.index) != hidden.end()) continue;
+        const TopoDS_Shape shape = viewport.elementShape(e);
+        const bool inside = viewport.xRay() || (front && *front == e);
+        if (!shape.IsNull() && elementInBox(viewport, shape, box, crossing, inside)) addElement(e);
+      }
+      continue;
+    }
+    // One unit: the screen footprint of its exact bounds (and its children).
+    Bnd_Box bounds;
     for (const doc::ObjectId& id : document.subtree(o.id)) {
       const doc::Object* leaf = document.find(id);
       if (!leaf || leaf->shape.IsNull() || !document.isVisible(id)) continue;
-      box.Add(geom::exactBounds(document.worldShape(*leaf)));
+      bounds.Add(geom::exactBounds(document.worldShape(*leaf)));
     }
-    if (box.IsVoid()) continue;
+    if (bounds.IsVoid()) continue;
     double x0, y0, z0, x1, y1, z1;
-    box.Get(x0, y0, z0, x1, y1, z1);
+    bounds.Get(x0, y0, z0, x1, y1, z1);
     QRect footprint;
     bool allInside = true;
     for (int i = 0; i < 8; ++i) {
-      const QPoint p = host_.viewport().toWidget(gp_Pnt(i & 1 ? x1 : x0, i & 2 ? y1 : y0, i & 4 ? z1 : z0));
+      const QPoint p = viewport.toWidget(gp_Pnt(i & 1 ? x1 : x0, i & 2 ? y1 : y0, i & 4 ? z1 : z0));
       allInside = allInside && rect.contains(p);
       footprint = footprint.isNull() ? QRect(p, QSize(1, 1)) : footprint.united(QRect(p, QSize(1, 1)));
     }
     const bool hit = crossing ? rect.intersects(footprint) : allInside;
-    if (hit && std::find(selection.begin(), selection.end(), o.id) == selection.end()) selection.push_back(o.id);
+    if (hit && std::find(whole.begin(), whole.end(), o.id) == whole.end()) whole.push_back(o.id);
   }
-  host_.setSelection(selection);
-  host_.setStatus(QObject::tr("%1 個を選択（左→右: 完全に囲んだ物 / 右→左: 触れた物）").arg(selection.size()));
+  host_.setMixedSelection(elements, whole);
+  int faces = 0, edges = 0;
+  for (const ElementRef& e : elements) (e.type == TopAbs_FACE ? faces : edges)++;
+  host_.setStatus(QObject::tr("面 %1 / エッジ %2 / オブジェクト %3 を選択（左→右: 完全に囲んだもの / 右→左: 触れたもの）")
+                      .arg(faces)
+                      .arg(edges)
+                      .arg(whole.size()));
 }
 
 bool SelectTool::mouseDoubleClick(const ToolEvent& e) {

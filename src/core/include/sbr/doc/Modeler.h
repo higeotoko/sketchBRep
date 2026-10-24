@@ -579,6 +579,10 @@ class Modeler {
   // divide it (lines drawn first, the face after).
   Status divideWithLinesOn(const ObjectId& parent, const TopoDS_Face& face, const gp_Pln& plane);
   Status settleFace(const ObjectId& id, Settled& out);
+  // Faces and open shells of `id`'s group joined to it edge by edge: when
+  // together they close a volume (no gap, no edge with three faces, valid),
+  // they are replaced by one solid (SewnFeature), materials kept.
+  Status closeIntoSolid(const ObjectId& id, Settled& out);
   // `base` replaced by these world faces (the first keeps its id), with its
   // material, tag and attributes; returns the ids.
   Result<std::vector<ObjectId>> replaceByFaces(const Object& base, const std::vector<TopoDS_Face>& worldFaces);

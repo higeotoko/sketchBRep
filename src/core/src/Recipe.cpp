@@ -138,6 +138,16 @@ Result<TopoDS_Shape> buildBase(const BaseFeature& base, const RegenContext& cont
             }
             return geom::loft(wires, l.solid);
           },
+          [&](const SewnFeature& f) -> Result<TopoDS_Shape> {
+            std::vector<TopoDS_Shape> placed;
+            for (const BooleanOperand& in : f.faces) {
+              if (!in.recipe) return Result<TopoDS_Shape>::failure("Face missing");
+              auto shape = regenerate(*in.recipe, context);
+              if (!shape) return Result<TopoDS_Shape>::failure("'" + in.name + "': " + shape.error());
+              placed.push_back(shape->Moved(TopLoc_Location(in.placement)));
+            }
+            return geom::sewIntoSolid(placed);
+          },
           [&](const SweepFeature& f) -> Result<TopoDS_Shape> {
             if (f.inputs.size() != 2 || !f.inputs[0].recipe || !f.inputs[1].recipe) {
               return Result<TopoDS_Shape>::failure("Sweep needs a profile and a path");
@@ -211,6 +221,7 @@ const std::vector<BooleanOperand>* operandsOf(const BaseFeature& base) {
   if (const auto* w = std::get_if<SweepFeature>(&base)) return &w->inputs;
   if (const auto* l = std::get_if<LoopProfile>(&base)) return &l->curves;
   if (const auto* p = std::get_if<FacePart>(&base)) return &p->source;
+  if (const auto* s = std::get_if<SewnFeature>(&base)) return &s->faces;
   return nullptr;
 }
 std::vector<BooleanOperand>* operandsOf(BaseFeature& base) {
@@ -536,6 +547,7 @@ std::string describe(const Recipe& recipe) {
                  },
                  [&](const LoftFeature& l) { out << "Loft (" << l.sections.size() << " sections)"; },
                  [&](const SweepFeature&) { out << "Sweep"; },
+                 [&](const SewnFeature& s) { out << "Solid from " << s.faces.size() << " faces"; },
                  [&](const LoopProfile& l) { out << "Face (" << l.curves.size() << " edges)"; },
                  [&](const FacePart&) { out << "Face part"; },
                  [&](const GroupNode&) { out << "Group"; },

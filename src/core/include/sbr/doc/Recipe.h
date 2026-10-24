@@ -158,6 +158,14 @@ struct FacePart {
   gp_Pnt inside;
 };
 
+// Faces drawn one by one that close a volume between them (SketchUp: six
+// rectangles round a box are a box): the faces' own recipes (each still
+// editable as "in<i>.<key>"), joined along their shared edges into one
+// closed solid. Regenerating fails rather than give a shape with gaps.
+struct SewnFeature {
+  std::vector<BooleanOperand> faces;
+};
+
 // A parameter of one object of a component definition, changed for one
 // placement only (a door twice as wide, the same component otherwise).
 struct ParameterOverride {
@@ -213,7 +221,7 @@ struct ComponentInstance {
 using BaseFeature = std::variant<RectangleProfile, CircleProfile, PolygonProfile, PolylineCurve, InterpolatedCurve,
                                  ArcCurve, LinearDimension, TextNote, GuideLine, ImageUnderlay, ImportedShape,
                                  BooleanFeature, LoftFeature, SweepFeature, LoopProfile, FacePart, GroupNode,
-                                 ComponentInstance, RegularPolygonProfile>;
+                                 ComponentInstance, RegularPolygonProfile, SewnFeature>;
 
 // --- Modifiers ------------------------------------------------------------
 // Extrudes the profile face along its normal. Must be the first modifier.

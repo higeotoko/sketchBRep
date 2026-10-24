@@ -769,6 +769,53 @@ Result<TopoDS_Shape> capHoles(const TopoDS_Shape& shell) {
   return sewn;  // still open somewhere
 }
 
+Result<TopoDS_Shape> sewIntoSolid(const std::vector<TopoDS_Shape>& pieces, double tolerance) {
+  using R = Result<TopoDS_Shape>;
+  try {
+    BRepBuilderAPI_Sewing sewing(tolerance);
+    sewing.SetNonManifoldMode(Standard_True);  // three faces on an edge stay visible as such
+    int faces = 0;
+    for (const TopoDS_Shape& piece : pieces) {
+      for (TopExp_Explorer f(piece, TopAbs_FACE); f.More(); f.Next(), ++faces) sewing.Add(f.Current());
+    }
+    if (faces < 4) return R::failure("Too few faces to close a volume");
+    sewing.Perform();
+    const TopoDS_Shape sewn = sewing.SewedShape();
+    TopoDS_Shell shell;
+    int shells = 0;
+    for (TopExp_Explorer s(sewn, TopAbs_SHELL); s.More(); s.Next(), ++shells) shell = TopoDS::Shell(s.Current());
+    if (shells != 1) return R::failure("The faces do not join into one piece");
+    TopTools_IndexedMapOfShape inShell;
+    TopExp::MapShapes(shell, TopAbs_FACE, inShell);
+    if (inShell.Extent() != faces) return R::failure("Some faces do not join the others");
+    TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
+    TopExp::MapShapesAndAncestors(shell, TopAbs_EDGE, TopAbs_FACE, edgeFaces);
+    for (int i = 1; i <= edgeFaces.Extent(); ++i) {
+      if (BRep_Tool::Degenerated(TopoDS::Edge(edgeFaces.FindKey(i)))) continue;
+      const int n = edgeFaces(i).Extent();
+      if (n < 2) return R::failure("There is a gap: an edge has a face on one side only");
+      if (n > 2) return R::failure("An edge is shared by more than two faces");
+    }
+    BRepBuilderAPI_MakeSolid make(shell);
+    if (!make.IsDone()) return R::failure("The faces do not close a volume");
+    ShapeFix_Solid fix(make.Solid());
+    fix.Perform();
+    TopoDS_Shape solid = fix.Solid();
+    GProp_GProps props;
+    BRepGProp::VolumeProperties(solid, props);
+    if (std::abs(props.Mass()) < 1e-6) return R::failure("The faces close no volume");
+    if (props.Mass() < 0) solid.Reverse();
+    if (!BRepCheck_Analyzer(solid).IsValid()) return R::failure("The faces do not make a valid solid");
+    BOPAlgo_ArgumentAnalyzer analyzer;
+    analyzer.SetShape1(solid);
+    analyzer.SelfInterMode() = Standard_True;
+    analyzer.Perform();
+    if (analyzer.HasFaulty()) return R::failure("Faces pass through each other");
+    return solid;
+  } catch (const Standard_Failure& e) {
+    return R::failure(std::string("Joining the faces failed: ") + e.GetMessageString());
+  }
+}
 
 namespace {
 

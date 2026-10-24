@@ -44,6 +44,9 @@ class ToolHost {
   // Face/edge selection; the owning objects become the object selection
   // (for the panel and for Move/Rotate) without highlighting them whole.
   virtual void setElementSelection(const std::vector<ElementRef>& elements) = 0;
+  // Faces / edges of raw geometry together with objects taken whole
+  // (groups, components, locked ones) - e.g. from a selection box.
+  virtual void setMixedSelection(const std::vector<ElementRef>& elements, const std::vector<doc::ObjectId>& whole) = 0;
   virtual std::vector<ElementRef> elementSelection() const = 0;
   virtual std::vector<doc::ObjectId> selection() const = 0;
   // What is selected, resolved now, the one meaning shared by Delete,
@@ -160,6 +163,11 @@ class SelectTool : public Tool {
   void boxSelect(const QRect& rect, bool crossing, bool additive);
   std::optional<QPoint> boxStart_;
   bool boxAdditive_ = false;
+  // Pressed on a face / edge: a click picks it; dragging on draws a box
+  // instead (SketchUp), from the selection as it was before the press.
+  bool boxOverElement_ = false;
+  std::vector<ElementRef> beforeElements_;
+  std::vector<doc::ObjectId> beforeWhole_;
   // Object that a click on `leaf` addresses at the current editing level.
   doc::ObjectId target(const doc::ObjectId& leaf) const;
   QElapsedTimer sinceDoubleClick_;

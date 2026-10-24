@@ -134,8 +134,10 @@ class ChangeSet {
 // first input's material; a face of the result lying on a face of an input
 // (same plane, same facing) keeps what that face showed when it differs
 // from the result's material. Faces made by cutting face the other way and
-// inherit the result's.
-void carryMaterials(Object& result, const std::vector<std::pair<const Object*, gp_Trsf>>& inputs) {
+// inherit the result's. `eitherSide`: faces drawn one by one face either
+// way; what they showed goes to the solid's face on them whichever way.
+void carryMaterials(Object& result, const std::vector<std::pair<const Object*, gp_Trsf>>& inputs,
+                    bool eitherSide = false) {
   if (inputs.empty() || result.shape.IsNull()) return;
   result.material = inputs.front().first->material;
   struct Source {
@@ -170,7 +172,9 @@ void carryMaterials(Object& result, const std::vector<std::pair<const Object*, g
     if (!mine || !mine->plane || !mine->plane->inside) continue;
     const gp_Pnt p = *mine->plane->inside;
     for (const Source& src : sources) {
-      if (src.normal.Angle(mine->plane->normal) > 1e-6) continue;
+      if (eitherSide ? !src.normal.IsParallel(mine->plane->normal, 1e-6) : src.normal.Angle(mine->plane->normal) > 1e-6) {
+        continue;
+      }
       if (std::abs(gp_Vec(src.point, p).Dot(gp_Vec(src.normal))) > 1e-3) continue;
       BRepClass_FaceClassifier classifier(src.face, p, 1e-6);
       if (classifier.State() != TopAbs_IN) continue;
@@ -2416,6 +2420,138 @@ std::vector<ObjectId> Modeler::settledIds(const std::vector<ObjectId>& ids, cons
   return out;
 }
 
+Status Modeler::closeIntoSolid(const ObjectId& id, Settled& out) {
+  const Object* start = document_.find(id);
+  if (!start || start->locked || !document_.isVisible(id)) return Status::success();
+  if (start->kind() != ObjectKind::Face && start->kind() != ObjectKind::Shell) return Status::success();
+  const ObjectId parent = start->parent;
+  // Faces and open shells of the same group, by their straight and curved
+  // edges (ends and middle).
+  struct Piece {
+    const Object* object;
+    std::vector<std::array<gp_Pnt, 3>> edges;
+  };
+  std::vector<Piece> pieces;
+  for (const Object& o : document_.objects()) {
+    if (o.parent != parent || o.locked || !document_.isVisible(o.id) || o.shape.IsNull()) continue;
+    if (o.kind() != ObjectKind::Face && o.kind() != ObjectKind::Shell) continue;
+    Piece piece{&o, {}};
+    // Its free edges (an open shell's edges between two of its own faces
+    // are joined already).
+    TopTools_IndexedDataMapOfShapeListOfShape edges;
+    TopExp::MapShapesAndAncestors(document_.worldShape(o), TopAbs_EDGE, TopAbs_FACE, edges);
+    for (int i = 1; i <= edges.Extent(); ++i) {
+      const TopoDS_Edge e = TopoDS::Edge(edges.FindKey(i));
+      if (BRep_Tool::Degenerated(e) || edges(i).Extent() > 1) continue;
+      BRepAdaptor_Curve c(e);
+      piece.edges.push_back({c.Value(c.FirstParameter()), c.Value(0.5 * (c.FirstParameter() + c.LastParameter())),
+                             c.Value(c.LastParameter())});
+    }
+    pieces.push_back(std::move(piece));
+  }
+  constexpr double tol = geom::kSewTolerance;
+  // Edges by their middle on a grid, so a floor of many tiles stays quick.
+  struct EdgeAt {
+    std::size_t piece;
+    std::size_t edge;
+  };
+  constexpr double cell = 1.0;  // mm
+  using Key = std::array<long long, 3>;
+  auto keyOf = [&](const gp_Pnt& p) {
+    return Key{std::llround(std::floor(p.X() / cell)), std::llround(std::floor(p.Y() / cell)),
+               std::llround(std::floor(p.Z() / cell))};
+  };
+  std::map<Key, std::vector<EdgeAt>> grid;
+  for (std::size_t i = 0; i < pieces.size(); ++i) {
+    for (std::size_t e = 0; e < pieces[i].edges.size(); ++e) grid[keyOf(pieces[i].edges[e][1])].push_back({i, e});
+  }
+  auto same = [&](const std::array<gp_Pnt, 3>& x, const std::array<gp_Pnt, 3>& y) {
+    if (x[1].Distance(y[1]) > tol) return false;
+    return (x[0].Distance(y[0]) < tol && x[2].Distance(y[2]) < tol) ||
+           (x[0].Distance(y[2]) < tol && x[2].Distance(y[0]) < tol);
+  };
+  // The other pieces sharing this edge.
+  auto partners = [&](std::size_t piece, std::size_t edge) {
+    std::vector<std::size_t> out;
+    const auto& x = pieces[piece].edges[edge];
+    const Key k = keyOf(x[1]);
+    for (long long dx = -1; dx <= 1; ++dx) {
+      for (long long dy = -1; dy <= 1; ++dy) {
+        for (long long dz = -1; dz <= 1; ++dz) {
+          const auto it = grid.find(Key{k[0] + dx, k[1] + dy, k[2] + dz});
+          if (it == grid.end()) continue;
+          for (const EdgeAt& at : it->second) {
+            if (at.piece != piece && same(x, pieces[at.piece].edges[at.edge])) out.push_back(at.piece);
+          }
+        }
+      }
+    }
+    return out;
+  };
+  // Everything joined to the start, edge by edge; an edge nobody shares
+  // means the whole is open (no need to try).
+  std::vector<std::size_t> joined;
+  for (std::size_t i = 0; i < pieces.size(); ++i) {
+    if (pieces[i].object->id == id) joined.push_back(i);
+  }
+  bool open = false;
+  for (std::size_t k = 0; k < joined.size(); ++k) {
+    const std::size_t piece = joined[k];
+    for (std::size_t e = 0; e < pieces[piece].edges.size(); ++e) {
+      const auto others = partners(piece, e);
+      if (others.empty()) open = true;
+      for (std::size_t other : others) {
+        if (std::find(joined.begin(), joined.end(), other) == joined.end()) joined.push_back(other);
+      }
+    }
+  }
+  if (open) return Status::success();
+  if (joined.size() < 2) return Status::success();
+  // Kept in the order they were drawn.
+  std::sort(joined.begin(), joined.end());
+  const gp_Trsf toParent =
+      parent.empty() ? gp_Trsf() : document_.worldTransform(*document_.find(parent)).Inverted();
+  std::vector<TopoDS_Shape> placed;
+  SewnFeature feature;
+  std::vector<std::pair<const Object*, gp_Trsf>> inputs;
+  for (std::size_t i : joined) {
+    const Object* o = pieces[i].object;
+    const gp_Trsf at = toParent * document_.worldTransform(*o);
+    placed.push_back(o->shape.Moved(TopLoc_Location(at)));
+    feature.faces.push_back(BooleanOperand{std::make_shared<const Recipe>(o->recipe), at, o->name});
+    inputs.emplace_back(o, at);
+  }
+  // Open, gaps, a face twice, a fin...: they stay as they are.
+  if (!geom::sewIntoSolid(placed)) return Status::success();
+  Object result;
+  result.id = generateObjectId();
+  result.parent = parent;
+  const Object& first = *pieces[joined.front()].object;
+  result.layer = first.layer;
+  result.color = first.color;
+  result.attributes = first.attributes;
+  result.name = uniqueName("Solid");
+  result.recipe.base = std::move(feature);
+  if (const Status built = rebuild(result, document_.regenContext()); !built) return Status::success();
+  carryMaterials(result, inputs, true);
+  ChangeSet changes(document_);
+  for (std::size_t i : joined) {
+    const ObjectId gone = pieces[i].object->id;
+    changes.erase(gone);
+    // What became this piece earlier in the settling became the solid too.
+    for (auto& [was, now] : out.became) {
+      for (ObjectId& n : now) {
+        if (n == gone) n = result.id;
+      }
+      now.erase(std::unique(now.begin(), now.end()), now.end());
+    }
+    out.became[gone] = {result.id};
+  }
+  changes.add(result);
+  history_.execute(changes.build("Close Into Solid"));
+  return Status::success();
+}
+
 Result<Modeler::Settled> Modeler::settleOverlaps(const std::vector<ObjectId>& ids) {
   using R = Result<Settled>;
   Settled out;
@@ -2434,6 +2570,13 @@ Result<Modeler::Settled> Modeler::settleOverlaps(const std::vector<ObjectId>& id
     if (kind == ObjectKind::Curve) s = settleLine(id, out);
     if (kind == ObjectKind::Face) s = settleFace(id, out);
     if (!s) {
+      history_.abortGroup();
+      return R::failure(s.message());
+    }
+  }
+  // Faces closing a volume with the ones already there: one solid.
+  for (const ObjectId& id : settledIds(ids, out)) {
+    if (const Status s = closeIntoSolid(id, out); !s) {
       history_.abortGroup();
       return R::failure(s.message());
     }
