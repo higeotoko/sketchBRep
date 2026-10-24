@@ -319,7 +319,7 @@
 | LOOK-03 | 自動確認済 | `Stretch.*`、`Overlaps.*`、屋根（`Flows.SC07_SC08_SC19_*`、両方の屋根面が塗装を保つ） |
 | LOOK-04 | 検証待ち | |
 | LOOK-05 | 後回し | |
-| LOOK-06 | 検証待ち | 非表示のオブジェクトと、非表示タグのオブジェクトは吸着・選択されない（`look06HiddenIsNotSnappedOrPicked`）。断面の裏・X 線での規則はまだ |
+| LOOK-06 | 検証待ち | 非表示のオブジェクトと、非表示タグのオブジェクトは吸着・選択されない（`look06HiddenIsNotSnappedOrPicked`）。面の裏に隠れた点は吸着しない／X 線では吸着する。断面で切り取られた側は X 線でも吸着・選択されず、残った側はこれまでどおり（`look06SectionAndXRayRules`） |
 
 ### 16. カメラ
 | ID | 状態 | 根拠・残り |

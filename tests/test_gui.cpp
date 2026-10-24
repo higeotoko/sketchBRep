@@ -193,6 +193,7 @@ class GuiPhase1 : public QObject {
   void move05FaceMovesSideways();
   void state03SaveWhileDrawingKeepsTheLastState();
   void look06HiddenIsNotSnappedOrPicked();
+  void look06SectionAndXRayRules();
   void rotatedRectangleTool();
   void arcCarriesOnTangent();
   void lockedObjectsSelectableNotEditable();
@@ -1679,6 +1680,61 @@ void GuiPhase1::look06HiddenIsNotSnappedOrPicked() {
   click(f.vp, f.vp->toWidget(gp_Pnt(500, 0, 500)));
   click(f.vp, f.vp->toWidget(gp_Pnt(3500, 0, 500)));
   QVERIFY(f.window.selection().empty());
+}
+
+// LOOK-06: what is drawn is what snaps and picks. A corner hidden behind
+// the box is not snapped, in X-ray it is; with a section cut, what is cut
+// away is neither snapped nor picked, what is left still is.
+void GuiPhase1::look06SectionAndXRayRules() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  f.box(0, 0, 1000, 1000, 1000);
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::Line);
+  auto tipAt = [&](const gp_Pnt& p) {
+    move(f.vp, f.vp->toWidget(gp_Pnt(-3000, -3000, 0)));  // away first: no sticky point
+    move(f.vp, f.vp->toWidget(p));
+    return f.vp->snapTip();
+  };
+  const gp_Pnt hiddenCorner(1000, 1000, 0);
+  QVERIFY(tipAt(hiddenCorner) != QStringLiteral("端点"));
+  f.vp->setXRay(true);
+  {
+    const QString tip = tipAt(hiddenCorner);
+    const gp_Pnt at = f.vp->snapTipPoint();
+    QVERIFY2(tip == QStringLiteral("端点") && at.Distance(hiddenCorner) < 1.0,
+             qPrintable(tip + QStringLiteral(" %1 %2 %3").arg(at.X()).arg(at.Y()).arg(at.Z())));
+  }
+  f.vp->setXRay(false);
+  QVERIFY(tipAt(hiddenCorner) != QStringLiteral("端点"));
+
+  // Everything above 500 cut away.
+  doc::SectionPlane plane;
+  plane.origin = {0, 0, 500};
+  plane.normal = {0, 0, 1};
+  m.setSection(plane);
+  f.vp->syncNow();
+  QVERIFY(tipAt(gp_Pnt(1000, 0, 1000)) != QStringLiteral("端点"));
+  QCOMPARE(tipAt(gp_Pnt(1000, 0, 0)), QStringLiteral("端点"));
+  // In X-ray too, the cut-away part stays out.
+  f.vp->setXRay(true);
+  QVERIFY(tipAt(gp_Pnt(1000, 0, 1000)) != QStringLiteral("端点"));
+  f.vp->setXRay(false);
+
+  // Picking: a click on the cut-away top edge does not take it (nor the
+  // top face), only what is seen through there, cut faces included.
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  f.window.activateTool(MainWindow::ToolId::Select);
+  click(f.vp, f.vp->toWidget(gp_Pnt(500, 0, 1000)));
+  for (const auto& e : f.window.elementSelection()) {
+    const Bnd_Box b = geom::exactBounds(f.vp->elementShape(e));
+    QVERIFY2(b.CornerMin().Z() < 500, qPrintable(QString::number(b.CornerMin().Z())));
+  }
+  // What is left is picked as before.
+  click(f.vp, f.vp->toWidget(gp_Pnt(500, 0, 250)));
+  QCOMPARE(f.window.elementSelection().size(), std::size_t(1));
+  m.setSection(std::nullopt);
 }
 
 // W8: the rotated rectangle - first side in any direction (length typed),
