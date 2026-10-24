@@ -175,9 +175,9 @@
 | ID | 状態 | 根拠・残り |
 |---|---|---|
 | SEL-01 | 自動確認済 | W1。一部だけの移動・回転・グループ化は断る。ポリラインの 1 辺だけを移動する操作は、まだできない |
-| SEL-02 | 要修正 | Shift での追加・解除だけ。Ctrl で追加、Ctrl+Shift で除外は未実装 |
+| SEL-02 | 自動確認済 | Ctrl＝追加、Shift＝切替、Ctrl+Shift＝除外（クリック・範囲選択。`ux07CtrlAddsCtrlShiftRemoves`、2026-10-24） |
 | SEL-03 | 検証待ち | `selectFacesEdgesAndWholeObject`。OS のダブルクリック間隔との整合は実機で確認する |
-| SEL-04 | 要修正 | 範囲選択はオブジェクトのバウンディングボックス単位（`boxSelectionWindowAndCrossing`）。面・辺単位の判定はない |
+| SEL-04 | 自動確認済 | 生の形状は面・辺ごとに判定、グループ・部品は 1 単位（`boxSelectionTakesFacesAndEdges`、`ux04BoxOverBlankSelectsNothing`、2026-10-24） |
 | SEL-05 | 自動確認済 | `rightClickMenuFollowsTheSelection`、ロック時のメニュー |
 | SEL-06 | 検証待ち | ホバーで強調しない／選択は青／ロックは赤。透明面・重なった面の確認はまだ |
 
