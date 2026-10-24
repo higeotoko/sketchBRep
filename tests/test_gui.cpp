@@ -181,6 +181,10 @@ class GuiPhase1 : public QObject {
   void ux01MixedSelectionKeepsPartsAndWholes();
   void ux07CtrlAddsCtrlShiftRemoves();
   void ux04BoxOverBlankSelectsNothing();
+  void ux02ScalePartsRefused();
+  void ux05ScaleInvalidPlaceDoesNotCommit();
+  void ux09ScaleCommasKeepTheirAxes();
+  void ux03MoveInsideGroupTakesItsChild();
   void lockedObjectsSelectableNotEditable();
   void groupEditShowsDottedBox();
   void snapTipNamesTheAdoptedPoint();
@@ -1184,6 +1188,193 @@ void GuiPhase1::ux04BoxOverBlankSelectsNothing() {
   crossing(gp_Pnt(3000, 3000, 0));  // on the line
   QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{line});
   QCOMPARE(f.window.elementSelection().size(), std::size_t(1));
+}
+
+namespace {
+
+// The Scale tool with grips on `ids` (selected whole).
+ScaleTool* scaleOn(MainWindow& w, const std::vector<doc::ObjectId>& ids) {
+  w.activateTool(MainWindow::ToolId::Select);
+  w.setSelection(ids);
+  w.activateTool(MainWindow::ToolId::Scale);
+  return dynamic_cast<ScaleTool*>(w.activeTool());
+}
+
+}  // namespace
+
+// UX-02: the top face only (or one edge) selected: Scale does not stretch
+// the whole box - refused with the reason, by grips and by base point.
+void GuiPhase1::ux02ScalePartsRefused() {
+  for (bool edge : {false, true}) {
+    Fixture f;
+    QVERIFY(f.setUp(500, 500));
+    doc::Modeler& m = f.window.modeler();
+    const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+    f.vp->syncNow();
+    f.window.activateTool(MainWindow::ToolId::Select);
+    click(f.vp, f.vp->toWidget(edge ? gp_Pnt(500, 0, 1000) : gp_Pnt(500, 500, 1000)));
+    QCOMPARE(f.window.elementSelection().size(), std::size_t(1));
+    const std::size_t steps = m.history().undoCount();
+    f.window.activateTool(MainWindow::ToolId::Scale);
+    auto* tool = dynamic_cast<ScaleTool*>(f.window.activeTool());
+    QVERIFY(tool);
+    QVERIFY(!f.window.lastError().isEmpty() || f.window.statusText().contains(QStringLiteral("面・辺だけ")));
+    if (tool->hasGrips()) {
+      const gp_Pnt g = *tool->gripPoint(1, 1, 1);
+      click(f.vp, f.vp->toWidget(g));
+      move(f.vp, f.vp->toWidget(g.Translated(gp_Vec(200, 200, 200))));
+      type(f.vp, QStringLiteral("2"));
+    }
+    // Base point, reference, typed factor.
+    click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));
+    click(f.vp, f.vp->toWidget(gp_Pnt(1000, 0, 0)));
+    type(f.vp, QStringLiteral("2"));
+    QVERIFY(std::abs(geom::volume(m.document().worldShape(box)) - 1e9) < 1e-3);
+    QCOMPARE(m.history().undoCount(), steps);
+    QVERIFY(!f.window.lastError().isEmpty());
+  }
+}
+
+// UX-05: a grip moved to 1.5, then past the fixed side (not allowed), then
+// clicked there: nothing is applied (not the earlier 1.5); a valid place
+// afterwards still works. A typed size that cannot be applied (locked)
+// changes nothing and keeps the drag.
+void GuiPhase1::ux05ScaleInvalidPlaceDoesNotCommit() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+  auto* tool = scaleOn(f.window, {box});
+  QVERIFY(tool && tool->hasGrips());
+  const std::size_t steps = m.history().undoCount();
+  const gp_Pnt g = *tool->gripPoint(1, 0, 0);
+  click(f.vp, f.vp->toWidget(g));
+  move(f.vp, f.vp->toWidget(gp_Pnt(1500, 500, 500)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(-600, 500, 500)));  // past the fixed side
+  click(f.vp, f.vp->toWidget(gp_Pnt(-600, 500, 500)));
+  EXPECT_BOX(m.document().worldShape(box), 1000, 1000, 1000);
+  QCOMPARE(m.history().undoCount(), steps);
+  click(f.vp, f.vp->toWidget(gp_Pnt(2000, 500, 500)));  // a valid place: applied
+  const Bnd_Box b = geom::exactBounds(m.document().worldShape(box));
+  QVERIFY2(std::abs(b.CornerMax().X() - 2000) < 20, qPrintable(QString::number(b.CornerMax().X())));
+  QCOMPARE(m.history().undoCount(), steps + 1);
+
+  // Locked: the typed factor is refused, nothing changes.
+  QVERIFY(m.undo());
+  QVERIFY(m.setLocked({box}, true).ok());
+  tool = scaleOn(f.window, {box});
+  if (tool && tool->hasGrips()) {
+    const std::size_t before = m.history().undoCount();
+    const gp_Pnt h = *tool->gripPoint(1, 0, 0);
+    click(f.vp, f.vp->toWidget(h));
+    type(f.vp, QStringLiteral("2"));
+    EXPECT_BOX(m.document().worldShape(box), 1000, 1000, 1000);
+    QCOMPARE(m.history().undoCount(), before);
+    QVERIFY(!f.window.lastError().isEmpty());
+  }
+}
+
+// UX-09: typed per direction with commas, an empty slot keeps its
+// direction (never moves the value to another one); a wrong count is
+// refused and changes nothing.
+void GuiPhase1::ux09ScaleCommasKeepTheirAxes() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+  auto* tool = scaleOn(f.window, {box});
+  QVERIFY(tool && tool->hasGrips());
+  auto grab = [&](int sx, int sy, int sz, Qt::KeyboardModifiers mods = Qt::NoModifier) {
+    const gp_Pnt g = *tool->gripPoint(sx, sy, sz);
+    const QPoint at = f.vp->toWidget(g);
+    move(f.vp, at);
+    send(f.vp, QEvent::MouseButtonPress, at, Qt::LeftButton, Qt::LeftButton, mods);
+    send(f.vp, QEvent::MouseButtonRelease, at, Qt::LeftButton, Qt::NoButton, mods);
+    QTest::qWait(20);
+    move(f.vp, f.vp->toWidget(g.Translated(gp_Vec(sx, sy, sz) * 100)));
+  };
+  grab(1, 1, 0);  // the edge grip: X and Y
+  type(f.vp, QStringLiteral(",2"));
+  EXPECT_BOX(m.document().worldShape(box), 1000, 2000, 1000);
+  QVERIFY(m.undo());
+  tool->cancel();
+  grab(1, 1, 0);
+  type(f.vp, QStringLiteral("2,"));
+  EXPECT_BOX(m.document().worldShape(box), 2000, 1000, 1000);
+  QVERIFY(m.undo());
+  tool->cancel();
+  // A corner with Shift: each direction on its own; the middle one kept.
+  grab(1, 1, 1, Qt::ShiftModifier);
+  type(f.vp, QStringLiteral("2,,3"));
+  EXPECT_BOX(m.document().worldShape(box), 2000, 1000, 3000);
+  QVERIFY(m.undo());
+  tool->cancel();
+  // Too many values for the edge grip: refused, nothing changes.
+  const std::size_t steps = m.history().undoCount();
+  f.window.clearLastError();
+  grab(1, 1, 0);
+  type(f.vp, QStringLiteral("2,3,4"));
+  EXPECT_BOX(m.document().worldShape(box), 1000, 1000, 1000);
+  QCOMPARE(m.history().undoCount(), steps);
+  QVERIFY(!f.window.lastError().isEmpty());
+}
+
+// UX-03: editing group G (A and B in it, C outside), nothing selected:
+// Move on A moves A only (not G, not B); nested G / H / A editing H moves
+// A only; a click on C outside the edited group moves nothing. Alt (grab
+// corners) the same.
+void GuiPhase1::ux03MoveInsideGroupTakesItsChild() {
+  Fixture f;
+  QVERIFY(f.setUp(2000, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId a = f.box(0, 0, 1000, 1000, 1000);
+  const doc::ObjectId b = f.box(1500, 0, 1000, 1000, 1000);
+  const doc::ObjectId c = f.box(4000, 0, 1000, 1000, 1000);
+  const doc::ObjectId g = *m.group({a, b});
+  f.vp->syncNow();
+  auto origin = [&](const doc::ObjectId& id) {
+    return geom::exactBounds(m.document().worldShape(*m.document().find(id))).CornerMin();
+  };
+  auto moveFrom = [&](const gp_Pnt& p, Qt::KeyboardModifiers mods = Qt::NoModifier) {
+    f.window.setSelection({});
+    f.window.activateTool(MainWindow::ToolId::Move);
+    const QPoint at = f.vp->toWidget(p);
+    move(f.vp, at);
+    send(f.vp, QEvent::MouseButtonPress, at, Qt::LeftButton, Qt::LeftButton, mods);
+    send(f.vp, QEvent::MouseButtonRelease, at, Qt::LeftButton, Qt::NoButton, mods);
+    QTest::qWait(20);
+    move(f.vp, f.vp->toWidget(p.Translated(gp_Vec(0, -800, 0))));
+    type(f.vp, QStringLiteral("500"));
+    QTest::keyClick(f.vp, Qt::Key_Escape);
+  };
+  f.window.enterGroup(g);
+  const gp_Trsf gBefore = m.document().find(g)->transform;
+  moveFrom(gp_Pnt(500, 0, 500));  // A's front
+  QVERIFY(origin(a).Distance(gp_Pnt(0, -500, 0)) < 1e-6);
+  QVERIFY(origin(b).Distance(gp_Pnt(1500, 0, 0)) < 1e-6);
+  QVERIFY(m.document().find(g)->transform.TranslationPart().IsEqual(gBefore.TranslationPart(), 1e-9));
+  // C outside the edited group: not moved, said why.
+  f.window.clearLastError();
+  moveFrom(gp_Pnt(4500, 0, 500));
+  QVERIFY(origin(c).Distance(gp_Pnt(4000, 0, 0)) < 1e-6);
+  QVERIFY(!f.window.lastError().isEmpty());
+  // Alt on C's corner (reshape) from inside G: refused too.
+  f.window.clearLastError();
+  moveFrom(gp_Pnt(4000, 0, 1000), Qt::AltModifier);
+  QVERIFY(origin(c).Distance(gp_Pnt(4000, 0, 0)) < 1e-6);
+  QVERIFY(std::abs(geom::volume(m.document().worldShape(c)) - 1e9) < 1e-3);
+  f.window.exitGroup();
+
+  // Nested G / H / A, editing H: A alone moves.
+  const doc::ObjectId h = *m.group({a});
+  QCOMPARE(m.document().find(h)->parent, g);
+  f.window.enterGroup(g);
+  f.window.enterGroup(h);
+  const gp_Pnt aBefore = origin(a), bBefore = origin(b);
+  moveFrom(gp_Pnt(500, -500, 500));  // A's front (moved above)
+  QVERIFY(origin(a).Distance(aBefore.Translated(gp_Vec(0, -500, 0))) < 1e-6);
+  QVERIFY(origin(b).Distance(bBefore) < 1e-6);
+  QVERIFY(m.document().find(h)->transform.TranslationPart().Modulus() < 1e-9);
 }
 
 void GuiPhase1::scaleGripsOnComponentsAndGroups() {

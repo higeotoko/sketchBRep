@@ -190,9 +190,7 @@ void SelectTool::apply(const std::vector<ElementRef>& elements, const std::vecto
   host_.setMixedSelection(parts, wholes);
 }
 
-doc::ObjectId SelectTool::target(const doc::ObjectId& leaf) const {
-  const doc::Document& document = host_.modeler().document();
-  const doc::ObjectId context = host_.editingGroup();
+doc::ObjectId addressedIn(const doc::Document& document, const doc::ObjectId& leaf, const doc::ObjectId& context) {
   if (context.empty()) return document.rootOf(leaf);
   // Inside a group: the child of the edited group that contains the leaf.
   doc::ObjectId current = leaf;
@@ -205,6 +203,10 @@ doc::ObjectId SelectTool::target(const doc::ObjectId& leaf) const {
     current = o->parent;
   }
   return {};  // outside the edited group
+}
+
+doc::ObjectId SelectTool::target(const doc::ObjectId& leaf) const {
+  return addressedIn(host_.modeler().document(), leaf, host_.editingGroup());
 }
 
 void SelectTool::mousePress(const ToolEvent& e) {
@@ -2710,6 +2712,12 @@ bool MoveTool::grabCorners(const ToolEvent& e) {
     const auto element = host_.viewport().pickElement(e.pos);
     host_.viewport().setPickMode(PickMode::Objects);
     if (!element || !reshapeable(element->objectId)) return false;
+    // Only shapes lying right in the edited context (not inside a group or
+    // component there, not outside the edited group).
+    if (addressedIn(document, element->objectId, host_.editingGroup()) != element->objectId) {
+      host_.reportError(QObject::tr("この角・辺は今の編集階層にないので動かせません（グループはダブルクリックで開いてから）"));
+      return true;  // handled: nothing grabbed
+    }
     grabbed.object = element->objectId;
     if (r.kind == snap::SnapKind::Endpoint) {
       grabbed.points = {r.point};
@@ -2771,7 +2779,15 @@ void MoveTool::mousePress(const ToolEvent& e) {
     targets_ = host_.selection();
     if (targets_.empty()) {
       if (const auto picked = host_.viewport().pickObject(e.pos)) {
-        targets_ = {host_.modeler().document().rootOf(*picked)};
+        // What a click selects at this editing level (UX-03): inside a
+        // group being edited, its child holding the picked shape; outside
+        // it, nothing (leave the group first).
+        const doc::ObjectId addressed = addressedIn(host_.modeler().document(), *picked, host_.editingGroup());
+        if (addressed.empty()) {
+          host_.reportError(QObject::tr("編集中のグループの外にある物は動かせません（Esc でグループの編集を終えてから）"));
+          return;
+        }
+        targets_ = {addressed};
         host_.setSelection(targets_);
       }
     }
@@ -3564,6 +3580,12 @@ void ScaleTool::activate() {
   cancel();
   host_.viewport().setPickMode(PickMode::None);
   host_.setMeasurement(QObject::tr("倍率"), QString());
+  if (partsOnly()) {
+    host_.viewport().clearGrips();
+    host_.reportError(QObject::tr("面・辺だけを拡大縮小することはまだできません（オブジェクト全体を変えることもしません）。"
+                                  "オブジェクト全体を選んでください（トリプルクリック）"));
+    return;
+  }
   buildBox();
   if (box_) {
     showBox(std::nullopt);
@@ -3603,10 +3625,19 @@ void ScaleTool::deactivate() {
 
 // --- scale grips ---------------------------------------------------------------
 
+bool ScaleTool::partsOnly() const {
+  const auto targets = host_.selectionTargets();
+  return std::any_of(targets.begin(), targets.end(), [](const doc::DeleteTarget& t) { return !t.whole; });
+}
+
 void ScaleTool::buildBox() {
   box_.reset();
   targets_ = host_.selection();
   if (targets_.empty()) return;
+  if (partsOnly()) {
+    targets_.clear();
+    return;
+  }
   const doc::Document& document = host_.modeler().document();
   // One object (or group): its own axes; several: the world's.
   gp_Ax3 frame;
@@ -3759,6 +3790,7 @@ QString ScaleTool::axisName(int axis) const {
 }
 
 void ScaleTool::updateGripDrag(const QPoint& pos) {
+  gripValid_ = false;
   Viewport& vp = host_.viewport();
   const gp_Pnt grip = gripWorld(active_);
   const gp_Dir axes[] = {box_->frame.XDirection(), box_->frame.YDirection(), box_->frame.Direction()};
@@ -3809,6 +3841,7 @@ void ScaleTool::updateGripDrag(const QPoint& pos) {
     return;
   }
   factors_ = f;
+  gripValid_ = true;
   // Preview: the shapes as they will be (exact transform, not the display).
   const doc::Document& document = host_.modeler().document();
   const gp_GTrsf g = geom::stretchTransform(anchor_, axes[0], axes[1], f[0], f[1], f[2]);
@@ -3974,6 +4007,11 @@ void ScaleTool::mousePress(const ToolEvent& e) {
   switch (stage_) {
     case Stage::Grip:
       updateGripDrag(e.pos);
+      if (!gripValid_) {
+        // Not here: the earlier factor is not applied either.
+        host_.reportError(QObject::tr("この位置では確定できません（反対側を越えています）。有効な位置でクリックするか、数値を入力するか、Esc"));
+        return;
+      }
       if (commitGrip(factors_)) {
         host_.setStatus(QObject::tr("伸縮しました（続けて倍率や寸法を入力すると変更）"));
       }
@@ -3994,6 +4032,10 @@ void ScaleTool::mousePress(const ToolEvent& e) {
         factors_ = {1, 1, 1};
         stage_ = Stage::Grip;
         updateGripDrag(e.pos);
+        return;
+      }
+      if (partsOnly()) {
+        host_.reportError(QObject::tr("面・辺だけを拡大縮小することはまだできません。オブジェクト全体を選んでください（トリプルクリック）"));
         return;
       }
       targets_ = host_.selection();
@@ -4034,15 +4076,23 @@ void ScaleTool::applyMeasurement(const QString& text) {
     for (int i = 0; i < 3; ++i) {
       if (grip.s[i] != 0) active.push_back(i);
     }
-    const QStringList values = t.split(QRegularExpression(QStringLiteral("[,;]")), Qt::SkipEmptyParts);
+    // One value: every direction of the grip alike. Several: one slot per
+    // direction in X, Y, Z order; an empty slot keeps that direction (a
+    // value never moves to another direction). Any other count: refused.
+    const QStringList values = t.split(QRegularExpression(QStringLiteral("[,;]")));
     std::array<double, 3> f{1, 1, 1};
     const std::size_t wanted = uniform ? 1 : active.size();
-    if (values.isEmpty() || static_cast<std::size_t>(values.size()) > wanted) {
-      host_.reportError(QObject::tr("倍率か寸法を %1 つまで入力してください: %2").arg(wanted).arg(text));
+    const bool one = values.size() == 1;
+    const bool blank = std::all_of(values.begin(), values.end(), [](const QString& v) { return v.trimmed().isEmpty(); });
+    if (blank || (!one && static_cast<std::size_t>(values.size()) != wanted)) {
+      host_.reportError(QObject::tr("倍率か寸法を 1 つ、または方向ごとに %1 つ（空欄はその方向を変えない）入力してください: %2")
+                            .arg(wanted)
+                            .arg(text));
       return;
     }
-    for (int k = 0; k < values.size(); ++k) {
-      const QString v = values[k].trimmed();
+    for (int k = 0; k < (one ? static_cast<int>(wanted) : values.size()); ++k) {
+      const QString v = values[one ? 0 : k].trimmed();
+      if (v.isEmpty()) continue;
       const int axis = active[static_cast<std::size_t>(k)];
       double factor = 0.0;
       if (v.contains(QRegularExpression(QStringLiteral("[a-zA-Z]")))) {
@@ -4069,7 +4119,7 @@ void ScaleTool::applyMeasurement(const QString& text) {
     }
     if (dragging) {
       factors_ = f;
-      commitGrip(f);
+      if (!commitGrip(f)) return;  // nothing changed: still dragging (type again or Esc)
       stage_ = Stage::Fixed;
       factors_ = {1, 1, 1};
     } else {

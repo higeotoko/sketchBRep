@@ -143,6 +143,11 @@ class Tool {
 
 QString snapLabel(snap::SnapKind kind);
 
+// The object a pick on `leaf` addresses while `context` is edited (empty:
+// top level): the child of `context` holding it (the root at top level);
+// empty when the leaf lies outside the edited group.
+doc::ObjectId addressedIn(const doc::Document& document, const doc::ObjectId& leaf, const doc::ObjectId& context);
+
 // Click: face or edge. Double-click: plus its neighbours (face -> bounding
 // edges, edge -> adjacent faces). Triple-click: the whole object. Geometry
 // inside a group or component selects the whole group/component.
@@ -778,6 +783,12 @@ class ScaleTool : public DrawingTool {
   Grip active_;
   bool flipUniform_ = false;  // Shift
   bool aboutCentre_ = false;  // Ctrl
+  // The grip's place under the cursor gives a usable factor (factors_);
+  // a click elsewhere (past the fixed side) applies nothing.
+  bool gripValid_ = false;
+  // Only faces / edges of an object selected: stretching them on their own
+  // is not done yet, and the whole object is never taken instead.
+  bool partsOnly() const;
   gp_Pnt anchor_;
   std::array<double, 3> factors_{1, 1, 1};
   struct LastGrip {
