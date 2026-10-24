@@ -4629,9 +4629,11 @@ void FollowMeTool::mousePress(const ToolEvent& e) {
       host_.reportError(QObject::tr("断面には面（押し出す前の形）を選んでください"));
       return;
     }
+    // Copied: `o` points into the document, which the sweep changes.
+    const doc::ObjectId profileId = o->id;
     if (!path_.empty()) {
       // The path was selected first: run now.
-      const auto swept = m.followMe(o->id, path_);
+      const auto swept = m.followMe(profileId, path_);
       if (!swept) {
         // Profile and path stay as they were; the user can pick another face.
         host_.reportError(QObject::tr("フォローミーに失敗しました: %1").arg(QString::fromStdString(swept.error())));
@@ -4641,14 +4643,15 @@ void FollowMeTool::mousePress(const ToolEvent& e) {
       host_.setStatus(QObject::tr("断面を沿わせました（断面の寸法はパネルで変更できます）"));
       return;
     }
-    profile_ = o->id;
+    profile_ = profileId;
     host_.viewport().setHighlightedElements({*picked});
     host_.setStatus(QObject::tr("パスにする線・円弧、またはソリッドの面をクリック（Esc で中止）"));
     return;
   }
   Result<doc::ObjectId> swept = Result<doc::ObjectId>::failure("");
   if (o->kind() == doc::ObjectKind::Curve) {
-    swept = m.followMe(*profile_, o->id);
+    const doc::ObjectId pathId = o->id;
+    swept = m.followMe(*profile_, pathId);
   } else if (picked->type == TopAbs_FACE) {
     const TopoDS_Shape face = host_.viewport().elementShape(*picked);
     swept = m.followMe(*profile_, BRepTools::OuterWire(TopoDS::Face(face)));

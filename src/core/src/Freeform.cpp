@@ -2,8 +2,12 @@
 
 #include <cmath>
 #include <cstdio>
+#include <optional>
+#include <string>
 
+#include <BOPAlgo_ArgumentAnalyzer.hxx>
 #include <BRepAdaptor_Curve.hxx>
+#include <BRepTools_WireExplorer.hxx>
 #include <TopExp.hxx>
 
 #include <BRepBuilderAPI_MakeEdge.hxx>
@@ -208,8 +212,85 @@ Result<TopoDS_Shape> mitredSweep(const TopoDS_Shape& profile, const TopoDS_Wire&
 
 }  // namespace
 
+namespace {
+
+// The sharpest corner of the path, as "(x, y, z)" (for messages).
+std::string sharpestCorner(const TopoDS_Wire& spine) {
+  double worst = -1;
+  gp_Pnt at;
+  std::optional<gp_Vec> before;
+  for (BRepTools_WireExplorer e(spine); e.More(); e.Next()) {
+    BRepAdaptor_Curve c(e.Current());
+    const bool reversed = e.Current().Orientation() == TopAbs_REVERSED;
+    gp_Pnt p0, p1;
+    gp_Vec t0, t1;
+    c.D1(reversed ? c.LastParameter() : c.FirstParameter(), p0, t0);
+    c.D1(reversed ? c.FirstParameter() : c.LastParameter(), p1, t1);
+    if (reversed) {
+      t0.Reverse();
+      t1.Reverse();
+    }
+    if (before && before->Magnitude() > 1e-12 && t0.Magnitude() > 1e-12 && before->Angle(t0) > worst) {
+      worst = before->Angle(t0);
+      at = p0;
+    }
+    before = t1;
+  }
+  char where[128];
+  std::snprintf(where, sizeof where, "(%.1f, %.1f, %.1f)", at.X(), at.Y(), at.Z());
+  return where;
+}
+
+// The swept shape passes through itself (BRepCheck does not see it).
+bool crossesItself(const TopoDS_Shape& shape) {
+  BOPAlgo_ArgumentAnalyzer analyzer;
+  analyzer.SetShape1(shape);
+  analyzer.SelfInterMode() = Standard_True;
+  analyzer.Perform();
+  return analyzer.HasFaulty();
+}
+
+// Where one edge of the path ends at an angle to the next (a polyline's
+// corner): the plain pipe would carry the profile round it unturned
+// (sheared, the wrong volume), so such paths are mitred.
+bool hasCorners(const TopoDS_Wire& spine) {
+  std::vector<std::pair<gp_Vec, gp_Vec>> tangents;  // at the start and end of each edge, in path order
+  for (BRepTools_WireExplorer e(spine); e.More(); e.Next()) {
+    BRepAdaptor_Curve c(e.Current());
+    gp_Pnt p;
+    gp_Vec t0, t1;
+    c.D1(c.FirstParameter(), p, t0);
+    c.D1(c.LastParameter(), p, t1);
+    if (e.Current().Orientation() == TopAbs_REVERSED) {
+      std::swap(t0, t1);
+      t0.Reverse();
+      t1.Reverse();
+    }
+    if (t0.Magnitude() < 1e-12 || t1.Magnitude() < 1e-12) continue;
+    tangents.emplace_back(t0, t1);
+  }
+  for (std::size_t i = 1; i < tangents.size(); ++i) {
+    if (tangents[i - 1].second.Angle(tangents[i].first) > 1e-6) return true;
+  }
+  if (BRep_Tool::IsClosed(spine) && tangents.size() > 1 && tangents.back().second.Angle(tangents.front().first) > 1e-6) {
+    return true;
+  }
+  return false;
+}
+
+}  // namespace
+
 Result<TopoDS_Shape> sweep(const TopoDS_Shape& profile, const TopoDS_Wire& spine) {
   try {
+    if (hasCorners(spine)) {
+      auto mitred = mitredSweep(profile, spine);
+      const bool invalid = !mitred && mitred.error().find("invalid shape") != std::string::npos;
+      if (invalid || (mitred && crossesItself(mitred.value()))) {
+        return Result<TopoDS_Shape>::failure("The swept shape would cross itself near " + sharpestCorner(spine) +
+                                             ": the path turns back within the profile's size");
+      }
+      return mitred;
+    }
     BRepOffsetAPI_MakePipe maker(spine, profile);
     maker.Build();
     if (maker.IsDone()) {
@@ -314,8 +395,10 @@ Result<TopoDS_Wire> pathFromEdges(const std::vector<TopoDS_Edge>& input, const g
     }
   }
   if (walked != edges.size()) {
-    return R::failure("The selected edges are not connected (" + std::to_string(edges.size() - walked) +
-                      " of them lie apart from the path); select one connected path");
+    char where[128];
+    std::snprintf(where, sizeof where, "(%.1f, %.1f, %.1f)", nodes[at].X(), nodes[at].Y(), nodes[at].Z());
+    return R::failure(std::string("The selected edges are not connected: the path breaks off at ") + where + " (" +
+                      std::to_string(edges.size() - walked) + " of them lie apart from it); select one connected path");
   }
   return wire.Wire();
 }

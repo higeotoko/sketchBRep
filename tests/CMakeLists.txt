@@ -23,6 +23,7 @@ add_executable(sbr_core_tests
   test_flows.cpp
   test_split_across.cpp
   test_closing_faces.cpp
+  test_follow_me.cpp
   test_ux_gate1.cpp
   test_rhino3dm.cpp
   test_scenarios.cpp

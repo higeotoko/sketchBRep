@@ -5507,7 +5507,9 @@ Result<ObjectId> Modeler::sweepObject(const ObjectId& profile, const ObjectId& s
   return addObject(std::move(object), "Sweep");
 }
 
-Result<ObjectId> Modeler::followMeAlong(const ObjectId& profileId, const BooleanOperand& path) {
+Result<ObjectId> Modeler::followMeAlong(const ObjectId& profileIdIn, const BooleanOperand& path) {
+  // A copy: the caller's id may live in the document, which changes below.
+  const ObjectId profileId = profileIdIn;
   const Object* profile = document_.find(profileId);
   if (!profile || profile->kind() != ObjectKind::Face) {
     return Result<ObjectId>::failure("Follow Me needs a face to sweep");

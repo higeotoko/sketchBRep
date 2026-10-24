@@ -177,6 +177,7 @@ class GuiPhase1 : public QObject {
   void rectangleStandsUpLikeSketchUp();
   void topEdgesCopiedDownDivideTheSides();
   void boxSelectionTakesFacesAndEdges();
+  void followMeReportedSetup();
   void lockedObjectsSelectableNotEditable();
   void groupEditShowsDottedBox();
   void snapTipNamesTheAdoptedPoint();
@@ -939,6 +940,110 @@ void GuiPhase1::boxSelectionTakesFacesAndEdges() {
   const bool groupWhole = std::any_of(mixed.begin(), mixed.end(), [&](const doc::DeleteTarget& t) { return t.id == group && t.whole; });
   const bool boxPart = std::any_of(mixed.begin(), mixed.end(), [&](const doc::DeleteTarget& t) { return t.id == box && !t.whole; });
   QVERIFY(groupWhole && boxPart);
+}
+
+// Report: a rectangle standing at the start of a 3-segment line on the
+// ground, the line's edges picked, Follow Me, the rectangle clicked: the
+// rectangle runs along the whole line, joined at the corners. (It failed:
+// the tool passed the profile's id by reference into the document, which
+// the sweep changes - the profile id read afterwards was garbage.)
+void GuiPhase1::followMeReportedSetup() {
+  const std::vector<gp_Pnt> points{gp_Pnt(1000, 0, 0), gp_Pnt(1000, 3000, 0), gp_Pnt(4000, 4500, 0),
+                                   gp_Pnt(6000, 3500, 0)};
+  double length = 0;
+  for (std::size_t i = 1; i < points.size(); ++i) length += points[i - 1].Distance(points[i]);
+  for (bool separate : {false, true}) {
+    Fixture f;
+    QVERIFY(f.setUp(3000, 2000));
+    doc::Modeler& m = f.window.modeler();
+    // The profile: 2000 x 1500 upright on y = 0; the path from the middle
+    // of its bottom edge, away from it, turning twice.
+    auto profile = m.createPolygon({gp_Pnt(0, 0, 0), gp_Pnt(2000, 0, 0), gp_Pnt(2000, 0, 1500), gp_Pnt(0, 0, 1500)});
+    QVERIFY(profile.ok());
+    if (separate) {
+      for (std::size_t i = 1; i < points.size(); ++i) QVERIFY(m.createPolyline({points[i - 1], points[i]}).ok());
+    } else {
+      QVERIFY(m.createPolyline(points).ok());
+    }
+    f.vp->syncNow();
+    const std::size_t objects = m.document().objects().size();
+    // Pick the three segments (Shift adds), from the last to the first.
+    auto pickPath = [&] {
+      f.window.activateTool(MainWindow::ToolId::Select);
+      for (std::size_t i = points.size() - 1; i >= 1; --i) {
+        const gp_Pnt mid((points[i - 1].XYZ() + points[i].XYZ()) * 0.5);
+        const QPoint at = f.vp->toWidget(mid);
+        const Qt::KeyboardModifiers mods = i == points.size() - 1 ? Qt::NoModifier : Qt::ShiftModifier;
+        move(f.vp, at);
+        send(f.vp, QEvent::MouseButtonPress, at, Qt::LeftButton, Qt::LeftButton, mods);
+        send(f.vp, QEvent::MouseButtonRelease, at, Qt::LeftButton, Qt::NoButton, mods);
+        QTest::qWait(20);
+      }
+    };
+    pickPath();
+    QCOMPARE(f.window.elementSelection().size(), std::size_t(3));  // edges, not the line as a whole
+    for (const ElementRef& e : f.window.elementSelection()) QCOMPARE(e.type, TopAbs_EDGE);
+    // Kept through the tool change; Esc before the click changes nothing.
+    f.window.activateTool(MainWindow::ToolId::FollowMe);
+    QVERIFY2(f.window.statusText().contains(QStringLiteral("3 本")), qPrintable(f.window.statusText()));
+    QTest::keyClick(f.vp, Qt::Key_Escape);
+    QCOMPARE(m.document().objects().size(), objects);
+    pickPath();
+    f.window.activateTool(MainWindow::ToolId::FollowMe);
+    const std::size_t steps = m.history().undoCount();
+    click(f.vp, f.vp->toWidget(gp_Pnt(1500, 0, 1000)));  // the profile
+    QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+    QCOMPARE(m.history().undoCount(), steps + 1);
+    QVERIFY(!m.document().find(*profile));  // consumed
+    std::optional<doc::ObjectId> swept;
+    for (const doc::Object& o : m.document().objects()) {
+      if (o.kind() == doc::ObjectKind::Solid) swept = o.id;
+    }
+    QVERIFY(swept.has_value());
+    const TopoDS_Shape shape = m.document().worldShape(*m.document().find(*swept));
+    QVERIFY(geom::validateShape(shape, true).valid);
+    QVERIFY(std::abs(geom::volume(shape) - 2000.0 * 1500 * length) < 1.0);  // turned at each corner
+    // The same as the AI's call on the same model.
+    doc::Modeler other;
+    const doc::ObjectId p2 = *other.createPolygon({gp_Pnt(0, 0, 0), gp_Pnt(2000, 0, 0), gp_Pnt(2000, 0, 1500), gp_Pnt(0, 0, 1500)});
+    const doc::ObjectId l2 = *other.createPolyline(points);
+    api::CommandApi api(other);
+    nlohmann::json args{{"profile", p2}, {"path_edges", nlohmann::json::array({nlohmann::json{{"id", l2}}})}};
+    const auto r = nlohmann::json::parse(api.execute(nlohmann::json{{"command", "follow_me"}, {"args", args}}.dump()));
+    QVERIFY(r["ok"].get<bool>());
+    const TopoDS_Shape viaApi = other.document().worldShape(*other.document().find(r["result"]["id"].get<std::string>()));
+    QVERIFY(std::abs(geom::volume(viaApi) - geom::volume(shape)) < 1e-3);
+    // One undo: profile and path as they were; redo; saved and reloaded.
+    QVERIFY(m.undo());
+    QVERIFY(m.document().find(*profile));
+    QCOMPARE(m.document().objects().size(), objects);
+    QVERIFY(m.redo());
+    const QString file = QDir(QDir::tempPath()).filePath(QStringLiteral("follow_me_gui.sbr"));
+    QVERIFY(m.save(file.toStdString()).ok());
+    doc::Modeler back;
+    QVERIFY(back.load(file.toStdString()).ok());
+    QVERIFY(std::abs(geom::volume(back.document().worldShape(*back.document().find(*swept))) - geom::volume(shape)) < 1e-3);
+  }
+  // A path with a gap: the reason and where, shown; nothing changed.
+  Fixture f;
+  QVERIFY(f.setUp(3000, 2000));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId profile =
+      *m.createPolygon({gp_Pnt(0, 0, 0), gp_Pnt(2000, 0, 0), gp_Pnt(2000, 0, 1500), gp_Pnt(0, 0, 1500)});
+  const doc::ObjectId a = *m.createPolyline({gp_Pnt(1000, 0, 0), gp_Pnt(1000, 3000, 0)});
+  const doc::ObjectId b = *m.createPolyline({gp_Pnt(1500, 3000, 0), gp_Pnt(4000, 4500, 0)});
+  f.vp->syncNow();
+  std::vector<ElementRef> path;
+  for (const doc::ObjectId& id : {a, b}) {
+    for (const ElementRef& e : f.vp->allElements(id)) path.push_back(e);
+  }
+  f.window.setElementSelection(path);
+  f.window.activateTool(MainWindow::ToolId::FollowMe);
+  const std::size_t objects = m.document().objects().size();
+  click(f.vp, f.vp->toWidget(gp_Pnt(1500, 0, 1000)));
+  QVERIFY(f.window.lastError().contains(QStringLiteral("(1000.0, 3000.0, 0.0)")));
+  QCOMPARE(m.document().objects().size(), objects);
+  QVERIFY(m.document().find(profile));
 }
 
 void GuiPhase1::scaleGripsOnComponentsAndGroups() {
