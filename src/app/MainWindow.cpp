@@ -87,6 +87,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   protractorTool_ = std::make_unique<ProtractorTool>(*this);
   pasteTool_ = std::make_unique<PasteTool>(*this);
   polygonTool_ = std::make_unique<PolygonTool>(*this);
+  rotatedRectangleTool_ = std::make_unique<RotatedRectangleTool>(*this);
   scaleTool_ = std::make_unique<ScaleTool>(*this);
   componentAxesTool_ = std::make_unique<ComponentAxesTool>(*this);
   wallTool_ = std::make_unique<WallTool>(*this);
@@ -668,6 +669,7 @@ void MainWindow::buildMenus() {
       {tr("選択"), QStringLiteral("Space"), ToolId::Select, CursorKind::Select},
       {tr("線"), QStringLiteral("L"), ToolId::Line, CursorKind::Pencil},
       {tr("矩形"), QStringLiteral("R"), ToolId::Rectangle, CursorKind::Rectangle},
+      {tr("回転矩形"), QStringLiteral("Shift+R"), ToolId::RotatedRectangle, CursorKind::Rectangle},
       {tr("壁"), QStringLiteral("W"), ToolId::Wall, CursorKind::Wall},
       {tr("スラブ"), QStringLiteral("Shift+W"), ToolId::Slab, CursorKind::Slab},
       {tr("開口"), QStringLiteral("O"), ToolId::Opening, CursorKind::Opening},
@@ -1097,6 +1099,7 @@ void MainWindow::activateTool(ToolId id) {
     case ToolId::Paste: active_ = pasteTool_.get(); break;
     case ToolId::ComponentAxes: active_ = componentAxesTool_.get(); break;
     case ToolId::Polygon: active_ = polygonTool_.get(); break;
+    case ToolId::RotatedRectangle: active_ = rotatedRectangleTool_.get(); break;
     case ToolId::Scale: active_ = scaleTool_.get(); break;
     case ToolId::Wall: active_ = wallTool_.get(); break;
     case ToolId::Slab: active_ = slabTool_.get(); break;

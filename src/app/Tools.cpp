@@ -2233,6 +2233,175 @@ void RectangleTool::applyMeasurement(const QString& text) {
   host_.reportError(QObject::tr("最初の角をクリックしてから寸法を入力してください"));
 }
 
+// --- Rotated rectangle ---------------------------------------------------------------
+
+QString RotatedRectangleTool::name() const { return QObject::tr("回転矩形"); }
+QCursor RotatedRectangleTool::cursor() const { return toolCursor(CursorKind::Rectangle); }
+
+void RotatedRectangleTool::activate() {
+  resetTracking();
+  reset();
+  host_.viewport().setPickMode(PickMode::None);
+  host_.setMeasurement(QObject::tr("長さ"), QString());
+  host_.setStatus(QObject::tr("最初の角をクリック"));
+}
+
+void RotatedRectangleTool::reset() {
+  stage_ = Stage::Corner;
+  resetLock();
+  host_.viewport().clearPreview();
+}
+
+void RotatedRectangleTool::cancel() {
+  reset();
+  host_.viewport().hideSnap();
+}
+
+bool RotatedRectangleTool::stepBack() {
+  // Esc: one step back (the last click taken back).
+  if (stage_ == Stage::Corner) return false;
+  stage_ = stage_ == Stage::Across ? Stage::Side : Stage::Corner;
+  host_.viewport().clearPreview();
+  refresh();
+  return true;
+}
+
+std::optional<gp_Pln> RotatedRectangleTool::workingPlane() const {
+  if (stage_ == Stage::Corner) return std::nullopt;
+  return gp_Pln(start_.origin, start_.normal);
+}
+
+std::optional<geom::SketchPlane> RotatedRectangleTool::planeTo(const gp_Pnt& p, double* height) const {
+  const gp_Vec side(corner_, end_);
+  if (side.Magnitude() < tolerance::kMinDimension) return std::nullopt;
+  const gp_Dir x(side);
+  gp_Vec across(corner_, p);
+  across -= gp_Vec(x) * across.Dot(gp_Vec(x));
+  if (across.Magnitude() < tolerance::kMinDimension) return std::nullopt;
+  geom::SketchPlane plane;
+  plane.origin = corner_;
+  plane.xDir = x;
+  plane.normal = gp_Dir(gp_Vec(x).Crossed(across));
+  if (height) *height = across.Magnitude();
+  return plane;
+}
+
+void RotatedRectangleTool::mouseMove(const ToolEvent& e) {
+  Viewport& vp = host_.viewport();
+  switch (stage_) {
+    case Stage::Corner: {
+      const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
+      host_.setStatus(QObject::tr("最初の角をクリック  [%1]").arg(snapLabel(r.kind)));
+      return;
+    }
+    case Stage::Side: {
+      const snap::SnapResult r = snapAt(e, corner_, start_.plane());
+      if (!r.valid()) return;
+      cursor_ = r.point;
+      host_.setMeasurement(QObject::tr("長さ"), mm(corner_.Distance(cursor_)));
+      if (corner_.Distance(cursor_) > tolerance::kMinDimension) {
+        vp.setPreview(BRepBuilderAPI_MakeEdge(corner_, cursor_).Edge());
+      }
+      host_.setStatus(QObject::tr("1 辺目の終わりをクリック、または長さを入力  [%1]").arg(snapLabel(r.kind)) + lockSuffix());
+      return;
+    }
+    case Stage::Across: {
+      // A point of the model tilts it; otherwise it lies on the start plane
+      // (or, when the first side leaves it, the upright plane through it).
+      snap::SnapResult r = snapAt(e, end_, std::nullopt);
+      using K = snap::SnapKind;
+      const bool model = r.kind == K::Endpoint || r.kind == K::Midpoint || r.kind == K::OnEdge ||
+                         r.kind == K::Origin || r.kind == K::Intersection || r.kind == K::FromPoint;
+      if (!model) {
+        const gp_Vec side(corner_, end_);
+        gp_Pln held = start_.plane();
+        if (std::abs(side.Dot(gp_Vec(start_.normal))) > 1e-6 * side.Magnitude()) {
+          const gp_Vec n = side.Crossed(gp_Vec(start_.normal));
+          if (n.Magnitude() > 1e-9) held = gp_Pln(corner_, gp_Dir(n));
+        }
+        r = snapAt(e, end_, held);
+      }
+      if (!r.valid()) return;
+      cursor_ = r.point;
+      double height = 0.0;
+      const auto plane = planeTo(cursor_, &height);
+      host_.setMeasurement(QObject::tr("長さ"), mm(height));
+      auto face = plane ? geom::makeRectangleFace(*plane, corner_.Distance(end_), height)
+                        : Result<TopoDS_Face>::failure("");
+      vp.setPreview(face ? TopoDS_Shape(face.value()) : TopoDS_Shape());
+      host_.setStatus(QObject::tr("もう一方の辺の向きをクリック、または長さを入力  [%1]").arg(snapLabel(r.kind)) +
+                      lockSuffix());
+      return;
+    }
+  }
+}
+
+void RotatedRectangleTool::mousePress(const ToolEvent& e) {
+  switch (stage_) {
+    case Stage::Corner: {
+      const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
+      if (!r.valid()) return;
+      corner_ = r.point;
+      start_ = planeForStart(host_.viewport(), e.pos, r);
+      stage_ = Stage::Side;
+      return;
+    }
+    case Stage::Side:
+      mouseMove(e);
+      if (corner_.Distance(cursor_) < tolerance::kMinDimension) return;
+      end_ = cursor_;
+      stage_ = Stage::Across;
+      resetLock();
+      return;
+    case Stage::Across: {
+      mouseMove(e);
+      double height = 0.0;
+      if (const auto plane = planeTo(cursor_, &height)) commit(*plane, height);
+      return;
+    }
+  }
+}
+
+void RotatedRectangleTool::commit(const geom::SketchPlane& plane, double height) {
+  auto id = host_.modeler().createRectangle(plane, corner_.Distance(end_), height);
+  if (!id) {
+    host_.reportError(QString::fromStdString(id.error()));
+    return;
+  }
+  reset();
+  host_.setStatus(QObject::tr("最初の角をクリック"));
+}
+
+void RotatedRectangleTool::applyMeasurement(const QString& text) {
+  const auto length = units::parseLength(text.toStdString());
+  if (!length || *length <= tolerance::kMinDimension) {
+    host_.reportError(QObject::tr("長さを解釈できません（正の値）: %1").arg(text));
+    return;
+  }
+  if (stage_ == Stage::Side) {
+    if (corner_.Distance(cursor_) < 1e-9) {
+      host_.reportError(QObject::tr("マウスで向きを示してから長さを入力してください"));
+      return;
+    }
+    end_ = corner_.Translated(gp_Vec(gp_Dir(gp_Vec(corner_, cursor_))) * *length);
+    stage_ = Stage::Across;
+    resetLock();
+    host_.viewport().clearPreview();
+    return;
+  }
+  if (stage_ == Stage::Across) {
+    double shown = 0.0;
+    const auto plane = planeTo(cursor_, &shown);
+    if (!plane) {
+      host_.reportError(QObject::tr("マウスでもう一方の辺の向きを示してから長さを入力してください"));
+      return;
+    }
+    commit(*plane, *length);
+    return;
+  }
+  host_.reportError(QObject::tr("最初の角をクリックしてから長さを入力してください"));
+}
+
 // --- Push/Pull --------------------------------------------------------------------
 
 QString PushPullTool::name() const { return QObject::tr("プッシュ/プル"); }

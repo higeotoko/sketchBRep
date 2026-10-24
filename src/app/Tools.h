@@ -594,6 +594,40 @@ class RectangleTool : public DrawingTool {
   std::optional<doc::ObjectId> lastCreated_;
 };
 
+// Rotated rectangle (SketchUp): first corner, then the end of the first
+// side (any direction - its length typed), then the other side across it
+// (any plane through the first side - snapped to a point of the model, or
+// its length typed). The result is a rectangle profile like the
+// Rectangle tool's (width / height stay editable), only turned.
+class RotatedRectangleTool : public DrawingTool {
+ public:
+  using DrawingTool::DrawingTool;
+  QString name() const override;
+  QCursor cursor() const override;
+  void activate() override;
+  void cancel() override;
+  bool stepBack() override;
+  void mousePress(const ToolEvent& e) override;
+  void mouseMove(const ToolEvent& e) override;
+  void applyMeasurement(const QString& text) override;
+
+ protected:
+  std::optional<gp_Pln> workingPlane() const override;
+
+ private:
+  enum class Stage { Corner, Side, Across };
+  // The rectangle for the point `p` across the first side, if it has one.
+  std::optional<geom::SketchPlane> planeTo(const gp_Pnt& p, double* height) const;
+  void commit(const geom::SketchPlane& plane, double height);
+  void reset();
+
+  Stage stage_ = Stage::Corner;
+  gp_Pnt corner_;
+  gp_Pnt end_;            // of the first side
+  gp_Pnt cursor_;         // where the cursor points now
+  geom::SketchPlane start_;  // from the first click (face or ground)
+};
+
 // Eraser: click deletes what is clicked (a group/component as a whole, or
 // a single object inside the group being edited).
 // SketchUp's eraser works on lines: a loose line loses the piece between

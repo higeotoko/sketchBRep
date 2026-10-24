@@ -192,6 +192,7 @@ class GuiPhase1 : public QObject {
   void move05FaceMovesSideways();
   void state03SaveWhileDrawingKeepsTheLastState();
   void look06HiddenIsNotSnappedOrPicked();
+  void rotatedRectangleTool();
   void lockedObjectsSelectableNotEditable();
   void groupEditShowsDottedBox();
   void snapTipNamesTheAdoptedPoint();
@@ -1678,6 +1679,53 @@ void GuiPhase1::look06HiddenIsNotSnappedOrPicked() {
   QVERIFY(f.window.selection().empty());
 }
 
+// W8: the rotated rectangle - first side in any direction (length typed),
+// the other side across it (length typed, or snapped to a point of the
+// model to tilt it); a rectangle profile (width / height editable).
+void GuiPhase1::rotatedRectangleTool() {
+  Fixture f;
+  QVERIFY(f.setUp(1500, 500));
+  doc::Modeler& m = f.window.modeler();
+  f.window.activateTool(MainWindow::ToolId::RotatedRectangle);
+  auto newest = [&]() -> const doc::Object& { return m.document().objects().back(); };
+  // On the ground, turned 45 degrees: 2000 x 500.
+  // (Cursor places far from the blue axis on screen: near it, the side
+  // would rightly follow blue.)
+  click(f.vp, f.vp->toWidget(gp_Pnt(5000, 0, 0)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(8000, 3000, 0)));
+  type(f.vp, QStringLiteral("2000"));
+  move(f.vp, f.vp->toWidget(gp_Pnt(3500, 4500, 0)));
+  type(f.vp, QStringLiteral("500"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  const auto* r = std::get_if<doc::RectangleProfile>(&newest().recipe.base);
+  QVERIFY(r);
+  QVERIFY(std::abs(std::abs(r->width) - 2000) < 1e-6 && std::abs(std::abs(r->height) - 500) < 1e-6);
+  const TopoDS_Face face = TopoDS::Face(m.document().worldShape(newest()));
+  QVERIFY(std::abs(geom::area(face) - 1e6) < 1.0);
+  QVERIFY(geom::planarFaceNormal(face)->IsParallel(gp::DZ(), 1e-9));
+  const Bnd_Box b = geom::exactBounds(face);
+  QVERIFY2(b.CornerMax().X() - b.CornerMin().X() > 1500, "turned, not along X");  // ~1414 + 354 across
+
+  // Tilted: corner, first side and the other side snapped to a box's corners.
+  const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+  f.vp->syncNow();
+  const std::size_t before = m.document().objects().size();
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));
+  // Esc takes the corner back; then again.
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 0, 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 1000, 1000)));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), before + 1);
+  const TopoDS_Face tilted = TopoDS::Face(m.document().worldShape(newest()));
+  QVERIFY2(std::abs(geom::area(tilted) - 1000.0 * 1000 * std::sqrt(2.0)) < 1.0, qPrintable(QString::number(geom::area(tilted))));
+  const gp_Dir n = *geom::planarFaceNormal(tilted);
+  QVERIFY(std::abs(n.X()) < 1e-9 && std::abs(std::abs(n.Y()) - std::sqrt(0.5)) < 1e-9);
+  QVERIFY(std::abs(geom::volume(m.document().worldShape(box)) - 1e9) < 1e-3);
+}
+
 void GuiPhase1::scaleGripsOnComponentsAndGroups() {
   Fixture f;
   QVERIFY(f.setUp(1500, 0));
@@ -2191,7 +2239,7 @@ void GuiPhase1::eachToolHasItsCursor() {
                   MainWindow::ToolId::Measure, MainWindow::ToolId::Revolve, MainWindow::ToolId::Arc,
                   MainWindow::ToolId::Paint, MainWindow::ToolId::Eraser, MainWindow::ToolId::Protractor,
                   MainWindow::ToolId::Polygon, MainWindow::ToolId::Scale, MainWindow::ToolId::Wall,
-                  MainWindow::ToolId::Slab, MainWindow::ToolId::Opening}) {
+                  MainWindow::ToolId::Slab, MainWindow::ToolId::Opening, MainWindow::ToolId::RotatedRectangle}) {
     f.window.activateTool(id);
     QCOMPARE(f.vp->cursor().shape(), Qt::BitmapCursor);
     QVERIFY(!f.vp->cursor().pixmap().isNull());
