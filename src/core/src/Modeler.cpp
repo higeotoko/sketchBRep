@@ -1183,6 +1183,24 @@ Result<ObjectId> Modeler::faceFromLoop(const ObjectId& curveId, bool* loopFound)
     const Object* object;
     gp_Pnt a, b;
   };
+  // Both ends must meet another curve for a loop (most lines drawn do not):
+  // found by boxes first, without reading every curve's ends.
+  auto metAt = [&](const gp_Pnt& p) {
+    Bnd_Box at;
+    at.Add(p);
+    at.Enlarge(1e-3);
+    for (const Object& o : document_.objects()) {
+      if (o.id == curveId || o.parent != start->parent || o.shape.IsNull() || document_.worldBounds(o).IsOut(at)) {
+        continue;
+      }
+      const auto ends = curveEnds(document_, o);
+      if (ends && (ends->first.Distance(p) < 1e-3 || ends->second.Distance(p) < 1e-3)) return true;
+    }
+    return false;
+  };
+  if (!metAt(startEnds->first) || !metAt(startEnds->second)) {
+    return Result<ObjectId>::failure("The curve does not close a loop");
+  }
   std::vector<Candidate> candidates;
   for (const Object& o : document_.objects()) {
     if (o.id == curveId || o.parent != start->parent) continue;
@@ -1364,13 +1382,84 @@ std::optional<CrossingSetup> crossingSetup(const Document& document, const std::
     setup.fresh.push_back(true);
     setup.owners.emplace_back(nullptr, k - 1);
   }
+  // Lines on the plane, kept only when joined to the chain (touching or
+  // crossing it, directly or through other such lines): the rest cannot
+  // bound a region with it, and arranging every line of a large drawing
+  // took ever longer.
+  struct Line {
+    const Object* object;
+    std::vector<gp_XY> pts;
+    std::vector<gp_Pnt> world;
+    bool joined = false;
+  };
+  const gp_Ax3 frame = plane->Position();
+  auto to2d = [&](const gp_Pnt& p) {
+    const gp_XYZ d = p.XYZ() - frame.Location().XYZ();
+    return gp_XY(d.Dot(frame.XDirection().XYZ()), d.Dot(frame.YDirection().XYZ()));
+  };
+  std::vector<Line> lines;
   for (const Object* o : others) {
-    const std::vector<gp_Pnt> pts = worldPolyline(document, *o);
+    std::vector<gp_Pnt> pts = worldPolyline(document, *o);
     if (std::any_of(pts.begin(), pts.end(), [&](const gp_Pnt& p) { return plane->Distance(p) > kTol; })) continue;
-    for (std::size_t k = 1; k < pts.size(); ++k) {
-      setup.segments.emplace_back(pts[k - 1], pts[k]);
+    Line line{o, {}, std::move(pts), false};
+    for (const gp_Pnt& p : line.world) line.pts.push_back(to2d(p));
+    lines.push_back(std::move(line));
+  }
+  // Segments by the cells their boxes cover.
+  constexpr double kCell = 1000.0;  // mm
+  auto cellRange = [&](const gp_XY& a, const gp_XY& b, auto&& visit) {
+    const long long x0 = std::llround(std::floor((std::min(a.X(), b.X()) - kTol) / kCell));
+    const long long x1 = std::llround(std::floor((std::max(a.X(), b.X()) + kTol) / kCell));
+    const long long y0 = std::llround(std::floor((std::min(a.Y(), b.Y()) - kTol) / kCell));
+    const long long y1 = std::llround(std::floor((std::max(a.Y(), b.Y()) + kTol) / kCell));
+    for (long long x = x0; x <= x1; ++x) {
+      for (long long y = y0; y <= y1; ++y) visit(std::make_pair(x, y));
+    }
+  };
+  std::map<std::pair<long long, long long>, std::vector<std::size_t>> cells;
+  for (std::size_t i = 0; i < lines.size(); ++i) {
+    for (std::size_t k = 1; k < lines[i].pts.size(); ++k) {
+      cellRange(lines[i].pts[k - 1], lines[i].pts[k], [&](const auto& c) { cells[c].push_back(i); });
+    }
+  }
+  auto meet = [&](const gp_XY& a, const gp_XY& b, const gp_XY& c, const gp_XY& d) {
+    // Segments ab and cd crossing or touching (within kTol).
+    auto distance = [](const gp_XY& p, const gp_XY& u, const gp_XY& v) {
+      const gp_XY uv = v - u;
+      const double len2 = uv.SquareModulus();
+      const double t = len2 < 1e-18 ? 0.0 : std::clamp((p - u).Dot(uv) / len2, 0.0, 1.0);
+      return (p - (u + uv * t)).Modulus();
+    };
+    auto side = [](const gp_XY& u, const gp_XY& v, const gp_XY& p) { return (v - u).Crossed(p - u); };
+    const double s1 = side(a, b, c), s2 = side(a, b, d), s3 = side(c, d, a), s4 = side(c, d, b);
+    if (((s1 > 0 && s2 < 0) || (s1 < 0 && s2 > 0)) && ((s3 > 0 && s4 < 0) || (s3 < 0 && s4 > 0))) return true;
+    return distance(c, a, b) < kTol || distance(d, a, b) < kTol || distance(a, c, d) < kTol || distance(b, c, d) < kTol;
+  };
+  std::vector<std::pair<gp_XY, gp_XY>> frontier;
+  for (std::size_t k = 1; k < chain.size(); ++k) frontier.emplace_back(to2d(chain[k - 1]), to2d(chain[k]));
+  while (!frontier.empty()) {
+    const auto [a, b] = frontier.back();
+    frontier.pop_back();
+    cellRange(a, b, [&](const auto& c) {
+      const auto it = cells.find(c);
+      if (it == cells.end()) return;
+      for (std::size_t i : it->second) {
+        Line& line = lines[i];
+        if (line.joined) continue;
+        for (std::size_t k = 1; k < line.pts.size() && !line.joined; ++k) {
+          line.joined = meet(a, b, line.pts[k - 1], line.pts[k]);
+        }
+        if (!line.joined) continue;
+        for (std::size_t k = 1; k < line.pts.size(); ++k) frontier.emplace_back(line.pts[k - 1], line.pts[k]);
+      }
+    });
+  }
+  for (const Line& line : lines) {
+    if (!line.joined) continue;
+    for (std::size_t k = 1; k < line.world.size(); ++k) {
+      setup.segments.emplace_back(line.world[k - 1], line.world[k]);
       setup.fresh.push_back(false);
-      setup.owners.emplace_back(o, k - 1);
+      setup.owners.emplace_back(line.object, k - 1);
     }
   }
   setup.fixed.assign(setup.segments.size(), false);
