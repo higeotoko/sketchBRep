@@ -3,6 +3,7 @@
 
 #include <cmath>
 
+#include <BRepAdaptor_Curve.hxx>
 #include <BRep_Tool.hxx>
 #include <GProp_GProps.hxx>
 #include <QWheelEvent>
@@ -193,6 +194,7 @@ class GuiPhase1 : public QObject {
   void state03SaveWhileDrawingKeepsTheLastState();
   void look06HiddenIsNotSnappedOrPicked();
   void rotatedRectangleTool();
+  void arcCarriesOnTangent();
   void lockedObjectsSelectableNotEditable();
   void groupEditShowsDottedBox();
   void snapTipNamesTheAdoptedPoint();
@@ -1724,6 +1726,41 @@ void GuiPhase1::rotatedRectangleTool() {
   const gp_Dir n = *geom::planarFaceNormal(tilted);
   QVERIFY(std::abs(n.X()) < 1e-9 && std::abs(std::abs(n.Y()) - std::sqrt(0.5)) < 1e-9);
   QVERIFY(std::abs(geom::volume(m.document().worldShape(box)) - 1e9) < 1e-3);
+}
+
+// W8: an arc started at the end of a line snaps to the bulge that carries
+// on from the line smoothly ([接線]); the arc's way at the start is the
+// line's way exactly.
+void GuiPhase1::arcCarriesOnTangent() {
+  Fixture f;
+  QVERIFY(f.setUp(2000, 500));
+  doc::Modeler& m = f.window.modeler();
+  QVERIFY(m.createPolyline({gp_Pnt(0, 0, 0), gp_Pnt(2000, 0, 0)}).ok());
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::Arc);
+  QTest::keyClick(f.vp, Qt::Key_Control);  // the arc as a line, not a face
+  click(f.vp, f.vp->toWidget(gp_Pnt(2000, 0, 0)));  // the line's end
+  click(f.vp, f.vp->toWidget(gp_Pnt(3000, 1000, 0)));
+  // The tangent bulge: half chord x tan(22.5 deg) to the right of the chord.
+  move(f.vp, f.vp->toWidget(gp_Pnt(2720, 310, 0)));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QVERIFY2(f.window.statusText().contains(QStringLiteral("接線")), qPrintable(f.window.statusText()));
+  click(f.vp, f.vp->toWidget(gp_Pnt(2720, 310, 0)));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  const doc::Object& arc = m.document().objects().back();
+  TopExp_Explorer e(m.document().worldShape(arc), TopAbs_EDGE);
+  QVERIFY(e.More());
+  BRepAdaptor_Curve c(TopoDS::Edge(e.Current()));
+  gp_Pnt p;
+  gp_Vec d;
+  c.D1(c.FirstParameter(), p, d);
+  if (p.Distance(gp_Pnt(2000, 0, 0)) > 1e-6) {
+    c.D1(c.LastParameter(), p, d);
+    d.Reverse();
+  }
+  QVERIFY(p.Distance(gp_Pnt(2000, 0, 0)) < 1e-6);
+  QVERIFY2(gp_Dir(d).IsParallel(gp::DX(), 1e-6) && d.X() > 0,
+           qPrintable(QStringLiteral("%1 %2 %3").arg(d.X()).arg(d.Y()).arg(d.Z())));
 }
 
 void GuiPhase1::scaleGripsOnComponentsAndGroups() {

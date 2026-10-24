@@ -1698,7 +1698,9 @@ void ArcTool::updateStatus(const QString& snap) {
       break;
     case Stage::Bulge:
       host_.setStatus(QObject::tr("膨らみをクリック、または数値を入力（%1 / Ctrl で切替）%2")
-                          .arg(mode, semicircle_ ? QObject::tr("  [半円]") : suffix));
+                          .arg(mode, semicircle_       ? QObject::tr("  [半円]")
+                                     : tangentSnapped_ ? QObject::tr("  [接線]")
+                                                       : suffix));
       break;
   }
 }
@@ -1731,8 +1733,19 @@ void ArcTool::mouseMove(const ToolEvent& e) {
       return;
     }
     case Stage::End: {
-      const snap::SnapResult r = snapAt(e, start_, plane_.plane());
+      snap::SnapResult r = snapAt(e, start_, plane_.plane());
       if (!r.valid()) return;
+      // The chord lies on the sketch plane: an inference off it (the blue
+      // axis from a point on the ground) gives the cursor's point on the
+      // plane instead (an arc across its own plane cannot be made).
+      if (plane_.plane().Distance(r.point) > 1e-3) {
+        const snap::Ray ray = host_.viewport().rayAt(e.pos);
+        IntAna_IntConicQuad hit(gp_Lin(ray.origin, ray.direction), plane_.plane(), Precision::Angular());
+        if (!hit.IsDone() || hit.NbPoints() < 1) return;
+        r.point = hit.Point(1);
+        r.kind = snap::SnapKind::WorkPlane;
+        host_.viewport().hideSnap();
+      }
       end_ = r.point;
       host_.setMeasurement(QObject::tr("弦の長さ"), mm(start_.Distance(end_)));
       host_.viewport().setPreview(start_.Distance(end_) > tolerance::kMinDimension
@@ -1765,6 +1778,13 @@ void ArcTool::mouseMove(const ToolEvent& e) {
       const double half = chord.Magnitude() / 2.0;
       semicircle_ = std::abs(std::abs(bulge_) - half) < 0.04 * half;
       if (semicircle_) bulge_ = std::copysign(half, bulge_);
+      // Carrying on smoothly from the line / arc it starts at.
+      tangentSnapped_ = false;
+      if (const auto t = tangentBulge(); t && std::abs(bulge_ - *t) < 0.05 * half) {
+        bulge_ = *t;
+        tangentSnapped_ = true;
+        semicircle_ = false;
+      }
       host_.setMeasurement(QObject::tr("膨らみ"), mm(std::abs(bulge_)));
       auto arc = geom::makeArc(start_, end_, plane_.normal, bulge_, face_);
       host_.viewport().setPreview(arc ? arc.value() : TopoDS_Shape(), face_);
@@ -1774,6 +1794,53 @@ void ArcTool::mouseMove(const ToolEvent& e) {
   }
 }
 
+void ArcTool::findTangent() {
+  // The one straight or curved edge ending at the start point (in this
+  // editing level): the way it was going when it got there.
+  const doc::Document& document = host_.modeler().document();
+  const doc::ObjectId context = host_.editingGroup();
+  std::optional<gp_Dir> found;
+  int ends = 0;
+  for (const doc::Object& o : document.objects()) {
+    if (o.parent != context || !document.isVisible(o.id) || o.shape.IsNull()) continue;
+    const doc::ObjectKind k = o.kind();
+    if (k != doc::ObjectKind::Curve && k != doc::ObjectKind::Face && k != doc::ObjectKind::Shell &&
+        k != doc::ObjectKind::Solid) {
+      continue;
+    }
+    TopTools_IndexedMapOfShape edges;
+    TopExp::MapShapes(document.worldShape(o), TopAbs_EDGE, edges);
+    for (int i = 1; i <= edges.Extent(); ++i) {
+      const TopoDS_Edge edge = TopoDS::Edge(edges(i));
+      if (BRep_Tool::Degenerated(edge)) continue;
+      BRepAdaptor_Curve c(edge);
+      for (const bool last : {false, true}) {
+        const double u = last ? c.LastParameter() : c.FirstParameter();
+        gp_Pnt p;
+        gp_Vec d;
+        c.D1(u, p, d);
+        if (p.Distance(start_) > 1e-6 || d.Magnitude() < 1e-12) continue;
+        ++ends;
+        found = gp_Dir(last ? d : -d);  // arriving at the start
+      }
+    }
+  }
+  if (ends == 1) tangent_ = found;
+}
+
+std::optional<double> ArcTool::tangentBulge() const {
+  if (!tangent_) return std::nullopt;
+  gp_Vec t(*tangent_);
+  t -= gp_Vec(plane_.normal) * t.Dot(gp_Vec(plane_.normal));  // on the arc's plane
+  const gp_Vec chord(start_, end_);
+  if (t.Magnitude() < 1e-9 || chord.Magnitude() < 1e-9) return std::nullopt;
+  const double angle = t.Angle(chord);  // between the way in and the chord
+  if (angle < 1e-6 || angle > M_PI - 1e-3) return std::nullopt;  // straight on, or back
+  const gp_Vec side = gp_Vec(plane_.normal).Crossed(chord).Normalized();
+  const double half = chord.Magnitude() / 2.0;
+  return std::copysign(half * std::tan(angle / 2.0), t.Dot(side));
+}
+
 void ArcTool::mousePress(const ToolEvent& e) {
   switch (stage_) {
     case Stage::Start: {
@@ -1781,6 +1848,8 @@ void ArcTool::mousePress(const ToolEvent& e) {
       if (!r.valid()) return;
       plane_ = planeForStart(host_.viewport(), e.pos, r);
       start_ = r.point;
+      tangent_.reset();
+      if (r.kind == snap::SnapKind::Endpoint) findTangent();
       stage_ = Stage::End;
       lastCreated_.reset();
       updateStatus();

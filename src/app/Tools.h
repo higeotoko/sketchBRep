@@ -432,6 +432,13 @@ class ArcTool : public DrawingTool {
   gp_Pnt start_, end_;
   double bulge_ = 0.0;
   bool semicircle_ = false;
+  // Started at the end of one line / arc: the way it went there. The bulge
+  // that makes the arc carry on from it smoothly snaps (SketchUp's tangent).
+  std::optional<gp_Dir> tangent_;
+  bool tangentSnapped_ = false;
+  // The bulge making the arc tangent to tangent_ at the start, if any.
+  std::optional<double> tangentBulge() const;
+  void findTangent();
   bool face_ = true;
   std::optional<doc::ObjectId> lastCreated_;
 };
