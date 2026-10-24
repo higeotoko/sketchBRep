@@ -190,6 +190,8 @@ class GuiPhase1 : public QObject {
   void ux10RotateCopyPreviewShowsTheParts();
   void followMeTracedFromTheProfile();
   void move05FaceMovesSideways();
+  void state03SaveWhileDrawingKeepsTheLastState();
+  void look06HiddenIsNotSnappedOrPicked();
   void lockedObjectsSelectableNotEditable();
   void groupEditShowsDottedBox();
   void snapTipNamesTheAdoptedPoint();
@@ -1621,6 +1623,59 @@ void GuiPhase1::move05FaceMovesSideways() {
   // Along the normal (the default lock): still a stretch.
   moveFace(gp_Pnt(500, 500, 1000), Qt::Key_unknown, gp_Pnt(500, 500, 1400), QStringLiteral("500"));
   QVERIFY(std::abs(geom::volume(m.document().worldShape(box)) - 1.5e9) < 1e-3);
+}
+
+// STATE-03: saved (and autosaved) with only a line's start point placed:
+// the file holds what was there before, nothing half drawn; the drawing
+// goes on afterwards.
+void GuiPhase1::state03SaveWhileDrawingKeepsTheLastState() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  f.box(0, 0, 1000, 1000, 1000);
+  f.window.activateTool(MainWindow::ToolId::Line);
+  click(f.vp, f.vp->toWidget(gp_Pnt(2000, 0, 0)));  // the start only
+  const QString file = QDir(QDir::tempPath()).filePath(QStringLiteral("state03.sbr"));
+  QVERIFY(f.window.saveFile(file));
+  QVERIFY(f.window.autosaveNow());
+  doc::Modeler back;
+  QVERIFY(back.load(file.toStdString()).ok());
+  QCOMPARE(back.document().objects().size(), std::size_t(1));  // the box, no line
+  // Still drawing: the second point makes the line.
+  click(f.vp, f.vp->toWidget(gp_Pnt(3000, 0, 0)));
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  QCOMPARE(m.document().objects().size(), std::size_t(2));
+}
+
+// LOOK-06: what is not shown is not snapped to or picked: an object hidden,
+// or on a tag turned off.
+void GuiPhase1::look06HiddenIsNotSnappedOrPicked() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId a = f.box(0, 0, 1000, 1000, 1000);
+  const doc::ObjectId b = f.box(3000, 0, 1000, 1000, 1000);
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::Line);
+  auto tipAt = [&](const gp_Pnt& p) {
+    move(f.vp, f.vp->toWidget(p));
+    return f.vp->snapTip();
+  };
+  QCOMPARE(tipAt(gp_Pnt(1000, 0, 1000)), QStringLiteral("端点"));
+  QVERIFY(m.setVisible(a, false).ok());
+  f.vp->syncNow();
+  QVERIFY(tipAt(gp_Pnt(1000, 0, 1000)) != QStringLiteral("端点"));
+  // A tag turned off.
+  QVERIFY(m.setLayer(b, "Hidden tag").ok());
+  m.setTagVisible("Hidden tag", false);
+  f.vp->syncNow();
+  QVERIFY(tipAt(gp_Pnt(4000, 0, 1000)) != QStringLiteral("端点"));
+  // Not picked either.
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  f.window.activateTool(MainWindow::ToolId::Select);
+  click(f.vp, f.vp->toWidget(gp_Pnt(500, 0, 500)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(3500, 0, 500)));
+  QVERIFY(f.window.selection().empty());
 }
 
 void GuiPhase1::scaleGripsOnComponentsAndGroups() {

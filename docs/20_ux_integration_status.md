@@ -319,7 +319,7 @@
 | LOOK-03 | 自動確認済 | `Stretch.*`、`Overlaps.*`、屋根（`Flows.SC07_SC08_SC19_*`、両方の屋根面が塗装を保つ） |
 | LOOK-04 | 検証待ち | |
 | LOOK-05 | 後回し | |
-| LOOK-06 | 検証待ち | |
+| LOOK-06 | 検証待ち | 非表示のオブジェクトと、非表示タグのオブジェクトは吸着・選択されない（`look06HiddenIsNotSnappedOrPicked`）。断面の裏・X 線での規則はまだ |
 
 ### 16. カメラ
 | ID | 状態 | 根拠・残り |
@@ -336,7 +336,7 @@
 |---|---|---|
 | STATE-01 | 自動確認済 | `escStepsBackAndConstraintsShow` |
 | STATE-02 | 自動確認済 | 各テストの Undo 回数 |
-| STATE-03 | 検証待ち | 保存と再読込は `Flows.SC07_SC08_SC19_*`。作図の途中で保存したときはまだ確認していない |
+| STATE-03 | 自動確認済 | 作図の途中（線の始点だけ）で保存・自動保存しても、確定済みの状態だけが残り、作図は続けられる（`state03SaveWhileDrawingKeepsTheLastState`）。保存と再読込は `Flows.SC07_SC08_SC19_*` |
 | STATE-04 | 後回し | 非同期の演算はまだない |
 | STATE-05 | 検証待ち | 実機 |
 | STATE-06 | 検証待ち | |
