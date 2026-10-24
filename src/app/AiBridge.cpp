@@ -74,12 +74,39 @@ void AiBridge::onReadyRead(QLocalSocket* socket) {
     }
     return;
   }
-  while (socket->canReadLine()) {
-    const QByteArray line = socket->readLine().trimmed();
-    if (line.isEmpty()) continue;
-    socket->write(QByteArray::fromStdString(execute(line.toStdString())) + '\n');
+  // One request per turn of the event loop: a client sending many at once
+  // does not hold the window (the user's Esc, painting) until all are done.
+  // A request without end (no newline in 64 MB) is refused and the client
+  // let go; a client not reading its answers waits until it does.
+  constexpr qint64 kMaxRequestBytes = 64 << 20;
+  constexpr qint64 kMaxUnreadAnswerBytes = 64 << 20;
+  auto again = [this, socket](int ms) {
+    if (retryPending_.contains(socket)) return;
+    retryPending_.insert(socket);
+    QPointer<QLocalSocket> guard(socket);
+    QTimer::singleShot(ms, this, [this, guard] {
+      if (!guard) return;
+      retryPending_.remove(guard.data());
+      onReadyRead(guard.data());
+    });
+  };
+  if (!socket->canReadLine()) {
+    if (socket->bytesAvailable() > kMaxRequestBytes) {
+      socket->write(nlohmann::json{{"ok", false}, {"error", "request too large (no end of line in 64 MB)"}}.dump().c_str());
+      socket->write("\n");
+      socket->flush();
+      socket->disconnectFromServer();
+    }
+    return;
   }
+  if (socket->bytesToWrite() > kMaxUnreadAnswerBytes) {
+    again(50);
+    return;
+  }
+  const QByteArray line = socket->readLine().trimmed();
+  if (!line.isEmpty()) socket->write(QByteArray::fromStdString(execute(line.toStdString())) + '\n');
   socket->flush();
+  if (socket->canReadLine()) again(0);
 }
 
 std::string AiBridge::execute(const std::string& requestJson) {

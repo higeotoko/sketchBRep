@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepTools.hxx>
@@ -10,6 +11,7 @@
 
 #include "TestHelpers.h"
 #include "sbr/doc/Modeler.h"
+#include "sbr/geom/Arrangement.h"
 #include "sbr/doc/NativeFormat.h"
 #include "sbr/geom/Freeform.h"
 #include "sbr/geom/Measure.h"
@@ -456,4 +458,22 @@ TEST(Freeform, LongSlantedLinesStayQuickToCross) {
     EXPECT_NEAR(area(m.document().find(faces->front())->shape), 0.5 * std::abs(1235.294 * 1235.294 - 1764.706 * 1764.706), 1.0);
     EXPECT_LT(seconds, 1.0);
   }
+}
+
+// PERF-08: a dense connected grid (every line crossing every other way):
+// the arrangement stays quick with the crossings it must find. Skipped
+// unless SBR_BENCH_N is set (lines each way); prints timings.
+TEST(Freeform, BenchDenseGridArrangement) {
+  const int n = std::getenv("SBR_BENCH_N") ? std::atoi(std::getenv("SBR_BENCH_N")) : 0;
+  if (n <= 0) GTEST_SKIP() << "set SBR_BENCH_N to run";
+  std::vector<std::pair<gp_Pnt, gp_Pnt>> segments;
+  for (int i = 0; i < n; ++i) {
+    segments.emplace_back(gp_Pnt(-500, i * 100.0, 0), gp_Pnt(n * 100.0, i * 100.0, 0));
+    segments.emplace_back(gp_Pnt(i * 100.0, -500, 0), gp_Pnt(i * 100.0, n * 100.0, 0));
+  }
+  const auto start = std::chrono::steady_clock::now();
+  const auto arranged = geom::arrangeLines(segments, std::vector<bool>(segments.size(), true), gp_Pln(gp::XOY()));
+  const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+  std::printf("bench dense grid n=%d crossings=%d regions=%zu s=%.3f\n", n, n * n, arranged.regions.size(), seconds);
+  EXPECT_EQ(arranged.regions.size(), static_cast<std::size_t>((n - 1) * (n - 1)));
 }

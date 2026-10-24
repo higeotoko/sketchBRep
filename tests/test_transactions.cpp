@@ -812,3 +812,39 @@ TEST(Transactions, SharedRecipesAreSavedOnce) {
   ASSERT_TRUE(plain.createRectangle(plane, 100, 100).ok());
   EXPECT_NE(sbr::doc::serializeDocument(plain.document()).find("\"version\": 3"), std::string::npos);
 }
+
+// PERF-06: a group changing one object many times keeps one change for it
+// (its state before and after), undone and redone exactly.
+TEST(Transactions, GroupKeepsOneChangePerObject) {
+  sbr::doc::Modeler m;
+  auto wall = m.createPolygon({gp_Pnt(0, 0, 0), gp_Pnt(1000, 0, 0), gp_Pnt(1000, 1000, 0), gp_Pnt(0, 1000, 0)});
+  auto other = m.createPolygon({gp_Pnt(5000, 0, 0), gp_Pnt(6000, 0, 0), gp_Pnt(6000, 1000, 0)});
+  ASSERT_TRUE(wall.ok() && other.ok());
+  const std::vector<sbr::doc::ObjectId> order = [&] {
+    std::vector<sbr::doc::ObjectId> ids;
+    for (const auto& o : m.document().objects()) ids.push_back(o.id);
+    return ids;
+  }();
+  const gp_Trsf start = m.document().find(*wall)->transform;
+  m.history().beginGroup("batch");
+  for (int k = 0; k < 100; ++k) ASSERT_TRUE(m.move({*wall}, gp_Vec(10, 0, 0)).ok());
+  auto temp = m.createPolygon({gp_Pnt(9000, 0, 0), gp_Pnt(9500, 0, 0), gp_Pnt(9500, 500, 0)});
+  ASSERT_TRUE(temp.ok());
+  ASSERT_TRUE(m.remove({*temp}).ok());
+  ASSERT_TRUE(m.remove({*other}).ok());
+  m.history().endGroup();
+  ASSERT_NE(m.history().lastCommand(), nullptr);
+  EXPECT_EQ(m.history().lastCommand()->deltas.size(), 2u);  // the wall, the other; the temporary one gone
+  const gp_Trsf end = m.document().find(*wall)->transform;
+  EXPECT_NEAR(end.TranslationPart().X() - start.TranslationPart().X(), 1000, 1e-6);
+  ASSERT_TRUE(m.undo());
+  EXPECT_NEAR(m.document().find(*wall)->transform.TranslationPart().X(), start.TranslationPart().X(), 1e-9);
+  ASSERT_NE(m.document().find(*other), nullptr);
+  EXPECT_EQ(m.document().find(*temp), nullptr);
+  std::vector<sbr::doc::ObjectId> now;
+  for (const auto& o : m.document().objects()) now.push_back(o.id);
+  EXPECT_EQ(now, order);  // in their places again
+  ASSERT_TRUE(m.redo());
+  EXPECT_NEAR(m.document().find(*wall)->transform.TranslationPart().X(), end.TranslationPart().X(), 1e-9);
+  EXPECT_EQ(m.document().find(*other), nullptr);
+}

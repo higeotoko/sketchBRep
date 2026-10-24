@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <cstdint>
+#include <unordered_map>
 #include <set>
 
 #include <gp_Ax3.hxx>
@@ -73,13 +75,33 @@ LineArrangement arrangeLines(const std::vector<std::pair<gp_Pnt, gp_Pnt>>& segme
   }
 
   // Vertices (merged within the tolerance) and undirected edges.
+  // Found by cells of the tolerance's size (the neighbouring ones too):
+  // looking through every vertex made a dense grid take the square of its
+  // crossings.
   std::vector<gp_XY> vertices;
+  std::unordered_map<std::uint64_t, std::vector<int>> cells;
+  auto cellOf = [](double v) { return static_cast<std::int64_t>(std::floor(v / (2 * kTol))); };
+  auto keyOf = [](std::int64_t x, std::int64_t y) {
+    return (static_cast<std::uint64_t>(x) * 0x9E3779B97F4A7C15ull) ^ static_cast<std::uint64_t>(y);
+  };
   auto vertexAt = [&](const gp_XY& p) {
-    for (std::size_t k = 0; k < vertices.size(); ++k) {
-      if ((vertices[k] - p).Modulus() < kTol) return static_cast<int>(k);
+    const std::int64_t cx = cellOf(p.X()), cy = cellOf(p.Y());
+    int best = -1;
+    for (std::int64_t dx = -1; dx <= 1; ++dx) {
+      for (std::int64_t dy = -1; dy <= 1; ++dy) {
+        const auto it = cells.find(keyOf(cx + dx, cy + dy));
+        if (it == cells.end()) continue;
+        for (int k : it->second) {
+          // The first one made within the tolerance, as before.
+          if ((vertices[k] - p).Modulus() < kTol && (best < 0 || k < best)) best = k;
+        }
+      }
     }
+    if (best >= 0) return best;
     vertices.push_back(p);
-    return static_cast<int>(vertices.size() - 1);
+    const int k = static_cast<int>(vertices.size() - 1);
+    cells[keyOf(cx, cy)].push_back(k);
+    return k;
   };
   std::map<std::pair<int, int>, std::vector<std::size_t>> edgePieces;  // (lo, hi) -> pieces
   std::set<std::pair<int, int>> freshEdges;

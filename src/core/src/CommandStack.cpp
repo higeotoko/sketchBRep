@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <optional>
+#include <string>
+#include <type_traits>
 #include <unordered_map>
 
 namespace sbr::doc {
@@ -193,12 +195,16 @@ void CommandStack::record(Command command) {
   revision_ = nextRevision_++;
   if (amending_ && !undo_.empty()) {
     Command& last = undo_.back();
+    // By id (looking each up in the list was quadratic for large steps).
+    std::unordered_map<ObjectId, std::size_t> where;
+    for (std::size_t i = 0; i < last.deltas.size(); ++i) where.emplace(last.deltas[i].id, i);
     for (ObjectDelta& d : command.deltas) {
-      auto it = std::find_if(last.deltas.begin(), last.deltas.end(), [&](const ObjectDelta& e) { return e.id == d.id; });
-      if (it == last.deltas.end()) {
+      const auto it = where.find(d.id);
+      if (it == where.end()) {
+        where.emplace(d.id, last.deltas.size());
         last.deltas.push_back(std::move(d));
       } else {
-        it->after = std::move(d.after);
+        last.deltas[it->second].after = std::move(d.after);
       }
     }
     // Created and removed again within the step: nothing to restore.
@@ -268,8 +274,38 @@ void CommandStack::endGroup() {
   }
   Command command = std::move(*group_);
   group_.reset();
+  // (Recorded even when nothing is left: the user's action stays a step.)
+  compress(command);
   // Already applied: record it without applying again.
   record(std::move(command));
+}
+
+void CommandStack::compress(Command& command) {
+  // One change per object, definition and material: its state before the
+  // group's first change and after its last (a batch moving one wall a
+  // hundred times kept a hundred wall shapes for one undo). Each stays
+  // where its first change was, so undoing in reverse order restores
+  // what was there before as before; created and removed again: nothing.
+  auto merge = [](auto& list) {
+    using Delta = typename std::decay_t<decltype(list)>::value_type;
+    std::unordered_map<std::string, std::size_t> first;
+    std::vector<Delta> out;
+    out.reserve(list.size());
+    for (Delta& d : list) {
+      const auto [it, fresh] = first.emplace(d.id, out.size());
+      if (fresh) {
+        out.push_back(std::move(d));
+      } else {
+        out[it->second].after = std::move(d.after);
+      }
+    }
+    out.erase(std::remove_if(out.begin(), out.end(), [](const Delta& d) { return !d.before && !d.after; }),
+              out.end());
+    list = std::move(out);
+  };
+  merge(command.deltas);
+  merge(command.definitionDeltas);
+  merge(command.materialDeltas);
 }
 
 void CommandStack::abortGroup() {

@@ -119,6 +119,7 @@ class CommandStack {
   bool amending_ = false;
   std::string groupName_;
   std::optional<Command> group_;
+  static void compress(Command& command);
   PersistentSettings groupSettings_;  // at the outermost beginGroup()
 };
 

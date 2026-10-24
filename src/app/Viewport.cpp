@@ -1458,14 +1458,21 @@ void Viewport::syncSome(std::optional<double> budgetMs) {
   if (view_.IsNull()) return;
   const doc::Document& document = modeler_.document();
 
-  // Objects to look at: those whose appearance changed (selection, context)
-  // and those changed since the last sync (plus everything below a changed
-  // group, whose placement they inherit), or everything; then what an
-  // earlier slice left over.
+  // The budget counts from here: gathering the queue is part of the slice.
+  QElapsedTimer clock;
+  clock.start();
+  // Objects to look at: what an earlier slice left over first (changes
+  // coming in all the time must not keep it waiting for ever), then those
+  // whose appearance changed (selection, context) and those changed since
+  // the last sync (plus everything below a changed group, whose placement
+  // they inherit), or everything.
   std::optional<std::vector<doc::ObjectId>> changed;
   if (!fullSync_) changed = document.changedSince(syncedSequence_);
   syncedSequence_ = document.sequence();
-  std::vector<doc::ObjectId> queue(appearanceDirty_.begin(), appearanceDirty_.end());
+  std::vector<doc::ObjectId> queue = std::move(pendingSync_);
+  pendingSync_.clear();
+  pendingSet_.clear();
+  queue.insert(queue.end(), appearanceDirty_.begin(), appearanceDirty_.end());
   appearanceDirty_.clear();
   if (!changed) {
     for (const auto& [id, entry] : entries_) {
@@ -1481,12 +1488,7 @@ void Viewport::syncSome(std::optional<double> budgetMs) {
       }
     }
   }
-  queue.insert(queue.end(), pendingSync_.begin(), pendingSync_.end());
-  pendingSync_.clear();
-  pendingSet_.clear();
   fullSync_ = false;
-  QElapsedTimer clock;
-  clock.start();
   std::unordered_set<doc::ObjectId> done;
   bool guidesChanged = false;
   for (std::size_t i = 0; i < queue.size(); ++i) {

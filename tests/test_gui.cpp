@@ -223,6 +223,7 @@ class GuiPhase1 : public QObject {
   void moveSelectedFaceStretchesSolid();
   void eraserDeletesClickedObject();
   void aiBridgeOverLocalSocket();
+  void aiRequestsTakeTurnsWithTheWindow();
   void aiWaitsForLongOperation();
   void arcToolSemicircleAndBulgeEdit();
   void scenesSaveRestoreAndPersist();
@@ -4221,6 +4222,43 @@ void GuiPhase1::aiWaitsForLongOperation() {
   QTRY_VERIFY_WITH_TIMEOUT(socket.canReadLine(), 3000);
   QVERIFY(QJsonDocument::fromJson(socket.readLine()).object().value("ok").toBool());
   QCOMPARE(m.listObjects().size(), before + 1);
+  f.window.setAiAccess(false);
+}
+
+// PERF-11: many requests sent at once are answered in order, one per turn
+// of the event loop (the window keeps handling its own events between
+// them); a request without end of line is refused past its limit.
+void GuiPhase1::aiRequestsTakeTurnsWithTheWindow() {
+  Fixture f;
+  QVERIFY(f.setUp(1000, 0));
+  doc::Modeler& m = f.window.modeler();
+  f.window.setAiAccess(true);
+  QLocalSocket socket;
+  socket.connectToServer(f.window.aiBridge()->serverName());
+  QTRY_VERIFY(socket.state() == QLocalSocket::ConnectedState);
+  const std::size_t before = m.listObjects().size();
+  QByteArray many;
+  for (int k = 0; k < 20; ++k) {
+    many += QByteArray(R"({"command": "create_box", "args": {"origin": [)") + QByteArray::number(k * 200) +
+            R"(, 0, 0], "width": 100, "depth": 100, "height": 100}})" "\n";
+  }
+  int ticks = 0;
+  QTimer ticker;
+  connect(&ticker, &QTimer::timeout, [&] { ++ticks; });
+  ticker.start(0);
+  socket.write(many);
+  socket.flush();
+  QTRY_COMPARE_WITH_TIMEOUT(m.listObjects().size(), before + 20, 10000);
+  ticker.stop();
+  QVERIFY2(ticks >= 10, qPrintable(QString::number(ticks)));  // the loop ran between requests
+  QList<QByteArray> answers;
+  QTRY_VERIFY_WITH_TIMEOUT((
+                               [&] {
+                                 while (socket.canReadLine()) answers << socket.readLine();
+                               }(),
+                               answers.size() == 20),
+                           3000);
+  for (const QByteArray& a : answers) QVERIFY(QJsonDocument::fromJson(a).object().value("ok").toBool());
   f.window.setAiAccess(false);
 }
 
