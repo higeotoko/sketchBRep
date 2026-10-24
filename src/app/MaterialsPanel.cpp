@@ -1,0 +1,232 @@
+#include "MaterialsPanel.h"
+
+#include "BuiltinMaterialData.h"
+#include "MaterialEditor.h"
+
+#include <algorithm>
+#include <map>
+
+#include <QHBoxLayout>
+#include <QImage>
+#include <QListWidget>
+#include <QMenu>
+#include <QPainter>
+#include <QPixmap>
+#include <QPushButton>
+#include <QScrollArea>
+#include <QTabWidget>
+#include <QVBoxLayout>
+
+namespace sbr::app {
+namespace {
+
+constexpr int kPresetRole = Qt::UserRole + 1;  // index into presets()
+
+QIcon swatch(const doc::Color& c, bool inherit = false) {
+  QPixmap pixmap(28, 20);
+  pixmap.fill(Qt::transparent);
+  QPainter p(&pixmap);
+  p.setRenderHint(QPainter::Antialiasing);
+  p.setPen(QPen(QColor(90, 90, 90), 1));
+  if (inherit) {
+    p.setBrush(Qt::white);
+    p.drawRoundedRect(QRectF(1.5, 1.5, 25, 17), 3, 3);
+    p.drawLine(QPointF(4, 17), QPointF(24, 3));  // "none"
+  } else {
+    p.setBrush(QColor::fromRgbF(c.r, c.g, c.b));
+    p.drawRoundedRect(QRectF(1.5, 1.5, 25, 17), 3, 3);
+  }
+  return QIcon(pixmap);
+}
+
+}  // namespace
+
+const std::vector<MaterialsPanel::Preset>& MaterialsPanel::presets() {
+  // From the material pack's table (names and order as they always were).
+  static const std::vector<Preset> all = [] {
+    std::vector<Preset> out;
+    for (const BuiltinMaterialData& d : kBuiltinMaterialData) {
+      out.push_back({d.name, doc::Color{d.color[0], d.color[1], d.color[2]}, d.resource, d.widthMm, d.heightMm,
+                     d.opacity, d.metallic, d.roughness, d.reflectance, d.useTexture});
+    }
+    return out;
+  }();
+  return all;
+}
+
+std::optional<int> MaterialsPanel::presetNamed(const std::string& name) {
+  for (int i = 0; i < static_cast<int>(presets().size()); ++i) {
+    if (name == presets()[static_cast<std::size_t>(i)].name) return i;
+  }
+  return std::nullopt;
+}
+
+QIcon MaterialsPanel::presetIcon(int index) {
+  static std::map<int, QIcon> made;
+  if (const auto it = made.find(index); it != made.end()) return it->second;
+  const Preset& p = presets()[static_cast<std::size_t>(index)];
+  QIcon icon = swatch(p.color);
+  if (p.usePicture) {
+    const QImage picture(QString::fromUtf8(p.picture));
+    if (!picture.isNull()) {
+      QPixmap pixmap(28, 20);
+      pixmap.fill(Qt::transparent);
+      QPainter painter(&pixmap);
+      painter.setRenderHint(QPainter::Antialiasing);
+      painter.setPen(QPen(QColor(90, 90, 90), 1));
+      // A piece of the picture about as big as the swatch shows of a tile.
+      painter.setBrush(QBrush(QPixmap::fromImage(picture.scaled(96, 96, Qt::IgnoreAspectRatio,
+                                                                Qt::SmoothTransformation))));
+      painter.drawRoundedRect(QRectF(1.5, 1.5, 25, 17), 3, 3);
+      icon = QIcon(pixmap);
+    }
+  }
+  return made[index] = icon;
+}
+
+MaterialsPanel::MaterialsPanel(QWidget* parent) : QWidget(parent) {
+  auto* outer = new QVBoxLayout(this);
+  outer->setContentsMargins(0, 0, 0, 0);
+  tabs_ = new QTabWidget;
+  outer->addWidget(tabs_);
+  auto* choose = new QWidget;
+  tabs_->addTab(choose, tr("選択"));
+  editor_ = new MaterialEditor;
+  auto* scroll = new QScrollArea;
+  scroll->setWidget(editor_);
+  scroll->setWidgetResizable(true);
+  tabs_->addTab(scroll, tr("編集"));
+  auto* layout = new QVBoxLayout(choose);
+  layout->setContentsMargins(4, 4, 4, 4);
+  list_ = new QListWidget;
+  list_->setObjectName(QStringLiteral("materialList"));
+  list_->setIconSize(QSize(28, 20));
+  list_->setToolTip(tr("クリックで塗る素材に（ペイントツールに切り替え）。ダブルクリックで「編集」タブ"));
+  list_->setContextMenuPolicy(Qt::CustomContextMenu);
+  layout->addWidget(list_);
+  auto* row = new QHBoxLayout;
+  auto* add = new QPushButton(tr("＋ 新規"));
+  auto* presets = new QPushButton(tr("定番 ▾"));
+  edit_ = new QPushButton(tr("編集"));
+  remove_ = new QPushButton(tr("削除"));
+  row->addWidget(add);
+  row->addWidget(presets);
+  row->addWidget(edit_);
+  row->addWidget(remove_);
+  layout->addLayout(row);
+  apply_ = new QPushButton(tr("選択に適用"));
+  apply_->setToolTip(tr("選んでいる部材（面を選んでいればその面）にこの素材を割り当てます"));
+  layout->addWidget(apply_);
+
+  auto* menu = new QMenu(presets);
+  for (int i = 0; i < static_cast<int>(MaterialsPanel::presets().size()); ++i) {
+    const Preset& p = MaterialsPanel::presets()[static_cast<std::size_t>(i)];
+    menu->addAction(presetIcon(i), QString::fromUtf8(p.name), this, [this, i] { emit presetRequested(i); });
+  }
+  presets->setMenu(menu);
+
+  connect(add, &QPushButton::clicked, this, [this] { emit createRequested(); });
+  connect(edit_, &QPushButton::clicked, this, [this] {
+    if (!currentId().empty()) openEditor();
+  });
+  connect(remove_, &QPushButton::clicked, this, [this] {
+    if (!currentId().empty()) emit deleteRequested(currentId());
+  });
+  connect(apply_, &QPushButton::clicked, this, [this] { emit applyRequested(currentId()); });
+  connect(list_, &QListWidget::currentRowChanged, this, [this](int) {
+    const QListWidgetItem* item = list_->currentItem();
+    if (item && item->data(kPresetRole).isValid()) {
+      // A ready-made one: add it to the library and pick it.
+      if (!updating_) emit presetRequested(item->data(kPresetRole).toInt());
+      return;
+    }
+    const bool real = !currentId().empty();
+    edit_->setEnabled(real);
+    remove_->setEnabled(real);
+    if (!updating_ && item) emit materialChosen(currentId());
+  });
+  connect(list_, &QListWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+    QListWidgetItem* item = list_->itemAt(pos);
+    if (!item || item->data(kPresetRole).isValid()) return;
+    const std::string id = item->data(Qt::UserRole).toString().toStdString();
+    QMenu menu(this);
+    if (!id.empty()) {
+      menu.addAction(tr("編集（色・テクスチャ・不透明度）"), this, [this, item] {
+        list_->setCurrentItem(item);
+        openEditor();
+      });
+      menu.addAction(tr("選択中の部材・面に適用"), this, [this, id] { emit applyRequested(id); });
+      // A material named like a preset can take its picture (on request
+      // only: documents are not changed by themselves).
+      if (const auto preset = presetNamed(item->text().toStdString())) {
+        menu.addAction(presetIcon(*preset), tr("定番の画像を適用"), this,
+                       [this, id, index = *preset] { emit presetPictureRequested(id, index); });
+      }
+      menu.addAction(tr("削除"), this, [this, id] { emit deleteRequested(id); });
+    } else {
+      menu.addAction(tr("選択中の部材・面の素材を外す"), this, [this] { emit applyRequested({}); });
+    }
+    menu.exec(list_->viewport()->mapToGlobal(pos));
+  });
+  connect(list_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem*) {
+    if (!currentId().empty()) openEditor();
+  });
+}
+
+std::string MaterialsPanel::currentId() const {
+  const QListWidgetItem* item = list_->currentItem();
+  return item ? item->data(Qt::UserRole).toString().toStdString() : std::string();
+}
+
+void MaterialsPanel::refresh(const doc::Document& document, const std::optional<std::string>& current) {
+  updating_ = true;
+  if (document.materials() != shown_ || list_->count() == 0) {
+    shown_ = document.materials();
+    list_->clear();
+    auto* inherit = new QListWidgetItem(swatch({}, true), tr("（素材なし：継承に戻す）"));
+    inherit->setData(Qt::UserRole, QString());
+    inherit->setToolTip(tr("塗ると面・部材の個別の素材を外し、部材全体・グループの素材に戻します"));
+    list_->addItem(inherit);
+    for (const doc::Material& m : shown_) {
+      auto* item = new QListWidgetItem(QIcon(MaterialEditor::swatch(document, m, QSize(28, 20))),
+                                       QString::fromStdString(m.name));
+      item->setData(Qt::UserRole, QString::fromStdString(m.id));
+      list_->addItem(item);
+    }
+    // Ready-made ones not in the document yet.
+    bool header = false;
+    for (int i = 0; i < static_cast<int>(presets().size()); ++i) {
+      const Preset& p = presets()[static_cast<std::size_t>(i)];
+      const bool have = std::any_of(shown_.begin(), shown_.end(),
+                                    [&](const doc::Material& m) { return m.name == p.name; });
+      if (have) continue;
+      if (!header) {
+        auto* title = new QListWidgetItem(tr("― 定番（クリックで追加して塗る） ―"));
+        title->setFlags(Qt::NoItemFlags);
+        list_->addItem(title);
+        header = true;
+      }
+      auto* item = new QListWidgetItem(presetIcon(i), QString::fromUtf8(p.name));
+      item->setData(kPresetRole, i);
+      item->setForeground(QColor(110, 110, 110));
+      list_->addItem(item);
+    }
+  }
+  list_->setCurrentRow(-1);
+  for (int i = 0; i < list_->count() && current; ++i) {
+    const QListWidgetItem* item = list_->item(i);
+    if (!item->data(kPresetRole).isValid() && (item->flags() & Qt::ItemIsSelectable) &&
+        item->data(Qt::UserRole).toString().toStdString() == *current) {
+      list_->setCurrentRow(i);
+    }
+  }
+  const bool real = !currentId().empty();
+  edit_->setEnabled(real);
+  remove_->setEnabled(real);
+  editor_->showMaterial(document, real ? document.findMaterial(currentId()) : nullptr);
+  updating_ = false;
+}
+
+void MaterialsPanel::openEditor() { tabs_->setCurrentIndex(1); }
+
+}  // namespace sbr::app
