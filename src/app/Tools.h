@@ -70,6 +70,12 @@ class ToolHost {
   virtual void materialPicked(const std::string&) {}
   // Brings the material library into view (paint tool without a material).
   virtual void showMaterials() {}
+  // A yes / no question before a large change (e.g. resizing the model).
+  virtual bool confirm(const QString& title, const QString& question) {
+    (void)title;
+    (void)question;
+    return true;
+  }
 };
 
 // The edit a tool has just committed, which a value typed right after may
@@ -752,7 +758,9 @@ class PaintTool : public Tool {
 };
 
 // Tape measure: click two points (with inference) to read the distance.
-// Does not change the model.
+// A length typed right after a measurement resizes the model (SketchUp):
+// everything at this editing level is scaled so that the measured
+// distance becomes the typed one, after a confirmation.
 class MeasureTool : public DrawingTool {
  public:
   using DrawingTool::DrawingTool;
@@ -772,6 +780,7 @@ class MeasureTool : public DrawingTool {
   gp_Vec guideOffset(const gp_Pnt& p) const;
   void showGuide(const gp_Pnt& p);
   void placeGuide(const gp_Vec& offset);
+  void resizeModel(double length);
   std::optional<gp_Pnt> start_;
   std::optional<gp_Dir> guideDir_;  // set while pulling a guide off an edge
   gp_Vec guideOffset_;

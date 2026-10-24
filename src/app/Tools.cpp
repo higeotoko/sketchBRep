@@ -3755,10 +3755,15 @@ void MeasureTool::mousePress(const ToolEvent& e) {
 }
 
 void MeasureTool::applyMeasurement(const QString& text) {
-  if (!start_ || !guideDir_) return;  // measuring: nothing to apply
+  const bool resizing = !start_ && lastDistance_;
+  if (!resizing && (!start_ || !guideDir_)) return;  // measuring: nothing to apply
   const auto value = units::parseLength(text.toStdString());
   if (!value || *value <= 0) {
     host_.reportError(QObject::tr("長さを解釈できません: %1").arg(text));
+    return;
+  }
+  if (resizing) {
+    resizeModel(*value);
     return;
   }
   if (guideOffset_.Magnitude() <= tolerance::kMinDimension) {
@@ -3766,6 +3771,41 @@ void MeasureTool::applyMeasurement(const QString& text) {
     return;
   }
   placeGuide(guideOffset_.Normalized() * *value);
+}
+
+void MeasureTool::resizeModel(double length) {
+  if (*lastDistance_ <= tolerance::kMinDimension) return;
+  const double factor = length / *lastDistance_;
+  doc::Modeler& m = host_.modeler();
+  const doc::ObjectId group = host_.editingGroup();
+  std::vector<doc::ObjectId> ids;
+  if (group.empty()) {
+    for (const doc::Object& o : m.document().objects()) {
+      if (o.parent.empty()) ids.push_back(o.id);
+    }
+  } else {
+    ids = m.document().children(group);
+  }
+  if (ids.empty() || std::abs(factor - 1.0) < 1e-9) return;
+  const QString question = group.empty() ? QObject::tr("モデルのサイズを変更しますか？")
+                                         : QObject::tr("編集中のグループのサイズを変更しますか？");
+  if (!host_.confirm(QObject::tr("サイズ変更"),
+                     question + QObject::tr("\n%1 mm を %2 mm にします（%3 倍）")
+                                    .arg(mm(*lastDistance_), mm(length), QString::number(factor, 'g', 6)))) {
+    return;
+  }
+  // About the world origin, or the origin of the group being edited.
+  gp_Pnt center(0, 0, 0);
+  if (const doc::Object* g = group.empty() ? nullptr : m.document().find(group)) {
+    center = center.Transformed(m.document().worldTransform(*g));
+  }
+  if (const Status done = m.scale(ids, center, factor); !done) {
+    host_.reportError(QString::fromStdString(done.message()));
+    return;
+  }
+  lastDistance_ = length;
+  host_.setMeasurement(QObject::tr("距離"), mm(length));
+  host_.setStatus(QObject::tr("サイズを変更しました（%1 倍）").arg(QString::number(factor, 'g', 6)));
 }
 
 // --- Component axes ---------------------------------------------------------------------

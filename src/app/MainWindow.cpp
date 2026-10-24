@@ -2407,6 +2407,11 @@ void MainWindow::booleanSelection(doc::BooleanKind kind) {
 
 // --- files ------------------------------------------------------------------------
 
+bool MainWindow::confirm(const QString& title, const QString& question) {
+  return QMessageBox::question(this, title, question, QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes) ==
+         QMessageBox::Yes;
+}
+
 bool MainWindow::maybeSave() {
   if (modeler_.history().isClean()) return true;
   const auto answer = QMessageBox::question(

@@ -194,6 +194,7 @@ class GuiPhase1 : public QObject {
   void state03SaveWhileDrawingKeepsTheLastState();
   void look06HiddenIsNotSnappedOrPicked();
   void look06SectionAndXRayRules();
+  void measureResizesTheModel();
   void rotatedRectangleTool();
   void arcCarriesOnTangent();
   void lockedObjectsSelectableNotEditable();
@@ -1735,6 +1736,67 @@ void GuiPhase1::look06SectionAndXRayRules() {
   click(f.vp, f.vp->toWidget(gp_Pnt(500, 0, 250)));
   QCOMPARE(f.window.elementSelection().size(), std::size_t(1));
   m.setSection(std::nullopt);
+}
+
+// W8 (guide calibration): a length typed right after measuring resizes the
+// model (after a question; No leaves it), one undo step; inside a group,
+// only that group's contents.
+void GuiPhase1::measureResizesTheModel() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId a = f.box(0, 0, 1000, 1000, 1000);
+  const doc::ObjectId b = f.box(3000, 0, 1000, 1000, 1000);
+  f.vp->syncNow();
+  auto sizeOf = [&](const doc::ObjectId& id) {
+    const Bnd_Box box = geom::exactBounds(m.document().worldShape(*m.document().find(id)));
+    return box.CornerMax().X() - box.CornerMin().X();
+  };
+  auto answer = [&](QMessageBox::StandardButton button, bool* asked) {
+    QTimer::singleShot(200, [=] {
+      auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+      if (!box) return;
+      *asked = true;
+      box->button(button)->click();
+    });
+  };
+  f.window.activateTool(MainWindow::ToolId::Measure);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 0, 0)));
+  bool asked = false;
+  answer(QMessageBox::No, &asked);
+  type(f.vp, QStringLiteral("2000"));
+  QVERIFY(asked);
+  QVERIFY(std::abs(sizeOf(a) - 1000) < 1e-6);
+  asked = false;
+  answer(QMessageBox::Yes, &asked);
+  type(f.vp, QStringLiteral("2000"));
+  QVERIFY(asked);
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QVERIFY(std::abs(sizeOf(a) - 2000) < 1e-6);
+  QVERIFY(std::abs(sizeOf(b) - 2000) < 1e-6);
+  // About the origin: b moved out too.
+  QVERIFY(std::abs(geom::exactBounds(m.document().worldShape(*m.document().find(b))).CornerMin().X() - 6000) < 1e-6);
+  QVERIFY(m.undo());
+  QVERIFY(std::abs(sizeOf(a) - 1000) < 1e-6 && std::abs(sizeOf(b) - 1000) < 1e-6);
+
+  // Inside a group: only its contents, about the group's origin.
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  const auto group = m.group({b}, "G");
+  QVERIFY(group);
+  f.window.enterGroup(*group);
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::Measure);
+  click(f.vp, f.vp->toWidget(gp_Pnt(3000, 0, 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(4000, 0, 0)));
+  asked = false;
+  answer(QMessageBox::Yes, &asked);
+  type(f.vp, QStringLiteral("500"));
+  QVERIFY(asked);
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QVERIFY(std::abs(sizeOf(a) - 1000) < 1e-6);
+  QVERIFY(std::abs(sizeOf(b) - 500) < 1e-6);
+  f.window.exitGroup();
 }
 
 // W8: the rotated rectangle - first side in any direction (length typed),

@@ -52,6 +52,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   std::vector<doc::ObjectId> selection() const override { return selection_; }
   std::vector<doc::DeleteTarget> selectionTargets() const override;
   doc::ObjectId editingGroup() const override { return modeler_.activeGroup(); }
+  bool confirm(const QString& title, const QString& question) override;
   void enterGroup(const doc::ObjectId& groupId) override;
   void exitGroup() override;
   void beginTextEntry(const QString& label, const QString& text) override;
