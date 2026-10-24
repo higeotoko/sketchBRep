@@ -356,6 +356,13 @@ class Viewport : public QWidget {
   bool fullSync_ = true;
   std::set<doc::ObjectId> appearanceDirty_;
   std::vector<doc::ObjectId> pendingSync_;  // left over by a time-limited slice
+  std::unordered_set<doc::ObjectId> pendingSet_;  // the same, to look up
+  // Before a pick is used: brings the picked object's display up to date
+  // when it is behind the document (a slice not done yet), so the face /
+  // edge numbers picked are those of its current shape. True when it was
+  // behind (the pick is made again).
+  bool freshen(const doc::ObjectId& id);
+  void takeInChanges();
   void syncSlice();
   void syncSome(std::optional<double> budgetMs);
   display::DisplayQuality quality_ = display::DisplayQuality::normal();

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <map>
 
+#include <Standard_Failure.hxx>
 #include <QAction>
 #include <QClipboard>
 #include <QCoreApplication>
@@ -1880,7 +1881,17 @@ void MainWindow::autosaveInBackground() {
   const QString original = currentPath_;
   autosaving_ = true;
   autosaveThread_ = std::thread([this, snapshot, sequence, generation, target, part, original] {
-    const Status s = doc::saveDocument(*snapshot, utf8(part));
+    // Nothing may leave the thread (that ends the program): a failure is
+    // reported like any other failed autosave, the recovery file kept.
+    Status s = Status::failure("unknown error");
+    try {
+      s = doc::saveDocument(*snapshot, utf8(part));
+    } catch (const Standard_Failure& e) {
+      s = Status::failure(e.GetMessageString());
+    } catch (const std::exception& e) {
+      s = Status::failure(e.what());
+    } catch (...) {
+    }
     QMetaObject::invokeMethod(
         this,
         [this, s, sequence, generation, target, part, original] {
@@ -2640,7 +2651,16 @@ void MainWindow::startRecipeVerification() {
     QStringList warnings;
     for (const Job& job : jobs) {
       if (*cancel) return;
-      if (auto w = doc::checkRecipe(job.object, context)) warnings << QString::fromStdString(job.prefix + *w);
+      // Nothing may leave the thread: a failing check is one more note.
+      try {
+        if (auto w = doc::checkRecipe(job.object, context)) warnings << QString::fromStdString(job.prefix + *w);
+      } catch (const Standard_Failure& e) {
+        warnings << QString::fromStdString(job.prefix + job.object.name + ": " + e.GetMessageString());
+      } catch (const std::exception& e) {
+        warnings << QString::fromStdString(job.prefix + job.object.name + ": " + e.what());
+      } catch (...) {
+        warnings << QString::fromStdString(job.prefix + job.object.name + ": unknown error");
+      }
     }
     QMetaObject::invokeMethod(
         this,

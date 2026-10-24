@@ -16,6 +16,7 @@
 #include <nlohmann/json.hpp>
 
 #include <BRepTools.hxx>
+#include <Standard_Failure.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <BRep_Tool.hxx>
 #include <TopExp.hxx>
@@ -2184,6 +2185,10 @@ json run(const Context& c, const json& request, int depth) {
     return json{{"ok", false}, {"error", std::string("invalid argument: ") + e.what()}};
   } catch (const std::exception& e) {
     return json{{"ok", false}, {"error", e.what()}};
+  } catch (const Standard_Failure& e) {
+    return json{{"ok", false}, {"error", std::string("geometry kernel error: ") + e.GetMessageString()}};
+  } catch (...) {
+    return json{{"ok", false}, {"error", "internal error"}};
   }
 }
 
@@ -2196,7 +2201,15 @@ std::string CommandApi::execute(const std::string& requestJson) {
   } catch (const json::exception& e) {
     return json{{"ok", false}, {"error", std::string("invalid JSON: ") + e.what()}}.dump();
   }
-  return run(Context{modeler_, options_, extensions_, *this}, request, 0).dump();
+  const bool inGroup = modeler_.history().inGroup();
+  json result = run(Context{modeler_, options_, extensions_, *this}, request, 0);
+  // A step group a failing command left open (an exception past its own
+  // clean-up) is taken back whole: later edits must not pile into it.
+  if (!inGroup && modeler_.history().inGroup()) {
+    modeler_.history().abortGroup();
+    if (result.value("ok", false)) result = json{{"ok", false}, {"error", "internal error: an edit was left open (reverted)"}};
+  }
+  return result.dump();
 }
 
 const char* CommandApi::toString(Effect effect) {

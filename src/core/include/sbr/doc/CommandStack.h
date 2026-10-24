@@ -70,6 +70,9 @@ class CommandStack {
   // closes the group (all-or-nothing batches).
   void abortGroup();
   bool inGroup() const { return groupDepth_ > 0; }
+  // Object changes gathered so far by the open group (0 outside one): the
+  // part of a step's budget already spent by earlier commands of it.
+  std::size_t groupObjectChanges() const { return group_ ? group_->deltas.size() : 0; }
   // While amending, the next recorded step (a command, or a whole group)
   // is merged into the most recent undo step instead of becoming its own:
   // revising what was just done ("type right after to change it") stays

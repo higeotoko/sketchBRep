@@ -3,6 +3,8 @@
 #include <QByteArray>
 #include <QStringList>
 
+#include <functional>
+
 #include <QMessageBox>
 #include <Standard_Failure.hxx>
 
@@ -28,6 +30,10 @@ class SafeApplication : public QApplication {
       failure = QStringLiteral("unknown error");
     }
     qWarning("SketchBRep: exception in an event handler: %s", qPrintable(failure));
+    try {
+      if (afterFailure) afterFailure();
+    } catch (...) {
+    }
     if (!reporting_) {
       reporting_ = true;
       QMessageBox::warning(nullptr, QStringLiteral("SketchBRep"),
@@ -37,6 +43,9 @@ class SafeApplication : public QApplication {
     }
     return false;
   }
+
+  // Puts the model back in order after a failure (an undo group left open).
+  std::function<void()> afterFailure;
 
  private:
   bool reporting_ = false;
@@ -61,6 +70,9 @@ int main(int argc, char** argv) {
   QApplication::setWindowIcon(icon);
 
   sbr::app::MainWindow window;
+  app.afterFailure = [&window] {
+    if (window.modeler().history().inGroup()) window.modeler().history().abortGroup();
+  };
   window.resize(1400, 900);
   window.show();
 

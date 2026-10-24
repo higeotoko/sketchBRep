@@ -1405,14 +1405,26 @@ std::optional<CrossingSetup> crossingSetup(const Document& document, const std::
     for (const gp_Pnt& p : line.world) line.pts.push_back(to2d(p));
     lines.push_back(std::move(line));
   }
-  // Segments by the cells their boxes cover.
+  // Segments by the cells they pass through (within kTol): column by
+  // column, the rows the segment spans there. A slanted line covers about
+  // as many cells as it is long, not as its bounding box is large (a 1 km
+  // diagonal covered a million).
   constexpr double kCell = 1000.0;  // mm
   auto cellRange = [&](const gp_XY& a, const gp_XY& b, auto&& visit) {
-    const long long x0 = std::llround(std::floor((std::min(a.X(), b.X()) - kTol) / kCell));
-    const long long x1 = std::llround(std::floor((std::max(a.X(), b.X()) + kTol) / kCell));
-    const long long y0 = std::llround(std::floor((std::min(a.Y(), b.Y()) - kTol) / kCell));
-    const long long y1 = std::llround(std::floor((std::max(a.Y(), b.Y()) + kTol) / kCell));
+    auto cell = [](double v) { return std::llround(std::floor(v / kCell)); };
+    const gp_XY& left = a.X() <= b.X() ? a : b;
+    const gp_XY& right = a.X() <= b.X() ? b : a;
+    const double dx = right.X() - left.X();
+    const long long x0 = cell(left.X() - kTol), x1 = cell(right.X() + kTol);
     for (long long x = x0; x <= x1; ++x) {
+      // The part of the segment over this column (widened by kTol).
+      const double xa = std::max(left.X(), x * kCell - kTol), xb = std::min(right.X(), (x + 1) * kCell + kTol);
+      double ya = left.Y(), yb = right.Y();
+      if (dx > 1e-12) {
+        ya = left.Y() + (right.Y() - left.Y()) * std::clamp((xa - left.X()) / dx, 0.0, 1.0);
+        yb = left.Y() + (right.Y() - left.Y()) * std::clamp((xb - left.X()) / dx, 0.0, 1.0);
+      }
+      const long long y0 = cell(std::min(ya, yb) - kTol), y1 = cell(std::max(ya, yb) + kTol);
       for (long long y = y0; y <= y1; ++y) visit(std::make_pair(x, y));
     }
   };
@@ -4663,6 +4675,19 @@ Result<std::vector<ObjectId>> Modeler::copy(const std::vector<ObjectId>& ids,
   }
   const std::vector<ObjectId> roots = topmost(ids);
   if (roots.empty()) return Result<std::vector<ObjectId>>::failure("Nothing selected");
+  // What the copies would make in all (each copy repeats the whole content
+  // of groups), counted before anything is made; an enclosing step (an AI
+  // batch, edit_each) shares one budget with its earlier commands.
+  std::size_t perCopy = 0;
+  for (const ObjectId& id : roots) perCopy += document_.subtree(id).size();
+  const std::size_t spent = history_.groupObjectChanges();
+  const std::size_t room = spent < kMaxObjectsPerStep ? kMaxObjectsPerStep - spent : 0;
+  if (perCopy * static_cast<std::size_t>(count) > room) {
+    return Result<std::vector<ObjectId>>::failure(
+        "The copies would make " + std::to_string(perCopy * static_cast<std::size_t>(count)) + " objects (" +
+        std::to_string(perCopy) + " per copy x " + std::to_string(count) + "), more than the " +
+        std::to_string(room) + " one step may still make; nothing was changed");
+  }
 
   ChangeSet changes(document_);
   std::vector<ObjectId> created;

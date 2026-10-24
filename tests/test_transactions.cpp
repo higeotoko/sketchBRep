@@ -2,6 +2,7 @@
 // atomic batches also roll back persistent settings, and preview, proposal
 // and commit report the same typed change set.
 
+#include <chrono>
 #include <cmath>
 
 #include <gtest/gtest.h>
@@ -662,4 +663,103 @@ TEST(Transactions, EraseEdgeMergesSplitFaces) {
   a.ok("erase_edge", {{"id", wall}, {"edge", {{"near", {2000, 0, 1000}}}}});
   EXPECT_EQ(a.ok("get_object", {{"id", wall}})["faces"].size(), 6u);
   EXPECT_FALSE(a.call("erase_edge", {{"id", wall}, {"edge", {{"near", {2000, 0, 3000}}}}})["ok"]);
+}
+
+// PERF-13: a step failing half applied (here: a listener throwing at the
+// n-th change notification) leaves the document as it was before the step,
+// alone or inside a group, and the history as it was.
+TEST(Transactions, StepFailingHalfAppliedIsTakenBack) {
+  for (const bool grouped : {false, true}) {
+    for (int failAt = 1; failAt <= 3; ++failAt) {
+      sbr::doc::Modeler m;
+      auto a = m.createPolygon({gp_Pnt(0, 0, 0), gp_Pnt(1000, 0, 0), gp_Pnt(1000, 1000, 0), gp_Pnt(0, 1000, 0)});
+      auto b = m.createPolygon({gp_Pnt(2000, 0, 0), gp_Pnt(3000, 0, 0), gp_Pnt(3000, 1000, 0), gp_Pnt(2000, 1000, 0)});
+      ASSERT_TRUE(a.ok() && b.ok());
+      const std::size_t undos = m.history().undoCount();
+      const std::size_t materials = m.document().materials().size();
+      int notified = 0;
+      bool armed = false;
+      m.document().addListener([&] {
+        if (armed && ++notified == failAt) throw std::runtime_error("injected");
+      });
+      if (grouped) m.history().beginGroup("group");
+      armed = true;
+      bool threw = false;
+      try {
+        // A new colour material and both boxes taking it: one step with a
+        // material and two objects (several notifications).
+        (void)m.paint({*a, *b}, sbr::doc::Color{0.2, 0.4, 0.6});
+      } catch (const std::runtime_error&) {
+        threw = true;
+      }
+      armed = false;
+      if (grouped) m.history().abortGroup();
+      SCOPED_TRACE(testing::Message() << "grouped " << grouped << " failAt " << failAt << " threw " << threw);
+      if (!threw) continue;  // fewer notifications than failAt
+      EXPECT_EQ(m.document().materials().size(), materials);
+      EXPECT_TRUE(m.document().find(*a)->material.empty());
+      EXPECT_TRUE(m.document().find(*b)->material.empty());
+      EXPECT_EQ(m.history().undoCount(), undos);
+      // History still works on.
+      ASSERT_TRUE(m.undo());
+      EXPECT_EQ(m.document().find(*b), nullptr);
+      ASSERT_TRUE(m.redo());
+      EXPECT_NE(m.document().find(*b), nullptr);
+    }
+  }
+}
+
+// PERF-13: an exception past a command's own clean-up (here mid-way through
+// place_on_grid) takes its step group back: the copies made so far go, and
+// the next command is its own undo step again.
+TEST(Transactions, CommandFailingInsideItsGroupLeavesNothingOpen) {
+  Api a;
+  a.ok("create_grid", {{"x_spacings", {3600, 3600, 3600}}, {"y_spacings", {6000, 6000}}});
+  const std::string column =
+      a.ok("create_box", {{"origin", {-5000, -5000, 0}}, {"width", 400}, {"depth", 400}, {"height", 3000}})["id"];
+  const std::size_t objects = a.modeler.document().objects().size();
+  const std::size_t steps = a.modeler.history().undoCount();
+  int notified = 0;
+  bool armed = true;
+  a.modeler.document().addListener([&] {
+    if (armed && ++notified == 5) throw std::runtime_error("injected");
+  });
+  const json r = a.call("place_on_grid", {{"source", column}});
+  armed = false;
+  EXPECT_FALSE(r["ok"]) << r.dump();
+  EXPECT_FALSE(a.modeler.history().inGroup());
+  EXPECT_EQ(a.modeler.document().objects().size(), objects);
+  EXPECT_EQ(a.modeler.history().undoCount(), steps);
+  a.ok("create_box", {{"origin", {9000, 9000, 0}}, {"width", 400}, {"depth", 400}, {"height", 3000}});
+  EXPECT_EQ(a.modeler.history().undoCount(), steps + 1);
+}
+
+// PERF-02: copies are counted with their contents before anything is made,
+// and a batch shares one budget across its commands.
+TEST(Transactions, CopiesStayWithinOneStepsBudget) {
+  sbr::doc::Modeler m;
+  std::vector<sbr::doc::ObjectId> parts;
+  for (int i = 0; i < 100; ++i) {
+    auto p = m.createPolygon({gp_Pnt(i * 10.0, 0, 0), gp_Pnt(i * 10.0 + 5, 0, 0), gp_Pnt(i * 10.0 + 5, 5, 0)});
+    ASSERT_TRUE(p.ok());
+    parts.push_back(*p);
+  }
+  auto group = m.group(parts, "G");
+  ASSERT_TRUE(group.ok());
+  const std::size_t objects = m.document().objects().size();
+  gp_Trsf shift;
+  shift.SetTranslation(gp_Vec(0, 1000, 0));
+  const auto start = std::chrono::steady_clock::now();
+  auto refused = m.copy({*group}, shift, 10000);  // 101 x 10000 objects
+  EXPECT_LT(std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(), 0.5);
+  ASSERT_FALSE(refused.ok());
+  EXPECT_NE(refused.error().find("1010000"), std::string::npos) << refused.error();
+  EXPECT_EQ(m.document().objects().size(), objects);
+  // Within a group (as an AI batch): what earlier commands made counts.
+  m.history().beginGroup("batch");
+  ASSERT_TRUE(m.copy({*group}, shift, 1000).ok());   // 101000
+  EXPECT_FALSE(m.copy({*group}, shift, 1000).ok());  // 202000 in the step: over
+  m.history().abortGroup();
+  EXPECT_EQ(m.document().objects().size(), objects);
+  ASSERT_TRUE(m.copy({*group}, shift, 10).ok());
 }

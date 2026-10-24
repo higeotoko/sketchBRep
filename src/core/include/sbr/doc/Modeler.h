@@ -439,6 +439,9 @@ class Modeler {
   // existing edge is not made twice. One undo step; returns the new lines.
   Result<std::vector<ObjectId>> copyEdges(const std::vector<TopoDS_Edge>& worldEdges, const gp_Trsf& worldDelta,
                                           int count = 1);
+  // Most objects one step may make by copying (all copies of all contents
+  // together, and across the commands of an enclosing batch).
+  static constexpr std::size_t kMaxObjectsPerStep = 200000;
   Result<std::vector<ObjectId>> copy(const std::vector<ObjectId>& ids, const gp_Trsf& worldDelta,
                                      int count = 1);
   // Clipboard: a snapshot of the objects (with their subtrees) that stays

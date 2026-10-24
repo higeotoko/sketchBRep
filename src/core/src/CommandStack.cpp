@@ -147,17 +147,43 @@ void CommandStack::execute(Command command) {
       !command.settings) {
     return;
   }
+  // All of the step or none of it: failing half applied (a listener, out
+  // of memory), the step is taken back before the failure goes on, so the
+  // document matches the history (an enclosing group can still be aborted).
+  auto takeBack = [&] {
+    try {
+      applyBefore(command);
+    } catch (...) {
+    }
+  };
   if (groupDepth_ > 0) {
-    applyAfter(command);
     if (!group_) group_ = Command{groupName_, {}, {}, {}, std::nullopt};
-    group_->deltas.insert(group_->deltas.end(), command.deltas.begin(), command.deltas.end());
-    group_->definitionDeltas.insert(group_->definitionDeltas.end(), command.definitionDeltas.begin(),
-                                    command.definitionDeltas.end());
-    group_->materialDeltas.insert(group_->materialDeltas.end(), command.materialDeltas.begin(),
-                                  command.materialDeltas.end());
+    const std::size_t deltas = group_->deltas.size(), definitions = group_->definitionDeltas.size(),
+                      materials = group_->materialDeltas.size();
+    try {
+      applyAfter(command);
+      group_->deltas.insert(group_->deltas.end(), command.deltas.begin(), command.deltas.end());
+      group_->definitionDeltas.insert(group_->definitionDeltas.end(), command.definitionDeltas.begin(),
+                                      command.definitionDeltas.end());
+      group_->materialDeltas.insert(group_->materialDeltas.end(), command.materialDeltas.begin(),
+                                    command.materialDeltas.end());
+    } catch (...) {
+      group_->deltas.erase(group_->deltas.begin() + static_cast<std::ptrdiff_t>(deltas), group_->deltas.end());
+      group_->definitionDeltas.erase(group_->definitionDeltas.begin() + static_cast<std::ptrdiff_t>(definitions),
+                                     group_->definitionDeltas.end());
+      group_->materialDeltas.erase(group_->materialDeltas.begin() + static_cast<std::ptrdiff_t>(materials),
+                                   group_->materialDeltas.end());
+      takeBack();
+      throw;
+    }
     return;
   }
-  applyAfter(command);
+  try {
+    applyAfter(command);
+  } catch (...) {
+    takeBack();
+    throw;
+  }
   record(std::move(command));
 }
 

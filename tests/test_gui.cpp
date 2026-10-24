@@ -250,6 +250,7 @@ class GuiPhase1 : public QObject {
   void selectionDotsKeepTheMaterialColour();
   void selectionDotsOnOnePlacementOnly();
   void paintedFaceFollowsItsMaterial();
+  void picksNeverUseADisplayBehindTheModel();
   void movedObjectsPickWhereTheyAre();
   void openingKeepsTheWindowResponsive();
   void shownAgainPicksAndSnaps();
@@ -2898,8 +2899,11 @@ void GuiPhase1::snapTipNamesTheAdoptedPoint() {
   QVERIFY(f.vp->snapTip().isEmpty());
   QCOMPARE(tipAt(gp_Pnt(1000, 0, 1000)), QString());
   // Other snapping tools show it the same way.
+  // (The line drawn starts at the front edge's midpoint: an end point
+  // there now; the left edge's midpoint is untouched.)
   f.window.activateTool(MainWindow::ToolId::Rectangle);
-  QCOMPARE(tipAt(gp_Pnt(500, 0, 1000)), QStringLiteral("中点"));
+  QCOMPARE(tipAt(gp_Pnt(500, 0, 1000)), QStringLiteral("端点"));
+  QCOMPARE(tipAt(gp_Pnt(0, 500, 1000)), QStringLiteral("中点"));
   f.window.activateTool(MainWindow::ToolId::Move);
   QCOMPARE(tipAt(gp_Pnt(1000, 0, 1000)), QStringLiteral("端点"));
 }
@@ -6014,6 +6018,39 @@ void GuiPhase1::paintedFaceFollowsItsMaterial() {
   QVERIFY(m.editMaterial(changed).ok());
   c = colourAt(front);
   QVERIFY2(c.green() > c.red() + 80 && c.green() > c.blue() + 80, qPrintable(c.name()));
+}
+
+// PERF-14: a pick made before the display has caught up with the model
+// (sync timer not run, or a slice of a large update still pending) uses the
+// object's current shape: nothing where it was, its faces where it is, with
+// face numbers of its current shape.
+void GuiPhase1::picksNeverUseADisplayBehindTheModel() {
+  Fixture f;
+  QVERIFY(f.setUp(1500, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(-1000, -1000, 2000, 2000, 2000);
+  f.vp->syncNow();
+  const gp_Pnt now(4000, -1000, 1000), before(0, -1000, 1000);
+  QVERIFY(m.move({box}, gp_Vec(4000, 0, 0)).ok());
+  // No syncNow / processEvents: the display is still where the box was.
+  QVERIFY(!f.vp->elementAt(f.vp->toWidget(before)));
+  QVERIFY(m.move({box}, gp_Vec(-4000, 0, 0)).ok());
+  QVERIFY(m.move({box}, gp_Vec(4000, 0, 0)).ok());
+  auto element = f.vp->elementAt(f.vp->toWidget(now));
+  QVERIFY(element && element->objectId == box && element->type == TopAbs_FACE);
+  // The number names the front face of the box as it is now.
+  TopTools_IndexedMapOfShape faces;
+  TopExp::MapShapes(m.document().worldShape(*m.document().find(box)), TopAbs_FACE, faces);
+  QVERIFY(element->index >= 1 && element->index <= faces.Extent());
+  const Bnd_Box b = geom::exactBounds(faces(element->index));
+  QVERIFY2(std::abs(b.CornerMin().Y() + 1000) < 1e-6 && std::abs(b.CornerMax().Y() + 1000) < 1e-6 &&
+               std::abs(b.CornerMin().X() - 3000) < 1e-6,
+           "picked face is not the front face where the box is now");
+  // A reshaped box (pushed further out), picked at once: its new front.
+  f.vp->syncNow();
+  QVERIFY(m.move({box}, gp_Vec(0, 3000, 0)).ok());
+  element = f.vp->elementAt(f.vp->toWidget(gp_Pnt(4000, 2000, 1000)));
+  QVERIFY(element && element->objectId == box);
 }
 
 // A moved object keeps its display (only placed anew): picks, snaps,

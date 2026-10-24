@@ -435,3 +435,25 @@ TEST(Freeform, OpenCurveEndsAreTheUnsharedOnes) {
   EXPECT_TRUE(has(gp_Pnt(6000, 0, 0)));
   EXPECT_FALSE(has(gp_Pnt(1000, 0, 0)));
 }
+
+// PERF-01: a long slanted line registers the cells it passes through, not
+// every cell of its bounding box (a 1 km diagonal covered a million cells).
+TEST(Freeform, LongSlantedLinesStayQuickToCross) {
+  for (const double length : {100e3, 1e6}) {
+    doc::Modeler m;
+    ASSERT_TRUE(m.createPolyline({gp_Pnt(0, 0, 0), gp_Pnt(length, length * 0.7, 0)}).ok());
+    ASSERT_TRUE(m.createPolyline({gp_Pnt(0, 0, 0), gp_Pnt(length * 0.7, length, 0)}).ok());
+    // Across both near their start: a triangle between the three.
+    auto across = m.createPolyline({gp_Pnt(1000, 2000, 0), gp_Pnt(2000, 1000, 0)});
+    ASSERT_TRUE(across.ok());
+    const auto start = std::chrono::steady_clock::now();
+    auto faces = m.facesFromCrossings(*across);
+    const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    std::printf("long line %.0f mm: %.3f s\n", length, seconds);
+    ASSERT_TRUE(faces.ok()) << faces.error();
+    ASSERT_EQ(faces->size(), 1u);
+    // The triangle (0,0), (1235.3,1764.7), (1764.7,1235.3).
+    EXPECT_NEAR(area(m.document().find(faces->front())->shape), 0.5 * std::abs(1235.294 * 1235.294 - 1764.706 * 1764.706), 1.0);
+    EXPECT_LT(seconds, 1.0);
+  }
+}

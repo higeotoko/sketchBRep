@@ -408,6 +408,9 @@ bool Viewport::toolCall(const std::function<void()>& call) {
   }
   try {
     if (tool_) tool_->cancel();
+    // A step group the tool had opened is taken back whole, so later
+    // edits do not pile into it.
+    if (modeler_.history().inGroup()) modeler_.history().abortGroup();
   } catch (...) {
   }
   clearPreview();
@@ -1480,6 +1483,7 @@ void Viewport::syncSome(std::optional<double> budgetMs) {
   }
   queue.insert(queue.end(), pendingSync_.begin(), pendingSync_.end());
   pendingSync_.clear();
+  pendingSet_.clear();
   fullSync_ = false;
   QElapsedTimer clock;
   clock.start();
@@ -1488,7 +1492,10 @@ void Viewport::syncSome(std::optional<double> budgetMs) {
   for (std::size_t i = 0; i < queue.size(); ++i) {
     if (budgetMs && clock.nsecsElapsed() / 1e6 > *budgetMs) {
       for (std::size_t j = i; j < queue.size(); ++j) {
-        if (done.insert(queue[j]).second) pendingSync_.push_back(queue[j]);
+        if (done.insert(queue[j]).second) {
+          pendingSync_.push_back(queue[j]);
+          pendingSet_.insert(queue[j]);
+        }
       }
       break;
     }
@@ -1669,8 +1676,25 @@ std::optional<doc::ObjectId> Viewport::idOf(const Handle(AIS_InteractiveObject)&
   return std::nullopt;
 }
 
+void Viewport::takeInChanges() {
+  // Changes not looked at yet (the slice timer has not run): a slice takes
+  // them in before picking, the rest waits as usual.
+  if (fullSync_ || modeler_.document().sequence() != syncedSequence_) syncSome(50.0);
+}
+
+bool Viewport::freshen(const doc::ObjectId& id) {
+  bool behind = false;
+  if (pendingSet_.erase(id) > 0) {
+    syncObject(id);
+    syncLabel(id);
+    behind = true;
+  }
+  return behind;
+}
+
 std::optional<FacePick> Viewport::pickFace(const QPoint& pos) {
   if (view_.IsNull() || pickMode_ != PickMode::Faces) return std::nullopt;
+  takeInChanges();
   const QPoint p = devicePos(pos);
   context_->MoveTo(p.x(), p.y(), view_, Standard_False);
   redraw();
@@ -1703,6 +1727,7 @@ std::optional<FacePick> Viewport::pickFace(const QPoint& pos) {
   Handle(StdSelect_BRepOwner) owner = Handle(StdSelect_BRepOwner)::DownCast(selector->Picked(chosen));
   const auto id = idOf(Handle(AIS_InteractiveObject)::DownCast(owner->Selectable()));
   if (!id) return std::nullopt;
+  if (freshen(*id)) return pickFace(pos);
   const Entry& entry = entries_.at(*id);
   const int index = entry.displayFaces.FindIndex(owner->Shape());
   if (index < 1 || index > entry.canonicalFaces.Extent()) return std::nullopt;
@@ -1717,11 +1742,14 @@ std::optional<FacePick> Viewport::pickFace(const QPoint& pos) {
 
 std::optional<doc::ObjectId> Viewport::pickObject(const QPoint& pos) {
   if (view_.IsNull() || pickMode_ != PickMode::Objects) return std::nullopt;
+  takeInChanges();
   const QPoint p = devicePos(pos);
   context_->MoveTo(p.x(), p.y(), view_, Standard_False);
   redraw();
   if (!context_->HasDetected()) return std::nullopt;
-  return idOf(context_->DetectedInteractive());
+  const auto id = idOf(context_->DetectedInteractive());
+  if (id && freshen(*id)) return pickObject(pos);
+  return id;
 }
 
 std::optional<ElementRef> Viewport::elementAt(const QPoint& pos) {
@@ -1734,6 +1762,7 @@ std::optional<ElementRef> Viewport::elementAt(const QPoint& pos) {
 
 std::optional<ElementRef> Viewport::pickElement(const QPoint& pos) {
   if (view_.IsNull() || pickMode_ != PickMode::Elements) return std::nullopt;
+  takeInChanges();
   const QPoint p = devicePos(pos);
   // Detection only: pointing at a face or an edge shows nothing (SketchUp);
   // selected elements are shown by setHighlightedElements.
@@ -1748,6 +1777,7 @@ std::optional<ElementRef> Viewport::pickElement(const QPoint& pos) {
   if (owner.IsNull()) return std::nullopt;
   const auto id = idOf(Handle(AIS_InteractiveObject)::DownCast(owner->Selectable()));
   if (!id) return std::nullopt;
+  if (freshen(*id)) return pickElement(pos);
   const Entry& entry = entries_.at(*id);
   const TopAbs_ShapeEnum type = owner->Shape().ShapeType();
   int index = 0;
