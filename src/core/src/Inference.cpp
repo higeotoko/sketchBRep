@@ -76,9 +76,15 @@ struct InferenceEngine::Slot {
   int shapeIndex = -1;
   TopoDS_Shape shape;
   Bnd_Box box;
-  std::vector<PointEntry> points;
-  std::vector<EdgeEntry> edges;
+  // Points and edges are indexed when a query first reaches the shape:
+  // thousands of objects added at once (opening a file, a large copy) only
+  // get their boxes until the cursor comes near them.
+  mutable bool indexed = false;
+  mutable std::vector<PointEntry> points;
+  mutable std::vector<EdgeEntry> edges;
   mutable std::unique_ptr<IntCurvesFace_ShapeIntersector> intersector;
+
+  void ensureIndexed() const;
 
   IntCurvesFace_ShapeIntersector& faces() const {
     if (!intersector) {
@@ -228,6 +234,12 @@ void indexShape(Slot& slot, const TopoDS_Shape& shape, int shapeIndex) {
   slot.shape = shape;
   BRepBndLib::Add(shape, slot.box);
   slot.box.Enlarge(1.0);
+}
+
+template <typename Slot>
+void indexPointsAndEdges(const Slot& slot) {
+  const TopoDS_Shape& shape = slot.shape;
+  const int shapeIndex = slot.shapeIndex;
   TopTools_IndexedMapOfShape vertices;
   TopExp::MapShapes(shape, TopAbs_VERTEX, vertices);
   for (int i = 1; i <= vertices.Extent(); ++i) {
@@ -288,6 +300,12 @@ bool InferenceEngine::isVisible(const gp_Pnt& p, const Ray& ray) const {
     }
   }
   return true;
+}
+
+void InferenceEngine::Slot::ensureIndexed() const {
+  if (indexed) return;
+  indexed = true;
+  indexPointsAndEdges(*this);
 }
 
 void InferenceEngine::setShapes(const std::vector<TopoDS_Shape>& shapes) {
@@ -377,8 +395,9 @@ void InferenceEngine::rebuildGuidePoints() const {
       }
     }
     if (!cache_) continue;
-    for (const Slot& slot : cache_->slots) {
-      if (!slot.alive) continue;
+    // Only shapes whose box the guide passes through can cross it.
+    for (const Slot& slot : cache_->along(g)) {
+      slot.ensureIndexed();
       for (const EdgeEntry& e : slot.edges) {
       if (!e.isLine) continue;
       const gp_Vec ab(e.a, e.b);
@@ -427,6 +446,7 @@ SnapResult InferenceEngine::snap(const SnapQuery& q) const {
   std::optional<SnapResult> pointSnap;
   if (q.snapToGeometry && cache_) {
     std::vector<std::pair<double, SnapResult>> candidates;
+    for (const Slot& slot : nearby) slot.ensureIndexed();
     for (const Slot& slot : nearby)
     for (const auto& entry : slot.points) {
       const double d = screenDistance(q.project, entry.point, q.cursor);
@@ -494,6 +514,7 @@ SnapResult InferenceEngine::snap(const SnapQuery& q) const {
   // 2. On edge (visible edges only).
   if (q.snapToGeometry && cache_) {
     std::vector<std::pair<double, SnapResult>> candidates;
+    for (const Slot& slot : nearby) slot.ensureIndexed();
     for (const Slot& slot : nearby)
     for (const EdgeEntry& e : slot.edges) {
       gp_Pnt candidate;

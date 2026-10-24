@@ -1350,11 +1350,21 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
     if (!found->second.edgeOverlay.IsNull()) found->second.edgeOverlay->SetTransparency(transparency);
   }
   if (created) {
-    // Selection mode -1 would make the object permanently unselectable in
-    // OCCT 7.6, so display with mode 0 and then apply the tool's pick mode.
-    context_->Display(entry.ais, shaded_ ? AIS_Shaded : AIS_WireFrame, 0, Standard_False);
+    // Displayed straight with the selection the tool picks with (computing
+    // another first, then replacing it, doubled the cost of every new
+    // object). Selection mode -1 would make the object permanently
+    // unselectable in OCCT 7.6: no pick mode displays with 0, deactivated.
+    const bool lockedFaces = entry.locked && pickMode_ == PickMode::Faces;
+    const int mode = pickMode_ == PickMode::Faces && !lockedFaces ? AIS_Shape::SelectionMode(TopAbs_FACE)
+                     : pickMode_ == PickMode::Elements           ? AIS_Shape::SelectionMode(TopAbs_EDGE)
+                                                                 : 0;
+    context_->Display(entry.ais, shaded_ ? AIS_Shaded : AIS_WireFrame, mode, Standard_False);
     if (!entry.edgeOverlay.IsNull()) context_->Display(entry.edgeOverlay, AIS_WireFrame, -1, Standard_False);
-    applyPickMode(entry.ais, entry.locked);
+    if (pickMode_ == PickMode::Elements) {
+      context_->Activate(entry.ais, AIS_Shape::SelectionMode(TopAbs_FACE));
+    } else if (pickMode_ == PickMode::None || lockedFaces) {
+      context_->Deactivate(entry.ais);
+    }
   } else if (recompute) {
     context_->Redisplay(entry.ais, Standard_False);  // per-face colours changed
   }

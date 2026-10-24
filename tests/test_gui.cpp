@@ -3248,7 +3248,13 @@ void GuiPhase1::benchManyCopiesOperations() {
   times.emplace_back("undo_delete", timed([&] { QVERIFY(m.undo()); }));
   const std::string path = QDir(QDir::tempPath()).filePath(QStringLiteral("sbr_bench_ops.sbr")).toStdString();
   times.emplace_back("save", timed([&] { QVERIFY(m.save(path).ok()); }));
+  {
+    doc::Modeler other;
+    times.emplace_back("load_core", timed([&] { QVERIFY(other.load(path, nullptr, false).ok()); }));
+  }
   times.emplace_back("open", timed([&] { QVERIFY(f.window.openFile(QString::fromStdString(path))); }));
+  times.emplace_back("clear", timed([&] { m.newDocument(); }));
+  times.emplace_back("open_empty", timed([&] { QVERIFY(f.window.openFile(QString::fromStdString(path))); }));
   QString line = QStringLiteral("bench ops n=%1 objects=%2").arg(n).arg(m.document().objects().size());
   for (const auto& [name, ms] : times) line += QStringLiteral(" %1_ms=%2").arg(QString::fromStdString(name)).arg(ms, 0, 'f', 1);
   qInfo("%s", qPrintable(line));
