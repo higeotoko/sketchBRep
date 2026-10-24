@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <chrono>
 #include <cmath>
 
 #include <BRepAdaptor_Surface.hxx>
@@ -379,4 +381,57 @@ TEST(Freeform, FollowMeSweepsAndConsumesTheProfile) {
   ASSERT_TRUE(ring.ok()) << ring.error();
   EXPECT_TRUE(validateShape(m.document().worldShape(*ring), true).valid);
   EXPECT_GT(volume(m.document().worldShape(*ring)), 0.0);
+}
+
+// A curve joined to a grid of loose lines it does not close against: the
+// loop search ends at once (a walk through every route took minutes), and
+// a curve that does close takes the shortest way round (the smaller face).
+TEST(Freeform, LoopSearchStaysQuickInAGridOfLines) {
+  doc::Modeler m;
+  constexpr int kCells = 8;
+  for (int i = 0; i <= kCells; ++i) {
+    for (int j = 0; j < kCells; ++j) {
+      ASSERT_TRUE(m.createPolyline({gp_Pnt(j * 1000.0, i * 1000.0, 0), gp_Pnt((j + 1) * 1000.0, i * 1000.0, 0)}).ok());
+      ASSERT_TRUE(m.createPolyline({gp_Pnt(i * 1000.0, j * 1000.0, 0), gp_Pnt(i * 1000.0, (j + 1) * 1000.0, 0)}).ok());
+    }
+  }
+  auto outside = m.createArc(gp_Pnt(-3000, -3000, 0), gp_Pnt(0, 0, 0), gp::DZ(), 300, false);
+  ASSERT_TRUE(outside.ok()) << outside.error();
+  const auto start = std::chrono::steady_clock::now();
+  EXPECT_FALSE(m.faceFromLoop(*outside).ok());
+  EXPECT_LT(std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(), 2.0);
+
+  // Two cells side by side, open on the left: closing it makes one cell.
+  doc::Modeler n;
+  for (const auto& [a, b] : std::vector<std::pair<gp_Pnt, gp_Pnt>>{
+           {gp_Pnt(0, 0, 0), gp_Pnt(1000, 0, 0)}, {gp_Pnt(1000, 0, 0), gp_Pnt(2000, 0, 0)},
+           {gp_Pnt(2000, 0, 0), gp_Pnt(2000, 1000, 0)}, {gp_Pnt(2000, 1000, 0), gp_Pnt(1000, 1000, 0)},
+           {gp_Pnt(1000, 1000, 0), gp_Pnt(0, 1000, 0)}, {gp_Pnt(1000, 0, 0), gp_Pnt(1000, 1000, 0)}}) {
+    ASSERT_TRUE(n.createPolyline({a, b}).ok());
+  }
+  auto closing = n.createArc(gp_Pnt(0, 1000, 0), gp_Pnt(0, 0, 0), gp::DZ(), -1e-9, false);
+  if (!closing.ok()) closing = n.createPolyline({gp_Pnt(0, 1000, 0), gp_Pnt(0, 0, 0)});
+  ASSERT_TRUE(closing.ok()) << closing.error();
+  auto face = n.faceFromLoop(*closing);
+  ASSERT_TRUE(face.ok()) << face.error();
+  EXPECT_NEAR(area(n.document().find(*face)->shape), 1e6, 1e-3);
+}
+
+// Loose ends: the ends of lines no other line meets (an end shared by two
+// lines is not one).
+TEST(Freeform, OpenCurveEndsAreTheUnsharedOnes) {
+  doc::Modeler m;
+  ASSERT_TRUE(m.createPolyline({gp_Pnt(0, 0, 0), gp_Pnt(1000, 0, 0)}).ok());
+  ASSERT_TRUE(m.createPolyline({gp_Pnt(1000, 0, 0), gp_Pnt(1000, 1000, 0)}).ok());
+  ASSERT_TRUE(m.createPolyline({gp_Pnt(5000, 0, 0), gp_Pnt(6000, 0, 0)}).ok());
+  const auto ends = m.openCurveEnds();
+  ASSERT_EQ(ends.size(), 4u);
+  auto has = [&](const gp_Pnt& p) {
+    return std::any_of(ends.begin(), ends.end(), [&](const gp_Pnt& e) { return e.Distance(p) < 1e-6; });
+  };
+  EXPECT_TRUE(has(gp_Pnt(0, 0, 0)));
+  EXPECT_TRUE(has(gp_Pnt(1000, 1000, 0)));
+  EXPECT_TRUE(has(gp_Pnt(5000, 0, 0)));
+  EXPECT_TRUE(has(gp_Pnt(6000, 0, 0)));
+  EXPECT_FALSE(has(gp_Pnt(1000, 0, 0)));
 }

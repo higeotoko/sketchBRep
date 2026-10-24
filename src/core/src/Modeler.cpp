@@ -1145,10 +1145,29 @@ std::vector<gp_Pnt> Modeler::openCurveEnds() const {
       ends.push_back(e->second);
     }
   }
+  // Ends met by no other end: compared with the ends in the same and the
+  // neighbouring cells only (every pair took long with thousands of lines).
+  constexpr double tol = 1e-3;
+  auto cellOf = [](const gp_Pnt& p) {
+    return std::array<long long, 3>{std::llround(std::floor(p.X() / (4 * tol))),
+                                    std::llround(std::floor(p.Y() / (4 * tol))),
+                                    std::llround(std::floor(p.Z() / (4 * tol)))};
+  };
+  std::map<std::array<long long, 3>, std::vector<std::size_t>> cells;
+  for (std::size_t i = 0; i < ends.size(); ++i) cells[cellOf(ends[i])].push_back(i);
   std::vector<gp_Pnt> open;
   for (std::size_t i = 0; i < ends.size(); ++i) {
     int shared = 0;
-    for (std::size_t j = 0; j < ends.size(); ++j) shared += ends[i].Distance(ends[j]) < 1e-3;
+    const auto c = cellOf(ends[i]);
+    for (long long dx = -1; dx <= 1; ++dx) {
+      for (long long dy = -1; dy <= 1; ++dy) {
+        for (long long dz = -1; dz <= 1; ++dz) {
+          const auto it = cells.find({c[0] + dx, c[1] + dy, c[2] + dz});
+          if (it == cells.end()) continue;
+          for (std::size_t j : it->second) shared += ends[i].Distance(ends[j]) < tol;
+        }
+      }
+    }
     if (shared == 1) open.push_back(ends[i]);
   }
   return open;
@@ -1169,26 +1188,68 @@ Result<ObjectId> Modeler::faceFromLoop(const ObjectId& curveId, bool* loopFound)
     if (o.id == curveId || o.parent != start->parent) continue;
     if (const auto ends = curveEnds(document_, o)) candidates.push_back({&o, ends->first, ends->second});
   }
-  // Depth-first search for a chain from the curve's end back to its start.
-  std::vector<int> path;
-  std::vector<bool> used(candidates.size(), false);
-  std::function<bool(const gp_Pnt&)> search = [&](const gp_Pnt& at) -> bool {
-    if (!path.empty() && at.Distance(startEnds->first) < 1e-3) return true;
-    if (path.size() > 32) return false;
-    for (std::size_t i = 0; i < candidates.size(); ++i) {
-      if (used[i]) continue;
-      const bool fromA = candidates[i].a.Distance(at) < 1e-3;
-      const bool fromB = candidates[i].b.Distance(at) < 1e-3;
-      if (!fromA && !fromB) continue;
-      used[i] = true;
-      path.push_back(static_cast<int>(i));
-      if (search(fromA ? candidates[i].b : candidates[i].a)) return true;
-      path.pop_back();
-      used[i] = false;
-    }
-    return false;
+  // The shortest chain from the curve's end back to its start, breadth
+  // first over the meeting points (each point once): a depth-first walk
+  // through every route froze for minutes on a grid of lines the curve
+  // did not close against.
+  constexpr double tol = 1e-3;
+  std::vector<gp_Pnt> nodes;
+  std::map<std::array<long long, 3>, std::vector<int>> cells;
+  auto cellOf = [&](const gp_Pnt& p) {
+    return std::array<long long, 3>{std::llround(std::floor(p.X() / (4 * tol))),
+                                    std::llround(std::floor(p.Y() / (4 * tol))),
+                                    std::llround(std::floor(p.Z() / (4 * tol)))};
   };
-  if (!search(startEnds->second)) return Result<ObjectId>::failure("The curve does not close a loop");
+  auto nodeOf = [&](const gp_Pnt& p) {
+    const auto c = cellOf(p);
+    for (long long dx = -1; dx <= 1; ++dx) {
+      for (long long dy = -1; dy <= 1; ++dy) {
+        for (long long dz = -1; dz <= 1; ++dz) {
+          const auto it = cells.find({c[0] + dx, c[1] + dy, c[2] + dz});
+          if (it == cells.end()) continue;
+          for (int n : it->second) {
+            if (nodes[static_cast<std::size_t>(n)].Distance(p) < tol) return n;
+          }
+        }
+      }
+    }
+    nodes.push_back(p);
+    cells[c].push_back(static_cast<int>(nodes.size()) - 1);
+    return static_cast<int>(nodes.size()) - 1;
+  };
+  const int from = nodeOf(startEnds->second), to = nodeOf(startEnds->first);
+  std::vector<std::vector<std::pair<int, int>>> links;  // node -> (candidate, other node)
+  for (std::size_t i = 0; i < candidates.size(); ++i) {
+    const int a = nodeOf(candidates[i].a), b = nodeOf(candidates[i].b);
+    if (static_cast<int>(links.size()) < static_cast<int>(nodes.size())) links.resize(nodes.size());
+    if (a == b) continue;
+    links[static_cast<std::size_t>(a)].push_back({static_cast<int>(i), b});
+    links[static_cast<std::size_t>(b)].push_back({static_cast<int>(i), a});
+  }
+  links.resize(nodes.size());
+  std::vector<std::pair<int, int>> came(nodes.size(), {-1, -1});  // (candidate, previous node)
+  std::vector<int> depth(nodes.size(), -1);
+  std::deque<int> queue{from};
+  depth[static_cast<std::size_t>(from)] = 0;
+  while (!queue.empty() && depth[static_cast<std::size_t>(to)] < 0) {
+    const int at = queue.front();
+    queue.pop_front();
+    if (depth[static_cast<std::size_t>(at)] > 32) break;
+    for (const auto& [candidate, next] : links[static_cast<std::size_t>(at)]) {
+      if (depth[static_cast<std::size_t>(next)] >= 0) continue;
+      depth[static_cast<std::size_t>(next)] = depth[static_cast<std::size_t>(at)] + 1;
+      came[static_cast<std::size_t>(next)] = {candidate, at};
+      queue.push_back(next);
+    }
+  }
+  if (from == to || depth[static_cast<std::size_t>(to)] < 0) {
+    return Result<ObjectId>::failure("The curve does not close a loop");
+  }
+  std::vector<int> path;
+  for (int at = to; at != from; at = came[static_cast<std::size_t>(at)].second) {
+    path.push_back(came[static_cast<std::size_t>(at)].first);
+  }
+  std::reverse(path.begin(), path.end());
   if (loopFound) *loopFound = true;
 
   std::vector<const Object*> members = {start};

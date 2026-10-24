@@ -979,26 +979,29 @@ void Viewport::syncSection() {
   sectionKey_ = key;
 }
 
-void Viewport::syncLabels() {
-  for (auto& [id, label] : labels_) context_->Remove(label, Standard_False);
-  labels_.clear();
-  for (const doc::Object& o : modeler_.document().objects()) {
-    if (o.kind() != doc::ObjectKind::Annotation || !modeler_.document().isVisible(o.id)) continue;
-    const auto label = doc::annotationLabel(o.recipe);
-    if (!label || label->text.empty()) continue;
-    const bool selected = isSelected(o);
-    Handle(AIS_TextLabel) text = new AIS_TextLabel();
-    text->SetText(TCollection_ExtendedString(label->text.c_str(), Standard_True));  // UTF-8
-    text->SetPosition(label->position.Transformed(modeler_.document().worldTransform(o)));
-    text->SetHeight(15);
-    text->SetColor(selected ? kSelectedColor : Quantity_Color(Quantity_NOC_BLACK));
-    text->SetHJustification(Graphic3d_HTA_CENTER);
-    text->SetVJustification(Graphic3d_VTA_BOTTOM);
-    text->SetZLayer(Graphic3d_ZLayerId_TopOSD);
-    // Selection mode -1: labels are not pickable; their lines are.
-    context_->Display(text, 0, -1, Standard_False);
-    labels_.emplace(o.id, text);
+void Viewport::syncLabel(const doc::ObjectId& id) {
+  // One annotation's text, as its object is synchronised (all of them were
+  // made again on every update of the view).
+  if (const auto it = labels_.find(id); it != labels_.end()) {
+    context_->Remove(it->second, Standard_False);
+    labels_.erase(it);
   }
+  const doc::Object* o = modeler_.document().find(id);
+  if (!o || o->kind() != doc::ObjectKind::Annotation || !modeler_.document().isVisible(o->id)) return;
+  const auto label = doc::annotationLabel(o->recipe);
+  if (!label || label->text.empty()) return;
+  const bool selected = isSelected(*o);
+  Handle(AIS_TextLabel) text = new AIS_TextLabel();
+  text->SetText(TCollection_ExtendedString(label->text.c_str(), Standard_True));  // UTF-8
+  text->SetPosition(label->position.Transformed(modeler_.document().worldTransform(*o)));
+  text->SetHeight(15);
+  text->SetColor(selected ? kSelectedColor : Quantity_Color(Quantity_NOC_BLACK));
+  text->SetHJustification(Graphic3d_HTA_CENTER);
+  text->SetVJustification(Graphic3d_VTA_BOTTOM);
+  text->SetZLayer(Graphic3d_ZLayerId_TopOSD);
+  // Selection mode -1: labels are not pickable; their lines are.
+  context_->Display(text, 0, -1, Standard_False);
+  labels_.emplace(o->id, text);
 }
 
 QString Viewport::annotationText(const doc::ObjectId& id) const {
@@ -1458,14 +1461,16 @@ void Viewport::syncSome(std::optional<double> budgetMs) {
       }
       break;
     }
-    if (done.insert(queue[i]).second) guidesChanged |= syncObject(queue[i]);
+    if (done.insert(queue[i]).second) {
+      guidesChanged |= syncObject(queue[i]);
+      syncLabel(queue[i]);
+    }
   }
   if (guidesChanged) {
     std::vector<gp_Lin> lines;
     for (const auto& [id, line] : guideLines_) lines.push_back(line);
     inference_.setGuides(lines);
   }
-  syncLabels();
   syncSection();
   syncOpenEnds();
   syncEditBox();

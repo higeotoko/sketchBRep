@@ -207,6 +207,7 @@ class GuiPhase1 : public QObject {
   void benchManyCopiesOperations();
   void benchMoreSlowPatterns();
   void benchPerOperationAtScale();
+  void benchSuspiciousShapes();
   void groupEditFadesTheRest();
   void componentEditUpdatesPlacementsInSlices();
   void incrementalSyncFollowsGroupsAndUndo();
@@ -251,6 +252,7 @@ class GuiPhase1 : public QObject {
   void autosaveWritesInTheBackground();
   void builtinMaterialsCarryTheirPictures();
   void presetPictureKeepsTheMaterial();
+  void labelsFollowTheirNotes();
   void eraserDragErasesCrossedLines();
   void eraserDragFollowsWhatTheLineBecame();
   void wheelZoomIsConsistentAndReversible();
@@ -3504,6 +3506,125 @@ void GuiPhase1::benchPerOperationAtScale() {
   qInfo("%s", qPrintable(text));
 }
 
+// Shapes and settings that may be slow in numbers: pictures on many
+// objects, many cylinders, deeply nested groups, and the memory the undo
+// history takes for repeated edits of a large selection. Skipped unless
+// SBR_BENCH_N is set; prints timings.
+void GuiPhase1::benchSuspiciousShapes() {
+  const int n = qEnvironmentVariableIntValue("SBR_BENCH_N");
+  if (n <= 0) QSKIP("set SBR_BENCH_N to run the benchmark");
+  auto rssMb = [] {
+    QFile status(QStringLiteral("/proc/self/status"));
+    if (!status.open(QIODevice::ReadOnly)) return -1.0;
+    for (const QByteArray& line : status.readAll().split('\n')) {
+      if (line.startsWith("VmRSS:")) return line.mid(6).trimmed().split(' ').front().toDouble() / 1024.0;
+    }
+    return -1.0;
+  };
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  std::vector<std::pair<std::string, double>> times;
+  QElapsedTimer t;
+  auto timed = [&](const char* name, const std::function<void()>& fn) {
+    t.start();
+    fn();
+    f.vp->syncNow();
+    QCoreApplication::processEvents();
+    times.emplace_back(name, t.nsecsElapsed() / 1e6);
+  };
+  const int columns = static_cast<int>(std::ceil(std::sqrt(static_cast<double>(n))));
+  auto grid = [&](const doc::ObjectId& first, double y0) {
+    gp_Trsf dx, dy;
+    dx.SetTranslation(gp_Vec(1500, 0, 0));
+    dy.SetTranslation(gp_Vec(0, 1500, 0));
+    auto row = m.copy({first}, dx, columns - 1);
+    std::vector<doc::ObjectId> all{first};
+    all.insert(all.end(), row->begin(), row->end());
+    auto rest = m.copy(all, dy, (n + columns - 1) / columns - 1);
+    if (rest.ok()) all.insert(all.end(), rest->begin(), rest->end());
+    (void)y0;
+    return all;
+  };
+  // Boxes painted with a picture material.
+  const auto brick = f.window.addPresetMaterial(5);
+  QVERIFY(brick);
+  const doc::ObjectId first = f.box(0, 0, 1000, 1000, 1000);
+  QVERIFY(m.assignMaterial({first}, *brick).ok());
+  std::vector<doc::ObjectId> boxes;
+  timed("textured_boxes_make_and_show", [&] { boxes = grid(first, 0); });
+  timed("textured_select_all", [&] { f.window.setSelection(boxes); });
+  timed("textured_move_all", [&] { QVERIFY(m.move(boxes, gp_Vec(0, 0, 100)).ok()); });
+  timed("textured_deselect", [&] { f.window.setSelection({}); });
+  timed("textured_hide_show", [&] {
+    QVERIFY(m.hide(boxes).ok());
+    f.vp->syncNow();
+    QVERIFY(m.unhideAll().ok());
+  });
+  // Cylinders (curved faces): made, shown, pointed at.
+  geom::SketchPlane plane = geom::SketchPlane::ground();
+  plane.origin = gp_Pnt(0, -100000, 0);
+  auto circle = m.createCircle(plane, 400);
+  QVERIFY(circle.ok());
+  QVERIFY(m.extrude(*circle, 2000).ok());
+  std::vector<doc::ObjectId> cylinders;
+  timed("cylinders_make_and_show", [&] { cylinders = grid(*circle, -100000); });
+  f.vp->fitAll();
+  f.window.activateTool(MainWindow::ToolId::Line);
+  timed("hover_100_over_all", [&] {
+    for (int k = 0; k < 100; ++k) move(f.vp, QPoint(40 + (13 * k) % (f.vp->width() - 80), 40 + (7 * k) % (f.vp->height() - 80)));
+  });
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  f.window.activateTool(MainWindow::ToolId::Select);
+  // Groups 30 deep with a box inside each level.
+  doc::ObjectId deepest = f.box(0, 200000, 1000, 1000, 1000);
+  doc::ObjectId top = deepest;
+  for (int level = 0; level < 30; ++level) {
+    const doc::ObjectId extra = f.box(1500.0 * (level + 1), 200000, 1000, 1000, 1000);
+    auto g = m.group({top, extra}, "L" + std::to_string(level));
+    QVERIFY(g.ok());
+    top = *g;
+  }
+  timed("nested_move_top", [&] { QVERIFY(m.move({top}, gp_Vec(0, 100, 0)).ok()); });
+  timed("nested_select_top", [&] { f.window.setSelection({top}); });
+  {
+    // Where one ordinary step's time goes: the step, the display update,
+    // the panels (deferred), painting.
+    QElapsedTimer part;
+    part.start();
+    f.window.setSelection({deepest});
+    const double step = part.nsecsElapsed() / 1e6;
+    part.restart();
+    f.vp->syncNow();
+    const double sync = part.nsecsElapsed() / 1e6;
+    part.restart();
+    QCoreApplication::processEvents();
+    const double events = part.nsecsElapsed() / 1e6;
+    part.restart();
+    f.vp->redraw();
+    const double redraw = part.nsecsElapsed() / 1e6;
+    qInfo("bench split select_step_ms=%.1f sync_ms=%.1f events_ms=%.1f redraw_ms=%.1f", step, sync, events, redraw);
+  }
+  timed("nested_line_in_deepest", [&] {
+    QVERIFY(m.setActiveGroup(m.document().find(deepest)->parent).ok());
+    QVERIFY(m.createPolyline({gp_Pnt(0, 199000, 0), gp_Pnt(500, 199000, 0)}).ok());
+    QVERIFY(m.setActiveGroup({}).ok());
+  });
+  // Memory of the history: the boxes moved 30 times.
+  const double before = rssMb();
+  timed("move_all_30_times", [&] {
+    for (int k = 0; k < 30; ++k) QVERIFY(m.move(boxes, gp_Vec(10, 0, 0)).ok());
+  });
+  const double after = rssMb();
+  times.emplace_back("history_growth_mb_per_move", (after - before) / 30.0);
+  timed("undo_30", [&] {
+    for (int k = 0; k < 30; ++k) QVERIFY(m.undo());
+  });
+  QString text = QStringLiteral("bench suspicious n=%1 objects=%2 rss_mb=%3").arg(n).arg(m.document().objects().size()).arg(rssMb());
+  for (const auto& [name, ms] : times) text += QStringLiteral(" %1=%2").arg(QString::fromStdString(name)).arg(ms, 0, 'f', 1);
+  qInfo("%s", qPrintable(text));
+}
+
 // Performance plan step 0: viewport cost of a model with many placements.
 // Skipped unless SBR_BENCH_N is set (e.g. SBR_BENCH_N=1000); prints timings.
 void GuiPhase1::benchViewportSync() {
@@ -5948,6 +6069,46 @@ void GuiPhase1::presetPictureKeepsTheMaterial() {
   QCOMPARE(m.document().findMaterial(*brick)->texture->image, own.texture->image);
   QVERIFY(f.window.applyPresetPicture(*brick, *index, true));  // replacing it asked for
   QVERIFY(m.document().findMaterial(*brick)->texture->image != own.texture->image);
+}
+
+// Each note's text is made as its object is synchronised (not all of them
+// again on every update): hidden, shown, renamed, deleted and undone, the
+// text follows; the others stay as they are.
+void GuiPhase1::labelsFollowTheirNotes() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  std::vector<doc::ObjectId> notes;
+  for (int k = 0; k < 20; ++k) {
+    auto id = m.createText(gp_Pnt(k * 500.0, 0, 0), std::nullopt, "N" + std::to_string(k));
+    QVERIFY(id.ok());
+    notes.push_back(*id);
+  }
+  f.vp->syncNow();
+  QCOMPARE(f.vp->annotationText(notes[3]), QStringLiteral("N3"));
+  QVERIFY(m.setVisible(notes[3], false).ok());
+  f.vp->syncNow();
+  QVERIFY(f.vp->annotationText(notes[3]).isEmpty());
+  QCOMPARE(f.vp->annotationText(notes[4]), QStringLiteral("N4"));
+  QVERIFY(m.setVisible(notes[3], true).ok());
+  f.vp->syncNow();
+  QCOMPARE(f.vp->annotationText(notes[3]), QStringLiteral("N3"));
+  QVERIFY(m.remove({notes[5]}).ok());
+  f.vp->syncNow();
+  QVERIFY(f.vp->annotationText(notes[5]).isEmpty());
+  QVERIFY(m.undo());
+  f.vp->syncNow();
+  QCOMPARE(f.vp->annotationText(notes[5]), QStringLiteral("N5"));
+  // Inside a group hidden by its tag: the text goes with it.
+  auto group = m.group({notes[6], notes[7]}, "G");
+  QVERIFY(group.ok());
+  QVERIFY(m.setLayer(*group, "Hidden").ok());
+  m.setTagVisible("Hidden", false);
+  f.vp->syncNow();
+  QVERIFY(f.vp->annotationText(notes[6]).isEmpty());
+  m.setTagVisible("Hidden", true);
+  f.vp->syncNow();
+  QCOMPARE(f.vp->annotationText(notes[7]), QStringLiteral("N7"));
 }
 
 // SketchUp: hold the eraser down and sweep across lines; they are marked

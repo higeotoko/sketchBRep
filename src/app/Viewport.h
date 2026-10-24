@@ -293,7 +293,7 @@ class Viewport : public QWidget {
   // Brings one object's display entry and snap index up to date (created,
   // replaced, recoloured or removed). Returns true if a guide changed.
   bool syncObject(const doc::ObjectId& id);
-  void syncLabels();
+  void syncLabel(const doc::ObjectId& id);
   void syncSection();
   void syncOpenEnds();
   // Editing inside a group or component: a dotted box around it (SketchUp).
