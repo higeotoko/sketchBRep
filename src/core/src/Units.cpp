@@ -25,6 +25,17 @@ std::string lower(std::string_view s) {
 std::optional<double> parseLength(std::string_view text) {
   text = trim(text);
   if (text.empty()) return std::nullopt;
+  // Feet and inches together (SketchUp): 3'6", 3' 6", 3'6, -3'6.5" (3' alone
+  // is feet below).
+  if (const std::size_t foot = text.find('\''); foot != std::string_view::npos && foot + 1 < text.size()) {
+    const auto feet = parseLength(std::string(text.substr(0, foot)) + "ft");
+    std::string inches(trim(text.substr(foot + 1)));
+    if (!feet || inches.empty() || inches.front() == '-' || inches.front() == '+') return std::nullopt;
+    if (inches.back() != '"') inches += "in";
+    const auto more = parseLength(inches);
+    if (!more) return std::nullopt;
+    return text.front() == '-' ? *feet - *more : *feet + *more;
+  }
 
   std::size_t numberEnd = 0;
   while (numberEnd < text.size()) {
@@ -55,6 +66,10 @@ std::optional<double> parseLength(std::string_view text) {
     scale = 10.0;
   } else if (suffix == "m") {
     scale = 1000.0;
+  } else if (suffix == "in" || suffix == "\"") {
+    scale = 25.4;
+  } else if (suffix == "ft" || suffix == "'") {
+    scale = 304.8;
   } else {
     return std::nullopt;
   }

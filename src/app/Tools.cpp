@@ -4437,7 +4437,7 @@ void ScaleTool::applyMeasurement(const QString& text) {
       if (v.isEmpty()) continue;
       const int axis = active[static_cast<std::size_t>(k)];
       double factor = 0.0;
-      if (v.contains(QRegularExpression(QStringLiteral("[a-zA-Z]")))) {
+      if (v.contains(QRegularExpression(QStringLiteral("[a-zA-Z'\"]")))) {
         const auto length = units::parseLength(v.toStdString());
         const double size = box.hi.Coord(axis + 1) - box.lo.Coord(axis + 1);
         if (!length || *length <= 0 || size < tolerance::kMinDimension) {
@@ -4486,7 +4486,7 @@ void ScaleTool::applyMeasurement(const QString& text) {
     const doc::Object* o = document.find(id);
     return o && o->kind() == doc::ObjectKind::Image;
   });
-  const bool isLength = images || t.contains(QRegularExpression(QStringLiteral("[a-zA-Z]")));
+  const bool isLength = images || t.contains(QRegularExpression(QStringLiteral("[a-zA-Z'\"]")));
   double referenceDistance = 0.0;
   if (stage_ == Stage::Scaling) {
     referenceDistance = fixed_.Distance(reference_);

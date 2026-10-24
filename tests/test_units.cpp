@@ -20,7 +20,7 @@ TEST(Units, ParsesUnitSuffixes) {
 TEST(Units, RejectsGarbage) {
   EXPECT_FALSE(parseLength(""));
   EXPECT_FALSE(parseLength("abc"));
-  EXPECT_FALSE(parseLength("12ft"));
+  EXPECT_FALSE(parseLength("12yd"));  // (feet and inches are read since W8)
   EXPECT_FALSE(parseLength("1.2.3"));
 }
 
@@ -70,4 +70,22 @@ TEST(Units, LengthSlotsMayBeEmpty) {
   EXPECT_FALSE(parseLengthSlots(","));        // nothing given
   EXPECT_FALSE(parseLengthSlots("3000,abc"));  // garbage is not "empty"
   EXPECT_FALSE(parseLengthSlots(""));
+}
+
+// W8: inches and feet as in SketchUp - 12", 12in, 3', 3ft, 3'6", 3' 6",
+// 3'6 (inches), -3'6" (all negative); still refused: nonsense after them.
+TEST(Units, InchesAndFeet) {
+  EXPECT_NEAR(*parseLength("12\""), 304.8, 1e-9);
+  EXPECT_NEAR(*parseLength("12in"), 304.8, 1e-9);
+  EXPECT_NEAR(*parseLength("3'"), 914.4, 1e-9);
+  EXPECT_NEAR(*parseLength("3ft"), 914.4, 1e-9);
+  EXPECT_NEAR(*parseLength("3'6\""), 1066.8, 1e-9);
+  EXPECT_NEAR(*parseLength("3' 6\""), 1066.8, 1e-9);
+  EXPECT_NEAR(*parseLength("3'6"), 1066.8, 1e-9);
+  EXPECT_NEAR(*parseLength("3'6.5\""), 1079.5, 1e-9);
+  EXPECT_NEAR(*parseLength("-3'6\""), -1066.8, 1e-9);
+  EXPECT_FALSE(parseLength("3'x").has_value());
+  EXPECT_FALSE(parseLength("3'-6\"").has_value());
+  EXPECT_FALSE(parseLength("'6\"").has_value());
+  EXPECT_NEAR(*parseLength("2000"), 2000, 1e-9);  // mm as before
 }
