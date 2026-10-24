@@ -1,3 +1,5 @@
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 
@@ -200,4 +202,43 @@ TEST(NativeFormat, FastLoadThenVerifyRecipesInSlices) {
   }
   ASSERT_EQ(found.size(), 1u);
   EXPECT_NE(found.front().find("could not be regenerated"), std::string::npos) << found.front();
+}
+
+// PERF-05: peak memory of saving a large model (VmHWM growth). Skipped
+// unless SBR_BENCH_FILE names a .sbr file; prints the numbers.
+TEST(NativeFormat, BenchSavePeakMemory) {
+  const char* file = std::getenv("SBR_BENCH_FILE");
+  if (!file) GTEST_SKIP() << "set SBR_BENCH_FILE to run";
+  auto status = [](const char* key) {
+    std::ifstream in("/proc/self/status");
+    std::string line;
+    while (std::getline(in, line)) {
+      if (line.rfind(key, 0) == 0) return std::stod(line.substr(std::strlen(key))) / 1024.0;
+    }
+    return -1.0;
+  };
+  Document d;
+  ASSERT_TRUE(loadDocument(d, file).ok());
+  // Pictures on materials, as a textured model carries (3 MB each).
+  const int pictures = std::getenv("SBR_BENCH_PICTURES") ? std::atoi(std::getenv("SBR_BENCH_PICTURES")) : 0;
+  for (int k = 0; k < pictures; ++k) {
+    std::string bytes(3 << 20, '\0');
+    for (std::size_t i = 0; i < bytes.size(); ++i) bytes[i] = static_cast<char>((i * 2654435761u + k * 97) >> 13);
+    Material material;
+    material.id = "bench-" + std::to_string(k);
+    material.name = material.id;
+    MaterialTexture texture;
+    texture.image = d.addImage(bytes, material.id + ".png");
+    material.texture = texture;
+    d.putMaterial(material);
+  }
+  const std::string text = serializeDocument(d);
+  const double before = status("VmRSS:");
+  // Peak so far reset (Linux 4.0+): writing 5 to clear_refs resets VmHWM.
+  { std::ofstream("/proc/self/clear_refs") << "5"; }
+  const std::string out = ::testing::TempDir() + "/bench_save.sbr";
+  ASSERT_TRUE(saveDocument(d, out).ok());
+  const double peak = status("VmHWM:");
+  std::printf("bench save file_mb=%.1f rss_before_mb=%.1f peak_mb=%.1f peak_growth_mb=%.1f\n", text.size() / 1048576.0, before,
+              peak, peak - before);
 }

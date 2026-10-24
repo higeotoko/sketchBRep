@@ -11,6 +11,8 @@
 
 #include "sbr/api/CommandApi.h"
 #include "sbr/doc/Modeler.h"
+#include "sbr/doc/NativeFormat.h"
+#include "sbr/geom/Measure.h"
 
 using nlohmann::json;
 using sbr::api::CommandApi;
@@ -762,4 +764,51 @@ TEST(Transactions, CopiesStayWithinOneStepsBudget) {
   m.history().abortGroup();
   EXPECT_EQ(m.document().objects().size(), objects);
   ASSERT_TRUE(m.copy({*group}, shift, 10).ok());
+}
+
+// PERF-04: a recipe sharing its inputs (a part copied, both joined, again
+// and again) is saved with each shared input once, not once per use; it
+// loads back with the same shape and stays editable.
+TEST(Transactions, SharedRecipesAreSavedOnce) {
+  sbr::doc::Modeler m;
+  sbr::geom::SketchPlane plane = sbr::geom::SketchPlane::ground();
+  auto profile = m.createRectangle(plane, 1000, 1000);
+  ASSERT_TRUE(profile.ok());
+  ASSERT_TRUE(m.extrude(*profile, 1000).ok());
+  sbr::doc::ObjectId part = *profile;
+  std::vector<std::size_t> sizes;
+  for (int k = 0; k < 10; ++k) {
+    gp_Trsf shift;
+    shift.SetTranslation(gp_Vec(500.0 * std::pow(2.0, k), 0, 0));
+    auto copy = m.copy({part}, shift);
+    ASSERT_TRUE(copy.ok() && copy->size() == 1);
+    auto joined = m.boolean(sbr::doc::BooleanKind::Union, {part, copy->front()});
+    ASSERT_TRUE(joined.ok()) << joined.error();
+    part = *joined;
+    sizes.push_back(sbr::doc::serializeDocument(m.document()).size());
+  }
+  std::string line;
+  for (std::size_t s : sizes) line += std::to_string(s) + " ";
+  std::printf("saved bytes per doubling: %s\n", line.c_str());
+  // Each doubling adds about the same (one more boolean), not twice as much.
+  EXPECT_LT(sizes.back(), sizes[4] * 4);
+  // Back the same, the shared inputs shared again, still editable.
+  sbr::doc::Document loaded;
+  std::vector<std::string> warnings;
+  ASSERT_TRUE(sbr::doc::deserializeDocument(sbr::doc::serializeDocument(m.document()), loaded, &warnings, true).ok());
+  EXPECT_TRUE(warnings.empty()) << warnings.front();
+  const sbr::doc::Object* back = loaded.find(part);
+  ASSERT_NE(back, nullptr);
+  EXPECT_NEAR(sbr::geom::volume(back->shape), sbr::geom::volume(m.document().find(part)->shape), 1e-3);
+  const auto* top = std::get_if<sbr::doc::BooleanFeature>(&back->recipe.base);
+  ASSERT_NE(top, nullptr);
+  // The part and its copy are built from the same inputs, shared again.
+  const auto* left = std::get_if<sbr::doc::BooleanFeature>(&top->operands[0].recipe->base);
+  const auto* right = std::get_if<sbr::doc::BooleanFeature>(&top->operands[1].recipe->base);
+  ASSERT_TRUE(left && right);
+  EXPECT_EQ(left->operands[0].recipe, right->operands[0].recipe);
+  // A file without shared recipes keeps the version before.
+  sbr::doc::Modeler plain;
+  ASSERT_TRUE(plain.createRectangle(plane, 100, 100).ok());
+  EXPECT_NE(sbr::doc::serializeDocument(plain.document()).find("\"version\": 3"), std::string::npos);
 }

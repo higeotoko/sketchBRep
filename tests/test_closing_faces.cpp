@@ -323,3 +323,40 @@ TEST(ClosingFaces, Bench) {
               double(std::chrono::duration_cast<ms>(t2 - t1).count()) / (n * 6));
   EXPECT_EQ(count(m, ObjectKind::Solid), n);
 }
+
+// PERF-15: boxes closed face by face (each last face closes a solid), and
+// one open shape growing a face at a time (each new face joins the whole
+// shape again). Skipped unless SBR_BENCH_N is set; prints timings.
+TEST(ClosingFaces, BenchJoiningOneByOne) {
+  const int n = qEnvInt("SBR_BENCH_N");
+  if (n <= 0) GTEST_SKIP() << "set SBR_BENCH_N to run";
+  Modeler m;
+  auto quad = [&](gp_Pnt a, gp_Pnt b, gp_Pnt c, gp_Pnt d) { ASSERT_TRUE(m.createPolygon({a, b, c, d}).ok()); };
+  auto t0 = std::chrono::steady_clock::now();
+  const int boxes = std::max(1, n / 10);
+  for (int k = 0; k < boxes; ++k) {
+    const double x = k * 3000.0, s = 1000.0;
+    quad(gp_Pnt(x, 0, 0), gp_Pnt(x + s, 0, 0), gp_Pnt(x + s, s, 0), gp_Pnt(x, s, 0));
+    quad(gp_Pnt(x, 0, s), gp_Pnt(x + s, 0, s), gp_Pnt(x + s, s, s), gp_Pnt(x, s, s));
+    quad(gp_Pnt(x, 0, 0), gp_Pnt(x + s, 0, 0), gp_Pnt(x + s, 0, s), gp_Pnt(x, 0, s));
+    quad(gp_Pnt(x, s, 0), gp_Pnt(x + s, s, 0), gp_Pnt(x + s, s, s), gp_Pnt(x, s, s));
+    quad(gp_Pnt(x, 0, 0), gp_Pnt(x, s, 0), gp_Pnt(x, s, s), gp_Pnt(x, 0, s));
+    quad(gp_Pnt(x + s, 0, 0), gp_Pnt(x + s, s, 0), gp_Pnt(x + s, s, s), gp_Pnt(x + s, 0, s));
+  }
+  const double closing = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+  int solids = 0;
+  for (const auto& o : m.document().objects()) solids += o.kind() == ObjectKind::Solid;
+  EXPECT_EQ(solids, boxes);
+  // A zigzag wall: n upright faces, each sharing an edge with the last.
+  std::vector<double> perFace;
+  for (int k = 0; k < n; ++k) {
+    const double x0 = k * 1000.0, y0 = (k % 2) * 1000.0, x1 = (k + 1) * 1000.0, y1 = ((k + 1) % 2) * 1000.0;
+    const auto t = std::chrono::steady_clock::now();
+    quad(gp_Pnt(x0, y0 + 50000, 0), gp_Pnt(x1, y1 + 50000, 0), gp_Pnt(x1, y1 + 50000, 3000), gp_Pnt(x0, y0 + 50000, 3000));
+    perFace.push_back(std::chrono::duration<double>(std::chrono::steady_clock::now() - t).count() * 1000);
+  }
+  double total = 0;
+  for (double ms : perFace) total += ms;
+  std::printf("bench joining n=%d boxes=%d closing_s=%.2f per_box_ms=%.1f zigzag_total_s=%.2f first_ms=%.1f last_ms=%.1f\n", n,
+              boxes, closing, closing * 1000 / boxes, total / 1000, perFace.front(), perFace.back());
+}

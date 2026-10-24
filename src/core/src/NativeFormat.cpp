@@ -4,7 +4,10 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <memory>
 #include <set>
+#include <unordered_map>
+#include <vector>
 #include <sstream>
 
 #include <nlohmann/json.hpp>
@@ -107,6 +110,55 @@ BooleanKind booleanKindFrom(const std::string& s) {
 json recipeToJson(const Recipe& recipe);
 Recipe recipeFrom(const json& j);
 
+// Recipes are shared by the features using them (a part copied and joined
+// with itself, again and again): one used in more than one place is written
+// once in the file's "recipes" table and referred to by index, so the file
+// does not grow with every path through the shared inputs (it doubled on
+// each copy-and-join). Read back once and shared again on load.
+struct RecipeWriter {
+  bool counting = true;  // first pass: how often each recipe is used
+  std::unordered_map<const Recipe*, int> uses;
+  std::unordered_map<const Recipe*, std::size_t> index;
+  json entries = json::array();
+};
+thread_local RecipeWriter* recipeWriter = nullptr;
+
+struct RecipeReader {
+  const json* entries = nullptr;
+  std::vector<std::shared_ptr<const Recipe>> parsed;
+};
+thread_local RecipeReader* recipeReader = nullptr;
+
+// The ["recipe", inline] or ["ref", index] member of an operand.
+json sharedRecipe(const std::shared_ptr<const Recipe>& recipe) {
+  RecipeWriter* w = recipeWriter;
+  if (!w) return json::array({"recipe", recipeToJson(*recipe)});
+  const Recipe* key = recipe.get();
+  if (w->counting) {
+    if (++w->uses[key] == 1) (void)recipeToJson(*recipe);  // its inputs, once
+    return json::array({"recipe", nullptr});
+  }
+  if (w->uses[key] < 2) return json::array({"recipe", recipeToJson(*recipe)});
+  auto it = w->index.find(key);
+  if (it == w->index.end()) {
+    it = w->index.emplace(key, w->entries.size()).first;
+    w->entries.push_back(nullptr);  // the place, before its own inputs
+    json written = recipeToJson(*recipe);
+    w->entries[it->second] = std::move(written);
+  }
+  return json::array({"ref", it->second});
+}
+
+std::shared_ptr<const Recipe> sharedRecipeFrom(const json& operand) {
+  if (!operand.contains("ref")) return std::make_shared<const Recipe>(recipeFrom(operand.at("recipe")));
+  const std::size_t i = operand.at("ref").get<std::size_t>();
+  RecipeReader* r = recipeReader;
+  if (!r || !r->entries || i >= r->entries->size()) throw std::runtime_error("missing shared recipe");
+  if (r->parsed.size() < r->entries->size()) r->parsed.resize(r->entries->size());
+  if (!r->parsed[i]) r->parsed[i] = std::make_shared<const Recipe>(recipeFrom((*r->entries)[i]));
+  return r->parsed[i];
+}
+
 json overridesToJson(const std::vector<ParameterOverride>& overrides) {
   json list = json::array();
   for (const ParameterOverride& p : overrides) list.push_back({{"object", p.object}, {"key", p.key}, {"value", p.value}});
@@ -187,6 +239,7 @@ json baseToJson(const BaseFeature& base) {
             return j;
           },
           [](const ImportedShape& s) {
+            if (recipeWriter && recipeWriter->counting) return json();  // nothing to count inside
             return json{{"type", "imported"},
                         {"source", s.source},
                         {"brep", geom::shapeToBRepString(s.shape)}};
@@ -196,14 +249,14 @@ json baseToJson(const BaseFeature& base) {
             for (const BooleanOperand& o : b.operands) {
               operands.push_back({{"name", o.name},
                                   {"placement", toJson(o.placement)},
-                                  {"recipe", recipeToJson(*o.recipe)}});
+                                  sharedRecipe(o.recipe)});
             }
             return json{{"type", "boolean"}, {"kind", toString(b.kind)}, {"operands", operands}};
           },
           [](const SewnFeature& s) {
             json faces = json::array();
             for (const BooleanOperand& o : s.faces) {
-              faces.push_back({{"name", o.name}, {"placement", toJson(o.placement)}, {"recipe", recipeToJson(*o.recipe)}});
+              faces.push_back({{"name", o.name}, {"placement", toJson(o.placement)}, sharedRecipe(o.recipe)});
             }
             return json{{"type", "sewn"}, {"faces", faces}};
           },
@@ -212,14 +265,14 @@ json baseToJson(const BaseFeature& base) {
             for (const BooleanOperand& o : l.sections) {
               sections.push_back({{"name", o.name},
                                   {"placement", toJson(o.placement)},
-                                  {"recipe", recipeToJson(*o.recipe)}});
+                                  sharedRecipe(o.recipe)});
             }
             return json{{"type", "loft"}, {"solid", l.solid}, {"sections", sections}};
           },
           [](const LoopProfile& l) {
             json curves = json::array();
             for (const BooleanOperand& o : l.curves) {
-              curves.push_back({{"name", o.name}, {"placement", toJson(o.placement)}, {"recipe", recipeToJson(*o.recipe)}});
+              curves.push_back({{"name", o.name}, {"placement", toJson(o.placement)}, sharedRecipe(o.recipe)});
             }
             json j = {{"type", "loop"}, {"curves", curves}};
             if (l.reversed) j["reversed"] = true;
@@ -228,7 +281,7 @@ json baseToJson(const BaseFeature& base) {
           [](const FacePart& f) {
             json source = json::array();
             for (const BooleanOperand& o : f.source) {
-              source.push_back({{"name", o.name}, {"placement", toJson(o.placement)}, {"recipe", recipeToJson(*o.recipe)}});
+              source.push_back({{"name", o.name}, {"placement", toJson(o.placement)}, sharedRecipe(o.recipe)});
             }
             return json{{"type", "facepart"}, {"source", source}, {"line", pointsToJson(f.line)}, {"inside", toJson(f.inside)}};
           },
@@ -237,7 +290,7 @@ json baseToJson(const BaseFeature& base) {
             for (const BooleanOperand& o : f.inputs) {
               inputs.push_back({{"name", o.name},
                                 {"placement", toJson(o.placement)},
-                                {"recipe", recipeToJson(*o.recipe)}});
+                                sharedRecipe(o.recipe)});
             }
             return json{{"type", "sweep"}, {"inputs", inputs}};
           },
@@ -340,7 +393,7 @@ BaseFeature baseFrom(const json& j) {
     BooleanFeature b;
     b.kind = booleanKindFrom(j.at("kind").get<std::string>());
     for (const json& o : j.at("operands")) {
-      b.operands.push_back(BooleanOperand{std::make_shared<const Recipe>(recipeFrom(o.at("recipe"))),
+      b.operands.push_back(BooleanOperand{sharedRecipeFrom(o),
                                           trsfFrom(o.at("placement")),
                                           o.value("name", std::string())});
     }
@@ -350,7 +403,7 @@ BaseFeature baseFrom(const json& j) {
     LoftFeature l;
     l.solid = j.value("solid", true);
     for (const json& o : j.at("sections")) {
-      l.sections.push_back(BooleanOperand{std::make_shared<const Recipe>(recipeFrom(o.at("recipe"))),
+      l.sections.push_back(BooleanOperand{sharedRecipeFrom(o),
                                           trsfFrom(o.at("placement")),
                                           o.value("name", std::string())});
     }
@@ -359,7 +412,7 @@ BaseFeature baseFrom(const json& j) {
   if (type == "sewn") {
     SewnFeature s;
     for (const json& o : j.at("faces")) {
-      s.faces.push_back(BooleanOperand{std::make_shared<const Recipe>(recipeFrom(o.at("recipe"))),
+      s.faces.push_back(BooleanOperand{sharedRecipeFrom(o),
                                        trsfFrom(o.at("placement")), o.value("name", std::string())});
     }
     return s;
@@ -368,7 +421,7 @@ BaseFeature baseFrom(const json& j) {
     LoopProfile l;
     l.reversed = j.value("reversed", false);
     for (const json& o : j.at("curves")) {
-      l.curves.push_back(BooleanOperand{std::make_shared<const Recipe>(recipeFrom(o.at("recipe"))),
+      l.curves.push_back(BooleanOperand{sharedRecipeFrom(o),
                                         trsfFrom(o.at("placement")), o.value("name", std::string())});
     }
     return l;
@@ -376,7 +429,7 @@ BaseFeature baseFrom(const json& j) {
   if (type == "facepart") {
     FacePart f;
     for (const json& o : j.at("source")) {
-      f.source.push_back(BooleanOperand{std::make_shared<const Recipe>(recipeFrom(o.at("recipe"))),
+      f.source.push_back(BooleanOperand{sharedRecipeFrom(o),
                                         trsfFrom(o.at("placement")), o.value("name", std::string())});
     }
     f.line = pointsFrom(j.at("line"));
@@ -386,7 +439,7 @@ BaseFeature baseFrom(const json& j) {
   if (type == "sweep") {
     SweepFeature f;
     for (const json& o : j.at("inputs")) {
-      f.inputs.push_back(BooleanOperand{std::make_shared<const Recipe>(recipeFrom(o.at("recipe"))),
+      f.inputs.push_back(BooleanOperand{sharedRecipeFrom(o),
                                         trsfFrom(o.at("placement")),
                                         o.value("name", std::string())});
     }
@@ -442,7 +495,7 @@ json modifierToJson(const Modifier& m) {
             return json{{"type", "hole"},
                         {"name", op.outline.name},
                         {"placement", toJson(op.outline.placement)},
-                        {"recipe", recipeToJson(*op.outline.recipe)}};
+                        sharedRecipe(op.outline.recipe)};
           },
           [](const OffsetFaceOp& op) {
             return json{{"type", "offsetface"},
@@ -508,7 +561,7 @@ Modifier modifierFrom(const json& j) {
     return op;
   }
   if (type == "hole") {
-    return HoleOp{BooleanOperand{std::make_shared<const Recipe>(recipeFrom(j.at("recipe"))),
+    return HoleOp{BooleanOperand{sharedRecipeFrom(j),
                                  trsfFrom(j.at("placement")), j.value("name", std::string())}};
   }
   if (type == "offsetface") {
@@ -766,6 +819,16 @@ Object objectFrom(const json& j, const RegenContext& context, std::vector<std::s
 }  // namespace
 
 std::string serializeDocument(const Document& document) {
+  RecipeWriter recipes;
+  struct Scope {
+    explicit Scope(RecipeWriter* w) { recipeWriter = w; }
+    ~Scope() { recipeWriter = nullptr; }
+  } scope(&recipes);
+  for (const ComponentDefinition& d : document.definitions()) {
+    for (const Object& o : d.objects) (void)recipeToJson(o.recipe);
+  }
+  for (const Object& o : document.objects()) (void)recipeToJson(o.recipe);
+  recipes.counting = false;
   ShapeTable shapes;
   json definitions = json::array();
   for (const ComponentDefinition& d : document.definitions()) {
@@ -818,7 +881,8 @@ std::string serializeDocument(const Document& document) {
   }
   json root = {
       {"format", kNativeFormatMagic},
-      {"version", kNativeFormatVersion},
+      // Files without shared recipes stay readable by the version before.
+      {"version", recipes.entries.empty() ? 3 : kNativeFormatVersion},
       {"units", s.units},
       {"linearTolerance", s.linearTolerance},
       {"camera", cameraToJson(s.camera)},
@@ -826,6 +890,7 @@ std::string serializeDocument(const Document& document) {
       {"sections", sections},
       {"hiddenTags", s.hiddenTags},
       {"shapes", shapes.entries},
+      {"recipes", recipes.entries},
       {"materials", materials},
       {"images", images},
       {"definitions", definitions},
@@ -871,6 +936,12 @@ Status deserializeDocument(const std::string& text, Document& document,
 
     ShapeReader shapes;
     if (root.contains("shapes")) shapes.entries = &root.at("shapes");
+    RecipeReader recipes;
+    if (root.contains("recipes")) recipes.entries = &root.at("recipes");
+    struct Scope {
+      explicit Scope(RecipeReader* r) { recipeReader = r; }
+      ~Scope() { recipeReader = nullptr; }
+    } scope(&recipes);
     // Definitions first: instances regenerate from their shapes.
     if (root.contains("definitions")) {
       for (const json& d : root.at("definitions")) {
@@ -977,7 +1048,7 @@ Status saveDocument(const Document& document, const std::string& path) {
   const fs::path target = fs::u8path(path);
   fs::path temp = target;
   temp += ".tmp";
-  const std::string text = serializeDocument(document);
+  std::string text = serializeDocument(document);
   {
     std::ofstream out(temp, std::ios::binary | std::ios::trunc);
     if (!out) return Status::failure("Cannot write " + path);
@@ -986,11 +1057,23 @@ Status saveDocument(const Document& document, const std::string& path) {
     if (!out) return Status::failure("Write failed for " + path);
   }
   // Verify what actually reached the disk before replacing the old file.
+  // One copy of the file read back at a time (a stream buffer and copies
+  // of it held the text up to four times over while checking).
   {
-    std::ifstream in(temp, std::ios::binary);
-    std::stringstream buffer;
-    buffer << in.rdbuf();
-    if (buffer.str() != text) {
+    std::string written;
+    {
+      std::ifstream in(temp, std::ios::binary | std::ios::ate);
+      const std::streamoff size = in ? static_cast<std::streamoff>(in.tellg()) : -1;
+      if (size >= 0) {
+        written.resize(static_cast<std::size_t>(size));
+        in.seekg(0);
+        in.read(written.data(), size);
+        if (!in) written.clear();
+      }
+    }
+    const bool same = written == text;
+    std::string().swap(text);  // not needed any more
+    if (!same) {
       std::error_code ec;
       fs::remove(temp, ec);
       return Status::failure("Verification of saved data failed");
@@ -998,7 +1081,7 @@ Status saveDocument(const Document& document, const std::string& path) {
     // Structure and stored geometry read back; recipes are not re-run here
     // (that is what loading does), so saving a large model stays quick.
     Document check;
-    const Status parsed = deserializeDocument(buffer.str(), check, nullptr, false);
+    const Status parsed = deserializeDocument(written, check, nullptr, false);
     if (!parsed) {
       std::error_code ec;
       fs::remove(temp, ec);

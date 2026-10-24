@@ -2739,35 +2739,53 @@ Status Modeler::closeIntoSolid(const ObjectId& id, Settled& out) {
   // Closing a volume (every edge shared - else no need to try): a solid.
   // Otherwise the faces meeting at an angle share their edges as one open
   // shape (a box being drawn side by side), never a face twice or a fin.
+  // The joined object as its recipe makes it (the faces sewn once: what
+  // closes a volume is told from this result, not from a trial sewing
+  // done twice).
+  auto build = [&](const std::vector<std::size_t>& joined, Object& result,
+                   std::vector<std::pair<const Object*, gp_Trsf>>& inputs) {
+    SewnFeature feature;
+    inputs.clear();
+    for (std::size_t i : joined) {
+      const Object* o = pieces[i].object;
+      const gp_Trsf at = toParent * document_.worldTransform(*o);
+      inputs.emplace_back(o, at);
+      // Faces joined before: their own faces again (one sewing, not nested).
+      const auto* sewn = std::get_if<SewnFeature>(&o->recipe.base);
+      if (sewn && o->recipe.modifiers.empty()) {
+        for (const BooleanOperand& f : sewn->faces) feature.faces.push_back(BooleanOperand{f.recipe, at * f.placement, f.name});
+        continue;
+      }
+      feature.faces.push_back(BooleanOperand{std::make_shared<const Recipe>(o->recipe), at, o->name});
+    }
+    result = Object();
+    result.id = generateObjectId();
+    result.parent = parent;
+    const Object& first = *pieces[joined.front()].object;
+    result.layer = first.layer;
+    result.color = first.color;
+    result.attributes = first.attributes;
+    result.recipe.base = std::move(feature);
+    return rebuild(result, document_.regenContext()).ok();
+  };
+  Object result;
+  std::vector<std::pair<const Object*, gp_Trsf>> inputs;
+  bool built = false;
   bool open = false;
   std::vector<std::size_t> joined = reach(false, &open);
-  if (open || joined.size() < 2 || !geom::sewIntoSolid(placedOf(joined))) {
+  if (!open && joined.size() >= 2) {
+    built = build(joined, result, inputs);
+    if (built && result.kind() != ObjectKind::Solid) {
+      // Did not close after all: the faces meeting at an angle instead,
+      // the same result when they are the same faces.
+      if (reach(true, nullptr) != joined) built = false;
+    }
+  }
+  if (!built) {
     joined = reach(true, nullptr);
     if (joined.size() < 2) return Status::success();
+    if (!build(joined, result, inputs)) return Status::success();
   }
-  SewnFeature feature;
-  std::vector<std::pair<const Object*, gp_Trsf>> inputs;
-  for (std::size_t i : joined) {
-    const Object* o = pieces[i].object;
-    const gp_Trsf at = toParent * document_.worldTransform(*o);
-    inputs.emplace_back(o, at);
-    // Faces joined before: their own faces again (one sewing, not nested).
-    const auto* sewn = std::get_if<SewnFeature>(&o->recipe.base);
-    if (sewn && o->recipe.modifiers.empty()) {
-      for (const BooleanOperand& f : sewn->faces) feature.faces.push_back(BooleanOperand{f.recipe, at * f.placement, f.name});
-      continue;
-    }
-    feature.faces.push_back(BooleanOperand{std::make_shared<const Recipe>(o->recipe), at, o->name});
-  }
-  Object result;
-  result.id = generateObjectId();
-  result.parent = parent;
-  const Object& first = *pieces[joined.front()].object;
-  result.layer = first.layer;
-  result.color = first.color;
-  result.attributes = first.attributes;
-  result.recipe.base = std::move(feature);
-  if (const Status built = rebuild(result, document_.regenContext()); !built) return Status::success();
   result.name = uniqueName(result.kind() == ObjectKind::Solid ? "Solid" : "Surface");
   carryMaterials(result, inputs, true);
   ChangeSet changes(document_);

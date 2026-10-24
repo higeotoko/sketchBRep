@@ -787,49 +787,79 @@ Result<TopoDS_Shape> capHoles(const TopoDS_Shape& shell) {
   return sewn;  // still open somewhere
 }
 
+namespace {
+
+// The pieces' faces sewn (non-manifold: three faces on an edge stay visible
+// as such); `faces` counts them.
+TopoDS_Shape sewPieces(const std::vector<TopoDS_Shape>& pieces, double tolerance, int& faces) {
+  BRepBuilderAPI_Sewing sewing(tolerance);
+  sewing.SetNonManifoldMode(Standard_True);
+  faces = 0;
+  for (const TopoDS_Shape& piece : pieces) {
+    for (TopExp_Explorer f(piece, TopAbs_FACE); f.More(); f.Next(), ++faces) sewing.Add(f.Current());
+  }
+  if (faces == 0) return {};
+  sewing.Perform();
+  return sewing.SewedShape();
+}
+
+// The sewn faces as a valid solid, if they close one.
+Result<TopoDS_Shape> solidOf(const TopoDS_Shape& sewn, int faces) {
+  using R = Result<TopoDS_Shape>;
+  TopoDS_Shell shell;
+  int shells = 0;
+  for (TopExp_Explorer s(sewn, TopAbs_SHELL); s.More(); s.Next(), ++shells) shell = TopoDS::Shell(s.Current());
+  if (shells != 1) return R::failure("The faces do not join into one piece");
+  TopTools_IndexedMapOfShape inShell;
+  TopExp::MapShapes(shell, TopAbs_FACE, inShell);
+  if (inShell.Extent() != faces) return R::failure("Some faces do not join the others");
+  TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
+  TopExp::MapShapesAndAncestors(shell, TopAbs_EDGE, TopAbs_FACE, edgeFaces);
+  for (int i = 1; i <= edgeFaces.Extent(); ++i) {
+    if (BRep_Tool::Degenerated(TopoDS::Edge(edgeFaces.FindKey(i)))) continue;
+    const int n = edgeFaces(i).Extent();
+    if (n < 2) return R::failure("There is a gap: an edge has a face on one side only");
+    if (n > 2) return R::failure("An edge is shared by more than two faces");
+  }
+  BRepBuilderAPI_MakeSolid make(shell);
+  if (!make.IsDone()) return R::failure("The faces do not close a volume");
+  ShapeFix_Solid fix(make.Solid());
+  fix.Perform();
+  TopoDS_Shape solid = fix.Solid();
+  GProp_GProps props;
+  BRepGProp::VolumeProperties(solid, props);
+  if (std::abs(props.Mass()) < 1e-6) return R::failure("The faces close no volume");
+  if (props.Mass() < 0) solid.Reverse();
+  if (!BRepCheck_Analyzer(solid).IsValid()) return R::failure("The faces do not make a valid solid");
+  BOPAlgo_ArgumentAnalyzer analyzer;
+  analyzer.SetShape1(solid);
+  analyzer.SelfInterMode() = Standard_True;
+  analyzer.Perform();
+  if (analyzer.HasFaulty()) return R::failure("Faces pass through each other");
+  return solid;
+}
+
+// The sewn faces as an open shape (a shell put in order).
+TopoDS_Shape openOf(TopoDS_Shape sewn) {
+  if (sewn.ShapeType() == TopAbs_SHELL) {
+    ShapeFix_Shell fix(TopoDS::Shell(sewn));
+    fix.Perform();
+    sewn = fix.Shell();
+  }
+  return sewn;
+}
+
+}  // namespace
+
 Result<TopoDS_Shape> sewIntoSolid(const std::vector<TopoDS_Shape>& pieces, double tolerance) {
   using R = Result<TopoDS_Shape>;
   try {
-    BRepBuilderAPI_Sewing sewing(tolerance);
-    sewing.SetNonManifoldMode(Standard_True);  // three faces on an edge stay visible as such
     int faces = 0;
     for (const TopoDS_Shape& piece : pieces) {
-      for (TopExp_Explorer f(piece, TopAbs_FACE); f.More(); f.Next(), ++faces) sewing.Add(f.Current());
+      for (TopExp_Explorer f(piece, TopAbs_FACE); f.More(); f.Next()) ++faces;
     }
     if (faces < 4) return R::failure("Too few faces to close a volume");
-    sewing.Perform();
-    const TopoDS_Shape sewn = sewing.SewedShape();
-    TopoDS_Shell shell;
-    int shells = 0;
-    for (TopExp_Explorer s(sewn, TopAbs_SHELL); s.More(); s.Next(), ++shells) shell = TopoDS::Shell(s.Current());
-    if (shells != 1) return R::failure("The faces do not join into one piece");
-    TopTools_IndexedMapOfShape inShell;
-    TopExp::MapShapes(shell, TopAbs_FACE, inShell);
-    if (inShell.Extent() != faces) return R::failure("Some faces do not join the others");
-    TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
-    TopExp::MapShapesAndAncestors(shell, TopAbs_EDGE, TopAbs_FACE, edgeFaces);
-    for (int i = 1; i <= edgeFaces.Extent(); ++i) {
-      if (BRep_Tool::Degenerated(TopoDS::Edge(edgeFaces.FindKey(i)))) continue;
-      const int n = edgeFaces(i).Extent();
-      if (n < 2) return R::failure("There is a gap: an edge has a face on one side only");
-      if (n > 2) return R::failure("An edge is shared by more than two faces");
-    }
-    BRepBuilderAPI_MakeSolid make(shell);
-    if (!make.IsDone()) return R::failure("The faces do not close a volume");
-    ShapeFix_Solid fix(make.Solid());
-    fix.Perform();
-    TopoDS_Shape solid = fix.Solid();
-    GProp_GProps props;
-    BRepGProp::VolumeProperties(solid, props);
-    if (std::abs(props.Mass()) < 1e-6) return R::failure("The faces close no volume");
-    if (props.Mass() < 0) solid.Reverse();
-    if (!BRepCheck_Analyzer(solid).IsValid()) return R::failure("The faces do not make a valid solid");
-    BOPAlgo_ArgumentAnalyzer analyzer;
-    analyzer.SetShape1(solid);
-    analyzer.SelfInterMode() = Standard_True;
-    analyzer.Perform();
-    if (analyzer.HasFaulty()) return R::failure("Faces pass through each other");
-    return solid;
+    return solidOf(sewPieces(pieces, tolerance, faces), faces);
   } catch (const Standard_Failure& e) {
     return R::failure(std::string("Joining the faces failed: ") + e.GetMessageString());
   }
@@ -838,29 +868,34 @@ Result<TopoDS_Shape> sewIntoSolid(const std::vector<TopoDS_Shape>& pieces, doubl
 Result<TopoDS_Shape> sewOpen(const std::vector<TopoDS_Shape>& pieces, double tolerance) {
   using R = Result<TopoDS_Shape>;
   try {
-    BRepBuilderAPI_Sewing sewing(tolerance);
-    sewing.SetNonManifoldMode(Standard_True);
     int faces = 0;
-    for (const TopoDS_Shape& piece : pieces) {
-      for (TopExp_Explorer f(piece, TopAbs_FACE); f.More(); f.Next(), ++faces) sewing.Add(f.Current());
-    }
+    const TopoDS_Shape sewn = sewPieces(pieces, tolerance, faces);
     if (faces == 0) return R::failure("No faces");
-    sewing.Perform();
-    TopoDS_Shape sewn = sewing.SewedShape();
-    if (sewn.ShapeType() == TopAbs_SHELL) {
-      ShapeFix_Shell fix(TopoDS::Shell(sewn));
-      fix.Perform();
-      sewn = fix.Shell();
-    }
-    return sewn;
+    return openOf(sewn);
   } catch (const Standard_Failure& e) {
     return R::failure(std::string("Joining the faces failed: ") + e.GetMessageString());
   }
 }
 
 Result<TopoDS_Shape> sewFaces(const std::vector<TopoDS_Shape>& pieces, double tolerance) {
-  if (auto solid = sewIntoSolid(pieces, tolerance)) return solid;
-  return sewOpen(pieces, tolerance);
+  // Sewn once: a solid when that closes one, else the open shape from the
+  // same sewing (an open shape growing face by face sewed everything twice
+  // on each new face).
+  using R = Result<TopoDS_Shape>;
+  try {
+    int faces = 0;
+    const TopoDS_Shape sewn = sewPieces(pieces, tolerance, faces);
+    if (faces == 0) return R::failure("No faces");
+    if (faces >= 4) {
+      try {
+        if (auto solid = solidOf(sewn, faces)) return solid;
+      } catch (const Standard_Failure&) {
+      }
+    }
+    return openOf(sewn);
+  } catch (const Standard_Failure& e) {
+    return R::failure(std::string("Joining the faces failed: ") + e.GetMessageString());
+  }
 }
 
 Result<TopoDS_Shape> pushPullOpenFace(const TopoDS_Shape& shape, const TopoDS_Face& face, double distance) {

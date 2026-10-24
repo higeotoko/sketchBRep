@@ -16,7 +16,7 @@ namespace sbr::doc {
 
 // 3: geometry shared by several objects (component placements) is stored
 // once in a "shapes" table and referenced; versions 1 and 2 are still read.
-constexpr int kNativeFormatVersion = 3;
+constexpr int kNativeFormatVersion = 4;  // 4: shared recipes table
 constexpr const char* kNativeFormatMagic = "SketchBRep";
 
 std::string serializeDocument(const Document& document);
