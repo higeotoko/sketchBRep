@@ -73,7 +73,8 @@ endif()
 # End-to-end GUI test (needs a display; run under xvfb-run on headless CI).
 if(SBR_BUILD_APP)
   find_package(Qt6 REQUIRED COMPONENTS Test)
-  add_executable(sbr_gui_tests test_gui.cpp ${PROJECT_SOURCE_DIR}/src/app/branding.qrc)
+  add_executable(sbr_gui_tests test_gui.cpp ${PROJECT_SOURCE_DIR}/src/app/branding.qrc
+                               ${PROJECT_SOURCE_DIR}/assets/materials/builtin/integration/materials.qrc)
   set_target_properties(sbr_gui_tests PROPERTIES AUTOMOC ON AUTORCC ON)
   target_link_libraries(sbr_gui_tests PRIVATE sbr_ui Qt6::Test nlohmann_json::nlohmann_json)
   target_compile_definitions(sbr_gui_tests PRIVATE SBR_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

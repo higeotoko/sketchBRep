@@ -146,6 +146,9 @@ class MainWindow : public QMainWindow, public ToolHost {
   // Makes `id` the paint material and switches to the paint tool.
   void chooseMaterial(const std::string& id);
   std::optional<std::string> addPresetMaterial(int index);
+  // The preset's picture to an existing material (id and assignments
+  // kept); a picture of its own is replaced only when confirmed (or asked).
+  bool applyPresetPicture(const std::string& id, int presetIndex, bool replaceOwn = false);
   // The selected faces (or else the selected objects) take `id`.
   bool applyMaterialToSelection(const std::string& id);
   // Gives the material the picture in `path` as its texture (embedded).
@@ -280,6 +283,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   // Elements picked (their owners become the object selection), without
   // refreshing the panels.
   void takeElements(const std::vector<ElementRef>& elements);
+  // A preset's picture embedded in the document, as a material texture.
+  Result<doc::MaterialTexture> presetTexture(int index);
   std::unique_ptr<CircleTool> circleTool_;
   std::unique_ptr<PaintTool> paintTool_;
   std::unique_ptr<EraserTool> eraserTool_;

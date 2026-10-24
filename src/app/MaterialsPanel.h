@@ -32,12 +32,22 @@ class MaterialsPanel : public QWidget {
   // Shows the "編集" tab for the material picked in the list.
   void openEditor();
 
-  // Ready-made materials offered for one-click adding.
+  // Ready-made materials offered for one-click adding (assets/materials/
+  // builtin): name, plain colour (also the fallback), picture (a Qt
+  // resource) and its size per tile in mm, opacity and rendering values.
   struct Preset {
     const char* name;
     doc::Color color;
+    const char* picture;
+    double width, height;
+    double opacity, metallic, roughness, reflectance;
+    bool usePicture;  // added with its picture (glass: off, plain tint)
   };
   static const std::vector<Preset>& presets();
+  // The preset of that exact name, if any.
+  static std::optional<int> presetNamed(const std::string& name);
+  // Thumbnail of a preset: its picture, or its colour.
+  static QIcon presetIcon(int index);
 
  signals:
   void materialChosen(const std::string& id);  // "" = inherit
@@ -46,6 +56,9 @@ class MaterialsPanel : public QWidget {
   void editRequested(const std::string& id);
   void deleteRequested(const std::string& id);
   void applyRequested(const std::string& id);  // to the selection
+  // An existing material of a preset's name gets the preset's picture
+  // (asked for explicitly; the material keeps its id and assignments).
+  void presetPictureRequested(const std::string& id, int presetIndex);
 
  private:
   std::string currentId() const;

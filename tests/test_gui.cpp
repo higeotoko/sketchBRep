@@ -249,6 +249,8 @@ class GuiPhase1 : public QObject {
   void openingKeepsTheWindowResponsive();
   void shownAgainPicksAndSnaps();
   void autosaveWritesInTheBackground();
+  void builtinMaterialsCarryTheirPictures();
+  void presetPictureKeepsTheMaterial();
   void eraserDragErasesCrossedLines();
   void eraserDragFollowsWhatTheLineBecame();
   void wheelZoomIsConsistentAndReversible();
@@ -5835,6 +5837,117 @@ void GuiPhase1::autosaveWritesInTheBackground() {
   QTRY_VERIFY_WITH_TIMEOUT(!f.window.autosaving(), 30000);
   QVERIFY(!QFileInfo::exists(recovery));
   QVERIFY(!QFileInfo::exists(recovery + QStringLiteral(".part")));
+}
+
+// The twelve ready-made materials (assets/materials/builtin): same names
+// and order as ever; added with their picture embedded in the document at
+// its real size (glass: no picture, see-through), one undo step, and the
+// same after saving and opening again.
+void GuiPhase1::builtinMaterialsCarryTheirPictures() {
+  const std::vector<std::string> names = {"木（明るい）", "木（濃い）", "漆喰（白）", "コンクリート",
+                                          "モルタル", "レンガ", "タイル（グレー）", "畳",
+                                          "ガラス", "金属（ステンレス）", "黒（鉄）", "芝"};
+  const auto& presets = MaterialsPanel::presets();
+  QCOMPARE(presets.size(), names.size());
+  for (std::size_t i = 0; i < names.size(); ++i) QCOMPARE(std::string(presets[i].name), names[i]);
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  const std::size_t steps = m.history().undoCount();
+  std::vector<std::string> ids;
+  for (int i = 0; i < static_cast<int>(names.size()); ++i) {
+    QVERIFY(!MaterialsPanel::presetIcon(i).isNull());
+    const auto id = f.window.addPresetMaterial(i);
+    QVERIFY(id);
+    ids.push_back(*id);
+    const doc::Material* mat = m.document().findMaterial(*id);
+    const auto& p = presets[static_cast<std::size_t>(i)];
+    QCOMPARE(mat->name, std::string(p.name));
+    QVERIFY(mat->color == p.color);  // the plain colour stays (fallback)
+    QCOMPARE(mat->opacity, p.opacity);
+    QCOMPARE(mat->roughness, p.roughness);
+    if (!p.usePicture) {
+      QVERIFY(!mat->texture);
+      continue;
+    }
+    QVERIFY2(mat->texture, p.name);
+    QCOMPARE(mat->texture->width, p.width);
+    QCOMPARE(mat->texture->height, p.height);
+    QVERIFY(!mat->texture->colorize);
+    const doc::Document::Image* image = m.document().findImage(mat->texture->image);
+    QVERIFY(image && !image->bytes.empty());
+    QVERIFY(!QImage::fromData(QByteArray::fromStdString(image->bytes)).isNull());
+  }
+  QCOMPARE(m.history().undoCount(), steps + names.size());  // one step each
+  const doc::Material* glass = m.document().findMaterial(ids[8]);
+  QCOMPARE(glass->opacity, 0.22);
+  const doc::Material* brick = m.document().findMaterial(ids[5]);
+  QCOMPARE(brick->texture->width, 840.0);
+  QCOMPARE(brick->texture->height, 650.0);
+  // One undo takes a material back whole; redo brings it with its picture.
+  QVERIFY(m.undo());
+  QVERIFY(!m.document().findMaterial(ids.back()));
+  QVERIFY(m.redo());
+  QVERIFY(m.document().findMaterial(ids.back()) && m.document().findMaterial(ids.back())->texture);
+  // Painted, saved and opened elsewhere: the same picture and size.
+  const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+  QVERIFY(m.assignMaterial({box}, ids[5]).ok());
+  const QString path = QDir(QDir::tempPath()).filePath(QStringLiteral("sbr_builtin_materials.sbr"));
+  QVERIFY(m.save(path.toStdString()).ok());
+  doc::Modeler back;
+  QVERIFY(back.load(path.toStdString()).ok());
+  const doc::Material* again = back.document().findMaterial(ids[5]);
+  QVERIFY(again && again->texture && again->texture->image == brick->texture->image);
+  QVERIFY(back.document().findImage(again->texture->image));
+  QCOMPARE(back.document().find(box)->material, ids[5]);
+  if (const QString dir = qEnvironmentVariable("SBR_SHOT_DIR"); !dir.isEmpty()) {
+    for (int i = 0; i < 12; ++i) {
+      const doc::ObjectId b = f.box(1200.0 * (i % 4), 1200.0 * (i / 4) + 3000, 1000, 1000, 1000);
+      m.assignMaterial({b}, ids[static_cast<std::size_t>(i)]);
+    }
+    f.vp->fitAll();
+    f.vp->syncNow();
+    f.vp->dumpImage(dir + QStringLiteral("/builtin_materials.png"));
+  }
+  // The ready-made ones added are no longer offered below the list.
+  f.window.materialsPanel()->refresh(m.document(), std::nullopt);
+  for (int row = 0; row < f.window.materialsPanel()->list()->count(); ++row) {
+    QVERIFY(!f.window.materialsPanel()->list()->item(row)->data(Qt::UserRole + 1).isValid());
+  }
+}
+
+// An existing material named like a preset takes its picture only when
+// asked: same id, colour and the faces and objects it is on; a picture of
+// its own is kept unless replacing it is confirmed.
+void GuiPhase1::presetPictureKeepsTheMaterial() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  auto brick = m.createMaterial("レンガ", doc::Color{0.7, 0.3, 0.2});
+  QVERIFY(brick.ok());
+  const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+  QVERIFY(m.assignMaterial({box}, *brick).ok());
+  QVERIFY(!m.document().findMaterial(*brick)->texture);  // nothing changed by itself
+  const auto index = MaterialsPanel::presetNamed("レンガ");
+  QVERIFY(index);
+  const std::size_t steps = m.history().undoCount();
+  QVERIFY(f.window.applyPresetPicture(*brick, *index));
+  const doc::Material* now = m.document().findMaterial(*brick);
+  QVERIFY(now->texture && now->texture->width == 840.0 && now->texture->height == 650.0);
+  QVERIFY(now->color == (doc::Color{0.7, 0.3, 0.2}));
+  QCOMPARE(m.document().find(box)->material, *brick);
+  QCOMPARE(m.history().undoCount(), steps + 1);
+  // A picture of its own: kept when the question is answered No.
+  doc::Material own = *now;
+  own.texture->image = m.addTextureImage("not a real picture", "own.png");
+  QVERIFY(m.editMaterial(own).ok());
+  QTimer::singleShot(200, [] {
+    if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) box->button(QMessageBox::No)->click();
+  });
+  QVERIFY(!f.window.applyPresetPicture(*brick, *index));
+  QCOMPARE(m.document().findMaterial(*brick)->texture->image, own.texture->image);
+  QVERIFY(f.window.applyPresetPicture(*brick, *index, true));  // replacing it asked for
+  QVERIFY(m.document().findMaterial(*brick)->texture->image != own.texture->image);
 }
 
 // SketchUp: hold the eraser down and sweep across lines; they are marked

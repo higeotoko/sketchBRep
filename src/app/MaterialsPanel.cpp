@@ -1,10 +1,13 @@
 #include "MaterialsPanel.h"
 
+#include "BuiltinMaterialData.h"
 #include "MaterialEditor.h"
 
 #include <algorithm>
+#include <map>
 
 #include <QHBoxLayout>
+#include <QImage>
 #include <QListWidget>
 #include <QMenu>
 #include <QPainter>
@@ -39,13 +42,46 @@ QIcon swatch(const doc::Color& c, bool inherit = false) {
 }  // namespace
 
 const std::vector<MaterialsPanel::Preset>& MaterialsPanel::presets() {
-  static const std::vector<Preset> all = {
-      {"木（明るい）", {0.80, 0.64, 0.44}}, {"木（濃い）", {0.48, 0.32, 0.20}}, {"漆喰（白）", {0.95, 0.94, 0.90}},
-      {"コンクリート", {0.66, 0.66, 0.64}}, {"モルタル", {0.74, 0.72, 0.68}},  {"レンガ", {0.63, 0.32, 0.22}},
-      {"タイル（グレー）", {0.52, 0.54, 0.56}}, {"畳", {0.73, 0.73, 0.48}},  {"ガラス", {0.62, 0.80, 0.88}},
-      {"金属（ステンレス）", {0.76, 0.77, 0.78}}, {"黒（鉄）", {0.18, 0.18, 0.19}}, {"芝", {0.40, 0.60, 0.28}},
-  };
+  // From the material pack's table (names and order as they always were).
+  static const std::vector<Preset> all = [] {
+    std::vector<Preset> out;
+    for (const BuiltinMaterialData& d : kBuiltinMaterialData) {
+      out.push_back({d.name, doc::Color{d.color[0], d.color[1], d.color[2]}, d.resource, d.widthMm, d.heightMm,
+                     d.opacity, d.metallic, d.roughness, d.reflectance, d.useTexture});
+    }
+    return out;
+  }();
   return all;
+}
+
+std::optional<int> MaterialsPanel::presetNamed(const std::string& name) {
+  for (int i = 0; i < static_cast<int>(presets().size()); ++i) {
+    if (name == presets()[static_cast<std::size_t>(i)].name) return i;
+  }
+  return std::nullopt;
+}
+
+QIcon MaterialsPanel::presetIcon(int index) {
+  static std::map<int, QIcon> made;
+  if (const auto it = made.find(index); it != made.end()) return it->second;
+  const Preset& p = presets()[static_cast<std::size_t>(index)];
+  QIcon icon = swatch(p.color);
+  if (p.usePicture) {
+    const QImage picture(QString::fromUtf8(p.picture));
+    if (!picture.isNull()) {
+      QPixmap pixmap(28, 20);
+      pixmap.fill(Qt::transparent);
+      QPainter painter(&pixmap);
+      painter.setRenderHint(QPainter::Antialiasing);
+      painter.setPen(QPen(QColor(90, 90, 90), 1));
+      // A piece of the picture about as big as the swatch shows of a tile.
+      painter.setBrush(QBrush(QPixmap::fromImage(picture.scaled(96, 96, Qt::IgnoreAspectRatio,
+                                                                Qt::SmoothTransformation))));
+      painter.drawRoundedRect(QRectF(1.5, 1.5, 25, 17), 3, 3);
+      icon = QIcon(pixmap);
+    }
+  }
+  return made[index] = icon;
 }
 
 MaterialsPanel::MaterialsPanel(QWidget* parent) : QWidget(parent) {
@@ -85,7 +121,7 @@ MaterialsPanel::MaterialsPanel(QWidget* parent) : QWidget(parent) {
   auto* menu = new QMenu(presets);
   for (int i = 0; i < static_cast<int>(MaterialsPanel::presets().size()); ++i) {
     const Preset& p = MaterialsPanel::presets()[static_cast<std::size_t>(i)];
-    menu->addAction(swatch(p.color), QString::fromUtf8(p.name), this, [this, i] { emit presetRequested(i); });
+    menu->addAction(presetIcon(i), QString::fromUtf8(p.name), this, [this, i] { emit presetRequested(i); });
   }
   presets->setMenu(menu);
 
@@ -120,6 +156,12 @@ MaterialsPanel::MaterialsPanel(QWidget* parent) : QWidget(parent) {
         openEditor();
       });
       menu.addAction(tr("選択中の部材・面に適用"), this, [this, id] { emit applyRequested(id); });
+      // A material named like a preset can take its picture (on request
+      // only: documents are not changed by themselves).
+      if (const auto preset = presetNamed(item->text().toStdString())) {
+        menu.addAction(presetIcon(*preset), tr("定番の画像を適用"), this,
+                       [this, id, index = *preset] { emit presetPictureRequested(id, index); });
+      }
       menu.addAction(tr("削除"), this, [this, id] { emit deleteRequested(id); });
     } else {
       menu.addAction(tr("選択中の部材・面の素材を外す"), this, [this] { emit applyRequested({}); });
@@ -164,7 +206,7 @@ void MaterialsPanel::refresh(const doc::Document& document, const std::optional<
         list_->addItem(title);
         header = true;
       }
-      auto* item = new QListWidgetItem(swatch(p.color), QString::fromUtf8(p.name));
+      auto* item = new QListWidgetItem(presetIcon(i), QString::fromUtf8(p.name));
       item->setData(kPresetRole, i);
       item->setForeground(QColor(110, 110, 110));
       list_->addItem(item);

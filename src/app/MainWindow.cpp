@@ -194,6 +194,8 @@ void MainWindow::buildUi() {
   materialsDock_->raise();
   connect(materialsPanel_, &MaterialsPanel::materialChosen, this, [this](const std::string& id) { chooseMaterial(id); });
   connect(materialsPanel_, &MaterialsPanel::presetRequested, this, [this](int i) { addPresetMaterial(i); });
+  connect(materialsPanel_, &MaterialsPanel::presetPictureRequested, this,
+          [this](const std::string& id, int index) { applyPresetPicture(id, index); });
   connect(materialsPanel_, &MaterialsPanel::createRequested, this, [this] { editMaterialDialog({}); });
   connect(materialsPanel_->editor(), &MaterialEditor::edited, this, [this](const doc::Material& m, bool continuing) {
     report(modeler_.editMaterial(m, continuing));
@@ -1593,13 +1595,79 @@ std::optional<std::string> MainWindow::addPresetMaterial(int index) {
   const auto& presets = MaterialsPanel::presets();
   if (index < 0 || index >= static_cast<int>(presets.size())) return std::nullopt;
   const auto& p = presets[static_cast<std::size_t>(index)];
+  // Made and set up as one undo step; nothing is left of it on a failure.
+  modeler_.history().beginGroup("Add Material");
   auto id = modeler_.createMaterial(p.name, p.color);
-  if (!id) {
-    reportError(QString::fromStdString(id.error()));
+  Status set = id ? Status::success() : Status::failure(id.error());
+  if (id) {
+    doc::Material m = *modeler_.document().findMaterial(*id);
+    m.opacity = p.opacity;
+    m.metallic = p.metallic;
+    m.roughness = p.roughness;
+    m.reflectance = p.reflectance;
+    if (p.usePicture) {
+      auto texture = presetTexture(index);
+      if (texture) {
+        m.texture = *texture;
+      } else {
+        set = Status::failure(texture.error());
+      }
+    }
+    if (set) set = modeler_.editMaterial(m);
+  }
+  if (!set) {
+    modeler_.history().abortGroup();
+    reportError(QString::fromStdString(set.message()));
     return std::nullopt;
   }
+  modeler_.history().endGroup();
   chooseMaterial(id.value());
   return id.value();
+}
+
+Result<doc::MaterialTexture> MainWindow::presetTexture(int index) {
+  const auto& p = MaterialsPanel::presets()[static_cast<std::size_t>(index)];
+  // A Qt resource: read through QFile (not a path the C++ library opens).
+  QFile file(QString::fromUtf8(p.picture));
+  if (!file.open(QIODevice::ReadOnly)) {
+    return Result<doc::MaterialTexture>::failure(std::string("The picture of '") + p.name + "' is missing");
+  }
+  const QByteArray bytes = file.readAll();
+  if (QImage::fromData(bytes).isNull()) {
+    return Result<doc::MaterialTexture>::failure(std::string("The picture of '") + p.name + "' cannot be read");
+  }
+  // Embedded in the document (by its hash): the file opens anywhere.
+  const std::string image =
+      modeler_.addTextureImage(bytes.toStdString(), QFileInfo(file.fileName()).fileName().toStdString());
+  return doc::MaterialTexture{image, p.width, p.height, false};
+}
+
+bool MainWindow::applyPresetPicture(const std::string& id, int index, bool replaceOwn) {
+  const auto& presets = MaterialsPanel::presets();
+  const doc::Material* current = modeler_.document().findMaterial(id);
+  if (!current || index < 0 || index >= static_cast<int>(presets.size())) return false;
+  const auto& p = presets[static_cast<std::size_t>(index)];
+  if (current->texture && !replaceOwn) {
+    // A picture of its own is kept unless replacing it is confirmed.
+    if (QMessageBox::question(this, tr("定番の画像を適用"),
+                              tr("「%1」にはすでに画像があります。定番「%2」の画像に置き換えますか？")
+                                  .arg(QString::fromStdString(current->name), QString::fromUtf8(p.name)),
+                              QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) {
+      return false;
+    }
+  }
+  auto texture = presetTexture(index);
+  if (!texture) {
+    reportError(QString::fromStdString(texture.error()));
+    return false;
+  }
+  // The same material (id, name, colour, opacity, where it is used): only
+  // the picture and its size are added.
+  doc::Material changed = *current;
+  changed.texture = *texture;
+  if (!report(modeler_.editMaterial(changed))) return false;
+  setStatus(tr("「%1」に定番の画像を適用しました").arg(QString::fromStdString(changed.name)));
+  return true;
 }
 
 void MainWindow::editMaterialDialog(const std::string& id) {
