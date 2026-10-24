@@ -48,6 +48,15 @@ ObjectKind Object::kind() const {
   if (std::holds_alternative<GuideLine>(recipe.base)) return ObjectKind::Guide;
   if (std::holds_alternative<ImageUnderlay>(recipe.base)) return ObjectKind::Image;
   if (shape.IsNull()) return ObjectKind::Empty;
+  // A bare shape tells its kind by its type (exploring it allocates, and
+  // kind() is asked of every object in many loops).
+  switch (shape.ShapeType()) {
+    case TopAbs_SOLID: return ObjectKind::Solid;
+    case TopAbs_FACE: return ObjectKind::Face;
+    case TopAbs_EDGE:
+    case TopAbs_WIRE: return ObjectKind::Curve;
+    default: break;
+  }
   if (TopExp_Explorer(shape, TopAbs_SOLID).More()) return ObjectKind::Solid;
   if (TopExp_Explorer(shape, TopAbs_SHELL).More()) {
     int faces = 0;

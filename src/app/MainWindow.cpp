@@ -126,6 +126,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
 MainWindow::~MainWindow() {
   stopRecipeVerification();
+  if (autosaveThread_.joinable()) autosaveThread_.join();
+  QFile::remove(recoveryFile_ + QStringLiteral(".part"));
   geom::setProgressIndicator(nullptr);
   // A normal end leaves no recovery file behind (a crash does).
   if (sessionLock_) clearRecovery();
@@ -1743,7 +1745,7 @@ void MainWindow::startSession() {
   recoveryFile_ = dir.filePath(id + QStringLiteral(".sbr"));
   autosavedSequence_ = modeler_.document().sequence();
   autosaveTimer_ = new QTimer(this);
-  connect(autosaveTimer_, &QTimer::timeout, this, [this] { autosaveNow(); });
+  connect(autosaveTimer_, &QTimer::timeout, this, [this] { autosaveInBackground(); });
   setAutosaveMinutes(autosaveMinutes_);
 }
 
@@ -1787,7 +1789,60 @@ bool MainWindow::autosaveNow() {
   return true;
 }
 
+void MainWindow::autosaveInBackground() {
+  if (recoveryFile_.isEmpty() || autosaving_) return;
+  if (GuiProgress::busy()) {
+    QTimer::singleShot(2000, this, [this] { autosaveInBackground(); });
+    return;
+  }
+  const doc::Document& document = modeler_.document();
+  if (modeler_.history().isClean()) {
+    clearRecovery();
+    return;
+  }
+  if (document.sequence() == autosavedSequence_ && QFileInfo::exists(recoveryFile_)) return;
+  viewport_->storeCamera(modeler_.document().settings().camera);
+  if (autosaveThread_.joinable()) autosaveThread_.join();
+  // A copy (objects share their shapes, which are not changed in place).
+  auto snapshot = std::make_shared<const doc::Document>(document);
+  const std::uint64_t sequence = document.sequence();
+  const int generation = recoveryGeneration_;
+  const QString target = recoveryFile_;
+  const QString part = recoveryFile_ + QStringLiteral(".part");
+  const QString original = currentPath_;
+  autosaving_ = true;
+  autosaveThread_ = std::thread([this, snapshot, sequence, generation, target, part, original] {
+    const Status s = doc::saveDocument(*snapshot, utf8(part));
+    QMetaObject::invokeMethod(
+        this,
+        [this, s, sequence, generation, target, part, original] {
+          autosaving_ = false;
+          if (generation != recoveryGeneration_ || target != recoveryFile_) {
+            QFile::remove(part);  // dropped meanwhile: not to come back
+            return;
+          }
+          if (!s) {
+            QFile::remove(part);
+            statusBar()->showMessage(tr("自動保存できませんでした: %1").arg(QString::fromStdString(s.message())), 8000);
+            return;
+          }
+          QFile::remove(target);
+          QFile::rename(part, target);
+          QFile meta(target.chopped(4) + QStringLiteral(".json"));
+          if (meta.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            const nlohmann::json j = {{"original", utf8(original)},
+                                      {"saved", QDateTime::currentDateTime().toString(Qt::ISODate).toStdString()}};
+            meta.write(QByteArray::fromStdString(j.dump()));
+          }
+          autosavedSequence_ = sequence;
+          statusBar()->showMessage(tr("自動保存しました（復旧用）"), 2500);
+        },
+        Qt::QueuedConnection);
+  });
+}
+
 void MainWindow::clearRecovery() {
+  ++recoveryGeneration_;  // an autosave under way is not put in place
   if (recoveryFile_.isEmpty()) return;
   QFile::remove(recoveryFile_);
   QFile::remove(recoveryFile_.chopped(4) + QStringLiteral(".json"));

@@ -8,6 +8,7 @@
 #include <sstream>
 
 #include <nlohmann/json.hpp>
+#include <TopExp_Explorer.hxx>
 
 #include "sbr/Codec.h"
 #include "sbr/geom/Measure.h"
@@ -610,16 +611,22 @@ struct ShapeTable {
   json entries = json::array();
   std::map<std::pair<const void*, int>, std::size_t> index;
 
+  // Volume for a reader's information; only solids have one (computing it
+  // for each of thousands of faces took a good part of saving).
+  static double volumeOf(const TopoDS_Shape& shape) {
+    return TopExp_Explorer(shape, TopAbs_SOLID).More() ? geom::volume(shape) : 0.0;
+  }
+
   json reference(const TopoDS_Shape& shape) {
     if (!shape.Location().IsIdentity()) {
-      return {{"brep", geom::shapeToBRepString(shape)}, {"volume", geom::volume(shape)}};
+      return {{"brep", geom::shapeToBRepString(shape)}, {"volume", volumeOf(shape)}};
     }
     const auto key = std::make_pair(static_cast<const void*>(shape.TShape().get()),
                                     static_cast<int>(shape.Orientation()));
     auto it = index.find(key);
     if (it == index.end()) {
       it = index.emplace(key, entries.size()).first;
-      entries.push_back({{"brep", geom::shapeToBRepString(shape)}, {"volume", geom::volume(shape)}});
+      entries.push_back({{"brep", geom::shapeToBRepString(shape)}, {"volume", volumeOf(shape)}});
     }
     return {{"shape", it->second}, {"volume", entries[it->second]["volume"]}};
   }

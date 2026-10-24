@@ -206,6 +206,7 @@ class GuiPhase1 : public QObject {
   void benchEnterManyCopies();
   void benchManyCopiesOperations();
   void benchMoreSlowPatterns();
+  void benchPerOperationAtScale();
   void groupEditFadesTheRest();
   void componentEditUpdatesPlacementsInSlices();
   void incrementalSyncFollowsGroupsAndUndo();
@@ -247,6 +248,7 @@ class GuiPhase1 : public QObject {
   void movedObjectsPickWhereTheyAre();
   void openingKeepsTheWindowResponsive();
   void shownAgainPicksAndSnaps();
+  void autosaveWritesInTheBackground();
   void eraserDragErasesCrossedLines();
   void eraserDragFollowsWhatTheLineBecame();
   void wheelZoomIsConsistentAndReversible();
@@ -3406,6 +3408,100 @@ void GuiPhase1::benchMoreSlowPatterns() {
   qInfo("%s", qPrintable(text));
 }
 
+// What one ordinary operation costs as the model grows (N separate
+// rectangles drawn one by one, then pushed up): creating one more, a line,
+// deleting one, undo, renaming, a click, saving, copy / paste, orbiting,
+// and a line across a grid of lines. Skipped unless SBR_BENCH_N is set.
+void GuiPhase1::benchPerOperationAtScale() {
+  const int n = qEnvironmentVariableIntValue("SBR_BENCH_N");
+  if (n <= 0) QSKIP("set SBR_BENCH_N to run the benchmark");
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  const int columns = static_cast<int>(std::ceil(std::sqrt(static_cast<double>(n))));
+  QElapsedTimer t;
+  std::vector<std::pair<std::string, double>> times;
+  auto timed = [&](const char* name, const std::function<void()>& fn) {
+    t.start();
+    fn();
+    f.vp->syncNow();
+    QCoreApplication::processEvents();
+    times.emplace_back(name, t.nsecsElapsed() / 1e6);
+  };
+  // Drawn one by one (each named "Rectangle k"), the last 50 timed.
+  double lastFifty = 0;
+  for (int k = 0; k < n; ++k) {
+    geom::SketchPlane plane = geom::SketchPlane::ground();
+    plane.origin = gp_Pnt((k % columns) * 1500.0, (k / columns) * 1500.0, 0);
+    if (k >= n - 50) t.start();
+    auto r = m.createRectangle(plane, 1000, 1000);
+    QVERIFY(r.ok());
+    if (k >= n - 50) lastFifty += t.nsecsElapsed() / 1e6;
+  }
+  times.emplace_back("create_rectangle_core_avg_of_last_50", lastFifty / 50);
+  timed("initial_sync", [] {});
+  timed("create_one_more", [&] {
+    geom::SketchPlane plane = geom::SketchPlane::ground();
+    plane.origin = gp_Pnt(-5000, -5000, 0);
+    QVERIFY(m.createRectangle(plane, 1000, 1000).ok());
+  });
+  timed("line_one", [&] { QVERIFY(m.createPolyline({gp_Pnt(-5000, -8000, 0), gp_Pnt(-3000, -8000, 0)}).ok()); });
+  const doc::ObjectId some = m.document().objects()[static_cast<std::size_t>(n / 2)].id;
+  timed("select_one", [&] { f.window.setSelection({some}); });
+  timed("rename_one", [&] { QVERIFY(m.rename(some, "Renamed").ok()); });
+  timed("push_pull_one", [&] { QVERIFY(m.extrude(some, 500).ok()); });
+  timed("delete_one", [&] { QVERIFY(m.remove({some}).ok()); });
+  timed("undo", [&] { QVERIFY(m.undo()); });
+  timed("redo", [&] { QVERIFY(m.redo()); });
+  f.window.activateTool(MainWindow::ToolId::Select);
+  timed("click_one", [&] { click(f.vp, f.vp->toWidget(gp_Pnt(500, 500, 0))); });
+  const QString path = QDir(QDir::tempPath()).filePath(QStringLiteral("sbr_bench_scale.sbr"));
+  timed("save", [&] { QVERIFY(m.save(path.toStdString()).ok()); });
+  std::vector<doc::ObjectId> half;
+  for (const doc::Object& o : m.document().objects()) {
+    if (half.size() < static_cast<std::size_t>(n / 2)) half.push_back(o.id);
+  }
+  doc::Modeler::Clipboard clip;
+  timed("copy_half_to_clipboard", [&] {
+    auto c = m.copyToClipboard(half);
+    QVERIFY(c.ok());
+    clip = *c;
+  });
+  gp_Trsf away;
+  away.SetTranslation(gp_Vec(0, 200000, 0));
+  timed("paste_half", [&] { QVERIFY(m.paste(clip, away).ok()); });
+  timed("undo_paste", [&] { QVERIFY(m.undo()); });
+  f.vp->fitAll();
+  timed("orbit_10_steps", [&] {
+    const QPoint c(f.vp->width() / 2, f.vp->height() / 2);
+    send(f.vp, QEvent::MouseButtonPress, c, Qt::MiddleButton, Qt::MiddleButton);
+    for (int k = 1; k <= 10; ++k) {
+      send(f.vp, QEvent::MouseMove, c + QPoint(8 * k, 3 * k), Qt::NoButton, Qt::MiddleButton);
+      f.vp->repaint();
+    }
+    send(f.vp, QEvent::MouseButtonRelease, c + QPoint(80, 30), Qt::MiddleButton, Qt::NoButton);
+  });
+  // A grid of 40 x 40 lines (1600 lines), then one more across all of them.
+  // (Lines crossing lines divide them, as in SketchUp: the cross lines are
+  // drawn one by one.)
+  timed("grid_of_lines", [&] {
+    auto x = m.createPolyline({gp_Pnt(0, -60000, 0), gp_Pnt(0, -40000, 0)});
+    QVERIFY(x.ok());
+    gp_Trsf dx;
+    dx.SetTranslation(gp_Vec(1000, 0, 0));
+    QVERIFY(m.copy({*x}, dx, 39).ok());
+    for (int k = 0; k < 40; ++k) {
+      QVERIFY(m.createPolyline({gp_Pnt(-1000, -60000 + 500.0 * k, 0), gp_Pnt(40000, -60000 + 500.0 * k, 0)}).ok());
+    }
+  });
+  timed("line_across_grid", [&] {
+    QVERIFY(m.createPolyline({gp_Pnt(-500, -59000, 0), gp_Pnt(39500, -41000, 0)}).ok());
+  });
+  QString text = QStringLiteral("bench scale n=%1 objects=%2").arg(n).arg(m.document().objects().size());
+  for (const auto& [name, ms] : times) text += QStringLiteral(" %1_ms=%2").arg(QString::fromStdString(name)).arg(ms, 0, 'f', 1);
+  qInfo("%s", qPrintable(text));
+}
+
 // Performance plan step 0: viewport cost of a model with many placements.
 // Skipped unless SBR_BENCH_N is set (e.g. SBR_BENCH_N=1000); prints timings.
 void GuiPhase1::benchViewportSync() {
@@ -5707,6 +5803,38 @@ void GuiPhase1::shownAgainPicksAndSnaps() {
   f.window.activateTool(MainWindow::ToolId::PushPull);
   const auto face = f.vp->pickFace(f.vp->toWidget(gp_Pnt(0, -1000, 1000)));
   QVERIFY(face && face->objectId == a);
+}
+
+// The autosave timer writes a copy of the model on a thread of its own
+// (the window keeps answering); saving meanwhile drops it (no recovery
+// file left over from a session saved).
+void GuiPhase1::autosaveWritesInTheBackground() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  for (int k = 0; k < 300; ++k) {
+    geom::SketchPlane plane = geom::SketchPlane::ground();
+    plane.origin = gp_Pnt((k % 20) * 1500.0, (k / 20) * 1500.0, 0);
+    QVERIFY(m.createRectangle(plane, 1000, 1000).ok());
+  }
+  const QString recovery = f.window.recoveryFile();
+  QVERIFY(!recovery.isEmpty());
+  QFile::remove(recovery);
+  f.window.autosaveInBackground();
+  QVERIFY(f.window.autosaving());
+  QTRY_VERIFY_WITH_TIMEOUT(!f.window.autosaving(), 30000);
+  QVERIFY(QFileInfo::exists(recovery));
+  QVERIFY(!QFileInfo::exists(recovery + QStringLiteral(".part")));
+  doc::Modeler back;
+  QVERIFY(back.load(recovery.toStdString()).ok());
+  QCOMPARE(back.document().objects().size(), m.document().objects().size());
+  // Saved while an autosave is under way: the recovery file stays away.
+  QVERIFY(m.createPolyline({gp_Pnt(-1000, -1000, 0), gp_Pnt(-2000, -1000, 0)}).ok());
+  f.window.autosaveInBackground();
+  QVERIFY(f.window.saveFile(QDir(QDir::tempPath()).filePath(QStringLiteral("sbr_autosave_bg.sbr"))));
+  QTRY_VERIFY_WITH_TIMEOUT(!f.window.autosaving(), 30000);
+  QVERIFY(!QFileInfo::exists(recovery));
+  QVERIFY(!QFileInfo::exists(recovery + QStringLiteral(".part")));
 }
 
 // SketchUp: hold the eraser down and sweep across lines; they are marked

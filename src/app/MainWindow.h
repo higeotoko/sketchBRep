@@ -125,6 +125,9 @@ class MainWindow : public QMainWindow, public ToolHost {
   // Startup: asks whether to recover what an earlier session left.
   void offerRecovery();
   bool autosaveNow();
+  // What the autosave timer does: the same, written on a thread of its own.
+  void autosaveInBackground();
+  bool autosaving() const { return autosaving_; }
   QString recoveryFile() const { return recoveryFile_; }
   // Minutes between autosaves (0 = off) and backup generations kept on save.
   void setAutosaveMinutes(int minutes);
@@ -230,6 +233,13 @@ class MainWindow : public QMainWindow, public ToolHost {
   std::unique_ptr<QLockFile> sessionLock_;
   QString recoveryFile_;
   std::uint64_t autosavedSequence_ = 0;
+  // Timed autosaves write a copy of the document on a thread of their own
+  // (seconds for a large model froze the window every few minutes), to a
+  // part file put in place afterwards unless the recovery file was dropped
+  // meanwhile (saved, closed: the generation changed).
+  std::thread autosaveThread_;
+  bool autosaving_ = false;
+  int recoveryGeneration_ = 0;
   int autosaveMinutes_ = 5;
   int backupGenerations_ = 3;
   QLabel* status_ = nullptr;

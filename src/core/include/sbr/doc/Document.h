@@ -11,6 +11,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include <Bnd_Box.hxx>
+
 #include "sbr/doc/Object.h"
 
 namespace sbr::doc {
@@ -126,6 +128,9 @@ class Document {
   gp_Trsf parentTransform(const Object& object) const;  // parent world transform
   gp_Trsf worldTransform(const Object& object) const;
   TopoDS_Shape worldShape(const Object& object) const;
+  // Box around the world shape, kept while the shape and placement stay
+  // (checks against every object of a large model compare boxes first).
+  Bnd_Box worldBounds(const Object& object) const;
   TopoDS_Shape worldShape(const ObjectId& id) const;
 
   // --- embedded images (by content hash; never edited, only added) ------
@@ -209,6 +214,12 @@ class Document {
   // ordered list. Order of objects_ (display / file order) is unchanged.
   mutable std::unordered_map<ObjectId, std::size_t> index_;
   mutable std::unordered_map<ObjectId, std::vector<ObjectId>> children_;
+  struct KeptBounds {
+    TopoDS_Shape shape;  // held: its address is not reused while kept
+    std::array<double, 12> placement{};
+    Bnd_Box box;
+  };
+  mutable std::unordered_map<ObjectId, KeptBounds> bounds_;
   mutable bool indexValid_ = false;
   mutable bool childrenValid_ = false;  // children_ (positions in index_ may still be valid)
   void ensureChildren() const;

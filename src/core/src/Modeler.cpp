@@ -1,6 +1,7 @@
 #include "sbr/doc/Modeler.h"
 
 #include <algorithm>
+#include <unordered_set>
 #include <deque>
 #include <cmath>
 #include <limits>
@@ -201,29 +202,34 @@ gp_Trsf localDelta(const gp_Trsf& parentWorld, const gp_Trsf& worldDelta) {
 Modeler::Modeler() : history_(document_) {}
 
 std::string Modeler::uniqueName(const std::string& base) const {
+  // Names taken, gathered once (each candidate checked against every object
+  // made drawing in a model of thousands ever slower).
+  const std::string prefix = base + " ";
+  std::unordered_set<std::string> taken;
+  auto note = [&](const std::string& name) {
+    if (name.size() > prefix.size() && name.compare(0, prefix.size(), prefix) == 0) taken.insert(name);
+  };
+  for (const Object& o : document_.objects()) note(o.name);
+  for (const ComponentDefinition& d : document_.definitions()) note(d.name);
   for (int n = 1;; ++n) {
-    const std::string candidate = base + " " + std::to_string(n);
-    bool taken = false;
-    for (const Object& o : document_.objects()) {
-      if (o.name == candidate) {
-        taken = true;
-        break;
-      }
-    }
-    for (const ComponentDefinition& d : document_.definitions()) {
-      if (d.name == candidate) taken = true;
-    }
-    if (!taken) return candidate;
+    std::string candidate = prefix + std::to_string(n);
+    if (!taken.count(candidate)) return candidate;
   }
 }
 
 std::vector<ObjectId> Modeler::topmost(const std::vector<ObjectId>& ids) const {
+  // Kept: those not inside another one given (a parent walk per object,
+  // not a check against every other one).
+  const std::unordered_set<ObjectId> given(ids.begin(), ids.end());
+  std::unordered_set<ObjectId> seen;
   std::vector<ObjectId> out;
   for (const ObjectId& id : ids) {
-    if (!document_.find(id) || std::find(out.begin(), out.end(), id) != out.end()) continue;
+    const Object* o = document_.find(id);
+    if (!o || !seen.insert(id).second) continue;
     bool covered = false;
-    for (const ObjectId& other : ids) {
-      if (other != id && document_.isAncestor(other, id)) covered = true;
+    for (const Object* a = o->parent.empty() ? nullptr : document_.find(o->parent); a && !covered;
+         a = a->parent.empty() ? nullptr : document_.find(a->parent)) {
+      covered = given.count(a->id) > 0;
     }
     if (!covered) out.push_back(id);
   }
@@ -553,9 +559,21 @@ void Modeler::punchHole(const ObjectId& profileId) {
   // The smallest coplanar profile around it is the one to cut.
   const Object* host = nullptr;
   double hostArea = 0.0;
+  const Bnd_Box innerBox = document_.worldBounds(*inner);
+  // Only a face whose box holds the inner one's (boxes first: a floor of
+  // thousands of faces checked each geometrically took ever longer).
+  auto holds = [&](const Bnd_Box& outer) {
+    if (outer.IsVoid() || innerBox.IsVoid()) return false;
+    double a0, b0, c0, a1, b1, c1, x0, y0, z0, x1, y1, z1;
+    outer.Get(a0, b0, c0, a1, b1, c1);
+    innerBox.Get(x0, y0, z0, x1, y1, z1);
+    constexpr double slack = 1e-3;
+    return x0 >= a0 - slack && y0 >= b0 - slack && z0 >= c0 - slack && x1 <= a1 + slack && y1 <= b1 + slack &&
+           z1 <= c1 + slack;
+  };
   for (const Object& o : document_.objects()) {
     if (o.id == profileId || o.parent != inner->parent || o.kind() != ObjectKind::Face ||
-        !document_.isVisible(o.id)) {
+        !document_.isVisible(o.id) || !holds(document_.worldBounds(o))) {
       continue;
     }
     const TopoDS_Shape outer = document_.worldShape(o);
@@ -2447,8 +2465,7 @@ Status Modeler::closeIntoSolid(const ObjectId& id, Settled& out) {
   for (const Object& o : document_.objects()) {
     if (o.parent != parent || o.locked || !document_.isVisible(o.id) || o.shape.IsNull()) continue;
     if (o.kind() != ObjectKind::Face && o.kind() != ObjectKind::Shell) continue;
-    Piece piece{&o, {}, false, {}, {}};
-    BRepBndLib::Add(document_.worldShape(o), piece.box);
+    Piece piece{&o, document_.worldBounds(o), false, {}, {}};
     piece.box.Enlarge(tol);
     pieces.push_back(std::move(piece));
   }
@@ -2836,16 +2853,17 @@ Status Modeler::settleFace(const ObjectId& id, Settled& out) {
   // Faces already there on the same plane (either side), nearby.
   std::vector<ObjectId> others;
   for (const Object& o : document_.objects()) {
-    if (o.id == id || o.parent != fresh.parent || !document_.isVisible(o.id) || o.kind() != ObjectKind::Face) continue;
+    if (o.id == id || o.parent != fresh.parent || o.kind() != ObjectKind::Face || !document_.isVisible(o.id) ||
+        document_.worldBounds(o).IsOut(reach)) {
+      continue;
+    }
     gp_Pln on;
     const TopoDS_Face f = lonePlanarFace(document_.worldShape(o), &on);
     if (f.IsNull() || !on.Axis().Direction().IsParallel(plane.Axis().Direction(), 1e-9) ||
         plane.Distance(on.Location()) > tol) {
       continue;
     }
-    Bnd_Box box;
-    BRepBndLib::Add(f, box);
-    if (!box.IsOut(reach)) others.push_back(o.id);
+    others.push_back(o.id);
   }
   std::vector<TopoDS_Face> parts{face};
   std::vector<ObjectId> takenBy;
