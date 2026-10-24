@@ -1418,17 +1418,17 @@ void GuiPhase1::ux06SameNegativeValueTwiceSameResult() {
   click(f.vp, f.vp->toWidget(gp_Pnt(6000, 0, 0)));     // reference: +X
   move(f.vp, f.vp->toWidget(gp_Pnt(5000, 1000, 0)));   // towards +Y (counter-clockwise)
   type(f.vp, QStringLiteral("90"));
-  auto far = [&] {
+  auto farCorner = [&] {
     const Bnd_Box b = geom::exactBounds(m.document().worldShape(box));
     return std::make_pair(std::lround(b.CornerMax().X()), std::lround(b.CornerMax().Y()));
   };
-  const auto ninety = far();
+  const auto ninety = farCorner();
   type(f.vp, QStringLiteral("-30"));
-  const auto once = far();
+  const auto once = farCorner();
   type(f.vp, QStringLiteral("-30"));
-  QCOMPARE(far(), once);  // the same -30, not +30
+  QCOMPARE(farCorner(), once);  // the same -30, not +30
   type(f.vp, QStringLiteral("90"));
-  QCOMPARE(far(), ninety);
+  QCOMPARE(farCorner(), ninety);
   QVERIFY(once != ninety);
 }
 
