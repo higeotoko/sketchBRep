@@ -332,6 +332,13 @@ struct RegenContext {
 // Rebuilds the shape from scratch. Every intermediate result is validated.
 // Group nodes regenerate to a null shape.
 Result<TopoDS_Shape> regenerate(const Recipe& recipe, const RegenContext& context = {});
+// Nested (shared) recipes keep their regenerated shapes; a caller making
+// an operand from an object gives its shape, so regenerating the new
+// Boolean does not rebuild the object's whole history again.
+void rememberShape(const std::shared_ptr<const Recipe>& recipe, const TopoDS_Shape& shape);
+// Off for a thread working on its own (background checks): it then neither
+// uses nor adds kept shapes, which the main thread's objects share.
+void useKeptShapes(bool on);
 
 std::vector<Parameter> parameters(const Recipe& recipe);
 // Changes a parameter in place. Does not regenerate.

@@ -3261,6 +3261,7 @@ std::optional<Result<PushPullResult>> Modeler::mergeIntoHost(const Object& profi
       feature.operands.push_back(BooleanOperand{std::make_shared<const Recipe>(host.recipe),
                                                 toParent * document_.worldTransform(host),
                                                 host.name});
+      rememberShape(feature.operands.back().recipe, host.shape);
       feature.operands.push_back(BooleanOperand{std::make_shared<const Recipe>(extruded.recipe),
                                                 toParent * document_.worldTransform(profileBefore),
                                                 profileBefore.name});
@@ -4420,11 +4421,22 @@ Result<ObjectId> Modeler::cutOpenings(const ObjectId& hostId, const gp_Dir& face
       }
     }
   }
-    // A point on the face plane to place the profiles on.
+  // A point on the face plane to place the profiles on.
   const auto ref = geom::FaceRef::fromFace(*face);
   const double planeOffset = gp_Vec(ref->centroid.XYZ()).Dot(gp_Vec(faceNormal));
-  history_.beginGroup("Openings");
-  ObjectId current = hostId;
+  // Every opening is cut in one Boolean (the wall minus all of them): one
+  // push-through per opening recomputed the whole wall again for each, ever
+  // slower as it gained holes (40 openings took minutes). The recipe is the
+  // same kind as a push-through: rectangles extruded through, operands
+  // 1..n of a Subtract, so they are listed and resized the same way.
+  const Object hostObject = *host;
+  const gp_Trsf toParent = document_.parentTransform(hostObject).Inverted();
+  const std::string name = uniqueName("Opening");
+  BooleanFeature feature;
+  feature.kind = BooleanKind::Subtract;
+  feature.operands.push_back(BooleanOperand{std::make_shared<const Recipe>(hostObject.recipe),
+                                            toParent * document_.worldTransform(hostObject), hostObject.name});
+  rememberShape(feature.operands.back().recipe, hostObject.shape);
   for (double c : centres) {
     geom::SketchPlane plane;
     plane.normal = faceNormal;
@@ -4432,32 +4444,35 @@ Result<ObjectId> Modeler::cutOpenings(const ObjectId& hostId, const gp_Dir& face
     gp_XYZ origin = gp_Vec(faceNormal).XYZ() * planeOffset + gp_Vec(u).XYZ() * (c - width / 2);
     origin.SetZ(z0 + sill);
     plane.origin = gp_Pnt(origin);
-    auto profile = createRectangle(plane, width, height, uniqueName("Opening"));
-    if (!profile) {
-      history_.abortGroup();
-      return R::failure(profile.error());
-    }
-    const TopoDS_Shape shape = document_.worldShape(*profile);
-    TopExp_Explorer f(shape, TopAbs_FACE);
-    auto cut = f.More() ? pushPull(*profile, TopoDS::Face(f.Current()), -depth) : Result<PushPullResult>::failure("no face");
-    if (!cut || cut->id == *profile) {
-      history_.abortGroup();
-      return R::failure(cut ? "The opening did not cut the wall" : cut.error());
-    }
-    current = cut->id;
+    Recipe tool;
+    tool.base = RectangleProfile{plane, width, height};
+    tool.modifiers.push_back(ExtrudeOp{-depth});
+    feature.operands.push_back(BooleanOperand{std::make_shared<const Recipe>(std::move(tool)), toParent, name});
   }
+  Object result = hostObject;
+  result.id = generateObjectId();
+  result.transform = gp_Trsf();
+  result.recipe = Recipe{};
+  result.recipe.base = std::move(feature);
+  result.faceMaterials.clear();
+  result.hiddenEdges.clear();
+  if (const Status built = rebuild(result, document_.regenContext()); !built) return R::failure(built.message());
   // An opening must leave the wall in one piece.
   auto solids = [](const TopoDS_Shape& s) {
     int n = 0;
     for (TopExp_Explorer e(s, TopAbs_SOLID); e.More(); e.Next()) ++n;
     return n;
   };
-  if (solids(document_.worldShape(current)) > solids(world)) {
-    history_.abortGroup();
-    return R::failure("The opening would cut the wall in two");
+  if (solids(result.shape) > solids(world)) return R::failure("The opening would cut the wall in two");
+  if (std::abs(geom::volume(result.shape) - geom::volume(hostObject.shape)) < tolerance::kLinear) {
+    return R::failure("The opening did not cut the wall");
   }
-  history_.endGroup();
-  return current;
+  carryMaterials(result, {{&hostObject, toParent * document_.worldTransform(hostObject)}});
+  ChangeSet changes(document_);
+  changes.erase(hostObject.id);
+  changes.add(result);
+  history_.execute(changes.build("Openings"));
+  return result.id;
 }
 
 Status Modeler::move(const std::vector<ObjectId>& ids, const gp_Vec& offset) {
@@ -4996,6 +5011,7 @@ Result<ObjectId> Modeler::boolean(BooleanKind kind, const std::vector<ObjectId>&
     }
     feature.operands.push_back(BooleanOperand{std::make_shared<const Recipe>(o->recipe),
                                               toParent * document_.worldTransform(*o), o->name});
+    rememberShape(feature.operands.back().recipe, o->shape);
   }
   const Object& first = *document_.find(unique.front());
   result.color = first.color;

@@ -304,21 +304,36 @@ Result<TopoDS_Shape> booleanCombine(BooleanOp op, const std::vector<TopoDS_Shape
     }
   }
   try {
-    TopoDS_Shape current = shapes.front();
-    for (std::size_t i = 1; i < shapes.size(); ++i) {
-      std::unique_ptr<BRepAlgoAPI_BooleanOperation> algo;
-      switch (op) {
-        case BooleanOp::Union: algo = std::make_unique<BRepAlgoAPI_Fuse>(current, shapes[i], progressRange()); break;
-        case BooleanOp::Subtract: algo = std::make_unique<BRepAlgoAPI_Cut>(current, shapes[i], progressRange()); break;
-        case BooleanOp::Intersect:
-          algo = std::make_unique<BRepAlgoAPI_Common>(current, shapes[i], progressRange());
-          break;
-      }
+    // Inputs are never modified (they may be shapes the document holds).
+    // A union or a subtraction takes all its tools in one operation (one
+    // tool at a time redid the whole growing solid for each: 200 openings
+    // in a wall took most of a minute); a common is the common of each.
+    auto run = [&](std::unique_ptr<BRepAlgoAPI_BooleanOperation> algo, const TopoDS_Shape& argument,
+                   std::size_t firstTool, std::size_t lastTool) -> Result<TopoDS_Shape> {
+      TopTools_ListOfShape arguments, tools;
+      arguments.Append(argument);
+      for (std::size_t i = firstTool; i < lastTool; ++i) tools.Append(shapes[i]);
+      algo->SetArguments(arguments);
+      algo->SetTools(tools);
+      algo->SetNonDestructive(Standard_True);
+      algo->Build(progressRange());
       if (cancelled()) return Result<TopoDS_Shape>::failure(kCancelledMessage);
-      if (!algo->IsDone() || algo->HasErrors()) {
-        return Result<TopoDS_Shape>::failure("Boolean operation failed");
+      if (!algo->IsDone() || algo->HasErrors()) return Result<TopoDS_Shape>::failure("Boolean operation failed");
+      return algo->Shape();
+    };
+    TopoDS_Shape current = shapes.front();
+    if (op == BooleanOp::Intersect) {
+      for (std::size_t i = 1; i < shapes.size(); ++i) {
+        auto next = run(std::make_unique<BRepAlgoAPI_Common>(), current, i, i + 1);
+        if (!next) return next;
+        current = next.value();
       }
-      current = algo->Shape();
+    } else {
+      auto all = run(op == BooleanOp::Union ? std::unique_ptr<BRepAlgoAPI_BooleanOperation>(new BRepAlgoAPI_Fuse())
+                                            : std::unique_ptr<BRepAlgoAPI_BooleanOperation>(new BRepAlgoAPI_Cut()),
+                     current, 1, shapes.size());
+      if (!all) return all;
+      current = all.value();
     }
     ShapeUpgrade_UnifySameDomain unify(current, Standard_True, Standard_True, Standard_False);
     unify.Build();

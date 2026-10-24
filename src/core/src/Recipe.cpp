@@ -5,6 +5,8 @@
 #include <TopoDS_Shell.hxx>
 
 #include <cmath>
+#include <unordered_map>
+#include <mutex>
 #include <sstream>
 
 #include <BRepBuilderAPI_MakeEdge.hxx>
@@ -42,6 +44,53 @@ geom::BooleanOp toGeom(BooleanKind kind) {
     case BooleanKind::Intersect: return geom::BooleanOp::Intersect;
   }
   return geom::BooleanOp::Union;
+}
+
+const std::vector<BooleanOperand>* operandsOf(const BaseFeature& base);
+
+// Whether a recipe depends on more than itself (component definitions).
+bool usesContext(const Recipe& recipe) {
+  if (std::holds_alternative<ComponentInstance>(recipe.base)) return true;
+  if (const auto* operands = operandsOf(recipe.base)) {
+    for (const BooleanOperand& o : *operands) {
+      if (o.recipe && usesContext(*o.recipe)) return true;
+    }
+  }
+  for (const Modifier& m : recipe.modifiers) {
+    const auto* hole = std::get_if<HoleOp>(&m);
+    if (hole && hole->outline.recipe && usesContext(*hole->outline.recipe)) return true;
+  }
+  return false;
+}
+
+// Nested recipes are shared and never change once shared (const): their
+// shapes are kept, so a wall cut again and again (each opening a Boolean
+// on the one before) regenerates only the new step, not the whole chain
+// every time (40 openings in one go took minutes).
+struct Kept {
+  std::shared_ptr<const Recipe> recipe;  // keeps the address from being reused
+  TopoDS_Shape shape;
+};
+std::mutex keptMutex;
+std::unordered_map<const Recipe*, Kept> kept;
+thread_local bool keptOnThisThread = true;
+
+void keep(const std::shared_ptr<const Recipe>& recipe, const TopoDS_Shape& shape) {
+  if (!keptOnThisThread) return;
+  const std::lock_guard<std::mutex> lock(keptMutex);
+  constexpr std::size_t kMaxKept = 2048;
+  if (kept.size() >= kMaxKept) kept.clear();
+  kept.emplace(recipe.get(), Kept{recipe, shape});
+}
+
+Result<TopoDS_Shape> regenerateShared(const std::shared_ptr<const Recipe>& recipe, const RegenContext& context) {
+  if (keptOnThisThread) {
+    const std::lock_guard<std::mutex> lock(keptMutex);
+    if (const auto it = kept.find(recipe.get()); it != kept.end()) return it->second.shape;
+  }
+  auto shape = regenerate(*recipe, context);
+  if (shape && !usesContext(*recipe)) keep(recipe, shape.value());
+  return shape;
 }
 
 Result<TopoDS_Shape> buildBase(const BaseFeature& base, const RegenContext& context) {
@@ -110,7 +159,7 @@ Result<TopoDS_Shape> buildBase(const BaseFeature& base, const RegenContext& cont
             for (std::size_t i = 0; i < b.operands.size(); ++i) {
               const BooleanOperand& operand = b.operands[i];
               if (!operand.recipe) return Result<TopoDS_Shape>::failure("Boolean operand missing");
-              auto shape = regenerate(*operand.recipe, context);
+              auto shape = regenerateShared(operand.recipe, context);
               if (!shape) {
                 return Result<TopoDS_Shape>::failure("Operand '" + operand.name +
                                                      "': " + shape.error());
@@ -123,7 +172,7 @@ Result<TopoDS_Shape> buildBase(const BaseFeature& base, const RegenContext& cont
             std::vector<TopoDS_Wire> wires;
             for (const BooleanOperand& section : l.sections) {
               if (!section.recipe) return Result<TopoDS_Shape>::failure("Loft section missing");
-              auto shape = regenerate(*section.recipe, context);
+              auto shape = regenerateShared(section.recipe, context);
               if (!shape) {
                 return Result<TopoDS_Shape>::failure("Section '" + section.name + "': " + shape.error());
               }
@@ -142,7 +191,7 @@ Result<TopoDS_Shape> buildBase(const BaseFeature& base, const RegenContext& cont
             std::vector<TopoDS_Shape> placed;
             for (const BooleanOperand& in : f.faces) {
               if (!in.recipe) return Result<TopoDS_Shape>::failure("Face missing");
-              auto shape = regenerate(*in.recipe, context);
+              auto shape = regenerateShared(in.recipe, context);
               if (!shape) return Result<TopoDS_Shape>::failure("'" + in.name + "': " + shape.error());
               placed.push_back(shape->Moved(TopLoc_Location(in.placement)));
             }
@@ -154,7 +203,7 @@ Result<TopoDS_Shape> buildBase(const BaseFeature& base, const RegenContext& cont
             }
             std::vector<TopoDS_Shape> placed;
             for (const BooleanOperand& in : f.inputs) {
-              auto shape = regenerate(*in.recipe, context);
+              auto shape = regenerateShared(in.recipe, context);
               if (!shape) return Result<TopoDS_Shape>::failure("'" + in.name + "': " + shape.error());
               placed.push_back(shape->Moved(TopLoc_Location(in.placement)));
             }
@@ -166,7 +215,7 @@ Result<TopoDS_Shape> buildBase(const BaseFeature& base, const RegenContext& cont
             std::vector<TopoDS_Shape> curves;
             for (const BooleanOperand& c : l.curves) {
               if (!c.recipe) return Result<TopoDS_Shape>::failure("Loop curve missing");
-              auto shape = regenerate(*c.recipe, context);
+              auto shape = regenerateShared(c.recipe, context);
               if (!shape) return Result<TopoDS_Shape>::failure("'" + c.name + "': " + shape.error());
               curves.push_back(shape->Moved(TopLoc_Location(c.placement)));
             }
@@ -178,7 +227,7 @@ Result<TopoDS_Shape> buildBase(const BaseFeature& base, const RegenContext& cont
           },
           [&](const FacePart& f) -> Result<TopoDS_Shape> {
             if (f.source.size() != 1 || !f.source[0].recipe) return Result<TopoDS_Shape>::failure("Split face missing");
-            auto shape = regenerate(*f.source[0].recipe, context);
+            auto shape = regenerateShared(f.source[0].recipe, context);
             if (!shape) return Result<TopoDS_Shape>::failure(shape.error());
             const TopoDS_Shape placed = shape->Moved(TopLoc_Location(f.source[0].placement));
             if (placed.ShapeType() != TopAbs_FACE) return Result<TopoDS_Shape>::failure("Split source is not a face");
@@ -243,6 +292,12 @@ const char* toString(BooleanKind kind) {
   return "Union";
 }
 
+void useKeptShapes(bool on) { keptOnThisThread = on; }
+
+void rememberShape(const std::shared_ptr<const Recipe>& recipe, const TopoDS_Shape& shape) {
+  if (recipe && !shape.IsNull() && !usesContext(*recipe)) keep(recipe, shape);
+}
+
 Result<TopoDS_Shape> regenerate(const Recipe& recipe, const RegenContext& context) {
   auto current = buildBase(recipe.base, context);
   if (!current) return current;
@@ -274,7 +329,7 @@ Result<TopoDS_Shape> regenerate(const Recipe& recipe, const RegenContext& contex
             [&](const HoleOp& op) -> Result<TopoDS_Shape> {
               if (!isFace) return Result<TopoDS_Shape>::failure("A hole requires a profile face");
               if (!op.outline.recipe) return Result<TopoDS_Shape>::failure("Hole outline missing");
-              auto hole = regenerate(*op.outline.recipe, context);
+              auto hole = regenerateShared(op.outline.recipe, context);
               if (!hole) return Result<TopoDS_Shape>::failure("Hole: " + hole.error());
               const TopoDS_Shape placed = hole->Moved(TopLoc_Location(op.outline.placement));
               if (placed.ShapeType() != TopAbs_FACE) return Result<TopoDS_Shape>::failure("Hole outline is not a face");

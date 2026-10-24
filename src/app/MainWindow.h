@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+#include <thread>
 #include <map>
 #include <memory>
 #include <string>
@@ -95,7 +97,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   bool createGrid(const QString& xSpacings, const QString& ySpacings);
   // After opening, recipes are verified in the background (a few objects
   // per idle moment); true while that is still running.
-  bool verifyingRecipes() const { return verifyTimer_ && verifyTimer_->isActive(); }
+  bool verifyingRecipes() const { return verifying_; }
   const QStringList& recipeWarnings() const { return recipeWarnings_; }
   // Clipboard (inside this window): copy / cut the selection, paste with the
   // paste tool (follows the cursor) or in place.
@@ -257,10 +259,14 @@ class MainWindow : public QMainWindow, public ToolHost {
   std::unique_ptr<SlabTool> slabTool_;
   std::unique_ptr<OpeningTool> openingTool_;
   doc::Modeler::Clipboard clipboard_;
-  QTimer* verifyTimer_ = nullptr;
-  std::size_t verifyCursor_ = 0;
+  // Recipes are checked on a thread of their own after opening a file (a
+  // wall with many openings took seconds, which froze the window).
+  std::thread verifyThread_;
+  std::shared_ptr<std::atomic<bool>> verifyCancel_;
+  bool verifying_ = false;
   QStringList recipeWarnings_;
   void startRecipeVerification();
+  void stopRecipeVerification();
   std::unique_ptr<CircleTool> circleTool_;
   std::unique_ptr<PaintTool> paintTool_;
   std::unique_ptr<EraserTool> eraserTool_;

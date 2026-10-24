@@ -205,6 +205,7 @@ class GuiPhase1 : public QObject {
   void benchViewportSync();
   void benchEnterManyCopies();
   void benchManyCopiesOperations();
+  void benchMoreSlowPatterns();
   void groupEditFadesTheRest();
   void componentEditUpdatesPlacementsInSlices();
   void incrementalSyncFollowsGroupsAndUndo();
@@ -244,6 +245,7 @@ class GuiPhase1 : public QObject {
   void selectionDotsKeepTheMaterialColour();
   void selectionDotsOnOnePlacementOnly();
   void movedObjectsPickWhereTheyAre();
+  void openingKeepsTheWindowResponsive();
   void eraserDragErasesCrossedLines();
   void eraserDragFollowsWhatTheLineBecame();
   void wheelZoomIsConsistentAndReversible();
@@ -3260,6 +3262,149 @@ void GuiPhase1::benchManyCopiesOperations() {
   qInfo("%s", qPrintable(line));
 }
 
+// More patterns that may slow down with a large model: pointing (snaps
+// per mouse move), drawing lines among many lines, box selection, tags,
+// X-ray, hide / unhide, grouping, making components, editing inside a big
+// group and a solid with many faces. Skipped unless SBR_BENCH_N is set.
+void GuiPhase1::benchMoreSlowPatterns() {
+  const int n = qEnvironmentVariableIntValue("SBR_BENCH_N");
+  if (n <= 0) QSKIP("set SBR_BENCH_N to run the benchmark");
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  api::CommandApi api(m);
+  auto call = [&](const std::string& command, const nlohmann::json& args) {
+    const auto r = nlohmann::json::parse(api.execute(nlohmann::json{{"command", command}, {"args", args}}.dump()));
+    return r.value("ok", false) ? r["result"] : nlohmann::json();
+  };
+  const int columns = static_cast<int>(std::ceil(std::sqrt(static_cast<double>(n))));
+  auto array = [&](const doc::ObjectId& first, const gp_Vec& step, const gp_Vec& rowStep) {
+    gp_Trsf dx, dz;
+    dx.SetTranslation(step);
+    dz.SetTranslation(rowStep);
+    auto row = m.copy({first}, dx, columns - 1);
+    std::vector<doc::ObjectId> all{first};
+    all.insert(all.end(), row->begin(), row->end());
+    auto rest = m.copy(all, dz, (n + columns - 1) / columns - 1);
+    if (rest.ok()) all.insert(all.end(), rest->begin(), rest->end());
+    return all;
+  };
+  // Panels with windows (component placements) far off, loose boxes, many
+  // loose lines on the ground, and one long wall with 60 openings.
+  const std::string panel = call("create_box", {{"origin", {0, 50000, 0}}, {"width", 3000}, {"depth", 200}, {"height", 2500}})["id"];
+  const std::string cut = call("place_openings", {{"host", panel}, {"count", 3}, {"width", 600}, {"height", 900},
+                                                  {"sill", 800}, {"face_normal", {0, -1, 0}}})["id"];
+  auto instance = m.makeComponent({cut.empty() ? panel : cut}, "Panel");
+  QVERIFY(instance.ok());
+  const std::vector<doc::ObjectId> panels = array(*instance, gp_Vec(3200, 0, 0), gp_Vec(0, 0, 3000));
+  const std::vector<doc::ObjectId> boxes = array(f.box(0, 20000, 1000, 1000, 1000), gp_Vec(1200, 0, 0), gp_Vec(0, 1200, 0));
+  auto line = m.createPolyline({gp_Pnt(0, 0, 0), gp_Pnt(20000, 0, 0)});
+  QVERIFY(line.ok());
+  gp_Trsf dy;
+  dy.SetTranslation(gp_Vec(0, 10, 0));
+  QVERIFY(m.copy({*line}, dy, 999).ok());  // 1000 parallel lines, 10 apart
+  const std::string wall = call("create_box", {{"origin", {0, -5000, 0}}, {"width", 60000}, {"depth", 200}, {"height", 3000}})["id"];
+  const std::string holed = call("place_openings", {{"host", wall}, {"count", 60}, {"width", 150}, {"height", 600},
+                                                    {"sill", 900}, {"face_normal", {0, -1, 0}}})["id"];
+  QVERIFY(!holed.empty());
+  qInfo("bench setup done");
+  QElapsedTimer setup;
+  setup.start();
+  f.vp->syncNow();
+  std::vector<std::pair<std::string, double>> times;
+  times.emplace_back("initial_sync", setup.nsecsElapsed() / 1e6);
+  auto timed = [&](const char* name, const std::function<void()>& fn) {
+    QElapsedTimer t;
+    t.start();
+    qInfo("bench step %s", name);
+    fn();
+    f.vp->syncNow();
+    QCoreApplication::processEvents();
+    times.emplace_back(name, t.nsecsElapsed() / 1e6);
+  };
+
+  // Pointing: the line tool snapping as the mouse moves over everything.
+  f.window.activateTool(MainWindow::ToolId::Line);
+  timed("hover_100_moves", [&] {
+    for (int k = 0; k < 100; ++k) move(f.vp, QPoint(50 + 11 * k % f.vp->width(), 80 + 7 * k % f.vp->height()));
+  });
+  // A line among the 1000 lines (crossing all of them), then one off them.
+  const std::size_t before = m.document().objects().size();
+  timed("line_across_1000_lines", [&] {
+    QVERIFY(m.createPolyline({gp_Pnt(10000, -100, 0), gp_Pnt(10000, 10100, 0)}).ok());
+  });
+  qInfo("bench detail objects_after_crossing=%zu (was %zu)", m.document().objects().size(), before);
+  timed("line_elsewhere", [&] { QVERIFY(m.createPolyline({gp_Pnt(-5000, -9000, 0), gp_Pnt(-4000, -9000, 0)}).ok()); });
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  // Box selection of everything on screen (window), then crossing.
+  f.window.activateTool(MainWindow::ToolId::Select);
+  auto drag = [&](const QPoint& from, const QPoint& to) {
+    send(f.vp, QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
+    for (int i = 1; i <= 4; ++i) send(f.vp, QEvent::MouseMove, from + (to - from) * i / 4, Qt::NoButton, Qt::LeftButton);
+    send(f.vp, QEvent::MouseButtonRelease, to, Qt::LeftButton, Qt::NoButton);
+  };
+  f.vp->fitAll();
+  QCoreApplication::processEvents();
+  timed("window_select_all", [&] { drag(QPoint(2, 2), QPoint(f.vp->width() - 2, f.vp->height() - 2)); });
+  qInfo("bench detail window_selected=%zu", f.window.selection().size());
+  timed("crossing_select_middle", [&] {
+    drag(QPoint(f.vp->width() * 2 / 3, f.vp->height() * 2 / 3), QPoint(f.vp->width() / 3, f.vp->height() / 3));
+  });
+  timed("deselect", [&] { f.window.setSelection({}); });
+  // Tags, X-ray, hide / unhide.
+  for (const doc::ObjectId& id : panels) m.setLayer(id, "Panels");
+  timed("tag_hide", [&] { m.setTagVisible("Panels", false); });
+  timed("tag_show", [&] { m.setTagVisible("Panels", true); });
+  timed("xray_on", [&] { f.vp->setXRay(true); });
+  timed("xray_off", [&] { f.vp->setXRay(false); });
+  timed("hide_boxes", [&] { QVERIFY(m.hide(boxes).ok()); });
+  timed("unhide_all", [&] { QVERIFY(m.unhideAll().ok()); });
+  // Grouping and components.
+  doc::ObjectId group;
+  timed("group_boxes", [&] {
+    auto g = m.group(boxes, "Boxes");
+    QVERIFY(g.ok());
+    group = *g;
+  });
+  timed("enter_big_group", [&] { f.window.enterGroup(group); });
+  timed("line_in_big_group", [&] { QVERIFY(m.createPolyline({gp_Pnt(0, 19000, 0), gp_Pnt(1000, 19000, 0)}).ok()); });
+  timed("exit_big_group", [&] { f.window.exitGroup(); });
+  timed("ungroup_boxes", [&] { QVERIFY(m.ungroup(group).ok()); });
+  const std::vector<doc::ObjectId> some(boxes.begin(), boxes.begin() + std::min<std::size_t>(boxes.size(), 300));
+  doc::ObjectId component;
+  timed("component_of_300", [&] {
+    auto c = m.makeComponent(some, "Lot");
+    QVERIFY(c.ok());
+    component = *c;
+  });
+  timed("explode_300", [&] { QVERIFY(m.explode(component).ok()); });
+  // A solid with many faces: pick a face, push / pull it.
+  const doc::Object* w = m.document().find(holed);
+  QVERIFY(w);
+  qInfo("bench detail wall_faces=%d", [&] {
+    TopTools_IndexedMapOfShape faces;
+    TopExp::MapShapes(w->shape, TopAbs_FACE, faces);
+    return faces.Extent();
+  }());
+  f.window.activateTool(MainWindow::ToolId::PushPull);
+  const QPoint onWall = f.vp->toWidget(gp_Pnt(100, -5000, 300));
+  timed("hover_holed_wall", [&] { for (int k = 0; k < 20; ++k) move(f.vp, onWall + QPoint(k % 3, 0)); });
+  timed("pushpull_holed_wall", [&] {
+    const doc::Object* now = m.document().find(holed);
+    TopoDS_Face top;
+    for (TopExp_Explorer e(m.document().worldShape(*now), TopAbs_FACE); e.More(); e.Next()) {
+      const Bnd_Box b = geom::exactBounds(e.Current());
+      if (b.CornerMin().Z() > 2999) top = TopoDS::Face(e.Current());
+    }
+    QVERIFY(!top.IsNull());
+    QVERIFY(m.pushPull(holed, top, 500).ok());
+  });
+  timed("undo_pushpull", [&] { QVERIFY(m.undo()); });
+  QString text = QStringLiteral("bench more n=%1 objects=%2").arg(n).arg(m.document().objects().size());
+  for (const auto& [name, ms] : times) text += QStringLiteral(" %1_ms=%2").arg(QString::fromStdString(name)).arg(ms, 0, 'f', 1);
+  qInfo("%s", qPrintable(text));
+}
+
 // Performance plan step 0: viewport cost of a model with many placements.
 // Skipped unless SBR_BENCH_N is set (e.g. SBR_BENCH_N=1000); prints timings.
 void GuiPhase1::benchViewportSync() {
@@ -5483,6 +5628,51 @@ void GuiPhase1::movedObjectsPickWhereTheyAre() {
   QCOMPARE(blueAt(now), 0);
   element = f.vp->elementAt(f.vp->toWidget(before));
   QVERIFY(element && element->objectId == box);
+}
+
+// Opening a file checks the recipes on a thread of its own: a wall with
+// 40 openings takes a while to regenerate, and the window keeps answering
+// meanwhile (no gap between timer ticks longer than a fraction of that).
+void GuiPhase1::openingKeepsTheWindowResponsive() {
+  const QString path = QDir(QDir::tempPath()).filePath(QStringLiteral("sbr_open_responsive.sbr"));
+  {
+    doc::Modeler m;
+    api::CommandApi api(m);
+    const auto r = nlohmann::json::parse(api.execute(
+        R"({"command":"create_box","args":{"origin":[0,0,0],"width":20000,"depth":200,"height":3000}})"));
+    const std::string wall = r["result"]["id"];
+    for (int k = 0; k < 4; ++k) {
+      const auto box = nlohmann::json::parse(api.execute(nlohmann::json{
+          {"command", "create_box"},
+          {"args", {{"origin", {0, 1000.0 * (k + 1), 0}}, {"width", 20000}, {"depth", 200}, {"height", 3000}}}}.dump()));
+      api.execute(nlohmann::json{{"command", "place_openings"},
+                                 {"args", {{"host", box["result"]["id"]}, {"count", 40}, {"width", 150}, {"height", 600},
+                                           {"sill", 900}, {"face_normal", {0, -1, 0}}}}}.dump());
+    }
+    api.execute(nlohmann::json{{"command", "place_openings"},
+                               {"args", {{"host", wall}, {"count", 40}, {"width", 150}, {"height", 600}, {"sill", 900},
+                                         {"face_normal", {0, -1, 0}}}}}.dump());
+    QVERIFY(m.save(path.toStdString()).ok());
+  }
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  QVERIFY(f.window.openFile(path));
+  QVERIFY(f.window.verifyingRecipes());
+  QElapsedTimer clock;
+  clock.start();
+  qint64 last = 0, longest = 0;
+  QTimer tick;
+  tick.setInterval(10);
+  QObject::connect(&tick, &QTimer::timeout, [&] {
+    longest = std::max(longest, clock.elapsed() - last);
+    last = clock.elapsed();
+  });
+  tick.start();
+  QTRY_VERIFY_WITH_TIMEOUT(!f.window.verifyingRecipes(), 60000);
+  tick.stop();
+  qInfo("verification took %lld ms, longest pause %lld ms", clock.elapsed(), longest);
+  QVERIFY2(longest < 200, qPrintable(QString::number(longest)));
+  QVERIFY2(f.window.recipeWarnings().isEmpty(), qPrintable(f.window.recipeWarnings().join(QStringLiteral("; "))));
 }
 
 // SketchUp: hold the eraser down and sweep across lines; they are marked

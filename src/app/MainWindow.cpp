@@ -124,6 +124,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 }
 
 MainWindow::~MainWindow() {
+  stopRecipeVerification();
   geom::setProgressIndicator(nullptr);
   // A normal end leaves no recovery file behind (a crash does).
   if (sessionLock_) clearRecovery();
@@ -2464,32 +2465,77 @@ bool MainWindow::openFile(const QString& path) {
 }
 
 void MainWindow::startRecipeVerification() {
-  if (!verifyTimer_) {
-    verifyTimer_ = new QTimer(this);
-    verifyTimer_->setInterval(0);
-    connect(verifyTimer_, &QTimer::timeout, this, [this] {
-      // ~15 ms of checking per idle moment keeps the window responsive.
-      QElapsedTimer slice;
-      slice.start();
-      const std::size_t total = modeler_.document().objects().size();
-      while (verifyCursor_ < total && slice.elapsed() < 15) {
-        for (const std::string& w : modeler_.verifyRecipes(verifyCursor_, 8)) {
-          recipeWarnings_ << QString::fromStdString(w);
-        }
-      }
-      if (verifyCursor_ < total) return;
-      verifyTimer_->stop();
-      if (!recipeWarnings_.isEmpty()) {
-        statusBar()->showMessage(tr("レシピの確認で %1 件の注意（保存された形状を使っています）")
-                                     .arg(recipeWarnings_.size()),
-                                 15000);
-        statusBar()->setToolTip(recipeWarnings_.join(QStringLiteral("\n")));
-      }
-    });
-  }
-  verifyCursor_ = 0;
+  stopRecipeVerification();
   recipeWarnings_.clear();
-  verifyTimer_->start();
+  // A copy of what to check (objects as loaded, component definitions):
+  // the thread never touches the document, which the user goes on editing.
+  struct Job {
+    std::string prefix;
+    doc::Object object;
+  };
+  const doc::Document& document = modeler_.document();
+  auto definitions = std::make_shared<const std::vector<doc::ComponentDefinition>>(document.definitions());
+  std::vector<Job> jobs;
+  for (const doc::ComponentDefinition& d : *definitions) {
+    for (const doc::Object& o : d.objects) {
+      if (!o.shape.IsNull() && !o.isContainer()) jobs.push_back({d.name + ": ", o});
+    }
+  }
+  for (const doc::Object& o : document.objects()) {
+    if (o.shape.IsNull() || o.isContainer() || std::holds_alternative<doc::ComponentInstance>(o.recipe.base)) continue;
+    jobs.push_back({{}, o});
+  }
+  auto cancel = std::make_shared<std::atomic<bool>>(false);
+  verifyCancel_ = cancel;
+  verifying_ = true;
+  verifyThread_ = std::thread([this, cancel, definitions, jobs = std::move(jobs)] {
+    doc::useKeptShapes(false);
+    auto find = [definitions](const std::string& id) -> const doc::ComponentDefinition* {
+      for (const doc::ComponentDefinition& d : *definitions) {
+        if (d.id == id) return &d;
+      }
+      return nullptr;
+    };
+    doc::RegenContext plain;
+    plain.definitionShape = [find](const std::string& id) -> std::optional<TopoDS_Shape> {
+      const doc::ComponentDefinition* d = find(id);
+      if (!d || d->shape.IsNull()) return std::nullopt;
+      return d->shape;
+    };
+    doc::RegenContext context = plain;
+    context.instanceShape = [find, plain](const doc::ComponentInstance& instance) -> Result<TopoDS_Shape> {
+      const doc::ComponentDefinition* d = find(instance.definitionId);
+      if (!d) return Result<TopoDS_Shape>::failure("Unknown component definition " + instance.definitionId);
+      return doc::buildInstanceShape(*d, instance, plain);
+    };
+    QStringList warnings;
+    for (const Job& job : jobs) {
+      if (*cancel) return;
+      if (auto w = doc::checkRecipe(job.object, context)) warnings << QString::fromStdString(job.prefix + *w);
+    }
+    QMetaObject::invokeMethod(
+        this,
+        [this, cancel, warnings] {
+          if (*cancel) return;
+          verifying_ = false;
+          recipeWarnings_ = warnings;
+          if (!recipeWarnings_.isEmpty()) {
+            statusBar()->showMessage(tr("レシピの確認で %1 件の注意（保存された形状を使っています）")
+                                         .arg(recipeWarnings_.size()),
+                                     15000);
+            statusBar()->setToolTip(recipeWarnings_.join(QStringLiteral("\n")));
+          }
+        },
+        Qt::QueuedConnection);
+  });
+}
+
+void MainWindow::stopRecipeVerification() {
+  if (verifyCancel_) *verifyCancel_ = true;
+  // Stops between objects: waits for the one being checked at most.
+  if (verifyThread_.joinable()) verifyThread_.join();
+  verifyCancel_.reset();
+  verifying_ = false;
 }
 
 bool MainWindow::saveFile(const QString& path) {
