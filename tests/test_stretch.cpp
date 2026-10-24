@@ -206,3 +206,80 @@ TEST(Stretch, Api) {
   ASSERT_TRUE(u["ok"].get<bool>()) << u.dump();
   EXPECT_NEAR(boundsOf(m, box).CornerMax().X(), 1000, 1e-6);
 }
+
+// LIM-02: a placement stretched on its own, made unique: the stretch goes
+// into a definition of its own (parametric: each object gets the stretch
+// step), the placement plain again and looking the same; then it can be
+// edited in place (only it changes) and exploded. The only placement of a
+// component: baked into that definition. Exploding a stretched placement
+// gives stretched pieces. One undo step each; saved and reloaded.
+TEST(Stretch, StretchedPlacementMadeUniqueEditedAndExploded) {
+  Modeler m;
+  const ObjectId box = cube(m);
+  auto component = m.makeComponent({box});
+  ASSERT_TRUE(component.ok());
+  gp_Trsf away;
+  away.SetTranslation(gp_Vec(3000, 0, 0));
+  const ObjectId other = m.copy({*component}, away, 1)->front();
+  const std::string shared = std::get<ComponentInstance>(m.document().find(*component)->recipe.base).definitionId;
+  ASSERT_TRUE(m.stretch({*component}, gp_Pnt(0, 0, 0), gp::DX(), gp::DY(), 2.0, 1.0, 1.0).ok());
+  const Bnd_Box before = boundsOf(m, *component);
+
+  const std::size_t steps = m.history().undoCount();
+  auto unique = m.makeUnique(*component);
+  ASSERT_TRUE(unique.ok()) << unique.error();
+  EXPECT_EQ(m.history().undoCount(), steps + 1);
+  const ComponentInstance own = std::get<ComponentInstance>(m.document().find(*component)->recipe.base);  // a copy
+  EXPECT_NE(own.definitionId, shared);
+  EXPECT_TRUE(own.stretches.empty());
+  const Bnd_Box after = boundsOf(m, *component);
+  EXPECT_LT(before.CornerMin().Distance(after.CornerMin()) + before.CornerMax().Distance(after.CornerMax()), 1e-6);
+  EXPECT_NEAR(boundsOf(m, other).CornerMax().X() - boundsOf(m, other).CornerMin().X(), 1000, 1e-6);
+
+  // Now editable in place: the edit reaches this placement only.
+  auto edit = m.beginComponentEdit(*component);
+  ASSERT_TRUE(edit.ok()) << edit.error();
+  ASSERT_TRUE(m.endComponentEdit(*edit).ok());
+  ASSERT_TRUE(m.document().find(*component));
+  ASSERT_TRUE(m.document().find(other));
+  // Its definition's height parameter: this one taller, the other not.
+  const ComponentDefinition* d = m.document().findDefinition(own.definitionId);
+  ASSERT_TRUE(d);
+  ASSERT_FALSE(d->objects.empty());
+  ASSERT_TRUE(m.setDefinitionParameter(own.definitionId, d->objects.front().id, "op0.distance", 2000).ok());
+  EXPECT_NEAR(boundsOf(m, *component).CornerMax().Z(), 2000, 1e-6);
+  EXPECT_NEAR(boundsOf(m, *component).CornerMax().X() - boundsOf(m, *component).CornerMin().X(), 2000, 1e-6);
+  EXPECT_NEAR(boundsOf(m, other).CornerMax().Z(), 1000, 1e-6);
+
+  // In the file, and back.
+  const std::string path = ::testing::TempDir() + "stretch_unique.sbr";
+  ASSERT_TRUE(m.save(path).ok());
+  Modeler back;
+  ASSERT_TRUE(back.load(path).ok());
+  EXPECT_NEAR(boundsOf(back, *component).CornerMax().X() - boundsOf(back, *component).CornerMin().X(), 2000, 1e-6);
+
+  // Undo back to before Make Unique (the parameter, the edit's two ends,
+  // Make Unique): the shared definition and the stretch again.
+  while (m.history().undoCount() > steps) ASSERT_TRUE(m.undo());
+  ASSERT_TRUE(m.document().find(*component));
+  EXPECT_EQ(std::get<ComponentInstance>(m.document().find(*component)->recipe.base).definitionId, shared);
+  EXPECT_FALSE(std::get<ComponentInstance>(m.document().find(*component)->recipe.base).stretches.empty());
+
+  // Exploded while stretched: stretched pieces where it was.
+  auto pieces = m.explode(*component);
+  ASSERT_TRUE(pieces.ok()) << pieces.error();
+  Bnd_Box exploded;
+  for (const ObjectId& id : *pieces) exploded.Add(boundsOf(m, id));
+  EXPECT_LT(before.CornerMin().Distance(exploded.CornerMin()) + before.CornerMax().Distance(exploded.CornerMax()), 1e-6);
+  for (const ObjectId& id : *pieces) EXPECT_EQ(m.document().find(id)->kind(), ObjectKind::Solid);
+
+  // The only placement, stretched: baked into its definition, plain again.
+  Modeler single;
+  const ObjectId lone = *single.makeComponent({cube(single)});
+  ASSERT_TRUE(single.stretch({lone}, gp_Pnt(0, 0, 0), gp::DX(), gp::DY(), 1.0, 3.0, 1.0).ok());
+  ASSERT_TRUE(single.makeUnique(lone).ok());
+  const ComponentInstance plain = std::get<ComponentInstance>(single.document().find(lone)->recipe.base);
+  EXPECT_TRUE(plain.stretches.empty());
+  EXPECT_NEAR(boundsOf(single, lone).CornerMax().Y() - boundsOf(single, lone).CornerMin().Y(), 3000, 1e-6);
+  EXPECT_TRUE(single.beginComponentEdit(lone).ok());
+}

@@ -4832,6 +4832,59 @@ Result<ObjectId> Modeler::makeComponent(const std::vector<ObjectId>& ids, const 
   return instance.id;
 }
 
+namespace {
+
+// The definition as one placement shows it: its own parameters written in
+// and its own stretches baked into the recipe of every object (a StretchOp
+// in that object's own coordinates, so it stays parametric). A placement
+// both mirrored and stretched, or a component inside, is refused.
+Result<ComponentDefinition> placementDefinition(const ComponentDefinition& stored, const ComponentInstance& ref,
+                                                const RegenContext& context) {
+  using R = Result<ComponentDefinition>;
+  auto written = applyOverrides(stored, ref.overrides, context);
+  if (!written || ref.stretches.empty()) return written;
+  if (ref.mirrored) return R::failure("A placement both mirrored and stretched cannot be baked yet; mirror it back first");
+  ComponentDefinition definition = written.value();
+  std::map<ObjectId, const Object*> byId;
+  for (const Object& o : definition.objects) byId[o.id] = &o;
+  // Each object's placement in the definition (its parents' and its own).
+  auto chain = [&](const Object& o) {
+    gp_Trsf t = o.transform;
+    ObjectId parent = o.parent;
+    int guard = 0;
+    while (!parent.empty() && guard++ < 1000) {
+      const auto it = byId.find(parent);
+      if (it == byId.end()) break;
+      t = it->second->transform * t;
+      parent = it->second->parent;
+    }
+    return t;
+  };
+  std::vector<gp_Trsf> placements;
+  for (const Object& o : definition.objects) placements.push_back(chain(o));
+  for (std::size_t i = 0; i < definition.objects.size(); ++i) {
+    Object& o = definition.objects[i];
+    if (o.kind() == ObjectKind::Group) continue;  // what is in it is stretched
+    if (o.kind() == ObjectKind::Instance) {
+      return R::failure("A stretched placement with a component inside cannot be baked yet");
+    }
+    const gp_Trsf toLocal = placements[i].Inverted();
+    for (const StretchOp& s : ref.stretches) {
+      o.recipe.modifiers.push_back(StretchOp{s.center.Transformed(toLocal), s.xDir.Transformed(toLocal),
+                                             s.yDir.Transformed(toLocal), s.fx, s.fy, s.fz});
+    }
+    if (const Status built = rebuild(o, context); !built) {
+      return R::failure("'" + o.name + "' cannot be stretched: " + built.message());
+    }
+  }
+  auto shape = buildDefinitionShape(definition, context);
+  if (!shape) return R::failure(shape.error());
+  definition.shape = shape.value();
+  return definition;
+}
+
+}  // namespace
+
 Result<std::vector<ObjectId>> Modeler::explode(const ObjectId& instanceId) {
   const Object* instance = document_.find(instanceId);
   if (!instance || instance->kind() != ObjectKind::Instance) {
@@ -4844,11 +4897,8 @@ Result<std::vector<ObjectId>> Modeler::explode(const ObjectId& instanceId) {
     // Its pieces would need mirrored placements, which stay rigid here.
     return Result<std::vector<ObjectId>>::failure("A mirrored component cannot be exploded; mirror it back first");
   }
-  if (!ref.stretches.empty()) {
-    return Result<std::vector<ObjectId>>::failure(
-        "This placement is stretched on its own; it cannot be exploded yet (undo the stretch first)");
-  }
-  auto definition = applyOverrides(*stored, ref.overrides, document_.regenContext());
+  // Stretched on its own: its pieces come out stretched (baked, LIM-02).
+  auto definition = placementDefinition(*stored, ref, document_.regenContext());
   if (!definition) return Result<std::vector<ObjectId>>::failure(definition.error());
 
   ChangeSet changes(document_);
@@ -4991,8 +5041,8 @@ Result<ObjectId> Modeler::beginComponentEdit(const ObjectId& instanceId) {
   if (!ref->stretches.empty()) {
     // Editing shows the shared definition; this placement differs from it.
     return Result<ObjectId>::failure(
-        "This placement is stretched on its own; edit the component from another placement (the edit applies to "
-        "this one too) or undo the stretch first");
+        "This placement is stretched on its own; edit the shared component from another placement (the edit "
+        "applies to this one too), or Make Unique to bake the stretch into a definition of its own and edit that");
   }
 
   Object group;
@@ -5174,11 +5224,29 @@ Result<std::string> Modeler::makeUnique(const ObjectId& instanceId) {
   if (!ref) return R::failure("Not a component instance");
   const ComponentDefinition* stored = document_.findDefinition(ref->definitionId);
   if (!stored) return R::failure("Definition not found");
-  if (document_.instanceCount(stored->id) < 2) return R::failure("This is already the only placement of the component");
-  auto written = applyOverrides(*stored, ref->overrides, document_.regenContext());
+  // The only placement: nothing to separate - unless it is stretched on its
+  // own, then the stretch is baked into the definition (LIM-02).
+  const bool only = document_.instanceCount(stored->id) < 2;
+  if (only && ref->stretches.empty()) return R::failure("This is already the only placement of the component");
+  auto written = placementDefinition(*stored, *ref, document_.regenContext());
   if (!written) return R::failure(written.error());
 
   ComponentDefinition definition = written.value();
+  if (only) {
+    // Baked into its own definition, the placement plain again.
+    Object updated = *instance;
+    auto& own = std::get<ComponentInstance>(updated.recipe.base);
+    own.overrides.clear();
+    own.stretches.clear();
+    auto shape = buildInstanceShape(definition, own, document_.regenContext());
+    if (!shape) return R::failure(shape.error());
+    updated.shape = shape.value();
+    ChangeSet changes(document_);
+    changes.putDefinition(definition);
+    changes.modify(updated);
+    history_.execute(changes.build("Make Unique"));
+    return definition.id;
+  }
   definition.id = generateObjectId();
   // "Door" -> "Door #2", the first free number.
   for (int n = 2;; ++n) {
@@ -5198,7 +5266,7 @@ Result<std::string> Modeler::makeUnique(const ObjectId& instanceId) {
   }
 
   Object updated = *instance;
-  ComponentInstance own{definition.id, {}, ref->mirrored, ref->stretches};
+  ComponentInstance own{definition.id, {}, ref->mirrored, {}};  // its stretches are in the definition now
   auto shape = buildInstanceShape(definition, own, document_.regenContext());
   if (!shape) return R::failure(shape.error());
   updated.recipe.base = own;
