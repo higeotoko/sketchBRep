@@ -508,9 +508,15 @@ std::vector<SplitCandidate> splitCandidates(const Document& document, const Obje
                                             const std::vector<gp_Pnt>& points) {
   std::vector<SplitCandidate> out;
   if (points.size() < 2) return out;
+  // Only objects whose box the line reaches (this runs as the pointer
+  // moves, for the hint, over every object of a large model).
+  Bnd_Box reach;
+  for (const gp_Pnt& p : points) reach.Add(p);
+  reach.Enlarge(1e-3);
   for (int pass = 0; pass < 2; ++pass) {
     for (const Object& o : document.objects()) {
-      if (o.parent != context || !document.isVisible(o.id)) continue;
+      if (o.parent != context || o.shape.IsNull() || document.worldBounds(o).IsOut(reach)) continue;
+      if (!document.isVisible(o.id)) continue;
       const bool profile = o.kind() == ObjectKind::Face;
       if ((pass == 0) != profile || (!profile && o.kind() != ObjectKind::Solid)) continue;
       const TopoDS_Shape shape = document.worldShape(o);
@@ -1319,11 +1325,9 @@ std::vector<const Object*> solidsNear(const Document& document, const std::vecto
   reach.Enlarge(1e-3);
   std::vector<const Object*> out;
   for (const Object& o : document.objects()) {
-    if (o.parent != parent || !document.isVisible(o.id)) continue;
+    if (o.parent != parent || o.shape.IsNull() || document.worldBounds(o).IsOut(reach)) continue;
     if (o.kind() != ObjectKind::Solid && o.kind() != ObjectKind::Shell) continue;
-    Bnd_Box box;
-    BRepBndLib::Add(document.worldShape(o), box);
-    if (!box.IsOut(reach)) out.push_back(&o);
+    if (document.isVisible(o.id)) out.push_back(&o);
   }
   return out;
 }
@@ -2317,13 +2321,11 @@ Result<Modeler::Divided> Modeler::splitAcross(const std::vector<gp_Pnt>& worldPo
     std::vector<std::pair<double, double>> portions;
     for (int pass = 0; pass < 2; ++pass) {
       for (const Object& o : document_.objects()) {
-        if (o.parent != activeGroup_ || !document_.isVisible(o.id) || o.locked) continue;
+        if (o.parent != activeGroup_ || o.locked || o.shape.IsNull() || document_.worldBounds(o).IsOut(reach)) continue;
         const bool profile = o.kind() == ObjectKind::Face;
         if ((pass == 0) != profile || (!profile && o.kind() != ObjectKind::Solid)) continue;
+        if (!document_.isVisible(o.id)) continue;
         const TopoDS_Shape shape = document_.worldShape(o);
-        Bnd_Box box;
-        BRepBndLib::Add(shape, box);
-        if (box.IsOut(reach)) continue;
         for (TopExp_Explorer e(shape, TopAbs_FACE); e.More(); e.Next()) {
           const TopoDS_Face face = TopoDS::Face(e.Current());
           gp_Pln plane;
@@ -2669,13 +2671,11 @@ Status Modeler::settleLine(const ObjectId& id, Settled& out) {
   std::vector<TopoDS_Edge> curved;
   std::vector<ObjectId> loose;
   for (const Object& o : document_.objects()) {
-    if (o.id == id || o.parent != line.parent || !document_.isVisible(o.id) || o.shape.IsNull()) continue;
+    if (o.id == id || o.parent != line.parent || o.shape.IsNull() || document_.worldBounds(o).IsOut(reach)) continue;
     const ObjectKind k = o.kind();
     if (k != ObjectKind::Curve && k != ObjectKind::Face && k != ObjectKind::Shell && k != ObjectKind::Solid) continue;
+    if (!document_.isVisible(o.id)) continue;
     const TopoDS_Shape shape = document_.worldShape(o);
-    Bnd_Box box;
-    BRepBndLib::Add(shape, box);
-    if (box.IsOut(reach)) continue;
     collectEdges(shape, straight, curved);
     if (k == ObjectKind::Curve && !o.locked) loose.push_back(o.id);
   }
@@ -4703,6 +4703,30 @@ Result<std::vector<ObjectId>> Modeler::paste(const Clipboard& clipboard, const g
   }
   history_.beginGroup("Paste");
   history_.execute(changes.build("Paste"));
+  // Pasted together they are as they were copied (settled already): only
+  // what is there already can overlap them. Nothing there near them: no
+  // settling (pasting thousands far off checked each against everything).
+  Bnd_Box pastedBox;
+  std::unordered_set<ObjectId> pasted;
+  for (const ObjectId& id : created) {
+    for (const ObjectId& part : document_.subtree(id)) {
+      pasted.insert(part);
+      if (const Object* o = document_.find(part)) pastedBox.Add(document_.worldBounds(*o));
+    }
+  }
+  pastedBox.Enlarge(tolerance::kMinDimension);
+  bool near = false;
+  for (const Object& o : document_.objects()) {
+    if (o.parent != activeGroup_ || pasted.count(o.id) || o.shape.IsNull()) continue;
+    if (!document_.worldBounds(o).IsOut(pastedBox)) {
+      near = true;
+      break;
+    }
+  }
+  if (!near) {
+    history_.endGroup();
+    return created;
+  }
   auto settled = settleOverlaps(created);
   if (!settled) {
     history_.abortGroup();

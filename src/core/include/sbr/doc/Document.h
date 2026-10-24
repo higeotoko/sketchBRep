@@ -214,12 +214,6 @@ class Document {
   // ordered list. Order of objects_ (display / file order) is unchanged.
   mutable std::unordered_map<ObjectId, std::size_t> index_;
   mutable std::unordered_map<ObjectId, std::vector<ObjectId>> children_;
-  struct KeptBounds {
-    TopoDS_Shape shape;  // held: its address is not reused while kept
-    std::array<double, 12> placement{};
-    Bnd_Box box;
-  };
-  mutable std::unordered_map<ObjectId, KeptBounds> bounds_;
   mutable bool indexValid_ = false;
   mutable bool childrenValid_ = false;  // children_ (positions in index_ may still be valid)
   void ensureChildren() const;

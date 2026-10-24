@@ -239,21 +239,24 @@ TopoDS_Shape Document::worldShape(const Object& object) const {
 }
 
 Bnd_Box Document::worldBounds(const Object& object) const {
-  const TopoDS_Shape world = worldShape(object);
-  if (world.IsNull()) return Bnd_Box();
-  const gp_Trsf t = world.Location().Transformation();
+  if (object.shape.IsNull()) return Bnd_Box();
+  // Placement of the world shape: the object's world transform and its
+  // shape's own location (no world shape built to find it out).
+  const gp_Trsf t = worldTransform(object) * object.shape.Location().Transformation();
   std::array<double, 12> placement{};
   for (int r = 1; r <= 3; ++r) {
     for (int c = 1; c <= 4; ++c) placement[static_cast<std::size_t>((r - 1) * 4 + c - 1)] = t.Value(r, c);
   }
-  KeptBounds& kept = bounds_[object.id];
-  if (kept.shape.IsNull() || kept.shape.TShape() != world.TShape() || kept.placement != placement) {
-    kept.shape = world;
-    kept.placement = placement;
-    kept.box = Bnd_Box();
-    BRepBndLib::Add(world, kept.box);
+  // Kept on the object itself (no lookup: loops over thousands of objects
+  // ask it of each).
+  if (object.boundsShape.IsNull() || object.boundsShape.TShape() != object.shape.TShape() ||
+      object.boundsPlacement != placement) {
+    object.boundsShape = object.shape;
+    object.boundsPlacement = placement;
+    object.bounds = Bnd_Box();
+    BRepBndLib::Add(worldShape(object), object.bounds);
   }
-  return kept.box;
+  return object.bounds;
 }
 
 TopoDS_Shape Document::worldShape(const ObjectId& id) const {
@@ -334,7 +337,6 @@ void Document::remove(const ObjectId& id) {
   const auto i = indexOf(id);
   if (!i) return;
   objects_.erase(objects_.begin() + static_cast<std::ptrdiff_t>(*i));
-  bounds_.erase(id);
   invalidateIndex();
   touch(id);
   notify();
@@ -347,10 +349,7 @@ void Document::removeMany(const std::vector<ObjectId>& ids) {
                                 [&](const Object& o) { return going.count(o.id) > 0; }),
                  objects_.end());
   invalidateIndex();
-  for (const ObjectId& id : ids) {
-    bounds_.erase(id);
-    touch(id);
-  }
+  for (const ObjectId& id : ids) touch(id);
   notify();
 }
 
@@ -504,7 +503,6 @@ void Document::clear() {
   materials_.clear();
   images_.clear();
   variants_.clear();
-  bounds_.clear();
   settings_ = DocumentSettings{};
   invalidateIndex();
   log_.clear();

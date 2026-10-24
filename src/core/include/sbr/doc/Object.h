@@ -7,6 +7,7 @@
 
 #include <optional>
 
+#include <Bnd_Box.hxx>
 #include <gp_Trsf.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Shape.hxx>
@@ -60,6 +61,12 @@ struct Object {
 
   Recipe recipe;
   TopoDS_Shape shape;  // canonical shape in local coordinates (cached result of recipe)
+
+  // Box around the world shape as last asked (Document::worldBounds) and
+  // what it was for; a cache, never saved.
+  mutable TopoDS_Shape boundsShape;
+  mutable std::array<double, 12> boundsPlacement{};
+  mutable Bnd_Box bounds;
 
   ObjectKind kind() const;
   bool isContainer() const { return kind() == ObjectKind::Group; }
