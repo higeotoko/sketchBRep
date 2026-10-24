@@ -5,7 +5,6 @@
 #include <BRepFill.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <ShapeFix_Shell.hxx>
-#include <TopTools_ListIteratorOfListOfShape.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_MakeSolid.hxx>
 #include <BRepTools_WireExplorer.hxx>
@@ -882,7 +881,7 @@ Result<TopoDS_Shape> pushPullOpenFace(const TopoDS_Shape& shape, const TopoDS_Fa
       // The face beyond this edge, when the side face lies on its plane.
       std::optional<std::size_t> beyond;
       if (const int k = edgeFaces.FindIndex(edge); k > 0) {
-        for (TopTools_ListIteratorOfListOfShape it(edgeFaces(k)); it.More(); it.Next()) {
+        for (TopTools_ListOfShape::Iterator it(edgeFaces(k)); it.More(); it.Next()) {
           if (it.Value().IsSame(face)) continue;
           for (std::size_t j = 0; j < original.size(); ++j) {
             if (!original[j].IsSame(it.Value()) || now[j].size() != 1) continue;
