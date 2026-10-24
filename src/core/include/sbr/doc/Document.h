@@ -162,6 +162,11 @@ class Document {
   void insert(Object object, std::optional<std::size_t> index = std::nullopt);
   void replace(const Object& object);
   void remove(const ObjectId& id);
+  // Many at once (undo / redo of large steps): the same result as one by
+  // one in this order, with one index rebuild and one notification.
+  void removeMany(const std::vector<ObjectId>& ids);
+  void insertMany(std::vector<std::pair<Object, std::optional<std::size_t>>> objects);
+  void replaceMany(const std::vector<const Object*>& objects);
   void putDefinition(const ComponentDefinition& definition);
   void removeDefinition(const std::string& id);
   // Material edits change how many objects look: like settings, they ask
@@ -205,6 +210,8 @@ class Document {
   mutable std::unordered_map<ObjectId, std::size_t> index_;
   mutable std::unordered_map<ObjectId, std::vector<ObjectId>> children_;
   mutable bool indexValid_ = false;
+  mutable bool childrenValid_ = false;  // children_ (positions in index_ may still be valid)
+  void ensureChildren() const;
   // Variant shapes of placements with their own parameters / mirror, by
   // definition and settings; an entry is valid while the definition's shape
   // is the one it was built from.

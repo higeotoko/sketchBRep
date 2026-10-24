@@ -3,6 +3,7 @@
 #include "WheelZoom.h"
 
 #include <AIS_ColoredShape.hxx>
+#include <AIS_ConnectedInteractive.hxx>
 #include <cstring>
 #include <unordered_set>
 #include <QElapsedTimer>
@@ -723,6 +724,31 @@ void Viewport::showImage(const Handle(AIS_Shape)& ais, const doc::ImageUnderlay&
 
 void Viewport::scheduleSync() { syncTimer_.start(); }
 
+bool Viewport::relocate(const doc::ObjectId& id, Entry& entry, const TopoDS_Shape& world) {
+  if (world.TShape() != entry.canonicalWorld.TShape() || world.Orientation() != entry.canonicalWorld.Orientation()) {
+    return false;
+  }
+  const gp_Trsf shown = world.Location().Transformation() * entry.builtLocation.Transformation().Inverted();
+  if (std::abs(shown.ScaleFactor() - 1.0) > 1e-9 || shown.IsNegative()) return false;  // rigid only
+  entry.shown = shown;
+  const TopLoc_Location location(shown);
+  context_->SetLocation(entry.ais, location);
+  if (!entry.edgeOverlay.IsNull()) context_->SetLocation(entry.edgeOverlay, location);
+  if (!entry.textureOverlay.IsNull()) context_->SetLocation(entry.textureOverlay, location);
+  if (!entry.selectionDots.IsNull()) {
+    // Shared dots are placed at the object's world transformation.
+    const bool shared = !Handle(AIS_ConnectedInteractive)::DownCast(entry.selectionDots).IsNull();
+    context_->SetLocation(entry.selectionDots, shared ? world.Location() : location);
+  }
+  entry.canonicalWorld = world;
+  entry.canonicalFaces.Clear();
+  entry.canonicalEdges.Clear();
+  TopExp::MapShapes(world, TopAbs_FACE, entry.canonicalFaces);
+  TopExp::MapShapes(world, TopAbs_EDGE, entry.canonicalEdges);
+  inference_.setShape(id, world);
+  return true;
+}
+
 void Viewport::releaseProto(const Entry& entry) {
   if (!entry.proto) return;
   const auto it = protos_.find(*entry.proto);
@@ -731,6 +757,8 @@ void Viewport::releaseProto(const Entry& entry) {
 
 Handle(AIS_Shape) Viewport::makeDisplay(const doc::Object& object, Entry& entry) {
   entry.canonicalWorld = modeler_.document().worldShape(object);
+  entry.builtLocation = entry.canonicalWorld.Location();
+  entry.shown = gp_Trsf();
   const TopoDS_Shape& local = object.shape;
   if (local.Location().IsIdentity()) {
     // Same local shape (e.g. every placement of a component): one display
@@ -940,8 +968,7 @@ void Viewport::syncLabels() {
     if (o.kind() != doc::ObjectKind::Annotation || !modeler_.document().isVisible(o.id)) continue;
     const auto label = doc::annotationLabel(o.recipe);
     if (!label || label->text.empty()) continue;
-    bool selected = false;
-    for (const doc::ObjectId& s : selection_) selected |= s == o.id || modeler_.document().isAncestor(s, o.id);
+    const bool selected = isSelected(o);
     Handle(AIS_TextLabel) text = new AIS_TextLabel();
     text->SetText(TCollection_ExtendedString(label->text.c_str(), Standard_True));  // UTF-8
     text->SetPosition(label->position.Transformed(modeler_.document().worldTransform(o)));
@@ -1160,6 +1187,7 @@ void Viewport::updateTextures(const doc::Object& object, Entry& entry) {
   }
   if (overlay->layers.empty()) return;
   overlay->SetZLayer(entry.ais->ZLayer());
+  if (entry.shown.Form() != gp_Identity) overlay->SetLocalTransformation(entry.shown);
   entry.textureOverlay = overlay;
   context_->Display(entry.textureOverlay, 0, -1, Standard_False);
 }
@@ -1193,8 +1221,15 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
   // An object whose faces got (or lost every) own colour needs the other
   // kind of display object.
   const bool needsFaceColors = wanted && !faceColorsOf(*o).empty();
+  const TopoDS_Shape world = wanted ? document.worldShape(*o) : TopoDS_Shape();
+  if (found != entries_.end() && wanted && o->kind() != doc::ObjectKind::Guide &&
+      !sameLocatedShape(found->second.canonicalWorld, world) &&
+      needsFaceColors == (dynamic_cast<AIS_ColoredShape*>(found->second.ais.get()) != nullptr) &&
+      (o->hiddenEdges.empty() ? std::vector<int>() : doc::hiddenEdgeIndices(*o)) == found->second.hiddenEdges) {
+    relocate(id, found->second, world);  // moved only: no new display
+  }
   if (found != entries_.end() &&
-      (!wanted || !sameLocatedShape(found->second.canonicalWorld, document.worldShape(*o)) ||
+      (!wanted || !sameLocatedShape(found->second.canonicalWorld, world) ||
        needsFaceColors != (dynamic_cast<AIS_ColoredShape*>(found->second.ais.get()) != nullptr) ||
        (o->hiddenEdges.empty() ? std::vector<int>() : doc::hiddenEdgeIndices(*o)) != found->second.hiddenEdges)) {
     removeDisplay(found->second);
@@ -1209,12 +1244,8 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
   if (found == entries_.end()) {
     Entry entry;
     entry.ais = makeDisplay(*o, entry);
-    // Selection mode -1 would make the object permanently unselectable in
-    // OCCT 7.6, so display with mode 0 and then apply the tool's pick mode.
-    context_->Display(entry.ais, shaded_ ? AIS_Shaded : AIS_WireFrame, 0, Standard_False);
-    if (!entry.edgeOverlay.IsNull()) context_->Display(entry.edgeOverlay, AIS_WireFrame, -1, Standard_False);
     entry.locked = o->locked;
-    applyPickMode(entry.ais, entry.locked);
+    // Displayed below, once styled: its presentation is computed once.
     found = entries_.emplace(id, std::move(entry)).first;
     created = true;
     if (o->kind() == doc::ObjectKind::Guide) {
@@ -1231,8 +1262,7 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
       inference_.setShape(id, found->second.canonicalWorld);
     }
   }
-  bool selected = false;
-  for (const doc::ObjectId& s : selection_) selected |= s == id || document.isAncestor(s, id);
+  const bool selected = isSelected(*o);
   // Locked itself or inside a locked group: shown red when selected.
   bool locked = false;
   for (const doc::Object* a = o; a && !locked; a = a->parent.empty() ? nullptr : document.find(a->parent)) {
@@ -1248,16 +1278,22 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
   const bool hasFaces = o->kind() != doc::ObjectKind::Curve && o->kind() != doc::ObjectKind::Annotation &&
                         o->kind() != doc::ObjectKind::Guide;
   if (selected && !hasFaces) color = locked ? kLockedColor : kSelectedColor;
-  bool restyled = false;
+  // Restyling changes the aspects of the computed presentation in place
+  // (SetColor / SetTransparency / SynchronizeAspects); only per-face
+  // colours need the presentation computed again.
+  bool recompute = false;
   Quantity_Color current;
   found->second.ais->Color(current);
   Entry& entry = found->second;
   auto faceColors = faceColorsOf(*o);
-  const bool facesChanged =
-      faceColors != entry.faceColors || selected != entry.shownSelected || locked != entry.shownLocked;
-  if (!current.IsEqual(color) || facesChanged) {
+  const bool colorChanged = !current.IsEqual(color);
+  const bool faceColorsChanged = faceColors != entry.faceColors;
+  const bool stateChanged = selected != entry.shownSelected || locked != entry.shownLocked;
+  if (created || colorChanged || faceColorsChanged || stateChanged) {
     entry.ais->SetColor(color);
-    if (auto* colored = dynamic_cast<AIS_ColoredShape*>(entry.ais.get()); colored && facesChanged) {
+    if (auto* colored = dynamic_cast<AIS_ColoredShape*>(entry.ais.get());
+        colored && (created || colorChanged || faceColorsChanged)) {
+      recompute = true;
       colored->ClearCustomAspects();
       for (const auto& [index, rgbValue] : faceColors) {
         if (index >= 1 && index <= entry.displayFaces.Extent()) {
@@ -1275,23 +1311,30 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
     const Quantity_Color line = !selected  ? Quantity_Color(Quantity_NOC_BLACK)
                                 : locked    ? kLockedColor
                                             : kSelectedEdgeColor;
-    entry.ais->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(line, Aspect_TOL_SOLID, 1.5));
-    if (!entry.edgeOverlay.IsNull()) {
-      entry.edgeOverlay->SetColor(line);
-      context_->Redisplay(entry.edgeOverlay, Standard_False);
-    }
+    entry.ais->Attributes()->FaceBoundaryAspect()->SetColor(line);
+    entry.ais->SynchronizeAspects();
+    if (!entry.edgeOverlay.IsNull()) entry.edgeOverlay->SetColor(line);
     // The dots over the faces of a selected object.
     if (!entry.selectionDots.IsNull()) context_->Remove(entry.selectionDots, Standard_False);
     entry.selectionDots.Nullify();
     if (selected && hasFaces && !locked) {
-      entry.selectionDots = makeSelectionDots(entry.displayShape);
+      const auto proto = entry.proto ? protos_.find(*entry.proto) : protos_.end();
+      if (proto != protos_.end()) {
+        // Placements of one shape share the dots' presentation.
+        if (proto->second.dots.IsNull()) proto->second.dots = makeSelectionDots(proto->second.display);
+        Handle(AIS_ConnectedInteractive) placed = new AIS_ConnectedInteractive();
+        placed->Connect(proto->second.dots, document.worldTransform(*o));
+        entry.selectionDots = placed;
+      } else {
+        entry.selectionDots = makeSelectionDots(entry.displayShape);
+        if (entry.shown.Form() != gp_Identity) entry.selectionDots->SetLocalTransformation(entry.shown);
+      }
       entry.selectionDots->SetZLayer(entry.ais->ZLayer());
       context_->Display(entry.selectionDots, AIS_Shaded, -1, Standard_False);
     }
-    restyled = true;
   }
   if (hasFaces) updateTextures(*o, entry);
-  if (found->second.locked != o->locked) {
+  if (!created && found->second.locked != o->locked) {
     found->second.locked = o->locked;
     applyPickMode(found->second.ais, o->locked);
   }
@@ -1306,8 +1349,15 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
     found->second.ais->SetTransparency(transparency);
     if (!found->second.edgeOverlay.IsNull()) found->second.edgeOverlay->SetTransparency(transparency);
   }
-  // Only what changed is presented again (was: every object on every sync).
-  if (restyled || created) context_->Redisplay(found->second.ais, Standard_False);
+  if (created) {
+    // Selection mode -1 would make the object permanently unselectable in
+    // OCCT 7.6, so display with mode 0 and then apply the tool's pick mode.
+    context_->Display(entry.ais, shaded_ ? AIS_Shaded : AIS_WireFrame, 0, Standard_False);
+    if (!entry.edgeOverlay.IsNull()) context_->Display(entry.edgeOverlay, AIS_WireFrame, -1, Standard_False);
+    applyPickMode(entry.ais, entry.locked);
+  } else if (recompute) {
+    context_->Redisplay(entry.ais, Standard_False);  // per-face colours changed
+  }
   return guidesChanged;
 }
 
@@ -1395,7 +1445,17 @@ void Viewport::setSelection(const std::vector<doc::ObjectId>& ids) {
     }
   }
   selection_ = ids;
+  selectedSet_ = std::unordered_set<doc::ObjectId>(ids.begin(), ids.end());
   syncSlice();
+}
+
+bool Viewport::isSelected(const doc::Object& object) const {
+  if (selectedSet_.empty()) return false;
+  const doc::Document& document = modeler_.document();
+  for (const doc::Object* a = &object; a; a = a->parent.empty() ? nullptr : document.find(a->parent)) {
+    if (selectedSet_.count(a->id)) return true;
+  }
+  return false;
 }
 
 void Viewport::setDisplayQuality(const display::DisplayQuality& quality) {
@@ -1536,9 +1596,10 @@ std::optional<FacePick> Viewport::pickFace(const QPoint& pos) {
     const auto id = idOf(Handle(AIS_InteractiveObject)::DownCast(owner->Selectable()));
     const doc::Object* o = id ? modeler_.document().find(*id) : nullptr;
     gp_Pln plane;
-    // Coplanar with the front-most hit at the cursor: the profile lies on it.
+    // Coplanar with the front-most hit at the cursor: the profile lies on it
+    // (the face where it is now, the display may have been moved).
     if (o && o->kind() == doc::ObjectKind::Face &&
-        geom::isPlanarFace(TopoDS::Face(owner->Shape()), &plane) &&
+        geom::isPlanarFace(TopoDS::Face(owner->Shape().Moved(TopLoc_Location(entries_.at(*id).shown))), &plane) &&
         plane.Distance(selector->PickedPoint(chosen)) < 1.0) {
       chosen = i;
       break;
@@ -1666,11 +1727,12 @@ void Viewport::setHighlightedElements(const std::vector<ElementRef>& elements) {
     const auto it = entries_.find(e.objectId);
     if (it == entries_.end()) continue;
     const Entry& entry = it->second;
+    const TopLoc_Location shown(entry.shown);
     if (e.type == TopAbs_FACE && e.index <= entry.displayFaces.Extent()) {
-      builder.Add(faces, entry.displayFaces(e.index));
+      builder.Add(faces, entry.displayFaces(e.index).Moved(shown));
       anyFace = true;
     } else if (e.type == TopAbs_EDGE && e.index <= entry.displayEdges.Extent()) {
-      builder.Add(edges, entry.displayEdges(e.index));
+      builder.Add(edges, entry.displayEdges(e.index).Moved(shown));
       anyEdge = true;
     }
   }
@@ -1786,7 +1848,8 @@ void Viewport::setGhost(const std::vector<doc::ObjectId>& ids, const gp_Trsf& de
     if (!wanted) continue;
     // Shapes cannot carry a scaled location: scaling ghosts (scale tool)
     // are moved as a whole by the presentation's transformation instead.
-    builder.Add(compound, scaled ? entry.displayShape : entry.displayShape.Moved(TopLoc_Location(delta)));
+    builder.Add(compound, scaled ? entry.displayShape.Moved(TopLoc_Location(entry.shown))
+                                 : entry.displayShape.Moved(TopLoc_Location(delta * entry.shown)));
     any = true;
   }
   setPreview(any ? TopoDS_Shape(compound) : TopoDS_Shape(), true);

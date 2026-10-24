@@ -1,6 +1,8 @@
 #include "sbr/doc/CommandStack.h"
 
 #include <algorithm>
+#include <optional>
+#include <unordered_map>
 
 namespace sbr::doc {
 
@@ -9,6 +11,52 @@ void applySettings(Document& document, const PersistentSettings& settings) {
   if (PersistentSettings::of(document.settings()) == settings) return;
   settings.applyTo(document.settings());
   document.settingsChanged();
+}
+
+// One object state to apply: the object as it should be, or removed.
+struct ObjectState {
+  const ObjectId* id;
+  const Object* state;  // nullptr: removed
+  std::optional<std::size_t> index;  // where a re-inserted object goes
+};
+
+// Applies the states in order, as runs of the same kind (removals,
+// insertions, replacements): a step changing thousands of objects
+// rebuilds the document's index once per run, not once per object.
+void applyStates(Document& document, const std::vector<ObjectState>& states) {
+  enum class Kind { Remove, Insert, Replace };
+  // Whether each object exists, before and as the states are applied
+  // (each object appears once in a step).
+  std::unordered_map<ObjectId, bool> exists;
+  for (const ObjectState& s : states) exists.emplace(*s.id, document.find(*s.id) != nullptr);
+  std::vector<ObjectId> removals;
+  std::vector<std::pair<Object, std::optional<std::size_t>>> insertions;
+  std::vector<const Object*> replacements;
+  auto flush = [&] {
+    document.removeMany(removals);
+    document.insertMany(std::move(insertions));
+    document.replaceMany(replacements);
+    removals.clear();
+    insertions.clear();
+    replacements.clear();
+  };
+  std::optional<Kind> run;
+  for (const ObjectState& s : states) {
+    bool& present = exists[*s.id];
+    const Kind kind = !s.state ? Kind::Remove : present ? Kind::Replace : Kind::Insert;
+    if (run && *run != kind) flush();
+    run = kind;
+    if (kind == Kind::Remove) {
+      if (present) removals.push_back(*s.id);
+      present = false;
+    } else if (kind == Kind::Insert) {
+      insertions.emplace_back(*s.state, s.index);
+      present = true;
+    } else {
+      replacements.push_back(s.state);
+    }
+  }
+  flush();
 }
 }  // namespace
 
@@ -27,30 +75,23 @@ void CommandStack::applyAfter(const Command& command) {
       document_.removeDefinition(d.id);
     }
   }
+  std::vector<ObjectState> states;
+  states.reserve(command.deltas.size());
   for (const ObjectDelta& d : command.deltas) {
-    if (!d.after) {
-      document_.remove(d.id);
-    } else if (document_.find(d.id)) {
-      document_.replace(*d.after);
-    } else {
-      document_.insert(*d.after);
-    }
+    states.push_back({&d.id, d.after ? &*d.after : nullptr, std::nullopt});
   }
+  applyStates(document_, states);
   if (command.settings) applySettings(document_, command.settings->after);
 }
 
 void CommandStack::applyBefore(const Command& command) {
   if (command.settings) applySettings(document_, command.settings->before);
+  std::vector<ObjectState> states;
+  states.reserve(command.deltas.size());
   for (auto it = command.deltas.rbegin(); it != command.deltas.rend(); ++it) {
-    const ObjectDelta& d = *it;
-    if (!d.before) {
-      document_.remove(d.id);
-    } else if (document_.find(d.id)) {
-      document_.replace(*d.before);
-    } else {
-      document_.insert(*d.before, d.indexBefore);
-    }
+    states.push_back({&it->id, it->before ? &*it->before : nullptr, it->indexBefore});
   }
+  applyStates(document_, states);
   for (auto it = command.definitionDeltas.rbegin(); it != command.definitionDeltas.rend(); ++it) {
     if (it->before) {
       document_.putDefinition(*it->before);

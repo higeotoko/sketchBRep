@@ -8,6 +8,7 @@
 #include <functional>
 #include <map>
 #include <set>
+#include <unordered_set>
 
 #include <gp_Lin.hxx>
 #include <optional>
@@ -250,6 +251,7 @@ class Viewport : public QWidget {
   struct Proto {
     TopoDS_Shape display;  // local coordinates
     int users = 0;
+    Handle(AIS_Shape) dots;  // selection dots, shared by the placements (made when first needed)
   };
   struct Entry {
     Handle(AIS_Shape) ais;
@@ -262,6 +264,11 @@ class Viewport : public QWidget {
     bool shownLocked = false;
     bool locked = false;  // not pickable
     TopoDS_Shape canonicalWorld;
+    // The display (and its face / edge maps, which picks are looked up in)
+    // stays where it was built; a moved object only gets this rigid
+    // transformation on top: world = shown * display.
+    TopLoc_Location builtLocation;  // canonicalWorld's location when the display was built
+    gp_Trsf shown;
     TopoDS_Shape displayShape;
     TopTools_IndexedMapOfShape displayFaces;
     TopTools_IndexedMapOfShape canonicalFaces;
@@ -271,7 +278,7 @@ class Viewport : public QWidget {
     // are this line overlay instead (not pickable).
     std::vector<int> hiddenEdges;
     Handle(AIS_Shape) edgeOverlay;
-    Handle(AIS_Shape) selectionDots;  // shown while the object is selected
+    Handle(AIS_InteractiveObject) selectionDots;  // shown while the object is selected
     Handle(AIS_InteractiveObject) textureOverlay;  // faces with a picture material
     std::string textureKey;                        // what the overlay shows
   };
@@ -321,6 +328,9 @@ class Viewport : public QWidget {
   };
   std::map<std::string, DefinitionColors> definitionColors_;
   void releaseProto(const Entry& entry);
+  // Moves an object's display to its new place without rebuilding it (same
+  // shape, new rigid location). False when it has to be rebuilt instead.
+  bool relocate(const doc::ObjectId& id, Entry& entry, const TopoDS_Shape& world);
   std::map<doc::ObjectId, Handle(AIS_TextLabel)> labels_;  // annotation texts
   Handle(Graphic3d_ClipPlane) section_;
   bool showOpenEnds_ = false;
@@ -331,6 +341,9 @@ class Viewport : public QWidget {
   Handle(AIS_Shape) proposalRemoved_;
   std::array<double, 6> sectionKey_{};  // origin + normal of section_
   std::vector<doc::ObjectId> selection_;
+  std::unordered_set<doc::ObjectId> selectedSet_;  // selection_, for lookups
+  // Selected itself or inside a selected group.
+  bool isSelected(const doc::Object& object) const;
   snap::InferenceEngine inference_;
   std::map<doc::ObjectId, gp_Lin> guideLines_;
   // Incremental sync: the document sequence last synchronised, and objects

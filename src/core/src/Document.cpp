@@ -4,6 +4,7 @@
 #include "sbr/geom/Operations.h"
 
 #include <algorithm>
+#include <unordered_set>
 
 #include <sstream>
 
@@ -132,6 +133,7 @@ std::string placementKey(const ComponentInstance& instance) {
 
 void Document::invalidateIndex() const {
   indexValid_ = false;
+  childrenValid_ = false;
   index_.clear();
   children_.clear();
 }
@@ -139,13 +141,18 @@ void Document::invalidateIndex() const {
 void Document::ensureIndex() const {
   if (indexValid_) return;
   index_.clear();
-  children_.clear();
   index_.reserve(objects_.size());
-  for (std::size_t i = 0; i < objects_.size(); ++i) {
-    index_.emplace(objects_[i].id, i);
-    if (!objects_[i].parent.empty()) children_[objects_[i].parent].push_back(objects_[i].id);
-  }
+  for (std::size_t i = 0; i < objects_.size(); ++i) index_.emplace(objects_[i].id, i);
   indexValid_ = true;
+}
+
+void Document::ensureChildren() const {
+  if (childrenValid_) return;
+  children_.clear();
+  for (const Object& o : objects_) {
+    if (!o.parent.empty()) children_[o.parent].push_back(o.id);
+  }
+  childrenValid_ = true;
 }
 
 const Object* Document::find(const ObjectId& id) const {
@@ -163,7 +170,7 @@ std::optional<std::size_t> Document::indexOf(const ObjectId& id) const {
 
 std::vector<ObjectId> Document::children(const ObjectId& id) const {
   if (id.empty()) return {};
-  ensureIndex();
+  ensureChildren();
   const auto it = children_.find(id);
   return it == children_.end() ? std::vector<ObjectId>{} : it->second;
 }
@@ -285,7 +292,7 @@ void Document::insert(Object object, std::optional<std::size_t> index) {
   if (at == objects_.size() && indexValid_) {
     // Appending keeps the indexes valid (children stay in list order).
     index_[id] = objects_.size();
-    if (!parent.empty()) children_[parent].push_back(id);
+    if (!parent.empty() && childrenValid_) children_[parent].push_back(id);
   } else {
     invalidateIndex();
   }
@@ -298,7 +305,7 @@ void Document::replace(const Object& object) {
   const auto i = indexOf(object.id);
   if (!i) return;
   Object& o = objects_[*i];
-  if (o.parent != object.parent) invalidateIndex();
+  if (o.parent != object.parent) childrenValid_ = false;  // positions stay
   o = object;
   touch(object.id);
   notify();
@@ -310,6 +317,48 @@ void Document::remove(const ObjectId& id) {
   objects_.erase(objects_.begin() + static_cast<std::ptrdiff_t>(*i));
   invalidateIndex();
   touch(id);
+  notify();
+}
+
+void Document::removeMany(const std::vector<ObjectId>& ids) {
+  if (ids.empty()) return;
+  const std::unordered_set<ObjectId> going(ids.begin(), ids.end());
+  objects_.erase(std::remove_if(objects_.begin(), objects_.end(),
+                                [&](const Object& o) { return going.count(o.id) > 0; }),
+                 objects_.end());
+  invalidateIndex();
+  for (const ObjectId& id : ids) touch(id);
+  notify();
+}
+
+void Document::insertMany(std::vector<std::pair<Object, std::optional<std::size_t>>> objects) {
+  if (objects.empty()) return;
+  bool appended = true;
+  for (auto& [object, index] : objects) {
+    const std::size_t at = std::min(index.value_or(objects_.size()), objects_.size());
+    appended = appended && at == objects_.size();
+    const ObjectId id = object.id;
+    objects_.insert(objects_.begin() + static_cast<std::ptrdiff_t>(at), std::move(object));
+    if (appended && indexValid_) {
+      index_[id] = objects_.size() - 1;
+      if (!objects_.back().parent.empty() && childrenValid_) children_[objects_.back().parent].push_back(id);
+    }
+    touch(id);
+  }
+  if (!appended) invalidateIndex();
+  notify();
+}
+
+void Document::replaceMany(const std::vector<const Object*>& objects) {
+  if (objects.empty()) return;
+  for (const Object* object : objects) {
+    const auto i = indexOf(object->id);
+    if (!i) continue;
+    Object& o = objects_[*i];
+    if (o.parent != object->parent) childrenValid_ = false;
+    o = *object;
+    touch(object->id);
+  }
   notify();
 }
 

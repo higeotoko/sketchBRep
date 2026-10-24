@@ -204,6 +204,7 @@ class GuiPhase1 : public QObject {
   void proposalShowsRotationAndHide();
   void benchViewportSync();
   void benchEnterManyCopies();
+  void benchManyCopiesOperations();
   void groupEditFadesTheRest();
   void componentEditUpdatesPlacementsInSlices();
   void incrementalSyncFollowsGroupsAndUndo();
@@ -241,6 +242,8 @@ class GuiPhase1 : public QObject {
   void rightClickMenuFollowsTheSelection();
   void skyAndGroundFollowTheHorizon();
   void selectionDotsKeepTheMaterialColour();
+  void selectionDotsOnOnePlacementOnly();
+  void movedObjectsPickWhereTheyAre();
   void eraserDragErasesCrossedLines();
   void eraserDragFollowsWhatTheLineBecame();
   void wheelZoomIsConsistentAndReversible();
@@ -3175,6 +3178,82 @@ void GuiPhase1::benchEnterManyCopies() {
         n, m.document().objects().size(), initial, enterComponent, editInside, exitComponent, enterGroup, exitGroup);
 }
 
+// Everyday operations on a model of many copies (placements of a wall
+// panel with window openings, and grouped boxes), each until the display
+// is up to date. Skipped unless SBR_BENCH_N is set; prints timings.
+void GuiPhase1::benchManyCopiesOperations() {
+  const int n = qEnvironmentVariableIntValue("SBR_BENCH_N");
+  if (n <= 0) QSKIP("set SBR_BENCH_N to run the benchmark");
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  api::CommandApi api(m);
+  auto call = [&](const std::string& command, const nlohmann::json& args) {
+    const auto r = nlohmann::json::parse(api.execute(nlohmann::json{{"command", command}, {"args", args}}.dump()));
+    return r.value("ok", false) ? r["result"] : nlohmann::json();
+  };
+  // A panel 3000 x 200 x 2500 with 3 windows.
+  const std::string panel = call("create_box", {{"origin", {0, 0, 0}}, {"width", 3000}, {"depth", 200}, {"height", 2500}})["id"];
+  const std::string cut = call("place_openings", {{"host", panel}, {"count", 3}, {"width", 600}, {"height", 900},
+                                                  {"sill", 800}, {"face_normal", {0, -1, 0}}})["id"];
+  auto instance = m.makeComponent({cut.empty() ? panel : cut}, "Panel");
+  QVERIFY(instance.ok());
+  const int columns = static_cast<int>(std::ceil(std::sqrt(static_cast<double>(n))));
+  auto array = [&](const doc::ObjectId& first, const gp_Vec& step) {
+    gp_Trsf dx, dz;
+    dx.SetTranslation(step);
+    dz.SetTranslation(gp_Vec(0, 0, 3000));
+    auto row = m.copy({first}, dx, columns - 1);
+    std::vector<doc::ObjectId> firstRow{first};
+    firstRow.insert(firstRow.end(), row->begin(), row->end());
+    QVERIFY(m.copy(firstRow, dz, (n + columns - 1) / columns - 1).ok());
+  };
+  array(*instance, gp_Vec(3200, 0, 0));
+  auto group = m.group({f.box(0, 3000, 1000, 1000, 1000)}, "Box");
+  QVERIFY(group.ok());
+  array(*group, gp_Vec(1200, 0, 0));
+  auto trigger = [&](const QKeySequence& keys) {
+    for (QAction* a : f.window.findChildren<QAction*>()) {
+      if (a->shortcut() == keys) {
+        a->trigger();
+        return;
+      }
+    }
+    QFAIL("no action for the shortcut");
+  };
+  auto timed = [&](const std::function<void()>& fn) {
+    QElapsedTimer t;
+    t.start();
+    fn();
+    const double core = t.nsecsElapsed() / 1e6;
+    f.vp->syncNow();
+    qInfo("bench step core_ms=%.1f total_ms=%.1f", core, t.nsecsElapsed() / 1e6);
+    return t.nsecsElapsed() / 1e6;
+  };
+  std::vector<std::pair<std::string, double>> times;
+  times.emplace_back("initial_sync", timed([] {}));
+  times.emplace_back("redraw", timed([&] { f.vp->redraw(); }));
+  times.emplace_back("select_all", timed([&] { trigger(QKeySequence::SelectAll); }));
+  const std::vector<doc::ObjectId> all = f.window.selection();
+  times.emplace_back("move_all", timed([&] { QVERIFY(m.move(all, gp_Vec(0, 0, 100)).ok()); }));
+  times.emplace_back("undo_move", timed([&] { QVERIFY(m.undo()); }));
+  times.emplace_back("deselect", timed([&] { f.window.setSelection({}); }));
+  const std::vector<doc::ObjectId> half(all.begin(), all.begin() + all.size() / 2);
+  times.emplace_back("select_half", timed([&] { f.window.setSelection(half); }));
+  gp_Trsf away;
+  away.SetTranslation(gp_Vec(0, 100000, 0));
+  times.emplace_back("copy_half", timed([&] { QVERIFY(m.copy(half, away).ok()); }));
+  times.emplace_back("undo_copy", timed([&] { QVERIFY(m.undo()); }));
+  times.emplace_back("delete_half", timed([&] { trigger(QKeySequence::Delete); }));
+  times.emplace_back("undo_delete", timed([&] { QVERIFY(m.undo()); }));
+  const std::string path = QDir(QDir::tempPath()).filePath(QStringLiteral("sbr_bench_ops.sbr")).toStdString();
+  times.emplace_back("save", timed([&] { QVERIFY(m.save(path).ok()); }));
+  times.emplace_back("open", timed([&] { QVERIFY(f.window.openFile(QString::fromStdString(path))); }));
+  QString line = QStringLiteral("bench ops n=%1 objects=%2").arg(n).arg(m.document().objects().size());
+  for (const auto& [name, ms] : times) line += QStringLiteral(" %1_ms=%2").arg(QString::fromStdString(name)).arg(ms, 0, 'f', 1);
+  qInfo("%s", qPrintable(line));
+}
+
 // Performance plan step 0: viewport cost of a model with many placements.
 // Skipped unless SBR_BENCH_N is set (e.g. SBR_BENCH_N=1000); prints timings.
 void GuiPhase1::benchViewportSync() {
@@ -5304,6 +5383,100 @@ void GuiPhase1::selectionDotsKeepTheMaterialColour() {
   }
   QVERIFY2(reddish > 128, qPrintable(QString("red %1 blue %2").arg(reddish).arg(blue)));
   QVERIFY2(blue >= 4, qPrintable(QString("red %1 blue %2").arg(reddish).arg(blue)));
+}
+
+// Placements share the dots' presentation: selecting one placement dots
+// that one only (none on the other, nor at the definition's own place), and
+// the dots go again when it is deselected.
+void GuiPhase1::selectionDotsOnOnePlacementOnly() {
+  Fixture f;
+  QVERIFY(f.setUp(1500, 0));
+  doc::Modeler& m = f.window.modeler();
+  auto instance = m.makeComponent({f.box(-1000, -1000, 2000, 2000, 2000)}, "Block");
+  QVERIFY(instance.ok());
+  gp_Trsf shift;
+  shift.SetTranslation(gp_Vec(4000, 0, 0));
+  auto copy = m.copy({*instance}, shift);
+  QVERIFY(copy.ok() && copy->size() == 1);
+  auto blueAt = [&](const gp_Pnt& p) {
+    f.vp->syncNow();
+    const QString path = QDir(QDir::tempPath()).filePath(QStringLiteral("sbr_dots_one.png"));
+    if (!f.vp->dumpImage(path)) return -1;
+    const QImage shot(path);
+    const QPoint c = f.vp->toWidget(p);
+    int blue = 0;
+    for (int dy = -8; dy < 8; ++dy) {
+      for (int dx = -8; dx < 8; ++dx) {
+        const QColor px = shot.pixelColor(c.x() + dx, c.y() + dy);
+        if (px.blue() > px.red() + 60) ++blue;
+      }
+    }
+    return blue;
+  };
+  const gp_Pnt original(0, -1000, 1000), copied(4000, -1000, 1000);
+  f.window.setSelection({copy->front()});
+  QVERIFY2(blueAt(copied) >= 4, qPrintable(QString::number(blueAt(copied))));
+  QCOMPARE(blueAt(original), 0);
+  f.window.setSelection({});
+  QCOMPARE(blueAt(copied), 0);
+  f.window.setSelection({*instance});
+  QVERIFY(blueAt(original) >= 4);
+  QCOMPARE(blueAt(copied), 0);
+}
+
+// A moved object keeps its display (only placed anew): picks, snaps,
+// the face highlight and the dots all follow it to where it is now, and
+// back again with undo.
+void GuiPhase1::movedObjectsPickWhereTheyAre() {
+  Fixture f;
+  QVERIFY(f.setUp(1500, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(-1000, -1000, 2000, 2000, 2000);
+  f.vp->syncNow();
+  const std::size_t displays = f.vp->sharedDisplayCount();
+  QVERIFY(m.move({box}, gp_Vec(4000, 0, 0)).ok());
+  f.vp->syncNow();
+  QCOMPARE(f.vp->sharedDisplayCount(), displays);
+  // Picked and snapped at the new place, not at the old one.
+  const gp_Pnt now(4000, -1000, 1000), before(0, -1000, 1000);
+  auto element = f.vp->elementAt(f.vp->toWidget(now));
+  QVERIFY(element && element->objectId == box && element->type == TopAbs_FACE);
+  const Bnd_Box picked = geom::exactBounds(f.vp->elementShape(*element));
+  QVERIFY(std::abs(picked.CornerMin().X() - 3000) < 1e-6 && std::abs(picked.CornerMin().Y() + 1000) < 1e-6);
+  QVERIFY(!f.vp->elementAt(f.vp->toWidget(before)));
+  const auto hit = f.vp->faceAt(f.vp->toWidget(now));
+  QVERIFY(hit && std::abs(hit->first.Y() + 1000) < 1.0);
+  // The picked face and the whole object are highlighted where they are.
+  auto blueAt = [&](const gp_Pnt& p) {
+    f.vp->syncNow();
+    const QString path = QDir(QDir::tempPath()).filePath(QStringLiteral("sbr_moved.png"));
+    if (!f.vp->dumpImage(path)) return -1;
+    const QImage shot(path);
+    const QPoint c = f.vp->toWidget(p);
+    int blue = 0;
+    for (int dy = -8; dy < 8; ++dy) {
+      for (int dx = -8; dx < 8; ++dx) {
+        const QColor px = shot.pixelColor(c.x() + dx, c.y() + dy);
+        if (px.blue() > px.red() + 60) ++blue;
+      }
+    }
+    return blue;
+  };
+  f.window.setElementSelection({*element});
+  QVERIFY(blueAt(now) >= 4);
+  QCOMPARE(blueAt(before), 0);
+  f.window.setSelection({box});
+  QVERIFY(blueAt(now) >= 4);
+  QCOMPARE(blueAt(before), 0);
+  // Moved again while selected, then back with undo.
+  QVERIFY(m.move({box}, gp_Vec(0, 0, 0.5)).ok());
+  QVERIFY(m.undo());
+  QVERIFY(m.undo());
+  f.vp->syncNow();
+  QVERIFY(blueAt(before) >= 4);
+  QCOMPARE(blueAt(now), 0);
+  element = f.vp->elementAt(f.vp->toWidget(before));
+  QVERIFY(element && element->objectId == box);
 }
 
 // SketchUp: hold the eraser down and sweep across lines; they are marked

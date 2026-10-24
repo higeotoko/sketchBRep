@@ -1,5 +1,7 @@
 #include "PropertiesPanel.h"
 
+#include <QSignalBlocker>
+
 #include <algorithm>
 #include <cmath>
 #include <map>
@@ -141,8 +143,32 @@ void PropertiesPanel::refresh(const doc::Modeler& modeler,
                               const std::vector<doc::ObjectId>& selection,
                               const QString& elementSummary) {
   updating_ = true;
-  const bool rebuild = treeDocument_ != &modeler.document() || treeSequence_ != modeler.document().sequence() ||
-                       modeler.document().sequence() == 0;
+  const doc::Document& document = modeler.document();
+  bool rebuild = treeDocument_ != &document || document.sequence() == 0;
+  if (!rebuild && treeSequence_ != document.sequence()) {
+    // Objects only changed (moved, reshaped, renamed...): their rows are
+    // updated in place; added, removed or regrouped ones rebuild the tree.
+    const auto changed = document.changedSince(treeSequence_);
+    rebuild = !changed;
+    for (std::size_t i = 0; !rebuild && i < changed->size(); ++i) {
+      const doc::Object* o = document.find((*changed)[i]);
+      const auto it = o ? treeItems_.find(o->id) : treeItems_.end();
+      const QTreeWidgetItem* parentItem = it == treeItems_.end() ? nullptr : it->second->parent();
+      const QString shownParent = parentItem ? parentItem->data(0, Qt::UserRole).toString() : QString();
+      rebuild = it == treeItems_.end() || shownParent != QString::fromStdString(o->parent);
+    }
+    if (!rebuild) {
+      for (const doc::ObjectId& id : *changed) {
+        const doc::Object* o = document.find(id);
+        QTreeWidgetItem* item = treeItems_.at(id);
+        item->setText(0, QString::fromStdString(o->name));
+        item->setText(1, kindLabel(o->kind()));
+        item->setText(2, QString::fromStdString(o->layer));
+        item->setCheckState(0, o->visible ? Qt::Checked : Qt::Unchecked);
+      }
+      treeSequence_ = document.sequence();
+    }
+  }
   if (rebuild) {
     treeDocument_ = &modeler.document();
     treeSequence_ = modeler.document().sequence();
@@ -183,11 +209,16 @@ void PropertiesPanel::refresh(const doc::Modeler& modeler,
     }
     tree_->expandAll();
   }
-  tree_->clearSelection();
-  for (const doc::ObjectId& id : selection) {
-    const auto it = treeItems_.find(id);
-    if (it != treeItems_.end()) it->second->setSelected(true);
+  {
+    // Thousands of rows selected at once: the view repaints once, not per row.
+    const QSignalBlocker quiet(tree_->selectionModel());
+    tree_->clearSelection();
+    for (const doc::ObjectId& id : selection) {
+      const auto it = treeItems_.find(id);
+      if (it != treeItems_.end()) it->second->setSelected(true);
+    }
   }
+  tree_->viewport()->update();
   updating_ = false;
   rebuildForm(modeler, selection, elementSummary);
 }
