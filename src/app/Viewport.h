@@ -108,6 +108,7 @@ class Viewport : public QWidget {
   // --- picking / inference (positions in widget logical pixels) -----------
   snap::Ray rayAt(const QPoint& pos) const;
   snap::ScreenPoint project(const gp_Pnt& p) const;  // logical pixels
+  QSize viewSize() const;  // device pixels
   QPoint toWidget(const gp_Pnt& p) const;
   snap::SnapResult snap(const QPoint& pos, std::optional<gp_Pnt> anchor,
                         std::optional<gp_Dir> lockedDirection,
@@ -279,6 +280,7 @@ class Viewport : public QWidget {
     std::vector<int> hiddenEdges;
     Handle(AIS_Shape) edgeOverlay;
     Handle(AIS_InteractiveObject) selectionDots;  // shown while the object is selected
+    bool erased = false;  // hidden (object, tag or parent): display kept to show again
     Handle(AIS_InteractiveObject) textureOverlay;  // faces with a picture material
     std::string textureKey;                        // what the overlay shows
   };
@@ -331,6 +333,8 @@ class Viewport : public QWidget {
   // Moves an object's display to its new place without rebuilding it (same
   // shape, new rigid location). False when it has to be rebuilt instead.
   bool relocate(const doc::ObjectId& id, Entry& entry, const TopoDS_Shape& world);
+  // Puts the display on screen with the selection the tool picks with.
+  void displayWithPickMode(Entry& entry);
   std::map<doc::ObjectId, Handle(AIS_TextLabel)> labels_;  // annotation texts
   Handle(Graphic3d_ClipPlane) section_;
   bool showOpenEnds_ = false;

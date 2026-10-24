@@ -5,6 +5,7 @@
 #include <TopoDS_Shell.hxx>
 
 #include <cmath>
+#include <optional>
 #include <unordered_map>
 #include <mutex>
 #include <sstream>
@@ -83,6 +84,45 @@ void keep(const std::shared_ptr<const Recipe>& recipe, const TopoDS_Shape& shape
   kept.emplace(recipe.get(), Kept{recipe, shape});
 }
 
+// Booleans by their operands: kind, then each operand's (shared) recipe
+// and placement. Empty when an operand depends on the context.
+std::string booleanKey(const BooleanFeature& b) {
+  if (!keptOnThisThread) return {};
+  std::ostringstream key;
+  key.precision(17);
+  key << static_cast<int>(b.kind);
+  for (const BooleanOperand& o : b.operands) {
+    if (!o.recipe || usesContext(*o.recipe)) return {};
+    key << '|' << static_cast<const void*>(o.recipe.get());
+    for (int r = 1; r <= 3; ++r) {
+      for (int c = 1; c <= 4; ++c) key << ',' << o.placement.Value(r, c);
+    }
+  }
+  return key.str();
+}
+
+struct KeptBoolean {
+  std::vector<std::shared_ptr<const Recipe>> operands;  // keeps the addresses from being reused
+  TopoDS_Shape shape;
+};
+std::unordered_map<std::string, KeptBoolean> keptBooleans;
+
+std::optional<TopoDS_Shape> keptBoolean(const std::string& key) {
+  const std::lock_guard<std::mutex> lock(keptMutex);
+  const auto it = keptBooleans.find(key);
+  if (it == keptBooleans.end()) return std::nullopt;
+  return it->second.shape;
+}
+
+void keepBoolean(const std::string& key, const BooleanFeature& b, const TopoDS_Shape& shape) {
+  const std::lock_guard<std::mutex> lock(keptMutex);
+  constexpr std::size_t kMaxKept = 512;
+  if (keptBooleans.size() >= kMaxKept) keptBooleans.clear();
+  KeptBoolean entry{{}, shape};
+  for (const BooleanOperand& o : b.operands) entry.operands.push_back(o.recipe);
+  keptBooleans.emplace(key, std::move(entry));
+}
+
 Result<TopoDS_Shape> regenerateShared(const std::shared_ptr<const Recipe>& recipe, const RegenContext& context) {
   if (keptOnThisThread) {
     const std::lock_guard<std::mutex> lock(keptMutex);
@@ -155,6 +195,13 @@ Result<TopoDS_Shape> buildBase(const BaseFeature& base, const RegenContext& cont
             return s.shape;
           },
           [&](const BooleanFeature& b) -> Result<TopoDS_Shape> {
+            // The same operands (shared, never changed) placed the same way
+            // give the same result: a wall cut by many openings is not cut
+            // again for each later push / pull on it.
+            const std::string key = booleanKey(b);
+            if (!key.empty()) {
+              if (auto kept = keptBoolean(key)) return *kept;
+            }
             std::vector<TopoDS_Shape> shapes;
             for (std::size_t i = 0; i < b.operands.size(); ++i) {
               const BooleanOperand& operand = b.operands[i];
@@ -166,7 +213,9 @@ Result<TopoDS_Shape> buildBase(const BaseFeature& base, const RegenContext& cont
               }
               shapes.push_back(shape->Moved(TopLoc_Location(operand.placement)));
             }
-            return geom::booleanCombine(toGeom(b.kind), shapes);
+            auto combined = geom::booleanCombine(toGeom(b.kind), shapes);
+            if (combined && !key.empty()) keepBoolean(key, b, combined.value());
+            return combined;
           },
           [&](const LoftFeature& l) -> Result<TopoDS_Shape> {
             std::vector<TopoDS_Wire> wires;

@@ -3,6 +3,7 @@
 #include "Messages.h"
 
 #include <algorithm>
+#include <tuple>
 #include <cmath>
 #include <map>
 #include <limits>
@@ -157,39 +158,48 @@ void SelectTool::apply(const std::vector<ElementRef>& elements, const std::vecto
     parts = host_.elementSelection();
     wholes = host_.wholeSelection();
   }
-  auto has = [](const auto& list, const auto& item) { return std::find(list.begin(), list.end(), item) != list.end(); };
-  auto take = [](auto& list, const auto& item) { list.erase(std::remove(list.begin(), list.end(), item), list.end()); };
+  // Membership by set (thousands of faces and edges from one box): what is
+  // in `parts` / `wholes`; the lists keep the order and drop what was
+  // taken off at the end.
+  using Key = std::tuple<doc::ObjectId, int, int>;
+  auto key = [](const ElementRef& e) { return Key{e.objectId, static_cast<int>(e.type), e.index}; };
+  std::set<Key> inParts;
+  for (const ElementRef& e : parts) inParts.insert(key(e));
+  std::set<doc::ObjectId> inWholes(wholes.begin(), wholes.end());
   auto addPart = [&](const ElementRef& e) {
-    if (!has(parts, e) && !has(wholes, e.objectId)) parts.push_back(e);
+    if (!inWholes.count(e.objectId) && inParts.insert(key(e)).second) parts.push_back(e);
   };
   auto addWhole = [&](const doc::ObjectId& id) {
-    if (has(wholes, id)) return;
-    wholes.push_back(id);
-    // The whole covers its faces / edges picked before.
-    parts.erase(std::remove_if(parts.begin(), parts.end(), [&](const ElementRef& e) { return e.objectId == id; }),
-                parts.end());
+    if (inWholes.insert(id).second) wholes.push_back(id);
   };
   // Toggle as one: everything picked selected already -> all off, else on.
-  const bool allIn = std::all_of(elements.begin(), elements.end(), [&](const ElementRef& e) { return has(parts, e); }) &&
-                     std::all_of(whole.begin(), whole.end(), [&](const doc::ObjectId& id) { return has(wholes, id); });
+  const bool allIn =
+      std::all_of(elements.begin(), elements.end(), [&](const ElementRef& e) { return inParts.count(key(e)) > 0; }) &&
+      std::all_of(whole.begin(), whole.end(), [&](const doc::ObjectId& id) { return inWholes.count(id) > 0; });
   for (const ElementRef& e : elements) {
-    const bool in = has(parts, e);
+    const bool in = inParts.count(key(e)) > 0;
     const bool off = mode == Mode::Remove || (mode == Mode::Toggle && (eachOnItsOwn ? in : allIn));
     if (off) {
-      take(parts, e);
+      inParts.erase(key(e));
     } else {
       addPart(e);
     }
   }
   for (const doc::ObjectId& id : whole) {
-    const bool in = has(wholes, id);
+    const bool in = inWholes.count(id) > 0;
     const bool off = mode == Mode::Remove || (mode == Mode::Toggle && (eachOnItsOwn ? in : allIn));
     if (off) {
-      take(wholes, id);
+      inWholes.erase(id);
     } else {
       addWhole(id);
     }
   }
+  // Taken off, or covered by its whole object selected.
+  parts.erase(std::remove_if(parts.begin(), parts.end(),
+                             [&](const ElementRef& e) { return !inParts.count(key(e)) || inWholes.count(e.objectId); }),
+              parts.end());
+  wholes.erase(std::remove_if(wholes.begin(), wholes.end(), [&](const doc::ObjectId& id) { return !inWholes.count(id); }),
+               wholes.end());
   host_.setMixedSelection(parts, wholes);
 }
 
@@ -352,8 +362,32 @@ void SelectTool::boxSelect(const QRect& rect, bool crossing, Mode mode) {
   // A box lying inside faces only: the front one (X-ray: every one there).
   const std::optional<ElementRef> front =
       viewport.xRay() || !crossing ? std::nullopt : viewport.pickElement(box.center().toPoint());
+  std::set<std::tuple<doc::ObjectId, int, int>> taken;
   auto addElement = [&](const ElementRef& e) {
-    if (std::find(elements.begin(), elements.end(), e) == elements.end()) elements.push_back(e);
+    if (taken.emplace(e.objectId, static_cast<int>(e.type), e.index).second) elements.push_back(e);
+  };
+  // Exact bounds of each distinct shape once (placements of a component
+  // share theirs), its corners then placed like each object: thousands of
+  // copies in the box took seconds.
+  std::map<const void*, Bnd_Box> localBounds;
+  auto placedCorners = [&](const doc::Object& leaf, std::vector<gp_Pnt>& corners) {
+    const TopoDS_Shape& local = leaf.shape;
+    gp_Trsf world = document.worldTransform(leaf);
+    Bnd_Box box;
+    if (local.Location().IsIdentity()) {
+      auto it = localBounds.find(local.TShape().get());
+      if (it == localBounds.end()) it = localBounds.emplace(local.TShape().get(), geom::exactBounds(local)).first;
+      box = it->second;
+    } else {
+      box = geom::exactBounds(document.worldShape(leaf));
+      world = gp_Trsf();
+    }
+    if (box.IsVoid()) return;
+    double x0, y0, z0, x1, y1, z1;
+    box.Get(x0, y0, z0, x1, y1, z1);
+    for (int i = 0; i < 8; ++i) {
+      corners.push_back(gp_Pnt(i & 1 ? x1 : x0, i & 2 ? y1 : y0, i & 4 ? z1 : z0).Transformed(world));
+    }
   };
   for (const doc::Object& o : document.objects()) {
     if (o.parent != context || !document.isVisible(o.id)) continue;
@@ -361,29 +395,44 @@ void SelectTool::boxSelect(const QRect& rect, bool crossing, Mode mode) {
     const bool raw = !o.locked && (kind == doc::ObjectKind::Curve || kind == doc::ObjectKind::Face ||
                                    kind == doc::ObjectKind::Shell || kind == doc::ObjectKind::Solid);
     if (raw) {
+      // The object's footprint first: wholly inside the box, every face and
+      // edge is; clear of it, none is. Only objects across its border are
+      // looked at element by element.
+      std::vector<gp_Pnt> corners;
+      placedCorners(o, corners);
+      QRectF footprint;
+      for (const gp_Pnt& c : corners) {
+        const QPointF p(viewport.toWidget(c));
+        footprint = footprint.isNull() ? QRectF(p, QSizeF(0.01, 0.01)) : footprint.united(QRectF(p, QSizeF(0.01, 0.01)));
+      }
+      const bool clear = !corners.empty() && !footprint.intersects(box);
+      const bool within = !corners.empty() && box.contains(footprint);
+      if (clear) continue;
       const std::vector<int> hidden = doc::hiddenEdgeIndices(o);
       for (const ElementRef& e : viewport.allElements(o.id)) {
         if (e.type == TopAbs_EDGE && std::find(hidden.begin(), hidden.end(), e.index) != hidden.end()) continue;
+        if (within) {
+          addElement(e);
+          continue;
+        }
         const TopoDS_Shape shape = viewport.elementShape(e);
         const bool inside = viewport.xRay() || (front && *front == e);
         if (!shape.IsNull() && elementInBox(viewport, shape, box, crossing, inside)) addElement(e);
       }
       continue;
     }
-    // One unit: the screen footprint of its exact bounds (and its children).
-    Bnd_Box bounds;
+    // One unit: the screen footprint of its exact bounds (and its children's).
+    std::vector<gp_Pnt> corners;
     for (const doc::ObjectId& id : document.subtree(o.id)) {
       const doc::Object* leaf = document.find(id);
       if (!leaf || leaf->shape.IsNull() || !document.isVisible(id)) continue;
-      bounds.Add(geom::exactBounds(document.worldShape(*leaf)));
+      placedCorners(*leaf, corners);
     }
-    if (bounds.IsVoid()) continue;
-    double x0, y0, z0, x1, y1, z1;
-    bounds.Get(x0, y0, z0, x1, y1, z1);
+    if (corners.empty()) continue;
     QRect footprint;
     bool allInside = true;
-    for (int i = 0; i < 8; ++i) {
-      const QPoint p = viewport.toWidget(gp_Pnt(i & 1 ? x1 : x0, i & 2 ? y1 : y0, i & 4 ? z1 : z0));
+    for (const gp_Pnt& corner : corners) {
+      const QPoint p = viewport.toWidget(corner);
       allInside = allInside && rect.contains(p);
       footprint = footprint.isNull() ? QRect(p, QSize(1, 1)) : footprint.united(QRect(p, QSize(1, 1)));
     }

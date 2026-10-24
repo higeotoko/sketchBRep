@@ -724,6 +724,24 @@ void Viewport::showImage(const Handle(AIS_Shape)& ais, const doc::ImageUnderlay&
 
 void Viewport::scheduleSync() { syncTimer_.start(); }
 
+void Viewport::displayWithPickMode(Entry& entry) {
+  // Displayed straight with the selection the tool picks with (computing
+  // another first, then replacing it, doubled the cost of every new
+  // object). Selection mode -1 would make the object permanently
+  // unselectable in OCCT 7.6: no pick mode displays with 0, deactivated.
+  const bool lockedFaces = entry.locked && pickMode_ == PickMode::Faces;
+  const int mode = pickMode_ == PickMode::Faces && !lockedFaces ? AIS_Shape::SelectionMode(TopAbs_FACE)
+                   : pickMode_ == PickMode::Elements           ? AIS_Shape::SelectionMode(TopAbs_EDGE)
+                                                               : 0;
+  context_->Display(entry.ais, shaded_ ? AIS_Shaded : AIS_WireFrame, mode, Standard_False);
+  if (!entry.edgeOverlay.IsNull()) context_->Display(entry.edgeOverlay, AIS_WireFrame, -1, Standard_False);
+  if (pickMode_ == PickMode::Elements) {
+    context_->Activate(entry.ais, AIS_Shape::SelectionMode(TopAbs_FACE));
+  } else if (pickMode_ == PickMode::None || lockedFaces) {
+    context_->Deactivate(entry.ais);
+  }
+}
+
 bool Viewport::relocate(const doc::ObjectId& id, Entry& entry, const TopoDS_Shape& world) {
   if (world.TShape() != entry.canonicalWorld.TShape() || world.Orientation() != entry.canonicalWorld.Orientation()) {
     return false;
@@ -1220,8 +1238,42 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
   // tessellated display copy and their snap index.
   // An object whose faces got (or lost every) own colour needs the other
   // kind of display object.
+  // Hidden (itself, its tag or a parent): the display is only taken off
+  // the screen, to come back as it was (showing a tag of thousands of
+  // objects rebuilt every display).
+  if (found != entries_.end() && o && !o->shape.IsNull() && !wanted) {
+    Entry& entry = found->second;
+    if (!entry.erased) {
+      entry.erased = true;
+      for (const Handle(AIS_InteractiveObject)& shown :
+           {Handle(AIS_InteractiveObject)(entry.ais), Handle(AIS_InteractiveObject)(entry.edgeOverlay),
+            entry.textureOverlay, entry.selectionDots}) {
+        if (!shown.IsNull()) context_->Erase(shown, Standard_False);
+      }
+      inference_.removeShape(id);
+      guidesChanged = guideLines_.erase(id) > 0;
+    }
+    return guidesChanged;
+  }
   const bool needsFaceColors = wanted && !faceColorsOf(*o).empty();
   const TopoDS_Shape world = wanted ? document.worldShape(*o) : TopoDS_Shape();
+  if (found != entries_.end() && wanted && found->second.erased &&
+      sameLocatedShape(found->second.canonicalWorld, world) && o->kind() != doc::ObjectKind::Guide) {
+    // Shown again: the kept display back on screen.
+    Entry& entry = found->second;
+    entry.erased = false;
+    displayWithPickMode(entry);
+    if (!entry.textureOverlay.IsNull()) context_->Display(entry.textureOverlay, 0, -1, Standard_False);
+    if (!entry.selectionDots.IsNull()) context_->Display(entry.selectionDots, AIS_Shaded, -1, Standard_False);
+    inference_.setShape(id, entry.canonicalWorld);
+  } else if (found != entries_.end() && found->second.erased) {
+    // Changed while hidden: built again below.
+    found->second.erased = false;
+    removeDisplay(found->second);
+    releaseProto(found->second);
+    entries_.erase(found);
+    found = entries_.end();
+  }
   if (found != entries_.end() && wanted && o->kind() != doc::ObjectKind::Guide &&
       !sameLocatedShape(found->second.canonicalWorld, world) &&
       needsFaceColors == (dynamic_cast<AIS_ColoredShape*>(found->second.ais.get()) != nullptr) &&
@@ -1350,21 +1402,7 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
     if (!found->second.edgeOverlay.IsNull()) found->second.edgeOverlay->SetTransparency(transparency);
   }
   if (created) {
-    // Displayed straight with the selection the tool picks with (computing
-    // another first, then replacing it, doubled the cost of every new
-    // object). Selection mode -1 would make the object permanently
-    // unselectable in OCCT 7.6: no pick mode displays with 0, deactivated.
-    const bool lockedFaces = entry.locked && pickMode_ == PickMode::Faces;
-    const int mode = pickMode_ == PickMode::Faces && !lockedFaces ? AIS_Shape::SelectionMode(TopAbs_FACE)
-                     : pickMode_ == PickMode::Elements           ? AIS_Shape::SelectionMode(TopAbs_EDGE)
-                                                                 : 0;
-    context_->Display(entry.ais, shaded_ ? AIS_Shaded : AIS_WireFrame, mode, Standard_False);
-    if (!entry.edgeOverlay.IsNull()) context_->Display(entry.edgeOverlay, AIS_WireFrame, -1, Standard_False);
-    if (pickMode_ == PickMode::Elements) {
-      context_->Activate(entry.ais, AIS_Shape::SelectionMode(TopAbs_FACE));
-    } else if (pickMode_ == PickMode::None || lockedFaces) {
-      context_->Deactivate(entry.ais);
-    }
+    displayWithPickMode(entry);
   } else if (recompute) {
     context_->Redisplay(entry.ais, Standard_False);  // per-face colours changed
   }
@@ -1504,8 +1542,8 @@ void Viewport::setShaded(bool shaded) {
 
 snap::Ray Viewport::rayAt(const QPoint& pos) const {
   const Handle(Graphic3d_Camera)& camera = view_->Camera();
-  Standard_Integer w = 1, h = 1;
-  view_->Window()->Size(w, h);
+  const QSize size = viewSize();
+  const double w = size.width(), h = size.height();
   const double dpr = devicePixelRatioF();
   const double ndcX = 2.0 * (pos.x() * dpr) / w - 1.0;
   const double ndcY = 1.0 - 2.0 * (pos.y() * dpr) / h;
@@ -1522,10 +1560,20 @@ snap::Ray Viewport::rayAt(const QPoint& pos) const {
   return snap::Ray{camera->Eye(), d};
 }
 
-snap::ScreenPoint Viewport::project(const gp_Pnt& p) const {
-  const Handle(Graphic3d_Camera)& camera = view_->Camera();
+QSize Viewport::viewSize() const {
+  // As of the last redraw (the camera's aspect is too); asking the window
+  // costs a round trip to the window system (X11), once per projected
+  // point: thousands per mouse move when snapping in a large model.
+  if (!glSize_.isEmpty()) return glSize_;
   Standard_Integer w = 1, h = 1;
   view_->Window()->Size(w, h);
+  return QSize(w, h);
+}
+
+snap::ScreenPoint Viewport::project(const gp_Pnt& p) const {
+  const Handle(Graphic3d_Camera)& camera = view_->Camera();
+  const QSize size = viewSize();
+  const double w = size.width(), h = size.height();
   const gp_Pnt ndc = camera->Project(p);
   const double dpr = devicePixelRatioF();
   return snap::ScreenPoint{(ndc.X() + 1.0) * 0.5 * w / dpr, (1.0 - ndc.Y()) * 0.5 * h / dpr};

@@ -267,6 +267,9 @@ class MainWindow : public QMainWindow, public ToolHost {
   QStringList recipeWarnings_;
   void startRecipeVerification();
   void stopRecipeVerification();
+  // Elements picked (their owners become the object selection), without
+  // refreshing the panels.
+  void takeElements(const std::vector<ElementRef>& elements);
   std::unique_ptr<CircleTool> circleTool_;
   std::unique_ptr<PaintTool> paintTool_;
   std::unique_ptr<EraserTool> eraserTool_;

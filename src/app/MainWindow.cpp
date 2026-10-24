@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 
 #include <algorithm>
+#include <unordered_set>
 #include <cstdint>
 #include <map>
 
@@ -1176,20 +1177,23 @@ std::string MainWindow::elementBasis(const doc::ObjectId& id) const {
 }
 
 void MainWindow::setElementSelection(const std::vector<ElementRef>& elements) {
+  takeElements(elements);
+  refreshPanels();
+}
+
+void MainWindow::takeElements(const std::vector<ElementRef>& elements) {
   elements_ = elements;
   elementBases_.clear();
-  for (const ElementRef& e : elements_) elementBases_[e.objectId] = elementBasis(e.objectId);
   // Owners become the object selection (panel, Move/Rotate targets) but are
   // not highlighted as a whole: only the picked faces/edges are.
   selection_.clear();
-  for (const ElementRef& e : elements) {
-    if (std::find(selection_.begin(), selection_.end(), e.objectId) == selection_.end()) {
-      selection_.push_back(e.objectId);
-    }
+  for (const ElementRef& e : elements_) {
+    if (elementBases_.count(e.objectId)) continue;  // owner seen already
+    elementBases_[e.objectId] = elementBasis(e.objectId);
+    selection_.push_back(e.objectId);
   }
   viewport_->setSelection({});
   viewport_->setHighlightedElements(elements);
-  refreshPanels();
 }
 
 void MainWindow::setMixedSelection(const std::vector<ElementRef>& elements, const std::vector<doc::ObjectId>& whole) {
@@ -1197,9 +1201,10 @@ void MainWindow::setMixedSelection(const std::vector<ElementRef>& elements, cons
     setSelection(whole);
     return;
   }
-  setElementSelection(elements);
+  takeElements(elements);
+  std::unordered_set<doc::ObjectId> chosen(selection_.begin(), selection_.end());
   for (const doc::ObjectId& id : whole) {
-    if (std::find(selection_.begin(), selection_.end(), id) == selection_.end()) selection_.push_back(id);
+    if (chosen.insert(id).second) selection_.push_back(id);
   }
   viewport_->setSelection(wholeSelection());
   refreshPanels();
@@ -1207,10 +1212,11 @@ void MainWindow::setMixedSelection(const std::vector<ElementRef>& elements, cons
 
 // Selected objects taken whole (none of their faces / edges picked).
 std::vector<doc::ObjectId> MainWindow::wholeSelection() const {
+  std::unordered_set<doc::ObjectId> parts;
+  for (const ElementRef& e : elements_) parts.insert(e.objectId);
   std::vector<doc::ObjectId> out;
   for (const doc::ObjectId& id : selection_) {
-    const bool parts = std::any_of(elements_.begin(), elements_.end(), [&](const ElementRef& e) { return e.objectId == id; });
-    if (!parts) out.push_back(id);
+    if (!parts.count(id)) out.push_back(id);
   }
   return out;
 }

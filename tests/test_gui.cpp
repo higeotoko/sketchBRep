@@ -246,6 +246,7 @@ class GuiPhase1 : public QObject {
   void selectionDotsOnOnePlacementOnly();
   void movedObjectsPickWhereTheyAre();
   void openingKeepsTheWindowResponsive();
+  void shownAgainPicksAndSnaps();
   void eraserDragErasesCrossedLines();
   void eraserDragFollowsWhatTheLineBecame();
   void wheelZoomIsConsistentAndReversible();
@@ -5673,6 +5674,39 @@ void GuiPhase1::openingKeepsTheWindowResponsive() {
   qInfo("verification took %lld ms, longest pause %lld ms", clock.elapsed(), longest);
   QVERIFY2(longest < 200, qPrintable(QString::number(longest)));
   QVERIFY2(f.window.recipeWarnings().isEmpty(), qPrintable(f.window.recipeWarnings().join(QStringLiteral("; "))));
+}
+
+// Hidden objects keep their display off screen: shown again they are
+// picked and snapped as before, and one moved while hidden comes back
+// where it is now.
+void GuiPhase1::shownAgainPicksAndSnaps() {
+  Fixture f;
+  QVERIFY(f.setUp(1500, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId a = f.box(-1000, -1000, 2000, 2000, 2000);
+  const doc::ObjectId b = f.box(3000, -1000, 2000, 2000, 2000);
+  QVERIFY(m.setLayer(a, "T").ok());
+  QVERIFY(m.setLayer(b, "T").ok());
+  f.vp->syncNow();
+  m.setTagVisible("T", false);
+  f.vp->syncNow();
+  QVERIFY(!f.vp->elementAt(f.vp->toWidget(gp_Pnt(0, -1000, 1000))));
+  QVERIFY(m.move({b}, gp_Vec(2000, 0, 0)).ok());  // moved while hidden
+  m.setTagVisible("T", true);
+  f.vp->syncNow();
+  auto element = f.vp->elementAt(f.vp->toWidget(gp_Pnt(0, -1000, 1000)));
+  QVERIFY(element && element->objectId == a);
+  element = f.vp->elementAt(f.vp->toWidget(gp_Pnt(6000, -1000, 1000)));
+  QVERIFY(element && element->objectId == b);
+  QVERIFY(!f.vp->elementAt(f.vp->toWidget(gp_Pnt(3500, -1000, 1000))));
+  f.window.activateTool(MainWindow::ToolId::Line);
+  move(f.vp, f.vp->toWidget(gp_Pnt(1000, -1000, 2000)));
+  QCOMPARE(f.vp->snapTip(), QStringLiteral("端点"));
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  // Push / pull picks faces of what was hidden.
+  f.window.activateTool(MainWindow::ToolId::PushPull);
+  const auto face = f.vp->pickFace(f.vp->toWidget(gp_Pnt(0, -1000, 1000)));
+  QVERIFY(face && face->objectId == a);
 }
 
 // SketchUp: hold the eraser down and sweep across lines; they are marked
