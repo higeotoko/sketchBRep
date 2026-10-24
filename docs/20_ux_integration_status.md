@@ -238,7 +238,7 @@
 | MOVE-02 | 検証待ち | 後から選ぶ場合は、オブジェクト全体を掴む |
 | MOVE-03 | 検証待ち | |
 | MOVE-04 | 自動確認済 | `copySelectedEdgeArrays`、W1（面のコピー）、W4（変形中の Ctrl 切替） |
-| MOVE-05 | 要修正 | 面は法線方向にしか動かせない（`moveSelectedFaceStretchesSolid`）。横方向への移動は未対応 |
+| MOVE-05 | 自動確認済 | 面 1 枚の移動：既定は法線方向（伸縮）。↓ で固定を外す・→←↑ で別の軸に固定すると横へも動き、まわりの面がついてくる（平らを保てない面は折る）。`move05FaceMovesSideways`、2026-10-24 |
 | MOVE-06 | 自動確認済 | `moveToolLiftsRidgeIntoGable`、`Roof.*` |
 
 ### 8. 線コピー・配列

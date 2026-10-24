@@ -2569,11 +2569,28 @@ void MoveTool::mouseMove(const ToolEvent& e) {
                     lockSuffix() + copySuffix());
     return;
   }
+  if (stretch_ && stretchSideways()) {
+    // Sideways: the face's corners move, the faces round it follow.
+    const gp_Vec d(base_, current_);
+    host_.setMeasurement(QObject::tr("距離"), mm(d.Magnitude()));
+    const doc::Object* o = host_.modeler().document().find(stretch_->first);
+    auto moved = o ? geom::moveVertices(host_.modeler().document().worldShape(*o), stretchCorners_, d, true)
+                   : Result<TopoDS_Shape>::failure("");
+    if (moved) {
+      host_.viewport().setPreview(moved.value(), true);
+      host_.setStatus(QObject::tr("面を横へ移動（まわりの面がついてくる）: クリックで確定、または距離を入力") + lockSuffix());
+    } else {
+      host_.viewport().clearPreview();
+      host_.setStatus(QObject::tr("ここには動かせません: %1").arg(userMessage(QString::fromStdString(moved.error()))) +
+                      lockSuffix());
+    }
+    return;
+  }
   if (stretch_) {
     // Preview the slab the face sweeps through.
     const double d = gp_Vec(base_, current_).Dot(gp_Vec(stretchNormal_));
     host_.setMeasurement(QObject::tr("距離"), mm(d));
-    host_.setStatus(QObject::tr("面を移動（ソリッドを伸縮）: クリックで確定、または距離を入力"));
+    host_.setStatus(QObject::tr("面を移動（ソリッドを伸縮）: クリックで確定、または距離を入力（↓ で法線の固定を外すと横へも動かせる）"));
     if (std::abs(d) > tolerance::kMinDimension) {
       BRepPrimAPI_MakePrism prism(stretch_->second, gp_Vec(stretchNormal_) * d, Standard_True);
       host_.viewport().setPreview(prism.IsDone() ? prism.Shape() : TopoDS_Shape(), true);
@@ -2655,7 +2672,13 @@ void MoveTool::finish() {
     host_.viewport().setPickMode(PickMode::Objects);
     return;
   }
-  if (stretch_) {
+  if (stretch_ && stretchSideways()) {
+    const gp_Vec d(base_, current_);
+    const Status s = host_.modeler().moveVertices(stretch_->first, stretchCorners_, d);
+    if (!s) host_.reportError(QObject::tr("面を移動できませんでした: %1").arg(QString::fromStdString(s.message())));
+    host_.setSelection({});  // face indices change with the shape
+    last_.reset();
+  } else if (stretch_) {
     const double d = gp_Vec(base_, current_).Dot(gp_Vec(stretchNormal_));
     if (std::abs(d) > tolerance::kMinDimension) {
       auto result = host_.modeler().pushPull(stretch_->first, stretch_->second, d);
@@ -2677,6 +2700,13 @@ void MoveTool::finish() {
   }
   resetState();
   host_.viewport().setPickMode(PickMode::Objects);
+}
+
+bool MoveTool::stretchSideways() const {
+  if (!stretch_ || copy_) return false;
+  const gp_Vec d(base_, current_);
+  const gp_Vec side = d - gp_Vec(stretchNormal_) * d.Dot(gp_Vec(stretchNormal_));
+  return side.Magnitude() > tolerance::kMinDimension;
 }
 
 void MoveTool::copyToggled() {
@@ -2790,6 +2820,13 @@ void MoveTool::mousePress(const ToolEvent& e) {
         if (!r.valid()) return;
         stretch_ = std::make_pair(owner->id, TopoDS::Face(face));
         stretchNormal_ = *normal;
+        stretchCorners_.clear();
+        for (TopExp_Explorer v(face, TopAbs_VERTEX); v.More(); v.Next()) {
+          const gp_Pnt p = BRep_Tool::Pnt(TopoDS::Vertex(v.Current()));
+          if (std::none_of(stretchCorners_.begin(), stretchCorners_.end(), [&](const gp_Pnt& q) { return q.Distance(p) < 1e-6; })) {
+            stretchCorners_.push_back(p);
+          }
+        }
         locked_ = *normal;  // movement constrained to the face normal
         base_ = current_ = r.point;
         moving_ = true;
@@ -2837,7 +2874,7 @@ void MoveTool::applyMeasurement(const QString& text) {
       host_.reportError(QObject::tr("距離を解釈できません: %1").arg(text));
       return;
     }
-    if (stretch_) {
+    if (stretch_ && !stretchSideways()) {
       const double d = gp_Vec(base_, current_).Dot(gp_Vec(stretchNormal_));
       current_ = base_.Translated(gp_Vec(stretchNormal_) * (d < 0 ? -*length : *length));
       finish();

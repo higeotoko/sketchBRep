@@ -189,6 +189,7 @@ class GuiPhase1 : public QObject {
   void ux08RotateArrowsSetThePlane();
   void ux10RotateCopyPreviewShowsTheParts();
   void followMeTracedFromTheProfile();
+  void move05FaceMovesSideways();
   void lockedObjectsSelectableNotEditable();
   void groupEditShowsDottedBox();
   void snapTipNamesTheAdoptedPoint();
@@ -1571,6 +1572,55 @@ void GuiPhase1::followMeTracedFromTheProfile() {
   QVERIFY(std::abs(made - previewed) < 1e-3);
   QVERIFY(m.undo());
   QVERIFY(m.document().find(profile));
+}
+
+// MOVE-05: a selected face moves sideways too: ↓ lets go of the normal
+// lock (the top slides over: a slanted box, same volume), → holds X (the
+// front slides along X); along the normal it still stretches the box. One
+// undo step each; the box stays a valid solid.
+void GuiPhase1::move05FaceMovesSideways() {
+  Fixture f;
+  QVERIFY(f.setUp(500, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+  f.vp->syncNow();
+  auto moveFace = [&](const gp_Pnt& on, Qt::Key key, const gp_Pnt& towards, const QString& typed) {
+    f.window.activateTool(MainWindow::ToolId::Select);
+    click(f.vp, f.vp->toWidget(on));
+    QCOMPARE(f.window.elementSelection().size(), std::size_t(1));
+    f.window.activateTool(MainWindow::ToolId::Move);
+    click(f.vp, f.vp->toWidget(on));
+    if (key != Qt::Key_unknown) QTest::keyClick(f.vp, key);
+    move(f.vp, f.vp->toWidget(towards));
+    type(f.vp, typed);
+    QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+    f.vp->syncNow();
+  };
+  const std::size_t steps = m.history().undoCount();
+  // The top, slid 300 along +X.
+  moveFace(gp_Pnt(500, 500, 1000), Qt::Key_Down, gp_Pnt(800, 500, 1000), QStringLiteral("300"));
+  TopoDS_Shape s = m.document().worldShape(box);
+  QVERIFY(geom::validateShape(s, true).valid);
+  QVERIFY(std::abs(geom::volume(s) - 1e9) < 1e-3);
+  Bnd_Box b = geom::exactBounds(s);
+  // Free (↓): along the cursor's way, as shown on screen (within a pixel).
+  QVERIFY2(std::abs(b.CornerMax().X() - 1300) < 1.0 && std::abs(b.CornerMax().Z() - 1000) < 1e-6,
+           qPrintable(QStringLiteral("%1 %2").arg(b.CornerMax().X()).arg(b.CornerMax().Z())));
+  QCOMPARE(m.history().undoCount(), steps + 1);
+  QVERIFY(m.undo());
+  f.vp->syncNow();
+  // The front (y = 0), held to X with →, 200.
+  moveFace(gp_Pnt(500, 0, 500), Qt::Key_Right, gp_Pnt(800, 0, 500), QStringLiteral("200"));
+  s = m.document().worldShape(box);
+  QVERIFY(geom::validateShape(s, true).valid);
+  QVERIFY(std::abs(geom::volume(s) - 1e9) < 1e-3);
+  b = geom::exactBounds(s);
+  QVERIFY(std::abs(b.CornerMax().X() - 1200) < 1e-6 && std::abs(b.CornerMin().Y()) < 1e-6);
+  QVERIFY(m.undo());
+  f.vp->syncNow();
+  // Along the normal (the default lock): still a stretch.
+  moveFace(gp_Pnt(500, 500, 1000), Qt::Key_unknown, gp_Pnt(500, 500, 1400), QStringLiteral("500"));
+  QVERIFY(std::abs(geom::volume(m.document().worldShape(box)) - 1.5e9) < 1e-3);
 }
 
 void GuiPhase1::scaleGripsOnComponentsAndGroups() {
