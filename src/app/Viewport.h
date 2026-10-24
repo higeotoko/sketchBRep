@@ -75,8 +75,12 @@ class Viewport : public QWidget {
   }
 
   // --- document display ---------------------------------------------------
+  // Brings the display up to date a slice at a time (the event loop runs
+  // between slices, so thousands of placements rebuilt after a component
+  // edit do not freeze the window); syncNow() does it all at once.
   void scheduleSync();
   void syncNow();
+  bool syncPending() const { return !pendingSync_.empty(); }
   void setSelection(const std::vector<doc::ObjectId>& ids);
   void setDisplayQuality(const display::DisplayQuality& quality);
   const display::DisplayQuality& displayQuality() const { return quality_; }
@@ -334,6 +338,9 @@ class Viewport : public QWidget {
   std::uint64_t syncedSequence_ = 0;
   bool fullSync_ = true;
   std::set<doc::ObjectId> appearanceDirty_;
+  std::vector<doc::ObjectId> pendingSync_;  // left over by a time-limited slice
+  void syncSlice();
+  void syncSome(std::optional<double> budgetMs);
   display::DisplayQuality quality_ = display::DisplayQuality::normal();
   bool shaded_ = true;
   bool xRay_ = false;

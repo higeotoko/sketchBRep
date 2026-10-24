@@ -4,6 +4,8 @@
 
 #include <AIS_ColoredShape.hxx>
 #include <cstring>
+#include <unordered_set>
+#include <QElapsedTimer>
 #include <QImage>
 #include <Image_PixMap.hxx>
 #include <TopLoc_Location.hxx>
@@ -246,7 +248,7 @@ Viewport::Viewport(doc::Modeler& modeler, QWidget* parent)
 
   syncTimer_.setSingleShot(true);
   syncTimer_.setInterval(0);
-  connect(&syncTimer_, &QTimer::timeout, this, &Viewport::syncNow);
+  connect(&syncTimer_, &QTimer::timeout, this, &Viewport::syncSlice);
   wheelClock_.start();
   if (const QString log = qEnvironmentVariable("SBR_WHEEL_LOG"); !log.isEmpty()) {
     wheelLog_ = std::make_unique<QFile>(log);
@@ -1297,49 +1299,69 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
   // A see-through material shows through (glass), whatever else applies.
   const double own = hasFaces ? 1.0 - document.displayOpacity(*o) : 0.0;
   const double transparency = std::max(own, faded ? 0.8 : (xRay_ ? 0.5 : 0.0));
+  // Fading in / out (group edit, X-ray) only changes the aspects of the
+  // computed presentation (SetTransparency synchronises them): nothing is
+  // tessellated again, so entering a group among thousands stays quick.
   if (std::abs(found->second.ais->Transparency() - transparency) > 1e-6) {
     found->second.ais->SetTransparency(transparency);
-    if (!found->second.edgeOverlay.IsNull()) {
-      found->second.edgeOverlay->SetTransparency(transparency);
-      context_->Redisplay(found->second.edgeOverlay, Standard_False);
-    }
-    restyled = true;
+    if (!found->second.edgeOverlay.IsNull()) found->second.edgeOverlay->SetTransparency(transparency);
   }
   // Only what changed is presented again (was: every object on every sync).
   if (restyled || created) context_->Redisplay(found->second.ais, Standard_False);
   return guidesChanged;
 }
 
-void Viewport::syncNow() {
+void Viewport::syncNow() { syncSome(std::nullopt); }
+
+void Viewport::syncSlice() {
+  constexpr double kSliceMs = 50.0;
+  syncSome(kSliceMs);
+}
+
+void Viewport::syncSome(std::optional<double> budgetMs) {
   syncTimer_.stop();
   if (view_.IsNull()) return;
   const doc::Document& document = modeler_.document();
 
-  // Objects to look at: those changed since the last sync (plus everything
-  // below a changed group, whose placement they inherit), or everything.
+  // Objects to look at: those whose appearance changed (selection, context)
+  // and those changed since the last sync (plus everything below a changed
+  // group, whose placement they inherit), or everything; then what an
+  // earlier slice left over.
   std::optional<std::vector<doc::ObjectId>> changed;
   if (!fullSync_) changed = document.changedSince(syncedSequence_);
   syncedSequence_ = document.sequence();
-  bool guidesChanged = false;
+  std::vector<doc::ObjectId> queue(appearanceDirty_.begin(), appearanceDirty_.end());
+  appearanceDirty_.clear();
   if (!changed) {
-    for (auto it = entries_.begin(); it != entries_.end();) {
-      const doc::ObjectId id = (it++)->first;  // syncObject may erase it
-      if (!document.find(id)) guidesChanged |= syncObject(id);
+    for (const auto& [id, entry] : entries_) {
+      if (!document.find(id)) queue.push_back(id);
     }
-    for (const doc::Object& o : document.objects()) guidesChanged |= syncObject(o.id);
+    for (const doc::Object& o : document.objects()) queue.push_back(o.id);
   } else {
-    std::set<doc::ObjectId> ids(appearanceDirty_.begin(), appearanceDirty_.end());
     for (const doc::ObjectId& id : *changed) {
-      ids.insert(id);
+      queue.push_back(id);
       const doc::Object* o = document.find(id);
       if (o && o->isContainer()) {
-        for (const doc::ObjectId& c : document.subtree(id)) ids.insert(c);
+        for (const doc::ObjectId& c : document.subtree(id)) queue.push_back(c);
       }
     }
-    for (const doc::ObjectId& id : ids) guidesChanged |= syncObject(id);
   }
+  queue.insert(queue.end(), pendingSync_.begin(), pendingSync_.end());
+  pendingSync_.clear();
   fullSync_ = false;
-  appearanceDirty_.clear();
+  QElapsedTimer clock;
+  clock.start();
+  std::unordered_set<doc::ObjectId> done;
+  bool guidesChanged = false;
+  for (std::size_t i = 0; i < queue.size(); ++i) {
+    if (budgetMs && clock.nsecsElapsed() / 1e6 > *budgetMs) {
+      for (std::size_t j = i; j < queue.size(); ++j) {
+        if (done.insert(queue[j]).second) pendingSync_.push_back(queue[j]);
+      }
+      break;
+    }
+    if (done.insert(queue[i]).second) guidesChanged |= syncObject(queue[i]);
+  }
   if (guidesChanged) {
     std::vector<gp_Lin> lines;
     for (const auto& [id, line] : guideLines_) lines.push_back(line);
@@ -1359,6 +1381,10 @@ void Viewport::syncNow() {
     if (e.index <= count) still.push_back(e);
   }
   setHighlightedElements(still);
+  if (!pendingSync_.empty()) {
+    redraw();  // show what is done so far
+    syncTimer_.start();
+  }
 }
 
 void Viewport::setSelection(const std::vector<doc::ObjectId>& ids) {
@@ -1369,7 +1395,7 @@ void Viewport::setSelection(const std::vector<doc::ObjectId>& ids) {
     }
   }
   selection_ = ids;
-  syncNow();
+  syncSlice();
 }
 
 void Viewport::setDisplayQuality(const display::DisplayQuality& quality) {
@@ -1666,7 +1692,7 @@ void Viewport::setHighlightedElements(const std::vector<ElementRef>& elements) {
 void Viewport::setEditContext(const doc::ObjectId& groupId) {
   editContext_ = groupId;
   fullSync_ = true;  // fading inside / outside the context
-  syncNow();
+  syncSlice();
 }
 
 void Viewport::syncEditBox() {

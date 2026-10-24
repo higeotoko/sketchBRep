@@ -203,6 +203,9 @@ class GuiPhase1 : public QObject {
   void aiReadsKeepDrawingInProgress();
   void proposalShowsRotationAndHide();
   void benchViewportSync();
+  void benchEnterManyCopies();
+  void groupEditFadesTheRest();
+  void componentEditUpdatesPlacementsInSlices();
   void incrementalSyncFollowsGroupsAndUndo();
   void componentPlacementsShareOneDisplay();
   void circleToolTypedRadius();
@@ -3054,6 +3057,122 @@ void GuiPhase1::proposalShowsRotationAndHide() {
   QCOMPARE(committed.modified.size(), std::size_t(2));
   QVERIFY(committed.modified[0].aspects & doc::kPlacement);
   QVERIFY(committed.modified[1].aspects & doc::kVisibility);
+}
+
+// Entering a group fades everything else (and leaving brings it back)
+// by changing only the display aspects, not by rebuilding the display.
+void GuiPhase1::groupEditFadesTheRest() {
+  Fixture f;
+  QVERIFY(f.setUp(1500, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId outside = f.box(0, 0, 1000, 1000, 1000);
+  QVERIFY(m.setColor(outside, doc::Color{0.8, 0.1, 0.1}).ok());
+  auto group = m.group({f.box(3000, 0, 1000, 1000, 1000)}, "G");
+  QVERIFY(group.ok());
+  f.vp->syncNow();
+  auto pixel = [&] {
+    f.vp->redraw();
+    const QString path = QDir(QDir::tempPath()).filePath(QStringLiteral("sbr_fade.png"));
+    if (!f.vp->dumpImage(path)) return QColor();
+    const QImage shot(path);
+    const QPoint at = f.vp->toWidget(gp_Pnt(500, 0, 500));
+    const double ratio = static_cast<double>(shot.width()) / f.vp->width();
+    return shot.pixelColor(static_cast<int>(at.x() * ratio), static_cast<int>(at.y() * ratio));
+  };
+  const QColor before = pixel();
+  QVERIFY2(before.red() > 2 * before.green(), qPrintable(before.name()));  // red face
+  f.window.enterGroup(*group);
+  f.vp->syncNow();
+  const QColor faded = pixel();
+  QVERIFY2(faded.green() > before.green() + 40, qPrintable(before.name() + QStringLiteral(" -> ") + faded.name()));
+  f.window.exitGroup();
+  f.vp->syncNow();
+  const QColor after = pixel();
+  QVERIFY2(std::abs(after.green() - before.green()) < 8, qPrintable(before.name() + QStringLiteral(" / ") + after.name()));
+}
+
+// Leaving a component edit with many placements: the window answers again
+// after one slice of the display update; the rest follows in slices until
+// every placement shows the edited definition (and picks on it).
+void GuiPhase1::componentEditUpdatesPlacementsInSlices() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  auto instance = m.makeComponent({f.box(0, 0, 400, 400, 400)}, "Block");
+  QVERIFY(instance.ok());
+  gp_Trsf dx, dy;
+  dx.SetTranslation(gp_Vec(600, 0, 0));
+  dy.SetTranslation(gp_Vec(0, 600, 0));
+  auto row = m.copy({*instance}, dx, 24);
+  QVERIFY(row.ok());
+  std::vector<doc::ObjectId> firstRow{*instance};
+  firstRow.insert(firstRow.end(), row->begin(), row->end());
+  QVERIFY(m.copy(firstRow, dy, 23).ok());  // 600 placements
+  f.vp->syncNow();
+  f.window.enterGroup(*instance);
+  const doc::ObjectId inside = m.document().children(m.activeGroup()).front();
+  QVERIFY(m.move({inside}, gp_Vec(0, 0, 1000)).ok());
+  f.window.exitGroup();
+  QTRY_VERIFY_WITH_TIMEOUT(!f.vp->syncPending(), 20000);
+  // The far corner placement shows (and picks) the block raised by 1000.
+  const QPoint top = f.vp->toWidget(gp_Pnt(24 * 600 + 200, 23 * 600 + 200, 1400));
+  const auto hit = f.vp->faceAt(top);
+  QVERIFY(hit && std::abs(hit->first.Z() - 1400) < 1.0);
+}
+
+// Entering one of many copied component placements / groups, editing in
+// it and leaving it again (seconds with thousands of copies). Skipped
+// unless SBR_BENCH_N is set; prints timings.
+void GuiPhase1::benchEnterManyCopies() {
+  const int n = qEnvironmentVariableIntValue("SBR_BENCH_N");
+  if (n <= 0) QSKIP("set SBR_BENCH_N to run the benchmark");
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  auto timed = [](const std::function<void()>& fn) {
+    QElapsedTimer t;
+    t.start();
+    fn();
+    return t.nsecsElapsed() / 1e6;
+  };
+  const int columns = static_cast<int>(std::ceil(std::sqrt(static_cast<double>(n))));
+  auto array = [&](const doc::ObjectId& first) {
+    gp_Trsf dx, dz;
+    dx.SetTranslation(gp_Vec(1800, 0, 0));
+    dz.SetTranslation(gp_Vec(0, 0, 2000));
+    auto row = m.copy({first}, dx, columns - 1);
+    std::vector<doc::ObjectId> firstRow{first};
+    firstRow.insert(firstRow.end(), row->begin(), row->end());
+    return m.copy(firstRow, dz, (n + columns - 1) / columns - 1).ok();
+  };
+  auto instance = m.makeComponent({f.box(0, 0, 1200, 150, 1500)}, "Window");
+  QVERIFY(instance.ok());
+  QVERIFY(array(*instance));
+  auto group = m.group({f.box(0, 5000, 1200, 150, 1500)}, "Box");
+  QVERIFY(group.ok());
+  QVERIFY(array(*group));
+  const doc::ObjectId placement = *instance;
+  const doc::ObjectId groupId = *group;
+  const double initial = timed([&] { f.vp->syncNow(); });
+  const double enterComponent = timed([&] { f.window.enterGroup(placement); f.vp->syncNow(); });
+  const doc::ObjectId inside = m.document().children(m.activeGroup()).front();
+  const double editInside = timed([&] { m.move({inside}, gp_Vec(0, 0, 10)); f.vp->syncNow(); });
+  const doc::ObjectId editing = m.activeGroup();
+  const double exitComponentCore = timed([&] { QVERIFY(m.endComponentEdit(editing).ok()); });
+  // The window answers again after one slice; the rest follows in slices.
+  const double exitComponentView = timed([&] { f.vp->setEditContext({}); });
+  const bool pending = f.vp->syncPending();
+  const double exitComponentRest = timed([&] { f.vp->syncNow(); });
+  qInfo("bench detail exit_component_first_slice_ms=%.1f pending=%d rest_ms=%.1f", exitComponentView, pending,
+        exitComponentRest);
+  f.window.exitGroup();
+  const double exitComponent = exitComponentCore + timed([&] { f.vp->syncNow(); });
+  qInfo("bench detail exit_component_core_ms=%.1f", exitComponentCore);
+  const double enterGroup = timed([&] { f.window.enterGroup(groupId); f.vp->syncNow(); });
+  const double exitGroup = timed([&] { f.window.exitGroup(); f.vp->syncNow(); });
+  qInfo("bench enter n=%d objects=%zu initial_sync_ms=%.1f enter_component_ms=%.1f edit_inside_ms=%.1f "
+        "exit_component_ms=%.1f enter_group_ms=%.1f exit_group_ms=%.1f",
+        n, m.document().objects().size(), initial, enterComponent, editInside, exitComponent, enterGroup, exitGroup);
 }
 
 // Performance plan step 0: viewport cost of a model with many placements.
