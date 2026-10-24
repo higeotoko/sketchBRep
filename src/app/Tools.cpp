@@ -2167,6 +2167,9 @@ bool RectangleTool::keyPress(QKeyEvent* event) {
 
 void RectangleTool::commit(double u, double v) {
   if (std::abs(u) < tolerance::kMinDimension || std::abs(v) < tolerance::kMinDimension) return;
+  // The cursor's way (u_, v_ until reset; a typed size may differ).
+  shownU_ = (std::abs(u_) > 1e-9 ? u_ : u) < 0 ? -1.0 : 1.0;
+  shownV_ = (std::abs(v_) > 1e-9 ? v_ : v) < 0 ? -1.0 : 1.0;
   auto id = host_.modeler().createRectangle(plane_, u, v);
   if (!id) {
     host_.reportError(QString::fromStdString(id.error()));
@@ -2211,8 +2214,10 @@ void RectangleTool::applyMeasurement(const QString& text) {
     const doc::Object* o = host_.modeler().document().find(*lastCreated_);
     const auto* r = o ? std::get_if<doc::RectangleProfile>(&o->recipe.base) : nullptr;
     if (r) {
-      const double newW = side((*sides)[0], r->width);
-      const double newH = side((*sides)[1], r->height);
+      // From the way the rectangle was drawn, not its current sign (typing
+      // the same negative size twice must not flip it back).
+      const double newW = (*sides)[0] ? shownU_ * *(*sides)[0] : r->width;
+      const double newH = (*sides)[1] ? shownV_ * *(*sides)[1] : r->height;
       const Status s = recent_.revise(host_.modeler(), [&] {
         Status t = host_.modeler().setParameter(*lastCreated_, "width", newW);
         if (t) t = host_.modeler().setParameter(*lastCreated_, "height", newH);
@@ -2549,7 +2554,11 @@ void MoveTool::mouseMove(const ToolEvent& e) {
     const gp_Vec d(base_, current_);
     host_.setMeasurement(QObject::tr("距離"), mm(d.Magnitude()));
     if (d.Magnitude() > tolerance::kMinDimension) {
-      previewEdgeCopy(d);
+      {
+        gp_Trsf t;
+        t.SetTranslation(d);
+        previewPartsCopy(t);
+      }
     } else {
       host_.viewport().clearPreview();
     }
@@ -2575,7 +2584,11 @@ void MoveTool::mouseMove(const ToolEvent& e) {
     const gp_Vec d(base_, current_);
     host_.setMeasurement(QObject::tr("距離"), mm(d.Magnitude()));
     if (d.Magnitude() > tolerance::kMinDimension) {
-      previewEdgeCopy(d);
+      {
+        gp_Trsf t;
+        t.SetTranslation(d);
+        previewPartsCopy(t);
+      }
     } else {
       host_.viewport().clearPreview();
     }
@@ -2674,15 +2687,21 @@ void MoveTool::copyToggled() {
   }
 }
 
-void MoveTool::previewEdgeCopy(const gp_Vec& d) {
+void TransformTool::previewPartsCopy(const gp_Trsf& t) {
   TopoDS_Compound copies;
   BRep_Builder builder;
   builder.MakeCompound(copies);
-  gp_Trsf t;
-  t.SetTranslation(d);
+  const doc::Document& document = host_.modeler().document();
   for (const TopoDS_Edge& e : edgeTargets_) builder.Add(copies, e.Moved(TopLoc_Location(t)));
   if (edgeTargets_.empty()) {
     for (const doc::DeleteTarget& target : elementTargets_) {
+      if (target.whole) {
+        for (const doc::ObjectId& id : document.subtree(target.id)) {
+          const doc::Object* o = document.find(id);
+          if (o && !o->isContainer() && !o->shape.IsNull()) builder.Add(copies, document.worldShape(*o).Moved(TopLoc_Location(t)));
+        }
+        continue;
+      }
       for (const TopoDS_Face& f : target.faces) builder.Add(copies, f.Moved(TopLoc_Location(t)));
       for (const TopoDS_Edge& e : target.edges) builder.Add(copies, e.Moved(TopLoc_Location(t)));
     }
@@ -2883,10 +2902,36 @@ void RotateTool::activate() {
   host_.setStatus(QObject::tr("回転の中心をクリック（面上なら面の法線まわり）") + copySuffix());
 }
 
+bool RotateTool::keyPress(QKeyEvent* event) {
+  std::optional<gp_Dir> axis;
+  switch (event->key()) {
+    case Qt::Key_Right: axis = gp::DX(); break;
+    case Qt::Key_Left: axis = gp::DY(); break;
+    case Qt::Key_Up: axis = gp::DZ(); break;
+    case Qt::Key_Down: break;
+    default: return TransformTool::keyPress(event);
+  }
+  if (event->isAutoRepeat()) return true;
+  if (stage_ == Stage::Rotating) return true;  // the plane is set by now
+  axisLock_ = (!axis || (axisLock_ && axisLock_->IsParallel(*axis, 1e-9))) ? std::nullopt : axis;
+  if (stage_ == Stage::Reference) normal_ = axisLock_ ? *axisLock_ : gp::DZ();
+  const QString held = axisLock_ ? QObject::tr("［回転面を固定: %1 まわり、↓で解除］")
+                                       .arg(axisLock_->IsParallel(gp::DX(), 1e-9)   ? QObject::tr("赤 (X)")
+                                            : axisLock_->IsParallel(gp::DY(), 1e-9) ? QObject::tr("緑 (Y)")
+                                                                                    : QObject::tr("青 (Z)"))
+                                 : QString();
+  host_.setStatus((stage_ == Stage::Center ? QObject::tr("回転の中心をクリック（面上なら面の法線まわり）")
+                                           : QObject::tr("基準の方向をクリック")) +
+                  held + copySuffix());
+  refresh();
+  return true;
+}
+
 void RotateTool::resetState() {
   stage_ = Stage::Center;
   angle_ = 0.0;
   copy_ = false;
+  axisLock_.reset();
   resetLock();
   host_.viewport().clearPreview();
   host_.viewport().hideSnap();
@@ -2951,8 +2996,21 @@ void RotateTool::mouseMove(const ToolEvent& e) {
       const auto angle = angleAt(r.point);
       if (!angle) return;
       angle_ = *angle;
-      vp.setGhost(targets_, rotation(angle_));
       host_.setMeasurement(QObject::tr("角度"), QString::number(angle_ * 180.0 / M_PI, 'f', 1));
+      if (partialSelection()) {
+        // Faces / edges picked on their own: their copies, as the copy
+        // makes them; without Ctrl nothing is shown (they are not turned
+        // on their own - the click says so).
+        if (copy_) {
+          previewPartsCopy(rotation(angle_));
+          host_.setStatus(QObject::tr("選んだ面・辺をコピー: クリックで確定、または角度を入力") + copySuffix());
+        } else {
+          vp.clearPreview();
+          host_.setStatus(QObject::tr("選んだ面・辺だけを回転することはできません（Ctrl でコピー）") + copySuffix());
+        }
+        return;
+      }
+      vp.setGhost(targets_, rotation(angle_));
       host_.setStatus(QObject::tr("クリックで確定、または角度を入力") + copySuffix());
       return;
     }
@@ -2970,7 +3028,9 @@ void RotateTool::mousePress(const ToolEvent& e) {
       const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
       if (!r.valid()) return;
       center_ = r.point;
-      normal_ = (r.kind == snap::SnapKind::OnFace && r.faceNormal) ? *r.faceNormal : gp::DZ();
+      normal_ = axisLock_                                             ? *axisLock_
+                : (r.kind == snap::SnapKind::OnFace && r.faceNormal) ? *r.faceNormal
+                                                                      : gp::DZ();
       stage_ = Stage::Reference;
       return;
     }
@@ -2988,6 +3048,7 @@ void RotateTool::mousePress(const ToolEvent& e) {
       if (std::abs(angle_) > 1e-9) {
         lastAxis_ = gp_Ax1(center_, normal_);
         lastAngle_ = referenceAngle_ = angle_;
+        shownSign_ = angle_ < 0 ? -1.0 : 1.0;
         divided_ = false;
         commit(rotation(angle_));
       }
@@ -3006,6 +3067,7 @@ void RotateTool::applyMeasurement(const QString& text) {
       return;
     }
     const double sign = angle_ < 0 ? -1.0 : 1.0;
+    shownSign_ = sign;
     lastAxis_ = gp_Ax1(center_, normal_);
     lastAngle_ = referenceAngle_ = sign * degrees * M_PI / 180.0;
     divided_ = false;
@@ -3038,8 +3100,10 @@ void RotateTool::applyMeasurement(const QString& text) {
     host_.reportError(QObject::tr("角度を解釈できません: %1").arg(text));
     return;
   }
-  // A negative angle turns the other way round (NUM-03).
-  const double reference = (referenceAngle_ < 0 ? -1.0 : 1.0) * degrees * M_PI / 180.0;
+  // A negative angle turns the other way round (NUM-03), from the way the
+  // cursor showed - not from the last typed value (that would flip back
+  // and forth on the same input).
+  const double reference = shownSign_ * degrees * M_PI / 180.0;
   const double step = divided_ ? reference / last_->count : reference;
   gp_Trsf delta;
   delta.SetRotation(lastAxis_, step);

@@ -583,6 +583,9 @@ class RectangleTool : public DrawingTool {
   geom::SketchPlane planeFor(const ToolEvent& e);
 
   bool hasCorner_ = false;
+  // The way each side went where the cursor showed it when the last
+  // rectangle was made: re-typed sizes count from it (UX-06).
+  double shownU_ = 1.0, shownV_ = 1.0;
   geom::SketchPlane start_;  // from the first click (face or ground)
   geom::SketchPlane plane_;  // the one drawn on now
   std::optional<gp_Dir> planeLock_;  // arrow keys: normal of the plane
@@ -959,6 +962,10 @@ class TransformTool : public DrawingTool {
   // edges). A copy copies just those elements, never their whole owner.
   void captureTargets();
   bool partialSelection() const { return !elementTargets_.empty(); }
+  // The copies a partial selection makes (the picked faces / edges, and
+  // objects selected whole with them), placed by `t`: what the preview
+  // shows is what the copy makes (UX-10).
+  void previewPartsCopy(const gp_Trsf& t);
 
   std::vector<doc::ObjectId> targets_;
   // Edges selected on their own (one edge of a line, a face or a solid):
@@ -1019,7 +1026,6 @@ class MoveTool : public TransformTool {
   double referenceSign_ = 1.0;
   double typedSign_ = 1.0;
   bool divided_ = false;
-  void previewEdgeCopy(const gp_Vec& d);
 };
 
 class RotateTool : public TransformTool {
@@ -1033,6 +1039,10 @@ class RotateTool : public TransformTool {
   void mousePress(const ToolEvent& e) override;
   void mouseMove(const ToolEvent& e) override;
   void applyMeasurement(const QString& text) override;
+  // SketchUp: → / ← / ↑ hold the rotation plane across red / green / blue
+  // (the axis turned about), again or ↓ lets go; before the centre or until
+  // the reference is set.
+  bool keyPress(QKeyEvent* event) override;
 
  protected:
   std::optional<gp_Pln> workingPlane() const override;
@@ -1040,6 +1050,7 @@ class RotateTool : public TransformTool {
 
  private:
   enum class Stage { Center, Reference, Rotating };
+  std::optional<gp_Dir> axisLock_;
   void resetState() override;
   gp_Trsf rotation(double angle) const;
   std::optional<double> angleAt(const gp_Pnt& p) const;
@@ -1055,6 +1066,10 @@ class RotateTool : public TransformTool {
   // count from it ("*5" five times it, "/5" it divided in five), never
   // from an earlier array's result (as Move's distance, ARR-02).
   double referenceAngle_ = 0.0;
+  // The way round the cursor showed when the rotation was made: a typed
+  // angle counts from it (a negative one the other way), so typing the
+  // same value again gives the same result (UX-06).
+  double shownSign_ = 1.0;
   bool divided_ = false;
 };
 

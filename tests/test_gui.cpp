@@ -185,6 +185,9 @@ class GuiPhase1 : public QObject {
   void ux05ScaleInvalidPlaceDoesNotCommit();
   void ux09ScaleCommasKeepTheirAxes();
   void ux03MoveInsideGroupTakesItsChild();
+  void ux06SameNegativeValueTwiceSameResult();
+  void ux08RotateArrowsSetThePlane();
+  void ux10RotateCopyPreviewShowsTheParts();
   void lockedObjectsSelectableNotEditable();
   void groupEditShowsDottedBox();
   void snapTipNamesTheAdoptedPoint();
@@ -1375,6 +1378,143 @@ void GuiPhase1::ux03MoveInsideGroupTakesItsChild() {
   QVERIFY(origin(a).Distance(aBefore.Translated(gp_Vec(0, -500, 0))) < 1e-6);
   QVERIFY(origin(b).Distance(bBefore) < 1e-6);
   QVERIFY(m.document().find(h)->transform.TranslationPart().Modulus() < 1e-9);
+}
+
+// UX-06: the same negative value typed again right after gives the same
+// result (it counts from the way the cursor showed, not from the last
+// typed sign): rectangle sides and rotation angles; all one undo step.
+void GuiPhase1::ux06SameNegativeValueTwiceSameResult() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  f.window.activateTool(MainWindow::ToolId::Rectangle);
+  const std::size_t steps = m.history().undoCount();
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(2000, 1000, 0)));  // drawn towards +X, +Y
+  auto xs = [&] {
+    const Bnd_Box b = geom::exactBounds(m.document().worldShape(m.document().objects().back()));
+    return std::make_pair(std::lround(b.CornerMin().X()), std::lround(b.CornerMax().X()));
+  };
+  type(f.vp, QStringLiteral("-3000,"));
+  QCOMPARE(xs(), std::make_pair(-3000L, 0L));
+  type(f.vp, QStringLiteral("-3000,"));  // again: the same
+  QCOMPARE(xs(), std::make_pair(-3000L, 0L));
+  type(f.vp, QStringLiteral("3000,"));
+  QCOMPARE(xs(), std::make_pair(0L, 3000L));
+  type(f.vp, QStringLiteral("-3000,"));
+  QCOMPARE(xs(), std::make_pair(-3000L, 0L));
+  QCOMPARE(m.history().undoCount(), steps + 1);
+
+  // Rotation: a box rotated 90 about its corner, then -30 typed twice.
+  const doc::ObjectId box = f.box(5000, 0, 1000, 200, 200);
+  f.window.activateTool(MainWindow::ToolId::Select);
+  f.window.setSelection({box});
+  f.window.activateTool(MainWindow::ToolId::Rotate);
+  click(f.vp, f.vp->toWidget(gp_Pnt(5000, 0, 0)));     // centre
+  click(f.vp, f.vp->toWidget(gp_Pnt(6000, 0, 0)));     // reference: +X
+  move(f.vp, f.vp->toWidget(gp_Pnt(5000, 1000, 0)));   // towards +Y (counter-clockwise)
+  type(f.vp, QStringLiteral("90"));
+  auto far = [&] {
+    const Bnd_Box b = geom::exactBounds(m.document().worldShape(box));
+    return std::make_pair(std::lround(b.CornerMax().X()), std::lround(b.CornerMax().Y()));
+  };
+  const auto ninety = far();
+  type(f.vp, QStringLiteral("-30"));
+  const auto once = far();
+  type(f.vp, QStringLiteral("-30"));
+  QCOMPARE(far(), once);  // the same -30, not +30
+  type(f.vp, QStringLiteral("90"));
+  QCOMPARE(far(), ninety);
+  QVERIFY(once != ninety);
+}
+
+// UX-08: in Rotate, → / ← / ↑ hold the rotation plane across red / green /
+// blue (SketchUp), also with the centre on a face; 90 typed: an uneven box
+// 1000 x 200 x 100 turns about that axis.
+void GuiPhase1::ux08RotateArrowsSetThePlane() {
+  struct Case {
+    Qt::Key key;
+    gp_Pnt reference;  // a point away from the centre in that plane
+    long dx, dy, dz;   // the extents afterwards
+  };
+  const Case cases[] = {
+      {Qt::Key_Right, gp_Pnt(0, -1500, 0), 1000, 100, 200},
+      {Qt::Key_Left, gp_Pnt(-1500, 0, 0), 100, 200, 1000},
+      {Qt::Key_Up, gp_Pnt(-1500, 0, 0), 200, 1000, 100},
+  };
+  for (const Case& c : cases) {
+    Fixture f;
+    QVERIFY(f.setUp(0, 0));
+    doc::Modeler& m = f.window.modeler();
+    const doc::ObjectId box = f.box(0, 0, 1000, 200, 100);
+    f.vp->syncNow();
+    f.window.activateTool(MainWindow::ToolId::Select);
+    f.window.setSelection({box});
+    f.window.activateTool(MainWindow::ToolId::Rotate);
+    QTest::keyClick(f.vp, c.key);
+    click(f.vp, f.vp->toWidget(gp_Pnt(500, 100, 100)));  // the centre, on the top face
+    click(f.vp, f.vp->toWidget(c.reference));
+    type(f.vp, QStringLiteral("90"));
+    QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+    const Bnd_Box b = geom::exactBounds(m.document().worldShape(box));
+    const long dx = std::lround(b.CornerMax().X() - b.CornerMin().X());
+    const long dy = std::lround(b.CornerMax().Y() - b.CornerMin().Y());
+    const long dz = std::lround(b.CornerMax().Z() - b.CornerMin().Z());
+    QVERIFY2(dx == c.dx && dy == c.dy && dz == c.dz,
+             qPrintable(QStringLiteral("key %1: %2 x %3 x %4").arg(int(c.key)).arg(dx).arg(dy).arg(dz)));
+  }
+}
+
+// UX-10: Rotate + Ctrl on the top face only (or one edge, or both): the
+// preview shows just those, as the copy makes them; the box stays as it
+// was. Without Ctrl nothing is previewed (parts are not turned alone).
+void GuiPhase1::ux10RotateCopyPreviewShowsTheParts() {
+  struct Case {
+    std::vector<gp_Pnt> picks;
+    int faces, edgesAlone;
+  };
+  const Case cases[] = {
+      {{gp_Pnt(500, 500, 1000)}, 1, 0},
+      {{gp_Pnt(500, 0, 1000)}, 0, 1},
+      {{gp_Pnt(500, 500, 1000), gp_Pnt(0, 500, 0)}, 1, 1},
+  };
+  for (const Case& c : cases) {
+    Fixture f;
+    QVERIFY(f.setUp(500, 500));
+    doc::Modeler& m = f.window.modeler();
+    const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+    f.vp->syncNow();
+    f.window.activateTool(MainWindow::ToolId::Select);
+    for (std::size_t i = 0; i < c.picks.size(); ++i) clickWith(f.vp, f.vp->toWidget(c.picks[i]), i ? Qt::ShiftModifier : Qt::NoModifier);
+    QCOMPARE(f.window.elementSelection().size(), c.picks.size());
+    f.window.activateTool(MainWindow::ToolId::Rotate);
+    QTest::keyClick(f.vp, Qt::Key_Up);                     // about blue
+    click(f.vp, f.vp->toWidget(gp_Pnt(2000, 2000, 0)));    // centre beside the box
+    click(f.vp, f.vp->toWidget(gp_Pnt(3000, 2000, 0)));    // reference +X
+    move(f.vp, f.vp->toWidget(gp_Pnt(2000, 3000, 0)));     // 90
+    QVERIFY(f.vp->previewShape().IsNull());                // no Ctrl: nothing shown
+    QTest::keyClick(f.vp, Qt::Key_Control);
+    move(f.vp, f.vp->toWidget(gp_Pnt(2001, 3000, 0)));
+    const TopoDS_Shape preview = f.vp->previewShape();
+    QVERIFY(!preview.IsNull());
+    int faces = 0;
+    for (TopExp_Explorer e(preview, TopAbs_FACE); e.More(); e.Next()) ++faces;
+    int loose = 0;
+    for (TopExp_Explorer e(preview, TopAbs_EDGE, TopAbs_FACE); e.More(); e.Next()) ++loose;
+    QCOMPARE(faces, c.faces);
+    QCOMPARE(loose, c.edgesAlone);
+    const Bnd_Box shown = geom::exactBounds(preview);
+    click(f.vp, f.vp->toWidget(gp_Pnt(2001, 3000, 0)));
+    QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+    QVERIFY(std::abs(geom::volume(m.document().worldShape(box)) - 1e9) < 1e-3);  // the box as it was
+    // What was made lies where the preview showed it.
+    Bnd_Box made;
+    for (const doc::Object& o : m.document().objects()) {
+      if (o.id != box) made.Add(geom::exactBounds(m.document().worldShape(o)));
+    }
+    QVERIFY(!made.IsVoid());
+    QVERIFY(made.CornerMin().Distance(shown.CornerMin()) < 1.0 && made.CornerMax().Distance(shown.CornerMax()) < 1.0);
+  }
 }
 
 void GuiPhase1::scaleGripsOnComponentsAndGroups() {

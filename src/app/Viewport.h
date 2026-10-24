@@ -141,6 +141,8 @@ class Viewport : public QWidget {
   // in world space. Built from display copies, never from canonical shapes.
   void setGhost(const std::vector<doc::ObjectId>& ids, const gp_Trsf& delta);
   void clearPreview();
+  // What the tool preview shows now (null: nothing) - for checks.
+  TopoDS_Shape previewShape() const { return preview_.IsNull() ? TopoDS_Shape() : preview_->Shape(); }
   // The marker, guide lines and a small label next to the cursor naming
   // what the point snapped to (SketchUp's ScreenTip), all from `result`.
   void showSnap(const snap::SnapResult& result, std::optional<gp_Pnt> anchor);
