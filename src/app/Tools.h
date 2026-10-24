@@ -634,8 +634,12 @@ class EraserTool : public Tool {
   bool dragging_ = false;
 };
 
-// Follow Me: click the face to sweep (a profile), then the path: a line /
-// arc / curve, or a face of a solid to run around its outline.
+// Follow Me (SketchUp). A: edges selected first, then a click on the
+// profile face runs along them. B: the profile face clicked first, then
+// the path traced with the cursor along connected edges from the profile
+// (the path taken so far highlighted, the shape previewed), a click at the
+// end makes it, Esc stops; a click on a face of a solid instead runs
+// around its outline. Preview and result use the same calculation.
 class FollowMeTool : public Tool {
  public:
   using Tool::Tool;
@@ -645,13 +649,35 @@ class FollowMeTool : public Tool {
   void cancel() override;
   void mousePress(const ToolEvent& e) override;
   void mouseMove(const ToolEvent& e) override;
+  // Edges of the path traced so far (B), for checks.
+  std::size_t tracedEdges() const { return traced_.size(); }
 
  private:
+  // The edges a path can run along (this editing level, the profile's own
+  // left out), joined at shared points.
+  struct PathEdge {
+    doc::ObjectId object;  // the edge as picked: object and edge index
+    int index = 0;
+    TopoDS_Edge edge;
+    std::size_t a = 0, b = 0;  // nodes
+    double length = 0.0;
+  };
+  void buildNetwork();
+  // The edges from the profile to the end of `hovered`, shortest way.
+  std::vector<std::size_t> traceTo(std::size_t hovered) const;
+  void showTrace();
+  void finishTrace();
+
   std::optional<doc::ObjectId> profile_;
   // SketchUp order: the path's edges selected before the tool (lines,
   // arcs, edges of faces / solids, possibly of several objects); then one
   // click on the profile runs it.
   std::vector<TopoDS_Edge> path_;
+  std::vector<PathEdge> network_;
+  std::vector<gp_Pnt> nodes_;
+  std::optional<std::size_t> start_;  // node nearest the profile
+  std::vector<std::size_t> traced_;
+  bool previewOk_ = false;
 };
 
 // Paint bucket: click to apply the current colour (groups and components

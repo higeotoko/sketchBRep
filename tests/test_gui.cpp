@@ -188,6 +188,7 @@ class GuiPhase1 : public QObject {
   void ux06SameNegativeValueTwiceSameResult();
   void ux08RotateArrowsSetThePlane();
   void ux10RotateCopyPreviewShowsTheParts();
+  void followMeTracedFromTheProfile();
   void lockedObjectsSelectableNotEditable();
   void groupEditShowsDottedBox();
   void snapTipNamesTheAdoptedPoint();
@@ -1515,6 +1516,61 @@ void GuiPhase1::ux10RotateCopyPreviewShowsTheParts() {
     QVERIFY(!made.IsVoid());
     QVERIFY(made.CornerMin().Distance(shown.CornerMin()) < 1.0 && made.CornerMax().Distance(shown.CornerMax()) < 1.0);
   }
+}
+
+// Follow Me B: the profile clicked first, the path traced with the cursor
+// along the lines drawn one segment at a time: it grows and shrinks with
+// the cursor (highlighted, previewed), Esc stops with nothing changed, a
+// click at the end makes what the preview showed - the same as when the
+// edges are selected first.
+void GuiPhase1::followMeTracedFromTheProfile() {
+  const std::vector<gp_Pnt> points{gp_Pnt(1000, 0, 0), gp_Pnt(1000, 3000, 0), gp_Pnt(4000, 4500, 0),
+                                   gp_Pnt(6000, 3500, 0)};
+  double length = 0;
+  for (std::size_t i = 1; i < points.size(); ++i) length += points[i - 1].Distance(points[i]);
+  Fixture f;
+  QVERIFY(f.setUp(3000, 2000));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId profile =
+      *m.createPolygon({gp_Pnt(0, 0, 0), gp_Pnt(2000, 0, 0), gp_Pnt(2000, 0, 1500), gp_Pnt(0, 0, 1500)});
+  for (std::size_t i = 1; i < points.size(); ++i) QVERIFY(m.createPolyline({points[i - 1], points[i]}).ok());
+  f.vp->syncNow();
+  const std::size_t objects = m.document().objects().size();
+  auto mid = [&](std::size_t i) { return f.vp->toWidget(gp_Pnt((points[i - 1].XYZ() + points[i].XYZ()) * 0.5)); };
+  f.window.activateTool(MainWindow::ToolId::FollowMe);
+  auto* tool = dynamic_cast<FollowMeTool*>(f.window.activeTool());
+  QVERIFY(tool);
+  const std::size_t steps = m.history().undoCount();
+  click(f.vp, f.vp->toWidget(gp_Pnt(1500, 0, 1000)));  // the profile
+  for (std::size_t i = 1; i < points.size(); ++i) {
+    move(f.vp, mid(i));
+    QCOMPARE(tool->tracedEdges(), i);
+    QVERIFY(!f.vp->previewShape().IsNull());
+  }
+  move(f.vp, mid(1));  // back: shorter again
+  QCOMPARE(tool->tracedEdges(), std::size_t(1));
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  QCOMPARE(m.document().objects().size(), objects);
+  QCOMPARE(m.history().undoCount(), steps);
+  QVERIFY(f.vp->previewShape().IsNull());
+  // Again, to the end, and click there.
+  click(f.vp, f.vp->toWidget(gp_Pnt(1500, 0, 1000)));
+  for (std::size_t i = 1; i < points.size(); ++i) move(f.vp, mid(i));
+  const double previewed = geom::volume(f.vp->previewShape());
+  click(f.vp, mid(points.size() - 1));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.history().undoCount(), steps + 1);
+  QVERIFY(!m.document().find(profile));
+  std::optional<doc::ObjectId> swept;
+  for (const doc::Object& o : m.document().objects()) {
+    if (o.kind() == doc::ObjectKind::Solid) swept = o.id;
+  }
+  QVERIFY(swept.has_value());
+  const double made = geom::volume(m.document().worldShape(*swept));
+  QVERIFY(std::abs(made - 2000.0 * 1500 * length) < 1.0);
+  QVERIFY(std::abs(made - previewed) < 1e-3);
+  QVERIFY(m.undo());
+  QVERIFY(m.document().find(profile));
 }
 
 void GuiPhase1::scaleGripsOnComponentsAndGroups() {

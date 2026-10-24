@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <limits>
 #include <set>
 
 #include <QKeyEvent>
@@ -20,6 +21,8 @@
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
+#include <BRepGProp.hxx>
+#include <GProp_GProps.hxx>
 #include <BRepClass_FaceClassifier.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <BRepTools.hxx>
@@ -4725,7 +4728,158 @@ void FollowMeTool::activate() {
 void FollowMeTool::cancel() {
   profile_.reset();
   path_.clear();
+  network_.clear();
+  nodes_.clear();
+  start_.reset();
+  traced_.clear();
+  previewOk_ = false;
   host_.viewport().setHighlightedElements({});
+  host_.viewport().clearPreview();
+}
+
+void FollowMeTool::buildNetwork() {
+  network_.clear();
+  nodes_.clear();
+  start_.reset();
+  if (!profile_) return;
+  const doc::Document& document = host_.modeler().document();
+  Viewport& vp = host_.viewport();
+  const doc::ObjectId context = host_.editingGroup();
+  constexpr double kJoin = 1e-4;  // as geom::pathFromEdges
+  auto node = [&](const gp_Pnt& p) {
+    for (std::size_t i = 0; i < nodes_.size(); ++i) {
+      if (nodes_[i].Distance(p) < kJoin) return i;
+    }
+    nodes_.push_back(p);
+    return nodes_.size() - 1;
+  };
+  for (const doc::Object& o : document.objects()) {
+    if (o.parent != context || o.id == *profile_ || !document.isVisible(o.id)) continue;
+    const doc::ObjectKind k = o.kind();
+    if (k != doc::ObjectKind::Curve && k != doc::ObjectKind::Face && k != doc::ObjectKind::Shell &&
+        k != doc::ObjectKind::Solid) {
+      continue;
+    }
+    for (const ElementRef& ref : vp.allElements(o.id)) {
+      if (ref.type != TopAbs_EDGE) continue;
+      const TopoDS_Shape shape = vp.elementShape(ref);
+      if (shape.IsNull() || BRep_Tool::Degenerated(TopoDS::Edge(shape))) continue;
+      PathEdge e;
+      e.object = ref.objectId;
+      e.index = ref.index;
+      e.edge = TopoDS::Edge(shape);
+      e.a = node(BRep_Tool::Pnt(TopExp::FirstVertex(e.edge)));
+      e.b = node(BRep_Tool::Pnt(TopExp::LastVertex(e.edge)));
+      GProp_GProps props;
+      BRepGProp::LinearProperties(e.edge, props);
+      e.length = props.Mass();
+      network_.push_back(e);
+    }
+  }
+  // The path starts where it meets the profile (or as near as it comes).
+  const doc::Object* profile = document.find(*profile_);
+  if (!profile || nodes_.empty()) return;
+  const TopoDS_Shape face = document.worldShape(*profile);
+  double best = 0.0;
+  for (std::size_t i = 0; i < nodes_.size(); ++i) {
+    BRepExtrema_DistShapeShape dist(BRepBuilderAPI_MakeVertex(nodes_[i]).Vertex(), face);
+    if (!dist.IsDone()) continue;
+    if (!start_ || dist.Value() < best) {
+      best = dist.Value();
+      start_ = i;
+    }
+  }
+}
+
+std::vector<std::size_t> FollowMeTool::traceTo(std::size_t hovered) const {
+  if (!start_) return {};
+  // Shortest way (by length) from the start to every node.
+  const std::size_t n = nodes_.size();
+  std::vector<double> dist(n, std::numeric_limits<double>::infinity());
+  std::vector<std::optional<std::size_t>> via(n);  // edge reaching the node
+  std::vector<bool> done(n, false);
+  dist[*start_] = 0.0;
+  for (std::size_t round = 0; round < n; ++round) {
+    std::optional<std::size_t> u;
+    for (std::size_t i = 0; i < n; ++i) {
+      if (!done[i] && std::isfinite(dist[i]) && (!u || dist[i] < dist[*u])) u = i;
+    }
+    if (!u) break;
+    done[*u] = true;
+    for (std::size_t k = 0; k < network_.size(); ++k) {
+      const PathEdge& e = network_[k];
+      if (e.a != *u && e.b != *u) continue;
+      const std::size_t v = e.a == *u ? e.b : e.a;
+      if (dist[*u] + e.length < dist[v]) {
+        dist[v] = dist[*u] + e.length;
+        via[v] = k;
+      }
+    }
+  }
+  // Through the hovered edge to its far end.
+  const PathEdge& h = network_[hovered];
+  const bool fromA = dist[h.a] <= dist[h.b];
+  std::size_t at = fromA ? h.a : h.b;
+  if (!std::isfinite(dist[at])) return {};
+  std::vector<std::size_t> out{hovered};
+  int guard = 0;
+  while (at != *start_ && guard++ < 100000) {
+    if (!via[at]) return {};
+    const PathEdge& e = network_[*via[at]];
+    if (*via[at] == hovered) return {};  // the shortest way already runs through it
+    out.push_back(*via[at]);
+    at = e.a == at ? e.b : e.a;
+  }
+  std::reverse(out.begin(), out.end());
+  return out;
+}
+
+void FollowMeTool::showTrace() {
+  Viewport& vp = host_.viewport();
+  std::vector<ElementRef> shown;
+  std::vector<TopoDS_Edge> edges;
+  for (std::size_t k : traced_) {
+    shown.push_back(ElementRef{network_[k].object, TopAbs_EDGE, network_[k].index});
+    edges.push_back(network_[k].edge);
+  }
+  vp.setHighlightedElements(shown);
+  previewOk_ = false;
+  if (edges.empty() || !profile_) {
+    vp.clearPreview();
+    return;
+  }
+  // The same calculation the click makes (Modeler::followMe).
+  const doc::Document& document = host_.modeler().document();
+  const doc::Object* profile = document.find(*profile_);
+  if (!profile) return;
+  const TopoDS_Shape face = document.worldShape(*profile);
+  GProp_GProps props;
+  BRepGProp::SurfaceProperties(face, props);
+  auto wire = geom::pathFromEdges(edges, props.CentreOfMass());
+  auto swept = wire ? geom::sweep(face, wire.value()) : Result<TopoDS_Shape>::failure(wire.error());
+  if (!swept) {
+    vp.clearPreview();
+    host_.setStatus(QObject::tr("この経路では作れません: %1").arg(QString::fromStdString(swept.error())));
+    return;
+  }
+  vp.setPreview(swept.value(), true);
+  previewOk_ = true;
+  host_.setStatus(QObject::tr("経路 %1 本をなぞっています。終点でクリックして確定、Esc で中止").arg(traced_.size()));
+}
+
+void FollowMeTool::finishTrace() {
+  doc::Modeler& m = host_.modeler();
+  std::vector<TopoDS_Edge> edges;
+  for (std::size_t k : traced_) edges.push_back(network_[k].edge);
+  const doc::ObjectId profileId = *profile_;
+  const auto swept = m.followMe(profileId, edges);
+  if (!swept) {
+    // Profile and path as they were; tracing goes on.
+    host_.reportError(QObject::tr("フォローミーに失敗しました: %1").arg(QString::fromStdString(swept.error())));
+    return;
+  }
+  cancel();
+  host_.setStatus(QObject::tr("断面を沿わせました（断面の寸法はパネルで変更できます）"));
 }
 
 void FollowMeTool::mouseMove(const ToolEvent& e) {
@@ -4737,22 +4891,37 @@ void FollowMeTool::mouseMove(const ToolEvent& e) {
     host_.setStatus(o && o->kind() == doc::ObjectKind::Face ? QObject::tr("この面を断面にします") : pick);
     return;
   }
-  if (o && o->kind() == doc::ObjectKind::Curve) {
-    host_.setStatus(QObject::tr("この線に沿わせます"));
-  } else if (o && o->kind() == doc::ObjectKind::Solid && picked->type == TopAbs_FACE) {
-    host_.setStatus(QObject::tr("この面の輪郭を一周させます（巾木・笠木など）"));
-  } else {
-    host_.setStatus(QObject::tr("パスにする線・円弧、またはソリッドの面をクリック（Esc で中止）"));
+  // Tracing: the edge under the cursor extends (or shortens) the path.
+  if (picked && picked->type == TopAbs_EDGE) {
+    for (std::size_t k = 0; k < network_.size(); ++k) {
+      if (network_[k].object != picked->objectId || network_[k].index != picked->index) continue;
+      const auto path = traceTo(k);
+      if (path.empty()) {
+        host_.setStatus(QObject::tr("この辺は断面からつながっていません"));
+        return;
+      }
+      if (path != traced_) {
+        traced_ = path;
+        showTrace();
+      }
+      return;
+    }
+  }
+  if (traced_.empty()) {
+    if (o && o->kind() == doc::ObjectKind::Solid && picked->type == TopAbs_FACE) {
+      host_.setStatus(QObject::tr("この面の輪郭を一周させます（巾木・笠木など）"));
+    } else {
+      host_.setStatus(QObject::tr("断面につながる辺をなぞって経路を示し、終点でクリック（ソリッドの面のクリックで輪郭を一周、Esc で中止）"));
+    }
   }
 }
 
 void FollowMeTool::mousePress(const ToolEvent& e) {
   const auto picked = host_.viewport().pickElement(e.pos);
-  if (!picked) return;
   doc::Modeler& m = host_.modeler();
-  const doc::Object* o = m.document().find(picked->objectId);
-  if (!o) return;
+  const doc::Object* o = picked ? m.document().find(picked->objectId) : nullptr;
   if (!profile_) {
+    if (!o) return;
     if (o->kind() != doc::ObjectKind::Face) {
       host_.reportError(QObject::tr("断面には面（押し出す前の形）を選んでください"));
       return;
@@ -4772,10 +4941,23 @@ void FollowMeTool::mousePress(const ToolEvent& e) {
       return;
     }
     profile_ = profileId;
+    buildNetwork();
+    traced_.clear();
     host_.viewport().setHighlightedElements({*picked});
-    host_.setStatus(QObject::tr("パスにする線・円弧、またはソリッドの面をクリック（Esc で中止）"));
+    host_.setStatus(QObject::tr("断面につながる辺をなぞって経路を示し、終点でクリック（ソリッドの面のクリックで輪郭を一周、Esc で中止）"));
     return;
   }
+  // The traced path: made as previewed.
+  if (!traced_.empty()) {
+    mouseMove(e);  // the end under the cursor now
+    if (!previewOk_) {
+      host_.reportError(QObject::tr("この経路では作れません（理由はステータスに表示）。経路をなぞり直すか Esc"));
+      return;
+    }
+    finishTrace();
+    return;
+  }
+  if (!o) return;
   Result<doc::ObjectId> swept = Result<doc::ObjectId>::failure("");
   if (o->kind() == doc::ObjectKind::Curve) {
     const doc::ObjectId pathId = o->id;
