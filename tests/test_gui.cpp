@@ -3641,7 +3641,20 @@ void GuiPhase1::pushPullOnOpenShape() {
   f.vp->syncNow();
   f.window.activateTool(MainWindow::ToolId::PushPull);
   QTest::qWait(30);
+  // As on a SketchUp surface: the front moves out 400, the box grows.
   click(f.vp, f.vp->toWidget(gp_Pnt(500, 0, 500)));  // the front face (y = 0)
+  move(f.vp, f.vp->toWidget(gp_Pnt(500, -600, 500)));
+  type(f.vp, QStringLiteral("400"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  QCOMPARE(m.document().find(box)->kind(), doc::ObjectKind::Shell);
+  QVERIFY(std::abs(geom::exactBounds(m.document().worldShape(box)).CornerMin().Y() + 400) < 1e-6);
+  QVERIFY(m.undo());
+  f.vp->syncNow();
+  // Ctrl keeps the starting face: a 400 thick volume of its own.
+  QTest::keyClick(f.vp, Qt::Key_Control);
+  QVERIFY(f.window.statusText().contains(QStringLiteral("開始面を残す")));
+  click(f.vp, f.vp->toWidget(gp_Pnt(500, 0, 500)));
   move(f.vp, f.vp->toWidget(gp_Pnt(500, -600, 500)));
   type(f.vp, QStringLiteral("400"));
   QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));

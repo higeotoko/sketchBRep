@@ -2215,9 +2215,24 @@ QString PushPullTool::name() const { return QObject::tr("プッシュ/プル"); 
 QCursor PushPullTool::cursor() const { return toolCursor(CursorKind::PushPull); }
 
 void PushPullTool::activate() {
+  keepStart_ = false;
   host_.viewport().setPickMode(PickMode::Faces);
   host_.setMeasurement(QObject::tr("距離"), QString());
-  host_.setStatus(QObject::tr("押し出す面をクリック（数値入力で直前の操作を変更）"));
+  host_.setStatus(QObject::tr("押し出す面をクリック（数値入力で直前の操作を変更）") + keepSuffix());
+}
+
+QString PushPullTool::keepSuffix() const {
+  return keepStart_ ? QObject::tr("［開始面を残す: 開いた形状では別の体積に / Ctrl で切替］")
+                    : QObject::tr("（Ctrl で開始面を残す）");
+}
+
+bool PushPullTool::keyPress(QKeyEvent* event) {
+  if (event->key() != Qt::Key_Control || event->isAutoRepeat()) return false;
+  keepStart_ = !keepStart_;
+  host_.setStatus((dragging_ ? QObject::tr("クリックで確定、または距離を入力して Enter")
+                             : QObject::tr("押し出す面をクリック（数値入力で直前の操作を変更）")) +
+                  keepSuffix());
+  return true;
 }
 
 void PushPullTool::cancel() {
@@ -2261,7 +2276,8 @@ void PushPullTool::mouseMove(const ToolEvent& e) {
   host_.setMeasurement(QObject::tr("距離"), mm(distance_));
   host_.setStatus(QObject::tr("クリックで確定、または距離を入力して Enter") +
                   (pointSnap ? QStringLiteral("  [") + snapLabel(s.kind) + QStringLiteral("]")
-                             : QString()));
+                             : QString()) +
+                  keepSuffix());
   if (std::abs(distance_) > tolerance::kMinDimension && curved_) {
     // Preview the whole solid with the face moved.
     const doc::Object* o = host_.modeler().document().find(objectId_);
@@ -2307,7 +2323,7 @@ void PushPullTool::commit(double distance) {
   }
   doc::Modeler& m = host_.modeler();
   auto before = m.parameters(objectId_);
-  auto result = m.pushPull(objectId_, face_, distance);
+  auto result = m.pushPull(objectId_, face_, distance, keepStart_);
   if (!result) {
     host_.reportError(QObject::tr("プッシュ/プルに失敗しました: %1")
                           .arg(QString::fromStdString(result.error())));

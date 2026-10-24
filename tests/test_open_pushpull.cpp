@@ -1,7 +1,8 @@
-// Push/pull on an open shape (faces deleted, still being modelled): the
-// picked flat face gives a new solid of its own; the open shape loses just
-// that face (it is the volume's face now: no two faces on top of each
-// other) and stays open; nothing is filled or removed besides.
+// Push/pull on an open shape (faces deleted, or faces drawn edge to edge),
+// as on a SketchUp surface: the face moves along its normal and each of its
+// edges gets a side face back to where it was; a side face on the plane of
+// the face beyond the edge extends it (pulled away) or divides it (pushed
+// along into it). The shape stays one object; nothing is filled.
 
 #include <BRepCheck_Analyzer.hxx>
 #include <TopExp.hxx>
@@ -46,23 +47,66 @@ ObjectId openBox(Modeler& m) {
   return *face;
 }
 
-ObjectId otherThan(const Modeler& m, const ObjectId& id) {
-  for (const Object& o : m.document().objects()) {
-    if (o.id != id) return o.id;
-  }
-  return {};
-}
+Bnd_Box boundsOf(const Modeler& m, const ObjectId& id) { return geom::exactBounds(m.document().worldShape(*m.document().find(id))); }
 
 }  // namespace
 
-// 3./4. A side of the open box pulled out 500: a 1000 x 1000 x 500 solid
-// beside it; the box keeps its four other faces, still open; one undo
-// step, redo, saved and reloaded.
-TEST(OpenPushPull, SideFaceMakesAVolume) {
+
+// A side of the open box (top missing) pulled out 500: the floor and the
+// two sides beside it grow, a 500 strip closes the top over the new part;
+// one object, still open; one undo step; the distance typed again; files.
+TEST(OpenPushPull, SidePulledOutGrowsTheSurface) {
   Modeler m;
   const ObjectId box = openBox(m);
   const std::size_t steps = m.history().undoCount();
   auto r = m.pushPull(box, facing(m, box, gp_Dir(-1, 0, 0)), 500);
+  ASSERT_TRUE(r.ok()) << r.error();
+  EXPECT_EQ(r->id, box);
+  EXPECT_EQ(m.history().undoCount(), steps + 1);
+  EXPECT_EQ(m.document().objects().size(), 1u);
+  const Object* o = m.document().find(box);
+  EXPECT_EQ(o->kind(), ObjectKind::Shell);  // still open, not filled
+  EXPECT_EQ(faceCount(o->shape), 6);        // floor, 2 grown sides, far side, moved side, top strip
+  EXPECT_TRUE(geom::validateShape(o->shape, false).drawingValid);
+  EXPECT_NEAR(boundsOf(m, box).CornerMin().X(), -500, 1e-6);
+  EXPECT_NEAR(boundsOf(m, box).CornerMax().X(), 1000, 1e-6);
+  // The floor grew rather than getting a second face beside it.
+  int floors = 0;
+  for (TopExp_Explorer e(m.document().worldShape(*o), TopAbs_FACE); e.More(); e.Next()) {
+    const Bnd_Box b = geom::exactBounds(e.Current());
+    if (std::abs(b.CornerMax().Z()) < 1e-6) {
+      ++floors;
+      EXPECT_NEAR(b.CornerMin().X(), -500, 1e-6);
+    }
+  }
+  EXPECT_EQ(floors, 1);
+  // Typed again right after: a parameter of the shape.
+  ASSERT_TRUE(m.setParameter(box, r->parameterKey, 300).ok());
+  EXPECT_NEAR(boundsOf(m, box).CornerMin().X(), -300, 1e-6);
+
+  const std::string path = ::testing::TempDir() + "open_pushpull.sbr";
+  ASSERT_TRUE(m.save(path).ok());
+  Modeler back;
+  ASSERT_TRUE(back.load(path).ok());
+  EXPECT_EQ(back.document().find(box)->kind(), ObjectKind::Shell);
+  EXPECT_NEAR(boundsOf(back, box).CornerMin().X(), -300, 1e-6);
+
+  ASSERT_TRUE(m.undo());  // the retyped distance
+  ASSERT_TRUE(m.undo());  // the push/pull
+  EXPECT_EQ(faceCount(m.document().worldShape(*m.document().find(box))), 5);
+  EXPECT_NEAR(boundsOf(m, box).CornerMin().X(), 0, 1e-6);
+  ASSERT_TRUE(m.redo());
+  EXPECT_NEAR(boundsOf(m, box).CornerMin().X(), -500, 1e-6);
+}
+
+// Ctrl (keep the starting face): the side gives a 1000 x 1000 x 500 solid
+// of its own beside the box; the box keeps its four other faces, still
+// open; one undo step, the distance typed again, saved and reloaded.
+TEST(OpenPushPull, KeepingTheStartFaceMakesAVolume) {
+  Modeler m;
+  const ObjectId box = openBox(m);
+  const std::size_t steps = m.history().undoCount();
+  auto r = m.pushPull(box, facing(m, box, gp_Dir(-1, 0, 0)), 500, true);
   ASSERT_TRUE(r.ok()) << r.error();
   EXPECT_EQ(m.history().undoCount(), steps + 1);
   const Object* volume = m.document().find(r->id);
@@ -71,46 +115,41 @@ TEST(OpenPushPull, SideFaceMakesAVolume) {
   EXPECT_EQ(volume->kind(), ObjectKind::Solid);
   EXPECT_TRUE(geom::validateShape(m.document().worldShape(*volume), true).valid);
   EXPECT_NEAR(geom::volume(m.document().worldShape(*volume)), 1000.0 * 1000 * 500, 1e-3);
-  Bnd_Box bounds = geom::exactBounds(m.document().worldShape(*volume));
-  EXPECT_NEAR(bounds.CornerMin().X(), -500, 1e-6);  // outwards
-  EXPECT_NEAR(bounds.CornerMax().X(), 0, 1e-6);
-  const Object* rest = m.document().find(box);
-  EXPECT_EQ(rest->kind(), ObjectKind::Shell);  // still open, not filled
-  EXPECT_EQ(faceCount(m.document().worldShape(*rest)), 4);
+  EXPECT_NEAR(boundsOf(m, r->id).CornerMin().X(), -500, 1e-6);  // outwards
+  EXPECT_NEAR(boundsOf(m, r->id).CornerMax().X(), 0, 1e-6);
+  EXPECT_EQ(m.document().find(box)->kind(), ObjectKind::Shell);  // still open, not filled
+  EXPECT_EQ(faceCount(m.document().worldShape(*m.document().find(box))), 4);
   EXPECT_TRUE(facing(m, box, gp_Dir(-1, 0, 0)).IsNull());  // no face left under the volume's
-  // The distance can be typed again right after (a parameter of the volume).
   ASSERT_TRUE(m.setParameter(r->id, r->parameterKey, 300).ok());
   EXPECT_NEAR(geom::volume(m.document().worldShape(*m.document().find(r->id))), 1000.0 * 1000 * 300, 1e-3);
-
-  const std::string path = ::testing::TempDir() + "open_pushpull.sbr";
+  const std::string path = ::testing::TempDir() + "open_pushpull_keep.sbr";
   ASSERT_TRUE(m.save(path).ok());
   Modeler back;
   ASSERT_TRUE(back.load(path).ok());
-  EXPECT_EQ(back.document().find(box)->kind(), ObjectKind::Shell);
   EXPECT_NEAR(geom::volume(back.document().worldShape(*back.document().find(r->id))), 1000.0 * 1000 * 300, 1e-3);
-
-  ASSERT_TRUE(m.undo());  // the retyped distance
-  ASSERT_TRUE(m.undo());  // the push/pull
+  ASSERT_TRUE(m.undo());
+  ASSERT_TRUE(m.undo());
   EXPECT_FALSE(m.document().find(r->id));
   EXPECT_EQ(faceCount(m.document().worldShape(*m.document().find(box))), 5);
-  ASSERT_TRUE(m.redo());
-  EXPECT_TRUE(m.document().find(r->id));
-  EXPECT_EQ(faceCount(m.document().worldShape(*m.document().find(box))), 4);
 }
 
-// Pushed in (negative): the volume lies inside the box.
-TEST(OpenPushPull, NegativeGoesInside) {
+// The floor pushed up inside (negative: against its downward normal): it
+// moves up, and the four sides are divided at its new height.
+TEST(OpenPushPull, FloorPushedUpDividesTheSides) {
   Modeler m;
   const ObjectId box = openBox(m);
-  auto r = m.pushPull(box, facing(m, box, gp_Dir(0, 0, -1)), -200);  // the floor, thickened upwards
+  auto r = m.pushPull(box, facing(m, box, gp_Dir(0, 0, -1)), -200);
   ASSERT_TRUE(r.ok()) << r.error();
-  Bnd_Box bounds = geom::exactBounds(m.document().worldShape(*m.document().find(r->id)));
-  EXPECT_NEAR(bounds.CornerMin().Z(), 0, 1e-6);
-  EXPECT_NEAR(bounds.CornerMax().Z(), 200, 1e-6);
-  EXPECT_NEAR(geom::volume(m.document().worldShape(*m.document().find(r->id))), 1000.0 * 1000 * 200, 1e-3);
+  const Object* o = m.document().find(box);
+  EXPECT_EQ(o->kind(), ObjectKind::Shell);
+  EXPECT_EQ(faceCount(o->shape), 9);  // the floor and each side in two
+  const TopoDS_Face floor = facing(m, box, gp_Dir(0, 0, -1));
+  ASSERT_FALSE(floor.IsNull());
+  EXPECT_NEAR(geom::exactBounds(floor).CornerMin().Z(), 200, 1e-6);
+  EXPECT_TRUE(geom::validateShape(o->shape, false).drawingValid);
 }
 
-// A face with a hole: the volume keeps the hole.
+// A top with a hole pulled up: the hole goes along (its wall grows too).
 TEST(OpenPushPull, FaceWithAHole) {
   Modeler m;
   auto face = m.createRectangle(geom::SketchPlane::ground(), 2000, 2000);
@@ -119,12 +158,15 @@ TEST(OpenPushPull, FaceWithAHole) {
   auto disc = m.createCircle(centre, 400);
   ASSERT_TRUE(m.remove({*disc}).ok());
   ASSERT_TRUE(m.pushPull(*face, TopoDS::Face(m.document().worldShape(*face)), 1000).ok());
-  // Open it: delete one side.
-  ASSERT_TRUE(m.deleteFaces(*face, {facing(m, *face, gp_Dir(1, 0, 0))}).ok());
+  ASSERT_TRUE(m.deleteFaces(*face, {facing(m, *face, gp_Dir(1, 0, 0))}).ok());  // open
   auto r = m.pushPull(*face, facing(m, *face, gp::DZ()), 300);
   ASSERT_TRUE(r.ok()) << r.error();
-  EXPECT_NEAR(geom::volume(m.document().worldShape(*m.document().find(r->id))),
-              (2000.0 * 2000 - M_PI * 400 * 400) * 300, 1.0);
+  EXPECT_EQ(m.document().find(*face)->kind(), ObjectKind::Shell);
+  EXPECT_NEAR(boundsOf(m, *face).CornerMax().Z(), 1300, 1e-6);
+  const TopoDS_Face top = facing(m, *face, gp::DZ());
+  ASSERT_FALSE(top.IsNull());
+  EXPECT_NEAR(geom::area(top), 2000.0 * 2000 - M_PI * 400 * 400, 1.0);
+  EXPECT_TRUE(geom::validateShape(m.document().find(*face)->shape, false).drawingValid);
 }
 
 // A curved face of an open shape is refused with the reason; nothing changes.
@@ -141,7 +183,7 @@ TEST(OpenPushPull, CurvedFaceRefused) {
   const std::size_t steps = m.history().undoCount();
   auto r = m.pushPull(*disc, side, 100);
   ASSERT_FALSE(r.ok());
-  EXPECT_NE(r.error().find("curved"), std::string::npos) << r.error();
+  EXPECT_NE(r.error().find("Curved"), std::string::npos) << r.error();
   EXPECT_EQ(m.history().undoCount(), steps);
 }
 
@@ -154,7 +196,15 @@ TEST(OpenPushPull, Api) {
       {"command", "push_pull"},
       {"args", {{"id", box}, {"face", {{"normal", {-1, 0, 0}}}}, {"distance", 500}}}}.dump()));
   ASSERT_TRUE(r["ok"].get<bool>()) << r.dump();
-  const ObjectId volume = otherThan(m, box);
-  EXPECT_NEAR(geom::volume(m.document().worldShape(*m.document().find(volume))), 1000.0 * 1000 * 500, 1e-3);
+  EXPECT_EQ(m.document().objects().size(), 1u);
   EXPECT_EQ(m.document().find(box)->kind(), ObjectKind::Shell);
+  EXPECT_NEAR(boundsOf(m, box).CornerMin().X(), -500, 1e-6);
+  // keep_start_face: a volume of its own from the opposite side.
+  const auto k = nlohmann::json::parse(api.execute(nlohmann::json{
+      {"command", "push_pull"},
+      {"args", {{"id", box}, {"face", {{"normal", {1, 0, 0}}}}, {"distance", 200}, {"keep_start_face", true}}}}.dump()));
+  ASSERT_TRUE(k["ok"].get<bool>()) << k.dump();
+  const ObjectId volume = k["result"]["id"].get<std::string>();
+  EXPECT_NE(volume, box);
+  EXPECT_NEAR(geom::volume(m.document().worldShape(*m.document().find(volume))), 1000.0 * 1000 * 200, 1e-3);
 }

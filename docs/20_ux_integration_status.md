@@ -267,8 +267,8 @@
 | PULL-01 | 検証待ち | |
 | PULL-02 | 自動確認済 | `Offset.*`、`Flows.SC01_FrameWall` |
 | PULL-03 | 検証待ち | |
-| PULL-04 | 検証待ち | 同じ量の繰り返しはあり（`pushPullDoubleClickRepeatsDistance`）。開始面を残す操作はない |
-| PULL-05 | 自動確認済 | `OpenPushPull.*`、`pushPullOnOpenShape`、`Flows.SC07_*` |
+| PULL-04 | 検証待ち | 同じ量の繰り返しはあり（`pushPullDoubleClickRepeatsDistance`）。開始面を残す操作は Ctrl（開いた形状のみ、状態はステータスに表示。`pushPullOnOpenShape`）。ソリッドでの Ctrl はまだない |
+| PULL-05 | 自動確認済 | 2026-10-24 から既定は SketchUp の面と同じ（面が動いて形状が広がる）。新しい体積は Ctrl（開始面を残す）で作る。`OpenPushPull.*`、`pushPullOnOpenShape`、`Flows.SC07_*` |
 | PULL-06 | 検証待ち | |
 
 ### 11. オフセット・フォローミー

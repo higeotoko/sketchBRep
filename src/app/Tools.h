@@ -876,6 +876,9 @@ class PushPullTool : public Tool {
   void applyMeasurement(const QString& text) override;
   // Double-clicking a face repeats the previous push/pull distance.
   bool mouseDoubleClick(const ToolEvent& e) override;
+  // Ctrl: keep the starting face (on an open shape a volume of its own).
+  bool keyPress(QKeyEvent* event) override;
+  bool keepsStartFace() const { return keepStart_; }
 
   bool isDragging() const { return dragging_; }
 
@@ -885,6 +888,8 @@ class PushPullTool : public Tool {
 
   bool dragging_ = false;
   bool curved_ = false;
+  bool keepStart_ = false;
+  QString keepSuffix() const;
   doc::ObjectId objectId_;
   TopoDS_Face face_;
   gp_Pnt origin_;

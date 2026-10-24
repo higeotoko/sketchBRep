@@ -2,6 +2,10 @@
 
 #include <BOPAlgo_ArgumentAnalyzer.hxx>
 #include <BRepAdaptor_Curve.hxx>
+#include <BRepFill.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
+#include <ShapeFix_Shell.hxx>
+#include <TopTools_ListIteratorOfListOfShape.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_MakeSolid.hxx>
 #include <BRepTools_WireExplorer.hxx>
@@ -814,6 +818,125 @@ Result<TopoDS_Shape> sewIntoSolid(const std::vector<TopoDS_Shape>& pieces, doubl
     return solid;
   } catch (const Standard_Failure& e) {
     return R::failure(std::string("Joining the faces failed: ") + e.GetMessageString());
+  }
+}
+
+Result<TopoDS_Shape> sewOpen(const std::vector<TopoDS_Shape>& pieces, double tolerance) {
+  using R = Result<TopoDS_Shape>;
+  try {
+    BRepBuilderAPI_Sewing sewing(tolerance);
+    sewing.SetNonManifoldMode(Standard_True);
+    int faces = 0;
+    for (const TopoDS_Shape& piece : pieces) {
+      for (TopExp_Explorer f(piece, TopAbs_FACE); f.More(); f.Next(), ++faces) sewing.Add(f.Current());
+    }
+    if (faces == 0) return R::failure("No faces");
+    sewing.Perform();
+    TopoDS_Shape sewn = sewing.SewedShape();
+    if (sewn.ShapeType() == TopAbs_SHELL) {
+      ShapeFix_Shell fix(TopoDS::Shell(sewn));
+      fix.Perform();
+      sewn = fix.Shell();
+    }
+    return sewn;
+  } catch (const Standard_Failure& e) {
+    return R::failure(std::string("Joining the faces failed: ") + e.GetMessageString());
+  }
+}
+
+Result<TopoDS_Shape> sewFaces(const std::vector<TopoDS_Shape>& pieces, double tolerance) {
+  if (auto solid = sewIntoSolid(pieces, tolerance)) return solid;
+  return sewOpen(pieces, tolerance);
+}
+
+Result<TopoDS_Shape> pushPullOpenFace(const TopoDS_Shape& shape, const TopoDS_Face& face, double distance) {
+  using R = Result<TopoDS_Shape>;
+  const auto normal = planarFaceNormal(face);
+  if (!normal) return R::failure("Curved faces of open shapes cannot be pushed/pulled (only flat ones)");
+  if (std::abs(distance) < Precision::Confusion()) return R::failure("Distance must be non-zero");
+  try {
+    const gp_Vec shift = gp_Vec(*normal) * distance;
+    gp_Trsf move;
+    move.SetTranslation(shift);
+    // The other faces, each possibly extended or divided below.
+    TopTools_IndexedMapOfShape all;
+    TopExp::MapShapes(shape, TopAbs_FACE, all);
+    std::vector<TopoDS_Face> original;
+    std::vector<std::vector<TopoDS_Face>> now;
+    for (int i = 1; i <= all.Extent(); ++i) {
+      if (all(i).IsSame(face)) continue;
+      original.push_back(TopoDS::Face(all(i)));
+      now.push_back({TopoDS::Face(all(i))});
+    }
+    TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
+    TopExp::MapShapesAndAncestors(shape, TopAbs_EDGE, TopAbs_FACE, edgeFaces);
+    std::vector<TopoDS_Shape> added{BRepBuilderAPI_Transform(face, move, Standard_True).Shape()};
+    TopTools_IndexedMapOfShape edges;
+    TopExp::MapShapes(face, TopAbs_EDGE, edges);
+    for (int i = 1; i <= edges.Extent(); ++i) {
+      const TopoDS_Edge edge = TopoDS::Edge(edges(i));
+      if (BRep_Tool::Degenerated(edge)) continue;
+      const TopoDS_Edge moved = TopoDS::Edge(BRepBuilderAPI_Transform(edge, move, Standard_True).Shape());
+      const TopoDS_Face side = BRepFill::Face(edge, moved);
+      if (side.IsNull()) return R::failure("A side face could not be made");
+      // The face beyond this edge, when the side face lies on its plane.
+      std::optional<std::size_t> beyond;
+      if (const int k = edgeFaces.FindIndex(edge); k > 0) {
+        for (TopTools_ListIteratorOfListOfShape it(edgeFaces(k)); it.More(); it.Next()) {
+          if (it.Value().IsSame(face)) continue;
+          for (std::size_t j = 0; j < original.size(); ++j) {
+            if (!original[j].IsSame(it.Value()) || now[j].size() != 1) continue;
+            gp_Pln plane;
+            if (isPlanarFace(now[j].front(), &plane) && std::abs(plane.Axis().Direction().XYZ().Dot(shift.XYZ())) <
+                                                             1e-9 * shift.Magnitude()) {
+              beyond = j;
+            }
+          }
+        }
+      }
+      if (!beyond) {
+        added.push_back(side);
+        continue;
+      }
+      TopoDS_Face& there = now[*beyond].front();
+      BRepAdaptor_Curve c(edge);
+      const gp_Pnt mid = c.Value(0.5 * (c.FirstParameter() + c.LastParameter()));
+      const gp_Pnt probe = mid.Translated(shift.Normalized() * std::min(0.5 * std::abs(distance), 1.0));
+      if (pointOnFace(there, probe) && !pointOnFaceBoundary(there, probe)) {
+        // Pushed along into it: it is divided at the new edge.
+        std::vector<gp_Pnt> line;
+        if (c.GetType() == GeomAbs_Line) {
+          line = {BRep_Tool::Pnt(TopExp::FirstVertex(moved)), BRep_Tool::Pnt(TopExp::LastVertex(moved))};
+        }
+        if (line.empty()) {
+          added.push_back(side);
+          continue;
+        }
+        auto parts = splitPlanarFace(there, line);
+        if (parts && parts->size() > 1) now[*beyond] = *parts;
+        continue;
+      }
+      // Pulled away from it: it grows by the side face.
+      BRepAlgoAPI_Fuse fuse(there, side);
+      fuse.SetFuzzyValue(1e-6);
+      fuse.Build();
+      if (fuse.IsDone() && !fuse.HasErrors()) {
+        ShapeUpgrade_UnifySameDomain unify(fuse.Shape(), Standard_True, Standard_True, Standard_False);
+        unify.Build();
+        TopTools_IndexedMapOfShape grown;
+        TopExp::MapShapes(unify.Shape(), TopAbs_FACE, grown);
+        if (grown.Extent() == 1) {
+          there = TopoDS::Face(grown(1));
+          continue;
+        }
+      }
+      added.push_back(side);
+    }
+    std::vector<TopoDS_Shape> pieces = added;
+    for (const auto& list : now) pieces.insert(pieces.end(), list.begin(), list.end());
+    return sewFaces(pieces);
+  } catch (const Standard_Failure& e) {
+    return R::failure(std::string("Push/pull failed: ") + e.GetMessageString());
   }
 }
 

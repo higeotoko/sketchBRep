@@ -261,7 +261,11 @@ class Modeler {
 
   // --- editing ------------------------------------------------------------
   // `face` is a face of the object's world shape (or an equivalent copy).
-  Result<PushPullResult> pushPull(const ObjectId& id, const TopoDS_Face& face, double distance);
+  // `keepStartFace` (Ctrl, SketchUp's "create new starting face"): on an
+  // open shape the face stays where it was and gives a volume of its own
+  // (e.g. a wall given thickness) instead of moving out as on a surface.
+  Result<PushPullResult> pushPull(const ObjectId& id, const TopoDS_Face& face, double distance,
+                                  bool keepStartFace = false);
   // Extrudes a face/profile object directly (convenience for scripting).
   Result<PushPullResult> extrude(const ObjectId& id, double distance);
   // Creates a new face object whose outline is offset from a profile face
@@ -558,9 +562,9 @@ class Modeler {
   std::vector<ObjectId> topmost(const std::vector<ObjectId>& ids) const;
 
  private:
-  // Push/pull of a flat face of an open shape: a new solid from that face
-  // (its own object, distance editable), the face taken out of the open
-  // shape (no duplicate faces), nothing else changed or filled.
+  // Push/pull with the starting face kept, on an open shape: a new solid
+  // from that face (its own object, distance editable), the face taken out
+  // of the open shape (no duplicate faces), nothing else changed or filled.
   Result<PushPullResult> volumeFromOpenFace(const ObjectId& id, const TopoDS_Face& worldFace, double distance);
   // The object with a MoveVerticesOp for these world points (not committed).
   Result<Object> movedVertices(const Object& current, const std::vector<gp_Pnt>& worldPoints,

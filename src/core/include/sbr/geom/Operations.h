@@ -29,6 +29,19 @@ Result<TopoDS_Shape> capHoles(const TopoDS_Shape& shell);
 // kept tiny, so a gap meant to be there is never closed.
 constexpr double kSewTolerance = 1e-4;  // mm
 Result<TopoDS_Shape> sewIntoSolid(const std::vector<TopoDS_Shape>& pieces, double tolerance = kSewTolerance);
+// The same faces joined where their edges meet, left open (a shell, or a
+// compound of shells and faces where they do not all meet).
+Result<TopoDS_Shape> sewOpen(const std::vector<TopoDS_Shape>& pieces, double tolerance = kSewTolerance);
+// Closed into a solid when they close a volume (sewIntoSolid), else open.
+Result<TopoDS_Shape> sewFaces(const std::vector<TopoDS_Shape>& pieces, double tolerance = kSewTolerance);
+
+// Push/pull of a flat face of an open shape, as SketchUp does on a surface:
+// the face moves `distance` along its normal and every edge of it gets a
+// side face back to where it was. A side face on the plane of the face
+// beyond that edge extends that face (pulled away from it) or divides it
+// at the new edge (pushed along into it) instead of lying on top of it.
+// Closed by it: a solid.
+Result<TopoDS_Shape> pushPullOpenFace(const TopoDS_Shape& shape, const TopoDS_Face& face, double distance);
 
 // Moves the vertices of a polyhedral shape (flat faces, straight edges) found
 // at `points` by `delta`, keeping every face flat (SketchUp's move of an

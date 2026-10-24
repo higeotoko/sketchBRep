@@ -2,6 +2,10 @@
 // to edge round a cube stayed six loose faces): once the last one closes it
 // without gaps, they are one solid, like a box pushed up from a rectangle.
 
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
@@ -18,6 +22,11 @@ using namespace sbr;
 using namespace sbr::doc;
 
 namespace {
+
+int qEnvInt(const char* name) {
+  const char* v = std::getenv(name);
+  return v ? std::atoi(v) : 0;
+}
 
 int count(const Modeler& m, ObjectKind k) {
   int n = 0;
@@ -89,10 +98,11 @@ TEST(ClosingFaces, AnyOrderVolumePushPullUndoAndFiles) {
     EXPECT_EQ(faces, 6);
     EXPECT_EQ(m.history().undoCount(), before + 6);  // one step per face drawn
 
-    // Undo takes back the last face: open again, five faces; redo closes.
+    // Undo takes back the last face: open again (the five as one open
+    // shape, or in pieces where only side by side); redo closes.
     ASSERT_TRUE(m.undo());
     EXPECT_EQ(count(m, ObjectKind::Solid), 0);
-    EXPECT_EQ(count(m, ObjectKind::Face), 5);
+    EXPECT_GE(count(m, ObjectKind::Shell), 1);
     ASSERT_TRUE(m.redo());
     ASSERT_TRUE(onlySolid(m).has_value());
 
@@ -113,15 +123,16 @@ TEST(ClosingFaces, AnyOrderVolumePushPullUndoAndFiles) {
   }
 }
 
-// What does not close: five sides, a gap, a side twice, a side in another
-// group - the faces stay faces.
+// What does not close: five sides, a gap, a fin, a side in another group -
+// no solid (the faces meeting at an angle are one open shape meanwhile).
 TEST(ClosingFaces, OpenGapsTwiceAndOtherGroupsStayFaces) {
   {
     Modeler m;
     const auto sides = cubeSides();
     for (int i = 0; i < 5; ++i) ASSERT_TRUE(m.createPolygon(sides[i]).ok());
     EXPECT_EQ(count(m, ObjectKind::Solid), 0);
-    EXPECT_EQ(count(m, ObjectKind::Face), 5);
+    EXPECT_EQ(count(m, ObjectKind::Shell), 1);
+    EXPECT_EQ(count(m, ObjectKind::Face), 0);
   }
   {
     Modeler m;  // the right side 0.5 mm off: a gap, kept
@@ -129,7 +140,8 @@ TEST(ClosingFaces, OpenGapsTwiceAndOtherGroupsStayFaces) {
     for (gp_Pnt& p : sides[5]) p.SetX(p.X() + 0.5);
     for (const auto& side : sides) ASSERT_TRUE(m.createPolygon(side).ok());
     EXPECT_EQ(count(m, ObjectKind::Solid), 0);
-    EXPECT_EQ(count(m, ObjectKind::Face), 6);
+    EXPECT_EQ(count(m, ObjectKind::Shell), 1);  // the five that meet
+    EXPECT_EQ(count(m, ObjectKind::Face), 1);   // the one 0.5 mm off
   }
   {
     Modeler m;  // a fin on the top edge: three faces on one edge
@@ -151,7 +163,8 @@ TEST(ClosingFaces, OpenGapsTwiceAndOtherGroupsStayFaces) {
     ASSERT_TRUE(m.createPolygon(sides[5]).ok());
     ASSERT_TRUE(m.setActiveGroup({}).ok());
     EXPECT_EQ(count(m, ObjectKind::Solid), 0);
-    EXPECT_EQ(count(m, ObjectKind::Face), 7);
+    EXPECT_EQ(count(m, ObjectKind::Shell), 1);  // the five outside
+    EXPECT_EQ(count(m, ObjectKind::Face), 2);   // in the group: apart
   }
 }
 
@@ -162,19 +175,11 @@ TEST(ClosingFaces, DeleteAFaceThenCloseAgainKeepsMaterials) {
   auto red = m.createMaterial("Red", Color{1, 0, 0});
   ASSERT_TRUE(red.ok());
   const auto sides = cubeSides();
-  std::vector<ObjectId> ids;
-  for (const auto& side : sides) {
-    if (ids.size() == 2) {  // the front, painted before the box closes
-      auto front = m.createPolygon(side);
-      ASSERT_TRUE(front.ok());
-      ASSERT_TRUE(m.assignMaterial({*front}, *red).ok());
-      ids.push_back(*front);
-      continue;
-    }
-    auto id = m.createPolygon(side);
-    ASSERT_TRUE(id.ok());
-    ids.push_back(*id);
-  }
+  // The front first, painted while it is a face of its own.
+  auto front = m.createPolygon(sides[2]);
+  ASSERT_TRUE(front.ok());
+  ASSERT_TRUE(m.assignMaterial({*front}, *red).ok());
+  for (int i : {0, 1, 3, 4, 5}) ASSERT_TRUE(m.createPolygon(sides[i]).ok());
   const auto solid = onlySolid(m);
   ASSERT_TRUE(solid.has_value());
   auto materialAt = [&](const ObjectId& id, const gp_Pnt& p) {
@@ -201,4 +206,120 @@ TEST(ClosingFaces, DeleteAFaceThenCloseAgainKeepsMaterials) {
   EXPECT_EQ(m.document().objects().size(), 1u);
   EXPECT_NEAR(geom::volume(m.document().worldShape(*m.document().find(*again))), 1e9, 1e-3);
   EXPECT_EQ(materialAt(*again, gp_Pnt(500, 0, 500)), *red);
+}
+
+namespace {
+
+int edgesOf(const TopoDS_Shape& s) {
+  TopTools_IndexedMapOfShape edges;
+  TopExp::MapShapes(s, TopAbs_EDGE, edges);
+  return edges.Extent();
+}
+
+}  // namespace
+
+// Stage 1 of sharing edges while still open (SketchUp): faces meeting at an
+// angle are one open shape at once, the edge between them one edge; faces
+// side by side on one plane stay apart for now.
+TEST(ClosingFaces, AngledFacesShareTheirEdgeWhileOpen) {
+  Modeler m;
+  const auto sides = cubeSides();
+  ASSERT_TRUE(m.createPolygon(sides[0]).ok());  // bottom
+  ASSERT_TRUE(m.createPolygon(sides[2]).ok());  // front, at right angles
+  ASSERT_EQ(m.document().objects().size(), 1u);
+  const Object& surface = m.document().objects().front();
+  EXPECT_EQ(surface.kind(), ObjectKind::Shell);
+  EXPECT_EQ(edgesOf(surface.shape), 7);  // 4 + 4 - the shared one
+  // Two more sides: still one open shape; Undo takes back one face at a time.
+  ASSERT_TRUE(m.createPolygon(sides[4]).ok());
+  ASSERT_TRUE(m.createPolygon(sides[3]).ok());
+  ASSERT_EQ(m.document().objects().size(), 1u);
+  EXPECT_EQ(edgesOf(m.document().objects().front().shape), 4 * 4 - 5);  // 5 shared
+  ASSERT_TRUE(m.undo());
+  ASSERT_EQ(m.document().objects().size(), 1u);  // the three before, the fourth gone
+  EXPECT_EQ(edgesOf(m.document().objects().front().shape), 4 * 3 - 3);
+  ASSERT_TRUE(m.redo());
+
+  // The shared top corner of front and left moved up: both faces follow.
+  const ObjectId id = m.document().objects().front().id;
+  ASSERT_TRUE(m.moveVertices(id, {gp_Pnt(0, 0, 1000)}, gp_Vec(0, 0, 200)).ok());
+  bool front = false, left = false;
+  for (TopExp_Explorer e(m.document().worldShape(*m.document().find(id)), TopAbs_FACE); e.More(); e.Next()) {
+    const TopoDS_Face f = TopoDS::Face(e.Current());
+    if (!geom::pointOnFace(f, gp_Pnt(0, 0, 1200))) continue;
+    const Bnd_Box b = geom::exactBounds(f);
+    front = front || std::abs(b.CornerMax().Y() - b.CornerMin().Y()) < 1e-6;
+    left = left || std::abs(b.CornerMax().X() - b.CornerMin().X()) < 1e-6;
+  }
+  EXPECT_TRUE(front && left);
+
+  // Side by side on one plane: two faces of their own (stage 2).
+  Modeler flat;
+  ASSERT_TRUE(flat.createPolygon({gp_Pnt(0, 0, 0), gp_Pnt(1000, 0, 0), gp_Pnt(1000, 1000, 0), gp_Pnt(0, 1000, 0)}).ok());
+  ASSERT_TRUE(flat.createPolygon({gp_Pnt(1000, 0, 0), gp_Pnt(2000, 0, 0), gp_Pnt(2000, 1000, 0), gp_Pnt(1000, 1000, 0)}).ok());
+  EXPECT_EQ(count(flat, ObjectKind::Face), 2);
+  EXPECT_EQ(count(flat, ObjectKind::Shell), 0);
+}
+
+// An open box drawn face by face, then a side pulled out: the surface
+// grows like a SketchUp one; the last face closes it into a solid of the
+// right volume.
+TEST(ClosingFaces, OpenBoxPulledThenClosed) {
+  Modeler m;
+  const auto sides = cubeSides();
+  for (int i : {0, 2, 3, 4, 5}) ASSERT_TRUE(m.createPolygon(sides[i]).ok());  // no top
+  ASSERT_EQ(m.document().objects().size(), 1u);
+  const ObjectId id = m.document().objects().front().id;
+  TopoDS_Face right;
+  for (TopExp_Explorer e(m.document().worldShape(*m.document().find(id)), TopAbs_FACE); e.More(); e.Next()) {
+    const Bnd_Box b = geom::exactBounds(e.Current());
+    if (std::abs(b.CornerMin().X() - 1000) < 1e-6 && std::abs(b.CornerMax().X() - 1000) < 1e-6) {
+      right = TopoDS::Face(e.Current());
+    }
+  }
+  ASSERT_FALSE(right.IsNull());
+  // Its normal may face in or out (drawn faces): pulled out to x = 1500 either way.
+  const auto n = geom::planarFaceNormal(right);
+  ASSERT_TRUE(n.has_value());
+  ASSERT_TRUE(m.pushPull(id, right, n->X() > 0 ? 500 : -500).ok());
+  EXPECT_EQ(m.document().find(id)->kind(), ObjectKind::Shell);
+  EXPECT_NEAR(geom::exactBounds(m.document().worldShape(*m.document().find(id))).CornerMax().X(), 1500, 1e-6);
+  // The rest of the top (the pull made the strip over x 1000..1500).
+  ASSERT_TRUE(m.createPolygon(sides[1]).ok());
+  const auto solid = onlySolid(m);
+  ASSERT_TRUE(solid.has_value());
+  EXPECT_EQ(m.document().objects().size(), 1u);
+  EXPECT_NEAR(geom::volume(m.document().worldShape(*m.document().find(*solid))), 1.5e9, 1e-3);
+}
+
+// Cost of drawing face by face (SBR_BENCH_N=20: a 20 x 20 floor of tiles,
+// then 20 boxes drawn side by side face by face). Skipped otherwise.
+TEST(ClosingFaces, Bench) {
+  const int n = qEnvInt("SBR_BENCH_N");
+  if (n <= 0) GTEST_SKIP() << "set SBR_BENCH_N to run";
+  Modeler m;
+  auto t0 = std::chrono::steady_clock::now();
+  for (int i = 0; i < n; ++i) {
+    for (int j = 0; j < n; ++j) {
+      const double x = i * 1000, y = j * 1000;
+      ASSERT_TRUE(m.createPolygon({gp_Pnt(x, y, 0), gp_Pnt(x + 1000, y, 0), gp_Pnt(x + 1000, y + 1000, 0),
+                                   gp_Pnt(x, y + 1000, 0)})
+                      .ok());
+    }
+  }
+  auto t1 = std::chrono::steady_clock::now();
+  for (int b = 0; b < n; ++b) {
+    for (auto side : cubeSides()) {
+      for (gp_Pnt& p : side) p.SetY(p.Y() - 3000.0 - 1500.0 * b);
+      ASSERT_TRUE(m.createPolygon(side).ok());
+    }
+  }
+  auto t2 = std::chrono::steady_clock::now();
+  using ms = std::chrono::milliseconds;
+  std::printf("floor %d tiles: %lld ms (%.2f ms each); %d boxes face by face: %lld ms (%.2f ms per face)\n", n * n,
+              (long long)std::chrono::duration_cast<ms>(t1 - t0).count(),
+              double(std::chrono::duration_cast<ms>(t1 - t0).count()) / (n * n), n,
+              (long long)std::chrono::duration_cast<ms>(t2 - t1).count(),
+              double(std::chrono::duration_cast<ms>(t2 - t1).count()) / (n * 6));
+  EXPECT_EQ(count(m, ObjectKind::Solid), n);
 }

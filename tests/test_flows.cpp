@@ -67,12 +67,13 @@ TEST(Flows, SC01_FrameWall) {
 TEST(Flows, SC07_SC08_SC19_EditSaveReloadEdit) {
   Modeler m;
   auto red = m.createMaterial("Red", {1, 0, 0});
-  // SC07: a box with its top deleted, the front given 200 of thickness.
+  // SC07: a box with its top deleted, the front given 200 of thickness
+  // (push/pull keeping the starting face: Ctrl, as in SketchUp).
   auto box = m.createRectangle(at(0, 0), 1000, 1000);
   ASSERT_TRUE(m.extrude(*box, 1000).ok());
   ASSERT_TRUE(m.deleteFaces(*box, {faceFacing(m, *box, gp::DZ())}, {}).ok());
   EXPECT_EQ(m.document().find(*box)->kind(), ObjectKind::Shell);
-  auto thick = m.pushPull(*box, faceFacing(m, *box, gp_Dir(0, -1, 0)), 200);
+  auto thick = m.pushPull(*box, faceFacing(m, *box, gp_Dir(0, -1, 0)), 200, true);
   ASSERT_TRUE(thick.ok()) << thick.error();
   ASSERT_FALSE(thick->id.empty());
   EXPECT_NEAR(volumeOf(m, thick->id), 1e6 * 200, 1e-2);

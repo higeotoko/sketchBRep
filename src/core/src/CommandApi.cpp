@@ -930,16 +930,19 @@ const std::vector<CommandDef>& commands() {
        "equally outermost / close are refused, listing them). Planar faces only; curved faces by index, "
        "e.g. a cylinder side changes its radius. Positive distance moves the face outwards. A profile lying on another "
        "solid's face cuts into it (negative) or joins it (positive); the merged object gets a new "
-       "id, so always continue with the returned id. A flat face of an open shape (faces deleted) gives a new "
-       "solid of its own from that face (returned id), the face is taken out of the open shape, which stays "
-       "open.",
+       "id, so always continue with the returned id. A flat face of an open shape (faces deleted, or faces "
+       "drawn edge to edge) moves out as on a SketchUp surface: side faces join it back to its edges, a face "
+       "beyond an edge on the same plane grows or is divided; closing it makes a solid. With keep_start_face "
+       "(SketchUp's Ctrl) the face stays and gives a new solid of its own instead (returned id), the face "
+       "taken out of the open shape, which stays open.",
        SCHEMA({"type": "object", "properties": {"id": {"type": "string"},
          "face": {"oneOf": [{"type": "integer"}, {"type": "object", "properties": {"normal": {"type": "array"},
                                                                                    "near": {"type": "array"}}}]},
-         "distance": {"type": "number"}}, "required": ["id", "face", "distance"]}),
+         "distance": {"type": "number"}, "keep_start_face": {"type": "boolean"}}, "required": ["id", "face", "distance"]}),
        [](doc::Modeler& m, const json& a) {
          const ObjectId id = text(a, "id");
-         const auto r = must(m.pushPull(id, selectFace(m, id, arg(a, "face")), number(a, "distance")));
+         const bool keep = a.contains("keep_start_face") && a.at("keep_start_face").get<bool>();
+         const auto r = must(m.pushPull(id, selectFace(m, id, arg(a, "face")), number(a, "distance"), keep));
          return json{{"id", r.id}, {"parameter", r.parameterKey}};
        }},
       {"face_from_loop",

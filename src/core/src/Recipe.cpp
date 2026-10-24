@@ -146,7 +146,7 @@ Result<TopoDS_Shape> buildBase(const BaseFeature& base, const RegenContext& cont
               if (!shape) return Result<TopoDS_Shape>::failure("'" + in.name + "': " + shape.error());
               placed.push_back(shape->Moved(TopLoc_Location(in.placement)));
             }
-            return geom::sewIntoSolid(placed);
+            return geom::sewFaces(placed);
           },
           [&](const SweepFeature& f) -> Result<TopoDS_Shape> {
             if (f.inputs.size() != 2 || !f.inputs[0].recipe || !f.inputs[1].recipe) {
@@ -356,12 +356,14 @@ Result<TopoDS_Shape> regenerate(const Recipe& recipe, const RegenContext& contex
               return geom::moveVertices(shape, op.points, gp_Vec(op.direction) * op.distance, op.autofold);
             },
             [&](const PushPullOp& op) -> Result<TopoDS_Shape> {
-              const geom::ValidationReport report = geom::validateShape(shape, true);
-              if (!report.valid) {
+              const bool solid = TopExp_Explorer(shape, TopAbs_SOLID).More();
+              if (solid && !geom::validateShape(shape, true).valid) {
                 return Result<TopoDS_Shape>::failure("Push/pull requires a valid solid");
               }
               auto face = op.face.resolve(shape, splitLines);
               if (!face) return Result<TopoDS_Shape>::failure(face.error());
+              // An open shape: pushed / pulled as a surface (SketchUp).
+              if (!solid) return geom::pushPullOpenFace(shape, face.value(), op.distance);
               return geom::pushPullFace(shape, face.value(), op.distance, splitLines);
             },
         },
