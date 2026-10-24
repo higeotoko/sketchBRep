@@ -178,6 +178,9 @@ class GuiPhase1 : public QObject {
   void topEdgesCopiedDownDivideTheSides();
   void boxSelectionTakesFacesAndEdges();
   void followMeReportedSetup();
+  void ux01MixedSelectionKeepsPartsAndWholes();
+  void ux07CtrlAddsCtrlShiftRemoves();
+  void ux04BoxOverBlankSelectsNothing();
   void lockedObjectsSelectableNotEditable();
   void groupEditShowsDottedBox();
   void snapTipNamesTheAdoptedPoint();
@@ -1044,6 +1047,143 @@ void GuiPhase1::followMeReportedSetup() {
   QVERIFY(f.window.lastError().contains(QStringLiteral("(1000.0, 3000.0, 0.0)")));
   QCOMPARE(m.document().objects().size(), objects);
   QVERIFY(m.document().find(profile));
+}
+
+namespace {
+
+// What the selection means, per object: whole, or how many faces / edges.
+std::map<doc::ObjectId, std::tuple<bool, int, int>> meaning(MainWindow& w) {
+  std::map<doc::ObjectId, std::tuple<bool, int, int>> out;
+  for (const doc::DeleteTarget& t : w.selectionTargets()) {
+    out[t.id] = {t.whole, int(t.faces.size()), int(t.edges.size())};
+  }
+  return out;
+}
+
+void clickWith(QWidget* w, const QPoint& at, Qt::KeyboardModifiers mods) {
+  move(w, at);
+  send(w, QEvent::MouseButtonPress, at, Qt::LeftButton, Qt::LeftButton, mods);
+  send(w, QEvent::MouseButtonRelease, at, Qt::LeftButton, Qt::NoButton, mods);
+  QTest::qWait(20);
+}
+
+}  // namespace
+
+// UX-01: a face of a loose box and a group, added to each other with Shift
+// in either order: the face stays a face (not the whole box), the group a
+// whole, and Delete takes just those.
+void GuiPhase1::ux01MixedSelectionKeepsPartsAndWholes() {
+  for (bool faceFirst : {true, false}) {
+    Fixture f;
+    QVERIFY(f.setUp(2000, 500));
+    doc::Modeler& m = f.window.modeler();
+    const doc::ObjectId a = f.box(0, 0, 1000, 1000, 1000);
+    const doc::ObjectId inner = f.box(3000, 0, 1000, 1000, 1000);
+    const doc::ObjectId group = *m.group({inner});
+    f.vp->syncNow();
+    f.window.activateTool(MainWindow::ToolId::Select);
+    const QPoint top = f.vp->toWidget(gp_Pnt(500, 500, 1000));
+    const QPoint g = f.vp->toWidget(gp_Pnt(3500, 500, 1000));
+    clickWith(f.vp, faceFirst ? top : g, Qt::NoModifier);
+    clickWith(f.vp, faceFirst ? g : top, Qt::ShiftModifier);
+    const auto now = meaning(f.window);
+    QCOMPARE(now.size(), std::size_t(2));
+    QVERIFY(now.count(a) && now.count(group));
+    QCOMPARE(now.at(a), std::make_tuple(false, 1, 0));  // the top face only
+    QVERIFY(std::get<0>(now.at(group)));                 // the group as a whole
+    // Delete: the top face goes (the box opens), the group goes.
+    f.window.activateWindow();
+    QTest::qWait(50);
+    QTest::keyClick(f.vp, Qt::Key_Delete);
+    QTest::qWait(30);
+    QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+    QVERIFY(m.document().find(a));
+    QCOMPARE(m.document().find(a)->kind(), doc::ObjectKind::Shell);
+    QVERIFY(!m.document().find(group));
+  }
+}
+
+// UX-07 (Windows SketchUp): Ctrl adds only, Shift toggles, Ctrl+Shift
+// removes only - by click and by box.
+void GuiPhase1::ux07CtrlAddsCtrlShiftRemoves() {
+  Fixture f;
+  QVERIFY(f.setUp(2000, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId a = f.box(0, 0, 1000, 1000, 1000);
+  const doc::ObjectId inner = f.box(3000, 0, 1000, 1000, 1000);
+  const doc::ObjectId group = *m.group({inner});
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::Select);
+  const QPoint top = f.vp->toWidget(gp_Pnt(500, 500, 1000));
+  const QPoint front = f.vp->toWidget(gp_Pnt(500, 0, 500));
+  const QPoint g = f.vp->toWidget(gp_Pnt(3500, 500, 1000));
+  const Qt::KeyboardModifiers ctrl = Qt::ControlModifier, both = Qt::ControlModifier | Qt::ShiftModifier;
+  clickWith(f.vp, top, Qt::NoModifier);
+  clickWith(f.vp, g, ctrl);  // added
+  QCOMPARE(meaning(f.window).size(), std::size_t(2));
+  clickWith(f.vp, g, ctrl);  // Ctrl again: still selected (adds only)
+  QCOMPARE(meaning(f.window).size(), std::size_t(2));
+  clickWith(f.vp, top, ctrl);  // the face again: still there
+  QCOMPARE(std::get<1>(meaning(f.window).at(a)), 1);
+  clickWith(f.vp, front, both);  // not selected: Ctrl+Shift does not add it
+  QCOMPARE(std::get<1>(meaning(f.window).at(a)), 1);
+  clickWith(f.vp, g, both);  // selected: removed
+  QCOMPARE(meaning(f.window).size(), std::size_t(1));
+  QVERIFY(!meaning(f.window).count(group));
+  clickWith(f.vp, top, both);
+  QVERIFY(meaning(f.window).empty());
+  // By box: Ctrl adds the group, Ctrl+Shift takes it away again.
+  clickWith(f.vp, top, Qt::NoModifier);
+  QRect r;
+  for (int i = 0; i < 8; ++i) {
+    r = r.united(QRect(f.vp->toWidget(gp_Pnt(i & 1 ? 4000 : 3000, i & 2 ? 1000 : 0, i & 4 ? 1000 : 0)), QSize(1, 1)));
+  }
+  r.adjust(-10, -10, 10, 10);
+  auto boxWith = [&](Qt::KeyboardModifiers mods) {
+    send(f.vp, QEvent::MouseButtonPress, r.topLeft(), Qt::LeftButton, Qt::LeftButton, mods);
+    for (int i = 1; i <= 4; ++i) send(f.vp, QEvent::MouseMove, r.topLeft() + (r.bottomRight() - r.topLeft()) * i / 4, Qt::NoButton, Qt::LeftButton, mods);
+    send(f.vp, QEvent::MouseButtonRelease, r.bottomRight(), Qt::LeftButton, Qt::NoButton, mods);
+    QTest::qWait(20);
+  };
+  boxWith(ctrl);
+  QCOMPARE(meaning(f.window).size(), std::size_t(2));
+  QCOMPARE(std::get<1>(meaning(f.window).at(a)), 1);
+  boxWith(ctrl);  // again: still both
+  QCOMPARE(meaning(f.window).size(), std::size_t(2));
+  boxWith(both);
+  QCOMPARE(meaning(f.window).size(), std::size_t(1));
+  QVERIFY(meaning(f.window).count(a));
+}
+
+// UX-04: a crossing box over the blank part of an L-shaped face's or a
+// long diagonal line's bounding rectangle touches neither: nothing is
+// selected (the old check used the projected bounding box); one touching
+// the line takes the line's edge only.
+void GuiPhase1::ux04BoxOverBlankSelectsNothing() {
+  Fixture f;
+  QVERIFY(f.setUp(3000, 3000));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId line = *m.createPolyline({gp_Pnt(0, 0, 0), gp_Pnt(6000, 6000, 0)});
+  QVERIFY(m.createPolygon({gp_Pnt(-4000, 0, 0), gp_Pnt(-1000, 0, 0), gp_Pnt(-1000, 1000, 0), gp_Pnt(-3000, 1000, 0),
+                           gp_Pnt(-3000, 4000, 0), gp_Pnt(-4000, 4000, 0)})
+              .ok());
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::Select);
+  auto crossing = [&](const gp_Pnt& at) {
+    const QPoint c = f.vp->toWidget(at);
+    const QPoint from = c + QPoint(8, 8), to = c - QPoint(8, 8);
+    send(f.vp, QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
+    for (int i = 1; i <= 4; ++i) send(f.vp, QEvent::MouseMove, from + (to - from) * i / 4, Qt::NoButton, Qt::LeftButton);
+    send(f.vp, QEvent::MouseButtonRelease, to, Qt::LeftButton, Qt::NoButton);
+    QTest::qWait(20);
+  };
+  crossing(gp_Pnt(4500, 1500, 0));  // inside the line's box, far from it
+  QVERIFY(f.window.selection().empty());
+  crossing(gp_Pnt(-1500, 3000, 0));  // inside the L's box, in its notch
+  QVERIFY(f.window.selection().empty());
+  crossing(gp_Pnt(3000, 3000, 0));  // on the line
+  QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{line});
+  QCOMPARE(f.window.elementSelection().size(), std::size_t(1));
 }
 
 void GuiPhase1::scaleGripsOnComponentsAndGroups() {

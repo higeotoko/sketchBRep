@@ -47,6 +47,8 @@ class ToolHost {
   // Faces / edges of raw geometry together with objects taken whole
   // (groups, components, locked ones) - e.g. from a selection box.
   virtual void setMixedSelection(const std::vector<ElementRef>& elements, const std::vector<doc::ObjectId>& whole) = 0;
+  // Selected objects taken whole (none of their faces / edges picked).
+  virtual std::vector<doc::ObjectId> wholeSelection() const = 0;
   virtual std::vector<ElementRef> elementSelection() const = 0;
   virtual std::vector<doc::ObjectId> selection() const = 0;
   // What is selected, resolved now, the one meaning shared by Delete,
@@ -156,13 +158,23 @@ class SelectTool : public Tool {
   void mouseRelease(const ToolEvent& e) override;
   void cancel() override;
 
+  // Windows SketchUp: no key replaces the selection, Ctrl adds only, Shift
+  // toggles, Ctrl+Shift removes only - for clicks and boxes alike.
+  enum class Mode { Replace, Add, Toggle, Remove };
+  static Mode modeOf(Qt::KeyboardModifiers modifiers);
+
  private:
-  void apply(const std::vector<ElementRef>& picked, bool additive);
+  // Picked faces / edges and whole objects (groups, components, locked
+  // ones) combined with the selection as it is; both kinds are kept side by
+  // side (a face never becomes its whole object). `eachOnItsOwn`: Toggle
+  // turns every item over by itself (a box) instead of all together.
+  void apply(const std::vector<ElementRef>& elements, const std::vector<doc::ObjectId>& whole, Mode mode,
+             bool eachOnItsOwn = false);
   // Rectangle selection from empty space (spec 07 §6.1): dragged left to
   // right selects what is fully inside, right to left what it touches.
-  void boxSelect(const QRect& rect, bool crossing, bool additive);
+  void boxSelect(const QRect& rect, bool crossing, Mode mode);
   std::optional<QPoint> boxStart_;
-  bool boxAdditive_ = false;
+  Mode boxMode_ = Mode::Replace;
   // Pressed on a face / edge: a click picks it; dragging on draws a box
   // instead (SketchUp), from the selection as it was before the press.
   bool boxOverElement_ = false;

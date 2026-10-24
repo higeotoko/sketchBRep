@@ -127,7 +127,7 @@ void SelectTool::activate() {
   host_.viewport().setPickMode(PickMode::Elements);
   host_.setMeasurement(QString(), QString());
   host_.setStatus(QObject::tr("クリック: 面・エッジ / ダブルクリック: 隣接も選択 / トリプルクリック: オブジェクト全体 / "
-                              "Shift で追加・解除"));
+                              "Ctrl で追加・Shift で切替・Ctrl+Shift で除外"));
 }
 
 void SelectTool::mouseMove(const ToolEvent& e) {
@@ -138,25 +138,56 @@ void SelectTool::mouseMove(const ToolEvent& e) {
     return;
   } host_.viewport().pickElement(e.pos); }
 
-void SelectTool::apply(const std::vector<ElementRef>& picked, bool additive) {
-  std::vector<ElementRef> selection = additive ? host_.elementSelection() : std::vector<ElementRef>{};
-  if (additive) {
-    // Shift toggles: remove when everything picked is already selected.
-    const bool allSelected = std::all_of(picked.begin(), picked.end(), [&](const ElementRef& p) {
-      return std::find(selection.begin(), selection.end(), p) != selection.end();
-    });
-    for (const ElementRef& p : picked) {
-      const auto it = std::find(selection.begin(), selection.end(), p);
-      if (allSelected && it != selection.end()) {
-        selection.erase(it);
-      } else if (!allSelected && it == selection.end()) {
-        selection.push_back(p);
-      }
-    }
-  } else {
-    selection = picked;
+SelectTool::Mode SelectTool::modeOf(Qt::KeyboardModifiers modifiers) {
+  const bool ctrl = modifiers & Qt::ControlModifier, shift = modifiers & Qt::ShiftModifier;
+  if (ctrl && shift) return Mode::Remove;
+  if (ctrl) return Mode::Add;
+  if (shift) return Mode::Toggle;
+  return Mode::Replace;
+}
+
+void SelectTool::apply(const std::vector<ElementRef>& elements, const std::vector<doc::ObjectId>& whole, Mode mode,
+                       bool eachOnItsOwn) {
+  std::vector<ElementRef> parts;
+  std::vector<doc::ObjectId> wholes;
+  if (mode != Mode::Replace) {
+    parts = host_.elementSelection();
+    wholes = host_.wholeSelection();
   }
-  host_.setElementSelection(selection);
+  auto has = [](const auto& list, const auto& item) { return std::find(list.begin(), list.end(), item) != list.end(); };
+  auto take = [](auto& list, const auto& item) { list.erase(std::remove(list.begin(), list.end(), item), list.end()); };
+  auto addPart = [&](const ElementRef& e) {
+    if (!has(parts, e) && !has(wholes, e.objectId)) parts.push_back(e);
+  };
+  auto addWhole = [&](const doc::ObjectId& id) {
+    if (has(wholes, id)) return;
+    wholes.push_back(id);
+    // The whole covers its faces / edges picked before.
+    parts.erase(std::remove_if(parts.begin(), parts.end(), [&](const ElementRef& e) { return e.objectId == id; }),
+                parts.end());
+  };
+  // Toggle as one: everything picked selected already -> all off, else on.
+  const bool allIn = std::all_of(elements.begin(), elements.end(), [&](const ElementRef& e) { return has(parts, e); }) &&
+                     std::all_of(whole.begin(), whole.end(), [&](const doc::ObjectId& id) { return has(wholes, id); });
+  for (const ElementRef& e : elements) {
+    const bool in = has(parts, e);
+    const bool off = mode == Mode::Remove || (mode == Mode::Toggle && (eachOnItsOwn ? in : allIn));
+    if (off) {
+      take(parts, e);
+    } else {
+      addPart(e);
+    }
+  }
+  for (const doc::ObjectId& id : whole) {
+    const bool in = has(wholes, id);
+    const bool off = mode == Mode::Remove || (mode == Mode::Toggle && (eachOnItsOwn ? in : allIn));
+    if (off) {
+      take(wholes, id);
+    } else {
+      addWhole(id);
+    }
+  }
+  host_.setMixedSelection(parts, wholes);
 }
 
 doc::ObjectId SelectTool::target(const doc::ObjectId& leaf) const {
@@ -177,25 +208,20 @@ doc::ObjectId SelectTool::target(const doc::ObjectId& leaf) const {
 }
 
 void SelectTool::mousePress(const ToolEvent& e) {
-  const bool additive = e.modifiers & Qt::ShiftModifier;
+  const Mode mode = modeOf(e.modifiers);
   const auto picked = host_.viewport().pickElement(e.pos);
   if (!picked) {
     // Empty space: a click clears the selection, a drag selects a box.
     boxStart_ = e.pos;
-    boxAdditive_ = additive;
+    boxMode_ = mode;
     boxOverElement_ = false;
     return;
   }
   // A drag from here draws a box all the same.
   beforeElements_ = host_.elementSelection();
-  beforeWhole_.clear();
-  for (const doc::ObjectId& id : host_.selection()) {
-    const bool parts = std::any_of(beforeElements_.begin(), beforeElements_.end(),
-                                   [&](const ElementRef& el) { return el.objectId == id; });
-    if (!parts) beforeWhole_.push_back(id);
-  }
+  beforeWhole_ = host_.wholeSelection();
   boxStart_ = e.pos;
-  boxAdditive_ = additive;
+  boxMode_ = mode;
   boxOverElement_ = true;
   doc::ObjectId addressed = target(picked->objectId);
   if (addressed.empty()) {
@@ -210,14 +236,7 @@ void SelectTool::mousePress(const ToolEvent& e) {
   const doc::Object* addressedObject = document.find(addressed);
   if (addressed != picked->objectId || (owner && owner->kind() == doc::ObjectKind::Instance) ||
       (addressedObject && addressedObject->locked)) {
-    std::vector<doc::ObjectId> selection = additive ? host_.selection() : std::vector<doc::ObjectId>{};
-    const auto it = std::find(selection.begin(), selection.end(), addressed);
-    if (it == selection.end()) {
-      selection.push_back(addressed);
-    } else {
-      selection.erase(it);
-    }
-    host_.setSelection(selection);
+    apply({}, {addressed}, mode);
     return;
   }
   // Third click shortly after a double-click: the whole object.
@@ -225,10 +244,10 @@ void SelectTool::mousePress(const ToolEvent& e) {
                       (e.pos - doubleClickPos_).manhattanLength() < 6;
   sinceDoubleClick_.invalidate();
   if (triple) {
-    apply(host_.viewport().allElements(picked->objectId), additive);
+    apply(host_.viewport().allElements(picked->objectId), {}, mode);
     return;
   }
-  apply({*picked}, additive);
+  apply({*picked}, {}, mode);
 }
 
 void SelectTool::cancel() {
@@ -242,11 +261,11 @@ void SelectTool::mouseRelease(const ToolEvent& e) {
   boxStart_.reset();
   host_.viewport().setRubberBand(std::nullopt);
   if ((e.pos - start).manhattanLength() < 5) {
-    if (!boxAdditive_ && !boxOverElement_) host_.setSelection({});
+    if (boxMode_ == Mode::Replace && !boxOverElement_) host_.setSelection({});
     return;
   }
   if (boxOverElement_) host_.setMixedSelection(beforeElements_, beforeWhole_);  // the press only began the box
-  boxSelect(QRect(start, e.pos).normalized(), e.pos.x() < start.x(), boxAdditive_);
+  boxSelect(QRect(start, e.pos).normalized(), e.pos.x() < start.x(), boxMode_);
 }
 
 namespace {
@@ -315,21 +334,16 @@ bool elementInBox(Viewport& viewport, const TopoDS_Shape& element, const QRectF&
 
 }  // namespace
 
-void SelectTool::boxSelect(const QRect& rect, bool crossing, bool additive) {
+void SelectTool::boxSelect(const QRect& rect, bool crossing, Mode mode) {
   // Like SketchUp: raw geometry of the current context is taken face by
   // face and edge by edge; groups, components (and locked objects) as one.
   const doc::Document& document = host_.modeler().document();
   const doc::ObjectId context = host_.editingGroup();
   Viewport& viewport = host_.viewport();
   const QRectF box(rect);
-  std::vector<ElementRef> elements = additive ? host_.elementSelection() : std::vector<ElementRef>{};
+  // What the box holds; then combined with the selection by `mode`.
+  std::vector<ElementRef> elements;
   std::vector<doc::ObjectId> whole;
-  if (additive) {
-    for (const doc::ObjectId& id : host_.selection()) {
-      const bool parts = std::any_of(elements.begin(), elements.end(), [&](const ElementRef& e) { return e.objectId == id; });
-      if (!parts) whole.push_back(id);
-    }
-  }
   // A box lying inside faces only: the front one (X-ray: every one there).
   const std::optional<ElementRef> front =
       viewport.xRay() || !crossing ? std::nullopt : viewport.pickElement(box.center().toPoint());
@@ -371,7 +385,7 @@ void SelectTool::boxSelect(const QRect& rect, bool crossing, bool additive) {
     const bool hit = crossing ? rect.intersects(footprint) : allInside;
     if (hit && std::find(whole.begin(), whole.end(), o.id) == whole.end()) whole.push_back(o.id);
   }
-  host_.setMixedSelection(elements, whole);
+  apply(elements, whole, mode, true);
   int faces = 0, edges = 0;
   for (const ElementRef& e : elements) (e.type == TopAbs_FACE ? faces : edges)++;
   host_.setStatus(QObject::tr("面 %1 / エッジ %2 / オブジェクト %3 を選択（左→右: 完全に囲んだもの / 右→左: 触れたもの）")
@@ -402,7 +416,7 @@ bool SelectTool::mouseDoubleClick(const ToolEvent& e) {
   if (addressed != picked->objectId) return false;
   sinceDoubleClick_.start();
   doubleClickPos_ = e.pos;
-  apply(host_.viewport().withNeighbours(*picked), e.modifiers & Qt::ShiftModifier);
+  apply(host_.viewport().withNeighbours(*picked), {}, modeOf(e.modifiers));
   return true;
 }
 
