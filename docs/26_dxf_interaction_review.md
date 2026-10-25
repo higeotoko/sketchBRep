@@ -65,3 +65,6 @@
 - GUI本体135件合格、3件失敗、7件スキップ。失敗はこの環境で修正前にも確認済みの `topEdgesCopiedDownDivideTheSides`、`moveToolLiftsRidgeIntoGable`、`autosaveWritesInTheBackground`。新しい失敗はない。
 - 取り込みGUIは11件すべて合格。操作時の画質切替・通常画質への復帰・画像書き出しも確認。
 - 全GUIログ：`/tmp/sbr-interaction-all-gui.log`。コアログ：`/tmp/sbr-interaction-core.log`。
+- 同じ実図面の操作一式を別プロセスでも再確認し合格。Linuxの `getrusage(RUSAGE_CHILDREN).ru_maxrss` で子プロセスの最大RSSは約482 MiB。Windowsの使用メモリやGPUメモリの計測値ではなく、長時間のリーク試験でもない。
+- 最終 CI は Linux・Windows とも成功（コミット `944a03c`）。Windows はビルド・コアテスト・DLL依存確認・同梱CLIの起動・成果物アップロードまで成功。
+- 更新版ZIP（約64 MB）: https://github.com/higeotoko/sketchBRep/actions/runs/40242788014/artifacts/12617253393
