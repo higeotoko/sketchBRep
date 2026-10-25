@@ -17,6 +17,7 @@
 #include <TopExp_Explorer.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
+#include <TopoDS_Vertex.hxx>
 
 #include "sbr/geom/Freeform.h"
 #include "sbr/geom/Measure.h"
