@@ -16,6 +16,7 @@
 #include "sbr/doc/CommandStack.h"
 #include "sbr/doc/Document.h"
 #include "sbr/geom/Rhino3dm.h"
+#include "sbr/geom/Dxf.h"
 #include "sbr/geom/ShapeIO.h"
 
 namespace sbr::doc {
@@ -548,6 +549,8 @@ class Modeler {
   // Exports the given objects (all visible objects when empty) as STEP,
   // keeping object names and colours.
   Status exportStep(const std::string& path, const std::vector<ObjectId>& ids = {}) const;
+  Result<std::vector<ObjectId>> importDxf(const std::string& path, const geom::DxfImportOptions& options = {},
+                                         geom::DxfImportReport* report = nullptr);
   Result<std::vector<ObjectId>> importStep(const std::string& path);
   // Rhino .3dm: exact NURBS Breps with names, colours and tags as layers.
   Status export3dm(const std::string& path, const std::vector<ObjectId>& ids = {}) const;
@@ -600,6 +603,7 @@ class Modeler {
   std::vector<geom::NamedShape> exportParts(const std::vector<ObjectId>& ids) const;
   Result<std::vector<ObjectId>> addImported(const std::vector<geom::NamedShape>& parts, const std::string& path,
                                             const std::string& commandName);
+  Result<ObjectId> faceFromCurveJunctions(const ObjectId& curveId, bool* loopFound);
   std::string uniqueName(const std::string& base) const;
   // Deep copy of a subtree with fresh ids. Returns objects parents-first.
   std::vector<Object> cloneSubtree(const ObjectId& id, const ObjectId& newParent) const;

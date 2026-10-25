@@ -1260,7 +1260,7 @@ Result<ObjectId> Modeler::faceFromLoop(const ObjectId& curveId, bool* loopFound)
     }
   }
   if (from == to || depth[static_cast<std::size_t>(to)] < 0) {
-    return Result<ObjectId>::failure("The curve does not close a loop");
+    return faceFromCurveJunctions(curveId, loopFound);
   }
   std::vector<int> path;
   for (int at = to; at != from; at = came[static_cast<std::size_t>(at)].second) {
@@ -5762,6 +5762,17 @@ Result<std::vector<ObjectId>> Modeler::import3dm(const std::string& path, bool a
         "); nothing was imported. Import again allowing a partial import to take what could be read");
   }
   return addImported(parts.value(), path, "Import 3DM");
+}
+
+Result<std::vector<ObjectId>> Modeler::importDxf(const std::string& path, const geom::DxfImportOptions& options,
+                                                geom::DxfImportReport* report) {
+  geom::DxfImportReport local;
+  auto& found = report ? *report : local;
+  auto parts = geom::readDxf(path, options, &found);
+  if (!parts) return Result<std::vector<ObjectId>>::failure(parts.error());
+  if (found.incomplete() && !options.allowPartial)
+    return Result<std::vector<ObjectId>>::failure("DXF contains unsupported entities; nothing imported. " + found.summary());
+  return addImported(*parts, path, "Import DXF");
 }
 
 Result<std::vector<ObjectId>> Modeler::importStep(const std::string& path) {

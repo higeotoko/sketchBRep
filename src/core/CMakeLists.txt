@@ -17,11 +17,13 @@ add_library(sbr_core STATIC
   src/CommandStack.cpp
   src/NativeFormat.cpp
   src/Modeler.cpp
+  src/CurveJunctions.cpp
   src/Inference.cpp
   src/Freeform.cpp
   src/CommandApi.cpp
   src/McpServer.cpp
   src/Annotation.cpp
+  src/Dxf.cpp
   src/Rhino3dm.cpp
   src/Progress.cpp
 )

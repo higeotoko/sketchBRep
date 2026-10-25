@@ -5,6 +5,7 @@ set(CMAKE_AUTOMOC ON)
 # UI code as a library so the GUI tests can drive the real main window.
 add_library(sbr_ui STATIC
   MainWindow.cpp MainWindow.h
+  DwgConverter.cpp DwgConverter.h
   PropertiesPanel.cpp PropertiesPanel.h
   MaterialsPanel.cpp MaterialsPanel.h
   MaterialEditor.cpp MaterialEditor.h

@@ -1389,8 +1389,13 @@ void CurveTool::applyMeasurement(const QString&) { finish(false); }
 
 void CurveTool::finish(bool closed) {
   if (points_.size() >= 2) {
-    auto id = host_.modeler().createCurve(points_, closed);
-    if (!id) host_.reportError(QString::fromStdString(id.error()));
+    if (closed) {
+      auto id = host_.modeler().createCurve(points_, true);
+      if (!id) host_.reportError(QString::fromStdString(id.error()));
+    } else {
+      // Closing a mixed outline must not depend on which tool drew its last edge.
+      createCurveAndFace(host_, [&] { return host_.modeler().createCurve(points_, false); }, "Curve");
+    }
   }
   cancel();
   activate();

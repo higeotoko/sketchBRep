@@ -530,6 +530,10 @@ json modifierToJson(const Modifier& m) {
           [](const MergeAcrossOp& op) {
             return json{{"type", "mergeacross"}, {"point", toJson(op.point)}, {"direction", toJson(op.direction)}};
           },
+          [](const CurveIntervalOp& op) {
+            return json{{"type", "curveinterval"}, {"edge", op.edge}, {"edge_count", op.edgeCount},
+                        {"first", op.first}, {"last", op.last}, {"start", toJson(op.start)}, {"end", toJson(op.end)}};
+          },
           [](const ReverseOp&) { return json{{"type", "reverse"}}; },
           [](const MoveVerticesOp& op) {
             json j{{"type", "movevertices"},
@@ -596,6 +600,9 @@ Modifier modifierFrom(const json& j) {
   }
   if (type == "capholes") return CapHolesOp{};
   if (type == "mergeacross") return MergeAcrossOp{pointFrom(j.at("point")), dirFrom(j.at("direction"))};
+  if (type == "curveinterval") return CurveIntervalOp{j.at("edge").get<int>(), j.at("edge_count").get<int>(),
+                                                       j.at("first").get<double>(), j.at("last").get<double>(),
+                                                       pointFrom(j.at("start")), pointFrom(j.at("end"))};
   if (type == "reverse") return ReverseOp{};
   if (type == "movevertices") {
     MoveVerticesOp op;

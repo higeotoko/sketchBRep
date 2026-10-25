@@ -1838,6 +1838,22 @@ const std::vector<CommandDef>& commands() {
          must(m.export3dm(text(a, "path"), a.contains("ids") ? ids(a, "ids") : std::vector<ObjectId>{}));
          return json::object();
        }},
+      {"import_dxf", "Import ASCII DXF model-space curves as exact editable edges/wires; layers become tags. "
+       "Unsupported entities require allow_partial. unitless_scale_to_mm applies only when INSUNITS is absent/zero.",
+       SCHEMA({"type": "object", "properties": {"path": {"type": "string"},
+               "allow_partial": {"type": "boolean"}, "unitless_scale_to_mm": {"type": "number", "exclusiveMinimum": 0}},
+               "required": ["path"]}),
+       [](doc::Modeler& m, const json& a) {
+         geom::DxfImportOptions options;
+         options.allowPartial = a.value("allow_partial", false);
+         options.unitlessScaleToMm = a.value("unitless_scale_to_mm", 1.0);
+         geom::DxfImportReport report;
+         json out = idsResult(must(m.importDxf(text(a, "path"), options, &report)));
+         out["report"] = {{"imported", report.imported}, {"omitted", report.omitted},
+                          {"paper_space", report.paperSpace}, {"units_known", report.unitsKnown},
+                          {"scale_to_mm", report.scaleToMm}, {"complete", !report.incomplete()}};
+         return out;
+       }},
       {"import_3dm",
        "Import the surfaces and solids of a Rhino .3dm file (units converted to mm). A file that does not "
        "come through whole (meshes, points, curves, failed or partial conversions) is refused with what was "
@@ -1869,7 +1885,7 @@ const std::vector<CommandDef>& commands() {
 
 bool isFileCommand(const std::string& name) {
   return name == "save" || name == "open" || name == "export_step" || name == "export_3dm" ||
-         name == "import_3dm" || name == "set_material_texture";
+         name == "import_3dm" || name == "import_dxf" || name == "set_material_texture";
 }
 
 CommandApi::Effect builtinEffect(const std::string& name) {

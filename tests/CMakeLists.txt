@@ -1,6 +1,7 @@
 find_package(GTest REQUIRED)
 
 add_executable(sbr_core_tests
+  test_dxf.cpp
   test_units.cpp
   test_geometry.cpp
   test_document.cpp
@@ -28,6 +29,8 @@ add_executable(sbr_core_tests
   test_rhino3dm.cpp
   test_scenarios.cpp
 )
+set_source_files_properties(test_dxf.cpp PROPERTIES
+  COMPILE_DEFINITIONS SBR_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 target_link_libraries(sbr_core_tests PRIVATE sbr::core nlohmann_json::nlohmann_json GTest::gtest_main)
 if(SBR_WITH_OPENNURBS)
   # The 3DM import report tests write their fixture with openNURBS itself.
@@ -80,4 +83,16 @@ if(SBR_BUILD_APP)
   target_compile_definitions(sbr_gui_tests PRIVATE SBR_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
   add_test(NAME gui_phase1 COMMAND sbr_gui_tests)
   set_tests_properties(gui_phase1 PROPERTIES LABELS gui ENVIRONMENT "QT_QPA_PLATFORM=xcb")
+endif()
+
+if(SBR_BUILD_APP)
+  add_executable(sbr_fake_oda fake_oda.cpp)
+  target_link_libraries(sbr_fake_oda PRIVATE Qt6::Core)
+  add_executable(sbr_drawing_import_tests test_drawing_import.cpp)
+  set_target_properties(sbr_drawing_import_tests PROPERTIES AUTOMOC ON)
+  target_link_libraries(sbr_drawing_import_tests PRIVATE sbr_ui Qt6::Test)
+  target_compile_definitions(sbr_drawing_import_tests PRIVATE SBR_FAKE_ODA="$<TARGET_FILE:sbr_fake_oda>")
+  add_dependencies(sbr_drawing_import_tests sbr_fake_oda)
+  add_test(NAME gui_drawing_import COMMAND sbr_drawing_import_tests)
+  set_tests_properties(gui_drawing_import PROPERTIES LABELS gui ENVIRONMENT "QT_QPA_PLATFORM=xcb")
 endif()

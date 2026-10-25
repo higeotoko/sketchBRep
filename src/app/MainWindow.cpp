@@ -1,4 +1,6 @@
 #include "MainWindow.h"
+#include "DwgConverter.h"
+#include <QTemporaryDir>
 
 #include <algorithm>
 #include <unordered_set>
@@ -440,6 +442,8 @@ void MainWindow::buildMenus() {
                                                       tr("画像 (*.png *.jpg *.jpeg *.bmp *.gif)"));
     if (!path.isEmpty()) importUnderlay(path);
   });
+  file->addAction(tr("DXF / DWG 2D図面を取り込む..."), this, &MainWindow::importDrawing);
+  file->addAction(tr("DWG 変換ソフトの設定..."), this, &MainWindow::configureDwgConverter);
   file->addAction(tr("STEP インポート..."), this, &MainWindow::importStep);
   file->addAction(tr("STEP エクスポート..."), this, &MainWindow::exportStep);
   file->addAction(tr("Rhino 3DM インポート..."), this, &MainWindow::import3dm);
@@ -2724,6 +2728,74 @@ bool MainWindow::saveAs() {
   if (path.isEmpty()) return false;
   if (!path.endsWith(QStringLiteral(".sbr"), Qt::CaseInsensitive)) path += QStringLiteral(".sbr");
   return saveFile(path);
+}
+
+void MainWindow::configureDwgConverter() {
+  const auto path = QFileDialog::getOpenFileName(this, tr("ODA File Converter の実行ファイルを選択"),
+                                                QSettings().value("import/odaConverter").toString());
+  if (path.isEmpty()) return;
+  if (!QFileInfo(path).isExecutable()) { reportError(tr("実行ファイルを選択してください。")); return; }
+  QSettings().setValue("import/odaConverter", path);
+  setStatus(tr("DWG 変換ソフトを設定しました"));
+}
+
+void MainWindow::importDrawing() {
+  const QString path = QFileDialog::getOpenFileName(this, tr("2D図面を取り込む"), {},
+                                                   tr("2D CAD (*.dxf *.dwg);;DXF (*.dxf);;DWG (*.dwg)"));
+  if (path.isEmpty()) return;
+  if (path.endsWith(".dwg", Qt::CaseInsensitive)) {
+    QString converter = QSettings().value("import/odaConverter").toString();
+    if (converter.isEmpty()) {
+      QMessageBox::information(this, tr("DWG の取り込み"),
+          tr("DWG の取り込みには ODA File Converter の別途インストールが必要です。\n"
+             "インストール済みの場合は、次の画面で実行ファイルを選択してください。\n"
+             "公式配布元: https://www.opendesign.com/guestfiles/oda_file_converter"));
+      configureDwgConverter();
+      converter = QSettings().value("import/odaConverter").toString();
+      if (converter.isEmpty()) return;
+    }
+    QTemporaryDir output;
+    if (!output.isValid()) { reportError(tr("一時フォルダーを作成できません。")); return; }
+    auto converted = convertDwgToDxf(path, converter, output.path(), this);
+    if (!converted) { reportError(QString::fromStdString(converted.error())); return; }
+    importDxfFile(*converted);
+  } else importDxfFile(path);
+}
+
+bool MainWindow::importDxfFile(const QString& path) {
+  geom::DxfImportOptions options;
+  geom::DxfImportReport report;
+  // Inspect before committing, so neither cancelling units nor partial import adds history.
+  {
+    auto inspected = geom::readDxf(utf8(path), options, &report);
+    if (!inspected) { reportError(QString::fromStdString(inspected.error())); return false; }
+  }
+  if (!report.unitsKnown) {
+    bool ok = false;
+    options.unitlessScaleToMm = QInputDialog::getDouble(this, tr("図面の単位"),
+        tr("図面に単位の指定がありません。1 図面単位は何 mm ですか？\n"
+           "mm: 1 / cm: 10 / m: 1000 / inch: 25.4"), 1, 0.000001, 1000000, 6, &ok);
+    if (!ok) return false;
+  }
+  if (report.incomplete()) {
+    QStringList omitted;
+    for (const auto& [type, count] : report.omitted)
+      omitted << tr("%1: %2 個").arg(QString::fromStdString(type)).arg(count);
+    if (QMessageBox::question(this, tr("2D図面の取り込み"),
+          tr("次の要素は読み込めません。\n%1\n\n読める線図だけを取り込みますか？")
+              .arg(omitted.join('\n')), QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+      return false;
+    options.allowPartial = true;
+  }
+  auto ids = modeler_.importDxf(utf8(path), options, &report);
+  if (!ids) { reportError(QString::fromStdString(ids.error())); return false; }
+  setSelection(*ids);
+  viewport_->syncNow();
+  viewport_->fitAll();
+  setStatus(tr("2D図面から %1 個の線図を取り込みました（単位 mm、レイヤはタグ）。%2")
+      .arg(ids->size()).arg(report.incomplete() ? tr("未対応の要素は除外しました。") : QString()) +
+      (report.paperSpace ? tr(" ペーパー空間の %1 個は対象外です。").arg(report.paperSpace) : QString()));
+  return true;
 }
 
 void MainWindow::importStep() {

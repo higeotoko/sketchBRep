@@ -173,6 +173,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   // Imports a .3dm file; when it does not come through whole, asks before
   // taking what could be read.
   void import3dmFile(const QString& path);
+  bool importDxfFile(const QString& path);
   static QString describe3dmReport(const geom::Import3dmReport& report);
 
  protected:
@@ -205,6 +206,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   bool save();
   bool saveAs();
   void importStep();
+  void importDrawing();
+  void configureDwgConverter();
   void exportStep();
   void import3dm();
   void export3dm();

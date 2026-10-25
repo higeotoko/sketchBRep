@@ -303,6 +303,16 @@ struct MergeAcrossOp {
   gp_Dir direction;
 };
 
+// An exact interval of one edge of the preceding recipe. Keeping the source
+// recipe lets a split curve retain its construction history. A changed edge
+// count or endpoint identity is refused instead of selecting another edge.
+struct CurveIntervalOp {
+  int edge = 1;
+  int edgeCount = 1;
+  double first = 0.0, last = 1.0;
+  gp_Pnt start, end;
+};
+
 // All faces turned over (front <-> back) - for open shells and profiles.
 struct ReverseOp {};
 
@@ -317,7 +327,7 @@ struct InsetOp {
 
 using Modifier = std::variant<ExtrudeOp, PushPullOp, OffsetOp, RevolveOp, SplitOp, OffsetFaceOp, HoleOp, ScaleOp,
                               RemoveFaceOp, CapHolesOp, ReverseOp, MoveVerticesOp, InsetOp, StretchOp,
-                              MergeAcrossOp>;
+                              MergeAcrossOp, CurveIntervalOp>;
 
 struct Recipe {
   BaseFeature base;

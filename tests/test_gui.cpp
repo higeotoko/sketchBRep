@@ -230,6 +230,12 @@ class GuiPhase1 : public QObject {
   void dimensionAndTextTools();
   void lineAcrossWallSplitsFace();
   void arcAndLinesCloseIntoFace();
+  void arcClosesMixedOutline_data();
+  void arcClosesMixedOutline();
+  void arcOutlineClosesAfterErasingCorner();
+  void splineClosesMixedOutline_data();
+  void splineClosesMixedOutline();
+  void texturedMaterialSurvivesGeometryRebuild();
   void sectionPlaneCutsView();
   void sectionToolAndTagsPanel();
   void pushPullCylinderSide();
@@ -6708,3 +6714,181 @@ void GuiPhase1::brandingResourcesLoad() {
 
 QTEST_MAIN(GuiPhase1)
 #include "test_gui.moc"
+
+
+// A spline drawn last must close the same outline as a line drawn last.
+void GuiPhase1::splineClosesMixedOutline_data() {
+  QTest::addColumn<bool>("curveLast");
+  QTest::newRow("spline-last") << true;
+  QTest::newRow("line-last") << false;
+}
+
+void GuiPhase1::splineClosesMixedOutline() {
+  QFETCH(bool, curveLast);
+  Fixture f;
+  QVERIFY(f.setUp(1500, 1000));
+  auto& m = f.window.modeler();
+  const std::vector<gp_Pnt> line = {gp_Pnt(0, 0, 0), gp_Pnt(0, 3000, 0), gp_Pnt(4000, 3000, 0)};
+  const std::vector<gp_Pnt> curve = {gp_Pnt(4000, 3000, 0), gp_Pnt(3000, 500, 0), gp_Pnt(0, 0, 0)};
+  QVERIFY(curveLast ? m.createPolyline(line).ok() : m.createCurve(curve, false).ok());
+  f.vp->syncNow();
+  const auto before = m.history().undoCount();
+  f.window.activateTool(curveLast ? MainWindow::ToolId::Curve : MainWindow::ToolId::Line);
+  for (const gp_Pnt& p : curveLast ? curve : line) click(f.vp, f.vp->toWidget(p));
+  if (curveLast) QTest::keyClick(f.vp, Qt::Key_Return);
+  f.vp->syncNow();
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  const auto id = m.document().objects().front().id;
+  QCOMPARE(m.document().find(id)->kind(), doc::ObjectKind::Face);
+  const double area = geom::area(m.document().worldShape(id));
+  QVERIFY(area > 1e6);
+  bool spline = false;
+  for (TopExp_Explorer e(m.document().worldShape(id), TopAbs_EDGE); e.More(); e.Next())
+    spline |= BRepAdaptor_Curve(TopoDS::Edge(e.Current())).GetType() == GeomAbs_BSplineCurve;
+  QVERIFY(spline);
+  QCOMPARE(m.history().undoCount(), before + 1);
+  QVERIFY(m.undo());
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  QCOMPARE(m.document().objects().front().kind(), doc::ObjectKind::Curve);
+  QVERIFY(m.redo());
+  QTemporaryDir dir;
+  QVERIFY(m.save(dir.filePath("mixed.sbr").toStdString()));
+  doc::Modeler loaded;
+  QVERIFY(loaded.load(dir.filePath("mixed.sbr").toStdString()));
+  QVERIFY(std::abs(geom::area(loaded.document().worldShape(id)) - area) < 1e-3);
+  QVERIFY(m.extrude(id, 1000));
+  QVERIFY(std::abs(geom::volume(m.document().worldShape(id)) - area * 1000) < 1);
+}
+
+
+void GuiPhase1::texturedMaterialSurvivesGeometryRebuild() {
+  Fixture f;
+  QVERIFY(f.setUp(1000, 1000));
+  auto& m = f.window.modeler();
+  const auto box = f.box(0, 0, 2000, 2000, 2000);
+  f.vp->syncNow();
+  auto brick = f.window.addPresetMaterial(5);
+  QVERIFY(brick);
+  QVERIFY(m.assignMaterial({box}, *brick));
+  f.vp->syncNow();
+  QVERIFY(f.vp->showsTexture(box));
+  const auto image = m.document().findMaterial(*brick)->texture->image;
+  QVERIFY(m.setParameter(box, "width", 3000));
+  f.vp->syncNow();
+  QCOMPARE(m.document().find(box)->material, *brick);
+  QCOMPARE(m.document().findMaterial(*brick)->texture->image, image);
+  QVERIFY(m.document().findImage(image));
+  QVERIFY(f.vp->showsTexture(box));
+  QVERIFY(m.undo());
+  f.vp->syncNow();
+  QVERIFY(f.vp->showsTexture(box));
+  QVERIFY(m.redo());
+  f.vp->syncNow();
+  QVERIFY(f.vp->showsTexture(box));
+  // Rendering must still leave the canonical B-rep free of mesh data.
+  for (TopExp_Explorer e(m.document().worldShape(box), TopAbs_FACE); e.More(); e.Next()) {
+    TopLoc_Location location;
+    QVERIFY(BRep_Tool::Triangulation(TopoDS::Face(e.Current()), location).IsNull());
+  }
+}
+
+
+void GuiPhase1::arcClosesMixedOutline_data() {
+  QTest::addColumn<bool>("arcLast");
+  QTest::addColumn<bool>("lineMode");
+  QTest::newRow("arc-last-line-mode") << true << true;
+  QTest::newRow("arc-last-default-mode") << true << false;
+  QTest::newRow("line-last") << false << true;
+}
+
+void GuiPhase1::arcClosesMixedOutline() {
+  QFETCH(bool, arcLast);
+  QFETCH(bool, lineMode);
+  Fixture f;
+  QVERIFY(f.setUp(3000, 1000));
+  auto& m = f.window.modeler();
+  const std::vector<gp_Pnt> line = {gp_Pnt(2000, 0, 0), gp_Pnt(0, 0, 0), gp_Pnt(0, 4000, 0),
+                                   gp_Pnt(6000, 0, 0), gp_Pnt(4000, 0, 0)};
+  if (arcLast) QVERIFY(m.createPolyline(line));
+  else QVERIFY(m.createArc(gp_Pnt(4000, 0, 0), gp_Pnt(2000, 0, 0), gp::DZ(), 400, false));
+  f.vp->syncNow();
+  const auto before = m.history().undoCount();
+  if (arcLast) {
+    f.window.activateTool(MainWindow::ToolId::Arc);
+    if (lineMode) QTest::keyClick(f.vp, Qt::Key_Control);
+    click(f.vp, f.vp->toWidget(gp_Pnt(4000, 0, 0)));
+    click(f.vp, f.vp->toWidget(gp_Pnt(2000, 0, 0)));
+    move(f.vp, f.vp->toWidget(gp_Pnt(3000, -400, 0)));
+    type(f.vp, QStringLiteral("400"));
+  } else {
+    f.window.activateTool(MainWindow::ToolId::Line);
+    for (const auto& p : line) click(f.vp, f.vp->toWidget(p));
+  }
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  if (arcLast && !lineMode) {
+    // The documented default is an arc+chord segment face, not a loose arc.
+    // Do not mistake this mode for a failed attempt to fill the surrounding outline.
+    QCOMPARE(m.document().objects().size(), std::size_t(2));
+    const auto& segment = m.document().objects().back();
+    QCOMPARE(segment.kind(), doc::ObjectKind::Face);
+    const double segmentArea = geom::area(m.document().worldShape(segment));
+    QVERIFY(segmentArea > 0 && segmentArea < 1e6);
+    QCOMPARE(m.history().undoCount(), before + 1);
+    QVERIFY(m.undo());
+    QCOMPARE(m.document().objects().size(), std::size_t(1));
+    return;
+  }
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  const auto id = m.document().objects().front().id;
+  QCOMPARE(m.document().find(id)->kind(), doc::ObjectKind::Face);
+  const double area = geom::area(m.document().worldShape(id));
+  QVERIFY(area > 12e6);
+  QCOMPARE(m.history().undoCount(), before + 1);
+  QVERIFY(m.undo());
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  QCOMPARE(m.document().objects().front().kind(), doc::ObjectKind::Curve);
+  QVERIFY(m.redo());
+  QVERIFY(m.extrude(id, 1000));
+  QVERIFY(std::abs(geom::volume(m.document().worldShape(id)) - area * 1000) < 1);
+}
+
+
+void GuiPhase1::arcOutlineClosesAfterErasingCorner() {
+  Fixture f;
+  QVERIFY(f.setUp(3000, 2000));
+  auto& m = f.window.modeler();
+  QVERIFY(m.createPolyline({gp_Pnt(0, 0, 0), gp_Pnt(6000, 0, 0), gp_Pnt(6000, 4000, 0)}));
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::Arc);
+  click(f.vp, f.vp->toWidget(gp_Pnt(4000, 0, 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(6000, 2000, 0)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(5500, 500, 0)));
+  type(f.vp, QStringLiteral("585.786437626905"));
+  f.vp->syncNow();
+  QCOMPARE(m.document().objects().size(), std::size_t(2));
+  f.window.activateTool(MainWindow::ToolId::Eraser);
+  for (const auto& point : {gp_Pnt(5000, 1000, 0), gp_Pnt(5000, 0, 0), gp_Pnt(6000, 1000, 0)}) {
+    click(f.vp, f.vp->toWidget(point));
+    f.vp->syncNow();
+    QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  }
+  const auto before = m.history().undoCount();
+  f.window.activateTool(MainWindow::ToolId::Line);
+  click(f.vp, f.vp->toWidget(gp_Pnt(6000, 4000, 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));
+  f.vp->syncNow();
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), std::size_t(2));
+  doc::ObjectId id;
+  for (const auto& o : m.document().objects()) {
+    if (o.kind() == doc::ObjectKind::Face) id = o.id;
+    else QCOMPARE(o.kind(), doc::ObjectKind::Curve);  // the unused interval stays
+  }
+  QVERIFY(!id.empty());
+  QCOMPARE(m.history().undoCount(), before + 1);
+  QVERIFY(m.undo());
+  QCOMPARE(m.document().objects().size(), std::size_t(3));
+  QVERIFY(m.redo());
+  QVERIFY(m.extrude(id, 1000));
+}

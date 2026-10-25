@@ -12,6 +12,10 @@
 
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepTools.hxx>
+#include <BRep_Tool.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
+#include <TopExp.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
 #include <TopLoc_Location.hxx>
 #include <TopExp_Explorer.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
@@ -460,6 +464,28 @@ Result<TopoDS_Shape> regenerate(const Recipe& recipe, const RegenContext& contex
               // to merge, the shape as it is.
               return geom::mergeFacesAcross(shape, op.point, op.direction);
             },
+            [&](const CurveIntervalOp& op) -> Result<TopoDS_Shape> {
+              TopTools_IndexedMapOfShape edges;
+              TopExp::MapShapes(shape, TopAbs_EDGE, edges);
+              if (edges.Extent() != op.edgeCount || op.edge < 1 || op.edge > edges.Extent() ||
+                  !std::isfinite(op.first) || !std::isfinite(op.last) ||
+                  op.first < 0 || op.last > 1 || op.first >= op.last)
+                return Result<TopoDS_Shape>::failure("The curve interval no longer identifies an edge");
+              const auto edge = TopoDS::Edge(edges(op.edge));
+              TopoDS_Vertex a, b; TopExp::Vertices(edge, a, b);
+              if (a.IsNull() || b.IsNull()) return Result<TopoDS_Shape>::failure("The curve interval lost its ends");
+              const gp_Pnt p = BRep_Tool::Pnt(a), q = BRep_Tool::Pnt(b);
+              if (!((p.Distance(op.start) < tolerance::kLinear && q.Distance(op.end) < tolerance::kLinear) ||
+                    (p.Distance(op.end) < tolerance::kLinear && q.Distance(op.start) < tolerance::kLinear)))
+                return Result<TopoDS_Shape>::failure("The curve interval endpoints changed; select the outline again");
+              double first, last;
+              const auto curve = BRep_Tool::Curve(edge, first, last);
+              if (curve.IsNull()) return Result<TopoDS_Shape>::failure("The curve interval has no curve");
+              BRepBuilderAPI_MakeEdge part(curve, first + (last - first) * op.first,
+                                                first + (last - first) * op.last);
+              if (!part.IsDone()) return Result<TopoDS_Shape>::failure("The curve interval cannot be built");
+              return TopoDS_Shape(BRepBuilderAPI_MakeWire(part.Edge()).Wire());
+            },
             [&](const ReverseOp&) -> Result<TopoDS_Shape> { return shape.Reversed(); },
             [&](const MoveVerticesOp& op) -> Result<TopoDS_Shape> {
               return geom::moveVertices(shape, op.points, gp_Vec(op.direction) * op.distance, op.autofold);
@@ -536,6 +562,7 @@ std::vector<Parameter> parameters(const Recipe& recipe) {
                    [&](const RemoveFaceOp&) {},
                    [&](const CapHolesOp&) {},
                    [&](const MergeAcrossOp&) {},
+                   [&](const CurveIntervalOp&) {},
                    [&](const ReverseOp&) {},
                    [&](const MoveVerticesOp& op) {
                      out.push_back({opKey(i), "Move " + std::to_string(i) + " distance", op.distance, true});
@@ -618,7 +645,7 @@ Status setParameter(Recipe& recipe, const std::string& key, double value) {
     if (key != opKey(i)) continue;
     bool found = false;
     std::visit(Overloaded{[&](RevolveOp&) {}, [&](SplitOp&) {}, [&](HoleOp&) {}, [&](ScaleOp&) {}, [&](StretchOp&) {},
-                          [&](RemoveFaceOp&) {}, [&](CapHolesOp&) {}, [&](ReverseOp&) {}, [&](MergeAcrossOp&) {},
+                          [&](RemoveFaceOp&) {}, [&](CapHolesOp&) {}, [&](ReverseOp&) {}, [&](MergeAcrossOp&) {}, [&](CurveIntervalOp&) {},
                           [&](auto& op) {
                             op.distance = value;
                             found = true;
@@ -677,6 +704,7 @@ std::string describe(const Recipe& recipe) {
                    [&](const RemoveFaceOp&) { out << " > Delete face"; },
                    [&](const CapHolesOp&) { out << " > Fill holes"; },
                    [&](const MergeAcrossOp&) { out << " > Erase line"; },
+                   [&](const CurveIntervalOp&) { out << " > Curve interval"; },
                    [&](const ReverseOp&) { out << " > Reverse faces"; },
                    [&](const MoveVerticesOp& op) {
                      out << " > Move " << op.points.size() << (op.points.size() == 1 ? " corner " : " corners ")

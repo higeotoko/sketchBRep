@@ -6,6 +6,11 @@
 #include <gtest/gtest.h>
 
 #include <TopExp_Explorer.hxx>
+#include <BRepBuilderAPI_MakeVertex.hxx>
+#include <BRepExtrema_DistShapeShape.hxx>
+#include <BRepAdaptor_Curve.hxx>
+#include <BRepGProp.hxx>
+#include <GProp_GProps.hxx>
 #include <TopoDS.hxx>
 
 #include "sbr/doc/Modeler.h"
@@ -378,4 +383,139 @@ TEST(Gate1, OutlineOnSolidFaceFacesOutwards) {
   auto cut = m.pushPull(*window, TopoDS::Face(m.document().worldShape(*window)), -300);
   ASSERT_TRUE(cut.ok()) << cut.error();
   EXPECT_NEAR(geom::volume(m.document().worldShape(cut->id)), 4000.0 * 300 * 3000 - 1000.0 * 1000 * 300, 1.0);
+}
+
+
+TEST(Gate1, ArcOutlineClosesAfterErasingOverlappingCorner) {
+  doc::Modeler m;
+  ASSERT_TRUE(m.createPolyline({gp_Pnt(0, 0, 0), gp_Pnt(6000, 0, 0), gp_Pnt(6000, 4000, 0)}));
+  const double bulge = -2000 * (std::sqrt(2.0) - 1) / std::sqrt(2.0);
+  ASSERT_TRUE(m.createArc(gp_Pnt(4000, 0, 0), gp_Pnt(6000, 2000, 0), gp::DZ(), bulge, true));
+  auto erase = [&](const gp_Pnt& point) {
+    const auto vertex = BRepBuilderAPI_MakeVertex(point).Vertex();
+    for (const auto& o : m.document().objects()) {
+      for (TopExp_Explorer e(m.document().worldShape(o), TopAbs_EDGE); e.More(); e.Next()) {
+        BRepExtrema_DistShapeShape distance(vertex, e.Current());
+        if (!distance.IsDone() || distance.Value() > 1e-5) continue;
+        return m.eraseLinePiece(o.id, TopoDS::Edge(e.Current()), point).status();
+      }
+    }
+    return Status::failure("No edge at erase point");
+  };
+  ASSERT_TRUE(erase(gp_Pnt(5000, 1000, 0)));  // the arc's chord
+  ASSERT_TRUE(erase(gp_Pnt(5000, 0, 0)));     // overlapping corner below the arc
+  ASSERT_TRUE(erase(gp_Pnt(6000, 1000, 0)));
+  auto closing = m.createPolyline({gp_Pnt(6000, 4000, 0), gp_Pnt(0, 0, 0)});
+  ASSERT_TRUE(closing);
+  bool found = false;
+  auto face = m.faceFromLoop(*closing, &found);
+  ASSERT_TRUE(face) << face.error();
+  EXPECT_TRUE(found);
+  EXPECT_EQ(m.document().objects().size(), 1u);
+  EXPECT_EQ(m.document().find(*face)->kind(), doc::ObjectKind::Face);
+  EXPECT_NEAR(geom::area(m.document().worldShape(*face)), 12e6 - (4 - M_PI) * 1e6, 1e-2);
+}
+
+TEST(Gate1, TrimmedLineMeetingArcInteriorMakesFaceAndKeepsOverhang) {
+  doc::Modeler m;
+  ASSERT_TRUE(m.createPolyline({gp_Pnt(0, 0, 0), gp_Pnt(6000, 0, 0), gp_Pnt(6000, 4000, 0)}));
+  // Snapping a mouse click on an edge need not put the start at a round number.
+  // This near-tangent arc crosses Y=0 again just after its start.
+  ASSERT_TRUE(m.createArc(gp_Pnt(3995.542879740573, 0, 0), gp_Pnt(6000, 2000, 0),
+                          gp::DZ(), -585.786437626905, true));
+  auto erase = [&](const gp_Pnt& point) {
+    const auto vertex = BRepBuilderAPI_MakeVertex(point).Vertex();
+    for (const auto& o : m.document().objects()) {
+      for (TopExp_Explorer e(m.document().worldShape(o), TopAbs_EDGE); e.More(); e.Next()) {
+        BRepExtrema_DistShapeShape distance(vertex, e.Current());
+        if (!distance.IsDone() || distance.Value() > 2) continue;
+        return m.eraseLinePiece(o.id, TopoDS::Edge(e.Current()), point).status();
+      }
+    }
+    return Status::failure("No edge at erase point");
+  };
+  ASSERT_TRUE(erase(gp_Pnt(4997.771439870286, 1000, 0)));
+  ASSERT_TRUE(erase(gp_Pnt(5000, 0, 0)));
+  ASSERT_TRUE(erase(gp_Pnt(6000, 1000, 0)));
+  const auto before = m.history().undoCount();
+  m.history().beginGroup("Line");
+  auto closing = m.createPolyline({gp_Pnt(6000, 4000, 0), gp_Pnt(0, 0, 0)});
+  ASSERT_TRUE(closing);
+  auto totalLength = [&] {
+    double length = 0;
+    for (const auto& o : m.document().objects()) {
+      GProp_GProps props; BRepGProp::LinearProperties(m.document().worldShape(o), props);
+      length += props.Mass();
+    }
+    return length;
+  };
+  const double lengthBefore = totalLength();
+  auto face = m.faceFromLoop(*closing);
+  ASSERT_TRUE(face) << face.error();
+  m.history().endGroup();
+  EXPECT_NEAR(totalLength(), lengthBefore, 1e-3);
+  EXPECT_EQ(m.history().undoCount(), before + 1);
+  EXPECT_EQ(m.document().objects().size(), 2u);  // face plus the unused interval
+  EXPECT_EQ(m.document().find(*face)->kind(), doc::ObjectKind::Face);
+  const auto& loop = std::get<doc::LoopProfile>(m.document().find(*face)->recipe.base);
+  bool keptSourceArc = false;
+  for (const auto& operand : loop.curves) {
+    if (!std::holds_alternative<doc::ArcCurve>(operand.recipe->base)) continue;
+    keptSourceArc = true;
+    ASSERT_FALSE(operand.recipe->modifiers.empty());
+    EXPECT_TRUE(std::holds_alternative<doc::CurveIntervalOp>(operand.recipe->modifiers.back()));
+  }
+  EXPECT_TRUE(keptSourceArc);
+  for (const auto& o : m.document().objects()) if (o.id != *face) {
+    EXPECT_EQ(o.kind(), doc::ObjectKind::Curve);
+    EXPECT_TRUE(std::holds_alternative<doc::ArcCurve>(o.recipe.base) ||
+                std::holds_alternative<doc::PolylineCurve>(o.recipe.base));
+    ASSERT_FALSE(o.recipe.modifiers.empty());
+    EXPECT_TRUE(std::holds_alternative<doc::CurveIntervalOp>(o.recipe.modifiers.back()));
+  }
+  doc::Document loaded;
+  const auto saved = doc::serializeDocument(m.document());
+  ASSERT_TRUE(doc::deserializeDocument(saved, loaded));
+  EXPECT_EQ(loaded.objects().size(), 2u);
+  const double area = geom::area(m.document().worldShape(*face));
+  EXPECT_NEAR(geom::area(loaded.worldShape(*loaded.find(*face))), area, 1e-3);
+  ASSERT_TRUE(m.undo()); EXPECT_EQ(m.document().objects().size(), 3u);
+  ASSERT_TRUE(m.redo()); EXPECT_EQ(m.document().objects().size(), 2u);
+  ASSERT_TRUE(m.extrude(*face, 1000));
+  EXPECT_NEAR(geom::volume(m.document().worldShape(*face)), area * 1000, 1.0);
+}
+
+
+TEST(Gate1, CurveJunctionsDoNotFillGapsOrNonplanarLoops) {
+  for (bool gap : {false, true}) {
+    doc::Modeler m;
+    auto arc = m.createArc(gp_Pnt(-1, 0, 0), gp_Pnt(10, 0, 0), gp::DZ(), 4, false);
+    ASSERT_TRUE(arc);
+    TopExp_Explorer e(m.document().worldShape(*arc), TopAbs_EDGE);
+    BRepAdaptor_Curve curve(TopoDS::Edge(e.Current()));
+    gp_Pnt joint = curve.Value(curve.FirstParameter() * 0.9 + curve.LastParameter() * 0.1);
+    if (gap) joint.SetZ(0.01);
+    ASSERT_TRUE(m.createPolyline({gp_Pnt(-10, -10, 0), joint}));
+    ASSERT_TRUE(m.createPolyline({gp_Pnt(10, 0, 0), gp_Pnt(20, -10, 0)}));
+    auto closing = m.createPolyline({gp_Pnt(20, -10, 0), gp_Pnt(0, -20, gap ? 0 : 10), gp_Pnt(-10, -10, 0)});
+    ASSERT_TRUE(closing);
+    const auto before = doc::serializeDocument(m.document());
+    const auto steps = m.history().undoCount();
+    bool found = false;
+    EXPECT_FALSE(m.faceFromLoop(*closing, &found));
+    EXPECT_EQ(found, !gap);
+    EXPECT_EQ(doc::serializeDocument(m.document()), before);
+    EXPECT_EQ(m.history().undoCount(), steps);
+  }
+}
+
+
+TEST(Gate1, CurveIntervalRejectsChangedEdgeIdentity) {
+  doc::Recipe recipe;
+  recipe.base = doc::PolylineCurve{{gp_Pnt(0, 0, 0), gp_Pnt(10, 0, 0), gp_Pnt(10, 10, 0)}};
+  recipe.modifiers.push_back(doc::CurveIntervalOp{1, 2, 0.2, 0.8, gp_Pnt(0, 0, 0), gp_Pnt(10, 0, 0)});
+  ASSERT_TRUE(doc::regenerate(recipe));
+  // Same number of edges, but the indexed edge is no longer the selected one.
+  std::get<doc::PolylineCurve>(recipe.base).points[0] = gp_Pnt(-10, 0, 0);
+  EXPECT_FALSE(doc::regenerate(recipe));
 }

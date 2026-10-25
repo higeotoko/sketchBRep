@@ -1422,7 +1422,6 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
       context_->Display(entry.selectionDots, AIS_Shaded, -1, Standard_False);
     }
   }
-  if (hasFaces) updateTextures(*o, entry);
   if (!created && found->second.locked != o->locked) {
     found->second.locked = o->locked;
     applyPickMode(found->second.ais, o->locked);
@@ -1443,6 +1442,9 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
   } else if (recompute) {
     context_->Redisplay(entry.ais, Standard_False);  // per-face colours changed
   }
+  // Display/Redisplay tessellates the display copy. A rebuilt shape has no
+  // triangles yet before that call; caching its texture then loses the picture.
+  if (hasFaces) updateTextures(*o, entry);
   return guidesChanged;
 }
 
