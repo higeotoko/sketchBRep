@@ -848,3 +848,46 @@ TEST(Transactions, GroupKeepsOneChangePerObject) {
   EXPECT_NEAR(m.document().find(*wall)->transform.TranslationPart().X(), end.TranslationPart().X(), 1e-9);
   EXPECT_EQ(m.document().find(*other), nullptr);
 }
+
+// Lines crossing on a face: each segment erases on its own, whichever line
+// was drawn first (an earlier line crossed by later ones could not be
+// erased, and erasing took the whole line). Saved and pushed afterwards.
+TEST(Transactions, CrossingLinesEraseSegmentBySegment) {
+  for (const bool horizontalFirst : {true, false}) {
+    Api a;
+    const std::string box =
+        a.ok("create_box", {{"origin", {0, 0, 0}}, {"width", 3000}, {"depth", 2000}, {"height", 1500}})["id"];
+    const json h = {{0, 0, 1200}, {3000, 0, 1200}};
+    const json v1 = {{1000, 0, 0}, {1000, 0, 1500}};
+    const json v2 = {{2000, 0, 0}, {2000, 0, 1500}};
+    for (const json& line : horizontalFirst ? std::vector<json>{h, v1, v2} : std::vector<json>{v1, v2, h}) {
+      a.ok("split_face", {{"points", line}});
+    }
+    auto frontFaces = [&] {
+      int n = 0;
+      const json object = a.ok("get_object", {{"id", box}});
+      for (const json& f : object["faces"]) n += f["normal"][1].get<double>() < -0.99;
+      return n;
+    };
+    EXPECT_EQ(frontFaces(), 6);
+    // The upper piece of the first vertical line only.
+    a.ok("erase_edge", {{"id", box}, {"edge", {{"near", {1000, 0, 1400}}}}});
+    EXPECT_EQ(frontFaces(), 5);
+    // A piece of the horizontal line, crossed by the second vertical one.
+    a.ok("erase_edge", {{"id", box}, {"edge", {{"near", {2500, 0, 1200}}}}});
+    EXPECT_EQ(frontFaces(), 4);
+    // Saved and opened again: the same.
+    sbr::doc::Document loaded;
+    std::vector<std::string> warnings;
+    ASSERT_TRUE(sbr::doc::deserializeDocument(sbr::doc::serializeDocument(a.modeler.document()), loaded, &warnings, true).ok());
+    EXPECT_TRUE(warnings.empty()) << warnings.front();
+    // Then pushed: a face beside the erased line moves out whole.
+    a.ok("push_pull", {{"id", box}, {"face", {{"normal", {0, -1, 0}}, {"near", {500, 0, 1400}}}}, {"distance", 300}});
+    EXPECT_NEAR(a.ok("get_object", {{"id", box}})["volume"].get<double>(), 3000.0 * 2000 * 1500 + 2000.0 * 300 * 300, 1.0);
+    // Undo three times: the lines as drawn.
+    ASSERT_TRUE(a.modeler.undo());
+    ASSERT_TRUE(a.modeler.undo());
+    ASSERT_TRUE(a.modeler.undo());
+    EXPECT_EQ(frontFaces(), 6);
+  }
+}

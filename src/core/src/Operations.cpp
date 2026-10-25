@@ -191,6 +191,49 @@ void keepEdgesOn(ShapeUpgrade_UnifySameDomain& unify, const TopoDS_Shape& shape,
 
 }  // namespace
 
+Result<TopoDS_Shape> mergeFacesAcross(const TopoDS_Shape& shape, const gp_Pnt& point, const gp_Dir& direction) {
+  using R = Result<TopoDS_Shape>;
+  try {
+    TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
+    TopExp::MapShapesAndAncestors(shape, TopAbs_EDGE, TopAbs_FACE, edgeFaces);
+    int target = 0;
+    for (int i = 1; i <= edgeFaces.Extent() && target == 0; ++i) {
+      const TopoDS_Edge edge = TopoDS::Edge(edgeFaces.FindKey(i));
+      BRepAdaptor_Curve curve(edge);
+      if (curve.GetType() != GeomAbs_Line || !curve.Line().Direction().IsParallel(direction, 1e-6)) continue;
+      const gp_Pnt a = curve.Value(curve.FirstParameter()), b = curve.Value(curve.LastParameter());
+      const gp_Vec ab(a, b);
+      if (ab.SquareMagnitude() < 1e-12) continue;
+      const double t = gp_Vec(a, point).Dot(ab) / ab.SquareMagnitude();
+      if (t <= 0 || t >= 1 || a.Translated(ab * t).Distance(point) > 1e-3) continue;
+      // Exactly two faces beside it, in one plane.
+      const TopTools_ListOfShape& beside = edgeFaces(i);
+      if (beside.Extent() != 2) continue;
+      gp_Pln p1, p2;
+      if (!isPlanarFace(TopoDS::Face(beside.First()), &p1) || !isPlanarFace(TopoDS::Face(beside.Last()), &p2)) continue;
+      if (!p1.Axis().Direction().IsParallel(p2.Axis().Direction(), 1e-6) || p1.Distance(p2.Location()) > 1e-3) continue;
+      target = i;
+    }
+    if (target == 0) return shape;
+    // Every piece of the border between those two faces goes (a line
+    // erased across it before leaves its point dividing the border).
+    const TopTools_ListOfShape& pair = edgeFaces(target);
+    auto between = [&](int i) {
+      const TopTools_ListOfShape& f = edgeFaces(i);
+      return f.Extent() == 2 && ((f.First().IsSame(pair.First()) && f.Last().IsSame(pair.Last())) ||
+                                 (f.First().IsSame(pair.Last()) && f.Last().IsSame(pair.First())));
+    };
+    ShapeUpgrade_UnifySameDomain unify(shape, Standard_False, Standard_True, Standard_False);
+    for (int i = 1; i <= edgeFaces.Extent(); ++i) {
+      if (!between(i)) unify.KeepShape(edgeFaces.FindKey(i));
+    }
+    unify.Build();
+    return unify.Shape();
+  } catch (const Standard_Failure& e) {
+    return R::failure(std::string("Erasing the line failed: ") + e.GetMessageString());
+  }
+}
+
 Result<TopoDS_Shape> pushPullFace(const TopoDS_Shape& solid, const TopoDS_Face& face, double distance,
                                   const std::vector<Segment>& keepLines) {
   if (!std::isfinite(distance) || std::abs(distance) < tolerance::kMinDimension) {

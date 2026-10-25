@@ -20,6 +20,10 @@ namespace sbr::geom {
 // a face and sews them in; a shell closed that way becomes a solid. Holes
 // that are not flat are refused.
 Result<TopoDS_Shape> capHoles(const TopoDS_Shape& shell);
+// The two coplanar faces on either side of the straight edge through `point`
+// along `direction` made one; every other edge stays. No such edge (it went
+// with an earlier change): the shape unchanged.
+Result<TopoDS_Shape> mergeFacesAcross(const TopoDS_Shape& shape, const gp_Pnt& point, const gp_Dir& direction);
 
 // Faces (and open shells) meeting edge to edge round a volume, joined into
 // one closed solid facing outwards. Refused - with the reason - when there

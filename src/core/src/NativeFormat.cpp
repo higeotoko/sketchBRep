@@ -527,6 +527,9 @@ json modifierToJson(const Modifier& m) {
             return j;
           },
           [](const CapHolesOp&) { return json{{"type", "capholes"}}; },
+          [](const MergeAcrossOp& op) {
+            return json{{"type", "mergeacross"}, {"point", toJson(op.point)}, {"direction", toJson(op.direction)}};
+          },
           [](const ReverseOp&) { return json{{"type", "reverse"}}; },
           [](const MoveVerticesOp& op) {
             json j{{"type", "movevertices"},
@@ -592,6 +595,7 @@ Modifier modifierFrom(const json& j) {
     return op;
   }
   if (type == "capholes") return CapHolesOp{};
+  if (type == "mergeacross") return MergeAcrossOp{pointFrom(j.at("point")), dirFrom(j.at("direction"))};
   if (type == "reverse") return ReverseOp{};
   if (type == "movevertices") {
     MoveVerticesOp op;

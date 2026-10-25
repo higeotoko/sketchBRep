@@ -293,6 +293,16 @@ struct MoveVerticesOp {
 // Every flat hole of an open shell gets a face; closed again, it is a solid.
 struct CapHolesOp {};
 
+// A line erased from a face (SketchUp's eraser on one segment): the two
+// coplanar faces on either side of the straight edge through `point` along
+// `direction` become one. Only that segment goes; lines drawn before or
+// after stay (dropping the split that drew it took the whole line, and
+// failed when later lines were drawn across it).
+struct MergeAcrossOp {
+  gp_Pnt point;
+  gp_Dir direction;
+};
+
 // All faces turned over (front <-> back) - for open shells and profiles.
 struct ReverseOp {};
 
@@ -306,7 +316,8 @@ struct InsetOp {
 };
 
 using Modifier = std::variant<ExtrudeOp, PushPullOp, OffsetOp, RevolveOp, SplitOp, OffsetFaceOp, HoleOp, ScaleOp,
-                              RemoveFaceOp, CapHolesOp, ReverseOp, MoveVerticesOp, InsetOp, StretchOp>;
+                              RemoveFaceOp, CapHolesOp, ReverseOp, MoveVerticesOp, InsetOp, StretchOp,
+                              MergeAcrossOp>;
 
 struct Recipe {
   BaseFeature base;

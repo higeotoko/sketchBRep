@@ -1072,25 +1072,24 @@ Result<ObjectId> Modeler::eraseEdge(const ObjectId& id, const TopoDS_Edge& world
       std::abs(gp_Vec(a->centroid, b->centroid).Dot(gp_Vec(a->normal))) > 1e-3) {
     return corner;
   }
-  // The split that drew this line: dropping it must merge faces and change
-  // nothing else (same volume, fewer faces).
+  // That segment only, as SketchUp's eraser: a step merging the two faces
+  // beside it, added after everything else (lines drawn later across it
+  // stay; dropping the split that drew it took the whole line and failed
+  // when later lines crossed it). Nothing else may change: the same
+  // volume, one face less.
   const double volume = geom::volume(current->shape);
   const int faces = faceCount(current->shape);
-  const TopoDS_Edge edge = TopoDS::Edge(edgeFaces.FindKey(index));
-  for (std::size_t k = current->recipe.modifiers.size(); k-- > 0;) {
-    const auto* split = std::get_if<SplitOp>(&current->recipe.modifiers[k]);
-    if (!split || !edgeOnLine(edge, split->points)) continue;
-    Object object = *current;
-    object.recipe.modifiers.erase(object.recipe.modifiers.begin() + static_cast<std::ptrdiff_t>(k));
-    if (!rebuild(object, document_.regenContext())) continue;
-    const double after = geom::volume(object.shape);
-    if (std::abs(after - volume) > 1e-6 * std::max(1.0, std::abs(volume)) || faceCount(object.shape) >= faces) continue;
-    const Status s = commitModified(std::move(object), "Erase Line");
-    if (!s) return R::failure(s.message());
-    return id;
+  const auto mark = edgeMark(TopoDS::Edge(edgeFaces.FindKey(index)));
+  if (!mark) return corner;
+  Object object = *current;
+  object.recipe.modifiers.push_back(MergeAcrossOp{mark->point, mark->direction});
+  if (!rebuild(object, document_.regenContext()) || faceCount(object.shape) != faces - 1 ||
+      std::abs(geom::volume(object.shape) - volume) > 1e-6 * std::max(1.0, std::abs(volume))) {
+    return R::failure("This line cannot be erased: the faces beside it do not join into one");
   }
-  return R::failure("This line cannot be erased on its own (it does not come from a drawn split, or later edits "
-                    "depend on it)");
+  const Status s = commitModified(std::move(object), "Erase Line");
+  if (!s) return R::failure(s.message());
+  return id;
 }
 
 namespace {

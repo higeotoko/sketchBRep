@@ -455,6 +455,11 @@ Result<TopoDS_Shape> regenerate(const Recipe& recipe, const RegenContext& contex
               return TopoDS_Shape(shell);
             },
             [&](const CapHolesOp&) -> Result<TopoDS_Shape> { return geom::capHoles(shape); },
+            [&](const MergeAcrossOp& op) -> Result<TopoDS_Shape> {
+              // Gone with an earlier change (a parameter edited): nothing
+              // to merge, the shape as it is.
+              return geom::mergeFacesAcross(shape, op.point, op.direction);
+            },
             [&](const ReverseOp&) -> Result<TopoDS_Shape> { return shape.Reversed(); },
             [&](const MoveVerticesOp& op) -> Result<TopoDS_Shape> {
               return geom::moveVertices(shape, op.points, gp_Vec(op.direction) * op.distance, op.autofold);
@@ -530,6 +535,7 @@ std::vector<Parameter> parameters(const Recipe& recipe) {
                    [&](const HoleOp&) {},
                    [&](const RemoveFaceOp&) {},
                    [&](const CapHolesOp&) {},
+                   [&](const MergeAcrossOp&) {},
                    [&](const ReverseOp&) {},
                    [&](const MoveVerticesOp& op) {
                      out.push_back({opKey(i), "Move " + std::to_string(i) + " distance", op.distance, true});
@@ -612,7 +618,7 @@ Status setParameter(Recipe& recipe, const std::string& key, double value) {
     if (key != opKey(i)) continue;
     bool found = false;
     std::visit(Overloaded{[&](RevolveOp&) {}, [&](SplitOp&) {}, [&](HoleOp&) {}, [&](ScaleOp&) {}, [&](StretchOp&) {},
-                          [&](RemoveFaceOp&) {}, [&](CapHolesOp&) {}, [&](ReverseOp&) {},
+                          [&](RemoveFaceOp&) {}, [&](CapHolesOp&) {}, [&](ReverseOp&) {}, [&](MergeAcrossOp&) {},
                           [&](auto& op) {
                             op.distance = value;
                             found = true;
@@ -670,6 +676,7 @@ std::string describe(const Recipe& recipe) {
                    [&](const HoleOp&) { out << " > Hole"; },
                    [&](const RemoveFaceOp&) { out << " > Delete face"; },
                    [&](const CapHolesOp&) { out << " > Fill holes"; },
+                   [&](const MergeAcrossOp&) { out << " > Erase line"; },
                    [&](const ReverseOp&) { out << " > Reverse faces"; },
                    [&](const MoveVerticesOp& op) {
                      out << " > Move " << op.points.size() << (op.points.size() == 1 ? " corner " : " corners ")

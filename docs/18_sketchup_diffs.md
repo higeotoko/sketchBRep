@@ -878,3 +878,23 @@ DPI 100%・150%・200%（`QT_SCALE_FACTOR`）でのスクリーンショット�
 - `OpenPushPull.VolumeAgainstABoxJoinsItAndLeavesNoSeam`
 - `OpenPushPull.VolumeTouchingAlongAnEdgeStaysApart`
 - `PushPullOnSolids.ProfileOverhangingTheSolidJoinsIt`：前の仕様「はみ出した四角形は別のまま」を、この変更に合わせて改めた。
+
+## 追加：消しゴムは、当てた区間だけを消す（2026-10-25）
+
+**報告された症状**
+- 面の上で交差した線があると、縦線が消しゴムで消せなかった。
+
+**原因**
+- 消しゴムは、その線を引いた手順（SplitOp）を履歴から取り除いて、形を作り直していた。そのため 2 つの問題があった。
+  - 先に引いた線を取り除くと、後から引いた線が「どの面を分けたか」を見つけられなくなる。作り直しに失敗して断っていた。
+  - 当てた区間だけでなく、引いた線全体を消そうとしていた。
+
+**変更**
+- 当てた区間の両側の面（同じ平面の 2 枚）を 1 枚にする手順（`MergeAcrossOp`）を、履歴の最後に足す。
+- 引いた順番に関係なく、どの区間も消せる。SketchUp の消しゴムと同じ。
+- その 2 枚の境目が、前に消した線の跡の点で分かれていても、境目ごと消える。
+- 消したあとも、保存・読み込み・押し出しができる。Ctrl+Z 1 回で 1 区間ずつ戻る。
+- 保存形式に、手順の種類 `mergeacross` が増えた。前の版のアプリは、この手順を含むファイルを読めない。
+
+**テスト**
+- `Transactions.CrossingLinesEraseSegmentBySegment`：横線が先と、縦線が先の両方で確かめる。
