@@ -8,7 +8,10 @@
 #include <QInputDialog>
 #include <QMessageBox>
 #include <QAbstractButton>
+#include <QCheckBox>
+#include <QElapsedTimer>
 #include "MainWindow.h"
+#include "Viewport.h"
 #include "DwgConverter.h"
 
 using namespace sbr;
@@ -46,11 +49,14 @@ class DrawingImport : public QObject {
     file.write("0\nSECTION\n2\nENTITIES\n0\nLINE\n10\n0\n20\n0\n11\n10\n21\n0\n"
                "0\nTEXT\n1\nNote\n0\nENDSEC\n0\nEOF\n"); file.close();
     app::MainWindow window;
-    QTimer::singleShot(0, [] {
+    QTimer cancelUnits;
+    connect(&cancelUnits, &QTimer::timeout, [] {
       for (auto* w : QApplication::topLevelWidgets())
         if (auto* dialog = qobject_cast<QInputDialog*>(w)) dialog->reject();
     });
+    cancelUnits.start(10);
     QVERIFY(!window.importDxfFile(path));
+    cancelUnits.stop();
     QVERIFY(window.modeler().listObjects().empty());
     QVERIFY(!window.modeler().history().canUndo());
     QTimer timer;
@@ -72,6 +78,45 @@ class DrawingImport : public QObject {
     QTest::newRow("missing-output") << QByteArray("AC1032MISSING");
     QTest::newRow("timeout") << QByteArray("AC1032TIMEOUT");
     QTest::newRow("not-dwg") << QByteArray("not a drawing");
+  }
+  void largeDrawingUsesLayerBatches() {
+    QTemporaryDir dir;
+    QString path = dir.filePath("large.dxf");
+    QFile file(path); QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n");
+    for (int i = 0; i < 1500; ++i)
+      file.write(QString("0\nLINE\n8\nWalls\n10\n%1\n20\n0\n11\n%1\n21\n1000\n").arg(i).toUtf8());
+    file.write("0\nENDSEC\n0\nEOF\n"); file.close();
+    // Optional local measurement with a real drawing; never retain its data.
+    const auto real = qEnvironmentVariable("SBR_DXF_BENCH");
+    if (!real.isEmpty()) path = real;
+    app::MainWindow window; window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QTimer timer;
+    connect(&timer, &QTimer::timeout, [] {
+      for (auto* w : QApplication::topLevelWidgets())
+        if (auto* dialog = qobject_cast<QMessageBox*>(w)) {
+          if (dialog->checkBox()) QVERIFY(dialog->checkBox()->isChecked());
+          dialog->button(QMessageBox::Yes)->click();
+        }
+    });
+    timer.start(10);
+    QElapsedTimer clock; clock.start();
+    QVERIFY(window.importDxfFile(path));
+    qInfo() << "DXF import/display ms:" << clock.elapsed() << "objects:" << window.modeler().listObjects().size();
+    if (real.isEmpty()) QCOMPARE(window.modeler().listObjects().size(), std::size_t(1));
+    else QVERIFY(window.modeler().listObjects().size() < 1000);
+    if (!real.isEmpty()) {
+      clock.restart();
+      for (int i = 0; i < 10; ++i) {
+        window.viewport().zoomWheel(QPointF(300, 300), i % 2 ? -0.2 : 0.2);
+        window.viewport().renderNow();
+      }
+      qInfo() << "DXF 10 zoom/render frames ms:" << clock.elapsed();
+    }
+    timer.stop();
+    QVERIFY(window.modeler().history().undo());
+    QVERIFY(window.modeler().listObjects().empty());
   }
   void conversionFailureAndTimeout() {
     QFETCH(QByteArray, content);

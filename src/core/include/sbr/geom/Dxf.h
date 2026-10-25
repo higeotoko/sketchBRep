@@ -9,6 +9,8 @@ struct DxfImportOptions {
   // Used only when $INSUNITS is absent or zero. Model coordinates are mm.
   double unitlessScaleToMm = 1.0;
   bool allowPartial = false;
+  // Keep exact edges, but use one document/display object per layer.
+  bool groupByLayer = false;
 };
 
 struct DxfImportReport {

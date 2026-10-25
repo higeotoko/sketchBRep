@@ -179,3 +179,29 @@ TEST(Dxf, ReadsIndependentWriterFixture) {
   EXPECT_EQ(BRepAdaptor_Curve(TopoDS::Edge((*parts)[5].shape)).GetType(), GeomAbs_BSplineCurve);
   EXPECT_NEAR(length(parts->back().shape), 1000, 1e-6);
 }
+
+TEST(Dxf, LayerBatchingKeepsExactGeometryAndHistory) {
+  const auto path = fixture(line + line +
+      "0\nARC\n8\nGarden\n10\n0\n20\n0\n40\n10\n50\n0\n51\n90\n");
+  auto plain = geom::readDxf(path); ASSERT_TRUE(plain);
+  geom::DxfImportOptions options; options.groupByLayer = true;
+  geom::DxfImportReport report;
+  auto batched = geom::readDxf(path, options, &report); ASSERT_TRUE(batched);
+  ASSERT_EQ(batched->size(), 2u); EXPECT_EQ(report.imported, 3);
+  double expected = 0, actual = 0;
+  for (const auto& p : *plain) expected += length(p.shape);
+  int edges = 0, circles = 0;
+  for (const auto& p : *batched) {
+    actual += length(p.shape);
+    for (TopExp_Explorer e(p.shape, TopAbs_EDGE); e.More(); e.Next()) {
+      ++edges;
+      circles += BRepAdaptor_Curve(TopoDS::Edge(e.Current())).GetType() == GeomAbs_Circle;
+    }
+  }
+  EXPECT_EQ(edges, 3); EXPECT_EQ(circles, 1); EXPECT_NEAR(actual, expected, 1e-8);
+  doc::Modeler m; auto ids = m.importDxf(path, options); ASSERT_TRUE(ids); ASSERT_EQ(ids->size(), 2u);
+  EXPECT_TRUE(m.history().undo()); EXPECT_TRUE(m.listObjects().empty());
+  EXPECT_TRUE(m.history().redo()); ASSERT_TRUE(m.save(path + ".sbr"));
+  doc::Modeler loaded; ASSERT_TRUE(loaded.load(path + ".sbr"));
+  EXPECT_EQ(loaded.listObjects().size(), 2u);
+}

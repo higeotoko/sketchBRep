@@ -38,6 +38,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QInputDialog>
+#include <QProgressDialog>
 #include <QHBoxLayout>
 #include <QListWidget>
 #include <QPushButton>
@@ -2765,11 +2766,18 @@ void MainWindow::importDrawing() {
 bool MainWindow::importDxfFile(const QString& path) {
   geom::DxfImportOptions options;
   geom::DxfImportReport report;
+  QProgressDialog progress(tr("DXF の線図を読み取り中…"), QString(), 0, 0, this);
+  progress.setCancelButton(nullptr);
+  progress.setWindowModality(Qt::ApplicationModal);
+  progress.setMinimumDuration(0);
+  progress.show();
+  QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
   // Inspect before committing, so neither cancelling units nor partial import adds history.
   {
     auto inspected = geom::readDxf(utf8(path), options, &report);
     if (!inspected) { reportError(QString::fromStdString(inspected.error())); return false; }
   }
+  progress.hide();
   if (!report.unitsKnown) {
     bool ok = false;
     options.unitlessScaleToMm = QInputDialog::getDouble(this, tr("図面の単位"),
@@ -2777,23 +2785,37 @@ bool MainWindow::importDxfFile(const QString& path) {
            "mm: 1 / cm: 10 / m: 1000 / inch: 25.4"), 1, 0.000001, 1000000, 6, &ok);
     if (!ok) return false;
   }
-  if (report.incomplete()) {
+  if (report.incomplete() || report.imported > 1000) {
     QStringList omitted;
     for (const auto& [type, count] : report.omitted)
       omitted << tr("%1: %2 個").arg(QString::fromStdString(type)).arg(count);
-    if (QMessageBox::question(this, tr("2D図面の取り込み"),
-          tr("次の要素は読み込めません。\n%1\n\n読める線図だけを取り込みますか？")
-              .arg(omitted.join('\n')), QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+    QMessageBox confirm(QMessageBox::Question, tr("2D図面の取り込み"),
+        tr("読み込める線図: %1 本\n%2\n取り込みますか？")
+            .arg(report.imported).arg(omitted.empty() ? QString() :
+                tr("次の要素は読み込めません。\n%1\n").arg(omitted.join('\n'))),
+        QMessageBox::Yes | QMessageBox::No, this);
+    confirm.setDefaultButton(QMessageBox::No);
+    auto* grouped = new QCheckBox(tr("レイヤごとにまとめる（大きな図面向け・線の形状は保持）"), &confirm);
+    grouped->setChecked(report.imported > 1000);
+    grouped->setToolTip(tr("まとめるとレイヤ単位で選択・移動します。個別の線図として扱う場合はチェックを外してください。"));
+    confirm.setCheckBox(grouped);
+    if (confirm.exec() != QMessageBox::Yes)
       return false;
+    options.groupByLayer = grouped->isChecked();
     options.allowPartial = true;
   }
+  progress.setLabelText(tr("%1 本の線図を登録して表示を準備中…").arg(report.imported));
+  progress.show();
+  QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
   auto ids = modeler_.importDxf(utf8(path), options, &report);
   if (!ids) { reportError(QString::fromStdString(ids.error())); return false; }
   setSelection(*ids);
   viewport_->syncNow();
+  viewport_->setStandardView(Viewport::StandardView::Top);
   viewport_->fitAll();
-  setStatus(tr("2D図面から %1 個の線図を取り込みました（単位 mm、レイヤはタグ）。%2")
-      .arg(ids->size()).arg(report.incomplete() ? tr("未対応の要素は除外しました。") : QString()) +
+  progress.hide();
+  setStatus(tr("取り込み完了: %1 本の線図 → %2 オブジェクト（単位 mm、レイヤはタグ）。%3")
+      .arg(report.imported).arg(ids->size()).arg(report.incomplete() ? tr("未対応の要素は除外しました。") : QString()) +
       (report.paperSpace ? tr(" ペーパー空間の %1 個は対象外です。").arg(report.paperSpace) : QString()));
   return true;
 }

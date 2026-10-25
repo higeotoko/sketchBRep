@@ -24,6 +24,8 @@
 #include <gp_Circ.hxx>
 #include <gp_Elips.hxx>
 #include <TopoDS_Wire.hxx>
+#include <TopoDS_Compound.hxx>
+#include <BRep_Builder.hxx>
 
 namespace sbr::geom {
 namespace {
@@ -350,6 +352,18 @@ Result<std::vector<NamedShape>> readDxf(const std::string& path, const DxfImport
     gp_Trsf scale; scale.SetScale(gp_Pnt(0, 0, 0), report.scaleToMm);
     for (const auto& e : entities) add(e, scale, {}, 0);
     if (result.empty()) throw std::runtime_error("No supported 2D curves in DXF; " + report.summary());
+    if (options.groupByLayer) {
+      BRep_Builder builder;
+      std::map<std::string, TopoDS_Compound> layers;
+      for (const auto& part : result) {
+        auto [it, inserted] = layers.try_emplace(part.layer);
+        if (inserted) builder.MakeCompound(it->second);
+        builder.Add(it->second, part.shape);
+      }
+      result.clear();
+      for (const auto& [layer, shape] : layers)
+        result.push_back({shape, layer, std::nullopt, layer});
+    }
     return result;
   } catch (const Standard_Failure& err) {
     return Result<std::vector<NamedShape>>::failure(std::string("DXF: ") + err.GetMessageString());

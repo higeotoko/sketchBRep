@@ -1841,11 +1841,12 @@ const std::vector<CommandDef>& commands() {
       {"import_dxf", "Import ASCII DXF model-space curves as exact editable edges/wires; layers become tags. "
        "Unsupported entities require allow_partial. unitless_scale_to_mm applies only when INSUNITS is absent/zero.",
        SCHEMA({"type": "object", "properties": {"path": {"type": "string"},
-               "allow_partial": {"type": "boolean"}, "unitless_scale_to_mm": {"type": "number", "exclusiveMinimum": 0}},
+               "allow_partial": {"type": "boolean"}, "group_by_layer": {"type": "boolean"}, "unitless_scale_to_mm": {"type": "number", "exclusiveMinimum": 0}},
                "required": ["path"]}),
        [](doc::Modeler& m, const json& a) {
          geom::DxfImportOptions options;
          options.allowPartial = a.value("allow_partial", false);
+         options.groupByLayer = a.value("group_by_layer", false);
          options.unitlessScaleToMm = a.value("unitless_scale_to_mm", 1.0);
          geom::DxfImportReport report;
          json out = idsResult(must(m.importDxf(text(a, "path"), options, &report)));

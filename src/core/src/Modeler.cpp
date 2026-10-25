@@ -5786,13 +5786,17 @@ Result<std::vector<ObjectId>> Modeler::addImported(const std::vector<geom::Named
   ChangeSet changes(document_);
   std::vector<ObjectId> ids;
   std::set<std::string> usedNames;
+  std::map<std::string, int> nextSuffix;
   for (const geom::NamedShape& part : parts) {
     Object o;
     o.id = generateObjectId();
     if (!part.layer.empty()) o.layer = part.layer;
     std::string name = part.name.empty() ? uniqueName("Imported") : part.name;
     // Keep names unique within the batch as well.
-    for (int n = 2; usedNames.count(name); ++n) name = part.name + " (" + std::to_string(n) + ")";
+    const std::string baseName = name;
+    auto& suffix = nextSuffix[baseName];
+    if (suffix < 2) suffix = 2;
+    while (usedNames.count(name)) name = baseName + " (" + std::to_string(suffix++) + ")";
     usedNames.insert(name);
     o.name = name;
     if (part.color) {
