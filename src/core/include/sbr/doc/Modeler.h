@@ -607,6 +607,11 @@ class Modeler {
   // committed cut/join, or nullopt to fall back to a plain extrusion.
   std::optional<Result<PushPullResult>> mergeIntoHost(const Object& profileBefore, Object extruded,
                                                       const std::string& key);
+  // Push/pull of a profile whose volume overlaps or shares a face with
+  // solids beside it (same context): one solid, as loose geometry in
+  // SketchUp; the seams between them go. Nullopt: none (a plain extrusion).
+  std::optional<Result<PushPullResult>> joinTouching(const Object& profileBefore, Object extruded,
+                                                     const std::string& key);
   Status checkSameParent(const std::vector<ObjectId>& ids, ObjectId& parent) const;
 
   Document document_;

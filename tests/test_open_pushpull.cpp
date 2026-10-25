@@ -208,3 +208,95 @@ TEST(OpenPushPull, Api) {
   EXPECT_NE(volume, box);
   EXPECT_NEAR(geom::volume(m.document().worldShape(*m.document().find(volume))), 1000.0 * 1000 * 200, 1e-3);
 }
+
+namespace {
+
+// Runs a non-atomic batch; the results of its steps.
+nlohmann::json runSteps(api::CommandApi& api, const nlohmann::json& steps) {
+  const auto r = nlohmann::json::parse(
+      api.execute(nlohmann::json{{"command", "batch"}, {"args", {{"atomic", false}, {"commands", steps}}}}.dump()));
+  EXPECT_TRUE(r.value("ok", false)) << r.dump();
+  return r["result"]["results"];
+}
+
+std::vector<double> areasFacing(const nlohmann::json& object, int axis, double sign) {
+  std::vector<double> out;
+  for (const auto& f : object["faces"]) {
+    if (f["normal"][axis].get<double>() * sign > 0.99) out.push_back(f["area"].get<double>());
+  }
+  return out;
+}
+
+}  // namespace
+
+// A rectangle drawn over a notch and pushed down to fill it becomes part of
+// the solid it overlaps: one box again, no seams to erase (it stayed a
+// second solid on top, whose outline could not be erased).
+TEST(OpenPushPull, FillingANotchJoinsTheSolid) {
+  Modeler m;
+  api::CommandApi api(m);
+  using nlohmann::json;
+  const json steps = json::array({
+      {{"command", "create_box"}, {"args", {{"origin", {0, 0, 0}}, {"width", 4000}, {"depth", 4000}, {"height", 2000}}}},
+      {{"command", "split_face"}, {"args", {{"points", {{3000, 4000, 2000}, {4000, 3000, 2000}}}}}},
+      {{"command", "push_pull"},
+       {"args", {{"id", "$1.id"}, {"face", {{"normal", {0, 0, 1}}, {"near", {3800, 3800, 2000}}}}, {"distance", -2000}}}},
+      {{"command", "create_rectangle"}, {"args", {{"origin", {2500, 2500, 2000}}, {"width", 1500}, {"height", 1500}}}},
+      {{"command", "push_pull"},
+       {"args", {{"id", "$4.id"}, {"face", {{"normal", {0, 0, 1}}, {"near", {3900, 3900, 2000}}}}, {"distance", -2000}}}},
+      {{"command", "get_object"}, {"args", {{"id", "$5.id"}}}},
+  });
+  const json results = runSteps(api, steps);
+  for (const json& r : results) ASSERT_TRUE(r.value("ok", false)) << r.dump();
+  EXPECT_EQ(m.document().objects().size(), 1u);
+  const json box = results[5]["result"];
+  EXPECT_EQ(box["faces"].size(), 6u);
+  EXPECT_NEAR(box["volume"].get<double>(), 4000.0 * 4000 * 2000, 1.0);
+}
+
+// A triangle drawn on the ground against a box and pulled up joins it; its
+// top pushed down later (after a line divides the top) leaves the box's
+// front whole, without the line where the triangle met it.
+TEST(OpenPushPull, VolumeAgainstABoxJoinsItAndLeavesNoSeam) {
+  Modeler m;
+  api::CommandApi api(m);
+  using nlohmann::json;
+  const json steps = json::array({
+      {{"command", "create_box"}, {"args", {{"origin", {0, 0, 0}}, {"width", 3000}, {"depth", 2000}, {"height", 2000}}}},
+      {{"command", "create_polygon"}, {"args", {{"points", {{0, 0, 0}, {1200, 0, 0}, {-200, -1200, 0}}}}}},
+      {{"command", "push_pull"},
+       {"args", {{"id", "$2.id"}, {"face", {{"normal", {0, 0, -1}}, {"near", {300, -300, 0}}}}, {"distance", -2000}}}},
+      {{"command", "split_face"}, {"args", {{"points", {{0, 0, 2000}, {1200, 0, 2000}}}}}},
+      {{"command", "push_pull"},
+       {"args", {{"id", "$3.id"}, {"face", {{"normal", {0, 0, 1}}, {"near", {300, -300, 2000}}}}, {"distance", -800}}}},
+      {{"command", "get_object"}, {"args", {{"id", "$3.id"}}}},
+  });
+  const json results = runSteps(api, steps);
+  for (const json& r : results) ASSERT_TRUE(r.value("ok", false)) << r.dump();
+  EXPECT_EQ(m.document().objects().size(), 1u);
+  const json solid = results[5]["result"];
+  // The box's front: one face (1800 x 2000 beside the triangle, 1200 x 800
+  // above it).
+  const auto front = areasFacing(solid, 1, -1);
+  ASSERT_EQ(front.size(), 1u);
+  EXPECT_NEAR(front.front(), 1800.0 * 2000 + 1200.0 * 800, 1.0);
+}
+
+// Touching along an edge only, or apart: the volume stays an object of its own.
+TEST(OpenPushPull, VolumeTouchingAlongAnEdgeStaysApart) {
+  Modeler m;
+  api::CommandApi api(m);
+  using nlohmann::json;
+  const json steps = json::array({
+      {{"command", "create_box"}, {"args", {{"origin", {0, 0, 0}}, {"width", 1000}, {"depth", 1000}, {"height", 1000}}}},
+      {{"command", "create_rectangle"}, {"args", {{"origin", {1000, 1000, 0}}, {"width", 1000}, {"height", 1000}}}},
+      {{"command", "push_pull"},
+       {"args", {{"id", "$2.id"}, {"face", {{"normal", {0, 0, 1}}, {"near", {1500, 1500, 0}}}}, {"distance", 1000}}}},
+      {{"command", "create_rectangle"}, {"args", {{"origin", {3000, 0, 0}}, {"width", 1000}, {"height", 1000}}}},
+      {{"command", "push_pull"},
+       {"args", {{"id", "$4.id"}, {"face", {{"normal", {0, 0, 1}}, {"near", {3500, 500, 0}}}}, {"distance", 1000}}}},
+  });
+  const json results = runSteps(api, steps);
+  for (const json& r : results) ASSERT_TRUE(r.value("ok", false)) << r.dump();
+  EXPECT_EQ(m.document().objects().size(), 3u);
+}

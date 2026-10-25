@@ -3298,6 +3298,7 @@ Result<PushPullResult> Modeler::pushPull(const ObjectId& id, const TopoDS_Face& 
     // A profile drawn on a face of another solid cuts into it or grows it,
     // as in SketchUp (parametric Boolean, one undo step).
     if (auto merged = mergeIntoHost(*current, object, key)) return *merged;
+    if (auto joined = joinTouching(*current, object, key)) return *joined;
   } else if (object.kind() == ObjectKind::Solid) {
     // Pulling the cap of a solid whose last step is an extrusion edits the
     // extrusion distance instead of adding a new operation.
@@ -3477,6 +3478,61 @@ std::optional<Result<PushPullResult>> Modeler::mergeIntoHost(const Object& profi
     }
   }
   return std::nullopt;
+}
+
+std::optional<Result<PushPullResult>> Modeler::joinTouching(const Object& profileBefore, Object extruded,
+                                                              const std::string& key) {
+  // The new volume where it will be.
+  Object built = extruded;
+  if (!rebuild(built, document_.regenContext()) || built.kind() != ObjectKind::Solid) return std::nullopt;
+  const gp_Trsf profileWorld = document_.worldTransform(profileBefore);
+  Bnd_Box reach;
+  BRepBndLib::Add(built.shape.Moved(TopLoc_Location(profileWorld)), reach);
+  reach.Enlarge(tolerance::kLinear);
+  const TopoDS_Shape volume = built.shape.Moved(TopLoc_Location(profileWorld));
+  std::vector<const Object*> hosts;
+  for (const Object& o : document_.objects()) {
+    if (o.id == profileBefore.id || o.parent != profileBefore.parent || o.kind() != ObjectKind::Solid ||
+        o.locked || !document_.isVisible(o.id) || document_.worldBounds(o).IsOut(reach)) {
+      continue;
+    }
+    // Joined by a shared face or volume: the two make one solid (along an
+    // edge or at a point only, or apart: they stay apart).
+    const auto pair = geom::booleanCombine(geom::BooleanOp::Union, {document_.worldShape(o), volume});
+    if (pair && pair->ShapeType() == TopAbs_SOLID) hosts.push_back(&o);
+  }
+  if (hosts.empty()) return std::nullopt;
+  // All of them and the volume in one union; only when that is one solid
+  // (touching along an edge or at a point only, they stay apart).
+  Object result;
+  result.id = generateObjectId();
+  result.parent = profileBefore.parent;
+  result.name = hosts.front()->name;
+  result.color = hosts.front()->color;
+  result.layer = hosts.front()->layer;
+  result.material = hosts.front()->material;
+  BooleanFeature feature;
+  feature.kind = BooleanKind::Union;
+  std::vector<std::pair<const Object*, gp_Trsf>> inputs;
+  for (const Object* host : hosts) {
+    const gp_Trsf at = document_.parentTransform(*host).Inverted() * document_.worldTransform(*host);
+    feature.operands.push_back(BooleanOperand{std::make_shared<const Recipe>(host->recipe), at, host->name});
+    rememberShape(feature.operands.back().recipe, host->shape);
+    inputs.emplace_back(host, at);
+  }
+  const gp_Trsf profileAt = document_.parentTransform(profileBefore).Inverted() * profileWorld;
+  feature.operands.push_back(BooleanOperand{std::make_shared<const Recipe>(extruded.recipe), profileAt,
+                                            profileBefore.name});
+  inputs.emplace_back(&profileBefore, profileAt);
+  result.recipe.base = std::move(feature);
+  if (!rebuild(result, document_.regenContext()) || result.shape.ShapeType() != TopAbs_SOLID) return std::nullopt;
+  carryMaterials(result, inputs);
+  ChangeSet changes(document_);
+  for (const Object* host : hosts) changes.erase(host->id);
+  changes.erase(profileBefore.id);
+  changes.add(result);
+  history_.execute(changes.build("Push/Pull (join)"));
+  return Result<PushPullResult>(PushPullResult{result.id, "in" + std::to_string(hosts.size()) + "." + key});
 }
 
 Result<PushPullResult> Modeler::extrude(const ObjectId& id, double distance) {

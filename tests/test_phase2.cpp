@@ -502,11 +502,30 @@ TEST(PushPullOnSolids, RectangleOnTopJoins) {
   EXPECT_TRUE(geom::validateShape(m.document().find(pp->id)->shape, true).valid);
 }
 
-TEST(PushPullOnSolids, ProfileOffTheSolidStaysSeparate) {
+// Overhanging the top face, pulled up: the volume stands on the box and
+// shares a face with it, so they are one solid (as loose geometry in
+// SketchUp; two solids left seams that could not be erased).
+TEST(PushPullOnSolids, ProfileOverhangingTheSolidJoinsIt) {
   Modeler m;
   box(m, 0, 0, 0, 1000, 1000, 1000);
   geom::SketchPlane plane = geom::SketchPlane::ground();
   plane.origin = gp_Pnt(800, 800, 1000);  // overhangs the top face
+  auto rect = m.createRectangle(plane, 500, 500);
+  auto pp = m.pushPull(*rect, TopoDS::Face(m.document().worldShape(*rect)), 300);
+  ASSERT_TRUE(pp.ok()) << pp.error();
+  EXPECT_EQ(m.document().objects().size(), 1u);
+  EXPECT_NEAR(worldVolume(m, pp->id), 1e9 + 500.0 * 500 * 300, 1e-2);
+  // Its height stays editable.
+  ASSERT_TRUE(m.setParameter(pp->id, pp->parameterKey, 600).ok());
+  EXPECT_NEAR(worldVolume(m, pp->id), 1e9 + 500.0 * 500 * 600, 1e-2);
+}
+
+// Off the solid (apart): an object of its own.
+TEST(PushPullOnSolids, ProfileOffTheSolidStaysSeparate) {
+  Modeler m;
+  box(m, 0, 0, 0, 1000, 1000, 1000);
+  geom::SketchPlane plane = geom::SketchPlane::ground();
+  plane.origin = gp_Pnt(1500, 0, 1000);
   auto rect = m.createRectangle(plane, 500, 500);
   auto pp = m.pushPull(*rect, TopoDS::Face(m.document().worldShape(*rect)), 300);
   ASSERT_TRUE(pp.ok());
