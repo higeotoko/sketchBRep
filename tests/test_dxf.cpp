@@ -205,3 +205,23 @@ TEST(Dxf, LayerBatchingKeepsExactGeometryAndHistory) {
   doc::Modeler loaded; ASSERT_TRUE(loaded.load(path + ".sbr"));
   EXPECT_EQ(loaded.listObjects().size(), 2u);
 }
+
+TEST(Dxf, MovingLayerBatchesPreservesOverlapsAndObjectIdentity) {
+  const auto path = fixture(line + "0\nLINE\n8\nGarden\n10\n1\n20\n2\n11\n4\n21\n6\n");
+  geom::DxfImportOptions options; options.groupByLayer = true;
+  doc::Modeler m; auto ids = m.importDxf(path, options); ASSERT_TRUE(ids); ASSERT_EQ(ids->size(), 2u);
+  const auto original = m.document().find(ids->front())->shape;
+  ASSERT_TRUE(m.move(*ids, gp_Vec(1000, 500, 0)));
+  ASSERT_EQ(m.listObjects().size(), 2u);
+  for (const auto& id : *ids) {
+    const auto* o = m.document().find(id); ASSERT_NE(o, nullptr);
+    EXPECT_TRUE(std::holds_alternative<doc::ImportedShape>(o->recipe.base));
+    EXPECT_NEAR(length(o->shape), 5, 1e-8);
+    EXPECT_NEAR(m.document().worldTransform(*o).TranslationPart().X(), 1000, 1e-8);
+  }
+  EXPECT_TRUE(m.document().find(ids->front())->shape.IsSame(original));
+  ASSERT_TRUE(m.history().undo());
+  EXPECT_NEAR(m.document().worldTransform(*m.document().find(ids->front())).TranslationPart().X(), 0, 1e-8);
+  ASSERT_TRUE(m.history().redo());
+  EXPECT_EQ(m.listObjects().size(), 2u);
+}

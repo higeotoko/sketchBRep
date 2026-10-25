@@ -10,8 +10,10 @@
 #include <QAbstractButton>
 #include <QCheckBox>
 #include <QElapsedTimer>
+#include <algorithm>
 #include "MainWindow.h"
 #include "Viewport.h"
+#include "Tools.h"
 #include "DwgConverter.h"
 
 using namespace sbr;
@@ -72,6 +74,26 @@ class DrawingImport : public QObject {
     QVERIFY(!window.modeler().history().canUndo());
     timer.stop();
   }
+  void cameraMotionRestoresQuality() {
+    app::MainWindow window; window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto& view = window.viewport();
+    view.zoomWheel(view.rect().center(), 1);
+    QVERIFY(view.interactiveRendering());
+    QTRY_VERIFY_WITH_TIMEOUT(!view.interactiveRendering(), 2000);
+    const auto center = view.rect().center();
+    QTest::mousePress(&view, Qt::MiddleButton, Qt::NoModifier, center);
+    QTest::mouseMove(&view, center + QPoint(10, 5), 0);
+    QVERIFY(view.interactiveRendering());
+    QTest::qWait(220);
+    QVERIFY(view.interactiveRendering());
+    QTest::mouseRelease(&view, Qt::MiddleButton, Qt::NoModifier, center);
+    QTRY_VERIFY_WITH_TIMEOUT(!view.interactiveRendering(), 2000);
+    view.zoomWheel(center, -1);
+    QTemporaryDir image;
+    QVERIFY(view.dumpImage(image.filePath("view.png")));
+    QVERIFY(!view.interactiveRendering());
+  }
   void conversionFailureAndTimeout_data() {
     QTest::addColumn<QByteArray>("content");
     QTest::newRow("exit-failure") << QByteArray("AC1032FAIL");
@@ -113,6 +135,50 @@ class DrawingImport : public QObject {
         window.viewport().renderNow();
       }
       qInfo() << "DXF 10 zoom/render frames ms:" << clock.elapsed();
+      window.setSelection({});
+      auto measure = [&](const char* name, const auto& operation) {
+        std::vector<double> times;
+        for (int y = 1; y <= 5; ++y) for (int x = 1; x <= 8; ++x) {
+          const QPoint p(window.viewport().width() * x / 9, window.viewport().height() * y / 6);
+          QElapsedTimer sample; sample.start(); operation(p);
+          times.push_back(sample.nsecsElapsed() / 1e6);
+        }
+        std::sort(times.begin(), times.end());
+        qInfo() << name << "median/p95/max ms:" << times[20] << times[37] << times.back();
+      };
+      measure("DXF snap", [&](const QPoint& p) { window.viewport().snap(p, {}, {}, {}); });
+      window.viewport().setPickMode(app::PickMode::Elements);
+      measure("DXF pick", [&](const QPoint& p) { window.viewport().pickElement(p); });
+      window.viewport().setPickMode(app::PickMode::Objects);
+      measure("DXF object pick", [&](const QPoint& p) { window.viewport().pickObject(p); });
+      window.viewport().setPickMode(app::PickMode::Elements);
+      measure("DXF hover", [&](const QPoint& p) { QTest::mouseMove(&window.viewport(), p, 0); });
+      const QPoint center = window.viewport().rect().center();
+      clock.restart();
+      QTest::mousePress(&window.viewport(), Qt::MiddleButton, Qt::NoModifier, center);
+      qInfo() << "DXF orbit start ms:" << clock.elapsed();
+      measure("DXF orbit/render", [&](const QPoint& p) {
+        QTest::mouseMove(&window.viewport(), p, 0); window.viewport().renderNow();
+      });
+      QTest::mouseRelease(&window.viewport(), Qt::MiddleButton, Qt::NoModifier, center);
+      QTest::mousePress(&window.viewport(), Qt::MiddleButton, Qt::ShiftModifier, center);
+      measure("DXF pan/render", [&](const QPoint& p) {
+        QTest::mouseMove(&window.viewport(), p, 0); window.viewport().renderNow();
+      });
+      QTest::mouseRelease(&window.viewport(), Qt::MiddleButton, Qt::ShiftModifier, center);
+      window.viewport().setStandardView(app::Viewport::StandardView::Top);
+      window.activateTool(app::MainWindow::ToolId::Line);
+      measure("DXF line hover", [&](const QPoint& p) { QTest::mouseMove(&window.viewport(), p, 0); });
+      std::vector<doc::ObjectId> all;
+      for (const auto& o : window.modeler().listObjects()) all.push_back(o.id);
+      clock.restart(); window.setSelection(all); window.viewport().syncNow(); window.viewport().renderNow();
+      qInfo() << "DXF select all/sync/render ms:" << clock.elapsed();
+      clock.restart(); const auto moved = window.modeler().move(all, gp_Vec(1000, 500, 0));
+      QVERIFY2(moved.ok(), moved.message().c_str());
+      window.viewport().syncNow(); window.viewport().renderNow();
+      qInfo() << "DXF move all/sync/render ms:" << clock.elapsed();
+      QVERIFY(window.modeler().history().undo());
+      window.viewport().syncNow();
     }
     timer.stop();
     QVERIFY(window.modeler().history().undo());

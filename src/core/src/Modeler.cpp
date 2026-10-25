@@ -2805,6 +2805,16 @@ Status Modeler::closeIntoSolid(const ObjectId& id, Settled& out) {
   return Status::success();
 }
 
+namespace {
+// An imported drawing layer is an assembly of independent curves, not a
+// single sketch chain. Moving it must preserve its contents and identity.
+bool importedCurveBatch(const Object& object) {
+  return std::holds_alternative<ImportedShape>(object.recipe.base) &&
+         !object.shape.IsNull() && object.shape.ShapeType() == TopAbs_COMPOUND &&
+         object.kind() == ObjectKind::Curve;
+}
+}
+
 Result<Modeler::Settled> Modeler::settleOverlaps(const std::vector<ObjectId>& ids) {
   using R = Result<Settled>;
   Settled out;
@@ -2817,7 +2827,7 @@ Result<Modeler::Settled> Modeler::settleOverlaps(const std::vector<ObjectId>& id
   history_.beginGroup("Tidy");
   for (const ObjectId& id : ids) {
     const Object* o = document_.find(id);
-    if (!o || o->locked || !document_.isVisible(id)) continue;
+    if (!o || o->locked || !document_.isVisible(id) || importedCurveBatch(*o)) continue;
     const ObjectKind kind = o->kind();
     Status s = Status::success();
     if (kind == ObjectKind::Curve) s = settleLine(id, out);
@@ -2856,7 +2866,7 @@ Status Modeler::settleLine(const ObjectId& id, Settled& out) {
     if (!document_.isVisible(o.id)) continue;
     const TopoDS_Shape shape = document_.worldShape(o);
     collectEdges(shape, straight, curved);
-    if (k == ObjectKind::Curve && !o.locked) loose.push_back(o.id);
+    if (k == ObjectKind::Curve && !o.locked && !importedCurveBatch(o)) loose.push_back(o.id);
   }
   // The pieces of the line not lying on one of them.
   std::vector<TopoDS_Edge> kept;

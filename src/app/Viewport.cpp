@@ -251,6 +251,12 @@ Viewport::Viewport(doc::Modeler& modeler, QWidget* parent)
   syncTimer_.setSingleShot(true);
   syncTimer_.setInterval(0);
   connect(&syncTimer_, &QTimer::timeout, this, &Viewport::syncSlice);
+  interactionQualityTimer_.setSingleShot(true);
+  interactionQualityTimer_.setInterval(180);
+  connect(&interactionQualityTimer_, &QTimer::timeout, this, [this] {
+    if (drag_ != Drag::None) { interactionQualityTimer_.start(); return; }
+    restoreRenderingQuality();
+  });
   wheelClock_.start();
   if (const QString log = qEnvironmentVariable("SBR_WHEEL_LOG"); !log.isEmpty()) {
     wheelLog_ = std::make_unique<QFile>(log);
@@ -441,6 +447,7 @@ void Viewport::mouseReleaseEvent(QMouseEvent* event) {
 void Viewport::mouseMoveEvent(QMouseEvent* event) {
   if (view_.IsNull()) return;
   const QPoint pos = event->position().toPoint();
+  beginInteractiveRendering();
   if (drag_ != Drag::None) {
     const QPoint delta = pos - lastDragPos_;
     lastDragPos_ = pos;
@@ -549,6 +556,7 @@ void Viewport::acquireWheelAnchor(const QPointF& pos) {
 
 void Viewport::zoomWheel(const QPointF& pos, double notches) {
   if (view_.IsNull() || notches == 0.0) return;
+  beginInteractiveRendering();
   const Handle(Graphic3d_Camera)& camera = view_->Camera();
   const qint64 now = wheelClock_.elapsed();
   // Same gesture: close in time, the cursor (nearly) still, and the camera
@@ -2152,6 +2160,7 @@ void Viewport::leaveEvent(QEvent* event) {
 
 bool Viewport::dumpImage(const QString& path) {
   if (view_.IsNull()) return false;
+  if (interactiveRendering()) restoreRenderingQuality();
   renderNow();
   return view_->Dump(path.toUtf8().constData()) == Standard_True;
 }
@@ -2160,6 +2169,23 @@ void Viewport::redraw() {
   // Several changes in one event (sync, selection, highlight, snap marker)
   // become one frame: the view is rendered when Qt paints.
   update();
+}
+
+void Viewport::beginInteractiveRendering() {
+  if (view_.IsNull()) return;
+  // Keep exact geometry; only multisampling changes during mouse interaction.
+  view_->ChangeRenderingParams().NbMsaaSamples = 0;
+  view_->ChangeRenderingParams().IsAntialiasingEnabled = Standard_False;
+  interactionQualityTimer_.start();
+}
+
+void Viewport::restoreRenderingQuality() {
+  interactionQualityTimer_.stop();
+  if (view_.IsNull()) return;
+  view_->ChangeRenderingParams().NbMsaaSamples = 4;
+  view_->ChangeRenderingParams().IsAntialiasingEnabled = Standard_True;
+  view_->Invalidate();
+  redraw();
 }
 
 void Viewport::renderNow() {

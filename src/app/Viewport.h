@@ -167,6 +167,7 @@ class Viewport : public QWidget {
   // Schedules a repaint (coalesced); renderNow() draws immediately.
   void redraw();
   void renderNow();
+  bool interactiveRendering() const { return interactionQualityTimer_.isActive(); }
 
   // --- camera -------------------------------------------------------------
   enum class StandardView { Iso, Top, Front, Right, Back, Left };
@@ -391,6 +392,9 @@ class Viewport : public QWidget {
   std::pair<doc::ObjectId, std::uint64_t> editBoxKey_;  // context and document state shown
 
   QTimer syncTimer_;
+  QTimer interactionQualityTimer_;
+  void beginInteractiveRendering();
+  void restoreRenderingQuality();
   QSize glSize_;  // native window size the GL view was last resized to
   // Sky above the horizon, ground below (SketchUp): screen-space bands
   // behind everything, rebuilt only when the horizon moves on screen.
