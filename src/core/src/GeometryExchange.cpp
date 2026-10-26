@@ -4,6 +4,7 @@
 #include <fstream>
 #include <locale>
 #include <mutex>
+#include <type_traits>
 #include <iostream>
 #include <BRepBuilderAPI_Copy.hxx>
 #include <BRepCheck_Analyzer.hxx>
@@ -31,7 +32,7 @@ std::mutex exchangeMutex;
 // stdout as JSON for CLI/MCP, and restore the application's printers after I/O.
 struct ExchangeDiagnostics {
   Handle(Message_Messenger) messenger=Message::DefaultMessenger();
-  Message_SequenceOfPrinters saved=messenger->Printers();
+  std::decay_t<decltype(Message::DefaultMessenger()->Printers())> saved=messenger->Printers();
   std::streambuf* stdoutBuffer=nullptr;
   ExchangeDiagnostics() {
     Handle(Message_PrinterOStream) printer=new Message_PrinterOStream("cerr",Standard_True,Message_Warning);
