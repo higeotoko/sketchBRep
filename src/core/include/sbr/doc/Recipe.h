@@ -153,6 +153,7 @@ struct LoopProfile {
 // face's recipe (source[0], editable as "in0.<key>"), the split line and a
 // point inside this part (parent coordinates).
 struct FacePart {
+  // Optional source[1]: exact cutter curve, in parent coordinates.
   std::vector<BooleanOperand> source;
   std::vector<gp_Pnt> line;
   gp_Pnt inside;
@@ -251,6 +252,7 @@ struct RevolveOp {
 struct SplitOp {
   geom::FaceRef face;
   std::vector<gp_Pnt> points;
+  std::optional<BooleanOperand> curve;
 };
 
 // Push/pull of a curved face: offset along its normal, neighbours adapt.

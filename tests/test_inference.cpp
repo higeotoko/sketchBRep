@@ -322,3 +322,13 @@ TEST(Inference, HierarchyFindsTheSameSnapsInLargeModels) {
   EXPECT_EQ(r.kind, SnapKind::Endpoint);
   EXPECT_NEAR(r.point.Distance(corner), 0, 1e-9);
 }
+
+TEST(Inference, CoincidentSilhouettePointsAndEdgesPreferTheNearerSurface) {
+  InferenceEngine engine;TopView view;engine.setShapes({box()});
+  // Top and bottom edges coincide on screen and are both on a silhouette.
+  for(const auto& pos:std::vector<ScreenPoint>{{0,0},{0,-50},{0,-35}}) {
+    const auto r=engine.snap(view.query(pos.x,pos.y));
+    EXPECT_NEAR(r.point.Z(),500,1e-6);
+    EXPECT_NEAR(r.point.X(),0,1e-6);
+  }
+}

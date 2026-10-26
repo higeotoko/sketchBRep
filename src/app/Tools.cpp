@@ -690,6 +690,13 @@ void createCurveAndFace(ToolHost& host, Create create, const char* undoName) {
     host.reportError(QString::fromStdString(curve.error()));
     return;
   }
+  auto divided=m.splitWithCurve(*curve);
+  if(!divided) {
+    m.history().abortGroup();host.reportError(QString::fromStdString(divided.error()));return;
+  }
+  if(*divided) {
+    m.history().endGroup();host.setStatus(QObject::tr("面を分割しました。分かれた面をプッシュ/プルできます"));return;
+  }
   bool loopFound = false;
   auto face = m.faceFromLoop(*curve, &loopFound);
   // Not closed end to end: crossing other lines (or itself) may still close areas.
@@ -720,8 +727,17 @@ geom::SketchPlane planeForStart(Viewport& viewport, const QPoint& pos, const sna
   gp_Dir normal = gp::DZ();
   if (r.kind == snap::SnapKind::OnFace && r.faceNormal) {
     normal = *r.faceNormal;
-  } else if (const auto face = viewport.faceAt(pos)) {
-    if (std::abs(gp_Vec(face->first, r.point).Dot(gp_Vec(face->second))) < 1e-6) normal = face->second;
+  } else {
+    // A snapped boundary point may project just outside the face after
+    // rounding to a pixel. Read a neighbouring visible face through it,
+    // rather than silently drawing an arc on the horizontal work plane.
+    for(const auto& offset:{QPoint(0,0),QPoint(1,0),QPoint(-1,0),QPoint(0,1),QPoint(0,-1),
+                           QPoint(1,1),QPoint(-1,1),QPoint(1,-1),QPoint(-1,-1)}) {
+      const auto face=viewport.faceAt(pos+offset);
+      if(face && std::abs(gp_Vec(face->first,r.point).Dot(gp_Vec(face->second)))<1e-6) {
+        normal=face->second;break;
+      }
+    }
   }
   return geom::SketchPlane::fromNormal(r.point, normal);
 }
@@ -1334,6 +1350,7 @@ void CurveTool::activate() {
 void CurveTool::cancel() {
   points_.clear();
   current_.reset();
+  drawPlane_.reset();
   host_.viewport().clearPreview();
   host_.viewport().hideSnap();
 }
@@ -1341,6 +1358,7 @@ void CurveTool::cancel() {
 bool CurveTool::stepBack() {
   if (points_.empty()) return false;
   points_.pop_back();
+  if(points_.empty())drawPlane_.reset();
   resetLock();
   updatePreview();
   host_.setStatus(QObject::tr("最後の点を取り消しました"));
@@ -1351,7 +1369,7 @@ void CurveTool::mouseMove(const ToolEvent& e) {
   std::optional<gp_Pnt> anchor;
   if (!points_.empty()) anchor = points_.back();
   const snap::SnapResult r =
-      snapAt(e, anchor, anchor ? std::optional<gp_Pln>(gp_Pln(*anchor, gp::DZ())) : std::nullopt);
+      snapAt(e, anchor, drawPlane_);
   if (r.valid()) current_ = r.point;
   updatePreview();
 }
@@ -1367,6 +1385,7 @@ void CurveTool::mousePress(const ToolEvent& e) {
     }
   }
   if (!points_.empty() && current_->Distance(points_.back()) < tolerance::kMinDimension) return;
+  if(points_.empty())drawPlane_=planeForStart(host_.viewport(),e.pos,last_).plane();
   points_.push_back(*current_);
   updatePreview();
 }
@@ -1936,12 +1955,21 @@ void ArcTool::commit(double bulge) {
     lastCreated_ = arc && host_.modeler().document().find(*arc) ? arc : std::nullopt;
     if (lastCreated_) recent_.mark(host_.modeler());
   } else {
-    auto id = host_.modeler().createArc(start_, end_, plane_.normal, bulge, true);
-    if (!id) {
-      host_.reportError(QString::fromStdString(id.error()));
+    auto& m=host_.modeler();m.history().beginGroup("Arc");
+    // On an existing planar face both arc modes divide it along the arc.
+    // Away from a face the default remains an arc+chord segment profile.
+    auto stroke=m.createArc(start_,end_,plane_.normal,bulge,false);
+    auto divided=stroke?m.splitWithCurve(*stroke):Result<bool>::failure(stroke.error());
+    if(!divided) {
+      m.history().abortGroup();host_.reportError(QString::fromStdString(divided.error()));
+    } else if(*divided) {
+      m.history().endGroup();lastCreated_.reset();
+      host_.setStatus(QObject::tr("面を分割しました。分かれた面をプッシュ/プルできます"));
     } else {
-      lastCreated_ = id.value();
-      recent_.mark(host_.modeler());
+      const auto removed=m.remove({*stroke});
+      auto id=removed?m.createArc(start_,end_,plane_.normal,bulge,true):Result<doc::ObjectId>::failure(removed.message());
+      if(!id){m.history().abortGroup();host_.reportError(QString::fromStdString(id.error()));}
+      else{m.history().endGroup();lastCreated_=*id;recent_.mark(m);}
     }
   }
   reset();

@@ -660,7 +660,7 @@ Result<ObjectId> Modeler::splitWithLine(const std::vector<gp_Pnt>& worldPoints) 
     std::vector<gp_Pnt> local;
     for (const gp_Pnt& p : worldPoints) local.push_back(p.Transformed(toLocal));
     Object object = candidate;
-    object.recipe.modifiers.push_back(SplitOp{*ref, local});
+    object.recipe.modifiers.push_back(SplitOp{*ref, local,std::nullopt});
     const Status s = commitModified(std::move(object), "Split Face");
     if (s) return candidate.id;
     lastError = s.message();
@@ -2566,12 +2566,113 @@ Result<Modeler::Divided> Modeler::splitAcross(const std::vector<gp_Pnt>& worldPo
   return out;
 }
 
+Result<bool> Modeler::splitWithCurve(const ObjectId& curveId) {
+  const auto* object=document_.find(curveId);
+  if(!object)return Result<bool>::failure("Object not found");
+  if(object->kind()!=ObjectKind::Curve)return false;
+  history_.beginGroup("Split Face");
+  std::vector<ObjectId> now{curveId};
+  const auto status=divideWithCurve(curveId,now);
+  if(!status){history_.abortGroup();return Result<bool>::failure(status.message());}
+  history_.endGroup();
+  return now!=std::vector<ObjectId>{curveId};
+}
+
+Status Modeler::divideWithCurve(const ObjectId& curveId, std::vector<ObjectId>& now) {
+  const auto* found=document_.find(curveId);
+  if(!found)return Status::success();
+  const Object curveObject=*found;
+  if(curveObject.locked || !document_.isVisible(curveId) || curveObject.parent!=activeGroup_)return Status::success();
+  const auto world=document_.worldShape(curveObject);
+  const auto edges=chainOf(world);
+  // Arc and interpolated-curve tools create one exact edge. Drawing layers
+  // and arbitrary multi-edge imports are not treated as one sketch stroke.
+  if(edges.size()!=1 || BRepAdaptor_Curve(edges.front()).GetType()==GeomAbs_Line)return Status::success();
+  const auto edge=edges.front();BRepAdaptor_Curve original(edge);
+  const double first=original.FirstParameter(),last=original.LastParameter();
+  Bnd_Box reach;BRepBndLib::Add(world,reach);reach.Enlarge(tolerance::kMinDimension);
+  std::vector<ObjectId> targets;
+  for(const auto& o:document_.objects()) {
+    if(o.id==curveId || o.parent!=curveObject.parent || o.locked || !document_.isVisible(o.id) ||
+       (o.kind()!=ObjectKind::Face && o.kind()!=ObjectKind::Solid) || document_.worldBounds(o).IsOut(reach))continue;
+    targets.push_back(o.id);
+  }
+  std::vector<std::pair<double,double>> used;
+  for(const auto& id:targets) {
+    // Revisit a solid after each split: the cutter may cross several of its
+    // existing coplanar regions. Previously inserted edges divide nothing.
+    for(int pass=0;pass<256;++pass) {
+      const auto* current=document_.find(id);if(!current)break;
+      const Object candidate=*current;
+      const auto toLocal=document_.worldTransform(candidate).Inverted();
+      const auto localCurve=world.Moved(TopLoc_Location(toLocal));
+      bool divided=false;
+      for(TopExp_Explorer e(candidate.shape,TopAbs_FACE);e.More();e.Next()) {
+        const auto face=TopoDS::Face(e.Current());
+        if(!geom::isPlanarFace(face))continue;
+        Bnd_Box bounds;BRepBndLib::Add(face.Moved(TopLoc_Location(document_.worldTransform(candidate))),bounds);
+        if(bounds.IsOut(reach))continue;
+        auto result=geom::splitFaceWithCurve(candidate.shape,face,localCurve);
+        if(!result)continue;
+        // Common preserves the source curve's parameterization. Consume only
+        // edge-to-edge or closed portions that were offered to the splitter.
+        BRepAlgoAPI_Common common;TopTools_ListOfShape arguments,tools;arguments.Append(localCurve);tools.Append(face);
+        common.SetArguments(arguments);common.SetTools(tools);common.SetNonDestructive(Standard_True);common.Build();
+        std::vector<std::pair<double,double>> portions;
+        if(common.IsDone() && !common.HasErrors())for(TopExp_Explorer pe(common.Shape(),TopAbs_EDGE);pe.More();pe.Next()) {
+          BRepAdaptor_Curve c(TopoDS::Edge(pe.Current()));
+          const auto a=c.Value(c.FirstParameter()),b=c.Value(c.LastParameter());
+          if(geom::pointOnFaceBoundary(face,c.Value((c.FirstParameter()+c.LastParameter())/2)))continue;
+          if(a.Distance(b)>1e-6 && (!geom::pointOnFaceBoundary(face,a)||!geom::pointOnFaceBoundary(face,b)))continue;
+          portions.emplace_back(c.FirstParameter()-first,c.LastParameter()-first);
+        }
+        if(portions.empty())continue;
+        Recipe cutter;cutter.base=ImportedShape{BRepBuilderAPI_Copy(localCurve).Shape(),"Planar split curve"};
+        BooleanOperand operand{std::make_shared<const Recipe>(cutter),gp_Trsf(),curveObject.name};
+        if(candidate.shape.ShapeType()==TopAbs_FACE) {
+          auto parts=geom::splitPlanarFaceWithCurve(face,localCurve);
+          if(!parts)return parts.status();
+          std::string material=candidate.material;
+          for(const auto& entry:resolveFaceMaterials(candidate).faces)if(entry.first==1)material=entry.second;
+          std::size_t n=0;
+          for(const auto& part:*parts) {
+            auto inside=geom::SurfaceRef::fromFace(part);if(!inside)return inside.status();
+            Object o=candidate;o.recipe=Recipe{};
+            o.recipe.base=FacePart{{{std::make_shared<const Recipe>(candidate.recipe),gp_Trsf(),candidate.name},operand},{},inside->point};
+            o.material=material;o.faceMaterials.clear();o.hiddenEdges.clear();
+            if(n++==0){if(auto status=commitModified(std::move(o),"Split Face");!status)return status;}
+            else{o.id=generateObjectId();o.name=uniqueName(candidate.name);auto added=addObject(std::move(o),"Split Face");if(!added)return added.status();}
+          }
+        } else {
+          auto ref=geom::FaceRef::identify(face);if(!ref)return ref.status();
+          Object o=candidate;o.recipe.modifiers.push_back(SplitOp{*ref,{},operand});
+          if(auto status=commitModified(std::move(o),"Split Face");!status)return status;
+        }
+        used.insert(used.end(),portions.begin(),portions.end());
+        divided=true;break;
+      }
+      if(!divided || candidate.shape.ShapeType()==TopAbs_FACE)break;
+      if(pass==255)return Status::failure("Too many face regions for one curved stroke");
+    }
+  }
+  if(used.empty())return Status::success();
+  if(auto status=remove({curveId});!status)return status;
+  now.erase(std::remove(now.begin(),now.end(),curveId),now.end());
+  for(const auto& interval:uncovered(last-first,used,1e-9)) {
+    auto piece=subEdge(edge,first+interval.first,first+interval.second);if(piece.IsNull())continue;
+    Object o=curveObject;o.id=generateObjectId();o.name=uniqueName(curveObject.name);o.recipe=Recipe{};
+    o.recipe.base=ImportedShape{piece.Moved(TopLoc_Location(document_.worldTransform(curveObject).Inverted())),"Unused curve portion"};
+    auto added=addObject(std::move(o),"Split Face");if(!added)return added.status();now.push_back(*added);
+  }
+  return Status::success();
+}
+
 Status Modeler::divideWithLine(const ObjectId& lineId, std::vector<ObjectId>& now) {
   const Object* found = document_.find(lineId);
   if (!found) return Status::success();
   const Object line = *found;
   const std::vector<gp_Pnt> points = worldPolyline(document_, line);
-  if (points.size() < 2) return Status::success();
+  if (points.size() < 2) return divideWithCurve(lineId,now);
   auto divided = splitAcross(points);
   if (!divided) return divided.status();
   if (divided->faces == 0) return Status::success();

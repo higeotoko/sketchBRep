@@ -435,6 +435,49 @@ Result<TopoDS_Wire> splitWire(const TopoDS_Face& face, const std::vector<gp_Pnt>
 
 }  // namespace
 
+Result<TopoDS_Shape> splitFaceWithCurve(const TopoDS_Shape& shape, const TopoDS_Face& face,
+                                      const TopoDS_Shape& curve) {
+  using R=Result<TopoDS_Shape>;
+  if (!isPlanarFace(face)) return R::failure("Only planar faces can be split");
+  try {
+    // Common keeps only exact portions on the face. A curve merely piercing
+    // the plane gives vertices, never an edge; no projection or extension.
+    BRepAlgoAPI_Common common;
+    TopTools_ListOfShape arguments,tools;arguments.Append(curve);tools.Append(face);
+    common.SetArguments(arguments);common.SetTools(tools);common.SetNonDestructive(Standard_True);common.Build();
+    if (!common.IsDone() || common.HasErrors()) return R::failure("Curve does not lie on the face");
+    BRepFeat_SplitShape split(shape);
+    bool added=false;
+    for (TopExp_Explorer e(common.Shape(),TopAbs_EDGE);e.More();e.Next()) {
+      const auto edge=TopoDS::Edge(e.Current());
+      BRepAdaptor_Curve c(edge);
+      const auto a=c.Value(c.FirstParameter()), b=c.Value(c.LastParameter());
+      const auto mid=c.Value((c.FirstParameter()+c.LastParameter())/2);
+      if (pointOnFaceBoundary(face,mid)) continue;
+      if (a.Distance(b)>1e-6 && (!pointOnFaceBoundary(face,a) || !pointOnFaceBoundary(face,b))) continue;
+      split.Add(edge,face);added=true;
+    }
+    if (!added) return R::failure("The curve does not divide the face");
+    split.Build();
+    if (!split.IsDone()) return R::failure("The face could not be split");
+    const auto result=split.Shape();int before=0,after=0;
+    for(TopExp_Explorer e(shape,TopAbs_FACE);e.More();e.Next())++before;
+    for(TopExp_Explorer e(result,TopAbs_FACE);e.More();e.Next())++after;
+    if(after<=before)return R::failure("The curve does not divide the face");
+    if(!BRepCheck_Analyzer(result).IsValid())return R::failure("Split produced invalid geometry");
+    return result;
+  } catch(const Standard_Failure& e){return R::failure(std::string("Split failed: ")+e.GetMessageString());}
+}
+
+Result<std::vector<TopoDS_Face>> splitPlanarFaceWithCurve(const TopoDS_Face& face,
+                                                        const TopoDS_Shape& curve) {
+  auto result=splitFaceWithCurve(face,face,curve);
+  if(!result)return Result<std::vector<TopoDS_Face>>::failure(result.error());
+  std::vector<TopoDS_Face> parts;
+  for(TopExp_Explorer e(*result,TopAbs_FACE);e.More();e.Next())parts.push_back(TopoDS::Face(e.Current()));
+  return parts;
+}
+
 Result<std::vector<TopoDS_Face>> splitPlanarFace(const TopoDS_Face& face, const std::vector<gp_Pnt>& polyline) {
   if (!isPlanarFace(face)) return Result<std::vector<TopoDS_Face>>::failure("Only planar faces can be split");
   auto wire = splitWire(face, polyline);

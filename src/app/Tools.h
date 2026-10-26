@@ -403,11 +403,15 @@ class CurveTool : public DrawingTool {
   bool keyPress(QKeyEvent* event) override;
   void applyMeasurement(const QString& text) override;
 
+ protected:
+  std::optional<gp_Pln> workingPlane() const override { return drawPlane_; }
+
  private:
   void finish(bool closed);
   void updatePreview();
   std::vector<gp_Pnt> points_;
   std::optional<gp_Pnt> current_;
+  std::optional<gp_Pln> drawPlane_;
 };
 
 // 2-point arc: start, end, then the bulge (snaps to a semicircle). Makes a

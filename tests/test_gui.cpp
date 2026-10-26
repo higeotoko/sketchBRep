@@ -226,6 +226,8 @@ class GuiPhase1 : public QObject {
   void aiRequestsTakeTurnsWithTheWindow();
   void aiWaitsForLongOperation();
   void arcToolSemicircleAndBulgeEdit();
+  void curvesDividePlanarFaces_data();
+  void curvesDividePlanarFaces();
   void scenesSaveRestoreAndPersist();
   void dimensionAndTextTools();
   void lineAcrossWallSplitsFace();
@@ -6891,4 +6893,52 @@ void GuiPhase1::arcOutlineClosesAfterErasingCorner() {
   QCOMPARE(m.document().objects().size(), std::size_t(3));
   QVERIFY(m.redo());
   QVERIFY(m.extrude(id, 1000));
+}
+
+
+void GuiPhase1::curvesDividePlanarFaces_data() {
+  QTest::addColumn<int>("mode");QTest::addColumn<bool>("solid");QTest::addColumn<bool>("tilted");
+  for(bool solid:{false,true})for(int mode=0;mode<3;++mode)
+    QTest::newRow(qPrintable(QString("%1-%2").arg(solid?"solid":"profile").arg(mode)))<<mode<<solid<<false;
+  for(int mode=0;mode<3;++mode)QTest::newRow(qPrintable(QString("tilted-%1").arg(mode)))<<mode<<false<<true;
+}
+void GuiPhase1::curvesDividePlanarFaces() {
+  QFETCH(int,mode);QFETCH(bool,solid);QFETCH(bool,tilted);Fixture f;QVERIFY(f.setUp(1000,1000));auto& m=f.window.modeler();
+  const auto plane=geom::SketchPlane::fromNormal(gp_Pnt(0,0,0),tilted?gp_Dir(0,1,1):gp::DZ());
+  auto face=m.createRectangle(plane,2000,2000);QVERIFY(face);
+  if(solid)QVERIFY(m.extrude(*face,1000));
+  const double z=solid?1000:0;
+  auto point=[&](double x,double y){return plane.toWorld(x,y).Translated(gp_Vec(plane.normal)*z);};
+  const auto center=point(1000,1000),eye=center.Translated(gp_Vec(plane.normal)*10000);
+  doc::CameraState cam;cam.eye={eye.X(),eye.Y(),eye.Z()};cam.target={center.X(),center.Y(),center.Z()};
+  cam.up={plane.yDir().X(),plane.yDir().Y(),plane.yDir().Z()};cam.scale=4000;cam.perspective=false;
+  f.vp->syncNow();f.vp->restoreCamera(cam);QTest::qWait(50);const auto steps=m.history().undoCount();
+  f.window.activateTool(mode==2?MainWindow::ToolId::Curve:MainWindow::ToolId::Arc);
+  if(mode==1)QTest::keyClick(f.vp,Qt::Key_Control);
+  click(f.vp,f.vp->toWidget(point(0,1000)));
+  if(mode==2) {
+    click(f.vp,f.vp->toWidget(point(500,600)));
+    click(f.vp,f.vp->toWidget(point(1500,1400)));
+    click(f.vp,f.vp->toWidget(point(2000,1000)));QTest::keyClick(f.vp,Qt::Key_Return);
+  } else {
+    click(f.vp,f.vp->toWidget(point(2000,1000)));
+    move(f.vp,f.vp->toWidget(point(1000,1400)));type(f.vp,QStringLiteral("400"));
+  }
+  QTest::qWait(30);QVERIFY2(f.window.lastError().isEmpty(),qPrintable(f.window.lastError()));
+  int faces=0,curves=0;double area=0;
+  for(const auto& o:m.document().objects()) {
+    curves+=o.kind()==doc::ObjectKind::Curve;
+    for(TopExp_Explorer e(o.shape,TopAbs_FACE);e.More();e.Next())++faces;
+    if(!solid)area+=geom::area(o.shape);
+  }
+  QCOMPARE(faces,solid?7:2);QCOMPARE(curves,0);
+  if(!solid)QVERIFY(std::abs(area-4000000)<1e-3);
+  else {
+    // A split in the hidden bottom face would also give seven faces.
+    int top=0;for(TopExp_Explorer e(m.document().find(*face)->shape,TopAbs_FACE);e.More();e.Next()) {
+      const auto f=TopoDS::Face(e.Current());gp_Pln p;if(geom::isPlanarFace(f,&p)&&std::abs(p.Location().Z()-z)<1e-6&&p.Axis().Direction().IsParallel(gp::DZ(),1e-6))++top;
+    }
+    QCOMPARE(top,2);
+  }
+  QCOMPARE(m.history().undoCount(),steps+1);QVERIFY(m.undo());QCOMPARE(m.document().objects().size(),std::size_t(1));QVERIFY(m.redo());
 }

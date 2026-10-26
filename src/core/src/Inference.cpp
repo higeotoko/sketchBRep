@@ -437,6 +437,15 @@ SnapResult InferenceEngine::snap(const SnapQuery& q) const {
   if (guidePointsDirty_) rebuildGuidePoints();
   SnapResult result;
   const double tol = q.pixelTolerance;
+  // At a silhouette, upper/lower points can both be visible and project to
+  // the same pixel. Prefer the nearer one instead of storage order. Round
+  // sub-micro-pixel noise so numerical projection differences do not win.
+  const auto nearerCandidate = [&](const auto& a,const auto& b) {
+    const auto sa=std::llround(a.first*1e6),sb=std::llround(b.first*1e6);
+    if(sa!=sb)return sa<sb;
+    return gp_Vec(q.ray.origin,a.second.point).Dot(gp_Vec(q.ray.direction)) <
+           gp_Vec(q.ray.origin,b.second.point).Dot(gp_Vec(q.ray.direction));
+  };
   // Shapes that can have a point or edge under the cursor (sticky points
   // are kept within 1.5x the tolerance).
   const Cache::Slots nearby = cache_ ? cache_->nearCursor(q, 1.5 * tol) : Cache::Slots{};
@@ -476,8 +485,7 @@ SnapResult InferenceEngine::snap(const SnapQuery& q) const {
       r.point = p;
       candidates.emplace_back(d, r);
     }
-    std::sort(candidates.begin(), candidates.end(),
-              [](const auto& a, const auto& b) { return a.first < b.first; });
+    std::sort(candidates.begin(), candidates.end(),nearerCandidate);
     for (const auto& [score, r] : candidates) {
       if (isVisible(r.point, q.ray)) {
         pointSnap = r;
@@ -556,8 +564,7 @@ SnapResult InferenceEngine::snap(const SnapQuery& q) const {
       r.edgeDirection = g.Direction();
       candidates.emplace_back(d, r);
     }
-    std::sort(candidates.begin(), candidates.end(),
-              [](const auto& a, const auto& b) { return a.first < b.first; });
+    std::sort(candidates.begin(), candidates.end(),nearerCandidate);
     for (const auto& [score, r] : candidates) {
       if (isVisible(r.point, q.ray)) return r;
     }

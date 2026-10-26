@@ -509,9 +509,9 @@ json modifierToJson(const Modifier& m) {
             return json{{"type", "inset"}, {"distance", op.distance}, {"face", faceRefToJson(op.face)}};
           },
           [](const SplitOp& op) {
-            return json{{"type", "split"},
-                        {"points", pointsToJson(op.points)},
-                        {"face", faceRefToJson(op.face)}};
+            json j{{"type", "split"}, {"points", pointsToJson(op.points)}, {"face", faceRefToJson(op.face)}};
+            if(op.curve)j["curve"]={{"name",op.curve->name},{"placement",toJson(op.curve->placement)},sharedRecipe(op.curve->recipe)};
+            return j;
           },
           [](const StretchOp& op) {
             return json{{"type", "stretch"}, {"center", toJson(op.center)}, {"x", toJson(op.xDir)},
@@ -623,6 +623,10 @@ Modifier modifierFrom(const json& j) {
     op.points = pointsFrom(j.at("points"));
     const json& f = j.at("face");
     op.face = faceRefFrom(f);
+    if(j.contains("curve")) {
+      const auto& c=j.at("curve");
+      op.curve=BooleanOperand{sharedRecipeFrom(c),trsfFrom(c.at("placement")),c.value("name",std::string())};
+    }
     return op;
   }
   throw std::runtime_error("unknown modifier type: " + type);

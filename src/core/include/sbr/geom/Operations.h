@@ -105,6 +105,12 @@ Result<TopoDS_Shape> imprintOffset(const TopoDS_Shape& solid, const TopoDS_Face&
 Result<TopoDS_Shape> splitFace(const TopoDS_Shape& solid, const TopoDS_Face& face,
                                const std::vector<gp_Pnt>& polyline);
 
+// Exact curved edges on a planar face. Does not project or tessellate curves.
+Result<TopoDS_Shape> splitFaceWithCurve(const TopoDS_Shape& shape, const TopoDS_Face& face,
+                                      const TopoDS_Shape& curve);
+Result<std::vector<TopoDS_Face>> splitPlanarFaceWithCurve(const TopoDS_Face& face,
+                                                        const TopoDS_Shape& curve);
+
 // Same for a single planar face (a profile): returns the parts.
 Result<std::vector<TopoDS_Face>> splitPlanarFace(const TopoDS_Face& face, const std::vector<gp_Pnt>& polyline);
 

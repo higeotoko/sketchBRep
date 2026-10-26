@@ -279,15 +279,21 @@ Result<TopoDS_Shape> buildBase(const BaseFeature& base, const RegenContext& cont
             return TopoDS_Shape(f);
           },
           [&](const FacePart& f) -> Result<TopoDS_Shape> {
-            if (f.source.size() != 1 || !f.source[0].recipe) return Result<TopoDS_Shape>::failure("Split face missing");
+            if (f.source.empty() || f.source.size()>2 || !f.source[0].recipe) return Result<TopoDS_Shape>::failure("Split face missing");
             auto shape = regenerateShared(f.source[0].recipe, context);
             if (!shape) return Result<TopoDS_Shape>::failure(shape.error());
             const TopoDS_Shape placed = shape->Moved(TopLoc_Location(f.source[0].placement));
             if (placed.ShapeType() != TopAbs_FACE) return Result<TopoDS_Shape>::failure("Split source is not a face");
-            auto parts = geom::splitPlanarFace(TopoDS::Face(placed), f.line);
+            auto parts = [&]() -> Result<std::vector<TopoDS_Face>> {
+              if(f.source.size()==1)return geom::splitPlanarFace(TopoDS::Face(placed), f.line);
+              if(!f.source[1].recipe)return Result<std::vector<TopoDS_Face>>::failure("Split curve missing");
+              auto curve=regenerateShared(f.source[1].recipe,context);
+              if(!curve)return Result<std::vector<TopoDS_Face>>::failure(curve.error());
+              return geom::splitPlanarFaceWithCurve(TopoDS::Face(placed),curve->Moved(TopLoc_Location(f.source[1].placement)));
+            }();
             // The original face may have grown since (e.g. a larger width):
             // the split line then reaches on to its new edges.
-            if (!parts) parts = geom::splitPlanarFaceExtended(TopoDS::Face(placed), f.line);
+            if (!parts && f.source.size()==1) parts = geom::splitPlanarFaceExtended(TopoDS::Face(placed), f.line);
             if (!parts) return Result<TopoDS_Shape>::failure(parts.error());
             for (const TopoDS_Face& part : parts.value()) {
               if (geom::pointOnFace(part, f.inside)) return TopoDS_Shape(part);
@@ -403,6 +409,12 @@ Result<TopoDS_Shape> regenerate(const Recipe& recipe, const RegenContext& contex
             [&](const SplitOp& op) -> Result<TopoDS_Shape> {
               auto face = op.face.resolve(shape, splitLines);
               if (!face) return Result<TopoDS_Shape>::failure(face.error());
+              if(op.curve) {
+                if(!op.curve->recipe)return Result<TopoDS_Shape>::failure("Split curve missing");
+                auto curve=regenerateShared(op.curve->recipe,context);
+                if(!curve)return Result<TopoDS_Shape>::failure(curve.error());
+                return geom::splitFaceWithCurve(shape,*face,curve->Moved(TopLoc_Location(op.curve->placement)));
+              }
               for (std::size_t k = 1; k < op.points.size(); ++k) splitLines.emplace_back(op.points[k - 1], op.points[k]);
               return geom::splitFace(shape, face.value(), op.points);
             },

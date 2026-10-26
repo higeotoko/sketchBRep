@@ -112,6 +112,10 @@ class Modeler {
   // the original recipe. Only objects of the current editing context are
   // considered.
   Result<ObjectId> splitWithLine(const std::vector<gp_Pnt>& worldPoints);
+  // Imprint an exact single-edge curve on planar faces in its editing group.
+  // True when divided; consume the used part and retain exact outside pieces.
+  // Part of the caller's undo group (as settleOverlaps).
+  Result<bool> splitWithCurve(const ObjectId& curveId);
   // A straight line (polyline, world) lying on flat faces of the current
   // group: every part of it that runs across a face from edge to edge
   // divides that face, so one line can divide several faces side by side
@@ -594,6 +598,7 @@ class Modeler {
   // A loose line dividing the faces it runs across (splitAcross); the line
   // is replaced by its unused parts. `now`: what the line became.
   Status divideWithLine(const ObjectId& lineId, std::vector<ObjectId>& now);
+  Status divideWithCurve(const ObjectId& curveId, std::vector<ObjectId>& now);
   // Loose lines of `parent` lying on this face (world) and its plane
   // divide it (lines drawn first, the face after).
   Status divideWithLinesOn(const ObjectId& parent, const TopoDS_Face& face, const gp_Pln& plane);

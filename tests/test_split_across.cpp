@@ -13,6 +13,7 @@
 #include <TopoDS_Vertex.hxx>
 
 #include <gtest/gtest.h>
+#include <chrono>
 
 #include <nlohmann/json.hpp>
 
@@ -281,4 +282,94 @@ TEST(SplitAcross, TopEdgesCopiedDownDivideEverySide) {
       EXPECT_TRUE(geom::validateShape(m.document().worldShape(*m.document().find(box)), true).valid);
     }
   }
+}
+
+// Curves used to be displayed on planar faces but worldPolyline() rejected
+// every non-line edge, so the tidy path never imprinted them.
+namespace {
+int circleEdges(const TopoDS_Shape& shape) {
+  int n=0;for(TopExp_Explorer e(shape,TopAbs_EDGE);e.More();e.Next())n+=BRepAdaptor_Curve(TopoDS::Edge(e.Current())).GetType()==GeomAbs_Circle;
+  return n;
+}
+double faceArea(const Modeler& m) {
+  double area=0;for(const auto& o:m.document().objects())if(o.kind()==ObjectKind::Face)area+=geom::area(o.shape);return area;
+}
+}
+TEST(PlanarCurveSplit, ArcKeepsExactBoundaryAndUndoSaveAndPushPull) {
+  Modeler m;auto face=m.createRectangle(at(0,0),100,100);ASSERT_TRUE(face);
+  auto material=m.createMaterial("Texture",{0.6,0.7,0.8});ASSERT_TRUE(material);
+  const auto image=m.addTextureImage("texture bytes for persistence test","texture.png");
+  auto settings=*m.document().findMaterial(*material);settings.texture=MaterialTexture{image,10,20,false};ASSERT_TRUE(m.editMaterial(settings));
+  ASSERT_TRUE(m.paintFaces(*face,{TopoDS::Face(m.document().find(*face)->shape)},*material));
+  const auto steps=m.history().undoCount();m.history().beginGroup("Arc");
+  auto arc=m.createArc(gp_Pnt(0,50,0),gp_Pnt(100,50,0),gp::DZ(),20,false);ASSERT_TRUE(arc);
+  auto settled=m.settleOverlaps({*arc});ASSERT_TRUE(settled)<<settled.error();m.history().endGroup();
+  ASSERT_EQ(count(m,ObjectKind::Face),2);EXPECT_EQ(count(m,ObjectKind::Curve),0);EXPECT_NEAR(faceArea(m),10000,1e-5);
+  int circles=0;for(const auto& o:m.document().objects())circles+=circleEdges(o.shape);EXPECT_GE(circles,2);
+  EXPECT_EQ(m.history().undoCount(),steps+1);ASSERT_TRUE(m.undo());EXPECT_EQ(count(m,ObjectKind::Face),1);
+  ASSERT_TRUE(m.redo());EXPECT_EQ(count(m,ObjectKind::Face),2);
+  const auto file=::testing::TempDir()+"planar_arc.sbr";ASSERT_TRUE(m.save(file));Modeler loaded;ASSERT_TRUE(loaded.load(file));
+  EXPECT_EQ(count(loaded,ObjectKind::Face),2);EXPECT_NEAR(faceArea(loaded),10000,1e-5);
+  for(const auto& o:loaded.document().objects())EXPECT_EQ(o.material,*material);
+  ASSERT_TRUE(loaded.document().findMaterial(*material)->texture);EXPECT_EQ(loaded.document().findMaterial(*material)->texture->image,image);
+  const auto& part=loaded.document().objects().front();const auto id=part.id;const double area=geom::area(part.shape);
+  ASSERT_TRUE(loaded.extrude(id,10));EXPECT_NEAR(volumeOf(loaded,id),area*10,1e-4);
+}
+TEST(PlanarCurveSplit, SplineOnTiltedPlaneAndPlacedGroup) {
+  Modeler m;auto plane=geom::SketchPlane::fromNormal(gp_Pnt(0,0,0),gp_Dir(0,1,1));
+  auto face=m.createRectangle(plane,100,100);ASSERT_TRUE(face);auto group=m.group({*face});ASSERT_TRUE(group);
+  ASSERT_TRUE(m.move({*group},gp_Vec(200,300,400)));ASSERT_TRUE(m.setActiveGroup(*group));
+  auto point=[&](double x,double y){return plane.origin.Translated(gp_Vec(plane.xDir)*x+gp_Vec(plane.yDir())*y+gp_Vec(200,300,400));};
+  auto curve=m.createCurve({point(0,50),point(25,30),point(70,70),point(100,50)},false);ASSERT_TRUE(curve);
+  auto settled=m.settleOverlaps({*curve});ASSERT_TRUE(settled)<<settled.error();
+  EXPECT_EQ(count(m,ObjectKind::Face),2);EXPECT_EQ(count(m,ObjectKind::Curve),0);EXPECT_NEAR(faceArea(m),10000,1e-4);
+  bool spline=false;for(const auto& o:m.document().objects())if(o.kind()==ObjectKind::Face) {
+    EXPECT_EQ(o.parent,*group);for(TopExp_Explorer e(o.shape,TopAbs_EDGE);e.More();e.Next())spline|=BRepAdaptor_Curve(TopoDS::Edge(e.Current())).GetType()==GeomAbs_BSplineCurve;
+  }
+  EXPECT_TRUE(spline);
+}
+TEST(PlanarCurveSplit, SolidFaceRetainsVolumeAndRecipeAfterReload) {
+  Modeler m;auto box=m.createRectangle(at(0,0),100,100);ASSERT_TRUE(box);ASSERT_TRUE(m.extrude(*box,100));
+  auto arc=m.createArc(gp_Pnt(0,0,50),gp_Pnt(100,0,50),gp_Dir(0,-1,0),20,false);ASSERT_TRUE(arc);
+  auto settled=m.settleOverlaps({*arc});ASSERT_TRUE(settled)<<settled.error();
+  EXPECT_EQ(faces(m,*box),7);EXPECT_EQ(count(m,ObjectKind::Curve),0);EXPECT_NEAR(volumeOf(m,*box),1000000,1e-4);
+  EXPECT_TRUE(geom::validateShape(m.document().find(*box)->shape,true).valid);
+  const auto file=::testing::TempDir()+"solid_arc_split.sbr";ASSERT_TRUE(m.save(file));Modeler loaded;ASSERT_TRUE(loaded.load(file));
+  EXPECT_EQ(faces(loaded,*box),7);EXPECT_NEAR(volumeOf(loaded,*box),1000000,1e-4);
+  const auto part=frontFaceAt(loaded,*box,gp_Pnt(50,0,25));ASSERT_FALSE(part.IsNull());
+  const auto partArea=geom::area(part);ASSERT_TRUE(loaded.pushPull(*box,part,10));
+  EXPECT_NEAR(volumeOf(loaded,*box),1000000+partArea*10,1e-3);
+}
+TEST(PlanarCurveSplit, CurvesStoppingInsideOrOffThePlaneDoNotDivide) {
+  for(int mode=0;mode<4;++mode) {
+    SCOPED_TRACE(mode);Modeler m;auto face=m.createRectangle(at(0,0),100,100);ASSERT_TRUE(face);
+    if(mode==3){ASSERT_TRUE(m.group({*face}));}
+    const double z=mode==1?1:0;
+    auto arc=m.createArc(gp_Pnt(mode==0?10:0,50,z),gp_Pnt(mode==0?90:100,50,z),mode==2?gp::DY():gp::DZ(),20,false);ASSERT_TRUE(arc);
+    auto settled=m.settleOverlaps({*arc});ASSERT_TRUE(settled)<<settled.error();
+    EXPECT_EQ(count(m,ObjectKind::Face),1);EXPECT_EQ(count(m,ObjectKind::Curve),1);EXPECT_NEAR(faceArea(m),10000,1e-5);
+  }
+}
+TEST(PlanarCurveSplit, OversizedArcKeepsOnlyTheTwoExactOutsidePortions) {
+  Modeler m;ASSERT_TRUE(m.createRectangle(at(0,0),100,100));
+  auto arc=m.createArc(gp_Pnt(-50,50,0),gp_Pnt(150,50,0),gp::DZ(),20,false);ASSERT_TRUE(arc);
+  auto settled=m.settleOverlaps({*arc});ASSERT_TRUE(settled)<<settled.error();
+  EXPECT_EQ(count(m,ObjectKind::Face),2);EXPECT_EQ(count(m,ObjectKind::Curve),2);EXPECT_NEAR(faceArea(m),10000,1e-5);
+  for(const auto& o:m.document().objects())if(o.kind()==ObjectKind::Curve){EXPECT_EQ(circleEdges(o.shape),1); }
+}
+
+TEST(PlanarCurveSplit, RepeatedStrokesPreserveAreaAndSaveAsOneUndoGroup) {
+  Modeler m;ASSERT_TRUE(m.createRectangle(at(0,0),1000,1000));
+  const auto steps=m.history().undoCount();m.history().beginGroup("Repeated curves");
+  const auto start=std::chrono::steady_clock::now();
+  for(int i=0;i<24;++i) {
+    auto arc=m.createArc(gp_Pnt(0,20+40*i,0),gp_Pnt(1000,20+40*i,0),gp::DZ(),10,false);ASSERT_TRUE(arc);
+    auto result=m.splitWithCurve(*arc);ASSERT_TRUE(result)<<result.error();ASSERT_TRUE(*result);
+  }
+  m.history().endGroup();
+  std::cout<<"24 planar curved strokes: "<<std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count()<<" ms\n";
+  EXPECT_EQ(count(m,ObjectKind::Face),25);EXPECT_NEAR(faceArea(m),1000000,1e-3);EXPECT_EQ(m.history().undoCount(),steps+1);
+  const auto file=::testing::TempDir()+"repeated_planar_curves.sbr";ASSERT_TRUE(m.save(file));Modeler loaded;ASSERT_TRUE(loaded.load(file));
+  EXPECT_EQ(count(loaded,ObjectKind::Face),25);EXPECT_NEAR(faceArea(loaded),1000000,1e-3);
+  ASSERT_TRUE(m.undo());EXPECT_EQ(count(m,ObjectKind::Face),1);ASSERT_TRUE(m.redo());EXPECT_EQ(count(m,ObjectKind::Face),25);
 }
