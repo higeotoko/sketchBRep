@@ -27,7 +27,7 @@ AI 専用の裏口は作らず、GUI のツールと同じ `doc::Modeler` を JS
 | `sbr_cli` | `tools/cli` | ヘッドレス実行。JSON Lines のスクリプト、`--schema`、`--mcp`（ヘッドレス MCP） |
 | `sbr_mcp` | `tools/mcp` | MCP サーバー。起動中のアプリへ転送（`--headless` でアプリなし） |
 | `AiBridge` | `src/app/AiBridge.*` | アプリ内の共通入口。ローカルパイプと任意のChatGPT用HTTPから同じモデルを操作。「外部AIからの操作を許可」でON |
-| `McpHttpServer` | `src/app/McpHttpServer.*` | ChatGPT用のStreamable HTTP。ループバック待受＋秘密URL。利用者が用意するHTTPSトンネルを経由 |
+| `McpHttpServer` | `src/app/McpHttpServer.*` | リモートMCP用のStreamable HTTP。ループバック待受＋秘密URL。利用者が用意するHTTPSトンネルを経由 |
 
 ChatGPTの経路は `ChatGPT → 利用者のHTTPSトンネル → McpHttpServer → AiBridge → doc::Modeler`。上記のローカル接続と同じ検証・Undoを使う。
 
@@ -93,11 +93,14 @@ ChatGPTの経路は `ChatGPT → 利用者のHTTPSトンネル → McpHttpServer
 
 ## 使い方
 
-### ChatGPTのチャット画面から接続
+### リモートMCP接続（サービス側の利用条件あり）
 
-「AI連携 > ChatGPT 接続...」でHTTP接続口を開始し、HTTPSトンネルの公開URLから専用接続URLを生成して、ChatGPTのカスタムMCPアプリへ登録する。アカウントの機能と外部トンネルが別途必要。[手順・権限・検証範囲](33_chatgpt_connection.md)を参照。
+「AI連携 > リモートMCP接続...」でHTTP接続口を開始し、必要なHTTPS到達経路のURLからMCPクライアント用接続URLを生成する。MCP登録・読み取り・モデル作成／編集の権限は別条件。ChatGPTのプラン別条件とPlusのWindowsデスクトップでの実測、HTTPSと認証の違いは接続マニュアルを参照する。トンネルはサービス側の利用制限を解除しない。[手順・権限・検証範囲](33_chatgpt_connection.md)を参照。
 
 ### 1. ローカルMCPクライアント（Claude Desktop / Claude Code / Codex等）から操作する
+
+同一PCからのローカルMCPは通常HTTPSトンネル不要。クライアントは利用者が選び、特定のAIモデルや有料AI API、OpenAI APIキーを必須としない。ローカルLLMはモデルとクライアント双方のツール呼び出し対応が必要。「MCP 接続設定をコピー」のJSONが使えるかはクライアントの設定形式によるため、各製品の登録手順に従う。Codex等の開発環境で接続できることは、ChatGPT通常チャットでの編集権限を意味しない。
+
 1. SketchBRep を起動 → メニュー「AI 連携 > 外部 AI からの操作を許可」を ON（ステータスバーに「AI 連携 ON」）
 2. 「AI 連携 > MCP 接続設定をコピー」→ Claude Desktop の設定（`claude_desktop_config.json`）に貼り付け
    ```json
@@ -118,7 +121,7 @@ sbr_cli --open out.sbr --mcp                        # ヘッドレス MCP サー
 |---|---|
 | AI が壊れた形状を作る | GUI と同じ `Modeler` 経由なので、B-rep 検証・失敗時に一切変更しない・Undo がそのまま効く |
 | 途中まで実行して中途半端になる | `batch` は原子的（失敗したら全ステップを戻す）。成功しても Undo 1 回で全部戻る |
-| 知らないうちに外部から操作される | アプリ側は **既定 OFF**・明示的にON。通常のローカルソケットは同じユーザーのみ（`UserAccessOption`）。ChatGPT用HTTPは別途開始し、ループバック待受・秘密URL・Host/Origin検証を使う。HTTPSトンネルは利用者が用意する。OFFで両方停止。詳細は33章 |
+| 知らないうちに外部から操作される | アプリ側は **既定 OFF**・明示的にON。通常のローカルソケットは同じユーザーのみ（`UserAccessOption`）。リモートMCP用HTTPは別途開始し、ループバック待受・秘密URL・Host/Origin検証を使う。HTTPSトンネルは利用者が用意する。OFFで両方停止。詳細は33章 |
 | ファイルの上書き・消失 | アプリ経由では `save` / `open` / `export_step` を無効化。保存はユーザーが行う |
 | 作図中に割り込まれる | AI のコマンド実行前に、作図途中のツール操作をキャンセルしてから実行 |
 | 面の番号がずれる | 番号は `get_object` の結果に対応（表示・選択と同じ順序）。`{"normal": [...]}` 指定なら番号に依存しない。押し出しでトポロジーが変わったら `get_object` で取り直す方針を `instructions` で AI に伝えている |

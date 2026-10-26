@@ -754,7 +754,7 @@ void MainWindow::buildMenus() {
   QMenu* ai = menuBar()->addMenu(tr("AI 連携(&A)"));
   aiAction_ = ai->addAction(tr("外部 AI からの操作を許可"));
   aiAction_->setCheckable(true);
-  aiAction_->setToolTip(tr("ローカルMCPと、有効にしたChatGPT接続からモデルを操作できるようにします"));
+  aiAction_->setToolTip(tr("ローカルMCPと、有効にしたリモートMCP接続からモデルを操作できるようにします"));
   connect(aiAction_, &QAction::toggled, this, [this](bool on) { setAiAccess(on); });
   ai->addAction(tr("MCP 接続設定をコピー"), this, [this] {
     QString exe = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("sbr_mcp"));
@@ -766,7 +766,7 @@ void MainWindow::buildMenus() {
     QApplication::clipboard()->setText(QString::fromStdString(config.dump(2)));
     setStatus(tr("MCP 設定をコピーしました（Claude Desktop などの設定ファイルに貼り付け）"));
   });
-  ai->addAction(tr("ChatGPT 接続..."),this,&MainWindow::showChatGptConnection);
+  ai->addAction(tr("リモートMCP接続..."),this,&MainWindow::showChatGptConnection);
   ai->addAction(tr("AI 連携について"), this, [this] {
     QMessageBox::information(
         this, tr("AI 連携"),
@@ -774,8 +774,8 @@ void MainWindow::buildMenus() {
            "sbr_mcp（MCP サーバー）経由でモデルを操作できます。<br><br>"
            "・AI の操作も GUI と同じコマンドで実行され、形状チェック・失敗時の取り消し・Ctrl+Z が効きます<br>"
            "・AI はファイルの保存・開く・書き出しはできません（保存はあなたが行います）<br>"
-           "・通常のMCP接続は同じユーザーのローカルプロセスのみです。ChatGPT接続を開始した場合は専用URLからも操作できます<br><br>"
-           "設定: Claude Desktop / Claude Code / Codex はローカルMCPを利用できます。<br>ChatGPTのチャット画面からは「ChatGPT 接続...」を開いてください。"));
+           "・通常のMCP接続は同じユーザーのローカルプロセスのみです。リモートMCP接続を開始した場合は専用URLからも操作できます<br><br>"
+           "AIクライアントは利用者が選べます。特定のAIモデルや有料AI API、OpenAI APIキーは必須ではありません。<br>設定: ローカルMCPは sbr_mcp を各クライアントの手順で登録し、外部クライアントは「リモートMCP接続...」を使います。操作の可否はサービス・プラン・環境に依存します。"));
   });
 
   QMenu* help = menuBar()->addMenu(tr("ヘルプ(&H)"));
@@ -813,11 +813,11 @@ void MainWindow::showAbout() {
 }
 
 void MainWindow::showChatGptConnection() {
-  QDialog dialog(this);dialog.setWindowTitle(tr("ChatGPT 接続"));dialog.resize(760,570);
+  QDialog dialog(this);dialog.setWindowTitle(tr("リモートMCP接続"));dialog.resize(760,680);
   auto* layout=new QVBoxLayout(&dialog);
-  auto* intro=new QLabel(tr("ChatGPT のチャット画面から、起動中のこのモデルを操作します。<br>"
-      "1. 下のボタンで接続を開始<br>2. このPCでHTTPSトンネルを起動（ngrok等を別途インストール）<br>"
-      "3. 公開HTTPS URLを入力し、生成した接続URLをChatGPTのカスタムMCPアプリに登録"),&dialog);
+  auto* intro=new QLabel(tr("MCP対応クライアントから、HTTPで起動中のこのモデルへ接続するための設定です。<br>"
+      "1. 接続を開始<br>2. 必要に応じ、認証・アクセス制御を確認したHTTPS到達経路を用意<br>"
+      "3. 公開HTTPS URLを入力し、生成した接続URLをMCPクライアントに設定"),&dialog);
   intro->setWordWrap(true);layout->addWidget(intro);
   auto* state=new QLabel(&dialog);layout->addWidget(state);
   auto* buttons=new QHBoxLayout;auto* start=new QPushButton(tr("接続を開始"),&dialog);start->setObjectName("chatGptStart");
@@ -826,20 +826,25 @@ void MainWindow::showChatGptConnection() {
   auto* form=new QFormLayout;
   auto* tunnel=new QLineEdit(&dialog);tunnel->setObjectName("chatGptTunnelCommand");tunnel->setReadOnly(true);
   auto* copyTunnel=new QPushButton(tr("コマンドをコピー"),&dialog);auto* tunnelRow=new QHBoxLayout;
-  tunnelRow->addWidget(tunnel);tunnelRow->addWidget(copyTunnel);form->addRow(tr("このPCで実行"),tunnelRow);
+  tunnelRow->addWidget(tunnel);tunnelRow->addWidget(copyTunnel);form->addRow(tr("HTTPSトンネルの例（ngrok）"),tunnelRow);
   auto* base=new QLineEdit(&dialog);base->setObjectName("chatGptPublicBase");base->setPlaceholderText("https://example.ngrok-free.app");
   if(auto* server=aiBridge_->chatGptServer();server&&!server->publicUrl().isEmpty())base->setText(server->publicUrl().adjusted(QUrl::RemovePath).toString());
-  form->addRow(tr("トンネルの公開HTTPS URL"),base);
+  form->addRow(tr("公開HTTPS URL"),base);
   auto* endpoint=new QLineEdit(&dialog);endpoint->setObjectName("chatGptEndpoint");endpoint->setReadOnly(true);
   auto* copyEndpoint=new QPushButton(tr("接続URLをコピー"),&dialog);copyEndpoint->setObjectName("chatGptCopyEndpoint");
-  auto* endpointRow=new QHBoxLayout;endpointRow->addWidget(endpoint);endpointRow->addWidget(copyEndpoint);form->addRow(tr("ChatGPTに登録する接続URL"),endpointRow);
+  auto* endpointRow=new QHBoxLayout;endpointRow->addWidget(endpoint);endpointRow->addWidget(copyEndpoint);form->addRow(tr("MCPクライアント用接続URL"),endpointRow);
   layout->addLayout(form);
-  auto* help=new QLabel(tr("ChatGPT側で開発者モード／カスタムMCPアプリが使えるアカウントと設定が必要です。"
-      "アプリを追加するときは、上の接続URLと「認証なし」を選び、会話でSketchBRepを有効にしてください。<br><br>"
-      "接続URLは操作権限を持つ秘密情報です。他の人に共有しないでください。"
-      "「接続を停止」または「外部 AI からの操作を許可」をOFFにすると切断します。再開後はURLを登録し直してください。<br><br>"
-      "AIの操作はCtrl+Zで取り消せます。ファイルの保存・読み込み・書き出しはAIから実行できません。"
-      "HTTPSトンネルやChatGPTの登録は、この画面では自動実行しません。"),&dialog);
+  auto* availability=new QLabel(tr("<b>AIサービスの対応状況について</b><br>"
+      "SketchBRepは標準MCPによる外部AI接続に対応しています。"
+      "ただし、利用可能な操作はAIサービス、契約プラン、クライアント環境によって異なります。"
+      "一部のAIサービスでは、MCPサーバーを登録できても、通常チャットからのモデル作成・編集が利用できない場合があります。"
+      "詳細は利用するAIサービスの公式ドキュメントをご確認ください。"),&dialog);
+  availability->setWordWrap(true);layout->addWidget(availability);
+  auto* help=new QLabel(tr("HTTPSの暗号化とアクセス認証は別です。CAD編集命令を受け付けるため、認証なしのインターネット公開には危険があります。"
+      "接続URLを秘密にするだけでは、十分なアクセス制御とは限りません。URLを共有せず、公開経路の認証・アクセス制御を確認してください。<br><br>"
+      "「接続を停止」または「外部 AI からの操作を許可」をOFFにすると切断します。再開後はURLを設定し直してください。"
+      "AIの操作はCtrl+Zで取り消せます。ファイル操作の制限は従来どおりです。"
+      "トンネルの起動やクライアントの登録は、この画面では自動実行しません。"),&dialog);
   help->setWordWrap(true);layout->addWidget(help);
   auto update=[&]{
     auto* server=aiBridge_->chatGptServer();const bool running=server&&server->isListening();
@@ -847,9 +852,9 @@ void MainWindow::showChatGptConnection() {
     tunnel->setText(running?QString("ngrok http http://127.0.0.1:%1").arg(server->port()):QString());
     QString connectionUrl;
     if(!running)state->setText(tr("停止中。開始するとAI連携もONになります。"));
-    else if(base->text().trimmed().isEmpty())state->setText(tr("接続口を開始しました。トンネルを起動し、公開HTTPS URLを入力してください。"));
+    else if(base->text().trimmed().isEmpty())state->setText(tr("接続口を開始しました。必要なHTTPS到達経路を確認し、公開HTTPS URLを入力してください。"));
     else if(!server->setPublicBase(QUrl(base->text().trimmed())))state->setText(tr("公開URLは https://ホスト名 の形で入力してください（パス・クエリなし）。"));
-    else{connectionUrl=server->publicUrl().toString();state->setText(tr("接続URLをChatGPTへ登録できます（受信リクエスト %1 件）。画面を閉じても接続口は動作します。").arg(server->requestsHandled()));}
+    else{connectionUrl=server->publicUrl().toString();state->setText(tr("MCPクライアント用接続URLを生成しました（受信リクエスト %1 件）。画面を閉じても接続口は動作します。").arg(server->requestsHandled()));}
     if(endpoint->text()!=connectionUrl)endpoint->setText(connectionUrl);
     copyEndpoint->setEnabled(!connectionUrl.isEmpty());
   };

@@ -6948,10 +6948,10 @@ void GuiPhase1::curvesDividePlanarFaces() {
 
 void GuiPhase1::chatGptConnectionDialogControlsBridge() {
   Fixture f;QVERIFY(f.setUp());f.window.setAiAccess(false);
-  QAction* connectAction=nullptr;for(auto* action:f.window.findChildren<QAction*>())if(action->text()==QString::fromUtf8("ChatGPT 接続..."))connectAction=action;
+  QAction* connectAction=nullptr;for(auto* action:f.window.findChildren<QAction*>())if(action->text()==QString::fromUtf8("リモートMCP接続..."))connectAction=action;
   QVERIFY(connectAction);bool started=false,copied=false;
   QTimer timer;connect(&timer,&QTimer::timeout,[&]{for(auto* widget:QApplication::topLevelWidgets())
-    if(auto* dialog=qobject_cast<QDialog*>(widget);dialog&&dialog->isVisible()&&dialog->windowTitle()==QString::fromUtf8("ChatGPT 接続")) {
+    if(auto* dialog=qobject_cast<QDialog*>(widget);dialog&&dialog->isVisible()&&dialog->windowTitle()==QString::fromUtf8("リモートMCP接続")) {
       auto* start=dialog->findChild<QPushButton*>("chatGptStart");auto* base=dialog->findChild<QLineEdit*>("chatGptPublicBase");auto* endpoint=dialog->findChild<QLineEdit*>("chatGptEndpoint");auto* copy=dialog->findChild<QPushButton*>("chatGptCopyEndpoint");
       if(start&&base&&endpoint&&copy){start->click();started=f.window.aiBridge()->chatGptServer()&&f.window.aiBridge()->chatGptServer()->isListening();
         base->setText("https://tunnel.example");copy->click();copied=QApplication::clipboard()->text()==endpoint->text()&&endpoint->text().startsWith("https://tunnel.example/mcp/");}
