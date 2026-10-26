@@ -13,6 +13,14 @@ struct Entry {
 
 // Ordered: more specific phrases first.
 const Entry kEntries[] = {
+    {"Select curve edges for a face", "面の輪郭にする線・円弧を選択してください"},
+    {"Face boundary is hidden or locked", "輪郭の線図が非表示またはロックされています。表示・ロック解除して選び直してください"},
+    {"Face boundary is outside the editing context", "同じグループ内の輪郭を選択してください。グループの中の線は、編集に入ってから選びます"},
+    {"Face boundary changed; select the edges again", "輪郭の線が編集で変わりました。辺を選び直してください"},
+    {"Select at most 4096 boundary edges", "選択する辺が多すぎます。レイヤ全体ではなく、面にしたい輪郭の辺だけを選択してください（4096本まで）"},
+    {"Face boundary branches or contains duplicate edges", "輪郭が枝分かれしているか、線が重複しています。1つの輪郭に必要な線だけを選んでください"},
+    {"The curves do not form a single loop", "複数の輪郭や余分な線が含まれています。面にしたい1つの輪郭だけを選択してください"},
+    {"The loop is not closed", "輪郭が閉じていません。線の不足・端点の隙間・つなぎ忘れを確認してください"},
     {"Cancelled by the user", "計算を中止しました"},
     {"Openings go through the side of a wall", "開口は壁の側面にあけるものです。ここはスラブやブロックの縁なので、あけると奥まで全部くり抜いてしまいます。床の開口は上の面に矩形を描いてプッシュ/プルで抜いてください"},
     {"The opening would cut the wall in two", "この開口だと壁が 2 つに分かれてしまうので中止しました。高さか腰の高さを見直してください"},

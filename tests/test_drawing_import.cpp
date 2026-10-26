@@ -10,6 +10,8 @@
 #include <QAbstractButton>
 #include <QCheckBox>
 #include <QElapsedTimer>
+#include <QMenu>
+#include <QAction>
 #include <algorithm>
 #include "MainWindow.h"
 #include "Viewport.h"
@@ -93,6 +95,55 @@ class DrawingImport : public QObject {
     QTemporaryDir image;
     QVERIFY(view.dumpImage(image.filePath("view.png")));
     QVERIFY(!view.interactiveRendering());
+  }
+  void selectedDxfOutlineCreatesFaceFromContextMenu_data() {
+    QTest::addColumn<QString>("fixture");
+    QTest::addColumn<bool>("grouped");
+    QTest::newRow("closed-polyline") << QString("small_closed_polyline.dxf") << false;
+    QTest::newRow("individual-lines") << QString("small_closed_lines.dxf") << false;
+    QTest::newRow("layer-batch") << QString("small_closed_lines.dxf") << true;
+    QTest::newRow("arc-layer") << QString("small_arc_outline.dxf") << true;
+    QTest::newRow("selected-edges-in-layer") << QString("small_layer_with_extra_line.dxf") << true;
+  }
+  void selectedDxfOutlineCreatesFaceFromContextMenu() {
+    QFETCH(QString, fixture); QFETCH(bool, grouped);
+    app::MainWindow window; window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    const auto path=QString::fromUtf8(SBR_TEST_DATA_DIR)+"/dxf/"+fixture;
+    geom::DxfImportOptions options; options.groupByLayer=grouped;
+    auto ids=window.modeler().importDxf(path.toStdString(),options); QVERIFY(ids.ok());
+    window.setSelection(*ids); window.viewport().syncNow();
+    if (fixture=="small_layer_with_extra_line.dxf") {
+      std::vector<app::ElementRef> boundary;
+      for (const auto& e:window.viewport().allElements(ids->front()))
+        if (e.type==TopAbs_EDGE && e.index<=4) boundary.push_back(e);
+      QCOMPARE(boundary.size(),std::size_t(4));
+      window.setElementSelection(boundary);
+    }
+    window.viewport().setStandardView(app::Viewport::StandardView::Top);
+    const auto before=window.modeler().listObjects().size();
+    auto* menu=window.buildContextMenu(QPoint(2,2));
+    QAction* create=nullptr;
+    for(auto* a:menu->actions()) if(a->text()==QString::fromUtf8("選択した線から面を生成")) create=a;
+    QVERIFY(create); create->trigger(); delete menu;
+    QVERIFY2(window.lastError().isEmpty(),qPrintable(window.lastError()));
+    QCOMPARE(window.selection().size(),std::size_t(1));
+    const auto face=window.selection().front();
+    QCOMPARE(window.modeler().document().find(face)->kind(),doc::ObjectKind::Face);
+    QCOMPARE(window.modeler().listObjects().size(),before+1);
+    QVERIFY(window.modeler().history().undo()); QCOMPARE(window.modeler().listObjects().size(),before);
+    QVERIFY(window.modeler().history().redo()); QVERIFY(window.modeler().extrude(face,100));
+  }
+  void importedLinesMakeFaceWhenClosedWithLineTool() {
+    app::MainWindow window; window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QVERIFY(window.importDxfFile(QString::fromUtf8(SBR_TEST_DATA_DIR)+"/dxf/small_open_rectangle.dxf"));
+    window.activateTool(app::MainWindow::ToolId::Line);
+    QTest::mouseClick(&window.viewport(),Qt::LeftButton,Qt::NoModifier,window.viewport().toWidget(gp_Pnt(0,1000,0)));
+    QTest::mouseClick(&window.viewport(),Qt::LeftButton,Qt::NoModifier,window.viewport().toWidget(gp_Pnt(0,0,0)));
+    const auto objects=window.modeler().listObjects();
+    QCOMPARE(objects.size(),std::size_t(1));
+    QCOMPARE(objects.front().kind,doc::ObjectKind::Face);
   }
   void conversionFailureAndTimeout_data() {
     QTest::addColumn<QByteArray>("content");

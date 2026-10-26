@@ -2438,6 +2438,19 @@ QMenu* MainWindow::buildContextMenu(const QPoint& pos) {
     menu->addAction(tr("コピー"), this, [this] { copySelection(); });
     menu->addSeparator();
     // Groups and components.
+    const bool curveBoundary = std::all_of(ids.begin(), ids.end(), [&](const doc::ObjectId& id) {
+      const auto* o = document.find(id); return o && o->kind() == doc::ObjectKind::Curve;
+    }) && std::none_of(elements_.begin(), elements_.end(), [](const ElementRef& e) { return e.type != TopAbs_EDGE; });
+    if (curveBoundary) {
+      menu->addAction(tr("選択した線から面を生成"), this, [this] {
+        auto face = modeler_.faceFromSelection(selectionTargets());
+        if (!face) { reportError(QString::fromStdString(face.error())); return; }
+        setSelection({*face});
+        viewport_->syncNow();
+        setStatus(tr("選択した輪郭から面を作成しました（元の線図は保持しています）"));
+      });
+      menu->addSeparator();
+    }
     menu->addAction(tr("グループ化"), this, &MainWindow::groupSelection);
     menu->addAction(tr("コンポーネントを作成"), this, &MainWindow::makeComponent);
     if (single && single->kind() == doc::ObjectKind::Group) {

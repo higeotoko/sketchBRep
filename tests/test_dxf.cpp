@@ -225,3 +225,97 @@ TEST(Dxf, MovingLayerBatchesPreservesOverlapsAndObjectIdentity) {
   ASSERT_TRUE(m.history().redo());
   EXPECT_EQ(m.listObjects().size(), 2u);
 }
+
+namespace {
+std::string smallDxf(const char* name) { return std::string(SBR_TEST_DATA_DIR) + "/dxf/" + name; }
+double faceArea(const TopoDS_Shape& s) { GProp_GProps p; BRepGProp::SurfaceProperties(s,p); return p.Mass(); }
+std::vector<doc::DeleteTarget> wholeCurves(const std::vector<doc::ObjectId>& ids) {
+  std::vector<doc::DeleteTarget> out; for (const auto& id : ids) out.push_back({id,true,{},{}}); return out;
+}
+}
+TEST(Dxf, ImportedLineEdgesCloseAutomaticallyWithDrawnLastSide) {
+  doc::Modeler m;
+  auto ids = m.importDxf(smallDxf("small_open_rectangle.dxf")); ASSERT_TRUE(ids); ASSERT_EQ(ids->size(),3u);
+  auto closing = m.createPolyline({gp_Pnt(0,1000,0),gp_Pnt(0,0,0)}); ASSERT_TRUE(closing);
+  auto face = m.faceFromLoop(*closing); ASSERT_TRUE(face) << face.error();
+  EXPECT_EQ(m.listObjects().size(),1u); EXPECT_NEAR(faceArea(m.document().find(*face)->shape),2000000,1e-5);
+}
+TEST(Dxf, ManualFaceFromSmallClosedLinesPolylineAndArc) {
+  for (bool grouped : {false,true}) for (const char* name : {"small_closed_lines.dxf", "small_closed_polyline.dxf", "small_arc_outline.dxf"}) {
+    SCOPED_TRACE(name);
+    SCOPED_TRACE(grouped);
+    doc::Modeler m; geom::DxfImportOptions options; options.groupByLayer=grouped;
+    auto ids=m.importDxf(smallDxf(name),options); ASSERT_TRUE(ids);
+    for (const auto& id:*ids) EXPECT_EQ(m.document().find(id)->kind(),doc::ObjectKind::Curve);
+    const auto count=m.listObjects().size();
+    auto face=m.faceFromSelection(wholeCurves(*ids)); ASSERT_TRUE(face)<<face.error();
+    const double expected=std::string(name).find("arc")!=std::string::npos ? std::acos(-1)*500000 : 2000000;
+    EXPECT_NEAR(faceArea(m.document().find(*face)->shape),expected,1e-5);
+    EXPECT_EQ(m.listObjects().size(),count+1); EXPECT_EQ(m.history().undoCount(),2u);
+    ASSERT_TRUE(m.history().undo()); EXPECT_EQ(m.listObjects().size(),count);
+    ASSERT_TRUE(m.history().redo()); ASSERT_TRUE(m.extrude(*face,100));
+    const auto path=::testing::TempDir()+std::string("manual_face.sbr"); ASSERT_TRUE(m.save(path));
+    doc::Modeler loaded; ASSERT_TRUE(loaded.load(path));
+    EXPECT_EQ(loaded.listObjects().size(),count+1);
+  }
+}
+TEST(Dxf, SelectedEdgesFromMovedLayerKeepUnusedCurves) {
+  const auto rectangle=geom::readDxf(smallDxf("small_closed_lines.dxf")); ASSERT_TRUE(rectangle);
+  // A fifth, unrelated line makes whole-layer selection unsuitable for one face.
+  std::string lines;
+  const std::vector<gp_Pnt> p{{0,0,0},{2000,0,0},{2000,1000,0},{0,1000,0},{0,0,0}};
+  for(size_t i=1;i<p.size();++i) lines+="0\nLINE\n8\nOutline\n10\n"+std::to_string(p[i-1].X())+"\n20\n"+std::to_string(p[i-1].Y())+"\n11\n"+std::to_string(p[i].X())+"\n21\n"+std::to_string(p[i].Y())+"\n";
+  lines+="0\nLINE\n8\nOutline\n10\n5000\n20\n0\n11\n6000\n21\n0\n";
+  doc::Modeler m; geom::DxfImportOptions options; options.groupByLayer=true;
+  auto ids=m.importDxf(fixture(lines),options); ASSERT_TRUE(ids); ASSERT_EQ(ids->size(),1u);
+  ASSERT_TRUE(m.move(*ids,gp_Vec(123,456,0)));
+  const auto before=m.history().undoCount();
+  EXPECT_FALSE(m.faceFromSelection(wholeCurves(*ids))); EXPECT_EQ(m.history().undoCount(),before);
+  doc::DeleteTarget target{ids->front(),false,{},{}};
+  for(TopExp_Explorer e(m.document().worldShape(*m.document().find(ids->front())),TopAbs_EDGE); e.More()&&target.edges.size()<4;e.Next()) target.edges.push_back(TopoDS::Edge(e.Current()));
+  auto face=m.faceFromSelection({target}); ASSERT_TRUE(face)<<face.error();
+  EXPECT_EQ(m.listObjects().size(),2u);
+  EXPECT_NEAR(faceArea(m.document().find(*face)->shape),2000000,1e-5);
+  EXPECT_NEAR(length(m.document().find(ids->front())->shape),7000,1e-6);
+  const auto& loop=std::get<doc::LoopProfile>(m.document().find(*face)->recipe.base);
+  ASSERT_EQ(loop.curves.size(),1u);
+  EXPECT_NEAR(length(std::get<doc::ImportedShape>(loop.curves.front().recipe->base).shape),6000,1e-6);
+}
+TEST(Dxf, ManualFaceRejectsInvalidBoundariesWithoutChangingHistory) {
+  for(const auto& points : std::vector<std::vector<gp_Pnt>>{
+      {{0,0,0},{1000,0,0},{1000,1000,0},{0,0.01,0}},
+      {{0,0,0},{1000,0,0},{1000,1000,10},{0,1000,0},{0,0,0}},
+      {{0,0,0},{1000,1000,0},{1000,0,0},{0,1000,0},{0,0,0}}}) {
+    doc::Modeler m; auto curve=m.createPolyline(points); ASSERT_TRUE(curve);
+    EXPECT_FALSE(m.faceFromSelection(wholeCurves({*curve})));
+    EXPECT_EQ(m.history().undoCount(),1u); EXPECT_EQ(m.listObjects().size(),1u);
+  }
+  doc::Modeler m; auto ids=m.importDxf(smallDxf("small_closed_lines.dxf")); ASSERT_TRUE(ids);
+  ASSERT_TRUE(m.setLocked({ids->front()},true)); const auto before=m.history().undoCount();
+  EXPECT_FALSE(m.faceFromSelection(wholeCurves(*ids))); EXPECT_EQ(m.history().undoCount(),before);
+}
+
+TEST(Dxf, ManualFaceRetainsEditableArcRecipe) {
+  doc::Modeler m;
+  auto arc=m.createArc(gp_Pnt(-1000,0,0),gp_Pnt(1000,0,0),gp::DZ(),1000,false); ASSERT_TRUE(arc);
+  auto line=m.createPolyline({gp_Pnt(-1000,0,0),gp_Pnt(1000,0,0)}); ASSERT_TRUE(line);
+  auto face=m.faceFromSelection(wholeCurves({*arc,*line})); ASSERT_TRUE(face)<<face.error();
+  const auto& loop=std::get<doc::LoopProfile>(m.document().find(*face)->recipe.base);
+  ASSERT_TRUE(std::holds_alternative<doc::ArcCurve>(loop.curves[0].recipe->base));
+  const double before=faceArea(m.document().find(*face)->shape);
+  ASSERT_TRUE(m.setParameter(*face,"in0.bulge",500));
+  EXPECT_GT(std::abs(before-faceArea(m.document().find(*face)->shape)),1000);
+  EXPECT_DOUBLE_EQ(std::get<doc::ArcCurve>(m.document().find(*arc)->recipe.base).bulge,1000);
+}
+
+TEST(Dxf, GroupedImportedOpenOutlineCanBeClosedManually) {
+  doc::Modeler m; geom::DxfImportOptions options; options.groupByLayer=true;
+  auto ids=m.importDxf(smallDxf("small_open_rectangle.dxf"),options); ASSERT_TRUE(ids);
+  auto closing=m.createPolyline({gp_Pnt(0,1000,0),gp_Pnt(0,0,0)}); ASSERT_TRUE(closing);
+  // An assembled layer deliberately has no single pair of curve ends.
+  EXPECT_FALSE(m.faceFromLoop(*closing));
+  auto selected=*ids; selected.push_back(*closing);
+  auto face=m.faceFromSelection(wholeCurves(selected)); ASSERT_TRUE(face)<<face.error();
+  EXPECT_NEAR(faceArea(m.document().find(*face)->shape),2000000,1e-5);
+  EXPECT_EQ(m.listObjects().size(),3u);
+}

@@ -1098,11 +1098,10 @@ namespace {
 std::optional<std::pair<gp_Pnt, gp_Pnt>> curveEnds(const Document& document, const Object& o) {
   if (o.kind() != ObjectKind::Curve || !document.isVisible(o.id)) return std::nullopt;
   const TopoDS_Shape shape = document.worldShape(o);
-  TopExp_Explorer w(shape, TopAbs_WIRE);
-  if (!w.More()) return std::nullopt;
-  const TopoDS_Wire wire = TopoDS::Wire(w.Current());
   TopoDS_Vertex a, b;
-  TopExp::Vertices(wire, a, b);
+  if (shape.ShapeType() == TopAbs_EDGE) TopExp::Vertices(TopoDS::Edge(shape), a, b);
+  else if (shape.ShapeType() == TopAbs_WIRE) TopExp::Vertices(TopoDS::Wire(shape), a, b);
+  else return std::nullopt;  // A layer compound is not a single chain.
   if (a.IsNull() || b.IsNull()) return std::nullopt;
   const gp_Pnt pa = BRep_Tool::Pnt(a), pb = BRep_Tool::Pnt(b);
   if (pa.Distance(pb) < 1e-3) return std::nullopt;  // already closed

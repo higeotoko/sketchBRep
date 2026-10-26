@@ -187,6 +187,9 @@ class Modeler {
   // loopFound (optional) tells "no closed loop" apart from "a loop that cannot
   // become a face" (not planar, crossing itself).
   Result<ObjectId> faceFromLoop(const ObjectId& curveId, bool* loopFound = nullptr);
+  // One closed planar boundary from selected curve objects / their edges.
+  // Source curves remain intact; the face retains their recipe snapshots.
+  Result<ObjectId> faceFromSelection(const std::vector<DeleteTarget>& targets);
   // SketchUp-style: where the line crosses other loose straight lines (or
   // itself) in the same plane and group and so closes areas, those areas
   // become faces. The lines are cut at the crossings; pieces bounding a new

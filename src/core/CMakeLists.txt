@@ -18,6 +18,7 @@ add_library(sbr_core STATIC
   src/NativeFormat.cpp
   src/Modeler.cpp
   src/CurveJunctions.cpp
+  src/SelectedFace.cpp
   src/Inference.cpp
   src/Freeform.cpp
   src/CommandApi.cpp

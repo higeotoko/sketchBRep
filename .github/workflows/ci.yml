@@ -149,6 +149,9 @@ jobs:
           if (-not (Test-Path "$dist\platforms\qwindows.dll")) { throw "qwindows.dll not found" }
           Copy-Item README.md $dist
           Copy-Item docs\images\phase2.png $dist
+          New-Item -ItemType Directory -Force "$dist\examples\dxf" | Out-Null
+          Copy-Item tests\data\dxf\small*.dxf "$dist\examples\dxf"
+          Copy-Item docs\27_dxf_face_creation.md "$dist\examples\dxf\README.md"
 
       - name: Check that every DLL dependency in the zip resolves
         shell: pwsh
