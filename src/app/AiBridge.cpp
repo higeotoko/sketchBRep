@@ -1,4 +1,5 @@
 #include "AiBridge.h"
+#include "McpHttpServer.h"
 
 #include <QLocalServer>
 #include <QLocalSocket>
@@ -29,6 +30,7 @@ QString AiBridge::serverName() const { return QString::fromStdString(api::bridge
 bool AiBridge::isEnabled() const { return server_ && server_->isListening(); }
 
 bool AiBridge::setEnabled(bool enabled) {
+  if(!enabled)stopChatGpt();
   if (enabled == isEnabled()) return true;
   if (!enabled) {
     server_.reset();  // closes the server and its connections
@@ -47,6 +49,14 @@ bool AiBridge::setEnabled(bool enabled) {
   connect(server_.get(), &QLocalServer::newConnection, this, &AiBridge::onConnection);
   return true;
 }
+
+bool AiBridge::startChatGpt() {
+  if(!isEnabled()){lastError_=QStringLiteral("Enable AI access first");return false;}
+  if(!http_)http_=std::make_unique<McpHttpServer>([this](const std::string& request){return execute(request);});
+  if(!http_->start()){lastError_=http_->errorString();return false;}
+  return true;
+}
+void AiBridge::stopChatGpt(){if(http_)http_->stop();}
 
 void AiBridge::onConnection() {
   while (QLocalSocket* socket = server_->nextPendingConnection()) {

@@ -232,6 +232,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   void undo();
   void redo();
   void buildAiBridge();
+  void showChatGptConnection();
   void syncEditContext();
   void refreshScenes();
   void refreshTags();

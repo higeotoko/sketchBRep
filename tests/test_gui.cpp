@@ -20,6 +20,7 @@
 #include <gp_Lin.hxx>
 
 #include <QApplication>
+#include <QClipboard>
 #include <QColorDialog>
 #include <QComboBox>
 #include <QSlider>
@@ -55,6 +56,7 @@
 #include <GProp_GProps.hxx>
 
 #include "AiBridge.h"
+#include "McpHttpServer.h"
 #include "ProgressDialog.h"
 #include "WheelZoom.h"
 #include "MainWindow.h"
@@ -223,6 +225,7 @@ class GuiPhase1 : public QObject {
   void moveSelectedFaceStretchesSolid();
   void eraserDeletesClickedObject();
   void aiBridgeOverLocalSocket();
+  void chatGptConnectionDialogControlsBridge();
   void aiRequestsTakeTurnsWithTheWindow();
   void aiWaitsForLongOperation();
   void arcToolSemicircleAndBulgeEdit();
@@ -6941,4 +6944,19 @@ void GuiPhase1::curvesDividePlanarFaces() {
     QCOMPARE(top,2);
   }
   QCOMPARE(m.history().undoCount(),steps+1);QVERIFY(m.undo());QCOMPARE(m.document().objects().size(),std::size_t(1));QVERIFY(m.redo());
+}
+
+void GuiPhase1::chatGptConnectionDialogControlsBridge() {
+  Fixture f;QVERIFY(f.setUp());f.window.setAiAccess(false);
+  QAction* connectAction=nullptr;for(auto* action:f.window.findChildren<QAction*>())if(action->text()==QString::fromUtf8("ChatGPT 接続..."))connectAction=action;
+  QVERIFY(connectAction);bool started=false,copied=false;
+  QTimer timer;connect(&timer,&QTimer::timeout,[&]{for(auto* widget:QApplication::topLevelWidgets())
+    if(auto* dialog=qobject_cast<QDialog*>(widget);dialog&&dialog->isVisible()&&dialog->windowTitle()==QString::fromUtf8("ChatGPT 接続")) {
+      auto* start=dialog->findChild<QPushButton*>("chatGptStart");auto* base=dialog->findChild<QLineEdit*>("chatGptPublicBase");auto* endpoint=dialog->findChild<QLineEdit*>("chatGptEndpoint");auto* copy=dialog->findChild<QPushButton*>("chatGptCopyEndpoint");
+      if(start&&base&&endpoint&&copy){start->click();started=f.window.aiBridge()->chatGptServer()&&f.window.aiBridge()->chatGptServer()->isListening();
+        base->setText("https://tunnel.example");copy->click();copied=QApplication::clipboard()->text()==endpoint->text()&&endpoint->text().startsWith("https://tunnel.example/mcp/");}
+      dialog->accept();
+    }});
+  timer.start(10);connectAction->trigger();timer.stop();QVERIFY(started);QVERIFY(copied);
+  QVERIFY(f.window.aiBridge()->chatGptServer()->isListening());f.window.setAiAccess(false);QVERIFY(!f.window.aiBridge()->chatGptServer()->isListening());
 }

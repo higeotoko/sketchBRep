@@ -1,5 +1,5 @@
 #pragma once
-// Local bridge for external AI agents (via sbr_mcp) into the running app.
+// Bridge for external AI agents (local sbr_mcp and optional ChatGPT HTTP).
 //
 // Off by default. When enabled, a QLocalServer (named pipe on Windows,
 // user-only access) accepts one CommandApi request per line and executes it
@@ -21,6 +21,8 @@ class QLocalSocket;
 
 namespace sbr::app {
 
+class McpHttpServer;
+
 class AiBridge : public QObject {
   Q_OBJECT
  public:
@@ -36,6 +38,9 @@ class AiBridge : public QObject {
   bool isEnabled() const;
   QString serverName() const;
   QString lastError() const { return lastError_; }
+  bool startChatGpt();
+  void stopChatGpt();
+  McpHttpServer* chatGptServer() const { return http_.get(); }
 
   // Same entry point as a socket request (used by tests).
   std::string execute(const std::string& requestJson);
@@ -49,6 +54,7 @@ class AiBridge : public QObject {
   void onReadyRead(QLocalSocket* socket);
 
   api::CommandApi api_;
+  std::unique_ptr<McpHttpServer> http_;
   std::unique_ptr<QLocalServer> server_;
   std::function<void()> before_, after_;
   static constexpr int kBusyRetryMs = 100;

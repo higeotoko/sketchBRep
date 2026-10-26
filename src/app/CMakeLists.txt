@@ -14,6 +14,7 @@ add_library(sbr_ui STATIC
   WheelZoom.cpp WheelZoom.h
   Cursors.cpp Cursors.h
   AiBridge.cpp AiBridge.h
+  McpHttpServer.cpp McpHttpServer.h
   Messages.cpp Messages.h
   ProgressDialog.cpp ProgressDialog.h
 )

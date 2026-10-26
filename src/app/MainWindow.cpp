@@ -60,6 +60,7 @@
 #include <nlohmann/json.hpp>
 
 #include "AiBridge.h"
+#include "McpHttpServer.h"
 #include "Messages.h"
 #include "ProgressDialog.h"
 #include "WheelZoom.h"
@@ -753,7 +754,7 @@ void MainWindow::buildMenus() {
   QMenu* ai = menuBar()->addMenu(tr("AI 連携(&A)"));
   aiAction_ = ai->addAction(tr("外部 AI からの操作を許可"));
   aiAction_->setCheckable(true);
-  aiAction_->setToolTip(tr("このパソコン上の AI クライアント（MCP: sbr_mcp 経由）がモデルを操作できるようにします"));
+  aiAction_->setToolTip(tr("ローカルMCPと、有効にしたChatGPT接続からモデルを操作できるようにします"));
   connect(aiAction_, &QAction::toggled, this, [this](bool on) { setAiAccess(on); });
   ai->addAction(tr("MCP 接続設定をコピー"), this, [this] {
     QString exe = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("sbr_mcp"));
@@ -765,6 +766,7 @@ void MainWindow::buildMenus() {
     QApplication::clipboard()->setText(QString::fromStdString(config.dump(2)));
     setStatus(tr("MCP 設定をコピーしました（Claude Desktop などの設定ファイルに貼り付け）"));
   });
+  ai->addAction(tr("ChatGPT 接続..."),this,&MainWindow::showChatGptConnection);
   ai->addAction(tr("AI 連携について"), this, [this] {
     QMessageBox::information(
         this, tr("AI 連携"),
@@ -772,8 +774,8 @@ void MainWindow::buildMenus() {
            "sbr_mcp（MCP サーバー）経由でモデルを操作できます。<br><br>"
            "・AI の操作も GUI と同じコマンドで実行され、形状チェック・失敗時の取り消し・Ctrl+Z が効きます<br>"
            "・AI はファイルの保存・開く・書き出しはできません（保存はあなたが行います）<br>"
-           "・接続できるのは同じユーザーのローカルプロセスだけです<br><br>"
-           "設定: 「MCP 接続設定をコピー」で Claude Desktop などの設定に貼り付けてください。"));
+           "・通常のMCP接続は同じユーザーのローカルプロセスのみです。ChatGPT接続を開始した場合は専用URLからも操作できます<br><br>"
+           "設定: Claude Desktop / Claude Code / Codex はローカルMCPを利用できます。<br>ChatGPTのチャット画面からは「ChatGPT 接続...」を開いてください。"));
   });
 
   QMenu* help = menuBar()->addMenu(tr("ヘルプ(&H)"));
@@ -808,6 +810,57 @@ void MainWindow::showAbout() {
                             "Qt %2").arg(QStringLiteral(OCC_VERSION_COMPLETE), QString::fromLatin1(qVersion())));
   box.setStandardButtons(QMessageBox::Ok);
   box.exec();
+}
+
+void MainWindow::showChatGptConnection() {
+  QDialog dialog(this);dialog.setWindowTitle(tr("ChatGPT 接続"));dialog.resize(760,570);
+  auto* layout=new QVBoxLayout(&dialog);
+  auto* intro=new QLabel(tr("ChatGPT のチャット画面から、起動中のこのモデルを操作します。<br>"
+      "1. 下のボタンで接続を開始<br>2. このPCでHTTPSトンネルを起動（ngrok等を別途インストール）<br>"
+      "3. 公開HTTPS URLを入力し、生成した接続URLをChatGPTのカスタムMCPアプリに登録"),&dialog);
+  intro->setWordWrap(true);layout->addWidget(intro);
+  auto* state=new QLabel(&dialog);layout->addWidget(state);
+  auto* buttons=new QHBoxLayout;auto* start=new QPushButton(tr("接続を開始"),&dialog);start->setObjectName("chatGptStart");
+  auto* stop=new QPushButton(tr("接続を停止"),&dialog);stop->setObjectName("chatGptStop");
+  buttons->addWidget(start);buttons->addWidget(stop);buttons->addStretch();layout->addLayout(buttons);
+  auto* form=new QFormLayout;
+  auto* tunnel=new QLineEdit(&dialog);tunnel->setObjectName("chatGptTunnelCommand");tunnel->setReadOnly(true);
+  auto* copyTunnel=new QPushButton(tr("コマンドをコピー"),&dialog);auto* tunnelRow=new QHBoxLayout;
+  tunnelRow->addWidget(tunnel);tunnelRow->addWidget(copyTunnel);form->addRow(tr("このPCで実行"),tunnelRow);
+  auto* base=new QLineEdit(&dialog);base->setObjectName("chatGptPublicBase");base->setPlaceholderText("https://example.ngrok-free.app");
+  if(auto* server=aiBridge_->chatGptServer();server&&!server->publicUrl().isEmpty())base->setText(server->publicUrl().adjusted(QUrl::RemovePath).toString());
+  form->addRow(tr("トンネルの公開HTTPS URL"),base);
+  auto* endpoint=new QLineEdit(&dialog);endpoint->setObjectName("chatGptEndpoint");endpoint->setReadOnly(true);
+  auto* copyEndpoint=new QPushButton(tr("接続URLをコピー"),&dialog);copyEndpoint->setObjectName("chatGptCopyEndpoint");
+  auto* endpointRow=new QHBoxLayout;endpointRow->addWidget(endpoint);endpointRow->addWidget(copyEndpoint);form->addRow(tr("ChatGPTに登録する接続URL"),endpointRow);
+  layout->addLayout(form);
+  auto* help=new QLabel(tr("ChatGPT側で開発者モード／カスタムMCPアプリが使えるアカウントと設定が必要です。"
+      "アプリを追加するときは、上の接続URLと「認証なし」を選び、会話でSketchBRepを有効にしてください。<br><br>"
+      "接続URLは操作権限を持つ秘密情報です。他の人に共有しないでください。"
+      "「接続を停止」または「外部 AI からの操作を許可」をOFFにすると切断します。再開後はURLを登録し直してください。<br><br>"
+      "AIの操作はCtrl+Zで取り消せます。ファイルの保存・読み込み・書き出しはAIから実行できません。"
+      "HTTPSトンネルやChatGPTの登録は、この画面では自動実行しません。"),&dialog);
+  help->setWordWrap(true);layout->addWidget(help);
+  auto update=[&]{
+    auto* server=aiBridge_->chatGptServer();const bool running=server&&server->isListening();
+    start->setEnabled(!running);stop->setEnabled(running);copyTunnel->setEnabled(running);base->setEnabled(running);
+    tunnel->setText(running?QString("ngrok http http://127.0.0.1:%1").arg(server->port()):QString());
+    QString connectionUrl;
+    if(!running)state->setText(tr("停止中。開始するとAI連携もONになります。"));
+    else if(base->text().trimmed().isEmpty())state->setText(tr("接続口を開始しました。トンネルを起動し、公開HTTPS URLを入力してください。"));
+    else if(!server->setPublicBase(QUrl(base->text().trimmed())))state->setText(tr("公開URLは https://ホスト名 の形で入力してください（パス・クエリなし）。"));
+    else{connectionUrl=server->publicUrl().toString();state->setText(tr("接続URLをChatGPTへ登録できます（受信リクエスト %1 件）。画面を閉じても接続口は動作します。").arg(server->requestsHandled()));}
+    if(endpoint->text()!=connectionUrl)endpoint->setText(connectionUrl);
+    copyEndpoint->setEnabled(!connectionUrl.isEmpty());
+  };
+  connect(start,&QPushButton::clicked,&dialog,[&]{setAiAccess(true);if(!aiBridge_->isEnabled()){state->setText(tr("AI連携を開始できませんでした：%1").arg(aiBridge_->lastError()));return;}
+    if(!aiBridge_->startChatGpt())state->setText(tr("接続を開始できませんでした：%1").arg(aiBridge_->lastError()));else update();});
+  connect(stop,&QPushButton::clicked,&dialog,[&]{aiBridge_->stopChatGpt();update();});
+  connect(base,&QLineEdit::textChanged,&dialog,[&]{update();});
+  connect(copyTunnel,&QPushButton::clicked,&dialog,[&]{QApplication::clipboard()->setText(tunnel->text());});
+  connect(copyEndpoint,&QPushButton::clicked,&dialog,[&]{QApplication::clipboard()->setText(endpoint->text());});
+  auto* close=new QDialogButtonBox(QDialogButtonBox::Close,&dialog);connect(close,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);layout->addWidget(close);
+  QTimer refresh;connect(&refresh,&QTimer::timeout,&dialog,[&]{update();});refresh.start(500);update();dialog.exec();
 }
 
 void MainWindow::setAiAccess(bool enabled) {

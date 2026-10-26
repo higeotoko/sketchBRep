@@ -22,11 +22,14 @@ AI 専用の裏口は作らず、GUI のツールと同じ `doc::Modeler` を JS
 
 | 部品 | 場所 | 役割 |
 |---|---|---|
-| `api::CommandApi` | `src/core/.../api/CommandApi.h` | `{"command", "args"}` → `{"ok", "result" \| "error"}`。41 コマンド + `batch` + `describe`。Qt 非依存 |
+| `api::CommandApi` | `src/core/.../api/CommandApi.h` | `{"command", "args"}` → `{"ok", "result" \| "error"}`。一覧は `schemaJson()` から出力。Qt 非依存 |
 | `api::McpServer` | `src/core/.../api/McpServer.h` | MCP の `initialize` / `tools/list` / `tools/call` / `ping` を CommandApi に変換。通信路に依存しない |
 | `sbr_cli` | `tools/cli` | ヘッドレス実行。JSON Lines のスクリプト、`--schema`、`--mcp`（ヘッドレス MCP） |
 | `sbr_mcp` | `tools/mcp` | MCP サーバー。起動中のアプリへ転送（`--headless` でアプリなし） |
-| `AiBridge` | `src/app/AiBridge.*` | アプリ内のローカルサーバー。メニュー「AI 連携 > 外部 AI からの操作を許可」で ON |
+| `AiBridge` | `src/app/AiBridge.*` | アプリ内の共通入口。ローカルパイプと任意のChatGPT用HTTPから同じモデルを操作。「外部AIからの操作を許可」でON |
+| `McpHttpServer` | `src/app/McpHttpServer.*` | ChatGPT用のStreamable HTTP。ループバック待受＋秘密URL。利用者が用意するHTTPSトンネルを経由 |
+
+ChatGPTの経路は `ChatGPT → 利用者のHTTPSトンネル → McpHttpServer → AiBridge → doc::Modeler`。上記のローカル接続と同じ検証・Undoを使う。
 
 ## コマンド（ツール）一覧
 
@@ -90,7 +93,11 @@ AI 専用の裏口は作らず、GUI のツールと同じ `doc::Modeler` を JS
 
 ## 使い方
 
-### 1. Claude Desktop / Claude Code から、開いているモデルを操作する
+### ChatGPTのチャット画面から接続
+
+「AI連携 > ChatGPT 接続...」でHTTP接続口を開始し、HTTPSトンネルの公開URLから専用接続URLを生成して、ChatGPTのカスタムMCPアプリへ登録する。アカウントの機能と外部トンネルが別途必要。[手順・権限・検証範囲](33_chatgpt_connection.md)を参照。
+
+### 1. ローカルMCPクライアント（Claude Desktop / Claude Code / Codex等）から操作する
 1. SketchBRep を起動 → メニュー「AI 連携 > 外部 AI からの操作を許可」を ON（ステータスバーに「AI 連携 ON」）
 2. 「AI 連携 > MCP 接続設定をコピー」→ Claude Desktop の設定（`claude_desktop_config.json`）に貼り付け
    ```json
@@ -111,7 +118,7 @@ sbr_cli --open out.sbr --mcp                        # ヘッドレス MCP サー
 |---|---|
 | AI が壊れた形状を作る | GUI と同じ `Modeler` 経由なので、B-rep 検証・失敗時に一切変更しない・Undo がそのまま効く |
 | 途中まで実行して中途半端になる | `batch` は原子的（失敗したら全ステップを戻す）。成功しても Undo 1 回で全部戻る |
-| 知らないうちに外部から操作される | アプリ側は **既定 OFF**・明示的に ON。ローカルソケットのみ（ネットワークに開かない）、同じユーザーのみ接続可（`UserAccessOption`）。ステータスバーに接続状態を表示 |
+| 知らないうちに外部から操作される | アプリ側は **既定 OFF**・明示的にON。通常のローカルソケットは同じユーザーのみ（`UserAccessOption`）。ChatGPT用HTTPは別途開始し、ループバック待受・秘密URL・Host/Origin検証を使う。HTTPSトンネルは利用者が用意する。OFFで両方停止。詳細は33章 |
 | ファイルの上書き・消失 | アプリ経由では `save` / `open` / `export_step` を無効化。保存はユーザーが行う |
 | 作図中に割り込まれる | AI のコマンド実行前に、作図途中のツール操作をキャンセルしてから実行 |
 | 面の番号がずれる | 番号は `get_object` の結果に対応（表示・選択と同じ順序）。`{"normal": [...]}` 指定なら番号に依存しない。押し出しでトポロジーが変わったら `get_object` で取り直す方針を `instructions` で AI に伝えている |

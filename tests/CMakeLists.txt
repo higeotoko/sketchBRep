@@ -78,6 +78,11 @@ endif()
 # End-to-end GUI test (needs a display; run under xvfb-run on headless CI).
 if(SBR_BUILD_APP)
   find_package(Qt6 REQUIRED COMPONENTS Test)
+  add_executable(sbr_chatgpt_transport_tests test_chatgpt_transport.cpp)
+  set_target_properties(sbr_chatgpt_transport_tests PROPERTIES AUTOMOC ON)
+  target_link_libraries(sbr_chatgpt_transport_tests PRIVATE sbr_ui Qt6::Test nlohmann_json::nlohmann_json)
+  add_test(NAME chatgpt_transport COMMAND sbr_chatgpt_transport_tests)
+
   add_executable(sbr_geometry_exchange_gui_tests test_geometry_exchange_gui.cpp)
   set_target_properties(sbr_geometry_exchange_gui_tests PROPERTIES AUTOMOC ON)
   target_link_libraries(sbr_geometry_exchange_gui_tests PRIVATE sbr_ui Qt6::Test)

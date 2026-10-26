@@ -3,6 +3,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <fstream>
+#include <filesystem>
 #include <iterator>
 
 #ifdef _WIN32
@@ -63,7 +64,7 @@ json toolResult(const json& response) {
   const json result = response.value("result", json::object());
   json content = json::array({{{"type", "text"}, {"text", result.dump()}}});
   if (result.is_object() && result.contains("image_path") && result["image_path"].is_string()) {
-    std::ifstream in(result["image_path"].get<std::string>(), std::ios::binary);
+    std::ifstream in(std::filesystem::u8path(result["image_path"].get<std::string>()), std::ios::binary);
     const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     if (!bytes.empty()) content.push_back({{"type", "image"}, {"data", base64(bytes)}, {"mimeType", "image/png"}});
   }
@@ -122,7 +123,10 @@ std::optional<std::string> McpServer::handle(const std::string& message) {
     for (const json& t : described["result"]) {
       json tool = {{"name", t["name"]}, {"description", t["description"]}, {"inputSchema", t["input_schema"]}};
       // MCP tool annotations: clients may run read-only tools without asking.
-      if (t.value("effect", std::string()) == "read") tool["annotations"] = {{"readOnlyHint", true}};
+      const auto effect=t.value("effect",std::string());
+      tool["annotations"]={{"readOnlyHint",effect=="read"},
+                           {"destructiveHint",effect!="read"&&effect!="view_write"},
+                           {"openWorldHint",effect=="external_io"}};
       tools.push_back(std::move(tool));
     }
     return rpcResult(id, {{"tools", tools}}).dump();
