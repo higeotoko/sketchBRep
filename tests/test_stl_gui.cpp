@@ -4,6 +4,7 @@
 #include <QMenuBar>
 #include <QFile>
 #include <QFileDialog>
+#include <QLineEdit>
 #include <QDoubleSpinBox>
 #include <QStandardPaths>
 #include <QTemporaryDir>
@@ -15,7 +16,7 @@ class StlExportGui : public QObject {
   Q_OBJECT
   QAction* exportAction(app::MainWindow& w) {
     for(auto* menu:w.menuBar()->actions()) if(menu->menu()) for(auto* action:menu->menu()->actions())
-      if(action->text()==QString::fromUtf8("STL エクスポート...")) return action;
+      if(action->text()==QString::fromUtf8("エクスポート...")) return action;
     return nullptr;
   }
  private slots:
@@ -43,7 +44,10 @@ class StlExportGui : public QObject {
     connect(&timer,&QTimer::timeout,[&]{
       for(auto* widget:QApplication::topLevelWidgets()) {
         if(auto* file=qobject_cast<QFileDialog*>(widget);file&&file->isVisible()) {
-          file->setDirectory(dir.path());file->selectFile("fine");fileChosen=true;
+          file->setDirectory(dir.path());
+          for(const auto& filter:file->nameFilters())if(filter.startsWith("STL")){file->selectNameFilter(filter);QMetaObject::invokeMethod(file,"filterSelected",Qt::DirectConnection,Q_ARG(QString,filter));}
+          if(auto* edit=file->findChild<QLineEdit*>("fileNameEdit"))edit->setText("fine");else file->selectFile("fine");
+          fileChosen=true;
           QMetaObject::invokeMethod(file,"accept",Qt::QueuedConnection);
         } else if(auto* dialog=qobject_cast<QDialog*>(widget);dialog&&dialog->isVisible()&&dialog->windowTitle()==QString::fromUtf8("STL エクスポート")) {
           if(auto* accuracy=dialog->findChild<QDoubleSpinBox*>()){accuracy->setValue(0.02);configured=true;dialog->accept();}
@@ -54,11 +58,16 @@ class StlExportGui : public QObject {
     QVERIFY(configured);QVERIFY(fileChosen);QVERIFY(QFile(fine).size()>QFile(coarse).size());
     const auto history=w.modeler().history().undoCount();
     bool cancelled=false;QTimer cancel;
-    connect(&cancel,&QTimer::timeout,[&]{for(auto* widget:QApplication::topLevelWidgets())
-      if(auto* dialog=qobject_cast<QDialog*>(widget);dialog&&dialog->isVisible()&&dialog->findChild<QDoubleSpinBox*>()){
+    connect(&cancel,&QTimer::timeout,[&]{for(auto* widget:QApplication::topLevelWidgets()) {
+      if(auto* file=qobject_cast<QFileDialog*>(widget);file&&file->isVisible()) {
+        file->setDirectory(dir.path());for(const auto& filter:file->nameFilters())if(filter.startsWith("STL")){file->selectNameFilter(filter);QMetaObject::invokeMethod(file,"filterSelected",Qt::DirectConnection,Q_ARG(QString,filter));}
+        if(auto* edit=file->findChild<QLineEdit*>("fileNameEdit"))edit->setText("cancelled");else file->selectFile("cancelled");
+        QMetaObject::invokeMethod(file,"accept",Qt::QueuedConnection);
+      } else if(auto* dialog=qobject_cast<QDialog*>(widget);dialog&&dialog->isVisible()&&dialog->findChild<QDoubleSpinBox*>()){
         cancelled=true;dialog->reject();
-      }});
-    cancel.start(10);action->trigger();cancel.stop();QVERIFY(cancelled);QCOMPARE(w.modeler().history().undoCount(),history);
+      }
+    }});
+    cancel.start(10);action->trigger();cancel.stop();QVERIFY(cancelled);QVERIFY(!QFile::exists(dir.filePath("cancelled.stl")));QCOMPARE(w.modeler().history().undoCount(),history);
   }
   void drawingLinesHaveAnActionableError() {
     QTemporaryDir dir;app::MainWindow w;

@@ -76,6 +76,28 @@
 namespace sbr::app {
 namespace {
 std::string utf8(const QString& s) { return s.toUtf8().toStdString(); }
+
+enum class ExchangeType { Step, Stl, Dxf, Dwg, Iges, Brep, Rhino, Image };
+struct ExchangeFormat {
+  ExchangeType type;
+  QString filter;
+  QStringList extensions;
+};
+std::vector<ExchangeFormat> exchangeFormats(bool importing) {
+  auto text=[](const char* source){return QCoreApplication::translate("MainWindow",source);};
+  std::vector<ExchangeFormat> formats{{ExchangeType::Step,text("STEP ファイル (*.step *.stp)"),{"step","stp"}}};
+  if(importing) {
+    formats.push_back({ExchangeType::Dxf,text("DXF 2D図面 (*.dxf)"),{"dxf"}});
+    formats.push_back({ExchangeType::Dwg,text("DWG 2D図面 (*.dwg)"),{"dwg"}});
+  } else formats.push_back({ExchangeType::Stl,text("STL ファイル (*.stl)"),{"stl"}});
+  formats.push_back({ExchangeType::Iges,text("IGES ファイル (*.igs *.iges)"),{"igs","iges"}});
+  formats.push_back({ExchangeType::Brep,text("BREP ファイル (*.brep *.brp)"),{"brep","brp"}});
+  formats.push_back({ExchangeType::Rhino,text("Rhino 3DM ファイル (*.3dm)"),{"3dm"}});
+  formats.push_back(importing?ExchangeFormat{ExchangeType::Image,text("画像・下敷き (*.png *.jpg *.jpeg *.bmp *.gif)"),{"png","jpg","jpeg","bmp","gif"}}:
+                             ExchangeFormat{ExchangeType::Image,text("PNG 画像 (*.png)"),{"png"}});
+  return formats;
+}
+
 }  // namespace
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
@@ -438,28 +460,9 @@ void MainWindow::buildMenus() {
   file->addAction(tr("保存(&S)"), QKeySequence::Save, this, &MainWindow::save);
   file->addAction(tr("名前を付けて保存(&A)..."), QKeySequence::SaveAs, this, &MainWindow::saveAs);
   file->addSeparator();
-  file->addAction(tr("画像を下敷きとして読み込む..."), this, [this] {
-    const QString path = QFileDialog::getOpenFileName(this, tr("下敷きの画像"), QString(),
-                                                      tr("画像 (*.png *.jpg *.jpeg *.bmp *.gif)"));
-    if (!path.isEmpty()) importUnderlay(path);
-  });
-  file->addAction(tr("DXF / DWG 2D図面を取り込む..."), this, &MainWindow::importDrawing);
+  file->addAction(tr("インポート..."),this,&MainWindow::importFile);
+  file->addAction(tr("エクスポート..."),this,&MainWindow::exportFile);
   file->addAction(tr("DWG 変換ソフトの設定..."), this, &MainWindow::configureDwgConverter);
-  file->addAction(tr("STEP インポート..."), this, &MainWindow::importStep);
-  file->addAction(tr("STEP エクスポート..."), this, &MainWindow::exportStep);
-  file->addAction(tr("STL エクスポート..."), this, &MainWindow::exportStl);
-  file->addAction(tr("IGES インポート..."),this,[this]{importGeometry(GeometryFormat::Iges);});
-  file->addAction(tr("IGES エクスポート..."),this,[this]{exportGeometry(GeometryFormat::Iges);});
-  file->addAction(tr("BREP インポート..."),this,[this]{importGeometry(GeometryFormat::Brep);});
-  file->addAction(tr("BREP エクスポート..."),this,[this]{exportGeometry(GeometryFormat::Brep);});
-  file->addAction(tr("Rhino 3DM インポート..."), this, &MainWindow::import3dm);
-  file->addAction(tr("Rhino 3DM エクスポート..."), this, &MainWindow::export3dm);
-  file->addAction(tr("画像エクスポート (PNG)..."), this, [this] {
-    QString path = QFileDialog::getSaveFileName(this, tr("画像エクスポート"), QString(), tr("PNG 画像 (*.png)"));
-    if (path.isEmpty()) return;
-    if (!path.endsWith(QStringLiteral(".png"), Qt::CaseInsensitive)) path += QStringLiteral(".png");
-    exportImage(path);
-  });
   file->addSeparator();
   file->addAction(tr("自動保存とバックアップの設定..."), this, &MainWindow::showAutosaveDialog);
   file->addAction(tr("終了(&X)"), QKeySequence::Quit, this, &QWidget::close);
@@ -2758,10 +2761,72 @@ void MainWindow::configureDwgConverter() {
   setStatus(tr("DWG 変換ソフトを設定しました"));
 }
 
-void MainWindow::importDrawing() {
-  const QString path = QFileDialog::getOpenFileName(this, tr("2D図面を取り込む"), {},
-                                                   tr("2D CAD (*.dxf *.dwg);;DXF (*.dxf);;DWG (*.dwg)"));
-  if (path.isEmpty()) return;
+void MainWindow::importFile() {
+  const auto formats=exchangeFormats(true);
+  QStringList filters,patterns;
+  for(const auto& format:formats) {
+    filters<<format.filter;
+    for(const auto& extension:format.extensions)patterns<<"*."+extension;
+  }
+  filters.prepend(tr("対応するすべてのファイル (%1)").arg(patterns.join(' ')));
+  QFileDialog file(this,tr("インポート"),QSettings().value("files/importDirectory").toString());
+  file.setObjectName("importFileDialog");file.setFileMode(QFileDialog::ExistingFile);file.setNameFilters(filters);
+  if(file.exec()!=QDialog::Accepted || file.selectedFiles().isEmpty())return;
+  const auto path=file.selectedFiles().front();
+  QSettings().setValue("files/importDirectory",QFileInfo(path).absolutePath());
+  const auto suffix=QFileInfo(path).suffix().toLower();
+  const auto format=std::find_if(formats.begin(),formats.end(),[&](const auto& f){return f.extensions.contains(suffix);});
+  if(format==formats.end()){reportError(tr("この形式のインポートには対応していません：%1").arg(suffix));return;}
+  switch(format->type) {
+    case ExchangeType::Step:importStepFile(path);break;
+    case ExchangeType::Dxf:case ExchangeType::Dwg:importDrawingFile(path);break;
+    case ExchangeType::Iges:importGeometryFile(path,GeometryFormat::Iges);break;
+    case ExchangeType::Brep:importGeometryFile(path,GeometryFormat::Brep);break;
+    case ExchangeType::Rhino:import3dmFile(path);break;
+    case ExchangeType::Image:importUnderlay(path);break;
+    case ExchangeType::Stl:break; // not offered by the import dialog
+  }
+}
+
+void MainWindow::exportFile() {
+  const auto formats=exchangeFormats(false);
+  QStringList filters;for(const auto& format:formats)filters<<format.filter;
+  QFileDialog file(this,tr("エクスポート"),QSettings().value("files/exportDirectory").toString());
+  file.setObjectName("exportFileDialog");file.setAcceptMode(QFileDialog::AcceptSave);
+  file.setFileMode(QFileDialog::AnyFile);file.setNameFilters(filters);
+  // Confirm the final, normalized filename ourselves, including when the
+  // chosen format changes an extension typed in the filename field.
+  file.setOption(QFileDialog::DontConfirmOverwrite,true);
+  auto updateSuffix=[&](const QString& filter){for(const auto& format:formats)if(format.filter==filter)file.setDefaultSuffix(format.extensions.front());};
+  const auto last=QSettings().value("files/exportFormat",QStringLiteral("step")).toString();
+  for(const auto& format:formats)if(format.extensions.front()==last)file.selectNameFilter(format.filter);
+  updateSuffix(file.selectedNameFilter());
+  connect(&file,&QFileDialog::filterSelected,&file,updateSuffix);
+  if(file.exec()!=QDialog::Accepted || file.selectedFiles().isEmpty())return;
+  const auto format=std::find_if(formats.begin(),formats.end(),[&](const auto& f){return f.filter==file.selectedNameFilter();});
+  if(format==formats.end())return;
+  QString path=file.selectedFiles().front();const auto suffix=QFileInfo(path).suffix().toLower();
+  if(!format->extensions.contains(suffix)) {
+    const bool known=std::any_of(formats.begin(),formats.end(),[&](const auto& f){return f.extensions.contains(suffix);});
+    if(known)path.chop(suffix.size()+1);
+    path+='.'+format->extensions.front();
+  }
+  if(QFileInfo::exists(path) && QMessageBox::question(this,tr("上書きの確認"),
+      tr("このファイルは既に存在します。上書きしますか？\n%1").arg(path),QMessageBox::Yes|QMessageBox::No,QMessageBox::No)!=QMessageBox::Yes)return;
+  QSettings().setValue("files/exportDirectory",QFileInfo(path).absolutePath());
+  QSettings().setValue("files/exportFormat",format->extensions.front());
+  switch(format->type) {
+    case ExchangeType::Step:exportStepFile(path);break;
+    case ExchangeType::Stl:exportStl(path);break;
+    case ExchangeType::Iges:exportGeometry(path,GeometryFormat::Iges);break;
+    case ExchangeType::Brep:exportGeometry(path,GeometryFormat::Brep);break;
+    case ExchangeType::Rhino:export3dmFile(path);break;
+    case ExchangeType::Image:exportImage(path);break;
+    case ExchangeType::Dxf:case ExchangeType::Dwg:break; // not offered for export
+  }
+}
+
+void MainWindow::importDrawingFile(const QString& path) {
   if (path.endsWith(".dwg", Qt::CaseInsensitive)) {
     QString converter = QSettings().value("import/odaConverter").toString();
     if (converter.isEmpty()) {
@@ -2838,10 +2903,7 @@ bool MainWindow::importDxfFile(const QString& path) {
   return true;
 }
 
-void MainWindow::importStep() {
-  const QString path = QFileDialog::getOpenFileName(this, tr("STEP インポート"), QString(),
-                                                    tr("STEP (*.step *.stp)"));
-  if (path.isEmpty()) return;
+void MainWindow::importStepFile(const QString& path) {
   auto ids = modeler_.importStep(utf8(path));
   if (!ids) {
     reportError(QString::fromStdString(ids.error()));
@@ -2852,14 +2914,7 @@ void MainWindow::importStep() {
   viewport_->fitAll();
 }
 
-void MainWindow::exportStep() {
-  QString path = QFileDialog::getSaveFileName(this, tr("STEP エクスポート"), QString(),
-                                              tr("STEP (*.step *.stp)"));
-  if (path.isEmpty()) return;
-  if (!path.endsWith(QStringLiteral(".step"), Qt::CaseInsensitive) &&
-      !path.endsWith(QStringLiteral(".stp"), Qt::CaseInsensitive)) {
-    path += QStringLiteral(".step");
-  }
+void MainWindow::exportStepFile(const QString& path) {
   const Status s = modeler_.exportStep(utf8(path), selection_);
   if (!s) {
     reportError(QString::fromStdString(s.message()));
@@ -2868,14 +2923,7 @@ void MainWindow::exportStep() {
   }
 }
 
-void MainWindow::import3dm() {
-  const QString path = QFileDialog::getOpenFileName(this, tr("Rhino 3DM インポート"), QString(),
-                                                    tr("Rhino (*.3dm)"));
-  if (path.isEmpty()) return;
-  import3dmFile(path);
-}
-
-void MainWindow::exportStl() {
+void MainWindow::exportStl(const QString& path) {
   QDialog dialog(this); dialog.setWindowTitle(tr("STL エクスポート"));
   auto* form = new QFormLayout(&dialog);
   form->addRow(new QLabel(selection_.empty() ? tr("出力範囲：表示中のモデル全体") :
@@ -2892,12 +2940,7 @@ void MainWindow::exportStl() {
   connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
   form->addRow(buttons);
   if (dialog.exec()!=QDialog::Accepted) return;
-  QFileDialog file(this,tr("STL エクスポート"),{},tr("STL (*.stl)"));
-  file.setAcceptMode(QFileDialog::AcceptSave);
-  file.setFileMode(QFileDialog::AnyFile);
-  file.setDefaultSuffix("stl");
-  if (file.exec()!=QDialog::Accepted || file.selectedFiles().isEmpty()) return;
-  exportStlFile(file.selectedFiles().front(),tolerance->value());
+  exportStlFile(path,tolerance->value());
 }
 
 bool MainWindow::exportStlFile(const QString& path, double linearDeflection) {
@@ -2906,13 +2949,6 @@ bool MainWindow::exportStlFile(const QString& path, double linearDeflection) {
   if (!result) { reportError(QString::fromStdString(result.message())); return false; }
   setStatus(tr("STLを書き出しました（mm）：%1").arg(path));
   return true;
-}
-
-void MainWindow::importGeometry(GeometryFormat format) {
-  const bool iges=format==GeometryFormat::Iges;
-  const auto path=QFileDialog::getOpenFileName(this,iges?tr("IGES インポート"):tr("BREP インポート（mm）"),{},
-      iges?tr("IGES (*.igs *.iges)"):tr("OCCT BRep (*.brep *.brp)"));
-  if(!path.isEmpty())importGeometryFile(path,format);
 }
 
 bool MainWindow::importGeometryFile(const QString& path,GeometryFormat format) {
@@ -2925,7 +2961,7 @@ bool MainWindow::importGeometryFile(const QString& path,GeometryFormat format) {
   return true;
 }
 
-void MainWindow::exportGeometry(GeometryFormat format) {
+void MainWindow::exportGeometry(const QString& path, GeometryFormat format) {
   const bool iges=format==GeometryFormat::Iges;
   QDialog settings(this);settings.setWindowTitle(iges?tr("IGES エクスポート"):tr("BREP エクスポート"));
   auto* form=new QFormLayout(&settings);
@@ -2937,9 +2973,7 @@ void MainWindow::exportGeometry(GeometryFormat format) {
   connect(buttons,&QDialogButtonBox::accepted,&settings,&QDialog::accept);
   connect(buttons,&QDialogButtonBox::rejected,&settings,&QDialog::reject);form->addRow(buttons);
   if(settings.exec()!=QDialog::Accepted)return;
-  QFileDialog file(this,settings.windowTitle(),{},iges?tr("IGES (*.igs *.iges)"):tr("OCCT BRep (*.brep *.brp)"));
-  file.setAcceptMode(QFileDialog::AcceptSave);file.setFileMode(QFileDialog::AnyFile);file.setDefaultSuffix(iges?"igs":"brep");
-  if(file.exec()==QDialog::Accepted&&!file.selectedFiles().isEmpty())exportGeometryFile(file.selectedFiles().front(),format);
+  exportGeometryFile(path,format);
 }
 
 bool MainWindow::exportGeometryFile(const QString& path,GeometryFormat format) {
@@ -3005,10 +3039,7 @@ void MainWindow::import3dmFile(const QString& path) {
   }
 }
 
-void MainWindow::export3dm() {
-  QString path = QFileDialog::getSaveFileName(this, tr("Rhino 3DM エクスポート"), QString(), tr("Rhino (*.3dm)"));
-  if (path.isEmpty()) return;
-  if (!path.endsWith(QStringLiteral(".3dm"), Qt::CaseInsensitive)) path += QStringLiteral(".3dm");
+void MainWindow::export3dmFile(const QString& path) {
   const Status s = modeler_.export3dm(utf8(path), selection_);
   if (!s) {
     reportError(QString::fromStdString(s.message()));

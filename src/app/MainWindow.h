@@ -209,15 +209,15 @@ class MainWindow : public QMainWindow, public ToolHost {
   void open();
   bool save();
   bool saveAs();
-  void importStep();
-  void importDrawing();
+  void importFile();
+  void exportFile();
+  void importStepFile(const QString& path);
+  void importDrawingFile(const QString& path);
   void configureDwgConverter();
-  void exportStep();
-  void exportStl();
-  void importGeometry(GeometryFormat format);
-  void exportGeometry(GeometryFormat format);
-  void import3dm();
-  void export3dm();
+  void exportStepFile(const QString& path);
+  void exportStl(const QString& path);
+  void exportGeometry(const QString& path, GeometryFormat format);
+  void export3dmFile(const QString& path);
   void deleteSelection();
   // Faces / edges of some object picked without the whole object.
   bool partOfObjectsSelected() const;

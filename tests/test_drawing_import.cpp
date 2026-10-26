@@ -1,5 +1,9 @@
 #include <QtTest/QtTest>
 #include <QFile>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QLineEdit>
+#include <QMenuBar>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QTemporaryDir>
@@ -21,10 +25,45 @@
 using namespace sbr;
 class DrawingImport : public QObject {
   Q_OBJECT
+  QTemporaryDir settingsDirectory_;
  private slots:
   void initTestCase() {
     QStandardPaths::setTestModeEnabled(true);
+    QCoreApplication::setOrganizationName("SketchBRepTests");
+    QSettings::setDefaultFormat(QSettings::IniFormat);
+    QSettings::setPath(QSettings::IniFormat,QSettings::UserScope,settingsDirectory_.path());
     QSettings().clear();
+  }
+  void unifiedImportDispatchesDrawingFormats_data() {
+    QTest::addColumn<bool>("dwg");QTest::newRow("dxf")<<false;QTest::newRow("dwg")<<true;
+  }
+  void unifiedImportDispatchesDrawingFormats() {
+    QFETCH(bool,dwg);QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
+    QTemporaryDir dir;const auto path=dir.filePath(dwg?"drawing.DWG":"drawing.DXF");
+    QFile file(path);QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(dwg?QByteArray("AC1032fixture"):QByteArray("0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n0\nLINE\n8\nWalls\n10\n0\n20\n0\n11\n10\n21\n0\n0\nENDSEC\n0\nEOF\n"));file.close();
+    if(dwg){QSettings().setValue("import/odaConverter",QString::fromUtf8(SBR_FAKE_ODA));QCOMPARE(QSettings().value("import/odaConverter").toString(),QString::fromUtf8(SBR_FAKE_ODA));}
+    app::MainWindow window;window.show();QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QAction* input=nullptr;for(auto* menu:window.menuBar()->actions())if(menu->menu())for(auto* action:menu->menu()->actions())
+      if(action->text()==QString::fromUtf8("インポート..."))input=action;
+    QVERIFY(input);QTimer timer;
+    connect(&timer,&QTimer::timeout,[&]{for(auto* widget:QApplication::topLevelWidgets())
+      if(auto* dialog=qobject_cast<QFileDialog*>(widget);dialog&&dialog->isVisible()) {
+        dialog->setDirectory(dir.path());
+        if(auto* edit=dialog->findChild<QLineEdit*>("fileNameEdit"))edit->setText(QFileInfo(path).fileName());else dialog->selectFile(path);
+        QMetaObject::invokeMethod(dialog,"accept",Qt::QueuedConnection);
+      }});
+    bool timedOut=false;QTimer watchdog;watchdog.setSingleShot(true);
+    connect(&watchdog,&QTimer::timeout,[&]{timedOut=true;for(auto* widget:QApplication::topLevelWidgets())
+      if(auto* dialog=qobject_cast<QDialog*>(widget);dialog&&dialog->isVisible()) {
+        qWarning()<<"Unfinished import dialog:"<<dialog->windowTitle();
+        if(auto* message=qobject_cast<QMessageBox*>(dialog))qWarning()<<message->text();
+        dialog->reject();
+      }});
+    watchdog.start(10000);timer.start(10);input->trigger();timer.stop();watchdog.stop();QVERIFY(!timedOut);
+    QVERIFY2(window.lastError().isEmpty(),qPrintable(window.lastError()));QCOMPARE(window.modeler().listObjects().size(),std::size_t(1));
+    QCOMPARE(window.modeler().document().objects().front().kind(),doc::ObjectKind::Curve);
+    QCOMPARE(window.modeler().history().undoCount(),std::size_t(1));QVERIFY(window.modeler().history().undo());QVERIFY(window.modeler().listObjects().empty());
   }
   void conversionAndGuiImport() {
     QTemporaryDir dir;
