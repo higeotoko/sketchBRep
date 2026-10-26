@@ -51,3 +51,5 @@
 - 提供された実DXFの141オブジェクトから、1つの閉じた輪郭の4辺を選択して生成も確認。約7.5 msで面を追加し、元の141オブジェクトを保持（計142）。保存・再読込も成功。実図面のすべての輪郭を検証したものではない。
 - ログ：`/tmp/sbr-face-all-core.log`、`/tmp/sbr-face-all-gui.log`。
 - Windows実機での操作確認は未実施。
+- 最終CI（`6f3f4c9`）はLinux・Windowsとも成功。Windowsのビルド・コアテスト・同梱DLL確認・同梱CLI起動・ZIPアップロードまで成功。
+- 更新版ZIP（小さなDXF5種と操作説明を同梱）: https://github.com/higeotoko/sketchBRep/actions/runs/40254435065/artifacts/12622530732
