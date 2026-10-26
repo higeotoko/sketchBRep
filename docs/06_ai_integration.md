@@ -46,6 +46,7 @@ AI 専用の裏口は作らず、GUI のツールと同じ `doc::Modeler` を JS
 - 表示状態: `hide` / `unhide_all`（非表示は描画・吸着・出力の対象外）, `set_section`（断面。平面図・断面図の切断）, `list_tags`, `set_tag_visible`
 - 3DM: `export_3dm` / `import_3dm`（ファイル系なのでアプリ経由では無効、`sbr_cli` 等で使用）
 - 履歴・ファイル: `undo`, `redo`, `save`, `open`, `export_step`（**アプリ経由では無効**）
+- STL: `export_stl {path, ids?, linear_deflection_mm?}`（バイナリSTL・mm、近似精度の既定0.1 mm／最小0.001 mm）。ファイル系のためアプリ経由・preview・原子的batchでは実行しない。表示中の面／立体のみが対象で、線・マテリアルは含めない
 - アプリ起動中のみ: `get_selection`（ユーザーが選んだ物・面）, `select`, `set_view`, `capture_view`（ビューの PNG を AI に画像で返す）, `list_scenes`, `go_to_scene`（保存ビューの表示・保存）
 - 意味の属性: `set_attribute`（`kind=wall`、`level=2F` などのキーと値。複数対象を Undo 1 回で）。`query_objects` / `edit_each` の `attributes` 条件（`"*"` はキーがあれば何でも）と、`aggregate` の `group_by: "attribute:level"` で使える。形状には影響せず、名前や AI の推測を事実扱いしないための「明示的な意味」
 - 消しゴム: `erase_edge {id, edge: 番号 か {near: [x,y,z]}}`（split_face や線で分けた面の境の線を消して一枚に戻す。形は変わらない。角の辺は拒否）

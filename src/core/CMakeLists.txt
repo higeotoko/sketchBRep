@@ -6,6 +6,7 @@ add_library(sbr_core STATIC
   src/Validation.cpp
   src/Measure.cpp
   src/ShapeIO.cpp
+  src/Stl.cpp
   src/FaceRef.cpp
   src/DisplayMesh.cpp
   src/Recipe.cpp

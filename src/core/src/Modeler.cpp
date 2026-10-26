@@ -5756,6 +5756,33 @@ Status Modeler::export3dm(const std::string& path, const std::vector<ObjectId>& 
   return geom::write3dm(parts, path);
 }
 
+Status Modeler::exportStl(const std::string& path, const std::vector<ObjectId>& ids,
+                         const geom::StlExportOptions& options) const {
+  for (const auto& id : ids) if (!document_.find(id)) return Status::failure("Object not found");
+  std::vector<ObjectId> wanted;
+  if (ids.empty()) {
+    for (const auto& o : document_.objects()) wanted.push_back(o.id);
+  } else {
+    for (const auto& root : topmost(ids)) {
+      const auto children = document_.subtree(root);
+      wanted.insert(wanted.end(), children.begin(), children.end());
+    }
+  }
+  BRep_Builder builder;
+  TopoDS_Compound shape; builder.MakeCompound(shape);
+  for (const auto& id : wanted) {
+    const auto* o = document_.find(id);
+    if (!o || o->shape.IsNull() || !document_.isVisible(id) || o->kind()==ObjectKind::Image ||
+        o->kind()==ObjectKind::Annotation || o->kind()==ObjectKind::Guide) continue;
+    const auto part = document_.worldShape(*o);
+    if (TopExp_Explorer(part, TopAbs_FACE).More()) {
+      // Adding a child freezes its TShape; never freeze a canonical object.
+      builder.Add(shape, BRepBuilderAPI_Copy(part, Standard_False, Standard_False).Shape());
+    }
+  }
+  return geom::writeStl(shape, path, options);
+}
+
 Result<std::vector<ObjectId>> Modeler::import3dm(const std::string& path, bool allowPartial,
                                                  geom::Import3dmReport* report) {
   geom::Import3dmReport local;

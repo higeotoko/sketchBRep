@@ -1,0 +1,2 @@
+{"command":"create_box","args":{"origin":[0,0,0],"width":10,"depth":20,"height":30}}
+{"command":"export_stl","args":{"path":"dist/SketchBRep/examples/stl/box_10x20x30.stl","linear_deflection_mm":0.1}}

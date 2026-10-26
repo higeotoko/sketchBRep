@@ -13,6 +13,14 @@ struct Entry {
 
 // Ordered: more specific phrases first.
 const Entry kEntries[] = {
+    {"STL export requires faces or solids", "STLに書き出せる面や立体がありません。線図だけの場合は、先に面を生成してください"},
+    {"STL tolerance must be", "STLの近似精度は0.001 mm以上、角度は0.01〜3ラジアンで指定してください"},
+    {"STL float precision collapses", "原点から遠すぎるか、非常に細かい形状がSTLの数値精度でつぶれます。原点に近づけるかSTEP形式で書き出してください"},
+    {"STL coordinates exceed", "STLの数値で表せない座標です。原点に近づけるかSTEP形式で書き出してください"},
+    {"Cannot export invalid geometry to STL", "形状が不正なためSTLに書き出せません。形状を確認してください"},
+    {"STL tessellation failed", "STL用の三角形メッシュを作れませんでした。形状や近似精度を確認してください"},
+    {"Could not write STL file", "STLファイルを作成できません。保存先や書き込み権限を確認してください"},
+    {"Could not finish writing STL file", "STLを書き込み終えられませんでした。空き容量や保存先を確認してください"},
     {"Select curve edges for a face", "面の輪郭にする線・円弧を選択してください"},
     {"Face boundary is hidden or locked", "輪郭の線図が非表示またはロックされています。表示・ロック解除して選び直してください"},
     {"Face boundary is outside the editing context", "同じグループ内の輪郭を選択してください。グループの中の線は、編集に入ってから選びます"},

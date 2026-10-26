@@ -1871,6 +1871,15 @@ const std::vector<CommandDef>& commands() {
                           {"complete", !report.incomplete()}, {"summary", report.summary()}};
          return out;
        }},
+      {"export_stl", "Export visible face/solid geometry (or ids) as binary STL in mm. Curves and materials are omitted; surfaces remain open. The canonical B-rep is unchanged.",
+       SCHEMA({"type": "object", "properties": {"path": {"type": "string"},
+               "ids": {"type": "array", "items": {"type": "string"}},
+               "linear_deflection_mm": {"type": "number", "minimum": 0.001}}, "required": ["path"]}),
+       [](doc::Modeler& m, const json& a) {
+         geom::StlExportOptions options; options.linearDeflection=a.value("linear_deflection_mm",0.1);
+         must(m.exportStl(text(a,"path"),a.contains("ids") ? ids(a,"ids") : std::vector<ObjectId>{},options));
+         return json::object();
+       }},
       {"export_step", "Export visible objects (or 'ids') to STEP with names and colours.",
        SCHEMA({"type": "object", "properties": {"path": {"type": "string"},
                "ids": {"type": "array", "items": {"type": "string"}}}, "required": ["path"]}),
@@ -1885,7 +1894,7 @@ const std::vector<CommandDef>& commands() {
 #undef SCHEMA
 
 bool isFileCommand(const std::string& name) {
-  return name == "save" || name == "open" || name == "export_step" || name == "export_3dm" ||
+  return name == "save" || name == "open" || name == "export_step" || name == "export_stl" || name == "export_3dm" ||
          name == "import_3dm" || name == "import_dxf" || name == "set_material_texture";
 }
 

@@ -20,6 +20,15 @@ Result<TopoDS_Shape> shapeFromBRepString(const std::string& text);
 Status writeStep(const TopoDS_Shape& shape, const std::string& path);
 Result<TopoDS_Shape> readStep(const std::string& path);
 
+struct StlExportOptions {
+  double linearDeflection = 0.1;   // absolute chord deviation in mm
+  double angularDeflection = 0.35; // radians
+};
+// Binary STL, coordinates in mm (STL stores no unit or material metadata).
+// Tessellation is performed on a private copy, never on the canonical B-rep.
+Status writeStl(const TopoDS_Shape& shape, const std::string& path,
+                const StlExportOptions& options = {});
+
 // A named, optionally coloured part for STEP exchange.
 struct NamedShape {
   TopoDS_Shape shape;

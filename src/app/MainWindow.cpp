@@ -447,6 +447,7 @@ void MainWindow::buildMenus() {
   file->addAction(tr("DWG 変換ソフトの設定..."), this, &MainWindow::configureDwgConverter);
   file->addAction(tr("STEP インポート..."), this, &MainWindow::importStep);
   file->addAction(tr("STEP エクスポート..."), this, &MainWindow::exportStep);
+  file->addAction(tr("STL エクスポート..."), this, &MainWindow::exportStl);
   file->addAction(tr("Rhino 3DM インポート..."), this, &MainWindow::import3dm);
   file->addAction(tr("Rhino 3DM エクスポート..."), this, &MainWindow::export3dm);
   file->addAction(tr("画像エクスポート (PNG)..."), this, [this] {
@@ -2868,6 +2869,39 @@ void MainWindow::import3dm() {
                                                     tr("Rhino (*.3dm)"));
   if (path.isEmpty()) return;
   import3dmFile(path);
+}
+
+void MainWindow::exportStl() {
+  QDialog dialog(this); dialog.setWindowTitle(tr("STL エクスポート"));
+  auto* form = new QFormLayout(&dialog);
+  form->addRow(new QLabel(selection_.empty() ? tr("出力範囲：表示中のモデル全体") :
+      tr("出力範囲：選択したオブジェクト %1 個").arg(selection_.size()), &dialog));
+  auto* tolerance = new QDoubleSpinBox(&dialog);
+  tolerance->setDecimals(3); tolerance->setRange(0.001,1000); tolerance->setValue(0.1);
+  tolerance->setSuffix(tr(" mm")); tolerance->setSingleStep(0.05);
+  form->addRow(tr("曲面の近似精度（小さいほど細かい）"), tolerance);
+  auto* info = new QLabel(tr("バイナリSTLで書き出します。単位はmmとして読み込んでください。\n"
+      "線・色・テクスチャは含みません。面だけの形状には厚みがありません。"), &dialog);
+  info->setWordWrap(true); form->addRow(info);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  form->addRow(buttons);
+  if (dialog.exec()!=QDialog::Accepted) return;
+  QFileDialog file(this,tr("STL エクスポート"),{},tr("STL (*.stl)"));
+  file.setAcceptMode(QFileDialog::AcceptSave);
+  file.setFileMode(QFileDialog::AnyFile);
+  file.setDefaultSuffix("stl");
+  if (file.exec()!=QDialog::Accepted || file.selectedFiles().isEmpty()) return;
+  exportStlFile(file.selectedFiles().front(),tolerance->value());
+}
+
+bool MainWindow::exportStlFile(const QString& path, double linearDeflection) {
+  geom::StlExportOptions options; options.linearDeflection=linearDeflection;
+  const auto result=modeler_.exportStl(utf8(path),selection_,options);
+  if (!result) { reportError(QString::fromStdString(result.message())); return false; }
+  setStatus(tr("STLを書き出しました（mm）：%1").arg(path));
+  return true;
 }
 
 QString MainWindow::describe3dmReport(const geom::Import3dmReport& r) {

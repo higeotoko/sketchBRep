@@ -152,6 +152,8 @@ jobs:
           New-Item -ItemType Directory -Force "$dist\examples\dxf" | Out-Null
           Copy-Item tests\data\dxf\small*.dxf "$dist\examples\dxf"
           Copy-Item docs\27_dxf_face_creation.md "$dist\examples\dxf\README.md"
+          New-Item -ItemType Directory -Force "$dist\examples\stl" | Out-Null
+          Copy-Item docs\28_stl_export.md "$dist\examples\stl\README.md"
 
       - name: Check that every DLL dependency in the zip resolves
         shell: pwsh
@@ -186,6 +188,12 @@ jobs:
           $out = Get-Content tests\data\mcp_session.jsonl | dist\SketchBRep\sbr_mcp.exe --headless | Out-String
           Write-Host $out.Substring(0, [Math]::Min(600, $out.Length))
           if ($out -notmatch '"isError":false') { throw "sbr_mcp smoke test failed" }
+          Get-Content tests\data\stl_export.jsonl | dist\SketchBRep\sbr_cli.exe
+          if ($LASTEXITCODE -ne 0) { throw "STL export smoke test failed" }
+          $stl = [System.IO.File]::ReadAllBytes("dist\SketchBRep\examples\stl\box_10x20x30.stl")
+          if ($stl.Length -ne 684 -or [System.BitConverter]::ToUInt32($stl, 80) -ne 12) {
+            throw "Unexpected STL triangle count or size"
+          }
 
       - uses: actions/upload-artifact@v4
         with:

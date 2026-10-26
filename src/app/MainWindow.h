@@ -103,6 +103,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   // paste tool (follows the cursor) or in place.
   // The current view as shown (without the snap marker) as a PNG.
   bool exportImage(const QString& path);
+  bool exportStlFile(const QString& path, double linearDeflection = 0.1);
   bool copySelection();
   bool cutSelection();
   void paste();
@@ -209,6 +210,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   void importDrawing();
   void configureDwgConverter();
   void exportStep();
+  void exportStl();
   void import3dm();
   void export3dm();
   void deleteSelection();

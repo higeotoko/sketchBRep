@@ -552,6 +552,8 @@ class Modeler {
   // Exports the given objects (all visible objects when empty) as STEP,
   // keeping object names and colours.
   Status exportStep(const std::string& path, const std::vector<ObjectId>& ids = {}) const;
+  Status exportStl(const std::string& path, const std::vector<ObjectId>& ids = {},
+                   const geom::StlExportOptions& options = {}) const;
   Result<std::vector<ObjectId>> importDxf(const std::string& path, const geom::DxfImportOptions& options = {},
                                          geom::DxfImportReport* report = nullptr);
   Result<std::vector<ObjectId>> importStep(const std::string& path);
