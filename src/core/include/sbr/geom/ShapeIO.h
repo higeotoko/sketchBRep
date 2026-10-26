@@ -43,4 +43,11 @@ Status writeStepParts(const std::vector<NamedShape>& parts, const std::string& p
 // and surface colours where present.
 Result<std::vector<NamedShape>> readStepParts(const std::string& path);
 
+// Geometry-only OCCT text BRep (no project history/material metadata).
+Status writeBrep(const TopoDS_Shape& shape, const std::string& path);
+Result<TopoDS_Shape> readBrep(const std::string& path);
+// IGES B-rep mode, millimetres. Imports normalize the file's units to mm.
+Status writeIges(const TopoDS_Shape& shape, const std::string& path);
+Result<std::vector<NamedShape>> readIges(const std::string& path);
+
 }  // namespace sbr::geom

@@ -13,6 +13,18 @@ struct Entry {
 
 // Ordered: more specific phrases first.
 const Entry kEntries[] = {
+    {"Cannot open BRep file", "BREPファイルを開けません。保存先やファイルを確認してください"},
+    {"Empty or unreadable BRep file", "BREPファイルが空か、OCCTテキストBREPとして読み込めません"},
+    {"Invalid BRep geometry", "BREPの形状が不正です。元のソフトで形状を確認してください"},
+    {"Cannot read IGES file", "IGESファイルを読み込めません。ファイル形式や保存先を確認してください"},
+    {"No supported geometry in IGES file", "読み込める幾何形状がIGESファイルにありません"},
+    {"IGES transfer was incomplete", "IGESの一部の形状を変換できませんでした。今回は取り込んでいません"},
+    {"Invalid IGES geometry", "IGESの変換結果が不正なため取り込んでいません"},
+    {"Could not write BRep file", "BREPファイルを作成できません。保存先を確認してください"},
+    {"Could not write IGES file", "IGESファイルを作成できません。保存先を確認してください"},
+    {"Could not finish writing BRep file", "BREPを書き込み終えられませんでした。空き容量や保存先を確認してください"},
+    {"Could not finish writing IGES file", "IGESを書き込み終えられませんでした。空き容量や保存先を確認してください"},
+    {"IGES geometry transfer failed", "この形状をIGESに変換できませんでした。元の形状を確認してください"},
     {"STL export requires faces or solids", "STLに書き出せる面や立体がありません。線図だけの場合は、先に面を生成してください"},
     {"STL tolerance must be", "STLの近似精度は0.001 mm以上、角度は0.01〜3ラジアンで指定してください"},
     {"STL float precision collapses", "原点から遠すぎるか、非常に細かい形状がSTLの数値精度でつぶれます。原点に近づけるかSTEP形式で書き出してください"},

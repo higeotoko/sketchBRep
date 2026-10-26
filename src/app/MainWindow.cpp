@@ -448,6 +448,10 @@ void MainWindow::buildMenus() {
   file->addAction(tr("STEP インポート..."), this, &MainWindow::importStep);
   file->addAction(tr("STEP エクスポート..."), this, &MainWindow::exportStep);
   file->addAction(tr("STL エクスポート..."), this, &MainWindow::exportStl);
+  file->addAction(tr("IGES インポート..."),this,[this]{importGeometry(GeometryFormat::Iges);});
+  file->addAction(tr("IGES エクスポート..."),this,[this]{exportGeometry(GeometryFormat::Iges);});
+  file->addAction(tr("BREP インポート..."),this,[this]{importGeometry(GeometryFormat::Brep);});
+  file->addAction(tr("BREP エクスポート..."),this,[this]{exportGeometry(GeometryFormat::Brep);});
   file->addAction(tr("Rhino 3DM インポート..."), this, &MainWindow::import3dm);
   file->addAction(tr("Rhino 3DM エクスポート..."), this, &MainWindow::export3dm);
   file->addAction(tr("画像エクスポート (PNG)..."), this, [this] {
@@ -2901,6 +2905,48 @@ bool MainWindow::exportStlFile(const QString& path, double linearDeflection) {
   const auto result=modeler_.exportStl(utf8(path),selection_,options);
   if (!result) { reportError(QString::fromStdString(result.message())); return false; }
   setStatus(tr("STLを書き出しました（mm）：%1").arg(path));
+  return true;
+}
+
+void MainWindow::importGeometry(GeometryFormat format) {
+  const bool iges=format==GeometryFormat::Iges;
+  const auto path=QFileDialog::getOpenFileName(this,iges?tr("IGES インポート"):tr("BREP インポート（mm）"),{},
+      iges?tr("IGES (*.igs *.iges)"):tr("OCCT BRep (*.brep *.brp)"));
+  if(!path.isEmpty())importGeometryFile(path,format);
+}
+
+bool MainWindow::importGeometryFile(const QString& path,GeometryFormat format) {
+  const bool iges=format==GeometryFormat::Iges;
+  auto ids=iges?modeler_.importIges(utf8(path)):modeler_.importBrep(utf8(path));
+  if(!ids){reportError(QString::fromStdString(ids.error()));return false;}
+  setSelection(*ids);viewport_->syncNow();viewport_->fitAll();
+  setStatus(tr("%1から%2個のオブジェクトを読み込みました（形状のみ、mm）。")
+      .arg(iges?QStringLiteral("IGES"):QStringLiteral("BREP")).arg(ids->size()));
+  return true;
+}
+
+void MainWindow::exportGeometry(GeometryFormat format) {
+  const bool iges=format==GeometryFormat::Iges;
+  QDialog settings(this);settings.setWindowTitle(iges?tr("IGES エクスポート"):tr("BREP エクスポート"));
+  auto* form=new QFormLayout(&settings);
+  form->addRow(new QLabel(selection_.empty()?tr("出力範囲：表示中のモデル全体"):
+      tr("出力範囲：選択したオブジェクト %1 個").arg(selection_.size()),&settings));
+  form->addRow(new QLabel(tr("正確な曲線・面・立体をmm基準で書き出します。\n"
+      "形状のみの出力です。編集履歴・名前・タグ・素材はSBR形式で保存してください。"),&settings));
+  auto* buttons=new QDialogButtonBox(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,&settings);
+  connect(buttons,&QDialogButtonBox::accepted,&settings,&QDialog::accept);
+  connect(buttons,&QDialogButtonBox::rejected,&settings,&QDialog::reject);form->addRow(buttons);
+  if(settings.exec()!=QDialog::Accepted)return;
+  QFileDialog file(this,settings.windowTitle(),{},iges?tr("IGES (*.igs *.iges)"):tr("OCCT BRep (*.brep *.brp)"));
+  file.setAcceptMode(QFileDialog::AcceptSave);file.setFileMode(QFileDialog::AnyFile);file.setDefaultSuffix(iges?"igs":"brep");
+  if(file.exec()==QDialog::Accepted&&!file.selectedFiles().isEmpty())exportGeometryFile(file.selectedFiles().front(),format);
+}
+
+bool MainWindow::exportGeometryFile(const QString& path,GeometryFormat format) {
+  const bool iges=format==GeometryFormat::Iges;
+  const auto status=iges?modeler_.exportIges(utf8(path),selection_):modeler_.exportBrep(utf8(path),selection_);
+  if(!status){reportError(QString::fromStdString(status.message()));return false;}
+  setStatus(tr("%1を書き出しました（形状のみ、mm）：%2").arg(iges?QStringLiteral("IGES"):QStringLiteral("BREP")).arg(path));
   return true;
 }
 

@@ -1871,6 +1871,18 @@ const std::vector<CommandDef>& commands() {
                           {"complete", !report.incomplete()}, {"summary", report.summary()}};
          return out;
        }},
+      {"import_brep", "Import OCCT text BRep geometry, assuming mm. Project history and materials are not imported.",
+       SCHEMA({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
+       [](doc::Modeler& m,const json& a){return idsResult(must(m.importBrep(text(a,"path"))));}},
+      {"import_iges", "Import supported visible IGES geometry, normalizing units to mm. Reject incomplete root transfers.",
+       SCHEMA({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
+       [](doc::Modeler& m,const json& a){return idsResult(must(m.importIges(text(a,"path"))));}},
+      {"export_brep", "Export selected or visible geometry as OCCT text BRep in model mm coordinates, without history or materials.",
+       SCHEMA({"type":"object","properties":{"path":{"type":"string"},"ids":{"type":"array","items":{"type":"string"}}},"required":["path"]}),
+       [](doc::Modeler& m,const json& a){must(m.exportBrep(text(a,"path"),a.contains("ids")?ids(a,"ids"):std::vector<ObjectId>{}));return json::object();}},
+      {"export_iges", "Export selected or visible exact geometry as IGES B-rep in mm, without history or materials.",
+       SCHEMA({"type":"object","properties":{"path":{"type":"string"},"ids":{"type":"array","items":{"type":"string"}}},"required":["path"]}),
+       [](doc::Modeler& m,const json& a){must(m.exportIges(text(a,"path"),a.contains("ids")?ids(a,"ids"):std::vector<ObjectId>{}));return json::object();}},
       {"export_stl", "Export visible face/solid geometry (or ids) as binary STL in mm. Curves and materials are omitted; surfaces remain open. The canonical B-rep is unchanged.",
        SCHEMA({"type": "object", "properties": {"path": {"type": "string"},
                "ids": {"type": "array", "items": {"type": "string"}},
@@ -1895,6 +1907,7 @@ const std::vector<CommandDef>& commands() {
 
 bool isFileCommand(const std::string& name) {
   return name == "save" || name == "open" || name == "export_step" || name == "export_stl" || name == "export_3dm" ||
+         name == "import_brep" || name == "export_brep" || name == "import_iges" || name == "export_iges" ||
          name == "import_3dm" || name == "import_dxf" || name == "set_material_texture";
 }
 

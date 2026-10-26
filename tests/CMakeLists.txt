@@ -1,6 +1,7 @@
 find_package(GTest REQUIRED)
 
 add_executable(sbr_core_tests
+  test_geometry_exchange.cpp
   test_stl.cpp
   test_dxf.cpp
   test_units.cpp
@@ -77,6 +78,11 @@ endif()
 # End-to-end GUI test (needs a display; run under xvfb-run on headless CI).
 if(SBR_BUILD_APP)
   find_package(Qt6 REQUIRED COMPONENTS Test)
+  add_executable(sbr_geometry_exchange_gui_tests test_geometry_exchange_gui.cpp)
+  set_target_properties(sbr_geometry_exchange_gui_tests PROPERTIES AUTOMOC ON)
+  target_link_libraries(sbr_geometry_exchange_gui_tests PRIVATE sbr_ui Qt6::Test)
+  add_test(NAME gui_geometry_exchange COMMAND sbr_geometry_exchange_gui_tests)
+  set_tests_properties(gui_geometry_exchange PROPERTIES LABELS gui ENVIRONMENT "QT_QPA_PLATFORM=xcb")
   add_executable(sbr_stl_gui_tests test_stl_gui.cpp)
   set_target_properties(sbr_stl_gui_tests PROPERTIES AUTOMOC ON)
   target_link_libraries(sbr_stl_gui_tests PRIVATE sbr_ui Qt6::Test)

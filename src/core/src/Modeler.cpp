@@ -5756,9 +5756,8 @@ Status Modeler::export3dm(const std::string& path, const std::vector<ObjectId>& 
   return geom::write3dm(parts, path);
 }
 
-Status Modeler::exportStl(const std::string& path, const std::vector<ObjectId>& ids,
-                         const geom::StlExportOptions& options) const {
-  for (const auto& id : ids) if (!document_.find(id)) return Status::failure("Object not found");
+Result<TopoDS_Shape> Modeler::exportGeometry(const std::vector<ObjectId>& ids, bool facesOnly) const {
+  for (const auto& id : ids) if (!document_.find(id)) return Result<TopoDS_Shape>::failure("Object not found");
   std::vector<ObjectId> wanted;
   if (ids.empty()) {
     for (const auto& o : document_.objects()) wanted.push_back(o.id);
@@ -5775,12 +5774,39 @@ Status Modeler::exportStl(const std::string& path, const std::vector<ObjectId>& 
     if (!o || o->shape.IsNull() || !document_.isVisible(id) || o->kind()==ObjectKind::Image ||
         o->kind()==ObjectKind::Annotation || o->kind()==ObjectKind::Guide) continue;
     const auto part = document_.worldShape(*o);
-    if (TopExp_Explorer(part, TopAbs_FACE).More()) {
+    if (!facesOnly || TopExp_Explorer(part, TopAbs_FACE).More()) {
       // Adding a child freezes its TShape; never freeze a canonical object.
       builder.Add(shape, BRepBuilderAPI_Copy(part, Standard_False, Standard_False).Shape());
     }
   }
-  return geom::writeStl(shape, path, options);
+  return TopoDS_Shape(shape);
+}
+
+Status Modeler::exportStl(const std::string& path, const std::vector<ObjectId>& ids,
+                         const geom::StlExportOptions& options) const {
+  auto shape=exportGeometry(ids,true);
+  return shape ? geom::writeStl(*shape,path,options) : shape.status();
+}
+
+Status Modeler::exportBrep(const std::string& path, const std::vector<ObjectId>& ids) const {
+  auto shape=exportGeometry(ids);
+  return shape ? geom::writeBrep(*shape,path) : shape.status();
+}
+
+Status Modeler::exportIges(const std::string& path, const std::vector<ObjectId>& ids) const {
+  auto shape=exportGeometry(ids);
+  return shape ? geom::writeIges(*shape,path) : shape.status();
+}
+
+Result<std::vector<ObjectId>> Modeler::importBrep(const std::string& path) {
+  auto shape=geom::readBrep(path);
+  if(!shape)return Result<std::vector<ObjectId>>::failure(shape.error());
+  return addImported({{*shape,"BRep",std::nullopt,{}}},path,"Import BRep");
+}
+
+Result<std::vector<ObjectId>> Modeler::importIges(const std::string& path) {
+  auto parts=geom::readIges(path);
+  return parts ? addImported(*parts,path,"Import IGES") : Result<std::vector<ObjectId>>::failure(parts.error());
 }
 
 Result<std::vector<ObjectId>> Modeler::import3dm(const std::string& path, bool allowPartial,

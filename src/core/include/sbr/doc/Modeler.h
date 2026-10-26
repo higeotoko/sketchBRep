@@ -552,6 +552,10 @@ class Modeler {
   // Exports the given objects (all visible objects when empty) as STEP,
   // keeping object names and colours.
   Status exportStep(const std::string& path, const std::vector<ObjectId>& ids = {}) const;
+  Status exportBrep(const std::string& path, const std::vector<ObjectId>& ids = {}) const;
+  Status exportIges(const std::string& path, const std::vector<ObjectId>& ids = {}) const;
+  Result<std::vector<ObjectId>> importBrep(const std::string& path);
+  Result<std::vector<ObjectId>> importIges(const std::string& path);
   Status exportStl(const std::string& path, const std::vector<ObjectId>& ids = {},
                    const geom::StlExportOptions& options = {}) const;
   Result<std::vector<ObjectId>> importDxf(const std::string& path, const geom::DxfImportOptions& options = {},
@@ -606,6 +610,7 @@ class Modeler {
   // True if a profile lying on a solid's face points into that solid.
   bool facesIntoSolid(const TopoDS_Face& worldFace, const ObjectId& parent) const;
   std::vector<geom::NamedShape> exportParts(const std::vector<ObjectId>& ids) const;
+  Result<TopoDS_Shape> exportGeometry(const std::vector<ObjectId>& ids, bool facesOnly = false) const;
   Result<std::vector<ObjectId>> addImported(const std::vector<geom::NamedShape>& parts, const std::string& path,
                                             const std::string& commandName);
   Result<ObjectId> faceFromCurveJunctions(const ObjectId& curveId, bool* loopFound);

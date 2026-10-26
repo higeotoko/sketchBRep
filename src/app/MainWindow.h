@@ -104,6 +104,9 @@ class MainWindow : public QMainWindow, public ToolHost {
   // The current view as shown (without the snap marker) as a PNG.
   bool exportImage(const QString& path);
   bool exportStlFile(const QString& path, double linearDeflection = 0.1);
+  enum class GeometryFormat { Brep, Iges };
+  bool importGeometryFile(const QString& path, GeometryFormat format);
+  bool exportGeometryFile(const QString& path, GeometryFormat format);
   bool copySelection();
   bool cutSelection();
   void paste();
@@ -211,6 +214,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   void configureDwgConverter();
   void exportStep();
   void exportStl();
+  void importGeometry(GeometryFormat format);
+  void exportGeometry(GeometryFormat format);
   void import3dm();
   void export3dm();
   void deleteSelection();

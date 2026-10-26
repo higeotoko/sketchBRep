@@ -154,6 +154,8 @@ jobs:
           Copy-Item docs\27_dxf_face_creation.md "$dist\examples\dxf\README.md"
           New-Item -ItemType Directory -Force "$dist\examples\stl" | Out-Null
           Copy-Item docs\28_stl_export.md "$dist\examples\stl\README.md"
+          New-Item -ItemType Directory -Force "$dist\examples\exchange" | Out-Null
+          Copy-Item docs\30_geometry_exchange_formats.md "$dist\examples\exchange\README.md"
 
       - name: Check that every DLL dependency in the zip resolves
         shell: pwsh
@@ -193,6 +195,16 @@ jobs:
           $stl = [System.IO.File]::ReadAllBytes("dist\SketchBRep\examples\stl\box_10x20x30.stl")
           if ($stl.Length -ne 684 -or [System.BitConverter]::ToUInt32($stl, 80) -ne 12) {
             throw "Unexpected STL triangle count or size"
+          }
+          $exchange = Get-Content tests\data\geometry_exchange.jsonl | dist\SketchBRep\sbr_cli.exe
+          if ($LASTEXITCODE -ne 0) { throw "Geometry exchange smoke test failed" }
+          foreach ($line in $exchange) {
+            $result = $line | ConvertFrom-Json
+            if (-not $result.ok) { throw "Geometry exchange command failed" }
+          }
+          if (-not (Test-Path "dist\SketchBRep\examples\exchange\box_10x20x30.brep") -or
+              -not (Test-Path "dist\SketchBRep\examples\exchange\box_10x20x30.igs")) {
+            throw "Geometry exchange examples were not written"
           }
 
       - uses: actions/upload-artifact@v4
