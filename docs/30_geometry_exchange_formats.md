@@ -69,3 +69,7 @@ Windows配布では従来のDLL依存探索で必要なライブラリを同梱�
 Windows ZIP の `examples/exchange` に、同梱CLIで作成・再読込を検証した10×20×30 mmの箱（BREP / IGES）とこの説明を同梱する。
 
 ローカル結果：コア341件合格・任意ベンチ4件スキップ。新規GUI6件、STL GUI5件、DXF取り込みGUI17件合格。GUI本体の既存3失敗は変わらない。同梱サンプル生成・再読込のCLIは5応答とも成功したJSONであることを確認。
+
+最終CIはLinux・Windowsとも成功。Windows側のOCCTで旧プリンタ列のtypedefが利用できなかったため、返り値から型を推論する実装に修正済み（`72b1923`）。Windowsコアテスト・配布DLL確認・同梱CLIの新形式往復まで合格。Windows実機の対話操作や他CADでの網羅的な互換性確認は未実施。
+
+配布ZIP：https://github.com/higeotoko/sketchBRep/actions/runs/40265398284/artifacts/12626482190
