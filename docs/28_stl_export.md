@@ -52,3 +52,5 @@ Windows ZIP の `examples/stl/box_10x20x30.stl` は、同梱CLIで作った10×2
 - 新しいCLIスモークテストもローカルで実行し、10×20×30 mmの箱が684バイト・12三角形になることを確認。
 - ログ：`/tmp/sbr-stl-final-core.log`、`/tmp/sbr-stl-final-gui.log`、`/tmp/sbr-stl-all-gui.log`。
 - Windows実機や実際のスライサーでの操作確認は未実施。STLの読み直しは、書き出し実装から独立したバイナリパーサーで行っている。
+- 最終CI（`475ff2d`）はLinux・Windowsとも成功。Windows配布物のみのPATHで同梱CLIのSTL出力も成功し、サンプルの684バイト・12三角形を確認済み。
+- STL対応の更新版ZIP: https://github.com/higeotoko/sketchBRep/actions/runs/40258054421/artifacts/12623169834
