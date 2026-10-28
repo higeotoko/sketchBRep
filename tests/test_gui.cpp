@@ -280,6 +280,7 @@ class GuiPhase1 : public QObject {
   void eraserDragFollowsWhatTheLineBecame();
   void wheelZoomIsConsistentAndReversible();
   void wheelZoomEmptySpaceAndLimits();
+  void wheelZoomThroughWallKeepsOrientationAndInputConsistency();
   void wheelZoomKeepsDrawing();
   void materialEditorColourTextureOpacityDuplicate();
   void brandingResourcesLoad();
@@ -6598,7 +6599,7 @@ void GuiPhase1::wheelZoomIsConsistentAndReversible() {
 
 // Request Z04 Z10: pointing at the sky zooms at the depth last used (no
 // jump to the origin), keeps moving through empty space, and zooming into
-// a face stops short of it: no flip, no NaN.
+// a face can be crossed: no flip, no NaN.
 void GuiPhase1::wheelZoomEmptySpaceAndLimits() {
   Fixture f;
   QVERIFY(f.setUp(4000, 6000));
@@ -6610,6 +6611,7 @@ void GuiPhase1::wheelZoomEmptySpaceAndLimits() {
   start.perspective = true;
   start.scale = 20000;
   f.vp->restoreCamera(start);
+  f.vp->storeCamera(start);  // SetScale may adjust a perspective eye; compare the actual pose.
   const QPoint wall = f.vp->toWidget(gp_Pnt(4000, 0, 1500));
   wheelAt(f.vp, wall, QPoint(0, 120));
   QCOMPARE(f.vp->lastWheelAnchorSource(), QStringLiteral("face"));
@@ -6633,15 +6635,15 @@ void GuiPhase1::wheelZoomEmptySpaceAndLimits() {
     QVERIFY(gap(before, after) > 1.0);
   }
 
-  // Into the wall: stops short of it, stays in front, all finite.
+  // Into the wall: the camera keeps advancing through it, all finite.
   f.vp->restoreCamera(start);
-  for (int k = 0; k < 200; ++k) wheelAt(f.vp, wall, QPoint(0, 120));
+  for (int k = 0; k < 60; ++k) wheelAt(f.vp, wall, QPoint(0, 120));
   doc::CameraState close;
   f.vp->storeCamera(close);
   for (double v : close.eye) QVERIFY(std::isfinite(v));
-  QVERIFY2(close.eye[1] < 0 && close.eye[1] > -wheel::kMinDistance - 1.0, qPrintable(QString::number(close.eye[1])));
-  // And out again.
-  for (int k = 0; k < 200; ++k) wheelAt(f.vp, wall, QPoint(0, -120));
+  QVERIFY2(close.eye[1] > 0, qPrintable(QString::number(close.eye[1])));
+  // And out again, without reversing the viewing direction.
+  for (int k = 0; k < 60; ++k) wheelAt(f.vp, wall, QPoint(0, -120));
   doc::CameraState away;
   f.vp->storeCamera(away);
   QVERIFY2(away.eye[1] < start.eye[1] + 1.0, qPrintable(QString::number(away.eye[1])));
@@ -7119,4 +7121,110 @@ void GuiPhase1::sectionToolboxControlsAreIndependentAndCached() {
     cuts->setChecked(false); planes->setChecked(true); f.vp->syncNow();
     f.vp->dumpImage(QDir(root).filePath(QStringLiteral("section-no-cut-marker.png")));
   }
+}
+
+void GuiPhase1::wheelZoomThroughWallKeepsOrientationAndInputConsistency() {
+  // Near a surface, fractional events and reverse input remain continuous,
+  // including when the retained anchor goes behind the camera.
+  const gp_Pnt anchor(37, 0, -29), eye(37, -20, -29), center(37, 980, -29);
+  const gp_Dir approach(0, 1, 0);
+  const double ratio = wheel::kDefaultRatioPerNotch;
+  const auto one = wheel::zoomThroughSurface(eye, center, anchor, approach, std::pow(ratio, 24));
+  QVERIFY(one.eye.Y() > 0);
+  for (int chunks : {24, 48, 2400}) {
+    auto e = eye, c = center;
+    for (int i = 0; i < chunks; ++i) {
+      const auto pose = wheel::zoomThroughSurface(e, c, anchor, approach, std::pow(ratio, 24.0 / chunks));
+      QVERIFY(pose.eye.Y() > e.Y());
+      e = pose.eye; c = pose.center;
+    }
+    QVERIFY(e.Distance(one.eye) < 1e-7);
+    QVERIFY(c.Distance(one.center) < 1e-7);
+  }
+  const auto reversed = wheel::zoomThroughSurface(one.eye, one.center, anchor, approach, std::pow(ratio, -24));
+  QVERIFY(reversed.eye.Distance(eye) < 1e-8);
+  QVERIFY(reversed.center.Distance(center) < 1e-8);
+  for (double d : {10.000001, 10.0, 9.999999, 0.0, -9.999999, -10.0, -10.000001}) {
+    const gp_Pnt before(0, -d, 0);
+    const auto pose = wheel::zoomThroughSurface(before, before.Translated(gp_Vec(0, 1000, 0)), gp::Origin(), approach, ratio);
+    QVERIFY(pose.eye.Y() > before.Y());
+    const double step = pose.eye.Distance(before);
+    QVERIFY(step > 1.8 && step < 2.01); // no stop or jump in the close-up zone
+  }
+
+  const auto deep = wheel::zoomThroughSurface(eye, center, anchor, approach, std::pow(ratio, 120));
+  const auto deeper = wheel::zoomThroughSurface(deep.eye, deep.center, anchor, approach, ratio);
+  QVERIFY(deeper.eye.Distance(deep.eye) > 80 && deeper.eye.Distance(deep.eye) < 100);
+  const auto deepBack = wheel::zoomThroughSurface(deep.eye, deep.center, anchor, approach, std::pow(ratio, -120));
+  QVERIFY(deepBack.eye.Distance(eye) < 1e-7);
+
+  // A room built with the actual wall API, including both sides of a
+  // 200 mm exterior wall. No opening, hidden faces or section cut.
+  Fixture f;
+  QVERIFY(f.setUp(2000, 2000));
+  auto& m = f.window.modeler();
+  QVERIFY(m.createWalls({gp_Pnt(0, 0, 0), gp_Pnt(4000, 0, 0), gp_Pnt(4000, 4000, 0),
+                         gp_Pnt(0, 4000, 0), gp_Pnt(0, 0, 0)}, 200, 3000).ok());
+  f.box(1750, 2000, 500, 500, 1700); // visible interior reference, behind the exterior wall
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::Select);
+  doc::CameraState start;
+  start.eye = {2000, -1000, 1500}; start.target = {2000, 3000, 1500};
+  start.perspective = true; start.scale = 4000;
+  f.vp->restoreCamera(start); f.vp->storeCamera(start);
+  const QPoint cursor = f.vp->toWidget(gp_Pnt(2000, -100, 1500));
+  const auto steps = m.history().undoCount();
+  double farStep = 0, nearStep = 1e9;
+  for (int i = 0; i < 60; ++i) {
+    doc::CameraState before, after;
+    f.vp->storeCamera(before);
+    wheelAt(f.vp, cursor, QPoint(0, 120));
+    f.vp->storeCamera(after);
+    QVERIFY(after.eye[1] > before.eye[1]);
+    for (double v : after.eye) QVERIFY(std::isfinite(v));
+    if (i == 0) farStep = after.eye[1] - before.eye[1];
+    if (std::abs(before.eye[1] + 100) < 10) nearStep = std::min(nearStep, after.eye[1] - before.eye[1]);
+    for (int axis = 0; axis < 3; ++axis)
+      QVERIFY(std::abs((after.target[axis] - after.eye[axis]) - (start.target[axis] - start.eye[axis])) < 1e-7);
+  }
+  doc::CameraState inside;
+  f.vp->storeCamera(inside);
+  QVERIFY2(inside.eye[1] > 100 && inside.eye[1] < 3900, qPrintable(QString::number(inside.eye[1])));
+  QVERIFY(inside.perspective);
+  const auto interiorHit = f.vp->faceAt(cursor);
+  QVERIFY(interiorHit && interiorHit->first.Y() > 1800 && interiorHit->first.Y() < 2600);
+  QVERIFY(nearStep > 0 && nearStep < farStep / 10);
+  QCOMPARE(m.history().undoCount(), steps);
+  for (int i = 0; i < 60; ++i) wheelAt(f.vp, cursor, QPoint(0, -120));
+  doc::CameraState back; f.vp->storeCamera(back);
+  QVERIFY(gap(back, start) < 1e-5);
+  if (qEnvironmentVariableIsSet("SBR_SCREENSHOT_DIR")) {
+    f.vp->restoreCamera(inside);
+    f.vp->dumpImage(QDir(qEnvironmentVariable("SBR_SCREENSHOT_DIR")).filePath(QStringLiteral("wheel-inside-walls.png")));
+  }
+  // One event vs fractional notches must also agree across the wall.
+  f.vp->restoreCamera(start);
+  wheelAt(f.vp, cursor, QPoint(0, 60 * 120));
+  doc::CameraState aggregated; f.vp->storeCamera(aggregated);
+  QVERIFY(gap(aggregated, inside) < 1e-5);
+  f.vp->restoreCamera(start);
+  for (int i = 0; i < 120; ++i) wheelAt(f.vp, cursor, QPoint(0, 60));
+  doc::CameraState fractional; f.vp->storeCamera(fractional);
+  QVERIFY(gap(fractional, inside) < 1e-5);
+  // A user may pause just before the wall. Reacquiring its anchor must
+  // still give a small, forward step rather than getting stuck or jumping.
+  f.vp->restoreCamera(start);
+  bool paused = false;
+  for (int i = 0; i < 60; ++i) {
+    doc::CameraState before, after; f.vp->storeCamera(before);
+    const double remaining = -100.0 - before.eye[1];
+    const bool pauseHere = !paused && remaining > 0 && remaining < 10;
+    if (pauseHere) { QTest::qWait(wheel::kGestureGapMs + 50); paused = true; }
+    wheelAt(f.vp, cursor, QPoint(0, 120)); f.vp->storeCamera(after);
+    QVERIFY(after.eye[1] > before.eye[1]);
+    if (pauseHere) QVERIFY(after.eye[1] - before.eye[1] < 5);
+  }
+  QVERIFY(paused);
+  f.vp->storeCamera(inside);
+  QVERIFY(inside.eye[1] > 100 && inside.eye[1] < 3900);
 }

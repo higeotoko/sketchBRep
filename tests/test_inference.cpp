@@ -332,3 +332,29 @@ TEST(Inference, CoincidentSilhouettePointsAndEdgesPreferTheNearerSurface) {
     EXPECT_NEAR(r.point.X(),0,1e-6);
   }
 }
+
+TEST(Inference, InteriorFaceQueriesIgnoreGeometryBehindTheEye) {
+  InferenceEngine engine;
+  gp_Trsf shift; shift.SetTranslation(gp_Vec(0, 2000, 0));
+  engine.setShapes({box(), box().Moved(TopLoc_Location(shift))});
+  SnapQuery query;
+  query.project = [](const gp_Pnt& p) { return ScreenPoint{p.X(), p.Z()}; };
+  query.cursor = {500, 250};
+  query.pixelTolerance = 0;
+  for (bool section : {false, true}) {
+    engine.setClip(section ? std::optional<gp_Pln>(gp_Pln(gp_Pnt(0, 0, 1000), gp::DZ())) : std::nullopt);
+    query.ray = {gp_Pnt(500, 500, 250), gp::DY()}; // inside the first solid
+    auto hit = engine.snap(query);
+    ASSERT_EQ(hit.kind, SnapKind::OnFace);
+    EXPECT_NEAR(hit.point.Y(), 1000, 1e-6);
+    query.ray.origin.SetY(1500); // in between the two solids
+    hit = engine.snap(query);
+    ASSERT_EQ(hit.kind, SnapKind::OnFace);
+    EXPECT_NEAR(hit.point.Y(), 2000, 1e-6);
+    query.ray.origin.SetY(3500); // both solids are now behind the eye
+    EXPECT_NE(engine.snap(query).kind, SnapKind::OnFace);
+    EXPECT_FALSE(engine.isVisible(gp_Pnt(500, 1000, 250), query.ray));
+  }
+  engine.setSeeThrough(true);
+  EXPECT_FALSE(engine.isVisible(gp_Pnt(500, 1000, 250), query.ray));
+}

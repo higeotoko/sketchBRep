@@ -434,6 +434,7 @@ class Viewport : public QWidget {
     gp_Pnt anchor;
     const char* source = "";
     bool virtualAnchor = false;  // in empty space (no face or ground there)
+    gp_Dir approach;             // fixed during a surface-crossing gesture
     gp_Pnt eyeAfter;             // the camera as this zoom left it
     double scaleAfter = 0.0;
     std::optional<gp_Pnt> lastSolid;  // the last anchor on something: depth for empty space

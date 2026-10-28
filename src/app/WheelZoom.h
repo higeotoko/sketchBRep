@@ -3,7 +3,8 @@
 //
 // The wheel moves the camera towards (or away from) an anchor: the point of
 // the model under the cursor. The anchor stays exactly under the cursor,
-// and one notch changes the distance to it by a fixed ratio, so the zoom
+// and, outside the surface close-up zone, one notch changes the distance
+// to it by a fixed ratio, so the zoom
 // is fast far away and fine close up, and the same total wheel input gives
 // the same camera however the device splits it into events:
 //
@@ -27,7 +28,7 @@ namespace sbr::app::wheel {
 inline constexpr double kDefaultRatioPerNotch = 1.2;  // distance to anchor / 1.2 per notch
 inline constexpr double kAngleUnitsPerNotch = 120.0;  // Qt: 15 degrees = one notch
 inline constexpr double kPixelsPerNotch = 50.0;       // pixel-only devices (touchpads)
-inline constexpr double kMinDistance = 10.0;          // mm: closest approach to an anchor
+inline constexpr double kMinDistance = 10.0;          // mm: close-up depth scale (not a wall collision limit)
 inline constexpr double kMaxDistance = 1.0e8;         // mm: 100 km
 inline constexpr double kMinVirtualDepth = 500.0;     // mm: an anchor in empty space stays this far ahead
 inline constexpr double kMinOrthoScale = 10.0;        // mm: view height
@@ -51,6 +52,14 @@ struct Pose {
 // divided by `ratio` (clamped to kMinDistance..kMaxDistance); the centre
 // moves with it.
 Pose zoomPerspective(const gp_Pnt& eye, const gp_Pnt& center, const gp_Pnt& anchor, double ratio);
+
+// Model surface: retain the approach direction even after crossing the
+// anchor. Exponential outside a small close-up zone, linear through it,
+// then gently faster on the other side with bounded indoor travel speed.
+// Continuous, reversible and
+// independent of event subdivision while the gesture anchor is retained.
+Pose zoomThroughSurface(const gp_Pnt& eye, const gp_Pnt& center, const gp_Pnt& anchor,
+                        const gp_Dir& approach, double ratio);
 
 // Orthographic: the scale divided by `ratio` (clamped), eye and centre
 // shifted across the view direction so `anchor` keeps its screen position.

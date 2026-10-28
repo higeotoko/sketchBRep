@@ -29,6 +29,7 @@
 #include <TopoDS_Iterator.hxx>
 
 #include <algorithm>
+#include <string_view>
 #include <cmath>
 
 #include <QGuiApplication>
@@ -568,7 +569,11 @@ void Viewport::zoomWheel(const QPointF& pos, double notches) {
                            std::abs(moved.x()) + std::abs(moved.y()) <= wheel::kGestureMovePx &&
                            camera->Eye().Distance(wheel_.eyeAfter) < 1e-6 &&
                            std::abs(camera->Scale() - wheel_.scaleAfter) <= 1e-9 * wheel_.scaleAfter;
-  if (!sameGesture) acquireWheelAnchor(pos);
+  if (!sameGesture) {
+    acquireWheelAnchor(pos);
+    const gp_Vec toward(camera->Eye(), wheel_.anchor);
+    wheel_.approach = toward.SquareMagnitude() > 1e-18 ? gp_Dir(toward) : rayAt(pos.toPoint()).direction;
+  }
   wheel_.active = true;
   wheel_.lastMs = now;
   wheel_.pos = pos;
@@ -588,7 +593,9 @@ void Viewport::zoomWheel(const QPointF& pos, double notches) {
         wheel_.anchor = camera->Eye().Translated(ahead * (wheel::kMinVirtualDepth / distance));
       }
     }
-    const wheel::Pose pose = wheel::zoomPerspective(camera->Eye(), camera->Center(), wheel_.anchor, ratio);
+    const wheel::Pose pose = std::string_view(wheel_.source) == "face"
+        ? wheel::zoomThroughSurface(camera->Eye(), camera->Center(), wheel_.anchor, wheel_.approach, ratio)
+        : wheel::zoomPerspective(camera->Eye(), camera->Center(), wheel_.anchor, ratio);
     camera->SetEyeAndCenter(pose.eye, pose.center);
   }
   wheel_.eyeAfter = camera->Eye();

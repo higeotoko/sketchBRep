@@ -277,6 +277,7 @@ bool InferenceEngine::isClipped(const gp_Pnt& p) const {
 
 bool InferenceEngine::isVisible(const gp_Pnt& p, const Ray& ray) const {
   if (isClipped(p)) return false;
+  if (gp_Vec(ray.origin, p).Dot(gp_Vec(ray.direction)) < -tolerance::kLinear) return false;
   if (!cache_ || seeThrough_) return true;
   // Sight line from the viewer (ray origin: eye, or far behind the near
   // plane for orthographic views) to the point.
@@ -674,12 +675,12 @@ SnapResult InferenceEngine::snap(const SnapQuery& q) const {
       IntCurvesFace_ShapeIntersector* intersector = &slot.faces();
       int hit = 0;
       if (!clip_) {
-        intersector->PerformNearest(line, -1e12, 1e12);
+        intersector->PerformNearest(line, 0.0, 1e12);
         if (!intersector->IsDone() || intersector->NbPnt() < 1) continue;
         hit = 1;
       } else {
         // Nearest hit that the section does not cut away.
-        intersector->Perform(line, -1e12, 1e12);
+        intersector->Perform(line, 0.0, 1e12);
         if (!intersector->IsDone()) continue;
         double nearest = std::numeric_limits<double>::max();
         for (int i = 1; i <= intersector->NbPnt(); ++i) {
