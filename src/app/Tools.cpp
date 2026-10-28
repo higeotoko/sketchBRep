@@ -1674,10 +1674,10 @@ void SectionTool::cancel() {
 void SectionTool::preview(double depth) {
   const gp_Pnt at = origin_.Translated(-gp_Vec(normal_) * depth);
   // A large square showing where the cut goes.
-  const double half = 20000.0;
+  const double half = halfSize_;
   const gp_Ax3 frame(at, normal_);
   const TopoDS_Face square = BRepBuilderAPI_MakeFace(gp_Pln(frame), -half, half, -half, half).Face();
-  host_.viewport().setPreview(BRepTools::OuterWire(square));
+  host_.viewport().setPreview(square, true, true);
 }
 
 void SectionTool::mouseMove(const ToolEvent& e) {
@@ -1699,6 +1699,13 @@ void SectionTool::mousePress(const ToolEvent& e) {
     if (!hit) return;
     origin_ = hit->first;
     normal_ = hit->second;
+    Bnd_Box bounds;
+    const auto& document = host_.modeler().document();
+    for (const auto& o : document.objects()) {
+      if (o.kind() != doc::ObjectKind::Guide && o.kind() != doc::ObjectKind::Annotation && document.isVisible(o.id))
+        bounds.Add(document.worldBounds(o));
+    }
+    halfSize_ = (!bounds.IsVoid() && !bounds.IsOpen()) ? std::max(100.0, std::sqrt(bounds.SquareExtent())) : 2000.0;
     placing_ = true;
     depth_ = 0.0;
     preview(0.0);

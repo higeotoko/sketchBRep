@@ -520,6 +520,7 @@ class SectionTool : public Tool {
   gp_Pnt origin_;
   gp_Dir normal_;
   double depth_ = 0.0;
+  double halfSize_ = 2000.0;
 };
 
 // Circle: centre (on a face or the ground), then radius by mouse or value.

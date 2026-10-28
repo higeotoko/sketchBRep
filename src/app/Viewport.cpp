@@ -40,6 +40,8 @@
 
 #include <Aspect_DisplayConnection.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <Graphic3d_SequenceOfHClipPlane.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepBndLib.hxx>
 #include <Bnd_Box.hxx>
@@ -958,6 +960,54 @@ void Viewport::syncOpenEnds() {
 }
 
 void Viewport::syncSection() {
+  const auto& planes = modeler_.document().settings().sections;
+  if (sectionMarkerKey_ != planes || sectionMarkerSequence_ != modeler_.document().sequence()) {
+    if (!sectionMarkers_.IsNull()) context_->Remove(sectionMarkers_, Standard_False);
+    sectionMarkers_.Nullify();
+    Bnd_Box bounds;
+    const auto& document = modeler_.document();
+    const bool showPlanes = std::any_of(planes.begin(), planes.end(), [](const auto& p) { return p.visible; });
+    if (showPlanes) for (const auto& o : document.objects()) {
+      if (o.kind() != doc::ObjectKind::Guide && o.kind() != doc::ObjectKind::Annotation && document.isVisible(o.id))
+        bounds.Add(document.worldBounds(o));
+    }
+    double half = 2000;
+    gp_Pnt center(0, 0, 0);
+    if (!bounds.IsVoid() && !bounds.IsOpen()) {
+      double x, y, z, X, Y, Z;
+      bounds.Get(x, y, z, X, Y, Z);
+      center = gp_Pnt((x+X)/2, (y+Y)/2, (z+Z)/2);
+      half = std::max(100.0, 0.6 * std::sqrt(bounds.SquareExtent()));
+    }
+    BRep_Builder builder;
+    TopoDS_Compound markers;
+    builder.MakeCompound(markers);
+    bool any = false;
+    for (const auto& p : planes) {
+      if (!p.visible) continue;
+      const gp_Pnt origin(p.origin[0], p.origin[1], p.origin[2]);
+      const gp_Vec n(p.normal[0], p.normal[1], p.normal[2]);
+      if (n.SquareMagnitude() < 1e-20) continue;
+      const gp_Dir normal(n);
+      const gp_Pnt at = center.Translated(-gp_Vec(normal) * gp_Vec(origin, center).Dot(gp_Vec(normal)));
+      builder.Add(markers, BRepBuilderAPI_MakeFace(gp_Pln(at, normal), -half, half, -half, half).Face());
+      any = true;
+    }
+    if (any) {
+      sectionMarkers_ = new AIS_Shape(markers);
+      sectionMarkers_->SetColor(rgb(0.3, 0.65, 0.95));
+      sectionMarkers_->SetTransparency(0.78);
+      // Keep the translucent marker just in front of a coincident cut cap.
+      sectionMarkers_->SetPolygonOffsets(Aspect_POM_Fill, -1.0f, -2.0f);
+      sectionMarkers_->Attributes()->SetFaceBoundaryDraw(true);
+      Handle(Graphic3d_SequenceOfHClipPlane) unclipped = new Graphic3d_SequenceOfHClipPlane;
+      unclipped->SetOverrideGlobal(true);
+      sectionMarkers_->SetClipPlanes(unclipped);
+      context_->Display(sectionMarkers_, AIS_Shaded, -1, Standard_False);
+    }
+    sectionMarkerKey_ = planes;
+    sectionMarkerSequence_ = modeler_.document().sequence();
+  }
   const doc::SectionPlane* active = nullptr;
   for (const doc::SectionPlane& p : modeler_.document().settings().sections) {
     if (p.active) active = &p;
@@ -1949,12 +1999,19 @@ void Viewport::clearHover() {
 
 // --- transient feedback -----------------------------------------------------------
 
-void Viewport::setPreview(const TopoDS_Shape& shape, bool solid) {
+void Viewport::setPreview(const TopoDS_Shape& shape, bool solid, bool unclipped) {
   if (view_.IsNull()) return;
   if (!preview_.IsNull()) context_->Remove(preview_, Standard_False);
   preview_.Nullify();
   if (!shape.IsNull()) {
     preview_ = new AIS_Shape(shape);
+    if (unclipped) {
+      Handle(Graphic3d_SequenceOfHClipPlane) planes = new Graphic3d_SequenceOfHClipPlane;
+      planes->SetOverrideGlobal(true);
+      preview_->SetClipPlanes(planes);
+      preview_->SetPolygonOffsets(Aspect_POM_Fill, -1.0f, -2.0f);
+      preview_->Attributes()->SetFaceBoundaryDraw(true);
+    }
     if (solid) {
       preview_->SetColor(rgb(0.55, 0.7, 0.95));
       preview_->SetTransparency(0.45);

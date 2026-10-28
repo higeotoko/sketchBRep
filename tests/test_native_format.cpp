@@ -242,3 +242,51 @@ TEST(NativeFormat, BenchSavePeakMemory) {
   std::printf("bench save file_mb=%.1f rss_before_mb=%.1f peak_mb=%.1f peak_growth_mb=%.1f\n", text.size() / 1048576.0, before,
               peak, peak - before);
 }
+
+TEST(NativeFormat, SavedSectionsKeepIndependentMarkersAndCanBeEditedWithUndo) {
+  Modeler m;
+  SectionPlane first;
+  first.name = "Plan";
+  first.origin = {0, 0, 1200};
+  first.normal = {0, 0, 1};
+  m.setSection(first);
+  SectionPlane second;
+  second.name = "Elevation";
+  second.normal = {1, 0, 0};
+  m.setSection(second);
+  auto edited = m.document().settings().sections.front();
+  edited.active = true;
+  edited.visible = false;
+  edited.name = "Ground floor";
+  edited.origin[2] = 1500;
+  edited.normal[2] = -1;
+  m.updateSection(0, edited);
+  EXPECT_FALSE(m.document().settings().sections[1].active);
+  EXPECT_TRUE(m.sectionVisible());
+  const auto path = test::tempPath("saved_sections.sbr");
+  ASSERT_TRUE(m.save(path).ok());
+  Modeler loaded;
+  ASSERT_TRUE(loaded.load(path).ok());
+  EXPECT_EQ(loaded.document().settings().sections, m.document().settings().sections);
+  loaded.setSectionPlanesVisible(false);
+  EXPECT_TRUE(loaded.sectionVisible());
+  EXPECT_FALSE(loaded.document().settings().sections[1].visible);
+  loaded.undo();
+  EXPECT_TRUE(loaded.document().settings().sections[1].visible);
+  loaded.removeSection(0);
+  EXPECT_FALSE(loaded.sectionVisible());
+  EXPECT_EQ(loaded.document().settings().sections.size(), 1u);
+  loaded.undo();
+  EXPECT_EQ(loaded.document().settings().sections[0], edited);
+  loaded.setSectionVisible(false);
+  EXPECT_FALSE(loaded.sectionVisible());
+  EXPECT_FALSE(loaded.document().settings().sections[0].visible);
+  loaded.undo();
+  EXPECT_TRUE(loaded.sectionVisible());
+  auto invalid = edited;
+  invalid.normal = {0, 0, 0};
+  loaded.updateSection(0, invalid);
+  EXPECT_EQ(loaded.document().settings().sections[0], edited);
+  loaded.removeSection(100);
+  EXPECT_EQ(loaded.document().settings().sections.size(), 2u);
+}

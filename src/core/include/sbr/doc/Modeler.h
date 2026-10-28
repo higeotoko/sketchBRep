@@ -260,6 +260,9 @@ class Modeler {
   void setSection(const std::optional<SectionPlane>& plane);
   // Shows the most recent section again (true) or none (false).
   void setSectionVisible(bool visible);
+  void updateSection(std::size_t index, const SectionPlane& plane);
+  void removeSection(std::size_t index);
+  void setSectionPlanesVisible(bool visible);
   bool sectionVisible() const;
   void clearSections();
   Result<ObjectId> createPolygon(const std::vector<gp_Pnt>& points, const std::string& name = {});

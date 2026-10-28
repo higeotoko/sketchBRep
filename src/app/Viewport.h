@@ -142,12 +142,13 @@ class Viewport : public QWidget {
   void clearHover();
 
   // --- transient feedback ---------------------------------------------------
-  void setPreview(const TopoDS_Shape& shape, bool solid = false);
+  void setPreview(const TopoDS_Shape& shape, bool solid = false, bool unclipped = false);
   // Transparent copy of the objects (and their children) moved by `delta`
   // in world space. Built from display copies, never from canonical shapes.
   void setGhost(const std::vector<doc::ObjectId>& ids, const gp_Trsf& delta);
   void clearPreview();
   // What the tool preview shows now (null: nothing) - for checks.
+  TopoDS_Shape sectionMarkerShape() const { return sectionMarkers_.IsNull() ? TopoDS_Shape() : sectionMarkers_->Shape(); }
   TopoDS_Shape previewShape() const { return preview_.IsNull() ? TopoDS_Shape() : preview_->Shape(); }
   // The marker, guide lines and a small label next to the cursor naming
   // what the point snapped to (SketchUp's ScreenTip), all from `result`.
@@ -338,6 +339,9 @@ class Viewport : public QWidget {
   void displayWithPickMode(Entry& entry);
   std::map<doc::ObjectId, Handle(AIS_TextLabel)> labels_;  // annotation texts
   Handle(Graphic3d_ClipPlane) section_;
+  Handle(AIS_Shape) sectionMarkers_;
+  std::vector<doc::SectionPlane> sectionMarkerKey_;
+  std::uint64_t sectionMarkerSequence_ = 0;
   bool showOpenEnds_ = false;
   int openEndCount_ = 0;
   Handle(AIS_Shape) openEnds_;

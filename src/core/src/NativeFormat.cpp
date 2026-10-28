@@ -892,7 +892,7 @@ std::string serializeDocument(const Document& document) {
   for (const Scene& scene : s.scenes) scenes.push_back({{"name", scene.name}, {"camera", cameraToJson(scene.camera)}});
   json sections = json::array();
   for (const SectionPlane& p : s.sections) {
-    sections.push_back({{"name", p.name}, {"origin", p.origin}, {"normal", p.normal}, {"active", p.active}});
+    sections.push_back({{"name", p.name}, {"origin", p.origin}, {"normal", p.normal}, {"active", p.active}, {"visible", p.visible}});
   }
   json root = {
       {"format", kNativeFormatMagic},
@@ -939,6 +939,7 @@ Status deserializeDocument(const std::string& text, Document& document,
         plane.origin = p.at("origin").get<std::array<double, 3>>();
         plane.normal = p.at("normal").get<std::array<double, 3>>();
         plane.active = p.value("active", true);
+        plane.visible = p.value("visible", true);
         s.sections.push_back(plane);
       }
     }

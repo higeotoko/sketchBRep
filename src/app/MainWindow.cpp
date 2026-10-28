@@ -48,6 +48,8 @@
 #include <QToolButton>
 #include <QTimer>
 #include <QToolBar>
+#include <QScrollArea>
+#include <QGridLayout>
 
 #include <BRep_Builder.hxx>
 #include <QComboBox>
@@ -152,6 +154,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 }
 
 MainWindow::~MainWindow() {
+  if (auto* palette = findChild<QDockWidget*>(QStringLiteral("toolsPalette"))) {
+    QSettings settings;
+    settings.setValue("tools/floating", palette->isFloating());
+    settings.setValue("tools/geometry", palette->saveGeometry());
+    settings.setValue("tools/area", static_cast<int>(dockWidgetArea(palette)));
+  }
   stopRecipeVerification();
   if (autosaveThread_.joinable()) autosaveThread_.join();
   QFile::remove(recoveryFile_ + QStringLiteral(".part"));
@@ -604,6 +612,63 @@ void MainWindow::buildMenus() {
     modeler_.setSectionVisible(on);
     updateTitle();
   });
+  sections->addAction(tr("断面平面をすべて表示"), this, [this] { modeler_.setSectionPlanesVisible(true); updateTitle(); });
+  sections->addAction(tr("断面平面をすべて非表示"), this, [this] { modeler_.setSectionPlanesVisible(false); updateTitle(); });
+  auto* savedSections = sections->addMenu(tr("保存済み断面（SBRファイルに保存）"));
+  connect(savedSections, &QMenu::aboutToShow, this, [this, savedSections] {
+    savedSections->clear();
+    const auto planes = modeler_.document().settings().sections;
+    const auto revision = modeler_.history().revision();
+    if (planes.empty()) savedSections->addAction(tr("断面はありません"))->setEnabled(false);
+    for (std::size_t i = 0; i < planes.size(); ++i) {
+      const auto plane = planes[i];
+      auto* menu = savedSections->addMenu(QString::fromStdString(plane.name));
+      auto* active = menu->addAction(tr("この断面でカット"));
+      active->setCheckable(true);
+      active->setChecked(plane.active);
+      connect(active, &QAction::toggled, this, [this, i, revision](bool on) {
+        if (modeler_.history().revision() != revision) return;
+        auto p = modeler_.document().settings().sections.at(i);
+        p.active = on; modeler_.updateSection(i, p); updateTitle();
+      });
+      auto* visible = menu->addAction(tr("断面平面を表示"));
+      visible->setCheckable(true);
+      visible->setChecked(plane.visible);
+      connect(visible, &QAction::toggled, this, [this, i, revision](bool on) {
+        if (modeler_.history().revision() != revision) return;
+        auto p = modeler_.document().settings().sections.at(i);
+        p.visible = on; modeler_.updateSection(i, p); updateTitle();
+      });
+      menu->addAction(tr("名前を変更..."), this, [this, i, revision] {
+        if (modeler_.history().revision() != revision) return;
+        auto p = modeler_.document().settings().sections.at(i);
+        bool ok = false;
+        const auto name = QInputDialog::getText(this, tr("断面の名前"), tr("名前"), QLineEdit::Normal,
+                                               QString::fromStdString(p.name), &ok);
+        if (ok && modeler_.history().revision() == revision && !name.trimmed().isEmpty()) { p.name = name.trimmed().toStdString(); modeler_.updateSection(i, p); updateTitle(); }
+      });
+      menu->addAction(tr("位置を移動..."), this, [this, i, revision] {
+        if (modeler_.history().revision() != revision) return;
+        auto p = modeler_.document().settings().sections.at(i);
+        bool ok = false;
+        const double offset = QInputDialog::getDouble(this, tr("断面を移動"), tr("法線方向の移動量 (mm)"),
+                                                       0, -1e9, 1e9, 3, &ok);
+        if (!ok || modeler_.history().revision() != revision) return;
+        const gp_Dir n(p.normal[0], p.normal[1], p.normal[2]);
+        p.origin[0] += n.X()*offset; p.origin[1] += n.Y()*offset; p.origin[2] += n.Z()*offset;
+        modeler_.updateSection(i, p); updateTitle();
+      });
+      menu->addAction(tr("カット方向を反転"), this, [this, i, revision] {
+        if (modeler_.history().revision() != revision) return;
+        auto p = modeler_.document().settings().sections.at(i);
+        for (auto& n : p.normal) n = -n;
+        modeler_.updateSection(i, p); updateTitle();
+      });
+      menu->addAction(tr("削除"), this, [this, i, revision] {
+        if (modeler_.history().revision() == revision) { modeler_.removeSection(i); updateTitle(); }
+      });
+    }
+  });
   sections->addAction(tr("断面をすべて削除"), this, [this] {
     modeler_.clearSections();
     updateTitle();
@@ -673,12 +738,29 @@ void MainWindow::buildMenus() {
 
   // --- Tools (menu + left toolbar)
   QMenu* tools = menuBar()->addMenu(tr("ツール(&T)"));
-  QToolBar* bar = new QToolBar(tr("ツール"), this);
-  bar->setObjectName(QStringLiteral("toolsBar"));
-  bar->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
-  bar->setIconSize(QSize(28, 28));
-  bar->setMovable(false);
-  addToolBar(Qt::LeftToolBarArea, bar);
+  auto* palette = new QDockWidget(tr("ツール（上部をドラッグして移動）"), this);
+  palette->setObjectName(QStringLiteral("toolsPalette"));
+  palette->setAllowedAreas(Qt::AllDockWidgetAreas);
+  palette->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable | QDockWidget::DockWidgetClosable);
+  auto* scroll = new QScrollArea(palette);
+  scroll->setWidgetResizable(true);
+  scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  auto* contents = new QWidget(scroll);
+  auto* grid = new QGridLayout(contents);
+  grid->setContentsMargins(4, 4, 4, 4);
+  grid->setSpacing(2);
+  grid->setAlignment(Qt::AlignTop);
+  scroll->setWidget(contents);
+  palette->setWidget(scroll);
+  const int savedArea = QSettings().value("tools/area", int(Qt::LeftDockWidgetArea)).toInt();
+  const auto area = savedArea == Qt::RightDockWidgetArea ? Qt::RightDockWidgetArea : Qt::LeftDockWidgetArea;
+  addDockWidget(area, palette);
+  auto* expanded = view->addAction(tr("ツールパレットを全表示（名前付き）"));
+  expanded->setObjectName(QStringLiteral("expandedToolsAction"));
+  expanded->setCheckable(true);
+  expanded->setChecked(QSettings().value("tools/expanded", true).toBool());
+  view->addAction(palette->toggleViewAction());
+  int toolIndex = 0;
   toolGroup_ = new QActionGroup(this);
   struct ToolEntry {
     QString label;
@@ -729,10 +811,25 @@ void MainWindow::buildMenus() {
     });
     toolGroup_->addAction(a);
     tools->addAction(a);
-    bar->addAction(a);
+    auto* button = new QToolButton(contents);
+    button->setDefaultAction(a);
+    button->setIconSize(QSize(28, 28));
+    button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    button->setToolButtonStyle(expanded->isChecked() ? Qt::ToolButtonTextUnderIcon : Qt::ToolButtonIconOnly);
+    grid->addWidget(button, toolIndex / 3, toolIndex % 3);
+    ++toolIndex;
     toolActions_[static_cast<int>(id)] = a;
   }
 
+  connect(expanded, &QAction::toggled, this, [contents](bool on) {
+    for (auto* button : contents->findChildren<QToolButton*>())
+      button->setToolButtonStyle(on ? Qt::ToolButtonTextUnderIcon : Qt::ToolButtonIconOnly);
+    QSettings().setValue("tools/expanded", on);
+  });
+  if (QSettings().value("tools/floating", false).toBool()) {
+    palette->setFloating(true);
+    palette->restoreGeometry(QSettings().value("tools/geometry").toByteArray());
+  }
   tools->addSeparator();
   tools->addAction(tr("通り芯を作成..."), this, &MainWindow::showGridDialog);
   tools->addAction(tr("壁の設定..."), this, &MainWindow::showWallSettingsDialog);

@@ -47,6 +47,9 @@
 #include <QJsonObject>
 #include <QLineEdit>
 #include <QAction>
+#include <QDockWidget>
+#include <QToolButton>
+#include <QScrollArea>
 #include <QLocalSocket>
 #include <QMouseEvent>
 #include <QScreen>
@@ -242,6 +245,7 @@ class GuiPhase1 : public QObject {
   void splineClosesMixedOutline();
   void texturedMaterialSurvivesGeometryRebuild();
   void sectionPlaneCutsView();
+  void toolsPaletteShowsAllAndFloats();
   void sectionToolAndTagsPanel();
   void pushPullCylinderSide();
   void lineAcrossRectangleSplitsProfile();
@@ -4527,6 +4531,15 @@ void GuiPhase1::sectionPlaneCutsView() {
   plane.normal = {0, 0, 1};
   m.setSection(plane);
   QTest::qWait(50);
+  f.vp->syncNow();
+  QVERIFY(!f.vp->sectionMarkerShape().IsNull());
+  m.setSectionPlanesVisible(false);
+  f.vp->syncNow();
+  QVERIFY(f.vp->sectionMarkerShape().IsNull());
+  QVERIFY(m.sectionVisible());
+  m.setSectionPlanesVisible(true);
+  f.vp->syncNow();
+  QVERIFY(!f.vp->sectionMarkerShape().IsNull());
   f.vp->redraw();
   if (qEnvironmentVariableIsSet("SBR_SCREENSHOT_DIR")) {
     f.vp->dumpImage(QDir(qEnvironmentVariable("SBR_SCREENSHOT_DIR")).filePath(QStringLiteral("section.png")));
@@ -4552,6 +4565,7 @@ void GuiPhase1::sectionToolAndTagsPanel() {
   f.window.activateTool(MainWindow::ToolId::Section);
   QCOMPARE(f.vp->cursor().shape(), Qt::BitmapCursor);
   click(f.vp, f.vp->toWidget(gp_Pnt(1000, 1000, 2000)));
+  QCOMPARE(f.vp->previewShape().ShapeType(), TopAbs_FACE);
   type(f.vp, QStringLiteral("800"));
   QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
   QCOMPARE(m.document().settings().sections.size(), std::size_t(1));
@@ -6959,4 +6973,31 @@ void GuiPhase1::chatGptConnectionDialogControlsBridge() {
     }});
   timer.start(10);connectAction->trigger();timer.stop();QVERIFY(started);QVERIFY(copied);
   QVERIFY(f.window.aiBridge()->chatGptServer()->isListening());f.window.setAiAccess(false);QVERIFY(!f.window.aiBridge()->chatGptServer()->isListening());
+}
+
+void GuiPhase1::toolsPaletteShowsAllAndFloats() {
+  Fixture f;
+  QVERIFY(f.setUp(1000, 1000));
+  auto* palette = f.window.findChild<QDockWidget*>(QStringLiteral("toolsPalette"));
+  QVERIFY(palette);
+  QVERIFY(palette->features().testFlag(QDockWidget::DockWidgetFloatable));
+  QVERIFY(palette->features().testFlag(QDockWidget::DockWidgetMovable));
+  auto buttons = palette->findChildren<QToolButton*>();
+  QCOMPARE(buttons.size(), 25);
+  auto* expanded = f.window.findChild<QAction*>(QStringLiteral("expandedToolsAction"));
+  QVERIFY(expanded);
+  expanded->setChecked(true);
+  for (auto* b : buttons) {
+    QVERIFY(!b->menu());
+    QCOMPARE(b->toolButtonStyle(), Qt::ToolButtonTextUnderIcon);
+  }
+  palette->setFloating(true);
+  QTest::qWait(30);
+  QVERIFY(palette->isFloating());
+  palette->setFloating(false);
+  expanded->setChecked(false);
+  for (auto* b : buttons) QCOMPARE(b->toolButtonStyle(), Qt::ToolButtonIconOnly);
+  expanded->setChecked(true);
+  if (qEnvironmentVariableIsSet("SBR_SCREENSHOT_DIR"))
+    f.window.grab().save(QDir(qEnvironmentVariable("SBR_SCREENSHOT_DIR")).filePath(QStringLiteral("tools-palette.png")));
 }

@@ -44,9 +44,10 @@ struct SectionPlane {
   std::array<double, 3> origin{0, 0, 0};
   std::array<double, 3> normal{0, 0, -1};
   bool active = true;
+  bool visible = true;  // plane marker; independent of clipping
 
   bool operator==(const SectionPlane& o) const {
-    return name == o.name && origin == o.origin && normal == o.normal && active == o.active;
+    return name == o.name && origin == o.origin && normal == o.normal && active == o.active && visible == o.visible;
   }
 };
 

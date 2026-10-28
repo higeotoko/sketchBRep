@@ -3259,6 +3259,33 @@ void Modeler::setSectionVisible(bool visible) {
   });
 }
 
+void Modeler::updateSection(std::size_t index, const SectionPlane& plane) {
+  if (index >= document_.settings().sections.size()) return;
+  double length = 0;
+  for (int i = 0; i < 3; ++i) {
+    if (!std::isfinite(plane.origin[i]) || !std::isfinite(plane.normal[i])) return;
+    length += plane.normal[i] * plane.normal[i];
+  }
+  if (!std::isfinite(length) || length < 1e-20) return;
+  editSettings(document_, history_, "Edit Section", [&](PersistentSettings& s) {
+    if (plane.active) for (auto& p : s.sections) p.active = false;
+    s.sections[index] = plane;
+  });
+}
+
+void Modeler::setSectionPlanesVisible(bool visible) {
+  editSettings(document_, history_, "Section Plane Visibility", [&](PersistentSettings& s) {
+    for (auto& p : s.sections) p.visible = visible;
+  });
+}
+
+void Modeler::removeSection(std::size_t index) {
+  if (index >= document_.settings().sections.size()) return;
+  editSettings(document_, history_, "Delete Section", [&](PersistentSettings& s) {
+    s.sections.erase(s.sections.begin() + index);
+  });
+}
+
 bool Modeler::sectionVisible() const {
   for (const SectionPlane& p : document_.settings().sections) {
     if (p.active) return true;
