@@ -182,6 +182,9 @@ void MainWindow::buildUi() {
   viewport_ = new Viewport(modeler_, this);
   setCentralWidget(viewport_);
 
+  // Drag previews must not animate / repeatedly resize the native 3D view.
+  setDockOptions(dockOptions() & ~QMainWindow::AnimatedDocks);
+
   // Scene tabs (saved views) above the viewport.
   QToolBar* scenes = new QToolBar(tr("シーン"), this);
   scenes->setObjectName(QStringLiteral("scenesBar"));
@@ -204,7 +207,7 @@ void MainWindow::buildUi() {
   addToolBar(Qt::TopToolBarArea, scenes);
 
   panel_ = new PropertiesPanel;
-  auto* dock = new QDockWidget(tr("オブジェクト / 属性"), this);
+  auto* dock = new PanelDock(tr("オブジェクト / 属性"), this);
   dock->setObjectName(QStringLiteral("propertiesDock"));
   dock->setWidget(panel_);
   dock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
@@ -213,7 +216,7 @@ void MainWindow::buildUi() {
 
   // Tags: tick to show / hide everything with that tag (SketchUp's Tags panel).
   tagList_ = new QListWidget;
-  auto* tagDock = new QDockWidget(tr("タグ"), this);
+  auto* tagDock = new PanelDock(tr("タグ"), this);
   tagDock->setObjectName(QStringLiteral("tagsDock"));
   tagDock->setWidget(tagList_);
   tagDock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable |
@@ -226,7 +229,7 @@ void MainWindow::buildUi() {
 
   // Materials: pick one to paint with (SketchUp's Materials panel).
   materialsPanel_ = new MaterialsPanel;
-  materialsDock_ = new QDockWidget(tr("マテリアル（素材）"), this);
+  materialsDock_ = new PanelDock(tr("マテリアル（素材）"), this);
   materialsDock_->setObjectName(QStringLiteral("materialsDock"));
   materialsDock_->setWidget(materialsPanel_);
   materialsDock_->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable |

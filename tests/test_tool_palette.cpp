@@ -3,6 +3,7 @@
 #include <QApplication>
 #include <QDir>
 #include <QMainWindow>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QScrollBar>
 #include <QSignalSpy>
@@ -25,11 +26,121 @@ QList<QAction*> populate(ToolPalette& tools, int count = 25) {
   return actions;
 }
 void events() { QCoreApplication::processEvents(); }
+void titleMouse(QWidget* title, QEvent::Type type, QPoint global,
+                Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
+  QMouseEvent event(type, QPointF(title->mapFromGlobal(global)), QPointF(global),
+                    type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
+                    type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton, modifiers);
+  QApplication::sendEvent(title, &event);
+  events();
+}
 }
 
 class ToolPaletteTests : public QObject {
   Q_OBJECT
  private slots:
+  void edgeTargetsAreNarrowAndStable() {
+    const QRect bounds(100, 100, 800, 600);
+    QCOMPARE(panelDockTarget(bounds, {500, 117}, Qt::AllDockWidgetAreas), Qt::NoDockWidgetArea);
+    QCOMPARE(panelDockTarget(bounds, {500, 116}, Qt::AllDockWidgetAreas), Qt::TopDockWidgetArea);
+    QCOMPARE(panelDockTarget(bounds, {500, 128}, Qt::AllDockWidgetAreas, Qt::TopDockWidgetArea), Qt::TopDockWidgetArea);
+    QCOMPARE(panelDockTarget(bounds, {500, 129}, Qt::AllDockWidgetAreas, Qt::TopDockWidgetArea), Qt::NoDockWidgetArea);
+    QCOMPARE(panelDockTarget(bounds, {500, 110}, Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea), Qt::NoDockWidgetArea);
+    QCOMPARE(panelDockTarget(bounds, {110, 400}, Qt::LeftDockWidgetArea), Qt::LeftDockWidgetArea);
+    QCOMPARE(panelDockTarget(bounds, {890, 400}, Qt::RightDockWidgetArea), Qt::RightDockWidgetArea);
+    QCOMPARE(panelDockTarget(bounds, {500, 690}, Qt::BottomDockWidgetArea), Qt::BottomDockWidgetArea);
+    QCOMPARE(panelDockTarget(bounds, {500, 91}, Qt::AllDockWidgetAreas), Qt::NoDockWidgetArea);
+  }
+
+  void previewDoesNotResizeTheEditingArea() {
+    QMainWindow host;
+    host.setDockOptions(host.dockOptions() & ~QMainWindow::AnimatedDocks);
+    host.setCentralWidget(new QWidget);
+    host.resize(800, 600); host.move(100, 100);
+    auto* dock = new PanelDock(QStringLiteral("属性"), &host);
+    dock->setWidget(new QWidget);
+    host.addDockWidget(Qt::RightDockWidgetArea, dock);
+    host.show(); events();
+    dock->setFloating(true); dock->resize(180, 160);
+    dock->move(host.mapToGlobal(QPoint(250, 180))); dock->show(); events();
+    auto* title = dock->titleBarWidget();
+    const auto central = host.centralWidget()->geometry();
+    const QPoint press = title->mapToGlobal(QPoint(10, 12));
+    titleMouse(title, QEvent::MouseButtonPress, press);
+    titleMouse(title, QEvent::MouseMove, host.mapToGlobal(QPoint(400, 100)));
+    for (int i = 0; i < 120; ++i)
+      titleMouse(title, QEvent::MouseMove, host.mapToGlobal(QPoint(300 + i, 12 + i % 10)));
+    QCOMPARE(host.centralWidget()->geometry(), central);
+    QVERIFY(dock->isFloating());
+    auto* preview = host.findChild<QWidget*>(QStringLiteral("panelDockPreview"));
+    QVERIFY(preview && preview->isVisible());
+    QCOMPARE(preview->height(), 36);
+    // Holding Ctrl suppresses the preview even before another mouse move.
+    QTest::keyPress(title, Qt::Key_Control); events();
+    QVERIFY(!preview->isVisible());
+    QTest::keyRelease(title, Qt::Key_Control);
+    titleMouse(title, QEvent::MouseMove, host.mapToGlobal(QPoint(400, 12)));
+    QVERIFY(preview->isVisible());
+    titleMouse(title, QEvent::MouseButtonRelease, host.mapToGlobal(QPoint(400, 12)));
+    QVERIFY(!dock->isFloating());
+    QCOMPARE(host.dockWidgetArea(dock), Qt::TopDockWidgetArea);
+    QVERIFY(!preview->isVisible());
+
+    // Escape returns a detached panel to its former dock, without leaving
+    // the drag active or handing Escape on to a modeling tool.
+    titleMouse(title, QEvent::MouseButtonPress, title->mapToGlobal(QPoint(10, 12)));
+    titleMouse(title, QEvent::MouseMove, host.mapToGlobal(QPoint(350, 250)));
+    QVERIFY(dock->isFloating());
+    QTest::keyClick(title, Qt::Key_Escape); events();
+    QVERIFY(!dock->isFloating());
+    QCOMPARE(host.dockWidgetArea(dock), Qt::TopDockWidgetArea);
+  }
+
+  void titleButtonsAndTabsRemainUsable() {
+    QMainWindow host;
+    auto* a = new PanelDock(QStringLiteral("素材"), &host);
+    auto* b = new PanelDock(QStringLiteral("タグ"), &host);
+    a->setWidget(new QWidget); b->setWidget(new QWidget);
+    host.addDockWidget(Qt::RightDockWidgetArea, a);
+    host.addDockWidget(Qt::RightDockWidgetArea, b);
+    host.tabifyDockWidget(a, b); host.show(); a->raise(); events();
+    auto* floating = a->findChild<QAbstractButton*>(QStringLiteral("panelFloatButton"));
+    auto* close = a->findChild<QAbstractButton*>(QStringLiteral("panelCloseButton"));
+    QVERIFY(floating && close);
+    QTest::mouseClick(floating, Qt::LeftButton); events();
+    QVERIFY(a->isFloating());
+    QVERIFY(a->windowFlags().testFlag(Qt::FramelessWindowHint));
+    QTest::mouseClick(floating, Qt::LeftButton); events();
+    QVERIFY(!a->isFloating());
+    QVERIFY(host.tabifiedDockWidgets(a).contains(b));
+    QTest::mouseDClick(a->titleBarWidget(), Qt::LeftButton, Qt::NoModifier, QPoint(10, 12)); events();
+    QVERIFY(a->isFloating());
+    QTest::mouseDClick(a->titleBarWidget(), Qt::LeftButton, Qt::NoModifier, QPoint(10, 12)); events();
+    QVERIFY(!a->isFloating());
+    QVERIFY(host.tabifiedDockWidgets(a).contains(b));
+    QTest::mouseClick(close, Qt::LeftButton); events();
+    QVERIFY(!a->isVisible());
+    a->toggleViewAction()->trigger(); events();
+    QVERIFY(a->isVisible());
+  }
+
+  void titleUsesThePanelTheme() {
+    for (bool dark : {false, true}) {
+      QMainWindow host;
+      auto* dock = new PanelDock(QStringLiteral("ツール"), &host);
+      QPalette palette = dock->palette();
+      const QColor base(dark ? "#25272b" : "#f3f4f6");
+      palette.setColor(QPalette::Window, base);
+      palette.setColor(QPalette::WindowText, dark ? QColor("#e2e5ea") : QColor("#22262e"));
+      dock->setPalette(palette); dock->setWidget(new QWidget);
+      host.addDockWidget(Qt::LeftDockWidgetArea, dock); host.show();
+      dock->setFloating(true); dock->resize(240, 160); dock->show(); events();
+      const auto image = dock->titleBarWidget()->grab().toImage();
+      QCOMPARE(image.pixelColor(1, 1).rgb(), (dark ? base.lighter(112) : base.darker(104)).rgb());
+      QVERIFY(dock->windowFlags().testFlag(Qt::FramelessWindowHint));
+    }
+  }
+
   void narrowAndWideKeepEveryButtonAccessible() {
     ToolPalette tools;
     const auto actions = populate(tools);
@@ -162,6 +273,14 @@ class ToolPaletteTests : public QObject {
         x += 50;
       }
       painter.end(); cursors.save(output + (dark ? "/cursors-dark.png" : "/cursors-light.png"));
+      QMainWindow host;
+      auto* dock = new PanelDock(QStringLiteral("マテリアル（素材）"), &host);
+      auto* body = new QWidget;
+      body->setMinimumSize(220, 100);
+      dock->setWidget(body);
+      host.addDockWidget(Qt::RightDockWidgetArea, dock); host.show();
+      dock->setFloating(true); dock->resize(260, 180); dock->show(); events();
+      dock->grab().save(output + (dark ? "/panel-dark.png" : "/panel-light.png"));
     }
     QApplication::setPalette(original);
   }

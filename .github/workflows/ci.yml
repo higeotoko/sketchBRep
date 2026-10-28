@@ -187,6 +187,7 @@ jobs:
           Copy-Item docs\34_sections_and_tools_palette.md "$dist\SECTIONS_AND_TOOLS.md"
           Copy-Item docs\35_wheel_surface_navigation.md "$dist\WHEEL_NAVIGATION.md"
           Copy-Item docs\36_palette_ui_and_cursors.md "$dist\PALETTE_AND_CURSORS.md"
+          Copy-Item docs\37_panel_docking.md "$dist\PANEL_DOCKING.md"
           Copy-Item docs\images\phase2.png $dist
           New-Item -ItemType Directory -Force "$dist\examples\dxf" | Out-Null
           Copy-Item tests\data\dxf\small*.dxf "$dist\examples\dxf"

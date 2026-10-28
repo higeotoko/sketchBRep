@@ -251,6 +251,7 @@ class GuiPhase1 : public QObject {
   void sectionPlaneCutsView();
   void sectionToolboxControlsAreIndependentAndCached();
   void toolsPaletteShowsAllAndFloats();
+  void panelDragPreviewKeepsTheModelViewStill();
   void paletteResizeKeepsBackdropAcrossViewport();
   void sectionToolAndTagsPanel();
   void pushPullCylinderSide();
@@ -7109,6 +7110,49 @@ void GuiPhase1::emptyDoubleClickExitsOnlySelectionContext() {
       f.window.exitGroup();
     }
   }
+}
+
+void GuiPhase1::panelDragPreviewKeepsTheModelViewStill() {
+  Fixture f;
+  QVERIFY(f.setUp());
+  QVERIFY(!f.window.dockOptions().testFlag(QMainWindow::AnimatedDocks));
+  for (const auto& name : {"propertiesDock", "materialsDock", "tagsDock", "toolsPalette", "sectionToolbox"}) {
+    auto* dock = f.window.findChild<PanelDock*>(QString::fromLatin1(name));
+    QVERIFY(dock && dock->titleBarWidget());
+  }
+  auto* dock = f.window.findChild<PanelDock*>(QStringLiteral("propertiesDock"));
+  dock->setFloating(true); dock->show();
+  QTest::qWait(30);
+  struct ResizeCounter : QObject {
+    int count = 0;
+    bool eventFilter(QObject*, QEvent* e) override { if (e->type() == QEvent::Resize) ++count; return false; }
+  } counter;
+  f.vp->installEventFilter(&counter);
+  const QRect geometry = f.vp->geometry();
+  const auto sequence = f.window.modeler().document().sequence();
+  QWidget* title = dock->titleBarWidget();
+  const auto mouse = [&](QEvent::Type type, QPoint global, Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
+    QMouseEvent event(type, QPointF(title->mapFromGlobal(global)), QPointF(global),
+                     type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
+                     type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton, modifiers);
+    QApplication::sendEvent(title, &event);
+    QCoreApplication::processEvents();
+  };
+  mouse(QEvent::MouseButtonPress, title->mapToGlobal(QPoint(10, 12)));
+  QElapsedTimer time; time.start();
+  for (int i = 0; i < 120; ++i) {
+    const QPoint point(geometry.center().x() + i % 60, geometry.top() + 10 + i % 12);
+    mouse(QEvent::MouseMove, f.window.mapToGlobal(point));
+  }
+  qInfo("panel drag: 120 moves in %lld ms, %d viewport resizes", time.elapsed(), counter.count);
+  QCOMPARE(counter.count, 0);
+  QCOMPARE(f.vp->geometry(), geometry);
+  QCOMPARE(f.window.modeler().document().sequence(), sequence);
+  auto* preview = f.window.findChild<QWidget*>(QStringLiteral("panelDockPreview"));
+  QVERIFY(preview && preview->isVisible());
+  mouse(QEvent::MouseButtonRelease, title->mapToGlobal(QPoint(10, 12)), Qt::ControlModifier);
+  QVERIFY(dock->isFloating());
+  QVERIFY(!preview->isVisible());
 }
 
 void GuiPhase1::groupsAndComponentsSelectWithOutlines() {

@@ -176,7 +176,7 @@ bool ToolPalette::eventFilter(QObject* watched, QEvent* event) {
 }
 
 ToolPaletteDock::ToolPaletteDock(const QString& title, QWidget* parent, int columns, bool compactRow)
-    : QDockWidget(title, parent), tools_(new ToolPalette(this, columns)), compactRow_(compactRow) {
+    : PanelDock(title, parent), tools_(new ToolPalette(this, columns)), compactRow_(compactRow) {
   setFeatures(DockWidgetMovable | DockWidgetFloatable | DockWidgetClosable);
   setWidget(tools_);
   connect(this, &QDockWidget::topLevelChanged, this, [this] { updateConstraints(); });

@@ -1,7 +1,7 @@
 #pragma once
 
 #include <QAbstractScrollArea>
-#include <QDockWidget>
+#include "PanelDock.h"
 #include <QToolButton>
 #include <vector>
 
@@ -44,7 +44,7 @@ class ToolPalette : public QAbstractScrollArea {
 
 // Constraints belong to the content, so Qt can account for docked vs
 // floating title bars. A four-command toolbox fits its contents when floating.
-class ToolPaletteDock : public QDockWidget {
+class ToolPaletteDock : public PanelDock {
   Q_OBJECT
  public:
   ToolPaletteDock(const QString& title, QWidget* parent, int columns, bool compactRow = false);
