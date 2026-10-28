@@ -307,6 +307,10 @@ struct Fixture {
     window.show();
     if (!QTest::qWaitForWindowExposed(&window)) return false;
     vp = &window.viewport();
+    // Keep a landscape modeling area when tool panels change width. These
+    // mouse tests depend on pixel rounding at a fixed camera scale.
+    window.resize(window.width() + 840 - vp->width(), window.height());
+    QTest::qWait(30);
     doc::CameraState cam;
     cam.eye = {cx - 6000, cy - 8000, 9000};
     cam.target = {cx, cy, 0};
