@@ -59,7 +59,27 @@ jobs:
           ccache --show-stats
 
       - name: Test (core, Phase 0 CLI and GUI end-to-end under Xvfb)
-        run: xvfb-run -a -s "-screen 0 1600x1000x24" ctest --test-dir build --output-on-failure
+        run: |
+          set +e
+          xvfb-run -a -s "-screen 0 1600x1000x24" ctest --test-dir build --output-on-failure 2>&1 | tee test-log.txt
+          test_status=${PIPESTATUS[0]}
+          set -e
+          if [ "$test_status" -ne 0 ]; then
+            python3 - <<'PY_DIAGNOSTICS'
+          from pathlib import Path
+          lines = Path("test-log.txt").read_text(errors="replace").splitlines()
+          count = 0
+          for index, line in enumerate(lines):
+              if "FAIL!" in line or "[  FAILED  ]" in line or "***Failed" in line or "***Timeout" in line:
+                  detail = " / ".join(lines[index:index + 3])
+                  detail = detail.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+                  print("::error::" + detail)
+                  count += 1
+                  if count >= 40:
+                      break
+          PY_DIAGNOSTICS
+          fi
+          exit "$test_status"
 
   # Windows build + portable zip (exe and all runtime DLLs) for trying the app.
   windows:
