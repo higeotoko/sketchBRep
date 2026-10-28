@@ -399,14 +399,15 @@ std::optional<std::vector<ObjectId>> Document::changedSince(std::uint64_t sequen
   std::vector<ObjectId> ids;
   auto it = std::lower_bound(log_.begin(), log_.end(), sequence + 1,
                              [](const LogEntry& e, std::uint64_t s) { return e.sequence < s; });
-  for (; it != log_.end(); ++it) ids.push_back(it->id);
+  for (; it != log_.end(); ++it) if (!it->id.empty()) ids.push_back(it->id);
   std::sort(ids.begin(), ids.end());
   ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
   return ids;
 }
 
-void Document::settingsChanged() {
-  fullChangeSequence_ = ++sequence_;
+void Document::settingsChanged(bool affectsObjects) {
+  if (affectsObjects) fullChangeSequence_ = ++sequence_;
+  else touch({});  // A view-only revision, without invalidating object displays.
   notify();
 }
 

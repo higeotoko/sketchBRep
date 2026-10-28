@@ -505,6 +505,7 @@ class TextTool : public DrawingTool {
 class SectionTool : public Tool {
  public:
   using Tool::Tool;
+  void setOnPlaced(std::function<void()> callback) { onPlaced_ = std::move(callback); }
   QString name() const override;
   QCursor cursor() const override;
   void activate() override;
@@ -521,6 +522,7 @@ class SectionTool : public Tool {
   gp_Dir normal_;
   double depth_ = 0.0;
   double halfSize_ = 2000.0;
+  std::function<void()> onPlaced_;
 };
 
 // Circle: centre (on a face or the ground), then radius by mouse or value.

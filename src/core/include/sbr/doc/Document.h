@@ -51,12 +51,22 @@ struct SectionPlane {
   }
 };
 
+// Independent view switches, matching section planes / cuts / fill.
+struct SectionDisplay {
+  bool planes = true;
+  bool cuts = true;
+  bool fill = true;
+  bool operator==(const SectionDisplay& o) const { return planes == o.planes && cuts == o.cuts && fill == o.fill; }
+  bool operator!=(const SectionDisplay& o) const { return !(*this == o); }
+};
+
 struct DocumentSettings {
   std::string units = "mm";
   double linearTolerance = tolerance::kLinear;
   CameraState camera;
   std::vector<Scene> scenes;
   std::vector<SectionPlane> sections;
+  SectionDisplay sectionDisplay;
   std::set<std::string> hiddenTags;  // objects with these tags are hidden
 };
 
@@ -65,16 +75,18 @@ struct DocumentSettings {
 struct PersistentSettings {
   std::vector<Scene> scenes;
   std::vector<SectionPlane> sections;
+  SectionDisplay sectionDisplay;
   std::set<std::string> hiddenTags;
 
-  static PersistentSettings of(const DocumentSettings& s) { return {s.scenes, s.sections, s.hiddenTags}; }
+  static PersistentSettings of(const DocumentSettings& s) { return {s.scenes, s.sections, s.sectionDisplay, s.hiddenTags}; }
   void applyTo(DocumentSettings& s) const {
     s.scenes = scenes;
     s.sections = sections;
+    s.sectionDisplay = sectionDisplay;
     s.hiddenTags = hiddenTags;
   }
   bool operator==(const PersistentSettings& o) const {
-    return scenes == o.scenes && sections == o.sections && hiddenTags == o.hiddenTags;
+    return scenes == o.scenes && sections == o.sections && sectionDisplay == o.sectionDisplay && hiddenTags == o.hiddenTags;
   }
   bool operator!=(const PersistentSettings& o) const { return !(*this == o); }
 };
@@ -196,8 +208,9 @@ class Document {
   std::uint64_t sequence() const { return sequence_; }
   std::optional<std::vector<ObjectId>> changedSince(std::uint64_t sequence) const;
   // Persistent settings (tag visibility, sections, scenes) were changed in
-  // place: forces a full resynchronisation and notifies listeners.
-  void settingsChanged();
+  // place: notifies listeners. Section-only view changes need no object
+  // resynchronisation; tag visibility and other global changes still do.
+  void settingsChanged(bool affectsObjects = true);
 
  private:
   void touch(const ObjectId& id);

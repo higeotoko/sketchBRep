@@ -246,6 +246,7 @@ class GuiPhase1 : public QObject {
   void splineClosesMixedOutline();
   void texturedMaterialSurvivesGeometryRebuild();
   void sectionPlaneCutsView();
+  void sectionToolboxControlsAreIndependentAndCached();
   void toolsPaletteShowsAllAndFloats();
   void sectionToolAndTagsPanel();
   void pushPullCylinderSide();
@@ -7024,4 +7025,98 @@ void GuiPhase1::toolsPaletteShowsAllAndFloats() {
   expanded->setChecked(true);
   if (qEnvironmentVariableIsSet("SBR_SCREENSHOT_DIR"))
     f.window.grab().save(QDir(qEnvironmentVariable("SBR_SCREENSHOT_DIR")).filePath(QStringLiteral("tools-palette.png")));
+}
+
+void GuiPhase1::sectionToolboxControlsAreIndependentAndCached() {
+  Fixture f;
+  QVERIFY(f.setUp(1000, 1000));
+  auto& m = f.window.modeler();
+  f.box(0, 0, 2000, 2000, 2000);
+  f.window.activateTool(MainWindow::ToolId::Section);
+  auto* dock = f.window.findChild<QDockWidget*>(QStringLiteral("sectionToolbox"));
+  QVERIFY(dock && dock->isVisible());
+  QCOMPARE(dock->findChildren<QToolButton*>().size(), 4);
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 1000, 2000)));
+  QVERIFY(!f.vp->previewShape().IsNull());
+  auto* planes = f.window.findChild<QAction*>(QStringLiteral("sectionPlanesAction"));
+  auto* cuts = f.window.findChild<QAction*>(QStringLiteral("sectionCutsAction"));
+  auto* fill = f.window.findChild<QAction*>(QStringLiteral("sectionFillAction"));
+  QVERIFY(planes && cuts && fill);
+  planes->setChecked(false); // Must also remove an unfinished insertion preview.
+  QVERIFY(f.vp->previewShape().IsNull());
+  QVERIFY(dynamic_cast<SelectTool*>(f.window.activeTool()));
+  f.window.activateTool(MainWindow::ToolId::Section);
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 1000, 2000)));
+  type(f.vp, QStringLiteral("800"));
+  QVERIFY(dynamic_cast<SelectTool*>(f.window.activeTool()));
+  QVERIFY(f.vp->previewShape().IsNull());
+  f.vp->syncNow();
+  QVERIFY(f.vp->sectionCutApplied());
+  QVERIFY(f.vp->sectionFillApplied());
+  QVERIFY(!f.vp->sectionMarkerShape().IsNull());
+  const auto largeDxf = qEnvironmentVariable("SBR_SECTION_DXF");
+  if (!largeDxf.isEmpty()) {
+    geom::DxfImportOptions options;
+    options.allowPartial = true;
+    options.groupByLayer = true;
+    const auto imported = m.importDxf(largeDxf.toUtf8().toStdString(), options);
+    QVERIFY2(imported.ok(), imported.ok() ? "" : imported.error().c_str());
+    f.vp->syncNow(); QCoreApplication::processEvents(); f.vp->syncNow();
+    qInfo("section controls with DXF: %zu imported objects", imported->size());
+  }
+  const auto marker = f.vp->sectionMarkerShape().TShape();
+  const auto builds = f.vp->sectionMarkerBuilds();
+  const auto scans = f.vp->sectionBoundsScans();
+  QElapsedTimer elapsed; elapsed.start();
+  for (int i = 0; i < 40; ++i) {
+    planes->setChecked(false); f.vp->syncNow();
+    QVERIFY(f.vp->sectionMarkerShape().IsNull());
+    QVERIFY(f.vp->sectionCutApplied());
+    fill->setChecked(false); f.vp->syncNow();
+    QVERIFY(!f.vp->sectionFillApplied());
+    QVERIFY(f.vp->sectionCutApplied());
+    cuts->setChecked(false); f.vp->syncNow();
+    QVERIFY(!f.vp->sectionCutApplied());
+    cuts->setChecked(true); fill->setChecked(true); planes->setChecked(true);
+    f.vp->syncNow();
+    QVERIFY(f.vp->sectionFillApplied());
+    QCOMPARE(f.vp->sectionMarkerShape().TShape().get(), marker.get());
+    QCoreApplication::processEvents();
+  }
+  QCOMPARE(f.vp->sectionMarkerBuilds(), builds);
+  QCOMPARE(f.vp->sectionBoundsScans(), scans);
+  qInfo("section switches: 240 changes in %lld ms; no marker rebuild or bounds rescan", elapsed.elapsed());
+  cuts->setChecked(false);
+  QCoreApplication::processEvents();
+  QMenu* saved = nullptr;
+  for (auto* menu : f.window.findChildren<QMenu*>())
+    if (menu->title().startsWith(QStringLiteral("保存済み断面"))) saved = menu;
+  QVERIFY(saved);
+  QVERIFY(QMetaObject::invokeMethod(saved, "aboutToShow", Qt::DirectConnection));
+  QVERIFY(!saved->actions().isEmpty() && saved->actions().front()->menu());
+  auto* activate = saved->actions().front()->menu()->actions().front();
+  QVERIFY(!activate->isChecked());
+  const auto steps = m.history().undoCount();
+  activate->trigger();
+  QCOMPARE(m.history().undoCount(), steps + 1);
+  f.vp->syncNow();
+  QVERIFY(f.vp->sectionCutApplied());
+  m.undo(); f.vp->syncNow();
+  QVERIFY(!f.vp->sectionCutApplied());
+  m.redo(); QCoreApplication::processEvents(); f.vp->syncNow();
+  QVERIFY(f.vp->sectionCutApplied());
+  if (!qEnvironmentVariable("SBR_SCREENSHOT_DIR").isEmpty())
+    dock->grab().save(QDir(qEnvironmentVariable("SBR_SCREENSHOT_DIR")).filePath(QStringLiteral("section-toolbox.png")));
+  // Closing the toolbox is independent of all three display states.
+  dock->close(); f.vp->syncNow();
+  QVERIFY(f.vp->sectionCutApplied());
+  planes->setChecked(false); fill->setChecked(false); f.vp->syncNow();
+  const auto root = qEnvironmentVariable("SBR_SCREENSHOT_DIR");
+  if (!root.isEmpty()) f.vp->dumpImage(QDir(root).filePath(QStringLiteral("section-open-no-marker.png")));
+  fill->setChecked(true); f.vp->syncNow();
+  if (!root.isEmpty()) {
+    f.vp->dumpImage(QDir(root).filePath(QStringLiteral("section-filled-no-marker.png")));
+    cuts->setChecked(false); planes->setChecked(true); f.vp->syncNow();
+    f.vp->dumpImage(QDir(root).filePath(QStringLiteral("section-no-cut-marker.png")));
+  }
 }

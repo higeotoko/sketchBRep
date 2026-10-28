@@ -258,11 +258,13 @@ class Modeler {
   std::vector<std::string> tags() const;  // tags in use, sorted
   // Adds an active section plane (others are deactivated); empty = none.
   void setSection(const std::optional<SectionPlane>& plane);
-  // Shows the most recent section again (true) or none (false).
+  // Toggles clipping while retaining the chosen active plane.
   void setSectionVisible(bool visible);
   void updateSection(std::size_t index, const SectionPlane& plane);
+  void activateSection(std::size_t index);
   void removeSection(std::size_t index);
   void setSectionPlanesVisible(bool visible);
+  void setSectionFillVisible(bool visible);
   bool sectionVisible() const;
   void clearSections();
   Result<ObjectId> createPolygon(const std::vector<gp_Pnt>& points, const std::string& name = {});

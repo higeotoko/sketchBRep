@@ -903,6 +903,7 @@ std::string serializeDocument(const Document& document) {
       {"camera", cameraToJson(s.camera)},
       {"scenes", scenes},
       {"sections", sections},
+      {"sectionDisplay", {{"planes", s.sectionDisplay.planes}, {"cuts", s.sectionDisplay.cuts}, {"fill", s.sectionDisplay.fill}}},
       {"hiddenTags", s.hiddenTags},
       {"shapes", shapes.entries},
       {"recipes", recipes.entries},
@@ -932,6 +933,12 @@ Status deserializeDocument(const std::string& text, Document& document,
     if (s.units != "mm") return Status::failure("Unsupported units: " + s.units);
     s.linearTolerance = root.value("linearTolerance", tolerance::kLinear);
     if (root.contains("camera")) s.camera = cameraFrom(root.at("camera"));
+    if (root.contains("sectionDisplay")) {
+      const auto& display = root.at("sectionDisplay");
+      s.sectionDisplay.planes = display.value("planes", true);
+      s.sectionDisplay.cuts = display.value("cuts", true);
+      s.sectionDisplay.fill = display.value("fill", true);
+    }
     if (root.contains("sections")) {
       for (const json& p : root.at("sections")) {
         SectionPlane plane;

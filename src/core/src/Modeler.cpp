@@ -3252,10 +3252,10 @@ void Modeler::setTagVisible(const std::string& tag, bool visible) {
 }
 
 void Modeler::setSectionVisible(bool visible) {
-  if (document_.settings().sections.empty() || visible == sectionVisible()) return;
-  editSettings(document_, history_, visible ? "Show Section" : "Hide Section", [&](PersistentSettings& s) {
-    for (SectionPlane& p : s.sections) p.active = false;
-    if (visible) s.sections.back().active = true;
+  editSettings(document_, history_, visible ? "Show Section Cuts" : "Hide Section Cuts", [&](PersistentSettings& s) {
+    s.sectionDisplay.cuts = visible;
+    if (visible && !s.sections.empty() && std::none_of(s.sections.begin(), s.sections.end(), [](const auto& p) { return p.active; }))
+      s.sections.back().active = true;
   });
 }
 
@@ -3273,10 +3273,22 @@ void Modeler::updateSection(std::size_t index, const SectionPlane& plane) {
   });
 }
 
+void Modeler::activateSection(std::size_t index) {
+  if (index >= document_.settings().sections.size()) return;
+  editSettings(document_, history_, "Activate Section", [&](PersistentSettings& s) {
+    for (std::size_t i = 0; i < s.sections.size(); ++i) s.sections[i].active = i == index;
+    s.sectionDisplay.cuts = true;
+  });
+}
+
 void Modeler::setSectionPlanesVisible(bool visible) {
   editSettings(document_, history_, "Section Plane Visibility", [&](PersistentSettings& s) {
-    for (auto& p : s.sections) p.visible = visible;
+    s.sectionDisplay.planes = visible;
   });
+}
+
+void Modeler::setSectionFillVisible(bool visible) {
+  editSettings(document_, history_, "Section Fill Visibility", [&](PersistentSettings& s) { s.sectionDisplay.fill = visible; });
 }
 
 void Modeler::removeSection(std::size_t index) {
@@ -3287,6 +3299,7 @@ void Modeler::removeSection(std::size_t index) {
 }
 
 bool Modeler::sectionVisible() const {
+  if (!document_.settings().sectionDisplay.cuts) return false;
   for (const SectionPlane& p : document_.settings().sections) {
     if (p.active) return true;
   }
@@ -3311,6 +3324,8 @@ void Modeler::setSection(const std::optional<SectionPlane>& plane) {
       SectionPlane p = *plane;
       if (p.name.empty()) p.name = "Section " + std::to_string(s.sections.size() + 1);
       p.active = true;
+      s.sectionDisplay.planes = true;
+      s.sectionDisplay.cuts = true;
       s.sections.push_back(p);
     }
   });

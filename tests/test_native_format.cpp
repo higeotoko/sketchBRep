@@ -2,6 +2,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <nlohmann/json.hpp>
 
 #include "TestHelpers.h"
 #include "sbr/doc/Modeler.h"
@@ -270,9 +271,10 @@ TEST(NativeFormat, SavedSectionsKeepIndependentMarkersAndCanBeEditedWithUndo) {
   EXPECT_EQ(loaded.document().settings().sections, m.document().settings().sections);
   loaded.setSectionPlanesVisible(false);
   EXPECT_TRUE(loaded.sectionVisible());
-  EXPECT_FALSE(loaded.document().settings().sections[1].visible);
-  loaded.undo();
+  EXPECT_FALSE(loaded.document().settings().sectionDisplay.planes);
   EXPECT_TRUE(loaded.document().settings().sections[1].visible);
+  loaded.undo();
+  EXPECT_TRUE(loaded.document().settings().sectionDisplay.planes);
   loaded.removeSection(0);
   EXPECT_FALSE(loaded.sectionVisible());
   EXPECT_EQ(loaded.document().settings().sections.size(), 1u);
@@ -289,4 +291,66 @@ TEST(NativeFormat, SavedSectionsKeepIndependentMarkersAndCanBeEditedWithUndo) {
   EXPECT_EQ(loaded.document().settings().sections[0], edited);
   loaded.removeSection(100);
   EXPECT_EQ(loaded.document().settings().sections.size(), 2u);
+}
+
+TEST(NativeFormat, SectionDisplaySwitchesPreserveChosenCutAndLegacyDefaults) {
+  Modeler m;
+  const auto object = m.createRectangle(geom::SketchPlane::ground(), 1000, 1000);
+  ASSERT_TRUE(object.ok());
+  SectionPlane first; first.name = "Chosen"; first.origin[2] = 100;
+  SectionPlane second; second.name = "Latest"; second.origin[2] = 500;
+  m.setSection(first); m.setSection(second);
+  auto chosen = m.document().settings().sections[0];
+  chosen.active = true;
+  m.updateSection(0, chosen);
+  const auto shape = m.document().find(*object)->shape.TShape();
+  const auto sequence = m.document().sequence();
+  for (int i = 0; i < 100; ++i) {
+    m.setSectionVisible(false); m.setSectionVisible(true);
+    m.setSectionPlanesVisible(false); m.setSectionPlanesVisible(true);
+    m.setSectionFillVisible(false); m.setSectionFillVisible(true);
+  }
+  ASSERT_TRUE(m.document().changedSince(sequence));
+  EXPECT_TRUE(m.document().changedSince(sequence)->empty());
+  EXPECT_EQ(m.document().find(*object)->shape.TShape(), shape);
+  EXPECT_TRUE(m.document().settings().sections[0].active);
+  EXPECT_FALSE(m.document().settings().sections[1].active);
+  m.setSectionPlanesVisible(false);
+  m.setSectionFillVisible(false);
+  EXPECT_TRUE(m.sectionVisible());
+  m.setSectionVisible(false);
+  EXPECT_FALSE(m.sectionVisible());
+  EXPECT_TRUE(m.document().settings().sections[0].active);
+  m.undo(); EXPECT_TRUE(m.sectionVisible());
+  m.redo(); EXPECT_FALSE(m.sectionVisible());
+  const auto path = test::tempPath("section_display.sbr");
+  ASSERT_TRUE(m.save(path).ok());
+  Modeler loaded;
+  ASSERT_TRUE(loaded.load(path).ok());
+  EXPECT_EQ(loaded.document().settings().sectionDisplay, m.document().settings().sectionDisplay);
+  EXPECT_TRUE(loaded.document().settings().sections[0].active);
+  auto renamed = loaded.document().settings().sections[0];
+  renamed.name = "Renamed while cuts are off";
+  renamed.visible = false;
+  loaded.updateSection(0, renamed);
+  EXPECT_FALSE(loaded.sectionVisible());
+  EXPECT_FALSE(loaded.document().settings().sectionDisplay.cuts);
+  loaded.activateSection(0);
+  EXPECT_TRUE(loaded.sectionVisible());
+  loaded.undo(); EXPECT_FALSE(loaded.sectionVisible());
+  loaded.redo(); EXPECT_TRUE(loaded.sectionVisible());
+  loaded.setSectionVisible(true);
+  EXPECT_TRUE(loaded.document().settings().sections[0].active);
+  EXPECT_FALSE(loaded.document().settings().sections[1].active);
+  // Older projects have no global switches: use their former display behavior.
+  nlohmann::json legacy;
+  { std::ifstream in(path); in >> legacy; }
+  legacy.erase("sectionDisplay");
+  { std::ofstream out(path); out << legacy; }
+  Modeler old;
+  ASSERT_TRUE(old.load(path).ok());
+  EXPECT_EQ(old.document().settings().sectionDisplay, SectionDisplay{});
+  const auto beforeTags = loaded.document().sequence();
+  loaded.setTagVisible("Default", false);
+  EXPECT_FALSE(loaded.document().changedSince(beforeTags));
 }

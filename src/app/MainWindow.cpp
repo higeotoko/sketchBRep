@@ -48,6 +48,7 @@
 #include <QToolButton>
 #include <QTimer>
 #include <QToolBar>
+#include <QPainter>
 #include <QScrollArea>
 #include <QGridLayout>
 
@@ -79,6 +80,26 @@
 namespace sbr::app {
 namespace {
 std::string utf8(const QString& s) { return s.toUtf8().toStdString(); }
+
+QIcon sectionSwitchIcon(int kind) {
+  QPixmap image(32, 32);
+  image.fill(Qt::transparent);
+  QPainter p(&image);
+  p.setRenderHint(QPainter::Antialiasing);
+  const QColor ink(48, 77, 96), blue(0, 150, 215);
+  const QPolygonF front{QPointF(5, 10), QPointF(21, 13), QPointF(21, 28), QPointF(5, 25)};
+  const QPolygonF top{QPointF(5, 10), QPointF(12, 4), QPointF(28, 7), QPointF(21, 13)};
+  const QPolygonF side{QPointF(21, 13), QPointF(28, 7), QPointF(28, 22), QPointF(21, 28)};
+  p.setPen(QPen(ink, 1.4));
+  p.setBrush(QColor(225, 235, 242));
+  p.drawPolygon(front); p.drawPolygon(top); p.drawPolygon(side);
+  const QPolygonF plane{QPointF(3, 17), QPointF(12, 10), QPointF(30, 14), QPointF(21, 21)};
+  p.setPen(QPen(blue, 1.8));
+  p.setBrush(kind == 2 ? blue : QColor(0, 170, 230, kind == 0 ? 70 : 0));
+  p.drawPolygon(plane);
+  if (kind == 1) { p.setPen(QPen(blue, 2)); p.drawLine(QPointF(5, 18), QPointF(21, 21)); }
+  return QIcon(image);
+}
 
 enum class ExchangeType { Step, Stl, Dxf, Dwg, Iges, Brep, Rhino, Image };
 struct ExchangeFormat {
@@ -137,6 +158,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   dimensionTool_ = std::make_unique<DimensionTool>(*this);
   textTool_ = std::make_unique<TextTool>(*this);
   sectionTool_ = std::make_unique<SectionTool>(*this);
+  sectionTool_->setOnPlaced([this] {
+    QTimer::singleShot(0, this, [this] { if (active_ == sectionTool_.get()) activateTool(ToolId::Select); });
+  });
   followMeTool_ = std::make_unique<FollowMeTool>(*this);
 
   buildUi();
@@ -154,6 +178,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 }
 
 MainWindow::~MainWindow() {
+  if (sectionDock_ && sectionDock_->isFloating())
+    QSettings().setValue("section/toolboxGeometry", sectionDock_->saveGeometry());
   if (auto* palette = findChild<QDockWidget*>(QStringLiteral("toolsPalette"))) {
     QSettings settings;
     settings.setValue("tools/floating", palette->isFloating());
@@ -604,16 +630,51 @@ void MainWindow::buildMenus() {
   // --- View
   QMenu* view = menuBar()->addMenu(tr("表示(&V)"));
   QMenu* sections = view->addMenu(tr("断面"));
-  sections->addAction(tr("断面ツール (Shift+S)"), this, [this] { activateTool(ToolId::Section); });
-  sectionVisibleAction_ = sections->addAction(tr("断面で切って表示"));
+  auto* createSection = sections->addAction(toolIcon(CursorKind::Section), tr("断面平面を配置 (Shift+S)"), this,
+                                             [this] { activateTool(ToolId::Section); });
+  sectionPlanesAction_ = sections->addAction(sectionSwitchIcon(0), tr("断面平面を表示"));
+  sectionPlanesAction_->setObjectName(QStringLiteral("sectionPlanesAction"));
+  sectionPlanesAction_->setCheckable(true);
+  sectionPlanesAction_->setToolTip(tr("断面の目印だけを表示／非表示（カットは維持）"));
+  sectionVisibleAction_ = sections->addAction(sectionSwitchIcon(1), tr("断面カットを表示"));
+  sectionVisibleAction_->setObjectName(QStringLiteral("sectionCutsAction"));
   sectionVisibleAction_->setCheckable(true);
-  sectionVisibleAction_->setEnabled(false);
-  connect(sectionVisibleAction_, &QAction::toggled, this, [this](bool on) {
-    modeler_.setSectionVisible(on);
-    updateTitle();
+  sectionVisibleAction_->setToolTip(tr("選んだ断面で切って表示。OFFにしても選んだ断面は保持"));
+  sectionFillAction_ = sections->addAction(sectionSwitchIcon(2), tr("断面塗りつぶしを表示"));
+  sectionFillAction_->setObjectName(QStringLiteral("sectionFillAction"));
+  sectionFillAction_->setCheckable(true);
+  sectionFillAction_->setToolTip(tr("切り口の塗りつぶしを表示／非表示（元の面や断面の目印は消しません）"));
+  auto finishPlacement = [this] { if (active_ == sectionTool_.get()) activateTool(ToolId::Select); };
+  connect(sectionPlanesAction_, &QAction::toggled, this, [this, finishPlacement](bool on) {
+    finishPlacement(); modeler_.setSectionPlanesVisible(on); updateTitle();
   });
-  sections->addAction(tr("断面平面をすべて表示"), this, [this] { modeler_.setSectionPlanesVisible(true); updateTitle(); });
-  sections->addAction(tr("断面平面をすべて非表示"), this, [this] { modeler_.setSectionPlanesVisible(false); updateTitle(); });
+  connect(sectionVisibleAction_, &QAction::toggled, this, [this, finishPlacement](bool on) {
+    finishPlacement(); modeler_.setSectionVisible(on); updateTitle();
+  });
+  connect(sectionFillAction_, &QAction::toggled, this, [this, finishPlacement](bool on) {
+    finishPlacement(); modeler_.setSectionFillVisible(on); updateTitle();
+  });
+  sectionDock_ = new QDockWidget(tr("断面"), this);
+  sectionDock_->setObjectName(QStringLiteral("sectionToolbox"));
+  sectionDock_->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable | QDockWidget::DockWidgetClosable);
+  sectionDock_->setAllowedAreas(Qt::TopDockWidgetArea | Qt::BottomDockWidgetArea);
+  auto* controls = new QWidget(sectionDock_);
+  auto* row = new QHBoxLayout(controls);
+  row->setContentsMargins(4, 4, 4, 4); row->setSpacing(2);
+  for (auto* action : {createSection, sectionPlanesAction_, sectionVisibleAction_, sectionFillAction_}) {
+    auto* button = new QToolButton(controls);
+    button->setDefaultAction(action); button->setIconSize(QSize(28, 28));
+    row->addWidget(button);
+  }
+  sectionDock_->setWidget(controls);
+  addDockWidget(Qt::TopDockWidgetArea, sectionDock_);
+  sectionDock_->setFloating(true);
+  sectionDock_->hide();
+  sectionDock_->resize(sectionDock_->sizeHint());
+  sectionDock_->move(80, 100);
+  const auto sectionGeometry = QSettings().value("section/toolboxGeometry").toByteArray();
+  if (!sectionGeometry.isEmpty()) sectionDock_->restoreGeometry(sectionGeometry);
+  view->addAction(sectionDock_->toggleViewAction());
   auto* savedSections = sections->addMenu(tr("保存済み断面（SBRファイルに保存）"));
   connect(savedSections, &QMenu::aboutToShow, this, [this, savedSections] {
     savedSections->clear();
@@ -625,11 +686,13 @@ void MainWindow::buildMenus() {
       auto* menu = savedSections->addMenu(QString::fromStdString(plane.name));
       auto* active = menu->addAction(tr("この断面でカット"));
       active->setCheckable(true);
-      active->setChecked(plane.active);
+      active->setChecked(plane.active && modeler_.document().settings().sectionDisplay.cuts);
       connect(active, &QAction::toggled, this, [this, i, revision](bool on) {
         if (modeler_.history().revision() != revision) return;
         auto p = modeler_.document().settings().sections.at(i);
-        p.active = on; modeler_.updateSection(i, p); updateTitle();
+        if (on) modeler_.activateSection(i);
+        else { p.active = false; modeler_.updateSection(i, p); }
+        updateTitle();
       });
       auto* visible = menu->addAction(tr("断面平面を表示"));
       visible->setCheckable(true);
@@ -1267,7 +1330,10 @@ void MainWindow::activateTool(ToolId id) {
     case ToolId::Arc: active_ = arcTool_.get(); break;
     case ToolId::Dimension: active_ = dimensionTool_.get(); break;
     case ToolId::Text: active_ = textTool_.get(); break;
-    case ToolId::Section: active_ = sectionTool_.get(); break;
+    case ToolId::Section:
+      active_ = sectionTool_.get();
+      if (sectionDock_) { sectionDock_->show(); sectionDock_->raise(); }
+      break;
     case ToolId::FollowMe: active_ = followMeTool_.get(); break;
     case ToolId::Paint: active_ = paintTool_.get(); break;
     case ToolId::Eraser: active_ = eraserTool_.get(); break;
@@ -1519,8 +1585,13 @@ void MainWindow::refreshTags() {
   }
   if (sectionVisibleAction_) {
     const QSignalBlocker blockAction(sectionVisibleAction_);
-    sectionVisibleAction_->setEnabled(!modeler_.document().settings().sections.empty());
-    sectionVisibleAction_->setChecked(modeler_.sectionVisible());
+    const auto& settings = modeler_.document().settings();
+    sectionVisibleAction_->setChecked(settings.sectionDisplay.cuts);
+    const QSignalBlocker planesBlock(sectionPlanesAction_), fillBlock(sectionFillAction_);
+    sectionPlanesAction_->setChecked(settings.sectionDisplay.planes);
+    sectionFillAction_->setChecked(settings.sectionDisplay.fill);
+    if (!hadSections_ && !settings.sections.empty() && sectionDock_) sectionDock_->show();
+    hadSections_ = !settings.sections.empty();
   }
 }
 

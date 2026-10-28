@@ -10,9 +10,11 @@ namespace sbr::doc {
 
 namespace {
 void applySettings(Document& document, const PersistentSettings& settings) {
-  if (PersistentSettings::of(document.settings()) == settings) return;
+  const auto before = PersistentSettings::of(document.settings());
+  if (before == settings) return;
+  const bool sectionOnly = before.scenes == settings.scenes && before.hiddenTags == settings.hiddenTags;
   settings.applyTo(document.settings());
-  document.settingsChanged();
+  document.settingsChanged(!sectionOnly);
 }
 
 // One object state to apply: the object as it should be, or removed.

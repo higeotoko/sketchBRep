@@ -11,6 +11,7 @@
 #include <unordered_set>
 
 #include <gp_Lin.hxx>
+#include <Bnd_Box.hxx>
 #include <optional>
 #include <vector>
 
@@ -148,7 +149,14 @@ class Viewport : public QWidget {
   void setGhost(const std::vector<doc::ObjectId>& ids, const gp_Trsf& delta);
   void clearPreview();
   // What the tool preview shows now (null: nothing) - for checks.
-  TopoDS_Shape sectionMarkerShape() const { return sectionMarkers_.IsNull() ? TopoDS_Shape() : sectionMarkers_->Shape(); }
+  TopoDS_Shape sectionMarkerShape() const {
+    return sectionMarkers_.IsNull() || context_.IsNull() || !context_->IsDisplayed(sectionMarkers_)
+               ? TopoDS_Shape() : sectionMarkers_->Shape();
+  }
+  bool sectionCutApplied() const { return !section_.IsNull(); }
+  bool sectionFillApplied() const { return !section_.IsNull() && section_->IsCapping(); }
+  std::uint64_t sectionMarkerBuilds() const { return sectionMarkerBuilds_; }
+  std::uint64_t sectionBoundsScans() const { return sectionBoundsScans_; }
   TopoDS_Shape previewShape() const { return preview_.IsNull() ? TopoDS_Shape() : preview_->Shape(); }
   // The marker, guide lines and a small label next to the cursor naming
   // what the point snapped to (SketchUp's ScreenTip), all from `result`.
@@ -342,6 +350,10 @@ class Viewport : public QWidget {
   Handle(AIS_Shape) sectionMarkers_;
   std::vector<doc::SectionPlane> sectionMarkerKey_;
   std::uint64_t sectionMarkerSequence_ = 0;
+  Bnd_Box sectionBounds_;
+  bool sectionBoundsDirty_ = true;
+  std::uint64_t sectionMarkerBuilds_ = 0;
+  std::uint64_t sectionBoundsScans_ = 0;
   bool showOpenEnds_ = false;
   int openEndCount_ = 0;
   Handle(AIS_Shape) openEnds_;

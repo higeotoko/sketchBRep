@@ -335,6 +335,10 @@ class MainWindow : public QMainWindow, public ToolHost {
   QLabel* proposalLabel_ = nullptr;
   QListWidget* tagList_ = nullptr;
   QAction* sectionVisibleAction_ = nullptr;
+  QAction* sectionPlanesAction_ = nullptr;
+  QAction* sectionFillAction_ = nullptr;
+  QDockWidget* sectionDock_ = nullptr;
+  bool hadSections_ = false;
 };
 
 }  // namespace sbr::app

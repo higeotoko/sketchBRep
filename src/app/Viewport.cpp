@@ -960,29 +960,40 @@ void Viewport::syncOpenEnds() {
 }
 
 void Viewport::syncSection() {
-  const auto& planes = modeler_.document().settings().sections;
-  if (sectionMarkerKey_ != planes || sectionMarkerSequence_ != modeler_.document().sequence()) {
+  const auto& document = modeler_.document();
+  const auto& planes = document.settings().sections;
+  const auto& display = document.settings().sectionDisplay;
+  if (sectionMarkerSequence_ != document.sequence()) {
+    const auto changed = document.changedSince(sectionMarkerSequence_);
+    sectionBoundsDirty_ |= !changed || !changed->empty();
+    sectionMarkerSequence_ = document.sequence();
+  }
+  if (!display.planes) {
+    if (!sectionMarkers_.IsNull()) context_->Erase(sectionMarkers_, Standard_False);
+  } else if (sectionMarkerKey_ != planes || sectionBoundsDirty_) {
+    const bool any = std::any_of(planes.begin(), planes.end(), [](const auto& p) { return p.visible; });
+    if (any && sectionBoundsDirty_) {
+      sectionBounds_ = Bnd_Box();
+      for (const auto& o : document.objects()) {
+        if (o.kind() != doc::ObjectKind::Guide && o.kind() != doc::ObjectKind::Annotation && document.isVisible(o.id))
+          sectionBounds_.Add(document.worldBounds(o));
+      }
+      sectionBoundsDirty_ = false;
+      ++sectionBoundsScans_;
+    }
     if (!sectionMarkers_.IsNull()) context_->Remove(sectionMarkers_, Standard_False);
     sectionMarkers_.Nullify();
-    Bnd_Box bounds;
-    const auto& document = modeler_.document();
-    const bool showPlanes = std::any_of(planes.begin(), planes.end(), [](const auto& p) { return p.visible; });
-    if (showPlanes) for (const auto& o : document.objects()) {
-      if (o.kind() != doc::ObjectKind::Guide && o.kind() != doc::ObjectKind::Annotation && document.isVisible(o.id))
-        bounds.Add(document.worldBounds(o));
-    }
     double half = 2000;
     gp_Pnt center(0, 0, 0);
-    if (!bounds.IsVoid() && !bounds.IsOpen()) {
+    if (!sectionBounds_.IsVoid() && !sectionBounds_.IsOpen()) {
       double x, y, z, X, Y, Z;
-      bounds.Get(x, y, z, X, Y, Z);
+      sectionBounds_.Get(x, y, z, X, Y, Z);
       center = gp_Pnt((x+X)/2, (y+Y)/2, (z+Z)/2);
-      half = std::max(100.0, 0.6 * std::sqrt(bounds.SquareExtent()));
+      half = std::max(100.0, 0.6 * std::sqrt(sectionBounds_.SquareExtent()));
     }
     BRep_Builder builder;
     TopoDS_Compound markers;
     builder.MakeCompound(markers);
-    bool any = false;
     for (const auto& p : planes) {
       if (!p.visible) continue;
       const gp_Pnt origin(p.origin[0], p.origin[1], p.origin[2]);
@@ -991,26 +1002,28 @@ void Viewport::syncSection() {
       const gp_Dir normal(n);
       const gp_Pnt at = center.Translated(-gp_Vec(normal) * gp_Vec(origin, center).Dot(gp_Vec(normal)));
       builder.Add(markers, BRepBuilderAPI_MakeFace(gp_Pln(at, normal), -half, half, -half, half).Face());
-      any = true;
     }
     if (any) {
       sectionMarkers_ = new AIS_Shape(markers);
-      sectionMarkers_->SetColor(rgb(0.3, 0.65, 0.95));
-      sectionMarkers_->SetTransparency(0.78);
-      // Keep the translucent marker just in front of a coincident cut cap.
+      sectionMarkers_->SetColor(rgb(0.65, 0.61, 0.52));
+      sectionMarkers_->SetTransparency(0.9);
       sectionMarkers_->SetPolygonOffsets(Aspect_POM_Fill, -1.0f, -2.0f);
       sectionMarkers_->Attributes()->SetFaceBoundaryDraw(true);
+      sectionMarkers_->Attributes()->SetFaceBoundaryAspect(
+          new Prs3d_LineAspect(rgb(0.45, 0.42, 0.35), Aspect_TOL_DASH, 1.5));
       Handle(Graphic3d_SequenceOfHClipPlane) unclipped = new Graphic3d_SequenceOfHClipPlane;
       unclipped->SetOverrideGlobal(true);
       sectionMarkers_->SetClipPlanes(unclipped);
       context_->Display(sectionMarkers_, AIS_Shaded, -1, Standard_False);
+      ++sectionMarkerBuilds_;
     }
     sectionMarkerKey_ = planes;
-    sectionMarkerSequence_ = modeler_.document().sequence();
+  } else if (!sectionMarkers_.IsNull() && !context_->IsDisplayed(sectionMarkers_)) {
+    context_->Display(sectionMarkers_, AIS_Shaded, -1, Standard_False);
   }
   const doc::SectionPlane* active = nullptr;
   for (const doc::SectionPlane& p : modeler_.document().settings().sections) {
-    if (p.active) active = &p;
+    if (p.active && display.cuts) active = &p;
   }
   std::array<double, 6> key{};
   if (active) {
@@ -1022,7 +1035,10 @@ void Viewport::syncSection() {
   } else {
     inference_.setClip(std::nullopt);
   }
-  if (!section_.IsNull() && active && key == sectionKey_) return;
+  if (!section_.IsNull() && active && key == sectionKey_) {
+    section_->SetCapping(display.fill);
+    return;
+  }
   if (!section_.IsNull()) {
     view_->RemoveClipPlane(section_);
     section_.Nullify();
@@ -1033,7 +1049,7 @@ void Viewport::syncSection() {
   const gp_Pnt origin(key[0], key[1], key[2]);
   const gp_Dir normal(key[3], key[4], key[5]);
   section_ = new Graphic3d_ClipPlane(gp_Pln(origin, normal.Reversed()));
-  section_->SetCapping(Standard_True);
+  section_->SetCapping(display.fill);
   Graphic3d_MaterialAspect material(Graphic3d_NameOfMaterial_Plastified);
   material.SetColor(Quantity_Color(0.25, 0.25, 0.28, Quantity_TOC_RGB));
   section_->SetCappingMaterial(material);

@@ -1723,7 +1723,8 @@ void SectionTool::commit(double depth) {
   plane.normal = {normal_.X(), normal_.Y(), normal_.Z()};
   host_.modeler().setSection(plane);
   cancel();
-  host_.setStatus(QObject::tr("断面を作成しました（表示メニュー > 断面 で表示切替・解除）"));
+  host_.setStatus(QObject::tr("断面を作成しました（断面パレットで平面・カット・塗りつぶしを切り替え）"));
+  if (onPlaced_) onPlaced_();
 }
 
 void SectionTool::applyMeasurement(const QString& text) {
