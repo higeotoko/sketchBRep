@@ -49,6 +49,7 @@
 #include <QAction>
 #include <QDockWidget>
 #include <QToolButton>
+#include <QToolBar>
 #include <QScrollArea>
 #include <QLocalSocket>
 #include <QMouseEvent>
@@ -307,10 +308,29 @@ struct Fixture {
     window.show();
     if (!QTest::qWaitForWindowExposed(&window)) return false;
     vp = &window.viewport();
-    // Keep a landscape modeling area when tool panels change width. These
-    // mouse tests depend on pixel rounding at a fixed camera scale.
-    window.resize(window.width() + 815 - vp->width(), window.height());
-    QTest::qWait(30);
+    // Preserve the former modeling area's size on each Qt/font platform.
+    // These geometry tests depend on pixel rounding at a fixed camera scale;
+    // keep the real expanded palette visible during the actual operations.
+    if (auto* palette = window.findChild<QDockWidget*>(QStringLiteral("toolsPalette"))) {
+      QToolBar reference;
+      reference.setMovable(false);
+      reference.setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+      reference.setIconSize(QSize(28, 28));
+      for (auto* button : palette->findChildren<QToolButton*>())
+        reference.addAction(button->defaultAction());
+      palette->hide();
+      window.addToolBar(Qt::LeftToolBarArea, &reference);
+      reference.show();
+      QTest::qWait(30);
+      const QSize referenceSize = vp->size();
+      window.removeToolBar(&reference);
+      reference.hide();
+      palette->show();
+      QTest::qWait(30);
+      window.resize(window.width() + referenceSize.width() - vp->width(),
+                    window.height() + referenceSize.height() - vp->height());
+      QTest::qWait(30);
+    }
     doc::CameraState cam;
     cam.eye = {cx - 6000, cy - 8000, 9000};
     cam.target = {cx, cy, 0};
