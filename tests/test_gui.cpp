@@ -270,7 +270,7 @@ class GuiPhase1 : public QObject {
   void rightClickMenuFollowsTheSelection();
   void skyAndGroundFollowTheHorizon();
   void selectionDotsKeepTheMaterialColour();
-  void selectionDotsOnOnePlacementOnly();
+  void selectionOutlineOnOnePlacementOnly();
   void paintedFaceFollowsItsMaterial();
   void picksNeverUseADisplayBehindTheModel();
   void movedObjectsPickWhereTheyAre();
@@ -6018,10 +6018,9 @@ void GuiPhase1::selectionDotsKeepTheMaterialColour() {
   QVERIFY2(blue >= 4, qPrintable(QString("red %1 blue %2").arg(reddish).arg(blue)));
 }
 
-// Placements share the dots' presentation: selecting one placement dots
-// that one only (none on the other, nor at the definition's own place), and
-// the dots go again when it is deselected.
-void GuiPhase1::selectionDotsOnOnePlacementOnly() {
+// Component placements share geometry, but only the chosen placement has
+// blue edges. Their face interiors stay free of raw-geometry stippling.
+void GuiPhase1::selectionOutlineOnOnePlacementOnly() {
   Fixture f;
   QVERIFY(f.setUp(1500, 0));
   doc::Modeler& m = f.window.modeler();
@@ -6048,12 +6047,17 @@ void GuiPhase1::selectionDotsOnOnePlacementOnly() {
   };
   const gp_Pnt original(0, -1000, 1000), copied(4000, -1000, 1000);
   f.window.setSelection({copy->front()});
-  QVERIFY2(blueAt(copied) >= 4, qPrintable(QString::number(blueAt(copied))));
-  QCOMPARE(blueAt(original), 0);
-  f.window.setSelection({});
+  const gp_Pnt originalEdge(0, -1000, 2000), copiedEdge(4000, -1000, 2000);
   QCOMPARE(blueAt(copied), 0);
+  QCOMPARE(blueAt(original), 0);
+  QVERIFY2(blueAt(copiedEdge) >= 4, qPrintable(QString::number(blueAt(copiedEdge))));
+  QCOMPARE(blueAt(originalEdge), 0);
+  f.window.setSelection({});
+  QCOMPARE(blueAt(copiedEdge), 0);
   f.window.setSelection({*instance});
-  QVERIFY(blueAt(original) >= 4);
+  QVERIFY(blueAt(originalEdge) >= 4);
+  QCOMPARE(blueAt(copiedEdge), 0);
+  QCOMPARE(blueAt(original), 0);
   QCOMPARE(blueAt(copied), 0);
 }
 
