@@ -1424,6 +1424,10 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
   // their colours under blue dots, with blue edges (SketchUp).
   const bool hasFaces = o->kind() != doc::ObjectKind::Curve && o->kind() != doc::ObjectKind::Annotation &&
                         o->kind() != doc::ObjectKind::Guide;
+  // Selecting a group/component outlines its contents as one object. Face
+  // stippling belongs only to raw geometry selected in the editing context.
+  const bool faceSelection = selectedSet_.count(id) && hasFaces && !locked
+      && o->kind() != doc::ObjectKind::Instance;
   if (selected && !hasFaces) color = locked ? kLockedColor : kSelectedColor;
   // Restyling changes the aspects of the computed presentation in place
   // (SetColor / SetTransparency / SynchronizeAspects); only per-face
@@ -1435,7 +1439,8 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
   auto faceColors = faceColorsOf(*o);
   const bool colorChanged = !current.IsEqual(color);
   const bool faceColorsChanged = faceColors != entry.faceColors;
-  const bool stateChanged = selected != entry.shownSelected || locked != entry.shownLocked;
+  const bool stateChanged = selected != entry.shownSelected || locked != entry.shownLocked
+      || faceSelection != entry.shownFaceSelection;
   if (created || colorChanged || faceColorsChanged || stateChanged) {
     entry.ais->SetColor(color);
     auto sameFaces = [&] {
@@ -1476,6 +1481,7 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
     }
     entry.faceColors = std::move(faceColors);
     entry.shownSelected = selected;
+    entry.shownFaceSelection = faceSelection;
     entry.shownLocked = locked;
     showBackSide(entry.ais, o->kind());
     // SetColor() also recolours the face boundaries; black, or blue when
@@ -1489,7 +1495,7 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
     // The dots over the faces of a selected object.
     if (!entry.selectionDots.IsNull()) context_->Remove(entry.selectionDots, Standard_False);
     entry.selectionDots.Nullify();
-    if (selected && hasFaces && !locked) {
+    if (faceSelection) {
       const auto proto = entry.proto ? protos_.find(*entry.proto) : protos_.end();
       if (proto != protos_.end()) {
         // Placements of one shape share the dots' presentation.

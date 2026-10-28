@@ -219,6 +219,8 @@ class GuiPhase1 : public QObject {
   void benchSuspiciousShapes();
   void benchPaintAndViews();
   void groupEditFadesTheRest();
+  void groupsAndComponentsSelectWithOutlines();
+  void emptyDoubleClickExitsOnlySelectionContext();
   void componentEditUpdatesPlacementsInSlices();
   void incrementalSyncFollowsGroupsAndUndo();
   void componentPlacementsShareOneDisplay();
@@ -7053,6 +7055,127 @@ void GuiPhase1::toolsPaletteShowsAllAndFloats() {
   QVERIFY(!palette->isFloating());
   QVERIFY(palette->isVisible());
   QCOMPARE(f.window.dockWidgetArea(palette), Qt::LeftDockWidgetArea);
+}
+
+void GuiPhase1::emptyDoubleClickExitsOnlySelectionContext() {
+  for (bool component : {false, true}) {
+    Fixture f;
+    QVERIFY(f.setUp(1000, 1000));
+    auto& m = f.window.modeler();
+    const auto box = f.box(0, 0, 2000, 2000, 1000);
+    auto container = component ? m.makeComponent({box}, "Unit") : m.group({box});
+    QVERIFY(container);
+    f.vp->syncNow();
+    f.vp->setStandardView(Viewport::StandardView::Top);
+    f.window.activateTool(MainWindow::ToolId::Select);
+    const QPoint empty(12, f.vp->height() - 12);
+    QVERIFY(!f.vp->pickElement(empty));
+    doc::CameraState before, after;
+    f.vp->storeCamera(before);
+    const auto sequence = m.document().sequence();
+    doubleClick(f.vp, empty); // outside an editing context: no action or camera jump
+    QVERIFY(f.window.editingGroup().empty());
+    QCOMPARE(m.document().sequence(), sequence);
+    f.vp->storeCamera(after);
+    QVERIFY(before.eye == after.eye && before.target == after.target);
+
+    f.window.enterGroup(*container);
+    const auto editing = f.window.editingGroup();
+    QVERIFY(!editing.empty());
+    // A drawing tool keeps ownership of double-click to finish its line.
+    f.window.activateTool(MainWindow::ToolId::Line);
+    click(f.vp, QPoint(f.vp->width() - 30, 20));
+    doubleClick(f.vp, QPoint(f.vp->width() - 30, 65));
+    QCOMPARE(f.window.editingGroup(), editing);
+    const auto contents = m.document().children(editing).size();
+    QVERIFY(contents >= 2); // original body plus the drawn line
+
+    f.window.activateTool(MainWindow::ToolId::Select);
+    click(f.vp, empty); // a single empty click only clears the selection
+    QCOMPARE(f.window.editingGroup(), editing);
+    send(f.vp, QEvent::MouseButtonDblClick, empty, Qt::LeftButton, Qt::LeftButton, Qt::ControlModifier);
+    send(f.vp, QEvent::MouseButtonRelease, empty, Qt::LeftButton, Qt::NoButton, Qt::ControlModifier);
+    QCOMPARE(f.window.editingGroup(), editing);
+    doubleClick(f.vp, empty);
+    QVERIFY(f.window.editingGroup().empty());
+    QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{*container});
+    if (component) {
+      f.window.enterGroup(*container);
+      QCOMPARE(m.document().children(f.window.editingGroup()).size(), contents); // edits committed on exit
+      f.window.exitGroup();
+    }
+  }
+}
+
+void GuiPhase1::groupsAndComponentsSelectWithOutlines() {
+  for (bool component : {false, true}) {
+    Fixture f;
+    QVERIFY(f.setUp(1000, 1000));
+    auto& m = f.window.modeler();
+    const auto box = f.box(0, 0, 2000, 2000, 1000);
+    f.vp->syncNow();
+    f.vp->setStandardView(Viewport::StandardView::Top);
+    QTemporaryDir output;
+    QVERIFY(output.isValid());
+    const auto shot = [&](const QString& name) {
+      const auto path = output.filePath(name + QStringLiteral(".png"));
+      return f.vp->dumpImage(path) ? QImage(path) : QImage();
+    };
+    const auto bluePixels = [](const QImage& image, QRect area) {
+      int count = 0;
+      area = area.intersected(image.rect());
+      for (int y = area.top(); y <= area.bottom(); ++y)
+        for (int x = area.left(); x <= area.right(); ++x) {
+          const QColor c = image.pixelColor(x, y);
+          count += c.blue() > c.red() + 40 && c.blue() > c.green() + 20;
+        }
+      return count;
+    };
+    const QPoint center = f.vp->toWidget(gp_Pnt(1000, 1000, 1000));
+    const qreal dpr = f.vp->devicePixelRatioF();
+    const QRect interior(QPoint(qRound(center.x()*dpr) - 16, qRound(center.y()*dpr) - 16), QSize(32, 32));
+    // A raw solid selected whole still shows the existing face stippling.
+    f.window.setSelection({box});
+    const auto raw = shot(QStringLiteral("raw"));
+    QVERIFY(!raw.isNull());
+    QVERIFY(bluePixels(raw, interior) > 10);
+
+    auto container = component ? m.makeComponent({box}, "Unit") : m.group({box}, "Inner");
+    QVERIFY(container);
+    if (!component) {
+      container = m.group({*container}, "Outer"); // nested groups must behave the same
+      QVERIFY(container);
+    }
+    f.window.setSelection({});
+    f.vp->syncNow();
+    f.window.activateTool(MainWindow::ToolId::Select);
+    click(f.vp, center);
+    QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{*container});
+    QVERIFY(f.window.elementSelection().empty());
+    const auto outlined = shot(QStringLiteral("container"));
+    QVERIFY(!outlined.isNull());
+    QCOMPARE(bluePixels(outlined, interior), 0);
+    QVERIFY(bluePixels(outlined, outlined.rect()) > 100); // visible blue outline remains
+
+    if (!component) {
+      // Both states select this leaf, but only the direct selection has dots.
+      f.window.setSelection({box});
+      const auto direct = shot(QStringLiteral("direct"));
+      QVERIFY(bluePixels(direct, interior) > 10);
+      f.window.setSelection({*container});
+      QCOMPARE(bluePixels(shot(QStringLiteral("outer-again")), interior), 0);
+      f.window.enterGroup(*container);
+      f.window.enterGroup(m.document().find(box)->parent);
+    } else {
+      f.window.enterGroup(*container);
+    }
+    // Entering the container enables ordinary face selection, as before.
+    click(f.vp, center);
+    QVERIFY(!f.window.elementSelection().empty());
+    const auto face = shot(QStringLiteral("face"));
+    QVERIFY(bluePixels(face, interior) > 10);
+    f.window.exitGroup();
+  }
 }
 
 void GuiPhase1::paletteResizeKeepsBackdropAcrossViewport() {

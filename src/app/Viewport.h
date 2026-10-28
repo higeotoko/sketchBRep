@@ -272,6 +272,7 @@ class Viewport : public QWidget {
     // and whether the object is shown selected (no face colours then).
     std::vector<std::pair<int, std::array<double, 4>>> faceColors;  // RGB + opacity
     bool shownSelected = false;
+    bool shownFaceSelection = false;  // raw geometry selected, rather than its enclosing group
     bool shownLocked = false;
     bool locked = false;  // not pickable
     TopoDS_Shape canonicalWorld;

@@ -450,7 +450,15 @@ void SelectTool::boxSelect(const QRect& rect, bool crossing, Mode mode) {
 
 bool SelectTool::mouseDoubleClick(const ToolEvent& e) {
   const auto picked = host_.viewport().pickElement(e.pos);
-  if (!picked) return false;  // empty space: nothing
+  if (!picked) {
+    // Only Select owns this gesture. Drawing tools keep their own finish
+    // actions, and modifier-assisted selection must not end group editing.
+    if (host_.editingGroup().empty() || e.modifiers != Qt::NoModifier) return false;
+    cancel();
+    sinceDoubleClick_.invalidate();
+    host_.exitGroup();  // same component commit / edit cleanup as Escape
+    return true;
+  }
   const doc::Document& document = host_.modeler().document();
   const doc::ObjectId addressed = target(picked->objectId);
   if (addressed.empty()) return false;

@@ -1453,7 +1453,7 @@ void MainWindow::enterGroup(const doc::ObjectId& id) {
   if (node && !node->editingDefinition.empty()) {
     // Make the scope visible: every instance changes (spec 07 §6.2).
     const int count = modeler_.instanceCount(node->editingDefinition) + 1;
-    QString text = tr("コンポーネント編集中: %1（終了すると %2 個すべてに反映 / Esc で終了）")
+    QString text = tr("コンポーネント編集中: %1（終了すると %2 個すべてに反映 / Esc・空白ダブルクリックで終了）")
                        .arg(QString::fromStdString(g->name))
                        .arg(count);
     // The definition is edited as stored; this placement's own settings come back afterwards.
@@ -1463,9 +1463,10 @@ void MainWindow::enterGroup(const doc::ObjectId& id) {
     contextLabel_->setText(text);
     contextLabel_->setStyleSheet(QStringLiteral("QLabel { background: #ffd9b3; padding: 0 6px; }"));
   } else {
-    contextLabel_->setText(tr("グループ編集中: %1（Esc で終了）").arg(QString::fromStdString(g->name)));
+    contextLabel_->setText(tr("グループ編集中: %1（Esc・空白ダブルクリックで終了）").arg(QString::fromStdString(g->name)));
     contextLabel_->setStyleSheet(QStringLiteral("QLabel { background: #fff3c4; padding: 0 6px; }"));
   }
+  contextLabel_->setToolTip(tr("選択ツールで空白をダブルクリック、または Esc で編集終了。作図中のダブルクリックは作図の確定です。"));
   contextLabel_->show();
   viewport_->setEditContext(groupId);
   setSelection({});
