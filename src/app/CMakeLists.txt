@@ -12,7 +12,7 @@ add_library(sbr_ui STATIC
   Tools.cpp Tools.h
   Viewport.cpp Viewport.h
   WheelZoom.cpp WheelZoom.h
-  Cursors.cpp Cursors.h
+  Cursors.cpp Cursors.h Branding.h
   ToolPalette.cpp ToolPalette.h
   PanelDock.cpp PanelDock.h
   AiBridge.cpp AiBridge.h
@@ -32,7 +32,7 @@ set(SBR_APP_RESOURCES branding.qrc)
 # executable: added materials embed them in the document from there.
 list(APPEND SBR_APP_RESOURCES ${PROJECT_SOURCE_DIR}/assets/materials/builtin/integration/materials.qrc)
 if(WIN32)
-  set(SBR_ICON_FILE "${PROJECT_SOURCE_DIR}/assets/branding/05-windows/sketchbrep.ico")
+  set(SBR_ICON_FILE "${PROJECT_SOURCE_DIR}/assets/branding/05-windows/sketchbrep-compact.ico")
   file(TO_NATIVE_PATH "${SBR_ICON_FILE}" SBR_ICON_FILE)
   string(REPLACE "\\" "\\\\" SBR_ICON_FILE "${SBR_ICON_FILE}")
   configure_file(sketchbrep.rc.in ${CMAKE_CURRENT_BINARY_DIR}/sketchbrep.rc @ONLY)

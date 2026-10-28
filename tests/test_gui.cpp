@@ -6749,22 +6749,41 @@ void GuiPhase1::brandingResourcesLoad() {
   const QPixmap wordmark(QStringLiteral(":/branding/wordmark.png"));
   QVERIFY(!wordmark.isNull());
   QVERIFY(wordmark.hasAlphaChannel());
-  QVERIFY(QFile::exists(QStringLiteral(SBR_SOURCE_DIR "/assets/branding/05-windows/sketchbrep.ico")));
-  // The About box shows the wordmark (and closes again).
+  QVERIFY(QFile::exists(QStringLiteral(SBR_SOURCE_DIR "/assets/branding/05-windows/sketchbrep-compact.ico")));
+  // The regular dialog paints its whole client area and uses theme-aware
+  // text rather than a dark-on-transparent raster wordmark.
   Fixture f;
   QVERIFY(f.setUp(0, 0));
-  bool shown = false;
-  QTimer::singleShot(300, [&] {
-    auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
-    if (!box) return;
-    shown = box->iconPixmap().width() > 100;
-    if (const QString dir = qEnvironmentVariable("SBR_SHOT_DIR"); !dir.isEmpty()) {
-      box->grab().save(dir + QStringLiteral("/about.png"));
-    }
-    box->accept();
-  });
-  f.window.showAbout();
-  QVERIFY(shown);
+  const QPalette original = QApplication::palette();
+  for (bool dark : {false, true}) {
+    QPalette palette = original;
+    palette.setColor(QPalette::Window, dark ? QColor("#202124") : QColor("#f3f4f6"));
+    palette.setColor(QPalette::WindowText, dark ? QColor("#eef0f3") : QColor("#22262e"));
+    palette.setColor(QPalette::Button, palette.color(QPalette::Window));
+    palette.setColor(QPalette::ButtonText, palette.color(QPalette::WindowText));
+    palette.setColor(QPalette::Base, palette.color(QPalette::Window));
+    palette.setColor(QPalette::Text, palette.color(QPalette::WindowText));
+    QApplication::setPalette(palette);
+    bool shown = false, background = false, readable = false;
+    QTimer::singleShot(300, [&] {
+      auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+      if (!dialog || dialog->objectName() != QStringLiteral("aboutDialog")) return;
+      auto* name = dialog->findChild<QLabel*>(QStringLiteral("aboutWordmark"));
+      auto* symbol = dialog->findChild<QLabel*>(QStringLiteral("aboutSymbol"));
+      shown = name && symbol && name->text().contains(QStringLiteral("Sketch")) && dialog->autoFillBackground();
+      readable = name && name->text().contains(palette.color(QPalette::WindowText).name());
+      const auto image = dialog->grab().toImage();
+      background = image.pixelColor(10, image.height() - 2).rgb() == palette.color(QPalette::Window).rgb();
+      if (const QString dir = qEnvironmentVariable("SBR_SHOT_DIR"); !dir.isEmpty())
+        dialog->grab().save(dir + (dark ? QStringLiteral("/about-dark.png") : QStringLiteral("/about-light.png")));
+      dialog->accept();
+    });
+    f.window.showAbout();
+    QApplication::setPalette(original);
+    QVERIFY(shown);
+    QVERIFY(readable);
+    QVERIFY(background);
+  }
 }
 
 QTEST_MAIN(GuiPhase1)

@@ -10,6 +10,7 @@
 #include <QTemporaryDir>
 #include "ToolPalette.h"
 #include "Cursors.h"
+#include "Branding.h"
 
 using namespace sbr::app;
 
@@ -39,6 +40,23 @@ void titleMouse(QWidget* title, QEvent::Type type, QPoint global,
 class ToolPaletteTests : public QObject {
   Q_OBJECT
  private slots:
+  void applicationIconUsesItsSmallCanvas() {
+    const auto icon = applicationIcon();
+    const auto available = icon.availableSizes();
+    for (int size : {16, 20, 24, 32, 40, 48, 64, 96, 128, 256}) {
+      QVERIFY(available.contains(QSize(size, size)));
+      const auto image = icon.pixmap(QSize(size, size)).toImage();
+      QVERIFY(!image.isNull());
+      QRect content;
+      for (int y = 0; y < image.height(); ++y)
+        for (int x = 0; x < image.width(); ++x)
+          if (image.pixelColor(x, y).alpha() > 8) content = content.united(QRect(x, y, 1, 1));
+      QVERIFY(content.width() >= size * .85);
+      QVERIFY(content.height() >= size * .85);
+      QCOMPARE(image.pixelColor(0, 0).alpha(), 0);
+    }
+  }
+
   void edgeTargetsAreNarrowAndStable() {
     const QRect bounds(100, 100, 800, 600);
     QCOMPARE(panelDockTarget(bounds, {500, 117}, Qt::AllDockWidgetAreas), Qt::NoDockWidgetArea);

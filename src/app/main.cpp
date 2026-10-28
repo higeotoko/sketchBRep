@@ -9,6 +9,7 @@
 #include <Standard_Failure.hxx>
 
 #include "MainWindow.h"
+#include "Branding.h"
 
 namespace {
 
@@ -64,10 +65,7 @@ int main(int argc, char** argv) {
   QApplication::setApplicationVersion(QStringLiteral(SBR_VERSION));
   // Title bar, taskbar and Alt+Tab (assets/branding; the .exe icon itself
   // comes from the Windows resource).
-  QIcon icon;
-  icon.addFile(QStringLiteral(":/branding/app-icon-256.png"));
-  icon.addFile(QStringLiteral(":/branding/app-icon-1024.png"));
-  QApplication::setWindowIcon(icon);
+  QApplication::setWindowIcon(sbr::app::applicationIcon());
 
   sbr::app::MainWindow window;
   app.afterFailure = [&window] {

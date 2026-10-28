@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 #include "DwgConverter.h"
 #include "ToolPalette.h"
+#include "Branding.h"
 #include <QTemporaryDir>
 
 #include <algorithm>
@@ -933,19 +934,52 @@ void MainWindow::buildMenus() {
 }
 
 void MainWindow::showAbout() {
-  QMessageBox box(this);
-  box.setWindowTitle(tr("SketchBRep について"));
-  // The wordmark from assets/branding (a resource of the application).
-  const QPixmap wordmark(QStringLiteral(":/branding/wordmark.png"));
-  if (!wordmark.isNull()) {
-    box.setIconPixmap(wordmark.scaledToWidth(360, Qt::SmoothTransformation));
-  }
-  box.setText(tr("<b>SketchBRep</b> %1").arg(QApplication::applicationVersion()));
-  box.setInformativeText(tr("建築設計向けハイブリッド 3D モデラー。<br>"
-                            "操作は SketchUp のように気軽に、形状は B-rep（Open CASCADE %1）で正確に。<br><br>"
-                            "Qt %2").arg(QStringLiteral(OCC_VERSION_COMPLETE), QString::fromLatin1(qVersion())));
-  box.setStandardButtons(QMessageBox::Ok);
-  box.exec();
+  // A regular dialog avoids QMessageBox's platform-specific icon/footer
+  // layout. Text stays native and crisp at every DPI and on either theme.
+  QDialog dialog(this);
+  dialog.setObjectName(QStringLiteral("aboutDialog"));
+  dialog.setWindowTitle(tr("SketchBRep について"));
+  dialog.setWindowIcon(applicationIcon());
+  dialog.setAutoFillBackground(true);
+  auto* layout = new QVBoxLayout(&dialog);
+  layout->setContentsMargins(24, 24, 24, 20);
+  layout->setSpacing(18);
+  auto* brand = new QHBoxLayout;
+  brand->setSpacing(16);
+  auto* symbol = new QLabel(&dialog);
+  symbol->setObjectName(QStringLiteral("aboutSymbol"));
+  symbol->setFixedSize(80, 80);
+  symbol->setPixmap(applicationIcon().pixmap(QSize(80, 80), dialog.devicePixelRatioF()));
+  brand->addWidget(symbol);
+  auto* identity = new QVBoxLayout;
+  identity->setSpacing(3);
+  const QColor ink = dialog.palette().color(QPalette::WindowText);
+  const QColor accent(dialog.palette().color(QPalette::Window).lightness() < 128 ? "#65add3" : "#28718e");
+  auto* wordmark = new QLabel(QStringLiteral("<span style='color:%1'>Sketch</span><span style='color:%2'>BRep</span>")
+                                .arg(ink.name(), accent.name()), &dialog);
+  wordmark->setObjectName(QStringLiteral("aboutWordmark"));
+  QFont font = wordmark->font(); font.setPointSizeF(26); font.setWeight(QFont::DemiBold);
+  wordmark->setFont(font);
+  identity->addWidget(wordmark);
+  auto* version = new QLabel(tr("バージョン %1").arg(QApplication::applicationVersion()), &dialog);
+  version->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  identity->addWidget(version);
+  brand->addLayout(identity);
+  brand->addStretch();
+  layout->addLayout(brand);
+  auto* description = new QLabel(tr("建築設計向けハイブリッド 3D モデラー。\n"
+                                    "SketchUpのように気軽に操作し、B-repで正確な形状を扱います。"), &dialog);
+  description->setWordWrap(true);
+  layout->addWidget(description);
+  auto* libraries = new QLabel(tr("Open CASCADE %1  /  Qt %2")
+                                  .arg(QStringLiteral(OCC_VERSION_COMPLETE), QString::fromLatin1(qVersion())), &dialog);
+  libraries->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  layout->addWidget(libraries);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok, &dialog);
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  layout->addWidget(buttons);
+  dialog.setMinimumWidth(480);
+  dialog.exec();
 }
 
 void MainWindow::showChatGptConnection() {
