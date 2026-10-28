@@ -361,6 +361,7 @@ void Viewport::paintEvent(QPaintEvent*) { renderNow(); }
 void Viewport::resizeEvent(QResizeEvent*) {
   if (!view_.IsNull()) view_->MustBeResized();
   hideSnapTip();  // placed for the old size; back on the next move
+  redraw();
 }
 
 QPoint Viewport::devicePos(const QPoint& logical) const {
@@ -2289,6 +2290,7 @@ void Viewport::renderNow() {
 }
 
 void Viewport::updateSkyAndGround() {
+  const int columns = std::max(glSize_.width(), 2);
   const int rows = std::max(glSize_.height(), 2);
   const Handle(Graphic3d_Camera)& camera = view_->Camera();
   // The horizon is where horizontal planes vanish: a point far away in the
@@ -2306,9 +2308,12 @@ void Viewport::updateSkyAndGround() {
   }
   const int horizon = static_cast<int>(std::lround(std::clamp(fromTop, -1.0, 2.0) * rows));
   const bool under = camera->Eye().Z() < 0;
-  if (horizon == horizonRow_ && rows == backgroundRows_ && under == underGround_ && !backdrop_.IsNull()) return;
+  // Dock resizing can change only the width. The screen-space backdrop
+  // must cover that new width even when its horizon and height are unchanged.
+  if (columns == backdropWidth_ && horizon == horizonRow_ && rows == backgroundRows_
+      && under == underGround_ && !backdrop_.IsNull()) return;
   horizonRow_ = horizon;
-  backdropWidth_ = std::max(glSize_.width(), 2);
+  backdropWidth_ = columns;
   backgroundRows_ = rows;
   underGround_ = under;
   if (!backdrop_.IsNull()) context_->Remove(backdrop_, Standard_False);

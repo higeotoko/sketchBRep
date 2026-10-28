@@ -249,6 +249,7 @@ class GuiPhase1 : public QObject {
   void sectionPlaneCutsView();
   void sectionToolboxControlsAreIndependentAndCached();
   void toolsPaletteShowsAllAndFloats();
+  void paletteResizeKeepsBackdropAcrossViewport();
   void sectionToolAndTagsPanel();
   void pushPullCylinderSide();
   void lineAcrossRectangleSplitsProfile();
@@ -7052,6 +7053,47 @@ void GuiPhase1::toolsPaletteShowsAllAndFloats() {
   QVERIFY(!palette->isFloating());
   QVERIFY(palette->isVisible());
   QCOMPARE(f.window.dockWidgetArea(palette), Qt::LeftDockWidgetArea);
+}
+
+void GuiPhase1::paletteResizeKeepsBackdropAcrossViewport() {
+  Fixture f;
+  QVERIFY(f.setUp());
+  f.vp->setStandardView(Viewport::StandardView::Front);
+  auto* palette = f.window.findChild<QDockWidget*>(QStringLiteral("toolsPalette"));
+  QVERIFY(palette);
+  QTemporaryDir output;
+  QVERIFY(output.isValid());
+  for (bool perspective : {false, true}) {
+    f.vp->setPerspective(perspective);
+    for (int width : {350, 90, 260, 90}) {
+      f.window.resizeDocks({palette}, {width}, Qt::Horizontal);
+      QTest::qWait(30);
+      const QString path = output.filePath(QStringLiteral("resized.png"));
+      QVERIFY(f.vp->dumpImage(path));
+      const QImage image(path);
+      QVERIFY(!image.isNull());
+      // Empty sky and ground must cover the newly exposed right edge too.
+      // Use a short vertical median to ignore a thin perspective axis line;
+      // the white band itself spans the entire height of the view.
+      const auto backdropColor = [&image](int x, int y) {
+        std::vector<int> red, green, blue;
+        for (int dy = -6; dy <= 6; dy += 2) {
+          const QColor c = image.pixelColor(x, y + dy);
+          red.push_back(c.red()); green.push_back(c.green()); blue.push_back(c.blue());
+        }
+        std::sort(red.begin(), red.end()); std::sort(green.begin(), green.end()); std::sort(blue.begin(), blue.end());
+        return QColor(red[3], green[3], blue[3]);
+      };
+      for (int y : {image.height() / 4, 3 * image.height() / 4}) {
+        const QColor left = backdropColor(40, y);
+        const QColor right = backdropColor(image.width() - 40, y);
+        const int difference = std::abs(left.red() - right.red())
+            + std::abs(left.green() - right.green()) + std::abs(left.blue() - right.blue());
+        QVERIFY2(difference < 10, qPrintable(QStringLiteral("palette width=%1 perspective=%2 left=%3 right=%4")
+            .arg(width).arg(perspective).arg(left.name()).arg(right.name())));
+      }
+    }
+  }
 }
 
 void GuiPhase1::sectionToolboxControlsAreIndependentAndCached() {
