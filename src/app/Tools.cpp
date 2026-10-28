@@ -2395,7 +2395,7 @@ void RectangleTool::applyMeasurement(const QString& text) {
 // --- Rotated rectangle ---------------------------------------------------------------
 
 QString RotatedRectangleTool::name() const { return QObject::tr("回転矩形"); }
-QCursor RotatedRectangleTool::cursor() const { return toolCursor(CursorKind::Rectangle); }
+QCursor RotatedRectangleTool::cursor() const { return toolCursor(CursorKind::RotatedRectangle); }
 
 void RotatedRectangleTool::activate() {
   resetTracking();

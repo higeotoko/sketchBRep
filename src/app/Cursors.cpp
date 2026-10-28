@@ -1,412 +1,199 @@
 #include "Cursors.h"
 
+#include <QGuiApplication>
+#include <QIconEngine>
 #include <QPainter>
 #include <QPainterPath>
-#include <QPixmap>
+#include <QPalette>
+#include <QScreen>
+#include <cmath>
+#include <algorithm>
+#include <QtMath>
 
 namespace sbr::app {
 namespace {
+constexpr qreal pi = 3.14159265358979323846;
 
-constexpr int kSize = 32;
-
-// Strokes `path` twice: a wide white halo, then the black line.
-void halo(QPainter& p, const QPainterPath& path, bool fill = false) {
-  p.setBrush(Qt::NoBrush);
-  p.setPen(QPen(Qt::white, 4.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-  p.drawPath(path);
-  p.setPen(QPen(Qt::black, 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-  if (fill) p.setBrush(Qt::black);
-  p.drawPath(path);
+void arrow(QPainterPath& path, QPointF tip, QPointF from, qreal size = 3) {
+  QLineF line(tip, from); line.setLength(size);
+  QLineF left(line), right(line);
+  left.setAngle(line.angle() + 35); right.setAngle(line.angle() - 35);
+  path.moveTo(left.p2()); path.lineTo(tip); path.lineTo(right.p2());
 }
 
-QPainterPath arrowHead(QPointF tip, QPointF from, double size = 4.5) {
-  const QLineF axis(tip, from);
-  QLineF a = axis;
-  a.setLength(size);
-  QLineF left = a, right = a;
-  left.setAngle(a.angle() + 30);
-  right.setAngle(a.angle() - 30);
-  QPainterPath path;
-  path.moveTo(left.p2());
-  path.lineTo(tip);
-  path.lineTo(right.p2());
-  return path;
-}
-
-// Pencil pointing to the lower-left corner (hotspot at its tip).
-QPainterPath pencil() {
-  QPainterPath path;
-  path.moveTo(2, 30);
-  path.lineTo(5, 22);
-  path.lineTo(19, 8);
-  path.lineTo(24, 13);
-  path.lineTo(10, 27);
-  path.closeSubpath();
-  path.moveTo(5, 22);
-  path.lineTo(10, 27);
-  path.moveTo(16, 11);
-  path.lineTo(21, 16);
-  return path;
-}
-
-QPixmap draw(CursorKind kind, QPoint& hotspot) {
-  QPixmap pixmap(kSize, kSize);
-  pixmap.fill(Qt::transparent);
-  QPainter p(&pixmap);
-  p.setRenderHint(QPainter::Antialiasing);
-  hotspot = QPoint(kSize / 2, kSize / 2);
-
+// Toolbar symbols use one stroke system in a 24-unit canvas. They do not
+// carry a cursor's pointer, hotspot or white halo.
+QPainterPath symbol(CursorKind kind) {
+  QPainterPath p;
   switch (kind) {
-    case CursorKind::Select: {
-      QPainterPath arrow;
-      arrow.moveTo(6, 3);
-      arrow.lineTo(6, 26);
-      arrow.lineTo(12, 20);
-      arrow.lineTo(16, 29);
-      arrow.lineTo(20, 27);
-      arrow.lineTo(16, 18);
-      arrow.lineTo(24, 18);
-      arrow.closeSubpath();
-      p.setBrush(Qt::white);
-      halo(p, arrow);
-      hotspot = QPoint(6, 3);
-      break;
-    }
-    case CursorKind::Eraser: {
-      // Tilted eraser block, hotspot at its lower-left corner.
-      QPainterPath block;
-      block.moveTo(4, 26);
-      block.lineTo(18, 8);
-      block.lineTo(28, 16);
-      block.lineTo(14, 30);
-      block.closeSubpath();
-      halo(p, block);
-      QPainterPath band;
-      band.moveTo(10, 18);
-      band.lineTo(20, 26);
-      halo(p, band);
-      hotspot = QPoint(6, 27);
-      break;
-    }
-    case CursorKind::Paint: {
-      // Paint bucket tipping to the lower left (hotspot at the drip).
-      QPainterPath bucket;
-      bucket.moveTo(10, 10);
-      bucket.lineTo(22, 4);
-      bucket.lineTo(29, 17);
-      bucket.lineTo(17, 23);
-      bucket.closeSubpath();
-      halo(p, bucket);
-      QPainterPath drip;
-      drip.moveTo(10, 10);
-      drip.cubicTo(4, 14, 3, 22, 4, 28);
-      halo(p, drip);
-      hotspot = QPoint(4, 28);
-      break;
-    }
-    case CursorKind::Circle: {
-      halo(p, pencil());
-      QPainterPath circle;
-      circle.addEllipse(QPointF(24, 24), 6, 6);
-      halo(p, circle);
-      hotspot = QPoint(2, 30);
-      break;
-    }
-    case CursorKind::Dimension: {
-      halo(p, pencil());
-      QPainterPath dim;
-      dim.moveTo(14, 26);
-      dim.lineTo(30, 26);
-      dim.moveTo(14, 21);
-      dim.lineTo(14, 31);
-      dim.moveTo(30, 21);
-      dim.lineTo(30, 31);
-      halo(p, dim);
-      hotspot = QPoint(2, 30);
-      break;
-    }
-    case CursorKind::Text: {
-      halo(p, pencil());
-      QPainterPath t;
-      t.moveTo(15, 16);
-      t.lineTo(29, 16);
-      t.moveTo(22, 16);
-      t.lineTo(22, 30);
-      halo(p, t);
-      hotspot = QPoint(2, 30);
-      break;
-    }
-    case CursorKind::FollowMe: {
-      // A small profile riding along a bent path.
-      QPainterPath path;
-      path.moveTo(4, 28);
-      path.lineTo(20, 28);
-      path.lineTo(28, 12);
-      halo(p, path);
-      QPainterPath profile;
-      profile.addRect(QRectF(15, 18, 7, 7));
-      halo(p, profile);
-      hotspot = QPoint(4, 28);
-      break;
-    }
-    case CursorKind::Section: {
-      // A plane seen at an angle with its normal arrow.
-      QPainterPath plane;
-      plane.moveTo(6, 14);
-      plane.lineTo(20, 8);
-      plane.lineTo(20, 26);
-      plane.lineTo(6, 30);
-      plane.closeSubpath();
-      halo(p, plane);
-      QPainterPath arrow;
-      arrow.moveTo(13, 19);
-      arrow.lineTo(29, 19);
-      arrow.moveTo(25, 15);
-      arrow.lineTo(29, 19);
-      arrow.lineTo(25, 23);
-      halo(p, arrow);
-      hotspot = QPoint(13, 19);
-      break;
-    }
-    case CursorKind::Arc: {
-      halo(p, pencil());
-      QPainterPath arc;
-      arc.moveTo(16, 28);
-      arc.quadTo(23, 12, 30, 28);
-      halo(p, arc);
-      hotspot = QPoint(2, 30);
-      break;
-    }
-    case CursorKind::Measure: {
-      // Tape measure: case with a tape ending at the hotspot.
-      QPainterPath body;
-      body.addRoundedRect(QRectF(12, 4, 16, 16), 4, 4);
-      halo(p, body);
-      QPainterPath tape;
-      tape.moveTo(14, 20);
-      tape.lineTo(3, 29);
-      halo(p, tape);
-      QPainterPath dot;
-      dot.addEllipse(QPointF(20, 12), 2.5, 2.5);
-      halo(p, dot);
-      hotspot = QPoint(3, 29);
-      break;
-    }
-    case CursorKind::Polygon: {
-      // Pencil with a small hexagon.
-      halo(p, pencil());
-      QPainterPath hex;
-      for (int k = 0; k < 6; ++k) {
-        const double a = M_PI / 3 * k;
-        const QPointF c(23 + 7 * std::cos(a), 22 + 7 * std::sin(a));
-        if (k == 0) hex.moveTo(c); else hex.lineTo(c);
-      }
-      hex.closeSubpath();
-      halo(p, hex);
-      hotspot = QPoint(2, 30);
-      break;
-    }
-    case CursorKind::Wall: {
-      // Pencil with a wall block (two courses of bricks).
-      halo(p, pencil());
-      QPainterPath wall;
-      wall.addRect(QRectF(16, 14, 14, 12));
-      wall.moveTo(16, 20);
-      wall.lineTo(30, 20);
-      wall.moveTo(23, 14);
-      wall.lineTo(23, 20);
-      wall.moveTo(19, 20);
-      wall.lineTo(19, 26);
-      wall.moveTo(27, 20);
-      wall.lineTo(27, 26);
-      halo(p, wall);
-      hotspot = QPoint(2, 30);
-      break;
-    }
-    case CursorKind::Slab: {
-      // Pencil with a slab seen at an angle.
-      halo(p, pencil());
-      QPainterPath slab;
-      slab.moveTo(14, 18);
-      slab.lineTo(22, 13);
-      slab.lineTo(31, 17);
-      slab.lineTo(23, 22);
-      slab.closeSubpath();
-      slab.moveTo(14, 18);
-      slab.lineTo(14, 21);
-      slab.lineTo(23, 25);
-      slab.lineTo(31, 20);
-      slab.lineTo(31, 17);
-      slab.moveTo(23, 22);
-      slab.lineTo(23, 25);
-      halo(p, slab);
-      hotspot = QPoint(2, 30);
-      break;
-    }
-    case CursorKind::Opening: {
-      // Crosshair with a window (frame and mullion) to its lower right.
-      QPainterPath cross;
-      cross.moveTo(8, 1);
-      cross.lineTo(8, 15);
-      cross.moveTo(1, 8);
-      cross.lineTo(15, 8);
-      halo(p, cross);
-      QPainterPath window;
-      window.addRect(QRectF(15, 13, 15, 17));
-      window.moveTo(22.5, 13);
-      window.lineTo(22.5, 30);
-      window.moveTo(15, 21);
-      window.lineTo(30, 21);
-      halo(p, window);
-      hotspot = QPoint(8, 8);
-      break;
-    }
-    case CursorKind::Scale: {
-      // Small and large squares sharing a corner, with a diagonal arrow.
-      QPainterPath small;
-      small.addRect(QRectF(3, 19, 10, 10));
-      halo(p, small);
-      QPainterPath large;
-      large.addRect(QRectF(3, 7, 22, 22));
-      halo(p, large);
-      QPainterPath arrow;
-      arrow.moveTo(13, 19);
-      arrow.lineTo(28, 4);
-      arrow.moveTo(21, 4);
-      arrow.lineTo(28, 4);
-      arrow.lineTo(28, 11);
-      halo(p, arrow);
-      hotspot = QPoint(3, 29);
-      break;
-    }
-    case CursorKind::Protractor: {
-      // Half disc on its base line, with an angled ray from the centre.
-      QPainterPath arc;
-      arc.moveTo(4, 26);
-      arc.arcTo(QRectF(4, 8, 24, 36), 180, -180);
-      arc.closeSubpath();
-      halo(p, arc);
-      QPainterPath ray;
-      ray.moveTo(16, 26);
-      ray.lineTo(25, 13);
-      halo(p, ray);
-      hotspot = QPoint(16, 26);
-      break;
-    }
-    case CursorKind::Revolve: {
-      // Profile rectangle and an arc around a dashed axis.
-      QPainterPath axis;
-      axis.moveTo(6, 2);
-      axis.lineTo(6, 30);
-      p.setPen(QPen(Qt::black, 1.2, Qt::DashLine));
-      p.drawPath(axis);
-      QPainterPath profile;
-      profile.addRect(QRectF(10, 8, 7, 16));
-      halo(p, profile);
-      QPainterPath arc;
-      arc.arcMoveTo(QRectF(-10, 4, 40, 24), 20);
-      arc.arcTo(QRectF(-10, 4, 40, 24), 20, -110);
-      halo(p, arc);
-      const QPointF end = arc.currentPosition();
-      halo(p, arrowHead(end, QPointF(end.x() + 5, end.y() - 3), 5));
-      hotspot = QPoint(4, 4);
-      break;
-    }
+    case CursorKind::Select:
+      p.moveTo(5, 3); p.lineTo(5, 20); p.lineTo(10, 15); p.lineTo(14, 22);
+      p.lineTo(17, 20); p.lineTo(13, 13); p.lineTo(21, 13); p.closeSubpath(); break;
     case CursorKind::Pencil:
-      halo(p, pencil());
-      hotspot = QPoint(2, 30);
-      break;
-    case CursorKind::Rectangle: {
-      halo(p, pencil());
-      QPainterPath rect;
-      rect.addRect(QRectF(20, 22, 10, 7));
-      halo(p, rect);
-      hotspot = QPoint(2, 30);
-      break;
-    }
-    case CursorKind::Curve: {
-      halo(p, pencil());
-      QPainterPath s;
-      s.moveTo(18, 30);
-      s.cubicTo(22, 20, 26, 32, 30, 22);
-      halo(p, s);
-      hotspot = QPoint(2, 30);
-      break;
-    }
-    case CursorKind::PushPull: {
-      // A face (parallelogram) with an arrow pulled out of it.
-      QPainterPath face;
-      face.moveTo(4, 28);
-      face.lineTo(20, 28);
-      face.lineTo(28, 21);
-      face.lineTo(12, 21);
-      face.closeSubpath();
-      halo(p, face);
-      QPainterPath shaft;
-      shaft.moveTo(16, 24);
-      shaft.lineTo(16, 4);
-      halo(p, shaft);
-      halo(p, arrowHead(QPointF(16, 3), QPointF(16, 12), 6));
-      hotspot = QPoint(16, 24);
-      break;
-    }
-    case CursorKind::Move: {
-      QPainterPath cross;
-      cross.moveTo(16, 3);
-      cross.lineTo(16, 29);
-      cross.moveTo(3, 16);
-      cross.lineTo(29, 16);
-      halo(p, cross);
-      halo(p, arrowHead(QPointF(16, 2), QPointF(16, 10)));
-      halo(p, arrowHead(QPointF(16, 30), QPointF(16, 22)));
-      halo(p, arrowHead(QPointF(2, 16), QPointF(10, 16)));
-      halo(p, arrowHead(QPointF(30, 16), QPointF(22, 16)));
-      break;
-    }
+      p.moveTo(5, 19); p.lineTo(19, 5); p.addEllipse(QPointF(5, 19), 1.5, 1.5);
+      p.addEllipse(QPointF(19, 5), 1.5, 1.5); break;
+    case CursorKind::Rectangle: p.addRect(QRectF(4, 5, 16, 14)); break;
+    case CursorKind::RotatedRectangle:
+      p.moveTo(3, 10); p.lineTo(15, 4); p.lineTo(21, 15); p.lineTo(9, 21); p.closeSubpath(); break;
+    case CursorKind::Circle: p.addEllipse(QPointF(12, 12), 8, 8); break;
+    case CursorKind::Arc: p.moveTo(4, 19); p.quadTo(12, -7, 20, 19); break;
+    case CursorKind::Curve:
+      p.moveTo(3, 19); p.cubicTo(7, -4, 16, 28, 21, 5); break;
+    case CursorKind::Polygon:
+      for (int k = 0; k < 6; ++k) {
+        QPointF v(12 + 9 * std::cos(k * pi / 3), 12 + 9 * std::sin(k * pi / 3));
+        if (!k) p.moveTo(v); else p.lineTo(v);
+      }
+      p.closeSubpath(); break;
+    case CursorKind::PushPull:
+      p.moveTo(3, 17); p.lineTo(12, 13); p.lineTo(21, 17); p.lineTo(12, 21); p.closeSubpath();
+      p.moveTo(12, 17); p.lineTo(12, 3); arrow(p, {12, 3}, {12, 11}); break;
+    case CursorKind::Move:
+      p.moveTo(12, 3); p.lineTo(12, 21); p.moveTo(3, 12); p.lineTo(21, 12);
+      arrow(p, {12, 3}, {12, 10}); arrow(p, {12, 21}, {12, 14});
+      arrow(p, {3, 12}, {10, 12}); arrow(p, {21, 12}, {14, 12}); break;
     case CursorKind::Rotate: {
-      // Protractor-like circular arrow around the centre (hotspot).
-      QPainterPath arc;
-      arc.arcMoveTo(QRectF(5, 5, 22, 22), 120);
-      arc.arcTo(QRectF(5, 5, 22, 22), 120, 270);
-      halo(p, arc);
-      const QPointF end = arc.currentPosition();
-      halo(p, arrowHead(end, QPointF(end.x() - 6, end.y() - 4), 5));
-      QPainterPath centre;
-      centre.addEllipse(QPointF(16, 16), 1.5, 1.5);
-      halo(p, centre, true);
-      break;
+      p.arcMoveTo(QRectF(4, 4, 16, 16), 110); p.arcTo(QRectF(4, 4, 16, 16), 110, 285);
+      const auto end = p.currentPosition(), from = p.pointAtPercent(.92); arrow(p, end, from); break;
     }
-    case CursorKind::Offset: {
-      QPainterPath outer, inner;
-      outer.addRect(QRectF(3, 6, 22, 22));
-      inner.addRect(QRectF(9, 12, 10, 10));
-      halo(p, outer);
-      halo(p, inner);
-      QPainterPath arrow;
-      arrow.moveTo(26, 4);
-      arrow.lineTo(20, 10);
-      halo(p, arrow);
-      halo(p, arrowHead(QPointF(19, 11), QPointF(26, 4), 4));
-      hotspot = QPoint(3, 28);
-      break;
-    }
+    case CursorKind::Scale:
+      p.addRect(QRectF(4, 12, 8, 8)); p.moveTo(9, 15); p.lineTo(21, 3);
+      arrow(p, {21, 3}, {14, 10}, 4); break;
+    case CursorKind::Offset: p.addRect(QRectF(3, 3, 18, 18)); p.addRect(QRectF(7, 7, 10, 10)); break;
+    case CursorKind::Revolve:
+      p.moveTo(5, 3); p.lineTo(5, 21); p.moveTo(9, 5); p.lineTo(15, 5); p.lineTo(15, 14);
+      p.arcMoveTo(QRectF(3, 12, 18, 8), 165); p.arcTo(QRectF(3, 12, 18, 8), 165, 285);
+      arrow(p, p.currentPosition(), p.pointAtPercent(.92), 2.5); break;
+    case CursorKind::FollowMe:
+      p.addRect(QRectF(3, 15, 6, 6)); p.moveTo(6, 15); p.lineTo(6, 9);
+      p.quadTo(6, 4, 12, 4); p.lineTo(21, 4); arrow(p, {21, 4}, {14, 4}); break;
+    case CursorKind::Measure:
+      p.moveTo(3, 17); p.lineTo(17, 3); p.lineTo(21, 7); p.lineTo(7, 21); p.closeSubpath();
+      for (int i = 0; i < 3; ++i) { p.moveTo(7 + 4*i, 13 - 4*i); p.lineTo(9 + 4*i, 15 - 4*i); } break;
+    case CursorKind::Protractor:
+      p.moveTo(3, 20); p.arcTo(QRectF(3, 3, 18, 34), 180, -180); p.closeSubpath();
+      p.moveTo(12, 20); p.lineTo(18, 8); break;
+    case CursorKind::Dimension:
+      p.moveTo(4, 4); p.lineTo(4, 20); p.moveTo(20, 4); p.lineTo(20, 20);
+      p.moveTo(4, 12); p.lineTo(20, 12); arrow(p, {4, 12}, {11, 12}); arrow(p, {20, 12}, {13, 12}); break;
+    case CursorKind::Text:
+      p.moveTo(4, 5); p.lineTo(20, 5); p.moveTo(12, 5); p.lineTo(12, 21);
+      p.moveTo(8, 21); p.lineTo(16, 21); break;
+    case CursorKind::Paint:
+      p.moveTo(5, 9); p.lineTo(12, 3); p.lineTo(21, 12); p.lineTo(14, 18); p.closeSubpath();
+      p.moveTo(4, 15); p.cubicTo(0, 20, 4, 24, 7, 20); p.quadTo(8, 19, 4, 15); break;
+    case CursorKind::Eraser:
+      p.moveTo(3, 15); p.lineTo(12, 4); p.lineTo(21, 11); p.lineTo(13, 21); p.lineTo(10, 21); p.closeSubpath();
+      p.moveTo(8, 9); p.lineTo(17, 16); p.moveTo(3, 21); p.lineTo(21, 21); break;
+    case CursorKind::Wall:
+      p.addRect(QRectF(3, 5, 18, 15)); p.moveTo(3, 12); p.lineTo(21, 12);
+      p.moveTo(10, 5); p.lineTo(10, 12); p.moveTo(15, 12); p.lineTo(15, 20); break;
+    case CursorKind::Slab:
+      p.moveTo(3, 10); p.lineTo(12, 5); p.lineTo(21, 10); p.lineTo(12, 15); p.closeSubpath();
+      p.moveTo(3, 10); p.lineTo(3, 14); p.lineTo(12, 19); p.lineTo(21, 14); p.lineTo(21, 10);
+      p.moveTo(12, 15); p.lineTo(12, 19); break;
+    case CursorKind::Opening:
+      p.addRect(QRectF(4, 3, 16, 18)); p.addRect(QRectF(8, 7, 8, 10));
+      p.moveTo(12, 7); p.lineTo(12, 17); break;
+    case CursorKind::Section:
+      p.moveTo(4, 7); p.lineTo(15, 3); p.lineTo(15, 20); p.lineTo(4, 23); p.closeSubpath();
+      p.moveTo(9, 12); p.lineTo(22, 12); arrow(p, {22, 12}, {15, 12}); break;
+    case CursorKind::SectionPlanes:
+      p.moveTo(3, 8); p.lineTo(16, 3); p.lineTo(21, 16); p.lineTo(8, 21); p.closeSubpath(); break;
+    case CursorKind::SectionCuts:
+    case CursorKind::SectionFill:
+      p.moveTo(3, 11); p.lineTo(10, 6); p.lineTo(21, 9); p.lineTo(14, 14); p.closeSubpath();
+      p.moveTo(3, 11); p.lineTo(3, 18); p.lineTo(14, 21); p.lineTo(21, 16); p.lineTo(21, 9);
+      p.moveTo(14, 14); p.lineTo(14, 21); break;
   }
-  p.end();
-  return pixmap;
+  return p;
 }
 
-}  // namespace
+void drawSymbol(QPainter& painter, CursorKind kind, const QRectF& rect, QColor color, bool cursorHalo = false) {
+  painter.save();
+  painter.translate(rect.topLeft());
+  painter.scale(rect.width() / 24, rect.height() / 24);
+  const auto path = symbol(kind);
+  painter.setBrush(Qt::NoBrush);
+  if (cursorHalo) {
+    painter.setPen(QPen(Qt::white, 4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter.drawPath(path);
+  }
+  painter.setPen(QPen(color, 1.65, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+  painter.drawPath(path);
+  if (kind == CursorKind::SectionFill) {
+    QPainterPath fill;
+    fill.moveTo(3, 11); fill.lineTo(10, 6); fill.lineTo(21, 9); fill.lineTo(14, 14); fill.closeSubpath();
+    painter.fillPath(fill, color);
+  }
+  painter.restore();
+}
+
+class ToolIconEngine : public QIconEngine {
+ public:
+  explicit ToolIconEngine(CursorKind kind) : kind_(kind) {}
+  QIconEngine* clone() const override { return new ToolIconEngine(kind_); }
+  void paint(QPainter* p, const QRect& r, QIcon::Mode mode, QIcon::State) override {
+    const QPalette palette = QGuiApplication::palette();
+    const QColor color = mode == QIcon::Disabled ? palette.color(QPalette::Disabled, QPalette::ButtonText)
+        : palette.color(mode == QIcon::Selected ? QPalette::HighlightedText : QPalette::ButtonText);
+    p->setRenderHint(QPainter::Antialiasing);
+    const int side = std::min(r.width(), r.height());
+    drawSymbol(*p, kind_, QRectF(r.center().x() - side/2.0 + .5, r.center().y() - side/2.0 + .5, side, side), color);
+  }
+  QPixmap pixmap(const QSize& size, QIcon::Mode mode, QIcon::State state) override { return scaledPixmap(size, mode, state, 1); }
+  QPixmap scaledPixmap(const QSize& size, QIcon::Mode mode, QIcon::State state, qreal scale) override {
+#if QT_VERSION < QT_VERSION_CHECK(6, 8, 0)
+    const QSize logical(qRound(size.width() / scale), qRound(size.height() / scale));
+#else
+    const QSize logical = size;
+#endif
+    QPixmap image(QSize(qCeil(logical.width() * scale), qCeil(logical.height() * scale)));
+    image.setDevicePixelRatio(scale); image.fill(Qt::transparent);
+    QPainter painter(&image); paint(&painter, QRect(QPoint(), logical), mode, state);
+    return image;
+  }
+ private:
+  CursorKind kind_;
+};
+}
 
 QCursor toolCursor(CursorKind kind) {
   if (kind == CursorKind::Select) return QCursor(Qt::ArrowCursor);
-  QPoint hotspot;
-  const QPixmap pixmap = draw(kind, hotspot);
-  return QCursor(pixmap, hotspot.x(), hotspot.y());
+  const auto* screen = QGuiApplication::screenAt(QCursor::pos());
+  const qreal dpr = screen ? screen->devicePixelRatio() : 1.0;
+  QPixmap image(QSize(qCeil(32 * dpr), qCeil(32 * dpr)));
+  image.setDevicePixelRatio(dpr); image.fill(Qt::transparent);
+  QPainter p(&image); p.setRenderHint(QPainter::Antialiasing);
+  if (kind == CursorKind::Move) {
+    // The empty center is intentional: a single point marks the exact
+    // pick/grab position, rather than the intersection of four busy arms.
+    QPainterPath arrows;
+    arrows.moveTo(16, 3); arrows.lineTo(16, 10);
+    arrows.moveTo(16, 22); arrows.lineTo(16, 29);
+    arrows.moveTo(3, 16); arrows.lineTo(10, 16);
+    arrows.moveTo(22, 16); arrows.lineTo(29, 16);
+    arrow(arrows, {16, 3}, {16, 10}, 4); arrow(arrows, {16, 29}, {16, 22}, 4);
+    arrow(arrows, {3, 16}, {10, 16}, 4); arrow(arrows, {29, 16}, {22, 16}, 4);
+    p.setPen(QPen(Qt::white, 3.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin)); p.drawPath(arrows);
+    p.setPen(QPen(Qt::black, 1.4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin)); p.drawPath(arrows);
+    p.setPen(Qt::NoPen); p.setBrush(Qt::white); p.drawEllipse(QPointF(16, 16), 2.5, 2.5);
+    p.setBrush(Qt::black); p.drawEllipse(QPointF(16, 16), 1, 1);
+    p.end();
+    return QCursor(image, 16, 16);
+  }
+  drawSymbol(p, kind, QRectF(16, 16, 15, 15), Qt::black, true);
+  QPainterPath pointer;
+  pointer.moveTo(3, 2); pointer.lineTo(3, 19); pointer.lineTo(7, 15);
+  pointer.lineTo(10, 22); pointer.lineTo(13, 20); pointer.lineTo(10, 13);
+  pointer.lineTo(17, 13); pointer.closeSubpath();
+  p.setBrush(Qt::white); p.setPen(QPen(Qt::white, 3.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+  p.drawPath(pointer);
+  p.setPen(QPen(Qt::black, 1.4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin)); p.drawPath(pointer);
+  p.end();
+  return QCursor(image, 3, 2);
 }
 
-QIcon toolIcon(CursorKind kind) {
-  QPoint hotspot;
-  return QIcon(draw(kind, hotspot));
-}
+QIcon toolIcon(CursorKind kind) { return QIcon(new ToolIconEngine(kind)); }
 
 }  // namespace sbr::app

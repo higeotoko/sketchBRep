@@ -63,6 +63,7 @@
 #include "McpHttpServer.h"
 #include "ProgressDialog.h"
 #include "WheelZoom.h"
+#include "ToolPalette.h"
 #include "MainWindow.h"
 #include "MaterialEditor.h"
 #include "MaterialsPanel.h"
@@ -7021,12 +7022,36 @@ void GuiPhase1::toolsPaletteShowsAllAndFloats() {
   palette->setFloating(true);
   QTest::qWait(30);
   QVERIFY(palette->isFloating());
+  expanded->setChecked(false);
+  auto* content = palette->findChild<ToolPalette*>();
+  QVERIFY(content);
+  const QSize cell = content->cellSize();
+  palette->resize(90, 200);
+  QCoreApplication::processEvents();
+  for (auto* button : buttons) {
+    content->ensureButtonVisible(button);
+    QCoreApplication::processEvents();
+    QVERIFY(content->viewport()->rect().contains(button->geometry()));
+    QTest::mouseClick(button, Qt::LeftButton);
+    QVERIFY(button->defaultAction()->isChecked());
+    QCOMPARE(button->size(), cell);
+  }
+  palette->resize(900, 600);
+  QCoreApplication::processEvents();
+  for (auto* button : buttons) QCOMPARE(button->size(), cell);
   palette->setFloating(false);
   expanded->setChecked(false);
   for (auto* b : buttons) QCOMPARE(b->toolButtonStyle(), Qt::ToolButtonIconOnly);
   expanded->setChecked(true);
   if (qEnvironmentVariableIsSet("SBR_SCREENSHOT_DIR"))
     f.window.grab().save(QDir(qEnvironmentVariable("SBR_SCREENSHOT_DIR")).filePath(QStringLiteral("tools-palette.png")));
+  expanded->setChecked(false);
+  auto* reset = f.window.findChild<QAction*>(QStringLiteral("resetPalettesAction"));
+  QVERIFY(reset);
+  reset->trigger(); QCoreApplication::processEvents();
+  QVERIFY(!palette->isFloating());
+  QVERIFY(palette->isVisible());
+  QCOMPARE(f.window.dockWidgetArea(palette), Qt::LeftDockWidgetArea);
 }
 
 void GuiPhase1::sectionToolboxControlsAreIndependentAndCached() {

@@ -13,6 +13,7 @@ add_library(sbr_ui STATIC
   Viewport.cpp Viewport.h
   WheelZoom.cpp WheelZoom.h
   Cursors.cpp Cursors.h
+  ToolPalette.cpp ToolPalette.h
   AiBridge.cpp AiBridge.h
   McpHttpServer.cpp McpHttpServer.h
   Messages.cpp Messages.h

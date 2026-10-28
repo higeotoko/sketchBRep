@@ -78,6 +78,17 @@ endif()
 # End-to-end GUI test (needs a display; run under xvfb-run on headless CI).
 if(SBR_BUILD_APP)
   find_package(Qt6 REQUIRED COMPONENTS Test)
+  # Raster-only widget tests run on Windows too, without an OCCT/OpenGL view.
+  add_executable(sbr_tool_palette_tests test_tool_palette.cpp)
+  set_target_properties(sbr_tool_palette_tests PROPERTIES AUTOMOC ON)
+  target_link_libraries(sbr_tool_palette_tests PRIVATE sbr_ui Qt6::Test)
+  foreach(scale IN ITEMS 1 1.5 2)
+    string(REPLACE "." "_" scale_name "${scale}")
+    add_test(NAME tool_palette_${scale_name} COMMAND sbr_tool_palette_tests)
+    set_tests_properties(tool_palette_${scale_name} PROPERTIES
+      ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=${scale}")
+  endforeach()
+
   add_executable(sbr_chatgpt_transport_tests test_chatgpt_transport.cpp)
   set_target_properties(sbr_chatgpt_transport_tests PROPERTIES AUTOMOC ON)
   target_link_libraries(sbr_chatgpt_transport_tests PRIVATE sbr_ui Qt6::Test nlohmann_json::nlohmann_json)

@@ -217,4 +217,4 @@ Open CASCADE Technology は LGPL 2.1（+ 例外）、Qt 6 は LGPL 3 / 商用の
 
 ロゴ一式は [assets/branding](assets/branding)（編集用 SVG、アウトライン SVG、アプリアイコン、透過 PNG、Windows 用 ICO、README 用横長ロゴ。説明は [README-ja.md](assets/branding/README-ja.md)）。アプリでは Windows の実行ファイルのアイコン（ICO・バージョン情報つき）、ウィンドウのアイコン、「ヘルプ > SketchBRep について」に使っています。
 
-断面の平面・カット・塗りつぶしの独立切り替えと、独立可能なツールパレットの使い方は [断面とツールパレット](docs/34_sections_and_tools_palette.md) を参照してください。
+断面の表示切り替えとパレットの使い方は [断面とツールパレット](docs/34_sections_and_tools_palette.md)、コンパクト表示・配置の初期化・操作位置が分かるカーソルは [パレットとカーソルの操作仕様](docs/36_palette_ui_and_cursors.md) を参照してください。

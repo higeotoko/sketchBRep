@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 #include "DwgConverter.h"
+#include "ToolPalette.h"
 #include <QTemporaryDir>
 
 #include <algorithm>
@@ -80,26 +81,6 @@
 namespace sbr::app {
 namespace {
 std::string utf8(const QString& s) { return s.toUtf8().toStdString(); }
-
-QIcon sectionSwitchIcon(int kind) {
-  QPixmap image(32, 32);
-  image.fill(Qt::transparent);
-  QPainter p(&image);
-  p.setRenderHint(QPainter::Antialiasing);
-  const QColor ink(48, 77, 96), blue(0, 150, 215);
-  const QPolygonF front{QPointF(5, 10), QPointF(21, 13), QPointF(21, 28), QPointF(5, 25)};
-  const QPolygonF top{QPointF(5, 10), QPointF(12, 4), QPointF(28, 7), QPointF(21, 13)};
-  const QPolygonF side{QPointF(21, 13), QPointF(28, 7), QPointF(28, 22), QPointF(21, 28)};
-  p.setPen(QPen(ink, 1.4));
-  p.setBrush(QColor(225, 235, 242));
-  p.drawPolygon(front); p.drawPolygon(top); p.drawPolygon(side);
-  const QPolygonF plane{QPointF(3, 17), QPointF(12, 10), QPointF(30, 14), QPointF(21, 21)};
-  p.setPen(QPen(blue, 1.8));
-  p.setBrush(kind == 2 ? blue : QColor(0, 170, 230, kind == 0 ? 70 : 0));
-  p.drawPolygon(plane);
-  if (kind == 1) { p.setPen(QPen(blue, 2)); p.drawLine(QPointF(5, 18), QPointF(21, 21)); }
-  return QIcon(image);
-}
 
 enum class ExchangeType { Step, Stl, Dxf, Dwg, Iges, Brep, Rhino, Image };
 struct ExchangeFormat {
@@ -632,15 +613,15 @@ void MainWindow::buildMenus() {
   QMenu* sections = view->addMenu(tr("断面"));
   auto* createSection = sections->addAction(toolIcon(CursorKind::Section), tr("断面平面を配置 (Shift+S)"), this,
                                              [this] { activateTool(ToolId::Section); });
-  sectionPlanesAction_ = sections->addAction(sectionSwitchIcon(0), tr("断面平面を表示"));
+  sectionPlanesAction_ = sections->addAction(toolIcon(CursorKind::SectionPlanes), tr("断面平面を表示"));
   sectionPlanesAction_->setObjectName(QStringLiteral("sectionPlanesAction"));
   sectionPlanesAction_->setCheckable(true);
   sectionPlanesAction_->setToolTip(tr("断面の目印だけを表示／非表示（カットは維持）"));
-  sectionVisibleAction_ = sections->addAction(sectionSwitchIcon(1), tr("断面カットを表示"));
+  sectionVisibleAction_ = sections->addAction(toolIcon(CursorKind::SectionCuts), tr("断面カットを表示"));
   sectionVisibleAction_->setObjectName(QStringLiteral("sectionCutsAction"));
   sectionVisibleAction_->setCheckable(true);
   sectionVisibleAction_->setToolTip(tr("選んだ断面で切って表示。OFFにしても選んだ断面は保持"));
-  sectionFillAction_ = sections->addAction(sectionSwitchIcon(2), tr("断面塗りつぶしを表示"));
+  sectionFillAction_ = sections->addAction(toolIcon(CursorKind::SectionFill), tr("断面塗りつぶしを表示"));
   sectionFillAction_->setObjectName(QStringLiteral("sectionFillAction"));
   sectionFillAction_->setCheckable(true);
   sectionFillAction_->setToolTip(tr("切り口の塗りつぶしを表示／非表示（元の面や断面の目印は消しません）"));
@@ -654,26 +635,20 @@ void MainWindow::buildMenus() {
   connect(sectionFillAction_, &QAction::toggled, this, [this, finishPlacement](bool on) {
     finishPlacement(); modeler_.setSectionFillVisible(on); updateTitle();
   });
-  sectionDock_ = new QDockWidget(tr("断面"), this);
+  auto* sectionPalette = new ToolPaletteDock(tr("断面"), this, 4, true);
+  sectionDock_ = sectionPalette;
   sectionDock_->setObjectName(QStringLiteral("sectionToolbox"));
-  sectionDock_->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable | QDockWidget::DockWidgetClosable);
   sectionDock_->setAllowedAreas(Qt::TopDockWidgetArea | Qt::BottomDockWidgetArea);
-  auto* controls = new QWidget(sectionDock_);
-  auto* row = new QHBoxLayout(controls);
-  row->setContentsMargins(4, 4, 4, 4); row->setSpacing(2);
-  for (auto* action : {createSection, sectionPlanesAction_, sectionVisibleAction_, sectionFillAction_}) {
-    auto* button = new QToolButton(controls);
-    button->setDefaultAction(action); button->setIconSize(QSize(28, 28));
-    row->addWidget(button);
-  }
-  sectionDock_->setWidget(controls);
+  for (auto* action : {createSection, sectionPlanesAction_, sectionVisibleAction_, sectionFillAction_})
+    sectionPalette->tools()->addTool(action);
   addDockWidget(Qt::TopDockWidgetArea, sectionDock_);
   sectionDock_->setFloating(true);
   sectionDock_->hide();
-  sectionDock_->resize(sectionDock_->sizeHint());
   sectionDock_->move(80, 100);
   const auto sectionGeometry = QSettings().value("section/toolboxGeometry").toByteArray();
   if (!sectionGeometry.isEmpty()) sectionDock_->restoreGeometry(sectionGeometry);
+  sectionPalette->resetSize(); // discard old stretched sizes, preserve the position
+  sectionDock_->toggleViewAction()->setText(tr("断面パレットを表示"));
   view->addAction(sectionDock_->toggleViewAction());
   auto* savedSections = sections->addMenu(tr("保存済み断面（SBRファイルに保存）"));
   connect(savedSections, &QMenu::aboutToShow, this, [this, savedSections] {
@@ -801,29 +776,19 @@ void MainWindow::buildMenus() {
 
   // --- Tools (menu + left toolbar)
   QMenu* tools = menuBar()->addMenu(tr("ツール(&T)"));
-  auto* palette = new QDockWidget(tr("ツール（上部をドラッグして移動）"), this);
+  auto* palette = new ToolPaletteDock(tr("ツール"), this, 3);
   palette->setObjectName(QStringLiteral("toolsPalette"));
-  palette->setAllowedAreas(Qt::AllDockWidgetAreas);
-  palette->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable | QDockWidget::DockWidgetClosable);
-  auto* scroll = new QScrollArea(palette);
-  scroll->setWidgetResizable(true);
-  scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-  auto* contents = new QWidget(scroll);
-  auto* grid = new QGridLayout(contents);
-  grid->setContentsMargins(4, 4, 4, 4);
-  grid->setSpacing(2);
-  grid->setAlignment(Qt::AlignTop);
-  scroll->setWidget(contents);
-  palette->setWidget(scroll);
+  palette->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
   const int savedArea = QSettings().value("tools/area", int(Qt::LeftDockWidgetArea)).toInt();
   const auto area = savedArea == Qt::RightDockWidgetArea ? Qt::RightDockWidgetArea : Qt::LeftDockWidgetArea;
   addDockWidget(area, palette);
-  auto* expanded = view->addAction(tr("ツールパレットを全表示（名前付き）"));
+  auto* expanded = view->addAction(tr("ツール名を表示"));
   expanded->setObjectName(QStringLiteral("expandedToolsAction"));
   expanded->setCheckable(true);
-  expanded->setChecked(QSettings().value("tools/expanded", true).toBool());
+  expanded->setChecked(QSettings().value("tools/showLabels", false).toBool());
+  palette->tools()->setShowLabels(expanded->isChecked());
+  palette->toggleViewAction()->setText(tr("ツールパレットを表示"));
   view->addAction(palette->toggleViewAction());
-  int toolIndex = 0;
   toolGroup_ = new QActionGroup(this);
   struct ToolEntry {
     QString label;
@@ -835,7 +800,7 @@ void MainWindow::buildMenus() {
       {tr("選択"), QStringLiteral("Space"), ToolId::Select, CursorKind::Select},
       {tr("線"), QStringLiteral("L"), ToolId::Line, CursorKind::Pencil},
       {tr("矩形"), QStringLiteral("R"), ToolId::Rectangle, CursorKind::Rectangle},
-      {tr("回転矩形"), QStringLiteral("Shift+R"), ToolId::RotatedRectangle, CursorKind::Rectangle},
+      {tr("回転矩形"), QStringLiteral("Shift+R"), ToolId::RotatedRectangle, CursorKind::RotatedRectangle},
       {tr("壁"), QStringLiteral("W"), ToolId::Wall, CursorKind::Wall},
       {tr("スラブ"), QStringLiteral("Shift+W"), ToolId::Slab, CursorKind::Slab},
       {tr("開口"), QStringLiteral("O"), ToolId::Opening, CursorKind::Opening},
@@ -874,25 +839,33 @@ void MainWindow::buildMenus() {
     });
     toolGroup_->addAction(a);
     tools->addAction(a);
-    auto* button = new QToolButton(contents);
-    button->setDefaultAction(a);
-    button->setIconSize(QSize(28, 28));
-    button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-    button->setToolButtonStyle(expanded->isChecked() ? Qt::ToolButtonTextUnderIcon : Qt::ToolButtonIconOnly);
-    grid->addWidget(button, toolIndex / 3, toolIndex % 3);
-    ++toolIndex;
+    palette->tools()->addTool(a);
     toolActions_[static_cast<int>(id)] = a;
   }
 
-  connect(expanded, &QAction::toggled, this, [contents](bool on) {
-    for (auto* button : contents->findChildren<QToolButton*>())
-      button->setToolButtonStyle(on ? Qt::ToolButtonTextUnderIcon : Qt::ToolButtonIconOnly);
-    QSettings().setValue("tools/expanded", on);
+  connect(expanded, &QAction::toggled, this, [palette](bool on) {
+    palette->tools()->setShowLabels(on);
+    QSettings().setValue("tools/showLabels", on);
   });
   if (QSettings().value("tools/floating", false).toBool()) {
     palette->setFloating(true);
     palette->restoreGeometry(QSettings().value("tools/geometry").toByteArray());
   }
+  // Migrate the old clipped/stretched palette once; keep the user's position.
+  if (QSettings().value("tools/layoutVersion", 0).toInt() < 2) palette->resetSize();
+  QSettings().setValue("tools/layoutVersion", 2);
+  auto* resetPalettes = view->addAction(tr("パレットの配置を初期化"));
+  resetPalettes->setObjectName(QStringLiteral("resetPalettesAction"));
+  connect(resetPalettes, &QAction::triggered, this, [this, palette, sectionPalette, expanded] {
+    expanded->setChecked(false);
+    palette->setFloating(false);
+    addDockWidget(Qt::LeftDockWidgetArea, palette);
+    palette->show(); palette->resetSize();
+    const bool sectionShown = sectionPalette->isVisible();
+    sectionPalette->setFloating(true); sectionPalette->resetSize();
+    sectionPalette->move(viewport_->mapToGlobal(QPoint(12, 12)));
+    sectionPalette->setVisible(sectionShown);
+  });
   tools->addSeparator();
   tools->addAction(tr("通り芯を作成..."), this, &MainWindow::showGridDialog);
   tools->addAction(tr("壁の設定..."), this, &MainWindow::showWallSettingsDialog);

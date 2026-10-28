@@ -33,6 +33,7 @@
 #include <cmath>
 
 #include <QGuiApplication>
+#include <QtMath>
 #include <QKeyEvent>
 #include <QMessageBox>
 #include <QMouseEvent>
@@ -2192,12 +2193,15 @@ void Viewport::hideSnapTip() {
 // cursor nor the snapped point nor that line, inside the view.
 QRect Viewport::placeSnapTip(const QSize& size, const QPoint& marker, std::optional<QPoint> anchor) const {
   const QPoint c = snapCursor_;
-  const int gx = 16, gy = 18;  // clear of the cursor's tip and a crosshair
+  const QPixmap image = cursor().pixmap();
+  const QSize cursorSize = image.isNull() ? QSize(24, 24)
+      : QSize(qCeil(image.width() / image.devicePixelRatioF()), qCeil(image.height() / image.devicePixelRatioF()));
+  const QRect cursorBounds(c - cursor().hotSpot(), cursorSize);
+  const int right = cursorBounds.right() + 8, left = cursorBounds.left() - size.width() - 8;
+  const int bottom = cursorBounds.bottom() + 6, top = cursorBounds.top() - size.height() - 6;
   std::vector<QRect> candidates = {
-      QRect(QPoint(c.x() + gx, c.y() + gy), size),                                  // below right
-      QRect(QPoint(c.x() + gx, c.y() - gy - size.height()), size),                  // above right
-      QRect(QPoint(c.x() - gx - size.width(), c.y() + gy), size),                   // below left
-      QRect(QPoint(c.x() - gx - size.width(), c.y() - gy - size.height()), size)};  // above left
+      QRect(QPoint(right, bottom), size), QRect(QPoint(right, top), size),
+      QRect(QPoint(left, bottom), size), QRect(QPoint(left, top), size)};
   // Facing away from where the line comes from first.
   if (anchor) {
     const QPointF back(anchor->x() - marker.x(), anchor->y() - marker.y());
@@ -2208,7 +2212,7 @@ QRect Viewport::placeSnapTip(const QSize& size, const QPoint& marker, std::optio
   }
   auto blocks = [&](const QRect& r) {
     const QRect around = r.adjusted(-4, -4, 4, 4);
-    if (around.contains(c) || around.contains(marker)) return true;
+    if (around.intersects(cursorBounds) || around.contains(marker)) return true;
     if (anchor) {
       for (int i = 0; i <= 32; ++i) {
         const double t = i / 32.0;
