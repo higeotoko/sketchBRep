@@ -188,6 +188,9 @@ jobs:
           Copy-Item docs\35_wheel_surface_navigation.md "$dist\WHEEL_NAVIGATION.md"
           Copy-Item docs\36_palette_ui_and_cursors.md "$dist\PALETTE_AND_CURSORS.md"
           Copy-Item docs\37_panel_docking.md "$dist\PANEL_DOCKING.md"
+          New-Item -ItemType Directory -Force "$dist\images" | Out-Null
+          Copy-Item docs\images\panel-dock-motion.mp4 "$dist\images"
+          Copy-Item docs\images\panel-dock-motion-phases.png "$dist\images"
           Copy-Item docs\images\phase2.png $dist
           New-Item -ItemType Directory -Force "$dist\examples\dxf" | Out-Null
           Copy-Item tests\data\dxf\small*.dxf "$dist\examples\dxf"

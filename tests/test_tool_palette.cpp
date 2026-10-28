@@ -8,6 +8,7 @@
 #include <QScrollBar>
 #include <QSignalSpy>
 #include <QTemporaryDir>
+#include <QVariantAnimation>
 #include "ToolPalette.h"
 #include "Cursors.h"
 #include "Branding.h"
@@ -35,11 +36,151 @@ void titleMouse(QWidget* title, QEvent::Type type, QPoint global,
   QApplication::sendEvent(title, &event);
   events();
 }
+struct DockRig : QMainWindow {
+  PanelDock* dock;
+  DockRig() {
+    setDockOptions(dockOptions() & ~QMainWindow::AnimatedDocks);
+    setCentralWidget(new QWidget);
+    resize(800, 600); move(100, 100);
+    dock = new PanelDock(QStringLiteral("属性"), this);
+    dock->setWidget(new QWidget);
+    addDockWidget(Qt::RightDockWidgetArea, dock); show(); events();
+    dock->setFloating(true); dock->resize(180, 160);
+    dock->move(mapToGlobal(QPoint(250, 180))); dock->show(); events();
+  }
+  void press() { titleMouse(dock->titleBarWidget(), QEvent::MouseButtonPress, dock->titleBarWidget()->mapToGlobal(QPoint(10, 12))); }
+  void go(QPoint point, Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
+    titleMouse(dock->titleBarWidget(), QEvent::MouseMove, mapToGlobal(point), modifiers);
+  }
+  void release(QPoint point) { titleMouse(dock->titleBarWidget(), QEvent::MouseButtonRelease, mapToGlobal(point)); }
+  QWidget* guide() { return findChild<QWidget*>(QStringLiteral("panelDockPreview")); }
+  QList<QWidget*> guides() {
+    QList<QWidget*> result;
+    for (auto* w : findChildren<QWidget*>()) if (w->objectName().startsWith(QStringLiteral("panelDockPreview"))) result.append(w);
+    return result;
+  }
+};
+QVariantAnimation* previewMotion(QWidget* guide) {
+  return guide ? guide->findChild<QVariantAnimation*>(QStringLiteral("dockPreviewMotion")) : nullptr;
+}
+void finishPreviews(DockRig& rig) {
+  for (auto* guide : rig.guides()) if (auto* motion = previewMotion(guide)) motion->setCurrentTime(motion->duration());
+  events();
+}
+qint64 alphaSum(QWidget* guide) {
+  const auto image = guide->grab().toImage();
+  qint64 sum = 0;
+  for (int y = 0; y < image.height(); ++y) for (int x = 0; x < image.width(); ++x) sum += image.pixelColor(x, y).alpha();
+  return sum;
+}
 }
 
 class ToolPaletteTests : public QObject {
   Q_OBJECT
  private slots:
+  void previewAppearsSettlesAndStopsUpdating() {
+    DockRig rig;
+    rig.press(); rig.go(QPoint(400, 12));
+    auto* guide = rig.guide();
+    QVERIFY(guide && guide->isVisible());
+    auto* motion = previewMotion(guide); QVERIFY(motion);
+    QCOMPARE(motion->duration(), 140);
+    QCOMPARE(motion->easingCurve().type(), QEasingCurve::OutCubic);
+    motion->setCurrentTime(0); events();
+    QCOMPARE(alphaSum(guide), qint64(0));
+    motion->setCurrentTime(50); events();
+    const auto middle = alphaSum(guide);
+    motion->setCurrentTime(140); events();
+    const auto held = alphaSum(guide);
+    QVERIFY(middle > 0 && middle < held);
+    QCOMPARE(motion->state(), QAbstractAnimation::Stopped);
+    struct PaintCounter : QObject {
+      int count = 0;
+      bool eventFilter(QObject*, QEvent* e) override { if (e->type() == QEvent::Paint) ++count; return false; }
+    } paints;
+    guide->installEventFilter(&paints); events(); paints.count = 0;
+    QTest::qWait(50);
+    QCOMPARE(paints.count, 0); // no permanent pulse or repaint timer
+    rig.release(QPoint(400, 12));
+    QVERIFY(!rig.dock->isFloating()); // placement never waits for the animation
+    QVERIFY(guide->isVisible());
+    QCOMPARE(motion->duration(), 160);
+    QCOMPARE(motion->state(), QAbstractAnimation::Running);
+    motion->setCurrentTime(80); events();
+    QVERIFY(alphaSum(guide) < held / 2);
+    motion->setCurrentTime(160); events();
+    QVERIFY(!guide->isVisible());
+    QCOMPARE(motion->state(), QAbstractAnimation::Stopped);
+  }
+
+  void previewTransitionsLeaveNoControlOrEscapeResidue() {
+    DockRig rig;
+    rig.press(); rig.go(QPoint(400, 12)); finishPreviews(rig);
+    QPointer<QWidget> old = rig.guide();
+    rig.go(QPoint(790, 300));
+    QVERIFY(rig.guide() != old);
+    QVERIFY(old->isVisible() && rig.guide()->isVisible());
+    QCOMPARE(previewMotion(old)->duration(), 90);
+    for (auto* guide : rig.guides()) QVERIFY(std::min(guide->width(), guide->height()) <= 36);
+    finishPreviews(rig);
+    QVERIFY(!old->isVisible() && rig.guide()->isVisible());
+    rig.go(QPoint(400, 150)); // normal leave fades out
+    QVERIFY(rig.guide()->isVisible());
+    rig.go(QPoint(790, 300)); // rapid reentry replaces, rather than queues, animations
+    finishPreviews(rig);
+    QVERIFY(rig.guides().size() <= 2);
+    QTest::keyPress(rig.dock->titleBarWidget(), Qt::Key_Control); events();
+    for (auto* guide : rig.guides()) { QVERIFY(!guide->isVisible()); QCOMPARE(previewMotion(guide)->state(), QAbstractAnimation::Stopped); }
+    QTest::keyRelease(rig.dock->titleBarWidget(), Qt::Key_Control);
+    rig.go(QPoint(12, 300));
+    QVERIFY(rig.guide()->isVisible());
+    // Mouse modifiers alone also suppress the guide without a fading ghost.
+    rig.go(QPoint(12, 300), Qt::ControlModifier);
+    for (auto* guide : rig.guides()) QVERIFY(!guide->isVisible());
+    rig.go(QPoint(12, 300));
+    QTest::keyClick(rig.dock->titleBarWidget(), Qt::Key_Escape); events();
+    for (auto* guide : rig.guides()) { QVERIFY(!guide->isVisible()); QCOMPARE(previewMotion(guide)->state(), QAbstractAnimation::Stopped); }
+  }
+
+  void earlyDropDoesNotFlashAtFullOpacity() {
+    DockRig rig;
+    rig.press(); rig.go(QPoint(400, 12));
+    auto* guide = rig.guide(); QVERIFY(guide);
+    auto* motion = previewMotion(guide); QVERIFY(motion);
+    motion->setCurrentTime(20); events();
+    const auto early = alphaSum(guide);
+    QVERIFY(early > 0);
+    rig.release(QPoint(400, 12));
+    QVERIFY(!rig.dock->isFloating());
+    // A rapid drop fades from the partly revealed guide, rather than
+    // introducing a fully opaque confirmation frame.
+    QVERIFY(alphaSum(guide) <= early * 1.3);
+    motion->setCurrentTime(motion->duration()); events();
+    QVERIFY(!guide->isVisible());
+  }
+
+  void rapidCrossingConsecutivePanelsAndCloseCleanUp() {
+    DockRig rig;
+    rig.press(); rig.go(QPoint(400, 12));
+    rig.go(QPoint(400, 150)); rig.release(QPoint(400, 150));
+    QTest::qWait(190);
+    for (auto* guide : rig.guides()) QVERIFY(!guide->isVisible());
+    rig.press(); rig.go(QPoint(400, 12)); finishPreviews(rig);
+    rig.release(QPoint(400, 12));
+    QVERIFY(rig.guide()->isVisible()); // settling from the first panel
+    auto* other = new PanelDock(QStringLiteral("素材"), &rig);
+    other->setWidget(new QWidget); rig.addDockWidget(Qt::RightDockWidgetArea, other);
+    other->setFloating(true); other->show(); events();
+    titleMouse(other->titleBarWidget(), QEvent::MouseButtonPress, other->titleBarWidget()->mapToGlobal(QPoint(10, 12)));
+    for (auto* guide : rig.guides()) QVERIFY(!guide->isVisible());
+    titleMouse(other->titleBarWidget(), QEvent::MouseMove, rig.mapToGlobal(QPoint(790, 300)));
+    other->hide(); events();
+    for (auto* guide : rig.guides()) { QVERIFY(!guide->isVisible()); QCOMPARE(previewMotion(guide)->state(), QAbstractAnimation::Stopped); }
+    delete other;
+    QTest::qWait(190);
+    for (auto* guide : rig.guides()) QVERIFY(!guide->isVisible());
+  }
+
   void applicationIconUsesItsSmallCanvas() {
     const auto icon = applicationIcon();
     const auto available = icon.availableSizes();
@@ -99,9 +240,16 @@ class ToolPaletteTests : public QObject {
     QTest::keyRelease(title, Qt::Key_Control);
     titleMouse(title, QEvent::MouseMove, host.mapToGlobal(QPoint(400, 12)));
     QVERIFY(preview->isVisible());
+    auto* motion = preview->findChild<QVariantAnimation*>(QStringLiteral("dockPreviewMotion"));
+    QVERIFY(motion);
+    motion->setCurrentTime(motion->duration()); events();
     titleMouse(title, QEvent::MouseButtonRelease, host.mapToGlobal(QPoint(400, 12)));
     QVERIFY(!dock->isFloating());
     QCOMPARE(host.dockWidgetArea(dock), Qt::TopDockWidgetArea);
+    QVERIFY(preview->isVisible()); // native docking is done while only the guide settles
+    QCOMPARE(motion->state(), QAbstractAnimation::Running);
+    QCOMPARE(motion->duration(), 160);
+    motion->setCurrentTime(motion->duration()); events();
     QVERIFY(!preview->isVisible());
 
     // Escape returns a detached panel to its former dock, without leaving

@@ -54,6 +54,7 @@
 #include <QLocalSocket>
 #include <QMouseEvent>
 #include <QScreen>
+#include <QVariantAnimation>
 #include <QtTest/QtTest>
 
 #include <BRepGProp.hxx>
@@ -252,6 +253,7 @@ class GuiPhase1 : public QObject {
   void sectionToolboxControlsAreIndependentAndCached();
   void toolsPaletteShowsAllAndFloats();
   void panelDragPreviewKeepsTheModelViewStill();
+  void panelMotionSettlesAfterNativeDock();
   void paletteResizeKeepsBackdropAcrossViewport();
   void sectionToolAndTagsPanel();
   void pushPullCylinderSide();
@@ -7128,6 +7130,91 @@ void GuiPhase1::emptyDoubleClickExitsOnlySelectionContext() {
       QCOMPARE(m.document().children(f.window.editingGroup()).size(), contents); // edits committed on exit
       f.window.exitGroup();
     }
+  }
+}
+
+void GuiPhase1::panelMotionSettlesAfterNativeDock() {
+  struct RestorePalette {
+    QPalette palette = QApplication::palette();
+    ~RestorePalette() { QApplication::setPalette(palette); }
+  } restore;
+  for (bool dark : {false, true}) {
+    auto palette = restore.palette;
+    palette.setColor(QPalette::Window, dark ? QColor("#25272b") : QColor("#f3f4f6"));
+    palette.setColor(QPalette::WindowText, dark ? QColor("#e2e5ea") : QColor("#22262e"));
+    palette.setColor(QPalette::Button, palette.color(QPalette::Window));
+    palette.setColor(QPalette::ButtonText, palette.color(QPalette::WindowText));
+    palette.setColor(QPalette::Base, palette.color(QPalette::Window));
+    palette.setColor(QPalette::Text, palette.color(QPalette::WindowText));
+    QApplication::setPalette(palette);
+    Fixture f;
+    QVERIFY(f.setUp());
+    f.window.move(30, 30);
+    f.box(0, 0, 2000, 1500, 1200);
+    f.vp->syncNow();
+    auto* dock = f.window.findChild<PanelDock*>(QStringLiteral("propertiesDock"));
+    QVERIFY(dock);
+    dock->setFloating(true); dock->show(); QTest::qWait(30);
+    const QRect geometry = f.vp->geometry();
+    const auto sequence = f.window.modeler().document().sequence();
+    const QPoint target = f.window.mapToGlobal(QPoint(geometry.center().x(), geometry.top() + 12));
+    auto* title = dock->titleBarWidget();
+    const auto mouse = [&](QEvent::Type type, QPoint global) {
+      QMouseEvent event(type, QPointF(title->mapFromGlobal(global)), QPointF(global),
+                       type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
+                       type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton, Qt::NoModifier);
+      QApplication::sendEvent(title, &event);
+      QCoreApplication::processEvents();
+    };
+    const auto capture = [&](const QString& phase) {
+      const auto folder = qEnvironmentVariable("SBR_MOTION_CAPTURE_DIR");
+      if (folder.isEmpty()) return;
+      QDir().mkpath(folder);
+      const QPoint origin = f.window.mapToGlobal(QPoint());
+      QGuiApplication::primaryScreen()->grabWindow(0, origin.x(), origin.y(), f.window.width(), f.window.height())
+          .save(folder + (dark ? "/dark-" : "/light-") + phase + ".png");
+    };
+    mouse(QEvent::MouseButtonPress, title->mapToGlobal(QPoint(10, 12)));
+    mouse(QEvent::MouseMove, target);
+    auto* guide = f.window.findChild<QWidget*>(QStringLiteral("panelDockPreview"));
+    QVERIFY(guide && guide->isVisible());
+    auto* motion = guide->findChild<QVariantAnimation*>(QStringLiteral("dockPreviewMotion"));
+    QVERIFY(motion);
+    capture(QStringLiteral("enter-0"));
+    QTest::qWait(50); capture(QStringLiteral("enter-50"));
+    QTRY_COMPARE(motion->state(), QAbstractAnimation::Stopped);
+    capture(QStringLiteral("hold"));
+    if (qEnvironmentVariableIsSet("SBR_MOTION_CAPTURE_DIR")) QTest::qWait(300);
+    // Retarget near the corner: real native tooltip surfaces must overlap
+    // only for the short cross-fade, without rearranging the model view.
+    mouse(QEvent::MouseMove, f.window.mapToGlobal(QPoint(f.window.width() - 12, geometry.top() + 32)));
+    auto* next = f.window.findChild<QWidget*>(QStringLiteral("panelDockPreview"));
+    QVERIFY(next && next != guide && next->isVisible() && guide->isVisible());
+    auto* nextMotion = next->findChild<QVariantAnimation*>(QStringLiteral("dockPreviewMotion"));
+    QVERIFY(nextMotion);
+    QTest::qWait(50); capture(QStringLiteral("switch-50"));
+    QTRY_COMPARE(nextMotion->state(), QAbstractAnimation::Stopped);
+    QVERIFY(!guide->isVisible());
+    mouse(QEvent::MouseMove, target);
+    guide = f.window.findChild<QWidget*>(QStringLiteral("panelDockPreview"));
+    motion = guide->findChild<QVariantAnimation*>(QStringLiteral("dockPreviewMotion"));
+    QTRY_COMPARE(motion->state(), QAbstractAnimation::Stopped);
+    capture(QStringLiteral("return-hold"));
+    QCOMPARE(f.vp->geometry(), geometry);
+    QCOMPARE(f.window.modeler().document().sequence(), sequence);
+    QSignalSpy placement(dock, &QDockWidget::topLevelChanged);
+    mouse(QEvent::MouseButtonRelease, target);
+    QVERIFY(!dock->isFloating());
+    QCOMPARE(placement.count(), 1);
+    QVERIFY(guide->isVisible());
+    QCOMPARE(motion->state(), QAbstractAnimation::Running);
+    capture(QStringLiteral("settle-0"));
+    QTest::qWait(75); capture(QStringLiteral("settle-75"));
+    QTRY_VERIFY(!guide->isVisible());
+    QCOMPARE(motion->state(), QAbstractAnimation::Stopped);
+    capture(QStringLiteral("done"));
+    if (qEnvironmentVariableIsSet("SBR_MOTION_CAPTURE_DIR")) QTest::qWait(300);
+    QCOMPARE(f.window.modeler().document().sequence(), sequence);
   }
 }
 

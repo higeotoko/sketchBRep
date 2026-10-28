@@ -13,6 +13,7 @@ Qt::DockWidgetArea panelDockTarget(const QRect& bounds, const QPoint& position,
                                   Qt::DockWidgetAreas allowed, Qt::DockWidgetArea previous = Qt::NoDockWidgetArea);
 
 class PanelTitleBar;
+class DockPreview;
 
 // Standard Qt docking/resizing, with a themed title bar and a lightweight
 // edge preview. Dragging never rearranges the model view until release.
@@ -33,9 +34,10 @@ class PanelDock : public QDockWidget {
   void toggleFloating();
   void dockAt(Qt::DockWidgetArea area, bool restoreTabs = false);
   QRect dockBounds() const;
-  void clearPreview();
+  void clearPreview(bool animated = false);
   QMainWindow* host_;
-  QPointer<QWidget> preview_;
+  QPointer<DockPreview> preview_;
+  QPointer<DockPreview> outgoingPreview_;
   QPointer<QDockWidget> tabPeer_;
   Qt::DockWidgetArea lastArea_ = Qt::RightDockWidgetArea;
   Qt::DockWidgetArea target_ = Qt::NoDockWidgetArea;
@@ -44,6 +46,7 @@ class PanelDock : public QDockWidget {
   bool pressed_ = false;
   bool dragging_ = false;
   bool wasFloating_ = false;
+  bool committingDock_ = false;
 };
 
 }  // namespace sbr::app
