@@ -195,9 +195,10 @@ void keepEdgesOn(ShapeUpgrade_UnifySameDomain& unify, const TopoDS_Shape& shape,
   }
 }
 
-// Edges lying along one of the curves (ends and middle on it).
+// Edges lying along one of the curves (ends and middle on it); with
+// `betweenCurved`, only those between two curved faces.
 void keepEdgesAlong(ShapeUpgrade_UnifySameDomain& unify, const TopoDS_Shape& shape,
-                    const std::vector<TopoDS_Edge>& curves) {
+                    const std::vector<TopoDS_Edge>& curves, bool betweenCurved = false) {
   if (curves.empty()) return;
   std::vector<Bnd_Box> boxes;
   for (const TopoDS_Edge& c : curves) {
@@ -211,7 +212,16 @@ void keepEdgesAlong(ShapeUpgrade_UnifySameDomain& unify, const TopoDS_Shape& sha
     BRepExtrema_DistShapeShape d(BRepBuilderAPI_MakeVertex(p).Vertex(), curves[k]);
     return d.IsDone() && d.Value() < 1e-3;
   };
+  TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
+  if (betweenCurved) TopExp::MapShapesAndAncestors(shape, TopAbs_EDGE, TopAbs_FACE, edgeFaces);
   for (TopExp_Explorer e(shape, TopAbs_EDGE); e.More(); e.Next()) {
+    if (betweenCurved) {
+      const int i = edgeFaces.FindIndex(e.Current());
+      if (i == 0) continue;
+      bool curved = edgeFaces(i).Extent() == 2;
+      for (const TopoDS_Shape& f : edgeFaces(i)) curved = curved && isCylinderOrCone(TopoDS::Face(f));
+      if (!curved) continue;
+    }
     BRepAdaptor_Curve curve(TopoDS::Edge(e.Current()));
     const double a = curve.FirstParameter(), b = curve.LastParameter();
     const gp_Pnt pa = curve.Value(a), pm = curve.Value(0.5 * (a + b)), pb = curve.Value(b);
@@ -222,6 +232,25 @@ void keepEdgesAlong(ShapeUpgrade_UnifySameDomain& unify, const TopoDS_Shape& sha
       }
     }
   }
+}
+
+// Where lines were drawn into curved faces (`curves`): the outlines of the
+// cylinders / cones before a push/pull, kept where curved faces meet after
+// it, so a new side face is not joined across a divided surface (joined, a
+// part's line can end inside the joined face: invalid, seen with OCCT 8).
+void keepCurvedOutlines(ShapeUpgrade_UnifySameDomain& unify, const TopoDS_Shape& combined, const TopoDS_Shape& solid,
+                        const std::vector<TopoDS_Edge>& curves) {
+  if (curves.empty()) return;
+  std::vector<TopoDS_Edge> out;
+  TopTools_IndexedMapOfShape outlines;
+  for (TopExp_Explorer f(solid, TopAbs_FACE); f.More(); f.Next()) {
+    if (!isCylinderOrCone(TopoDS::Face(f.Current()))) continue;
+    for (TopExp_Explorer e(f.Current(), TopAbs_EDGE); e.More(); e.Next()) {
+      if (!BRep_Tool::Degenerated(TopoDS::Edge(e.Current()))) outlines.Add(e.Current());
+    }
+  }
+  for (int i = 1; i <= outlines.Extent(); ++i) out.push_back(TopoDS::Edge(outlines(i)));
+  keepEdgesAlong(unify, combined, out, true);
 }
 
 }  // namespace
@@ -459,6 +488,7 @@ Result<TopoDS_Shape> pushPullFace(const TopoDS_Shape& solid, const TopoDS_Face& 
     ShapeUpgrade_UnifySameDomain unify(combined, Standard_True, Standard_True, Standard_False);
     keepEdgesOn(unify, combined, keepLines);
     keepEdgesAlong(unify, combined, keepCurves);
+    keepCurvedOutlines(unify, combined, solid, keepCurves);
     unify.Build();
     const auto extracted = singleSolid(unify.Shape());
     if (!extracted) return extracted;
@@ -1015,6 +1045,7 @@ Result<TopoDS_Shape> pushPullCurvedPart(const TopoDS_Shape& solid, const TopoDS_
     ShapeUpgrade_UnifySameDomain unify(combined, Standard_True, Standard_True, Standard_False);
     keepEdgesOn(unify, combined, keepLines);
     keepEdgesAlong(unify, combined, keepCurves);
+    keepCurvedOutlines(unify, combined, solid, keepCurves);
     unify.Build();
     const auto extracted = singleSolid(unify.Shape());
     if (!extracted) return extracted;

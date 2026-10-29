@@ -257,9 +257,13 @@ TEST(CurvedFaceSplit, PushPullOfTheTopKeepsTheDivision) {
   auto pulled = m.pushPull(c, top, 300);
   ASSERT_TRUE(pulled) << pulled.error();
   EXPECT_NEAR(volumeOf(m, c), M_PI * 500 * 500 * 1300, 1e-3 * M_PI * 500 * 500);
-  // Two halves below the circle, two above (the line now reaches the top
-  // only where it was drawn: the new part of the side is one face).
-  EXPECT_GE(curvedFaces(m, c), 4);
+  // The four parts as drawn, and the new part of the side as a face of its
+  // own (the old top edge stays a line, as SketchUp).
+  EXPECT_EQ(curvedFaces(m, c), 5);
+  // Regenerated (as opening the file) the same.
+  Object again = *m.document().find(c);
+  ASSERT_TRUE(rebuild(again, m.document().regenContext()));
+  EXPECT_NEAR(geom::volume(again.shape), M_PI * 500 * 500 * 1300, 1e-3 * M_PI * 500 * 500);
   EXPECT_TRUE(valid(m, c));
 }
 
