@@ -407,6 +407,62 @@ class Modeler {
   // A floor slab: plan polygon (any winding) with its top at `top`,
   // `thickness` below. Attribute kind = slab. One undo step.
   Result<ObjectId> createSlab(const std::vector<gp_Pnt>& outline, double top, double thickness);
+  // --- linear members (docs/40) ---------------------------------------------
+  // A beam, column or brace: `section` swept from `start` to `end` (world),
+  // the axis line through `anchor` of it. `up`: the section's up hint
+  // (default world up; columns: world +Y), fixed when made. role / material
+  // class go into the attributes kind / material_class (optional). A plain
+  // solid otherwise: every edit works on it. One undo step.
+  struct MemberSpec {
+    gp_Pnt start;
+    gp_Pnt end;
+    geom::Section section;
+    geom::SectionAnchor anchor;
+    std::optional<gp_Dir> up;
+    double roll = 0.0;  // radians
+    std::string role;
+    std::string materialClass;
+    std::string name;
+  };
+  Result<ObjectId> createMember(const MemberSpec& spec);
+  // What can be edited of a member as it is now: each value with what it
+  // means and where it comes from (the member's parameter, or measured on
+  // its shape after other edits). Computed when asked, never kept.
+  struct MemberField {
+    std::string key;      // length, width, depth, web, flange, radius, roll
+    std::string meaning;
+    std::string unit;     // mm or deg
+    double value = 0.0;
+    std::string basis;    // parameter / shape
+    bool editable = true;
+    std::string note;
+  };
+  struct MemberInfo {
+    ObjectId id;
+    std::string section;  // current section's name
+    std::string catalog;  // the catalog entry it is now ("" own dimensions)
+    std::string origin;   // the catalog entry it was made from
+    geom::Section::Kind kind = geom::Section::Kind::Rectangle;
+    geom::SectionAnchor anchor;
+    bool edited = false;  // edited after it was made (push/pull, holes, ...)
+    std::string role;
+    std::string materialClass;
+    std::vector<MemberField> fields;
+  };
+  Result<MemberInfo> memberInfo(const ObjectId& id) const;
+  // Basic edits, all together in one step (checked as a whole, never one
+  // by one): another catalog section (anchor, rotation and length kept),
+  // own dimensions, length (absolute: the start stays, a column's foot),
+  // rotation, or the anchor (the member stays where it is; only the axis
+  // line moves). Other edits made since are kept: when they cannot be
+  // redone on the changed member, nothing changes and the reason is given.
+  struct MemberChange {
+    std::optional<std::string> catalog;
+    std::optional<double> width, depth, web, flange, radius, length, roll;  // mm, mm..., mm, radians
+    std::optional<geom::SectionAnchor> anchor;
+  };
+  Result<MemberInfo> changeMember(const ObjectId& id, const MemberChange& change);
+
   // Cuts `count` equal rectangular openings through a wall's face (the
   // outermost planar face facing `faceNormal`), evenly spread along it, or
   // `spacing` apart (centre to centre) around the face's middle. sill =

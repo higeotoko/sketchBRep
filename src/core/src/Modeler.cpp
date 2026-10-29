@@ -3491,6 +3491,27 @@ Result<PushPullResult> Modeler::pushPull(const ObjectId& id, const TopoDS_Face& 
   const gp_Trsf world = document_.worldTransform(object);
   const TopoDS_Face face = TopoDS::Face(worldFace.Moved(TopLoc_Location(world.Inverted())));
   const auto pickedNormal = geom::planarFaceNormal(face);
+  // A member's end face pushed / pulled along it: its length, kept as the
+  // member's own parameter (docs/40). Only when the member then rebuilds;
+  // otherwise as any other face.
+  if (const auto* member = std::get_if<LinearMember>(&object.recipe.base); member && pickedNormal && !keepStartFace) {
+    const gp_Vec along(member->start, member->end);
+    gp_Pln plane;
+    if (along.Magnitude() > tolerance::kMinDimension && pickedNormal->IsParallel(gp_Dir(along), 1e-9) &&
+        geom::isPlanarFace(face, &plane)) {
+      Object longer = object;
+      auto& m = std::get<LinearMember>(longer.recipe.base);
+      const gp_Vec move = gp_Vec(*pickedNormal) * distance;
+      bool atEnd = plane.Distance(member->end) < tolerance::kLinear;
+      bool atStart = !atEnd && plane.Distance(member->start) < tolerance::kLinear;
+      if (atEnd) m.end.Translate(move);
+      if (atStart) m.start.Translate(move);
+      if ((atEnd || atStart) && m.start.Distance(m.end) >= tolerance::kMinDimension &&
+          gp_Vec(m.start, m.end).Dot(along) > 0 && commitModified(std::move(longer), "Push/Pull")) {
+        return PushPullResult{id, "length"};
+      }
+    }
+  }
   if (!pickedNormal) {
     if (object.kind() != ObjectKind::Solid) {
       return Result<PushPullResult>::failure("Only planar faces of profiles can be pushed/pulled");
@@ -4803,6 +4824,161 @@ Result<std::vector<ObjectId>> Modeler::createWalls(std::vector<gp_Pnt> points, d
   }
   history_.endGroup();
   return walls;
+}
+
+// --- linear members -----------------------------------------------------------
+
+namespace {
+
+// How far the shape reaches along the member's axis (its vertices: the
+// end faces are flat and every edge ends in one).
+double extentAlong(const TopoDS_Shape& shape, const gp_Pnt& origin, const gp_Dir& axis) {
+  double lo = 0, hi = 0;
+  bool first = true;
+  TopTools_IndexedMapOfShape vertices;
+  TopExp::MapShapes(shape, TopAbs_VERTEX, vertices);
+  for (int i = 1; i <= vertices.Extent(); ++i) {
+    const double t = gp_Vec(origin, BRep_Tool::Pnt(TopoDS::Vertex(vertices(i)))).Dot(gp_Vec(axis));
+    lo = first ? t : std::min(lo, t);
+    hi = first ? t : std::max(hi, t);
+    first = false;
+  }
+  return hi - lo;
+}
+
+std::string attributeOr(const Object& o, const std::string& key) {
+  const auto it = o.attributes.find(key);
+  return it == o.attributes.end() ? std::string() : it->second;
+}
+
+}  // namespace
+
+Result<ObjectId> Modeler::createMember(const MemberSpec& spec) {
+  using R = Result<ObjectId>;
+  if (const Status valid = geom::validateSection(spec.section); !valid) return R::failure(valid.message());
+  if (std::abs(spec.anchor.across) > 1 || std::abs(spec.anchor.up) > 1) return R::failure("Unknown section anchor");
+  const gp_Vec along(spec.start, spec.end);
+  if (!(along.Magnitude() >= tolerance::kMinDimension)) {
+    return R::failure("A member needs two different, finite points");
+  }
+  auto up = spec.up ? geom::memberUp(gp_Dir(along), *spec.up) : geom::memberUp(gp_Dir(along));
+  if (!up) return R::failure(up.error());
+  LinearMember member{spec.start, spec.end, *up, spec.roll, spec.section, spec.anchor, spec.section.catalog};
+  Object o;
+  o.name = spec.name.empty() ? uniqueName(spec.role == "column" ? "Column" : spec.role == "beam" ? "Beam" : "Member")
+                             : spec.name;
+  o.recipe.base = member;
+  // Meaning in the same step (no attribute pass afterwards).
+  if (!spec.role.empty()) o.attributes["kind"] = spec.role;
+  if (!spec.materialClass.empty()) o.attributes["material_class"] = spec.materialClass;
+  return addObject(std::move(o), "Member");
+}
+
+Result<Modeler::MemberInfo> Modeler::memberInfo(const ObjectId& id) const {
+  using R = Result<MemberInfo>;
+  const Object* o = document_.find(id);
+  if (!o) return R::failure("Object not found");
+  const auto* m = std::get_if<LinearMember>(&o->recipe.base);
+  if (!m) return R::failure("Not a member made by the member tool (no section to edit; its shape can still be edited)");
+  MemberInfo info;
+  info.id = id;
+  info.section = geom::sectionName(m->section);
+  info.catalog = m->section.catalog;
+  info.origin = m->origin;
+  info.kind = m->section.kind;
+  info.anchor = m->anchor;
+  info.edited = !o->recipe.modifiers.empty();
+  info.role = attributeOr(*o, "kind");
+  info.materialClass = attributeOr(*o, "material_class");
+  const double parameterLength = m->start.Distance(m->end);
+  if (info.edited) {
+    // After other edits the member's own length is what it was made with;
+    // what it is now is measured along its axis.
+    const double now = extentAlong(o->shape, m->start, gp_Dir(gp_Vec(m->start, m->end)));
+    info.fields.push_back({"length", "length along the member axis", "mm", now, "shape", true,
+                           "measured on the edited shape; changing it moves the end (a column: its top)"});
+  } else {
+    info.fields.push_back({"length", "length along the member axis", "mm", parameterLength, "parameter", true, ""});
+  }
+  const std::string sectionNote =
+      info.edited ? "section as made; the edits made since are redone on a changed section, or nothing changes" : "";
+  info.fields.push_back({"width", "section width (across)", "mm", m->section.width, "parameter", true, sectionNote});
+  info.fields.push_back({"depth", "section depth (up)", "mm", m->section.depth, "parameter", true, sectionNote});
+  if (m->section.kind == geom::Section::Kind::H) {
+    info.fields.push_back({"web", "web thickness", "mm", m->section.web, "parameter", true, sectionNote});
+    info.fields.push_back({"flange", "flange thickness", "mm", m->section.flange, "parameter", true, sectionNote});
+    info.fields.push_back({"radius", "fillet radius", "mm", m->section.radius, "parameter", true, sectionNote});
+  }
+  info.fields.push_back({"roll", "rotation about the axis", "deg", m->roll * 180.0 / M_PI, "parameter", true, ""});
+  return info;
+}
+
+Result<Modeler::MemberInfo> Modeler::changeMember(const ObjectId& id, const MemberChange& change) {
+  using R = Result<MemberInfo>;
+  const Object* current = document_.find(id);
+  if (!current) return R::failure("Object not found");
+  if (!std::holds_alternative<LinearMember>(current->recipe.base)) {
+    return R::failure("Not a member made by the member tool (no section to edit; its shape can still be edited)");
+  }
+  Object object = *current;
+  auto& m = std::get<LinearMember>(object.recipe.base);
+  if (change.catalog) {
+    const geom::CatalogSection* entry = geom::findSection(*change.catalog);
+    if (!entry) return R::failure("No section '" + *change.catalog + "' in the catalog (nothing was changed)");
+    m.section = entry->section;
+    m.origin = entry->id;
+  }
+  // The section's own dimensions, all at once (one check of the result).
+  geom::Section section = m.section;
+  const bool h = section.kind == geom::Section::Kind::H;
+  bool own = false;
+  auto set = [&](const std::optional<double>& v, double& field, bool applies, const char* name) -> Status {
+    if (!v) return Status::success();
+    if (!applies) return Status::failure(std::string("A ") + geom::sectionName(section) + " section has no " + name);
+    if (std::abs(field - *v) > 1e-12) own = true;
+    field = *v;
+    return Status::success();
+  };
+  for (const Status& s : {set(change.width, section.width, true, "width"), set(change.depth, section.depth, true, "depth"),
+                          set(change.web, section.web, h, "web"), set(change.flange, section.flange, h, "flange"),
+                          set(change.radius, section.radius, h, "fillet radius")}) {
+    if (!s) return R::failure(s.message());
+  }
+  if (own) section.catalog.clear();
+  if (const Status valid = geom::validateSection(section); !valid) return R::failure(valid.message());
+  m.section = section;
+  if (change.roll) {
+    if (!std::isfinite(*change.roll)) return R::failure("The rotation must be finite");
+    m.roll = *change.roll;
+  }
+  if (change.anchor) {
+    if (std::abs(change.anchor->across) > 1 || std::abs(change.anchor->up) > 1) return R::failure("Unknown section anchor");
+    // The member stays; its axis line moves to the new anchor.
+    auto frame = geom::memberFrame(m.start, m.end, m.up, m.roll);
+    if (!frame) return R::failure(frame.error());
+    const auto [u0, v0] = geom::anchorOffset(m.section, m.anchor);
+    const auto [u1, v1] = geom::anchorOffset(m.section, *change.anchor);
+    const gp_Vec shift = gp_Vec(frame->XDirection()) * (u1 - u0) + gp_Vec(frame->YDirection()) * (v1 - v0);
+    m.start.Translate(shift);
+    m.end.Translate(shift);
+    m.anchor = *change.anchor;
+  }
+  if (change.length) {
+    double target = *change.length;
+    if (!object.recipe.modifiers.empty()) {
+      // Edited since: the measured length is what was asked about.
+      const double now = extentAlong(current->shape, std::get<LinearMember>(current->recipe.base).start,
+                                     gp_Dir(gp_Vec(m.start, m.end)));
+      target = m.start.Distance(m.end) + (*change.length - now);
+    }
+    if (const Status s = ::sbr::doc::setParameter(object.recipe, "length", target); !s) return R::failure(s.message());
+  }
+  const Status committed = commitModified(std::move(object), "Change Member");
+  if (!committed) {
+    return R::failure("The member was not changed: " + committed.message() +
+                      " (the edits made to it could not be redone; its shape can still be edited directly)");
+  }
+  return memberInfo(id);
 }
 
 Result<ObjectId> Modeler::createSlab(const std::vector<gp_Pnt>& outline, double top, double thickness) {

@@ -92,6 +92,9 @@ QPainterPath symbol(CursorKind kind) {
       p.moveTo(3, 10); p.lineTo(12, 5); p.lineTo(21, 10); p.lineTo(12, 15); p.closeSubpath();
       p.moveTo(3, 10); p.lineTo(3, 14); p.lineTo(12, 19); p.lineTo(21, 14); p.lineTo(21, 10);
       p.moveTo(12, 15); p.lineTo(12, 19); break;
+    case CursorKind::Member:  // an H section on a member running off
+      p.moveTo(3, 6); p.lineTo(11, 6); p.moveTo(3, 18); p.lineTo(11, 18); p.moveTo(7, 6); p.lineTo(7, 18);
+      p.moveTo(11, 6); p.lineTo(21, 3); p.moveTo(11, 18); p.lineTo(21, 15); break;
     case CursorKind::Opening:
       p.addRect(QRectF(4, 3, 16, 18)); p.addRect(QRectF(8, 7, 8, 10));
       p.moveTo(12, 7); p.lineTo(12, 17); break;

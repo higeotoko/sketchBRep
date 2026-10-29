@@ -64,7 +64,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   // Used by tests and the command line.
   bool openFile(const QString& path);
   bool saveFile(const QString& path);
-  enum class ToolId { Select, Line, Rectangle, PushPull, Move, Rotate, Offset, Curve, Revolve, Measure, Circle, Paint, Eraser, Arc, Dimension, Text, Section, FollowMe, Protractor, Polygon, Scale, Wall, Slab, Opening, Paste, ComponentAxes, RotatedRectangle, Count };
+  enum class ToolId { Select, Line, Rectangle, PushPull, Move, Rotate, Offset, Curve, Revolve, Measure, Circle, Paint, Eraser, Arc, Dimension, Text, Section, FollowMe, Protractor, Polygon, Scale, Wall, Slab, Opening, Paste, ComponentAxes, RotatedRectangle, Member, Count };
   void activateTool(ToolId id);
   // Component placement commands on the instances among `ids`: "unique",
   // "reset", "mirror0".."mirror2" (red / green / blue) or "axes" (tool).
@@ -159,6 +159,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   bool setMaterialTexture(const std::string& id, const QString& path);
   // Architectural helpers behind the Tools menu (also used by tests).
   WallTool& wallTool() { return *wallTool_; }
+  MemberTool& memberTool() { return *memberTool_; }
   SlabTool& slabTool() { return *slabTool_; }
   OpeningTool& openingTool() { return *openingTool_; }
   // Openings into the selected wall: the face picked (face selection) or the
@@ -201,6 +202,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   void showWheelZoomDialog();
   void refreshConstraints();
   void showWallSettingsDialog();
+  void showMemberSettingsDialog();
   void showSlabSettingsDialog();
   void showOpeningSettingsDialog();
   void showOpeningsDialog();
@@ -280,6 +282,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   std::unique_ptr<ScaleTool> scaleTool_;
   std::unique_ptr<ComponentAxesTool> componentAxesTool_;
   std::unique_ptr<WallTool> wallTool_;
+  std::unique_ptr<MemberTool> memberTool_;
   std::unique_ptr<SlabTool> slabTool_;
   std::unique_ptr<OpeningTool> openingTool_;
   doc::Modeler::Clipboard clipboard_;

@@ -412,6 +412,64 @@ doc::BooleanKind booleanKind(const std::string& s) {
 }
 
 json idResult(const ObjectId& id) { return json{{"id", id}}; }
+
+// A member section: a catalog id, or {kind, width, depth[, web, flange, radius]}.
+geom::Section sectionFrom(const json& v) {
+  if (v.is_string()) {
+    const geom::CatalogSection* entry = geom::findSection(v.get<std::string>());
+    if (!entry) throw ApiError("no section '" + v.get<std::string>() + "' in the catalog (see list_sections)");
+    return entry->section;
+  }
+  if (!v.is_object()) throw ApiError("'section' must be a catalog id or {kind, width, depth, ...}");
+  geom::Section s;
+  const std::string kind = textOr(v, "kind", "rectangle");
+  if (kind == "h") s.kind = geom::Section::Kind::H;
+  else if (kind != "rectangle") throw ApiError("section kind: rectangle or h");
+  s.width = number(v, "width");
+  s.depth = number(v, "depth");
+  if (s.kind == geom::Section::Kind::H) {
+    s.web = number(v, "web");
+    s.flange = number(v, "flange");
+    s.radius = numberOr(v, "radius", 0.0);
+  }
+  return s;
+}
+
+geom::SectionAnchor anchorFrom(const json& v) {
+  if (!v.is_object()) throw ApiError("'anchor' must be {across: left|center|right, up: top|center|bottom}");
+  geom::SectionAnchor anchor;
+  const std::string across = textOr(v, "across", "center"), up = textOr(v, "up", "center");
+  if (across == "left") anchor.across = 1;
+  else if (across == "right") anchor.across = -1;
+  else if (across != "center") throw ApiError("anchor across: left, center or right");
+  if (up == "top") anchor.up = 1;
+  else if (up == "bottom") anchor.up = -1;
+  else if (up != "center") throw ApiError("anchor up: top, center or bottom");
+  return anchor;
+}
+
+json memberInfoJson(const doc::Modeler::MemberInfo& info) {
+  json fields = json::array();
+  for (const auto& f : info.fields) {
+    json field{{"key", f.key}, {"meaning", f.meaning}, {"unit", f.unit}, {"value", f.value},
+               {"basis", f.basis}, {"editable", f.editable}};
+    if (!f.note.empty()) field["note"] = f.note;
+    fields.push_back(field);
+  }
+  static const char* across[] = {"right", "center", "left"};
+  static const char* up[] = {"bottom", "center", "top"};
+  json out{{"id", info.id},
+           {"section", info.section},
+           {"kind", geom::toString(info.kind)},
+           {"catalog", info.catalog.empty() ? json(nullptr) : json(info.catalog)},
+           {"made_from", info.origin.empty() ? json(nullptr) : json(info.origin)},
+           {"anchor", {{"across", across[info.anchor.across + 1]}, {"up", up[info.anchor.up + 1]}}},
+           {"edited", info.edited},
+           {"fields", fields}};
+  if (!info.role.empty()) out["role"] = info.role;
+  if (!info.materialClass.empty()) out["material_class"] = info.materialClass;
+  return out;
+}
 json idsResult(const std::vector<ObjectId>& v) { return json{{"ids", v}}; }
 
 // --- queries for agents on large models -------------------------------------------------
@@ -1733,6 +1791,107 @@ const std::vector<CommandDef>& commands() {
            for (const json& p : list) pts.push_back(grid.point(p, 0.0));
          }
          return idResult(must(m.createSlab(pts, numberOr(a, "top", 0.0), number(a, "thickness"))));
+       }},
+      {"list_sections",
+       "Sections for create_member: catalog entries (exact ids, e.g. \"H-200x100x5.5x8\"), optionally "
+       "filtered by 'query' (part of the id or family, e.g. \"H-400\"; exact matches come first). Rectangles "
+       "(timber, RC) need no entry: give {kind: \"rectangle\", width, depth}. A missing size is never "
+       "replaced by another one.",
+       SCHEMA({"type": "object", "properties": {"query": {"type": "string"}}}),
+       [](doc::Modeler&, const json& a) {
+         const std::string query = textOr(a, "query", "");
+         json exact = json::array(), near = json::array();
+         for (const geom::CatalogSection& c : geom::sectionCatalog()) {
+           const bool same = !query.empty() && c.id == query;
+           if (!query.empty() && !same && c.id.find(query) == std::string::npos && c.family != query) continue;
+           json entry{{"id", c.id}, {"family", c.family}, {"material_class", c.material}, {"standard", c.standard},
+                      {"kind", geom::toString(c.section.kind)}, {"width", c.section.width},
+                      {"depth", c.section.depth}, {"web", c.section.web}, {"flange", c.section.flange},
+                      {"radius", c.section.radius}};
+           (same ? exact : near).push_back(entry);
+         }
+         for (json& e : near) exact.push_back(std::move(e));
+         return json{{"sections", exact}, {"units", "mm"},
+                     {"rectangle", "any width x depth: {kind: rectangle, width, depth}"}};
+       }},
+      {"create_member",
+       "A linear member (beam, column, brace; steel, timber or RC): 'section' (a catalog id from "
+       "list_sections, or {kind: rectangle, width, depth}, or {kind: h, width, depth, web, flange, radius}) "
+       "swept from 'start' to 'end' ([x, y, z] or a grid crossing \"X1/Y1\" at height 'base', mm), or "
+       "'length' along 'direction' (default up: a column). 'anchor' {across: left|center|right, up: "
+       "top|center|bottom} is the point of the section on the start-end line (left / right looking from "
+       "start to end; e.g. a beam on its top edge: up=top). 'up' [x, y, z]: the section's up hint (default "
+       "world up; members along it face +Y); 'roll' (deg) turns it about the member. 'role' (column, beam, "
+       "brace, ...) and 'material_class' (steel, timber, rc) are optional attributes kind / material_class. "
+       "A plain solid afterwards: every edit works on it. Returns the id and member_info.",
+       SCHEMA({"type": "object", "properties": {
+         "section": {}, "start": {}, "end": {}, "length": {"type": "number"}, "direction": {"type": "array"},
+         "base": {"type": "number"}, "anchor": {"type": "object"}, "up": {"type": "array"},
+         "roll": {"type": "number"}, "role": {"type": "string"}, "material_class": {"type": "string"},
+         "name": {"type": "string"}},
+         "required": ["section", "start"]}),
+       [](doc::Modeler& m, const json& a) {
+         const GridLookup grid(m.document());
+         const double base = numberOr(a, "base", 0.0);
+         doc::Modeler::MemberSpec spec;
+         spec.section = sectionFrom(arg(a, "section"));
+         // [x, y, z] as given; [x, y] and grid crossings at 'base'.
+         auto at = [&](const json& v) {
+           return v.is_array() && v.size() == 3 ? gp_Pnt(xyz(v, "point")) : grid.point(v, base);
+         };
+         spec.start = at(arg(a, "start"));
+         if (a.contains("end")) {
+           spec.end = at(a.at("end"));
+         } else if (a.contains("length")) {
+           spec.end = spec.start.Translated(gp_Vec(direction(a, "direction", gp::DZ())) * number(a, "length"));
+         } else {
+           throw ApiError("give 'end', or 'length' (and 'direction')");
+         }
+         if (a.contains("anchor")) spec.anchor = anchorFrom(a.at("anchor"));
+         if (a.contains("up")) spec.up = direction(a, "up", gp::DZ());
+         spec.roll = numberOr(a, "roll", 0.0) * M_PI / 180.0;
+         spec.role = textOr(a, "role", "");
+         spec.materialClass = textOr(a, "material_class", spec.section.kind == geom::Section::Kind::H ? "steel" : "");
+         spec.name = textOr(a, "name", "");
+         const ObjectId id = must(m.createMember(spec));
+         return memberInfoJson(must(m.memberInfo(id)));
+       }},
+      {"member_info",
+       "What can be edited of a member now: section (current name, catalog id or own dimensions, and the "
+       "catalog it was made from), anchor, role, material_class, and fields [{key, meaning, unit, value, "
+       "basis, editable, note}] for length (measured along the axis after other edits: basis shape), "
+       "width, depth (H: web, flange, radius) and roll. Values are what it is now, never the original "
+       "sizes after edits. Objects not made as members: an error (their shape stays editable).",
+       SCHEMA({"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}),
+       [](doc::Modeler& m, const json& a) { return memberInfoJson(must(m.memberInfo(text(a, "id")))); }},
+      {"change_member",
+       "Basic member edits in one step, checked together: 'catalog' (another catalog section; anchor, "
+       "rotation and length kept), own 'width' / 'depth' (H: 'web', 'flange', 'radius'; the section "
+       "becomes its own), 'length' (absolute, mm; the start stays, a column's foot), 'roll' (deg), "
+       "'anchor' {across, up} (the member stays put; only its axis line moves). Edits made to it since are "
+       "redone; if they cannot be, nothing changes and the reason is returned. Same id; returns "
+       "member_info. Role: set_attribute kind.",
+       SCHEMA({"type": "object", "properties": {
+         "id": {"type": "string"}, "catalog": {"type": "string"}, "width": {"type": "number"},
+         "depth": {"type": "number"}, "web": {"type": "number"}, "flange": {"type": "number"},
+         "radius": {"type": "number"}, "length": {"type": "number"}, "roll": {"type": "number"},
+         "anchor": {"type": "object"}},
+         "required": ["id"]}),
+       [](doc::Modeler& m, const json& a) {
+         doc::Modeler::MemberChange change;
+         if (a.contains("catalog")) change.catalog = text(a, "catalog");
+         auto opt = [&](const char* key) -> std::optional<double> {
+           return a.contains(key) ? std::optional<double>(number(a, key)) : std::nullopt;
+         };
+         change.width = opt("width");
+         change.depth = opt("depth");
+         change.web = opt("web");
+         change.flange = opt("flange");
+         change.radius = opt("radius");
+         change.length = opt("length");
+         if (a.contains("roll")) change.roll = number(a, "roll") * M_PI / 180.0;
+         if (a.contains("anchor")) change.anchor = anchorFrom(a.at("anchor"));
+         return memberInfoJson(must(m.changeMember(text(a, "id"), change)));
        }},
       {"place_openings",
        "Cut 'count' equal openings ('width' x 'height', lower edge 'sill' above the face's bottom, mm) "

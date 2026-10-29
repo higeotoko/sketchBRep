@@ -1107,6 +1107,143 @@ TopoDS_Shape WallTool::previewShape(const std::vector<gp_Pnt>& pts) const {
   return preview;
 }
 
+// --- Members --------------------------------------------------------------------
+
+QString MemberTool::name() const { return QObject::tr("部材"); }
+QCursor MemberTool::cursor() const { return toolCursor(CursorKind::Member); }
+
+QString MemberTool::settingsText() const {
+  static const char* across[] = {"右", "中", "左"};
+  static const char* up[] = {"下端", "芯", "上端"};
+  const QString role = settings_.role == "column" ? QObject::tr("柱")
+                       : settings_.role == "beam" ? QObject::tr("梁")
+                       : settings_.role == "brace" ? QObject::tr("筋かい")
+                       : settings_.role.empty() ? QObject::tr("用途なし")
+                                                : QString::fromStdString(settings_.role);
+  QString anchor = QString::fromUtf8(up[settings_.anchor.up + 1]);
+  if (settings_.anchor.across != 0) anchor += QStringLiteral("・") + QString::fromUtf8(across[settings_.anchor.across + 1]);
+  return QObject::tr("%1 / 基準 %2 / 回転 %3° / %4")
+      .arg(QString::fromStdString(geom::sectionName(settings_.section)), anchor, QString::number(settings_.roll), role);
+}
+
+void MemberTool::activate() {
+  resetTracking();
+  start_.reset();
+  current_.reset();
+  host_.viewport().setPickMode(PickMode::None);
+  host_.setMeasurement(QObject::tr("長さ"), QString());
+  host_.setStatus(QObject::tr("部材の始点をクリック（ツール > 部材の設定で断面を変更）  ") + settingsText());
+}
+
+void MemberTool::cancel() {
+  start_.reset();
+  current_.reset();
+  host_.viewport().clearPreview();
+  host_.viewport().hideSnap();
+}
+
+bool MemberTool::stepBack() {
+  if (!start_) return false;
+  cancel();
+  host_.setStatus(QObject::tr("部材の始点をクリック  ") + settingsText());
+  return true;
+}
+
+std::optional<gp_Pln> MemberTool::workingPlane() const {
+  if (!start_) return std::nullopt;
+  return gp_Pln(*start_, gp::DZ());
+}
+
+std::optional<gp_Pnt> MemberTool::pointAt(const ToolEvent& e) {
+  std::optional<gp_Pnt> anchor = start_;
+  std::optional<gp_Pln> plane;
+  if (start_) plane = gp_Pln(*start_, gp::DZ());  // up and down: the blue axis or a point
+  snap::SnapResult r = snapAt(e, anchor, plane);
+  if (!r.valid()) return std::nullopt;
+  host_.setStatus((start_ ? QObject::tr("終点をクリック / 長さを入力 / Esc で始点からやり直し")
+                          : QObject::tr("部材の始点をクリック")) +
+                  QStringLiteral("  [") + snapLabel(r.kind) + QStringLiteral("]  ") + settingsText() + lockSuffix());
+  return r.point;
+}
+
+void MemberTool::updatePreview() {
+  if (!start_ || !current_ || start_->Distance(*current_) < tolerance::kMinDimension) {
+    host_.viewport().clearPreview();
+    return;
+  }
+  const gp_Dir axis(gp_Vec(*start_, *current_));
+  auto up = geom::memberUp(axis);
+  auto shape = up ? geom::makeMember(*start_, *current_, *up, settings_.roll * M_PI / 180.0, settings_.section,
+                                     settings_.anchor)
+                  : Result<TopoDS_Shape>::failure(up.error());
+  host_.viewport().setPreview(shape ? shape.value() : TopoDS_Shape());
+}
+
+void MemberTool::mouseMove(const ToolEvent& e) {
+  current_ = pointAt(e);
+  if (start_ && current_) host_.setMeasurement(QObject::tr("長さ"), mm(start_->Distance(*current_)));
+  updatePreview();
+}
+
+void MemberTool::place(const gp_Pnt& end) {
+  doc::Modeler::MemberSpec spec;
+  spec.start = *start_;
+  spec.end = end;
+  spec.section = settings_.section;
+  spec.anchor = settings_.anchor;
+  spec.roll = settings_.roll * M_PI / 180.0;
+  spec.role = settings_.role;
+  spec.materialClass = settings_.materialClass;
+  recent_.begin(host_.modeler());
+  auto id = host_.modeler().createMember(spec);
+  if (!id) {
+    host_.reportError(QString::fromStdString(id.error()));
+    return;
+  }
+  lastCreated_ = *id;
+  recent_.mark(host_.modeler());
+  start_.reset();
+  current_.reset();
+  host_.viewport().clearPreview();
+  host_.setStatus(QObject::tr("部材を作成しました（%1）。続けて長さを入力するとこの部材の長さを変更／次の始点をクリック")
+                      .arg(settingsText()));
+}
+
+void MemberTool::mousePress(const ToolEvent& e) {
+  const auto p = pointAt(e);
+  if (!p) return;
+  if (!start_) {
+    start_ = *p;
+    return;
+  }
+  if (p->Distance(*start_) < tolerance::kMinDimension) return;
+  place(*p);
+}
+
+void MemberTool::applyMeasurement(const QString& text) {
+  const auto length = parseOne(text);
+  if (!length || *length <= 0) {
+    host_.reportError(QObject::tr("長さを解釈できません: %1").arg(text));
+    return;
+  }
+  doc::Modeler& m = host_.modeler();
+  if (!start_ && lastCreated_ && recent_.fresh(m)) {
+    // Right after one was made: its length (in the same undo step).
+    const doc::ObjectId id = *lastCreated_;
+    doc::Modeler::MemberChange change;
+    change.length = *length;
+    const Status s = recent_.revise(m, [&] { return m.changeMember(id, change).status(); });
+    if (!s) host_.reportError(QString::fromStdString(s.message()));
+    else host_.setStatus(QObject::tr("部材の長さを %1 にしました").arg(mm(*length)));
+    return;
+  }
+  if (!start_ || !current_ || current_->Distance(*start_) < 1e-9) {
+    host_.reportError(QObject::tr("始点をクリックし、方向を示してから長さを入力してください"));
+    return;
+  }
+  place(start_->Translated(gp_Vec(gp_Dir(gp_Vec(*start_, *current_))) * *length));
+}
+
 // --- Slabs ----------------------------------------------------------------------
 
 QString SlabTool::name() const { return QObject::tr("スラブ"); }

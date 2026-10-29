@@ -140,6 +140,9 @@ Result<TopoDS_Shape> regenerateShared(const std::shared_ptr<const Recipe>& recip
 Result<TopoDS_Shape> buildBase(const BaseFeature& base, const RegenContext& context) {
   return std::visit(
       Overloaded{
+          [](const LinearMember& m) -> Result<TopoDS_Shape> {
+            return geom::makeMember(m.start, m.end, m.up, m.roll, m.section, m.anchor);
+          },
           [](const RectangleProfile& r) -> Result<TopoDS_Shape> {
             auto face = geom::makeRectangleFace(r.plane, r.width, r.height);
             if (!face) return Result<TopoDS_Shape>::failure(face.error());
@@ -554,6 +557,17 @@ std::vector<Parameter> parameters(const Recipe& recipe) {
   if (const auto* c = std::get_if<CircleProfile>(&recipe.base)) {
     out.push_back({"radius", "Radius", c->radius, true});
   }
+  if (const auto* m = std::get_if<LinearMember>(&recipe.base)) {
+    out.push_back({"length", "Length", m->start.Distance(m->end), true});
+    out.push_back({"width", "Section width", m->section.width, true});
+    out.push_back({"depth", "Section depth", m->section.depth, true});
+    if (m->section.kind == geom::Section::Kind::H) {
+      out.push_back({"web", "Web thickness", m->section.web, true});
+      out.push_back({"flange", "Flange thickness", m->section.flange, true});
+      out.push_back({"radius", "Fillet radius", m->section.radius, true});
+    }
+    out.push_back({"roll", "Rotation (deg)", m->roll * 180.0 / M_PI, false});
+  }
   if (const auto* u = std::get_if<ImageUnderlay>(&recipe.base)) {
     out.push_back({"width", "Width", u->width, true});  // the height follows (same proportions)
   }
@@ -634,6 +648,40 @@ Status setParameter(Recipe& recipe, const std::string& key, double value) {
       return Status::success();
     }
   }
+  if (auto* m = std::get_if<LinearMember>(&recipe.base)) {
+    if (key == "length") {
+      if (!(value >= tolerance::kMinDimension)) return Status::failure("The length must be positive");
+      const gp_Vec along(m->start, m->end);
+      if (along.Magnitude() < tolerance::kMinDimension) return Status::failure("The member has no direction");
+      const gp_Dir d(along);
+      // A column keeps its foot; anything else its start.
+      if (std::abs(d.Z()) > 0.999 && m->end.Z() < m->start.Z()) {
+        m->start = m->end.Translated(-gp_Vec(d) * value);
+      } else {
+        m->end = m->start.Translated(gp_Vec(d) * value);
+      }
+      return Status::success();
+    }
+    if (key == "roll") {
+      m->roll = value * M_PI / 180.0;
+      return Status::success();
+    }
+    geom::Section changed = m->section;
+    const bool h = changed.kind == geom::Section::Kind::H;
+    double* field = key == "width"         ? &changed.width
+                    : key == "depth"       ? &changed.depth
+                    : h && key == "web"    ? &changed.web
+                    : h && key == "flange" ? &changed.flange
+                    : h && key == "radius" ? &changed.radius
+                                           : nullptr;
+    if (field) {
+      if (std::abs(*field - value) > 1e-12) changed.catalog.clear();  // its own dimensions now
+      *field = value;
+      if (const Status valid = geom::validateSection(changed); !valid) return valid;
+      m->section = changed;
+      return Status::success();
+    }
+  }
   if (auto* c = std::get_if<CircleProfile>(&recipe.base); c && key == "radius") {
     c->radius = value;
     return Status::success();
@@ -696,6 +744,10 @@ Status setParameter(Recipe& recipe, const std::string& key, double value) {
 std::string describe(const Recipe& recipe) {
   std::ostringstream out;
   std::visit(Overloaded{
+                 [&](const LinearMember& m) {
+                   out << "Member " << geom::sectionName(m.section) << " L=" << m.start.Distance(m.end);
+                   if (!m.origin.empty() && m.origin != m.section.catalog) out << " (made from " << m.origin << ")";
+                 },
                  [&](const RectangleProfile& r) {
                    out << "Rectangle " << r.width << " x " << r.height;
                  },

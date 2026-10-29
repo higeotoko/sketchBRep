@@ -124,6 +124,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   scaleTool_ = std::make_unique<ScaleTool>(*this);
   componentAxesTool_ = std::make_unique<ComponentAxesTool>(*this);
   wallTool_ = std::make_unique<WallTool>(*this);
+  memberTool_ = std::make_unique<MemberTool>(*this);
   slabTool_ = std::make_unique<SlabTool>(*this);
   openingTool_ = std::make_unique<OpeningTool>(*this);
   pasteTool_->setClipboard(&clipboard_);
@@ -808,6 +809,7 @@ void MainWindow::buildMenus() {
       {tr("壁"), QStringLiteral("W"), ToolId::Wall, CursorKind::Wall},
       {tr("スラブ"), QStringLiteral("Shift+W"), ToolId::Slab, CursorKind::Slab},
       {tr("開口"), QStringLiteral("O"), ToolId::Opening, CursorKind::Opening},
+      {tr("部材"), QStringLiteral("I"), ToolId::Member, CursorKind::Member},
       {tr("円"), QStringLiteral("C"), ToolId::Circle, CursorKind::Circle},
       {tr("円弧"), QStringLiteral("A"), ToolId::Arc, CursorKind::Arc},
       {tr("多角形"), QStringLiteral("Shift+C"), ToolId::Polygon, CursorKind::Polygon},
@@ -873,6 +875,7 @@ void MainWindow::buildMenus() {
   tools->addSeparator();
   tools->addAction(tr("通り芯を作成..."), this, &MainWindow::showGridDialog);
   tools->addAction(tr("壁の設定..."), this, &MainWindow::showWallSettingsDialog);
+  tools->addAction(tr("部材の設定..."), this, &MainWindow::showMemberSettingsDialog);
   tools->addAction(tr("スラブの設定..."), this, &MainWindow::showSlabSettingsDialog);
   tools->addAction(tr("開口の設定..."), this, &MainWindow::showOpeningSettingsDialog);
   tools->addAction(tr("開口を等間隔に配置..."), this, &MainWindow::showOpeningsDialog);
@@ -1353,6 +1356,7 @@ void MainWindow::activateTool(ToolId id) {
     case ToolId::RotatedRectangle: active_ = rotatedRectangleTool_.get(); break;
     case ToolId::Scale: active_ = scaleTool_.get(); break;
     case ToolId::Wall: active_ = wallTool_.get(); break;
+    case ToolId::Member: active_ = memberTool_.get(); break;
     case ToolId::Slab: active_ = slabTool_.get(); break;
     case ToolId::Opening: active_ = openingTool_.get(); break;
     case ToolId::Count: return;
@@ -1764,6 +1768,109 @@ void MainWindow::showWallSettingsDialog() {
   }
   wallTool_->setSettings({*t, *h, justification->currentIndex() - 1});
   setStatus(wallTool_->settingsText());
+}
+
+void MainWindow::showMemberSettingsDialog() {
+  QDialog dialog(this);
+  dialog.setObjectName(QStringLiteral("memberSettingsDialog"));
+  dialog.setWindowTitle(tr("部材の設定"));
+  auto* form = new QFormLayout(&dialog);
+  const MemberTool::Settings current = memberTool_->settings();
+  auto* section = new QComboBox(&dialog);
+  section->setObjectName(QStringLiteral("memberSection"));
+  section->addItem(tr("長方形（幅×せいを入力）"), QString());
+  for (const geom::CatalogSection& c : geom::sectionCatalog()) {
+    section->addItem(QString::fromStdString(geom::sectionName(c.section)), QString::fromStdString(c.id));
+  }
+  const int catalogIndex = section->findData(QString::fromStdString(current.section.catalog));
+  section->setCurrentIndex(current.section.kind == geom::Section::Kind::Rectangle ? 0 : std::max(0, catalogIndex));
+  auto length = [&](double v) { return new QLineEdit(QString::fromStdString(units::formatLength(v, 0)), &dialog); };
+  auto* width = length(current.section.width);
+  auto* depth = length(current.section.depth);
+  width->setObjectName(QStringLiteral("memberWidth"));
+  depth->setObjectName(QStringLiteral("memberDepth"));
+  auto* up = new QComboBox(&dialog);
+  up->setObjectName(QStringLiteral("memberAnchorUp"));
+  up->addItems({tr("下端"), tr("芯（中心）"), tr("上端")});
+  up->setCurrentIndex(current.anchor.up + 1);
+  auto* across = new QComboBox(&dialog);
+  across->setObjectName(QStringLiteral("memberAnchorAcross"));
+  across->addItems({tr("右"), tr("中心"), tr("左")});
+  across->setCurrentIndex(current.anchor.across + 1);
+  auto* roll = new QLineEdit(QString::number(current.roll), &dialog);
+  roll->setObjectName(QStringLiteral("memberRoll"));
+  auto* role = new QComboBox(&dialog);
+  role->setObjectName(QStringLiteral("memberRole"));
+  const std::pair<QString, QString> roles[] = {{tr("なし"), QString()}, {tr("柱"), QStringLiteral("column")},
+                                               {tr("梁"), QStringLiteral("beam")}, {tr("筋かい"), QStringLiteral("brace")}};
+  for (const auto& [label, key] : roles) role->addItem(label, key);
+  role->setCurrentIndex(std::max(0, role->findData(QString::fromStdString(current.role))));
+  auto* material = new QComboBox(&dialog);
+  material->setObjectName(QStringLiteral("memberMaterialClass"));
+  const std::pair<QString, QString> materials[] = {{tr("未設定"), QString()}, {tr("木"), QStringLiteral("timber")},
+                                                   {tr("鋼"), QStringLiteral("steel")}, {tr("RC"), QStringLiteral("rc")}};
+  for (const auto& [label, key] : materials) material->addItem(label, key);
+  material->setCurrentIndex(std::max(0, material->findData(QString::fromStdString(current.materialClass))));
+  // Picking a role suggests its usual anchor (beams: top edge, others:
+  // centre), shown in the boxes, unless the anchor was set in this dialog.
+  auto anchorTouched = std::make_shared<bool>(false);
+  connect(up, &QComboBox::activated, &dialog, [=] { *anchorTouched = true; });
+  connect(across, &QComboBox::activated, &dialog, [=] { *anchorTouched = true; });
+  connect(role, &QComboBox::currentIndexChanged, &dialog, [=] {
+    if (*anchorTouched) return;
+    up->setCurrentIndex(role->currentData().toString() == QStringLiteral("beam") ? 2 : 1);
+    across->setCurrentIndex(1);
+  });
+  // Own dimensions only for a rectangle; a catalog section brings its own.
+  auto sync = [=] {
+    width->setEnabled(section->currentIndex() == 0);
+    depth->setEnabled(section->currentIndex() == 0);
+  };
+  connect(section, &QComboBox::currentIndexChanged, &dialog, sync);
+  sync();
+  form->addRow(tr("断面"), section);
+  form->addRow(tr("幅"), width);
+  form->addRow(tr("せい"), depth);
+  form->addRow(tr("基準（上下）"), up);
+  form->addRow(tr("基準（左右）"), across);
+  form->addRow(tr("回転（度）"), roll);
+  form->addRow(tr("用途"), role);
+  form->addRow(tr("材料種別"), material);
+  form->addRow(new QLabel(tr("基準はクリックした線が断面のどこを通るか。左右は始点から終点を見て。\n"
+                             "作った後も通常の形状として自由に編集できます"),
+                          &dialog));
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+  form->addRow(buttons);
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  if (dialog.exec() != QDialog::Accepted) return;
+  MemberTool::Settings next = current;
+  if (section->currentIndex() == 0) {
+    const auto w = units::parseLength(width->text().toStdString());
+    const auto d = units::parseLength(depth->text().toStdString());
+    if (!w || !d || *w <= 0 || *d <= 0) {
+      reportError(tr("幅とせいは正の長さで入力してください"));
+      return;
+    }
+    next.section = geom::Section{};
+    next.section.width = *w;
+    next.section.depth = *d;
+  } else {
+    next.section = geom::findSection(section->currentData().toString().toStdString())->section;
+  }
+  bool ok = false;
+  next.roll = roll->text().toDouble(&ok);
+  if (!ok) {
+    reportError(tr("回転は角度（度）で入力してください"));
+    return;
+  }
+  next.anchor = {across->currentIndex() - 1, up->currentIndex() - 1};
+  next.role = role->currentData().toString().toStdString();
+  next.materialClass = material->currentData().toString().toStdString();
+  // A steel section without a material class given: steel.
+  if (next.materialClass.empty() && next.section.kind == geom::Section::Kind::H) next.materialClass = "steel";
+  memberTool_->setSettings(next);
+  setStatus(memberTool_->settingsText());
 }
 
 void MainWindow::showSlabSettingsDialog() {

@@ -1,6 +1,7 @@
 add_library(sbr_core STATIC
   src/Units.cpp
   src/Profile.cpp
+  src/Section.cpp
   src/Operations.cpp
   src/Arrangement.cpp
   src/Validation.cpp

@@ -321,6 +321,52 @@ class WallTool : public PlanPolylineTool {
   Settings settings_;
 };
 
+// Linear members (docs/40): a catalog or own section between two clicks
+// (or the start, a direction and a typed length), the click line through
+// the chosen anchor of the section; the same settings for the next one.
+// A value typed right after changes that member's length (one undo step).
+// Same as create_member.
+class MemberTool : public DrawingTool {
+ public:
+  struct Settings {
+    geom::Section section;  // default: a 105 x 105 timber section
+    geom::SectionAnchor anchor;
+    double roll = 0.0;  // degrees
+    std::string role;   // "", column, beam, brace
+    std::string materialClass;
+    Settings() {
+      section.width = 105;
+      section.depth = 105;
+    }
+  };
+  using DrawingTool::DrawingTool;
+  QString name() const override;
+  QCursor cursor() const override;
+  void activate() override;
+  void cancel() override;
+  bool stepBack() override;
+  void mousePress(const ToolEvent& e) override;
+  void mouseMove(const ToolEvent& e) override;
+  void applyMeasurement(const QString& text) override;
+  void setSettings(const Settings& s) { settings_ = s; }
+  const Settings& settings() const { return settings_; }
+  QString settingsText() const;
+  const std::optional<doc::ObjectId>& lastCreated() const { return lastCreated_; }
+
+ protected:
+  std::optional<gp_Pln> workingPlane() const override;
+
+ private:
+  std::optional<gp_Pnt> pointAt(const ToolEvent& e);
+  void place(const gp_Pnt& end);
+  void updatePreview();
+
+  Settings settings_;
+  std::optional<gp_Pnt> start_;
+  std::optional<gp_Pnt> current_;
+  std::optional<doc::ObjectId> lastCreated_;
+};
+
 // Floor slabs (Shift+W): click the outline's corners on the level of the
 // slab's top (the ground, or the top of walls); the slab hangs `thickness`
 // below. Enter closes the outline. Same as create_slab.

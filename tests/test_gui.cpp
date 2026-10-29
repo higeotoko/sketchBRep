@@ -243,6 +243,7 @@ class GuiPhase1 : public QObject {
   void dimensionAndTextTools();
   void lineAcrossWallSplitsFace();
   void lineAlongCylinderDividesItsSide();
+  void memberToolDrawsAndRetypes();
   void arcAndLinesCloseIntoFace();
   void arcClosesMixedOutline_data();
   void arcClosesMixedOutline();
@@ -4558,6 +4559,43 @@ void GuiPhase1::lineAlongCylinderDividesItsSide() {
   QVERIFY2(std::abs(after - volume) < 1e-6 * volume, qPrintable(QString::number(after)));
 }
 
+void GuiPhase1::memberToolDrawsAndRetypes() {
+  Fixture f;
+  QVERIFY(f.setUp(2000, 0));
+  doc::Modeler& m = f.window.modeler();
+  MemberTool::Settings settings;
+  settings.section = geom::findSection("H-200x100x5.5x8")->section;
+  settings.anchor = {0, 1};  // on its top edge
+  settings.role = "beam";
+  settings.materialClass = "steel";
+  f.window.memberTool().setSettings(settings);
+  f.window.activateTool(MainWindow::ToolId::Member);
+  const std::size_t steps = m.history().undoCount();
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(4000, 0, 0)));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  const doc::ObjectId id = m.document().objects().front().id;
+  auto info = m.memberInfo(id);
+  QVERIFY(info.ok());
+  QCOMPARE(QString::fromStdString(info->catalog), QStringLiteral("H-200x100x5.5x8"));
+  QCOMPARE(QString::fromStdString(info->role), QStringLiteral("beam"));
+  Bnd_Box box;
+  BRepBndLib::AddOptimal(m.document().worldShape(*m.document().find(id)), box, Standard_False, Standard_False);
+  double x0, y0, z0, x1, y1, z1;
+  box.Get(x0, y0, z0, x1, y1, z1);
+  QVERIFY2(std::abs(z1) < 1.0 && std::abs(z0 + 200) < 1.0, qPrintable(QString("%1 %2").arg(z0).arg(z1)));
+  // Typed right after: its length, in the same undo step.
+  type(f.vp, QStringLiteral("3000"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  info = m.memberInfo(id);
+  QVERIFY(info.ok());
+  QVERIFY(std::abs(info->fields.front().value - 3000) < 1e-6);
+  QCOMPARE(m.history().undoCount(), steps + 1);
+  QVERIFY(m.undo());
+  QVERIFY(m.document().objects().empty());
+}
+
 void GuiPhase1::arcAndLinesCloseIntoFace() {
   Fixture f;
   QVERIFY(f.setUp(1000, 1000));
@@ -7084,7 +7122,7 @@ void GuiPhase1::toolsPaletteShowsAllAndFloats() {
   QVERIFY(palette->features().testFlag(QDockWidget::DockWidgetFloatable));
   QVERIFY(palette->features().testFlag(QDockWidget::DockWidgetMovable));
   auto buttons = palette->findChildren<QToolButton*>();
-  QCOMPARE(buttons.size(), 25);
+  QCOMPARE(buttons.size(), 26);
   auto* expanded = f.window.findChild<QAction*>(QStringLiteral("expandedToolsAction"));
   QVERIFY(expanded);
   expanded->setChecked(true);

@@ -305,6 +305,24 @@ json baseToJson(const BaseFeature& base) {
             }
             return j;
           },
+          [](const LinearMember& m) {
+            json section{{"kind", geom::toString(m.section.kind)}, {"width", m.section.width},
+                         {"depth", m.section.depth}};
+            if (m.section.kind == geom::Section::Kind::H) {
+              section["web"] = m.section.web;
+              section["flange"] = m.section.flange;
+              section["radius"] = m.section.radius;
+            }
+            if (!m.section.catalog.empty()) section["catalog"] = m.section.catalog;
+            return json{{"type", "member"},
+                        {"start", toJson(m.start)},
+                        {"end", toJson(m.end)},
+                        {"up", toJson(m.up)},
+                        {"roll", m.roll},
+                        {"section", section},
+                        {"anchor", {m.anchor.across, m.anchor.up}},
+                        {"origin", m.origin}};
+          },
           [](const ComponentInstance& c) {
             json j = {{"type", "instance"}, {"definition", c.definitionId}};
             if (!c.overrides.empty()) j["overrides"] = overridesToJson(c.overrides);
@@ -408,6 +426,27 @@ BaseFeature baseFrom(const json& j) {
                                           o.value("name", std::string())});
     }
     return l;
+  }
+  if (type == "member") {
+    LinearMember m;
+    m.start = pointFrom(j.at("start"));
+    m.end = pointFrom(j.at("end"));
+    m.up = dirFrom(j.at("up"));
+    m.roll = j.value("roll", 0.0);
+    const json& s = j.at("section");
+    const std::string kind = s.at("kind").get<std::string>();
+    if (kind == "h") m.section.kind = geom::Section::Kind::H;
+    else if (kind != "rectangle") throw std::runtime_error("unknown section kind: " + kind);
+    m.section.width = s.at("width").get<double>();
+    m.section.depth = s.at("depth").get<double>();
+    m.section.web = s.value("web", 0.0);
+    m.section.flange = s.value("flange", 0.0);
+    m.section.radius = s.value("radius", 0.0);
+    m.section.catalog = s.value("catalog", std::string());
+    const json& a = j.at("anchor");
+    m.anchor = {a.at(0).get<int>(), a.at(1).get<int>()};
+    m.origin = j.value("origin", std::string());
+    return m;
   }
   if (type == "sewn") {
     SewnFeature s;

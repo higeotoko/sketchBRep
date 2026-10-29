@@ -22,6 +22,7 @@
 #include "sbr/Types.h"
 #include "sbr/geom/FaceRef.h"
 #include "sbr/geom/Profile.h"
+#include "sbr/geom/Section.h"
 
 namespace sbr::doc {
 
@@ -167,6 +168,24 @@ struct SewnFeature {
   std::vector<BooleanOperand> faces;
 };
 
+// A linear member (beam, column, brace; steel, timber or RC): a catalog or
+// own section swept straight from `start` to `end` (docs/40). `up` is the
+// section's up direction fixed when it was made (never re-derived from the
+// camera or the shape), turned by `roll` about the member; `anchor` is
+// where the axis line meets the section. Edited afterwards like any solid;
+// its own parameters: length, width, depth (and the H thicknesses), roll.
+struct LinearMember {
+  gp_Pnt start;
+  gp_Pnt end;
+  gp_Dir up{0, 0, 1};
+  double roll = 0.0;  // radians
+  geom::Section section;
+  geom::SectionAnchor anchor;
+  // The catalog section it was last made from (kept when dimensions are
+  // then changed by hand: "generated from", never "is").
+  std::string origin;
+};
+
 // A parameter of one object of a component definition, changed for one
 // placement only (a door twice as wide, the same component otherwise).
 struct ParameterOverride {
@@ -222,7 +241,7 @@ struct ComponentInstance {
 using BaseFeature = std::variant<RectangleProfile, CircleProfile, PolygonProfile, PolylineCurve, InterpolatedCurve,
                                  ArcCurve, LinearDimension, TextNote, GuideLine, ImageUnderlay, ImportedShape,
                                  BooleanFeature, LoftFeature, SweepFeature, LoopProfile, FacePart, GroupNode,
-                                 ComponentInstance, RegularPolygonProfile, SewnFeature>;
+                                 ComponentInstance, RegularPolygonProfile, SewnFeature, LinearMember>;
 
 // --- Modifiers ------------------------------------------------------------
 // Extrudes the profile face along its normal. Must be the first modifier.
