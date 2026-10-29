@@ -1,6 +1,7 @@
 #pragma once
 // Construction of planar sketch profiles (wires / faces).
 
+#include <utility>
 #include <vector>
 
 #include <gp_Ax3.hxx>
@@ -49,6 +50,11 @@ Result<TopoDS_Face> makePolygonFace(const std::vector<gp_Pnt>& points);
 
 // Open polyline. Consecutive duplicate points are rejected.
 Result<TopoDS_Wire> makePolylineWire(const std::vector<gp_Pnt>& points);
+
+// The middle of the arc from (ax, ay) to (bx, by) whose bulge (DXF) is
+// tan(sweep / 4), positive counter-clockwise; on the chord when it is 0.
+// A bulge is no distance: never pass it on as one (ArcCurve's bulge is).
+std::pair<double, double> bulgeArcMiddle(double ax, double ay, double bx, double by, double bulge);
 
 // Best-fit plane test: true when all points lie within tolerance of a plane.
 bool arePointsCoplanar(const std::vector<gp_Pnt>& points, gp_Pln* planeOut = nullptr);

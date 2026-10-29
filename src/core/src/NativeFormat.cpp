@@ -313,6 +313,11 @@ json baseToJson(const BaseFeature& base) {
               section["flange"] = m.section.flange;
               section["radius"] = m.section.radius;
             }
+            if (m.section.kind == geom::Section::Kind::Profile) {
+              // The outline itself: the file needs no catalog to open.
+              section["loops"] = m.section.outline->loops;
+              section["label"] = m.section.label;
+            }
             if (!m.section.catalog.empty()) section["catalog"] = m.section.catalog;
             return json{{"type", "member"},
                         {"start", toJson(m.start)},
@@ -436,6 +441,8 @@ BaseFeature baseFrom(const json& j) {
     const json& s = j.at("section");
     const std::string kind = s.at("kind").get<std::string>();
     if (kind == "h") m.section.kind = geom::Section::Kind::H;
+    else if (kind == "circle") m.section.kind = geom::Section::Kind::Circle;
+    else if (kind == "profile") m.section.kind = geom::Section::Kind::Profile;
     else if (kind != "rectangle") throw std::runtime_error("unknown section kind: " + kind);
     m.section.width = s.at("width").get<double>();
     m.section.depth = s.at("depth").get<double>();
@@ -443,6 +450,20 @@ BaseFeature baseFrom(const json& j) {
     m.section.flange = s.value("flange", 0.0);
     m.section.radius = s.value("radius", 0.0);
     m.section.catalog = s.value("catalog", std::string());
+    m.section.label = s.value("label", std::string());
+    if (m.section.kind == geom::Section::Kind::Profile) {
+      auto outline = std::make_shared<geom::SectionOutline>();
+      outline->loops = s.at("loops").get<std::vector<std::vector<std::array<double, 3>>>>();
+      // The same as the catalog's: share it (one outline for many members).
+      const geom::CatalogSection* entry = m.section.catalog.empty() ? nullptr : geom::findSection(m.section.catalog);
+      if (entry && entry->section.outline && entry->section.outline->loops == outline->loops) {
+        m.section.outline = entry->section.outline;
+      } else {
+        // Not (or no longer) the catalog's outline: the member's own.
+        if (entry) m.section.catalog.clear();
+        m.section.outline = std::move(outline);
+      }
+    }
     const json& a = j.at("anchor");
     m.anchor = {a.at(0).get<int>(), a.at(1).get<int>()};
     m.origin = j.value("origin", std::string());

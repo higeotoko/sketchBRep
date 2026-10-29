@@ -559,8 +559,13 @@ std::vector<Parameter> parameters(const Recipe& recipe) {
   }
   if (const auto* m = std::get_if<LinearMember>(&recipe.base)) {
     out.push_back({"length", "Length", m->start.Distance(m->end), true});
-    out.push_back({"width", "Section width", m->section.width, true});
-    out.push_back({"depth", "Section depth", m->section.depth, true});
+    // A catalog outline changes by choosing another size, not here.
+    if (m->section.kind == geom::Section::Kind::Circle) {
+      out.push_back({"diameter", "Section diameter", m->section.width, true});
+    } else if (m->section.kind != geom::Section::Kind::Profile) {
+      out.push_back({"width", "Section width", m->section.width, true});
+      out.push_back({"depth", "Section depth", m->section.depth, true});
+    }
     if (m->section.kind == geom::Section::Kind::H) {
       out.push_back({"web", "Web thickness", m->section.web, true});
       out.push_back({"flange", "Flange thickness", m->section.flange, true});
@@ -667,6 +672,21 @@ Status setParameter(Recipe& recipe, const std::string& key, double value) {
       return Status::success();
     }
     geom::Section changed = m->section;
+    if (changed.kind == geom::Section::Kind::Circle && key == "diameter") {
+      changed.width = changed.depth = value;
+      changed.catalog.clear();
+      if (const Status valid = geom::validateSection(changed); !valid) return valid;
+      m->section = changed;
+      return Status::success();
+    }
+    if (changed.kind == geom::Section::Kind::Profile &&
+        (key == "width" || key == "depth" || key == "web" || key == "flange" || key == "radius")) {
+      return Status::failure("A catalog section changes size by choosing another one from the catalog (its shape "
+                             "can still be edited directly)");
+    }
+    if (changed.kind == geom::Section::Kind::Circle && (key == "width" || key == "depth")) {
+      return Status::failure("A round section has a diameter, not a width and depth");
+    }
     const bool h = changed.kind == geom::Section::Kind::H;
     double* field = key == "width"         ? &changed.width
                     : key == "depth"       ? &changed.depth

@@ -1776,19 +1776,76 @@ void MainWindow::showMemberSettingsDialog() {
   dialog.setWindowTitle(tr("部材の設定"));
   auto* form = new QFormLayout(&dialog);
   const MemberTool::Settings current = memberTool_->settings();
-  auto* section = new QComboBox(&dialog);
-  section->setObjectName(QStringLiteral("memberSection"));
-  section->addItem(tr("長方形（幅×せいを入力）"), QString());
+  // The section: a family, then a size found by typing part of its name.
+  auto* family = new QComboBox(&dialog);
+  family->setObjectName(QStringLiteral("memberFamily"));
+  family->addItem(tr("長方形（木・RC）"), QStringLiteral("rectangle"));
+  family->addItem(tr("円形（RC丸柱など）"), QStringLiteral("circle"));
+  QStringList families;
   for (const geom::CatalogSection& c : geom::sectionCatalog()) {
-    section->addItem(QString::fromStdString(geom::sectionName(c.section)), QString::fromStdString(c.id));
+    if (!families.contains(QString::fromStdString(c.family))) families << QString::fromStdString(c.family);
   }
-  const int catalogIndex = section->findData(QString::fromStdString(current.section.catalog));
-  section->setCurrentIndex(current.section.kind == geom::Section::Kind::Rectangle ? 0 : std::max(0, catalogIndex));
+  const std::pair<QString, QString> familyNames[] = {
+      {QStringLiteral("H"), tr("H形鋼")},       {QStringLiteral("I"), tr("I形鋼")},
+      {QStringLiteral("BOX"), tr("角形鋼管")},  {QStringLiteral("PIPE"), tr("鋼管")},
+      {QStringLiteral("ANGLE"), tr("山形鋼")},  {QStringLiteral("CHANNEL"), tr("溝形鋼")},
+      {QStringLiteral("C"), tr("リップ溝形鋼")}, {QStringLiteral("CT"), tr("CT形鋼")},
+      {QStringLiteral("FB"), tr("平鋼")},       {QStringLiteral("SB"), tr("角鋼")},
+      {QStringLiteral("RB"), tr("丸鋼")},       {QStringLiteral("HB"), tr("六角鋼")}};
+  for (const auto& [key, label] : familyNames) {
+    if (families.removeAll(key)) family->addItem(label + QStringLiteral(" (") + key + QStringLiteral(")"), key);
+  }
+  for (const QString& rest : families) family->addItem(rest, rest);
+  auto* search = new QLineEdit(&dialog);
+  search->setObjectName(QStringLiteral("memberSearch"));
+  search->setPlaceholderText(tr("サイズを検索（例 400x200、BCP-350）"));
+  auto* sizes = new QListWidget(&dialog);
+  sizes->setObjectName(QStringLiteral("memberSizes"));
+  sizes->setMinimumHeight(160);
   auto length = [&](double v) { return new QLineEdit(QString::fromStdString(units::formatLength(v, 0)), &dialog); };
-  auto* width = length(current.section.width);
-  auto* depth = length(current.section.depth);
+  const bool own = current.section.kind == geom::Section::Kind::Rectangle || current.section.kind == geom::Section::Kind::Circle;
+  auto* width = length(own ? current.section.width : 105);
+  auto* depth = length(current.section.kind == geom::Section::Kind::Rectangle ? current.section.depth : 105);
+  auto* diameter = length(current.section.kind == geom::Section::Kind::Circle ? current.section.width : 600);
   width->setObjectName(QStringLiteral("memberWidth"));
   depth->setObjectName(QStringLiteral("memberDepth"));
+  diameter->setObjectName(QStringLiteral("memberDiameter"));
+  auto fill = [=] {
+    const QString key = family->currentData().toString();
+    const bool catalog = key != QStringLiteral("rectangle") && key != QStringLiteral("circle");
+    width->setEnabled(key == QStringLiteral("rectangle"));
+    depth->setEnabled(key == QStringLiteral("rectangle"));
+    diameter->setEnabled(key == QStringLiteral("circle"));
+    search->setEnabled(catalog);
+    sizes->setEnabled(catalog);
+    const QString previous = sizes->currentItem() ? sizes->currentItem()->data(Qt::UserRole).toString() : QString();
+    sizes->clear();
+    if (!catalog) return;
+    const std::string text = search->text().trimmed().toStdString();
+    for (const geom::CatalogSection& c : geom::sectionCatalog()) {
+      if (QString::fromStdString(c.family) != key) continue;
+      if (!text.empty() && c.name.find(text) == std::string::npos && c.id.find(text) == std::string::npos) continue;
+      auto* item = new QListWidgetItem(QString::fromStdString(c.name), sizes);
+      item->setData(Qt::UserRole, QString::fromStdString(c.id));
+      item->setToolTip(QString::fromStdString(c.id + "  " + c.standard + " " + c.subtype));
+      if (item->data(Qt::UserRole).toString() == previous) sizes->setCurrentItem(item);
+    }
+    if (!sizes->currentItem() && sizes->count() > 0) sizes->setCurrentRow(0);
+  };
+  connect(family, &QComboBox::currentIndexChanged, &dialog, fill);
+  connect(search, &QLineEdit::textChanged, &dialog, fill);
+  // Start where the tool is: its family and size.
+  if (current.section.kind == geom::Section::Kind::Circle) {
+    family->setCurrentIndex(1);
+  } else if (const geom::CatalogSection* entry = geom::findSection(current.section.catalog)) {
+    family->setCurrentIndex(std::max(0, family->findData(QString::fromStdString(entry->family))));
+  } else {
+    family->setCurrentIndex(0);
+  }
+  fill();
+  for (int i = 0; i < sizes->count(); ++i) {
+    if (sizes->item(i)->data(Qt::UserRole).toString().toStdString() == current.section.catalog) sizes->setCurrentRow(i);
+  }
   auto* up = new QComboBox(&dialog);
   up->setObjectName(QStringLiteral("memberAnchorUp"));
   up->addItems({tr("下端"), tr("芯（中心）"), tr("上端")});
@@ -1811,6 +1868,8 @@ void MainWindow::showMemberSettingsDialog() {
                                                    {tr("鋼"), QStringLiteral("steel")}, {tr("RC"), QStringLiteral("rc")}};
   for (const auto& [label, key] : materials) material->addItem(label, key);
   material->setCurrentIndex(std::max(0, material->findData(QString::fromStdString(current.materialClass))));
+  auto* height = length(current.columnHeight);
+  height->setObjectName(QStringLiteral("memberColumnHeight"));
   // Picking a role suggests its usual anchor (beams: top edge, others:
   // centre), shown in the boxes, unless the anchor was set in this dialog.
   auto anchorTouched = std::make_shared<bool>(false);
@@ -1821,23 +1880,22 @@ void MainWindow::showMemberSettingsDialog() {
     up->setCurrentIndex(role->currentData().toString() == QStringLiteral("beam") ? 2 : 1);
     across->setCurrentIndex(1);
   });
-  // Own dimensions only for a rectangle; a catalog section brings its own.
-  auto sync = [=] {
-    width->setEnabled(section->currentIndex() == 0);
-    depth->setEnabled(section->currentIndex() == 0);
-  };
-  connect(section, &QComboBox::currentIndexChanged, &dialog, sync);
-  sync();
-  form->addRow(tr("断面"), section);
+  form->addRow(tr("断面の種類"), family);
+  form->addRow(tr("サイズ"), search);
+  form->addRow(QString(), sizes);
   form->addRow(tr("幅"), width);
   form->addRow(tr("せい"), depth);
+  form->addRow(tr("直径"), diameter);
   form->addRow(tr("基準（上下）"), up);
   form->addRow(tr("基準（左右）"), across);
   form->addRow(tr("回転（度）"), roll);
   form->addRow(tr("用途"), role);
   form->addRow(tr("材料種別"), material);
+  form->addRow(tr("柱の高さ"), height);
   form->addRow(new QLabel(tr("基準はクリックした線が断面のどこを通るか。左右は始点から終点を見て。\n"
-                             "作った後も通常の形状として自由に編集できます"),
+                             "柱は1点目のあと Enter で「柱の高さ」の鉛直材、2点目のクリックで傾けて配置。\n"
+                             "鋼材のサイズ: %1\n作った後も通常の形状として自由に編集できます")
+                              .arg(QString::fromStdString(geom::sectionCatalogSource())),
                           &dialog));
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
   form->addRow(buttons);
@@ -1845,7 +1903,8 @@ void MainWindow::showMemberSettingsDialog() {
   connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
   if (dialog.exec() != QDialog::Accepted) return;
   MemberTool::Settings next = current;
-  if (section->currentIndex() == 0) {
+  const QString key = family->currentData().toString();
+  if (key == QStringLiteral("rectangle")) {
     const auto w = units::parseLength(width->text().toStdString());
     const auto d = units::parseLength(depth->text().toStdString());
     if (!w || !d || *w <= 0 || *d <= 0) {
@@ -1855,8 +1914,21 @@ void MainWindow::showMemberSettingsDialog() {
     next.section = geom::Section{};
     next.section.width = *w;
     next.section.depth = *d;
+  } else if (key == QStringLiteral("circle")) {
+    const auto d = units::parseLength(diameter->text().toStdString());
+    if (!d || *d <= 0) {
+      reportError(tr("直径は正の長さで入力してください"));
+      return;
+    }
+    next.section = geom::Section{};
+    next.section.kind = geom::Section::Kind::Circle;
+    next.section.width = next.section.depth = *d;
   } else {
-    next.section = geom::findSection(section->currentData().toString().toStdString())->section;
+    if (!sizes->currentItem()) {
+      reportError(tr("サイズを選んでください"));
+      return;
+    }
+    next.section = geom::findSection(sizes->currentItem()->data(Qt::UserRole).toString().toStdString())->section;
   }
   bool ok = false;
   next.roll = roll->text().toDouble(&ok);
@@ -1864,11 +1936,17 @@ void MainWindow::showMemberSettingsDialog() {
     reportError(tr("回転は角度（度）で入力してください"));
     return;
   }
+  const auto h = units::parseLength(height->text().toStdString());
+  if (!h || *h <= 0) {
+    reportError(tr("柱の高さは正の長さで入力してください"));
+    return;
+  }
+  next.columnHeight = *h;
   next.anchor = {across->currentIndex() - 1, up->currentIndex() - 1};
   next.role = role->currentData().toString().toStdString();
   next.materialClass = material->currentData().toString().toStdString();
-  // A steel section without a material class given: steel.
-  if (next.materialClass.empty() && next.section.kind == geom::Section::Kind::H) next.materialClass = "steel";
+  // A catalog (steel) section without a material class given: steel.
+  if (next.materialClass.empty() && !next.section.catalog.empty()) next.materialClass = "steel";
   memberTool_->setSettings(next);
   setStatus(memberTool_->settingsText());
 }
@@ -2590,7 +2668,7 @@ void MainWindow::commitMeasurement() {
   userTyping_ = false;
   // Enter without typing finishes a wall run / slab outline (the box only
   // shows the current length then).
-  if (!typed && (active_ == wallTool_.get() || active_ == slabTool_.get())) {
+  if (!typed && (active_ == wallTool_.get() || active_ == slabTool_.get() || active_ == memberTool_.get())) {
     viewport_->toolCall([&] { active_->applyMeasurement(QString()); });
     viewport_->setFocus();
     return;

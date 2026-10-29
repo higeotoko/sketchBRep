@@ -429,7 +429,7 @@ class Modeler {
   // means and where it comes from (the member's parameter, or measured on
   // its shape after other edits). Computed when asked, never kept.
   struct MemberField {
-    std::string key;      // length, width, depth, web, flange, radius, roll
+    std::string key;      // length, width, depth (diameter), web, flange, radius, roll
     std::string meaning;
     std::string unit;     // mm or deg
     double value = 0.0;
@@ -439,6 +439,7 @@ class Modeler {
   };
   struct MemberInfo {
     ObjectId id;
+    std::string element;  // member, wall or slab
     std::string section;  // current section's name
     std::string catalog;  // the catalog entry it is now ("" own dimensions)
     std::string origin;   // the catalog entry it was made from
@@ -459,9 +460,21 @@ class Modeler {
   struct MemberChange {
     std::optional<std::string> catalog;
     std::optional<double> width, depth, web, flange, radius, length, roll;  // mm, mm..., mm, radians
+    std::optional<double> diameter;  // a round section
+    // Walls and slabs (docs/41): thickness (wall: keep its left / right /
+    // center line, default the one it was drawn on; slab: keep top
+    // (default) / bottom / center), height (wall, from its foot), length.
+    std::optional<double> thickness, height;
+    std::optional<std::string> keep;
     std::optional<geom::SectionAnchor> anchor;
   };
   Result<MemberInfo> changeMember(const ObjectId& id, const MemberChange& change);
+
+ private:
+  std::optional<MemberInfo> wallOrSlabInfo(const Object& o) const;
+  Result<MemberInfo> changeWallOrSlab(const ObjectId& id, const MemberChange& change);
+
+ public:
 
   // Cuts `count` equal rectangular openings through a wall's face (the
   // outermost planar face facing `faceNormal`), evenly spread along it, or

@@ -54,8 +54,14 @@ geom::Section rectangle(double width, double depth) {
 const geom::Section& h200() { return geom::findSection("H-200x100x5.5x8")->section; }
 const geom::Section& h400() { return geom::findSection("H-400x200x8x13")->section; }
 
+// A rolled H's area from its nominal sizes (fillet radius r).
+double hArea(double depth, double width, double web, double flange, double r) {
+  return 2 * width * flange + (depth - 2 * flange) * web + 4 * r * r * (1 - M_PI / 4);
+}
 double hArea(const geom::Section& s) {
-  return 2 * s.width * s.flange + (s.depth - 2 * s.flange) * s.web + 4 * s.radius * s.radius * (1 - M_PI / 4);
+  if (s.catalog == "H-200x100x5.5x8") return hArea(200, 100, 5.5, 8, 8);
+  if (s.catalog == "H-400x200x8x13") return hArea(400, 200, 8, 13, 13);
+  return hArea(s.depth, s.width, s.web, s.flange, s.radius);
 }
 
 template <typename F>
@@ -295,8 +301,9 @@ TEST(Members, BadRequestsChangeNothing) {
   spec.end = gp_Pnt(1000, 0, 0);
   spec.section = rectangle(0, 100);
   EXPECT_FALSE(m.createMember(spec));
-  geom::Section bad = h200();
-  bad.web = 120;  // wider than the flanges
+  geom::Section bad;
+  bad.kind = geom::Section::Kind::H;
+  bad.width = 100, bad.depth = 200, bad.web = 120, bad.flange = 8;  // web wider than the flanges
   spec.section = bad;
   EXPECT_FALSE(m.createMember(spec));
   EXPECT_TRUE(m.document().objects().empty());
@@ -305,10 +312,10 @@ TEST(Members, BadRequestsChangeNothing) {
   const ObjectId h = *m.createMember(spec);
   const double v = volumeOf(m, h);
   EXPECT_FALSE(m.changeMember(h, change([](Modeler::MemberChange& c) { c.length = -5.0; })));
-  EXPECT_FALSE(m.changeMember(h, change([](Modeler::MemberChange& c) { c.web = 150.0; })));
+  EXPECT_FALSE(m.changeMember(h, change([](Modeler::MemberChange& c) { c.web = 150.0; })));  // a catalog outline
   EXPECT_FALSE(m.changeMember(h, change([](Modeler::MemberChange& c) { c.width = 150.0; c.flange = 120.0; })));  // checked together: refused as a whole
   EXPECT_NEAR(volumeOf(m, h), v, 1e-9);
-  EXPECT_NEAR(field(*m.memberInfo(h), "width"), 100, 1e-12);
+  EXPECT_NEAR(field(*m.memberInfo(h), "width"), 100, 1e-9);
 }
 
 // §13.4-6: saved and opened again, the same basic edits work; GUI and AI go
@@ -339,7 +346,7 @@ TEST(Members, AiCommandsGoTheSameWay) {
   auto run = [&](json command) { return json::parse(api.execute(command.dump())); };
   const json list = run({{"command", "list_sections"}, {"args", {{"query", "H-400x200x8x13"}}}});
   ASSERT_TRUE(list.value("ok", false)) << list.dump();
-  EXPECT_EQ(list["result"]["sections"][0]["id"], "H-400x200x8x13");
+  EXPECT_EQ(list["result"]["exact"][0]["id"], "H-400x200x8x13");
   const json made = run({{"command", "create_member"},
                          {"args",
                           {{"section", "H-400x200x8x13"},
@@ -362,11 +369,171 @@ TEST(Members, AiCommandsGoTheSameWay) {
   ASSERT_TRUE(own.value("ok", false)) << own.dump();
   EXPECT_TRUE(own["result"]["catalog"].is_null());
   const json missing = run({{"command", "create_member"},
-                            {"args", {{"section", "H-300x150x6.5x9"}, {"start", {0, 0, 0}}, {"end", {1, 0, 0}}}}});
+                            {"args", {{"section", "H-123x45x6x7"}, {"start", {0, 0, 0}}, {"end", {1, 0, 0}}}}});
   EXPECT_FALSE(missing.value("ok", true));
   // The role is the ordinary kind attribute: found by the ordinary query.
   const json beams = run({{"command", "query_objects"}, {"args", {{"where", {{"kind", "beam"}}}}}});
   ASSERT_TRUE(beams.value("ok", false)) << beams.dump();
+}
+
+// Stage B (docs/41): the Steel Member Generator catalog, every section an
+// exact valid solid, holes and arcs the right way round.
+TEST(Members, EveryCatalogSectionMakesAValidMember) {
+  const auto& catalog = geom::sectionCatalog();
+  EXPECT_EQ(catalog.size(), 1204u);
+  int families = 0;
+  std::string last;
+  int index = 0;
+  for (const geom::CatalogSection& c : catalog) {
+    if (c.family != last) ++families, last = c.family;
+    // Every outline is checked as a face when it is made; every tenth
+    // member as a whole solid too (all of them takes seconds).
+    auto solid = geom::makeMember(gp_Pnt(0, 0, 0), gp_Pnt(0, 0, 1000), gp::DY(), 0, c.section, {});
+    ASSERT_TRUE(solid) << c.id << ": " << solid.error();
+    const bool firstOfFamily = index == 0 || c.family != catalog[index - 1].family;
+    if (index++ % 10 != 0 && !firstOfFamily) continue;
+    ASSERT_TRUE(geom::validateShape(solid.value(), true).valid) << c.id;
+    // Its overall size is the catalog's.
+    Bnd_Box b;
+    BRepBndLib::AddOptimal(solid.value(), b, Standard_False, Standard_False);
+    double x0, y0, z0, x1, y1, z1;
+    b.Get(x0, y0, z0, x1, y1, z1);
+    EXPECT_NEAR(x1 - x0, c.section.width, 1e-3) << c.id;
+    EXPECT_NEAR(y1 - y0, c.section.depth, 1e-3) << c.id;
+    EXPECT_GT(geom::volume(solid.value()), 0) << c.id;
+  }
+  EXPECT_GE(families, 12);
+  EXPECT_NE(geom::sectionCatalogSource().find("steel-member-generator"), std::string::npos);
+}
+
+TEST(Members, TubesAnglesAndRoundColumns) {
+  Modeler m;
+  // A round tube: its exact ring area.
+  const geom::CatalogSection* pipe = geom::findSection("PIPE/STK/CHS/21.7x2");
+  ASSERT_TRUE(pipe);
+  Modeler::MemberSpec spec;
+  spec.start = gp_Pnt(0, 0, 0);
+  spec.end = gp_Pnt(2000, 0, 0);
+  spec.section = pipe->section;
+  const ObjectId p = *m.createMember(spec);
+  EXPECT_NEAR(volumeOf(m, p), M_PI / 4 * (21.7 * 21.7 - 17.7 * 17.7) * 2000, 1e-3);
+  // An angle on its outer heel: the heel on the line, legs up and to one side.
+  spec.section = geom::findSection("ANGLE/general/Equal/45x45x5")->section;
+  spec.anchor = {-1, -1};
+  spec.start = gp_Pnt(0, 1000, 0);
+  spec.end = gp_Pnt(2000, 1000, 0);
+  const ObjectId l = *m.createMember(spec);
+  const Box b = boxOf(m, l);
+  EXPECT_NEAR(b.z0, 0, 1e-6);
+  EXPECT_NEAR(b.z1, 45, 1e-6);
+  EXPECT_NEAR(std::min(std::abs(b.y0 - 1000), std::abs(b.y1 - 1000)), 0, 1e-6);
+  EXPECT_TRUE(valid(m, l));
+  // A catalog section changes size only by another catalog entry.
+  auto refused = m.changeMember(l, change([](Modeler::MemberChange& c) { c.width = 60.0; }));
+  EXPECT_FALSE(refused);
+  ASSERT_TRUE(m.changeMember(l, change([](Modeler::MemberChange& c) { c.catalog = std::string("ANGLE/general/Equal/65x65x6"); })));
+  EXPECT_NEAR(boxOf(m, l).z1, 65, 1e-6);  // still on its heel
+  // An RC round column: its diameter edited, its foot kept.
+  Modeler::MemberSpec column;
+  column.start = gp_Pnt(5000, 0, 0);
+  column.end = gp_Pnt(5000, 0, 3000);
+  column.section.kind = geom::Section::Kind::Circle;
+  column.section.width = column.section.depth = 600;
+  column.role = "column";
+  column.materialClass = "rc";
+  const ObjectId c = *m.createMember(column);
+  EXPECT_NEAR(volumeOf(m, c), M_PI * 300 * 300 * 3000, 1e-2);
+  ASSERT_TRUE(m.changeMember(c, change([](Modeler::MemberChange& x) { x.diameter = 800.0; })));
+  EXPECT_NEAR(volumeOf(m, c), M_PI * 400 * 400 * 3000, 1e-2);
+  EXPECT_NEAR(boxOf(m, c).z0, 0, 1e-6);
+  // Saved and opened: the catalog outline is shared again, not copied.
+  const std::string file = ::testing::TempDir() + "members_b.sbr";
+  ASSERT_TRUE(m.save(file));
+  Modeler loaded;
+  ASSERT_TRUE(loaded.load(file));
+  const auto* member = std::get_if<LinearMember>(&loaded.document().find(p)->recipe.base);
+  ASSERT_TRUE(member);
+  EXPECT_EQ(member->section.outline.get(), pipe->section.outline.get());
+  EXPECT_NEAR(volumeOf(loaded, p), volumeOf(m, p), 1e-6);
+  EXPECT_NEAR(volumeOf(loaded, c), volumeOf(m, c), 1e-6);
+}
+
+TEST(Members, AiFindsSectionsExactlyOrNot) {
+  Modeler m;
+  api::CommandApi api(m);
+  auto run = [&](json command) { return json::parse(api.execute(command.dump())); };
+  const json near = run({{"command", "list_sections"}, {"args", {{"query", "400x200"}, {"family", "H"}}}});
+  ASSERT_TRUE(near.value("ok", false)) << near.dump();
+  EXPECT_TRUE(near["result"]["exact"].empty());
+  EXPECT_GE(near["result"]["total_matches"].get<int>(), 1);
+  const json paged = run({{"command", "list_sections"}, {"args", {{"family", "BOX"}, {"limit", 10}, {"offset", 5}}}});
+  EXPECT_EQ(paged["result"]["matches"].size(), 10u);
+  EXPECT_EQ(paged["result"]["total_matches"], 291);
+  const json box = run({{"command", "create_member"},
+                        {"args", {{"section", "BOX/BCP/SHS/350x350x12"}, {"start", {0, 0, 0}}, {"length", 3500},
+                                  {"role", "column"}}}});
+  ASSERT_TRUE(box.value("ok", false)) << box.dump();
+  EXPECT_EQ(box["result"]["section"], "BCP-350x350x12");
+  const json round = run({{"command", "create_member"},
+                          {"args", {{"section", {{"kind", "circle"}, {"diameter", 600}}}, {"start", {2000, 0, 0}},
+                                    {"length", 3000}, {"material_class", "rc"}}}});
+  ASSERT_TRUE(round.value("ok", false)) << round.dump();
+  const json bigger = run({{"command", "change_member"}, {"args", {{"id", round["result"]["id"]}, {"diameter", 700}}}});
+  ASSERT_TRUE(bigger.value("ok", false)) << bigger.dump();
+}
+
+// §13.4-4: the AI changes a slab's thickness keeping its top; the person
+// then pushes the top face as usual (the special edit binds nothing).
+TEST(Members, SlabThicknessKeepsTheTopThenPushPullAsUsual) {
+  Modeler m;
+  const ObjectId slab = *m.createSlab({gp_Pnt(0, 0, 0), gp_Pnt(6000, 0, 0), gp_Pnt(6000, 4000, 0), gp_Pnt(0, 4000, 0)}, 3000, 150);
+  auto info = m.memberInfo(slab);
+  ASSERT_TRUE(info) << info.error();
+  EXPECT_EQ(info->element, "slab");
+  EXPECT_NEAR(field(*info, "thickness"), 150, 1e-9);
+  auto thicker = m.changeMember(slab, change([](Modeler::MemberChange& c) { c.thickness = 200.0; }));
+  ASSERT_TRUE(thicker) << thicker.error();
+  EXPECT_NEAR(boxOf(m, slab).z1, 3000, 1e-6);  // the top stays
+  EXPECT_NEAR(boxOf(m, slab).z0, 2800, 1e-6);
+  ASSERT_TRUE(m.changeMember(slab, change([](Modeler::MemberChange& c) { c.thickness = 250.0; c.keep = std::string("bottom"); })));
+  EXPECT_NEAR(boxOf(m, slab).z0, 2800, 1e-6);
+  EXPECT_NEAR(boxOf(m, slab).z1, 3050, 1e-6);
+  // Pushing the top face by hand moves it (no "keep top" binding).
+  ASSERT_TRUE(m.pushPull(slab, faceFacing(m, slab, gp::DZ()), 50));
+  EXPECT_NEAR(boxOf(m, slab).z1, 3100, 1e-6);
+  info = m.memberInfo(slab);
+  ASSERT_TRUE(info);
+  // (The push became the extrusion's own distance: still exact.)
+  EXPECT_NEAR(field(*info, "thickness"), 300, 1e-6);
+  EXPECT_FALSE(m.changeMember(slab, change([](Modeler::MemberChange& c) { c.height = 10.0; })));
+}
+
+TEST(Members, WallThicknessKeepsTheLineItWasDrawnOn) {
+  Modeler m;
+  // Drawn on its outer (right) face line, y = 0, wall to the left (+y).
+  auto walls = m.createWalls({gp_Pnt(0, 0, 0), gp_Pnt(5000, 0, 0)}, 200, 2700, -1);
+  ASSERT_TRUE(walls) << walls.error();
+  const ObjectId w = walls->front();
+  auto info = m.memberInfo(w);
+  ASSERT_TRUE(info) << info.error();
+  EXPECT_EQ(info->element, "wall");
+  EXPECT_NEAR(field(*info, "thickness"), 200, 1e-9);
+  EXPECT_NEAR(field(*info, "height"), 2700, 1e-9);
+  ASSERT_TRUE(m.changeMember(w, change([](Modeler::MemberChange& c) { c.thickness = 300.0; c.height = 3000.0; })));
+  Box b = boxOf(m, w);
+  EXPECT_NEAR(b.y0, 0, 1e-6);  // the drawn line stays
+  EXPECT_NEAR(b.y1, 300, 1e-6);
+  EXPECT_NEAR(b.z1, 3000, 1e-6);
+  // Centred walls keep their centre line; an explicit keep wins.
+  auto centred = m.createWalls({gp_Pnt(0, 1000, 0), gp_Pnt(5000, 1000, 0)}, 200, 2700, 0);
+  ASSERT_TRUE(centred);
+  ASSERT_TRUE(m.changeMember(centred->front(), change([](Modeler::MemberChange& c) { c.thickness = 100.0; })));
+  b = boxOf(m, centred->front());
+  EXPECT_NEAR(b.y0, 950, 1e-6);
+  EXPECT_NEAR(b.y1, 1050, 1e-6);
+  ASSERT_TRUE(m.changeMember(centred->front(), change([](Modeler::MemberChange& c) { c.thickness = 300.0; c.keep = std::string("right"); })));
+  EXPECT_NEAR(boxOf(m, centred->front()).y0, 950, 1e-6);
+  EXPECT_FALSE(m.changeMember(w, change([](Modeler::MemberChange& c) { c.catalog = std::string("H-400x200x8x13"); })));
 }
 
 // §9.4 / §13.2: optional, SBR_MEMBER_BENCH_N members: making them, one

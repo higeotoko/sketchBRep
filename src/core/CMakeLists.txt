@@ -33,6 +33,18 @@ add_library(sbr_core STATIC
 )
 add_library(sbr::core ALIAS sbr_core)
 
+# The built-in section catalog (docs/41), compiled in: members keep working
+# without any file next to the program.
+set(SBR_STEEL_CATALOG ${CMAKE_CURRENT_SOURCE_DIR}/data/steel_sections.json)
+set(SBR_STEEL_CATALOG_CPP ${CMAKE_CURRENT_BINARY_DIR}/SteelCatalogData.cpp)
+add_custom_command(
+  OUTPUT ${SBR_STEEL_CATALOG_CPP}
+  COMMAND ${CMAKE_COMMAND} -DINPUT=${SBR_STEEL_CATALOG} -DOUTPUT=${SBR_STEEL_CATALOG_CPP} -DNAME=kSteelCatalog
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedText.cmake
+  DEPENDS ${SBR_STEEL_CATALOG} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedText.cmake
+  COMMENT "Embedding the section catalog")
+target_sources(sbr_core PRIVATE ${SBR_STEEL_CATALOG_CPP})
+
 target_include_directories(sbr_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # OCCT headers are third party: keep their warnings out of our build output.
 target_include_directories(sbr_core SYSTEM PUBLIC ${OpenCASCADE_INCLUDE_DIR})

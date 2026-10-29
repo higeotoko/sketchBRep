@@ -172,4 +172,10 @@ Result<TopoDS_Wire> makePolylineWire(const std::vector<gp_Pnt>& points) {
   return polygon.Wire();
 }
 
+std::pair<double, double> bulgeArcMiddle(double ax, double ay, double bx, double by, double bulge) {
+  // The sagitta point: right of the chord for a counter-clockwise arc;
+  // keeps major and clockwise arcs too.
+  return {(ax + bx) / 2 + (by - ay) * bulge / 2, (ay + by) / 2 - (bx - ax) * bulge / 2};
+}
+
 }  // namespace sbr::geom

@@ -321,9 +321,11 @@ class WallTool : public PlanPolylineTool {
   Settings settings_;
 };
 
-// Linear members (docs/40): a catalog or own section between two clicks
+// Linear members (docs/40, 41): a catalog or own section between two clicks
 // (or the start, a direction and a typed length), the click line through
 // the chosen anchor of the section; the same settings for the next one.
+// Columns: the foot, then Enter for one straight up (its height set in
+// the settings) or a typed height; a second click leans it.
 // A value typed right after changes that member's length (one undo step).
 // Same as create_member.
 class MemberTool : public DrawingTool {
@@ -334,6 +336,7 @@ class MemberTool : public DrawingTool {
     double roll = 0.0;  // degrees
     std::string role;   // "", column, beam, brace
     std::string materialClass;
+    double columnHeight = 3000.0;  // columns: Enter after the first point
     Settings() {
       section.width = 105;
       section.depth = 105;

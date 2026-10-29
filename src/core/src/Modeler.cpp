@@ -4817,7 +4817,10 @@ Result<std::vector<ObjectId>> Modeler::createWalls(std::vector<gp_Pnt> points, d
     }
     walls.push_back(*id);
   }
-  const Status tagged = setAttribute(walls, "kind", "wall");
+  Status tagged = setAttribute(walls, "kind", "wall");
+  // Which face the drawn line is (looking along it): kept when the
+  // thickness changes (docs/41).
+  if (tagged) tagged = setAttribute(walls, "wall_line", justification < 0 ? "right" : justification > 0 ? "left" : "center");
   if (!tagged) {
     history_.abortGroup();
     return R::failure(tagged.message());
@@ -4853,6 +4856,99 @@ std::string attributeOr(const Object& o, const std::string& key) {
 
 }  // namespace
 
+// Walls and slabs made by their tools: an extruded rectangle (walls) or
+// plan polygon (slabs), tagged kind = wall / slab.
+std::optional<Modeler::MemberInfo> Modeler::wallOrSlabInfo(const Object& o) const {
+  const std::string kind = attributeOr(o, "kind");
+  if (kind != "wall" && kind != "slab") return std::nullopt;
+  if (o.recipe.modifiers.empty() || !std::holds_alternative<ExtrudeOp>(o.recipe.modifiers.front())) return std::nullopt;
+  const double extrude = std::get<ExtrudeOp>(o.recipe.modifiers.front()).distance;
+  MemberInfo info;
+  info.id = o.id;
+  info.element = kind;
+  info.role = kind;
+  info.materialClass = attributeOr(o, "material_class");
+  info.edited = o.recipe.modifiers.size() > 1;
+  const std::string note = info.edited ? "edits made since are redone on a change, or nothing changes" : "";
+  if (kind == "wall") {
+    const auto* r = std::get_if<RectangleProfile>(&o.recipe.base);
+    if (!r) return std::nullopt;
+    info.fields.push_back({"length", "wall length along its line", "mm", std::abs(r->width), "parameter", true, note});
+    info.fields.push_back({"thickness", "wall thickness", "mm", std::abs(r->height), "parameter", true,
+                           "kept: the wall's " + (attributeOr(o, "wall_line").empty() ? std::string("centre (no line recorded)")
+                                                                                       : attributeOr(o, "wall_line") + " line") +
+                               (note.empty() ? "" : "; " + note)});
+    info.fields.push_back({"height", "wall height from its foot", "mm", std::abs(extrude), "parameter", true, note});
+    return info;
+  }
+  const auto* p = std::get_if<PolygonProfile>(&o.recipe.base);
+  if (!p || p->points.empty()) return std::nullopt;
+  const double bottom = p->points.front().Z();
+  if (info.edited) {
+    // Its top or bottom pushed / pulled since: what it is now.
+    const Bnd_Box box = geom::exactBounds(o.shape);
+    info.fields.push_back({"thickness", "slab thickness (vertical extent now)", "mm",
+                           box.IsVoid() ? std::abs(extrude) : box.CornerMax().Z() - box.CornerMin().Z(), "shape", true, note});
+    info.fields.push_back({"top", "top level now", "mm", box.IsVoid() ? bottom + extrude : box.CornerMax().Z(), "shape",
+                           false, ""});
+  } else {
+    info.fields.push_back({"thickness", "slab thickness", "mm", extrude, "parameter", true, "keep: top (default), bottom or center"});
+    info.fields.push_back({"top", "top level", "mm", bottom + extrude, "parameter", false, ""});
+  }
+  return info;
+}
+
+Result<Modeler::MemberInfo> Modeler::changeWallOrSlab(const ObjectId& id, const MemberChange& change) {
+  using R = Result<MemberInfo>;
+  const Object* current = document_.find(id);
+  Object object = *current;
+  const std::string kind = attributeOr(object, "kind");
+  if (change.catalog || change.width || change.depth || change.web || change.flange || change.radius || change.roll ||
+      change.anchor || change.diameter) {
+    return R::failure("A " + kind + " has no section: use thickness" + (kind == "wall" ? ", height and length" : "") +
+                      " (nothing was changed)");
+  }
+  auto positive = [](const std::optional<double>& v) { return !v || (std::isfinite(*v) && *v >= tolerance::kMinDimension); };
+  if (!positive(change.thickness) || !positive(change.height) || !positive(change.length)) {
+    return R::failure("Sizes must be positive (nothing was changed)");
+  }
+  auto& extrude = std::get<ExtrudeOp>(object.recipe.modifiers.front());
+  if (kind == "wall") {
+    auto& r = std::get<RectangleProfile>(object.recipe.base);
+    if (change.length) r.width = (r.width < 0 ? -1 : 1) * *change.length;
+    if (change.height) extrude.distance = (extrude.distance < 0 ? -1 : 1) * *change.height;
+    if (change.thickness) {
+      // The band runs from the origin line to the left (+yDir) by the
+      // rectangle's height: keep the recorded line.
+      const std::string keep = change.keep.value_or(attributeOr(object, "wall_line").empty() ? "center"
+                                                                                               : attributeOr(object, "wall_line"));
+      if (keep != "left" && keep != "right" && keep != "center") return R::failure("keep: left, right or center");
+      const double before = r.height, after = (r.height < 0 ? -1 : 1) * *change.thickness;
+      const double shift = keep == "right" ? 0.0 : keep == "left" ? before - after : (before - after) / 2;
+      r.plane.origin.Translate(gp_Vec(r.plane.yDir()) * shift);
+      r.height = after;
+    }
+  } else {
+    if (change.length) return R::failure("A slab's outline changes by editing it directly (nothing was changed)");
+    if (change.height) return R::failure("A slab has a thickness, not a height (nothing was changed)");
+    if (change.thickness) {
+      auto& p = std::get<PolygonProfile>(object.recipe.base);
+      const std::string keep = change.keep.value_or("top");
+      if (keep != "top" && keep != "bottom" && keep != "center") return R::failure("keep: top, bottom or center");
+      const double before = extrude.distance, after = *change.thickness;
+      const double lift = keep == "bottom" ? 0.0 : keep == "top" ? before - after : (before - after) / 2;
+      for (gp_Pnt& q : p.points) q.SetZ(q.Z() + lift);
+      extrude.distance = after;
+    }
+  }
+  const Status committed = commitModified(std::move(object), "Change " + kind);
+  if (!committed) {
+    return R::failure("The " + kind + " was not changed: " + committed.message() +
+                      " (the edits made to it could not be redone; its shape can still be edited directly)");
+  }
+  return memberInfo(id);
+}
+
 Result<ObjectId> Modeler::createMember(const MemberSpec& spec) {
   using R = Result<ObjectId>;
   if (const Status valid = geom::validateSection(spec.section); !valid) return R::failure(valid.message());
@@ -4879,8 +4975,13 @@ Result<Modeler::MemberInfo> Modeler::memberInfo(const ObjectId& id) const {
   const Object* o = document_.find(id);
   if (!o) return R::failure("Object not found");
   const auto* m = std::get_if<LinearMember>(&o->recipe.base);
-  if (!m) return R::failure("Not a member made by the member tool (no section to edit; its shape can still be edited)");
+  if (!m) {
+    if (auto other = wallOrSlabInfo(*o)) return *other;
+    return R::failure("Not a member, wall or slab made by those tools (no basic sizes to edit; its shape can still be "
+                      "edited directly)");
+  }
   MemberInfo info;
+  info.element = "member";
   info.id = id;
   info.section = geom::sectionName(m->section);
   info.catalog = m->section.catalog;
@@ -4902,8 +5003,16 @@ Result<Modeler::MemberInfo> Modeler::memberInfo(const ObjectId& id) const {
   }
   const std::string sectionNote =
       info.edited ? "section as made; the edits made since are redone on a changed section, or nothing changes" : "";
-  info.fields.push_back({"width", "section width (across)", "mm", m->section.width, "parameter", true, sectionNote});
-  info.fields.push_back({"depth", "section depth (up)", "mm", m->section.depth, "parameter", true, sectionNote});
+  const bool catalogOutline = m->section.kind == geom::Section::Kind::Profile;
+  const std::string sizeNote = catalogOutline ? "the catalog section's overall size; change it by choosing another "
+                                                "catalog section"
+                                              : sectionNote;
+  if (m->section.kind == geom::Section::Kind::Circle) {
+    info.fields.push_back({"diameter", "section diameter", "mm", m->section.width, "parameter", true, sectionNote});
+  } else {
+    info.fields.push_back({"width", "section width (across)", "mm", m->section.width, "parameter", !catalogOutline, sizeNote});
+    info.fields.push_back({"depth", "section depth (up)", "mm", m->section.depth, "parameter", !catalogOutline, sizeNote});
+  }
   if (m->section.kind == geom::Section::Kind::H) {
     info.fields.push_back({"web", "web thickness", "mm", m->section.web, "parameter", true, sectionNote});
     info.fields.push_back({"flange", "flange thickness", "mm", m->section.flange, "parameter", true, sectionNote});
@@ -4918,7 +5027,12 @@ Result<Modeler::MemberInfo> Modeler::changeMember(const ObjectId& id, const Memb
   const Object* current = document_.find(id);
   if (!current) return R::failure("Object not found");
   if (!std::holds_alternative<LinearMember>(current->recipe.base)) {
-    return R::failure("Not a member made by the member tool (no section to edit; its shape can still be edited)");
+    if (wallOrSlabInfo(*current)) return changeWallOrSlab(id, change);
+    return R::failure("Not a member, wall or slab made by those tools (no basic sizes to edit; its shape can still be "
+                      "edited directly)");
+  }
+  if (change.thickness || change.height || change.keep) {
+    return R::failure("A member has no thickness or height: use width, depth and length (nothing was changed)");
   }
   Object object = *current;
   auto& m = std::get<LinearMember>(object.recipe.base);
@@ -4939,7 +5053,18 @@ Result<Modeler::MemberInfo> Modeler::changeMember(const ObjectId& id, const Memb
     field = *v;
     return Status::success();
   };
-  for (const Status& s : {set(change.width, section.width, true, "width"), set(change.depth, section.depth, true, "depth"),
+  const bool round = section.kind == geom::Section::Kind::Circle;
+  const bool outline = section.kind == geom::Section::Kind::Profile;
+  if (outline && (change.width || change.depth || change.web || change.flange || change.radius)) {
+    return R::failure("A catalog section (" + geom::sectionName(section) +
+                      ") changes size by choosing another catalog section; nothing was changed");
+  }
+  if (change.diameter) {
+    if (!round) return R::failure("Only a round section has a diameter");
+    if (std::abs(section.width - *change.diameter) > 1e-12) own = true;
+    section.width = section.depth = *change.diameter;
+  }
+  for (const Status& s : {set(change.width, section.width, !round, "width"), set(change.depth, section.depth, !round, "depth"),
                           set(change.web, section.web, h, "web"), set(change.flange, section.flange, h, "flange"),
                           set(change.radius, section.radius, h, "fillet radius")}) {
     if (!s) return R::failure(s.message());

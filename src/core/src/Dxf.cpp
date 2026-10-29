@@ -1,4 +1,5 @@
 #include "sbr/geom/Dxf.h"
+#include "sbr/geom/Profile.h"
 
 #include <cmath>
 #include <filesystem>
@@ -108,8 +109,8 @@ TopoDS_Edge segment(const gp_Pnt& a, const gp_Pnt& b, double bulge) {
   if (a.Distance(b) <= Precision::Confusion()) throw std::runtime_error("Zero-length DXF segment");
   if (bulge == 0) return BRepBuilderAPI_MakeEdge(a, b).Edge();
   // bulge = tan(sweep/4); the sagitta point preserves major and clockwise arcs.
-  const gp_Pnt mid((a.X() + b.X()) / 2 + (b.Y() - a.Y()) * bulge / 2,
-                   (a.Y() + b.Y()) / 2 - (b.X() - a.X()) * bulge / 2, a.Z());
+  const auto [mx, my] = bulgeArcMiddle(a.X(), a.Y(), b.X(), b.Y(), bulge);
+  const gp_Pnt mid(mx, my, a.Z());
   GC_MakeArcOfCircle arc(a, mid, b);
   if (!arc.IsDone()) throw std::runtime_error("Invalid DXF bulge arc");
   return BRepBuilderAPI_MakeEdge(arc.Value()).Edge();

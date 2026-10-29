@@ -1160,8 +1160,11 @@ std::optional<gp_Pnt> MemberTool::pointAt(const ToolEvent& e) {
   if (start_) plane = gp_Pln(*start_, gp::DZ());  // up and down: the blue axis or a point
   snap::SnapResult r = snapAt(e, anchor, plane);
   if (!r.valid()) return std::nullopt;
-  host_.setStatus((start_ ? QObject::tr("終点をクリック / 長さを入力 / Esc で始点からやり直し")
-                          : QObject::tr("部材の始点をクリック")) +
+  const bool column = settings_.role == "column";
+  host_.setStatus((start_ ? (column ? QObject::tr("Enter で高さ %1 の柱 / 高さを入力 / 頂部をクリックで傾けた柱 / Esc で戻る")
+                                          .arg(mm(settings_.columnHeight))
+                                    : QObject::tr("終点をクリック / 長さを入力 / Esc で始点からやり直し"))
+                          : (column ? QObject::tr("柱の脚部をクリック") : QObject::tr("部材の始点をクリック"))) +
                   QStringLiteral("  [") + snapLabel(r.kind) + QStringLiteral("]  ") + settingsText() + lockSuffix());
   return r.point;
 }
@@ -1221,6 +1224,12 @@ void MemberTool::mousePress(const ToolEvent& e) {
 }
 
 void MemberTool::applyMeasurement(const QString& text) {
+  const bool column = settings_.role == "column";
+  if (text.trimmed().isEmpty()) {
+    // Enter after a column's foot: straight up, the settings' height.
+    if (start_ && column) place(start_->Translated(gp_Vec(0, 0, settings_.columnHeight)));
+    return;
+  }
   const auto length = parseOne(text);
   if (!length || *length <= 0) {
     host_.reportError(QObject::tr("長さを解釈できません: %1").arg(text));
@@ -1235,6 +1244,11 @@ void MemberTool::applyMeasurement(const QString& text) {
     const Status s = recent_.revise(m, [&] { return m.changeMember(id, change).status(); });
     if (!s) host_.reportError(QString::fromStdString(s.message()));
     else host_.setStatus(QObject::tr("部材の長さを %1 にしました").arg(mm(*length)));
+    return;
+  }
+  if (start_ && column && !locked_) {
+    // A column's typed height: straight up, wherever the mouse is.
+    place(start_->Translated(gp_Vec(0, 0, *length)));
     return;
   }
   if (!start_ || !current_ || current_->Distance(*start_) < 1e-9) {

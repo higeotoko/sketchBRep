@@ -184,6 +184,7 @@ jobs:
           Copy-Item docs\31_planar_curve_splitting.md "$dist\PLANAR_CURVE_SPLITTING.md"
           Copy-Item docs\39_curved_face_split.md "$dist\CURVED_FACE_SPLIT.md"
           Copy-Item docs\40_members_stage_a.md "$dist\MEMBERS.md"
+          Copy-Item docs\41_members_stage_b.md "$dist\MEMBERS_STAGE_B.md"
           Copy-Item docs\32_unified_import_export.md "$dist\IMPORT_EXPORT.md"
           Copy-Item docs\33_chatgpt_connection.md "$dist\CHATGPT_CONNECTION.md"
           Copy-Item docs\34_sections_and_tools_palette.md "$dist\SECTIONS_AND_TOOLS.md"

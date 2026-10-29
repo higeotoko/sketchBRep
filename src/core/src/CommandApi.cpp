@@ -423,8 +423,13 @@ geom::Section sectionFrom(const json& v) {
   if (!v.is_object()) throw ApiError("'section' must be a catalog id or {kind, width, depth, ...}");
   geom::Section s;
   const std::string kind = textOr(v, "kind", "rectangle");
+  if (kind == "circle") {
+    s.kind = geom::Section::Kind::Circle;
+    s.width = s.depth = number(v, "diameter");
+    return s;
+  }
   if (kind == "h") s.kind = geom::Section::Kind::H;
-  else if (kind != "rectangle") throw ApiError("section kind: rectangle or h");
+  else if (kind != "rectangle") throw ApiError("section kind: rectangle, circle or h (catalog sections by id)");
   s.width = number(v, "width");
   s.depth = number(v, "depth");
   if (s.kind == geom::Section::Kind::H) {
@@ -458,7 +463,13 @@ json memberInfoJson(const doc::Modeler::MemberInfo& info) {
   }
   static const char* across[] = {"right", "center", "left"};
   static const char* up[] = {"bottom", "center", "top"};
+  if (info.element != "member") {
+    json out{{"id", info.id}, {"element", info.element}, {"edited", info.edited}, {"fields", fields}};
+    if (!info.materialClass.empty()) out["material_class"] = info.materialClass;
+    return out;
+  }
   json out{{"id", info.id},
+           {"element", info.element},
            {"section", info.section},
            {"kind", geom::toString(info.kind)},
            {"catalog", info.catalog.empty() ? json(nullptr) : json(info.catalog)},
@@ -1793,30 +1804,46 @@ const std::vector<CommandDef>& commands() {
          return idResult(must(m.createSlab(pts, numberOr(a, "top", 0.0), number(a, "thickness"))));
        }},
       {"list_sections",
-       "Sections for create_member: catalog entries (exact ids, e.g. \"H-200x100x5.5x8\"), optionally "
-       "filtered by 'query' (part of the id or family, e.g. \"H-400\"; exact matches come first). Rectangles "
-       "(timber, RC) need no entry: give {kind: \"rectangle\", width, depth}. A missing size is never "
-       "replaced by another one.",
-       SCHEMA({"type": "object", "properties": {"query": {"type": "string"}}}),
+       "Sections for create_member from the built-in catalog (the Steel Member Generator's 1,204 steel "
+       "sections: H, I, BOX, PIPE, ANGLE, CHANNEL, C, CT, FB, SB, RB, HB). 'query': part of the id or name "
+       "(e.g. \"400x200\", \"BCP-350\"); 'family' narrows to one family. 'exact' lists the id / name equal "
+       "to the query; 'matches' the others, 'limit' (default 50) from 'offset'. A missing size is never "
+       "replaced by another one. Rectangles and circles (timber, RC) need no entry: {kind: rectangle, "
+       "width, depth} or {kind: circle, diameter}.",
+       SCHEMA({"type": "object", "properties": {"query": {"type": "string"}, "family": {"type": "string"},
+                                                "limit": {"type": "integer"}, "offset": {"type": "integer"}}}),
        [](doc::Modeler&, const json& a) {
-         const std::string query = textOr(a, "query", "");
-         json exact = json::array(), near = json::array();
+         const std::string query = textOr(a, "query", ""), family = textOr(a, "family", "");
+         const int limit = static_cast<int>(numberOr(a, "limit", 50)), offset = static_cast<int>(numberOr(a, "offset", 0));
+         if (limit < 1 || limit > 500 || offset < 0) throw ApiError("limit: 1 to 500, offset: 0 or more");
+         auto entry = [](const geom::CatalogSection& c) {
+           json dims = json::object();
+           for (const auto& [k, v] : c.dimensions) dims[k] = v;
+           return json{{"id", c.id}, {"name", c.name}, {"family", c.family}, {"standard", c.standard},
+                       {"subtype", c.subtype}, {"material_class", c.material}, {"dimensions", dims},
+                       {"width", c.section.width}, {"depth", c.section.depth}};
+         };
+         json exact = json::array(), matches = json::array();
+         int total = 0;
          for (const geom::CatalogSection& c : geom::sectionCatalog()) {
-           const bool same = !query.empty() && c.id == query;
-           if (!query.empty() && !same && c.id.find(query) == std::string::npos && c.family != query) continue;
-           json entry{{"id", c.id}, {"family", c.family}, {"material_class", c.material}, {"standard", c.standard},
-                      {"kind", geom::toString(c.section.kind)}, {"width", c.section.width},
-                      {"depth", c.section.depth}, {"web", c.section.web}, {"flange", c.section.flange},
-                      {"radius", c.section.radius}};
-           (same ? exact : near).push_back(entry);
+           if (!family.empty() && c.family != family) continue;
+           if (!query.empty() && (c.id == query || c.name == query)) {
+             exact.push_back(entry(c));
+             continue;
+           }
+           if (!query.empty() && c.id.find(query) == std::string::npos && c.name.find(query) == std::string::npos) continue;
+           if (total >= offset && total < offset + limit) matches.push_back(entry(c));
+           ++total;
          }
-         for (json& e : near) exact.push_back(std::move(e));
-         return json{{"sections", exact}, {"units", "mm"},
-                     {"rectangle", "any width x depth: {kind: rectangle, width, depth}"}};
+         return json{{"exact", exact}, {"matches", matches}, {"total_matches", total}, {"offset", offset},
+                     {"limit", limit}, {"units", "mm"}, {"source", geom::sectionCatalogSource()},
+                     {"own_sections", "{kind: rectangle, width, depth}, {kind: circle, diameter}, "
+                                      "{kind: h, width, depth, web, flange, radius}"}};
        }},
       {"create_member",
        "A linear member (beam, column, brace; steel, timber or RC): 'section' (a catalog id from "
-       "list_sections, or {kind: rectangle, width, depth}, or {kind: h, width, depth, web, flange, radius}) "
+       "list_sections, or {kind: rectangle, width, depth}, {kind: circle, diameter} or {kind: h, width, depth, "
+       "web, flange, radius}) "
        "swept from 'start' to 'end' ([x, y, z] or a grid crossing \"X1/Y1\" at height 'base', mm), or "
        "'length' along 'direction' (default up: a column). 'anchor' {across: left|center|right, up: "
        "top|center|bottom} is the point of the section on the start-end line (left / right looking from "
@@ -1851,7 +1878,9 @@ const std::vector<CommandDef>& commands() {
          if (a.contains("up")) spec.up = direction(a, "up", gp::DZ());
          spec.roll = numberOr(a, "roll", 0.0) * M_PI / 180.0;
          spec.role = textOr(a, "role", "");
-         spec.materialClass = textOr(a, "material_class", spec.section.kind == geom::Section::Kind::H ? "steel" : "");
+         // A catalog (steel) section brings its material class unless one is given.
+         const geom::CatalogSection* entry = spec.section.catalog.empty() ? nullptr : geom::findSection(spec.section.catalog);
+         spec.materialClass = textOr(a, "material_class", entry ? entry->material : "");
          spec.name = textOr(a, "name", "");
          const ObjectId id = must(m.createMember(spec));
          return memberInfoJson(must(m.memberInfo(id)));
@@ -1861,21 +1890,26 @@ const std::vector<CommandDef>& commands() {
        "catalog it was made from), anchor, role, material_class, and fields [{key, meaning, unit, value, "
        "basis, editable, note}] for length (measured along the axis after other edits: basis shape), "
        "width, depth (H: web, flange, radius) and roll. Values are what it is now, never the original "
-       "sizes after edits. Objects not made as members: an error (their shape stays editable).",
+       "sizes after edits. Walls (create_wall) give length, thickness, height; slabs (create_slab) "
+       "thickness and top. Other objects: an error (their shape stays editable).",
        SCHEMA({"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}),
        [](doc::Modeler& m, const json& a) { return memberInfoJson(must(m.memberInfo(text(a, "id")))); }},
       {"change_member",
        "Basic member edits in one step, checked together: 'catalog' (another catalog section; anchor, "
        "rotation and length kept), own 'width' / 'depth' (H: 'web', 'flange', 'radius'; the section "
-       "becomes its own), 'length' (absolute, mm; the start stays, a column's foot), 'roll' (deg), "
+       "becomes its own; catalog sections change size by 'catalog' only), 'diameter' (round), 'length' "
+       "(absolute, mm; the start stays, a column's foot), 'roll' (deg), "
        "'anchor' {across, up} (the member stays put; only its axis line moves). Edits made to it since are "
        "redone; if they cannot be, nothing changes and the reason is returned. Same id; returns "
-       "member_info. Role: set_attribute kind.",
+       "member_info. Role: set_attribute kind. Walls: 'thickness' (keep: left | right | center line, "
+       "default the line it was drawn on), 'height' (foot kept), 'length'. Slabs: 'thickness' (keep: top "
+       "(default) | bottom | center).",
        SCHEMA({"type": "object", "properties": {
          "id": {"type": "string"}, "catalog": {"type": "string"}, "width": {"type": "number"},
          "depth": {"type": "number"}, "web": {"type": "number"}, "flange": {"type": "number"},
          "radius": {"type": "number"}, "length": {"type": "number"}, "roll": {"type": "number"},
-         "anchor": {"type": "object"}},
+         "diameter": {"type": "number"}, "thickness": {"type": "number"}, "height": {"type": "number"},
+         "keep": {"type": "string"}, "anchor": {"type": "object"}},
          "required": ["id"]}),
        [](doc::Modeler& m, const json& a) {
          doc::Modeler::MemberChange change;
@@ -1889,6 +1923,10 @@ const std::vector<CommandDef>& commands() {
          change.flange = opt("flange");
          change.radius = opt("radius");
          change.length = opt("length");
+         change.diameter = opt("diameter");
+         change.thickness = opt("thickness");
+         change.height = opt("height");
+         if (a.contains("keep")) change.keep = text(a, "keep");
          if (a.contains("roll")) change.roll = number(a, "roll") * M_PI / 180.0;
          if (a.contains("anchor")) change.anchor = anchorFrom(a.at("anchor"));
          return memberInfoJson(must(m.changeMember(text(a, "id"), change)));

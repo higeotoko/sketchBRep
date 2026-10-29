@@ -244,6 +244,7 @@ class GuiPhase1 : public QObject {
   void lineAcrossWallSplitsFace();
   void lineAlongCylinderDividesItsSide();
   void memberToolDrawsAndRetypes();
+  void memberToolColumnsAndCatalogSearch();
   void arcAndLinesCloseIntoFace();
   void arcClosesMixedOutline_data();
   void arcClosesMixedOutline();
@@ -4594,6 +4595,47 @@ void GuiPhase1::memberToolDrawsAndRetypes() {
   QCOMPARE(m.history().undoCount(), steps + 1);
   QVERIFY(m.undo());
   QVERIFY(m.document().objects().empty());
+}
+
+void GuiPhase1::memberToolColumnsAndCatalogSearch() {
+  Fixture f;
+  QVERIFY(f.setUp(2000, 0));
+  doc::Modeler& m = f.window.modeler();
+  // The settings dialog: a steel family, a size found by typing.
+  QTimer::singleShot(100, [&] {
+    auto* dialog = f.window.findChild<QDialog*>(QStringLiteral("memberSettingsDialog"));
+    if (!dialog) return;
+    auto* family = dialog->findChild<QComboBox*>(QStringLiteral("memberFamily"));
+    family->setCurrentIndex(family->findData(QStringLiteral("BOX")));
+    dialog->findChild<QLineEdit*>(QStringLiteral("memberSearch"))->setText(QStringLiteral("BCP-350x350x12"));
+    auto* role = dialog->findChild<QComboBox*>(QStringLiteral("memberRole"));
+    role->setCurrentIndex(role->findData(QStringLiteral("column")));
+    dialog->findChild<QLineEdit*>(QStringLiteral("memberColumnHeight"))->setText(QStringLiteral("3500"));
+    dialog->accept();
+  });
+  f.window.showMemberSettingsDialog();
+  const MemberTool::Settings& s = f.window.memberTool().settings();
+  QCOMPARE(QString::fromStdString(s.section.catalog), QStringLiteral("BOX/BCP/SHS/350x350x12"));
+  QCOMPARE(QString::fromStdString(s.materialClass), QStringLiteral("steel"));
+  QCOMPARE(s.anchor.up, 0);  // a column: on its centre
+  // The foot, then Enter: straight up, 3500.
+  f.window.activateTool(MainWindow::ToolId::Member);
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 0, 0)));
+  type(f.vp, QString());
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  const doc::ObjectId id = m.document().objects().front().id;
+  const Bnd_Box b = geom::exactBounds(m.document().worldShape(*m.document().find(id)));
+  QVERIFY2(std::abs(b.CornerMin().Z()) < 1e-6 && std::abs(b.CornerMax().Z() - 3500) < 1e-6,
+           qPrintable(QString::number(b.CornerMax().Z())));
+  QVERIFY(std::abs(b.CornerMax().X() - b.CornerMin().X() - 350) < 1e-3);
+  QCOMPARE(QString::fromStdString(m.document().find(id)->attributes.at("kind")), QStringLiteral("column"));
+  // A typed height after the next foot.
+  click(f.vp, f.vp->toWidget(gp_Pnt(3000, 0, 0)));
+  type(f.vp, QStringLiteral("2800"));
+  QCOMPARE(m.document().objects().size(), std::size_t(2));
+  const Bnd_Box c = geom::exactBounds(m.document().worldShape(m.document().objects().back()));
+  QVERIFY(std::abs(c.CornerMax().Z() - 2800) < 1e-6);
 }
 
 void GuiPhase1::arcAndLinesCloseIntoFace() {

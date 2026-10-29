@@ -4,6 +4,9 @@
 // point (docs/40). The catalog is where a member starts from, never a rule
 // on its shape afterwards.
 
+#include <array>
+#include <atomic>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -17,25 +20,36 @@
 
 namespace sbr::geom {
 
+// An exact outline: closed loops of (x, y, bulge) - the first the outside,
+// the others holes - each segment straight (bulge 0) or a circular arc
+// (bulge = tan(sweep / 4), positive counter-clockwise, as in DXF).
+struct SectionOutline {
+  std::vector<std::vector<std::array<double, 3>>> loops;
+  // Checked as a face once (0 not yet, 1 valid, 2 invalid), not for every
+  // member made of it.
+  mutable std::atomic<int> checked{0};
+};
+
 // A section in its own plane: x across (width), y up (depth), centred on
-// the middle of its bounding box. More kinds (box / round tubes, channels,
-// angles, round RC columns) are added the same way.
+// the middle of its bounding box. Rectangles (timber, RC), circles (RC
+// columns, round bars), own H dimensions, and catalog outlines (every
+// steel family: H, I, channels, angles, box and round tubes, ...).
 struct Section {
-  enum class Kind { Rectangle, H };
+  enum class Kind { Rectangle, H, Circle, Profile };
   Kind kind = Kind::Rectangle;
-  double width = 0.0;   // B: across (x)
-  double depth = 0.0;   // H: up (y)
+  double width = 0.0;   // B: across (x); circle: diameter; profile: its bounding box
+  double depth = 0.0;   // H: up (y); circle: diameter; profile: its bounding box
   double web = 0.0;     // H: web thickness tw
   double flange = 0.0;  // H: flange thickness tf
   double radius = 0.0;  // H: fillet radius between web and flanges
+  // Profile: the outline (shared with the catalog entry it came from).
+  std::shared_ptr<const SectionOutline> outline;
   // Catalog entry the section is (empty: own dimensions). Changing a
   // dimension by hand makes it the member's own section.
   std::string catalog;
+  std::string label;  // the catalog's display name ("BCP-350x350x12")
 
-  bool operator==(const Section& o) const {
-    return kind == o.kind && width == o.width && depth == o.depth && web == o.web && flange == o.flange &&
-           radius == o.radius && catalog == o.catalog;
-  }
+  bool operator==(const Section& o) const;
 };
 
 const char* toString(Section::Kind kind);
@@ -45,15 +59,21 @@ Status validateSection(const Section& section);
 std::string sectionName(const Section& section);
 
 struct CatalogSection {
-  std::string id;        // "H-200x100x5.5x8"
-  std::string family;    // "H"
+  std::string id;        // "H-200x100x5.5x8", "BOX/BCP/SHS/350x350x12"
+  std::string name;      // "BCP-350x350x12"
+  std::string family;    // H, I, BOX, PIPE, ANGLE, CHANNEL, C, CT, FB, SB, RB, HB
+  std::string standard;  // BCP, STK, JIS_G_3194, general, ...
+  std::string subtype;   // SHS, CHS, Equal, Lipped, ...
   std::string material;  // material class it is made of ("steel")
-  std::string standard;  // where the dimensions come from
+  std::vector<std::pair<std::string, double>> dimensions;  // nominal (H, B, t, ...)
   Section section;
 };
-// The built-in catalog (checked once, when first used).
+// The built-in catalog: the Steel Member Generator's sections (docs/41),
+// read and checked once, when first used.
 const std::vector<CatalogSection>& sectionCatalog();
 const CatalogSection* findSection(const std::string& id);
+// Where the catalog comes from (repository, version, commit).
+std::string sectionCatalogSource();
 
 // The section as a face in `frame` (its x / y axes are the section's).
 // Straight edges and exact arcs only.

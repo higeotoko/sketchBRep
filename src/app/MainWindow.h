@@ -160,6 +160,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   // Architectural helpers behind the Tools menu (also used by tests).
   WallTool& wallTool() { return *wallTool_; }
   MemberTool& memberTool() { return *memberTool_; }
+  // Tools > Member settings (section family, size search, anchor, role).
+  void showMemberSettingsDialog();
   SlabTool& slabTool() { return *slabTool_; }
   OpeningTool& openingTool() { return *openingTool_; }
   // Openings into the selected wall: the face picked (face selection) or the
@@ -202,7 +204,6 @@ class MainWindow : public QMainWindow, public ToolHost {
   void showWheelZoomDialog();
   void refreshConstraints();
   void showWallSettingsDialog();
-  void showMemberSettingsDialog();
   void showSlabSettingsDialog();
   void showOpeningSettingsDialog();
   void showOpeningsDialog();
