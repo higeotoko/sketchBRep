@@ -25,6 +25,7 @@ add_executable(sbr_core_tests
   test_overlaps.cpp
   test_flows.cpp
   test_split_across.cpp
+  test_curved_split.cpp
   test_closing_faces.cpp
   test_follow_me.cpp
   test_ux_gate1.cpp

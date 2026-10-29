@@ -256,9 +256,12 @@ struct SplitOp {
 };
 
 // Push/pull of a curved face: offset along its normal, neighbours adapt.
+// `part`: one part of a divided cylinder / cone moves on its own instead,
+// with a step to the rest of the surface (geom::pushPullCurvedPart).
 struct OffsetFaceOp {
   geom::SurfaceRef face;
   double distance = 0.0;
+  bool part = false;
 };
 
 // A hole in a profile face: an outline drawn inside it (F-05). The outline's
@@ -315,6 +318,16 @@ struct CurveIntervalOp {
   gp_Pnt start, end;
 };
 
+// Lines, arcs and circles lying exactly on cylindrical / conical faces of the
+// shape, drawn into them: each face they cross from boundary to boundary (or
+// that a closed one goes round) is divided there, nothing else changes.
+// `edges` is the exact pieces on the faces (object coordinates via its
+// placement), so no face has to be found again on regeneration. Edges no
+// longer on a curved face (a parameter edited since) are left out.
+struct ImprintOp {
+  BooleanOperand edges;
+};
+
 // All faces turned over (front <-> back) - for open shells and profiles.
 struct ReverseOp {};
 
@@ -329,7 +342,7 @@ struct InsetOp {
 
 using Modifier = std::variant<ExtrudeOp, PushPullOp, OffsetOp, RevolveOp, SplitOp, OffsetFaceOp, HoleOp, ScaleOp,
                               RemoveFaceOp, CapHolesOp, ReverseOp, MoveVerticesOp, InsetOp, StretchOp,
-                              MergeAcrossOp, CurveIntervalOp>;
+                              MergeAcrossOp, CurveIntervalOp, ImprintOp>;
 
 struct Recipe {
   BaseFeature base;

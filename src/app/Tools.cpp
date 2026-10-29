@@ -4841,12 +4841,10 @@ gp_Pnt pointOnEdgeAt(Viewport& vp, const QPoint& pos, const TopoDS_Edge& edge) {
   return c.Value(0.5 * (c.FirstParameter() + c.LastParameter()));
 }
 
-bool sameFlatPlane(const std::vector<TopoDS_Face>& faces) {
-  if (faces.size() != 2) return false;
-  const auto a = geom::FaceRef::fromFace(faces[0]);
-  const auto b = geom::FaceRef::fromFace(faces[1]);
-  return a && b && a->normal.Angle(b->normal) < 1e-6 &&
-         std::abs(gp_Vec(a->centroid, b->centroid).Dot(gp_Vec(a->normal))) < 1e-3;
+// Two faces on one surface (one plane, or one cylinder / cone a line was
+// drawn across): the edge between them is a dividing line, not a corner.
+bool sameSurface(const std::vector<TopoDS_Face>& faces) {
+  return faces.size() == 2 && !faces[0].IsSame(faces[1]) && geom::sameSurface(faces[0], faces[1]);
 }
 
 }  // namespace
@@ -4859,7 +4857,7 @@ EraserTool::EdgeAction EraserTool::actionFor(const ElementRef& picked, const Top
     case doc::ObjectKind::Face: return EdgeAction::FaceOutline;  // (a dividing line merges, see mousePress)
     case doc::ObjectKind::Solid:
     case doc::ObjectKind::Shell:
-      return sameFlatPlane(host_.modeler().facesAtEdge(picked.objectId, edge)) ? EdgeAction::Merge : EdgeAction::Corner;
+      return sameSurface(host_.modeler().facesAtEdge(picked.objectId, edge)) ? EdgeAction::Merge : EdgeAction::Corner;
     default: return EdgeAction::None;
   }
 }

@@ -242,6 +242,7 @@ class GuiPhase1 : public QObject {
   void scenesSaveRestoreAndPersist();
   void dimensionAndTextTools();
   void lineAcrossWallSplitsFace();
+  void lineAlongCylinderDividesItsSide();
   void arcAndLinesCloseIntoFace();
   void arcClosesMixedOutline_data();
   void arcClosesMixedOutline();
@@ -4512,6 +4513,49 @@ void GuiPhase1::lineAcrossWallSplitsFace() {
   QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
   const double v = geom::volume(m.document().worldShape(*m.document().find(wall)));
   QVERIFY2(std::abs(v - (4000.0 * 200 * 3000 + 4000.0 * 1500 * 300)) < 1.0, qPrintable(QString::number(v)));
+}
+
+void GuiPhase1::lineAlongCylinderDividesItsSide() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  auto disc = m.createCircle(geom::SketchPlane::ground(), 1500);
+  QVERIFY(disc);
+  QVERIFY(m.extrude(*disc, 3000));
+  const doc::ObjectId cylinder = *disc;
+  f.vp->syncNow();
+  const double volume = geom::volume(m.document().worldShape(*m.document().find(cylinder)));
+  auto sides = [&] {
+    int n = 0;
+    for (TopExp_Explorer e(m.document().worldShape(*m.document().find(cylinder)), TopAbs_FACE); e.More(); e.Next())
+      n += geom::isCylinderOrCone(TopoDS::Face(e.Current()));
+    return n;
+  };
+  QCOMPARE(sides(), 1);
+  // Up the side facing the camera, from the bottom edge to the top edge.
+  const double a = 4.0;
+  const gp_Pnt bottom(1500 * std::cos(a), 1500 * std::sin(a), 0), top(1500 * std::cos(a), 1500 * std::sin(a), 3000);
+  f.window.activateTool(MainWindow::ToolId::Line);
+  click(f.vp, f.vp->toWidget(bottom));
+  click(f.vp, f.vp->toWidget(top));
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(sides(), 2);  // the seam and the line
+  QCOMPARE(m.document().objects().size(), std::size_t(1));  // no separate line object
+  // Drawing and dividing are one undo step.
+  QVERIFY(m.undo());
+  QCOMPARE(sides(), 1);
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  QVERIFY(m.redo());
+  QCOMPARE(sides(), 2);
+  // The eraser on that line joins the side again.
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::Eraser);
+  click(f.vp, f.vp->toWidget(gp_Pnt(1500 * std::cos(a), 1500 * std::sin(a), 1700)));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(sides(), 1);
+  const double after = geom::volume(m.document().worldShape(*m.document().find(cylinder)));
+  QVERIFY2(std::abs(after - volume) < 1e-6 * volume, qPrintable(QString::number(after)));
 }
 
 void GuiPhase1::arcAndLinesCloseIntoFace() {

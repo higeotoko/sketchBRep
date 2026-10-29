@@ -498,12 +498,14 @@ json modifierToJson(const Modifier& m) {
                         sharedRecipe(op.outline.recipe)};
           },
           [](const OffsetFaceOp& op) {
-            return json{{"type", "offsetface"},
-                        {"distance", op.distance},
-                        {"face",
-                         {{"point", toJson(op.face.point)},
-                          {"normal", toJson(op.face.normal)},
-                          {"surfaceType", op.face.surfaceType}}}};
+            json j{{"type", "offsetface"},
+                   {"distance", op.distance},
+                   {"face",
+                    {{"point", toJson(op.face.point)},
+                     {"normal", toJson(op.face.normal)},
+                     {"surfaceType", op.face.surfaceType}}}};
+            if (op.part) j["part"] = true;
+            return j;
           },
           [](const InsetOp& op) {
             return json{{"type", "inset"}, {"distance", op.distance}, {"face", faceRefToJson(op.face)}};
@@ -529,6 +531,10 @@ json modifierToJson(const Modifier& m) {
           [](const CapHolesOp&) { return json{{"type", "capholes"}}; },
           [](const MergeAcrossOp& op) {
             return json{{"type", "mergeacross"}, {"point", toJson(op.point)}, {"direction", toJson(op.direction)}};
+          },
+          [](const ImprintOp& op) {
+            return json{{"type", "imprint"},
+                        {"edges", {{"name", op.edges.name}, {"placement", toJson(op.edges.placement)}, sharedRecipe(op.edges.recipe)}}};
           },
           [](const CurveIntervalOp& op) {
             return json{{"type", "curveinterval"}, {"edge", op.edge}, {"edge_count", op.edgeCount},
@@ -578,6 +584,7 @@ Modifier modifierFrom(const json& j) {
     op.face.point = pointFrom(f.at("point"));
     op.face.normal = dirFrom(f.at("normal"));
     op.face.surfaceType = f.value("surfaceType", 0);
+    op.part = j.value("part", false);
     return op;
   }
   if (type == "scale") return ScaleOp{pointFrom(j.at("center")), j.at("factor").get<double>()};
@@ -628,6 +635,10 @@ Modifier modifierFrom(const json& j) {
       op.curve=BooleanOperand{sharedRecipeFrom(c),trsfFrom(c.at("placement")),c.value("name",std::string())};
     }
     return op;
+  }
+  if (type == "imprint") {
+    const json& e = j.at("edges");
+    return ImprintOp{BooleanOperand{sharedRecipeFrom(e), trsfFrom(e.at("placement")), e.value("name", std::string())}};
   }
   throw std::runtime_error("unknown modifier type: " + type);
 }

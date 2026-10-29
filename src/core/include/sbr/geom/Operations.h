@@ -9,6 +9,7 @@
 #include <gp_Pnt.hxx>
 #include <gp_Pln.hxx>
 #include <gp_Vec.hxx>
+#include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Shape.hxx>
 
@@ -20,10 +21,25 @@ namespace sbr::geom {
 // a face and sews them in; a shell closed that way becomes a solid. Holes
 // that are not flat are refused.
 Result<TopoDS_Shape> capHoles(const TopoDS_Shape& shell);
-// The two coplanar faces on either side of the straight edge through `point`
-// along `direction` made one; every other edge stays. No such edge (it went
-// with an earlier change): the shape unchanged.
+// The two faces on either side of the edge through `point` along
+// `direction` (its tangent there) made one, when they lie on one surface
+// (one plane, or one cylinder / cone); every other edge stays. No such edge
+// (it went with an earlier change): the shape unchanged.
 Result<TopoDS_Shape> mergeFacesAcross(const TopoDS_Shape& shape, const gp_Pnt& point, const gp_Dir& direction);
+// Whether two faces lie on one surface: one plane, or one cylinder or cone
+// (same axis and size). Faces of other kinds never do here.
+bool sameSurface(const TopoDS_Face& a, const TopoDS_Face& b);
+
+// Cylindrical and conical faces: the curved faces lines and arcs divide.
+bool isCylinderOrCone(const TopoDS_Face& face);
+// The parts of `curve` lying exactly on `face` (never projected, never a
+// chord through it) that run across it from boundary to boundary, or are
+// closed on it. Their parameters are those of the source curve.
+std::vector<TopoDS_Edge> curvePortionsAcross(const TopoDS_Face& face, const TopoDS_Shape& curve);
+// The edges drawn into the faces of `shape` they lie on, dividing them
+// (exact; a solid stays one valid solid). Edges dividing nothing: the shape
+// unchanged.
+Result<TopoDS_Shape> imprintEdges(const TopoDS_Shape& shape, const std::vector<TopoDS_Edge>& edges);
 
 // Faces (and open shells) meeting edge to edge round a volume, joined into
 // one closed solid facing outwards. Refused - with the reason - when there
@@ -75,10 +91,12 @@ Result<TopoDS_Shape> extrudeFace(const TopoDS_Face& face, double distance);
 // (distance < 0) a prism. Coplanar faces are merged afterwards. Fails without
 // side effects if the result is not a single valid solid.
 // keepLines: segments of lines that split faces earlier (SplitOp); edges on
-// them are kept, so coplanar parts are not merged back together.
+// them are kept, so coplanar parts are not merged back together. keepCurves:
+// edges drawn into curved faces earlier (ImprintOp), kept the same way.
 using Segment = std::pair<gp_Pnt, gp_Pnt>;
 Result<TopoDS_Shape> pushPullFace(const TopoDS_Shape& solid, const TopoDS_Face& face, double distance,
-                                  const std::vector<Segment>& keepLines = {});
+                                  const std::vector<Segment>& keepLines = {},
+                                  const std::vector<TopoDS_Edge>& keepCurves = {});
 
 // Offsets the outer boundary of a planar face within its plane (positive =
 // outwards, sharp corners as in architectural plans). Inner holes are not
@@ -131,6 +149,13 @@ std::optional<gp_Dir> faceNormalAt(const TopoDS_Face& face, const gp_Pnt& p);
 // face is offset by 'distance' along its normal and the neighbouring faces
 // are extended or trimmed to meet it. Fails without side effects.
 Result<TopoDS_Shape> offsetSolidFace(const TopoDS_Shape& solid, const TopoDS_Face& face, double distance);
+// Push/pull of one part of a divided cylinder or cone (a line drawn across
+// it, see imprintEdges): only that part moves out (or in) along its normal,
+// as SketchUp, with a step to the parts beside it; the rest of the surface
+// stays where it is. The lines drawn earlier are kept as in pushPullFace.
+Result<TopoDS_Shape> pushPullCurvedPart(const TopoDS_Shape& solid, const TopoDS_Face& face, double distance,
+                                        const std::vector<Segment>& keepLines = {},
+                                        const std::vector<TopoDS_Edge>& keepCurves = {});
 
 // Face with 'hole' (a face strictly inside it, same plane) cut out.
 Result<TopoDS_Face> cutHole(const TopoDS_Face& face, const TopoDS_Face& hole);

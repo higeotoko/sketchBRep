@@ -366,6 +366,7 @@ Result<TopoDS_Shape> regenerate(const Recipe& recipe, const RegenContext& contex
   }
 
   std::vector<geom::Segment> splitLines;  // kept through later push/pulls
+  std::vector<TopoDS_Edge> imprinted;     // the same for lines drawn into curved faces
   for (std::size_t i = 0; i < recipe.modifiers.size(); ++i) {
     const std::string prefix = "Step " + std::to_string(i + 1) + ": ";
     const bool isFace = !shape.IsNull() && shape.ShapeType() == TopAbs_FACE;
@@ -399,6 +400,7 @@ Result<TopoDS_Shape> regenerate(const Recipe& recipe, const RegenContext& contex
             [&](const OffsetFaceOp& op) -> Result<TopoDS_Shape> {
               auto face = op.face.resolve(shape);
               if (!face) return Result<TopoDS_Shape>::failure(face.error());
+              if (op.part) return geom::pushPullCurvedPart(shape, face.value(), op.distance, splitLines, imprinted);
               return geom::offsetSolidFace(shape, face.value(), op.distance);
             },
             [&](const InsetOp& op) -> Result<TopoDS_Shape> {
@@ -430,6 +432,9 @@ Result<TopoDS_Shape> regenerate(const Recipe& recipe, const RegenContext& contex
                 t.Transforms(b);
                 seg = {gp_Pnt(a), gp_Pnt(b)};
               }
+              // Stretched unevenly, a circle is no longer one: those lines
+              // are no longer kept apart by later push/pulls.
+              imprinted.clear();
               return geom::stretchShape(shape, t);
             },
             [&](const ScaleOp& op) -> Result<TopoDS_Shape> {
@@ -444,6 +449,7 @@ Result<TopoDS_Shape> regenerate(const Recipe& recipe, const RegenContext& contex
                 s.first.Transform(t);
                 s.second.Transform(t);
               }
+              for (TopoDS_Edge& e : imprinted) e = TopoDS::Edge(BRepBuilderAPI_Transform(e, t, true).Shape());
               return scaled.Shape();
             },
             [&](const RemoveFaceOp& op) -> Result<TopoDS_Shape> {
@@ -475,6 +481,24 @@ Result<TopoDS_Shape> regenerate(const Recipe& recipe, const RegenContext& contex
               // Gone with an earlier change (a parameter edited): nothing
               // to merge, the shape as it is.
               return geom::mergeFacesAcross(shape, op.point, op.direction);
+            },
+            [&](const ImprintOp&) -> Result<TopoDS_Shape> {
+              // A run of them divides the faces in one go: one by one, each
+              // would go through every face the ones before made.
+              std::vector<TopoDS_Edge> edges;
+              std::size_t j = i;
+              for (; j < recipe.modifiers.size(); ++j) {
+                const auto* op = std::get_if<ImprintOp>(&recipe.modifiers[j]);
+                if (!op) break;
+                if (!op->edges.recipe) return Result<TopoDS_Shape>::failure("Curved-face line missing");
+                auto drawn = regenerateShared(op->edges.recipe, context);
+                if (!drawn) return Result<TopoDS_Shape>::failure(drawn.error());
+                const TopoDS_Shape placed = drawn->Moved(TopLoc_Location(op->edges.placement));
+                for (TopExp_Explorer e(placed, TopAbs_EDGE); e.More(); e.Next()) edges.push_back(TopoDS::Edge(e.Current()));
+              }
+              i = j - 1;
+              imprinted.insert(imprinted.end(), edges.begin(), edges.end());
+              return geom::imprintEdges(shape, edges);
             },
             [&](const CurveIntervalOp& op) -> Result<TopoDS_Shape> {
               TopTools_IndexedMapOfShape edges;
@@ -511,7 +535,7 @@ Result<TopoDS_Shape> regenerate(const Recipe& recipe, const RegenContext& contex
               if (!face) return Result<TopoDS_Shape>::failure(face.error());
               // An open shape: pushed / pulled as a surface (SketchUp).
               if (!solid) return geom::pushPullOpenFace(shape, face.value(), op.distance);
-              return geom::pushPullFace(shape, face.value(), op.distance, splitLines);
+              return geom::pushPullFace(shape, face.value(), op.distance, splitLines, imprinted);
             },
         },
         recipe.modifiers[i]);
@@ -574,6 +598,7 @@ std::vector<Parameter> parameters(const Recipe& recipe) {
                    [&](const RemoveFaceOp&) {},
                    [&](const CapHolesOp&) {},
                    [&](const MergeAcrossOp&) {},
+                   [&](const ImprintOp&) {},
                    [&](const CurveIntervalOp&) {},
                    [&](const ReverseOp&) {},
                    [&](const MoveVerticesOp& op) {
@@ -657,7 +682,7 @@ Status setParameter(Recipe& recipe, const std::string& key, double value) {
     if (key != opKey(i)) continue;
     bool found = false;
     std::visit(Overloaded{[&](RevolveOp&) {}, [&](SplitOp&) {}, [&](HoleOp&) {}, [&](ScaleOp&) {}, [&](StretchOp&) {},
-                          [&](RemoveFaceOp&) {}, [&](CapHolesOp&) {}, [&](ReverseOp&) {}, [&](MergeAcrossOp&) {}, [&](CurveIntervalOp&) {},
+                          [&](RemoveFaceOp&) {}, [&](CapHolesOp&) {}, [&](ReverseOp&) {}, [&](MergeAcrossOp&) {}, [&](CurveIntervalOp&) {}, [&](ImprintOp&) {},
                           [&](auto& op) {
                             op.distance = value;
                             found = true;
@@ -716,6 +741,7 @@ std::string describe(const Recipe& recipe) {
                    [&](const RemoveFaceOp&) { out << " > Delete face"; },
                    [&](const CapHolesOp&) { out << " > Fill holes"; },
                    [&](const MergeAcrossOp&) { out << " > Erase line"; },
+                   [&](const ImprintOp&) { out << " > Divide curved face"; },
                    [&](const CurveIntervalOp&) { out << " > Curve interval"; },
                    [&](const ReverseOp&) { out << " > Reverse faces"; },
                    [&](const MoveVerticesOp& op) {

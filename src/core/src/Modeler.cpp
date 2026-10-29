@@ -1053,8 +1053,10 @@ Result<ObjectId> Modeler::eraseEdge(const ObjectId& id, const TopoDS_Edge& world
     history_.execute(changes.build("Erase Line"));
     return merged.id;
   }
-  if (current->kind() != ObjectKind::Solid && current->kind() != ObjectKind::Face) return corner;
-  // Solids: the two faces beside the edge must lie in one plane.
+  if (current->kind() != ObjectKind::Solid && current->kind() != ObjectKind::Face &&
+      current->kind() != ObjectKind::Shell) return corner;
+  // Solids: the two faces beside the edge must lie on one surface (one
+  // plane, or one cylinder / cone a line was drawn across).
   const gp_Trsf toLocal = document_.worldTransform(*current).Inverted();
   const TopoDS_Edge local = TopoDS::Edge(worldEdge.Moved(TopLoc_Location(toLocal)));
   TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
@@ -1066,12 +1068,8 @@ Result<ObjectId> Modeler::eraseEdge(const ObjectId& id, const TopoDS_Edge& world
   if (index == 0) return R::failure("The edge is not part of this object");
   const TopTools_ListOfShape& beside = edgeFaces(index);
   if (beside.Extent() != 2) return corner;
-  const auto a = geom::FaceRef::fromFace(TopoDS::Face(beside.First()));
-  const auto b = geom::FaceRef::fromFace(TopoDS::Face(beside.Last()));
-  if (!a || !b || a->normal.Angle(b->normal) > 1e-6 ||
-      std::abs(gp_Vec(a->centroid, b->centroid).Dot(gp_Vec(a->normal))) > 1e-3) {
-    return corner;
-  }
+  if (beside.First().IsSame(beside.Last()) ||  // the seam of a round face
+      !geom::sameSurface(TopoDS::Face(beside.First()), TopoDS::Face(beside.Last()))) return corner;
   // That segment only, as SketchUp's eraser: a step merging the two faces
   // beside it, added after everything else (lines drawn later across it
   // stay; dropping the split that drew it took the whole line and failed
@@ -2199,7 +2197,8 @@ Result<DeleteOutcome> Modeler::deleteSelection(const std::vector<DeleteTarget>& 
       if (beside.size() == 2 && !besideSelected) {
         const auto n0 = geom::planarFaceNormal(beside[0]);
         const auto n1 = geom::planarFaceNormal(beside[1]);
-        dividing = n0 && n1 && n0->Angle(*n1) < 1e-6;
+        dividing = (n0 && n1 && n0->Angle(*n1) < 1e-6) ||
+                   (!beside[0].IsSame(beside[1]) && geom::sameSurface(beside[0], beside[1]));  // across a cylinder
       }
       const Object* owner = document_.find(found->first);
       const bool facePart = owner && std::holds_alternative<FacePart>(owner->recipe.base);
@@ -2578,6 +2577,37 @@ Result<bool> Modeler::splitWithCurve(const ObjectId& curveId) {
   return now!=std::vector<ObjectId>{curveId};
 }
 
+namespace {
+
+// Curved faces painted on their own and divided from `before` to `after`:
+// every part carries the paint on (the mark of a curved face is one point
+// on it, which may now be on the dividing line or in one part only).
+void paintTheParts(std::vector<FaceMaterial>& faceMaterials, const TopoDS_Shape& before, const TopoDS_Shape& after) {
+  std::vector<FaceMaterial> out;
+  for (const FaceMaterial& fm : faceMaterials) {
+    const auto old = fm.surface && !fm.plane ? fm.surface->resolve(before) : Result<TopoDS_Face>::failure("");
+    if (!old) {
+      out.push_back(fm);
+      continue;
+    }
+    std::size_t parts = 0;
+    for (TopExp_Explorer e(after, TopAbs_FACE); e.More(); e.Next()) {
+      const TopoDS_Face part = TopoDS::Face(e.Current());
+      const auto inside = geom::SurfaceRef::fromFace(part);
+      if (!inside || !geom::sameSurface(part, *old) ||
+          BRepClass_FaceClassifier(*old, inside->point, 1e-6).State() != TopAbs_IN) continue;
+      if (auto again = FaceMaterial::of(part, fm.material)) {
+        out.push_back(std::move(*again));
+        ++parts;
+      }
+    }
+    if (parts == 0) out.push_back(fm);
+  }
+  faceMaterials = std::move(out);
+}
+
+}  // namespace
+
 Status Modeler::divideWithCurve(const ObjectId& curveId, std::vector<ObjectId>& now) {
   const auto* found=document_.find(curveId);
   if(!found)return Status::success();
@@ -2587,21 +2617,27 @@ Status Modeler::divideWithCurve(const ObjectId& curveId, std::vector<ObjectId>& 
   const auto edges=chainOf(world);
   // Arc and interpolated-curve tools create one exact edge. Drawing layers
   // and arbitrary multi-edge imports are not treated as one sketch stroke.
-  if(edges.size()!=1 || BRepAdaptor_Curve(edges.front()).GetType()==GeomAbs_Line)return Status::success();
+  // A straight line divides flat faces elsewhere (splitAcross); here only
+  // the curved ones it lies on.
+  if(edges.size()!=1)return Status::success();
+  const bool straight=BRepAdaptor_Curve(edges.front()).GetType()==GeomAbs_Line;
   const auto edge=edges.front();BRepAdaptor_Curve original(edge);
   const double first=original.FirstParameter(),last=original.LastParameter();
   Bnd_Box reach;BRepBndLib::Add(world,reach);reach.Enlarge(tolerance::kMinDimension);
   std::vector<ObjectId> targets;
   for(const auto& o:document_.objects()) {
     if(o.id==curveId || o.parent!=curveObject.parent || o.locked || !document_.isVisible(o.id) ||
-       (o.kind()!=ObjectKind::Face && o.kind()!=ObjectKind::Solid) || document_.worldBounds(o).IsOut(reach))continue;
+       (o.kind()!=ObjectKind::Face && o.kind()!=ObjectKind::Solid && o.kind()!=ObjectKind::Shell) ||
+       document_.worldBounds(o).IsOut(reach))continue;
     targets.push_back(o.id);
   }
   std::vector<std::pair<double,double>> used;
   for(const auto& id:targets) {
     // Revisit a solid after each split: the cutter may cross several of its
     // existing coplanar regions. Previously inserted edges divide nothing.
-    for(int pass=0;pass<256;++pass) {
+    // (Open shells: only their curved faces, below.)
+    const bool flat=!straight && document_.find(id)->kind()!=ObjectKind::Shell;
+    for(int pass=0;flat && pass<256;++pass) {
       const auto* current=document_.find(id);if(!current)break;
       const Object candidate=*current;
       const auto toLocal=document_.worldTransform(candidate).Inverted();
@@ -2654,11 +2690,68 @@ Status Modeler::divideWithCurve(const ObjectId& curveId, std::vector<ObjectId>& 
       if(!divided || candidate.shape.ShapeType()==TopAbs_FACE)break;
       if(pass==255)return Status::failure("Too many face regions for one curved stroke");
     }
+    // Cylinders and cones: the parts of the stroke lying exactly on them,
+    // drawn into all of them in one step (never projected, no chords).
+    const auto* current=document_.find(id);
+    if(!current || current->shape.ShapeType()==TopAbs_FACE)continue;
+    const Object candidate=*current;
+    const gp_Trsf toWorld=document_.worldTransform(candidate);
+    const auto localCurve=world.Moved(TopLoc_Location(toWorld.Inverted()));
+    BRep_Builder builder;TopoDS_Compound pieces;builder.MakeCompound(pieces);
+    std::vector<std::pair<double,double>> portions;
+    for(TopExp_Explorer e(candidate.shape,TopAbs_FACE);e.More();e.Next()) {
+      const auto face=TopoDS::Face(e.Current());
+      if(!geom::isCylinderOrCone(face))continue;
+      Bnd_Box bounds;BRepBndLib::Add(face.Moved(TopLoc_Location(toWorld)),bounds);
+      if(bounds.IsOut(reach))continue;
+      for(const auto& piece:geom::curvePortionsAcross(face,localCurve)) {
+        BRepAdaptor_Curve c(piece);
+        portions.emplace_back(c.FirstParameter()-first,c.LastParameter()-first);
+      }
+    }
+    if(portions.empty())continue;
+    // Parts on faces side by side drawn as one edge (one line across a
+    // divided cylinder is one tool for the splitter, not one per face).
+    std::sort(portions.begin(),portions.end());
+    std::vector<std::pair<double,double>> runs;
+    for(const auto& p:portions) {
+      if(!runs.empty() && p.first<=runs.back().second+1e-9)runs.back().second=std::max(runs.back().second,p.second);
+      else runs.push_back(p);
+    }
+    const auto localEdge=TopoDS::Edge(edge.Moved(TopLoc_Location(toWorld.Inverted())));
+    for(const auto& run:runs) {
+      const auto piece=subEdge(localEdge,first+run.first,first+run.second);
+      if(!piece.IsNull())builder.Add(pieces,piece);
+    }
+    const TopoDS_Shape copy=BRepBuilderAPI_Copy(pieces).Shape();
+    std::vector<TopoDS_Edge> drawnEdges;
+    for(TopExp_Explorer e(copy,TopAbs_EDGE);e.More();e.Next())drawnEdges.push_back(TopoDS::Edge(e.Current()));
+    // Drawn into the current shape: the same as regenerating the recipe with
+    // the step added, without going through every earlier step again.
+    auto next=geom::imprintEdges(candidate.shape,drawnEdges);
+    if(!next)return next.status();
+    if(faceCount(*next)<=faceCount(candidate.shape))continue;  // it divided nothing
+    Recipe drawn;drawn.base=ImportedShape{copy,"Curved face division"};
+    Object o=candidate;
+    o.recipe.modifiers.push_back(ImprintOp{BooleanOperand{std::make_shared<const Recipe>(drawn),gp_Trsf(),curveObject.name}});
+    o.shape=*next;
+    paintTheParts(o.faceMaterials,candidate.shape,o.shape);
+    history_.execute(Command{"Split Face",{ObjectDelta{o.id,candidate,o,document_.indexOf(o.id)}},{}});
+    used.insert(used.end(),portions.begin(),portions.end());
   }
   if(used.empty())return Status::success();
   if(auto status=remove({curveId});!status)return status;
   now.erase(std::remove(now.begin(),now.end(),curveId),now.end());
   for(const auto& interval:uncovered(last-first,used,1e-9)) {
+    if(straight) {
+      // What is left of a straight line stays a line (faces close on it).
+      auto id=createPolyline({original.Value(first+interval.first),original.Value(first+interval.second)});
+      if(!id)return id.status();
+      Object o=*document_.find(*id);o.layer=curveObject.layer;o.material=curveObject.material;o.color=curveObject.color;
+      o.attributes=curveObject.attributes;
+      if(auto status=commitModified(std::move(o),"Split Face");!status)return status;
+      now.push_back(*id);continue;
+    }
     auto piece=subEdge(edge,first+interval.first,first+interval.second);if(piece.IsNull())continue;
     Object o=curveObject;o.id=generateObjectId();o.name=uniqueName(curveObject.name);o.recipe=Recipe{};
     o.recipe.base=ImportedShape{piece.Moved(TopLoc_Location(document_.worldTransform(curveObject).Inverted())),"Unused curve portion"};
@@ -2675,7 +2768,7 @@ Status Modeler::divideWithLine(const ObjectId& lineId, std::vector<ObjectId>& no
   if (points.size() < 2) return divideWithCurve(lineId,now);
   auto divided = splitAcross(points);
   if (!divided) return divided.status();
-  if (divided->faces == 0) return Status::success();
+  if (divided->faces == 0) return divideWithCurve(lineId, now);  // perhaps along a cylinder
   if (const Status s = remove({lineId}); !s) return s;
   now.erase(std::remove(now.begin(), now.end(), lineId), now.end());
   for (const std::vector<gp_Pnt>& part : divided->rest) {
@@ -3403,8 +3496,19 @@ Result<PushPullResult> Modeler::pushPull(const ObjectId& id, const TopoDS_Face& 
       return Result<PushPullResult>::failure("Only planar faces of profiles can be pushed/pulled");
     }
     std::string curvedKey;
-    // An extruded circle's side: change the radius (stays a clean parameter).
-    if (auto* circle = std::get_if<CircleProfile>(&object.recipe.base);
+    // One part of a divided cylinder / cone (a line drawn across it): only
+    // that part moves, with a step to the rest (SketchUp).
+    bool part = false;
+    for (TopExp_Explorer e(object.shape, TopAbs_FACE); e.More() && !part; e.Next()) {
+      const TopoDS_Face other = TopoDS::Face(e.Current());
+      part = other.TShape() != face.TShape() && geom::sameSurface(other, face);  // (face is moved here)
+    }
+    if (part) {
+      const auto ref = geom::SurfaceRef::fromFace(face);
+      if (!ref) return Result<PushPullResult>::failure(ref.error());
+      object.recipe.modifiers.push_back(OffsetFaceOp{ref.value(), distance, true});
+      curvedKey = opKey(object.recipe.modifiers.size() - 1);
+    } else if (auto* circle = std::get_if<CircleProfile>(&object.recipe.base);  // a circle's side: its radius
         circle && object.recipe.modifiers.size() == 1 &&
         std::holds_alternative<ExtrudeOp>(object.recipe.modifiers.front()) &&
         BRepAdaptor_Surface(face).GetType() == GeomAbs_Cylinder) {

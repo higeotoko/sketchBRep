@@ -1,6 +1,10 @@
 #include "sbr/geom/Operations.h"
 
 #include <BOPAlgo_ArgumentAnalyzer.hxx>
+#include <gp_Cone.hxx>
+#include <gp_Cylinder.hxx>
+#include <BRepAdaptor_Surface.hxx>
+#include <GeomAPI_ProjectPointOnCurve.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepFill.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
@@ -62,6 +66,8 @@
 #include <BRepFeat_SplitShape.hxx>
 #include <BRepClass_FaceClassifier.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
+#include <BRepBndLib.hxx>
+#include <Bnd_Box.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
@@ -189,7 +195,175 @@ void keepEdgesOn(ShapeUpgrade_UnifySameDomain& unify, const TopoDS_Shape& shape,
   }
 }
 
+// Edges lying along one of the curves (ends and middle on it).
+void keepEdgesAlong(ShapeUpgrade_UnifySameDomain& unify, const TopoDS_Shape& shape,
+                    const std::vector<TopoDS_Edge>& curves) {
+  if (curves.empty()) return;
+  std::vector<Bnd_Box> boxes;
+  for (const TopoDS_Edge& c : curves) {
+    Bnd_Box box;
+    BRepBndLib::Add(c, box);
+    box.Enlarge(1e-3);
+    boxes.push_back(box);
+  }
+  auto along = [&](const gp_Pnt& p, std::size_t k) {
+    if (boxes[k].IsOut(p)) return false;
+    BRepExtrema_DistShapeShape d(BRepBuilderAPI_MakeVertex(p).Vertex(), curves[k]);
+    return d.IsDone() && d.Value() < 1e-3;
+  };
+  for (TopExp_Explorer e(shape, TopAbs_EDGE); e.More(); e.Next()) {
+    BRepAdaptor_Curve curve(TopoDS::Edge(e.Current()));
+    const double a = curve.FirstParameter(), b = curve.LastParameter();
+    const gp_Pnt pa = curve.Value(a), pm = curve.Value(0.5 * (a + b)), pb = curve.Value(b);
+    for (std::size_t k = 0; k < curves.size(); ++k) {
+      if (along(pm, k) && along(pa, k) && along(pb, k)) {
+        unify.KeepShape(e.Current());
+        break;
+      }
+    }
+  }
+}
+
 }  // namespace
+
+bool isCylinderOrCone(const TopoDS_Face& face) {
+  const GeomAbs_SurfaceType type = BRepAdaptor_Surface(face, Standard_False).GetType();
+  return type == GeomAbs_Cylinder || type == GeomAbs_Cone;
+}
+
+bool sameSurface(const TopoDS_Face& a, const TopoDS_Face& b) {
+  gp_Pln pa, pb;
+  if (isPlanarFace(a, &pa)) {
+    return isPlanarFace(b, &pb) && pa.Axis().Direction().IsParallel(pb.Axis().Direction(), 1e-6) &&
+           pa.Distance(pb.Location()) < 1e-3;
+  }
+  const BRepAdaptor_Surface sa(a, Standard_False), sb(b, Standard_False);
+  if (sa.GetType() != sb.GetType()) return false;
+  auto sameAxis = [](const gp_Ax1& x, const gp_Ax1& y) {
+    return x.Direction().IsParallel(y.Direction(), 1e-6) && gp_Lin(x).Distance(y.Location()) < 1e-3;
+  };
+  if (sa.GetType() == GeomAbs_Cylinder) {
+    const gp_Cylinder ca = sa.Cylinder(), cb = sb.Cylinder();
+    return sameAxis(ca.Axis(), cb.Axis()) && std::abs(ca.Radius() - cb.Radius()) < 1e-3;
+  }
+  if (sa.GetType() == GeomAbs_Cone) {
+    const gp_Cone ca = sa.Cone(), cb = sb.Cone();
+    return sameAxis(ca.Axis(), cb.Axis()) && ca.Apex().Distance(cb.Apex()) < 1e-3 &&
+           std::abs(std::abs(ca.SemiAngle()) - std::abs(cb.SemiAngle())) < 1e-9;
+  }
+  return false;
+}
+
+
+namespace {
+
+// Whether p lies on an edge of the face (any kind of face; pointOnFaceBoundary
+// is for flat ones).
+bool onEdgeOf(const TopoDS_Face& face, const gp_Pnt& p, double tolerance = 1e-3) {
+  const TopoDS_Vertex v = BRepBuilderAPI_MakeVertex(p);
+  for (TopExp_Explorer e(face, TopAbs_EDGE); e.More(); e.Next()) {
+    BRepExtrema_DistShapeShape d(v, e.Current());
+    if (d.IsDone() && d.Value() < tolerance) return true;
+  }
+  return false;
+}
+
+}  // namespace
+
+std::vector<TopoDS_Edge> curvePortionsAcross(const TopoDS_Face& face, const TopoDS_Shape& curve) {
+  std::vector<TopoDS_Edge> out;
+  try {
+    // Common keeps only the exact parts on the face: a curve piercing it
+    // gives a vertex, a chord inside the surface nothing.
+    BRepAlgoAPI_Common common;
+    TopTools_ListOfShape arguments, tools;
+    arguments.Append(curve);
+    tools.Append(face);
+    common.SetArguments(arguments);
+    common.SetTools(tools);
+    common.SetNonDestructive(Standard_True);
+    common.Build();
+    if (!common.IsDone() || common.HasErrors()) return out;
+    for (TopExp_Explorer e(common.Shape(), TopAbs_EDGE); e.More(); e.Next()) {
+      const TopoDS_Edge edge = TopoDS::Edge(e.Current());
+      BRepAdaptor_Curve c(edge);
+      const gp_Pnt a = c.Value(c.FirstParameter()), b = c.Value(c.LastParameter());
+      if (onEdgeOf(face, c.Value(0.5 * (c.FirstParameter() + c.LastParameter())))) continue;  // along an edge
+      const bool closed = a.Distance(b) < 1e-6;
+      if (!closed && (!onEdgeOf(face, a) || !onEdgeOf(face, b))) continue;  // stops on the face
+      out.push_back(edge);
+    }
+  } catch (const Standard_Failure&) {
+    out.clear();
+  }
+  return out;
+}
+
+Result<TopoDS_Shape> imprintEdges(const TopoDS_Shape& shape, const std::vector<TopoDS_Edge>& edges) {
+  using R = Result<TopoDS_Shape>;
+  if (edges.empty()) return shape;
+  try {
+    // Only edges still lying on a cylinder or cone of the shape (a parameter
+    // edited since may have moved the faces away): the others are left out,
+    // never pressed onto a face.
+    std::vector<std::pair<TopoDS_Face, Bnd_Box>> curved;
+    for (TopExp_Explorer e(shape, TopAbs_FACE); e.More(); e.Next()) {
+      const TopoDS_Face f = TopoDS::Face(e.Current());
+      if (!isCylinderOrCone(f)) continue;
+      Bnd_Box box;
+      BRepBndLib::Add(f, box);
+      box.Enlarge(1e-3);
+      curved.emplace_back(f, box);
+    }
+    auto onCurvedFace = [&](const gp_Pnt& p) {
+      const TopoDS_Vertex v = BRepBuilderAPI_MakeVertex(p);
+      for (const auto& [f, box] : curved) {
+        if (box.IsOut(p)) continue;
+        BRepExtrema_DistShapeShape d(v, f);
+        if (d.IsDone() && d.Value() < 1e-4) return true;
+      }
+      return false;
+    };
+    TopTools_ListOfShape arguments, tools;
+    arguments.Append(shape);
+    for (const TopoDS_Edge& e : edges) {
+      BRepAdaptor_Curve c(e);
+      const double a = c.FirstParameter(), b = c.LastParameter();
+      if (onCurvedFace(c.Value(a)) && onCurvedFace(c.Value(0.5 * (a + b))) && onCurvedFace(c.Value(b))) tools.Append(e);
+    }
+    if (tools.IsEmpty()) return shape;
+    BRepAlgoAPI_Splitter splitter;
+    splitter.SetArguments(arguments);
+    splitter.SetTools(tools);
+    splitter.SetNonDestructive(Standard_True);
+    splitter.Build(progressRange());  // a large shape can take a while: Esc stops it
+    if (cancelled()) return R::failure(kCancelledMessage);
+    if (!splitter.IsDone() || splitter.HasErrors()) return R::failure("The lines could not be drawn into the faces");
+    // The argument's kind back (the splitter wraps it in a compound).
+    const TopAbs_ShapeEnum kind = shape.ShapeType() == TopAbs_COMPOUND ? TopAbs_SHELL : shape.ShapeType();
+    TopoDS_Shape result;
+    int found = 0;
+    for (TopExp_Explorer e(splitter.Shape(), kind); e.More(); e.Next(), ++found) result = e.Current();
+    if (found != 1) return R::failure("Drawing the lines into the faces broke the shape apart");
+    int before = 0, after = 0;
+    for (TopExp_Explorer e(shape, TopAbs_FACE); e.More(); e.Next()) ++before;
+    for (TopExp_Explorer e(result, TopAbs_FACE); e.More(); e.Next()) ++after;
+    if (after <= before) return shape;  // nothing divided
+    // Only the faces made here are checked: the others are the ones before.
+    TopTools_IndexedMapOfShape kept;
+    TopExp::MapShapes(shape, TopAbs_FACE, kept);
+    BRep_Builder builder;
+    TopoDS_Compound made;
+    builder.MakeCompound(made);
+    for (TopExp_Explorer e(result, TopAbs_FACE); e.More(); e.Next()) {
+      if (!kept.Contains(e.Current())) builder.Add(made, e.Current());
+    }
+    if (!BRepCheck_Analyzer(made).IsValid()) return R::failure("Dividing the faces produced invalid geometry");
+    return result;
+  } catch (const Standard_Failure& e) {
+    return R::failure(std::string("Dividing the faces failed: ") + e.GetMessageString());
+  }
+}
 
 Result<TopoDS_Shape> mergeFacesAcross(const TopoDS_Shape& shape, const gp_Pnt& point, const gp_Dir& direction) {
   using R = Result<TopoDS_Shape>;
@@ -199,19 +373,22 @@ Result<TopoDS_Shape> mergeFacesAcross(const TopoDS_Shape& shape, const gp_Pnt& p
     int target = 0;
     for (int i = 1; i <= edgeFaces.Extent() && target == 0; ++i) {
       const TopoDS_Edge edge = TopoDS::Edge(edgeFaces.FindKey(i));
-      BRepAdaptor_Curve curve(edge);
-      if (curve.GetType() != GeomAbs_Line || !curve.Line().Direction().IsParallel(direction, 1e-6)) continue;
-      const gp_Pnt a = curve.Value(curve.FirstParameter()), b = curve.Value(curve.LastParameter());
-      const gp_Vec ab(a, b);
-      if (ab.SquareMagnitude() < 1e-12) continue;
-      const double t = gp_Vec(a, point).Dot(ab) / ab.SquareMagnitude();
-      if (t <= 0 || t >= 1 || a.Translated(ab * t).Distance(point) > 1e-3) continue;
-      // Exactly two faces beside it, in one plane.
+      if (BRep_Tool::Degenerated(edge)) continue;
+      // The edge through the point, running along `direction` there.
+      double first = 0, last = 0;
+      const Handle(Geom_Curve) curve = BRep_Tool::Curve(edge, first, last);
+      if (curve.IsNull()) continue;
+      GeomAPI_ProjectPointOnCurve project(point, curve, first, last);
+      if (project.NbPoints() == 0 || project.LowerDistance() > 1e-3) continue;
+      const double t = project.LowerDistanceParameter();
+      if (t <= first + 1e-9 * (last - first) || t >= last - 1e-9 * (last - first)) continue;
+      gp_Pnt p;
+      gp_Vec d;
+      curve->D1(t, p, d);
+      if (d.Magnitude() < 1e-12 || !gp_Dir(d).IsParallel(direction, 1e-6)) continue;
+      // Exactly two faces beside it, on one surface.
       const TopTools_ListOfShape& beside = edgeFaces(i);
-      if (beside.Extent() != 2) continue;
-      gp_Pln p1, p2;
-      if (!isPlanarFace(TopoDS::Face(beside.First()), &p1) || !isPlanarFace(TopoDS::Face(beside.Last()), &p2)) continue;
-      if (!p1.Axis().Direction().IsParallel(p2.Axis().Direction(), 1e-6) || p1.Distance(p2.Location()) > 1e-3) continue;
+      if (beside.Extent() != 2 || !sameSurface(TopoDS::Face(beside.First()), TopoDS::Face(beside.Last()))) continue;
       target = i;
     }
     if (target == 0) return shape;
@@ -235,7 +412,8 @@ Result<TopoDS_Shape> mergeFacesAcross(const TopoDS_Shape& shape, const gp_Pnt& p
 }
 
 Result<TopoDS_Shape> pushPullFace(const TopoDS_Shape& solid, const TopoDS_Face& face, double distance,
-                                  const std::vector<Segment>& keepLines) {
+                                  const std::vector<Segment>& keepLines,
+                                  const std::vector<TopoDS_Edge>& keepCurves) {
   if (!std::isfinite(distance) || std::abs(distance) < tolerance::kMinDimension) {
     return Result<TopoDS_Shape>::failure("Push/pull distance must be non-zero");
   }
@@ -280,6 +458,7 @@ Result<TopoDS_Shape> pushPullFace(const TopoDS_Shape& solid, const TopoDS_Face& 
 
     ShapeUpgrade_UnifySameDomain unify(combined, Standard_True, Standard_True, Standard_False);
     keepEdgesOn(unify, combined, keepLines);
+    keepEdgesAlong(unify, combined, keepCurves);
     unify.Build();
     const auto extracted = singleSolid(unify.Shape());
     if (!extracted) return extracted;
@@ -799,6 +978,49 @@ Result<TopoDS_Shape> offsetSolidFace(const TopoDS_Shape& solid, const TopoDS_Fac
     return result;
   } catch (const Standard_Failure& e) {
     return Result<TopoDS_Shape>::failure(std::string("Offset failed: ") + e.GetMessageString());
+  }
+}
+
+Result<TopoDS_Shape> pushPullCurvedPart(const TopoDS_Shape& solid, const TopoDS_Face& face, double distance,
+                                        const std::vector<Segment>& keepLines,
+                                        const std::vector<TopoDS_Edge>& keepCurves) {
+  using R = Result<TopoDS_Shape>;
+  if (!std::isfinite(distance) || std::abs(distance) < tolerance::kMinDimension) {
+    return R::failure("Push/pull distance must be non-zero");
+  }
+  try {
+    // The layer between the face and its offset (outwards: added, inwards:
+    // taken away), the face as it lies in the solid facing out.
+    BRepOffset_MakeOffset thick;
+    thick.Initialize(face, distance, 1e-4, BRepOffset_Skin, Standard_False, Standard_False, GeomAbs_Intersection,
+                     Standard_True);
+    thick.MakeOffsetShape(progressRange());
+    if (cancelled()) return R::failure(kCancelledMessage);
+    if (!thick.IsDone()) return R::failure("The face could not be moved");
+    TopExp_Explorer layerSolid(thick.Shape(), TopAbs_SOLID);
+    if (!layerSolid.More()) return R::failure("The face could not be moved");
+    const TopoDS_Shape layer = layerSolid.Current();
+    TopoDS_Shape combined;
+    if (distance > 0) {
+      BRepAlgoAPI_Fuse fuse(solid, layer, progressRange());
+      if (cancelled()) return R::failure(kCancelledMessage);
+      if (!fuse.IsDone() || fuse.HasErrors()) return R::failure("Push/pull: boolean union failed");
+      combined = fuse.Shape();
+    } else {
+      BRepAlgoAPI_Cut cut(solid, layer, progressRange());
+      if (cancelled()) return R::failure(kCancelledMessage);
+      if (!cut.IsDone() || cut.HasErrors()) return R::failure("Push/pull: boolean subtraction failed");
+      combined = cut.Shape();
+    }
+    ShapeUpgrade_UnifySameDomain unify(combined, Standard_True, Standard_True, Standard_False);
+    keepEdgesOn(unify, combined, keepLines);
+    keepEdgesAlong(unify, combined, keepCurves);
+    unify.Build();
+    const auto extracted = singleSolid(unify.Shape());
+    if (!extracted) return extracted;
+    return validatedSolid(extracted.value(), "Push/pull");
+  } catch (const Standard_Failure& e) {
+    return R::failure(std::string("Push/pull failed: ") + e.GetMessageString());
   }
 }
 
