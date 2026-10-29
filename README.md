@@ -8,6 +8,8 @@
 
 > 現在のステータス: **Phase 2（実用モデリング基礎）**
 
+開発を引き継ぐ場合は [最新の引継書（2026-10-29）](docs/38_handover_to_claude_2026-10-29.md) を参照してください。
+
 ![Phase 2 screenshot](docs/images/phase2.png)
 
 ## できること
