@@ -397,6 +397,15 @@ void MainWindow::buildUi() {
     if (!o || o->layer == utf8(tag)) return;
     QTimer::singleShot(0, this, [this, id, tag] { report(modeler_.setLayer(id, utf8(tag))); });
   });
+  connect(panel_, &PropertiesPanel::attributeEdited, this,
+          [this](const doc::ObjectId& id, const std::string& key, const std::string& value) {
+            const doc::Object* o = modeler_.document().find(id);
+            if (!o) return;
+            const auto it = o->attributes.find(key);
+            const std::string now = it == o->attributes.end() ? std::string() : it->second;
+            if (now == value) return;
+            QTimer::singleShot(0, this, [this, id, key, value] { report(modeler_.setAttribute({id}, key, value)); });
+          });
   connect(panel_, &PropertiesPanel::colorEdited, this,
           [this](const doc::ObjectId& id, const doc::Color& color) {
             QTimer::singleShot(0, this, [this, id, color] { report(modeler_.setColor(id, color)); });
@@ -876,6 +885,17 @@ void MainWindow::buildMenus() {
   tools->addAction(tr("通り芯を作成..."), this, &MainWindow::showGridDialog);
   tools->addAction(tr("壁の設定..."), this, &MainWindow::showWallSettingsDialog);
   tools->addAction(tr("部材の設定..."), this, &MainWindow::showMemberSettingsDialog);
+  // Direct entries (spec §4.2): the member tool with each one's own last
+  // settings; one palette button stays.
+  QMenu* members = tools->addMenu(tr("部材を引く"));
+  members->setObjectName(QStringLiteral("membersMenu"));
+  const std::pair<QString, std::string> memberEntries[] = {
+      {tr("鋼材（断面を選んで2点）"), "steel"}, {tr("柱（脚部＋高さ）"), "column"}, {tr("梁（上端基準で2点）"), "beam"}};
+  for (const auto& [label, entry] : memberEntries) {
+    QAction* a = members->addAction(label);
+    a->setObjectName(QStringLiteral("memberEntry_") + QString::fromStdString(entry));
+    connect(a, &QAction::triggered, this, [this, entry = entry] { startMember(entry); });
+  }
   tools->addAction(tr("スラブの設定..."), this, &MainWindow::showSlabSettingsDialog);
   tools->addAction(tr("開口の設定..."), this, &MainWindow::showOpeningSettingsDialog);
   tools->addAction(tr("開口を等間隔に配置..."), this, &MainWindow::showOpeningsDialog);
@@ -1768,6 +1788,12 @@ void MainWindow::showWallSettingsDialog() {
   }
   wallTool_->setSettings({*t, *h, justification->currentIndex() - 1});
   setStatus(wallTool_->settingsText());
+}
+
+void MainWindow::startMember(const std::string& entry) {
+  memberTool_->useEntry(entry);
+  activateTool(ToolId::Member);
+  setStatus(memberTool_->settingsText());
 }
 
 void MainWindow::showMemberSettingsDialog() {

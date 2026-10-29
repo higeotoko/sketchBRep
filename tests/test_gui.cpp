@@ -245,6 +245,8 @@ class GuiPhase1 : public QObject {
   void lineAlongCylinderDividesItsSide();
   void memberToolDrawsAndRetypes();
   void memberToolColumnsAndCatalogSearch();
+  void roleAddedToAnyShapeInProperties();
+  void memberEntriesKeepTheirOwnSettings();
   void arcAndLinesCloseIntoFace();
   void arcClosesMixedOutline_data();
   void arcClosesMixedOutline();
@@ -4636,6 +4638,62 @@ void GuiPhase1::memberToolColumnsAndCatalogSearch() {
   QCOMPARE(m.document().objects().size(), std::size_t(2));
   const Bnd_Box c = geom::exactBounds(m.document().worldShape(m.document().objects().back()));
   QVERIFY(std::abs(c.CornerMax().Z() - 2800) < 1e-6);
+}
+
+void GuiPhase1::roleAddedToAnyShapeInProperties() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId id = f.box(0, 0, 300, 300, 3000);
+  const double volume = geom::volume(m.document().worldShape(*m.document().find(id)));
+  f.window.setSelection({id});
+  QTest::qWait(50);
+  auto* role = f.window.findChild<QComboBox*>(QStringLiteral("roleBox"));
+  QVERIFY(role);
+  role->setCurrentIndex(role->findData(QStringLiteral("column")));
+  emit role->activated(role->currentIndex());
+  QTest::qWait(50);
+  QCOMPARE(QString::fromStdString(m.document().find(id)->attributes.at("kind")), QStringLiteral("column"));
+  auto* material = f.window.findChild<QComboBox*>(QStringLiteral("materialClassBox"));
+  QVERIFY(material);
+  material->setCurrentIndex(material->findData(QStringLiteral("rc")));
+  emit material->activated(material->currentIndex());
+  QTest::qWait(50);
+  QCOMPARE(QString::fromStdString(m.document().find(id)->attributes.at("material_class")), QStringLiteral("rc"));
+  // Meaning only: the shape is as it was, still edited as before.
+  QVERIFY(std::abs(geom::volume(m.document().worldShape(*m.document().find(id))) - volume) < 1e-6);
+  // Back to none: the attribute goes.
+  role = f.window.findChild<QComboBox*>(QStringLiteral("roleBox"));
+  role->setCurrentIndex(0);
+  emit role->activated(0);
+  QTest::qWait(50);
+  QVERIFY(!m.document().find(id)->attributes.count("kind"));
+}
+
+void GuiPhase1::memberEntriesKeepTheirOwnSettings() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  auto* steel = f.window.findChild<QAction*>(QStringLiteral("memberEntry_steel"));
+  auto* column = f.window.findChild<QAction*>(QStringLiteral("memberEntry_column"));
+  auto* beam = f.window.findChild<QAction*>(QStringLiteral("memberEntry_beam"));
+  QVERIFY(steel && column && beam);
+  steel->trigger();
+  QCOMPARE(QString::fromStdString(f.window.memberTool().settings().section.catalog), QStringLiteral("H-400x200x8x13"));
+  beam->trigger();
+  QCOMPARE(f.window.memberTool().settings().anchor.up, 1);
+  QCOMPARE(QString::fromStdString(f.window.memberTool().settings().role), QStringLiteral("beam"));
+  column->trigger();
+  QCOMPARE(QString::fromStdString(f.window.memberTool().settings().role), QStringLiteral("column"));
+  // A column's own section stays the column's.
+  MemberTool::Settings s = f.window.memberTool().settings();
+  s.section = geom::Section{};
+  s.section.kind = geom::Section::Kind::Circle;
+  s.section.width = s.section.depth = 600;
+  f.window.memberTool().setSettings(s);
+  beam->trigger();
+  QVERIFY(f.window.memberTool().settings().section.kind != geom::Section::Kind::Circle);
+  column->trigger();
+  QVERIFY(f.window.memberTool().settings().section.kind == geom::Section::Kind::Circle);
 }
 
 void GuiPhase1::arcAndLinesCloseIntoFace() {

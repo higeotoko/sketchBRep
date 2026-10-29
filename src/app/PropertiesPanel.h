@@ -34,6 +34,8 @@ class PropertiesPanel : public QWidget {
   void renameRequested(const doc::ObjectId& id, const QString& name);
   void visibilityToggled(const doc::ObjectId& id, bool visible);
   void tagEdited(const doc::ObjectId& id, const QString& tag);
+  // A meaning attribute set ("" value: removed), e.g. kind = column.
+  void attributeEdited(const doc::ObjectId& id, const std::string& key, const std::string& value);
   void colorEdited(const doc::ObjectId& id, const doc::Color& color);
   void positionEdited(const doc::ObjectId& id, double x, double y, double z);
   void definitionParameterEdited(const std::string& definitionId, const doc::ObjectId& objectId,

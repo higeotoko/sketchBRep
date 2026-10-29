@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <optional>
 #include <vector>
 
@@ -355,6 +356,11 @@ class MemberTool : public DrawingTool {
   const Settings& settings() const { return settings_; }
   QString settingsText() const;
   const std::optional<doc::ObjectId>& lastCreated() const { return lastCreated_; }
+  // The entries Tools > Members > Steel / Column / Beam (spec §4.2): each
+  // keeps its own last settings (a column's section is not a beam's); the
+  // ones in use are put away under their entry first.
+  void useEntry(const std::string& entry);
+  const std::string& entry() const { return entry_; }
 
  protected:
   std::optional<gp_Pln> workingPlane() const override;
@@ -365,6 +371,8 @@ class MemberTool : public DrawingTool {
   void updatePreview();
 
   Settings settings_;
+  std::string entry_;  // "", steel, column, beam
+  std::map<std::string, Settings> entries_;
   std::optional<gp_Pnt> start_;
   std::optional<gp_Pnt> current_;
   std::optional<doc::ObjectId> lastCreated_;

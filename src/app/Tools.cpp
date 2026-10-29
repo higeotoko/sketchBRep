@@ -1126,6 +1126,28 @@ QString MemberTool::settingsText() const {
       .arg(QString::fromStdString(geom::sectionName(settings_.section)), anchor, QString::number(settings_.roll), role);
 }
 
+void MemberTool::useEntry(const std::string& entry) {
+  entries_[entry_] = settings_;
+  entry_ = entry;
+  if (const auto it = entries_.find(entry); it != entries_.end()) {
+    settings_ = it->second;
+    return;
+  }
+  // First time: the entry's usual start, the rest as it is now.
+  if (entry == "steel") {
+    if (const geom::CatalogSection* h = geom::findSection("H-400x200x8x13")) settings_.section = h->section;
+    settings_.materialClass = "steel";
+    settings_.role.clear();
+    settings_.anchor = {0, 0};
+  } else if (entry == "column") {
+    settings_.role = "column";
+    settings_.anchor = {0, 0};
+  } else if (entry == "beam") {
+    settings_.role = "beam";
+    settings_.anchor = {0, 1};  // on its top edge
+  }
+}
+
 void MemberTool::activate() {
   resetTracking();
   start_.reset();

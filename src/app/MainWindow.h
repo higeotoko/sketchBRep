@@ -162,6 +162,9 @@ class MainWindow : public QMainWindow, public ToolHost {
   MemberTool& memberTool() { return *memberTool_; }
   // Tools > Member settings (section family, size search, anchor, role).
   void showMemberSettingsDialog();
+  // Tools > Members > steel / column / beam: the member tool with that
+  // entry's own settings.
+  void startMember(const std::string& entry);
   SlabTool& slabTool() { return *slabTool_; }
   OpeningTool& openingTool() { return *openingTool_; }
   // Openings into the selected wall: the face picked (face selection) or the

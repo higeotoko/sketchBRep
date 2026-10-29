@@ -473,6 +473,35 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
   });
 
   detailsForm->addRow(tr("種類"), new QLabel(kindLabel(o->kind())));
+  if (o->kind() == doc::ObjectKind::Solid || o->kind() == doc::ObjectKind::Shell || o->kind() == doc::ObjectKind::Face) {
+    // Role and material class (docs/41): added to any shape afterwards;
+    // they change nothing about it (no resizing, no rules).
+    auto choose = [&](const QString& label, const char* key, const QString& objectName,
+                      std::initializer_list<std::pair<QString, QString>> options) {
+      auto* box = new QComboBox;
+      box->setObjectName(objectName);
+      for (const auto& [text, value] : options) box->addItem(text, value);
+      const auto it = o->attributes.find(key);
+      const QString now = it == o->attributes.end() ? QString() : QString::fromStdString(it->second);
+      int index = box->findData(now);
+      if (index < 0) {  // a value set elsewhere: shown as it is
+        box->addItem(now, now);
+        index = box->count() - 1;
+      }
+      box->setCurrentIndex(index);
+      const std::string attribute = key;
+      connect(box, &QComboBox::activated, this, [this, id, box, attribute] {
+        emit attributeEdited(id, attribute, box->currentData().toString().toStdString());
+      });
+      detailsForm->addRow(label, box);
+    };
+    choose(tr("用途"), "kind", QStringLiteral("roleBox"),
+           {{tr("なし"), QString()}, {tr("柱"), QStringLiteral("column")}, {tr("梁"), QStringLiteral("beam")},
+            {tr("筋かい"), QStringLiteral("brace")}, {tr("壁"), QStringLiteral("wall")}, {tr("スラブ"), QStringLiteral("slab")}});
+    choose(tr("材料種別"), "material_class", QStringLiteral("materialClassBox"),
+           {{tr("未設定"), QString()}, {tr("木"), QStringLiteral("timber")}, {tr("鋼"), QStringLiteral("steel")},
+            {tr("RC"), QStringLiteral("rc")}});
+  }
   if (!o->attributes.empty()) {
     // Meaning attributes (set by people or agents, e.g. level = 2F).
     QStringList pairs;
