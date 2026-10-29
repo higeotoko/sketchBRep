@@ -2909,6 +2909,27 @@ QMenu* MainWindow::buildContextMenu(const QPoint& pos) {
     }
     menu->addAction(tr("グループ化"), this, &MainWindow::groupSelection);
     menu->addAction(tr("コンポーネントを作成"), this, &MainWindow::makeComponent);
+    // Following (docs/42): only when asked, the first one picked the host.
+    if (ids.size() >= 2) {
+      const doc::Object* host = document.find(ids.front());
+      QAction* follow = menu->addAction(
+          tr("最初に選んだ「%1」に追従させる").arg(host ? QString::fromStdString(host->name) : QString()), this, [this] {
+            const std::vector<doc::ObjectId> followers(selection_.begin() + 1, selection_.end());
+            if (report(modeler_.setFollow(followers, selection_.front()))) {
+              setStatus(tr("%1 個が「%2」に追従します（手で動かしても追従は続きます）")
+                            .arg(followers.size())
+                            .arg(QString::fromStdString(modeler_.document().find(selection_.front())->name)));
+            }
+          });
+      follow->setObjectName(QStringLiteral("followFirstAction"));
+    }
+    if (std::any_of(ids.begin(), ids.end(), [&](const doc::ObjectId& id) {
+          const doc::Object* o = document.find(id);
+          return o && o->follow;
+        })) {
+      QAction* stop = menu->addAction(tr("追従を止める"), this, [this] { report(modeler_.setFollow(selection_, std::nullopt)); });
+      stop->setObjectName(QStringLiteral("stopFollowingAction"));
+    }
     if (single && single->kind() == doc::ObjectKind::Group) {
       const doc::ObjectId id = single->id;
       menu->addAction(tr("グループを編集（中に入る）"), this, [this, id] { enterGroup(id); });

@@ -256,6 +256,10 @@ json describeObject(const doc::Modeler& m, const doc::Object& o, bool withFaces)
             {"bounds", worldBounds(d, o)}};
   if (!o.parent.empty()) j["parent"] = o.parent;
   if (!o.attributes.empty()) j["attributes"] = o.attributes;
+  if (o.follow) {
+    j["follow"] = {{"host", o.follow->host},
+                   {"state", m.followState(o.id) == doc::Modeler::FollowState::Active ? "active" : "suspended"}};
+  }
   j["material"] = o.material.empty() ? json(nullptr) : json(o.material);
   if (const std::string shown = d.inheritedMaterial(o); shown != o.material) j["inherited_material"] = shown;
   if (!o.faceMaterials.empty()) {
@@ -1748,6 +1752,21 @@ const std::vector<CommandDef>& commands() {
                "key": {"type": "string"}, "value": {"type": "string"}}, "required": ["ids", "key", "value"]}),
        [](doc::Modeler& m, const json& a) {
          must(m.setAttribute(ids(a, "ids"), text(a, "key"), text(a, "value")));
+         return json::object();
+       }},
+      {"set_follow",
+       "Objects 'ids' follow 'host' (an id) from where they are now: when the host is moved or turned, "
+       "they go with it, keeping their place on it (its own shape changes move nothing). Moved "
+       "themselves, they keep following from there; moved together with the host, once. 'host' null: "
+       "stop following. Nothing follows unless asked (snapping or placing never makes it). Refused for "
+       "itself, an object inside the other, or a circle of followers. The host deleted: they stay put "
+       "(get_object follow.state = suspended). One undo step.",
+       SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}},
+               "host": {"type": ["string", "null"]}}, "required": ["ids", "host"]}),
+       [](doc::Modeler& m, const json& a) {
+         const json& host = arg(a, "host");
+         if (!host.is_null() && !host.is_string()) throw ApiError("'host' must be an id or null");
+         must(m.setFollow(ids(a, "ids"), host.is_null() ? std::nullopt : std::optional<ObjectId>(host.get<std::string>())));
          return json::object();
        }},
       {"create_wall",

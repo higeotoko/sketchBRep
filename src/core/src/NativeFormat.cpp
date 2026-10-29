@@ -861,6 +861,10 @@ json objectToJson(const Object& o, const Color& shown, ShapeTable& shapes) {
     j["hiddenEdges"] = edges;
   }
   if (!o.attributes.empty()) j["attributes"] = o.attributes;
+  if (o.follow) {
+    j["follow"] = {{"host", o.follow->host}, {"offset", toJson(o.follow->offset)}};
+    if (o.follow->rebase) j["follow"]["rebase"] = true;
+  }
   if (!o.shape.IsNull()) j["geometry"] = shapes.reference(o.shape);
   return j;
 }
@@ -901,6 +905,10 @@ Object objectFrom(const json& j, const RegenContext& context, std::vector<std::s
   }
   if (j.contains("transform")) o.transform = trsfFrom(j.at("transform"));
   if (j.contains("attributes")) o.attributes = j.at("attributes").get<std::map<std::string, std::string>>();
+  if (j.contains("follow")) {
+    const json& f = j.at("follow");
+    o.follow = Follow{f.at("host").get<std::string>(), trsfFrom(f.at("offset")), f.value("rebase", false)};
+  }
   o.recipe = recipeFrom(j.at("recipe"));
 
   Result<TopoDS_Shape> stored = Result<TopoDS_Shape>::failure("no stored geometry");

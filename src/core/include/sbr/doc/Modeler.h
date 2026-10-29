@@ -407,6 +407,15 @@ class Modeler {
   // A floor slab: plan polygon (any winding) with its top at `top`,
   // `thickness` below. Attribute kind = slab. One undo step.
   Result<ObjectId> createSlab(const std::vector<gp_Pnt>& outline, double top, double thickness);
+  // --- following (docs/42) ---------------------------------------------------
+  // `ids` follow `host` from where they are now (nullopt: stop following).
+  // Only asked for, never made by snapping or placing. Refused (nothing
+  // changes) for itself, an object inside the other, or a circle of
+  // followers. One undo step.
+  Status setFollow(const std::vector<ObjectId>& ids, const std::optional<ObjectId>& host);
+  enum class FollowState { None, Active, Suspended };  // suspended: the host is gone
+  FollowState followState(const ObjectId& id) const;
+
   // --- linear members (docs/40) ---------------------------------------------
   // A beam, column or brace: `section` swept from `start` to `end` (world),
   // the axis line through `anchor` of it. `up`: the section's up hint
@@ -695,7 +704,9 @@ class Modeler {
   Result<ObjectId> faceFromCurveJunctions(const ObjectId& curveId, bool* loopFound);
   std::string uniqueName(const std::string& base) const;
   // Deep copy of a subtree with fresh ids. Returns objects parents-first.
-  std::vector<Object> cloneSubtree(const ObjectId& id, const ObjectId& newParent) const;
+  std::vector<Object> cloneSubtree(const ObjectId& id, const ObjectId& newParent,
+                                   std::map<ObjectId, ObjectId>* copies = nullptr) const;
+  void refollowCopies(const std::map<ObjectId, ObjectId>& copyOf, const std::vector<ObjectId>& created);
   // Push/pull of a profile lying on a face of another solid: returns the
   // committed cut/join, or nullopt to fall back to a plain extrusion.
   std::optional<Result<PushPullResult>> mergeIntoHost(const Object& profileBefore, Object extruded,

@@ -247,6 +247,7 @@ class GuiPhase1 : public QObject {
   void memberToolColumnsAndCatalogSearch();
   void roleAddedToAnyShapeInProperties();
   void memberEntriesKeepTheirOwnSettings();
+  void followFromTheContextMenu();
   void arcAndLinesCloseIntoFace();
   void arcClosesMixedOutline_data();
   void arcClosesMixedOutline();
@@ -4694,6 +4695,41 @@ void GuiPhase1::memberEntriesKeepTheirOwnSettings() {
   QVERIFY(f.window.memberTool().settings().section.kind != geom::Section::Kind::Circle);
   column->trigger();
   QVERIFY(f.window.memberTool().settings().section.kind == geom::Section::Kind::Circle);
+}
+
+void GuiPhase1::followFromTheContextMenu() {
+  Fixture f;
+  QVERIFY(f.setUp(1000, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId beam = f.box(0, 0, 2000, 200, 300);
+  const doc::ObjectId bracket = f.box(500, 300, 100, 100, 100);
+  f.vp->syncNow();
+  // The host picked first, then what follows it.
+  f.window.setSelection({beam, bracket});
+  QMenu* menu = f.window.buildContextMenu(f.vp->toWidget(gp_Pnt(1000, 0, 300)));
+  auto* follow = menu->findChild<QAction*>(QStringLiteral("followFirstAction"));
+  QVERIFY(follow);
+  follow->trigger();
+  delete menu;
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.followState(bracket), doc::Modeler::FollowState::Active);
+  QVERIFY(m.move({beam}, gp_Vec(0, 0, 400)));
+  const Bnd_Box b = geom::exactBounds(m.document().worldShape(*m.document().find(bracket)));
+  QVERIFY(std::abs(b.CornerMin().Z() - 400) < 1e-6);
+  // The properties say so.
+  f.window.setSelection({bracket});
+  QTest::qWait(50);
+  auto* label = f.window.findChild<QLabel*>(QStringLiteral("followLabel"));
+  QVERIFY(label);
+  QVERIFY(label->text().contains(QString::fromStdString(m.document().find(beam)->name)));
+  // And stopped from the menu again (right-clicked off the model: the
+  // selection stays).
+  menu = f.window.buildContextMenu(QPoint(5, 5));
+  auto* stop = menu->findChild<QAction*>(QStringLiteral("stopFollowingAction"));
+  QVERIFY(stop);
+  stop->trigger();
+  delete menu;
+  QCOMPARE(m.followState(bracket), doc::Modeler::FollowState::None);
 }
 
 void GuiPhase1::arcAndLinesCloseIntoFace() {

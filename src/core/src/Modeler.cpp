@@ -73,8 +73,21 @@ class ChangeSet {
   explicit ChangeSet(const Document& document) : document_(document) {}
 
   void modify(const Object& object) {
+    for (ObjectDelta& d : modified_) {
+      if (d.id == object.id) {  // changed again in the same step: one delta
+        d.after = object;
+        return;
+      }
+    }
     modified_.push_back(
         ObjectDelta{object.id, *document_.find(object.id), object, document_.indexOf(object.id)});
+  }
+  // The object as this change set leaves it (null: not changed here).
+  const Object* pending(const ObjectId& id) const {
+    for (const ObjectDelta& d : modified_) {
+      if (d.id == id && d.after) return &*d.after;
+    }
+    return nullptr;
   }
   void add(const Object& object) {
     added_.push_back(ObjectDelta{object.id, std::nullopt, object, std::nullopt});
@@ -130,6 +143,81 @@ class ChangeSet {
   std::vector<DefinitionDelta> definitions_;
   std::vector<MaterialDelta> materials_;
 };
+
+bool sameTrsf(const gp_Trsf& a, const gp_Trsf& b) {
+  for (int r = 1; r <= 3; ++r) {
+    for (int c = 1; c <= 4; ++c) {
+      if (std::abs(a.Value(r, c) - b.Value(r, c)) > 1e-9) return false;
+    }
+  }
+  return true;
+}
+
+// Objects following something (docs/42) after the moves in `changes`: one
+// whose host moved goes with it, once; one moved itself (by hand, with its
+// group or together with the host) keeps following from where it is now.
+void followUp(const Document& document, ChangeSet& changes) {
+  // Only objects someone asked to follow: one field looked at per object.
+  std::vector<ObjectId> followers;
+  for (const Object& o : document.objects()) {
+    if (o.follow) followers.push_back(o.id);
+  }
+  if (followers.empty()) return;
+  auto current = [&](const ObjectId& id) -> const Object* {
+    if (const Object* p = changes.pending(id)) return p;
+    return document.find(id);
+  };
+  std::function<gp_Trsf(const ObjectId&)> after = [&](const ObjectId& id) -> gp_Trsf {
+    const Object* o = current(id);
+    if (!o) return gp_Trsf();
+    return o->parent.empty() ? o->transform : after(o->parent) * o->transform;
+  };
+  auto before = [&](const ObjectId& id) {
+    const Object* o = document.find(id);
+    return o ? document.worldTransform(*o) : gp_Trsf();
+  };
+  // Rounds: a follower moved by its host moves its own followers next.
+  for (std::size_t round = 0; round <= followers.size(); ++round) {
+    bool moved = false;
+    for (const ObjectId& id : followers) {
+      Object f = *current(id);
+      if (!f.follow) continue;
+      const ObjectId host = f.follow->host;
+      const bool selfMoved = !sameTrsf(after(id), before(id));
+      if (!document.find(host)) {
+        // Suspended: it stays where it is put; the offset is taken again
+        // once the host is back.
+        if (selfMoved && !f.follow->rebase) {
+          f.follow->rebase = true;
+          changes.modify(f);
+        }
+        continue;
+      }
+      if (selfMoved) {
+        // Put somewhere by hand (or moved with its group, or with the host):
+        // it keeps following from there, never let go.
+        const gp_Trsf offset = after(host).Inverted() * after(id);
+        if (f.follow->rebase || !sameTrsf(offset, f.follow->offset)) {
+          f.follow->offset = offset;
+          f.follow->rebase = false;
+          changes.modify(f);
+        }
+        continue;
+      }
+      if (f.locked || sameTrsf(after(host), before(host))) continue;
+      // The host moved and it did not: once, to the same place on the host.
+      const gp_Trsf offset = f.follow->rebase ? before(host).Inverted() * before(id) : f.follow->offset;
+      const gp_Trsf parentWorld = f.parent.empty() ? gp_Trsf() : after(f.parent);
+      f.transform = parentWorld.Inverted() * after(host) * offset;
+      f.follow->offset = offset;
+      f.follow->rebase = false;
+      changes.modify(f);
+      moved = true;
+    }
+    if (!moved) break;
+  }
+}
+
 
 // Materials through Booleans (docs/11_materials.md): the result takes the
 // first input's material; a face of the result lying on a face of an input
@@ -247,7 +335,8 @@ Status Modeler::checkSameParent(const std::vector<ObjectId>& ids, ObjectId& pare
   return Status::success();
 }
 
-std::vector<Object> Modeler::cloneSubtree(const ObjectId& id, const ObjectId& newParent) const {
+std::vector<Object> Modeler::cloneSubtree(const ObjectId& id, const ObjectId& newParent,
+                                          std::map<ObjectId, ObjectId>* copies) const {
   std::vector<Object> out;
   std::map<ObjectId, ObjectId> mapping;
   for (const ObjectId& old : document_.subtree(id)) {
@@ -257,6 +346,7 @@ std::vector<Object> Modeler::cloneSubtree(const ObjectId& id, const ObjectId& ne
     c.parent = old == id ? newParent : mapping[c.parent];
     out.push_back(std::move(c));
   }
+  if (copies) copies->insert(mapping.begin(), mapping.end());
   return out;
 }
 
@@ -4314,6 +4404,7 @@ Status Modeler::transform(const std::vector<ObjectId>& ids, const gp_Trsf& world
     o.transform = localDelta(document_.parentTransform(o), worldDelta) * o.transform;
     changes.modify(o);
   }
+  followUp(document_, changes);
   history_.beginGroup(commandName);
   history_.execute(changes.build(commandName));
   // Moved onto lines or faces already there: not stacked twice.
@@ -4751,6 +4842,7 @@ Status Modeler::align(const std::vector<ObjectId>& ids, int axis, int edge, std:
     o.transform = localDelta(document_.parentTransform(o), delta) * o.transform;
     changes.modify(o);
   }
+  followUp(document_, changes);
   history_.execute(changes.build("Align"));
   return Status::success();
 }
@@ -5321,22 +5413,26 @@ Result<std::vector<ObjectId>> Modeler::copy(const std::vector<ObjectId>& ids,
 
   ChangeSet changes(document_);
   std::vector<ObjectId> created;
+  std::vector<std::pair<std::map<ObjectId, ObjectId>, std::vector<ObjectId>>> copies;  // per copy k
   gp_Trsf step;  // worldDelta^k
   for (int k = 1; k <= count; ++k) {
     step = worldDelta * step;
     // A copy landing back on the original (a polar array going full
     // circle, e.g. 30 degrees x 12) is not made: it would only double it.
     if (landsOnItself(step)) continue;
+    copies.emplace_back();
     for (const ObjectId& id : roots) {
-      std::vector<Object> clones = cloneSubtree(id, document_.find(id)->parent);
+      std::vector<Object> clones = cloneSubtree(id, document_.find(id)->parent, &copies.back().first);
       Object& root = clones.front();
       root.transform = localDelta(document_.parentTransform(root), step) * root.transform;
       created.push_back(root.id);
+      copies.back().second.push_back(root.id);
       for (const Object& c : clones) changes.add(c);
     }
   }
   history_.beginGroup(count == 1 ? "Copy" : "Array");
   history_.execute(changes.build(count == 1 ? "Copy" : "Array"));
+  for (const auto& [copyOf, made] : copies) refollowCopies(copyOf, made);
   auto settled = settleOverlaps(created);
   if (!settled) {
     history_.abortGroup();
@@ -5508,6 +5604,7 @@ Result<std::vector<ObjectId>> Modeler::paste(const Clipboard& clipboard, const g
   }
   history_.beginGroup("Paste");
   history_.execute(changes.build("Paste"));
+  refollowCopies(mapping, created);
   // Pasted together they are as they were copied (settled already): only
   // what is there already can overlap them. Nothing there near them: no
   // settling (pasting thousands far off checked each against everything).
@@ -5542,8 +5639,87 @@ Result<std::vector<ObjectId>> Modeler::paste(const Clipboard& clipboard, const g
 }
 
 Status Modeler::setPosition(const ObjectId& id, const gp_Vec& translation) {
-  return modifyAttribute(document_, history_, id, "Set Position",
-                         [&](Object& o) { o.transform.SetTranslationPart(translation); });
+  const Object* current = document_.find(id);
+  if (!current) return Status::failure("Object not found");
+  Object o = *current;
+  o.transform.SetTranslationPart(translation);
+  ChangeSet changes(document_);
+  changes.modify(o);
+  followUp(document_, changes);
+  history_.execute(changes.build("Set Position"));
+  return Status::success();
+}
+
+// --- following (docs/42) ------------------------------------------------------
+
+Status Modeler::setFollow(const std::vector<ObjectId>& ids, const std::optional<ObjectId>& host) {
+  if (ids.empty()) return Status::failure("Nothing selected");
+  const Object* h = host ? document_.find(*host) : nullptr;
+  if (host && !h) return Status::failure("The object to follow was not found");
+  ChangeSet changes(document_);
+  for (const ObjectId& id : ids) {
+    const Object* current = document_.find(id);
+    if (!current) return Status::failure("Object not found");
+    Object o = *current;
+    if (!host) {
+      if (!o.follow) continue;
+      o.follow.reset();
+      changes.modify(o);
+      continue;
+    }
+    if (id == *host) return Status::failure("An object cannot follow itself");
+    // Inside the host (or holding it): it moves with it already.
+    for (const ObjectId& part : document_.subtree(id)) {
+      if (part == *host) return Status::failure("'" + o.name + "' contains the object to follow");
+    }
+    for (const ObjectId& part : document_.subtree(*host)) {
+      if (part == id) return Status::failure("'" + o.name + "' is inside the object to follow; it moves with it already");
+    }
+    // Following round in a circle: refused, both stay as they are.
+    std::set<ObjectId> seen{id};
+    for (const Object* next = h; next && next->follow;) {
+      if (!seen.insert(next->follow->host).second || next->follow->host == id) {
+        return Status::failure("'" + o.name + "' would end up following itself (through '" + next->name + "')");
+      }
+      next = document_.find(next->follow->host);
+    }
+    o.follow = Follow{*host, document_.worldTransform(*h).Inverted() * document_.worldTransform(o), false};
+    changes.modify(o);
+  }
+  history_.execute(changes.build(host ? "Follow" : "Stop Following"));
+  return Status::success();
+}
+
+Modeler::FollowState Modeler::followState(const ObjectId& id) const {
+  const Object* o = document_.find(id);
+  if (!o || !o->follow) return FollowState::None;
+  return document_.find(o->follow->host) ? FollowState::Active : FollowState::Suspended;
+}
+
+// Copies and pasted objects that follow something: their copy keeps
+// following - the copied host when it was copied with them, otherwise the
+// same host from where the copy was put.
+void Modeler::refollowCopies(const std::map<ObjectId, ObjectId>& copyOf, const std::vector<ObjectId>& created) {
+  ChangeSet changes(document_);
+  bool any = false;
+  for (const ObjectId& root : created) {
+    for (const ObjectId& id : document_.subtree(root)) {
+      const Object* c = document_.find(id);
+      if (!c || !c->follow) continue;
+      Object o = *c;
+      if (const auto it = copyOf.find(o.follow->host); it != copyOf.end()) {
+        o.follow->host = it->second;
+      } else if (const Object* h = document_.find(o.follow->host)) {
+        o.follow->offset = document_.worldTransform(*h).Inverted() * document_.worldTransform(o);
+        o.follow->rebase = false;
+      } else {
+        o.follow->rebase = true;
+      }
+      changes.modify(o);
+      any = true;
+    }
+  }
+  if (any) history_.execute(changes.build("Follow"));
 }
 
 // --- structure ------------------------------------------------------------------

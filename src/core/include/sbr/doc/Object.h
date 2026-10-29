@@ -39,6 +39,17 @@ struct EdgeMark {
 };
 std::optional<EdgeMark> edgeMark(const TopoDS_Edge& localEdge);
 
+// Following another object (docs/42): set only when someone asks for it.
+// When the host moves this object keeps `offset` to it (pose only: the
+// host's own shape changes move nothing); moved by hand, it keeps
+// following from where it was put. The host gone: the object stays where
+// it is (suspended, worked out each time, never stored).
+struct Follow {
+  ObjectId host;
+  gp_Trsf offset;       // inverse(host world) * this world
+  bool rebase = false;  // moved while the host was gone: offset taken again from the poses
+};
+
 struct Object {
   ObjectId id;
   ObjectId parent;  // empty: top level; otherwise a Group object
@@ -58,6 +69,7 @@ struct Object {
   // Optional meaning ("kind": "wall", "level": "2F", "grid": "X3"), set by
   // people or agents and used to find objects. Geometry never depends on it.
   std::map<std::string, std::string> attributes;
+  std::optional<Follow> follow;
 
   Recipe recipe;
   TopoDS_Shape shape;  // canonical shape in local coordinates (cached result of recipe)

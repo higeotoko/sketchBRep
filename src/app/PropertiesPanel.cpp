@@ -473,6 +473,13 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
   });
 
   detailsForm->addRow(tr("種類"), new QLabel(kindLabel(o->kind())));
+  if (o->follow) {
+    const doc::Object* host = modeler.document().find(o->follow->host);
+    auto* label = new QLabel(host ? tr("「%1」に追従中").arg(QString::fromStdString(host->name))
+                                  : tr("追従先がありません（その場に保持。戻れば再び追従）"));
+    label->setObjectName(QStringLiteral("followLabel"));
+    detailsForm->addRow(tr("追従"), label);
+  }
   if (o->kind() == doc::ObjectKind::Solid || o->kind() == doc::ObjectKind::Shell || o->kind() == doc::ObjectKind::Face) {
     // Role and material class (docs/41): added to any shape afterwards;
     // they change nothing about it (no resizing, no rules).

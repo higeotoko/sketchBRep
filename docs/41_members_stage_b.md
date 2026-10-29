@@ -154,4 +154,4 @@ GUIテスト：`roleAddedToAnyShapeInProperties`、`memberEntriesKeepTheirOwnSet
 
 - 同じ断面の部材で表示を共有すること。保存は軽くなったが、表示用のメッシュは今も1本ずつ持っている。
 - カタログの出典（JISなど）の照合。SMGの取り込み元はDXFのデータで、規格書との照合はSMG側の記録に従う。
-- 追従（再精査v0.4）：仕様案§3.2との方針の整理を、利用者と相談中。
+- 追従：[docs/42](42_follow.md) で、明示的にONにした物だけを対象に対応した。

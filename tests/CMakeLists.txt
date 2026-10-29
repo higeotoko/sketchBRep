@@ -27,6 +27,7 @@ add_executable(sbr_core_tests
   test_split_across.cpp
   test_curved_split.cpp
   test_members.cpp
+  test_follow.cpp
   test_closing_faces.cpp
   test_follow_me.cpp
   test_ux_gate1.cpp
