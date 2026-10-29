@@ -34,7 +34,7 @@ int countOf(const TopoDS_Shape& shape, TopAbs_ShapeEnum type) {
 }
 }  // namespace
 
-ValidationReport validateShape(const TopoDS_Shape& shape, bool expectSolid) {
+ValidationReport validateShape(const TopoDS_Shape& shape, bool expectSolid, bool exactVolume) {
   ValidationReport report;
   if (shape.IsNull()) {
     report.issues.push_back("shape is null");
@@ -59,7 +59,7 @@ ValidationReport validateShape(const TopoDS_Shape& shape, bool expectSolid) {
     if (shellCheck.Closed() != BRepCheck_NoError) report.closed = false;
   }
 
-  if (report.solids > 0) report.volume = volume(shape);
+  if (report.solids > 0) report.volume = exactVolume ? volume(shape) : roughVolume(shape);
   TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
   TopExp::MapShapesAndAncestors(shape, TopAbs_EDGE, TopAbs_FACE, edgeFaces);
   for (int i = 1; i <= edgeFaces.Extent(); ++i) {

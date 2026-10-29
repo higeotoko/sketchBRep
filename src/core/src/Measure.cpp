@@ -15,6 +15,13 @@ double volume(const TopoDS_Shape& shape) {
   return props.Mass();
 }
 
+double roughVolume(const TopoDS_Shape& shape) {
+  if (shape.IsNull()) return 0.0;
+  GProp_GProps props;
+  BRepGProp::VolumeProperties(shape, props);
+  return props.Mass();
+}
+
 double area(const TopoDS_Shape& shape) {
   if (shape.IsNull()) return 0.0;
   GProp_GProps props;

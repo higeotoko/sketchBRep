@@ -138,7 +138,7 @@ Result<TopoDS_Shape> singleSolid(const TopoDS_Shape& shape) {
 }
 
 Result<TopoDS_Shape> validatedSolid(const TopoDS_Shape& shape, const char* what) {
-  const ValidationReport report = validateShape(shape, true);
+  const ValidationReport report = validateShape(shape, true, false);
   if (!report.valid) {
     return Result<TopoDS_Shape>::failure(std::string(what) + " produced an invalid solid: " +
                                          report.summary());
@@ -158,7 +158,7 @@ Result<TopoDS_Shape> extrudeFace(const TopoDS_Face& face, double distance) {
     BRepPrimAPI_MakePrism prism(face, gp_Vec(*normal) * distance, Standard_True, Standard_True);
     if (!prism.IsDone()) return Result<TopoDS_Shape>::failure("Extrusion failed");
     TopoDS_Shape solid = prism.Shape();
-    if (volume(solid) < 0) solid.Reverse();
+    if (roughVolume(solid) < 0) solid.Reverse();
     return validatedSolid(solid, "Extrusion");
   } catch (const Standard_Failure& e) {
     return Result<TopoDS_Shape>::failure(std::string("Extrusion failed: ") +

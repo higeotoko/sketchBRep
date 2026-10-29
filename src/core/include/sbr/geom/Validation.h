@@ -30,7 +30,8 @@ struct ValidationReport {
 
 // Runs BRepCheck_Analyzer and topological sanity checks. When `expectSolid`
 // is set, the shape must consist of exactly one closed solid with positive
-// volume.
-ValidationReport validateShape(const TopoDS_Shape& shape, bool expectSolid);
+// volume. `exactVolume` false: the volume only checked for being positive
+// (roughVolume; regeneration's checks), not reported exactly.
+ValidationReport validateShape(const TopoDS_Shape& shape, bool expectSolid, bool exactVolume = true);
 
 }  // namespace sbr::geom

@@ -11,7 +11,13 @@
 #include <sstream>
 
 #include <nlohmann/json.hpp>
+#include <BRepGProp.hxx>
+#include <BRep_Tool.hxx>
+#include <GProp_GProps.hxx>
+#include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
+#include <TopoDS.hxx>
 
 #include "sbr/Codec.h"
 #include "sbr/geom/Measure.h"
@@ -716,8 +722,29 @@ Recipe recipeFrom(const json& j) {
   return recipe;
 }
 
+// The same corners, edges and faces in the same places: what a recipe
+// regenerated as it was saved gives. Cheap (no integration), so a large
+// model opens quickly; anything else is compared by volume below.
+bool sameCorners(const TopoDS_Shape& a, const TopoDS_Shape& b) {
+  for (const TopAbs_ShapeEnum kind : {TopAbs_FACE, TopAbs_EDGE}) {
+    TopTools_IndexedMapOfShape ma, mb;
+    TopExp::MapShapes(a, kind, ma);
+    TopExp::MapShapes(b, kind, mb);
+    if (ma.Extent() != mb.Extent()) return false;
+  }
+  TopTools_IndexedMapOfShape va, vb;
+  TopExp::MapShapes(a, TopAbs_VERTEX, va);
+  TopExp::MapShapes(b, TopAbs_VERTEX, vb);
+  if (va.Extent() != vb.Extent()) return false;
+  for (int i = 1; i <= va.Extent(); ++i) {
+    if (BRep_Tool::Pnt(TopoDS::Vertex(va(i))).Distance(BRep_Tool::Pnt(TopoDS::Vertex(vb(i)))) > 1e-6) return false;
+  }
+  return true;
+}
+
 bool sameGeometry(const TopoDS_Shape& a, const TopoDS_Shape& b) {
   if (a.IsNull() || b.IsNull()) return a.IsNull() == b.IsNull();
+  if (sameCorners(a, b)) return true;
   const double va = geom::volume(a);
   const double vb = geom::volume(b);
   if (std::abs(va - vb) > 1e-6 * std::max(1.0, std::abs(va))) return false;
@@ -752,8 +779,13 @@ struct ShapeTable {
 
   // Volume for a reader's information; only solids have one (computing it
   // for each of thousands of faces took a good part of saving).
+  // Gauss integration (no adaptive refinement): exact for flat faces, a
+  // quarter of the time on curved ones, and only for reading.
   static double volumeOf(const TopoDS_Shape& shape) {
-    return TopExp_Explorer(shape, TopAbs_SOLID).More() ? geom::volume(shape) : 0.0;
+    if (!TopExp_Explorer(shape, TopAbs_SOLID).More()) return 0.0;
+    GProp_GProps props;
+    BRepGProp::VolumeProperties(shape, props);
+    return props.Mass();
   }
 
   json reference(const TopoDS_Shape& shape) {
