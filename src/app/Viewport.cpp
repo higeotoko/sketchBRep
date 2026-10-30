@@ -2407,6 +2407,15 @@ void Viewport::lockView(StandardView v) {
   emit viewLockChanged();
 }
 
+void Viewport::turnElevation(int step) {
+  static const StandardView ring[] = {StandardView::Front, StandardView::Right, StandardView::Back, StandardView::Left};
+  int at = -1;
+  for (int i = 0; i < 4; ++i) {
+    if (lockedView_ && *lockedView_ == ring[i]) at = i;
+  }
+  lockView(at < 0 ? StandardView::Front : ring[((at + step) % 4 + 4) % 4]);
+}
+
 void Viewport::unlockView() {
   if (!lockedView_) return;
   lockedView_.reset();

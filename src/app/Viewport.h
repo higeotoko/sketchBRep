@@ -191,6 +191,9 @@ class Viewport : public QWidget {
   // saved camera end it; another standard view switches the fixed view.
   void lockView(StandardView view);
   void unlockView();
+  // Around the building, fixed: front -> right -> back -> left -> front
+  // (step +1; -1 the other way). From 3D or the plan: the front.
+  void turnElevation(int step);
   std::optional<StandardView> lockedView() const { return lockedView_; }
   // Where drawing in empty space lands: the ground, or the fixed view's plane.
   gp_Pln constructionPlane() const;

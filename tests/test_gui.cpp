@@ -4806,7 +4806,7 @@ void GuiPhase1::fixedElevationPansAndDrawsOnItsPlane() {
   front->trigger();
   QVERIFY(f.vp->lockedView() == Viewport::StandardView::Front);
   QVERIFY(!f.vp->isPerspective());
-  QVERIFY(f.window.findChild<QToolButton*>(QStringLiteral("viewLockButton"))->isVisible());
+  QVERIFY(f.window.findChild<QToolButton*>(QStringLiteral("viewButton2"))->isChecked());
   // The middle button pans; the view never turns.
   doc::CameraState before, after;
   f.vp->storeCamera(before);
@@ -4841,7 +4841,27 @@ void GuiPhase1::fixedElevationPansAndDrawsOnItsPlane() {
   f.window.findChild<QAction*>(QStringLiteral("unlockViewAction"))->trigger();
   QVERIFY(!f.vp->lockedView());
   QCOMPARE(f.vp->isPerspective(), perspective);
-  QVERIFY(!f.window.findChild<QToolButton*>(QStringLiteral("viewLockButton"))->isVisible());
+  QVERIFY(f.window.findChild<QToolButton*>(QStringLiteral("viewButton0"))->isChecked());
+  // The four elevations in turn: the next one, round to the front again;
+  // a button of the status bar fixes one at once.
+  auto* next = f.window.findChild<QAction*>(QStringLiteral("nextElevationAction"));
+  next->trigger();
+  QVERIFY(f.vp->lockedView() == Viewport::StandardView::Front);
+  next->trigger();
+  QVERIFY(f.vp->lockedView() == Viewport::StandardView::Right);
+  QVERIFY(f.vp->constructionPlane().Axis().Direction().IsParallel(gp::DX(), 1e-12));
+  next->trigger();
+  next->trigger();
+  QVERIFY(f.vp->lockedView() == Viewport::StandardView::Left);
+  next->trigger();
+  QVERIFY(f.vp->lockedView() == Viewport::StandardView::Front);
+  f.window.findChild<QAction*>(QStringLiteral("previousElevationAction"))->trigger();
+  QVERIFY(f.vp->lockedView() == Viewport::StandardView::Left);
+  f.window.findChild<QToolButton*>(QStringLiteral("viewButton4"))->click();  // back
+  QVERIFY(f.vp->lockedView() == Viewport::StandardView::Back);
+  QVERIFY(f.window.findChild<QToolButton*>(QStringLiteral("viewButton4"))->isChecked());
+  f.window.findChild<QToolButton*>(QStringLiteral("viewButton0"))->click();
+  QVERIFY(!f.vp->lockedView());
   QVERIFY(f.vp->constructionPlane().Axis().Direction().IsParallel(gp::DZ(), 1e-12));
 }
 

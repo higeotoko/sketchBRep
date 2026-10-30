@@ -307,22 +307,50 @@ void MainWindow::buildUi() {
   statusBar()->addPermanentWidget(proposalBar_);
 
   // Plan / elevation mode (docs/44): which view is fixed, and the way back.
-  auto* viewLock = new QToolButton;
-  viewLock->setObjectName(QStringLiteral("viewLockButton"));
-  viewLock->setAutoRaise(true);
-  viewLock->setStyleSheet(QStringLiteral("QToolButton { color: #1a5fb4; font-weight: bold; padding: 0 6px; }"));
-  viewLock->setToolTip(tr("平行投影で固定中（中ボタンのドラッグは画面移動）。クリックで 3D に戻る (Alt+0)"));
-  viewLock->hide();
-  connect(viewLock, &QToolButton::clicked, this, [this] { viewport_->unlockView(); });
-  statusBar()->addPermanentWidget(viewLock);
-  connect(viewport_, &Viewport::viewLockChanged, this, [this, viewLock] {
+  // One click each: 3D, the plan and the four elevations (Rhino's view
+  // tabs); the fixed one is shown pressed.
+  auto* viewBar = new QWidget;
+  viewBar->setObjectName(QStringLiteral("viewBar"));
+  auto* viewBarLayout = new QHBoxLayout(viewBar);
+  viewBarLayout->setContentsMargins(0, 0, 6, 0);
+  viewBarLayout->setSpacing(0);
+  const std::pair<QString, std::optional<Viewport::StandardView>> viewButtons[] = {
+      {tr("3D"), std::nullopt},
+      {tr("平面"), Viewport::StandardView::Top},
+      {tr("正面"), Viewport::StandardView::Front},
+      {tr("右"), Viewport::StandardView::Right},
+      {tr("背面"), Viewport::StandardView::Back},
+      {tr("左"), Viewport::StandardView::Left}};
+  std::vector<QToolButton*> viewBarButtons;
+  for (const auto& [label, v] : viewButtons) {
+    auto* b = new QToolButton(viewBar);
+    b->setText(label);
+    b->setCheckable(true);
+    b->setAutoExclusive(true);
+    b->setAutoRaise(true);
+    b->setFocusPolicy(Qt::NoFocus);
+    b->setObjectName(QStringLiteral("viewButton%1").arg(v ? static_cast<int>(*v) : 0));
+    b->setProperty("view", v ? static_cast<int>(*v) : 0);
+    b->setStyleSheet(QStringLiteral("QToolButton { padding: 0 5px; } QToolButton:checked { color: white; background: #1a5fb4; }"));
+    b->setToolTip(v ? tr("%1を平行投影で固定（中ボタンのドラッグは画面移動）").arg(label) : tr("3D に戻る (Alt+0)"));
+    const auto view = v;
+    connect(b, &QToolButton::clicked, this, [this, view] {
+      if (view) viewport_->lockView(*view);
+      else viewport_->unlockView();
+    });
+    viewBarLayout->addWidget(b);
+    viewBarButtons.push_back(b);
+  }
+  viewBarButtons.front()->setChecked(true);
+  statusBar()->addPermanentWidget(viewBar);
+  connect(viewport_, &Viewport::viewLockChanged, this, [this, viewBarButtons] {
     const auto locked = viewport_->lockedView();
     static const std::map<Viewport::StandardView, const char*> names = {
         {Viewport::StandardView::Top, "平面"},     {Viewport::StandardView::Front, "正面"},
         {Viewport::StandardView::Right, "右側面"}, {Viewport::StandardView::Back, "背面"},
         {Viewport::StandardView::Left, "左側面"}};
-    if (locked) viewLock->setText(tr("%1（固定）  ✕ 3D に戻る").arg(tr(names.at(*locked))));
-    viewLock->setVisible(locked.has_value());
+    const int pressed = locked ? static_cast<int>(*locked) : 0;
+    for (QToolButton* b : viewBarButtons) b->setChecked(b->property("view").toInt() == pressed);
     if (perspectiveAction_) {
       const QSignalBlocker block(perspectiveAction_);
       perspectiveAction_->setChecked(viewport_->isPerspective());
@@ -794,6 +822,13 @@ void MainWindow::buildMenus() {
                                        [this, sv] { viewport_->lockView(sv); });
     a->setObjectName(QStringLiteral("lockView%1").arg(static_cast<int>(sv)));
   }
+  fixedViews->addSeparator();
+  fixedViews->addAction(tr("次の立面へ（正面→右→背面→左）"), QKeySequence(QStringLiteral("Alt+Right")), this,
+                        [this] { viewport_->turnElevation(1); })
+      ->setObjectName(QStringLiteral("nextElevationAction"));
+  fixedViews->addAction(tr("前の立面へ"), QKeySequence(QStringLiteral("Alt+Left")), this,
+                        [this] { viewport_->turnElevation(-1); })
+      ->setObjectName(QStringLiteral("previousElevationAction"));
   fixedViews->addSeparator();
   fixedViews->addAction(tr("3D に戻る"), QKeySequence(QStringLiteral("Alt+0")), this, [this] { viewport_->unlockView(); })
       ->setObjectName(QStringLiteral("unlockViewAction"));
