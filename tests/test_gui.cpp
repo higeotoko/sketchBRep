@@ -247,6 +247,7 @@ class GuiPhase1 : public QObject {
   void memberToolColumnsAndCatalogSearch();
   void roleAddedToAnyShapeInProperties();
   void memberEntriesKeepTheirOwnSettings();
+  void memberPanelShowsWhileDrawingMembers();
   void followFromTheContextMenu();
   void arcAndLinesCloseIntoFace();
   void arcClosesMixedOutline_data();
@@ -4695,6 +4696,37 @@ void GuiPhase1::memberEntriesKeepTheirOwnSettings() {
   QVERIFY(f.window.memberTool().settings().section.kind != geom::Section::Kind::Circle);
   column->trigger();
   QVERIFY(f.window.memberTool().settings().section.kind == geom::Section::Kind::Circle);
+}
+
+void GuiPhase1::memberPanelShowsWhileDrawingMembers() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  f.window.activateTool(MainWindow::ToolId::Member);
+  QDockWidget* panel = f.window.memberPanel();
+  QVERIFY(panel && panel->isVisible() && panel->isFloating());
+  auto* summary = panel->findChild<QLabel*>(QStringLiteral("memberPanelSummary"));
+  QVERIFY(summary && summary->text().contains(QStringLiteral("105")));
+  QVERIFY(panel->findChild<QToolButton*>(QStringLiteral("memberPanelEntry_plain"))->isChecked());
+  // An entry from the panel switches the settings, and the panel says so.
+  auto* steel = panel->findChild<QToolButton*>(QStringLiteral("memberPanelEntry_steel"));
+  steel->click();
+  QCOMPARE(QString::fromStdString(f.window.memberTool().settings().section.catalog), QStringLiteral("H-400x200x8x13"));
+  QVERIFY(steel->isChecked());
+  QVERIFY2(summary->text().contains(QStringLiteral("400")), qPrintable(summary->text()));
+  QVERIFY(summary->text().contains(QStringLiteral("鋼")));
+  panel->findChild<QToolButton*>(QStringLiteral("memberPanelEntry_column"))->click();
+  QVERIFY(summary->text().contains(QStringLiteral("Enter")));
+  // The menu entries keep the panel in step.
+  f.window.findChild<QAction*>(QStringLiteral("memberEntry_beam"))->trigger();
+  QVERIFY(panel->findChild<QToolButton*>(QStringLiteral("memberPanelEntry_beam"))->isChecked());
+  QVERIFY(summary->text().contains(QStringLiteral("上端")));
+  if (const QString shot = qEnvironmentVariable("SBR_MEMBER_PANEL_SHOT"); !shot.isEmpty()) {
+    QTest::qWait(200);
+    QVERIFY(f.window.screen()->grabWindow(0).copy(f.window.frameGeometry().united(panel->frameGeometry())).save(shot));
+  }
+  // Gone with any other tool.
+  f.window.activateTool(MainWindow::ToolId::Select);
+  QVERIFY(!panel->isVisible());
 }
 
 void GuiPhase1::followFromTheContextMenu() {

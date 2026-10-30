@@ -42,6 +42,7 @@
 #include <QInputDialog>
 #include <QProgressDialog>
 #include <QHBoxLayout>
+#include <QVBoxLayout>
 #include <QListWidget>
 #include <QPushButton>
 #include <QMenu>
@@ -163,6 +164,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 MainWindow::~MainWindow() {
   if (sectionDock_ && sectionDock_->isFloating())
     QSettings().setValue("section/toolboxGeometry", sectionDock_->saveGeometry());
+  if (memberPanel_) QSettings().setValue("member/panelGeometry", memberPanel_->saveGeometry());
   if (auto* palette = findChild<QDockWidget*>(QStringLiteral("toolsPalette"))) {
     QSettings settings;
     settings.setValue("tools/floating", palette->isFloating());
@@ -1344,6 +1346,7 @@ void MainWindow::activateTool(ToolId id) {
     active_->recentEdit().clear();  // typing after switching tools changes nothing earlier
   }
   viewport_->hideSnap();  // no marker or label left from the previous tool
+  if (memberPanel_ && id != ToolId::Member) memberPanel_->hide();
   viewport_->clearGrips();
   // While drawing outlines, show where loose lines/arcs are still open.
   viewport_->setShowOpenEnds(id == ToolId::Line || id == ToolId::Arc || id == ToolId::Curve);
@@ -1376,7 +1379,10 @@ void MainWindow::activateTool(ToolId id) {
     case ToolId::RotatedRectangle: active_ = rotatedRectangleTool_.get(); break;
     case ToolId::Scale: active_ = scaleTool_.get(); break;
     case ToolId::Wall: active_ = wallTool_.get(); break;
-    case ToolId::Member: active_ = memberTool_.get(); break;
+    case ToolId::Member:
+      active_ = memberTool_.get();
+      showMemberPanel();
+      break;
     case ToolId::Slab: active_ = slabTool_.get(); break;
     case ToolId::Opening: active_ = openingTool_.get(); break;
     case ToolId::Count: return;
@@ -1794,6 +1800,88 @@ void MainWindow::startMember(const std::string& entry) {
   memberTool_->useEntry(entry);
   activateTool(ToolId::Member);
   setStatus(memberTool_->settingsText());
+  refreshMemberPanel();
+}
+
+void MainWindow::showMemberPanel() {
+  if (!memberPanel_) {
+    // A floating panel (a window of its own, like the section toolbox): a
+    // widget inside the native 3D view would be drawn over.
+    auto* dock = new PanelDock(tr("部材"), this);
+    memberPanel_ = dock;
+    dock->setObjectName(QStringLiteral("memberPanel"));
+    dock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
+    dock->setAllowedAreas(Qt::NoDockWidgetArea);  // never takes room from the view
+    auto* content = new QWidget(dock);
+    auto* layout = new QVBoxLayout(content);
+    layout->setContentsMargins(8, 6, 8, 8);
+    auto* entries = new QHBoxLayout;
+    entries->setSpacing(4);
+    const std::pair<QString, std::string> list[] = {
+        {tr("汎用"), ""}, {tr("鋼材"), "steel"}, {tr("柱"), "column"}, {tr("梁"), "beam"}};
+    for (const auto& [label, entry] : list) {
+      auto* button = new QToolButton(content);
+      button->setText(label);
+      button->setCheckable(true);
+      button->setAutoExclusive(true);
+      button->setFocusPolicy(Qt::NoFocus);  // typed lengths keep going to the view
+      button->setObjectName(QStringLiteral("memberPanelEntry_") +
+                            (entry.empty() ? QStringLiteral("plain") : QString::fromStdString(entry)));
+      button->setProperty("entry", QString::fromStdString(entry));
+      connect(button, &QToolButton::clicked, this, [this, entry = entry] { startMember(entry); });
+      entries->addWidget(button);
+    }
+    layout->addLayout(entries);
+    memberSummary_ = new QLabel(content);
+    memberSummary_->setObjectName(QStringLiteral("memberPanelSummary"));
+    memberSummary_->setTextFormat(Qt::PlainText);
+    layout->addWidget(memberSummary_);
+    auto* settings = new QPushButton(tr("断面・基準の設定..."), content);
+    settings->setObjectName(QStringLiteral("memberPanelSettings"));
+    settings->setFocusPolicy(Qt::NoFocus);
+    connect(settings, &QPushButton::clicked, this, [this] {
+      showMemberSettingsDialog();
+      viewport_->setFocus();
+    });
+    layout->addWidget(settings);
+    dock->setWidget(content);
+    addDockWidget(Qt::TopDockWidgetArea, dock);
+    dock->setFloating(true);
+    const auto geometry = QSettings().value("member/panelGeometry").toByteArray();
+    if (geometry.isEmpty() || !dock->restoreGeometry(geometry)) dock->move(viewport_->mapToGlobal(QPoint(12, 12)));
+  }
+  refreshMemberPanel();
+  memberPanel_->show();
+  memberPanel_->raise();
+}
+
+void MainWindow::refreshMemberPanel() {
+  if (!memberPanel_) return;
+  const MemberTool::Settings& s = memberTool_->settings();
+  const QString entry = QString::fromStdString(memberTool_->entry());
+  for (auto* button : memberPanel_->findChildren<QToolButton*>())
+    if (button->property("entry").isValid()) button->setChecked(button->property("entry").toString() == entry);
+  static const char* across[] = {"右", "中心", "左"};
+  static const char* up[] = {"下端", "芯", "上端"};
+  QString anchor = QString::fromUtf8(up[s.anchor.up + 1]);
+  if (s.anchor.across != 0) anchor += QStringLiteral("・") + QString::fromUtf8(across[s.anchor.across + 1]);
+  const QString material = s.materialClass == "timber" ? tr("木")
+                           : s.materialClass == "steel" ? tr("鋼")
+                           : s.materialClass == "rc"    ? tr("RC")
+                                                        : tr("未設定");
+  const QString role = s.role == "column" ? tr("柱")
+                       : s.role == "beam" ? tr("梁")
+                       : s.role == "brace" ? tr("筋かい")
+                                           : tr("なし");
+  QStringList lines;
+  lines << tr("断面：%1").arg(QString::fromStdString(geom::sectionName(s.section)));
+  lines << tr("材料：%1　用途：%2").arg(material, role);
+  lines << tr("基準：%1　回転：%2°").arg(anchor, QString::number(s.roll));
+  lines << (s.role == "column"
+                ? tr("脚部をクリック → Enter で高さ %1").arg(QString::fromStdString(units::formatLength(s.columnHeight, 0)))
+                : tr("2点をクリック（長さは数値でも入力可）"));
+  memberSummary_->setText(lines.join(QLatin1Char('\n')));
+  memberPanel_->adjustSize();
 }
 
 void MainWindow::showMemberSettingsDialog() {
@@ -1975,6 +2063,7 @@ void MainWindow::showMemberSettingsDialog() {
   if (next.materialClass.empty() && !next.section.catalog.empty()) next.materialClass = "steel";
   memberTool_->setSettings(next);
   setStatus(memberTool_->settingsText());
+  refreshMemberPanel();
 }
 
 void MainWindow::showSlabSettingsDialog() {

@@ -1154,7 +1154,7 @@ void MemberTool::activate() {
   current_.reset();
   host_.viewport().setPickMode(PickMode::None);
   host_.setMeasurement(QObject::tr("長さ"), QString());
-  host_.setStatus(QObject::tr("部材の始点をクリック（ツール > 部材の設定で断面を変更）  ") + settingsText());
+  host_.setStatus(QObject::tr("部材の始点をクリック（断面は部材パネルで切り替え）  ") + settingsText());
 }
 
 void MemberTool::cancel() {

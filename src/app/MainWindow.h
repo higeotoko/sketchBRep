@@ -165,6 +165,9 @@ class MainWindow : public QMainWindow, public ToolHost {
   // Tools > Members > steel / column / beam: the member tool with that
   // entry's own settings.
   void startMember(const std::string& entry);
+  // The panel shown while the member tool is in use: the entries, what will
+  // be drawn and a way to the settings (created on first use).
+  QDockWidget* memberPanel() const { return memberPanel_; }
   SlabTool& slabTool() { return *slabTool_; }
   OpeningTool& openingTool() { return *openingTool_; }
   // Openings into the selected wall: the face picked (face selection) or the
@@ -345,6 +348,10 @@ class MainWindow : public QMainWindow, public ToolHost {
   QAction* sectionPlanesAction_ = nullptr;
   QAction* sectionFillAction_ = nullptr;
   QDockWidget* sectionDock_ = nullptr;
+  QDockWidget* memberPanel_ = nullptr;
+  QLabel* memberSummary_ = nullptr;
+  void showMemberPanel();
+  void refreshMemberPanel();
   bool hadSections_ = false;
 };
 
