@@ -165,6 +165,13 @@ class MainWindow : public QMainWindow, public ToolHost {
   // Tools > Members > steel / column / beam: the member tool with that
   // entry's own settings.
   void startMember(const std::string& entry);
+  // A grid (docs/43): its lines' names and spacings edited in a table;
+  // columns and beams placed on its crossings with the member tool's
+  // column / beam settings. `grid`: the grid group.
+  void showGridEditDialog(const doc::ObjectId& grid);
+  void showGridMembersDialog(const doc::ObjectId& grid);
+  // The grid a selection means: the grid itself, or a line inside it.
+  std::optional<doc::ObjectId> selectedGrid() const;
   // The panel shown while the member tool is in use: the entries, what will
   // be drawn and a way to the settings (created on first use).
   QDockWidget* memberPanel() const { return memberPanel_; }

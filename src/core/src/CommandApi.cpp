@@ -240,6 +240,23 @@ json worldBounds(const doc::Document& d, const doc::Object& o) {
   return bounds(d.worldShape(o));
 }
 
+// A grid's lines (docs/43): by direction, in order of position, each with
+// its id, name, position (from the grid's origin) and spacing from the one
+// before.
+json gridJson(const doc::GridSpec& spec) {
+  auto axes = [](std::vector<doc::GridAxis> list) {
+    std::sort(list.begin(), list.end(), [](const doc::GridAxis& a, const doc::GridAxis& b) { return a.offset < b.offset; });
+    json out = json::array();
+    for (std::size_t i = 0; i < list.size(); ++i) {
+      json a = {{"id", list[i].id}, {"name", list[i].name}, {"position", list[i].offset}};
+      if (i > 0) a["spacing"] = list[i].offset - list[i - 1].offset;
+      out.push_back(a);
+    }
+    return out;
+  };
+  return json{{"x", axes(spec.x)}, {"y", axes(spec.y)}, {"label_offset", spec.labelOffset}};
+}
+
 json describeObject(const doc::Modeler& m, const doc::Object& o, bool withFaces) {
   const doc::Document& d = m.document();
   const TopoDS_Shape world = d.worldShape(o);
@@ -256,6 +273,12 @@ json describeObject(const doc::Modeler& m, const doc::Object& o, bool withFaces)
             {"bounds", worldBounds(d, o)}};
   if (!o.parent.empty()) j["parent"] = o.parent;
   if (!o.attributes.empty()) j["attributes"] = o.attributes;
+  if (const doc::GridSpec* grid = m.gridSpec(o.id)) j["grid"] = gridJson(*grid);
+  if (o.gridPin) {
+    j["grid_pin"] = {{"grid", o.gridPin->grid},
+                     {"start", {o.gridPin->startX, o.gridPin->startY}},
+                     {"end", {o.gridPin->endX, o.gridPin->endY}}};
+  }
   if (o.follow) {
     j["follow"] = {{"host", o.follow->host},
                    {"state", m.followState(o.id) == doc::Modeler::FollowState::Active ? "active" : "suspended"}};
@@ -904,7 +927,9 @@ const std::vector<CommandDef>& commands() {
       {"create_grid",
        "Structural grid (通り芯) on the ground: lines X1.. (along Y) at the cumulative 'x_spacings' from "
        "'origin', lines Y1.. (along X) at 'y_spacings', with labels and chained spacing dimensions, all on the "
-       "'Grid' tag. Drawing snaps to the lines and their crossings. Returns line ids by name.",
+       "'Grid' tag, in a group (the grid) that remembers them: edit with set_grid, place members with "
+       "place_members_on_grid. Drawing snaps to the lines and their crossings. Returns the grid's id and "
+       "line ids by name.",
        SCHEMA({"type": "object", "properties": {
          "origin": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
          "x_spacings": {"type": "array", "items": {"type": "number"}},
@@ -916,7 +941,7 @@ const std::vector<CommandDef>& commands() {
                                                   numberOr(a, "label_offset", 1500.0)));
          json lines = json::object();
          for (const ObjectId& id : grid.lines) lines[m.document().find(id)->name] = id;
-         return json{{"lines", lines}, {"labels", grid.labels}, {"dimensions", grid.dimensions}};
+         return json{{"grid", grid.grid}, {"lines", lines}, {"labels", grid.labels}, {"dimensions", grid.dimensions}};
        }},
       {"hide", "Hide objects (one undo step). Hidden objects are not drawn, snapped to or exported.",
        SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}}},
@@ -1903,6 +1928,106 @@ const std::vector<CommandDef>& commands() {
          spec.name = textOr(a, "name", "");
          const ObjectId id = must(m.createMember(spec));
          return memberInfoJson(must(m.memberInfo(id)));
+       }},
+      {"set_grid",
+       "Edit a grid (the group returned by create_grid as 'grid'; get_object shows its lines): 'x' and "
+       "'y' list the lines wanted, in order, each {id (to keep a line; leave out for a new one), name, "
+       "position (mm from the grid's origin) or spacing (from the line before)}; lines not listed are "
+       "taken away. Lines, labels and dimensions are made again; members pinned to its crossings "
+       "(place_members_on_grid) follow, keeping their heights. One undo step. Returns the grid.",
+       SCHEMA({"type": "object", "properties": {"grid": {"type": "string"}, "x": {"type": "array"},
+               "y": {"type": "array"}, "label_offset": {"type": "number"}}, "required": ["grid"]}),
+       [](doc::Modeler& m, const json& a) {
+         const ObjectId id = text(a, "grid");
+         const doc::GridSpec* current = m.gridSpec(id);
+         if (!current) throw ApiError("'" + id + "' is not a grid");
+         doc::GridSpec spec = *current;
+         auto axes = [&](const char* key, std::vector<doc::GridAxis>& out) {
+           if (!a.contains(key)) return;
+           const json& list = a.at(key);
+           if (!list.is_array()) throw ApiError(std::string("'") + key + "' must be a list of lines");
+           out.clear();
+           double previous = 0.0;
+           for (std::size_t i = 0; i < list.size(); ++i) {
+             const json& l = list[i];
+             doc::GridAxis axis;
+             axis.id = textOr(l, "id", "");
+             if (axis.id.empty()) {
+               axis.id = "a" + std::to_string(spec.nextId++);
+             } else if (!current->find(axis.id)) {
+               throw ApiError("no grid line with id '" + axis.id + "'");
+             }
+             const doc::GridAxis* was = current->find(axis.id);
+             axis.name = textOr(l, "name", was ? was->name : "");
+             if (l.contains("position")) {
+               axis.offset = number(l, "position");
+             } else if (l.contains("spacing")) {
+               if (i == 0) throw ApiError("the first line needs a 'position'");
+               axis.offset = previous + number(l, "spacing");
+             } else if (was) {
+               axis.offset = was->offset;
+             } else {
+               throw ApiError("a new line needs a 'position' or 'spacing'");
+             }
+             previous = axis.offset;
+             out.push_back(axis);
+           }
+         };
+         axes("x", spec.x);
+         axes("y", spec.y);
+         spec.labelOffset = numberOr(a, "label_offset", spec.labelOffset);
+         must(m.setGrid(id, spec));
+         return json{{"grid", id}, {"lines", gridJson(*m.gridSpec(id))}};
+       }},
+      {"place_members_on_grid",
+       "Columns and beams on a grid's crossings, pinned to them (when the grid is edited or moved they "
+       "follow; heights kept). 'columns', 'x_beams' (on the x lines, running along the grid's Y) and "
+       "'y_beams' each take a member like create_member's {section, anchor, roll, role, material_class} "
+       "(role defaults: column, beam; beams default to anchor up=top). 'x' / 'y' limit to these lines "
+       "(names or ids; default all). Columns stand from 'base' (mm above the grid, default 0) up "
+       "'height' (default 3000); beams lie at base + height. What is already pinned the same way is "
+       "skipped. One undo step; returns the new ids.",
+       SCHEMA({"type": "object", "properties": {"grid": {"type": "string"}, "columns": {"type": "object"},
+               "x_beams": {"type": "object"}, "y_beams": {"type": "object"}, "x": {"type": "array"},
+               "y": {"type": "array"}, "base": {"type": "number"}, "height": {"type": "number"}},
+               "required": ["grid"]}),
+       [](doc::Modeler& m, const json& a) {
+         const ObjectId id = text(a, "grid");
+         const doc::GridSpec* spec = m.gridSpec(id);
+         if (!spec) throw ApiError("'" + id + "' is not a grid");
+         doc::Modeler::GridMemberOptions options;
+         auto lines = [&](const char* key, const std::vector<doc::GridAxis>& all, std::vector<std::string>& out) {
+           if (!a.contains(key)) return;
+           for (const json& v : a.at(key)) {
+             const std::string name = v.get<std::string>();
+             const auto it = std::find_if(all.begin(), all.end(),
+                                          [&](const doc::GridAxis& g) { return g.id == name || g.name == name; });
+             if (it == all.end()) throw ApiError("no grid line '" + name + "' in '" + key + "'");
+             out.push_back(it->id);
+           }
+         };
+         lines("x", spec->x, options.x);
+         lines("y", spec->y, options.y);
+         options.base = numberOr(a, "base", 0.0);
+         options.height = numberOr(a, "height", 3000.0);
+         auto member = [&](const char* key, const std::string& role, int anchorUp) -> std::optional<doc::Modeler::MemberSpec> {
+           if (!a.contains(key)) return std::nullopt;
+           const json& v = a.at(key);
+           doc::Modeler::MemberSpec s;
+           s.section = sectionFrom(arg(v, "section"));
+           s.anchor.up = anchorUp;
+           if (v.contains("anchor")) s.anchor = anchorFrom(v.at("anchor"));
+           s.roll = numberOr(v, "roll", 0.0) * M_PI / 180.0;
+           s.role = textOr(v, "role", role);
+           const geom::CatalogSection* entry = s.section.catalog.empty() ? nullptr : geom::findSection(s.section.catalog);
+           s.materialClass = textOr(v, "material_class", entry ? entry->material : "");
+           return s;
+         };
+         options.columns = member("columns", "column", 0);
+         options.xBeams = member("x_beams", "beam", 1);
+         options.yBeams = member("y_beams", "beam", 1);
+         const auto made = must(m.placeMembersOnGrid(id, options));
+         return json{{"columns", made.columns}, {"beams", made.beams}, {"skipped", made.skipped}};
        }},
       {"member_info",
        "What can be edited of a member now: section (current name, catalog id or own dimensions, and the "

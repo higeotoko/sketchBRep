@@ -367,7 +367,7 @@ TEST(CommandApi, StructuralGridIsOneUndoStep) {
   // "Delete all guides" keeps the grid.
   a.ok("create_guide", {{"point", {0, 0, 0}}, {"direction", {1, 1, 0}}});
   a.ok("clear_guides");
-  EXPECT_EQ(a.modeler.document().objects().size(), 19u);
+  EXPECT_EQ(a.modeler.document().objects().size(), 20u);  // 19 parts and their grid (group)
 
   a.ok("undo");  // the guide comes back
   a.ok("undo");  // and its creation

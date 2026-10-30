@@ -89,6 +89,12 @@ class ChangeSet {
     }
     return nullptr;
   }
+  bool erased(const ObjectId& id) const {
+    for (const ObjectDelta& d : removed_) {
+      if (d.id == id) return true;
+    }
+    return false;
+  }
   void add(const Object& object) {
     added_.push_back(ObjectDelta{object.id, std::nullopt, object, std::nullopt});
   }
@@ -481,84 +487,438 @@ Status Modeler::clearGuides() {
   return remove(guides);
 }
 
-Result<Modeler::GridLines> Modeler::createGridLines(const gp_Pnt& origin, const std::vector<double>& xSpacings,
-                                                    const std::vector<double>& ySpacings, double labelOffset) {
-  for (double s : xSpacings) {
-    if (!(s > tolerance::kMinDimension)) return Result<GridLines>::failure("Grid spacings must be positive");
-  }
-  for (double s : ySpacings) {
-    if (!(s > tolerance::kMinDimension)) return Result<GridLines>::failure("Grid spacings must be positive");
-  }
-  if (!(labelOffset > 0)) return Result<GridLines>::failure("Label offset must be positive");
-  // Positions of the lines along each axis (a single line when no spacing).
-  auto positions = [](double start, const std::vector<double>& spacings) {
-    std::vector<double> p{start};
-    for (double s : spacings) p.push_back(p.back() + s);
-    return p;
-  };
-  const std::vector<double> xs = positions(origin.X(), xSpacings);
-  const std::vector<double> ys = positions(origin.Y(), ySpacings);
-  const double z = origin.Z();
-  const double dimOffset = labelOffset / 2;
+namespace {
 
-  GridLines grid;
-  history_.beginGroup("Grid Lines");
-  auto fail = [&](const std::string& message) {
-    history_.abortGroup();
-    return Result<GridLines>::failure(message);
-  };
-  auto addText = [&](const gp_Pnt& at, const std::string& text) -> Status {
+std::string attributeOf(const Object& o, const std::string& key) {
+  const auto it = o.attributes.find(key);
+  return it == o.attributes.end() ? std::string() : it->second;
+}
+
+const GridSpec* gridOf(const Object* o) {
+  if (!o) return nullptr;
+  const auto* node = std::get_if<GroupNode>(&o->recipe.base);
+  return node && node->grid ? &*node->grid : nullptr;
+}
+
+// What a grid's group holds, made from its description (group
+// coordinates): each part keyed by "grid_part" and "grid_axis".
+std::vector<Object> gridParts(const GridSpec& spec) {
+  std::vector<Object> parts;
+  auto part = [&](const std::string& kind, const std::string& key, const std::string& name, BaseFeature base) {
     Object o;
-    o.name = "Grid " + text;
+    o.name = name;
     o.layer = "Grid";
-    o.recipe.base = TextNote{at, std::nullopt, text};
-    auto id = addObject(std::move(o), "Grid Lines");
-    if (!id) return Status::failure(id.error());
-    grid.labels.push_back(*id);
-    return Status::success();
+    o.attributes["grid_part"] = kind;
+    o.attributes["grid_axis"] = key;
+    o.recipe.base = std::move(base);
+    parts.push_back(std::move(o));
   };
-  for (std::size_t i = 0; i < xs.size(); ++i) {
-    const std::string name = "X" + std::to_string(i + 1);
-    auto id = createGuide(gp_Pnt(xs[i], ys.front(), z), gp::DY(), name, "Grid");
-    if (!id) return fail(id.error());
-    grid.lines.push_back(*id);
-  }
-  for (std::size_t i = 0; i < ys.size(); ++i) {
-    const std::string name = "Y" + std::to_string(i + 1);
-    auto id = createGuide(gp_Pnt(xs.front(), ys[i], z), gp::DX(), name, "Grid");
-    if (!id) return fail(id.error());
-    grid.lines.push_back(*id);
-  }
-  for (std::size_t i = 0; i < xs.size(); ++i) {
-    const Status s = addText(gp_Pnt(xs[i], ys.front() - labelOffset, z), "X" + std::to_string(i + 1));
-    if (!s) return fail(s.message());
-  }
-  for (std::size_t i = 0; i < ys.size(); ++i) {
-    const Status s = addText(gp_Pnt(xs.front() - labelOffset, ys[i], z), "Y" + std::to_string(i + 1));
-    if (!s) return fail(s.message());
-  }
-  auto addDimension = [&](const gp_Pnt& from, const gp_Pnt& to, const gp_Vec& offset) -> Status {
-    Object o;
-    o.name = uniqueName("Grid Dimension");
-    o.layer = "Grid";
-    o.recipe.base = LinearDimension{from, to, offset, {}};
-    auto id = addObject(std::move(o), "Grid Lines");
-    if (!id) return Status::failure(id.error());
-    grid.dimensions.push_back(*id);
-    return Status::success();
+  auto ordered = [](std::vector<GridAxis> axes) {
+    std::sort(axes.begin(), axes.end(), [](const GridAxis& a, const GridAxis& b) { return a.offset < b.offset; });
+    return axes;
   };
+  const std::vector<GridAxis> xs = ordered(spec.x), ys = ordered(spec.y);
+  const double x0 = xs.empty() ? 0.0 : xs.front().offset;
+  const double y0 = ys.empty() ? 0.0 : ys.front().offset;
+  for (const GridAxis& a : xs) part("line", a.id, a.name, GuideLine{gp_Pnt(a.offset, y0, 0), gp::DY()});
+  for (const GridAxis& a : ys) part("line", a.id, a.name, GuideLine{gp_Pnt(x0, a.offset, 0), gp::DX()});
+  for (const GridAxis& a : xs) {
+    part("label", a.id, "Grid " + a.name, TextNote{gp_Pnt(a.offset, y0 - spec.labelOffset, 0), std::nullopt, a.name});
+  }
+  for (const GridAxis& a : ys) {
+    part("label", a.id, "Grid " + a.name, TextNote{gp_Pnt(x0 - spec.labelOffset, a.offset, 0), std::nullopt, a.name});
+  }
+  const double dimOffset = spec.labelOffset / 2;
   for (std::size_t i = 0; i + 1 < xs.size(); ++i) {
-    const Status s = addDimension(gp_Pnt(xs[i], ys.front(), z), gp_Pnt(xs[i + 1], ys.front(), z),
-                                  gp_Vec(0, -dimOffset, 0));
-    if (!s) return fail(s.message());
+    part("dimension", xs[i].id + ":" + xs[i + 1].id, "Grid Dimension",
+         LinearDimension{gp_Pnt(xs[i].offset, y0, 0), gp_Pnt(xs[i + 1].offset, y0, 0), gp_Vec(0, -dimOffset, 0), {}});
   }
   for (std::size_t i = 0; i + 1 < ys.size(); ++i) {
-    const Status s = addDimension(gp_Pnt(xs.front(), ys[i], z), gp_Pnt(xs.front(), ys[i + 1], z),
-                                  gp_Vec(-dimOffset, 0, 0));
-    if (!s) return fail(s.message());
+    part("dimension", ys[i].id + ":" + ys[i + 1].id, "Grid Dimension",
+         LinearDimension{gp_Pnt(x0, ys[i].offset, 0), gp_Pnt(x0, ys[i + 1].offset, 0), gp_Vec(-dimOffset, 0, 0), {}});
   }
+  return parts;
+}
+
+Status checkGrid(const GridSpec& spec) {
+  if (spec.x.empty() || spec.y.empty()) return Status::failure("A grid needs at least one line in each direction");
+  if (!(spec.labelOffset > 0)) return Status::failure("Label offset must be positive");
+  std::set<std::string> ids, names;
+  for (const auto* list : {&spec.x, &spec.y}) {
+    std::vector<double> at;
+    for (const GridAxis& a : *list) {
+      if (a.id.empty() || !ids.insert(a.id).second) return Status::failure("Grid line ids must be unique");
+      if (a.name.empty()) return Status::failure("Grid lines need names");
+      if (!names.insert(a.name).second) return Status::failure("Grid line name '" + a.name + "' is used twice");
+      if (!std::isfinite(a.offset)) return Status::failure("Grid line positions must be finite");
+      for (double o : at) {
+        if (std::abs(o - a.offset) < tolerance::kMinDimension) {
+          return Status::failure("Two grid lines at the same place ('" + a.name + "')");
+        }
+      }
+      at.push_back(a.offset);
+    }
+  }
+  return Status::success();
+}
+
+// The grid's group with `spec`, its parts made again in `changes`: a part
+// still wanted keeps its id (and whether it is shown), others are added or
+// erased. Parts erased already in `changes` stay erased.
+Status regrid(const Document& document, const Object& group, const GridSpec& spec, ChangeSet& changes,
+              const RegenContext& context) {
+  Object g = group;
+  std::get<GroupNode>(g.recipe.base).grid = spec;
+  changes.modify(g);
+  std::map<std::string, ObjectId> existing;
+  for (const ObjectId& id : document.children(group.id)) {
+    const Object* c = document.find(id);
+    const std::string kind = attributeOf(*c, "grid_part");
+    if (kind.empty()) continue;  // drawn into the group by hand: left alone
+    existing[kind + "/" + attributeOf(*c, "grid_axis")] = id;
+  }
+  for (Object& part : gridParts(spec)) {
+    const std::string key = part.attributes["grid_part"] + "/" + part.attributes["grid_axis"];
+    const auto it = existing.find(key);
+    if (it != existing.end()) {
+      const ObjectId id = it->second;
+      existing.erase(it);
+      if (changes.erased(id)) continue;
+      const Object* before = changes.pending(id);
+      if (!before) before = document.find(id);
+      Object o = *before;
+      o.name = part.name;
+      o.recipe = part.recipe;
+      o.transform = gp_Trsf();
+      if (const Status built = rebuild(o, context); !built) return built;
+      changes.modify(o);
+    } else {
+      part.id = generateObjectId();
+      part.parent = group.id;
+      if (const Status built = rebuild(part, context); !built) return built;
+      changes.add(part);
+    }
+  }
+  for (const auto& [key, id] : existing) changes.erase(id);
+  return Status::success();
+}
+
+// Lines of grids moved or erased in `changes` (inside the group, by hand):
+// the grid takes the line's new place, or loses the line (erasing a label
+// takes its line too), and is made again.
+Status gridUp(const Document& document, ChangeSet& changes, const RegenContext& context) {
+  for (const Object& g : document.objects()) {
+    const GridSpec* spec = gridOf(&g);
+    if (!spec || changes.erased(g.id)) continue;
+    const Object* now = changes.pending(g.id);
+    GridSpec next = *gridOf(now ? now : &g);
+    bool changed = false;
+    for (const ObjectId& id : document.children(g.id)) {
+      const Object* c = document.find(id);
+      const std::string kind = attributeOf(*c, "grid_part");
+      if (kind != "line" && kind != "label") continue;
+      const std::string axis = attributeOf(*c, "grid_axis");
+      const bool alongY = std::any_of(next.x.begin(), next.x.end(), [&](const GridAxis& a) { return a.id == axis; });
+      std::vector<GridAxis>& list = alongY ? next.x : next.y;
+      const auto found = std::find_if(list.begin(), list.end(), [&](const GridAxis& a) { return a.id == axis; });
+      if (found == list.end()) continue;
+      if (changes.erased(id)) {
+        list.erase(found);
+        changed = true;
+        continue;
+      }
+      const Object* moved = changes.pending(id);
+      if (!moved || sameTrsf(moved->transform, gp_Trsf())) continue;
+      gp_Pnt at;
+      if (const auto* line = std::get_if<GuideLine>(&moved->recipe.base)) at = line->point;
+      else if (const auto* note = std::get_if<TextNote>(&moved->recipe.base)) at = note->position;
+      else continue;
+      at.Transform(moved->transform);
+      found->offset = alongY ? at.X() : at.Y();
+      changed = true;
+    }
+    if (!changed) continue;
+    if (next.x.empty() || next.y.empty()) {
+      return Status::failure("A grid needs at least one line in each direction (erase the whole grid instead)");
+    }
+    if (const Status valid = checkGrid(next); !valid) return valid;
+    if (const Status made = regrid(document, now ? *now : g, next, changes, context); !made) return made;
+  }
+  return Status::success();
+}
+
+// Where a crossing of a grid is (world), as `grid` and `spec` say.
+std::optional<gp_Pnt> crossingOf(const GridSpec& spec, const gp_Trsf& gridWorld, const std::string& x,
+                                 const std::string& y) {
+  const GridAxis* a = nullptr;
+  const GridAxis* b = nullptr;
+  for (const GridAxis& g : spec.x) {
+    if (g.id == x) a = &g;
+  }
+  for (const GridAxis& g : spec.y) {
+    if (g.id == y) b = &g;
+  }
+  if (!a || !b) return std::nullopt;
+  return gp_Pnt(a->offset, b->offset, 0).Transformed(gridWorld);
+}
+
+// Members pinned to grid crossings (docs/43) after `changes`: each end
+// moves by as much as its crossing did. A member moved itself in the same
+// step keeps where it was put.
+void pinUp(const Document& document, ChangeSet& changes, const RegenContext& context) {
+  std::vector<ObjectId> pinned;
+  for (const Object& o : document.objects()) {
+    if (o.gridPin && !changes.erased(o.id)) pinned.push_back(o.id);
+  }
+  if (pinned.empty()) return;
+  auto current = [&](const ObjectId& id) -> const Object* {
+    if (changes.erased(id)) return nullptr;
+    if (const Object* p = changes.pending(id)) return p;
+    return document.find(id);
+  };
+  std::function<gp_Trsf(const ObjectId&)> after = [&](const ObjectId& id) -> gp_Trsf {
+    const Object* o = current(id);
+    if (!o) return gp_Trsf();
+    return o->parent.empty() ? o->transform : after(o->parent) * o->transform;
+  };
+  for (const ObjectId& id : pinned) {
+    const Object* was = document.find(id);
+    const GridPin& pin = *was->gridPin;
+    const Object* gridBefore = document.find(pin.grid);
+    const Object* gridAfter = current(pin.grid);
+    const GridSpec* specBefore = gridOf(gridBefore);
+    const GridSpec* specAfter = gridOf(gridAfter);
+    if (!specBefore || !specAfter || was->locked) continue;
+    if (!sameTrsf(after(id), document.worldTransform(*was))) continue;  // moved itself
+    auto delta = [&](const std::string& x, const std::string& y) {
+      const auto from = crossingOf(*specBefore, document.worldTransform(*gridBefore), x, y);
+      const auto to = crossingOf(*specAfter, after(pin.grid), x, y);
+      return from && to ? gp_Vec(*from, *to) : gp_Vec(0, 0, 0);
+    };
+    const gp_Vec dStart = delta(pin.startX, pin.startY), dEnd = delta(pin.endX, pin.endY);
+    if (dStart.Magnitude() < 1e-9 && dEnd.Magnitude() < 1e-9) continue;
+    Object o = *current(id);
+    auto* member = std::get_if<LinearMember>(&o.recipe.base);
+    if (!member) continue;
+    const gp_Trsf toLocal = after(id).Inverted();
+    member->start.Translate(dStart.Transformed(toLocal));
+    member->end.Translate(dEnd.Transformed(toLocal));
+    if (!rebuild(o, context)) continue;  // e.g. both ends on one point: it stays as it was
+    changes.modify(o);
+  }
+}
+
+// Everything that goes with moves and grid changes in `changes`: grids
+// take moved lines, pinned members follow their crossings, objects
+// follow their hosts (docs/42).
+Status settleMoves(const Document& document, ChangeSet& changes, const RegenContext& context) {
+  if (const Status grids = gridUp(document, changes, context); !grids) return grids;
+  pinUp(document, changes, context);
+  followUp(document, changes);
+  return Status::success();
+}
+
+}  // namespace
+
+Result<Modeler::GridLines> Modeler::createGridLines(const gp_Pnt& origin, const std::vector<double>& xSpacings,
+                                                    const std::vector<double>& ySpacings, double labelOffset) {
+  for (const auto* list : {&xSpacings, &ySpacings}) {
+    for (double s : *list) {
+      if (!(s > tolerance::kMinDimension)) return Result<GridLines>::failure("Grid spacings must be positive");
+    }
+  }
+  GridSpec spec;
+  spec.labelOffset = labelOffset;
+  auto axes = [&](const std::string& prefix, const std::vector<double>& spacings) {
+    std::vector<GridAxis> out;
+    double at = 0.0;
+    for (std::size_t i = 0; i <= spacings.size(); ++i) {
+      if (i > 0) at += spacings[i - 1];
+      out.push_back({"a" + std::to_string(spec.nextId++), prefix + std::to_string(i + 1), at});
+    }
+    return out;
+  };
+  spec.x = axes("X", xSpacings);
+  spec.y = axes("Y", ySpacings);
+  if (const Status valid = checkGrid(spec); !valid) return Result<GridLines>::failure(valid.message());
+
+  Object group;
+  group.id = generateObjectId();
+  group.name = uniqueName("Grid");
+  group.layer = "Grid";
+  group.recipe.base = GroupNode{};
+  gp_Trsf place;
+  place.SetTranslation(gp_Vec(origin.XYZ()));
+  // Drawn while a group is open: into that group, as other new geometry.
+  if (!activeGroup_.empty()) {
+    if (const Object* open = document_.find(activeGroup_)) {
+      group.parent = activeGroup_;
+      place = document_.worldTransform(*open).Inverted() * place;
+    }
+  }
+  group.transform = place;
+  ChangeSet changes(document_);
+  changes.add(group);
+  // Parts made against a document that does not hold the group yet: put
+  // the group in first, then make the parts.
+  history_.beginGroup("Grid Lines");
+  history_.execute(changes.build("Grid Lines"));
+  ChangeSet parts(document_);
+  if (const Status made = regrid(document_, *document_.find(group.id), spec, parts, document_.regenContext()); !made) {
+    history_.abortGroup();
+    return Result<GridLines>::failure(made.message());
+  }
+  history_.execute(parts.build("Grid Lines"));
   history_.endGroup();
-  return grid;
+
+  GridLines out;
+  out.grid = group.id;
+  std::map<std::string, ObjectId> byKey;
+  for (const ObjectId& id : document_.children(group.id)) {
+    const Object* c = document_.find(id);
+    byKey[attributeOf(*c, "grid_part") + "/" + attributeOf(*c, "grid_axis")] = id;
+    if (attributeOf(*c, "grid_part") == "dimension") out.dimensions.push_back(id);
+  }
+  for (const auto* list : {&spec.x, &spec.y}) {
+    for (const GridAxis& a : *list) {
+      out.lines.push_back(byKey["line/" + a.id]);
+      out.labels.push_back(byKey["label/" + a.id]);
+    }
+  }
+  return out;
+}
+
+const GridSpec* Modeler::gridSpec(const ObjectId& grid) const { return gridOf(document_.find(grid)); }
+
+Status Modeler::setGrid(const ObjectId& grid, const GridSpec& spec) {
+  const Object* g = document_.find(grid);
+  if (!gridOf(g)) return Status::failure("Not a grid");
+  if (g->locked) return Status::failure("'" + g->name + "' is locked");
+  if (const Status valid = checkGrid(spec); !valid) return valid;
+  GridSpec next = spec;
+  // New ids never reuse old ones (pins of erased lines stay broken).
+  for (const auto* list : {&next.x, &next.y}) {
+    for (const GridAxis& a : *list) {
+      if (a.id.size() > 1 && a.id[0] == 'a') {
+        try {
+          next.nextId = std::max(next.nextId, std::stoi(a.id.substr(1)) + 1);
+        } catch (...) {
+        }
+      }
+    }
+  }
+  next.nextId = std::max(next.nextId, gridOf(g)->nextId);
+  if (next == *gridOf(g)) return Status::success();
+  ChangeSet changes(document_);
+  if (const Status made = regrid(document_, *g, next, changes, document_.regenContext()); !made) return made;
+  if (const Status settled = settleMoves(document_, changes, document_.regenContext()); !settled) return settled;
+  history_.execute(changes.build("Edit Grid"));
+  return Status::success();
+}
+
+Result<Modeler::GridMembers> Modeler::placeMembersOnGrid(const ObjectId& grid, const GridMemberOptions& options) {
+  using R = Result<GridMembers>;
+  const Object* g = document_.find(grid);
+  const GridSpec* spec = gridOf(g);
+  if (!spec) return R::failure("Not a grid");
+  if (!options.columns && !options.xBeams && !options.yBeams) return R::failure("Nothing to place");
+  if (!(options.height > tolerance::kMinDimension) || !std::isfinite(options.base)) {
+    return R::failure("The height must be positive");
+  }
+  auto pick = [](const std::vector<GridAxis>& all, const std::vector<std::string>& wanted) -> Result<std::vector<GridAxis>> {
+    std::vector<GridAxis> out;
+    for (const GridAxis& a : all) {
+      if (wanted.empty() || std::find(wanted.begin(), wanted.end(), a.id) != wanted.end()) out.push_back(a);
+    }
+    for (const std::string& w : wanted) {
+      if (std::none_of(all.begin(), all.end(), [&](const GridAxis& a) { return a.id == w; })) {
+        return Result<std::vector<GridAxis>>::failure("No grid line with id '" + w + "'");
+      }
+    }
+    std::sort(out.begin(), out.end(), [](const GridAxis& a, const GridAxis& b) { return a.offset < b.offset; });
+    return out;
+  };
+  auto xs = pick(spec->x, options.x);
+  if (!xs) return R::failure(xs.error());
+  auto ys = pick(spec->y, options.y);
+  if (!ys) return R::failure(ys.error());
+  // Members go next to the grid (same parent), in its parent's coordinates.
+  const gp_Trsf place = g->transform;
+  const gp_Dir up = gp::DZ().Transformed(place);
+  auto at = [&](const GridAxis& x, const GridAxis& y, double z) { return gp_Pnt(x.offset, y.offset, z).Transformed(place); };
+  // Pins already there: the same thing is not placed twice.
+  std::set<std::string> taken;
+  auto key = [](const std::string& a, const std::string& b, const std::string& c, const std::string& d) {
+    return a + "/" + b + "-" + c + "/" + d;
+  };
+  for (const Object& o : document_.objects()) {
+    if (o.gridPin && o.gridPin->grid == grid) {
+      taken.insert(key(o.gridPin->startX, o.gridPin->startY, o.gridPin->endX, o.gridPin->endY));
+    }
+  }
+  ChangeSet changes(document_);
+  GridMembers out;
+  const RegenContext context = document_.regenContext();
+  auto add = [&](const MemberSpec& base, const gp_Pnt& from, const gp_Pnt& to, const GridPin& pin,
+                 std::vector<ObjectId>& list) -> Status {
+    const std::string k = key(pin.startX, pin.startY, pin.endX, pin.endY);
+    if (!taken.insert(k).second) {
+      ++out.skipped;
+      return Status::success();
+    }
+    MemberSpec s = base;
+    s.start = from;
+    s.end = to;
+    s.up = up;
+    s.name.clear();
+    auto made = memberObject(s);
+    if (!made) return Status::failure(made.error());
+    Object o = *made;
+    o.id = generateObjectId();
+    o.parent = g->parent;
+    o.gridPin = pin;
+    // Names unique within this step too.
+    o.name += " " + std::to_string(out.columns.size() + out.beams.size() + 1);
+    if (const Status built = rebuild(o, context); !built) return built;
+    changes.add(o);
+    list.push_back(o.id);
+    return Status::success();
+  };
+  const double top = options.base + options.height;
+  if (options.columns) {
+    for (const GridAxis& x : *xs) {
+      for (const GridAxis& y : *ys) {
+        const Status s = add(*options.columns, at(x, y, options.base), at(x, y, top), GridPin{grid, x.id, y.id, x.id, y.id},
+                             out.columns);
+        if (!s) return R::failure(s.message());
+      }
+    }
+  }
+  if (options.xBeams) {
+    for (const GridAxis& x : *xs) {
+      for (std::size_t i = 0; i + 1 < ys->size(); ++i) {
+        const GridAxis& a = (*ys)[i];
+        const GridAxis& b = (*ys)[i + 1];
+        const Status s = add(*options.xBeams, at(x, a, top), at(x, b, top), GridPin{grid, x.id, a.id, x.id, b.id}, out.beams);
+        if (!s) return R::failure(s.message());
+      }
+    }
+  }
+  if (options.yBeams) {
+    for (const GridAxis& y : *ys) {
+      for (std::size_t i = 0; i + 1 < xs->size(); ++i) {
+        const GridAxis& a = (*xs)[i];
+        const GridAxis& b = (*xs)[i + 1];
+        const Status s = add(*options.yBeams, at(a, y, top), at(b, y, top), GridPin{grid, a.id, y.id, b.id, y.id}, out.beams);
+        if (!s) return R::failure(s.message());
+      }
+    }
+  }
+  if (out.columns.empty() && out.beams.empty()) {
+    return out.skipped ? R::failure("Every member asked for is there already") : R::failure("Nothing to place");
+  }
+  history_.execute(changes.build("Members on Grid"));
+  return out;
 }
 
 Status Modeler::setAnnotationText(const ObjectId& id, const std::string& text) {
@@ -4385,6 +4745,8 @@ Status Modeler::remove(const std::vector<ObjectId>& ids) {
     }
   }
   if (!any) return Status::failure("Nothing selected");
+  // Lines of a grid erased: the grid without them (docs/43).
+  if (const Status grids = gridUp(document_, changes, document_.regenContext()); !grids) return grids;
   history_.execute(changes.build("Delete"));
   return Status::success();
 }
@@ -4404,7 +4766,7 @@ Status Modeler::transform(const std::vector<ObjectId>& ids, const gp_Trsf& world
     o.transform = localDelta(document_.parentTransform(o), worldDelta) * o.transform;
     changes.modify(o);
   }
-  followUp(document_, changes);
+  if (const Status settled = settleMoves(document_, changes, document_.regenContext()); !settled) return settled;
   history_.beginGroup(commandName);
   history_.execute(changes.build(commandName));
   // Moved onto lines or faces already there: not stacked twice.
@@ -4842,7 +5204,7 @@ Status Modeler::align(const std::vector<ObjectId>& ids, int axis, int edge, std:
     o.transform = localDelta(document_.parentTransform(o), delta) * o.transform;
     changes.modify(o);
   }
-  followUp(document_, changes);
+  if (const Status settled = settleMoves(document_, changes, document_.regenContext()); !settled) return settled;
   history_.execute(changes.build("Align"));
   return Status::success();
 }
@@ -5041,8 +5403,8 @@ Result<Modeler::MemberInfo> Modeler::changeWallOrSlab(const ObjectId& id, const 
   return memberInfo(id);
 }
 
-Result<ObjectId> Modeler::createMember(const MemberSpec& spec) {
-  using R = Result<ObjectId>;
+Result<Object> Modeler::memberObject(const MemberSpec& spec) {
+  using R = Result<Object>;
   if (const Status valid = geom::validateSection(spec.section); !valid) return R::failure(valid.message());
   if (std::abs(spec.anchor.across) > 1 || std::abs(spec.anchor.up) > 1) return R::failure("Unknown section anchor");
   const gp_Vec along(spec.start, spec.end);
@@ -5059,7 +5421,13 @@ Result<ObjectId> Modeler::createMember(const MemberSpec& spec) {
   // Meaning in the same step (no attribute pass afterwards).
   if (!spec.role.empty()) o.attributes["kind"] = spec.role;
   if (!spec.materialClass.empty()) o.attributes["material_class"] = spec.materialClass;
-  return addObject(std::move(o), "Member");
+  return o;
+}
+
+Result<ObjectId> Modeler::createMember(const MemberSpec& spec) {
+  auto o = memberObject(spec);
+  if (!o) return Result<ObjectId>::failure(o.error());
+  return addObject(*o, "Member");
 }
 
 Result<Modeler::MemberInfo> Modeler::memberInfo(const ObjectId& id) const {
@@ -5645,7 +6013,7 @@ Status Modeler::setPosition(const ObjectId& id, const gp_Vec& translation) {
   o.transform.SetTranslationPart(translation);
   ChangeSet changes(document_);
   changes.modify(o);
-  followUp(document_, changes);
+  if (const Status settled = settleMoves(document_, changes, document_.regenContext()); !settled) return settled;
   history_.execute(changes.build("Set Position"));
   return Status::success();
 }
@@ -5705,16 +6073,29 @@ void Modeler::refollowCopies(const std::map<ObjectId, ObjectId>& copyOf, const s
   for (const ObjectId& root : created) {
     for (const ObjectId& id : document_.subtree(root)) {
       const Object* c = document_.find(id);
-      if (!c || !c->follow) continue;
+      if (!c || (!c->follow && !c->gridPin)) continue;
       Object o = *c;
-      if (const auto it = copyOf.find(o.follow->host); it != copyOf.end()) {
-        o.follow->host = it->second;
-      } else if (const Object* h = document_.find(o.follow->host)) {
-        o.follow->offset = document_.worldTransform(*h).Inverted() * document_.worldTransform(o);
-        o.follow->rebase = false;
-      } else {
-        o.follow->rebase = true;
+      // Pinned to a grid copied with it: to the copy. Copied alone: the
+      // same grid (docs/43).
+      bool touched = false;
+      if (o.gridPin) {
+        if (const auto it = copyOf.find(o.gridPin->grid); it != copyOf.end()) {
+          o.gridPin->grid = it->second;
+          touched = true;
+        }
       }
+      if (o.follow) {
+        touched = true;
+        if (const auto it = copyOf.find(o.follow->host); it != copyOf.end()) {
+          o.follow->host = it->second;
+        } else if (const Object* h = document_.find(o.follow->host)) {
+          o.follow->offset = document_.worldTransform(*h).Inverted() * document_.worldTransform(o);
+          o.follow->rebase = false;
+        } else {
+          o.follow->rebase = true;
+        }
+      }
+      if (!touched) continue;
       changes.modify(o);
       any = true;
     }

@@ -50,6 +50,16 @@ struct Follow {
   bool rebase = false;  // moved while the host was gone: offset taken again from the poses
 };
 
+// A member pinned to crossings of a grid (docs/43): its start at the
+// crossing of x line `startX` and y line `startY` (axis ids), its end at
+// `endX`/`endY` (a column: the same crossing). When the grid changes or
+// moves, each end moves by as much as its crossing did (heights and any
+// offset set by hand are kept). The grid or an axis gone: it stays put.
+struct GridPin {
+  ObjectId grid;
+  std::string startX, startY, endX, endY;
+};
+
 struct Object {
   ObjectId id;
   ObjectId parent;  // empty: top level; otherwise a Group object
@@ -70,6 +80,7 @@ struct Object {
   // people or agents and used to find objects. Geometry never depends on it.
   std::map<std::string, std::string> attributes;
   std::optional<Follow> follow;
+  std::optional<GridPin> gridPin;
 
   Recipe recipe;
   TopoDS_Shape shape;  // canonical shape in local coordinates (cached result of recipe)

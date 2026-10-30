@@ -309,6 +309,15 @@ json baseToJson(const BaseFeature& base) {
               if (!g.editingOverrides.empty()) j["editing"]["overrides"] = overridesToJson(g.editingOverrides);
               if (g.editingMirrored) j["editing"]["mirrored"] = true;
             }
+            if (g.grid) {
+              auto axes = [](const std::vector<GridAxis>& list) {
+                json out = json::array();
+                for (const GridAxis& a : list) out.push_back({{"id", a.id}, {"name", a.name}, {"offset", a.offset}});
+                return out;
+              };
+              j["grid"] = {{"x", axes(g.grid->x)}, {"y", axes(g.grid->y)}, {"labelOffset", g.grid->labelOffset},
+                           {"nextId", g.grid->nextId}};
+            }
             return j;
           },
           [](const LinearMember& m) {
@@ -520,6 +529,22 @@ BaseFeature baseFrom(const json& j) {
       g.editingInstanceName = e.value("instanceName", std::string());
       if (e.contains("overrides")) g.editingOverrides = overridesFrom(e.at("overrides"));
       g.editingMirrored = e.value("mirrored", false);
+    }
+    if (j.contains("grid")) {
+      const json& gj = j.at("grid");
+      GridSpec spec;
+      auto axes = [](const json& list) {
+        std::vector<GridAxis> out;
+        for (const json& a : list) {
+          out.push_back({a.at("id").get<std::string>(), a.value("name", std::string()), a.at("offset").get<double>()});
+        }
+        return out;
+      };
+      spec.x = axes(gj.at("x"));
+      spec.y = axes(gj.at("y"));
+      spec.labelOffset = gj.value("labelOffset", 1500.0);
+      spec.nextId = gj.value("nextId", 1);
+      g.grid = spec;
     }
     return g;
   }
@@ -865,6 +890,11 @@ json objectToJson(const Object& o, const Color& shown, ShapeTable& shapes) {
     j["follow"] = {{"host", o.follow->host}, {"offset", toJson(o.follow->offset)}};
     if (o.follow->rebase) j["follow"]["rebase"] = true;
   }
+  if (o.gridPin) {
+    j["gridPin"] = {{"grid", o.gridPin->grid},
+                    {"start", {o.gridPin->startX, o.gridPin->startY}},
+                    {"end", {o.gridPin->endX, o.gridPin->endY}}};
+  }
   if (!o.shape.IsNull()) j["geometry"] = shapes.reference(o.shape);
   return j;
 }
@@ -908,6 +938,12 @@ Object objectFrom(const json& j, const RegenContext& context, std::vector<std::s
   if (j.contains("follow")) {
     const json& f = j.at("follow");
     o.follow = Follow{f.at("host").get<std::string>(), trsfFrom(f.at("offset")), f.value("rebase", false)};
+  }
+  if (j.contains("gridPin")) {
+    const json& p = j.at("gridPin");
+    o.gridPin = GridPin{p.at("grid").get<std::string>(), p.at("start").at(0).get<std::string>(),
+                        p.at("start").at(1).get<std::string>(), p.at("end").at(0).get<std::string>(),
+                        p.at("end").at(1).get<std::string>()};
   }
   o.recipe = recipeFrom(j.at("recipe"));
 

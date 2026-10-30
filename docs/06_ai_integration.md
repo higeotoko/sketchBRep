@@ -39,7 +39,7 @@ ChatGPTの経路は `ChatGPT → 利用者のHTTPSトンネル → McpHttpServer
 - 大きいモデルを読む: `query_objects`（種類・タグ・名前・親・グループ配下・部品定義・可視・範囲で絞り込み、`fields` で返す項目を指定、`limit` と `next_cursor` でページ分け）, `aggregate`（件数・体積・面積の合計、`group_by` で種類・タグ・定義ごと）, `get_changes`（`sequence` 以降に変わった／消えた ID。`full: true` なら読み直し）。体積・面積・外接箱は形状ごとにキャッシュし、同じ部品の配置では 1 回だけ計算
 - 作る: `create_line`, `face_from_loop`（線・円弧で囲んだ輪郭を面に）, `create_rectangle`, `create_circle`, `create_regular_polygon`（正多角形。半径・辺の数を後から変更可）, `create_arc`（正確な円弧・弓形の面）, `create_polygon`, `create_curve`, `create_box`
 - 注記: `create_dimension`, `create_text`, `set_text`（寸法・部屋名や面積のラベル。`get_object` で文字も読める）
-- 補助: `create_guide`（点と方向で無限長のガイド線。作図の吸着先、出力対象外）, `clear_guides`（通り芯は残す）, `create_grid`（通り芯 X1.. / Y1.. を符号・スパン寸法つきで一括作成。Undo 1 回。結果の `lines` で「X3」のように名前から ID を引ける）
+- 補助: `create_guide`（点と方向で無限長のガイド線。作図の吸着先、出力対象外）, `clear_guides`（通り芯は残す）, `create_grid`（通り芯 X1.. / Y1.. を符号・スパン寸法つきで一括作成。Undo 1 回。結果の `grid` が通り芯のまとまり（グループ）、`lines` で「X3」のように名前から ID を引ける）, `set_grid`（通り芯の名前・位置・間隔・本数を後から変更。符号と寸法も作り直し、乗っている柱・梁も動く）, `place_members_on_grid`（交点に柱、通りに梁をまとめて配置し、通り芯に固定する。docs/43）
 - 編集: `split_face`（面を線で分割）, `extrude`, `push_pull`（面は番号か `{"normal": [0,0,1]}`）, `set_parameter`, `offset`, `move`, `rotate`, `scale`（等倍・パラメトリック）, `copy_array`（直線・円形）, `boolean`, `revolve`, `loft`, `sweep`
 - 構造・属性: `group`, `ungroup`, `make_component`, `set_definition_parameter`, `rename`, `set_tag`, `paint`, `delete`
 - コンポーネントの配置: `placement_parameters`（読み取り）, `set_placement_parameter`, `clear_placement_parameters`, `make_unique`, `mirror_placement {ids, axis}`, `set_component_axes {id, origin, x_axis?}`（docs/14_components.md）

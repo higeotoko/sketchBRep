@@ -28,6 +28,15 @@
 #include "sbr/geom/Validation.h"
 
 namespace sbr::doc {
+
+const GridAxis* GridSpec::find(const std::string& id) const {
+  for (const auto* list : {&x, &y}) {
+    for (const GridAxis& a : *list) {
+      if (a.id == id) return &a;
+    }
+  }
+  return nullptr;
+}
 namespace {
 
 template <class... Ts>

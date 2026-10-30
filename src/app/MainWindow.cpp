@@ -60,6 +60,8 @@
 #include <QDoubleSpinBox>
 #include <QSpinBox>
 #include <QPlainTextEdit>
+#include <QTableWidget>
+#include <QHeaderView>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
@@ -1746,8 +1748,174 @@ bool MainWindow::createGrid(const QString& xSpacings, const QString& ySpacings) 
     reportError(QString::fromStdString(grid.error()));
     return false;
   }
-  setStatus(tr("通り芯を作成しました（X %1 本・Y %2 本）").arg(xs->size() + 1).arg(ys->size() + 1));
+  setSelection({grid->grid});
+  setStatus(tr("通り芯を作成しました（X %1 本・Y %2 本）。右クリックで間隔の編集、柱・梁の配置ができます")
+                .arg(xs->size() + 1)
+                .arg(ys->size() + 1));
   return true;
+}
+
+std::optional<doc::ObjectId> MainWindow::selectedGrid() const {
+  if (selection_.size() != 1) return std::nullopt;
+  const doc::Object* o = modeler_.document().find(selection_.front());
+  for (int up = 0; o && up < 2; ++up, o = o->parent.empty() ? nullptr : modeler_.document().find(o->parent)) {
+    if (modeler_.gridSpec(o->id)) return o->id;
+  }
+  return std::nullopt;
+}
+
+void MainWindow::showGridEditDialog(const doc::ObjectId& gridId) {
+  const doc::GridSpec* current = modeler_.gridSpec(gridId);
+  if (!current) return;
+  QDialog dialog(this);
+  dialog.setObjectName(QStringLiteral("gridEditDialog"));
+  dialog.setWindowTitle(tr("通り芯の編集"));
+  auto* layout = new QVBoxLayout(&dialog);
+  // One table per direction: name, and the spacing from the line before
+  // (the first row: its place from the grid's origin). Ids ride on the
+  // names, so renamed or moved lines stay the same lines (pins kept).
+  auto table = [&](const QString& title, const QString& objectName, std::vector<doc::GridAxis> axes) {
+    std::sort(axes.begin(), axes.end(), [](const doc::GridAxis& a, const doc::GridAxis& b) { return a.offset < b.offset; });
+    layout->addWidget(new QLabel(title, &dialog));
+    auto* t = new QTableWidget(static_cast<int>(axes.size()), 2, &dialog);
+    t->setObjectName(objectName);
+    t->setHorizontalHeaderLabels({tr("名前"), tr("間隔（前の通りから）")});
+    t->horizontalHeader()->setStretchLastSection(true);
+    t->verticalHeader()->hide();
+    for (std::size_t i = 0; i < axes.size(); ++i) {
+      auto* name = new QTableWidgetItem(QString::fromStdString(axes[i].name));
+      name->setData(Qt::UserRole, QString::fromStdString(axes[i].id));
+      t->setItem(static_cast<int>(i), 0, name);
+      const double value = i == 0 ? axes[i].offset : axes[i].offset - axes[i - 1].offset;
+      t->setItem(static_cast<int>(i), 1, new QTableWidgetItem(QString::fromStdString(units::formatLength(value, 0))));
+    }
+    auto* buttons = new QHBoxLayout;
+    auto* add = new QPushButton(tr("通りを追加"), &dialog);
+    add->setObjectName(objectName + QStringLiteral("Add"));
+    auto* remove = new QPushButton(tr("選んだ通りを削除"), &dialog);
+    remove->setObjectName(objectName + QStringLiteral("Remove"));
+    connect(add, &QPushButton::clicked, t, [t] {
+      const int row = t->rowCount();
+      t->insertRow(row);
+      // A name not taken yet, after the last one's pattern (X3 -> X4).
+      QString last = row > 0 && t->item(row - 1, 0) ? t->item(row - 1, 0)->text() : QStringLiteral("X0");
+      QRegularExpressionMatch m = QRegularExpression(QStringLiteral("^(.*?)(\\d+)$")).match(last);
+      const QString name = m.hasMatch() ? m.captured(1) + QString::number(m.captured(2).toInt() + 1) : last + QStringLiteral("'");
+      t->setItem(row, 0, new QTableWidgetItem(name));
+      const QString spacing = row > 1 && t->item(row - 1, 1) ? t->item(row - 1, 1)->text() : QStringLiteral("3600");
+      t->setItem(row, 1, new QTableWidgetItem(row == 0 ? QStringLiteral("0") : spacing));
+    });
+    connect(remove, &QPushButton::clicked, t, [t] {
+      if (t->currentRow() >= 0) t->removeRow(t->currentRow());
+    });
+    buttons->addWidget(add);
+    buttons->addWidget(remove);
+    buttons->addStretch();
+    layout->addWidget(t);
+    layout->addLayout(buttons);
+    return t;
+  };
+  QTableWidget* xTable = table(tr("X 方向に並ぶ通り（Y 方向に伸びる線）"), QStringLiteral("gridXTable"), current->x);
+  QTableWidget* yTable = table(tr("Y 方向に並ぶ通り（X 方向に伸びる線）"), QStringLiteral("gridYTable"), current->y);
+  layout->addWidget(new QLabel(tr("間隔は前の通りから（1 行目は通り芯の原点からの位置）。単位 m も可。\n"
+                                  "通り芯に乗せた柱・梁は一緒に動きます"),
+                               &dialog));
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+  layout->addWidget(buttons);
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  if (dialog.exec() != QDialog::Accepted) return;
+  doc::GridSpec next = *modeler_.gridSpec(gridId);
+  auto read = [&](QTableWidget* t, std::vector<doc::GridAxis>& out) -> bool {
+    out.clear();
+    double at = 0.0;
+    for (int row = 0; row < t->rowCount(); ++row) {
+      const QTableWidgetItem* name = t->item(row, 0);
+      const QTableWidgetItem* value = t->item(row, 1);
+      const auto length = value ? units::parseLength(value->text().toStdString()) : std::nullopt;
+      if (!name || name->text().trimmed().isEmpty() || !length || (row > 0 && *length <= 0)) {
+        reportError(tr("%1 行目：名前と、正の間隔を入力してください").arg(row + 1));
+        return false;
+      }
+      at = row == 0 ? *length : at + *length;
+      doc::GridAxis axis;
+      axis.id = name->data(Qt::UserRole).toString().toStdString();
+      if (axis.id.empty()) axis.id = "a" + std::to_string(next.nextId++);
+      axis.name = name->text().trimmed().toStdString();
+      axis.offset = at;
+      out.push_back(axis);
+    }
+    return true;
+  };
+  if (!read(xTable, next.x) || !read(yTable, next.y)) return;
+  if (report(modeler_.setGrid(gridId, next))) setStatus(tr("通り芯を変更しました"));
+}
+
+void MainWindow::showGridMembersDialog(const doc::ObjectId& gridId) {
+  if (!modeler_.gridSpec(gridId)) return;
+  const MemberTool::Settings column = memberTool_->settingsFor("column");
+  const MemberTool::Settings beam = memberTool_->settingsFor("beam");
+  QDialog dialog(this);
+  dialog.setObjectName(QStringLiteral("gridMembersDialog"));
+  dialog.setWindowTitle(tr("通り芯に柱・梁を配置"));
+  auto* form = new QFormLayout(&dialog);
+  auto* columns = new QCheckBox(tr("柱：%1").arg(QString::fromStdString(geom::sectionName(column.section))), &dialog);
+  columns->setObjectName(QStringLiteral("gridColumns"));
+  columns->setChecked(true);
+  auto* xBeams = new QCheckBox(tr("X 通りの梁（Y 方向に架ける）"), &dialog);
+  xBeams->setObjectName(QStringLiteral("gridXBeams"));
+  xBeams->setChecked(true);
+  auto* yBeams = new QCheckBox(tr("Y 通りの梁（X 方向に架ける）"), &dialog);
+  yBeams->setObjectName(QStringLiteral("gridYBeams"));
+  yBeams->setChecked(true);
+  form->addRow(columns);
+  form->addRow(xBeams);
+  form->addRow(yBeams);
+  form->addRow(new QLabel(tr("梁：%1").arg(QString::fromStdString(geom::sectionName(beam.section))), &dialog));
+  auto* base = new QLineEdit(QStringLiteral("0"), &dialog);
+  base->setObjectName(QStringLiteral("gridBase"));
+  auto* height = new QLineEdit(QString::fromStdString(units::formatLength(column.columnHeight, 0)), &dialog);
+  height->setObjectName(QStringLiteral("gridHeight"));
+  form->addRow(tr("柱の下端（通り芯の面から）"), base);
+  form->addRow(tr("柱の高さ（梁はその上に置く）"), height);
+  form->addRow(new QLabel(tr("断面・基準は部材パネルの「柱」「梁」の設定を使います。\n"
+                             "置いた柱・梁は通り芯に付いていて、通り芯を直すと一緒に動きます"),
+                          &dialog));
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+  form->addRow(buttons);
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  if (dialog.exec() != QDialog::Accepted) return;
+  const auto b = units::parseLength(base->text().toStdString());
+  const auto h = units::parseLength(height->text().toStdString());
+  if (!b || !h || *h <= 0) {
+    reportError(tr("高さは正の長さで入力してください"));
+    return;
+  }
+  auto spec = [](const MemberTool::Settings& s) {
+    doc::Modeler::MemberSpec m;
+    m.section = s.section;
+    m.anchor = s.anchor;
+    m.roll = s.roll * M_PI / 180.0;
+    m.role = s.role;
+    m.materialClass = s.materialClass;
+    if (m.materialClass.empty() && !m.section.catalog.empty()) m.materialClass = "steel";
+    return m;
+  };
+  doc::Modeler::GridMemberOptions options;
+  options.base = *b;
+  options.height = *h;
+  if (columns->isChecked()) options.columns = spec(column);
+  if (xBeams->isChecked()) options.xBeams = spec(beam);
+  if (yBeams->isChecked()) options.yBeams = spec(beam);
+  const auto made = modeler_.placeMembersOnGrid(gridId, options);
+  if (!made) {
+    reportError(QString::fromStdString(made.error()));
+    return;
+  }
+  QString text = tr("柱 %1 本・梁 %2 本を配置しました").arg(made->columns.size()).arg(made->beams.size());
+  if (made->skipped) text += tr("（すでにある %1 本は飛ばしました）").arg(made->skipped);
+  setStatus(text);
 }
 
 void MainWindow::showGridDialog() {
@@ -3018,6 +3186,15 @@ QMenu* MainWindow::buildContextMenu(const QPoint& pos) {
         })) {
       QAction* stop = menu->addAction(tr("追従を止める"), this, [this] { report(modeler_.setFollow(selection_, std::nullopt)); });
       stop->setObjectName(QStringLiteral("stopFollowingAction"));
+    }
+    // A grid (docs/43): its lines edited, members placed on it.
+    if (const auto grid = selectedGrid()) {
+      const doc::ObjectId id = *grid;
+      menu->addAction(tr("通り芯を編集（間隔・名前・本数）..."), this, [this, id] { showGridEditDialog(id); })
+          ->setObjectName(QStringLiteral("editGridAction"));
+      menu->addAction(tr("通り芯に柱・梁を配置..."), this, [this, id] { showGridMembersDialog(id); })
+          ->setObjectName(QStringLiteral("gridMembersAction"));
+      menu->addSeparator();
     }
     if (single && single->kind() == doc::ObjectKind::Group) {
       const doc::ObjectId id = single->id;

@@ -38,6 +38,8 @@
 #include <QSettings>
 #include <QListWidget>
 #include <QPushButton>
+#include <QTableWidget>
+#include <QCheckBox>
 #include <QTabBar>
 #include <QTemporaryDir>
 #include <QStandardPaths>
@@ -248,6 +250,7 @@ class GuiPhase1 : public QObject {
   void roleAddedToAnyShapeInProperties();
   void memberEntriesKeepTheirOwnSettings();
   void memberPanelShowsWhileDrawingMembers();
+  void gridEditedAndMembersFollow();
   void followFromTheContextMenu();
   void arcAndLinesCloseIntoFace();
   void arcClosesMixedOutline_data();
@@ -4727,6 +4730,68 @@ void GuiPhase1::memberPanelShowsWhileDrawingMembers() {
   // Gone with any other tool.
   f.window.activateTool(MainWindow::ToolId::Select);
   QVERIFY(!panel->isVisible());
+}
+
+void GuiPhase1::gridEditedAndMembersFollow() {
+  Fixture f;
+  QVERIFY(f.setUp(3000, 3000));
+  doc::Modeler& m = f.window.modeler();
+  QVERIFY(f.window.createGrid(QStringLiteral("3600*2"), QStringLiteral("6000")));
+  const auto grid = f.window.selectedGrid();
+  QVERIFY(grid);
+  f.vp->syncNow();
+  // Right-clicked on a line: the grid's own entries.
+  QMenu* menu = f.window.buildContextMenu(f.vp->toWidget(gp_Pnt(3600, 3000, 0)));
+  QVERIFY(menu->findChild<QAction*>(QStringLiteral("editGridAction")));
+  QVERIFY(menu->findChild<QAction*>(QStringLiteral("gridMembersAction")));
+  delete menu;
+  // Columns and beams on it (the member tool's column / beam settings).
+  QTimer::singleShot(100, [&] {
+    auto* dialog = f.window.findChild<QDialog*>(QStringLiteral("gridMembersDialog"));
+    if (!dialog) return;
+    dialog->findChild<QLineEdit*>(QStringLiteral("gridHeight"))->setText(QStringLiteral("3000"));
+    dialog->accept();
+  });
+  f.window.showGridMembersDialog(*grid);
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  std::vector<doc::ObjectId> columns;
+  for (const doc::Object& o : m.document().objects()) {
+    const auto it = o.attributes.find("kind");
+    if (o.gridPin && it != o.attributes.end() && it->second == "column") columns.push_back(o.id);
+  }
+  QCOMPARE(columns.size(), std::size_t(6));
+  // X2 moved: spacing 3600 -> 4000 in the table, and a line added.
+  QTimer::singleShot(100, [&] {
+    auto* dialog = f.window.findChild<QDialog*>(QStringLiteral("gridEditDialog"));
+    if (!dialog) return;
+    auto* xs = dialog->findChild<QTableWidget*>(QStringLiteral("gridXTable"));
+    xs->item(1, 1)->setText(QStringLiteral("4000"));
+    dialog->findChild<QPushButton*>(QStringLiteral("gridXTableAdd"))->click();
+    dialog->accept();
+  });
+  f.window.showGridEditDialog(*grid);
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  const doc::GridSpec& spec = *m.gridSpec(*grid);
+  QCOMPARE(spec.x.size(), std::size_t(4));
+  QCOMPARE(QString::fromStdString(spec.x[3].name), QStringLiteral("X4"));
+  QVERIFY(std::abs(spec.x[1].offset - 4000) < 1e-9);
+  QVERIFY(std::abs(spec.x[3].offset - 11200) < 1e-9);
+  // The columns on X2 went with it.
+  int onX2 = 0;
+  for (const doc::ObjectId& id : columns) {
+    const doc::Object* o = m.document().find(id);
+    if (o->gridPin->startX != spec.x[1].id) continue;
+    const auto& member = std::get<doc::LinearMember>(o->recipe.base);
+    QVERIFY(std::abs(member.start.Transformed(m.document().worldTransform(*o)).X() - 4000) < 1e-6);
+    ++onX2;
+  }
+  QCOMPARE(onX2, 2);
+  if (const QString shot = qEnvironmentVariable("SBR_GRID_SHOT"); !shot.isEmpty()) {
+    f.window.setSelection({});
+    f.vp->fitAll();
+    QTest::qWait(200);
+    QVERIFY(f.window.screen()->grabWindow(0).copy(f.window.frameGeometry()).save(shot));
+  }
 }
 
 void GuiPhase1::followFromTheContextMenu() {

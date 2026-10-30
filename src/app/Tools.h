@@ -360,6 +360,9 @@ class MemberTool : public DrawingTool {
   // keeps its own last settings (a column's section is not a beam's); the
   // ones in use are put away under their entry first.
   void useEntry(const std::string& entry);
+  // What an entry would draw with now (its own last settings, or its usual
+  // start), without switching to it.
+  Settings settingsFor(const std::string& entry) const;
   const std::string& entry() const { return entry_; }
 
  protected:

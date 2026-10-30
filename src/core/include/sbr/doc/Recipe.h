@@ -197,6 +197,29 @@ struct ParameterOverride {
   }
 };
 
+// A structural grid (通り芯, docs/43), kept by its group: lines named and
+// placed by offset in the group's own coordinates. `x` lines run along the
+// group's Y at x = offset, `y` lines along X at y = offset. The lines,
+// labels and spacing dimensions inside the group are made from this and
+// made again whenever it changes; members pinned to its crossings follow.
+// `id` is stable across renames (pins refer to it).
+struct GridAxis {
+  std::string id;
+  std::string name;
+  double offset = 0.0;
+  bool operator==(const GridAxis& o) const { return id == o.id && name == o.name && offset == o.offset; }
+};
+struct GridSpec {
+  std::vector<GridAxis> x;
+  std::vector<GridAxis> y;
+  double labelOffset = 1500.0;
+  int nextId = 1;  // for new axes: "a<n>"
+  bool operator==(const GridSpec& o) const {
+    return x == o.x && y == o.y && labelOffset == o.labelOffset && nextId == o.nextId;
+  }
+  const GridAxis* find(const std::string& id) const;
+};
+
 // Container node of the object hierarchy. Has no geometry of its own.
 struct GroupNode {
   // Set while this group is a component being edited in place (spec 07
@@ -208,6 +231,8 @@ struct GroupNode {
   // The placement's own settings, given back when editing ends.
   std::vector<ParameterOverride> editingOverrides;
   bool editingMirrored = false;
+  // Set when this group is a structural grid (docs/43).
+  std::optional<GridSpec> grid;
 };
 
 // Scale along three directions of a frame (object coordinates), each by its

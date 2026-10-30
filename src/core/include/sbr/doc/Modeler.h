@@ -94,17 +94,28 @@ class Modeler {
   // Locked objects cannot be picked, moved or erased (still shown and
   // snapped to). One undo step.
   Status setLocked(const std::vector<ObjectId>& ids, bool locked);
-  // Structural grid (通り芯) on the ground plane: lines X1.. along Y at the
-  // cumulative x spacings from 'origin', Y1.. along X, each labelled at its
-  // start 'labelOffset' outside the grid, with chained spacing dimensions.
-  // Everything goes on the "Grid" tag; one undo step.
+  // Structural grid (通り芯, docs/43): a group "Grid" placed at 'origin'
+  // holding the grid's own description (GridSpec): lines X1.. along Y at
+  // the cumulative x spacings, Y1.. along X, each labelled 'labelOffset'
+  // outside the grid, with chained spacing dimensions, all on the "Grid"
+  // tag. Edited afterwards with setGrid, or by moving or erasing a line
+  // inside the group. One undo step.
   struct GridLines {
+    ObjectId grid;                 // the group
     std::vector<ObjectId> lines;   // X1..Xn, then Y1..Ym
     std::vector<ObjectId> labels;  // same order
     std::vector<ObjectId> dimensions;
   };
   Result<GridLines> createGridLines(const gp_Pnt& origin, const std::vector<double>& xSpacings,
                                     const std::vector<double>& ySpacings, double labelOffset = 1500.0);
+  // The description of a grid group (null: not a grid).
+  const GridSpec* gridSpec(const ObjectId& grid) const;
+  // Gives the grid new lines (names, offsets, added or taken away; ids
+  // kept for lines that stay): its lines, labels and dimensions are made
+  // again and members pinned to its crossings follow. One undo step.
+  // Refused: no lines in a direction, an empty or repeated name, a
+  // repeated id, two lines at the same place.
+  Status setGrid(const ObjectId& grid, const GridSpec& spec);
   // A line (world points) drawn from edge to edge across a planar face of a
   // visible solid splits that face (parametric SplitOp). Returns the solid's
   // id, or a failure if the line does not divide any face.
@@ -434,6 +445,26 @@ class Modeler {
     std::string name;
   };
   Result<ObjectId> createMember(const MemberSpec& spec);
+  // Members on a grid (docs/43), pinned to its crossings: columns standing
+  // on the crossings, beams from crossing to neighbouring crossing along
+  // the x lines (running along the grid's Y) and the y lines. Only the
+  // lines listed (axis ids; empty: all). Columns from `base` above the
+  // grid's plane up `height`; beams at base + height. Sections, anchors and
+  // roles from the specs (their points ignored). A crossing or span that
+  // already has a member pinned the same way is skipped. One undo step.
+  struct GridMemberOptions {
+    std::vector<std::string> x, y;
+    double base = 0.0;
+    double height = 3000.0;
+    std::optional<MemberSpec> columns;
+    std::optional<MemberSpec> xBeams;  // on the x lines
+    std::optional<MemberSpec> yBeams;  // on the y lines
+  };
+  struct GridMembers {
+    std::vector<ObjectId> columns, beams;
+    std::size_t skipped = 0;
+  };
+  Result<GridMembers> placeMembersOnGrid(const ObjectId& grid, const GridMemberOptions& options);
   // What can be edited of a member as it is now: each value with what it
   // means and where it comes from (the member's parameter, or measured on
   // its shape after other edits). Computed when asked, never kept.
@@ -675,6 +706,8 @@ class Modeler {
                                double height, double sill, std::optional<double> spacing,
                                std::optional<gp_Pnt> at);
   Result<ObjectId> addObject(Object object, const std::string& commandName);
+  // The member object for `spec` (named, not built or added).
+  Result<Object> memberObject(const MemberSpec& spec);
   Status commitModified(Object object, const std::string& commandName);
   // settleOverlaps' two halves (one object each).
   Status settleLine(const ObjectId& id, Settled& out);
