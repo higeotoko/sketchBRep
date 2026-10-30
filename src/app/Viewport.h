@@ -184,6 +184,16 @@ class Viewport : public QWidget {
   void setPerspective(bool perspective);
   bool isPerspective() const;
   void fitAll();
+  // Plan / elevation mode (docs/44, like Rhino's Top / Front views): a
+  // fixed parallel view. Orbiting pans instead, and a point clicked in
+  // empty space lands on the view's own work plane (plan: the ground;
+  // front / back: y = 0; right / left: x = 0). Iso, perspective or a
+  // saved camera end it; another standard view switches the fixed view.
+  void lockView(StandardView view);
+  void unlockView();
+  std::optional<StandardView> lockedView() const { return lockedView_; }
+  // Where drawing in empty space lands: the ground, or the fixed view's plane.
+  gp_Pln constructionPlane() const;
 
   // --- wheel zoom (WheelZoom.h, docs/17_wheel_zoom.md) ----------------------
   // Zooms by `notches` (positive: in) at the cursor position `pos`
@@ -230,6 +240,8 @@ class Viewport : public QWidget {
   void toolFailed(const QString& message);
   // Right button released without dragging: the context menu.
   void contextMenuRequested(const QPoint& pos);
+  // The plan / elevation mode started, switched or ended.
+  void viewLockChanged();
 
  protected:
   void showEvent(QShowEvent* event) override;
@@ -313,6 +325,8 @@ class Viewport : public QWidget {
   void removeDisplay(Entry& entry);
   QPoint devicePos(const QPoint& logical) const;
   void orbit(const QPoint& delta);
+  std::optional<StandardView> lockedView_;
+  bool perspectiveBeforeLock_ = true;
   std::optional<doc::ObjectId> idOf(const Handle(AIS_InteractiveObject)& object) const;
 
   doc::Modeler& modeler_;

@@ -378,7 +378,8 @@ void Viewport::mousePressEvent(QMouseEvent* event) {
     return;
   }
   if (event->button() == Qt::MiddleButton) {
-    drag_ = (event->modifiers() & Qt::ShiftModifier) ? Drag::Pan : Drag::Orbit;
+    // A fixed plan / elevation is never turned: the middle button pans.
+    drag_ = (event->modifiers() & Qt::ShiftModifier) || lockedView_ ? Drag::Pan : Drag::Orbit;
     lastDragPos_ = event->position().toPoint();
     setCursor(drag_ == Drag::Pan ? Qt::SizeAllCursor : Qt::ClosedHandCursor);
     if (drag_ == Drag::Orbit) {
@@ -438,7 +439,7 @@ void Viewport::mouseReleaseEvent(QMouseEvent* event) {
   if (event->button() == Qt::LeftButton && leftInCameraDrag_) {
     leftInCameraDrag_ = false;
     if (drag_ == Drag::Pan && (event->buttons() & Qt::MiddleButton)) {
-      drag_ = (event->modifiers() & Qt::ShiftModifier) ? Drag::Pan : Drag::Orbit;  // back to the middle's own
+      drag_ = (event->modifiers() & Qt::ShiftModifier) || lockedView_ ? Drag::Pan : Drag::Orbit;  // back to the middle's own
       setCursor(drag_ == Drag::Pan ? Qt::SizeAllCursor : Qt::ClosedHandCursor);
     }
     return;
@@ -456,7 +457,7 @@ void Viewport::mouseMoveEvent(QMouseEvent* event) {
   if (drag_ != Drag::None) {
     const QPoint delta = pos - lastDragPos_;
     lastDragPos_ = pos;
-    if (drag_ == Drag::Orbit && !(event->modifiers() & Qt::ShiftModifier)) {
+    if (drag_ == Drag::Orbit && !(event->modifiers() & Qt::ShiftModifier) && !lockedView_) {
       orbit(delta);
     } else {
       const QPoint d = devicePos(delta);
@@ -1736,7 +1737,7 @@ snap::SnapResult Viewport::snap(const QPoint& pos, std::optional<gp_Pnt> anchor,
   query.viewDirection = viewDirection();  // perspective-safe culling
   query.anchor = anchor;
   query.lockedDirection = lockedDirection;
-  if (workPlane) query.workPlane = *workPlane;
+  query.workPlane = workPlane ? *workPlane : constructionPlane();
   query.trackedPoints = trackedPoints;
   query.trackedDirections = trackedDirections;
   return inference_.snap(query);
@@ -2307,6 +2308,12 @@ void Viewport::updateSkyAndGround() {
   double fromTop;  // horizon position, 0 = top edge, 1 = bottom edge
   if (level.Magnitude() < 1e-9) {
     fromTop = d.Z() < 0 ? -1.0 : 2.0;
+  } else if (camera->IsOrthographic() && std::abs(d.Z()) < 1e-9) {
+    // A parallel elevation (front, side): the ground line is the ground's
+    // own height, z = 0, as drawn in an elevation.
+    const gp_Pnt c = camera->Center();
+    const double y = camera->Project(gp_Pnt(c.X(), c.Y(), 0.0)).Y();
+    fromTop = std::isfinite(y) ? (1.0 - y) / 2.0 : 0.5;
   } else {
     const gp_Pnt distant = camera->Eye().Translated(level.Normalized() * (1e6 * std::max(camera->Distance(), 1.0)));
     const double y = camera->Project(distant).Y();  // normalised device coordinates, +1 = top
@@ -2368,6 +2375,14 @@ void Viewport::orbit(const QPoint& delta) {
 
 void Viewport::setStandardView(StandardView v) {
   if (view_.IsNull()) return;
+  if (lockedView_ && v == StandardView::Iso) {
+    unlockView();
+    return;
+  }
+  if (lockedView_ && *lockedView_ != v) {
+    lockedView_ = v;
+    emit viewLockChanged();
+  }
   switch (v) {
     case StandardView::Iso: view_->SetProj(V3d_XposYnegZpos); break;
     case StandardView::Top: view_->SetProj(V3d_Zpos); break;
@@ -2379,8 +2394,49 @@ void Viewport::setStandardView(StandardView v) {
   fitAll();
 }
 
+void Viewport::lockView(StandardView v) {
+  if (view_.IsNull()) return;
+  if (v == StandardView::Iso) {
+    unlockView();
+    return;
+  }
+  if (!lockedView_) perspectiveBeforeLock_ = isPerspective();
+  lockedView_ = v;
+  view_->Camera()->SetProjectionType(Graphic3d_Camera::Projection_Orthographic);
+  setStandardView(v);
+  emit viewLockChanged();
+}
+
+void Viewport::unlockView() {
+  if (!lockedView_) return;
+  lockedView_.reset();
+  if (view_.IsNull()) return;
+  view_->Camera()->SetProjectionType(perspectiveBeforeLock_ ? Graphic3d_Camera::Projection_Perspective
+                                                            : Graphic3d_Camera::Projection_Orthographic);
+  setStandardView(StandardView::Iso);
+  emit viewLockChanged();
+}
+
+gp_Pln Viewport::constructionPlane() const {
+  if (lockedView_) {
+    switch (*lockedView_) {
+      case StandardView::Front:
+      case StandardView::Back: return gp_Pln(gp::Origin(), gp::DY());
+      case StandardView::Right:
+      case StandardView::Left: return gp_Pln(gp::Origin(), gp::DX());
+      default: break;
+    }
+  }
+  return gp_Pln(gp::Origin(), gp::DZ());
+}
+
 void Viewport::setPerspective(bool perspective) {
   if (view_.IsNull()) return;
+  // Perspective is 3D: the fixed view ends (the direction stays).
+  if (perspective && lockedView_) {
+    lockedView_.reset();
+    emit viewLockChanged();
+  }
   view_->Camera()->SetProjectionType(perspective ? Graphic3d_Camera::Projection_Perspective
                                                  : Graphic3d_Camera::Projection_Orthographic);
   view_->Invalidate();
@@ -2440,6 +2496,11 @@ void Viewport::storeCamera(doc::CameraState& state) const {
 
 void Viewport::restoreCamera(const doc::CameraState& state) {
   if (view_.IsNull()) return;
+  // A saved camera is a view of its own: the fixed view ends.
+  if (lockedView_) {
+    lockedView_.reset();
+    emit viewLockChanged();
+  }
   const Handle(Graphic3d_Camera)& c = view_->Camera();
   c->SetProjectionType(state.perspective ? Graphic3d_Camera::Projection_Perspective
                                          : Graphic3d_Camera::Projection_Orthographic);

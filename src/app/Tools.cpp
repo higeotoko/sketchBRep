@@ -732,7 +732,8 @@ void createCurveAndFace(ToolHost& host, Create create, const char* undoName) {
 }
 
 geom::SketchPlane planeForStart(Viewport& viewport, const QPoint& pos, const snap::SnapResult& r) {
-  gp_Dir normal = gp::DZ();
+  // Empty space: the view's work plane (the ground, or an elevation's).
+  gp_Dir normal = viewport.constructionPlane().Axis().Direction();
   if (r.kind == snap::SnapKind::OnFace && r.faceNormal) {
     normal = *r.faceNormal;
   } else {

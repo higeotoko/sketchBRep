@@ -306,6 +306,38 @@ void MainWindow::buildUi() {
   connect(rejectButton, &QPushButton::clicked, this, &MainWindow::rejectProposal);
   statusBar()->addPermanentWidget(proposalBar_);
 
+  // Plan / elevation mode (docs/44): which view is fixed, and the way back.
+  auto* viewLock = new QToolButton;
+  viewLock->setObjectName(QStringLiteral("viewLockButton"));
+  viewLock->setAutoRaise(true);
+  viewLock->setStyleSheet(QStringLiteral("QToolButton { color: #1a5fb4; font-weight: bold; padding: 0 6px; }"));
+  viewLock->setToolTip(tr("平行投影で固定中（中ボタンのドラッグは画面移動）。クリックで 3D に戻る (Alt+0)"));
+  viewLock->hide();
+  connect(viewLock, &QToolButton::clicked, this, [this] { viewport_->unlockView(); });
+  statusBar()->addPermanentWidget(viewLock);
+  connect(viewport_, &Viewport::viewLockChanged, this, [this, viewLock] {
+    const auto locked = viewport_->lockedView();
+    static const std::map<Viewport::StandardView, const char*> names = {
+        {Viewport::StandardView::Top, "平面"},     {Viewport::StandardView::Front, "正面"},
+        {Viewport::StandardView::Right, "右側面"}, {Viewport::StandardView::Back, "背面"},
+        {Viewport::StandardView::Left, "左側面"}};
+    if (locked) viewLock->setText(tr("%1（固定）  ✕ 3D に戻る").arg(tr(names.at(*locked))));
+    viewLock->setVisible(locked.has_value());
+    if (perspectiveAction_) {
+      const QSignalBlocker block(perspectiveAction_);
+      perspectiveAction_->setChecked(viewport_->isPerspective());
+    }
+    // A plane drawn in the old view is not the new view's.
+    if (active_) active_->cancel();
+    setStatus(locked ? tr("%1を平行投影で固定しました。何もない所の点は%2に乗ります（中ボタンで画面移動）")
+                           .arg(tr(names.at(*locked)),
+                                *locked == Viewport::StandardView::Top ? tr("地面（Z=0）")
+                                : *locked == Viewport::StandardView::Front || *locked == Viewport::StandardView::Back
+                                    ? tr("Y=0 の立面")
+                                    : tr("X=0 の立面"))
+                     : tr("3D に戻りました"));
+  });
+
   aiLabel_ = new QLabel;
   aiLabel_->setStyleSheet(QStringLiteral("QLabel { background: #dbeafe; padding: 0 6px; }"));
   aiLabel_->hide();
@@ -748,6 +780,23 @@ void MainWindow::buildMenus() {
     view->addAction(v.label, QKeySequence(QString::fromLatin1(v.key)), this,
                     [this, sv] { viewport_->setStandardView(sv); });
   }
+  // Plan / elevation mode (docs/44): the same views, fixed in parallel
+  // projection, drawing on the view's own plane.
+  QMenu* fixedViews = view->addMenu(tr("平面・立面モード（平行投影で固定）"));
+  fixedViews->setObjectName(QStringLiteral("fixedViewsMenu"));
+  const ViewEntry fixed[] = {
+      {tr("平面"), "Alt+1", Viewport::StandardView::Top},   {tr("正面"), "Alt+2", Viewport::StandardView::Front},
+      {tr("右側面"), "Alt+3", Viewport::StandardView::Right}, {tr("背面"), "Alt+4", Viewport::StandardView::Back},
+      {tr("左側面"), "Alt+5", Viewport::StandardView::Left}};
+  for (const ViewEntry& v : fixed) {
+    const Viewport::StandardView sv = v.view;
+    QAction* a = fixedViews->addAction(v.label, QKeySequence(QString::fromLatin1(v.key)), this,
+                                       [this, sv] { viewport_->lockView(sv); });
+    a->setObjectName(QStringLiteral("lockView%1").arg(static_cast<int>(sv)));
+  }
+  fixedViews->addSeparator();
+  fixedViews->addAction(tr("3D に戻る"), QKeySequence(QStringLiteral("Alt+0")), this, [this] { viewport_->unlockView(); })
+      ->setObjectName(QStringLiteral("unlockViewAction"));
   view->addAction(tr("全体表示"), QKeySequence(tr("Shift+Z")), this, [this] { viewport_->fitAll(); });
   view->addSeparator();
   perspectiveAction_ = view->addAction(tr("透視投影"));

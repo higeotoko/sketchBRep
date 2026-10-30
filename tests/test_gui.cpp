@@ -251,6 +251,7 @@ class GuiPhase1 : public QObject {
   void memberEntriesKeepTheirOwnSettings();
   void memberPanelShowsWhileDrawingMembers();
   void gridEditedAndMembersFollow();
+  void fixedElevationPansAndDrawsOnItsPlane();
   void followFromTheContextMenu();
   void arcAndLinesCloseIntoFace();
   void arcClosesMixedOutline_data();
@@ -4792,6 +4793,56 @@ void GuiPhase1::gridEditedAndMembersFollow() {
     QTest::qWait(200);
     QVERIFY(f.window.screen()->grabWindow(0).copy(f.window.frameGeometry()).save(shot));
   }
+}
+
+void GuiPhase1::fixedElevationPansAndDrawsOnItsPlane() {
+  Fixture f;
+  QVERIFY(f.setUp(1000, 0));
+  doc::Modeler& m = f.window.modeler();
+  const bool perspective = f.vp->isPerspective();  // the fixture's own camera
+  // View > plan / elevation mode > front.
+  auto* front = f.window.findChild<QAction*>(QStringLiteral("lockView2"));
+  QVERIFY(front);
+  front->trigger();
+  QVERIFY(f.vp->lockedView() == Viewport::StandardView::Front);
+  QVERIFY(!f.vp->isPerspective());
+  QVERIFY(f.window.findChild<QToolButton*>(QStringLiteral("viewLockButton"))->isVisible());
+  // The middle button pans; the view never turns.
+  doc::CameraState before, after;
+  f.vp->storeCamera(before);
+  const QPoint a = f.vp->rect().center();
+  const QPoint b = a + QPoint(120, 60);
+  send(f.vp, QEvent::MouseButtonPress, a, Qt::MiddleButton, Qt::MiddleButton);
+  send(f.vp, QEvent::MouseMove, b, Qt::NoButton, Qt::MiddleButton);
+  send(f.vp, QEvent::MouseButtonRelease, b, Qt::MiddleButton, Qt::NoButton);
+  QTest::qWait(30);
+  f.vp->storeCamera(after);
+  auto direction = [](const doc::CameraState& c) {
+    return gp_Dir(c.target[0] - c.eye[0], c.target[1] - c.eye[1], c.target[2] - c.eye[2]);
+  };
+  QVERIFY(direction(before).IsEqual(direction(after), 1e-9));
+  QVERIFY(gap(before, after) > 1.0);
+  // A rectangle in empty space stands on the front's plane (y = 0).
+  f.window.activateTool(MainWindow::ToolId::Rectangle);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(2000, 0, 1500)));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  const Bnd_Box box = geom::exactBounds(m.document().worldShape(m.document().objects().front()));
+  QVERIFY2(box.CornerMax().Y() - box.CornerMin().Y() < 1e-6, "flat in y");
+  QVERIFY2(std::abs(box.CornerMax().Z() - box.CornerMin().Z() - 1500) < 20, qPrintable(QString::number(box.CornerMax().Z())));
+  QVERIFY(std::abs(box.CornerMax().X() - box.CornerMin().X() - 2000) < 20);
+  if (const QString shot = qEnvironmentVariable("SBR_ELEVATION_SHOT"); !shot.isEmpty()) {
+    f.window.activateTool(MainWindow::ToolId::Select);
+    QTest::qWait(200);
+    QVERIFY(f.window.screen()->grabWindow(0).copy(f.window.frameGeometry()).save(shot));
+  }
+  // Back to 3D: the projection as before, the mode gone.
+  f.window.findChild<QAction*>(QStringLiteral("unlockViewAction"))->trigger();
+  QVERIFY(!f.vp->lockedView());
+  QCOMPARE(f.vp->isPerspective(), perspective);
+  QVERIFY(!f.window.findChild<QToolButton*>(QStringLiteral("viewLockButton"))->isVisible());
+  QVERIFY(f.vp->constructionPlane().Axis().Direction().IsParallel(gp::DZ(), 1e-12));
 }
 
 void GuiPhase1::followFromTheContextMenu() {
