@@ -1,0 +1,10 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+  <!-- The logo set lives in assets/branding (README-ja.md there). -->
+  <qresource prefix="/branding">
+    <file alias="app-icon.ico">../../assets/branding/05-windows/sketchbrep-compact.ico</file>
+    <file alias="app-icon-256.png">../../assets/branding/03-app-icon/sketchbrep-app-icon-compact-256.png</file>
+    <file alias="app-icon-1024.png">../../assets/branding/03-app-icon/sketchbrep-app-icon-compact-1024.png</file>
+    <file alias="wordmark.png">../../assets/branding/06-readme/sketchbrep-readme.png</file>
+  </qresource>
+</RCC>
