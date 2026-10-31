@@ -1056,6 +1056,7 @@ class PushPullTool : public Tool {
   void reset();
 
   bool dragging_ = false;
+  bool curvedPart_ = false;  // one part of a divided curved surface
   bool curved_ = false;
   bool keepStart_ = false;
   QString keepSuffix() const;

@@ -253,6 +253,8 @@ class GuiPhase1 : public QObject {
   void gridEditedAndMembersFollow();
   void fixedElevationPansAndDrawsOnItsPlane();
   void workPlaneAtAHeightOrAGridLine();
+  void curvedShapesMoveAndCopy();
+  void curvedPartPreviewIsWhatPushPullMakes();
   void followFromTheContextMenu();
   void arcAndLinesCloseIntoFace();
   void arcClosesMixedOutline_data();
@@ -4921,6 +4923,99 @@ void GuiPhase1::workPlaneAtAHeightOrAGridLine() {
   f.vp->unlockView();
   QVERIFY(!button->isVisible());
   QVERIFY(std::abs(f.vp->constructionPlane().Location().Z()) < 1e-9);
+}
+
+// Report: a cylinder or a circle face could not be moved, nor copied with
+// Ctrl, after being clicked (a face of it selected) like any other shape.
+void GuiPhase1::curvedShapesMoveAndCopy() {
+  Fixture f;
+  QVERIFY(f.setUp(1500, 1500));
+  doc::Modeler& m = f.window.modeler();
+  geom::SketchPlane plane = geom::SketchPlane::ground();
+  plane.origin = gp_Pnt(0, 0, 0);
+  const doc::ObjectId disc = *m.createCircle(plane, 400);
+  plane.origin = gp_Pnt(2000, 0, 0);
+  const doc::ObjectId drum = *m.createCircle(plane, 400);
+  QVERIFY(m.extrude(drum, 800));
+  f.vp->syncNow();
+  auto centre = [&](const doc::ObjectId& id) {
+    const Bnd_Box b = geom::exactBounds(m.document().worldShape(*m.document().find(id)));
+    return gp_Pnt((b.CornerMin().X() + b.CornerMax().X()) / 2, (b.CornerMin().Y() + b.CornerMax().Y()) / 2,
+                  b.CornerMin().Z());
+  };
+  struct Case {
+    doc::ObjectId id;
+    gp_Pnt grab;
+  };
+  for (const Case& c : {Case{disc, gp_Pnt(0, 0, 0)}, Case{drum, gp_Pnt(2000, -400, 400)}, Case{drum, gp_Pnt(2000, 0, 800)}}) {
+    const gp_Pnt before = centre(c.id);
+    // Clicked as usual (a face of it selected), then moved 1000 along y.
+    f.window.activateTool(MainWindow::ToolId::Select);
+    click(f.vp, f.vp->toWidget(gp_Pnt(6000, -3000, 0)));
+    click(f.vp, f.vp->toWidget(c.grab));
+    f.window.activateTool(MainWindow::ToolId::Move);
+    click(f.vp, f.vp->toWidget(c.grab));
+    move(f.vp, f.vp->toWidget(c.grab.Translated(gp_Vec(0, 600, 0))));
+    QTest::keyClick(f.vp, Qt::Key_Left);  // along green (y)
+    move(f.vp, f.vp->toWidget(c.grab.Translated(gp_Vec(0, 600, 0))));
+    type(f.vp, QStringLiteral("1000"));
+    QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+    const gp_Pnt after = centre(c.id);
+    QVERIFY2(std::abs(after.Y() - before.Y() - 1000) < 1e-6 && std::abs(after.X() - before.X()) < 1e-6,
+             qPrintable(QStringLiteral("%1 %2 -> %3 %4").arg(before.X()).arg(before.Y()).arg(after.X()).arg(after.Y())));
+    QVERIFY(m.undo());
+  }
+  // Ctrl: a copy, the original stays.
+  const std::size_t count = m.document().objects().size();
+  f.window.activateTool(MainWindow::ToolId::Select);
+  click(f.vp, f.vp->toWidget(gp_Pnt(6000, -3000, 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(2000, -400, 400)));
+  f.window.activateTool(MainWindow::ToolId::Move);
+  click(f.vp, f.vp->toWidget(gp_Pnt(2000, -400, 400)));
+  QTest::keyClick(f.vp, Qt::Key_Control);
+  move(f.vp, f.vp->toWidget(gp_Pnt(2000, 200, 400)));
+  QTest::keyClick(f.vp, Qt::Key_Left);
+  move(f.vp, f.vp->toWidget(gp_Pnt(2000, 200, 400)));
+  type(f.vp, QStringLiteral("1500"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), count + 1);
+  QVERIFY(std::abs(centre(drum).Y()) < 1e-6);
+  QVERIFY(std::abs(centre(m.document().objects().back().id).Y() - 1500) < 1e-6);
+}
+
+// Report: pulling one part of a divided cylinder side previewed the whole
+// cylinder made bigger, though only that part moves out when committed.
+void GuiPhase1::curvedPartPreviewIsWhatPushPullMakes() {
+  Fixture f;
+  QVERIFY(f.setUp(0, 0));
+  doc::Modeler& m = f.window.modeler();
+  auto disc = m.createCircle(geom::SketchPlane::ground(), 1500);
+  QVERIFY(disc && m.extrude(*disc, 3000));
+  f.vp->syncNow();
+  // A line up the side: the side in two parts (with the seam).
+  const double a = 4.0;
+  f.window.activateTool(MainWindow::ToolId::Line);
+  click(f.vp, f.vp->toWidget(gp_Pnt(1500 * std::cos(a), 1500 * std::sin(a), 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(1500 * std::cos(a), 1500 * std::sin(a), 3000)));
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  f.vp->syncNow();
+  const double t = 5.0;  // on the part from the line round to the seam
+  const gp_Pnt on(1500 * std::cos(t), 1500 * std::sin(t), 1500);
+  const gp_Pnt out(1900 * std::cos(t), 1900 * std::sin(t), 1500);
+  f.window.activateTool(MainWindow::ToolId::PushPull);
+  click(f.vp, f.vp->toWidget(on));
+  move(f.vp, f.vp->toWidget(out));
+  const TopoDS_Shape preview = f.vp->previewShape();
+  QVERIFY(!preview.IsNull());
+  const double shown = geom::volume(preview);
+  // Committed there: the same shape as shown (before, the preview was the
+  // whole side pulled out: far more volume).
+  click(f.vp, f.vp->toWidget(out));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  const double made = geom::volume(m.document().worldShape(m.document().objects().front()));
+  QVERIFY2(made > M_PI * 1500 * 1500 * 3000 * 1.01, qPrintable(QString::number(made)));  // it did grow
+  QVERIFY2(std::abs(made - shown) < 1e-3 * made, qPrintable(QStringLiteral("%1 vs %2").arg(made).arg(shown)));
 }
 
 void GuiPhase1::followFromTheContextMenu() {

@@ -2818,10 +2818,13 @@ void PushPullTool::mouseMove(const ToolEvent& e) {
                              : QString()) +
                   keepSuffix());
   if (std::abs(distance_) > tolerance::kMinDimension && curved_) {
-    // Preview the whole solid with the face moved.
+    // Preview the whole solid as the push/pull will leave it: one part of
+    // a divided cylinder moves on its own (as committed), else the face.
     const doc::Object* o = host_.modeler().document().find(objectId_);
-    auto moved = o ? geom::offsetSolidFace(host_.modeler().document().worldShape(*o), face_, distance_)
-                   : Result<TopoDS_Shape>::failure("");
+    const TopoDS_Shape shape = o ? host_.modeler().document().worldShape(*o) : TopoDS_Shape();
+    auto moved = !o              ? Result<TopoDS_Shape>::failure("")
+                 : curvedPart_   ? geom::pushPullCurvedPart(shape, face_, distance_)
+                                 : geom::offsetSolidFace(shape, face_, distance_);
     vp.setPreview(moved ? moved.value() : TopoDS_Shape(), true);
   } else if (std::abs(distance_) > tolerance::kMinDimension) {
     BRepPrimAPI_MakePrism prism(face_, gp_Vec(normal_) * distance_, Standard_True);
@@ -2850,6 +2853,18 @@ void PushPullTool::mousePress(const ToolEvent& e) {
   origin_ = pick->point;
   normal_ = *normal;
   distance_ = 0.0;
+  // One part of a divided curved surface (another face on the same
+  // surface): only it moves, as Modeler::pushPull does.
+  curvedPart_ = false;
+  if (curved_) {
+    if (const doc::Object* o = host_.modeler().document().find(objectId_)) {
+      const TopoDS_Shape world = host_.modeler().document().worldShape(*o);  // where face_ is
+      for (TopExp_Explorer ex(world, TopAbs_FACE); ex.More() && !curvedPart_; ex.Next()) {
+        const TopoDS_Face other = TopoDS::Face(ex.Current());
+        curvedPart_ = other.TShape() != face_.TShape() && geom::sameSurface(other, face_);
+      }
+    }
+  }
   dragging_ = true;
   host_.viewport().clearHover();
   host_.viewport().setPickMode(PickMode::None);
@@ -3329,8 +3344,19 @@ void MoveTool::mousePress(const ToolEvent& e) {
       const TopoDS_Shape face = host_.viewport().elementShape(elements.front());
       const doc::Object* owner = host_.modeler().document().find(elements.front().objectId);
       const auto normal = face.IsNull() ? std::nullopt : geom::planarFaceNormal(TopoDS::Face(face));
-      if (owner && normal &&
-          (owner->kind() == doc::ObjectKind::Solid || owner->kind() == doc::ObjectKind::Face)) {
+      // Only a flat face with straight sides is dragged by its corners. A
+      // face on its own, or one with a curved outline (a cylinder's top),
+      // takes the whole object along, moved or copied like any object.
+      bool straight = !face.IsNull();
+      for (TopExp_Explorer ex(face, TopAbs_EDGE); straight && ex.More(); ex.Next()) {
+        straight = BRepAdaptor_Curve(TopoDS::Edge(ex.Current())).GetType() == GeomAbs_Line;
+      }
+      if (owner && (owner->kind() == doc::ObjectKind::Face || !normal || !straight) &&
+          addressedIn(host_.modeler().document(), owner->id, host_.editingGroup()) == owner->id) {
+        elementTargets_.clear();
+        edgeTargets_.clear();
+        host_.setSelection({owner->id});
+      } else if (owner && normal && straight && owner->kind() == doc::ObjectKind::Solid) {
         const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
         if (!r.valid()) return;
         stretch_ = std::make_pair(owner->id, TopoDS::Face(face));
