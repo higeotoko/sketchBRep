@@ -461,7 +461,10 @@ void Viewport::mouseMoveEvent(QMouseEvent* event) {
       orbit(delta);
     } else {
       const QPoint d = devicePos(delta);
-      view_->Pan(d.x(), -d.y(), 1.0, Standard_False);
+      // Each step from where the view is now (theToStart = true): with
+      // false OCCT pans relative to a remembered start, so the small steps
+      // of a real mouse never add up and the view only shivers.
+      view_->Pan(d.x(), -d.y(), 1.0, Standard_True);
     }
     redraw();
     return;

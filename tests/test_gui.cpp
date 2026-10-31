@@ -4812,11 +4812,16 @@ void GuiPhase1::fixedElevationPansAndDrawsOnItsPlane() {
   f.vp->storeCamera(before);
   const QPoint a = f.vp->rect().center();
   const QPoint b = a + QPoint(120, 60);
+  // In small steps, as a real mouse sends them: they add up.
+  const QPoint marker = f.vp->toWidget(gp_Pnt(0, 0, 0));
   send(f.vp, QEvent::MouseButtonPress, a, Qt::MiddleButton, Qt::MiddleButton);
-  send(f.vp, QEvent::MouseMove, b, Qt::NoButton, Qt::MiddleButton);
+  for (int i = 1; i <= 10; ++i) send(f.vp, QEvent::MouseMove, a + (b - a) * i / 10, Qt::NoButton, Qt::MiddleButton);
   send(f.vp, QEvent::MouseButtonRelease, b, Qt::MiddleButton, Qt::NoButton);
   QTest::qWait(30);
   f.vp->storeCamera(after);
+  const QPoint moved = f.vp->toWidget(gp_Pnt(0, 0, 0)) - marker;
+  QVERIFY2(std::abs(moved.x() - 120) <= 3 && std::abs(moved.y() - 60) <= 3,
+           qPrintable(QStringLiteral("%1, %2").arg(moved.x()).arg(moved.y())));
   auto direction = [](const doc::CameraState& c) {
     return gp_Dir(c.target[0] - c.eye[0], c.target[1] - c.eye[1], c.target[2] - c.eye[2]);
   };
