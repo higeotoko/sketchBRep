@@ -170,6 +170,13 @@ class MainWindow : public QMainWindow, public ToolHost {
   // column / beam settings. `grid`: the grid group.
   void showGridEditDialog(const doc::ObjectId& grid);
   void showGridMembersDialog(const doc::ObjectId& grid);
+  // Work planes offered for the fixed view (docs/44): grid lines lying
+  // across it (an elevation: those parallel to it), by name and offset.
+  struct WorkPlaneChoice {
+    QString name;
+    double offset = 0.0;
+  };
+  std::vector<WorkPlaneChoice> workPlaneChoices() const;
   // The grid a selection means: the grid itself, or a line inside it.
   std::optional<doc::ObjectId> selectedGrid() const;
   // The panel shown while the member tool is in use: the entries, what will

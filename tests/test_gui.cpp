@@ -252,6 +252,7 @@ class GuiPhase1 : public QObject {
   void memberPanelShowsWhileDrawingMembers();
   void gridEditedAndMembersFollow();
   void fixedElevationPansAndDrawsOnItsPlane();
+  void workPlaneAtAHeightOrAGridLine();
   void followFromTheContextMenu();
   void arcAndLinesCloseIntoFace();
   void arcClosesMixedOutline_data();
@@ -4868,6 +4869,58 @@ void GuiPhase1::fixedElevationPansAndDrawsOnItsPlane() {
   f.window.findChild<QToolButton*>(QStringLiteral("viewButton0"))->click();
   QVERIFY(!f.vp->lockedView());
   QVERIFY(f.vp->constructionPlane().Axis().Direction().IsParallel(gp::DZ(), 1e-12));
+}
+
+void GuiPhase1::workPlaneAtAHeightOrAGridLine() {
+  Fixture f;
+  QVERIFY(f.setUp(1000, 0));
+  doc::Modeler& m = f.window.modeler();
+  QVERIFY(f.window.createGrid(QStringLiteral("3600"), QStringLiteral("6000")));
+  const std::size_t before = m.document().objects().size();
+  auto rectangle = [&](const gp_Pnt& a, const gp_Pnt& b) -> Bnd_Box {
+    f.window.activateTool(MainWindow::ToolId::Rectangle);
+    click(f.vp, f.vp->toWidget(a));
+    click(f.vp, f.vp->toWidget(b));
+    if (m.document().objects().size() == before) return {};
+    return geom::exactBounds(m.document().worldShape(m.document().objects().back()));
+  };
+  // The front, on the grid line Y2 (6000 deep), offered from the grid.
+  f.vp->lockView(Viewport::StandardView::Front);
+  auto* button = f.window.findChild<QToolButton*>(QStringLiteral("workPlaneButton"));
+  QVERIFY(button->isVisible());
+  const auto choices = f.window.workPlaneChoices();
+  QCOMPARE(choices.size(), std::size_t(2));  // Y1, Y2: the x lines run across the front
+  QCOMPARE(choices[1].name, QStringLiteral("Y2"));
+  QVERIFY(std::abs(choices[1].offset - 6000) < 1e-9);
+  f.vp->setWorkOffset(choices[1].offset, choices[1].name);
+  QVERIFY2(button->text().contains(QStringLiteral("Y2")), qPrintable(button->text()));
+  f.vp->fitAll();
+  // (Away from the ground line: there Y1 and Y2 lie on top of each other
+  // and a click snaps to the line, wherever it is.)
+  Bnd_Box box = rectangle(gp_Pnt(700, 6000, 500), gp_Pnt(2300, 6000, 1700));
+  QVERIFY(!box.IsVoid());
+  QVERIFY2(std::abs(box.CornerMin().Y() - 6000) < 1e-6 && std::abs(box.CornerMax().Y() - 6000) < 1e-6,
+           qPrintable(QString::number(box.CornerMin().Y())));
+  if (const QString shot = qEnvironmentVariable("SBR_WORKPLANE_SHOT"); !shot.isEmpty()) {
+    f.window.activateTool(MainWindow::ToolId::Select);
+    QTest::qWait(200);
+    QVERIFY(f.window.screen()->grabWindow(0).copy(f.window.frameGeometry()).save(shot));
+  }
+  // The plan at 3000: its own height, the front keeps its depth.
+  f.vp->lockView(Viewport::StandardView::Top);
+  QVERIFY(std::abs(f.vp->workOffset()) < 1e-9);
+  f.vp->setWorkOffset(3000);
+  f.vp->fitAll();
+  box = rectangle(gp_Pnt(500, 500, 3000), gp_Pnt(1500, 2500, 3000));
+  QVERIFY(!box.IsVoid());
+  QVERIFY2(std::abs(box.CornerMin().Z() - 3000) < 1e-6, qPrintable(QString::number(box.CornerMin().Z())));
+  f.vp->lockView(Viewport::StandardView::Back);  // the same plane as the front
+  QVERIFY(std::abs(f.vp->workOffset() - 6000) < 1e-9);
+  QVERIFY(f.window.workPlaneChoices().size() == 2);
+  // 3D draws on the ground again.
+  f.vp->unlockView();
+  QVERIFY(!button->isVisible());
+  QVERIFY(std::abs(f.vp->constructionPlane().Location().Z()) < 1e-9);
 }
 
 void GuiPhase1::followFromTheContextMenu() {

@@ -12,6 +12,7 @@
 
 #include <gp_Lin.hxx>
 #include <Bnd_Box.hxx>
+#include <array>
 #include <optional>
 #include <vector>
 
@@ -197,6 +198,13 @@ class Viewport : public QWidget {
   std::optional<StandardView> lockedView() const { return lockedView_; }
   // Where drawing in empty space lands: the ground, or the fixed view's plane.
   gp_Pln constructionPlane() const;
+  // The fixed view's work plane moved along its normal (docs/44): the plan
+  // to height z, the front / back to y, the right / left to x. Each of the
+  // three is kept on its own (front and back share theirs). `name` says
+  // what it is ("2F", "Y2"; empty: a typed value). 3D draws on the ground.
+  void setWorkOffset(double offset, const QString& name = QString());
+  double workOffset() const;
+  QString workOffsetName() const;
 
   // --- wheel zoom (WheelZoom.h, docs/17_wheel_zoom.md) ----------------------
   // Zooms by `notches` (positive: in) at the cursor position `pos`
@@ -245,6 +253,8 @@ class Viewport : public QWidget {
   void contextMenuRequested(const QPoint& pos);
   // The plan / elevation mode started, switched or ended.
   void viewLockChanged();
+  // The fixed view's work plane moved (setWorkOffset).
+  void workPlaneChanged();
 
  protected:
   void showEvent(QShowEvent* event) override;
@@ -330,6 +340,10 @@ class Viewport : public QWidget {
   void orbit(const QPoint& delta);
   std::optional<StandardView> lockedView_;
   bool perspectiveBeforeLock_ = true;
+  // Work plane offsets: [0] plan (z), [1] front / back (y), [2] right / left (x).
+  int workAxis() const;
+  std::array<double, 3> workOffsets_{};
+  std::array<QString, 3> workNames_;
   std::optional<doc::ObjectId> idOf(const Handle(AIS_InteractiveObject)& object) const;
 
   doc::Modeler& modeler_;

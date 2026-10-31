@@ -2429,17 +2429,43 @@ void Viewport::unlockView() {
   emit viewLockChanged();
 }
 
-gp_Pln Viewport::constructionPlane() const {
-  if (lockedView_) {
-    switch (*lockedView_) {
-      case StandardView::Front:
-      case StandardView::Back: return gp_Pln(gp::Origin(), gp::DY());
-      case StandardView::Right:
-      case StandardView::Left: return gp_Pln(gp::Origin(), gp::DX());
-      default: break;
-    }
+int Viewport::workAxis() const {
+  if (!lockedView_) return -1;
+  switch (*lockedView_) {
+    case StandardView::Top: return 0;
+    case StandardView::Front:
+    case StandardView::Back: return 1;
+    case StandardView::Right:
+    case StandardView::Left: return 2;
+    default: return -1;
   }
-  return gp_Pln(gp::Origin(), gp::DZ());
+}
+
+gp_Pln Viewport::constructionPlane() const {
+  switch (workAxis()) {
+    case 0: return gp_Pln(gp_Pnt(0, 0, workOffsets_[0]), gp::DZ());
+    case 1: return gp_Pln(gp_Pnt(0, workOffsets_[1], 0), gp::DY());
+    case 2: return gp_Pln(gp_Pnt(workOffsets_[2], 0, 0), gp::DX());
+    default: return gp_Pln(gp::Origin(), gp::DZ());
+  }
+}
+
+void Viewport::setWorkOffset(double offset, const QString& name) {
+  const int axis = workAxis();
+  if (axis < 0 || !std::isfinite(offset)) return;
+  workOffsets_[axis] = offset;
+  workNames_[axis] = name;
+  emit workPlaneChanged();
+}
+
+double Viewport::workOffset() const {
+  const int axis = workAxis();
+  return axis < 0 ? 0.0 : workOffsets_[axis];
+}
+
+QString Viewport::workOffsetName() const {
+  const int axis = workAxis();
+  return axis < 0 ? QString() : workNames_[axis];
 }
 
 void Viewport::setPerspective(bool perspective) {

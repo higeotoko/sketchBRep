@@ -342,6 +342,68 @@ void MainWindow::buildUi() {
     viewBarButtons.push_back(b);
   }
   viewBarButtons.front()->setChecked(true);
+  // The fixed view's work plane: how high (plan) or how deep (elevation).
+  auto* workPlane = new QToolButton(viewBar);
+  workPlane->setObjectName(QStringLiteral("workPlaneButton"));
+  workPlane->setAutoRaise(true);
+  workPlane->setFocusPolicy(Qt::NoFocus);
+  workPlane->setPopupMode(QToolButton::InstantPopup);
+  workPlane->setToolTip(tr("何もない所をクリックした点が乗る面（平面は高さ、立面は奥行き）"));
+  auto* workPlaneMenu = new QMenu(workPlane);
+  workPlaneMenu->setObjectName(QStringLiteral("workPlaneMenu"));
+  workPlane->setMenu(workPlaneMenu);
+  workPlane->hide();
+  viewBarLayout->addSpacing(6);
+  viewBarLayout->addWidget(workPlane);
+  connect(workPlaneMenu, &QMenu::aboutToShow, this, [this, workPlaneMenu] {
+    workPlaneMenu->clear();
+    const auto locked = viewport_->lockedView();
+    if (!locked) return;
+    const bool plan = *locked == Viewport::StandardView::Top;
+    workPlaneMenu->addAction(plan ? tr("高さを入力...") : tr("奥行きを入力..."), this, [this, plan] {
+      bool ok = false;
+      const QString text = QInputDialog::getText(
+          this, tr("作業面"), plan ? tr("作業面の高さ Z（単位 m も可）") : tr("作業面の位置（単位 m も可）"),
+          QLineEdit::Normal, QString::fromStdString(units::formatLength(viewport_->workOffset(), 0)), &ok);
+      if (!ok) return;
+      const auto value = units::parseLength(text.trimmed().toStdString());
+      if (!value) {
+        reportError(tr("長さとして読めません: %1").arg(text));
+        return;
+      }
+      viewport_->setWorkOffset(*value);
+    })->setObjectName(QStringLiteral("workPlaneTyped"));
+    workPlaneMenu->addAction(plan ? tr("地面（Z=0）に戻す") : tr("原点（0）に戻す"), this,
+                             [this] { viewport_->setWorkOffset(0.0); })
+        ->setObjectName(QStringLiteral("workPlaneReset"));
+    const auto choices = workPlaneChoices();
+    if (!choices.empty()) workPlaneMenu->addSection(tr("通り芯"));
+    for (const WorkPlaneChoice& c : choices) {
+      workPlaneMenu->addAction(tr("%1 通り（%2）").arg(c.name, QString::fromStdString(units::formatLength(c.offset, 0))),
+                               this, [this, c] { viewport_->setWorkOffset(c.offset, c.name); })
+          ->setObjectName(QStringLiteral("workPlaneGrid_") + c.name);
+    }
+  });
+  auto showWorkPlane = [this, workPlane] {
+    const auto locked = viewport_->lockedView();
+    workPlane->setVisible(locked.has_value());
+    if (!locked) return;
+    const char* axis = *locked == Viewport::StandardView::Top                                        ? "Z"
+                       : *locked == Viewport::StandardView::Front || *locked == Viewport::StandardView::Back ? "Y"
+                                                                                                        : "X";
+    const QString at = QStringLiteral("%1=%2").arg(QLatin1String(axis),
+                                                   QString::fromStdString(units::formatLength(viewport_->workOffset(), 0)));
+    const QString name = viewport_->workOffsetName();
+    workPlane->setText(tr("作業面: %1 ▾").arg(name.isEmpty() ? at : tr("%1 通り（%2）").arg(name, at)));
+  };
+  connect(viewport_, &Viewport::viewLockChanged, this, showWorkPlane);
+  connect(viewport_, &Viewport::workPlaneChanged, this, [this, showWorkPlane] {
+    showWorkPlane();
+    // A plane chosen for the drawing in progress is not the new one.
+    if (active_) active_->cancel();
+    setStatus(tr("作業面を移しました。何もない所の点は %1 に乗ります")
+                  .arg(findChild<QToolButton*>(QStringLiteral("workPlaneButton"))->text().remove(QStringLiteral(" ▾"))));
+  });
   statusBar()->addPermanentWidget(viewBar);
   connect(viewport_, &Viewport::viewLockChanged, this, [this, viewBarButtons] {
     const auto locked = viewport_->lockedView();
@@ -1837,6 +1899,27 @@ bool MainWindow::createGrid(const QString& xSpacings, const QString& ySpacings) 
                 .arg(xs->size() + 1)
                 .arg(ys->size() + 1));
   return true;
+}
+
+std::vector<MainWindow::WorkPlaneChoice> MainWindow::workPlaneChoices() const {
+  std::vector<WorkPlaneChoice> out;
+  const auto locked = viewport_->lockedView();
+  if (!locked || *locked == Viewport::StandardView::Top) return out;
+  // An elevation along y (front / back) takes grid lines running along x,
+  // and the other way round; a line askew to the view is no plane of it.
+  const bool alongX = *locked == Viewport::StandardView::Front || *locked == Viewport::StandardView::Back;
+  const doc::Document& d = modeler_.document();
+  for (const doc::Object& o : d.objects()) {
+    if (o.kind() != doc::ObjectKind::Guide || o.layer != "Grid" || !d.isVisible(o.id)) continue;
+    const auto& line = std::get<doc::GuideLine>(o.recipe.base);
+    const gp_Trsf world = d.worldTransform(o);
+    const gp_Dir dir = line.direction.Transformed(world);
+    if (!dir.IsParallel(alongX ? gp::DX() : gp::DY(), 1e-9)) continue;
+    const gp_Pnt p = line.point.Transformed(world);
+    out.push_back({QString::fromStdString(o.name), alongX ? p.Y() : p.X()});
+  }
+  std::sort(out.begin(), out.end(), [](const WorkPlaneChoice& a, const WorkPlaneChoice& b) { return a.offset < b.offset; });
+  return out;
 }
 
 std::optional<doc::ObjectId> MainWindow::selectedGrid() const {
