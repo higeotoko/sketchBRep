@@ -18,6 +18,7 @@
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepLib.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
+#include <BRepTools_History.hxx>
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <BRepGProp.hxx>
@@ -744,7 +745,7 @@ struct Reader {
           if (s.IsNull()) s = face;
           for (TopExp_Explorer e(s, TopAbs_FACE); e.More(); e.Next()) {
             TopoDS_Shape r = unify.History()->IsRemoved(e.Current()) ? TopoDS_Shape() : e.Current();
-            const TopTools_ListOfShape& modified = unify.History()->Modified(e.Current());
+            const auto& modified = unify.History()->Modified(e.Current());
             if (!modified.IsEmpty()) r = modified.First();
             if (r.IsNull()) continue;
             GProp_GProps props;
