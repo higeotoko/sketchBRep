@@ -376,6 +376,16 @@ void MainWindow::buildUi() {
     workPlaneMenu->addAction(plan ? tr("地面（Z=0）に戻す") : tr("原点（0）に戻す"), this,
                              [this] { viewport_->setWorkOffset(0.0); })
         ->setObjectName(QStringLiteral("workPlaneReset"));
+    // Snapped points brought onto the plane (keeps the depth) or not.
+    QAction* project = workPlaneMenu->addAction(tr("物に吸着した点も作業面にそろえる（奥行きを保つ）"));
+    project->setObjectName(QStringLiteral("workPlaneProject"));
+    project->setCheckable(true);
+    project->setChecked(viewport_->projectSnaps());
+    connect(project, &QAction::toggled, this, [this](bool on) {
+      viewport_->setProjectSnaps(on);
+      setStatus(on ? tr("物に吸着した点は、作業面の奥行きにそろえます")
+                   : tr("物に吸着した点は、その物の奥行きのままにします（クリックした面に描けます）"));
+    });
     const auto choices = workPlaneChoices();
     if (!choices.empty()) workPlaneMenu->addSection(tr("通り芯"));
     for (const WorkPlaneChoice& c : choices) {

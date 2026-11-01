@@ -254,6 +254,7 @@ class GuiPhase1 : public QObject {
   void fixedElevationPansAndDrawsOnItsPlane();
   void workPlaneAtAHeightOrAGridLine();
   void curvedShapesMoveAndCopy();
+  void snapsKeepTheWorkPlaneDepth();
   void curvedPartPreviewIsWhatPushPullMakes();
   void followFromTheContextMenu();
   void arcAndLinesCloseIntoFace();
@@ -4923,6 +4924,48 @@ void GuiPhase1::workPlaneAtAHeightOrAGridLine() {
   f.vp->unlockView();
   QVERIFY(!button->isVisible());
   QVERIFY(std::abs(f.vp->constructionPlane().Location().Z()) < 1e-9);
+}
+
+// Report: on the Y3 elevation (or a plan at a height), snapping to a line
+// or a corner in front of it drew at that thing's depth, not the plane's.
+void GuiPhase1::snapsKeepTheWorkPlaneDepth() {
+  Fixture f;
+  QVERIFY(f.setUp(1000, 0));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);  // in front, y 0..1000
+  f.vp->lockView(Viewport::StandardView::Front);
+  f.vp->setWorkOffset(6000, QStringLiteral("Y3"));
+  f.vp->fitAll();
+  f.vp->syncNow();
+  auto rectangle = [&](const gp_Pnt& a, const gp_Pnt& b) -> Bnd_Box {
+    const std::size_t before = m.document().objects().size();
+    f.window.activateTool(MainWindow::ToolId::Rectangle);
+    click(f.vp, f.vp->toWidget(a));
+    click(f.vp, f.vp->toWidget(b));
+    if (m.document().objects().size() == before) return {};
+    return geom::exactBounds(m.document().worldShape(m.document().objects().back()));
+  };
+  // From the box's top corner (snapped) to a point beside it.
+  Bnd_Box made = rectangle(gp_Pnt(1000, 0, 1000), gp_Pnt(2500, 0, 2200));
+  QVERIFY(!made.IsVoid());
+  QVERIFY2(std::abs(made.CornerMin().Y() - 6000) < 1e-6 && std::abs(made.CornerMax().Y() - 6000) < 1e-6,
+           qPrintable(QStringLiteral("%1..%2").arg(made.CornerMin().Y()).arg(made.CornerMax().Y())));
+  QVERIFY(std::abs(made.CornerMin().Z() - 1000) < 1e-6);  // it did take the corner's height
+  // Turned off: the snapped thing's own depth (the box's front, y = 0).
+  f.vp->setProjectSnaps(false);
+  made = rectangle(gp_Pnt(200, 0, 200), gp_Pnt(800, 0, 800));
+  QVERIFY(!made.IsVoid());
+  QVERIFY2(std::abs(made.CornerMax().Y()) < 1e-6, qPrintable(QString::number(made.CornerMax().Y())));
+  f.vp->setProjectSnaps(true);
+  // The plan at 3000 over the box: its corner gives x and y, not z.
+  f.vp->lockView(Viewport::StandardView::Top);
+  f.vp->setWorkOffset(3000);
+  f.vp->fitAll();
+  made = rectangle(gp_Pnt(1000, 1000, 1000), gp_Pnt(2200, 2400, 1000));
+  QVERIFY(!made.IsVoid());
+  QVERIFY2(std::abs(made.CornerMin().Z() - 3000) < 1e-6, qPrintable(QString::number(made.CornerMin().Z())));
+  QVERIFY(std::abs(made.CornerMin().X() - 1000) < 1e-6);
+  (void)box;
 }
 
 // Report: a cylinder or a circle face could not be moved, nor copied with

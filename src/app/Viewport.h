@@ -205,6 +205,11 @@ class Viewport : public QWidget {
   void setWorkOffset(double offset, const QString& name = QString());
   double workOffset() const;
   QString workOffsetName() const;
+  // While fixed, points snapped to the model are brought onto the work plane
+  // along the line of sight (default), so drawing keeps the chosen depth;
+  // off: they keep their own depth (drawing on what was clicked).
+  void setProjectSnaps(bool on) { projectSnaps_ = on; }
+  bool projectSnaps() const { return projectSnaps_; }
 
   // --- wheel zoom (WheelZoom.h, docs/17_wheel_zoom.md) ----------------------
   // Zooms by `notches` (positive: in) at the cursor position `pos`
@@ -344,6 +349,7 @@ class Viewport : public QWidget {
   int workAxis() const;
   std::array<double, 3> workOffsets_{};
   std::array<QString, 3> workNames_;
+  bool projectSnaps_ = true;
   std::optional<doc::ObjectId> idOf(const Handle(AIS_InteractiveObject)& object) const;
 
   doc::Modeler& modeler_;

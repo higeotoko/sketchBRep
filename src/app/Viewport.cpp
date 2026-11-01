@@ -841,8 +841,12 @@ Handle(AIS_Shape) Viewport::makeDisplay(const doc::Object& object, Entry& entry)
     ais->SetColor(Quantity_NOC_GRAY20);
     ais->SetWidth(1.0);
   } else if (object.kind() == doc::ObjectKind::Guide) {
+    // Grid lines (通り芯) as drawn on drawings: dash-dot; other guides dashed.
+    const bool grid = object.layer == "Grid";
     ais->SetColor(Quantity_NOC_GRAY50);
-    ais->Attributes()->SetWireAspect(new Prs3d_LineAspect(Quantity_NOC_GRAY50, Aspect_TOL_DASH, 1.0));
+    ais->Attributes()->SetWireAspect(new Prs3d_LineAspect(grid ? Quantity_Color(0.35, 0.35, 0.40, Quantity_TOC_RGB)
+                                                                : Quantity_Color(Quantity_NOC_GRAY50),
+                                                           grid ? Aspect_TOL_DOTDASH : Aspect_TOL_DASH, 1.0));
   } else {
     const doc::Color c = modeler_.document().displayColor(object);
     ais->SetColor(rgb(c.r, c.g, c.b));
@@ -1085,10 +1089,19 @@ void Viewport::syncLabel(const doc::ObjectId& id) {
   Handle(AIS_TextLabel) text = new AIS_TextLabel();
   text->SetText(TCollection_ExtendedString(label->text.c_str(), Standard_True));  // UTF-8
   text->SetPosition(label->position.Transformed(modeler_.document().worldTransform(*o)));
-  text->SetHeight(15);
+  // A grid line's name (X1, Y2): larger, bold, in a white box over the
+  // line's end, so it reads at any zoom (as the bubbles of a drawing).
+  const auto part = o->attributes.find("grid_part");
+  const bool gridName = part != o->attributes.end() && part->second == "label";
+  text->SetHeight(gridName ? 22 : 15);
   text->SetColor(selected ? kSelectedColor : Quantity_Color(Quantity_NOC_BLACK));
   text->SetHJustification(Graphic3d_HTA_CENTER);
-  text->SetVJustification(Graphic3d_VTA_BOTTOM);
+  text->SetVJustification(gridName ? Graphic3d_VTA_CENTER : Graphic3d_VTA_BOTTOM);
+  if (gridName) {
+    text->SetFontAspect(Font_FA_Bold);
+    text->Attributes()->TextAspect()->Aspect()->SetDisplayType(Aspect_TODT_SUBTITLE);
+    text->Attributes()->TextAspect()->Aspect()->SetColorSubTitle(Quantity_NOC_WHITE);
+  }
   text->SetZLayer(Graphic3d_ZLayerId_TopOSD);
   // Selection mode -1: labels are not pickable; their lines are.
   context_->Display(text, 0, -1, Standard_False);
@@ -1743,7 +1756,19 @@ snap::SnapResult Viewport::snap(const QPoint& pos, std::optional<gp_Pnt> anchor,
   query.workPlane = workPlane ? *workPlane : constructionPlane();
   query.trackedPoints = trackedPoints;
   query.trackedDirections = trackedDirections;
-  return inference_.snap(query);
+  snap::SnapResult r = inference_.snap(query);
+  // A fixed plan / elevation draws on its work plane (docs/44): a point
+  // snapped to something in front of it or behind it is brought onto the
+  // plane along the line of sight (Rhino's "project" snap). It stays where
+  // it shows on the screen; only its depth becomes the plane's.
+  if (lockedView_ && projectSnaps_ && r.valid()) {
+    const gp_Pln plane = constructionPlane();
+    const gp_Dir n = plane.Axis().Direction();
+    const double depth = gp_Vec(plane.Location(), r.point).Dot(gp_Vec(n));
+    if (std::abs(depth) > 1e-9) r.point.Translate(gp_Vec(n) * -depth);
+    r.faceNormal = n;  // whatever was clicked, drawing starts on the plane
+  }
+  return r;
 }
 
 std::optional<std::pair<gp_Pnt, gp_Dir>> Viewport::faceAt(const QPoint& pos) const {
