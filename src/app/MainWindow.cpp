@@ -1915,6 +1915,39 @@ bool MainWindow::createGrid(const QString& xSpacings, const QString& ySpacings) 
   return true;
 }
 
+void MainWindow::changeSelectedMembersSection() {
+  std::vector<doc::ObjectId> members;
+  for (const doc::ObjectId& id : selection_) {
+    const doc::Object* o = modeler_.document().find(id);
+    if (o && std::holds_alternative<doc::LinearMember>(o->recipe.base)) members.push_back(id);
+  }
+  if (members.empty()) return;
+  // The member settings dialog, starting from the first one's section; the
+  // member tool's own settings are put back afterwards.
+  const MemberTool::Settings kept = memberTool_->settings();
+  MemberTool::Settings start = kept;
+  start.section = std::get<doc::LinearMember>(modeler_.document().find(members.front())->recipe.base).section;
+  memberTool_->setSettings(start);
+  const bool taken = showMemberSettingsDialog();
+  const geom::Section chosen = memberTool_->settings().section;
+  memberTool_->setSettings(kept);
+  refreshMemberPanel();
+  if (!taken) return;
+  doc::Modeler::MemberChange change;
+  change.section = chosen;
+  modeler_.history().beginGroup("Member Section");
+  for (const doc::ObjectId& id : members) {
+    const auto changed = modeler_.changeMember(id, change);
+    if (!changed) {
+      modeler_.history().abortGroup();
+      reportError(tr("断面を変えられませんでした: %1").arg(QString::fromStdString(changed.error())));
+      return;
+    }
+  }
+  modeler_.history().endGroup();
+  setStatus(tr("%1 本の断面を %2 にしました").arg(members.size()).arg(QString::fromStdString(geom::sectionName(chosen))));
+}
+
 void MainWindow::showLevelsEditDialog() {
   QDialog dialog(this);
   dialog.setObjectName(QStringLiteral("levelsEditDialog"));
@@ -2137,8 +2170,8 @@ void MainWindow::showGridEditDialog(const doc::ObjectId& gridId) {
 
 void MainWindow::showGridMembersDialog(const doc::ObjectId& gridId) {
   if (!modeler_.gridSpec(gridId)) return;
-  const MemberTool::Settings column = memberTool_->settingsFor("column");
-  const MemberTool::Settings beam = memberTool_->settingsFor("beam");
+  MemberTool::Settings column = memberTool_->settingsFor("column");
+  MemberTool::Settings beam = memberTool_->settingsFor("beam");
   QDialog dialog(this);
   dialog.setObjectName(QStringLiteral("gridMembersDialog"));
   dialog.setWindowTitle(tr("通り芯に柱・梁を配置"));
@@ -2155,7 +2188,41 @@ void MainWindow::showGridMembersDialog(const doc::ObjectId& gridId) {
   form->addRow(columns);
   form->addRow(xBeams);
   form->addRow(yBeams);
-  form->addRow(new QLabel(tr("梁：%1").arg(QString::fromStdString(geom::sectionName(beam.section))), &dialog));
+  auto* beamLabel = new QLabel(tr("梁：%1").arg(QString::fromStdString(geom::sectionName(beam.section))), &dialog);
+  beamLabel->setObjectName(QStringLiteral("gridBeamSection"));
+  form->addRow(beamLabel);
+  // The sections chosen here are the member tool's column / beam entries
+  // (the member panel's 柱 / 梁): changed here, they stay for next time.
+  auto editEntry = [this](const std::string& entry) {
+    const std::string was = memberTool_->entry();
+    memberTool_->useEntry(entry);
+    const bool taken = showMemberSettingsDialog();
+    const MemberTool::Settings now = memberTool_->settings();
+    memberTool_->useEntry(was);
+    refreshMemberPanel();
+    return taken ? std::optional<MemberTool::Settings>(now) : std::nullopt;
+  };
+  auto* sections = new QHBoxLayout;
+  auto* columnSection = new QPushButton(tr("柱の断面を変更..."), &dialog);
+  columnSection->setObjectName(QStringLiteral("gridColumnSectionButton"));
+  auto* beamSection = new QPushButton(tr("梁の断面を変更..."), &dialog);
+  beamSection->setObjectName(QStringLiteral("gridBeamSectionButton"));
+  connect(columnSection, &QPushButton::clicked, &dialog, [&, editEntry] {
+    if (const auto s = editEntry("column")) {
+      column = *s;
+      columns->setText(tr("柱：%1").arg(QString::fromStdString(geom::sectionName(column.section))));
+    }
+  });
+  connect(beamSection, &QPushButton::clicked, &dialog, [&, editEntry] {
+    if (const auto s = editEntry("beam")) {
+      beam = *s;
+      beamLabel->setText(tr("梁：%1").arg(QString::fromStdString(geom::sectionName(beam.section))));
+    }
+  });
+  sections->addWidget(columnSection);
+  sections->addWidget(beamSection);
+  sections->addStretch();
+  form->addRow(sections);
   auto* base = new QLineEdit(QStringLiteral("0"), &dialog);
   base->setObjectName(QStringLiteral("gridBase"));
   auto* height = new QLineEdit(QString::fromStdString(units::formatLength(column.columnHeight, 0)), &dialog);
@@ -2372,7 +2439,7 @@ void MainWindow::refreshMemberPanel() {
   memberPanel_->adjustSize();
 }
 
-void MainWindow::showMemberSettingsDialog() {
+bool MainWindow::showMemberSettingsDialog() {
   QDialog dialog(this);
   dialog.setObjectName(QStringLiteral("memberSettingsDialog"));
   dialog.setWindowTitle(tr("部材の設定"));
@@ -2503,7 +2570,7 @@ void MainWindow::showMemberSettingsDialog() {
   form->addRow(buttons);
   connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
   connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-  if (dialog.exec() != QDialog::Accepted) return;
+  if (dialog.exec() != QDialog::Accepted) return false;
   MemberTool::Settings next = current;
   const QString key = family->currentData().toString();
   if (key == QStringLiteral("rectangle")) {
@@ -2511,7 +2578,7 @@ void MainWindow::showMemberSettingsDialog() {
     const auto d = units::parseLength(depth->text().toStdString());
     if (!w || !d || *w <= 0 || *d <= 0) {
       reportError(tr("幅とせいは正の長さで入力してください"));
-      return;
+      return false;
     }
     next.section = geom::Section{};
     next.section.width = *w;
@@ -2520,7 +2587,7 @@ void MainWindow::showMemberSettingsDialog() {
     const auto d = units::parseLength(diameter->text().toStdString());
     if (!d || *d <= 0) {
       reportError(tr("直径は正の長さで入力してください"));
-      return;
+      return false;
     }
     next.section = geom::Section{};
     next.section.kind = geom::Section::Kind::Circle;
@@ -2528,7 +2595,7 @@ void MainWindow::showMemberSettingsDialog() {
   } else {
     if (!sizes->currentItem()) {
       reportError(tr("サイズを選んでください"));
-      return;
+      return false;
     }
     next.section = geom::findSection(sizes->currentItem()->data(Qt::UserRole).toString().toStdString())->section;
   }
@@ -2536,12 +2603,12 @@ void MainWindow::showMemberSettingsDialog() {
   next.roll = roll->text().toDouble(&ok);
   if (!ok) {
     reportError(tr("回転は角度（度）で入力してください"));
-    return;
+    return false;
   }
   const auto h = units::parseLength(height->text().toStdString());
   if (!h || *h <= 0) {
     reportError(tr("柱の高さは正の長さで入力してください"));
-    return;
+    return false;
   }
   next.columnHeight = *h;
   next.anchor = {across->currentIndex() - 1, up->currentIndex() - 1};
@@ -2552,6 +2619,7 @@ void MainWindow::showMemberSettingsDialog() {
   memberTool_->setSettings(next);
   setStatus(memberTool_->settingsText());
   refreshMemberPanel();
+  return true;
 }
 
 void MainWindow::showSlabSettingsDialog() {
@@ -3506,6 +3574,16 @@ QMenu* MainWindow::buildContextMenu(const QPoint& pos) {
         })) {
       QAction* stop = menu->addAction(tr("追従を止める"), this, [this] { report(modeler_.setFollow(selection_, std::nullopt)); });
       stop->setObjectName(QStringLiteral("stopFollowingAction"));
+    }
+    // Members (columns, beams): their section changed together.
+    if (std::all_of(ids.begin(), ids.end(), [&](const doc::ObjectId& id) {
+          const doc::Object* o = document.find(id);
+          return o && std::holds_alternative<doc::LinearMember>(o->recipe.base);
+        })) {
+      menu->addAction(ids.size() == 1 ? tr("部材の断面を変更...") : tr("%1 本の部材の断面をまとめて変更...").arg(ids.size()),
+                      this, [this] { changeSelectedMembersSection(); })
+          ->setObjectName(QStringLiteral("memberSectionAction"));
+      menu->addSeparator();
     }
     // A level line drawn as a guide (the tape measure in an elevation).
     if (single && single->kind() == doc::ObjectKind::Guide && !single->attributes.count("grid_part") &&

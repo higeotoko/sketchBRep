@@ -168,6 +168,12 @@ TEST(Levels, Api) {
   }
   ASSERT_TRUE(run({{"command", "set_levels"}, {"args", {{"levels", levels}}}}).value("ok", false));
   EXPECT_NEAR(worldEnd(m, column, true).Z(), 3200, 1e-6);
+  // A whole new section, the column's ends kept.
+  const json changed = run({{"command", "change_member"},
+                            {"args", {{"id", column}, {"section", {{"kind", "circle"}, {"diameter", 500}}}}}});
+  ASSERT_TRUE(changed.value("ok", false)) << changed.dump();
+  EXPECT_EQ(std::get<LinearMember>(m.document().find(column)->recipe.base).section.kind, geom::Section::Kind::Circle);
+  EXPECT_NEAR(worldEnd(m, column, true).Z(), 3200, 1e-6);
   const json info = run({{"command", "get_object"}, {"args", {{"id", column}}}});
   EXPECT_EQ(info["result"]["grid_pin"]["levels"].size(), 2u);
   EXPECT_FALSE(run({{"command", "place_members_on_grid"},

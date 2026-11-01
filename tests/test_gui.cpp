@@ -256,6 +256,7 @@ class GuiPhase1 : public QObject {
   void curvedShapesMoveAndCopy();
   void snapsKeepTheWorkPlaneDepth();
   void levelsInElevationsAndPlans();
+  void gridMemberSectionsChosenAndChanged();
   void curvedPartPreviewIsWhatPushPullMakes();
   void followFromTheContextMenu();
   void arcAndLinesCloseIntoFace();
@@ -5028,6 +5029,80 @@ void GuiPhase1::levelsInElevationsAndPlans() {
   QVERIFY(m.undo());
   QVERIFY(m.document().find(guide));
   QCOMPARE(m.levels().size(), std::size_t(3));
+}
+
+// Report: the columns and beams placed on a grid were always 105 x 105 (the
+// member panel's column / beam settings, with no way to them there) and
+// could not be changed afterwards.
+void GuiPhase1::gridMemberSectionsChosenAndChanged() {
+  Fixture f;
+  QVERIFY(f.setUp(3000, 3000));
+  doc::Modeler& m = f.window.modeler();
+  QVERIFY(f.window.createGrid(QStringLiteral("6000"), QStringLiteral("6000")));
+  const auto grid = f.window.selectedGrid();
+  QVERIFY(grid);
+  // In the placement dialog: the columns a steel box section, the beams 300 x 600.
+  auto chooseInSettings = [&](const std::function<void(QDialog*)>& fill) {
+    QTimer::singleShot(100, [&, fill] {
+      if (auto* d = f.window.findChild<QDialog*>(QStringLiteral("memberSettingsDialog"))) {
+        fill(d);
+        d->accept();
+      }
+    });
+  };
+  QTimer::singleShot(100, [&] {
+    auto* dialog = f.window.findChild<QDialog*>(QStringLiteral("gridMembersDialog"));
+    if (!dialog) return;
+    chooseInSettings([](QDialog* d) {
+      auto* family = d->findChild<QComboBox*>(QStringLiteral("memberFamily"));
+      family->setCurrentIndex(family->findData(QStringLiteral("BOX")));
+      d->findChild<QLineEdit*>(QStringLiteral("memberSearch"))->setText(QStringLiteral("BCP-350x350x12"));
+    });
+    dialog->findChild<QPushButton*>(QStringLiteral("gridColumnSectionButton"))->click();
+    chooseInSettings([](QDialog* d) {
+      auto* family = d->findChild<QComboBox*>(QStringLiteral("memberFamily"));
+      family->setCurrentIndex(family->findData(QStringLiteral("rectangle")));
+      d->findChild<QLineEdit*>(QStringLiteral("memberWidth"))->setText(QStringLiteral("300"));
+      d->findChild<QLineEdit*>(QStringLiteral("memberDepth"))->setText(QStringLiteral("600"));
+    });
+    dialog->findChild<QPushButton*>(QStringLiteral("gridBeamSectionButton"))->click();
+    QVERIFY(dialog->findChild<QCheckBox*>(QStringLiteral("gridColumns"))->text().contains(QStringLiteral("350")));
+    QVERIFY(dialog->findChild<QLabel*>(QStringLiteral("gridBeamSection"))->text().contains(QStringLiteral("600")));
+    dialog->accept();
+  });
+  f.window.showGridMembersDialog(*grid);
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  std::vector<doc::ObjectId> columns, beams;
+  for (const doc::Object& o : m.document().objects()) {
+    if (!o.gridPin) continue;
+    (o.attributes.at("kind") == "column" ? columns : beams).push_back(o.id);
+  }
+  QCOMPARE(columns.size(), std::size_t(4));
+  QCOMPARE(beams.size(), std::size_t(4));
+  auto section = [&](const doc::ObjectId& id) { return std::get<doc::LinearMember>(m.document().find(id)->recipe.base).section; };
+  QCOMPARE(QString::fromStdString(section(columns.front()).catalog), QStringLiteral("BOX/BCP/SHS/350x350x12"));
+  QVERIFY(std::abs(section(beams.front()).depth - 600) < 1e-9);
+  // The panel's column entry keeps the box for next time.
+  QCOMPARE(QString::fromStdString(f.window.memberTool().settingsFor("column").section.catalog),
+           QStringLiteral("BOX/BCP/SHS/350x350x12"));
+  // Two beams selected, changed together to 250 x 500: one undo step.
+  const std::size_t steps = m.history().undoCount();
+  f.window.setSelection({beams[0], beams[1]});
+  chooseInSettings([](QDialog* d) {
+    d->findChild<QLineEdit*>(QStringLiteral("memberWidth"))->setText(QStringLiteral("250"));
+    d->findChild<QLineEdit*>(QStringLiteral("memberDepth"))->setText(QStringLiteral("500"));
+  });
+  QMenu* menu = f.window.buildContextMenu(QPoint(1, 1));
+  QAction* change = menu->findChild<QAction*>(QStringLiteral("memberSectionAction"));
+  QVERIFY(change);
+  change->trigger();
+  delete menu;
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QVERIFY(std::abs(section(beams[0]).depth - 500) < 1e-9 && std::abs(section(beams[1]).width - 250) < 1e-9);
+  QVERIFY(std::abs(section(beams[2]).depth - 600) < 1e-9);  // not selected: as it was
+  QCOMPARE(m.history().undoCount(), steps + 1);
+  // Still pinned: the grid moved, they go along.
+  QVERIFY(m.document().find(beams[0])->gridPin);
 }
 
 // Report: on the Y3 elevation (or a plan at a height), snapping to a line

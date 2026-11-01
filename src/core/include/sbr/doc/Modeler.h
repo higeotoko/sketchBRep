@@ -509,6 +509,9 @@ class Modeler {
   // line moves). Other edits made since are kept: when they cannot be
   // redone on the changed member, nothing changes and the reason is given.
   struct MemberChange {
+    // A whole new section (any kind: own rectangle / circle, or a catalog
+    // one), the member's axis, anchor and roll kept.
+    std::optional<geom::Section> section;
     std::optional<std::string> catalog;
     std::optional<double> width, depth, web, flange, radius, length, roll;  // mm, mm..., mm, radians
     std::optional<double> diameter;  // a round section

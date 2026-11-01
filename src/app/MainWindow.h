@@ -161,7 +161,11 @@ class MainWindow : public QMainWindow, public ToolHost {
   WallTool& wallTool() { return *wallTool_; }
   MemberTool& memberTool() { return *memberTool_; }
   // Tools > Member settings (section family, size search, anchor, role).
-  void showMemberSettingsDialog();
+  // True when accepted (the settings taken).
+  bool showMemberSettingsDialog();
+  // The section of the selected members changed at once (one undo step),
+  // chosen in the member settings dialog.
+  void changeSelectedMembersSection();
   // Tools > Members > steel / column / beam: the member tool with that
   // entry's own settings.
   void startMember(const std::string& entry);

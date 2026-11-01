@@ -2081,7 +2081,8 @@ const std::vector<CommandDef>& commands() {
        SCHEMA({"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}),
        [](doc::Modeler& m, const json& a) { return memberInfoJson(must(m.memberInfo(text(a, "id")))); }},
       {"change_member",
-       "Basic member edits in one step, checked together: 'catalog' (another catalog section; anchor, "
+       "Basic member edits in one step, checked together: 'section' (a whole new section as in create_member: "
+       "a catalog id or {kind: rectangle|circle|h, ...}; axis, anchor and roll kept), 'catalog' (another catalog section; anchor, "
        "rotation and length kept), own 'width' / 'depth' (H: 'web', 'flange', 'radius'; the section "
        "becomes its own; catalog sections change size by 'catalog' only), 'diameter' (round), 'length' "
        "(absolute, mm; the start stays, a column's foot), 'roll' (deg), "
@@ -2091,7 +2092,7 @@ const std::vector<CommandDef>& commands() {
        "default the line it was drawn on), 'height' (foot kept), 'length'. Slabs: 'thickness' (keep: top "
        "(default) | bottom | center).",
        SCHEMA({"type": "object", "properties": {
-         "id": {"type": "string"}, "catalog": {"type": "string"}, "width": {"type": "number"},
+         "id": {"type": "string"}, "section": {}, "catalog": {"type": "string"}, "width": {"type": "number"},
          "depth": {"type": "number"}, "web": {"type": "number"}, "flange": {"type": "number"},
          "radius": {"type": "number"}, "length": {"type": "number"}, "roll": {"type": "number"},
          "diameter": {"type": "number"}, "thickness": {"type": "number"}, "height": {"type": "number"},
@@ -2099,6 +2100,7 @@ const std::vector<CommandDef>& commands() {
          "required": ["id"]}),
        [](doc::Modeler& m, const json& a) {
          doc::Modeler::MemberChange change;
+         if (a.contains("section")) change.section = sectionFrom(a.at("section"));
          if (a.contains("catalog")) change.catalog = text(a, "catalog");
          auto opt = [&](const char* key) -> std::optional<double> {
            return a.contains(key) ? std::optional<double>(number(a, key)) : std::nullopt;

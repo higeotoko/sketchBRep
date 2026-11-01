@@ -5563,6 +5563,11 @@ Result<Modeler::MemberInfo> Modeler::changeMember(const ObjectId& id, const Memb
   }
   Object object = *current;
   auto& m = std::get<LinearMember>(object.recipe.base);
+  if (change.section) {
+    if (const Status valid = geom::validateSection(*change.section); !valid) return R::failure(valid.message());
+    m.section = *change.section;
+    m.origin = change.section->catalog;
+  }
   if (change.catalog) {
     const geom::CatalogSection* entry = geom::findSection(*change.catalog);
     if (!entry) return R::failure("No section '" + *change.catalog + "' in the catalog (nothing was changed)");
