@@ -189,6 +189,7 @@ jobs:
           Copy-Item docs\43_grid.md "$dist\GRID.md"
           Copy-Item docs\44_plan_elevation_mode.md "$dist\PLAN_ELEVATION.md"
           Copy-Item docs\45_levels.md "$dist\LEVELS.md"
+          Copy-Item docs\46_collada_sketchup.md "$dist\SKETCHUP_DAE.md"
           Copy-Item docs\32_unified_import_export.md "$dist\IMPORT_EXPORT.md"
           Copy-Item docs\33_chatgpt_connection.md "$dist\CHATGPT_CONNECTION.md"
           Copy-Item docs\34_sections_and_tools_palette.md "$dist\SECTIONS_AND_TOOLS.md"

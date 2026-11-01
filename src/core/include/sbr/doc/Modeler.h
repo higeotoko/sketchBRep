@@ -16,6 +16,7 @@
 #include "sbr/doc/CommandStack.h"
 #include "sbr/doc/Document.h"
 #include "sbr/geom/Rhino3dm.h"
+#include "sbr/geom/Collada.h"
 #include "sbr/geom/Dxf.h"
 #include "sbr/geom/ShapeIO.h"
 
@@ -700,6 +701,15 @@ class Modeler {
   // `allowPartial`; `report` (optional) says what was found either way.
   Result<std::vector<ObjectId>> import3dm(const std::string& path, bool allowPartial = false,
                                           geom::Import3dmReport* report = nullptr);
+
+  // COLLADA (.dae, docs/46), for SketchUp Pro: the given objects (all
+  // visible ones when empty) as meshes in mm, each object's colours and
+  // faces painted on their own kept; loose lines as lines.
+  Status exportCollada(const std::string& path, const std::vector<ObjectId>& ids = {},
+                       const geom::ColladaExportOptions& options = {}) const;
+  // Each mesh of the file an object (faces joined, closed ones solids),
+  // coloured from its materials; one undo step. `report` says what came.
+  Result<std::vector<ObjectId>> importCollada(const std::string& path, geom::ColladaReport* report = nullptr);
 
   // --- queries ------------------------------------------------------------
   std::vector<ObjectSummary> listObjects() const;

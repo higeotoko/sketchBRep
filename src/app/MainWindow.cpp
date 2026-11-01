@@ -86,7 +86,7 @@ namespace sbr::app {
 namespace {
 std::string utf8(const QString& s) { return s.toUtf8().toStdString(); }
 
-enum class ExchangeType { Step, Stl, Dxf, Dwg, Iges, Brep, Rhino, Image };
+enum class ExchangeType { Step, Stl, Dxf, Dwg, Iges, Brep, Rhino, Collada, Image };
 struct ExchangeFormat {
   ExchangeType type;
   QString filter;
@@ -102,6 +102,7 @@ std::vector<ExchangeFormat> exchangeFormats(bool importing) {
   formats.push_back({ExchangeType::Iges,text("IGES ファイル (*.igs *.iges)"),{"igs","iges"}});
   formats.push_back({ExchangeType::Brep,text("BREP ファイル (*.brep *.brp)"),{"brep","brp"}});
   formats.push_back({ExchangeType::Rhino,text("Rhino 3DM ファイル (*.3dm)"),{"3dm"}});
+  formats.push_back({ExchangeType::Collada,text("COLLADA・SketchUp 用 (*.dae)"),{"dae"}});
   formats.push_back(importing?ExchangeFormat{ExchangeType::Image,text("画像・下敷き (*.png *.jpg *.jpeg *.bmp *.gif)"),{"png","jpg","jpeg","bmp","gif"}}:
                              ExchangeFormat{ExchangeType::Image,text("PNG 画像 (*.png)"),{"png"}});
   return formats;
@@ -3931,6 +3932,7 @@ void MainWindow::importFile() {
     case ExchangeType::Iges:importGeometryFile(path,GeometryFormat::Iges);break;
     case ExchangeType::Brep:importGeometryFile(path,GeometryFormat::Brep);break;
     case ExchangeType::Rhino:import3dmFile(path);break;
+    case ExchangeType::Collada:importColladaFile(path);break;
     case ExchangeType::Image:importUnderlay(path);break;
     case ExchangeType::Stl:break; // not offered by the import dialog
   }
@@ -3969,6 +3971,7 @@ void MainWindow::exportFile() {
     case ExchangeType::Iges:exportGeometry(path,GeometryFormat::Iges);break;
     case ExchangeType::Brep:exportGeometry(path,GeometryFormat::Brep);break;
     case ExchangeType::Rhino:export3dmFile(path);break;
+    case ExchangeType::Collada:exportColladaFile(path);break;
     case ExchangeType::Image:exportImage(path);break;
     case ExchangeType::Dxf:case ExchangeType::Dwg:break; // not offered for export
   }
@@ -4185,6 +4188,33 @@ void MainWindow::import3dmFile(const QString& path) {
   } else {
     setStatus(tr("3DM から %1 個を読み込みました（単位は mm に換算、レイヤはタグに）").arg(ids->size()));
   }
+}
+
+void MainWindow::importColladaFile(const QString& path) {
+  geom::ColladaReport report;
+  const auto ids = modeler_.importCollada(utf8(path), &report);
+  if (!ids) {
+    reportError(tr("COLLADA を読み込めませんでした: %1").arg(QString::fromStdString(ids.error())));
+    return;
+  }
+  setSelection(*ids);
+  viewport_->fitObjects(*ids);
+  QString text = tr("COLLADA から %1 個を読み込みました（うち立体 %2 個、単位 %3 → mm）")
+                     .arg(ids->size())
+                     .arg(report.solids)
+                     .arg(QString::fromStdString(report.units));
+  if (report.degenerate > 0) text += tr("。小さすぎる面など %1 枚は省きました").arg(report.degenerate);
+  if (report.textured > 0) text += tr("。テクスチャ %1 個は色で表示します").arg(report.textured);
+  setStatus(text);
+}
+
+void MainWindow::exportColladaFile(const QString& path) {
+  const Status s = modeler_.exportCollada(utf8(path), selection_);
+  if (!s) {
+    reportError(tr("COLLADA を書き出せませんでした: %1").arg(QString::fromStdString(s.message())));
+    return;
+  }
+  statusBar()->showMessage(tr("COLLADA を書き出しました（SketchUp の ファイル > インポート で開けます）: %1").arg(path), 5000);
 }
 
 void MainWindow::export3dmFile(const QString& path) {

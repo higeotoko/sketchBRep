@@ -6933,6 +6933,77 @@ Status Modeler::export3dm(const std::string& path, const std::vector<ObjectId>& 
   return geom::write3dm(parts, path);
 }
 
+Status Modeler::exportCollada(const std::string& path, const std::vector<ObjectId>& ids,
+                              const geom::ColladaExportOptions& options) const {
+  for (const ObjectId& id : ids) {
+    if (!document_.find(id)) return Status::failure("Object not found");
+  }
+  std::vector<ObjectId> wanted;
+  if (ids.empty()) {
+    for (const Object& o : document_.objects()) wanted.push_back(o.id);
+  } else {
+    for (const ObjectId& root : topmost(ids)) {
+      for (const ObjectId& id : document_.subtree(root)) wanted.push_back(id);
+    }
+  }
+  auto colorOf = [&](const std::string& materialId, const Color& fallback) {
+    if (const Material* m = document_.findMaterial(materialId)) return geom::ColladaColor{m->color.r, m->color.g, m->color.b, m->opacity};
+    return geom::ColladaColor{fallback.r, fallback.g, fallback.b, 1.0};
+  };
+  std::vector<geom::ColladaPart> parts;
+  for (const ObjectId& id : wanted) {
+    const Object* o = document_.find(id);
+    if (!o || o->shape.IsNull() || !document_.isVisible(id) || o->kind() == ObjectKind::Annotation ||
+        o->kind() == ObjectKind::Guide || o->kind() == ObjectKind::Image) {
+      continue;
+    }
+    geom::ColladaPart part;
+    part.shape = document_.worldShape(*o);
+    part.name = o->name;
+    part.color = colorOf(document_.inheritedMaterial(*o), document_.displayColor(*o));
+    // Faces painted on their own (indices of the local shape are those of
+    // the placed one: placing keeps the topology).
+    for (const auto& [index, material] : resolveFaceMaterials(*o).faces) {
+      part.faceColors.emplace_back(index, colorOf(material, document_.displayColor(*o)));
+    }
+    parts.push_back(std::move(part));
+  }
+  if (parts.empty()) return Status::failure("Nothing to export");
+  return geom::writeCollada(parts, path, options);
+}
+
+Result<std::vector<ObjectId>> Modeler::importCollada(const std::string& path, geom::ColladaReport* report) {
+  using R = Result<std::vector<ObjectId>>;
+  auto parts = geom::readCollada(path, report);
+  if (!parts) return R::failure(parts.error());
+  ChangeSet changes(document_);
+  std::vector<ObjectId> ids;
+  for (const geom::ColladaPart& part : *parts) {
+    Object o;
+    o.id = generateObjectId();
+    o.name = part.name.empty() ? uniqueName("Imported") : part.name;
+    o.color = Color{part.color.r, part.color.g, part.color.b};
+    if (TopExp_Explorer(part.shape, TopAbs_FACE).More()) {
+      o.material = changes.colorMaterialFor(o.color);
+      TopTools_IndexedMapOfShape faces;
+      TopExp::MapShapes(part.shape, TopAbs_FACE, faces);
+      for (const auto& [index, color] : part.faceColors) {
+        if (index < 1 || index > faces.Extent()) continue;
+        if (auto fm = FaceMaterial::of(TopoDS::Face(faces(index)),
+                                       changes.colorMaterialFor(Color{color.r, color.g, color.b}))) {
+          o.faceMaterials.push_back(std::move(*fm));
+        }
+      }
+    }
+    o.recipe.base = ImportedShape{part.shape, path};
+    if (const Status built = rebuild(o); !built) return R::failure(built.message());
+    ids.push_back(o.id);
+    changes.add(o);
+  }
+  history_.execute(changes.build("Import COLLADA"));
+  return ids;
+}
+
 Result<TopoDS_Shape> Modeler::exportGeometry(const std::vector<ObjectId>& ids, bool facesOnly) const {
   for (const auto& id : ids) if (!document_.find(id)) return Result<TopoDS_Shape>::failure("Object not found");
   std::vector<ObjectId> wanted;

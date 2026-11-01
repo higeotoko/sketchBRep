@@ -2277,6 +2277,34 @@ const std::vector<CommandDef>& commands() {
          must(m.exportStl(text(a,"path"),a.contains("ids") ? ids(a,"ids") : std::vector<ObjectId>{},options));
          return json::object();
        }},
+      {"export_dae",
+       "Export visible objects (or 'ids') to COLLADA (.dae) for SketchUp Pro (File > Import there): meshes in mm, "
+       "Z up, each object's colours and faces painted on their own; loose lines as lines. 'deflection_mm' (default "
+       "1) and 'angle_deg' (default 15): how finely curved faces are cut.",
+       SCHEMA({"type": "object", "properties": {"path": {"type": "string"},
+               "ids": {"type": "array", "items": {"type": "string"}}, "deflection_mm": {"type": "number"},
+               "angle_deg": {"type": "number"}}, "required": ["path"]}),
+       [](doc::Modeler& m, const json& a) {
+         geom::ColladaExportOptions options;
+         options.linearDeflection = numberOr(a, "deflection_mm", 1.0);
+         options.angularDeflection = numberOr(a, "angle_deg", 15.0) * M_PI / 180.0;
+         must(m.exportCollada(text(a, "path"), a.contains("ids") ? ids(a, "ids") : std::vector<ObjectId>{}, options));
+         return json::object();
+       }},
+      {"import_dae",
+       "Import a COLLADA (.dae) file (e.g. exported from SketchUp Pro): each mesh an object, triangles joined "
+       "into faces, closed meshes solids, colours from the materials, units and up axis converted (mm, Z up), "
+       "components placed. One undo step; 'report' says what was found.",
+       SCHEMA({"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}),
+       [](doc::Modeler& m, const json& a) {
+         geom::ColladaReport report;
+         json out = idsResult(must(m.importCollada(text(a, "path"), &report)));
+         out["report"] = {{"units", report.units}, {"scale_to_mm", report.scaleToMm}, {"up_axis", report.upAxis},
+                          {"parts", report.parts}, {"solids", report.solids}, {"faces", report.triangles},
+                          {"lines", report.lines}, {"left_out", report.degenerate}, {"textured", report.textured},
+                          {"unsupported", report.unsupported}, {"summary", report.summary()}};
+         return out;
+       }},
       {"export_step", "Export visible objects (or 'ids') to STEP with names and colours.",
        SCHEMA({"type": "object", "properties": {"path": {"type": "string"},
                "ids": {"type": "array", "items": {"type": "string"}}}, "required": ["path"]}),
@@ -2293,7 +2321,8 @@ const std::vector<CommandDef>& commands() {
 bool isFileCommand(const std::string& name) {
   return name == "save" || name == "open" || name == "export_step" || name == "export_stl" || name == "export_3dm" ||
          name == "import_brep" || name == "export_brep" || name == "import_iges" || name == "export_iges" ||
-         name == "import_3dm" || name == "import_dxf" || name == "set_material_texture";
+         name == "import_3dm" || name == "import_dxf" || name == "set_material_texture" || name == "export_dae" ||
+         name == "import_dae";
 }
 
 CommandApi::Effect builtinEffect(const std::string& name) {
