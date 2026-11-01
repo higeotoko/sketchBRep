@@ -77,6 +77,7 @@
 #endif
 
 #include "Tools.h"
+#include "sbr/Units.h"
 #include "sbr/geom/Measure.h"
 #include "sbr/geom/Operations.h"
 
@@ -1082,7 +1083,7 @@ void Viewport::syncLabel(const doc::ObjectId& id) {
     labels_.erase(it);
   }
   const doc::Object* o = modeler_.document().find(id);
-  if (!o || o->kind() != doc::ObjectKind::Annotation || !modeler_.document().isVisible(o->id)) return;
+  if (!o || o->kind() != doc::ObjectKind::Annotation || !modeler_.document().isVisible(o->id) || hiddenInView(*o)) return;
   const auto label = doc::annotationLabel(o->recipe);
   if (!label || label->text.empty()) return;
   const bool selected = isSelected(*o);
@@ -1343,7 +1344,7 @@ std::optional<std::array<double, 3>> Viewport::shownFaceColor(const doc::ObjectI
 bool Viewport::syncObject(const doc::ObjectId& id) {
   const doc::Document& document = modeler_.document();
   const doc::Object* o = document.find(id);
-  const bool wanted = o && !o->shape.IsNull() && document.isVisible(id);
+  const bool wanted = o && !o->shape.IsNull() && document.isVisible(id) && !hiddenInView(*o);
   bool guidesChanged = false;
   auto found = entries_.find(id);
   // Shapes are compared by TShape + location: unchanged objects keep their
@@ -1614,11 +1615,9 @@ void Viewport::syncSome(std::optional<double> budgetMs) {
       syncLabel(queue[i]);
     }
   }
-  if (guidesChanged) {
-    std::vector<gp_Lin> lines;
-    for (const auto& [id, line] : guideLines_) lines.push_back(line);
-    inference_.setGuides(lines);
-  }
+  if (guidesChanged) pushGuides();
+  // Levels or grids may have changed: an elevation's datums again.
+  if (lockedView_ || !datums_.empty()) refreshDatums();
   syncSection();
   syncOpenEnds();
   syncEditBox();
@@ -2409,6 +2408,7 @@ void Viewport::setStandardView(StandardView v) {
   }
   if (lockedView_ && *lockedView_ != v) {
     lockedView_ = v;
+    viewLockSwitched();
     emit viewLockChanged();
   }
   switch (v) {
@@ -2432,6 +2432,7 @@ void Viewport::lockView(StandardView v) {
   lockedView_ = v;
   view_->Camera()->SetProjectionType(Graphic3d_Camera::Projection_Orthographic);
   setStandardView(v);
+  viewLockSwitched();
   emit viewLockChanged();
 }
 
@@ -2451,7 +2452,155 @@ void Viewport::unlockView() {
   view_->Camera()->SetProjectionType(perspectiveBeforeLock_ ? Graphic3d_Camera::Projection_Perspective
                                                             : Graphic3d_Camera::Projection_Orthographic);
   setStandardView(StandardView::Iso);
+  viewLockSwitched();
   emit viewLockChanged();
+}
+
+bool Viewport::hiddenInView(const doc::Object& o) const {
+  // A grid's own parts lie on the ground: an elevation shows its datums.
+  return workAxis() > 0 && o.attributes.count("grid_part") > 0;
+}
+
+void Viewport::viewLockSwitched() {
+  // The grid's parts shown or not, as the view now wants them.
+  const doc::Document& document = modeler_.document();
+  bool guidesChanged = false;
+  for (const doc::Object& o : document.objects()) {
+    if (!o.attributes.count("grid_part")) continue;
+    guidesChanged |= syncObject(o.id);
+    syncLabel(o.id);
+  }
+  if (guidesChanged) pushGuides();
+  refreshDatums();
+  redraw();
+}
+
+void Viewport::pushGuides() {
+  std::vector<gp_Lin> lines;
+  for (const auto& [id, line] : guideLines_) lines.push_back(line);
+  lines.insert(lines.end(), datumGuides_.begin(), datumGuides_.end());
+  inference_.setGuides(lines);
+}
+
+QStringList Viewport::elevationDatumNames() const { return datumNames_; }
+
+void Viewport::refreshDatums() {
+  if (view_.IsNull()) return;
+  for (const auto& d : datums_) context_->Remove(d, Standard_False);
+  datums_.clear();
+  datumNames_.clear();
+  const bool hadGuides = !datumGuides_.empty();
+  datumGuides_.clear();
+  const int axis = workAxis();
+  if (axis <= 0) {  // 3D or the plan: nothing of this
+    if (hadGuides) pushGuides();
+    return;
+  }
+  const doc::Document& document = modeler_.document();
+  // Across the screen (h) and into it (n).
+  const gp_Dir n = axis == 1 ? gp::DY() : gp::DX();
+  const gp_Dir h = axis == 1 ? gp::DX() : gp::DY();
+  // How far the lines go: the model, the grids and the levels, with room.
+  double hMin = 1e300, hMax = -1e300, zMin = 1e300, zMax = -1e300;
+  auto take = [&](double hv, double zv) {
+    hMin = std::min(hMin, hv);
+    hMax = std::max(hMax, hv);
+    zMin = std::min(zMin, zv);
+    zMax = std::max(zMax, zv);
+  };
+  struct Facing {
+    gp_Pnt at;
+    QString name;
+  };
+  std::vector<Facing> facing;
+  for (const doc::Object& o : document.objects()) {
+    if (!document.isVisible(o.id)) continue;
+    const auto part = o.attributes.find("grid_part");
+    if (part != o.attributes.end()) {
+      if (part->second != "line") continue;
+      const auto& line = std::get<doc::GuideLine>(o.recipe.base);
+      const gp_Trsf world = document.worldTransform(o);
+      const gp_Pnt p = line.point.Transformed(world);
+      take(gp_Vec(p.XYZ()).Dot(gp_Vec(h)), p.Z());
+      if (line.direction.Transformed(world).IsParallel(n, 1e-9)) facing.push_back({p, QString::fromStdString(o.name)});
+      continue;
+    }
+    if (o.kind() == doc::ObjectKind::Guide || o.kind() == doc::ObjectKind::Annotation || o.isContainer() ||
+        o.shape.IsNull()) {
+      continue;
+    }
+    const Bnd_Box b = document.worldBounds(o);
+    if (b.IsVoid()) continue;
+    double x0, y0, z0, x1, y1, z1;
+    b.Get(x0, y0, z0, x1, y1, z1);
+    take(axis == 1 ? x0 : y0, z0);
+    take(axis == 1 ? x1 : y1, z1);
+  }
+  const auto& levels = document.settings().levels;
+  for (const doc::FloorLevel& l : levels) {
+    zMin = std::min(zMin, l.elevation);
+    zMax = std::max(zMax, l.elevation);
+  }
+  if (facing.empty() && levels.empty()) {
+    if (hadGuides) pushGuides();
+    return;
+  }
+  if (hMin > hMax) hMin = -5000, hMax = 5000;
+  if (zMin > zMax) zMin = 0, zMax = 3000;
+  zMin = std::min(zMin, 0.0);
+  const double margin = 0.08 * std::max(hMax - hMin, zMax - zMin) + 1000.0;
+  const double depth = workOffset();
+  auto at = [&](double hv, double zv) { return gp_Pnt(gp_XYZ(h.XYZ()) * hv + gp_XYZ(n.XYZ()) * depth + gp_XYZ(0, 0, zv)); };
+  auto line = [&](const gp_Pnt& a, const gp_Pnt& b, const Quantity_Color& color) {
+    Handle(AIS_Shape) ais = new AIS_Shape(BRepBuilderAPI_MakeEdge(a, b).Edge());
+    ais->SetColor(color);
+    ais->Attributes()->SetWireAspect(new Prs3d_LineAspect(color, Aspect_TOL_DOTDASH, 1.0));
+    ais->SetInfiniteState(true);  // not part of "fit all"
+    context_->Display(ais, AIS_WireFrame, -1, Standard_False);  // -1: never picked
+    datums_.push_back(ais);
+  };
+  auto label = [&](const gp_Pnt& p, const QString& text, bool boxed, Graphic3d_HorizontalTextAlignment ha,
+                   Graphic3d_VerticalTextAlignment va) {
+    Handle(AIS_TextLabel) t = new AIS_TextLabel();
+    t->SetText(TCollection_ExtendedString(text.toUtf8().constData(), Standard_True));
+    t->SetPosition(p);
+    t->SetHeight(boxed ? 22 : 16);
+    t->SetColor(Quantity_NOC_BLACK);
+    t->SetHJustification(ha);
+    t->SetVJustification(va);
+    t->SetZLayer(Graphic3d_ZLayerId_TopOSD);
+    if (boxed) {
+      t->SetFontAspect(Font_FA_Bold);
+      t->Attributes()->TextAspect()->Aspect()->SetDisplayType(Aspect_TODT_SUBTITLE);
+      t->Attributes()->TextAspect()->Aspect()->SetColorSubTitle(Quantity_NOC_WHITE);
+    }
+    context_->Display(t, 0, -1, Standard_False);
+    datums_.push_back(t);
+  };
+  // Levels: across the whole width, named at the left end.
+  const Quantity_Color levelColor(0.15, 0.30, 0.65, Quantity_TOC_RGB);
+  const double left = axis == 1 && *lockedView_ == StandardView::Back ? hMax + margin
+                      : axis == 2 && *lockedView_ == StandardView::Left ? hMax + margin
+                                                                        : hMin - margin;
+  for (const doc::FloorLevel& l : levels) {
+    line(at(hMin - margin, l.elevation), at(hMax + margin, l.elevation), levelColor);
+    const QString name = QStringLiteral("▽%1  %2").arg(QString::fromStdString(l.name),
+                                                         QString::fromStdString(units::formatLength(l.elevation, 0)));
+    label(at(left, l.elevation), name, false, Graphic3d_HTA_LEFT, Graphic3d_VTA_BOTTOM);
+    datumNames_ << QString::fromStdString(l.name);
+    datumGuides_.push_back(gp_Lin(at(0, l.elevation), h));
+  }
+  // Grid lines facing the view: upright, from below GL to above the top.
+  const Quantity_Color gridColor(0.35, 0.35, 0.40, Quantity_TOC_RGB);
+  for (const Facing& f : facing) {
+    const double hv = gp_Vec(f.at.XYZ()).Dot(gp_Vec(h));
+    const double bottom = zMin - margin * 0.5, top = zMax + margin * 0.5;
+    line(at(hv, bottom), at(hv, top), gridColor);
+    label(at(hv, top), f.name, true, Graphic3d_HTA_CENTER, Graphic3d_VTA_BOTTOM);
+    datumNames_ << f.name;
+    datumGuides_.push_back(gp_Lin(at(hv, 0), gp::DZ()));
+  }
+  pushGuides();
 }
 
 int Viewport::workAxis() const {
@@ -2498,6 +2647,7 @@ void Viewport::setPerspective(bool perspective) {
   // Perspective is 3D: the fixed view ends (the direction stays).
   if (perspective && lockedView_) {
     lockedView_.reset();
+    viewLockSwitched();
     emit viewLockChanged();
   }
   view_->Camera()->SetProjectionType(perspective ? Graphic3d_Camera::Projection_Perspective
@@ -2562,6 +2712,7 @@ void Viewport::restoreCamera(const doc::CameraState& state) {
   // A saved camera is a view of its own: the fixed view ends.
   if (lockedView_) {
     lockedView_.reset();
+    viewLockSwitched();
     emit viewLockChanged();
   }
   const Handle(Graphic3d_Camera)& c = view_->Camera();

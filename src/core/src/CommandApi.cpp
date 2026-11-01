@@ -257,6 +257,12 @@ json gridJson(const doc::GridSpec& spec) {
   return json{{"x", axes(spec.x)}, {"y", axes(spec.y)}, {"label_offset", spec.labelOffset}};
 }
 
+json levelsJson(const doc::Modeler& m) {
+  json out = json::array();
+  for (const doc::FloorLevel& l : m.levels()) out.push_back({{"id", l.id}, {"name", l.name}, {"elevation", l.elevation}});
+  return out;
+}
+
 json describeObject(const doc::Modeler& m, const doc::Object& o, bool withFaces) {
   const doc::Document& d = m.document();
   const TopoDS_Shape world = d.worldShape(o);
@@ -278,6 +284,9 @@ json describeObject(const doc::Modeler& m, const doc::Object& o, bool withFaces)
     j["grid_pin"] = {{"grid", o.gridPin->grid},
                      {"start", {o.gridPin->startX, o.gridPin->startY}},
                      {"end", {o.gridPin->endX, o.gridPin->endY}}};
+    if (!o.gridPin->startLevel.empty() || !o.gridPin->endLevel.empty()) {
+      j["grid_pin"]["levels"] = {o.gridPin->startLevel, o.gridPin->endLevel};
+    }
   }
   if (o.follow) {
     j["follow"] = {{"host", o.follow->host},
@@ -1979,17 +1988,40 @@ const std::vector<CommandDef>& commands() {
          must(m.setGrid(id, spec));
          return json{{"grid", id}, {"lines", gridJson(*m.gridSpec(id))}};
        }},
+      {"get_levels", "The levels (GL, 1FL..., docs/45): [{id, name, elevation}] by elevation (world z, mm).",
+       SCHEMA({"type": "object", "properties": {}}),
+       [](doc::Modeler& m, const json&) { return json{{"levels", levelsJson(m)}}; }},
+      {"set_levels",
+       "Replace the levels: 'levels' [{id (keep a level; leave out for a new one), name, elevation (world z, "
+       "mm)}]; levels not listed are taken away. Members placed on a grid with levels (place_members_on_grid "
+       "base_level / top_level) move with their levels. One undo step. Returns the levels.",
+       SCHEMA({"type": "object", "properties": {"levels": {"type": "array"}}, "required": ["levels"]}),
+       [](doc::Modeler& m, const json& a) {
+         std::vector<doc::FloorLevel> levels;
+         for (const json& l : arg(a, "levels")) {
+           const std::string id = textOr(l, "id", "");
+           if (!id.empty() && std::none_of(m.levels().begin(), m.levels().end(),
+                                           [&](const doc::FloorLevel& x) { return x.id == id; })) {
+             throw ApiError("no level with id '" + id + "'");
+           }
+           levels.push_back({id, text(l, "name"), number(l, "elevation")});
+         }
+         must(m.setLevels(levels));
+         return json{{"levels", levelsJson(m)}};
+       }},
       {"place_members_on_grid",
        "Columns and beams on a grid's crossings, pinned to them (when the grid is edited or moved they "
        "follow; heights kept). 'columns', 'x_beams' (on the x lines, running along the grid's Y) and "
        "'y_beams' each take a member like create_member's {section, anchor, roll, role, material_class} "
        "(role defaults: column, beam; beams default to anchor up=top). 'x' / 'y' limit to these lines "
        "(names or ids; default all). Columns stand from 'base' (mm above the grid, default 0) up "
-       "'height' (default 3000); beams lie at base + height. What is already pinned the same way is "
-       "skipped. One undo step; returns the new ids.",
+       "'height' (default 3000); beams lie at base + height. Or 'base_level' and 'top_level' (level names "
+       "or ids, see get_levels): columns between them, beams on the top level, and the ends then follow "
+       "those levels. What is already pinned the same way is skipped. One undo step; returns the new ids.",
        SCHEMA({"type": "object", "properties": {"grid": {"type": "string"}, "columns": {"type": "object"},
                "x_beams": {"type": "object"}, "y_beams": {"type": "object"}, "x": {"type": "array"},
-               "y": {"type": "array"}, "base": {"type": "number"}, "height": {"type": "number"}},
+               "y": {"type": "array"}, "base": {"type": "number"}, "height": {"type": "number"},
+               "base_level": {"type": "string"}, "top_level": {"type": "string"}},
                "required": ["grid"]}),
        [](doc::Modeler& m, const json& a) {
          const ObjectId id = text(a, "grid");
@@ -2010,6 +2042,16 @@ const std::vector<CommandDef>& commands() {
          lines("y", spec->y, options.y);
          options.base = numberOr(a, "base", 0.0);
          options.height = numberOr(a, "height", 3000.0);
+         auto level = [&](const char* key) -> std::string {
+           if (!a.contains(key)) return {};
+           const std::string name = text(a, key);
+           for (const doc::FloorLevel& l : m.levels()) {
+             if (l.id == name || l.name == name) return l.id;
+           }
+           throw ApiError("no level '" + name + "' (get_levels)");
+         };
+         options.baseLevel = level("base_level");
+         options.topLevel = level("top_level");
          auto member = [&](const char* key, const std::string& role, int anchorUp) -> std::optional<doc::Modeler::MemberSpec> {
            if (!a.contains(key)) return std::nullopt;
            const json& v = a.at(key);

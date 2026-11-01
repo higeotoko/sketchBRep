@@ -210,6 +210,12 @@ class Viewport : public QWidget {
   // off: they keep their own depth (drawing on what was clicked).
   void setProjectSnaps(bool on) { projectSnaps_ = on; }
   bool projectSnaps() const { return projectSnaps_; }
+  // What a fixed elevation adds (docs/45): the levels as horizontal
+  // dash-dot lines named "▽1FL", and the grid lines facing it as vertical
+  // ones with their names on top, all snapped to. The grid's parts lying on
+  // the ground (its lines, names and dimensions) are not shown there.
+  int elevationDatumCount() const { return static_cast<int>(datums_.size()); }
+  QStringList elevationDatumNames() const;
 
   // --- wheel zoom (WheelZoom.h, docs/17_wheel_zoom.md) ----------------------
   // Zooms by `notches` (positive: in) at the cursor position `pos`
@@ -350,6 +356,14 @@ class Viewport : public QWidget {
   std::array<double, 3> workOffsets_{};
   std::array<QString, 3> workNames_;
   bool projectSnaps_ = true;
+  // Elevation datums (docs/45).
+  bool hiddenInView(const doc::Object& o) const;
+  void viewLockSwitched();
+  void refreshDatums();
+  void pushGuides();
+  std::vector<Handle(AIS_InteractiveObject)> datums_;
+  std::vector<gp_Lin> datumGuides_;
+  QStringList datumNames_;
   std::optional<doc::ObjectId> idOf(const Handle(AIS_InteractiveObject)& object) const;
 
   doc::Modeler& modeler_;

@@ -108,6 +108,13 @@ class Modeler {
   };
   Result<GridLines> createGridLines(const gp_Pnt& origin, const std::vector<double>& xSpacings,
                                     const std::vector<double>& ySpacings, double labelOffset = 1500.0);
+  // Levels (GL, 1FL..., docs/45), kept by elevation in the document's
+  // settings (saved, undone). setLevels replaces them all: a level keeps
+  // its id (new ones get one), members whose ends stand on a level move up
+  // or down with it, in the same undo step. Refused: an empty or repeated
+  // name, a repeated id, a height that is not a number.
+  const std::vector<FloorLevel>& levels() const { return document_.settings().levels; }
+  Status setLevels(std::vector<FloorLevel> levels);
   // The description of a grid group (null: not a grid).
   const GridSpec* gridSpec(const ObjectId& grid) const;
   // Gives the grid new lines (names, offsets, added or taken away; ids
@@ -459,6 +466,10 @@ class Modeler {
     std::optional<MemberSpec> columns;
     std::optional<MemberSpec> xBeams;  // on the x lines
     std::optional<MemberSpec> yBeams;  // on the y lines
+    // Levels (ids, docs/45) instead of base and height: columns from the
+    // base level up to the top level, beams on the top level; the members'
+    // ends then follow those levels.
+    std::string baseLevel, topLevel;
   };
   struct GridMembers {
     std::vector<ObjectId> columns, beams;

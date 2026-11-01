@@ -662,10 +662,23 @@ std::optional<gp_Pnt> crossingOf(const GridSpec& spec, const gp_Trsf& gridWorld,
   return gp_Pnt(a->offset, b->offset, 0).Transformed(gridWorld);
 }
 
-// Members pinned to grid crossings (docs/43) after `changes`: each end
-// moves by as much as its crossing did. A member moved itself in the same
-// step keeps where it was put.
-void pinUp(const Document& document, ChangeSet& changes, const RegenContext& context) {
+double levelHeight(const std::vector<FloorLevel>& levels, const std::string& id, bool& found) {
+  for (const FloorLevel& l : levels) {
+    if (l.id == id) {
+      found = true;
+      return l.elevation;
+    }
+  }
+  found = false;
+  return 0.0;
+}
+
+// Members pinned to grid crossings (docs/43) and levels (docs/45) after
+// `changes` (and the levels going from `levelsBefore` to `levelsAfter`):
+// each end moves by as much as its crossing and its level did. A member
+// moved itself in the same step keeps where it was put.
+void pinUp(const Document& document, ChangeSet& changes, const RegenContext& context,
+           const std::vector<FloorLevel>& levelsBefore, const std::vector<FloorLevel>& levelsAfter) {
   std::vector<ObjectId> pinned;
   for (const Object& o : document.objects()) {
     if (o.gridPin && !changes.erased(o.id)) pinned.push_back(o.id);
@@ -684,18 +697,29 @@ void pinUp(const Document& document, ChangeSet& changes, const RegenContext& con
   for (const ObjectId& id : pinned) {
     const Object* was = document.find(id);
     const GridPin& pin = *was->gridPin;
+    if (was->locked) continue;
+    if (!sameTrsf(after(id), document.worldTransform(*was))) continue;  // moved itself
     const Object* gridBefore = document.find(pin.grid);
     const Object* gridAfter = current(pin.grid);
     const GridSpec* specBefore = gridOf(gridBefore);
     const GridSpec* specAfter = gridOf(gridAfter);
-    if (!specBefore || !specAfter || was->locked) continue;
-    if (!sameTrsf(after(id), document.worldTransform(*was))) continue;  // moved itself
-    auto delta = [&](const std::string& x, const std::string& y) {
-      const auto from = crossingOf(*specBefore, document.worldTransform(*gridBefore), x, y);
-      const auto to = crossingOf(*specAfter, after(pin.grid), x, y);
-      return from && to ? gp_Vec(*from, *to) : gp_Vec(0, 0, 0);
+    auto delta = [&](const std::string& x, const std::string& y, const std::string& level) {
+      gp_Vec d(0, 0, 0);
+      if (specBefore && specAfter) {
+        const auto from = crossingOf(*specBefore, document.worldTransform(*gridBefore), x, y);
+        const auto to = crossingOf(*specAfter, after(pin.grid), x, y);
+        if (from && to) d = gp_Vec(*from, *to);
+      }
+      if (!level.empty()) {
+        bool had = false, has = false;
+        const double from = levelHeight(levelsBefore, level, had);
+        const double to = levelHeight(levelsAfter, level, has);
+        if (had && has) d += gp_Vec(0, 0, to - from);
+      }
+      return d;
     };
-    const gp_Vec dStart = delta(pin.startX, pin.startY), dEnd = delta(pin.endX, pin.endY);
+    const gp_Vec dStart = delta(pin.startX, pin.startY, pin.startLevel);
+    const gp_Vec dEnd = delta(pin.endX, pin.endY, pin.endLevel);
     if (dStart.Magnitude() < 1e-9 && dEnd.Magnitude() < 1e-9) continue;
     Object o = *current(id);
     auto* member = std::get_if<LinearMember>(&o.recipe.base);
@@ -713,7 +737,7 @@ void pinUp(const Document& document, ChangeSet& changes, const RegenContext& con
 // follow their hosts (docs/42).
 Status settleMoves(const Document& document, ChangeSet& changes, const RegenContext& context) {
   if (const Status grids = gridUp(document, changes, context); !grids) return grids;
-  pinUp(document, changes, context);
+  pinUp(document, changes, context, document.settings().levels, document.settings().levels);
   followUp(document, changes);
   return Status::success();
 }
@@ -790,6 +814,38 @@ Result<Modeler::GridLines> Modeler::createGridLines(const gp_Pnt& origin, const 
 
 const GridSpec* Modeler::gridSpec(const ObjectId& grid) const { return gridOf(document_.find(grid)); }
 
+Status Modeler::setLevels(std::vector<FloorLevel> levels) {
+  std::set<std::string> ids, names;
+  int next = 1;
+  for (const FloorLevel& l : document_.settings().levels) {
+    if (l.id.size() > 1 && l.id[0] == 'L') {
+      try {
+        next = std::max(next, std::stoi(l.id.substr(1)) + 1);
+      } catch (...) {
+      }
+    }
+  }
+  for (FloorLevel& l : levels) {
+    if (l.name.empty()) return Status::failure("Levels need names");
+    if (!std::isfinite(l.elevation)) return Status::failure("Level heights must be numbers");
+    if (!names.insert(l.name).second) return Status::failure("Level name '" + l.name + "' is used twice");
+    if (l.id.empty()) l.id = "L" + std::to_string(next++);
+    if (!ids.insert(l.id).second) return Status::failure("Level ids must be unique");
+  }
+  std::stable_sort(levels.begin(), levels.end(),
+                   [](const FloorLevel& a, const FloorLevel& b) { return a.elevation < b.elevation; });
+  const PersistentSettings before = PersistentSettings::of(document_.settings());
+  PersistentSettings after = before;
+  after.levels = levels;
+  if (after == before) return Status::success();
+  ChangeSet changes(document_);
+  pinUp(document_, changes, document_.regenContext(), before.levels, after.levels);
+  Command command = changes.build("Edit Levels");
+  command.settings = SettingsDelta{before, after};
+  history_.execute(std::move(command));
+  return Status::success();
+}
+
 Status Modeler::setGrid(const ObjectId& grid, const GridSpec& spec) {
   const Object* g = document_.find(grid);
   if (!gridOf(g)) return Status::failure("Not a grid");
@@ -822,7 +878,17 @@ Result<Modeler::GridMembers> Modeler::placeMembersOnGrid(const ObjectId& grid, c
   const GridSpec* spec = gridOf(g);
   if (!spec) return R::failure("Not a grid");
   if (!options.columns && !options.xBeams && !options.yBeams) return R::failure("Nothing to place");
-  if (!(options.height > tolerance::kMinDimension) || !std::isfinite(options.base)) {
+  GridMemberOptions levelled = options;
+  if (!options.baseLevel.empty() || !options.topLevel.empty()) {
+    bool hasBase = false, hasTop = false;
+    const double base = levelHeight(document_.settings().levels, options.baseLevel, hasBase);
+    const double top = levelHeight(document_.settings().levels, options.topLevel, hasTop);
+    if (!hasBase || !hasTop) return R::failure("Give both levels (base and top) that exist");
+    // Levels are world heights; the grid's own plane may sit higher.
+    levelled.base = base - document_.worldTransform(*g).TranslationPart().Z();
+    levelled.height = top - base;
+  }
+  if (!(levelled.height > tolerance::kMinDimension) || !std::isfinite(levelled.base)) {
     return R::failure("The height must be positive");
   }
   auto pick = [](const std::vector<GridAxis>& all, const std::vector<std::string>& wanted) -> Result<std::vector<GridAxis>> {
@@ -848,20 +914,19 @@ Result<Modeler::GridMembers> Modeler::placeMembersOnGrid(const ObjectId& grid, c
   auto at = [&](const GridAxis& x, const GridAxis& y, double z) { return gp_Pnt(x.offset, y.offset, z).Transformed(place); };
   // Pins already there: the same thing is not placed twice.
   std::set<std::string> taken;
-  auto key = [](const std::string& a, const std::string& b, const std::string& c, const std::string& d) {
-    return a + "/" + b + "-" + c + "/" + d;
+  // (A column of another storey, between other levels, is another one.)
+  auto key = [](const GridPin& p) {
+    return p.startX + "/" + p.startY + "@" + p.startLevel + "-" + p.endX + "/" + p.endY + "@" + p.endLevel;
   };
   for (const Object& o : document_.objects()) {
-    if (o.gridPin && o.gridPin->grid == grid) {
-      taken.insert(key(o.gridPin->startX, o.gridPin->startY, o.gridPin->endX, o.gridPin->endY));
-    }
+    if (o.gridPin && o.gridPin->grid == grid) taken.insert(key(*o.gridPin));
   }
   ChangeSet changes(document_);
   GridMembers out;
   const RegenContext context = document_.regenContext();
   auto add = [&](const MemberSpec& base, const gp_Pnt& from, const gp_Pnt& to, const GridPin& pin,
                  std::vector<ObjectId>& list) -> Status {
-    const std::string k = key(pin.startX, pin.startY, pin.endX, pin.endY);
+    const std::string k = key(pin);
     if (!taken.insert(k).second) {
       ++out.skipped;
       return Status::success();
@@ -884,12 +949,14 @@ Result<Modeler::GridMembers> Modeler::placeMembersOnGrid(const ObjectId& grid, c
     list.push_back(o.id);
     return Status::success();
   };
-  const double top = options.base + options.height;
+  const double top = levelled.base + levelled.height;
+  const std::string& baseLevel = options.baseLevel;
+  const std::string& topLevel = options.topLevel;
   if (options.columns) {
     for (const GridAxis& x : *xs) {
       for (const GridAxis& y : *ys) {
-        const Status s = add(*options.columns, at(x, y, options.base), at(x, y, top), GridPin{grid, x.id, y.id, x.id, y.id},
-                             out.columns);
+        const Status s = add(*options.columns, at(x, y, levelled.base), at(x, y, top),
+                             GridPin{grid, x.id, y.id, x.id, y.id, baseLevel, topLevel}, out.columns);
         if (!s) return R::failure(s.message());
       }
     }
@@ -899,7 +966,7 @@ Result<Modeler::GridMembers> Modeler::placeMembersOnGrid(const ObjectId& grid, c
       for (std::size_t i = 0; i + 1 < ys->size(); ++i) {
         const GridAxis& a = (*ys)[i];
         const GridAxis& b = (*ys)[i + 1];
-        const Status s = add(*options.xBeams, at(x, a, top), at(x, b, top), GridPin{grid, x.id, a.id, x.id, b.id}, out.beams);
+        const Status s = add(*options.xBeams, at(x, a, top), at(x, b, top), GridPin{grid, x.id, a.id, x.id, b.id, topLevel, topLevel}, out.beams);
         if (!s) return R::failure(s.message());
       }
     }
@@ -909,7 +976,7 @@ Result<Modeler::GridMembers> Modeler::placeMembersOnGrid(const ObjectId& grid, c
       for (std::size_t i = 0; i + 1 < xs->size(); ++i) {
         const GridAxis& a = (*xs)[i];
         const GridAxis& b = (*xs)[i + 1];
-        const Status s = add(*options.yBeams, at(a, y, top), at(b, y, top), GridPin{grid, a.id, y.id, b.id, y.id}, out.beams);
+        const Status s = add(*options.yBeams, at(a, y, top), at(b, y, top), GridPin{grid, a.id, y.id, b.id, y.id, topLevel, topLevel}, out.beams);
         if (!s) return R::failure(s.message());
       }
     }

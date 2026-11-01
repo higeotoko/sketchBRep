@@ -387,9 +387,10 @@ void MainWindow::buildUi() {
                    : tr("物に吸着した点は、その物の奥行きのままにします（クリックした面に描けます）"));
     });
     const auto choices = workPlaneChoices();
-    if (!choices.empty()) workPlaneMenu->addSection(tr("通り芯"));
+    if (!choices.empty()) workPlaneMenu->addSection(plan ? tr("レベル") : tr("通り芯"));
     for (const WorkPlaneChoice& c : choices) {
-      workPlaneMenu->addAction(tr("%1 通り（%2）").arg(c.name, QString::fromStdString(units::formatLength(c.offset, 0))),
+      workPlaneMenu->addAction((plan ? tr("%1（%2）") : tr("%1 通り（%2）"))
+                                   .arg(c.name, QString::fromStdString(units::formatLength(c.offset, 0))),
                                this, [this, c] { viewport_->setWorkOffset(c.offset, c.name); })
           ->setObjectName(QStringLiteral("workPlaneGrid_") + c.name);
     }
@@ -404,7 +405,8 @@ void MainWindow::buildUi() {
     const QString at = QStringLiteral("%1=%2").arg(QLatin1String(axis),
                                                    QString::fromStdString(units::formatLength(viewport_->workOffset(), 0)));
     const QString name = viewport_->workOffsetName();
-    workPlane->setText(tr("作業面: %1 ▾").arg(name.isEmpty() ? at : tr("%1 通り（%2）").arg(name, at)));
+    const bool plan = *locked == Viewport::StandardView::Top;
+    workPlane->setText(tr("作業面: %1 ▾").arg(name.isEmpty() ? at : (plan ? tr("%1（%2）") : tr("%1 通り（%2）")).arg(name, at)));
   };
   connect(viewport_, &Viewport::viewLockChanged, this, showWorkPlane);
   connect(viewport_, &Viewport::workPlaneChanged, this, [this, showWorkPlane] {
@@ -1043,6 +1045,8 @@ void MainWindow::buildMenus() {
   });
   tools->addSeparator();
   tools->addAction(tr("通り芯を作成..."), this, &MainWindow::showGridDialog);
+  tools->addAction(tr("レベル（GL・FL）を編集..."), this, &MainWindow::showLevelsEditDialog)
+      ->setObjectName(QStringLiteral("editLevelsAction"));
   tools->addAction(tr("壁の設定..."), this, &MainWindow::showWallSettingsDialog);
   tools->addAction(tr("部材の設定..."), this, &MainWindow::showMemberSettingsDialog);
   // Direct entries (spec §4.2): the member tool with each one's own last
@@ -1911,10 +1915,113 @@ bool MainWindow::createGrid(const QString& xSpacings, const QString& ySpacings) 
   return true;
 }
 
+void MainWindow::showLevelsEditDialog() {
+  QDialog dialog(this);
+  dialog.setObjectName(QStringLiteral("levelsEditDialog"));
+  dialog.setWindowTitle(tr("レベル（GL・FL）"));
+  auto* layout = new QVBoxLayout(&dialog);
+  auto* t = new QTableWidget(0, 2, &dialog);
+  t->setObjectName(QStringLiteral("levelsTable"));
+  t->setHorizontalHeaderLabels({tr("名前"), tr("高さ（Z）")});
+  t->horizontalHeader()->setStretchLastSection(true);
+  t->verticalHeader()->hide();
+  auto addRow = [t](const QString& name, double elevation, const QString& id) {
+    const int row = t->rowCount();
+    t->insertRow(row);
+    auto* item = new QTableWidgetItem(name);
+    item->setData(Qt::UserRole, id);
+    t->setItem(row, 0, item);
+    t->setItem(row, 1, new QTableWidgetItem(QString::fromStdString(units::formatLength(elevation, 0))));
+  };
+  // Highest first, as drawn in a section; a start when there are none.
+  const auto& levels = modeler_.levels();
+  for (auto it = levels.rbegin(); it != levels.rend(); ++it) {
+    addRow(QString::fromStdString(it->name), it->elevation, QString::fromStdString(it->id));
+  }
+  if (levels.empty()) {
+    addRow(QStringLiteral("2FL"), 3150, QString());
+    addRow(QStringLiteral("1FL"), 150, QString());
+    addRow(QStringLiteral("GL"), 0, QString());
+  }
+  layout->addWidget(t);
+  auto* row = new QHBoxLayout;
+  auto* add = new QPushButton(tr("レベルを追加"), &dialog);
+  add->setObjectName(QStringLiteral("levelsAdd"));
+  auto* remove = new QPushButton(tr("選んだレベルを削除"), &dialog);
+  connect(add, &QPushButton::clicked, t, [t, addRow] {
+    // One storey up from the top row, named after it (2FL -> 3FL).
+    double top = 0;
+    QString name = QStringLiteral("FL");
+    if (t->rowCount() > 0 && t->item(0, 1)) {
+      top = units::parseLength(t->item(0, 1)->text().toStdString()).value_or(0) + 3000;
+      const QRegularExpressionMatch m = QRegularExpression(QStringLiteral("^(\\d+)(.*)$")).match(t->item(0, 0)->text());
+      name = m.hasMatch() ? QString::number(m.captured(1).toInt() + 1) + m.captured(2) : t->item(0, 0)->text() + QStringLiteral("'");
+    }
+    t->insertRow(0);
+    t->setItem(0, 0, new QTableWidgetItem(name));
+    t->setItem(0, 1, new QTableWidgetItem(QString::fromStdString(units::formatLength(top, 0))));
+    (void)addRow;
+  });
+  connect(remove, &QPushButton::clicked, t, [t] {
+    if (t->currentRow() >= 0) t->removeRow(t->currentRow());
+  });
+  row->addWidget(add);
+  row->addWidget(remove);
+  row->addStretch();
+  layout->addLayout(row);
+  layout->addWidget(new QLabel(tr("高さは地面（Z=0）から。単位 m も可。立面では横の一点鎖線で出て、吸着できます。\n"
+                                  "平面の「作業面 ▾」から、そのレベルの高さで描けます"),
+                               &dialog));
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+  layout->addWidget(buttons);
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  if (dialog.exec() != QDialog::Accepted) return;
+  std::vector<doc::FloorLevel> next;
+  for (int r = 0; r < t->rowCount(); ++r) {
+    const QTableWidgetItem* name = t->item(r, 0);
+    const auto z = t->item(r, 1) ? units::parseLength(t->item(r, 1)->text().toStdString()) : std::nullopt;
+    if (!name || name->text().trimmed().isEmpty() || !z) {
+      reportError(tr("%1 行目：名前と高さを入力してください").arg(r + 1));
+      return;
+    }
+    next.push_back({name->data(Qt::UserRole).toString().toStdString(), name->text().trimmed().toStdString(), *z});
+  }
+  if (report(modeler_.setLevels(next))) setStatus(tr("レベルを %1 つにしました").arg(next.size()));
+}
+
+bool MainWindow::guideToLevel(const doc::ObjectId& guide, const QString& name) {
+  const doc::Object* o = modeler_.document().find(guide);
+  if (!o || o->kind() != doc::ObjectKind::Guide) return false;
+  const auto& line = std::get<doc::GuideLine>(o->recipe.base);
+  const gp_Trsf world = modeler_.document().worldTransform(*o);
+  if (std::abs(line.direction.Transformed(world).Z()) > 1e-9) {
+    reportError(tr("水平なガイド線だけがレベルになります"));
+    return false;
+  }
+  std::vector<doc::FloorLevel> levels = modeler_.levels();
+  levels.push_back({std::string(), name.trimmed().toStdString(), line.point.Transformed(world).Z()});
+  // One step: the level made and the guide it came from taken away.
+  modeler_.history().beginGroup("Guide to Level");
+  if (!report(modeler_.setLevels(levels)) || !report(modeler_.remove({guide}))) {
+    modeler_.history().abortGroup();
+    return false;
+  }
+  modeler_.history().endGroup();
+  setStatus(tr("レベル「%1」を作りました（高さ %2）")
+                .arg(name.trimmed(), QString::fromStdString(units::formatLength(levels.back().elevation, 0))));
+  return true;
+}
+
 std::vector<MainWindow::WorkPlaneChoice> MainWindow::workPlaneChoices() const {
   std::vector<WorkPlaneChoice> out;
   const auto locked = viewport_->lockedView();
-  if (!locked || *locked == Viewport::StandardView::Top) return out;
+  if (!locked) return out;
+  if (*locked == Viewport::StandardView::Top) {
+    // A plan: the levels (docs/45).
+    for (const doc::FloorLevel& l : modeler_.levels()) out.push_back({QString::fromStdString(l.name), l.elevation});
+    return out;
+  }
   // An elevation along y (front / back) takes grid lines running along x,
   // and the other way round; a line askew to the view is no plane of it.
   const bool alongX = *locked == Viewport::StandardView::Front || *locked == Viewport::StandardView::Back;
@@ -2053,6 +2160,36 @@ void MainWindow::showGridMembersDialog(const doc::ObjectId& gridId) {
   base->setObjectName(QStringLiteral("gridBase"));
   auto* height = new QLineEdit(QString::fromStdString(units::formatLength(column.columnHeight, 0)), &dialog);
   height->setObjectName(QStringLiteral("gridHeight"));
+  // Levels (docs/45): between two of them, the members then follow them.
+  auto* baseLevel = new QComboBox(&dialog);
+  baseLevel->setObjectName(QStringLiteral("gridBaseLevel"));
+  auto* topLevel = new QComboBox(&dialog);
+  topLevel->setObjectName(QStringLiteral("gridTopLevel"));
+  baseLevel->addItem(tr("（数値で指定）"), QString());
+  topLevel->addItem(tr("（数値で指定）"), QString());
+  for (const doc::FloorLevel& l : modeler_.levels()) {
+    const QString text = QStringLiteral("%1（%2）").arg(QString::fromStdString(l.name),
+                                                       QString::fromStdString(units::formatLength(l.elevation, 0)));
+    baseLevel->addItem(text, QString::fromStdString(l.id));
+    topLevel->addItem(text, QString::fromStdString(l.id));
+  }
+  if (modeler_.levels().size() >= 2) {
+    // The lowest storey by default: the second level up (1FL over GL), and the next.
+    const int count = static_cast<int>(modeler_.levels().size());
+    baseLevel->setCurrentIndex(count >= 3 ? 2 : 1);
+    topLevel->setCurrentIndex(count >= 3 ? 3 : 2);
+  }
+  auto levelled = [baseLevel, base, height] {
+    const bool on = !baseLevel->currentData().toString().isEmpty();
+    base->setEnabled(!on);
+    height->setEnabled(!on);
+  };
+  connect(baseLevel, &QComboBox::currentIndexChanged, &dialog, levelled);
+  levelled();
+  if (!modeler_.levels().empty()) {
+    form->addRow(tr("柱の下端のレベル"), baseLevel);
+    form->addRow(tr("柱の上端のレベル（梁はここ）"), topLevel);
+  }
   form->addRow(tr("柱の下端（通り芯の面から）"), base);
   form->addRow(tr("柱の高さ（梁はその上に置く）"), height);
   form->addRow(new QLabel(tr("断面・基準は部材パネルの「柱」「梁」の設定を使います。\n"
@@ -2082,6 +2219,12 @@ void MainWindow::showGridMembersDialog(const doc::ObjectId& gridId) {
   doc::Modeler::GridMemberOptions options;
   options.base = *b;
   options.height = *h;
+  options.baseLevel = baseLevel->currentData().toString().toStdString();
+  options.topLevel = topLevel->currentData().toString().toStdString();
+  if (options.baseLevel.empty() != options.topLevel.empty()) {
+    reportError(tr("レベルで指定する時は、下端と上端の両方を選んでください"));
+    return;
+  }
   if (columns->isChecked()) options.columns = spec(column);
   if (xBeams->isChecked()) options.xBeams = spec(beam);
   if (yBeams->isChecked()) options.yBeams = spec(beam);
@@ -3363,6 +3506,21 @@ QMenu* MainWindow::buildContextMenu(const QPoint& pos) {
         })) {
       QAction* stop = menu->addAction(tr("追従を止める"), this, [this] { report(modeler_.setFollow(selection_, std::nullopt)); });
       stop->setObjectName(QStringLiteral("stopFollowingAction"));
+    }
+    // A level line drawn as a guide (the tape measure in an elevation).
+    if (single && single->kind() == doc::ObjectKind::Guide && !single->attributes.count("grid_part") &&
+        std::abs(std::get<doc::GuideLine>(single->recipe.base)
+                     .direction.Transformed(document.worldTransform(*single))
+                     .Z()) < 1e-9) {
+      const doc::ObjectId id = single->id;
+      menu->addAction(tr("このガイド線をレベルにする..."), this, [this, id] {
+            bool ok = false;
+            const QString name = QInputDialog::getText(this, tr("レベルにする"), tr("レベルの名前（例: 2FL）"),
+                                                       QLineEdit::Normal, QString(), &ok);
+            if (ok && !name.trimmed().isEmpty()) guideToLevel(id, name);
+          })
+          ->setObjectName(QStringLiteral("guideToLevelAction"));
+      menu->addSeparator();
     }
     // A grid (docs/43): its lines edited, members placed on it.
     if (const auto grid = selectedGrid()) {

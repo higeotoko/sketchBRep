@@ -51,6 +51,16 @@ struct SectionPlane {
   }
 };
 
+// A level (GL, 1FL, 2FL..., docs/45): a named height, world z. Shown as a
+// line in fixed elevations, offered as a plan's work plane; members placed
+// on a grid with levels keep their ends on them. `id` stays when renamed.
+struct FloorLevel {
+  std::string id;
+  std::string name;
+  double elevation = 0.0;
+  bool operator==(const FloorLevel& o) const { return id == o.id && name == o.name && elevation == o.elevation; }
+};
+
 // Independent view switches, matching section planes / cuts / fill.
 struct SectionDisplay {
   bool planes = true;
@@ -68,6 +78,7 @@ struct DocumentSettings {
   std::vector<SectionPlane> sections;
   SectionDisplay sectionDisplay;
   std::set<std::string> hiddenTags;  // objects with these tags are hidden
+  std::vector<FloorLevel> levels;    // by elevation
 };
 
 // The part of the settings that belongs to the model's state (saved, undone
@@ -77,16 +88,21 @@ struct PersistentSettings {
   std::vector<SectionPlane> sections;
   SectionDisplay sectionDisplay;
   std::set<std::string> hiddenTags;
+  std::vector<FloorLevel> levels;
 
-  static PersistentSettings of(const DocumentSettings& s) { return {s.scenes, s.sections, s.sectionDisplay, s.hiddenTags}; }
+  static PersistentSettings of(const DocumentSettings& s) {
+    return {s.scenes, s.sections, s.sectionDisplay, s.hiddenTags, s.levels};
+  }
   void applyTo(DocumentSettings& s) const {
     s.scenes = scenes;
     s.sections = sections;
     s.sectionDisplay = sectionDisplay;
     s.hiddenTags = hiddenTags;
+    s.levels = levels;
   }
   bool operator==(const PersistentSettings& o) const {
-    return scenes == o.scenes && sections == o.sections && sectionDisplay == o.sectionDisplay && hiddenTags == o.hiddenTags;
+    return scenes == o.scenes && sections == o.sections && sectionDisplay == o.sectionDisplay &&
+           hiddenTags == o.hiddenTags && levels == o.levels;
   }
   bool operator!=(const PersistentSettings& o) const { return !(*this == o); }
 };

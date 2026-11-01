@@ -894,6 +894,9 @@ json objectToJson(const Object& o, const Color& shown, ShapeTable& shapes) {
     j["gridPin"] = {{"grid", o.gridPin->grid},
                     {"start", {o.gridPin->startX, o.gridPin->startY}},
                     {"end", {o.gridPin->endX, o.gridPin->endY}}};
+    if (!o.gridPin->startLevel.empty() || !o.gridPin->endLevel.empty()) {
+      j["gridPin"]["levels"] = {o.gridPin->startLevel, o.gridPin->endLevel};
+    }
   }
   if (!o.shape.IsNull()) j["geometry"] = shapes.reference(o.shape);
   return j;
@@ -944,6 +947,10 @@ Object objectFrom(const json& j, const RegenContext& context, std::vector<std::s
     o.gridPin = GridPin{p.at("grid").get<std::string>(), p.at("start").at(0).get<std::string>(),
                         p.at("start").at(1).get<std::string>(), p.at("end").at(0).get<std::string>(),
                         p.at("end").at(1).get<std::string>()};
+    if (p.contains("levels")) {
+      o.gridPin->startLevel = p.at("levels").at(0).get<std::string>();
+      o.gridPin->endLevel = p.at("levels").at(1).get<std::string>();
+    }
   }
   o.recipe = recipeFrom(j.at("recipe"));
 
@@ -1041,6 +1048,8 @@ std::string serializeDocument(const Document& document) {
   for (const SectionPlane& p : s.sections) {
     sections.push_back({{"name", p.name}, {"origin", p.origin}, {"normal", p.normal}, {"active", p.active}, {"visible", p.visible}});
   }
+  json levelsJson = json::array();
+  for (const FloorLevel& l : s.levels) levelsJson.push_back({{"id", l.id}, {"name", l.name}, {"elevation", l.elevation}});
   json root = {
       {"format", kNativeFormatMagic},
       // Files without shared recipes stay readable by the version before.
@@ -1052,6 +1061,7 @@ std::string serializeDocument(const Document& document) {
       {"sections", sections},
       {"sectionDisplay", {{"planes", s.sectionDisplay.planes}, {"cuts", s.sectionDisplay.cuts}, {"fill", s.sectionDisplay.fill}}},
       {"hiddenTags", s.hiddenTags},
+      {"levels", levelsJson},
       {"shapes", shapes.entries},
       {"recipes", recipes.entries},
       {"materials", materials},
@@ -1098,6 +1108,11 @@ Status deserializeDocument(const std::string& text, Document& document,
       }
     }
     if (root.contains("hiddenTags")) s.hiddenTags = root.at("hiddenTags").get<std::set<std::string>>();
+    if (root.contains("levels")) {
+      for (const json& l : root.at("levels")) {
+        s.levels.push_back({l.at("id").get<std::string>(), l.value("name", std::string()), l.at("elevation").get<double>()});
+      }
+    }
     if (root.contains("scenes")) {
       for (const json& scene : root.at("scenes")) {
         s.scenes.push_back({scene.value("name", std::string()), cameraFrom(scene.at("camera"))});

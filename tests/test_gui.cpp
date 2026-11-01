@@ -255,6 +255,7 @@ class GuiPhase1 : public QObject {
   void workPlaneAtAHeightOrAGridLine();
   void curvedShapesMoveAndCopy();
   void snapsKeepTheWorkPlaneDepth();
+  void levelsInElevationsAndPlans();
   void curvedPartPreviewIsWhatPushPullMakes();
   void followFromTheContextMenu();
   void arcAndLinesCloseIntoFace();
@@ -4924,6 +4925,109 @@ void GuiPhase1::workPlaneAtAHeightOrAGridLine() {
   f.vp->unlockView();
   QVERIFY(!button->isVisible());
   QVERIFY(std::abs(f.vp->constructionPlane().Location().Z()) < 1e-9);
+}
+
+// Levels (docs/45): edited in a table, shown in elevations with the grid
+// lines facing them, offered to plans; columns placed between levels
+// follow them; a horizontal guide becomes a level.
+void GuiPhase1::levelsInElevationsAndPlans() {
+  Fixture f;
+  QVERIFY(f.setUp(3000, 3000));
+  doc::Modeler& m = f.window.modeler();
+  // The table starts with GL, 1FL, 2FL when there are none.
+  QTimer::singleShot(100, [&] {
+    if (auto* dialog = f.window.findChild<QDialog*>(QStringLiteral("levelsEditDialog"))) dialog->accept();
+  });
+  f.window.showLevelsEditDialog();
+  QCOMPARE(m.levels().size(), std::size_t(3));
+  QCOMPARE(QString::fromStdString(m.levels()[1].name), QStringLiteral("1FL"));
+  QVERIFY(f.window.createGrid(QStringLiteral("6000"), QStringLiteral("6000")));
+  const auto grid = f.window.selectedGrid();
+  QVERIFY(grid);
+  // Columns between 1FL and 2FL (the dialog's own choice).
+  QTimer::singleShot(100, [&] {
+    auto* dialog = f.window.findChild<QDialog*>(QStringLiteral("gridMembersDialog"));
+    if (!dialog) return;
+    QCOMPARE(dialog->findChild<QComboBox*>(QStringLiteral("gridBaseLevel"))->currentText().left(3), QStringLiteral("1FL"));
+    dialog->findChild<QCheckBox*>(QStringLiteral("gridXBeams"))->setChecked(false);
+    dialog->findChild<QCheckBox*>(QStringLiteral("gridYBeams"))->setChecked(false);
+    dialog->accept();
+  });
+  f.window.showGridMembersDialog(*grid);
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  std::vector<doc::ObjectId> columns;
+  for (const doc::Object& o : m.document().objects()) {
+    if (o.gridPin) columns.push_back(o.id);
+  }
+  QCOMPARE(columns.size(), std::size_t(4));
+  auto top = [&](const doc::ObjectId& id) {
+    const doc::Object* o = m.document().find(id);
+    return std::get<doc::LinearMember>(o->recipe.base).end.Transformed(m.document().worldTransform(*o)).Z();
+  };
+  QVERIFY(std::abs(top(columns.front()) - 3150) < 1e-6);
+  // 2FL raised in the table: the columns go up with it.
+  QTimer::singleShot(100, [&] {
+    auto* dialog = f.window.findChild<QDialog*>(QStringLiteral("levelsEditDialog"));
+    if (!dialog) return;
+    dialog->findChild<QTableWidget*>(QStringLiteral("levelsTable"))->item(0, 1)->setText(QStringLiteral("3.3m"));
+    dialog->accept();
+  });
+  f.window.showLevelsEditDialog();
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QVERIFY2(std::abs(top(columns.front()) - 3300) < 1e-6, qPrintable(QString::number(top(columns.front()))));
+  // The front: levels across, X1 and X2 upright; the grid's ground parts hidden.
+  doc::ObjectId label;
+  for (const doc::Object& o : m.document().objects()) {
+    const auto it = o.attributes.find("grid_part");
+    if (it != o.attributes.end() && it->second == "label") label = o.id;
+  }
+  f.vp->syncNow();
+  QVERIFY(!f.vp->annotationText(label).isEmpty());
+  QCOMPARE(f.vp->elevationDatumCount(), 0);
+  f.vp->lockView(Viewport::StandardView::Front);
+  const QStringList names = f.vp->elevationDatumNames();
+  QVERIFY2(names.contains(QStringLiteral("2FL")) && names.contains(QStringLiteral("GL")) &&
+               names.contains(QStringLiteral("X1")) && names.contains(QStringLiteral("X2")) &&
+               !names.contains(QStringLiteral("Y1")),
+           qPrintable(names.join(',')));
+  QVERIFY(f.vp->annotationText(label).isEmpty());
+  // A line drawn in the front snaps to 2FL.
+  f.vp->fitAll();
+  if (const QString shot = qEnvironmentVariable("SBR_LEVELS_SHOT"); !shot.isEmpty()) {
+    f.window.setSelection({});
+    QTest::qWait(200);
+    QVERIFY(f.window.screen()->grabWindow(0).copy(f.window.frameGeometry()).save(shot));
+  }
+  f.window.activateTool(MainWindow::ToolId::Line);
+  click(f.vp, f.vp->toWidget(gp_Pnt(-500, 0, 3300)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(2000, 0, 3300)));
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  const doc::Object& drawn = m.document().objects().back();
+  QCOMPARE(drawn.kind(), doc::ObjectKind::Curve);
+  const Bnd_Box line = geom::exactBounds(m.document().worldShape(drawn));
+  QVERIFY2(std::abs(line.CornerMin().Z() - 3300) < 1e-6 && std::abs(line.CornerMax().Z() - 3300) < 1e-6,
+           qPrintable(QString::number(line.CornerMin().Z())));
+  // The plan offers the levels as work planes.
+  f.vp->lockView(Viewport::StandardView::Top);
+  const auto choices = f.window.workPlaneChoices();
+  QCOMPARE(choices.size(), std::size_t(3));
+  QCOMPARE(choices[2].name, QStringLiteral("2FL"));
+  QVERIFY(std::abs(choices[2].offset - 3300) < 1e-9);
+  // Back to 3D: the grid's names again, no datums.
+  f.vp->unlockView();
+  QCOMPARE(f.vp->elevationDatumCount(), 0);
+  QVERIFY(!f.vp->annotationText(label).isEmpty());
+  // A horizontal guide made a level, in one undo step.
+  const doc::ObjectId guide = *m.createGuide(gp_Pnt(0, 0, 6300), gp::DX());
+  const std::size_t steps = m.history().undoCount();
+  QVERIFY(f.window.guideToLevel(guide, QStringLiteral("RFL")));
+  QCOMPARE(m.levels().back().name, std::string("RFL"));
+  QVERIFY(std::abs(m.levels().back().elevation - 6300) < 1e-9);
+  QVERIFY(!m.document().find(guide));
+  QCOMPARE(m.history().undoCount(), steps + 1);
+  QVERIFY(m.undo());
+  QVERIFY(m.document().find(guide));
+  QCOMPARE(m.levels().size(), std::size_t(3));
 }
 
 // Report: on the Y3 elevation (or a plan at a height), snapping to a line

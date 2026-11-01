@@ -177,6 +177,10 @@ class MainWindow : public QMainWindow, public ToolHost {
     double offset = 0.0;
   };
   std::vector<WorkPlaneChoice> workPlaneChoices() const;
+  // Levels (docs/45): edited in a table (Tools menu); a horizontal guide
+  // made a level of that name (one undo step, the guide taken away).
+  void showLevelsEditDialog();
+  bool guideToLevel(const doc::ObjectId& guide, const QString& name);
   // The grid a selection means: the grid itself, or a line inside it.
   std::optional<doc::ObjectId> selectedGrid() const;
   // The panel shown while the member tool is in use: the entries, what will

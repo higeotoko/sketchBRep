@@ -58,6 +58,9 @@ struct Follow {
 struct GridPin {
   ObjectId grid;
   std::string startX, startY, endX, endY;
+  // Levels the ends stand on (docs/45; empty: none): when a level's
+  // height changes, that end moves up or down by as much.
+  std::string startLevel, endLevel;
 };
 
 struct Object {
