@@ -1079,6 +1079,14 @@ class PushPullTool : public Tool {
   // follows once the mouse rests (the heavy calculation), and no longer
   // during this drag if it took long.
   void showCurvedResult(std::uint64_t generation);
+  // Sets the face to push / pull (picked, or selected before the tool).
+  bool beginOn(const doc::ObjectId& id, const TopoDS_Face& face, const gp_Pnt& point);
+  struct Preselected {
+    doc::ObjectId object;
+    TopoDS_Face face;
+    gp_Pnt centre;
+  };
+  std::optional<Preselected> preselected_;
   std::uint64_t previewGeneration_ = 0;
   bool slowPreview_ = false;
   bool keepStart_ = false;

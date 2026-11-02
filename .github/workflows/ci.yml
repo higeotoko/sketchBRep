@@ -192,6 +192,7 @@ jobs:
           Copy-Item docs\46_collada_sketchup.md "$dist\SKETCHUP_DAE.md"
           Copy-Item docs\47_rhino_operations.md "$dist\RHINO_OPERATIONS.md"
           Copy-Item docs\48_input_box_and_upright_shapes.md "$dist\INPUT_AND_UPRIGHT.md"
+          Copy-Item docs\49_verification_plan.md "$dist\VERIFY_CHECKLIST.md"
           Copy-Item docs\32_unified_import_export.md "$dist\IMPORT_EXPORT.md"
           Copy-Item docs\33_chatgpt_connection.md "$dist\CHATGPT_CONNECTION.md"
           Copy-Item docs\34_sections_and_tools_palette.md "$dist\SECTIONS_AND_TOOLS.md"
@@ -265,3 +266,31 @@ jobs:
           name: SketchBRep-windows-x64
           path: dist/SketchBRep
           retention-days: 30
+
+      - name: Test GUI end-to-end (Windows, Mesa software OpenGL)
+        shell: pwsh
+        env:
+          MESA_VERSION: "26.2.3"
+          GALLIUM_DRIVER: llvmpipe
+        run: |
+          $env_root = "${{ steps.mamba.outputs.environment-path }}"
+          $env:PATH = "$env_root\Library\bin;$env:PATH"
+          $archive = "mesa.7z"
+          Invoke-WebRequest -Uri "https://github.com/pal1000/mesa-dist-win/releases/download/$env:MESA_VERSION/mesa3d-$env:MESA_VERSION-release-msvc.7z" -OutFile $archive
+          7z x $archive -omesa -y | Out-Null
+          $gl = Get-ChildItem mesa\x64 -Filter *.dll | Where-Object { $_.Name -match '^(opengl32|libgallium_wgl|libglapi)\.dll$' }
+          if (-not ($gl | Where-Object Name -eq "opengl32.dll")) { throw "Mesa opengl32.dll not found" }
+          # Next to each GUI test program: loaded before the system's OpenGL.
+          foreach ($dir in @("build\tests")) { $gl | Copy-Item -Destination $dir }
+          $platforms = Get-ChildItem -Path $env_root -Recurse -Directory -Filter platforms |
+                       Where-Object { $_.FullName -match "plugins" } | Select-Object -First 1
+          $env:QT_PLUGIN_PATH = Split-Path $platforms.FullName
+          ctest --test-dir build --output-on-failure -L gui 2>&1 | Tee-Object -FilePath gui-test-log.txt
+          $status = $LASTEXITCODE
+          if ($status -ne 0) {
+            Get-Content gui-test-log.txt | Where-Object { $_ -match 'FAIL!|\*\*\*Failed|\*\*\*Timeout|Exception' } |
+              Select-Object -First 40 | ForEach-Object {
+                Write-Output ("::error::" + $_.Replace('%', '%25'))
+              }
+          }
+          exit $status

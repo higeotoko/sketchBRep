@@ -216,7 +216,7 @@
 |---|---|---|
 | LINE-01 | 自動確認済 | `escStepsBackAndConstraintsShow`（Esc で確定済みの線は残る） |
 | LINE-02 | 検証待ち | 単独の線への T 字接続は、接続点を作る（`Overlaps.Lines`）。面の辺の途中への接続はまだ |
-| LINE-03 | 検証待ち | 閉じる前の案内あり。隙間のある輪郭はまだ確認していない |
+| LINE-03 | 自動確認済 | 閉じる前の案内あり。0.5 mm の隙間は勝手に閉じず、線もそのまま（`verifyLine03GapStaysLines`） |
 | LINE-04 | 自動確認済 | `lineAcrossRectangleSplitsProfile`、`lineAcrossWallSplitsFace`、`SplitAcross.*`（はみ出した線、複数の面、コピー、後から描いた面、穴）、`lineAcrossStripsInAGroupDividesEach` |
 | LINE-05 | 自動確認済 | W0 |
 | LINE-06 | 自動確認済 | `lineAgainstVolumeMakesFace` |
@@ -224,7 +224,7 @@
 ### 6. 矩形・円・円弧
 | ID | 状態 | 根拠・残り |
 |---|---|---|
-| SHAPE-01 | 検証待ち | `lineToolStaysOnWallPlane`。描いている途中の Orbit はまだ確認していない |
+| SHAPE-01 | 自動確認済 | `lineToolStaysOnWallPlane`、描いている途中の視点変更（`verifyShape01OrbitWhileDrawing`） |
 | SHAPE-02 | 後回し | |
 | SHAPE-03 | 後回し | |
 | SHAPE-04 | 自動確認済 | `circleToolTypedRadius` |
@@ -236,7 +236,7 @@
 |---|---|---|
 | MOVE-01 | 検証待ち | |
 | MOVE-02 | 検証待ち | 後から選ぶ場合は、オブジェクト全体を掴む |
-| MOVE-03 | 検証待ち | |
+| MOVE-03 | 自動確認済 | 青軸の固定が数値入力まで続く（`polarArrayFullCircleAndCtrlMidMove`） |
 | MOVE-04 | 自動確認済 | `copySelectedEdgeArrays`、W1（面のコピー）、W4（変形中の Ctrl 切替） |
 | MOVE-05 | 自動確認済 | 面 1 枚の移動：既定は法線方向（伸縮）。↓ で固定を外す・→←↑ で別の軸に固定すると横へも動き、まわりの面がついてくる（平らを保てない面は折る）。`move05FaceMovesSideways`、2026-10-24 |
 | MOVE-06 | 自動確認済 | `moveToolLiftsRidgeIntoGable`、`Roof.*` |
@@ -264,9 +264,9 @@
 ### 10. Push/Pull
 | ID | 状態 | 根拠・残り |
 |---|---|---|
-| PULL-01 | 検証待ち | |
+| PULL-01 | 自動確認済 | 面を選んでから P → 距離を入力で、その面を押し出す（この時に実装。`verifyPull01PreselectedFace`） |
 | PULL-02 | 自動確認済 | `Offset.*`、`Flows.SC01_FrameWall` |
-| PULL-03 | 検証待ち | |
+| PULL-03 | 自動確認済 | 他の立体の角まで引くと、ちょうどその高さ（`verifyPull03UpToAnotherPoint`） |
 | PULL-04 | 検証待ち | 同じ量の繰り返しはあり（`pushPullDoubleClickRepeatsDistance`）。開始面を残す操作は Ctrl（開いた形状のみ、状態はステータスに表示。`pushPullOnOpenShape`）。ソリッドでの Ctrl はまだない |
 | PULL-05 | 自動確認済 | 2026-10-24 から既定は SketchUp の面と同じ（面が動いて形状が広がる）。新しい体積は Ctrl（開始面を残す）で作る。`OpenPushPull.*`、`pushPullOnOpenShape`、`Flows.SC07_*` |
 | PULL-06 | 検証待ち | |
@@ -285,7 +285,7 @@
 | ID | 状態 | 根拠・残り |
 |---|---|---|
 | GROUP-01 | 自動確認済 | `groupEditModeAndLooseFaceDelete`、`groupEditShowsDottedBox` |
-| GROUP-02 | 検証待ち | 重なりの整理はグループの境界を越えない（`Overlaps.OtherGroupsSolidsAndHeightsStayApart`） |
+| GROUP-02 | 自動確認済 | 重なりの整理はグループの境界を越えない（`Overlaps.OtherGroupsSolidsAndHeightsStayApart`）。中で押し出しても、接している外の立体は変わらない（`verifyGroup02InsideLeavesOutsideAlone`） |
 | GROUP-03 | 検証待ち | 編集中は点線の箱を表示。階層の表示はまだ |
 | GROUP-04 | 自動確認済 | `componentEditInPlace`、`Components.*` |
 | GROUP-05 | 自動確認済 | W1（一部だけは断る）。部分選択から作るグループはまだない |
@@ -298,15 +298,15 @@
 | CLIP-02 | 自動確認済 | W1 |
 | CLIP-03 | 自動確認済 | `copyPasteFollowsCursor` |
 | CLIP-04 | 検証待ち | 回転したグループの中から外への貼り付けは、まだ確認していない |
-| CLIP-05 | 検証待ち | |
-| CLIP-06 | 検証待ち | `Clipboard.*` |
+| CLIP-05 | 自動確認済 | 貼り付け中の Esc・ツール変更で何も残らず Undo も増えない、2 回貼ると 2 個（`verifyClip05PasteEscLeavesNothing`） |
+| CLIP-06 | 自動確認済 | `Clipboard.*`。マテリアルとタグを保ったまま貼り付く（`verifyClip06PasteKeepsMaterialAndTag`） |
 
 ### 14. メジャー・補助線
 | ID | 状態 | 根拠・残り |
 |---|---|---|
 | GUIDE-01 | 自動確認済 | `tapeMeasureReadsDistance`、`tapeMeasurePullsGuideOffEdge` |
 | GUIDE-02 | 自動確認済 | `gridLinesSnapAtCrossings` |
-| GUIDE-03 | 検証待ち | |
+| GUIDE-03 | 自動確認済 | ガイドを一括で消しても線は残り、Undo 1 回で戻る（`verifyGuide03ClearGuidesKeepsLines`） |
 | GUIDE-04 | 自動確認済 | `protractorPlacesAngledGuide` |
 | GUIDE-05 | 後回し | 下絵の較正はある（`imageUnderlayCalibrateLockTrace`） |
 | GUIDE-06 | 検証待ち | |
@@ -317,7 +317,7 @@
 | LOOK-01 | 自動確認済 | `paintToolAndEyedropper`、`Materials.*` |
 | LOOK-02 | 自動確認済 | 同上 |
 | LOOK-03 | 自動確認済 | `Stretch.*`、`Overlaps.*`、屋根（`Flows.SC07_SC08_SC19_*`、両方の屋根面が塗装を保つ） |
-| LOOK-04 | 検証待ち | |
+| LOOK-04 | 自動確認済 | 開いた面を反転、Undo で戻る（`verifyLook04ReverseOpenFace`） |
 | LOOK-05 | 後回し | |
 | LOOK-06 | 検証待ち | 非表示のオブジェクトと、非表示タグのオブジェクトは吸着・選択されない（`look06HiddenIsNotSnappedOrPicked`）。面の裏に隠れた点は吸着しない／X 線では吸着する。断面で切り取られた側は X 線でも吸着・選択されず、残った側はこれまでどおり（`look06SectionAndXRayRules`） |
 
@@ -328,7 +328,7 @@
 | CAM-02 | 自動確認済 | `wheelZoom*`。速さの感じ方は実機で確認する |
 | CAM-03 | 検証待ち | 実機 |
 | CAM-04 | 検証待ち | 左ダブルクリックでの全体表示はやめた（中ボタンだけ） |
-| CAM-05 | 検証待ち | |
+| CAM-05 | 自動確認済 | 平行・透視の切替でモデル・履歴・未保存状態が変わらない（`verifyCam05ProjectionKeepsModel`） |
 | CAM-06 | 検証待ち | 実機 |
 
 ### 17. 中断・履歴・保存

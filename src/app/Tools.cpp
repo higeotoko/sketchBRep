@@ -2828,8 +2828,22 @@ QCursor PushPullTool::cursor() const { return toolCursor(CursorKind::PushPull); 
 
 void PushPullTool::activate() {
   keepStart_ = false;
+  preselected_.reset();
   host_.viewport().setPickMode(PickMode::Faces);
   host_.setMeasurement(QObject::tr("距離"), QString());
+  // PULL-01: one face selected first: it is the one pushed / pulled when a
+  // distance is typed (or it is clicked as usual).
+  const auto elements = host_.elementSelection();
+  if (elements.size() == 1 && elements.front().type == TopAbs_FACE) {
+    const TopoDS_Shape face = host_.viewport().elementShape(elements.front());
+    if (!face.IsNull()) {
+      GProp_GProps props;
+      BRepGProp::SurfaceProperties(face, props);
+      preselected_ = Preselected{elements.front().objectId, TopoDS::Face(face), props.CentreOfMass()};
+      host_.setStatus(QObject::tr("選んだ面を押し出します。距離を入力して Enter、または面をクリック") + keepSuffix());
+      return;
+    }
+  }
   host_.setStatus(QObject::tr("押し出す面をクリック（数値入力で直前の操作を変更）") + keepSuffix());
 }
 
@@ -2848,6 +2862,7 @@ bool PushPullTool::keyPress(QKeyEvent* event) {
 }
 
 void PushPullTool::cancel() {
+  preselected_.reset();
   reset();
 }
 
@@ -2945,15 +2960,22 @@ void PushPullTool::mousePress(const ToolEvent& e) {
   }
   const auto pick = host_.viewport().pickFace(e.pos);
   if (!pick) return;
-  auto normal = geom::planarFaceNormal(pick->face);
+  if (!beginOn(pick->objectId, pick->face, pick->point)) return;
+  dragging_ = true;
+  host_.viewport().clearHover();
+  host_.viewport().setPickMode(PickMode::None);
+}
+
+bool PushPullTool::beginOn(const doc::ObjectId& id, const TopoDS_Face& face, const gp_Pnt& point) {
+  auto normal = geom::planarFaceNormal(face);
   curved_ = !normal;
   // Curved faces (cylinders, swept/lofted surfaces) move along their
   // normal at the picked point.
-  if (!normal) normal = geom::faceNormalAt(pick->face, pick->point);
-  if (!normal) return;
-  objectId_ = pick->objectId;
-  face_ = pick->face;
-  origin_ = pick->point;
+  if (!normal) normal = geom::faceNormalAt(face, point);
+  if (!normal) return false;
+  objectId_ = id;
+  face_ = face;
+  origin_ = point;
   normal_ = *normal;
   distance_ = 0.0;
   // One part of a divided curved surface (another face on the same
@@ -2968,10 +2990,8 @@ void PushPullTool::mousePress(const ToolEvent& e) {
       }
     }
   }
-  dragging_ = true;
   slowPreview_ = false;
-  host_.viewport().clearHover();
-  host_.viewport().setPickMode(PickMode::None);
+  return true;
 }
 
 void PushPullTool::commit(double distance) {
@@ -3021,6 +3041,14 @@ void PushPullTool::applyMeasurement(const QString& text) {
   if (dragging_) {
     commit(distance_ < -tolerance::kMinDimension ? -*value : *value);
     return;
+  }
+  if (preselected_) {
+    const Preselected p = *preselected_;
+    preselected_.reset();
+    if (beginOn(p.object, p.face, p.centre)) {
+      commit(*value);
+      return;
+    }
   }
   if (last_ && recent_.fresh(host_.modeler())) {
     const Status s = recent_.revise(host_.modeler(), [&] {

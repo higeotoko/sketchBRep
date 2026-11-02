@@ -279,6 +279,16 @@ class GuiPhase1 : public QObject {
   void filletTwoLinesLikeAutoCad();
   void measurementBoxUnitOutsideAndTypingReplaces();
   void circlePolygonArcStandUp();
+  void verifyPull01PreselectedFace();
+  void verifyShape01OrbitWhileDrawing();
+  void verifyClip05PasteEscLeavesNothing();
+  void verifyCam05ProjectionKeepsModel();
+  void verifyGuide03ClearGuidesKeepsLines();
+  void verifyLook04ReverseOpenFace();
+  void verifyLine03GapStaysLines();
+  void verifyPull03UpToAnotherPoint();
+  void verifyClip06PasteKeepsMaterialAndTag();
+  void verifyGroup02InsideLeavesOutsideAlone();
   void panelDragPreviewKeepsTheModelViewStill();
   void panelMotionSettlesAfterNativeDock();
   void paletteResizeKeepsBackdropAcrossViewport();
@@ -8615,4 +8625,233 @@ void GuiPhase1::circlePolygonArcStandUp() {
   QVERIFY(m.document().find(up)->kind() == doc::ObjectKind::Face);
   QVERIFY(std::abs(normalOf(up).Z()) < 1e-9);
   QVERIFY(std::abs(std::get<doc::CircleProfile>(m.document().find(up)->recipe.base).radius - 1000) < 1e-3);
+}
+
+// ---- docs/49: items "検証待ち" in docs/20 made automatic checks ---------------
+
+namespace {
+std::optional<ElementRef> faceAt(Viewport* vp, const doc::ObjectId& id, const gp_Pnt& centre) {
+  for (const ElementRef& r : vp->allElements(id)) {
+    if (r.type != TopAbs_FACE) continue;
+    GProp_GProps p;
+    BRepGProp::SurfaceProperties(vp->elementShape(r), p);
+    if (p.CentreOfMass().Distance(centre) < 1e-3) return r;
+  }
+  return std::nullopt;
+}
+}  // namespace
+
+// PULL-01: a face selected first, then P: the push / pull takes that face
+// (typed distance + Enter), nothing to pick again.
+void GuiPhase1::verifyPull01PreselectedFace() {
+  Fixture f;
+  QVERIFY(f.setUp(500, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+  f.vp->syncNow();
+  const auto top = faceAt(f.vp, box, gp_Pnt(500, 500, 1000));
+  QVERIFY(top);
+  f.window.setElementSelection({*top});
+  f.window.activateTool(MainWindow::ToolId::PushPull);
+  type(f.vp, QStringLiteral("500"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  const Bnd_Box b = geom::exactBounds(m.document().worldShape(*m.document().find(box)));
+  QVERIFY2(std::abs(b.CornerMax().Z() - 1500) < 1e-6, qPrintable(QString::number(b.CornerMax().Z())));
+}
+
+// SHAPE-01: the camera turned while a line is being drawn on a wall: the
+// line stays on the wall's plane (does not drop to the ground).
+void GuiPhase1::verifyShape01OrbitWhileDrawing() {
+  Fixture f;
+  QVERIFY(f.setUp(2000, 0));
+  doc::Modeler& m = f.window.modeler();
+  f.box(0, 0, 4000, 200, 3000);
+  f.window.activateTool(MainWindow::ToolId::Line);
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 0, 1000)));  // on the wall's front face
+  doc::CameraState cam;
+  cam.eye = {2000 - 9000, -7000, 6000};
+  cam.target = {2000, 0, 1000};
+  cam.up = {0, 0, 1};
+  cam.perspective = false;
+  cam.scale = 16000;
+  f.vp->restoreCamera(cam);  // orbited mid-line
+  QTest::qWait(50);
+  click(f.vp, f.vp->toWidget(gp_Pnt(2500, 0, 2000)));
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  QTest::qWait(30);
+  const doc::Object& line = m.document().objects().back();
+  QCOMPARE(line.kind(), doc::ObjectKind::Curve);
+  const Bnd_Box b = geom::exactBounds(m.document().worldShape(line));
+  QVERIFY2(std::abs(b.CornerMin().Y()) < 1e-6 && std::abs(b.CornerMax().Y()) < 1e-6,
+           qPrintable(QStringLiteral("y %1..%2").arg(b.CornerMin().Y()).arg(b.CornerMax().Y())));
+  QVERIFY(b.CornerMax().Z() > 1500);
+}
+
+// CLIP-05: pasting, then Esc or another tool: nothing is left behind and
+// no undo step is made; pasting twice places two copies.
+void GuiPhase1::verifyClip05PasteEscLeavesNothing() {
+  Fixture f;
+  QVERIFY(f.setUp(1500, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 500, 500, 500);
+  f.vp->syncNow();
+  f.window.setSelection({box});
+  QVERIFY(f.window.copySelection());
+  const std::size_t objects = m.document().objects().size();
+  const std::size_t steps = m.history().undoCount();
+  f.window.paste();
+  move(f.vp, f.vp->toWidget(gp_Pnt(2000, 0, 0)));
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  QCOMPARE(m.document().objects().size(), objects);
+  QCOMPARE(m.history().undoCount(), steps);
+  QVERIFY(f.vp->previewShape().IsNull());
+  f.window.paste();
+  move(f.vp, f.vp->toWidget(gp_Pnt(2000, 0, 0)));
+  f.window.activateTool(MainWindow::ToolId::Line);  // another tool
+  QCOMPARE(m.document().objects().size(), objects);
+  QCOMPARE(m.history().undoCount(), steps);
+  for (const double x : {2000.0, 3000.0}) {
+    f.window.paste();
+    click(f.vp, f.vp->toWidget(gp_Pnt(x, 0, 0)));
+  }
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), objects + 2);
+}
+
+// CAM-05: parallel <-> perspective changes only the view: the model, its
+// history and the unsaved flag stay as they were.
+void GuiPhase1::verifyCam05ProjectionKeepsModel() {
+  Fixture f;
+  QVERIFY(f.setUp(500, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+  f.vp->syncNow();
+  const double volume = geom::volume(m.document().worldShape(*m.document().find(box)));
+  const std::size_t steps = m.history().undoCount();
+  const auto revision = m.history().revision();
+  for (const bool perspective : {true, false, true}) {
+    f.vp->setPerspective(perspective);
+    QTest::qWait(20);
+    QCOMPARE(f.vp->isPerspective(), perspective);
+  }
+  QCOMPARE(m.history().undoCount(), steps);
+  QCOMPARE(m.history().revision(), revision);
+  QVERIFY(std::abs(geom::volume(m.document().worldShape(*m.document().find(box))) - volume) < 1e-6);
+}
+
+// GUIDE-03: guides cleared at once; lines and the grid stay; one undo
+// brings the guides back.
+void GuiPhase1::verifyGuide03ClearGuidesKeepsLines() {
+  Fixture f;
+  QVERIFY(f.setUp(500, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId line = *m.createPolyline({gp_Pnt(0, 0, 0), gp_Pnt(1000, 0, 0)});
+  const doc::ObjectId g1 = *m.createGuide(gp_Pnt(0, 0, 0), gp::DX());
+  const doc::ObjectId g2 = *m.createGuide(gp_Pnt(0, 500, 0), gp::DY());
+  f.vp->syncNow();
+  QVERIFY(m.clearGuides());
+  QVERIFY(!m.document().find(g1) && !m.document().find(g2));
+  QVERIFY(m.document().find(line));
+  QVERIFY(m.undo());
+  QVERIFY(m.document().find(g1) && m.document().find(g2) && m.document().find(line));
+}
+
+// LOOK-04: an open face shows which side is which and can be turned over;
+// undo turns it back.
+void GuiPhase1::verifyLook04ReverseOpenFace() {
+  Fixture f;
+  QVERIFY(f.setUp(500, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId face = *m.createRectangle(geom::SketchPlane::ground(), 1000, 1000);
+  f.vp->syncNow();
+  auto normalZ = [&] {
+    TopExp_Explorer x(m.document().worldShape(*m.document().find(face)), TopAbs_FACE);
+    const auto n = geom::planarFaceNormal(TopoDS::Face(x.Current()));
+    return n ? n->Z() : 0.0;
+  };
+  const double before = normalZ();
+  QVERIFY(std::abs(before) > 0.99);
+  QVERIFY(m.reverseFaces({face}));
+  QVERIFY(std::abs(normalZ() + before) < 1e-9);
+  QVERIFY(m.undo());
+  QVERIFY(std::abs(normalZ() - before) < 1e-9);
+}
+
+// LINE-03: an outline left open by a small gap (0.5 mm) is not closed into
+// a face by itself; the lines are kept as they were drawn.
+void GuiPhase1::verifyLine03GapStaysLines() {
+  Fixture f;
+  QVERIFY(f.setUp(500, 500));
+  doc::Modeler& m = f.window.modeler();
+  QVERIFY(m.createPolyline({gp_Pnt(0, 0, 0), gp_Pnt(1000, 0, 0), gp_Pnt(1000, 1000, 0), gp_Pnt(0, 1000, 0),
+                            gp_Pnt(0, 0.5, 0)})
+              .ok());
+  f.vp->syncNow();
+  for (const doc::Object& o : m.document().objects()) QVERIFY(o.kind() != doc::ObjectKind::Face);
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  const auto& points = std::get<doc::PolylineCurve>(m.document().objects().front().recipe.base).points;
+  QCOMPARE(points.size(), std::size_t(5));
+  QVERIFY(points.back().Distance(gp_Pnt(0, 0.5, 0)) < 1e-9);
+}
+
+// PULL-03: dragging a face up to a corner of another solid: the height
+// becomes exactly that corner's (not where the cursor happens to be).
+void GuiPhase1::verifyPull03UpToAnotherPoint() {
+  Fixture f;
+  QVERIFY(f.setUp(1000, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId low = f.box(0, 0, 1000, 1000, 1000);
+  f.box(2000, 0, 1000, 1000, 1700);
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::PushPull);
+  click(f.vp, f.vp->toWidget(gp_Pnt(500, 500, 1000)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(2000, 0, 1700)));  // the tall one's corner
+  click(f.vp, f.vp->toWidget(gp_Pnt(2000, 0, 1700)));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  const Bnd_Box b = geom::exactBounds(m.document().worldShape(*m.document().find(low)));
+  QVERIFY2(std::abs(b.CornerMax().Z() - 1700) < 1e-6, qPrintable(QString::number(b.CornerMax().Z())));
+}
+
+// CLIP-06: a copy pasted keeps its material and tag.
+void GuiPhase1::verifyClip06PasteKeepsMaterialAndTag() {
+  Fixture f;
+  QVERIFY(f.setUp(1500, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 500, 500, 500);
+  const std::string red = *m.createMaterial("Red", doc::Color{0.9, 0.1, 0.1});
+  QVERIFY(m.assignMaterial({box}, red));
+  QVERIFY(m.setLayer(box, "Walls"));
+  f.vp->syncNow();
+  f.window.setSelection({box});
+  QVERIFY(f.window.copySelection());
+  f.window.paste();
+  click(f.vp, f.vp->toWidget(gp_Pnt(2500, 0, 0)));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  const doc::Object& copy = m.document().objects().back();
+  QVERIFY(copy.id != box);
+  QCOMPARE(copy.material, red);
+  QCOMPARE(copy.layer, std::string("Walls"));
+}
+
+// GROUP-02: editing inside a group, a face pulled where it touches a solid
+// outside: only the one inside changes.
+void GuiPhase1::verifyGroup02InsideLeavesOutsideAlone() {
+  Fixture f;
+  QVERIFY(f.setUp(1000, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId inside = f.box(0, 0, 1000, 1000, 1000);
+  const doc::ObjectId outside = f.box(1000, 0, 1000, 1000, 1000);  // touching it
+  const doc::ObjectId group = *m.group({inside});
+  f.vp->syncNow();
+  const double before = geom::volume(m.document().worldShape(*m.document().find(outside)));
+  f.window.enterGroup(group);
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::PushPull);
+  click(f.vp, f.vp->toWidget(gp_Pnt(500, 500, 1000)));
+  move(f.vp, f.vp->toWidget(gp_Pnt(500, 500, 1300)));
+  type(f.vp, QStringLiteral("300"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QVERIFY(std::abs(geom::volume(m.document().worldShape(*m.document().find(inside))) - 1.3e9) < 1.0);
+  QVERIFY(std::abs(geom::volume(m.document().worldShape(*m.document().find(outside))) - before) < 1e-6);
+  QCOMPARE(m.document().find(outside)->parent, std::string());
 }
