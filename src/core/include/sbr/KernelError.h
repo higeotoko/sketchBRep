@@ -4,6 +4,7 @@
 // pointer crashes the program (a failed push / pull took SketchBRep down).
 
 #include <string>
+#include <typeinfo>
 
 #include <Standard_Failure.hxx>
 
@@ -12,8 +13,9 @@ namespace sbr {
 inline std::string kernelMessage(const Standard_Failure& e) {
   const char* m = e.GetMessageString();
   if (m && *m) return m;
-  const char* type = e.DynamicType().IsNull() ? nullptr : e.DynamicType()->Name();
-  return type && *type ? std::string(type) : std::string("geometry kernel error");
+  // The kind of failure (OCCT 8 dropped DynamicType() from failures).
+  const char* type = typeid(e).name();
+  return type && *type ? std::string("geometry kernel error (") + type + ")" : std::string("geometry kernel error");
 }
 
 }  // namespace sbr
