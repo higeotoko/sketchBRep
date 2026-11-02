@@ -285,12 +285,35 @@ jobs:
           $platforms = Get-ChildItem -Path $env_root -Recurse -Directory -Filter platforms |
                        Where-Object { $_.FullName -match "plugins" } | Select-Object -First 1
           $env:QT_PLUGIN_PATH = Split-Path $platforms.FullName
-          ctest --test-dir build --output-on-failure -L gui 2>&1 | Tee-Object -FilePath gui-test-log.txt
+          ctest --test-dir build --output-on-failure -L gui -E gui_phase1 2>&1 | Tee-Object -FilePath gui-test-log.txt
           $status = $LASTEXITCODE
-          if ($status -ne 0) {
-            Get-Content gui-test-log.txt | Where-Object { $_ -match 'FAIL!|\*\*\*Failed|\*\*\*Timeout|Exception' } |
-              Select-Object -First 40 | ForEach-Object {
-                Write-Output ("::error::" + $_.Replace('%', '%25'))
-              }
+          # The big suite run directly, its results also written to a file (the
+          # console output can be lost if the program ends abnormally).
+          $env:QT_QPA_PLATFORM = "windows"
+          & build\tests\sbr_gui_tests.exe -o gui_phase1.txt,txt -o -,txt 2>&1 | Out-Null
+          $phase1 = $LASTEXITCODE
+          Write-Host "gui_phase1 exit code: $phase1"
+          if (Test-Path gui_phase1.txt) {
+            $lines = Get-Content gui_phase1.txt
+            $lines | Where-Object { $_ -match '^(FAIL!|Totals|QFATAL|QWARN)|Loc:' } | Select-Object -First 80 | ForEach-Object { Write-Host $_ }
+            Write-Host "--- last lines ---"
+            $lines | Select-Object -Last 15 | ForEach-Object { Write-Host $_ }
+            $lines | Where-Object { $_ -match '^FAIL!' } | Select-Object -First 40 | ForEach-Object {
+              Write-Output ("::error::" + $_.Replace('%', '%25'))
+            }
+          } else {
+            Write-Output "::error::gui_phase1 wrote no results (it ended before writing)"
           }
+          if ($phase1 -ne 0) { $status = 1 }
           exit $status
+
+      - name: Keep the Windows GUI test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-gui-test-log
+          path: |
+            gui_phase1.txt
+            gui-test-log.txt
+          if-no-files-found: ignore
+          retention-days: 7
