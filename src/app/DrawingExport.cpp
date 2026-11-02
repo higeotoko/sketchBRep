@@ -17,6 +17,8 @@
 #include <QImage>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMessageBox>
+#include <QTemporaryDir>
 #include <QPageSize>
 #include <QPainter>
 #include <QPainterPath>
@@ -28,6 +30,7 @@
 
 #include <Bnd_Box.hxx>
 
+#include "DwgConverter.h"
 #include "sbr/doc/Document.h"
 
 namespace sbr::app {
@@ -314,7 +317,7 @@ DrawingDialog::DrawingDialog(const doc::Document& document, QWidget* parent) : Q
   notes_->setWordWrap(true);
   right->addWidget(notes_);
   auto* buttons = new QDialogButtonBox;
-  QPushButton* exportButton = buttons->addButton(tr("書き出す（PDF・DXF・JWW）..."), QDialogButtonBox::AcceptRole);
+  QPushButton* exportButton = buttons->addButton(tr("書き出す（PDF・DXF・JWW・DWG）..."), QDialogButtonBox::AcceptRole);
   exportButton->setObjectName(QStringLiteral("drawingExportButton"));
   buttons->addButton(QDialogButtonBox::Close);
   right->addWidget(buttons);
@@ -475,10 +478,17 @@ Status DrawingDialog::exportTo(const QString& path) {
   if (timer_->isActive() || !sheet_) refreshNow();
   if (!sheet_) return Status::failure(error_.isEmpty() ? "Nothing to write" : error_.toStdString());
   const QString ext = QFileInfo(path).suffix().toLower();
-  Status s = Status::failure("Unknown format: choose .pdf, .dxf or .jww");
+  Status s = Status::failure("Unknown format: choose .pdf, .dxf, .jww or .dwg");
   if (ext == QLatin1String("pdf")) s = writePdf(*sheet_, path);
   else if (ext == QLatin1String("dxf")) s = draw::writeDxf(*sheet_, path.toStdString());
   else if (ext == QLatin1String("jww")) s = draw::writeJww(*sheet_, path.toStdString());
+  else if (ext == QLatin1String("dwg")) {
+    // DWG: our DXF converted by ODA File Converter (installed separately).
+    QTemporaryDir temp;
+    const QString dxf = temp.filePath(QStringLiteral("drawing.dxf"));
+    s = temp.isValid() ? draw::writeDxf(*sheet_, dxf.toStdString()) : Status::failure("No temporary folder");
+    if (s) s = convertDxfToDwg(dxf, QSettings().value("import/odaConverter").toString(), path, this);
+  }
   if (s) {
     QSettings settings;
     settings.setValue("drawing/cutHeight", cutHeight_->value());
@@ -492,16 +502,34 @@ Status DrawingDialog::exportTo(const QString& path) {
 void DrawingDialog::chooseFileAndExport() {
   QSettings settings;
   const QString last = settings.value("drawing/format", QStringLiteral("pdf")).toString();
-  const QStringList filters{tr("PDF（印刷用） (*.pdf)"), tr("DXF（AutoCAD・Jw_cad など） (*.dxf)"), tr("Jw_cad (*.jww)")};
-  QString selected = last == QLatin1String("dxf") ? filters[1] : last == QLatin1String("jww") ? filters[2] : filters[0];
+  const QStringList filters{tr("PDF（印刷用） (*.pdf)"), tr("DXF（AutoCAD・Jw_cad など） (*.dxf)"), tr("Jw_cad (*.jww)"),
+                            tr("DWG（ODA File Converter で変換） (*.dwg)")};
+  QString selected = last == QLatin1String("dxf")   ? filters[1]
+                     : last == QLatin1String("jww") ? filters[2]
+                     : last == QLatin1String("dwg") ? filters[3]
+                                                    : filters[0];
   QString name = drawingName_->text().trimmed();
   if (name.isEmpty()) name = tr("図面");
   QString path = QFileDialog::getSaveFileName(this, tr("図面を書き出す"),
                                               settings.value("drawing/dir").toString() + QLatin1Char('/') + name,
                                               filters.join(QStringLiteral(";;")), &selected);
   if (path.isEmpty()) return;
-  const QString ext = selected == filters[1] ? QStringLiteral("dxf") : selected == filters[2] ? QStringLiteral("jww") : QStringLiteral("pdf");
+  const QString ext = selected == filters[1]   ? QStringLiteral("dxf")
+                      : selected == filters[2] ? QStringLiteral("jww")
+                      : selected == filters[3] ? QStringLiteral("dwg")
+                                               : QStringLiteral("pdf");
   if (QFileInfo(path).suffix().isEmpty()) path += QLatin1Char('.') + ext;
+  if (QFileInfo(path).suffix().toLower() == QLatin1String("dwg") &&
+      QSettings().value("import/odaConverter").toString().isEmpty()) {
+    // Asked for once, as importing DWG does.
+    QMessageBox::information(this, tr("DWG で書き出す"),
+                             tr("DWG で書き出すには ODA File Converter の別途インストールが必要です。\n"
+                                "インストール済みの場合は、次の画面で実行ファイルを選択してください。\n"
+                                "公式配布元: https://www.opendesign.com/guestfiles/oda_file_converter"));
+    const QString exe = QFileDialog::getOpenFileName(this, tr("ODA File Converter の実行ファイルを選択"));
+    if (exe.isEmpty() || !QFileInfo(exe).isExecutable()) return;
+    QSettings().setValue("import/odaConverter", exe);
+  }
   settings.setValue("drawing/format", QFileInfo(path).suffix().toLower());
   settings.setValue("drawing/dir", QFileInfo(path).absolutePath());
   const Status s = exportTo(path);

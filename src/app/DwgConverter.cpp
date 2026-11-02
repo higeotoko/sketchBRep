@@ -60,4 +60,54 @@ Result<QString> convertDwgToDxf(const QString& input, const QString& executable,
     return Result<QString>::failure("ODA File Converter が DXF を出力しませんでした。");
   return output;
 }
+
+Status convertDxfToDwg(const QString& dxf, const QString& executable, const QString& output, QWidget* parent,
+                       int timeoutMs) {
+  if (executable.isEmpty() || !QFileInfo(executable).isExecutable())
+    return Status::failure("DWG で書き出すには ODA File Converter の実行ファイルを設定してください（ファイル > DWG 変換ソフトの設定）。");
+  QTemporaryDir staging, converted;
+  if (!staging.isValid() || !converted.isValid() ||
+      !QFile::copy(dxf, staging.filePath(QStringLiteral("drawing.dxf"))))
+    return Status::failure("DWG 変換用の一時ファイルを作れません。");
+  QProcess process;
+  process.setProgram(executable);
+  process.setArguments({staging.path(), converted.path(), QStringLiteral("ACAD2018"), QStringLiteral("DWG"),
+                        QStringLiteral("0"), QStringLiteral("1"), QStringLiteral("drawing.dxf")});
+  process.setStandardOutputFile(QProcess::nullDevice());
+  process.setStandardErrorFile(QProcess::nullDevice());
+  QProgressDialog progress(QStringLiteral("DXF を DWG に変換しています…"), QStringLiteral("中止"), 0, 0, parent);
+  progress.setWindowModality(Qt::ApplicationModal);
+  progress.setMinimumDuration(0);
+  QEventLoop loop;
+  QTimer timeout;
+  timeout.setSingleShot(true);
+  bool cancelled = false, timedOut = false;
+  QObject::connect(&process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), &loop, &QEventLoop::quit);
+  QObject::connect(&process, &QProcess::errorOccurred, &loop, &QEventLoop::quit);
+  QObject::connect(&progress, &QProgressDialog::canceled, &loop, [&] { cancelled = true; loop.quit(); });
+  QObject::connect(&timeout, &QTimer::timeout, &loop, [&] { timedOut = true; loop.quit(); });
+  process.start();
+  timeout.start(timeoutMs);
+  loop.exec();
+  if (process.state() != QProcess::NotRunning) { process.kill(); process.waitForFinished(3000); }
+  QObject::disconnect(&progress, nullptr, &loop, nullptr);
+  progress.close();
+  if (cancelled) return Status::failure("DWG への変換を中止しました。");
+  if (timedOut) return Status::failure("DWG への変換が制限時間を超えました。");
+  if (process.error() == QProcess::FailedToStart || process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0)
+    return Status::failure("ODA File Converter の変換に失敗しました。設定した実行ファイルを確認してください。");
+  const QString made = QDir(converted.path()).filePath(QStringLiteral("drawing.dwg"));
+  if (!QFileInfo(made).isFile() || QFileInfo(made).size() == 0)
+    return Status::failure("ODA File Converter が DWG を出力しませんでした。");
+  // Replace the chosen file only now that the DWG exists.
+  const QString temp = output + QStringLiteral(".part");
+  QFile::remove(temp);
+  if (!QFile::copy(made, temp)) return Status::failure("DWG を保存できません: " + output.toStdString());
+  QFile::remove(output);
+  if (!QFile::rename(temp, output)) {
+    QFile::remove(temp);
+    return Status::failure("DWG を保存できません: " + output.toStdString());
+  }
+  return Status::success();
+}
 }  // namespace sbr::app

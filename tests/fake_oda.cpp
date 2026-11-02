@@ -6,6 +6,18 @@
 int main(int argc, char** argv) {
   QCoreApplication app(argc, argv);
   const auto a = app.arguments();
+  if (a.size() == 8 && a[3] == "ACAD2018" && a[4] == "DWG" && a[5] == "0" && a[6] == "1" && a[7] == "drawing.dxf") {
+    // DXF -> DWG (drawing export): a DWG header in front of the DXF it got.
+    QFile input(QDir(a[1]).filePath(a[7]));
+    if (!input.open(QIODevice::ReadOnly)) return 4;
+    const auto data = input.readAll();
+    if (!data.contains("EOF")) return 5;
+    QFile output(QDir(a[2]).filePath("drawing.dwg"));
+    if (!output.open(QIODevice::WriteOnly)) return 6;
+    output.write("AC1032");
+    output.write(data);
+    return 0;
+  }
   if (a.size() != 8 || a[3] != "ACAD2018" || a[4] != "DXF" || a[5] != "0" || a[6] != "1" || a[7] != "drawing.dwg") return 2;
   if (QDir(a[1]).entryList(QDir::Files).size() != 1) return 3;
   QFile input(QDir(a[1]).filePath(a[7]));

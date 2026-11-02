@@ -17,6 +17,8 @@
 #include <QMenu>
 #include <QAction>
 #include <algorithm>
+#include "DrawingExport.h"
+#include "DwgConverter.h"
 #include "MainWindow.h"
 #include "Viewport.h"
 #include "Tools.h"
@@ -64,6 +66,33 @@ class DrawingImport : public QObject {
     QVERIFY2(window.lastError().isEmpty(),qPrintable(window.lastError()));QCOMPARE(window.modeler().listObjects().size(),std::size_t(1));
     QCOMPARE(window.modeler().document().objects().front().kind(),doc::ObjectKind::Curve);
     QCOMPARE(window.modeler().history().undoCount(),std::size_t(1));QVERIFY(window.modeler().history().undo());QVERIFY(window.modeler().listObjects().empty());
+  }
+  // docs/50: a drawing written as DWG through ODA File Converter (the
+  // stand-in here): the DXF handed over, the DWG put where asked, the
+  // previous file kept when the converter is missing or fails.
+  void drawingExportedAsDwg() {
+    QTemporaryDir dir;
+    app::MainWindow window;
+    auto& m = window.modeler();
+    geom::SketchPlane plane = geom::SketchPlane::ground();
+    const auto wall = m.createRectangle(plane, 4000, 200);
+    QVERIFY(wall && m.extrude(*wall, 3000));
+    app::DrawingDialog dialog(m.document());
+    dialog.refreshNow();
+    QVERIFY2(dialog.sheet().has_value(), qPrintable(dialog.lastError()));
+    const QString path = dir.filePath(QString::fromUtf8("平面図 with spaces.dwg"));
+    QSettings().setValue("import/odaConverter", QString());
+    QVERIFY(!dialog.exportTo(path));  // no converter set: refused, nothing written
+    QVERIFY(!QFileInfo::exists(path));
+    QSettings().setValue("import/odaConverter", QString::fromUtf8(SBR_FAKE_ODA));
+    const Status s = dialog.exportTo(path);
+    QVERIFY2(s, s.message().c_str());
+    QFile out(path);
+    QVERIFY(out.open(QIODevice::ReadOnly));
+    const QByteArray data = out.readAll();
+    QVERIFY(data.startsWith("AC1032"));
+    QVERIFY(data.contains("AC1009") && data.contains("CUT"));  // our DXF went in
+    QSettings().setValue("import/odaConverter", QString());
   }
   void conversionAndGuiImport() {
     QTemporaryDir dir;
