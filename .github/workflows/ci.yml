@@ -230,23 +230,40 @@ jobs:
           Get-ChildItem $dist -Recurse -Include *.dll | ForEach-Object { $shipped[$_.Name.ToLowerInvariant()] = $true }
           $rows = @()
           $missing = @()
+          $metas = @{}
           foreach ($metaFile in Get-ChildItem "$env_root\conda-meta" -Filter *.json) {
-            $meta = Get-Content $metaFile.FullName -Raw | ConvertFrom-Json
-            $hits = @($meta.files | Where-Object { $shipped.ContainsKey([IO.Path]::GetFileName($_).ToLowerInvariant()) })
-            if ($hits.Count -eq 0) { continue }
+            $m = Get-Content $metaFile.FullName -Raw | ConvertFrom-Json
+            $metas[$m.name] = $m
+          }
+          # A package's info/licenses: from the package cache, else the
+          # package downloaded (its URL in conda-meta) and unpacked by micromamba.
+          function Get-LicenceDir($meta) {
             $pkgDir = $meta.extracted_package_dir
             if (-not $pkgDir -or -not (Test-Path $pkgDir)) { $pkgDir = Join-Path $env:MAMBA_ROOT_PREFIX "pkgs\$($meta.name)-$($meta.version)-$($meta.build)" }
             $source = Join-Path $pkgDir "info\licenses"
-            if (-not (Test-Path $source) -and $meta.url) {
-              # Not in the package cache (environment restored from the CI
-              # cache): the package itself, unpacked by micromamba.
-              $file = Join-Path $env:RUNNER_TEMP ([IO.Path]::GetFileName($meta.url))
-              $unpacked = Join-Path $env:RUNNER_TEMP ("pkg-" + $meta.name)
-              try {
-                Invoke-WebRequest -Uri $meta.url -OutFile $file
-                & $env:MAMBA_EXE package extract $file $unpacked | Out-Null
-                $source = Join-Path $unpacked "info\licenses"
-              } catch { Write-Host "Could not fetch $($meta.name): $_" }
+            if ((Test-Path $source) -or -not $meta.url) { return $source }
+            $file = Join-Path $env:RUNNER_TEMP ([IO.Path]::GetFileName($meta.url))
+            $unpacked = Join-Path $env:RUNNER_TEMP ("pkg-" + $meta.name)
+            try {
+              Invoke-WebRequest -Uri $meta.url -OutFile $file
+              & $env:MAMBA_EXE package extract $file $unpacked | Out-Null
+            } catch { Write-Host "Could not fetch $($meta.name): $_" }
+            return Join-Path $unpacked "info\licenses"
+          }
+          foreach ($meta in $metas.Values) {
+            $hits = @($meta.files | Where-Object { $shipped.ContainsKey([IO.Path]::GetFileName($_).ToLowerInvariant()) })
+            if ($hits.Count -eq 0) { continue }
+            $source = Get-LicenceDir $meta
+            if (-not (Test-Path $source)) {
+              # Split packages (e.g. libfreetype6) keep the licence on their
+              # sibling (libfreetype, freetype).
+              $base = ($meta.name -replace '^lib', '') -replace '\d+$', ''
+              foreach ($sibling in @("lib$base", $base)) {
+                if ($sibling -ne $meta.name -and $metas.ContainsKey($sibling)) {
+                  $candidate = Get-LicenceDir $metas[$sibling]
+                  if (Test-Path $candidate) { $source = $candidate; break }
+                }
+              }
             }
             if (Test-Path $source) {
               Copy-Item $source (Join-Path $licences $meta.name) -Recurse
