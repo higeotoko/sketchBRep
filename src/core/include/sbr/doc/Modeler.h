@@ -18,6 +18,7 @@
 #include "sbr/geom/Rhino3dm.h"
 #include "sbr/geom/Collada.h"
 #include "sbr/geom/Dxf.h"
+#include "sbr/geom/Jww.h"
 #include "sbr/geom/ShapeIO.h"
 
 namespace sbr::doc {
@@ -733,6 +734,9 @@ class Modeler {
                    const geom::StlExportOptions& options = {}) const;
   Result<std::vector<ObjectId>> importDxf(const std::string& path, const geom::DxfImportOptions& options = {},
                                          geom::DxfImportReport* report = nullptr);
+  // Jw_cad .jww (docs/50): lines and arcs at real size, layers as tags.
+  Result<std::vector<ObjectId>> importJww(const std::string& path, const geom::JwwImportOptions& options = {},
+                                         geom::JwwImportReport* report = nullptr);
   Result<std::vector<ObjectId>> importStep(const std::string& path);
   // Rhino .3dm: exact NURBS Breps with names, colours and tags as layers.
   Status export3dm(const std::string& path, const std::vector<ObjectId>& ids = {}) const;

@@ -20,11 +20,17 @@ add_library(sbr_ui STATIC
   Messages.cpp Messages.h
   ProgressDialog.cpp ProgressDialog.h
   DrawingExport.cpp DrawingExport.h
+  CrashLog.cpp CrashLog.h
+  HelpWindow.cpp HelpWindow.h
 )
 target_include_directories(sbr_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
                           PRIVATE ${PROJECT_SOURCE_DIR}/assets/materials/builtin/integration)
 target_link_libraries(sbr_ui PUBLIC sbr::core Qt6::Widgets Qt6::Network TKService TKV3d TKOpenGl
                              PRIVATE nlohmann_json::nlohmann_json)
+# The help topics (ヘルプ > 操作方法), embedded; with a static library Qt
+# links the resources into every program using it.
+file(GLOB SBR_HELP_FILES RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS help/*.md)
+qt_add_resources(sbr_ui "help" PREFIX "/help" BASE help FILES ${SBR_HELP_FILES})
 
 # The logo (assets/branding): window icon and About box as Qt resources;
 # on Windows also the executable's own icon and version information.

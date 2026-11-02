@@ -7086,6 +7086,13 @@ Result<std::vector<ObjectId>> Modeler::importDxf(const std::string& path, const 
   return addImported(*parts, path, "Import DXF");
 }
 
+Result<std::vector<ObjectId>> Modeler::importJww(const std::string& path, const geom::JwwImportOptions& options,
+                                                geom::JwwImportReport* report) {
+  auto parts = geom::readJww(path, options, report);
+  if (!parts) return Result<std::vector<ObjectId>>::failure(parts.error());
+  return addImported(*parts, path, "Import JWW");
+}
+
 Result<std::vector<ObjectId>> Modeler::importStep(const std::string& path) {
   auto parts = geom::readStepParts(path);
   if (!parts) return Result<std::vector<ObjectId>>::failure(parts.error());

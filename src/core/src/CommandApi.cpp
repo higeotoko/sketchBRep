@@ -2330,6 +2330,20 @@ const std::vector<CommandDef>& commands() {
          must(m.export3dm(text(a, "path"), a.contains("ids") ? ids(a, "ids") : std::vector<ObjectId>{}));
          return json::object();
        }},
+      {"import_jww", "Import a Jw_cad drawing (.jww): lines, arcs, circles and ellipses at real size (each layer "
+       "group's scale), block instances expanded, dimension lines kept; text, points and fills are not read "
+       "(allow_partial to import anyway). Layers become tags 'Jw <group>/<layer>'.",
+       SCHEMA({"type": "object", "properties": {"path": {"type": "string"}, "allow_partial": {"type": "boolean"},
+               "group_by_layer": {"type": "boolean"}}, "required": ["path"]}),
+       [](doc::Modeler& m, const json& a) {
+         geom::JwwImportOptions options;
+         options.allowPartial = a.value("allow_partial", false);
+         options.groupByLayer = a.value("group_by_layer", false);
+         geom::JwwImportReport report;
+         json out = idsResult(must(m.importJww(text(a, "path"), options, &report)));
+         out["report"] = {{"imported", report.imported}, {"omitted", report.omitted}, {"version", report.version}};
+         return out;
+       }},
       {"import_dxf", "Import ASCII DXF model-space curves as exact editable edges/wires; layers become tags. "
        "Unsupported entities require allow_partial. unitless_scale_to_mm applies only when INSUNITS is absent/zero.",
        SCHEMA({"type": "object", "properties": {"path": {"type": "string"},
@@ -2478,7 +2492,7 @@ const std::vector<CommandDef>& commands() {
 bool isFileCommand(const std::string& name) {
   return name == "save" || name == "open" || name == "export_step" || name == "export_stl" || name == "export_3dm" ||
          name == "import_brep" || name == "export_brep" || name == "import_iges" || name == "export_iges" ||
-         name == "import_3dm" || name == "import_dxf" || name == "set_material_texture" || name == "export_dae" ||
+         name == "import_3dm" || name == "import_dxf" || name == "import_jww" || name == "set_material_texture" || name == "export_dae" ||
          name == "import_dae" || name == "export_drawing";
 }
 

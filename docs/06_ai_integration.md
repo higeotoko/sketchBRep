@@ -172,3 +172,4 @@ sbr_cli --open out.sbr --mcp                        # ヘッドレス MCP サー
 アプリ内 AI ではファイル操作として禁止する。
 DWG は GUI から ODA File Converter で変換する。
 対応範囲は [24_dxf_dwg_import.md](24_dxf_dwg_import.md) を参照。
+`import_jww` は Jw_cad の図面（.jww）を同じように取り込む。`path`、`allow_partial`、`group_by_layer`（レイヤごとにグループ）を指定する。文字・点・塗りがあると、`allow_partial: true` のときだけ取り込む。

@@ -36,6 +36,7 @@ add_library(sbr_core STATIC
   src/DrawingJww.cpp
   src/DrawingInternal.cpp
   src/TextEncoding.cpp
+  src/JwwRead.cpp
   src/Surfaces.cpp
   src/Progress.cpp
 )

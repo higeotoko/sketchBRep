@@ -19,6 +19,11 @@
 #include "sbr/doc/Modeler.h"
 #include "sbr/draw/Drawing.h"
 #include "sbr/geom/Dxf.h"
+#include "sbr/geom/Jww.h"
+
+#include <BRepBndLib.hxx>
+#include <Bnd_Box.hxx>
+#include <cstdlib>
 
 using namespace sbr;
 using namespace sbr::draw;
@@ -461,4 +466,74 @@ TEST(Drawing, Api) {
   EXPECT_FALSE(run({{"path", jww}, {"kind", "perspective"}}).value("ok", true));
   std::remove(jww.c_str());
   std::remove(dxf.c_str());
+}
+
+// JWW read back (docs/50): what we write comes in at real size, on layers
+// named as Jw shows them.
+TEST(Jww, ReadsWhatWeWrite) {
+  doc::Modeler m;
+  box(m, 0, 0, 4000, 200, 3000);
+  const doc::ObjectId c = *m.createCircle(geom::SketchPlane::ground(), 300);
+  ASSERT_TRUE(m.extrude(c, 3000));
+  SheetSpec spec;
+  spec.scale = 50;
+  const auto sheet = layoutSheet(*makeView(m.document(), planView(1200)), spec);
+  ASSERT_TRUE(sheet);
+  const std::string path = tempPath("roundtrip.jww");
+  ASSERT_TRUE(writeJww(*sheet, path));
+  geom::JwwImportReport report;
+  EXPECT_FALSE(geom::readJww(path, {}, &report));  // text and fills: not read, so refused unless asked
+  const auto parts = geom::readJww(path, {true, false}, &report);
+  ASSERT_TRUE(parts) << parts.error();
+  EXPECT_EQ(report.version, 600u);
+  EXPECT_GT(report.omitted["text"], 0);
+  EXPECT_GT(report.omitted["solid fills"], 0);
+  // The cut wall: a 4000 mm line on the "断面" layer; the column: a circle r 300.
+  bool wall = false, column = false;
+  for (const auto& p : *parts) {
+    Bnd_Box b;
+    BRepBndLib::AddOptimal(p.shape, b, false, false);
+    double x0, y0, z0, x1, y1, z1;
+    b.Get(x0, y0, z0, x1, y1, z1);
+    if (p.layer.find("/断面") != std::string::npos) {
+      wall |= std::abs((x1 - x0) - 4000) < 1e-3 && std::abs(y1 - y0) < 1e-3;
+      column |= std::abs((x1 - x0) - 600) < 1e-2 && std::abs((y1 - y0) - 600) < 1e-2;
+    }
+  }
+  EXPECT_TRUE(wall);
+  EXPECT_TRUE(column);
+  // One object per layer, if asked.
+  const auto grouped = geom::readJww(path, {true, true});
+  ASSERT_TRUE(grouped);
+  EXPECT_LT(grouped->size(), parts->size());
+  // Through the model and the AI command: one undo step.
+  doc::Modeler target;
+  api::CommandApi commands(target);
+  const auto refused = nlohmann::json::parse(
+      commands.execute(nlohmann::json{{"command", "import_jww"}, {"args", {{"path", path}}}}.dump()));
+  EXPECT_FALSE(refused.value("ok", true));  // text and fills are not read: asked for explicitly
+  const auto in = nlohmann::json::parse(commands.execute(
+      nlohmann::json{{"command", "import_jww"}, {"args", {{"path", path}, {"allow_partial", true}, {"group_by_layer", true}}}}
+          .dump()));
+  ASSERT_TRUE(in.value("ok", false)) << in.dump();
+  EXPECT_EQ(in["result"]["report"]["version"], 600);
+  EXPECT_EQ(target.history().undoCount(), 1u);
+  std::remove(path.c_str());
+  EXPECT_FALSE(geom::readJww(tempPath("missing.jww")));
+}
+
+// Jw_cad's own drawings (not in the repository): SBR_JWW_SAMPLES=<folder>.
+TEST(Jww, ReadsJwCadDrawings) {
+  const char* dir = std::getenv("SBR_JWW_SAMPLES");
+  if (!dir) GTEST_SKIP() << "SBR_JWW_SAMPLES not set";
+  int files = 0;
+  for (const auto& entry : std::filesystem::directory_iterator(std::filesystem::u8path(dir))) {
+    if (entry.path().extension() != ".jww") continue;
+    geom::JwwImportReport report;
+    const auto parts = geom::readJww(entry.path().u8string(), {true, false}, &report);
+    EXPECT_TRUE(parts) << entry.path().u8string() << ": " << (parts ? "" : parts.error());
+    if (parts) std::printf("%s: %s\n", entry.path().filename().u8string().c_str(), report.summary().c_str());
+    ++files;
+  }
+  EXPECT_GT(files, 0);
 }

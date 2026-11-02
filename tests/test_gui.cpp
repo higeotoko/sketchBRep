@@ -64,6 +64,10 @@
 #include <GProp_GProps.hxx>
 
 #include "AiBridge.h"
+#include "CrashLog.h"
+#include "HelpWindow.h"
+#include <QPlainTextEdit>
+#include <QTextBrowser>
 #include "McpHttpServer.h"
 #include "ProgressDialog.h"
 #include "WheelZoom.h"
@@ -295,6 +299,7 @@ class GuiPhase1 : public QObject {
   void verifyGroup02InsideLeavesOutsideAlone();
   void drawingDialogPlanSectionElevationAndExport();
   void recentFilesReopen();
+  void helpWindowAndCrashLog();
   void panelDragPreviewKeepsTheModelViewStill();
   void panelMotionSettlesAfterNativeDock();
   void paletteResizeKeepsBackdropAcrossViewport();
@@ -8959,4 +8964,88 @@ void GuiPhase1::recentFilesReopen() {
   QFile::remove(b);
   QCOMPARE(f.window.recentFiles().size(), 1);
   QSettings().remove("file/recent");
+}
+
+// docs/51: the help window's topics and search, the record of recent actions
+// and the report a crash writes, and the bug report dialog.
+void GuiPhase1::helpWindowAndCrashLog() {
+  QTemporaryDir logs;
+  installCrashLog(logs.path());
+  QCOMPARE(crashLogDirectory(), logs.path());
+  Fixture f;
+  QVERIFY(f.setUp(500, 500));
+
+  // Help: every topic is embedded, a topic can be opened, search narrows.
+  f.window.showHelp(QStringLiteral("keys"));
+  HelpWindow* help = f.window.helpWindow();
+  QVERIFY(help);
+  QVERIFY(help->isVisible());
+  QCOMPARE(help->topicIds().size(), 8);
+  QCOMPARE(help->currentTopic(), QStringLiteral("keys"));
+  auto* text = help->findChild<QTextBrowser*>(QStringLiteral("helpText"));
+  QVERIFY(text);
+  QVERIFY(text->toPlainText().contains(QStringLiteral("プッシュ/プル")));
+  help->search(QStringLiteral("JWW"));
+  QVERIFY(help->visibleTopicCount() >= 1);
+  QVERIFY(help->visibleTopicCount() < 8);
+  help->search(QStringLiteral("zzzz-not-in-help"));
+  QCOMPARE(help->visibleTopicCount(), 0);
+  help->search(QString());
+  QCOMPARE(help->visibleTopicCount(), 8);
+  QVERIFY(help->showTopic(QStringLiteral("trouble")));
+  QVERIFY(text->toPlainText().contains(QStringLiteral("不具合")));
+  help->close();
+
+  // Recent actions: tools and edits.
+  f.window.activateTool(MainWindow::ToolId::Rectangle);
+  f.box(0, 0, 1000, 1000, 1000);
+  QTest::qWait(50);
+  const QString actions = recentActivity().join(QLatin1Char('\n'));
+  QVERIFY2(actions.contains(QStringLiteral("tool: ")), qPrintable(actions));
+  QVERIFY2(actions.contains(QStringLiteral("edit: ")), qPrintable(actions));
+
+  // The report a crash would write.
+  const QString report = writeCrashReportForTest("test failure");
+  QFile file(report);
+  QVERIFY(file.open(QIODevice::ReadOnly));
+  const QString written = QString::fromUtf8(file.readAll());
+  QVERIFY(written.contains(QStringLiteral("SketchBRep")));
+  QVERIFY(written.contains(QStringLiteral("Failure: test failure")));
+  QVERIFY(written.contains(QStringLiteral("Last actions")));
+  QVERIFY(written.contains(QStringLiteral("edit: ")));
+  file.close();
+
+  // Reports from earlier sessions are told once; this session's is not.
+  QSettings().remove("crash/seen");
+  QVERIFY(takeNewCrashReports().isEmpty());
+  QSettings().remove("crash/seen");
+  QFile old(QDir(logs.path()).filePath(QStringLiteral("crash-20000101-000000.txt")));
+  QVERIFY(old.open(QIODevice::WriteOnly));
+  old.write("SketchBRep crash report\n");
+  old.close();
+  QCOMPARE(takeNewCrashReports().size(), 1);
+  QVERIFY(takeNewCrashReports().isEmpty());
+
+  // The bug report dialog shows the version and the recent actions.
+  BugReportDialog dialog(&f.window);
+  auto* info = dialog.findChild<QPlainTextEdit*>(QStringLiteral("bugReportInfo"));
+  QVERIFY(info);
+  QVERIFY(info->toPlainText().contains(QStringLiteral("SketchBRep")));
+  QVERIFY(info->toPlainText().contains(QStringLiteral("tool: ")));
+  auto* copy = dialog.findChild<QPushButton*>(QStringLiteral("copyBugReport"));
+  QVERIFY(copy);
+  copy->click();
+  QCOMPARE(QApplication::clipboard()->text(), info->toPlainText());
+
+  // After a crash, the next start says where the report is.
+  bool told = false;
+  QTimer::singleShot(200, [&told] {
+    auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+    if (!box) return;
+    told = box->informativeText().contains(QStringLiteral("crash-"));
+    box->button(QMessageBox::Close)->click();
+  });
+  f.window.reportPreviousCrash({old.fileName()});
+  QVERIFY(told);
+  QSettings().remove("crash/seen");
 }

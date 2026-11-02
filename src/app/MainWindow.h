@@ -34,6 +34,8 @@ class MaterialsPanel;
 class PropertiesPanel;
 class Viewport;
 
+class HelpWindow;
+
 class MainWindow : public QMainWindow, public ToolHost {
   Q_OBJECT
  public:
@@ -74,6 +76,12 @@ class MainWindow : public QMainWindow, public ToolHost {
   QMenu* buildContextMenu(const QPoint& pos);
   // Help > About: logo, version, what it is built on.
   void showAbout();
+  // ヘルプ (docs/51): the help window at a topic (empty: where it was), the
+  // bug report dialog, and the note after a crash (with its report files).
+  void showHelp(const QString& topic = QString());
+  void showBugReport();
+  void reportPreviousCrash(const QStringList& reports);
+  HelpWindow* helpWindow() const { return help_; }
   // File > 2D drawings: plans, sections, elevations as PDF / DXF / JWW (docs/50).
   void showDrawingDialog();
   // File > recent files (newest first, those still there; up to 10).
@@ -213,6 +221,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   // taking what could be read.
   void import3dmFile(const QString& path);
   bool importDxfFile(const QString& path);
+  // Jw_cad .jww (docs/50): asks before importing when some kinds are not read.
+  bool importJwwFile(const QString& path);
   static QString describe3dmReport(const geom::Import3dmReport& report);
 
  protected:
@@ -365,6 +375,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   QString currentPath_;
   QString lastError_;
   bool refreshPending_ = false;
+  HelpWindow* help_ = nullptr;
+  long long loggedRevision_ = -1;  // last edit written to the crash log
 
   std::unique_ptr<AiBridge> aiBridge_;
   QAction* aiAction_ = nullptr;

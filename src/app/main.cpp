@@ -2,13 +2,16 @@
 #include "sbr/KernelError.h"
 #include <QIcon>
 #include <QByteArray>
+#include <QStandardPaths>
 #include <QStringList>
+#include <QTimer>
 
 #include <functional>
 
 #include <QMessageBox>
 #include <Standard_Failure.hxx>
 
+#include "CrashLog.h"
 #include "MainWindow.h"
 #include "Branding.h"
 
@@ -67,6 +70,9 @@ int main(int argc, char** argv) {
   // Title bar, taskbar and Alt+Tab (assets/branding; the .exe icon itself
   // comes from the Windows resource).
   QApplication::setWindowIcon(sbr::app::applicationIcon());
+  // What was being done if the program stops (docs/51); nothing is sent.
+  sbr::app::installCrashLog(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) +
+                            QStringLiteral("/logs"));
 
   sbr::app::MainWindow window;
   app.afterFailure = [&window] {
@@ -80,6 +86,11 @@ int main(int argc, char** argv) {
     window.openFile(args.at(1));
   } else {
     window.offerRecovery();  // work left by a session that did not end normally
+  }
+  // After a crash: where its report is, to send with a bug report.
+  const QStringList crashes = sbr::app::takeNewCrashReports();
+  if (!crashes.isEmpty()) {
+    QTimer::singleShot(0, &window, [&window, crashes] { window.reportPreviousCrash(crashes); });
   }
   return QApplication::exec();
 }

@@ -1,6 +1,8 @@
 #include "MainWindow.h"
 #include "sbr/KernelError.h"
 #include "DrawingExport.h"
+#include "CrashLog.h"
+#include "HelpWindow.h"
 #include "DwgConverter.h"
 #include "ToolPalette.h"
 #include "Branding.h"
@@ -15,7 +17,9 @@
 #include <QAction>
 #include <QClipboard>
 #include <QCoreApplication>
+#include <QDesktopServices>
 #include <QDir>
+#include <QUrl>
 #include <QSettings>
 #include <QImage>
 
@@ -89,7 +93,7 @@ namespace sbr::app {
 namespace {
 std::string utf8(const QString& s) { return s.toUtf8().toStdString(); }
 
-enum class ExchangeType { Step, Stl, Dxf, Dwg, Iges, Brep, Rhino, Collada, Image };
+enum class ExchangeType { Step, Stl, Dxf, Dwg, Jww, Iges, Brep, Rhino, Collada, Image };
 struct ExchangeFormat {
   ExchangeType type;
   QString filter;
@@ -101,6 +105,7 @@ std::vector<ExchangeFormat> exchangeFormats(bool importing) {
   if(importing) {
     formats.push_back({ExchangeType::Dxf,text("DXF 2D図面 (*.dxf)"),{"dxf"}});
     formats.push_back({ExchangeType::Dwg,text("DWG 2D図面 (*.dwg)"),{"dwg"}});
+    formats.push_back({ExchangeType::Jww,text("Jw_cad 2D図面 (*.jww)"),{"jww"}});
   } else formats.push_back({ExchangeType::Stl,text("STL ファイル (*.stl)"),{"stl"}});
   formats.push_back({ExchangeType::Iges,text("IGES ファイル (*.igs *.iges)"),{"igs","iges"}});
   formats.push_back({ExchangeType::Brep,text("BREP ファイル (*.brep *.brp)"),{"brep","brp"}});
@@ -1150,21 +1155,50 @@ void MainWindow::buildMenus() {
   });
 
   QMenu* help = menuBar()->addMenu(tr("ヘルプ(&H)"));
-  help->addAction(tr("操作方法"), this, [this] {
-    QMessageBox::information(
-        this, tr("操作方法"),
-        tr("<b>カメラ</b><br>ホイール: ズーム / ホイールドラッグ: オービット / "
-           "Shift+ホイールドラッグ: パン / ダブルクリック: フォーカス<br>"
-           "F2〜F7: 標準ビュー / F8: 透視・平行投影 / Shift+Z: 全体表示<br><br>"
-           "<b>ツール</b><br>Space: 選択 / L: 線 / R: 矩形 / P: プッシュ/プル<br>"
-           "D: 寸法（2 点 → 寸法線の位置）/ Shift+T: テキスト（面をクリックすると面積）<br>"
-           "C: 円 / A: 円弧（始点 → 終点 → 膨らみ。Ctrl で面/線）/ N: 曲線 / V: 回転体 / T: メジャー / B: ペイント（Alt+クリックで色を拾う）/ E: 消しゴム<br>"
-           "M: 移動 / Q: 回転 / F: オフセット（移動・回転中に Ctrl でコピー、確定後 x3 で配列・/3 で等分割）<br>"
-           "作図中に数値を打って Enter で寸法指定（例: 3000, 4.5m, 3000,4500）<br>"
-           "Shift: 推論方向をロック / →・←・↑: X・Y・Z 軸ロック / ↓: 解除 / Esc: 中止"));
-  });
+  help->addAction(tr("操作方法・ヘルプ"), QKeySequence(QKeySequence::HelpContents), this, [this] { showHelp(); })
+      ->setObjectName(QStringLiteral("helpAction"));
+  help->addAction(tr("キーの一覧"), this, [this] { showHelp(QStringLiteral("keys")); });
+  help->addAction(tr("不具合を報告..."), this, &MainWindow::showBugReport)
+      ->setObjectName(QStringLiteral("bugReportAction"));
   help->addSeparator();
   help->addAction(tr("SketchBRep について"), this, &MainWindow::showAbout);
+}
+
+void MainWindow::showHelp(const QString& topic) {
+  if (!help_) {
+    help_ = new HelpWindow(this);
+    help_->setAttribute(Qt::WA_DeleteOnClose, false);
+  }
+  if (!topic.isEmpty()) help_->showTopic(topic);
+  help_->show();
+  help_->raise();
+  help_->activateWindow();
+}
+
+void MainWindow::showBugReport() {
+  BugReportDialog dialog(this);
+  dialog.exec();
+}
+
+void MainWindow::reportPreviousCrash(const QStringList& reports) {
+  if (reports.isEmpty()) return;
+  QMessageBox box(this);
+  box.setObjectName(QStringLiteral("previousCrashBox"));
+  box.setIcon(QMessageBox::Information);
+  box.setWindowTitle(tr("前回の終了について"));
+  box.setText(tr("前回、SketchBRep が途中で終了しました。ご迷惑をおかけしました。"));
+  box.setInformativeText(
+      tr("直前の操作の記録を残しました。不具合の報告に添えていただけると、直す手がかりになります"
+         "（自動ではどこにも送りません）。\n\n%1").arg(QDir::toNativeSeparators(reports.front())));
+  QPushButton* open = box.addButton(tr("記録のフォルダを開く"), QMessageBox::ActionRole);
+  QPushButton* report = box.addButton(tr("報告のしかた..."), QMessageBox::ActionRole);
+  box.addButton(QMessageBox::Close);
+  box.exec();
+  if (box.clickedButton() == open) {
+    QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(reports.front()).absolutePath()));
+  } else if (box.clickedButton() == report) {
+    showBugReport();
+  }
 }
 
 void MainWindow::showAbout() {
@@ -1613,6 +1647,7 @@ void MainWindow::activateTool(ToolId id) {
   viewport_->setTool(active_);
   viewport_->setToolCursor(active_->cursor());
   userTyping_ = false;
+  noteActivity(QStringLiteral("tool: ") + active_->name());
   active_->activate();
   refreshConstraints();
   viewport_->setFocus();
@@ -1841,6 +1876,12 @@ void MainWindow::onDocumentChanged() {
   refreshPending_ = true;
   QTimer::singleShot(0, this, [this] {
     refreshPending_ = false;
+    if (modeler_.history().revision() != loggedRevision_) {
+      loggedRevision_ = modeler_.history().revision();
+      noteActivity(QStringLiteral("edit: %1 (rev %2)")
+                       .arg(QString::fromStdString(modeler_.history().undoName()))
+                       .arg(loggedRevision_));
+    }
     // A pending AI proposal is based on the model as it was: once the user
     // edits, it is withdrawn (it would be refused anyway, spec 07 §9.2).
     if (hasPendingProposal() && modeler_.history().revision() != proposal_->revision) {
@@ -3894,6 +3935,7 @@ void MainWindow::newDocument() {
 bool MainWindow::openFile(const QString& path) {
   if (active_) active_->cancel();
   exitGroup();
+  noteActivity(QStringLiteral("open: ") + QFileInfo(path).fileName());
   std::vector<std::string> warnings;
   // Stored geometry first (quick even for large models); the recipes are
   // checked afterwards in the background.
@@ -4005,6 +4047,7 @@ void MainWindow::stopRecipeVerification() {
 
 bool MainWindow::saveFile(const QString& path) {
   viewport_->storeCamera(modeler_.document().settings().camera);
+  noteActivity(QStringLiteral("save: ") + QFileInfo(path).fileName());
   // Previous versions of the file stay as .bak1 .. .bakN.
   if (const Status kept = doc::rotateBackups(utf8(path), backupGenerations_); !kept) {
     reportError(QString::fromStdString(kept.message()));
@@ -4068,9 +4111,11 @@ void MainWindow::importFile() {
   const auto suffix=QFileInfo(path).suffix().toLower();
   const auto format=std::find_if(formats.begin(),formats.end(),[&](const auto& f){return f.extensions.contains(suffix);});
   if(format==formats.end()){reportError(tr("この形式のインポートには対応していません：%1").arg(suffix));return;}
+  noteActivity(QStringLiteral("import: ")+QFileInfo(path).fileName());
   switch(format->type) {
     case ExchangeType::Step:importStepFile(path);break;
     case ExchangeType::Dxf:case ExchangeType::Dwg:importDrawingFile(path);break;
+    case ExchangeType::Jww:importJwwFile(path);break;
     case ExchangeType::Iges:importGeometryFile(path,GeometryFormat::Iges);break;
     case ExchangeType::Brep:importGeometryFile(path,GeometryFormat::Brep);break;
     case ExchangeType::Rhino:import3dmFile(path);break;
@@ -4107,6 +4152,7 @@ void MainWindow::exportFile() {
       tr("このファイルは既に存在します。上書きしますか？\n%1").arg(path),QMessageBox::Yes|QMessageBox::No,QMessageBox::No)!=QMessageBox::Yes)return;
   QSettings().setValue("files/exportDirectory",QFileInfo(path).absolutePath());
   QSettings().setValue("files/exportFormat",format->extensions.front());
+  noteActivity(QStringLiteral("export: ")+QFileInfo(path).fileName());
   switch(format->type) {
     case ExchangeType::Step:exportStepFile(path);break;
     case ExchangeType::Stl:exportStl(path);break;
@@ -4115,7 +4161,7 @@ void MainWindow::exportFile() {
     case ExchangeType::Rhino:export3dmFile(path);break;
     case ExchangeType::Collada:exportColladaFile(path);break;
     case ExchangeType::Image:exportImage(path);break;
-    case ExchangeType::Dxf:case ExchangeType::Dwg:break; // not offered for export
+    case ExchangeType::Dxf:case ExchangeType::Dwg:case ExchangeType::Jww:break; // not offered for export (drawings: File > 図面を書き出す)
   }
 }
 
@@ -4380,6 +4426,7 @@ void MainWindow::closeEvent(QCloseEvent* event) {
 
 namespace sbr::app {
 void MainWindow::showDrawingDialog() {
+  noteActivity(QStringLiteral("drawing dialog"));
   DrawingDialog dialog(modeler_.document(), this);
   dialog.resize(1100, 720);
   dialog.exec();
@@ -4423,5 +4470,49 @@ void MainWindow::fillRecentFilesMenu(QMenu* menu) {
   }
   menu->addSeparator();
   menu->addAction(tr("一覧を消去"), this, [] { QSettings().remove("file/recent"); });
+}
+}  // namespace sbr::app
+
+namespace sbr::app {
+bool MainWindow::importJwwFile(const QString& path) {
+  geom::JwwImportOptions options;
+  geom::JwwImportReport report;
+  {
+    // Look first: nothing is added when the import is not wanted.
+    options.allowPartial = true;
+    auto inspected = geom::readJww(utf8(path), options, &report);
+    if (!inspected) { reportError(QString::fromStdString(inspected.error())); return false; }
+  }
+  if (report.incomplete() || report.imported > 1000) {
+    static const std::map<std::string, const char*> names{
+        {"text", "文字"}, {"points", "点"}, {"solid fills", "塗りつぶし（ソリッド）"},
+        {"dimension values", "寸法値の文字"}, {"blocks without a definition", "定義のないブロック"},
+        {"invalid curves", "形が壊れた線"}};
+    QStringList omitted;
+    for (const auto& [type, count] : report.omitted) {
+      const auto n = names.find(type);
+      omitted << tr("%1: %2 個").arg(n == names.end() ? QString::fromStdString(type) : tr(n->second)).arg(count);
+    }
+    QMessageBox confirm(QMessageBox::Question, tr("Jw_cad 図面の取り込み"),
+        tr("読み込める線・円弧: %1 本（実寸 mm、レイヤはタグ）\n%2\n取り込みますか？")
+            .arg(report.imported).arg(omitted.empty() ? QString() :
+                tr("次の要素は読み込みません。\n%1\n").arg(omitted.join('\n'))),
+        QMessageBox::Yes | QMessageBox::No, this);
+    confirm.setDefaultButton(QMessageBox::Yes);
+    auto* grouped = new QCheckBox(tr("レイヤごとにまとめる（大きな図面向け・線の形状は保持）"), &confirm);
+    grouped->setChecked(report.imported > 1000);
+    confirm.setCheckBox(grouped);
+    if (confirm.exec() != QMessageBox::Yes) return false;
+    options.groupByLayer = grouped->isChecked();
+  }
+  auto ids = modeler_.importJww(utf8(path), options, &report);
+  if (!ids) { reportError(QString::fromStdString(ids.error())); return false; }
+  setSelection(*ids);
+  viewport_->syncNow();
+  viewport_->setStandardView(Viewport::StandardView::Top);
+  viewport_->fitAll();
+  setStatus(tr("Jw_cad 図面を取り込みました: %1 本 → %2 オブジェクト（実寸 mm、レイヤはタグ）")
+                .arg(report.imported).arg(ids->size()));
+  return true;
 }
 }  // namespace sbr::app
