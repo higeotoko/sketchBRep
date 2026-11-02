@@ -1,4 +1,5 @@
 #include "sbr/geom/ShapeIO.h"
+#include "sbr/KernelError.h"
 
 #include <locale>
 #include <sstream>
@@ -51,7 +52,7 @@ Result<TopoDS_Shape> shapeFromBRepString(const std::string& text) {
     if (shape.IsNull()) return Result<TopoDS_Shape>::failure("Empty or unreadable BRep data");
     return shape;
   } catch (const Standard_Failure& e) {
-    return Result<TopoDS_Shape>::failure(std::string("BRep read failed: ") + e.GetMessageString());
+    return Result<TopoDS_Shape>::failure(std::string("BRep read failed: ") + sbr::kernelMessage(e));
   }
 }
 
@@ -69,7 +70,7 @@ Status writeStep(const TopoDS_Shape& shape, const std::string& path) {
     }
     return Status::success();
   } catch (const Standard_Failure& e) {
-    return Status::failure(std::string("STEP export failed: ") + e.GetMessageString());
+    return Status::failure(std::string("STEP export failed: ") + sbr::kernelMessage(e));
   }
 }
 
@@ -88,7 +89,7 @@ Result<TopoDS_Shape> readStep(const std::string& path) {
     return shape;
   } catch (const Standard_Failure& e) {
     return Result<TopoDS_Shape>::failure(std::string("STEP import failed: ") +
-                                         e.GetMessageString());
+                                         sbr::kernelMessage(e));
   }
 }
 
@@ -205,7 +206,7 @@ Status writeStepParts(const std::vector<NamedShape>& parts, const std::string& p
     }
     return Status::success();
   } catch (const Standard_Failure& e) {
-    return Status::failure(std::string("STEP export failed: ") + e.GetMessageString());
+    return Status::failure(std::string("STEP export failed: ") + sbr::kernelMessage(e));
   }
 }
 
@@ -233,7 +234,7 @@ Result<std::vector<NamedShape>> readStepParts(const std::string& path) {
     if (parts.empty()) return R::failure("STEP file contains no shapes");
     return parts;
   } catch (const Standard_Failure& e) {
-    return R::failure(std::string("STEP import failed: ") + e.GetMessageString());
+    return R::failure(std::string("STEP import failed: ") + sbr::kernelMessage(e));
   }
 }
 

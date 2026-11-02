@@ -1,4 +1,5 @@
 #include <QApplication>
+#include "sbr/KernelError.h"
 #include <QIcon>
 #include <QByteArray>
 #include <QStringList>
@@ -24,7 +25,7 @@ class SafeApplication : public QApplication {
     try {
       return QApplication::notify(receiver, event);
     } catch (const Standard_Failure& e) {
-      failure = QString::fromUtf8(e.GetMessageString());
+      failure = QString::fromStdString(sbr::kernelMessage(e));
     } catch (const std::exception& e) {
       failure = QString::fromUtf8(e.what());
     } catch (...) {

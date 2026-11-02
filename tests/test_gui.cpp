@@ -5238,6 +5238,9 @@ void GuiPhase1::curvedPartPreviewIsWhatPushPullMakes() {
   f.window.activateTool(MainWindow::ToolId::PushPull);
   click(f.vp, f.vp->toWidget(on));
   move(f.vp, f.vp->toWidget(out));
+  // While moving: the face alone (instant); at rest: the whole solid.
+  QCOMPARE(f.vp->previewShape().ShapeType(), TopAbs_FACE);
+  QTest::qWait(400);
   const TopoDS_Shape preview = f.vp->previewShape();
   QVERIFY(!preview.IsNull());
   const double shown = geom::volume(preview);

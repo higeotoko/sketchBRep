@@ -1,4 +1,5 @@
 #include "sbr/geom/Dxf.h"
+#include "sbr/KernelError.h"
 #include "sbr/geom/Profile.h"
 
 #include <cmath>
@@ -367,7 +368,7 @@ Result<std::vector<NamedShape>> readDxf(const std::string& path, const DxfImport
     }
     return result;
   } catch (const Standard_Failure& err) {
-    return Result<std::vector<NamedShape>>::failure(std::string("DXF: ") + err.GetMessageString());
+    return Result<std::vector<NamedShape>>::failure(std::string("DXF: ") + sbr::kernelMessage(err));
   } catch (const std::exception& err) {
     return Result<std::vector<NamedShape>>::failure(err.what());
   }

@@ -1,4 +1,5 @@
 #include "sbr/geom/Collada.h"
+#include "sbr/KernelError.h"
 
 #include <algorithm>
 #include <cmath>
@@ -229,7 +230,7 @@ Status writeCollada(const std::vector<ColladaPart>& parts, const std::string& pa
     if (!out) return Status::failure("Cannot write " + path);
     return Status::success();
   } catch (const Standard_Failure& e) {
-    return Status::failure(std::string("COLLADA export failed: ") + e.GetMessageString());
+    return Status::failure(std::string("COLLADA export failed: ") + sbr::kernelMessage(e));
   }
 }
 
@@ -863,7 +864,7 @@ Result<std::vector<ColladaPart>> readCollada(const std::string& path, ColladaRep
     if (reader.parts.empty()) return R::failure("No faces or lines in the COLLADA file (" + report.summary() + ")");
     return std::move(reader.parts);
   } catch (const Standard_Failure& e) {
-    return R::failure(std::string("COLLADA import failed: ") + e.GetMessageString());
+    return R::failure(std::string("COLLADA import failed: ") + sbr::kernelMessage(e));
   } catch (const std::exception& e) {
     return R::failure(std::string("COLLADA import failed: ") + e.what());
   }

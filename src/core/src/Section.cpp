@@ -1,4 +1,5 @@
 #include "sbr/geom/Section.h"
+#include "sbr/KernelError.h"
 
 #include <cmath>
 #include <cstdio>
@@ -299,7 +300,7 @@ Result<TopoDS_Face> makeSectionFace(const Section& s, const gp_Ax3& frame) {
     if (!face.IsDone()) return R::failure("The section face could not be made");
     return face.Face();
   } catch (const Standard_Failure& e) {
-    return R::failure(std::string("The section could not be made: ") + e.GetMessageString());
+    return R::failure(std::string("The section could not be made: ") + sbr::kernelMessage(e));
   }
 }
 
@@ -352,7 +353,7 @@ Result<TopoDS_Shape> makeMember(const gp_Pnt& start, const gp_Pnt& end, const gp
     if (!prism.IsDone()) return R::failure("The member could not be made");
     return prism.Shape();
   } catch (const Standard_Failure& e) {
-    return R::failure(std::string("The member could not be made: ") + e.GetMessageString());
+    return R::failure(std::string("The member could not be made: ") + sbr::kernelMessage(e));
   }
 }
 

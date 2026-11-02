@@ -1,4 +1,5 @@
 #include "sbr/geom/Operations.h"
+#include "sbr/KernelError.h"
 
 #include <BOPAlgo_ArgumentAnalyzer.hxx>
 #include <gp_Cone.hxx>
@@ -162,7 +163,7 @@ Result<TopoDS_Shape> extrudeFace(const TopoDS_Face& face, double distance) {
     return validatedSolid(solid, "Extrusion");
   } catch (const Standard_Failure& e) {
     return Result<TopoDS_Shape>::failure(std::string("Extrusion failed: ") +
-                                         e.GetMessageString());
+                                         sbr::kernelMessage(e));
   }
 }
 
@@ -390,7 +391,7 @@ Result<TopoDS_Shape> imprintEdges(const TopoDS_Shape& shape, const std::vector<T
     if (!BRepCheck_Analyzer(made).IsValid()) return R::failure("Dividing the faces produced invalid geometry");
     return result;
   } catch (const Standard_Failure& e) {
-    return R::failure(std::string("Dividing the faces failed: ") + e.GetMessageString());
+    return R::failure(std::string("Dividing the faces failed: ") + sbr::kernelMessage(e));
   }
 }
 
@@ -436,7 +437,7 @@ Result<TopoDS_Shape> mergeFacesAcross(const TopoDS_Shape& shape, const gp_Pnt& p
     unify.Build();
     return unify.Shape();
   } catch (const Standard_Failure& e) {
-    return R::failure(std::string("Erasing the line failed: ") + e.GetMessageString());
+    return R::failure(std::string("Erasing the line failed: ") + sbr::kernelMessage(e));
   }
 }
 
@@ -495,7 +496,7 @@ Result<TopoDS_Shape> pushPullFace(const TopoDS_Shape& solid, const TopoDS_Face& 
     return validatedSolid(extracted.value(), "Push/pull");
   } catch (const Standard_Failure& e) {
     return Result<TopoDS_Shape>::failure(std::string("Push/pull failed: ") +
-                                         e.GetMessageString());
+                                         sbr::kernelMessage(e));
   }
 }
 
@@ -544,7 +545,7 @@ Result<TopoDS_Face> offsetFace(const TopoDS_Face& face, double distance) {
     }
     return out;
   } catch (const Standard_Failure& e) {
-    return Result<TopoDS_Face>::failure(std::string("Offset failed: ") + e.GetMessageString());
+    return Result<TopoDS_Face>::failure(std::string("Offset failed: ") + sbr::kernelMessage(e));
   }
 }
 
@@ -602,7 +603,7 @@ Result<TopoDS_Shape> booleanCombine(BooleanOp op, const std::vector<TopoDS_Shape
     }
     return result;
   } catch (const Standard_Failure& e) {
-    return Result<TopoDS_Shape>::failure(std::string("Boolean failed: ") + e.GetMessageString());
+    return Result<TopoDS_Shape>::failure(std::string("Boolean failed: ") + sbr::kernelMessage(e));
   }
 }
 
@@ -675,7 +676,7 @@ Result<TopoDS_Shape> splitFaceWithCurve(const TopoDS_Shape& shape, const TopoDS_
     if(after<=before)return R::failure("The curve does not divide the face");
     if(!BRepCheck_Analyzer(result).IsValid())return R::failure("Split produced invalid geometry");
     return result;
-  } catch(const Standard_Failure& e){return R::failure(std::string("Split failed: ")+e.GetMessageString());}
+  } catch(const Standard_Failure& e){return R::failure(std::string("Split failed: ")+sbr::kernelMessage(e));}
 }
 
 Result<std::vector<TopoDS_Face>> splitPlanarFaceWithCurve(const TopoDS_Face& face,
@@ -704,7 +705,7 @@ Result<std::vector<TopoDS_Face>> splitPlanarFace(const TopoDS_Face& face, const 
     if (parts.size() < 2) return Result<std::vector<TopoDS_Face>>::failure("The line does not divide the face");
     return parts;
   } catch (const Standard_Failure& e) {
-    return Result<std::vector<TopoDS_Face>>::failure(std::string("Split failed: ") + e.GetMessageString());
+    return Result<std::vector<TopoDS_Face>>::failure(std::string("Split failed: ") + sbr::kernelMessage(e));
   }
 }
 
@@ -735,7 +736,7 @@ Result<std::vector<TopoDS_Face>> splitPlanarFaceExtended(const TopoDS_Face& face
     if (parts.size() < 2) return Result<std::vector<TopoDS_Face>>::failure("The line does not divide the face");
     return parts;
   } catch (const Standard_Failure& e) {
-    return Result<std::vector<TopoDS_Face>>::failure(std::string("Split failed: ") + e.GetMessageString());
+    return Result<std::vector<TopoDS_Face>>::failure(std::string("Split failed: ") + sbr::kernelMessage(e));
   }
 }
 
@@ -910,7 +911,7 @@ Result<TopoDS_Shape> stretchShape(const TopoDS_Shape& shape, const gp_GTrsf& tra
     BRepLib::SameParameter(result, 1e-6, Standard_True);
     return result;
   } catch (const Standard_Failure& e) {
-    return Result<TopoDS_Shape>::failure(std::string("Stretch failed: ") + e.GetMessageString());
+    return Result<TopoDS_Shape>::failure(std::string("Stretch failed: ") + sbr::kernelMessage(e));
   }
 }
 
@@ -935,7 +936,7 @@ Result<TopoDS_Shape> imprintOffset(const TopoDS_Shape& solid, const TopoDS_Face&
     if (!report.valid) return Result<TopoDS_Shape>::failure("The offset made an invalid solid");
     return result;
   } catch (const Standard_Failure& e) {
-    return Result<TopoDS_Shape>::failure(std::string("Offset failed: ") + e.GetMessageString());
+    return Result<TopoDS_Shape>::failure(std::string("Offset failed: ") + sbr::kernelMessage(e));
   }
 }
 
@@ -957,7 +958,7 @@ Result<TopoDS_Shape> splitFace(const TopoDS_Shape& solid, const TopoDS_Face& fac
     if (!report.valid) return Result<TopoDS_Shape>::failure("Split produced an invalid solid");
     return result;
   } catch (const Standard_Failure& e) {
-    return Result<TopoDS_Shape>::failure(std::string("Split failed: ") + e.GetMessageString());
+    return Result<TopoDS_Shape>::failure(std::string("Split failed: ") + sbr::kernelMessage(e));
   }
 }
 
@@ -980,7 +981,8 @@ std::optional<gp_Dir> faceNormalAt(const TopoDS_Face& face, const gp_Pnt& p) {
   }
 }
 
-Result<TopoDS_Shape> offsetSolidFace(const TopoDS_Shape& solid, const TopoDS_Face& face, double distance) {
+namespace {
+Result<TopoDS_Shape> offsetSolidFaceDirect(const TopoDS_Shape& solid, const TopoDS_Face& face, double distance) {
   if (std::abs(distance) < tolerance::kMinDimension) return Result<TopoDS_Shape>::failure("Distance must be non-zero");
   try {
     BRepOffset_MakeOffset maker;
@@ -991,6 +993,9 @@ Result<TopoDS_Shape> offsetSolidFace(const TopoDS_Shape& solid, const TopoDS_Fac
     if (cancelled()) return Result<TopoDS_Shape>::failure(kCancelledMessage);
     if (!maker.IsDone()) return Result<TopoDS_Shape>::failure("The face could not be moved");
     TopoDS_Shape result = maker.Shape();
+    // "Done" with nothing made happens on freeform faces: refused, not
+    // looked into (that crashed the program).
+    if (result.IsNull()) return Result<TopoDS_Shape>::failure("This curved face cannot be moved this way");
     if (result.ShapeType() == TopAbs_SHELL) {
       BRepBuilderAPI_MakeSolid makeSolid(TopoDS::Shell(result));
       if (!makeSolid.IsDone()) return Result<TopoDS_Shape>::failure("The result is not closed");
@@ -1007,8 +1012,18 @@ Result<TopoDS_Shape> offsetSolidFace(const TopoDS_Shape& solid, const TopoDS_Fac
     if (!report.valid) return Result<TopoDS_Shape>::failure("Moving the face gives an invalid solid");
     return result;
   } catch (const Standard_Failure& e) {
-    return Result<TopoDS_Shape>::failure(std::string("Offset failed: ") + e.GetMessageString());
+    return Result<TopoDS_Shape>::failure(std::string("Offset failed: ") + sbr::kernelMessage(e));
   }
+}
+}  // namespace
+
+Result<TopoDS_Shape> offsetSolidFace(const TopoDS_Shape& solid, const TopoDS_Face& face, double distance) {
+  auto direct = offsetSolidFaceDirect(solid, face, distance);
+  if (direct || direct.error() == kCancelledMessage) return direct;
+  // The neighbours could not follow (e.g. a cone of a loft): the layer
+  // between the face and its offset added or taken away instead.
+  auto layered = pushPullCurvedPart(solid, face, distance, {}, {});
+  return layered ? layered : direct;
 }
 
 Result<TopoDS_Shape> pushPullCurvedPart(const TopoDS_Shape& solid, const TopoDS_Face& face, double distance,
@@ -1026,7 +1041,7 @@ Result<TopoDS_Shape> pushPullCurvedPart(const TopoDS_Shape& solid, const TopoDS_
                      Standard_True);
     thick.MakeOffsetShape(progressRange());
     if (cancelled()) return R::failure(kCancelledMessage);
-    if (!thick.IsDone()) return R::failure("The face could not be moved");
+    if (!thick.IsDone() || thick.Shape().IsNull()) return R::failure("The face could not be moved");
     TopExp_Explorer layerSolid(thick.Shape(), TopAbs_SOLID);
     if (!layerSolid.More()) return R::failure("The face could not be moved");
     const TopoDS_Shape layer = layerSolid.Current();
@@ -1051,7 +1066,7 @@ Result<TopoDS_Shape> pushPullCurvedPart(const TopoDS_Shape& solid, const TopoDS_
     if (!extracted) return extracted;
     return validatedSolid(extracted.value(), "Push/pull");
   } catch (const Standard_Failure& e) {
-    return R::failure(std::string("Push/pull failed: ") + e.GetMessageString());
+    return R::failure(std::string("Push/pull failed: ") + sbr::kernelMessage(e));
   }
 }
 
@@ -1089,7 +1104,7 @@ Result<TopoDS_Face> cutHole(const TopoDS_Face& face, const TopoDS_Face& hole) {
     if (n0 && n1 && n0->Dot(*n1) < 0) result.Reverse();
     return result;
   } catch (const Standard_Failure& e) {
-    return Result<TopoDS_Face>::failure(std::string("Hole failed: ") + e.GetMessageString());
+    return Result<TopoDS_Face>::failure(std::string("Hole failed: ") + sbr::kernelMessage(e));
   }
 }
 
@@ -1200,7 +1215,7 @@ Result<TopoDS_Shape> sewIntoSolid(const std::vector<TopoDS_Shape>& pieces, doubl
     if (faces < 4) return R::failure("Too few faces to close a volume");
     return solidOf(sewPieces(pieces, tolerance, faces), faces);
   } catch (const Standard_Failure& e) {
-    return R::failure(std::string("Joining the faces failed: ") + e.GetMessageString());
+    return R::failure(std::string("Joining the faces failed: ") + sbr::kernelMessage(e));
   }
 }
 
@@ -1212,7 +1227,7 @@ Result<TopoDS_Shape> sewOpen(const std::vector<TopoDS_Shape>& pieces, double tol
     if (faces == 0) return R::failure("No faces");
     return openOf(sewn);
   } catch (const Standard_Failure& e) {
-    return R::failure(std::string("Joining the faces failed: ") + e.GetMessageString());
+    return R::failure(std::string("Joining the faces failed: ") + sbr::kernelMessage(e));
   }
 }
 
@@ -1233,7 +1248,7 @@ Result<TopoDS_Shape> sewFaces(const std::vector<TopoDS_Shape>& pieces, double to
     }
     return openOf(sewn);
   } catch (const Standard_Failure& e) {
-    return R::failure(std::string("Joining the faces failed: ") + e.GetMessageString());
+    return R::failure(std::string("Joining the faces failed: ") + sbr::kernelMessage(e));
   }
 }
 
@@ -1324,7 +1339,7 @@ Result<TopoDS_Shape> pushPullOpenFace(const TopoDS_Shape& shape, const TopoDS_Fa
     for (const auto& list : now) pieces.insert(pieces.end(), list.begin(), list.end());
     return sewFaces(pieces);
   } catch (const Standard_Failure& e) {
-    return R::failure(std::string("Push/pull failed: ") + e.GetMessageString());
+    return R::failure(std::string("Push/pull failed: ") + sbr::kernelMessage(e));
   }
 }
 

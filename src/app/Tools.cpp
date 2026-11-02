@@ -10,6 +10,11 @@
 #include <set>
 
 #include <QKeyEvent>
+#include <Standard_Failure.hxx>
+#include <Geom_Surface.hxx>
+#include <Geom_OffsetSurface.hxx>
+#include <QElapsedTimer>
+#include <QTimer>
 #include <QLineF>
 #include <QPolygonF>
 #include <QRegularExpression>
@@ -2885,21 +2890,51 @@ void PushPullTool::mouseMove(const ToolEvent& e) {
                   (pointSnap ? QStringLiteral("  [") + snapLabel(s.kind) + QStringLiteral("]")
                              : QString()) +
                   keepSuffix());
+  ++previewGeneration_;
   if (std::abs(distance_) > tolerance::kMinDimension && curved_) {
-    // Preview the whole solid as the push/pull will leave it: one part of
-    // a divided cylinder moves on its own (as committed), else the face.
-    const doc::Object* o = host_.modeler().document().find(objectId_);
-    const TopoDS_Shape shape = o ? host_.modeler().document().worldShape(*o) : TopoDS_Shape();
-    auto moved = !o              ? Result<TopoDS_Shape>::failure("")
-                 : curvedPart_   ? geom::pushPullCurvedPart(shape, face_, distance_)
-                                 : geom::offsetSolidFace(shape, face_, distance_);
-    vp.setPreview(moved ? moved.value() : TopoDS_Shape(), true);
+    // At once: the face itself moved out along its normal (its offset
+    // surface, cheap), so dragging stays smooth.
+    TopoDS_Shape quick;
+    try {
+      Handle(Geom_Surface) surface = BRep_Tool::Surface(face_);
+      const double d = face_.Orientation() == TopAbs_REVERSED ? -distance_ : distance_;
+      double u0, u1, v0, v1;
+      BRepTools::UVBounds(face_, u0, u1, v0, v1);
+      BRepBuilderAPI_MakeFace moved(new Geom_OffsetSurface(surface, d), u0, u1, v0, v1, 1e-6);
+      if (moved.IsDone()) quick = moved.Face();
+    } catch (const Standard_Failure&) {
+    }
+    vp.setPreview(quick, true);
+    // Once the mouse rests: the whole solid as the push / pull will leave it.
+    if (!slowPreview_) {
+      const std::uint64_t generation = previewGeneration_;
+      QTimer::singleShot(250, &vp, [this, generation] { showCurvedResult(generation); });
+    }
   } else if (std::abs(distance_) > tolerance::kMinDimension) {
     BRepPrimAPI_MakePrism prism(face_, gp_Vec(normal_) * distance_, Standard_True);
     vp.setPreview(prism.IsDone() ? prism.Shape() : TopoDS_Shape(), true);
   } else {
     vp.clearPreview();
   }
+}
+
+void PushPullTool::showCurvedResult(std::uint64_t generation) {
+  if (!dragging_ || !curved_ || generation != previewGeneration_) return;  // moved on since
+  const doc::Object* o = host_.modeler().document().find(objectId_);
+  if (!o) return;
+  QElapsedTimer took;
+  took.start();
+  // One part of a divided cylinder moves on its own (as committed), else the face.
+  const TopoDS_Shape shape = host_.modeler().document().worldShape(*o);
+  Result<TopoDS_Shape> moved = Result<TopoDS_Shape>::failure("");
+  try {
+    moved = curvedPart_ ? geom::pushPullCurvedPart(shape, face_, distance_)
+                        : geom::offsetSolidFace(shape, face_, distance_);
+  } catch (const Standard_Failure&) {
+  }
+  if (moved) host_.viewport().setPreview(moved.value(), true);
+  // Too heavy to follow the mouse: only the face for the rest of this drag.
+  if (took.elapsed() > 700) slowPreview_ = true;
 }
 
 void PushPullTool::mousePress(const ToolEvent& e) {
@@ -2934,6 +2969,7 @@ void PushPullTool::mousePress(const ToolEvent& e) {
     }
   }
   dragging_ = true;
+  slowPreview_ = false;
   host_.viewport().clearHover();
   host_.viewport().setPickMode(PickMode::None);
 }

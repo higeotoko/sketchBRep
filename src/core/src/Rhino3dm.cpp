@@ -1,4 +1,5 @@
 #include "sbr/geom/Rhino3dm.h"
+#include "sbr/KernelError.h"
 
 #include <sstream>
 
@@ -591,7 +592,7 @@ Status write3dm(const std::vector<NamedShape>& parts, const std::string& path) {
     }
     return Status::success();
   } catch (const Standard_Failure& e) {
-    return Status::failure(std::string("3DM export failed: ") + e.GetMessageString());
+    return Status::failure(std::string("3DM export failed: ") + sbr::kernelMessage(e));
   }
 }
 
@@ -662,7 +663,7 @@ Result<std::vector<NamedShape>> read3dm(const std::string& path, Import3dmReport
     if (out.empty()) return Result<std::vector<NamedShape>>::failure("The 3DM file contains no surfaces or solids");
     return out;
   } catch (const Standard_Failure& e) {
-    return Result<std::vector<NamedShape>>::failure(std::string("3DM import failed: ") + e.GetMessageString());
+    return Result<std::vector<NamedShape>>::failure(std::string("3DM import failed: ") + sbr::kernelMessage(e));
   }
 }
 

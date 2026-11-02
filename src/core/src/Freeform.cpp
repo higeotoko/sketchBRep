@@ -1,4 +1,5 @@
 #include "sbr/geom/Freeform.h"
+#include "sbr/KernelError.h"
 
 #include <cmath>
 #include <cstdio>
@@ -78,7 +79,7 @@ Result<TopoDS_Shape> makeArc(const gp_Pnt& start, const gp_Pnt& end, const gp_Di
     if (const auto n = planarFaceNormal(f); n && n->Dot(normal) < 0) f.Reverse();
     return TopoDS_Shape(f);
   } catch (const Standard_Failure& e) {
-    return Result<TopoDS_Shape>::failure(std::string("Arc failed: ") + e.GetMessageString());
+    return Result<TopoDS_Shape>::failure(std::string("Arc failed: ") + sbr::kernelMessage(e));
   }
 }
 
@@ -110,7 +111,7 @@ Result<TopoDS_Face> faceFromCurves(const std::vector<TopoDS_Shape>& curves) {
     if (!check.IsValid()) return Result<TopoDS_Face>::failure("The loop crosses itself");
     return face;
   } catch (const Standard_Failure& e) {
-    return Result<TopoDS_Face>::failure(std::string("Face failed: ") + e.GetMessageString());
+    return Result<TopoDS_Face>::failure(std::string("Face failed: ") + sbr::kernelMessage(e));
   }
 }
 
@@ -130,7 +131,7 @@ Result<TopoDS_Wire> makeInterpolatedCurve(const std::vector<gp_Pnt>& points, boo
     const TopoDS_Edge edge = BRepBuilderAPI_MakeEdge(interpolate.Curve()).Edge();
     return BRepBuilderAPI_MakeWire(edge).Wire();
   } catch (const Standard_Failure& e) {
-    return Result<TopoDS_Wire>::failure(std::string("Curve failed: ") + e.GetMessageString());
+    return Result<TopoDS_Wire>::failure(std::string("Curve failed: ") + sbr::kernelMessage(e));
   }
 }
 
@@ -143,7 +144,7 @@ Result<TopoDS_Shape> loft(const std::vector<TopoDS_Wire>& sections, bool solid) 
     if (!maker.IsDone()) return Result<TopoDS_Shape>::failure("Loft failed");
     return checked(maker.Shape(), "Loft");
   } catch (const Standard_Failure& e) {
-    return Result<TopoDS_Shape>::failure(std::string("Loft failed: ") + e.GetMessageString());
+    return Result<TopoDS_Shape>::failure(std::string("Loft failed: ") + sbr::kernelMessage(e));
   }
 }
 
@@ -156,7 +157,7 @@ Result<TopoDS_Shape> revolve(const TopoDS_Shape& profile, const gp_Ax1& axis, do
     if (!maker.IsDone()) return Result<TopoDS_Shape>::failure("Revolve failed");
     return checked(maker.Shape(), "Revolve");
   } catch (const Standard_Failure& e) {
-    return Result<TopoDS_Shape>::failure(std::string("Revolve failed: ") + e.GetMessageString());
+    return Result<TopoDS_Shape>::failure(std::string("Revolve failed: ") + sbr::kernelMessage(e));
   }
 }
 
@@ -303,7 +304,7 @@ Result<TopoDS_Shape> sweep(const TopoDS_Shape& profile, const TopoDS_Wire& spine
     try {
       return mitredSweep(profile, spine);
     } catch (const Standard_Failure&) {
-      return Result<TopoDS_Shape>::failure(std::string("Sweep failed: ") + e.GetMessageString());
+      return Result<TopoDS_Shape>::failure(std::string("Sweep failed: ") + sbr::kernelMessage(e));
     }
   }
 }

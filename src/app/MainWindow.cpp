@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "sbr/KernelError.h"
 #include "DwgConverter.h"
 #include "ToolPalette.h"
 #include "Branding.h"
@@ -3093,7 +3094,7 @@ void MainWindow::autosaveInBackground() {
     try {
       s = doc::saveDocument(*snapshot, utf8(part));
     } catch (const Standard_Failure& e) {
-      s = Status::failure(e.GetMessageString());
+      s = Status::failure(sbr::kernelMessage(e));
     } catch (const std::exception& e) {
       s = Status::failure(e.what());
     } catch (...) {
@@ -3963,7 +3964,7 @@ void MainWindow::startRecipeVerification() {
       try {
         if (auto w = doc::checkRecipe(job.object, context)) warnings << QString::fromStdString(job.prefix + *w);
       } catch (const Standard_Failure& e) {
-        warnings << QString::fromStdString(job.prefix + job.object.name + ": " + e.GetMessageString());
+        warnings << QString::fromStdString(job.prefix + job.object.name + ": " + sbr::kernelMessage(e));
       } catch (const std::exception& e) {
         warnings << QString::fromStdString(job.prefix + job.object.name + ": " + e.what());
       } catch (...) {

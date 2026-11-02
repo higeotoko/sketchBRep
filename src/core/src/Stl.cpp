@@ -1,4 +1,5 @@
 #include "sbr/geom/ShapeIO.h"
+#include "sbr/KernelError.h"
 
 #include <array>
 #include <cmath>
@@ -96,7 +97,7 @@ Status writeStl(const TopoDS_Shape& canonical, const std::string& path, const St
     if (!out) return Status::failure("Could not finish writing STL file: " + path);
     return Status::success();
   } catch (const Standard_Failure& e) {
-    return Status::failure(std::string("STL export failed: ") + e.GetMessageString());
+    return Status::failure(std::string("STL export failed: ") + sbr::kernelMessage(e));
   } catch (const std::exception& e) {
     return Status::failure(std::string("STL export failed: ") + e.what());
   }

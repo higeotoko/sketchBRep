@@ -1,4 +1,5 @@
 #include "Viewport.h"
+#include "sbr/KernelError.h"
 
 #include "WheelZoom.h"
 
@@ -301,7 +302,7 @@ void Viewport::initViewer() {
   } catch (const Standard_Failure& e) {
     view_.Nullify();
     QMessageBox::critical(this, tr("OpenGL エラー"),
-                          tr("3Dビューを初期化できませんでした: %1").arg(e.GetMessageString()));
+                          tr("3Dビューを初期化できませんでした: %1").arg(QString::fromStdString(sbr::kernelMessage(e))));
     return;
   }
 
@@ -415,7 +416,7 @@ bool Viewport::toolCall(const std::function<void()>& call) {
     call();
     return true;
   } catch (const Standard_Failure& e) {
-    failure = QString::fromUtf8(e.GetMessageString());
+    failure = QString::fromStdString(sbr::kernelMessage(e));
   } catch (const std::exception& e) {
     failure = QString::fromUtf8(e.what());
   }

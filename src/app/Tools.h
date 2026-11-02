@@ -1074,6 +1074,13 @@ class PushPullTool : public Tool {
   bool dragging_ = false;
   bool curvedPart_ = false;  // one part of a divided curved surface
   bool curved_ = false;
+  // Curved faces: while the mouse moves only the face moved is shown (its
+  // offset surface, instant); the whole solid as push / pull will leave it
+  // follows once the mouse rests (the heavy calculation), and no longer
+  // during this drag if it took long.
+  void showCurvedResult(std::uint64_t generation);
+  std::uint64_t previewGeneration_ = 0;
+  bool slowPreview_ = false;
   bool keepStart_ = false;
   QString keepSuffix() const;
   doc::ObjectId objectId_;

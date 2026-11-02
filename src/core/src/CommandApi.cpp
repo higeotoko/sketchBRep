@@ -1,4 +1,5 @@
 #include "sbr/api/CommandApi.h"
+#include "sbr/KernelError.h"
 #include "sbr/geom/Surfaces.h"
 #include <TopExp_Explorer.hxx>
 
@@ -2744,7 +2745,7 @@ json run(const Context& c, const json& request, int depth) {
   } catch (const std::exception& e) {
     return json{{"ok", false}, {"error", e.what()}};
   } catch (const Standard_Failure& e) {
-    return json{{"ok", false}, {"error", std::string("geometry kernel error: ") + e.GetMessageString()}};
+    return json{{"ok", false}, {"error", std::string("geometry kernel error: ") + sbr::kernelMessage(e)}};
   } catch (...) {
     return json{{"ok", false}, {"error", "internal error"}};
   }

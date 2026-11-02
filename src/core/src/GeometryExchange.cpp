@@ -1,4 +1,5 @@
 #include "sbr/geom/ShapeIO.h"
+#include "sbr/KernelError.h"
 
 #include <filesystem>
 #include <fstream>
@@ -54,7 +55,7 @@ Status writeBrep(const TopoDS_Shape& shape,const std::string& path) {
     BRepTools::Write(shape,file,Standard_False,Standard_False,TopTools_FormatVersion_CURRENT);
     file.close();
     return file ? Status::success() : Status::failure("Could not finish writing BRep file: "+path);
-  }catch(const Standard_Failure& e){return Status::failure(std::string("BRep export failed: ")+e.GetMessageString());}
+  }catch(const Standard_Failure& e){return Status::failure(std::string("BRep export failed: ")+sbr::kernelMessage(e));}
    catch(const std::exception& e){return Status::failure(std::string("BRep export failed: ")+e.what());}
 }
 Result<TopoDS_Shape> readBrep(const std::string& path) {
@@ -69,7 +70,7 @@ Result<TopoDS_Shape> readBrep(const std::string& path) {
     BRepTools::Clean(shape);
     if(!BRepCheck_Analyzer(shape).IsValid())return R::failure("Invalid BRep geometry");
     return shape;
-  }catch(const Standard_Failure& e){return R::failure(std::string("BRep import failed: ")+e.GetMessageString());}
+  }catch(const Standard_Failure& e){return R::failure(std::string("BRep import failed: ")+sbr::kernelMessage(e));}
    catch(const std::exception& e){return R::failure(std::string("BRep import failed: ")+e.what());}
 }
 Status writeIges(const TopoDS_Shape& shape,const std::string& path) {
@@ -85,7 +86,7 @@ Status writeIges(const TopoDS_Shape& shape,const std::string& path) {
     if(!file)return Status::failure("Could not write IGES file: "+path);
     file.imbue(std::locale::classic());const bool written=writer.Write(file);file.close();
     return written&&file ? Status::success() : Status::failure("Could not finish writing IGES file: "+path);
-  }catch(const Standard_Failure& e){return Status::failure(std::string("IGES export failed: ")+e.GetMessageString());}
+  }catch(const Standard_Failure& e){return Status::failure(std::string("IGES export failed: ")+sbr::kernelMessage(e));}
    catch(const std::exception& e){return Status::failure(std::string("IGES export failed: ")+e.what());}
 }
 Result<std::vector<NamedShape>> readIges(const std::string& path) {
@@ -106,7 +107,7 @@ Result<std::vector<NamedShape>> readIges(const std::string& path) {
       parts.push_back({shape,"IGES "+std::to_string(i),std::nullopt,{}});
     }
     return parts;
-  }catch(const Standard_Failure& e){return R::failure(std::string("IGES import failed: ")+e.GetMessageString());}
+  }catch(const Standard_Failure& e){return R::failure(std::string("IGES import failed: ")+sbr::kernelMessage(e));}
    catch(const std::exception& e){return R::failure(std::string("IGES import failed: ")+e.what());}
 }
 } // namespace sbr::geom
