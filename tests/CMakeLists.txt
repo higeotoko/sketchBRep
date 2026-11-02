@@ -33,6 +33,7 @@ add_executable(sbr_core_tests
   test_collada.cpp
   test_surfaces.cpp
   test_curved_pushpull.cpp
+  test_drawing.cpp
   test_closing_faces.cpp
   test_follow_me.cpp
   test_ux_gate1.cpp

@@ -68,6 +68,7 @@
 #include "ProgressDialog.h"
 #include "WheelZoom.h"
 #include "ToolPalette.h"
+#include "DrawingExport.h"
 #include "MainWindow.h"
 #include "MaterialEditor.h"
 #include "MaterialsPanel.h"
@@ -289,6 +290,7 @@ class GuiPhase1 : public QObject {
   void verifyPull03UpToAnotherPoint();
   void verifyClip06PasteKeepsMaterialAndTag();
   void verifyGroup02InsideLeavesOutsideAlone();
+  void drawingDialogPlanSectionElevationAndExport();
   void panelDragPreviewKeepsTheModelViewStill();
   void panelMotionSettlesAfterNativeDock();
   void paletteResizeKeepsBackdropAcrossViewport();
@@ -8858,4 +8860,65 @@ void GuiPhase1::verifyGroup02InsideLeavesOutsideAlone() {
   QVERIFY(std::abs(geom::volume(m.document().worldShape(*m.document().find(inside))) - 1.3e9) < 1.0);
   QVERIFY(std::abs(geom::volume(m.document().worldShape(*m.document().find(outside))) - before) < 1e-6);
   QCOMPARE(m.document().find(outside)->parent, std::string());
+}
+
+// docs/50: File > 2D drawings: plan / section / elevation previewed, the
+// scale and paper follow, frame on and off, written as PDF, DXF and JWW.
+void GuiPhase1::drawingDialogPlanSectionElevationAndExport() {
+  Fixture f;
+  QVERIFY(f.setUp(3000, 2000));
+  doc::Modeler& m = f.window.modeler();
+  QVERIFY(m.createGridLines(gp_Pnt(0, 0, 0), {6000}, {4000}));
+  f.box(-100, -100, 200, 200, 3000);
+  f.box(5900, 3900, 200, 200, 3000);
+  QVERIFY(m.setLevels({{"", "1FL", 0.0}, {"", "2FL", 3000.0}}));
+  f.vp->syncNow();
+  QVERIFY(f.window.findChild<QAction*>(QStringLiteral("exportDrawingAction")));
+  DrawingDialog dialog(m.document(), &f.window);
+  dialog.show();
+  QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+  dialog.refreshNow();
+  QVERIFY2(dialog.sheet().has_value(), qPrintable(dialog.lastError()));
+  QCOMPARE(dialog.sheet()->paper, std::string("A4"));
+  auto* preview = dialog.findChild<QLabel*>(QStringLiteral("drawingPreview"));
+  QVERIFY(preview && !preview->pixmap().isNull());
+  auto* name = dialog.findChild<QLineEdit*>(QStringLiteral("drawingName"));
+  QVERIFY(name->text().contains(QStringLiteral("平面図")));
+  // 1:20: the same view laid out again on more paper.
+  auto* scale = dialog.findChild<QComboBox*>(QStringLiteral("drawingScale"));
+  scale->setCurrentIndex(scale->findData(20));
+  dialog.refreshNow();
+  QCOMPARE(dialog.sheet()->scale, 20.0);
+  QVERIFY(dialog.sheet()->paper != std::string("A4"));
+  scale->setCurrentIndex(scale->findData(100));
+  // A section along a grid axis: levels and the axes standing up.
+  auto* kind = dialog.findChild<QComboBox*>(QStringLiteral("drawingKind"));
+  kind->setCurrentIndex(1);
+  auto* position = dialog.findChild<QComboBox*>(QStringLiteral("drawingPosition"));
+  const int y1 = position->findText(QStringLiteral("Y1通り"));
+  QVERIFY(y1 >= 0);
+  position->setCurrentIndex(y1);
+  dialog.refreshNow();
+  QVERIFY2(dialog.sheet().has_value(), qPrintable(dialog.lastError()));
+  QVERIFY(name->text().contains(QStringLiteral("断面図")));
+  int levelLines = 0;
+  for (const draw::Item& i : dialog.sheet()->items) levelLines += i.pen == draw::Pen::Level && i.kind == draw::Item::Kind::Line;
+  QCOMPARE(levelLines, 2);
+  // An elevation, without the frame.
+  kind->setCurrentIndex(2);
+  dialog.findChild<QCheckBox*>(QStringLiteral("drawingFrame"))->setChecked(false);
+  dialog.refreshNow();
+  QVERIFY2(dialog.sheet().has_value(), qPrintable(dialog.lastError()));
+  for (const draw::Item& i : dialog.sheet()->items) QVERIFY(i.pen != draw::Pen::Frame);
+  // Written in each format.
+  QTemporaryDir dir;
+  for (const QString ext : {QStringLiteral("pdf"), QStringLiteral("dxf"), QStringLiteral("jww")}) {
+    const QString path = dir.filePath(QStringLiteral("drawing.") + ext);
+    const Status s = dialog.exportTo(path);
+    QVERIFY2(s, s.message().c_str());
+    QVERIFY(QFileInfo(path).size() > 100);
+  }
+  QFile pdf(dir.filePath(QStringLiteral("drawing.pdf")));
+  QVERIFY(pdf.open(QIODevice::ReadOnly));
+  QVERIFY(pdf.read(5) == "%PDF-");
 }

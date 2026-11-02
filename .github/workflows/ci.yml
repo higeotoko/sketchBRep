@@ -193,6 +193,7 @@ jobs:
           Copy-Item docs\47_rhino_operations.md "$dist\RHINO_OPERATIONS.md"
           Copy-Item docs\48_input_box_and_upright_shapes.md "$dist\INPUT_AND_UPRIGHT.md"
           Copy-Item docs\49_verification_plan.md "$dist\VERIFY_CHECKLIST.md"
+          Copy-Item docs\50_drawings.md "$dist\DRAWINGS.md"
           Copy-Item docs\32_unified_import_export.md "$dist\IMPORT_EXPORT.md"
           Copy-Item docs\33_chatgpt_connection.md "$dist\CHATGPT_CONNECTION.md"
           Copy-Item docs\34_sections_and_tools_palette.md "$dist\SECTIONS_AND_TOOLS.md"

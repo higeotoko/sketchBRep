@@ -19,6 +19,7 @@ add_library(sbr_ui STATIC
   McpHttpServer.cpp McpHttpServer.h
   Messages.cpp Messages.h
   ProgressDialog.cpp ProgressDialog.h
+  DrawingExport.cpp DrawingExport.h
 )
 target_include_directories(sbr_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
                           PRIVATE ${PROJECT_SOURCE_DIR}/assets/materials/builtin/integration)

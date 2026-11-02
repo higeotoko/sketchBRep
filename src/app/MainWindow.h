@@ -74,6 +74,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   QMenu* buildContextMenu(const QPoint& pos);
   // Help > About: logo, version, what it is built on.
   void showAbout();
+  // File > 2D drawings: plans, sections, elevations as PDF / DXF / JWW (docs/50).
+  void showDrawingDialog();
   Tool* activeTool() const { return active_; }
   QLineEdit* measurementBox() const { return measurement_; }
   QString lastError() const { return lastError_; }

@@ -1,5 +1,6 @@
 #include "sbr/api/CommandApi.h"
 #include "sbr/KernelError.h"
+#include "sbr/draw/Drawing.h"
 #include "sbr/geom/Surfaces.h"
 #include <TopExp_Explorer.hxx>
 
@@ -2397,6 +2398,56 @@ const std::vector<CommandDef>& commands() {
          must(m.exportCollada(text(a, "path"), a.contains("ids") ? ids(a, "ids") : std::vector<ObjectId>{}, options));
          return json::object();
        }},
+      {"export_drawing",
+       "2D drawing (docs/50) as DXF or JWW (Jw_cad), by the path's extension. 'kind': 'plan' (cut at "
+       "'cut_z' mm, default 1200, seen from above), 'section' ('point' [x,y,z] on the cut and 'look' "
+       "[x,y,z] towards the viewer, horizontal) or 'elevation' ('side': 0 south, 1 east, 2 north, 3 west). "
+       "'scale' (denominator, default 100), 'paper' (auto, A4-A1), 'frame' (default true), 'title', "
+       "'project', 'number', 'author', 'date', 'hidden' (hidden lines), 'fill', 'grid', 'levels', "
+       "'annotations'. Returns the paper chosen and notes (what did not fit or was left out).",
+       SCHEMA({"type": "object", "properties": {"path": {"type": "string"}, "kind": {"type": "string"},
+               "cut_z": {"type": "number"}, "point": {"type": "array"}, "look": {"type": "array"},
+               "side": {"type": "integer"}, "scale": {"type": "number"}, "paper": {"type": "string"},
+               "frame": {"type": "boolean"}, "title": {"type": "string"}, "project": {"type": "string"},
+               "number": {"type": "string"}, "author": {"type": "string"}, "date": {"type": "string"},
+               "hidden": {"type": "boolean"}, "fill": {"type": "boolean"}, "grid": {"type": "boolean"},
+               "levels": {"type": "boolean"}, "annotations": {"type": "boolean"}}, "required": ["path", "kind"]}),
+       [](doc::Modeler& m, const json& a) {
+         const std::string kind = text(a, "kind");
+         draw::ViewSpec spec;
+         if (kind == "plan") {
+           spec = draw::planView(numberOr(a, "cut_z", 1200.0));
+         } else if (kind == "section") {
+           spec = draw::sectionView(point(a, "point"), direction(a, "look", gp_Dir(0, -1, 0)));
+         } else if (kind == "elevation") {
+           spec = draw::elevationView(m.document(), a.value("side", 0));
+         } else {
+           throw std::runtime_error("kind must be plan, section or elevation");
+         }
+         spec.title = textOr(a, "title", {});
+         spec.hidden = a.value("hidden", false);
+         spec.fill = a.value("fill", true);
+         spec.grid = a.value("grid", true);
+         spec.levels = a.value("levels", true);
+         spec.annotations = a.value("annotations", true);
+         const draw::View view = must(draw::makeView(m.document(), spec));
+         draw::SheetSpec sheetSpec;
+         sheetSpec.scale = numberOr(a, "scale", 100.0);
+         sheetSpec.paper = textOr(a, "paper", "auto");
+         sheetSpec.frame = a.value("frame", true);
+         sheetSpec.title = {textOr(a, "project", {}), spec.title, textOr(a, "number", {}), textOr(a, "author", {}),
+                            textOr(a, "date", {})};
+         const draw::Sheet sheet = must(draw::layoutSheet(view, sheetSpec));
+         const std::string path = text(a, "path");
+         const std::string ext = path.size() > 4 ? path.substr(path.size() - 4) : std::string();
+         if (ext == ".jww" || ext == ".JWW") must(draw::writeJww(sheet, path));
+         else if (ext == ".dxf" || ext == ".DXF") must(draw::writeDxf(sheet, path));
+         else throw std::runtime_error("The path must end in .dxf or .jww (PDF: from the app's File menu)");
+         json notes = json::array();
+         for (const std::string& n : view.notes) notes.push_back(n);
+         for (const std::string& n : sheet.notes) notes.push_back(n);
+         return json{{"paper", sheet.paper}, {"scale", sheet.scale}, {"objects", view.objects}, {"notes", notes}};
+       }},
       {"import_dae",
        "Import a COLLADA (.dae) file (e.g. exported from SketchUp Pro): each mesh an object, triangles joined "
        "into faces, closed meshes solids, colours from the materials, units and up axis converted (mm, Z up), "
@@ -2428,7 +2479,7 @@ bool isFileCommand(const std::string& name) {
   return name == "save" || name == "open" || name == "export_step" || name == "export_stl" || name == "export_3dm" ||
          name == "import_brep" || name == "export_brep" || name == "import_iges" || name == "export_iges" ||
          name == "import_3dm" || name == "import_dxf" || name == "set_material_texture" || name == "export_dae" ||
-         name == "import_dae";
+         name == "import_dae" || name == "export_drawing";
 }
 
 CommandApi::Effect builtinEffect(const std::string& name) {

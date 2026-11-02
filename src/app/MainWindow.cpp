@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 #include "sbr/KernelError.h"
+#include "DrawingExport.h"
 #include "DwgConverter.h"
 #include "ToolPalette.h"
 #include "Branding.h"
@@ -655,6 +656,8 @@ void MainWindow::buildMenus() {
   file->addSeparator();
   file->addAction(tr("インポート..."),this,&MainWindow::importFile);
   file->addAction(tr("エクスポート..."),this,&MainWindow::exportFile);
+  file->addAction(tr("図面を書き出す（平面・断面・立面）..."), this, &MainWindow::showDrawingDialog)
+      ->setObjectName(QStringLiteral("exportDrawingAction"));
   file->addAction(tr("DWG 変換ソフトの設定..."), this, &MainWindow::configureDwgConverter);
   file->addSeparator();
   file->addAction(tr("自動保存とバックアップの設定..."), this, &MainWindow::showAutosaveDialog);
@@ -4368,4 +4371,12 @@ void MainWindow::closeEvent(QCloseEvent* event) {
   }
 }
 
+}  // namespace sbr::app
+
+namespace sbr::app {
+void MainWindow::showDrawingDialog() {
+  DrawingDialog dialog(modeler_.document(), this);
+  dialog.resize(1100, 720);
+  dialog.exec();
+}
 }  // namespace sbr::app

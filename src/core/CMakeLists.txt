@@ -30,6 +30,12 @@ add_library(sbr_core STATIC
   src/Dxf.cpp
   src/Rhino3dm.cpp
   src/Collada.cpp
+  src/Drawing.cpp
+  src/DrawingSheet.cpp
+  src/DrawingDxf.cpp
+  src/DrawingJww.cpp
+  src/DrawingInternal.cpp
+  src/TextEncoding.cpp
   src/Surfaces.cpp
   src/Progress.cpp
 )
