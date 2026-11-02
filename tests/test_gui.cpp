@@ -153,6 +153,9 @@ class GuiPhase1 : public QObject {
   void initTestCase() {
     // Keep app settings (e.g. AI access) out of the user's real configuration.
     QStandardPaths::setTestModeEnabled(true);
+    // On Windows, settings without an organisation name are neither read
+    // nor written (the app sets it in main): the tests' own name.
+    QCoreApplication::setOrganizationName(QStringLiteral("SketchBRepTests"));
     QSettings().clear();
   }
   void drawPushPullSaveReopen();
