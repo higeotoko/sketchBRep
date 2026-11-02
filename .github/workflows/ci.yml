@@ -275,6 +275,11 @@ jobs:
         run: |
           $env_root = "${{ steps.mamba.outputs.environment-path }}"
           $env:PATH = "$env_root\Library\bin;$env:PATH"
+          # The runner's screen is 1024x768: the tests' 1280x860 window would
+          # not fit and shrink (picks then land on other points). Larger first.
+          try { Set-DisplayResolution -Width 1920 -Height 1080 -Force } catch { Write-Host "Set-DisplayResolution: $_" }
+          Add-Type -AssemblyName System.Windows.Forms
+          Write-Host ("Screen: " + [System.Windows.Forms.Screen]::PrimaryScreen.Bounds)
           $archive = "mesa.7z"
           Invoke-WebRequest -Uri "https://github.com/pal1000/mesa-dist-win/releases/download/$env:MESA_VERSION/mesa3d-$env:MESA_VERSION-release-msvc.7z" -OutFile $archive
           7z x $archive -omesa -y | Out-Null
