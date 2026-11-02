@@ -695,8 +695,12 @@ void GuiPhase1::rectangleOneSideSignsAndReentry() {
   type(f.vp, QStringLiteral("300cm,1.5m"));
   b = bounds();
   QVERIFY(same(b.CornerMax().X(), 3000) && same(b.CornerMax().Y(), 1500));
-  // Garbage and zero: nothing changes.
-  type(f.vp, QStringLiteral("3000,abc"));
+  // Garbage and zero: nothing changes. Garbage goes into the box itself:
+  // letters typed in the view are tool shortcuts (on Windows "a" switched
+  // to the arc tool before the value was entered).
+  f.window.measurementBox()->setText(QStringLiteral("3000,abc"));
+  QTest::keyClick(f.window.measurementBox(), Qt::Key_Return);
+  QTest::qWait(50);
   QVERIFY(!f.window.lastError().isEmpty());
   f.window.clearLastError();
   type(f.vp, QStringLiteral("0,"));
