@@ -694,7 +694,9 @@ class Modeler {
   struct LinePick {
     ObjectId id;
     std::size_t segment = 0;  // points[segment] -> points[segment + 1]
-    gp_Pnt near;              // where it was clicked (world): the side kept
+    // Where it was clicked (world): the side kept. (Not "near": a macro
+    // in the Windows headers.)
+    gp_Pnt clicked;
   };
   Result<std::optional<ObjectId>> filletLines(const LinePick& a, const LinePick& b, double size, bool chamfer);
   // The solid hollowed, these faces (world) left open; returns the

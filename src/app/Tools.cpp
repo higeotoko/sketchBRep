@@ -6010,7 +6010,7 @@ std::optional<SurfaceTool::Pick> SurfaceTool::pickAt(const ToolEvent& e, QString
         const gp_Pnt q(a.XYZ() + (b.XYZ() - a.XYZ()) * (i / 200.0));
         const QPoint s = host_.viewport().toWidget(q) - e.pos;
         const double d = double(s.x()) * s.x() + double(s.y()) * s.y();
-        if (d < nearest) nearest = d, p.near = q;
+        if (d < nearest) nearest = d, p.clicked = q;
       }
       return p;
     }
@@ -6340,8 +6340,8 @@ void SurfaceTool::commit() {
       host_.reportError(QObject::tr("線をもう 1 本クリックしてください"));
       return;
     }
-    const doc::Modeler::LinePick a{picks_[0].object, picks_[0].segment, picks_[0].near};
-    const doc::Modeler::LinePick b{picks_[1].object, picks_[1].segment, picks_[1].near};
+    const doc::Modeler::LinePick a{picks_[0].object, picks_[0].segment, picks_[0].clicked};
+    const doc::Modeler::LinePick b{picks_[1].object, picks_[1].segment, picks_[1].clicked};
     recent_.begin(m);
     auto joined = m.filletLines(a, b, size_, kind_ == Kind::Chamfer);
     picks_.clear();

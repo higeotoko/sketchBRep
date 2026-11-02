@@ -7350,7 +7350,7 @@ Result<std::optional<ObjectId>> Modeler::filletLines(const LinePick& a, const Li
   for (Side& side : sides) {
     gp_Vec u(side.s0, side.s1);
     u.Normalize();
-    double along = gp_Vec(meet, side.pick->near).Dot(u);
+    double along = gp_Vec(meet, side.pick->clicked).Dot(u);
     // Clicked right at the meeting point: keep the longer part.
     if (std::abs(along) < 1e-6) {
       along = std::abs(gp_Vec(meet, side.s0).Dot(u)) > std::abs(gp_Vec(meet, side.s1).Dot(u)) ? gp_Vec(meet, side.s0).Dot(u)

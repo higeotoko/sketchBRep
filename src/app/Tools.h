@@ -1320,7 +1320,7 @@ class SurfaceTool : public Tool {
     bool whole = false;       // a curve object taken whole
     TopoDS_Shape shape;       // world
     std::size_t segment = 0;  // fillet of lines: the piece of the line object
-    gp_Pnt near;              // ... and where it was clicked (the side kept)
+    gp_Pnt clicked;           // ... and where it was clicked (the side kept)
   };
   // Fillet / chamfer works on edges of a solid, corners of a flat face, or
   // two lines (AutoCAD), as the first pick says.
