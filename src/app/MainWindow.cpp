@@ -149,6 +149,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     QTimer::singleShot(0, this, [this] { if (active_ == sectionTool_.get()) activateTool(ToolId::Select); });
   });
   followMeTool_ = std::make_unique<FollowMeTool>(*this);
+  sweep2Tool_ = std::make_unique<SurfaceTool>(*this, SurfaceTool::Kind::Sweep2);
+  edgeSurfaceTool_ = std::make_unique<SurfaceTool>(*this, SurfaceTool::Kind::EdgeSurface);
+  patchTool_ = std::make_unique<SurfaceTool>(*this, SurfaceTool::Kind::Patch);
+  filletTool_ = std::make_unique<SurfaceTool>(*this, SurfaceTool::Kind::Fillet);
+  chamferTool_ = std::make_unique<SurfaceTool>(*this, SurfaceTool::Kind::Chamfer);
+  shellTool_ = std::make_unique<SurfaceTool>(*this, SurfaceTool::Kind::Shell);
 
   buildUi();
   // Long Booleans / push-pulls show a cancellable progress dialog.
@@ -735,6 +741,13 @@ void MainWindow::buildMenus() {
                    [this] { booleanSelection(doc::BooleanKind::Subtract); });
   solid->addAction(tr("積（共通部分）"), this,
                    [this] { booleanSelection(doc::BooleanKind::Intersect); });
+  solid->addSeparator();
+  solid->addAction(tr("フィレット（辺を丸める）"), this, [this] { activateTool(ToolId::Fillet); })
+      ->setObjectName(QStringLiteral("filletAction"));
+  solid->addAction(tr("面取り（辺を斜めに落とす）"), this, [this] { activateTool(ToolId::Chamfer); })
+      ->setObjectName(QStringLiteral("chamferAction"));
+  solid->addAction(tr("シェル（厚みを残してくり抜く）"), this, [this] { activateTool(ToolId::Shell); })
+      ->setObjectName(QStringLiteral("shellAction"));
 
   // --- Freeform (Phase 3)
   QMenu* freeform = menuBar()->addMenu(tr("曲面(&U)"));
@@ -760,6 +773,14 @@ void MainWindow::buildMenus() {
     }
     setSelection({id.value()});
   });
+
+  freeform->addSeparator();
+  freeform->addAction(tr("2 レールスイープ（レール 2 本 → 断面）"), this, [this] { activateTool(ToolId::Sweep2); })
+      ->setObjectName(QStringLiteral("sweep2Action"));
+  freeform->addAction(tr("縁から面（2〜4 本の線）"), this, [this] { activateTool(ToolId::EdgeSurface); })
+      ->setObjectName(QStringLiteral("edgeSurfaceAction"));
+  freeform->addAction(tr("パッチ（閉じた輪郭に曲面）"), this, [this] { activateTool(ToolId::Patch); })
+      ->setObjectName(QStringLiteral("patchAction"));
 
   // --- View
   QMenu* view = menuBar()->addMenu(tr("表示(&V)"));
@@ -993,6 +1014,7 @@ void MainWindow::buildMenus() {
       {tr("曲線"), QStringLiteral("N"), ToolId::Curve, CursorKind::Curve},
       {tr("回転体"), QStringLiteral("V"), ToolId::Revolve, CursorKind::Revolve},
       {tr("フォローミー"), QStringLiteral("Shift+F"), ToolId::FollowMe, CursorKind::FollowMe},
+      {tr("フィレット"), QStringLiteral("Shift+E"), ToolId::Fillet, CursorKind::Fillet},
       {tr("メジャー"), QStringLiteral("T"), ToolId::Measure, CursorKind::Measure},
       {tr("分度器"), QStringLiteral("Shift+P"), ToolId::Protractor, CursorKind::Protractor},
       {tr("寸法"), QStringLiteral("D"), ToolId::Dimension, CursorKind::Dimension},
@@ -1534,6 +1556,12 @@ void MainWindow::activateTool(ToolId id) {
       if (sectionDock_) { sectionDock_->show(); sectionDock_->raise(); }
       break;
     case ToolId::FollowMe: active_ = followMeTool_.get(); break;
+    case ToolId::Sweep2: active_ = sweep2Tool_.get(); break;
+    case ToolId::EdgeSurface: active_ = edgeSurfaceTool_.get(); break;
+    case ToolId::Patch: active_ = patchTool_.get(); break;
+    case ToolId::Fillet: active_ = filletTool_.get(); break;
+    case ToolId::Chamfer: active_ = chamferTool_.get(); break;
+    case ToolId::Shell: active_ = shellTool_.get(); break;
     case ToolId::Paint: active_ = paintTool_.get(); break;
     case ToolId::Eraser: active_ = eraserTool_.get(); break;
     case ToolId::Paste: active_ = pasteTool_.get(); break;
@@ -3340,7 +3368,8 @@ void MainWindow::commitMeasurement() {
   userTyping_ = false;
   // Enter without typing finishes a wall run / slab outline (the box only
   // shows the current length then).
-  if (!typed && (active_ == wallTool_.get() || active_ == slabTool_.get() || active_ == memberTool_.get())) {
+  if (!typed && (active_ == wallTool_.get() || active_ == slabTool_.get() || active_ == memberTool_.get() ||
+                 dynamic_cast<SurfaceTool*>(active_))) {
     viewport_->toolCall([&] { active_->applyMeasurement(QString()); });
     viewport_->setFocus();
     return;
@@ -3551,6 +3580,39 @@ QMenu* MainWindow::buildContextMenu(const QPoint& pos) {
         viewport_->syncNow();
         setStatus(tr("選択した輪郭から面を作成しました（元の線図は保持しています）"));
       });
+      // Rhino-style surfaces from the curves (docs/47).
+      if (elements_.empty() && ids.size() >= 2 && ids.size() <= 4) {
+        menu->addAction(tr("縁から面"), this, [this] { activateTool(ToolId::EdgeSurface); })
+            ->setObjectName(QStringLiteral("contextEdgeSurfaceAction"));
+      }
+      menu->addAction(tr("パッチ（曲面）"), this, [this] { activateTool(ToolId::Patch); })
+          ->setObjectName(QStringLiteral("contextPatchAction"));
+      if (elements_.empty() && ids.size() >= 3) {
+        menu->addAction(tr("2 レールスイープ（選んだ順: レール, レール, 断面）"), this,
+                        [this] { activateTool(ToolId::Sweep2); })
+            ->setObjectName(QStringLiteral("contextSweep2Action"));
+      }
+      menu->addSeparator();
+    }
+    // Edges / faces of one solid (docs/47).
+    if (single && single->kind() == doc::ObjectKind::Solid && !single->locked) {
+      const bool edges = !elements_.empty() && std::all_of(elements_.begin(), elements_.end(), [](const ElementRef& e) {
+        return e.type == TopAbs_EDGE;
+      });
+      const bool faces = !elements_.empty() && std::all_of(elements_.begin(), elements_.end(), [](const ElementRef& e) {
+        return e.type == TopAbs_FACE;
+      });
+      if (edges || elements_.empty()) {
+        menu->addAction(edges ? tr("この辺をフィレット") : tr("フィレット..."), this, [this] { activateTool(ToolId::Fillet); })
+            ->setObjectName(QStringLiteral("contextFilletAction"));
+        menu->addAction(edges ? tr("この辺を面取り") : tr("面取り..."), this, [this] { activateTool(ToolId::Chamfer); })
+            ->setObjectName(QStringLiteral("contextChamferAction"));
+      }
+      if (faces || elements_.empty()) {
+        menu->addAction(faces ? tr("この面を開けてシェル") : tr("シェル（くり抜き）..."), this,
+                        [this] { activateTool(ToolId::Shell); })
+            ->setObjectName(QStringLiteral("contextShellAction"));
+      }
       menu->addSeparator();
     }
     menu->addAction(tr("グループ化"), this, &MainWindow::groupSelection);

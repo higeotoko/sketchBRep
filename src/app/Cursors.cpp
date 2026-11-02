@@ -108,6 +108,9 @@ QPainterPath symbol(CursorKind kind) {
       p.moveTo(3, 11); p.lineTo(10, 6); p.lineTo(21, 9); p.lineTo(14, 14); p.closeSubpath();
       p.moveTo(3, 11); p.lineTo(3, 18); p.lineTo(14, 21); p.lineTo(21, 16); p.lineTo(21, 9);
       p.moveTo(14, 14); p.lineTo(14, 21); break;
+    case CursorKind::Fillet:  // a corner rounded off
+      p.moveTo(4, 21); p.lineTo(4, 13); p.quadTo(4, 4, 13, 4); p.lineTo(21, 4);
+      p.moveTo(4, 9); p.lineTo(4, 4); p.lineTo(9, 4); break;
   }
   return p;
 }

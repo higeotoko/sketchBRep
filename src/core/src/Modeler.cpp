@@ -48,6 +48,7 @@
 #include "sbr/doc/NativeFormat.h"
 #include "sbr/doc/ChangeSummary.h"
 #include "sbr/geom/Freeform.h"
+#include "sbr/geom/Surfaces.h"
 #include "sbr/geom/Measure.h"
 #include "sbr/geom/Arrangement.h"
 #include "sbr/geom/Operations.h"
@@ -7204,6 +7205,105 @@ Result<ObjectId> Modeler::sweepObject(const ObjectId& profile, const ObjectId& s
   object.name = uniqueName("Sweep");
   object.recipe.base = std::move(feature);
   return addObject(std::move(object), "Sweep");
+}
+
+namespace {
+// What a picked curve becomes in a recipe: the object's own recipe (whole
+// curve), or a copy of one edge.
+Result<BooleanOperand> curveOperand(const Document& d, const Modeler::CurvePick& pick) {
+  using R = Result<BooleanOperand>;
+  const Object* o = d.find(pick.id);
+  if (!o) return R::failure("Curve not found");
+  if (pick.edge) {
+    Recipe r;
+    r.base = ImportedShape{*pick.edge, "edge of " + o->name};
+    return BooleanOperand{std::make_shared<const Recipe>(std::move(r)), gp_Trsf(), o->name + " (edge)"};
+  }
+  if (o->kind() != ObjectKind::Curve && o->kind() != ObjectKind::Face) {
+    return R::failure("'" + o->name + "' is not a curve (pick a curve, or an edge of it)");
+  }
+  return BooleanOperand{std::make_shared<const Recipe>(o->recipe), d.worldTransform(*o), o->name};
+}
+}  // namespace
+
+Result<ObjectId> Modeler::sweep2(const CurvePick& rail1, const CurvePick& rail2, const std::vector<CurvePick>& profiles) {
+  using R = Result<ObjectId>;
+  if (profiles.empty()) return R::failure("Sweep2 needs at least one profile");
+  Sweep2Feature feature;
+  std::vector<CurvePick> all{rail1, rail2};
+  all.insert(all.end(), profiles.begin(), profiles.end());
+  for (const CurvePick& p : all) {
+    auto operand = curveOperand(document_, p);
+    if (!operand) return R::failure(operand.error());
+    feature.inputs.push_back(*operand);
+  }
+  Object o;
+  o.name = uniqueName("Sweep2");
+  o.recipe.base = std::move(feature);
+  return addObject(std::move(o), "Sweep2");
+}
+
+Result<ObjectId> Modeler::surfaceFromCurves(const std::vector<CurvePick>& curves, bool patch) {
+  using R = Result<ObjectId>;
+  if (!patch && (curves.size() < 2 || curves.size() > 4)) return R::failure("Edge surface needs 2, 3 or 4 curves");
+  if (curves.empty()) return R::failure("Patch needs a closed outline of curves");
+  FillSurfaceFeature feature;
+  feature.patch = patch;
+  for (const CurvePick& p : curves) {
+    auto operand = curveOperand(document_, p);
+    if (!operand) return R::failure(operand.error());
+    feature.curves.push_back(*operand);
+  }
+  Object o;
+  o.name = uniqueName(patch ? "Patch" : "Edge Surface");
+  o.recipe.base = std::move(feature);
+  return addObject(std::move(o), patch ? "Patch" : "Edge Surface");
+}
+
+Result<std::string> Modeler::roundEdges(const ObjectId& id, const std::vector<TopoDS_Edge>& worldEdges, double size,
+                                        bool chamfer) {
+  using R = Result<std::string>;
+  const Object* current = document_.find(id);
+  if (!current) return R::failure("Object not found");
+  if (current->locked) return R::failure("'" + current->name + "' is locked");
+  if (current->kind() != ObjectKind::Solid) return R::failure(chamfer ? "Only edges of a solid can be chamfered" : "Only edges of a solid can be rounded");
+  if (worldEdges.empty()) return R::failure("Choose the edges first");
+  Object object = *current;
+  const gp_Trsf toLocal = document_.worldTransform(object).Inverted();
+  FilletOp op;
+  op.distance = size;
+  op.chamfer = chamfer;
+  for (const TopoDS_Edge& e : worldEdges) {
+    const auto [point, direction] = geom::edgeKey(TopoDS::Edge(e.Moved(TopLoc_Location(toLocal))));
+    // An edge picked twice counts once.
+    if (std::any_of(op.edges.begin(), op.edges.end(), [&](const EdgeRef& r) { return r.point.Distance(point) < 1e-6; })) continue;
+    op.edges.push_back({point, direction});
+  }
+  object.recipe.modifiers.push_back(op);
+  const std::string key = opKey(object.recipe.modifiers.size() - 1);
+  if (const Status s = commitModified(std::move(object), chamfer ? "Chamfer" : "Fillet"); !s) return R::failure(s.message());
+  return key;
+}
+
+Result<std::string> Modeler::shellSolid(const ObjectId& id, const std::vector<TopoDS_Face>& worldFaces, double thickness) {
+  using R = Result<std::string>;
+  const Object* current = document_.find(id);
+  if (!current) return R::failure("Object not found");
+  if (current->locked) return R::failure("'" + current->name + "' is locked");
+  if (current->kind() != ObjectKind::Solid) return R::failure("Only a solid can be shelled");
+  Object object = *current;
+  const gp_Trsf toLocal = document_.worldTransform(object).Inverted();
+  ShellOp op;
+  op.distance = thickness;
+  for (const TopoDS_Face& f : worldFaces) {
+    auto ref = geom::SurfaceRef::fromFace(TopoDS::Face(f.Moved(TopLoc_Location(toLocal))));
+    if (!ref) return R::failure(ref.error());
+    op.faces.push_back(*ref);
+  }
+  object.recipe.modifiers.push_back(op);
+  const std::string key = opKey(object.recipe.modifiers.size() - 1);
+  if (const Status s = commitModified(std::move(object), "Shell"); !s) return R::failure(s.message());
+  return key;
 }
 
 Result<ObjectId> Modeler::followMeAlong(const ObjectId& profileIdIn, const BooleanOperand& path) {

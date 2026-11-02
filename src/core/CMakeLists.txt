@@ -30,6 +30,7 @@ add_library(sbr_core STATIC
   src/Dxf.cpp
   src/Rhino3dm.cpp
   src/Collada.cpp
+  src/Surfaces.cpp
   src/Progress.cpp
 )
 add_library(sbr::core ALIAS sbr_core)

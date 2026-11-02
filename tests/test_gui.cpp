@@ -269,6 +269,11 @@ class GuiPhase1 : public QObject {
   void sectionPlaneCutsView();
   void sectionToolboxControlsAreIndependentAndCached();
   void toolsPaletteShowsAllAndFloats();
+  void filletEdgeTypedAndRetyped();
+  void shellOpensClickedFace();
+  void sweep2RolesAndTouchingProfiles();
+  void edgeSurfaceFourthCurveMakesIt();
+  void contextMenuOffersSurfaceOps();
   void panelDragPreviewKeepsTheModelViewStill();
   void panelMotionSettlesAfterNativeDock();
   void paletteResizeKeepsBackdropAcrossViewport();
@@ -7801,7 +7806,7 @@ void GuiPhase1::toolsPaletteShowsAllAndFloats() {
   QVERIFY(palette->features().testFlag(QDockWidget::DockWidgetFloatable));
   QVERIFY(palette->features().testFlag(QDockWidget::DockWidgetMovable));
   auto buttons = palette->findChildren<QToolButton*>();
-  QCOMPARE(buttons.size(), 26);
+  QCOMPARE(buttons.size(), 27);
   auto* expanded = f.window.findChild<QAction*>(QStringLiteral("expandedToolsAction"));
   QVERIFY(expanded);
   expanded->setChecked(true);
@@ -8332,4 +8337,147 @@ void GuiPhase1::wheelZoomThroughWallKeepsOrientationAndInputConsistency() {
   QVERIFY(paused);
   f.vp->storeCamera(inside);
   QVERIFY(inside.eye[1] > 100 && inside.eye[1] < 3900);
+}
+
+// docs/47: a fillet on an edge clicked in the tool, the radius typed + Enter
+// (one undo step); typed again right after, the same fillet changes (still
+// one step); the radius stays editable as a parameter.
+void GuiPhase1::filletEdgeTypedAndRetyped() {
+  Fixture f;
+  QVERIFY(f.setUp(500, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+  f.vp->syncNow();
+  const double before = geom::volume(m.document().worldShape(*m.document().find(box)));
+  f.window.activateTool(MainWindow::ToolId::Fillet);
+  auto* tool = dynamic_cast<SurfaceTool*>(f.window.activeTool());
+  QVERIFY(tool);
+  const std::size_t steps = m.history().undoCount();
+  click(f.vp, f.vp->toWidget(gp_Pnt(500, 0, 1000)));  // the front top edge
+  QCOMPARE(tool->picked(), std::size_t(1));
+  QVERIFY(f.vp->roleShapeCount() == 1);
+  QVERIFY(tool->previewOk());
+  f.window.measurementBox()->setText(QStringLiteral("100"));
+  QTest::keyClick(f.window.measurementBox(), Qt::Key_Return);
+  QTest::qWait(30);
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.history().undoCount(), steps + 1);
+  const double r100 = geom::volume(m.document().worldShape(*m.document().find(box)));
+  QVERIFY(std::abs(before - r100 - (100.0 * 100 - M_PI * 100 * 100 / 4) * 1000) < 1.0);
+  f.window.measurementBox()->setText(QStringLiteral("200"));
+  QTest::keyClick(f.window.measurementBox(), Qt::Key_Return);
+  QTest::qWait(30);
+  QCOMPARE(m.history().undoCount(), steps + 1);
+  const double r200 = geom::volume(m.document().worldShape(*m.document().find(box)));
+  QVERIFY(std::abs(before - r200 - (200.0 * 200 - M_PI * 200 * 200 / 4) * 1000) < 1.0);
+  QVERIFY(m.undo());
+  QVERIFY(std::abs(geom::volume(m.document().worldShape(*m.document().find(box))) - before) < 1e-3);
+}
+
+// docs/47: Shell with the top face clicked: hollow, open at the top; Esc
+// first takes the pick back.
+void GuiPhase1::shellOpensClickedFace() {
+  Fixture f;
+  QVERIFY(f.setUp(500, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::Shell);
+  auto* tool = dynamic_cast<SurfaceTool*>(f.window.activeTool());
+  QVERIFY(tool);
+  click(f.vp, f.vp->toWidget(gp_Pnt(500, 500, 1000)));  // the top
+  QCOMPARE(tool->picked(), std::size_t(1));
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  QCOMPARE(tool->picked(), std::size_t(0));
+  click(f.vp, f.vp->toWidget(gp_Pnt(500, 500, 1000)));
+  type(f.vp, QStringLiteral("100"));  // typed into the view, as the user does
+  QTest::qWait(30);
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  const double v = geom::volume(m.document().worldShape(*m.document().find(box)));
+  QVERIFY2(std::abs(v - (1e9 - 800.0 * 800 * 900)) < 10.0, qPrintable(QString::number(v, 'f', 1)));
+}
+
+// docs/47: Sweep2 - rail 1, rail 2 clicked; the curve touching both is
+// taken as the profile at once (blue); Enter makes it, the curves stay.
+void GuiPhase1::sweep2RolesAndTouchingProfiles() {
+  Fixture f;
+  QVERIFY(f.setUp(1500, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId rail1 = *m.createPolyline({gp_Pnt(0, 0, 0), gp_Pnt(3000, 0, 0)});
+  const doc::ObjectId rail2 = *m.createPolyline({gp_Pnt(0, 1000, 0), gp_Pnt(3000, 1000, 0)});
+  const doc::ObjectId profile = *m.createCurve({gp_Pnt(0, 0, 0), gp_Pnt(0, 500, 400), gp_Pnt(0, 1000, 0)}, false);
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::Sweep2);
+  auto* tool = dynamic_cast<SurfaceTool*>(f.window.activeTool());
+  QVERIFY(tool);
+  click(f.vp, f.vp->toWidget(gp_Pnt(1500, 0, 0)));
+  QCOMPARE(tool->picked(), std::size_t(1));
+  QVERIFY(f.window.statusText().contains(QStringLiteral("2 本目")));
+  click(f.vp, f.vp->toWidget(gp_Pnt(1500, 1000, 0)));
+  QCOMPARE(tool->picked(), std::size_t(3));  // the arch touching both, taken
+  QVERIFY(tool->previewOk());
+  QCOMPARE(f.vp->roleShapeCount(), std::size_t(3));
+  const std::size_t steps = m.history().undoCount();
+  QTest::keyClick(f.vp, Qt::Key_Return);
+  QTest::qWait(30);
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.history().undoCount(), steps + 1);
+  QCOMPARE(f.window.selection().size(), std::size_t(1));
+  const doc::Object* made = m.document().find(f.window.selection().front());
+  QVERIFY(made && std::holds_alternative<doc::Sweep2Feature>(made->recipe.base));
+  QVERIFY(m.document().find(rail1) && m.document().find(rail2) && m.document().find(profile));
+}
+
+// docs/47: Edge surface - the 4th curve clicked makes it at once.
+void GuiPhase1::edgeSurfaceFourthCurveMakesIt() {
+  Fixture f;
+  QVERIFY(f.setUp(500, 500));
+  doc::Modeler& m = f.window.modeler();
+  const gp_Pnt a(0, 0, 0), b(1000, 0, 200), c(1000, 1000, 0), d(0, 1000, 300);
+  for (const auto& [p, q] : {std::pair{a, b}, std::pair{b, c}, std::pair{c, d}, std::pair{d, a}}) {
+    QVERIFY(m.createPolyline({p, q}).ok());
+  }
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::EdgeSurface);
+  auto* tool = dynamic_cast<SurfaceTool*>(f.window.activeTool());
+  QVERIFY(tool);
+  const std::size_t objects = m.document().objects().size();
+  for (const auto& [p, q] : {std::pair{a, b}, std::pair{b, c}, std::pair{c, d}}) {
+    click(f.vp, f.vp->toWidget(gp_Pnt((p.XYZ() + q.XYZ()) / 2)));
+  }
+  QCOMPARE(tool->picked(), std::size_t(3));
+  QCOMPARE(m.document().objects().size(), objects);
+  click(f.vp, f.vp->toWidget(gp_Pnt((d.XYZ() + a.XYZ()) / 2)));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(), objects + 1);
+  QCOMPARE(tool->picked(), std::size_t(0));
+}
+
+// docs/47: right-click offers the operations that fit what is selected.
+void GuiPhase1::contextMenuOffersSurfaceOps() {
+  Fixture f;
+  QVERIFY(f.setUp(500, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+  f.vp->syncNow();
+  f.window.setSelection({box});
+  QMenu* menu = f.window.buildContextMenu(f.vp->toWidget(gp_Pnt(500, 500, 1000)));
+  QVERIFY(menu->findChild<QAction*>(QStringLiteral("contextFilletAction")));
+  QVERIFY(menu->findChild<QAction*>(QStringLiteral("contextShellAction")));
+  QVERIFY(!menu->findChild<QAction*>(QStringLiteral("contextPatchAction")));
+  delete menu;
+  const doc::ObjectId l1 = *m.createPolyline({gp_Pnt(3000, 0, 0), gp_Pnt(4000, 0, 0)});
+  const doc::ObjectId l2 = *m.createPolyline({gp_Pnt(3000, 1000, 0), gp_Pnt(4000, 1000, 300)});
+  f.vp->syncNow();
+  f.window.setSelection({l1, l2});
+  menu = f.window.buildContextMenu(f.vp->toWidget(gp_Pnt(3500, 0, 0)));
+  QAction* edge = menu->findChild<QAction*>(QStringLiteral("contextEdgeSurfaceAction"));
+  QVERIFY(edge);
+  QVERIFY(!menu->findChild<QAction*>(QStringLiteral("contextFilletAction")));
+  edge->trigger();
+  auto* tool = dynamic_cast<SurfaceTool*>(f.window.activeTool());
+  QVERIFY(tool && tool->kind() == SurfaceTool::Kind::EdgeSurface);
+  QCOMPARE(tool->picked(), std::size_t(2));  // selected first: taken in
+  QVERIFY(tool->previewOk());
+  delete menu;
 }

@@ -140,6 +140,18 @@ struct SweepFeature {
   std::vector<BooleanOperand> inputs;
 };
 
+// Sweep2 (docs/47): inputs[0], inputs[1] = the rails, then the profiles.
+struct Sweep2Feature {
+  std::vector<BooleanOperand> inputs;
+};
+
+// A surface from boundary curves (docs/47): EdgeSrf (2-4 curves) or, with
+// `patch`, a smooth patch over one closed outline of any number of curves.
+struct FillSurfaceFeature {
+  std::vector<BooleanOperand> curves;
+  bool patch = false;
+};
+
 // Face bounded by curves (lines, arcs, NURBS) chained into a closed loop.
 // The curves are snapshots, so e.g. an arc's bulge stays editable
 // ("in<i>.bulge").
@@ -266,9 +278,32 @@ struct ComponentInstance {
 using BaseFeature = std::variant<RectangleProfile, CircleProfile, PolygonProfile, PolylineCurve, InterpolatedCurve,
                                  ArcCurve, LinearDimension, TextNote, GuideLine, ImageUnderlay, ImportedShape,
                                  BooleanFeature, LoftFeature, SweepFeature, LoopProfile, FacePart, GroupNode,
-                                 ComponentInstance, RegularPolygonProfile, SewnFeature, LinearMember>;
+                                 ComponentInstance, RegularPolygonProfile, SewnFeature, LinearMember, Sweep2Feature,
+                                 FillSurfaceFeature>;
 
 // --- Modifiers ------------------------------------------------------------
+// An edge of the shape before the modifier, told by a point in its middle
+// and the direction there (local coordinates; see geom::findEdge).
+struct EdgeRef {
+  gp_Pnt point;
+  gp_Dir direction{1, 0, 0};
+};
+
+// Edges rounded (fillet, radius `distance`) or bevelled (chamfer, both
+// sides `distance`), docs/47. The size stays editable ("op<i>.distance").
+struct FilletOp {
+  std::vector<EdgeRef> edges;
+  double distance = 0.0;
+  bool chamfer = false;
+};
+
+// The solid hollowed to walls `distance` thick, these faces left open
+// (Rhino's Shell, docs/47).
+struct ShellOp {
+  std::vector<geom::SurfaceRef> faces;
+  double distance = 0.0;
+};
+
 // Extrudes the profile face along its normal. Must be the first modifier.
 struct ExtrudeOp {
   double distance = 0.0;  // signed, relative to the profile normal
@@ -386,7 +421,7 @@ struct InsetOp {
 
 using Modifier = std::variant<ExtrudeOp, PushPullOp, OffsetOp, RevolveOp, SplitOp, OffsetFaceOp, HoleOp, ScaleOp,
                               RemoveFaceOp, CapHolesOp, ReverseOp, MoveVerticesOp, InsetOp, StretchOp,
-                              MergeAcrossOp, CurveIntervalOp, ImprintOp>;
+                              MergeAcrossOp, CurveIntervalOp, ImprintOp, FilletOp, ShellOp>;
 
 struct Recipe {
   BaseFeature base;

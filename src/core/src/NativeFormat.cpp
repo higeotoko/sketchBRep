@@ -300,6 +300,20 @@ json baseToJson(const BaseFeature& base) {
             }
             return json{{"type", "sweep"}, {"inputs", inputs}};
           },
+          [](const Sweep2Feature& f) {
+            json inputs = json::array();
+            for (const BooleanOperand& o : f.inputs) {
+              inputs.push_back({{"name", o.name}, {"placement", toJson(o.placement)}, sharedRecipe(o.recipe)});
+            }
+            return json{{"type", "sweep2"}, {"inputs", inputs}};
+          },
+          [](const FillSurfaceFeature& f) {
+            json curves = json::array();
+            for (const BooleanOperand& o : f.curves) {
+              curves.push_back({{"name", o.name}, {"placement", toJson(o.placement)}, sharedRecipe(o.recipe)});
+            }
+            return json{{"type", f.patch ? "patch" : "edgesurface"}, {"curves", curves}};
+          },
           [](const GroupNode& g) {
             json j = {{"type", "group"}};
             if (!g.editingDefinition.empty()) {
@@ -511,6 +525,21 @@ BaseFeature baseFrom(const json& j) {
     f.inside = pointFrom(j.at("inside"));
     return f;
   }
+  if (type == "sweep2") {
+    Sweep2Feature f;
+    for (const json& o : j.at("inputs")) {
+      f.inputs.push_back(BooleanOperand{sharedRecipeFrom(o), trsfFrom(o.at("placement")), o.value("name", std::string())});
+    }
+    return f;
+  }
+  if (type == "patch" || type == "edgesurface") {
+    FillSurfaceFeature f;
+    f.patch = type == "patch";
+    for (const json& o : j.at("curves")) {
+      f.curves.push_back(BooleanOperand{sharedRecipeFrom(o), trsfFrom(o.at("placement")), o.value("name", std::string())});
+    }
+    return f;
+  }
   if (type == "sweep") {
     SweepFeature f;
     for (const json& o : j.at("inputs")) {
@@ -598,6 +627,16 @@ json modifierToJson(const Modifier& m) {
             if (op.part) j["part"] = true;
             return j;
           },
+          [](const FilletOp& op) {
+            json edges = json::array();
+            for (const EdgeRef& e : op.edges) edges.push_back({{"point", toJson(e.point)}, {"direction", toJson(e.direction)}});
+            return json{{"type", op.chamfer ? "chamfer" : "fillet"}, {"distance", op.distance}, {"edges", edges}};
+          },
+          [](const ShellOp& op) {
+            json faces = json::array();
+            for (const geom::SurfaceRef& f : op.faces) faces.push_back(surfaceRefToJson(f));
+            return json{{"type", "shell"}, {"distance", op.distance}, {"faces", faces}};
+          },
           [](const InsetOp& op) {
             return json{{"type", "inset"}, {"distance", op.distance}, {"face", faceRefToJson(op.face)}};
           },
@@ -667,6 +706,19 @@ Modifier modifierFrom(const json& j) {
   if (type == "hole") {
     return HoleOp{BooleanOperand{sharedRecipeFrom(j),
                                  trsfFrom(j.at("placement")), j.value("name", std::string())}};
+  }
+  if (type == "fillet" || type == "chamfer") {
+    FilletOp op;
+    op.chamfer = type == "chamfer";
+    op.distance = j.at("distance").get<double>();
+    for (const json& e : j.at("edges")) op.edges.push_back({pointFrom(e.at("point")), dirFrom(e.at("direction"))});
+    return op;
+  }
+  if (type == "shell") {
+    ShellOp op;
+    op.distance = j.at("distance").get<double>();
+    for (const json& f : j.at("faces")) op.faces.push_back(surfaceRefFrom(f));
+    return op;
   }
   if (type == "offsetface") {
     OffsetFaceOp op;

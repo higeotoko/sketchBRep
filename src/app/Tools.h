@@ -1253,4 +1253,69 @@ class OffsetTool : public Tool {
   std::optional<LastOffset> last_;
 };
 
+// Rhino-style operations (docs/47) by role-guided clicks. Inputs may be
+// selected first or clicked in the tool; the status bar says what to click
+// next, the picked inputs show in their role's colour, the result is
+// previewed before it is made, Esc takes the last pick back.
+// - Sweep2: rail 1 (red), rail 2 (green), then profiles (blue; curves
+//   touching both rails are taken at once), Enter makes it.
+// - Edge surface: 2-4 curves or edges; the 4th makes it, Enter for 2-3.
+// - Patch: the curves / edges of one closed outline, Enter makes it.
+// - Fillet / chamfer: edges of a solid (Shift adds, double-click takes the
+//   smoothly joined run), type the size + Enter. Typed right after, the
+//   size of what was just made changes.
+// - Shell: faces of a solid to leave open (Shift adds; none = closed
+//   hollow), type the wall thickness + Enter; retyping right after changes it.
+class SurfaceTool : public Tool {
+ public:
+  enum class Kind { Sweep2, EdgeSurface, Patch, Fillet, Chamfer, Shell };
+  SurfaceTool(ToolHost& host, Kind kind) : Tool(host), kind_(kind) {}
+  QString name() const override;
+  QCursor cursor() const override;
+  void activate() override;
+  void cancel() override;
+  bool stepBack() override;
+  void mousePress(const ToolEvent& e) override;
+  bool mouseDoubleClick(const ToolEvent& e) override;
+  // Enter: a value typed makes it with that size; Enter alone makes it
+  // with the size shown (MainWindow passes an empty text then).
+  void applyMeasurement(const QString& text) override;
+  QString constraintText() const override;
+  // For checks.
+  Kind kind() const { return kind_; }
+  std::size_t picked() const { return picks_.size(); }
+  double size() const { return size_; }
+  bool previewOk() const { return previewOk_; }
+  // Makes it from what is picked now (Enter).
+  void commit();
+
+ private:
+  struct Pick {
+    doc::ObjectId object;     // with the element as picked (an edge / face)
+    int type = 0;             // TopAbs_EDGE / TopAbs_FACE
+    int index = 0;
+    bool whole = false;       // a curve object taken whole
+    TopoDS_Shape shape;       // world
+  };
+  bool edgeKind() const { return kind_ == Kind::Fillet || kind_ == Kind::Chamfer; }
+  bool curveKind() const { return kind_ == Kind::Sweep2 || kind_ == Kind::EdgeSurface || kind_ == Kind::Patch; }
+  std::optional<Pick> pickAt(const ToolEvent& e, QString* why) const;
+  void addPick(const Pick& p, bool add);
+  void takeTouchingProfiles();
+  void refresh();
+  QString prompt() const;
+  QString sizeLabel() const;
+  std::vector<doc::Modeler::CurvePick> curvePicks(std::size_t from, std::size_t to) const;
+
+  Kind kind_;
+  std::vector<Pick> picks_;
+  std::optional<doc::ObjectId> target_;  // fillet / chamfer / shell: the solid
+  double size_ = 0.0;
+  bool previewOk_ = false;
+  QString previewError_;
+  // What was just made, for a value typed right after.
+  doc::ObjectId recentObject_;
+  std::string recentKey_;
+};
+
 }  // namespace sbr::app

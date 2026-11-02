@@ -2086,6 +2086,25 @@ void Viewport::setPreview(const TopoDS_Shape& shape, bool solid, bool unclipped)
 
 void Viewport::clearPreview() { setPreview(TopoDS_Shape()); }
 
+void Viewport::setRoleShapes(const std::vector<std::pair<TopoDS_Shape, Quantity_Color>>& shapes) {
+  if (view_.IsNull()) return;
+  for (const Handle(AIS_Shape)& r : roles_) context_->Remove(r, Standard_False);
+  roles_.clear();
+  for (const auto& [shape, color] : shapes) {
+    if (shape.IsNull()) continue;
+    Handle(AIS_Shape) r = new AIS_Shape(shape);
+    r->SetColor(color);
+    r->SetWidth(4.0);
+    r->SetZLayer(Graphic3d_ZLayerId_Topmost);
+    const bool face = TopExp_Explorer(shape, TopAbs_FACE).More();
+    if (face) r->SetTransparency(0.5);
+    context_->Display(r, face ? AIS_Shaded : AIS_WireFrame, -1, Standard_False);
+    context_->Deactivate(r);
+    roles_.push_back(r);
+  }
+  redraw();
+}
+
 void Viewport::setGhost(const std::vector<doc::ObjectId>& ids, const gp_Trsf& delta) {
   const bool scaled = std::abs(delta.ScaleFactor() - 1.0) > 1e-12;
   TopoDS_Compound compound;

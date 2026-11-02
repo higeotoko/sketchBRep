@@ -416,6 +416,14 @@ TopoDS_Edge selectEdge(const doc::Modeler& m, const ObjectId& id, const json& se
   return TopoDS::Edge(edges(scored.front().second));
 }
 
+// A curve input: an object id (the whole curve) or {"id", "edge"} for one edge of it.
+doc::Modeler::CurvePick curvePick(const doc::Modeler& m, const json& item) {
+  if (item.is_string()) return {item.get<std::string>(), std::nullopt};
+  const ObjectId id = text(item, "id");
+  if (!item.contains("edge")) return {id, std::nullopt};
+  return {id, selectEdge(m, id, item.at("edge"))};
+}
+
 // The selection as the GUI holds it ('ids' whole, 'elements' = faces /
 // edges picked on an object), shared by delete and copy.
 std::vector<doc::DeleteTarget> selectionTargets(const doc::Modeler& m, const json& a) {
@@ -1400,6 +1408,69 @@ const std::vector<CommandDef>& commands() {
                "required": ["profile", "path"]}),
        [](doc::Modeler& m, const json& a) {
          return idResult(must(m.sweepObject(text(a, "profile"), text(a, "path"))));
+       }},
+      {"sweep2",
+       "Rhino's Sweep2: 'profiles' (curves or faces) swept along 'rail1' while kept touching 'rail2', each "
+       "turned and stretched to span the rails. Each of rail1 / rail2 / profiles items is an object id "
+       "(a curve) or {\"id\": object, \"edge\": index or {\"near\": [x,y,z]}} for one edge of it. The inputs "
+       "stay; the result is a new object (closed profiles give a solid).",
+       SCHEMA({"type": "object", "properties": {"rail1": {}, "rail2": {}, "profiles": {"type": "array"}},
+               "required": ["rail1", "rail2", "profiles"]}),
+       [](doc::Modeler& m, const json& a) {
+         std::vector<doc::Modeler::CurvePick> profiles;
+         for (const json& p : arg(a, "profiles")) profiles.push_back(curvePick(m, p));
+         return idResult(must(m.sweep2(curvePick(m, arg(a, "rail1")), curvePick(m, arg(a, "rail2")), profiles)));
+       }},
+      {"edge_surface",
+       "Rhino's EdgeSrf: a surface from 2, 3 or 4 boundary curves ('curves': ids or {\"id\", \"edge\"} picks). "
+       "Two are joined straight across; three or four must meet end to end. The curves stay.",
+       SCHEMA({"type": "object", "properties": {"curves": {"type": "array"}}, "required": ["curves"]}),
+       [](doc::Modeler& m, const json& a) {
+         std::vector<doc::Modeler::CurvePick> curves;
+         for (const json& p : arg(a, "curves")) curves.push_back(curvePick(m, p));
+         return idResult(must(m.surfaceFromCurves(curves, false)));
+       }},
+      {"patch",
+       "Rhino's Patch: a smooth surface over one closed outline of any number of curves ('curves': ids or "
+       "{\"id\", \"edge\"} picks); a flat outline gives a flat face. The curves stay.",
+       SCHEMA({"type": "object", "properties": {"curves": {"type": "array"}}, "required": ["curves"]}),
+       [](doc::Modeler& m, const json& a) {
+         std::vector<doc::Modeler::CurvePick> curves;
+         for (const json& p : arg(a, "curves")) curves.push_back(curvePick(m, p));
+         return idResult(must(m.surfaceFromCurves(curves, true)));
+       }},
+      {"fillet_edges",
+       "Round edges of a solid: 'edges' are edge indices or {\"near\": [x,y,z]} selectors, 'radius' in mm. "
+       "Returns the parameter key; set_parameter changes the radius later.",
+       SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "edges": {"type": "array"},
+               "radius": {"type": "number"}}, "required": ["id", "edges", "radius"]}),
+       [](doc::Modeler& m, const json& a) {
+         const ObjectId id = text(a, "id");
+         std::vector<TopoDS_Edge> edges;
+         for (const json& e : arg(a, "edges")) edges.push_back(selectEdge(m, id, e));
+         return json{{"id", id}, {"parameter", must(m.roundEdges(id, edges, number(a, "radius"), false))}};
+       }},
+      {"chamfer_edges",
+       "Bevel edges of a solid by equal distances: 'edges' as fillet_edges, 'size' in mm. Returns the "
+       "parameter key.",
+       SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "edges": {"type": "array"},
+               "size": {"type": "number"}}, "required": ["id", "edges", "size"]}),
+       [](doc::Modeler& m, const json& a) {
+         const ObjectId id = text(a, "id");
+         std::vector<TopoDS_Edge> edges;
+         for (const json& e : arg(a, "edges")) edges.push_back(selectEdge(m, id, e));
+         return json{{"id", id}, {"parameter", must(m.roundEdges(id, edges, number(a, "size"), true))}};
+       }},
+      {"shell",
+       "Rhino's Shell: hollow a solid to walls 'thickness' mm thick, the faces in 'open' (face indices or "
+       "{\"normal\": [...]} / {\"near\": [...]} selectors) left open. Returns the parameter key.",
+       SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "open": {"type": "array"},
+               "thickness": {"type": "number"}}, "required": ["id", "open", "thickness"]}),
+       [](doc::Modeler& m, const json& a) {
+         const ObjectId id = text(a, "id");
+         std::vector<TopoDS_Face> faces;
+         for (const json& f : arg(a, "open")) faces.push_back(selectFace(m, id, f));
+         return json{{"id", id}, {"parameter", must(m.shellSolid(id, faces, number(a, "thickness")))}};
        }},
 
       // ---- structure & attributes

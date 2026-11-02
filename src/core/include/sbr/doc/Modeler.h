@@ -662,6 +662,27 @@ class Modeler {
   // other shapes produce a new non-parametric object.
   Result<ObjectId> revolveObject(const ObjectId& profile, const gp_Ax1& axis, double angleRadians);
   Result<ObjectId> sweepObject(const ObjectId& profile, const ObjectId& spine);
+
+  // --- Rhino-style surfaces and edge operations (docs/47) ---------------------
+  // A curve to build from: a whole curve object (kept parametric: editing
+  // it later edits the input), or one edge of any object (world, a copy).
+  struct CurvePick {
+    ObjectId id;
+    std::optional<TopoDS_Edge> edge;
+  };
+  // Profiles along rail1, keeping touch with rail2 (Sweep2). A new object;
+  // the curves stay.
+  Result<ObjectId> sweep2(const CurvePick& rail1, const CurvePick& rail2, const std::vector<CurvePick>& profiles);
+  // EdgeSrf (2-4 curves) or, with `patch`, a smooth patch over one closed
+  // outline. A new object; the curves stay.
+  Result<ObjectId> surfaceFromCurves(const std::vector<CurvePick>& curves, bool patch);
+  // Edges of a solid (world edges) rounded / bevelled; the size stays
+  // editable: returns its parameter key (setParameter). One undo step.
+  Result<std::string> roundEdges(const ObjectId& id, const std::vector<TopoDS_Edge>& worldEdges, double size,
+                                 bool chamfer);
+  // The solid hollowed, these faces (world) left open; returns the
+  // thickness's parameter key. One undo step.
+  Result<std::string> shellSolid(const ObjectId& id, const std::vector<TopoDS_Face>& worldFaces, double thickness);
   // Replaces the through-points of a NURBS curve object (local coordinates).
   Status setCurvePoints(const ObjectId& id, const std::vector<gp_Pnt>& points);
 

@@ -24,6 +24,7 @@
 
 #include "sbr/geom/Annotation.h"
 #include "sbr/geom/Freeform.h"
+#include "sbr/geom/Surfaces.h"
 #include "sbr/geom/Operations.h"
 #include "sbr/geom/Validation.h"
 
@@ -276,6 +277,35 @@ Result<TopoDS_Shape> buildBase(const BaseFeature& base, const RegenContext& cont
             if (!path.More()) return Result<TopoDS_Shape>::failure("Sweep path must be a curve");
             return geom::sweep(placed[0], TopoDS::Wire(path.Current()));
           },
+          [&](const Sweep2Feature& f) -> Result<TopoDS_Shape> {
+            if (f.inputs.size() < 3) return Result<TopoDS_Shape>::failure("Sweep2 needs two rails and a profile");
+            std::vector<TopoDS_Shape> placed;
+            for (const BooleanOperand& in : f.inputs) {
+              if (!in.recipe) return Result<TopoDS_Shape>::failure("Sweep2 input missing");
+              auto shape = regenerateShared(in.recipe, context);
+              if (!shape) return Result<TopoDS_Shape>::failure("'" + in.name + "': " + shape.error());
+              placed.push_back(shape->Moved(TopLoc_Location(in.placement)));
+            }
+            auto rail = [&](int i) -> Result<TopoDS_Wire> {
+              auto w = geom::curveWire(placed[i]);
+              if (!w) return Result<TopoDS_Wire>::failure("Rail " + std::to_string(i + 1) + ": " + w.error());
+              return w;
+            };
+            auto r1 = rail(0), r2 = rail(1);
+            if (!r1) return Result<TopoDS_Shape>::failure(r1.error());
+            if (!r2) return Result<TopoDS_Shape>::failure(r2.error());
+            return geom::sweep2(*r1, *r2, std::vector<TopoDS_Shape>(placed.begin() + 2, placed.end()));
+          },
+          [&](const FillSurfaceFeature& f) -> Result<TopoDS_Shape> {
+            std::vector<TopoDS_Shape> placed;
+            for (const BooleanOperand& in : f.curves) {
+              if (!in.recipe) return Result<TopoDS_Shape>::failure("Boundary curve missing");
+              auto shape = regenerateShared(in.recipe, context);
+              if (!shape) return Result<TopoDS_Shape>::failure("'" + in.name + "': " + shape.error());
+              placed.push_back(shape->Moved(TopLoc_Location(in.placement)));
+            }
+            return f.patch ? geom::patchSurface(placed) : geom::surfaceFromEdges(placed);
+          },
           [&](const LoopProfile& l) -> Result<TopoDS_Shape> {
             std::vector<TopoDS_Shape> curves;
             for (const BooleanOperand& c : l.curves) {
@@ -339,6 +369,8 @@ const std::vector<BooleanOperand>* operandsOf(const BaseFeature& base) {
   if (const auto* b = std::get_if<BooleanFeature>(&base)) return &b->operands;
   if (const auto* l = std::get_if<LoftFeature>(&base)) return &l->sections;
   if (const auto* w = std::get_if<SweepFeature>(&base)) return &w->inputs;
+  if (const auto* w = std::get_if<Sweep2Feature>(&base)) return &w->inputs;
+  if (const auto* f = std::get_if<FillSurfaceFeature>(&base)) return &f->curves;
   if (const auto* l = std::get_if<LoopProfile>(&base)) return &l->curves;
   if (const auto* p = std::get_if<FacePart>(&base)) return &p->source;
   if (const auto* s = std::get_if<SewnFeature>(&base)) return &s->faces;
@@ -408,6 +440,24 @@ Result<TopoDS_Shape> regenerate(const Recipe& recipe, const RegenContext& contex
               auto cut = geom::cutHole(TopoDS::Face(shape), TopoDS::Face(placed));
               if (!cut) return Result<TopoDS_Shape>::failure(cut.error());
               return TopoDS_Shape(cut.value());
+            },
+            [&](const FilletOp& op) -> Result<TopoDS_Shape> {
+              std::vector<TopoDS_Edge> edges;
+              for (const EdgeRef& ref : op.edges) {
+                auto edge = geom::findEdge(shape, ref.point, ref.direction);
+                if (!edge) return Result<TopoDS_Shape>::failure(edge.error());
+                edges.push_back(*edge);
+              }
+              return geom::roundEdges(shape, edges, op.distance, op.chamfer);
+            },
+            [&](const ShellOp& op) -> Result<TopoDS_Shape> {
+              std::vector<TopoDS_Face> faces;
+              for (const geom::SurfaceRef& ref : op.faces) {
+                auto face = ref.resolve(shape);
+                if (!face) return Result<TopoDS_Shape>::failure(face.error());
+                faces.push_back(*face);
+              }
+              return geom::shellSolid(shape, faces, op.distance);
             },
             [&](const OffsetFaceOp& op) -> Result<TopoDS_Shape> {
               auto face = op.face.resolve(shape);
@@ -638,6 +688,10 @@ std::vector<Parameter> parameters(const Recipe& recipe) {
                      out.push_back({opKey(i), "Push/Pull " + std::to_string(i) + " distance",
                                     op.distance, true});
                    },
+                   [&](const FilletOp& op) {
+                     out.push_back({opKey(i), op.chamfer ? "Chamfer size" : "Fillet radius", op.distance, true});
+                   },
+                   [&](const ShellOp& op) { out.push_back({opKey(i), "Shell thickness", op.distance, true}); },
                },
                recipe.modifiers[i]);
   }
@@ -804,6 +858,10 @@ std::string describe(const Recipe& recipe) {
                  },
                  [&](const LoftFeature& l) { out << "Loft (" << l.sections.size() << " sections)"; },
                  [&](const SweepFeature&) { out << "Sweep"; },
+                 [&](const Sweep2Feature& f) { out << "Sweep2 (" << (f.inputs.size() > 2 ? f.inputs.size() - 2 : 0) << " profiles)"; },
+                 [&](const FillSurfaceFeature& f) {
+                   out << (f.patch ? "Patch (" : "Edge surface (") << f.curves.size() << " curves)";
+                 },
                  [&](const SewnFeature& s) { out << "Solid from " << s.faces.size() << " faces"; },
                  [&](const LoopProfile& l) { out << "Face (" << l.curves.size() << " edges)"; },
                  [&](const FacePart&) { out << "Face part"; },
@@ -830,6 +888,10 @@ std::string describe(const Recipe& recipe) {
                          << op.distance;
                    },
                    [&](const OffsetFaceOp& op) { out << " > Push/Pull (curved) " << op.distance; },
+                   [&](const FilletOp& op) {
+                     out << (op.chamfer ? " > Chamfer " : " > Fillet R") << op.distance << " (" << op.edges.size() << " edges)";
+                   },
+                   [&](const ShellOp& op) { out << " > Shell " << op.distance; },
                    [&](const OffsetOp& op) { out << " > Offset " << op.distance; },
                    [&](const InsetOp& op) { out << " > Offset on face " << op.distance; },
                    [&](const RevolveOp& op) { out << " > Revolve " << op.angle * 180.0 / M_PI << " deg"; },
