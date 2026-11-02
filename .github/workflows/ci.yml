@@ -237,6 +237,17 @@ jobs:
             $pkgDir = $meta.extracted_package_dir
             if (-not $pkgDir -or -not (Test-Path $pkgDir)) { $pkgDir = Join-Path $env:MAMBA_ROOT_PREFIX "pkgs\$($meta.name)-$($meta.version)-$($meta.build)" }
             $source = Join-Path $pkgDir "info\licenses"
+            if (-not (Test-Path $source) -and $meta.url) {
+              # Not in the package cache (environment restored from the CI
+              # cache): the package itself, unpacked by micromamba.
+              $file = Join-Path $env:RUNNER_TEMP ([IO.Path]::GetFileName($meta.url))
+              $unpacked = Join-Path $env:RUNNER_TEMP ("pkg-" + $meta.name)
+              try {
+                Invoke-WebRequest -Uri $meta.url -OutFile $file
+                & $env:MAMBA_EXE package extract $file $unpacked | Out-Null
+                $source = Join-Path $unpacked "info\licenses"
+              } catch { Write-Host "Could not fetch $($meta.name): $_" }
+            }
             if (Test-Path $source) {
               Copy-Item $source (Join-Path $licences $meta.name) -Recurse
             } elseif ($meta.name -like "api-ms-win-*" -or $meta.name -eq "ucrt") {
