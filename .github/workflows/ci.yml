@@ -274,6 +274,10 @@ jobs:
             }
             $rows += "| $($meta.name) | $($meta.version) | $($meta.license) | licenses/$($meta.name) |"
           }
+          # Texts the packages leave out: OCCT's exception to the LGPL, and the
+          # GPL 3 that the LGPL 3 (Qt) is written as additions to.
+          if (Test-Path "$licences\occt") { Copy-Item packaging\licenses\OCCT_LGPL_EXCEPTION.txt "$licences\occt" }
+          if (Test-Path "$licences\qt6-main") { Copy-Item packaging\licenses\GPL-3.0.txt "$licences\qt6-main" }
           $opennurbs = Get-ChildItem build -Recurse -Filter LICENSE -ErrorAction SilentlyContinue |
                        Where-Object { $_.FullName -match "opennurbs" } | Select-Object -First 1
           if ($opennurbs) {
