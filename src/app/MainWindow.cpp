@@ -653,6 +653,9 @@ void MainWindow::buildMenus() {
   file->addAction(tr("開く(&O)..."), QKeySequence::Open, this, &MainWindow::open);
   file->addAction(tr("保存(&S)"), QKeySequence::Save, this, &MainWindow::save);
   file->addAction(tr("名前を付けて保存(&A)..."), QKeySequence::SaveAs, this, &MainWindow::saveAs);
+  QMenu* recent = file->addMenu(tr("最近使ったファイル"));
+  recent->setObjectName(QStringLiteral("recentFilesMenu"));
+  connect(recent, &QMenu::aboutToShow, this, [this, recent] { fillRecentFilesMenu(recent); });
   file->addSeparator();
   file->addAction(tr("インポート..."),this,&MainWindow::importFile);
   file->addAction(tr("エクスポート..."),this,&MainWindow::exportFile);
@@ -3901,6 +3904,7 @@ bool MainWindow::openFile(const QString& path) {
   }
   startRecipeVerification();
   currentPath_ = path;
+  rememberRecentFile(path);
   setSelection({});
   viewport_->syncNow();
   viewport_->restoreCamera(modeler_.document().settings().camera);
@@ -4012,6 +4016,7 @@ bool MainWindow::saveFile(const QString& path) {
     return false;
   }
   currentPath_ = path;
+  rememberRecentFile(path);
   updateTitle();
   clearRecovery();  // the work is in its file now
   statusBar()->showMessage(tr("保存しました: %1").arg(path), 4000);
@@ -4378,5 +4383,45 @@ void MainWindow::showDrawingDialog() {
   DrawingDialog dialog(modeler_.document(), this);
   dialog.resize(1100, 720);
   dialog.exec();
+}
+}  // namespace sbr::app
+
+namespace sbr::app {
+QStringList MainWindow::recentFiles() const {
+  QStringList out;
+  for (const QString& p : QSettings().value("file/recent").toStringList()) {
+    if (QFileInfo::exists(p)) out << p;
+  }
+  return out;
+}
+
+void MainWindow::rememberRecentFile(const QString& path) {
+  QStringList list = QSettings().value("file/recent").toStringList();
+  const QString absolute = QFileInfo(path).absoluteFilePath();
+  list.removeAll(absolute);
+  list.prepend(absolute);
+  while (list.size() > 10) list.removeLast();
+  QSettings().setValue("file/recent", list);
+}
+
+void MainWindow::fillRecentFilesMenu(QMenu* menu) {
+  menu->clear();
+  const QStringList files = recentFiles();
+  if (files.isEmpty()) {
+    menu->addAction(tr("（まだありません）"))->setEnabled(false);
+    return;
+  }
+  int n = 1;
+  for (const QString& p : files) {
+    const QString label = QStringLiteral("&%1 %2").arg(n % 10).arg(QFileInfo(p).fileName());
+    QAction* a = menu->addAction(label, this, [this, p] {
+      if (maybeSave()) openFile(p);
+    });
+    a->setToolTip(QDir::toNativeSeparators(p));
+    a->setStatusTip(QDir::toNativeSeparators(p));
+    ++n;
+  }
+  menu->addSeparator();
+  menu->addAction(tr("一覧を消去"), this, [] { QSettings().remove("file/recent"); });
 }
 }  // namespace sbr::app

@@ -9,6 +9,7 @@
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <nlohmann/json.hpp>
+#include "sbr/TextEncoding.h"
 #include "sbr/doc/Modeler.h"
 #include "sbr/api/CommandApi.h"
 
@@ -318,4 +319,36 @@ TEST(Dxf, GroupedImportedOpenOutlineCanBeClosedManually) {
   auto face=m.faceFromSelection(wholeCurves(selected)); ASSERT_TRUE(face)<<face.error();
   EXPECT_NEAR(faceArea(m.document().find(*face)->shape),2000000,1e-5);
   EXPECT_EQ(m.listObjects().size(),3u);
+}
+
+// Jw_cad and Japanese AutoCAD write older DXF in Shift_JIS (no version, or
+// $DWGCODEPAGE ANSI_932): layer and block names come in as Japanese.
+TEST(Dxf, ShiftJisLayersAsJwCadWritesThem) {
+  const std::string kabe = sbr::toShiftJis(u8"壁"), tategu = sbr::toShiftJis(u8"建具");
+  // Jw_cad style: no header version or code page.
+  auto parts = geom::readDxf(fixture("0\nLINE\n8\n" + kabe + "\n10\n0\n20\n0\n11\n10\n21\n0\n"));
+  ASSERT_TRUE(parts) << parts.error();
+  ASSERT_EQ(parts->size(), 1u);
+  EXPECT_EQ(parts->front().layer, u8"壁");
+  // R12 with the code page, a block named in Japanese.
+  const std::string path = ::testing::TempDir() + "dxf_sjis_r12.dxf";
+  {
+    std::ofstream f(path, std::ios::binary);
+    f << "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1009\n9\n$DWGCODEPAGE\n3\nANSI_932\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n"
+      << "0\nSECTION\n2\nBLOCKS\n0\nBLOCK\n2\n" << tategu << "\n10\n0\n20\n0\n0\nLINE\n8\n0\n10\n0\n20\n0\n11\n5\n21\n0\n0\nENDBLK\n0\nENDSEC\n"
+      << "0\nSECTION\n2\nENTITIES\n0\nINSERT\n2\n" << tategu << "\n8\n" << tategu << "\n10\n0\n20\n0\n0\nENDSEC\n0\nEOF\n";
+  }
+  geom::DxfImportReport report;
+  auto block = geom::readDxf(path, {}, &report);
+  ASSERT_TRUE(block) << block.error();
+  ASSERT_EQ(block->size(), 1u);
+  EXPECT_EQ(block->front().layer, u8"建具");
+  EXPECT_EQ(report.convertedFrom, "Shift_JIS");
+  // Another code page is still refused (names would be garbled).
+  {
+    std::ofstream f(path, std::ios::binary);
+    f << "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1009\n9\n$DWGCODEPAGE\n3\nANSI_1251\n0\nENDSEC\n"
+      << "0\nSECTION\n2\nENTITIES\n0\nLINE\n8\n\xc0\xc1\n10\n0\n20\n0\n11\n1\n21\n0\n0\nENDSEC\n0\nEOF\n";
+  }
+  EXPECT_FALSE(geom::readDxf(path));
 }

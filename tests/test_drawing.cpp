@@ -18,6 +18,7 @@
 #include "sbr/api/CommandApi.h"
 #include "sbr/doc/Modeler.h"
 #include "sbr/draw/Drawing.h"
+#include "sbr/geom/Dxf.h"
 
 using namespace sbr;
 using namespace sbr::draw;
@@ -375,6 +376,12 @@ TEST(Drawing, WritesDxf) {
   EXPECT_GE(lines, 4);
   EXPECT_NE(text.find("\nSOLID\n"), std::string::npos);
   EXPECT_EQ(text.substr(text.size() - 4), "EOF\n");
+  // And read back by our own DXF import (Shift_JIS text, R12).
+  geom::DxfImportReport report;
+  const auto back = geom::readDxf(path, {}, &report);
+  ASSERT_TRUE(back) << back.error();
+  EXPECT_FALSE(back->empty());
+  EXPECT_EQ(report.convertedFrom, "Shift_JIS");
   std::remove(path.c_str());
 }
 

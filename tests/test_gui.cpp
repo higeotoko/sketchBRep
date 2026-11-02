@@ -291,6 +291,7 @@ class GuiPhase1 : public QObject {
   void verifyClip06PasteKeepsMaterialAndTag();
   void verifyGroup02InsideLeavesOutsideAlone();
   void drawingDialogPlanSectionElevationAndExport();
+  void recentFilesReopen();
   void panelDragPreviewKeepsTheModelViewStill();
   void panelMotionSettlesAfterNativeDock();
   void paletteResizeKeepsBackdropAcrossViewport();
@@ -8921,4 +8922,38 @@ void GuiPhase1::drawingDialogPlanSectionElevationAndExport() {
   QFile pdf(dir.filePath(QStringLiteral("drawing.pdf")));
   QVERIFY(pdf.open(QIODevice::ReadOnly));
   QVERIFY(pdf.read(5) == "%PDF-");
+}
+
+// File > recent files: saved and opened files, newest first; one click
+// opens it again; missing files are not offered.
+void GuiPhase1::recentFilesReopen() {
+  QSettings().remove("file/recent");
+  QTemporaryDir dir;
+  const QString a = dir.filePath(QStringLiteral("a.sbr")), b = dir.filePath(QStringLiteral("b.sbr"));
+  {
+    Fixture f;
+    QVERIFY(f.setUp(500, 500));
+    f.box(0, 0, 1000, 1000, 1000);
+    QVERIFY(f.window.saveFile(a));
+    f.box(2000, 0, 500, 500, 500);
+    QVERIFY(f.window.saveFile(b));
+    QCOMPARE(f.window.recentFiles(), (QStringList{QFileInfo(b).absoluteFilePath(), QFileInfo(a).absoluteFilePath()}));
+  }
+  Fixture f;
+  QVERIFY(f.setUp(500, 500));
+  auto* menu = f.window.findChild<QMenu*>(QStringLiteral("recentFilesMenu"));
+  QVERIFY(menu);
+  emit menu->aboutToShow();
+  QAction* second = nullptr;
+  for (QAction* x : menu->actions()) {
+    if (x->text().contains(QStringLiteral("a.sbr"))) second = x;
+  }
+  QVERIFY(second);
+  second->trigger();
+  QTest::qWait(50);
+  QCOMPARE(f.window.modeler().document().objects().size(), std::size_t(1));
+  QCOMPARE(f.window.recentFiles().front(), QFileInfo(a).absoluteFilePath());
+  QFile::remove(b);
+  QCOMPARE(f.window.recentFiles().size(), 1);
+  QSettings().remove("file/recent");
 }

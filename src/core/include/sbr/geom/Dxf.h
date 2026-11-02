@@ -19,6 +19,7 @@ struct DxfImportReport {
   bool unitsKnown = false;
   double scaleToMm = 1.0;
   std::map<std::string, int> omitted;
+  std::string convertedFrom;  // text read from this code page ("Shift_JIS", ...); empty: UTF-8 / ASCII
   bool incomplete() const { return !omitted.empty(); }
   std::string summary() const;
 };

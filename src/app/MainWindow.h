@@ -76,6 +76,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   void showAbout();
   // File > 2D drawings: plans, sections, elevations as PDF / DXF / JWW (docs/50).
   void showDrawingDialog();
+  // File > recent files (newest first, those still there; up to 10).
+  QStringList recentFiles() const;
   Tool* activeTool() const { return active_; }
   QLineEdit* measurementBox() const { return measurement_; }
   QString lastError() const { return lastError_; }
@@ -216,6 +218,8 @@ class MainWindow : public QMainWindow, public ToolHost {
  protected:
   void closeEvent(QCloseEvent* event) override;
   bool eventFilter(QObject* watched, QEvent* event) override;
+  void rememberRecentFile(const QString& path);
+  void fillRecentFilesMenu(QMenu* menu);
 
  private:
   std::string elementBasis(const doc::ObjectId& id) const;

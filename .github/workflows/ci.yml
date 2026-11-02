@@ -100,6 +100,7 @@ jobs:
           create-args: >-
             occt qt6-main nlohmann_json gtest
           cache-environment: true
+          cache-downloads: true
 
       # Qt tools (moc) and tests load the environment's DLLs.
       - name: Put environment DLLs on PATH
@@ -180,30 +181,32 @@ jobs:
           # TBB's allocator is loaded at run time, not linked.
           Get-ChildItem "$env_root\Library\bin" -Filter "tbbmalloc*.dll" | Copy-Item -Destination $dist
           if (-not (Test-Path "$dist\platforms\qwindows.dll")) { throw "qwindows.dll not found" }
-          Copy-Item README.md $dist
-          Copy-Item docs\31_planar_curve_splitting.md "$dist\PLANAR_CURVE_SPLITTING.md"
-          Copy-Item docs\39_curved_face_split.md "$dist\CURVED_FACE_SPLIT.md"
-          Copy-Item docs\40_members_stage_a.md "$dist\MEMBERS.md"
-          Copy-Item docs\41_members_stage_b.md "$dist\MEMBERS_STAGE_B.md"
-          Copy-Item docs\42_follow.md "$dist\FOLLOW.md"
-          Copy-Item docs\43_grid.md "$dist\GRID.md"
-          Copy-Item docs\44_plan_elevation_mode.md "$dist\PLAN_ELEVATION.md"
-          Copy-Item docs\45_levels.md "$dist\LEVELS.md"
-          Copy-Item docs\46_collada_sketchup.md "$dist\SKETCHUP_DAE.md"
-          Copy-Item docs\47_rhino_operations.md "$dist\RHINO_OPERATIONS.md"
-          Copy-Item docs\48_input_box_and_upright_shapes.md "$dist\INPUT_AND_UPRIGHT.md"
-          Copy-Item docs\49_verification_plan.md "$dist\VERIFY_CHECKLIST.md"
-          Copy-Item docs\50_drawings.md "$dist\DRAWINGS.md"
-          Copy-Item docs\32_unified_import_export.md "$dist\IMPORT_EXPORT.md"
-          Copy-Item docs\33_chatgpt_connection.md "$dist\CHATGPT_CONNECTION.md"
-          Copy-Item docs\34_sections_and_tools_palette.md "$dist\SECTIONS_AND_TOOLS.md"
-          Copy-Item docs\35_wheel_surface_navigation.md "$dist\WHEEL_NAVIGATION.md"
-          Copy-Item docs\36_palette_ui_and_cursors.md "$dist\PALETTE_AND_CURSORS.md"
-          Copy-Item docs\37_panel_docking.md "$dist\PANEL_DOCKING.md"
-          New-Item -ItemType Directory -Force "$dist\images" | Out-Null
-          Copy-Item docs\images\panel-dock-motion.mp4 "$dist\images"
-          Copy-Item docs\images\panel-dock-motion-phases.png "$dist\images"
-          Copy-Item docs\images\phase2.png $dist
+          # For users: the start guide, the terms, the licences at the top;
+          # the manual (one file per feature) in manual\.
+          Copy-Item packaging\00_START_HERE.md, packaging\EULA.md, packaging\THIRD_PARTY_NOTICES.md $dist
+          $manual = "$dist\manual"
+          New-Item -ItemType Directory -Force "$manual\images" | Out-Null
+          Copy-Item docs\31_planar_curve_splitting.md "$manual\PLANAR_CURVE_SPLITTING.md"
+          Copy-Item docs\39_curved_face_split.md "$manual\CURVED_FACE_SPLIT.md"
+          Copy-Item docs\40_members_stage_a.md "$manual\MEMBERS.md"
+          Copy-Item docs\41_members_stage_b.md "$manual\MEMBERS_STAGE_B.md"
+          Copy-Item docs\42_follow.md "$manual\FOLLOW.md"
+          Copy-Item docs\43_grid.md "$manual\GRID.md"
+          Copy-Item docs\44_plan_elevation_mode.md "$manual\PLAN_ELEVATION.md"
+          Copy-Item docs\45_levels.md "$manual\LEVELS.md"
+          Copy-Item docs\46_collada_sketchup.md "$manual\SKETCHUP_DAE.md"
+          Copy-Item docs\47_rhino_operations.md "$manual\RHINO_OPERATIONS.md"
+          Copy-Item docs\48_input_box_and_upright_shapes.md "$manual\INPUT_AND_UPRIGHT.md"
+          Copy-Item docs\49_verification_plan.md "$manual\VERIFY_CHECKLIST.md"
+          Copy-Item docs\50_drawings.md "$manual\DRAWINGS.md"
+          Copy-Item docs\32_unified_import_export.md "$manual\IMPORT_EXPORT.md"
+          Copy-Item docs\33_chatgpt_connection.md "$manual\CHATGPT_CONNECTION.md"
+          Copy-Item docs\34_sections_and_tools_palette.md "$manual\SECTIONS_AND_TOOLS.md"
+          Copy-Item docs\35_wheel_surface_navigation.md "$manual\WHEEL_NAVIGATION.md"
+          Copy-Item docs\36_palette_ui_and_cursors.md "$manual\PALETTE_AND_CURSORS.md"
+          Copy-Item docs\37_panel_docking.md "$manual\PANEL_DOCKING.md"
+          Copy-Item docs\images\panel-dock-motion.mp4 "$manual\images"
+          Copy-Item docs\images\panel-dock-motion-phases.png "$manual\images"
           New-Item -ItemType Directory -Force "$dist\examples\dxf" | Out-Null
           Copy-Item tests\data\dxf\small*.dxf "$dist\examples\dxf"
           Copy-Item docs\27_dxf_face_creation.md "$dist\examples\dxf\README.md"
@@ -211,6 +214,49 @@ jobs:
           Copy-Item docs\28_stl_export.md "$dist\examples\stl\README.md"
           New-Item -ItemType Directory -Force "$dist\examples\exchange" | Out-Null
           Copy-Item docs\30_geometry_exchange_formats.md "$dist\examples\exchange\README.md"
+
+      # Licences of everything shipped (LGPL and others require them):
+      # for each DLL in the zip, the conda package it came from, its licence
+      # files and a table of package, version and licence; openNURBS (built
+      # in) from its source. A shipped DLL without licence files stops here.
+      - name: Collect third-party licences
+        shell: pwsh
+        run: |
+          $env_root = "${{ steps.mamba.outputs.environment-path }}"
+          $dist = "dist\SketchBRep"
+          $licences = "$dist\licenses"
+          New-Item -ItemType Directory -Force $licences | Out-Null
+          $shipped = @{}
+          Get-ChildItem $dist -Recurse -Include *.dll | ForEach-Object { $shipped[$_.Name.ToLowerInvariant()] = $true }
+          $rows = @()
+          $missing = @()
+          foreach ($metaFile in Get-ChildItem "$env_root\conda-meta" -Filter *.json) {
+            $meta = Get-Content $metaFile.FullName -Raw | ConvertFrom-Json
+            $hits = @($meta.files | Where-Object { $shipped.ContainsKey([IO.Path]::GetFileName($_).ToLowerInvariant()) })
+            if ($hits.Count -eq 0) { continue }
+            $pkgDir = $meta.extracted_package_dir
+            if (-not $pkgDir -or -not (Test-Path $pkgDir)) { $pkgDir = Join-Path $env:MAMBA_ROOT_PREFIX "pkgs\$($meta.name)-$($meta.version)-$($meta.build)" }
+            $source = Join-Path $pkgDir "info\licenses"
+            if (Test-Path $source) {
+              Copy-Item $source (Join-Path $licences $meta.name) -Recurse
+            } elseif ($meta.name -like "api-ms-win-*" -or $meta.name -eq "ucrt") {
+              # Windows' own runtime: no separate licence text.
+            } else {
+              $missing += $meta.name
+            }
+            $rows += "| $($meta.name) | $($meta.version) | $($meta.license) | licenses/$($meta.name) |"
+          }
+          $opennurbs = Get-ChildItem build -Recurse -Filter LICENSE -ErrorAction SilentlyContinue |
+                       Where-Object { $_.FullName -match "opennurbs" } | Select-Object -First 1
+          if ($opennurbs) {
+            New-Item -ItemType Directory -Force "$licences\opennurbs" | Out-Null
+            Copy-Item $opennurbs.FullName "$licences\opennurbs\LICENSE"
+            $rows += "| opennurbs (built in, with zlib and FreeType) | eb92af3 | openNURBS licence (MIT style) | licenses/opennurbs |"
+          } else { $missing += "opennurbs" }
+          $table = @("# Shipped libraries", "", "| Package | Version | Licence | Licence files |", "|---|---|---|---|") + ($rows | Sort-Object)
+          Set-Content -Path "$licences\PACKAGES.md" -Value $table -Encoding utf8
+          Write-Host ("Licences collected for {0} packages" -f $rows.Count)
+          if ($missing.Count -gt 0) { throw ("No licence files for: " + ($missing -join ", ")) }
 
       - name: Check that every DLL dependency in the zip resolves
         shell: pwsh

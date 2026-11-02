@@ -1,3 +1,4 @@
+#include "sbr/TextEncoding.h"
 #include "sbr/geom/Dxf.h"
 #include "sbr/KernelError.h"
 #include "sbr/geom/Profile.h"
@@ -237,6 +238,7 @@ std::string DxfImportReport::summary() const {
   if (!unitsKnown) out << " (unitless override)";
   for (const auto& [type, count] : omitted) out << "; omitted " << type << ": " << count;
   if (paperSpace) out << "; paper space: " << paperSpace;
+  if (!convertedFrom.empty()) out << "; text read as " << convertedFrom;
   return out.str();
 }
 
@@ -311,9 +313,52 @@ Result<std::vector<NamedShape>> readDxf(const std::string& path, const DxfImport
     if (!section.empty() || !entitySection) throw std::runtime_error("DXF ENTITIES section missing or incomplete");
     // Modern DXF is UTF-8 regardless of DWGCODEPAGE. Older raw code pages
     // need explicit conversion, rather than making corrupted UTF-8 tag names.
+    // Older DXF in a code page: Japanese (ANSI_932, and files that do not
+    // say, as Jw_cad writes them) and Western (ANSI_1252) are converted;
+    // others are refused rather than read as broken names.
     if (version < "AC1021" && codepage != "UTF-8") {
-      for (const auto& item : pairs) for (unsigned char c : item.value)
-        if (c >= 128) throw std::runtime_error("Legacy DXF text encoding: export UTF-8 (AutoCAD 2007+) DXF first");
+      bool raw = false;
+      for (const auto& item : pairs) for (unsigned char c : item.value) raw = raw || c >= 128;
+      if (raw) {
+        const bool japanese = codepage.empty() || codepage == "ANSI_932" || codepage == "DOS932";
+        const bool western = codepage == "ANSI_1252";
+        if (!japanese && !western)
+          throw std::runtime_error("DXF text in code page " + codepage + ": export UTF-8 (AutoCAD 2007+) DXF first");
+        auto convert = [&](const std::string& in) -> std::optional<std::string> {
+          if (japanese) return fromShiftJis(in);
+          std::string out;  // Windows-1252 is Latin-1 for letters: each byte one code point
+          for (unsigned char c : in) {
+            if (c < 0x80) out.push_back(static_cast<char>(c));
+            else { out.push_back(static_cast<char>(0xC0 | (c >> 6))); out.push_back(static_cast<char>(0x80 | (c & 0x3F))); }
+          }
+          return out;
+        };
+        auto fix = [&](std::string& v) {
+          bool high = false;
+          for (unsigned char c : v) high = high || c >= 128;
+          if (!high) return;
+          const auto converted = convert(v);
+          if (!converted)
+            throw std::runtime_error("DXF text is not Shift_JIS (no code page given): export UTF-8 (AutoCAD 2007+) DXF first");
+          v = *converted;
+        };
+        for (auto& e : entities) {
+          for (auto& d : e.data) fix(d.value);
+          for (auto& v : e.vertices) for (auto& d : v.data) fix(d.value);
+        }
+        std::map<std::string, Block> renamed;
+        for (auto& [blockKey, block] : blocks) {
+          for (auto& e : block.entities) {
+            for (auto& d : e.data) fix(d.value);
+            for (auto& v : e.vertices) for (auto& d : v.data) fix(d.value);
+          }
+          std::string key = blockKey;
+          fix(key);
+          renamed[key] = std::move(block);
+        }
+        blocks = std::move(renamed);
+        report.convertedFrom = japanese ? "Shift_JIS" : "Windows-1252";
+      }
     }
     report.unitsKnown = units != 0;
     report.scaleToMm = units ? unitScale(units) : options.unitlessScaleToMm;
