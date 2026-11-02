@@ -50,6 +50,7 @@
 #include <QTabBar>
 #include <QToolButton>
 #include <QTimer>
+#include <QKeyEvent>
 #include <QToolBar>
 #include <QPainter>
 #include <QScrollArea>
@@ -290,6 +291,11 @@ void MainWindow::buildUi() {
   measurement_ = new QLineEdit;
   measurement_->setFixedWidth(200);
   measurement_->setPlaceholderText(tr("数値入力"));
+  measurement_->setObjectName(QStringLiteral("measurementBox"));
+  measurement_->installEventFilter(this);
+  measurementUnit_ = new QLabel;
+  measurementUnit_->setObjectName(QStringLiteral("measurementUnit"));
+  measurementUnit_->setMinimumWidth(24);
   contextLabel_ = new QLabel;
   contextLabel_->setStyleSheet(QStringLiteral("QLabel { background: #fff3c4; padding: 0 6px; }"));
   contextLabel_->hide();
@@ -459,14 +465,22 @@ void MainWindow::buildUi() {
   statusBar()->addPermanentWidget(constraintLabel_);
   statusBar()->addPermanentWidget(measurementLabel_);
   statusBar()->addPermanentWidget(measurement_);
+  statusBar()->addPermanentWidget(measurementUnit_);
 
   connect(viewport_, &Viewport::measurementChar, this, [this](QChar c) {
-    if (!userTyping_) measurement_->clear();
+    if (!userTyping_ || measurementFresh_) measurement_->clear();
     userTyping_ = true;
+    measurementFresh_ = false;
     measurement_->insert(QString(c));
   });
   connect(viewport_, &Viewport::measurementBackspace, this, [this] {
-    if (userTyping_) measurement_->backspace();
+    if (measurementFresh_) {
+      measurement_->clear();
+      measurementFresh_ = false;
+      userTyping_ = true;
+    } else if (userTyping_) {
+      measurement_->backspace();
+    }
   });
   connect(viewport_, &Viewport::measurementCommit, this, &MainWindow::commitMeasurement);
   connect(viewport_, &Viewport::toolInput, this, &MainWindow::refreshConstraints);
@@ -480,7 +494,10 @@ void MainWindow::buildUi() {
                     .arg(message.isEmpty() ? QString() : QStringLiteral("： ") + message));
   });
   connect(measurement_, &QLineEdit::returnPressed, this, &MainWindow::commitMeasurement);
-  connect(measurement_, &QLineEdit::textEdited, this, [this] { userTyping_ = true; });
+  connect(measurement_, &QLineEdit::textEdited, this, [this] {
+    userTyping_ = true;
+    measurementFresh_ = false;
+  });
   connect(viewport_, &Viewport::escapePressed, this, [this] {
     userTyping_ = false;
     if (active_ == selectTool_.get() && !modeler_.activeGroup().empty()) {
@@ -1612,9 +1629,62 @@ QString MainWindow::constraintText() const { return constraintLabel_ ? constrain
 
 QString MainWindow::statusText() const { return status_->text(); }
 
+namespace {
+// The value as the box shows it and its unit, shown beside the box: "1000.0
+// mm" -> "1000" + "mm"; a plain number gets the unit its label implies
+// (lengths in mm, angles in degrees). Text with a unit of its own (e.g.
+// "2.00 m²") stays as it is.
+std::pair<QString, QString> splitUnit(const QString& label, const QString& value) {
+  QString v = value.trimmed();
+  QString unit;
+  static const QRegularExpression mmSuffix(QStringLiteral("\\s*mm\\b"));
+  if (v.contains(mmSuffix)) {
+    v.remove(mmSuffix);
+    unit = QStringLiteral("mm");
+  }
+  static const QRegularExpression numeric(QStringLiteral("^[-+0-9.,\\s]*$"));
+  if (!numeric.match(v).hasMatch()) return {value, QString()};
+  if (unit.isEmpty()) {
+    if (label.contains(QObject::tr("角度"))) unit = QStringLiteral("°");
+    else if (label.contains(QObject::tr("倍率")) || label.contains(QObject::tr("テキスト"))) unit.clear();
+    else unit = QStringLiteral("mm");
+  }
+  // "1000.0" -> "1000": nothing to delete before typing a whole number.
+  static const QRegularExpression zeroDecimals(QStringLiteral("\\.0+(?=$|[,\\s])"));
+  v.replace(zeroDecimals, QString());
+  return {v, unit};
+}
+}  // namespace
+
 void MainWindow::setMeasurement(const QString& label, const QString& value) {
   measurementLabel_->setText(label);
-  if (!userTyping_) measurement_->setText(value);
+  if (userTyping_) return;
+  const auto [shown, unit] = splitUnit(label, value);
+  measurement_->setText(shown);
+  measurementUnit_->setText(shown.isEmpty() && label.isEmpty() ? QString() : unit);
+  measurementFresh_ = !shown.isEmpty();
+}
+
+bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+  if (watched == measurement_ && measurementFresh_) {
+    // A value the program put there: clicking into the box selects it all,
+    // and the first key typed replaces it (no deleting first).
+    if (event->type() == QEvent::FocusIn || event->type() == QEvent::MouseButtonRelease) {
+      QTimer::singleShot(0, measurement_, [this] {
+        if (measurementFresh_) measurement_->selectAll();
+      });
+    } else if (event->type() == QEvent::KeyPress) {
+      auto* key = static_cast<QKeyEvent*>(event);
+      const bool typing = !key->text().isEmpty() && key->text().at(0).isPrint();
+      if (typing || key->key() == Qt::Key_Backspace || key->key() == Qt::Key_Delete) {
+        measurement_->clear();
+        measurementFresh_ = false;
+        userTyping_ = true;
+        if (!typing) return true;
+      }
+    }
+  }
+  return QMainWindow::eventFilter(watched, event);
 }
 
 void MainWindow::reportError(const QString& raw) {
@@ -1854,6 +1924,7 @@ void MainWindow::beginTextEntry(const QString& label, const QString& text) {
   userTyping_ = false;
   setMeasurement(label, text);
   userTyping_ = true;  // keep the text while the user edits it
+  measurementFresh_ = !measurement_->text().isEmpty();  // ...and the first key typed replaces it
   measurement_->setFocus();
   measurement_->selectAll();
 }

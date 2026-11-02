@@ -753,6 +753,54 @@ geom::SketchPlane planeForStart(Viewport& viewport, const QPoint& pos, const sna
 }
 }  // namespace
 
+bool DrawingTool::planeKey(QKeyEvent* event) {
+  std::optional<gp_Dir> axis;
+  switch (event->key()) {
+    case Qt::Key_Right: axis = gp::DX(); break;
+    case Qt::Key_Left: axis = gp::DY(); break;
+    case Qt::Key_Up: axis = gp::DZ(); break;
+    case Qt::Key_Down: break;
+    default: return false;
+  }
+  if (event->isAutoRepeat()) return true;
+  if (!axis || (heldPlane_ && heldPlane_->IsParallel(*axis, 1e-9))) heldPlane_.reset();
+  else heldPlane_ = axis;
+  refresh();
+  return true;
+}
+
+QString DrawingTool::planeHint() const {
+  if (!heldPlane_) return QObject::tr("（矢印キーで面の向きを固定: →赤 ←緑 ↑青）");
+  if (heldPlane_->IsParallel(gp::DX(), 1e-9)) return QObject::tr("（赤軸に垂直な面に固定中、↓で解除）");
+  if (heldPlane_->IsParallel(gp::DY(), 1e-9)) return QObject::tr("（緑軸に垂直な面に固定中、↓で解除）");
+  return QObject::tr("（水平な面に固定中、↓で解除）");
+}
+
+geom::SketchPlane DrawingTool::standingPlane(const ToolEvent& e, const geom::SketchPlane& start) {
+  if (heldPlane_) {
+    return start.normal.IsParallel(*heldPlane_, 1e-9) ? start : geom::SketchPlane::fromNormal(start.origin, *heldPlane_);
+  }
+  // As the rectangle: only points of the model count (not faces).
+  const snap::SnapResult r = snapAt(e, start.origin, std::nullopt);
+  using K = snap::SnapKind;
+  const bool model = r.kind == K::Endpoint || r.kind == K::Midpoint || r.kind == K::OnEdge || r.kind == K::Origin ||
+                     r.kind == K::Intersection || r.kind == K::FromPoint;
+  if (!model) return start;
+  const gp_Vec d(start.origin, r.point);
+  if (d.Magnitude() < tolerance::kMinDimension ||
+      std::abs(d.Dot(gp_Vec(start.normal))) < tolerance::kMinDimension) {
+    return start;
+  }
+  const gp_Dir view = host_.viewport().viewDirection();
+  std::optional<gp_Dir> best;
+  for (const gp_Dir& axis : {gp::DX(), gp::DY(), gp::DZ()}) {
+    if (axis.IsParallel(start.normal, 1e-9)) continue;
+    if (std::abs(d.Dot(gp_Vec(axis))) > 0.25 * d.Magnitude()) continue;  // the point is not in this plane
+    if (!best || std::abs(axis.Dot(view)) > std::abs(best->Dot(view))) best = axis;
+  }
+  return best ? geom::SketchPlane::fromNormal(start.origin, *best) : start;
+}
+
 // --- Line -----------------------------------------------------------------------
 
 QString LineTool::name() const { return QObject::tr("線"); }
@@ -1960,10 +2008,10 @@ void ArcTool::updateStatus(const QString& snap) {
     case Stage::Start:
       host_.setMeasurement(QObject::tr("膨らみ"), QString());
       host_.setStatus(QObject::tr("円弧の始点をクリック（%1 / Ctrl で切替。数値で直前の円弧の膨らみを変更）%2")
-                          .arg(mode, suffix));
+                          .arg(mode, suffix) + planeHint());
       break;
     case Stage::End:
-      host_.setStatus(QObject::tr("終点をクリック、または弦の長さを入力%1").arg(suffix));
+      host_.setStatus(QObject::tr("終点をクリック、または弦の長さを入力%1").arg(suffix) + planeHint());
       break;
     case Stage::Bulge:
       host_.setStatus(QObject::tr("膨らみをクリック、または数値を入力（%1 / Ctrl で切替）%2")
@@ -1984,6 +2032,12 @@ bool ArcTool::stepBack() {
 }
 
 bool ArcTool::keyPress(QKeyEvent* event) {
+  // The plane is chosen up to the chord's end; then the bulge is in it.
+  if (stage_ != Stage::Bulge && planeKey(event)) {
+    if (stage_ == Stage::End && lastEvent_) mouseMove(*lastEvent_);
+    updateStatus();
+    return true;
+  }
   if (event->key() == Qt::Key_Control && !event->isAutoRepeat()) {
     face_ = !face_;
     if (lastEvent_) mouseMove(*lastEvent_);
@@ -2002,6 +2056,7 @@ void ArcTool::mouseMove(const ToolEvent& e) {
       return;
     }
     case Stage::End: {
+      plane_ = standingPlane(e, startPlane_);
       snap::SnapResult r = snapAt(e, start_, plane_.plane());
       if (!r.valid()) return;
       // The chord lies on the sketch plane: an inference off it (the blue
@@ -2115,7 +2170,9 @@ void ArcTool::mousePress(const ToolEvent& e) {
     case Stage::Start: {
       const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
       if (!r.valid()) return;
-      plane_ = planeForStart(host_.viewport(), e.pos, r);
+      startPlane_ = planeForStart(host_.viewport(), e.pos, r);
+      startPlane_.origin = r.point;
+      plane_ = heldPlane_ ? geom::SketchPlane::fromNormal(r.point, *heldPlane_) : startPlane_;
       start_ = r.point;
       tangent_.reset();
       if (r.kind == snap::SnapKind::Endpoint) findTangent();
@@ -2239,16 +2296,17 @@ void CircleTool::cancel() {
 void CircleTool::mouseMove(const ToolEvent& e) {
   if (!hasCentre_) {
     const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
-    host_.setStatus(QObject::tr("円の中心をクリック  [%1]").arg(snapLabel(r.kind)));
+    host_.setStatus(QObject::tr("円の中心をクリック  [%1]").arg(snapLabel(r.kind)) + planeHint());
     return;
   }
+  plane_ = standingPlane(e, start_);
   const snap::SnapResult r = snapAt(e, plane_.origin, plane_.plane());
   if (!r.valid()) return;
   double u = 0, v = 0;
   plane_.toLocal(r.point, u, v);
   radius_ = std::hypot(u, v);
   host_.setMeasurement(QObject::tr("半径"), mm(radius_));
-  host_.setStatus(QObject::tr("半径の位置をクリック、または半径を入力  [%1]").arg(snapLabel(r.kind)));
+  host_.setStatus(QObject::tr("半径の位置をクリック、または半径を入力  [%1]").arg(snapLabel(r.kind)) + planeHint());
   auto face = geom::makeCircleFace(plane_, radius_);
   host_.viewport().setPreview(face ? TopoDS_Shape(BRepTools::OuterWire(face.value())) : TopoDS_Shape());
 }
@@ -2257,7 +2315,9 @@ void CircleTool::mousePress(const ToolEvent& e) {
   if (!hasCentre_) {
     const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
     if (!r.valid()) return;
-    plane_ = planeForStart(host_.viewport(), e.pos, r);
+    start_ = planeForStart(host_.viewport(), e.pos, r);
+    start_.origin = r.point;
+    plane_ = heldPlane_ ? geom::SketchPlane::fromNormal(r.point, *heldPlane_) : start_;
     hasCentre_ = true;
     lastCreated_.reset();
     return;
@@ -2265,6 +2325,8 @@ void CircleTool::mousePress(const ToolEvent& e) {
   mouseMove(e);
   commit(radius_);
 }
+
+bool CircleTool::keyPress(QKeyEvent* event) { return planeKey(event) || DrawingTool::keyPress(event); }
 
 void CircleTool::commit(double radius) {
   if (radius < tolerance::kMinDimension) return;
@@ -2329,9 +2391,10 @@ void PolygonTool::cancel() {
 void PolygonTool::mouseMove(const ToolEvent& e) {
   if (!hasCentre_) {
     const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
-    host_.setStatus(prompt() + QStringLiteral("  [") + snapLabel(r.kind) + QStringLiteral("]"));
+    host_.setStatus(prompt() + QStringLiteral("  [") + snapLabel(r.kind) + QStringLiteral("]") + planeHint());
     return;
   }
+  plane_ = standingPlane(e, start_);
   const snap::SnapResult r = snapAt(e, plane_.origin, plane_.plane());
   if (!r.valid()) return;
   gp_Vec v(plane_.origin, r.point);
@@ -2339,7 +2402,7 @@ void PolygonTool::mouseMove(const ToolEvent& e) {
   radius_ = v.Magnitude();
   if (radius_ > tolerance::kMinDimension) plane_.xDir = gp_Dir(v);  // first corner under the mouse
   host_.setMeasurement(QObject::tr("半径"), mm(radius_));
-  host_.setStatus(QObject::tr("角の位置をクリック、または半径を入力  [%1]").arg(snapLabel(r.kind)));
+  host_.setStatus(QObject::tr("角の位置をクリック、または半径を入力  [%1]").arg(snapLabel(r.kind)) + planeHint());
   std::vector<gp_Pnt> corners;
   const gp_Vec x(plane_.xDir), y(plane_.yDir());
   for (int k = 0; k < sides_; ++k) {
@@ -2354,7 +2417,9 @@ void PolygonTool::mousePress(const ToolEvent& e) {
   if (!hasCentre_) {
     const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
     if (!r.valid()) return;
-    plane_ = planeForStart(host_.viewport(), e.pos, r);
+    start_ = planeForStart(host_.viewport(), e.pos, r);
+    start_.origin = r.point;
+    plane_ = heldPlane_ ? geom::SketchPlane::fromNormal(r.point, *heldPlane_) : start_;
     hasCentre_ = true;
     lastCreated_.reset();
     return;
@@ -2362,6 +2427,8 @@ void PolygonTool::mousePress(const ToolEvent& e) {
   mouseMove(e);
   commit(radius_);
 }
+
+bool PolygonTool::keyPress(QKeyEvent* event) { return planeKey(event) || DrawingTool::keyPress(event); }
 
 void PolygonTool::commit(double radius) {
   if (radius < tolerance::kMinDimension) return;
@@ -5707,6 +5774,9 @@ QString SurfaceTool::sizeLabel() const {
 void SurfaceTool::activate() {
   picks_.clear();
   target_.reset();
+  mode_.reset();
+  allCorners_ = false;
+  recentLines_.reset();
   size_ = lastSize(kind_);
   recentObject_.clear();
   recentKey_.clear();
@@ -5728,9 +5798,11 @@ void SurfaceTool::activate() {
       bool dup = false;
       for (const Pick& q : picks_) dup |= q.whole && p.whole && q.object == p.object;
       if (!dup) picks_.push_back(p);
-    } else if (edgeKind() && e.type == TopAbs_EDGE && o->kind() == doc::ObjectKind::Solid) {
+    } else if (edgeKind() && e.type == TopAbs_EDGE &&
+               (o->kind() == doc::ObjectKind::Solid || o->kind() == doc::ObjectKind::Face)) {
       if (target_ && *target_ != e.objectId) continue;
       target_ = e.objectId;
+      mode_ = o->kind() == doc::ObjectKind::Solid ? Mode::Solid : Mode::Face;
       picks_.push_back(p);
     } else if (kind_ == Kind::Shell && e.type == TopAbs_FACE && o->kind() == doc::ObjectKind::Solid) {
       if (target_ && *target_ != e.objectId) continue;
@@ -5745,12 +5817,16 @@ void SurfaceTool::activate() {
       picks_.push_back(Pick{id, TopAbs_EDGE, 1, true, document.worldShape(*o)});
     } else if (kind_ == Kind::Shell && o->kind() == doc::ObjectKind::Solid && !target_) {
       target_ = id;  // the whole solid: a closed hollow unless faces are clicked
+    } else if (edgeKind() && o->kind() == doc::ObjectKind::Face && !target_) {
+      target_ = id;  // a flat face selected: all its corners
+      mode_ = Mode::Face;
+      allCorners_ = true;
     }
   }
   if (kind_ == Kind::EdgeSurface && picks_.size() > 4) picks_.resize(4);
   if (kind_ == Kind::Sweep2 && picks_.size() == 2) takeTouchingProfiles();
   if (!sizeLabel().isEmpty()) {
-    host_.beginTextEntry(sizeLabel(), QString::fromStdString(units::formatLength(size_)));
+    host_.beginTextEntry(sizeLabel(), QString::number(size_, 'g', 6));
   } else {
     host_.setMeasurement(QString(), QString());
   }
@@ -5760,6 +5836,8 @@ void SurfaceTool::activate() {
 void SurfaceTool::cancel() {
   picks_.clear();
   target_.reset();
+  mode_.reset();
+  allCorners_ = false;
   previewOk_ = false;
   previewError_.clear();
   Viewport& vp = host_.viewport();
@@ -5769,16 +5847,27 @@ void SurfaceTool::cancel() {
 }
 
 bool SurfaceTool::stepBack() {
+  if (allCorners_) {
+    allCorners_ = false;
+    target_.reset();
+    mode_.reset();
+    refresh();
+    return true;
+  }
   if (picks_.empty()) {
     if (target_) {
       target_.reset();
+      mode_.reset();
       refresh();
       return true;
     }
     return false;
   }
   picks_.pop_back();
-  if (picks_.empty() && kind_ != Kind::Shell) target_.reset();
+  if (picks_.empty() && kind_ != Kind::Shell) {
+    target_.reset();
+    mode_.reset();
+  }
   refresh();
   return true;
 }
@@ -5798,17 +5887,28 @@ QString SurfaceTool::prompt() const {
       if (n == 0) return QObject::tr("閉じた輪郭になる線・辺をクリック");
       return QObject::tr("%1 本選択。輪郭が閉じたら Enter で作成").arg(n);
     case Kind::Fillet:
-    case Kind::Chamfer:
-      if (n == 0) return QObject::tr("立体の辺をクリック（Shift で追加、ダブルクリックでつながった辺）");
-      return QObject::tr("辺 %1 本。%2を入力して Enter（今: %3）")
-          .arg(n)
-          .arg(sizeLabel(), QString::fromStdString(units::formatLength(size_)));
+    case Kind::Chamfer: {
+      const QString now = QString::number(size_, 'g', 6) + QStringLiteral(" mm");
+      if (mode_ == Mode::Lines) {
+        return QObject::tr("もう 1 本の線をクリック（残す側をクリック。%1 %2、0 で角をつなぐだけ）").arg(sizeLabel(), now);
+      }
+      if (mode_ == Mode::Face) {
+        const std::size_t c = corners().size();
+        if (c == 0) return QObject::tr("となりの辺もクリック（Shift で追加）。面をクリックすると全部の角");
+        return QObject::tr("角 %1 か所。%2を入力して Enter（今: %3）").arg(c).arg(sizeLabel(), now);
+      }
+      if (n == 0) {
+        return QObject::tr("辺・面・線をクリック（%1 %2。立体の面はまわりの辺、平らな面は全部の角、線は 2 本で）")
+            .arg(sizeLabel(), now);
+      }
+      return QObject::tr("辺 %1 本。%2を入力して Enter（今: %3）").arg(n).arg(sizeLabel(), now);
+    }
     case Kind::Shell:
       if (!target_) return QObject::tr("開けたい面をクリック（Shift で追加。立体だけ選ぶと閉じた空洞）");
       return QObject::tr("開ける面 %1 枚%2。厚みを入力して Enter（今: %3）")
           .arg(n)
           .arg(n == 0 ? QObject::tr("（閉じた空洞）") : QString())
-          .arg(QString::fromStdString(units::formatLength(size_)));
+          .arg(QString::number(size_, 'g', 6) + QStringLiteral(" mm"));
   }
   return {};
 }
@@ -5851,16 +5951,48 @@ std::optional<SurfaceTool::Pick> SurfaceTool::pickAt(const ToolEvent& e, QString
     *why = QObject::tr("線か辺をクリックしてください");
     return std::nullopt;
   }
-  if (o->kind() != doc::ObjectKind::Solid) {
+  if (edgeKind()) {
+    // Lines (AutoCAD): a piece of a line object, and where on it.
+    if (const auto* line = std::get_if<doc::PolylineCurve>(&o->recipe.base);
+        line && o->recipe.modifiers.empty() && ref->type == TopAbs_EDGE) {
+      if (mode_ && *mode_ != Mode::Lines) {
+        *why = QObject::tr("線は、立体・面とは別にフィレットしてください（Esc で選び直し）");
+        return std::nullopt;
+      }
+      const TopoDS_Edge edge = TopoDS::Edge(shape);
+      const gp_Pnt a = BRep_Tool::Pnt(TopExp::FirstVertex(edge)), b = BRep_Tool::Pnt(TopExp::LastVertex(edge));
+      const gp_Trsf w = document.worldTransform(*o);
+      double best = 1e300;
+      for (std::size_t i = 0; i + 1 < line->points.size(); ++i) {
+        const gp_Pnt p0 = line->points[i].Transformed(w), p1 = line->points[i + 1].Transformed(w);
+        const double d = std::min(p0.Distance(a) + p1.Distance(b), p0.Distance(b) + p1.Distance(a));
+        if (d < best) best = d, p.segment = i;
+      }
+      // The point of the piece nearest the cursor on screen.
+      double nearest = 1e300;
+      for (int i = 0; i <= 200; ++i) {
+        const gp_Pnt q(a.XYZ() + (b.XYZ() - a.XYZ()) * (i / 200.0));
+        const QPoint s = host_.viewport().toWidget(q) - e.pos;
+        const double d = double(s.x()) * s.x() + double(s.y()) * s.y();
+        if (d < nearest) nearest = d, p.near = q;
+      }
+      return p;
+    }
+    const bool solid = o->kind() == doc::ObjectKind::Solid, flat = o->kind() == doc::ObjectKind::Face;
+    if (!solid && !flat) {
+      *why = QObject::tr("立体の辺、平らな面の辺、または線をクリックしてください");
+      return std::nullopt;
+    }
+    if (mode_ && *mode_ != (solid ? Mode::Solid : Mode::Face)) {
+      *why = QObject::tr("立体・平らな面・線は別々にフィレットしてください（Esc で選び直し）");
+      return std::nullopt;
+    }
+  } else if (o->kind() != doc::ObjectKind::Solid) {
     *why = QObject::tr("立体（ソリッド）をクリックしてください");
     return std::nullopt;
   }
   if (addressedIn(document, ref->objectId, host_.editingGroup()) != ref->objectId) {
-    *why = QObject::tr("グループの中の立体は、グループを開いて（ダブルクリック）から");
-    return std::nullopt;
-  }
-  if (edgeKind() && ref->type != TopAbs_EDGE) {
-    *why = QObject::tr("辺をクリックしてください");
+    *why = QObject::tr("グループの中の物は、グループを開いて（ダブルクリック）から");
     return std::nullopt;
   }
   if (kind_ == Kind::Shell && ref->type != TopAbs_FACE) {
@@ -5871,6 +6003,49 @@ std::optional<SurfaceTool::Pick> SurfaceTool::pickAt(const ToolEvent& e, QString
 }
 
 void SurfaceTool::addPick(const Pick& p, bool add) {
+  if (edgeKind()) {
+    const doc::Document& document = host_.modeler().document();
+    const doc::Object* o = document.find(p.object);
+    if (!o) return;
+    if (o->kind() == doc::ObjectKind::Curve) {
+      mode_ = Mode::Lines;
+      if (!picks_.empty() && picks_.back().object == p.object && picks_.back().segment == p.segment) {
+        host_.setStatus(QObject::tr("もう 1 本の線をクリックしてください"));
+        return;
+      }
+      picks_.push_back(p);
+      return;
+    }
+    mode_ = o->kind() == doc::ObjectKind::Solid ? Mode::Solid : Mode::Face;
+    if (p.type == TopAbs_FACE) {
+      if (*mode_ == Mode::Face) {
+        // The flat face clicked: all its corners.
+        target_ = p.object;
+        picks_.clear();
+        allCorners_ = true;
+        return;
+      }
+      // A face of a solid: its outline's edges, at once.
+      if (target_ && *target_ != p.object) {
+        if (add) return;
+        picks_.clear();
+      }
+      if (!add) picks_.clear();
+      target_ = p.object;
+      Viewport& vp = host_.viewport();
+      for (TopExp_Explorer x(p.shape, TopAbs_EDGE); x.More(); x.Next()) {
+        for (const ElementRef& r : vp.allElements(p.object)) {
+          if (r.type != TopAbs_EDGE) continue;
+          const TopoDS_Shape edge = vp.elementShape(r);
+          if (edge.IsNull() || !edge.IsSame(x.Current())) continue;
+          const bool have = std::any_of(picks_.begin(), picks_.end(), [&](const Pick& q) { return q.index == r.index; });
+          if (!have) picks_.push_back(Pick{p.object, TopAbs_EDGE, r.index, false, edge});
+        }
+      }
+      return;
+    }
+    allCorners_ = false;
+  }
   if (!curveKind()) {
     if (target_ && *target_ != p.object) {
       if (add) {
@@ -5925,6 +6100,37 @@ std::vector<doc::Modeler::CurvePick> SurfaceTool::curvePicks(std::size_t from, s
   return out;
 }
 
+std::vector<gp_Pnt> SurfaceTool::corners() const {
+  std::vector<gp_Pnt> out;
+  if (mode_ != Mode::Face || !target_) return out;
+  if (allCorners_) {
+    const doc::Object* o = host_.modeler().document().find(*target_);
+    if (!o) return out;
+    TopExp_Explorer f(host_.modeler().document().worldShape(*o), TopAbs_FACE);
+    if (f.More()) out = geom::faceCorners(TopoDS::Face(f.Current()));
+    return out;
+  }
+  // Each two picked edges meeting at a point: that corner.
+  auto ends = [](const TopoDS_Shape& e) {
+    const TopoDS_Edge edge = TopoDS::Edge(e);
+    return std::make_pair(BRep_Tool::Pnt(TopExp::FirstVertex(edge)), BRep_Tool::Pnt(TopExp::LastVertex(edge)));
+  };
+  for (std::size_t i = 0; i < picks_.size(); ++i) {
+    for (std::size_t j = i + 1; j < picks_.size(); ++j) {
+      const auto [a0, a1] = ends(picks_[i].shape);
+      const auto [b0, b1] = ends(picks_[j].shape);
+      for (const gp_Pnt& a : {a0, a1}) {
+        for (const gp_Pnt& b : {b0, b1}) {
+          if (a.Distance(b) < 1e-6 && std::none_of(out.begin(), out.end(), [&](const gp_Pnt& c) { return c.Distance(a) < 1e-6; })) {
+            out.push_back(a);
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
 void SurfaceTool::refresh() {
   Viewport& vp = host_.viewport();
   // Roles by colour.
@@ -5960,12 +6166,17 @@ void SurfaceTool::refresh() {
   } else if (kind_ == Kind::Patch && !picks_.empty()) {
     ready = true;
     made = geom::patchSurface(shapes(0));
-  } else if ((edgeKind() && !picks_.empty()) || (kind_ == Kind::Shell && target_)) {
+  } else if ((edgeKind() && mode_ != Mode::Lines && target_ && (!picks_.empty() || allCorners_)) ||
+             (kind_ == Kind::Shell && target_)) {
     ready = true;
     const doc::Object* o = document.find(*target_);
     if (o) {
       const TopoDS_Shape solid = document.worldShape(*o);
-      if (edgeKind()) {
+      if (edgeKind() && mode_ == Mode::Face) {
+        const auto c = corners();
+        if (c.empty()) ready = false;
+        else made = geom::roundCorners(solid, c, size_, kind_ == Kind::Chamfer);
+      } else if (edgeKind()) {
         std::vector<TopoDS_Edge> edges;
         for (const Pick& p : picks_) edges.push_back(TopoDS::Edge(p.shape));
         made = geom::roundEdges(solid, edges, size_, kind_ == Kind::Chamfer);
@@ -5999,11 +6210,15 @@ void SurfaceTool::mousePress(const ToolEvent& e) {
   addPick(*p, (e.modifiers & Qt::ShiftModifier) != 0);
   if (kind_ == Kind::Sweep2 && picks_.size() == 2) takeTouchingProfiles();
   refresh();
+  if (mode_ == Mode::Lines && picks_.size() == 2) {
+    commit();  // AutoCAD: the second line joins them at once
+    return;
+  }
   if (kind_ == Kind::EdgeSurface && picks_.size() == 4) commit();
 }
 
 bool SurfaceTool::mouseDoubleClick(const ToolEvent& e) {
-  if (!edgeKind() || !target_ || picks_.empty()) return false;
+  if (!edgeKind() || !target_ || picks_.empty() || mode_ != Mode::Solid) return false;
   // The run of edges joining the last one smoothly (tangent), as a rounded
   // corner or a chain of arcs is filleted in one go.
   const doc::Document& document = host_.modeler().document();
@@ -6084,14 +6299,41 @@ void SurfaceTool::commit() {
     host_.setStatus(QObject::tr("%1を作りました（入力の線はそのまま残ります）。続けて次をクリック").arg(name()));
     return;
   }
-  if (!target_ || (edgeKind() && picks_.empty())) {
-    host_.reportError(edgeKind() ? QObject::tr("辺をクリックしてください") : QObject::tr("立体の面をクリックしてください"));
+  if (mode_ == Mode::Lines) {
+    if (picks_.size() < 2) {
+      host_.reportError(QObject::tr("線をもう 1 本クリックしてください"));
+      return;
+    }
+    const doc::Modeler::LinePick a{picks_[0].object, picks_[0].segment, picks_[0].near};
+    const doc::Modeler::LinePick b{picks_[1].object, picks_[1].segment, picks_[1].near};
+    recent_.begin(m);
+    auto joined = m.filletLines(a, b, size_, kind_ == Kind::Chamfer);
+    picks_.clear();
+    mode_.reset();
+    if (!joined) {
+      refresh();
+      host_.reportError(QObject::tr("%1できませんでした: %2").arg(name(), QString::fromStdString(joined.error())));
+      return;
+    }
+    lastSize(kind_) = size_;
+    recent_.mark(m);
+    recentLines_ = std::make_pair(a, b);
+    recentKey_.clear();
+    refresh();
+    host_.beginTextEntry(sizeLabel(), QString::number(size_, 'g', 6));
+    host_.setStatus(QObject::tr("線をつなぎました。すぐに数値を打つと%1を変えられます。続けて次の線をクリック").arg(sizeLabel()));
+    return;
+  }
+  if (!target_ || (edgeKind() && picks_.empty() && !allCorners_)) {
+    host_.reportError(edgeKind() ? QObject::tr("辺・面・線をクリックしてください") : QObject::tr("立体の面をクリックしてください"));
     return;
   }
   const doc::ObjectId target = *target_;
   Result<std::string> key = Result<std::string>::failure("");
   recent_.begin(m);
-  if (edgeKind()) {
+  if (edgeKind() && mode_ == Mode::Face) {
+    key = m.roundCorners(target, corners(), size_, kind_ == Kind::Chamfer);
+  } else if (edgeKind()) {
     std::vector<TopoDS_Edge> edges;
     for (const Pick& p : picks_) edges.push_back(TopoDS::Edge(p.shape));
     key = m.roundEdges(target, edges, size_, kind_ == Kind::Chamfer);
@@ -6108,11 +6350,14 @@ void SurfaceTool::commit() {
   recent_.mark(m);
   recentObject_ = target;
   recentKey_ = *key;
+  recentLines_.reset();
   picks_.clear();
   target_.reset();
+  mode_.reset();
+  allCorners_ = false;
   host_.setSelection({target});
   refresh();
-  host_.beginTextEntry(sizeLabel(), QString::fromStdString(units::formatLength(size_)));
+  host_.beginTextEntry(sizeLabel(), QString::number(size_, 'g', 6));
   host_.setStatus(QObject::tr("%1しました。すぐに数値を打つと%2を変えられます（あとからはプロパティで）")
                       .arg(name(), sizeLabel()));
 }
@@ -6124,11 +6369,32 @@ void SurfaceTool::applyMeasurement(const QString& text) {
   }
   if (sizeLabel().isEmpty()) return;
   const auto value = units::parseLength(text.toStdString());
-  if (!value || !(*value > 0)) {
+  // Lines may meet with no arc (0, AutoCAD's R0).
+  const bool zeroOk = edgeKind() && (mode_ == Mode::Lines || (picks_.empty() && !target_ && recentLines_));
+  if (!value || !(*value > 0 || (zeroOk && *value == 0) || (edgeKind() && *value == 0 && !target_))) {
     host_.reportError(QObject::tr("%1は正の長さで入力してください").arg(sizeLabel()));
     return;
   }
   doc::Modeler& m = host_.modeler();
+  if (picks_.empty() && !target_ && recentLines_ && recent_.fresh(m)) {
+    // The two lines just joined: joined again with the new size, the same undo step.
+    const auto [a, b] = *recentLines_;
+    const bool chamfer = kind_ == Kind::Chamfer;
+    std::string why;
+    const Status s = recent_.replace(m, [&]() -> Status {
+      auto r = m.filletLines(a, b, *value, chamfer);
+      if (!r) why = r.error();
+      return r ? Status::success() : Status::failure(r.error());
+    });
+    if (!s) {
+      host_.reportError(QObject::tr("%1を変えられませんでした: %2").arg(sizeLabel(), QString::fromStdString(why.empty() ? s.message() : why)));
+      return;
+    }
+    size_ = *value;
+    lastSize(kind_) = size_;
+    host_.setStatus(QObject::tr("%1を %2 mm にしました").arg(sizeLabel(), QString::number(size_, 'g', 6)));
+    return;
+  }
   // Right after making one, with nothing new picked: change what was made.
   if (picks_.empty() && !target_ && !recentKey_.empty() && recent_.fresh(m)) {
     const std::string key = recentKey_;
@@ -6140,12 +6406,13 @@ void SurfaceTool::applyMeasurement(const QString& text) {
     }
     size_ = *value;
     lastSize(kind_) = size_;
-    host_.setStatus(QObject::tr("%1を %2 にしました").arg(sizeLabel(), QString::fromStdString(units::formatLength(size_))));
+    host_.setStatus(QObject::tr("%1を %2 mm にしました").arg(sizeLabel(), QString::number(size_, 'g', 6)));
     return;
   }
   size_ = *value;
   // Picks waiting: typed + Enter makes it (SketchUp's way with values).
-  if ((edgeKind() && !picks_.empty()) || (kind_ == Kind::Shell && target_)) {
+  // Lines: the size is set first; the second line clicked joins them.
+  if ((edgeKind() && mode_ != Mode::Lines && (!picks_.empty() || allCorners_)) || (kind_ == Kind::Shell && target_)) {
     commit();
     return;
   }

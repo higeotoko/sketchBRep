@@ -293,6 +293,8 @@ struct EdgeRef {
 // sides `distance`), docs/47. The size stays editable ("op<i>.distance").
 struct FilletOp {
   std::vector<EdgeRef> edges;
+  // A flat face: its corners rounded instead (points at the corners).
+  std::vector<gp_Pnt> corners;
   double distance = 0.0;
   bool chamfer = false;
 };

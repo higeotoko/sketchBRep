@@ -1,4 +1,6 @@
 #include "sbr/api/CommandApi.h"
+#include "sbr/geom/Surfaces.h"
+#include <TopExp_Explorer.hxx>
 
 #include <algorithm>
 #include <cctype>
@@ -1460,6 +1462,38 @@ const std::vector<CommandDef>& commands() {
          std::vector<TopoDS_Edge> edges;
          for (const json& e : arg(a, "edges")) edges.push_back(selectEdge(m, id, e));
          return json{{"id", id}, {"parameter", must(m.roundEdges(id, edges, number(a, "size"), true))}};
+       }},
+      {"fillet_corners",
+       "Round (or with 'chamfer': true, cut) corners of a flat face object: 'corners' are points [x,y,z] at "
+       "the corners, or omitted for every corner; 'size' in mm. Returns the parameter key.",
+       SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "corners": {"type": "array"},
+               "size": {"type": "number"}, "chamfer": {"type": "boolean"}}, "required": ["id", "size"]}),
+       [](doc::Modeler& m, const json& a) {
+         const ObjectId id = text(a, "id");
+         std::vector<gp_Pnt> corners;
+         if (a.contains("corners")) {
+           for (const json& c : arg(a, "corners")) corners.push_back(gp_Pnt(c.at(0), c.at(1), c.at(2)));
+         } else {
+           TopExp_Explorer f(m.document().worldShape(object(m, id)), TopAbs_FACE);
+           if (f.More()) corners = geom::faceCorners(TopoDS::Face(f.Current()));
+         }
+         return json{{"id", id},
+                     {"parameter", must(m.roundCorners(id, corners, number(a, "size"), a.value("chamfer", false)))}};
+       }},
+      {"fillet_lines",
+       "AutoCAD's fillet (or with 'chamfer': true, chamfer) of two straight lines: 'a' and 'b' are "
+       "{\"id\": line object, \"segment\": index (default 0), \"near\": [x,y,z] on the part to keep}; each is "
+       "cut back or extended to meet the other and joined by an arc of 'size' mm (0: they just meet). "
+       "Returns the new arc / cut line, if any.",
+       SCHEMA({"type": "object", "properties": {"a": {"type": "object"}, "b": {"type": "object"},
+               "size": {"type": "number"}, "chamfer": {"type": "boolean"}}, "required": ["a", "b", "size"]}),
+       [](doc::Modeler& m, const json& a) {
+         auto pick = [&](const json& p) {
+           return doc::Modeler::LinePick{text(p, "id"), p.value("segment", std::size_t(0)), point(p, "near")};
+         };
+         const auto joint = must(m.filletLines(pick(arg(a, "a")), pick(arg(a, "b")), number(a, "size"),
+                                               a.value("chamfer", false)));
+         return joint ? json{{"id", *joint}} : json{{"id", nullptr}};
        }},
       {"shell",
        "Rhino's Shell: hollow a solid to walls 'thickness' mm thick, the faces in 'open' (face indices or "

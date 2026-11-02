@@ -630,7 +630,13 @@ json modifierToJson(const Modifier& m) {
           [](const FilletOp& op) {
             json edges = json::array();
             for (const EdgeRef& e : op.edges) edges.push_back({{"point", toJson(e.point)}, {"direction", toJson(e.direction)}});
-            return json{{"type", op.chamfer ? "chamfer" : "fillet"}, {"distance", op.distance}, {"edges", edges}};
+            json j{{"type", op.chamfer ? "chamfer" : "fillet"}, {"distance", op.distance}, {"edges", edges}};
+            if (!op.corners.empty()) {
+              json corners = json::array();
+              for (const gp_Pnt& c : op.corners) corners.push_back(toJson(c));
+              j["corners"] = corners;
+            }
+            return j;
           },
           [](const ShellOp& op) {
             json faces = json::array();
@@ -712,6 +718,9 @@ Modifier modifierFrom(const json& j) {
     op.chamfer = type == "chamfer";
     op.distance = j.at("distance").get<double>();
     for (const json& e : j.at("edges")) op.edges.push_back({pointFrom(e.at("point")), dirFrom(e.at("direction"))});
+    if (j.contains("corners")) {
+      for (const json& c : j.at("corners")) op.corners.push_back(pointFrom(c));
+    }
     return op;
   }
   if (type == "shell") {

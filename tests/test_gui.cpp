@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include <BRepAdaptor_Curve.hxx>
+#include <BRepAdaptor_Surface.hxx>
 #include <BRep_Tool.hxx>
 #include <GProp_GProps.hxx>
 #include <QWheelEvent>
@@ -274,6 +275,10 @@ class GuiPhase1 : public QObject {
   void sweep2RolesAndTouchingProfiles();
   void edgeSurfaceFourthCurveMakesIt();
   void contextMenuOffersSurfaceOps();
+  void filletFlatFaceCorners();
+  void filletTwoLinesLikeAutoCad();
+  void measurementBoxUnitOutsideAndTypingReplaces();
+  void circlePolygonArcStandUp();
   void panelDragPreviewKeepsTheModelViewStill();
   void panelMotionSettlesAfterNativeDock();
   void paletteResizeKeepsBackdropAcrossViewport();
@@ -8480,4 +8485,131 @@ void GuiPhase1::contextMenuOffersSurfaceOps() {
   QCOMPARE(tool->picked(), std::size_t(2));  // selected first: taken in
   QVERIFY(tool->previewOk());
   delete menu;
+}
+
+// docs/47 (2D): the fillet tool on a flat face: a click on the face rounds
+// all its corners with the radius typed.
+void GuiPhase1::filletFlatFaceCorners() {
+  Fixture f;
+  QVERIFY(f.setUp(500, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId face = *m.createRectangle(geom::SketchPlane::ground(), 1000, 1000);
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::Fillet);
+  auto* tool = dynamic_cast<SurfaceTool*>(f.window.activeTool());
+  QVERIFY(tool);
+  click(f.vp, f.vp->toWidget(gp_Pnt(500, 500, 0)));
+  QVERIFY(tool->previewOk());
+  type(f.vp, QStringLiteral("100"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  const double a = geom::area(m.document().worldShape(*m.document().find(face)));
+  QVERIFY2(std::abs(a - (1e6 - (4 - M_PI) * 100 * 100)) < 1e-3, qPrintable(QString::number(a)));
+}
+
+// AutoCAD: R typed first, then two lines clicked: joined at once by the
+// arc; the R retyped right after changes it (one undo step).
+void GuiPhase1::filletTwoLinesLikeAutoCad() {
+  Fixture f;
+  QVERIFY(f.setUp(500, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId a = *m.createPolyline({gp_Pnt(300, 0, 0), gp_Pnt(1000, 0, 0)});
+  const doc::ObjectId b = *m.createPolyline({gp_Pnt(0, 300, 0), gp_Pnt(0, 1000, 0)});
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::Fillet);
+  type(f.vp, QStringLiteral("100"));
+  const std::size_t steps = m.history().undoCount();
+  click(f.vp, f.vp->toWidget(gp_Pnt(700, 0, 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 700, 0)));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.history().undoCount(), steps + 1);
+  auto start = [&](const doc::ObjectId& id) { return std::get<doc::PolylineCurve>(m.document().find(id)->recipe.base).points[0]; };
+  QVERIFY(start(a).Distance(gp_Pnt(100, 0, 0)) < 1e-6);
+  QVERIFY(start(b).Distance(gp_Pnt(0, 100, 0)) < 1e-6);
+  type(f.vp, QStringLiteral("200"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.history().undoCount(), steps + 1);
+  QVERIFY(start(a).Distance(gp_Pnt(200, 0, 0)) < 1e-6);
+  QVERIFY(m.undo());
+  QVERIFY(start(a).Distance(gp_Pnt(300, 0, 0)) < 1e-6);
+}
+
+// The box holds the bare number, the unit beside it; the first key typed
+// replaces the value shown, in the box or in the view.
+void GuiPhase1::measurementBoxUnitOutsideAndTypingReplaces() {
+  Fixture f;
+  QVERIFY(f.setUp(500, 500));
+  f.window.activateTool(MainWindow::ToolId::Fillet);
+  QLineEdit* box = f.window.measurementBox();
+  auto* unit = f.window.findChild<QLabel*>(QStringLiteral("measurementUnit"));
+  QVERIFY(unit);
+  QVERIFY(!box->text().contains(QStringLiteral("mm")));
+  QCOMPARE(unit->text(), QStringLiteral("mm"));
+  const QString shown = box->text();
+  QVERIFY(!shown.isEmpty());
+  // Clicked into the box somewhere, then typed: the old value goes.
+  box->setFocus();
+  box->setCursorPosition(1);
+  QTest::keyClicks(box, QStringLiteral("25"));
+  QCOMPARE(box->text(), QStringLiteral("25"));
+  QTest::keyClick(box, Qt::Key_Escape);
+  // In the view: the same.
+  f.window.activateTool(MainWindow::ToolId::Select);
+  f.window.activateTool(MainWindow::ToolId::Fillet);
+  QTest::keyClicks(f.vp, QStringLiteral("40"));
+  QCOMPARE(box->text(), QStringLiteral("40"));
+  // A length shown by a drawing tool: number only, mm beside it.
+  f.window.setMeasurement(QStringLiteral("長さ"), QStringLiteral("1200.0"));
+  QCOMPARE(box->text(), QStringLiteral("40"));  // still typing: kept
+}
+
+// Circles, polygons and arcs drawn upright like rectangles: held to a plane
+// by the arrow keys, or stood up to a point of the model off the ground.
+void GuiPhase1::circlePolygonArcStandUp() {
+  Fixture f;
+  QVERIFY(f.setUp(500, 500));
+  doc::Modeler& m = f.window.modeler();
+  auto normalOf = [&](const doc::ObjectId& id) {
+    TopExp_Explorer x(m.document().worldShape(*m.document().find(id)), TopAbs_FACE);
+    BRepAdaptor_Surface s(TopoDS::Face(x.Current()));
+    return s.Plane().Axis().Direction();
+  };
+  auto newest = [&]() { return m.document().objects().back().id; };
+  // Circle, ← (across green): stands in the red-blue plane.
+  f.window.activateTool(MainWindow::ToolId::Circle);
+  QTest::keyClick(f.vp, Qt::Key_Left);
+  click(f.vp, f.vp->toWidget(gp_Pnt(0, 0, 0)));
+  type(f.vp, QStringLiteral("300"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QVERIFY(normalOf(newest()).IsParallel(gp::DY(), 1e-9));
+  QTest::keyClick(f.vp, Qt::Key_Down);  // let go
+  // Polygon, →: across red.
+  f.window.activateTool(MainWindow::ToolId::Polygon);
+  QTest::keyClick(f.vp, Qt::Key_Right);
+  click(f.vp, f.vp->toWidget(gp_Pnt(1500, 0, 0)));
+  type(f.vp, QStringLiteral("300"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QVERIFY(normalOf(newest()).IsParallel(gp::DX(), 1e-9));
+  QTest::keyClick(f.vp, Qt::Key_Down);
+  // Arc, ←: start, end along red, bulge typed.
+  f.window.activateTool(MainWindow::ToolId::Arc);
+  QTest::keyClick(f.vp, Qt::Key_Left);
+  click(f.vp, f.vp->toWidget(gp_Pnt(3000, 0, 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(4000, 0, 0)));
+  type(f.vp, QStringLiteral("300"));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  const Bnd_Box arc = geom::exactBounds(m.document().worldShape(*m.document().find(newest())));
+  QVERIFY2(arc.CornerMax().Z() - arc.CornerMin().Z() > 290, "the arc stands up");
+  QVERIFY(arc.CornerMax().Y() - arc.CornerMin().Y() < 1e-6);
+  QTest::keyClick(f.vp, Qt::Key_Down);
+  // Circle stood up to the top of an upright line: the plane facing the viewer.
+  QVERIFY(m.createPolyline({gp_Pnt(500, 2000, 0), gp_Pnt(500, 2000, 1000)}).ok());
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::Circle);
+  click(f.vp, f.vp->toWidget(gp_Pnt(500, 2000, 0)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(500, 2000, 1000)));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  const doc::ObjectId up = newest();
+  QVERIFY(m.document().find(up)->kind() == doc::ObjectKind::Face);
+  QVERIFY(std::abs(normalOf(up).Z()) < 1e-9);
+  QVERIFY(std::abs(std::get<doc::CircleProfile>(m.document().find(up)->recipe.base).radius - 1000) < 1e-3);
 }

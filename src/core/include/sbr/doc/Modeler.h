@@ -680,6 +680,23 @@ class Modeler {
   // editable: returns its parameter key (setParameter). One undo step.
   Result<std::string> roundEdges(const ObjectId& id, const std::vector<TopoDS_Edge>& worldEdges, double size,
                                  bool chamfer);
+  // Corners of a flat face object (world points at the corners) rounded /
+  // cut; the size stays editable (returns its parameter key). One undo step.
+  Result<std::string> roundCorners(const ObjectId& id, const std::vector<gp_Pnt>& worldCorners, double size,
+                                   bool chamfer);
+  // AutoCAD's fillet / chamfer of two straight lines: each is extended or
+  // cut back to where they meet, the part on the side of `near` kept, and
+  // joined there by an arc of `size` (chamfer: a straight cut `size` back
+  // along each; 0: they just meet). A line is a segment of a line object;
+  // only its free ends move (two segments meeting inside one line object
+  // are split there). The new arc / cut is returned (empty for 0). If the
+  // lines then close an outline, its face is made. One undo step.
+  struct LinePick {
+    ObjectId id;
+    std::size_t segment = 0;  // points[segment] -> points[segment + 1]
+    gp_Pnt near;              // where it was clicked (world): the side kept
+  };
+  Result<std::optional<ObjectId>> filletLines(const LinePick& a, const LinePick& b, double size, bool chamfer);
   // The solid hollowed, these faces (world) left open; returns the
   // thickness's parameter key. One undo step.
   Result<std::string> shellSolid(const ObjectId& id, const std::vector<TopoDS_Face>& worldFaces, double thickness);

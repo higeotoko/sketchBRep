@@ -6,6 +6,7 @@
 
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepGProp.hxx>
+#include <Bnd_Box.hxx>
 #include <GProp_GProps.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
@@ -17,6 +18,7 @@
 #include "sbr/doc/Modeler.h"
 #include "sbr/doc/NativeFormat.h"
 #include "sbr/geom/Measure.h"
+#include "sbr/geom/Surfaces.h"
 
 using namespace sbr;
 using namespace sbr::doc;
@@ -245,4 +247,91 @@ TEST(Surfaces, TooLargeSaysHowLarge) {
   const auto r = m.roundEdges(b, {TopoDS::Edge(edges(1))}, 500, false);
   ASSERT_FALSE(r);
   EXPECT_NE(r.error().find("up to about"), std::string::npos) << r.error();
+}
+
+// docs/47 (2D): corners of a flat face rounded, radius editable, then
+// pushed up into a box with rounded corners.
+TEST(Surfaces, FlatFaceCornersRounded) {
+  Modeler m;
+  const ObjectId r = *m.createRectangle(geom::SketchPlane::ground(), 1000, 600);
+  const std::vector<gp_Pnt> corners{gp_Pnt(0, 0, 0), gp_Pnt(1000, 0, 0), gp_Pnt(1000, 600, 0), gp_Pnt(0, 600, 0)};
+  const auto key = m.roundCorners(r, corners, 100, false);
+  ASSERT_TRUE(key) << key.error();
+  EXPECT_NEAR(area(world(m, r)), 1000.0 * 600 - (4 - M_PI) * 100 * 100, 1e-3);
+  ASSERT_TRUE(m.setParameter(r, *key, 50));
+  EXPECT_NEAR(area(world(m, r)), 1000.0 * 600 - (4 - M_PI) * 50 * 50, 1e-3);
+  const auto chamfered = m.roundCorners(*m.createRectangle(geom::SketchPlane::ground(), 1000, 600),
+                                        {gp_Pnt(0, 0, 0)}, 100, true);
+  ASSERT_TRUE(chamfered) << chamfered.error();
+  const auto tooLarge = m.roundCorners(*m.createRectangle(geom::SketchPlane::ground(), 1000, 600), {gp_Pnt(0, 0, 0)}, 5000, false);
+  ASSERT_FALSE(tooLarge);
+  EXPECT_NE(tooLarge.error().find("up to about"), std::string::npos) << tooLarge.error();
+  // Saved and loaded again.
+  Document d;
+  ASSERT_TRUE(deserializeDocument(serializeDocument(m.document()), d).ok());
+  EXPECT_NEAR(area(d.worldShape(*d.find(r))), area(world(m, r)), 1e-6);
+  // Pushed up: a box with rounded corners.
+  ASSERT_TRUE(m.extrude(r, 300));
+  EXPECT_NEAR(geom::volume(world(m, r)), (1000.0 * 600 - (4 - M_PI) * 50 * 50) * 300, 1.0);
+  const ObjectId plain = *m.createRectangle(geom::SketchPlane::ground(), 10, 10);
+  EXPECT_EQ(geom::faceCorners(TopoDS::Face(TopExp_Explorer(world(m, plain), TopAbs_FACE).Current())).size(), 4u);
+}
+
+// AutoCAD's fillet of two lines: cut back / extended to meet, joined by an
+// arc; 0 just makes them meet; a corner inside one line object splits it;
+// when the outline closes, its face is made.
+TEST(Surfaces, LinesFilletedTogether) {
+  Modeler m;
+  auto points = [&](const ObjectId& id) { return std::get<PolylineCurve>(m.document().find(id)->recipe.base).points; };
+  // Two lines not touching, at right angles.
+  const ObjectId a = *m.createPolyline({gp_Pnt(200, 0, 0), gp_Pnt(1000, 0, 0)});
+  const ObjectId b = *m.createPolyline({gp_Pnt(0, 300, 0), gp_Pnt(0, 1000, 0)});
+  const std::size_t steps = m.history().undoCount();
+  auto arc = m.filletLines({a, 0, gp_Pnt(600, 0, 0)}, {b, 0, gp_Pnt(0, 600, 0)}, 100, false);
+  ASSERT_TRUE(arc) << arc.error();
+  ASSERT_TRUE(arc->has_value());
+  EXPECT_EQ(m.history().undoCount(), steps + 1);
+  EXPECT_LT(points(a)[0].Distance(gp_Pnt(100, 0, 0)), 1e-6);
+  EXPECT_LT(points(b)[0].Distance(gp_Pnt(0, 100, 0)), 1e-6);
+  GProp_GProps p;
+  BRepGProp::LinearProperties(world(m, **arc), p);
+  EXPECT_NEAR(p.Mass(), M_PI * 100 / 2, 1e-6);  // a quarter circle
+  // Its middle bulges towards the corner.
+  const Bnd_Box box = geom::exactBounds(world(m, **arc));
+  EXPECT_NEAR(box.CornerMin().X(), 0, 1e-6);
+  ASSERT_TRUE(m.undo());
+  // 0: they just meet.
+  auto none = m.filletLines({a, 0, gp_Pnt(600, 0, 0)}, {b, 0, gp_Pnt(0, 600, 0)}, 0, false);
+  ASSERT_TRUE(none) << none.error();
+  EXPECT_FALSE(none->has_value());
+  EXPECT_LT(points(a)[0].Distance(gp_Pnt(0, 0, 0)), 1e-6);
+  EXPECT_LT(points(b)[0].Distance(gp_Pnt(0, 0, 0)), 1e-6);
+  // Parallel lines never meet; too large is said with how large.
+  const ObjectId c = *m.createPolyline({gp_Pnt(0, 2000, 0), gp_Pnt(1000, 2000, 0)});
+  EXPECT_FALSE(m.filletLines({a, 0, gp_Pnt(600, 0, 0)}, {c, 0, gp_Pnt(500, 2000, 0)}, 10, false));
+  const auto big = m.filletLines({a, 0, gp_Pnt(600, 0, 0)}, {b, 0, gp_Pnt(0, 600, 0)}, 5000, false);
+  ASSERT_FALSE(big);
+  EXPECT_NE(big.error().find("up to about"), std::string::npos) << big.error();
+  // Chamfer: a straight cut.
+  const ObjectId e = *m.createPolyline({gp_Pnt(5000, 0, 0), gp_Pnt(6000, 0, 0), gp_Pnt(6000, 1000, 0)});
+  auto cut = m.filletLines({e, 0, gp_Pnt(5500, 0, 0)}, {e, 1, gp_Pnt(6000, 500, 0)}, 100, true);
+  ASSERT_TRUE(cut) << cut.error();
+  ASSERT_TRUE(cut->has_value());
+  EXPECT_EQ(points(e).size(), 2u);  // split at the corner
+  EXPECT_LT(points(e)[1].Distance(gp_Pnt(5900, 0, 0)), 1e-6);
+  EXPECT_FALSE(m.filletLines({e, 0, gp_Pnt(5500, 0, 0)}, {e, 0, gp_Pnt(5600, 0, 0)}, 10, false));
+}
+
+TEST(Surfaces, FilletedLinesCloseIntoAFace) {
+  Modeler m;
+  const ObjectId p1 = *m.createPolyline({gp_Pnt(0, 0, 0), gp_Pnt(0, 1000, 0), gp_Pnt(1000, 1000, 0)});
+  const ObjectId p2 = *m.createPolyline({gp_Pnt(200, 0, 0), gp_Pnt(1000, 0, 0), gp_Pnt(1000, 800, 0)});
+  ASSERT_TRUE(m.filletLines({p1, 0, gp_Pnt(0, 500, 0)}, {p2, 0, gp_Pnt(600, 0, 0)}, 0, false));
+  auto arc = m.filletLines({p1, 1, gp_Pnt(500, 1000, 0)}, {p2, 1, gp_Pnt(1000, 400, 0)}, 100, false);
+  ASSERT_TRUE(arc) << arc.error();
+  double faces = 0;
+  for (const Object& o : m.document().objects()) {
+    if (o.kind() == ObjectKind::Face) faces += area(m.document().worldShape(o));
+  }
+  EXPECT_NEAR(faces, 1e6 - (1 - M_PI / 4) * 100 * 100, 1e-3);
 }

@@ -7285,6 +7285,188 @@ Result<std::string> Modeler::roundEdges(const ObjectId& id, const std::vector<To
   return key;
 }
 
+Result<std::string> Modeler::roundCorners(const ObjectId& id, const std::vector<gp_Pnt>& worldCorners, double size,
+                                          bool chamfer) {
+  using R = Result<std::string>;
+  const Object* current = document_.find(id);
+  if (!current) return R::failure("Object not found");
+  if (current->locked) return R::failure("'" + current->name + "' is locked");
+  if (current->kind() != ObjectKind::Face) return R::failure("Only the corners of a flat face can be rounded here");
+  if (worldCorners.empty()) return R::failure("Choose the corners first");
+  Object object = *current;
+  const gp_Trsf toLocal = document_.worldTransform(object).Inverted();
+  FilletOp op;
+  op.distance = size;
+  op.chamfer = chamfer;
+  for (const gp_Pnt& c : worldCorners) {
+    const gp_Pnt local = c.Transformed(toLocal);
+    if (std::any_of(op.corners.begin(), op.corners.end(), [&](const gp_Pnt& p) { return p.Distance(local) < 1e-6; })) continue;
+    op.corners.push_back(local);
+  }
+  object.recipe.modifiers.push_back(op);
+  const std::string key = opKey(object.recipe.modifiers.size() - 1);
+  if (const Status s = commitModified(std::move(object), chamfer ? "Chamfer" : "Fillet"); !s) return R::failure(s.message());
+  return key;
+}
+
+Result<std::optional<ObjectId>> Modeler::filletLines(const LinePick& a, const LinePick& b, double size, bool chamfer) {
+  using R = Result<std::optional<ObjectId>>;
+  if (!(size >= 0) || !std::isfinite(size)) return R::failure("The size must be 0 or more");
+  struct Side {
+    const LinePick* pick;
+    Object object;
+    std::vector<gp_Pnt> world;  // the line object's points
+    gp_Pnt s0, s1;              // the segment
+    gp_Dir kept;                // from the meeting point along the part kept
+    std::size_t moved = 0;      // index of the point that moves
+    double room = 0.0;          // length of the part kept, from the meeting point
+  };
+  std::vector<Side> sides;
+  for (const LinePick* p : {&a, &b}) {
+    const Object* o = document_.find(p->id);
+    if (!o) return R::failure("Line not found");
+    if (o->locked) return R::failure("'" + o->name + "' is locked");
+    const auto* line = std::get_if<PolylineCurve>(&o->recipe.base);
+    if (!line || !o->recipe.modifiers.empty()) return R::failure("Only straight lines can be joined this way");
+    if (p->segment + 1 >= line->points.size()) return R::failure("No such piece of the line");
+    Side side{p, *o, {}, {}, {}, gp::DX(), 0, 0.0};
+    const gp_Trsf w = document_.worldTransform(*o);
+    for (const gp_Pnt& q : line->points) side.world.push_back(q.Transformed(w));
+    side.s0 = side.world[p->segment];
+    side.s1 = side.world[p->segment + 1];
+    if (side.s0.Distance(side.s1) < 1e-6) return R::failure("A line has no length");
+    sides.push_back(std::move(side));
+  }
+  if (a.id == b.id && a.segment == b.segment) return R::failure("Pick two different lines");
+  // Where the two lines (extended) meet.
+  const gp_Vec u1(sides[0].s0, sides[0].s1), u2(sides[1].s0, sides[1].s1);
+  const gp_Vec n = u1.Crossed(u2);
+  if (n.Magnitude() < 1e-9 * u1.Magnitude() * u2.Magnitude()) return R::failure("The lines are parallel: they never meet");
+  const gp_Vec w0(sides[1].s0, sides[0].s0);
+  if (std::abs(w0.Dot(n.Normalized())) > 1e-3) return R::failure("The lines are not in one plane: they never meet");
+  // s0 + u1 t = s0' + u2 s, in the plane.
+  const double t = gp_Vec(sides[0].s0, sides[1].s0).Crossed(u2).Dot(n) / n.SquareMagnitude();
+  const gp_Pnt meet = sides[0].s0.Translated(u1 * t);
+  for (Side& side : sides) {
+    gp_Vec u(side.s0, side.s1);
+    u.Normalize();
+    double along = gp_Vec(meet, side.pick->near).Dot(u);
+    // Clicked right at the meeting point: keep the longer part.
+    if (std::abs(along) < 1e-6) {
+      along = std::abs(gp_Vec(meet, side.s0).Dot(u)) > std::abs(gp_Vec(meet, side.s1).Dot(u)) ? gp_Vec(meet, side.s0).Dot(u)
+                                                                                          : gp_Vec(meet, side.s1).Dot(u);
+    }
+    side.kept = gp_Dir(along > 0 ? u : -u);
+    const double d0 = gp_Vec(meet, side.s0).Dot(gp_Vec(side.kept)), d1 = gp_Vec(meet, side.s1).Dot(gp_Vec(side.kept));
+    // The end nearer the meeting point moves; the far end stays.
+    side.moved = d0 < d1 ? side.pick->segment : side.pick->segment + 1;
+    side.room = std::max(d0, d1);
+    if (side.room < 1e-6) return R::failure("The part kept would have no length (click the part to keep)");
+  }
+  const bool inside = a.id == b.id && sides[0].moved == sides[1].moved;  // a corner of one line object
+  for (const Side& side : sides) {
+    const std::size_t last = side.world.size() - 1;
+    if (!inside && side.moved != 0 && side.moved != last) {
+      return R::failure("A line can only be lengthened or shortened at a free end (this corner joins more lines)");
+    }
+  }
+  if (inside && size <= 0) return R::failure("These lines already meet at a corner");
+  // Where each line ends now, and what joins them.
+  const double angle = gp_Vec(sides[0].kept).Angle(gp_Vec(sides[1].kept));
+  if (angle < 1e-6 || angle > M_PI - 1e-6) return R::failure("The lines run straight on: nothing to round");
+  double back = 0.0;  // from the meeting point along each line
+  if (size > 0) back = chamfer ? size : size / std::tan(angle / 2);
+  for (const Side& side : sides) {
+    if (back > side.room - 1e-6) {
+      char text[128];
+      std::snprintf(text, sizeof text, "%s is too large for these lines (up to about %.0f mm)",
+                    chamfer ? "The chamfer" : "The radius",
+                    std::floor(chamfer ? std::min(sides[0].room, sides[1].room)
+                                       : std::min(sides[0].room, sides[1].room) * std::tan(angle / 2)));
+      return R::failure(text);
+    }
+  }
+  const gp_Pnt t1 = meet.Translated(gp_Vec(sides[0].kept) * back);
+  const gp_Pnt t2 = meet.Translated(gp_Vec(sides[1].kept) * back);
+  history_.beginGroup(chamfer ? "Chamfer Lines" : "Fillet Lines");
+  auto fail = [&](const std::string& why) {
+    history_.abortGroup();
+    return R::failure(why);
+  };
+  auto commitPoints = [&](Object object, const std::vector<gp_Pnt>& world) -> Status {
+    const gp_Trsf toLocal = document_.worldTransform(object).Inverted();
+    std::vector<gp_Pnt> local;
+    for (const gp_Pnt& q : world) local.push_back(q.Transformed(toLocal));
+    object.recipe.base = PolylineCurve{local};
+    return commitModified(std::move(object), "Line");
+  };
+  std::vector<ObjectId> touched;
+  if (inside) {
+    // Split the line object at the corner: before it -> t, t' -> after it.
+    const Side& s = sides[0];
+    const std::size_t k = s.moved;
+    // Which pick runs before the corner.
+    const bool firstBefore = sides[0].pick->segment < sides[1].pick->segment;
+    const gp_Pnt before = firstBefore ? t1 : t2, after = firstBefore ? t2 : t1;
+    std::vector<gp_Pnt> head(s.world.begin(), s.world.begin() + k);
+    head.push_back(before);
+    std::vector<gp_Pnt> tail{after};
+    tail.insert(tail.end(), s.world.begin() + k + 1, s.world.end());
+    if (const Status st = commitPoints(s.object, head); !st) return fail(st.message());
+    auto rest = createPolyline(tail);
+    if (!rest) return fail(rest.error());
+    touched = {s.object.id, *rest};
+  } else {
+    // Each free end moved to where the line now ends.
+    std::vector<gp_Pnt> first = sides[0].world;
+    first[sides[0].moved] = t1;
+    if (a.id == b.id) {
+      first[sides[1].moved] = t2;
+      if (const Status st = commitPoints(sides[0].object, first); !st) return fail(st.message());
+    } else {
+      std::vector<gp_Pnt> second = sides[1].world;
+      second[sides[1].moved] = t2;
+      if (const Status st = commitPoints(sides[0].object, first); !st) return fail(st.message());
+      if (const Status st = commitPoints(sides[1].object, second); !st) return fail(st.message());
+    }
+    touched = {sides[0].object.id};
+    if (a.id != b.id) touched.push_back(sides[1].object.id);
+  }
+  std::optional<ObjectId> joint;
+  if (back > 0) {
+    if (chamfer) {
+      auto cut = createPolyline({t1, t2});
+      if (!cut) return fail(cut.error());
+      joint = *cut;
+    } else {
+      // The arc t1 -> t2 tangent to both, its apex towards the meeting point.
+      const gp_Dir normal(gp_Vec(sides[0].kept).Crossed(gp_Vec(sides[1].kept)));
+      const double radius = size;
+      const gp_Vec bis = (gp_Vec(sides[0].kept) + gp_Vec(sides[1].kept)).Normalized();
+      const gp_Pnt centre = meet.Translated(bis * (radius / std::sin(angle / 2)));
+      const gp_Pnt apex = centre.Translated(gp_Vec(centre, meet).Normalized() * radius);
+      const gp_Pnt mid((t1.XYZ() + t2.XYZ()) / 2);
+      const gp_Vec side = gp_Vec(normal).Crossed(gp_Vec(t1, t2)).Normalized();
+      const double bulge = gp_Vec(mid, apex).Dot(side);
+      auto arc = createArc(t1, t2, normal, bulge, false);
+      if (!arc) return fail(arc.error());
+      joint = *arc;
+    }
+  }
+  history_.endGroup();
+  // Closing an outline (as drawing it would): its face.
+  if (joint) {
+    bool loop = false;
+    (void)faceFromLoop(*joint, &loop);
+  } else {
+    for (const ObjectId& id : touched) {
+      bool loop = false;
+      if (document_.find(id) && faceFromLoop(id, &loop)) break;
+    }
+  }
+  return joint;
+}
+
 Result<std::string> Modeler::shellSolid(const ObjectId& id, const std::vector<TopoDS_Face>& worldFaces, double thickness) {
   using R = Result<std::string>;
   const Object* current = document_.find(id);

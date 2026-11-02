@@ -19,6 +19,8 @@
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepFilletAPI_MakeChamfer.hxx>
 #include <BRepFilletAPI_MakeFillet.hxx>
+#include <BRepFilletAPI_MakeFillet2d.hxx>
+#include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
 #include <BRepOffsetAPI_MakeFilling.hxx>
 #include <BRepOffsetAPI_MakeOffsetShape.hxx>
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
@@ -31,6 +33,7 @@
 #include <BRep_Tool.hxx>
 #include <GeomAbs_Shape.hxx>
 #include <ShapeAnalysis_FreeBounds.hxx>
+#include <ShapeFix_Shape.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
@@ -367,6 +370,122 @@ Result<TopoDS_Shape> shellSolid(const TopoDS_Shape& solid, const std::vector<Top
   } catch (const Standard_Failure& e) {
     return R::failure("Shell failed (the walls may be too thick): " + occtMessage(e));
   }
+}
+
+namespace {
+
+Result<TopoDS_Shape> tryRoundCorners(const TopoDS_Face& face, const std::vector<gp_Pnt>& corners, double size,
+                                     bool chamfer) {
+  using R = Result<TopoDS_Shape>;
+  const char* what = chamfer ? "Chamfer" : "Fillet";
+  TopTools_IndexedDataMapOfShapeListOfShape edgesAt;
+  TopExp::MapShapesAndAncestors(face, TopAbs_VERTEX, TopAbs_EDGE, edgesAt);
+  BRepFilletAPI_MakeFillet2d mk(face);
+  if (mk.Status() != ChFi2d_Ready) return R::failure("Only a flat face can have its corners rounded");
+  for (const gp_Pnt& c : corners) {
+    int found = 0;
+    for (int i = 1; i <= edgesAt.Extent(); ++i) {
+      const TopoDS_Vertex& v = TopoDS::Vertex(edgesAt.FindKey(i));
+      if (BRep_Tool::Pnt(v).Distance(c) > 1e-3) continue;
+      found = i;
+      break;
+    }
+    if (!found) return R::failure("A corner is no longer there");
+    const TopoDS_Vertex& v = TopoDS::Vertex(edgesAt.FindKey(found));
+    if (chamfer) {
+      std::vector<TopoDS_Edge> two;
+      for (const TopoDS_Shape& e : edgesAt.FindFromIndex(found)) {
+        bool dup = false;
+        for (const TopoDS_Edge& t : two) dup |= t.IsSame(e);
+        if (!dup) two.push_back(TopoDS::Edge(e));
+      }
+      if (two.size() != 2) return R::failure("A corner to chamfer must join exactly two edges");
+      mk.AddChamfer(two[0], two[1], size, size);
+    } else {
+      mk.AddFillet(v, size);
+    }
+    if (mk.Status() != ChFi2d_IsDone) {
+      return R::failure(std::string(what) + " failed at a corner: the size may be too large for its edges");
+    }
+  }
+  mk.Build();
+  if (!mk.IsDone()) return R::failure(std::string(what) + " failed: the size may be too large for these corners");
+  TopoDS_Shape out = mk.Shape();
+  if (!BRepCheck_Analyzer(out).IsValid()) {
+    // The 2D chamfer may leave the new edges without their curves on the
+    // plane or loosely joined: mended (same face, same outline).
+    ShapeFix_Shape fix(out);
+    fix.Perform();
+    out = fix.Shape();
+  }
+  if (!BRepCheck_Analyzer(out).IsValid()) return R::failure(std::string(what) + " gave an invalid face: try a smaller size");
+  return out;
+}
+
+}  // namespace
+
+Result<TopoDS_Shape> roundCorners(const TopoDS_Shape& shape, const std::vector<gp_Pnt>& corners, double size,
+                                  bool chamfer) {
+  using R = Result<TopoDS_Shape>;
+  const char* what = chamfer ? "Chamfer" : "Fillet";
+  if (!(size > 1e-6) || !std::isfinite(size)) return R::failure(std::string(what) + " size must be positive");
+  if (corners.empty()) return R::failure("No corners to " + std::string(chamfer ? "chamfer" : "round"));
+  TopExp_Explorer f(shape, TopAbs_FACE);
+  if (!f.More()) return R::failure("Not a face");
+  const TopoDS_Face face = TopoDS::Face(f.Current());
+  f.Next();
+  if (f.More()) return R::failure("Only the corners of one flat face can be rounded");
+  auto attempt = [&](double s) {
+    try {
+      return tryRoundCorners(face, corners, s, chamfer);
+    } catch (const Standard_Failure& e) {
+      return R::failure(std::string(what) + " failed (the size may be too large): " + occtMessage(e));
+    }
+  };
+  auto made = attempt(size);
+  if (made) return made;
+  // As for edges: about the largest size these corners take.
+  double ok = 0.0, bad = size;
+  for (double probe = size / 2; probe > size / 1024; probe /= 2) {
+    if (attempt(probe)) {
+      ok = probe;
+      break;
+    }
+    bad = probe;
+  }
+  if (ok <= 0.0) return made;
+  for (int i = 0; i < 6; ++i) {
+    const double mid = (ok + bad) / 2;
+    if (attempt(mid)) ok = mid; else bad = mid;
+  }
+  char hint[96];
+  std::snprintf(hint, sizeof hint, " (these corners take up to about %.0f mm)", std::floor(ok));
+  return R::failure(made.error() + hint);
+}
+
+std::vector<gp_Pnt> faceCorners(const TopoDS_Face& face) {
+  std::vector<gp_Pnt> out;
+  TopTools_IndexedDataMapOfShapeListOfShape edgesAt;
+  TopExp::MapShapesAndAncestors(face, TopAbs_VERTEX, TopAbs_EDGE, edgesAt);
+  for (int i = 1; i <= edgesAt.Extent(); ++i) {
+    const TopoDS_Vertex& v = TopoDS::Vertex(edgesAt.FindKey(i));
+    const gp_Pnt at = BRep_Tool::Pnt(v);
+    std::vector<gp_Dir> tangents;
+    for (const TopoDS_Shape& s : edgesAt.FindFromIndex(i)) {
+      BRepAdaptor_Curve c(TopoDS::Edge(s));
+      for (double u : {c.FirstParameter(), c.LastParameter()}) {
+        gp_Pnt p;
+        gp_Vec t;
+        c.D1(u, p, t);
+        if (p.Distance(at) < 1e-3 && t.Magnitude() > 1e-12) {
+          tangents.push_back(gp_Dir(t));
+          break;
+        }
+      }
+    }
+    if (tangents.size() == 2 && !tangents[0].IsParallel(tangents[1], 1e-3)) out.push_back(at);
+  }
+  return out;
 }
 
 std::pair<gp_Pnt, gp_Dir> edgeKey(const TopoDS_Edge& edge) {

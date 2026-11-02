@@ -218,6 +218,17 @@ class DrawingTool : public Tool {
   void resetTracking();
   void refresh();
   QString lockSuffix() const;
+  // Circles, polygons and arcs (SketchUp): the arrow keys hold the shape to
+  // the plane across that axis (→ red, ← green, ↑ blue); again or ↓ lets
+  // go. True when the key was one of them.
+  bool planeKey(QKeyEvent* event);
+  // The plane drawn in from `start` (the first click's): the one held by
+  // the arrow keys; else stood up to a point of the model off it that the
+  // cursor reaches (the upright axis plane through both, the one facing
+  // the viewer most); else `start` itself.
+  geom::SketchPlane standingPlane(const ToolEvent& e, const geom::SketchPlane& start);
+  QString planeHint() const;
+  std::optional<gp_Dir> heldPlane_;
 
   std::optional<gp_Dir> locked_;
   std::vector<gp_Pnt> trackedPoints_;      // recently hovered points
@@ -498,6 +509,7 @@ class ArcTool : public DrawingTool {
   void reset();
   void updateStatus(const QString& snap = {});
   enum class Stage { Start, End, Bulge } stage_ = Stage::Start;
+  geom::SketchPlane startPlane_;  // from the first click (face or ground)
   geom::SketchPlane plane_;
   gp_Pnt start_, end_;
   double bulge_ = 0.0;
@@ -601,9 +613,11 @@ class CircleTool : public DrawingTool {
   std::optional<gp_Pln> workingPlane() const override;
 
  private:
+  bool keyPress(QKeyEvent* event) override;
   void commit(double radius);
   void reset();
   bool hasCentre_ = false;
+  geom::SketchPlane start_;  // from the centre click (face or ground)
   geom::SketchPlane plane_;
   double radius_ = 0.0;
   std::optional<doc::ObjectId> lastCreated_;
@@ -628,10 +642,12 @@ class PolygonTool : public DrawingTool {
   std::optional<gp_Pln> workingPlane() const override;
 
  private:
+  bool keyPress(QKeyEvent* event) override;
   void commit(double radius);
   void reset();
   QString prompt() const;
   bool hasCentre_ = false;
+  geom::SketchPlane start_;  // from the centre click (face or ground)
   geom::SketchPlane plane_;  // xDir points at the first corner
   double radius_ = 0.0;
   int sides_ = 6;
@@ -1296,7 +1312,17 @@ class SurfaceTool : public Tool {
     int index = 0;
     bool whole = false;       // a curve object taken whole
     TopoDS_Shape shape;       // world
+    std::size_t segment = 0;  // fillet of lines: the piece of the line object
+    gp_Pnt near;              // ... and where it was clicked (the side kept)
   };
+  // Fillet / chamfer works on edges of a solid, corners of a flat face, or
+  // two lines (AutoCAD), as the first pick says.
+  enum class Mode { Solid, Face, Lines };
+  std::optional<Mode> mode_;
+  bool allCorners_ = false;  // a flat face clicked: all its corners
+  std::vector<gp_Pnt> corners() const;
+  // The two lines just joined (a value typed right after joins them anew).
+  std::optional<std::pair<doc::Modeler::LinePick, doc::Modeler::LinePick>> recentLines_;
   bool edgeKind() const { return kind_ == Kind::Fillet || kind_ == Kind::Chamfer; }
   bool curveKind() const { return kind_ == Kind::Sweep2 || kind_ == Kind::EdgeSurface || kind_ == Kind::Patch; }
   std::optional<Pick> pickAt(const ToolEvent& e, QString* why) const;

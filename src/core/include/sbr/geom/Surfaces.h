@@ -39,6 +39,15 @@ Result<TopoDS_Shape> patchSurface(const std::vector<TopoDS_Shape>& curves);
 // by `size`. When too large, the failure says about how large they take.
 Result<TopoDS_Shape> roundEdges(const TopoDS_Shape& solid, const std::vector<TopoDS_Edge>& edges, double size,
                                 bool chamfer);
+// Corners of a flat face rounded (fillet) or cut (chamfer, equal
+// distances) by `size`; the face stays one flat face. `corners` are points
+// at the corners (within 1e-3 mm). When too large, says how large they take.
+Result<TopoDS_Shape> roundCorners(const TopoDS_Shape& face, const std::vector<gp_Pnt>& corners, double size,
+                                  bool chamfer);
+// The corners of a flat face where two edges meet at an angle (not where
+// they run on smoothly).
+std::vector<gp_Pnt> faceCorners(const TopoDS_Face& face);
+
 // The solid hollowed to walls `thickness` thick, the given faces left open
 // (Rhino's Shell). No face to open: a closed hollow inside.
 Result<TopoDS_Shape> shellSolid(const TopoDS_Shape& solid, const std::vector<TopoDS_Face>& open, double thickness);

@@ -442,6 +442,7 @@ Result<TopoDS_Shape> regenerate(const Recipe& recipe, const RegenContext& contex
               return TopoDS_Shape(cut.value());
             },
             [&](const FilletOp& op) -> Result<TopoDS_Shape> {
+              if (!op.corners.empty()) return geom::roundCorners(shape, op.corners, op.distance, op.chamfer);
               std::vector<TopoDS_Edge> edges;
               for (const EdgeRef& ref : op.edges) {
                 auto edge = geom::findEdge(shape, ref.point, ref.direction);
@@ -889,7 +890,9 @@ std::string describe(const Recipe& recipe) {
                    },
                    [&](const OffsetFaceOp& op) { out << " > Push/Pull (curved) " << op.distance; },
                    [&](const FilletOp& op) {
-                     out << (op.chamfer ? " > Chamfer " : " > Fillet R") << op.distance << " (" << op.edges.size() << " edges)";
+                     out << (op.chamfer ? " > Chamfer " : " > Fillet R") << op.distance << " ("
+                         << (op.corners.empty() ? op.edges.size() : op.corners.size())
+                         << (op.corners.empty() ? " edges)" : " corners)");
                    },
                    [&](const ShellOp& op) { out << " > Shell " << op.distance; },
                    [&](const OffsetOp& op) { out << " > Offset " << op.distance; },

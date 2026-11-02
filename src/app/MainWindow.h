@@ -213,6 +213,7 @@ class MainWindow : public QMainWindow, public ToolHost {
 
  protected:
   void closeEvent(QCloseEvent* event) override;
+  bool eventFilter(QObject* watched, QEvent* event) override;
 
  private:
   std::string elementBasis(const doc::ObjectId& id) const;
@@ -291,6 +292,12 @@ class MainWindow : public QMainWindow, public ToolHost {
   int backupGenerations_ = 3;
   QLabel* status_ = nullptr;
   QLabel* measurementLabel_ = nullptr;
+  // The unit of the value in the box, shown beside it (not in the box, so
+  // typing never has to work around it).
+  QLabel* measurementUnit_ = nullptr;
+  // The box shows a value the program put there (not typed): the first key
+  // typed replaces it whole, wherever the cursor is.
+  bool measurementFresh_ = false;
   QLabel* constraintLabel_ = nullptr;
   QLabel* contextLabel_ = nullptr;
   QLineEdit* measurement_ = nullptr;
