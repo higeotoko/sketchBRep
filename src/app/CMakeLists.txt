@@ -1,4 +1,4 @@
-find_package(Qt6 6.2 REQUIRED COMPONENTS Widgets Network)
+find_package(Qt6 6.2 REQUIRED COMPONENTS Widgets Network PrintSupport)
 
 set(CMAKE_AUTOMOC ON)
 
@@ -25,7 +25,7 @@ add_library(sbr_ui STATIC
 )
 target_include_directories(sbr_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
                           PRIVATE ${PROJECT_SOURCE_DIR}/assets/materials/builtin/integration)
-target_link_libraries(sbr_ui PUBLIC sbr::core Qt6::Widgets Qt6::Network TKService TKV3d TKOpenGl
+target_link_libraries(sbr_ui PUBLIC sbr::core Qt6::Widgets Qt6::Network Qt6::PrintSupport TKService TKV3d TKOpenGl
                              PRIVATE nlohmann_json::nlohmann_json)
 # The help topics (ヘルプ > 操作方法), embedded; with a static library Qt
 # links the resources into every program using it.

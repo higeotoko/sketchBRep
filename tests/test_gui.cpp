@@ -67,6 +67,7 @@
 #include "CrashLog.h"
 #include "HelpWindow.h"
 #include <QPlainTextEdit>
+#include <QPrinter>
 #include <QTextBrowser>
 #include "McpHttpServer.h"
 #include "ProgressDialog.h"
@@ -8930,6 +8931,58 @@ void GuiPhase1::drawingDialogPlanSectionElevationAndExport() {
   QFile pdf(dir.filePath(QStringLiteral("drawing.pdf")));
   QVERIFY(pdf.open(QIODevice::ReadOnly));
   QVERIFY(pdf.read(5) == "%PDF-");
+  // Printing: the printer takes the sheet's paper and prints at real size;
+  // on a smaller paper it is shrunk and says so.
+  QVERIFY(dialog.findChild<QPushButton*>(QStringLiteral("drawingPrintButton")));
+  {
+    QPrinter printer(QPrinter::HighResolution);
+    setUpPrinter(*dialog.sheet(), printer);
+    QCOMPARE(printer.pageLayout().orientation(), QPageLayout::Landscape);
+    const QSizeF mm = printer.pageLayout().fullRect(QPageLayout::Millimeter).size();
+    QVERIFY(std::abs(mm.width() - dialog.sheet()->paperWidth) < 1.0);
+    QVERIFY(std::abs(mm.height() - dialog.sheet()->paperHeight) < 1.0);
+    printer.setOutputFormat(QPrinter::PdfFormat);
+    printer.setOutputFileName(dir.filePath(QStringLiteral("printed.pdf")));
+    bool scaled = true;
+    const Status s = dialog.printTo(printer, &scaled);
+    QVERIFY2(s, s.message().c_str());
+    QVERIFY(!scaled);
+    QVERIFY(QFileInfo(dir.filePath(QStringLiteral("printed.pdf"))).size() > 100);
+  }
+  {
+    QPrinter printer(QPrinter::HighResolution);
+    setUpPrinter(*dialog.sheet(), printer);
+    printer.setPageSize(QPageSize(QPageSize::A6));
+    printer.setOutputFormat(QPrinter::PdfFormat);
+    printer.setOutputFileName(dir.filePath(QStringLiteral("small.pdf")));
+    bool scaled = false;
+    QVERIFY(dialog.printTo(printer, &scaled));
+    QVERIFY(scaled);
+  }
+  // In the background: a change starts the view on another thread, the
+  // dialog stays usable, the result comes in by itself. The model changed
+  // meanwhile (as the AI may) does not reach the drawing being made.
+  kind->setCurrentIndex(0);
+  f.box(9000, 0, 500, 500, 3000);
+  QTRY_VERIFY_WITH_TIMEOUT(dialog.computing(), 3000);
+  QVERIFY(dialog.isEnabled());
+  QTRY_VERIFY_WITH_TIMEOUT(!dialog.computing(), 30000);
+  QVERIFY2(dialog.sheet().has_value(), qPrintable(dialog.lastError()));
+  QVERIFY(name->text().contains(QStringLiteral("平面図")));
+  const auto cutObjects = [&] {
+    int n = 0;
+    for (const draw::Item& i : dialog.sheet()->items) n += i.pen == draw::Pen::Cut;
+    return n;
+  };
+  const int cutsBefore = cutObjects();
+  // A new dialog sees the new box.
+  DrawingDialog fresh(m.document(), &f.window);
+  fresh.findChild<QComboBox*>(QStringLiteral("drawingScale"))->setCurrentIndex(scale->currentIndex());
+  fresh.refreshNow();
+  QVERIFY2(fresh.sheet().has_value(), qPrintable(fresh.lastError()));
+  int freshCuts = 0;
+  for (const draw::Item& i : fresh.sheet()->items) freshCuts += i.pen == draw::Pen::Cut;
+  QVERIFY2(freshCuts > cutsBefore, qPrintable(QStringLiteral("%1 %2").arg(freshCuts).arg(cutsBefore)));
 }
 
 // File > recent files: saved and opened files, newest first; one click

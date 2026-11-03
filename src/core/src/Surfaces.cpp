@@ -1,4 +1,5 @@
 #include "sbr/geom/Surfaces.h"
+#include "sbr/geom/Progress.h"
 
 #include <algorithm>
 #include <cmath>
@@ -94,7 +95,8 @@ Result<std::vector<TopoDS_Edge>> loopOf(const std::vector<TopoDS_Shape>& curves)
 Result<TopoDS_Shape> filling(const std::vector<TopoDS_Edge>& loop) {
   BRepOffsetAPI_MakeFilling fill;
   for (const TopoDS_Edge& e : loop) fill.Add(e, GeomAbs_C0);
-  fill.Build();
+  fill.Build(geom::progressRange());
+  if (geom::cancelled()) return Result<TopoDS_Shape>::failure(geom::kCancelledMessage);
   if (!fill.IsDone()) return Result<TopoDS_Shape>::failure("No surface could be made over these curves");
   const TopoDS_Shape s = fill.Shape();
   if (!BRepCheck_Analyzer(s).IsValid()) return Result<TopoDS_Shape>::failure("The surface over these curves is not valid");
@@ -212,7 +214,8 @@ Result<TopoDS_Shape> sweep2(const TopoDS_Wire& rail1In, const TopoDS_Wire& rail2
       if (w.IsNull()) return R::failure("Could not fit a profile between the rails");
       loft.AddWire(w);
     }
-    loft.Build();
+    loft.Build(geom::progressRange());
+    if (geom::cancelled()) return R::failure(geom::kCancelledMessage);
     if (!loft.IsDone()) return R::failure("Sweep2 failed: the profiles could not be joined along the rails");
     const TopoDS_Shape s = loft.Shape();
     if (!BRepCheck_Analyzer(s).IsValid()) return R::failure("Sweep2 gave an invalid shape (rails crossing?)");
@@ -248,7 +251,8 @@ Result<TopoDS_Shape> surfaceFromEdges(const std::vector<TopoDS_Shape>& curves) {
       }
       for (const TopoDS_Wire& w : wires) ruled.AddWire(w);
       ruled.CheckCompatibility(Standard_False);
-      ruled.Build();
+      ruled.Build(geom::progressRange());
+      if (geom::cancelled()) return R::failure(geom::kCancelledMessage);
       if (!ruled.IsDone()) return R::failure("No surface between these two curves");
       return ruled.Shape();
     }
@@ -290,13 +294,15 @@ Result<TopoDS_Shape> tryRoundEdges(const TopoDS_Shape& solid, const std::vector<
     if (chamfer) {
       BRepFilletAPI_MakeChamfer mk(solid);
       for (const TopoDS_Edge& e : edges) mk.Add(size, e);
-      mk.Build();
+      mk.Build(geom::progressRange());
+      if (geom::cancelled()) return R::failure(geom::kCancelledMessage);
       if (!mk.IsDone()) return R::failure("Chamfer failed: the size may be too large for these edges");
       out = mk.Shape();
     } else {
       BRepFilletAPI_MakeFillet mk(solid);
       for (const TopoDS_Edge& e : edges) mk.Add(size, e);
-      mk.Build();
+      mk.Build(geom::progressRange());
+      if (geom::cancelled()) return R::failure(geom::kCancelledMessage);
       if (!mk.IsDone()) return R::failure("Fillet failed: the radius may be too large for these edges");
       out = mk.Shape();
     }
@@ -315,11 +321,15 @@ Result<TopoDS_Shape> roundEdges(const TopoDS_Shape& solid, const std::vector<Top
                                 bool chamfer) {
   auto made = tryRoundEdges(solid, edges, size, chamfer);
   if (made || !(size > 1e-6) || !std::isfinite(size) || edges.empty()) return made;
+  const auto stopped = [](const Result<TopoDS_Shape>& r) { return !r && r.error() == geom::kCancelledMessage; };
+  if (stopped(made)) return made;
   // Too large? Find about the largest size these edges take (a few tries,
   // halving the gap), so the message can say "up to N mm".
   double ok = 0.0, bad = size;
   for (double probe = size / 2; probe > size / 1024; probe /= 2) {
-    if (tryRoundEdges(solid, edges, probe, chamfer)) {
+    const auto tried = tryRoundEdges(solid, edges, probe, chamfer);
+    if (stopped(tried)) return tried;
+    if (tried) {
       ok = probe;
       break;
     }
@@ -328,7 +338,9 @@ Result<TopoDS_Shape> roundEdges(const TopoDS_Shape& solid, const std::vector<Top
   if (ok <= 0.0) return made;
   for (int i = 0; i < 6; ++i) {
     const double mid = (ok + bad) / 2;
-    if (tryRoundEdges(solid, edges, mid, chamfer)) ok = mid; else bad = mid;
+    const auto tried = tryRoundEdges(solid, edges, mid, chamfer);
+    if (stopped(tried)) return tried;
+    if (tried) ok = mid; else bad = mid;
   }
   char hint[96];
   std::snprintf(hint, sizeof hint, " (these edges take up to about %.0f mm)", std::floor(ok));
@@ -342,7 +354,9 @@ Result<TopoDS_Shape> shellSolid(const TopoDS_Shape& solid, const std::vector<Top
     if (open.empty()) {
       // Nothing open: a closed hollow inside (the walls all round).
       BRepOffsetAPI_MakeOffsetShape inner;
-      inner.PerformByJoin(solid, -thickness, 1e-3);
+      inner.PerformByJoin(solid, -thickness, 1e-3, BRepOffset_Skin, Standard_False, Standard_False, GeomAbs_Arc,
+                          Standard_False, geom::progressRange());
+      if (geom::cancelled()) return R::failure(geom::kCancelledMessage);
       if (!inner.IsDone()) return R::failure("Shell failed: the walls may be thicker than the solid allows");
       TopoDS_Shape core = inner.Shape();
       if (core.ShapeType() != TopAbs_SOLID) {
@@ -352,7 +366,8 @@ Result<TopoDS_Shape> shellSolid(const TopoDS_Shape& solid, const std::vector<Top
         const TopoDS_Shape made = ms.Shape();
         core = made;
       }
-      BRepAlgoAPI_Cut cut(solid, core);
+      BRepAlgoAPI_Cut cut(solid, core, geom::progressRange());
+      if (geom::cancelled()) return R::failure(geom::kCancelledMessage);
       if (!cut.IsDone()) return R::failure("Shell failed: the hollow could not be cut");
       const TopoDS_Shape out = cut.Shape();
       if (!BRepCheck_Analyzer(out).IsValid()) return R::failure("Shell gave an invalid shape: try a thinner wall");
@@ -361,8 +376,9 @@ Result<TopoDS_Shape> shellSolid(const TopoDS_Shape& solid, const std::vector<Top
     TopTools_ListOfShape faces;
     for (const TopoDS_Face& f : open) faces.Append(f);
     BRepOffsetAPI_MakeThickSolid mk;
-    mk.MakeThickSolidByJoin(solid, faces, -thickness, 1e-3);
-    mk.Build();
+    mk.MakeThickSolidByJoin(solid, faces, -thickness, 1e-3, BRepOffset_Skin, Standard_False, Standard_False,
+                            GeomAbs_Arc, Standard_False, geom::progressRange());
+    if (geom::cancelled()) return R::failure(geom::kCancelledMessage);
     if (!mk.IsDone()) return R::failure("Shell failed: the walls may be thicker than the solid allows");
     const TopoDS_Shape out = mk.Shape();
     if (!BRepCheck_Analyzer(out).IsValid()) return R::failure("Shell gave an invalid shape: try a thinner wall");

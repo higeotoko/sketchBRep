@@ -8,6 +8,7 @@
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Common.hxx>
+#include <TopTools_ListOfShape.hxx>
 #include <BRepAlgoAPI_Section.hxx>
 #include <BRepBndLib.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
@@ -387,9 +388,22 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
         continue;
       }
       // Cut: the lines on the plane, exactly; the part kept seen beyond.
-      BRepAlgoAPI_Section section(world, plane);
+      // Non-destructive: the model's shapes are shared with the window
+      // (drawings are made on another thread), never changed here.
+      BRepAlgoAPI_Section section(world, plane, Standard_False);
+      section.SetNonDestructive(Standard_True);
+      section.Build();
       if (section.IsDone()) addLocalEdges(section.Shape().Moved(TopLoc_Location(proj.toLocal)), Pen::Cut, deflection, cut);
-      BRepAlgoAPI_Common kept(world, keepBox);
+      BRepAlgoAPI_Common kept;
+      {
+        TopTools_ListOfShape arguments, tools;
+        arguments.Append(world);
+        tools.Append(keepBox);
+        kept.SetArguments(arguments);
+        kept.SetTools(tools);
+        kept.SetNonDestructive(Standard_True);
+        kept.Build();
+      }
       if (!kept.IsDone() || kept.Shape().IsNull()) {
         view.notes.push_back("'" + o.name + "' could not be cut: drawn uncut");
         builder.Add(seen, world);

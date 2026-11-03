@@ -1,5 +1,6 @@
 #include "DrawingExport.h"
 
+#include <chrono>
 #include <cmath>
 
 #include <QApplication>
@@ -22,9 +23,14 @@
 #include <QPageSize>
 #include <QPainter>
 #include <QPainterPath>
+#include <algorithm>
+
 #include <QPdfWriter>
+#include <QPrintDialog>
+#include <QPrinter>
 #include <QPushButton>
 #include <QSettings>
+#include <QThread>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -153,7 +159,40 @@ Status writePdf(const draw::Sheet& sheet, const QString& path) {
   return QFileInfo(path).size() > 0 ? Status::success() : Status::failure("Writing " + path.toStdString() + " failed");
 }
 
-DrawingDialog::DrawingDialog(const doc::Document& document, QWidget* parent) : QDialog(parent), document_(document) {
+void setUpPrinter(const draw::Sheet& sheet, QPrinter& printer) {
+  // The page size is given upright; the orientation turns it.
+  const double shortSide = std::min(sheet.paperWidth, sheet.paperHeight);
+  const double longSide = std::max(sheet.paperWidth, sheet.paperHeight);
+  printer.setPageSize(QPageSize(QSizeF(shortSide, longSide), QPageSize::Millimeter, QString::fromStdString(sheet.paper)));
+  printer.setPageOrientation(sheet.paperWidth >= sheet.paperHeight ? QPageLayout::Landscape : QPageLayout::Portrait);
+  printer.setFullPage(true);
+  printer.setPageMargins(QMarginsF(0, 0, 0, 0), QPageLayout::Millimeter);
+  printer.setDocName(QString::fromStdString(sheet.title));
+  printer.setCreator(QStringLiteral("SketchBRep"));
+}
+
+Status printSheet(const draw::Sheet& sheet, QPrinter& printer, bool* scaled) {
+  // The sheet at real size from the paper's corner (the frame keeps 10 mm
+  // and more from the edges, more than printers leave unprinted). On a
+  // smaller paper than the sheet's, it is shrunk to fit (scale no longer
+  // true): *scaled says so.
+  QPainter painter;
+  if (!painter.begin(&printer)) return Status::failure("The printer could not be started");
+  const QRectF paper = printer.paperRect(QPrinter::DevicePixel);
+  const double dpmmX = printer.logicalDpiX() / 25.4, dpmmY = printer.logicalDpiY() / 25.4;
+  QRectF target(0, 0, sheet.paperWidth * dpmmX, sheet.paperHeight * dpmmY);
+  // Printers round paper sizes to whole points: allow half a millimetre.
+  const double slack = 0.5 * std::max(dpmmX, dpmmY);
+  const bool fits = target.width() <= paper.width() + slack && target.height() <= paper.height() + slack;
+  if (!fits) target = QRectF(0, 0, paper.width(), paper.height());
+  if (scaled) *scaled = !fits;
+  renderSheet(painter, sheet, target);
+  painter.end();
+  return Status::success();
+}
+
+DrawingDialog::DrawingDialog(const doc::Document& document, QWidget* parent)
+    : QDialog(parent), document_(document), snapshot_(std::make_shared<const doc::Document>(document)) {
   setWindowTitle(tr("図面を書き出す（平面・断面・立面）"));
   setObjectName(QStringLiteral("drawingDialog"));
   QSettings settings;
@@ -319,6 +358,9 @@ DrawingDialog::DrawingDialog(const doc::Document& document, QWidget* parent) : Q
   auto* buttons = new QDialogButtonBox;
   QPushButton* exportButton = buttons->addButton(tr("書き出す（PDF・DXF・JWW・DWG）..."), QDialogButtonBox::AcceptRole);
   exportButton->setObjectName(QStringLiteral("drawingExportButton"));
+  QPushButton* printButton = buttons->addButton(tr("印刷..."), QDialogButtonBox::ActionRole);
+  printButton->setObjectName(QStringLiteral("drawingPrintButton"));
+  connect(printButton, &QPushButton::clicked, this, &DrawingDialog::choosePrinterAndPrint);
   buttons->addButton(QDialogButtonBox::Close);
   right->addWidget(buttons);
   connect(exportButton, &QPushButton::clicked, this, &DrawingDialog::chooseFileAndExport);
@@ -327,7 +369,10 @@ DrawingDialog::DrawingDialog(const doc::Document& document, QWidget* parent) : Q
   timer_ = new QTimer(this);
   timer_->setSingleShot(true);
   timer_->setInterval(250);
-  connect(timer_, &QTimer::timeout, this, &DrawingDialog::refreshNow);
+  connect(timer_, &QTimer::timeout, this, &DrawingDialog::refreshInBackground);
+  poll_ = new QTimer(this);
+  poll_->setInterval(40);
+  connect(poll_, &QTimer::timeout, this, &DrawingDialog::collectJob);
   auto view = [this] { viewChanged(); };
   auto layout = [this] { layoutChanged(); };
   connect(kind_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this, view] {
@@ -417,9 +462,58 @@ void DrawingDialog::viewChanged() {
 
 void DrawingDialog::layoutChanged() { timer_->start(); }
 
-void DrawingDialog::refreshNow() {
-  timer_->stop();
+DrawingDialog::~DrawingDialog() {
+  // A view still being made works on the dialog's own copy of the model:
+  // wait for it (hidden line removal cannot be stopped half way).
+  if (job_.valid()) job_.wait();
+}
+
+bool DrawingDialog::computing() const { return job_.valid(); }
+
+void DrawingDialog::startJob(const draw::ViewSpec& spec) {
+  // The model as it was when the dialog opened (its own copy): the window
+  // may change the model meanwhile (AI), never the shapes drawn here.
+  viewDirty_ = false;
+  jobSpec_ = spec;
+  job_ = std::async(std::launch::async, [model = snapshot_, spec] { return draw::makeView(*model, spec); });
+  poll_->start();
+}
+
+void DrawingDialog::finishJob() {
+  poll_->stop();
+  auto v = job_.get();
+  if (!v) {
+    view_.reset();
+    sheet_.reset();
+    error_ = QString::fromStdString(v.error());
+    return;
+  }
+  view_ = std::move(v.value());
+}
+
+void DrawingDialog::layOut() {
   error_.clear();
+  QString why;
+  const auto spec = viewSpec(&why);
+  if (!spec) {
+    error_ = why;
+    sheet_.reset();
+    return;
+  }
+  if (!view_) return;
+  view_->spec.title = spec->title;
+  auto sheet = draw::layoutSheet(*view_, sheetSpec());
+  if (!sheet) {
+    sheet_.reset();
+    error_ = QString::fromStdString(sheet.error());
+  } else {
+    sheet_ = std::move(sheet.value());
+  }
+}
+
+void DrawingDialog::refreshInBackground() {
+  timer_->stop();
+  if (computing()) return;  // collectJob starts the next one
   QString why;
   const auto spec = viewSpec(&why);
   if (!spec) {
@@ -429,32 +523,58 @@ void DrawingDialog::refreshNow() {
     return;
   }
   if (viewDirty_ || !view_) {
-    QApplication::setOverrideCursor(Qt::WaitCursor);
-    auto v = draw::makeView(document_, *spec);
-    QApplication::restoreOverrideCursor();
-    viewDirty_ = false;
-    if (!v) {
-      view_.reset();
+    startJob(*spec);
+    showPreview();  // "計算しています" while the previous drawing stays shown
+    return;
+  }
+  layOut();
+  showPreview();
+}
+
+void DrawingDialog::collectJob() {
+  if (!job_.valid() || job_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
+  finishJob();
+  if (viewDirty_) {  // changed while it was being made: make it again
+    refreshInBackground();
+    return;
+  }
+  if (view_) layOut();
+  showPreview();
+}
+
+void DrawingDialog::refreshNow() {
+  timer_->stop();
+  // A view being made for older settings is waited for, then made again
+  // if the settings changed; the window keeps painting meanwhile.
+  for (;;) {
+    if (job_.valid()) {
+      while (job_.wait_for(std::chrono::milliseconds(30)) != std::future_status::ready) {
+        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+      }
+      finishJob();
+    }
+    QString why;
+    const auto spec = viewSpec(&why);
+    if (!spec) {
+      error_ = why;
       sheet_.reset();
-      error_ = QString::fromStdString(v.error());
       showPreview();
       return;
     }
-    view_ = std::move(v.value());
+    if (!viewDirty_ && view_) break;
+    if (!viewDirty_ && !view_ && !error_.isEmpty()) {  // made, and it failed
+      showPreview();
+      return;
+    }
+    startJob(*spec);
   }
-  view_->spec.title = spec->title;
-  auto sheet = draw::layoutSheet(*view_, sheetSpec());
-  if (!sheet) {
-    sheet_.reset();
-    error_ = QString::fromStdString(sheet.error());
-  } else {
-    sheet_ = std::move(sheet.value());
-  }
+  layOut();
   showPreview();
 }
 
 void DrawingDialog::showPreview() {
   QStringList notes;
+  if (computing()) notes << tr("図を計算しています…（その間も設定を変えられます）");
   if (!error_.isEmpty()) notes << error_;
   if (view_) {
     for (const std::string& n : view_->notes) notes << QString::fromStdString(n);
@@ -497,6 +617,34 @@ Status DrawingDialog::exportTo(const QString& path) {
     settings.setValue("drawing/author", author_->text());
   }
   return s;
+}
+
+Status DrawingDialog::printTo(QPrinter& printer, bool* scaled) {
+  if (timer_->isActive() || !sheet_) refreshNow();
+  if (!sheet_) return Status::failure(error_.isEmpty() ? "Nothing to print" : error_.toStdString());
+  return printSheet(*sheet_, printer, scaled);
+}
+
+void DrawingDialog::choosePrinterAndPrint() {
+  if (timer_->isActive() || !sheet_) refreshNow();
+  if (!sheet_) return;
+  QPrinter printer(QPrinter::HighResolution);
+  setUpPrinter(*sheet_, printer);
+  QPrintDialog dialog(&printer, this);
+  dialog.setWindowTitle(tr("図面を印刷"));
+  if (dialog.exec() != QDialog::Accepted) return;
+  bool scaled = false;
+  const Status s = printTo(printer, &scaled);
+  if (!s) {
+    error_ = tr("印刷できませんでした: %1").arg(QString::fromStdString(s.message()));
+    showPreview();
+    return;
+  }
+  if (scaled) {
+    QMessageBox::information(this, tr("図面を印刷"),
+                             tr("選んだ用紙が図面（%1）より小さいため、縮小して印刷しました。縮尺どおりではありません。")
+                                 .arg(QString::fromStdString(sheet_->paper)));
+  }
 }
 
 void DrawingDialog::chooseFileAndExport() {

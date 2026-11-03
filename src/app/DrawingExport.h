@@ -3,6 +3,8 @@
 // scale, paper, frame and title block, with a preview), and the PDF writer.
 // The preview and the PDF are painted by the same code.
 
+#include <future>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -17,6 +19,7 @@
 #include "sbr/draw/Drawing.h"
 
 class QPainter;
+class QPrinter;
 class QComboBox;
 class QCheckBox;
 class QDoubleSpinBox;
@@ -33,24 +36,40 @@ namespace sbr::app {
 // Paints the sheet into `target` (keeping the paper's proportions).
 void renderSheet(QPainter& painter, const draw::Sheet& sheet, const QRectF& target);
 Status writePdf(const draw::Sheet& sheet, const QString& path);
+// Printing: the printer set to the sheet's paper (landscape, no margins),
+// then the sheet at real size; shrunk to fit a smaller paper (*scaled).
+void setUpPrinter(const draw::Sheet& sheet, QPrinter& printer);
+Status printSheet(const draw::Sheet& sheet, QPrinter& printer, bool* scaled = nullptr);
 
 class DrawingDialog : public QDialog {
   Q_OBJECT
  public:
   DrawingDialog(const doc::Document& document, QWidget* parent = nullptr);
+  ~DrawingDialog() override;
+  // True while a view is being made on another thread (the dialog stays
+  // usable; the preview shows the last drawing until it is ready).
+  bool computing() const;
   // For checks and the AI: what would be written now.
   const std::optional<draw::Sheet>& sheet() const { return sheet_; }
   QString lastError() const { return error_; }
   // Writes the sheet (format by extension: .pdf, .dxf, .jww).
   Status exportTo(const QString& path);
-  // Recalculates at once (normally after a short pause in the changes).
+  Status printTo(QPrinter& printer, bool* scaled = nullptr);
+  // Recalculates and waits for it (normally done in the background after
+  // a short pause in the changes).
   void refreshNow();
 
  private:
   void viewChanged();
+  void refreshInBackground();
+  void collectJob();
+  void startJob(const draw::ViewSpec& spec);
+  void finishJob();
+  void layOut();
   void layoutChanged();
   void showPreview();
   void chooseFileAndExport();
+  void choosePrinterAndPrint();
   std::optional<draw::ViewSpec> viewSpec(QString* why) const;
   draw::SheetSpec sheetSpec() const;
   void updateVisibleOptions();
@@ -65,6 +84,10 @@ class DrawingDialog : public QDialog {
   };
   std::vector<SectionPosition> positions_;
   const doc::Document& document_;
+  std::shared_ptr<const doc::Document> snapshot_;
+  std::future<Result<draw::View>> job_;
+  std::optional<draw::ViewSpec> jobSpec_;
+  QTimer* poll_ = nullptr;
   QComboBox* kind_ = nullptr;
   QComboBox* level_ = nullptr;
   QDoubleSpinBox* cutHeight_ = nullptr;

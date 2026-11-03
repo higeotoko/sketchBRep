@@ -346,6 +346,45 @@ jobs:
           path: dist/SketchBRep
           retention-days: 30
 
+      # The installer (packaging/installer): the same folder, installed for
+      # the current user with a start menu entry and the .sbr association.
+      # Checked by installing and uninstalling it silently.
+      - name: Build and check the installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress | Out-Null
+          }
+          if (-not (Test-Path $iscc)) { throw "Inno Setup not found" }
+          $version = (Select-String -Path CMakeLists.txt -Pattern 'project\(SketchBRep VERSION ([0-9.]+)').Matches[0].Groups[1].Value
+          $source = (Resolve-Path dist\SketchBRep).Path
+          $output = (Resolve-Path dist).Path
+          & $iscc /Qp "/DAppVersion=$version" "/DSourceDir=$source" "/DOutputDir=$output" packaging\installer\SketchBRep.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+          $setup = "dist\SketchBRep-$version-setup-x64.exe"
+          if (-not (Test-Path $setup)) { throw "installer not written" }
+          Write-Host ("Installer: {0:N0} MB" -f ((Get-Item $setup).Length / 1MB))
+          $target = Join-Path $env:RUNNER_TEMP "sbr-install"
+          $p = Start-Process -FilePath $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/CURRENTUSER", "/NORESTART", "/DIR=`"$target`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "install failed: $($p.ExitCode)" }
+          if (-not (Test-Path "$target\SketchBRep.exe") -or -not (Test-Path "$target\platforms\qwindows.dll")) { throw "installed files missing" }
+          $command = (Get-ItemProperty "HKCU:\Software\Classes\SketchBRep.Model\shell\open\command").'(default)'
+          if ($command -notmatch "SketchBRep.exe") { throw ".sbr association missing: $command" }
+          & "$target\sbr_phase0.exe" 10 20 30 (Join-Path $env:RUNNER_TEMP "installed.step")
+          if ($LASTEXITCODE -ne 0) { throw "installed program does not run" }
+          $p = Start-Process -FilePath "$target\unins000.exe" -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "uninstall failed: $($p.ExitCode)" }
+          Start-Sleep -Seconds 3
+          if (Test-Path "$target\SketchBRep.exe") { throw "uninstall left the program" }
+          if (Test-Path "HKCU:\Software\Classes\SketchBRep.Model") { throw "uninstall left the association" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SketchBRep-windows-x64-setup
+          path: dist/SketchBRep-*-setup-x64.exe
+          retention-days: 30
+
       - name: Test GUI end-to-end (Windows, Mesa software OpenGL)
         shell: pwsh
         env:

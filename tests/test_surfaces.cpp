@@ -335,3 +335,36 @@ TEST(Surfaces, FilletedLinesCloseIntoAFace) {
   }
   EXPECT_NEAR(faces, 1e6 - (1 - M_PI / 4) * 100 * 100, 1e-3);
 }
+
+// Fillets, chamfers and shells report progress and stop when the user
+// cancels (the progress dialog's 中止): the model stays as it was.
+#include "sbr/geom/Progress.h"
+
+namespace {
+class CancelEverything : public geom::CancellableProgress {
+ protected:
+  Standard_Boolean UserBreak() override { return Standard_True; }
+  void Show(const Message_ProgressScope&, const Standard_Boolean) override {}
+};
+}  // namespace
+
+TEST(Surfaces, CancelledLeavesTheSolidAsItWas) {
+  Modeler m;
+  const ObjectId b = box(m, 1000);
+  const std::size_t steps = m.history().undoCount();
+  geom::setProgressIndicator(new CancelEverything());
+  const auto fillet = m.roundEdges(b, {uprightEdge(m, b, 1000, 1000)}, 100, false);
+  const auto chamfer = m.roundEdges(b, {uprightEdge(m, b, 0, 0)}, 100, true);
+  const auto shell = m.shellSolid(b, {faceAtZ(m, b, 1000)}, 100);
+  geom::setProgressIndicator(nullptr);
+  ASSERT_FALSE(fillet);
+  EXPECT_NE(fillet.error().find(geom::kCancelledMessage), std::string::npos) << fillet.error();
+  ASSERT_FALSE(chamfer);
+  EXPECT_NE(chamfer.error().find(geom::kCancelledMessage), std::string::npos) << chamfer.error();
+  ASSERT_FALSE(shell);
+  EXPECT_NE(shell.error().find(geom::kCancelledMessage), std::string::npos) << shell.error();
+  EXPECT_EQ(m.history().undoCount(), steps);
+  EXPECT_NEAR(geom::volume(world(m, b)), 1e9, 1e-3);
+  // Without the cancel, it works again.
+  EXPECT_TRUE(m.roundEdges(b, {uprightEdge(m, b, 1000, 1000)}, 100, false));
+}
