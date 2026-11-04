@@ -290,3 +290,22 @@ TEST_F(Frames, HardwareUsesSharedShapesAndDoesNotFollowAnEditedColumn) {
   std::cout << "Frame tag toggle and visibility checks: " << elapsed << " ms\n";
   EXPECT_GT(made["hardware"].get<int>(), 250);
 }
+
+TEST_F(Frames, MovingAnAncestorProtectsTheFramesWorldPlacement) {
+  const auto parent = m.createGridLines(gp::Origin(), {910}, {910});
+  ASSERT_TRUE(parent);
+  ASSERT_TRUE(m.setActiveGroup(parent->grid));
+  const auto made = frame({{"x_bays", 2}, {"y_bays", 2}});
+  const auto column = role("through_column").front();
+  const auto before = endpoint(column, false);
+  gp_Trsf shift;
+  shift.SetTranslation(gp_Vec(200, 300, 0));
+  ASSERT_TRUE(m.transform({parent->grid}, shift, "Move Building"));
+  const auto count = m.history().undoCount();
+  const auto result = m.generateFrame(json{{"replace", made["frame"]}}.dump());
+  EXPECT_FALSE(result);
+  EXPECT_NE(result.error().find("requires_decision"), std::string::npos);
+  EXPECT_EQ(m.history().undoCount(), count);
+  EXPECT_NEAR(endpoint(column, false).X(), before.X() + 200, 1e-6);
+  EXPECT_NEAR(endpoint(column, false).Y(), before.Y() + 300, 1e-6);
+}

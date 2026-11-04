@@ -231,6 +231,14 @@ void MainWindow::showTimberFrameDialog() {
                               {"y", {limits[2]->value(), limits[3]->value()}}};
   const std::string replace = replacing->isChecked() ? frame : std::string();
   if (previewTimberFrame(inputs.dump(), replace)) return;
+  if (lastError_.contains(QStringLiteral("コンテナー"))) {
+    const auto choice =
+        QMessageBox::question(this, tr("架構全体が編集されています"),
+                              tr("元の架構を保持し、入力した条件で別の架構をプレビューしますか？"),
+                              QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
+    if (choice == QMessageBox::Yes && previewTimberFrame(inputs.dump())) return;
+    return;
+  }
   if (lastError_.contains(QStringLiteral("requires_decision"))) {
     const auto choice = QMessageBox::question(this, tr("手で編集した部材があります"),
                                               tr("手で編集・追加・削除した部材を保持して、残りを作り直します"

@@ -809,6 +809,15 @@ Result<std::string> Modeler::generateFrame(const std::string& text) {
       const auto* group = std::get_if<GroupNode>(&oldRoot->recipe.base);
       need(group && !group->constructionFrame.empty(), "replace must name a generated frame group");
       previous = json::parse(group->constructionFrame);
+      if (previous.contains("root_world")) {
+        Object worldRoot = *oldRoot;
+        worldRoot.transform = document_.worldTransform(*oldRoot);
+        if (construction::frameFingerprint(worldRoot) != previous.at("root_world")) dirty.insert(replacing);
+      } else if (!oldRoot->parent.empty()) {
+        // Older nested-frame records did not retain the parent's world pose.
+        // Without that evidence, preserve the existing frame rather than reset it.
+        dirty.insert(replacing);
+      }
       for (const auto& key : previous.value("suppressed_keys", json::array()))
         skipKeys.insert(key.get<std::string>());
       if (!skipKeys.empty() && !preserve)
@@ -833,6 +842,9 @@ Result<std::string> Modeler::generateFrame(const std::string& text) {
             }
         }
       }
+      need(!dirty.count(replacing),
+           "requires_decision: 架構全体のコンテナーが編集されています。元の架構を保持して、replace "
+           "を省略し別に生成してください。");
       if (!dirty.empty() && !preserve) {
         json list = json::array();
         for (const auto& id : dirty) list.push_back(id);
@@ -841,9 +853,6 @@ Result<std::string> Modeler::generateFrame(const std::string& text) {
             "preserve、別に作るなら replace を省略してください。対象=" +
             list.dump());
       }
-      need(!dirty.count(replacing),
-           "requires_decision: 架構全体のコンテナーが編集されています。元の架構を保持して、replace "
-           "を省略し別に生成してください。");
       for (const auto& id : dirty) {
         const Object* o = document_.find(id);
         if (o)
@@ -1095,7 +1104,10 @@ Result<std::string> Modeler::generateFrame(const std::string& text) {
       counts[p.role] = counts.value(p.role, 0) + 1;
       created.push_back(std::move(o));
     }
-    json manifest = {{"version", 1},
+    Object worldRoot = root;
+    worldRoot.transform = rootWorld;
+    json manifest = {{"version", 2},
+                     {"root_world", construction::frameFingerprint(worldRoot)},
                      {"recipe", "post_beam_2storey"},
                      {"inputs", plan.inputs},
                      {"levels", plan.levelIds},
