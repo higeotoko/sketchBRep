@@ -128,3 +128,11 @@ docs/52 §5・§11の段階2。段階1のカタログ・役割・プリセット
   これはローカルWindows（MSVC 19.44 / OCCT 8.0.1 / Qt 6.12）の実測で、全PCへの速度保証ではない。
 - Windows実機確認：人による操作確認は未実施。
 - ローカルは `SBR_WITH_OPENNURBS=OFF`。3DMの4件を除外。通常構成とLinux・Windowsの全GUIはCIで確認する。
+
+### CIの実行結果（2026-11-04）
+
+- 実装・統合コミット `25a165cf536ed018b547a1002f3deb28702855a6` の [CI #238](https://github.com/higeotoko/sketchBRep/actions/runs/41782500889) はLinux・Windowsとも成功。
+- Linux：471件、失敗0。Windows：非GUI467件・補助GUI3件が成功、主GUIは194件成功・7件スキップ・失敗0。
+- Windows zipの依存DLL検査・配布フォルダーからの起動テストも成功。
+- インストーラーのビルドとアップロードは両方skipped。設定ファイルは維持。
+- 既存の図面GUIテストで、短時間の非同期処理を見逃す競合を修正した。親グループ移動後の再生成保護も追加検証した。
