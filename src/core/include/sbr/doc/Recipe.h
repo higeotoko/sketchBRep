@@ -245,6 +245,7 @@ struct GroupNode {
   bool editingMirrored = false;
   // Set when this group is a structural grid (docs/43).
   std::optional<GridSpec> grid;
+  std::string constructionFrame;  // recipe inputs and generation manifest (docs/55)
 };
 
 // Scale along three directions of a frame (object coordinates), each by its

@@ -1,0 +1,34 @@
+{
+  "source": {
+    "name": "SketchBRep 木造レシピの計画用初期値（docs/52 §5）",
+    "version": "1",
+    "date": "2026-11-04",
+    "url": "https://github.com/higeotoko/sketchBRep/blob/claude/sketchbrep-modeler-spec-4wnp0b/docs/52_construction_guides.md"
+  },
+  "normative": "specification",
+  "entries": {
+    "post_beam_2storey": {
+      "name": "矩形・在来軸組・和小屋（1階 / 2階）",
+      "version": 1,
+      "defaults": {
+        "x_bays": 10,
+        "y_bays": 8,
+        "storeys": 2,
+        "roof": "gable",
+        "ridge_axis": "x",
+        "joist_divisions": 2,
+        "rafter_divisions": 2,
+        "finish_thickness": 0
+      },
+      "notes": [
+        "2階なしは同じレシピの1階建て。",
+        "仕上げ厚未決の場合は計画FLを指定可能。",
+        "柱は外周の通り芯交点と追加指定位置。内部の全交点には置かない。",
+        "梁せいはカタログの仮の値。断面照査は行わない。",
+        "製品未選定の金物と鋼製束は未選定と表示。",
+        "継手は仕様未選定の目印。",
+        "下屋と床区域の境界は概略形。取り合い・段差は記録し、施工可能との判定はしない。"
+      ]
+    }
+  }
+}

@@ -3,6 +3,7 @@ add_library(sbr_core STATIC
   src/Profile.cpp
   src/Section.cpp
   src/ConstructionGuide.cpp
+  src/ConstructionFrame.cpp
   src/Operations.cpp
   src/Arrangement.cpp
   src/Validation.cpp
@@ -55,7 +56,7 @@ add_custom_command(
   COMMENT "Embedding the section catalog")
 target_sources(sbr_core PRIVATE ${SBR_STEEL_CATALOG_CPP})
 
-foreach(table IN ITEMS sections roles presets)
+foreach(table IN ITEMS sections roles presets recipes hardware)
   set(input ${PROJECT_SOURCE_DIR}/assets/construction/timber/${table}.json)
   set(output ${CMAKE_CURRENT_BINARY_DIR}/Timber_${table}.cpp)
   add_custom_command(OUTPUT ${output}

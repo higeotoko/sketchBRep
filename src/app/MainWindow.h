@@ -107,6 +107,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   // Structural grid from typed spacings ("3600*3, 2700"); false + error
   // message when the text cannot be read or the grid fails.
   bool createGrid(const QString& xSpacings, const QString& ySpacings);
+  bool previewTimberFrame(const std::string& inputs, const std::string& replace = {}, bool preserveEdited = false);
   // After opening, recipes are verified in the background (a few objects
   // per idle moment); true while that is still running.
   bool verifyingRecipes() const { return verifying_; }
@@ -242,6 +243,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   bool maybeSave();
   void commitMeasurement();
   void showGridDialog();
+  void showTimberFrameDialog();
   void editMaterialDialog(const std::string& id);  // "" = new material
   void startSession();
   void clearRecovery();

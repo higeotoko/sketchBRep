@@ -28,6 +28,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QDoubleSpinBox>
+#include <QSpinBox>
 #include <QFormLayout>
 #include <QLabel>
 #include <QDir>
@@ -301,6 +302,7 @@ class GuiPhase1 : public QObject {
   void drawingDialogPlanSectionElevationAndExport();
   void recentFilesReopen();
   void helpWindowAndCrashLog();
+  void timberFramePreviewApplyLevelsAndUndo();
   void panelDragPreviewKeepsTheModelViewStill();
   void panelMotionSettlesAfterNativeDock();
   void paletteResizeKeepsBackdropAcrossViewport();
@@ -9110,4 +9112,86 @@ void GuiPhase1::helpWindowAndCrashLog() {
   f.window.reportPreviousCrash({old.fileName()});
   QVERIFY(told);
   QSettings().remove("crash/seen");
+}
+
+void GuiPhase1::timberFramePreviewApplyLevelsAndUndo() {
+  Fixture f;
+  QVERIFY(f.setUp(4550, 3640));
+  QElapsedTimer timer;
+  timer.start();
+  QVERIFY2(f.window.previewTimberFrame("{}"), qPrintable(f.window.lastError()));
+  QVERIFY(f.window.hasPendingProposal());
+  QVERIFY(f.window.modeler().document().objects().empty());
+  f.window.applyProposal();
+  QVERIFY(!f.window.hasPendingProposal());
+  QVERIFY(f.window.modeler().document().objects().size() > 750);
+  QCOMPARE(f.window.modeler().history().undoCount(), std::size_t(1));
+  f.vp->syncNow();
+  f.vp->fitAll();
+  QTest::qWait(100);
+  qInfo() << "Timber preview, apply and display ms:" << timer.elapsed();
+  const QString capture = qEnvironmentVariable("SBR_FRAME_CAPTURE");
+  if (!capture.isEmpty()) QVERIFY(f.window.exportImage(capture));
+  timer.restart();
+  f.window.modeler().setTagVisible("金物", false);
+  f.vp->syncNow();
+  QTest::qWait(30);
+  qInfo() << "Timber hardware hide and display ms:" << timer.elapsed();
+  for (const auto& o : f.window.modeler().document().objects())
+    if (o.layer == "金物") QVERIFY(!f.window.modeler().document().isVisible(o.id));
+  QVERIFY(f.window.modeler().undo());
+  doc::ObjectId root;
+  for (const auto& o : f.window.modeler().document().objects()) {
+    const auto* group = std::get_if<doc::GroupNode>(&o.recipe.base);
+    if (group && !group->constructionFrame.empty()) {
+      root = o.id;
+      break;
+    }
+  }
+  QVERIFY(!root.empty());
+  timer.restart();
+  gp_Trsf shift;
+  shift.SetTranslation(gp_Vec(300, 0, 0));
+  QVERIFY(f.window.modeler().transform({root}, shift, "Move Frame"));
+  f.vp->syncNow();
+  QTest::qWait(50);
+  qInfo() << "Timber whole-frame move and display ms:" << timer.elapsed();
+  QVERIFY(f.window.modeler().undo());
+  QVERIFY(f.window.modeler().undo());
+  QVERIFY(f.window.modeler().document().objects().empty());
+  QVERIFY(f.window.modeler().levels().empty());
+  QVERIFY(f.window.modeler().document().definitions().empty());
+  QVERIFY(f.window.modeler().redo());
+  auto levels = f.window.modeler().levels();
+  for (auto& l : levels)
+    if (l.name.find("桁天端") != std::string::npos) l.elevation += 300;
+  QVERIFY(f.window.modeler().setLevels(levels));
+  f.vp->syncNow();
+  QTest::qWait(50);
+  QVERIFY(f.window.previewTimberFrame(R"({"storeys":1,"x_bays":2,"y_bays":2})"));
+  f.window.rejectProposal();
+  QVERIFY(!f.window.hasPendingProposal());
+  f.window.setSelection({});
+  auto* action = f.window.findChild<QAction*>(QStringLiteral("timberFrameAction"));
+  QVERIFY(action);
+  bool dialogSeen = false;
+  QTimer::singleShot(100, [&] {
+    auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+    if (!dialog) return;
+    auto* x = dialog->findChild<QSpinBox*>(QStringLiteral("timberXBays"));
+    auto* y = dialog->findChild<QSpinBox*>(QStringLiteral("timberYBays"));
+    auto* button = dialog->findChild<QPushButton*>(QStringLiteral("timberPreview"));
+    if (!x || !y || !button) {
+      dialog->reject();
+      return;
+    }
+    dialogSeen = true;
+    x->setValue(2);
+    y->setValue(2);
+    button->click();
+  });
+  action->trigger();
+  QVERIFY(dialogSeen);
+  QVERIFY(f.window.hasPendingProposal());
+  f.window.rejectProposal();
 }

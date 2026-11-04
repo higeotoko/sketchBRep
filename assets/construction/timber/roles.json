@@ -254,6 +254,26 @@
         "TIMBER-45x105"
       ],
       "note": ""
+    },
+    "lintel": {
+      "name": "まぐさ",
+      "default_section": "TIMBER-105x105",
+      "sections": [
+        "TIMBER-105x105",
+        "TIMBER-120x120",
+        "TIMBER-105x240",
+        "TIMBER-120x240"
+      ],
+      "note": "形を作るための仮の断面。開口幅による断面照査は未実施。"
+    },
+    "window_sill": {
+      "name": "窓台",
+      "default_section": "TIMBER-105x105",
+      "sections": [
+        "TIMBER-105x105",
+        "TIMBER-120x120"
+      ],
+      "note": "形を作るための仮の断面。"
     }
   }
 }

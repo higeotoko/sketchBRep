@@ -1,5 +1,7 @@
 #include "sbr/doc/Modeler.h"
 #include "sbr/ConstructionGuide.h"
+#include "sbr/ConstructionFrame.h"
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <unordered_set>
@@ -696,6 +698,8 @@ void pinUp(const Document& document, ChangeSet& changes, const RegenContext& con
     if (!o) return gp_Trsf();
     return o->parent.empty() ? o->transform : after(o->parent) * o->transform;
   };
+  std::map<ObjectId, Object> frameRoots;
+  std::map<ObjectId, nlohmann::json> frameManifests;
   for (const ObjectId& id : pinned) {
     const Object* was = document.find(id);
     const GridPin& pin = *was->gridPin;
@@ -724,13 +728,42 @@ void pinUp(const Document& document, ChangeSet& changes, const RegenContext& con
     const gp_Vec dEnd = delta(pin.endX, pin.endY, pin.endLevel);
     if (dStart.Magnitude() < 1e-9 && dEnd.Magnitude() < 1e-9) continue;
     Object o = *current(id);
-    auto* member = std::get_if<LinearMember>(&o.recipe.base);
-    if (!member) continue;
-    const gp_Trsf toLocal = after(id).Inverted();
-    member->start.Translate(dStart.Transformed(toLocal));
-    member->end.Translate(dEnd.Transformed(toLocal));
-    if (!rebuild(o, context)) continue;  // e.g. both ends on one point: it stays as it was
+    if (auto* member = std::get_if<LinearMember>(&o.recipe.base)) {
+      const gp_Trsf toLocal = after(id).Inverted();
+      member->start.Translate(dStart.Transformed(toLocal));
+      member->end.Translate(dEnd.Transformed(toLocal));
+      if (!rebuild(o, context)) continue;
+    } else if (std::holds_alternative<ComponentInstance>(o.recipe.base)) {
+      if (!construction::moveFrameInstance(o, document, after(id), dStart, dEnd)) continue;
+    } else
+      continue;
     changes.modify(o);
+    // An automatic level/grid move is not a hand edit. Advance only clean
+    // generated stamps, keeping earlier manual edits dirty for regeneration.
+    ObjectId parent = was->parent;
+    while (!parent.empty()) {
+      const Object* container = document.find(parent);
+      if (!container) break;
+      const auto* group = std::get_if<GroupNode>(&container->recipe.base);
+      if (group && !group->constructionFrame.empty()) {
+        auto found = frameRoots.find(parent);
+        if (found == frameRoots.end()) {
+          frameRoots.emplace(parent, *container);
+          frameManifests.emplace(parent, nlohmann::json::parse(group->constructionFrame));
+        }
+        auto& manifest = frameManifests.at(parent);
+        if (manifest.at("objects").contains(id) &&
+            manifest.at("objects").at(id) == construction::frameFingerprint(*was)) {
+          manifest["objects"][id] = construction::frameFingerprint(o);
+        }
+        break;
+      }
+      parent = container->parent;
+    }
+  }
+  for (auto& [id, root] : frameRoots) {
+    std::get<GroupNode>(root.recipe.base).constructionFrame = frameManifests.at(id).dump();
+    changes.modify(root);
   }
 }
 
@@ -5511,10 +5544,39 @@ Result<ObjectId> Modeler::createMember(const MemberSpec& spec) {
   return addObject(*o, "Member");
 }
 
+namespace {
+std::optional<Object> frameMemberObject(const Document& document, const Object& instance) {
+  const auto* ref = std::get_if<ComponentInstance>(&instance.recipe.base);
+  if (!ref || ref->mirrored || !ref->stretches.empty()) return std::nullopt;
+  const auto* stored = document.findDefinition(ref->definitionId);
+  if (!stored || stored->objects.size() != 1 ||
+      !std::holds_alternative<LinearMember>(stored->objects[0].recipe.base))
+    return std::nullopt;
+  const auto own = applyOverrides(*stored, ref->overrides, document.regenContext());
+  if (!own) return std::nullopt;
+  Object o = instance;
+  o.transform = instance.transform * own->objects[0].transform;
+  o.recipe = own->objects[0].recipe;
+  const auto anchor = instance.attributes.find("member_anchor_up");
+  if (anchor != instance.attributes.end()) {
+    auto& member = std::get<LinearMember>(o.recipe.base);
+    member.anchor.up = anchor->second == "1" ? 1 : anchor->second == "-1" ? -1 : 0;
+    const gp_Vec offset = gp_Vec(member.up) * (member.anchor.up * member.section.depth / 2);
+    member.start.Translate(offset);
+    member.end.Translate(offset);
+  }
+  o.recipe.modifiers.insert(o.recipe.modifiers.end(), instance.recipe.modifiers.begin(),
+                            instance.recipe.modifiers.end());
+  return o;
+}
+}  // namespace
+
 Result<Modeler::MemberInfo> Modeler::memberInfo(const ObjectId& id) const {
   using R = Result<MemberInfo>;
   const Object* o = document_.find(id);
   if (!o) return R::failure("Object not found");
+  const auto expanded = frameMemberObject(document_, *o);
+  if (expanded) o = &*expanded;
   const auto* m = std::get_if<LinearMember>(&o->recipe.base);
   if (!m) {
     if (auto other = wallOrSlabInfo(*o)) return *other;
@@ -5567,6 +5629,8 @@ Result<Modeler::MemberInfo> Modeler::changeMember(const ObjectId& id, const Memb
   using R = Result<MemberInfo>;
   const Object* current = document_.find(id);
   if (!current) return R::failure("Object not found");
+  const auto expanded = frameMemberObject(document_, *current);
+  if (expanded) current = &*expanded;
   if (!std::holds_alternative<LinearMember>(current->recipe.base)) {
     if (wallOrSlabInfo(*current)) return changeWallOrSlab(id, change);
     return R::failure("Not a member, wall or slab made by those tools (no basic sizes to edit; its shape can still be "

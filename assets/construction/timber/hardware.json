@@ -1,0 +1,52 @@
+{
+  "source": {
+    "name": "SketchBRep 表示用簡略形の仮寸法（製品未選定）",
+    "version": "1",
+    "date": "2026-11-04",
+    "url": "https://github.com/higeotoko/sketchBRep/blob/claude/sketchbrep-modeler-spec-4wnp0b/docs/52_construction_guides.md"
+  },
+  "normative": "specification",
+  "entries": {
+    "anchor_bolt": {
+      "name": "アンカーボルト（製品未選定）",
+      "shape": "bolt",
+      "diameter": 12,
+      "length": 400,
+      "selection": "unselected"
+    },
+    "beam_end_plate": {
+      "name": "梁端金物（製品未選定）",
+      "shape": "plate",
+      "width": 40,
+      "height": 100,
+      "thickness": 3,
+      "selection": "unselected"
+    },
+    "brace_plate": {
+      "name": "筋かい端金物（製品未選定）",
+      "shape": "plate",
+      "width": 90,
+      "height": 120,
+      "thickness": 3,
+      "selection": "unselected"
+    },
+    "column_connection": {
+      "name": "柱頭柱脚金物・未選定（N値未評価）",
+      "shape": "marker",
+      "size": 40,
+      "selection": "not_evaluated"
+    },
+    "floor_post": {
+      "name": "鋼製束・未選定",
+      "shape": "marker",
+      "size": 40,
+      "selection": "unselected"
+    },
+    "joint": {
+      "name": "継手候補・仕様未選定",
+      "shape": "marker",
+      "size": 25,
+      "selection": "unselected"
+    }
+  }
+}

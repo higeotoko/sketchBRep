@@ -12,6 +12,10 @@ extern const char* const kTimber_roles[];
 extern const unsigned kTimber_roles_parts;
 extern const char* const kTimber_presets[];
 extern const unsigned kTimber_presets_parts;
+extern const char* const kTimber_recipes[];
+extern const unsigned kTimber_recipes_parts;
+extern const char* const kTimber_hardware[];
+extern const unsigned kTimber_hardware_parts;
 }
 
 namespace sbr::construction {
@@ -21,7 +25,7 @@ constexpr const char* kNotice =
     "意匠・概略の検討用。構造の安全、法令への適合、施工できることを判定・保証しません。"
     "標準寸法は市場の流通寸法の目安で、法令の値ではありません。"
     "梁せいは形を作るための仮の値です。スパンから自動で決めません。"
-    "樹種・等級は属性のみ。レシピ・診断・壁量計算は未実装です。";
+    "樹種・等級は属性のみ。生成は概略形です。診断・壁量計算は未実装です。";
 
 json read(const char* const* parts, unsigned count) {
   std::string text;
@@ -35,7 +39,9 @@ const json& builtin(const std::string& system) {
       {"schema_version", 1}, {"system", "timber"}, {"title", "木造の手引き"}, {"notice", kNotice},
       {"sections", read(embedded::kTimber_sections, embedded::kTimber_sections_parts)},
       {"roles", read(embedded::kTimber_roles, embedded::kTimber_roles_parts)},
-      {"presets", read(embedded::kTimber_presets, embedded::kTimber_presets_parts)}};
+      {"presets", read(embedded::kTimber_presets, embedded::kTimber_presets_parts)},
+      {"recipes", read(embedded::kTimber_recipes, embedded::kTimber_recipes_parts)},
+      {"hardware", read(embedded::kTimber_hardware, embedded::kTimber_hardware_parts)}};
   return data;
 }
 
@@ -237,6 +243,19 @@ std::string guideMarkdown(const std::string& system, const std::string& override
         << " | " << cell(p.at("unit")) << " | " << cell(p.value("choices", json::array()).dump())
         << " | " << cell(p.at("note")) << " |\n";
   }
+  for (const char* key : {"recipes", "hardware"}) {
+    out << "\n## " << (std::string(key) == "recipes" ? "木造レシピ" : "金物の簡略表示") << "\n\n";
+    sourceText(out, data.at(key));
+    for (const auto& [id, e] : data.at(key).at("entries").items()) {
+      out << "- " << cell(e.at("name")) << " (`" << cell(id) << "`)";
+      if (e.contains("defaults")) out << "：" << e.at("defaults").dump(-1, ' ', false);
+      out << "\n";
+      if (e.contains("notes")) for (const auto& note : e.at("notes")) out << "  - " << cell(note) << "\n";
+    }
+  }
+  out << "\ngenerate_frame {system: timber, recipe: post_beam_2storey, inputs, preview: true} で試し、"
+         "返されたrevisionをexpected_revisionにして preview: false で確定します。"
+         "画面では木造架構メニューからプレビューし、適用・却下を選べます。\n";
   out << "\n役割は既存属性 kind、材料は material_class を使います。"
          "AI は list_sections {system: timber, role: column} で断面を選び、"
          "create_member の section に返された ID、role に役割を渡します。"

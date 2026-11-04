@@ -20,6 +20,9 @@ constexpr int kNativeFormatVersion = 4;  // 4: shared recipes table
 constexpr const char* kNativeFormatMagic = "SketchBRep";
 
 std::string serializeDocument(const Document& document);
+// Recipe and editable object state, without cached geometry; used to tell
+// hand edits from a generated object's last state. No document mutation.
+std::string objectStateJson(const Object& object);
 // regenerate = false skips re-running the recipes (stored geometry is
 // used as is): a structural check of a file just written.
 Status deserializeDocument(const std::string& text, Document& document,

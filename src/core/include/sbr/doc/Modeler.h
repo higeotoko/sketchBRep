@@ -455,6 +455,9 @@ class Modeler {
     std::string name;
   };
   Result<ObjectId> createMember(const MemberSpec& spec);
+  // Timber recipe (docs/52 stage 2): shared parts, levels and layer groups,
+  // committed as one command. Inputs / result use the CommandApi JSON form.
+  Result<std::string> generateFrame(const std::string& argsJson);
   // Members on a grid (docs/43), pinned to its crossings: columns standing
   // on the crossings, beams from crossing to neighbouring crossing along
   // the x lines (running along the grid's Y) and the y lines. Only the

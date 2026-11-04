@@ -1097,6 +1097,7 @@ void MainWindow::buildMenus() {
   });
   tools->addSeparator();
   tools->addAction(tr("通り芯を作成..."), this, &MainWindow::showGridDialog);
+  tools->addAction(tr("木造架構を作成・作り直し..."), this, &MainWindow::showTimberFrameDialog)->setObjectName(QStringLiteral("timberFrameAction"));
   tools->addAction(tr("レベル（GL・FL）を編集..."), this, &MainWindow::showLevelsEditDialog)
       ->setObjectName(QStringLiteral("editLevelsAction"));
   tools->addAction(tr("壁の設定..."), this, &MainWindow::showWallSettingsDialog);
@@ -1451,7 +1452,7 @@ void MainWindow::buildAiBridge() {
     proposalLabel_->setText(text.isEmpty() ? tr("AI の提案: %1").arg(counts)
                                            : tr("AI の提案: %1（%2）").arg(text, counts));
     QStringList details;
-    if (!changes["settings"].empty()) details << tr("表示設定（タグ・断面・シーン）も変わります");
+    if (!changes["settings"].empty()) details << tr("モデル設定（レベル・タグ・断面・シーンなど）も変わります");
     if (!added.isEmpty()) details << tr("追加: %1").arg(added.join(QStringLiteral(", ")));
     if (!changed.isEmpty()) details << tr("変更: %1").arg(changed.join(QStringLiteral(", ")));
     if (!removed.isEmpty()) details << tr("削除: %1").arg(removed.join(QStringLiteral(", ")));

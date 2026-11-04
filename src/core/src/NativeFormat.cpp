@@ -324,6 +324,7 @@ json baseToJson(const BaseFeature& base) {
               if (!g.editingOverrides.empty()) j["editing"]["overrides"] = overridesToJson(g.editingOverrides);
               if (g.editingMirrored) j["editing"]["mirrored"] = true;
             }
+            if (!g.constructionFrame.empty()) j["constructionFrame"] = g.constructionFrame;
             if (g.grid) {
               auto axes = [](const std::vector<GridAxis>& list) {
                 json out = json::array();
@@ -552,6 +553,7 @@ BaseFeature baseFrom(const json& j) {
   }
   if (type == "group") {
     GroupNode g;
+    g.constructionFrame = j.value("constructionFrame", std::string());
     if (j.contains("editing")) {
       const json& e = j.at("editing");
       g.editingDefinition = e.value("definition", std::string());
@@ -1048,6 +1050,14 @@ Object objectFrom(const json& j, const RegenContext& context, std::vector<std::s
 }
 
 }  // namespace
+
+std::string objectStateJson(const Object& object) {
+  Object copy = object;
+  copy.shape.Nullify();
+  if (auto* group = std::get_if<GroupNode>(&copy.recipe.base)) group->constructionFrame.clear();
+  ShapeTable shapes;
+  return objectToJson(copy, copy.color, shapes).dump();
+}
 
 std::string serializeDocument(const Document& document) {
   RecipeWriter recipes;

@@ -30,7 +30,7 @@ struct Construction : testing::Test {
 
 TEST_F(Construction, CatalogAndGuideComeFromSameTables) {
   const json data = json::parse(construction::guideData("timber"));
-  EXPECT_EQ(data["roles"]["entries"].size(), 18u);
+  EXPECT_EQ(data["roles"]["entries"].size(), 20u);
   EXPECT_EQ(data["roles"]["entries"]["column"]["default_section"], "TIMBER-105x105");
   const std::string md = construction::guideMarkdown("timber");
   for (const auto& [id, entry] : data["sections"]["entries"].items()) {

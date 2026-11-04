@@ -2049,9 +2049,42 @@ const std::vector<CommandDef>& commands() {
                      {"own_sections", "{kind: rectangle, width, depth}, {kind: circle, diameter}, "
                                       "{kind: h, width, depth, web, flange, radius}"}};
        }},
+      {"generate_frame",
+       "Generate a timber post_beam_2storey frame (1 or 2 storeys, gable/shed Japanese roof). "
+       "Read get_construction_guide first. inputs: {x_bays:10,y_bays:8,module:910,storeys:2,roof:gable|shed, "
+       "ridge_axis:x|y,roof_pitch:4 (sun),roof_angle (degrees instead),origin:[x,y,z],grid (existing id), "
+       "second_floor:{x:[0,10],y:[0,8]} (zero-based grid indices),columns:[[i,j],...], "
+       "first_floor_system/second_floor_system:joist|joistless,floor_zones:[{storey, x:[i,j],y:[i,j],system}], "
+       "opening_hosts:[id],braces:[{storey,from:[i,j],to:[i,j]}],levels:{first_fl:height_or_id,...}, "
+       "spacing:{joist/rafter:{mode:equal_division|fixed_pitch,divisions:2,pitch:455}},sections:{role:catalog_id}}. "
+       "Shared component parts, six stage groups, levels and hardware (illustrative, products unselected). "
+       "preview defaults true: scratch copy, no changes; returns revision. Apply with preview:false and "
+       "expected_revision from preview. One undo. replace: a prior frame group; edited/added/deleted parts "
+       "require a user decision; on_modified:preserve keeps them and skips their generated counterparts. "
+       "No section safety or wall-quantity evaluation.",
+       SCHEMA({"type":"object","properties":{"system":{"type":"string","enum":["timber"]},
+         "recipe":{"type":"string","enum":["post_beam_2storey"]},"inputs":{"type":"object"},
+         "preview":{"type":"boolean"},"expected_revision":{"type":"integer"},"replace":{"type":"string"},
+         "on_modified":{"type":"string","enum":["ask","preserve"]},"name":{"type":"string"}}}),
+       [](doc::Modeler& m, const json& a) {
+         if (a.value("preview", true)) {
+           doc::Modeler scratch;scratch.copyFrom(m);
+           if (a.contains("expected_revision") && a.at("expected_revision") != m.history().revision())
+             throw ApiError("The model changed; preview the frame again");
+           json trial=a;trial.erase("expected_revision");
+           json result=json::parse(must(scratch.generateFrame(trial.dump())));
+           result["preview"]=true;result["revision"]=m.history().revision();
+           result["apply"]={{"preview",false},{"expected_revision",m.history().revision()}};
+           return result;
+         }
+         if (!a.contains("expected_revision") && !m.history().inGroup())
+           throw ApiError("Preview first and supply expected_revision, or apply inside a revision-checked batch/proposal");
+         json result=json::parse(must(m.generateFrame(a.dump())));
+         result["preview"]=false;return result;
+       }},
       {"get_construction_guide",
        "Read the construction guide before choosing sections. Returns data and Markdown generated from the "
-       "same embedded tables plus this project's overrides. Stage 1: timber only; steel/rc guides are not implemented.",
+       "same embedded tables plus this project's overrides. Timber only; steel/rc guides are not implemented.",
        SCHEMA({"type": "object", "properties": {"system": {"type": "string", "enum": ["timber", "steel", "rc"]}}, "required": ["system"]}),
        [](doc::Modeler& m, const json& a) {
          const std::string system = text(a, "system"), patch = constructionPatch(m, system);
@@ -2925,6 +2958,11 @@ CommandApi::Effect CommandApi::effectOf(const std::string& requestJson) const {
     return Effect::ModelWrite;
   }
   const std::string name = request["command"].get<std::string>();
+  if (name == "generate_frame") {
+    const json a = request.value("args", json::object());
+    return a.is_object() && (!a.contains("preview") || a["preview"] == true) ? Effect::Read
+                                                                             : Effect::ModelWrite;
+  }
   if (name == "batch") {
     const json args = request.value("args", json::object());
     if (!args.is_object() || !args.contains("commands") || !args["commands"].is_array()) return Effect::ModelWrite;

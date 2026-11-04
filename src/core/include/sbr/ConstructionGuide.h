@@ -1,5 +1,5 @@
 #pragma once
-// Embedded construction tables and project overrides (docs/52, stage 1).
+// Embedded construction tables and project overrides (docs/52, stages 1–2).
 // JSON crosses this boundary as text, like CommandApi. Invalid data throws
 // std::runtime_error; callers validate before changing the document.
 #include <string>
