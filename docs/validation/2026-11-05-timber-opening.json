@@ -1,0 +1,23 @@
+{
+  "date_jst": "2026-11-05",
+  "base_commit": "073ce730d79ed279a99f9e6f489d0bc57672b06e",
+  "platform": "Windows / MSVC 19.44 / OCCT 8.0.1 / Qt 6.12 / 3DM enabled",
+  "final_related_core_tests": {"tests": 48, "failures": 0},
+  "final_gui_isolated": {"actual_tests": 3, "including_init_cleanup": 5, "failures": 0, "process_exit": 0},
+  "broad_non_gui_attempt": {"selected": 516, "passed": 508, "skipped": 7, "failed": 1, "failed_test": "chatgpt_transport", "seconds": 123.76},
+  "local_network_transport_retest": {"actual_tests": 6, "including_init_cleanup": 8, "failures": 0, "process_exit": 0},
+  "independent_arithmetic": {"cases": 36, "floor_direction_rows": 144, "max_abs_numeric_error": 4.269421812144458e-15},
+  "reproduction": {
+    "wall_thickness_mm": 120,
+    "opening_width_mm": 1800,
+    "before": {"lintel_center_y_mm": 60, "studs_crossing_opening": 2, "parts": 712},
+    "after": {"lintel_center_y_mm": 0, "studs_crossing_opening": 0, "parts": 714}
+  },
+  "limits": [
+    "Opening conflict warnings inspect design axes, not all solid intersections",
+    "Retained edited members remain unassessed for opening conflicts",
+    "Wall-quantity design inputs are not linked to individual generated members",
+    "No installed portable app replaced; no human Windows workflow verification",
+    "No Linux, CI or full GUI suite verification in this local record"
+  ]
+}

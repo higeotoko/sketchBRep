@@ -246,6 +246,104 @@ TEST_F(Frames, ExistingGridAndOpeningHeadersUseWorldCoordinates) {
   EXPECT_NEAR(after.Y() - before.Y(), 200, 1e-6);
 }
 
+TEST_F(Frames, OpeningFramingUsesWallReferenceInsteadOfPickedFace) {
+  for (int justification : {-1, 0, 1}) {
+    for (double side : {-1., 1.}) {
+      Modeler model;
+      const auto grid = model.createGridLines({1000, 2000, 0}, {910, 910, 910}, {910, 910});
+      ASSERT_TRUE(grid);
+      const auto walls = model.createWalls({{1000, 2000, 600}, {3730, 2000, 600}}, 120, 2400, justification);
+      ASSERT_TRUE(walls);
+      const auto cut = model.placeOpenings(walls->front(), gp_Dir(0, side, 0), 1, 800, 1000, 700);
+      ASSERT_TRUE(cut);
+      const auto made = model.generateFrame(json{{"inputs", {{"grid", grid->grid}, {"storeys", 1},
+                                                           {"opening_hosts", {*cut}}}}}.dump());
+      ASSERT_TRUE(made) << made.error();
+      int headers = 0, studsInside = 0;
+      for (const auto& object : model.document().objects()) {
+        if (!object.attributes.count("kind")) continue;
+        const auto role = object.attributes.at("kind");
+        if (role != "lintel" && role != "window_sill" && role != "stud") continue;
+        const auto expanded = construction::frameMemberObject(model.document(), object);
+        ASSERT_TRUE(expanded);
+        const auto& member = std::get<LinearMember>(expanded->recipe.base);
+        const auto world = model.document().worldTransform(*expanded);
+        const auto a = member.start.Transformed(world), b = member.end.Transformed(world);
+        if (role == "lintel" || role == "window_sill") {
+          ++headers;
+          EXPECT_NEAR(a.Y(), 2000, 1e-6);
+          EXPECT_NEAR(b.Y(), 2000, 1e-6);
+        } else if (std::abs(a.Y() - 2000) < 1e-6 && a.X() > 1965 && a.X() < 2765 &&
+                   std::min(std::max(a.Z(), b.Z()), 2300.) - std::max(std::min(a.Z(), b.Z()), 1300.) > 1e-6)
+          ++studsInside;
+      }
+      EXPECT_EQ(headers, 2);
+      EXPECT_EQ(studsInside, 0);
+    }
+  }
+}
+
+TEST_F(Frames, OpeningConflictsWarnAndKeepStructuralColumnsAndBraces) {
+  const auto walls = m.createWalls({{0, 0, 600}, {2730, 0, 600}}, 120, 2400);
+  ASSERT_TRUE(walls);
+  const auto cut = m.placeOpenings(walls->front(), gp::DY(), 1, 1800, 1000, 700);
+  ASSERT_TRUE(cut);
+  const auto made = frame({{"x_bays", 3}, {"y_bays", 2}, {"storeys", 1}, {"opening_hosts", {*cut}},
+                           {"braces", json::array({{{"storey", 1}, {"from", {1, 0}}, {"to", {2, 0}}}})}});
+  EXPECT_EQ(made["counts"]["column"], 10);
+  EXPECT_EQ(made["counts"]["brace"], 1);
+  int columns = 0, braces = 0;
+  for (const auto& object : m.document().objects()) {
+    if (!object.attributes.count("opening_conflict")) continue;
+    EXPECT_EQ(object.attributes.at("opening_conflict"), "design_axis");
+    EXPECT_EQ(object.attributes.at("opening_host"), *cut);
+    EXPECT_EQ(object.attributes.at("opening_index"), "1");
+    if (object.attributes.at("kind") == "column") ++columns;
+    if (object.attributes.at("kind") == "brace") ++braces;
+  }
+  EXPECT_EQ(columns, 2);
+  EXPECT_EQ(braces, 1);
+  EXPECT_GE(made["warnings"].size(), 3u);
+  Document reopened;
+  ASSERT_TRUE(deserializeDocument(serializeDocument(m.document()), reopened));
+  int saved = 0;
+  for (const auto& object : reopened.objects()) saved += object.attributes.count("opening_conflict");
+  EXPECT_EQ(saved, 3);
+  ObjectId removed;
+  for (const auto& object : m.document().objects())
+    if (object.attributes.count("frame_key") && object.attributes.at("frame_key") == "column/1/0/1")
+      removed = object.id;
+  ASSERT_FALSE(removed.empty());
+  ASSERT_TRUE(m.remove({removed}));
+  const auto regenerated = m.generateFrame(json{{"replace", made["frame"]}, {"on_modified", "preserve"}}.dump());
+  ASSERT_TRUE(regenerated) << regenerated.error();
+  const auto updated = json::parse(*regenerated);
+  for (const auto& warning : updated["warnings"])
+    EXPECT_EQ(warning.get<std::string>().find("column/1/0/1 /"), std::string::npos);
+}
+
+TEST_F(Frames, RotatedWallReferenceKeepsOpeningFramingOnItsOwnLine) {
+  const auto grid = m.createGridLines({0, 0, 0}, {910, 910, 910}, {910, 910});
+  ASSERT_TRUE(grid);
+  const auto walls = m.createWalls({{0, 0, 600}, {2730, 0, 600}}, 120, 2400);
+  ASSERT_TRUE(walls);
+  const auto cut = m.placeOpenings(walls->front(), gp::DY(), 1, 800, 1000, 700);
+  ASSERT_TRUE(cut);
+  gp_Trsf rotate, translate;
+  rotate.SetRotation(gp_Ax1({0, 0, 0}, gp::DZ()), .37);
+  translate.SetTranslation(gp_Vec(1000, 2000, 0));
+  const auto placement = translate * rotate;
+  ASSERT_TRUE(m.transform({grid->grid, *cut}, placement, "Move rotated plan"));
+  frame({{"grid", grid->grid}, {"storeys", 1}, {"opening_hosts", {*cut}}});
+  for (const auto& id : role("lintel")) {
+    const auto a = endpoint(id, false).Transformed(placement.Inverted());
+    const auto b = endpoint(id, true).Transformed(placement.Inverted());
+    EXPECT_NEAR(a.Y(), 0, 1e-6);
+    EXPECT_NEAR(b.Y(), 0, 1e-6);
+    EXPECT_NEAR(a.Distance(b), 800, 1e-6);
+  }
+}
+
 TEST_F(Frames, StalePreviewBadInputsAndBatchAreAtomic) {
   const auto preview = ok("generate_frame", {{"inputs", {{"x_bays", 3}, {"y_bays", 3}}}});
   const auto grid = m.createGridLines(gp::Origin(), {910}, {910});

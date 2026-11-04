@@ -169,7 +169,39 @@ struct Opening {
   gp_Dir along;
   double width, bottom, top;
   int storey;
+  std::string host;
+  std::size_t index;
 };
+
+// A picked opening is on a wall FACE. Only a wall made by the wall tool
+// provides a known reference line; do not infer one from an arbitrary B-rep.
+std::optional<gp_Ax1> wallReferenceLine(const Object& host, const Document& document) {
+  const auto kind = host.attributes.find("kind");
+  if (kind == host.attributes.end() || kind->second != "wall") return std::nullopt;
+  const Recipe* recipe = &host.recipe;
+  gp_Trsf placement = document.worldTransform(host);
+  for (int depth = 0; depth < 64; ++depth) {
+    const auto* cut = std::get_if<BooleanFeature>(&recipe->base);
+    if (!cut) break;
+    if (!recipe->modifiers.empty() || cut->kind != BooleanKind::Subtract || cut->operands.empty() ||
+        !cut->operands.front().recipe)
+      return std::nullopt;
+    placement = placement * cut->operands.front().placement;
+    recipe = cut->operands.front().recipe.get();
+  }
+  const auto* rect = std::get_if<RectangleProfile>(&recipe->base);
+  if (!rect || recipe->modifiers.size() != 1 ||
+      !std::holds_alternative<ExtrudeOp>(recipe->modifiers.front()))
+    return std::nullopt;
+  const auto line = host.attributes.find("wall_line");
+  const std::string ref = line == host.attributes.end() ? "center" : line->second;
+  if (ref != "center" && ref != "left" && ref != "right") return std::nullopt;
+  const double offset = ref == "right" ? 0 : ref == "left" ? rect->height : rect->height / 2;
+  const auto origin = rect->plane.toWorld(0, offset).Transformed(placement);
+  const auto direction = gp_Dir(rect->plane.xDir).Transformed(placement);
+  if (std::abs(direction.Z()) > 1e-6) return std::nullopt;
+  return gp_Ax1(origin, direction);
+}
 
 // Plans geometry from the guide's effective tables. All dimensions are in
 // the grid's coordinates; level heights are world Z. The same plan is used
@@ -456,13 +488,23 @@ struct Plan {
     for (const auto& host : inputs.value("opening_hosts", json::array())) {
       auto list = modeler.openings(host.get<std::string>());
       need(list.ok(), list.error());
+      const auto* wall = modeler.document().find(host.get<std::string>());
+      const auto reference = wall ? wallReferenceLine(*wall, modeler.document()) : std::nullopt;
+      if (!reference && !list->empty())
+        warnings.push_back("開口参照壁の基準線は未評価です（手編集・任意形状）: " + host.get<std::string>());
       for (const auto& o : *list) {
         need(std::abs(o.normal.Z()) < 1e-6, "Only vertical wall openings can be framed");
         gp_Dir along = gp::DZ().Crossed(o.normal);
-        gp_Pnt center = o.center.Transformed(gridWorld.Inverted());
+        gp_Pnt worldCenter = o.center;
+        if (reference && std::abs(reference->Direction().Dot(o.normal)) < 1e-6) {
+          const double offset = gp_Vec(reference->Location(), o.center).Dot(gp_Vec(o.normal));
+          worldCenter.Translate(gp_Vec(o.normal) * -offset);
+        }
+        gp_Pnt center = worldCenter.Transformed(gridWorld.Inverted());
         gp_Dir direction = along.Transformed(gridWorld.Inverted());
         const int floor = storeys == 2 && o.bottom >= height("second_fl") - 1e-6 ? 2 : 1;
-        openings.push_back({center, direction, o.along, o.bottom, o.bottom + o.height, floor});
+        openings.push_back({center, direction, o.along, o.bottom, o.bottom + o.height, floor,
+                            host.get<std::string>(), o.index});
       }
     }
   }
@@ -970,6 +1012,36 @@ struct Plan {
     roofParts();
     braces();
   }
+  void openingConflicts(const std::set<std::string>& suppressed) {
+    for (auto& piece : pieces) {
+      if (piece.role != "column" && piece.role != "through_column" && piece.role != "brace") continue;
+      if (suppressed.count(piece.key)) continue;
+      for (const auto& opening : openings) {
+        const gp_Vec along(opening.along), delta(piece.from, piece.to);
+        const gp_Vec start(opening.center, piece.from), endOffset(opening.center, piece.to);
+        const auto across = [&](const gp_Vec& v) { return v.X() * along.Y() - v.Y() * along.X(); };
+        if (std::abs(across(start)) > 1e-6 || std::abs(across(endOffset)) > 1e-6) continue;
+        double first = 0, last = 1;
+        const auto clip = [&](double a, double d, double low, double high) {
+          low += 1e-6; high -= 1e-6;
+          if (std::abs(d) < 1e-12) return a > low && a < high;
+          double t0 = (low - a) / d, t1 = (high - a) / d;
+          if (t0 > t1) std::swap(t0, t1);
+          first = std::max(first, t0); last = std::min(last, t1);
+          return first < last;
+        };
+        if (!clip(start.Dot(along), delta.Dot(along), -opening.width / 2, opening.width / 2) ||
+            !clip(piece.from.Z(), delta.Z(), opening.bottom, opening.top)) continue;
+        piece.attributes["opening_conflict"] = "design_axis";
+        piece.attributes["opening_host"] = opening.host;
+        piece.attributes["opening_index"] = std::to_string(opening.index);
+        warnings.push_back("開口と柱・筋かいの設計芯が競合: " + piece.key + " / " + opening.host +
+                           " 開口" + std::to_string(opening.index) +
+                           "。支持条件を確認してください。部材は自動削除していません。");
+        break;
+      }
+    }
+  }
 };
 }  // namespace
 
@@ -1093,6 +1165,9 @@ Result<std::string> Modeler::generateFrame(const std::string& text) {
     }
     Plan plan(*this, args, name, oldRoot != nullptr);
     plan.build();
+    plan.openingConflicts(skipKeys);
+    if (!keep.empty() && !plan.openings.empty())
+      plan.warnings.push_back("保持した手編集部材と開口の関係は未評価です。生成計画の競合警告とは別に確認してください。");
     Object root;
     if (oldRoot)
       root = *oldRoot;

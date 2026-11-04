@@ -41,7 +41,11 @@ bool MainWindow::previewTimberFrame(const std::string& inputs, const std::string
     lastError_ = QString::fromStdString(response.value("error", std::string("生成できませんでした")));
     return false;
   }
-  proposalLabel_->setText(tr("木造架構のプレビュー — 「適用」で確定、「却下」で取り消し"));
+  const auto warnings = response.at("result").value("warnings", json::array());
+  proposalLabel_->setText(warnings.empty()
+      ? tr("木造架構のプレビュー — 「適用」で確定、「却下」で取り消し")
+      : tr("木造架構のプレビュー — 警告 %1 件（カーソルを合わせると詳細）。「適用」／「却下」")
+          .arg(static_cast<qulonglong>(warnings.size())));
   setStatus(
       tr("木造架構を青色でプレビューしています。寸法・接合は概略値です。確認して「適用」を押してください"));
   return true;

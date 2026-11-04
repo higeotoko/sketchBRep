@@ -309,6 +309,7 @@ class GuiPhase1 : public QObject {
   void recentFilesReopen();
   void helpWindowAndCrashLog();
   void timberFramePreviewApplyLevelsAndUndo();
+  void timberOpeningConflictsRemainVisibleInPreview();
   void timberStairwellRegenerationMatchesDialogAndExports();
   void frameChecksUpdateAndDiscardStaleResults();
   void timberQuantitiesAndFramingExport();
@@ -9209,6 +9210,28 @@ void GuiPhase1::timberStairwellRegenerationMatchesDialogAndExports() {
   } catch (const std::exception& e) {
     QFAIL(e.what());
   }
+}
+
+void GuiPhase1::timberOpeningConflictsRemainVisibleInPreview() {
+  using json = nlohmann::json;
+  Fixture f;
+  QVERIFY(f.setUp(4550, 3640));
+  auto& model = f.window.modeler();
+  const auto walls = model.createWalls({{0, 0, 600}, {2730, 0, 600}}, 120, 2400);
+  QVERIFY(walls);
+  const auto cut = model.placeOpenings(walls->front(), gp::DY(), 1, 1800, 1000, 700);
+  QVERIFY(cut);
+  const auto before = serializeDocument(model.document());
+  const json inputs = {{"x_bays", 3}, {"y_bays", 2}, {"storeys", 1}, {"opening_hosts", {*cut}},
+                       {"braces", json::array({{{"storey", 1}, {"from", {1, 0}}, {"to", {2, 0}}}})}};
+  QVERIFY(f.window.previewTimberFrame(inputs.dump()));
+  auto* label = f.window.findChild<QLabel*>(QStringLiteral("proposalSummary"));
+  QVERIFY(label);
+  QVERIFY(label->text().contains(QStringLiteral("警告")));
+  QVERIFY(label->toolTip().contains(QStringLiteral("開口と柱・筋かいの設計芯が競合")));
+  QCOMPARE(serializeDocument(model.document()), before);
+  f.window.rejectProposal();
+  QCOMPARE(serializeDocument(model.document()), before);
 }
 
 void GuiPhase1::timberFramePreviewApplyLevelsAndUndo() {

@@ -316,6 +316,7 @@ void MainWindow::buildUi() {
   auto* proposalLayout = new QHBoxLayout(proposalBar_);
   proposalLayout->setContentsMargins(6, 0, 6, 0);
   proposalLabel_ = new QLabel;
+  proposalLabel_->setObjectName(QStringLiteral("proposalSummary"));
   auto* applyButton = new QPushButton(tr("適用"));
   auto* rejectButton = new QPushButton(tr("却下"));
   applyButton->setObjectName(QStringLiteral("proposalApply"));
@@ -1427,6 +1428,13 @@ void MainWindow::buildAiBridge() {
     // (red ghost), from the change set its trial run recorded: the same one
     // preview reports and the commit records (review B).
     const json& changes = tried["result"]["changes"];
+    json warnings = json::array();
+    for (const auto& step : tried["result"].value("results", json::array())) {
+      const auto result = step.value("result", json::object());
+      if (result.is_object() && result.contains("warnings") && result["warnings"].is_array())
+        for (const auto& warning : result["warnings"])
+          if (warning.is_string()) warnings.push_back(warning);
+    }
     BRep_Builder builder;
     TopoDS_Compound ghost, removedGhost;
     builder.MakeCompound(ghost);
@@ -1464,6 +1472,7 @@ void MainWindow::buildAiBridge() {
     if (!added.isEmpty()) details << tr("追加: %1").arg(added.join(QStringLiteral(", ")));
     if (!changed.isEmpty()) details << tr("変更: %1").arg(changed.join(QStringLiteral(", ")));
     if (!removed.isEmpty()) details << tr("削除: %1").arg(removed.join(QStringLiteral(", ")));
+    for (const auto& warning : warnings) details << QString::fromStdString(warning.get<std::string>());
     proposalLabel_->setToolTip(details.join(QStringLiteral("\n")));
     proposalBar_->show();
     setStatus(tr("AI の提案を表示しています（青: 追加・変更、赤: 削除）。「適用」か「却下」を選んでください"));
@@ -1472,7 +1481,8 @@ void MainWindow::buildAiBridge() {
                 {"added", added.size()},
                 {"changed", changed.size()},
                 {"removed", removed.size()},
-                {"changes", changes}}
+                {"changes", changes},
+                {"warnings", warnings}}
         .dump();
   };
   handlers["proposal_status"] = [this](const std::string&) {
