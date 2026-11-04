@@ -246,3 +246,12 @@ TEST_F(FrameChecks, LegacyAllocationAndSingleStoreyAreNotGuessed) {
   EXPECT_EQ(legacy["counts"]["pass"], 0);
   EXPECT_GT(legacy["counts"]["not_evaluated"].get<int>(), 0);
 }
+
+TEST_F(FrameChecks, ShallowOverlapStillUsesVolumeThreshold) {
+  const auto a = member({0, 0, 0}, {1000, 0, 0});
+  member({0, 99.5, 0}, {1000, 99.5, 0});
+  const auto report = check({{"rules", {"COM-01"}}});
+  EXPECT_TRUE(report["complete"]);
+  EXPECT_EQ(status(report, "COM-01", a), "fail");
+  EXPECT_GT(report["counts"]["fail"].get<int>(), 0);
+}

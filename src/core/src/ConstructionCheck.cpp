@@ -426,7 +426,8 @@ Result<std::string> checkFrame(const doc::Document& d, const std::string& text,
           b.bounds.Get(bx, by, bz, bX, bY, bZ);
           const double x = std::max(ax, bx), y = std::max(ay, by), z = std::max(az, bz), X = std::min(aX, bX),
                        Y = std::min(aY, bY), Z = std::min(aZ, bZ);
-          if (X - x <= tol || Y - y <= tol || Z - z <= tol) continue;
+          if (X - x <= tolerance::kLinear || Y - y <= tolerance::kLinear || Z - z <= tolerance::kLinear)
+            continue;
           if (++pairs > budget) {
             complete = false;
             break;
