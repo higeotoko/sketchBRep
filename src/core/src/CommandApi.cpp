@@ -2101,7 +2101,20 @@ const std::vector<CommandDef>& commands() {
          if(a.value("include_csv",false)) report["csv"]=construction::takeOffCsv(report.dump());
          return report;
        }},
-      {"check_wall_quantity",
+        {"list_wall_bays",
+         "Read-only geometric wall-bay candidates after excluding rectangular openings across their full width. "
+         "Optional ids selects wall hosts; elevation (world Z mm) limits walls spanning that height. "
+         "Returns host IDs, endpoints, t0/t1, geometry height and source signatures. Hidden walls are omitted; "
+         "unsupported walls/cuts are reported. Candidate IDs belong only to this snapshot. "
+         "Supports, specifications and ratios remain unverified; candidates are never added to wall quantity.",
+         SCHEMA({"type":"object","properties":{"ids":{"type":"array","items":{"type":"string"}},
+           "elevation":{"type":"number"}}}),
+         [](doc::Modeler& m, const json& a) {
+           auto result = json::parse(must(construction::wallBayCandidates(m, a.dump())));
+           result["revision"] = m.history().revision();
+           return result;
+         }},
+        {"check_wall_quantity",
        "Read-only 1-2-storey timber wall-quantity comparison. Uses saved inputs or optional inputs draft. "
        "Returns X/Y floor rows, individual wall reasons, provenance, pinned table and date notice. "
        "include_csv:true adds UTF-8 BOM CSV. Missing loads, specifications or tables remain not_evaluated. "
@@ -2674,7 +2687,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
       name == "preview" || name == "query_objects" || name == "aggregate" || name == "get_changes" ||
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
       name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" ||
-      name == "check_frame" || name == "take_off" || name == "check_wall_quantity") {
+        name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays") {
     return E::Read;
   }
   if (isFileCommand(name)) return E::ExternalIo;

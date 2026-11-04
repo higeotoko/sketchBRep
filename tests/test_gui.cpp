@@ -1,5 +1,6 @@
 #include "TakeOffDialog.h"
 #include "WallQuantityDialog.h"
+#include "WallBaysDialog.h"
 #include <QTextBrowser>
 #include "sbr/ConstructionQuantity.h"
 #include <QPainter>
@@ -271,6 +272,7 @@ class GuiPhase1 : public QObject {
   void fixedElevationPansAndDrawsOnItsPlane();
   void workPlaneAtAHeightOrAGridLine();
   void architectureToolbarDrawsAtChosenLevel();
+  void wallBayCandidatesHighlightAndInvalidateWithoutEditing();
   void planOpeningChoosesFloorAndPreservesUndo();
   void planOpeningOnRotatedWalls_data();
   void planOpeningOnRotatedWalls();
@@ -5060,6 +5062,58 @@ void GuiPhase1::planOpeningRejectsAmbiguousHiddenAndLockedWalls() {
   const auto lockedCount = m.history().undoCount();
   click(f.vp, point);
   QCOMPARE(m.history().undoCount(), lockedCount);
+}
+
+void GuiPhase1::wallBayCandidatesHighlightAndInvalidateWithoutEditing() {
+  Fixture f;
+  QVERIFY(f.setUp(2000, 1000));
+  auto& m = f.window.modeler();
+  auto walls = m.createWalls({{0, 0, 0}, {6000, 0, 0}}, 120, 3000);
+  QVERIFY(walls);
+  auto cut = m.placeOpeningAt(walls->front(), gp::DY(), {3000, 60, 1500}, 1000, 1000, 700);
+  QVERIFY(cut);
+  f.vp->lockView(Viewport::StandardView::Top);
+  f.vp->setWorkOffset(0);
+  const auto sequence = m.document().sequence();
+  const auto steps = m.history().undoCount();
+  auto* action = f.window.findChild<QAction*>(QStringLiteral("wallBaysAction"));
+  QVERIFY(action);
+  action->trigger();
+  auto* dialog = f.window.findChild<WallBaysDialog*>();
+  QVERIFY(dialog && !dialog->isModal());
+  auto* table = dialog->findChild<QTableWidget*>(QStringLiteral("wallBaysTable"));
+  QCOMPARE(table->rowCount(), 2);
+  table->selectRow(0);
+  QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{*cut});
+  QVERIFY(!f.vp->inspectionMarkerShape().IsNull());
+  auto box = geom::exactBounds(f.vp->inspectionMarkerShape());
+  QVERIFY(std::abs(box.CornerMin().X()) < 1e-6);
+  QVERIFY(std::abs(box.CornerMax().X() - 2500) < 1e-6);
+  table->selectRow(1);
+  box = geom::exactBounds(f.vp->inspectionMarkerShape());
+  QVERIFY(std::abs(box.CornerMin().X() - 3500) < 1e-6);
+  if (const auto shot = qEnvironmentVariable("SBR_WALL_BAYS_SHOT"); !shot.isEmpty()) {
+    f.vp->syncNow();
+    QVERIFY(f.vp->dumpImage(shot));
+  }
+  QCOMPARE(m.document().sequence(), sequence);
+  QCOMPARE(m.history().undoCount(), steps);
+  QCOMPARE(m.document().settings().wallCalculation, std::string("{}"));
+  // A drawing tool's preview is independent of this inspection marker.
+  f.window.activateTool(MainWindow::ToolId::Wall);
+  QVERIFY(!f.vp->inspectionMarkerShape().IsNull());
+  QVERIFY(m.setOpeningSize(*cut, {}, 2000, {}, false));
+  QTRY_COMPARE(table->rowCount(), 0);
+  QVERIFY(f.vp->inspectionMarkerShape().IsNull());
+  auto* refresh = dialog->findChild<QPushButton*>(QStringLiteral("wallBaysRefresh"));
+  QVERIFY(refresh);
+  refresh->click();
+  QCOMPARE(table->rowCount(), 2);
+  table->selectRow(0);
+  box = geom::exactBounds(f.vp->inspectionMarkerShape());
+  QVERIFY(std::abs(box.CornerMax().X() - 2000) < 1e-6);
+  dialog->close();
+  QVERIFY(f.vp->inspectionMarkerShape().IsNull());
 }
 
 void GuiPhase1::architectureToolbarDrawsAtChosenLevel() {

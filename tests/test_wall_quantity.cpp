@@ -283,3 +283,114 @@ TEST_F(WallQuantity, DeletedOrDifferentFrameCannotKeepGreen) {
   EXPECT_EQ(report(in)["rows"][0]["status"], "not_evaluated");
   EXPECT_EQ(report(sample(), {{"frame", "other-frame"}})["rows"][0]["status"], "not_evaluated");
 }
+
+TEST_F(WallQuantity, BayCandidatesSubtractWindowWidthsAndMergeVerticallySeparateOpenings) {
+  auto walls = m.createWalls({{0, 0, 600}, {6000, 0, 600}}, 120, 3000);
+  ASSERT_TRUE(walls);
+  auto cut = m.placeOpeningAt(walls->front(), gp::DY(), {2000, 60, 1500}, 1000, 800, 600);
+  ASSERT_TRUE(cut);
+  cut = m.placeOpeningAt(*cut, gp::DY(), {2000, 60, 2800}, 1000, 500, 1900);
+  ASSERT_TRUE(cut);
+  cut = m.placeOpeningAt(*cut, gp::DY(), {4500, 60, 1500}, 1000, 2100, 0);
+  ASSERT_TRUE(cut);
+  const auto before = m.history().undoCount();
+  const auto sequence = m.document().sequence();
+  auto result = construction::wallBayCandidates(m);
+  ASSERT_TRUE(result) << result.error();
+  auto data = json::parse(*result);
+  ASSERT_EQ(data["bays"].size(), 3);
+  const auto& bays = data["bays"];
+  EXPECT_DOUBLE_EQ(bays[0]["length_mm"], 1500);
+  EXPECT_DOUBLE_EQ(bays[1]["length_mm"], 1500);
+  EXPECT_DOUBLE_EQ(bays[2]["length_mm"], 1000);
+  EXPECT_EQ(bays[0]["start"], (json{0, 0, 600}));
+  EXPECT_EQ(bays[1]["start"], (json{2500, 0, 600}));
+  EXPECT_DOUBLE_EQ(bays[2]["t1"], 1.0);
+  EXPECT_EQ(bays[0]["status"], "candidate_only");
+  EXPECT_FALSE(bays[0]["verified"]);
+  EXPECT_FALSE(bays[0].contains("ratio"));
+  EXPECT_EQ(m.history().undoCount(), before);
+  EXPECT_EQ(m.document().sequence(), sequence);
+  EXPECT_EQ(m.document().settings().wallCalculation, "{}");
+}
+
+TEST_F(WallQuantity, BayCandidateCoordinatesAndSignaturesFollowRotatedParentAndSave) {
+  auto walls = m.createWalls({{0, 0, 0}, {6000, 0, 0}}, 120, 3000, -1);
+  ASSERT_TRUE(walls);
+  auto group = m.group({walls->front()});
+  ASSERT_TRUE(group);
+  const auto original = json::parse(*construction::wallBayCandidates(m))["bays"][0];
+  gp_Trsf transform;
+  transform.SetRotation(gp_Ax1(gp::Origin(), gp::DZ()), .4);
+  transform.SetTranslationPart(gp_Vec(100, 200, 3000));
+  ASSERT_TRUE(m.transform({*group}, transform, "Move group"));
+  auto result = construction::wallBayCandidates(m, R"({"elevation":3000})");
+  ASSERT_TRUE(result);
+  const auto bay = json::parse(*result)["bays"][0];
+  const auto expected = gp_Pnt(6000, 0, 0).Transformed(transform);
+  EXPECT_NEAR(bay["start"][0].get<double>(), 100, 1e-6);
+  EXPECT_NEAR(bay["start"][1].get<double>(), 200, 1e-6);
+  EXPECT_NEAR(bay["end"][0].get<double>(), expected.X(), 1e-6);
+  EXPECT_NEAR(bay["length_mm"].get<double>(), 6000, 1e-6);
+  EXPECT_EQ(bay["direction"], "diagonal");
+  EXPECT_NE(bay["source_signature"], original["source_signature"]);
+  Modeler restored;
+  ASSERT_TRUE(deserializeDocument(serializeDocument(m.document()), restored.document()));
+  EXPECT_EQ(json::parse(*construction::wallBayCandidates(restored))["bays"][0], bay);
+}
+
+TEST_F(WallQuantity, BayCandidatesRespectElevationVisibilityAndApiReadOnlyEffect) {
+  auto lower = m.createWalls({{0, 0, 0}, {6000, 0, 0}}, 120, 3000);
+  auto upper = m.createWalls({{0, 0, 3000}, {6000, 0, 3000}}, 120, 3000);
+  ASSERT_TRUE(lower && upper);
+  api::CommandApi api(m);
+  EXPECT_EQ(api.effectOf(R"({"command":"list_wall_bays"})"), api::CommandApi::Effect::Read);
+  const auto count = m.history().undoCount();
+  const auto response = json::parse(api.execute(R"({"command":"list_wall_bays","args":{"elevation":3000}})"));
+  ASSERT_TRUE(response["ok"]);
+  ASSERT_EQ(response["result"]["bays"].size(), 1);
+  EXPECT_EQ(response["result"]["bays"][0]["host"], upper->front());
+  EXPECT_EQ(m.history().undoCount(), count);
+  ASSERT_TRUE(m.setLayer(upper->front(), "hidden"));
+  m.setTagVisible("hidden", false);
+  const auto data = json::parse(*construction::wallBayCandidates(m, R"({"elevation":3000})"));
+  EXPECT_TRUE(data["bays"].empty());
+  EXPECT_EQ(data["hidden_walls_omitted"], 1);
+  EXPECT_TRUE(json::parse(*construction::wallBayCandidates(m, R"({"ids":[]})"))["bays"].empty());
+  EXPECT_FALSE(construction::wallBayCandidates(m, R"({"ids":["missing"]})"));
+  EXPECT_FALSE(construction::wallBayCandidates(m, R"({"elevation":"bad"})"));
+}
+
+TEST_F(WallQuantity, BayCandidatesDoNotIgnoreUnsupportedCircularCuts) {
+  auto walls = m.createWalls({{0, 0, 0}, {6000, 0, 0}}, 120, 3000);
+  ASSERT_TRUE(walls);
+  geom::SketchPlane plane;
+  plane.origin = {3000, 100, 1500}; plane.normal = gp::DY(); plane.xDir = gp::DX();
+  auto circle = m.createCircle(plane, 200);
+  ASSERT_TRUE(circle);
+  auto cylinder = m.extrude(*circle, -200);
+  ASSERT_TRUE(cylinder);
+  auto cut = m.boolean(BooleanKind::Subtract, {walls->front(), *circle});
+  ASSERT_TRUE(cut) << cut.error();
+  ASSERT_TRUE(m.setAttribute({*cut}, "kind", "wall"));
+  const auto data = json::parse(*construction::wallBayCandidates(m));
+  EXPECT_TRUE(data["bays"].empty());
+  ASSERT_EQ(data["excluded"].size(), 1);
+  EXPECT_EQ(data["excluded"][0]["host"], *cut);
+}
+
+TEST_F(WallQuantity, BayResizeRecomputesIntervalsWithoutChangingManualCalculation) {
+  auto walls = m.createWalls({{0, 0, 0}, {6000, 0, 0}}, 120, 3000);
+  ASSERT_TRUE(walls);
+  auto cut = m.placeOpeningAt(walls->front(), gp::DY(), {3000, 60, 1000}, 1000, 1000, 700);
+  ASSERT_TRUE(cut);
+  ASSERT_TRUE(m.setWallCalculation(sample().dump()));
+  const auto inputs = m.document().settings().wallCalculation;
+  const auto before = json::parse(*construction::wallBayCandidates(m))["bays"][0];
+  ASSERT_TRUE(m.setOpeningSize(*cut, {}, 2000, {}, false));
+  const auto after = json::parse(*construction::wallBayCandidates(m))["bays"][0];
+  EXPECT_DOUBLE_EQ(before["length_mm"], 2500);
+  EXPECT_DOUBLE_EQ(after["length_mm"], 2000);
+  EXPECT_NE(after["source_signature"], before["source_signature"]);
+  EXPECT_EQ(m.document().settings().wallCalculation, inputs);
+}

@@ -9,6 +9,7 @@ add_library(sbr_ui STATIC
   FrameCheckPanel.cpp FrameCheckPanel.h
   TakeOffDialog.cpp TakeOffDialog.h
   WallQuantityDialog.cpp WallQuantityDialog.h
+  WallBaysDialog.cpp WallBaysDialog.h
   DwgConverter.cpp DwgConverter.h
   PropertiesPanel.cpp PropertiesPanel.h
   MaterialsPanel.cpp MaterialsPanel.h

@@ -57,8 +57,7 @@ def package(args):
     (stage / "LOCAL_BUILD.md").write_text(
         f"# Windows ローカル更新版\n\n実装コミット: {commit}\n\n"
         "ZIPをすべて展開し、SketchBRep.exeを起動してください。\n"
-        "建築ツールバーと平面からの窓・扉の配置に対応しています。\n"
-        "変更と検証は manual/60〜62、manual/validation を参照してください。\n"
+        "変更と操作方法は manual/ の更新記録、検証は manual/validation を参照してください。\n"
         "ローカル検証版です。CI・人による実機操作の確認を示すものではありません。\n"
         "インストーラーは含みません。\n", encoding="utf-8")
     checked = 0

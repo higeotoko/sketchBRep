@@ -1,0 +1,26 @@
+{
+  "date_jst": "2026-11-05",
+  "base_commit": "a05b30f",
+  "platform": "Windows / MSVC 19.44 / OCCT 8.0.1 / Qt 6.12 / 3DM enabled",
+  "build_exit_code": 0,
+  "related_core": {"tests": 56, "failures": 0, "errors": 0, "seconds": 21.753, "exit_code": 0},
+  "command_api": {"tests": 19, "failures": 0, "errors": 0, "seconds": 0.103, "exit_code": 0},
+  "gui": {"actual_conditions": 17, "including_init_cleanup": 19, "failures": 0, "errors": 0, "seconds": 40.910, "exit_code": 0},
+  "new_core_cases": [
+    "BayCandidatesSubtractWindowWidthsAndMergeVerticallySeparateOpenings",
+    "BayCandidateCoordinatesAndSignaturesFollowRotatedParentAndSave",
+    "BayCandidatesRespectElevationVisibilityAndApiReadOnlyEffect",
+    "BayCandidatesDoNotIgnoreUnsupportedCircularCuts",
+    "BayResizeRecomputesIntervalsWithoutChangingManualCalculation"
+  ],
+  "new_gui_case": "wallBayCandidatesHighlightAndInvalidateWithoutEditing",
+  "highlight_image_inspected": true,
+  "ci_verified": false,
+  "human_windows_verified": false,
+  "limits": [
+    "Geometric candidates only; no column, horizontal member or specification verification",
+    "No automatic designation or wall-quantity contribution",
+    "Candidate IDs are scoped to the returned document snapshot",
+    "No Linux or full GUI suite verification in this local record"
+  ]
+}

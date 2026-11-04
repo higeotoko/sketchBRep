@@ -150,6 +150,9 @@ class Viewport : public QWidget {
   // in world space. Built from display copies, never from canonical shapes.
   void setGhost(const std::vector<doc::ObjectId>& ids, const gp_Trsf& delta);
   void clearPreview();
+  // Read-only diagnostics highlight, independent of an active drawing tool.
+  void setInspectionMarker(const TopoDS_Shape& shape);
+  TopoDS_Shape inspectionMarkerShape() const { return inspectionMarker_.IsNull() ? TopoDS_Shape() : inspectionMarker_->Shape(); }
   // Picked inputs shown by their role (e.g. rail 1 red, rail 2 green,
   // profiles blue), drawn thick over the model; empty clears.
   void setRoleShapes(const std::vector<std::pair<TopoDS_Shape, Quantity_Color>>& shapes);
@@ -446,6 +449,7 @@ class Viewport : public QWidget {
   PickMode pickMode_ = PickMode::None;
 
   Handle(AIS_Shape) preview_;
+  Handle(AIS_Shape) inspectionMarker_;
   std::vector<Handle(AIS_Shape)> roles_;
   Handle(AIS_Shape) snapMarker_;
   Handle(AIS_Shape) inferenceLine_;

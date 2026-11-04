@@ -201,3 +201,9 @@ DWG は GUI から ODA File Converter で変換する。
 荷重は上階を含む累積kN。形状から仕様・荷重を推測して入力しない。
 同梱表は `get_construction_guide`、保存済みの表は比較結果の `table_snapshot` で確認する。
 詳しい入力・適用範囲は [58_wall_quantity_stage5.md](58_wall_quantity_stage5.md)。
+
+`list_wall_bays {ids?:[wallId], elevation?:worldZ_mm}` は、開口の横幅を除いた壁の幾何的な区間候補を
+読み取り専用で返す。host、世界座標のstart/end、t0/t1、geometry_height_mm、source_signature、
+document sequenceとrevisionを持つ。候補IDはスナップショット内だけで有効。
+未対応の壁・加工はexcluded、非表示の壁は省略数を返す。柱・横架材・施工仕様・壁倍率は未確認で、
+壁量には自動計上しない。詳細は [64_wall_bay_candidates.md](64_wall_bay_candidates.md)。

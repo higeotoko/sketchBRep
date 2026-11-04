@@ -1,5 +1,6 @@
 #include "TakeOffDialog.h"
 #include "WallQuantityDialog.h"
+#include "WallBaysDialog.h"
 #include "FrameCheckPanel.h"
 #include "MainWindow.h"
 #include "sbr/KernelError.h"
@@ -1108,6 +1109,8 @@ void MainWindow::buildMenus() {
       ->setObjectName(QStringLiteral("takeOffAction"));
   tools->addAction(tr("木造の壁量..."), this, &MainWindow::showWallQuantityDialog)
       ->setObjectName(QStringLiteral("wallQuantityAction"));
+  tools->addAction(tr("壁の区間候補（開口を除く）..."), this, &MainWindow::showWallBaysDialog)
+      ->setObjectName(QStringLiteral("wallBaysAction"));
   tools->addAction(tr("レベル（GL・FL）を編集..."), this, &MainWindow::showLevelsEditDialog)
       ->setObjectName(QStringLiteral("editLevelsAction"));
   tools->addAction(tr("壁の設定..."), this, &MainWindow::showWallSettingsDialog);
@@ -1263,7 +1266,7 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
   timber->setPopupMode(QToolButton::InstantPopup);
   auto* timberMenu = new QMenu(timber);
   timberMenu->setObjectName(QStringLiteral("architectureTimberMenu"));
-  for (const char* name : {"timberFrameAction", "frameCheckAction", "wallQuantityAction", "takeOffAction"})
+  for (const char* name : {"timberFrameAction", "frameCheckAction", "wallBaysAction", "wallQuantityAction", "takeOffAction"})
     timberMenu->addAction(findChild<QAction*>(QLatin1String(name)));
   timber->setMenu(timberMenu);
   bar->addWidget(timber);
@@ -2637,6 +2640,13 @@ void MainWindow::showTakeOffDialog() {
 void MainWindow::showWallQuantityDialog() {
   WallQuantityDialog dialog(this);
   dialog.exec();
+}
+
+void MainWindow::showWallBaysDialog() {
+  if (auto* current = findChild<WallBaysDialog*>()) { current->show(); current->raise(); return; }
+  auto* dialog = new WallBaysDialog(this);
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  dialog->show();
 }
 
 void MainWindow::showFrameCheckPanel() {

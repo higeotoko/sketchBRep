@@ -14,6 +14,8 @@
 
 その後の [平面上での窓・扉の配置](docs/62_plan_opening_placement.md) も参照してください。
 
+最新の追加は [壁の区間候補の抽出と選択](docs/64_wall_bay_candidates.md)。更新版のWindows ZIPを毎回渡す方針は [配布記録](docs/63_windows_zip_delivery.md) に残しています。
+
 ![Phase 2 screenshot](docs/images/phase2.png)
 
 ## できること

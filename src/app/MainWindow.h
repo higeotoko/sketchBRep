@@ -250,6 +250,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   void showFrameCheckPanel();
   void showTakeOffDialog();
   void showWallQuantityDialog();
+  void showWallBaysDialog();
   void editMaterialDialog(const std::string& id);  // "" = new material
   void startSession();
   void clearRecovery();

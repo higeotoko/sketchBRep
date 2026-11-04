@@ -2087,6 +2087,21 @@ void Viewport::setPreview(const TopoDS_Shape& shape, bool solid, bool unclipped)
 
 void Viewport::clearPreview() { setPreview(TopoDS_Shape()); }
 
+void Viewport::setInspectionMarker(const TopoDS_Shape& shape) {
+  if (view_.IsNull()) return;
+  if (!inspectionMarker_.IsNull()) context_->Remove(inspectionMarker_, false);
+  inspectionMarker_.Nullify();
+  if (!shape.IsNull()) {
+    inspectionMarker_ = new AIS_Shape(shape);
+    inspectionMarker_->SetColor(rgb(1.0, .42, .08));
+    inspectionMarker_->SetWidth(6.0);
+    inspectionMarker_->SetZLayer(Graphic3d_ZLayerId_Topmost);
+    context_->Display(inspectionMarker_, AIS_WireFrame, -1, false);
+    context_->Deactivate(inspectionMarker_);
+  }
+  redraw();
+}
+
 void Viewport::setRoleShapes(const std::vector<std::pair<TopoDS_Shape, Quantity_Color>>& shapes) {
   if (view_.IsNull()) return;
   for (const Handle(AIS_Shape)& r : roles_) context_->Remove(r, Standard_False);
