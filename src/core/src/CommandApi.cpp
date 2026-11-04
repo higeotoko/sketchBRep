@@ -1,4 +1,5 @@
 #include "sbr/ConstructionQuantity.h"
+#include "sbr/ConstructionWall.h"
 #include "sbr/ConstructionCheck.h"
 #include "sbr/api/CommandApi.h"
 #include "sbr/ConstructionGuide.h"
@@ -2098,6 +2099,33 @@ const std::vector<CommandDef>& commands() {
          if(a.value("include_csv",false)) report["csv"]=construction::takeOffCsv(report.dump());
          return report;
        }},
+      {"check_wall_quantity",
+       "Read-only 1-2-storey timber wall-quantity comparison. Uses saved inputs or optional inputs draft. "
+       "Returns X/Y floor rows, individual wall reasons, provenance, pinned table and date notice. "
+       "include_csv:true adds UTF-8 BOM CSV. Missing loads, specifications or tables remain not_evaluated. "
+       "Not a building safety or code-compliance assessment. Read get_construction_guide first.",
+       SCHEMA({"type":"object","properties":{"inputs":{"type":"object"},"include_csv":{"type":"boolean"}}}),
+       [](doc::Modeler& m, const json& a) {
+         auto report = json::parse(must(construction::checkWallQuantity(m.document(), a.dump())));
+         report["revision"] = m.history().revision();
+         if (a.value("include_csv", false)) report["csv"] = construction::wallQuantityCsv(report.dump());
+         return report;
+       }},
+      {"set_wall_calculation",
+       "Replace timber wall calculation inputs and pin coefficient-table snapshot in project; one undo. "
+       "inputs: {height_m,co_designated:bool,wind_coefficient_cm_m2,input_basis,frame?,"
+       "floors:[{id,name,area_m2,weight_kn,wind_x_m2,wind_y_m2,walls_complete}],"
+       "walls:[{id,floor,direction:X|Y,spec,verified,height_mm,start:[x,y],end:[x,y]}],table_snapshot?}. "
+       "Floors are bottom to top; weight_kn is cumulative burden including upper floors. mm/m2/kN units. "
+       "Alternatively wall grid+start_axes/end_axes:[xAxisId,yAxisId] follows grid edits. "
+       "verified confirms full construction/connection conditions from guide; not inferred from geometry. "
+       "Omitting table_snapshot selects current built-in table; null removes it; custom tables require metadata. "
+       "Read check_wall_quantity to see resulting report. Null inputs remain unknown, never zero.",
+       SCHEMA({"type":"object","properties":{"inputs":{"type":"object"}},"required":["inputs"]}),
+       [](doc::Modeler& m, const json& a) {
+         must(m.setWallCalculation(arg(a, "inputs").dump()));
+         return json::parse(must(construction::checkWallQuantity(m.document())));
+       }},
       {"check_frame",
        "Read-only timber diagnosis: COM-01..03, MOD-01..02, TMB-01..04, LAT-* placeholders and SEC-* outside scope. "
        "Returns four outcomes, reason codes, measurements/units, provenance and checker version. "
@@ -2644,7 +2672,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
       name == "preview" || name == "query_objects" || name == "aggregate" || name == "get_changes" ||
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
       name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" ||
-      name == "check_frame" || name == "take_off") {
+      name == "check_frame" || name == "take_off" || name == "check_wall_quantity") {
     return E::Read;
   }
   if (isFileCommand(name)) return E::ExternalIo;

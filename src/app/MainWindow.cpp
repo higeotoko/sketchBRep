@@ -1,4 +1,5 @@
 #include "TakeOffDialog.h"
+#include "WallQuantityDialog.h"
 #include "FrameCheckPanel.h"
 #include "MainWindow.h"
 #include "sbr/KernelError.h"
@@ -1103,6 +1104,8 @@ void MainWindow::buildMenus() {
   tools->addAction(tr("架構チェック"), this, &MainWindow::showFrameCheckPanel)->setObjectName(QStringLiteral("frameCheckAction"));
   tools->addAction(tr("木材の拾い出し..."), this, &MainWindow::showTakeOffDialog)
       ->setObjectName(QStringLiteral("takeOffAction"));
+  tools->addAction(tr("木造の壁量..."), this, &MainWindow::showWallQuantityDialog)
+      ->setObjectName(QStringLiteral("wallQuantityAction"));
   tools->addAction(tr("レベル（GL・FL）を編集..."), this, &MainWindow::showLevelsEditDialog)
       ->setObjectName(QStringLiteral("editLevelsAction"));
   tools->addAction(tr("壁の設定..."), this, &MainWindow::showWallSettingsDialog);
@@ -2523,6 +2526,11 @@ void MainWindow::startMember(const std::string& entry) {
 
 void MainWindow::showTakeOffDialog() {
   TakeOffDialog dialog(modeler_.document(), this);
+  dialog.exec();
+}
+
+void MainWindow::showWallQuantityDialog() {
+  WallQuantityDialog dialog(this);
   dialog.exec();
 }
 

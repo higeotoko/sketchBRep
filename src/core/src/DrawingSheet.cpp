@@ -243,11 +243,25 @@ Result<Sheet> layoutSheet(const View& view, const SheetSpec& spec) {
 
   // The paper: the smallest that holds it (paper mm = real / scale).
   const bool frame = spec.frame;
+  std::vector<std::string> calculationLines;
+  for (const auto& note : view.calculationNotes) {
+    std::string line;
+    int count = 0;
+    for (unsigned char c : note) {
+      if ((c & 0xC0) != 0x80 && count++ == 90) {
+        calculationLines.push_back(line);
+        line.clear();
+        count = 1;
+      }
+      line += static_cast<char>(c);
+    }
+    if (!line.empty()) calculationLines.push_back(line);
+  }
   auto areaOf = [&](const Paper& p, double& x0, double& y0, double& x1, double& y1) {
     x0 = frame ? kLeftMargin : kMargin;
     x1 = p.w - kMargin;
     y0 = frame ? kMargin + kTitleH + 4 : kMargin;
-    y1 = p.h - kMargin;
+    y1 = p.h - kMargin - calculationLines.size() * 4.0;
   };
   const Paper* paper = nullptr;
   Sheet sheet;
@@ -284,6 +298,9 @@ Result<Sheet> layoutSheet(const View& view, const SheetSpec& spec) {
   items.push_back(text(Pen::Text, gp_Pnt2d((all.x0 + all.x1) / 2 + dx, all.y0 + dy - captionGap / 2), caption, 5.0, 1, 1));
 
   auto P = [&](double x, double y) { return gp_Pnt2d(x * s, y * s); };  // paper mm -> sheet
+  for (std::size_t i = 0; i < calculationLines.size(); ++i)
+    items.push_back(text(Pen::Text, P(kLeftMargin + 2, paper->h - kMargin - 3 - i * 4.0), calculationLines[i],
+                         2.2, 0, 0));
   if (view.spec.kind == ViewKind::Plan && spec.north) {
     const gp_Pnt2d c = P(ax1 - 14, ay1 - 16);
     items.push_back(circle(Pen::Text, c, 6 * s));

@@ -1,4 +1,5 @@
 #include "sbr/ConstructionGuide.h"
+#include "sbr/ConstructionWall.h"
 
 #include <cmath>
 #include <sstream>
@@ -29,7 +30,8 @@ constexpr const char* kNotice =
     "意匠・概略の検討用。構造の安全、法令への適合、施工できることを判定・保証しません。"
     "標準寸法は市場の流通寸法の目安で、法令の値ではありません。"
     "梁せいは形を作るための仮の値です。スパンから自動で決めません。"
-    "樹種・等級は属性のみ。生成は概略形です。診断は形と配置の確認です。壁量計算は未実装です。";
+    "樹種・等級は属性のみ。生成は概略形です。診断は形と配置の確認です。"
+    "壁量は指定した耐力壁と入力荷重による比較です。四分割法・N値・柱頭柱脚は未評価です。";
 
 json read(const char* const* parts, unsigned count) {
   std::string text;
@@ -49,7 +51,8 @@ const json& builtin(const std::string& system) {
                             {"recipes", read(embedded::kTimber_recipes, embedded::kTimber_recipes_parts)},
                             {"hardware", read(embedded::kTimber_hardware, embedded::kTimber_hardware_parts)},
                             {"checks", read(embedded::kTimber_checks, embedded::kTimber_checks_parts)},
-                            {"outputs", read(embedded::kTimber_outputs, embedded::kTimber_outputs_parts)}};
+                            {"outputs", read(embedded::kTimber_outputs, embedded::kTimber_outputs_parts)},
+                            {"wall_tables", json::parse(wallTables())}};
   return data;
 }
 
@@ -281,6 +284,25 @@ std::string guideMarkdown(const std::string& system, const std::string& override
   out << "\ngenerate_frame {system: timber, recipe: post_beam_2storey, inputs, preview: true} で試し、"
          "返されたrevisionをexpected_revisionにして preview: false で確定します。"
          "画面では木造架構メニューからプレビューし、適用・却下を選べます。\n";
+  out << "\n## 壁量計算\n\n";
+  const auto& wall = data.at("wall_tables");
+  sourceText(out, wall);
+  out << "根拠: " << cell(wall.at("basis")) << "／施行: " << cell(wall.at("effective_from"))
+      << "／表の確認日: " << cell(wall.at("checked_on")) << "／正誤表: " << cell(wall.at("errata")) << "\n\n";
+  for (const auto& note : wall.at("notes")) out << "- " << cell(note) << "\n";
+  for (const auto& [id, spec] : wall.at("entries").items())
+    out << "- `" << id << "` " << cell(spec.at("name")) << "／壁倍率 " << cell(display(spec.at("ratio")))
+        << "／条件: " << cell(spec.at("conditions")) << "\n";
+  out << "\nset_wall_calculation {inputs} で入力・係数表の写しを保存しUndoできます。"
+         "check_wall_quantity {include_csv:true} は読み取り専用。"
+         "floorsは下階から順に、area_m2は算定用床面積、weight_knは上階を含めた累積荷重、"
+         "wind_x_m2/wind_y_m2は床上1.35m以下を控除した見付面積です。"
+         "height_m、co_designated（C0指定区域か）、wind_coefficient_cm_m2、input_basisを明示します。"
+         "wallsはid、floor、direction、spec、start/endのXY座標mm、筋かいのheight_mm、verifiedを持ちます。"
+         "gridとstart_axes/end_axesの[X通りID,Y通りID]でも指定できます。"
+         "仕様・施工・接合の確認後にverified:true、入力した階の壁が揃ったらwalls_complete:trueにします。"
+         "table_snapshotを省略すると同梱表の写し、nullなら表なし、出典付きの表で利用者登録も可能です。"
+         "既存入力を修正する時は保存済みの表を保ち、明示的な版切替だけで表を更新してください。\n";
   out << "\n役割は既存属性 kind、材料は material_class を使います。"
          "AI は list_sections {system: timber, role: column} で断面を選び、"
          "create_member の section に返された ID、role に役割を渡します。"

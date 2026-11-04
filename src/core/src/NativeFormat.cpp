@@ -1,4 +1,5 @@
 #include "sbr/doc/NativeFormat.h"
+#include "sbr/ConstructionWall.h"
 
 #include <cmath>
 #include <filesystem>
@@ -1131,10 +1132,14 @@ std::string serializeDocument(const Document& document) {
       {"camera", cameraToJson(s.camera)},
       {"scenes", scenes},
       {"sections", sections},
-      {"sectionDisplay", {{"planes", s.sectionDisplay.planes}, {"cuts", s.sectionDisplay.cuts}, {"fill", s.sectionDisplay.fill}}},
+      {"sectionDisplay",
+       {{"planes", s.sectionDisplay.planes},
+        {"cuts", s.sectionDisplay.cuts},
+        {"fill", s.sectionDisplay.fill}}},
       {"hiddenTags", s.hiddenTags},
       {"levels", levelsJson},
       {"constructionOverrides", s.constructionOverrides},
+      {"wallCalculation", s.wallCalculation},
       {"shapes", shapes.entries},
       {"recipes", recipes.entries},
       {"materials", materials},
@@ -1185,6 +1190,10 @@ Status deserializeDocument(const std::string& text, Document& document,
       for (const json& l : root.at("levels")) {
         s.levels.push_back({l.at("id").get<std::string>(), l.value("name", std::string()), l.at("elevation").get<double>()});
       }
+    }
+    if (root.contains("wallCalculation")) {
+      const auto value = root.at("wallCalculation").get<std::string>();
+      s.wallCalculation = value == "{}" ? value : construction::normalizeWallInputs(value);
     }
     if (root.contains("constructionOverrides")) {
       s.constructionOverrides = root.at("constructionOverrides").get<std::map<std::string, std::string>>();

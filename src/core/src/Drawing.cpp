@@ -1,6 +1,7 @@
 #include <BRepBuilderAPI_Copy.hxx>
 #include "sbr/ConstructionQuantity.h"
 #include "sbr/ConstructionGuide.h"
+#include "sbr/ConstructionWall.h"
 #include <nlohmann/json.hpp>
 #include <set>
 #include "sbr/draw/Drawing.h"
@@ -642,6 +643,16 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     }
     if (!report.at("complete").get<bool>())
       view.notes.push_back("部材情報の不足・編集後の寸法など、拾い出しに未評価があります");
+  }
+  if (document.settings().wallCalculation != "{}") {
+    const auto wall = construction::checkWallQuantity(document);
+    if (wall) {
+      const auto report = nlohmann::json::parse(*wall);
+      view.calculationNotes.push_back(report.at("notice"));
+      view.calculationNotes.push_back(
+          "壁量の結果・入力範囲は別の壁量表を参照。図面のタグや表示範囲と計算範囲は同一とは限りません。");
+    } else
+      view.calculationNotes.push_back("壁量は未評価: " + wall.error());
   }
   if (!spec.framingPreset.empty()) {
     view.notes.push_back(

@@ -137,6 +137,7 @@ struct View {
   ViewSpec spec;
   int objects = 0;            // objects drawn
   std::vector<std::string> notes;  // what was left out, with the reason
+  std::vector<std::string> calculationNotes;  // provenance only; no wall-quantity verdict on a geometry sheet
 };
 
 // The view of the visible model. Heavy for large models (hidden lines):

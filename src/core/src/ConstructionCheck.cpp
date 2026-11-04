@@ -19,6 +19,7 @@
 
 #include "sbr/ConstructionFrame.h"
 #include "sbr/ConstructionGuide.h"
+#include "sbr/ConstructionWall.h"
 #include "sbr/KernelError.h"
 
 namespace sbr::construction {
@@ -487,9 +488,37 @@ Result<std::string> checkFrame(const doc::Document& d, const std::string& text,
            {{"pair_budget", budget}});
     }
     emit("TMB-04", {}, "not_evaluated", "spacing_reference_missing", "柱間隔の目安と出典の表が未登録です");
-    for (const auto& id : {"LAT-01", "LAT-02", "LAT-03"})
+    if (wanted.count("LAT-01")) {
+      json args = json::object();
+      if (!scope.empty()) args["frame"] = scope;
+      const auto checked = checkWallQuantity(d, args.dump());
+      if (!checked) {
+        emit("LAT-01", {}, "not_evaluated", "wall_inputs_invalid", checked.error());
+        complete = false;
+      } else {
+        const auto report = json::parse(*checked);
+        for (const auto& row : report.at("rows")) {
+          const auto status = row.at("status").get<std::string>();
+          auto message = row.at("floor").get<std::string>() + " " + row.at("direction").get<std::string>();
+          for (const auto& reason : row.at("reasons")) message += "／" + reason.get<std::string>();
+          message += " " + report.at("notice").get<std::string>();
+          emit("LAT-01", {}, status,
+               status == "not_evaluated" ? "wall_inputs_incomplete" : "wall_quantity_comparison",
+               message, row);
+          results.back()["wall_table"] = report.at("table_snapshot");
+          results.back()["notice"] = report.at("notice");
+          results.back()["calculation_checker_version"] = report.at("checker_version");
+          results.back()["calculation_complete"] = report.at("complete");
+          if (!report.at("table_snapshot").is_null()) {
+            results.back()["source"] = report.at("table_snapshot").at("source");
+            results.back()["normative"] = report.at("table_snapshot").at("normative");
+          }
+        }
+      }
+    }
+    for (const auto& id : {"LAT-02", "LAT-03"})
       emit(id, {}, "not_evaluated", "calculation_not_implemented",
-           "壁量・四分割法・N値の検査器と根拠表は段階5です");
+           "四分割法・N値の検査器と根拠表は未実装です");
     emit("SEC-01", {}, "not_applicable", "outside_stage_scope", "断面照査は今回の対象外です");
     // An empty selection cannot earn a green rule result.
     if (selectedCount == 0)

@@ -80,6 +80,7 @@ struct DocumentSettings {
   std::set<std::string> hiddenTags;  // objects with these tags are hidden
   std::vector<FloorLevel> levels;    // by elevation
   std::map<std::string, std::string> constructionOverrides;  // system -> JSON merge patch
+  std::string wallCalculation = "{}";  // designations, loads and pinned coefficient table
 };
 
 // The part of the settings that belongs to the model's state (saved, undone
@@ -91,9 +92,11 @@ struct PersistentSettings {
   std::set<std::string> hiddenTags;
   std::vector<FloorLevel> levels;
   std::map<std::string, std::string> constructionOverrides;
+  std::string wallCalculation = "{}";
 
   static PersistentSettings of(const DocumentSettings& s) {
-    return {s.scenes, s.sections, s.sectionDisplay, s.hiddenTags, s.levels, s.constructionOverrides};
+    return {s.scenes,         s.sections, s.sectionDisplay, s.hiddenTags, s.levels, s.constructionOverrides,
+            s.wallCalculation};
   }
   void applyTo(DocumentSettings& s) const {
     s.scenes = scenes;
@@ -102,10 +105,12 @@ struct PersistentSettings {
     s.hiddenTags = hiddenTags;
     s.levels = levels;
     s.constructionOverrides = constructionOverrides;
+    s.wallCalculation = wallCalculation;
   }
   bool operator==(const PersistentSettings& o) const {
     return scenes == o.scenes && sections == o.sections && sectionDisplay == o.sectionDisplay &&
-           hiddenTags == o.hiddenTags && levels == o.levels && constructionOverrides == o.constructionOverrides;
+           hiddenTags == o.hiddenTags && levels == o.levels &&
+           constructionOverrides == o.constructionOverrides && wallCalculation == o.wallCalculation;
   }
   bool operator!=(const PersistentSettings& o) const { return !(*this == o); }
 };

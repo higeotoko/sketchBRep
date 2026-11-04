@@ -1,6 +1,7 @@
 #include "sbr/doc/Modeler.h"
 #include "sbr/ConstructionGuide.h"
 #include "sbr/ConstructionFrame.h"
+#include "sbr/ConstructionWall.h"
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -3885,6 +3886,17 @@ void editSettings(Document& document, CommandStack& history, const std::string& 
   history.execute(Command{name, {}, {}, {}, SettingsDelta{before, after}});
 }
 }  // namespace
+
+Status Modeler::setWallCalculation(const std::string& inputs) {
+  try {
+    const auto normalized = construction::normalizeWallInputs(inputs);
+    editSettings(document_, history_, "Wall Quantity Inputs",
+                 [&](PersistentSettings& s) { s.wallCalculation = normalized; });
+    return Status::success();
+  } catch (const std::exception& e) {
+    return Status::failure(e.what());
+  }
+}
 
 Status Modeler::setConstructionOverrides(const std::string& system, const std::string& patch) {
   try {

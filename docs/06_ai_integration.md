@@ -192,3 +192,12 @@ DWG は GUI から ODA File Converter で変換する。
 配置数・役割・断面・長さ・材積・実形状体積・定尺換算を返す。未評価の量は空欄にし、0で埋めない。
 `export_drawing {kind:"framing", preset:"second_floor", within?, tags?, path, scale?}` で伏図をDXF/JWWに出す。
 同じ対象条件の拾い出し表と符号が対応する。詳しくは [57_quantities_framing_stage4.md](57_quantities_framing_stage4.md)。
+
+## 壁量（段階5）
+
+`set_wall_calculation {inputs}` で耐力壁・荷重と係数表の写しを保存する（Undo可）。
+`check_wall_quantity {inputs?, include_csv?}` は読み取り専用で、階・X/Yごとの比較と壁内訳、未評価理由、
+根拠・版・施行日・確認日の但し書き、検査時revisionを返す。`check_frame` のLAT-01にも反映する。
+荷重は上階を含む累積kN。形状から仕様・荷重を推測して入力しない。
+同梱表は `get_construction_guide`、保存済みの表は比較結果の `table_snapshot` で確認する。
+詳しい入力・適用範囲は [58_wall_quantity_stage5.md](58_wall_quantity_stage5.md)。

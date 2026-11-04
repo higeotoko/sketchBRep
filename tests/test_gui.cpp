@@ -1,4 +1,6 @@
 #include "TakeOffDialog.h"
+#include "WallQuantityDialog.h"
+#include <QTextBrowser>
 #include "sbr/ConstructionQuantity.h"
 #include <QPainter>
 #include "FrameCheckPanel.h"
@@ -309,6 +311,7 @@ class GuiPhase1 : public QObject {
   void timberFramePreviewApplyLevelsAndUndo();
   void frameChecksUpdateAndDiscardStaleResults();
   void timberQuantitiesAndFramingExport();
+  void wallQuantityInputsComparisonSaveAndStaleModel();
   void panelDragPreviewKeepsTheModelViewStill();
   void panelMotionSettlesAfterNativeDock();
   void paletteResizeKeepsBackdropAcrossViewport();
@@ -9260,6 +9263,100 @@ void GuiPhase1::frameChecksUpdateAndDiscardStaleResults() {
   const auto capture=qEnvironmentVariable("SBR_CHECK_CAPTURE");
   if(!capture.isEmpty()) QVERIFY(panel->grab().save(capture));
   panel->hide();
+}
+
+void GuiPhase1::wallQuantityInputsComparisonSaveAndStaleModel() {
+  using nlohmann::json;
+  try {
+    Fixture f;
+    QVERIFY(f.setUp(2500, 2500));
+    auto& m = f.window.modeler();
+    const json in = {{"height_m", 6},
+                     {"co_designated", false},
+                     {"wind_coefficient_cm_m2", 50},
+                     {"input_basis", "GUI検証の仮想入力"},
+                     {"floors",
+                      {{{"id", "1"},
+                        {"name", "1階"},
+                        {"area_m2", 50},
+                        {"weight_kn", 98},
+                        {"wind_x_m2", 30},
+                        {"wind_y_m2", 6},
+                        {"walls_complete", true}}}},
+                     {"walls",
+                      {{{"id", "X1"},
+                        {"floor", "1"},
+                        {"direction", "X"},
+                        {"start", {0, 0}},
+                        {"end", {10000, 0}},
+                        {"height_mm", 3000},
+                        {"spec", "brace_45x90"},
+                        {"verified", true}},
+                       {{"id", "Y1"},
+                        {"floor", "1"},
+                        {"direction", "Y"},
+                        {"start", {0, 0}},
+                        {"end", {0, 4000}},
+                        {"height_mm", 3000},
+                        {"spec", "brace_45x90"},
+                        {"verified", true}}}}};
+    QVERIFY(m.setWallCalculation(in.dump()));
+    WallQuantityDialog dialog(&f.window);
+    dialog.show();
+    dialog.refreshNow();
+    QVERIFY(!dialog.reportJson().empty());
+    auto report = json::parse(dialog.reportJson());
+    QCOMPARE(report["rows"][0]["status"].get<std::string>(), std::string("pass"));
+    QCOMPARE(report["rows"][1]["status"].get<std::string>(), std::string("fail"));
+    auto* rows = dialog.findChild<QTableWidget*>(QStringLiteral("wallDesignations"));
+    auto* notice = dialog.findChild<QTextBrowser*>(QStringLiteral("wallNotice"));
+    QVERIFY(rows);
+    QVERIFY(notice);
+    QVERIFY(notice->toPlainText().contains("2025-04-01"));
+    auto* tabs = dialog.findChild<QTabWidget*>();
+    QVERIFY(tabs);
+    tabs->setCurrentIndex(1);
+    QTest::qWait(50);
+    const auto capture = qEnvironmentVariable("SBR_WALL_QUANTITY_CAPTURE");
+    if (!capture.isEmpty()) QVERIFY(dialog.grab().save(capture));
+    const auto revision = m.history().revision();
+    rows->item(0, 9)->setCheckState(Qt::Unchecked);
+    QTemporaryDir dir;
+    QVERIFY(dialog.exportCsv(dir.filePath("walls.csv")));
+    report = json::parse(dialog.reportJson());
+    QCOMPARE(report["rows"][0]["status"].get<std::string>(), std::string("not_evaluated"));
+    QCOMPARE(m.history().revision(), revision);
+    QFile csv(dir.filePath("walls.csv"));
+    QVERIFY(csv.open(QIODevice::ReadOnly));
+    const auto bytes = csv.readAll();
+    QVERIFY(bytes.startsWith("\xef\xbb\xbf"));
+    QVERIFY(bytes.contains("2026-11-04"));
+    QVERIFY(dialog.applyInputs());
+    QCOMPARE(m.history().revision(), revision + 1);
+    QVERIFY(m.undo());
+    QVERIFY(!dialog.applyInputs());  // refuses to overwrite newer or undone model
+    dialog.reload();
+    QCOMPARE(json::parse(dialog.reportJson())["rows"][0]["status"].get<std::string>(), std::string("pass"));
+    auto* wind = dialog.findChild<QLineEdit*>(QStringLiteral("wallWindCoefficient"));
+    QVERIFY(wind);
+    wind->setText("75");
+    dialog.refreshNow();
+    QCOMPARE(json::parse(dialog.reportJson())["rows"][0]["required_m"].get<double>(), 22.5);
+    auto* action = f.window.findChild<QAction*>(QStringLiteral("wallQuantityAction"));
+    QVERIFY(action);
+    dialog.hide();
+    bool seen = false;
+    QTimer::singleShot(0, [&] {
+      if (auto* d = qobject_cast<WallQuantityDialog*>(QApplication::activeModalWidget())) {
+        seen = true;
+        d->reject();
+      }
+    });
+    action->trigger();
+    QVERIFY(seen);
+  } catch (const std::exception& e) {
+    QFAIL(e.what());
+  }
 }
 
 void GuiPhase1::timberQuantitiesAndFramingExport() {

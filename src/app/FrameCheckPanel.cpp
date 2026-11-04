@@ -236,7 +236,7 @@ bool FrameCheckPanel::exportCsv(const QString& path) const {
     for (const auto* key : {"rule", "status", "targets", "reason_code", "message", "measured", "required",
                             "source", "checker_version"})
       fields << csv(r.at(key).is_string() ? string(r.at(key)) : string(r.at(key).dump()));
-    fields << csv(string(data.at("revision").dump())) << csv(string(data.at("notice")));
+    fields << csv(string(data.at("revision").dump())) << csv(string(r.value("notice", data.at("notice"))));
     text += fields.join(',') + QStringLiteral("\r\n");
   }
   QSaveFile file(path);
