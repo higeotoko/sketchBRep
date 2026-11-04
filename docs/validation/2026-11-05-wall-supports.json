@@ -1,0 +1,28 @@
+{
+  "date_jst": "2026-11-05",
+  "base_commit": "8472e6deafa1c1094c6095a80c1465a4dbd7f74c",
+  "platform": "Windows / MSVC 19.44 / OCCT 8.0.1 / Qt 6.12 / 3DM enabled",
+  "mcp_research": {
+    "server": "SumiCAD", "version": "0.7.1", "tool_count": 64,
+    "read_tools": ["project_info", "list_actions", "guide", "get_elements", "get_element"],
+    "read_actions": ["structure.wallBays", "structure.levels", "structure.offGridPosts", "structure.runChecks"],
+    "live_model_edited": false,
+    "adopted": ["Intervals divided by existing posts and openings", "Member references and selecting actual targets", "Recheck after geometry changes"],
+    "not_imported": ["Source code", "Legal formulas and coefficients", "Regional defaults", "Automatic fixes"]
+  },
+  "build_exit_code": 0,
+  "related_core_and_api": {"tests": 84, "failures": 0, "errors": 0, "seconds": 22.399, "exit_code": 0},
+  "gui": {"actual_conditions": 18, "including_init_cleanup": 20, "failures": 0, "errors": 0, "seconds": 44.865, "exit_code": 0},
+  "new_core_tests": 9,
+  "new_gui_test": "wallBaySupportsSelectMembersAndInvalidateAfterDeletion",
+  "dialog_image_inspected": true,
+  "ci_verified": false,
+  "human_windows_verified": false,
+  "limits": [
+    "Geometric contact only; joint capacity and construction specifications are unverified",
+    "Multiple members covering portions of an edge remain partial",
+    "Edited or unsupported member geometry is reported as unassessed",
+    "No automatic wall-quantity contribution or persistent calculation linkage",
+    "No Linux or full GUI suite verification in this local record"
+  ]
+}

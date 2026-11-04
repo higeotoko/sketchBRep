@@ -16,6 +16,8 @@
 
 最新の追加は [壁の区間候補の抽出と選択](docs/64_wall_bay_candidates.md)。更新版のWindows ZIPを毎回渡す方針は [配布記録](docs/63_windows_zip_delivery.md) に残しています。
 
+柱位置での区間分割と両端柱・上下材の対応表示は [MCP調査と実部材参照](docs/65_wall_bay_member_references.md) を参照してください。
+
 ![Phase 2 screenshot](docs/images/phase2.png)
 
 ## できること

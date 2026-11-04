@@ -2102,13 +2102,15 @@ const std::vector<CommandDef>& commands() {
          return report;
        }},
         {"list_wall_bays",
-         "Read-only geometric wall-bay candidates after excluding rectangular openings across their full width. "
+         "Read-only geometric wall-bay candidates, split at existing timber post centres and rectangular openings. "
          "Optional ids selects wall hosts; elevation (world Z mm) limits walls spanning that height. "
-         "Returns host IDs, endpoints, t0/t1, geometry height and source signatures. Hidden walls are omitted; "
+         "Returns endpoints, t0/t1, source signatures and start/end post, bottom/top member references, "
+         "real-shape joint distances and frame_geometry (touching/gaps/incomplete/ambiguous/unassessed). "
+         "split_at_posts:false retains opening-only intervals. Hidden walls are omitted; hidden members are still inspected. "
          "unsupported walls/cuts are reported. Candidate IDs belong only to this snapshot. "
-         "Supports, specifications and ratios remain unverified; candidates are never added to wall quantity.",
+         "Geometric contact does not establish joint capacity or specifications. Never added to wall quantity.",
          SCHEMA({"type":"object","properties":{"ids":{"type":"array","items":{"type":"string"}},
-           "elevation":{"type":"number"}}}),
+           "elevation":{"type":"number"},"split_at_posts":{"type":"boolean"}}}),
          [](doc::Modeler& m, const json& a) {
            auto result = json::parse(must(construction::wallBayCandidates(m, a.dump())));
            result["revision"] = m.history().revision();

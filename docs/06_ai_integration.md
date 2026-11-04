@@ -207,3 +207,8 @@ DWG は GUI から ODA File Converter で変換する。
 document sequenceとrevisionを持つ。候補IDはスナップショット内だけで有効。
 未対応の壁・加工はexcluded、非表示の壁は省略数を返す。柱・横架材・施工仕様・壁倍率は未確認で、
 壁量には自動計上しない。詳細は [64_wall_bay_candidates.md](64_wall_bay_candidates.md)。
+
+`wall-bays-2` では既存柱の位置でも分割し、`supports` に両端柱・上下材の候補と状態、
+`frame_geometry` と `joint_distances_mm` に実形状の接触・隙間を返す。
+`split_at_posts:false` は従来の開口除外区間を維持する。仕様確認・接合耐力とは別の幾何診断で、
+壁量には自動計上しない。[65_wall_bay_member_references.md](65_wall_bay_member_references.md) を参照。

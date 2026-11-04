@@ -273,6 +273,7 @@ class GuiPhase1 : public QObject {
   void workPlaneAtAHeightOrAGridLine();
   void architectureToolbarDrawsAtChosenLevel();
   void wallBayCandidatesHighlightAndInvalidateWithoutEditing();
+  void wallBaySupportsSelectMembersAndInvalidateAfterDeletion();
   void planOpeningChoosesFloorAndPreservesUndo();
   void planOpeningOnRotatedWalls_data();
   void planOpeningOnRotatedWalls();
@@ -5112,6 +5113,63 @@ void GuiPhase1::wallBayCandidatesHighlightAndInvalidateWithoutEditing() {
   table->selectRow(0);
   box = geom::exactBounds(f.vp->inspectionMarkerShape());
   QVERIFY(std::abs(box.CornerMax().X() - 2000) < 1e-6);
+  dialog->close();
+  QVERIFY(f.vp->inspectionMarkerShape().IsNull());
+}
+
+void GuiPhase1::wallBaySupportsSelectMembersAndInvalidateAfterDeletion() {
+  Fixture f;
+  QVERIFY(f.setUp(1500, 1200));
+  auto& m = f.window.modeler();
+  QVERIFY(m.createWalls({{0, 0, 0}, {3000, 0, 0}}, 120, 3000));
+  std::vector<doc::ObjectId> posts;
+  for (double x : {0., 1000., 2000., 3000.}) {
+    doc::Modeler::MemberSpec spec;
+    spec.start = {x, 0, 0}; spec.end = {x, 0, 2880};
+    spec.section.width = spec.section.depth = 105;
+    spec.role = "column"; spec.materialClass = "timber";
+    auto id = m.createMember(spec); QVERIFY(id); posts.push_back(*id);
+  }
+  doc::ObjectId top;
+  for (double z : {0., 3000.}) {
+    doc::Modeler::MemberSpec spec;
+    spec.start = {0, 0, z}; spec.end = {3000, 0, z};
+    spec.section.width = spec.section.depth = 120; spec.up = gp::DZ(); spec.anchor.up = 1;
+    spec.role = z == 0 ? "sill" : "beam"; spec.materialClass = "timber";
+    auto id = m.createMember(spec); QVERIFY(id); if (z > 0) top = *id;
+  }
+  f.vp->lockView(Viewport::StandardView::Top);
+  f.vp->setWorkOffset(0);
+  const auto sequence = m.document().sequence(), count = m.history().undoCount();
+  f.window.findChild<QAction*>(QStringLiteral("wallBaysAction"))->trigger();
+  auto* dialog = f.window.findChild<WallBaysDialog*>();
+  QVERIFY(dialog);
+  auto* table = dialog->findChild<QTableWidget*>(QStringLiteral("wallBaysTable"));
+  QCOMPARE(table->rowCount(), 3);
+  table->selectRow(0);
+  QVERIFY(table->item(0, 9)->text().contains(QStringLiteral("四辺接触")));
+  auto* start = dialog->findChild<QPushButton*>(QStringLiteral("wallBaySupport_start_post"));
+  auto* upper = dialog->findChild<QPushButton*>(QStringLiteral("wallBaySupport_top"));
+  QVERIFY(start->isEnabled() && upper->isEnabled());
+  start->click();
+  QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{posts[0]});
+  QVERIFY(std::abs(geom::exactBounds(f.vp->inspectionMarkerShape()).CornerMax().Z() - 2880) < 1e-6);
+  upper->click();
+  QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{top});
+  QCOMPARE(m.document().sequence(), sequence);
+  QCOMPARE(m.history().undoCount(), count);
+  if (const auto shot = qEnvironmentVariable("SBR_BAY_SUPPORT_DIALOG_SHOT"); !shot.isEmpty())
+    QVERIFY(dialog->grab().save(shot));
+  QVERIFY(m.remove({top}));
+  QTRY_COMPARE(table->rowCount(), 0);
+  QVERIFY(!upper->isEnabled());
+  QVERIFY(f.vp->inspectionMarkerShape().IsNull());
+  dialog->findChild<QPushButton*>(QStringLiteral("wallBaysRefresh"))->click();
+  QCOMPARE(table->rowCount(), 3);
+  table->selectRow(0);
+  QVERIFY(!upper->isEnabled());
+  QCOMPARE(table->item(0, 8)->text(), QStringLiteral("未検出"));
+  QCOMPARE(m.document().settings().wallCalculation, std::string("{}"));
   dialog->close();
   QVERIFY(f.vp->inspectionMarkerShape().IsNull());
 }

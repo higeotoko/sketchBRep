@@ -13,6 +13,30 @@ using namespace sbr;
 using namespace sbr::doc;
 using nlohmann::json;
 namespace {
+struct BayFrameExample {
+  ObjectId wall, bottom, top;
+  std::vector<ObjectId> posts;
+};
+BayFrameExample bayFrameExample(Modeler& m) {
+  BayFrameExample frame;
+  const auto walls = m.createWalls({{0, 0, 0}, {3000, 0, 0}}, 120, 3000);
+  if (!walls) throw std::runtime_error(walls.error());
+  frame.wall = walls->front();
+  auto member = [&](gp_Pnt a, gp_Pnt b, const std::string& role) {
+    Modeler::MemberSpec spec;
+    spec.start = a; spec.end = b; spec.role = role; spec.materialClass = "timber";
+    spec.section.width = spec.section.depth = role == "column" ? 105 : 120;
+    spec.up = role == "column" ? gp::DY() : gp::DZ();
+    if (role != "column") spec.anchor.up = 1;
+    const auto result = m.createMember(spec);
+    if (!result) throw std::runtime_error(result.error());
+    return *result;
+  };
+  for (double x : {0., 1000., 2000., 3000.}) frame.posts.push_back(member({x, 0, 0}, {x, 0, 2880}, "column"));
+  frame.bottom = member({0, 0, 0}, {3000, 0, 0}, "sill");
+  frame.top = member({0, 0, 3000}, {3000, 0, 3000}, "beam");
+  return frame;
+}
 json wall(std::string id, std::string direction, double length = 10000, std::string floor = "1") {
   return {{"id", id},
           {"floor", floor},
@@ -393,4 +417,176 @@ TEST_F(WallQuantity, BayResizeRecomputesIntervalsWithoutChangingManualCalculatio
   EXPECT_DOUBLE_EQ(after["length_mm"], 2000);
   EXPECT_NE(after["source_signature"], before["source_signature"]);
   EXPECT_EQ(m.document().settings().wallCalculation, inputs);
+}
+
+TEST_F(WallQuantity, BayPostsSplitRealIntervalsAndFourMemberContactsRemainUnverified) {
+  const auto frame = bayFrameExample(m);
+  const auto count = m.history().undoCount(), sequence = m.document().sequence();
+  const auto data = json::parse(*construction::wallBayCandidates(m));
+  ASSERT_EQ(data["bays"].size(), 3);
+  for (std::size_t i = 0; i < 3; ++i) {
+    const auto& bay = data["bays"][i];
+    EXPECT_DOUBLE_EQ(bay["length_mm"], 1000);
+    EXPECT_EQ(bay["supports"]["start_post"]["ids"], json::array({frame.posts[i]}));
+    EXPECT_EQ(bay["supports"]["end_post"]["ids"], json::array({frame.posts[i + 1]}));
+    EXPECT_EQ(bay["supports"]["top"]["ids"], json::array({frame.top}));
+    EXPECT_EQ(bay["supports"]["bottom"]["ids"], json::array({frame.bottom}));
+    EXPECT_EQ(bay["frame_geometry"], "touching");
+    EXPECT_FALSE(bay["verified"]);
+    EXPECT_FALSE(bay.contains("ratio"));
+    for (const auto& distance : bay["joint_distances_mm"]) EXPECT_LE(distance.get<double>(), 1.0);
+  }
+  EXPECT_EQ(json::parse(*construction::wallBayCandidates(m, R"({"split_at_posts":false})"))["bays"].size(), 1);
+  EXPECT_EQ(m.history().undoCount(), count);
+  EXPECT_EQ(m.document().sequence(), sequence);
+  EXPECT_EQ(m.document().settings().wallCalculation, "{}");
+}
+
+TEST_F(WallQuantity, BayOpeningBoundariesAndPostsDoNotCreateCandidatesInsideAnOpening) {
+  auto frame = bayFrameExample(m);
+  const auto cut = m.placeOpeningAt(frame.wall, gp::DY(), {1000, 60, 1000}, 800, 1000, 700);
+  ASSERT_TRUE(cut);
+  const auto data = json::parse(*construction::wallBayCandidates(m));
+  ASSERT_EQ(data["bays"].size(), 3);
+  EXPECT_DOUBLE_EQ(data["bays"][0]["length_mm"], 600);
+  EXPECT_DOUBLE_EQ(data["bays"][1]["length_mm"], 600);
+  EXPECT_DOUBLE_EQ(data["bays"][2]["length_mm"], 1000);
+  EXPECT_EQ(data["bays"][0]["supports"]["end_post"]["status"], "missing");
+  EXPECT_EQ(data["bays"][1]["supports"]["start_post"]["status"], "missing");
+  EXPECT_EQ(data["bays"][2]["frame_geometry"], "touching");
+}
+
+TEST_F(WallQuantity, BayPostMovesAndMemberDeletionChangeReferencesAndSignatures) {
+  const auto frame = bayFrameExample(m);
+  const auto before = json::parse(*construction::wallBayCandidates(m));
+  gp_Trsf shift;
+  shift.SetTranslation(gp_Vec(0, 300, 0));
+  ASSERT_TRUE(m.transform({frame.posts[1]}, shift, "Move post off wall"));
+  const auto moved = json::parse(*construction::wallBayCandidates(m));
+  ASSERT_EQ(moved["bays"].size(), 2);
+  EXPECT_DOUBLE_EQ(moved["bays"][0]["length_mm"], 2000);
+  EXPECT_NE(moved["bays"][0]["source_signature"], before["bays"][0]["source_signature"]);
+  ASSERT_TRUE(m.remove({frame.top}));
+  const auto removed = json::parse(*construction::wallBayCandidates(m));
+  EXPECT_EQ(removed["bays"][0]["supports"]["top"]["status"], "missing");
+  EXPECT_EQ(removed["bays"][0]["frame_geometry"], "incomplete");
+  EXPECT_NE(removed["bays"][0]["source_signature"], moved["bays"][0]["source_signature"]);
+  ASSERT_TRUE(m.undo());
+  EXPECT_EQ(json::parse(*construction::wallBayCandidates(m))["bays"], moved["bays"]);
+}
+
+TEST_F(WallQuantity, BayPartialColumnsGapsDuplicatesAndHiddenMembersAreExplicit) {
+  const auto frame = bayFrameExample(m);
+  ASSERT_TRUE(m.setLayer(frame.top, "hidden-frame"));
+  m.setTagVisible("hidden-frame", false);
+  auto data = json::parse(*construction::wallBayCandidates(m));
+  EXPECT_EQ(data["bays"][0]["frame_geometry"], "touching");
+  Modeler::MemberChange shortPost;
+  shortPost.length = 1000;
+  ASSERT_TRUE(m.changeMember(frame.posts[0], shortPost));
+  data = json::parse(*construction::wallBayCandidates(m));
+  EXPECT_EQ(data["bays"][0]["frame_geometry"], "gaps");
+  EXPECT_GT(data["bays"][0]["joint_distances_mm"]["start_top"].get<double>(), 1000);
+  ASSERT_TRUE(m.undo());
+  Modeler::MemberSpec copy;
+  copy.start = {1000, 0, 0}; copy.end = {1000, 0, 2880}; copy.role = "column"; copy.materialClass = "timber";
+  copy.section.width = copy.section.depth = 105;
+  ASSERT_TRUE(m.createMember(copy));
+  data = json::parse(*construction::wallBayCandidates(m));
+  ASSERT_EQ(data["bays"].size(), 3);
+  EXPECT_EQ(data["bays"][0]["supports"]["end_post"]["status"], "ambiguous");
+  EXPECT_EQ(data["bays"][0]["frame_geometry"], "ambiguous");
+}
+
+TEST_F(WallQuantity, BaySharedMembersRotatedParentAndDefinitionEditsUseCurrentGeometry) {
+  auto frame = bayFrameExample(m);
+  const auto shared = m.makeComponent({frame.posts[1]}, "Shared post");
+  ASSERT_TRUE(shared);
+  frame.posts[1] = *shared;
+  std::vector<ObjectId> all{frame.wall, frame.bottom, frame.top};
+  all.insert(all.end(), frame.posts.begin(), frame.posts.end());
+  const auto group = m.group(all);
+  ASSERT_TRUE(group);
+  gp_Trsf placement;
+  placement.SetRotation(gp_Ax1(gp::Origin(), gp::DZ()), .37);
+  placement.SetTranslationPart(gp_Vec(100, 200, 3000));
+  ASSERT_TRUE(m.transform({*group}, placement, "Place frame"));
+  auto data = json::parse(*construction::wallBayCandidates(m));
+  ASSERT_EQ(data["bays"].size(), 3);
+  EXPECT_EQ(data["bays"][0]["supports"]["end_post"]["ids"], json::array({*shared}));
+  EXPECT_EQ(data["bays"][0]["frame_geometry"], "touching");
+  const auto* instance = std::get_if<ComponentInstance>(&m.document().find(*shared)->recipe.base);
+  ASSERT_TRUE(instance);
+  const auto* definition = m.document().findDefinition(instance->definitionId);
+  ASSERT_TRUE(definition);
+  const auto signature = data["bays"][0]["source_signature"];
+  ASSERT_TRUE(m.setDefinitionParameter(instance->definitionId, definition->objects[0].id, "length", 1000));
+  data = json::parse(*construction::wallBayCandidates(m));
+  EXPECT_EQ(data["bays"][0]["frame_geometry"], "gaps");
+  EXPECT_NE(data["bays"][0]["source_signature"], signature);
+  Modeler restored;
+  ASSERT_TRUE(deserializeDocument(serializeDocument(m.document()), restored.document()));
+  EXPECT_EQ(json::parse(*construction::wallBayCandidates(restored))["bays"], data["bays"]);
+}
+
+TEST_F(WallQuantity, BayDecorativeLintelCannotStandInForAnUpperFrameMember) {
+  const auto frame = bayFrameExample(m);
+  ASSERT_TRUE(m.setAttribute({frame.top}, "kind", "lintel"));
+  const auto data = json::parse(*construction::wallBayCandidates(m));
+  EXPECT_EQ(data["bays"][0]["supports"]["top"]["status"], "missing");
+  EXPECT_EQ(data["bays"][0]["frame_geometry"], "incomplete");
+}
+
+TEST_F(WallQuantity, BaySplitUpperMembersRemainPartialUntilTheirJointIsAssessed) {
+  const auto frame = bayFrameExample(m);
+  ASSERT_TRUE(m.remove({frame.top}));
+  std::vector<ObjectId> pieces;
+  for (double from : {0., 1500.}) {
+    Modeler::MemberSpec beam;
+    beam.start = {from, 0, 3000}; beam.end = {from + 1500, 0, 3000};
+    beam.section.width = beam.section.depth = 120;
+    beam.up = gp::DZ(); beam.anchor.up = 1; beam.role = "beam"; beam.materialClass = "timber";
+    auto made = m.createMember(beam);
+    ASSERT_TRUE(made); pieces.push_back(*made);
+  }
+  const auto data = json::parse(*construction::wallBayCandidates(m));
+  EXPECT_EQ(data["bays"][0]["frame_geometry"], "touching");
+  EXPECT_EQ(data["bays"][1]["supports"]["top"]["status"], "partial");
+  EXPECT_EQ(data["bays"][1]["supports"]["top"]["partial_ids"], pieces);
+  EXPECT_EQ(data["bays"][1]["frame_geometry"], "incomplete");
+  EXPECT_EQ(data["bays"][2]["frame_geometry"], "touching");
+}
+
+TEST_F(WallQuantity, BayTaggedArbitrarySolidsAreReportedInsteadOfAssumedToBeMembers) {
+  const auto frame = bayFrameExample(m);
+  ASSERT_TRUE(m.remove({frame.top}));
+  geom::SketchPlane plane;
+  plane.origin = {0, -60, 2880};
+  auto rectangle = m.createRectangle(plane, 3000, 120);
+  ASSERT_TRUE(rectangle);
+  ASSERT_TRUE(m.extrude(*rectangle, 120));
+  ASSERT_TRUE(m.setAttribute({*rectangle}, "kind", "beam"));
+  ASSERT_TRUE(m.setAttribute({*rectangle}, "material_class", "timber"));
+  const auto data = json::parse(*construction::wallBayCandidates(m));
+  ASSERT_EQ(data["unassessed_members"].size(), 1);
+  EXPECT_EQ(data["unassessed_members"][0]["id"], *rectangle);
+  EXPECT_EQ(data["bays"][0]["supports"]["top"]["status"], "missing");
+  EXPECT_EQ(data["bays"][0]["frame_geometry"], "incomplete");
+}
+
+TEST_F(WallQuantity, BayMembersInsideLeftOrRightJustifiedWallAreDetectedAwayFromReferenceEdge) {
+  for (int justification : {-1, 1}) {
+    Modeler model;
+    const auto frame = bayFrameExample(model);
+    ASSERT_TRUE(model.remove({frame.wall}));
+    ASSERT_TRUE(model.createWalls({{0, 0, 0}, {3000, 0, 0}}, 120, 3000, justification));
+    std::vector<ObjectId> members = frame.posts;
+    members.push_back(frame.bottom); members.push_back(frame.top);
+    gp_Trsf toWallCentre;
+    toWallCentre.SetTranslation(gp_Vec(0, justification < 0 ? 60 : -60, 0));
+    ASSERT_TRUE(model.transform(members, toWallCentre, "Centre frame inside wall"));
+    const auto data = json::parse(*construction::wallBayCandidates(model));
+    ASSERT_EQ(data["bays"].size(), 3);
+    for (const auto& bay : data["bays"]) EXPECT_EQ(bay["frame_geometry"], "touching");
+  }
 }
