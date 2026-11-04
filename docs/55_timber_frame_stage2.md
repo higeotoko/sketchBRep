@@ -59,6 +59,7 @@ docs/52 §5・§11の段階2。段階1のカタログ・役割・プリセット
 | `first_floor_system` / `second_floor_system` | `joist` / `joistless` |
 | `floor_zones` | `[{"storey":1,"x":[0,2],"y":[0,8],"system":"joistless"}]`。同じ階で区域を重ねない |
 | `opening_hosts` | 開口がある壁のIDの配列 |
+| `floor_openings` | `[{"storey":2,"x":[2,4],"y":[1,3]}]`。階段・吹抜け用の床開口。通り芯番号の矩形範囲。詳しくは [木造の一連操作検証](59_timber_workflow_refinement.md) |
 | `braces` | `[{"storey":1,"from":[0,0],"to":[1,0]}]`。同じ通り芯上の区間 |
 | `roof_angle` | 角度で指定するとき。`roof_pitch`（寸勾配）に優先 |
 | `spacing` | `{"rafter":{"mode":"fixed_pitch","pitch":455}}` または `{"joist":{"mode":"equal_division","divisions":3}}`。端の調整を結果に記録 |

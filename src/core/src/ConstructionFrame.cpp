@@ -591,7 +591,7 @@ struct Plan {
       need(system == "joist" || system == "joistless", "Floor system must be joist or joistless");
       const double beamZ = height(ref) - finish - (system == "joistless" ? ply : section("joist").depth);
       if (floor == 2) ring(area, "rim_beam", ref, beamZ, stage, "floor2/rim", false);
-      for (int i = (floor == 1 ? area.y0 + 1 : area.x0); i < (floor == 1 ? area.y1 : area.x1 + 1);
+      for (int i = (floor == 1 ? area.y0 + 1 : area.x0 + 1); i < (floor == 1 ? area.y1 : area.x1);
            i += (floor == 1 ? 2 : 1)) {
         const auto role = floor == 1 ? "floor_girder" : "floor_beam";
         member(role, "floor/" + std::to_string(floor) + "/beam/" + std::to_string(i),
@@ -700,6 +700,168 @@ struct Plan {
         }
     }
   }
+  void floorOpenings() {
+    const auto requested = inputs.value("floor_openings", json::array());
+    need(requested.is_array() && requested.size() <= 100, "floor_openings needs at most 100 rectangles");
+    struct Void {
+      int storey;
+      Rect area;
+    };
+    std::vector<Void> holes;
+    for (const auto& entry : requested) {
+      const int floor = integer(entry, "storey", 2, 1, storeys);
+      const Rect rect = rectangle(entry, nx, ny), allowed = floor == 1 ? full : upper;
+      need(allowed.contains(rect.x0, rect.y0) && allowed.contains(rect.x1, rect.y1),
+           "Floor opening is outside this storey");
+      for (const auto& other : holes)
+        need(other.storey != floor || std::max(rect.x0, other.area.x0) >= std::min(rect.x1, other.area.x1) ||
+                 std::max(rect.y0, other.area.y0) >= std::min(rect.y1, other.area.y1),
+             "Floor openings must not overlap");
+      holes.push_back({floor, rect});
+    }
+    if (holes.empty()) return;
+    auto floorOf = [](const Piece& p) { return p.stage == "1階床組" ? 1 : p.stage == "2階床組" ? 2 : 0; };
+    // Clip design axes, not B-reps: retain shared, editable member recipes.
+    // A beam on an aperture boundary remains an edge support. The opening is
+    // specified between grid axes; its finished clear width is not certified.
+    auto intervals = [&](const Piece& p) {
+      std::vector<std::pair<double, double>> spans{{0, 1}};
+      for (const auto& hole : holes) {
+        if (hole.storey != floorOf(p)) continue;
+        double first = 0, last = 1;
+        bool crosses = true;
+        const double a[] = {p.from.X(), p.from.Y()}, b[] = {p.to.X(), p.to.Y()};
+        const double lo[] = {x(hole.area.x0), y(hole.area.y0)}, hi[] = {x(hole.area.x1), y(hole.area.y1)};
+        for (int axis = 0; axis < 2; ++axis) {
+          const double delta = b[axis] - a[axis];
+          if (std::abs(delta) < 1e-9) {
+            if (a[axis] <= lo[axis] + 1e-6 || a[axis] >= hi[axis] - 1e-6) crosses = false;
+          } else {
+            double t0 = (lo[axis] - a[axis]) / delta, t1 = (hi[axis] - a[axis]) / delta;
+            if (t0 > t1) std::swap(t0, t1);
+            first = std::max(first, t0);
+            last = std::min(last, t1);
+          }
+        }
+        if (!crosses || last <= first + 1e-9) continue;
+        std::vector<std::pair<double, double>> remaining;
+        for (const auto& span : spans) {
+          if (last <= span.first || first >= span.second)
+            remaining.push_back(span);
+          else {
+            if (first > span.first + 1e-9) remaining.emplace_back(span.first, first);
+            if (last < span.second - 1e-9) remaining.emplace_back(last, span.second);
+          }
+        }
+        spans = std::move(remaining);
+      }
+      return spans;
+    };
+    const auto original = std::move(pieces);
+    pieces.clear();
+    keys.clear();
+    std::set<std::string> clipped;
+    for (const auto& p : original) {
+      if (!floorOf(p) || (!p.hardware.empty() && p.role != "floor_post")) continue;
+      const auto spans = intervals(p);
+      if (spans.size() != 1 || spans[0].first != 0 || spans[0].second != 1) clipped.insert(p.key);
+    }
+    for (const auto& p : original) {
+      if (clipped.count(p.key)) {
+        if (p.role == "horizontal_brace" || !p.hardware.empty()) continue;
+        int n = 0;
+        for (const auto& span : intervals(p)) {
+          Piece segment = p;
+          segment.from = p.from.Translated(gp_Vec(p.from, p.to) * span.first);
+          segment.to = p.from.Translated(gp_Vec(p.from, p.to) * span.second);
+          if (segment.from.Distance(segment.to) <= tolerance::kMinDimension) continue;
+          segment.key += "/opening/" + std::to_string(n++);
+          add(segment);
+          const auto ref = floorOf(p) == 1 ? "first_fl" : "second_fl";
+          if (p.role == "floor_beam" || p.role == "rim_beam") {
+            hardware("beam_end_plate", segment.key + "/fitting/start", segment.from, ref, p.stage);
+            hardware("beam_end_plate", segment.key + "/fitting/end", segment.to, ref, p.stage);
+          }
+          const double length = segment.from.Distance(segment.to);
+          for (double at = stock; at < length - 1e-6; at += stock)
+            hardware("joint", segment.key + "/joint/" + keyNumber(at),
+                     segment.from.Translated(gp_Vec(segment.from, segment.to) * (at / length)), ref, p.stage);
+        }
+        continue;
+      }
+      if (!p.hardware.empty()) {
+        const auto fitting = p.key.find("/fitting/"), joint = p.key.find("/joint/");
+        const auto end = fitting != std::string::npos ? fitting : joint;
+        if (end != std::string::npos && clipped.count(p.key.substr(0, end))) continue;
+      }
+      add(p);
+    }
+    for (std::size_t n = 0; n < holes.size(); ++n) {
+      const auto& hole = holes[n];
+      const auto& a = hole.area;
+      const std::string ref = hole.storey == 1 ? "first_fl" : "second_fl";
+      const std::string stage = hole.storey == 1 ? "1階床組" : "2階床組";
+      const std::string mode =
+          inputs.value(hole.storey == 1 ? "first_floor_system" : "second_floor_system",
+                       data.at("presets")
+                           .at("entries")
+                           .at(hole.storey == 1 ? "first_floor_system" : "second_floor_system")
+                           .at("value")
+                           .get<std::string>());
+      const double ply = data.at("sections")
+                             .at("entries")
+                             .at(data.at("roles")
+                                     .at("entries")
+                                     .at("floor_sheathing")
+                                     .at("default_section")
+                                     .get<std::string>())
+                             .at("thickness");
+      const double z = height(ref) - finish - (mode == "joistless" ? ply : section("joist").depth);
+      const gp_Pnt corners[] = {at(a.x0, a.y0, z), at(a.x1, a.y0, z), at(a.x1, a.y1, z), at(a.x0, a.y1, z)};
+      for (int edge = 0; edge < 4; ++edge) {
+        const auto start = corners[edge], end = corners[(edge + 1) % 4];
+        const bool alongX = std::abs(end.Y() - start.Y()) < 1e-6;
+        const double low = alongX ? std::min(start.X(), end.X()) : std::min(start.Y(), end.Y());
+        const double high = alongX ? std::max(start.X(), end.X()) : std::max(start.Y(), end.Y());
+        std::vector<std::pair<double, double>> gaps{{low, high}};
+        for (const auto& existing : pieces) {
+          if (existing.stage != stage || !existing.hardware.empty() ||
+              (existing.role != "floor_beam" && existing.role != "rim_beam" &&
+               existing.role != "floor_girder") ||
+              std::abs(existing.from.Z() - z) > 1e-6 || std::abs(existing.to.Z() - z) > 1e-6)
+            continue;
+          if (alongX ? (std::abs(existing.from.Y() - start.Y()) > 1e-6 ||
+                        std::abs(existing.to.Y() - start.Y()) > 1e-6)
+                     : (std::abs(existing.from.X() - start.X()) > 1e-6 ||
+                        std::abs(existing.to.X() - start.X()) > 1e-6))
+            continue;
+          const double e0 = alongX ? existing.from.X() : existing.from.Y(),
+                       e1 = alongX ? existing.to.X() : existing.to.Y();
+          std::vector<std::pair<double, double>> remaining;
+          for (const auto& gap : gaps) {
+            if (std::max(e0, e1) <= gap.first || std::min(e0, e1) >= gap.second)
+              remaining.push_back(gap);
+            else {
+              if (std::min(e0, e1) > gap.first + 1e-6) remaining.emplace_back(gap.first, std::min(e0, e1));
+              if (std::max(e0, e1) < gap.second - 1e-6) remaining.emplace_back(std::max(e0, e1), gap.second);
+            }
+          }
+          gaps = std::move(remaining);
+        }
+        int part = 0;
+        for (const auto& gap : gaps)
+          member(hole.storey == 1 ? "floor_girder" : "floor_beam",
+                 "floor/opening/" + std::to_string(hole.storey) + "/" + std::to_string(n) + "/edge/" +
+                     std::to_string(edge) + "/" + std::to_string(part++),
+                 alongX ? gp_Pnt(gap.first, start.Y(), z) : gp_Pnt(start.X(), gap.first, z),
+                 alongX ? gp_Pnt(gap.second, start.Y(), z) : gp_Pnt(start.X(), gap.second, z), ref, ref,
+                 stage);
+      }
+      warnings.push_back(std::to_string(hole.storey) +
+                         "階の床開口：通り芯間の概略範囲。受け梁の断面・接合・柱への荷重伝達と仕上げ後の有効"
+                         "寸法は未照査。保持した編集部材・柱が開口内に残る場合は別途確認してください。");
+    }
+  }
   void roofArea(const Rect& area, const std::string& ref, const std::string& kind, const std::string& prefix,
                 std::optional<bool> orientation = std::nullopt, bool reverse = false) {
     const bool alongX = orientation.value_or(axisX);
@@ -804,6 +966,7 @@ struct Plan {
     readOpenings();
     verticals();
     floors();
+    floorOpenings();
     roofParts();
     braces();
   }
@@ -1080,6 +1243,8 @@ Result<std::string> Modeler::generateFrame(const std::string& text) {
     std::size_t hardwareCount = 0;
     for (const auto& p : plan.pieces) {
       if (skipKeys.count(p.key)) continue;
+      const auto split = p.key.find("/opening/");
+      if (split != std::string::npos && skipKeys.count(p.key.substr(0, split))) continue;
       const auto& def = definition(p);
       Object o;
       o.id = generateObjectId();

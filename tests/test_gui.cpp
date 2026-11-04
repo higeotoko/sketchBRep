@@ -309,6 +309,7 @@ class GuiPhase1 : public QObject {
   void recentFilesReopen();
   void helpWindowAndCrashLog();
   void timberFramePreviewApplyLevelsAndUndo();
+  void timberStairwellRegenerationMatchesDialogAndExports();
   void frameChecksUpdateAndDiscardStaleResults();
   void timberQuantitiesAndFramingExport();
   void wallQuantityInputsComparisonSaveAndStaleModel();
@@ -9123,6 +9124,91 @@ void GuiPhase1::helpWindowAndCrashLog() {
   f.window.reportPreviousCrash({old.fileName()});
   QVERIFY(told);
   QSettings().remove("crash/seen");
+}
+
+void GuiPhase1::timberStairwellRegenerationMatchesDialogAndExports() {
+  using nlohmann::json;
+  try {
+    Fixture f;
+    QVERIFY(f.setUp(7280, 5460));
+    auto& m = f.window.modeler();
+    const auto made = m.generateFrame(
+        R"({"inputs":{"x_bays":8,"y_bays":6,"roof_angle":30,"second_floor":{"x":[0,6],"y":[0,4]},"columns":[[2,2]],"floor_openings":[{"storey":2,"x":[2,4],"y":[1,3]}],"braces":[{"storey":1,"from":[0,0],"to":[1,0]}]}})");
+    QVERIFY2(made, made.error().c_str());
+    const auto frame = json::parse(*made).at("frame").get<std::string>();
+    f.window.setSelection({frame});
+    auto* action = f.window.findChild<QAction*>(QStringLiteral("timberFrameAction"));
+    QVERIFY(action);
+    bool seen = false;
+    QTimer::singleShot(100, [&] {
+      auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+      if (!dialog) return;
+      auto* range = dialog->findChild<QCheckBox*>(QStringLiteral("timberSecondFloorRange"));
+      auto* slope = dialog->findChild<QDoubleSpinBox*>(QStringLiteral("timberRoofPitch"));
+      auto* holes = dialog->findChild<QTableWidget*>(QStringLiteral("timberFloorOpenings"));
+      auto* preview = dialog->findChild<QPushButton*>(QStringLiteral("timberPreview"));
+      if (!range || !slope || !holes || !preview || holes->rowCount() != 1) {
+        dialog->reject();
+        return;
+      }
+      seen = true;
+      range->setChecked(false);
+      slope->setValue(5);
+      qobject_cast<QSpinBox*>(holes->cellWidget(0, 2))->setValue(5);
+      const auto capture = qEnvironmentVariable("SBR_WORKFLOW_FORM_CAPTURE");
+      if (!capture.isEmpty()) {
+        if (auto* scroll = dialog->findChild<QScrollArea*>()) scroll->ensureWidgetVisible(holes);
+        dialog->grab().save(capture);
+      }
+      preview->click();
+    });
+    action->trigger();
+    QVERIFY(seen);
+    QVERIFY2(f.window.hasPendingProposal(), qPrintable(f.window.lastError()));
+    f.window.applyProposal();
+    QVERIFY2(!f.window.hasPendingProposal(), qPrintable(f.window.lastError()));
+    const auto& group = std::get<doc::GroupNode>(m.document().find(frame)->recipe.base);
+    const auto inputs = json::parse(group.constructionFrame).at("inputs");
+    QVERIFY(!inputs.contains("second_floor"));
+    QVERIFY(!inputs.contains("roof_angle"));
+    QCOMPARE(inputs.at("roof_pitch").get<double>(), 5.0);
+    QCOMPARE(inputs.at("floor_openings")[0].at("x")[1].get<int>(), 5);
+    QCOMPARE(inputs.at("braces").size(), std::size_t(1));
+    QCOMPARE(inputs.at("columns").size(), std::size_t(1));
+    int sheets = 0;
+    for (const auto& o : m.document().objects())
+      if (o.attributes.count("kind") && o.attributes.at("kind") == "floor_sheathing") ++sheets;
+    QCOMPARE(sheets, 42);
+    const auto spec = draw::framingView(m.document(), "second_floor");
+    QVERIFY(spec);
+    const auto view = draw::makeView(m.document(), *spec);
+    QVERIFY(view);
+    draw::SheetSpec page;
+    page.scale = 30;
+    const auto sheet = draw::layoutSheet(*view, page);
+    QVERIFY(sheet);
+    QTemporaryDir dir;
+    const auto pdf = qEnvironmentVariable("SBR_WORKFLOW_PDF_CAPTURE", dir.filePath("stairwell.pdf"));
+    QVERIFY(writePdf(*sheet, pdf));
+    QVERIFY(QFileInfo(pdf).size() > 1000);
+    const auto imagePath = qEnvironmentVariable("SBR_WORKFLOW_PLAN_CAPTURE");
+    if (!imagePath.isEmpty()) {
+      QImage image(1500, 1050, QImage::Format_RGB32);
+      image.fill(Qt::white);
+      QPainter painter(&image);
+      renderSheet(painter, *sheet, QRectF(0, 0, 1500, 1050));
+      painter.end();
+      QVERIFY(image.save(imagePath));
+    }
+    QVERIFY(m.undo());
+    const auto old =
+        json::parse(std::get<doc::GroupNode>(m.document().find(frame)->recipe.base).constructionFrame)
+            .at("inputs");
+    QVERIFY(old.contains("second_floor"));
+    QCOMPARE(old.at("roof_angle").get<double>(), 30.0);
+  } catch (const std::exception& e) {
+    QFAIL(e.what());
+  }
 }
 
 void GuiPhase1::timberFramePreviewApplyLevelsAndUndo() {

@@ -2058,6 +2058,8 @@ const std::vector<CommandDef>& commands() {
        "ridge_axis:x|y,roof_pitch:4 (sun),roof_angle (degrees instead),origin:[x,y,z],grid (existing id), "
        "second_floor:{x:[0,10],y:[0,8]} (zero-based grid indices),columns:[[i,j],...], "
        "first_floor_system/second_floor_system:joist|joistless,floor_zones:[{storey, x:[i,j],y:[i,j],system}], "
+       "floor_openings:[{storey:2,x:[2,4],y:[1,3]}] omits flooring/joists/beams inside grid-aligned apertures "
+       "and adds missing boundary beams. Columns stay; support/joints/finished clear size unassessed. "
        "opening_hosts:[id],braces:[{storey,from:[i,j],to:[i,j]}],levels:{first_fl:height_or_id,...}, "
        "spacing:{joist/rafter:{mode:equal_division|fixed_pitch,divisions:2,pitch:455}},sections:{role:catalog_id}}. "
        "Shared component parts, six stage groups, levels and hardware (illustrative, products unselected). "

@@ -10,6 +10,10 @@
 #include <QPushButton>
 #include <QSpinBox>
 #include <QVBoxLayout>
+#include <QTableWidget>
+#include <QHeaderView>
+#include <QScrollArea>
+#include <cmath>
 #include <nlohmann/json.hpp>
 
 #include "AiBridge.h"
@@ -79,8 +83,13 @@ void MainWindow::showTimberFrameDialog() {
                     "梁せいは仮の値、金物の製品と継手は未選定です。構造の照査は行いません。"));
   intro->setWordWrap(true);
   layout->addWidget(intro);
-  auto* form = new QFormLayout;
-  layout->addLayout(form);
+  auto* settings = new QWidget(&dialog);
+  auto* form = new QFormLayout(settings);
+  auto* scroll = new QScrollArea(&dialog);
+  scroll->setWidgetResizable(true);
+  scroll->setWidget(settings);
+  layout->addWidget(scroll, 1);
+  dialog.resize(680, 820);
   auto* useGrid = new QCheckBox(tr("選択中の通り芯を使う"));
   useGrid->setObjectName(QStringLiteral("timberUseGrid"));
   useGrid->setChecked(!grid.empty());
@@ -130,8 +139,13 @@ void MainWindow::showTimberFrameDialog() {
   axis->setCurrentIndex(initial.value("ridge_axis", std::string("x")) == "y" ? 1 : 0);
   form->addRow(tr("棟・母屋の向き"), axis);
   auto* slope =
-      numeric("timberRoofPitch", initial.value("roof_pitch", value("roof_pitch")), 0.1, 30, tr(" 寸"));
+      numeric("timberRoofPitch",
+              initial.contains("roof_angle")
+                  ? std::tan(initial.at("roof_angle").get<double>() * 3.141592653589793 / 180.0) * 10
+                  : initial.value("roof_pitch", value("roof_pitch")),
+              0.1, 39.9, tr(" 寸"));
   form->addRow(tr("屋根勾配"), slope);
+  const double initialPitch = slope->value();
   auto* over = numeric("timberEaveProjection", initial.value("eave_projection", value("eave_projection")), 0,
                        10000, tr(" mm"));
   form->addRow(tr("軒の出（柱芯から）"), over);
@@ -158,6 +172,7 @@ void MainWindow::showTimberFrameDialog() {
   form->addRow(tr("1階の床"), first);
   form->addRow(tr("2階の床"), second);
   auto* range = new QCheckBox(tr("2階の範囲を通り芯の番号で指定（先頭は0）"));
+  range->setObjectName(QStringLiteral("timberSecondFloorRange"));
   form->addRow(range);
   auto* rangeRow = new QWidget;
   auto* row = new QHBoxLayout(rangeRow);
@@ -182,6 +197,43 @@ void MainWindow::showTimberFrameDialog() {
   rangeRow->setEnabled(range->isChecked());
   form->addRow(tr("Xの先頭・末尾 / Yの先頭・末尾"), rangeRow);
   connect(range, &QCheckBox::toggled, rangeRow, &QWidget::setEnabled);
+  auto* apertures = new QTableWidget(settings);
+  apertures->setObjectName(QStringLiteral("timberFloorOpenings"));
+  apertures->setColumnCount(5);
+  apertures->setHorizontalHeaderLabels({tr("階"), tr("X先頭"), tr("X末尾"), tr("Y先頭"), tr("Y末尾")});
+  apertures->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+  apertures->setMaximumHeight(140);
+  auto addAperture = [&](const json& entry) {
+    const int row = apertures->rowCount();
+    apertures->insertRow(row);
+    const int values[] = {entry.value("storey", 2), entry.at("x")[0], entry.at("x")[1], entry.at("y")[0],
+                          entry.at("y")[1]};
+    for (int c = 0; c < 5; ++c) {
+      auto* spin = new QSpinBox(apertures);
+      spin->setRange(c == 0 ? 1 : 0, c == 0 ? 2 : 40);
+      spin->setValue(values[c]);
+      apertures->setCellWidget(row, c, spin);
+    }
+  };
+  for (const auto& entry : initial.value("floor_openings", json::array())) addAperture(entry);
+  form->addRow(tr("階段・吹抜けの床開口（通り芯番号）"), apertures);
+  auto* apertureButtons = new QWidget(settings);
+  auto* apertureRow = new QHBoxLayout(apertureButtons);
+  apertureRow->setContentsMargins(0, 0, 0, 0);
+  auto* addHole = new QPushButton(tr("床開口を追加"), settings);
+  auto* removeHole = new QPushButton(tr("選択した床開口を削除"), settings);
+  apertureRow->addWidget(addHole);
+  apertureRow->addWidget(removeHole);
+  form->addRow(apertureButtons);
+  connect(addHole, &QPushButton::clicked, &dialog,
+          [&] { addAperture({{"storey", storeys->currentData().toInt()}, {"x", {0, 1}}, {"y", {0, 1}}}); });
+  connect(removeHole, &QPushButton::clicked, &dialog, [&] { apertures->removeRow(apertures->currentRow()); });
+  auto* apertureNotice =
+      new QLabel(tr("開口内の床材・梁・根太を除き、周囲に受け梁の概略形を置きます。柱は自動削除しません。\n"
+                    "階段・手すり、受け梁の断面・接合、仕上げ後の有効寸法は別途確認してください。"),
+                 settings);
+  apertureNotice->setWordWrap(true);
+  form->addRow(apertureNotice);
   auto update = [&] {
     const bool gridMode = useGrid->isChecked(), regen = replacing->isChecked();
     x->setEnabled(!gridMode);
@@ -229,6 +281,17 @@ void MainWindow::showTimberFrameDialog() {
   if (range->isChecked() && storeys->currentData().toInt() == 2)
     inputs["second_floor"] = {{"x", {limits[0]->value(), limits[1]->value()}},
                               {"y", {limits[2]->value(), limits[3]->value()}}};
+  else if (replacing->isChecked())
+    inputs["second_floor"] = nullptr;
+  if (replacing->isChecked() &&
+      (!initial.contains("roof_angle") || std::abs(slope->value() - initialPitch) > 1e-9))
+    inputs["roof_angle"] = nullptr;
+  inputs["floor_openings"] = json::array();
+  for (int r = 0; r < apertures->rowCount(); ++r) {
+    int v[5];
+    for (int c = 0; c < 5; ++c) v[c] = qobject_cast<QSpinBox*>(apertures->cellWidget(r, c))->value();
+    inputs["floor_openings"].push_back({{"storey", v[0]}, {"x", {v[1], v[2]}}, {"y", {v[3], v[4]}}});
+  }
   const std::string replace = replacing->isChecked() ? frame : std::string();
   if (previewTimberFrame(inputs.dump(), replace)) return;
   if (lastError_.contains(QStringLiteral("コンテナー"))) {
