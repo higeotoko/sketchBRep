@@ -87,6 +87,11 @@ struct ViewSpec {
   // Plans: where to look down from (the cut) and how far down to see (the
   // level below the next): 0 = everything below.
   double depth = 0.0;
+  std::vector<std::string> tags;  // empty: all leaf tags
+  std::string within;            // optional ancestor group
+  bool includeHidden = false;
+  bool memberLabels = false;
+  std::string framingPreset;     // named framing plan, empty for ordinary views
 };
 
 // The usual views. Plans: cut at `cutZ`, seen from above. Sections: cut on
@@ -96,6 +101,9 @@ struct ViewSpec {
 ViewSpec planView(double cutZ);
 ViewSpec sectionView(const gp_Pnt& point, const gp_Dir& towardsViewer);
 ViewSpec elevationView(const doc::Document& document, int side);
+Result<ViewSpec> framingView(const doc::Document& document, const std::string& preset,
+                             const std::string& within = "", bool includeHidden = false,
+                             const std::vector<std::string>& tags = {});
 
 // Annotations whose size is on paper: made into lines when laid out at a
 // scale. Grid axes: a point on the line and its direction (plans), or the
@@ -123,6 +131,8 @@ struct View {
   std::vector<GridMark> grids;
   std::vector<LevelMark> levels;
   std::vector<DimensionMark> dimensions;
+  struct MemberMark { gp_Pnt2d at; std::string text; };
+  std::vector<MemberMark> members;
   double minU = 0, minV = 0, maxU = 0, maxV = 0;  // extent of the model's lines
   ViewSpec spec;
   int objects = 0;            // objects drawn

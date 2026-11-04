@@ -1,6 +1,6 @@
 # 構造種別の手引き（木造・鉄骨造・RC造）の設計（2026-11-04 JST）
 
-位置づけ：設計書。段階1〜3は実装済み（[docs/54](54_construction_guides_stage1.md)、[docs/55](55_timber_frame_stage2.md)、[docs/56](56_frame_checks_stage3.md)）。段階4以降は未実装。木造ルール v0.2 / v0.4（`timber_rules_recipe_v0.4.json` の 42 項目）の思想を引き継ぎ、重さの配分を変えた。
+位置づけ：設計書。段階1〜4は実装済み（[docs/54](54_construction_guides_stage1.md)、[docs/55](55_timber_frame_stage2.md)、[docs/56](56_frame_checks_stage3.md)、[docs/57](57_quantities_framing_stage4.md)）。段階5以降は未実装。木造ルール v0.2 / v0.4（`timber_rules_recipe_v0.4.json` の 42 項目）の思想を引き継ぎ、重さの配分を変えた。
 
 ## 1. 決めたこと（2026-11-04）
 

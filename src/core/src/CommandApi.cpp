@@ -1,3 +1,4 @@
+#include "sbr/ConstructionQuantity.h"
 #include "sbr/ConstructionCheck.h"
 #include "sbr/api/CommandApi.h"
 #include "sbr/ConstructionGuide.h"
@@ -2083,6 +2084,20 @@ const std::vector<CommandDef>& commands() {
          json result=json::parse(must(m.generateFrame(a.dump())));
          result["preview"]=false;return result;
        }},
+      {"take_off",
+       "Read-only timber quantities grouped by role, section and design length. Counts placements (not shared definitions or solids). "
+       "within scopes a group, tags filters leaf tags, visible_only defaults false. stock_length overrides the reference length. "
+       "Unknown or edited member sizes remain not_evaluated/null. Design volume and actual shape volume are separate. "
+       "Stock equivalents/lower bounds are not cutting or procurement plans. include_csv returns UTF-8 CSV. Marks match a drawing with identical filters.",
+       SCHEMA({"type":"object","properties":{"system":{"type":"string","enum":["timber"]},"within":{"type":"string"},
+         "tags":{"type":"array","items":{"type":"string"}},"visible_only":{"type":"boolean"},
+         "stock_length":{"type":"number","exclusiveMinimum":0},"include_csv":{"type":"boolean"}}}),
+       [](doc::Modeler& m,const json& a){
+         json report=json::parse(must(construction::takeOff(m.document(),a.dump())));
+         report["revision"]=m.history().revision();
+         if(a.value("include_csv",false)) report["csv"]=construction::takeOffCsv(report.dump());
+         return report;
+       }},
       {"check_frame",
        "Read-only timber diagnosis: COM-01..03, MOD-01..02, TMB-01..04, LAT-* placeholders and SEC-* outside scope. "
        "Returns four outcomes, reason codes, measurements/units, provenance and checker version. "
@@ -2536,14 +2551,17 @@ const std::vector<CommandDef>& commands() {
        "[x,y,z] towards the viewer, horizontal) or 'elevation' ('side': 0 south, 1 east, 2 north, 3 west). "
        "'scale' (denominator, default 100), 'paper' (auto, A4-A1), 'frame' (default true), 'title', "
        "'project', 'number', 'author', 'date', 'hidden' (hidden lines), 'fill', 'grid', 'levels', "
-       "'annotations'. Returns the paper chosen and notes (what did not fit or was left out).",
+       "'annotations'. kind:framing with preset:foundation|first_floor|second_floor|roof makes a tag-filtered framing plan. "
+       "within scopes a group; tags filters leaf tags, include_hidden includes hidden objects, member_labels adds section marks. "
+       "Returns the paper chosen and notes (what did not fit or was left out).",
        SCHEMA({"type": "object", "properties": {"path": {"type": "string"}, "kind": {"type": "string"},
                "cut_z": {"type": "number"}, "point": {"type": "array"}, "look": {"type": "array"},
                "side": {"type": "integer"}, "scale": {"type": "number"}, "paper": {"type": "string"},
                "frame": {"type": "boolean"}, "title": {"type": "string"}, "project": {"type": "string"},
                "number": {"type": "string"}, "author": {"type": "string"}, "date": {"type": "string"},
                "hidden": {"type": "boolean"}, "fill": {"type": "boolean"}, "grid": {"type": "boolean"},
-               "levels": {"type": "boolean"}, "annotations": {"type": "boolean"}}, "required": ["path", "kind"]}),
+               "levels": {"type": "boolean"}, "annotations": {"type": "boolean"}, "preset":{"type":"string"},"within":{"type":"string"},
+               "tags":{"type":"array","items":{"type":"string"}},"include_hidden":{"type":"boolean"},"member_labels":{"type":"boolean"}}, "required": ["path", "kind"]}),
        [](doc::Modeler& m, const json& a) {
          const std::string kind = text(a, "kind");
          draw::ViewSpec spec;
@@ -2553,11 +2571,17 @@ const std::vector<CommandDef>& commands() {
            spec = draw::sectionView(point(a, "point"), direction(a, "look", gp_Dir(0, -1, 0)));
          } else if (kind == "elevation") {
            spec = draw::elevationView(m.document(), a.value("side", 0));
+         } else if(kind=="framing") {
+           spec=must(draw::framingView(m.document(),text(a,"preset"),textOr(a,"within",{}),a.value("include_hidden",false),a.value("tags",std::vector<std::string>{})));
          } else {
-           throw std::runtime_error("kind must be plan, section or elevation");
+           throw std::runtime_error("kind must be plan, section, elevation or framing");
          }
-         spec.title = textOr(a, "title", {});
-         spec.hidden = a.value("hidden", false);
+         spec.within=textOr(a,"within",{});
+         if(a.contains("tags") && kind!="framing") spec.tags=a.at("tags").get<std::vector<std::string>>();
+         spec.includeHidden=a.value("include_hidden",false);
+         spec.memberLabels=a.value("member_labels",kind=="framing");
+         spec.title = textOr(a, "title", spec.title);
+         spec.hidden = a.value("hidden", spec.hidden);
          spec.fill = a.value("fill", true);
          spec.grid = a.value("grid", true);
          spec.levels = a.value("levels", true);
@@ -2619,7 +2643,8 @@ CommandApi::Effect builtinEffect(const std::string& name) {
   if (name == "list_objects" || name == "get_object" || name == "list_tags" || name == "describe" ||
       name == "preview" || name == "query_objects" || name == "aggregate" || name == "get_changes" ||
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
-      name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" || name == "check_frame") {
+      name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" ||
+      name == "check_frame" || name == "take_off") {
     return E::Read;
   }
   if (isFileCommand(name)) return E::ExternalIo;

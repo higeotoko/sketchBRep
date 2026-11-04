@@ -1,3 +1,4 @@
+#include "TakeOffDialog.h"
 #include "FrameCheckPanel.h"
 #include "MainWindow.h"
 #include "sbr/KernelError.h"
@@ -665,7 +666,7 @@ void MainWindow::buildMenus() {
   file->addSeparator();
   file->addAction(tr("インポート..."),this,&MainWindow::importFile);
   file->addAction(tr("エクスポート..."),this,&MainWindow::exportFile);
-  file->addAction(tr("図面を書き出す（平面・断面・立面）..."), this, &MainWindow::showDrawingDialog)
+  file->addAction(tr("図面を書き出す（平面・断面・立面・伏図）..."), this, &MainWindow::showDrawingDialog)
       ->setObjectName(QStringLiteral("exportDrawingAction"));
   file->addAction(tr("DWG 変換ソフトの設定..."), this, &MainWindow::configureDwgConverter);
   file->addSeparator();
@@ -1100,6 +1101,8 @@ void MainWindow::buildMenus() {
   tools->addAction(tr("通り芯を作成..."), this, &MainWindow::showGridDialog);
   tools->addAction(tr("木造架構を作成・作り直し..."), this, &MainWindow::showTimberFrameDialog)->setObjectName(QStringLiteral("timberFrameAction"));
   tools->addAction(tr("架構チェック"), this, &MainWindow::showFrameCheckPanel)->setObjectName(QStringLiteral("frameCheckAction"));
+  tools->addAction(tr("木材の拾い出し..."), this, &MainWindow::showTakeOffDialog)
+      ->setObjectName(QStringLiteral("takeOffAction"));
   tools->addAction(tr("レベル（GL・FL）を編集..."), this, &MainWindow::showLevelsEditDialog)
       ->setObjectName(QStringLiteral("editLevelsAction"));
   tools->addAction(tr("壁の設定..."), this, &MainWindow::showWallSettingsDialog);
@@ -2516,6 +2519,11 @@ void MainWindow::startMember(const std::string& entry) {
   activateTool(ToolId::Member);
   setStatus(memberTool_->settingsText());
   refreshMemberPanel();
+}
+
+void MainWindow::showTakeOffDialog() {
+  TakeOffDialog dialog(modeler_.document(), this);
+  dialog.exec();
 }
 
 void MainWindow::showFrameCheckPanel() {

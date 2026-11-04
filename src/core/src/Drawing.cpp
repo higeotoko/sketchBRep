@@ -1,3 +1,8 @@
+#include <BRepBuilderAPI_Copy.hxx>
+#include "sbr/ConstructionQuantity.h"
+#include "sbr/ConstructionGuide.h"
+#include <nlohmann/json.hpp>
+#include <set>
 #include "sbr/draw/Drawing.h"
 
 #include <algorithm>
@@ -82,6 +87,12 @@ namespace {
 constexpr double kOnPlane = 1e-4;  // mm: an edge / face on the cut plane
 
 // Where the view puts world points: (u, v) on the sheet, w towards the viewer.
+bool selected(const doc::Document& d, const doc::Object& o, const ViewSpec& spec) {
+  if (!spec.includeHidden && !d.isVisible(o.id)) return false;
+  if (!spec.within.empty() && o.id != spec.within && !d.isAncestor(spec.within, o.id)) return false;
+  return spec.tags.empty() || std::find(spec.tags.begin(), spec.tags.end(), o.layer) != spec.tags.end();
+}
+
 struct Projection {
   gp_Ax3 frame;
   gp_Trsf toLocal;
@@ -306,8 +317,41 @@ ViewSpec elevationView(const doc::Document& document, int side) {
   return s;
 }
 
+Result<ViewSpec> framingView(const doc::Document& d, const std::string& preset, const std::string& within,
+                             bool includeHidden, const std::vector<std::string>& tags) {
+  try {
+    const auto data = nlohmann::json::parse(construction::guideData("timber"));
+    const auto& presets = data.at("outputs").at("framing_presets");
+    if (!presets.contains(preset)) return Result<ViewSpec>::failure("Unknown framing preset: " + preset);
+    if (!within.empty() && (!d.find(within) || !d.find(within)->isContainer()))
+      return Result<ViewSpec>::failure("within must name a group");
+    ViewSpec spec = planView(0);
+    spec.within = within;
+    spec.includeHidden = includeHidden;
+    spec.tags =
+        tags.empty() ? std::vector<std::string>{presets.at(preset).at("tag").get<std::string>()} : tags;
+    spec.title = presets.at(preset).at("name");
+    spec.hidden = presets.at(preset).value("hidden", true);
+    spec.memberLabels = true;
+    spec.framingPreset = preset;
+    Bnd_Box all;
+    for (const auto& o : d.objects())
+      if (!o.shape.IsNull() && selected(d, o, spec)) all.Add(d.worldBounds(o));
+    if (all.IsVoid())
+      return Result<ViewSpec>::failure("Nothing to draw for the framing tag (check scope and visibility)");
+    double x, y, z, X, Y, Z;
+    all.Get(x, y, z, X, Y, Z);
+    spec.frame.SetLocation(gp_Pnt(0, 0, Z + 10));
+    return spec;
+  } catch (const std::exception& e) {
+    return Result<ViewSpec>::failure(e.what());
+  }
+}
+
 Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
   using R = Result<View>;
+  if (!spec.within.empty() && (!document.find(spec.within) || !document.find(spec.within)->isContainer()))
+    return R::failure("within must name a group");
   View view;
   view.spec = spec;
   const Projection proj(spec.frame);
@@ -317,7 +361,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
   // The whole model's size: the clipping box and the curve deflection.
   Bnd_Box all;
   for (const doc::Object& o : document.objects()) {
-    if (!o.shape.IsNull() && document.isVisible(o.id)) all.Add(document.worldBounds(o));
+    if (!o.shape.IsNull() && selected(document, o, spec)) all.Add(document.worldBounds(o));
   }
   if (all.IsVoid()) return R::failure("Nothing to draw: the model is empty or hidden");
   const double diag = std::sqrt(all.SquareExtent());
@@ -339,8 +383,10 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
   builder.MakeCompound(seen);
   bool anySeen = false;
   std::vector<Item> cut, fills, loose;
+  std::set<doc::ObjectId> drawn, gridIds;
   for (const doc::Object& o : document.objects()) {
-    if (o.shape.IsNull() || !document.isVisible(o.id)) continue;
+    if (o.shape.IsNull() || !selected(document, o, spec)) continue;
+    if (o.gridPin) gridIds.insert(o.gridPin->grid);
     if (o.attributes.count("grid_part")) continue;  // drawn from the grid itself
     const doc::ObjectKind kind = o.kind();
     const bool body = kind == doc::ObjectKind::Solid || kind == doc::ObjectKind::Shell ||
@@ -349,7 +395,15 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     if (!body && !curve) continue;
     // Where it lies: in front of the cut (gone), behind (kept whole), or across.
     Bnd_Box local;
-    const TopoDS_Shape world = document.worldShape(o);
+    // Even read-only OCCT algorithms can change topology bookkeeping flags.
+    // Isolate their input, including geometry shared by component placements.
+    TopoDS_Shape world;
+    try {
+      world = BRepBuilderAPI_Copy(document.worldShape(o), true, false).Shape();
+    } catch (const Standard_Failure& e) {
+      view.notes.push_back(o.name + ": " + kernelMessage(e));
+      continue;
+    }
     BRepBndLib::Add(world.Moved(TopLoc_Location(proj.toLocal)), local);
     if (local.IsVoid()) continue;
     double ux0, uy0, uz0, ux1, uy1, uz1;
@@ -379,12 +433,14 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
           addLocalEdge(TopoDS::Edge(edge.Moved(TopLoc_Location(proj.toLocal))), Pen::Visible, deflection, loose);
         }
         ++view.objects;
+        drawn.insert(o.id);
         continue;
       }
       if (!across) {
         builder.Add(seen, world);
         anySeen = true;
         ++view.objects;
+        drawn.insert(o.id);
         continue;
       }
       // Cut: the lines on the plane, exactly; the part kept seen beyond.
@@ -423,6 +479,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
       }
       anySeen = true;
       ++view.objects;
+      drawn.insert(o.id);
     } catch (const Standard_Failure& e) {
       view.notes.push_back("'" + o.name + "' left out: " + kernelMessage(e));
     }
@@ -497,7 +554,11 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
   if (spec.grid) {
     for (const doc::Object& o : document.objects()) {
       const auto* node = std::get_if<doc::GroupNode>(&o.recipe.base);
-      if (!node || !node->grid || !document.isVisible(o.id)) continue;
+      if (!node || !node->grid || (!spec.includeHidden && !document.isVisible(o.id))) continue;
+      if (!spec.within.empty() && o.id != spec.within && !document.isAncestor(spec.within, o.id) &&
+          !gridIds.count(o.id))
+        continue;
+      if (!spec.tags.empty() && !gridIds.empty() && !gridIds.count(o.id)) continue;
       const gp_Trsf w = document.worldTransform(o);
       for (int family = 0; family < 2; ++family) {
         const auto& axes = family == 0 ? node->grid->x : node->grid->y;
@@ -534,7 +595,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
   }
   if (spec.annotations) {
     for (const doc::Object& o : document.objects()) {
-      if (!document.isVisible(o.id) || o.attributes.count("grid_part")) continue;
+      if (!selected(document, o, spec) || o.attributes.count("grid_part")) continue;
       const gp_Trsf w = document.worldTransform(o);
       if (const auto* d = std::get_if<doc::LinearDimension>(&o.recipe.base)) {
         const gp_Pnt a = d->start.Transformed(w), b = d->end.Transformed(w);
@@ -562,6 +623,31 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
         if (t->target) view.items.push_back(line(Pen::Text, proj.uv(t->target->Transformed(w)), proj.uv(p)));
       }
     }
+  }
+  if (spec.memberLabels) {
+    const auto quantities = construction::takeOff(
+        document,
+        nlohmann::json{{"tags", spec.tags}, {"within", spec.within}, {"visible_only", !spec.includeHidden}}
+            .dump());
+    if (!quantities) return R::failure(quantities.error());
+    const auto report = nlohmann::json::parse(*quantities);
+    for (const auto& part : report.at("parts")) {
+      if (!drawn.count(part.at("id").get<std::string>())) continue;
+      const auto& at = part.at("position");
+      const gp_Pnt p(at[0].get<double>(), at[1].get<double>(), at[2].get<double>());
+      const double depth = proj.local(p).Z();
+      if (cutting && (depth > kOnPlane || depth < -keepDepth)) continue;
+      view.members.push_back(
+          {proj.uv(p), part.at("mark").get<std::string>() + " " + part.at("section").get<std::string>()});
+    }
+    if (!report.at("complete").get<bool>())
+      view.notes.push_back("部材情報の不足・編集後の寸法など、拾い出しに未評価があります");
+  }
+  if (!spec.framingPreset.empty()) {
+    view.notes.push_back(
+        "意匠・概略の検討用。断面・接合の照査は行っていません。符号は同じ対象条件の拾い出し表に対応します");
+    if (spec.framingPreset == "foundation")
+      view.notes.push_back("選択タグの形状だけを描きます。基礎形状の有無・寸法は別途確認してください");
   }
   if (view.items.empty() && view.grids.empty()) {
     return R::failure(cutting ? "Nothing on this side of the cut: check the cut height or the side looked at"

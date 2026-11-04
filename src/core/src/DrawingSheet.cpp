@@ -203,6 +203,32 @@ Result<Sheet> layoutSheet(const View& view, const SheetSpec& spec) {
   }
   for (const DimensionMark& d : view.dimensions) dimension(items, d.a, d.b, d.offset, d.text, s);
 
+  // Keep labels legible in paper units. Try alternate leader positions
+  // before accepting a crowded position; never move the model itself.
+  std::vector<Box> labels;
+  bool crowded = false;
+  for (const auto& mark : view.members) {
+    const double height = 2.5, width = textWidth(mark.text, height) * s;
+    gp_Pnt2d at;
+    Box box;
+    bool found = false;
+    for (int attempt = 0; attempt < 32; ++attempt) {
+      const int ring = attempt / 4;
+      const double dy = (3 + ring * 4) * s;
+      const bool right = attempt % 4 < 2, above = attempt % 2 == 0;
+      at = gp_Pnt2d(mark.at.X() + (right ? 2 * s : -width - 2 * s),
+                    mark.at.Y() + (above ? dy : -dy - height * s));
+      box = {at.X() - s, at.Y() - s, at.X() + width + s, at.Y() + height * s + s};
+      found = std::none_of(labels.begin(), labels.end(), [&](const Box& b) {
+        return box.x0 < b.x1 && box.x1 > b.x0 && box.y0 < b.y1 && box.y1 > b.y0;
+      });
+      if (found) break;
+    }
+    crowded |= !found;
+    labels.push_back(box);
+    items.push_back(line(Pen::Text, mark.at, at));
+    items.push_back(text(Pen::Text, at, mark.text, height, 0, 0));
+  }
   Box all;
   for (const Item& i : items) extentOf(i, s, all);
   // The drawing's caption below it.
@@ -225,6 +251,7 @@ Result<Sheet> layoutSheet(const View& view, const SheetSpec& spec) {
   };
   const Paper* paper = nullptr;
   Sheet sheet;
+  if (crowded) sheet.notes.push_back("部材符号が混み合っています。縮尺・タグ・符号の表示を調整してください");
   sheet.scale = s;
   for (const Paper& p : kPapers) {
     if (spec.paper != "auto" && spec.paper != p.name) continue;
@@ -306,6 +333,13 @@ Result<Sheet> layoutSheet(const View& view, const SheetSpec& spec) {
       items.push_back(text(Pen::TitleBlock, P(c.x + label / 2, c.y + row / 2), c.label, 2.5, 1, 1));
       if (!c.value.empty()) items.push_back(text(Pen::TitleBlock, P(c.x + label + 2, c.y + row / 2), c.value, 3.5, 0, 1));
     }
+  }
+  if (!view.spec.framingPreset.empty()) {
+    items.push_back(
+        text(Pen::Text, P(kLeftMargin + 2, kMargin + 4), "概略検討用／断面・接合未照査", 2.5, 0, 0));
+    if (view.spec.framingPreset == "foundation")
+      items.push_back(
+          text(Pen::Text, P(kLeftMargin + 2, kMargin + 9), "基礎形状の有無・寸法は別途確認", 2.5, 0, 0));
   }
   sheet.items = std::move(items);
   return sheet;

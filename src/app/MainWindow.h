@@ -246,6 +246,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   void showGridDialog();
   void showTimberFrameDialog();
   void showFrameCheckPanel();
+  void showTakeOffDialog();
   void editMaterialDialog(const std::string& id);  // "" = new material
   void startSession();
   void clearRecovery();

@@ -1,3 +1,6 @@
+#include "TakeOffDialog.h"
+#include "sbr/ConstructionQuantity.h"
+#include <QPainter>
 #include "FrameCheckPanel.h"
 // Phase 1 acceptance test driving the real main window with synthetic input:
 // draw a rectangle, push/pull it 3000 mm, save, reopen and re-edit.
@@ -305,6 +308,7 @@ class GuiPhase1 : public QObject {
   void helpWindowAndCrashLog();
   void timberFramePreviewApplyLevelsAndUndo();
   void frameChecksUpdateAndDiscardStaleResults();
+  void timberQuantitiesAndFramingExport();
   void panelDragPreviewKeepsTheModelViewStill();
   void panelMotionSettlesAfterNativeDock();
   void paletteResizeKeepsBackdropAcrossViewport();
@@ -9256,4 +9260,120 @@ void GuiPhase1::frameChecksUpdateAndDiscardStaleResults() {
   const auto capture=qEnvironmentVariable("SBR_CHECK_CAPTURE");
   if(!capture.isEmpty()) QVERIFY(panel->grab().save(capture));
   panel->hide();
+}
+
+void GuiPhase1::timberQuantitiesAndFramingExport() {
+  struct DrawingSettings {
+    QVariantMap values;
+    DrawingSettings() {
+      QSettings settings;
+      settings.beginGroup("drawing");
+      for (const auto& key : settings.allKeys()) values[key] = settings.value(key);
+    }
+    ~DrawingSettings() {
+      QSettings settings;
+      settings.remove("drawing");
+      settings.beginGroup("drawing");
+      for (auto it = values.begin(); it != values.end(); ++it) settings.setValue(it.key(), it.value());
+    }
+  } drawingSettings;
+  try {
+    Fixture f;
+    QVERIFY(f.setUp(2500, 2500));
+    auto& m = f.window.modeler();
+    const auto made = m.generateFrame(R"({"inputs":{"x_bays":2,"y_bays":2}})");
+    QVERIFY2(made, made.error().c_str());
+    const auto frame = nlohmann::json::parse(*made).at("frame").get<std::string>();
+    TakeOffDialog quantities(m.document(), &f.window);
+    quantities.show();
+    quantities.refreshNow();
+    QVERIFY(!quantities.reportJson().empty());
+    const auto original = nlohmann::json::parse(quantities.reportJson());
+    QVERIFY(original.at("complete").get<bool>());
+    auto* tags = quantities.findChild<QListWidget*>(QStringLiteral("takeOffTags"));
+    QVERIFY(tags);
+    for (int i = 0; i < tags->count(); ++i)
+      if (tags->item(i)->text() == QStringLiteral("2階床組")) tags->item(i)->setCheckState(Qt::Checked);
+    quantities.refreshNow();
+    const auto floor = nlohmann::json::parse(quantities.reportJson());
+    QVERIFY(floor.at("totals").at("count").get<int>() < original.at("totals").at("count").get<int>());
+    QTemporaryDir dir;
+    QVERIFY(quantities.exportCsv(dir.filePath(QStringLiteral("takeoff.csv"))));
+    QFile csv(dir.filePath(QStringLiteral("takeoff.csv")));
+    QVERIFY(csv.open(QIODevice::ReadOnly));
+    const auto data = csv.readAll();
+    QVERIFY(data.startsWith("\xef\xbb\xbf"));
+    doc::Modeler::MemberSpec added;
+    added.start = gp::Origin();
+    added.end = gp_Pnt(1000, 0, 0);
+    added.section.width = 100;
+    added.section.depth = 100;
+    added.role = "column";
+    added.materialClass = "timber";
+    QVERIFY(m.createMember(added));
+    quantities.refreshNow();
+    QVERIFY(nlohmann::json::parse(quantities.reportJson()).at("totals") == floor.at("totals"));
+    DrawingDialog drawing(m.document(), &f.window);
+    drawing.show();
+    auto* kind = drawing.findChild<QComboBox*>(QStringLiteral("drawingKind"));
+    QVERIFY(kind);
+    kind->setCurrentIndex(5);
+    auto* within = drawing.findChild<QComboBox*>(QStringLiteral("drawingWithin"));
+    QVERIFY(within);
+    within->setCurrentIndex(within->findData(QString::fromStdString(frame)));
+    auto* labels = drawing.findChild<QCheckBox*>(QStringLiteral("drawingMemberLabels"));
+    QVERIFY(labels);
+    QVERIFY(labels->isChecked());
+    auto* scale = drawing.findChild<QComboBox*>(QStringLiteral("drawingScale"));
+    scale->setCurrentIndex(scale->findData(30));
+    drawing.refreshNow();
+    QVERIFY2(drawing.sheet().has_value(), qPrintable(drawing.lastError()));
+    const auto revision = m.history().revision();
+    for (const auto* extension : {"dxf", "jww", "pdf"}) {
+      const auto path = dir.filePath(QStringLiteral("framing.") + QString::fromLatin1(extension));
+      const auto result = drawing.exportTo(path);
+      QVERIFY2(result, result.message().c_str());
+      QVERIFY(QFileInfo(path).size() > 100);
+    }
+    QVERIFY(drawing.exportQuantityCsv(dir.filePath(QStringLiteral("framing.csv"))));
+    QFile matched(dir.filePath(QStringLiteral("framing.csv")));
+    QVERIFY(matched.open(QIODevice::ReadOnly));
+    const auto matchedCsv = matched.readAll();
+    for (const auto& row : floor.at("rows")) {
+      const auto mark = row.at("mark").get<std::string>();
+      bool shown = false;
+      for (const auto& item : drawing.sheet()->items)
+        if (item.text.rfind(mark + " ", 0) == 0) shown = true;
+      QVERIFY2(shown, mark.c_str());
+      QVERIFY(matchedCsv.contains(mark.c_str()));
+    }
+    QCOMPARE(m.history().revision(), revision);
+    QTest::qWait(50);
+    const auto tableCapture = qEnvironmentVariable("SBR_QUANTITY_CAPTURE");
+    if (!tableCapture.isEmpty()) QVERIFY(quantities.grab().save(tableCapture));
+    const auto planCapture = qEnvironmentVariable("SBR_FRAMING_CAPTURE");
+    if (!planCapture.isEmpty()) {
+      QImage image(1500, 1050, QImage::Format_RGB32);
+      image.fill(Qt::white);
+      QPainter painter(&image);
+      renderSheet(painter, *drawing.sheet(), QRectF(0, 0, 1500, 1050));
+      painter.end();
+      QVERIFY(image.save(planCapture));
+    }
+    drawing.hide();
+    quantities.hide();
+    auto* action = f.window.findChild<QAction*>(QStringLiteral("takeOffAction"));
+    QVERIFY(action);
+    bool seen = false;
+    QTimer::singleShot(0, [&] {
+      if (auto* dialog = qobject_cast<TakeOffDialog*>(QApplication::activeModalWidget())) {
+        seen = true;
+        dialog->reject();
+      }
+    });
+    action->trigger();
+    QVERIFY(seen);
+  } catch (const std::exception& e) {
+    QFAIL(e.what());
+  }
 }

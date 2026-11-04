@@ -14,6 +14,8 @@ extern const char* const kTimber_presets[];
 extern const unsigned kTimber_presets_parts;
 extern const char* const kTimber_recipes[];
 extern const unsigned kTimber_recipes_parts;
+extern const char* const kTimber_outputs[];
+extern const unsigned kTimber_outputs_parts;
 extern const char* const kTimber_checks[];
 extern const unsigned kTimber_checks_parts;
 extern const char* const kTimber_hardware[];
@@ -37,14 +39,17 @@ json read(const char* const* parts, unsigned count) {
 
 const json& builtin(const std::string& system) {
   if (system != "timber") throw std::runtime_error("Construction guide not implemented for system '" + system + "'");
-  static const json data = {
-      {"schema_version", 1}, {"system", "timber"}, {"title", "木造の手引き"}, {"notice", kNotice},
-      {"sections", read(embedded::kTimber_sections, embedded::kTimber_sections_parts)},
-      {"roles", read(embedded::kTimber_roles, embedded::kTimber_roles_parts)},
-      {"presets", read(embedded::kTimber_presets, embedded::kTimber_presets_parts)},
-      {"recipes", read(embedded::kTimber_recipes, embedded::kTimber_recipes_parts)},
-      {"hardware", read(embedded::kTimber_hardware, embedded::kTimber_hardware_parts)},
-      {"checks", read(embedded::kTimber_checks, embedded::kTimber_checks_parts)}};
+  static const json data = {{"schema_version", 1},
+                            {"system", "timber"},
+                            {"title", "木造の手引き"},
+                            {"notice", kNotice},
+                            {"sections", read(embedded::kTimber_sections, embedded::kTimber_sections_parts)},
+                            {"roles", read(embedded::kTimber_roles, embedded::kTimber_roles_parts)},
+                            {"presets", read(embedded::kTimber_presets, embedded::kTimber_presets_parts)},
+                            {"recipes", read(embedded::kTimber_recipes, embedded::kTimber_recipes_parts)},
+                            {"hardware", read(embedded::kTimber_hardware, embedded::kTimber_hardware_parts)},
+                            {"checks", read(embedded::kTimber_checks, embedded::kTimber_checks_parts)},
+                            {"outputs", read(embedded::kTimber_outputs, embedded::kTimber_outputs_parts)}};
   return data;
 }
 
@@ -263,6 +268,16 @@ std::string guideMarkdown(const std::string& system, const std::string& override
   out << "\ncheck_frame {system: timber, rules: [\"MOD-01\",\"TMB-01\"]} はモデルを変えません。"
          "判定は合格・不適合・未評価・対象外。画面の架構チェックは編集後に自動更新します。"
          "接触は支えの形の確認だけで、接合耐力・構造の安全を評価しません。\n";
+  out << "\n## 拾い出し・伏図\n\n";
+  sourceText(out, data.at("outputs"));
+  for (const auto& note : data.at("outputs").at("quantity_notes")) out << "- " << cell(note) << "\n";
+  for (const auto& [id, preset] : data.at("outputs").at("framing_presets").items())
+    out << "- `" << id << "` " << cell(preset.at("name")) << "：タグ " << cell(preset.at("tag")) << "\n";
+  out << "\ntake_off {system: timber, within?, tags?, visible_only?} で読み取り、include_csv:true "
+         "でCSVも受け取れます。"
+         "export_drawing {kind:framing, preset:foundation|first_floor|second_floor|roof, within?, path} "
+         "で伏図を出力します。"
+         "図面内の符号は、同じ対象条件の拾い出しと対応します。\n";
   out << "\ngenerate_frame {system: timber, recipe: post_beam_2storey, inputs, preview: true} で試し、"
          "返されたrevisionをexpected_revisionにして preview: false で確定します。"
          "画面では木造架構メニューからプレビューし、適用・却下を選べます。\n";

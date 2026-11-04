@@ -184,3 +184,11 @@ DWG は GUI から ODA File Converter で変換する。
 例：`{"command":"check_frame","args":{"rules":["MOD-01","TMB-01"]}}`。
 未評価を合格と扱わず、結果によって人の編集を止めない。
 詳しい判定範囲・情報不足・接合の扱いは [56_frame_checks_stage3.md](56_frame_checks_stage3.md)。
+
+
+## 拾い出しと伏図（段階4）
+
+`take_off {system:"timber", within?, tags?, visible_only?, stock_length?, include_csv?}` は読み取り専用。
+配置数・役割・断面・長さ・材積・実形状体積・定尺換算を返す。未評価の量は空欄にし、0で埋めない。
+`export_drawing {kind:"framing", preset:"second_floor", within?, tags?, path, scale?}` で伏図をDXF/JWWに出す。
+同じ対象条件の拾い出し表と符号が対応する。詳しくは [57_quantities_framing_stage4.md](57_quantities_framing_stage4.md)。

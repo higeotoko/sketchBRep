@@ -1,0 +1,40 @@
+{
+  "source": {
+    "name": "SketchBRep 拾い出し・伏図の仕様（docs/52 §8）",
+    "version": "1",
+    "date": "2026-11-04",
+    "url": "https://github.com/higeotoko/sketchBRep/blob/claude/sketchbrep-modeler-spec-4wnp0b/docs/52_construction_guides.md"
+  },
+  "normative": "specification",
+  "quantity_notes": [
+    "配置ごとに1本／1枚。共有定義や立体の個数では数えない。",
+    "材積は未編集の部材の断面積×設計芯長。加工後の実形状体積とは分ける。",
+    "編集後や内訳不明の部品は寸法未評価。分からない量は空欄にし、既知分だけの合計を示す。",
+    "定尺換算は同じ行の総延長÷定尺。切上げ参考本数は理論下限で、木取り・発注・継手の計画ではない。",
+    "合板は枚数と材積。板の定尺寸法が未登録のため、材の定尺換算を適用しない。",
+    "図面の符号は、その図と同じ架構・タグ・表示条件の拾い出し表に対応する。",
+    "材料属性timberが対象。単一材の部品は内部の属性も参照し、複合部品の内訳は未評価とする。"
+  ],
+  "framing_presets": {
+    "foundation": {
+      "name": "基礎・土台伏図",
+      "tag": "基礎・土台",
+      "hidden": true
+    },
+    "first_floor": {
+      "name": "1階床伏図",
+      "tag": "1階床組",
+      "hidden": true
+    },
+    "second_floor": {
+      "name": "2階床伏図",
+      "tag": "2階床組",
+      "hidden": true
+    },
+    "roof": {
+      "name": "小屋伏図",
+      "tag": "小屋組",
+      "hidden": true
+    }
+  }
+}

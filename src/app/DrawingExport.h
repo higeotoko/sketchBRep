@@ -26,6 +26,7 @@ class QDoubleSpinBox;
 class QLabel;
 class QLineEdit;
 class QTimer;
+class QListWidget;
 
 namespace sbr::doc {
 class Document;
@@ -58,6 +59,7 @@ class DrawingDialog : public QDialog {
   // Writes the sheet (format by extension: .pdf, .dxf, .jww).
   Status exportTo(const QString& path);
   Status printTo(QPrinter& printer, bool* scaled = nullptr);
+  Status exportQuantityCsv(const QString& path);
   // Recalculates and waits for it (normally done in the background after
   // a short pause in the changes).
   void refreshNow();
@@ -105,6 +107,10 @@ class DrawingDialog : public QDialog {
   QCheckBox* levels_ = nullptr;
   QCheckBox* annotations_ = nullptr;
   QCheckBox* frame_ = nullptr;
+  QCheckBox* memberLabels_ = nullptr;
+  QCheckBox* includeHidden_ = nullptr;
+  QComboBox* within_ = nullptr;
+  QListWidget* tags_ = nullptr;
   QLineEdit* project_ = nullptr;
   QLineEdit* drawingName_ = nullptr;
   QLineEdit* number_ = nullptr;

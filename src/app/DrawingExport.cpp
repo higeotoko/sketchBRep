@@ -1,3 +1,11 @@
+#include "sbr/ConstructionGuide.h"
+#include "sbr/ConstructionQuantity.h"
+#include <nlohmann/json.hpp>
+#include <QListWidget>
+#include <QScrollArea>
+#include <QSaveFile>
+#include <QSignalBlocker>
+#include <set>
 #include "DrawingExport.h"
 
 #include <chrono>
@@ -193,18 +201,28 @@ Status printSheet(const draw::Sheet& sheet, QPrinter& printer, bool* scaled) {
 
 DrawingDialog::DrawingDialog(const doc::Document& document, QWidget* parent)
     : QDialog(parent), document_(document), snapshot_(std::make_shared<const doc::Document>(document)) {
-  setWindowTitle(tr("図面を書き出す（平面・断面・立面）"));
+  setWindowTitle(tr("図面を書き出す（平面・断面・立面・伏図）"));
   setObjectName(QStringLiteral("drawingDialog"));
   QSettings settings;
   auto* root = new QHBoxLayout(this);
-  auto* left = new QVBoxLayout;
-  root->addLayout(left);
+  auto* controls = new QWidget(this);
+  auto* left = new QVBoxLayout(controls);
+  auto* scroll = new QScrollArea(this);
+  scroll->setWidgetResizable(true);
+  scroll->setWidget(controls);
+  scroll->setMinimumWidth(330);
+  scroll->setMaximumWidth(440);
+  root->addWidget(scroll);
 
   auto* what = new QGroupBox(tr("図面"));
   auto* form = new QFormLayout(what);
   kind_ = new QComboBox;
   kind_->setObjectName(QStringLiteral("drawingKind"));
   kind_->addItems({tr("平面図"), tr("断面図"), tr("立面図")});
+  const auto presets =
+      nlohmann::json::parse(construction::guideData("timber")).at("outputs").at("framing_presets");
+  for (const auto* key : {"foundation", "first_floor", "second_floor", "roof"})
+    kind_->addItem(QString::fromStdString(presets.at(key).at("name").get<std::string>()));
   form->addRow(tr("種類"), kind_);
   // Plan: level + cut height.
   planRow_ = new QWidget;
@@ -325,7 +343,37 @@ DrawingDialog::DrawingDialog(const doc::Document& document, QWidget* parent)
   frame_->setObjectName(QStringLiteral("drawingFrame"));
   frame_->setChecked(true);
   for (QCheckBox* b : {fill_, hidden_, grid_, levels_, annotations_, frame_}) c->addWidget(b);
+  memberLabels_ = new QCheckBox(tr("部材符号・断面"));
+  memberLabels_->setObjectName(QStringLiteral("drawingMemberLabels"));
+  c->addWidget(memberLabels_);
+  includeHidden_ = new QCheckBox(tr("非表示の物も含める"));
+  includeHidden_->setObjectName(QStringLiteral("drawingIncludeHidden"));
+  c->addWidget(includeHidden_);
   left->addWidget(contents);
+  auto* filterBox = new QGroupBox(tr("対象"));
+  auto* filters = new QFormLayout(filterBox);
+  within_ = new QComboBox;
+  within_->setObjectName(QStringLiteral("drawingWithin"));
+  within_->addItem(tr("すべての架構"), QString());
+  std::set<std::string> tagNames;
+  for (const auto& object : document.objects()) {
+    const auto* group = std::get_if<doc::GroupNode>(&object.recipe.base);
+    if (group && !group->constructionFrame.empty())
+      within_->addItem(QString::fromStdString(object.name), QString::fromStdString(object.id));
+    if (!object.isContainer() && !object.shape.IsNull() && !object.attributes.count("grid_part"))
+      tagNames.insert(object.layer);
+  }
+  filters->addRow(tr("架構"), within_);
+  tags_ = new QListWidget;
+  tags_->setObjectName(QStringLiteral("drawingTags"));
+  tags_->setMaximumHeight(100);
+  for (const auto& tag : tagNames) {
+    auto* item = new QListWidgetItem(QString::fromStdString(tag), tags_);
+    item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+    item->setCheckState(Qt::Unchecked);
+  }
+  filters->addRow(tr("タグ（未選択は全体／伏図の既定）"), tags_);
+  left->addWidget(filterBox);
 
   auto* titleBox = new QGroupBox(tr("表題欄"));
   auto* titleForm = new QFormLayout(titleBox);
@@ -361,6 +409,16 @@ DrawingDialog::DrawingDialog(const doc::Document& document, QWidget* parent)
   QPushButton* printButton = buttons->addButton(tr("印刷..."), QDialogButtonBox::ActionRole);
   printButton->setObjectName(QStringLiteral("drawingPrintButton"));
   connect(printButton, &QPushButton::clicked, this, &DrawingDialog::choosePrinterAndPrint);
+  auto* quantitiesButton = buttons->addButton(tr("この図の拾い出しCSV..."), QDialogButtonBox::ActionRole);
+  quantitiesButton->setObjectName(QStringLiteral("drawingQuantitiesButton"));
+  connect(quantitiesButton, &QPushButton::clicked, this, [this] {
+    const auto path =
+        QFileDialog::getSaveFileName(this, tr("この図の拾い出し"), QString(), tr("CSV (*.csv)"));
+    if (!path.isEmpty()) {
+      const auto result = exportQuantityCsv(path);
+      if (!result) notes_->setText(QString::fromStdString(result.message()));
+    }
+  });
   buttons->addButton(QDialogButtonBox::Close);
   right->addWidget(buttons);
   connect(exportButton, &QPushButton::clicked, this, &DrawingDialog::chooseFileAndExport);
@@ -376,9 +434,29 @@ DrawingDialog::DrawingDialog(const doc::Document& document, QWidget* parent)
   auto view = [this] { viewChanged(); };
   auto layout = [this] { layoutChanged(); };
   connect(kind_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this, view] {
+    if (kind_->currentIndex() >= 3) {
+      static const char* keys[] = {"foundation", "first_floor", "second_floor", "roof"};
+      const auto preset = nlohmann::json::parse(construction::guideData("timber"))
+                              .at("outputs")
+                              .at("framing_presets")
+                              .at(keys[kind_->currentIndex() - 3]);
+      hidden_->setChecked(preset.value("hidden", true));
+      const auto stageTag = QString::fromStdString(preset.at("tag").get<std::string>());
+      const QSignalBlocker blocker(tags_);
+      for (int i = 0; i < tags_->count(); ++i)
+        tags_->item(i)->setCheckState(tags_->item(i)->text() == stageTag ? Qt::Checked : Qt::Unchecked);
+    } else {
+      const QSignalBlocker blocker(tags_);
+      for (int i = 0; i < tags_->count(); ++i) tags_->item(i)->setCheckState(Qt::Unchecked);
+    }
+    memberLabels_->setChecked(kind_->currentIndex() >= 3);
     updateVisibleOptions();
     view();
   });
+  connect(within_, qOverload<int>(&QComboBox::currentIndexChanged), this, view);
+  connect(tags_, &QListWidget::itemChanged, this, [view](QListWidgetItem*) { view(); });
+  connect(memberLabels_, &QCheckBox::toggled, this, view);
+  connect(includeHidden_, &QCheckBox::toggled, this, view);
   connect(level_, qOverload<int>(&QComboBox::currentIndexChanged), this, view);
   connect(cutHeight_, qOverload<double>(&QDoubleSpinBox::valueChanged), this, view);
   connect(position_, qOverload<int>(&QComboBox::currentIndexChanged), this, [fillSides, view] {
@@ -423,11 +501,29 @@ std::optional<draw::ViewSpec> DrawingDialog::viewSpec(QString* why) const {
     const SectionPosition& p = positions_[i];
     spec = draw::sectionView(p.point, p.viewers[std::clamp(side_->currentIndex(), 0, 1)]);
     spec.title = (p.label + tr(" 断面図")).toStdString();
-  } else {
+  } else if (k == 2) {
     const int side = static_cast<QComboBox*>(elevationRow_)->currentIndex();
-    spec = draw::elevationView(document_, side);
+    spec = draw::elevationView(*snapshot_, side);
     static const char* const names[] = {"南立面図", "東立面図", "北立面図", "西立面図"};
     spec.title = names[std::clamp(side, 0, 3)];
+  }
+  spec.within = within_->currentData().toString().toStdString();
+  for (int i = 0; i < tags_->count(); ++i)
+    if (tags_->item(i)->checkState() == Qt::Checked)
+      spec.tags.push_back(tags_->item(i)->text().toStdString());
+  spec.includeHidden = includeHidden_->isChecked();
+  spec.memberLabels = memberLabels_->isChecked();
+  if (k >= 3) {
+    static const char* presets[] = {"foundation", "first_floor", "second_floor", "roof"};
+    const auto framing =
+        draw::framingView(*snapshot_, presets[k - 3], spec.within, spec.includeHidden, spec.tags);
+    if (!framing) {
+      *why = QString::fromStdString(framing.error());
+      return std::nullopt;
+    }
+    const bool labels = spec.memberLabels;
+    spec = *framing;
+    spec.memberLabels = labels;
   }
   spec.hidden = hidden_->isChecked();
   spec.fill = fill_->isChecked();
@@ -545,6 +641,8 @@ void DrawingDialog::collectJob() {
 
 void DrawingDialog::refreshNow() {
   timer_->stop();
+  // processEvents below must not let the poller consume this same future.
+  const QSignalBlocker blockPolling(poll_);
   // A view being made for older settings is waited for, then made again
   // if the settings changed; the window keeps painting meanwhile.
   for (;;) {
@@ -593,6 +691,24 @@ void DrawingDialog::showPreview() {
     renderSheet(p, *sheet_, QRectF(QPointF(8, 8), QSizeF(preview_->size()) - QSizeF(16, 16)));
   }
   preview_->setPixmap(QPixmap::fromImage(image));
+}
+
+Status DrawingDialog::exportQuantityCsv(const QString& path) {
+  QString why;
+  const auto spec = viewSpec(&why);
+  if (!spec) return Status::failure(why.toStdString());
+  const auto report = construction::takeOff(
+      *snapshot_,
+      nlohmann::json{{"within", spec->within}, {"tags", spec->tags}, {"visible_only", !spec->includeHidden}}
+          .dump());
+  if (!report) return Status::failure(report.error());
+  const auto csv = construction::takeOffCsv(*report);
+  QSaveFile file(path);
+  if (!file.open(QIODevice::WriteOnly) ||
+      file.write(csv.data(), static_cast<qint64>(csv.size())) != static_cast<qint64>(csv.size()) ||
+      !file.commit())
+    return Status::failure("CSVを保存できませんでした");
+  return Status::success();
 }
 
 Status DrawingDialog::exportTo(const QString& path) {
