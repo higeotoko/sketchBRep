@@ -1,3 +1,4 @@
+#include "FrameCheckPanel.h"
 // Phase 1 acceptance test driving the real main window with synthetic input:
 // draw a rectangle, push/pull it 3000 mm, save, reopen and re-edit.
 
@@ -303,6 +304,7 @@ class GuiPhase1 : public QObject {
   void recentFilesReopen();
   void helpWindowAndCrashLog();
   void timberFramePreviewApplyLevelsAndUndo();
+  void frameChecksUpdateAndDiscardStaleResults();
   void panelDragPreviewKeepsTheModelViewStill();
   void panelMotionSettlesAfterNativeDock();
   void paletteResizeKeepsBackdropAcrossViewport();
@@ -9196,4 +9198,62 @@ void GuiPhase1::timberFramePreviewApplyLevelsAndUndo() {
   QVERIFY(dialogSeen);
   QVERIFY(f.window.hasPendingProposal());
   f.window.rejectProposal();
+}
+
+
+void GuiPhase1::frameChecksUpdateAndDiscardStaleResults() {
+  Fixture f;
+  QVERIFY(f.setUp(3000,3000));
+  auto& m=f.window.modeler();
+  const auto made=m.generateFrame(R"({"inputs":{"x_bays":3,"y_bays":3,"columns":[[1,1]]}})");
+  QVERIFY2(made,made.error().c_str());
+  doc::ObjectId upper;
+  for(const auto& o:m.document().objects())
+    if(o.attributes.count("frame_key") && o.attributes.at("frame_key")=="column/1/1/2") upper=o.id;
+  QVERIFY(!upper.empty());
+  auto* action=f.window.findChild<QAction*>(QStringLiteral("frameCheckAction")); QVERIFY(action); action->trigger();
+  auto* panel=f.window.findChild<FrameCheckPanel*>(); QVERIFY(panel); QVERIFY(panel->isVisible());
+  QTRY_VERIFY_WITH_TIMEOUT(!panel->resultJson().empty(),30000);
+  const auto revision=m.history().revision();
+  panel->invalidate();
+  QVERIFY(panel->resultJson().empty());
+  auto* debounce=panel->findChild<QTimer*>(QStringLiteral("frameCheckDebounce")); QVERIFY(debounce);
+  // Launch without processing another event: editing now invalidates an
+  // in-flight result even if the worker is already finishing it.
+  QVERIFY(QMetaObject::invokeMethod(debounce,"timeout",Qt::DirectConnection));
+  gp_Trsf shift; shift.SetTranslation(gp_Vec(200,200,0));
+  QVERIFY(m.transform({upper},shift,"Free column move"));
+  QVERIFY(panel->resultJson().empty());
+  QTRY_VERIFY_WITH_TIMEOUT(!panel->resultJson().empty(),30000);
+  const auto result=nlohmann::json::parse(panel->resultJson());
+  QCOMPARE(result.at("revision").get<long long>(),static_cast<long long>(m.history().revision()));
+  QVERIFY(m.history().revision()>revision);
+  for(const auto* rule:{"MOD-01","TMB-01"}) {
+    bool failed=false;
+    for(const auto& row:result.at("results"))
+      if(row.at("rule")==rule && row.at("status")=="fail")
+        for(const auto& target:row.at("targets")) if(target==upper) failed=true;
+    QVERIFY2(failed,rule);
+  }
+  auto* table=panel->findChild<QTableWidget*>(QStringLiteral("frameCheckResults")); QVERIFY(table);
+  int targetRow=-1;
+  for(int row=0;row<table->rowCount();++row)
+    if(table->item(row,0)->data(Qt::UserRole).toStringList().contains(QString::fromStdString(upper))) {targetRow=row;break;}
+  QVERIFY(targetRow>=0);
+  emit table->cellDoubleClicked(targetRow,0);
+  const auto selected=f.window.selection();
+  QVERIFY(std::find(selected.begin(),selected.end(),upper)!=selected.end());
+  QTemporaryDir dir; const auto path=dir.filePath(QStringLiteral("checks.csv")); QVERIFY(panel->exportCsv(path));
+  QFile csv(path); QVERIFY(csv.open(QIODevice::ReadOnly)); const auto bytes=csv.readAll();
+  QVERIFY(bytes.contains("reason_code")); QVERIFY(bytes.contains("construction-check-1"));
+  QVERIFY(bytes.contains(QStringLiteral("意匠・概略").toUtf8()));
+  QVERIFY(m.undo());
+  QVERIFY(panel->resultJson().empty());
+  QTRY_VERIFY_WITH_TIMEOUT(!panel->resultJson().empty(),30000);
+  const auto restored=nlohmann::json::parse(panel->resultJson());
+  for(const auto& row:restored.at("results")) if(row.at("rule")=="MOD-01")
+    for(const auto& target:row.at("targets")) if(target==upper) QCOMPARE(row.at("status").get<std::string>(),std::string("pass"));
+  const auto capture=qEnvironmentVariable("SBR_CHECK_CAPTURE");
+  if(!capture.isEmpty()) QVERIFY(panel->grab().save(capture));
+  panel->hide();
 }

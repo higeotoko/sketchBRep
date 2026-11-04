@@ -2,6 +2,9 @@
 #include "sbr/doc/Document.h"
 
 namespace sbr::construction {
+// Expands a single-member placement to its design recipe (including its own
+// dimensions and anchor). No hierarchy or document state is changed.
+std::optional<doc::Object> frameMemberObject(const doc::Document& document, const doc::Object& instance);
 // Fingerprints editable state, never a cached B-rep or the frame's manifest.
 std::string frameFingerprint(const doc::Object& object);
 std::string frameDefinitionFingerprint(const doc::ComponentDefinition& definition);

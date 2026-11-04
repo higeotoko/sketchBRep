@@ -17,6 +17,32 @@
 #include "sbr/doc/NativeFormat.h"
 
 namespace sbr::construction {
+using namespace doc;
+std::optional<Object> frameMemberObject(const Document& document, const Object& instance) {
+  const auto* ref = std::get_if<ComponentInstance>(&instance.recipe.base);
+  if (!ref || ref->mirrored || !ref->stretches.empty()) return std::nullopt;
+  const auto* stored = document.findDefinition(ref->definitionId);
+  if (!stored || stored->objects.size() != 1 ||
+      !std::holds_alternative<LinearMember>(stored->objects[0].recipe.base))
+    return std::nullopt;
+  const auto own = applyOverrides(*stored, ref->overrides, document.regenContext());
+  if (!own) return std::nullopt;
+  Object o = instance;
+  o.transform = instance.transform * own->objects[0].transform;
+  o.recipe = own->objects[0].recipe;
+  const auto anchor = instance.attributes.find("member_anchor_up");
+  if (anchor != instance.attributes.end()) {
+    auto& member = std::get<LinearMember>(o.recipe.base);
+    member.anchor.up = anchor->second == "1" ? 1 : anchor->second == "-1" ? -1 : 0;
+    const gp_Vec offset = gp_Vec(member.up) * (member.anchor.up * member.section.depth / 2);
+    member.start.Translate(offset);
+    member.end.Translate(offset);
+  }
+  o.recipe.modifiers.insert(o.recipe.modifiers.end(), instance.recipe.modifiers.begin(),
+                            instance.recipe.modifiers.end());
+  return o;
+}
+
 namespace {
 using json = nlohmann::json;
 void rounded(json& j) {
@@ -493,10 +519,10 @@ struct Plan {
       hardware("column_connection", key + "/foot", at(i, j, height("sill_top")), "sill_top", "1階軸組");
       hardware("column_connection", key + "/head", at(i, j, ceiling), end, "1階軸組");
       if (upperColumn && !through) {
-        member("column", key + "/2", at(i, j, height("second_fl")),
+        member("column", key + "/2", at(i, j, supportTop("second_fl")),
                at(i, j, height("eave_top") - section("eave_beam").depth), "second_fl", "eave_top", "2階軸組",
                0);
-        hardware("column_connection", key + "/2/foot", at(i, j, height("second_fl")), "second_fl", "2階軸組");
+        hardware("column_connection", key + "/2/foot", at(i, j, supportTop("second_fl")), "second_fl", "2階軸組");
         hardware("column_connection", key + "/2/head",
                  at(i, j, height("eave_top") - section("eave_beam").depth), "eave_top", "2階軸組");
       }
@@ -1046,6 +1072,10 @@ Result<std::string> Modeler::generateFrame(const std::string& text) {
       addedDefinitions.push_back(def);
       return definitions.emplace(digest, std::move(def)).first->second;
     };
+    json allocation = json::object();
+    if (previous.is_object() && previous.contains("allocation"))
+      for (const auto& id : keep)
+        if (previous.at("allocation").contains(id)) allocation[id] = previous.at("allocation").at(id);
     json counts = json::object();
     std::size_t hardwareCount = 0;
     for (const auto& p : plan.pieces) {
@@ -1101,12 +1131,17 @@ Result<std::string> Modeler::generateFrame(const std::string& text) {
       pin.startY = closest(plan.grid.y, p.from.Y());
       pin.endY = closest(plan.grid.y, p.to.Y());
       o.gridPin = pin;
+      if (p.role == "joist" || p.role == "rafter")
+        allocation[o.id] = {
+            {"start", {p.from.X(), p.from.Y()}}, {"end", {p.to.X(), p.to.Y()}}, {"kind", p.role}};
       counts[p.role] = counts.value(p.role, 0) + 1;
       created.push_back(std::move(o));
     }
     Object worldRoot = root;
     worldRoot.transform = rootWorld;
-    json manifest = {{"version", 2},
+    json manifest = {{"version", 3},
+                     {"allocation", allocation},
+                     {"spacing", plan.spacing},
                      {"root_world", construction::frameFingerprint(worldRoot)},
                      {"recipe", "post_beam_2storey"},
                      {"inputs", plan.inputs},

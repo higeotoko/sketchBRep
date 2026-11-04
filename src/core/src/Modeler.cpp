@@ -5544,38 +5544,11 @@ Result<ObjectId> Modeler::createMember(const MemberSpec& spec) {
   return addObject(*o, "Member");
 }
 
-namespace {
-std::optional<Object> frameMemberObject(const Document& document, const Object& instance) {
-  const auto* ref = std::get_if<ComponentInstance>(&instance.recipe.base);
-  if (!ref || ref->mirrored || !ref->stretches.empty()) return std::nullopt;
-  const auto* stored = document.findDefinition(ref->definitionId);
-  if (!stored || stored->objects.size() != 1 ||
-      !std::holds_alternative<LinearMember>(stored->objects[0].recipe.base))
-    return std::nullopt;
-  const auto own = applyOverrides(*stored, ref->overrides, document.regenContext());
-  if (!own) return std::nullopt;
-  Object o = instance;
-  o.transform = instance.transform * own->objects[0].transform;
-  o.recipe = own->objects[0].recipe;
-  const auto anchor = instance.attributes.find("member_anchor_up");
-  if (anchor != instance.attributes.end()) {
-    auto& member = std::get<LinearMember>(o.recipe.base);
-    member.anchor.up = anchor->second == "1" ? 1 : anchor->second == "-1" ? -1 : 0;
-    const gp_Vec offset = gp_Vec(member.up) * (member.anchor.up * member.section.depth / 2);
-    member.start.Translate(offset);
-    member.end.Translate(offset);
-  }
-  o.recipe.modifiers.insert(o.recipe.modifiers.end(), instance.recipe.modifiers.begin(),
-                            instance.recipe.modifiers.end());
-  return o;
-}
-}  // namespace
-
 Result<Modeler::MemberInfo> Modeler::memberInfo(const ObjectId& id) const {
   using R = Result<MemberInfo>;
   const Object* o = document_.find(id);
   if (!o) return R::failure("Object not found");
-  const auto expanded = frameMemberObject(document_, *o);
+  const auto expanded = construction::frameMemberObject(document_, *o);
   if (expanded) o = &*expanded;
   const auto* m = std::get_if<LinearMember>(&o->recipe.base);
   if (!m) {
@@ -5629,7 +5602,7 @@ Result<Modeler::MemberInfo> Modeler::changeMember(const ObjectId& id, const Memb
   using R = Result<MemberInfo>;
   const Object* current = document_.find(id);
   if (!current) return R::failure("Object not found");
-  const auto expanded = frameMemberObject(document_, *current);
+  const auto expanded = construction::frameMemberObject(document_, *current);
   if (expanded) current = &*expanded;
   if (!std::holds_alternative<LinearMember>(current->recipe.base)) {
     if (wallOrSlabInfo(*current)) return changeWallOrSlab(id, change);

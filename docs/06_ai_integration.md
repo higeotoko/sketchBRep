@@ -175,3 +175,12 @@ sbr_cli --open out.sbr --mcp                        # ヘッドレス MCP サー
 DWG は GUI から ODA File Converter で変換する。
 対応範囲は [24_dxf_dwg_import.md](24_dxf_dwg_import.md) を参照。
 `import_jww` は Jw_cad の図面（.jww）を同じように取り込む。`path`、`allow_partial`、`group_by_layer`（レイヤごとにグループ）を指定する。文字・点・塗りがあると、`allow_partial: true` のときだけ取り込む。
+
+
+## 架構チェック（段階3）
+
+`check_frame {system:"timber", frame?, rules?, pair_budget?}` は読み取り専用。
+4段階の結果、対象ID、理由コード、測定値と単位、必要値と出典、検査器の版、検査時のrevisionを返す。
+例：`{"command":"check_frame","args":{"rules":["MOD-01","TMB-01"]}}`。
+未評価を合格と扱わず、結果によって人の編集を止めない。
+詳しい判定範囲・情報不足・接合の扱いは [56_frame_checks_stage3.md](56_frame_checks_stage3.md)。

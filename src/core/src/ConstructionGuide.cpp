@@ -14,6 +14,8 @@ extern const char* const kTimber_presets[];
 extern const unsigned kTimber_presets_parts;
 extern const char* const kTimber_recipes[];
 extern const unsigned kTimber_recipes_parts;
+extern const char* const kTimber_checks[];
+extern const unsigned kTimber_checks_parts;
 extern const char* const kTimber_hardware[];
 extern const unsigned kTimber_hardware_parts;
 }
@@ -25,7 +27,7 @@ constexpr const char* kNotice =
     "意匠・概略の検討用。構造の安全、法令への適合、施工できることを判定・保証しません。"
     "標準寸法は市場の流通寸法の目安で、法令の値ではありません。"
     "梁せいは形を作るための仮の値です。スパンから自動で決めません。"
-    "樹種・等級は属性のみ。生成は概略形です。診断・壁量計算は未実装です。";
+    "樹種・等級は属性のみ。生成は概略形です。診断は形と配置の確認です。壁量計算は未実装です。";
 
 json read(const char* const* parts, unsigned count) {
   std::string text;
@@ -41,7 +43,8 @@ const json& builtin(const std::string& system) {
       {"roles", read(embedded::kTimber_roles, embedded::kTimber_roles_parts)},
       {"presets", read(embedded::kTimber_presets, embedded::kTimber_presets_parts)},
       {"recipes", read(embedded::kTimber_recipes, embedded::kTimber_recipes_parts)},
-      {"hardware", read(embedded::kTimber_hardware, embedded::kTimber_hardware_parts)}};
+      {"hardware", read(embedded::kTimber_hardware, embedded::kTimber_hardware_parts)},
+      {"checks", read(embedded::kTimber_checks, embedded::kTimber_checks_parts)}};
   return data;
 }
 
@@ -253,6 +256,13 @@ std::string guideMarkdown(const std::string& system, const std::string& override
       if (e.contains("notes")) for (const auto& note : e.at("notes")) out << "  - " << cell(note) << "\n";
     }
   }
+  out << "\n## 架構チェック\n\n";
+  sourceText(out, data.at("checks"));
+  for (const auto& [id, rule] : data.at("checks").at("entries").items())
+    out << "- `" << id << "` " << cell(rule.at("name")) << "：" << cell(rule.at("scope")) << "\n";
+  out << "\ncheck_frame {system: timber, rules: [\"MOD-01\",\"TMB-01\"]} はモデルを変えません。"
+         "判定は合格・不適合・未評価・対象外。画面の架構チェックは編集後に自動更新します。"
+         "接触は支えの形の確認だけで、接合耐力・構造の安全を評価しません。\n";
   out << "\ngenerate_frame {system: timber, recipe: post_beam_2storey, inputs, preview: true} で試し、"
          "返されたrevisionをexpected_revisionにして preview: false で確定します。"
          "画面では木造架構メニューからプレビューし、適用・却下を選べます。\n";

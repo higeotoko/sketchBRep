@@ -81,7 +81,7 @@ const char* McpServer::instructions() {
          "(select faces by index or {\"normal\": [x,y,z]}). Dimensions stay editable through set_parameter "
          "(keys from get_object.parameters). Use batch for multi-step edits: it is one undo step and is "
          "reverted as a whole if a step fails; \"$1.id\" refers to step 1's result. Prefer editing "
-         "parameters over rebuilding geometry. Before structural modeling read get_construction_guide {system} "
+         "parameters over rebuilding geometry. After timber edits use check_frame: missing information is not_evaluated, never a safety approval. Before structural modeling read get_construction_guide {system} "
          "and choose dimensions from list_sections {system, role}, rather than general knowledge.";
 }
 

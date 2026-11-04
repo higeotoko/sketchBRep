@@ -1,3 +1,4 @@
+#include "FrameCheckPanel.h"
 #include "MainWindow.h"
 #include "sbr/KernelError.h"
 #include "DrawingExport.h"
@@ -1098,6 +1099,7 @@ void MainWindow::buildMenus() {
   tools->addSeparator();
   tools->addAction(tr("通り芯を作成..."), this, &MainWindow::showGridDialog);
   tools->addAction(tr("木造架構を作成・作り直し..."), this, &MainWindow::showTimberFrameDialog)->setObjectName(QStringLiteral("timberFrameAction"));
+  tools->addAction(tr("架構チェック"), this, &MainWindow::showFrameCheckPanel)->setObjectName(QStringLiteral("frameCheckAction"));
   tools->addAction(tr("レベル（GL・FL）を編集..."), this, &MainWindow::showLevelsEditDialog)
       ->setObjectName(QStringLiteral("editLevelsAction"));
   tools->addAction(tr("壁の設定..."), this, &MainWindow::showWallSettingsDialog);
@@ -1874,6 +1876,7 @@ QString MainWindow::elementSummary() const {
 // --- document ---------------------------------------------------------------------
 
 void MainWindow::onDocumentChanged() {
+  if (frameCheckPanel_) frameCheckPanel_->invalidate();
   static_cast<GuiProgress*>(progress_.get())->finish();
   viewport_->scheduleSync();
   if (refreshPending_) return;
@@ -2513,6 +2516,11 @@ void MainWindow::startMember(const std::string& entry) {
   activateTool(ToolId::Member);
   setStatus(memberTool_->settingsText());
   refreshMemberPanel();
+}
+
+void MainWindow::showFrameCheckPanel() {
+  if (!frameCheckPanel_) frameCheckPanel_ = new FrameCheckPanel(this);
+  frameCheckPanel_->show(); frameCheckPanel_->raise(); frameCheckPanel_->invalidate();
 }
 
 void MainWindow::showMemberPanel() {

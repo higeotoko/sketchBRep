@@ -35,6 +35,7 @@ class PropertiesPanel;
 class Viewport;
 
 class HelpWindow;
+class FrameCheckPanel;
 
 class MainWindow : public QMainWindow, public ToolHost {
   Q_OBJECT
@@ -244,6 +245,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   void commitMeasurement();
   void showGridDialog();
   void showTimberFrameDialog();
+  void showFrameCheckPanel();
   void editMaterialDialog(const std::string& id);  // "" = new material
   void startSession();
   void clearRecovery();
@@ -401,6 +403,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   QAction* sectionFillAction_ = nullptr;
   QDockWidget* sectionDock_ = nullptr;
   QDockWidget* memberPanel_ = nullptr;
+  FrameCheckPanel* frameCheckPanel_ = nullptr;
   QLabel* memberSummary_ = nullptr;
   void showMemberPanel();
   void refreshMemberPanel();

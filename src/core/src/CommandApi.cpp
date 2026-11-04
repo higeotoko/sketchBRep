@@ -1,3 +1,4 @@
+#include "sbr/ConstructionCheck.h"
 #include "sbr/api/CommandApi.h"
 #include "sbr/ConstructionGuide.h"
 #include "sbr/KernelError.h"
@@ -2082,6 +2083,17 @@ const std::vector<CommandDef>& commands() {
          json result=json::parse(must(m.generateFrame(a.dump())));
          result["preview"]=false;return result;
        }},
+      {"check_frame",
+       "Read-only timber diagnosis: COM-01..03, MOD-01..02, TMB-01..04, LAT-* placeholders and SEC-* outside scope. "
+       "Returns four outcomes, reason codes, measurements/units, provenance and checker version. "
+       "Optional frame scopes the diagnosis to one generated group; rules filters IDs or prefixes with *. "
+       "Geometry contact does not establish connection capacity or structural safety. No model changes, no undo.",
+       SCHEMA({"type":"object","properties":{"system":{"type":"string","enum":["timber"]},"frame":{"type":"string"},
+         "rules":{"type":"array","items":{"type":"string"}},"pair_budget":{"type":"integer","minimum":1,"maximum":20000}}}),
+       [](doc::Modeler& m, const json& a) {
+         json result=json::parse(must(construction::checkFrame(m.document(),a.dump())));
+         result["revision"]=m.history().revision(); return result;
+       }},
       {"get_construction_guide",
        "Read the construction guide before choosing sections. Returns data and Markdown generated from the "
        "same embedded tables plus this project's overrides. Timber only; steel/rc guides are not implemented.",
@@ -2607,7 +2619,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
   if (name == "list_objects" || name == "get_object" || name == "list_tags" || name == "describe" ||
       name == "preview" || name == "query_objects" || name == "aggregate" || name == "get_changes" ||
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
-      name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide") {
+      name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" || name == "check_frame") {
     return E::Read;
   }
   if (isFileCommand(name)) return E::ExternalIo;
