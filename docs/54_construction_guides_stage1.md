@@ -65,3 +65,14 @@ GUIの `helpWindowAndCrashLog`：トピック表示、上書きとUndoの表示�
 - Windows実機確認：人による操作確認は未実施。
 - ローカルは `SBR_WITH_OPENNURBS=OFF`。3DM関連4件は検証対象から除外。
   3DMを含む全構成・Linux・配布物はCIで別途確認する。
+
+### CIの結果（2026-11-04）
+
+実装コミット `ff535797cce249b19c6d486d8c5417ff9318df98` の
+[CI #233](https://github.com/higeotoko/sketchBRep/actions/runs/41773608702) はLinux・Windowsとも成功。
+
+- 計算テスト済み：Linuxは3DMを含む通常構成で460件中453件成功、7件スキップ、失敗0。Windowsの非GUI456件も失敗0。
+- GUI自動確認済み：Linuxの全GUI、WindowsのGUI3件と大きいGUIスイート（193成功、7スキップ、失敗0）が成功。
+- 配布物：Windows zipのDLL・起動確認、インストーラーのインストール・起動・アンインストール確認が成功。
+  成果物名は `SketchBRep-windows-x64` と `SketchBRep-windows-x64-setup`。
+- Windows実機確認：人による操作確認は引き続き未実施。
