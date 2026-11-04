@@ -1,0 +1,5 @@
+{"command":"create_box","args":{"origin":[0,0,0],"width":10,"depth":20,"height":30}}
+{"command":"export_brep","args":{"path":"dist/SketchBRep/examples/exchange/box_10x20x30.brep"}}
+{"command":"export_iges","args":{"path":"dist/SketchBRep/examples/exchange/box_10x20x30.igs"}}
+{"command":"import_brep","args":{"path":"dist/SketchBRep/examples/exchange/box_10x20x30.brep"}}
+{"command":"import_iges","args":{"path":"dist/SketchBRep/examples/exchange/box_10x20x30.igs"}}

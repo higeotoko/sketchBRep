@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="998" viewBox="230 100 860 780" role="img" aria-labelledby="title"><title id="title">SketchBRep detailed symbol</title>
+<defs>
+ <linearGradient id="top-left" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#f4f4f2"/><stop offset="1" stop-color="#e5e7e7"/></linearGradient>
+ <linearGradient id="front-gray" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#aab7bc"/><stop offset="1" stop-color="#8f9fa7"/></linearGradient>
+ <linearGradient id="extrusion-side" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#e8eef0"/><stop offset="1" stop-color="#c6dce8"/></linearGradient>
+ <linearGradient id="blue-face" x1="0" y1="1" x2="1" y2="0"><stop stop-color="#65add3"/><stop offset="1" stop-color="#5aabd6"/></linearGradient>
+ </defs>
+<g id="cube-mark">
+<path id="axis-top" d="M627 143 V168 M627 184 V214 M592 227 L627 207 L662 227" fill="none" stroke="#1e2933" stroke-width="3.4" stroke-linejoin="round" stroke-linecap="round" />
+<path id="axis-bottom-left" d="M351 674 L278 715" fill="none" stroke="#1e2933" stroke-width="3.4" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="18 15"/>
+<path id="axis-bottom-right" d="M934 704 L981 731" fill="none" stroke="#1e2933" stroke-width="3.4" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="18 15"/>
+<path id="top-silhouette" d="M371 361 L611 236 Q627 228 644 237 L876 360 Q891 368 891 384 L891 413 L620 559 L355 410 L355 384 Q355 369 371 361" fill="url(#top-left)" stroke="#1e2933" stroke-width="9" stroke-linejoin="round" stroke-linecap="round" />
+<path id="top-right-plane" d="M627 235 L875 365 L640 493 Q633 497 627 497 Z" fill="#f8f8f6" stroke="none" stroke-width="0" stroke-linejoin="round" stroke-linecap="round" />
+<path id="left-front-plane" d="M371 377 L598 500 Q615 510 615 531 L615 815 Q615 835 597 825 L370 688 Q355 680 355 662 L355 389 Q355 372 371 377" fill="url(#front-gray)" stroke="#1e2933" stroke-width="9" stroke-linejoin="round" stroke-linecap="round" />
+<path id="right-base-plane" d="M640 499 L872 374 Q890 365 890 385 L890 677 Q890 691 877 698 L635 829 Q619 838 619 817 L619 530 Q619 510 640 499" fill="url(#extrusion-side)" stroke="#1e2933" stroke-width="9" stroke-linejoin="round" stroke-linecap="round" />
+<path id="extruded-top-plane" d="M640 499 L889 402 L934 427 Q946 434 932 444 L746 549 L725 550 L665 512 Z" fill="url(#extrusion-side)" stroke="none" stroke-width="0" stroke-linejoin="round" stroke-linecap="round" />
+<path id="extruded-top-edge" d="M877 400 L933 428" fill="none" stroke="#1e2933" stroke-width="7" stroke-linejoin="round" stroke-linecap="round" />
+<path id="construction-hidden-edges" d="M865 397 L665 507 L665 745 L715 773" fill="none" stroke="#1e2933" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="18 15"/>
+<path id="construction-top-return" d="M665 507 L720 538" fill="none" stroke="#1e2933" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="18 15"/>
+<path id="blue-extruded-plane" d="M744 535 L925 435 Q942 426 942 445 L942 663 Q942 677 930 684 L746 782 Q726 793 726 774 L726 558 Q726 545 744 535" fill="url(#blue-face)" stroke="#1e2933" stroke-width="9" stroke-linejoin="round" stroke-linecap="round" />
+<path id="blue-edge-highlight" d="M736 770 L736 560 Q736 551 748 545 L930 446" fill="none" stroke="#b8e1f4" stroke-width="4" stroke-linejoin="round" stroke-linecap="round" />
+<path id="front-edge-highlight" d="M368 382 L596 507 Q607 513 607 533 L607 813" fill="none" stroke="#dae2e5" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" />
+<g id="glasses" fill="none" stroke="#1e2933" stroke-width="13" stroke-linecap="round" stroke-linejoin="round">
+<path id="temple-left" d="M356 507 L382 523"/>
+<path id="bridge" d="M459 565 L495 585"/>
+<path id="temple-right" d="M575 632 L618 655 L661 631"/>
+<ellipse id="left-lens" cx="420" cy="547" rx="36" ry="55" transform="rotate(-25 420 547)"/>
+<ellipse id="right-lens" cx="535" cy="610" rx="35.5" ry="54.5" transform="rotate(-25 535 610)"/>
+</g>
+<path id="arrow-right-gap" d="M942 574 V597" fill="none" stroke="url(#blue-face)" stroke-width="12" stroke-linejoin="round" stroke-linecap="round" />
+<path id="extrusion-arrow-shaft" d="M883 561 L1014 615" fill="none" stroke="#1e2933" stroke-width="9" stroke-linejoin="round" stroke-linecap="round" />
+<path id="extrusion-arrow-head" d="M1006 584 L1048 625 L1006 642 Z" fill="#1e2933" stroke="#1e2933" stroke-width="8" stroke-linejoin="round" stroke-linecap="round" />
+</g>
+</svg>

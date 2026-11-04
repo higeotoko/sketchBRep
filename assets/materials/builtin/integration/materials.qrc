@@ -1,0 +1,16 @@
+<RCC>
+  <qresource prefix="/materials">
+    <file alias="wood_light_albedo.jpg">../textures/wood_light_albedo.jpg</file>
+    <file alias="wood_dark_albedo.jpg">../textures/wood_dark_albedo.jpg</file>
+    <file alias="plaster_white_albedo.jpg">../textures/plaster_white_albedo.jpg</file>
+    <file alias="concrete_albedo.jpg">../textures/concrete_albedo.jpg</file>
+    <file alias="mortar_albedo.jpg">../textures/mortar_albedo.jpg</file>
+    <file alias="brick_albedo.jpg">../textures/brick_albedo.jpg</file>
+    <file alias="tile_gray_albedo.jpg">../textures/tile_gray_albedo.jpg</file>
+    <file alias="tatami_albedo.jpg">../textures/tatami_albedo.jpg</file>
+    <file alias="glass_albedo.jpg">../textures/glass_albedo.jpg</file>
+    <file alias="stainless_albedo.jpg">../textures/stainless_albedo_v2.jpg</file>
+    <file alias="black_iron_albedo.jpg">../textures/black_iron_albedo.jpg</file>
+    <file alias="grass_albedo.jpg">../textures/grass_albedo.jpg</file>
+  </qresource>
+</RCC>

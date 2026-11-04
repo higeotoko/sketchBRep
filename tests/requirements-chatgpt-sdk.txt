@@ -1,0 +1,2 @@
+# Optional interoperability test only; not an application runtime dependency.
+mcp==1.29.0

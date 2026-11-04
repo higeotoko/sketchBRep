@@ -1,0 +1,4 @@
+# sbr_cli script: a slab with a row of columns, edited parametrically.
+{"command": "create_box", "args": {"origin": [0, 0, 0], "width": 12000, "depth": 6000, "height": 200, "name": "Slab"}}
+{"command": "batch", "args": {"name": "Columns", "commands": [{"command": "create_box", "args": {"origin": [0, 0, 200], "width": 400, "depth": 400, "height": 3000, "name": "C1"}}, {"command": "copy_array", "args": {"ids": ["$1.id"], "vector": [3900, 0, 0], "count": 3}}, {"command": "paint", "args": {"ids": ["$1.id"], "color": "#a0a0a0"}}]}}
+{"command": "list_objects"}

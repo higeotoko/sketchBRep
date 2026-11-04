@@ -1,0 +1,66 @@
+{
+  "mode": "built-in image_gen",
+  "prompt_prefix": "Use case: photorealistic-natural. Asset type: production architectural CAD repeating BASE COLOR / albedo texture. Generate ONE square 1024x1024 image of the described material filling every pixel edge to edge. Orthographic front-on surface scan with zero perspective, perfectly flat even diffuse illumination, no lighting gradient, no cast shadows, no ambient occlusion, no reflections baked into color, no vignette. Opposite edges MUST match seamlessly for repetition in both directions. Fine photoreal material detail at stated physical scale, restrained contrast appropriate for architectural modelling. No text, labels, borders, collage, palette, objects, watermark or logos. Opaque RGB image; transparency will be material metadata. Subject: ",
+  "assets": [
+    {
+      "key": "wood_light",
+      "name": "木（明るい）",
+      "subject_prompt": "Light honey oak wood, natural fine straight grain flowing vertically, subtle pale growth rings, a few gentle organic variations, no plank joints, no knots with dramatic contrast. Warm golden beige oak, moderate saturation. Physical sample one metre square."
+    },
+    {
+      "key": "wood_dark",
+      "name": "木（濃い）",
+      "subject_prompt": "Dark walnut wood, fine natural straight grain flowing vertically, restrained dark brown and umber tones, no plank joints, no large knots, subtle natural growth rings. Physical sample one metre square."
+    },
+    {
+      "key": "plaster_white",
+      "name": "漆喰（白）",
+      "subject_prompt": "White Japanese lime plaster, warm off-white fine matte mineral texture, subtle restrained trowel movements, very low contrast, no cracks, no dirt. Physical sample one metre square."
+    },
+    {
+      "key": "concrete",
+      "name": "コンクリート",
+      "subject_prompt": "Architectural cast concrete, neutral mid light gray, realistic tiny pores and faint mottling, refined fair faced surface, no formwork joints, no bolt holes, no cracks. Physical sample two metres square."
+    },
+    {
+      "key": "mortar",
+      "name": "モルタル",
+      "subject_prompt": "Warm gray beige cement mortar render, fine sand aggregate, subtle evenly distributed hand trowel texture, matte uniform finish, slightly warmer and finer than concrete, no cracks or joints. Physical sample one metre square."
+    },
+    {
+      "key": "brick",
+      "name": "レンガ",
+      "subject_prompt": "Terracotta red brown fired clay brick wall in precise running bond. Four brick module widths across, eight courses tall; each module 210mm wide by65mm high including thin 10mm warm gray mortar joints. Every second course offset half a brick. Geometrically straight horizontal parallel mortar, restrained brick tone variation, lightly rough clay face. Matching opposite boundaries for exact repeating running bond. No heavy weathering."
+    },
+    {
+      "key": "tile_gray",
+      "name": "タイル（グレー）",
+      "subject_prompt": "Gray matte architectural porcelain floor tiles in a straight square grid, four by four modules, each module300mm including thin3mm pale gray grout. Subtle cool neutral gray stone speckling, low contrast, clean straight grout lines, no diagonal pattern, no glossy glare. Sample spans1200mm square, tileable opposite edges with grout centred on all image boundaries."
+    },
+    {
+      "key": "tatami",
+      "name": "畳",
+      "subject_prompt": "Japanese tatami woven igusa rush mat close surface, muted natural straw olive beige green, tiny densely packed regular woven horizontal parallel rush rows, fine vertical stitch spacing. Entire image only continuous woven mat surface, NO cloth border, no panel seams. Physical sample900mm square."
+    },
+    {
+      "key": "glass",
+      "name": "ガラス",
+      "subject_prompt": "Clear architectural float glass BASE COLOR MAP only, near uniform extremely pale blue green with imperceptibly subtle fine surface microvariation. NO windows, no frames, no reflected room or sky, no light streaks, no frost, no scratches, no checkerboard. Flat light cyan tinted glass material swatch, opacity handled separately by application. Physical sample one metre square."
+    },
+    {
+      "key": "stainless",
+      "name": "金属（ステンレス）",
+      "subject_prompt": "Brushed stainless steel BASE COLOR MAP, medium light neutral silver gray, very fine close parallel brushed hairline grain running vertically. Uniform brightness, tiny restrained stochastic variation, no metallic light gradients, no highlight or reflected objects. Physical sample500mm square."
+    },
+    {
+      "key": "black_iron",
+      "name": "黒（鉄）",
+      "subject_prompt": "Black iron architectural metal BASE COLOR MAP, dark charcoal nearly black with subtle fine matte mill scale grain and very slight rough mineral surface, not rusty, no scratches, no rivets, no seams, no highlights. Restrained readable dark texture, physical sample500mm square."
+    },
+    {
+      "key": "grass",
+      "name": "芝",
+      "subject_prompt": "Natural maintained turf grass seen perfectly from above, dense short small grass blades with random orientations, balanced medium natural green and muted olive variation, no flowers, no soil gaps, no large clumps or stripes, no obvious repeated landmarks. Flat diffuse color without baked directional shadows. Physical sample1000mm square."
+    }
+  ]
+}

@@ -1,0 +1,279 @@
+{
+  "source": {
+    "name": "SketchBRep 木造初期値（docs/52 §4、流通寸法の目安）",
+    "version": "1",
+    "date": "2026-11-04",
+    "url": "https://github.com/higeotoko/sketchBRep/blob/claude/sketchbrep-modeler-spec-4wnp0b/docs/52_construction_guides.md"
+  },
+  "normative": "market_practice",
+  "entries": {
+    "sill": {
+      "name": "土台",
+      "default_section": "TIMBER-120x120",
+      "sections": [
+        "TIMBER-105x105",
+        "TIMBER-120x120"
+      ],
+      "note": ""
+    },
+    "floor_girder": {
+      "name": "大引",
+      "default_section": "TIMBER-90x90",
+      "sections": [
+        "TIMBER-90x90",
+        "TIMBER-105x105"
+      ],
+      "note": ""
+    },
+    "floor_post": {
+      "name": "床束",
+      "default_section": "STEEL-POST-UNSELECTED",
+      "sections": [
+        "TIMBER-90x90",
+        "STEEL-POST-UNSELECTED"
+      ],
+      "note": ""
+    },
+    "joist": {
+      "name": "根太",
+      "default_section": "TIMBER-45x60",
+      "sections": [
+        "TIMBER-45x45",
+        "TIMBER-45x60"
+      ],
+      "note": ""
+    },
+    "floor_sheathing": {
+      "name": "床下地合板",
+      "default_section": "PLYWOOD-28",
+      "sections": [
+        "PLYWOOD-24",
+        "PLYWOOD-28"
+      ],
+      "note": ""
+    },
+    "through_column": {
+      "name": "通し柱",
+      "default_section": "TIMBER-120x120",
+      "sections": [
+        "TIMBER-105x105",
+        "TIMBER-120x120"
+      ],
+      "note": ""
+    },
+    "column": {
+      "name": "管柱",
+      "default_section": "TIMBER-105x105",
+      "sections": [
+        "TIMBER-105x105",
+        "TIMBER-120x120"
+      ],
+      "note": ""
+    },
+    "stud": {
+      "name": "間柱",
+      "default_section": "TIMBER-30x105",
+      "sections": [
+        "TIMBER-27x105",
+        "TIMBER-30x105",
+        "TIMBER-30x120"
+      ],
+      "note": ""
+    },
+    "rim_beam": {
+      "name": "胴差",
+      "default_section": "TIMBER-105x240",
+      "sections": [
+        "TIMBER-105x105",
+        "TIMBER-105x120",
+        "TIMBER-105x150",
+        "TIMBER-105x180",
+        "TIMBER-105x210",
+        "TIMBER-105x240",
+        "TIMBER-105x270",
+        "TIMBER-105x300",
+        "TIMBER-105x330",
+        "TIMBER-105x360",
+        "TIMBER-105x390",
+        "TIMBER-120x105",
+        "TIMBER-120x120",
+        "TIMBER-120x150",
+        "TIMBER-120x180",
+        "TIMBER-120x210",
+        "TIMBER-120x240",
+        "TIMBER-120x270",
+        "TIMBER-120x300",
+        "TIMBER-120x330",
+        "TIMBER-120x360",
+        "TIMBER-120x390"
+      ],
+      "note": "幅は柱と同じ。せい240は形を作る仮の値。スパンから自動決定しない。"
+    },
+    "floor_beam": {
+      "name": "床梁",
+      "default_section": "TIMBER-105x240",
+      "sections": [
+        "TIMBER-105x105",
+        "TIMBER-105x120",
+        "TIMBER-105x150",
+        "TIMBER-105x180",
+        "TIMBER-105x210",
+        "TIMBER-105x240",
+        "TIMBER-105x270",
+        "TIMBER-105x300",
+        "TIMBER-105x330",
+        "TIMBER-105x360",
+        "TIMBER-105x390",
+        "TIMBER-120x105",
+        "TIMBER-120x120",
+        "TIMBER-120x150",
+        "TIMBER-120x180",
+        "TIMBER-120x210",
+        "TIMBER-120x240",
+        "TIMBER-120x270",
+        "TIMBER-120x300",
+        "TIMBER-120x330",
+        "TIMBER-120x360",
+        "TIMBER-120x390"
+      ],
+      "note": "幅は柱と同じ。せい240は形を作る仮の値。スパンから自動決定しない。"
+    },
+    "eave_beam": {
+      "name": "桁",
+      "default_section": "TIMBER-105x240",
+      "sections": [
+        "TIMBER-105x105",
+        "TIMBER-105x120",
+        "TIMBER-105x150",
+        "TIMBER-105x180",
+        "TIMBER-105x210",
+        "TIMBER-105x240",
+        "TIMBER-105x270",
+        "TIMBER-105x300",
+        "TIMBER-105x330",
+        "TIMBER-105x360",
+        "TIMBER-105x390",
+        "TIMBER-120x105",
+        "TIMBER-120x120",
+        "TIMBER-120x150",
+        "TIMBER-120x180",
+        "TIMBER-120x210",
+        "TIMBER-120x240",
+        "TIMBER-120x270",
+        "TIMBER-120x300",
+        "TIMBER-120x330",
+        "TIMBER-120x360",
+        "TIMBER-120x390"
+      ],
+      "note": "幅は柱と同じ。せい240は形を作る仮の値。スパンから自動決定しない。"
+    },
+    "roof_beam": {
+      "name": "小屋梁",
+      "default_section": "TIMBER-105x240",
+      "sections": [
+        "TIMBER-105x105",
+        "TIMBER-105x120",
+        "TIMBER-105x150",
+        "TIMBER-105x180",
+        "TIMBER-105x210",
+        "TIMBER-105x240",
+        "TIMBER-105x270",
+        "TIMBER-105x300",
+        "TIMBER-105x330",
+        "TIMBER-105x360",
+        "TIMBER-105x390",
+        "TIMBER-120x105",
+        "TIMBER-120x120",
+        "TIMBER-120x150",
+        "TIMBER-120x180",
+        "TIMBER-120x210",
+        "TIMBER-120x240",
+        "TIMBER-120x270",
+        "TIMBER-120x300",
+        "TIMBER-120x330",
+        "TIMBER-120x360",
+        "TIMBER-120x390"
+      ],
+      "note": "幅は柱と同じ。せい240は形を作る仮の値。スパンから自動決定しない。"
+    },
+    "horizontal_brace": {
+      "name": "火打梁",
+      "default_section": "TIMBER-90x90",
+      "sections": [
+        "TIMBER-90x90",
+        "STEEL-BRACE-UNSELECTED"
+      ],
+      "note": ""
+    },
+    "brace": {
+      "name": "筋かい",
+      "default_section": "TIMBER-45x90",
+      "sections": [
+        "TIMBER-30x90",
+        "TIMBER-45x90",
+        "TIMBER-90x90"
+      ],
+      "note": ""
+    },
+    "roof_post": {
+      "name": "小屋束",
+      "default_section": "TIMBER-90x90",
+      "sections": [
+        "TIMBER-90x90",
+        "TIMBER-105x105"
+      ],
+      "note": ""
+    },
+    "purlin": {
+      "name": "母屋",
+      "default_section": "TIMBER-105x105",
+      "sections": [
+        "TIMBER-90x90",
+        "TIMBER-105x105",
+        "TIMBER-120x120"
+      ],
+      "note": ""
+    },
+    "ridge": {
+      "name": "棟木",
+      "default_section": "TIMBER-105x105",
+      "sections": [
+        "TIMBER-90x90",
+        "TIMBER-105x105",
+        "TIMBER-120x120"
+      ],
+      "note": ""
+    },
+    "rafter": {
+      "name": "垂木",
+      "default_section": "TIMBER-45x60",
+      "sections": [
+        "TIMBER-45x45",
+        "TIMBER-45x60",
+        "TIMBER-45x90",
+        "TIMBER-45x105"
+      ],
+      "note": ""
+    },
+    "lintel": {
+      "name": "まぐさ",
+      "default_section": "TIMBER-105x105",
+      "sections": [
+        "TIMBER-105x105",
+        "TIMBER-120x120",
+        "TIMBER-105x240",
+        "TIMBER-120x240"
+      ],
+      "note": "形を作るための仮の断面。開口幅による断面照査は未実施。"
+    },
+    "window_sill": {
+      "name": "窓台",
+      "default_section": "TIMBER-105x105",
+      "sections": [
+        "TIMBER-105x105",
+        "TIMBER-120x120"
+      ],
+      "note": "形を作るための仮の断面。"
+    }
+  }
+}

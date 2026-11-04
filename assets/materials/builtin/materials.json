@@ -1,0 +1,288 @@
+{
+  "format": "sketchbrep-material-pack",
+  "version": 1,
+  "created_date": "2026-10-24",
+  "source_repository": "higeotoko/sketchBRep",
+  "source_commit": "716dd6a6e489a9f26bbca577282e0448d243c3cb",
+  "source_presets_path": "src/app/MaterialsPanel.cpp",
+  "color_space": "sRGB",
+  "map_type": "base_color",
+  "integration_required": true,
+  "materials": [
+    {
+      "preset_index": 0,
+      "name": "木（明るい）",
+      "key": "wood_light",
+      "base_color_srgb": [
+        0.8,
+        0.64,
+        0.44
+      ],
+      "texture": {
+        "file": "textures/wood_light_albedo.jpg",
+        "width_mm": 1000,
+        "height_mm": 1000,
+        "colorize": false
+      },
+      "opacity": 1,
+      "metallic": 0,
+      "roughness": 0.55,
+      "reflectance": 0.5,
+      "enabled_by_default": true,
+      "notes": ""
+    },
+    {
+      "preset_index": 1,
+      "name": "木（濃い）",
+      "key": "wood_dark",
+      "base_color_srgb": [
+        0.48,
+        0.32,
+        0.2
+      ],
+      "texture": {
+        "file": "textures/wood_dark_albedo.jpg",
+        "width_mm": 1000,
+        "height_mm": 1000,
+        "colorize": false
+      },
+      "opacity": 1,
+      "metallic": 0,
+      "roughness": 0.48,
+      "reflectance": 0.5,
+      "enabled_by_default": true,
+      "notes": ""
+    },
+    {
+      "preset_index": 2,
+      "name": "漆喰（白）",
+      "key": "plaster_white",
+      "base_color_srgb": [
+        0.95,
+        0.94,
+        0.9
+      ],
+      "texture": {
+        "file": "textures/plaster_white_albedo.jpg",
+        "width_mm": 1000,
+        "height_mm": 1000,
+        "colorize": false
+      },
+      "opacity": 1,
+      "metallic": 0,
+      "roughness": 0.9,
+      "reflectance": 0.45,
+      "enabled_by_default": true,
+      "notes": ""
+    },
+    {
+      "preset_index": 3,
+      "name": "コンクリート",
+      "key": "concrete",
+      "base_color_srgb": [
+        0.66,
+        0.66,
+        0.64
+      ],
+      "texture": {
+        "file": "textures/concrete_albedo.jpg",
+        "width_mm": 2000,
+        "height_mm": 2000,
+        "colorize": false
+      },
+      "opacity": 1,
+      "metallic": 0,
+      "roughness": 0.88,
+      "reflectance": 0.45,
+      "enabled_by_default": true,
+      "notes": ""
+    },
+    {
+      "preset_index": 4,
+      "name": "モルタル",
+      "key": "mortar",
+      "base_color_srgb": [
+        0.74,
+        0.72,
+        0.68
+      ],
+      "texture": {
+        "file": "textures/mortar_albedo.jpg",
+        "width_mm": 1000,
+        "height_mm": 1000,
+        "colorize": false
+      },
+      "opacity": 1,
+      "metallic": 0,
+      "roughness": 0.9,
+      "reflectance": 0.45,
+      "enabled_by_default": true,
+      "notes": ""
+    },
+    {
+      "preset_index": 5,
+      "name": "レンガ",
+      "key": "brick",
+      "base_color_srgb": [
+        0.63,
+        0.32,
+        0.22
+      ],
+      "texture": {
+        "file": "textures/brick_albedo.jpg",
+        "width_mm": 840,
+        "height_mm": 650,
+        "colorize": false
+      },
+      "opacity": 1,
+      "metallic": 0,
+      "roughness": 0.88,
+      "reflectance": 0.45,
+      "enabled_by_default": true,
+      "notes": "生成結果は横4モジュール×縦10段。840×650mm設定でモジュール約210×65mm。実製品の寸法保証ではない。"
+    },
+    {
+      "preset_index": 6,
+      "name": "タイル（グレー）",
+      "key": "tile_gray",
+      "base_color_srgb": [
+        0.52,
+        0.54,
+        0.56
+      ],
+      "texture": {
+        "file": "textures/tile_gray_albedo.jpg",
+        "width_mm": 1200,
+        "height_mm": 1200,
+        "colorize": false
+      },
+      "opacity": 1,
+      "metallic": 0,
+      "roughness": 0.65,
+      "reflectance": 0.5,
+      "enabled_by_default": true,
+      "notes": "300mm角想定、画像1枚1200×1200mm。生成模様の寸法は目安。"
+    },
+    {
+      "preset_index": 7,
+      "name": "畳",
+      "key": "tatami",
+      "base_color_srgb": [
+        0.73,
+        0.73,
+        0.48
+      ],
+      "texture": {
+        "file": "textures/tatami_albedo.jpg",
+        "width_mm": 900,
+        "height_mm": 900,
+        "colorize": false
+      },
+      "opacity": 1,
+      "metallic": 0,
+      "roughness": 0.85,
+      "reflectance": 0.45,
+      "enabled_by_default": true,
+      "notes": ""
+    },
+    {
+      "preset_index": 8,
+      "name": "ガラス",
+      "key": "glass",
+      "base_color_srgb": [
+        0.62,
+        0.8,
+        0.88
+      ],
+      "texture": {
+        "file": "textures/glass_albedo.jpg",
+        "width_mm": 1000,
+        "height_mm": 1000,
+        "colorize": false
+      },
+      "opacity": 0.22,
+      "metallic": 0,
+      "roughness": 0.08,
+      "reflectance": 0.5,
+      "enabled_by_default": false,
+      "notes": "画像は淡い色の参考。既定は画像なし＋opacity0.22を推奨。透明度はPNGアルファでなくMaterial.opacity。"
+    },
+    {
+      "preset_index": 9,
+      "name": "金属（ステンレス）",
+      "key": "stainless",
+      "base_color_srgb": [
+        0.76,
+        0.77,
+        0.78
+      ],
+      "texture": {
+        "file": "textures/stainless_albedo_v2.jpg",
+        "width_mm": 500,
+        "height_mm": 500,
+        "colorize": false
+      },
+      "opacity": 1,
+      "metallic": 1,
+      "roughness": 0.27,
+      "reflectance": 0.5,
+      "enabled_by_default": true,
+      "notes": ""
+    },
+    {
+      "preset_index": 10,
+      "name": "黒（鉄）",
+      "key": "black_iron",
+      "base_color_srgb": [
+        0.18,
+        0.18,
+        0.19
+      ],
+      "texture": {
+        "file": "textures/black_iron_albedo.jpg",
+        "width_mm": 500,
+        "height_mm": 500,
+        "colorize": false
+      },
+      "opacity": 1,
+      "metallic": 1,
+      "roughness": 0.7,
+      "reflectance": 0.5,
+      "enabled_by_default": true,
+      "notes": ""
+    },
+    {
+      "preset_index": 11,
+      "name": "芝",
+      "key": "grass",
+      "base_color_srgb": [
+        0.4,
+        0.6,
+        0.28
+      ],
+      "texture": {
+        "file": "textures/grass_albedo.jpg",
+        "width_mm": 1000,
+        "height_mm": 1000,
+        "colorize": false
+      },
+      "opacity": 1,
+      "metallic": 0,
+      "roughness": 0.92,
+      "reflectance": 0.4,
+      "enabled_by_default": true,
+      "notes": ""
+    }
+  ],
+  "distribution": {
+    "variant": "light",
+    "image_format": "JPEG",
+    "resolution_px": [
+      1024,
+      1024
+    ],
+    "jpeg_quality": 88,
+    "chroma_subsampling": "4:4:4",
+    "physical_scale_unchanged": true
+  }
+}

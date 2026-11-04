@@ -1,0 +1,33 @@
+#pragma once
+// Parsing and formatting of lengths typed into the measurement box.
+
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace sbr::units {
+
+// Parses a single length such as "3000", "4.5m", "300 cm", "-12.5mm".
+// A value without a suffix is interpreted in millimetres. Returns mm.
+std::optional<double> parseLength(std::string_view text);
+
+// Parses a comma/semicolon separated list of lengths, e.g. "3000,4500" or
+// "3m; 4.5m". Returns std::nullopt if any element fails to parse.
+std::optional<std::vector<double>> parseLengthList(std::string_view text);
+
+// Like parseLengthList, but an item may be left empty to keep that value
+// as it is: "3000," = the first only, ",1500" = the second only. Empty
+// slots are std::nullopt; at least one item has a value.
+std::optional<std::vector<std::optional<double>>> parseLengthSlots(std::string_view text);
+
+// Grid spacings: a length list where an item may repeat, "3600*3" or
+// "3600x3" (three bays of 3600). Empty text = no spacings. The repeat
+// count must be a whole number from 1 to 1000.
+std::optional<std::vector<double>> parseSpacingList(std::string_view text);
+
+// Formats a mm value for display with the given number of decimals.
+// Display precision is independent from the model precision.
+std::string formatLength(double mm, int decimals = 1);
+
+}  // namespace sbr::units

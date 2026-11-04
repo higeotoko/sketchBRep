@@ -1,0 +1,444 @@
+name: CI
+
+# Saving CI minutes (see docs/09_ci.md):
+# - docs-only changes do not run CI; a newer push cancels the older run
+# - repository variable SBR_CI_ECONOMY=true: the Windows job runs only when
+#   started by hand (Actions > CI > Run workflow) or when the PR has the
+#   label "windows"; Linux always runs
+# - ccache keeps Linux rebuilds short
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["docs/**", "**/*.md"]
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+    paths-ignore: ["docs/**", "**/*.md"]
+  workflow_dispatch:
+    inputs:
+      windows:
+        description: "Also build the Windows package"
+        type: boolean
+        default: true
+
+concurrency:
+  # Labelling a PR must not cancel the build already running for it.
+  group: ci-${{ github.ref }}-${{ github.event.action == 'labeled' && 'label' || 'build' }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    # A "labeled" event only matters for the Windows job.
+    if: github.event.action != 'labeled'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build g++ ccache \
+            libocct-foundation-dev libocct-modeling-data-dev libocct-modeling-algorithms-dev \
+            libocct-data-exchange-dev libocct-visualization-dev libocct-ocaf-dev libtbb-dev libfontconfig-dev \
+            qt6-base-dev libgl-dev libgl1-mesa-dri xvfb \
+            nlohmann-json3-dev libgtest-dev libgmock-dev
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-linux-${{ github.sha }}
+          restore-keys: ccache-linux-
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: |
+          ccache --max-size=500M
+          cmake --build build
+          ccache --show-stats
+
+      - name: Test (core, Phase 0 CLI and GUI end-to-end under Xvfb)
+        run: |
+          set +e
+          xvfb-run -a -s "-screen 0 1600x1000x24" ctest --test-dir build --output-on-failure 2>&1 | tee test-log.txt
+          test_status=${PIPESTATUS[0]}
+          set -e
+          if [ "$test_status" -ne 0 ]; then
+            python3 - <<'PY_DIAGNOSTICS'
+          from pathlib import Path
+          lines = Path("test-log.txt").read_text(errors="replace").splitlines()
+          count = 0
+          for index, line in enumerate(lines):
+              if "FAIL!" in line or "[  FAILED  ]" in line or "***Failed" in line or "***Timeout" in line:
+                  detail = " / ".join(lines[index:index + 3])
+                  detail = detail.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+                  print("::error::" + detail)
+                  count += 1
+                  if count >= 40:
+                      break
+          PY_DIAGNOSTICS
+          fi
+          exit "$test_status"
+
+  # Windows build + portable zip (exe and all runtime DLLs) for trying the app.
+  windows:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.windows) ||
+      (github.event_name != 'workflow_dispatch' && github.event.action != 'labeled' && vars.SBR_CI_ECONOMY != 'true') ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'windows') &&
+       (vars.SBR_CI_ECONOMY == 'true' || github.event.action == 'labeled'))
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install OCCT / Qt 6 (conda-forge)
+        id: mamba
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: sbr
+          create-args: >-
+            occt qt6-main nlohmann_json gtest
+          cache-environment: true
+          cache-downloads: true
+
+      # Qt tools (moc) and tests load the environment's DLLs.
+      - name: Put environment DLLs on PATH
+        shell: pwsh
+        run: Add-Content $env:GITHUB_PATH "${{ steps.mamba.outputs.environment-path }}\Library\bin"
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          $env_root = "${{ steps.mamba.outputs.environment-path }}"
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release `
+                -DCMAKE_PREFIX_PATH="$env_root\Library"
+
+      - name: Build
+        shell: pwsh
+        run: |
+          cmake --build build 2>&1 | Tee-Object -FilePath build-log.txt
+          $buildExitCode = $LASTEXITCODE
+          if ($buildExitCode -ne 0) {
+            # Surface compiler diagnostics in the summary, including when the
+            # viewer cannot open authenticated Actions logs.
+            Get-Content build-log.txt | Where-Object { $_ -match 'error [A-Z]+[0-9]+|fatal error|FAILED:|unresolved external' } |
+              Select-Object -First 20 | ForEach-Object {
+                $message = $_.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+                Write-Output "::error::$message"
+              }
+            exit $buildExitCode
+          }
+
+      - name: Test (core + Phase 0 CLI)
+        shell: pwsh
+        run: |
+          $env:PATH = "${{ steps.mamba.outputs.environment-path }}\Library\bin;$env:PATH"
+          ctest --test-dir build --output-on-failure -LE gui
+
+      - name: Package portable zip
+        shell: pwsh
+        run: |
+          $env_root = "${{ steps.mamba.outputs.environment-path }}"
+          $dist = "dist\SketchBRep"
+          New-Item -ItemType Directory -Force $dist | Out-Null
+          Copy-Item build\src\app\SketchBRep.exe $dist
+          Copy-Item build\tools\phase0\sbr_phase0.exe $dist
+          Copy-Item build\tools\cli\sbr_cli.exe $dist
+          Copy-Item build\tools\mcp\sbr_mcp.exe $dist
+          # Qt plugins: platform integration (required), styles, image formats.
+          foreach ($name in @("platforms", "styles", "imageformats")) {
+            $dir = Get-ChildItem -Path $env_root -Recurse -Directory -Filter $name |
+                   Where-Object { $_.FullName -match "plugins" } | Select-Object -First 1
+            if ($dir) { Copy-Item $dir.FullName "$dist\$name" -Recurse }
+          }
+          # Only the DLLs actually needed: walk dependencies (dumpbin) from the
+          # executables and plugins, resolving names inside the environment.
+          $search = @("$env_root\Library\bin", "$env_root")
+          $queue = [System.Collections.Generic.Queue[string]]::new()
+          Get-ChildItem $dist -Recurse -Include *.exe, *.dll | ForEach-Object { $queue.Enqueue($_.FullName) }
+          $seen = @{}
+          while ($queue.Count -gt 0) {
+            $file = $queue.Dequeue()
+            $deps = dumpbin /nologo /dependents $file | Where-Object { $_ -match '^\s+\S+\.dll\s*$' } |
+                    ForEach-Object { $_.Trim() }
+            foreach ($dep in $deps) {
+              $key = $dep.ToLowerInvariant()
+              if ($seen.ContainsKey($key)) { continue }
+              $seen[$key] = $true
+              foreach ($dir in $search) {
+                $candidate = Join-Path $dir $dep
+                if (Test-Path $candidate) {
+                  Copy-Item $candidate $dist
+                  $queue.Enqueue((Join-Path $dist $dep))
+                  break
+                }
+              }
+            }
+          }
+          # TBB's allocator is loaded at run time, not linked.
+          Get-ChildItem "$env_root\Library\bin" -Filter "tbbmalloc*.dll" | Copy-Item -Destination $dist
+          if (-not (Test-Path "$dist\platforms\qwindows.dll")) { throw "qwindows.dll not found" }
+          # For users: the start guide, the terms, the licences at the top;
+          # the manual (one file per feature) in manual\.
+          Copy-Item packaging\00_START_HERE.md, packaging\EULA.md, packaging\THIRD_PARTY_NOTICES.md $dist
+          $manual = "$dist\manual"
+          New-Item -ItemType Directory -Force "$manual\images" | Out-Null
+          Copy-Item docs\31_planar_curve_splitting.md "$manual\PLANAR_CURVE_SPLITTING.md"
+          Copy-Item docs\39_curved_face_split.md "$manual\CURVED_FACE_SPLIT.md"
+          Copy-Item docs\40_members_stage_a.md "$manual\MEMBERS.md"
+          Copy-Item docs\41_members_stage_b.md "$manual\MEMBERS_STAGE_B.md"
+          Copy-Item docs\42_follow.md "$manual\FOLLOW.md"
+          Copy-Item docs\43_grid.md "$manual\GRID.md"
+          Copy-Item docs\44_plan_elevation_mode.md "$manual\PLAN_ELEVATION.md"
+          Copy-Item docs\45_levels.md "$manual\LEVELS.md"
+          Copy-Item docs\46_collada_sketchup.md "$manual\SKETCHUP_DAE.md"
+          Copy-Item docs\47_rhino_operations.md "$manual\RHINO_OPERATIONS.md"
+          Copy-Item docs\48_input_box_and_upright_shapes.md "$manual\INPUT_AND_UPRIGHT.md"
+          Copy-Item docs\49_verification_plan.md "$manual\VERIFY_CHECKLIST.md"
+          Copy-Item docs\50_drawings.md "$manual\DRAWINGS.md"
+          Copy-Item docs\32_unified_import_export.md "$manual\IMPORT_EXPORT.md"
+          Copy-Item docs\33_chatgpt_connection.md "$manual\CHATGPT_CONNECTION.md"
+          Copy-Item docs\34_sections_and_tools_palette.md "$manual\SECTIONS_AND_TOOLS.md"
+          Copy-Item docs\35_wheel_surface_navigation.md "$manual\WHEEL_NAVIGATION.md"
+          Copy-Item docs\36_palette_ui_and_cursors.md "$manual\PALETTE_AND_CURSORS.md"
+          Copy-Item docs\37_panel_docking.md "$manual\PANEL_DOCKING.md"
+          Copy-Item docs\images\panel-dock-motion.mp4 "$manual\images"
+          Copy-Item docs\images\panel-dock-motion-phases.png "$manual\images"
+          New-Item -ItemType Directory -Force "$dist\examples\dxf" | Out-Null
+          Copy-Item tests\data\dxf\small*.dxf "$dist\examples\dxf"
+          Copy-Item docs\27_dxf_face_creation.md "$dist\examples\dxf\README.md"
+          New-Item -ItemType Directory -Force "$dist\examples\stl" | Out-Null
+          Copy-Item docs\28_stl_export.md "$dist\examples\stl\README.md"
+          New-Item -ItemType Directory -Force "$dist\examples\exchange" | Out-Null
+          Copy-Item docs\30_geometry_exchange_formats.md "$dist\examples\exchange\README.md"
+
+      # Licences of everything shipped (LGPL and others require them):
+      # for each DLL in the zip, the conda package it came from, its licence
+      # files and a table of package, version and licence; openNURBS (built
+      # in) from its source. A shipped DLL without licence files stops here.
+      - name: Collect third-party licences
+        shell: pwsh
+        run: |
+          $env_root = "${{ steps.mamba.outputs.environment-path }}"
+          $dist = "dist\SketchBRep"
+          $licences = "$dist\licenses"
+          New-Item -ItemType Directory -Force $licences | Out-Null
+          $shipped = @{}
+          Get-ChildItem $dist -Recurse -Include *.dll | ForEach-Object { $shipped[$_.Name.ToLowerInvariant()] = $true }
+          $rows = @()
+          $missing = @()
+          $metas = @{}
+          foreach ($metaFile in Get-ChildItem "$env_root\conda-meta" -Filter *.json) {
+            $m = Get-Content $metaFile.FullName -Raw | ConvertFrom-Json
+            $metas[$m.name] = $m
+          }
+          # A package's info/licenses: from the package cache, else the
+          # package downloaded (its URL in conda-meta) and unpacked by micromamba.
+          function Get-LicenceDir($meta) {
+            $pkgDir = $meta.extracted_package_dir
+            if (-not $pkgDir -or -not (Test-Path $pkgDir)) { $pkgDir = Join-Path $env:MAMBA_ROOT_PREFIX "pkgs\$($meta.name)-$($meta.version)-$($meta.build)" }
+            $source = Join-Path $pkgDir "info\licenses"
+            if ((Test-Path $source) -or -not $meta.url) { return $source }
+            $file = Join-Path $env:RUNNER_TEMP ([IO.Path]::GetFileName($meta.url))
+            $unpacked = Join-Path $env:RUNNER_TEMP ("pkg-" + $meta.name)
+            try {
+              Invoke-WebRequest -Uri $meta.url -OutFile $file
+              & $env:MAMBA_EXE package extract $file $unpacked | Out-Null
+            } catch { Write-Host "Could not fetch $($meta.name): $_" }
+            return Join-Path $unpacked "info\licenses"
+          }
+          foreach ($meta in $metas.Values) {
+            $hits = @($meta.files | Where-Object { $shipped.ContainsKey([IO.Path]::GetFileName($_).ToLowerInvariant()) })
+            if ($hits.Count -eq 0) { continue }
+            $source = Get-LicenceDir $meta
+            if (-not (Test-Path $source)) {
+              # Split packages (e.g. libfreetype6) keep the licence on their
+              # sibling (libfreetype, freetype).
+              $base = ($meta.name -replace '^lib', '') -replace '\d+$', ''
+              foreach ($sibling in @("lib$base", $base)) {
+                if ($sibling -ne $meta.name -and $metas.ContainsKey($sibling)) {
+                  $candidate = Get-LicenceDir $metas[$sibling]
+                  if (Test-Path $candidate) { $source = $candidate; break }
+                }
+              }
+            }
+            if (Test-Path $source) {
+              Copy-Item $source (Join-Path $licences $meta.name) -Recurse
+            } elseif ($meta.name -like "api-ms-win-*" -or $meta.name -eq "ucrt") {
+              # Windows' own runtime: no separate licence text.
+            } else {
+              $missing += $meta.name
+            }
+            $rows += "| $($meta.name) | $($meta.version) | $($meta.license) | licenses/$($meta.name) |"
+          }
+          # Texts the packages leave out: OCCT's exception to the LGPL, and the
+          # GPL 3 that the LGPL 3 (Qt) is written as additions to.
+          if (Test-Path "$licences\occt") { Copy-Item packaging\licenses\OCCT_LGPL_EXCEPTION.txt "$licences\occt" }
+          if (Test-Path "$licences\qt6-main") { Copy-Item packaging\licenses\GPL-3.0.txt "$licences\qt6-main" }
+          $opennurbs = Get-ChildItem build -Recurse -Filter LICENSE -ErrorAction SilentlyContinue |
+                       Where-Object { $_.FullName -match "opennurbs" } | Select-Object -First 1
+          if ($opennurbs) {
+            New-Item -ItemType Directory -Force "$licences\opennurbs" | Out-Null
+            Copy-Item $opennurbs.FullName "$licences\opennurbs\LICENSE"
+            $rows += "| opennurbs (built in, with zlib and FreeType) | eb92af3 | openNURBS licence (MIT style) | licenses/opennurbs |"
+          } else { $missing += "opennurbs" }
+          $table = @("# Shipped libraries", "", "| Package | Version | Licence | Licence files |", "|---|---|---|---|") + ($rows | Sort-Object)
+          Set-Content -Path "$licences\PACKAGES.md" -Value $table -Encoding utf8
+          Write-Host ("Licences collected for {0} packages" -f $rows.Count)
+          if ($missing.Count -gt 0) { throw ("No licence files for: " + ($missing -join ", ")) }
+
+      - name: Check that every DLL dependency in the zip resolves
+        shell: pwsh
+        run: |
+          $dist = "dist\SketchBRep"
+          $missing = @()
+          Get-ChildItem $dist -Recurse -Include *.exe, *.dll | ForEach-Object {
+            $file = $_
+            dumpbin /nologo /dependents $file.FullName | Where-Object { $_ -match '^\s+\S+\.dll\s*$' } |
+              ForEach-Object {
+                $dep = $_.Trim()
+                if ($dep -like "api-ms-win-*" -or $dep -like "ext-ms-*") { return }
+                if (Test-Path (Join-Path $dist $dep)) { return }
+                # The VC++ runtime is present on the runner but not on every PC:
+                # it must ship in the zip.
+                $runtime = $dep -like "vcruntime*" -or $dep -like "msvcp*" -or $dep -like "concrt*"
+                if (-not $runtime -and (Test-Path (Join-Path "C:\Windows\System32" $dep))) { return }
+                $missing += "$($file.Name) -> $dep"
+              }
+          }
+          if ($missing.Count -gt 0) { $missing | ForEach-Object { Write-Host $_ }; throw "missing DLLs" }
+          $size = (Get-ChildItem $dist -Recurse | Measure-Object Length -Sum).Sum / 1MB
+          Write-Host ("Package size: {0:N0} MB" -f $size)
+
+      - name: Smoke test packaged app (headless Phase 0 CLI from the zip folder)
+        shell: pwsh
+        run: |
+          $env:PATH = "C:\Windows\System32"
+          dist\SketchBRep\sbr_phase0.exe 1000 2000 3000 dist\box.step
+          if ($LASTEXITCODE -ne 0) { throw "sbr_phase0 failed" }
+          # MCP server (headless) from the zip: initialize, list tools, call a tool.
+          $out = Get-Content tests\data\mcp_session.jsonl | dist\SketchBRep\sbr_mcp.exe --headless | Out-String
+          Write-Host $out.Substring(0, [Math]::Min(600, $out.Length))
+          if ($out -notmatch '"isError":false') { throw "sbr_mcp smoke test failed" }
+          Get-Content tests\data\stl_export.jsonl | dist\SketchBRep\sbr_cli.exe
+          if ($LASTEXITCODE -ne 0) { throw "STL export smoke test failed" }
+          $stl = [System.IO.File]::ReadAllBytes("dist\SketchBRep\examples\stl\box_10x20x30.stl")
+          if ($stl.Length -ne 684 -or [System.BitConverter]::ToUInt32($stl, 80) -ne 12) {
+            throw "Unexpected STL triangle count or size"
+          }
+          $exchange = Get-Content tests\data\geometry_exchange.jsonl | dist\SketchBRep\sbr_cli.exe
+          if ($LASTEXITCODE -ne 0) { throw "Geometry exchange smoke test failed" }
+          foreach ($line in $exchange) {
+            $result = $line | ConvertFrom-Json
+            if (-not $result.ok) { throw "Geometry exchange command failed" }
+          }
+          if (-not (Test-Path "dist\SketchBRep\examples\exchange\box_10x20x30.brep") -or
+              -not (Test-Path "dist\SketchBRep\examples\exchange\box_10x20x30.igs")) {
+            throw "Geometry exchange examples were not written"
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SketchBRep-windows-x64
+          path: dist/SketchBRep
+          retention-days: 30
+
+      # The installer (packaging/installer): the same folder, installed for
+      # the current user with a start menu entry and the .sbr association.
+      # Checked by installing and uninstalling it silently.
+      - name: Build and check the installer
+        if: false
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress | Out-Null
+          }
+          if (-not (Test-Path $iscc)) { throw "Inno Setup not found" }
+          $version = (Select-String -Path CMakeLists.txt -Pattern 'project\(SketchBRep VERSION ([0-9.]+)').Matches[0].Groups[1].Value
+          $source = (Resolve-Path dist\SketchBRep).Path
+          $output = (Resolve-Path dist).Path
+          & $iscc /Qp "/DAppVersion=$version" "/DSourceDir=$source" "/DOutputDir=$output" packaging\installer\SketchBRep.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+          $setup = "dist\SketchBRep-$version-setup-x64.exe"
+          if (-not (Test-Path $setup)) { throw "installer not written" }
+          Write-Host ("Installer: {0:N0} MB" -f ((Get-Item $setup).Length / 1MB))
+          $target = Join-Path $env:RUNNER_TEMP "sbr-install"
+          $p = Start-Process -FilePath $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/CURRENTUSER", "/NORESTART", "/DIR=`"$target`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "install failed: $($p.ExitCode)" }
+          if (-not (Test-Path "$target\SketchBRep.exe") -or -not (Test-Path "$target\platforms\qwindows.dll")) { throw "installed files missing" }
+          $command = (Get-ItemProperty "HKCU:\Software\Classes\SketchBRep.Model\shell\open\command").'(default)'
+          if ($command -notmatch "SketchBRep.exe") { throw ".sbr association missing: $command" }
+          & "$target\sbr_phase0.exe" 10 20 30 (Join-Path $env:RUNNER_TEMP "installed.step")
+          if ($LASTEXITCODE -ne 0) { throw "installed program does not run" }
+          $p = Start-Process -FilePath "$target\unins000.exe" -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "uninstall failed: $($p.ExitCode)" }
+          Start-Sleep -Seconds 3
+          if (Test-Path "$target\SketchBRep.exe") { throw "uninstall left the program" }
+          if (Test-Path "HKCU:\Software\Classes\SketchBRep.Model") { throw "uninstall left the association" }
+
+      - uses: actions/upload-artifact@v4
+        if: false
+        with:
+          name: SketchBRep-windows-x64-setup
+          path: dist/SketchBRep-*-setup-x64.exe
+          retention-days: 30
+
+      - name: Test GUI end-to-end (Windows, Mesa software OpenGL)
+        shell: pwsh
+        env:
+          MESA_VERSION: "26.2.3"
+          GALLIUM_DRIVER: llvmpipe
+        run: |
+          $env_root = "${{ steps.mamba.outputs.environment-path }}"
+          $env:PATH = "$env_root\Library\bin;$env:PATH"
+          # The runner's screen is 1024x768: the tests' 1280x860 window would
+          # not fit and shrink (picks then land on other points). Larger first.
+          try { Set-DisplayResolution -Width 1920 -Height 1080 -Force } catch { Write-Host "Set-DisplayResolution: $_" }
+          Add-Type -AssemblyName System.Windows.Forms
+          Write-Host ("Screen: " + [System.Windows.Forms.Screen]::PrimaryScreen.Bounds)
+          $archive = "mesa.7z"
+          Invoke-WebRequest -Uri "https://github.com/pal1000/mesa-dist-win/releases/download/$env:MESA_VERSION/mesa3d-$env:MESA_VERSION-release-msvc.7z" -OutFile $archive
+          7z x $archive -omesa -y | Out-Null
+          $gl = Get-ChildItem mesa\x64 -Filter *.dll | Where-Object { $_.Name -match '^(opengl32|libgallium_wgl|libglapi)\.dll$' }
+          if (-not ($gl | Where-Object Name -eq "opengl32.dll")) { throw "Mesa opengl32.dll not found" }
+          # Next to each GUI test program: loaded before the system's OpenGL.
+          foreach ($dir in @("build\tests")) { $gl | Copy-Item -Destination $dir }
+          $platforms = Get-ChildItem -Path $env_root -Recurse -Directory -Filter platforms |
+                       Where-Object { $_.FullName -match "plugins" } | Select-Object -First 1
+          $env:QT_PLUGIN_PATH = Split-Path $platforms.FullName
+          ctest --test-dir build --output-on-failure -L gui -E gui_phase1 2>&1 | Tee-Object -FilePath gui-test-log.txt
+          $status = $LASTEXITCODE
+          # The big suite run directly, its results also written to a file (the
+          # console output can be lost if the program ends abnormally).
+          $env:QT_QPA_PLATFORM = "windows"
+          & build\tests\sbr_gui_tests.exe -o gui_phase1.txt,txt -o -,txt 2>&1 | Out-Null
+          $phase1 = $LASTEXITCODE
+          Write-Host "gui_phase1 exit code: $phase1"
+          if (Test-Path gui_phase1.txt) {
+            $lines = Get-Content gui_phase1.txt
+            $lines | Where-Object { $_ -match '^(FAIL!|Totals|QFATAL|QWARN)|Loc:' } | Select-Object -First 80 | ForEach-Object { Write-Host $_ }
+            Write-Host "--- last lines ---"
+            $lines | Select-Object -Last 15 | ForEach-Object { Write-Host $_ }
+            $lines | Where-Object { $_ -match '^FAIL!' } | Select-Object -First 40 | ForEach-Object {
+              Write-Output ("::error::" + $_.Replace('%', '%25'))
+            }
+          } else {
+            Write-Output "::error::gui_phase1 wrote no results (it ended before writing)"
+          }
+          if ($phase1 -ne 0) { $status = 1 }
+          exit $status
+
+      - name: Keep the Windows GUI test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-gui-test-log
+          path: |
+            gui_phase1.txt
+            gui-test-log.txt
+          if-no-files-found: ignore
+          retention-days: 7

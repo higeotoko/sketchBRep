@@ -1,0 +1,139 @@
+{
+  "svg": [
+    {
+      "file": "01-editable\\sketchbrep-logo-editable.svg",
+      "vector_only": true,
+      "text_elements": 2,
+      "named_elements": 32
+    },
+    {
+      "file": "02-outlined\\sketchbrep-logo-paths.svg",
+      "vector_only": true,
+      "text_elements": 0,
+      "named_elements": 32
+    },
+    {
+      "file": "02-outlined\\sketchbrep-symbol-detail.svg",
+      "vector_only": true,
+      "text_elements": 0,
+      "named_elements": 29
+    },
+    {
+      "file": "03-app-icon\\sketchbrep-app-icon.svg",
+      "vector_only": true,
+      "text_elements": 0,
+      "named_elements": 24
+    },
+    {
+      "file": "06-readme\\sketchbrep-readme.svg",
+      "vector_only": true,
+      "text_elements": 0,
+      "named_elements": 27
+    }
+  ],
+  "png": [
+    {
+      "file": "03-app-icon\\sketchbrep-app-icon-1024.png",
+      "size": [
+        1024,
+        1024
+      ],
+      "transparent": true,
+      "content_bounds": [
+        77,
+        131,
+        947,
+        886
+      ]
+    },
+    {
+      "file": "03-app-icon\\sketchbrep-app-icon-256.png",
+      "size": [
+        256,
+        256
+      ],
+      "transparent": true,
+      "content_bounds": [
+        19,
+        32,
+        237,
+        222
+      ]
+    },
+    {
+      "file": "04-png\\sketchbrep-logo-1024.png",
+      "size": [
+        1024,
+        1024
+      ],
+      "transparent": true,
+      "content_bounds": [
+        106,
+        115,
+        918,
+        869
+      ]
+    },
+    {
+      "file": "04-png\\sketchbrep-logo-256.png",
+      "size": [
+        256,
+        256
+      ],
+      "transparent": true,
+      "content_bounds": [
+        26,
+        28,
+        230,
+        218
+      ]
+    },
+    {
+      "file": "04-png\\sketchbrep-logo-3072.png",
+      "size": [
+        3072,
+        3072
+      ],
+      "transparent": true,
+      "content_bounds": [
+        318,
+        346,
+        2754,
+        2605
+      ]
+    },
+    {
+      "file": "06-readme\\sketchbrep-readme.png",
+      "size": [
+        2480,
+        880
+      ],
+      "transparent": true,
+      "content_bounds": [
+        204,
+        200,
+        2403,
+        763
+      ]
+    }
+  ],
+  "ico": {
+    "sizes": [
+      16,
+      24,
+      32,
+      48,
+      64,
+      128,
+      256
+    ],
+    "directory_entries": 7,
+    "bits_per_pixel": 32,
+    "verified_with": "ICO directory + Pillow decoder"
+  },
+  "notes": [
+    "Typeface: Century Gothic Bold; editable font must be installed. Outlined versions require no fonts.",
+    "Reconstructed from reference raster; not an exact trace.",
+    "No bitmap embeddings or external resources in SVG. Vector gradients retained."
+  ]
+}

@@ -1,0 +1,98 @@
+[
+  {
+    "key": "wood_light",
+    "name": "木（明るい）",
+    "width_px": 1024,
+    "height_px": 1024,
+    "bytes": 261871,
+    "sha256": "df0888cb38e1ff663e4014429440c5d2e7be42a22f350205fd6e0d78b2735ba9"
+  },
+  {
+    "key": "wood_dark",
+    "name": "木（濃い）",
+    "width_px": 1024,
+    "height_px": 1024,
+    "bytes": 251239,
+    "sha256": "4e07cdaedf9d8486103e51f61f5e2505cd810792abf11a7cfe7aab0715c651db"
+  },
+  {
+    "key": "plaster_white",
+    "name": "漆喰（白）",
+    "width_px": 1024,
+    "height_px": 1024,
+    "bytes": 288277,
+    "sha256": "9882679d287ed52b145621f2b956a7d2890a0a430c7d60b3ef2c43ddd79ad3d6"
+  },
+  {
+    "key": "concrete",
+    "name": "コンクリート",
+    "width_px": 1024,
+    "height_px": 1024,
+    "bytes": 390555,
+    "sha256": "2d4fde8e25f94f88c6e2a5a37a0548257985503b4171e60b46b17f743fb13d95"
+  },
+  {
+    "key": "mortar",
+    "name": "モルタル",
+    "width_px": 1024,
+    "height_px": 1024,
+    "bytes": 409686,
+    "sha256": "16cd795be69495f54448c94b0c211108ab6f3533f0fc92a6df66aba873565c32"
+  },
+  {
+    "key": "brick",
+    "name": "レンガ",
+    "width_px": 1024,
+    "height_px": 1024,
+    "bytes": 420666,
+    "sha256": "ca42536e8f57da4c961eebd70fca62d6ad026244681bcda9f885da2d4982c779"
+  },
+  {
+    "key": "tile_gray",
+    "name": "タイル（グレー）",
+    "width_px": 1024,
+    "height_px": 1024,
+    "bytes": 343690,
+    "sha256": "f5e118af8696ddff2340346883077d027d736111e81903b9cda665f1a929ae36"
+  },
+  {
+    "key": "tatami",
+    "name": "畳",
+    "width_px": 1024,
+    "height_px": 1024,
+    "bytes": 375233,
+    "sha256": "4f758417dc9913cbaa9e088fdf0a66ce92bf9b32e8a1ec71fb896c3c1dfe41c0"
+  },
+  {
+    "key": "glass",
+    "name": "ガラス",
+    "width_px": 1024,
+    "height_px": 1024,
+    "bytes": 23400,
+    "sha256": "3770a4c71837c0825918dad96b83312019011a766c0960419c4f8bf5b650097c"
+  },
+  {
+    "key": "stainless",
+    "name": "金属（ステンレス）",
+    "width_px": 1024,
+    "height_px": 1024,
+    "bytes": 185675,
+    "sha256": "27c2adeb992b2679bf384697bb5863cc91708a51eadde2772141f620c4e9621c"
+  },
+  {
+    "key": "black_iron",
+    "name": "黒（鉄）",
+    "width_px": 1024,
+    "height_px": 1024,
+    "bytes": 315932,
+    "sha256": "ce8b7f81b4705bc047792a83f5a980b17e2c0bd78fad89d3adf5b2503f9c4534"
+  },
+  {
+    "key": "grass",
+    "name": "芝",
+    "width_px": 1024,
+    "height_px": 1024,
+    "bytes": 769455,
+    "sha256": "ed0cd11e02df29a116265313b083acc99aa0fd56764269c70447adad2d45ef20"
+  }
+]
