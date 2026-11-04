@@ -8964,14 +8964,11 @@ void GuiPhase1::drawingDialogPlanSectionElevationAndExport() {
   // In the background: a change starts the view on another thread, the
   // dialog stays usable, the result comes in by itself. The model changed
   // meanwhile (as the AI may) does not reach the drawing being made.
-  // Record the state when the debounce timer launches the worker. A fast
-  // worker can finish between QTRY's polls, so polling computing() misses it.
-  bool sawComputing = false;
-  for (auto* timer : dialog.findChildren<QTimer*>())
-    connect(timer, &QTimer::timeout, &dialog, [&] { sawComputing |= dialog.computing(); });
+  const int jobsBefore = dialog.jobsStarted();
   kind->setCurrentIndex(0);
   f.box(9000, 0, 500, 500, 3000);
-  QTRY_VERIFY_WITH_TIMEOUT(sawComputing, 3000);
+  // Started on the other thread (it may already be done when looked at).
+  QTRY_VERIFY_WITH_TIMEOUT(dialog.jobsStarted() > jobsBefore, 3000);
   QVERIFY(dialog.isEnabled());
   QTRY_VERIFY_WITH_TIMEOUT(!dialog.computing(), 30000);
   QVERIFY2(dialog.sheet().has_value(), qPrintable(dialog.lastError()));
