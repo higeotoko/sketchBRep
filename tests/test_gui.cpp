@@ -270,6 +270,7 @@ class GuiPhase1 : public QObject {
   void gridEditedAndMembersFollow();
   void fixedElevationPansAndDrawsOnItsPlane();
   void workPlaneAtAHeightOrAGridLine();
+  void architectureToolbarDrawsAtChosenLevel();
   void curvedShapesMoveAndCopy();
   void snapsKeepTheWorkPlaneDepth();
   void levelsInElevationsAndPlans();
@@ -4923,6 +4924,66 @@ void GuiPhase1::fixedElevationPansAndDrawsOnItsPlane() {
   f.window.findChild<QToolButton*>(QStringLiteral("viewButton0"))->click();
   QVERIFY(!f.vp->lockedView());
   QVERIFY(f.vp->constructionPlane().Axis().Direction().IsParallel(gp::DZ(), 1e-12));
+}
+
+void GuiPhase1::architectureToolbarDrawsAtChosenLevel() {
+  Fixture f;
+  QVERIFY(f.setUp(2000, 1500));
+  auto& m = f.window.modeler();
+  QVERIFY(m.setLevels({{"", "2FL", 3200.0}}));
+  const auto id = m.levels().front().id;
+  auto* bar = f.window.findChild<QToolBar*>(QStringLiteral("architectureToolbar"));
+  auto* level = f.window.findChild<QToolButton*>(QStringLiteral("architecturePlanLevel"));
+  QVERIFY(bar && bar->isVisible() && level);
+  auto* menu = level->menu();
+  QVERIFY(QMetaObject::invokeMethod(menu, "aboutToShow"));
+  auto* choice = menu->findChild<QAction*>(QStringLiteral("architectureLevel_") + QString::fromStdString(id));
+  QVERIFY(choice);
+  // A stale menu action resolves the latest level value rather than
+  // silently using the height that was current when the menu opened.
+  auto levels = m.levels();
+  levels.front().elevation = 3500;
+  QVERIFY(m.setLevels(levels));
+  const auto revision = m.history().revision();
+  choice->trigger();
+  QCOMPARE(m.history().revision(), revision);
+  QVERIFY(f.vp->lockedView() == Viewport::StandardView::Top);
+  QCOMPARE(f.vp->workOffset(), 3500.0);
+  QVERIFY(f.vp->projectSnaps());
+  auto* wall = bar->findChild<QToolButton*>(QStringLiteral("architectureWall"));
+  QVERIFY(wall && wall->menu());
+  wall->defaultAction()->trigger();
+  QVERIFY(wall->isChecked());
+  click(f.vp, f.vp->toWidget(gp_Pnt(500, 500, 3500)));
+  click(f.vp, f.vp->toWidget(gp_Pnt(2500, 500, 3500)));
+  QTest::keyClick(f.vp, Qt::Key_Return);
+  QCOMPARE(m.document().objects().size(), std::size_t(1));
+  const auto& object = m.document().objects().front();
+  QCOMPARE(object.attributes.at("kind"), std::string("wall"));
+  const auto box = geom::exactBounds(m.document().worldShape(object));
+  QVERIFY(std::abs(box.CornerMin().Z() - 3500) < 1e-6);
+  QVERIFY(m.undo());
+  QVERIFY(m.document().objects().empty());
+  // The menu offers the existing timber actions, including the exact
+  // same preview/apply entry; it does not create a second command path.
+  auto* timber = bar->findChild<QMenu*>(QStringLiteral("architectureTimberMenu"));
+  QVERIFY(timber);
+  QVERIFY(timber->actions().contains(f.window.findChild<QAction*>(QStringLiteral("timberFrameAction"))));
+  f.window.findChild<QAction*>(QStringLiteral("architecture3D"))->trigger();
+  QVERIFY(!f.vp->lockedView());
+  QVERIFY(level->text().contains(QStringLiteral("平面で描く")));
+  // A deleted level is also resolved at activation time.
+  QVERIFY(m.setLevels({}));
+  choice->trigger();
+  QVERIFY(!f.vp->lockedView());
+  QVERIFY(QMetaObject::invokeMethod(menu, "aboutToShow"));
+  for (auto* action : menu->actions())
+    QVERIFY(!action->objectName().startsWith(QStringLiteral("architectureLevel_")));
+  if (const auto shot = qEnvironmentVariable("SBR_ARCHITECTURE_SHOT"); !shot.isEmpty()) {
+    f.window.activateTool(MainWindow::ToolId::Select);
+    QTest::qWait(100);
+    QVERIFY(f.window.grab().save(shot));
+  }
 }
 
 void GuiPhase1::workPlaneAtAHeightOrAGridLine() {

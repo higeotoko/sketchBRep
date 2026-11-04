@@ -10,6 +10,8 @@
 
 開発を引き継ぐ場合は [引継書（2026-11-04）](docs/53_handover_2026-11-04.md) と、その後の [木造の開口・架構の修正記録（2026-11-05）](docs/60_timber_opening_reference_audit.md) を参照してください。
 
+最新の操作改善は [平面から始める建築ツールバーと今後の取込方針](docs/61_architecture_workflow_toolbar.md) に記録しています。
+
 ![Phase 2 screenshot](docs/images/phase2.png)
 
 ## できること

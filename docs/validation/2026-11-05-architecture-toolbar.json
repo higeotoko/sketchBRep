@@ -1,0 +1,36 @@
+{
+  "date_jst": "2026-11-05",
+  "base_commit": "11fc22c85803174b7adcbbb27206e39d85634a7c",
+  "platform": "Windows / MSVC 19.44 / OCCT 8.0.1 / Qt 6.12 / 3DM enabled",
+  "build": {"targets": ["sbr_core_tests", "sbr_cli", "sbr_gui_tests", "SketchBRep"], "exit_code": 0},
+  "core": {"changed": false, "rerun": false},
+  "gui": {
+    "actual_tests": 10,
+    "including_init_cleanup": 12,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": 15.160,
+    "exit_code": 0,
+    "tests": [
+      "architectureToolbarDrawsAtChosenLevel",
+      "workPlaneAtAHeightOrAGridLine",
+      "wallToolAndArchitectureMenus",
+      "slabToolAndOpeningTool",
+      "timberOpeningConflictsRemainVisibleInPreview",
+      "memberToolColumnsAndCatalogSearch",
+      "levelsInElevationsAndPlans",
+      "timberStairwellRegenerationMatchesDialogAndExports",
+      "timberFramePreviewApplyLevelsAndUndo",
+      "wallQuantityInputsComparisonSaveAndStaleModel"
+    ]
+  },
+  "human_windows_workflow_verified": false,
+  "installed_app_replaced": false,
+  "limits": [
+    "No Linux, CI or full GUI suite verification in this local record",
+    "Plan level selection sets the current work plane, not object level bindings",
+    "Openings still require a wall-face click in 3D or elevation",
+    "Wall-quantity model linkage remains future work"
+  ]
+}

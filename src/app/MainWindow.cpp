@@ -1100,7 +1100,8 @@ void MainWindow::buildMenus() {
     sectionPalette->setVisible(sectionShown);
   });
   tools->addSeparator();
-  tools->addAction(tr("通り芯を作成..."), this, &MainWindow::showGridDialog);
+  tools->addAction(tr("通り芯を作成..."), this, &MainWindow::showGridDialog)
+      ->setObjectName(QStringLiteral("createGridAction"));
   tools->addAction(tr("木造架構を作成・作り直し..."), this, &MainWindow::showTimberFrameDialog)->setObjectName(QStringLiteral("timberFrameAction"));
   tools->addAction(tr("架構チェック"), this, &MainWindow::showFrameCheckPanel)->setObjectName(QStringLiteral("frameCheckAction"));
   tools->addAction(tr("木材の拾い出し..."), this, &MainWindow::showTakeOffDialog)
@@ -1135,6 +1136,8 @@ void MainWindow::buildMenus() {
     alignMenu->addAction(tr("%1 最大").arg(a), this, [this, axis] { alignSelection(axis, 1); });
     if (axis < 2) alignMenu->addSeparator();
   }
+
+  buildArchitectureToolbar(view);
 
   // --- AI integration (off by default; see docs/06_ai_integration.md)
   QMenu* ai = menuBar()->addMenu(tr("AI 連携(&A)"));
@@ -1172,6 +1175,98 @@ void MainWindow::buildMenus() {
       ->setObjectName(QStringLiteral("bugReportAction"));
   help->addSeparator();
   help->addAction(tr("SketchBRep について"), this, &MainWindow::showAbout);
+}
+
+void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
+  auto* bar = new QToolBar(tr("建築"), this);
+  bar->setObjectName(QStringLiteral("architectureToolbar"));
+  bar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+  addToolBarBreak(Qt::TopToolBarArea);
+  addToolBar(Qt::TopToolBarArea, bar);
+  viewMenu->addAction(bar->toggleViewAction());
+
+  auto* level = new QToolButton(bar);
+  level->setObjectName(QStringLiteral("architecturePlanLevel"));
+  level->setPopupMode(QToolButton::InstantPopup);
+  level->setToolTip(tr("レベルを選んで平面で描く。吸着点も選んだ高さにそろえます。高さは作業面から変更できます"));
+  auto* menu = new QMenu(level);
+  level->setMenu(menu);
+  auto showPlane = [this, level] {
+    const bool plan = viewport_->lockedView() == Viewport::StandardView::Top;
+    const QString height = QString::fromStdString(units::formatLength(viewport_->workOffset(), 0));
+    const QString name = viewport_->workOffsetName();
+    level->setText(plan ? tr("平面: %1").arg(name.isEmpty() ? height : tr("%1（%2）").arg(name, height))
+                        : tr("平面で描く"));
+  };
+  connect(viewport_, &Viewport::viewLockChanged, this, showPlane);
+  connect(viewport_, &Viewport::workPlaneChanged, this, showPlane);
+  showPlane();
+  connect(menu, &QMenu::aboutToShow, this, [this, menu] {
+    menu->clear();
+    auto choose = [this](double elevation, const QString& name) {
+      viewport_->lockView(Viewport::StandardView::Top);
+      viewport_->setProjectSnaps(true);
+      viewport_->setWorkOffset(elevation, name);
+      viewport_->setFocus();
+      setStatus(tr("%1 の高さ %2 で描きます。壁・スラブ・柱を選んで配置できます")
+                    .arg(name, QString::fromStdString(units::formatLength(elevation, 0))));
+    };
+    menu->addAction(tr("地面（Z=0）"), this, [choose] { choose(0, tr("地面")); })
+        ->setObjectName(QStringLiteral("architectureGround"));
+    for (const auto& l : modeler_.levels()) {
+      auto* action = menu->addAction(tr("%1（%2）")
+          .arg(QString::fromStdString(l.name), QString::fromStdString(units::formatLength(l.elevation, 0))));
+      action->setObjectName(QStringLiteral("architectureLevel_") + QString::fromStdString(l.id));
+      connect(action, &QAction::triggered, this, [this, choose, id = l.id] {
+        // Resolve the stable ID again: a model edit while the menu is open
+        // must not apply the removed level's cached height.
+        for (const auto& current : modeler_.levels()) {
+          if (current.id == id) { choose(current.elevation, QString::fromStdString(current.name)); return; }
+        }
+      });
+    }
+    menu->addSeparator();
+    menu->addAction(findChild<QAction*>(QStringLiteral("editLevelsAction")));
+    menu->addAction(findChild<QAction*>(QStringLiteral("createGridAction")));
+  });
+  bar->addWidget(level);
+  bar->addAction(tr("3D"), this, [this] { viewport_->unlockView(); })
+      ->setObjectName(QStringLiteral("architecture3D"));
+  bar->addSeparator();
+  // Reuse the same actions as the palette: tool state and shortcuts stay
+  // shared, and geometry edits keep their existing undo contract.
+  auto drawing = [this, bar](ToolId tool, const QString& name, auto settings) {
+    auto* button = new QToolButton(bar);
+    button->setObjectName(name);
+    button->setDefaultAction(toolActions_[static_cast<int>(tool)]);
+    button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    button->setPopupMode(QToolButton::MenuButtonPopup);
+    auto* options = new QMenu(button);
+    options->addAction(tr("寸法・配置の設定..."), this, settings);
+    button->setMenu(options);
+    bar->addWidget(button);
+  };
+  drawing(ToolId::Wall, QStringLiteral("architectureWall"), &MainWindow::showWallSettingsDialog);
+  drawing(ToolId::Slab, QStringLiteral("architectureSlab"), &MainWindow::showSlabSettingsDialog);
+  drawing(ToolId::Opening, QStringLiteral("architectureOpening"), &MainWindow::showOpeningSettingsDialog);
+  findChild<QToolButton*>(QStringLiteral("architectureOpening"))->setToolTip(
+      tr("開口: 3D または立面で壁面をクリック。右の矢印から幅・高さ・腰高を設定"));
+  for (const char* entry : {"column", "beam"}) {
+    auto* button = new QToolButton(bar);
+    button->setDefaultAction(findChild<QAction*>(QStringLiteral("memberEntry_") + QLatin1String(entry)));
+    button->setText(QLatin1String(entry) == QStringLiteral("column") ? tr("柱") : tr("梁"));
+    bar->addWidget(button);
+  }
+  bar->addSeparator();
+  auto* timber = new QToolButton(bar);
+  timber->setText(tr("木造"));
+  timber->setPopupMode(QToolButton::InstantPopup);
+  auto* timberMenu = new QMenu(timber);
+  timberMenu->setObjectName(QStringLiteral("architectureTimberMenu"));
+  for (const char* name : {"timberFrameAction", "frameCheckAction", "wallQuantityAction", "takeOffAction"})
+    timberMenu->addAction(findChild<QAction*>(QLatin1String(name)));
+  timber->setMenu(timberMenu);
+  bar->addWidget(timber);
 }
 
 void MainWindow::showHelp(const QString& topic) {

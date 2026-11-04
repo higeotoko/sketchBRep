@@ -24,6 +24,7 @@ class QDockWidget;
 class QActionGroup;
 class QLabel;
 class QLineEdit;
+class QMenu;
 class QTabBar;
 class QListWidget;
 
@@ -244,6 +245,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   bool maybeSave();
   void commitMeasurement();
   void showGridDialog();
+  void buildArchitectureToolbar(QMenu* viewMenu);
   void showTimberFrameDialog();
   void showFrameCheckPanel();
   void showTakeOffDialog();
