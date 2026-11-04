@@ -49,6 +49,9 @@ class DrawingDialog : public QDialog {
   // True while a view is being made on another thread (the dialog stays
   // usable; the preview shows the last drawing until it is ready).
   bool computing() const;
+  // Views started on the other thread so far (for checks: a small view can
+  // be ready before anyone sees computing()).
+  int jobsStarted() const { return jobsStarted_; }
   // For checks and the AI: what would be written now.
   const std::optional<draw::Sheet>& sheet() const { return sheet_; }
   QString lastError() const { return error_; }
@@ -88,6 +91,7 @@ class DrawingDialog : public QDialog {
   std::future<Result<draw::View>> job_;
   std::optional<draw::ViewSpec> jobSpec_;
   QTimer* poll_ = nullptr;
+  int jobsStarted_ = 0;
   QComboBox* kind_ = nullptr;
   QComboBox* level_ = nullptr;
   QDoubleSpinBox* cutHeight_ = nullptr;

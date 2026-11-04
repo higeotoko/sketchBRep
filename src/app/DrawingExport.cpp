@@ -475,6 +475,7 @@ void DrawingDialog::startJob(const draw::ViewSpec& spec) {
   // may change the model meanwhile (AI), never the shapes drawn here.
   viewDirty_ = false;
   jobSpec_ = spec;
+  ++jobsStarted_;
   job_ = std::async(std::launch::async, [model = snapshot_, spec] { return draw::makeView(*model, spec); });
   poll_->start();
 }
