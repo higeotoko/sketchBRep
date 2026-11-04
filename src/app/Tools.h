@@ -22,6 +22,7 @@
 class QKeyEvent;
 
 namespace sbr::app {
+struct FacePick;
 
 class Viewport;
 struct ElementRef;
@@ -418,7 +419,9 @@ class SlabTool : public PlanPolylineTool {
 // Openings (O): hover a vertical face of a wall to see the window / door
 // there (width x height, sill above the face's bottom; snaps to the
 // face's middle and ends, and next to / in line with / between openings
-// already there), click to cut it through. Typing "w,h" or "w,h,sill"
+// already there), click to cut it through. In a locked plan view, known
+// wall recipes spanning the work plane provide the side face instead.
+// Typing "w,h" or "w,h,sill"
 // sets the size, and right after a click redoes that opening at the new
 // size. Same as place_openings with 'at'.
 class OpeningTool : public Tool {
@@ -451,6 +454,8 @@ class OpeningTool : public Tool {
     bool overlaps = false;                // with an opening already there
   };
   std::optional<Target> targetAt(const ToolEvent& e);
+  std::optional<FacePick> planFaceAt(const ToolEvent& e);
+  bool ambiguousPlan_ = false;
   bool place(const Target& t);
 
   Settings settings_;

@@ -48,6 +48,7 @@
 #include "Cursors.h"
 #include "Viewport.h"
 #include "sbr/Units.h"
+#include "sbr/ConstructionFrame.h"
 #include "sbr/geom/Annotation.h"
 #include "sbr/geom/Freeform.h"
 #include "sbr/geom/FaceRef.h"
@@ -1383,18 +1384,83 @@ QString OpeningTool::settingsText() const {
 void OpeningTool::activate() {
   host_.viewport().setPickMode(PickMode::Faces);
   host_.setMeasurement(QObject::tr("幅,高さ[,腰]"), QString());
-  host_.setStatus(QObject::tr("壁の縦の面にカーソルを合わせてクリック（%1。「1600,1100,900」のように入力で変更）")
+  host_.setStatus(QObject::tr("平面の壁、または3D・立面の壁面をクリック（%1。「1600,1100,900」のように入力で変更）")
                       .arg(settingsText()));
 }
 
 void OpeningTool::cancel() {
   hover_.reset();
   host_.viewport().clearPreview();
+  host_.viewport().setRoleShapes({});
+}
+
+std::optional<FacePick> OpeningTool::planFaceAt(const ToolEvent& e) {
+  auto& vp = host_.viewport();
+  const auto& document = host_.modeler().document();
+  const auto ray = vp.rayAt(e.pos);
+  if (std::abs(ray.direction.Z()) < 1e-9) return std::nullopt;
+  const auto at = ray.origin.Translated(gp_Vec(ray.direction) *
+      ((vp.workOffset() - ray.origin.Z()) / ray.direction.Z()));
+  std::optional<FacePick> best;
+  double bestDistance = 8.0;
+  ambiguousPlan_ = false;
+  for (const auto& o : document.objects()) {
+    if (o.parent != host_.editingGroup() || o.kind() != doc::ObjectKind::Solid || !document.isVisible(o.id)) continue;
+    bool locked = false;
+    for (const doc::Object* ancestor = &o; ancestor;
+         ancestor = ancestor->parent.empty() ? nullptr : document.find(ancestor->parent))
+      if (ancestor->locked) { locked = true; break; }
+    if (locked) continue;
+    const auto reference = construction::wallReferenceLine(o, document);
+    if (!reference) continue;
+    const auto u = reference->Direction();
+    const gp_Dir n = gp::DZ().Crossed(u);
+    const auto world = document.worldShape(o);
+    double u0 = 1e300, u1 = -1e300, n0 = 1e300, n1 = -1e300, z0 = 1e300, z1 = -1e300;
+    for (TopExp_Explorer v(world, TopAbs_VERTEX); v.More(); v.Next()) {
+      const auto p = BRep_Tool::Pnt(TopoDS::Vertex(v.Current()));
+      const double a = gp_Vec(p.XYZ()).Dot(gp_Vec(u)), b = gp_Vec(p.XYZ()).Dot(gp_Vec(n));
+      u0 = std::min(u0, a); u1 = std::max(u1, a);
+      n0 = std::min(n0, b); n1 = std::max(n1, b);
+      z0 = std::min(z0, p.Z()); z1 = std::max(z1, p.Z());
+    }
+    // A floor plan targets walls spanning the work plane, not an upper
+    // storey merely drawn over it. The top boundary belongs to the next floor.
+    if (vp.workOffset() < z0 - tolerance::kLinear || vp.workOffset() >= z1 - tolerance::kLinear) continue;
+    const double along = gp_Vec(at.XYZ()).Dot(gp_Vec(u));
+    const double across = gp_Vec(at.XYZ()).Dot(gp_Vec(n));
+    gp_Pnt nearest = at.Translated(gp_Vec(u) * (std::clamp(along, u0, u1) - along) +
+                                  gp_Vec(n) * (std::clamp(across, n0, n1) - across));
+    const auto screen = vp.project(nearest);
+    const double distance = std::hypot(screen.x - e.pos.x(), screen.y - e.pos.y());
+    if (distance > 8.0 || distance > bestDistance + 1.0) continue;
+    const gp_Dir normal = across < (n0 + n1) / 2 ? n.Reversed() : n;
+    std::optional<FacePick> candidate;
+    double outermost = -1e300;
+    for (TopExp_Explorer f(world, TopAbs_FACE); f.More(); f.Next()) {
+      const auto face = TopoDS::Face(f.Current());
+      const auto ref = geom::FaceRef::fromFace(face);
+      if (!ref || !ref->normal.IsEqual(normal, 1e-6)) continue;
+      const double offset = gp_Vec(ref->centroid.XYZ()).Dot(gp_Vec(normal));
+      if (offset > outermost) {
+        outermost = offset;
+        candidate = FacePick{o.id, face, at.Translated(gp_Vec(normal) *
+            (offset - gp_Vec(at.XYZ()).Dot(gp_Vec(normal))))};
+      }
+    }
+    if (!candidate) continue;
+    if (best && std::abs(distance - bestDistance) <= 1.0) { ambiguousPlan_ = true; continue; }
+    best = candidate;
+    bestDistance = distance;
+    ambiguousPlan_ = false;
+  }
+  return ambiguousPlan_ ? std::nullopt : best;
 }
 
 std::optional<OpeningTool::Target> OpeningTool::targetAt(const ToolEvent& e) {
   Viewport& vp = host_.viewport();
-  const auto pick = vp.pickFace(e.pos);
+  ambiguousPlan_ = false;
+  const auto pick = vp.lockedView() == Viewport::StandardView::Top ? planFaceAt(e) : vp.pickFace(e.pos);
   if (!pick) return std::nullopt;
   const auto ref = geom::FaceRef::fromFace(pick->face);
   if (!ref || std::abs(ref->normal.Z()) > 1e-6) return std::nullopt;
@@ -1407,7 +1473,20 @@ std::optional<OpeningTool::Target> OpeningTool::targetAt(const ToolEvent& e) {
   // the middle of each gap between them.
   const gp_Vec u(gp::DZ().Crossed(t.normal));
   double u0 = 1e300, u1 = -1e300;
-  for (TopExp_Explorer v(pick->face, TopAbs_VERTEX); v.More(); v.Next()) {
+  // Use the complete outer side, like cutOpenings: door cuts may split
+  // that plane into several faces, none of which alone spans the wall.
+  BRep_Builder builder;
+  TopoDS_Compound side;
+  builder.MakeCompound(side);
+  const double planeOffset = gp_Vec(ref->centroid.XYZ()).Dot(gp_Vec(ref->normal));
+  for (TopExp_Explorer f(host_.modeler().document().worldShape(*owner), TopAbs_FACE); f.More(); f.Next()) {
+    const auto face = TopoDS::Face(f.Current());
+    const auto other = geom::FaceRef::fromFace(face);
+    if (other && other->normal.IsEqual(ref->normal, 1e-6) &&
+        std::abs(gp_Vec(other->centroid.XYZ()).Dot(gp_Vec(ref->normal)) - planeOffset) < tolerance::kLinear)
+      builder.Add(side, face);
+  }
+  for (TopExp_Explorer v(side, TopAbs_VERTEX); v.More(); v.Next()) {
     const double d = gp_Vec(BRep_Tool::Pnt(TopoDS::Vertex(v.Current())).XYZ()).Dot(u);
     u0 = std::min(u0, d);
     u1 = std::max(u1, d);
@@ -1440,11 +1519,12 @@ std::optional<OpeningTool::Target> OpeningTool::targetAt(const ToolEvent& e) {
   }
   if (!taken.empty() && u1 > from + w) candidates.push_back({0.5 * (from + u1), QObject::tr("間の中央")});
   const double here = gp_Vec(t.at.XYZ()).Dot(u);
+  const auto cursor = vp.project(t.at);
   double best = 12.0;  // pixels
   for (const Candidate& c : candidates) {
     const gp_Pnt p = t.at.Translated(u * (c.centre - here));
     const snap::ScreenPoint s = vp.project(p);
-    const double d = std::hypot(s.x - e.pos.x(), s.y - e.pos.y());
+    const double d = std::hypot(s.x - cursor.x, s.y - cursor.y);
     if (d < best) {
       best = d;
       t.at = p;
@@ -1457,7 +1537,7 @@ std::optional<OpeningTool::Target> OpeningTool::targetAt(const ToolEvent& e) {
   t.toEnd = u1 - (c + w / 2);
   // Would it run into one already there? (Placing it would be refused.)
   double z0 = 1e300;
-  for (TopExp_Explorer v(pick->face, TopAbs_VERTEX); v.More(); v.Next()) {
+  for (TopExp_Explorer v(side, TopAbs_VERTEX); v.More(); v.Next()) {
     z0 = std::min(z0, BRep_Tool::Pnt(TopoDS::Vertex(v.Current())).Z());
   }
   const double b0 = z0 + settings_.sill, b1 = b0 + settings_.height;
@@ -1475,9 +1555,11 @@ std::optional<OpeningTool::Target> OpeningTool::targetAt(const ToolEvent& e) {
 void OpeningTool::mouseMove(const ToolEvent& e) {
   hover_ = targetAt(e);
   Viewport& vp = host_.viewport();
+  vp.setRoleShapes({});
   if (!hover_) {
     vp.clearPreview();
-    host_.setStatus(QObject::tr("壁（厚みのあるソリッド）の縦の面にカーソルを合わせてください（%1）").arg(settingsText()));
+    host_.setStatus(ambiguousPlan_ ? QObject::tr("壁が重なっています。交点から離すか、3D・立面で壁面を選んでください") :
+        QObject::tr("平面では作業面の高さにある壁を選びます。任意形状の壁は3D・立面で壁面を選んでください（%1）").arg(settingsText()));
     return;
   }
   if (hover_->overlaps) {
@@ -1523,6 +1605,17 @@ void OpeningTool::mouseMove(const ToolEvent& e) {
   } else if (face) {
     vp.setPreview(face.value(), true);
   }
+  if (vp.lockedView() == Viewport::StandardView::Top && depth > tolerance::kMinDimension) {
+    // A window's cut is below the wall top (and may be under a roof).
+    // Show its footprint above the display, without moving canonical geometry.
+    geom::SketchPlane plan;
+    plan.normal = gp::DZ();
+    plan.xDir = u;
+    plan.origin = origin;
+    plan.origin.SetZ(vp.workOffset());
+    const auto footprint = geom::makeRectangleFace(plan, settings_.width, depth);
+    if (footprint) vp.setRoleShapes({{*footprint, Quantity_Color(.18, .42, .92, Quantity_TOC_RGB)}});
+  }
   host_.setStatus(QObject::tr("クリックで開口をあける（%1）  端から %2 / %3")
                       .arg(settingsText(), mm(hover_->fromStart), mm(hover_->toEnd)) +
                   (hover_->snap.isEmpty() ? QString() : QStringLiteral("  [") + hover_->snap + QStringLiteral("]")));
@@ -1535,6 +1628,7 @@ bool OpeningTool::place(const Target& t) {
     return false;
   }
   host_.viewport().clearPreview();
+  host_.viewport().setRoleShapes({});
   last_ = t;
   recent_.mark(host_.modeler());
   host_.setStatus(QObject::tr("開口をあけました（%1）。続けて入力するとこの開口の大きさを変更").arg(settingsText()));
@@ -1544,7 +1638,8 @@ bool OpeningTool::place(const Target& t) {
 void OpeningTool::mousePress(const ToolEvent& e) {
   const auto t = targetAt(e);
   if (!t) {
-    host_.setStatus(QObject::tr("壁の縦の面をクリックしてください"));
+    host_.setStatus(ambiguousPlan_ ? QObject::tr("壁が重なっています。交点から離すか、3D・立面で壁面を選んでください") :
+        QObject::tr("平面の壁、または3D・立面の壁面をクリックしてください"));
     return;
   }
   place(*t);

@@ -1,0 +1,38 @@
+{
+  "date_jst": "2026-11-05",
+  "base_commit": "e492b34c92c93e2d3b9fb5acce01782c2d7014a7",
+  "platform": "Windows / MSVC 19.44 / OCCT 8.0.1 / Qt 6.12 / 3DM enabled",
+  "build": {"targets": ["sbr_core_tests", "sbr_cli", "sbr_gui_tests", "SketchBRep"], "exit_code": 0},
+  "core": {
+    "tests": 51, "failures": 0, "errors": 0, "seconds": 19.101, "exit_code": 0,
+    "filter": "Frames.*:FrameChecks.*:WallQuantity.*:TimberWorkflow.*:Openings.*:Transactions.Openings*:Transactions.GridWalls*"
+  },
+  "gui": {
+    "actual_conditions": 16, "including_init_cleanup": 18,
+    "failures": 0, "errors": 0, "skipped": 0, "seconds": 24.442, "exit_code": 0,
+    "tests": [
+      "planOpeningChoosesFloorAndPreservesUndo",
+      "planOpeningOnRotatedWalls (six data rows)",
+      "planOpeningRejectsAmbiguousHiddenAndLockedWalls",
+      "slabToolAndOpeningTool",
+      "architectureToolbarDrawsAtChosenLevel",
+      "wallToolAndArchitectureMenus",
+      "workPlaneAtAHeightOrAGridLine",
+      "levelsInElevationsAndPlans",
+      "timberOpeningConflictsRemainVisibleInPreview",
+      "timberFramePreviewApplyLevelsAndUndo",
+      "wallQuantityInputsComparisonSaveAndStaleModel"
+    ]
+  },
+  "preview_image_inspected": true,
+  "human_windows_workflow_verified": false,
+  "installed_app_replaced": false,
+  "limits": [
+    "No Linux, CI or full GUI suite verification in this local record",
+    "Plan placement targets known wall-tool recipes spanning the work plane",
+    "Ambiguous overlapping walls require another cursor position or a wall-face pick",
+    "Plan footprint is a transient preview, not a persistent window/door symbol",
+    "Level selection does not automatically hide upper storeys or roofs",
+    "Wall-quantity model linkage remains future work"
+  ]
+}

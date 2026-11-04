@@ -43,6 +43,36 @@ std::optional<Object> frameMemberObject(const Document& document, const Object& 
   return o;
 }
 
+// A picked opening is on a wall FACE. Only a wall made by the wall tool
+// provides a known reference line; do not infer one from an arbitrary B-rep.
+std::optional<gp_Ax1> wallReferenceLine(const Object& host, const Document& document) {
+  const auto kind = host.attributes.find("kind");
+  if (kind == host.attributes.end() || kind->second != "wall") return std::nullopt;
+  const Recipe* recipe = &host.recipe;
+  gp_Trsf placement = document.worldTransform(host);
+  for (int depth = 0; depth < 64; ++depth) {
+    const auto* cut = std::get_if<BooleanFeature>(&recipe->base);
+    if (!cut) break;
+    if (!recipe->modifiers.empty() || cut->kind != BooleanKind::Subtract || cut->operands.empty() ||
+        !cut->operands.front().recipe)
+      return std::nullopt;
+    placement = placement * cut->operands.front().placement;
+    recipe = cut->operands.front().recipe.get();
+  }
+  const auto* rect = std::get_if<RectangleProfile>(&recipe->base);
+  if (!rect || recipe->modifiers.size() != 1 ||
+      !std::holds_alternative<ExtrudeOp>(recipe->modifiers.front()))
+    return std::nullopt;
+  const auto line = host.attributes.find("wall_line");
+  const std::string ref = line == host.attributes.end() ? "center" : line->second;
+  if (ref != "center" && ref != "left" && ref != "right") return std::nullopt;
+  const double offset = ref == "right" ? 0 : ref == "left" ? rect->height : rect->height / 2;
+  const auto origin = rect->plane.toWorld(0, offset).Transformed(placement);
+  const auto direction = gp_Dir(rect->plane.xDir).Transformed(placement);
+  if (std::abs(direction.Z()) > 1e-6) return std::nullopt;
+  return gp_Ax1(origin, direction);
+}
+
 namespace {
 using json = nlohmann::json;
 void rounded(json& j) {
@@ -172,36 +202,6 @@ struct Opening {
   std::string host;
   std::size_t index;
 };
-
-// A picked opening is on a wall FACE. Only a wall made by the wall tool
-// provides a known reference line; do not infer one from an arbitrary B-rep.
-std::optional<gp_Ax1> wallReferenceLine(const Object& host, const Document& document) {
-  const auto kind = host.attributes.find("kind");
-  if (kind == host.attributes.end() || kind->second != "wall") return std::nullopt;
-  const Recipe* recipe = &host.recipe;
-  gp_Trsf placement = document.worldTransform(host);
-  for (int depth = 0; depth < 64; ++depth) {
-    const auto* cut = std::get_if<BooleanFeature>(&recipe->base);
-    if (!cut) break;
-    if (!recipe->modifiers.empty() || cut->kind != BooleanKind::Subtract || cut->operands.empty() ||
-        !cut->operands.front().recipe)
-      return std::nullopt;
-    placement = placement * cut->operands.front().placement;
-    recipe = cut->operands.front().recipe.get();
-  }
-  const auto* rect = std::get_if<RectangleProfile>(&recipe->base);
-  if (!rect || recipe->modifiers.size() != 1 ||
-      !std::holds_alternative<ExtrudeOp>(recipe->modifiers.front()))
-    return std::nullopt;
-  const auto line = host.attributes.find("wall_line");
-  const std::string ref = line == host.attributes.end() ? "center" : line->second;
-  if (ref != "center" && ref != "left" && ref != "right") return std::nullopt;
-  const double offset = ref == "right" ? 0 : ref == "left" ? rect->height : rect->height / 2;
-  const auto origin = rect->plane.toWorld(0, offset).Transformed(placement);
-  const auto direction = gp_Dir(rect->plane.xDir).Transformed(placement);
-  if (std::abs(direction.Z()) > 1e-6) return std::nullopt;
-  return gp_Ax1(origin, direction);
-}
 
 // Plans geometry from the guide's effective tables. All dimensions are in
 // the grid's coordinates; level heights are world Z. The same plan is used
@@ -489,7 +489,7 @@ struct Plan {
       auto list = modeler.openings(host.get<std::string>());
       need(list.ok(), list.error());
       const auto* wall = modeler.document().find(host.get<std::string>());
-      const auto reference = wall ? wallReferenceLine(*wall, modeler.document()) : std::nullopt;
+      const auto reference = wall ? construction::wallReferenceLine(*wall, modeler.document()) : std::nullopt;
       if (!reference && !list->empty())
         warnings.push_back("開口参照壁の基準線は未評価です（手編集・任意形状）: " + host.get<std::string>());
       for (const auto& o : *list) {

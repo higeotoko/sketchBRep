@@ -1250,7 +1250,7 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
   drawing(ToolId::Slab, QStringLiteral("architectureSlab"), &MainWindow::showSlabSettingsDialog);
   drawing(ToolId::Opening, QStringLiteral("architectureOpening"), &MainWindow::showOpeningSettingsDialog);
   findChild<QToolButton*>(QStringLiteral("architectureOpening"))->setToolTip(
-      tr("開口: 3D または立面で壁面をクリック。右の矢印から幅・高さ・腰高を設定"));
+      tr("開口: 平面の壁、または3D・立面の壁面をクリック。右の矢印から幅・高さ・腰高を設定"));
   for (const char* entry : {"column", "beam"}) {
     auto* button = new QToolButton(bar);
     button->setDefaultAction(findChild<QAction*>(QStringLiteral("memberEntry_") + QLatin1String(entry)));

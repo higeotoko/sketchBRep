@@ -271,6 +271,10 @@ class GuiPhase1 : public QObject {
   void fixedElevationPansAndDrawsOnItsPlane();
   void workPlaneAtAHeightOrAGridLine();
   void architectureToolbarDrawsAtChosenLevel();
+  void planOpeningChoosesFloorAndPreservesUndo();
+  void planOpeningOnRotatedWalls_data();
+  void planOpeningOnRotatedWalls();
+  void planOpeningRejectsAmbiguousHiddenAndLockedWalls();
   void curvedShapesMoveAndCopy();
   void snapsKeepTheWorkPlaneDepth();
   void levelsInElevationsAndPlans();
@@ -4924,6 +4928,138 @@ void GuiPhase1::fixedElevationPansAndDrawsOnItsPlane() {
   f.window.findChild<QToolButton*>(QStringLiteral("viewButton0"))->click();
   QVERIFY(!f.vp->lockedView());
   QVERIFY(f.vp->constructionPlane().Axis().Direction().IsParallel(gp::DZ(), 1e-12));
+}
+
+void GuiPhase1::planOpeningChoosesFloorAndPreservesUndo() {
+  Fixture f;
+  QVERIFY(f.setUp(2000, 1000));
+  auto& m = f.window.modeler();
+  const auto lower = m.createWalls({{0, 0, 0}, {5000, 0, 0}}, 200, 3000);
+  const auto upper = m.createWalls({{0, 0, 3000}, {5000, 0, 3000}}, 200, 3000);
+  QVERIFY(lower && upper);
+  // A floor/roof over the walls must not steal the plan placement.
+  QVERIFY(m.createSlab({{0, -1000, 6000}, {5000, -1000, 6000}, {5000, 1000, 6000}, {0, 1000, 6000}}, 0, 150));
+  f.vp->lockView(Viewport::StandardView::Top);
+  f.vp->setWorkOffset(0);
+  f.window.openingTool().setSettings({800, 1000, 800});
+  f.window.activateTool(MainWindow::ToolId::Opening);
+  f.vp->syncNow();
+  QTest::qWait(50);
+  const auto point = f.vp->toWidget(gp_Pnt(2500, 0, 0));
+  const auto revision = m.history().revision();
+  move(f.vp, point);
+  QCOMPARE(m.history().revision(), revision);
+  QVERIFY(!f.vp->previewShape().IsNull());
+  QVERIFY2(f.window.statusText().contains(QStringLiteral("クリックで開口")), qPrintable(f.window.statusText()));
+  if (const auto shot = qEnvironmentVariable("SBR_PLAN_OPENING_SHOT"); !shot.isEmpty())
+    QVERIFY(f.vp->dumpImage(shot));
+  click(f.vp, point);
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QVERIFY(!m.document().find(lower->front()));
+  QVERIFY(m.document().find(upper->front()));
+  const auto count = m.history().undoCount();
+  type(f.vp, QStringLiteral("1000,1200,700"));
+  QCOMPARE(m.history().undoCount(), count);
+  doc::ObjectId cut;
+  for (const auto& o : m.document().objects()) {
+    auto openings = m.openings(o.id);
+    if (openings && !openings->empty()) cut = o.id;
+  }
+  QVERIFY(!cut.empty());
+  const auto openings = m.openings(cut);
+  QCOMPARE(openings->front().width, 1000.0);
+  QCOMPARE(openings->front().height, 1200.0);
+  QCOMPARE(openings->front().bottom, 700.0);
+  QVERIFY(std::abs(openings->front().center.X() - 2500) < 1e-6);
+  // An overlap gives feedback and never adds a history step.
+  move(f.vp, point);
+  QVERIFY(f.window.statusText().contains(QStringLiteral("重なります")));
+  click(f.vp, point);
+  QCOMPARE(m.history().undoCount(), count);
+  QVERIFY(m.undo());
+  QVERIFY(m.document().find(lower->front()));
+  f.vp->setWorkOffset(3000);
+  click(f.vp, f.vp->toWidget(gp_Pnt(2500, 0, 3000)));
+  QVERIFY(m.document().find(lower->front()));
+  QVERIFY(!m.document().find(upper->front()));
+  QVERIFY(m.undo());
+  QVERIFY(m.document().find(upper->front()));
+}
+
+void GuiPhase1::planOpeningOnRotatedWalls_data() {
+  QTest::addColumn<int>("justification");
+  QTest::addColumn<int>("side");
+  for (int j : {-1, 0, 1}) for (int side : {-1, 1})
+    QTest::newRow(qPrintable(QStringLiteral("line%1-side%2").arg(j).arg(side))) << j << side;
+}
+
+void GuiPhase1::planOpeningOnRotatedWalls() {
+  QFETCH(int, justification);
+  QFETCH(int, side);
+  Fixture f;
+  QVERIFY(f.setUp(2000, 1500));
+  auto& m = f.window.modeler();
+  auto walls = m.createWalls({{0, 0, 0}, {5000, 0, 0}}, 120, 2400, justification);
+  QVERIFY(walls);
+  auto group = m.group({walls->front()});
+  QVERIFY(group);
+  gp_Trsf placement;
+  placement.SetRotation(gp_Ax1(gp::Origin(), gp::DZ()), .37);
+  placement.SetTranslationPart(gp_Vec(1000, 200, 600));
+  QVERIFY(m.transform({*group}, placement, "Move group"));
+  f.vp->lockView(Viewport::StandardView::Top);
+  f.vp->setWorkOffset(600);
+  f.window.openingTool().setSettings({800, 1000, 700});
+  f.window.activateTool(MainWindow::ToolId::Opening);
+  f.vp->syncNow();
+  QTest::qWait(50);
+  const double middle = justification < 0 ? 60 : justification > 0 ? -60 : 0;
+  const auto point = f.vp->toWidget(gp_Pnt(2500, middle + side * 40, 0).Transformed(placement));
+  const auto steps = m.history().undoCount();
+  click(f.vp, point);  // A closed group is not edited through its contents.
+  QCOMPARE(m.history().undoCount(), steps);
+  f.window.enterGroup(*group);
+  click(f.vp, point);
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  doc::ObjectId cut;
+  for (const auto& o : m.document().objects()) if (o.parent == *group) cut = o.id;
+  auto openings = m.openings(cut);
+  QVERIFY(openings && openings->size() == 1);
+  const auto center = openings->front().center.Transformed(placement.Inverted());
+  QVERIFY2(std::abs(center.X() - 2500) < 1e-6, qPrintable(QString::number(center.X())));
+  QVERIFY(std::abs(openings->front().bottom - 1300) < 1e-6);
+  QCOMPARE(openings->front().width, 800.0);
+  QVERIFY(m.undo());
+  QVERIFY(m.document().find(walls->front()));
+}
+
+void GuiPhase1::planOpeningRejectsAmbiguousHiddenAndLockedWalls() {
+  Fixture f;
+  QVERIFY(f.setUp(2000, 1000));
+  auto& m = f.window.modeler();
+  const auto a = m.createWalls({{0, 0, 0}, {5000, 0, 0}}, 200, 3000);
+  const auto b = m.createWalls({{0, 0, 0}, {5000, 0, 0}}, 200, 3000);
+  QVERIFY(a && b);
+  f.vp->lockView(Viewport::StandardView::Top);
+  f.window.activateTool(MainWindow::ToolId::Opening);
+  f.vp->syncNow();
+  QTest::qWait(50);
+  const auto point = f.vp->toWidget(gp_Pnt(2500, 0, 0));
+  const auto count = m.history().undoCount();
+  click(f.vp, point);
+  QCOMPARE(m.history().undoCount(), count);
+  QVERIFY(f.window.statusText().contains(QStringLiteral("壁が重なって")));
+  QVERIFY(m.setLayer(a->front(), "hidden"));
+  QVERIFY(m.setLayer(b->front(), "hidden"));
+  m.setTagVisible("hidden", false);
+  const auto hiddenCount = m.history().undoCount();
+  click(f.vp, point);
+  QCOMPARE(m.history().undoCount(), hiddenCount);
+  m.setTagVisible("hidden", true);
+  QVERIFY(m.setLocked({a->front(), b->front()}, true));
+  const auto lockedCount = m.history().undoCount();
+  click(f.vp, point);
+  QCOMPARE(m.history().undoCount(), lockedCount);
 }
 
 void GuiPhase1::architectureToolbarDrawsAtChosenLevel() {

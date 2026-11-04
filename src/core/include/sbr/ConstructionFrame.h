@@ -1,7 +1,11 @@
 #pragma once
+#include <gp_Ax1.hxx>
 #include "sbr/doc/Document.h"
 
 namespace sbr::construction {
+// World reference line of a known wall-tool recipe (including subtracts).
+// Unknown edited recipes are not inferred from their bounding box.
+std::optional<gp_Ax1> wallReferenceLine(const doc::Object& wall, const doc::Document& document);
 // Expands a single-member placement to its design recipe (including its own
 // dimensions and anchor). No hierarchy or document state is changed.
 std::optional<doc::Object> frameMemberObject(const doc::Document& document, const doc::Object& instance);

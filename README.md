@@ -12,6 +12,8 @@
 
 最新の操作改善は [平面から始める建築ツールバーと今後の取込方針](docs/61_architecture_workflow_toolbar.md) に記録しています。
 
+その後の [平面上での窓・扉の配置](docs/62_plan_opening_placement.md) も参照してください。
+
 ![Phase 2 screenshot](docs/images/phase2.png)
 
 ## できること
