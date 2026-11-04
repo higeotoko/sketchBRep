@@ -102,3 +102,11 @@ COM-01は、非平行な部材の端部付近（断面外寸の1.5倍以内）�
 - Windows実機確認：人による操作確認は未実施。
 - ローカルはWindows / MSVC 19.44 / OCCT 8.0.1 / Qt 6.12、`SBR_WITH_OPENNURBS=OFF`。3DMの4件を除外。
   通常構成・両OSの全GUIはCIで確認する。
+
+### CI・配布物の結果（2026-11-04）
+
+- 最終コード `5d2a4e191f306ac02ea29d68ceeb79fb5ee393ec` の [CI #241](https://github.com/higeotoko/sketchBRep/actions/runs/41805370855) はLinux・Windowsとも成功。
+- Linux：484件、失敗0。Windows：計算・CLI480件で失敗0、補助GUI3件成功。主GUIは195件成功・7件スキップ・失敗0。
+- Windows zipの依存DLL検査・配布フォルダーからの起動テスト成功。インストーラーの2ステップはskipped。
+- ダウンロードしたzipもSHA-256がGitHubのダイジェストと一致。展開した同梱CLIから生成とMOD-01/TMB-01/MOD-02を実行し、新機能の動作を確認。
+- 人によるWindows実機操作は未実施。
