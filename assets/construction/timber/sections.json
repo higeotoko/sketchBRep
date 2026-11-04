@@ -1,0 +1,250 @@
+{
+  "source": {
+    "name": "SketchBRep 木造初期値（docs/52 §4、流通寸法の目安）",
+    "version": "1",
+    "date": "2026-11-04",
+    "url": "https://github.com/higeotoko/sketchBRep/blob/claude/sketchbrep-modeler-spec-4wnp0b/docs/52_construction_guides.md"
+  },
+  "normative": "market_practice",
+  "entries": {
+    "TIMBER-27x105": {
+      "name": "27×105",
+      "kind": "rectangle",
+      "width": 27,
+      "depth": 105,
+      "material_class": "timber"
+    },
+    "TIMBER-30x90": {
+      "name": "30×90",
+      "kind": "rectangle",
+      "width": 30,
+      "depth": 90,
+      "material_class": "timber"
+    },
+    "TIMBER-30x105": {
+      "name": "30×105",
+      "kind": "rectangle",
+      "width": 30,
+      "depth": 105,
+      "material_class": "timber"
+    },
+    "TIMBER-30x120": {
+      "name": "30×120",
+      "kind": "rectangle",
+      "width": 30,
+      "depth": 120,
+      "material_class": "timber"
+    },
+    "TIMBER-45x45": {
+      "name": "45×45",
+      "kind": "rectangle",
+      "width": 45,
+      "depth": 45,
+      "material_class": "timber"
+    },
+    "TIMBER-45x60": {
+      "name": "45×60",
+      "kind": "rectangle",
+      "width": 45,
+      "depth": 60,
+      "material_class": "timber"
+    },
+    "TIMBER-45x90": {
+      "name": "45×90",
+      "kind": "rectangle",
+      "width": 45,
+      "depth": 90,
+      "material_class": "timber"
+    },
+    "TIMBER-45x105": {
+      "name": "45×105",
+      "kind": "rectangle",
+      "width": 45,
+      "depth": 105,
+      "material_class": "timber"
+    },
+    "TIMBER-90x90": {
+      "name": "90×90",
+      "kind": "rectangle",
+      "width": 90,
+      "depth": 90,
+      "material_class": "timber"
+    },
+    "TIMBER-105x105": {
+      "name": "105×105",
+      "kind": "rectangle",
+      "width": 105,
+      "depth": 105,
+      "material_class": "timber"
+    },
+    "TIMBER-105x120": {
+      "name": "105×120",
+      "kind": "rectangle",
+      "width": 105,
+      "depth": 120,
+      "material_class": "timber"
+    },
+    "TIMBER-105x150": {
+      "name": "105×150",
+      "kind": "rectangle",
+      "width": 105,
+      "depth": 150,
+      "material_class": "timber"
+    },
+    "TIMBER-105x180": {
+      "name": "105×180",
+      "kind": "rectangle",
+      "width": 105,
+      "depth": 180,
+      "material_class": "timber"
+    },
+    "TIMBER-105x210": {
+      "name": "105×210",
+      "kind": "rectangle",
+      "width": 105,
+      "depth": 210,
+      "material_class": "timber"
+    },
+    "TIMBER-105x240": {
+      "name": "105×240",
+      "kind": "rectangle",
+      "width": 105,
+      "depth": 240,
+      "material_class": "timber"
+    },
+    "TIMBER-105x270": {
+      "name": "105×270",
+      "kind": "rectangle",
+      "width": 105,
+      "depth": 270,
+      "material_class": "timber"
+    },
+    "TIMBER-105x300": {
+      "name": "105×300",
+      "kind": "rectangle",
+      "width": 105,
+      "depth": 300,
+      "material_class": "timber"
+    },
+    "TIMBER-105x330": {
+      "name": "105×330",
+      "kind": "rectangle",
+      "width": 105,
+      "depth": 330,
+      "material_class": "timber"
+    },
+    "TIMBER-105x360": {
+      "name": "105×360",
+      "kind": "rectangle",
+      "width": 105,
+      "depth": 360,
+      "material_class": "timber"
+    },
+    "TIMBER-105x390": {
+      "name": "105×390",
+      "kind": "rectangle",
+      "width": 105,
+      "depth": 390,
+      "material_class": "timber"
+    },
+    "TIMBER-120x105": {
+      "name": "120×105",
+      "kind": "rectangle",
+      "width": 120,
+      "depth": 105,
+      "material_class": "timber"
+    },
+    "TIMBER-120x120": {
+      "name": "120×120",
+      "kind": "rectangle",
+      "width": 120,
+      "depth": 120,
+      "material_class": "timber"
+    },
+    "TIMBER-120x150": {
+      "name": "120×150",
+      "kind": "rectangle",
+      "width": 120,
+      "depth": 150,
+      "material_class": "timber"
+    },
+    "TIMBER-120x180": {
+      "name": "120×180",
+      "kind": "rectangle",
+      "width": 120,
+      "depth": 180,
+      "material_class": "timber"
+    },
+    "TIMBER-120x210": {
+      "name": "120×210",
+      "kind": "rectangle",
+      "width": 120,
+      "depth": 210,
+      "material_class": "timber"
+    },
+    "TIMBER-120x240": {
+      "name": "120×240",
+      "kind": "rectangle",
+      "width": 120,
+      "depth": 240,
+      "material_class": "timber"
+    },
+    "TIMBER-120x270": {
+      "name": "120×270",
+      "kind": "rectangle",
+      "width": 120,
+      "depth": 270,
+      "material_class": "timber"
+    },
+    "TIMBER-120x300": {
+      "name": "120×300",
+      "kind": "rectangle",
+      "width": 120,
+      "depth": 300,
+      "material_class": "timber"
+    },
+    "TIMBER-120x330": {
+      "name": "120×330",
+      "kind": "rectangle",
+      "width": 120,
+      "depth": 330,
+      "material_class": "timber"
+    },
+    "TIMBER-120x360": {
+      "name": "120×360",
+      "kind": "rectangle",
+      "width": 120,
+      "depth": 360,
+      "material_class": "timber"
+    },
+    "TIMBER-120x390": {
+      "name": "120×390",
+      "kind": "rectangle",
+      "width": 120,
+      "depth": 390,
+      "material_class": "timber"
+    },
+    "PLYWOOD-24": {
+      "name": "床下地合板 厚24",
+      "kind": "sheet",
+      "thickness": 24,
+      "material_class": "timber"
+    },
+    "PLYWOOD-28": {
+      "name": "床下地合板 厚28",
+      "kind": "sheet",
+      "thickness": 28,
+      "material_class": "timber"
+    },
+    "STEEL-POST-UNSELECTED": {
+      "name": "鋼製束（製品未選定）",
+      "kind": "unselected",
+      "material_class": "steel"
+    },
+    "STEEL-BRACE-UNSELECTED": {
+      "name": "鋼製火打（製品未選定）",
+      "kind": "unselected",
+      "material_class": "steel"
+    }
+  }
+}

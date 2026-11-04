@@ -223,6 +223,9 @@ TEST(McpServer, InitializeListAndCallTools) {
   EXPECT_TRUE(r["result"]["isError"]);  // tool errors are results, not protocol errors
 
   r = rpc(server, {{"jsonrpc", "2.0"}, {"id", 4}, {"method", "resources/list"}});
+  ASSERT_EQ(r["result"]["resources"].size(), 1u);
+  EXPECT_EQ(r["result"]["resources"][0]["uri"], "sketchbrep://construction/timber");
+  r = rpc(server, {{"jsonrpc", "2.0"}, {"id", 6}, {"method", "not/a/method"}});
   EXPECT_EQ(r["error"]["code"], -32601);
   r = json::parse(*server.handle("{oops"));
   EXPECT_EQ(r["error"]["code"], -32700);

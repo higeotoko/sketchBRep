@@ -1,4 +1,5 @@
 #include "sbr/geom/Section.h"
+#include "sbr/ConstructionGuide.h"
 #include "sbr/KernelError.h"
 
 #include <cmath>
@@ -207,7 +208,7 @@ const CatalogSection* findSection(const std::string& id) {
   for (const CatalogSection& entry : sectionCatalog()) {
     if (entry.id == id) return &entry;
   }
-  return nullptr;
+  return construction::findSection(id);
 }
 
 std::string sectionCatalogSource() {

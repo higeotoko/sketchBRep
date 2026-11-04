@@ -7,6 +7,8 @@
 #include <QDialog>
 #include <QString>
 #include <QStringList>
+#include <string>
+#include <vector>
 
 class QListWidget;
 class QLineEdit;
@@ -19,8 +21,9 @@ class HelpWindow : public QDialog {
  public:
   explicit HelpWindow(QWidget* parent = nullptr);
   // Topic ids: "start", "keys", "drawing", "modeling", "architecture",
-  // "drawings", "exchange", "trouble".
+  // "drawings", "exchange", "trouble", "construction_timber".
   QStringList topicIds() const;
+  void setConstructionOverrides(const std::string& patch);
   bool showTopic(const QString& id);
   QString currentTopic() const;
   // Shows only the topics containing the text (all when empty).
@@ -32,6 +35,7 @@ class HelpWindow : public QDialog {
     QString id, title, markdown;
   };
   std::vector<Topic> topics_;
+  std::string constructionPatch_ = "{}";
   QLineEdit* search_ = nullptr;
   QListWidget* list_ = nullptr;
   QTextBrowser* text_ = nullptr;

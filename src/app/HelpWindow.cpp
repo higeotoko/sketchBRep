@@ -1,4 +1,5 @@
 #include "HelpWindow.h"
+#include "sbr/ConstructionGuide.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -29,7 +30,8 @@ struct TopicFile {
 const TopicFile kTopics[] = {{"start", "01_start.md"},       {"keys", "02_keys.md"},
                              {"drawing", "03_drawing.md"},   {"modeling", "04_modeling.md"},
                              {"architecture", "05_architecture.md"}, {"drawings", "06_drawings.md"},
-                             {"exchange", "07_exchange.md"}, {"trouble", "08_trouble.md"}};
+                             {"exchange", "07_exchange.md"}, {"trouble", "08_trouble.md"},
+                             {"construction_timber", nullptr}};
 }  // namespace
 
 HelpWindow::HelpWindow(QWidget* parent) : QDialog(parent) {
@@ -37,9 +39,15 @@ HelpWindow::HelpWindow(QWidget* parent) : QDialog(parent) {
   setWindowTitle(tr("SketchBRep ヘルプ"));
   setWindowFlag(Qt::WindowMaximizeButtonHint);
   for (const TopicFile& t : kTopics) {
-    QFile f(QStringLiteral(":/help/") + QString::fromLatin1(t.file));
-    if (!f.open(QIODevice::ReadOnly)) continue;
-    Topic topic{QString::fromLatin1(t.id), {}, QString::fromUtf8(f.readAll())};
+    QString markdown;
+    if (t.file) {
+      QFile f(QStringLiteral(":/help/") + QString::fromLatin1(t.file));
+      if (!f.open(QIODevice::ReadOnly)) continue;
+      markdown = QString::fromUtf8(f.readAll());
+    } else {
+      markdown = QString::fromStdString(construction::guideMarkdown("timber"));
+    }
+    Topic topic{QString::fromLatin1(t.id), {}, markdown};
     // The title is the first heading.
     const QString first = topic.markdown.section(QLatin1Char('\n'), 0, 0);
     topic.title = first.startsWith(QLatin1String("# ")) ? first.mid(2).trimmed() : topic.id;
@@ -82,6 +90,18 @@ HelpWindow::HelpWindow(QWidget* parent) : QDialog(parent) {
   connect(search_, &QLineEdit::textChanged, this, &HelpWindow::search);
   resize(900, 640);
   if (list_->count() > 0) list_->setCurrentRow(0);
+}
+
+void HelpWindow::setConstructionOverrides(const std::string& patch) {
+  if (patch == constructionPatch_) return;
+  const QString markdown = QString::fromStdString(construction::guideMarkdown("timber", patch));
+  constructionPatch_ = patch;
+  for (Topic& t : topics_) {
+    if (t.id != QLatin1String("construction_timber")) continue;
+    t.markdown = markdown;
+    if (currentTopic() == t.id) text_->setMarkdown(t.markdown);
+  }
+  search(search_->text());
 }
 
 QStringList HelpWindow::topicIds() const {

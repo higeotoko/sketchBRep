@@ -117,6 +117,7 @@ class Modeler {
   // name, a repeated id, a height that is not a number.
   const std::vector<FloorLevel>& levels() const { return document_.settings().levels; }
   Status setLevels(std::vector<FloorLevel> levels);
+  Status setConstructionOverrides(const std::string& system, const std::string& patch);
   // The description of a grid group (null: not a grid).
   const GridSpec* gridSpec(const ObjectId& grid) const;
   // Gives the grid new lines (names, offsets, added or taken away; ids

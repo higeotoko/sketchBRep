@@ -27,6 +27,7 @@ add_executable(sbr_core_tests
   test_split_across.cpp
   test_curved_split.cpp
   test_members.cpp
+  test_construction.cpp
   test_follow.cpp
   test_grid.cpp
   test_levels.cpp

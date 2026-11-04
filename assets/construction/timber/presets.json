@@ -1,0 +1,116 @@
+{
+  "source": {
+    "name": "SketchBRep 木造初期値（docs/52 §4、流通寸法の目安）",
+    "version": "1",
+    "date": "2026-11-04",
+    "url": "https://github.com/higeotoko/sketchBRep/blob/claude/sketchbrep-modeler-spec-4wnp0b/docs/52_construction_guides.md"
+  },
+  "normative": "market_practice",
+  "entries": {
+    "module": {
+      "name": "モジュール",
+      "value": 910,
+      "unit": "mm",
+      "note": "自由入力可",
+      "choices": [
+        910,
+        1000
+      ],
+      "minimum": 0.001
+    },
+    "stock_length": {
+      "name": "定尺",
+      "value": 4000,
+      "unit": "mm",
+      "note": "梁は5000以上も選べる",
+      "choices": [
+        3000,
+        4000,
+        6000
+      ],
+      "minimum": 0.001
+    },
+    "foundation_top": {
+      "name": "基礎天端（GLから）",
+      "value": 400,
+      "unit": "mm",
+      "note": ""
+    },
+    "sill_packing": {
+      "name": "土台パッキン",
+      "value": 20,
+      "unit": "mm",
+      "note": "",
+      "minimum": 0
+    },
+    "sill_top": {
+      "name": "土台天端",
+      "value": "foundation_top + sill_packing + sill.depth",
+      "unit": "formula",
+      "note": ""
+    },
+    "first_floor": {
+      "name": "1FL",
+      "value": "sill_top + joist.depth_or_sheathing.thickness + finish",
+      "unit": "formula",
+      "note": "仕上げ厚未決でも計画FLを指定可"
+    },
+    "storey_height": {
+      "name": "1FL→2FL",
+      "value": 2900,
+      "unit": "mm",
+      "note": "",
+      "minimum": 0.001
+    },
+    "eave_height": {
+      "name": "2FL→桁天端",
+      "value": 2700,
+      "unit": "mm",
+      "note": "",
+      "minimum": 0.001
+    },
+    "roof_pitch": {
+      "name": "屋根勾配",
+      "value": 4,
+      "unit": "寸",
+      "note": "",
+      "minimum": 0
+    },
+    "eave_projection": {
+      "name": "軒の出",
+      "value": 600,
+      "unit": "mm",
+      "note": "柱芯から測る",
+      "minimum": 0
+    },
+    "gable_projection": {
+      "name": "けらばの出",
+      "value": 450,
+      "unit": "mm",
+      "note": "柱芯から測る",
+      "minimum": 0
+    },
+    "spacing": {
+      "name": "根太・垂木の割付",
+      "value": "equal_division",
+      "unit": "",
+      "note": "モジュール/2、/3。固定303、455等は端の調整を記録",
+      "choices": [
+        "equal_division",
+        "fixed_pitch"
+      ]
+    },
+    "first_floor_system": {
+      "name": "1階床方式",
+      "value": "joist",
+      "unit": "",
+      "note": ""
+    },
+    "second_floor_system": {
+      "name": "2階床方式",
+      "value": "joistless",
+      "unit": "",
+      "note": "厚28合板、床梁はモジュールピッチ。区域ごとに変更可"
+    }
+  }
+}

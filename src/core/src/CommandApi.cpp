@@ -1,4 +1,5 @@
 #include "sbr/api/CommandApi.h"
+#include "sbr/ConstructionGuide.h"
 #include "sbr/KernelError.h"
 #include "sbr/draw/Drawing.h"
 #include "sbr/geom/Surfaces.h"
@@ -462,7 +463,18 @@ doc::BooleanKind booleanKind(const std::string& s) {
 json idResult(const ObjectId& id) { return json{{"id", id}}; }
 
 // A member section: a catalog id, or {kind, width, depth[, web, flange, radius]}.
-geom::Section sectionFrom(const json& v) {
+std::string constructionPatch(const doc::Modeler& m, const std::string& system) {
+  const auto& patches = m.document().settings().constructionOverrides;
+  const auto it = patches.find(system);
+  return it == patches.end() ? "{}" : it->second;
+}
+
+geom::Section sectionFrom(const json& v, const doc::Modeler& m) {
+  if (v.is_string() && (v.get<std::string>().rfind("TIMBER-", 0) == 0 ||
+                        v.get<std::string>().rfind("PLYWOOD-", 0) == 0 ||
+                        v.get<std::string>().rfind("STEEL-", 0) == 0)) {
+    return construction::section(v.get<std::string>(), constructionPatch(m, "timber"));
+  }
   if (v.is_string()) {
     const geom::CatalogSection* entry = geom::findSection(v.get<std::string>());
     if (!entry) throw ApiError("no section '" + v.get<std::string>() + "' in the catalog (see list_sections)");
@@ -1964,18 +1976,55 @@ const std::vector<CommandDef>& commands() {
          return idResult(must(m.createSlab(pts, numberOr(a, "top", 0.0), number(a, "thickness"))));
        }},
       {"list_sections",
-       "Sections for create_member from the built-in catalog (the Steel Member Generator's 1,204 steel "
+       "Sections for create_member. system: steel (default, legacy behavior) or timber; role filters timber roles. "
+       "Read get_construction_guide first. Timber returns provenance, default_section and section objects. "
+       "Sheets and unselected products cannot be swept into members. Built-in steel catalog (1,204 steel "
        "sections: H, I, BOX, PIPE, ANGLE, CHANNEL, C, CT, FB, SB, RB, HB). 'query': part of the id or name "
        "(e.g. \"400x200\", \"BCP-350\"); 'family' narrows to one family. 'exact' lists the id / name equal "
        "to the query; 'matches' the others, 'limit' (default 50) from 'offset'. A missing size is never "
        "replaced by another one. Rectangles and circles (timber, RC) need no entry: {kind: rectangle, "
        "width, depth} or {kind: circle, diameter}.",
-       SCHEMA({"type": "object", "properties": {"query": {"type": "string"}, "family": {"type": "string"},
+       SCHEMA({"type": "object", "properties": {"system": {"type": "string", "enum": ["steel", "timber", "rc"]}, "role": {"type": "string"}, "query": {"type": "string"}, "family": {"type": "string"},
                                                 "limit": {"type": "integer"}, "offset": {"type": "integer"}}}),
-       [](doc::Modeler&, const json& a) {
+       [](doc::Modeler& m, const json& a) {
+         const std::string system = textOr(a, "system", "steel"), role = textOr(a, "role", "");
          const std::string query = textOr(a, "query", ""), family = textOr(a, "family", "");
          const int limit = static_cast<int>(numberOr(a, "limit", 50)), offset = static_cast<int>(numberOr(a, "offset", 0));
          if (limit < 1 || limit > 500 || offset < 0) throw ApiError("limit: 1 to 500, offset: 0 or more");
+         if (system == "timber") {
+           const json data = json::parse(construction::guideData(system, constructionPatch(m, system)));
+           const auto& roles = data.at("roles").at("entries");
+           if (!role.empty() && !roles.contains(role)) throw ApiError("unknown timber role '" + role + "'");
+           json exact = json::array(), matches = json::array();
+           int total = 0;
+           for (const auto& [id, s] : data.at("sections").at("entries").items()) {
+             if (!role.empty()) {
+               const auto& choices = roles.at(role).at("sections");
+               if (std::find(choices.begin(), choices.end(), json(id)) == choices.end()) continue;
+             }
+             const std::string kind = s.at("kind"), name = s.at("name");
+             const std::string entryFamily = kind == "rectangle" ? "TIMBER" : kind == "sheet" ? "PLYWOOD" : "PRODUCT";
+             if (!family.empty() && family != entryFamily) continue;
+             json e = s;
+             e["id"] = id; e["family"] = entryFamily;
+             e["source"] = data.at("sections").at("source");
+             e["normative"] = data.at("sections").at("normative");
+             e["creatable_member"] = kind == "rectangle";
+             if (kind == "rectangle") e["section"] = {{"kind", "rectangle"}, {"width", s.at("width")}, {"depth", s.at("depth")}};
+             if (!query.empty() && (id == query || name == query)) { exact.push_back(e); continue; }
+             if (!query.empty() && id.find(query) == std::string::npos && name.find(query) == std::string::npos) continue;
+             if (total >= offset && total < offset + limit) matches.push_back(e);
+             ++total;
+           }
+           return json{{"system", system}, {"role", role},
+                       {"default_section", role.empty() ? json(nullptr) : roles.at(role).at("default_section")},
+                       {"exact", exact}, {"matches", matches}, {"total_matches", total}, {"offset", offset}, {"limit", limit},
+                       {"units", "mm"}, {"source", data.at("sections").at("source")},
+                       {"normative", data.at("sections").at("normative")},
+                       {"overrides", data.value("overrides", json::object())}, {"notice", data.at("notice")}};
+         }
+         if (system != "steel") throw ApiError("section catalog not implemented for system '" + system + "'");
+         if (!role.empty()) throw ApiError("steel role filters are not implemented; omit role");
          auto entry = [](const geom::CatalogSection& c) {
            json dims = json::object();
            for (const auto& [k, v] : c.dimensions) dims[k] = v;
@@ -2000,6 +2049,26 @@ const std::vector<CommandDef>& commands() {
                      {"own_sections", "{kind: rectangle, width, depth}, {kind: circle, diameter}, "
                                       "{kind: h, width, depth, web, flange, radius}"}};
        }},
+      {"get_construction_guide",
+       "Read the construction guide before choosing sections. Returns data and Markdown generated from the "
+       "same embedded tables plus this project's overrides. Stage 1: timber only; steel/rc guides are not implemented.",
+       SCHEMA({"type": "object", "properties": {"system": {"type": "string", "enum": ["timber", "steel", "rc"]}}, "required": ["system"]}),
+       [](doc::Modeler& m, const json& a) {
+         const std::string system = text(a, "system"), patch = constructionPatch(m, system);
+         return json{{"data", json::parse(construction::guideData(system, patch))},
+                     {"markdown", construction::guideMarkdown(system, patch)}};
+       }},
+      {"set_construction_overrides",
+       "Replace this project's construction defaults patch (saved in .sbr; one undo). system: timber. "
+       "overrides: {} resets defaults, otherwise {source:{name,version,date,url},normative:user, "
+       "sections/roles/presets:{entries:{id:{fields}}}}. Merge patch; invalid values change nothing. "
+       "Existing members are not resized. Read get_construction_guide to see effective values and share the patch.",
+       SCHEMA({"type": "object", "properties": {"system": {"type": "string"}, "overrides": {"type": "object"}}, "required": ["system", "overrides"]}),
+       [](doc::Modeler& m, const json& a) {
+         const std::string system = text(a, "system");
+         must(m.setConstructionOverrides(system, arg(a, "overrides").dump()));
+         return json{{"data", json::parse(construction::guideData(system, constructionPatch(m, system)))}};
+       }},
       {"create_member",
        "A linear member (beam, column, brace; steel, timber or RC): 'section' (a catalog id from "
        "list_sections, or {kind: rectangle, width, depth}, {kind: circle, diameter} or {kind: h, width, depth, "
@@ -2021,7 +2090,7 @@ const std::vector<CommandDef>& commands() {
          const GridLookup grid(m.document());
          const double base = numberOr(a, "base", 0.0);
          doc::Modeler::MemberSpec spec;
-         spec.section = sectionFrom(arg(a, "section"));
+         spec.section = sectionFrom(arg(a, "section"), m);
          // [x, y, z] as given; [x, y] and grid crossings at 'base'.
          auto at = [&](const json& v) {
            return v.is_array() && v.size() == 3 ? gp_Pnt(xyz(v, "point")) : grid.point(v, base);
@@ -2038,9 +2107,9 @@ const std::vector<CommandDef>& commands() {
          if (a.contains("up")) spec.up = direction(a, "up", gp::DZ());
          spec.roll = numberOr(a, "roll", 0.0) * M_PI / 180.0;
          spec.role = textOr(a, "role", "");
-         // A catalog (steel) section brings its material class unless one is given.
+         // A catalog section brings its material class unless one is given.
          const geom::CatalogSection* entry = spec.section.catalog.empty() ? nullptr : geom::findSection(spec.section.catalog);
-         spec.materialClass = textOr(a, "material_class", entry ? entry->material : "");
+         spec.materialClass = textOr(a, "material_class", entry ? entry->material : (spec.section.catalog.rfind("TIMBER-", 0) == 0 ? "timber" : ""));
          spec.name = textOr(a, "name", "");
          const ObjectId id = must(m.createMember(spec));
          return memberInfoJson(must(m.memberInfo(id)));
@@ -2163,13 +2232,13 @@ const std::vector<CommandDef>& commands() {
            if (!a.contains(key)) return std::nullopt;
            const json& v = a.at(key);
            doc::Modeler::MemberSpec s;
-           s.section = sectionFrom(arg(v, "section"));
+           s.section = sectionFrom(arg(v, "section"), m);
            s.anchor.up = anchorUp;
            if (v.contains("anchor")) s.anchor = anchorFrom(v.at("anchor"));
            s.roll = numberOr(v, "roll", 0.0) * M_PI / 180.0;
            s.role = textOr(v, "role", role);
            const geom::CatalogSection* entry = s.section.catalog.empty() ? nullptr : geom::findSection(s.section.catalog);
-           s.materialClass = textOr(v, "material_class", entry ? entry->material : "");
+           s.materialClass = textOr(v, "material_class", entry ? entry->material : (s.section.catalog.rfind("TIMBER-", 0) == 0 ? "timber" : ""));
            return s;
          };
          options.columns = member("columns", "column", 0);
@@ -2207,8 +2276,12 @@ const std::vector<CommandDef>& commands() {
          "required": ["id"]}),
        [](doc::Modeler& m, const json& a) {
          doc::Modeler::MemberChange change;
-         if (a.contains("section")) change.section = sectionFrom(a.at("section"));
-         if (a.contains("catalog")) change.catalog = text(a, "catalog");
+         if (a.contains("section")) change.section = sectionFrom(a.at("section"), m);
+         if (a.contains("catalog")) {
+           const std::string id = text(a, "catalog");
+           if (id.rfind("TIMBER-", 0) == 0) change.section = sectionFrom(a.at("catalog"), m);
+           else change.catalog = id;
+         }
          auto opt = [&](const char* key) -> std::optional<double> {
            return a.contains(key) ? std::optional<double>(number(a, key)) : std::nullopt;
          };
@@ -2501,7 +2574,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
   if (name == "list_objects" || name == "get_object" || name == "list_tags" || name == "describe" ||
       name == "preview" || name == "query_objects" || name == "aggregate" || name == "get_changes" ||
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
-      name == "placement_parameters") {
+      name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide") {
     return E::Read;
   }
   if (isFileCommand(name)) return E::ExternalIo;

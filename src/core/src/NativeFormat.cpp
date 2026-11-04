@@ -20,6 +20,7 @@
 #include <TopoDS.hxx>
 
 #include "sbr/Codec.h"
+#include "sbr/ConstructionGuide.h"
 #include "sbr/geom/Measure.h"
 #include "sbr/geom/ShapeIO.h"
 
@@ -1123,6 +1124,7 @@ std::string serializeDocument(const Document& document) {
       {"sectionDisplay", {{"planes", s.sectionDisplay.planes}, {"cuts", s.sectionDisplay.cuts}, {"fill", s.sectionDisplay.fill}}},
       {"hiddenTags", s.hiddenTags},
       {"levels", levelsJson},
+      {"constructionOverrides", s.constructionOverrides},
       {"shapes", shapes.entries},
       {"recipes", recipes.entries},
       {"materials", materials},
@@ -1173,6 +1175,10 @@ Status deserializeDocument(const std::string& text, Document& document,
       for (const json& l : root.at("levels")) {
         s.levels.push_back({l.at("id").get<std::string>(), l.value("name", std::string()), l.at("elevation").get<double>()});
       }
+    }
+    if (root.contains("constructionOverrides")) {
+      s.constructionOverrides = root.at("constructionOverrides").get<std::map<std::string, std::string>>();
+      for (const auto& [system, patch] : s.constructionOverrides) construction::validateOverrides(system, patch);
     }
     if (root.contains("scenes")) {
       for (const json& scene : root.at("scenes")) {

@@ -1,4 +1,5 @@
 #include "sbr/doc/Modeler.h"
+#include "sbr/ConstructionGuide.h"
 
 #include <algorithm>
 #include <unordered_set>
@@ -3851,6 +3852,18 @@ void editSettings(Document& document, CommandStack& history, const std::string& 
   history.execute(Command{name, {}, {}, {}, SettingsDelta{before, after}});
 }
 }  // namespace
+
+Status Modeler::setConstructionOverrides(const std::string& system, const std::string& patch) {
+  try {
+    construction::validateOverrides(system, patch);
+    editSettings(document_, history_, "Construction Defaults", [&](PersistentSettings& s) {
+      s.constructionOverrides[system] = patch;
+    });
+    return Status::success();
+  } catch (const std::exception& e) {
+    return Status::failure(e.what());
+  }
+}
 
 void Modeler::setTagVisible(const std::string& tag, bool visible) {
   editSettings(document_, history_, visible ? "Show Tag" : "Hide Tag", [&](PersistentSettings& s) {

@@ -1169,6 +1169,9 @@ void MainWindow::showHelp(const QString& topic) {
     help_ = new HelpWindow(this);
     help_->setAttribute(Qt::WA_DeleteOnClose, false);
   }
+  const auto& patches = modeler_.document().settings().constructionOverrides;
+  const auto it = patches.find("timber");
+  help_->setConstructionOverrides(it == patches.end() ? "{}" : it->second);
   if (!topic.isEmpty()) help_->showTopic(topic);
   help_->show();
   help_->raise();
@@ -1876,6 +1879,11 @@ void MainWindow::onDocumentChanged() {
   refreshPending_ = true;
   QTimer::singleShot(0, this, [this] {
     refreshPending_ = false;
+    if (help_) {
+      const auto& patches = modeler_.document().settings().constructionOverrides;
+      const auto it = patches.find("timber");
+      help_->setConstructionOverrides(it == patches.end() ? "{}" : it->second);
+    }
     if (modeler_.history().revision() != loggedRevision_) {
       loggedRevision_ = modeler_.history().revision();
       noteActivity(QStringLiteral("edit: %1 (rev %2)")

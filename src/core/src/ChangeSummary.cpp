@@ -93,6 +93,7 @@ ChangeSummary summarize(const Command& command) {
     if (a.scenes != b.scenes) summary.settings.push_back("scenes");
     if (a.sections != b.sections || a.sectionDisplay != b.sectionDisplay) summary.settings.push_back("sections");
     if (a.hiddenTags != b.hiddenTags) summary.settings.push_back("tags");
+    if (a.constructionOverrides != b.constructionOverrides) summary.settings.push_back("construction_overrides");
   }
   return summary;
 }

@@ -81,7 +81,8 @@ const char* McpServer::instructions() {
          "(select faces by index or {\"normal\": [x,y,z]}). Dimensions stay editable through set_parameter "
          "(keys from get_object.parameters). Use batch for multi-step edits: it is one undo step and is "
          "reverted as a whole if a step fails; \"$1.id\" refers to step 1's result. Prefer editing "
-         "parameters over rebuilding geometry.";
+         "parameters over rebuilding geometry. Before structural modeling read get_construction_guide {system} "
+         "and choose dimensions from list_sections {system, role}, rather than general knowledge.";
 }
 
 std::optional<std::string> McpServer::handle(const std::string& message) {
@@ -106,7 +107,7 @@ std::optional<std::string> McpServer::handle(const std::string& message) {
       if (wanted == v) version = v;
     }
     return rpcResult(id, {{"protocolVersion", version},
-                          {"capabilities", {{"tools", json::object()}}},
+                          {"capabilities", {{"tools", json::object()}, {"resources", json::object()}}},
                           {"serverInfo", {{"name", serverName_}, {"version", "0.1.0"}}},
                           {"instructions", instructions()}})
         .dump();
@@ -130,6 +131,19 @@ std::optional<std::string> McpServer::handle(const std::string& message) {
       tools.push_back(std::move(tool));
     }
     return rpcResult(id, {{"tools", tools}}).dump();
+  }
+  if (method == "resources/list") {
+    return rpcResult(id, {{"resources", json::array({{{"uri", "sketchbrep://construction/timber"},
+                         {"name", "木造の手引き"}, {"mimeType", "text/markdown"},
+                         {"description", "Project construction guide from embedded tables and overrides"}}})}}).dump();
+  }
+  if (method == "resources/read") {
+    const std::string uri = params.value("uri", std::string());
+    if (uri != "sketchbrep://construction/timber") return rpcError(id, -32602, "unknown resource: " + uri).dump();
+    const json response = json::parse(backend_(R"({"command":"get_construction_guide","args":{"system":"timber"}})"), nullptr, false);
+    if (!response.is_object() || !response.value("ok", false)) return rpcError(id, -32603, "construction guide unavailable").dump();
+    return rpcResult(id, {{"contents", json::array({{{"uri", uri}, {"mimeType", "text/markdown"},
+                         {"text", response.at("result").at("markdown")}}})}}).dump();
   }
   if (method == "tools/call") {
     const std::string name = params.value("name", std::string());

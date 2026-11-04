@@ -79,6 +79,7 @@ struct DocumentSettings {
   SectionDisplay sectionDisplay;
   std::set<std::string> hiddenTags;  // objects with these tags are hidden
   std::vector<FloorLevel> levels;    // by elevation
+  std::map<std::string, std::string> constructionOverrides;  // system -> JSON merge patch
 };
 
 // The part of the settings that belongs to the model's state (saved, undone
@@ -89,9 +90,10 @@ struct PersistentSettings {
   SectionDisplay sectionDisplay;
   std::set<std::string> hiddenTags;
   std::vector<FloorLevel> levels;
+  std::map<std::string, std::string> constructionOverrides;
 
   static PersistentSettings of(const DocumentSettings& s) {
-    return {s.scenes, s.sections, s.sectionDisplay, s.hiddenTags, s.levels};
+    return {s.scenes, s.sections, s.sectionDisplay, s.hiddenTags, s.levels, s.constructionOverrides};
   }
   void applyTo(DocumentSettings& s) const {
     s.scenes = scenes;
@@ -99,10 +101,11 @@ struct PersistentSettings {
     s.sectionDisplay = sectionDisplay;
     s.hiddenTags = hiddenTags;
     s.levels = levels;
+    s.constructionOverrides = constructionOverrides;
   }
   bool operator==(const PersistentSettings& o) const {
     return scenes == o.scenes && sections == o.sections && sectionDisplay == o.sectionDisplay &&
-           hiddenTags == o.hiddenTags && levels == o.levels;
+           hiddenTags == o.hiddenTags && levels == o.levels && constructionOverrides == o.constructionOverrides;
   }
   bool operator!=(const PersistentSettings& o) const { return !(*this == o); }
 };
