@@ -1,0 +1,24 @@
+{
+  "code_commit": "1870d1d60eba4d8c90a44fecf495062048155cb5",
+  "zip": "SketchBRep-windows-x64-1870d1d-r1-local.zip",
+  "bytes": 69643515,
+  "sha256": "255c2f444accd227e9adf336c33ce97ea4922475ca7b770f0082e97e9b25a32e",
+  "runtime_dlls_verified": 100,
+  "binary_dependencies_checked": 104,
+  "zip_crc_and_executable_hashes": "passed",
+  "path_limited_to_package_and_windows": true,
+  "phase0_step_export": "passed",
+  "cli_3dm_export": "passed",
+  "mcp_initialize_tools_and_create_box": "passed",
+  "gui_actual_conditions": 10,
+  "gui_including_init_cleanup": 12,
+  "gui_failures": 0,
+  "gui_process_exit": 0,
+  "gui_seconds": "12.482",
+  "test_only_files_added_after_extraction": [
+    "sbr_gui_tests.exe",
+    "Qt6Test.dll"
+  ],
+  "ci_verified": false,
+  "human_windows_verified": false
+}
