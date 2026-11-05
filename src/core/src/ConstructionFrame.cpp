@@ -66,8 +66,17 @@ std::optional<gp_Ax1> wallReferenceLine(const Object& host, const Document& docu
     return std::nullopt;
   const auto line = host.attributes.find("wall_line");
   const std::string ref = line == host.attributes.end() ? "center" : line->second;
-  if (ref != "center" && ref != "left" && ref != "right") return std::nullopt;
-  const double offset = ref == "right" ? 0 : ref == "left" ? rect->height : rect->height / 2;
+  if (ref != "center" && ref != "left" && ref != "right" && ref != "offset") return std::nullopt;
+  double offset = ref == "right" ? 0 : ref == "left" ? rect->height : rect->height / 2;
+  if (ref == "offset") {
+    const auto at = host.attributes.find("wall_line_offset");
+    if (at == host.attributes.end()) return std::nullopt;
+    try {
+      offset = std::stod(at->second);
+    } catch (...) {
+      return std::nullopt;
+    }
+  }
   const auto origin = rect->plane.toWorld(0, offset).Transformed(placement);
   const auto direction = gp_Dir(rect->plane.xDir).Transformed(placement);
   if (std::abs(direction.Z()) > 1e-6) return std::nullopt;

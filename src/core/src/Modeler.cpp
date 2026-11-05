@@ -1,4 +1,5 @@
 #include "sbr/doc/Modeler.h"
+#include "sbr/WallTypes.h"
 #include "sbr/OpeningSymbols.h"
 #include "sbr/ConstructionGuide.h"
 #include "sbr/ConstructionFrame.h"
@@ -5371,6 +5372,41 @@ Status Modeler::align(const std::vector<ObjectId>& ids, int axis, int edge, std:
 
 Result<std::vector<ObjectId>> Modeler::createWalls(std::vector<gp_Pnt> points, double thickness, double height,
                                                   int justification) {
+  const double o = justification < 0 ? 0.0 : justification > 0 ? -thickness : -thickness / 2;
+  return createWallBands(std::move(points), thickness, height, o,
+                         {{"wall_line", justification < 0 ? "right" : justification > 0 ? "left" : "center"}});
+}
+
+Result<std::vector<ObjectId>> Modeler::createTypedWalls(std::vector<gp_Pnt> points, double height,
+                                                       const std::string& typeId, double core, bool outsideRight) {
+  using R = Result<std::vector<ObjectId>>;
+  const auto type = construction::wallType(typeId, core);
+  if (!type) return R::failure(type.error());
+  // A closed outline drawn anticlockwise has its inside on the left: turn it round so the
+  // outside (left) faces out.
+  const bool closed = points.size() > 3 && points.front().Distance(points.back()) < tolerance::kLinear;
+  if (closed && type->exterior) {
+    double area2 = 0.0;
+    for (std::size_t i = 0; i + 1 < points.size(); ++i)
+      area2 += points[i].X() * points[i + 1].Y() - points[i + 1].X() * points[i].Y();
+    if ((area2 > 0) != outsideRight) std::reverse(points.begin(), points.end());
+  }
+  const double left = outsideRight ? type->inside() : type->outside();
+  const double right = outsideRight ? type->outside() : type->inside();
+  char offset[32];
+  std::snprintf(offset, sizeof offset, "%.6g", right);
+  return createWallBands(std::move(points), left + right, height, -right,
+                         {{"wall_line", "offset"},
+                          {"wall_line_offset", offset},
+                          {"wall_type", type->id},
+                          {"wall_type_name", type->name},
+                          {"wall_outside", outsideRight ? "right" : "left"},
+                          {"wall_layers", type->layersJson()}});
+}
+
+Result<std::vector<ObjectId>> Modeler::createWallBands(std::vector<gp_Pnt> points, double thickness, double height,
+                                                      double o,
+                                                      const std::vector<std::pair<std::string, std::string>>& attributes) {
   using R = Result<std::vector<ObjectId>>;
   if (points.size() < 2) return R::failure("A wall needs at least two points");
   if (!(thickness > tolerance::kMinDimension) || !(height > tolerance::kMinDimension)) {
@@ -5391,7 +5427,6 @@ Result<std::vector<ObjectId>> Modeler::createWalls(std::vector<gp_Pnt> points, d
     dirs.emplace_back(v);
   }
   // The wall's band, measured to the left of its line: [o, o + thickness].
-  const double o = justification < 0 ? 0.0 : justification > 0 ? -thickness : -thickness / 2;
   // Butt joints (exact for right angles): at a corner the incoming wall
   // runs on to the far side of the corner square, the outgoing one starts
   // after it. turn = +1 left, -1 right, 0 straight on.
@@ -5433,8 +5468,9 @@ Result<std::vector<ObjectId>> Modeler::createWalls(std::vector<gp_Pnt> points, d
   }
   Status tagged = setAttribute(walls, "kind", "wall");
   // Which face the drawn line is (looking along it): kept when the
-  // thickness changes (docs/41).
-  if (tagged) tagged = setAttribute(walls, "wall_line", justification < 0 ? "right" : justification > 0 ? "left" : "center");
+  // thickness changes (docs/41); and a build-up's description.
+  for (const auto& [key, value] : attributes)
+    if (tagged) tagged = setAttribute(walls, key, value);
   if (!tagged) {
     history_.abortGroup();
     return R::failure(tagged.message());
@@ -5536,9 +5572,11 @@ Result<Modeler::MemberInfo> Modeler::changeWallOrSlab(const ObjectId& id, const 
       // rectangle's height: keep the recorded line.
       const std::string keep = change.keep.value_or(attributeOr(object, "wall_line").empty() ? "center"
                                                                                                : attributeOr(object, "wall_line"));
-      if (keep != "left" && keep != "right" && keep != "center") return R::failure("keep: left, right or center");
+      // A build-up wall (line at an offset): its right face, and so its line, stay.
+      if (keep != "left" && keep != "right" && keep != "center" && keep != "offset")
+        return R::failure("keep: left, right or center");
       const double before = r.height, after = (r.height < 0 ? -1 : 1) * *change.thickness;
-      const double shift = keep == "right" ? 0.0 : keep == "left" ? before - after : (before - after) / 2;
+      const double shift = keep == "right" || keep == "offset" ? 0.0 : keep == "left" ? before - after : (before - after) / 2;
       r.plane.origin.Translate(gp_Vec(r.plane.yDir()) * shift);
       r.height = after;
     }

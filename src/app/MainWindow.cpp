@@ -5,6 +5,7 @@
 #include "FrameCheckPanel.h"
 #include "StructureDiagnosticsPanel.h"
 #include "MainWindow.h"
+#include "sbr/WallTypes.h"
 #include "sbr/KernelError.h"
 #include "DrawingExport.h"
 #include "CrashLog.h"
@@ -1301,6 +1302,37 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
     bar->addWidget(button);
   };
   drawing(ToolId::Wall, QStringLiteral("architectureWall"), &MainWindow::showWallSettingsDialog);
+  {
+    // The wall kind, right by the wall button: a timber build-up drawn on the column centre
+    // line (outside / inside from the line), or the plain thickness of the settings.
+    auto* kind = new QComboBox(bar);
+    kind->setObjectName(QStringLiteral("architectureWallType"));
+    kind->addItem(tr("壁：厚さ指定"), QString());
+    for (const auto& type : construction::wallTypes())
+      kind->addItem(QString::fromStdString(type.name), QString::fromStdString(type.id));
+    kind->setToolTip(tr("木造の壁の仕様。柱心の線で描くと、外側・内側の仕上げの厚みが付きます（数値は作図の目安）。"
+                        "外壁は進む向きの左が外。閉じた外周は自動で外向き"));
+    kind->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    bar->addWidget(kind);
+    auto* flip = new QToolButton(bar);
+    flip->setObjectName(QStringLiteral("architectureWallFlip"));
+    flip->setText(tr("外⇄内"));
+    flip->setCheckable(true);
+    flip->setToolTip(tr("外側を進む向きの右にする（開いた線の外壁で、外と内が逆の時）"));
+    bar->addWidget(flip);
+    auto apply = [this, kind, flip] {
+      WallTool::Settings s = wallTool_->settings();
+      s.type = kind->currentData().toString().toStdString();
+      s.outsideRight = flip->isChecked();
+      wallTool_->setSettings(s);
+      flip->setEnabled(!s.type.empty());
+      if (active_ != wallTool_.get()) activateTool(ToolId::Wall);
+      setStatus(wallTool_->settingsText());
+    };
+    connect(kind, &QComboBox::activated, this, apply);
+    connect(flip, &QToolButton::toggled, this, apply);
+    flip->setEnabled(false);
+  }
   drawing(ToolId::Slab, QStringLiteral("architectureSlab"), &MainWindow::showSlabSettingsDialog);
   drawing(ToolId::Opening, QStringLiteral("architectureOpening"), &MainWindow::showOpeningSettingsDialog);
   findChild<QToolButton*>(QStringLiteral("architectureOpening"))->setToolTip(
@@ -2663,6 +2695,29 @@ void MainWindow::showWallSettingsDialog() {
   auto* justification = new QComboBox(&dialog);
   justification->addItems({tr("線の左に寄せる"), tr("線を中心にする"), tr("線の右に寄せる")});
   justification->setCurrentIndex(current.justification + 1);
+  auto* type = new QComboBox(&dialog);
+  type->addItem(tr("厚さ指定（下の厚さ・基準線）"), QString());
+  for (const auto& t : construction::wallTypes())
+    type->addItem(QString::fromStdString(t.name), QString::fromStdString(t.id));
+  type->setCurrentIndex(std::max(0, type->findData(QString::fromStdString(current.type))));
+  auto* core = new QComboBox(&dialog);
+  core->addItems({QStringLiteral("105"), QStringLiteral("120")});
+  core->setCurrentIndex(current.core > 112 ? 1 : 0);
+  auto* outside = new QComboBox(&dialog);
+  outside->addItems({tr("進む向きの左"), tr("進む向きの右")});
+  outside->setCurrentIndex(current.outsideRight ? 1 : 0);
+  auto syncEnabled = [type, core, outside, thickness, justification] {
+    const bool typed = !type->currentData().toString().isEmpty();
+    core->setEnabled(typed);
+    outside->setEnabled(typed);
+    thickness->setEnabled(!typed);
+    justification->setEnabled(!typed);
+  };
+  connect(type, &QComboBox::currentIndexChanged, &dialog, syncEnabled);
+  syncEnabled();
+  form->addRow(tr("仕様"), type);
+  form->addRow(tr("柱の幅"), core);
+  form->addRow(tr("外側"), outside);
   form->addRow(tr("厚さ"), thickness);
   form->addRow(tr("高さ"), height);
   form->addRow(tr("基準線"), justification);
@@ -2678,7 +2733,18 @@ void MainWindow::showWallSettingsDialog() {
     reportError(tr("厚さと高さは正の長さで入力してください"));
     return;
   }
-  wallTool_->setSettings({*t, *h, justification->currentIndex() - 1});
+  WallTool::Settings next{*t, *h, justification->currentIndex() - 1};
+  next.type = type->currentData().toString().toStdString();
+  next.core = core->currentIndex() == 1 ? 120.0 : 105.0;
+  next.outsideRight = outside->currentIndex() == 1;
+  wallTool_->setSettings(next);
+  if (auto* bar = findChild<QComboBox*>(QStringLiteral("architectureWallType")))
+    bar->setCurrentIndex(std::max(0, bar->findData(QString::fromStdString(next.type))));
+  if (auto* flip = findChild<QToolButton*>(QStringLiteral("architectureWallFlip"))) {
+    const QSignalBlocker block(flip);
+    flip->setChecked(next.outsideRight);
+    flip->setEnabled(!next.type.empty());
+  }
   setStatus(wallTool_->settingsText());
 }
 

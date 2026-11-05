@@ -127,6 +127,8 @@ const Entry kEntries[] = {
     {"Opening sizes must be positive", "開口の幅・高さは正の値、腰は 0 以上にしてください"},
     {"This object has no rectangular openings", "この物には開口がありません"},
     {"This object has no openings", "この物には開口がありません"},
+    {"Unknown wall type", "壁の仕様が分かりません（外壁 サイディング・金属・ラスモルタル、内壁 石膏ボード）"},
+    {"Core width must be 30 to 300 mm", "柱の幅は 30〜300 mm で指定してください"},
     {"Unknown fitting type", "建具の種類が分かりません（窓・片開き・両開き・片引き・引違い・両引き・なし）"},
     {"Unknown fitting field", "建具の指定に知らない項目があります"},
     {"hinge is left|right and swing in|out", "片開きの吊元は左か右、開く向きは内か外です"},

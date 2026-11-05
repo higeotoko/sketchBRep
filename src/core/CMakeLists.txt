@@ -9,6 +9,7 @@ add_library(sbr_core STATIC
   src/ConstructionCheck.cpp
   src/ConstructionDiagnostics.cpp
   src/OpeningSymbols.cpp
+  src/WallTypes.cpp
   src/ConstructionQuantity.cpp
   src/ConstructionWall.cpp
   src/ConstructionWallBays.cpp

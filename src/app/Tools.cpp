@@ -1,5 +1,6 @@
 #include "sbr/ConstructionGuide.h"
 #include "Tools.h"
+#include "sbr/WallTypes.h"
 
 #include "Messages.h"
 
@@ -1122,6 +1123,14 @@ QString WallTool::name() const { return QObject::tr("壁"); }
 QCursor WallTool::cursor() const { return toolCursor(CursorKind::Wall); }
 
 QString WallTool::settingsText() const {
+  if (!settings_.type.empty()) {
+    const auto type = construction::wallType(settings_.type, settings_.core);
+    if (type) {
+      return QObject::tr("%1（柱心から外 %2・内 %3、厚さ %4）/ 高さ %5 / 外側＝進む向きの%6")
+          .arg(QString::fromStdString(type->name), mm(type->outside()), mm(type->inside()), mm(type->thickness()),
+               mm(settings_.height), settings_.outsideRight ? QObject::tr("右") : QObject::tr("左"));
+    }
+  }
   const QString just = settings_.justification < 0   ? QObject::tr("線の左")
                        : settings_.justification > 0 ? QObject::tr("線の右")
                                                       : QObject::tr("中心");
@@ -1137,7 +1146,10 @@ QString WallTool::finishedText(std::size_t created) const {
 Result<std::size_t> WallTool::commit(const std::vector<gp_Pnt>& points, bool closed) {
   std::vector<gp_Pnt> pts = points;
   if (closed) pts.push_back(points.front());
-  auto walls = host_.modeler().createWalls(pts, settings_.thickness, settings_.height, settings_.justification);
+  auto walls = settings_.type.empty()
+                   ? host_.modeler().createWalls(pts, settings_.thickness, settings_.height, settings_.justification)
+                   : host_.modeler().createTypedWalls(pts, settings_.height, settings_.type, settings_.core,
+                                                      settings_.outsideRight);
   if (!walls) return Result<std::size_t>::failure(walls.error());
   return walls->size();
 }
@@ -1148,8 +1160,16 @@ TopoDS_Shape WallTool::previewShape(const std::vector<gp_Pnt>& pts) const {
   BRep_Builder builder;
   TopoDS_Compound preview;
   builder.MakeCompound(preview);
-  const double t = settings_.thickness;
-  const double o = settings_.justification < 0 ? 0.0 : settings_.justification > 0 ? -t : -t / 2;
+  double t = settings_.thickness;
+  double o = settings_.justification < 0 ? 0.0 : settings_.justification > 0 ? -t : -t / 2;
+  if (!settings_.type.empty()) {
+    if (const auto type = construction::wallType(settings_.type, settings_.core)) {
+      // While drawing: the outside to the left (or right) of the line; a closed outline is
+      // turned outwards on commit.
+      t = type->thickness();
+      o = settings_.outsideRight ? -type->outside() : -type->inside();
+    }
+  }
   for (std::size_t i = 0; i + 1 < pts.size(); ++i) {
     const gp_Vec along(pts[i], pts[i + 1]);
     if (along.Magnitude() < tolerance::kMinDimension) continue;

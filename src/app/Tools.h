@@ -316,6 +316,11 @@ class WallTool : public PlanPolylineTool {
     double thickness = 200.0;
     double height = 3000.0;
     int justification = 0;  // -1 left of the line, 0 centred, 1 right
+    // A timber build-up (WallTypes.h) on the column centre line instead of the thickness;
+    // empty = the thickness and justification above.
+    std::string type;
+    double core = 105.0;        // column width
+    bool outsideRight = false;  // the outside on the right of the line (default left)
   };
   using PlanPolylineTool::PlanPolylineTool;
   QString name() const override;

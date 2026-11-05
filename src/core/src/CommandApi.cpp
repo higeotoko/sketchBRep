@@ -1963,11 +1963,17 @@ const std::vector<CommandDef>& commands() {
        "first point at the end for a closed outline. One wall per segment, corners butt-joined (exact at "
        "right angles), 'thickness' and 'height' (mm) from 'base' (default 0). 'justification': center "
        "(default), left or right of the line, looking along it. Length, thickness and height stay editable "
-       "(width / height / op0.distance). Walls get attribute kind=wall. One undo step.",
+       "(width / height / op0.distance). Walls get attribute kind=wall. One undo step. Timber walls on the "
+       "column centre line: 'type' instead of thickness = exterior_siding, exterior_metal, "
+       "exterior_lath_mortar, exterior_lath_mortar_direct or interior_board (layers outside -> inside around "
+       "the 'core', default 105 = column width); the outside is on the left of the line ('outside': right "
+       "swaps), a closed outline turns so it faces out. Layer thicknesses are usual drawing values, not "
+       "product specifications.",
        SCHEMA({"type": "object", "properties": {
          "points": {"type": "array"}, "thickness": {"type": "number"}, "height": {"type": "number"},
-         "base": {"type": "number"}, "justification": {"enum": ["center", "left", "right"]}},
-         "required": ["points", "thickness", "height"]}),
+         "base": {"type": "number"}, "justification": {"enum": ["center", "left", "right"]},
+         "type": {"type": "string"}, "core": {"type": "number"}, "outside": {"enum": ["left", "right"]}},
+         "required": ["points", "height"]}),
        [](doc::Modeler& m, const json& a) {
          const GridLookup grid(m.document());
          const double base = numberOr(a, "base", 0.0);
@@ -1975,6 +1981,13 @@ const std::vector<CommandDef>& commands() {
          const json& list = arg(a, "points");
          if (!list.is_array()) throw ApiError("'points' must be an array");
          for (const json& p : list) pts.push_back(grid.point(p, base));
+         if (a.contains("type")) {
+           const std::string side = textOr(a, "outside", "left");
+           if (side != "left" && side != "right") throw ApiError("outside: left or right");
+           return idsResult(must(m.createTypedWalls(pts, number(a, "height"), text(a, "type"),
+                                                    numberOr(a, "core", 105.0), side == "right")));
+         }
+         if (!a.contains("thickness")) throw ApiError("create_wall needs 'thickness' or 'type'");
          const std::string j = textOr(a, "justification", "center");
          if (j != "center" && j != "left" && j != "right") throw ApiError("justification: center, left or right");
          return idsResult(must(m.createWalls(pts, number(a, "thickness"), number(a, "height"),

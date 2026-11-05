@@ -1625,7 +1625,10 @@ void Viewport::syncSome(std::optional<double> budgetMs) {
   if (lockedView_ || !datums_.empty()) refreshDatums();
   syncSection();
   syncOpenEnds();
-  if (!queue.empty()) syncOpeningSymbols();
+  if (!queue.empty()) {
+    syncOpeningSymbols();
+    if (planCutZ_) syncWallCuts();
+  }
   syncEditBox();
   // Display copies may have been rebuilt: refresh the element overlay.
   std::vector<ElementRef> still;
@@ -2499,7 +2502,36 @@ void Viewport::setPlanCut(std::optional<double> z) {
   }
   syncSection();
   syncOpeningSymbols();
+  syncWallCuts();
   redraw();
+}
+
+void Viewport::syncWallCuts() {
+  if (view_.IsNull()) return;
+  // In a plan cut, walls are cut open (no filled cap) so the columns and studs inside them
+  // show; everything else keeps the view's filled cut.
+  Handle(Graphic3d_SequenceOfHClipPlane) planes;
+  if (planCutZ_) {
+    Handle(Graphic3d_ClipPlane) open = new Graphic3d_ClipPlane(gp_Pln(gp_Pnt(0, 0, *planCutZ_), gp::DZ().Reversed()));
+    open->SetCapping(false);
+    planes = new Graphic3d_SequenceOfHClipPlane();
+    planes->SetOverrideGlobal(true);
+    planes->Append(open);
+  }
+  const doc::Document& document = modeler_.document();
+  wallCutCount_ = 0;
+  for (auto& [id, entry] : entries_) {
+    const doc::Object* o = document.find(id);
+    const bool wall = o && o->attributes.count("kind") && o->attributes.at("kind") == "wall";
+    const Handle(Graphic3d_SequenceOfHClipPlane) want = wall ? planes : Handle(Graphic3d_SequenceOfHClipPlane)();
+    if (wall && planes) ++wallCutCount_;
+    for (const Handle(AIS_InteractiveObject)& shown :
+         {Handle(AIS_InteractiveObject)(entry.ais), Handle(AIS_InteractiveObject)(entry.edgeOverlay),
+          Handle(AIS_InteractiveObject)(entry.textureOverlay)}) {
+      if (shown.IsNull() || (shown->ClipPlanes().IsNull() && want.IsNull())) continue;
+      shown->SetClipPlanes(want);
+    }
+  }
 }
 
 void Viewport::syncOpeningSymbols() {

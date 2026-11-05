@@ -433,6 +433,14 @@ class Modeler {
   // along it), 0 = centred, 1 = right. Attribute kind = wall. One undo step.
   Result<std::vector<ObjectId>> createWalls(std::vector<gp_Pnt> points, double thickness, double height,
                                             int justification = 0);
+  // Timber walls of a build-up (WallTypes.h) on the column centre line: the core's centre on the
+  // line, the outside `type.outside()` to the left of it (looking along it) and the inside
+  // `type.inside()` to the right; `outsideRight` swaps them. A closed outline is turned so the
+  // outside faces out whichever way it was drawn. Attributes: kind = wall, wall_type,
+  // wall_type_name, wall_layers (JSON, outside -> inside), wall_line = offset and
+  // wall_line_offset (the line's distance from the wall's right face). One undo step.
+  Result<std::vector<ObjectId>> createTypedWalls(std::vector<gp_Pnt> points, double height, const std::string& type,
+                                                 double core = 105.0, bool outsideRight = false);
   // A floor slab: plan polygon (any winding) with its top at `top`,
   // `thickness` below. Attribute kind = slab. One undo step.
   Result<ObjectId> createSlab(const std::vector<gp_Pnt>& outline, double top, double thickness);
@@ -541,6 +549,10 @@ class Modeler {
   Result<MemberInfo> changeMember(const ObjectId& id, const MemberChange& change);
 
  private:
+  // Walls along `points`, each the band [o, o + thickness] to the left of its segment, tagged
+  // kind = wall plus `attributes`; one undo step.
+  Result<std::vector<ObjectId>> createWallBands(std::vector<gp_Pnt> points, double thickness, double height, double o,
+                                                const std::vector<std::pair<std::string, std::string>>& attributes);
   std::optional<MemberInfo> wallOrSlabInfo(const Object& o) const;
   Result<MemberInfo> changeWallOrSlab(const ObjectId& id, const MemberChange& change);
 

@@ -328,6 +328,7 @@ class GuiPhase1 : public QObject {
   void planLevelCutsAboveAndSillToolDrawsOnSillTop();
   void toolsMenuIsGroupedAndProposalBarIsReadable();
   void openingFittingFromPanelShowsInPlanCut();
+  void wallTypeFromToolbarAndColumnsShowInPlanCut();
   void foundationSupportsSelectActualPartsAndInvalidate();
   void foundationPadsFromMissingFloorPostsAndRegeneration();
   void foundationPadsWithDifferentTopsReloadWithoutChangingTheModel();
@@ -10067,6 +10068,56 @@ void GuiPhase1::openingFittingFromPanelShowsInPlanCut() {
   m.undo();f.vp->syncNow();
   QCOMPARE(f.vp->openingSymbolEdgeCount(),std::size_t(0));  // undone with the fitting
   f.vp->setPlanCut(std::nullopt);
+}
+
+// The wall kind is chosen on the architecture toolbar: a closed outline drawn on the column
+// lines gets the siding build-up outside, whichever way round it was clicked. In the plan cut
+// the walls are cut open (no cap) so the columns inside show; other objects keep the cap.
+void GuiPhase1::wallTypeFromToolbarAndColumnsShowInPlanCut() {
+  Fixture f;QVERIFY(f.setUp(2000,1500));auto& m=f.window.modeler();
+  auto* kind=f.window.findChild<QComboBox*>(QStringLiteral("architectureWallType"));QVERIFY(kind);
+  auto* flip=f.window.findChild<QToolButton*>(QStringLiteral("architectureWallFlip"));QVERIFY(flip);
+  QVERIFY(!flip->isEnabled());
+  const int siding=kind->findData(QStringLiteral("exterior_siding"));QVERIFY(siding>0);
+  kind->setCurrentIndex(siding);
+  emit kind->activated(siding);
+  QCOMPARE(f.window.wallTool().settings().type,std::string("exterior_siding"));
+  QVERIFY(flip->isEnabled());
+  QVERIFY(f.window.statusText().contains(QStringLiteral("窯業系サイディング")));
+  f.vp->lockView(Viewport::StandardView::Top);
+  f.vp->fitAll();f.vp->syncNow();QTest::qWait(30);
+  // Anticlockwise, on the column lines.
+  for(const gp_Pnt& p:{gp_Pnt(0,0,0),gp_Pnt(3640,0,0),gp_Pnt(3640,2730,0),gp_Pnt(0,2730,0),gp_Pnt(0,0,0)}) {
+    click(f.vp,f.vp->toWidget(p));QTest::qWait(20);
+  }
+  std::vector<doc::ObjectId> walls;Bnd_Box all;
+  for(const doc::Object& o:m.document().objects())
+    if(o.attributes.count("wall_type")) {walls.push_back(o.id);all.Add(m.document().worldBounds(o));}
+  QCOMPARE(walls.size(),std::size_t(4));
+  // Outside faces out: 95.5 beyond the lines (clicks are within a few mm).
+  QVERIFY2(std::abs(all.CornerMin().X()+95.5)<15,qPrintable(QString::number(all.CornerMin().X())));
+  QVERIFY2(std::abs(all.CornerMax().Y()-2730-95.5)<15,qPrintable(QString::number(all.CornerMax().Y())));
+  QTest::keyClick(f.vp,Qt::Key_Escape);
+  f.window.activateTool(MainWindow::ToolId::Select);
+  // A slab is not a wall: it keeps the filled cut.
+  QVERIFY(m.createSlab({gp_Pnt(0,0,0),gp_Pnt(3640,0,0),gp_Pnt(3640,2730,0),gp_Pnt(0,2730,0)},0,150));
+  f.vp->syncNow();
+  QCOMPARE(f.vp->wallsCutOpen(),std::size_t(0));  // 3D: nothing cut
+  f.vp->setPlanCut(1100.0);
+  QCOMPARE(f.vp->wallsCutOpen(),std::size_t(4));
+  // A wall made while the cut is on is cut open too.
+  QVERIFY(m.createTypedWalls({gp_Pnt(1820,0,0),gp_Pnt(1820,2730,0)},2400,"interior_board"));
+  f.vp->syncNow();
+  QCOMPARE(f.vp->wallsCutOpen(),std::size_t(5));
+  const auto capture=qEnvironmentVariable("SBR_WALL_CAPTURE");
+  if(!capture.isEmpty()) {
+    // With a timber frame under the walls: its columns show through the cut walls.
+    QVERIFY(m.generateFrame(R"({"inputs":{"x_bays":4,"y_bays":3,"storeys":1}})"));
+    f.vp->syncNow();f.vp->fitAll();QTest::qWait(80);
+    f.window.exportImage(capture);
+  }
+  f.vp->setPlanCut(std::nullopt);
+  QCOMPARE(f.vp->wallsCutOpen(),std::size_t(0));
 }
 
 // The Tools menu is a short list of groups (the drawing tools in their own submenu), and the
