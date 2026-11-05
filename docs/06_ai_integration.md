@@ -236,3 +236,5 @@ document sequenceとrevisionを持つ。候補IDはスナップショット内�
 同じ通りの1階の大引はその区間を外す。べた基礎の `inner_depth` は内部の地中梁（初期0＝なし）。[詳細](73_interior_sills_and_ground_beams.md)。
 
 `check_structure {frame_rules?}` は読み取り専用の構造診断のまとめ（壁量の行・耐力壁の世界座標・架構チェックと支持先の印・未評価の一覧）。画面の重ね描きと同じ関数。四分割法・N値は未評価として返す。[詳細](74_structure_diagnostics_overlay.md)。
+
+`check_wall_quantity` は `quarter_balance`（四分割法：階・方向ごとの側端部分の必要・存在・充足率、壁率比、判定）と `quarter_balance_basis` も返す。入力は `floors[].plan:{x:[min,max],y:[min,max]}`（任意で `side_areas_m2`）。下屋・一部だけ上階が載る側端部分は未評価。[詳細](76_quarter_balance.md)。
