@@ -1,0 +1,65 @@
+{
+  "date_jst": "2026-11-05",
+  "base_commit": "04c447191e560039221d4926e0f3a188e01a2def",
+  "platform": "Windows / MSVC 19.44 / OCCT 8.0.1 / Qt 6.12 / 3DM enabled",
+  "mcp_research": {
+    "server": "SumiCAD",
+    "version": "0.7.1",
+    "tool_count": 64,
+    "initial_connection_aborted_then_recovered": true,
+    "read_tools": [
+      "list_actions (structure, schemas:true, 43 actions)",
+      "list_actions (support, schemas:true, 2 unrelated balcony actions)",
+      "guide (foundation)"
+    ],
+    "read_actions": [
+      "foundation.steps",
+      "structure.runChecks (check:foundation, limit:50)"
+    ],
+    "current_model_foundation_result": "No footings; Foundation NONE / no foundation; not a safety pass",
+    "live_model_edited": false,
+    "adopted": [
+      "Trace supports to the foundation",
+      "Select actual objects from results",
+      "Separate missing, unassessed, geometry and capacity"
+    ],
+    "not_imported": [
+      "Source code",
+      "Legal coefficients",
+      "Regional defaults",
+      "Automatic fixes"
+    ]
+  },
+  "build_exit_code": 0,
+  "related_core_and_api": {
+    "tests": 108,
+    "failures": 0,
+    "errors": 0,
+    "seconds": 26.186,
+    "exit_code": 0
+  },
+  "gui": {
+    "actual_conditions": 21,
+    "including_init_cleanup": 23,
+    "failures": 0,
+    "errors": 0,
+    "seconds": 33.712,
+    "exit_code": 0
+  },
+  "new_core_tests": 12,
+  "new_gui_tests": [
+    "foundationSupportsSelectActualPartsAndInvalidate"
+  ],
+  "dialog_image_inspected": true,
+  "native_brep_unchanged_after_query_and_selection": true,
+  "ci_verified": false,
+  "human_windows_verified": false,
+  "limits": [
+    "Geometry only; no load transfer, joint, anchor, soil or capacity verdict",
+    "No automatic pads or walls-to-foundation routing",
+    "Unsupported member edits, slopes, stepped concrete and upper routes remain unassessed",
+    "Partial contacts are not summed; full candidates remain ambiguous",
+    "Hidden supports included; candidate search limited by depth and pair budget",
+    "No Linux or full GUI suite verification"
+  ]
+}

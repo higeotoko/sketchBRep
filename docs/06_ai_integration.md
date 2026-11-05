@@ -1,5 +1,10 @@
 # 06. AI 連携（バイパス）の設計と活用方針
 
+`check_foundation_supports {within?,ids?,tolerance_mm?,search_depth_mm?,packing_mm?,pair_budget?}` は、
+柱・土台・床束の下面と支持面の重なり・隙間、および土台を経由する基礎への形状対応を読み取り専用で返す。
+未評価・部分支持・重複候補・基礎計画の変更状態を区別する。耐力や接合の合否ではない。
+詳しくは [基礎までの支持先](67_foundation_support_paths.md)。
+
 基礎計画の追加：`generate_foundation` は既存土台から立上り・底盤を計画し、APIの初期動作は読み取り専用プレビュー。
 適用には `preview:false` と `expected_revision`、または既存のbatch/propose経路を使う。
 `check_foundation {foundation?}` は参照変更・手編集・土台下の隙間・生成部材の正味体積を読み取りで返す。

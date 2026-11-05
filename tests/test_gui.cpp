@@ -2,6 +2,7 @@
 #include "WallQuantityDialog.h"
 #include "WallBaysDialog.h"
 #include <QTextBrowser>
+#include "FoundationSupportsDialog.h"
 #include "sbr/ConstructionQuantity.h"
 #include <QPainter>
 #include "FrameCheckPanel.h"
@@ -319,6 +320,7 @@ class GuiPhase1 : public QObject {
   void timberFramePreviewApplyLevelsAndUndo();
   void foundationPreviewApplyRejectAndStaleRevision();
   void foundationDialogCreatesAndRegeneratesPlan();
+  void foundationSupportsSelectActualPartsAndInvalidate();
   void timberOpeningConflictsRemainVisibleInPreview();
   void timberStairwellRegenerationMatchesDialogAndExports();
   void frameChecksUpdateAndDiscardStaleResults();
@@ -9543,6 +9545,42 @@ void GuiPhase1::timberOpeningConflictsRemainVisibleInPreview() {
   QCOMPARE(serializeDocument(model.document()), before);
   f.window.rejectProposal();
   QCOMPARE(serializeDocument(model.document()), before);
+}
+
+void GuiPhase1::foundationSupportsSelectActualPartsAndInvalidate() {
+  using nlohmann::json;
+  Fixture f;QVERIFY(f.setUp(4000,3000));auto& m=f.window.modeler();
+  doc::Modeler::MemberSpec spec;spec.start={0,0,540};spec.end={3000,0,540};spec.up=gp::DZ();spec.anchor.up=1;
+  spec.section.width=spec.section.depth=120;spec.role="sill";spec.materialClass="timber";spec.name="土台A";
+  const auto sill=m.createMember(spec);QVERIFY(sill);
+  const auto foundation=m.generateFoundation(json{{"inputs",{{"sources",{*sill}}}}}.dump());QVERIFY(foundation);
+  const std::string stem=json::parse(*foundation)["quantities"]["foundation_stem"]["id"];
+  spec.start={1500,0,540};spec.end={1500,0,3000};spec.up.reset();spec.anchor.up=0;
+  spec.section.width=spec.section.depth=105;spec.role="column";spec.name="柱A";
+  const auto column=m.createMember(spec);QVERIFY(column);
+  spec.start={1500,1000,400};spec.end={1500,1000,800};spec.role="floor_post";spec.name="床束A";
+  const auto post=m.createMember(spec);QVERIFY(post);
+  const auto before=serializeDocument(m.document());const auto steps=m.history().undoCount();
+  auto* action=f.window.findChild<QAction*>(QStringLiteral("foundationSupportsAction"));QVERIFY(action);action->trigger();
+  auto* dialog=f.window.findChild<FoundationSupportsDialog*>();QVERIFY(dialog);
+  auto* table=dialog->findChild<QTableWidget*>(QStringLiteral("foundationSupportsTable"));QVERIFY(table);QCOMPARE(table->rowCount(),3);
+  int row=-1;for(int i=0;i<table->rowCount();++i) if(table->item(i,0)->text()==QStringLiteral("柱A")) row=i;
+  QVERIFY(row>=0);QVERIFY(table->item(row,6)->text().contains(QStringLiteral("形状の経路あり")));
+  table->selectRow(row);QCOMPARE(f.window.selection(),std::vector<doc::ObjectId>{*column});
+  auto* supports=dialog->findChild<QPushButton*>(QStringLiteral("foundationSupportsSelect"));QVERIFY(supports && supports->isEnabled());supports->click();
+  const auto selected=f.window.selection();QVERIFY(std::find(selected.begin(),selected.end(),*sill)!=selected.end());
+  QVERIFY(std::find(selected.begin(),selected.end(),stem)!=selected.end());QVERIFY(!f.vp->inspectionMarkerShape().IsNull());
+  const auto capture=qEnvironmentVariable("SBR_FOUNDATION_SUPPORTS_CAPTURE");if(!capture.isEmpty()) QVERIFY(dialog->grab().save(capture));
+  const auto after=serializeDocument(m.document());
+  if(!capture.isEmpty() && after!=before) {
+    QFile oldFile(capture+QStringLiteral(".before.json"));if(oldFile.open(QIODevice::WriteOnly)) oldFile.write(QByteArray::fromStdString(before));
+    QFile newFile(capture+QStringLiteral(".after.json"));if(newFile.open(QIODevice::WriteOnly)) newFile.write(QByteArray::fromStdString(after));
+  }
+  QCOMPARE(m.history().undoCount(),steps);QCOMPARE(after,before);
+  QVERIFY(m.remove({stem}));QTRY_COMPARE(table->rowCount(),0);QVERIFY(!supports->isEnabled());QVERIFY(f.vp->inspectionMarkerShape().IsNull());
+  dialog->findChild<QPushButton*>(QStringLiteral("foundationSupportsRefresh"))->click();QCOMPARE(table->rowCount(),3);
+  for(int i=0;i<table->rowCount();++i) if(table->item(i,0)->text()==QStringLiteral("柱A")) QVERIFY(table->item(i,6)->text().contains(QStringLiteral("要確認")));
+  dialog->close();QVERIFY(f.vp->inspectionMarkerShape().IsNull());
 }
 
 void GuiPhase1::foundationPreviewApplyRejectAndStaleRevision() {

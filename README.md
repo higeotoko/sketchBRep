@@ -20,6 +20,8 @@
 
 土台から布基礎の立上り・底盤を作り、正味コンクリート量・変更状態を確認する機能は [布基礎計画](docs/66_foundation_planning.md) を参照してください。
 
+柱・土台・床束の支持先を実形状で確認し、該当部材を選択する機能は [基礎までの支持先](docs/67_foundation_support_paths.md) に記録しています。
+
 ![Phase 2 screenshot](docs/images/phase2.png)
 
 ## できること

@@ -2082,6 +2082,17 @@ const std::vector<CommandDef>& commands() {
        SCHEMA({"type":"object","properties":{"foundation":{"type":"string"}}}),
        [](doc::Modeler& m,const json& a) { auto result=json::parse(must(construction::checkFoundation(m.document(),a.dump())));
          result["revision"]=m.history().revision();return result; }},
+      {"check_foundation_supports",
+       "Read-only base-face support geometry for timber sills, vertical columns and floor posts. "
+       "within/ids scope subjects; supports are searched across the document, including hidden parts. "
+       "Measures actual horizontal face overlap and vertical gaps, traces column -> sill -> foundation. "
+       "Partial, ambiguous, missing, gap and unsupported cases are explicit. Display-only floor posts and upper-storey routes are unassessed. "
+       "Generated plan freshness is separate from geometric contact. Never establishes load transfer, anchorage, capacity or soil safety.",
+       SCHEMA({"type":"object","properties":{"within":{"type":"string"},"ids":{"type":"array","items":{"type":"string"}},
+         "tolerance_mm":{"type":"number"},"search_depth_mm":{"type":"number"},"packing_mm":{"type":"number"},
+         "pair_budget":{"type":"integer"}}}),
+       [](doc::Modeler& m,const json& a) {auto result=json::parse(must(construction::foundationSupports(m.document(),a.dump())));
+         result["revision"]=m.history().revision();return result;}},
       {"generate_frame",
        "Generate a timber post_beam_2storey frame (1 or 2 storeys, gable/shed Japanese roof). "
        "Read get_construction_guide first. inputs: {x_bays:10,y_bays:8,module:910,storeys:2,roof:gable|shed, "
@@ -2719,7 +2730,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
       name == "preview" || name == "query_objects" || name == "aggregate" || name == "get_changes" ||
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
       name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" ||
-        name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation") {
+        name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports") {
     return E::Read;
   }
   if (isFileCommand(name)) return E::ExternalIo;

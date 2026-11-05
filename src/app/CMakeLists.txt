@@ -7,6 +7,7 @@ add_library(sbr_ui STATIC
   MainWindow.cpp MainWindow.h
   TimberFrameDialog.cpp
   FoundationDialog.cpp
+  FoundationSupportsDialog.cpp FoundationSupportsDialog.h
   FrameCheckPanel.cpp FrameCheckPanel.h
   TakeOffDialog.cpp TakeOffDialog.h
   WallQuantityDialog.cpp WallQuantityDialog.h
