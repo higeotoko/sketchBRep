@@ -398,8 +398,15 @@ class Modeler {
     double bottom = 0.0;               // world Z of the sill / lowest edge
     gp_Dir normal;                     // of the face it was cut from (world)
     double along = 0.0;                // horizontal extent along the wall (Z x normal)
+    double depth = 0.0;                // through the host, from the face along -normal (wall thickness)
   };
   Result<std::vector<OpeningInfo>> openings(const ObjectId& host) const;
+  // The same, from a document alone (drawings run on a copy without a Modeler).
+  static Result<std::vector<OpeningInfo>> openingsIn(const Document& document, const ObjectId& host);
+  // Door / window kind of openings (plan symbols): `fitting` is a JSON object, e.g.
+  // {"type":"swing_single","hinge":"left","swing":"in"}; applies to `indices` (1-based, all
+  // when empty). Stored on the host as attribute "opening_fittings". One undo step.
+  Status setOpeningFittings(const ObjectId& host, const std::vector<std::size_t>& indices, const std::string& fitting);
   // Resizes openings (all when `indices` is empty) keeping the horizontal
   // centre and the sill (keepCenter = false) or the centre (true) in place.
   // One undo step; the parameters stay editable.

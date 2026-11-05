@@ -1824,8 +1824,9 @@ const std::vector<CommandDef>& commands() {
        }},
       {"list_openings",
        "Rectangular openings (doors, windows pushed through) of the given objects (all objects when 'ids' is "
-       "omitted): index (for set_opening_size), name, width, height, centre and the world height of the "
-       "lowest edge (sill). mm.",
+       "omitted): index (for set_opening_size / set_opening_fittings), name, width, height, centre, the "
+       "world height of the lowest edge (sill), depth (wall thickness) and its door / window 'fitting' if "
+       "set. mm.",
        SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}}}}),
        [](doc::Modeler& m, const json& a) {
          std::vector<ObjectId> hosts;
@@ -1839,10 +1840,17 @@ const std::vector<CommandDef>& commands() {
            const auto found = must(m.openings(h));
            if (found.empty()) continue;
            json openings = json::array();
+           json fittings = json::object();
+           const auto& attrs = object(m, h).attributes;
+           if (const auto it = attrs.find("opening_fittings"); it != attrs.end())
+             fittings = json::parse(it->second, nullptr, false);
            for (const auto& o : found) {
-             openings.push_back({{"index", o.index}, {"name", o.name}, {"width", o.width}, {"height", o.height},
-                                 {"center", toJson(o.center)}, {"sill", o.bottom},
-                                 {"normal", toJson(o.normal.XYZ())}});
+             json entry = {{"index", o.index}, {"name", o.name}, {"width", o.width}, {"height", o.height},
+                           {"center", toJson(o.center)}, {"sill", o.bottom}, {"depth", o.depth},
+                           {"normal", toJson(o.normal.XYZ())}};
+             if (fittings.is_object() && fittings.contains(std::to_string(o.index)))
+               entry["fitting"] = fittings.at(std::to_string(o.index));
+             openings.push_back(entry);
            }
            list.push_back({{"host", h}, {"name", object(m, h).name}, {"openings", openings}});
          }
@@ -1869,6 +1877,29 @@ const std::vector<CommandDef>& commands() {
          const std::optional<double> w = a.contains("width") ? std::optional<double>(number(a, "width")) : std::nullopt;
          const std::optional<double> h = a.contains("height") ? std::optional<double>(number(a, "height")) : std::nullopt;
          must(m.setOpeningSize(text(a, "host"), which, w, h, keep == "center"));
+         return json::object();
+       }},
+      {"set_opening_fittings",
+       "Door / window kind of openings of 'host' ('openings': indices from list_openings, default all), "
+       "drawn as plan symbols in the plan cut and on plan drawings (DXF / JWW / PDF) to the real width and "
+       "wall thickness. 'fitting': {\"type\": none | window | swing_single (\"hinge\": left|right, "
+       "\"swing\": in|out) | swing_double (\"swing\") | sliding_single (\"slide\": left|right; 片引き) | "
+       "sliding_double (引違い) | sliding_bi (両引き)}. \"out\" is the side the opening was cut from (its "
+       "normal); left / right as seen from the side a door opens to, or from the cut side for sliding doors. "
+       "\"none\" removes it. One undo step; combine with place_openings in a batch.",
+       SCHEMA({"type": "object", "properties": {"host": {"type": "string"},
+               "openings": {"type": "array", "items": {"type": "integer"}}, "fitting": {"type": "object"}},
+               "required": ["host", "fitting"]}),
+       [](doc::Modeler& m, const json& a) {
+         std::vector<std::size_t> which;
+         if (a.contains("openings")) {
+           for (const json& i : a.at("openings")) {
+             if (!i.is_number_integer() || i.get<long long>() < 1) throw ApiError("'openings' must be indices >= 1");
+             which.push_back(i.get<std::size_t>());
+           }
+         }
+         if (!arg(a, "fitting").is_object()) throw ApiError("'fitting' must be an object");
+         must(m.setOpeningFittings(text(a, "host"), which, a.at("fitting").dump()));
          return json::object();
        }},
       {"assign_levels",

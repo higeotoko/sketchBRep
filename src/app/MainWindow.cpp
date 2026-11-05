@@ -655,6 +655,12 @@ void MainWindow::buildUi() {
               if (!report(modeler_.setCurvePoints(id, points))) refreshPanels();
             });
           });
+  connect(panel_, &PropertiesPanel::openingFittingEdited, this,
+          [this](const doc::ObjectId& id, int index, const QString& fitting) {
+            QTimer::singleShot(0, this, [this, id, index, fitting] {
+              if (!setOpeningFitting(id, index, fitting)) refreshPanels();
+            });
+          });
   connect(panel_, &PropertiesPanel::openingSizeEdited, this,
           [this](const doc::ObjectId& id, int index, double width, double height) {
             QTimer::singleShot(0, this, [this, id, index, width, height] {
@@ -3644,6 +3650,17 @@ void MainWindow::showOpeningsDialog() {
     return;
   }
   placeOpeningsOnSelection(count->value(), *w, *h, *s, gap);
+}
+
+bool MainWindow::setOpeningFitting(const doc::ObjectId& host, int index, const QString& fitting) {
+  if (index < 1) return false;
+  const Status s = modeler_.setOpeningFittings(host, {static_cast<std::size_t>(index)}, fitting.toStdString());
+  if (!s) {
+    reportError(tr("開口の建具を設定できません: %1").arg(QString::fromStdString(s.message())));
+    return false;
+  }
+  setStatus(tr("開口 %1 の建具を設定しました（平面の切断表示と平面図に記号が出ます）").arg(index));
+  return true;
 }
 
 bool MainWindow::resizeOpening(const doc::ObjectId& host, int index, double width, double height) {

@@ -327,6 +327,7 @@ class GuiPhase1 : public QObject {
   void structureDiagnosticsOverlayIsReadOnlyAndClearsOnEdit();
   void planLevelCutsAboveAndSillToolDrawsOnSillTop();
   void toolsMenuIsGroupedAndProposalBarIsReadable();
+  void openingFittingFromPanelShowsInPlanCut();
   void foundationSupportsSelectActualPartsAndInvalidate();
   void foundationPadsFromMissingFloorPostsAndRegeneration();
   void foundationPadsWithDifferentTopsReloadWithoutChangingTheModel();
@@ -10034,6 +10035,38 @@ void GuiPhase1::planLevelCutsAboveAndSillToolDrawsOnSillTop() {
   QVERIFY2(std::abs(b.CornerMax().Z()-sillZ)<1,qPrintable(QString::number(b.CornerMax().Z())));
   QVERIFY2(std::abs((b.CornerMax().X()-b.CornerMin().X())-1820)<1,qPrintable(QString::number(b.CornerMax().X()-b.CornerMin().X())));
   QTest::keyClick(f.vp,Qt::Key_Escape);
+}
+
+// An opening's door kind is chosen in the properties panel (one undo step) and its symbol is
+// drawn in the plan cut that passes through it, not in 3D or above it.
+void GuiPhase1::openingFittingFromPanelShowsInPlanCut() {
+  using nlohmann::json;
+  Fixture f;QVERIFY(f.setUp());auto& m=f.window.modeler();
+  const auto walls=m.createWalls({gp_Pnt(0,100,0),gp_Pnt(6000,100,0)},200,3000);QVERIFY(walls && walls->size()==1);
+  const auto host=m.placeOpenings(walls->front(),gp_Dir(0,-1,0),1,900,2100,0,std::nullopt);
+  QVERIFY2(host,host?"":host.error().c_str());
+  f.vp->syncNow();
+  f.window.setSelection({*host});
+  QApplication::processEvents();
+  auto* kind=f.window.findChild<QComboBox*>(QStringLiteral("openingFitting1"));QVERIFY(kind);
+  QCOMPARE(kind->currentIndex(),0);  // なし
+  const int swing=kind->findText(QStringLiteral("片開き 右吊元・内開き"));QVERIFY(swing>0);
+  kind->setCurrentIndex(swing);
+  emit kind->activated(swing);
+  QTRY_VERIFY(m.document().find(*host)->attributes.count("opening_fittings"));
+  const json stored=json::parse(m.document().find(*host)->attributes.at("opening_fittings"));
+  QCOMPARE(stored.at("1").at("hinge").get<std::string>(),std::string("right"));
+  f.vp->syncNow();
+  QCOMPARE(f.vp->openingSymbolEdgeCount(),std::size_t(0));  // 3D: no symbols
+  f.vp->lockView(Viewport::StandardView::Top);
+  f.vp->setPlanCut(1100.0);
+  QCOMPARE(f.vp->openingSymbolEdgeCount(),std::size_t(2));  // leaf + arc
+  f.vp->setPlanCut(2500.0);
+  QCOMPARE(f.vp->openingSymbolEdgeCount(),std::size_t(0));  // above the door
+  f.vp->setPlanCut(1100.0);
+  m.undo();f.vp->syncNow();
+  QCOMPARE(f.vp->openingSymbolEdgeCount(),std::size_t(0));  // undone with the fitting
+  f.vp->setPlanCut(std::nullopt);
 }
 
 // The Tools menu is a short list of groups (the drawing tools in their own submenu), and the

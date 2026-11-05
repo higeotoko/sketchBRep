@@ -1,4 +1,5 @@
 #include "Viewport.h"
+#include "sbr/OpeningSymbols.h"
 #include "sbr/KernelError.h"
 
 #include "WheelZoom.h"
@@ -1624,6 +1625,7 @@ void Viewport::syncSome(std::optional<double> budgetMs) {
   if (lockedView_ || !datums_.empty()) refreshDatums();
   syncSection();
   syncOpenEnds();
+  if (!queue.empty()) syncOpeningSymbols();
   syncEditBox();
   // Display copies may have been rebuilt: refresh the element overlay.
   std::vector<ElementRef> still;
@@ -2496,7 +2498,34 @@ void Viewport::setPlanCut(std::optional<double> z) {
     view_->AddClipPlane(planCut_);
   }
   syncSection();
+  syncOpeningSymbols();
   redraw();
+}
+
+void Viewport::syncOpeningSymbols() {
+  if (view_.IsNull()) return;
+  if (!openingSymbols_.IsNull()) {
+    context_->Remove(openingSymbols_, Standard_False);
+    openingSymbols_.Nullify();
+  }
+  openingSymbolEdges_ = 0;
+  if (!planCutZ_) return;
+  // Just under the cut (it would clip lines lying on it), drawn over the caps.
+  draw::SymbolOptions options;
+  options.z = *planCutZ_ - 1.0;
+  const auto edges = draw::openingSymbols(modeler_.document(), options);
+  if (edges.empty()) return;
+  TopoDS_Compound compound;
+  BRep_Builder builder;
+  builder.MakeCompound(compound);
+  for (const TopoDS_Edge& e : edges) builder.Add(compound, e);
+  openingSymbols_ = new AIS_Shape(compound);
+  openingSymbols_->SetColor(Quantity_Color(0.05, 0.05, 0.08, Quantity_TOC_RGB));
+  openingSymbols_->SetWidth(1.6);
+  openingSymbols_->SetZLayer(Graphic3d_ZLayerId_Topmost);
+  context_->Display(openingSymbols_, AIS_WireFrame, -1, Standard_False);
+  context_->Deactivate(openingSymbols_);
+  openingSymbolEdges_ = edges.size();
 }
 
 void Viewport::lockView(StandardView v) {
@@ -2558,6 +2587,17 @@ void Viewport::pushGuides() {
   std::vector<gp_Lin> lines;
   for (const auto& [id, line] : guideLines_) lines.push_back(line);
   lines.insert(lines.end(), datumGuides_.begin(), datumGuides_.end());
+  // In a plan (top view) the level's work plane is where one draws: level guides (grid lines)
+  // cross there, not on the ground under the floor where solids would hide the crossings and
+  // a joist corner next to them would win the snap.
+  guidesLiftedTo_ = workAxis() == 0 ? std::optional<double>(workOffsets_[0]) : std::nullopt;
+  if (guidesLiftedTo_)
+    for (gp_Lin& l : lines)
+      if (std::abs(l.Direction().Z()) < 1e-9) {
+        gp_Pnt at = l.Location();
+        at.SetZ(*guidesLiftedTo_);
+        l.SetLocation(at);
+      }
   inference_.setGuides(lines);
 }
 
@@ -2572,7 +2612,8 @@ void Viewport::refreshDatums() {
   datumGuides_.clear();
   const int axis = workAxis();
   if (axis <= 0) {  // 3D or the plan: nothing of this
-    if (hadGuides) pushGuides();
+    const std::optional<double> lift = axis == 0 ? std::optional<double>(workOffsets_[0]) : std::nullopt;
+    if (hadGuides || lift != guidesLiftedTo_) pushGuides();
     return;
   }
   const doc::Document& document = modeler_.document();
@@ -2708,6 +2749,7 @@ void Viewport::setWorkOffset(double offset, const QString& name) {
   if (axis < 0 || !std::isfinite(offset)) return;
   workOffsets_[axis] = offset;
   workNames_[axis] = name;
+  if (axis == 0) pushGuides();
   emit workPlaneChanged();
 }
 

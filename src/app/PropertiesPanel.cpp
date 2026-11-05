@@ -25,6 +25,7 @@
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
+#include <nlohmann/json.hpp>
 #include "sbr/geom/Measure.h"
 #include "sbr/geom/Validation.h"
 
@@ -426,7 +427,30 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
 
   // Openings cut into this object (walls): width x height, editable.
   if (const auto openings = modeler.openings(id); openings && !openings->empty()) {
-    form_->addRow(new QLabel(tr("<b>開口</b>（幅 × 高さ）")));
+    form_->addRow(new QLabel(tr("<b>開口</b>（幅 × 高さ・建具）")));
+    nlohmann::json fittings = nlohmann::json::object();
+    if (const doc::Object* host = modeler.document().find(id)) {
+      if (const auto it = host->attributes.find("opening_fittings"); it != host->attributes.end()) {
+        fittings = nlohmann::json::parse(it->second, nullptr, false);
+        if (!fittings.is_object()) fittings = nlohmann::json::object();
+      }
+    }
+    // Door / window kinds, shown in the plan (cut) and on plan drawings. 外 = the side the
+    // opening was made from, 内 = the other side; left / right as seen from the side it opens to.
+    const std::vector<std::pair<QString, std::string>> kinds = {
+        {tr("なし（開口だけ）"), R"({"type":"none"})"},
+        {tr("窓"), R"({"type":"window"})"},
+        {tr("片開き 左吊元・内開き"), R"({"type":"swing_single","hinge":"left","swing":"in"})"},
+        {tr("片開き 右吊元・内開き"), R"({"type":"swing_single","hinge":"right","swing":"in"})"},
+        {tr("片開き 左吊元・外開き"), R"({"type":"swing_single","hinge":"left","swing":"out"})"},
+        {tr("片開き 右吊元・外開き"), R"({"type":"swing_single","hinge":"right","swing":"out"})"},
+        {tr("両開き 内開き"), R"({"type":"swing_double","swing":"in"})"},
+        {tr("両開き 外開き"), R"({"type":"swing_double","swing":"out"})"},
+        {tr("片引き 左へ引く"), R"({"type":"sliding_single","slide":"left"})"},
+        {tr("片引き 右へ引く"), R"({"type":"sliding_single","slide":"right"})"},
+        {tr("引違い"), R"({"type":"sliding_double"})"},
+        {tr("両引き"), R"({"type":"sliding_bi"})"},
+    };
     for (const doc::Modeler::OpeningInfo& op : *openings) {
       auto* row = new QWidget;
       auto* h = new QHBoxLayout(row);
@@ -446,6 +470,20 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       };
       connect(w, &QDoubleSpinBox::editingFinished, this, commit);
       connect(ht, &QDoubleSpinBox::editingFinished, this, commit);
+      auto* kind = new QComboBox;
+      kind->setObjectName(QStringLiteral("openingFitting%1").arg(index));
+      kind->setToolTip(tr("平面（切断）と平面図に建具の記号を描きます。外＝開口をあけた面の側、内＝反対側。"
+                          "左右は開く側から見て（引戸は開口をあけた面の側から見て）"));
+      const nlohmann::json current = fittings.contains(std::to_string(index)) ? fittings.at(std::to_string(index))
+                                                                              : nlohmann::json{{"type", "none"}};
+      for (const auto& [label, value] : kinds) {
+        kind->addItem(label, QString::fromStdString(value));
+        if (nlohmann::json::parse(value) == current) kind->setCurrentIndex(kind->count() - 1);
+      }
+      connect(kind, &QComboBox::activated, this, [this, id, index, kind] {
+        emit openingFittingEdited(id, index, kind->currentData().toString());
+      });
+      h->addWidget(kind, 1);
       row->setObjectName(QStringLiteral("opening%1").arg(index));
       form_->addRow(tr("開口 %1").arg(index), row);
     }

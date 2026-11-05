@@ -45,6 +45,8 @@ class PropertiesPanel : public QWidget {
   void curvePointEdited(const doc::ObjectId& id, int index, double x, double y, double z);
   // Opening (window/door cut) `index` of a host resized.
   void openingSizeEdited(const doc::ObjectId& id, int index, double width, double height);
+  // Door / window kind of one opening (plan symbol): a fitting JSON (OpeningSymbols.h).
+  void openingFittingEdited(const doc::ObjectId& id, int index, const QString& fitting);
   void lockToggled(const doc::ObjectId& id, bool locked);
   // The object's material picked from the library ("" = inherit).
   void materialAssigned(const doc::ObjectId& id, const std::string& materialId);

@@ -1,4 +1,5 @@
 #include "sbr/doc/Modeler.h"
+#include "sbr/OpeningSymbols.h"
 #include "sbr/ConstructionGuide.h"
 #include "sbr/ConstructionFrame.h"
 #include "sbr/ConstructionWall.h"
@@ -5159,6 +5160,10 @@ void replaceOperand(Recipe& recipe, const std::vector<std::size_t>& path, std::s
 }  // namespace
 
 Result<std::vector<Modeler::OpeningInfo>> Modeler::openings(const ObjectId& hostId) const {
+  return openingsIn(document_, hostId);
+}
+
+Result<std::vector<Modeler::OpeningInfo>> Modeler::openingsIn(const Document& document_, const ObjectId& hostId) {
   const Object* host = document_.find(hostId);
   if (!host) return Result<std::vector<OpeningInfo>>::failure("Object not found");
   const gp_Trsf world = document_.worldTransform(*host);
@@ -5183,9 +5188,38 @@ Result<std::vector<Modeler::OpeningInfo>> Modeler::openings(const ObjectId& host
       }
     }
     info.along = a1 - a0;
+    // The cutter is extruded through the host from the face: its distance is the thickness.
+    for (const auto& m : o.operand->recipe->modifiers)
+      if (const auto* e = std::get_if<ExtrudeOp>(&m)) info.depth = std::abs(e->distance);
     out.push_back(info);
   }
   return out;
+}
+
+Status Modeler::setOpeningFittings(const ObjectId& hostId, const std::vector<std::size_t>& indices,
+                                   const std::string& fitting) {
+  const Object* host = document_.find(hostId);
+  if (!host) return Status::failure("Object not found");
+  const auto list = openings(hostId);
+  if (!list) return list.status();
+  if (list->empty()) return Status::failure("This object has no openings");
+  const auto checked = draw::normalizeFitting(fitting);
+  if (!checked) return checked.status();
+  nlohmann::json all = nlohmann::json::object();
+  if (const auto it = host->attributes.find("opening_fittings"); it != host->attributes.end()) {
+    all = nlohmann::json::parse(it->second, nullptr, false);
+    if (!all.is_object()) all = nlohmann::json::object();
+  }
+  const nlohmann::json value = nlohmann::json::parse(*checked);
+  std::vector<std::size_t> targets = indices;
+  if (targets.empty())
+    for (const auto& o : *list) targets.push_back(o.index);
+  for (const std::size_t index : targets) {
+    if (index < 1 || index > list->size()) return Status::failure("No opening " + std::to_string(index));
+    if (value.at("type") == "none") all.erase(std::to_string(index));
+    else all[std::to_string(index)] = value;
+  }
+  return setAttribute({hostId}, "opening_fittings", all.dump());
 }
 
 Status Modeler::setOpeningSize(const ObjectId& hostId, const std::vector<std::size_t>& indices,

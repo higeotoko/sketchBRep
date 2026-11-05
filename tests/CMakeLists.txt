@@ -35,6 +35,7 @@ add_executable(sbr_core_tests
   test_foundation_pads.cpp
   test_foundation_mat.cpp
   test_frame_interior_sills.cpp
+  test_opening_symbols.cpp
   test_structural_diagnostics.cpp
   test_quarter_balance.cpp
   test_timber_workflow.cpp

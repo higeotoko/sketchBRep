@@ -164,6 +164,8 @@ class Viewport : public QWidget {
   // plan view (3D or an elevation) removes it too.
   void setPlanCut(std::optional<double> z);
   std::optional<double> planCut() const { return planCutZ_; }
+  // Door / window symbols of the openings the plan cut passes through (edges shown; 0 without a cut).
+  std::size_t openingSymbolEdgeCount() const { return openingSymbolEdges_; }
   std::size_t diagnosticShapeCount() const { return diagnostics_.size(); }
   std::size_t roleShapeCount() const { return roles_.size(); }
   // What the tool preview shows now (null: nothing) - for checks.
@@ -380,6 +382,7 @@ class Viewport : public QWidget {
   void pushGuides();
   std::vector<Handle(AIS_InteractiveObject)> datums_;
   std::vector<gp_Lin> datumGuides_;
+  std::optional<double> guidesLiftedTo_;  // plan: guides moved to this work-plane height
   QStringList datumNames_;
   std::optional<doc::ObjectId> idOf(const Handle(AIS_InteractiveObject)& object) const;
 
@@ -464,6 +467,9 @@ class Viewport : public QWidget {
   Handle(AIS_Shape) inspectionMarker_;
   std::vector<Handle(AIS_Shape)> roles_;
   std::vector<Handle(AIS_Shape)> diagnostics_;
+  Handle(AIS_Shape) openingSymbols_;
+  std::size_t openingSymbolEdges_ = 0;
+  void syncOpeningSymbols();
   Handle(AIS_Shape) snapMarker_;
   Handle(AIS_Shape) inferenceLine_;
   Handle(AIS_Shape) referenceLine_;

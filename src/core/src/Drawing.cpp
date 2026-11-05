@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 #include <set>
 #include "sbr/draw/Drawing.h"
+#include "sbr/OpeningSymbols.h"
 
 #include <algorithm>
 #include <cmath>
@@ -527,6 +528,15 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
   }
   for (Item& h : hidden) view.items.push_back(std::move(h));
   for (Item& l : loose) view.items.push_back(std::move(l));
+  // Door / window symbols of the openings this plan cuts through, to their real width and
+  // the wall's thickness (OpeningSymbols.h).
+  if (spec.kind == ViewKind::Plan && std::abs(n.Z()) > 1 - 1e-9) {
+    SymbolOptions symbols;
+    symbols.z = spec.frame.Location().Z();
+    symbols.only = &drawn;
+    for (const TopoDS_Edge& e : openingSymbols(document, symbols))
+      addLocalEdge(TopoDS::Edge(e.Moved(TopLoc_Location(proj.toLocal))), Pen::Visible, deflection, view.items);
+  }
   for (Item& c : cut) view.items.push_back(std::move(c));
 
   // The extent of the model's lines (annotations are placed around it).
