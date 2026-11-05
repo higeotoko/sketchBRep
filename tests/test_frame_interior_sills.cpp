@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <map>
 #include <nlohmann/json.hpp>
 
 #include "sbr/ConstructionFoundation.h"
@@ -130,4 +131,24 @@ TEST_F(FrameInteriorSills, StudsFaceAcrossTheirWallOnBothDirections) {
     else { ++y; EXPECT_LT(dy, dx) << key << " " << dx << "x" << dy; }
   }
   EXPECT_GT(x, 0); EXPECT_GT(y, 0);
+}
+
+// Deleting a frame leaves its levels; making a frame again takes those unused levels over
+// (no "Level name already used"), and their heights follow the new inputs.
+TEST_F(FrameInteriorSills, FrameCanBeMadeAgainAfterItIsDeleted) {
+  const auto first = frame(json::object());
+  const std::string id = first["frame"];
+  const auto levelCount = m.levels().size();
+  std::map<std::string, std::string> before;
+  for (const auto& l : m.levels()) before[l.name] = l.id;
+  const auto del = call("delete", {{"ids", {id}}});
+  ASSERT_TRUE(del.value("ok", false)) << del.dump();
+  const auto again = frame({{"storey_height", 3000}});
+  EXPECT_EQ(again["frame"].is_string(), true);
+  EXPECT_EQ(m.levels().size(), levelCount);  // no duplicated levels
+  for (const auto& l : m.levels()) EXPECT_EQ(before[l.name], l.id) << l.name;
+  // A second frame next to a live one gets its own name and levels.
+  const auto second = frame({{"origin", {20000, 0, 0}}});
+  EXPECT_GT(m.levels().size(), levelCount);
+  (void)second;
 }

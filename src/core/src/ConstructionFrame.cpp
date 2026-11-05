@@ -175,6 +175,24 @@ struct Rect {
   bool contains(int x, int y) const { return x >= x0 && x <= x1 && y >= y0 && y <= y1; }
   bool boundary(int x, int y) const { return contains(x, y) && (x == x0 || x == x1 || y == y0 || y == y1); }
 };
+// A level still in use: an object's grid pin stands on it, or a generated frame binds it.
+// Levels left by a deleted frame are in use by nothing and may be taken over.
+bool levelInUse(const Document& d, const std::string& id) {
+  for (const auto& o : d.objects()) {
+    if (o.gridPin && (o.gridPin->startLevel == id || o.gridPin->endLevel == id)) return true;
+    const auto* group = std::get_if<GroupNode>(&o.recipe.base);
+    if (group && !group->constructionFrame.empty()) {
+      const json manifest = json::parse(group->constructionFrame, nullptr, false);
+      if (manifest.is_object() && manifest.contains("levels"))
+        for (const auto& [key, bound] : manifest.at("levels").items())
+          if (bound.is_string() && bound.get<std::string>() == id) return true;
+    }
+  }
+  for (const auto& def : d.definitions())
+    for (const auto& o : def.objects)
+      if (o.gridPin && (o.gridPin->startLevel == id || o.gridPin->endLevel == id)) return true;
+  return false;
+}
 Rect rectangle(const json& j, int nx, int ny) {
   need(j.is_object() && j.contains("x") && j.contains("y"),
        "range needs x:[first,last], y:[first,last] grid indices");
@@ -362,6 +380,14 @@ struct Plan {
     std::string title = name + " " + label;
     const auto existing =
         std::find_if(levels.begin(), levels.end(), [&](const FloorLevel& l) { return l.name == title; });
+    // A level of the same name left by a deleted frame (used by nothing): take it over, so
+    // deleting a frame and making it again works. Its height follows; nothing stands on it.
+    if (existing != levels.end() && !regenerating && !levelInUse(modeler.document(), existing->id)) {
+      existing->elevation = value;
+      levelIds[key] = existing->id;
+      heights[key] = value;
+      return;
+    }
     if (existing != levels.end() && regenerating) {
       need(std::abs(existing->elevation - value) < 1e-6,
            "Use set_levels / レベル編集 to change existing heights before regenerating the frame");
@@ -1257,7 +1283,12 @@ Result<std::string> Modeler::generateFrame(const std::string& text) {
       do {
         name = "木造架構 " + std::to_string(n++);
       } while (std::any_of(document_.objects().begin(), document_.objects().end(),
-                           [&](const Object& o) { return o.name == name; }));
+                           [&](const Object& o) { return o.name == name; }) ||
+               // a level of this frame name still used by something: pick the next name
+               std::any_of(document_.settings().levels.begin(), document_.settings().levels.end(),
+                           [&](const FloorLevel& l) {
+                             return l.name.rfind(name + " ", 0) == 0 && levelInUse(document_, l.id);
+                           }));
     }
     Plan plan(*this, args, name, oldRoot != nullptr);
     plan.build();

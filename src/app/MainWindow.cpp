@@ -328,7 +328,18 @@ void MainWindow::buildUi() {
   proposalLayout->addWidget(proposalLabel_);
   proposalLayout->addWidget(applyButton);
   proposalLayout->addWidget(rejectButton);
-  proposalBar_->setStyleSheet(QStringLiteral("QWidget { background: #e8f0ff; }"));
+  // Own colours for text and buttons too: the light background with the dark theme's light
+  // text was unreadable. Dark blue with white text reads in both themes.
+  proposalBar_->setObjectName(QStringLiteral("proposalBar"));
+  proposalBar_->setAttribute(Qt::WA_StyledBackground, true);  // a plain QWidget paints its style background
+  proposalBar_->setStyleSheet(QStringLiteral(
+      "QWidget#proposalBar { background: #1d4ed8; border-radius: 4px; }"
+      "QLabel#proposalSummary { color: #ffffff; font-weight: 600; padding: 2px 6px; }"
+      "QPushButton { border-radius: 4px; padding: 3px 14px; font-weight: 600; }"
+      "QPushButton#proposalApply { background: #ffffff; color: #1d4ed8; border: 1px solid #ffffff; }"
+      "QPushButton#proposalApply:hover { background: #dbeafe; }"
+      "QPushButton#proposalReject { background: transparent; color: #ffffff; border: 1px solid #ffffff; }"
+      "QPushButton#proposalReject:hover { background: #1e40af; }"));
   proposalBar_->hide();
   connect(applyButton, &QPushButton::clicked, this, &MainWindow::applyProposal);
   connect(rejectButton, &QPushButton::clicked, this, &MainWindow::rejectProposal);
@@ -1060,6 +1071,10 @@ void MainWindow::buildMenus() {
       {tr("ペイント"), QStringLiteral("B"), ToolId::Paint, CursorKind::Paint},
       {tr("消しゴム"), QStringLiteral("E"), ToolId::Eraser, CursorKind::Eraser},
   };
+  // The Tools menu was one long two-column list: group it. The drawing tools live in their own
+  // submenu (their shortcuts and the palette are unchanged).
+  QMenu* drawing = tools->addMenu(tr("描く・編集する"));
+  drawing->setObjectName(QStringLiteral("drawingToolsMenu"));
   for (const ToolEntry& e : entries) {
     QAction* a = new QAction(toolIcon(e.icon), e.label, this);
     a->setCheckable(true);
@@ -1075,7 +1090,7 @@ void MainWindow::buildMenus() {
       activateTool(id);
     });
     toolGroup_->addAction(a);
-    tools->addAction(a);
+    drawing->addAction(a);
     palette->tools()->addTool(a);
     toolActions_[static_cast<int>(id)] = a;
   }
@@ -1104,30 +1119,38 @@ void MainWindow::buildMenus() {
     sectionPalette->setVisible(sectionShown);
   });
   tools->addSeparator();
-  tools->addAction(tr("通り芯を作成..."), this, &MainWindow::showGridDialog)
+  QMenu* datums = tools->addMenu(tr("通り芯・レベル"));
+  datums->setObjectName(QStringLiteral("datumsMenu"));
+  datums->addAction(tr("通り芯を作成..."), this, &MainWindow::showGridDialog)
       ->setObjectName(QStringLiteral("createGridAction"));
-  tools->addAction(tr("木造架構を作成・作り直し..."), this, &MainWindow::showTimberFrameDialog)->setObjectName(QStringLiteral("timberFrameAction"));
-  tools->addAction(tr("布基礎計画（土台から作成・作り直し）..."), this, &MainWindow::showFoundationDialog)
-      ->setObjectName(QStringLiteral("foundationAction"));
-  tools->addAction(tr("べた基礎計画（土台から作成・作り直し）..."), this, &MainWindow::showFoundationMatDialog)
-      ->setObjectName(QStringLiteral("foundationMatAction"));
-  tools->addAction(tr("束石・独立基礎計画（床束・柱から）..."), this, &MainWindow::showFoundationPadsDialog)
-      ->setObjectName(QStringLiteral("foundationPadsAction"));
-  tools->addAction(tr("基礎までの支持先（柱・土台・床束）..."), this, &MainWindow::showFoundationSupportsDialog)
-      ->setObjectName(QStringLiteral("foundationSupportsAction"));
-  tools->addAction(tr("架構チェック"), this, &MainWindow::showFrameCheckPanel)->setObjectName(QStringLiteral("frameCheckAction"));
-  tools->addAction(tr("構造の診断（画面に重ねる）..."), this, &MainWindow::showStructureDiagnostics)
-      ->setObjectName(QStringLiteral("structureDiagnosticsAction"));
-  tools->addAction(tr("木材の拾い出し..."), this, &MainWindow::showTakeOffDialog)
-      ->setObjectName(QStringLiteral("takeOffAction"));
-  tools->addAction(tr("木造の壁量..."), this, &MainWindow::showWallQuantityDialog)
-      ->setObjectName(QStringLiteral("wallQuantityAction"));
-  tools->addAction(tr("壁の区間候補（開口を除く）..."), this, &MainWindow::showWallBaysDialog)
-      ->setObjectName(QStringLiteral("wallBaysAction"));
-  tools->addAction(tr("レベル（GL・FL）を編集..."), this, &MainWindow::showLevelsEditDialog)
+  datums->addAction(tr("レベル（GL・FL）を編集..."), this, &MainWindow::showLevelsEditDialog)
       ->setObjectName(QStringLiteral("editLevelsAction"));
-  tools->addAction(tr("壁の設定..."), this, &MainWindow::showWallSettingsDialog);
-  tools->addAction(tr("部材の設定..."), this, &MainWindow::showMemberSettingsDialog);
+  datums->addAction(tr("階を割り当て..."), this, &MainWindow::showLevelsDialog);
+  QMenu* timber = tools->addMenu(tr("木造"));
+  timber->setObjectName(QStringLiteral("timberToolsMenu"));
+  timber->addAction(tr("木造架構を作成・作り直し..."), this, &MainWindow::showTimberFrameDialog)->setObjectName(QStringLiteral("timberFrameAction"));
+  timber->addAction(tr("木材の拾い出し..."), this, &MainWindow::showTakeOffDialog)
+      ->setObjectName(QStringLiteral("takeOffAction"));
+  timber->addSeparator();
+  timber->addAction(tr("木造の壁量..."), this, &MainWindow::showWallQuantityDialog)
+      ->setObjectName(QStringLiteral("wallQuantityAction"));
+  timber->addAction(tr("壁の区間候補（開口を除く）..."), this, &MainWindow::showWallBaysDialog)
+      ->setObjectName(QStringLiteral("wallBaysAction"));
+  timber->addAction(tr("架構チェック"), this, &MainWindow::showFrameCheckPanel)->setObjectName(QStringLiteral("frameCheckAction"));
+  timber->addAction(tr("構造の診断（画面に重ねる）..."), this, &MainWindow::showStructureDiagnostics)
+      ->setObjectName(QStringLiteral("structureDiagnosticsAction"));
+  QMenu* foundations = tools->addMenu(tr("基礎"));
+  foundations->setObjectName(QStringLiteral("foundationToolsMenu"));
+  foundations->addAction(tr("布基礎計画（土台から作成・作り直し）..."), this, &MainWindow::showFoundationDialog)
+      ->setObjectName(QStringLiteral("foundationAction"));
+  foundations->addAction(tr("べた基礎計画（土台から作成・作り直し）..."), this, &MainWindow::showFoundationMatDialog)
+      ->setObjectName(QStringLiteral("foundationMatAction"));
+  foundations->addAction(tr("束石・独立基礎計画（床束・柱から）..."), this, &MainWindow::showFoundationPadsDialog)
+      ->setObjectName(QStringLiteral("foundationPadsAction"));
+  foundations->addSeparator();
+  foundations->addAction(tr("基礎までの支持先（柱・土台・床束）..."), this, &MainWindow::showFoundationSupportsDialog)
+      ->setObjectName(QStringLiteral("foundationSupportsAction"));
+  tools->addSeparator();
   // Direct entries (spec §4.2): the member tool with each one's own last
   // settings; one palette button stays.
   QMenu* members = tools->addMenu(tr("部材を引く"));
@@ -1140,10 +1163,13 @@ void MainWindow::buildMenus() {
     a->setObjectName(QStringLiteral("memberEntry_") + QString::fromStdString(entry));
     connect(a, &QAction::triggered, this, [this, entry = entry] { startMember(entry); });
   }
-  tools->addAction(tr("スラブの設定..."), this, &MainWindow::showSlabSettingsDialog);
-  tools->addAction(tr("開口の設定..."), this, &MainWindow::showOpeningSettingsDialog);
   tools->addAction(tr("開口を等間隔に配置..."), this, &MainWindow::showOpeningsDialog);
-  tools->addAction(tr("階を割り当て..."), this, &MainWindow::showLevelsDialog);
+  QMenu* settingsMenu = tools->addMenu(tr("設定（壁・部材・スラブ・開口）"));
+  settingsMenu->setObjectName(QStringLiteral("toolSettingsMenu"));
+  settingsMenu->addAction(tr("壁の設定..."), this, &MainWindow::showWallSettingsDialog);
+  settingsMenu->addAction(tr("部材の設定..."), this, &MainWindow::showMemberSettingsDialog);
+  settingsMenu->addAction(tr("スラブの設定..."), this, &MainWindow::showSlabSettingsDialog);
+  settingsMenu->addAction(tr("開口の設定..."), this, &MainWindow::showOpeningSettingsDialog);
   QMenu* alignMenu = tools->addMenu(tr("整列（最初に選んだ物に揃える）"));
   const char* axisNames[] = {"X", "Y", "Z"};
   for (int axis = 0; axis < 3; ++axis) {

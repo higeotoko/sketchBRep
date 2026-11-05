@@ -34,6 +34,7 @@
 #include <QComboBox>
 #include <QSlider>
 #include <QMenu>
+#include <QMenuBar>
 #include <QProgressBar>
 #include <QMessageBox>
 #include <QDoubleSpinBox>
@@ -325,6 +326,7 @@ class GuiPhase1 : public QObject {
   void timberInteriorSillsFromDialog();
   void structureDiagnosticsOverlayIsReadOnlyAndClearsOnEdit();
   void planLevelCutsAboveAndSillToolDrawsOnSillTop();
+  void toolsMenuIsGroupedAndProposalBarIsReadable();
   void foundationSupportsSelectActualPartsAndInvalidate();
   void foundationPadsFromMissingFloorPostsAndRegeneration();
   void foundationPadsWithDifferentTopsReloadWithoutChangingTheModel();
@@ -10016,6 +10018,9 @@ void GuiPhase1::planLevelCutsAboveAndSillToolDrawsOnSillTop() {
   QVERIFY(f.vp->planCut().has_value());QCOMPARE(*f.vp->planCut(),sillZ+1);
   QCOMPARE(f.vp->workOffset(),sillZ);
   if(!capture.isEmpty()) {f.vp->fitAll();QTest::qWait(50);f.window.exportImage(capture+QStringLiteral("-sill.png"));}
+  // Zoom to the frame as a user would: at the fixture's far view one pixel is ~20 mm and a
+  // joist corner 22.5 mm from the crossing shares its pixel.
+  f.vp->fitAll();f.vp->syncNow();QTest::qWait(50);
   const std::size_t count=m.document().objects().size();
   click(f.vp,f.vp->toWidget(gp_Pnt(910,910,sillZ)));
   QTest::qWait(30);
@@ -10029,6 +10034,38 @@ void GuiPhase1::planLevelCutsAboveAndSillToolDrawsOnSillTop() {
   QVERIFY2(std::abs(b.CornerMax().Z()-sillZ)<1,qPrintable(QString::number(b.CornerMax().Z())));
   QVERIFY2(std::abs((b.CornerMax().X()-b.CornerMin().X())-1820)<1,qPrintable(QString::number(b.CornerMax().X()-b.CornerMin().X())));
   QTest::keyClick(f.vp,Qt::Key_Escape);
+}
+
+// The Tools menu is a short list of groups (the drawing tools in their own submenu), and the
+// proposal bar has its own readable colours (white text on dark blue) in either theme.
+void GuiPhase1::toolsMenuIsGroupedAndProposalBarIsReadable() {
+  Fixture f;QVERIFY(f.setUp());
+  QMenu* tools=nullptr;
+  for(auto* a:f.window.menuBar()->actions()) if(a->text().startsWith(QStringLiteral("ツール"))) tools=a->menu();
+  QVERIFY(tools);
+  int topLevel=0;for(auto* a:tools->actions()) topLevel+=!a->isSeparator();
+  QVERIFY2(topLevel<=10,qPrintable(QString::number(topLevel)));
+  auto inMenu=[&](const char* menu,const char* action) {
+    auto* m=f.window.findChild<QMenu*>(QLatin1String(menu));
+    auto* a=f.window.findChild<QAction*>(QLatin1String(action));
+    return m && a && m->actions().contains(a);
+  };
+  QVERIFY(inMenu("timberToolsMenu","timberFrameAction"));
+  QVERIFY(inMenu("timberToolsMenu","structureDiagnosticsAction"));
+  QVERIFY(inMenu("foundationToolsMenu","foundationMatAction"));
+  QVERIFY(inMenu("datumsMenu","createGridAction"));
+  QVERIFY(inMenu("membersMenu","memberEntry_sill"));
+  QCOMPARE(f.window.findChild<QMenu*>(QStringLiteral("drawingToolsMenu"))->actions().size(),
+           f.window.findChild<QDockWidget*>(QStringLiteral("toolsPalette"))->findChildren<QToolButton*>().size());
+  // Shortcuts still reach the tools from inside the submenu.
+  QAction* rectangle=nullptr;
+  for(auto* a:f.window.findChild<QMenu*>(QStringLiteral("drawingToolsMenu"))->actions()) if(a->shortcut()==QKeySequence(QStringLiteral("R"))) rectangle=a;
+  QVERIFY(rectangle);QTest::keyClick(f.vp,Qt::Key_R);QVERIFY(rectangle->isChecked());
+  QTest::keyClick(f.vp,Qt::Key_Space);
+  auto* label=f.window.findChild<QLabel*>(QStringLiteral("proposalSummary"));QVERIFY(label);
+  auto* bar=label->parentWidget();QVERIFY(bar->styleSheet().contains(QStringLiteral("#1d4ed8")));
+  QVERIFY(bar->styleSheet().contains(QStringLiteral("QLabel#proposalSummary { color: #ffffff")));
+  QVERIFY(bar->testAttribute(Qt::WA_StyledBackground));
 }
 
 void GuiPhase1::timberFramePreviewApplyLevelsAndUndo() {
