@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <map>
 #include <nlohmann/json.hpp>
 
 #include "sbr/ConstructionCheck.h"
@@ -291,4 +292,28 @@ TEST_F(FrameChecks, SlopedMembersMeetingAtTheirEndsAreAnEndConnection) {
   const auto b = member({500, 0, 10000}, {500, 1000, 10000});
   EXPECT_EQ(status(check({{"rules", {"COM-01"}}}), "COM-01", a), "fail");
   (void)made; (void)b;
+}
+
+// Second-floor cross beams framed into the floor beams at the same level have no bearing
+// below; they are reported as a side joint whose specification is not evaluated, not as
+// a missing support. Free ends (the gable overhang of a purlin) stay "no support found".
+TEST_F(FrameChecks, BeamEndsFramedIntoBeamSidesAreSideJointsNotMissingSupports) {
+  make({{"x_bays", 4}, {"y_bays", 4}});
+  std::map<std::string, std::string> keys;
+  for (const auto& o : m.document().objects())
+    if (o.attributes.count("frame_key")) keys[o.id] = o.attributes.at("frame_key");
+  const auto report = check({{"rules", {"COM-02"}}});
+  int side = 0;
+  for (const auto& row : report.at("results")) {
+    if (row.at("targets").empty()) continue;
+    const auto key = keys[row.at("targets")[0].get<std::string>()];
+    if (key.rfind("floor2/cross/", 0) != 0) continue;
+    EXPECT_NE(row.at("reason_code"), "bearing_not_found") << key;
+    if (row.at("reason_code") == "side_joint_specification_missing") {
+      ++side;
+      EXPECT_EQ(row.at("status"), "not_evaluated");
+      EXPECT_FALSE(row.at("measured").at("side_joints").empty());
+    }
+  }
+  EXPECT_GT(side, 0);
 }

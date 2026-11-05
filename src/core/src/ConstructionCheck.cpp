@@ -213,7 +213,8 @@ Result<std::string> checkFrame(const doc::Document& d, const std::string& text,
       return found;
     };
     struct Bearing {
-      std::vector<std::string> known, unknown;
+      // side: the end sits inside the side of a beam at the same level (a framed-in joint).
+      std::vector<std::string> known, unknown, side;
     };
     auto support = [&](const Member& m, const gp_Pnt& p, bool belowColumn) {
       Bearing supports;
@@ -227,7 +228,13 @@ Result<std::string> checkFrame(const doc::Document& d, const std::string& text,
         if (p.X() < x0 - tol || p.X() > x1 + tol || p.Y() < y0 - tol || p.Y() > y1 + tol ||
             p.Z() < z0 - tol || p.Z() > z1 + tol)
           continue;
-        if (z0 >= p.Z() - tol) continue;  // a member above is not bearing below
+        if (z0 >= p.Z() - tol) {
+          // Not bearing from below. A beam end framed into the side of another beam at the
+          // same level is still a connection, whose joint (仕口) is not evaluated here.
+          if (!belowColumn && beam(other.role) && z1 > p.Z() + tol && includesPoint(other.shape, p, tol))
+            supports.side.push_back(other.object->id);
+          continue;
+        }
         if (includesPoint(other.shape, p, tol))
           (roleKnown ? supports.known : supports.unknown).push_back(other.object->id);
       }
@@ -360,18 +367,22 @@ Result<std::string> checkFrame(const doc::Document& d, const std::string& text,
           for (const auto& p :
                vertical ? std::vector<gp_Pnt>{base} : std::vector<gp_Pnt>{m.bottomA, m.bottomB}) {
             const auto found = support(m, p, vertical);
+            const bool side = found.known.empty() && found.unknown.empty() && !found.side.empty();
             emit(rule, ids,
                  !found.known.empty()     ? "pass"
-                 : !found.unknown.empty() ? "not_evaluated"
+                 : !found.unknown.empty() || side ? "not_evaluated"
                                           : "fail",
                  !found.known.empty()     ? "bearing_contact"
                  : !found.unknown.empty() ? "bearing_role_unknown"
+                 : side                   ? "side_joint_specification_missing"
                                           : "bearing_not_found",
-                 found.known.empty() ? "端部の受け材がないか、接する形の役割を確認できません"
-                                     : "端部の下側に受け材との接触があります（接合耐力は未評価）",
+                 !found.known.empty() ? "端部の下側に受け材との接触があります（接合耐力は未評価）"
+                 : side ? "端部が同じ高さの梁の側面に取り付いています。仕口の仕様・耐力は未評価です"
+                        : "端部の受け材がないか、接する形の役割を確認できません",
                  {{"at", point(p)},
                   {"supports", found.known},
                   {"unclassified", found.unknown},
+                  {"side_joints", found.side},
                   {"unit", "mm"}},
                  {{"contact_tolerance", tol}, {"unit", "mm"}});
           }
