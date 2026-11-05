@@ -2,6 +2,8 @@
 
 # SketchBRep（仮称）
 
+**開発再開時の最新引継ぎ： [Codex → Claude（2026-11-05）](docs/69_handover_codex_to_claude_2026-11-05.md)**
+
 建築設計向けハイブリッド 3D モデラー。
 **操作は SketchUp、形状の本質は Rhino** — 面をクリックして押し出すだけの直接操作で、
 内部では B-rep（Open CASCADE）を正規データとして保持します。
