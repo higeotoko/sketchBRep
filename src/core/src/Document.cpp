@@ -11,6 +11,7 @@
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRep_Builder.hxx>
+#include <Standard_Failure.hxx>
 #include <gp_Ax2.hxx>
 #include <TopLoc_Location.hxx>
 #include <TopoDS_Compound.hxx>
@@ -38,7 +39,14 @@ gp_Trsf worldIn(const std::vector<Object>& objects, const Object& object) {
 
 TopoDS_Shape placed(const TopoDS_Shape& shape, const gp_Trsf& t) {
   if (shape.IsNull() || t.Form() == gp_Identity) return shape;
-  return shape.Moved(TopLoc_Location(t));
+  try {
+    return shape.Moved(TopLoc_Location(t));
+  } catch (const Standard_Failure&) {
+    // OCCT 7 refuses a location with scale or mirror ("Moving with scaling
+    // transformation is forbidden"); OCCT 8 accepts it. Keep the shared
+    // location where allowed (sub-shape identity), else place a copy.
+    return BRepBuilderAPI_Transform(shape, t, true).Shape();
+  }
 }
 
 }  // namespace

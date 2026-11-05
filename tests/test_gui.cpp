@@ -398,6 +398,12 @@ struct Fixture {
     // These geometry tests depend on pixel rounding at a fixed camera scale;
     // keep the real expanded palette visible during the actual operations.
     if (auto* palette = window.findChild<QDockWidget*>(QStringLiteral("toolsPalette"))) {
+      // The architecture toolbar (a second top row) came later: measure the
+      // former area without it, then grow the window by its row instead of
+      // shrinking the modeling area (coarser pixels miss edge picks).
+      auto* architecture = window.findChild<QToolBar*>(QStringLiteral("architectureToolbar"));
+      const bool architectureShown = architecture && architecture->isVisible();
+      if (architectureShown) architecture->hide();
       QToolBar reference;
       reference.setMovable(false);
       reference.setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
@@ -412,6 +418,7 @@ struct Fixture {
       window.removeToolBar(&reference);
       reference.hide();
       palette->show();
+      if (architectureShown) architecture->show();
       QTest::qWait(30);
       window.resize(window.width() + referenceSize.width() - vp->width(),
                     window.height() + referenceSize.height() - vp->height());
