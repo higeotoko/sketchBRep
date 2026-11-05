@@ -1,0 +1,26 @@
+{
+  "code_commit": "6d09144edbe78d2a6e4c55a4e190456620a226f7",
+  "frame": "2-storey 4x4 bays (generate_frame defaults) + one interior sill",
+  "frame_only_mat": "passed",
+  "passage_at": [
+    910.0,
+    1365.0
+  ],
+  "outer_passage_refused": true,
+  "mat_volume_without_passage_m3": 3.237615,
+  "mat_volume_with_passage_m3": 3.207915,
+  "slab_m3": 2.154615,
+  "stem_m3": 1.0532999999999997,
+  "save_reopen_status": "current",
+  "floor_post_support_statuses": [
+    "not_evaluated"
+  ],
+  "step_and_foundation_dxf": "passed",
+  "mcp_mat_description": "passed",
+  "gui_actual_conditions": 3,
+  "gui_failures": 0,
+  "sample_sbr": "SketchBRep-mat-foundation-house-6d09144.sbr",
+  "sample_dxf": "SketchBRep-mat-foundation-house-6d09144.dxf",
+  "ci_verified": false,
+  "human_windows_verified": false
+}

@@ -5,6 +5,10 @@
 同位置の参照をまとめ、既存立体との体積の重なりは生成前に止める。プレビュー・適用・置換は既存の布基礎と同じ経路。
 複数の束石の数量は `quantities.foundation_pad.ids` と体積で返す。[詳細](68_foundation_pads.md)。
 
+`generate_foundation {inputs:{type:"mat",frame|sources,stem_width?,stem_height?,slab_thickness?,packing_mm?,top_z?,passages?:[{at:[x,y],width?,height?}]}}` はべた基礎の計画。
+土台の下の立上り（`stem_height` は耐圧盤の上から）と、その外周の輪郭の内側の耐圧盤を作る。外周が閉じていない土台は拒否。
+人通口は内部の立上りだけ。種別は置換で変えられない。数量は `foundation_stem`・`foundation_slab`。[詳細](72_mat_foundation.md)。
+
 `check_foundation_supports {within?,ids?,tolerance_mm?,search_depth_mm?,packing_mm?,pair_budget?}` は、
 柱・土台・床束の下面と支持面の重なり・隙間、および土台を経由する基礎への形状対応を読み取り専用で返す。
 未評価・部分支持・重複候補・基礎計画の変更状態を区別する。耐力や接合の合否ではない。
