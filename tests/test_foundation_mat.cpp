@@ -55,6 +55,11 @@ TEST_F(FoundationMat, RingMakesStemsOnASlabFillingTheOutlineInOneUndo) {
   EXPECT_NEAR(r["quantities"]["foundation_stem"]["volume_m3"].get<double>(),1.5*.4,1e-8);
   EXPECT_NEAR(r["quantities"]["foundation_slab"]["volume_m3"].get<double>(),3.15*2.15*.15,1e-8);
   EXPECT_FALSE(r["quantities"].contains("foundation_footing"));
+  // 根入れ部 300 wide, 150 below the slab, under the outer stems: centre-line 10 m × 0.3 × 0.15.
+  EXPECT_NEAR(r["quantities"]["foundation_edge_footing"]["volume_m3"].get<double>(),10*.3*.15,1e-8);
+  const auto edge=bounds(r["quantities"]["foundation_edge_footing"]["id"]);
+  EXPECT_NEAR(edge.CornerMin().Z(),-300,1e-6); EXPECT_NEAR(edge.CornerMax().Z(),-150,1e-6);
+  EXPECT_NEAR(edge.CornerMin().X(),-150,1e-6); EXPECT_NEAR(edge.CornerMax().Y(),2150,1e-6);
   const auto slab=bounds(r["quantities"]["foundation_slab"]["id"]);
   EXPECT_NEAR(slab.CornerMin().Z(),-150,1e-6); EXPECT_NEAR(slab.CornerMax().Z(),0,1e-6);
   EXPECT_NEAR(slab.CornerMin().X(),-75,1e-6); EXPECT_NEAR(slab.CornerMax().Y(),2075,1e-6);
@@ -74,6 +79,8 @@ TEST_F(FoundationMat, InteriorSillAddsAStemButNotSlab) {
   const auto r=generate();
   EXPECT_NEAR(r["quantities"]["foundation_stem"]["volume_m3"].get<double>(),(1.5+2.85*.15)*.4,1e-8);
   EXPECT_NEAR(r["quantities"]["foundation_slab"]["volume_m3"].get<double>(),3.15*2.15*.15,1e-8);
+  // The inner run is not outer: no 根入れ部 under it.
+  EXPECT_NEAR(r["quantities"]["foundation_edge_footing"]["volume_m3"].get<double>(),10*.3*.15,1e-8);
 }
 
 TEST_F(FoundationMat, LShapedOutlineFollowsTheSills) {
@@ -83,6 +90,20 @@ TEST_F(FoundationMat, LShapedOutlineFollowsTheSills) {
   const auto r=generate();
   const double outer=3.15*2.15-1.0*1.0; // the notch shifts with the stem faces but keeps 1000×1000
   EXPECT_NEAR(r["quantities"]["foundation_slab"]["volume_m3"].get<double>(),outer*.15,1e-8);
+  // Rectilinear loop: the band area is centre-line length × width (10 m here as well).
+  EXPECT_NEAR(r["quantities"]["foundation_edge_footing"]["volume_m3"].get<double>(),10*.3*.15,1e-8);
+  EXPECT_EQ(check(r["foundation"])["quantities"]["foundation_edge_footing"]["solids"],1);
+}
+
+TEST_F(FoundationMat, EdgeFootingCanBeOmittedOrResizedButNotNarrowerThanTheStem) {
+  ring();
+  auto r=generate({{"inputs",inputs({{"edge_depth",0}})}});
+  EXPECT_FALSE(r["quantities"].contains("foundation_edge_footing"));
+  EXPECT_EQ(r["inputs"]["edge_depth"],0);
+  r=generate({{"replace",r["foundation"]},{"inputs",{{"edge_depth",250},{"edge_width",450}}}});
+  EXPECT_NEAR(r["quantities"]["foundation_edge_footing"]["volume_m3"].get<double>(),10*.45*.25,1e-8);
+  EXPECT_EQ(check(r["foundation"])["status"],"current");
+  refused({{"replace",r["foundation"]},{"inputs",{{"edge_width",100}}}});
 }
 
 TEST_F(FoundationMat, PassageCutsOneInteriorStem) {

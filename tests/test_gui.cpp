@@ -9811,6 +9811,9 @@ void GuiPhase1::foundationMatDialogMakesSlabAndPassage() {
     // Switching to strip shows the footing and back to mat hides it again.
     kind->setCurrentIndex(0);seen=seen && foot->isVisible() && !slab->isVisible() && stem->value()==600;
     kind->setCurrentIndex(1);seen=seen && !foot->isVisible() && stem->value()==400;
+    auto* edgeDepth=dialog->findChild<QDoubleSpinBox*>(QStringLiteral("foundationEdgeDepth"));
+    seen=seen && edgeDepth && edgeDepth->isVisible() && edgeDepth->value()==150;
+    if(edgeDepth) edgeDepth->setValue(200);
     slab->setValue(180);passages->setText(QStringLiteral("1500,1000"));button->click();
   });
   const auto before=serializeDocument(m.document());action->trigger();QVERIFY(seen);
@@ -9822,6 +9825,9 @@ void GuiPhase1::foundationMatDialogMakesSlabAndPassage() {
   const auto stored=json::parse(m.document().find(root)->attributes.at("foundation_plan"));
   QCOMPARE(stored["inputs"]["type"].get<std::string>(),std::string("mat"));
   QCOMPARE(stored["inputs"]["slab_thickness"].get<double>(),180.);
+  QCOMPARE(stored["inputs"]["edge_depth"].get<double>(),200.);
+  int edges=0;for(const auto& o:m.document().objects()) edges+=o.parent==root && o.attributes.count("kind") && o.attributes.at("kind")=="foundation_edge_footing";
+  QCOMPARE(edges,1);
   QCOMPARE(stored["inputs"]["passages"].size(),std::size_t(1));
   int slabs=0;for(const auto& o:m.document().objects()) slabs+=o.parent==root && o.attributes.count("kind") && o.attributes.at("kind")=="foundation_slab";
   QCOMPARE(slabs,1);QCOMPARE(m.document().find(root)->name,std::string("べた基礎計画"));
@@ -9836,7 +9842,9 @@ void GuiPhase1::foundationMatDialogMakesSlabAndPassage() {
     auto* button=dialog->findChild<QPushButton*>(QStringLiteral("foundationPreview"));
     if(!kind || !passages || !slab || !report || !button) { dialog->reject();return; }
     seen=!kind->isEnabled() && kind->currentData().toString()==QStringLiteral("mat") && slab->value()==180 &&
-         passages->text()==QStringLiteral("1500,1000") && report->toPlainText().contains(QStringLiteral("耐圧盤"));
+         passages->text()==QStringLiteral("1500,1000") && report->toPlainText().contains(QStringLiteral("耐圧盤")) &&
+         report->toPlainText().contains(QStringLiteral("根入れ部")) &&
+         dialog->findChild<QDoubleSpinBox*>(QStringLiteral("foundationEdgeDepth"))->value()==200;
     const auto capture=qEnvironmentVariable("SBR_FOUNDATION_MAT_CAPTURE");
     if(!capture.isEmpty()) dialog->grab().save(capture+QStringLiteral("-dialog.png"));
     passages->setText(QStringLiteral("1500,0"));button->click();

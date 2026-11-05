@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <nlohmann/json.hpp>
@@ -63,7 +64,7 @@ struct Sources {
   bool pads=false, mat=false;
   double padWidth=0,padDepth=0,padHeight=0;
   std::string signature, key;
-  double top=0, stemWidth=0, stemHeight=0, footWidth=0, footHeight=0, packing=0, slabThickness=0;
+  double top=0, stemWidth=0, stemHeight=0, footWidth=0, footHeight=0, packing=0, slabThickness=0, edgeWidth=0, edgeDepth=0;
   Sources(const Document& d, const json& requested) {
     inputs = requested;
     type=inputs.value("type",std::string("strip"));
@@ -104,7 +105,8 @@ struct Sources {
       if(!inputs.contains("top_z")) top=sites.front().bottom;
       return;
     }
-    if (mat) allowed(inputs, {"type", "frame", "sources", "stem_width", "stem_height", "slab_thickness", "packing_mm", "top_z", "passages"});
+    if (mat) allowed(inputs, {"type", "frame", "sources", "stem_width", "stem_height", "slab_thickness", "edge_width", "edge_depth",
+                              "packing_mm", "top_z", "passages"});
     else allowed(inputs, {"type", "frame", "sources", "stem_width", "stem_height", "footing_width", "footing_thickness", "packing_mm", "top_z"});
     need(inputs.contains("frame") != inputs.contains("sources"), "frameまたはsources（土台ID）のどちらか一つを指定してください");
     std::set<ObjectId> ids;
@@ -173,6 +175,10 @@ struct Sources {
         inputs["passages"] = normalized;
       }
       inputs["slab_thickness"]=slabThickness;
+      // 根入れ部: a band under the outer stems below the slab bottom (0 = none).
+      edgeWidth = dimension(inputs, "edge_width", 300); edgeDepth = dimension(inputs, "edge_depth", 150, true);
+      need(edgeWidth >= stemWidth, "根入れ部の幅は立上り幅以上にしてください");
+      inputs["edge_width"]=edgeWidth; inputs["edge_depth"]=edgeDepth;
     } else {
       footWidth = dimension(inputs, "footing_width", 450); footHeight = dimension(inputs, "footing_thickness", 150);
       need(footWidth >= stemWidth, "底盤幅は立上り幅以上にしてください");
@@ -222,11 +228,12 @@ Recipe band(const Sill& line, double width, double base, double height) {
 BooleanOperand operand(Recipe recipe) {
   BooleanOperand o; o.recipe=std::make_shared<Recipe>(std::move(recipe)); return o;
 }
-Recipe unionOf(const Sources& plan, double width, double base, double height) {
+Recipe unionOf(const std::vector<Sill>& lines, double width, double base, double height) {
   BooleanFeature unioned; unioned.kind = BooleanKind::Union;
-  for (const auto& line : plan.lines) unioned.operands.push_back(operand(band(line, width, base, height)));
+  for (const auto& line : lines) unioned.operands.push_back(operand(band(line, width, base, height)));
   return unioned.operands.size()==1 ? *unioned.operands[0].recipe : Recipe{unioned,{}};
 }
+Recipe unionOf(const Sources& plan, double width, double base, double height) { return unionOf(plan.lines, width, base, height); }
 double stemBase(const Sources& plan) { return plan.top-plan.stemHeight; }
 Object part(const Document& d, const ObjectId& root, const std::string& kind, const std::string& name, Recipe recipe) {
   Object o; o.id=generateObjectId(); o.parent=root; o.layer="基礎・土台"; o.name=name;
@@ -290,6 +297,27 @@ Object slab(const Document& d, const Sources& plan, const ObjectId& root, const 
   for (auto p : loop) { p.SetZ(bottom); points.push_back(p); }
   Recipe recipe; recipe.base=PolygonProfile{points}; recipe.modifiers.push_back(ExtrudeOp{plan.slabThickness});
   return part(d, root, "foundation_slab", "べた基礎 耐圧盤（計画）", std::move(recipe));
+}
+// A stem is outer when the ground just beside it, at its middle, is outside the outline.
+bool outerRun(const Sources& plan, const Sill& line, const std::vector<gp_Pnt>& loop) {
+  const gp_Dir along(gp_Vec(line.a,line.b)), normal=gp::DZ().Crossed(along);
+  const gp_Pnt middle((line.a.X()+line.b.X())/2,(line.a.Y()+line.b.Y())/2,0);
+  for (double side : {-1.0, 1.0}) {
+    const gp_Pnt probe=middle.Translated(gp_Vec(normal)*(side*(plan.stemWidth/2+1)));
+    if (!insideOutline(loop,probe.X(),probe.Y())) return true;
+  }
+  return false;
+}
+// 根入れ部 (edge footing): a band centred under each outer stem, below the slab
+// bottom, joined at the corners. Its depth is below the slab, not below a ground level.
+std::optional<Object> edges(const Document& d, const Sources& plan, const ObjectId& root, const std::vector<gp_Pnt>& loop) {
+  if (plan.edgeDepth <= 0) return std::nullopt;
+  std::vector<Sill> outer;
+  for (const auto& line : plan.lines) if (outerRun(plan, line, loop)) outer.push_back(line);
+  need(!outer.empty(), "外周の立上りを読み取れません");
+  const double base = stemBase(plan)-plan.slabThickness-plan.edgeDepth;
+  return part(d, root, "foundation_edge_footing", "べた基礎 外周の根入れ部（計画）",
+              unionOf(outer, plan.edgeWidth, base, plan.edgeDepth));
 }
 // The stems with each passage cut through one interior run. A passage on an
 // outer run, on a junction or off every run is refused (nothing is moved).
@@ -371,7 +399,7 @@ json report(const Document& d, const Object& root) {
                {"unassessed",{"地盤・支持力・沈下","基礎断面の構造計算","配筋・かぶり・定着","耐力壁と柱の荷重伝達","凍結深度・地形","人通口・配管・換気"}}};
   const bool mat=manifest.at("inputs").value("type",std::string("strip"))=="mat";
   if (mat) result["unassessed"]={"地盤・支持力・沈下","耐圧盤・立上りの構造計算","配筋・かぶり・定着","耐力壁と柱の荷重伝達",
-                                  "外周の根入れ・凍結深度・地形","防湿・断熱・床下換気","人通口の補強・床下の点検経路","配管の貫通"};
+                                  "地盤面からの根入れ深さ・凍結深度・地形","防湿・断熱・床下換気","人通口の補強・床下の点検経路","配管の貫通"};
   if (modified(root,d,manifest)) { result["status"]="modified"; result["reasons"].push_back("基礎の形状・配置・構成が手編集されています"); }
   try {
     Sources source(d,manifest.at("inputs"));
@@ -469,6 +497,7 @@ Result<std::string> Modeler::generateFoundation(const std::string& text) {
     else if(plan.mat) {
       const auto loop=outline(document_,plan);
       parts.push_back(matStems(document_,plan,root.id,loop));parts.push_back(slab(document_,plan,root.id,loop));
+      if(auto edge=edges(document_,plan,root.id,loop)) parts.push_back(std::move(*edge));
     }
     else {parts.push_back(network(document_,plan,root.id,false));parts.push_back(network(document_,plan,root.id,true));}
     json manifest={{"version",1},{"inputs",plan.inputs},{"source_key",plan.key},{"source_signature",plan.signature},
@@ -499,7 +528,8 @@ Result<std::string> Modeler::generateFoundation(const std::string& text) {
       "対象は指定した土台下のみ。床束下の束石・土台のない耐力壁下・べた基礎は別途計画してください。"};
     if(plan.pads) r["warnings"]={"束石・独立基礎の計画形状です。寸法・地盤・支持力・凍結・配筋・アンカー等は未照査です。",
       "選択部材の下面を参照します。地盤や荷重から基礎底・必要断面を決める機能ではありません。"};
-    if(plan.mat) r["warnings"]={"べた基礎の計画形状です。耐圧盤・立上りの寸法、地盤・構造・配筋・根入れ・防湿・換気は未照査。寸法の初期値は設計値ではありません。",
+    if(plan.mat) r["warnings"]={"べた基礎の計画形状です。耐圧盤・立上り・根入れ部の寸法、地盤・構造・配筋・防湿・換気は未照査。寸法の初期値は設計値ではありません。",
+      "外周の根入れ部の深さは耐圧盤の下面からの寸法です。地盤面からの根入れ深さ・凍結深度は確認していません。",
       "耐圧盤は指定した土台の外周の内側だけ。土台のない耐力壁の下や、外周の外の玄関・ポーチは含みません。",
       "人通口は指定した位置の内部立上りだけに開けます。補強や床下の点検経路は確認していません。"};
     const auto result=r.dump();

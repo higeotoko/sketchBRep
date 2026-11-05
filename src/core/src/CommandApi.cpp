@@ -2063,7 +2063,8 @@ const std::vector<CommandDef>& commands() {
        "Pad top defaults to each source bottom; world-XY rectangle, planning dimensions only. No frame scope for pads. "
        "Coincident sources share a pad; intersecting pads or existing solids cause an atomic error. "
        "For a mat foundation (beta kiso) use inputs:{type:mat,frame OR sources,stem_width:150,stem_height:400 (rise above the slab top),"
-       "slab_thickness:150,packing_mm:20,top_z?,passages?:[{at:[x,y],width:600,height:330}]}: stems under the sills on a slab that fills "
+       "slab_thickness:150,edge_width:300,edge_depth:150 (edge footing under the outer stems below the slab bottom; 0 = none),"
+       "packing_mm:20,top_z?,passages?:[{at:[x,y],width:600,height:330}]}: stems under the sills on a slab that fills "
        "the outer outline of the stems (the sills must form one closed loop). Passages cut one interior stem each; outer stems, "
        "junctions and overlaps are refused. Type cannot change on replace. "
        "Geometry only: soil, capacity, reinforcement, frost, passages and ventilation remain unassessed.",
