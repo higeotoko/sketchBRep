@@ -9921,7 +9921,8 @@ void GuiPhase1::structureDiagnosticsOverlayIsReadOnlyAndClearsOnEdit() {
   };
   const json inputs={{"height_m",6},{"co_designated",false},{"wind_coefficient_cm_m2",50},
       {"input_basis","GUIテストの仮想入力（実建物ではない）"},
-      {"floors",{{{"id","1"},{"name","1階"},{"area_m2",50},{"weight_kn",98},{"wind_x_m2",30},{"wind_y_m2",6},{"walls_complete",true}}}},
+      {"floors",{{{"id","1"},{"name","1階"},{"area_m2",50},{"weight_kn",98},{"wind_x_m2",30},{"wind_y_m2",6},{"walls_complete",true},
+                  {"plan",{{"x",{0,10000}},{"y",{0,4000}}}}}}},
       {"walls",{wall("x","X",10000),wall("y","Y",4000)}}};
   QVERIFY(m.setWallCalculation(inputs.dump()));
   doc::Modeler::MemberSpec s;s.start={1500,1000,400};s.end={1500,1000,800};s.section.width=s.section.depth=90;
@@ -9949,7 +9950,10 @@ void GuiPhase1::structureDiagnosticsOverlayIsReadOnlyAndClearsOnEdit() {
                               markers->item(r,0)->data(Qt::UserRole).toStringList().contains(QString::fromStdString(*post)));
   QVERIFY(supportRow);
   QVERIFY(unassessed->text().contains(QStringLiteral("四分割法")) && unassessed->text().contains(QStringLiteral("N値")));
-  QVERIFY(f.vp->diagnosticShapeCount()>=3);  // two wall bands and the post marker
+  QVERIFY(f.vp->diagnosticShapeCount()>=7);  // two walls, four side-part bands and the post marker
+  auto* quarterTable=panel->findChild<QTableWidget*>(QStringLiteral("structureQuarterTable"));
+  QVERIFY(quarterTable);QCOMPARE(quarterTable->rowCount(),2);
+  QCOMPARE(quarterTable->item(0,4)->text(),QStringLiteral("つり合い不足"));  // the walls are all on one side
   QCOMPARE(serializeDocument(m.document()),before);QCOMPARE(m.history().revision(),revision);
   if(const auto capture=qEnvironmentVariable("SBR_STRUCTURE_CAPTURE");!capture.isEmpty()) {
     panel->grab().save(capture+QStringLiteral("-panel.png"));
@@ -9961,17 +9965,19 @@ void GuiPhase1::structureDiagnosticsOverlayIsReadOnlyAndClearsOnEdit() {
   QVERIFY(frameMarks && supportMarks);
   const int markerRows=markers->rowCount();
   frameMarks->setChecked(false);supportMarks->setChecked(false);
-  QCOMPARE(f.vp->diagnosticShapeCount(),std::size_t(2));QCOMPARE(markers->rowCount(),markerRows);
+  QCOMPARE(f.vp->diagnosticShapeCount(),std::size_t(6));QCOMPARE(markers->rowCount(),markerRows);
+  auto* bands=panel->findChild<QCheckBox*>(QStringLiteral("structureQuarterBands"));QVERIFY(bands);
+  bands->setChecked(false);QCOMPARE(f.vp->diagnosticShapeCount(),std::size_t(2));bands->setChecked(true);
   frameMarks->setChecked(true);supportMarks->setChecked(true);
   overlay->setChecked(false);QCOMPARE(f.vp->diagnosticShapeCount(),std::size_t(0));
-  overlay->setChecked(true);QVERIFY(f.vp->diagnosticShapeCount()>=3);
+  overlay->setChecked(true);QVERIFY(f.vp->diagnosticShapeCount()>=7);
   // An edit clears the drawing and asks for an update; updating draws again.
   gp_Trsf move;move.SetTranslation(gp_Vec(100,0,0));QVERIFY(m.transform({*post},move,"Move Post"));
   QTest::qWait(30);
   QCOMPARE(f.vp->diagnosticShapeCount(),std::size_t(0));
   QVERIFY(status->text().contains(QStringLiteral("モデルが変わりました")));
   QCOMPARE(walls->rowCount(),0);
-  refresh->click();QVERIFY(f.vp->diagnosticShapeCount()>=3);QCOMPARE(walls->rowCount(),2);
+  refresh->click();QVERIFY(f.vp->diagnosticShapeCount()>=7);QCOMPARE(walls->rowCount(),2);
   panel->close();QCOMPARE(f.vp->diagnosticShapeCount(),std::size_t(0));
 }
 

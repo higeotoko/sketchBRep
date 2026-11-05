@@ -87,9 +87,11 @@ WallQuantityDialog::WallQuantityDialog(MainWindow* window) : QDialog(window), wi
   floors_ = new QTableWidget(this);
   floors_->setObjectName(QStringLiteral("wallFloors"));
   setup(floors_, {tr("階ID"), tr("階名"), tr("算定用床面積 m²"), tr("累積荷重 kN"), tr("X風見付 m²"),
-                  tr("Y風見付 m²"), tr("壁入力完了")});
+                  tr("Y風見付 m²"), tr("壁入力完了"), tr("平面 X最小 mm"), tr("X最大 mm"), tr("Y最小 mm"),
+                  tr("Y最大 mm")});
   fl->addWidget(new QLabel(tr("風見付面積：当該階から上の投影面積から、床上1."
-                              "35m以下を控除した値。入力した階の壁が揃ってから「壁入力完了」。"),
+                              "35m以下を控除した値。入力した階の壁が揃ってから「壁入力完了」。\n"
+                              "平面の範囲（世界座標の矩形）を入れると四分割法（側端部分の壁量充足率・壁率比）も計算します。"),
                            this));
   fl->addWidget(floors_);
   auto* floorButtons = new QHBoxLayout;
@@ -144,6 +146,13 @@ WallQuantityDialog::WallQuantityDialog(MainWindow* window) : QDialog(window), wi
   results_->setEditTriggers(QAbstractItemView::NoEditTriggers);
   results_->setMaximumHeight(165);
   layout->addWidget(results_);
+  quarter_ = new QTableWidget(this);
+  quarter_->setObjectName(QStringLiteral("wallQuarterResults"));
+  setup(quarter_, {tr("階"), tr("方向"), tr("側端（低い側）充足率"), tr("側端（高い側）充足率"), tr("壁率比"),
+                   tr("四分割法の評価・理由")});
+  quarter_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+  quarter_->setMaximumHeight(140);
+  layout->addWidget(quarter_);
   status_ = new QLabel(this);
   status_->setWordWrap(true);
   status_->setObjectName(QStringLiteral("wallQuantityStatus"));
@@ -163,6 +172,7 @@ WallQuantityDialog::WallQuantityDialog(MainWindow* window) : QDialog(window), wi
     if (window_->modeler().history().revision() != revision_) {
       report_.clear();
       results_->setRowCount(0);
+      if (quarter_) quarter_->setRowCount(0);
       status_->setText(tr(
           "モデルが変更されました。再読込で最新のモデルを取得してください（入力中の変更は破棄されます）。"));
     }
@@ -296,6 +306,10 @@ void WallQuantityDialog::addFloor(const std::string& value) {
   for (const auto* key : {"id", "name", "area_m2", "weight_kn", "wind_x_m2", "wind_y_m2"})
     floors_->setItem(r, c++, item(f.value(key, json())));
   floors_->setItem(r, 6, checked(f.value("walls_complete", false)));
+  const json plan = f.value("plan", json());
+  const json values[] = {plan.is_null() ? json() : plan.at("x")[0], plan.is_null() ? json() : plan.at("x")[1],
+                         plan.is_null() ? json() : plan.at("y")[0], plan.is_null() ? json() : plan.at("y")[1]};
+  for (int k = 0; k < 4; ++k) floors_->setItem(r, 7 + k, item(values[k]));
 }
 void WallQuantityDialog::useTable(const std::string& table) {
   try {
@@ -386,14 +400,25 @@ std::string WallQuantityDialog::inputs() const {
              {"floors", json::array()},
              {"walls", json::array()}};
   if (!frame_.empty()) in["frame"] = frame_;
-  for (int r = 0; r < floors_->rowCount(); ++r)
-    in["floors"].push_back({{"id", cell(floors_, r, 0).toStdString()},
-                            {"name", cell(floors_, r, 1).toStdString()},
-                            {"area_m2", numeric(cell(floors_, r, 2))},
-                            {"weight_kn", numeric(cell(floors_, r, 3))},
-                            {"wind_x_m2", numeric(cell(floors_, r, 4))},
-                            {"wind_y_m2", numeric(cell(floors_, r, 5))},
-                            {"walls_complete", floors_->item(r, 6)->checkState() == Qt::Checked}});
+  for (int r = 0; r < floors_->rowCount(); ++r) {
+    json f = {{"id", cell(floors_, r, 0).toStdString()},
+              {"name", cell(floors_, r, 1).toStdString()},
+              {"area_m2", numeric(cell(floors_, r, 2))},
+              {"weight_kn", numeric(cell(floors_, r, 3))},
+              {"wind_x_m2", numeric(cell(floors_, r, 4))},
+              {"wind_y_m2", numeric(cell(floors_, r, 5))},
+              {"walls_complete", floors_->item(r, 6)->checkState() == Qt::Checked}};
+    // The plan (for 四分割法) only when all four edges are entered.
+    json edges[4];
+    int given = 0;
+    for (int k = 0; k < 4; ++k) {
+      edges[k] = numeric(floors_->item(r, 7 + k) ? floors_->item(r, 7 + k)->text() : QString());
+      given += !edges[k].is_null();
+    }
+    if (given == 4) f["plan"] = {{"x", {edges[0], edges[1]}}, {"y", {edges[2], edges[3]}}};
+    else if (given) throw std::runtime_error("平面の範囲は4つとも入力してください（四分割法）");
+    in["floors"].push_back(f);
+  }
   for (int r = 0; r < walls_->rowCount(); ++r) {
     const auto* combo = qobject_cast<QComboBox*>(walls_->cellWidget(r, 8));
     json w = {{"id", cell(walls_, r, 0).toStdString()},
@@ -420,6 +445,7 @@ void WallQuantityDialog::changed() {
   if (filling_) return;
   report_.clear();
   results_->setRowCount(0);
+      if (quarter_) quarter_->setRowCount(0);
   status_->setText(tr("再計算中（入力は未保存）…"));
   debounce_->start();
 }
@@ -427,6 +453,7 @@ void WallQuantityDialog::refreshNow() {
   debounce_->stop();
   report_.clear();
   results_->setRowCount(0);
+      if (quarter_) quarter_->setRowCount(0);
   if (window_->modeler().history().revision() != revision_) {
     status_->setText(tr("モデルが変更されました。再読込が必要です。"));
     return;
@@ -438,7 +465,30 @@ void WallQuantityDialog::refreshNow() {
     auto report = json::parse(*result);
     report["revision"] = revision_;
     report_ = report.dump();
-    notice_->setPlainText(display(report.at("notice")));
+    notice_->setPlainText(display(report.at("notice")) + QStringLiteral("\n") +
+                          tr("四分割法の根拠: %1（%2）")
+                              .arg(display(report.at("quarter_balance_basis").at("source")),
+                                   display(report.at("quarter_balance_basis").at("note"))));
+    const auto& quarter = report.at("quarter_balance");
+    quarter_->setRowCount(quarter.size());
+    int q = 0;
+    for (const auto& row : quarter) {
+      quarter_->setItem(q, 0, new QTableWidgetItem(display(row.at("floor"))));
+      quarter_->setItem(q, 1, new QTableWidgetItem(display(row.at("direction"))));
+      for (int side = 0; side < 2; ++side) {
+        QString text = tr("未評価");
+        if (row.at("strips").size() == 2 && row.at("strips")[side].at("ratio").is_number())
+          text = QString::number(row.at("strips")[side].at("ratio").get<double>(), 'f', 2);
+        quarter_->setItem(q, 2 + side, new QTableWidgetItem(text));
+      }
+      quarter_->setItem(q, 4, new QTableWidgetItem(row.at("wall_ratio").is_number()
+                                                       ? QString::number(row.at("wall_ratio").get<double>(), 'f', 2)
+                                                       : tr("未評価")));
+      QString verdict = row.at("status") == "pass"   ? tr("合格（四分割法のみ）")
+                        : row.at("status") == "fail" ? tr("不適合（配置のつり合い）")
+                                                     : tr("未評価");
+      quarter_->setItem(q++, 5, new QTableWidgetItem(verdict + " " + reasons(row.at("reasons"))));
+    }
     results_->setRowCount(report.at("rows").size());
     int r = 0;
     for (const auto& row : report.at("rows")) {

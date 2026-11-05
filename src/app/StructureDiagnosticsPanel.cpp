@@ -1,6 +1,8 @@
 #include "StructureDiagnosticsPanel.h"
 
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <gp_Pln.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRep_Builder.hxx>
 #include <Bnd_Box.hxx>
@@ -76,6 +78,10 @@ StructureDiagnosticsPanel::StructureDiagnosticsPanel(MainWindow* window)
   supportMarks_ = new QCheckBox(tr("基礎までの支持先の印"), content);
   supportMarks_->setObjectName(QStringLiteral("structureSupportMarks"));
   supportMarks_->setChecked(true);
+  quarterBands_ = new QCheckBox(tr("四分割の帯"), content);
+  quarterBands_->setObjectName(QStringLiteral("structureQuarterBands"));
+  quarterBands_->setChecked(true);
+  sources->addWidget(quarterBands_);
   sources->addWidget(frameMarks_);
   sources->addWidget(supportMarks_);
   sources->addStretch(1);
@@ -89,6 +95,15 @@ StructureDiagnosticsPanel::StructureDiagnosticsPanel(MainWindow* window)
   walls_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
   walls_->setMaximumHeight(170);
   layout->addWidget(walls_);
+  layout->addWidget(new QLabel(tr("四分割法（側端部分の壁量充足率と壁率比）"), content));
+  quarter_ = new QTableWidget(content);
+  quarter_->setObjectName(QStringLiteral("structureQuarterTable"));
+  quarter_->setColumnCount(5);
+  quarter_->setHorizontalHeaderLabels({tr("階"), tr("方向"), tr("充足率（低い側／高い側）"), tr("壁率比"), tr("判定")});
+  quarter_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+  quarter_->horizontalHeader()->setStretchLastSection(true);
+  quarter_->setMaximumHeight(150);
+  layout->addWidget(quarter_);
   wallNotice_ = new QLabel(content);
   wallNotice_->setObjectName(QStringLiteral("structureWallNotice"));
   wallNotice_->setWordWrap(true);
@@ -113,6 +128,7 @@ StructureDiagnosticsPanel::StructureDiagnosticsPanel(MainWindow* window)
   connect(overlay_, &QCheckBox::toggled, this, [this] { drawOverlay(); });
   connect(frameMarks_, &QCheckBox::toggled, this, [this] { drawOverlay(); });
   connect(supportMarks_, &QCheckBox::toggled, this, [this] { drawOverlay(); });
+  connect(quarterBands_, &QCheckBox::toggled, this, [this] { drawOverlay(); });
   connect(markers_, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
     std::vector<doc::ObjectId> targets;
     for (const auto& id : markers_->item(row, 0)->data(Qt::UserRole).toStringList())
@@ -159,6 +175,7 @@ void StructureDiagnosticsPanel::invalidate() {
 
 void StructureDiagnosticsPanel::populate() {
   walls_->setRowCount(0);
+  quarter_->setRowCount(0);
   markers_->setRowCount(0);
   wallNotice_->clear();
   unassessed_->clear();
@@ -194,6 +211,27 @@ void StructureDiagnosticsPanel::populate() {
       for (const auto& reason : row.value("reasons", json::array())) reasons << text(reason.get<std::string>());
       judged->setToolTip(reasons.join(QStringLiteral("\n")));
       walls_->setItem(i, 3, judged);
+    }
+    for (const auto& row : wall.value("quarter", json::array())) {
+      const int i = quarter_->rowCount();
+      quarter_->insertRow(i);
+      quarter_->setItem(i, 0, new QTableWidgetItem(text(row.value("floor", std::string()))));
+      quarter_->setItem(i, 1, new QTableWidgetItem(text(row.value("direction", std::string()))));
+      QStringList ratios;
+      for (const auto& s : row.value("strips", json::array()))
+        ratios << (s["ratio"].is_number() ? QString::number(s["ratio"].get<double>(), 'f', 2) : tr("未評価"));
+      quarter_->setItem(i, 2, new QTableWidgetItem(ratios.isEmpty() ? tr("未評価") : ratios.join(QStringLiteral(" ／ "))));
+      quarter_->setItem(i, 3, new QTableWidgetItem(row["wall_ratio"].is_number()
+                                                       ? QString::number(row["wall_ratio"].get<double>(), 'f', 2)
+                                                       : tr("未評価")));
+      const std::string status = row.value("status", std::string("not_evaluated"));
+      auto* judged = new QTableWidgetItem(status == "pass"   ? tr("つり合いOK（四分割法のみ）")
+                                          : status == "fail" ? tr("つり合い不足")
+                                                             : tr("未評価"));
+      QStringList reasons;
+      for (const auto& reason : row.value("reasons", json::array())) reasons << text(reason.get<std::string>());
+      judged->setToolTip(reasons.join(QStringLiteral("\n")));
+      quarter_->setItem(i, 4, judged);
     }
     QString note = text(wall.value("notice", std::string()));
     if (wall.value("stale_table", false)) note += tr("\n係数表の確認から1年以上たっています。最新の基準を確認してください。");
@@ -235,6 +273,17 @@ void StructureDiagnosticsPanel::drawOverlay() {
       const std::string status = w.value("wall_status", std::string()) == "evaluated" ? w.value("row_status", std::string()) : "not_evaluated";
       shapes.push_back({BRepBuilderAPI_MakeEdge(a, b).Edge(), tone(status)});
     }
+    // 四分割の帯: each side part as a translucent band on its storey level, in its row's colour.
+    if (quarterBands_->isChecked())
+      for (const auto& row : r.at("wall_quantity").value("quarter", json::array()))
+        for (const auto& s : row.value("strips", json::array())) {
+          const double x0 = s["rect"][0][0].get<double>(), y0 = s["rect"][0][1].get<double>();
+          const double x1 = s["rect"][1][0].get<double>(), y1 = s["rect"][1][1].get<double>();
+          const double z = s.value("z", 0.0) + 2;
+          if (x1 - x0 < 1 || y1 - y0 < 1) continue;
+          const auto band = BRepBuilderAPI_MakeFace(gp_Pln(gp_Pnt(0, 0, z), gp::DZ()), x0, x1, y0, y1).Face();
+          shapes.push_back({band, tone(row.value("status", std::string("not_evaluated")))});
+        }
     const auto& d = window_->modeler().document();
     for (const auto& m : r.at("markers")) {
       const bool frameRow = m.value("source", std::string()) == "frame_check";

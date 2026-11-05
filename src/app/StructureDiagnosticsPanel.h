@@ -37,6 +37,8 @@ class StructureDiagnosticsPanel : public PanelDock {
   QCheckBox* overlay_;
   QCheckBox* frameMarks_;
   QCheckBox* supportMarks_;
+  QCheckBox* quarterBands_;
+  QTableWidget* quarter_;
   QTableWidget* walls_;
   QTableWidget* markers_;
   std::string result_;

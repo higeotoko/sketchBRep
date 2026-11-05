@@ -80,6 +80,18 @@ Result<std::string> structuralDiagnostics(const doc::Document& d, const std::str
         wall["as_of"] = r.at("as_of");
         wall["stale_table"] = r.at("stale_table");
         wall["unassessed"] = r.at("unassessed");
+        wall["quarter_basis"] = r.at("quarter_balance_basis");
+        // 四分割法 rows with each side part as a band at its storey's level (display position).
+        json quarter = json::array();
+        for (auto row : r.at("quarter_balance")) {
+          const auto [z, placed] = storeyElevation(d, row.value("floor", std::string()));
+          for (auto& strip : row["strips"]) {
+            strip["z"] = z;
+            strip["elevation_from_level"] = placed;
+          }
+          quarter.push_back(std::move(row));
+        }
+        wall["quarter"] = quarter;
         std::map<std::pair<std::string, std::string>, std::string> rowStatus;
         for (const auto& row : r.at("rows"))
           rowStatus[{row.value("floor", std::string()), row.value("direction", std::string())}] =
@@ -147,7 +159,7 @@ Result<std::string> structuralDiagnostics(const doc::Document& d, const std::str
     out["counts"] = {{"frame_fail", frameFail}, {"frame_not_evaluated", frameOpen}, {"support_issues", supportOpen},
                      {"walls", out["walls"].size()}};
     // Checks this app does not compute yet: shown as unassessed, never as passing.
-    out["unassessed"] = {"四分割法（壁の配置のつり合い）", "N値（柱頭・柱脚の接合）", "柱の小径・直下率",
+    out["unassessed"] = {"四分割法の下屋・一部だけ上階が載る側端部分", "N値（柱頭・柱脚の接合）", "柱の小径・直下率",
                          "横架材の断面", "地盤・基礎の構造計算"};
     return out.dump();
   } catch (const std::exception& e) {

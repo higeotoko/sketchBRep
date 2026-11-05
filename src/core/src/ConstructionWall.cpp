@@ -1,7 +1,9 @@
 #include "sbr/ConstructionWall.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <optional>
 #include <ctime>
 #include <iomanip>
 #include <nlohmann/json.hpp>
@@ -114,6 +116,111 @@ struct Wall {
   double a = 0, b = 0, line = 0;
   bool geometric = false;
 };
+// 四分割法 (wall balance), after 平成12年建設省告示第1352号 (MLIT consolidated text, rev. 2007),
+// moved into 昭和56年建設省告示第1100号 第四 from 2025-04-01. Per storey and direction: the two side
+// parts (outer quarters of the plan, measured across the direction), existing = sum of wall length x
+// reduced ratio (alpha-h applies, MLIT material), required = side-part floor area x the storey's
+// earthquake requirement per floor area (Lw, which replaced 令46条4項 表2). Storeys are counted per
+// side part: a part without (or with only part of) the upper floor over it needs a one-storey Lw that
+// the inputs do not give, so it is not evaluated. Pass: both 壁量充足率 > 1, or 壁率比 >= 0.5.
+json quarterBalance(const json& in, const json& rows, const std::vector<Wall>& walls) {
+  json out = json::array();
+  const auto& floors = in.at("floors");
+  auto rect = [](const json& f) -> std::optional<std::array<double, 4>> {
+    if (!f.contains("plan")) return std::nullopt;
+    const auto& p = f.at("plan");
+    return std::array<double, 4>{p.at("x")[0].get<double>(), p.at("x")[1].get<double>(), p.at("y")[0].get<double>(),
+                                 p.at("y")[1].get<double>()};
+  };
+  for (std::size_t i = 0; i < floors.size(); ++i) {
+    const auto& f = floors[i];
+    for (const std::string direction : {"X", "Y"}) {
+      json row = {{"floor", f.at("id")}, {"name", f.value("name", f.at("id"))}, {"direction", direction},
+                  {"strips", json::array()}, {"wall_ratio", nullptr}, {"status", "not_evaluated"},
+                  {"reasons", json::array()}};
+      auto reason = [&](const std::string& s) { row["reasons"].push_back(s); };
+      const json* q = nullptr;
+      for (const auto& r : rows)
+        if (r.at("floor") == f.at("id") && r.at("direction") == direction) q = &r;
+      const auto plan = rect(f);
+      if (!plan) reason("この階の平面の範囲（plan）が未入力です");
+      double lw = 0;
+      if (!q || !q->contains("earthquake_cm_m2")) reason("この階の床面積あたりの必要壁量（地震）が未評価です");
+      else lw = q->at("earthquake_cm_m2").get<double>();
+      bool wallsKnown = f.value("walls_complete", false);
+      if (!wallsKnown) reason("耐力壁の入力完了が未確認です");
+      for (const auto& w : walls)
+        if (w.floor == f.at("id") && w.direction == direction && w.result.at("effective_m").is_null()) {
+          wallsKnown = false;
+          reason("未評価の耐力壁があります（壁量の内訳参照）");
+          break;
+        }
+      if (plan) {
+        const auto [x0, x1, y0, y1] = *plan;
+        // X-direction walls resist along X: their side parts are the quarters at both Y ends.
+        const bool alongX = direction == "X";
+        const double lo = alongX ? y0 : x0, hi = alongX ? y1 : x1, quarter = (hi - lo) / 4;
+        const json* upper = i + 1 < floors.size() ? &floors[i + 1] : nullptr;
+        const auto upperPlan = upper ? rect(*upper) : std::nullopt;
+        std::vector<double> ratios;
+        bool evaluable = row["reasons"].empty();
+        for (int side = 0; side < 2; ++side) {
+          const double a = side == 0 ? lo : hi - quarter, b = side == 0 ? lo + quarter : hi;
+          const std::array<double, 4> strip = alongX ? std::array<double, 4>{x0, x1, a, b}
+                                                     : std::array<double, 4>{a, b, y0, y1};
+          json s = {{"side", side == 0 ? "low" : "high"},
+                    {"rect", {{strip[0], strip[2]}, {strip[1], strip[3]}}},
+                    {"area_m2", (strip[1] - strip[0]) * (strip[3] - strip[2]) / 1e6},
+                    {"required_m", nullptr}, {"existing_m", nullptr}, {"ratio", nullptr}};
+          if (f.contains("side_areas_m2")) s["area_m2"] = f.at("side_areas_m2").at(direction)[side];
+          // Storeys counted per side part: the upper floor must cover this part entirely.
+          if (upper) {
+            if (!upperPlan) {
+              evaluable = false;
+              reason("上の階の平面の範囲（plan）が未入力です");
+            } else {
+              const auto& u = *upperPlan;
+              const double cover = std::max(0.0, std::min(u[1], strip[1]) - std::max(u[0], strip[0])) *
+                                   std::max(0.0, std::min(u[3], strip[3]) - std::max(u[2], strip[2]));
+              const double whole = (strip[1] - strip[0]) * (strip[3] - strip[2]);
+              s["upper_floor"] = cover >= whole - 1 ? "full" : cover <= 1 ? "none" : "partial";
+              if (s["upper_floor"] != "full") {
+                evaluable = false;
+                reason(s["upper_floor"] == "none"
+                           ? "上の階が載っていない側端部分（下屋）は、平屋としての床面積あたり必要壁量が入力にないため未評価です"
+                           : "上の階が一部だけ載る側端部分は未対応です（階数の数え方を決められません）");
+              }
+            }
+          }
+          double existing = 0;
+          for (const auto& w : walls)
+            if (w.floor == f.at("id") && w.direction == direction && w.geometric && w.line >= a - 1 &&
+                w.line <= b + 1 && !w.result.at("effective_m").is_null())
+              existing += w.result.at("effective_m").get<double>();
+          s["existing_m"] = existing;
+          if (lw > 0) {
+            const double required = s["area_m2"].get<double>() * lw / 100;
+            s["required_m"] = required;
+            if (required > 0) {
+              s["ratio"] = existing / required;
+              ratios.push_back(existing / required);
+            }
+          }
+          row["strips"].push_back(s);
+        }
+        if (evaluable && ratios.size() == 2) {
+          const double small = std::min(ratios[0], ratios[1]), large = std::max(ratios[0], ratios[1]);
+          row["wall_ratio"] = large > 0 ? small / large : 0.0;
+          const bool bothOver = ratios[0] > 1 && ratios[1] > 1;
+          row["status"] = bothOver || row["wall_ratio"].get<double>() >= .5 ? "pass" : "fail";
+          row["basis"] = bothOver ? "両側端の壁量充足率が1を超える" : "壁率比が0.5以上か";
+        }
+      }
+      out.push_back(std::move(row));
+    }
+  }
+  return out;
+}
 }  // namespace
 
 std::string wallTables() {
@@ -145,7 +252,7 @@ std::string normalizeWallInputs(const std::string& input) {
   if (!in.contains("floors")) in["floors"] = json::array();
   require(in.at("floors").is_array() && in.at("floors").size() <= 2, "床の指定は1〜2階が対象です");
   for (const auto& f : in.at("floors")) {
-    keys(f, {"id", "name", "area_m2", "weight_kn", "wind_x_m2", "wind_y_m2", "walls_complete"});
+    keys(f, {"id", "name", "area_m2", "weight_kn", "wind_x_m2", "wind_y_m2", "walls_complete", "plan", "side_areas_m2"});
     text(f, "id");
     require(floors.insert(f.at("id")).second, "階IDが重複しています");
     if (f.contains("name")) require(f.at("name").is_string(), "階名は文字列です");
@@ -153,6 +260,28 @@ std::string normalizeWallInputs(const std::string& input) {
     for (const auto* k : {"wind_x_m2", "wind_y_m2"}) number(f, k, true);
     if (f.contains("walls_complete"))
       require(f.at("walls_complete").is_boolean(), "耐力壁の入力完了は真偽値です");
+    // Plan extent for 四分割法 (world mm rectangle) and optional side-part areas when the
+    // floor is not that rectangle.
+    if (f.contains("plan")) {
+      const auto& p = f.at("plan");
+      require(p.is_object() && p.contains("x") && p.contains("y"), "planは{x:[min,max],y:[min,max]}（mm）です");
+      for (const auto* axis : {"x", "y"}) {
+        const auto& r = p.at(axis);
+        require(r.is_array() && r.size() == 2, "planの範囲は[min,max]です");
+        point(json::array({r[0], r[1]}));
+        require(r[1].get<double>() - r[0].get<double>() >= 100, "planの範囲が小さすぎるか逆順です");
+      }
+    }
+    if (f.contains("side_areas_m2")) {
+      const auto& s = f.at("side_areas_m2");
+      require(s.is_object() && s.contains("X") && s.contains("Y"), "side_areas_m2は{X:[低,高],Y:[低,高]}（m2）です");
+      for (const auto* axis : {"X", "Y"}) {
+        const auto& r = s.at(axis);
+        require(r.is_array() && r.size() == 2 && r[0].is_number() && r[1].is_number() && r[0].get<double>() > 0 &&
+                    r[1].get<double>() > 0,
+                "側端部分の床面積は正の数値です");
+      }
+    }
   }
   if (!in.contains("walls")) in["walls"] = json::array();
   require(in.at("walls").is_array() && in.at("walls").size() <= 2000, "耐力壁は2000区間以下です");
@@ -207,7 +336,7 @@ Result<std::string> checkWallQuantity(const doc::Document& d, const std::string&
       if (stale) notice += "表の確認から1年以上たっています。";
       if (future) notice += "表の施行日・確認日が計算日より後です。この日付では未評価です。";
     }
-    notice += "四分割法・N値・柱頭柱脚・準耐力壁等は未評価。";
+    notice += "四分割法は平成12年告示1352号（2025年4月から告示1100号第四）の考え方で別欄に計算。N値・柱頭柱脚・準耐力壁等は未評価。";
     bool scoped = true;
     const std::string frame = in.value("frame", std::string());
     if (!frame.empty()) scoped = d.find(frame) && d.find(frame)->isContainer();
@@ -400,11 +529,16 @@ Result<std::string> checkWallQuantity(const doc::Document& d, const std::string&
                 {"inputs", in},
                 {"rows", rows},
                 {"walls", parts},
+                {"quarter_balance", quarterBalance(in, rows, walls)},
+                {"quarter_balance_basis",
+                 {{"source", "平成12年建設省告示第1352号（国交省掲載の改正平成19年告示1227号までの版）"},
+                  {"url", "https://www.mlit.go.jp/notice/noticedata/pdf/201703/00006444.pdf"},
+                  {"note", "2025年4月1日から昭和56年建設省告示第1100号第四へ移行（移行後の条文は未照合）。必要壁量は側端部分の床面積×その階の地震のLw（令46条4項の表二を置き換えた式）。αhの低減は四分割法にも適用（国交省資料001746169 p.10）。準耐力壁等は算入しない。"}}},
                 {"notice", notice},
                 {"stale_table", stale},
                 {"complete", complete},
                 {"comparison_tolerance_m", 1e-10},
-                {"unassessed", {"四分割法", "N値", "柱頭柱脚", "準耐力壁等", "断面", "基礎"}}};
+                {"unassessed", {"N値", "柱頭柱脚", "準耐力壁等", "四分割法の下屋・一部だけ上階がある側端部分", "断面", "基礎"}}};
     return out.dump();
   } catch (const std::exception& e) {
     return Result<std::string>::failure(e.what());

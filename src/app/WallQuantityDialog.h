@@ -33,7 +33,7 @@ class WallQuantityDialog : public QDialog {
   bool filling_ = false;
   QLineEdit *height_, *wind_, *basis_;
   QComboBox* co_;
-  QTableWidget *floors_, *walls_, *results_;
+  QTableWidget *floors_, *walls_, *results_, *quarter_ = nullptr;
   QLabel* status_;
   QTextBrowser* notice_;
   QTimer *debounce_, *poll_;

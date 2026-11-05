@@ -40,7 +40,7 @@ TEST_F(StructuralDiagnostics, EmptyModelListsUnassessedChecksAndChangesNothing) 
   EXPECT_FALSE(r["wall_quantity"]["entered"]);
   EXPECT_TRUE(r["walls"].empty());
   EXPECT_GE(r["unassessed"].size(), 2u);
-  EXPECT_NE(r["unassessed"].dump().find("四分割法"), std::string::npos);
+  EXPECT_NE(r["unassessed"].dump().find("下屋"), std::string::npos);
   EXPECT_NE(r["unassessed"].dump().find("N値"), std::string::npos);
   EXPECT_EQ(serializeDocument(m.document()), before);
 }
@@ -58,10 +58,25 @@ TEST_F(StructuralDiagnostics, WallRowsAndWallsCarryStatusAndTheLevelElevation) {
   EXPECT_EQ(r["walls"][1]["row_status"], "fail");
   EXPECT_EQ(r["walls"][0]["start"][2], 0);
   EXPECT_FALSE(r["walls"][0]["elevation_from_level"]);
+  // Without a plan the quarter rows are there but not evaluated.
+  ASSERT_EQ(r["wall_quantity"]["quarter"].size(), 2u);
+  EXPECT_EQ(r["wall_quantity"]["quarter"][0]["status"], "not_evaluated");
+  // With a plan, each storey/direction gets its two side parts as bands.
+  auto in = wallInputs();
+  in["floors"][0]["plan"] = {{"x", {0, 10000}}, {"y", {0, 4000}}};
+  ASSERT_TRUE(m.setWallCalculation(in.dump()));
+  r = diagnose();
+  const auto& q = r["wall_quantity"]["quarter"];
+  ASSERT_EQ(q.size(), 2u);
+  EXPECT_EQ(q[0]["strips"].size(), 2u);
+  EXPECT_EQ(q[0]["status"], "fail");  // the far Y end has no X wall
+  EXPECT_EQ(q[0]["strips"][0]["z"], 0);
+  EXPECT_FALSE(r["wall_quantity"]["quarter_basis"]["source"].get<std::string>().empty());
   // With a frame, the 1FL level places the wall bands at the first floor.
   ASSERT_TRUE(m.generateFrame(R"({"inputs":{"x_bays":2,"y_bays":2,"storeys":1}})"));
   r = diagnose();
   EXPECT_TRUE(r["walls"][0]["elevation_from_level"]);
+  EXPECT_TRUE(r["wall_quantity"]["quarter"][0]["strips"][0]["elevation_from_level"]);
   EXPECT_GT(r["walls"][0]["start"][2].get<double>(), 0);
 }
 
