@@ -7,7 +7,11 @@
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
+#include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
+#include <QRegularExpression>
+#include <QSignalBlocker>
 #include <QPushButton>
 #include <QTextBrowser>
 #include <QVBoxLayout>
@@ -17,8 +21,8 @@ namespace sbr::app {
 using json=nlohmann::json;
 bool MainWindow::previewFoundation(const std::string& inputs,const std::string& replace,bool replaceEdited) {
   json args={{"inputs",json::parse(inputs)},{"preview",true},{"expected_revision",modeler_.history().revision()}};
-  const bool pads=args["inputs"].value("type",std::string("strip"))=="pads";
-  const auto title=pads?tr("束石・独立基礎計画"):tr("布基礎計画");
+  const auto type=args["inputs"].value("type",std::string("strip"));
+  const auto title=type=="pads"?tr("束石・独立基礎計画"):type=="mat"?tr("べた基礎計画"):tr("布基礎計画");
   if(!replace.empty()) args["replace"]=replace;
   if(replaceEdited) args["on_modified"]="replace";
   const auto trial=json::parse(aiBridge_->execute(json{{"command","generate_foundation"},{"args",args}}.dump()));
@@ -41,20 +45,27 @@ void MainWindow::showFoundationDialog() {
 void MainWindow::showFoundationPadsDialog() {
   showFoundationDialogFor(true);
 }
-void MainWindow::showFoundationDialogFor(bool pads) {
+void MainWindow::showFoundationMatDialog() {
+  showFoundationDialogFor(false,true);
+}
+// Strip and mat share the sill-based dialog (a type choice); pads have their own.
+void MainWindow::showFoundationDialogFor(bool pads,bool mat) {
   const auto openedRevision=modeler_.history().revision();
   QDialog dialog(this);dialog.setObjectName(QStringLiteral("foundationDialog"));
-  dialog.setWindowTitle(pads?tr("束石・独立基礎計画（床束・柱から）"):tr("布基礎計画（土台から作成・作り直し）"));dialog.resize(780,680);
+  dialog.setWindowTitle(pads?tr("束石・独立基礎計画（床束・柱から）"):tr("布基礎・べた基礎計画（土台から作成・作り直し）"));dialog.resize(780,720);
   auto* layout=new QVBoxLayout(&dialog);
   auto* notice=new QLabel(pads?tr("選択した実在する床束・柱の下面から、束石・独立基礎の計画形状を作ります。\n"
       "寸法は仮の計画値です。地盤・支持力・凍結・構造・配筋・アンカー等は未照査です。\n"
       "未選定の床束の目印は対象外です。既存基礎と重なる配置は避け、支持先一覧で未検出の床束を選んでください。"):
-      tr("実在する土台から、立上りと底盤のコンクリート形状を作ります。交点は層ごとに結合します。\n"
-      "初期寸法は計画用です。地盤・支持力・構造・配筋・凍結深度・人通口・換気は未照査です。\n"
-      "対象は指定した土台の下のみ。床束下の束石、土台のない耐力壁下、べた基礎は別途計画が必要です。"),&dialog);
+      tr("実在する土台から基礎のコンクリート形状を作ります。布基礎は立上りと底盤、べた基礎は立上りと外周の内側の耐圧盤です。\n"
+      "初期寸法は計画用です。地盤・支持力・構造・配筋・凍結深度・防湿・換気は未照査です。\n"
+      "対象は指定した土台の下のみ。べた基礎は外周の土台が一周つながっている必要があります。"),&dialog);
   notice->setWordWrap(true);layout->addWidget(notice);
   auto* form=new QFormLayout;
   auto* plans=new QComboBox(&dialog);plans->setObjectName(QStringLiteral("foundationPlan"));plans->addItem(tr("新規"),QString());
+  auto* kind=new QComboBox(&dialog);kind->setObjectName(QStringLiteral("foundationType"));
+  kind->addItem(tr("布基礎（立上り＋底盤）"),QStringLiteral("strip"));kind->addItem(tr("べた基礎（立上り＋耐圧盤）"),QStringLiteral("mat"));
+  kind->setCurrentIndex(mat?1:0);kind->setVisible(!pads);
   auto* frames=new QComboBox(&dialog);frames->setObjectName(QStringLiteral("foundationSourceFrame"));
   const json initialSources=selection_;
   json selectedSources=initialSources;
@@ -69,7 +80,7 @@ void MainWindow::showFoundationDialogFor(bool pads) {
   }
   if(!pads && frames->count()>1 && selection_.empty()) frames->setCurrentIndex(1);
   for(int i=1;i<frames->count();++i) if(selection_.size()==1 && frames->itemData(i).toString().toStdString()==selection_[0]) frames->setCurrentIndex(i);
-  form->addRow(tr("基礎計画"),plans);form->addRow(pads?tr("対象の床束・柱"):tr("対象の土台"),frames);
+  form->addRow(tr("基礎計画"),plans);if(!pads) form->addRow(tr("種別"),kind);form->addRow(pads?tr("対象の床束・柱"):tr("対象の土台"),frames);
   auto number=[&](const QString& name,double value,double minimum,double maximum) {
     auto* spin=new QDoubleSpinBox(&dialog);spin->setObjectName(name);spin->setRange(minimum,maximum);spin->setDecimals(1);spin->setValue(value);return spin;
   };
@@ -80,11 +91,39 @@ void MainWindow::showFoundationDialogFor(bool pads) {
   auto* padDepth=number("foundationPadDepth",300,1,10000);padDepth->setVisible(pads);
   auto* packing=number("foundationPacking",20,0,1000);
   auto* top=number("foundationTop",400,-1000000,1000000);
+  auto* slabThickness=number("foundationSlabThickness",150,1,10000);
+  auto* passages=new QLineEdit(&dialog);passages->setObjectName(QStringLiteral("foundationPassages"));
+  passages->setPlaceholderText(tr("例：1500,1000; 4500,2730（内部立上りの上の点 X,Y mm）"));
+  auto* passageWidth=number("foundationPassageWidth",600,1,8000);
+  auto* passageHeight=number("foundationPassageHeight",330,1,2000);
   stemWidth->setVisible(!pads);stemHeight->setVisible(!pads);packing->setVisible(!pads);
-  if(!pads) {form->addRow(tr("立上り幅 mm"),stemWidth);form->addRow(tr("立上り高さ mm"),stemHeight);}
-  form->addRow(pads?tr("束石の幅（世界X）mm"):tr("底盤幅 mm"),footWidth);
+  auto* stemHeightLabel=new QLabel(&dialog);
+  if(!pads) {form->addRow(tr("立上り幅 mm"),stemWidth);form->addRow(stemHeightLabel,stemHeight);}
+  auto* footWidthLabel=new QLabel(pads?tr("束石の幅（世界X）mm"):tr("底盤幅 mm"),&dialog);
+  form->addRow(footWidthLabel,footWidth);
   if(pads) form->addRow(tr("束石の奥行（世界Y）mm"),padDepth);
-  form->addRow(pads?tr("束石の高さ mm"):tr("底盤厚 mm"),footHeight);
+  auto* footHeightLabel=new QLabel(pads?tr("束石の高さ mm"):tr("底盤厚 mm"),&dialog);
+  form->addRow(footHeightLabel,footHeight);
+  auto* slabLabel=new QLabel(tr("耐圧盤の厚さ mm"),&dialog);
+  auto* passagesLabel=new QLabel(tr("人通口の位置"),&dialog);
+  auto* passageSizeLabel=new QLabel(tr("人通口の幅・高さ mm"),&dialog);
+  auto* passageSize=new QHBoxLayout;passageSize->addWidget(passageWidth);passageSize->addWidget(passageHeight);
+  if(!pads) {form->addRow(slabLabel,slabThickness);form->addRow(passagesLabel,passages);form->addRow(passageSizeLabel,passageSize);}
+  else {for(QWidget* w:std::initializer_list<QWidget*>{slabLabel,slabThickness,passagesLabel,passages,passageSizeLabel,passageWidth,passageHeight,stemHeightLabel}) w->hide();}
+  // Show the fields of the chosen type; the mat stem height is its rise above the slab top.
+  auto showType=[=]{
+    if(pads) return;
+    const bool isMat=kind->currentData().toString()==QStringLiteral("mat");
+    stemHeightLabel->setText(isMat?tr("立上り高さ（耐圧盤の上から）mm"):tr("立上り高さ mm"));
+    for(QWidget* w:std::initializer_list<QWidget*>{footWidthLabel,footWidth,footHeightLabel,footHeight}) w->setVisible(!isMat);
+    for(QWidget* w:std::initializer_list<QWidget*>{slabLabel,slabThickness,passagesLabel,passages,passageSizeLabel,passageWidth,passageHeight}) w->setVisible(isMat);
+  };
+  auto typeDefaults=[=]{
+    // Planning placeholders per type (not design values); a loaded plan overwrites them.
+    if(!pads) stemHeight->setValue(kind->currentData().toString()==QStringLiteral("mat")?400:600);
+    showType();
+  };
+  connect(kind,qOverload<int>(&QComboBox::currentIndexChanged),&dialog,typeDefaults);typeDefaults();
   if(!pads) form->addRow(tr("土台下のパッキン高さ mm"),packing);
   auto* automatic=new QCheckBox(pads?tr("各床束・柱の下面に天端を合わせる"):tr("土台下面−パッキンで基礎天端を算出"),&dialog);automatic->setChecked(true);
   automatic->setObjectName(QStringLiteral("foundationAutomaticTop"));form->addRow(automatic);
@@ -108,7 +147,7 @@ void MainWindow::showFoundationDialogFor(bool pads) {
     text<<(p["top_z"].is_number()?tr("基礎天端 Z=%1 mm").arg(p["top_z"].get<double>()):tr("基礎天端：各部材の下面に合わせた高さ"));
     if(p["generated_parts_volume_m3"].is_number()) text<<tr("コンクリート %1 m³").arg(p["generated_parts_volume_m3"].get<double>(),0,'f',3);
     for(const auto& [role,q]:p["quantities"].items()) text<<tr("%1：%2 m³／連続体 %3 個").arg(
-        role=="foundation_stem"?tr("立上り"):role=="foundation_pad"?tr("束石・独立基礎"):tr("底盤")).arg(q["volume_m3"].get<double>(),0,'f',3).arg(q["solids"].get<int>());
+        role=="foundation_stem"?tr("立上り"):role=="foundation_pad"?tr("束石・独立基礎"):role=="foundation_slab"?tr("耐圧盤"):tr("底盤")).arg(q["volume_m3"].get<double>(),0,'f',3).arg(q["solids"].get<int>());
     for(const auto& s:p["sources"]) {
       text<<tr("%1：部材下面から基礎天端 %2 mm").arg(QString::fromStdString(s["name"])).arg(s["packing_gap_mm"].get<double>(),0,'f',1);
       if(s["packing_gap_matches"]==false) text<<(pads?tr("  要確認：部材下面と基礎天端が一致しません。"):tr("  要確認：設定したパッキン高さと一致しません。"));
@@ -118,6 +157,7 @@ void MainWindow::showFoundationDialogFor(bool pads) {
   };
   auto loadPlan=[&] {
     const auto id=plans->currentData().toString().toStdString();overwrite->setChecked(false);
+    kind->setEnabled(id.empty());  // a plan keeps its type; make a new plan for another type
     if(id.empty()) { selectedSources=initialSources;if(pads) frames->setCurrentIndex(0);refreshReport();return; }
     const auto* root=modeler_.document().find(id);if(!root) return;
     const auto manifest=json::parse(root->attributes.at("foundation_plan"));const auto& in=manifest["inputs"];
@@ -133,8 +173,19 @@ void MainWindow::showFoundationDialogFor(bool pads) {
     }
     else { selectedSources=in["sources"];frames->setCurrentIndex(pads?1:0); }
     if(pads) {footWidth->setValue(in["width"]);padDepth->setValue(in["depth"]);footHeight->setValue(in["height"]);}
-    else {stemWidth->setValue(in["stem_width"]);stemHeight->setValue(in["stem_height"]);footWidth->setValue(in["footing_width"]);
-      footHeight->setValue(in["footing_thickness"]);packing->setValue(in["packing_mm"]);}
+    else {
+      const bool isMat=in.value("type",std::string("strip"))=="mat";
+      { const QSignalBlocker block(kind);kind->setCurrentIndex(isMat?1:0); }showType();
+      stemWidth->setValue(in["stem_width"]);stemHeight->setValue(in["stem_height"]);packing->setValue(in["packing_mm"]);
+      if(isMat) {
+        slabThickness->setValue(in["slab_thickness"]);QStringList points;
+        for(const auto& p:in.value("passages",json::array())) {
+          points<<QStringLiteral("%1,%2").arg(p["at"][0].get<double>()).arg(p["at"][1].get<double>());
+          passageWidth->setValue(p["width"]);passageHeight->setValue(p["height"]);
+        }
+        passages->setText(points.join(QStringLiteral("; ")));
+      } else {footWidth->setValue(in["footing_width"]);footHeight->setValue(in["footing_thickness"]);}
+    }
     automatic->setChecked(!in.contains("top_z"));if(manifest["top_z"].is_number()) top->setValue(manifest["top_z"]);refreshReport();
   };
   connect(plans,qOverload<int>(&QComboBox::currentIndexChanged),&dialog,[&]{loadPlan();});
@@ -151,6 +202,18 @@ void MainWindow::showFoundationDialogFor(bool pads) {
   if(modeler_.history().revision()!=openedRevision) { reportError(tr("モデルが変更されました。基礎の設定を開き直してください"));return; }
   json inputs={{"stem_width",stemWidth->value()},{"stem_height",stemHeight->value()},
       {"footing_width",footWidth->value()},{"footing_thickness",footHeight->value()},{"packing_mm",packing->value()}};
+  if(!pads && kind->currentData().toString()==QStringLiteral("mat")) {
+    json list=json::array();
+    for(const auto& item:passages->text().split(QLatin1Char(';'),Qt::SkipEmptyParts)) {
+      if(item.trimmed().isEmpty()) continue;
+      const auto xy=item.split(QRegularExpression(QStringLiteral("[,\\s]+")),Qt::SkipEmptyParts);
+      bool okX=false,okY=false;const double x=xy.value(0).toDouble(&okX),y=xy.value(1).toDouble(&okY);
+      if(xy.size()!=2 || !okX || !okY) { reportError(tr("人通口の位置は「X,Y」をセミコロンで区切って入力してください: %1").arg(item.trimmed()));return; }
+      list.push_back({{"at",{x,y}},{"width",passageWidth->value()},{"height",passageHeight->value()}});
+    }
+    inputs={{"type","mat"},{"stem_width",stemWidth->value()},{"stem_height",stemHeight->value()},
+            {"slab_thickness",slabThickness->value()},{"packing_mm",packing->value()},{"passages",list}};
+  }
   const auto source=frames->currentData().toString().toStdString();
   if(pads) inputs={{"type","pads"},{"width",footWidth->value()},{"depth",padDepth->value()},{"height",footHeight->value()}};
   if(pads) inputs["sources"]=frames->currentIndex()==0?initialSources:selectedSources;

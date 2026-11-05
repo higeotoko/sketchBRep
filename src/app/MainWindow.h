@@ -250,7 +250,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   void showTimberFrameDialog();
   void showFoundationDialog();
   void showFoundationPadsDialog();
-  void showFoundationDialogFor(bool pads);
+  void showFoundationMatDialog();
+  void showFoundationDialogFor(bool pads, bool mat = false);
   void showFoundationSupportsDialog();
   void showFrameCheckPanel();
   void showTakeOffDialog();

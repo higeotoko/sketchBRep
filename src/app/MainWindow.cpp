@@ -1108,6 +1108,8 @@ void MainWindow::buildMenus() {
   tools->addAction(tr("木造架構を作成・作り直し..."), this, &MainWindow::showTimberFrameDialog)->setObjectName(QStringLiteral("timberFrameAction"));
   tools->addAction(tr("布基礎計画（土台から作成・作り直し）..."), this, &MainWindow::showFoundationDialog)
       ->setObjectName(QStringLiteral("foundationAction"));
+  tools->addAction(tr("べた基礎計画（土台から作成・作り直し）..."), this, &MainWindow::showFoundationMatDialog)
+      ->setObjectName(QStringLiteral("foundationMatAction"));
   tools->addAction(tr("束石・独立基礎計画（床束・柱から）..."), this, &MainWindow::showFoundationPadsDialog)
       ->setObjectName(QStringLiteral("foundationPadsAction"));
   tools->addAction(tr("基礎までの支持先（柱・土台・床束）..."), this, &MainWindow::showFoundationSupportsDialog)
@@ -1274,7 +1276,7 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
   timber->setPopupMode(QToolButton::InstantPopup);
   auto* timberMenu = new QMenu(timber);
   timberMenu->setObjectName(QStringLiteral("architectureTimberMenu"));
-  for (const char* name : {"timberFrameAction", "foundationAction", "foundationPadsAction", "foundationSupportsAction", "frameCheckAction", "wallBaysAction", "wallQuantityAction", "takeOffAction"})
+  for (const char* name : {"timberFrameAction", "foundationAction", "foundationMatAction", "foundationPadsAction", "foundationSupportsAction", "frameCheckAction", "wallBaysAction", "wallQuantityAction", "takeOffAction"})
     timberMenu->addAction(findChild<QAction*>(QLatin1String(name)));
   timber->setMenu(timberMenu);
   bar->addWidget(timber);

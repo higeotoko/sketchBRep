@@ -320,6 +320,7 @@ class GuiPhase1 : public QObject {
   void timberFramePreviewApplyLevelsAndUndo();
   void foundationPreviewApplyRejectAndStaleRevision();
   void foundationDialogCreatesAndRegeneratesPlan();
+  void foundationMatDialogMakesSlabAndPassage();
   void foundationSupportsSelectActualPartsAndInvalidate();
   void foundationPadsFromMissingFloorPostsAndRegeneration();
   void foundationPadsWithDifferentTopsReloadWithoutChangingTheModel();
@@ -9778,6 +9779,72 @@ void GuiPhase1::foundationDialogCreatesAndRegeneratesPlan() {
   QVERIFY(!stored["inputs"].contains("top_z"));QCOMPARE(stored["top_z"].get<double>(),400.);
   QVERIFY(m.undo());const auto old=json::parse(m.document().find(root)->attributes.at("foundation_plan"));
   QCOMPARE(old["top_z"].get<double>(),350.);
+}
+
+// Mat foundation from the toolbar's timber menu: type, slab and a passage in
+// one preview → apply; reopening keeps the type fixed and shows the passage.
+void GuiPhase1::foundationMatDialogMakesSlabAndPassage() {
+  using nlohmann::json;
+  Fixture f;QVERIFY(f.setUp(1500,1000));auto& m=f.window.modeler();
+  std::vector<doc::ObjectId> sills;
+  auto sill=[&](gp_Pnt a,gp_Pnt b) {
+    doc::Modeler::MemberSpec s;s.start=a;s.end=b;s.section.width=s.section.depth=120;s.up=gp::DZ();s.anchor.up=1;
+    s.role="sill";s.materialClass="timber";auto id=m.createMember(s);if(id) sills.push_back(*id);
+  };
+  sill({0,0,540},{3000,0,540});sill({3000,0,540},{3000,2000,540});sill({3000,2000,540},{0,2000,540});
+  sill({0,2000,540},{0,0,540});sill({0,1000,540},{3000,1000,540});
+  QCOMPARE(sills.size(),std::size_t(5));f.window.setSelection(sills);
+  auto* action=f.window.findChild<QAction*>(QStringLiteral("foundationMatAction"));QVERIFY(action);
+  QVERIFY(f.window.findChild<QMenu*>(QStringLiteral("architectureTimberMenu"))->actions().contains(action));
+  bool seen=false;
+  QTimer::singleShot(100,[&] {
+    auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());if(!dialog) return;
+    auto* kind=dialog->findChild<QComboBox*>(QStringLiteral("foundationType"));
+    auto* stem=dialog->findChild<QDoubleSpinBox*>(QStringLiteral("foundationStemHeight"));
+    auto* slab=dialog->findChild<QDoubleSpinBox*>(QStringLiteral("foundationSlabThickness"));
+    auto* foot=dialog->findChild<QDoubleSpinBox*>(QStringLiteral("foundationFootWidth"));
+    auto* passages=dialog->findChild<QLineEdit*>(QStringLiteral("foundationPassages"));
+    auto* button=dialog->findChild<QPushButton*>(QStringLiteral("foundationPreview"));
+    if(!kind || !stem || !slab || !foot || !passages || !button) { dialog->reject();return; }
+    seen=kind->currentData().toString()==QStringLiteral("mat") && kind->isEnabled() && stem->value()==400 &&
+         slab->isVisible() && !foot->isVisible() && passages->isVisible();
+    // Switching to strip shows the footing and back to mat hides it again.
+    kind->setCurrentIndex(0);seen=seen && foot->isVisible() && !slab->isVisible() && stem->value()==600;
+    kind->setCurrentIndex(1);seen=seen && !foot->isVisible() && stem->value()==400;
+    slab->setValue(180);passages->setText(QStringLiteral("1500,1000"));button->click();
+  });
+  const auto before=serializeDocument(m.document());action->trigger();QVERIFY(seen);
+  QVERIFY2(f.window.hasPendingProposal(),qPrintable(f.window.lastError()));
+  QCOMPARE(serializeDocument(m.document()),before);f.window.applyProposal();
+  std::string root;
+  for(const auto& o:m.document().objects()) if(o.attributes.count("foundation_plan")) root=o.id;
+  QVERIFY(!root.empty());
+  const auto stored=json::parse(m.document().find(root)->attributes.at("foundation_plan"));
+  QCOMPARE(stored["inputs"]["type"].get<std::string>(),std::string("mat"));
+  QCOMPARE(stored["inputs"]["slab_thickness"].get<double>(),180.);
+  QCOMPARE(stored["inputs"]["passages"].size(),std::size_t(1));
+  int slabs=0;for(const auto& o:m.document().objects()) slabs+=o.parent==root && o.attributes.count("kind") && o.attributes.at("kind")=="foundation_slab";
+  QCOMPARE(slabs,1);QCOMPARE(m.document().find(root)->name,std::string("べた基礎計画"));
+  // A passage on the outer stem is refused with nothing changed.
+  f.window.setSelection({root});seen=false;
+  QTimer::singleShot(100,[&] {
+    auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());if(!dialog) return;
+    auto* kind=dialog->findChild<QComboBox*>(QStringLiteral("foundationType"));
+    auto* passages=dialog->findChild<QLineEdit*>(QStringLiteral("foundationPassages"));
+    auto* slab=dialog->findChild<QDoubleSpinBox*>(QStringLiteral("foundationSlabThickness"));
+    auto* report=dialog->findChild<QTextBrowser*>(QStringLiteral("foundationReport"));
+    auto* button=dialog->findChild<QPushButton*>(QStringLiteral("foundationPreview"));
+    if(!kind || !passages || !slab || !report || !button) { dialog->reject();return; }
+    seen=!kind->isEnabled() && kind->currentData().toString()==QStringLiteral("mat") && slab->value()==180 &&
+         passages->text()==QStringLiteral("1500,1000") && report->toPlainText().contains(QStringLiteral("耐圧盤"));
+    const auto capture=qEnvironmentVariable("SBR_FOUNDATION_MAT_CAPTURE");
+    if(!capture.isEmpty()) dialog->grab().save(capture+QStringLiteral("-dialog.png"));
+    passages->setText(QStringLiteral("1500,0"));button->click();
+  });
+  const auto applied=serializeDocument(m.document());
+  f.window.findChild<QAction*>(QStringLiteral("foundationAction"))->trigger();QVERIFY(seen);
+  QVERIFY(!f.window.hasPendingProposal());QVERIFY(f.window.lastError().contains(QStringLiteral("外周")));
+  QCOMPARE(serializeDocument(m.document()),applied);
 }
 
 void GuiPhase1::timberFramePreviewApplyLevelsAndUndo() {
