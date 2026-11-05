@@ -5,7 +5,7 @@
 同位置の参照をまとめ、既存立体との体積の重なりは生成前に止める。プレビュー・適用・置換は既存の布基礎と同じ経路。
 複数の束石の数量は `quantities.foundation_pad.ids` と体積で返す。[詳細](68_foundation_pads.md)。
 
-`generate_foundation {inputs:{type:"mat",frame|sources,stem_width?,stem_height?,slab_thickness?,edge_width?,edge_depth?,packing_mm?,top_z?,passages?:[{at:[x,y],width?,height?}]}}` はべた基礎の計画。
+`generate_foundation {inputs:{type:"mat",frame|sources,stem_width?,stem_height?,slab_thickness?,edge_width?,edge_depth?,inner_width?,inner_depth?,packing_mm?,top_z?,passages?:[{at:[x,y],width?,height?}]}}` はべた基礎の計画。
 土台の下の立上り（`stem_height` は耐圧盤の上から）と、その外周の輪郭の内側の耐圧盤を作る。外周が閉じていない土台は拒否。
 人通口は内部の立上りだけ。種別は置換で変えられない。外周の立上りの下に根入れ部（`edge_depth` は耐圧盤の下から、0でなし）。数量は `foundation_stem`・`foundation_slab`・`foundation_edge_footing`。[詳細](72_mat_foundation.md)。
 
@@ -231,3 +231,6 @@ document sequenceとrevisionを持つ。候補IDはスナップショット内�
 `frame_geometry` と `joint_distances_mm` に実形状の接触・隙間を返す。
 `split_at_posts:false` は従来の開口除外区間を維持する。仕様確認・接合耐力とは別の幾何診断で、
 壁量には自動計上しない。[65_wall_bay_member_references.md](65_wall_bay_member_references.md) を参照。
+
+`generate_frame` の `interior_sills:[{from:[i,j],to:[i,j]}]` は内部の通りの土台（1スパン1本、外周は拒否）。`sills_under_braces:true` で1階の内部の筋かいの下にも土台。
+同じ通りの1階の大引はその区間を外す。べた基礎の `inner_depth` は内部の地中梁（初期0＝なし）。[詳細](73_interior_sills_and_ground_beams.md)。
