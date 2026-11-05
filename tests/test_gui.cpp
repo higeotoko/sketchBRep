@@ -9955,6 +9955,14 @@ void GuiPhase1::structureDiagnosticsOverlayIsReadOnlyAndClearsOnEdit() {
     panel->grab().save(capture+QStringLiteral("-panel.png"));
     f.window.exportImage(capture+QStringLiteral("-model.png"));
   }
+  // Hiding each marker source on screen keeps the walls (and the list).
+  auto* frameMarks=panel->findChild<QCheckBox*>(QStringLiteral("structureFrameMarks"));
+  auto* supportMarks=panel->findChild<QCheckBox*>(QStringLiteral("structureSupportMarks"));
+  QVERIFY(frameMarks && supportMarks);
+  const int markerRows=markers->rowCount();
+  frameMarks->setChecked(false);supportMarks->setChecked(false);
+  QCOMPARE(f.vp->diagnosticShapeCount(),std::size_t(2));QCOMPARE(markers->rowCount(),markerRows);
+  frameMarks->setChecked(true);supportMarks->setChecked(true);
   overlay->setChecked(false);QCOMPARE(f.vp->diagnosticShapeCount(),std::size_t(0));
   overlay->setChecked(true);QVERIFY(f.vp->diagnosticShapeCount()>=3);
   // An edit clears the drawing and asks for an update; updating draws again.

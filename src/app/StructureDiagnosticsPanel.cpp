@@ -7,6 +7,7 @@
 #include <TopExp_Explorer.hxx>
 #include <TopoDS_Compound.hxx>
 #include <QCheckBox>
+#include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
 #include <QProgressBar>
@@ -48,7 +49,7 @@ Quantity_Color tone(const std::string& status) {
 }  // namespace
 
 StructureDiagnosticsPanel::StructureDiagnosticsPanel(MainWindow* window)
-    : PanelDock(tr("構造の診断"), window), window_(window) {
+    : PanelDock(tr("構造の診断"), window), window_(window), viewport_(&window->viewport()) {
   setObjectName(QStringLiteral("structureDiagnosticsPanel"));
   setAllowedAreas(Qt::NoDockWidgetArea);
   auto* content = new QWidget(this);
@@ -66,6 +67,19 @@ StructureDiagnosticsPanel::StructureDiagnosticsPanel(MainWindow* window)
   overlay_->setObjectName(QStringLiteral("structureOverlay"));
   overlay_->setChecked(true);
   layout->addWidget(overlay_);
+  // Large models can have many frame-check rows: each source's outlines can be hidden
+  // on screen while the list keeps every row.
+  auto* sources = new QHBoxLayout;
+  frameMarks_ = new QCheckBox(tr("架構チェックの印"), content);
+  frameMarks_->setObjectName(QStringLiteral("structureFrameMarks"));
+  frameMarks_->setChecked(true);
+  supportMarks_ = new QCheckBox(tr("基礎までの支持先の印"), content);
+  supportMarks_->setObjectName(QStringLiteral("structureSupportMarks"));
+  supportMarks_->setChecked(true);
+  sources->addWidget(frameMarks_);
+  sources->addWidget(supportMarks_);
+  sources->addStretch(1);
+  layout->addLayout(sources);
   layout->addWidget(new QLabel(tr("壁量（階・方向ごと、存在壁量／必要壁量）"), content));
   walls_ = new QTableWidget(content);
   walls_->setObjectName(QStringLiteral("structureWallTable"));
@@ -97,16 +111,18 @@ StructureDiagnosticsPanel::StructureDiagnosticsPanel(MainWindow* window)
   layout->addWidget(update);
   connect(update, &QPushButton::clicked, this, &StructureDiagnosticsPanel::refresh);
   connect(overlay_, &QCheckBox::toggled, this, [this] { drawOverlay(); });
+  connect(frameMarks_, &QCheckBox::toggled, this, [this] { drawOverlay(); });
+  connect(supportMarks_, &QCheckBox::toggled, this, [this] { drawOverlay(); });
   connect(markers_, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
     std::vector<doc::ObjectId> targets;
     for (const auto& id : markers_->item(row, 0)->data(Qt::UserRole).toStringList())
       if (window_->modeler().document().find(id.toStdString())) targets.push_back(id.toStdString());
     if (targets.empty()) return;
     window_->setSelection(targets);
-    window_->viewport().fitObjects(targets);
+    if (viewport_) viewport_->fitObjects(targets);
   });
   connect(this, &QDockWidget::visibilityChanged, this, [this](bool visible) {
-    if (!visible) window_->viewport().setDiagnosticShapes({});
+    if (!visible) clearDrawing();
     else drawOverlay();
   });
   setWidget(content);
@@ -114,7 +130,11 @@ StructureDiagnosticsPanel::StructureDiagnosticsPanel(MainWindow* window)
   resize(760, 640);
 }
 
-StructureDiagnosticsPanel::~StructureDiagnosticsPanel() { window_->viewport().setDiagnosticShapes({}); }
+StructureDiagnosticsPanel::~StructureDiagnosticsPanel() { clearDrawing(); }
+
+void StructureDiagnosticsPanel::clearDrawing() {
+  if (viewport_) viewport_->setDiagnosticShapes({});
+}
 
 void StructureDiagnosticsPanel::refresh() {
   const auto r = construction::structuralDiagnostics(window_->modeler().document());
@@ -217,6 +237,8 @@ void StructureDiagnosticsPanel::drawOverlay() {
     }
     const auto& d = window_->modeler().document();
     for (const auto& m : r.at("markers")) {
+      const bool frameRow = m.value("source", std::string()) == "frame_check";
+      if (!(frameRow ? frameMarks_ : supportMarks_)->isChecked()) continue;
       for (const auto& id : m.value("targets", json::array())) {
         const auto* o = d.find(id.get<std::string>());
         if (!o) continue;
@@ -229,6 +251,6 @@ void StructureDiagnosticsPanel::drawOverlay() {
       }
     }
   }
-  window_->viewport().setDiagnosticShapes(shapes);
+  if (viewport_) viewport_->setDiagnosticShapes(shapes);
 }
 }  // namespace sbr::app
