@@ -193,3 +193,29 @@ TEST_F(FoundationMat, GeneratedTwoStoreyFrameRotatedGivesOneSlabUnderItsOutline)
   EXPECT_EQ(c["quantities"]["foundation_stem"]["solids"],1);
   EXPECT_GT(c["quantities"]["foundation_slab"]["volume_m3"].get<double>(),0);
 }
+
+TEST_F(FoundationMat, GroundBeamsUnderInteriorStemsAreClippedAndDoNotOverlapTheEdge) {
+  ring(); sill({0,1000,540},{3000,1000,540});
+  // Off by default.
+  auto r=generate();
+  EXPECT_FALSE(r["quantities"].contains("foundation_ground_beam"));
+  EXPECT_EQ(r["inputs"]["inner_depth"],0);
+  // 300×200 under the inner run, clipped to the slab (x −75…3075), minus the 300×150 edge footing at both ends.
+  r=generate({{"replace",r["foundation"]},{"inputs",{{"inner_depth",200}}}});
+  EXPECT_NEAR(r["quantities"]["foundation_ground_beam"]["volume_m3"].get<double>(),3.15*.3*.2-2*.225*.3*.15,1e-8);
+  const auto beam=bounds(r["quantities"]["foundation_ground_beam"]["id"]);
+  EXPECT_NEAR(beam.CornerMin().Z(),-350,1e-6); EXPECT_NEAR(beam.CornerMax().Z(),-150,1e-6);
+  EXPECT_NEAR(beam.CornerMin().X(),-75,1e-6); EXPECT_NEAR(beam.CornerMax().X(),3075,1e-6);
+  const auto c=check(r["foundation"]); EXPECT_EQ(c["status"],"current");
+  EXPECT_EQ(c["quantities"]["foundation_ground_beam"]["solids"],1);
+  // Without the edge footing nothing is taken out.
+  r=generate({{"replace",r["foundation"]},{"inputs",{{"edge_depth",0}}}});
+  EXPECT_NEAR(r["quantities"]["foundation_ground_beam"]["volume_m3"].get<double>(),3.15*.3*.2,1e-8);
+  refused({{"replace",r["foundation"]},{"inputs",{{"inner_width",100}}}});
+}
+
+TEST_F(FoundationMat, RingWithoutInteriorStemsHasNoGroundBeam) {
+  ring();
+  const auto r=generate({{"inputs",inputs({{"inner_depth",200}})}});
+  EXPECT_FALSE(r["quantities"].contains("foundation_ground_beam"));
+}

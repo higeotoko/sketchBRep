@@ -9815,6 +9815,9 @@ void GuiPhase1::foundationMatDialogMakesSlabAndPassage() {
     auto* edgeDepth=dialog->findChild<QDoubleSpinBox*>(QStringLiteral("foundationEdgeDepth"));
     seen=seen && edgeDepth && edgeDepth->isVisible() && edgeDepth->value()==150;
     if(edgeDepth) edgeDepth->setValue(200);
+    auto* innerDepth=dialog->findChild<QDoubleSpinBox*>(QStringLiteral("foundationInnerDepth"));
+    seen=seen && innerDepth && innerDepth->isVisible() && innerDepth->value()==0;
+    if(innerDepth) innerDepth->setValue(150);
     slab->setValue(180);passages->setText(QStringLiteral("1500,1000"));button->click();
   });
   const auto before=serializeDocument(m.document());action->trigger();QVERIFY(seen);
@@ -9829,6 +9832,8 @@ void GuiPhase1::foundationMatDialogMakesSlabAndPassage() {
   QCOMPARE(stored["inputs"]["edge_depth"].get<double>(),200.);
   int edges=0;for(const auto& o:m.document().objects()) edges+=o.parent==root && o.attributes.count("kind") && o.attributes.at("kind")=="foundation_edge_footing";
   QCOMPARE(edges,1);
+  int beams=0;for(const auto& o:m.document().objects()) beams+=o.parent==root && o.attributes.count("kind") && o.attributes.at("kind")=="foundation_ground_beam";
+  QCOMPARE(beams,1);QCOMPARE(stored["inputs"]["inner_depth"].get<double>(),150.);
   QCOMPARE(stored["inputs"]["passages"].size(),std::size_t(1));
   int slabs=0;for(const auto& o:m.document().objects()) slabs+=o.parent==root && o.attributes.count("kind") && o.attributes.at("kind")=="foundation_slab";
   QCOMPARE(slabs,1);QCOMPARE(m.document().find(root)->name,std::string("べた基礎計画"));

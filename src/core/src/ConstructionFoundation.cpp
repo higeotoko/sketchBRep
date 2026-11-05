@@ -64,7 +64,7 @@ struct Sources {
   bool pads=false, mat=false;
   double padWidth=0,padDepth=0,padHeight=0;
   std::string signature, key;
-  double top=0, stemWidth=0, stemHeight=0, footWidth=0, footHeight=0, packing=0, slabThickness=0, edgeWidth=0, edgeDepth=0;
+  double top=0, stemWidth=0, stemHeight=0, footWidth=0, footHeight=0, packing=0, slabThickness=0, edgeWidth=0, edgeDepth=0, innerWidth=0, innerDepth=0;
   Sources(const Document& d, const json& requested) {
     inputs = requested;
     type=inputs.value("type",std::string("strip"));
@@ -105,7 +105,7 @@ struct Sources {
       if(!inputs.contains("top_z")) top=sites.front().bottom;
       return;
     }
-    if (mat) allowed(inputs, {"type", "frame", "sources", "stem_width", "stem_height", "slab_thickness", "edge_width", "edge_depth",
+    if (mat) allowed(inputs, {"type", "frame", "sources", "stem_width", "stem_height", "slab_thickness", "edge_width", "edge_depth", "inner_width", "inner_depth",
                               "packing_mm", "top_z", "passages"});
     else allowed(inputs, {"type", "frame", "sources", "stem_width", "stem_height", "footing_width", "footing_thickness", "packing_mm", "top_z"});
     need(inputs.contains("frame") != inputs.contains("sources"), "frameまたはsources（土台ID）のどちらか一つを指定してください");
@@ -179,6 +179,10 @@ struct Sources {
       edgeWidth = dimension(inputs, "edge_width", 300); edgeDepth = dimension(inputs, "edge_depth", 150, true);
       need(edgeWidth >= stemWidth, "根入れ部の幅は立上り幅以上にしてください");
       inputs["edge_width"]=edgeWidth; inputs["edge_depth"]=edgeDepth;
+      // 地中梁 under the interior stems (off unless a depth is given).
+      innerWidth = dimension(inputs, "inner_width", 300); innerDepth = dimension(inputs, "inner_depth", 0, true);
+      need(innerWidth >= stemWidth, "地中梁の幅は立上り幅以上にしてください");
+      inputs["inner_width"]=innerWidth; inputs["inner_depth"]=innerDepth;
     } else {
       footWidth = dimension(inputs, "footing_width", 450); footHeight = dimension(inputs, "footing_thickness", 150);
       need(footWidth >= stemWidth, "底盤幅は立上り幅以上にしてください");
@@ -318,6 +322,31 @@ std::optional<Object> edges(const Document& d, const Sources& plan, const Object
   const double base = stemBase(plan)-plan.slabThickness-plan.edgeDepth;
   return part(d, root, "foundation_edge_footing", "べた基礎 外周の根入れ部（計画）",
               unionOf(outer, plan.edgeWidth, base, plan.edgeDepth));
+}
+// 地中梁 (ground beams): a band under each interior stem below the slab bottom. It is
+// clipped to the slab outline (nothing sticks out of the house) and the outer edge
+// footing is taken out of it, so no concrete is counted twice.
+std::optional<Object> groundBeams(const Document& d, const Sources& plan, const ObjectId& root, const std::vector<gp_Pnt>& loop) {
+  if (plan.innerDepth <= 0) return std::nullopt;
+  std::vector<Sill> inner, outer;
+  for (const auto& line : plan.lines) (outerRun(plan, line, loop) ? outer : inner).push_back(line);
+  if (inner.empty()) return std::nullopt;
+  const double slabBottom = stemBase(plan)-plan.slabThickness, base = slabBottom-plan.innerDepth;
+  BooleanFeature clipped; clipped.kind=BooleanKind::Intersect;
+  clipped.operands.push_back(operand(unionOf(inner, plan.innerWidth, base, plan.innerDepth)));
+  {
+    std::vector<gp_Pnt> points; for (auto p : loop) { p.SetZ(base); points.push_back(p); }
+    Recipe prism; prism.base=PolygonProfile{points}; prism.modifiers.push_back(ExtrudeOp{plan.innerDepth});
+    clipped.operands.push_back(operand(std::move(prism)));
+  }
+  Recipe beams{clipped,{}};
+  if (plan.edgeDepth > 0) {
+    BooleanFeature cut; cut.kind=BooleanKind::Subtract;
+    cut.operands.push_back(operand(std::move(beams)));
+    cut.operands.push_back(operand(unionOf(outer, plan.edgeWidth, slabBottom-plan.edgeDepth, plan.edgeDepth)));
+    beams=Recipe{cut,{}};
+  }
+  return part(d, root, "foundation_ground_beam", "べた基礎 内部の地中梁（計画）", std::move(beams));
 }
 // The stems with each passage cut through one interior run. A passage on an
 // outer run, on a junction or off every run is refused (nothing is moved).
@@ -498,6 +527,7 @@ Result<std::string> Modeler::generateFoundation(const std::string& text) {
       const auto loop=outline(document_,plan);
       parts.push_back(matStems(document_,plan,root.id,loop));parts.push_back(slab(document_,plan,root.id,loop));
       if(auto edge=edges(document_,plan,root.id,loop)) parts.push_back(std::move(*edge));
+      if(auto beams=groundBeams(document_,plan,root.id,loop)) parts.push_back(std::move(*beams));
     }
     else {parts.push_back(network(document_,plan,root.id,false));parts.push_back(network(document_,plan,root.id,true));}
     json manifest={{"version",1},{"inputs",plan.inputs},{"source_key",plan.key},{"source_signature",plan.signature},

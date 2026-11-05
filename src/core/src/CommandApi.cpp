@@ -2064,6 +2064,7 @@ const std::vector<CommandDef>& commands() {
        "Coincident sources share a pad; intersecting pads or existing solids cause an atomic error. "
        "For a mat foundation (beta kiso) use inputs:{type:mat,frame OR sources,stem_width:150,stem_height:400 (rise above the slab top),"
        "slab_thickness:150,edge_width:300,edge_depth:150 (edge footing under the outer stems below the slab bottom; 0 = none),"
+       "inner_width:300,inner_depth:0 (ground beams under the interior stems below the slab, clipped to the outline; 0 = none),"
        "packing_mm:20,top_z?,passages?:[{at:[x,y],width:600,height:330}]}: stems under the sills on a slab that fills "
        "the outer outline of the stems (the sills must form one closed loop). Passages cut one interior stem each; outer stems, "
        "junctions and overlaps are refused. Type cannot change on replace. "

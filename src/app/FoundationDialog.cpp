@@ -94,6 +94,8 @@ void MainWindow::showFoundationDialogFor(bool pads,bool mat) {
   auto* slabThickness=number("foundationSlabThickness",150,1,10000);
   auto* edgeWidth=number("foundationEdgeWidth",300,1,10000);
   auto* edgeDepth=number("foundationEdgeDepth",150,0,10000);
+  auto* innerWidth=number("foundationInnerWidth",300,1,10000);
+  auto* innerDepth=number("foundationInnerDepth",0,0,10000);
   auto* passages=new QLineEdit(&dialog);passages->setObjectName(QStringLiteral("foundationPassages"));
   passages->setPlaceholderText(tr("例：1500,1000; 4500,2730（内部立上りの上の点 X,Y mm）"));
   auto* passageWidth=number("foundationPassageWidth",600,1,8000);
@@ -111,22 +113,27 @@ void MainWindow::showFoundationDialogFor(bool pads,bool mat) {
   const auto edgeTip=tr("外周の立上りの下に、耐圧盤の下面から下へ作る帯（根入れ部）。深さは耐圧盤の下面から。0 で作りません。\n"
                         "地盤面からの根入れ深さ・凍結深度は確認していません");
   for(QWidget* w:std::initializer_list<QWidget*>{edgeLabel,edgeWidth,edgeDepth}) w->setToolTip(edgeTip);
+  auto* innerLabel=new QLabel(tr("内部の地中梁 幅・深さ mm"),&dialog);
+  const auto innerTip=tr("内部の立上りの下に、耐圧盤の下面から下へ作る帯（地中梁）。深さ 0 で作りません（初期値）。\n"
+                         "耐圧盤の外にはみ出す分と外周の根入れ部との重なりは除きます。断面・配筋は確認していません");
+  for(QWidget* w:std::initializer_list<QWidget*>{innerLabel,innerWidth,innerDepth}) w->setToolTip(innerTip);
+  auto* innerSize=new QHBoxLayout;innerSize->addWidget(innerWidth);innerSize->addWidget(innerDepth);
   auto* edgeSize=new QHBoxLayout;edgeSize->addWidget(edgeWidth);edgeSize->addWidget(edgeDepth);
   auto* passagesLabel=new QLabel(tr("人通口の位置"),&dialog);
   auto* passageSizeLabel=new QLabel(tr("人通口の幅・高さ mm"),&dialog);
   auto* passageSize=new QHBoxLayout;passageSize->addWidget(passageWidth);passageSize->addWidget(passageHeight);
-  if(!pads) {form->addRow(slabLabel,slabThickness);form->addRow(edgeLabel,edgeSize);
+  if(!pads) {form->addRow(slabLabel,slabThickness);form->addRow(edgeLabel,edgeSize);form->addRow(innerLabel,innerSize);
     form->addRow(passagesLabel,passages);form->addRow(passageSizeLabel,passageSize);}
-  else {for(QWidget* w:std::initializer_list<QWidget*>{slabLabel,slabThickness,edgeLabel,edgeWidth,edgeDepth,passagesLabel,passages,
-                                                      passageSizeLabel,passageWidth,passageHeight,stemHeightLabel}) w->hide();}
+  else {for(QWidget* w:std::initializer_list<QWidget*>{slabLabel,slabThickness,edgeLabel,edgeWidth,edgeDepth,innerLabel,innerWidth,innerDepth,
+                                                      passagesLabel,passages,passageSizeLabel,passageWidth,passageHeight,stemHeightLabel}) w->hide();}
   // Show the fields of the chosen type; the mat stem height is its rise above the slab top.
   auto showType=[=]{
     if(pads) return;
     const bool isMat=kind->currentData().toString()==QStringLiteral("mat");
     stemHeightLabel->setText(isMat?tr("立上り高さ（耐圧盤の上から）mm"):tr("立上り高さ mm"));
     for(QWidget* w:std::initializer_list<QWidget*>{footWidthLabel,footWidth,footHeightLabel,footHeight}) w->setVisible(!isMat);
-    for(QWidget* w:std::initializer_list<QWidget*>{slabLabel,slabThickness,edgeLabel,edgeWidth,edgeDepth,passagesLabel,passages,
-                                                    passageSizeLabel,passageWidth,passageHeight}) w->setVisible(isMat);
+    for(QWidget* w:std::initializer_list<QWidget*>{slabLabel,slabThickness,edgeLabel,edgeWidth,edgeDepth,innerLabel,innerWidth,innerDepth,
+                                                    passagesLabel,passages,passageSizeLabel,passageWidth,passageHeight}) w->setVisible(isMat);
   };
   auto typeDefaults=[=]{
     // Planning placeholders per type (not design values); a loaded plan overwrites them.
@@ -157,7 +164,7 @@ void MainWindow::showFoundationDialogFor(bool pads,bool mat) {
     text<<(p["top_z"].is_number()?tr("基礎天端 Z=%1 mm").arg(p["top_z"].get<double>()):tr("基礎天端：各部材の下面に合わせた高さ"));
     if(p["generated_parts_volume_m3"].is_number()) text<<tr("コンクリート %1 m³").arg(p["generated_parts_volume_m3"].get<double>(),0,'f',3);
     for(const auto& [role,q]:p["quantities"].items()) text<<tr("%1：%2 m³／連続体 %3 個").arg(
-        role=="foundation_stem"?tr("立上り"):role=="foundation_pad"?tr("束石・独立基礎"):role=="foundation_slab"?tr("耐圧盤"):role=="foundation_edge_footing"?tr("外周の根入れ部"):tr("底盤")).arg(q["volume_m3"].get<double>(),0,'f',3).arg(q["solids"].get<int>());
+        role=="foundation_stem"?tr("立上り"):role=="foundation_pad"?tr("束石・独立基礎"):role=="foundation_slab"?tr("耐圧盤"):role=="foundation_edge_footing"?tr("外周の根入れ部"):role=="foundation_ground_beam"?tr("内部の地中梁"):tr("底盤")).arg(q["volume_m3"].get<double>(),0,'f',3).arg(q["solids"].get<int>());
     for(const auto& s:p["sources"]) {
       text<<tr("%1：部材下面から基礎天端 %2 mm").arg(QString::fromStdString(s["name"])).arg(s["packing_gap_mm"].get<double>(),0,'f',1);
       if(s["packing_gap_matches"]==false) text<<(pads?tr("  要確認：部材下面と基礎天端が一致しません。"):tr("  要確認：設定したパッキン高さと一致しません。"));
@@ -190,6 +197,7 @@ void MainWindow::showFoundationDialogFor(bool pads,bool mat) {
       if(isMat) {
         slabThickness->setValue(in["slab_thickness"]);QStringList points;
         edgeWidth->setValue(in.value("edge_width",300.0));edgeDepth->setValue(in.value("edge_depth",150.0));
+        innerWidth->setValue(in.value("inner_width",300.0));innerDepth->setValue(in.value("inner_depth",0.0));
         for(const auto& p:in.value("passages",json::array())) {
           points<<QStringLiteral("%1,%2").arg(p["at"][0].get<double>()).arg(p["at"][1].get<double>());
           passageWidth->setValue(p["width"]);passageHeight->setValue(p["height"]);
@@ -224,6 +232,7 @@ void MainWindow::showFoundationDialogFor(bool pads,bool mat) {
     }
     inputs={{"type","mat"},{"stem_width",stemWidth->value()},{"stem_height",stemHeight->value()},
             {"slab_thickness",slabThickness->value()},{"edge_width",edgeWidth->value()},{"edge_depth",edgeDepth->value()},
+            {"inner_width",innerWidth->value()},{"inner_depth",innerDepth->value()},
             {"packing_mm",packing->value()},{"passages",list}};
   }
   const auto source=frames->currentData().toString().toStdString();

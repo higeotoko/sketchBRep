@@ -32,7 +32,7 @@ std::string attribute(const Object& o,const Document& d,const char* key) {
   return {};
 }
 bool concrete(const std::string& role) {
-  return role=="foundation_stem" || role=="foundation_footing" || role=="foundation_pad" || role=="foundation_slab" || role=="foundation_edge_footing";
+  return role=="foundation_stem" || role=="foundation_footing" || role=="foundation_pad" || role=="foundation_slab" || role=="foundation_edge_footing" || role=="foundation_ground_beam";
 }
 bool subjectRole(const std::string& role) {
   return role=="sill" || role=="column" || role=="through_column" || role=="floor_post";
