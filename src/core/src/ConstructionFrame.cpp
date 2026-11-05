@@ -1,6 +1,7 @@
 #include "sbr/ConstructionFrame.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <map>
@@ -225,6 +226,8 @@ struct Plan {
   bool regenerating = false;
   std::string roof;
   Rect full{0, 0, 0, 0}, upper{0, 0, 0, 0};
+  // Interior sill bays (i,j)-(k,l), one grid bay each, normalised with (i,j) < (k,l).
+  std::set<std::array<int, 4>> innerSills;
 
   Plan(const Modeler& m, const json& args, std::string frameName, bool replacing = false)
       : modeler(m),
@@ -612,8 +615,58 @@ struct Plan {
     for (int j = a.y0; j < a.y1; ++j)
       for (int i : {a.x0, a.x1}) span(i, j, i, j + 1);
   }
+  // Interior sills: explicit grid runs, and (when asked) the runs under first-storey braces
+  // on interior grid lines, so a bearing wall inside the house sits on a sill (and a
+  // foundation can follow it). Each bay is one member, like the perimeter ring.
+  void interiorSills() {
+    auto run = [&](const json& from, const json& to, bool explicitRun) {
+      need(from.is_array() && to.is_array() && from.size() == 2 && to.size() == 2 && from[0].is_number_integer() &&
+               from[1].is_number_integer() && to[0].is_number_integer() && to[1].is_number_integer(),
+           "interior_sills need grid index pairs from:[i,j], to:[i,j]");
+      int i = from[0], j = from[1], u = to[0], v = to[1];
+      need(full.contains(i, j) && full.contains(u, v) && (i == u || j == v) && (i != u || j != v),
+           "An interior sill must lie on one grid line inside the frame");
+      const bool alongX = j == v;
+      const bool onBoundary = alongX ? (j == full.y0 || j == full.y1) : (i == full.x0 || i == full.x1);
+      if (onBoundary) {
+        need(!explicitRun, "The perimeter already has sills; give interior grid runs only");
+        return;
+      }
+      if (alongX) { if (i > u) std::swap(i, u); for (int k = i; k < u; ++k) innerSills.insert({k, j, k + 1, j}); }
+      else { if (j > v) std::swap(j, v); for (int k = j; k < v; ++k) innerSills.insert({i, k, i, k + 1}); }
+    };
+    for (const auto& s : inputs.value("interior_sills", json::array())) {
+      need(s.is_object() && s.contains("from") && s.contains("to"), "interior_sills entries need from and to");
+      run(s.at("from"), s.at("to"), true);
+    }
+    const bool underBraces = inputs.value("sills_under_braces", false);
+    std::size_t missing = 0;
+    for (const auto& brace : inputs.value("braces", json::array())) {
+      if (integer(brace, "storey", 1, 1, storeys) != 1) continue;
+      if (underBraces) { run(brace.at("from"), brace.at("to"), false); continue; }
+      const json a = brace.at("from"), b = brace.at("to");
+      const int i = a[0], j = a[1], u = b[0], v = b[1];
+      const bool boundary = j == v ? (j == full.y0 || j == full.y1) : (i == full.x0 || i == full.x1);
+      if (boundary) continue;
+      bool covered = true;
+      if (j == v) { for (int k = std::min(i, u); k < std::max(i, u); ++k) covered = covered && innerSills.count({k, j, k + 1, j}); }
+      else { for (int k = std::min(j, v); k < std::max(j, v); ++k) covered = covered && innerSills.count({i, k, i, k + 1}); }
+      missing += !covered;
+    }
+    if (missing)
+      warnings.push_back("1階の内部の筋かい壁 " + std::to_string(missing) +
+                         " か所の下に土台がありません。sills_under_braces か interior_sills で土台を入れると基礎計画の対象になります。");
+    for (const auto& bay : innerSills) {
+      const std::string id = "sill/inner/" + std::to_string(bay[0]) + "," + std::to_string(bay[1]) + "-" +
+                             std::to_string(bay[2]) + "," + std::to_string(bay[3]);
+      member("sill", id, at(bay[0], bay[1], height("sill_top")), at(bay[2], bay[3], height("sill_top")), "sill_top",
+             "sill_top", "基礎・土台");
+      hardware("anchor_bolt", id + "/hardware", at(bay[0], bay[1], height("sill_top")), "sill_top", "基礎・土台");
+    }
+  }
   void floors() {
     ring(full, "sill", "sill_top", height("sill_top"), "基礎・土台", "sill", true);
+    interiorSills();
     const double ply =
         data.at("sections")
             .at("entries")
@@ -636,11 +689,36 @@ struct Plan {
       for (int i = (floor == 1 ? area.y0 + 1 : area.x0 + 1); i < (floor == 1 ? area.y1 : area.x1);
            i += (floor == 1 ? 2 : 1)) {
         const auto role = floor == 1 ? "floor_girder" : "floor_beam";
-        member(role, "floor/" + std::to_string(floor) + "/beam/" + std::to_string(i),
-               floor == 1 ? at(area.x0, i, beamZ) : at(i, area.y0, beamZ),
-               floor == 1 ? at(area.x1, i, beamZ) : at(i, area.y1, beamZ), ref, ref, stage);
-        if (floor == 1)
-          for (int j = area.x0; j <= area.x1; j += 2) {
+        // A first-floor girder on the line of an interior sill gives way to it: the girder
+        // is split into the runs between sill bays, and the sill carries the floor there.
+        if (floor != 1) {
+          member(role, "floor/" + std::to_string(floor) + "/beam/" + std::to_string(i), at(i, area.y0, beamZ),
+                 at(i, area.y1, beamZ), ref, ref, stage);
+          continue;
+        }
+        auto sillBay = [&](int k) { return innerSills.count({k, i, k + 1, i}) > 0; };
+        std::vector<std::pair<int, int>> runs;  // girder runs between sill bays, in grid indices
+        for (int k = area.x0; k < area.x1;) {
+          if (sillBay(k)) { ++k; continue; }
+          const int start = k;
+          while (k < area.x1 && !sillBay(k)) ++k;
+          runs.push_back({start, k});
+        }
+        const bool split = !(runs.size() == 1 && runs[0].first == area.x0 && runs[0].second == area.x1);
+        for (const auto& [a, b] : runs) {
+          // Unchanged key when nothing is split, so existing frames regenerate the same parts.
+          const std::string key = "floor/1/beam/" + std::to_string(i) +
+                                  (split ? "/" + std::to_string(a) + "-" + std::to_string(b) : std::string());
+          member(role, key, at(a, i, beamZ), at(b, i, beamZ), ref, ref, stage);
+        }
+        auto postAt = [&](int j) {
+          if (!split) return true;
+          if (sillBay(j - 1) || sillBay(j)) return false;  // the girder end rests on the sill
+          for (const auto& [a, b] : runs) if (j >= a && j <= b) return true;
+          return false;
+        };
+        for (int j = area.x0; j <= area.x1; j += 2) {
+            if (!postAt(j)) continue;
             const auto& entry = data.at("roles").at("entries").at("floor_post");
             const std::string id = inputs.value("sections", json::object())
                                        .value("floor_post", entry.at("default_section").get<std::string>());

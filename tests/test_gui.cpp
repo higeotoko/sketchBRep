@@ -321,6 +321,7 @@ class GuiPhase1 : public QObject {
   void foundationPreviewApplyRejectAndStaleRevision();
   void foundationDialogCreatesAndRegeneratesPlan();
   void foundationMatDialogMakesSlabAndPassage();
+  void timberInteriorSillsFromDialog();
   void foundationSupportsSelectActualPartsAndInvalidate();
   void foundationPadsFromMissingFloorPostsAndRegeneration();
   void foundationPadsWithDifferentTopsReloadWithoutChangingTheModel();
@@ -9853,6 +9854,53 @@ void GuiPhase1::foundationMatDialogMakesSlabAndPassage() {
   f.window.findChild<QAction*>(QStringLiteral("foundationAction"))->trigger();QVERIFY(seen);
   QVERIFY(!f.window.hasPendingProposal());QVERIFY(f.window.lastError().contains(QStringLiteral("外周")));
   QCOMPARE(serializeDocument(m.document()),applied);
+}
+
+// Interior sills from the timber dialog: a grid run and "under interior braces",
+// regenerated in place; the stored inputs and the sill count follow.
+void GuiPhase1::timberInteriorSillsFromDialog() {
+  using nlohmann::json;
+  Fixture f;QVERIFY(f.setUp(1820,1820));auto& m=f.window.modeler();
+  const auto made=m.generateFrame(R"({"inputs":{"x_bays":4,"y_bays":4,"storeys":1,"braces":[{"storey":1,"from":[2,0],"to":[2,1]}]}})");
+  QVERIFY2(made,made.error().c_str());
+  const auto frame=json::parse(*made).at("frame").get<std::string>();
+  auto sills=[&]{int n=0;for(const auto& o:m.document().objects()) n+=o.attributes.count("kind") && o.attributes.at("kind")=="sill";return n;};
+  const int before=sills();
+  f.window.setSelection({frame});
+  auto* action=f.window.findChild<QAction*>(QStringLiteral("timberFrameAction"));QVERIFY(action);
+  bool seen=false;
+  QTimer::singleShot(100,[&] {
+    auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());if(!dialog) return;
+    auto* table=dialog->findChild<QTableWidget*>(QStringLiteral("timberInteriorSills"));
+    auto* add=dialog->findChild<QPushButton*>(QStringLiteral("timberAddInteriorSill"));
+    auto* braces=dialog->findChild<QCheckBox*>(QStringLiteral("timberSillsUnderBraces"));
+    auto* preview=dialog->findChild<QPushButton*>(QStringLiteral("timberPreview"));
+    if(!table || !add || !braces || !preview) { dialog->reject();return; }
+    seen=table->rowCount()==0 && !braces->isChecked();
+    add->click();seen=seen && table->rowCount()==1;
+    const int values[]={0,2,4,2};
+    for(int c=0;c<4;++c) qobject_cast<QSpinBox*>(table->cellWidget(0,c))->setValue(values[c]);
+    braces->setChecked(true);preview->click();
+  });
+  action->trigger();QVERIFY(seen);
+  QVERIFY2(f.window.hasPendingProposal(),qPrintable(f.window.lastError()));
+  f.window.applyProposal();QVERIFY2(!f.window.hasPendingProposal(),qPrintable(f.window.lastError()));
+  const auto& group=std::get<doc::GroupNode>(m.document().find(frame)->recipe.base);
+  const auto inputs=json::parse(group.constructionFrame).at("inputs");
+  QCOMPARE(inputs.at("interior_sills").size(),std::size_t(1));
+  QVERIFY(inputs.at("sills_under_braces").get<bool>());
+  QCOMPARE(sills(),before+4+1);  // the run (4 bays) and the bay under the interior brace
+  // Reopening shows the stored run and the option.
+  seen=false;
+  QTimer::singleShot(100,[&] {
+    auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());if(!dialog) return;
+    auto* table=dialog->findChild<QTableWidget*>(QStringLiteral("timberInteriorSills"));
+    auto* braces=dialog->findChild<QCheckBox*>(QStringLiteral("timberSillsUnderBraces"));
+    seen=table && braces && table->rowCount()==1 && braces->isChecked() &&
+         qobject_cast<QSpinBox*>(table->cellWidget(0,2))->value()==4;
+    dialog->reject();
+  });
+  f.window.setSelection({frame});action->trigger();QVERIFY(seen);
 }
 
 void GuiPhase1::timberFramePreviewApplyLevelsAndUndo() {

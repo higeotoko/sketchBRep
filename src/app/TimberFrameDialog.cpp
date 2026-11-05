@@ -251,6 +251,47 @@ void MainWindow::showTimberFrameDialog() {
                  settings);
   apertureNotice->setWordWrap(true);
   form->addRow(apertureNotice);
+  // Interior sills under bearing walls (grid runs), so a foundation plan can follow them.
+  auto* innerSills = new QTableWidget(settings);
+  innerSills->setObjectName(QStringLiteral("timberInteriorSills"));
+  innerSills->setColumnCount(4);
+  innerSills->setHorizontalHeaderLabels({tr("始点X"), tr("始点Y"), tr("終点X"), tr("終点Y")});
+  innerSills->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+  innerSills->setMaximumHeight(140);
+  auto addInnerSill = [&](const json& entry) {
+    const int row = innerSills->rowCount();
+    innerSills->insertRow(row);
+    const int values[] = {entry.at("from")[0], entry.at("from")[1], entry.at("to")[0], entry.at("to")[1]};
+    for (int c = 0; c < 4; ++c) {
+      auto* spin = new QSpinBox(innerSills);
+      spin->setRange(0, 40);
+      spin->setValue(values[c]);
+      innerSills->setCellWidget(row, c, spin);
+    }
+  };
+  for (const auto& entry : initial.value("interior_sills", json::array())) addInnerSill(entry);
+  form->addRow(tr("内部の土台（通り芯番号の区間）"), innerSills);
+  auto* innerButtons = new QWidget(settings);
+  auto* innerRow = new QHBoxLayout(innerButtons);
+  innerRow->setContentsMargins(0, 0, 0, 0);
+  auto* addInner = new QPushButton(tr("内部の土台を追加"), settings);
+  addInner->setObjectName(QStringLiteral("timberAddInteriorSill"));
+  auto* removeInner = new QPushButton(tr("選択した内部の土台を削除"), settings);
+  innerRow->addWidget(addInner);
+  innerRow->addWidget(removeInner);
+  form->addRow(innerButtons);
+  connect(addInner, &QPushButton::clicked, &dialog, [&] { addInnerSill({{"from", {0, 1}}, {"to", {1, 1}}}); });
+  connect(removeInner, &QPushButton::clicked, &dialog, [&] { innerSills->removeRow(innerSills->currentRow()); });
+  auto* underBraces = new QCheckBox(tr("1階の内部の筋かい壁の下にも土台を入れる"), settings);
+  underBraces->setObjectName(QStringLiteral("timberSillsUnderBraces"));
+  underBraces->setChecked(initial.value("sills_under_braces", false));
+  form->addRow(underBraces);
+  auto* innerNotice =
+      new QLabel(tr("内部の耐力壁の下に土台を置くと、基礎計画（布基礎・べた基礎）がその下にも立上りを作ります。\n"
+                    "同じ通りの大引はその区間を外し、土台が床を受けます。外周には既に土台があるので指定できません。"),
+                 settings);
+  innerNotice->setWordWrap(true);
+  form->addRow(innerNotice);
   auto update = [&] {
     const bool gridMode = useGrid->isChecked(), regen = replacing->isChecked();
     x->setEnabled(!gridMode);
@@ -311,6 +352,13 @@ void MainWindow::showTimberFrameDialog() {
     for (int c = 0; c < 5; ++c) v[c] = qobject_cast<QSpinBox*>(apertures->cellWidget(r, c))->value();
     inputs["floor_openings"].push_back({{"storey", v[0]}, {"x", {v[1], v[2]}}, {"y", {v[3], v[4]}}});
   }
+  inputs["interior_sills"] = json::array();
+  for (int r = 0; r < innerSills->rowCount(); ++r) {
+    int v[4];
+    for (int c = 0; c < 4; ++c) v[c] = qobject_cast<QSpinBox*>(innerSills->cellWidget(r, c))->value();
+    inputs["interior_sills"].push_back({{"from", {v[0], v[1]}}, {"to", {v[2], v[3]}}});
+  }
+  inputs["sills_under_braces"] = underBraces->isChecked();
   const std::string replace = replacing->isChecked() ? frame : std::string();
   if (previewTimberFrame(inputs.dump(), replace)) return;
   if (lastError_.contains(QStringLiteral("コンテナー"))) {
