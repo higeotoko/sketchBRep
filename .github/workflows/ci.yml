@@ -8,7 +8,10 @@ name: CI
 # - ccache keeps Linux rebuilds short
 on:
   push:
-    branches: [main]
+    # The work branch too: PR #1's test merge stopped updating on 2026-11-04, so its
+    # pull_request runs no longer start (docs/71). A push run attaches to the commit
+    # and shows on the PR page.
+    branches: [main, claude/sketchbrep-modeler-spec-4wnp0b]
     paths-ignore: ["docs/**", "**/*.md"]
   pull_request:
     types: [opened, synchronize, reopened, labeled]
