@@ -174,6 +174,22 @@ void MainWindow::showTimberFrameDialog() {
   auto* first = floor("timberFirstFloor", "first_floor_system");
   auto* second = floor("timberSecondFloor", "second_floor_system");
   form->addRow(tr("1階の床"), first);
+  // Subfloor board on the first-floor joists (joist floor only): none, or a thickness.
+  auto* board = new QComboBox;
+  board->setObjectName(QStringLiteral("timberFirstFloorBoard"));
+  board->addItem(tr("なし"), 0.0);
+  for (double mm : {12.0, 15.0, 24.0, 28.0}) board->addItem(tr("合板 %1 mm").arg(mm), mm);
+  {
+    const double current = initial.value("first_floor_board", 0.0);
+    int index = board->findData(current);
+    if (index < 0) { board->addItem(tr("合板 %1 mm").arg(current), current); index = board->count() - 1; }
+    board->setCurrentIndex(index);
+  }
+  board->setToolTip(tr("根太床の時、根太の上に張る床下地の合板。1FL は合板の厚みだけ上がります。根太レスでは使いません"));
+  auto syncBoard = [=] { board->setEnabled(first->currentData().toString() == QStringLiteral("joist")); };
+  QObject::connect(first, qOverload<int>(&QComboBox::currentIndexChanged), board, syncBoard);
+  syncBoard();
+  form->addRow(tr("1階の根太の上の床下地"), board);
   form->addRow(tr("2階の床"), second);
   auto* floorPost=new QComboBox;
   floorPost->setObjectName(QStringLiteral("timberFloorPostSection"));
@@ -324,7 +340,8 @@ void MainWindow::showTimberFrameDialog() {
                  {"eave_projection", over->value()},
                  {"gable_projection", gable->value()},
                  {"first_floor_system", first->currentData().toString().toStdString()},
-                 {"second_floor_system", second->currentData().toString().toStdString()}};
+                 {"second_floor_system", second->currentData().toString().toStdString()},
+                 {"first_floor_board", board->isEnabled() ? board->currentData().toDouble() : 0.0}};
   if (useGrid->isChecked())
     inputs["grid"] = grid;
   else {

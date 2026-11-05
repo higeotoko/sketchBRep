@@ -241,6 +241,9 @@ struct Plan {
   std::set<std::string> keys;
   int nx = 0, ny = 0, storeys = 2;
   double module = 910, finish = 0, stock = 4000, pitch = .4, over = 600, gableOver = 450;
+  // First floor, joist system: subfloor board on the joists (mm, 0 = none). Joistless floors
+  // already have their 24 mm board.
+  double board1 = 0;
   bool axisX = true;
   bool regenerating = false;
   std::string roof;
@@ -495,8 +498,11 @@ struct Plan {
             .at("entries")
             .at(data.at("roles").at("entries").at("floor_sheathing").at("default_section").get<std::string>())
             .at("thickness");
+    board1 = num(inputs, "first_floor_board", 0);
+    need(board1 >= 0 && board1 <= 50, "first_floor_board must be 0 to 50 mm (0 = no board on the joists)");
+    if (floor1 != "joist") board1 = 0;
     addLevel("first_fl", "1FL",
-             height("sill_top") + (floor1 == "joist" ? section("joist").depth : ply) + finish);
+             height("sill_top") + (floor1 == "joist" ? section("joist").depth + board1 : ply) + finish);
     if (storeys == 2)
       addLevel("second_fl", "2FL",
                height("first_fl") + num(inputs, "storey_height", preset("storey_height")));
@@ -713,7 +719,8 @@ struct Plan {
                            .at("value")
                            .get<std::string>());
       need(system == "joist" || system == "joistless", "Floor system must be joist or joistless");
-      const double beamZ = height(ref) - finish - (system == "joistless" ? ply : section("joist").depth);
+      const double board = floor == 1 ? board1 : 0;  // on the joists of a joist floor
+      const double beamZ = height(ref) - finish - (system == "joistless" ? ply : section("joist").depth + board);
       if (floor == 2) ring(area, "rim_beam", ref, beamZ, stage, "floor2/rim", false);
       for (int i = (floor == 1 ? area.y0 + 1 : area.x0 + 1); i < (floor == 1 ? area.y1 : area.x1);
            i += (floor == 1 ? 2 : 1)) {
@@ -795,6 +802,14 @@ struct Plan {
             const double mid = (x(i) + x(i + 1)) / 2;
             member("floor_sheathing", key + "/ply", gp_Pnt(mid, y(j), height(ref) - finish),
                    gp_Pnt(mid, y(j + 1), height(ref) - finish), ref, ref, stage, 1, s);
+          } else if (board > 0) {
+            // The subfloor board on the joists, one sheet per grid cell like the joistless floor.
+            geom::Section s;
+            s.width = x(i + 1) - x(i);
+            s.depth = board;
+            const double mid = (x(i) + x(i + 1)) / 2;
+            member("floor_sheathing", key + "/board", gp_Pnt(mid, y(j), height(ref) - finish),
+                   gp_Pnt(mid, y(j + 1), height(ref) - finish), ref, ref, stage, 1, s);
           }
         }
       auto cellMode = [&](int i, int j) {
@@ -817,12 +832,13 @@ struct Plan {
           while (last < area.y1 && cellMode(i, last) == "joist") ++last;
           const std::string key =
               "floor/" + std::to_string(floor) + "/joists/" + std::to_string(i) + "/" + std::to_string(first);
+          const double joistTop = height(ref) - finish - board;  // under the board, if any
           for (std::size_t k = 0; k + 1 < ps.size(); ++k)
-            member("joist", key + "/" + std::to_string(k), gp_Pnt(ps[k], y(first), height(ref) - finish),
-                   gp_Pnt(ps[k], y(last), height(ref) - finish), ref, ref, stage);
+            member("joist", key + "/" + std::to_string(k), gp_Pnt(ps[k], y(first), joistTop),
+                   gp_Pnt(ps[k], y(last), joistTop), ref, ref, stage);
           if (i + 1 == area.x1)
-            member("joist", key + "/end", gp_Pnt(x(i + 1), y(first), height(ref) - finish),
-                   gp_Pnt(x(i + 1), y(last), height(ref) - finish), ref, ref, stage);
+            member("joist", key + "/end", gp_Pnt(x(i + 1), y(first), joistTop),
+                   gp_Pnt(x(i + 1), y(last), joistTop), ref, ref, stage);
           first = last;
         }
       }
@@ -1118,7 +1134,15 @@ struct Plan {
       const std::string base = floor == 1 ? "sill_top" : "second_fl",
                         top = floor == 1 && storeys == 2 ? "second_fl" : "eave_top",
                         stage = floor == 1 ? "1階軸組" : "2階軸組";
-      const auto from = at(i, j, height(base)), to = at(u, v, height(top) - section("floor_beam").depth);
+      // A brace runs between horizontal members (横架材): from the top of the member under it
+      // (the sill, or the second-floor beam under the 24 mm floor board) to the bottom of the
+      // member over it (the 胴差 on the outer lines or a floor beam inside, or the eave beam).
+      const bool outer = floor == 1 ? full.boundary(i, j) && full.boundary(u, v) && (i == u ? (i == full.x0 || i == full.x1) : (j == full.y0 || j == full.y1))
+                                    : upper.boundary(i, j) && upper.boundary(u, v) && (i == u ? (i == upper.x0 || i == upper.x1) : (j == upper.y0 || j == upper.y1));
+      const double bottom = floor == 1 ? height("sill_top") : supportTop("second_fl");
+      const double head = top == "eave_top" ? height("eave_top") - section("eave_beam").depth
+                                            : supportTop("second_fl") - section(outer ? "rim_beam" : "floor_beam").depth;
+      const auto from = at(i, j, bottom), to = at(u, v, head);
       const std::string key = "brace/" + std::to_string(k++);
       member("brace", key, from, to, base, top, stage, 0);
       hardware("brace_plate", key + "/foot", from, base, stage);

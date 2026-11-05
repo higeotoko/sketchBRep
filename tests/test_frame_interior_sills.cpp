@@ -152,3 +152,77 @@ TEST_F(FrameInteriorSills, FrameCanBeMadeAgainAfterItIsDeleted) {
   EXPECT_GT(m.levels().size(), levelCount);
   (void)second;
 }
+
+// Braces run between horizontal members: 1F from the sill top to the 胴差 bottom, 2F from the
+// floor beam top (under the 24 mm board, not on it) to the eave beam bottom.
+TEST_F(FrameInteriorSills, BracesRunFromMemberTopToMemberBottom) {
+  frame({{"storeys", 2}, {"braces", {{{"storey", 1}, {"from", {0, 0}}, {"to", {1, 0}}},
+                                      {{"storey", 2}, {"from", {0, 0}}, {"to", {1, 0}}}}}});
+  auto range = [&](const std::string& kind, const std::string& keyPrefix) {
+    std::pair<double, double> r{1e9, -1e9};
+    for (const auto& o : m.document().objects()) {
+      if (!o.attributes.count("kind") || o.attributes.at("kind") != kind) continue;
+      if (!keyPrefix.empty() && (!o.attributes.count("frame_key") || o.attributes.at("frame_key").rfind(keyPrefix, 0) != 0)) continue;
+      const auto b = m.document().worldBounds(o);
+      r.first = std::min(r.first, b.CornerMin().Z()); r.second = std::max(r.second, b.CornerMax().Z());
+    }
+    return r;
+  };
+  const auto sill = range("sill", ""), rim = range("rim_beam", ""), board = range("floor_sheathing", ""), eave = range("eave_beam", "");
+  std::vector<std::pair<double, double>> braces;
+  for (const auto& o : m.document().objects())
+    if (o.attributes.count("kind") && o.attributes.at("kind") == "brace") {
+      // The brace axis ends (its section is centred on them).
+      const auto* ref = std::get_if<ComponentInstance>(&o.recipe.base);
+      ASSERT_NE(ref, nullptr);
+      const auto b = m.document().worldBounds(o);
+      braces.push_back({b.CornerMin().Z(), b.CornerMax().Z()});
+    }
+  ASSERT_EQ(braces.size(), 2u);
+  std::sort(braces.begin(), braces.end());
+  // The brace solid reaches a little past its axis ends (half its section across the slope),
+  // so compare the axis heights through the hardware plates placed at the ends.
+  std::vector<double> plates;
+  for (const auto& o : m.document().objects())
+    if (o.attributes.count("frame_key") && o.attributes.at("frame_key").find("brace/") == 0 &&
+        o.attributes.count("kind") && o.attributes.at("kind") == "brace_plate") {
+      const auto b = m.document().worldBounds(o);
+      plates.push_back(b.CornerMin().Z());  // the plate marker starts at the brace end
+    }
+  ASSERT_EQ(plates.size(), 4u);
+  std::sort(plates.begin(), plates.end());
+  EXPECT_NEAR(plates[0], sill.second, 1);    // 1F foot: sill top
+  EXPECT_NEAR(plates[1], rim.first, 1);      // 1F head: 胴差 bottom
+  EXPECT_NEAR(plates[2], board.first, 1);    // 2F foot: beam top = under the floor board
+  EXPECT_NEAR(plates[3], eave.first, 1);     // 2F head: eave beam bottom
+}
+
+// A joist first floor can carry a subfloor board: the joists stay on the girders and sills,
+// the board sits on the joists and 1FL moves up by its thickness. 0 (the default) adds none.
+TEST_F(FrameInteriorSills, FirstFloorBoardOnJoistsIsSelectable) {
+  auto zOf = [&](const std::string& kind, bool top) {
+    double z = top ? -1e9 : 1e9;
+    for (const auto& o : m.document().objects())
+      if (o.attributes.count("kind") && o.attributes.at("kind") == kind) {
+        const auto b = m.document().worldBounds(o);
+        z = top ? std::max(z, b.CornerMax().Z()) : std::min(z, b.CornerMin().Z());
+      }
+    return z;
+  };
+  frame(json::object());
+  int boards = 0;
+  for (const auto& o : m.document().objects()) boards += o.attributes.count("kind") && o.attributes.at("kind") == "floor_sheathing";
+  EXPECT_EQ(boards, 0);  // one storey, joist floor, no board by default
+  const double joistTop = zOf("joist", true), girderTop = zOf("floor_girder", true);
+  ASSERT_TRUE(m.undo());
+  frame({{"first_floor_board", 12}});
+  EXPECT_NEAR(zOf("joist", true), joistTop, 1e-6);
+  EXPECT_NEAR(zOf("floor_girder", true), girderTop, 1e-6);
+  EXPECT_NEAR(zOf("floor_sheathing", false), joistTop, 1e-6);
+  EXPECT_NEAR(zOf("floor_sheathing", true), joistTop + 12, 1e-6);
+  bool level = false;
+  for (const auto& l : m.levels())
+    if (l.name.size() >= 3 && l.name.substr(l.name.size() - 3) == "1FL") { level = true; EXPECT_NEAR(l.elevation, joistTop + 12, 1e-6); }
+  EXPECT_TRUE(level);
+  EXPECT_FALSE(call("generate_frame", {{"inputs", {{"x_bays", 4}, {"y_bays", 4}, {"first_floor_board", 80}}}}).value("ok", true));
+}
