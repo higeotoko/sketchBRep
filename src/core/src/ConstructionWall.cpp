@@ -211,8 +211,12 @@ json quarterBalance(const json& in, const json& rows, const std::vector<Wall>& w
         if (evaluable && ratios.size() == 2) {
           const double small = std::min(ratios[0], ratios[1]), large = std::max(ratios[0], ratios[1]);
           row["wall_ratio"] = large > 0 ? small / large : 0.0;
-          const bool bothOver = ratios[0] > 1 && ratios[1] > 1;
-          row["status"] = bothOver || row["wall_ratio"].get<double>() >= .5 ? "pass" : "fail";
+          // Same comparison tolerance as the wall quantity (1e-10): rounding must not turn an
+          // exact 1.0 into "over 1" or an exact 0.5 into "under 0.5".
+          constexpr double eps = 1e-10;
+          const bool bothOver = ratios[0] > 1 + eps && ratios[1] > 1 + eps;
+          row["status"] = bothOver || row["wall_ratio"].get<double>() >= .5 - eps ? "pass" : "fail";
+          row["comparison_tolerance"] = eps;
           row["basis"] = bothOver ? "両側端の壁量充足率が1を超える" : "壁率比が0.5以上か";
         }
       }

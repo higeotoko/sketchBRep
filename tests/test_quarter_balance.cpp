@@ -119,3 +119,13 @@ TEST_F(QuarterBalance, BadPlanIsRefusedAndSideAreasOverrideTheRectangle) {
   EXPECT_NEAR(r["wall_ratio"].get<double>(), 0.25, 1e-9);  // ratios 4/1 = 4.0 and 4/4 = 1.0 (not over 1)
   EXPECT_EQ(r["status"], "fail");
 }
+
+TEST_F(QuarterBalance, RatiosOfExactlyOneAreNotOverOne) {
+  // Both parts exactly 1.0 (2 m of ratio-2 wall... halves: 1 m x 2 = 2.0 m over 2.0 m): not "over 1",
+  // so the pass comes from the wall ratio (1.0 >= 0.5), not from the proviso.
+  const auto r = row(inputs({wall("a", "X", {0, 0}, {1000, 0}), wall("b", "X", {0, 4000}, {1000, 4000})}), "1", "X");
+  EXPECT_NEAR(r["strips"][0]["ratio"].get<double>(), 1.0, 1e-9);
+  EXPECT_EQ(r["status"], "pass");
+  EXPECT_EQ(r["basis"], "壁率比が0.5以上か");
+  EXPECT_DOUBLE_EQ(r["comparison_tolerance"].get<double>(), 1e-10);
+}
