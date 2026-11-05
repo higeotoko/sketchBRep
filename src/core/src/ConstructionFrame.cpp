@@ -797,10 +797,13 @@ struct Plan {
           first = last;
         }
       }
+      // Second-floor cross beams frame into the floor beams one bay at a time (they end at
+      // the beams instead of crossing them at the same height).
       if (floor == 2)
         for (int j = area.y0 + 1; j < area.y1; ++j)
-          member("floor_beam", "floor2/cross/" + std::to_string(j), at(area.x0, j, beamZ),
-                 at(area.x1, j, beamZ), ref, ref, stage);
+          for (int i = area.x0; i < area.x1; ++i)
+            member("floor_beam", "floor2/cross/" + std::to_string(j) + "/" + std::to_string(i), at(i, j, beamZ),
+                   at(i + 1, j, beamZ), ref, ref, stage);
       for (std::size_t n = 0; n < zones.size(); ++n) {
         ring(zones[n].area, "floor_girder", ref,
              height(ref) - finish - (zones[n].mode == "joistless" ? ply : section("joist").depth), stage,
@@ -988,7 +991,8 @@ struct Plan {
     const std::string stage = "小屋組";
     const double z = height(ref);
     ring(area, "eave_beam", ref, z, stage, prefix + "/eaves", false);
-    for (int i = (alongX ? area.x0 : area.y0); i <= (alongX ? area.x1 : area.y1); ++i)
+    // Ties on the interior lines only: the end lines already have the eave beams of the ring.
+    for (int i = (alongX ? area.x0 : area.y0) + 1; i < (alongX ? area.x1 : area.y1); ++i)
       member("roof_beam", prefix + "/tie/" + std::to_string(i),
              alongX ? at(i, area.y0, z) : at(area.x0, i, z), alongX ? at(i, area.y1, z) : at(area.x1, i, z),
              ref, ref, stage);
@@ -1014,6 +1018,10 @@ struct Plan {
     for (double cross : crosses) {
       const std::string role = kind == "gable" && std::abs(cross - middle) < 1e-6 ? "ridge" : "purlin";
       const std::string key = prefix + "/purlin/" + std::to_string(k++);
+      // On an eave line the eave beam already carries the rafters at this height: a purlin
+      // there would be a duplicate in the same place. (The key number is still used up, so
+      // the other purlins keep their keys.)
+      if (role == "purlin" && roofZ(cross) <= z + 1e-6) continue;
       member(role, key, p(a0 - gableOver, cross, roofZ(cross)), p(a1 + gableOver, cross, roofZ(cross)), ref,
              ref, stage);
       const auto& alongLines = alongX ? grid.x : grid.y;
@@ -1028,16 +1036,23 @@ struct Plan {
     const auto ps =
         positions(a0 - gableOver, a1 + gableOver,
                   integer(inputs, "rafter_divisions", defaults.at("rafter_divisions"), 1, 12), "rafter");
+    // Rafters sit on the purlins, ridge and eave beams (whose tops follow roofZ): the rafter
+    // axis is its top edge, lifted by its depth measured plumb, so its underside touches them.
+    // Plus the rise of the slope across half the widest support, so the underside clears
+    // the support's top on its downhill edge too (no overlap; the seat detail is not modelled).
+    const double support = std::max({section("purlin").width, section("ridge").width, section("eave_beam").width});
+    const double lift = section("rafter").depth * std::sqrt(1 + pitch * pitch) + pitch * support / 2;
+    auto rafterZ = [&](double cross) { return roofZ(cross) + lift; };
     int n = 0;
     for (double along : ps) {
       const std::string key = prefix + "/rafter/" + std::to_string(n++);
       if (kind == "gable") {
-        member("rafter", key + "/left", p(along, c0 - over, roofZ(c0 - over)),
-               p(along, middle, roofZ(middle)), ref, ref, stage);
-        member("rafter", key + "/right", p(along, middle, roofZ(middle)),
-               p(along, c1 + over, roofZ(c1 + over)), ref, ref, stage);
+        member("rafter", key + "/left", p(along, c0 - over, rafterZ(c0 - over)),
+               p(along, middle, rafterZ(middle)), ref, ref, stage);
+        member("rafter", key + "/right", p(along, middle, rafterZ(middle)),
+               p(along, c1 + over, rafterZ(c1 + over)), ref, ref, stage);
       } else
-        member("rafter", key, p(along, c0 - over, roofZ(c0 - over)), p(along, c1 + over, roofZ(c1 + over)),
+        member("rafter", key, p(along, c0 - over, rafterZ(c0 - over)), p(along, c1 + over, rafterZ(c1 + over)),
                ref, ref, stage);
     }
   }

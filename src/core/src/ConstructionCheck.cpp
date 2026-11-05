@@ -433,12 +433,6 @@ Result<std::string> checkFrame(const doc::Document& d, const std::string& text,
             complete = false;
             break;
           }
-          Bnd_Box overlap;
-          overlap.Update(x, y, z, X, Y, Z);
-          if (localConnection(a, b, overlap)) {
-            ++exempt;
-            continue;
-          }
           try {
             TopTools_ListOfShape arguments, tools;
             arguments.Append(a.shape);
@@ -455,6 +449,15 @@ Result<std::string> checkFrame(const doc::Document& d, const std::string& text,
             GProp_GProps props;
             BRepGProp::VolumeProperties(common.Shape(), props);
             const double volume = std::abs(props.Mass());
+            // Decide "local end connection" from the real shared solid, not the two members'
+            // axis-aligned boxes: for sloped members (rafters meeting at the ridge) the boxes
+            // overlap over the whole roof height even when the contact is at their ends.
+            Bnd_Box overlap;
+            BRepBndLib::AddOptimal(common.Shape(), overlap, false, false);
+            if (volume > 1.0 && !overlap.IsVoid() && localConnection(a, b, overlap)) {
+              ++exempt;
+              continue;
+            }
             if (volume > 1.0) {
               ++hits;
               emit("COM-01", {a.object->id, b.object->id}, "fail", "solid_intersection",

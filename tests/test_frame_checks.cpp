@@ -255,3 +255,40 @@ TEST_F(FrameChecks, ShallowOverlapStillUsesVolumeThreshold) {
   EXPECT_EQ(status(report, "COM-01", a), "fail");
   EXPECT_GT(report["counts"]["fail"].get<int>(), 0);
 }
+
+// The recipe's own frames have no member collisions: rafters sit on their supports,
+// eave lines have no duplicate purlins or ties, and second-floor cross beams frame into
+// the floor beams bay by bay. Joints at member ends (ridge rafters included) stay
+// "end connection, specification not evaluated", never a pass.
+TEST_F(FrameChecks, GeneratedFramesHaveNoMemberCollisions) {
+  for (const json inputs : {json{{"x_bays", 4}, {"y_bays", 4}}, json{{"x_bays", 6}, {"y_bays", 4}, {"roof", "shed"}},
+                            json{{"x_bays", 4}, {"y_bays", 4}, {"storeys", 1}}}) {
+    Modeler fresh;
+    const auto made = fresh.generateFrame(json{{"inputs", inputs}}.dump());
+    ASSERT_TRUE(made) << made.error();
+    const auto result = construction::checkFrame(fresh.document(), R"({"rules":["COM-01"]})");
+    ASSERT_TRUE(result) << result.error();
+    const auto report = json::parse(*result);
+    for (const auto& row : report.at("results")) {
+      if (!row.at("targets").empty()) ADD_FAILURE() << inputs.dump() << " " << row.dump();
+      else {
+        EXPECT_EQ(row.at("measured").at("collisions"), 0) << inputs.dump();
+        EXPECT_GT(row.at("measured").at("excluded_end_connections").get<int>(), 0) << inputs.dump();
+        EXPECT_EQ(row.at("status"), "not_evaluated") << inputs.dump();
+      }
+    }
+  }
+}
+
+// Two sloped members meeting at their ends (a ridge): the real shared solid is at the
+// ends, so it is an end connection even though their bounding boxes overlap all the way up.
+TEST_F(FrameChecks, SlopedMembersMeetingAtTheirEndsAreAnEndConnection) {
+  const auto made = make({{"x_bays", 2}, {"y_bays", 2}, {"storeys", 1}});
+  const auto report = check({{"rules", {"COM-01"}}});
+  for (const auto& row : report.at("results")) EXPECT_TRUE(row.at("targets").empty()) << row.dump();
+  // A real mid-span crossing at the same height is still a collision.
+  const auto a = member({0, 500, 10000}, {1000, 500, 10000});
+  const auto b = member({500, 0, 10000}, {500, 1000, 10000});
+  EXPECT_EQ(status(check({{"rules", {"COM-01"}}}), "COM-01", a), "fail");
+  (void)made; (void)b;
+}
