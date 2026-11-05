@@ -143,6 +143,9 @@ TEST_F(FoundationPads, TwoStoreyHouseCanPlanOnlyMissingRealFloorPostsAndExportFo
   Document reopened;ASSERT_TRUE(deserializeDocument(serializeDocument(m.document()),reopened));
   const auto checked=construction::foundationSupports(reopened,json{{"ids",posts}}.dump());ASSERT_TRUE(checked);
   const auto restored=json::parse(*checked);for(const auto& row:restored["rows"]) EXPECT_EQ(row["path_status"],"geometry_detected");
+  const auto all=construction::foundationSupports(reopened);ASSERT_TRUE(all);const auto allRows=json::parse(*all);
+  int count=0;for(const auto& row:allRows["rows"]) if(row["role"]=="floor_post") {++count;EXPECT_EQ(row["path_status"],"geometry_detected");}
+  EXPECT_EQ(count,6);
   const auto path=std::filesystem::temp_directory_path()/"foundation_pad_house.dxf";
   const auto exported=json::parse(api.execute(json{{"command","export_drawing"},{"args",{{"kind","framing"},{"preset","foundation"},{"path",path.string()}}}}.dump()));
   EXPECT_TRUE(exported["ok"])<<exported.dump();EXPECT_TRUE(std::filesystem::exists(path));

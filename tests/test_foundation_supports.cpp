@@ -145,3 +145,10 @@ TEST_F(FoundationSupports, SteppedConcreteDoesNotSilentlyIgnoreLowerTopFaces) {
   ASSERT_TRUE(m.setAttribute({*stepped},"kind","foundation_pad"));ASSERT_TRUE(m.setAttribute({*stepped},"material_class","rc"));
   const auto q=query();ASSERT_EQ(q["unassessed_supports"].size(),1u);EXPECT_EQ(row(c)["status"],"missing");
 }
+
+TEST_F(FoundationSupports, ShortFloorPostUsesConcreteBelowInsteadOfSillWhollyAboveItsBase) {
+  const auto s=sill();foundation(s);
+  const auto p=member("floor_post",{1500,0,400},{1500,0,410},90);
+  const auto r=row(p);EXPECT_EQ(r["status"],"detected");EXPECT_EQ(r["path_status"],"geometry_detected");
+  ASSERT_EQ(r["candidates"].size(),1u);EXPECT_EQ(r["candidates"][0]["role"],"foundation_stem");
+}

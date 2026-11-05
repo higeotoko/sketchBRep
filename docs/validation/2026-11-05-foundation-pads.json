@@ -26,10 +26,10 @@
   },
   "build_exit_code": 0,
   "related_core_and_api": {
-    "tests": 121,
+    "tests": 122,
     "failures": 0,
     "errors": 0,
-    "seconds": 26.949,
+    "seconds": 18.798,
     "exit_code": 0
   },
   "gui": {
@@ -37,10 +37,10 @@
     "including_init_cleanup": 26,
     "failures": 0,
     "errors": 0,
-    "seconds": 41.964,
+    "seconds": 32.519,
     "exit_code": 0
   },
-  "new_core_tests": 13,
+  "new_core_tests": 14,
   "new_gui_tests": [
     "foundationPadsFromMissingFloorPostsAndRegeneration",
     "foundationPadsWithDifferentTopsReloadWithoutChangingTheModel",
@@ -58,5 +58,6 @@
     "Positive-volume intersections with existing solids reject the whole operation",
     "Recreated member IDs need explicit rebinding",
     "No Linux or full GUI suite verification"
-  ]
+  ],
+  "additional_regression": "A short floor post cannot use a sill wholly above its base; all six house floor posts are checked"
 }

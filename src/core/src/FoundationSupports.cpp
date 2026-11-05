@@ -162,6 +162,10 @@ Result<std::string> foundationSupports(const doc::Document& d,const std::string&
       for(std::size_t i=0;i<members.size();++i) {
         const auto& target=members[i];if(i==index || !target.reason.empty()) continue;
         if(!(target.rc || (own.role!="sill" && target.role=="sill"))) continue;
+        // An object wholly above the base cannot support that base. In
+        // particular a short floor post below a sill must use the concrete
+        // underneath it, not the sill which the post itself carries.
+        if(target.low>own.low+tolerance) continue;
         const double gap=own.low-target.high;
         if(gap < -depth || gap>depth || !xyOverlap(own.bounds,target.bounds)) continue;
         if(tested>=budget) {exhausted=true;row["reason"]="形状比較の上限に達しました。対象を絞って再確認してください";return row;}
