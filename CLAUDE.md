@@ -33,4 +33,6 @@ Qt 6 + Open CASCADE（OCCT）の B-rep モデラー。SketchUp のような直�
 ## CI
 
 - GitHub Actions（`.github/workflows/ci.yml`）。docs だけの変更では走らない。
-- **2026-11-04 09:11 UTC（`5d2a4e1`）以降、CI が 1 度も起動していない**（docs/70 §3）。直近の検証はすべてローカル。CI が復活するまで、ローカル検証を「CI 済み」と書かない。
+- **PR #1 の push では CI が起動しない**（PR の試しマージが `5d2a4e1` で固まっている。docs/71）。push のあとに手で回す：`gh workflow run CI -R higeotoko/sketchBRep --ref claude/sketchbrep-modeler-spec-4wnp0b -f windows=true`、結果は `gh run view`。
+- `fa9e9a2` で Linux・Windows とも全件成功（docs/71）。CI の結果を見ていない変更を「CI 済み」と書かない。
+- オーナーの PC は表示倍率 175%。画素に敏感な GUI テストはローカルでは落ちることがある（docs/71 §4）。GUI 全件は CI を正とする。
