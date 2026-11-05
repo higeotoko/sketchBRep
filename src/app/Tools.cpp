@@ -1,3 +1,4 @@
+#include "sbr/ConstructionGuide.h"
 #include "Tools.h"
 
 #include "Messages.h"
@@ -1174,6 +1175,7 @@ QString MemberTool::settingsText() const {
   const QString role = settings_.role == "column" ? QObject::tr("柱")
                        : settings_.role == "beam" ? QObject::tr("梁")
                        : settings_.role == "brace" ? QObject::tr("筋かい")
+                       : settings_.role == "sill" ? QObject::tr("土台")
                        : settings_.role.empty() ? QObject::tr("用途なし")
                                                 : QString::fromStdString(settings_.role);
   QString anchor = QString::fromUtf8(up[settings_.anchor.up + 1]);
@@ -1198,6 +1200,20 @@ MemberTool::Settings MemberTool::settingsFor(const std::string& entry) const {
   } else if (entry == "beam") {
     s.role = "beam";
     s.anchor = {0, 1};  // on its top edge
+  } else if (entry == "sill") {
+    // 土台: the timber guide's default sill section, drawn on its top edge (the 土台天端 level).
+    const auto& patches = host_.modeler().document().settings().constructionOverrides;
+    const auto it = patches.find("timber");
+    try {
+      s.section = construction::section("TIMBER-120x120", it == patches.end() ? "{}" : it->second);
+    } catch (...) {
+      s.section.kind = geom::Section::Kind::Rectangle;
+      s.section.width = s.section.depth = 120;
+    }
+    s.role = "sill";
+    s.materialClass = "timber";
+    s.anchor = {0, 1};
+    s.roll = 0;
   }
   return s;
 }

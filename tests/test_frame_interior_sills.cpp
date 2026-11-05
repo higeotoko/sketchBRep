@@ -113,3 +113,21 @@ TEST_F(FrameInteriorSills, MatFoundationFollowsInteriorSillsAndTakesAPassage) {
   ASSERT_TRUE(c);
   EXPECT_EQ(json::parse(*c)["plans"][0]["status"], "current");
 }
+
+// Studs (間柱) turn with their wall: the thin side runs along the wall and the deep side
+// across it, on X walls and Y (gable) walls alike.
+TEST_F(FrameInteriorSills, StudsFaceAcrossTheirWallOnBothDirections) {
+  frame(json::object());
+  int x = 0, y = 0;
+  for (const auto& o : m.document().objects()) {
+    if (!o.attributes.count("frame_key")) continue;
+    const auto key = o.attributes.at("frame_key");
+    if (key.rfind("stud/", 0) != 0) continue;
+    const auto b = m.document().worldBounds(o);
+    const double dx = b.CornerMax().X() - b.CornerMin().X(), dy = b.CornerMax().Y() - b.CornerMin().Y();
+    const bool alongX = key.find("/x/") != std::string::npos;
+    if (alongX) { ++x; EXPECT_LT(dx, dy) << key << " " << dx << "x" << dy; }
+    else { ++y; EXPECT_LT(dy, dx) << key << " " << dx << "x" << dy; }
+  }
+  EXPECT_GT(x, 0); EXPECT_GT(y, 0);
+}

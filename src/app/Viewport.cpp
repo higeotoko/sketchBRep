@@ -1051,6 +1051,9 @@ void Viewport::syncSection() {
   }
   if (active) {
     inference_.setClip(gp_Pln(gp_Pnt(key[0], key[1], key[2]), gp_Dir(key[3], key[4], key[5])));
+  } else if (planCutZ_) {
+    // The plane names the side cut away (above the plan cut).
+    inference_.setClip(gp_Pln(gp_Pnt(0, 0, *planCutZ_), gp::DZ()));
   } else {
     inference_.setClip(std::nullopt);
   }
@@ -2476,8 +2479,29 @@ void Viewport::setStandardView(StandardView v) {
   fitAll();
 }
 
+void Viewport::setPlanCut(std::optional<double> z) {
+  if (view_.IsNull()) return;
+  if (!planCut_.IsNull()) {
+    view_->RemoveClipPlane(planCut_);
+    planCut_.Nullify();
+  }
+  planCutZ_ = z && std::isfinite(*z) ? z : std::nullopt;
+  if (planCutZ_) {
+    // OCCT keeps the side the normal points to: down, so what is below the cut stays.
+    planCut_ = new Graphic3d_ClipPlane(gp_Pln(gp_Pnt(0, 0, *planCutZ_), gp::DZ().Reversed()));
+    planCut_->SetCapping(true);
+    Graphic3d_MaterialAspect material(Graphic3d_NameOfMaterial_Plastified);
+    material.SetColor(Quantity_Color(0.25, 0.25, 0.28, Quantity_TOC_RGB));
+    planCut_->SetCappingMaterial(material);
+    view_->AddClipPlane(planCut_);
+  }
+  syncSection();
+  redraw();
+}
+
 void Viewport::lockView(StandardView v) {
   if (view_.IsNull()) return;
+  if (v != StandardView::Top) setPlanCut(std::nullopt);
   if (v == StandardView::Iso) {
     unlockView();
     return;
@@ -2500,6 +2524,7 @@ void Viewport::turnElevation(int step) {
 }
 
 void Viewport::unlockView() {
+  setPlanCut(std::nullopt);
   if (!lockedView_) return;
   lockedView_.reset();
   if (view_.IsNull()) return;

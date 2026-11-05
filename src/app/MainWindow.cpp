@@ -1133,7 +1133,8 @@ void MainWindow::buildMenus() {
   QMenu* members = tools->addMenu(tr("部材を引く"));
   members->setObjectName(QStringLiteral("membersMenu"));
   const std::pair<QString, std::string> memberEntries[] = {
-      {tr("鋼材（断面を選んで2点）"), "steel"}, {tr("柱（脚部＋高さ）"), "column"}, {tr("梁（上端基準で2点）"), "beam"}};
+      {tr("鋼材（断面を選んで2点）"), "steel"}, {tr("柱（脚部＋高さ）"), "column"}, {tr("梁（上端基準で2点）"), "beam"},
+      {tr("土台（土台天端の平面で2点）"), "sill"}};
   for (const auto& [label, entry] : memberEntries) {
     QAction* a = members->addAction(label);
     a->setObjectName(QStringLiteral("memberEntry_") + QString::fromStdString(entry));
@@ -1211,8 +1212,10 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
     const bool plan = viewport_->lockedView() == Viewport::StandardView::Top;
     const QString height = QString::fromStdString(units::formatLength(viewport_->workOffset(), 0));
     const QString name = viewport_->workOffsetName();
-    level->setText(plan ? tr("平面: %1").arg(name.isEmpty() ? height : tr("%1（%2）").arg(name, height))
-                        : tr("平面で描く"));
+    QString text = plan ? tr("平面: %1").arg(name.isEmpty() ? height : tr("%1（%2）").arg(name, height)) : tr("平面で描く");
+    if (plan && viewport_->planCut())
+      text += tr("　FL+%1 で切断").arg(QString::fromStdString(units::formatLength(*viewport_->planCut() - viewport_->workOffset(), 0)));
+    level->setText(text);
   };
   connect(viewport_, &Viewport::viewLockChanged, this, showPlane);
   connect(viewport_, &Viewport::workPlaneChanged, this, showPlane);
@@ -1222,9 +1225,12 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
     auto choose = [this](double elevation, const QString& name) {
       viewport_->lockView(Viewport::StandardView::Top);
       viewport_->setProjectSnaps(true);
+      // Show this level as a floor plan: cut 1100 mm above the floor (a drawing convention),
+      // set before the work plane so the toolbar label already names the cut.
+      viewport_->setPlanCut(elevation + 1100);
       viewport_->setWorkOffset(elevation, name);
       viewport_->setFocus();
-      setStatus(tr("%1 の高さ %2 で描きます。壁・スラブ・柱を選んで配置できます")
+      setStatus(tr("%1 の高さ %2 で描きます（FL+1100 より上は隠しています。「3D」で戻ります）。壁・スラブ・柱・土台を選んで配置できます")
                     .arg(name, QString::fromStdString(units::formatLength(elevation, 0))));
     };
     menu->addAction(tr("地面（Z=0）"), this, [choose] { choose(0, tr("地面")); })
@@ -1267,10 +1273,14 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
   drawing(ToolId::Opening, QStringLiteral("architectureOpening"), &MainWindow::showOpeningSettingsDialog);
   findChild<QToolButton*>(QStringLiteral("architectureOpening"))->setToolTip(
       tr("開口: 平面の壁、または3D・立面の壁面をクリック。右の矢印から幅・高さ・腰高を設定"));
-  for (const char* entry : {"column", "beam"}) {
+  for (const char* entry : {"sill", "column", "beam"}) {
     auto* button = new QToolButton(bar);
+    button->setObjectName(QStringLiteral("architectureMember_") + QLatin1String(entry));
     button->setDefaultAction(findChild<QAction*>(QStringLiteral("memberEntry_") + QLatin1String(entry)));
-    button->setText(QLatin1String(entry) == QStringLiteral("column") ? tr("柱") : tr("梁"));
+    const QString key = QLatin1String(entry);
+    button->setText(key == QStringLiteral("sill") ? tr("土台") : key == QStringLiteral("column") ? tr("柱") : tr("梁"));
+    if (key == QStringLiteral("sill"))
+      button->setToolTip(tr("土台: 土台天端のレベルの平面に切り替えて、通り芯の交点を2点クリック。布基礎・べた基礎の対象になります"));
     bar->addWidget(button);
   }
   bar->addSeparator();
@@ -2641,6 +2651,28 @@ void MainWindow::showWallSettingsDialog() {
 }
 
 void MainWindow::startMember(const std::string& entry) {
+  if (entry == "sill") {
+    // Draw sills on the sill-top level when the model has one (the timber recipe names it
+    // "<frame> 土台天端"); otherwise on the current work plane, and say so.
+    const doc::FloorLevel* sillTop = nullptr;
+    for (const auto& l : modeler_.levels())
+      if (QString::fromStdString(l.name).endsWith(QStringLiteral("土台天端")) && (!sillTop || l.elevation < sillTop->elevation))
+        sillTop = &l;
+    viewport_->lockView(Viewport::StandardView::Top);
+    viewport_->setProjectSnaps(true);
+    if (sillTop) {
+      viewport_->setPlanCut(sillTop->elevation + 1);  // just above: the floor over the sills is hidden
+      viewport_->setWorkOffset(sillTop->elevation, QString::fromStdString(sillTop->name));
+    }
+    memberTool_->useEntry(entry);
+    activateTool(ToolId::Member);
+    refreshMemberPanel();
+    setStatus(sillTop ? tr("土台天端（%1）の平面で、土台の始点と終点をクリック（通り芯の交点に吸着）  %2")
+                            .arg(QString::fromStdString(units::formatLength(sillTop->elevation, 0)), memberTool_->settingsText())
+                      : tr("土台天端のレベルがないため、作業面の高さ %1 に引きます。レベルは「レベル（GL・FL）を編集...」で作れます  %2")
+                            .arg(QString::fromStdString(units::formatLength(viewport_->workOffset(), 0)), memberTool_->settingsText()));
+    return;
+  }
   memberTool_->useEntry(entry);
   activateTool(ToolId::Member);
   setStatus(memberTool_->settingsText());
@@ -2849,7 +2881,8 @@ bool MainWindow::showMemberSettingsDialog() {
   auto* role = new QComboBox(&dialog);
   role->setObjectName(QStringLiteral("memberRole"));
   const std::pair<QString, QString> roles[] = {{tr("なし"), QString()}, {tr("柱"), QStringLiteral("column")},
-                                               {tr("梁"), QStringLiteral("beam")}, {tr("筋かい"), QStringLiteral("brace")}};
+                                               {tr("梁"), QStringLiteral("beam")}, {tr("筋かい"), QStringLiteral("brace")},
+                                               {tr("土台"), QStringLiteral("sill")}};
   for (const auto& [label, key] : roles) role->addItem(label, key);
   role->setCurrentIndex(std::max(0, role->findData(QString::fromStdString(current.role))));
   auto* material = new QComboBox(&dialog);

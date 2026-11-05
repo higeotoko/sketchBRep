@@ -159,6 +159,11 @@ class Viewport : public QWidget {
   // Read-only structural diagnostics drawn on their own layer (never picked, never
   // part of the model); empty clears. Independent of tools' role shapes.
   void setDiagnosticShapes(const std::vector<std::pair<TopoDS_Shape, Quantity_Color>>& shapes);
+  // A plan of one level: hide everything above `z` (world mm), like a floor plan's cut, without
+  // touching the model. Picking and snapping skip the hidden part. nullopt removes it; leaving the
+  // plan view (3D or an elevation) removes it too.
+  void setPlanCut(std::optional<double> z);
+  std::optional<double> planCut() const { return planCutZ_; }
   std::size_t diagnosticShapeCount() const { return diagnostics_.size(); }
   std::size_t roleShapeCount() const { return roles_.size(); }
   // What the tool preview shows now (null: nothing) - for checks.
@@ -411,6 +416,9 @@ class Viewport : public QWidget {
   void displayWithPickMode(Entry& entry);
   std::map<doc::ObjectId, Handle(AIS_TextLabel)> labels_;  // annotation texts
   Handle(Graphic3d_ClipPlane) section_;
+  // Plan view of a chosen level: everything above this height is cut away (view only).
+  Handle(Graphic3d_ClipPlane) planCut_;
+  std::optional<double> planCutZ_;
   Handle(AIS_Shape) sectionMarkers_;
   std::vector<doc::SectionPlane> sectionMarkerKey_;
   std::uint64_t sectionMarkerSequence_ = 0;

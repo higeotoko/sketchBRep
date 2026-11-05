@@ -193,6 +193,7 @@ struct Piece {
   gp_Pnt from, to;
   geom::Section section;
   int anchorUp = 0;
+  double roll = 0;  // radians about the member axis (studs on Y walls turn a quarter)
   std::map<std::string, std::string> attributes;
 };
 struct Opening {
@@ -317,7 +318,7 @@ struct Plan {
   }
   void member(const std::string& role, const std::string& key, const gp_Pnt& a, const gp_Pnt& b,
               const std::string& base, const std::string& top, const std::string& stage, int anchor = 1,
-              std::optional<geom::Section> custom = std::nullopt) {
+              std::optional<geom::Section> custom = std::nullopt, double roll = 0) {
     Piece p;
     p.role = role;
     p.key = key;
@@ -328,6 +329,7 @@ struct Plan {
     p.stage = p.layer = stage;
     p.section = custom ? *custom : section(role);
     p.anchorUp = anchor;
+    p.roll = roll;
     p.catalog = p.section.catalog;
     add(p);
     if (role == "rim_beam" || role == "floor_beam" || role == "eave_beam" || role == "roof_beam" ||
@@ -511,8 +513,9 @@ struct Plan {
       }
     }
   }
+  // roll: a stud on a Y-direction wall turns a quarter so its deep side stays across the wall.
   void stud(const gp_Pnt& location, int floor, const std::string& base, const std::string& top, double bottom,
-            double ceiling, const std::string& key) {
+            double ceiling, const std::string& key, double roll = 0) {
     std::vector<std::pair<double, double>> spans{{bottom, ceiling}};
     for (const auto& o : openings)
       if (o.storey == floor) {
@@ -536,7 +539,7 @@ struct Plan {
         a.SetZ(s.first);
         b.SetZ(s.second);
         member("stud", key + "/" + std::to_string(n++), a, b, base, top, floor == 1 ? "1階軸組" : "2階軸組",
-               0);
+               0, std::nullopt, roll);
       }
   }
   void verticals() {
@@ -585,7 +588,7 @@ struct Plan {
       for (int j = area.y0; j < area.y1; ++j)
         for (int i : {area.x0, area.x1})
           stud(gp_Pnt(x(i), (y(j) + y(j + 1)) / 2, z), floor, base, top, z, h,
-               "stud/" + std::to_string(floor) + "/y/" + std::to_string(i) + "/" + std::to_string(j));
+               "stud/" + std::to_string(floor) + "/y/" + std::to_string(i) + "/" + std::to_string(j), M_PI / 2);
     }
     int n = 0;
     for (const auto& o : openings) {
@@ -1433,7 +1436,7 @@ Result<std::string> Modeler::generateFrame(const std::string& text) {
       if (p.hardware.empty()) {
         const auto up = geom::memberUp(gp_Dir(gp_Vec(start, end)));
         need(up.ok(), up.error());
-        const auto frame = geom::memberFrame(start, end, *up, 0);
+        const auto frame = geom::memberFrame(start, end, *up, p.roll);
         need(frame.ok(), frame.error());
         gp_Ax3 centered = *frame;
         centered.SetLocation(

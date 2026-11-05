@@ -324,6 +324,7 @@ class GuiPhase1 : public QObject {
   void foundationMatDialogMakesSlabAndPassage();
   void timberInteriorSillsFromDialog();
   void structureDiagnosticsOverlayIsReadOnlyAndClearsOnEdit();
+  void planLevelCutsAboveAndSillToolDrawsOnSillTop();
   void foundationSupportsSelectActualPartsAndInvalidate();
   void foundationPadsFromMissingFloorPostsAndRegeneration();
   void foundationPadsWithDifferentTopsReloadWithoutChangingTheModel();
@@ -9979,6 +9980,55 @@ void GuiPhase1::structureDiagnosticsOverlayIsReadOnlyAndClearsOnEdit() {
   QCOMPARE(walls->rowCount(),0);
   refresh->click();QVERIFY(f.vp->diagnosticShapeCount()>=7);QCOMPARE(walls->rowCount(),2);
   panel->close();QCOMPARE(f.vp->diagnosticShapeCount(),std::size_t(0));
+}
+
+// Choosing a level shows a floor plan cut at FL+1100 (view only); 3D removes it. The sill
+// entry switches to the sill-top plan and two grid clicks draw a sill on its top edge.
+void GuiPhase1::planLevelCutsAboveAndSillToolDrawsOnSillTop() {
+  using nlohmann::json;
+  Fixture f;QVERIFY(f.setUp(1820,910));auto& m=f.window.modeler();
+  QVERIFY(m.generateFrame(R"({"inputs":{"x_bays":4,"y_bays":2,"storeys":1}})"));
+  f.vp->syncNow();
+  const doc::FloorLevel* first=nullptr;const doc::FloorLevel* sillTop=nullptr;
+  for(const auto& l:m.levels()) {
+    const auto name=QString::fromStdString(l.name);
+    if(name.endsWith(QStringLiteral("1FL"))) first=&l;
+    if(name.endsWith(QStringLiteral("土台天端"))) sillTop=&l;
+  }
+  QVERIFY(first && sillTop);
+  const double firstZ=first->elevation,sillZ=sillTop->elevation;const std::string firstId=first->id;
+  const auto before=serializeDocument(m.document());
+  auto* levelButton=f.window.findChild<QToolButton*>(QStringLiteral("architecturePlanLevel"));QVERIFY(levelButton);
+  emit levelButton->menu()->aboutToShow();
+  auto* pick=f.window.findChild<QAction*>(QStringLiteral("architectureLevel_")+QString::fromStdString(firstId));QVERIFY(pick);
+  pick->trigger();
+  QVERIFY(f.vp->planCut().has_value());QCOMPARE(*f.vp->planCut(),firstZ+1100);
+  QVERIFY(levelButton->text().contains(QStringLiteral("切断")));
+  const auto capture=qEnvironmentVariable("SBR_PLAN_CAPTURE");
+  if(!capture.isEmpty()) {f.vp->syncNow();f.vp->fitAll();QTest::qWait(50);f.window.exportImage(capture+QStringLiteral("-1fl.png"));}
+  QCOMPARE(serializeDocument(m.document()),before);  // a view setting only
+  f.window.findChild<QAction*>(QStringLiteral("architecture3D"))->trigger();
+  QVERIFY(!f.vp->planCut().has_value());
+  // The sill entry: the sill-top plan, cut just above it.
+  auto* sill=f.window.findChild<QAction*>(QStringLiteral("memberEntry_sill"));QVERIFY(sill);
+  QVERIFY(f.window.findChild<QToolButton*>(QStringLiteral("architectureMember_sill")));
+  sill->trigger();f.vp->syncNow();QTest::qWait(50);
+  QVERIFY(f.vp->planCut().has_value());QCOMPARE(*f.vp->planCut(),sillZ+1);
+  QCOMPARE(f.vp->workOffset(),sillZ);
+  if(!capture.isEmpty()) {f.vp->fitAll();QTest::qWait(50);f.window.exportImage(capture+QStringLiteral("-sill.png"));}
+  const std::size_t count=m.document().objects().size();
+  click(f.vp,f.vp->toWidget(gp_Pnt(910,910,sillZ)));
+  QTest::qWait(30);
+  click(f.vp,f.vp->toWidget(gp_Pnt(2730,910,sillZ)));
+  QTest::qWait(30);
+  QVERIFY2(m.document().objects().size()==count+1,qPrintable(f.window.lastError()));
+  const auto& made=m.document().objects().back();
+  QCOMPARE(made.attributes.at("kind"),std::string("sill"));
+  QCOMPARE(made.attributes.at("material_class"),std::string("timber"));
+  const auto b=m.document().worldBounds(made);
+  QVERIFY2(std::abs(b.CornerMax().Z()-sillZ)<1,qPrintable(QString::number(b.CornerMax().Z())));
+  QVERIFY2(std::abs((b.CornerMax().X()-b.CornerMin().X())-1820)<1,qPrintable(QString::number(b.CornerMax().X()-b.CornerMin().X())));
+  QTest::keyClick(f.vp,Qt::Key_Escape);
 }
 
 void GuiPhase1::timberFramePreviewApplyLevelsAndUndo() {
