@@ -37,6 +37,7 @@ class Viewport;
 
 class HelpWindow;
 class FrameCheckPanel;
+class StructureDiagnosticsPanel;
 
 class MainWindow : public QMainWindow, public ToolHost {
   Q_OBJECT
@@ -254,6 +255,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   void showFoundationDialogFor(bool pads, bool mat = false);
   void showFoundationSupportsDialog();
   void showFrameCheckPanel();
+  void showStructureDiagnostics();
   void showTakeOffDialog();
   void showWallQuantityDialog();
   void showWallBaysDialog();
@@ -415,6 +417,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   QDockWidget* sectionDock_ = nullptr;
   QDockWidget* memberPanel_ = nullptr;
   FrameCheckPanel* frameCheckPanel_ = nullptr;
+  StructureDiagnosticsPanel* structurePanel_ = nullptr;
   QLabel* memberSummary_ = nullptr;
   void showMemberPanel();
   void refreshMemberPanel();

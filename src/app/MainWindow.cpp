@@ -3,6 +3,7 @@
 #include "WallBaysDialog.h"
 #include "FoundationSupportsDialog.h"
 #include "FrameCheckPanel.h"
+#include "StructureDiagnosticsPanel.h"
 #include "MainWindow.h"
 #include "sbr/KernelError.h"
 #include "DrawingExport.h"
@@ -1115,6 +1116,8 @@ void MainWindow::buildMenus() {
   tools->addAction(tr("基礎までの支持先（柱・土台・床束）..."), this, &MainWindow::showFoundationSupportsDialog)
       ->setObjectName(QStringLiteral("foundationSupportsAction"));
   tools->addAction(tr("架構チェック"), this, &MainWindow::showFrameCheckPanel)->setObjectName(QStringLiteral("frameCheckAction"));
+  tools->addAction(tr("構造の診断（画面に重ねる）..."), this, &MainWindow::showStructureDiagnostics)
+      ->setObjectName(QStringLiteral("structureDiagnosticsAction"));
   tools->addAction(tr("木材の拾い出し..."), this, &MainWindow::showTakeOffDialog)
       ->setObjectName(QStringLiteral("takeOffAction"));
   tools->addAction(tr("木造の壁量..."), this, &MainWindow::showWallQuantityDialog)
@@ -1276,7 +1279,7 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
   timber->setPopupMode(QToolButton::InstantPopup);
   auto* timberMenu = new QMenu(timber);
   timberMenu->setObjectName(QStringLiteral("architectureTimberMenu"));
-  for (const char* name : {"timberFrameAction", "foundationAction", "foundationMatAction", "foundationPadsAction", "foundationSupportsAction", "frameCheckAction", "wallBaysAction", "wallQuantityAction", "takeOffAction"})
+  for (const char* name : {"timberFrameAction", "foundationAction", "foundationMatAction", "foundationPadsAction", "foundationSupportsAction", "frameCheckAction", "structureDiagnosticsAction", "wallBaysAction", "wallQuantityAction", "takeOffAction"})
     timberMenu->addAction(findChild<QAction*>(QLatin1String(name)));
   timber->setMenu(timberMenu);
   bar->addWidget(timber);
@@ -2002,6 +2005,7 @@ QString MainWindow::elementSummary() const {
 
 void MainWindow::onDocumentChanged() {
   if (frameCheckPanel_) frameCheckPanel_->invalidate();
+  if (structurePanel_) structurePanel_->invalidate();
   static_cast<GuiProgress*>(progress_.get())->finish();
   viewport_->scheduleSync();
   if (refreshPending_) return;
@@ -2663,6 +2667,11 @@ void MainWindow::showWallBaysDialog() {
 void MainWindow::showFoundationSupportsDialog() {
   if(auto* current=findChild<FoundationSupportsDialog*>()) {current->show();current->raise();return;}
   auto* dialog=new FoundationSupportsDialog(this);dialog->setAttribute(Qt::WA_DeleteOnClose);dialog->show();
+}
+
+void MainWindow::showStructureDiagnostics() {
+  if (!structurePanel_) structurePanel_ = new StructureDiagnosticsPanel(this);
+  structurePanel_->show(); structurePanel_->raise(); structurePanel_->refresh();
 }
 
 void MainWindow::showFrameCheckPanel() {

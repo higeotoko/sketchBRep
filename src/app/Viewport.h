@@ -156,6 +156,10 @@ class Viewport : public QWidget {
   // Picked inputs shown by their role (e.g. rail 1 red, rail 2 green,
   // profiles blue), drawn thick over the model; empty clears.
   void setRoleShapes(const std::vector<std::pair<TopoDS_Shape, Quantity_Color>>& shapes);
+  // Read-only structural diagnostics drawn on their own layer (never picked, never
+  // part of the model); empty clears. Independent of tools' role shapes.
+  void setDiagnosticShapes(const std::vector<std::pair<TopoDS_Shape, Quantity_Color>>& shapes);
+  std::size_t diagnosticShapeCount() const { return diagnostics_.size(); }
   std::size_t roleShapeCount() const { return roles_.size(); }
   // What the tool preview shows now (null: nothing) - for checks.
   TopoDS_Shape sectionMarkerShape() const {
@@ -451,6 +455,7 @@ class Viewport : public QWidget {
   Handle(AIS_Shape) preview_;
   Handle(AIS_Shape) inspectionMarker_;
   std::vector<Handle(AIS_Shape)> roles_;
+  std::vector<Handle(AIS_Shape)> diagnostics_;
   Handle(AIS_Shape) snapMarker_;
   Handle(AIS_Shape) inferenceLine_;
   Handle(AIS_Shape) referenceLine_;

@@ -34,6 +34,7 @@
 #include <QComboBox>
 #include <QSlider>
 #include <QMenu>
+#include <QProgressBar>
 #include <QMessageBox>
 #include <QDoubleSpinBox>
 #include <QSpinBox>
@@ -322,6 +323,7 @@ class GuiPhase1 : public QObject {
   void foundationDialogCreatesAndRegeneratesPlan();
   void foundationMatDialogMakesSlabAndPassage();
   void timberInteriorSillsFromDialog();
+  void structureDiagnosticsOverlayIsReadOnlyAndClearsOnEdit();
   void foundationSupportsSelectActualPartsAndInvalidate();
   void foundationPadsFromMissingFloorPostsAndRegeneration();
   void foundationPadsWithDifferentTopsReloadWithoutChangingTheModel();
@@ -9906,6 +9908,63 @@ void GuiPhase1::timberInteriorSillsFromDialog() {
     dialog->reject();
   });
   f.window.setSelection({frame});action->trigger();QVERIFY(seen);
+}
+
+// Structural overlay: wall bars, markers and drawing; reading never edits the model,
+// and an edit removes the drawing until the user updates it.
+void GuiPhase1::structureDiagnosticsOverlayIsReadOnlyAndClearsOnEdit() {
+  using nlohmann::json;
+  Fixture f;QVERIFY(f.setUp(3000,2000));auto& m=f.window.modeler();
+  auto wall=[](std::string id,std::string direction,double length) {
+    return json{{"id",id},{"floor","1"},{"direction",direction},{"spec","brace_45x90"},{"start",{0,0}},
+                {"end",direction=="X"?json{length,0}:json{0,length}},{"height_mm",3000},{"verified",true}};
+  };
+  const json inputs={{"height_m",6},{"co_designated",false},{"wind_coefficient_cm_m2",50},
+      {"input_basis","GUIテストの仮想入力（実建物ではない）"},
+      {"floors",{{{"id","1"},{"name","1階"},{"area_m2",50},{"weight_kn",98},{"wind_x_m2",30},{"wind_y_m2",6},{"walls_complete",true}}}},
+      {"walls",{wall("x","X",10000),wall("y","Y",4000)}}};
+  QVERIFY(m.setWallCalculation(inputs.dump()));
+  doc::Modeler::MemberSpec s;s.start={1500,1000,400};s.end={1500,1000,800};s.section.width=s.section.depth=90;
+  s.role="floor_post";s.materialClass="timber";const auto post=m.createMember(s);QVERIFY(post);
+  f.vp->syncNow();
+  const auto before=serializeDocument(m.document());const auto revision=m.history().revision();
+  auto* action=f.window.findChild<QAction*>(QStringLiteral("structureDiagnosticsAction"));QVERIFY(action);
+  QVERIFY(f.window.findChild<QMenu*>(QStringLiteral("architectureTimberMenu"))->actions().contains(action));
+  action->trigger();QTest::qWait(50);
+  auto* panel=f.window.findChild<QDockWidget*>(QStringLiteral("structureDiagnosticsPanel"));QVERIFY(panel && panel->isVisible());
+  auto* walls=panel->findChild<QTableWidget*>(QStringLiteral("structureWallTable"));
+  auto* markers=panel->findChild<QTableWidget*>(QStringLiteral("structureMarkers"));
+  auto* status=panel->findChild<QLabel*>(QStringLiteral("structureStatus"));
+  auto* unassessed=panel->findChild<QLabel*>(QStringLiteral("structureUnassessed"));
+  auto* overlay=panel->findChild<QCheckBox*>(QStringLiteral("structureOverlay"));
+  auto* refresh=panel->findChild<QPushButton*>(QStringLiteral("structureRefresh"));
+  QVERIFY(walls && markers && status && unassessed && overlay && refresh);
+  QCOMPARE(walls->rowCount(),2);
+  QCOMPARE(walls->item(0,3)->text(),QStringLiteral("足りている（壁量の比較のみ）"));
+  QCOMPARE(walls->item(1,3)->text(),QStringLiteral("不足"));
+  QVERIFY(qobject_cast<QProgressBar*>(walls->cellWidget(1,2))->text().contains(QStringLiteral("80%")));
+  bool supportRow=false;
+  for(int r=0;r<markers->rowCount();++r)
+    supportRow=supportRow || (markers->item(r,0)->text()==QStringLiteral("支えなし") &&
+                              markers->item(r,0)->data(Qt::UserRole).toStringList().contains(QString::fromStdString(*post)));
+  QVERIFY(supportRow);
+  QVERIFY(unassessed->text().contains(QStringLiteral("四分割法")) && unassessed->text().contains(QStringLiteral("N値")));
+  QVERIFY(f.vp->diagnosticShapeCount()>=3);  // two wall bands and the post marker
+  QCOMPARE(serializeDocument(m.document()),before);QCOMPARE(m.history().revision(),revision);
+  if(const auto capture=qEnvironmentVariable("SBR_STRUCTURE_CAPTURE");!capture.isEmpty()) {
+    panel->grab().save(capture+QStringLiteral("-panel.png"));
+    f.window.exportImage(capture+QStringLiteral("-model.png"));
+  }
+  overlay->setChecked(false);QCOMPARE(f.vp->diagnosticShapeCount(),std::size_t(0));
+  overlay->setChecked(true);QVERIFY(f.vp->diagnosticShapeCount()>=3);
+  // An edit clears the drawing and asks for an update; updating draws again.
+  gp_Trsf move;move.SetTranslation(gp_Vec(100,0,0));QVERIFY(m.transform({*post},move,"Move Post"));
+  QTest::qWait(30);
+  QCOMPARE(f.vp->diagnosticShapeCount(),std::size_t(0));
+  QVERIFY(status->text().contains(QStringLiteral("モデルが変わりました")));
+  QCOMPARE(walls->rowCount(),0);
+  refresh->click();QVERIFY(f.vp->diagnosticShapeCount()>=3);QCOMPARE(walls->rowCount(),2);
+  panel->close();QCOMPARE(f.vp->diagnosticShapeCount(),std::size_t(0));
 }
 
 void GuiPhase1::timberFramePreviewApplyLevelsAndUndo() {

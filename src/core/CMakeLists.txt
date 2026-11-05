@@ -7,6 +7,7 @@ add_library(sbr_core STATIC
   src/ConstructionFoundation.cpp
   src/FoundationSupports.cpp
   src/ConstructionCheck.cpp
+  src/ConstructionDiagnostics.cpp
   src/ConstructionQuantity.cpp
   src/ConstructionWall.cpp
   src/ConstructionWallBays.cpp

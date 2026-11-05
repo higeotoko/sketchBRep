@@ -1,6 +1,7 @@
 #include "sbr/ConstructionQuantity.h"
 #include "sbr/ConstructionWall.h"
 #include "sbr/ConstructionFoundation.h"
+#include "sbr/ConstructionDiagnostics.h"
 #include "sbr/ConstructionCheck.h"
 #include "sbr/api/CommandApi.h"
 #include "sbr/ConstructionGuide.h"
@@ -2102,6 +2103,15 @@ const std::vector<CommandDef>& commands() {
          "pair_budget":{"type":"integer"}}}),
        [](doc::Modeler& m,const json& a) {auto result=json::parse(must(construction::foundationSupports(m.document(),a.dump())));
          result["revision"]=m.history().revision();return result;}},
+      {"check_structure",
+       "Read-only structural overview for an on-screen overlay: wall quantity rows (existing/required per storey and "
+       "direction, with the coefficient-table caveat), designated walls with world coordinates (drawn at the nFL level), "
+       "and markers from check_frame (fail / not_evaluated) and check_foundation_supports (no detected support). "
+       "frame_rules optionally limits the frame rules. Quarter-division balance, N-value joints, post size and member "
+       "sections are listed as unassessed, never as passing. Changes nothing.",
+       SCHEMA({"type":"object","properties":{"frame_rules":{"type":"array","items":{"type":"string"}}}}),
+       [](doc::Modeler& m,const json& a) {auto result=json::parse(must(construction::structuralDiagnostics(m.document(),a.dump())));
+         result["revision"]=m.history().revision();return result;}},
       {"generate_frame",
        "Generate a timber post_beam_2storey frame (1 or 2 storeys, gable/shed Japanese roof). "
        "Read get_construction_guide first. inputs: {x_bays:10,y_bays:8,module:910,storeys:2,roof:gable|shed, "
@@ -2741,7 +2751,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
       name == "preview" || name == "query_objects" || name == "aggregate" || name == "get_changes" ||
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
       name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" ||
-        name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports") {
+        name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure") {
     return E::Read;
   }
   if (isFileCommand(name)) return E::ExternalIo;
