@@ -17,28 +17,39 @@ namespace sbr::app {
 using json=nlohmann::json;
 bool MainWindow::previewFoundation(const std::string& inputs,const std::string& replace,bool replaceEdited) {
   json args={{"inputs",json::parse(inputs)},{"preview",true},{"expected_revision",modeler_.history().revision()}};
+  const bool pads=args["inputs"].value("type",std::string("strip"))=="pads";
+  const auto title=pads?tr("束石・独立基礎計画"):tr("布基礎計画");
   if(!replace.empty()) args["replace"]=replace;
   if(replaceEdited) args["on_modified"]="replace";
   const auto trial=json::parse(aiBridge_->execute(json{{"command","generate_foundation"},{"args",args}}.dump()));
   if(!trial.value("ok",false)) { lastError_=QString::fromStdString(trial.value("error",std::string("基礎を生成できません")));return false; }
   const double volume=trial["result"]["generated_parts_volume_m3"].get<double>();
   args["preview"]=false;args.erase("expected_revision");
-  const json request={{"command","propose"},{"args",{{"description","布基礎計画のプレビュー"},
+  const json request={{"command","propose"},{"args",{{"description",title.toStdString()},
       {"commands",json::array({{{"command","generate_foundation"},{"args",args}}})}}}};
   const auto response=json::parse(aiBridge_->execute(request.dump()));
   if(!response.value("ok",false)) { lastError_=QString::fromStdString(response.value("error",std::string("プレビューできません")));return false; }
   lastError_.clear();
-  proposalLabel_->setText(tr("布基礎計画 — コンクリート %1 m³（計画形状）。「適用」／「却下」").arg(volume,0,'f',3));
-  setStatus(tr("布基礎をプレビューしています。地盤・構造・配筋等は未照査です。確認して「適用」を押してください"));
+  proposalLabel_->setText(tr("%1 — コンクリート %2 m³（計画形状）。「適用」／「却下」").arg(title).arg(volume,0,'f',3));
+  setStatus(tr("%1をプレビューしています。地盤・構造・配筋等は未照査です。確認して「適用」を押してください").arg(title));
   return true;
 }
 
 void MainWindow::showFoundationDialog() {
+  showFoundationDialogFor(false);
+}
+void MainWindow::showFoundationPadsDialog() {
+  showFoundationDialogFor(true);
+}
+void MainWindow::showFoundationDialogFor(bool pads) {
   const auto openedRevision=modeler_.history().revision();
   QDialog dialog(this);dialog.setObjectName(QStringLiteral("foundationDialog"));
-  dialog.setWindowTitle(tr("布基礎計画（土台から作成・作り直し）"));dialog.resize(780,680);
+  dialog.setWindowTitle(pads?tr("束石・独立基礎計画（床束・柱から）"):tr("布基礎計画（土台から作成・作り直し）"));dialog.resize(780,680);
   auto* layout=new QVBoxLayout(&dialog);
-  auto* notice=new QLabel(tr("実在する土台から、立上りと底盤のコンクリート形状を作ります。交点は層ごとに結合します。\n"
+  auto* notice=new QLabel(pads?tr("選択した実在する床束・柱の下面から、束石・独立基礎の計画形状を作ります。\n"
+      "寸法は仮の計画値です。地盤・支持力・凍結・構造・配筋・アンカー等は未照査です。\n"
+      "未選定の床束の目印は対象外です。既存基礎と重なる配置は避け、支持先一覧で未検出の床束を選んでください。"):
+      tr("実在する土台から、立上りと底盤のコンクリート形状を作ります。交点は層ごとに結合します。\n"
       "初期寸法は計画用です。地盤・支持力・構造・配筋・凍結深度・人通口・換気は未照査です。\n"
       "対象は指定した土台の下のみ。床束下の束石、土台のない耐力壁下、べた基礎は別途計画が必要です。"),&dialog);
   notice->setWordWrap(true);layout->addWidget(notice);
@@ -47,28 +58,35 @@ void MainWindow::showFoundationDialog() {
   auto* frames=new QComboBox(&dialog);frames->setObjectName(QStringLiteral("foundationSourceFrame"));
   const json initialSources=selection_;
   json selectedSources=initialSources;
-  frames->addItem(tr("現在選択した土台（グループを除く）"),QString());
+  frames->addItem(pads?tr("選択した実部材の床束・柱"):tr("現在選択した土台（グループを除く）"),QString());
+  if(pads) frames->addItem(tr("この計画に保存した参照部材"),QString());
   for(const auto& o:modeler_.document().objects()) {
-    if(o.attributes.count("foundation_plan")) plans->addItem(QString::fromStdString(o.name),QString::fromStdString(o.id));
+    if(o.attributes.count("foundation_plan") && (json::parse(o.attributes.at("foundation_plan"))["inputs"].value("type",std::string("strip"))=="pads")==pads)
+      plans->addItem(QString::fromStdString(o.name),QString::fromStdString(o.id));
     const auto* group=std::get_if<doc::GroupNode>(&o.recipe.base);
-    if(group && (!group->constructionFrame.empty() || (selection_.size()==1 && selection_[0]==o.id)))
+    if(!pads && group && (!group->constructionFrame.empty() || (selection_.size()==1 && selection_[0]==o.id)))
       frames->addItem(QString::fromStdString(o.name),QString::fromStdString(o.id));
   }
-  if(frames->count()>1 && selection_.empty()) frames->setCurrentIndex(1);
+  if(!pads && frames->count()>1 && selection_.empty()) frames->setCurrentIndex(1);
   for(int i=1;i<frames->count();++i) if(selection_.size()==1 && frames->itemData(i).toString().toStdString()==selection_[0]) frames->setCurrentIndex(i);
-  form->addRow(tr("基礎計画"),plans);form->addRow(tr("対象の土台"),frames);
+  form->addRow(tr("基礎計画"),plans);form->addRow(pads?tr("対象の床束・柱"):tr("対象の土台"),frames);
   auto number=[&](const QString& name,double value,double minimum,double maximum) {
     auto* spin=new QDoubleSpinBox(&dialog);spin->setObjectName(name);spin->setRange(minimum,maximum);spin->setDecimals(1);spin->setValue(value);return spin;
   };
   auto* stemWidth=number("foundationStemWidth",150,1,10000);
   auto* stemHeight=number("foundationStemHeight",600,1,10000);
-  auto* footWidth=number("foundationFootWidth",450,1,10000);
+  auto* footWidth=number("foundationFootWidth",pads?300:450,1,10000);
   auto* footHeight=number("foundationFootHeight",150,1,10000);
+  auto* padDepth=number("foundationPadDepth",300,1,10000);padDepth->setVisible(pads);
   auto* packing=number("foundationPacking",20,0,1000);
   auto* top=number("foundationTop",400,-1000000,1000000);
-  form->addRow(tr("立上り幅 mm"),stemWidth);form->addRow(tr("立上り高さ mm"),stemHeight);
-  form->addRow(tr("底盤幅 mm"),footWidth);form->addRow(tr("底盤厚 mm"),footHeight);form->addRow(tr("土台下のパッキン高さ mm"),packing);
-  auto* automatic=new QCheckBox(tr("土台下面−パッキンで基礎天端を算出"),&dialog);automatic->setChecked(true);
+  stemWidth->setVisible(!pads);stemHeight->setVisible(!pads);packing->setVisible(!pads);
+  if(!pads) {form->addRow(tr("立上り幅 mm"),stemWidth);form->addRow(tr("立上り高さ mm"),stemHeight);}
+  form->addRow(pads?tr("束石の幅（世界X）mm"):tr("底盤幅 mm"),footWidth);
+  if(pads) form->addRow(tr("束石の奥行（世界Y）mm"),padDepth);
+  form->addRow(pads?tr("束石の高さ mm"):tr("底盤厚 mm"),footHeight);
+  if(!pads) form->addRow(tr("土台下のパッキン高さ mm"),packing);
+  auto* automatic=new QCheckBox(pads?tr("各床束・柱の下面に天端を合わせる"):tr("土台下面−パッキンで基礎天端を算出"),&dialog);automatic->setChecked(true);
   automatic->setObjectName(QStringLiteral("foundationAutomaticTop"));form->addRow(automatic);
   auto* topLabel=new QLabel(tr("基礎天端（世界Z）mm"),&dialog);form->addRow(topLabel,top);
   auto visibility=[=]{ top->setVisible(!automatic->isChecked());topLabel->setVisible(!automatic->isChecked()); };
@@ -85,22 +103,22 @@ void MainWindow::showFoundationDialog() {
     const auto p=json::parse(*result)["plans"][0];
     QStringList text;
     const auto state=p["status"].get<std::string>();
-    text<<tr("状態：%1").arg(state=="current"?tr("参照土台・生成形状に変更なし（構造の合否ではありません）"):
-        state=="needs_regeneration"?tr("土台変更あり・再生成が必要"):state=="modified"?tr("基礎に手編集あり"):tr("参照土台がない・未対応"));
-    text<<tr("基礎天端 Z=%1 mm").arg(p["top_z"].get<double>());
+    text<<tr("状態：%1").arg(state=="current"?tr("参照部材・生成形状に変更なし（構造の合否ではありません）"):
+        state=="needs_regeneration"?tr("参照部材の変更あり・再生成が必要"):state=="modified"?tr("基礎に手編集あり"):tr("参照部材がない・未対応"));
+    text<<(p["top_z"].is_number()?tr("基礎天端 Z=%1 mm").arg(p["top_z"].get<double>()):tr("基礎天端：各部材の下面に合わせた高さ"));
     if(p["generated_parts_volume_m3"].is_number()) text<<tr("コンクリート %1 m³").arg(p["generated_parts_volume_m3"].get<double>(),0,'f',3);
     for(const auto& [role,q]:p["quantities"].items()) text<<tr("%1：%2 m³／連続体 %3 個").arg(
-        role=="foundation_stem"?tr("立上り"):tr("底盤")).arg(q["volume_m3"].get<double>(),0,'f',3).arg(q["solids"].get<int>());
+        role=="foundation_stem"?tr("立上り"):role=="foundation_pad"?tr("束石・独立基礎"):tr("底盤")).arg(q["volume_m3"].get<double>(),0,'f',3).arg(q["solids"].get<int>());
     for(const auto& s:p["sources"]) {
-      text<<tr("%1：土台下面から基礎天端 %2 mm").arg(QString::fromStdString(s["name"])).arg(s["packing_gap_mm"].get<double>(),0,'f',1);
-      if(s["packing_gap_matches"]==false) text<<tr("  要確認：設定したパッキン高さと一致しません。");
+      text<<tr("%1：部材下面から基礎天端 %2 mm").arg(QString::fromStdString(s["name"])).arg(s["packing_gap_mm"].get<double>(),0,'f',1);
+      if(s["packing_gap_matches"]==false) text<<(pads?tr("  要確認：部材下面と基礎天端が一致しません。"):tr("  要確認：設定したパッキン高さと一致しません。"));
     }
     for(const auto& reason:p["reasons"]) text<<QString::fromStdString(reason);
     text<<tr("地盤・構造・配筋・開口等の設計確認は含みません。");report->setPlainText(text.join(QStringLiteral("\n")));
   };
   auto loadPlan=[&] {
     const auto id=plans->currentData().toString().toStdString();overwrite->setChecked(false);
-    if(id.empty()) { selectedSources=initialSources;refreshReport();return; }
+    if(id.empty()) { selectedSources=initialSources;if(pads) frames->setCurrentIndex(0);refreshReport();return; }
     const auto* root=modeler_.document().find(id);if(!root) return;
     const auto manifest=json::parse(root->attributes.at("foundation_plan"));const auto& in=manifest["inputs"];
     if(in.contains("frame")) {
@@ -113,15 +131,17 @@ void MainWindow::showFoundationDialog() {
       }
       frames->setCurrentIndex(index);
     }
-    else { selectedSources=in["sources"];frames->setCurrentIndex(0); }
-    stemWidth->setValue(in["stem_width"]);stemHeight->setValue(in["stem_height"]);footWidth->setValue(in["footing_width"]);
-    footHeight->setValue(in["footing_thickness"]);packing->setValue(in["packing_mm"]);
-    automatic->setChecked(!in.contains("top_z"));top->setValue(manifest["top_z"]);refreshReport();
+    else { selectedSources=in["sources"];frames->setCurrentIndex(pads?1:0); }
+    if(pads) {footWidth->setValue(in["width"]);padDepth->setValue(in["depth"]);footHeight->setValue(in["height"]);}
+    else {stemWidth->setValue(in["stem_width"]);stemHeight->setValue(in["stem_height"]);footWidth->setValue(in["footing_width"]);
+      footHeight->setValue(in["footing_thickness"]);packing->setValue(in["packing_mm"]);}
+    automatic->setChecked(!in.contains("top_z"));if(manifest["top_z"].is_number()) top->setValue(manifest["top_z"]);refreshReport();
   };
   connect(plans,qOverload<int>(&QComboBox::currentIndexChanged),&dialog,[&]{loadPlan();});
   for(int i=1;i<plans->count();++i) if(selection_.size()==1 && plans->itemData(i).toString().toStdString()==selection_[0]) plans->setCurrentIndex(i);
   loadPlan();
   auto* buttons=new QDialogButtonBox(QDialogButtonBox::Cancel,&dialog);
+  buttons->button(QDialogButtonBox::Cancel)->setText(tr("キャンセル"));
   auto* preview=buttons->addButton(tr("プレビュー"),QDialogButtonBox::AcceptRole);preview->setObjectName(QStringLiteral("foundationPreview"));
   auto* inspect=buttons->addButton(tr("検査・数量を更新"),QDialogButtonBox::ActionRole);inspect->setObjectName(QStringLiteral("foundationInspect"));
   connect(inspect,&QPushButton::clicked,&dialog,refreshReport);
@@ -132,7 +152,9 @@ void MainWindow::showFoundationDialog() {
   json inputs={{"stem_width",stemWidth->value()},{"stem_height",stemHeight->value()},
       {"footing_width",footWidth->value()},{"footing_thickness",footHeight->value()},{"packing_mm",packing->value()}};
   const auto source=frames->currentData().toString().toStdString();
-  if(source.empty()) { inputs["sources"]=selectedSources;inputs["frame"]=nullptr; }
+  if(pads) inputs={{"type","pads"},{"width",footWidth->value()},{"depth",padDepth->value()},{"height",footHeight->value()}};
+  if(pads) inputs["sources"]=frames->currentIndex()==0?initialSources:selectedSources;
+  else if(source.empty()) { inputs["sources"]=selectedSources;inputs["frame"]=nullptr; }
   else { inputs["frame"]=source;inputs["sources"]=nullptr; }
   inputs["top_z"]=automatic->isChecked()?json():json(top->value());
   // merge-patch null removes a previous manual height when switching to auto.

@@ -1,5 +1,10 @@
 # 06. AI 連携（バイパス）の設計と活用方針
 
+`generate_foundation {inputs:{type:"pads",sources:[床束・柱ID],width?,depth?,height?,top_z?}}` は束石・独立基礎の計画。
+初期値は仮の300×300×150mmで、地盤・必要断面等の照査は含まない。対象は実部材の明示選択。
+同位置の参照をまとめ、既存立体との体積の重なりは生成前に止める。プレビュー・適用・置換は既存の布基礎と同じ経路。
+複数の束石の数量は `quantities.foundation_pad.ids` と体積で返す。[詳細](68_foundation_pads.md)。
+
 `check_foundation_supports {within?,ids?,tolerance_mm?,search_depth_mm?,packing_mm?,pair_budget?}` は、
 柱・土台・床束の下面と支持面の重なり・隙間、および土台を経由する基礎への形状対応を読み取り専用で返す。
 未評価・部分支持・重複候補・基礎計画の変更状態を区別する。耐力や接合の合否ではない。

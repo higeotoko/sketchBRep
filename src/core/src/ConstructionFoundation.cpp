@@ -5,6 +5,8 @@
 #include "sbr/doc/Modeler.h"
 #include "sbr/geom/Measure.h"
 #include <TopExp_Explorer.hxx>
+#include <BRepAlgoAPI_Common.hxx>
+#include <TopTools_ListOfShape.hxx>
 #include <algorithm>
 #include <cmath>
 #include <map>
@@ -43,14 +45,56 @@ std::string attr(const Object& o, const Document& d, const std::string& key) {
   return {};
 }
 struct Sill { ObjectId id; gp_Pnt a, b; double bottom; };
+struct PadSite { ObjectId id; gp_Pnt center; double bottom; };
 struct Sources {
   json inputs, rows = json::array();
   std::vector<Sill> lines;
+  std::vector<PadSite> sites;
+  bool pads=false;
+  double padWidth=0,padDepth=0,padHeight=0;
   std::string signature, key;
-  double top, stemWidth, stemHeight, footWidth, footHeight, packing;
+  double top=0, stemWidth=0, stemHeight=0, footWidth=0, footHeight=0, packing=0;
   Sources(const Document& d, const json& requested) {
     inputs = requested;
-    allowed(inputs, {"frame", "sources", "stem_width", "stem_height", "footing_width", "footing_thickness", "packing_mm", "top_z"});
+    const auto type=inputs.value("type",std::string("strip"));
+    need(type=="strip" || type=="pads","typeはstrip/padsです");pads=type=="pads";
+    if(pads) {
+      allowed(inputs,{"type","sources","width","depth","height","top_z"});
+      need(inputs.contains("sources") && inputs["sources"].is_array(),"実在する床束・柱のsources配列を指定してください");
+      std::set<ObjectId> ids;for(const auto& id:inputs["sources"]) ids.insert(id.get<std::string>());
+      need(!ids.empty() && ids.size()<=200,"床束・柱を1〜200本選択してください。未選定の目印は対象にできません");
+      padWidth=dimension(inputs,"width",300);padDepth=dimension(inputs,"depth",300);padHeight=dimension(inputs,"height",150);
+      inputs["sources"]=ids;inputs["width"]=padWidth;inputs["depth"]=padDepth;inputs["height"]=padHeight;
+      if(inputs.contains("top_z")) {
+        need(inputs["top_z"].is_number(),"top_zは高さmmです");top=inputs["top_z"].get<double>();
+        need(std::isfinite(top) && std::abs(top)<1e9,"束石天端が範囲外です");
+      }
+      for(const auto& id:ids) {
+        const auto* original=d.find(id);need(original,"参照部材がありません: "+id);
+        const auto role=attr(*original,d,"kind");
+        need(role=="floor_post" || role=="column" || role=="through_column","床束・柱を選択してください: "+id);
+        need(attr(*original,d,"display_only")!="true","未選定の目印ではなく実部材を指定してください: "+original->name);
+        const auto expanded=construction::frameMemberObject(d,*original);const auto& own=expanded?*expanded:*original;
+        const auto* member=std::get_if<LinearMember>(&own.recipe.base);
+        need(member && own.recipe.modifiers.empty() && member->section.kind==geom::Section::Kind::Rectangle,
+             "加工・任意形状・非矩形の部材は未対応です: "+original->name);
+        const auto world=d.parentTransform(*original)*own.transform;
+        const auto axis=gp_Vec(member->start,member->end).Transformed(world);
+        need(axis.Magnitude()>1 && gp_Dir(axis).IsParallel(gp::DZ(),1e-6),"鉛直な床束・柱を指定してください: "+original->name);
+        const auto bounds=geom::exactBounds(d.worldShape(*original));need(!bounds.IsVoid(),"部材形状がありません");
+        const auto lo=bounds.CornerMin(),hi=bounds.CornerMax();
+        need(padWidth+1e-4>=hi.X()-lo.X() && padDepth+1e-4>=hi.Y()-lo.Y(),"束石の幅・奥行が部材下面を覆っていません: "+original->name);
+        const double bottom=std::round(lo.Z()*1e6)/1e6;
+        gp_Pnt center((lo.X()+hi.X())/2,(lo.Y()+hi.Y())/2,bottom);
+        sites.push_back({id,center,bottom});
+        rows.push_back({{"id",id},{"name",original->name},{"base_z",bottom},{"center",point(center)},
+                        {"stamp",construction::frameFingerprint(own)}});
+      }
+      key="pads:sources:"+inputs["sources"].dump();signature=codec::sha256Hex(rows.dump());
+      if(!inputs.contains("top_z")) top=sites.front().bottom;
+      return;
+    }
+    allowed(inputs, {"type", "frame", "sources", "stem_width", "stem_height", "footing_width", "footing_thickness", "packing_mm", "top_z"});
     need(inputs.contains("frame") != inputs.contains("sources"), "frameまたはsources（土台ID）のどちらか一つを指定してください");
     std::set<ObjectId> ids;
     if (inputs.contains("frame")) {
@@ -110,6 +154,7 @@ struct Sources {
     inputs["footing_width"]=footWidth; inputs["footing_thickness"]=footHeight; inputs["packing_mm"]=packing;
     signature = codec::sha256Hex(rows.dump());
   }
+  double siteTop(const PadSite& site) const {return inputs.contains("top_z")?top:site.bottom;}
 };
 std::string rootStamp(const Object& root, const Document& d) {
   Object world = root; world.attributes.erase(kManifest); world.transform = d.worldTransform(root);
@@ -146,6 +191,37 @@ Object network(const Document& d, const Sources& plan, const ObjectId& root, boo
   const auto built = rebuild(o,d.regenContext()); need(built.ok(),built.message());
   return o;
 }
+double overlapVolume(const TopoDS_Shape& a,const TopoDS_Shape& b) {
+  if(geom::exactBounds(a).IsOut(geom::exactBounds(b))) return 0;
+  TopTools_ListOfShape arguments,tools;arguments.Append(a);tools.Append(b);
+  BRepAlgoAPI_Common common;common.SetArguments(arguments);common.SetTools(tools);common.SetNonDestructive(true);common.Build();
+  need(common.IsDone(),"基礎どうしの重なりを確認できません");return std::abs(geom::volume(common.Shape()));
+}
+std::vector<Object> padObjects(const Document& d,const Sources& plan,const ObjectId& root,json& sourceTops) {
+  std::vector<Object> out;std::map<std::string,std::size_t> positions;
+  for(const auto& site:plan.sites) {
+    const double top=plan.siteTop(site);sourceTops[site.id]=top;
+    const auto position=point(gp_Pnt(site.center.X(),site.center.Y(),top)).dump();
+    if(positions.count(position)) {
+      auto& part=out.at(positions.at(position));auto refs=json::parse(part.attributes.at("source_ids"));refs.push_back(site.id);
+      part.attributes["source_ids"]=refs.dump();continue;
+    }
+    Object o;o.id=generateObjectId();o.parent=root;o.layer="基礎・土台";o.name="束石・独立基礎（計画）";
+    o.attributes={{"kind","foundation_pad"},{"material_class","rc"},{"foundation_owner",root},{"source_ids",json::array({site.id}).dump()}};
+    geom::SketchPlane plane;plane.origin={site.center.X()-plan.padWidth/2,site.center.Y()-plan.padDepth/2,top-plan.padHeight};
+    o.recipe.base=RectangleProfile{plane,plan.padWidth,plan.padDepth};o.recipe.modifiers.push_back(ExtrudeOp{plan.padHeight});
+    const auto status=rebuild(o,d.regenContext());need(status.ok(),status.message());
+    for(const auto& other:out) need(overlapVolume(o.shape,other.shape)<=.001,"束石どうしが重なります。対象・寸法を分けて計画してください");
+    for(const auto& other:d.objects()) {
+      if(d.isAncestor(root,other.id)) continue;
+      if(other.isContainer() || attr(other,d,"display_only")=="true") continue;
+      const auto shape=d.worldShape(other);if(shape.IsNull() || !TopExp_Explorer(shape,TopAbs_SOLID).More()) continue;
+      need(overlapVolume(o.shape,shape)<=.001,"既存の形状と束石が重なります: "+other.name+"。支持先一覧で未検出の部材を選んでください");
+    }
+    positions[position]=out.size();out.push_back(std::move(o));
+  }
+  return out;
+}
 json report(const Document& d, const Object& root) {
   const auto manifest=json::parse(root.attributes.at(kManifest));
   json result={{"foundation",root.id},{"name",root.name},{"inputs",manifest.at("inputs")},
@@ -161,7 +237,9 @@ json report(const Document& d, const Object& root) {
     }
     for (const auto& line : source.rows) {
       auto row=line; row.erase("stamp");
-      const double gap=line["sill_bottom_z"].get<double>()-manifest.at("top_z").get<double>();
+      const double plannedTop=source.pads?manifest.at("source_tops").at(line["id"].get<std::string>()).get<double>():manifest.at("top_z").get<double>();
+      const double gap=line[source.pads?"base_z":"sill_bottom_z"].get<double>()-plannedTop;
+      row["planned_top_z"]=plannedTop;
       row["packing_gap_mm"]=gap;
       row["packing_gap_matches"] = result["status"]=="current" ? json(std::abs(gap-source.packing)<=1) : json();
       result["sources"].push_back(row);
@@ -175,13 +253,15 @@ json report(const Document& d, const Object& root) {
     const double volume=geom::volume(shape)/1e9;
     int solids=0; for (TopExp_Explorer s(shape,TopAbs_SOLID);s.More();s.Next()) ++solids;
     const std::string role=manifest.at("roles").at(id);
-    result["quantities"][role]={{"volume_m3",volume},{"solids",solids},{"id",id}};
+    auto& q=result["quantities"][role];if(q.is_null()) q={{"volume_m3",0.0},{"solids",0},{"ids",json::array()}};
+    q["volume_m3"]=q["volume_m3"].get<double>()+volume;q["solids"]=q["solids"].get<int>()+solids;q["ids"].push_back(id);
+    if(q["ids"].size()==1) q["id"]=id;else q.erase("id");
     total+=volume;
   }
   result["known_parts_volume_m3"]=total;
   result["generated_parts_volume_m3"]=complete?json(total):json();
   result["top_z"]=manifest.at("top_z");
-  result["notice"]="指定した土台下のみの布基礎計画です。床束下・土台のない耐力壁下・べた基礎は別途計画が必要です。交点は各層で結合しています。地盤・構造・配筋等は未照査です。";
+  result["notice"]="指定部材下の基礎計画です。対象外の支持先・べた基礎・地盤・構造・配筋等は別途確認してください。数量は生成部材のみです。";
   return result;
 }
 }
@@ -220,6 +300,7 @@ Result<std::string> Modeler::generateFoundation(const std::string& text) {
     json inputs=previous.empty()?json::object():previous.at("inputs");
     if (args.contains("inputs")) inputs.merge_patch(args["inputs"]);
     Sources plan(document_,inputs);
+    if(old) need(plan.pads==(previous.at("inputs").value("type",std::string("strip"))=="pads"),"基礎種別は置換で変更できません。新規計画を作ってください");
     if(old) for(const auto& line:plan.lines)
       need(!document_.isAncestor(old->id,line.id),"置換対象の基礎内にある土台は参照できません。先に外へ移してください");
     if (replace.empty()) for (const auto& candidate:document_.objects()) {
@@ -231,12 +312,16 @@ Result<std::string> Modeler::generateFoundation(const std::string& text) {
       }
       throw std::runtime_error("requires_decision: 同じ土台の基礎計画があります。replaceで作り直してください: "+candidate.id);
     }
-    Object root; root.id=old?old->id:generateObjectId(); root.name=args.value("name",old?old->name:std::string("布基礎計画"));
+    if(old) for(const auto& site:plan.sites) need(!document_.isAncestor(old->id,site.id),"基礎内の床束・柱は置換前に外へ移してください");
+    Object root; root.id=old?old->id:generateObjectId(); root.name=args.value("name",old?old->name:std::string(plan.pads?"束石・独立基礎計画":"布基礎計画"));
     root.recipe.base=GroupNode{}; root.layer="基礎・土台"; root.attributes["kind"]="foundation_plan";
-    auto stem=network(document_,plan,root.id,false), foot=network(document_,plan,root.id,true);
+    json sourceTops=json::object();std::vector<Object> parts;
+    if(plan.pads) parts=padObjects(document_,plan,root.id,sourceTops);
+    else {parts.push_back(network(document_,plan,root.id,false));parts.push_back(network(document_,plan,root.id,true));}
     json manifest={{"version",1},{"inputs",plan.inputs},{"source_key",plan.key},{"source_signature",plan.signature},
-                   {"roles",{{stem.id,"foundation_stem"},{foot.id,"foundation_footing"}}},
-                   {"top_z",plan.top},{"parts",{{stem.id,construction::frameFingerprint(stem)},{foot.id,construction::frameFingerprint(foot)}}}};
+                   {"roles",json::object()},{"top_z",plan.top},{"parts",json::object()}};
+    if(plan.pads) {manifest["source_tops"]=sourceTops;for(const auto& value:sourceTops) if(std::abs(value.get<double>()-plan.top)>.000001) manifest["top_z"]=nullptr;}
+    for(const auto& part:parts) {manifest["roles"][part.id]=part.attributes.at("kind");manifest["parts"][part.id]=construction::frameFingerprint(part);}
     manifest["root_stamp"]=construction::frameFingerprint(root);
     root.attributes[kManifest]=manifest.dump();
     Command command; command.name="Generate Foundation Plan";
@@ -246,16 +331,21 @@ Result<std::string> Modeler::generateFoundation(const std::string& text) {
       for(const auto& id:ids) if(id!=root.id) command.deltas.push_back({id,*document_.find(id),std::nullopt,document_.indexOf(id)});
     }
     command.deltas.push_back({root.id,old?std::optional<Object>(*old):std::nullopt,root,old?document_.indexOf(root.id):std::nullopt});
-    command.deltas.push_back({stem.id,std::nullopt,stem,std::nullopt}); command.deltas.push_back({foot.id,std::nullopt,foot,std::nullopt});
+    for(const auto& part:parts) command.deltas.push_back({part.id,std::nullopt,part,std::nullopt});
     // Finish measurements and the result before the one model mutation.
     // A geometry/measurement failure must leave no partial foundation behind.
-    const double stemVolume=geom::volume(stem.shape)/1e9, footVolume=geom::volume(foot.shape)/1e9;
     json r={{"foundation",root.id},{"name",root.name},{"inputs",plan.inputs},{"status","current"},
-            {"verified",false},{"top_z",plan.top},{"generated_parts_volume_m3",stemVolume+footVolume},
-            {"quantities",{{"foundation_stem",{{"id",stem.id},{"volume_m3",stemVolume}}},
-                            {"foundation_footing",{{"id",foot.id},{"volume_m3",footVolume}}}}}};
+            {"verified",false},{"top_z",manifest["top_z"]},{"generated_parts_volume_m3",0.0},{"quantities",json::object()}};
+    for(const auto& part:parts) {
+      const double volume=geom::volume(part.shape)/1e9;r["generated_parts_volume_m3"]=r["generated_parts_volume_m3"].get<double>()+volume;
+      auto& q=r["quantities"][part.attributes.at("kind")];if(q.is_null()) q={{"volume_m3",0.0},{"ids",json::array()}};
+      q["volume_m3"]=q["volume_m3"].get<double>()+volume;q["ids"].push_back(part.id);
+      if(q["ids"].size()==1) q["id"]=part.id;else q.erase("id");
+    }
     r["warnings"]={"布基礎の計画形状です。地盤・構造・配筋・開口等は未照査。寸法の初期値は設計値ではありません。",
       "対象は指定した土台下のみ。床束下の束石・土台のない耐力壁下・べた基礎は別途計画してください。"};
+    if(plan.pads) r["warnings"]={"束石・独立基礎の計画形状です。寸法・地盤・支持力・凍結・配筋・アンカー等は未照査です。",
+      "選択部材の下面を参照します。地盤や荷重から基礎底・必要断面を決める機能ではありません。"};
     const auto result=r.dump();
     history_.execute(std::move(command));
     return result;

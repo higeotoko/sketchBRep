@@ -175,6 +175,19 @@ void MainWindow::showTimberFrameDialog() {
   auto* second = floor("timberSecondFloor", "second_floor_system");
   form->addRow(tr("1階の床"), first);
   form->addRow(tr("2階の床"), second);
+  auto* floorPost=new QComboBox;
+  floorPost->setObjectName(QStringLiteral("timberFloorPostSection"));
+  const auto& postRole=guide.at("roles").at("entries").at("floor_post");
+  const auto initialPost=initial.value("sections",json::object()).value("floor_post",postRole.at("default_section").get<std::string>());
+  for(const auto& entry:postRole.at("sections")) {
+    const auto id=entry.get<std::string>();
+    const auto& sections=guide.at("sections").at("entries");
+    const auto name=sections.contains(id)?sections.at(id).value("name",id):id;
+    floorPost->addItem(id=="STEEL-POST-UNSELECTED"?tr("鋼製束（製品未選定の目印）"):tr("木製床束 %1（実形状・耐力未照査）").arg(QString::fromStdString(name)),QString::fromStdString(id));
+  }
+  int postIndex=floorPost->findData(QString::fromStdString(initialPost));
+  if(postIndex<0) {floorPost->addItem(QString::fromStdString(initialPost),QString::fromStdString(initialPost));postIndex=floorPost->count()-1;}
+  floorPost->setCurrentIndex(postIndex);form->addRow(tr("1階の床束"),floorPost);
   auto* range = new QCheckBox(tr("2階の範囲を通り芯の番号で指定（先頭は0）"));
   range->setObjectName(QStringLiteral("timberSecondFloorRange"));
   form->addRow(range);
@@ -278,6 +291,8 @@ void MainWindow::showTimberFrameDialog() {
     inputs["y_bays"] = y->value();
     inputs["module"] = module->value();
   }
+  const auto selectedPost=floorPost->currentData().toString().toStdString();
+  if(selectedPost!=initialPost || initial.value("sections",json::object()).contains("floor_post")) inputs["sections"]["floor_post"]=selectedPost;
   if (!replacing->isChecked()) {
     inputs["storey_height"] = height->value();
     inputs["eave_height"] = eave->value();

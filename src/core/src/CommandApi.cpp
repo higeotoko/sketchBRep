@@ -2059,6 +2059,9 @@ const std::vector<CommandDef>& commands() {
        "top_z optional world elevation; omitted = sill bottom minus packing. Sources must be horizontal, coplanar rectangular sills. "
        "Unions intersections per layer for net concrete volume. Preview by default; apply requires expected_revision or atomic proposal/batch. "
        "replace regenerates a plan; edited outputs need on_modified:replace. Identical re-runs do not duplicate a plan. "
+       "For isolated pads use inputs:{type:pads,sources:[real floor_post/column IDs],width:300,depth:300,height:150,top_z?}. "
+       "Pad top defaults to each source bottom; world-XY rectangle, planning dimensions only. No frame scope for pads. "
+       "Coincident sources share a pad; intersecting pads or existing solids cause an atomic error. "
        "Geometry only: soil, capacity, reinforcement, frost, passages and ventilation remain unassessed.",
        SCHEMA({"type":"object","properties":{"inputs":{"type":"object"},"replace":{"type":"string"},
          "preview":{"type":"boolean"},"expected_revision":{"type":"integer"},

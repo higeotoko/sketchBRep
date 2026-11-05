@@ -1,0 +1,62 @@
+{
+  "date_jst": "2026-11-05",
+  "base_commit": "c1448ea9d184f89369ea2ce87f0b6cc90f504152",
+  "platform": "Windows / MSVC 19.44 / OCCT 8.0.1 / Qt 6.12 / 3DM enabled",
+  "mcp_research": {
+    "server": "SumiCAD",
+    "version": "0.7.1",
+    "tool_count": 64,
+    "read_tools": [
+      "list_actions (footing, schemas:true, 15 actions)",
+      "list_actions (foundation, schemas:true, 21 actions)",
+      "guide (foundation)"
+    ],
+    "live_model_edited": false,
+    "adopted": [
+      "Reference actual source members",
+      "Explicit subject selection",
+      "Avoid duplicate foundations",
+      "Recheck after generation"
+    ],
+    "not_claimed": [
+      "SumiCAD pad-specific implementation reproduced",
+      "Source code imported",
+      "Legal formulas or defaults imported"
+    ]
+  },
+  "build_exit_code": 0,
+  "related_core_and_api": {
+    "tests": 121,
+    "failures": 0,
+    "errors": 0,
+    "seconds": 26.949,
+    "exit_code": 0
+  },
+  "gui": {
+    "actual_conditions": 24,
+    "including_init_cleanup": 26,
+    "failures": 0,
+    "errors": 0,
+    "seconds": 41.964,
+    "exit_code": 0
+  },
+  "new_core_tests": 13,
+  "new_gui_tests": [
+    "foundationPadsFromMissingFloorPostsAndRegeneration",
+    "foundationPadsWithDifferentTopsReloadWithoutChangingTheModel",
+    "timberFloorPostChoicePersistsInRegeneration"
+  ],
+  "pad_dialog_image_inspected": true,
+  "two_storey_house_core_workflow": "frame with real wooden floor posts -> strip -> missing support selection -> pads -> save/reopen -> foundation DXF",
+  "preview_rejection_preserves_native_brep": true,
+  "ci_verified": false,
+  "human_windows_verified": false,
+  "limits": [
+    "Planning geometry only, no soil, bearing, settlement, frost, required section, reinforcement or anchorage verdict",
+    "No mat, terrain, steps, wall load paths or automatic structural fixes",
+    "Explicit sources only; unselected markers rejected",
+    "Positive-volume intersections with existing solids reject the whole operation",
+    "Recreated member IDs need explicit rebinding",
+    "No Linux or full GUI suite verification"
+  ]
+}

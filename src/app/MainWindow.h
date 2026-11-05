@@ -249,6 +249,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   void buildArchitectureToolbar(QMenu* viewMenu);
   void showTimberFrameDialog();
   void showFoundationDialog();
+  void showFoundationPadsDialog();
+  void showFoundationDialogFor(bool pads);
   void showFoundationSupportsDialog();
   void showFrameCheckPanel();
   void showTakeOffDialog();

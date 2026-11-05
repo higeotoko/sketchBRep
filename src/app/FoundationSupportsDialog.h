@@ -23,6 +23,7 @@ class FoundationSupportsDialog : public QDialog {
   QTableWidget* table_;
   QLabel* status_;
   QPushButton* supports_;
+  QPushButton* pads_;
   std::uint64_t sequence_=0;
   std::string report_;
 };

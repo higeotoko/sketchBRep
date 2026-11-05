@@ -5,6 +5,7 @@
 #include <BRepBuilderAPI_Copy.hxx>
 #include <TopoDS_Compound.hxx>
 #include <QDialogButtonBox>
+#include <QAction>
 #include <QHeaderView>
 #include <QLabel>
 #include <QPushButton>
@@ -49,10 +50,20 @@ FoundationSupportsDialog::FoundationSupportsDialog(MainWindow* window):QDialog(w
   status_=new QLabel(this);status_->setObjectName(QStringLiteral("foundationSupportsStatus"));status_->setWordWrap(true);layout->addWidget(status_);
   auto* buttons=new QDialogButtonBox(QDialogButtonBox::Close,this);buttons->button(QDialogButtonBox::Close)->setText(tr("閉じる"));
   supports_=buttons->addButton(tr("支持先を見る"),QDialogButtonBox::ActionRole);supports_->setObjectName(QStringLiteral("foundationSupportsSelect"));supports_->setEnabled(false);
+  pads_=buttons->addButton(tr("未検出の床束に束石を計画"),QDialogButtonBox::ActionRole);
+  pads_->setObjectName(QStringLiteral("foundationSupportsPlanPads"));pads_->setEnabled(false);
   auto* reload=buttons->addButton(tr("モデルから再確認"),QDialogButtonBox::ActionRole);reload->setObjectName(QStringLiteral("foundationSupportsRefresh"));
   layout->addWidget(buttons);
   connect(buttons,&QDialogButtonBox::rejected,this,&QDialog::reject);
   connect(supports_,&QPushButton::clicked,this,[this]{highlight(true);});
+  connect(pads_,&QPushButton::clicked,this,[this] {
+    if(report_.empty() || sequence_!=window_->modeler().document().sequence()) return;
+    const auto snapshot=json::parse(report_);std::vector<doc::ObjectId> ids;
+    for(const auto& row:snapshot["rows"]) if(row["role"]=="floor_post" && row["status"]=="missing") ids.push_back(row["id"].get<std::string>());
+    if(ids.empty()) return;
+    window_->setSelection(ids);if(viewport_) viewport_->setInspectionMarker({});
+    window_->findChild<QAction*>(QStringLiteral("foundationPadsAction"))->trigger();
+  });
   connect(reload,&QPushButton::clicked,this,&FoundationSupportsDialog::refresh);
   connect(table_,&QTableWidget::itemSelectionChanged,this,[this]{highlight(false);});
   connect(this,&QDialog::finished,this,[this]{if(viewport_) viewport_->setInspectionMarker({});});
@@ -64,7 +75,7 @@ FoundationSupportsDialog::FoundationSupportsDialog(MainWindow* window):QDialog(w
 }
 FoundationSupportsDialog::~FoundationSupportsDialog() {if(viewport_) viewport_->setInspectionMarker({});}
 void FoundationSupportsDialog::clear() {
-  report_.clear();supports_->setEnabled(false);table_->setRowCount(0);if(viewport_) viewport_->setInspectionMarker({});
+  report_.clear();supports_->setEnabled(false);pads_->setEnabled(false);table_->setRowCount(0);if(viewport_) viewport_->setInspectionMarker({});
 }
 void FoundationSupportsDialog::refresh() {
   clear();const auto result=construction::foundationSupports(window_->modeler().document());
@@ -73,6 +84,7 @@ void FoundationSupportsDialog::refresh() {
   const QSignalBlocker block(table_);
   int complete=0;
   for(const auto& own:data["rows"]) {
+    if(own["role"]=="floor_post" && own["status"]=="missing") pads_->setEnabled(true);
     const int row=table_->rowCount();table_->insertRow(row);QStringList names,gaps,coverage,notes;
     if(!own["reason"].get<std::string>().empty()) notes<<QString::fromStdString(own["reason"]);
     const auto append=[&](const json& candidate,bool via) {

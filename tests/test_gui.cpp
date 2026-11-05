@@ -321,6 +321,9 @@ class GuiPhase1 : public QObject {
   void foundationPreviewApplyRejectAndStaleRevision();
   void foundationDialogCreatesAndRegeneratesPlan();
   void foundationSupportsSelectActualPartsAndInvalidate();
+  void foundationPadsFromMissingFloorPostsAndRegeneration();
+  void foundationPadsWithDifferentTopsReloadWithoutChangingTheModel();
+  void timberFloorPostChoicePersistsInRegeneration();
   void timberOpeningConflictsRemainVisibleInPreview();
   void timberStairwellRegenerationMatchesDialogAndExports();
   void frameChecksUpdateAndDiscardStaleResults();
@@ -9545,6 +9548,121 @@ void GuiPhase1::timberOpeningConflictsRemainVisibleInPreview() {
   QCOMPARE(serializeDocument(model.document()), before);
   f.window.rejectProposal();
   QCOMPARE(serializeDocument(model.document()), before);
+}
+
+void GuiPhase1::timberFloorPostChoicePersistsInRegeneration() {
+  using nlohmann::json;Fixture f;QVERIFY(f.setUp(4500,3500));auto& m=f.window.modeler();bool seen=false;
+  auto* action=f.window.findChild<QAction*>(QStringLiteral("timberFrameAction"));QVERIFY(action);
+  QTimer::singleShot(100,[&] {
+    auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());if(!dialog) return;
+    auto* posts=dialog->findChild<QComboBox*>(QStringLiteral("timberFloorPostSection"));
+    if(!posts) {dialog->reject();return;}
+    posts->setCurrentIndex(posts->findData(QStringLiteral("TIMBER-90x90")));
+    dialog->findChild<QSpinBox*>(QStringLiteral("timberXBays"))->setValue(4);
+    dialog->findChild<QSpinBox*>(QStringLiteral("timberYBays"))->setValue(4);seen=true;
+    dialog->findChild<QPushButton*>(QStringLiteral("timberPreview"))->click();
+  });
+  action->trigger();QVERIFY(seen);QVERIFY(f.window.hasPendingProposal());f.window.applyProposal();std::string frame;int real=0;
+  for(const auto& o:m.document().objects()) {
+    if(const auto* group=std::get_if<doc::GroupNode>(&o.recipe.base);group && !group->constructionFrame.empty()) frame=o.id;
+    if(o.attributes.count("kind") && o.attributes.at("kind")=="floor_post") {QVERIFY(!o.attributes.count("display_only"));++real;}
+  }
+  QVERIFY(real>0);QVERIFY(!frame.empty());f.window.setSelection({frame});seen=false;const auto before=serializeDocument(m.document());
+  QTimer::singleShot(100,[&] {
+    auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());if(!dialog) return;
+    auto* posts=dialog->findChild<QComboBox*>(QStringLiteral("timberFloorPostSection"));
+    seen=posts && posts->currentData().toString()==QStringLiteral("TIMBER-90x90");dialog->reject();
+  });
+  action->trigger();QVERIFY(seen);QCOMPARE(serializeDocument(m.document()),before);
+}
+
+void GuiPhase1::foundationPadsFromMissingFloorPostsAndRegeneration() {
+  using nlohmann::json;Fixture f;QVERIFY(f.setUp(5000,3000));auto& m=f.window.modeler();std::vector<doc::ObjectId> posts;
+  for(double x:{1000.,2000.,3000.,4000.}) {
+    doc::Modeler::MemberSpec spec;spec.start={x,1000,400};spec.end={x,1000,1000};spec.section.width=spec.section.depth=90;
+    spec.role="floor_post";spec.materialClass="timber";auto id=m.createMember(spec);QVERIFY(id);posts.push_back(*id);
+  }
+  QVERIFY(m.setAttribute({posts[2]},"display_only","true"));
+  QVERIFY(m.generateFoundation(json{{"inputs",{{"type","pads"},{"sources",{posts[3]}}}}}.dump()));
+  f.window.findChild<QAction*>(QStringLiteral("foundationSupportsAction"))->trigger();
+  auto* supports=f.window.findChild<FoundationSupportsDialog*>();QVERIFY(supports);
+  auto* plan=supports->findChild<QPushButton*>(QStringLiteral("foundationSupportsPlanPads"));QVERIFY(plan && plan->isEnabled());
+  const auto before=serializeDocument(m.document());const auto steps=m.history().undoCount();bool seen=false;
+  auto configure=[&] {
+    auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());if(!dialog) return;
+    auto* width=dialog->findChild<QDoubleSpinBox*>(QStringLiteral("foundationFootWidth"));
+    auto* depth=dialog->findChild<QDoubleSpinBox*>(QStringLiteral("foundationPadDepth"));
+    auto* height=dialog->findChild<QDoubleSpinBox*>(QStringLiteral("foundationFootHeight"));
+    auto* preview=dialog->findChild<QPushButton*>(QStringLiteral("foundationPreview"));
+    if(!width || !depth || !height || !preview) {dialog->reject();return;}
+    seen=true;width->setValue(400);depth->setValue(350);height->setValue(200);
+    const auto capture=qEnvironmentVariable("SBR_FOUNDATION_PADS_CAPTURE");if(!capture.isEmpty()) dialog->grab().save(capture);
+    preview->click();
+  };
+  QTimer::singleShot(100,configure);plan->click();QVERIFY(seen);QVERIFY2(f.window.hasPendingProposal(),qPrintable(f.window.lastError()));
+  QCOMPARE(f.window.selection(),(std::vector<doc::ObjectId>{posts[0],posts[1]}));QCOMPARE(serializeDocument(m.document()),before);
+  f.window.rejectProposal();QCOMPARE(serializeDocument(m.document()),before);
+  seen=false;QTimer::singleShot(100,configure);plan->click();QVERIFY(seen);QVERIFY(f.window.hasPendingProposal());f.window.applyProposal();
+  QCOMPARE(m.history().undoCount(),steps+1);std::string root;
+  for(const auto& o:m.document().objects()) if(o.attributes.count("foundation_plan")) {
+    const auto manifest=json::parse(o.attributes.at("foundation_plan"));if(manifest["inputs"].value("width",0.)==400) {root=o.id;QCOMPARE(manifest["parts"].size(),2u);}
+  }
+  QVERIFY(!root.empty());auto* table=supports->findChild<QTableWidget*>(QStringLiteral("foundationSupportsTable"));
+  QTRY_COMPARE(table->rowCount(),0);supports->findChild<QPushButton*>(QStringLiteral("foundationSupportsRefresh"))->click();QCOMPARE(table->rowCount(),4);
+  QVERIFY(!plan->isEnabled()); // unsupported marker and already supported posts are never selected for pads
+  supports->close();f.window.setSelection({root});seen=false;
+  const auto original=serializeDocument(m.document());
+  QTimer::singleShot(100,[&] {
+    auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());if(!dialog) return;
+    auto* width=dialog->findChild<QDoubleSpinBox*>(QStringLiteral("foundationFootWidth"));
+    auto* depth=dialog->findChild<QDoubleSpinBox*>(QStringLiteral("foundationPadDepth"));
+    auto* height=dialog->findChild<QDoubleSpinBox*>(QStringLiteral("foundationFootHeight"));
+    if(!width || !depth || !height) {dialog->reject();return;}
+    seen=width->value()==400 && depth->value()==350 && height->value()==200;
+    height->setValue(250);dialog->findChild<QPushButton*>(QStringLiteral("foundationPreview"))->click();
+  });
+  f.window.findChild<QAction*>(QStringLiteral("foundationPadsAction"))->trigger();QVERIFY(seen);QVERIFY(f.window.hasPendingProposal());
+  f.window.rejectProposal();QCOMPARE(serializeDocument(m.document()),original);
+  QVERIFY(f.window.previewFoundation(json{{"type","pads"},{"height",250}}.dump(),root));f.window.applyProposal();
+  QCOMPARE(json::parse(m.document().find(root)->attributes.at("foundation_plan"))["inputs"]["height"].get<double>(),250.);
+  QVERIFY(m.undo());QCOMPARE(json::parse(m.document().find(root)->attributes.at("foundation_plan"))["inputs"]["height"].get<double>(),200.);
+}
+
+void GuiPhase1::foundationPadsWithDifferentTopsReloadWithoutChangingTheModel() {
+  using nlohmann::json;Fixture f;QVERIFY(f.setUp(4000,3000));auto& m=f.window.modeler();std::vector<doc::ObjectId> ids;
+  for(double x:{1000.,2000.}) {
+    doc::Modeler::MemberSpec spec;spec.start={x,1000,x/10+300};spec.end={x,1000,1000};spec.section.width=spec.section.depth=90;
+    spec.role="floor_post";spec.materialClass="timber";const auto id=m.createMember(spec);QVERIFY(id);ids.push_back(*id);
+  }
+  const auto result=m.generateFoundation(json{{"inputs",{{"type","pads"},{"sources",ids}}}}.dump());QVERIFY(result);
+  const std::string root=json::parse(*result)["foundation"];f.window.setSelection({root});const auto before=serializeDocument(m.document());bool seen=false;
+  QTimer::singleShot(100,[&] {
+    auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());if(!dialog) return;
+    auto* automatic=dialog->findChild<QCheckBox*>(QStringLiteral("foundationAutomaticTop"));
+    auto* top=dialog->findChild<QDoubleSpinBox*>(QStringLiteral("foundationTop"));
+    auto* report=dialog->findChild<QTextBrowser*>(QStringLiteral("foundationReport"));
+    seen=automatic && automatic->isChecked() && top && !top->isVisible() && report && report->toPlainText().contains(QStringLiteral("各部材"));
+    dialog->reject();
+  });
+  f.window.findChild<QAction*>(QStringLiteral("foundationPadsAction"))->trigger();QVERIFY(seen);QCOMPARE(serializeDocument(m.document()),before);
+  QVERIFY(m.remove(ids));ids.clear();
+  for(double x:{1000.,2000.}) {
+    doc::Modeler::MemberSpec spec;spec.start={x,1000,x/10+300};spec.end={x,1000,1000};spec.section.width=spec.section.depth=90;
+    spec.role="floor_post";spec.materialClass="timber";const auto id=m.createMember(spec);QVERIFY(id);ids.push_back(*id);
+  }
+  f.window.setSelection(ids);seen=false;
+  QTimer::singleShot(100,[&] {
+    auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());if(!dialog) return;
+    auto* plans=dialog->findChild<QComboBox*>(QStringLiteral("foundationPlan"));
+    auto* source=dialog->findChild<QComboBox*>(QStringLiteral("foundationSourceFrame"));
+    if(!plans || !source) {dialog->reject();return;}
+    plans->setCurrentIndex(plans->findData(QString::fromStdString(root)));source->setCurrentIndex(0);seen=true;
+    dialog->findChild<QPushButton*>(QStringLiteral("foundationPreview"))->click();
+  });
+  f.window.findChild<QAction*>(QStringLiteral("foundationPadsAction"))->trigger();QVERIFY(seen);QVERIFY2(f.window.hasPendingProposal(),qPrintable(f.window.lastError()));
+  f.window.applyProposal();const auto rebound=json::parse(m.document().find(root)->attributes.at("foundation_plan"));
+  QCOMPARE(rebound["inputs"]["sources"].size(),2u);
+  for(const auto& id:ids) QVERIFY(std::find(rebound["inputs"]["sources"].begin(),rebound["inputs"]["sources"].end(),json(id))!=rebound["inputs"]["sources"].end());
 }
 
 void GuiPhase1::foundationSupportsSelectActualPartsAndInvalidate() {

@@ -22,6 +22,8 @@
 
 柱・土台・床束の支持先を実形状で確認し、該当部材を選択する機能は [基礎までの支持先](docs/67_foundation_support_paths.md) に記録しています。
 
+未検出の床束から束石を計画する流れと、木製床束の画面選択は [束石・独立基礎計画](docs/68_foundation_pads.md) を参照してください。
+
 ![Phase 2 screenshot](docs/images/phase2.png)
 
 ## できること
