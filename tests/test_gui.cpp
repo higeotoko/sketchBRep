@@ -317,6 +317,8 @@ class GuiPhase1 : public QObject {
   void recentFilesReopen();
   void helpWindowAndCrashLog();
   void timberFramePreviewApplyLevelsAndUndo();
+  void foundationPreviewApplyRejectAndStaleRevision();
+  void foundationDialogCreatesAndRegeneratesPlan();
   void timberOpeningConflictsRemainVisibleInPreview();
   void timberStairwellRegenerationMatchesDialogAndExports();
   void frameChecksUpdateAndDiscardStaleResults();
@@ -9541,6 +9543,78 @@ void GuiPhase1::timberOpeningConflictsRemainVisibleInPreview() {
   QCOMPARE(serializeDocument(model.document()), before);
   f.window.rejectProposal();
   QCOMPARE(serializeDocument(model.document()), before);
+}
+
+void GuiPhase1::foundationPreviewApplyRejectAndStaleRevision() {
+  using nlohmann::json;
+  Fixture f; QVERIFY(f.setUp(4000,3000)); auto& m=f.window.modeler();
+  const auto frame=m.generateFrame(R"({"inputs":{"x_bays":2,"y_bays":2,"storeys":1}})");
+  QVERIFY(frame);const std::string source=json::parse(*frame)["frame"];
+  const auto before=serializeDocument(m.document());const auto undo=m.history().undoCount();
+  const auto inputs=json{{"frame",source}}.dump();
+  QVERIFY2(f.window.previewFoundation(inputs),qPrintable(f.window.lastError()));
+  QVERIFY(f.window.hasPendingProposal());QCOMPARE(serializeDocument(m.document()),before);
+  f.window.rejectProposal();QCOMPARE(serializeDocument(m.document()),before);
+  QVERIFY(f.window.previewFoundation(inputs));f.window.applyProposal();
+  QCOMPARE(m.history().undoCount(),undo+1);
+  int plans=0,parts=0;
+  for(const auto& o:m.document().objects()) {
+    if(o.attributes.count("foundation_plan")) ++plans;
+    if(o.attributes.count("foundation_owner")) ++parts;
+  }
+  QCOMPARE(plans,1);QCOMPARE(parts,2);f.vp->syncNow();f.vp->fitAll();QTest::qWait(50);
+  const auto capture=qEnvironmentVariable("SBR_FOUNDATION_CAPTURE");
+  if(!capture.isEmpty()) QVERIFY(f.window.exportImage(capture));
+  QVERIFY(m.undo());QCOMPARE(serializeDocument(m.document()),before);
+  QVERIFY(f.window.previewFoundation(inputs));
+  gp_Trsf move;move.SetTranslation(gp_Vec(0,0,100));QVERIFY(m.transform({source},move,"Move Source"));
+  const auto moved=serializeDocument(m.document());f.window.applyProposal();
+  QCOMPARE(serializeDocument(m.document()),moved); // outdated preview cannot overwrite the edit
+  f.window.rejectProposal();
+}
+
+void GuiPhase1::foundationDialogCreatesAndRegeneratesPlan() {
+  using nlohmann::json;
+  Fixture f;QVERIFY(f.setUp(4000,3000));auto& m=f.window.modeler();
+  const auto frame=m.generateFrame(R"({"inputs":{"x_bays":2,"y_bays":2,"storeys":1}})");QVERIFY(frame);
+  auto* action=f.window.findChild<QAction*>(QStringLiteral("foundationAction"));QVERIFY(action);
+  bool seen=false;
+  QTimer::singleShot(100,[&] {
+    auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());if(!dialog) return;
+    auto* width=dialog->findChild<QDoubleSpinBox*>(QStringLiteral("foundationStemWidth"));
+    auto* automatic=dialog->findChild<QCheckBox*>(QStringLiteral("foundationAutomaticTop"));
+    auto* top=dialog->findChild<QDoubleSpinBox*>(QStringLiteral("foundationTop"));
+    auto* button=dialog->findChild<QPushButton*>(QStringLiteral("foundationPreview"));
+    if(!width || !automatic || !top || !button) { dialog->reject();return; }
+    seen=true;width->setValue(180);automatic->setChecked(false);top->setValue(350);button->click();
+  });
+  const auto before=serializeDocument(m.document());action->trigger();QVERIFY(seen);
+  QVERIFY2(f.window.hasPendingProposal(),qPrintable(f.window.lastError()));
+  QCOMPARE(serializeDocument(m.document()),before);f.window.applyProposal();
+  std::string root;
+  for(const auto& o:m.document().objects()) if(o.attributes.count("foundation_plan")) root=o.id;
+  QVERIFY(!root.empty());f.window.setSelection({root});seen=false;
+  QTimer::singleShot(100,[&] {
+    auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());if(!dialog) return;
+    auto* width=dialog->findChild<QDoubleSpinBox*>(QStringLiteral("foundationStemWidth"));
+    auto* automatic=dialog->findChild<QCheckBox*>(QStringLiteral("foundationAutomaticTop"));
+    auto* top=dialog->findChild<QDoubleSpinBox*>(QStringLiteral("foundationTop"));
+    auto* report=dialog->findChild<QTextBrowser*>(QStringLiteral("foundationReport"));
+    auto* button=dialog->findChild<QPushButton*>(QStringLiteral("foundationPreview"));
+    if(!width || !automatic || !top || !report || !button) {dialog->reject();return;}
+    seen=width->value()==180 && !automatic->isChecked() && top->value()==350 &&
+        report->toPlainText().contains(QStringLiteral("コンクリート"));
+    const auto capture=qEnvironmentVariable("SBR_FOUNDATION_DIALOG_CAPTURE");
+    if(!capture.isEmpty()) dialog->grab().save(capture);
+    automatic->setChecked(true);width->setValue(160);button->click();
+  });
+  action->trigger();QVERIFY(seen);QVERIFY2(f.window.hasPendingProposal(),qPrintable(f.window.lastError()));
+  f.window.applyProposal();
+  const auto stored=json::parse(m.document().find(root)->attributes.at("foundation_plan"));
+  QCOMPARE(stored["inputs"]["stem_width"].get<double>(),160.);
+  QVERIFY(!stored["inputs"].contains("top_z"));QCOMPARE(stored["top_z"].get<double>(),400.);
+  QVERIFY(m.undo());const auto old=json::parse(m.document().find(root)->attributes.at("foundation_plan"));
+  QCOMPARE(old["top_z"].get<double>(),350.);
 }
 
 void GuiPhase1::timberFramePreviewApplyLevelsAndUndo() {

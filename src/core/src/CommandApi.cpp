@@ -1,5 +1,6 @@
 #include "sbr/ConstructionQuantity.h"
 #include "sbr/ConstructionWall.h"
+#include "sbr/ConstructionFoundation.h"
 #include "sbr/ConstructionCheck.h"
 #include "sbr/api/CommandApi.h"
 #include "sbr/ConstructionGuide.h"
@@ -2052,6 +2053,35 @@ const std::vector<CommandDef>& commands() {
                      {"own_sections", "{kind: rectangle, width, depth}, {kind: circle, diameter}, "
                                       "{kind: h, width, depth, web, flange, radius}"}};
        }},
+      {"generate_foundation",
+       "Plan concrete strip foundations from existing timber sills. inputs: frame (group) OR sources:[sillIds], "
+       "stem_width:150,stem_height:600,footing_width:450,footing_thickness:150,packing_mm:20 (planning defaults in mm, not design values). "
+       "top_z optional world elevation; omitted = sill bottom minus packing. Sources must be horizontal, coplanar rectangular sills. "
+       "Unions intersections per layer for net concrete volume. Preview by default; apply requires expected_revision or atomic proposal/batch. "
+       "replace regenerates a plan; edited outputs need on_modified:replace. Identical re-runs do not duplicate a plan. "
+       "Geometry only: soil, capacity, reinforcement, frost, passages and ventilation remain unassessed.",
+       SCHEMA({"type":"object","properties":{"inputs":{"type":"object"},"replace":{"type":"string"},
+         "preview":{"type":"boolean"},"expected_revision":{"type":"integer"},
+         "on_modified":{"enum":["ask","replace"]},"name":{"type":"string"}}}),
+       [](doc::Modeler& m,const json& a) {
+         if(a.contains("expected_revision") && a["expected_revision"]!=m.history().revision())
+           throw ApiError("The model changed; preview the foundation again");
+         if(a.value("preview",true)) {
+           doc::Modeler scratch;scratch.copyFrom(m);json trial=a;trial.erase("expected_revision");
+           auto result=json::parse(must(scratch.generateFoundation(trial.dump())));
+           result["preview"]=true;result["revision"]=m.history().revision();return result;
+         }
+         if(!a.contains("expected_revision") && !m.history().inGroup())
+           throw ApiError("Preview first and supply expected_revision, or apply in a revision-checked batch/proposal");
+         auto result=json::parse(must(m.generateFoundation(a.dump())));result["preview"]=false;return result;
+       }},
+      {"check_foundation",
+       "Read-only generated strip-foundation plan status, live source changes, packing gaps and exact concrete volumes. "
+       "Optional foundation scopes one plan. current is recipe/geometry freshness, not a structural safety verdict. "
+       "Missing sources and edited outputs are reported; no model changes.",
+       SCHEMA({"type":"object","properties":{"foundation":{"type":"string"}}}),
+       [](doc::Modeler& m,const json& a) { auto result=json::parse(must(construction::checkFoundation(m.document(),a.dump())));
+         result["revision"]=m.history().revision();return result; }},
       {"generate_frame",
        "Generate a timber post_beam_2storey frame (1 or 2 storeys, gable/shed Japanese roof). "
        "Read get_construction_guide first. inputs: {x_bays:10,y_bays:8,module:910,storeys:2,roof:gable|shed, "
@@ -2689,7 +2719,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
       name == "preview" || name == "query_objects" || name == "aggregate" || name == "get_changes" ||
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
       name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" ||
-        name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays") {
+        name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation") {
     return E::Read;
   }
   if (isFileCommand(name)) return E::ExternalIo;
@@ -3040,7 +3070,7 @@ CommandApi::Effect CommandApi::effectOf(const std::string& requestJson) const {
     return Effect::ModelWrite;
   }
   const std::string name = request["command"].get<std::string>();
-  if (name == "generate_frame") {
+  if (name == "generate_frame" || name == "generate_foundation") {
     const json a = request.value("args", json::object());
     return a.is_object() && (!a.contains("preview") || a["preview"] == true) ? Effect::Read
                                                                              : Effect::ModelWrite;

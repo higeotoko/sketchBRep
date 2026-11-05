@@ -1,5 +1,10 @@
 # 06. AI 連携（バイパス）の設計と活用方針
 
+基礎計画の追加：`generate_foundation` は既存土台から立上り・底盤を計画し、APIの初期動作は読み取り専用プレビュー。
+適用には `preview:false` と `expected_revision`、または既存のbatch/propose経路を使う。
+`check_foundation {foundation?}` は参照変更・手編集・土台下の隙間・生成部材の正味体積を読み取りで返す。
+いずれも地盤・構造・配筋等の合否ではない。入力・置換・未対応範囲は [布基礎計画](66_foundation_planning.md) を参照。
+
 仕様書の「AI からの操作でも同じコマンド基盤を使用」を、**今の段階で配線まで通した**もの。
 AI 専用の裏口は作らず、GUI のツールと同じ `doc::Modeler` を JSON で呼べるようにしただけ、というのが基本方針。
 

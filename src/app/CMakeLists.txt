@@ -6,6 +6,7 @@ set(CMAKE_AUTOMOC ON)
 add_library(sbr_ui STATIC
   MainWindow.cpp MainWindow.h
   TimberFrameDialog.cpp
+  FoundationDialog.cpp
   FrameCheckPanel.cpp FrameCheckPanel.h
   TakeOffDialog.cpp TakeOffDialog.h
   WallQuantityDialog.cpp WallQuantityDialog.h

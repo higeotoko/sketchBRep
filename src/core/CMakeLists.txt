@@ -4,6 +4,7 @@ add_library(sbr_core STATIC
   src/Section.cpp
   src/ConstructionGuide.cpp
   src/ConstructionFrame.cpp
+  src/ConstructionFoundation.cpp
   src/ConstructionCheck.cpp
   src/ConstructionQuantity.cpp
   src/ConstructionWall.cpp

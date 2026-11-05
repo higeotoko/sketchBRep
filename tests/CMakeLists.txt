@@ -30,6 +30,7 @@ add_executable(sbr_core_tests
   test_construction.cpp
   test_wall_quantity.cpp
   test_frames.cpp
+  test_foundation.cpp
   test_timber_workflow.cpp
   test_frame_checks.cpp
   test_quantities.cpp

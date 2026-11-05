@@ -110,6 +110,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   // message when the text cannot be read or the grid fails.
   bool createGrid(const QString& xSpacings, const QString& ySpacings);
   bool previewTimberFrame(const std::string& inputs, const std::string& replace = {}, bool preserveEdited = false);
+  bool previewFoundation(const std::string& inputs, const std::string& replace = {}, bool replaceEdited = false);
   // After opening, recipes are verified in the background (a few objects
   // per idle moment); true while that is still running.
   bool verifyingRecipes() const { return verifying_; }
@@ -247,6 +248,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   void showGridDialog();
   void buildArchitectureToolbar(QMenu* viewMenu);
   void showTimberFrameDialog();
+  void showFoundationDialog();
   void showFrameCheckPanel();
   void showTakeOffDialog();
   void showWallQuantityDialog();

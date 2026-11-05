@@ -1104,6 +1104,8 @@ void MainWindow::buildMenus() {
   tools->addAction(tr("通り芯を作成..."), this, &MainWindow::showGridDialog)
       ->setObjectName(QStringLiteral("createGridAction"));
   tools->addAction(tr("木造架構を作成・作り直し..."), this, &MainWindow::showTimberFrameDialog)->setObjectName(QStringLiteral("timberFrameAction"));
+  tools->addAction(tr("布基礎計画（土台から作成・作り直し）..."), this, &MainWindow::showFoundationDialog)
+      ->setObjectName(QStringLiteral("foundationAction"));
   tools->addAction(tr("架構チェック"), this, &MainWindow::showFrameCheckPanel)->setObjectName(QStringLiteral("frameCheckAction"));
   tools->addAction(tr("木材の拾い出し..."), this, &MainWindow::showTakeOffDialog)
       ->setObjectName(QStringLiteral("takeOffAction"));
@@ -1266,7 +1268,7 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
   timber->setPopupMode(QToolButton::InstantPopup);
   auto* timberMenu = new QMenu(timber);
   timberMenu->setObjectName(QStringLiteral("architectureTimberMenu"));
-  for (const char* name : {"timberFrameAction", "frameCheckAction", "wallBaysAction", "wallQuantityAction", "takeOffAction"})
+  for (const char* name : {"timberFrameAction", "foundationAction", "frameCheckAction", "wallBaysAction", "wallQuantityAction", "takeOffAction"})
     timberMenu->addAction(findChild<QAction*>(QLatin1String(name)));
   timber->setMenu(timberMenu);
   bar->addWidget(timber);

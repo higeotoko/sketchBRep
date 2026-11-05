@@ -1,0 +1,62 @@
+{
+  "date_jst": "2026-11-05",
+  "base_commit": "91a0566355d5b0f7d21a39c433e67bf7f5b02a7a",
+  "platform": "Windows / MSVC 19.44 / OCCT 8.0.1 / Qt 6.12 / 3DM enabled",
+  "mcp_research": {
+    "server": "SumiCAD",
+    "version": "0.7.1",
+    "tool_count": 64,
+    "read_tools": [
+      "list_actions (foundation query, schemas:true, 21 actions)",
+      "guide (foundation)",
+      "project_info"
+    ],
+    "read_actions_completed": [],
+    "additional_profile_and_check_reads": "not completed: local connection aborted",
+    "live_model_edited": false,
+    "adopted": [
+      "Generate from existing sources",
+      "Avoid duplicate generation",
+      "Recheck after source changes",
+      "Consolidate dimensions and diagnostics"
+    ],
+    "not_imported": [
+      "Source code",
+      "Legal formulas and coefficients",
+      "Profile defaults",
+      "Automatic structural fixes",
+      "Reinforcement design"
+    ]
+  },
+  "build_exit_code": 0,
+  "related_core_and_api": {
+    "tests": 96,
+    "failures": 0,
+    "errors": 0,
+    "seconds": 17.877,
+    "exit_code": 0
+  },
+  "gui": {
+    "actual_conditions": 20,
+    "including_init_cleanup": 22,
+    "failures": 0,
+    "errors": 0,
+    "seconds": 28.016,
+    "exit_code": 0
+  },
+  "new_core_tests": 12,
+  "new_gui_tests": [
+    "foundationPreviewApplyRejectAndStaleRevision",
+    "foundationDialogCreatesAndRegeneratesPlan"
+  ],
+  "model_and_dialog_images_inspected": true,
+  "ci_verified": false,
+  "human_windows_verified": false,
+  "limits": [
+    "Only planning strip concrete under specified sills; not a complete building foundation",
+    "No pads under floor posts, mat slab, unsupported bearing walls, steps, slopes or passages",
+    "No soil, capacity, settlement, load transfer or reinforcement verdict",
+    "Generated-part quantities exclude manually added geometry",
+    "No Linux or full GUI suite verification in this local record"
+  ]
+}

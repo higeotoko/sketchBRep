@@ -18,6 +18,8 @@
 
 柱位置での区間分割と両端柱・上下材の対応表示は [MCP調査と実部材参照](docs/65_wall_bay_member_references.md) を参照してください。
 
+土台から布基礎の立上り・底盤を作り、正味コンクリート量・変更状態を確認する機能は [布基礎計画](docs/66_foundation_planning.md) を参照してください。
+
 ![Phase 2 screenshot](docs/images/phase2.png)
 
 ## できること
