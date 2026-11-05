@@ -234,3 +234,5 @@ document sequenceとrevisionを持つ。候補IDはスナップショット内�
 
 `generate_frame` の `interior_sills:[{from:[i,j],to:[i,j]}]` は内部の通りの土台（1スパン1本、外周は拒否）。`sills_under_braces:true` で1階の内部の筋かいの下にも土台。
 同じ通りの1階の大引はその区間を外す。べた基礎の `inner_depth` は内部の地中梁（初期0＝なし）。[詳細](73_interior_sills_and_ground_beams.md)。
+
+`check_structure {frame_rules?}` は読み取り専用の構造診断のまとめ（壁量の行・耐力壁の世界座標・架構チェックと支持先の印・未評価の一覧）。画面の重ね描きと同じ関数。四分割法・N値は未評価として返す。[詳細](74_structure_diagnostics_overlay.md)。
