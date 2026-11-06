@@ -40,6 +40,7 @@ add_executable(sbr_core_tests
   test_opening_symbols.cpp
   test_wall_types.cpp
   test_structural_diagnostics.cpp
+  test_structure_assist.cpp
   test_quarter_balance.cpp
   test_timber_workflow.cpp
   test_frame_checks.cpp

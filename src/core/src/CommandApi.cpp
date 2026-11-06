@@ -2,6 +2,7 @@
 #include "sbr/ConstructionWall.h"
 #include "sbr/ConstructionFoundation.h"
 #include "sbr/ConstructionDiagnostics.h"
+#include "sbr/ConstructionAssist.h"
 #include "sbr/ConstructionCheck.h"
 #include "sbr/api/CommandApi.h"
 #include "sbr/ConstructionGuide.h"
@@ -2180,6 +2181,20 @@ const std::vector<CommandDef>& commands() {
        SCHEMA({"type":"object","properties":{"frame_rules":{"type":"array","items":{"type":"string"}}}}),
        [](doc::Modeler& m,const json& a) {auto result=json::parse(must(construction::structuralDiagnostics(m.document(),a.dump())));
          result["revision"]=m.history().revision();return result;}},
+      {"structure_assist",
+       "Read-only figures taken from the model's shape for the designer to check before the wall calculation "
+       "(docs/87): wind projected areas per storey and direction (FL + wind_cut_mm, default 1350, left out), "
+       "floor-slab areas and plan extents (kind=slab within floor_band_mm below each floor level), column "
+       "alignment (share of upper posts with a post below) with the posts standing on beams, and beam spans "
+       "between the supports found under or at the ends of each beam with span / depth. Storeys from the "
+       "levels named 1FL, 2FL... or 'storeys' [{id, fl}]. A beam is judged only against span_depth_limit "
+       "with its limit_basis. suggested_wall_floors repeats the floor figures in set_wall_calculation form. "
+       "No loads, joints, sections or compliance. Changes nothing.",
+       SCHEMA({"type":"object","properties":{"storeys":{"type":"array","items":{"type":"object"}},
+         "cell_mm":{"type":"number"},"wind_cut_mm":{"type":"number"},"floor_band_mm":{"type":"number"},
+         "span_depth_limit":{"type":"number"},"limit_basis":{"type":"string"}}}),
+       [](doc::Modeler& m,const json& a) {auto result=json::parse(must(construction::structureAssist(m.document(),a.dump())));
+         result["revision"]=m.history().revision();return result;}},
       {"generate_frame",
        "Generate a timber post_beam_2storey frame (1 or 2 storeys, gable/shed Japanese roof). "
        "Read get_construction_guide first. inputs: {x_bays:10,y_bays:8,module:910,storeys:2,roof:gable|shed, "
@@ -2865,7 +2880,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
       name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" ||
       name == "get_sun" ||
-        name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure") {
+        name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
     return E::Read;
   }
   if (isFileCommand(name)) return E::ExternalIo;
