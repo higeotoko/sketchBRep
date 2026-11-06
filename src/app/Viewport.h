@@ -93,6 +93,13 @@ class Viewport : public QWidget {
   // snapped to.
   void setXRay(bool on);
   bool xRay() const { return xRay_; }
+  // Realistic display (docs/81_realistic_display): the materials' metallic / roughness drawn
+  // physically (PBR), a sun with shadows and a ground that takes them.
+  // Display only: picking, snapping, editing and the file are unchanged.
+  void setRealistic(bool on);
+  bool realistic() const { return realistic_; }
+  const Handle(AIS_Shape)& realisticGround() const { return realisticGround_; }
+  const Handle(V3d_View)& occView() const { return view_; }  // for checks
   // Shared display copies in use (one per distinct local shape; tests).
   std::size_t sharedDisplayCount() const { return protos_.size(); }
   // Whether an object's faces show a material picture (tests).
@@ -462,6 +469,13 @@ class Viewport : public QWidget {
   display::DisplayQuality quality_ = display::DisplayQuality::normal();
   bool shaded_ = true;
   bool xRay_ = false;
+  bool realistic_ = false;
+  Handle(AIS_Shape) realisticGround_;
+  std::vector<Handle(AIS_Shape)> axes_;  // hidden in the realistic display
+  void updateRealisticGround();
+  // The object's material (metallic, roughness) on its shading aspect; the
+  // CAD display (Phong) ignores it, the realistic one uses it.
+  void applyPhysicalMaterial(Entry& entry, const doc::Object& object);
   bool typing_ = false;  // a value is being typed into the measurement box
   PickMode pickMode_ = PickMode::None;
 

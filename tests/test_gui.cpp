@@ -79,6 +79,7 @@
 #include "HelpWindow.h"
 #include <QPlainTextEdit>
 #include <QPrinter>
+#include <V3d_Light.hxx>
 #include <QTextBrowser>
 #include "McpHttpServer.h"
 #include "ProgressDialog.h"
@@ -319,6 +320,7 @@ class GuiPhase1 : public QObject {
   void drawingDialogPlanSectionElevationAndExport();
   void recentFilesReopen();
   void helpWindowAndCrashLog();
+  void realisticDisplay();
   void timberFramePreviewApplyLevelsAndUndo();
   void foundationPreviewApplyRejectAndStaleRevision();
   void foundationDialogCreatesAndRegeneratesPlan();
@@ -10560,4 +10562,77 @@ void GuiPhase1::timberQuantitiesAndFramingExport() {
   } catch (const std::exception& e) {
     QFAIL(e.what());
   }
+}
+
+// docs/81_realistic_display: the realistic display (PBR with the materials' metallic /
+// roughness, a sun with shadows, a ground): display only, picking and
+// editing as usual, and back to the CAD display as it was.
+void GuiPhase1::realisticDisplay() {
+  Fixture f;
+  QVERIFY(f.setUp(500, 500));
+  doc::Modeler& m = f.window.modeler();
+  const doc::ObjectId box = f.box(0, 0, 1000, 1000, 1000);
+  auto material = m.createMaterial("metal", doc::Color{0.8, 0.8, 0.82});
+  QVERIFY(material);
+  doc::Material changed = *m.document().findMaterial(*material);
+  changed.metallic = 1.0;
+  changed.roughness = 0.2;
+  QVERIFY(m.editMaterial(changed));
+  QVERIFY(m.assignMaterial({box}, *material));
+  f.vp->syncNow();
+  const Graphic3d_TypeOfShadingModel cad = f.vp->occView()->ShadingModel();
+  const auto revision = m.history().revision();
+  const QString before = QDir::temp().filePath(QStringLiteral("sbr-cad.png"));
+  QVERIFY(f.window.exportImage(before));
+
+  auto* action = f.window.findChild<QAction*>(QStringLiteral("realisticAction"));
+  QVERIFY(action);
+  QCOMPARE(action->shortcut(), QKeySequence(QStringLiteral("F9")));
+  action->trigger();
+  QVERIFY(f.vp->realistic());
+  QCOMPARE(f.vp->occView()->ShadingModel(), Graphic3d_TypeOfShadingModel_Pbr);
+  int shadowCasters = 0;
+  for (V3d_ListOfLightIterator it(f.vp->occView()->ActiveLightIterator()); it.More(); it.Next()) {
+    shadowCasters += it.Value()->ToCastShadows() ? 1 : 0;
+  }
+  QCOMPARE(shadowCasters, 1);
+  QVERIFY(!f.vp->realisticGround().IsNull());
+  // The box's material reaches the shading: metal, smooth.
+  const QString after = QDir::temp().filePath(QStringLiteral("sbr-realistic.png"));
+  QVERIFY(f.window.exportImage(after));
+  QImage a(before), b(after);
+  QVERIFY(!a.isNull() && !b.isNull());
+  QVERIFY(a != b);  // drawn differently
+  // Not black: the lights reach the model.
+  double sum = 0;
+  for (int y = 0; y < b.height(); y += 8)
+    for (int x = 0; x < b.width(); x += 8) sum += qGray(b.pixel(x, y));
+  QVERIFY2(sum / ((b.height() / 8 + 1) * (b.width() / 8 + 1)) > 40.0, "realistic display too dark");
+  // Editing as usual: the box is picked where it is drawn; nothing changed.
+  f.window.setSelection({});
+  f.window.activateTool(MainWindow::ToolId::Select);
+  click(f.vp, f.vp->toWidget(gp_Pnt(500, 500, 1000)));
+  QTest::qWait(30);
+  QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{box});
+  QCOMPARE(m.history().revision(), revision);
+  // The ground is display only (not in the model) and follows the model.
+  Bnd_Box groundBefore;
+  f.vp->realisticGround()->BoundingBox(groundBefore);
+  f.box(20000, 0, 1000, 1000, 1000);
+  f.vp->syncNow();
+  Bnd_Box groundAfter;
+  f.vp->realisticGround()->BoundingBox(groundAfter);
+  QVERIFY(groundAfter.CornerMax().X() > 20000.0);
+  QVERIFY(groundBefore.CornerMax().X() < 20000.0);
+  // SBR_RENDER_SHOTS=<folder>: keep the two pictures to look at.
+  if (const QString keep = qEnvironmentVariable("SBR_RENDER_SHOTS"); !keep.isEmpty()) {
+    QFile::copy(before, QDir(keep).filePath(QStringLiteral("cad.png")));
+    QFile::copy(after, QDir(keep).filePath(QStringLiteral("realistic.png")));
+  }
+  action->trigger();
+  QVERIFY(!f.vp->realistic());
+  QCOMPARE(f.vp->occView()->ShadingModel(), cad);
+  QVERIFY(f.vp->realisticGround().IsNull());
+  QFile::remove(before);
+  QFile::remove(after);
 }

@@ -15,6 +15,9 @@
 #include <TopLoc_Location.hxx>
 #include <gp_Pnt2d.hxx>
 #include <Graphic3d_MaterialAspect.hxx>
+#include <Graphic3d_PBRMaterial.hxx>
+#include <V3d_AmbientLight.hxx>
+#include <V3d_DirectionalLight.hxx>
 #include <Poly_Triangulation.hxx>
 #include <Graphic3d_ShaderObject.hxx>
 #include <Graphic3d_ShaderProgram.hxx>
@@ -45,6 +48,7 @@
 #include <Aspect_DisplayConnection.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <gp_Pln.hxx>
 #include <Graphic3d_SequenceOfHClipPlane.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepBndLib.hxx>
@@ -344,6 +348,7 @@ void Viewport::displayAxes() {
           kAxisColors[i], half == 0 ? Aspect_TOL_SOLID : Aspect_TOL_DOT, 1.5));
       axis->SetInfiniteState(Standard_True);
       context_->Display(axis, AIS_WireFrame, -1, Standard_False);
+      axes_.push_back(axis);
     }
   }
 }
@@ -1507,6 +1512,7 @@ bool Viewport::syncObject(const doc::ObjectId& id) {
     entry.shownFaceSelection = faceSelection;
     entry.shownLocked = locked;
     showBackSide(entry.ais, o->kind());
+    applyPhysicalMaterial(entry, *o);
     // SetColor() also recolours the face boundaries; black, or blue when
     // selected (red when locked: selected but not to be edited).
     const Quantity_Color line = !selected  ? Quantity_Color(Quantity_NOC_BLACK)
@@ -1628,6 +1634,8 @@ void Viewport::syncSome(std::optional<double> budgetMs) {
   if (!queue.empty()) {
     syncOpeningSymbols();
     if (planCutZ_) syncWallCuts();
+    // The ground follows the model's extent (docs/81_realistic_display).
+    if (realistic_ && pendingSync_.empty()) updateRealisticGround();
   }
   syncEditBox();
   // Display copies may have been rebuilt: refresh the element overlay.
@@ -1696,6 +1704,109 @@ void Viewport::setShaded(bool shaded) {
   for (auto& [id, entry] : entries_) {
     context_->SetDisplayMode(entry.ais, shaded ? AIS_Shaded : AIS_WireFrame, Standard_False);
   }
+  redraw();
+}
+
+// --- realistic display (docs/81_realistic_display) ----------------------------------------------
+
+void Viewport::applyPhysicalMaterial(Entry& entry, const doc::Object& object) {
+  if (entry.ais.IsNull()) return;
+  const doc::Material* m = modeler_.document().findMaterial(modeler_.document().inheritedMaterial(object));
+  // No material: a matte, non-metal surface (painted plaster, concrete).
+  const float metallic = m ? static_cast<float>(m->metallic) : 0.0f;
+  const float roughness = m ? static_cast<float>(m->roughness) : 0.6f;
+  const Handle(Prs3d_Drawer)& drawer = entry.ais->Attributes();
+  if (!drawer->HasOwnShadingAspect()) drawer->SetupOwnShadingAspect();
+  const Handle(Graphic3d_AspectFillArea3d)& aspect = drawer->ShadingAspect()->Aspect();
+  for (Graphic3d_MaterialAspect* material : {&aspect->ChangeFrontMaterial(), &aspect->ChangeBackMaterial()}) {
+    Graphic3d_PBRMaterial pbr = material->PBRMaterial();
+    pbr.SetMetallic(metallic);
+    pbr.SetRoughness(Graphic3d_PBRMaterial::Roughness(roughness));
+    material->SetPBRMaterial(pbr);
+  }
+}
+
+void Viewport::updateRealisticGround() {
+  if (!realisticGround_.IsNull()) context_->Remove(realisticGround_, Standard_False);
+  realisticGround_.Nullify();
+  if (!realistic_) return;
+  // A ground at GL (z = 0) under the model, a little larger than it: large
+  // enough to take the shadows, small enough for the shadow map to stay
+  // sharp (it covers everything shown).
+  Bnd_Box box;
+  for (const auto& [id, entry] : entries_) {
+    if (!entry.ais.IsNull() && context_->IsDisplayed(entry.ais)) entry.ais->BoundingBox(box);
+  }
+  double x0 = -5000, y0 = -5000, x1 = 5000, y1 = 5000;
+  if (!box.IsVoid()) {
+    double zMin, zMax;
+    box.Get(x0, y0, zMin, x1, y1, zMax);
+    const double margin = std::max(3000.0, 0.5 * std::max({x1 - x0, y1 - y0, zMax - std::min(zMin, 0.0)}));
+    x0 -= margin, y0 -= margin, x1 += margin, y1 += margin;
+  }
+  const TopoDS_Face ground = BRepBuilderAPI_MakeFace(gp_Pln(gp::XOY()), x0, x1, y0, y1).Face();
+  realisticGround_ = new AIS_Shape(ground);
+  realisticGround_->SetColor(rgb(0.78, 0.79, 0.76));
+  realisticGround_->Attributes()->SetFaceBoundaryDraw(Standard_False);
+  Graphic3d_MaterialAspect material(Graphic3d_NameOfMaterial_Plastified);
+  material.SetColor(rgb(0.78, 0.79, 0.76));
+  Graphic3d_PBRMaterial pbr = material.PBRMaterial();
+  pbr.SetMetallic(0.0f);
+  pbr.SetRoughness(Graphic3d_PBRMaterial::Roughness(0.9f));
+  material.SetPBRMaterial(pbr);
+  realisticGround_->SetMaterial(material);
+  // Display only: never picked, never snapped to (it is not in the model).
+  context_->Display(realisticGround_, AIS_Shaded, -1, Standard_False);
+  context_->Deactivate(realisticGround_);
+}
+
+void Viewport::setRealistic(bool on) {
+  if (realistic_ == on || view_.IsNull()) {
+    realistic_ = on;
+    return;
+  }
+  realistic_ = on;
+  // The lights of the other display go (turned off and removed one by one:
+  // turning all off at once fails in OCCT 7.6 when one is already off).
+  std::vector<Handle(V3d_Light)> active, defined;
+  for (V3d_ListOfLightIterator it(viewer_->ActiveLightIterator()); it.More(); it.Next()) active.push_back(it.Value());
+  for (V3d_ListOfLightIterator it(viewer_->DefinedLightIterator()); it.More(); it.Next()) defined.push_back(it.Value());
+  for (const Handle(V3d_Light)& light : active) viewer_->SetLightOff(light);
+  for (const Handle(V3d_Light)& light : defined) viewer_->DelLight(light);
+  if (on) {
+    // A sun from the south-east, high (shadows), a soft light from the
+    // opposite side and some light from the sky everywhere.
+    Handle(V3d_AmbientLight) sky = new V3d_AmbientLight(Quantity_NOC_WHITE);
+    sky->SetIntensity(0.6f);
+    Handle(V3d_DirectionalLight) sun = new V3d_DirectionalLight(gp_Dir(-0.45, 0.55, -0.7), Quantity_NOC_WHITE);
+    sun->SetName("sun");
+    sun->SetIntensity(1.0f);
+    sun->SetCastShadows(Standard_True);
+    Handle(V3d_DirectionalLight) fill = new V3d_DirectionalLight(gp_Dir(0.5, -0.3, -0.4), rgb(0.85, 0.9, 1.0));
+    fill->SetIntensity(0.8f);
+    for (const Handle(V3d_Light)& light : {Handle(V3d_Light)(sky), Handle(V3d_Light)(sun), Handle(V3d_Light)(fill)}) {
+      viewer_->AddLight(light);
+      viewer_->SetLightOn(light);
+    }
+    Graphic3d_RenderingParams& params = view_->ChangeRenderingParams();
+    params.IsShadowEnabled = Standard_True;
+    params.ShadowMapResolution = 2048;
+    view_->SetShadingModel(Graphic3d_TypeOfShadingModel_Pbr);
+  } else {
+    viewer_->SetDefaultLights();
+    viewer_->SetLightOn();
+    view_->SetShadingModel(viewer_->DefaultShadingModel());
+  }
+  // The axes run a million millimetres each way: they would stretch the
+  // shadow map over all of that (and a rendered view does without them).
+  for (const Handle(AIS_Shape)& axis : axes_) {
+    if (on) {
+      context_->Erase(axis, Standard_False);
+    } else {
+      context_->Display(axis, AIS_WireFrame, -1, Standard_False);
+    }
+  }
+  updateRealisticGround();
   redraw();
 }
 

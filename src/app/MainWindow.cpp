@@ -1005,6 +1005,12 @@ void MainWindow::buildMenus() {
   xray->setCheckable(true);
   xray->setShortcut(QKeySequence(tr("Alt+X")));
   connect(xray, &QAction::toggled, this, [this](bool on) { viewport_->setXRay(on); });
+  // Materials, sun and shadows (docs/81_realistic_display): display only, edits as usual.
+  QAction* realistic = view->addAction(tr("リアル表示（材質・太陽・影）"));
+  realistic->setObjectName(QStringLiteral("realisticAction"));
+  realistic->setCheckable(true);
+  realistic->setShortcut(QKeySequence(QStringLiteral("F9")));
+  connect(realistic, &QAction::toggled, this, [this](bool on) { viewport_->setRealistic(on); });
   focusOnDoubleClick_ = view->addAction(tr("中ボタンのダブルクリックでフォーカス"));
   focusOnDoubleClick_->setCheckable(true);
   focusOnDoubleClick_->setChecked(true);
