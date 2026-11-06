@@ -1729,8 +1729,10 @@ void Viewport::applyPhysicalMaterial(Entry& entry, const doc::Object& object) {
 void Viewport::updateRealisticGround() {
   if (!realisticGround_.IsNull()) context_->Remove(realisticGround_, Standard_False);
   realisticGround_.Nullify();
-  if (!realistic_) return;
-  // A ground at GL (z = 0) under the model, a little larger than it: large
+  if (!realistic_ || !shadowsOnGround_) return;
+  // As SketchUp: no ground to see, only the shadows on it. A ground at GL
+  // (z = 0) under the model, its colour lit as the background's ground is
+  // drawn (so only the shadows show), a little larger than the model: large
   // enough to take the shadows, small enough for the shadow map to stay
   // sharp (it covers everything shown).
   Bnd_Box box;
@@ -1746,10 +1748,13 @@ void Viewport::updateRealisticGround() {
   }
   const TopoDS_Face ground = BRepBuilderAPI_MakeFace(gp_Pln(gp::XOY()), x0, x1, y0, y1).Face();
   realisticGround_ = new AIS_Shape(ground);
-  realisticGround_->SetColor(rgb(0.78, 0.79, 0.76));
+  // Lit by the sun, sky and fill light this comes out as the backdrop's
+  // ground (sRGB 0.80, 0.80, 0.78), measured on the rendered picture.
+  const Quantity_Color groundAlbedo = rgb(0.644, 0.64, 0.60);
+  realisticGround_->SetColor(groundAlbedo);
   realisticGround_->Attributes()->SetFaceBoundaryDraw(Standard_False);
   Graphic3d_MaterialAspect material(Graphic3d_NameOfMaterial_Plastified);
-  material.SetColor(rgb(0.78, 0.79, 0.76));
+  material.SetColor(groundAlbedo);
   Graphic3d_PBRMaterial pbr = material.PBRMaterial();
   pbr.SetMetallic(0.0f);
   pbr.SetRoughness(Graphic3d_PBRMaterial::Roughness(0.9f));
@@ -1758,6 +1763,13 @@ void Viewport::updateRealisticGround() {
   // Display only: never picked, never snapped to (it is not in the model).
   context_->Display(realisticGround_, AIS_Shaded, -1, Standard_False);
   context_->Deactivate(realisticGround_);
+}
+
+void Viewport::setShadowsOnGround(bool on) {
+  shadowsOnGround_ = on;
+  if (view_.IsNull()) return;
+  updateRealisticGround();
+  redraw();
 }
 
 void Viewport::setRealistic(bool on) {

@@ -10624,6 +10624,13 @@ void GuiPhase1::realisticDisplay() {
   f.vp->realisticGround()->BoundingBox(groundAfter);
   QVERIFY(groundAfter.CornerMax().X() > 20000.0);
   QVERIFY(groundBefore.CornerMax().X() < 20000.0);
+  // Shadows on the ground can be turned off: then no ground at all.
+  auto* groundShadows = f.window.findChild<QAction*>(QStringLiteral("groundShadowsAction"));
+  QVERIFY(groundShadows && groundShadows->isChecked());
+  groundShadows->trigger();
+  QVERIFY(f.vp->realisticGround().IsNull());
+  groundShadows->trigger();
+  QVERIFY(!f.vp->realisticGround().IsNull());
   // SBR_RENDER_SHOTS=<folder>: keep the two pictures to look at.
   if (const QString keep = qEnvironmentVariable("SBR_RENDER_SHOTS"); !keep.isEmpty()) {
     QFile::copy(before, QDir(keep).filePath(QStringLiteral("cad.png")));

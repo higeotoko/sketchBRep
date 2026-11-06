@@ -98,6 +98,10 @@ class Viewport : public QWidget {
   // Display only: picking, snapping, editing and the file are unchanged.
   void setRealistic(bool on);
   bool realistic() const { return realistic_; }
+  // Shadows on the ground (GL) in the realistic display; the ground itself
+  // is not to be seen (as SketchUp's "on ground" shadows). On by default.
+  void setShadowsOnGround(bool on);
+  bool shadowsOnGround() const { return shadowsOnGround_; }
   const Handle(AIS_Shape)& realisticGround() const { return realisticGround_; }
   const Handle(V3d_View)& occView() const { return view_; }  // for checks
   // Shared display copies in use (one per distinct local shape; tests).
@@ -470,6 +474,7 @@ class Viewport : public QWidget {
   bool shaded_ = true;
   bool xRay_ = false;
   bool realistic_ = false;
+  bool shadowsOnGround_ = true;
   Handle(AIS_Shape) realisticGround_;
   std::vector<Handle(AIS_Shape)> axes_;  // hidden in the realistic display
   void updateRealisticGround();

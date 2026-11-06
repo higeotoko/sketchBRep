@@ -1011,6 +1011,15 @@ void MainWindow::buildMenus() {
   realistic->setCheckable(true);
   realistic->setShortcut(QKeySequence(QStringLiteral("F9")));
   connect(realistic, &QAction::toggled, this, [this](bool on) { viewport_->setRealistic(on); });
+  QAction* groundShadows = view->addAction(tr("リアル表示で地面に影を落とす"));
+  groundShadows->setObjectName(QStringLiteral("groundShadowsAction"));
+  groundShadows->setCheckable(true);
+  groundShadows->setChecked(QSettings().value(QStringLiteral("view/groundShadows"), true).toBool());
+  viewport_->setShadowsOnGround(groundShadows->isChecked());
+  connect(groundShadows, &QAction::toggled, this, [this](bool on) {
+    viewport_->setShadowsOnGround(on);
+    QSettings().setValue(QStringLiteral("view/groundShadows"), on);
+  });
   focusOnDoubleClick_ = view->addAction(tr("中ボタンのダブルクリックでフォーカス"));
   focusOnDoubleClick_->setCheckable(true);
   focusOnDoubleClick_->setChecked(true);
