@@ -11,6 +11,7 @@
 | Rhino（.3dm） | ○ | ○ | |
 | COLLADA（.dae） | ○ | ○ | SketchUp との受け渡しに |
 | STL（.stl） | | ○ | 3D プリント用 |
+| glTF（.glb / .gltf） | | ○ | レンダリング用（Blender・Twinmotion・Unreal Engine など）。材質の色・透明度・金属感・粗さ付き |
 | DXF（.dxf） | ○ | 図面のみ | 2D の線・円弧を読み込みます。Jw_cad の Shift_JIS の DXF も読めます |
 | DWG（.dwg） | ○ | 図面のみ | ODA File Converter（無料）が必要です |
 | JWW（.jww） | ○ | 図面のみ | Jw_cad の図面の線・円・円弧・寸法線・ブロックを読み込みます |

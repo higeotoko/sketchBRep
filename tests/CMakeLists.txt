@@ -29,6 +29,7 @@ add_executable(sbr_core_tests
   test_members.cpp
   test_construction.cpp
   test_sun.cpp
+  test_gltf.cpp
   test_wall_quantity.cpp
   test_frames.cpp
   test_foundation.cpp

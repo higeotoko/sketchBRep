@@ -51,6 +51,7 @@ add_library(sbr_core STATIC
   src/Surfaces.cpp
   src/Progress.cpp
   src/Sun.cpp
+  src/Gltf.cpp
 )
 add_library(sbr::core ALIAS sbr_core)
 
@@ -85,6 +86,12 @@ if(TARGET TKDESTEP)
   set(SBR_OCCT_EXCHANGE TKDE TKXSBase TKDESTEP TKDEIGES)
 else()
   set(SBR_OCCT_EXCHANGE TKXSBase TKSTEP TKSTEPBase TKSTEPAttr TKSTEP209 TKXDESTEP TKIGES)
+endif()
+# glTF (docs/85_gltf_export): TKDEGLTF from 7.8, TKRWMesh before.
+if(TARGET TKDEGLTF)
+  list(APPEND SBR_OCCT_EXCHANGE TKDEGLTF TKRWMesh)
+else()
+  list(APPEND SBR_OCCT_EXCHANGE TKRWMesh)
 endif()
 
 target_link_libraries(sbr_core

@@ -7350,6 +7350,41 @@ Status Modeler::exportStep(const std::string& path, const std::vector<ObjectId>&
   return geom::writeStepParts(parts, path);
 }
 
+Status Modeler::exportGltf(const std::string& path, const std::vector<ObjectId>& ids,
+                           const geom::GltfExportOptions& options) const {
+  for (const ObjectId& id : ids) {
+    if (!document_.find(id)) return Status::failure("Object not found");
+  }
+  std::vector<ObjectId> wanted;
+  if (ids.empty()) {
+    for (const Object& o : document_.objects()) wanted.push_back(o.id);
+  } else {
+    for (const ObjectId& root : topmost(ids)) {
+      for (const ObjectId& id : document_.subtree(root)) wanted.push_back(id);
+    }
+  }
+  std::vector<geom::GltfPart> parts;
+  for (const ObjectId& id : wanted) {
+    const Object* o = document_.find(id);
+    if (!o || o->shape.IsNull() || !document_.isVisible(id)) continue;
+    // Only what has faces: lines, dimensions and guides do not render.
+    if (o->kind() == ObjectKind::Annotation || o->kind() == ObjectKind::Guide || o->kind() == ObjectKind::Curve) continue;
+    geom::GltfPart part;
+    part.shape = document_.worldShape(*o);
+    part.name = o->name;
+    const Color c = document_.displayColor(*o);  // per-face materials: not yet
+    part.color = {c.r, c.g, c.b, document_.displayOpacity(*o)};
+    if (const Material* m = document_.findMaterial(document_.inheritedMaterial(*o))) {
+      part.materialName = m->name;
+      part.metallic = m->metallic;
+      part.roughness = m->roughness;
+    }
+    parts.push_back(part);
+  }
+  if (parts.empty()) return Status::failure("Nothing to export");
+  return geom::writeGltf(parts, path, options);
+}
+
 Status Modeler::export3dm(const std::string& path, const std::vector<ObjectId>& ids) const {
   const auto parts = exportParts(ids);
   if (parts.empty()) return Status::failure("Nothing to export");

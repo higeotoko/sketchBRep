@@ -18,6 +18,7 @@
 #include "sbr/geom/Rhino3dm.h"
 #include "sbr/geom/Collada.h"
 #include "sbr/geom/Dxf.h"
+#include "sbr/geom/Gltf.h"
 #include "sbr/geom/Jww.h"
 #include "sbr/geom/ShapeIO.h"
 
@@ -772,6 +773,10 @@ class Modeler {
   // Exports the given objects (all visible objects when empty) as STEP,
   // keeping object names and colours.
   Status exportStep(const std::string& path, const std::vector<ObjectId>& ids = {}) const;
+  // glTF for renderers (docs/85_gltf_export): visible objects (or `ids`) with
+  // their materials' colour, opacity, metallic and roughness.
+  Status exportGltf(const std::string& path, const std::vector<ObjectId>& ids = {},
+                    const geom::GltfExportOptions& options = {}) const;
   Status exportBrep(const std::string& path, const std::vector<ObjectId>& ids = {}) const;
   Status exportIges(const std::string& path, const std::vector<ObjectId>& ids = {}) const;
   Result<std::vector<ObjectId>> importBrep(const std::string& path);

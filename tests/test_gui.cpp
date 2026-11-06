@@ -10603,6 +10603,16 @@ void GuiPhase1::realisticDisplay() {
   QVERIFY(f.vp->occView()->IsImageBasedLighting());
   const QString after = QDir::temp().filePath(QStringLiteral("sbr-realistic.png"));
   QVERIFY(f.window.exportImage(after));
+  // docs/85: glTF from the File > Export path, for renderers.
+  {
+    const QString glb = QDir::temp().filePath(QStringLiteral("sbr-render.glb"));
+    QVERIFY(f.window.exportGltfFile(glb));
+    QFile file(glb);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.read(4), QByteArray("glTF"));
+    file.close();
+    QFile::remove(glb);
+  }
   // docs/84: a scene remembers the realistic display.
   f.window.addScene(QStringLiteral("外観パース"));
   QCOMPARE(m.document().settings().scenes.back().realistic, std::optional<bool>(true));

@@ -103,7 +103,7 @@ namespace sbr::app {
 namespace {
 std::string utf8(const QString& s) { return s.toUtf8().toStdString(); }
 
-enum class ExchangeType { Step, Stl, Dxf, Dwg, Jww, Iges, Brep, Rhino, Collada, Image };
+enum class ExchangeType { Step, Stl, Dxf, Dwg, Jww, Iges, Brep, Rhino, Collada, Gltf, Image };
 struct ExchangeFormat {
   ExchangeType type;
   QString filter;
@@ -121,6 +121,8 @@ std::vector<ExchangeFormat> exchangeFormats(bool importing) {
   formats.push_back({ExchangeType::Brep,text("BREP ファイル (*.brep *.brp)"),{"brep","brp"}});
   formats.push_back({ExchangeType::Rhino,text("Rhino 3DM ファイル (*.3dm)"),{"3dm"}});
   formats.push_back({ExchangeType::Collada,text("COLLADA・SketchUp 用 (*.dae)"),{"dae"}});
+  // Renderers (docs/85_gltf_export): export only.
+  if(!importing) formats.push_back({ExchangeType::Gltf,text("glTF・レンダリング用（Blender・Twinmotion・UE） (*.glb *.gltf)"),{"glb","gltf"}});
   formats.push_back(importing?ExchangeFormat{ExchangeType::Image,text("画像・下敷き (*.png *.jpg *.jpeg *.bmp *.gif)"),{"png","jpg","jpeg","bmp","gif"}}:
                              ExchangeFormat{ExchangeType::Image,text("PNG 画像 (*.png)"),{"png"}});
   return formats;
@@ -4556,6 +4558,7 @@ void MainWindow::importFile() {
     case ExchangeType::Brep:importGeometryFile(path,GeometryFormat::Brep);break;
     case ExchangeType::Rhino:import3dmFile(path);break;
     case ExchangeType::Collada:importColladaFile(path);break;
+    case ExchangeType::Gltf:break; // not offered by the import dialog
     case ExchangeType::Image:importUnderlay(path);break;
     case ExchangeType::Stl:break; // not offered by the import dialog
   }
@@ -4596,6 +4599,7 @@ void MainWindow::exportFile() {
     case ExchangeType::Brep:exportGeometry(path,GeometryFormat::Brep);break;
     case ExchangeType::Rhino:export3dmFile(path);break;
     case ExchangeType::Collada:exportColladaFile(path);break;
+    case ExchangeType::Gltf:exportGltfFile(path);break;
     case ExchangeType::Image:exportImage(path);break;
     case ExchangeType::Dxf:case ExchangeType::Dwg:case ExchangeType::Jww:break; // not offered for export (drawings: File > 図面を書き出す)
   }
@@ -4839,6 +4843,16 @@ void MainWindow::exportColladaFile(const QString& path) {
     return;
   }
   statusBar()->showMessage(tr("COLLADA を書き出しました（SketchUp の ファイル > インポート で開けます）: %1").arg(path), 5000);
+}
+
+bool MainWindow::exportGltfFile(const QString& path) {
+  const Status s = modeler_.exportGltf(utf8(path), selection_);
+  if (!s) {
+    reportError(tr("glTF を書き出せませんでした: %1").arg(QString::fromStdString(s.message())));
+    return false;
+  }
+  statusBar()->showMessage(tr("glTF を書き出しました（材質の色・透明度・金属感・粗さ付き）: %1").arg(path), 5000);
+  return true;
 }
 
 void MainWindow::export3dmFile(const QString& path) {

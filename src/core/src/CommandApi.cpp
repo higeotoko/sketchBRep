@@ -2750,6 +2750,21 @@ const std::vector<CommandDef>& commands() {
          must(m.exportCollada(text(a, "path"), a.contains("ids") ? ids(a, "ids") : std::vector<ObjectId>{}, options));
          return json::object();
        }},
+      {"export_gltf",
+       "Export visible objects (or 'ids') to glTF 2.0 for renderers (Blender, Twinmotion, Unreal Engine): "
+       "'.glb' (one binary file) or '.gltf' (text and .bin). Metres, Y up as glTF wants; each object's material "
+       "colour, opacity, metallic and roughness (physically based); lines and guides left out. 'deflection_mm' "
+       "(default 1) and 'angle_deg' (default 15): how finely curved faces are cut. docs/85.",
+       SCHEMA({"type": "object", "properties": {"path": {"type": "string"},
+               "ids": {"type": "array", "items": {"type": "string"}}, "deflection_mm": {"type": "number"},
+               "angle_deg": {"type": "number"}}, "required": ["path"]}),
+       [](doc::Modeler& m, const json& a) {
+         geom::GltfExportOptions options;
+         options.linearDeflection = numberOr(a, "deflection_mm", 1.0);
+         options.angularDeflection = numberOr(a, "angle_deg", 15.0) * M_PI / 180.0;
+         must(m.exportGltf(text(a, "path"), a.contains("ids") ? ids(a, "ids") : std::vector<ObjectId>{}, options));
+         return json::object();
+       }},
       {"export_drawing",
        "2D drawing (docs/50) as DXF or JWW (Jw_cad), by the path's extension. 'kind': 'plan' (cut at "
        "'cut_z' mm, default 1200, seen from above), 'section' ('point' [x,y,z] on the cut and 'look' "
@@ -2840,7 +2855,7 @@ bool isFileCommand(const std::string& name) {
   return name == "save" || name == "open" || name == "export_step" || name == "export_stl" || name == "export_3dm" ||
          name == "import_brep" || name == "export_brep" || name == "import_iges" || name == "export_iges" ||
          name == "import_3dm" || name == "import_dxf" || name == "import_jww" || name == "set_material_texture" || name == "export_dae" ||
-         name == "import_dae" || name == "export_drawing";
+         name == "import_dae" || name == "export_drawing" || name == "export_gltf";
 }
 
 CommandApi::Effect builtinEffect(const std::string& name) {

@@ -288,6 +288,9 @@ class MainWindow : public QMainWindow, public ToolHost {
   void exportGeometry(const QString& path, GeometryFormat format);
   void importColladaFile(const QString& path);
   void exportColladaFile(const QString& path);
+ public:
+  bool exportGltfFile(const QString& path);  // docs/85_gltf_export (public for checks)
+ private:
   void export3dmFile(const QString& path);
   void deleteSelection();
   // Faces / edges of some object picked without the whole object.
