@@ -10594,9 +10594,7 @@ void GuiPhase1::realisticDisplay() {
   QVERIFY(f.vp->realistic());
   QCOMPARE(f.vp->occView()->ShadingModel(), Graphic3d_TypeOfShadingModel_Pbr);
   int shadowCasters = 0;
-  for (V3d_ListOfLightIterator it(f.vp->occView()->ActiveLightIterator()); it.More(); it.Next()) {
-    shadowCasters += it.Value()->ToCastShadows() ? 1 : 0;
-  }
+  for (const Handle(V3d_Light)& light : f.vp->occView()->ActiveLights()) shadowCasters += light->ToCastShadows() ? 1 : 0;
   QCOMPARE(shadowCasters, 1);
   QVERIFY(!f.vp->realisticGround().IsNull());
   // The box's material reaches the shading: metal, smooth.
@@ -10638,8 +10636,8 @@ void GuiPhase1::realisticDisplay() {
   // (as the background's ground) whatever the sun's height; at night no
   // sun and no shadows.
   auto sunLight = [&]() -> Handle(V3d_Light) {
-    for (V3d_ListOfLightIterator it(f.vp->occView()->ActiveLightIterator()); it.More(); it.Next()) {
-      if (it.Value()->Name() == "sun") return it.Value();
+    for (const Handle(V3d_Light)& light : f.vp->occView()->ActiveLights()) {
+      if (light->Name() == "sun") return light;
     }
     return {};
   };

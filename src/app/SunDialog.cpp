@@ -1,6 +1,7 @@
 #include "SunDialog.h"
 
 #include <cmath>
+#include <iterator>
 
 #include <QComboBox>
 #include <QDate>

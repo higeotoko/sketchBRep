@@ -1792,8 +1792,9 @@ void Viewport::setRealistic(bool on) {
   // The lights of the other display go (turned off and removed one by one:
   // turning all off at once fails in OCCT 7.6 when one is already off).
   std::vector<Handle(V3d_Light)> active, defined;
-  for (V3d_ListOfLightIterator it(viewer_->ActiveLightIterator()); it.More(); it.Next()) active.push_back(it.Value());
-  for (V3d_ListOfLightIterator it(viewer_->DefinedLightIterator()); it.More(); it.Next()) defined.push_back(it.Value());
+  // (The lists themselves: their iterator type is gone in OCCT 8.)
+  for (const Handle(V3d_Light)& light : viewer_->ActiveLights()) active.push_back(light);
+  for (const Handle(V3d_Light)& light : viewer_->DefinedLights()) defined.push_back(light);
   for (const Handle(V3d_Light)& light : active) viewer_->SetLightOff(light);
   for (const Handle(V3d_Light)& light : defined) viewer_->DelLight(light);
   if (on) {
