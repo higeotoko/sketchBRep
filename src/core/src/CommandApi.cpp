@@ -1993,6 +1993,20 @@ const std::vector<CommandDef>& commands() {
          return idsResult(must(m.createWalls(pts, number(a, "thickness"), number(a, "height"),
                                              j == "left" ? -1 : j == "right" ? 1 : 0)));
        }},
+      {"set_wall_type",
+       "Give walls already drawn ('ids', kind = wall) a timber build-up ('type' as in create_wall, 'core' "
+       "column width, default 105): each keeps the line it was drawn on and gets the layers around it. "
+       "'outside': auto (default: a typed wall keeps its outside, otherwise the side away from the middle "
+       "of the walls given), left or right of the line, or flip (the other side from auto). Corners and T "
+       "joints with neighbouring walls are "
+       "fitted again; openings move to the new faces. Returns every wall changed. One undo step.",
+       SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}},
+               "type": {"type": "string"}, "core": {"type": "number"}, "outside": {"enum": ["auto", "left", "right", "flip"]}},
+               "required": ["ids", "type"]}),
+       [](doc::Modeler& m, const json& a) {
+         return idsResult(must(m.setWallType(ids(a, "ids"), text(a, "type"), numberOr(a, "core", 105.0),
+                                             textOr(a, "outside", "auto"))));
+       }},
       {"create_slab",
        "A floor slab: 'outline' of plan points ([x, y] or \"X1/Y1\") or 'grid' {x: [\"X1\", \"X4\"], y: "
        "[\"Y1\", \"Y3\"]} for the rectangle between those lines, widened by 'overhang' (mm). Its top is "

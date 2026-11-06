@@ -329,6 +329,7 @@ class GuiPhase1 : public QObject {
   void toolsMenuIsGroupedAndProposalBarIsReadable();
   void openingFittingFromPanelShowsInPlanCut();
   void wallTypeFromToolbarAndColumnsShowInPlanCut();
+  void drawnWallsChangeTypeFromToolbarAndPanel();
   void foundationSupportsSelectActualPartsAndInvalidate();
   void foundationPadsFromMissingFloorPostsAndRegeneration();
   void foundationPadsWithDifferentTopsReloadWithoutChangingTheModel();
@@ -10118,6 +10119,41 @@ void GuiPhase1::wallTypeFromToolbarAndColumnsShowInPlanCut() {
   }
   f.vp->setPlanCut(std::nullopt);
   QCOMPARE(f.vp->wallsCutOpen(),std::size_t(0));
+}
+
+// Walls already drawn change their build-up from the toolbar picker (with them selected) or
+// the properties panel: the line stays, the outside faces out, 外⇄内 turns it round.
+void GuiPhase1::drawnWallsChangeTypeFromToolbarAndPanel() {
+  Fixture f;QVERIFY(f.setUp());auto& m=f.window.modeler();
+  const auto ring=m.createWalls({gp_Pnt(0,0,0),gp_Pnt(3640,0,0),gp_Pnt(3640,2730,0),gp_Pnt(0,2730,0),gp_Pnt(0,0,0)},200,2800);
+  QVERIFY(ring && ring->size()==4);
+  f.vp->syncNow();
+  f.window.activateTool(MainWindow::ToolId::Select);
+  f.window.setSelection(*ring);
+  QApplication::processEvents();
+  auto bounds=[&] {Bnd_Box b;for(const auto& id:*ring) b.Add(m.document().worldBounds(*m.document().find(id)));return b;};
+  auto* kind=f.window.findChild<QComboBox*>(QStringLiteral("architectureWallType"));QVERIFY(kind);
+  const int mortar=kind->findData(QStringLiteral("exterior_lath_mortar"));QVERIFY(mortar>0);
+  kind->setCurrentIndex(mortar);
+  emit kind->activated(mortar);
+  QCOMPARE(m.document().find(ring->front())->attributes.at("wall_type"),std::string("exterior_lath_mortar"));
+  QVERIFY(std::abs(bounds().CornerMin().X()+111.5)<1e-6);  // outside faces out
+  auto* flip=f.window.findChild<QToolButton*>(QStringLiteral("architectureWallFlip"));QVERIFY(flip&&flip->isEnabled());
+  flip->toggle();
+  QVERIFY2(std::abs(bounds().CornerMin().X()+65)<1e-6,qPrintable(QString::number(bounds().CornerMin().X())));
+  m.undo();
+  QVERIFY(std::abs(bounds().CornerMin().X()+111.5)<1e-6);
+  // The panel (one wall selected): board both sides on that wall; its neighbours are refitted.
+  f.window.setSelection({ring->front()});
+  QApplication::processEvents();
+  auto* panelType=f.window.findChild<QComboBox*>(QStringLiteral("wallType"));QVERIFY(panelType);
+  const int board=panelType->findData(QStringLiteral("interior_board"));QVERIFY(board>0);
+  panelType->setCurrentIndex(board);
+  emit panelType->activated(board);
+  QTRY_VERIFY(m.document().find(ring->front())->attributes.at("wall_type")==std::string("interior_board"));
+  QCOMPARE(m.document().find(ring->back())->attributes.at("wall_type"),std::string("exterior_lath_mortar"));
+  const Bnd_Box first=m.document().worldBounds(*m.document().find(ring->front()));
+  QVERIFY2(std::abs(first.CornerMin().Y()+65)<1e-6,qPrintable(QString::number(first.CornerMin().Y())));
 }
 
 // The Tools menu is a short list of groups (the drawing tools in their own submenu), and the

@@ -26,6 +26,7 @@
 #include <QVBoxLayout>
 
 #include <nlohmann/json.hpp>
+#include "sbr/WallTypes.h"
 #include "sbr/geom/Measure.h"
 #include "sbr/geom/Validation.h"
 
@@ -423,6 +424,27 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
     addAction(tr("軸…"), tr("原点と赤軸の向きを決め直す（どの配置も動きません）"), QStringLiteral("axes"));
     h->addStretch();
     form_->addRow(actions);
+  }
+
+  // A wall's build-up on its drawn line (timber walls).
+  if (const doc::Object* o = modeler.document().find(id);
+      o && o->attributes.count("kind") && o->attributes.at("kind") == "wall") {
+    auto* type = new QComboBox;
+    type->setObjectName(QStringLiteral("wallType"));
+    type->addItem(tr("厚さ指定（仕様なし）"), QString());
+    for (const auto& t : construction::wallTypes())
+      type->addItem(QString::fromStdString(t.name), QString::fromStdString(t.id));
+    const auto current = o->attributes.find("wall_type");
+    type->setCurrentIndex(current == o->attributes.end()
+                              ? 0
+                              : std::max(0, type->findData(QString::fromStdString(current->second))));
+    type->setToolTip(tr("描いた線（柱心）はそのままで、外側・内側の仕上げの厚みが付きます。何枚もまとめて変える時は、壁を選んで建築ツールバーの仕様から。"
+                        "角・T字の取り合いと開口も合わせて直します"));
+    connect(type, &QComboBox::activated, this, [this, id, type] {
+      const QString value = type->currentData().toString();
+      if (!value.isEmpty()) emit wallTypeEdited(id, value);
+    });
+    form_->addRow(tr("壁の仕様"), type);
   }
 
   // Openings cut into this object (walls): width x height, editable.

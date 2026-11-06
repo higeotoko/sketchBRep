@@ -47,6 +47,8 @@ class PropertiesPanel : public QWidget {
   void openingSizeEdited(const doc::ObjectId& id, int index, double width, double height);
   // Door / window kind of one opening (plan symbol): a fitting JSON (OpeningSymbols.h).
   void openingFittingEdited(const doc::ObjectId& id, int index, const QString& fitting);
+  // A wall's build-up (WallTypes.h id) chosen in the panel.
+  void wallTypeEdited(const doc::ObjectId& id, const QString& type);
   void lockToggled(const doc::ObjectId& id, bool locked);
   // The object's material picked from the library ("" = inherit).
   void materialAssigned(const doc::ObjectId& id, const std::string& materialId);

@@ -441,6 +441,15 @@ class Modeler {
   // wall_line_offset (the line's distance from the wall's right face). One undo step.
   Result<std::vector<ObjectId>> createTypedWalls(std::vector<gp_Pnt> points, double height, const std::string& type,
                                                  double core = 105.0, bool outsideRight = false);
+  // Gives walls already drawn (kind = wall, a rectangle pushed up, with or without openings) a
+  // build-up: each keeps the line it was drawn on (its wall_line) and gets the layers around it.
+  // outside: "left" / "right" of the line, or "auto" (a typed wall keeps its outside; otherwise
+  // the side away from the middle of the walls changed, or of all walls; "flip": the other side
+  // from that). Corners and T joints
+  // with neighbouring walls are fitted again (a neighbour's end may move); openings are moved
+  // to the new faces and cut through the new thickness. Returns every wall changed. One undo step.
+  Result<std::vector<ObjectId>> setWallType(const std::vector<ObjectId>& ids, const std::string& type,
+                                            double core = 105.0, const std::string& outside = "auto");
   // A floor slab: plan polygon (any winding) with its top at `top`,
   // `thickness` below. Attribute kind = slab. One undo step.
   Result<ObjectId> createSlab(const std::vector<gp_Pnt>& outline, double top, double thickness);

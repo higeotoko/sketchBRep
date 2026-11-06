@@ -656,6 +656,11 @@ void MainWindow::buildUi() {
               if (!report(modeler_.setCurvePoints(id, points))) refreshPanels();
             });
           });
+  connect(panel_, &PropertiesPanel::wallTypeEdited, this, [this](const doc::ObjectId& id, const QString& type) {
+    QTimer::singleShot(0, this, [this, id, type] {
+      if (!setWallTypeOfWalls(id, type.toStdString())) refreshPanels();
+    });
+  });
   connect(panel_, &PropertiesPanel::openingFittingEdited, this,
           [this](const doc::ObjectId& id, int index, const QString& fitting) {
             QTimer::singleShot(0, this, [this, id, index, fitting] {
@@ -1320,7 +1325,26 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
     flip->setCheckable(true);
     flip->setToolTip(tr("外側を進む向きの右にする（開いた線の外壁で、外と内が逆の時）"));
     bar->addWidget(flip);
-    auto apply = [this, kind, flip] {
+    auto apply = [this, kind, flip](bool flipped) {
+      // Walls selected (not drawing): the picker changes them; 外⇄内 turns their outside round.
+      if (active_ != wallTool_.get() && !kind->currentData().toString().isEmpty()) {
+        std::vector<doc::ObjectId> walls;
+        for (const doc::ObjectId& s : selection_) {
+          const doc::Object* o = modeler_.document().find(s);
+          if (o && o->attributes.count("kind") && o->attributes.at("kind") == "wall") walls.push_back(s);
+        }
+        if (!walls.empty()) {
+          WallTool::Settings s = wallTool_->settings();
+          s.type = kind->currentData().toString().toStdString();
+          wallTool_->setSettings(s);
+          flip->setEnabled(true);
+          const auto r = modeler_.setWallType(walls, s.type, s.core, flipped ? "flip" : "auto");
+          if (!r) reportError(tr("壁の仕様を変えられません: %1").arg(QString::fromStdString(r.error())));
+          else
+            setStatus(tr("選んだ壁 %1 枚を「%2」にしました（Ctrl+Z で戻せます）").arg(walls.size()).arg(kind->currentText()));
+          return;
+        }
+      }
       WallTool::Settings s = wallTool_->settings();
       s.type = kind->currentData().toString().toStdString();
       s.outsideRight = flip->isChecked();
@@ -1329,8 +1353,8 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
       if (active_ != wallTool_.get()) activateTool(ToolId::Wall);
       setStatus(wallTool_->settingsText());
     };
-    connect(kind, &QComboBox::activated, this, apply);
-    connect(flip, &QToolButton::toggled, this, apply);
+    connect(kind, &QComboBox::activated, this, [apply] { apply(false); });
+    connect(flip, &QToolButton::toggled, this, [apply] { apply(true); });
     flip->setEnabled(false);
   }
   drawing(ToolId::Slab, QStringLiteral("architectureSlab"), &MainWindow::showSlabSettingsDialog);
@@ -3716,6 +3740,31 @@ void MainWindow::showOpeningsDialog() {
     return;
   }
   placeOpeningsOnSelection(count->value(), *w, *h, *s, gap);
+}
+
+bool MainWindow::setWallTypeOfWalls(const doc::ObjectId& id, const std::string& type) {
+  std::vector<doc::ObjectId> walls;
+  const bool selected = std::find(selection_.begin(), selection_.end(), id) != selection_.end();
+  for (const doc::ObjectId& s : selected ? selection_ : std::vector<doc::ObjectId>{id}) {
+    const doc::Object* o = modeler_.document().find(s);
+    if (o && o->attributes.count("kind") && o->attributes.at("kind") == "wall") walls.push_back(s);
+  }
+  if (walls.empty()) {
+    reportError(tr("壁を選んでください"));
+    return false;
+  }
+  const double core = wallTool_->settings().core;
+  const auto r = modeler_.setWallType(walls, type, core);
+  if (!r) {
+    reportError(tr("壁の仕様を変えられません: %1").arg(QString::fromStdString(r.error())));
+    return false;
+  }
+  const auto t = construction::wallType(type, core);
+  setStatus(tr("壁 %1 枚を「%2」にしました（取り合いを直した隣の壁を含め %3 枚。Ctrl+Z で戻せます）")
+                .arg(walls.size())
+                .arg(t ? QString::fromStdString(t->name) : QString::fromStdString(type))
+                .arg(r->size()));
+  return true;
 }
 
 bool MainWindow::setOpeningFitting(const doc::ObjectId& host, int index, const QString& fitting) {

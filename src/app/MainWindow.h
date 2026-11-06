@@ -223,6 +223,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   bool resizeOpening(const doc::ObjectId& host, int index, double width, double height);
   // Door / window kind of opening `index` of `host` (fitting JSON, OpeningSymbols.h); one undo step.
   bool setOpeningFitting(const doc::ObjectId& host, int index, const QString& fitting);
+  // A build-up for the selected walls (or `id` alone when it is not selected); one undo step.
+  bool setWallTypeOfWalls(const doc::ObjectId& id, const std::string& type);
 
   // Imports a .3dm file; when it does not come through whole, asks before
   // taking what could be read.

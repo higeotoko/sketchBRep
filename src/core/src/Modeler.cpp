@@ -5223,6 +5223,244 @@ Status Modeler::setOpeningFittings(const ObjectId& hostId, const std::vector<std
   return setAttribute({hostId}, "opening_fittings", all.dump());
 }
 
+namespace {
+// A wall as drawn: its pushed-up rectangle (inside any opening cuts) and the line it was drawn on.
+struct WallBand {
+  const Object* object = nullptr;
+  std::vector<std::size_t> path;  // operand indices down to the wall's own recipe
+  gp_Trsf toWorld;                // the rectangle's frame -> world
+  Recipe recipe;                  // the rectangle + push (copy)
+  double lineOffset = 0.0;        // the drawn line, from the right face (rectangle origin side)
+  gp_Pnt start;                   // world: the line where the rectangle starts
+  gp_Dir dir, left;               // world: along the line, and to its left
+  double length = 0.0;            // the rectangle's length along the line
+  double right = 0.0, leftExt = 0.0;  // band: from -right to +leftExt across the line
+  double z0 = 0.0, z1 = 0.0;
+};
+
+std::optional<WallBand> wallBand(const Document& document, const Object& o) {
+  const auto kind = o.attributes.find("kind");
+  if (kind == o.attributes.end() || kind->second != "wall" || o.shape.IsNull()) return std::nullopt;
+  WallBand w;
+  w.object = &o;
+  const Recipe* recipe = &o.recipe;
+  gp_Trsf placement;
+  while (const auto* cut = std::get_if<BooleanFeature>(&recipe->base)) {
+    if (!recipe->modifiers.empty() || cut->kind != BooleanKind::Subtract || cut->operands.empty() ||
+        !cut->operands.front().recipe)
+      return std::nullopt;
+    placement = placement * cut->operands.front().placement;
+    w.path.push_back(0);
+    recipe = cut->operands.front().recipe.get();
+  }
+  const auto* rect = std::get_if<RectangleProfile>(&recipe->base);
+  if (!rect || recipe->modifiers.size() != 1 || !std::holds_alternative<ExtrudeOp>(recipe->modifiers.front()) ||
+      rect->width <= 0 || rect->height <= 0)
+    return std::nullopt;
+  w.recipe = *recipe;
+  w.toWorld = document.worldTransform(o) * placement;
+  if (std::abs(w.toWorld.ScaleFactor() - 1.0) > 1e-9) return std::nullopt;
+  const gp_Dir normal = rect->plane.normal.Transformed(w.toWorld);
+  if (normal.Z() < 1 - 1e-9) return std::nullopt;  // drawn on the ground plane, pushed up
+  const auto line = o.attributes.find("wall_line");
+  const std::string ref = line == o.attributes.end() ? "center" : line->second;
+  w.lineOffset = ref == "right" ? 0.0 : ref == "left" ? rect->height : rect->height / 2;
+  if (ref == "offset") {
+    const auto at = o.attributes.find("wall_line_offset");
+    try {
+      w.lineOffset = at == o.attributes.end() ? rect->height / 2 : std::stod(at->second);
+    } catch (...) {
+      return std::nullopt;
+    }
+  }
+  w.dir = rect->plane.xDir.Transformed(w.toWorld);
+  w.left = rect->plane.yDir().Transformed(w.toWorld);
+  w.start = rect->plane.toWorld(0, w.lineOffset).Transformed(w.toWorld);
+  w.length = rect->width;
+  w.right = w.lineOffset;
+  w.leftExt = rect->height - w.lineOffset;
+  const Bnd_Box box = document.worldBounds(o);
+  if (box.IsVoid()) return std::nullopt;
+  w.z0 = box.CornerMin().Z();
+  w.z1 = box.CornerMax().Z();
+  return w;
+}
+
+// Where the line through `a` along `da` meets the line through `b` along `db` (plan):
+// parameters along each; nullopt when parallel.
+std::optional<std::pair<double, double>> meet(const gp_Pnt& a, const gp_Dir& da, const gp_Pnt& b, const gp_Dir& db) {
+  const double den = da.X() * db.Y() - da.Y() * db.X();
+  if (std::abs(den) < 1e-6) return std::nullopt;
+  const double ex = b.X() - a.X(), ey = b.Y() - a.Y();
+  return std::make_pair((ex * db.Y() - ey * db.X()) / den, (ex * da.Y() - ey * da.X()) / den);
+}
+}  // namespace
+
+Result<std::vector<ObjectId>> Modeler::setWallType(const std::vector<ObjectId>& ids, const std::string& typeId,
+                                                  double core, const std::string& outside) {
+  using R = Result<std::vector<ObjectId>>;
+  const auto type = construction::wallType(typeId, core);
+  if (!type) return R::failure(type.error());
+  if (outside != "auto" && outside != "left" && outside != "right" && outside != "flip")
+    return R::failure("outside: auto, left, right or flip");
+  if (ids.empty()) return R::failure("Choose the walls to change");
+  // Every wall of the model (neighbours are fitted again too).
+  std::vector<WallBand> walls;
+  std::map<ObjectId, std::size_t> at;
+  for (const Object& o : document_.objects())
+    if (auto w = wallBand(document_, o)) {
+      at[o.id] = walls.size();
+      walls.push_back(std::move(*w));
+    }
+  std::set<std::size_t> targets;
+  for (const ObjectId& id : ids) {
+    const Object* o = document_.find(id);
+    if (!o) return R::failure("Object not found");
+    const auto it = at.find(id);
+    if (it == at.end())
+      return R::failure("'" + o->name + "' is not a wall drawn as a band (kind = wall, pushed up, not edited since)");
+    targets.insert(it->second);
+  }
+  // Which side is outside.
+  auto middle = [&](const std::set<std::size_t>& of) {
+    gp_XYZ sum(0, 0, 0);
+    for (std::size_t i : of) sum += walls[i].start.Translated(gp_Vec(walls[i].dir) * (walls[i].length / 2)).XYZ();
+    return gp_Pnt(sum / static_cast<double>(of.size()));
+  };
+  std::set<std::size_t> everything;
+  for (std::size_t i = 0; i < walls.size(); ++i) everything.insert(i);
+  const gp_Pnt centre = middle(targets.size() > 1 ? targets : everything);
+  std::map<std::size_t, std::pair<double, double>> before;  // index -> (right, left) as they were
+  std::map<std::size_t, bool> outsideRight;
+  for (std::size_t i : targets) {
+    WallBand& w = walls[i];
+    before[i] = {w.right, w.leftExt};
+    bool right = outside == "right";
+    if (outside == "auto" || outside == "flip") {
+      const auto kept = w.object->attributes.find("wall_outside");
+      if (kept != w.object->attributes.end()) {
+        right = kept->second == "right";
+      } else {
+        const gp_Pnt mid = w.start.Translated(gp_Vec(w.dir) * (w.length / 2));
+        const double side = gp_Vec(mid, centre).Dot(gp_Vec(w.left));
+        right = side > 1.0;  // the middle of the walls is on the left: outside to the right
+      }
+    }
+    if (outside == "flip") right = !right;  // the other way round from now
+    outsideRight[i] = right;
+    w.right = right ? type->outside() : type->inside();
+    w.leftExt = right ? type->inside() : type->outside();
+  }
+  // Ends: [s0, s1] along each wall's line from its start; refit those touching a changed wall.
+  std::vector<std::pair<double, double>> ends(walls.size());
+  for (std::size_t i = 0; i < walls.size(); ++i) ends[i] = {0.0, walls[i].length};
+  std::set<std::size_t> changed(targets.begin(), targets.end());
+  for (std::size_t i = 0; i < walls.size(); ++i) {
+    const WallBand& w = walls[i];
+    for (int end = 0; end < 2; ++end) {
+      const double s = end == 0 ? 0.0 : w.length;
+      // The node: the nearest other wall line this end reaches.
+      std::optional<std::size_t> partner;
+      double bestGap = 1e300;
+      bool corner = false;
+      for (std::size_t j = 0; j < walls.size(); ++j) {
+        if (j == i) continue;
+        const WallBand& o = walls[j];
+        if (std::min(w.z1, o.z1) - std::max(w.z0, o.z0) < 1.0) continue;  // another storey
+        const auto m = meet(w.start, w.dir, o.start, o.dir);
+        if (!m) continue;
+        const double reach = std::max(before.count(j) ? before[j].first + before[j].second : o.right + o.leftExt,
+                                      o.right + o.leftExt) + std::max(w.right + w.leftExt, 1.0) + 1.0;
+        const double gap = std::abs(m->first - s);
+        if (gap > reach || m->second < -reach || m->second > o.length + reach || gap >= bestGap) continue;
+        bestGap = gap;
+        partner = j;
+        corner = std::abs(m->second) <= reach || std::abs(m->second - o.length) <= reach;
+      }
+      if (!partner) continue;  // a free end stays
+      const std::size_t j = *partner;
+      if (!targets.count(i) && !targets.count(j)) continue;  // nothing about it changes
+      const WallBand& o = walls[j];
+      // The partner's two faces across this wall's line.
+      double f0 = 0, f1 = 0;
+      {
+        const auto a = meet(w.start, w.dir, o.start.Translated(gp_Vec(o.left) * o.leftExt), o.dir);
+        const auto b = meet(w.start, w.dir, o.start.Translated(gp_Vec(o.left) * -o.right), o.dir);
+        if (!a || !b) continue;
+        f0 = std::min(a->first, b->first);
+        f1 = std::max(a->first, b->first);
+      }
+      const bool incoming = end == 1;
+      bool owner = false;  // runs through the corner square
+      if (corner) {
+        // The partner's end at the node: incoming if it is its far end.
+        const auto m = meet(o.start, o.dir, w.start, w.dir);
+        const bool partnerIncoming = m && std::abs(m->first - o.length) < std::abs(m->first);
+        owner = incoming != partnerIncoming ? incoming : i < j;
+      }
+      const double value = owner ? (incoming ? f1 : f0) : (incoming ? f0 : f1);
+      if (end == 0) ends[i].first = value;
+      else ends[i].second = value;
+      changed.insert(i);
+    }
+  }
+  // Rebuild every changed wall.
+  Command command{"Wall Type", {}, {}};
+  std::vector<ObjectId> out;
+  for (std::size_t i : changed) {
+    const WallBand& w = walls[i];
+    Object object = *w.object;
+    Recipe recipe = w.recipe;
+    auto& rect = std::get<RectangleProfile>(recipe.base);
+    const auto [s0, s1] = ends[i];
+    if (s1 - s0 < tolerance::kMinDimension)
+      return R::failure("'" + object.name + "' would be shorter than the walls are thick");
+    const gp_Trsf toLocal = w.toWorld.Inverted();
+    const gp_Pnt origin = w.start.Translated(gp_Vec(w.dir) * s0 + gp_Vec(w.left) * -w.right);
+    rect.plane.origin = origin.Transformed(toLocal);
+    rect.width = s1 - s0;
+    const double oldThick = rect.height;
+    rect.height = w.right + w.leftExt;
+    if (w.path.empty()) {
+      object.recipe = recipe;
+    } else {
+      replaceOperand(object.recipe, w.path, 0, std::move(recipe));
+    }
+    if (targets.count(i)) {
+      // Openings: from the face they were cut from, through the new thickness.
+      const auto [right0, left0] = before.at(i);
+      const gp_Trsf hostWorld = document_.worldTransform(*w.object);
+      for (const OpeningRef& op : rectangularOpenings(*w.object)) {
+        Recipe cutter = *op.operand->recipe;
+        auto& face = std::get<RectangleProfile>(cutter.base);
+        const gp_Trsf cutterWorld = hostWorld * op.placement;
+        const gp_Dir n = face.plane.normal.Transformed(cutterWorld);
+        const bool fromLeft = gp_Vec(n).Dot(gp_Vec(w.left)) > 0;
+        const double move = fromLeft ? w.leftExt - left0 : w.right - right0;
+        face.plane.origin.Translate(gp_Vec(n).Transformed(cutterWorld.Inverted()) * move);
+        for (auto& m : cutter.modifiers)
+          if (auto* e = std::get_if<ExtrudeOp>(&m))
+            e->distance = std::copysign(std::abs(e->distance) + (rect.height - oldThick), e->distance);
+        replaceOperand(object.recipe, op.path, 0, std::move(cutter));
+      }
+      char offset[32];
+      std::snprintf(offset, sizeof offset, "%.6g", w.right);
+      object.attributes["wall_line"] = "offset";
+      object.attributes["wall_line_offset"] = offset;
+      object.attributes["wall_type"] = type->id;
+      object.attributes["wall_type_name"] = type->name;
+      object.attributes["wall_outside"] = outsideRight.at(i) ? "right" : "left";
+      object.attributes["wall_layers"] = type->layersJson();
+    }
+    const Status built = rebuild(object, document_.regenContext());
+    if (!built) return R::failure("'" + object.name + "': " + built.message());
+    command.deltas.push_back(ObjectDelta{object.id, *w.object, object, document_.indexOf(object.id)});
+    out.push_back(object.id);
+  }
+  history_.execute(std::move(command));
+  return out;
+}
+
 Status Modeler::setOpeningSize(const ObjectId& hostId, const std::vector<std::size_t>& indices,
                                std::optional<double> width, std::optional<double> height, bool keepCenter) {
   for (const std::optional<double>& d : {width, height}) {

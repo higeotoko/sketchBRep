@@ -108,3 +108,89 @@ TEST(WallTypes, ClosedOutlineFacesOutEitherWayRound) {
     for (const auto& id : ids) EXPECT_EQ(a.modeler.document().find(id.get<std::string>()), nullptr);
   }
 }
+
+namespace {
+double volumeOf(Api& a, const json& ids) {
+  double v = 0;
+  for (const auto& id : ids) v += a.ok("get_object", {{"id", id}})["volume"].get<double>();
+  return v;
+}
+}  // namespace
+
+TEST(WallTypes, DrawnWallsTakeABuildUpAroundTheirLine) {
+  Api a;
+  // A plain ring, 200 thick on the lines, drawn anticlockwise, and a partition across it.
+  const json ring = a.ok("create_wall", {{"points", {{0, 0}, {5460, 0}, {5460, 3640}, {0, 3640}, {0, 0}}},
+                                         {"thickness", 200}, {"height", 2800}})["ids"];
+  ASSERT_EQ(ring.size(), 4u);
+  const json part = a.ok("create_wall", {{"points", {{2730, 0}, {2730, 3640}}}, {"thickness", 120}, {"height", 2800}})["ids"];
+  ASSERT_EQ(part.size(), 1u);
+  // A door in the south wall, cut from its outer face.
+  const std::string south = ring[0];
+  const std::string southWithDoor =
+      a.ok("place_openings", {{"host", south}, {"face_normal", {0, -1, 0}}, {"at", {1200, 0, 0}},
+                              {"width", 800}, {"height", 2000}})["id"];
+  json walls = ring;
+  walls[0] = southWithDoor;
+
+  const json changed = a.ok("set_wall_type", {{"ids", walls}, {"type", "exterior_siding"}})["ids"];
+  EXPECT_EQ(changed.size(), 5u);  // the ring and the partition's two ends
+  const double out = 95.5, in = 65;
+  const Bnd_Box ringBox = a.bounds(walls);
+  EXPECT_NEAR(ringBox.CornerMin().X(), -out, 1e-6);
+  EXPECT_NEAR(ringBox.CornerMin().Y(), -out, 1e-6);
+  EXPECT_NEAR(ringBox.CornerMax().X(), 5460 + out, 1e-6);
+  EXPECT_NEAR(ringBox.CornerMax().Y(), 3640 + out, 1e-6);
+  // No overlaps, no gaps at the corners: the ring's volume, less the door through it.
+  const double ringArea = (5460 + 2 * out) * (3640 + 2 * out) - (5460 - 2 * in) * (3640 - 2 * in);
+  EXPECT_NEAR(volumeOf(a, walls), (ringArea * 2800 - 800.0 * 2000 * (out + in)), 1.0);
+  // The door goes through the new thickness and keeps its place along the wall.
+  const json door = a.ok("list_openings", {{"ids", {southWithDoor}}})["hosts"][0]["openings"][0];
+  EXPECT_NEAR(door["depth"].get<double>(), out + in, 1e-6);
+  EXPECT_NEAR(door["width"].get<double>(), 800, 1e-6);
+  EXPECT_NEAR(door["center"][0].get<double>(), 1200, 1e-6);
+  const auto& s = *a.modeler.document().find(southWithDoor);
+  EXPECT_EQ(s.attributes.at("wall_type"), "exterior_siding");
+  EXPECT_EQ(s.attributes.at("wall_outside"), "right");  // the ring was drawn anticlockwise
+
+  // The partition (not changed) now stops at the ring's inner faces.
+  Bnd_Box p = a.bounds(part);
+  EXPECT_NEAR(p.CornerMin().Y(), in, 1e-6);
+  EXPECT_NEAR(p.CornerMax().Y(), 3640 - in, 1e-6);
+  EXPECT_NEAR(p.CornerMax().X() - p.CornerMin().X(), 120, 1e-6);
+  // Then the partition itself: board both sides around its line.
+  a.ok("set_wall_type", {{"ids", part}, {"type", "interior_board"}});
+  p = a.bounds(part);
+  EXPECT_NEAR(p.CornerMin().X(), 2730 - 65, 1e-6);
+  EXPECT_NEAR(p.CornerMax().X(), 2730 + 65, 1e-6);
+  EXPECT_NEAR(p.CornerMin().Y(), in, 1e-6);
+
+  // Each change is one undo step.
+  a.ok("undo");
+  a.ok("undo");
+  const Bnd_Box back = a.bounds(walls);
+  EXPECT_NEAR(back.CornerMin().X(), -100, 1e-6);
+  EXPECT_EQ(a.modeler.document().find(southWithDoor)->attributes.count("wall_type"), 0u);
+}
+
+TEST(WallTypes, OutsideSideAndRefusals) {
+  Api a;
+  const json one = a.ok("create_wall", {{"points", {{0, 0}, {3640, 0}}}, {"thickness", 150}, {"height", 2400},
+                                        {"justification", "left"}})["ids"];
+  // Drawn with the wall left of the line: the line is its right face.
+  a.ok("set_wall_type", {{"ids", one}, {"type", "exterior_metal"}, {"outside", "right"}, {"core", 120}});
+  const Bnd_Box b = a.bounds(one);
+  EXPECT_NEAR(b.CornerMin().Y(), -(15 + 18 + 9 + 60), 1e-6);
+  EXPECT_NEAR(b.CornerMax().Y(), 60 + 12.5, 1e-6);
+  // "auto" keeps a typed wall's outside.
+  a.ok("set_wall_type", {{"ids", one}, {"type", "exterior_siding"}});
+  EXPECT_NEAR(a.bounds(one).CornerMin().Y(), -95.5, 1e-6);
+  // "flip" turns it round, keeping the line.
+  a.ok("set_wall_type", {{"ids", one}, {"type", "exterior_siding"}, {"outside", "flip"}});
+  EXPECT_NEAR(a.bounds(one).CornerMax().Y(), 95.5, 1e-6);
+  EXPECT_NEAR(a.bounds(one).CornerMin().Y(), -65, 1e-6);
+  const std::string box = a.ok("create_box", {{"origin", {0, 5000, 0}}, {"width", 100}, {"depth", 100}, {"height", 100}})["id"];
+  EXPECT_FALSE(a.call("set_wall_type", {{"ids", {box}}, {"type", "interior_board"}})["ok"].get<bool>());
+  EXPECT_FALSE(a.call("set_wall_type", {{"ids", one}, {"type", "brick"}})["ok"].get<bool>());
+  EXPECT_FALSE(a.call("set_wall_type", {{"ids", one}, {"type", "interior_board"}, {"outside", "up"}})["ok"].get<bool>());
+}
