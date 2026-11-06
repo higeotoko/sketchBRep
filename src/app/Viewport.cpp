@@ -15,7 +15,9 @@
 #include <TopLoc_Location.hxx>
 #include <gp_Pnt2d.hxx>
 #include <Graphic3d_MaterialAspect.hxx>
+#include <Graphic3d_CubeMapSeparate.hxx>
 #include <Graphic3d_PBRMaterial.hxx>
+#include <NCollection_Array1.hxx>
 #include <V3d_AmbientLight.hxx>
 #include <V3d_DirectionalLight.hxx>
 #include <Poly_Triangulation.hxx>
@@ -1712,10 +1714,59 @@ void Viewport::setShaded(bool shaded) {
   redraw();
 }
 
-// The ground's light: base (sky and fill) plus the sun times the sine of its
-// altitude, in linear colour (docs/82, measured on the rendered picture).
-constexpr double kGroundLightBase = 1.0;
-constexpr double kGroundLightSun = 0.431;
+constexpr float kSunIntensity = 1.5f;
+// The light on the ground per colour channel: the sky's (reflections and
+// the sky light) plus the sun times the sine of its altitude, in linear
+// colour, measured on the rendered picture (docs/83_sky_reflections). The
+// ground's colour is that light divided into the backdrop's ground colour,
+// so the ground comes out as the backdrop and only the shadows show.
+constexpr double kGroundLightBase[3] = {0.7862, 0.9029, 1.1558};
+constexpr double kGroundLightSun[3] = {0.4588, 0.4742, 0.4739};
+constexpr double kBackdropGround[3] = {0.5972, 0.5972, 0.5711};  // sRGB 203, 203, 199 in linear
+
+// The sky the realistic display's materials reflect (image-based lighting):
+// six square pictures of a cube around the scene, the sky brighter and
+// bluer towards the zenith, the ground below the horizon (as the backdrop).
+// Each texel's direction follows the OpenGL cube map layout; `up` picks the
+// world's up in it (docs/83_sky_reflections).
+Handle(Graphic3d_CubeMap) skyCubeMap(int up) {
+  constexpr int kSize = 64;
+  NCollection_Array1<Handle(Image_PixMap)> faces(0, 5);
+  for (int face = 0; face < 6; ++face) {
+    Handle(Image_PixMap) pixels = new Image_PixMap();
+    pixels->InitTrash(Image_Format_RGB, kSize, kSize);
+    for (int row = 0; row < kSize; ++row) {
+      for (int col = 0; col < kSize; ++col) {
+        const double u = 2.0 * (col + 0.5) / kSize - 1.0, v = 2.0 * (row + 0.5) / kSize - 1.0;
+        double d[3];
+        switch (face) {
+          case 0: d[0] = 1; d[1] = -v; d[2] = -u; break;   // +X
+          case 1: d[0] = -1; d[1] = -v; d[2] = u; break;   // -X
+          case 2: d[0] = u; d[1] = 1; d[2] = v; break;     // +Y
+          case 3: d[0] = u; d[1] = -1; d[2] = -v; break;   // -Y
+          case 4: d[0] = u; d[1] = -v; d[2] = 1; break;    // +Z
+          default: d[0] = -u; d[1] = -v; d[2] = -1; break; // -Z
+        }
+        const double length = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+        const double height = (up >= 0 ? d[up] : -d[-up - 1]) / length;  // -1 below .. 1 zenith
+        double r, g, b;
+        if (height >= 0.0) {  // horizon (pale) to zenith (blue)
+          const double t = std::sqrt(height);
+          r = 0.95 + (0.72 - 0.95) * t, g = 0.95 + (0.80 - 0.95) * t, b = 0.95 + (0.93 - 0.95) * t;
+        } else {  // the ground, a little darker further down
+          const double t = std::min(1.0, -height * 4.0);
+          r = 0.62 - 0.12 * t, g = 0.61 - 0.12 * t, b = 0.57 - 0.12 * t;
+        }
+        Standard_Byte* texel = pixels->ChangeRawValue(row, col);
+        texel[0] = static_cast<Standard_Byte>(std::lround(r * 255));
+        texel[1] = static_cast<Standard_Byte>(std::lround(g * 255));
+        texel[2] = static_cast<Standard_Byte>(std::lround(b * 255));
+      }
+    }
+    faces.SetValue(face, pixels);
+  }
+  return new Graphic3d_CubeMapSeparate(faces);
+}
 
 // --- realistic display (docs/81_realistic_display) ----------------------------------------------
 
@@ -1758,10 +1809,11 @@ void Viewport::updateRealisticGround() {
   }
   const TopoDS_Face ground = BRepBuilderAPI_MakeFace(gp_Pln(gp::XOY()), x0, x1, y0, y1).Face();
   realisticGround_ = new AIS_Shape(ground);
-  // Lit by the sun, sky and fill light this comes out as the backdrop's
-  // ground (sRGB 0.80, 0.80, 0.78), measured on the rendered picture.
-  const double k = 1.0 / std::max(groundLight_, 0.05);
-  const Quantity_Color groundAlbedo = rgb(std::min(1.0, 0.644 * k), std::min(1.0, 0.64 * k), std::min(1.0, 0.60 * k));
+  double albedo[3];
+  for (int c = 0; c < 3; ++c) {
+    albedo[c] = std::min(1.0, kBackdropGround[c] / (kGroundLightBase[c] + kGroundLightSun[c] * groundSunSine_));
+  }
+  const Quantity_Color groundAlbedo = rgb(albedo[0], albedo[1], albedo[2]);
   realisticGround_->SetColor(groundAlbedo);
   realisticGround_->Attributes()->SetFaceBoundaryDraw(Standard_False);
   Graphic3d_MaterialAspect material(Graphic3d_NameOfMaterial_Plastified);
@@ -1801,10 +1853,10 @@ void Viewport::setRealistic(bool on) {
     // A sun from the south-east, high (shadows), a soft light from the
     // opposite side and some light from the sky everywhere.
     Handle(V3d_AmbientLight) sky = new V3d_AmbientLight(Quantity_NOC_WHITE);
-    sky->SetIntensity(0.6f);
+    sky->SetIntensity(1.2f);
     Handle(V3d_DirectionalLight) sun = new V3d_DirectionalLight(gp_Dir(-0.45, 0.55, -0.7), Quantity_NOC_WHITE);
     sun->SetName("sun");
-    sun->SetIntensity(1.0f);
+    sun->SetIntensity(kSunIntensity);
     sun->SetCastShadows(Standard_True);
     sun_ = sun;
     Handle(V3d_DirectionalLight) fill = new V3d_DirectionalLight(gp_Dir(0.5, -0.3, -0.4), rgb(0.85, 0.9, 1.0));
@@ -1817,7 +1869,15 @@ void Viewport::setRealistic(bool on) {
     params.IsShadowEnabled = Standard_True;
     params.ShadowMapResolution = 2048;
     view_->SetShadingModel(Graphic3d_TypeOfShadingModel_Pbr);
+    // The sky to reflect (the backdrop is drawn over this background, so
+    // only the reflections show it).
+    // OCCT looks the cube map up with Y as the world's up (checked on the
+    // rendered picture: the top of a metal box reflects the sky).
+    view_->SetBackgroundCubeMap(skyCubeMap(1), Standard_True);
+    view_->SetImageBasedLighting(Standard_True);
   } else {
+    view_->SetBackgroundCubeMap(Handle(Graphic3d_CubeMap)(), Standard_False);
+    view_->SetImageBasedLighting(Standard_False);
     viewer_->SetDefaultLights();
     viewer_->SetLightOn();
     view_->SetShadingModel(viewer_->DefaultShadingModel());
@@ -1885,10 +1945,7 @@ void Viewport::applySun() {
   }
   sun_->SetEnabled(p.up() ? Standard_True : Standard_False);  // at night: no sun (an intensity of 0 is refused)
   sun_->SetCastShadows(p.up() ? Standard_True : Standard_False);
-  // Light on the ground, linear in the sine of the sun's altitude (measured
-  // on the rendered picture, docs/82), relative to the light the ground's
-  // colour was matched under (the sun at sin = 0.70).
-  groundLight_ = (kGroundLightBase + kGroundLightSun * s) / (kGroundLightBase + kGroundLightSun * 0.70);
+  groundSunSine_ = s;  // the ground's colour follows it (docs/83_sky_reflections)
   updateRealisticGround();
 }
 

@@ -496,7 +496,7 @@ class Viewport : public QWidget {
   // The sun from the document's date, time and place (docs/82); its
   // strength on the ground decides the ground's colour (kept unseen).
   void applySun();
-  double groundLight_ = 1.0;  // light on the ground relative to the calibrated sun
+  double groundSunSine_ = 0.0;  // the sun's height (sine) the ground's colour is made for
   Handle(AIS_Shape) realisticGround_;
   std::vector<Handle(AIS_Shape)> axes_;  // hidden in the realistic display
   void updateRealisticGround();

@@ -10598,8 +10598,15 @@ void GuiPhase1::realisticDisplay() {
   QCOMPARE(shadowCasters, 1);
   QVERIFY(!f.vp->realisticGround().IsNull());
   // The box's material reaches the shading: metal, smooth.
+  // docs/83: a sky for the materials to reflect (image-based lighting).
+  QVERIFY(f.vp->occView()->IsImageBasedLighting());
   const QString after = QDir::temp().filePath(QStringLiteral("sbr-realistic.png"));
   QVERIFY(f.window.exportImage(after));
+  // SBR_RENDER_SHOTS=<folder>: keep the two pictures to look at.
+  if (const QString keep = qEnvironmentVariable("SBR_RENDER_SHOTS"); !keep.isEmpty()) {
+    QFile::copy(before, QDir(keep).filePath(QStringLiteral("cad.png")));
+    QFile::copy(after, QDir(keep).filePath(QStringLiteral("realistic.png")));
+  }
   QImage a(before), b(after);
   QVERIFY(!a.isNull() && !b.isNull());
   QVERIFY(a != b);  // drawn differently
@@ -10671,6 +10678,14 @@ void GuiPhase1::realisticDisplay() {
     QVERIFY(m.setSun(night));
     f.vp->syncNow();
     QVERIFY(!sunLight()->ToCastShadows());
+    const QString shot = QDir::temp().filePath(QStringLiteral("sbr-night.png"));
+    QVERIFY(f.window.exportImage(shot));
+    const QImage im(shot);
+    QFile::remove(shot);
+    const QRgb ground = im.pixel(im.width() * 480 / 812, im.height() * 450 / 779);
+    const QRgb backdrop = im.pixel(im.width() * 790 / 812, im.height() * 760 / 779);
+    QVERIFY2(std::abs(qGray(ground) - qGray(backdrop)) <= 4,
+             qPrintable(QStringLiteral("night: ground %1, background %2").arg(qGray(ground)).arg(qGray(backdrop))));
   }
   QVERIFY(m.setSun(geom::SunSettings{}));
   f.vp->syncNow();
@@ -10724,15 +10739,11 @@ void GuiPhase1::realisticDisplay() {
   QVERIFY(!action->isChecked());
   display(R"({"realistic": true})");
   QVERIFY(action->isChecked());
-  // SBR_RENDER_SHOTS=<folder>: keep the two pictures to look at.
-  if (const QString keep = qEnvironmentVariable("SBR_RENDER_SHOTS"); !keep.isEmpty()) {
-    QFile::copy(before, QDir(keep).filePath(QStringLiteral("cad.png")));
-    QFile::copy(after, QDir(keep).filePath(QStringLiteral("realistic.png")));
-  }
   action->trigger();
   QVERIFY(!f.vp->realistic());
   QCOMPARE(f.vp->occView()->ShadingModel(), cad);
   QVERIFY(f.vp->realisticGround().IsNull());
+  QVERIFY(!f.vp->occView()->IsImageBasedLighting());
   QFile::remove(before);
   QFile::remove(after);
 }
