@@ -2530,18 +2530,22 @@ const std::vector<CommandDef>& commands() {
        "spread along it or 'spacing' apart centre to centre around its middle; or a single one centred on "
        "the point 'at' ([x, y, z], its position along the face; count is then ignored). Same as drawing "
        "them on the face and pushing them through; one undo step. Returns the wall's new id (use it "
-       "afterwards).",
+       "afterwards). 'fitting' (optional, as set_opening_fittings) gives the new openings their door / "
+       "window symbol in the same step.",
        SCHEMA({"type": "object", "properties": {
          "host": {"type": "string"}, "face_normal": {"type": "array", "items": {"type": "number"}},
          "count": {"type": "integer"}, "width": {"type": "number"}, "height": {"type": "number"},
          "sill": {"type": "number"}, "spacing": {"type": "number"},
-         "at": {"type": "array", "items": {"type": "number"}}},
+         "at": {"type": "array", "items": {"type": "number"}}, "fitting": {"type": "object"}},
          "required": ["host", "face_normal", "width", "height"]}),
        [](doc::Modeler& m, const json& a) {
+         // A door / window fitting for the new openings (as set_opening_fittings), same step.
+         const std::string fitting = a.contains("fitting") ? a.at("fitting").dump() : R"({"type":"none"})";
+         if (a.contains("fitting") && !a.at("fitting").is_object()) throw ApiError("'fitting' must be an object");
          if (a.contains("at")) {
            return idResult(must(m.placeOpeningAt(text(a, "host"), direction(a, "face_normal", gp::DY()),
                                                  point(a, "at"), number(a, "width"), number(a, "height"),
-                                                 numberOr(a, "sill", 0.0))));
+                                                 numberOr(a, "sill", 0.0), fitting)));
          }
          const json& count = arg(a, "count");
          if (!count.is_number_integer()) throw ApiError("'count' must be an integer");
@@ -2549,7 +2553,8 @@ const std::vector<CommandDef>& commands() {
                                               count.get<int>(), number(a, "width"), number(a, "height"),
                                               numberOr(a, "sill", 0.0),
                                               a.contains("spacing") ? std::optional<double>(number(a, "spacing"))
-                                                                    : std::nullopt)));
+                                                                    : std::nullopt,
+                                              fitting)));
        }},
       {"place_on_grid",
        "Copy 'source' (e.g. a column) to crossings of grid lines (from create_grid): 'x' and 'y' are line "

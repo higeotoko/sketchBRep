@@ -49,6 +49,24 @@ Result<std::string> normalizeFitting(const std::string& text) {
   return out.dump();
 }
 
+const std::vector<FittingChoice>& fittingChoices() {
+  static const std::vector<FittingChoice> choices = {
+      {"なし（開口だけ）", R"({"type":"none"})"},
+      {"窓", R"({"type":"window"})"},
+      {"片開き 左吊元・内開き", R"({"type":"swing_single","hinge":"left","swing":"in"})"},
+      {"片開き 右吊元・内開き", R"({"type":"swing_single","hinge":"right","swing":"in"})"},
+      {"片開き 左吊元・外開き", R"({"type":"swing_single","hinge":"left","swing":"out"})"},
+      {"片開き 右吊元・外開き", R"({"type":"swing_single","hinge":"right","swing":"out"})"},
+      {"両開き 内開き", R"({"type":"swing_double","swing":"in"})"},
+      {"両開き 外開き", R"({"type":"swing_double","swing":"out"})"},
+      {"片引き 左へ引く", R"({"type":"sliding_single","slide":"left"})"},
+      {"片引き 右へ引く", R"({"type":"sliding_single","slide":"right"})"},
+      {"引違い", R"({"type":"sliding_double"})"},
+      {"両引き", R"({"type":"sliding_bi"})"},
+  };
+  return choices;
+}
+
 std::vector<TopoDS_Edge> openingSymbols(const doc::Document& d, const SymbolOptions& options) {
   std::vector<TopoDS_Edge> out;
   for (const auto& host : d.objects()) {

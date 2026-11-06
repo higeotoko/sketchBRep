@@ -6,6 +6,7 @@
 #include "StructureDiagnosticsPanel.h"
 #include "MainWindow.h"
 #include "sbr/WallTypes.h"
+#include "sbr/OpeningSymbols.h"
 #include "sbr/KernelError.h"
 #include "DrawingExport.h"
 #include "CrashLog.h"
@@ -1312,7 +1313,7 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
     // line (outside / inside from the line), or the plain thickness of the settings.
     auto* kind = new QComboBox(bar);
     kind->setObjectName(QStringLiteral("architectureWallType"));
-    kind->addItem(tr("壁：厚さ指定"), QString());
+    kind->addItem(tr("壁の仕様：厚さ指定"), QString());
     for (const auto& type : construction::wallTypes())
       kind->addItem(QString::fromStdString(type.name), QString::fromStdString(type.id));
     kind->setToolTip(tr("木造の壁の仕様。柱心の線で描くと、外側・内側の仕上げの厚みが付きます（数値は作図の目安）。"
@@ -3138,6 +3139,16 @@ void MainWindow::showOpeningSettingsDialog() {
   form->addRow(tr("幅"), width);
   form->addRow(tr("高さ"), height);
   form->addRow(tr("床からの高さ（腰）"), sill);
+  auto* kind = new QComboBox(&dialog);
+  kind->setObjectName(QStringLiteral("openingToolFitting"));
+  for (const auto& c : draw::fittingChoices()) {
+    kind->addItem(QString::fromStdString(c.label), QString::fromStdString(c.fitting));
+    if (nlohmann::json::parse(c.fitting) == nlohmann::json::parse(current.fitting, nullptr, false))
+      kind->setCurrentIndex(kind->count() - 1);
+  }
+  kind->setToolTip(tr("あける開口の建具。平面（切断）と平面図に記号が出ます。外＝クリックした面の側。"
+                      "あけた後はプロパティパネルの「開口 n」でも変えられます"));
+  form->addRow(tr("建具"), kind);
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
   form->addRow(buttons);
   connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
@@ -3150,7 +3161,9 @@ void MainWindow::showOpeningSettingsDialog() {
     reportError(tr("幅・高さは正の長さ、腰は 0 以上で入力してください"));
     return;
   }
-  openingTool_->setSettings({*w, *h, *s});
+  OpeningTool::Settings next{*w, *h, *s};
+  next.fitting = kind->currentData().toString().toStdString();
+  openingTool_->setSettings(next);
   setStatus(openingTool_->settingsText());
 }
 

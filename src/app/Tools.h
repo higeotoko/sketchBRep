@@ -435,6 +435,7 @@ class OpeningTool : public Tool {
     double width = 900.0;
     double height = 2100.0;
     double sill = 0.0;
+    std::string fitting = R"({"type":"none"})";  // door / window symbol of new openings
   };
   using Tool::Tool;
   QString constraintText() const override;

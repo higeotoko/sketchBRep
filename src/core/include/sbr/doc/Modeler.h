@@ -558,6 +558,10 @@ class Modeler {
   Result<MemberInfo> changeMember(const ObjectId& id, const MemberChange& change);
 
  private:
+  // Runs `cut` (making openings in `host`, returning the new host) and gives the new openings
+  // `fitting`, as one undo step.
+  Result<ObjectId> withFitting(const ObjectId& host, const std::string& fitting,
+                               const std::function<Result<ObjectId>()>& cut);
   // Walls along `points`, each the band [o, o + thickness] to the left of its segment, tagged
   // kind = wall plus `attributes`; one undo step.
   Result<std::vector<ObjectId>> createWallBands(std::vector<gp_Pnt> points, double thickness, double height, double o,
@@ -578,6 +582,11 @@ class Modeler {
   // (only its position along the face counts), e.g. where the user clicked.
   Result<ObjectId> placeOpeningAt(const ObjectId& host, const gp_Dir& faceNormal, const gp_Pnt& at, double width,
                                   double height, double sill);
+  // The same with a door / window fitting (OpeningSymbols.h) for the new openings; one undo step.
+  Result<ObjectId> placeOpeningAt(const ObjectId& host, const gp_Dir& faceNormal, const gp_Pnt& at, double width,
+                                  double height, double sill, const std::string& fitting);
+  Result<ObjectId> placeOpenings(const ObjectId& host, const gp_Dir& faceNormal, int count, double width,
+                                 double height, double sill, std::optional<double> spacing, const std::string& fitting);
   // Copies the objects `count` times, copy k placed at worldDelta^k (linear
   // or polar arrays). Returns the ids of the new top-level copies.
   // What was just drawn, moved, copied, pasted or offset (`ids`) against

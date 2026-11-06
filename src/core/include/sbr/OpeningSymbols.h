@@ -24,6 +24,13 @@ namespace sbr::draw {
 // are drawing conventions, not product dimensions.
 Result<std::string> normalizeFitting(const std::string& fitting);
 
+// The kinds offered to people (label in Japanese, fitting JSON), "none" first.
+struct FittingChoice {
+  std::string label;
+  std::string fitting;
+};
+const std::vector<FittingChoice>& fittingChoices();
+
 struct SymbolOptions {
   double z = 0.0;                       // plan height (the cut): openings it passes through
   const std::set<std::string>* only = nullptr;  // host ids to draw (all when null)

@@ -27,6 +27,7 @@
 
 #include <nlohmann/json.hpp>
 #include "sbr/WallTypes.h"
+#include "sbr/OpeningSymbols.h"
 #include "sbr/geom/Measure.h"
 #include "sbr/geom/Validation.h"
 
@@ -459,20 +460,8 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
     }
     // Door / window kinds, shown in the plan (cut) and on plan drawings. 外 = the side the
     // opening was made from, 内 = the other side; left / right as seen from the side it opens to.
-    const std::vector<std::pair<QString, std::string>> kinds = {
-        {tr("なし（開口だけ）"), R"({"type":"none"})"},
-        {tr("窓"), R"({"type":"window"})"},
-        {tr("片開き 左吊元・内開き"), R"({"type":"swing_single","hinge":"left","swing":"in"})"},
-        {tr("片開き 右吊元・内開き"), R"({"type":"swing_single","hinge":"right","swing":"in"})"},
-        {tr("片開き 左吊元・外開き"), R"({"type":"swing_single","hinge":"left","swing":"out"})"},
-        {tr("片開き 右吊元・外開き"), R"({"type":"swing_single","hinge":"right","swing":"out"})"},
-        {tr("両開き 内開き"), R"({"type":"swing_double","swing":"in"})"},
-        {tr("両開き 外開き"), R"({"type":"swing_double","swing":"out"})"},
-        {tr("片引き 左へ引く"), R"({"type":"sliding_single","slide":"left"})"},
-        {tr("片引き 右へ引く"), R"({"type":"sliding_single","slide":"right"})"},
-        {tr("引違い"), R"({"type":"sliding_double"})"},
-        {tr("両引き"), R"({"type":"sliding_bi"})"},
-    };
+    std::vector<std::pair<QString, std::string>> kinds;
+    for (const auto& c : draw::fittingChoices()) kinds.emplace_back(QString::fromStdString(c.label), c.fitting);
     for (const doc::Modeler::OpeningInfo& op : *openings) {
       auto* row = new QWidget;
       auto* h = new QHBoxLayout(row);

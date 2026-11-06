@@ -1,6 +1,8 @@
 #include "sbr/ConstructionGuide.h"
 #include "Tools.h"
 #include "sbr/WallTypes.h"
+#include <nlohmann/json.hpp>
+#include "sbr/OpeningSymbols.h"
 
 #include "Messages.h"
 
@@ -1414,7 +1416,12 @@ QString OpeningTool::name() const { return QObject::tr("開口"); }
 QCursor OpeningTool::cursor() const { return toolCursor(CursorKind::Opening); }
 
 QString OpeningTool::settingsText() const {
-  return QObject::tr("幅 %1 × 高さ %2・腰 %3").arg(mm(settings_.width), mm(settings_.height), mm(settings_.sill));
+  QString kind;
+  for (const auto& c : draw::fittingChoices())
+    if (nlohmann::json::parse(c.fitting) == nlohmann::json::parse(settings_.fitting, nullptr, false))
+      kind = QString::fromStdString(c.label);
+  return QObject::tr("幅 %1 × 高さ %2・腰 %3").arg(mm(settings_.width), mm(settings_.height), mm(settings_.sill)) +
+         (kind.isEmpty() ? QString() : QStringLiteral("・") + kind);
 }
 
 void OpeningTool::activate() {
@@ -1658,7 +1665,8 @@ void OpeningTool::mouseMove(const ToolEvent& e) {
 }
 
 bool OpeningTool::place(const Target& t) {
-  auto r = host_.modeler().placeOpeningAt(t.host, t.normal, t.at, settings_.width, settings_.height, settings_.sill);
+  auto r = host_.modeler().placeOpeningAt(t.host, t.normal, t.at, settings_.width, settings_.height, settings_.sill,
+                                          settings_.fitting);
   if (!r) {
     host_.reportError(QString::fromStdString(r.error()));
     return false;

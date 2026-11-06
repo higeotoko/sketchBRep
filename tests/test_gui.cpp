@@ -330,6 +330,7 @@ class GuiPhase1 : public QObject {
   void openingFittingFromPanelShowsInPlanCut();
   void wallTypeFromToolbarAndColumnsShowInPlanCut();
   void drawnWallsChangeTypeFromToolbarAndPanel();
+  void openingToolPlacesWithAFitting();
   void foundationSupportsSelectActualPartsAndInvalidate();
   void foundationPadsFromMissingFloorPostsAndRegeneration();
   void foundationPadsWithDifferentTopsReloadWithoutChangingTheModel();
@@ -10154,6 +10155,29 @@ void GuiPhase1::drawnWallsChangeTypeFromToolbarAndPanel() {
   QCOMPARE(m.document().find(ring->back())->attributes.at("wall_type"),std::string("exterior_lath_mortar"));
   const Bnd_Box first=m.document().worldBounds(*m.document().find(ring->front()));
   QVERIFY2(std::abs(first.CornerMin().Y()+65)<1e-6,qPrintable(QString::number(first.CornerMin().Y())));
+}
+
+// The opening tool's settings carry the door kind: the opening it cuts has the symbol at once.
+void GuiPhase1::openingToolPlacesWithAFitting() {
+  Fixture f;QVERIFY(f.setUp(2000,1500));auto& m=f.window.modeler();
+  const auto walls=m.createWalls({gp_Pnt(0,100,0),gp_Pnt(6000,100,0)},200,3000);QVERIFY(walls&&walls->size()==1);
+  OpeningTool::Settings s{1600,2000,0};
+  s.fitting=R"({"type":"sliding_bi"})";
+  f.window.openingTool().setSettings(s);
+  QVERIFY(f.window.openingTool().settingsText().contains(QStringLiteral("両引き")));
+  f.vp->lockView(Viewport::StandardView::Top);
+  f.vp->setPlanCut(1100.0);
+  f.vp->fitAll();f.vp->syncNow();QTest::qWait(30);
+  f.window.activateTool(MainWindow::ToolId::Opening);
+  move(f.vp,f.vp->toWidget(gp_Pnt(3000,100,1100)));QTest::qWait(20);
+  click(f.vp,f.vp->toWidget(gp_Pnt(3000,100,1100)));QTest::qWait(30);
+  doc::ObjectId host;
+  for(const doc::Object& o:m.document().objects()) if(o.attributes.count("opening_fittings")) host=o.id;
+  QVERIFY2(!host.empty(),qPrintable(f.window.lastError()));
+  QVERIFY(m.document().find(host)->attributes.at("opening_fittings").find("sliding_bi")!=std::string::npos);
+  f.vp->syncNow();
+  QVERIFY(f.vp->openingSymbolEdgeCount()>0);
+  f.vp->setPlanCut(std::nullopt);
 }
 
 // The Tools menu is a short list of groups (the drawing tools in their own submenu), and the

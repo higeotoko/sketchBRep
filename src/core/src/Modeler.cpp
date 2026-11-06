@@ -6046,6 +6046,50 @@ Result<ObjectId> Modeler::placeOpeningAt(const ObjectId& hostId, const gp_Dir& f
   return cutOpenings(hostId, faceNormal, 1, width, height, sill, std::nullopt, at);
 }
 
+Result<ObjectId> Modeler::withFitting(const ObjectId& hostId, const std::string& fitting,
+                                      const std::function<Result<ObjectId>()>& cut) {
+  using R = Result<ObjectId>;
+  const auto checked = draw::normalizeFitting(fitting);
+  if (!checked) return R::failure(checked.status().message());
+  const bool none = nlohmann::json::parse(*checked).at("type") == "none";
+  if (none) return cut();
+  const auto before = openings(hostId);
+  const std::size_t had = before ? before->size() : 0;
+  history_.beginGroup("Opening");
+  const auto made = cut();
+  if (!made) {
+    history_.abortGroup();
+    return made;
+  }
+  const auto after = openings(*made);
+  std::vector<std::size_t> fresh;
+  if (after)
+    for (std::size_t i = had + 1; i <= after->size(); ++i) fresh.push_back(i);
+  if (fresh.empty()) {
+    history_.endGroup();
+    return made;
+  }
+  const Status fitted = setOpeningFittings(*made, fresh, *checked);
+  if (!fitted) {
+    history_.abortGroup();
+    return R::failure(fitted.message());
+  }
+  history_.endGroup();
+  return made;
+}
+
+Result<ObjectId> Modeler::placeOpeningAt(const ObjectId& hostId, const gp_Dir& faceNormal, const gp_Pnt& at,
+                                         double width, double height, double sill, const std::string& fitting) {
+  return withFitting(hostId, fitting, [&] { return placeOpeningAt(hostId, faceNormal, at, width, height, sill); });
+}
+
+Result<ObjectId> Modeler::placeOpenings(const ObjectId& hostId, const gp_Dir& faceNormal, int count, double width,
+                                        double height, double sill, std::optional<double> spacing,
+                                        const std::string& fitting) {
+  return withFitting(hostId, fitting,
+                     [&] { return placeOpenings(hostId, faceNormal, count, width, height, sill, spacing); });
+}
+
 Result<ObjectId> Modeler::cutOpenings(const ObjectId& hostId, const gp_Dir& faceNormal, int count, double width,
                                       double height, double sill, std::optional<double> spacing,
                                       std::optional<gp_Pnt> at) {

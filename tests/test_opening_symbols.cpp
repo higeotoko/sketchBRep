@@ -198,3 +198,33 @@ TEST(OpeningSymbols, FittingsStayWhenMoreOpeningsAreMade) {
   EXPECT_EQ(listed[0]["fitting"], (json{{"type", "sliding_bi"}}));
   EXPECT_FALSE(listed[2].contains("fitting"));
 }
+
+TEST(OpeningSymbols, PlacedWithAFittingInOneStep) {
+  Api a;
+  std::string host =
+      a.ok("create_box", {{"origin", {0, 0, 0}}, {"width", 6000}, {"depth", 200}, {"height", 3000}})["id"];
+  const std::size_t steps = a.modeler.history().undoCount();
+  host = a.ok("place_openings", {{"host", host}, {"face_normal", {0, -1, 0}}, {"count", 2}, {"width", 1600},
+                                 {"height", 2000}, {"fitting", {{"type", "sliding_double"}}}})["id"];
+  EXPECT_EQ(a.modeler.history().undoCount(), steps + 1);
+  json listed = a.ok("list_openings", {{"ids", {host}}})["hosts"][0]["openings"];
+  ASSERT_EQ(listed.size(), 2u);
+  for (const json& o : listed) EXPECT_EQ(o["fitting"], (json{{"type", "sliding_double"}}));
+  // A third one by position: only it gets the new kind.
+  const std::string twoOpenings = host;
+  host = a.ok("place_openings", {{"host", host}, {"face_normal", {0, -1, 0}}, {"at", {5500, 0, 0}}, {"width", 600},
+                                 {"height", 900}, {"sill", 1100}, {"fitting", {{"type", "window"}}}})["id"];
+  listed = a.ok("list_openings", {{"ids", {host}}})["hosts"][0]["openings"];
+  ASSERT_EQ(listed.size(), 3u);
+  EXPECT_EQ(listed[0]["fitting"], (json{{"type", "sliding_double"}}));
+  EXPECT_EQ(listed[2]["fitting"], (json{{"type", "window"}}));
+  // A wrong fitting cuts nothing.
+  EXPECT_FALSE(a.call("place_openings", {{"host", host}, {"face_normal", {0, -1, 0}}, {"at", {5500, 0, 2000}},
+                                         {"width", 300}, {"height", 300}, {"fitting", {{"type", "door"}}}})["ok"].get<bool>());
+  EXPECT_EQ(a.ok("list_openings", {{"ids", {host}}})["hosts"][0]["openings"].size(), 3u);
+  // Undo takes the opening and its fitting together.
+  a.ok("undo");
+  listed = a.ok("list_openings", {{"ids", {twoOpenings}}})["hosts"][0]["openings"];
+  EXPECT_EQ(listed.size(), 2u);
+  EXPECT_FALSE(listed[1].contains("fitting") && listed[1]["fitting"]["type"] == "window");
+}
