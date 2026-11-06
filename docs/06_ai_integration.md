@@ -237,4 +237,6 @@ document sequenceとrevisionを持つ。候補IDはスナップショット内�
 
 `check_structure {frame_rules?}` は読み取り専用の構造診断のまとめ（壁量の行・耐力壁の世界座標・架構チェックと支持先の印・未評価の一覧）。画面の重ね描きと同じ関数。四分割法・N値は未評価として返す。[詳細](74_structure_diagnostics_overlay.md)。
 
+`structure_assist {storeys?, cell_mm?, wind_cut_mm?, floor_band_mm?, span_depth_limit?, limit_basis?}` は読み取り専用。モデルの形から、階・方向ごとの見付面積（床面＋1.35m以下を除く）、床スラブの面積と平面の範囲、柱直下率と陸立ちの柱（何に乗っているか）、梁ごとの支点間スパンと梁せいの比を返す。`suggested_wall_floors` は `set_wall_calculation` の floors と同じ形の案。荷重・接合・断面・法適合は評価しない。[詳細](87_structure_assist.md)。
+
 `check_wall_quantity` は `quarter_balance`（四分割法：階・方向ごとの側端部分の必要・存在・充足率、壁率比、判定）と `quarter_balance_basis` も返す。入力は `floors[].plan:{x:[min,max],y:[min,max]}`（任意で `side_areas_m2`）。下屋・一部だけ上階が載る側端部分は未評価。[詳細](76_quarter_balance.md)。
