@@ -1116,7 +1116,11 @@ std::string serializeDocument(const Document& document) {
   }
   const DocumentSettings& s = document.settings();
   json scenes = json::array();
-  for (const Scene& scene : s.scenes) scenes.push_back({{"name", scene.name}, {"camera", cameraToJson(scene.camera)}});
+  for (const Scene& scene : s.scenes) {
+    json entry = {{"name", scene.name}, {"camera", cameraToJson(scene.camera)}};
+    if (scene.realistic) entry["realistic"] = *scene.realistic;
+    scenes.push_back(entry);
+  }
   json sections = json::array();
   for (const SectionPlane& p : s.sections) {
     sections.push_back({{"name", p.name}, {"origin", p.origin}, {"normal", p.normal}, {"active", p.active}, {"visible", p.visible}});
@@ -1222,7 +1226,9 @@ Status deserializeDocument(const std::string& text, Document& document,
     }
     if (root.contains("scenes")) {
       for (const json& scene : root.at("scenes")) {
-        s.scenes.push_back({scene.value("name", std::string()), cameraFrom(scene.at("camera"))});
+        Scene read{scene.value("name", std::string()), cameraFrom(scene.at("camera")), std::nullopt};
+        if (scene.contains("realistic")) read.realistic = scene.at("realistic").get<bool>();
+        s.scenes.push_back(read);
       }
     }
 

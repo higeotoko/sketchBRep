@@ -11,7 +11,9 @@
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QPushButton>
 #include <QSlider>
+#include <QTimer>
 #include <QVBoxLayout>
 
 namespace sbr::app {
@@ -21,10 +23,24 @@ struct Place {
   const char* name;
   double latitude, longitude;
 };
-// Prefectural capitals and large cities across Japan (degrees).
-const Place kPlaces[] = {{"札幌", 43.06, 141.35}, {"仙台", 38.27, 140.87}, {"東京", 35.68, 139.69},
-                         {"名古屋", 35.18, 136.91}, {"大阪", 34.69, 135.50}, {"広島", 34.39, 132.46},
-                         {"福岡", 33.59, 130.40}, {"那覇", 26.21, 127.68}};
+// The prefectural offices (degrees, about to 0.01: plenty for shadows).
+const Place kPlaces[] = {
+    {"北海道（札幌）", 43.06, 141.35}, {"青森", 40.82, 140.74},         {"岩手（盛岡）", 39.70, 141.15},
+    {"宮城（仙台）", 38.27, 140.87},   {"秋田", 39.72, 140.10},         {"山形", 38.24, 140.36},
+    {"福島", 37.75, 140.47},           {"茨城（水戸）", 36.34, 140.45}, {"栃木（宇都宮）", 36.57, 139.88},
+    {"群馬（前橋）", 36.39, 139.06},   {"埼玉（さいたま）", 35.86, 139.65}, {"千葉", 35.61, 140.12},
+    {"東京", 35.68, 139.69},           {"神奈川（横浜）", 35.45, 139.64}, {"新潟", 37.90, 139.02},
+    {"富山", 36.70, 137.21},           {"石川（金沢）", 36.59, 136.63}, {"福井", 36.07, 136.22},
+    {"山梨（甲府）", 35.66, 138.57},   {"長野", 36.65, 138.18},         {"岐阜", 35.39, 136.72},
+    {"静岡", 34.98, 138.38},           {"愛知（名古屋）", 35.18, 136.91}, {"三重（津）", 34.73, 136.51},
+    {"滋賀（大津）", 35.00, 135.87},   {"京都", 35.02, 135.76},         {"大阪", 34.69, 135.52},
+    {"兵庫（神戸）", 34.69, 135.18},   {"奈良", 34.69, 135.83},         {"和歌山", 34.23, 135.17},
+    {"鳥取", 35.50, 134.24},           {"島根（松江）", 35.47, 133.05}, {"岡山", 34.66, 133.93},
+    {"広島", 34.40, 132.46},           {"山口", 34.19, 131.47},         {"徳島", 34.07, 134.56},
+    {"香川（高松）", 34.34, 134.04},   {"愛媛（松山）", 33.84, 132.77}, {"高知", 33.56, 133.53},
+    {"福岡", 33.61, 130.42},           {"佐賀", 33.25, 130.30},         {"長崎", 32.74, 129.87},
+    {"熊本", 32.79, 130.74},           {"大分", 33.24, 131.61},         {"宮崎", 31.91, 131.42},
+    {"鹿児島", 31.56, 130.56},         {"沖縄（那覇）", 26.21, 127.68}};
 QDoubleSpinBox* spin(double min, double max, int decimals, const QString& suffix) {
   auto* s = new QDoubleSpinBox;
   s->setRange(min, max);
@@ -55,8 +71,38 @@ SunDialog::SunDialog(const geom::SunSettings& sun, QWidget* parent) : QDialog(pa
   time_->setValue(static_cast<int>(std::lround(sun.hour * 60.0)));
   timeLabel_ = new QLabel;
   timeLabel_->setMinimumWidth(48);
+  play_ = new QPushButton(tr("再生"));
+  play_->setObjectName(QStringLiteral("sunPlay"));
+  play_->setToolTip(tr("1 日の影の動きを再生（日の入りで止まる）"));
   timeRow->addWidget(time_, 1);
   timeRow->addWidget(timeLabel_);
+  timeRow->addWidget(play_);
+  // The day played: 10 minutes a step until the sun sets (or midnight).
+  player_ = new QTimer(this);
+  player_->setInterval(80);
+  connect(player_, &QTimer::timeout, this, [this] {
+    const bool wasUp = geom::sunPosition(settings()).up();
+    if (time_->value() + 10 > time_->maximum()) {
+      setPlaying(false);
+      return;
+    }
+    time_->setValue(time_->value() + 10);
+    if (wasUp && !geom::sunPosition(settings()).up()) setPlaying(false);
+  });
+  connect(play_, &QPushButton::clicked, this, [this] {
+    if (!player_->isActive() && !geom::sunPosition(settings()).up()) {
+      // From the night: start a little before sunrise.
+      int minutes = 0;
+      while (minutes < 24 * 60 - 10) {
+        geom::SunSettings s = settings();
+        s.hour = (minutes + 10) / 60.0;
+        if (geom::sunPosition(s).up()) break;
+        minutes += 10;
+      }
+      time_->setValue(minutes);
+    }
+    setPlaying(!player_->isActive());
+  });
   form->addRow(tr("時刻"), timeRow);
 
   place_ = new QComboBox;
@@ -129,6 +175,19 @@ geom::SunSettings SunDialog::settings() const {
 }
 
 void SunDialog::setMinutes(int minutes) { time_->setValue(minutes); }
+
+bool SunDialog::playing() const { return player_->isActive(); }
+
+void SunDialog::setPlaying(bool on) {
+  if (on) {
+    player_->start();
+  } else {
+    player_->stop();
+  }
+  play_->setText(on ? tr("停止") : tr("再生"));
+}
+
+int SunDialog::minutes() const { return time_->value(); }
 
 void SunDialog::update() {
   const int minutes = time_->value();

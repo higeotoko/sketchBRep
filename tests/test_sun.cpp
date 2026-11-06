@@ -92,3 +92,20 @@ TEST(Sun, CheckedSavedUndoneAndSetByTheAi) {
   EXPECT_FALSE(call("set_sun", {{"hour", 25.0}}).value("ok", true));
   EXPECT_EQ(a.effectOf(R"({"command":"get_sun","args":{}})"), api::CommandApi::Effect::Read);
 }
+
+// docs/84: scenes keep whether they show the realistic display; scenes
+// saved before keep the display as it is.
+TEST(Sun, ScenesRememberTheRealisticDisplay) {
+  doc::Modeler m;
+  doc::Scene shaded{"plan", {}, false}, rendered{"view", {}, true}, old{"old", {}, std::nullopt};
+  m.document().settings().scenes = {shaded, rendered, old};
+  const std::string path = ::testing::TempDir() + "scenes.sbr";
+  ASSERT_TRUE(m.save(path));
+  doc::Modeler back;
+  ASSERT_TRUE(back.load(path));
+  const auto& scenes = back.document().settings().scenes;
+  ASSERT_EQ(scenes.size(), 3u);
+  EXPECT_EQ(scenes[0].realistic, std::optional<bool>(false));
+  EXPECT_EQ(scenes[1].realistic, std::optional<bool>(true));
+  EXPECT_FALSE(scenes[2].realistic.has_value());
+}

@@ -34,8 +34,11 @@ struct CameraState {
 struct Scene {
   std::string name;
   CameraState camera;
+  // The realistic display on or off when the scene is shown (docs/84);
+  // none (scenes from before): the display stays as it is.
+  std::optional<bool> realistic;
 
-  bool operator==(const Scene& o) const { return name == o.name && camera == o.camera; }
+  bool operator==(const Scene& o) const { return name == o.name && camera == o.camera && realistic == o.realistic; }
 };
 
 // Section plane: hides the half-space the normal points to, so the model is

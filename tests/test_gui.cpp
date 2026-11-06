@@ -81,6 +81,7 @@
 #include "HelpWindow.h"
 #include <QPlainTextEdit>
 #include <QPrinter>
+#include <QScopeGuard>
 #include <V3d_Light.hxx>
 #include <QTextBrowser>
 #include "McpHttpServer.h"
@@ -10602,6 +10603,14 @@ void GuiPhase1::realisticDisplay() {
   QVERIFY(f.vp->occView()->IsImageBasedLighting());
   const QString after = QDir::temp().filePath(QStringLiteral("sbr-realistic.png"));
   QVERIFY(f.window.exportImage(after));
+  // docs/84: a scene remembers the realistic display.
+  f.window.addScene(QStringLiteral("外観パース"));
+  QCOMPARE(m.document().settings().scenes.back().realistic, std::optional<bool>(true));
+  action->trigger();
+  QVERIFY(!f.vp->realistic());
+  QVERIFY(f.window.goToScene(static_cast<int>(m.document().settings().scenes.size()) - 1));
+  QVERIFY(f.vp->realistic());
+  QVERIFY(action->isChecked());
   // SBR_RENDER_SHOTS=<folder>: keep the two pictures to look at.
   if (const QString keep = qEnvironmentVariable("SBR_RENDER_SHOTS"); !keep.isEmpty()) {
     QFile::copy(before, QDir(keep).filePath(QStringLiteral("cad.png")));
@@ -10698,6 +10707,30 @@ void GuiPhase1::realisticDisplay() {
     QTimer::singleShot(300, [&] {
       auto* dialog = qobject_cast<SunDialog*>(QApplication::activeModalWidget());
       if (!dialog) return;
+      // Closed whatever a check below says (a failed check returns early).
+      const auto close = qScopeGuard([&] {
+        if (dialog->isVisible()) dialog->reject();
+      });
+      // The day played: from the night it starts at sunrise, and stops when
+      // the sun sets.
+      dialog->setMinutes(2 * 60);
+      dialog->findChild<QPushButton*>(QStringLiteral("sunPlay"))->click();
+      QVERIFY(dialog->playing());
+      {
+        // Just before sunrise (April in Tokyo: about 5:10).
+        geom::SunSettings at = dialog->settings();
+        QVERIFY(!geom::sunPosition(at).up());
+        at.hour += 10.0 / 60.0;
+        QVERIFY(geom::sunPosition(at).up());
+        QVERIFY(dialog->minutes() > 4 * 60 && dialog->minutes() < 6 * 60);
+      }
+      const int start = dialog->minutes();
+      QTest::qWait(400);
+      QVERIFY(dialog->minutes() > start);
+      dialog->setMinutes(17 * 60 + 50);  // sunset in April about 18:15
+      QTRY_VERIFY_WITH_TIMEOUT(!dialog->playing(), 5000);
+      QVERIFY(dialog->minutes() < 19 * 60);
+      QVERIFY(!geom::sunPosition(dialog->settings()).up());
       dialog->setMinutes(8 * 60);
       geom::SunSettings shown = dialog->settings();
       const geom::SunPosition p = geom::sunPosition(shown);

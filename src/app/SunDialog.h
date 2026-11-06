@@ -12,7 +12,9 @@ class QComboBox;
 class QDateEdit;
 class QDoubleSpinBox;
 class QLabel;
+class QPushButton;
 class QSlider;
+class QTimer;
 
 namespace sbr::app {
 
@@ -23,6 +25,10 @@ class SunDialog : public QDialog {
   geom::SunSettings settings() const;
   // For checks: the time as on the slider (minutes from midnight).
   void setMinutes(int minutes);
+  int minutes() const;
+  // The day played on the time slider (the play button).
+  void setPlaying(bool on);
+  bool playing() const;
 
  signals:
   void changed(const sbr::geom::SunSettings& sun);
@@ -32,6 +38,8 @@ class SunDialog : public QDialog {
   QDateEdit* date_ = nullptr;
   QSlider* time_ = nullptr;
   QLabel* timeLabel_ = nullptr;
+  QPushButton* play_ = nullptr;
+  QTimer* player_ = nullptr;
   QComboBox* place_ = nullptr;
   QDoubleSpinBox* latitude_ = nullptr;
   QDoubleSpinBox* longitude_ = nullptr;

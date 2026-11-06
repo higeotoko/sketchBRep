@@ -1787,6 +1787,7 @@ void MainWindow::addScene(const QString& name) {
   doc::Scene scene;
   scene.name = name.isEmpty() ? tr("シーン %1").arg(scenes.size() + 1).toStdString() : name.toStdString();
   viewport_->storeCamera(scene.camera);
+  scene.realistic = viewport_->realistic();
   scenes.push_back(scene);
   modeler_.history().markDirty();
   refreshScenes();
@@ -1800,6 +1801,11 @@ bool MainWindow::goToScene(int index) {
   if (index < 0 || index >= static_cast<int>(scenes.size())) return false;
   viewport_->restoreCamera(scenes[index].camera);
   perspectiveAction_->setChecked(scenes[index].camera.perspective);
+  if (scenes[index].realistic) {
+    if (QAction* realistic = findChild<QAction*>(QStringLiteral("realisticAction"))) {
+      realistic->setChecked(*scenes[index].realistic);
+    }
+  }
   sceneBar_->setCurrentIndex(index);
   return true;
 }
@@ -1814,6 +1820,7 @@ void MainWindow::sceneMenu(int index, const QPoint& globalPos) {
   if (!chosen || index >= static_cast<int>(scenes.size())) return;
   if (chosen == update) {
     viewport_->storeCamera(scenes[index].camera);
+    scenes[index].realistic = viewport_->realistic();
   } else if (chosen == rename) {
     bool ok = false;
     const QString name = QInputDialog::getText(this, tr("シーン名"), tr("名前"), QLineEdit::Normal,
