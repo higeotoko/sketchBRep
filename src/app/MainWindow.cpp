@@ -1021,6 +1021,15 @@ void MainWindow::buildMenus() {
     viewport_->setShadowsOnGround(on);
     QSettings().setValue(QStringLiteral("view/groundShadows"), on);
   });
+  QAction* realisticEdges = view->addAction(tr("リアル表示で面の線を表示"));
+  realisticEdges->setObjectName(QStringLiteral("realisticEdgesAction"));
+  realisticEdges->setCheckable(true);
+  realisticEdges->setChecked(QSettings().value(QStringLiteral("view/realisticEdges"), false).toBool());
+  viewport_->setRealisticEdges(realisticEdges->isChecked());
+  connect(realisticEdges, &QAction::toggled, this, [this](bool on) {
+    viewport_->setRealisticEdges(on);
+    QSettings().setValue(QStringLiteral("view/realisticEdges"), on);
+  });
   // The sun's date, time and place (docs/82_sun_position): shown live while
   // the dialog is open (in the realistic display), kept on OK.
   view->addAction(tr("太陽の位置（日時・場所）..."), this, [this, realistic] {
@@ -1620,6 +1629,21 @@ void MainWindow::buildAiBridge() {
       viewport_->setStandardView(it->second);
     }
     return json{{"view", v}}.dump();
+  };
+  handlers["set_display"] = [this](const std::string& args) {
+    const json a = json::parse(args);
+    // Through the menu items, so their check marks follow.
+    const std::pair<const char*, const char*> items[] = {
+        {"realistic", "realisticAction"}, {"edges", "realisticEdgesAction"}, {"shadows_on_ground", "groundShadowsAction"}};
+    json out = json::object();
+    for (const auto& [key, action] : items) {
+      QAction* item = findChild<QAction*>(QString::fromLatin1(action));
+      if (!item) throw std::runtime_error(std::string("no menu item for ") + key);
+      if (a.contains(key)) item->setChecked(a.at(key).get<bool>());
+      out[key] = item->isChecked();
+    }
+    viewport_->syncNow();
+    return out.dump();
   };
   handlers["capture_view"] = [this](const std::string&) {
     viewport_->syncNow();

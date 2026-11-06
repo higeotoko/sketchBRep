@@ -10702,6 +10702,28 @@ void GuiPhase1::realisticDisplay() {
   }
   QVERIFY(m.undo());
   f.vp->syncNow();
+  // Faces without their outlines in the realistic display (an option), and
+  // the AI switching the display as the menu does.
+  QVERIFY(!f.vp->faceOutlinesDrawn(box));
+  auto display = [&](const char* args) {
+    const auto r = QJsonDocument::fromJson(QByteArray::fromStdString(f.window.aiBridge()->execute(
+                       std::string(R"({"command": "set_display", "args": )") + args + "}")))
+                       .object();
+    return r;
+  };
+  QJsonObject r = display(R"({"edges": true})");
+  QVERIFY2(r.value("ok").toBool(), qPrintable(QJsonDocument(r).toJson()));
+  QVERIFY(f.vp->faceOutlinesDrawn(box));
+  QVERIFY(f.window.findChild<QAction*>(QStringLiteral("realisticEdgesAction"))->isChecked());
+  r = display(R"({"edges": false})");
+  QVERIFY(!f.vp->faceOutlinesDrawn(box));
+  QCOMPARE(r.value("result").toObject().value("realistic").toBool(), true);
+  r = display(R"({"realistic": false})");
+  QVERIFY(!f.vp->realistic());
+  QVERIFY(f.vp->faceOutlinesDrawn(box));  // the CAD display draws them
+  QVERIFY(!action->isChecked());
+  display(R"({"realistic": true})");
+  QVERIFY(action->isChecked());
   // SBR_RENDER_SHOTS=<folder>: keep the two pictures to look at.
   if (const QString keep = qEnvironmentVariable("SBR_RENDER_SHOTS"); !keep.isEmpty()) {
     QFile::copy(before, QDir(keep).filePath(QStringLiteral("cad.png")));

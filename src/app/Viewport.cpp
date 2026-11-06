@@ -769,7 +769,7 @@ void Viewport::displayWithPickMode(Entry& entry) {
                    : pickMode_ == PickMode::Elements           ? AIS_Shape::SelectionMode(TopAbs_EDGE)
                                                                : 0;
   context_->Display(entry.ais, shaded_ ? AIS_Shaded : AIS_WireFrame, mode, Standard_False);
-  if (!entry.edgeOverlay.IsNull()) context_->Display(entry.edgeOverlay, AIS_WireFrame, -1, Standard_False);
+  if (!entry.edgeOverlay.IsNull() && !faceEdgesHidden()) context_->Display(entry.edgeOverlay, AIS_WireFrame, -1, Standard_False);
   if (pickMode_ == PickMode::Elements) {
     context_->Activate(entry.ais, AIS_Shape::SelectionMode(TopAbs_FACE));
   } else if (pickMode_ == PickMode::None || lockedFaces) {
@@ -861,7 +861,7 @@ Handle(AIS_Shape) Viewport::makeDisplay(const doc::Object& object, Entry& entry)
     showBackSide(ais, object.kind());
   }
   entry.hiddenEdges = doc::hiddenEdgeIndices(object);
-  ais->Attributes()->SetFaceBoundaryDraw(entry.hiddenEdges.empty() ? Standard_True : Standard_False);
+  ais->Attributes()->SetFaceBoundaryDraw(entry.hiddenEdges.empty() && !faceEdgesHidden() ? Standard_True : Standard_False);
   entry.edgeOverlay.Nullify();
   if (!entry.hiddenEdges.empty()) {
     BRep_Builder builder;
@@ -1832,6 +1832,7 @@ void Viewport::setRealistic(bool on) {
     }
   }
   shownSun_.reset();
+  refreshFaceEdges();
   if (on) {
     applySun();  // also makes the ground
   } else {
@@ -1839,6 +1840,31 @@ void Viewport::setRealistic(bool on) {
     updateRealisticGround();
   }
   redraw();
+}
+
+void Viewport::setRealisticEdges(bool show) {
+  realisticEdges_ = show;
+  if (view_.IsNull() || !realistic_) return;
+  refreshFaceEdges();
+  redraw();
+}
+
+void Viewport::refreshFaceEdges() {
+  const bool hide = faceEdgesHidden();
+  for (auto& [id, entry] : entries_) {
+    if (entry.ais.IsNull()) continue;
+    const Standard_Boolean draw = entry.hiddenEdges.empty() && !hide ? Standard_True : Standard_False;
+    if (entry.ais->Attributes()->FaceBoundaryDraw() != draw) {
+      entry.ais->Attributes()->SetFaceBoundaryDraw(draw);
+      if (context_->IsDisplayed(entry.ais)) context_->Redisplay(entry.ais, Standard_False);
+    }
+    if (entry.edgeOverlay.IsNull()) continue;
+    if (hide) {
+      context_->Erase(entry.edgeOverlay, Standard_False);
+    } else if (!entry.erased && context_->IsDisplayed(entry.ais)) {
+      context_->Display(entry.edgeOverlay, AIS_WireFrame, -1, Standard_False);
+    }
+  }
 }
 
 void Viewport::previewSun(const std::optional<geom::SunSettings>& sun) {

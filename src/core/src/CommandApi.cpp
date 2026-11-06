@@ -3299,6 +3299,13 @@ std::vector<CommandApi::Extension> CommandApi::appCommandSpecs() {
            "view": {"enum": ["iso", "top", "front", "right", "back", "left", "fit"]},
            "ids": {"type": "array", "items": {"type": "string"}}}, "required": ["view"]})",
        nullptr, Effect::ViewWrite},
+      {"set_display",
+       "The display (docs/81_realistic_display): 'realistic' (materials' metallic / roughness, the sun of "
+       "get_sun / set_sun, shadows) or the CAD display; 'edges' (faces' outlines in the realistic display); "
+       "'shadows_on_ground'. Omitted keys stay. Returns all three. Display only, not saved in the model.",
+       R"({"type": "object", "properties": {"realistic": {"type": "boolean"}, "edges": {"type": "boolean"},
+           "shadows_on_ground": {"type": "boolean"}}})",
+       nullptr, Effect::ViewWrite},
       {"capture_view", "Capture the current 3D view as a PNG image so you can look at the model.",
        R"({"type": "object", "properties": {}})", nullptr, Effect::Read},
       {"list_scenes", "List the saved views (scenes) of the model.", R"({"type": "object", "properties": {}})",

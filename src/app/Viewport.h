@@ -104,6 +104,16 @@ class Viewport : public QWidget {
   // While the sun dialog is open: its values shown live, not yet in the
   // document (nullopt: the document's again).
   void previewSun(const std::optional<geom::SunSettings>& sun);
+  // The faces' outlines in the realistic display (off by default, as a
+  // rendered view); curves, dimensions and guides always show.
+  void setRealisticEdges(bool show);
+  bool realisticEdges() const { return realisticEdges_; }
+  bool faceEdgesHidden() const { return realistic_ && !realisticEdges_; }
+  // For checks: whether the object's faces are drawn with their outlines.
+  bool faceOutlinesDrawn(const doc::ObjectId& id) const {
+    const auto it = entries_.find(id);
+    return it != entries_.end() && !it->second.ais.IsNull() && it->second.ais->Attributes()->FaceBoundaryDraw();
+  }
   bool shadowsOnGround() const { return shadowsOnGround_; }
   const Handle(AIS_Shape)& realisticGround() const { return realisticGround_; }
   const Handle(V3d_View)& occView() const { return view_; }  // for checks
@@ -478,6 +488,8 @@ class Viewport : public QWidget {
   bool xRay_ = false;
   bool realistic_ = false;
   bool shadowsOnGround_ = true;
+  bool realisticEdges_ = false;
+  void refreshFaceEdges();  // after the realistic display or its edges option changed
   Handle(V3d_Light) sun_;
   std::optional<geom::SunSettings> shownSun_;
   std::optional<geom::SunSettings> previewSun_;
