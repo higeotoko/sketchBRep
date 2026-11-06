@@ -1140,6 +1140,14 @@ std::string serializeDocument(const Document& document) {
       {"levels", levelsJson},
       {"constructionOverrides", s.constructionOverrides},
       {"wallCalculation", s.wallCalculation},
+      {"sun",
+       {{"month", s.sun.month},
+        {"day", s.sun.day},
+        {"hour", s.sun.hour},
+        {"latitude", s.sun.latitude},
+        {"longitude", s.sun.longitude},
+        {"timeZone", s.sun.timeZone},
+        {"northAngle", s.sun.northAngle}}},
       {"shapes", shapes.entries},
       {"recipes", recipes.entries},
       {"materials", materials},
@@ -1190,6 +1198,19 @@ Status deserializeDocument(const std::string& text, Document& document,
       for (const json& l : root.at("levels")) {
         s.levels.push_back({l.at("id").get<std::string>(), l.value("name", std::string()), l.at("elevation").get<double>()});
       }
+    }
+    if (root.contains("sun")) {
+      const json& j = root.at("sun");
+      geom::SunSettings sun;
+      sun.month = j.value("month", sun.month);
+      sun.day = j.value("day", sun.day);
+      sun.hour = j.value("hour", sun.hour);
+      sun.latitude = j.value("latitude", sun.latitude);
+      sun.longitude = j.value("longitude", sun.longitude);
+      sun.timeZone = j.value("timeZone", sun.timeZone);
+      sun.northAngle = j.value("northAngle", sun.northAngle);
+      if (*geom::sunSettingsError(sun)) throw std::runtime_error(std::string("sun: ") + geom::sunSettingsError(sun));
+      s.sun = sun;
     }
     if (root.contains("wallCalculation")) {
       const auto value = root.at("wallCalculation").get<std::string>();

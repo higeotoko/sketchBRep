@@ -14,6 +14,7 @@
 #include <Bnd_Box.hxx>
 
 #include "sbr/doc/Object.h"
+#include "sbr/geom/Sun.h"
 
 namespace sbr::doc {
 
@@ -81,6 +82,7 @@ struct DocumentSettings {
   std::vector<FloorLevel> levels;    // by elevation
   std::map<std::string, std::string> constructionOverrides;  // system -> JSON merge patch
   std::string wallCalculation = "{}";  // designations, loads and pinned coefficient table
+  geom::SunSettings sun;               // date, time, place, north (docs/82)
 };
 
 // The part of the settings that belongs to the model's state (saved, undone
@@ -93,10 +95,11 @@ struct PersistentSettings {
   std::vector<FloorLevel> levels;
   std::map<std::string, std::string> constructionOverrides;
   std::string wallCalculation = "{}";
+  geom::SunSettings sun;
 
   static PersistentSettings of(const DocumentSettings& s) {
     return {s.scenes,         s.sections, s.sectionDisplay, s.hiddenTags, s.levels, s.constructionOverrides,
-            s.wallCalculation};
+            s.wallCalculation, s.sun};
   }
   void applyTo(DocumentSettings& s) const {
     s.scenes = scenes;
@@ -106,11 +109,13 @@ struct PersistentSettings {
     s.levels = levels;
     s.constructionOverrides = constructionOverrides;
     s.wallCalculation = wallCalculation;
+    s.sun = sun;
   }
   bool operator==(const PersistentSettings& o) const {
     return scenes == o.scenes && sections == o.sections && sectionDisplay == o.sectionDisplay &&
            hiddenTags == o.hiddenTags && levels == o.levels &&
-           constructionOverrides == o.constructionOverrides && wallCalculation == o.wallCalculation;
+           constructionOverrides == o.constructionOverrides && wallCalculation == o.wallCalculation &&
+           sun == o.sun;
   }
   bool operator!=(const PersistentSettings& o) const { return !(*this == o); }
 };

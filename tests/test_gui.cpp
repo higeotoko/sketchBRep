@@ -76,6 +76,8 @@
 
 #include "AiBridge.h"
 #include "CrashLog.h"
+#include "sbr/geom/Sun.h"
+#include "SunDialog.h"
 #include "HelpWindow.h"
 #include <QPlainTextEdit>
 #include <QPrinter>
@@ -10631,6 +10633,77 @@ void GuiPhase1::realisticDisplay() {
   QVERIFY(f.vp->realisticGround().IsNull());
   groundShadows->trigger();
   QVERIFY(!f.vp->realisticGround().IsNull());
+  // docs/82: the sun from the date, time and place. The light comes from
+  // the south at noon (it travels north, +Y); the ground stays unseen
+  // (as the background's ground) whatever the sun's height; at night no
+  // sun and no shadows.
+  auto sunLight = [&]() -> Handle(V3d_Light) {
+    for (V3d_ListOfLightIterator it(f.vp->occView()->ActiveLightIterator()); it.More(); it.Next()) {
+      if (it.Value()->Name() == "sun") return it.Value();
+    }
+    return {};
+  };
+  for (double hour : {7.0, 9.0, 11.75}) {
+    geom::SunSettings sun;
+    sun.month = 6;
+    sun.day = 21;
+    sun.hour = hour;
+    QVERIFY(m.setSun(sun));
+    f.vp->syncNow();
+    const Handle(V3d_Light) light = sunLight();
+    QVERIFY(!light.IsNull());
+    QVERIFY(light->ToCastShadows());
+    const geom::SunPosition p = geom::sunPosition(sun);
+    QVERIFY(light->Direction().IsParallel(gp_Dir(-p.towardSun[0], -p.towardSun[1], -p.towardSun[2]), 1e-6));
+    const QString shot = QDir::temp().filePath(QStringLiteral("sbr-sun.png"));
+    QVERIFY(f.window.exportImage(shot));
+    const QImage im(shot);
+    QFile::remove(shot);
+    const QRgb ground = im.pixel(im.width() * 480 / 812, im.height() * 450 / 779);
+    const QRgb backdrop = im.pixel(im.width() * 790 / 812, im.height() * 760 / 779);
+    QVERIFY2(std::abs(qGray(ground) - qGray(backdrop)) <= 4,
+             qPrintable(QStringLiteral("hour %1: ground %2, background %3").arg(hour).arg(qGray(ground)).arg(qGray(backdrop))));
+  }
+  // Noon: from the south (the light travels north, +Y), not east or west.
+  QVERIFY(sunLight()->Direction().Y() > 0.1);
+  QVERIFY(std::abs(sunLight()->Direction().X()) < 0.1);
+  {
+    geom::SunSettings night;
+    night.hour = 1.0;
+    QVERIFY(m.setSun(night));
+    f.vp->syncNow();
+    QVERIFY(!sunLight()->ToCastShadows());
+  }
+  QVERIFY(m.setSun(geom::SunSettings{}));
+  f.vp->syncNow();
+  // The dialog: the time slider moves the sun live; Cancel leaves the
+  // model as it was, OK keeps the values (one undo step).
+  auto* sunAction = f.window.findChild<QAction*>(QStringLiteral("sunAction"));
+  QVERIFY(sunAction);
+  for (const bool accept : {false, true}) {
+    bool moved = false;
+    QTimer::singleShot(300, [&] {
+      auto* dialog = qobject_cast<SunDialog*>(QApplication::activeModalWidget());
+      if (!dialog) return;
+      dialog->setMinutes(8 * 60);
+      geom::SunSettings shown = dialog->settings();
+      const geom::SunPosition p = geom::sunPosition(shown);
+      moved = sunLight()->Direction().IsParallel(gp_Dir(-p.towardSun[0], -p.towardSun[1], -p.towardSun[2]), 1e-6);
+      if (accept) dialog->accept(); else dialog->reject();
+    });
+    const auto steps = m.history().undoCount();
+    sunAction->trigger();
+    QVERIFY(moved);
+    if (accept) {
+      QCOMPARE(m.document().settings().sun.hour, 8.0);
+      QCOMPARE(m.history().undoCount(), steps + 1);
+    } else {
+      QCOMPARE(m.document().settings().sun, geom::SunSettings{});
+      QCOMPARE(m.history().undoCount(), steps);
+    }
+  }
+  QVERIFY(m.undo());
+  f.vp->syncNow();
   // SBR_RENDER_SHOTS=<folder>: keep the two pictures to look at.
   if (const QString keep = qEnvironmentVariable("SBR_RENDER_SHOTS"); !keep.isEmpty()) {
     QFile::copy(before, QDir(keep).filePath(QStringLiteral("cad.png")));

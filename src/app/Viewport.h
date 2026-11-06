@@ -101,6 +101,9 @@ class Viewport : public QWidget {
   // Shadows on the ground (GL) in the realistic display; the ground itself
   // is not to be seen (as SketchUp's "on ground" shadows). On by default.
   void setShadowsOnGround(bool on);
+  // While the sun dialog is open: its values shown live, not yet in the
+  // document (nullopt: the document's again).
+  void previewSun(const std::optional<geom::SunSettings>& sun);
   bool shadowsOnGround() const { return shadowsOnGround_; }
   const Handle(AIS_Shape)& realisticGround() const { return realisticGround_; }
   const Handle(V3d_View)& occView() const { return view_; }  // for checks
@@ -475,6 +478,13 @@ class Viewport : public QWidget {
   bool xRay_ = false;
   bool realistic_ = false;
   bool shadowsOnGround_ = true;
+  Handle(V3d_Light) sun_;
+  std::optional<geom::SunSettings> shownSun_;
+  std::optional<geom::SunSettings> previewSun_;
+  // The sun from the document's date, time and place (docs/82); its
+  // strength on the ground decides the ground's colour (kept unseen).
+  void applySun();
+  double groundLight_ = 1.0;  // light on the ground relative to the calibrated sun
   Handle(AIS_Shape) realisticGround_;
   std::vector<Handle(AIS_Shape)> axes_;  // hidden in the realistic display
   void updateRealisticGround();

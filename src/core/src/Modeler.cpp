@@ -3900,6 +3900,12 @@ Status Modeler::setWallCalculation(const std::string& inputs) {
   }
 }
 
+Status Modeler::setSun(const geom::SunSettings& sun) {
+  if (const char* error = geom::sunSettingsError(sun); *error) return Status::failure(error);
+  editSettings(document_, history_, "Sun", [&](PersistentSettings& s) { s.sun = sun; });
+  return Status::success();
+}
+
 Status Modeler::setConstructionOverrides(const std::string& system, const std::string& patch) {
   try {
     construction::validateOverrides(system, patch);

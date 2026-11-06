@@ -267,6 +267,16 @@ json gridJson(const doc::GridSpec& spec) {
   return json{{"x", axes(spec.x)}, {"y", axes(spec.y)}, {"label_offset", spec.labelOffset}};
 }
 
+json sunJson(const geom::SunSettings& s) {
+  const geom::SunPosition p = geom::sunPosition(s);
+  return {{"month", s.month},       {"day", s.day},
+          {"hour", s.hour},         {"latitude", s.latitude},
+          {"longitude", s.longitude}, {"time_zone", s.timeZone},
+          {"north_angle", s.northAngle}, {"altitude", p.altitude},
+          {"azimuth", p.azimuth},   {"toward_sun", p.towardSun},
+          {"up", p.up()}};
+}
+
 json levelsJson(const doc::Modeler& m) {
   json out = json::array();
   for (const doc::FloorLevel& l : m.levels()) out.push_back({{"id", l.id}, {"name", l.name}, {"elevation", l.elevation}});
@@ -2389,6 +2399,31 @@ const std::vector<CommandDef>& commands() {
          must(m.setGrid(id, spec));
          return json{{"grid", id}, {"lines", gridJson(*m.gridSpec(id))}};
        }},
+      {"get_sun",
+       "The sun of the realistic display (docs/82): month, day, hour (local clock, 14.5 = 14:30), latitude, "
+       "longitude (degrees, north / east positive), time_zone (hours from UTC), north_angle (degrees from the "
+       "model's +Y to true north, clockwise from above), and where it is: altitude and azimuth (degrees, "
+       "azimuth from north clockwise), toward_sun (unit vector, Z up), up (above the horizon).",
+       SCHEMA({"type": "object", "properties": {}}),
+       [](doc::Modeler& m, const json&) { return sunJson(m.document().settings().sun); }},
+      {"set_sun",
+       "Set the sun's date, time, place or north (any of month, day, hour, latitude, longitude, time_zone, "
+       "north_angle; the rest stay). Saved with the model, one undo step. Returns as get_sun.",
+       SCHEMA({"type": "object", "properties": {"month": {"type": "integer"}, "day": {"type": "integer"},
+               "hour": {"type": "number"}, "latitude": {"type": "number"}, "longitude": {"type": "number"},
+               "time_zone": {"type": "number"}, "north_angle": {"type": "number"}}}),
+       [](doc::Modeler& m, const json& a) {
+         geom::SunSettings sun = m.document().settings().sun;
+         sun.month = a.value("month", sun.month);
+         sun.day = a.value("day", sun.day);
+         sun.hour = a.value("hour", sun.hour);
+         sun.latitude = a.value("latitude", sun.latitude);
+         sun.longitude = a.value("longitude", sun.longitude);
+         sun.timeZone = a.value("time_zone", sun.timeZone);
+         sun.northAngle = a.value("north_angle", sun.northAngle);
+         must(m.setSun(sun));
+         return sunJson(m.document().settings().sun);
+       }},
       {"get_levels", "The levels (GL, 1FL..., docs/45): [{id, name, elevation}] by elevation (world z, mm).",
        SCHEMA({"type": "object", "properties": {}}),
        [](doc::Modeler& m, const json&) { return json{{"levels", levelsJson(m)}}; }},
@@ -2814,6 +2849,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
       name == "preview" || name == "query_objects" || name == "aggregate" || name == "get_changes" ||
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
       name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" ||
+      name == "get_sun" ||
         name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure") {
     return E::Read;
   }

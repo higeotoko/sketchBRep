@@ -1637,6 +1637,11 @@ void Viewport::syncSome(std::optional<double> budgetMs) {
     // The ground follows the model's extent (docs/81_realistic_display).
     if (realistic_ && pendingSync_.empty()) updateRealisticGround();
   }
+  // The sun follows the document's date, time and place (docs/82).
+  if (realistic_ && (!shownSun_ || *shownSun_ != (previewSun_ ? *previewSun_ : modeler_.document().settings().sun))) {
+    applySun();
+    redraw();
+  }
   syncEditBox();
   // Display copies may have been rebuilt: refresh the element overlay.
   std::vector<ElementRef> still;
@@ -1707,6 +1712,11 @@ void Viewport::setShaded(bool shaded) {
   redraw();
 }
 
+// The ground's light: base (sky and fill) plus the sun times the sine of its
+// altitude, in linear colour (docs/82, measured on the rendered picture).
+constexpr double kGroundLightBase = 1.0;
+constexpr double kGroundLightSun = 0.431;
+
 // --- realistic display (docs/81_realistic_display) ----------------------------------------------
 
 void Viewport::applyPhysicalMaterial(Entry& entry, const doc::Object& object) {
@@ -1750,7 +1760,8 @@ void Viewport::updateRealisticGround() {
   realisticGround_ = new AIS_Shape(ground);
   // Lit by the sun, sky and fill light this comes out as the backdrop's
   // ground (sRGB 0.80, 0.80, 0.78), measured on the rendered picture.
-  const Quantity_Color groundAlbedo = rgb(0.644, 0.64, 0.60);
+  const double k = 1.0 / std::max(groundLight_, 0.05);
+  const Quantity_Color groundAlbedo = rgb(std::min(1.0, 0.644 * k), std::min(1.0, 0.64 * k), std::min(1.0, 0.60 * k));
   realisticGround_->SetColor(groundAlbedo);
   realisticGround_->Attributes()->SetFaceBoundaryDraw(Standard_False);
   Graphic3d_MaterialAspect material(Graphic3d_NameOfMaterial_Plastified);
@@ -1794,6 +1805,7 @@ void Viewport::setRealistic(bool on) {
     sun->SetName("sun");
     sun->SetIntensity(1.0f);
     sun->SetCastShadows(Standard_True);
+    sun_ = sun;
     Handle(V3d_DirectionalLight) fill = new V3d_DirectionalLight(gp_Dir(0.5, -0.3, -0.4), rgb(0.85, 0.9, 1.0));
     fill->SetIntensity(0.8f);
     for (const Handle(V3d_Light)& light : {Handle(V3d_Light)(sky), Handle(V3d_Light)(sun), Handle(V3d_Light)(fill)}) {
@@ -1818,8 +1830,39 @@ void Viewport::setRealistic(bool on) {
       context_->Display(axis, AIS_WireFrame, -1, Standard_False);
     }
   }
-  updateRealisticGround();
+  shownSun_.reset();
+  if (on) {
+    applySun();  // also makes the ground
+  } else {
+    sun_.Nullify();
+    updateRealisticGround();
+  }
   redraw();
+}
+
+void Viewport::previewSun(const std::optional<geom::SunSettings>& sun) {
+  previewSun_ = sun;
+  if (!realistic_ || view_.IsNull()) return;
+  applySun();
+  redraw();
+}
+
+void Viewport::applySun() {
+  if (!realistic_ || sun_.IsNull()) return;
+  const geom::SunSettings& settings = previewSun_ ? *previewSun_ : modeler_.document().settings().sun;
+  shownSun_ = settings;
+  const geom::SunPosition p = geom::sunPosition(settings);
+  const double s = p.up() ? p.towardSun[2] : 0.0;  // sine of the altitude
+  if (p.up()) {
+    sun_->SetDirection(gp_Dir(-p.towardSun[0], -p.towardSun[1], -p.towardSun[2]));
+  }
+  sun_->SetEnabled(p.up() ? Standard_True : Standard_False);  // at night: no sun (an intensity of 0 is refused)
+  sun_->SetCastShadows(p.up() ? Standard_True : Standard_False);
+  // Light on the ground, linear in the sine of the sun's altitude (measured
+  // on the rendered picture, docs/82), relative to the light the ground's
+  // colour was matched under (the sun at sin = 0.70).
+  groundLight_ = (kGroundLightBase + kGroundLightSun * s) / (kGroundLightBase + kGroundLightSun * 0.70);
+  updateRealisticGround();
 }
 
 // --- picking ------------------------------------------------------------------

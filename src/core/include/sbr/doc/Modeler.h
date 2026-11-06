@@ -119,6 +119,8 @@ class Modeler {
   Status setLevels(std::vector<FloorLevel> levels);
   Status setConstructionOverrides(const std::string& system, const std::string& patch);
   Status setWallCalculation(const std::string& inputs);
+  // Date, time, place and north for the sun (docs/82); one undo step.
+  Status setSun(const geom::SunSettings& sun);
   // The description of a grid group (null: not a grid).
   const GridSpec* gridSpec(const ObjectId& grid) const;
   // Gives the grid new lines (names, offsets, added or taken away; ids

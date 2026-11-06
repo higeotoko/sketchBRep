@@ -11,6 +11,7 @@
 #include "DrawingExport.h"
 #include "CrashLog.h"
 #include "HelpWindow.h"
+#include "SunDialog.h"
 #include "DwgConverter.h"
 #include "ToolPalette.h"
 #include "Branding.h"
@@ -1020,6 +1021,18 @@ void MainWindow::buildMenus() {
     viewport_->setShadowsOnGround(on);
     QSettings().setValue(QStringLiteral("view/groundShadows"), on);
   });
+  // The sun's date, time and place (docs/82_sun_position): shown live while
+  // the dialog is open (in the realistic display), kept on OK.
+  view->addAction(tr("太陽の位置（日時・場所）..."), this, [this, realistic] {
+    realistic->setChecked(true);
+    SunDialog dialog(modeler_.document().settings().sun, this);
+    connect(&dialog, &SunDialog::changed, this, [this](const geom::SunSettings& sun) { viewport_->previewSun(sun); });
+    const bool ok = dialog.exec() == QDialog::Accepted;
+    viewport_->previewSun(std::nullopt);
+    if (ok) {
+      if (const Status s = modeler_.setSun(dialog.settings()); !s) reportError(QString::fromStdString(s.message()));
+    }
+  })->setObjectName(QStringLiteral("sunAction"));
   focusOnDoubleClick_ = view->addAction(tr("中ボタンのダブルクリックでフォーカス"));
   focusOnDoubleClick_->setCheckable(true);
   focusOnDoubleClick_->setChecked(true);

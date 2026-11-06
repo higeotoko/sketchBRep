@@ -50,6 +50,7 @@ add_library(sbr_core STATIC
   src/JwwRead.cpp
   src/Surfaces.cpp
   src/Progress.cpp
+  src/Sun.cpp
 )
 add_library(sbr::core ALIAS sbr_core)
 

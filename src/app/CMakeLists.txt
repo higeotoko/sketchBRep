@@ -30,6 +30,7 @@ add_library(sbr_ui STATIC
   DrawingExport.cpp DrawingExport.h
   CrashLog.cpp CrashLog.h
   HelpWindow.cpp HelpWindow.h
+  SunDialog.cpp SunDialog.h
 )
 target_include_directories(sbr_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
                           PRIVATE ${PROJECT_SOURCE_DIR}/assets/materials/builtin/integration)
