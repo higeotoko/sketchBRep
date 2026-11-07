@@ -192,6 +192,8 @@ class Viewport : public QWidget {
   std::size_t openingSymbolEdgeCount() const { return openingSymbolEdges_; }
   // Walls cut open (no cap) by the plan cut, so the columns inside show.
   std::size_t wallsCutOpen() const { return wallCutCount_; }
+  // Edges of the walls' cut lines drawn in a plan cut (0 without a cut).
+  std::size_t wallOutlineEdgeCount() const { return wallOutlineEdges_; }
   std::size_t diagnosticShapeCount() const { return diagnostics_.size(); }
   std::size_t roleShapeCount() const { return roles_.size(); }
   // What the tool preview shows now (null: nothing) - for checks.
@@ -514,6 +516,10 @@ class Viewport : public QWidget {
   std::size_t openingSymbolEdges_ = 0;
   void syncOpeningSymbols();
   void syncWallCuts();
+  // The plan cut's line through each wall (walls are cut open, without a cap).
+  void syncWallOutlines();
+  Handle(AIS_Shape) wallOutlines_;
+  std::size_t wallOutlineEdges_ = 0;
   std::size_t wallCutCount_ = 0;
   Handle(AIS_Shape) snapMarker_;
   Handle(AIS_Shape) inferenceLine_;

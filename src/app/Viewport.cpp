@@ -57,6 +57,7 @@
 #include <Bnd_Box.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRep_Builder.hxx>
+#include <BRepAlgoAPI_Section.hxx>
 #include <Standard_Failure.hxx>
 #include <TopoDS_Compound.hxx>
 #include <Graphic3d_Camera.hxx>
@@ -1636,6 +1637,7 @@ void Viewport::syncSome(std::optional<double> budgetMs) {
   if (!queue.empty()) {
     syncOpeningSymbols();
     if (planCutZ_) syncWallCuts();
+    syncWallOutlines();
     // The ground follows the model's extent (docs/81_realistic_display).
     if (realistic_ && pendingSync_.empty()) updateRealisticGround();
   }
@@ -2753,6 +2755,7 @@ void Viewport::setPlanCut(std::optional<double> z) {
   syncSection();
   syncOpeningSymbols();
   syncWallCuts();
+  syncWallOutlines();
   redraw();
 }
 
@@ -2782,6 +2785,53 @@ void Viewport::syncWallCuts() {
       shown->SetClipPlanes(want);
     }
   }
+}
+
+void Viewport::syncWallOutlines() {
+  if (view_.IsNull()) return;
+  if (!wallOutlines_.IsNull()) {
+    context_->Remove(wallOutlines_, Standard_False);
+    wallOutlines_.Nullify();
+  }
+  wallOutlineEdges_ = 0;
+  if (!planCutZ_) return;
+  // Walls are cut open (syncWallCuts), so nothing draws their faces at the cut: a wall standing
+  // on a beam or sill shows its inner face only at its bottom, under the floor boards. Draw the
+  // cut line of each wall instead, just under the cut and over the floors.
+  const doc::Document& document = modeler_.document();
+  const gp_Pln cut(gp_Pnt(0, 0, *planCutZ_), gp::DZ());
+  gp_Trsf down;
+  down.SetTranslation(gp_Vec(0, 0, -1.0));
+  TopoDS_Compound compound;
+  BRep_Builder builder;
+  builder.MakeCompound(compound);
+  for (const auto& [id, entry] : entries_) {
+    const doc::Object* o = document.find(id);
+    if (!o || o->shape.IsNull() || !o->attributes.count("kind") || o->attributes.at("kind") != "wall") continue;
+    if (!document.isVisible(id) || hiddenInView(*o)) continue;
+    const TopoDS_Shape world = document.worldShape(*o);
+    Bnd_Box box;
+    BRepBndLib::Add(world, box);
+    if (box.IsVoid()) continue;
+    double x0, y0, z0, x1, y1, z1;
+    box.Get(x0, y0, z0, x1, y1, z1);
+    if (*planCutZ_ <= z0 || *planCutZ_ >= z1) continue;
+    BRepAlgoAPI_Section section(world, cut, Standard_False);
+    section.Approximation(Standard_False);
+    section.Build();
+    if (!section.IsDone()) continue;
+    for (TopExp_Explorer e(section.Shape(), TopAbs_EDGE); e.More(); e.Next()) {
+      builder.Add(compound, e.Current().Moved(TopLoc_Location(down)));
+      ++wallOutlineEdges_;
+    }
+  }
+  if (wallOutlineEdges_ == 0) return;
+  wallOutlines_ = new AIS_Shape(compound);
+  wallOutlines_->SetColor(Quantity_Color(0.05, 0.05, 0.08, Quantity_TOC_RGB));
+  wallOutlines_->SetWidth(1.4);
+  wallOutlines_->SetZLayer(Graphic3d_ZLayerId_Topmost);
+  context_->Display(wallOutlines_, AIS_WireFrame, -1, Standard_False);
+  context_->Deactivate(wallOutlines_);
 }
 
 void Viewport::syncOpeningSymbols() {

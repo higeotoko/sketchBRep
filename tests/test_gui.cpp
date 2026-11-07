@@ -10110,8 +10110,15 @@ void GuiPhase1::wallTypeFromToolbarAndColumnsShowInPlanCut() {
   QVERIFY(m.createSlab({gp_Pnt(0,0,0),gp_Pnt(3640,0,0),gp_Pnt(3640,2730,0),gp_Pnt(0,2730,0)},0,150));
   f.vp->syncNow();
   QCOMPARE(f.vp->wallsCutOpen(),std::size_t(0));  // 3D: nothing cut
+  QCOMPARE(f.vp->wallOutlineEdgeCount(),std::size_t(0));
   f.vp->setPlanCut(1100.0);
   QCOMPARE(f.vp->wallsCutOpen(),std::size_t(4));
+  // Cut open, the walls' cut lines are drawn instead (both faces of each wall).
+  const std::size_t outline=f.vp->wallOutlineEdgeCount();
+  QVERIFY2(outline>=8,qPrintable(QString::number(outline)));
+  f.vp->setPlanCut(50000.0);  // above the walls: no line
+  QCOMPARE(f.vp->wallOutlineEdgeCount(),std::size_t(0));
+  f.vp->setPlanCut(1100.0);
   // A wall made while the cut is on is cut open too.
   QVERIFY(m.createTypedWalls({gp_Pnt(1820,0,0),gp_Pnt(1820,2730,0)},2400,"interior_board"));
   f.vp->syncNow();
@@ -10123,8 +10130,10 @@ void GuiPhase1::wallTypeFromToolbarAndColumnsShowInPlanCut() {
     f.vp->syncNow();f.vp->fitAll();QTest::qWait(80);
     f.window.exportImage(capture);
   }
+  QVERIFY(f.vp->wallOutlineEdgeCount()>outline);  // the new wall's line too
   f.vp->setPlanCut(std::nullopt);
   QCOMPARE(f.vp->wallsCutOpen(),std::size_t(0));
+  QCOMPARE(f.vp->wallOutlineEdgeCount(),std::size_t(0));
 }
 
 // Walls already drawn change their build-up from the toolbar picker (with them selected) or
