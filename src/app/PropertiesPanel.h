@@ -57,6 +57,8 @@ class PropertiesPanel : public QWidget {
   // A wall's foot (top = false) or a wall's / slab's top put on the level `level` (its id;
   // empty: let go of its level).
   void levelAttachmentEdited(const doc::ObjectId& id, bool top, const QString& level);
+  // A wall's or a slab's own size (length / thickness / height) typed in the part section.
+  void partSizeEdited(const doc::ObjectId& id, const QString& key, double value);
   void lockToggled(const doc::ObjectId& id, bool locked);
   // The object's material picked from the library ("" = inherit).
   void materialAssigned(const doc::ObjectId& id, const std::string& materialId);

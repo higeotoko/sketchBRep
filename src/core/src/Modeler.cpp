@@ -6171,6 +6171,27 @@ std::string attributeOr(const Object& o, const std::string& key) {
 std::optional<Modeler::MemberInfo> Modeler::wallOrSlabInfo(const Object& o) const {
   const std::string kind = attributeOr(o, "kind");
   if (kind != "wall" && kind != "slab") return std::nullopt;
+  // A wall with openings cut into it (docs/90 G-04): its own rectangle and push lie inside the
+  // cuts. Its length and height stay editable; its thickness changes with its build-up
+  // (set_wall_type), which also refits the openings.
+  if (kind == "wall" && std::holds_alternative<BooleanFeature>(o.recipe.base)) {
+    const auto band = wallBand(document_, o);
+    if (!band || band->path.empty()) return std::nullopt;
+    const auto& r = std::get<RectangleProfile>(band->recipe.base);
+    MemberInfo cut;
+    cut.id = o.id;
+    cut.element = kind;
+    cut.role = kind;
+    cut.materialClass = attributeOr(o, "material_class");
+    cut.fields.push_back({"length", "wall length along its line", "mm", std::abs(r.width), "parameter", true,
+                          "its openings stay where they are and must stay inside the wall"});
+    cut.fields.push_back({"thickness", "wall thickness", "mm", std::abs(r.height), "parameter", false,
+                          "a wall with openings changes thickness with its build-up (set_wall_type)"});
+    cut.fields.push_back({"height", "wall height from its foot", "mm",
+                          std::abs(std::get<ExtrudeOp>(band->recipe.modifiers.front()).distance), "parameter", true,
+                          "its openings keep their sill heights and must stay inside the wall"});
+    return cut;
+  }
   if (o.recipe.modifiers.empty() || !std::holds_alternative<ExtrudeOp>(o.recipe.modifiers.front())) return std::nullopt;
   const double extrude = std::get<ExtrudeOp>(o.recipe.modifiers.front()).distance;
   MemberInfo info;
@@ -6221,6 +6242,34 @@ Result<Modeler::MemberInfo> Modeler::changeWallOrSlab(const ObjectId& id, const 
   auto positive = [](const std::optional<double>& v) { return !v || (std::isfinite(*v) && *v >= tolerance::kMinDimension); };
   if (!positive(change.thickness) || !positive(change.height) || !positive(change.length)) {
     return R::failure("Sizes must be positive (nothing was changed)");
+  }
+  if (kind == "wall" && std::holds_alternative<BooleanFeature>(object.recipe.base)) {
+    // A wall with openings: its rectangle and push inside the cuts change; the openings stay
+    // where they are (from the wall's start and foot) and must still lie inside the wall.
+    if (change.thickness)
+      return R::failure("A wall with openings changes thickness with its build-up (set_wall_type refits the "
+                        "openings); nothing was changed");
+    const auto band = wallBand(document_, *current);
+    if (!band || band->path.empty()) return R::failure("This wall is no longer the wall its tool made (nothing was changed)");
+    Recipe recipe = band->recipe;
+    auto& r = std::get<RectangleProfile>(recipe.base);
+    auto& push = std::get<ExtrudeOp>(recipe.modifiers.front());
+    if (change.length) r.width = *change.length;
+    if (change.height) push.distance = std::copysign(*change.height, push.distance);
+    const double length = r.width, top = band->z0 + std::abs(push.distance);
+    for (const OpeningExtent& e : openingExtents(*current, document_.worldTransform(*current))) {
+      const gp_Vec u(gp::DZ().Crossed(e.normal));
+      const double s = gp_Vec(band->start.XYZ()).Dot(u);
+      const bool along = u.Dot(gp_Vec(band->dir)) > 0;
+      const double t0 = along ? e.u0 - s : s - e.u1, t1 = along ? e.u1 - s : s - e.u0;
+      if (t0 < -tolerance::kLinear || t1 > length + tolerance::kLinear || e.z1 > top + tolerance::kLinear)
+        return R::failure("Opening " + std::to_string(e.index) +
+                          " would no longer be inside the wall: move or remove it first (nothing was changed)");
+    }
+    replaceOperand(object.recipe, band->path, 0, std::move(recipe));
+    const Status committed = commitModified(std::move(object), "Change wall");
+    if (!committed) return R::failure("The wall was not changed: " + committed.message());
+    return memberInfo(id);
   }
   auto& extrude = std::get<ExtrudeOp>(object.recipe.modifiers.front());
   if (kind == "wall") {

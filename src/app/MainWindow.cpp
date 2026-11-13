@@ -660,6 +660,27 @@ void MainWindow::buildUi() {
               if (!report(modeler_.setCurvePoints(id, points))) refreshPanels();
             });
           });
+  connect(panel_, &PropertiesPanel::partSizeEdited, this,
+          [this](const doc::ObjectId& id, const QString& key, double value) {
+            QTimer::singleShot(0, this, [this, id, key, value] {
+              doc::Modeler::MemberChange change;
+              if (key == QStringLiteral("length")) change.length = value;
+              else if (key == QStringLiteral("thickness")) change.thickness = value;
+              else if (key == QStringLiteral("height")) change.height = value;
+              else if (key == QStringLiteral("width")) change.width = value;
+              else if (key == QStringLiteral("depth")) change.depth = value;
+              else if (key == QStringLiteral("diameter")) change.diameter = value;
+              else if (key == QStringLiteral("web")) change.web = value;
+              else if (key == QStringLiteral("flange")) change.flange = value;
+              else if (key == QStringLiteral("radius")) change.radius = value;
+              else return;
+              const auto changed = modeler_.changeMember(id, change);
+              if (!changed) {
+                reportError(tr("寸法を変更できません: %1").arg(userMessage(QString::fromStdString(changed.error()))));
+                refreshPanels();
+              }
+            });
+          });
   connect(panel_, &PropertiesPanel::levelAttachmentEdited, this,
           [this](const doc::ObjectId& id, bool top, const QString& level) {
             QTimer::singleShot(0, this, [this, id, top, level] {
@@ -3243,7 +3264,7 @@ void MainWindow::showOpeningSettingsDialog() {
   form->addRow(tr("よく使う大きさ"), preset);
   form->addRow(tr("幅"), width);
   form->addRow(tr("高さ"), height);
-  form->addRow(tr("床からの高さ（腰）"), sill);
+  form->addRow(tr("腰高（壁の下端から）"), sill);
   auto* kind = new QComboBox(&dialog);
   kind->setObjectName(QStringLiteral("openingToolFitting"));
   for (const auto& c : draw::fittingChoices()) {
@@ -3834,7 +3855,7 @@ void MainWindow::showOpeningsDialog() {
   form->addRow(tr("個数"), count);
   form->addRow(tr("幅"), width);
   form->addRow(tr("高さ"), height);
-  form->addRow(tr("床からの高さ（腰）"), sill);
+  form->addRow(tr("腰高（壁の下端から）"), sill);
   form->addRow(tr("中心の間隔"), spacing);
   form->addRow(new QLabel(tr("選んだ壁の面（面を選んでいなければ一番大きい縦の面）に開けます"), &dialog));
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);

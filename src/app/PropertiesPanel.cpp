@@ -242,6 +242,188 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
   if (!o) return;
   const doc::ObjectId id = o->id;
 
+  // ===== The part (docs/90 G-04): what it is, in the same order for every building part:
+  // kind (種類), storey (階), reference (基準), sizes (寸法). The same words as its tool's settings.
+  const std::string partKind = [&] {
+    const auto it = o->attributes.find("kind");
+    const std::string kind = it == o->attributes.end() ? std::string() : it->second;
+    const auto info = modeler.memberInfo(id);
+    if (!info) return std::string();
+    if (kind == "wall" || kind == "slab") return kind;
+    return info->element == "member" ? std::string("member") : std::string();
+  }();
+  // Columns, beams and other members (step 3): placed ones of a generated frame are shown,
+  // and edited through the frame; a member of its own is edited here.
+  const bool ownMember = partKind == "member" && std::holds_alternative<doc::LinearMember>(o->recipe.base);
+  if (!partKind.empty()) {
+    QString what = partKind == "wall" ? tr("壁") : partKind == "slab" ? tr("床（スラブ）") : tr("部材");
+    if (partKind == "member") {
+      const auto it = o->attributes.find("kind");
+      const std::string role = it == o->attributes.end() ? std::string() : it->second;
+      static const std::map<std::string, QString> names = {
+          {"column", tr("柱")}, {"through_column", tr("通し柱")}, {"beam", tr("梁")}, {"girder", tr("大梁")},
+          {"floor_beam", tr("床梁")}, {"rim_beam", tr("胴差")}, {"eave_beam", tr("軒桁")}, {"roof_beam", tr("小屋梁")},
+          {"sill", tr("土台")}, {"joist", tr("根太")}, {"rafter", tr("垂木")}, {"stud", tr("間柱")},
+          {"brace", tr("筋かい")}, {"purlin", tr("母屋")}, {"ridge", tr("棟木")}, {"roof_post", tr("小屋束")},
+          {"floor_post", tr("床束")}, {"floor_girder", tr("大引")}, {"lintel", tr("まぐさ")}};
+      if (const auto found = names.find(role); found != names.end()) what = found->second;
+    }
+    auto* title = new QLabel(QStringLiteral("<b>%1</b>").arg(what));
+    title->setObjectName(QStringLiteral("partTitle"));
+    form_->addRow(title);
+  }
+  if (partKind == "member") {
+    const auto info = modeler.memberInfo(id);
+    // 種類: its section.
+    auto* section = new QLabel(QString::fromStdString(info->section));
+    section->setObjectName(QStringLiteral("partSection"));
+    section->setToolTip(tr("断面。別の断面にする時は「部材」パネルで選びます"));
+    form_->addRow(tr("種類"), section);
+    // 階: the levels its ends stand on (set when placed on a grid with levels, docs/45).
+    auto levelName = [&](const std::string& levelId) {
+      for (const doc::FloorLevel& l : modeler.levels())
+        if (l.id == levelId) return QString::fromStdString(l.name);
+      return levelId.empty() ? tr("なし") : tr("（削除されたレベル）");
+    };
+    auto* storey = new QLabel(o->gridPin ? tr("下端 %1 ／ 上端 %2").arg(levelName(o->gridPin->startLevel), levelName(o->gridPin->endLevel))
+                                         : tr("なし（レベルに付けていない）"));
+    storey->setObjectName(QStringLiteral("partStorey"));
+    storey->setToolTip(tr("「通り芯に柱・梁を配置」でレベルを選んで置いた部材は、階高を変えると付いてきます"));
+    form_->addRow(tr("階"), storey);
+  }
+  // A wall's build-up on its drawn line (timber walls).
+  if (const doc::Object* o = modeler.document().find(id);
+      o && o->attributes.count("kind") && o->attributes.at("kind") == "wall") {
+    auto* type = new QComboBox;
+    type->setObjectName(QStringLiteral("wallType"));
+    type->addItem(tr("厚さ指定（仕様なし）"), QString());
+    for (const auto& t : construction::wallTypes())
+      type->addItem(QString::fromStdString(t.name), QString::fromStdString(t.id));
+    const auto current = o->attributes.find("wall_type");
+    type->setCurrentIndex(current == o->attributes.end()
+                              ? 0
+                              : std::max(0, type->findData(QString::fromStdString(current->second))));
+    type->setToolTip(tr("描いた線（柱心）はそのままで、外側・内側の仕上げの厚みが付きます。何枚もまとめて変える時は、壁を選んで建築ツールバーの仕様から。"
+                        "角・T字の取り合いと開口も合わせて直します"));
+    connect(type, &QComboBox::activated, this, [this, id, type] {
+      const QString value = type->currentData().toString();
+      if (!value.isEmpty()) emit wallTypeEdited(id, value);
+    });
+    form_->addRow(tr("種類"), type);
+  }
+
+  // The levels a wall or a slab is on (docs/90 G-02): it follows them when a storey height
+  // changes. Choosing a level puts that end on it now.
+  if (const doc::Object* o = modeler.document().find(id);
+      o && o->attributes.count("kind") && (o->attributes.at("kind") == "wall" || o->attributes.at("kind") == "slab") &&
+      !modeler.levels().empty()) {
+    const bool wall = o->attributes.at("kind") == "wall";
+    auto row = [&](bool top, const QString& label, const QString& tip) {
+      auto* level = new QComboBox;
+      level->setObjectName(top ? QStringLiteral("levelTop") : QStringLiteral("levelBase"));
+      level->addItem(tr("なし（レベルに付けない）"), QString());
+      for (const doc::FloorLevel& l : modeler.levels())
+        level->addItem(tr("%1（%2）").arg(QString::fromStdString(l.name),
+                                        QString::fromStdString(units::formatLength(l.elevation))),
+                       QString::fromStdString(l.id));
+      const auto current = o->attributes.find(top ? "top_level" : "base_level");
+      const int at = current == o->attributes.end() ? 0 : level->findData(QString::fromStdString(current->second));
+      if (at < 0) {
+        // Its level was taken away: it stays where it is, and says so.
+        level->insertItem(1, tr("（削除されたレベル）"), QString::fromStdString(current->second));
+        level->setCurrentIndex(1);
+      } else {
+        level->setCurrentIndex(at);
+      }
+      level->setToolTip(tip);
+      connect(level, &QComboBox::activated, this, [this, id, top, level] {
+        emit levelAttachmentEdited(id, top, level->currentData().toString());
+      });
+      form_->addRow(label, level);
+    };
+    if (wall) {
+      row(false, tr("下端のレベル"),
+          tr("壁の足元を、このレベルに付けます。選ぶと足元がその高さに動き、あとでレベルの高さを変えると付いてきます。"
+             "上端がレベルに付いている壁は、上端をそのままにして伸び縮みします"));
+      row(true, tr("上端のレベル"),
+          tr("壁の上端を、このレベルに付けます。選ぶと高さがそのレベルまでになり、階高を変えると伸び縮みします。"
+             "「なし」の壁は、高さを保ったまま足元と一緒に動きます。開口の腰高は変わりません"));
+    } else {
+      row(true, tr("上面のレベル"),
+          tr("床の上面を、このレベルに付けます。選ぶと上面がその高さに動き、あとでレベルの高さを変えると付いてきます"));
+    }
+  }
+
+  if (!partKind.empty()) {
+    // 基準: what stays put when the sizes change.
+    auto attribute = [&](const char* key) {
+      const auto it = o->attributes.find(key);
+      return it == o->attributes.end() ? std::string() : it->second;
+    };
+    QString reference = tr("上面（厚さを変えても上面はそのまま）");
+    if (partKind == "member") {
+      reference = tr("なし（通り芯に付けていない）");
+      if (o->gridPin) {
+        auto axisName = [&](const std::string& axisId) {
+          if (const doc::GridSpec* grid = modeler.gridSpec(o->gridPin->grid)) {
+            for (const auto* list : {&grid->x, &grid->y})
+              for (const doc::GridAxis& a : *list)
+                if (a.id == axisId) return QString::fromStdString(a.name);
+          }
+          return tr("？");
+        };
+        const QString start = axisName(o->gridPin->startX) + QLatin1Char('/') + axisName(o->gridPin->startY);
+        const QString end = axisName(o->gridPin->endX) + QLatin1Char('/') + axisName(o->gridPin->endY);
+        reference = start == end ? tr("通り芯 %1").arg(start) : tr("通り芯 %1 〜 %2").arg(start, end);
+      }
+    }
+    if (partKind == "wall") {
+      const std::string line = attribute("wall_line");
+      reference = line == "left" ? tr("基準線：左の面") : line == "right" ? tr("基準線：右の面")
+                  : line == "offset" ? tr("基準線：柱心") : tr("基準線：中心");
+      if (const std::string outside = attribute("wall_outside"); !outside.empty())
+        reference += outside == "right" ? tr("／外側：右") : tr("／外側：左");
+    }
+    auto* label = new QLabel(reference);
+    label->setObjectName(QStringLiteral("partReference"));
+    label->setToolTip(partKind == "member"
+                          ? tr("通り芯に付けた部材は、通り芯を動かすと付いてきます")
+                          : tr("描いた時の基準。左右は、描いた向きに進んで見た時。外側の入れ替えは建築ツールバーの「外⇄内」"));
+    form_->addRow(tr("基準"), label);
+    // 寸法: the part's own sizes, in its own words (a wall: 長さ・厚さ・高さ).
+    if (const auto info = modeler.memberInfo(id)) {
+      for (const auto& field : info->fields) {
+        if (field.unit != "mm") continue;  // a member's roll is turned with the rotate tool
+        const QString name = field.key == "length" ? tr("長さ") : field.key == "thickness" ? tr("厚さ")
+                             : field.key == "height" ? tr("高さ") : field.key == "top" ? tr("上面の高さ")
+                             : field.key == "width" ? tr("幅") : field.key == "depth" ? tr("せい")
+                             : field.key == "diameter" ? tr("直径") : field.key == "web" ? tr("ウェブ厚")
+                             : field.key == "flange" ? tr("フランジ厚") : field.key == "radius" ? tr("隅の丸み")
+                             : QString::fromStdString(field.key);
+        auto* spin = lengthSpin(field.value);
+        spin->setObjectName(QStringLiteral("partSize_") + QString::fromStdString(field.key));
+        if (field.key != "top") spin->setRange(field.key == "radius" ? 0 : 1, 1e9);
+        else spin->setRange(-1e9, 1e9);
+        spin->setEnabled(field.editable && (partKind != "member" || ownMember));
+        if (partKind == "member" && !ownMember)
+          spin->setToolTip(tr("木造架構などの配置された部材です。寸法は、架構の作り直しか「部材」パネルで変えます"));
+        else if (partKind == "member")
+          spin->setToolTip(QString::fromStdString(field.note));
+        else if (!field.editable)
+          spin->setToolTip(field.key == "thickness" ? tr("開口のある壁の厚さは、上の「種類」（壁の仕様）で変えます。開口も合わせて直ります")
+                                                    : tr("上面の高さは「階」のレベル、または移動で変えます"));
+        else if (field.key == "length" || field.key == "height")
+          spin->setToolTip(tr("開口はそのままの位置に残ります。開口が壁からはみ出す寸法にはできません"));
+        const std::string key = field.key;
+        const double initial = field.value;
+        connect(spin, &QDoubleSpinBox::editingFinished, this, [this, id, key, spin, initial] {
+          if (std::abs(spin->value() - initial) > 1e-9) emit partSizeEdited(id, QString::fromStdString(key), spin->value());
+        });
+        form_->addRow(name, spin);
+      }
+    }
+  }
+
   // ===== Basic: what you need while modelling =====================================
   auto* name = new QLineEdit(QString::fromStdString(o->name));
   connect(name, &QLineEdit::editingFinished, this, [this, id, name] {
@@ -341,7 +523,7 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
   // loft sections, ...) live in the details.
   std::vector<doc::Parameter> nested;
   for (const doc::Parameter& p : modeler.parameters(id)) {
-    if (p.key.rfind("in", 0) == 0) {
+    if (p.key.rfind("in", 0) == 0 || !partKind.empty()) {
       nested.push_back(p);
     } else {
       addParameter(form_, p);
@@ -428,72 +610,9 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
     form_->addRow(actions);
   }
 
-  // The levels a wall or a slab is on (docs/90 G-02): it follows them when a storey height
-  // changes. Choosing a level puts that end on it now.
-  if (const doc::Object* o = modeler.document().find(id);
-      o && o->attributes.count("kind") && (o->attributes.at("kind") == "wall" || o->attributes.at("kind") == "slab") &&
-      !modeler.levels().empty()) {
-    const bool wall = o->attributes.at("kind") == "wall";
-    auto row = [&](bool top, const QString& label, const QString& tip) {
-      auto* level = new QComboBox;
-      level->setObjectName(top ? QStringLiteral("levelTop") : QStringLiteral("levelBase"));
-      level->addItem(tr("なし（レベルに付けない）"), QString());
-      for (const doc::FloorLevel& l : modeler.levels())
-        level->addItem(tr("%1（%2）").arg(QString::fromStdString(l.name),
-                                        QString::fromStdString(units::formatLength(l.elevation))),
-                       QString::fromStdString(l.id));
-      const auto current = o->attributes.find(top ? "top_level" : "base_level");
-      const int at = current == o->attributes.end() ? 0 : level->findData(QString::fromStdString(current->second));
-      if (at < 0) {
-        // Its level was taken away: it stays where it is, and says so.
-        level->insertItem(1, tr("（削除されたレベル）"), QString::fromStdString(current->second));
-        level->setCurrentIndex(1);
-      } else {
-        level->setCurrentIndex(at);
-      }
-      level->setToolTip(tip);
-      connect(level, &QComboBox::activated, this, [this, id, top, level] {
-        emit levelAttachmentEdited(id, top, level->currentData().toString());
-      });
-      form_->addRow(label, level);
-    };
-    if (wall) {
-      row(false, tr("下端のレベル"),
-          tr("壁の足元を、このレベルに付けます。選ぶと足元がその高さに動き、あとでレベルの高さを変えると付いてきます。"
-             "上端がレベルに付いている壁は、上端をそのままにして伸び縮みします"));
-      row(true, tr("上端のレベル"),
-          tr("壁の上端を、このレベルに付けます。選ぶと高さがそのレベルまでになり、階高を変えると伸び縮みします。"
-             "「なし」の壁は、高さを保ったまま足元と一緒に動きます。開口の腰高は変わりません"));
-    } else {
-      row(true, tr("上面のレベル"),
-          tr("床の上面を、このレベルに付けます。選ぶと上面がその高さに動き、あとでレベルの高さを変えると付いてきます"));
-    }
-  }
-
-  // A wall's build-up on its drawn line (timber walls).
-  if (const doc::Object* o = modeler.document().find(id);
-      o && o->attributes.count("kind") && o->attributes.at("kind") == "wall") {
-    auto* type = new QComboBox;
-    type->setObjectName(QStringLiteral("wallType"));
-    type->addItem(tr("厚さ指定（仕様なし）"), QString());
-    for (const auto& t : construction::wallTypes())
-      type->addItem(QString::fromStdString(t.name), QString::fromStdString(t.id));
-    const auto current = o->attributes.find("wall_type");
-    type->setCurrentIndex(current == o->attributes.end()
-                              ? 0
-                              : std::max(0, type->findData(QString::fromStdString(current->second))));
-    type->setToolTip(tr("描いた線（柱心）はそのままで、外側・内側の仕上げの厚みが付きます。何枚もまとめて変える時は、壁を選んで建築ツールバーの仕様から。"
-                        "角・T字の取り合いと開口も合わせて直します"));
-    connect(type, &QComboBox::activated, this, [this, id, type] {
-      const QString value = type->currentData().toString();
-      if (!value.isEmpty()) emit wallTypeEdited(id, value);
-    });
-    form_->addRow(tr("壁の仕様"), type);
-  }
-
   // Openings cut into this object (walls): width x height, editable.
   if (const auto openings = modeler.openings(id); openings && !openings->empty()) {
-    form_->addRow(new QLabel(tr("<b>開口</b>（幅 × 高さ・建具／左端から・腰高）")));
+    form_->addRow(new QLabel(tr("<b>開口</b>")));
     nlohmann::json fittings = nlohmann::json::object();
     if (const doc::Object* host = modeler.document().find(id)) {
       if (const auto it = host->attributes.find("opening_fittings"); it != host->attributes.end()) {
@@ -513,6 +632,8 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       auto* ht = lengthSpin(op.height);
       w->setRange(1, 1e9);
       ht->setRange(1, 1e9);
+      w->setPrefix(tr("幅 "));
+      ht->setPrefix(tr("高さ "));
       h->addWidget(w);
       h->addWidget(ht);
       const int index = static_cast<int>(op.index);
@@ -538,7 +659,6 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       });
       h->addWidget(kind, 1);
       row->setObjectName(QStringLiteral("opening%1").arg(index));
-      form_->addRow(tr("開口 %1").arg(index), row);
       // Where it sits in the wall, and removing it. The opening keeps its fitting when it moves,
       // and the other openings keep theirs when it is removed (they are kept by id, not number).
       auto* place = new QWidget;
@@ -552,8 +672,10 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       sill->setObjectName(QStringLiteral("openingSill%1").arg(index));
       offset->setToolTip(tr("壁の左端から開口の左の縁まで（開口をあけた面の側から見て）"));
       sill->setToolTip(tr("壁の下端から開口の下の縁まで（腰高）"));
-      ph->addWidget(offset);
+      sill->setPrefix(tr("腰高 "));
+      offset->setPrefix(tr("左端から "));
       ph->addWidget(sill);
+      ph->addWidget(offset);
       const double o0 = op.offset, s0 = op.sill;
       auto moved = [this, id, index, offset, sill, o0, s0] {
         if (std::abs(offset->value() - o0) > 1e-9 || std::abs(sill->value() - s0) > 1e-9)
@@ -568,7 +690,14 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       connect(remove, &QToolButton::clicked, this, [this, id, index] { emit openingRemoved(id, index); });
       ph->addWidget(remove);
       place->setObjectName(QStringLiteral("openingPlace%1").arg(index));
-      form_->addRow(tr("　位置"), place);
+      // One row per opening: its size and fitting, then where it sits.
+      auto* cell = new QWidget;
+      auto* lines = new QVBoxLayout(cell);
+      lines->setContentsMargins(0, 0, 0, 0);
+      lines->setSpacing(2);
+      lines->addWidget(row);
+      lines->addWidget(place);
+      form_->addRow(tr("開口 %1").arg(index), cell);
     }
   }
 

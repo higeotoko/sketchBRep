@@ -345,6 +345,7 @@ class GuiPhase1 : public QObject {
   void frameChecksUpdateAndDiscardStaleResults();
   void timberQuantitiesAndFramingExport();
   void planOfALevelLeavesOutTheStoreysBelow();
+  void partSectionShowsAWallInItsOwnWords();
   void wallAndSlabFollowTheirLevelsFromThePanel();
   void wallQuantityInputsComparisonSaveAndStaleModel();
   void panelDragPreviewKeepsTheModelViewStill();
@@ -10516,6 +10517,105 @@ void GuiPhase1::planOfALevelLeavesOutTheStoreysBelow() {
   QVERIFY(!f.vp->planFloor());
   for(const auto& id:{lower->front(),upper->front(),*floor,beam,through,footing,*line}) QVERIFY(f.vp->isDisplayed(id));
   for(const auto& o:m.document().objects()) QVERIFY(o.visible);
+}
+
+// The properties panel opens with the part itself (docs/90 G-04): kind, storey, reference and
+// sizes in the part's own words, in the same order for a wall and a slab; a wall's sizes stay
+// editable with openings in it.
+void GuiPhase1::partSectionShowsAWallInItsOwnWords() {
+  Fixture f;QVERIFY(f.setUp(2000,1500));auto& m=f.window.modeler();
+  QVERIFY(m.setLevels({{"","1FL",0},{"","2FL",3000}}));
+  const auto walls=m.createTypedWalls({gp_Pnt(0,0,0),gp_Pnt(6000,0,0)},3000,"exterior_siding",105,false);
+  QVERIFY2(walls,walls?"":walls.error().c_str());
+  const doc::ObjectId wall=walls->front();
+  const auto slab=m.createSlab({gp_Pnt(0,0,0),gp_Pnt(6000,0,0),gp_Pnt(6000,4000,0),gp_Pnt(0,4000,0)},3000,200);QVERIFY(slab);
+  auto spin=[&](const char* key){return f.window.findChild<QDoubleSpinBox*>(QStringLiteral("partSize_")+QLatin1String(key));};
+  auto top=[&](const doc::ObjectId& id){return geom::exactBounds(m.document().worldShape(*m.document().find(id))).CornerMax().Z();};
+  f.vp->syncNow();
+  f.window.setSelection({wall});
+  QApplication::processEvents();
+  auto* title=f.window.findChild<QLabel*>(QStringLiteral("partTitle"));QVERIFY(title);
+  QVERIFY(title->text().contains(QStringLiteral("壁")));
+  auto* reference=f.window.findChild<QLabel*>(QStringLiteral("partReference"));QVERIFY(reference);
+  QVERIFY2(reference->text().contains(QStringLiteral("柱心")) && reference->text().contains(QStringLiteral("外側")),qPrintable(reference->text()));
+  QVERIFY(f.window.findChild<QComboBox*>(QStringLiteral("wallType")));
+  QVERIFY(f.window.findChild<QComboBox*>(QStringLiteral("levelBase")));
+  QVERIFY(spin("length") && spin("thickness") && spin("height"));
+  QVERIFY(std::abs(spin("length")->value()-6000)<1e-6);
+  QVERIFY(std::abs(spin("thickness")->value()-160.5)<1e-6);
+  QVERIFY(std::abs(spin("height")->value()-3000)<1e-6);
+  QVERIFY(spin("thickness")->isEnabled());
+  // The height typed there: one undo step.
+  const auto steps=m.history().undoCount();
+  spin("height")->setValue(2700);
+  emit spin("height")->editingFinished();
+  QTRY_VERIFY(std::abs(top(wall)-2700)<1e-6);
+  QCOMPARE(m.history().undoCount(),steps+1);
+  QVERIFY(m.undo());
+  // With an opening the length and height still change; the thickness is the build-up's.
+  const auto cut=m.placeOpenings(wall,gp_Dir(0,-1,0),1,1600,1200,900,std::nullopt,R"({"type":"sliding_double"})");
+  QVERIFY2(cut,cut?"":cut.error().c_str());
+  f.window.setSelection({wall});
+  QApplication::processEvents();
+  QVERIFY(spin("length") && spin("height") && spin("thickness"));
+  QVERIFY(!spin("thickness")->isEnabled());
+  QVERIFY(spin("height")->isEnabled());
+  if(const auto shot=qEnvironmentVariable("SBR_PART_PANEL_SHOT");!shot.isEmpty()){
+    QTest::qWait(200);
+    QVERIFY(f.window.grab().save(shot));
+  }
+  spin("height")->setValue(3300);
+  emit spin("height")->editingFinished();
+  QTRY_VERIFY(std::abs(top(wall)-3300)<1e-6);
+  QVERIFY(std::abs(m.openings(wall)->front().sill-900)<1e-6);
+  QApplication::processEvents();
+  // A length that would leave the opening outside the wall: refused, reported, unchanged.
+  QVERIFY(spin("length"));
+  spin("length")->setValue(3000);
+  emit spin("length")->editingFinished();
+  QTRY_VERIFY(!f.window.lastError().isEmpty());
+  QVERIFY(std::abs(m.memberInfo(wall)->fields.front().value-6000)<1e-6);
+  // A slab: the same order, its own words.
+  f.window.setSelection({*slab});
+  QApplication::processEvents();
+  title=f.window.findChild<QLabel*>(QStringLiteral("partTitle"));QVERIFY(title);
+  QVERIFY(title->text().contains(QStringLiteral("床")));
+  QVERIFY(f.window.findChild<QComboBox*>(QStringLiteral("levelTop")));
+  QVERIFY(!f.window.findChild<QComboBox*>(QStringLiteral("wallType")));
+  QVERIFY(spin("thickness") && !spin("length") && !spin("height"));
+  spin("thickness")->setValue(250);
+  emit spin("thickness")->editingFinished();
+  QTRY_VERIFY(std::abs(m.memberInfo(*slab)->fields.front().value-250)<1e-6);
+  QVERIFY(std::abs(top(*slab)-3000)<1e-6);  // the top stays
+  // A column: the same four things. Its section is its kind; one of its own is edited here.
+  {
+    doc::Modeler::MemberSpec spec;
+    spec.start=gp_Pnt(9000,0,0);spec.end=gp_Pnt(9000,0,3000);spec.role="column";spec.materialClass="timber";
+    spec.section.width=spec.section.depth=105;spec.up=gp::DY();
+    const auto column=m.createMember(spec);QVERIFY2(column,column?"":column.error().c_str());
+    f.window.setSelection({*column});
+    QApplication::processEvents();
+    title=f.window.findChild<QLabel*>(QStringLiteral("partTitle"));QVERIFY(title);
+    QVERIFY2(title->text().contains(QStringLiteral("柱")),qPrintable(title->text()));
+    QVERIFY(f.window.findChild<QLabel*>(QStringLiteral("partSection")));
+    auto* storey=f.window.findChild<QLabel*>(QStringLiteral("partStorey"));QVERIFY(storey);
+    QVERIFY(storey->text().contains(QStringLiteral("なし")));
+    QVERIFY(spin("length") && spin("width") && spin("depth"));
+    QVERIFY(std::abs(spin("length")->value()-3000)<1e-6 && spin("length")->isEnabled());
+    spin("length")->setValue(2700);
+    emit spin("length")->editingFinished();
+    QTRY_VERIFY(std::abs(top(*column)-2700)<1e-6);
+    QApplication::processEvents();
+    QVERIFY(spin("depth"));
+    spin("depth")->setValue(120);
+    emit spin("depth")->editingFinished();
+    QTRY_VERIFY(std::abs(std::get<doc::LinearMember>(m.document().find(*column)->recipe.base).section.depth-120)<1e-6);
+  }
+  // Something that is no building part has no part section.
+  const doc::ObjectId box=f.box(8000,0,500,500,500);
+  f.window.setSelection({box});
+  QApplication::processEvents();
+  QVERIFY(!f.window.findChild<QLabel*>(QStringLiteral("partTitle")));
 }
 
 void GuiPhase1::wallQuantityInputsComparisonSaveAndStaleModel() {

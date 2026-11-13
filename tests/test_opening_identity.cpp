@@ -267,3 +267,46 @@ TEST(OpeningIdentity, DeletingTheFacesInsideAnOpeningRemovesTheOpening) {
   ASSERT_TRUE(a.modeler.undo());  // one step
   EXPECT_EQ(a.openings(wall).size(), 3u);
 }
+
+TEST(OpeningIdentity, AWallWithOpeningsKeepsItsOwnSizesEditable) {
+  // A wall made by the wall tool, 6000 long, 200 thick, 3000 high, with a window 800 x 1200
+  // (sill 900) in the middle: its left edge 2600 from the wall's start.
+  Api a;
+  const std::string wall = a.ok("create_wall", {{"points", {{0, 0}, {6000, 0}}}, {"thickness", 200},
+                                                {"height", 3000}})["ids"][0];
+  a.ok("place_openings", {{"host", wall}, {"face_normal", {0, -1, 0}}, {"count", 1}, {"width", 800},
+                          {"height", 1200}, {"sill", 900}});
+  auto field = [&](const std::string& key) {
+    const json info = a.ok("member_info", {{"id", wall}});
+    for (const auto& f : info["fields"])
+      if (f["key"] == key) return f;
+    ADD_FAILURE() << "no field " << key;
+    return json();
+  };
+  EXPECT_NEAR(field("length")["value"].get<double>(), 6000, 1e-9);
+  EXPECT_NEAR(field("height")["value"].get<double>(), 3000, 1e-9);
+  EXPECT_NEAR(field("thickness")["value"].get<double>(), 200, 1e-9);
+  EXPECT_TRUE(field("height")["editable"].get<bool>());
+  EXPECT_FALSE(field("thickness")["editable"].get<bool>());
+
+  // Higher and shorter: the window stays where it was, with its id.
+  const std::string id = a.openings(wall)[0]["id"];
+  a.ok("change_member", {{"id", wall}, {"height", 3300}, {"length", 5000}});
+  EXPECT_NEAR(a.volume(wall), 5000.0 * 200 * 3300 - 800.0 * 1200 * 200, 1);
+  const json o = a.openings(wall)[0];
+  EXPECT_EQ(o["id"], id);
+  EXPECT_NEAR(o["offset"].get<double>(), 2600, 1e-6);
+  EXPECT_NEAR(o["sill_height"].get<double>(), 900, 1e-6);
+  ASSERT_TRUE(a.modeler.undo());  // one step for both
+  EXPECT_NEAR(a.volume(wall), 6000.0 * 200 * 3000 - 800.0 * 1200 * 200, 1);
+
+  // Refused, nothing changed: the window would stick out, or the thickness (the build-up's job).
+  const std::string saved = sbr::doc::serializeDocument(a.modeler.document());
+  EXPECT_TRUE(a.refused("change_member", {{"id", wall}, {"length", 3000}}));  // ends inside the window
+  EXPECT_TRUE(a.refused("change_member", {{"id", wall}, {"height", 2000}}));  // lower than its head
+  EXPECT_TRUE(a.refused("change_member", {{"id", wall}, {"thickness", 150}}));
+  EXPECT_EQ(sbr::doc::serializeDocument(a.modeler.document()), saved);
+  // Exactly up to the window's edges is allowed.
+  a.ok("change_member", {{"id", wall}, {"length", 3400}, {"height", 2100}});
+  EXPECT_EQ(a.openings(wall).size(), 1u);
+}
