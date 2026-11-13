@@ -118,6 +118,9 @@ struct BooleanOperand {
   std::shared_ptr<const Recipe> recipe;
   gp_Trsf placement;
   std::string name;
+  // An identity of its own, for operands that are things in their own right (a wall's
+  // openings): it stays the same when other operands are added or removed. Empty otherwise.
+  std::string id;
 };
 
 // Parametric Boolean: operands are regenerated before combining, so editing

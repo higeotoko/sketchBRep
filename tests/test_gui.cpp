@@ -4988,7 +4988,8 @@ void GuiPhase1::planOpeningChoosesFloorAndPreservesUndo() {
     QVERIFY(f.vp->dumpImage(shot));
   click(f.vp, point);
   QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
-  QVERIFY(!m.document().find(lower->front()));
+  QVERIFY(m.document().find(lower->front()));  // the wall stays the same object (docs/90 B-01)
+  QCOMPARE(m.openings(lower->front())->size(), std::size_t(1));
   QVERIFY(m.document().find(upper->front()));
   const auto count = m.history().undoCount();
   type(f.vp, QStringLiteral("1000,1200,700"));
@@ -5014,9 +5015,9 @@ void GuiPhase1::planOpeningChoosesFloorAndPreservesUndo() {
   f.vp->setWorkOffset(3000);
   click(f.vp, f.vp->toWidget(gp_Pnt(2500, 0, 3000)));
   QVERIFY(m.document().find(lower->front()));
-  QVERIFY(!m.document().find(upper->front()));
+  QCOMPARE(m.openings(upper->front())->size(), std::size_t(1));  // cut into the upper wall, which stays the same object
   QVERIFY(m.undo());
-  QVERIFY(m.document().find(upper->front()));
+  QVERIFY(m.openings(upper->front())->empty());
 }
 
 void GuiPhase1::planOpeningOnRotatedWalls_data() {
@@ -6225,7 +6226,7 @@ void GuiPhase1::slabToolAndOpeningTool() {
   move(f.vp, f.vp->toWidget(gp_Pnt(1100, 0, 1500)));
   click(f.vp, f.vp->toWidget(gp_Pnt(1100, 0, 1500)));
   QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
-  QVERIFY(!m.document().find(wall));
+  QVERIFY(m.document().find(wall));  // the wall stays the same object (docs/90 B-01)
   doc::ObjectId host;
   for (const doc::Object& o : m.document().objects()) {
     if (o.id != slabId) host = o.id;
@@ -10063,7 +10064,8 @@ void GuiPhase1::openingFittingFromPanelShowsInPlanCut() {
   emit kind->activated(swing);
   QTRY_VERIFY(m.document().find(*host)->attributes.count("opening_fittings"));
   const json stored=json::parse(m.document().find(*host)->attributes.at("opening_fittings"));
-  QCOMPARE(stored.at("1").at("hinge").get<std::string>(),std::string("right"));
+  QCOMPARE(stored.size(),std::size_t(1));  // kept under the opening's id, not its number
+  QCOMPARE(stored.begin().value().at("hinge").get<std::string>(),std::string("right"));
   f.vp->syncNow();
   QCOMPARE(f.vp->openingSymbolEdgeCount(),std::size_t(0));  // 3D: no symbols
   f.vp->lockView(Viewport::StandardView::Top);
@@ -10075,6 +10077,26 @@ void GuiPhase1::openingFittingFromPanelShowsInPlanCut() {
   m.undo();f.vp->syncNow();
   QCOMPARE(f.vp->openingSymbolEdgeCount(),std::size_t(0));  // undone with the fitting
   f.vp->setPlanCut(std::nullopt);
+  // The panel also moves and removes one opening; the other keeps its fitting (docs/90 G-01).
+  const auto two=m.placeOpeningAt(*host,gp_Dir(0,-1,0),gp_Pnt(4500,0,0),800,1200,900,R"({"type":"window"})");
+  QVERIFY2(two,two?"":two.error().c_str());
+  QCOMPARE(*two,*host);  // the wall stays the same object
+  f.window.setSelection({*host});
+  QApplication::processEvents();
+  auto* offset=f.window.findChild<QDoubleSpinBox*>(QStringLiteral("openingOffset2"));QVERIFY(offset);
+  QVERIFY2(std::abs(offset->value()-4100)<1e-6,qPrintable(QString::number(offset->value())));
+  offset->setValue(4300);
+  emit offset->editingFinished();
+  QTRY_VERIFY(std::abs(m.openings(*host)->at(1).offset-4300)<1e-6);
+  QApplication::processEvents();
+  auto* remove=f.window.findChild<QToolButton*>(QStringLiteral("openingRemove1"));QVERIFY(remove);
+  remove->click();
+  QTRY_COMPARE(m.openings(*host)->size(),std::size_t(1));
+  const json left=json::parse(m.document().find(*host)->attributes.at("opening_fittings"));
+  QCOMPARE(left.size(),std::size_t(1));
+  QCOMPARE(left.begin().value().at("type").get<std::string>(),std::string("window"));
+  QVERIFY(m.undo());
+  QCOMPARE(m.openings(*host)->size(),std::size_t(2));
 }
 
 // The wall kind is chosen on the architecture toolbar: a closed outline drawn on the column

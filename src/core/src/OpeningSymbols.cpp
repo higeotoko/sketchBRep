@@ -78,7 +78,7 @@ std::vector<TopoDS_Edge> openingSymbols(const doc::Document& d, const SymbolOpti
     const auto list = doc::Modeler::openingsIn(d, host.id);
     if (!list) continue;
     for (const auto& o : *list) {
-      const auto it = fittings.find(std::to_string(o.index));
+      const auto it = fittings.find(o.id);  // the opening's id (its number for walls from before ids)
       if (it == fittings.end() || !it->is_object()) continue;
       const std::string type = it->value("type", std::string("none"));
       // Only openings the plan cut passes through (a high window above the cut is not drawn).

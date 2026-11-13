@@ -392,9 +392,15 @@ class Modeler {
   // --- architectural intents (shared by GUI and AI) -----------------------
   // Openings: rectangular profiles subtracted from a host (a wall with a
   // door / window pushed through), numbered 1, 2, ... in the order they
-  // were cut (also through nested Subtracts).
+  // were cut (also through nested Subtracts). The number of an opening changes when
+  // an earlier one is removed; its `id` does not (docs/90 B-01).
   struct OpeningInfo {
     std::size_t index = 0;
+    // Stays with the opening. Openings cut before ids existed report their number as text
+    // until the wall's openings are next edited, which gives them ids.
+    std::string id;
+    double offset = 0.0;  // from the host's left end (seen from the side it was cut from) to its left edge
+    double sill = 0.0;    // from the host's bottom to its lowest edge
     std::string name;
     double width = 0.0, height = 0.0;  // absolute
     gp_Pnt center;                     // world
@@ -415,6 +421,18 @@ class Modeler {
   // One undo step; the parameters stay editable.
   Status setOpeningSize(const ObjectId& host, const std::vector<std::size_t>& indices,
                         std::optional<double> width, std::optional<double> height, bool keepCenter = false);
+  // The numbers of the openings with these ids (OpeningInfo::id), in the order given.
+  Result<std::vector<std::size_t>> openingIndices(const ObjectId& host, const std::vector<std::string>& ids) const;
+  // Moves one opening within its wall by the part of `worldDelta` that lies in the wall's face
+  // (along the wall and up / down). It must stay inside the wall and clear of the other
+  // openings. Its size and fitting stay. One undo step.
+  Status moveOpening(const ObjectId& host, std::size_t index, const gp_Vec& worldDelta);
+  // The same, to a position: `offset` and / or `sill` as in OpeningInfo.
+  Status placeOpening(const ObjectId& host, std::size_t index, std::optional<double> offset,
+                      std::optional<double> sill);
+  // Removes openings: the wall is whole again there. Their fittings go with them; the other
+  // openings keep their ids, sizes and fittings. One undo step.
+  Status removeOpenings(const ObjectId& host, const std::vector<std::size_t>& indices);
   // Levels (floors): each object (topmost of `ids`, all top-level objects
   // when empty) gets attribute `key` = the name of the highest level whose
   // elevation is at or below its lowest point. Objects below every level

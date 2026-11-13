@@ -671,6 +671,17 @@ void MainWindow::buildUi() {
               if (!setOpeningFitting(id, index, fitting)) refreshPanels();
             });
           });
+  connect(panel_, &PropertiesPanel::openingPlaced, this,
+          [this](const doc::ObjectId& id, int index, double offset, double sill) {
+            QTimer::singleShot(0, this, [this, id, index, offset, sill] {
+              if (!placeOpening(id, index, offset, sill)) refreshPanels();
+            });
+          });
+  connect(panel_, &PropertiesPanel::openingRemoved, this, [this](const doc::ObjectId& id, int index) {
+    QTimer::singleShot(0, this, [this, id, index] {
+      if (!removeOpening(id, index)) refreshPanels();
+    });
+  });
   connect(panel_, &PropertiesPanel::openingSizeEdited, this,
           [this](const doc::ObjectId& id, int index, double width, double height) {
             QTimer::singleShot(0, this, [this, id, index, width, height] {
@@ -3857,6 +3868,26 @@ bool MainWindow::resizeOpening(const doc::ObjectId& host, int index, double widt
   const Status s = modeler_.setOpeningSize(host, {static_cast<std::size_t>(index)}, width, height);
   if (!s) {
     reportError(tr("開口のサイズを変更できません: %1").arg(QString::fromStdString(s.message())));
+    return false;
+  }
+  return true;
+}
+
+bool MainWindow::placeOpening(const doc::ObjectId& host, int index, double offset, double sill) {
+  if (index < 1) return false;
+  const Status s = modeler_.placeOpening(host, static_cast<std::size_t>(index), offset, sill);
+  if (!s) {
+    reportError(tr("開口を動かせません: %1").arg(QString::fromStdString(s.message())));
+    return false;
+  }
+  return true;
+}
+
+bool MainWindow::removeOpening(const doc::ObjectId& host, int index) {
+  if (index < 1) return false;
+  const Status s = modeler_.removeOpenings(host, {static_cast<std::size_t>(index)});
+  if (!s) {
+    reportError(tr("開口を削除できません: %1").arg(QString::fromStdString(s.message())));
     return false;
   }
   return true;

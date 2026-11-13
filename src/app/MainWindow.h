@@ -221,6 +221,9 @@ class MainWindow : public QMainWindow, public ToolHost {
   bool alignSelection(int axis, int edge);
   // Opening `index` (1, 2, ... as in Modeler::openings) of a host.
   bool resizeOpening(const doc::ObjectId& host, int index, double width, double height);
+  // One opening to `offset` from the wall's left end and `sill` above its bottom; removing one.
+  bool placeOpening(const doc::ObjectId& host, int index, double offset, double sill);
+  bool removeOpening(const doc::ObjectId& host, int index);
   // Door / window kind of opening `index` of `host` (fitting JSON, OpeningSymbols.h); one undo step.
   bool setOpeningFitting(const doc::ObjectId& host, int index, const QString& fitting);
   // A build-up for the selected walls (or `id` alone when it is not selected); one undo step.

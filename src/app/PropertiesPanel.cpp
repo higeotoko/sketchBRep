@@ -450,7 +450,7 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
 
   // Openings cut into this object (walls): width x height, editable.
   if (const auto openings = modeler.openings(id); openings && !openings->empty()) {
-    form_->addRow(new QLabel(tr("<b>開口</b>（幅 × 高さ・建具）")));
+    form_->addRow(new QLabel(tr("<b>開口</b>（幅 × 高さ・建具／左端から・腰高）")));
     nlohmann::json fittings = nlohmann::json::object();
     if (const doc::Object* host = modeler.document().find(id)) {
       if (const auto it = host->attributes.find("opening_fittings"); it != host->attributes.end()) {
@@ -485,8 +485,7 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       kind->setObjectName(QStringLiteral("openingFitting%1").arg(index));
       kind->setToolTip(tr("平面（切断）と平面図に建具の記号を描きます。外＝開口をあけた面の側、内＝反対側。"
                           "左右は開く側から見て（引戸は開口をあけた面の側から見て）"));
-      const nlohmann::json current = fittings.contains(std::to_string(index)) ? fittings.at(std::to_string(index))
-                                                                              : nlohmann::json{{"type", "none"}};
+      const nlohmann::json current = fittings.contains(op.id) ? fittings.at(op.id) : nlohmann::json{{"type", "none"}};
       for (const auto& [label, value] : kinds) {
         kind->addItem(label, QString::fromStdString(value));
         if (nlohmann::json::parse(value) == current) kind->setCurrentIndex(kind->count() - 1);
@@ -497,6 +496,36 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       h->addWidget(kind, 1);
       row->setObjectName(QStringLiteral("opening%1").arg(index));
       form_->addRow(tr("開口 %1").arg(index), row);
+      // Where it sits in the wall, and removing it. The opening keeps its fitting when it moves,
+      // and the other openings keep theirs when it is removed (they are kept by id, not number).
+      auto* place = new QWidget;
+      auto* ph = new QHBoxLayout(place);
+      ph->setContentsMargins(0, 0, 0, 0);
+      auto* offset = lengthSpin(op.offset);
+      auto* sill = lengthSpin(op.sill);
+      offset->setRange(0, 1e9);
+      sill->setRange(0, 1e9);
+      offset->setObjectName(QStringLiteral("openingOffset%1").arg(index));
+      sill->setObjectName(QStringLiteral("openingSill%1").arg(index));
+      offset->setToolTip(tr("壁の左端から開口の左の縁まで（開口をあけた面の側から見て）"));
+      sill->setToolTip(tr("壁の下端から開口の下の縁まで（腰高）"));
+      ph->addWidget(offset);
+      ph->addWidget(sill);
+      const double o0 = op.offset, s0 = op.sill;
+      auto moved = [this, id, index, offset, sill, o0, s0] {
+        if (std::abs(offset->value() - o0) > 1e-9 || std::abs(sill->value() - s0) > 1e-9)
+          emit openingPlaced(id, index, offset->value(), sill->value());
+      };
+      connect(offset, &QDoubleSpinBox::editingFinished, this, moved);
+      connect(sill, &QDoubleSpinBox::editingFinished, this, moved);
+      auto* remove = new QToolButton;
+      remove->setObjectName(QStringLiteral("openingRemove%1").arg(index));
+      remove->setText(tr("削除"));
+      remove->setToolTip(tr("この開口をふさぎます。ほかの開口の建具・寸法は変わりません"));
+      connect(remove, &QToolButton::clicked, this, [this, id, index] { emit openingRemoved(id, index); });
+      ph->addWidget(remove);
+      place->setObjectName(QStringLiteral("openingPlace%1").arg(index));
+      form_->addRow(tr("　位置"), place);
     }
   }
 

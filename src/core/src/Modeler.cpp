@@ -5164,10 +5164,215 @@ void replaceOperand(Recipe& recipe, const std::vector<std::size_t>& path, std::s
   op.recipe = std::make_shared<const Recipe>(std::move(inner));
 }
 
+// The operand at `path`, made writable (copy on write along the way).
+BooleanOperand& writableOperand(Recipe& recipe, const std::vector<std::size_t>& path, std::size_t depth = 0) {
+  auto& boolean = std::get<BooleanFeature>(recipe.base);
+  BooleanOperand& op = boolean.operands[path[depth]];
+  if (depth + 1 == path.size()) return op;
+  auto inner = std::make_shared<Recipe>(*op.recipe);
+  BooleanOperand& found = writableOperand(*inner, path, depth + 1);
+  op.recipe = inner;  // the operand lives in `inner`, which the host now owns
+  return found;
+}
+
+// Removes the operand at `path` (copy on write along the way).
+void eraseOperand(Recipe& recipe, const std::vector<std::size_t>& path, std::size_t depth = 0) {
+  auto& boolean = std::get<BooleanFeature>(recipe.base);
+  if (depth + 1 == path.size()) {
+    boolean.operands.erase(boolean.operands.begin() + static_cast<std::ptrdiff_t>(path[depth]));
+    return;
+  }
+  BooleanOperand& op = boolean.operands[path[depth]];
+  Recipe inner = *op.recipe;
+  eraseOperand(inner, path, depth + 1);
+  op.recipe = std::make_shared<const Recipe>(std::move(inner));
+}
+
+// A Subtract left with nothing to subtract is its first operand: an inner one is replaced by
+// that operand in its parent, the outermost by the operand's recipe with `placement` taking
+// the operand's placement.
+void collapseSubtracts(Recipe& recipe, gp_Trsf& placement) {
+  auto* boolean = std::get_if<BooleanFeature>(&recipe.base);
+  if (!boolean || boolean->kind != BooleanKind::Subtract || boolean->operands.empty() || !recipe.modifiers.empty())
+    return;
+  BooleanOperand& base = boolean->operands.front();
+  if (!base.recipe) return;
+  if (const auto* below = std::get_if<BooleanFeature>(&base.recipe->base);
+      below && below->kind == BooleanKind::Subtract && below->operands.size() == 1) {
+    Recipe inner = *base.recipe;
+    gp_Trsf p = base.placement;
+    collapseSubtracts(inner, p);
+    base.recipe = std::make_shared<const Recipe>(std::move(inner));
+    base.placement = p;
+  }
+  if (boolean->operands.size() != 1) return;
+  placement = placement * base.placement;
+  Recipe only = *base.recipe;  // `base` lives in `recipe`: copy before replacing it
+  recipe = std::move(only);
+}
+
+// What an opening's fitting is stored under: its id, or its number while it has none.
+std::string openingKey(const OpeningRef& o) { return o.operand->id.empty() ? std::to_string(o.index) : o.operand->id; }
+
+nlohmann::json storedFittings(const Object& host) {
+  if (const auto it = host.attributes.find("opening_fittings"); it != host.attributes.end()) {
+    auto all = nlohmann::json::parse(it->second, nullptr, false);
+    if (all.is_object()) return all;
+  }
+  return nlohmann::json::object();
+}
+
+// Gives every opening that has none an id of its own, and moves its fitting from its number to
+// that id. From then on removing an opening cannot shift another opening's fitting.
+void ensureOpeningIds(Object& object) {
+  std::vector<std::pair<std::vector<std::size_t>, std::size_t>> missing;
+  for (const OpeningRef& o : rectangularOpenings(object))
+    if (o.operand->id.empty()) missing.emplace_back(o.path, o.index);
+  if (missing.empty()) return;
+  nlohmann::json fittings = storedFittings(object);
+  for (const auto& [path, index] : missing) {
+    const std::string id = "opening-" + generateObjectId();
+    writableOperand(object.recipe, path).id = id;
+    const std::string old = std::to_string(index);
+    if (fittings.contains(old)) {
+      fittings[id] = fittings.at(old);
+      fittings.erase(old);
+    }
+  }
+  if (object.attributes.count("opening_fittings")) object.attributes["opening_fittings"] = fittings.dump();
+}
+
+// The host's extent along u and in Z (world), from its vertices.
+std::array<double, 4> hostExtent(const TopoDS_Shape& world, const gp_Vec& u) {
+  std::array<double, 4> e{1e300, -1e300, 1e300, -1e300};
+  for (TopExp_Explorer v(world, TopAbs_VERTEX); v.More(); v.Next()) {
+    const gp_Pnt p = BRep_Tool::Pnt(TopoDS::Vertex(v.Current()));
+    const double d = gp_Vec(p.XYZ()).Dot(u);
+    e[0] = std::min(e[0], d);
+    e[1] = std::max(e[1], d);
+    e[2] = std::min(e[2], p.Z());
+    e[3] = std::max(e[3], p.Z());
+  }
+  return e;
+}
+
 }  // namespace
 
 Result<std::vector<Modeler::OpeningInfo>> Modeler::openings(const ObjectId& hostId) const {
   return openingsIn(document_, hostId);
+}
+
+Result<std::vector<std::size_t>> Modeler::openingIndices(const ObjectId& hostId,
+                                                         const std::vector<std::string>& ids) const {
+  using R = Result<std::vector<std::size_t>>;
+  const auto list = openings(hostId);
+  if (!list) return R::failure(list.status().message());
+  std::vector<std::size_t> out;
+  for (const std::string& id : ids) {
+    const auto it = std::find_if(list->begin(), list->end(), [&](const OpeningInfo& o) { return o.id == id; });
+    if (it == list->end()) return R::failure("No opening '" + id + "' in this object");
+    out.push_back(it->index);
+  }
+  return out;
+}
+
+Status Modeler::moveOpening(const ObjectId& hostId, std::size_t index, const gp_Vec& worldDelta) {
+  const Object* current = document_.find(hostId);
+  if (!current) return Status::failure("Object not found");
+  if (current->locked) return Status::failure("The object is locked");
+  Object object = *current;
+  ensureOpeningIds(object);
+  const gp_Trsf world = document_.worldTransform(*current);
+  bool found = false;
+  for (const OpeningRef& o : rectangularOpenings(object)) {
+    if (o.index != index) continue;
+    found = true;
+    const gp_Trsf frame = world * o.placement;
+    const gp_Dir n = gp_Dir(o.rect->plane.normal).Transformed(frame);
+    if (std::abs(n.Z()) > 1e-6) return Status::failure("Only openings in a vertical face can be moved this way");
+    // Keep the opening in its face: drop the part of the move through the wall.
+    const gp_Vec u(gp::DZ().Crossed(n));
+    const gp_Vec inFace = u * worldDelta.Dot(u) + gp_Vec(gp::DZ()) * worldDelta.Z();
+    if (inFace.Magnitude() < tolerance::kLinear) return Status::failure("The opening would not move");
+    Recipe recipe = *o.operand->recipe;  // operands are shared snapshots: copy on write
+    auto& rect = std::get<RectangleProfile>(recipe.base);
+    rect.plane.origin.Translate(inFace.Transformed(frame.Inverted()));
+    replaceOperand(object.recipe, o.path, 0, std::move(recipe));
+    break;
+  }
+  if (!found) return Status::failure("No opening " + std::to_string(index) + " in this object");
+  const std::vector<OpeningExtent> extents = openingExtents(object, world);
+  const TopoDS_Shape shape = document_.worldShape(*current);
+  for (const OpeningExtent& e : extents) {
+    if (e.index != index) continue;
+    const auto wall = hostExtent(shape, gp_Vec(gp::DZ().Crossed(e.normal)));
+    if (e.u0 < wall[0] - tolerance::kLinear || e.u1 > wall[1] + tolerance::kLinear ||
+        e.z0 < wall[2] - tolerance::kLinear || e.z1 > wall[3] + tolerance::kLinear)
+      return Status::failure("The opening does not fit on the wall there");
+    for (const OpeningExtent& other : extents)
+      if (other.index != index && openingsOverlap(other, e.normal, e.u0, e.u1, e.z0, e.z1))
+        return Status::failure("The opening would overlap opening " + std::to_string(other.index));
+  }
+  return commitModified(std::move(object), "Move Opening");
+}
+
+Status Modeler::placeOpening(const ObjectId& hostId, std::size_t index, std::optional<double> offset,
+                             std::optional<double> sill) {
+  for (const std::optional<double>& d : {offset, sill})
+    if (d && (!std::isfinite(*d) || *d < -tolerance::kLinear))
+      return Status::failure("Opening positions must not be negative");
+  if (!offset && !sill) return Status::failure("Give an offset or a sill height");
+  const auto list = openings(hostId);
+  if (!list) return list.status();
+  for (const OpeningInfo& o : *list) {
+    if (o.index != index) continue;
+    if (std::abs(o.normal.Z()) > 1e-6) return Status::failure("Only openings in a vertical face can be moved this way");
+    const gp_Vec u(gp::DZ().Crossed(o.normal));
+    return moveOpening(hostId, index,
+                       u * (offset ? *offset - o.offset : 0.0) + gp_Vec(gp::DZ()) * (sill ? *sill - o.sill : 0.0));
+  }
+  return Status::failure("No opening " + std::to_string(index) + " in this object");
+}
+
+Status Modeler::removeOpenings(const ObjectId& hostId, const std::vector<std::size_t>& indices) {
+  const Object* current = document_.find(hostId);
+  if (!current) return Status::failure("Object not found");
+  if (current->locked) return Status::failure("The object is locked");
+  if (indices.empty()) return Status::failure("Give the openings to remove");
+  Object object = *current;
+  ensureOpeningIds(object);
+  std::set<std::string> ids;
+  {
+    const std::vector<OpeningRef> all = rectangularOpenings(object);
+    for (const std::size_t index : indices) {
+      const auto it = std::find_if(all.begin(), all.end(), [&](const OpeningRef& o) { return o.index == index; });
+      if (it == all.end()) return Status::failure("No opening " + std::to_string(index) + " in this object");
+      ids.insert(it->operand->id);
+    }
+  }
+  nlohmann::json fittings = storedFittings(object);
+  for (const std::string& id : ids) {
+    // One at a time: removing an operand shifts the paths of the others.
+    for (const OpeningRef& o : rectangularOpenings(object)) {
+      if (o.operand->id != id) continue;
+      eraseOperand(object.recipe, o.path);
+      break;
+    }
+    fittings.erase(id);
+  }
+  if (object.attributes.count("opening_fittings")) object.attributes["opening_fittings"] = fittings.dump();
+  gp_Trsf placement = object.transform;
+  collapseSubtracts(object.recipe, placement);
+  object.transform = placement;
+  object.faceMaterials.clear();
+  object.hiddenEdges.clear();
+  if (const Status built = rebuild(object, document_.regenContext()); !built) return built;
+  // Painted faces stay painted: carried from the wall as it was, in the new wall's own frame.
+  carryMaterials(object, {{current, object.transform.Inverted() * current->transform}});
+  ChangeSet changes(document_);
+  changes.modify(object);
+  history_.execute(changes.build("Remove Opening"));
+  return Status::success();
 }
 
 Result<std::vector<Modeler::OpeningInfo>> Modeler::openingsIn(const Document& document_, const ObjectId& hostId) {
@@ -5178,6 +5383,7 @@ Result<std::vector<Modeler::OpeningInfo>> Modeler::openingsIn(const Document& do
   for (const OpeningRef& o : rectangularOpenings(*host)) {
     OpeningInfo info;
     info.index = o.index;
+    info.id = openingKey(o);
     info.name = o.operand->name;
     info.width = std::abs(o.rect->width);
     info.height = std::abs(o.rect->height);
@@ -5195,6 +5401,11 @@ Result<std::vector<Modeler::OpeningInfo>> Modeler::openingsIn(const Document& do
       }
     }
     info.along = a1 - a0;
+    if (along.Magnitude() > 0.5) {
+      const auto wall = hostExtent(document_.worldShape(*host), along);
+      info.offset = a0 - wall[0];
+      info.sill = info.bottom - wall[2];
+    }
     // The cutter is extruded through the host from the face: its distance is the thickness.
     for (const auto& m : o.operand->recipe->modifiers)
       if (const auto* e = std::get_if<ExtrudeOp>(&m)) info.depth = std::abs(e->distance);
@@ -5212,21 +5423,27 @@ Status Modeler::setOpeningFittings(const ObjectId& hostId, const std::vector<std
   if (list->empty()) return Status::failure("This object has no openings");
   const auto checked = draw::normalizeFitting(fitting);
   if (!checked) return checked.status();
-  nlohmann::json all = nlohmann::json::object();
-  if (const auto it = host->attributes.find("opening_fittings"); it != host->attributes.end()) {
-    all = nlohmann::json::parse(it->second, nullptr, false);
-    if (!all.is_object()) all = nlohmann::json::object();
-  }
+  // Fittings are kept under the openings' ids, so they stay with their openings when another
+  // one is removed. Openings from before ids existed get theirs here.
+  Object object = *host;
+  ensureOpeningIds(object);
+  nlohmann::json all = storedFittings(object);
   const nlohmann::json value = nlohmann::json::parse(*checked);
   std::vector<std::size_t> targets = indices;
   if (targets.empty())
     for (const auto& o : *list) targets.push_back(o.index);
+  const std::vector<OpeningRef> refs = rectangularOpenings(object);
   for (const std::size_t index : targets) {
-    if (index < 1 || index > list->size()) return Status::failure("No opening " + std::to_string(index));
-    if (value.at("type") == "none") all.erase(std::to_string(index));
-    else all[std::to_string(index)] = value;
+    const auto it = std::find_if(refs.begin(), refs.end(), [&](const OpeningRef& o) { return o.index == index; });
+    if (it == refs.end()) return Status::failure("No opening " + std::to_string(index));
+    if (value.at("type") == "none") all.erase(openingKey(*it));
+    else all[openingKey(*it)] = value;
   }
-  return setAttribute({hostId}, "opening_fittings", all.dump());
+  object.attributes["opening_fittings"] = all.dump();
+  ChangeSet changes(document_);
+  changes.modify(object);
+  history_.execute(changes.build("Set Attribute"));
+  return Status::success();
 }
 
 namespace {
@@ -6194,7 +6411,10 @@ Result<ObjectId> Modeler::cutOpenings(const ObjectId& hostId, const gp_Dir& face
   // slower as it gained holes (40 openings took minutes). The recipe is the
   // same kind as a push-through: rectangles extruded through, operands
   // 1..n of a Subtract, so they are listed and resized the same way.
-  const Object hostObject = *host;
+  // Openings already there get ids first (and their fittings move to them), so the numbers
+  // they had are not needed again.
+  Object hostObject = *host;
+  ensureOpeningIds(hostObject);
   const gp_Trsf toParent = document_.parentTransform(hostObject).Inverted();
   const std::string name = uniqueName("Opening");
   BooleanFeature feature;
@@ -6212,10 +6432,11 @@ Result<ObjectId> Modeler::cutOpenings(const ObjectId& hostId, const gp_Dir& face
     Recipe tool;
     tool.base = RectangleProfile{plane, width, height};
     tool.modifiers.push_back(ExtrudeOp{-depth});
-    feature.operands.push_back(BooleanOperand{std::make_shared<const Recipe>(std::move(tool)), toParent, name});
+    feature.operands.push_back(BooleanOperand{std::make_shared<const Recipe>(std::move(tool)), toParent, name,
+                                              "opening-" + generateObjectId()});
   }
+  // The wall stays the same object (its id, tags, what follows it): it only gains openings.
   Object result = hostObject;
-  result.id = generateObjectId();
   result.transform = gp_Trsf();
   result.recipe = Recipe{};
   result.recipe.base = std::move(feature);
@@ -6234,8 +6455,7 @@ Result<ObjectId> Modeler::cutOpenings(const ObjectId& hostId, const gp_Dir& face
   }
   carryMaterials(result, {{&hostObject, toParent * document_.worldTransform(hostObject)}});
   ChangeSet changes(document_);
-  changes.erase(hostObject.id);
-  changes.add(result);
+  changes.modify(result);
   history_.execute(changes.build("Openings"));
   return result.id;
 }

@@ -258,6 +258,7 @@ json baseToJson(const BaseFeature& base) {
               operands.push_back({{"name", o.name},
                                   {"placement", toJson(o.placement)},
                                   sharedRecipe(o.recipe)});
+              if (!o.id.empty()) operands.back()["id"] = o.id;
             }
             return json{{"type", "boolean"}, {"kind", toString(b.kind)}, {"operands", operands}};
           },
@@ -450,7 +451,8 @@ BaseFeature baseFrom(const json& j) {
     for (const json& o : j.at("operands")) {
       b.operands.push_back(BooleanOperand{sharedRecipeFrom(o),
                                           trsfFrom(o.at("placement")),
-                                          o.value("name", std::string())});
+                                          o.value("name", std::string()),
+                                          o.value("id", std::string())});
     }
     return b;
   }

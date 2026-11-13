@@ -186,6 +186,23 @@ void must(const Status& s) {
   if (!s) throw ApiError(s.message());
 }
 
+// 'openings' of an opening command on 'host': ids (text) or numbers from list_openings.
+// Empty when the argument is absent (the commands then take every opening).
+std::vector<std::size_t> openingNumbers(doc::Modeler& m, const json& a) {
+  std::vector<std::size_t> which;
+  if (!a.contains("openings")) return which;
+  if (!a.at("openings").is_array()) throw ApiError("'openings' must be an array");
+  for (const json& i : a.at("openings")) {
+    if (i.is_string())
+      which.push_back(must(m.openingIndices(text(a, "host"), {i.get<std::string>()})).front());
+    else if (i.is_number_integer() && i.get<long long>() >= 1)
+      which.push_back(i.get<std::size_t>());
+    else
+      throw ApiError("'openings' must be ids or numbers >= 1 from list_openings");
+  }
+  return which;
+}
+
 // --- object descriptions ---------------------------------------------------------------
 
 json bounds(const TopoDS_Shape& shape) {
@@ -1835,9 +1852,12 @@ const std::vector<CommandDef>& commands() {
        }},
       {"list_openings",
        "Rectangular openings (doors, windows pushed through) of the given objects (all objects when 'ids' is "
-       "omitted): index (for set_opening_size / set_opening_fittings), name, width, height, centre, the "
-       "world height of the lowest edge (sill), depth (wall thickness) and its door / window 'fitting' if "
-       "set. mm.",
+       "omitted): id (stays with the opening when others are removed; use it in 'openings' of "
+       "set_opening_size / set_opening_fittings / move_opening / delete_openings), index (its number, "
+       "which shifts when an earlier opening is removed), name, width, height, centre, the world height of "
+       "the lowest edge (sill), offset (from the wall's left end, seen from the side it was cut from, to "
+       "the opening's left edge), sill_height (above the wall's bottom), depth (wall thickness) and its "
+       "door / window 'fitting' if set. mm.",
        SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}}}}),
        [](doc::Modeler& m, const json& a) {
          std::vector<ObjectId> hosts;
@@ -1856,11 +1876,11 @@ const std::vector<CommandDef>& commands() {
            if (const auto it = attrs.find("opening_fittings"); it != attrs.end())
              fittings = json::parse(it->second, nullptr, false);
            for (const auto& o : found) {
-             json entry = {{"index", o.index}, {"name", o.name}, {"width", o.width}, {"height", o.height},
-                           {"center", toJson(o.center)}, {"sill", o.bottom}, {"depth", o.depth},
+             json entry = {{"id", o.id}, {"index", o.index}, {"name", o.name}, {"width", o.width},
+                           {"height", o.height}, {"center", toJson(o.center)}, {"sill", o.bottom},
+                           {"offset", o.offset}, {"sill_height", o.sill}, {"depth", o.depth},
                            {"normal", toJson(o.normal.XYZ())}};
-             if (fittings.is_object() && fittings.contains(std::to_string(o.index)))
-               entry["fitting"] = fittings.at(std::to_string(o.index));
+             if (fittings.is_object() && fittings.contains(o.id)) entry["fitting"] = fittings.at(o.id);
              openings.push_back(entry);
            }
            list.push_back({{"host", h}, {"name", object(m, h).name}, {"openings", openings}});
@@ -1868,21 +1888,15 @@ const std::vector<CommandDef>& commands() {
          return json{{"hosts", list}};
        }},
       {"set_opening_size",
-       "Resize the rectangular openings of 'host' ('openings': indices from list_openings, default all) to "
+       "Resize the rectangular openings of 'host' ('openings': ids or numbers from list_openings, default all) to "
        "'width' and/or 'height' (mm). The horizontal centre and the sill stay put ('keep': \"sill\", "
        "default) or the centre stays ('keep': \"center\"). Stays parametric; one undo step. For many walls "
        "use edit_each with host \"$id\".",
        SCHEMA({"type": "object", "properties": {"host": {"type": "string"},
-               "openings": {"type": "array", "items": {"type": "integer"}}, "width": {"type": "number"},
+               "openings": {"type": "array", "items": {"type": ["string", "integer"]}}, "width": {"type": "number"},
                "height": {"type": "number"}, "keep": {"enum": ["sill", "center"]}}, "required": ["host"]}),
        [](doc::Modeler& m, const json& a) {
-         std::vector<std::size_t> which;
-         if (a.contains("openings")) {
-           for (const json& i : a.at("openings")) {
-             if (!i.is_number_integer() || i.get<long long>() < 1) throw ApiError("'openings' must be indices >= 1");
-             which.push_back(i.get<std::size_t>());
-           }
-         }
+         const std::vector<std::size_t> which = openingNumbers(m, a);
          const std::string keep = textOr(a, "keep", "sill");
          if (keep != "sill" && keep != "center") throw ApiError("'keep' must be sill or center");
          const std::optional<double> w = a.contains("width") ? std::optional<double>(number(a, "width")) : std::nullopt;
@@ -1890,8 +1904,52 @@ const std::vector<CommandDef>& commands() {
          must(m.setOpeningSize(text(a, "host"), which, w, h, keep == "center"));
          return json::object();
        }},
+      {"move_opening",
+       "Move one opening of 'host' within its wall: 'opening' (id or number from list_openings) and either "
+       "'by': [dx, dy, dz] (world mm; only the part along the wall and up / down counts) or 'offset' and / "
+       "or 'sill_height' as list_openings reports them (from the wall's left end seen from the cut side, "
+       "and above the wall's bottom). The opening keeps its id, size and fitting; it must stay inside the "
+       "wall and clear of the other openings (otherwise nothing changes). One undo step.",
+       SCHEMA({"type": "object", "properties": {"host": {"type": "string"},
+               "opening": {"type": ["string", "integer"]},
+               "by": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+               "offset": {"type": "number"}, "sill_height": {"type": "number"}},
+               "required": ["host", "opening"]}),
+       [](doc::Modeler& m, const json& a) {
+         json one = {{"host", arg(a, "host")}, {"openings", json::array({arg(a, "opening")})}};
+         const std::size_t index = openingNumbers(m, one).front();
+         const bool by = a.contains("by"), to = a.contains("offset") || a.contains("sill_height");
+         if (by == to) throw ApiError("Give either 'by' or 'offset' / 'sill_height'");
+         if (by) {
+           must(m.moveOpening(text(a, "host"), index, gp_Vec(xyz(arg(a, "by"), "by"))));
+         } else {
+           must(m.placeOpening(text(a, "host"), index,
+                               a.contains("offset") ? std::optional<double>(number(a, "offset")) : std::nullopt,
+                               a.contains("sill_height") ? std::optional<double>(number(a, "sill_height"))
+                                                         : std::nullopt));
+         }
+         json moved = json::object();
+         for (const auto& o : must(m.openings(text(a, "host"))))
+           if (o.index == index)
+             moved = {{"id", o.id}, {"index", o.index}, {"offset", o.offset}, {"sill_height", o.sill},
+                      {"center", toJson(o.center)}};
+         return json{{"opening", moved}};
+       }},
+      {"delete_openings",
+       "Remove openings of 'host' ('openings': ids or numbers from list_openings): the wall is whole again "
+       "there. Their fittings go with them; the other openings keep their ids, sizes and fittings (their "
+       "numbers shift). One undo step.",
+       SCHEMA({"type": "object", "properties": {"host": {"type": "string"},
+               "openings": {"type": "array", "items": {"type": ["string", "integer"]}, "minItems": 1}},
+               "required": ["host", "openings"]}),
+       [](doc::Modeler& m, const json& a) {
+         const auto which = openingNumbers(m, a);
+         if (which.empty()) throw ApiError("'openings' must name at least one opening");
+         must(m.removeOpenings(text(a, "host"), which));
+         return json{{"remaining", must(m.openings(text(a, "host"))).size()}};
+       }},
       {"set_opening_fittings",
-       "Door / window kind of openings of 'host' ('openings': indices from list_openings, default all), "
+       "Door / window kind of openings of 'host' ('openings': ids or numbers from list_openings, default all), "
        "drawn as plan symbols in the plan cut and on plan drawings (DXF / JWW / PDF) to the real width and "
        "wall thickness. 'fitting': {\"type\": none | window | swing_single (\"hinge\": left|right, "
        "\"swing\": in|out) | swing_double (\"swing\") | sliding_single (\"slide\": left|right; 片引き) | "
@@ -1899,16 +1957,10 @@ const std::vector<CommandDef>& commands() {
        "normal); left / right as seen from the side a door opens to, or from the cut side for sliding doors. "
        "\"none\" removes it. One undo step; combine with place_openings in a batch.",
        SCHEMA({"type": "object", "properties": {"host": {"type": "string"},
-               "openings": {"type": "array", "items": {"type": "integer"}}, "fitting": {"type": "object"}},
+               "openings": {"type": "array", "items": {"type": ["string", "integer"]}}, "fitting": {"type": "object"}},
                "required": ["host", "fitting"]}),
        [](doc::Modeler& m, const json& a) {
-         std::vector<std::size_t> which;
-         if (a.contains("openings")) {
-           for (const json& i : a.at("openings")) {
-             if (!i.is_number_integer() || i.get<long long>() < 1) throw ApiError("'openings' must be indices >= 1");
-             which.push_back(i.get<std::size_t>());
-           }
-         }
+         const std::vector<std::size_t> which = openingNumbers(m, a);
          if (!arg(a, "fitting").is_object()) throw ApiError("'fitting' must be an object");
          must(m.setOpeningFittings(text(a, "host"), which, a.at("fitting").dump()));
          return json::object();
@@ -2579,8 +2631,8 @@ const std::vector<CommandDef>& commands() {
        "through a wall 'host', on its face facing 'face_normal' (horizontal, e.g. [0, -1, 0]), evenly "
        "spread along it or 'spacing' apart centre to centre around its middle; or a single one centred on "
        "the point 'at' ([x, y, z], its position along the face; count is then ignored). Same as drawing "
-       "them on the face and pushing them through; one undo step. Returns the wall's new id (use it "
-       "afterwards). 'fitting' (optional, as set_opening_fittings) gives the new openings their door / "
+       "them on the face and pushing them through; one undo step. Returns the wall's id (the wall stays "
+       "the same object; each new opening gets an id, see list_openings). 'fitting' (optional, as set_opening_fittings) gives the new openings their door / "
        "window symbol in the same step.",
        SCHEMA({"type": "object", "properties": {
          "host": {"type": "string"}, "face_normal": {"type": "array", "items": {"type": "number"}},
