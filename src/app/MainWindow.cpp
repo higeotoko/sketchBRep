@@ -1225,6 +1225,19 @@ void MainWindow::buildMenus() {
   datums->addAction(tr("レベル（GL・FL）を編集..."), this, &MainWindow::showLevelsEditDialog)
       ->setObjectName(QStringLiteral("editLevelsAction"));
   datums->addAction(tr("階を割り当て..."), this, &MainWindow::showLevelsDialog);
+  {
+    // docs/90 G-05: on by default; off moves a wall alone (its neighbours stay as they are).
+    auto* joins = tools->addAction(tr("壁を動かすと、つながっている壁も付いてくる"));
+    joins->setObjectName(QStringLiteral("keepWallJoinsAction"));
+    joins->setCheckable(true);
+    joins->setChecked(modeler_.keepWallJoins());
+    joins->setToolTip(tr("壁を横へ動かした時、角・T 字でつながっている壁の長さを合わせます。"
+                         "外すと、動かした壁だけが動きます（アプリを閉じると、付いてくる設定に戻ります）"));
+    connect(joins, &QAction::toggled, this, [this](bool on) {
+      modeler_.setKeepWallJoins(on);
+      setStatus(on ? tr("壁を動かすと、つながっている壁も付いてきます") : tr("壁を動かしても、つながっている壁はそのままにします"));
+    });
+  }
   QMenu* timber = tools->addMenu(tr("木造"));
   timber->setObjectName(QStringLiteral("timberToolsMenu"));
   timber->addAction(tr("木造架構を作成・作り直し..."), this, &MainWindow::showTimberFrameDialog)->setObjectName(QStringLiteral("timberFrameAction"));

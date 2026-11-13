@@ -3257,6 +3257,7 @@ QString TransformTool::copySuffix() const {
 
 bool TransformTool::commit(const gp_Trsf& delta, int count) {
   doc::Modeler& m = host_.modeler();
+  joinNote_.clear();
   recent_.begin(m);  // a copy landing on what is there records nothing
   if (copy_ && !elementTargets_.empty()) {
     // Just the selected faces / edges (the faces / solids they belong to
@@ -3291,6 +3292,18 @@ bool TransformTool::commit(const gp_Trsf& delta, int count) {
       last_.reset();
       return false;
     }
+    // Walls joined to the moved ones: say what happened to them.
+    const doc::JoinFollow& joins = m.lastJoinFollow();
+    if (joins.followed > 0)
+      joinNote_ = QObject::tr("つながっている壁 %1 枚の長さを合わせました").arg(joins.followed);
+    if (!joins.left.empty()) {
+      QStringList names;
+      for (const std::string& n : joins.left) names << QString::fromStdString(n);
+      joinNote_ += (joinNote_.isEmpty() ? QString() : QStringLiteral("。")) +
+                   QObject::tr("%1 は付いてこられませんでした（開口が壁の外になる・ロック中・長さがなくなる）")
+                       .arg(names.join(QStringLiteral("、")));
+    }
+    if (!joinNote_.isEmpty()) host_.setStatus(joinNote_);
   }
   last_ = Last{targets_, edgeTargets_, elementTargets_, delta, copy_, count};
   recent_.mark(m);
@@ -3853,8 +3866,10 @@ void MoveTool::mousePress(const ToolEvent& e) {
     return;
   }
   mouseMove(e);
+  joinNote_.clear();
   finish();
-  host_.setStatus(QObject::tr("基点をクリック（数値で距離変更、コピー後は x3 で配列・/3 で等分割）"));
+  host_.setStatus((joinNote_.isEmpty() ? QString() : joinNote_ + QStringLiteral(" ｜ ")) +
+                  QObject::tr("基点をクリック（数値で距離変更、コピー後は x3 で配列・/3 で等分割）"));
 }
 
 void MoveTool::applyMeasurement(const QString& text) {

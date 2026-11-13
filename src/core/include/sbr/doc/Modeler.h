@@ -56,6 +56,12 @@ struct DeleteOutcome {
   int openings = 0;               // openings removed (their walls made whole there)
 };
 
+// What a move of walls did to the walls joined to them (docs/90 G-05).
+struct JoinFollow {
+  int followed = 0;               // walls made longer / shorter to stay joined
+  std::vector<std::string> left;  // names of joined walls that could not follow (they stay as they were)
+};
+
 class Modeler {
  public:
   Modeler();
@@ -371,8 +377,17 @@ class Modeler {
 
   // --- placement ------------------------------------------------------------
   // Applies a world-space transformation to the objects (and their children).
+  // Walls joined to a wall that is moved sideways (corners, T joints) are made longer or
+  // shorter so the joint stays (docs/90 G-05), in the same undo step. A joined wall that
+  // cannot follow (locked, an opening would be left outside it, nothing left of it) stays as
+  // it was: the move itself is never refused for it. Rotations leave joints alone.
   Status transform(const std::vector<ObjectId>& ids, const gp_Trsf& worldDelta,
                    const std::string& commandName = "Move");
+  // Whether moves keep wall joints (on by default; a setting of the session, not saved).
+  void setKeepWallJoins(bool on) { keepWallJoins_ = on; }
+  bool keepWallJoins() const { return keepWallJoins_; }
+  // What the last transform did to joined walls (empty when none were joined).
+  const JoinFollow& lastJoinFollow() const { return lastJoins_; }
   Status move(const std::vector<ObjectId>& ids, const gp_Vec& offset);
   Status rotate(const std::vector<ObjectId>& ids, const gp_Ax1& axis, double angleRadians);
   // Uniform scale about a world point (one undo step). Solids, faces and
@@ -865,6 +880,8 @@ class Modeler {
   // The member object for `spec` (named, not built or added).
   Result<Object> memberObject(const MemberSpec& spec);
   Status commitModified(Object object, const std::string& commandName);
+  bool keepWallJoins_ = true;
+  JoinFollow lastJoins_;
   // settleOverlaps' two halves (one object each).
   Status settleLine(const ObjectId& id, Settled& out);
   // A loose line dividing the faces it runs across (splitAcross); the line

@@ -1159,6 +1159,9 @@ class TransformTool : public DrawingTool {
   std::vector<TopoDS_Edge> edgeTargets_;
   std::vector<doc::DeleteTarget> elementTargets_;
   bool copy_ = false;
+  // What the last move did to the walls joined to the moved ones (docs/90 G-05), for the
+  // status bar; empty when nothing was joined.
+  QString joinNote_;
   struct Last {
     std::vector<doc::ObjectId> targets;
     std::vector<TopoDS_Edge> edges;

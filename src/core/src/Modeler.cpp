@@ -680,6 +680,11 @@ double levelHeight(const std::vector<FloorLevel>& levels, const std::string& id,
   return 0.0;
 }
 
+// Walls joined to walls under `roots` that move by `d` follow (docs/90 G-05); defined with
+// the wall helpers below.
+void followWallJoins(const Document& document, ChangeSet& changes, const RegenContext& context,
+                     const std::vector<ObjectId>& roots, const gp_Vec& d, JoinFollow& report);
+
 // Walls and slabs on levels (docs/90 G-02) after the levels go from `before` to `after`;
 // defined with the wall helpers below.
 void levelUp(const Document& document, ChangeSet& changes, const RegenContext& context,
@@ -4936,6 +4941,10 @@ Status Modeler::transform(const std::vector<ObjectId>& ids, const gp_Trsf& world
     o.transform = localDelta(document_.parentTransform(o), worldDelta) * o.transform;
     changes.modify(o);
   }
+  lastJoins_ = JoinFollow{};
+  if (keepWallJoins_ && worldDelta.Form() == gp_Translation)
+    followWallJoins(document_, changes, document_.regenContext(), roots, gp_Vec(worldDelta.TranslationPart()),
+                    lastJoins_);
   if (const Status settled = settleMoves(document_, changes, document_.regenContext()); !settled) return settled;
   history_.beginGroup(commandName);
   history_.execute(changes.build(commandName));
@@ -5595,6 +5604,102 @@ std::optional<std::pair<double, double>> meet(const gp_Pnt& a, const gp_Dir& da,
   if (std::abs(den) < 1e-6) return std::nullopt;
   const double ex = b.X() - a.X(), ey = b.Y() - a.Y();
   return std::make_pair((ex * db.Y() - ey * db.X()) / den, (ex * da.Y() - ey * da.X()) / den);
+}
+
+// --- wall joints follow a moved wall (docs/90 G-05) ----------------------------------------
+// A wall butts against another where its end lies on one of the other's faces (how the wall
+// tool makes corners, and how a partition meets a wall). When the other moves, that end goes
+// to the same face again; the wall's other end, its openings and its height stay.
+void followWallJoins(const Document& document, ChangeSet& changes, const RegenContext& context,
+                     const std::vector<ObjectId>& roots, const gp_Vec& d, JoinFollow& report) {
+  const gp_Vec flat(d.X(), d.Y(), 0);
+  if (flat.Magnitude() < tolerance::kLinear) return;
+  std::set<ObjectId> moved;
+  for (const ObjectId& rootId : roots)
+    for (const ObjectId& id : document.subtree(rootId)) moved.insert(id);
+  std::vector<WallBand> walls;
+  bool any = false;
+  for (const Object& o : document.objects())
+    if (auto w = wallBand(document, o)) {
+      any |= moved.count(o.id) > 0;
+      walls.push_back(std::move(*w));
+    }
+  if (!any) return;
+  const double joined = 1.0;  // an end this near a face is on it
+  for (std::size_t j = 0; j < walls.size(); ++j) {
+    const WallBand& w = walls[j];
+    if (moved.count(w.object->id)) continue;  // goes along as it is
+    double s0 = 0.0, s1 = w.length;
+    bool touched = false;
+    for (int end = 0; end < 2; ++end) {
+      const double s = end == 0 ? 0.0 : w.length;
+      // The node: the nearest other wall line this end reaches (as when a build-up changes).
+      std::optional<std::size_t> partner;
+      double bestGap = 1e300, partnerReach = 0.0;
+      for (std::size_t i = 0; i < walls.size(); ++i) {
+        if (i == j) continue;
+        const WallBand& o = walls[i];
+        if (std::min(w.z1, o.z1) - std::max(w.z0, o.z0) < 1.0) continue;  // another storey
+        const auto m = meet(w.start, w.dir, o.start, o.dir);
+        if (!m) continue;
+        const double reach = o.right + o.leftExt + std::max(w.right + w.leftExt, 1.0) + 1.0;
+        const double gap = std::abs(m->first - s);
+        if (gap > reach || m->second < -reach || m->second > o.length + reach || gap >= bestGap) continue;
+        bestGap = gap;
+        partner = i;
+        partnerReach = reach;
+      }
+      if (!partner || !moved.count(walls[*partner].object->id)) continue;
+      const WallBand& o = walls[*partner];
+      // The partner's two faces across this wall's line, where it is and where it goes.
+      auto faces = [&](const gp_Vec& shift) -> std::optional<std::pair<double, double>> {
+        const auto a = meet(w.start, w.dir, o.start.Translated(shift + gp_Vec(o.left) * o.leftExt), o.dir);
+        const auto b = meet(w.start, w.dir, o.start.Translated(shift + gp_Vec(o.left) * -o.right), o.dir);
+        if (!a || !b) return std::nullopt;
+        return std::make_pair(std::min(a->first, b->first), std::max(a->first, b->first));
+      };
+      const auto before = faces(gp_Vec()), after = faces(flat);
+      if (!before || !after) continue;
+      const double toNear = std::abs(s - before->first), toFar = std::abs(s - before->second);
+      if (std::min(toNear, toFar) > joined) continue;  // near it, not joined to it
+      // Still beside the partner where it goes? (Moved along itself past this wall: let go.)
+      const auto there = meet(w.start, w.dir, o.start.Translated(flat), o.dir);
+      if (!there || there->second < -partnerReach || there->second > o.length + partnerReach) continue;
+      const double value = toFar < toNear ? after->second : after->first;
+      if (std::abs(value - s) < 1e-9) continue;
+      (end == 0 ? s0 : s1) = value;
+      touched = true;
+    }
+    if (!touched) continue;
+    const Object& was = *w.object;
+    auto stays = [&] { report.left.push_back(was.name); };
+    if (was.locked || s1 - s0 < tolerance::kMinDimension) {
+      stays();
+      continue;
+    }
+    const Object* pending = changes.pending(was.id);
+    Object object = pending ? *pending : was;
+    Recipe recipe = w.recipe;
+    auto& rect = std::get<RectangleProfile>(recipe.base);
+    const gp_Pnt p0 = w.start.Translated(gp_Vec(w.dir) * s0), p1 = w.start.Translated(gp_Vec(w.dir) * s1);
+    rect.plane.origin = p0.Translated(gp_Vec(w.left) * -w.right).Transformed(w.toWorld.Inverted());
+    rect.width = s1 - s0;
+    if (w.path.empty()) object.recipe = std::move(recipe);
+    else replaceOperand(object.recipe, w.path, 0, std::move(recipe));
+    // Its openings stay where they are: all of them must still be in the wall.
+    bool inside = true;
+    for (const OpeningExtent& e : openingExtents(was, document.worldTransform(was))) {
+      const gp_Vec u(gp::DZ().Crossed(e.normal));
+      const double a = gp_Vec(p0.XYZ()).Dot(u), b = gp_Vec(p1.XYZ()).Dot(u);
+      inside &= e.u0 >= std::min(a, b) - tolerance::kLinear && e.u1 <= std::max(a, b) + tolerance::kLinear;
+    }
+    if (!inside || !rebuild(object, context)) {
+      stays();
+      continue;
+    }
+    changes.modify(object);
+    ++report.followed;
+  }
 }
 
 // --- walls and slabs on levels (docs/90 G-02) ---------------------------------------------

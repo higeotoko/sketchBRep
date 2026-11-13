@@ -347,6 +347,7 @@ class GuiPhase1 : public QObject {
   void planOfALevelLeavesOutTheStoreysBelow();
   void partSectionShowsAWallInItsOwnWords();
   void moveToolSlidesAnOpeningWithinItsWall();
+  void movedWallKeepsItsCornersAndSaysSo();
   void wallAndSlabFollowTheirLevelsFromThePanel();
   void wallQuantityInputsComparisonSaveAndStaleModel();
   void panelDragPreviewKeepsTheModelViewStill();
@@ -11208,4 +11209,51 @@ void GuiPhase1::moveToolSlidesAnOpeningWithinItsWall() {
   QVERIFY(std::abs(opening().sill-900)<1e-6);
   QVERIFY(std::abs(left()-wallLeft)<1e-6);
   Q_UNUSED(id0);
+}
+
+// docs/90 G-05: a wall moved sideways with the move tool takes the ends of the walls joined
+// to it along, the status bar says so, and the Tools menu switches it off.
+void GuiPhase1::movedWallKeepsItsCornersAndSaysSo() {
+  Fixture f;QVERIFY(f.setUp(3000,2000));auto& m=f.window.modeler();
+  const auto walls=m.createWalls({gp_Pnt(0,0,0),gp_Pnt(6000,0,0),gp_Pnt(6000,4000,0),gp_Pnt(0,4000,0),gp_Pnt(0,0,0)},200,3000,0);
+  QVERIFY2(walls,walls?"":walls.error().c_str());
+  QCOMPARE(walls->size(),std::size_t(4));
+  const doc::ObjectId south=walls->at(0),east=walls->at(1),west=walls->at(3);
+  auto low=[&](const doc::ObjectId& id){return geom::exactBounds(m.document().worldShape(*m.document().find(id))).CornerMin();};
+  const double eastY=low(east).Y(),westY=low(west).Y(),southY=low(south).Y();
+  f.vp->syncNow();
+  const auto steps=m.history().undoCount();
+  auto moveSouth=[&](const QString& distance){
+    f.window.activateTool(MainWindow::ToolId::Select);
+    f.window.setSelection({south});
+    f.window.activateTool(MainWindow::ToolId::Move);
+    const gp_Pnt at(3000,low(south).Y(),0);
+    click(f.vp,f.vp->toWidget(at));
+    QTest::keyClick(f.vp,Qt::Key_Left);  // along Y
+    move(f.vp,f.vp->toWidget(at.Translated(gp_Vec(0,-900,0))));
+    type(f.vp,distance);
+  };
+  moveSouth(QStringLiteral("455"));
+  QVERIFY2(f.window.lastError().isEmpty(),qPrintable(f.window.lastError()));
+  QVERIFY(std::abs(low(south).Y()-(southY-455))<1e-6);
+  QVERIFY(std::abs(low(east).Y()-(eastY-455))<1e-6);
+  QVERIFY(std::abs(low(west).Y()-(westY-455))<1e-6);
+  QCOMPARE(m.history().undoCount(),steps+1);
+  QVERIFY2(f.window.statusText().contains(QStringLiteral("つながっている壁 2 枚")),
+           qPrintable(f.window.statusText()));
+  QVERIFY(m.undo());
+  QVERIFY(std::abs(low(east).Y()-eastY)<1e-6);
+  // Switched off in the Tools menu: the wall alone.
+  auto* joins=f.window.findChild<QAction*>(QStringLiteral("keepWallJoinsAction"));QVERIFY(joins);
+  QVERIFY(joins->isChecked());
+  joins->setChecked(false);
+  f.vp->syncNow();
+  moveSouth(QStringLiteral("455"));
+  QVERIFY2(f.window.lastError().isEmpty(),qPrintable(f.window.lastError()));
+  QVERIFY(std::abs(low(south).Y()-(southY-455))<1e-6);
+  QVERIFY(std::abs(low(east).Y()-eastY)<1e-6);
+  QVERIFY(std::abs(low(west).Y()-westY)<1e-6);
+  QVERIFY(m.undo());
+  joins->setChecked(true);
+  QVERIFY(m.keepWallJoins());
 }

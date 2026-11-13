@@ -1332,12 +1332,24 @@ const std::vector<CommandDef>& commands() {
          }
          return idResult(must(m.offset(id, number(a, "distance"))).id);
        }},
-      {"move", "Move objects by a vector.",
+      {"move",
+       "Move objects by a vector. Walls joined to a moved wall (corners, T joints made by create_wall) are made "
+       "longer or shorter so the joints stay: 'joined_walls' {followed, left: [names that could not follow, e.g. "
+       "an opening would be left outside]}. keep_joins: false moves the objects alone. One undo step.",
        SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}},
-               "vector": {"type": "array", "items": {"type": "number"}}}, "required": ["ids", "vector"]}),
+               "vector": {"type": "array", "items": {"type": "number"}}, "keep_joins": {"type": "boolean"}},
+               "required": ["ids", "vector"]}),
        [](doc::Modeler& m, const json& a) {
-         must(m.move(ids(a, "ids"), gp_Vec(xyz(arg(a, "vector"), "vector"))));
-         return idsResult(ids(a, "ids"));
+         const bool was = m.keepWallJoins();
+         m.setKeepWallJoins(a.value("keep_joins", true));
+         const Status moved = m.move(ids(a, "ids"), gp_Vec(xyz(arg(a, "vector"), "vector")));
+         m.setKeepWallJoins(was);
+         must(moved);
+         json result = idsResult(ids(a, "ids"));
+         const doc::JoinFollow& joins = m.lastJoinFollow();
+         if (joins.followed > 0 || !joins.left.empty())
+           result["joined_walls"] = {{"followed", joins.followed}, {"left", joins.left}};
+         return result;
        }},
       {"rotate", "Rotate objects about an axis (degrees).",
        SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}},
