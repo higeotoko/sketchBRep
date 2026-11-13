@@ -2743,6 +2743,8 @@ void Viewport::setPlanCut(std::optional<double> z) {
     planCut_.Nullify();
   }
   planCutZ_ = z && std::isfinite(*z) ? z : std::nullopt;
+  // The storeys below are left out only in a plan cut: without one, everything shows.
+  if (!planCutZ_ && planFloorZ_) setPlanFloor(std::nullopt);
   if (planCutZ_) {
     // OCCT keeps the side the normal points to: down, so what is below the cut stays.
     planCut_ = new Graphic3d_ClipPlane(gp_Pln(gp_Pnt(0, 0, *planCutZ_), gp::DZ().Reversed()));
@@ -2898,7 +2900,60 @@ void Viewport::unlockView() {
 
 bool Viewport::hiddenInView(const doc::Object& o) const {
   // A grid's own parts lie on the ground: an elevation shows its datums.
-  return workAxis() > 0 && o.attributes.count("grid_part") > 0;
+  if (workAxis() > 0 && o.attributes.count("grid_part") > 0) return true;
+  return belowPlanFloor(o);
+}
+
+namespace {
+// Of a storey below the floor at `floor`: has faces, starts more than `depth` under the floor
+// and does not rise above it.
+bool storeyBelow(const doc::Document& document, const doc::Object& o, double floor, double depth) {
+  const doc::ObjectKind kind = o.kind();
+  if (kind != doc::ObjectKind::Solid && kind != doc::ObjectKind::Shell && kind != doc::ObjectKind::Face &&
+      kind != doc::ObjectKind::Instance)
+    return false;
+  const Bnd_Box box = document.worldBounds(o);
+  if (box.IsVoid()) return false;
+  double x0, y0, z0, x1, y1, z1;
+  box.Get(x0, y0, z0, x1, y1, z1);
+  const double gap = box.GetGap();
+  return z1 - gap <= floor + 1.0 && z0 + gap < floor - depth;
+}
+}  // namespace
+
+bool Viewport::belowPlanFloor(const doc::Object& o) const {
+  return planFloorZ_ && storeyBelow(modeler_.document(), o, *planFloorZ_, planFloorDepth_);
+}
+
+bool Viewport::isDisplayed(const doc::ObjectId& id) const {
+  const auto found = entries_.find(id);
+  return found != entries_.end() && !found->second.erased;
+}
+
+void Viewport::setPlanFloor(std::optional<double> z, double depth) {
+  const std::optional<double> before = planFloorZ_;
+  const double depthBefore = planFloorDepth_;
+  planFloorZ_ = z && std::isfinite(*z) ? z : std::nullopt;
+  planFloorDepth_ = std::isfinite(depth) && depth >= 0 ? depth : 400.0;
+  if (planFloorZ_ == before && planFloorDepth_ == depthBefore) return;
+  resyncForPlanFloor(before, depthBefore);
+}
+
+void Viewport::resyncForPlanFloor(std::optional<double> before, double depthBefore) {
+  if (view_.IsNull()) return;
+  // Only the objects whose answer changed are taken off or put back.
+  const doc::Document& document = modeler_.document();
+  bool guidesChanged = false;
+  for (const doc::Object& o : document.objects()) {
+    const bool was = before && storeyBelow(document, o, *before, depthBefore);
+    if (was == belowPlanFloor(o)) continue;
+    guidesChanged |= syncObject(o.id);
+  }
+  if (guidesChanged) pushGuides();
+  syncOpeningSymbols();
+  syncWallCuts();
+  syncWallOutlines();
+  redraw();
 }
 
 void Viewport::viewLockSwitched() {

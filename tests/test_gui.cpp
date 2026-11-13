@@ -344,6 +344,7 @@ class GuiPhase1 : public QObject {
   void timberStairwellRegenerationMatchesDialogAndExports();
   void frameChecksUpdateAndDiscardStaleResults();
   void timberQuantitiesAndFramingExport();
+  void planOfALevelLeavesOutTheStoreysBelow();
   void wallAndSlabFollowTheirLevelsFromThePanel();
   void wallQuantityInputsComparisonSaveAndStaleModel();
   void panelDragPreviewKeepsTheModelViewStill();
@@ -10450,6 +10451,71 @@ void GuiPhase1::wallAndSlabFollowTheirLevelsFromThePanel() {
   emit upper->activated(ground);
   QTRY_VERIFY(!f.window.lastError().isEmpty());
   QVERIFY(std::abs(top(wall)-before)<1e-6);
+}
+
+// A plan of a level shows that storey (docs/90 G-03): what belongs to the storeys below is
+// left out of the view, the floor and what comes up through it stay, lines are never left out,
+// and the model is not touched.
+void GuiPhase1::planOfALevelLeavesOutTheStoreysBelow() {
+  Fixture f;QVERIFY(f.setUp(2000,1500));auto& m=f.window.modeler();
+  QVERIFY(m.setLevels({{"","1FL",0},{"","2FL",3000}}));
+  std::string l1,l2;
+  for(const auto& l:m.levels()) (l.name=="1FL"?l1:l2)=l.id;
+  const auto lower=m.createWalls({gp_Pnt(0,0,0),gp_Pnt(6000,0,0)},200,3000);QVERIFY(lower);          // 1FL .. 2FL
+  const auto upper=m.createWalls({gp_Pnt(0,0,3000),gp_Pnt(6000,0,3000)},200,2700);QVERIFY(upper);    // on 2FL
+  const auto floor=m.createSlab({gp_Pnt(0,0,0),gp_Pnt(3000,0,0),gp_Pnt(3000,4000,0),gp_Pnt(0,4000,0)},3000,200);QVERIFY(floor);
+  const doc::ObjectId beam=f.box(0,2000,6000,120,240);                      // a beam just under the floor
+  { gp_Trsf t;t.SetTranslation(gp_Vec(0,0,2760));QVERIFY(m.transform({beam},t,"Move")); }
+  const doc::ObjectId through=f.box(5000,3000,120,120,5700);                // a post through both storeys
+  const doc::ObjectId footing=f.box(0,3500,6000,400,300);                   // below the ground floor
+  { gp_Trsf t;t.SetTranslation(gp_Vec(0,0,-900));QVERIFY(m.transform({footing},t,"Move")); }
+  const auto line=m.createPolyline({gp_Pnt(0,5000,0),gp_Pnt(6000,5000,0)});QVERIFY(line);                 // drawn on the ground
+
+  f.vp->syncNow();
+  for(const auto& id:{lower->front(),upper->front(),*floor,beam,through,footing,*line}) QVERIFY(f.vp->isDisplayed(id));
+
+  // From the toolbar: the plan of 2FL.
+  auto* level=f.window.findChild<QToolButton*>(QStringLiteral("architecturePlanLevel"));QVERIFY(level);
+  auto* menu=level->menu();
+  QVERIFY(QMetaObject::invokeMethod(menu,"aboutToShow"));
+  auto* second=menu->findChild<QAction*>(QStringLiteral("architectureLevel_")+QString::fromStdString(l2));QVERIFY(second);
+  second->trigger();
+  QVERIFY(f.vp->planFloor() && std::abs(*f.vp->planFloor()-3000)<1e-9);
+  QVERIFY(!f.vp->isDisplayed(lower->front()));   // the wall of the storey below
+  QVERIFY(!f.vp->isDisplayed(footing));
+  QVERIFY(f.vp->isDisplayed(upper->front()));
+  QVERIFY(f.vp->isDisplayed(*floor));            // the floor itself
+  QVERIFY(f.vp->isDisplayed(beam));              // its beam (starts 240 under the floor)
+  QVERIFY(f.vp->isDisplayed(through));           // comes up through the floor
+  QVERIFY(f.vp->isDisplayed(*line));             // lines are never left out
+  QVERIFY2(f.window.statusText().contains(QStringLiteral("下の階は隠しています")),qPrintable(f.window.statusText()));
+  // Something made below while in the plan stays out of it as well.
+  const doc::ObjectId made=f.box(1000,1000,500,500,2000);
+  f.vp->syncNow();
+  QVERIFY(!f.vp->isDisplayed(made));
+
+  // The plan of 1FL: the ground floor's wall shows, the footing does not; above the cut is clipped, not hidden.
+  QVERIFY(QMetaObject::invokeMethod(menu,"aboutToShow"));
+  auto* first=menu->findChild<QAction*>(QStringLiteral("architectureLevel_")+QString::fromStdString(l1));QVERIFY(first);
+  first->trigger();
+  QVERIFY(f.vp->isDisplayed(lower->front()));
+  QVERIFY(f.vp->isDisplayed(made));
+  QVERIFY(!f.vp->isDisplayed(footing));
+
+  // Switched off in the menu: everything shows in the plan; on again: left out again.
+  QVERIFY(QMetaObject::invokeMethod(menu,"aboutToShow"));
+  auto* below=menu->findChild<QAction*>(QStringLiteral("architectureHideBelow"));QVERIFY(below && below->isChecked());
+  below->setChecked(false);
+  QVERIFY(!f.vp->planFloor());
+  QVERIFY(f.vp->isDisplayed(footing));
+  below->setChecked(true);
+  QVERIFY(!f.vp->isDisplayed(footing));
+
+  // Back to 3D: everything is shown again, and nothing of this changed the model.
+  f.vp->unlockView();
+  QVERIFY(!f.vp->planFloor());
+  for(const auto& id:{lower->front(),upper->front(),*floor,beam,through,footing,*line}) QVERIFY(f.vp->isDisplayed(id));
+  for(const auto& o:m.document().objects()) QVERIFY(o.visible);
 }
 
 void GuiPhase1::wallQuantityInputsComparisonSaveAndStaleModel() {

@@ -1332,9 +1332,13 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
       // Show this level as a floor plan: cut 1100 mm above the floor (a drawing convention),
       // set before the work plane so the toolbar label already names the cut.
       viewport_->setPlanCut(elevation + 1100);
+      // The storeys below are left out too (docs/90 G-03), unless switched off in this menu.
+      viewport_->setPlanFloor(hideBelowPlan_ ? std::optional<double>(elevation) : std::nullopt);
       viewport_->setWorkOffset(elevation, name);
       viewport_->setFocus();
-      setStatus(tr("%1 の高さ %2 で描きます（FL+1100 より上は隠しています。「3D」で戻ります）。壁・スラブ・柱・土台を選んで配置できます")
+      setStatus((hideBelowPlan_
+                     ? tr("%1 の高さ %2 で描きます（FL+1100 より上と、下の階は隠しています。「3D」で戻ります）。壁・スラブ・柱・土台を選んで配置できます")
+                     : tr("%1 の高さ %2 で描きます（FL+1100 より上は隠しています。「3D」で戻ります）。壁・スラブ・柱・土台を選んで配置できます"))
                     .arg(name, QString::fromStdString(units::formatLength(elevation, 0))));
     };
     menu->addAction(tr("地面（Z=0）"), this, [choose] { choose(0, tr("地面")); })
@@ -1351,6 +1355,20 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
         }
       });
     }
+    menu->addSeparator();
+    auto* below = menu->addAction(tr("下の階を隠す（床面から 400 より下で、床より上に出ない物）"));
+    below->setObjectName(QStringLiteral("architectureHideBelow"));
+    below->setCheckable(true);
+    below->setChecked(hideBelowPlan_);
+    below->setToolTip(tr("平面で、下の階の壁・柱や基礎を表示しません。床・床梁と、床を貫く通し柱などは残ります。"
+                         "線・通り芯・寸法は隠しません。モデルは変わりません"));
+    connect(below, &QAction::toggled, this, [this](bool on) {
+      hideBelowPlan_ = on;
+      // In a plan now: applies at once, at the floor being drawn on.
+      if (viewport_->planCut())
+        viewport_->setPlanFloor(on ? std::optional<double>(viewport_->workOffset()) : std::nullopt);
+      setStatus(on ? tr("平面では下の階を隠します") : tr("平面でも下の階を表示します"));
+    });
     menu->addSeparator();
     menu->addAction(findChild<QAction*>(QStringLiteral("editLevelsAction")));
     menu->addAction(findChild<QAction*>(QStringLiteral("createGridAction")));

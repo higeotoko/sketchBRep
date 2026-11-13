@@ -219,6 +219,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   // Aligns the selection on a world axis (0 x / 1 y / 2 z) to the first
   // selected object's min (-1) / centre (0) / max (1).
   bool alignSelection(int axis, int edge);
+  // In a plan of a level, the storeys below are left out (docs/90 G-03); a view preference.
+  bool hideBelowPlan_ = true;
   // Opening `index` (1, 2, ... as in Modeler::openings) of a host.
   bool resizeOpening(const doc::ObjectId& host, int index, double width, double height);
   // One opening to `offset` from the wall's left end and `sill` above its bottom; removing one.

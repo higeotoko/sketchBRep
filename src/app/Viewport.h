@@ -188,6 +188,16 @@ class Viewport : public QWidget {
   // plan view (3D or an elevation) removes it too.
   void setPlanCut(std::optional<double> z);
   std::optional<double> planCut() const { return planCutZ_; }
+  // A plan of one storey also leaves out the storeys below (docs/90 G-03): with the floor at
+  // `z`, shapes with faces that start more than `depth` below it and do not rise above it are
+  // not shown, picked or snapped to (the walls and posts of the storey below, the foundation).
+  // The floor itself, its beams, and whatever comes up through the floor stay. Lines, grids,
+  // dimensions and texts are never left out. View only: the model is not touched. nullopt
+  // shows everything again; removing the plan cut does that too.
+  void setPlanFloor(std::optional<double> z, double depth = 400.0);
+  std::optional<double> planFloor() const { return planFloorZ_; }
+  // Whether the object is on screen now (not hidden, by the model or by the view).
+  bool isDisplayed(const doc::ObjectId& id) const;
   // Door / window symbols of the openings the plan cut passes through (edges shown; 0 without a cut).
   std::size_t openingSymbolEdgeCount() const { return openingSymbolEdges_; }
   // Walls cut open (no cap) by the plan cut, so the columns inside show.
@@ -521,6 +531,10 @@ class Viewport : public QWidget {
   Handle(AIS_Shape) wallOutlines_;
   std::size_t wallOutlineEdges_ = 0;
   std::size_t wallCutCount_ = 0;
+  std::optional<double> planFloorZ_;
+  double planFloorDepth_ = 400.0;
+  bool belowPlanFloor(const doc::Object& o) const;
+  void resyncForPlanFloor(std::optional<double> before, double depthBefore);
   Handle(AIS_Shape) snapMarker_;
   Handle(AIS_Shape) inferenceLine_;
   Handle(AIS_Shape) referenceLine_;
