@@ -4047,6 +4047,7 @@ void MainWindow::deleteSelection() {
     opened |= o && o->kind() == doc::ObjectKind::Shell;
   }
   QString status = tr("削除しました");
+  if (outcome->openings > 0) status = tr("開口を %1 つふさぎました（壁はそのまま。ほかの開口の建具・寸法は変わりません）").arg(outcome->openings);
   if (!outcome->lines.empty()) status += tr("（面の輪郭は線として残っています）");
   if (outcome->merged > 0) status += tr("（%1 本の線を消して面をつなげました）").arg(outcome->merged);
   if (opened) status += tr("。開いた形状はそのまま編集を続けられます（編集 > 穴をふさぐ でソリッドに戻すこともできます）");

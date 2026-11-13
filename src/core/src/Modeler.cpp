@@ -2629,6 +2629,36 @@ struct FaceKey {
 Result<DeleteOutcome> Modeler::deleteSelection(const std::vector<DeleteTarget>& targets) {
   using R = Result<DeleteOutcome>;
   if (targets.empty()) return R::failure("Nothing selected to delete");
+  // Faces inside an opening (its jambs, head or sill) stand for the opening: deleting them
+  // removes that opening and the wall is whole again there (docs/90 G-01), instead of tearing
+  // those faces out of the wall. Only when nothing else is selected with them.
+  {
+    std::map<ObjectId, std::set<std::size_t>> byHost;
+    bool reveals = true;
+    for (const DeleteTarget& t : targets) {
+      if (t.whole || t.faces.empty() || !t.edges.empty()) reveals = false;
+      for (std::size_t i = 0; reveals && i < t.faces.size(); ++i) {
+        const auto index = openingOfFace(t.id, t.faces[i]);
+        if (index) byHost[t.id].insert(*index);
+        else reveals = false;
+      }
+      if (!reveals) break;
+    }
+    if (reveals && !byHost.empty()) {
+      DeleteOutcome out;
+      history_.beginGroup("Remove Opening");
+      for (const auto& [host, indices] : byHost) {
+        const Status removed = removeOpenings(host, std::vector<std::size_t>(indices.begin(), indices.end()));
+        if (!removed) {
+          history_.abortGroup();
+          return R::failure(removed.message());
+        }
+        out.openings += static_cast<int>(indices.size());
+      }
+      history_.endGroup();
+      return out;
+    }
+  }
   // 1. Everything located and described before anything changes.
   struct Plan {
     ObjectId id;
@@ -5260,6 +5290,34 @@ std::array<double, 4> hostExtent(const TopoDS_Shape& world, const gp_Vec& u) {
 
 Result<std::vector<Modeler::OpeningInfo>> Modeler::openings(const ObjectId& hostId) const {
   return openingsIn(document_, hostId);
+}
+
+std::optional<std::size_t> Modeler::openingOfFace(const ObjectId& hostId, const TopoDS_Face& worldFace) const {
+  const Object* host = document_.find(hostId);
+  if (!host || worldFace.IsNull()) return std::nullopt;
+  const std::vector<OpeningExtent> extents = openingExtents(*host, document_.worldTransform(*host));
+  if (extents.empty()) return std::nullopt;
+  std::vector<gp_Pnt> corners;
+  for (TopExp_Explorer v(worldFace, TopAbs_VERTEX); v.More(); v.Next())
+    corners.push_back(BRep_Tool::Pnt(TopoDS::Vertex(v.Current())));
+  if (corners.size() < 3) return std::nullopt;
+  const double tol = 10 * tolerance::kLinear;
+  for (const OpeningExtent& e : extents) {
+    // A face of the hole lies within the opening's outline, through the wall. The wall's own
+    // faces around the hole reach past it.
+    const gp_Vec u(gp::DZ().Crossed(e.normal));
+    bool inside = true, through = false;
+    double n0 = 1e300, n1 = -1e300;
+    for (const gp_Pnt& p : corners) {
+      const double d = gp_Vec(p.XYZ()).Dot(u), n = gp_Vec(p.XYZ()).Dot(gp_Vec(e.normal));
+      inside &= d >= e.u0 - tol && d <= e.u1 + tol && p.Z() >= e.z0 - tol && p.Z() <= e.z1 + tol;
+      n0 = std::min(n0, n);
+      n1 = std::max(n1, n);
+    }
+    through = n1 - n0 > tol;  // it runs through the wall, not along its face
+    if (inside && through) return e.index;
+  }
+  return std::nullopt;
 }
 
 Result<std::vector<std::size_t>> Modeler::openingIndices(const ObjectId& hostId,

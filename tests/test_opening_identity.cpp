@@ -15,6 +15,10 @@
 #include "sbr/doc/NativeFormat.h"
 #include "sbr/geom/Measure.h"
 
+#include <TopExp_Explorer.hxx>
+#include <TopoDS.hxx>
+#include <TopoDS_Face.hxx>
+
 using json = nlohmann::json;
 using sbr::api::CommandApi;
 
@@ -224,4 +228,42 @@ TEST(OpeningIdentity, IdsAndFittingsSurviveSaveAndLoad) {
   EXPECT_EQ(list[2]["fitting"]["type"], "sliding_double");
   b.ok("delete_openings", {{"host", wall}, {"openings", {list[0]["id"]}}});
   EXPECT_EQ(b.openings(wall)[1]["fitting"]["type"], "sliding_double");
+}
+
+TEST(OpeningIdentity, DeletingTheFacesInsideAnOpeningRemovesTheOpening) {
+  Api a;
+  const std::string wall = wallWithThreeWindows(a);
+  const json before = a.openings(wall);
+  a.ok("set_opening_fittings", {{"host", wall}, {"openings", {before[2]["id"]}}, {"fitting", {{"type", "window"}}}});
+  // The faces of the wall: those inside the middle window (x 2600..3400, z 900..2100).
+  const auto& m = a.modeler;
+  const sbr::doc::Object& object = *m.document().find(wall);
+  const TopoDS_Shape world = m.document().worldShape(object);
+  std::vector<TopoDS_Face> inside, outside;
+  for (TopExp_Explorer e(world, TopAbs_FACE); e.More(); e.Next()) {
+    const TopoDS_Face f = TopoDS::Face(e.Current());
+    const auto index = m.openingOfFace(wall, f);
+    if (index && *index == 2) inside.push_back(f);
+    if (!index) outside.push_back(f);
+  }
+  EXPECT_EQ(inside.size(), 4u);   // two jambs, head and sill
+  EXPECT_EQ(outside.size(), 6u);  // the wall's own six faces belong to no opening
+
+  // One of them selected with a wall face: the ordinary delete (not an opening).
+  // One jamb on its own: the whole opening goes, and only that one.
+  sbr::doc::DeleteTarget target;
+  target.id = wall;
+  target.faces = {inside.front()};
+  const auto outcome = a.modeler.deleteSelection({target});
+  ASSERT_TRUE(outcome) << outcome.error();
+  EXPECT_EQ(outcome->openings, 1);
+  EXPECT_TRUE(outcome->removed.empty());
+  const json after = a.openings(wall);
+  ASSERT_EQ(after.size(), 2u);
+  EXPECT_EQ(after[0]["id"], before[0]["id"]);
+  EXPECT_EQ(after[1]["id"], before[2]["id"]);
+  EXPECT_EQ(after[1]["fitting"]["type"], "window");
+  EXPECT_NEAR(a.volume(wall), kWall - 2 * kHole, 1);
+  ASSERT_TRUE(a.modeler.undo());  // one step
+  EXPECT_EQ(a.openings(wall).size(), 3u);
 }

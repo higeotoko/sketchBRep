@@ -1820,14 +1820,17 @@ const std::vector<CommandDef>& commands() {
        "'elements' = [{\"id\": object, \"faces\": [face selectors], \"edges\": [edge selectors]}] delete "
        "only those faces / edges: a line's edges go alone (the rest of the line stays), a line dividing a flat "
        "face joins the faces, other edges take the faces they bound with them, faces go and leave their edges "
-       "as lines. All is located first, then done as one undo step; on a failure nothing changes. Returns "
-       "removed, lines, merged.",
+       "as lines. Faces inside a wall's opening (its jambs, head, sill), selected on their own, stand for "
+       "the opening: it is removed and the wall is whole again there (as delete_openings). All is located "
+       "first, then done as one undo step; on a failure nothing changes. Returns removed, lines, merged, "
+       "openings.",
        SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}},
                "elements": {"type": "array"}}}),
        [](doc::Modeler& m, const json& a) {
          const std::vector<doc::DeleteTarget> targets = selectionTargets(m, a);
          const doc::DeleteOutcome out = must(m.deleteSelection(targets));
-         return json{{"removed", out.removed}, {"lines", out.lines}, {"merged", out.merged}};
+         return json{{"removed", out.removed}, {"lines", out.lines}, {"merged", out.merged},
+                     {"openings", out.openings}};
        }},
 
       // ---- view state (kept in the file, not in undo)

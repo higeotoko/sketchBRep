@@ -53,6 +53,7 @@ struct DeleteOutcome {
   std::vector<ObjectId> removed;  // objects that are gone
   std::vector<ObjectId> lines;    // lines left by deleted faces / pieces of lines
   int merged = 0;                 // dividing lines taken away (faces joined)
+  int openings = 0;               // openings removed (their walls made whole there)
 };
 
 class Modeler {
@@ -421,6 +422,9 @@ class Modeler {
   // One undo step; the parameters stay editable.
   Status setOpeningSize(const ObjectId& host, const std::vector<std::size_t>& indices,
                         std::optional<double> width, std::optional<double> height, bool keepCenter = false);
+  // The opening a face of `host` belongs to: one of the faces inside the hole (its jambs, head
+  // or sill), given in world coordinates. Those faces stand for the opening when picked.
+  std::optional<std::size_t> openingOfFace(const ObjectId& host, const TopoDS_Face& worldFace) const;
   // The numbers of the openings with these ids (OpeningInfo::id), in the order given.
   Result<std::vector<std::size_t>> openingIndices(const ObjectId& host, const std::vector<std::string>& ids) const;
   // Moves one opening within its wall by the part of `worldDelta` that lies in the wall's face
