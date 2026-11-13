@@ -129,3 +129,25 @@ TEST_F(QuarterBalance, RatiosOfExactlyOneAreNotOverOne) {
   EXPECT_EQ(r["basis"], "壁率比が0.5以上か");
   EXPECT_DOUBLE_EQ(r["comparison_tolerance"].get<double>(), 1e-10);
 }
+
+TEST_F(QuarterBalance, BlockersOfTheWholeCalculationAlsoHoldForTheSideParts) {
+  // Balanced walls: passes when everything is in order.
+  const json walls = {wall("a", "X", {0, 0}, {2000, 0}), wall("b", "X", {0, 4000}, {2000, 4000})};
+  auto in = inputs(walls);
+  EXPECT_EQ(row(in, "1", "X")["status"], "pass");
+  // No basis for the loads and areas: the wall quantity is not evaluated, so neither is this.
+  in.erase("input_basis");
+  EXPECT_EQ(row(in, "1", "X")["status"], "not_evaluated");
+  EXPECT_TRUE(row(in, "1", "X")["wall_ratio"].is_null());
+  // A table that is not in force on the date of the calculation.
+  const auto early = construction::checkWallQuantity(
+      m.document(), json{{"inputs", inputs(walls)}, {"as_of", "2025-03-31"}}.dump());
+  ASSERT_TRUE(early) << early.error();
+  const json earlyReport = json::parse(*early);
+  ASSERT_EQ(earlyReport.at("quarter_balance").size(), 2u);
+  for (const auto& r : earlyReport.at("quarter_balance")) EXPECT_EQ(r["status"], "not_evaluated");
+  // Inputs saved for a frame that is gone.
+  in = inputs(walls);
+  in["frame"] = "no-such-group";
+  EXPECT_EQ(row(in, "1", "X")["status"], "not_evaluated");
+}

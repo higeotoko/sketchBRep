@@ -502,23 +502,17 @@ Result<std::string> checkFrame(const doc::Document& d, const std::string& text,
            {{"pair_budget", budget}});
     }
     emit("TMB-04", {}, "not_evaluated", "spacing_reference_missing", "柱間隔の目安と出典の表が未登録です");
-    if (wanted.count("LAT-01")) {
+    if (wanted.count("LAT-01") || wanted.count("LAT-02")) {
       json args = json::object();
       if (!scope.empty()) args["frame"] = scope;
       const auto checked = checkWallQuantity(d, args.dump());
       if (!checked) {
-        emit("LAT-01", {}, "not_evaluated", "wall_inputs_invalid", checked.error());
+        for (const auto* rule : {"LAT-01", "LAT-02"})
+          emit(rule, {}, "not_evaluated", "wall_inputs_invalid", checked.error());
         complete = false;
       } else {
         const auto report = json::parse(*checked);
-        for (const auto& row : report.at("rows")) {
-          const auto status = row.at("status").get<std::string>();
-          auto message = row.at("floor").get<std::string>() + " " + row.at("direction").get<std::string>();
-          for (const auto& reason : row.at("reasons")) message += "／" + reason.get<std::string>();
-          message += " " + report.at("notice").get<std::string>();
-          emit("LAT-01", {}, status,
-               status == "not_evaluated" ? "wall_inputs_incomplete" : "wall_quantity_comparison",
-               message, row);
+        auto annotate = [&] {
           results.back()["wall_table"] = report.at("table_snapshot");
           results.back()["notice"] = report.at("notice");
           results.back()["calculation_checker_version"] = report.at("checker_version");
@@ -527,12 +521,38 @@ Result<std::string> checkFrame(const doc::Document& d, const std::string& text,
             results.back()["source"] = report.at("table_snapshot").at("source");
             results.back()["normative"] = report.at("table_snapshot").at("normative");
           }
+        };
+        auto describe = [&](const json& row) {
+          auto message = row.at("floor").get<std::string>() + " " + row.at("direction").get<std::string>();
+          for (const auto& reason : row.at("reasons")) message += "／" + reason.get<std::string>();
+          return message;
+        };
+        if (wanted.count("LAT-01"))
+          for (const auto& row : report.at("rows")) {
+            const auto status = row.at("status").get<std::string>();
+            emit("LAT-01", {}, status,
+                 status == "not_evaluated" ? "wall_inputs_incomplete" : "wall_quantity_comparison",
+                 describe(row) + " " + report.at("notice").get<std::string>(), row);
+            annotate();
+          }
+        // 四分割法: the side-part comparison of the same calculation, per storey and direction.
+        if (wanted.count("LAT-02")) {
+          for (const auto& row : report.at("quarter_balance")) {
+            const auto status = row.at("status").get<std::string>();
+            auto message = describe(row);
+            if (row.contains("basis")) message += "／" + row.at("basis").get<std::string>();
+            emit("LAT-02", {}, status,
+                 status == "not_evaluated" ? "quarter_inputs_incomplete" : "quarter_balance_comparison",
+                 message + " " + report.at("notice").get<std::string>(), row);
+            annotate();
+            results.back()["quarter_basis"] = report.at("quarter_balance_basis");
+          }
+          if (report.at("quarter_balance").empty())
+            emit("LAT-02", {}, "not_evaluated", "quarter_inputs_incomplete", "計算する階が未登録です");
         }
       }
     }
-    for (const auto& id : {"LAT-02", "LAT-03"})
-      emit(id, {}, "not_evaluated", "calculation_not_implemented",
-           "四分割法・N値の検査器と根拠表は未実装です");
+    emit("LAT-03", {}, "not_evaluated", "calculation_not_implemented", "N値の検査器と根拠表は未実装です");
     emit("SEC-01", {}, "not_applicable", "outside_stage_scope", "断面照査は今回の対象外です");
     // An empty selection cannot earn a green rule result.
     if (selectedCount == 0)

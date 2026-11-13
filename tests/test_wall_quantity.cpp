@@ -320,6 +320,39 @@ TEST_F(WallQuantity, ReadOnlyApiRevisionCsvAndDiagnosticCarrySameBasis) {
   EXPECT_EQ(serializeDocument(m.document()), saved);
   EXPECT_EQ(m.history().revision(), revision);
 }
+TEST_F(WallQuantity, FrameCheckReportsTheQuarterBalanceAsLat02) {
+  // LAT-02 reports the side-part comparison of the same calculation; without the plan extent it
+  // says why it is not evaluated, never "not implemented".
+  ASSERT_TRUE(m.setWallCalculation(sample().dump()));
+  const auto quarter = construction::checkFrame(m.document(), R"({"rules":["LAT-02"]})");
+  ASSERT_TRUE(quarter);
+  const auto quarterRows = json::parse(*quarter)["results"];
+  ASSERT_EQ(quarterRows.size(), 2u);
+  for (const auto& row : quarterRows) {
+    EXPECT_EQ(row["rule"], "LAT-02");
+    EXPECT_EQ(row["status"], "not_evaluated");
+    EXPECT_EQ(row["reason_code"], "quarter_inputs_incomplete");
+    EXPECT_TRUE(row.contains("quarter_basis"));
+  }
+  auto planned = sample();
+  planned["floors"][0]["plan"] = {{"x", {0, 10000}}, {"y", {0, 5000}}};
+  planned["walls"] = json::array({wall("x0", "X", 3000), wall("y0", "Y", 3000), wall("x1", "X", 3000)});
+  planned["walls"][2]["start"] = {0, 5000};
+  planned["walls"][2]["end"] = {3000, 5000};
+  ASSERT_TRUE(m.setWallCalculation(planned.dump()));
+  const auto judged = construction::checkFrame(m.document(), R"({"rules":["LAT-*"]})");
+  ASSERT_TRUE(judged);
+  std::string x, y, n;
+  const json judgedReport = json::parse(*judged);
+  for (const auto& row : judgedReport["results"]) {
+    if (row["rule"] == "LAT-03") n = row["status"].get<std::string>();
+    if (row["rule"] != "LAT-02") continue;
+    (row["measured"]["direction"] == "X" ? x : y) = row["status"].get<std::string>();
+  }
+  EXPECT_EQ(x, "pass");  // the same walls at both Y ends
+  EXPECT_EQ(y, "fail");  // a wall at one X end only
+  EXPECT_EQ(n, "not_evaluated");  // N値 stays unimplemented
+}
 TEST_F(WallQuantity, GeometrySheetsCarryBasisDatesButDoNotClaimWallVerdict) {
   const auto box = m.createRectangle(geom::SketchPlane::ground(), 2000, 2000);
   ASSERT_TRUE(box);

@@ -123,7 +123,10 @@ struct Wall {
 // earthquake requirement per floor area (Lw, which replaced 令46条4項 表2). Storeys are counted per
 // side part: a part without (or with only part of) the upper floor over it needs a one-storey Lw that
 // the inputs do not give, so it is not evaluated. Pass: both 壁量充足率 > 1, or 壁率比 >= 0.5.
-json quarterBalance(const json& in, const json& rows, const std::vector<Wall>& walls) {
+// blockers: reasons that leave the whole calculation unevaluated (table not in force on the
+// date, another frame, no basis for the inputs). They hold for this comparison as well.
+json quarterBalance(const json& in, const json& rows, const std::vector<Wall>& walls,
+                    const std::vector<std::string>& blockers) {
   json out = json::array();
   const auto& floors = in.at("floors");
   auto rect = [](const json& f) -> std::optional<std::array<double, 4>> {
@@ -139,6 +142,7 @@ json quarterBalance(const json& in, const json& rows, const std::vector<Wall>& w
                   {"strips", json::array()}, {"wall_ratio", nullptr}, {"status", "not_evaluated"},
                   {"reasons", json::array()}};
       auto reason = [&](const std::string& s) { row["reasons"].push_back(s); };
+      for (const auto& blocker : blockers) reason(blocker);
       const json* q = nullptr;
       for (const auto& r : rows)
         if (r.at("floor") == f.at("id") && r.at("direction") == direction) q = &r;
@@ -539,6 +543,10 @@ Result<std::string> checkWallQuantity(const doc::Document& d, const std::string&
     bool complete = true;
     for (const auto& row : rows)
       if (row.at("status") == "not_evaluated") complete = false;
+    std::vector<std::string> blockers;
+    if (future) blockers.push_back("表の施行日・確認日が計算日より後です");
+    if (!scoped) blockers.push_back("計算対象の架構が異なるか削除されました");
+    if (in.value("input_basis", std::string()).empty()) blockers.push_back("荷重・面積・区域の入力根拠が未記入です");
     json out = {{"system", "timber"},
                 {"checker_version", kVersion},
                 {"as_of", date},
@@ -546,7 +554,7 @@ Result<std::string> checkWallQuantity(const doc::Document& d, const std::string&
                 {"inputs", in},
                 {"rows", rows},
                 {"walls", parts},
-                {"quarter_balance", quarterBalance(in, rows, walls)},
+                {"quarter_balance", quarterBalance(in, rows, walls, blockers)},
                 {"quarter_balance_basis",
                  {{"source", "平成12年建設省告示第1352号（国交省掲載の改正平成19年告示1227号までの版）"},
                   {"url", "https://www.mlit.go.jp/notice/noticedata/pdf/201703/00006444.pdf"},
