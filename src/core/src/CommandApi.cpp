@@ -2497,10 +2497,41 @@ const std::vector<CommandDef>& commands() {
       {"get_levels", "The levels (GL, 1FL..., docs/45): [{id, name, elevation}] by elevation (world z, mm).",
        SCHEMA({"type": "object", "properties": {}}),
        [](doc::Modeler& m, const json&) { return json{{"levels", levelsJson(m)}}; }},
+      {"attach_to_levels",
+       "Put walls and slabs ('ids', made by create_wall / create_slab) on levels and keep them there: "
+       "'base' (walls: the foot) and / or 'top' (walls: the top; slabs: the top face) name a level by id "
+       "or name; null lets that end go. A wall's foot moves to 'base' (the wall keeps its height, or its "
+       "top when that is on a level); its top moves to 'top' (the height changes). Afterwards set_levels "
+       "moves them with their levels; openings keep their sill heights. Walls and slabs made at a "
+       "level's height are attached from the start (attributes base_level / top_level hold the level "
+       "ids). Refused as a whole when a wall's top would not be above its foot. One undo step.",
+       SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}},
+               "base": {"type": ["string", "null"]}, "top": {"type": ["string", "null"]}},
+               "required": ["ids"]}),
+       [](doc::Modeler& m, const json& a) {
+         auto end = [&](const char* key) -> std::optional<std::string> {
+           if (!a.contains(key)) return std::nullopt;
+           if (a.at(key).is_null()) return std::string();
+           if (!a.at(key).is_string()) throw ApiError(std::string("'") + key + "' must be a level id, a name or null");
+           return a.at(key).get<std::string>();
+         };
+         must(m.attachToLevels(ids(a, "ids"), end("base"), end("top")));
+         json out = json::array();
+         for (const ObjectId& id : ids(a, "ids")) {
+           const auto& attrs = object(m, id).attributes;
+           auto level = [&](const char* key) -> json {
+             const auto it = attrs.find(key);
+             return it == attrs.end() ? json(nullptr) : json(it->second);
+           };
+           out.push_back({{"id", id}, {"base_level", level("base_level")}, {"top_level", level("top_level")}});
+         }
+         return json{{"objects", out}};
+       }},
       {"set_levels",
        "Replace the levels: 'levels' [{id (keep a level; leave out for a new one), name, elevation (world z, "
        "mm)}]; levels not listed are taken away. Members placed on a grid with levels (place_members_on_grid "
-       "base_level / top_level) move with their levels. One undo step. Returns the levels.",
+       "base_level / top_level) and walls / slabs on levels (attach_to_levels) move with their levels. One "
+       "undo step. Returns the levels.",
        SCHEMA({"type": "object", "properties": {"levels": {"type": "array"}}, "required": ["levels"]}),
        [](doc::Modeler& m, const json& a) {
          std::vector<doc::FloorLevel> levels;

@@ -39,6 +39,7 @@ add_executable(sbr_core_tests
   test_frame_interior_sills.cpp
   test_opening_symbols.cpp
   test_opening_identity.cpp
+  test_level_attachment.cpp
   test_wall_types.cpp
   test_structural_diagnostics.cpp
   test_structure_assist.cpp

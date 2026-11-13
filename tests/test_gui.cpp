@@ -344,6 +344,7 @@ class GuiPhase1 : public QObject {
   void timberStairwellRegenerationMatchesDialogAndExports();
   void frameChecksUpdateAndDiscardStaleResults();
   void timberQuantitiesAndFramingExport();
+  void wallAndSlabFollowTheirLevelsFromThePanel();
   void wallQuantityInputsComparisonSaveAndStaleModel();
   void panelDragPreviewKeepsTheModelViewStill();
   void panelMotionSettlesAfterNativeDock();
@@ -10386,6 +10387,69 @@ void GuiPhase1::frameChecksUpdateAndDiscardStaleResults() {
   const auto capture=qEnvironmentVariable("SBR_CHECK_CAPTURE");
   if(!capture.isEmpty()) QVERIFY(panel->grab().save(capture));
   panel->hide();
+}
+
+// Walls and slabs drawn at a level stand on it (docs/90 G-02): the panel shows the levels,
+// changing a storey height takes them along, and a level chosen in the panel moves that end.
+void GuiPhase1::wallAndSlabFollowTheirLevelsFromThePanel() {
+  Fixture f;QVERIFY(f.setUp());auto& m=f.window.modeler();
+  QVERIFY(m.setLevels({{"","1FL",0},{"","2FL",3000},{"","RFL",6000}}));
+  std::string l1,l2,lr;
+  for(const auto& l:m.levels()) (l.name=="1FL"?l1:l.name=="2FL"?l2:lr)=l.id;
+  const auto walls=m.createWalls({gp_Pnt(0,100,0),gp_Pnt(6000,100,0)},200,3000);QVERIFY(walls && walls->size()==1);
+  const auto slab=m.createSlab({gp_Pnt(0,0,0),gp_Pnt(6000,0,0),gp_Pnt(6000,4000,0),gp_Pnt(0,4000,0)},3000,200);QVERIFY(slab);
+  const doc::ObjectId wall=walls->front();
+  auto top=[&](const doc::ObjectId& id){return geom::exactBounds(m.document().worldShape(*m.document().find(id))).CornerMax().Z();};
+  auto bottom=[&](const doc::ObjectId& id){return geom::exactBounds(m.document().worldShape(*m.document().find(id))).CornerMin().Z();};
+  f.vp->syncNow();
+  f.window.setSelection({wall});
+  QApplication::processEvents();
+  auto* base=f.window.findChild<QComboBox*>(QStringLiteral("levelBase"));QVERIFY(base);
+  auto* upper=f.window.findChild<QComboBox*>(QStringLiteral("levelTop"));QVERIFY(upper);
+  QCOMPARE(base->currentData().toString(),QString::fromStdString(l1));   // attached when drawn
+  QCOMPARE(upper->currentData().toString(),QString::fromStdString(l2));
+  // The storey height changes: the wall's top and the slab go with 2FL.
+  QVERIFY(m.setLevels({{l1,"1FL",0},{l2,"2FL",3200},{lr,"RFL",6000}}));
+  QVERIFY(std::abs(top(wall)-3200)<1e-6);
+  QVERIFY(std::abs(top(*slab)-3200)<1e-6 && std::abs(bottom(*slab)-3000)<1e-6);
+  QVERIFY(m.undo());
+  QVERIFY(std::abs(top(wall)-3000)<1e-6);
+  // The top put on the roof level in the panel: the wall reaches it now, one undo step.
+  const auto steps=m.history().undoCount();
+  const int roof=upper->findData(QString::fromStdString(lr));QVERIFY(roof>0);
+  upper->setCurrentIndex(roof);
+  emit upper->activated(roof);
+  QTRY_VERIFY(std::abs(top(wall)-6000)<1e-6);
+  QCOMPARE(m.history().undoCount(),steps+1);
+  QVERIFY(std::abs(bottom(wall))<1e-6);
+  QVERIFY2(f.window.lastError().isEmpty(),qPrintable(f.window.lastError()));
+  // Let go of the top: it stays where it is and no longer follows.
+  QApplication::processEvents();
+  upper=f.window.findChild<QComboBox*>(QStringLiteral("levelTop"));QVERIFY(upper);
+  QCOMPARE(upper->currentData().toString(),QString::fromStdString(lr));
+  upper->setCurrentIndex(0);
+  emit upper->activated(0);
+  QTRY_VERIFY(!m.document().find(wall)->attributes.count("top_level"));
+  QVERIFY(m.setLevels({{l1,"1FL",0},{l2,"2FL",3000},{lr,"RFL",6500}}));
+  QVERIFY(std::abs(top(wall)-6000)<1e-6);
+  // A slab shows its one level.
+  f.window.setSelection({*slab});
+  QApplication::processEvents();
+  QVERIFY(!f.window.findChild<QComboBox*>(QStringLiteral("levelBase")));
+  auto* face=f.window.findChild<QComboBox*>(QStringLiteral("levelTop"));QVERIFY(face);
+  QCOMPARE(face->currentData().toString(),QString::fromStdString(l2));
+  // A refusal (the top below the foot) changes nothing and is reported.
+  f.window.setSelection({wall});
+  QApplication::processEvents();
+  QVERIFY(m.attachToLevels({wall},std::optional<std::string>(l2),std::nullopt));  // foot on 2FL
+  QApplication::processEvents();
+  upper=f.window.findChild<QComboBox*>(QStringLiteral("levelTop"));QVERIFY(upper);
+  const int ground=upper->findData(QString::fromStdString(l1));QVERIFY(ground>0);
+  const double before=top(wall);
+  upper->setCurrentIndex(ground);
+  emit upper->activated(ground);
+  QTRY_VERIFY(!f.window.lastError().isEmpty());
+  QVERIFY(std::abs(top(wall)-before)<1e-6);
 }
 
 void GuiPhase1::wallQuantityInputsComparisonSaveAndStaleModel() {

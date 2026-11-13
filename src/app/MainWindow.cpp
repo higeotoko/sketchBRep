@@ -660,6 +660,21 @@ void MainWindow::buildUi() {
               if (!report(modeler_.setCurvePoints(id, points))) refreshPanels();
             });
           });
+  connect(panel_, &PropertiesPanel::levelAttachmentEdited, this,
+          [this](const doc::ObjectId& id, bool top, const QString& level) {
+            QTimer::singleShot(0, this, [this, id, top, level] {
+              const std::optional<std::string> value = level.toStdString();
+              const Status s = top ? modeler_.attachToLevels({id}, std::nullopt, value)
+                                   : modeler_.attachToLevels({id}, value, std::nullopt);
+              if (!s) {
+                reportError(tr("レベルに付けられません: %1").arg(userMessage(QString::fromStdString(s.message()))));
+                refreshPanels();
+              } else {
+                setStatus(level.isEmpty() ? tr("レベルから外しました（今の位置のまま）")
+                                          : tr("レベルに付けました。レベルの高さを変えると付いてきます"));
+              }
+            });
+          });
   connect(panel_, &PropertiesPanel::wallTypeEdited, this, [this](const doc::ObjectId& id, const QString& type) {
     QTimer::singleShot(0, this, [this, id, type] {
       if (!setWallTypeOfWalls(id, type.toStdString())) refreshPanels();

@@ -437,6 +437,18 @@ class Modeler {
   // Removes openings: the wall is whole again there. Their fittings go with them; the other
   // openings keep their ids, sizes and fittings. One undo step.
   Status removeOpenings(const ObjectId& host, const std::vector<std::size_t>& indices);
+  // Walls and slabs on levels (docs/90 G-02). A wall made by its tool stands on a level
+  // (attribute "base_level") and may reach up to one ("top_level"); a slab's top lies on one
+  // ("top_level"). The values are level ids. When a level's height changes, what stands on it
+  // moves by as much and a wall reaching up to it grows or shrinks; openings keep their sill
+  // heights. Walls and slabs get these when they are made at a level's height; drawn lines
+  // and pushed shapes never do.
+  // attachToLevels sets them by hand: `base` / `top` name a level (id or name) to put that
+  // end on it now and keep it there, "" lets it go, nullopt leaves it as it is. A wall whose
+  // top is on a level keeps its top when its foot is moved to another one. One undo step;
+  // refused as a whole when a wall would end up with no height or cannot be rebuilt.
+  Status attachToLevels(const std::vector<ObjectId>& ids, std::optional<std::string> base,
+                        std::optional<std::string> top);
   // Levels (floors): each object (topmost of `ids`, all top-level objects
   // when empty) gets attribute `key` = the name of the highest level whose
   // elevation is at or below its lowest point. Objects below every level

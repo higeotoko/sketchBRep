@@ -54,6 +54,9 @@ class PropertiesPanel : public QWidget {
   void openingRemoved(const doc::ObjectId& id, int index);
   // A wall's build-up (WallTypes.h id) chosen in the panel.
   void wallTypeEdited(const doc::ObjectId& id, const QString& type);
+  // A wall's foot (top = false) or a wall's / slab's top put on the level `level` (its id;
+  // empty: let go of its level).
+  void levelAttachmentEdited(const doc::ObjectId& id, bool top, const QString& level);
   void lockToggled(const doc::ObjectId& id, bool locked);
   // The object's material picked from the library ("" = inherit).
   void materialAssigned(const doc::ObjectId& id, const std::string& materialId);

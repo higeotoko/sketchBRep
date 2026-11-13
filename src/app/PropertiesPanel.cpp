@@ -26,6 +26,7 @@
 #include <QVBoxLayout>
 
 #include <nlohmann/json.hpp>
+#include "sbr/Units.h"
 #include "sbr/WallTypes.h"
 #include "sbr/OpeningSymbols.h"
 #include "sbr/geom/Measure.h"
@@ -425,6 +426,48 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
     addAction(tr("軸…"), tr("原点と赤軸の向きを決め直す（どの配置も動きません）"), QStringLiteral("axes"));
     h->addStretch();
     form_->addRow(actions);
+  }
+
+  // The levels a wall or a slab is on (docs/90 G-02): it follows them when a storey height
+  // changes. Choosing a level puts that end on it now.
+  if (const doc::Object* o = modeler.document().find(id);
+      o && o->attributes.count("kind") && (o->attributes.at("kind") == "wall" || o->attributes.at("kind") == "slab") &&
+      !modeler.levels().empty()) {
+    const bool wall = o->attributes.at("kind") == "wall";
+    auto row = [&](bool top, const QString& label, const QString& tip) {
+      auto* level = new QComboBox;
+      level->setObjectName(top ? QStringLiteral("levelTop") : QStringLiteral("levelBase"));
+      level->addItem(tr("なし（レベルに付けない）"), QString());
+      for (const doc::FloorLevel& l : modeler.levels())
+        level->addItem(tr("%1（%2）").arg(QString::fromStdString(l.name),
+                                        QString::fromStdString(units::formatLength(l.elevation))),
+                       QString::fromStdString(l.id));
+      const auto current = o->attributes.find(top ? "top_level" : "base_level");
+      const int at = current == o->attributes.end() ? 0 : level->findData(QString::fromStdString(current->second));
+      if (at < 0) {
+        // Its level was taken away: it stays where it is, and says so.
+        level->insertItem(1, tr("（削除されたレベル）"), QString::fromStdString(current->second));
+        level->setCurrentIndex(1);
+      } else {
+        level->setCurrentIndex(at);
+      }
+      level->setToolTip(tip);
+      connect(level, &QComboBox::activated, this, [this, id, top, level] {
+        emit levelAttachmentEdited(id, top, level->currentData().toString());
+      });
+      form_->addRow(label, level);
+    };
+    if (wall) {
+      row(false, tr("下端のレベル"),
+          tr("壁の足元を、このレベルに付けます。選ぶと足元がその高さに動き、あとでレベルの高さを変えると付いてきます。"
+             "上端がレベルに付いている壁は、上端をそのままにして伸び縮みします"));
+      row(true, tr("上端のレベル"),
+          tr("壁の上端を、このレベルに付けます。選ぶと高さがそのレベルまでになり、階高を変えると伸び縮みします。"
+             "「なし」の壁は、高さを保ったまま足元と一緒に動きます。開口の腰高は変わりません"));
+    } else {
+      row(true, tr("上面のレベル"),
+          tr("床の上面を、このレベルに付けます。選ぶと上面がその高さに動き、あとでレベルの高さを変えると付いてきます"));
+    }
   }
 
   // A wall's build-up on its drawn line (timber walls).

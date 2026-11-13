@@ -680,6 +680,11 @@ double levelHeight(const std::vector<FloorLevel>& levels, const std::string& id,
   return 0.0;
 }
 
+// Walls and slabs on levels (docs/90 G-02) after the levels go from `before` to `after`;
+// defined with the wall helpers below.
+void levelUp(const Document& document, ChangeSet& changes, const RegenContext& context,
+             const std::vector<FloorLevel>& before, const std::vector<FloorLevel>& after);
+
 // Members pinned to grid crossings (docs/43) and levels (docs/45) after
 // `changes` (and the levels going from `levelsBefore` to `levelsAfter`):
 // each end moves by as much as its crossing and its level did. A member
@@ -878,6 +883,7 @@ Status Modeler::setLevels(std::vector<FloorLevel> levels) {
   if (after == before) return Status::success();
   ChangeSet changes(document_);
   pinUp(document_, changes, document_.regenContext(), before.levels, after.levels);
+  levelUp(document_, changes, document_.regenContext(), before.levels, after.levels);
   Command command = changes.build("Edit Levels");
   command.settings = SettingsDelta{before, after};
   history_.execute(std::move(command));
@@ -5575,7 +5581,136 @@ std::optional<std::pair<double, double>> meet(const gp_Pnt& a, const gp_Dir& da,
   const double ex = b.X() - a.X(), ey = b.Y() - a.Y();
   return std::make_pair((ex * db.Y() - ey * db.X()) / den, (ex * da.Y() - ey * da.X()) / den);
 }
+
+// --- walls and slabs on levels (docs/90 G-02) ---------------------------------------------
+constexpr const char* kBaseLevel = "base_level";
+constexpr const char* kTopLevel = "top_level";
+
+std::string attributeText(const Object& o, const char* key) {
+  const auto it = o.attributes.find(key);
+  return it == o.attributes.end() ? std::string() : it->second;
+}
+
+// The level at height z, if any: one named "...FL" first (GL and 1FL may share a height).
+const FloorLevel* levelAtHeight(const std::vector<FloorLevel>& levels, double z) {
+  const FloorLevel* found = nullptr;
+  for (const FloorLevel& l : levels) {
+    if (std::abs(l.elevation - z) > 1e-6) continue;
+    const bool floor = l.name.size() >= 2 && l.name.compare(l.name.size() - 2, 2, "FL") == 0;
+    if (!found || floor) found = &l;
+    if (floor) break;
+  }
+  return found;
+}
+
+// Moves a wall's foot by `dBase` and its top by `dTop` (world Z; its openings stay at their
+// height above the foot), or a slab as a whole by `dTop`. `was` is the object in the document,
+// `o` the copy being changed. False (and `o` is not to be used) when a wall would be left
+// without height, is no longer the pushed-up rectangle its tool made, or cannot be rebuilt.
+bool shiftOnLevels(const Document& document, const Object& was, Object& o, double dBase, double dTop,
+                   const RegenContext& context) {
+  const bool wall = attributeText(was, "kind") == "wall";
+  const double move = wall ? dBase : dTop;
+  if (std::abs(move) > 1e-9) {
+    gp_Trsf t;
+    t.SetTranslation(gp_Vec(0, 0, move).Transformed(document.parentTransform(was).Inverted()));
+    o.transform = t * o.transform;
+  }
+  const double grow = wall ? dTop - dBase : 0.0;
+  if (std::abs(grow) < 1e-9) return true;
+  const auto band = wallBand(document, was);
+  if (!band) return false;
+  Recipe recipe = band->recipe;
+  auto& push = std::get<ExtrudeOp>(recipe.modifiers.front());
+  const double height = std::abs(push.distance) + grow;
+  if (height < tolerance::kMinDimension) return false;
+  push.distance = std::copysign(height, push.distance);
+  if (band->path.empty()) o.recipe = std::move(recipe);
+  else replaceOperand(o.recipe, band->path, 0, std::move(recipe));
+  return static_cast<bool>(rebuild(o, context));
+}
+
+void levelUp(const Document& document, ChangeSet& changes, const RegenContext& context,
+             const std::vector<FloorLevel>& before, const std::vector<FloorLevel>& after) {
+  auto moved = [&](const std::string& level) {
+    if (level.empty()) return 0.0;
+    bool had = false, has = false;
+    const double from = levelHeight(before, level, had), to = levelHeight(after, level, has);
+    return had && has ? to - from : 0.0;  // a level that is gone: what stood on it stays put
+  };
+  std::vector<ObjectId> ids;
+  for (const Object& o : document.objects())
+    if ((o.attributes.count(kBaseLevel) || o.attributes.count(kTopLevel)) && !changes.erased(o.id)) ids.push_back(o.id);
+  for (const ObjectId& id : ids) {
+    const Object* was = document.find(id);
+    if (!was || was->locked) continue;
+    const std::string base = attributeText(*was, kBaseLevel), top = attributeText(*was, kTopLevel);
+    const double dBase = moved(base);
+    // A top that is on no level goes with the foot: the wall keeps its height.
+    const double dTop = top.empty() ? dBase : moved(top);
+    if (std::abs(dBase) < 1e-9 && std::abs(dTop) < 1e-9) continue;
+    const Object* pending = changes.pending(id);
+    Object o = pending ? *pending : *was;
+    if (shiftOnLevels(document, *was, o, dBase, dTop, context)) {
+      changes.modify(o);
+      continue;
+    }
+    // The height could not follow (an edited wall, or it would vanish): the foot still does.
+    Object rigid = pending ? *pending : *was;
+    if (std::abs(dBase) > 1e-9 && shiftOnLevels(document, *was, rigid, dBase, dBase, context)) changes.modify(rigid);
+  }
+}
 }  // namespace
+
+Status Modeler::attachToLevels(const std::vector<ObjectId>& ids, std::optional<std::string> base,
+                               std::optional<std::string> top) {
+  if (ids.empty()) return Status::failure("Nothing selected");
+  if (!base && !top) return Status::failure("Give a base or a top level");
+  const std::vector<FloorLevel>& levels = document_.settings().levels;
+  auto resolve = [&](const std::string& text) -> const FloorLevel* {
+    for (const FloorLevel& l : levels)
+      if (l.id == text) return &l;
+    for (const FloorLevel& l : levels)
+      if (l.name == text) return &l;
+    return nullptr;
+  };
+  const FloorLevel* baseLevel = base && !base->empty() ? resolve(*base) : nullptr;
+  const FloorLevel* topLevel = top && !top->empty() ? resolve(*top) : nullptr;
+  if (base && !base->empty() && !baseLevel) return Status::failure("No level '" + *base + "'");
+  if (top && !top->empty() && !topLevel) return Status::failure("No level '" + *top + "'");
+  ChangeSet changes(document_);
+  for (const ObjectId& id : ids) {
+    const Object* current = document_.find(id);
+    if (!current) return Status::failure("Object not found");
+    if (current->locked) return Status::failure("'" + current->name + "' is locked");
+    const std::string kind = attributeText(*current, "kind");
+    if (kind != "wall" && kind != "slab")
+      return Status::failure("'" + current->name + "' is not a wall or a slab made by those tools");
+    if (kind == "slab" && base && !base->empty())
+      return Status::failure("A slab lies with its top on a level: give 'top'");
+    const Bnd_Box box = geom::exactBounds(document_.worldShape(*current));
+    if (box.IsVoid()) return Status::failure("'" + current->name + "' has no shape");
+    const double z0 = box.CornerMin().Z(), z1 = box.CornerMax().Z();
+    Object o = *current;
+    auto set = [&](const char* key, const std::optional<std::string>& value, const FloorLevel* level) {
+      if (!value) return;
+      if (level) o.attributes[key] = level->id;
+      else o.attributes.erase(key);
+    };
+    set(kBaseLevel, base, baseLevel);
+    set(kTopLevel, top, topLevel);
+    const double dBase = baseLevel ? baseLevel->elevation - z0 : 0.0;
+    // The top goes to its new level; one staying on a level stays where it is; a free one
+    // goes with the foot.
+    const double dTop = topLevel ? topLevel->elevation - z1 : o.attributes.count(kTopLevel) ? 0.0 : dBase;
+    if (!shiftOnLevels(document_, *current, o, dBase, dTop, document_.regenContext()))
+      return Status::failure("'" + current->name + "' cannot be put on those levels: its top would not be above its "
+                             "foot, or it is no longer the wall its tool made (nothing was changed)");
+    changes.modify(o);
+  }
+  history_.execute(changes.build("Attach To Levels"));
+  return Status::success();
+}
 
 Result<std::vector<ObjectId>> Modeler::setWallType(const std::vector<ObjectId>& ids, const std::string& typeId,
                                                   double core, const std::string& outside) {
@@ -5990,6 +6125,12 @@ Result<std::vector<ObjectId>> Modeler::createWallBands(std::vector<gp_Pnt> point
   // thickness changes (docs/41); and a build-up's description.
   for (const auto& [key, value] : attributes)
     if (tagged) tagged = setAttribute(walls, key, value);
+  // Made at a level's height: the walls stand on it, and reach up to the level their top is at
+  // (docs/90 G-02). Elsewhere they are on no level.
+  if (const FloorLevel* level = levelAtHeight(document_.settings().levels, base); level && tagged)
+    tagged = setAttribute(walls, kBaseLevel, level->id);
+  if (const FloorLevel* level = levelAtHeight(document_.settings().levels, base + height); level && tagged)
+    tagged = setAttribute(walls, kTopLevel, level->id);
   if (!tagged) {
     history_.abortGroup();
     return R::failure(tagged.message());
@@ -6313,6 +6454,9 @@ Result<ObjectId> Modeler::createSlab(const std::vector<gp_Pnt>& outline, double 
     history_.abortGroup();
     return Result<ObjectId>::failure(id ? "Slab could not be extruded" : id.error());
   }
+  // Its top at a level's height: it lies on that level (docs/90 G-02).
+  if (const FloorLevel* level = levelAtHeight(document_.settings().levels, top))
+    setAttribute({*id}, kTopLevel, level->id);
   history_.endGroup();
   return id;
 }
