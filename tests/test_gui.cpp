@@ -346,6 +346,7 @@ class GuiPhase1 : public QObject {
   void timberQuantitiesAndFramingExport();
   void planOfALevelLeavesOutTheStoreysBelow();
   void partSectionShowsAWallInItsOwnWords();
+  void moveToolSlidesAnOpeningWithinItsWall();
   void wallAndSlabFollowTheirLevelsFromThePanel();
   void wallQuantityInputsComparisonSaveAndStaleModel();
   void panelDragPreviewKeepsTheModelViewStill();
@@ -11068,4 +11069,143 @@ void GuiPhase1::realisticDisplay() {
   QVERIFY(!f.vp->occView()->IsImageBasedLighting());
   QFile::remove(before);
   QFile::remove(after);
+}
+
+// docs/90 G-01: with the move tool, a face inside an opening stands for the opening. It
+// slides along its wall (↑: up and down); the wall, the opening's size and its fitting stay.
+void GuiPhase1::moveToolSlidesAnOpeningWithinItsWall() {
+  Fixture f;QVERIFY(f.setUp(3000,0));auto& m=f.window.modeler();
+  const auto walls=m.createTypedWalls({gp_Pnt(0,0,0),gp_Pnt(6000,0,0)},3000,"exterior_siding",105,false);
+  QVERIFY2(walls,walls?"":walls.error().c_str());
+  const doc::ObjectId wall=walls->front();
+  const auto cut=m.placeOpenings(wall,gp_Dir(0,-1,0),1,1600,1200,900,std::nullopt,R"({"type":"sliding_double"})");
+  QVERIFY2(cut,cut?"":cut.error().c_str());
+  QCOMPARE(*cut,wall);
+  f.vp->syncNow();
+  auto opening=[&]{const auto list=m.openings(wall);return list&&!list->empty()?list->front():doc::Modeler::OpeningInfo();};
+  // The middle of the opening's sill (the face inside the hole that looks up).
+  auto sill=[&]{
+    const TopoDS_Shape world=m.document().worldShape(*m.document().find(wall));
+    for(TopExp_Explorer e(world,TopAbs_FACE);e.More();e.Next()){
+      const TopoDS_Face face=TopoDS::Face(e.Current());
+      const auto normal=geom::planarFaceNormal(face);
+      if(!normal||normal->Z()<0.9||!m.openingOfFace(wall,face))continue;
+      const auto box=geom::exactBounds(face);
+      return gp_Pnt((box.CornerMin().XYZ()+box.CornerMax().XYZ())/2);
+    }
+    return gp_Pnt(0,0,-1);
+  };
+  auto left=[&]{return geom::exactBounds(m.document().worldShape(*m.document().find(wall))).CornerMin().X();};
+  const double offset0=opening().offset;
+  const std::string id0=opening().id;
+  const double wallLeft=left();
+  QVERIFY(sill().Z()>0);
+  const auto steps=m.history().undoCount();
+
+  // Nothing selected: a click inside the hole takes the opening, not the wall.
+  f.window.activateTool(MainWindow::ToolId::Move);
+  f.window.setSelection({});
+  gp_Pnt at=sill();
+  click(f.vp,f.vp->toWidget(at));
+  move(f.vp,f.vp->toWidget(at.Translated(gp_Vec(700,0,0))));
+  type(f.vp,QStringLiteral("500"));
+  QVERIFY2(f.window.lastError().isEmpty(),qPrintable(f.window.lastError()));
+  QVERIFY(std::abs(opening().offset-(offset0+500))<1e-6);
+  QVERIFY(std::abs(opening().sill-900)<1e-6);
+  QVERIFY(std::abs(opening().width-1600)<1e-6&&std::abs(opening().height-1200)<1e-6);
+  QVERIFY(std::abs(left()-wallLeft)<1e-6);  // the wall stayed
+  QVERIFY(m.document().find(wall));
+  QCOMPARE(m.history().undoCount(),steps+1);
+  QVERIFY(f.window.selection().empty());
+  // A distance typed right after replaces the move: still one step.
+  type(f.vp,QStringLiteral("300"));
+  QVERIFY2(f.window.lastError().isEmpty(),qPrintable(f.window.lastError()));
+  QVERIFY(std::abs(opening().offset-(offset0+300))<1e-6);
+  QCOMPARE(m.history().undoCount(),steps+1);
+  {
+    const auto& attributes=m.document().find(wall)->attributes;
+    QVERIFY(attributes.count("opening_fittings")&&attributes.at("opening_fittings").find("sliding_double")!=std::string::npos);  // the fitting stays with it
+  }
+
+  // By the mouse alone: along the wall only, whatever height the cursor is at.
+  f.vp->syncNow();
+  at=sill();
+  click(f.vp,f.vp->toWidget(at));
+  click(f.vp,f.vp->toWidget(at.Translated(gp_Vec(-400,0,350))));
+  QVERIFY2(f.window.lastError().isEmpty(),qPrintable(f.window.lastError()));
+  QVERIFY(opening().offset<offset0+300-50);
+  QVERIFY(std::abs(opening().sill-900)<1e-6);
+  QCOMPARE(m.history().undoCount(),steps+2);
+  const double offset1=opening().offset;
+
+  // ↑: up and down instead.
+  f.vp->syncNow();
+  at=sill();
+  click(f.vp,f.vp->toWidget(at));
+  QTest::keyClick(f.vp,Qt::Key_Up);
+  move(f.vp,f.vp->toWidget(at.Translated(gp_Vec(0,0,-400))));
+  type(f.vp,QStringLiteral("300"));
+  QVERIFY2(f.window.lastError().isEmpty(),qPrintable(f.window.lastError()));
+  QVERIFY(std::abs(opening().sill-600)<1e-6);
+  QVERIFY(std::abs(opening().offset-offset1)<1e-6);
+  QCOMPARE(m.history().undoCount(),steps+3);
+
+  // Out of the wall: refused and said, nothing changes.
+  f.vp->syncNow();
+  at=sill();
+  click(f.vp,f.vp->toWidget(at));
+  move(f.vp,f.vp->toWidget(at.Translated(gp_Vec(600,0,0))));
+  type(f.vp,QStringLiteral("5000"));
+  QVERIFY(!f.window.lastError().isEmpty());
+  f.window.clearLastError();
+  QVERIFY(std::abs(opening().offset-offset1)<1e-6);
+  QCOMPARE(m.history().undoCount(),steps+3);
+
+  // The face selected first, then the move tool: the opening again (not a stretch of the face).
+  f.window.activateTool(MainWindow::ToolId::Select);
+  f.vp->syncNow();
+  at=sill();
+  {
+    // (The face is narrow on screen: a click would as likely select one of its edges.)
+    std::vector<ElementRef> sillFace;
+    for(const ElementRef& el:f.vp->allElements(wall)){
+      if(el.type!=TopAbs_FACE)continue;
+      const TopoDS_Shape shape=f.vp->elementShape(el);
+      const auto normal=shape.IsNull()?std::nullopt:geom::planarFaceNormal(TopoDS::Face(shape));
+      if(normal&&normal->Z()>0.9&&m.openingOfFace(wall,TopoDS::Face(shape)))sillFace={el};
+    }
+    QCOMPARE(sillFace.size(),std::size_t(1));
+    f.window.setElementSelection(sillFace);
+  }
+  QCOMPARE(f.window.elementSelection().size(),std::size_t(1));
+  f.window.activateTool(MainWindow::ToolId::Move);
+  click(f.vp,f.vp->toWidget(at));
+  move(f.vp,f.vp->toWidget(at.Translated(gp_Vec(600,0,0))));
+  type(f.vp,QStringLiteral("200"));
+  QVERIFY2(f.window.lastError().isEmpty(),qPrintable(f.window.lastError()));
+  QVERIFY(std::abs(opening().offset-(offset1+200))<1e-6);
+  QVERIFY(std::abs(opening().width-1600)<1e-6);
+  QCOMPARE(m.openings(wall)->size(),std::size_t(1));
+  QCOMPARE(m.history().undoCount(),steps+4);
+  QCOMPARE(QString::fromStdString(opening().id),QString::fromStdString(m.openings(wall)->front().id));
+
+  // The whole wall selected: the wall moves, its opening with it.
+  f.window.activateTool(MainWindow::ToolId::Select);
+  f.window.setSelection({wall});
+  f.window.activateTool(MainWindow::ToolId::Move);
+  f.vp->syncNow();
+  at=sill();
+  click(f.vp,f.vp->toWidget(at));
+  move(f.vp,f.vp->toWidget(at.Translated(gp_Vec(800,0,0))));
+  type(f.vp,QStringLiteral("1000"));
+  QVERIFY2(f.window.lastError().isEmpty(),qPrintable(f.window.lastError()));
+  QVERIFY(left()>wallLeft+500);  // (the direction is the mouse's: about along X)
+  QVERIFY(std::abs(opening().offset-(offset1+200))<1e-6);
+
+  // Every step comes back.
+  while(m.history().undoCount()>steps)QVERIFY(m.undo());
+  QVERIFY(std::abs(opening().offset-offset0)<1e-6);
+  QVERIFY(std::abs(opening().sill-900)<1e-6);
+  QVERIFY(std::abs(left()-wallLeft)<1e-6);
+  Q_UNUSED(id0);
 }

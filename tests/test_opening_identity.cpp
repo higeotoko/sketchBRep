@@ -310,3 +310,29 @@ TEST(OpeningIdentity, AWallWithOpeningsKeepsItsOwnSizesEditable) {
   a.ok("change_member", {{"id", wall}, {"length", 3400}, {"height", 2100}});
   EXPECT_EQ(a.openings(wall).size(), 1u);
 }
+
+// What a tool shows while an opening is dragged: the same answer as the move itself, and
+// nothing changes by asking.
+TEST(OpeningIdentity, AskingWhetherAnOpeningCanMoveChangesNothing) {
+  Api a;
+  const std::string wall = wallWithThreeWindows(a);
+  const std::string saved = sbr::doc::serializeDocument(a.modeler.document());
+  const auto steps = a.modeler.history().undoCount();
+  const auto& m = a.modeler;
+  EXPECT_TRUE(m.canMoveOpening(wall, 2, gp_Vec(300, 0, 0)));
+  EXPECT_TRUE(m.canMoveOpening(wall, 2, gp_Vec(0, 0, -900)));     // down to the floor
+  EXPECT_TRUE(m.canMoveOpening(wall, 2, gp_Vec(900, 40, 0)));     // up to the third's edge
+  EXPECT_FALSE(m.canMoveOpening(wall, 2, gp_Vec(901, 0, 0)));     // into the third
+  EXPECT_FALSE(m.canMoveOpening(wall, 2, gp_Vec(0, 0, -901)));    // below the wall
+  EXPECT_FALSE(m.canMoveOpening(wall, 2, gp_Vec(0, 0, 901)));     // above its top
+  EXPECT_FALSE(m.canMoveOpening(wall, 1, gp_Vec(-901, 0, 0)));    // past the wall's end
+  EXPECT_FALSE(m.canMoveOpening(wall, 2, gp_Vec(0, 80, 0)));      // only through the wall
+  EXPECT_FALSE(m.canMoveOpening(wall, 9, gp_Vec(100, 0, 0)));     // no such opening
+  EXPECT_FALSE(m.canMoveOpening("nothing", 1, gp_Vec(100, 0, 0)));
+  EXPECT_EQ(sbr::doc::serializeDocument(a.modeler.document()), saved);
+  EXPECT_EQ(a.modeler.history().undoCount(), steps);
+  // The move agrees with the answer.
+  EXPECT_FALSE(a.modeler.moveOpening(wall, 2, gp_Vec(901, 0, 0)));
+  EXPECT_TRUE(a.modeler.moveOpening(wall, 2, gp_Vec(900, 40, 0)));
+  EXPECT_NEAR(a.openings(wall)[1]["offset"].get<double>(), 3500, 1e-6);
+}

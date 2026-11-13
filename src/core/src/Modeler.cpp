@@ -5340,10 +5340,14 @@ Result<std::vector<std::size_t>> Modeler::openingIndices(const ObjectId& hostId,
   return out;
 }
 
-Status Modeler::moveOpening(const ObjectId& hostId, std::size_t index, const gp_Vec& worldDelta) {
+namespace {
+// The host with one opening moved (not rebuilt yet), or why it cannot go there.
+Result<Object> withOpeningMoved(const Document& document_, const ObjectId& hostId, std::size_t index,
+                                const gp_Vec& worldDelta) {
+  using R = Result<Object>;
   const Object* current = document_.find(hostId);
-  if (!current) return Status::failure("Object not found");
-  if (current->locked) return Status::failure("The object is locked");
+  if (!current) return R::failure("Object not found");
+  if (current->locked) return R::failure("The object is locked");
   Object object = *current;
   ensureOpeningIds(object);
   const gp_Trsf world = document_.worldTransform(*current);
@@ -5353,18 +5357,18 @@ Status Modeler::moveOpening(const ObjectId& hostId, std::size_t index, const gp_
     found = true;
     const gp_Trsf frame = world * o.placement;
     const gp_Dir n = gp_Dir(o.rect->plane.normal).Transformed(frame);
-    if (std::abs(n.Z()) > 1e-6) return Status::failure("Only openings in a vertical face can be moved this way");
+    if (std::abs(n.Z()) > 1e-6) return R::failure("Only openings in a vertical face can be moved this way");
     // Keep the opening in its face: drop the part of the move through the wall.
     const gp_Vec u(gp::DZ().Crossed(n));
     const gp_Vec inFace = u * worldDelta.Dot(u) + gp_Vec(gp::DZ()) * worldDelta.Z();
-    if (inFace.Magnitude() < tolerance::kLinear) return Status::failure("The opening would not move");
+    if (inFace.Magnitude() < tolerance::kLinear) return R::failure("The opening would not move");
     Recipe recipe = *o.operand->recipe;  // operands are shared snapshots: copy on write
     auto& rect = std::get<RectangleProfile>(recipe.base);
     rect.plane.origin.Translate(inFace.Transformed(frame.Inverted()));
     replaceOperand(object.recipe, o.path, 0, std::move(recipe));
     break;
   }
-  if (!found) return Status::failure("No opening " + std::to_string(index) + " in this object");
+  if (!found) return R::failure("No opening " + std::to_string(index) + " in this object");
   const std::vector<OpeningExtent> extents = openingExtents(object, world);
   const TopoDS_Shape shape = document_.worldShape(*current);
   for (const OpeningExtent& e : extents) {
@@ -5372,12 +5376,23 @@ Status Modeler::moveOpening(const ObjectId& hostId, std::size_t index, const gp_
     const auto wall = hostExtent(shape, gp_Vec(gp::DZ().Crossed(e.normal)));
     if (e.u0 < wall[0] - tolerance::kLinear || e.u1 > wall[1] + tolerance::kLinear ||
         e.z0 < wall[2] - tolerance::kLinear || e.z1 > wall[3] + tolerance::kLinear)
-      return Status::failure("The opening does not fit on the wall there");
+      return R::failure("The opening does not fit on the wall there");
     for (const OpeningExtent& other : extents)
       if (other.index != index && openingsOverlap(other, e.normal, e.u0, e.u1, e.z0, e.z1))
-        return Status::failure("The opening would overlap opening " + std::to_string(other.index));
+        return R::failure("The opening would overlap opening " + std::to_string(other.index));
   }
-  return commitModified(std::move(object), "Move Opening");
+  return object;
+}
+}  // namespace
+
+Status Modeler::moveOpening(const ObjectId& hostId, std::size_t index, const gp_Vec& worldDelta) {
+  auto moved = withOpeningMoved(document_, hostId, index, worldDelta);
+  if (!moved) return moved.status();
+  return commitModified(std::move(moved.value()), "Move Opening");
+}
+
+Status Modeler::canMoveOpening(const ObjectId& hostId, std::size_t index, const gp_Vec& worldDelta) const {
+  return withOpeningMoved(document_, hostId, index, worldDelta).status();
 }
 
 Status Modeler::placeOpening(const ObjectId& hostId, std::size_t index, std::optional<double> offset,

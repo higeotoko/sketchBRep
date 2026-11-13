@@ -119,6 +119,8 @@ const Entry kEntries[] = {
     {"Unknown parameter", "その寸法は見つかりません"},
     {"would overlap", "既にある開口と重なります。位置か大きさを変えてください（穴がつながって 1 つになるのを防いでいます）"},
     {"The openings do not fit along the wall", "壁の長さに収まりません。個数・幅・間隔を小さくしてください"},
+    {"The opening would not move", "壁の厚さの向きには動かせません。壁に沿って、または上下に動かしてください"},
+    {"Only openings in a vertical face can be moved this way", "縦の面にあけた開口だけ、この方法で動かせます"},
     {"The opening does not fit on the wall there", "その位置では壁からはみ出します。壁の内側寄りに置くか、幅を小さくしてください"},
     {"The openings are taller than the wall", "腰の高さ＋開口の高さが壁の高さを超えています"},
     {"Openings go into a vertical face", "開口は壁の縦の面に入れてください"},

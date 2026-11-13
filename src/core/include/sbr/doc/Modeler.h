@@ -431,6 +431,9 @@ class Modeler {
   // (along the wall and up / down). It must stay inside the wall and clear of the other
   // openings. Its size and fitting stay. One undo step.
   Status moveOpening(const ObjectId& host, std::size_t index, const gp_Vec& worldDelta);
+  // Whether that move would be accepted (the same checks), changing nothing: what a tool
+  // shows while the opening is dragged.
+  Status canMoveOpening(const ObjectId& host, std::size_t index, const gp_Vec& worldDelta) const;
   // The same, to a position: `offset` and / or `sill` as in OpeningInfo.
   Status placeOpening(const ObjectId& host, std::size_t index, std::optional<double> offset,
                       std::optional<double> sill);

@@ -1180,6 +1180,7 @@ class MoveTool : public TransformTool {
   void mousePress(const ToolEvent& e) override;
   void mouseMove(const ToolEvent& e) override;
   void applyMeasurement(const QString& text) override;
+  bool keyPress(QKeyEvent* event) override;
 
  protected:
   QString targetText() const override;
@@ -1191,6 +1192,31 @@ class MoveTool : public TransformTool {
   bool moving_ = false;
   gp_Pnt base_;
   gp_Pnt current_;
+  // An opening of a wall grabbed by a face inside its hole (docs/90 G-01): it slides
+  // along the wall (↑: up and down, ↓: anywhere in the wall's face); the wall stays.
+  struct OpeningGrab {
+    doc::ObjectId host;
+    std::size_t index = 0;
+    gp_Dir normal;  // of the face it was cut from
+    gp_Dir along;   // to the right, seen from that side
+    double offset = 0.0, sill = 0.0;
+    TopoDS_Shape box;  // the hole as it is, world
+  };
+  std::optional<OpeningGrab> opening_;
+  std::optional<OpeningGrab> openingAt(const ToolEvent& e);
+  // The part of the move that lies in the wall's face.
+  gp_Vec openingDelta() const;
+  // The opening move just made: a distance typed right after replaces it.
+  struct LastOpening {
+    doc::ObjectId host;
+    std::size_t index = 0;
+    gp_Dir direction;
+  };
+  std::optional<LastOpening> lastOpening_;
+  // Whether the object pointed at has openings (for the hint), per document state.
+  doc::ObjectId hintFor_;
+  std::uint64_t hintSequence_ = 0;
+  bool hintOpenings_ = false;
   // Moving a single selected face stretches the solid along its normal.
   std::optional<std::pair<doc::ObjectId, TopoDS_Face>> stretch_;
   gp_Dir stretchNormal_;

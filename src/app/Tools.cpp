@@ -664,6 +664,7 @@ QString RotateTool::targetText() const {
 
 QString MoveTool::targetText() const {
   if (!moving_) return {};
+  if (opening_) return QObject::tr("%1 の開口 %2（壁の中で動かす）").arg(objectName(host_, opening_->host)).arg(opening_->index);
   if (stretch_) return QObject::tr("%1 の面（法線方向に伸縮）").arg(objectName(host_, stretch_->first));
   if (corners_) return QObject::tr("%1 の%2（面は平らなまま）").arg(objectName(host_, corners_->object), corners_->what);
   return targets_.size() == 1 ? objectName(host_, targets_.front()) : QObject::tr("%1 個").arg(targets_.size());
@@ -3324,7 +3325,7 @@ void MoveTool::activate() {
   resetState();
   host_.viewport().setPickMode(PickMode::Objects);
   host_.setMeasurement(QObject::tr("距離"), QString());
-  host_.setStatus(QObject::tr("基点をクリック（未選択ならクリックした対象を移動、Alt+クリックで角・辺・面をつかんで形を変える）") +
+  host_.setStatus(QObject::tr("基点をクリック（未選択ならクリックした対象を移動、穴の内側の面・ふちなら開口だけ移動、Alt+クリックで角・辺・面をつかんで形を変える）") +
                   copySuffix());
 }
 
@@ -3332,6 +3333,7 @@ void MoveTool::resetState() {
   moving_ = false;
   stretch_.reset();
   corners_.reset();
+  opening_.reset();
   copy_ = false;
   resetLock();
   host_.viewport().clearPreview();
@@ -3342,17 +3344,62 @@ void MoveTool::cancel() { resetState(); }
 
 void MoveTool::mouseMove(const ToolEvent& e) {
   if (!moving_) {
-    host_.viewport().pickObject(e.pos);
+    const auto pointed = host_.viewport().pickObject(e.pos);
     const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
-    host_.setStatus(QObject::tr("基点をクリック  [%1]").arg(snapLabel(r.kind)) + copySuffix());
+    // Pointing at a wall with openings, nothing selected: say how an opening is grabbed.
+    bool hint = false;
+    if (pointed && host_.selection().empty()) {
+      const doc::Modeler& m = host_.modeler();
+      if (hintFor_ != *pointed || hintSequence_ != m.document().sequence()) {
+        hintFor_ = *pointed;
+        hintSequence_ = m.document().sequence();
+        const auto list = m.openings(*pointed);
+        hintOpenings_ = list && !list->empty();
+      }
+      hint = hintOpenings_;
+    }
+    host_.setStatus(QObject::tr("基点をクリック  [%1]").arg(snapLabel(r.kind)) +
+                    (hint ? QObject::tr("（穴の内側の面かふちをクリックすると、開口だけを動かせます）") : QString()) + copySuffix());
     return;
   }
   // Reshaping often goes up (a roof edge): an axis lock then wins over the
   // ground-parallel plane the move is otherwise held to.
   const bool free = corners_ && locked_;
-  const snap::SnapResult r = snapAt(e, base_, free ? std::nullopt : std::optional<gp_Pln>(gp_Pln(base_, gp::DZ())));
+  std::optional<gp_Pln> held = free ? std::nullopt : std::optional<gp_Pln>(gp_Pln(base_, gp::DZ()));
+  if (opening_) {
+    // In the wall's face; seen edge-on (a plan) the ground plane, whose part along the wall counts.
+    const bool edgeOn =
+        std::abs(gp_Vec(host_.viewport().viewDirection()).Dot(gp_Vec(opening_->normal))) < 0.1;
+    if (!edgeOn) held = gp_Pln(base_, opening_->normal);
+  }
+  const snap::SnapResult r = snapAt(e, base_, held);
   if (!r.valid()) return;
   current_ = r.point;
+  if (opening_) {
+    const gp_Vec d = openingDelta();
+    host_.setMeasurement(QObject::tr("距離"), mm(d.Magnitude()));
+    const QString keys = locked_ && locked_->IsParallel(gp::DZ(), 1e-9) ? QObject::tr("（上下に固定中。↑で壁沿いに戻す、↓で面内を自由に）")
+                         : locked_ ? QObject::tr("（壁沿いに固定中。↑で上下、↓で面内を自由に）")
+                                   : QObject::tr("（面内を自由に。←→で壁沿い、↑で上下）");
+    if (d.Magnitude() <= tolerance::kMinDimension) {
+      host_.viewport().clearPreview();
+      host_.setStatus(QObject::tr("開口 %1 を移動: 動かす先をクリック、または距離を入力").arg(opening_->index) + keys);
+      return;
+    }
+    gp_Trsf t;
+    t.SetTranslation(d);
+    host_.viewport().setPreview(opening_->box.Moved(TopLoc_Location(t)), true);
+    const Status possible = host_.modeler().canMoveOpening(opening_->host, opening_->index, d);
+    if (possible) {
+      host_.setStatus(QObject::tr("開口 %1 を移動: クリックで確定、または距離を入力（左端から %2 ／ 腰高 %3）  [%4]")
+                          .arg(opening_->index)
+                          .arg(mm(opening_->offset + d.Dot(gp_Vec(opening_->along))), mm(opening_->sill + d.Z()),
+                               snapLabel(r.kind)) + keys);
+    } else {
+      host_.setStatus(QObject::tr("ここには動かせません: %1").arg(userMessage(QString::fromStdString(possible.message()))) + keys);
+    }
+    return;
+  }
   if (copy_ && !elementTargets_.empty() && edgeTargets_.empty()) {
     // Copying selected faces (and edges): the copies follow the cursor.
     const gp_Vec d(base_, current_);
@@ -3454,7 +3501,120 @@ void MoveTool::mouseMove(const ToolEvent& e) {
                   lockSuffix() + copySuffix());
 }
 
+gp_Vec MoveTool::openingDelta() const {
+  if (!opening_) return gp_Vec();
+  const gp_Vec d(base_, current_);
+  const gp_Vec along(opening_->along);
+  return along * d.Dot(along) + gp_Vec(gp::DZ()) * d.Z();
+}
+
+std::optional<MoveTool::OpeningGrab> MoveTool::openingAt(const ToolEvent& e) {
+  if (e.modifiers & Qt::AltModifier) return std::nullopt;
+  const doc::Modeler& m = host_.modeler();
+  // The one face selected, or with nothing selected what is under the cursor: a face inside
+  // the hole, or an edge of one (those faces are narrow on screen: the click often lands on
+  // the hole's outline).
+  std::optional<ElementRef> element;
+  std::vector<ElementRef> faces;
+  const auto elements = host_.elementSelection();
+  if (elements.size() == 1 && host_.wholeSelection().empty()) {
+    element = elements.front();
+    if (element->type == TopAbs_FACE) faces = {*element};
+  } else if (elements.empty() && host_.selection().empty()) {
+    element = host_.viewport().elementAt(e.pos);
+    if (element) {
+      for (const ElementRef& beside : element->type == TopAbs_FACE ? std::vector<ElementRef>{*element}
+                                                                  : host_.viewport().withNeighbours(*element))
+        if (beside.type == TopAbs_FACE) faces.push_back(beside);
+    }
+  }
+  if (!element || faces.empty()) return std::nullopt;
+  if (addressedIn(m.document(), element->objectId, host_.editingGroup()) != element->objectId) return std::nullopt;
+  std::optional<std::size_t> index;
+  for (const ElementRef& candidate : faces) {
+    const TopoDS_Shape face = host_.viewport().elementShape(candidate);
+    if (!face.IsNull()) index = m.openingOfFace(element->objectId, TopoDS::Face(face));
+    if (index) break;
+  }
+  if (!index) return std::nullopt;
+  const auto list = m.openings(element->objectId);
+  if (!list) return std::nullopt;
+  for (const doc::Modeler::OpeningInfo& o : *list) {
+    if (o.index != *index || std::abs(o.normal.Z()) > 1e-6) continue;
+    OpeningGrab grab;
+    grab.host = element->objectId;
+    grab.index = o.index;
+    grab.normal = o.normal;
+    grab.along = gp::DZ().Crossed(o.normal);
+    grab.offset = o.offset;
+    grab.sill = o.sill;
+    geom::SketchPlane plane;
+    plane.normal = o.normal;
+    plane.xDir = grab.along;
+    plane.origin = o.center.Translated(gp_Vec(grab.along) * (-o.along / 2));
+    plane.origin.SetZ(o.bottom);
+    const auto outline = geom::makeRectangleFace(plane, o.along, o.height);
+    if (outline && o.depth > tolerance::kMinDimension) {
+      BRepPrimAPI_MakePrism prism(outline.value(), gp_Vec(o.normal) * -o.depth);
+      grab.box = prism.IsDone() ? prism.Shape() : TopoDS_Shape(outline.value());
+    } else if (outline) {
+      grab.box = outline.value();
+    }
+    return grab;
+  }
+  return std::nullopt;
+}
+
+bool MoveTool::keyPress(QKeyEvent* event) {
+  if (!opening_ || !moving_) return TransformTool::keyPress(event);
+  switch (event->key()) {
+    case Qt::Key_Up:
+      if (event->isAutoRepeat()) return true;
+      locked_ = locked_ && locked_->IsParallel(gp::DZ(), 1e-9) ? opening_->along : gp::DZ();
+      break;
+    case Qt::Key_Left:
+    case Qt::Key_Right:
+      if (event->isAutoRepeat()) return true;
+      locked_ = opening_->along;
+      break;
+    case Qt::Key_Down:
+      if (event->isAutoRepeat()) return true;
+      locked_.reset();
+      break;
+    case Qt::Key_Control:
+      if (!event->isAutoRepeat())
+        host_.setStatus(QObject::tr("開口のコピーはまだできません。同じ大きさの開口は、開口ツールであけてください"));
+      return true;
+    case Qt::Key_Shift:
+      return true;  // the direction is the wall's: nothing to hold
+    default:
+      return TransformTool::keyPress(event);
+  }
+  shiftLock_ = false;
+  refresh();
+  return true;
+}
+
 void MoveTool::finish() {
+  if (opening_) {
+    const gp_Vec d = openingDelta();
+    if (d.Magnitude() > tolerance::kMinDimension) {
+      doc::Modeler& m = host_.modeler();
+      recent_.begin(m);
+      const Status s = m.moveOpening(opening_->host, opening_->index, d);
+      if (s) {
+        recent_.mark(m);
+        lastOpening_ = LastOpening{opening_->host, opening_->index, gp_Dir(d)};
+      } else {
+        host_.reportError(QObject::tr("開口を動かせませんでした: %1").arg(QString::fromStdString(s.message())));
+      }
+      host_.setSelection({});  // face indices change with the shape
+    }
+    last_.reset();
+    resetState();
+    host_.viewport().setPickMode(PickMode::Objects);
+    return;
+  }
   if ((corners_ || stretch_) && copy_ && !elementTargets_.empty()) {
     // Ctrl: the selected faces / edges are copied, the shape is not
     // reshaped or stretched.
@@ -3608,7 +3768,25 @@ void MoveTool::mousePress(const ToolEvent& e) {
     // Faces / edges selected on their own: what a Ctrl copy copies
     // (ARR-01, SEL-01); the owners are not moved or copied whole.
     captureTargets();
+    lastOpening_.reset();
     if (grabCorners(e)) return;
+    // A face inside an opening of a wall stands for the opening: it moves within the wall.
+    if (auto grabbed = openingAt(e)) {
+      const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
+      if (!r.valid()) return;
+      opening_ = std::move(grabbed);
+      elementTargets_.clear();
+      edgeTargets_.clear();
+      copy_ = false;
+      locked_ = opening_->along;  // along the wall: the sill stays where it is
+      shiftLock_ = false;
+      base_ = current_ = r.point;
+      last_.reset();
+      moving_ = true;
+      host_.viewport().clearHover();
+      host_.viewport().setPickMode(PickMode::None);
+      return;
+    }
     // A single selected face of a solid or profile: stretch along its normal.
     const auto elements = host_.elementSelection();
     if (elements.size() == 1 && elements.front().type == TopAbs_FACE) {
@@ -3686,6 +3864,16 @@ void MoveTool::applyMeasurement(const QString& text) {
       host_.reportError(QObject::tr("距離を解釈できません: %1").arg(text));
       return;
     }
+    if (opening_) {
+      const gp_Vec d = openingDelta();
+      if (d.Magnitude() < 1e-9) {
+        host_.reportError(QObject::tr("マウスで方向を示してから距離を入力してください"));
+        return;
+      }
+      current_ = base_.Translated(gp_Vec(gp_Dir(d)) * *length);
+      finish();
+      return;
+    }
     if (stretch_ && !stretchSideways()) {
       const double d = gp_Vec(base_, current_).Dot(gp_Vec(stretchNormal_));
       current_ = base_.Translated(gp_Vec(stretchNormal_) * (d < 0 ? -*length : *length));
@@ -3700,6 +3888,20 @@ void MoveTool::applyMeasurement(const QString& text) {
     typedSign_ = *length < 0 ? -1.0 : 1.0;
     finish();
     typedSign_ = 1.0;
+    return;
+  }
+  if (lastOpening_ && recent_.fresh(host_.modeler())) {
+    // The opening just moved goes that distance instead, the same way (negative: back).
+    const auto length = units::parseLength(text.toStdString());
+    if (!length || std::abs(*length) < tolerance::kMinDimension) {
+      host_.reportError(QObject::tr("距離を解釈できません: %1").arg(text));
+      return;
+    }
+    const LastOpening last = *lastOpening_;
+    doc::Modeler& m = host_.modeler();
+    const Status s = recent_.replace(
+        m, [&] { return m.moveOpening(last.host, last.index, gp_Vec(last.direction) * *length); });
+    if (!s) host_.reportError(QObject::tr("開口を動かせませんでした: %1").arg(QString::fromStdString(s.message())));
     return;
   }
   if (!canReeditLast()) {
