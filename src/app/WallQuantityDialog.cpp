@@ -114,7 +114,10 @@ WallQuantityDialog::WallQuantityDialog(MainWindow* window) : QDialog(window), wi
   walls_ = new QTableWidget(this);
   walls_->setObjectName(QStringLiteral("wallDesignations"));
   setup(walls_, {tr("壁ID"), tr("階ID"), tr("方向"), tr("始X"), tr("始Y"), tr("終X"), tr("終Y"),
-                 tr("高さ mm"), tr("仕様"), tr("仕様確認")});
+                 tr("高さ mm"), tr("仕様"), tr("仕様確認"), tr("柱間隔 mm")});
+  walls_->horizontalHeaderItem(10)->setToolTip(
+      tr("筋かいを入れた柱と柱の間隔。高さが3200mmを超える筋かいで必要（壁倍率の低減に使う）。\n"
+         "空欄のままだと、その壁は未評価になります。"));
   wl->addWidget(walls_);
   auto* wallButtons = new QHBoxLayout;
   auto* addWallButton = new QPushButton(tr("手動区間を追加"), this);
@@ -370,6 +373,7 @@ void WallQuantityDialog::addWall(const std::string& value) {
     changed();
   });
   walls_->setItem(r, 9, checked(w.value("verified", false)));
+  walls_->setItem(r, 10, item(w.value("bay_mm", json())));
 }
 void WallQuantityDialog::reload() {
   filling_ = true;
@@ -427,6 +431,7 @@ std::string WallQuantityDialog::inputs() const {
               {"height_mm", numeric(cell(walls_, r, 7))},
               {"spec", combo->currentData().toString().toStdString()},
               {"verified", walls_->item(r, 9)->checkState() == Qt::Checked}};
+    if (const auto bay = numeric(cell(walls_, r, 10)); !bay.is_null()) w["bay_mm"] = bay;
     const auto reference = walls_->item(r, 0)->data(Qt::UserRole).toString();
     if (!reference.isEmpty()) {
       const auto ref = json::parse(reference.toStdString());

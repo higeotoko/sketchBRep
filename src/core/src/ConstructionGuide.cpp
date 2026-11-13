@@ -298,7 +298,7 @@ std::string guideMarkdown(const std::string& system, const std::string& override
          "floorsは下階から順に、area_m2は算定用床面積、weight_knは上階を含めた累積荷重、"
          "wind_x_m2/wind_y_m2は床上1.35m以下を控除した見付面積です。"
          "height_m、co_designated（C0指定区域か）、wind_coefficient_cm_m2、input_basisを明示します。"
-         "wallsはid、floor、direction、spec、start/endのXY座標mm、筋かいのheight_mm、verifiedを持ちます。"
+         "wallsはid、floor、direction、spec、start/endのXY座標mm、筋かいのheight_mm、verifiedを持ちます。高さ3200mm超の筋かいは柱間隔bay_mmも必要です（無ければ未評価）。"
          "gridとstart_axes/end_axesの[X通りID,Y通りID]でも指定できます。"
          "仕様・施工・接合の確認後にverified:true、入力した階の壁が揃ったらwalls_complete:trueにします。"
          "table_snapshotを省略すると同梱表の写し、nullなら表なし、出典付きの表で利用者登録も可能です。"

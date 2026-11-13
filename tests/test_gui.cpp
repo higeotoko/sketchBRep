@@ -10414,6 +10414,24 @@ void GuiPhase1::wallQuantityInputsComparisonSaveAndStaleModel() {
     QVERIFY(rows);
     QVERIFY(notice);
     QVERIFY(notice->toPlainText().contains("2025-04-01"));
+    // A brace over 3200 high needs the post spacing (the last column); the interval length is not used.
+    QCOMPARE(rows->columnCount(), 11);
+    rows->item(0, 7)->setText(QStringLiteral("3640"));
+    dialog.refreshNow();
+    report = json::parse(dialog.reportJson());
+    QCOMPARE(report["walls"][0]["status"].get<std::string>(), std::string("not_evaluated"));
+    rows->item(0, 10)->setText(QStringLiteral("910"));
+    dialog.refreshNow();
+    report = json::parse(dialog.reportJson());
+    QCOMPARE(report["walls"][0]["status"].get<std::string>(), std::string("evaluated"));
+    QVERIFY(std::abs(report["walls"][0]["ratio"].get<double>() - 1.75) < 1e-9);
+    QCOMPARE(report["inputs"]["walls"][0]["bay_mm"].get<double>(), 910.0);
+    rows->item(0, 10)->setText(QString());
+    rows->item(0, 7)->setText(QStringLiteral("3000"));
+    dialog.refreshNow();
+    report = json::parse(dialog.reportJson());
+    QCOMPARE(report["rows"][0]["status"].get<std::string>(), std::string("pass"));
+    QVERIFY(!report["inputs"]["walls"][0].contains("bay_mm"));
     auto* tabs = dialog.findChild<QTabWidget*>();
     QVERIFY(tabs);
     tabs->setCurrentIndex(1);

@@ -2277,7 +2277,7 @@ const std::vector<CommandDef>& commands() {
        "Replace timber wall calculation inputs and pin coefficient-table snapshot in project; one undo. "
        "inputs: {height_m,co_designated:bool,wind_coefficient_cm_m2,input_basis,frame?,"
        "floors:[{id,name,area_m2,weight_kn,wind_x_m2,wind_y_m2,walls_complete}],"
-       "walls:[{id,floor,direction:X|Y,spec,verified,height_mm,start:[x,y],end:[x,y]}],table_snapshot?}. "
+       "walls:[{id,floor,direction:X|Y,spec,verified,height_mm,bay_mm?,start:[x,y],end:[x,y]}],table_snapshot?}. "
        "Floors are bottom to top; weight_kn is cumulative burden including upper floors. mm/m2/kN units. "
        "Alternatively wall grid+start_axes/end_axes:[xAxisId,yAxisId] follows grid edits. "
        "verified confirms full construction/connection conditions from guide; not inferred from geometry. "

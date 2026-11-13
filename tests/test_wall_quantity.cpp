@@ -114,6 +114,12 @@ TEST_F(WallQuantity, BraceHeightCorrectionAndPlywoodHaveDifferentConditions) {
   auto in = sample();
   in["walls"] = json::array({wall("x", "X", 910)});
   in["walls"][0]["height_mm"] = 3500;
+  // Over 3200 the reduction needs the post spacing of the braced bay: never guessed from the interval.
+  auto missing = report(in);
+  EXPECT_EQ(missing["walls"][0]["status"], "not_evaluated");
+  EXPECT_TRUE(missing["walls"][0]["effective_m"].is_null());
+  EXPECT_EQ(missing["rows"][0]["status"], "not_evaluated");
+  in["walls"][0]["bay_mm"] = 910;
   auto r = report(in);
   EXPECT_NEAR(r["walls"][0]["ratio"].get<double>(), 1.82, 1e-12);
   EXPECT_NEAR(r["walls"][0]["effective_m"].get<double>(), .91 * 1.82, 1e-12);
@@ -122,6 +128,35 @@ TEST_F(WallQuantity, BraceHeightCorrectionAndPlywoodHaveDifferentConditions) {
   in["walls"][0]["spec"] = "plywood_n50_150";
   in["walls"][0]["height_mm"] = nullptr;
   EXPECT_DOUBLE_EQ(report(in)["walls"][0]["ratio"].get<double>(), 2.5);
+}
+TEST_F(WallQuantity, TallBraceReductionUsesThePostSpacingNotTheIntervalLength) {
+  // Two 910 bays designated as one 1820 interval, 3640 high: 3.5 x 910 / 3640 = 0.875.
+  // The interval length (3.5 x 1820 / 3640 = 1.75 -> 1) must not hide the reduction.
+  auto in = sample();
+  in["walls"] = json::array({wall("x", "X", 1820)});
+  in["walls"][0]["height_mm"] = 3640;
+  in["walls"][0]["bay_mm"] = 910;
+  auto r = report(in);
+  EXPECT_NEAR(r["walls"][0]["height_factor"].get<double>(), .875, 1e-12);
+  EXPECT_NEAR(r["walls"][0]["ratio"].get<double>(), 1.75, 1e-12);
+  EXPECT_NEAR(r["walls"][0]["effective_m"].get<double>(), 1.82 * 1.75, 1e-12);
+  EXPECT_DOUBLE_EQ(r["walls"][0]["bay_mm"].get<double>(), 910);
+  // a wide bay is capped at 1
+  in["walls"][0]["bay_mm"] = 1820;
+  EXPECT_DOUBLE_EQ(report(in)["walls"][0]["ratio"].get<double>(), 2);
+  // a spacing longer than the interval is a contradiction, not a bonus
+  in["walls"][0]["bay_mm"] = 2000;
+  EXPECT_EQ(report(in)["walls"][0]["status"], "not_evaluated");
+  // at 3200 or below, and for plywood, the spacing is not needed
+  in["walls"][0].erase("bay_mm");
+  in["walls"][0]["height_mm"] = 3200;
+  EXPECT_EQ(report(in)["walls"][0]["status"], "evaluated");
+  in["walls"][0]["height_mm"] = 3640;
+  in["walls"][0]["spec"] = "plywood_n50_150";
+  EXPECT_EQ(report(in)["walls"][0]["status"], "evaluated");
+  // not a positive number: rejected as an input error
+  in["walls"][0]["bay_mm"] = -1;
+  EXPECT_FALSE(construction::checkWallQuantity(m.document(), json{{"inputs", in}}.dump()));
 }
 TEST_F(WallQuantity, MissingInputsAndTablesNeverTurnIntoZeroOrGreen) {
   for (const auto* key : {"height_m", "co_designated", "wind_coefficient_cm_m2"}) {

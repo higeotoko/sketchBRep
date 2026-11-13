@@ -291,12 +291,14 @@ std::string normalizeWallInputs(const std::string& input) {
   require(in.at("walls").is_array() && in.at("walls").size() <= 2000, "耐力壁は2000区間以下です");
   for (const auto& w : in.at("walls")) {
     keys(w, {"id", "floor", "direction", "start", "end", "height_mm", "spec", "verified", "grid",
-             "start_axes", "end_axes"});
+             "start_axes", "end_axes", "bay_mm"});
     for (const auto* k : {"id", "floor", "direction", "spec"}) text(w, k);
     require(walls.insert(w.at("id")).second, "壁IDが重複しています");
     require(floors.count(w.at("floor")) != 0, "壁の階IDが未登録です");
     require(w.at("direction") == "X" || w.at("direction") == "Y", "方向はX/Yです");
     number(w, "height_mm");
+    // 筋かいを入れた軸組の柱間隔 (the post spacing of the braced bay), for the tall-storey reduction.
+    number(w, "bay_mm");
     if (w.contains("verified")) require(w.at("verified").is_boolean(), "仕様確認は真偽値です");
     if (w.contains("start")) point(w.at("start"));
     if (w.contains("end")) point(w.at("end"));
@@ -407,8 +409,19 @@ Result<std::string> checkWallQuantity(const doc::Document& d, const std::string&
         if (spec.at("brace").get<bool>()) {
           if (!w.contains("height_mm") || w.at("height_mm").is_null())
             reason("筋かいの横架材上端間の高さが未指定です");
-          else if (w.at("height_mm").get<double>() > 3200 && wall.geometric)
-            factor = std::min(1.0, 3.5 * (wall.b - wall.a) / w.at("height_mm").get<double>());
+          else if (w.at("height_mm").get<double>() > 3200 && wall.geometric) {
+            // The reduction uses the post spacing of the braced bay, not the length of the
+            // designated interval: an interval over several bays would otherwise be reduced
+            // too little (or not at all). Without the spacing the wall is not evaluated.
+            if (!w.contains("bay_mm") || w.at("bay_mm").is_null())
+              reason("高さが3200mmを超える筋かいは、筋かいを入れた柱間隔（bay_mm）が必要です");
+            else if (w.at("bay_mm").get<double>() > wall.b - wall.a + 1)
+              reason("筋かいの柱間隔（bay_mm）が壁の区間より長くなっています");
+            else {
+              factor = std::min(1.0, 3.5 * w.at("bay_mm").get<double>() / w.at("height_mm").get<double>());
+              wall.result["bay_mm"] = w.at("bay_mm");
+            }
+          }
         }
         wall.result["height_factor"] = factor;
         wall.result["ratio"] = spec.at("ratio").get<double>() * factor;
