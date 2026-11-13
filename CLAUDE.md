@@ -7,6 +7,7 @@ Qt 6 + Open CASCADE（OCCT）の B-rep モデラー。SketchUp のような直�
 1. 一番新しい引継書：`docs/70_handover_cloud_to_local_2026-11-05.md`（ローカル開発への移行）と `docs/69_handover_codex_to_claude_2026-11-05.md`（直近の実装・手順・SumiCAD MCP）。
 2. `git status` と `git log --oneline -15`。完了済みの実装を作り直さない。引継ぎのためだけに再ビルド・全テストをしない。
 3. 機能の記録は `docs/NN_*.md`（番号順）。AI のコマンド一覧は docs/06。構造種別の手引きの設計は docs/52。
+4. 建築の機能（壁・開口・床・柱・梁・通り芯・レベル・屋根・階段・室）を足す・直す時は、先に `docs/90_bim_operation_framework.md`（BIM としての操作感の枠：約束 B-01〜B-09、足りないもの G-01〜、通しの受け入れ BIM-AC）に照らす。記録の docs に「どの約束を満たすか」を書き、同文書 §3 の表を直す。
 
 ## 守ること
 
