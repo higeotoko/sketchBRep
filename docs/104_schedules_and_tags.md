@@ -69,7 +69,7 @@
 ## 配った後に直したこと（`e682a75`）
 
 室の札の面積の単位を「㎡」から「m²」に変えた。実物のアプリを MCP で動かして絵を見たら、3D 画面の字体に「㎡」の字が無く、「居間  24.00 . .」と出ていた（自動テストは文字列だけを比べていたので通っていた）。「m²」は出ることを、同じ画面で確かめた。
-ZIP：`SketchBRep-windows-x64-e682a75-local.zip`（71,649,214 bytes、SHA256 `4dd65eabafa06ebd0ed080fac1bbf2271f9c65fcb167e0eda49f03ff058cf6b8`、検証 2 本とも成功）。CI の結果は、この記録を書いた時点では待ち。
+ZIP：`SketchBRep-windows-x64-e682a75-local.zip`（71,649,214 bytes、SHA256 `4dd65eabafa06ebd0ed080fac1bbf2271f9c65fcb167e0eda49f03ff058cf6b8`、検証 2 本とも成功）。`e682a75` だけの CI（run 43597977500）は、次の push が入って途中で取り消しになった（失敗ではない）。この直しを含む `1c193c9` の CI（run 43598801611）が、Linux・Windows とも成功している。
 
 ## まだやっていないこと
 
