@@ -200,6 +200,8 @@ class Viewport : public QWidget {
   bool isDisplayed(const doc::ObjectId& id) const;
   // Door / window symbols of the openings the plan cut passes through (edges shown; 0 without a cut).
   std::size_t openingSymbolEdgeCount() const { return openingSymbolEdges_; }
+  // The marks shown beside openings in a plan (W1, D1, ...), in the schedule's order.
+  const std::vector<QString>& openingTagTexts() const { return openingTagTexts_; }
   // Walls cut open (no cap) by the plan cut, so the columns inside show.
   std::size_t wallsCutOpen() const { return wallCutCount_; }
   // Edges of the walls' cut lines drawn in a plan cut (0 without a cut).
@@ -525,6 +527,12 @@ class Viewport : public QWidget {
   Handle(AIS_Shape) openingSymbols_;
   std::size_t openingSymbolEdges_ = 0;
   void syncOpeningSymbols();
+  // Tags read from the model (docs/104): the marks of the openings a plan cuts through, and
+  // each room's name with its area as the walls are now.
+  std::vector<Handle(AIS_TextLabel)> openingTags_;
+  std::vector<QString> openingTagTexts_;
+  std::map<doc::ObjectId, std::string> roomTags_;
+  void syncRoomTags();
   void syncWallCuts();
   // The plan cut's line through each wall (walls are cut open, without a cap).
   void syncWallOutlines();

@@ -5,7 +5,11 @@
 #include <nlohmann/json.hpp>
 #include <set>
 #include "sbr/draw/Drawing.h"
+#include <map>
+#include <optional>
+
 #include "sbr/OpeningSymbols.h"
+#include "sbr/doc/Schedules.h"
 
 #include <algorithm>
 #include <cmath>
@@ -536,6 +540,22 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     symbols.only = &drawn;
     for (const TopoDS_Edge& e : openingSymbols(document, symbols))
       addLocalEdge(TopoDS::Edge(e.Moved(TopLoc_Location(proj.toLocal))), Pen::Visible, deflection, view.items);
+    // Their marks, the same as in the door and window schedule (docs/104), beside the
+    // opening on the side it was cut from.
+    if (spec.annotations) {
+      for (const doc::OpeningRow& r : doc::openingSchedule(document).rows) {
+        if (!drawn.count(r.host) || symbols.z < r.bottom || symbols.z >= r.bottom + r.height) continue;
+        Item mark;
+        mark.kind = Item::Kind::Text;
+        mark.pen = Pen::Text;
+        mark.points = {proj.uv(gp_Pnt(r.center.X(), r.center.Y(), symbols.z).Translated(gp_Vec(r.normal) * 300.0))};
+        mark.text = r.mark;
+        mark.height = 2.5;
+        mark.hAlign = 1;
+        mark.vAlign = 1;
+        view.items.push_back(mark);
+      }
+    }
   }
   for (Item& c : cut) view.items.push_back(std::move(c));
 
@@ -605,6 +625,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     }
   }
   if (spec.annotations) {
+    std::optional<std::map<doc::ObjectId, std::string>> roomTags;
     for (const doc::Object& o : document.objects()) {
       if (!selected(document, o, spec) || o.attributes.count("grid_part")) continue;
       const gp_Trsf w = document.worldTransform(o);
@@ -629,6 +650,14 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
         text.pen = Pen::Text;
         text.points = {proj.uv(p)};
         text.text = t->text;
+        // A room's tag: its name and its area as the walls are now (docs/104).
+        if (const auto kind = o.attributes.find("kind"); kind != o.attributes.end() && kind->second == "room") {
+          if (!roomTags) {
+            roomTags.emplace();
+            for (const doc::RoomRow& r : doc::roomSchedule(document).rows) (*roomTags)[r.id] = doc::roomTagText(r);
+          }
+          if (const auto tag = roomTags->find(o.id); tag != roomTags->end()) text.text = tag->second;
+        }
         text.height = 3.5;
         view.items.push_back(text);
         if (t->target) view.items.push_back(line(Pen::Text, proj.uv(t->target->Transformed(w)), proj.uv(p)));

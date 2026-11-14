@@ -479,6 +479,16 @@ class Modeler {
   Result<ObjectId> createRoom(const gp_Pnt& at, const std::string& name);
   // Every room marker with its region as the walls are now.
   std::vector<RoomInfo> rooms() const;
+  // The same, from a document alone (tables and drawings run without a Modeler).
+  static std::vector<RoomInfo> roomsIn(const Document& document);
+  // Everything the walls standing on a floor at height `floor` enclose (壁芯), with or
+  // without rooms placed in it.
+  struct EnclosedArea {
+    double area = 0.0;  // mm2
+    int regions = 0;
+    int unreadableWalls = 0;
+  };
+  static EnclosedArea enclosedAt(const Document& document, double floor);
 
   // Whether moves keep wall joints (on by default; a setting of the session, not saved).
   void setKeepWallJoins(bool on) { keepWallJoins_ = on; }

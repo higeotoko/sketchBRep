@@ -1,3 +1,4 @@
+#include "sbr/doc/Schedules.h"
 #include "sbr/ConstructionQuantity.h"
 #include "sbr/ConstructionWall.h"
 #include "sbr/ConstructionFoundation.h"
@@ -2386,6 +2387,81 @@ const std::vector<CommandDef>& commands() {
        [](doc::Modeler& m, const json& a) {
          const GridLookup grid(m.document());
          return roomJson(m.roomAt(grid.point(arg(a, "at"), numberOr(a, "base", 0.0))));
+       }},
+      {"opening_schedule",
+       "The door and window schedule read from the walls as they are now. 'types': one line per mark (W1.. "
+       "windows, D1.. doors, O1.. plain openings; the same mark for the same kind, fitting, width and height) "
+       "with count and the sill heights among them; 'openings': every opening with its mark, host wall, id, "
+       "index, level, width, height, sill (mm). A fitting with its sill on the floor is a door, any other "
+       "fitting a window. Marks are worked out again each time (they are the ones drawn on plans); no product "
+       "numbers or materials. include_csv: true adds UTF-8 CSV (BOM) with Japanese headings.",
+       SCHEMA({"type": "object", "properties": {"include_csv": {"type": "boolean"}}}),
+       [](doc::Modeler& m, const json& a) {
+         const doc::OpeningSchedule s = doc::openingSchedule(m.document());
+         json types = json::array(), openings = json::array();
+         int total = 0;
+         for (const auto& t : s.types) {
+           types.push_back({{"mark", t.mark}, {"kind", t.kind}, {"fitting", t.fitting}, {"width", t.width},
+                            {"height", t.height}, {"count", t.count}, {"sills", t.sills}});
+           total += t.count;
+         }
+         for (const auto& r : s.rows)
+           openings.push_back({{"mark", r.mark}, {"kind", r.kind}, {"fitting", r.fitting}, {"width", r.width},
+                               {"height", r.height}, {"sill", r.sill}, {"host", r.host}, {"host_name", r.hostName},
+                               {"id", r.openingId}, {"index", r.index}, {"level", r.level},
+                               {"center", {r.center.X(), r.center.Y(), r.center.Z()}}});
+         json result{{"types", types}, {"openings", openings}, {"count", total}};
+         if (a.value("include_csv", false)) result["csv"] = doc::openingScheduleCsv(s);
+         return result;
+       }},
+      {"room_schedule",
+       "The room schedule as the walls are now: per room name, level, closed, counted (closed and not sharing "
+       "its region), problem, area_centre / area_inner (m2; area_inner null = not evaluated), inner_perimeter "
+       "(mm), tag (what is written at its marker on screen and on drawings); totals of the counted rooms "
+       "(total_area_inner null when a room's inner area is not evaluated). Not a legal floor area. "
+       "include_csv: true adds UTF-8 CSV (BOM).",
+       SCHEMA({"type": "object", "properties": {"include_csv": {"type": "boolean"}}}),
+       [](doc::Modeler& m, const json& a) {
+         const doc::RoomSchedule s = doc::roomSchedule(m.document());
+         json rooms = json::array();
+         for (const auto& r : s.rows) {
+           json row{{"id", r.id}, {"name", r.name}, {"level", r.level}, {"closed", r.closed}, {"counted", r.counted},
+                    {"problem", r.problem}, {"tag", doc::roomTagText(r)}};
+           if (r.closed) {
+             row["area_centre"] = r.centreArea / 1e6;
+             row["area_inner"] = r.innerKnown ? json(r.innerArea / 1e6) : json(nullptr);
+             row["inner_perimeter"] = r.innerKnown ? json(r.innerPerimeter) : json(nullptr);
+           }
+           rooms.push_back(row);
+         }
+         json result{{"rooms", rooms}, {"total_area_centre", s.centreTotal / 1e6},
+                     {"total_area_inner", s.innerMissing == 0 ? json(s.innerTotal / 1e6) : json(nullptr)},
+                     {"inner_not_evaluated", s.innerMissing}, {"not_counted", s.notCounted}};
+         if (a.value("include_csv", false)) result["csv"] = doc::roomScheduleCsv(s);
+         return result;
+       }},
+      {"area_table",
+       "Areas by storey measured from the model (m2): per level 'enclosed' (everything the walls standing on it "
+       "enclose, within the wall lines, with or without rooms), regions, rooms, regions_without_room, room_centre, "
+       "room_inner (null = not evaluated), slab (plan area of the slabs whose top lies on the level, openings "
+       "taken out), slabs, unreadable_walls (walls reshaped by hand: not read). legal_floor_area and "
+       "building_area are always \"not_evaluated\": what counts under the Building Standards Act is not looked "
+       "at. include_csv: true adds UTF-8 CSV (BOM).",
+       SCHEMA({"type": "object", "properties": {"include_csv": {"type": "boolean"}}}),
+       [](doc::Modeler& m, const json& a) {
+         const doc::AreaTable t = doc::areaTable(m.document());
+         json rows = json::array();
+         for (const auto& r : t.rows)
+           rows.push_back({{"level", r.level}, {"elevation", r.elevation},
+                           {"enclosed", r.enclosedKnown ? json(r.enclosedArea / 1e6) : json(nullptr)}, {"regions", r.regions},
+                           {"rooms", r.rooms}, {"regions_without_room", r.regionsWithoutRoom},
+                           {"room_centre", r.roomCentre / 1e6},
+                           {"room_inner", r.innerMissing == 0 ? json(r.roomInner / 1e6) : json(nullptr)},
+                           {"slab", r.slabArea / 1e6}, {"slabs", r.slabs}, {"unreadable_walls", r.unreadableWalls}});
+         json result{{"levels", rows}, {"total_enclosed", t.enclosedTotal / 1e6}, {"total_room_centre", t.roomCentreTotal / 1e6},
+                     {"total_slab", t.slabTotal / 1e6}, {"legal_floor_area", "not_evaluated"}, {"building_area", "not_evaluated"}};
+         if (a.value("include_csv", false)) result["csv"] = doc::areaTableCsv(t);
+         return result;
        }},
       {"list_rooms",
        "Every room (create_room) with its region as the walls are now: id, name, level, closed, problem, "

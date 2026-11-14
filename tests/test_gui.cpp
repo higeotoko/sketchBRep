@@ -352,6 +352,7 @@ class GuiPhase1 : public QObject {
   void roofToolDrawsARoofWhoseSizesAreChangedInThePanel();
   void ifcExportWritesTheBuildingAndSaysWhatItLeftOut();
   void stairToolDrawsAStairWithWindersAndOpensTheFloor();
+  void schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan();
   void wallAndSlabFollowTheirLevelsFromThePanel();
   void wallQuantityInputsComparisonSaveAndStaleModel();
   void panelDragPreviewKeepsTheModelViewStill();
@@ -11115,7 +11116,7 @@ void GuiPhase1::moveToolSlidesAnOpeningWithinItsWall() {
   move(f.vp,f.vp->toWidget(at.Translated(gp_Vec(700,0,0))));
   type(f.vp,QStringLiteral("500"));
   QVERIFY2(f.window.lastError().isEmpty(),qPrintable(f.window.lastError()));
-  QVERIFY(std::abs(opening().offset-(offset0+500))<1e-6);
+  QVERIFY2(std::abs(opening().offset-(offset0+500))<1e-6,qPrintable(QStringLiteral("offset %1 -> %2, wall left %3 -> %4, sill at %5 %6 %7").arg(offset0).arg(opening().offset).arg(wallLeft).arg(left()).arg(at.X()).arg(at.Y()).arg(at.Z())));
   QVERIFY(std::abs(opening().sill-900)<1e-6);
   QVERIFY(std::abs(opening().width-1600)<1e-6&&std::abs(opening().height-1200)<1e-6);
   QVERIFY(std::abs(left()-wallLeft)<1e-6);  // the wall stayed
@@ -11555,6 +11556,88 @@ void GuiPhase1::stairToolDrawsAStairWithWindersAndOpensTheFloor() {
   // The words for the turns.
   QVERIFY(StairTool::turnText(1).contains(QStringLiteral("踊り場")));
   QVERIFY(StairTool::turnText(3).contains(QStringLiteral("3 段回り")));
+}
+
+// docs/104 (G-11, N-10, N-11): the tables are read from the model, saved as CSV, and the marks
+// and room areas drawn on the plan are those of the tables.
+void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
+  Fixture f;QVERIFY(f.setUp(4000,3000));auto& m=f.window.modeler();
+  QVERIFY(m.setLevels({{"","1FL",0},{"","2FL",3000}}));
+  api::CommandApi api(m);
+  auto call=[&](const std::string& command,const nlohmann::json& args){
+    const auto r=nlohmann::json::parse(api.execute(nlohmann::json{{"command",command},{"args",args}}.dump()));
+    return r.value("ok",false)?r["result"]:nlohmann::json();
+  };
+  const auto walls=call("create_wall",{{"points",{{0,0},{8000,0},{8000,6000},{0,6000},{0,0}}},{"thickness",200},{"height",3000}})["ids"];
+  QCOMPARE(walls.size(),std::size_t(4));
+  const std::string south=walls[0],east=walls[1];
+  call("place_openings",{{"host",south},{"face_normal",{0,-1,0}},{"count",2},{"width",1600},{"height",1200},{"sill",900}});
+  call("set_opening_fittings",{{"host",south},{"fitting",{{"type","sliding_double"}}}});
+  call("place_openings",{{"host",east},{"face_normal",{1,0,0}},{"count",1},{"width",900},{"height",2100},{"sill",0}});
+  call("set_opening_fittings",{{"host",east},{"fitting",{{"type","swing_single"},{"hinge","left"},{"swing","in"}}}});
+  const std::string room=call("create_room",{{"at",{4000,3000}},{"name","LDK"}})["id"];
+  QVERIFY(!room.empty());
+  QApplication::processEvents();
+  // The room's tag: its name and its area on the wall lines; it follows the walls.
+  QTRY_COMPARE(f.vp->annotationText(room),QStringLiteral("LDK  48.00 ㎡"));
+  QVERIFY(m.move({east},gp_Vec(1000,0,0)));
+  QApplication::processEvents();
+  QTRY_COMPARE(f.vp->annotationText(room),QStringLiteral("LDK  54.00 ㎡"));
+  f.window.setSelection({room});  // selecting it keeps the tag
+  QApplication::processEvents();
+  QCOMPARE(f.vp->annotationText(room),QStringLiteral("LDK  54.00 ㎡"));
+  f.window.setSelection({});
+  QVERIFY(m.undo());
+  QApplication::processEvents();
+  QTRY_COMPARE(f.vp->annotationText(room),QStringLiteral("LDK  48.00 ㎡"));
+  // In a plan the openings cut by it carry the schedule's marks; none without a plan.
+  QVERIFY(f.vp->openingTagTexts().empty());
+  f.vp->setPlanCut(1100.0);
+  QApplication::processEvents();
+  QStringList marks;
+  for(const QString& t:f.vp->openingTagTexts())marks<<t;
+  marks.sort();
+  QCOMPARE(marks,QStringList({QStringLiteral("D1"),QStringLiteral("W1"),QStringLiteral("W1")}));
+  f.vp->setPlanCut(500.0);  // under the windows' sills
+  QApplication::processEvents();
+  QCOMPARE(f.vp->openingTagTexts().size(),std::size_t(1));
+  // The tables.
+  bool shown=false;QString why;
+  QTimer::singleShot(300,&f.window,[&]{
+    auto* dialog=f.window.findChild<QDialog*>(QStringLiteral("schedulesDialog"));
+    if(!dialog){why=QStringLiteral("no dialog");return;}
+    auto* tabs=dialog->findChild<QTabWidget*>(QStringLiteral("schedulesTabs"));
+    auto* types=dialog->findChild<QTableWidget*>(QStringLiteral("openingTypesTable"));
+    auto* each=dialog->findChild<QTableWidget*>(QStringLiteral("openingRowsTable"));
+    auto* rooms=dialog->findChild<QTableWidget*>(QStringLiteral("roomScheduleTable"));
+    auto* areas=dialog->findChild<QTableWidget*>(QStringLiteral("areaTable"));
+    auto* note=dialog->findChild<QLabel*>(QStringLiteral("areaTableNote"));
+    auto* save=dialog->findChild<QPushButton*>(QStringLiteral("scheduleSaveCsv"));
+    if(!tabs||!types||!each||!rooms||!areas||!note||!save){why=QStringLiteral("a table is missing");dialog->reject();return;}
+    shown=tabs->count()==3&&types->rowCount()==2&&types->item(0,0)->text()==QStringLiteral("W1")&&
+          types->item(0,2)->text()==QStringLiteral("引違い")&&types->item(0,5)->text()==QStringLiteral("2")&&
+          types->item(1,0)->text()==QStringLiteral("D1")&&types->item(1,1)->text()==QStringLiteral("扉")&&
+          each->rowCount()==3&&
+          rooms->rowCount()==1&&rooms->item(0,0)->text()==QStringLiteral("LDK")&&rooms->item(0,2)->text()==QStringLiteral("48.00")&&
+          areas->rowCount()==2&&areas->item(0,0)->text()==QStringLiteral("1FL")&&areas->item(0,1)->text()==QStringLiteral("48.00")&&
+          areas->item(0,7)->text()==QStringLiteral("未評価")&&areas->item(1,0)->text()==QStringLiteral("合計")&&
+          note->text().contains(QStringLiteral("未評価"));
+    if(!shown)why=QStringLiteral("types %1, each %2, rooms %3, areas %4").arg(types->rowCount()).arg(each->rowCount()).arg(rooms->rowCount()).arg(areas->rowCount());
+    dialog->reject();
+  });
+  {auto* action=f.window.findChild<QAction*>(QStringLiteral("schedulesAction"));QVERIFY(action);action->trigger();}
+  QVERIFY2(shown,qPrintable(why));
+  // Saved as CSV: what a spreadsheet opens (UTF-8 with a byte order mark).
+  QTemporaryDir dir;QVERIFY(dir.isValid());
+  const QString path=dir.filePath(QStringLiteral("doors.csv"));
+  QVERIFY(f.window.saveScheduleCsv(0,path));
+  QFile file(path);QVERIFY(file.open(QIODevice::ReadOnly));
+  const QByteArray bytes=file.readAll();
+  QVERIFY(bytes.startsWith(QByteArray::fromHex("efbbbf")));
+  QVERIFY2(QString::fromUtf8(bytes).contains(QStringLiteral("W1,窓,引違い,1600,1200,2,900")),bytes.constData());
+  QVERIFY2(f.window.statusText().contains(QStringLiteral("CSV に保存しました")),qPrintable(f.window.statusText()));
+  QVERIFY(f.window.scheduleCsv(1).contains(QStringLiteral("LDK,1FL,48.00")));
+  QVERIFY(f.window.scheduleCsv(2).contains(QStringLiteral("未評価")));
 }
 
 void GuiPhase1::ifcExportWritesTheBuildingAndSaysWhatItLeftOut() {

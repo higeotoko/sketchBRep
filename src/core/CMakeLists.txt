@@ -13,6 +13,7 @@ add_library(sbr_core STATIC
   src/RoomRegions.cpp
   src/Roof.cpp
   src/Stair.cpp
+  src/Schedules.cpp
   src/IfcExport.cpp
   src/WallTypes.cpp
   src/ConstructionQuantity.cpp

@@ -8,6 +8,8 @@
 #include "sbr/doc/IfcExport.h"
 #include "sbr/WallTypes.h"
 #include "sbr/OpeningSymbols.h"
+#include <QTabWidget>
+#include "sbr/doc/Schedules.h"
 #include "sbr/KernelError.h"
 #include "DrawingExport.h"
 #include "CrashLog.h"
@@ -1630,6 +1632,8 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
     auto* options = new QMenu(button);
     options->addAction(tr("室の一覧と面積..."), this, &MainWindow::showRoomsDialog)
         ->setObjectName(QStringLiteral("roomsListAction"));
+    options->addAction(tr("表（建具表・室の表・面積の表）..."), this, &MainWindow::showSchedulesDialog)
+        ->setObjectName(QStringLiteral("schedulesAction"));
     button->setMenu(options);
     bar->addWidget(button);
   }
@@ -4212,6 +4216,166 @@ void MainWindow::showStairSettingsDialog() {
   next.openFloor = open->isChecked();
   stairTool_->setSettings(next);
   setStatus(stairTool_->settingsText());
+}
+
+namespace {
+// The table as the bytes of its file (UTF-8 with a byte order mark, which a spreadsheet needs
+// to read the Japanese headings; QString would drop it).
+std::string scheduleBytes(const doc::Document& d, int table) {
+  return table == 0   ? doc::openingScheduleCsv(doc::openingSchedule(d))
+         : table == 1 ? doc::roomScheduleCsv(doc::roomSchedule(d))
+                      : doc::areaTableCsv(doc::areaTable(d));
+}
+}  // namespace
+
+QString MainWindow::scheduleCsv(int table) const { return QString::fromStdString(scheduleBytes(modeler_.document(), table)); }
+
+bool MainWindow::saveScheduleCsv(int table, const QString& path) {
+  QFile file(path);
+  if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate) || file.write(QByteArray::fromStdString(scheduleBytes(modeler_.document(), table))) < 0) {
+    reportError(tr("表を保存できませんでした: %1").arg(path));
+    return false;
+  }
+  file.close();
+  setStatus(tr("表を CSV に保存しました: %1").arg(QDir::toNativeSeparators(path)));
+  return true;
+}
+
+void MainWindow::showSchedulesDialog() {
+  const doc::Document& document = modeler_.document();
+  const doc::OpeningSchedule openings = doc::openingSchedule(document);
+  const doc::RoomSchedule rooms = doc::roomSchedule(document);
+  const doc::AreaTable areas = doc::areaTable(document);
+  QDialog dialog(this);
+  dialog.setObjectName(QStringLiteral("schedulesDialog"));
+  dialog.setWindowTitle(tr("表（モデルから読んだ今の値）"));
+  auto* layout = new QVBoxLayout(&dialog);
+  auto* tabs = new QTabWidget(&dialog);
+  tabs->setObjectName(QStringLiteral("schedulesTabs"));
+  layout->addWidget(tabs);
+  auto makeTable = [&](const char* name, const QStringList& headers, int rowCount) {
+    auto* table = new QTableWidget(rowCount, static_cast<int>(headers.size()));
+    table->setObjectName(QLatin1String(name));
+    table->setHorizontalHeaderLabels(headers);
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    return table;
+  };
+  auto note = [&](const char* name, const QString& text) {
+    auto* label = new QLabel(text);
+    label->setObjectName(QLatin1String(name));
+    label->setWordWrap(true);
+    return label;
+  };
+  auto area = [](double mm2) { return QString::number(mm2 / 1e6, 'f', 2); };
+  auto length = [](double mm) { return QString::number(mm, 'f', 0); };
+  auto kindText = [&](const std::string& kind) { return kind == "window" ? tr("窓") : kind == "door" ? tr("扉") : tr("開口"); };
+  {
+    // Doors and windows: one line per mark, then every opening.
+    auto* page = new QWidget;
+    auto* box = new QVBoxLayout(page);
+    auto* types = makeTable("openingTypesTable", {tr("符号"), tr("種類"), tr("建具"), tr("幅"), tr("高さ"), tr("数"), tr("腰高")},
+                            static_cast<int>(openings.types.size()));
+    int total = 0;
+    for (int row = 0; row < static_cast<int>(openings.types.size()); ++row) {
+      const doc::OpeningTypeRow& t = openings.types[static_cast<std::size_t>(row)];
+      QStringList sills;
+      for (double s : t.sills) sills << length(s);
+      const QStringList cells{QString::fromStdString(t.mark), kindText(t.kind), QString::fromStdString(t.fitting), length(t.width),
+                              length(t.height), QString::number(t.count), sills.join(QStringLiteral(" / "))};
+      for (int c = 0; c < cells.size(); ++c) types->setItem(row, c, new QTableWidgetItem(cells[c]));
+      total += t.count;
+    }
+    types->resizeColumnsToContents();
+    auto* each = makeTable("openingRowsTable", {tr("符号"), tr("階"), tr("壁"), tr("幅"), tr("高さ"), tr("腰高")},
+                           static_cast<int>(openings.rows.size()));
+    for (int row = 0; row < static_cast<int>(openings.rows.size()); ++row) {
+      const doc::OpeningRow& r = openings.rows[static_cast<std::size_t>(row)];
+      const QStringList cells{QString::fromStdString(r.mark), QString::fromStdString(r.level), QString::fromStdString(r.hostName),
+                              length(r.width), length(r.height), length(r.sill)};
+      for (int c = 0; c < cells.size(); ++c) each->setItem(row, c, new QTableWidgetItem(cells[c]));
+    }
+    each->resizeColumnsToContents();
+    connect(each, &QTableWidget::cellClicked, this, [this, openings](int row, int) {
+      if (row >= 0 && row < static_cast<int>(openings.rows.size())) setSelection({openings.rows[static_cast<std::size_t>(row)].host});
+    });
+    box->addWidget(types, 1);
+    box->addWidget(new QLabel(tr("開口ごと（行をクリックすると、その壁を選びます）")));
+    box->addWidget(each, 1);
+    box->addWidget(note("openingScheduleTotal",
+                        tr("合計 %1 か所・符号 %2 種類。符号は、種類・建具・幅・高さが同じ開口に同じものを付けます（W = 窓、D = 扉、O = 建具のない開口）。"
+                           "平面に出る符号と同じです。モデルを変えると付け直します。品番・材質は入っていません。")
+                            .arg(total).arg(openings.types.size())));
+    tabs->addTab(page, tr("建具表"));
+  }
+  {
+    auto* page = new QWidget;
+    auto* box = new QVBoxLayout(page);
+    auto* table = makeTable("roomScheduleTable", {tr("室名"), tr("階"), tr("壁芯 ㎡"), tr("内法 ㎡"), tr("内法の周長 m"), tr("状態")},
+                            static_cast<int>(rooms.rows.size()));
+    for (int row = 0; row < static_cast<int>(rooms.rows.size()); ++row) {
+      const doc::RoomRow& r = rooms.rows[static_cast<std::size_t>(row)];
+      const QStringList cells{QString::fromStdString(r.name), r.level.empty() ? tr("—") : QString::fromStdString(r.level),
+                              r.closed ? area(r.centreArea) : tr("—"),
+                              r.closed ? (r.innerKnown ? area(r.innerArea) : tr("未評価")) : tr("—"),
+                              r.closed && r.innerKnown ? QString::number(r.innerPerimeter / 1e3, 'f', 2) : tr("—"),
+                              r.counted ? tr("閉じている") : !r.closed ? tr("閉じていない") : tr("ほかの室と同じ場所")};
+      for (int c = 0; c < cells.size(); ++c) table->setItem(row, c, new QTableWidgetItem(cells[c]));
+    }
+    table->resizeColumnsToContents();
+    connect(table, &QTableWidget::cellClicked, this, [this, rooms](int row, int) {
+      if (row >= 0 && row < static_cast<int>(rooms.rows.size())) setSelection({rooms.rows[static_cast<std::size_t>(row)].id});
+    });
+    QString sum = tr("合計（閉じている室だけ）: 壁芯 %1 ㎡").arg(area(rooms.centreTotal));
+    sum += rooms.innerMissing == 0 ? tr(" ／ 内法 %1 ㎡").arg(area(rooms.innerTotal))
+                                   : tr(" ／ 内法は %1 室が未評価のため合計しません").arg(rooms.innerMissing);
+    if (rooms.notCounted > 0) sum += tr("\n合計に入れていない室: %1（閉じていない・同じ場所）").arg(rooms.notCounted);
+    sum += tr("\n壁芯＝壁を描いた線の内側、内法＝壁の面の内側。画面と図面の室の札には、壁芯の面積が出ます。");
+    box->addWidget(table, 1);
+    box->addWidget(note("roomScheduleTotal", sum));
+    tabs->addTab(page, tr("室の表"));
+  }
+  {
+    auto* page = new QWidget;
+    auto* box = new QVBoxLayout(page);
+    auto* table = makeTable("areaTable", {tr("階"), tr("壁で囲まれた面積（壁芯）㎡"), tr("室の数"), tr("室のない閉じた所"), tr("室の合計（壁芯）㎡"),
+                                          tr("室の合計（内法）㎡"), tr("床スラブ ㎡"), tr("法の床面積")},
+                            static_cast<int>(areas.rows.size()) + 1);
+    for (int row = 0; row < static_cast<int>(areas.rows.size()); ++row) {
+      const doc::AreaRow& r = areas.rows[static_cast<std::size_t>(row)];
+      const QStringList cells{r.level.empty() ? tr("（レベルなし）") : QString::fromStdString(r.level),
+                              r.enclosedKnown ? area(r.enclosedArea) : tr("—"), QString::number(r.rooms),
+                              r.enclosedKnown ? QString::number(r.regionsWithoutRoom) : tr("—"), area(r.roomCentre),
+                              r.innerMissing == 0 ? area(r.roomInner) : tr("未評価"), area(r.slabArea), tr("未評価")};
+      for (int c = 0; c < cells.size(); ++c) table->setItem(row, c, new QTableWidgetItem(cells[c]));
+    }
+    const int last = static_cast<int>(areas.rows.size());
+    const QStringList totals{tr("合計"), area(areas.enclosedTotal), QString(), QString(), area(areas.roomCentreTotal), QString(),
+                             area(areas.slabTotal), tr("未評価")};
+    for (int c = 0; c < totals.size(); ++c) table->setItem(last, c, new QTableWidgetItem(totals[c]));
+    table->resizeColumnsToContents();
+    int unreadable = 0;
+    for (const doc::AreaRow& r : areas.rows) unreadable += r.unreadableWalls;
+    QString text = tr("モデルから測った面積です。「壁で囲まれた面積」は、その階に立つ壁（壁ツールの壁）が囲む所の全部（室を置いていない所も含む）。"
+                      "法の床面積・建築面積（算入・不算入の決まり、吹抜け・階段・庇の扱い）は見ていないので、未評価です。");
+    if (unreadable > 0) text += tr("\n形を直接変えた壁が %1 枚あり、壁として読んでいません（面積に入っていない所があるかもしれません）。").arg(unreadable);
+    box->addWidget(table, 1);
+    box->addWidget(note("areaTableNote", text));
+    tabs->addTab(page, tr("面積の表"));
+  }
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
+  auto* save = buttons->addButton(tr("この表を CSV に保存..."), QDialogButtonBox::ActionRole);
+  save->setObjectName(QStringLiteral("scheduleSaveCsv"));
+  connect(save, &QPushButton::clicked, &dialog, [this, tabs, &dialog] {
+    const QString names[] = {tr("建具表"), tr("室の表"), tr("面積の表")};
+    const QString path = QFileDialog::getSaveFileName(&dialog, tr("表を CSV に保存"), names[tabs->currentIndex()] + QStringLiteral(".csv"),
+                                                      tr("CSV (*.csv)"));
+    if (!path.isEmpty()) saveScheduleCsv(tabs->currentIndex(), path);
+  });
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  layout->addWidget(buttons);
+  dialog.resize(760, 520);
+  dialog.exec();
 }
 
 void MainWindow::showRoomsDialog() {

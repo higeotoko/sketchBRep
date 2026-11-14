@@ -6750,7 +6750,21 @@ std::vector<ObjectId> Modeler::wallsUnderRoof(const ObjectId& roofId) const {
 
 RoomInfo Modeler::roomAt(const gp_Pnt& at) const { return regionInfo(document_, at); }
 
-std::vector<RoomInfo> Modeler::rooms() const {
+std::vector<RoomInfo> Modeler::rooms() const { return roomsIn(document_); }
+
+Modeler::EnclosedArea Modeler::enclosedAt(const Document& document, double floor) {
+  EnclosedArea out;
+  const StoreyWalls walls = storeyWalls(document, floor);
+  out.unreadableWalls = walls.unreadable;
+  if (walls.plan.empty()) return out;
+  for (const geom::RoomRegion& region : geom::roomRegions(walls.plan).regions) {
+    out.area += region.centreArea;
+    ++out.regions;
+  }
+  return out;
+}
+
+std::vector<RoomInfo> Modeler::roomsIn(const Document& document_) {
   std::vector<RoomInfo> out;
   for (const Object& o : document_.objects()) {
     if (!isRoomMarker(o)) continue;

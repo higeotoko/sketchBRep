@@ -279,9 +279,13 @@ class MainWindow : public QMainWindow, public ToolHost {
   void showOpeningSettingsDialog();
   void showRoofSettingsDialog();
   void showStairSettingsDialog();
+  void showSchedulesDialog();
  public:
   // IFC for other BIM software (docs/90 G-13); what was written goes to the status bar.
   void exportIfcFile(const QString& path);
+  // The tables read from the model (docs/104) as CSV: 0 doors and windows, 1 rooms, 2 areas.
+  QString scheduleCsv(int table) const;
+  bool saveScheduleCsv(int table, const QString& path);
   QString lastIfcSummary() const { return lastIfcSummary_; }
   QStringList lastIfcNotes() const { return lastIfcNotes_; }
  private:

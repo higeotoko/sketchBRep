@@ -1,5 +1,6 @@
 #include "Viewport.h"
 #include "sbr/OpeningSymbols.h"
+#include "sbr/doc/Schedules.h"
 #include "sbr/KernelError.h"
 
 #include "WheelZoom.h"
@@ -1101,7 +1102,9 @@ void Viewport::syncLabel(const doc::ObjectId& id) {
   if (!label || label->text.empty()) return;
   const bool selected = isSelected(*o);
   Handle(AIS_TextLabel) text = new AIS_TextLabel();
-  text->SetText(TCollection_ExtendedString(label->text.c_str(), Standard_True));  // UTF-8
+  // A room's tag (name and area, docs/104) once it has been read; its name until then.
+  const auto roomTag = roomTags_.find(id);
+  text->SetText(TCollection_ExtendedString((roomTag != roomTags_.end() ? roomTag->second : label->text).c_str(), Standard_True));  // UTF-8
   text->SetPosition(label->position.Transformed(modeler_.document().worldTransform(*o)));
   // A grid line's name (X1, Y2): larger, bold, in a white box over the
   // line's end, so it reads at any zoom (as the bubbles of a drawing).
@@ -2836,6 +2839,25 @@ void Viewport::syncWallOutlines() {
   context_->Deactivate(wallOutlines_);
 }
 
+void Viewport::syncRoomTags() {
+  // Only when a room is shown: its area follows the walls, whatever was edited.
+  bool any = false;
+  for (const auto& [id, label] : labels_) {
+    const doc::Object* o = modeler_.document().find(id);
+    const auto kind = o ? o->attributes.find("kind") : decltype(o->attributes.find("kind")){};
+    if (o && kind != o->attributes.end() && kind->second == "room") any = true;
+  }
+  roomTags_.clear();
+  if (!any) return;
+  for (const doc::RoomRow& r : doc::roomSchedule(modeler_.document()).rows) {
+    roomTags_[r.id] = doc::roomTagText(r);
+    const auto it = labels_.find(r.id);
+    if (it == labels_.end()) continue;
+    it->second->SetText(TCollection_ExtendedString(roomTags_[r.id].c_str(), Standard_True));
+    context_->Redisplay(it->second, Standard_False);
+  }
+}
+
 void Viewport::syncOpeningSymbols() {
   if (view_.IsNull()) return;
   if (!openingSymbols_.IsNull()) {
@@ -2843,7 +2865,28 @@ void Viewport::syncOpeningSymbols() {
     openingSymbols_.Nullify();
   }
   openingSymbolEdges_ = 0;
+  for (const Handle(AIS_TextLabel)& tag : openingTags_) context_->Remove(tag, Standard_False);
+  openingTags_.clear();
+  openingTagTexts_.clear();
+  syncRoomTags();
   if (!planCutZ_) return;
+  // The marks of the openings the plan cuts through, as in the schedule (docs/104).
+  for (const doc::OpeningRow& r : doc::openingSchedule(modeler_.document()).rows) {
+    const doc::Object* host = modeler_.document().find(r.host);
+    if (!host || !modeler_.document().isVisible(host->id) || hiddenInView(*host)) continue;
+    if (*planCutZ_ < r.bottom || *planCutZ_ >= r.bottom + r.height) continue;
+    Handle(AIS_TextLabel) tag = new AIS_TextLabel();
+    tag->SetText(TCollection_ExtendedString(r.mark.c_str(), Standard_True));
+    tag->SetPosition(gp_Pnt(r.center.X(), r.center.Y(), *planCutZ_ - 1.0).Translated(gp_Vec(r.normal) * 300.0));
+    tag->SetHeight(13);
+    tag->SetColor(Quantity_Color(0.05, 0.05, 0.08, Quantity_TOC_RGB));
+    tag->SetHJustification(Graphic3d_HTA_CENTER);
+    tag->SetVJustification(Graphic3d_VTA_CENTER);
+    tag->SetZLayer(Graphic3d_ZLayerId_TopOSD);
+    context_->Display(tag, 0, -1, Standard_False);
+    openingTags_.push_back(tag);
+    openingTagTexts_.push_back(QString::fromStdString(r.mark));
+  }
   // Just under the cut (it would clip lines lying on it), drawn over the caps.
   draw::SymbolOptions options;
   options.z = *planCutZ_ - 1.0;
