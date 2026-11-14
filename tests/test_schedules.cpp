@@ -129,7 +129,7 @@ TEST_F(Schedules, RoomsAndAreasAreReadAsTheWallsAreNow) {
   EXPECT_TRUE(living["counted"].get<bool>());
   EXPECT_NEAR(living["area_centre"].get<double>(), 24.0, 1e-9);  // 4000 x 6000 on the wall lines
   EXPECT_NEAR(living["area_inner"].get<double>(), 3.85 * 5.8, 1e-9);  // less 100 + 50 and 100 + 100
-  EXPECT_EQ(living["tag"], "居間  24.00 ㎡");
+  EXPECT_EQ(living["tag"], "居間  24.00 m²");
   EXPECT_NEAR(rooms["total_area_centre"].get<double>(), 24.0, 1e-9);
   EXPECT_NE(rooms["csv"].get<std::string>().find("居間,1FL,24.00,22.33,"), std::string::npos) << rooms["csv"];
 
@@ -157,10 +157,10 @@ TEST_F(Schedules, RoomsAndAreasAreReadAsTheWallsAreNow) {
         if (item.kind == sbr::draw::Item::Kind::Text && item.text.rfind("居間", 0) == 0) found = item.text;
     return found;
   };
-  EXPECT_EQ(tagOnPlan(), "居間  24.00 ㎡");
+  EXPECT_EQ(tagOnPlan(), "居間  24.00 m²");
   // The partition 1000 to the east: the room, its tag and the table follow.
   ok("move", {{"ids", {partition}}, {"vector", {1000, 0, 0}}});
-  EXPECT_EQ(tagOnPlan(), "居間  30.00 ㎡");
+  EXPECT_EQ(tagOnPlan(), "居間  30.00 m²");
   areas = ok("area_table");
   EXPECT_NEAR(areas["levels"][0]["enclosed"].get<double>(), 48.0, 1e-9);
   EXPECT_NEAR(areas["levels"][0]["room_centre"].get<double>(), 30.0, 1e-9);

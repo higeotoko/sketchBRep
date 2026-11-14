@@ -91,7 +91,8 @@ struct AreaTable {
 AreaTable areaTable(const Document& document);
 
 // What a room's tag says on screen and on drawings: its name and its area within the wall
-// lines (壁芯) as the walls are now; a room no longer enclosed says so.
+// lines (壁芯) as the walls are now; a room no longer enclosed says so. The unit is written
+// "m²": the view's font has no glyph for the one-character square metre sign.
 std::string roomTagText(const RoomRow& room);
 
 // The tables as CSV for a spreadsheet: UTF-8 with a byte order mark, CRLF, Japanese headings,

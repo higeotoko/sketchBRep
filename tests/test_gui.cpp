@@ -11579,17 +11579,17 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
   QVERIFY(!room.empty());
   QApplication::processEvents();
   // The room's tag: its name and its area on the wall lines; it follows the walls.
-  QTRY_COMPARE(f.vp->annotationText(room),QStringLiteral("LDK  48.00 ㎡"));
+  QTRY_COMPARE(f.vp->annotationText(room),QStringLiteral("LDK  48.00 m²"));
   QVERIFY(m.move({east},gp_Vec(1000,0,0)));
   QApplication::processEvents();
-  QTRY_COMPARE(f.vp->annotationText(room),QStringLiteral("LDK  54.00 ㎡"));
+  QTRY_COMPARE(f.vp->annotationText(room),QStringLiteral("LDK  54.00 m²"));
   f.window.setSelection({room});  // selecting it keeps the tag
   QApplication::processEvents();
-  QCOMPARE(f.vp->annotationText(room),QStringLiteral("LDK  54.00 ㎡"));
+  QCOMPARE(f.vp->annotationText(room),QStringLiteral("LDK  54.00 m²"));
   f.window.setSelection({});
   QVERIFY(m.undo());
   QApplication::processEvents();
-  QTRY_COMPARE(f.vp->annotationText(room),QStringLiteral("LDK  48.00 ㎡"));
+  QTRY_COMPARE(f.vp->annotationText(room),QStringLiteral("LDK  48.00 m²"));
   // In a plan the openings cut by it carry the schedule's marks; none without a plan.
   QVERIFY(f.vp->openingTagTexts().empty());
   f.vp->setPlanCut(1100.0);

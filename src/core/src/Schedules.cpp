@@ -228,7 +228,7 @@ AreaTable areaTable(const Document& document) {
 std::string roomTagText(const RoomRow& room) {
   if (!room.closed) return room.name + "（閉じていない）";
   if (!room.counted) return room.name;
-  return room.name + "  " + number(room.centreArea / 1e6, 2) + " ㎡";
+  return room.name + "  " + number(room.centreArea / 1e6, 2) + " m²";
 }
 
 std::string openingScheduleCsv(const OpeningSchedule& schedule) {
