@@ -39,4 +39,8 @@ struct RoofShape {
 // itself, or a size is not usable.
 Result<RoofShape> makeRoof(const RoofSpec& spec);
 
+// Everything above the roof's underside, within its plan (overhangs included), for `up` mm
+// upwards: what a wall under the roof loses to stand up to it.
+Result<TopoDS_Shape> roofSpaceAbove(const RoofSpec& spec, double up);
+
 }  // namespace sbr::geom

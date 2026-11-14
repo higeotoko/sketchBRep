@@ -422,6 +422,20 @@ class Modeler {
   // The same roof with other sizes (the same object). One undo step.
   Status changeRoof(const ObjectId& id, const geom::RoofSpec& spec);
 
+  // Walls made by the wall tool stand up to a roof's underside (docs/97 N-05): they are made
+  // tall enough and lose what is above the underside. They stay walls (length, build-up,
+  // openings as before; attribute top_roof = the roof). When the roof or the wall changes or
+  // moves they are fitted again. Walls that cannot be fitted (reshaped by hand, wholly above
+  // the roof) are refused by name and nothing changes. One undo step.
+  Status fitWallsToRoof(const std::vector<ObjectId>& walls, const ObjectId& roof);
+  // Flat tops again, at the height the walls had before.
+  Status releaseWallsFromRoof(const std::vector<ObjectId>& walls);
+  // Walls made by the wall tool whose line lies within the roof's outline (or on it) and that
+  // start below its bearing height: what "fit the walls under this roof" means.
+  std::vector<ObjectId> wallsUnderRoof(const ObjectId& roof) const;
+  // The walls fitted to this roof now.
+  std::vector<ObjectId> wallsFittedToRoof(const ObjectId& roof) const;
+
   // --- rooms (docs/90 G-07) -------------------------------------------------
   // The region `at` is in, bounded by the walls made by the wall tool that stand at its
   // height (those cut by a plan 1100 above it). closed = false with `problem` when no walls

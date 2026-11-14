@@ -244,4 +244,125 @@ TEST_F(Roofs, OnGridLinesAndNotOnOtherThings) {
   EXPECT_TRUE(refused("roof_info", {{"id", box}}));
   EXPECT_TRUE(refused("create_roof", {{"outline", {{0, 0}, {8000, 0}, {8000, 6000}}}, {"height", 3000}}));
 }
+
+// Walls up to the roof (docs/97 N-05). A house 8000 x 6000: walls 200 thick on the outline,
+// 3000 high; a gable roof bearing at 3000 (ridge along x, pitch 4): its underside is
+// 3000 + 0.4 x (distance in from the y = 0 / y = 6000 lines) high.
+struct WallsUnderRoof : Roofs {
+  std::string south, east, north, west, roof;
+  struct Box {
+    double x0, y0, z0, x1, y1, z1;
+  };
+  Box box(const std::string& id) {
+    const auto b = sbr::geom::exactBounds(modeler.document().worldShape(*modeler.document().find(id)));
+    return {b.CornerMin().X(), b.CornerMin().Y(), b.CornerMin().Z(), b.CornerMax().X(), b.CornerMax().Y(), b.CornerMax().Z()};
+  }
+  double volume(const std::string& id) { return sbr::geom::volume(modeler.document().find(id)->shape); }
+  // The volume of a 200 wall along y from y0 to y1 standing from 0 up to the underside.
+  static double gableWall(double y0, double y1, double bearing = 3000, double slope = 0.4) {
+    auto upTo = [&](double y) {  // integral of the underside's height from 0 to y (0 <= y <= 6000)
+      const double a = std::min(y, 3000.0), b = std::max(y - 3000.0, 0.0);
+      return bearing * y + slope * (a * a / 2 + (3000.0 * b - b * b / 2));
+    };
+    return 200.0 * (upTo(y1) - upTo(y0));
+  }
+  void SetUp() override {
+    const json ids = ok("create_wall", {{"points", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}, {0, 0}}},
+                                        {"thickness", 200}, {"height", 3000}})["ids"];
+    south = ids[0];
+    east = ids[1];
+    north = ids[2];
+    west = ids[3];
+    roof = ok("create_roof", {{"outline", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}}}, {"kind", "gable"}, {"height", 3000}})["id"];
+  }
+};
+
+TEST_F(WallsUnderRoof, GableEndWallsGetTheirTriangleAndStayWalls) {
+  const Box e0 = box(east), s0 = box(south);
+  const double southBefore = volume(south);
+  const auto steps = modeler.history().undoCount();
+  const json fitted = ok("fit_walls_to_roof", {{"roof", roof}});
+  EXPECT_EQ(fitted["walls"].size(), 4u);  // every wall under the roof
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+
+  // The gable end: up to the underside along its length (the ridge is 1200 above the bearing height).
+  const Box e1 = box(east);
+  EXPECT_NEAR(e1.y0, e0.y0, 1e-6);
+  EXPECT_NEAR(e1.y1, e0.y1, 1e-6);
+  EXPECT_NEAR(e1.z1, 4200, 1e-4);
+  EXPECT_NEAR(volume(east), gableWall(e0.y0, e0.y1), 50.0);
+  EXPECT_NEAR(volume(west), gableWall(box(west).y0, box(west).y1), 50.0);
+  // The eave walls: cut along the slope across their thickness (40 up at the inner face,
+  // 40 down at the outer one): the same volume.
+  const Box s1 = box(south);
+  EXPECT_NEAR(s1.z1, 3040, 1e-4);
+  EXPECT_NEAR(volume(south), southBefore, 50.0);
+  EXPECT_NEAR(s1.x0, s0.x0, 1e-6);
+
+  // Still walls: length and openings as before.
+  EXPECT_TRUE(ok("member_info", {{"id", east}}).contains("fields"));
+  ok("place_openings", {{"host", east}, {"face_normal", {1, 0, 0}}, {"count", 1}, {"width", 800}, {"height", 1000}, {"sill", 900}});
+  EXPECT_EQ(ok("list_openings", {{"ids", {east}}})["hosts"][0]["openings"].size(), 1u);
+  EXPECT_NEAR(volume(east), gableWall(e0.y0, e0.y1) - 800.0 * 1000 * 200, 50.0);
+  EXPECT_NEAR(box(east).z1, 4200, 1e-4);
+  // A room is still found from them.
+  EXPECT_TRUE(ok("room_at", {{"at", {4000, 3000}}})["closed"].get<bool>());
+
+  // The roof steeper: the walls follow, in the roof's undo step.
+  const auto before = modeler.history().undoCount();
+  ok("change_roof", {{"id", roof}, {"pitch", 6}});
+  EXPECT_EQ(modeler.history().undoCount(), before + 1);
+  EXPECT_NEAR(box(east).z1, 3000 + 0.6 * 3000, 1e-4);
+  EXPECT_NEAR(volume(east), gableWall(e0.y0, e0.y1, 3000, 0.6) - 800.0 * 1000 * 200, 50.0);
+  ASSERT_TRUE(modeler.undo());
+  EXPECT_NEAR(box(east).z1, 4200, 1e-4);
+
+  // The roof 500 higher: the walls reach it.
+  ok("change_roof", {{"id", roof}, {"height", 3500}});
+  EXPECT_NEAR(box(east).z1, 4700, 1e-4);
+  EXPECT_NEAR(box(south).z1, 3540, 1e-4);
+  ASSERT_TRUE(modeler.undo());
+
+  // The gable wall moved 1000 in (its neighbours follow): fitted again where it stands.
+  ok("move", {{"ids", {east}}, {"vector", {-1000, 0, 0}}});
+  EXPECT_NEAR(box(east).x1, e0.x1 - 1000, 1e-6);
+  EXPECT_NEAR(box(east).z1, 4200, 1e-4);
+  EXPECT_NEAR(volume(east), gableWall(e0.y0, e0.y1) - 800.0 * 1000 * 200, 50.0);
+  ASSERT_TRUE(modeler.undo());
+
+  // Released: flat again at its own height, the opening stays.
+  ok("release_walls_from_roof", {{"walls", {east}}});
+  EXPECT_NEAR(box(east).z1, 3000, 1e-6);
+  EXPECT_NEAR(volume(east), 200.0 * (e0.y1 - e0.y0) * 3000 - 800.0 * 1000 * 200, 50.0);
+  EXPECT_EQ(ok("list_openings", {{"ids", {east}}})["hosts"][0]["openings"].size(), 1u);
+  EXPECT_NEAR(box(west).z1, 4200, 1e-4);  // the others stay fitted
+  ok("release_walls_from_roof", {{"roof", roof}});
+  EXPECT_NEAR(box(west).z1, 3000, 1e-6);
+  EXPECT_NEAR(box(south).z1, 3000, 1e-6);
+  EXPECT_NEAR(volume(south), southBefore, 1.0);
+  EXPECT_TRUE(refused("release_walls_from_roof", {{"roof", roof}}));
+}
+
+TEST_F(WallsUnderRoof, WhatCannotBeFittedIsRefusedAndNothingChanges) {
+  // A wall on the storey above the bearing height is not "under" the roof, and cannot be fitted.
+  const std::string high = ok("create_wall", {{"points", {{1000, 3000}, {7000, 3000}}}, {"thickness", 100}, {"height", 500}, {"base", 6000}})["ids"][0];
+  const std::string low = ok("create_wall", {{"points", {{4000, 100}, {4000, 5900}}}, {"thickness", 100}, {"height", 2400}})["ids"][0];
+  const json fitted = ok("fit_walls_to_roof", {{"roof", roof}});
+  EXPECT_EQ(fitted["walls"].size(), 5u);  // the four and the low partition, not the one above
+  // The partition stands under the ridge line: up to it.
+  const auto b = sbr::geom::exactBounds(modeler.document().worldShape(*modeler.document().find(low)));
+  EXPECT_NEAR(b.CornerMax().Z(), 4200, 1e-4);
+  const double z = box(high).z1;
+  EXPECT_TRUE(refused("fit_walls_to_roof", {{"roof", roof}, {"walls", {high}}}));
+  EXPECT_NEAR(box(high).z1, z, 1e-9);
+  // Not a roof; a box is not a wall.
+  const std::string block = ok("create_box", {{"origin", {1000, 1000, 0}}, {"width", 500}, {"depth", 500}, {"height", 500}})["id"];
+  EXPECT_TRUE(refused("fit_walls_to_roof", {{"roof", block}}));
+  EXPECT_TRUE(refused("fit_walls_to_roof", {{"roof", roof}, {"walls", {block}}}));
+  // The roof deleted: the walls keep the shape they have (they can still be released).
+  ok("delete", {{"ids", {roof}}});
+  EXPECT_NEAR(box(east).z1, 4200, 1e-4);
+  ok("release_walls_from_roof", {{"walls", {east}}});
+  EXPECT_NEAR(box(east).z1, 3000, 1e-6);
+}
 }  // namespace

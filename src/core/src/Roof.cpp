@@ -74,7 +74,22 @@ Result<TopoDS_Shape> ridgeBody(const Frame& f, const Rect& r, bool alongA, doubl
 
 }  // namespace
 
-Result<RoofShape> makeRoof(const RoofSpec& spec) {
+namespace {
+Result<RoofShape> build(const RoofSpec& spec, double riseGiven);
+}
+
+Result<RoofShape> makeRoof(const RoofSpec& spec) { return build(spec, 0.0); }
+
+Result<TopoDS_Shape> roofSpaceAbove(const RoofSpec& spec, double up) {
+  if (!(up > 1.0)) return Result<TopoDS_Shape>::failure("The height above the roof must be positive");
+  const auto space = build(spec, up);
+  if (!space) return Result<TopoDS_Shape>::failure(space.error());
+  return space->solid;
+}
+
+namespace {
+// `riseGiven` > 0: that many mm upright instead of the roof's own thickness.
+Result<RoofShape> build(const RoofSpec& spec, double riseGiven) {
   if (spec.kind != "gable" && spec.kind != "hip" && spec.kind != "shed") return R::failure("Roof kind: gable, hip or shed");
   if (!(spec.pitch > 0.0) || spec.pitch > 30.0 || !std::isfinite(spec.pitch))
     return R::failure("Roof pitch must be above 0 and at most 30 (rise per 10 of run)");
@@ -157,7 +172,7 @@ Result<RoofShape> makeRoof(const RoofSpec& spec) {
   if (rects.size() > 40) return R::failure("The roof outline has too many steps");
 
   const double slope = spec.pitch / 10.0;
-  const double rise = spec.thickness * std::sqrt(1.0 + slope * slope);  // the thickness measured upright
+  const double rise = riseGiven > 0 ? riseGiven : spec.thickness * std::sqrt(1.0 + slope * slope);  // upright
   RoofShape out;
   out.parts = static_cast<int>(rects.size());
   std::vector<TopoDS_Shape> bodies;
@@ -236,5 +251,6 @@ Result<RoofShape> makeRoof(const RoofSpec& spec) {
   out.eaveHeight = box.CornerMin().Z();
   return out;
 }
+}  // namespace
 
 }  // namespace sbr::geom

@@ -61,6 +61,9 @@ class PropertiesPanel : public QWidget {
   void partSizeEdited(const doc::ObjectId& id, const QString& key, double value);
   // A roof's size (docs/90 G-08): key = kind (then `kind`), pitch, eave, gable_eave, thickness, height.
   void roofEdited(const doc::ObjectId& id, const QString& key, double value, const QString& kind);
+  // Walls up to a roof (docs/97 N-05): `id` is a roof (fit / release the walls under it) or a
+  // wall (release it).
+  void roofWallsRequested(const doc::ObjectId& id, bool fit);
   void lockToggled(const doc::ObjectId& id, bool locked);
   // The object's material picked from the library ("" = inherit).
   void materialAssigned(const doc::ObjectId& id, const std::string& materialId);

@@ -2200,6 +2200,31 @@ const std::vector<CommandDef>& commands() {
          result["id"] = text(a, "id");
          return result;
        }},
+      {"fit_walls_to_roof",
+       "Walls made by create_wall stand up to the underside of 'roof' (create_roof): made tall enough, then cut "
+       "to it (gable-end walls get their triangle). 'walls': ids, or omit for every wall under the roof (its line "
+       "within the roof's outline, starting below its bearing height). They stay walls (length, type, openings "
+       "editable) and are fitted again when the roof or the wall changes or moves. Refused, with nothing "
+       "changed, for a wall reshaped by hand or wholly above the roof. One undo step.",
+       SCHEMA({"type": "object", "properties": {"roof": {"type": "string"}, "walls": {"type": "array", "items": {"type": "string"}}},
+               "required": ["roof"]}),
+       [](doc::Modeler& m, const json& a) {
+         const std::string roof = text(a, "roof");
+         const std::vector<doc::ObjectId> walls = a.contains("walls") ? ids(a, "walls") : m.wallsUnderRoof(roof);
+         if (walls.empty()) throw ApiError("No walls made by create_wall stand under this roof");
+         must(m.fitWallsToRoof(walls, roof));
+         return json{{"roof", roof}, {"walls", walls}};
+       }},
+      {"release_walls_from_roof",
+       "Walls fitted to a roof get flat tops again at the height they had before. 'walls': ids, or 'roof' for "
+       "every wall fitted to it. One undo step.",
+       SCHEMA({"type": "object", "properties": {"roof": {"type": "string"}, "walls": {"type": "array", "items": {"type": "string"}}}}),
+       [](doc::Modeler& m, const json& a) {
+         const std::vector<doc::ObjectId> walls = a.contains("walls") ? ids(a, "walls") : m.wallsFittedToRoof(text(a, "roof"));
+         if (walls.empty()) throw ApiError("No walls are fitted to this roof");
+         must(m.releaseWallsFromRoof(walls));
+         return json{{"walls", walls}};
+       }},
       {"create_room",
        "A room: a marker (its name as a text note, attribute kind=room) at plan point 'at' ([x, y] or \"X1/Y1\") "
        "on the floor at 'base' (mm, default 0). The room is the region the walls made by create_wall enclose "

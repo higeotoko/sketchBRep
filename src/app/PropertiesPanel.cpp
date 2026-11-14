@@ -309,10 +309,54 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
         value->setObjectName(QLatin1String(name));
         form_->addRow(label, value);
       };
+      {
+        // The walls under it: up to its underside, or flat again.
+        const std::size_t fitted = modeler.wallsFittedToRoof(id).size();
+        const std::size_t under = modeler.wallsUnderRoof(id).size();
+        auto* line = new QWidget;
+        auto* box = new QHBoxLayout(line);
+        box->setContentsMargins(0, 0, 0, 0);
+        auto* state = new QLabel(fitted > 0 ? tr("%1 枚が屋根まで").arg(fitted) : tr("合わせていない（下に %1 枚）").arg(under));
+        state->setObjectName(QStringLiteral("roofWallsState"));
+        auto* fit = new QPushButton(tr("合わせる"));
+        fit->setObjectName(QStringLiteral("roofFitWalls"));
+        fit->setToolTip(tr("この屋根の下にある壁（壁ツールで描いた壁）の上端を、屋根の下面まで伸ばして合わせます。"
+                           "妻側の壁は三角になります。壁は壁のまま（長さ・仕様・開口を直せます）"));
+        fit->setEnabled(under > 0);
+        auto* release = new QPushButton(tr("外す"));
+        release->setObjectName(QStringLiteral("roofReleaseWalls"));
+        release->setToolTip(tr("合わせた壁を、元の高さの平らな上端に戻します"));
+        release->setEnabled(fitted > 0);
+        connect(fit, &QPushButton::clicked, this, [this, id] { emit roofWallsRequested(id, true); });
+        connect(release, &QPushButton::clicked, this, [this, id] { emit roofWallsRequested(id, false); });
+        box->addWidget(state, 1);
+        box->addWidget(fit);
+        box->addWidget(release);
+        form_->addRow(tr("下の壁"), line);
+      }
       row(tr("屋根面積"), tr("%1 ㎡（勾配なりの上面）").arg(roof->slopeArea / 1e6, 0, 'f', 2), "roofSlopeArea");
       row(tr("水平投影"), tr("%1 ㎡（軒の出を含む）").arg(roof->planArea / 1e6, 0, 'f', 2), "roofPlanArea");
       row(tr("いちばん高い所"), tr("%1 mm").arg(roof->ridgeHeight, 0, 'f', 1), "roofRidgeHeight");
     }
+  }
+
+  // ===== A wall standing up to a roof (docs/97 N-05): said, and released here.
+  if (const auto roofOf = o->attributes.find("top_roof"); roofOf != o->attributes.end()) {
+    const doc::Object* roofObject = document.find(roofOf->second);
+    auto* line = new QWidget;
+    auto* box = new QHBoxLayout(line);
+    box->setContentsMargins(0, 0, 0, 0);
+    auto* state = new QLabel(roofObject ? tr("屋根「%1」まで").arg(QString::fromStdString(roofObject->name))
+                                        : tr("屋根まで（その屋根は、もうありません）"));
+    state->setObjectName(QStringLiteral("wallTopRoof"));
+    auto* release = new QPushButton(tr("外す"));
+    release->setObjectName(QStringLiteral("wallReleaseRoof"));
+    release->setToolTip(tr("この壁を、元の高さの平らな上端に戻します"));
+    release->setEnabled(!o->locked);
+    connect(release, &QPushButton::clicked, this, [this, id] { emit roofWallsRequested(id, false); });
+    box->addWidget(state, 1);
+    box->addWidget(release);
+    form_->addRow(tr("上端"), line);
   }
 
   // ===== A room (docs/90 G-07): its areas as the walls are now.

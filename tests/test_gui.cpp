@@ -11399,4 +11399,39 @@ void GuiPhase1::roofToolDrawsARoofWhoseSizesAreChangedInThePanel() {
   QVERIFY(m.undo());QVERIFY(m.undo());QVERIFY(m.undo());
   QVERIFY(std::abs(m.roofInfo(roof)->planArea-4600.0*3200)<1.0);
   QCOMPARE(QString::fromStdString(m.roofInfo(roof)->spec.kind),QStringLiteral("gable"));
+  // docs/97 N-05: walls under the roof stand up to it from the roof's properties, and come
+  // back flat. (The roof was drawn at height 0: lift it onto walls 2400 high.)
+  {
+    geom::RoofSpec spec=m.roofInfo(roof)->spec;spec.height=2400;
+    QVERIFY(m.changeRoof(roof,spec));
+    const auto walls=m.createWalls({gp_Pnt(0,-3000,0),gp_Pnt(4000,-3000,0),gp_Pnt(4000,-1000,0),gp_Pnt(0,-1000,0),gp_Pnt(0,-3000,0)},200,2400,0);
+    QVERIFY2(walls,walls?"":walls.error().c_str());
+    auto top=[&](const doc::ObjectId& id){return geom::exactBounds(m.document().worldShape(*m.document().find(id))).CornerMax().Z();};
+    const doc::ObjectId gableEnd=walls->at(1);  // along y at x = 4000
+    f.window.setSelection({roof});
+    QApplication::processEvents();
+    auto* state=f.window.findChild<QLabel*>(QStringLiteral("roofWallsState"));QVERIFY(state);
+    QVERIFY2(state->text().contains(QStringLiteral("下に 4 枚")),qPrintable(state->text()));
+    auto* fit=f.window.findChild<QPushButton*>(QStringLiteral("roofFitWalls"));QVERIFY(fit&&fit->isEnabled());
+    const auto before=m.history().undoCount();
+    fit->click();
+    QTRY_VERIFY(std::abs(top(gableEnd)-(2400+0.4*1000))<1e-3);  // the ridge is 1000 in: 400 up
+    QCOMPARE(m.history().undoCount(),before+1);
+    QTRY_VERIFY(f.window.findChild<QLabel*>(QStringLiteral("roofWallsState"))->text().contains(QStringLiteral("4 枚が屋根まで")));
+    // The wall says so, and is released there.
+    f.window.setSelection({gableEnd});
+    QApplication::processEvents();
+    QVERIFY(f.window.findChild<QLabel*>(QStringLiteral("wallTopRoof")));
+    auto* release=f.window.findChild<QPushButton*>(QStringLiteral("wallReleaseRoof"));QVERIFY(release);
+    release->click();
+    QTRY_VERIFY(std::abs(top(gableEnd)-2400)<1e-6);
+    QVERIFY(std::abs(top(walls->at(3))-2800)<1e-3);  // the other gable end stays fitted
+    // The rest from the roof.
+    f.window.setSelection({roof});
+    QApplication::processEvents();
+    auto* all=f.window.findChild<QPushButton*>(QStringLiteral("roofReleaseWalls"));QVERIFY(all&&all->isEnabled());
+    all->click();
+    QTRY_VERIFY(std::abs(top(walls->at(3))-2400)<1e-6);
+    QVERIFY2(f.window.lastError().isEmpty(),qPrintable(f.window.lastError()));
+  }
 }

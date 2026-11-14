@@ -1,5 +1,7 @@
 #include "sbr/doc/Modeler.h"
 #include "sbr/geom/RoomRegions.h"
+
+#include <BRepBuilderAPI_Transform.hxx>
 #include "sbr/WallTypes.h"
 #include "sbr/OpeningSymbols.h"
 #include "sbr/ConstructionGuide.h"
@@ -686,6 +688,10 @@ double levelHeight(const std::vector<FloorLevel>& levels, const std::string& id,
 void followWallJoins(const Document& document, ChangeSet& changes, const RegenContext& context,
                      const std::vector<ObjectId>& roots, const gp_Vec& d, JoinFollow& report);
 
+// Walls fitted to a roof (docs/97 N-05) are fitted again when they or their roof are among
+// `changes`; defined with the roof helpers below.
+void refitWallsToRoofs(const Document& document, ChangeSet& changes, const RegenContext& context);
+
 // Walls and slabs on levels (docs/90 G-02) after the levels go from `before` to `after`;
 // defined with the wall helpers below.
 void levelUp(const Document& document, ChangeSet& changes, const RegenContext& context,
@@ -890,6 +896,7 @@ Status Modeler::setLevels(std::vector<FloorLevel> levels) {
   ChangeSet changes(document_);
   pinUp(document_, changes, document_.regenContext(), before.levels, after.levels);
   levelUp(document_, changes, document_.regenContext(), before.levels, after.levels);
+  refitWallsToRoofs(document_, changes, document_.regenContext());
   Command command = changes.build("Edit Levels");
   command.settings = SettingsDelta{before, after};
   history_.execute(std::move(command));
@@ -4946,6 +4953,7 @@ Status Modeler::transform(const std::vector<ObjectId>& ids, const gp_Trsf& world
   if (keepWallJoins_ && worldDelta.Form() == gp_Translation)
     followWallJoins(document_, changes, document_.regenContext(), roots, gp_Vec(worldDelta.TranslationPart()),
                     lastJoins_);
+  refitWallsToRoofs(document_, changes, document_.regenContext());
   if (const Status settled = settleMoves(document_, changes, document_.regenContext()); !settled) return settled;
   history_.beginGroup(commandName);
   history_.execute(changes.build(commandName));
@@ -5884,10 +5892,9 @@ std::optional<geom::RoofSpec> roofSpecFrom(const std::string& text) {
 }
 
 // The stored roof (in the object's own coordinates) and where the object stands, or why it is
-// no longer a roof whose sizes can be read.
-Result<std::pair<geom::RoofSpec, gp_Trsf>> storedRoof(const Document& document, const ObjectId& id) {
+// no longer a roof whose sizes can be read. `o` may be a changed copy not in the document yet.
+Result<std::pair<geom::RoofSpec, gp_Trsf>> storedRoofOf(const Document& document, const Object* o) {
   using R = Result<std::pair<geom::RoofSpec, gp_Trsf>>;
-  const Object* o = document.find(id);
   if (!o) return R::failure("Object not found");
   const auto kind = o->attributes.find("kind");
   const auto text = o->attributes.find("roof_spec");
@@ -5901,6 +5908,125 @@ Result<std::pair<geom::RoofSpec, gp_Trsf>> storedRoof(const Document& document, 
   if (std::abs(world.ScaleFactor() - 1.0) > 1e-9 || gp_Vec(0, 0, 1).Transformed(world).Z() < 1.0 - 1e-9)
     return R::failure("'" + o->name + "' was tilted or scaled: its roof sizes can no longer be read or changed");
   return std::make_pair(*spec, world);
+}
+
+Result<std::pair<geom::RoofSpec, gp_Trsf>> storedRoof(const Document& document, const ObjectId& id) {
+  return storedRoofOf(document, document.find(id));
+}
+
+geom::RoofSpec roofInFrame(geom::RoofSpec s, const gp_Trsf& t);
+
+// --- walls up to a roof (docs/97 N-05) -----------------------------------------------------
+constexpr const char* kTopRoof = "top_roof";            // on a wall: the roof it stands up to
+constexpr const char* kRoofTrim = "roof-trim";          // id of the operand that takes the wall's top away
+constexpr const char* kHeightBefore = "roof_trim_height";  // the wall's own height before it was fitted
+
+// The operand that trims the wall, down the chain of cuts: its path and the frame its
+// siblings are given in (that frame -> the object's own coordinates).
+bool findRoofTrim(const Recipe& recipe, std::vector<std::size_t>& path, gp_Trsf& frame) {
+  const auto* cut = std::get_if<BooleanFeature>(&recipe.base);
+  if (!cut || cut->kind != BooleanKind::Subtract || cut->operands.empty() || !recipe.modifiers.empty()) return false;
+  for (std::size_t i = 1; i < cut->operands.size(); ++i) {
+    if (cut->operands[i].id != kRoofTrim) continue;
+    path.push_back(i);
+    return true;
+  }
+  const BooleanOperand& base = cut->operands.front();
+  if (!base.recipe) return false;
+  const gp_Trsf outer = frame;
+  path.push_back(0);
+  frame = frame * base.placement;
+  if (findRoofTrim(*base.recipe, path, frame)) return true;
+  path.pop_back();
+  frame = outer;
+  return false;
+}
+
+// What the roof takes from walls under it (world), and its highest point.
+struct RoofCut {
+  TopoDS_Shape above;
+  double top = 0.0;
+};
+
+Result<RoofCut> roofCut(const Document& document, const Object* roof) {
+  using R = Result<RoofCut>;
+  const auto stored = storedRoofOf(document, roof);
+  if (!stored) return R::failure(stored.error());
+  const geom::RoofSpec world = roofInFrame(stored->first, stored->second);
+  const auto shape = geom::makeRoof(world);
+  if (!shape) return R::failure(shape.error());
+  const auto above = geom::roofSpaceAbove(world, 100000.0);
+  if (!above) return R::failure(above.error());
+  return RoofCut{above.value(), shape->ridgeHeight};
+}
+
+// `o` (a wall, possibly a changed copy) made tall enough and cut to the roof. False when it
+// is not a wall its tool made any more, or nothing of it would be left.
+bool fitWallToRoof(const Document& document, Object& o, const RoofCut& cut, const RegenContext& context) {
+  const auto band = wallBand(document, o);
+  if (!band) return false;
+  // Tall enough to reach the roof everywhere (its own height is remembered once).
+  Recipe recipe = band->recipe;
+  auto& push = std::get<ExtrudeOp>(recipe.modifiers.front());
+  const double own = std::abs(push.distance);
+  if (!o.attributes.count(kHeightBefore)) {
+    char text[32];
+    std::snprintf(text, sizeof text, "%.9g", own);
+    o.attributes[kHeightBefore] = text;
+  }
+  // The wall's foot: from its own recipe (its present top may already be cut).
+  const gp_Pnt foot = std::get<RectangleProfile>(band->recipe.base).plane.origin.Transformed(band->toWorld);
+  const double needed = cut.top - foot.Z();
+  if (needed > own) push.distance = std::copysign(needed, push.distance);
+  if (band->path.empty()) o.recipe = std::move(recipe);
+  else replaceOperand(o.recipe, band->path, 0, std::move(recipe));
+  // The cut, in the frame its fellow operands are in.
+  const gp_Trsf world = document.worldTransform(o);
+  std::vector<std::size_t> path;
+  gp_Trsf frame;
+  const bool has = findRoofTrim(o.recipe, path, frame);
+  const gp_Trsf toLocal = (world * frame).Inverted();
+  Recipe trim;
+  trim.base = ImportedShape{BRepBuilderAPI_Transform(cut.above, toLocal, Standard_True).Shape(), kRoofTrim};
+  if (has) {
+    writableOperand(o.recipe, path).recipe = std::make_shared<const Recipe>(std::move(trim));
+  } else {
+    BooleanFeature feature;
+    feature.kind = BooleanKind::Subtract;
+    feature.operands.push_back(BooleanOperand{std::make_shared<const Recipe>(o.recipe), gp_Trsf(), o.name, {}});
+    feature.operands.push_back(BooleanOperand{std::make_shared<const Recipe>(std::move(trim)), gp_Trsf(), "Roof", kRoofTrim});
+    o.recipe = Recipe{};
+    o.recipe.base = std::move(feature);
+  }
+  o.faceMaterials.clear();
+  o.hiddenEdges.clear();
+  if (!rebuild(o, context) || o.shape.IsNull()) return false;
+  return TopExp_Explorer(o.shape, TopAbs_SOLID).More();
+}
+
+void refitWallsToRoofs(const Document& document, ChangeSet& changes, const RegenContext& context) {
+  std::map<ObjectId, std::optional<RoofCut>> cuts;
+  std::vector<ObjectId> walls;
+  for (const Object& o : document.objects())
+    if (o.attributes.count(kTopRoof) && !changes.erased(o.id)) walls.push_back(o.id);
+  for (const ObjectId& id : walls) {
+    const Object* was = document.find(id);
+    const ObjectId roofId = was->attributes.at(kTopRoof);
+    const Object* wallNow = changes.pending(id);
+    const Object* roofNow = changes.pending(roofId);
+    if (!wallNow && !roofNow) continue;  // neither changed
+    if (changes.erased(roofId)) continue;  // the roof is gone: the wall keeps its shape
+    const Object* roof = roofNow ? roofNow : document.find(roofId);
+    if (!roof) continue;
+    if (!cuts.count(roofId)) {
+      const auto cut = roofCut(document, roof);
+      cuts[roofId] = cut ? std::optional<RoofCut>(cut.value()) : std::nullopt;
+    }
+    if (!cuts[roofId]) continue;  // a roof reshaped by hand: the walls stay as they are
+    Object wall = wallNow ? *wallNow : *was;
+    if (wall.locked) continue;
+    if (fitWallToRoof(document, wall, *cuts[roofId], context)) changes.modify(wall);
+  }
 }
 
 geom::RoofSpec roofInFrame(geom::RoofSpec s, const gp_Trsf& t) {
@@ -5967,7 +6093,116 @@ Status Modeler::changeRoof(const ObjectId& id, const geom::RoofSpec& spec) {
     if (const FloorLevel* level = levelAtHeight(document_.settings().levels, spec.height)) object.attributes[kTopLevel] = level->id;
     else object.attributes.erase(kTopLevel);
   }
-  return commitModified(std::move(object), "Change Roof");
+  if (const Status built = rebuild(object, document_.regenContext()); !built) return built;
+  // The walls standing up to it follow, in the same step.
+  ChangeSet changes(document_);
+  changes.modify(object);
+  refitWallsToRoofs(document_, changes, document_.regenContext());
+  history_.execute(changes.build("Change Roof"));
+  return Status::success();
+}
+
+Status Modeler::fitWallsToRoof(const std::vector<ObjectId>& walls, const ObjectId& roofId) {
+  if (walls.empty()) return Status::failure("Choose the walls to fit to the roof");
+  const auto cut = roofCut(document_, document_.find(roofId));
+  if (!cut) return cut.status();
+  ChangeSet changes(document_);
+  for (const ObjectId& id : walls) {
+    const Object* current = document_.find(id);
+    if (!current) return Status::failure("Object not found");
+    if (current->locked) return Status::failure("'" + current->name + "' is locked");
+    Object wall = *current;
+    wall.attributes[kTopRoof] = roofId;
+    wall.attributes.erase(kTopLevel);  // its top is the roof's now
+    if (!fitWallToRoof(document_, wall, cut.value(), document_.regenContext()))
+      return Status::failure("'" + current->name + "' cannot be fitted to the roof: it is no longer the wall its tool made, "
+                             "or all of it is above the roof (nothing was changed)");
+    changes.modify(wall);
+  }
+  history_.execute(changes.build("Fit Walls To Roof"));
+  return Status::success();
+}
+
+Status Modeler::releaseWallsFromRoof(const std::vector<ObjectId>& walls) {
+  if (walls.empty()) return Status::failure("Choose the walls to release");
+  ChangeSet changes(document_);
+  for (const ObjectId& id : walls) {
+    const Object* current = document_.find(id);
+    if (!current) return Status::failure("Object not found");
+    if (current->locked) return Status::failure("'" + current->name + "' is locked");
+    if (!current->attributes.count(kTopRoof)) return Status::failure("'" + current->name + "' is not fitted to a roof");
+    Object wall = *current;
+    std::vector<std::size_t> path;
+    gp_Trsf frame;
+    if (findRoofTrim(wall.recipe, path, frame)) {
+      eraseOperand(wall.recipe, path);
+      gp_Trsf placement = wall.transform;
+      collapseSubtracts(wall.recipe, placement);
+      wall.transform = placement;
+    }
+    // Its own height again.
+    const auto band = wallBand(document_, wall);
+    const auto before = wall.attributes.find(kHeightBefore);
+    if (band && before != wall.attributes.end()) {
+      Recipe recipe = band->recipe;
+      auto& push = std::get<ExtrudeOp>(recipe.modifiers.front());
+      try {
+        push.distance = std::copysign(std::stod(before->second), push.distance);
+      } catch (const std::exception&) {
+      }
+      if (band->path.empty()) wall.recipe = std::move(recipe);
+      else replaceOperand(wall.recipe, band->path, 0, std::move(recipe));
+    }
+    wall.attributes.erase(kTopRoof);
+    wall.attributes.erase(kHeightBefore);
+    wall.faceMaterials.clear();
+    wall.hiddenEdges.clear();
+    if (const Status built = rebuild(wall, document_.regenContext()); !built)
+      return Status::failure("'" + current->name + "': " + built.message());
+    changes.modify(wall);
+  }
+  history_.execute(changes.build("Release Walls From Roof"));
+  return Status::success();
+}
+
+std::vector<ObjectId> Modeler::wallsFittedToRoof(const ObjectId& roof) const {
+  std::vector<ObjectId> out;
+  for (const Object& o : document_.objects()) {
+    const auto it = o.attributes.find(kTopRoof);
+    if (it != o.attributes.end() && it->second == roof) out.push_back(o.id);
+  }
+  return out;
+}
+
+std::vector<ObjectId> Modeler::wallsUnderRoof(const ObjectId& roofId) const {
+  std::vector<ObjectId> out;
+  const auto stored = storedRoof(document_, roofId);
+  if (!stored) return out;
+  const geom::RoofSpec roof = roofInFrame(stored->first, stored->second);
+  // Within the outline grown a little (walls stand on its lines).
+  auto within = [&](const gp_Pnt& p) {
+    bool in = false;
+    double nearest = 1e300;
+    const auto& poly = roof.outline;
+    for (std::size_t i = 0, j = poly.size() - 1; i < poly.size(); j = i++) {
+      const gp_Pnt& a = poly[i];
+      const gp_Pnt& b = poly[j];
+      if ((a.Y() > p.Y()) != (b.Y() > p.Y()) && p.X() < (b.X() - a.X()) * (p.Y() - a.Y()) / (b.Y() - a.Y()) + a.X()) in = !in;
+      const gp_Vec ab(a, b), ap(a, gp_Pnt(p.X(), p.Y(), 0));
+      const double t = ab.SquareMagnitude() < 1e-12 ? 0.0 : std::clamp(ap.Dot(ab) / ab.SquareMagnitude(), 0.0, 1.0);
+      nearest = std::min(nearest, gp_Pnt(p.X(), p.Y(), 0).Distance(a.Translated(ab * t)));
+    }
+    return in || nearest < 300.0;
+  };
+  for (const Object& o : document_.objects()) {
+    const auto band = wallBand(document_, o);
+    if (!band) continue;
+    const gp_Pnt foot = std::get<RectangleProfile>(band->recipe.base).plane.origin.Transformed(band->toWorld);
+    if (foot.Z() >= roof.height - 1.0) continue;  // stands on or above the bearing height: another storey
+    const gp_Pnt mid = band->start.Translated(gp_Vec(band->dir) * (band->length / 2));
+    if (within(mid)) out.push_back(o.id);
+  }
+  return out;
 }
 
 RoomInfo Modeler::roomAt(const gp_Pnt& at) const { return regionInfo(document_, at); }

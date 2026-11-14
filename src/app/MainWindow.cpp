@@ -683,6 +683,28 @@ void MainWindow::buildUi() {
               }
             });
           });
+  connect(panel_, &PropertiesPanel::roofWallsRequested, this, [this](const doc::ObjectId& id, bool fit) {
+    QTimer::singleShot(0, this, [this, id, fit] {
+      const doc::Object* o = modeler_.document().find(id);
+      if (!o) return;
+      const bool isRoof = o->attributes.count("kind") && o->attributes.at("kind") == "roof";
+      const std::vector<doc::ObjectId> walls =
+          !isRoof ? std::vector<doc::ObjectId>{id} : fit ? modeler_.wallsUnderRoof(id) : modeler_.wallsFittedToRoof(id);
+      if (walls.empty()) {
+        reportError(fit ? tr("この屋根の下に、壁ツールで描いた壁がありません") : tr("この屋根に合わせた壁がありません"));
+        return;
+      }
+      const Status s = fit ? modeler_.fitWallsToRoof(walls, id) : modeler_.releaseWallsFromRoof(walls);
+      if (!s) {
+        reportError((fit ? tr("壁を屋根に合わせられません: %1") : tr("壁を屋根から外せません: %1"))
+                        .arg(userMessage(QString::fromStdString(s.message()))));
+      } else {
+        setStatus(fit ? tr("壁 %1 枚の上端を屋根に合わせました（Ctrl+Z で戻せます）").arg(walls.size())
+                      : tr("壁 %1 枚を、元の高さの平らな上端に戻しました").arg(walls.size()));
+      }
+      refreshPanels();
+    });
+  });
   connect(panel_, &PropertiesPanel::roofEdited, this,
           [this](const doc::ObjectId& id, const QString& key, double value, const QString& kind) {
             QTimer::singleShot(0, this, [this, id, key, value, kind] {

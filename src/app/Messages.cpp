@@ -119,6 +119,8 @@ const Entry kEntries[] = {
     {"Unknown parameter", "その寸法は見つかりません"},
     {"would overlap", "既にある開口と重なります。位置か大きさを変えてください（穴がつながって 1 つになるのを防いでいます）"},
     {"The openings do not fit along the wall", "壁の長さに収まりません。個数・幅・間隔を小さくしてください"},
+    {"cannot be fitted to the roof", "屋根に合わせられない壁があります（形を直接変えた壁、または全体が屋根より上にある壁）。何も変えていません"},
+    {"is not fitted to a roof", "屋根に合わせていない壁です"},
     {"Roof outlines must have right-angled corners only", "屋根の外周は、直角の角だけにしてください（斜めの辺は、まだ作れません）"},
     {"A roof outline needs at least four corners", "屋根の外周は、4 つ以上の角が要ります"},
     {"The roof outline crosses itself", "屋根の外周が自分と交わっています"},
