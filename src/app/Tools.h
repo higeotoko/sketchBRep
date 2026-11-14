@@ -421,6 +421,36 @@ class SlabTool : public PlanPolylineTool {
   double thickness_ = 200.0;
 };
 
+// Roof (docs/90 G-08): the outline of the walls it bears on, drawn on the level of their
+// tops (the eave level); kind, pitch and overhangs come from the roof settings. A shed roof
+// falls towards the first side drawn. Same as create_roof.
+class RoofTool : public PlanPolylineTool {
+ public:
+  struct Settings {
+    std::string kind = "gable";  // gable | hip | shed
+    double pitch = 4.0;          // rise per 10
+    double eave = 600.0, gableEave = 300.0, thickness = 100.0;
+  };
+  using PlanPolylineTool::PlanPolylineTool;
+  QString name() const override;
+  QCursor cursor() const override;
+  const Settings& settings() const { return settings_; }
+  void setSettings(const Settings& s) { settings_ = s; }
+  QString settingsText() const override;
+  static QString kindText(const std::string& kind);
+
+ protected:
+  QString startText() const override;
+  QString finishedText(std::size_t created) const override;
+  Result<std::size_t> commit(const std::vector<gp_Pnt>& points, bool closed) override;
+  TopoDS_Shape previewShape(const std::vector<gp_Pnt>& points) const override;
+  bool closesOnFinish() const override { return true; }
+
+ private:
+  geom::RoofSpec spec(const std::vector<gp_Pnt>& points) const;
+  Settings settings_;
+};
+
 // Openings (O): hover a vertical face of a wall to see the window / door
 // there (width x height, sill above the face's bottom; snaps to the
 // face's middle and ends, and next to / in line with / between openings

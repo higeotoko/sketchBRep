@@ -243,6 +243,78 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
   if (!o) return;
   const doc::ObjectId id = o->id;
 
+  // ===== A roof (docs/90 G-08): kind, storey, reference, sizes - the same order as other parts.
+  if (const auto kind = o->attributes.find("kind"); kind != o->attributes.end() && kind->second == "roof") {
+    auto* title = new QLabel(tr("<b>屋根</b>"));
+    title->setObjectName(QStringLiteral("partTitle"));
+    form_->addRow(title);
+    const auto roof = modeler.roofInfo(id);
+    if (!roof) {
+      auto* why = new QLabel(userMessage(QString::fromStdString(roof.error())));
+      why->setObjectName(QStringLiteral("roofProblem"));
+      why->setWordWrap(true);
+      form_->addRow(why);
+    } else {
+      auto* kinds = new QComboBox;
+      kinds->setObjectName(QStringLiteral("roofKind"));
+      kinds->addItem(tr("切妻"), QStringLiteral("gable"));
+      kinds->addItem(tr("寄棟"), QStringLiteral("hip"));
+      kinds->addItem(tr("片流れ"), QStringLiteral("shed"));
+      kinds->setCurrentIndex(std::max(0, kinds->findData(QString::fromStdString(roof->spec.kind))));
+      kinds->setEnabled(!o->locked);
+      connect(kinds, &QComboBox::activated, this, [this, id, kinds] {
+        emit roofEdited(id, QStringLiteral("kind"), 0.0, kinds->currentData().toString());
+      });
+      form_->addRow(tr("種類"), kinds);
+      QString level = tr("なし（レベルの高さにありません）");
+      for (const doc::FloorLevel& l : modeler.levels())
+        if (l.id == roof->level) level = tr("%1 に付いています").arg(QString::fromStdString(l.name));
+      auto* storey = new QLabel(level);
+      storey->setObjectName(QStringLiteral("partStorey"));
+      storey->setToolTip(tr("レベルの高さで作った屋根は、そのレベルの高さを変えると付いてきます"));
+      form_->addRow(tr("階"), storey);
+      auto* reference = new QLabel(tr("下面が、外周の線の上を「軒の高さ」で通る"));
+      reference->setObjectName(QStringLiteral("partReference"));
+      reference->setWordWrap(true);
+      form_->addRow(tr("基準"), reference);
+      auto size = [&](const QString& label, const char* key, double value, bool length, const QString& tip) {
+        auto* spin = length ? lengthSpin(value) : new QDoubleSpinBox;
+        if (!length) {
+          spin->setDecimals(2);
+          spin->setSingleStep(0.5);
+          spin->setSuffix(tr(" 寸"));
+          spin->setKeyboardTracking(false);
+          spin->setRange(0.1, 30.0);
+          spin->setValue(value);
+        } else if (QLatin1String(key) != QLatin1String("height")) {
+          spin->setRange(QLatin1String(key) == QLatin1String("thickness") ? 1 : 0, 1e9);
+        }
+        spin->setObjectName(QStringLiteral("roofSize_") + QLatin1String(key));
+        spin->setToolTip(tip);
+        spin->setEnabled(!o->locked);
+        const QString k = QLatin1String(key);
+        const double initial = spin->value();
+        connect(spin, &QDoubleSpinBox::editingFinished, this, [this, id, spin, k, initial] {
+          if (std::abs(spin->value() - initial) > 1e-9) emit roofEdited(id, k, spin->value(), QString());
+        });
+        form_->addRow(label, spin);
+      };
+      size(tr("勾配"), "pitch", roof->spec.pitch, false, tr("10 に対する立ち上がり（4 寸 = 4/10）"));
+      size(tr("軒の出"), "eave", roof->spec.eave, true, tr("外周の線から軒先まで（水平）"));
+      size(tr("けらばの出"), "gable_eave", roof->spec.gableEave, true, tr("妻側の出（水平）。片流れでは、流れに沿う 2 辺の出。寄棟では使いません"));
+      size(tr("厚さ"), "thickness", roof->spec.thickness, true, tr("勾配に直角に測った厚さ"));
+      size(tr("軒の高さ"), "height", roof->spec.height, true, tr("屋根の下面が、外周の線の上を通る高さ（壁・桁の上端）"));
+      auto row = [&](const QString& label, const QString& text, const char* name) {
+        auto* value = new QLabel(text);
+        value->setObjectName(QLatin1String(name));
+        form_->addRow(label, value);
+      };
+      row(tr("屋根面積"), tr("%1 ㎡（勾配なりの上面）").arg(roof->slopeArea / 1e6, 0, 'f', 2), "roofSlopeArea");
+      row(tr("水平投影"), tr("%1 ㎡（軒の出を含む）").arg(roof->planArea / 1e6, 0, 'f', 2), "roofPlanArea");
+      row(tr("いちばん高い所"), tr("%1 mm").arg(roof->ridgeHeight, 0, 'f', 1), "roofRidgeHeight");
+    }
+  }
+
   // ===== A room (docs/90 G-07): its areas as the walls are now.
   if (const auto kind = o->attributes.find("kind"); kind != o->attributes.end() && kind->second == "room") {
     for (const doc::RoomInfo& room : modeler.rooms()) {

@@ -2034,6 +2034,73 @@ void TextTool::applyMeasurement(const QString& text) {
   if (!s) host_.reportError(QString::fromStdString(s.message()));
 }
 
+// --- Roof ---------------------------------------------------------------------------
+
+QString RoofTool::name() const { return QObject::tr("屋根"); }
+QCursor RoofTool::cursor() const { return toolCursor(CursorKind::Slab); }
+
+QString RoofTool::kindText(const std::string& kind) {
+  return kind == "hip" ? QObject::tr("寄棟") : kind == "shed" ? QObject::tr("片流れ") : QObject::tr("切妻");
+}
+
+QString RoofTool::settingsText() const {
+  return QObject::tr("%1・%2 寸勾配・軒の出 %3・けらばの出 %4・厚さ %5")
+      .arg(kindText(settings_.kind))
+      .arg(settings_.pitch, 0, 'g', 4)
+      .arg(mm(settings_.eave), mm(settings_.gableEave), mm(settings_.thickness));
+}
+
+QString RoofTool::startText() const {
+  return QObject::tr("屋根が載る壁の外周を、軒の高さの平面で順にクリック（直角の角だけ。最初の点で閉じる）: %1").arg(settingsText());
+}
+
+QString RoofTool::finishedText(std::size_t) const { return QObject::tr("屋根を作成しました（Ctrl+Z で戻せます。勾配などはプロパティで直せます）"); }
+
+geom::RoofSpec RoofTool::spec(const std::vector<gp_Pnt>& points) const {
+  geom::RoofSpec s;
+  s.kind = settings_.kind;
+  s.outline = points;
+  s.height = points.empty() ? 0.0 : points.front().Z();
+  s.pitch = settings_.pitch;
+  s.eave = settings_.eave;
+  s.gableEave = settings_.gableEave;
+  s.thickness = settings_.thickness;
+  if (points.size() >= 3) {
+    // A shed falls towards the first side drawn: away from the middle of the outline.
+    gp_XYZ sum(0, 0, 0);
+    for (const gp_Pnt& p : points) sum += p.XYZ();
+    const gp_Pnt middle(sum / static_cast<double>(points.size()));
+    const gp_Vec side(points[0], points[1]);
+    gp_Vec out(side.Y(), -side.X(), 0);
+    const gp_Pnt mid((points[0].XYZ() + points[1].XYZ()) / 2);
+    if (out.Dot(gp_Vec(middle, mid)) < 0) out.Reverse();
+    if (out.Magnitude() > 1e-9) {
+      s.fallX = out.X();
+      s.fallY = out.Y();
+    }
+  }
+  return s;
+}
+
+Result<std::size_t> RoofTool::commit(const std::vector<gp_Pnt>& points, bool) {
+  auto roof = host_.modeler().createRoof(spec(points));
+  if (!roof) return Result<std::size_t>::failure(roof.error());
+  return std::size_t(1);
+}
+
+TopoDS_Shape RoofTool::previewShape(const std::vector<gp_Pnt>& pts) const {
+  if (pts.size() == 2) {
+    BRepBuilderAPI_MakeEdge edge(pts[0], pts[1]);
+    return edge.IsDone() ? TopoDS_Shape(edge.Edge()) : TopoDS_Shape();
+  }
+  // The roof as it would be; while the outline is not right-angled yet, just the outline.
+  if (pts.size() >= 4) {
+    if (const auto roof = geom::makeRoof(spec(pts))) return roof->solid;
+  }
+  auto face = geom::makePolygonFace(pts);
+  return face ? TopoDS_Shape(face.value()) : TopoDS_Shape();
+}
+
 // --- Room ---------------------------------------------------------------------------
 
 QString roomAreaText(const doc::RoomInfo& room) {

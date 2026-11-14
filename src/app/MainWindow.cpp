@@ -165,6 +165,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   dimensionTool_ = std::make_unique<DimensionTool>(*this);
   textTool_ = std::make_unique<TextTool>(*this);
   roomTool_ = std::make_unique<RoomTool>(*this);
+  roofTool_ = std::make_unique<RoofTool>(*this);
   sectionTool_ = std::make_unique<SectionTool>(*this);
   sectionTool_->setOnPlaced([this] {
     QTimer::singleShot(0, this, [this] { if (active_ == sectionTool_.get()) activateTool(ToolId::Select); });
@@ -678,6 +679,30 @@ void MainWindow::buildUi() {
               const auto changed = modeler_.changeMember(id, change);
               if (!changed) {
                 reportError(tr("寸法を変更できません: %1").arg(userMessage(QString::fromStdString(changed.error()))));
+                refreshPanels();
+              }
+            });
+          });
+  connect(panel_, &PropertiesPanel::roofEdited, this,
+          [this](const doc::ObjectId& id, const QString& key, double value, const QString& kind) {
+            QTimer::singleShot(0, this, [this, id, key, value, kind] {
+              const auto info = modeler_.roofInfo(id);
+              if (!info) {
+                reportError(tr("屋根を変更できません: %1").arg(userMessage(QString::fromStdString(info.error()))));
+                refreshPanels();
+                return;
+              }
+              geom::RoofSpec spec = info->spec;
+              if (key == QStringLiteral("kind")) spec.kind = kind.toStdString();
+              else if (key == QStringLiteral("pitch")) spec.pitch = value;
+              else if (key == QStringLiteral("eave")) spec.eave = value;
+              else if (key == QStringLiteral("gable_eave")) spec.gableEave = value;
+              else if (key == QStringLiteral("thickness")) spec.thickness = value;
+              else if (key == QStringLiteral("height")) spec.height = value;
+              else return;
+              const Status s = modeler_.changeRoof(id, spec);
+              if (!s) {
+                reportError(tr("屋根を変更できません: %1").arg(userMessage(QString::fromStdString(s.message()))));
                 refreshPanels();
               }
             });
@@ -1481,6 +1506,25 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
   findChild<QToolButton*>(QStringLiteral("architectureOpening"))->setToolTip(
       tr("開口: 平面の壁、または3D・立面の壁面をクリック。右の矢印から幅・高さ・腰高を設定"));
   {
+    // Roof (docs/90 G-08): only here, not in the drawing palette.
+    auto* roof = new QAction(tr("屋根"), this);
+    roof->setObjectName(QStringLiteral("architectureRoofAction"));
+    roof->setCheckable(true);
+    connect(roof, &QAction::triggered, this, [this] { activateTool(ToolId::Roof); });
+    toolGroup_->addAction(roof);
+    toolActions_[static_cast<int>(ToolId::Roof)] = roof;
+    auto* button = new QToolButton(bar);
+    button->setObjectName(QStringLiteral("architectureRoof"));
+    button->setDefaultAction(roof);
+    button->setPopupMode(QToolButton::MenuButtonPopup);
+    button->setToolTip(tr("屋根: 軒の高さの平面で、屋根が載る壁の外周を順にクリック。右の矢印から種類・勾配・軒の出を設定"));
+    auto* options = new QMenu(button);
+    options->addAction(tr("種類・勾配・軒の出の設定..."), this, &MainWindow::showRoofSettingsDialog)
+        ->setObjectName(QStringLiteral("roofSettingsAction"));
+    button->setMenu(options);
+    bar->addWidget(button);
+  }
+  {
     // Room (docs/90 G-07): only here, not in the drawing palette.
     auto* room = new QAction(tr("室"), this);
     room->setObjectName(QStringLiteral("architectureRoomAction"));
@@ -2027,6 +2071,7 @@ void MainWindow::activateTool(ToolId id) {
     case ToolId::Slab: active_ = slabTool_.get(); break;
     case ToolId::Opening: active_ = openingTool_.get(); break;
     case ToolId::Room: active_ = roomTool_.get(); break;
+    case ToolId::Roof: active_ = roofTool_.get(); break;
     case ToolId::Count: return;
   }
   // Tools without a toolbar button (paste) leave the toolbar unchecked.
@@ -3951,6 +3996,61 @@ bool MainWindow::setOpeningFitting(const doc::ObjectId& host, int index, const Q
   return true;
 }
 
+void MainWindow::showRoofSettingsDialog() {
+  QDialog dialog(this);
+  dialog.setObjectName(QStringLiteral("roofSettingsDialog"));
+  dialog.setWindowTitle(tr("屋根の設定"));
+  auto* form = new QFormLayout(&dialog);
+  const RoofTool::Settings current = roofTool_->settings();
+  auto* kind = new QComboBox(&dialog);
+  kind->setObjectName(QStringLiteral("roofToolKind"));
+  for (const char* k : {"gable", "hip", "shed"}) kind->addItem(RoofTool::kindText(k), QString::fromLatin1(k));
+  kind->setCurrentIndex(std::max(0, kind->findData(QString::fromStdString(current.kind))));
+  auto* pitch = new QDoubleSpinBox(&dialog);
+  pitch->setObjectName(QStringLiteral("roofToolPitch"));
+  pitch->setRange(0.1, 30.0);
+  pitch->setDecimals(2);
+  pitch->setSingleStep(0.5);
+  pitch->setSuffix(tr(" 寸"));
+  pitch->setValue(current.pitch);
+  auto field = [&](double v, const char* name) {
+    auto* edit = new QLineEdit(QString::fromStdString(units::formatLength(v, 0)), &dialog);
+    edit->setObjectName(QLatin1String(name));
+    return edit;
+  };
+  auto* eave = field(current.eave, "roofToolEave");
+  auto* gableEave = field(current.gableEave, "roofToolGableEave");
+  auto* thickness = field(current.thickness, "roofToolThickness");
+  form->addRow(tr("種類"), kind);
+  form->addRow(tr("勾配（10 に対する立ち上がり）"), pitch);
+  form->addRow(tr("軒の出"), eave);
+  form->addRow(tr("けらばの出"), gableEave);
+  form->addRow(tr("厚さ（勾配に直角）"), thickness);
+  auto* note = new QLabel(tr("屋根の下面が、描いた外周の線の上を、描いた平面の高さで通ります。片流れは、最初に描いた辺の側へ下ります。"), &dialog);
+  note->setWordWrap(true);
+  form->addRow(note);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  form->addRow(buttons);
+  if (dialog.exec() != QDialog::Accepted) return;
+  const auto e = units::parseLength(eave->text().toStdString());
+  const auto g = units::parseLength(gableEave->text().toStdString());
+  const auto t = units::parseLength(thickness->text().toStdString());
+  if (!e || !g || !t || *e < 0 || *g < 0 || *t < 1) {
+    reportError(tr("軒の出・けらばの出は 0 以上、厚さは 1 以上の長さで入力してください"));
+    return;
+  }
+  RoofTool::Settings next;
+  next.kind = kind->currentData().toString().toStdString();
+  next.pitch = pitch->value();
+  next.eave = *e;
+  next.gableEave = *g;
+  next.thickness = *t;
+  roofTool_->setSettings(next);
+  setStatus(roofTool_->settingsText());
+}
+
 void MainWindow::showRoomsDialog() {
   const std::vector<doc::RoomInfo> rooms = modeler_.rooms();
   QDialog dialog(this);
@@ -4098,7 +4198,8 @@ void MainWindow::commitMeasurement() {
   userTyping_ = false;
   // Enter without typing finishes a wall run / slab outline (the box only
   // shows the current length then).
-  if (!typed && (active_ == wallTool_.get() || active_ == slabTool_.get() || active_ == memberTool_.get() ||
+  if (!typed && (active_ == wallTool_.get() || active_ == slabTool_.get() || active_ == roofTool_.get() ||
+                 active_ == memberTool_.get() ||
                  dynamic_cast<SurfaceTool*>(active_))) {
     viewport_->toolCall([&] { active_->applyMeasurement(QString()); });
     viewport_->setFocus();

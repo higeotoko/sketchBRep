@@ -15,6 +15,7 @@
 
 #include "sbr/doc/CommandStack.h"
 #include "sbr/doc/Document.h"
+#include "sbr/geom/Roof.h"
 #include "sbr/geom/Rhino3dm.h"
 #include "sbr/geom/Collada.h"
 #include "sbr/geom/Dxf.h"
@@ -73,6 +74,15 @@ struct RoomInfo {
   std::vector<ObjectId> walls;        // the walls around it
   std::vector<gp_Pnt> looseEnds;      // not closed: the wall ends nearest the marker that meet nothing
   int unreadableWalls = 0;            // walls of this storey no longer the shape their tool made (not counted as walls)
+};
+
+// A roof made by createRoof (docs/90 G-08, docs/99) as it stands in the world.
+struct RoofInfo {
+  geom::RoofSpec spec;  // outline, height and fall direction in world coordinates
+  double planArea = 0.0, slopeArea = 0.0;  // mm2
+  double ridgeHeight = 0.0, eaveHeight = 0.0;  // world z of its highest point / lowest underside edge
+  int parts = 0;
+  std::string level;  // id of the level its bearing height follows, if any
 };
 
 // What a move of walls did to the walls joined to them (docs/90 G-05).
@@ -402,6 +412,16 @@ class Modeler {
   // it was: the move itself is never refused for it. Rotations leave joints alone.
   Status transform(const std::vector<ObjectId>& ids, const gp_Trsf& worldDelta,
                    const std::string& commandName = "Move");
+  // --- roofs (docs/90 G-08) -------------------------------------------------
+  // A roof as one solid over a right-angled plan outline (geom::makeRoof): attribute kind =
+  // roof, its sizes kept (attribute roof_spec) so they can be changed later. Made at a level's
+  // height its bearing height follows that level. One undo step.
+  Result<ObjectId> createRoof(const geom::RoofSpec& spec);
+  // Refused for an object that is not such a roof any more (its shape edited, or tilted).
+  Result<RoofInfo> roofInfo(const ObjectId& id) const;
+  // The same roof with other sizes (the same object). One undo step.
+  Status changeRoof(const ObjectId& id, const geom::RoofSpec& spec);
+
   // --- rooms (docs/90 G-07) -------------------------------------------------
   // The region `at` is in, bounded by the walls made by the wall tool that stand at its
   // height (those cut by a plan 1100 above it). closed = false with `problem` when no walls

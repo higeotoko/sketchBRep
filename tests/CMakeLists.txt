@@ -41,6 +41,7 @@ add_executable(sbr_core_tests
   test_opening_identity.cpp
   test_wall_joins.cpp
   test_rooms.cpp
+  test_roof.cpp
   test_level_attachment.cpp
   test_wall_types.cpp
   test_structural_diagnostics.cpp

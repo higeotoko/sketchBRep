@@ -11,6 +11,7 @@ add_library(sbr_core STATIC
   src/ConstructionAssist.cpp
   src/OpeningSymbols.cpp
   src/RoomRegions.cpp
+  src/Roof.cpp
   src/WallTypes.cpp
   src/ConstructionQuantity.cpp
   src/ConstructionWall.cpp

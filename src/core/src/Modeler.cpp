@@ -5852,6 +5852,124 @@ void levelUp(const Document& document, ChangeSet& changes, const RegenContext& c
 }
 }  // namespace
 
+// --- roofs (docs/90 G-08) ------------------------------------------------------------------
+namespace {
+std::string roofSpecText(const geom::RoofSpec& s) {
+  nlohmann::json outline = nlohmann::json::array();
+  for (const gp_Pnt& p : s.outline) outline.push_back({p.X(), p.Y()});
+  return nlohmann::json{{"kind", s.kind}, {"outline", outline}, {"height", s.height}, {"pitch", s.pitch},
+                        {"eave", s.eave}, {"gable_eave", s.gableEave}, {"thickness", s.thickness},
+                        {"ridge", s.ridge}, {"fall", {s.fallX, s.fallY}}}
+      .dump();
+}
+
+std::optional<geom::RoofSpec> roofSpecFrom(const std::string& text) {
+  try {
+    const nlohmann::json j = nlohmann::json::parse(text);
+    geom::RoofSpec s;
+    s.kind = j.at("kind").get<std::string>();
+    for (const auto& p : j.at("outline")) s.outline.emplace_back(p.at(0).get<double>(), p.at(1).get<double>(), 0.0);
+    s.height = j.at("height").get<double>();
+    s.pitch = j.at("pitch").get<double>();
+    s.eave = j.at("eave").get<double>();
+    s.gableEave = j.at("gable_eave").get<double>();
+    s.thickness = j.at("thickness").get<double>();
+    s.ridge = j.at("ridge").get<std::string>();
+    s.fallX = j.at("fall").at(0).get<double>();
+    s.fallY = j.at("fall").at(1).get<double>();
+    return s;
+  } catch (const std::exception&) {
+    return std::nullopt;
+  }
+}
+
+// The stored roof (in the object's own coordinates) and where the object stands, or why it is
+// no longer a roof whose sizes can be read.
+Result<std::pair<geom::RoofSpec, gp_Trsf>> storedRoof(const Document& document, const ObjectId& id) {
+  using R = Result<std::pair<geom::RoofSpec, gp_Trsf>>;
+  const Object* o = document.find(id);
+  if (!o) return R::failure("Object not found");
+  const auto kind = o->attributes.find("kind");
+  const auto text = o->attributes.find("roof_spec");
+  if (kind == o->attributes.end() || kind->second != "roof" || text == o->attributes.end())
+    return R::failure("'" + o->name + "' is not a roof made by the roof tool");
+  if (!std::holds_alternative<ImportedShape>(o->recipe.base) || !o->recipe.modifiers.empty())
+    return R::failure("'" + o->name + "' was reshaped by hand: its roof sizes can no longer be read or changed");
+  const auto spec = roofSpecFrom(text->second);
+  if (!spec) return R::failure("'" + o->name + "': its roof sizes cannot be read");
+  const gp_Trsf world = document.worldTransform(*o);
+  if (std::abs(world.ScaleFactor() - 1.0) > 1e-9 || gp_Vec(0, 0, 1).Transformed(world).Z() < 1.0 - 1e-9)
+    return R::failure("'" + o->name + "' was tilted or scaled: its roof sizes can no longer be read or changed");
+  return std::make_pair(*spec, world);
+}
+
+geom::RoofSpec roofInFrame(geom::RoofSpec s, const gp_Trsf& t) {
+  for (gp_Pnt& p : s.outline) {
+    p.Transform(t);
+    p.SetZ(0);
+  }
+  s.height += t.TranslationPart().Z();
+  const gp_Vec fall = gp_Vec(s.fallX, s.fallY, 0).Transformed(t);
+  s.fallX = fall.X();
+  s.fallY = fall.Y();
+  return s;
+}
+}  // namespace
+
+Result<ObjectId> Modeler::createRoof(const geom::RoofSpec& spec) {
+  using R = Result<ObjectId>;
+  const auto roof = geom::makeRoof(spec);
+  if (!roof) return R::failure(roof.error());
+  Object o;
+  o.name = uniqueName("Roof");
+  o.recipe.base = ImportedShape{roof->solid, "roof"};
+  o.attributes["kind"] = "roof";
+  o.attributes["roof_spec"] = roofSpecText(spec);
+  if (const FloorLevel* level = levelAtHeight(document_.settings().levels, spec.height))
+    o.attributes[kTopLevel] = level->id;
+  return addObject(std::move(o), "Roof");
+}
+
+Result<RoofInfo> Modeler::roofInfo(const ObjectId& id) const {
+  using R = Result<RoofInfo>;
+  const auto stored = storedRoof(document_, id);
+  if (!stored) return R::failure(stored.error());
+  const auto roof = geom::makeRoof(stored->first);
+  if (!roof) return R::failure(roof.error());
+  RoofInfo info;
+  info.spec = roofInFrame(stored->first, stored->second);
+  info.planArea = roof->planArea;
+  info.slopeArea = roof->slopeArea;
+  const double dz = stored->second.TranslationPart().Z();
+  info.ridgeHeight = roof->ridgeHeight + dz;
+  info.eaveHeight = roof->eaveHeight + dz;
+  info.parts = roof->parts;
+  info.level = attributeText(*document_.find(id), kTopLevel);
+  return info;
+}
+
+Status Modeler::changeRoof(const ObjectId& id, const geom::RoofSpec& spec) {
+  const auto stored = storedRoof(document_, id);
+  if (!stored) return stored.status();
+  const Object* current = document_.find(id);
+  if (current->locked) return Status::failure("The object is locked");
+  // Kept in the object's own coordinates: the roof stays where it was moved to.
+  const geom::RoofSpec local = roofInFrame(spec, stored->second.Inverted());
+  const auto roof = geom::makeRoof(local);
+  if (!roof) return roof.status();
+  Object object = *current;
+  object.recipe.base = ImportedShape{roof->solid, "roof"};
+  object.attributes["roof_spec"] = roofSpecText(local);
+  object.faceMaterials.clear();
+  object.hiddenEdges.clear();
+  // A bearing height typed in: the roof follows the level at that height, or none.
+  if (std::abs(spec.height - roofInFrame(stored->first, stored->second).height) > 1e-6) {
+    if (const FloorLevel* level = levelAtHeight(document_.settings().levels, spec.height)) object.attributes[kTopLevel] = level->id;
+    else object.attributes.erase(kTopLevel);
+  }
+  return commitModified(std::move(object), "Change Roof");
+}
+
 RoomInfo Modeler::roomAt(const gp_Pnt& at) const { return regionInfo(document_, at); }
 
 std::vector<RoomInfo> Modeler::rooms() const {

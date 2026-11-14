@@ -102,6 +102,33 @@ gp_XYZ xyz(const json& v, const char* key) {
 
 gp_Pnt point(const json& args, const char* key) { return gp_Pnt(xyz(arg(args, key), key)); }
 
+// The roof sizes given in `a` put into `s` (the others stay).
+void roofArgs(const json& a, geom::RoofSpec& s) {
+  if (a.contains("kind")) s.kind = text(a, "kind");
+  if (a.contains("ridge")) s.ridge = text(a, "ridge");
+  if (a.contains("height")) s.height = number(a, "height");
+  if (a.contains("pitch")) s.pitch = number(a, "pitch");
+  if (a.contains("eave")) s.eave = number(a, "eave");
+  if (a.contains("gable_eave")) s.gableEave = number(a, "gable_eave");
+  if (a.contains("thickness")) s.thickness = number(a, "thickness");
+  if (a.contains("fall")) {
+    const json& v = a.at("fall");
+    if (!v.is_array() || v.size() < 2 || !v[0].is_number() || !v[1].is_number()) throw ApiError("'fall' is [x, y]");
+    s.fallX = v[0].get<double>();
+    s.fallY = v[1].get<double>();
+  }
+}
+
+json roofJson(const doc::RoofInfo& r) {
+  json outline = json::array();
+  for (const gp_Pnt& p : r.spec.outline) outline.push_back({p.X(), p.Y()});
+  return json{{"kind", r.spec.kind}, {"outline", outline}, {"height", r.spec.height}, {"pitch", r.spec.pitch},
+              {"eave", r.spec.eave}, {"gable_eave", r.spec.gableEave}, {"thickness", r.spec.thickness},
+              {"ridge", r.spec.ridge}, {"fall", {r.spec.fallX, r.spec.fallY}}, {"plan_area", r.planArea / 1e6},
+              {"slope_area", r.slopeArea / 1e6}, {"ridge_height", r.ridgeHeight}, {"eave_height", r.eaveHeight},
+              {"parts", r.parts}, {"level", r.level}};
+}
+
 json roomJson(const doc::RoomInfo& r) {
   auto outline = [](const std::vector<gp_Pnt>& points) {
     json out = json::array();
@@ -2108,6 +2135,70 @@ const std::vector<CommandDef>& commands() {
        [](doc::Modeler& m, const json& a) {
          return idsResult(must(m.setWallType(ids(a, "ids"), text(a, "type"), numberOr(a, "core", 105.0),
                                              textOr(a, "outside", "auto"))));
+       }},
+      {"create_roof",
+       "A roof as one solid over a plan 'outline' ([x, y] or \"X1/Y1\" points; right-angled corners only: "
+       "rectangles, L, T, U shapes) or 'grid' {x: [..2 names], y: [..2 names]}. 'kind': gable (切妻, default), "
+       "hip (寄棟) or shed (片流れ). 'height' (mm): z of the roof's underside above the outline (the top of the "
+       "walls / plates). 'pitch': rise per 10 of run (寸勾配, default 4). 'eave': overhang at eaves in plan "
+       "(default 600); 'gable_eave': at gable ends (default 300; shed: at the sloping sides). 'thickness' at "
+       "right angles to the slope (default 100). gable over one rectangle: 'ridge' long (default) or short. "
+       "shed: 'fall' [x, y], the plan direction it falls towards (default [0, -1]). L / T shapes get valleys. "
+       "Attribute kind=roof; sizes stay changeable (change_roof). Made at a level's height it follows that "
+       "level. Wall tops are not cut to it. One undo step.",
+       SCHEMA({"type": "object", "properties": {
+         "outline": {"type": "array"}, "grid": {"type": "object"}, "kind": {"enum": ["gable", "hip", "shed"]},
+         "height": {"type": "number"}, "pitch": {"type": "number"}, "eave": {"type": "number"},
+         "gable_eave": {"type": "number"}, "thickness": {"type": "number"}, "ridge": {"enum": ["long", "short"]},
+         "fall": {"type": "array"}}, "required": ["height"]}),
+       [](doc::Modeler& m, const json& a) {
+         const GridLookup grid(m.document());
+         geom::RoofSpec spec;
+         if (a.contains("grid")) {
+           const json& g = a.at("grid");
+           const auto xs = ObjectFilter::strings(g, "x"), ys = ObjectFilter::strings(g, "y");
+           if (xs.size() != 2 || ys.size() != 2) throw ApiError("'grid' needs two x and two y line names");
+           const std::string &x0 = *xs.begin(), &x1 = *xs.rbegin(), &y0 = *ys.begin(), &y1 = *ys.rbegin();
+           spec.outline = {grid.crossing(x0, y0), grid.crossing(x1, y0), grid.crossing(x1, y1), grid.crossing(x0, y1)};
+         } else {
+           for (const json& p : arg(a, "outline")) spec.outline.push_back(grid.point(p, 0.0));
+         }
+         roofArgs(a, spec);
+         const std::string id = must(m.createRoof(spec));
+         json result = roofJson(must(m.roofInfo(id)));
+         result["id"] = id;
+         return result;
+       }},
+      {"roof_info",
+       "A roof made by create_roof as it stands: kind, outline, height, pitch, eave, gable_eave, thickness, ridge, "
+       "fall, plan_area / slope_area (m2, overhangs included; slope_area is its upper surface), ridge_height, "
+       "eave_height (mm), level. Refused for a roof reshaped by hand or tilted.",
+       SCHEMA({"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}),
+       [](doc::Modeler& m, const json& a) {
+         json result = roofJson(must(m.roofInfo(text(a, "id"))));
+         result["id"] = text(a, "id");
+         return result;
+       }},
+      {"change_roof",
+       "Change sizes of a roof made by create_roof (any of kind, outline, height, pitch, eave, gable_eave, "
+       "thickness, ridge, fall); the rest stays. The same object. One undo step.",
+       SCHEMA({"type": "object", "properties": {
+         "id": {"type": "string"}, "outline": {"type": "array"}, "kind": {"enum": ["gable", "hip", "shed"]},
+         "height": {"type": "number"}, "pitch": {"type": "number"}, "eave": {"type": "number"},
+         "gable_eave": {"type": "number"}, "thickness": {"type": "number"}, "ridge": {"enum": ["long", "short"]},
+         "fall": {"type": "array"}}, "required": ["id"]}),
+       [](doc::Modeler& m, const json& a) {
+         const GridLookup grid(m.document());
+         geom::RoofSpec spec = must(m.roofInfo(text(a, "id"))).spec;
+         if (a.contains("outline")) {
+           spec.outline.clear();
+           for (const json& p : a.at("outline")) spec.outline.push_back(grid.point(p, 0.0));
+         }
+         roofArgs(a, spec);
+         must(m.changeRoof(text(a, "id"), spec));
+         json result = roofJson(must(m.roofInfo(text(a, "id"))));
+         result["id"] = text(a, "id");
+         return result;
        }},
       {"create_room",
        "A room: a marker (its name as a text note, attribute kind=room) at plan point 'at' ([x, y] or \"X1/Y1\") "

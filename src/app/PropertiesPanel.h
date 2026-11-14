@@ -59,6 +59,8 @@ class PropertiesPanel : public QWidget {
   void levelAttachmentEdited(const doc::ObjectId& id, bool top, const QString& level);
   // A wall's or a slab's own size (length / thickness / height) typed in the part section.
   void partSizeEdited(const doc::ObjectId& id, const QString& key, double value);
+  // A roof's size (docs/90 G-08): key = kind (then `kind`), pitch, eave, gable_eave, thickness, height.
+  void roofEdited(const doc::ObjectId& id, const QString& key, double value, const QString& kind);
   void lockToggled(const doc::ObjectId& id, bool locked);
   // The object's material picked from the library ("" = inherit).
   void materialAssigned(const doc::ObjectId& id, const std::string& materialId);

@@ -349,6 +349,7 @@ class GuiPhase1 : public QObject {
   void moveToolSlidesAnOpeningWithinItsWall();
   void movedWallKeepsItsCornersAndSaysSo();
   void roomToolPlacesARoomWhoseAreaFollowsTheWalls();
+  void roofToolDrawsARoofWhoseSizesAreChangedInThePanel();
   void wallAndSlabFollowTheirLevelsFromThePanel();
   void wallQuantityInputsComparisonSaveAndStaleModel();
   void panelDragPreviewKeepsTheModelViewStill();
@@ -11332,4 +11333,70 @@ void GuiPhase1::roomToolPlacesARoomWhoseAreaFollowsTheWalls() {
   QVERIFY2(label("roomProblem").contains(QStringLiteral("閉じていません")),qPrintable(label("roomProblem")));
   QVERIFY(m.undo());
   QVERIFY(m.rooms().front().closed);
+}
+
+// docs/90 G-08: the roof tool draws a roof over an outline with the kind, pitch and overhangs
+// of its settings; the properties change them on the same object, one undo step each.
+void GuiPhase1::roofToolDrawsARoofWhoseSizesAreChangedInThePanel() {
+  Fixture f;QVERIFY(f.setUp(2000,0));auto& m=f.window.modeler();
+  auto* action=f.window.findChild<QAction*>(QStringLiteral("architectureRoofAction"));QVERIFY(action);
+  QVERIFY(f.window.findChild<QAction*>(QStringLiteral("roofSettingsAction")));
+  action->trigger();
+  click(f.vp,f.vp->toWidget(gp_Pnt(0,-3000,0)));
+  move(f.vp,f.vp->toWidget(gp_Pnt(2000,-3000,0)));
+  type(f.vp,QStringLiteral("4000"));
+  move(f.vp,f.vp->toWidget(gp_Pnt(4000,-1500,0)));
+  type(f.vp,QStringLiteral("2000"));
+  move(f.vp,f.vp->toWidget(gp_Pnt(2000,-1000,0)));
+  type(f.vp,QStringLiteral("4000"));
+  QCOMPARE(m.document().objects().size(),std::size_t(0));
+  QTest::keyClick(f.vp,Qt::Key_Return);  // Enter closes the outline
+  QTest::qWait(30);
+  QVERIFY2(f.window.lastError().isEmpty(),qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(),std::size_t(1));
+  const doc::ObjectId roof=m.document().objects().front().id;
+  QCOMPARE(QString::fromStdString(m.document().find(roof)->attributes.at("kind")),QStringLiteral("roof"));
+  auto info=m.roofInfo(roof);
+  QVERIFY2(info,info?"":info.error().c_str());
+  // Gable, pitch 4, eave 600, gable overhang 300 over 4000 x 2000 (ridge along the 4000).
+  QCOMPARE(QString::fromStdString(info->spec.kind),QStringLiteral("gable"));
+  QVERIFY2(std::abs(info->planArea-4600.0*3200)<1.0,qPrintable(QString::number(info->planArea)));
+  const double rise4=100*std::sqrt(1.16);
+  QVERIFY(std::abs(info->ridgeHeight-(0.4*1000+rise4))<1e-3);
+  const auto steps=m.history().undoCount();
+  // Selected: the roof's own words at the top of the properties.
+  f.window.activateTool(MainWindow::ToolId::Select);
+  f.window.setSelection({roof});
+  QApplication::processEvents();
+  auto* title=f.window.findChild<QLabel*>(QStringLiteral("partTitle"));QVERIFY(title);
+  QVERIFY(title->text().contains(QStringLiteral("屋根")));
+  auto spin=[&](const char* key){return f.window.findChild<QDoubleSpinBox*>(QStringLiteral("roofSize_")+QLatin1String(key));};
+  QVERIFY(spin("pitch")&&spin("eave")&&spin("gable_eave")&&spin("thickness")&&spin("height"));
+  QVERIFY(std::abs(spin("pitch")->value()-4)<1e-9&&std::abs(spin("eave")->value()-600)<1e-9);
+  auto* area=f.window.findChild<QLabel*>(QStringLiteral("roofPlanArea"));QVERIFY(area);
+  QVERIFY2(area->text().contains(QStringLiteral("14.72")),qPrintable(area->text()));
+  // Pitch 5: the same object, higher; one step.
+  spin("pitch")->setValue(5);
+  emit spin("pitch")->editingFinished();
+  QTRY_VERIFY(std::abs(m.roofInfo(roof)->ridgeHeight-(0.5*1000+100*std::sqrt(1.25)))<1e-3);
+  QCOMPARE(m.history().undoCount(),steps+1);
+  // Hip: eaves all round.
+  f.window.setSelection({roof});
+  QApplication::processEvents();
+  auto* kinds=f.window.findChild<QComboBox*>(QStringLiteral("roofKind"));QVERIFY(kinds);
+  kinds->setCurrentIndex(kinds->findData(QStringLiteral("hip")));
+  emit kinds->activated(kinds->currentIndex());
+  QTRY_VERIFY(m.roofInfo(roof)->spec.kind=="hip");
+  QVERIFY(std::abs(m.roofInfo(roof)->planArea-5200.0*3200)<1.0);
+  QCOMPARE(m.history().undoCount(),steps+2);
+  // A wider eave.
+  f.window.setSelection({roof});
+  QApplication::processEvents();
+  QVERIFY(spin("eave"));
+  spin("eave")->setValue(900);
+  emit spin("eave")->editingFinished();
+  QTRY_VERIFY(std::abs(m.roofInfo(roof)->planArea-5800.0*3800)<1.0);
+  QVERIFY(m.undo());QVERIFY(m.undo());QVERIFY(m.undo());
+  QVERIFY(std::abs(m.roofInfo(roof)->planArea-4600.0*3200)<1.0);
+  QCOMPARE(QString::fromStdString(m.roofInfo(roof)->spec.kind),QStringLiteral("gable"));
 }
