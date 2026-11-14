@@ -319,3 +319,41 @@ TEST_F(WallJoins, TheWallATeeRunsIntoFollowsNothingButItsOwnCornerPartners) {
   EXPECT_NEAR(box(south).x0, s0.x0, 1e-6);
 }
 }  // namespace
+
+// docs/107: corners that are not right angles stay closed too. A 8000 x 6000 room with its
+// south-east corner cut at 45 degrees: (6000, 0) - (8000, 2000).
+TEST(SkewWallJoins, ACornerThatIsNotARightAngleStaysClosed) {
+  sbr::doc::Modeler modeler;
+  CommandApi api{modeler};
+  auto ok = [&](const std::string& command, json args) {
+    json r = json::parse(api.execute(json{{"command", command}, {"args", args}}.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  const json ids = ok("create_wall", {{"points", {{0, 0}, {6000, 0}, {8000, 2000}, {8000, 6000}, {0, 6000}, {0, 0}}},
+                                      {"thickness", 200}, {"height", 3000}})["ids"];
+  ASSERT_EQ(ids.size(), 5u);
+  const std::string diagonal = ids[1], east = ids[2];
+  auto area = [&] {
+    const json r = ok("room_at", {{"at", {3000, 3000}}});
+    return r.value("closed", false) ? r["area_centre"].get<double>() : -1.0;
+  };
+  EXPECT_NEAR(area(), 48.0 - 2.0, 1e-6);
+  // The east wall 1000 out: the diagonal runs on to x = 9000 (at y = 3000), the east wall
+  // itself starts there, the north wall is longer.
+  const auto steps = modeler.history().undoCount();
+  ok("move", {{"ids", {east}}, {"vector", {1000, 0, 0}}});
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  EXPECT_NEAR(area(), 54.0 - 4.5, 1e-6);
+  ASSERT_TRUE(modeler.undo());
+  EXPECT_NEAR(area(), 46.0, 1e-6);
+  // The diagonal 500 * sqrt(2) outwards: it gets shorter between the walls it joins,
+  // which get longer; the corner cut is 1000 x 1000.
+  ok("move", {{"ids", {diagonal}}, {"vector", {500, -500, 0}}});
+  EXPECT_NEAR(area(), 48.0 - 0.5, 1e-6);
+  ASSERT_TRUE(modeler.undo());
+  EXPECT_NEAR(area(), 46.0, 1e-6);
+  // Inwards as well.
+  ok("move", {{"ids", {diagonal}}, {"vector", {-500, 500, 0}}});
+  EXPECT_NEAR(area(), 48.0 - 4.5, 1e-6);
+}

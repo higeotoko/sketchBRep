@@ -5728,17 +5728,21 @@ void settleWallJoins(const Document& document, ChangeSet& changes, const RegenCo
                      const std::vector<WallBand>& walls, const std::vector<std::array<WallEnd, 2>>& ends,
                      std::map<std::size_t, gp_Vec> displaced, const std::set<std::size_t>& primary,
                      const std::set<std::size_t>& keepShape, const std::set<ObjectId>& movedObjects, JoinFollow& report) {
-  // Walls joined to a displaced wall: the end on its face follows that face.
+  // An end on another wall's face stays on that face, whichever of the two walls goes: the end
+  // is put where this wall's line meets the face as both are after the move (docs/107). At
+  // right-angled corners this changes only the walls joined to a displaced wall; at other
+  // angles the displaced wall itself (also one the user moved) is made longer or shorter so
+  // that the corner stays closed.
   for (std::size_t k = 0; k < walls.size(); ++k) {
-    if (primary.count(k) || keepShape.count(k)) continue;
+    if (keepShape.count(k)) continue;
     const WallBand& w = walls[k];
     const gp_Vec own = displaced.count(k) ? displaced.at(k) : gp_Vec();
     double s0 = 0.0, s1 = w.length;
     bool touched = false;
     for (int end = 0; end < 2; ++end) {
       const WallEnd& e = ends[k][static_cast<std::size_t>(end)];
-      if (!e.partner || !e.joined || !displaced.count(*e.partner)) continue;
-      const gp_Vec relative = displaced.at(*e.partner) - own;  // how the partner goes, seen from this wall
+      if (!e.partner || !e.joined || (!displaced.count(*e.partner) && !displaced.count(k))) continue;
+      const gp_Vec relative = (displaced.count(*e.partner) ? displaced.at(*e.partner) : gp_Vec()) - own;  // how the partner goes, seen from this wall
       if (relative.Magnitude() < tolerance::kLinear) continue;
       const WallBand& o = walls[*e.partner];
       const double s = end == 0 ? 0.0 : w.length;
@@ -5749,7 +5753,7 @@ void settleWallJoins(const Document& document, ChangeSet& changes, const RegenCo
       const auto there = meet(w.start, w.dir, o.start.Translated(relative), o.dir);
       if (!there || there->second < -e.reach || there->second > o.length + e.reach) continue;
       const double value = e.far ? std::max(a->first, b->first) : std::min(a->first, b->first);
-      if (std::abs(value - s) < 1e-9) continue;
+      if (std::abs(value - s) < 1e-6) continue;
       (end == 0 ? s0 : s1) = value;
       touched = true;
     }
@@ -7239,13 +7243,21 @@ Result<std::vector<ObjectId>> Modeler::createWallBands(std::vector<gp_Pnt> point
     const gp_Pnt a = points[i], b = points[(i + 1) % points.size()];
     const double length = a.Distance(b);
     double startCut = 0.0, endRun = 0.0;
+    // At a corner that is not a right angle the same faces are farther along the line: the
+    // distances grow by 1 / sin(turn), so that each end lies on the other wall's face (and
+    // the walls count as joined, docs/107). Nearly straight turns keep the square distances.
+    auto slant = [&](std::size_t in, std::size_t out) {
+      const double sine = std::abs(gp_Vec(dirs[in]).Crossed(gp_Vec(dirs[out])).Z());
+      return sine < 0.25 ? 1.0 : 1.0 / sine;
+    };
     if (closed || i > 0) {
-      const int t = turn((i + segments - 1) % segments, i);
-      startCut = t > 0 ? o + thickness : t < 0 ? -o : 0.0;
+      const std::size_t before = (i + segments - 1) % segments;
+      const int t = turn(before, i);
+      startCut = (t > 0 ? o + thickness : t < 0 ? -o : 0.0) * slant(before, i);
     }
     if (closed || i + 1 < segments) {
       const int t = turn(i, (i + 1) % segments);
-      endRun = t > 0 ? -o : t < 0 ? o + thickness : 0.0;
+      endRun = (t > 0 ? -o : t < 0 ? o + thickness : 0.0) * slant(i, (i + 1) % segments);
     }
     const gp_Dir& dir = dirs[i];
     const gp_Dir left = gp::DZ().Crossed(dir);
