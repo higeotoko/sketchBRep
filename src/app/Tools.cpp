@@ -2151,7 +2151,7 @@ QString RoofTool::settingsText() const {
 }
 
 QString RoofTool::startText() const {
-  return QObject::tr("屋根が載る壁の外周を、軒の高さの平面で順にクリック（直角の角だけ。最初の点で閉じる）: %1").arg(settingsText());
+  return QObject::tr("屋根が載る壁の外周を、軒の高さの平面で順にクリック（最初の点で閉じる。斜めの辺がある時は、寄棟で、へこんだ角の無い形だけ）: %1").arg(settingsText());
 }
 
 QString RoofTool::finishedText(std::size_t) const { return QObject::tr("屋根を作成しました（Ctrl+Z で戻せます。勾配などはプロパティで直せます）"); }

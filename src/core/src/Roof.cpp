@@ -76,6 +76,70 @@ Result<TopoDS_Shape> ridgeBody(const Frame& f, const Rect& r, bool alongA, doubl
 
 namespace {
 Result<RoofShape> build(const RoofSpec& spec, double riseGiven);
+
+// A hip roof over an outline with slanted sides (docs/108): every side carries a plane rising
+// inwards from its eave, and the roof is what lies under all of them. The outline must have
+// no inward corners (the planes of an inward corner would cut the roof away beyond it).
+Result<RoofShape> slantedHip(const RoofSpec& spec, std::vector<gp_Pnt> points, double riseGiven) {
+  if (spec.kind != "hip")
+    return R::failure("A roof over an outline with slanted sides is a hip roof for now (gable and shed roofs need "
+                      "right-angled corners)");
+  double twice = 0.0, around = 0.0;
+  for (std::size_t i = 0; i < points.size(); ++i) {
+    const gp_Pnt &p = points[i], &q = points[(i + 1) % points.size()];
+    twice += p.X() * q.Y() - q.X() * p.Y();
+    around += p.Distance(q);
+    if (p.Distance(q) < 1.0) return R::failure("Two roof outline corners coincide");
+  }
+  if (std::abs(twice) < 2.0) return R::failure("The roof outline encloses nothing");
+  if (twice < 0) std::reverse(points.begin(), points.end());  // counter-clockwise: inside on the left
+  const std::size_t n = points.size();
+  for (std::size_t i = 0; i < n; ++i) {
+    const gp_Vec a(points[i], points[(i + 1) % n]), b(points[(i + 1) % n], points[(i + 2) % n]);
+    if (a.Crossed(b).Z() < -1e-6 * a.Magnitude() * b.Magnitude())
+      return R::failure("A roof outline with slanted sides must have no inward corners yet (L, T and U shapes need "
+                        "right-angled corners)");
+  }
+  const double slope = spec.pitch / 10.0;
+  const double rise = riseGiven > 0 ? riseGiven : spec.thickness * std::sqrt(1.0 + slope * slope);
+  const double lowest = spec.height - slope * spec.eave;
+  const double base = lowest - rise - 100.0;  // well below: the lifted copy must still reach under it
+  const double far = around + spec.eave + 1000.0;  // beyond the outline from any side
+  std::vector<TopoDS_Shape> bodies;
+  for (std::size_t i = 0; i < n; ++i) {
+    const gp_Pnt &p = points[i], &q = points[(i + 1) % n];
+    const gp_Vec d = gp_Vec(p, q).Normalized();
+    const gp_Vec in(-d.Y(), d.X(), 0);
+    const gp_Pnt s = p.Translated(d * -far);
+    auto at = [&](double inwards, double z) {
+      const gp_Pnt o = s.Translated(in * inwards);
+      return gp_Pnt(o.X(), o.Y(), z);
+    };
+    auto body = prism({at(-spec.eave, base), at(far, base), at(far, spec.height + slope * far), at(-spec.eave, lowest)},
+                      d * (p.Distance(q) + 2 * far));
+    if (!body) return R::failure(body.error());
+    bodies.push_back(body.value());
+  }
+  auto under = booleanCombine(BooleanOp::Intersect, bodies);
+  if (!under) return R::failure("Hip roof could not be built: " + under.error());
+  gp_Trsf lift;
+  lift.SetTranslation(gp_Vec(0, 0, rise));
+  const TopoDS_Shape lifted = BRepBuilderAPI_Transform(under.value(), lift, Standard_True).Shape();
+  auto roof = booleanCombine(BooleanOp::Subtract, {lifted, under.value()});
+  if (!roof) return R::failure("Roof could not be built: " + roof.error());
+  int solids = 0;
+  for (TopExp_Explorer e(roof.value(), TopAbs_SOLID); e.More(); e.Next()) ++solids;
+  if (solids != 1 || !BRepCheck_Analyzer(roof.value()).IsValid()) return R::failure("Roof could not be built as one solid");
+  RoofShape out;
+  out.parts = 1;
+  out.solid = roof.value();
+  out.planArea = volume(out.solid) / rise;
+  out.slopeArea = out.planArea * std::sqrt(1.0 + slope * slope);
+  const Bnd_Box box = exactBounds(out.solid);
+  out.ridgeHeight = box.CornerMax().Z();
+  out.eaveHeight = box.CornerMin().Z();
+  return out;
+}
 }
 
 Result<RoofShape> makeRoof(const RoofSpec& spec) { return build(spec, 0.0); }
@@ -116,8 +180,7 @@ Result<RoofShape> build(const RoofSpec& spec, double riseGiven) {
     const auto& p = poly[i];
     const auto& q = poly[(i + 1) % poly.size()];
     const double da = std::abs(q.first - p.first), db = std::abs(q.second - p.second);
-    if (std::min(da, db) > 0.01)
-      return R::failure("Roof outlines must have right-angled corners only (a slanted side is not supported yet)");
+    if (std::min(da, db) > 0.01) return slantedHip(spec, points, riseGiven);  // a slanted side
     if (std::max(da, db) < 1.0) return R::failure("Two roof outline corners coincide");
   }
   // Snap to exact lines (a side 0.005 off would make slivers).

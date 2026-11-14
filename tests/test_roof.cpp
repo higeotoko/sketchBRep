@@ -1,6 +1,7 @@
 // Roofs as one solid (docs/90 G-08, docs/99). Sizes are checked against hand calculations:
 // seen from above a roof covers its outline grown by the overhangs; its volume is that area
 // times its thickness measured upright; its upper surface is that area times sqrt(1 + slope^2).
+#include <algorithm>
 #include <cmath>
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -366,3 +367,58 @@ TEST_F(WallsUnderRoof, WhatCannotBeFittedIsRefusedAndNothingChanges) {
   EXPECT_NEAR(box(east).z1, 3000, 1e-6);
 }
 }  // namespace
+
+// docs/108: a hip roof over an outline with slanted sides (no inward corners).
+TEST(Roof, AHipRoofCoversAnOutlineWithSlantedSides) {
+  // 8000 x 6000 with its south-east corner cut at 45 degrees.
+  RoofSpec spec;
+  spec.kind = "hip";
+  spec.outline = {gp_Pnt(0, 0, 0), gp_Pnt(6000, 0, 0), gp_Pnt(8000, 2000, 0), gp_Pnt(8000, 6000, 0), gp_Pnt(0, 6000, 0)};
+  spec.height = 3000;
+  const auto roof = makeRoof(spec);
+  ASSERT_TRUE(roof) << roof.error();
+  EXPECT_TRUE(BRepCheck_Analyzer(roof->solid).IsValid());
+  int solids = 0;
+  for (TopExp_Explorer e(roof->solid, TopAbs_SOLID); e.More(); e.Next()) ++solids;
+  EXPECT_EQ(solids, 1);
+  // Seen from above: the outline grown by the eave (600) with mitred corners:
+  // area + perimeter x eave + eave^2 x sum of tan(half the turn) (three of 90, two of 45 degrees).
+  const double pi = std::acos(-1.0);
+  const double grown = 46e6 + (24000 + 2000 * std::sqrt(2.0)) * 600 + 600.0 * 600 * (3 + 2 * std::tan(pi / 8));
+  EXPECT_NEAR(roof->planArea, grown, 1.0);
+  EXPECT_NEAR(roof->slopeArea, grown * std::sqrt(1.16), 2.0);
+  EXPECT_NEAR(sbr::geom::volume(roof->solid), grown * kRise, 200.0);
+  EXPECT_NEAR(roof->eaveHeight, 3000 - 0.4 * 600, 1e-4);  // every eave at one height
+  // Drawn the other way round: the same roof.
+  std::reverse(spec.outline.begin(), spec.outline.end());
+  const auto other = makeRoof(spec);
+  ASSERT_TRUE(other) << other.error();
+  EXPECT_NEAR(other->planArea, grown, 1.0);
+
+  // A regular hexagon (corner radius 4000): a point over its middle, as high as its
+  // apothem times the slope.
+  RoofSpec hexagon;
+  hexagon.kind = "hip";
+  hexagon.height = 3000;
+  for (int i = 0; i < 6; ++i) hexagon.outline.emplace_back(4000 * std::cos(pi / 3 * i), 4000 * std::sin(pi / 3 * i), 0);
+  const auto tent = makeRoof(hexagon);
+  ASSERT_TRUE(tent) << tent.error();
+  EXPECT_NEAR(tent->ridgeHeight, 3000 + 0.4 * 4000 * std::cos(pi / 6) + kRise, 1e-3);
+  const auto b = sbr::geom::exactBounds(tent->solid);
+  EXPECT_NEAR(b.CornerMax().X(), 4000 + 600 / std::cos(pi / 6), 1e-3);  // the eave corner, mitred
+
+  // What it takes from walls under it (walls up to the roof) is built the same way.
+  EXPECT_TRUE(sbr::geom::roofSpaceAbove(spec, 100000.0));
+  // Not yet: gable or shed over slanted sides, and inward corners with slanted sides.
+  spec.kind = "gable";
+  const auto gable = makeRoof(spec);
+  ASSERT_FALSE(gable);
+  EXPECT_NE(gable.error().find("hip roof for now"), std::string::npos);
+  RoofSpec dented;
+  dented.kind = "hip";
+  dented.height = 3000;
+  dented.outline = {gp_Pnt(0, 0, 0), gp_Pnt(8000, 0, 0), gp_Pnt(8000, 6000, 0), gp_Pnt(4000, 3000, 0), gp_Pnt(0, 6000, 0)};
+  const auto refused = makeRoof(dented);
+  ASSERT_FALSE(refused);
+  EXPECT_NE(refused.error().find("no inward corners"), std::string::npos);
+}

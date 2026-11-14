@@ -127,6 +127,8 @@ const Entry kEntries[] = {
     {"is not exported:", "書き出していない室があります（閉じていない、または、ほかの室と同じ場所）"},
     {"cannot be fitted to the roof", "屋根に合わせられない壁があります（形を直接変えた壁、または全体が屋根より上にある壁）。何も変えていません"},
     {"is not fitted to a roof", "屋根に合わせていない壁です"},
+    {"A roof over an outline with slanted sides is a hip roof for now", "斜めの辺がある外周の屋根は、今は寄棟だけです（切妻・片流れは、直角の角だけの外周で作れます）"},
+    {"A roof outline with slanted sides must have no inward corners yet", "斜めの辺がある外周は、へこんだ角が無い形だけです（L 字・T 字・コの字は、直角の角だけにしてください）"},
     {"Roof outlines must have right-angled corners only", "屋根の外周は、直角の角だけにしてください（斜めの辺は、まだ作れません）"},
     {"A roof outline needs at least four corners", "屋根の外周は、4 つ以上の角が要ります"},
     {"The roof outline crosses itself", "屋根の外周が自分と交わっています"},
