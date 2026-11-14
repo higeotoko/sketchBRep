@@ -69,7 +69,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   // Used by tests and the command line.
   bool openFile(const QString& path);
   bool saveFile(const QString& path);
-  enum class ToolId { Select, Line, Rectangle, PushPull, Move, Rotate, Offset, Curve, Revolve, Measure, Circle, Paint, Eraser, Arc, Dimension, Text, Section, FollowMe, Protractor, Polygon, Scale, Wall, Slab, Opening, Paste, ComponentAxes, RotatedRectangle, Member, Sweep2, EdgeSurface, Patch, Fillet, Chamfer, Shell, Count };
+  enum class ToolId { Select, Line, Rectangle, PushPull, Move, Rotate, Offset, Curve, Revolve, Measure, Circle, Paint, Eraser, Arc, Dimension, Text, Section, FollowMe, Protractor, Polygon, Scale, Wall, Slab, Opening, Paste, ComponentAxes, RotatedRectangle, Member, Sweep2, EdgeSurface, Patch, Fillet, Chamfer, Shell, Room, Count };
   void activateTool(ToolId id);
   // Component placement commands on the instances among `ids`: "unique",
   // "reset", "mirror0".."mirror2" (red / green / blue) or "axes" (tool).
@@ -277,6 +277,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   void showWallSettingsDialog();
   void showSlabSettingsDialog();
   void showOpeningSettingsDialog();
+  // Every room with its areas as the walls are now (docs/90 G-07).
+  void showRoomsDialog();
   void showOpeningsDialog();
   void showLevelsDialog();
   void newDocument();
@@ -388,6 +390,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   std::unique_ptr<ArcTool> arcTool_;
   std::unique_ptr<DimensionTool> dimensionTool_;
   std::unique_ptr<TextTool> textTool_;
+  std::unique_ptr<RoomTool> roomTool_;
   std::unique_ptr<SectionTool> sectionTool_;
   std::unique_ptr<FollowMeTool> followMeTool_;
   std::unique_ptr<SurfaceTool> sweep2Tool_, edgeSurfaceTool_, patchTool_, filletTool_, chamferTool_, shellTool_;

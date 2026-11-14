@@ -102,6 +102,30 @@ gp_XYZ xyz(const json& v, const char* key) {
 
 gp_Pnt point(const json& args, const char* key) { return gp_Pnt(xyz(arg(args, key), key)); }
 
+json roomJson(const doc::RoomInfo& r) {
+  auto outline = [](const std::vector<gp_Pnt>& points) {
+    json out = json::array();
+    for (const gp_Pnt& p : points) out.push_back({p.X(), p.Y()});
+    return out;
+  };
+  json j{{"name", r.name}, {"level", r.level}, {"at", {r.at.X(), r.at.Y(), r.at.Z()}}, {"closed", r.closed},
+         {"problem", r.problem}, {"unreadable_walls", r.unreadableWalls}};
+  if (!r.id.empty()) j["id"] = r.id;
+  if (r.closed) {
+    j["area_centre"] = r.centreArea / 1e6;
+    j["area_inner"] = r.innerKnown ? json(r.innerArea / 1e6) : json(nullptr);
+    j["inner_perimeter"] = r.innerKnown ? json(r.innerPerimeter) : json(nullptr);
+    j["outline_centre"] = outline(r.centre);
+    j["outline_inner"] = outline(r.inner);
+    j["walls"] = r.walls;
+  } else {
+    json ends = json::array();
+    for (const gp_Pnt& p : r.looseEnds) ends.push_back({p.X(), p.Y()});
+    j["loose_ends"] = ends;
+  }
+  return j;
+}
+
 gp_Dir direction(const json& args, const char* key, const gp_Dir& fallback) {
   if (!args.contains(key)) return fallback;
   const gp_XYZ v = xyz(args.at(key), key);
@@ -2084,6 +2108,46 @@ const std::vector<CommandDef>& commands() {
        [](doc::Modeler& m, const json& a) {
          return idsResult(must(m.setWallType(ids(a, "ids"), text(a, "type"), numberOr(a, "core", 105.0),
                                              textOr(a, "outside", "auto"))));
+       }},
+      {"create_room",
+       "A room: a marker (its name as a text note, attribute kind=room) at plan point 'at' ([x, y] or \"X1/Y1\") "
+       "on the floor at 'base' (mm, default 0). The room is the region the walls made by create_wall enclose "
+       "there (walls a plan cut 1100 above the floor meets). Refused when the place is not enclosed (the error "
+       "names it; nothing is closed for you: see room_at for the loose wall ends) or already has a room. "
+       "Areas are read from the walls whenever asked (list_rooms): they follow moved walls. One undo step.",
+       SCHEMA({"type": "object", "properties": {"at": {}, "base": {"type": "number"}, "name": {"type": "string"}},
+               "required": ["at", "name"]}),
+       [](doc::Modeler& m, const json& a) {
+         const GridLookup grid(m.document());
+         return idResult(must(m.createRoom(grid.point(arg(a, "at"), numberOr(a, "base", 0.0)), text(a, "name"))));
+       }},
+      {"room_at",
+       "The region plan point 'at' is in on the floor at 'base' (default 0), without making a room: closed, "
+       "areas (m2: area_centre within wall lines 壁芯, area_inner within wall faces 内法 or null when the faces "
+       "give no simple outline - not evaluated, never a guess), walls, and when not closed the nearest "
+       "loose_ends of walls.",
+       SCHEMA({"type": "object", "properties": {"at": {}, "base": {"type": "number"}}, "required": ["at"]}),
+       [](doc::Modeler& m, const json& a) {
+         const GridLookup grid(m.document());
+         return roomJson(m.roomAt(grid.point(arg(a, "at"), numberOr(a, "base", 0.0))));
+       }},
+      {"list_rooms",
+       "Every room (create_room) with its region as the walls are now: id, name, level, closed, problem, "
+       "area_centre / area_inner (m2; area_inner null = not evaluated), inner_perimeter (mm), outlines, walls. "
+       "A room whose walls were opened reports closed=false and no area.",
+       SCHEMA({"type": "object", "properties": {}}),
+       [](doc::Modeler& m, const json&) {
+         json rooms = json::array();
+         double centre = 0.0;
+         int open = 0;
+         for (const doc::RoomInfo& r : m.rooms()) {
+           rooms.push_back(roomJson(r));
+           if (r.closed && r.problem.empty()) centre += r.centreArea;
+           else ++open;
+         }
+         return json{{"rooms", rooms}, {"total_area_centre", centre / 1e6}, {"not_counted", open},
+                     {"basis", "area_centre: within the lines the walls were drawn on; area_inner: within the wall faces. "
+                               "Not a legal floor area (no rules on what counts are applied)."}};
        }},
       {"create_slab",
        "A floor slab: 'outline' of plan points ([x, y] or \"X1/Y1\") or 'grid' {x: [\"X1\", \"X4\"], y: "

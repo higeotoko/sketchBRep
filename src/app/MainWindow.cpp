@@ -164,6 +164,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   arcTool_ = std::make_unique<ArcTool>(*this);
   dimensionTool_ = std::make_unique<DimensionTool>(*this);
   textTool_ = std::make_unique<TextTool>(*this);
+  roomTool_ = std::make_unique<RoomTool>(*this);
   sectionTool_ = std::make_unique<SectionTool>(*this);
   sectionTool_->setOnPlaced([this] {
     QTimer::singleShot(0, this, [this] { if (active_ == sectionTool_.get()) activateTool(ToolId::Select); });
@@ -1479,6 +1480,25 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
   drawing(ToolId::Opening, QStringLiteral("architectureOpening"), &MainWindow::showOpeningSettingsDialog);
   findChild<QToolButton*>(QStringLiteral("architectureOpening"))->setToolTip(
       tr("開口: 平面の壁、または3D・立面の壁面をクリック。右の矢印から幅・高さ・腰高を設定"));
+  {
+    // Room (docs/90 G-07): only here, not in the drawing palette.
+    auto* room = new QAction(tr("室"), this);
+    room->setObjectName(QStringLiteral("architectureRoomAction"));
+    room->setCheckable(true);
+    connect(room, &QAction::triggered, this, [this] { activateTool(ToolId::Room); });
+    toolGroup_->addAction(room);
+    toolActions_[static_cast<int>(ToolId::Room)] = room;
+    auto* button = new QToolButton(bar);
+    button->setObjectName(QStringLiteral("architectureRoom"));
+    button->setDefaultAction(room);
+    button->setPopupMode(QToolButton::MenuButtonPopup);
+    button->setToolTip(tr("室: 壁で囲まれた所をクリック。壁芯・内法の面積が出ます。右の矢印から室の一覧"));
+    auto* options = new QMenu(button);
+    options->addAction(tr("室の一覧と面積..."), this, &MainWindow::showRoomsDialog)
+        ->setObjectName(QStringLiteral("roomsListAction"));
+    button->setMenu(options);
+    bar->addWidget(button);
+  }
   for (const char* entry : {"sill", "column", "beam"}) {
     auto* button = new QToolButton(bar);
     button->setObjectName(QStringLiteral("architectureMember_") + QLatin1String(entry));
@@ -2006,6 +2026,7 @@ void MainWindow::activateTool(ToolId id) {
       break;
     case ToolId::Slab: active_ = slabTool_.get(); break;
     case ToolId::Opening: active_ = openingTool_.get(); break;
+    case ToolId::Room: active_ = roomTool_.get(); break;
     case ToolId::Count: return;
   }
   // Tools without a toolbar button (paste) leave the toolbar unchecked.
@@ -3928,6 +3949,60 @@ bool MainWindow::setOpeningFitting(const doc::ObjectId& host, int index, const Q
   }
   setStatus(tr("開口 %1 の建具を設定しました（平面の切断表示と平面図に記号が出ます）").arg(index));
   return true;
+}
+
+void MainWindow::showRoomsDialog() {
+  const std::vector<doc::RoomInfo> rooms = modeler_.rooms();
+  QDialog dialog(this);
+  dialog.setObjectName(QStringLiteral("roomsDialog"));
+  dialog.setWindowTitle(tr("室の一覧と面積"));
+  auto* layout = new QVBoxLayout(&dialog);
+  auto* table = new QTableWidget(static_cast<int>(rooms.size()), 5, &dialog);
+  table->setObjectName(QStringLiteral("roomsTable"));
+  table->setHorizontalHeaderLabels({tr("室名"), tr("階"), tr("壁芯 ㎡"), tr("内法 ㎡"), tr("状態")});
+  table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+  table->setSelectionBehavior(QAbstractItemView::SelectRows);
+  double centre = 0.0, inner = 0.0;
+  int notCounted = 0, innerMissing = 0;
+  for (int row = 0; row < static_cast<int>(rooms.size()); ++row) {
+    const doc::RoomInfo& r = rooms[static_cast<std::size_t>(row)];
+    QString level = tr("—");
+    for (const doc::FloorLevel& l : modeler_.levels())
+      if (l.id == r.level) level = QString::fromStdString(l.name);
+    const bool counted = r.closed && r.problem.empty();
+    auto cell = [&](int column, const QString& text) { table->setItem(row, column, new QTableWidgetItem(text)); };
+    cell(0, QString::fromStdString(r.name));
+    cell(1, level);
+    cell(2, r.closed ? QString::number(r.centreArea / 1e6, 'f', 2) : tr("—"));
+    cell(3, r.closed ? (r.innerKnown ? QString::number(r.innerArea / 1e6, 'f', 2) : tr("未評価")) : tr("—"));
+    cell(4, counted ? tr("閉じている") : !r.closed ? tr("閉じていない") : tr("ほかの室と同じ場所"));
+    if (counted) {
+      centre += r.centreArea;
+      if (r.innerKnown) inner += r.innerArea;
+      else ++innerMissing;
+    } else {
+      ++notCounted;
+    }
+  }
+  table->resizeColumnsToContents();
+  layout->addWidget(table);
+  QString sum = tr("合計（閉じている室だけ）: 壁芯 %1 ㎡").arg(centre / 1e6, 0, 'f', 2);
+  sum += innerMissing == 0 ? tr(" ／ 内法 %1 ㎡").arg(inner / 1e6, 0, 'f', 2)
+                           : tr(" ／ 内法は %1 室が未評価のため合計しません").arg(innerMissing);
+  if (notCounted > 0) sum += tr("\n合計に入れていない室: %1（閉じていない・同じ場所）").arg(notCounted);
+  sum += tr("\n壁芯＝壁を描いた線の内側、内法＝壁の面の内側。法の床面積（算入・不算入の決まり）ではありません。");
+  auto* total = new QLabel(sum, &dialog);
+  total->setObjectName(QStringLiteral("roomsTotal"));
+  total->setWordWrap(true);
+  layout->addWidget(total);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  layout->addWidget(buttons);
+  connect(table, &QTableWidget::cellClicked, this, [this, rooms](int row, int) {
+    if (row >= 0 && row < static_cast<int>(rooms.size())) setSelection({rooms[static_cast<std::size_t>(row)].id});
+  });
+  dialog.resize(560, 360);
+  dialog.exec();
 }
 
 bool MainWindow::resizeOpening(const doc::ObjectId& host, int index, double width, double height) {

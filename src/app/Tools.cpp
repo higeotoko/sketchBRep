@@ -2034,6 +2034,102 @@ void TextTool::applyMeasurement(const QString& text) {
   if (!s) host_.reportError(QString::fromStdString(s.message()));
 }
 
+// --- Room ---------------------------------------------------------------------------
+
+QString roomAreaText(const doc::RoomInfo& room) {
+  const QString centre = QString::number(room.centreArea / 1e6, 'f', 2);
+  return room.innerKnown ? QObject::tr("壁芯 %1 ㎡ ／ 内法 %2 ㎡").arg(centre, QString::number(room.innerArea / 1e6, 'f', 2))
+                         : QObject::tr("壁芯 %1 ㎡ ／ 内法は未評価（室の中に壁の端があるなど）").arg(centre);
+}
+
+QString roomProblemText(const doc::RoomInfo& room) {
+  QString text = userMessage(QString::fromStdString(room.problem));
+  if (!room.looseEnds.empty()) {
+    const gp_Pnt& p = room.looseEnds.front();
+    text += QObject::tr("。近くの、どこにも当たっていない壁の端: X %1, Y %2").arg(mm(p.X()), mm(p.Y()));
+  }
+  if (room.unreadableWalls > 0)
+    text += QObject::tr("。形を直接変えた壁 %1 枚は、壁として数えていません").arg(room.unreadableWalls);
+  return text;
+}
+
+QString RoomTool::name() const { return QObject::tr("室"); }
+QCursor RoomTool::cursor() const { return toolCursor(CursorKind::Text); }
+
+void RoomTool::activate() {
+  resetTracking();
+  resetLock();
+  lastCreated_.reset();
+  host_.viewport().setPickMode(PickMode::None);
+  host_.viewport().clearPreview();
+  host_.setMeasurement(QObject::tr("室名"), QString());
+  host_.setStatus(QObject::tr("壁で囲まれた所をクリックして室を置く（作業面の階の壁を見ます）"));
+}
+
+void RoomTool::cancel() {
+  host_.viewport().clearPreview();
+  host_.viewport().hideSnap();
+}
+
+std::optional<gp_Pnt> RoomTool::floorPoint(const ToolEvent& e) {
+  // Where the line of sight meets the floor, whatever stands in front of it (in 3D a wall
+  // is often between the eye and the floor of the room behind it). No snapping: a room is
+  // pointed at, not measured.
+  const double floor = host_.viewport().workOffset();
+  const snap::Ray ray = host_.viewport().rayAt(e.pos);
+  if (std::abs(ray.direction.Z()) < 1e-6) return std::nullopt;  // looking along the floor
+  const double t = (floor - ray.origin.Z()) / ray.direction.Z();
+  return gp_Pnt(ray.origin.X() + ray.direction.X() * t, ray.origin.Y() + ray.direction.Y() * t, floor);
+}
+
+void RoomTool::mouseMove(const ToolEvent& e) {
+  const auto p = floorPoint(e);
+  if (!p) return;
+  const doc::RoomInfo room = host_.modeler().roomAt(*p);
+  if (!room.closed) {
+    host_.viewport().clearPreview();
+    host_.setStatus(QObject::tr("ここには室を置けません: %1").arg(roomProblemText(room)));
+    return;
+  }
+  const auto face = geom::makePolygonFace(room.innerKnown ? room.inner : room.centre);
+  if (face) host_.viewport().setPreview(face.value(), true);
+  else host_.viewport().clearPreview();
+  host_.setStatus(QObject::tr("クリックで室を置く: %1").arg(roomAreaText(room)));
+}
+
+void RoomTool::mousePress(const ToolEvent& e) {
+  const auto p = floorPoint(e);
+  if (!p) return;
+  doc::Modeler& m = host_.modeler();
+  const doc::RoomInfo room = m.roomAt(*p);
+  if (!room.closed) {
+    host_.reportError(QObject::tr("ここには室を置けません: %1").arg(roomProblemText(room)));
+    return;
+  }
+  const QString name = QObject::tr("室%1").arg(m.rooms().size() + 1);
+  recent_.begin(m);
+  const auto id = m.createRoom(*p, name.toStdString());
+  if (!id) {
+    host_.reportError(QString::fromStdString(id.error()));
+    return;
+  }
+  lastCreated_ = id.value();
+  recent_.mark(m);
+  host_.viewport().clearPreview();
+  host_.setSelection({id.value()});
+  host_.setStatus(QObject::tr("「%1」を置きました（%2）。室名を入力して Enter で付け替え").arg(name, roomAreaText(room)));
+  host_.beginTextEntry(QObject::tr("室名"), name);
+}
+
+void RoomTool::applyMeasurement(const QString& text) {
+  if (!lastCreated_ || !recent_.fresh(host_.modeler())) {
+    host_.reportError(QObject::tr("先に室を置いてください"));
+    return;
+  }
+  const Status s = recent_.revise(host_.modeler(), [&] { return host_.modeler().setAnnotationText(*lastCreated_, text.toStdString()); });
+  if (!s) host_.reportError(QString::fromStdString(s.message()));
+}
+
 // --- Section ----------------------------------------------------------------------
 
 QString SectionTool::name() const { return QObject::tr("断面"); }

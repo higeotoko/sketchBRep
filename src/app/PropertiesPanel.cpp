@@ -1,4 +1,5 @@
 #include "PropertiesPanel.h"
+#include "Messages.h"
 
 #include <QSignalBlocker>
 
@@ -241,6 +242,45 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
   const doc::Object* o = document.find(selection.front());
   if (!o) return;
   const doc::ObjectId id = o->id;
+
+  // ===== A room (docs/90 G-07): its areas as the walls are now.
+  if (const auto kind = o->attributes.find("kind"); kind != o->attributes.end() && kind->second == "room") {
+    for (const doc::RoomInfo& room : modeler.rooms()) {
+      if (room.id != id) continue;
+      auto* title = new QLabel(tr("<b>室</b>"));
+      title->setObjectName(QStringLiteral("partTitle"));
+      form_->addRow(title);
+      QString level = tr("なし（レベルの高さにありません）");
+      for (const doc::FloorLevel& l : modeler.levels())
+        if (l.id == room.level) level = QString::fromStdString(l.name);
+      auto* storey = new QLabel(level);
+      storey->setObjectName(QStringLiteral("partStorey"));
+      form_->addRow(tr("階"), storey);
+      auto row = [&](const QString& label, const QString& text, const char* name, const QString& tip) {
+        auto* value = new QLabel(text);
+        value->setObjectName(QLatin1String(name));
+        value->setToolTip(tip);
+        value->setWordWrap(true);
+        form_->addRow(label, value);
+      };
+      if (room.closed) {
+        row(tr("壁芯の面積"), tr("%1 ㎡").arg(room.centreArea / 1e6, 0, 'f', 2), "roomAreaCentre",
+            tr("壁を描いた線（木造の壁は柱心）の内側。壁を動かすと変わります"));
+        row(tr("内法の面積"), room.innerKnown ? tr("%1 ㎡").arg(room.innerArea / 1e6, 0, 'f', 2) : tr("未評価"), "roomAreaInner",
+            room.innerKnown ? tr("壁の面の内側") : tr("室の中に壁の端があるなど、壁の面から形を決められないため、数字を出していません"));
+        row(tr("囲む壁"), tr("%1 枚").arg(room.walls.size()), "roomWalls", QString());
+        if (!room.problem.empty())
+          row(tr("注意"), userMessage(QString::fromStdString(room.problem)), "roomProblem", QString());
+      } else {
+        QString why = userMessage(QString::fromStdString(room.problem));
+        if (!room.looseEnds.empty())
+          why += tr("。近くの壁の端: X %1, Y %2").arg(room.looseEnds.front().X(), 0, 'f', 0).arg(room.looseEnds.front().Y(), 0, 'f', 0);
+        if (room.unreadableWalls > 0) why += tr("。形を直接変えた壁 %1 枚は壁として数えていません").arg(room.unreadableWalls);
+        row(tr("面積"), tr("なし（%1）").arg(why), "roomProblem", QString());
+      }
+      break;
+    }
+  }
 
   // ===== The part (docs/90 G-04): what it is, in the same order for every building part:
   // kind (種類), storey (階), reference (基準), sizes (寸法). The same words as its tool's settings.

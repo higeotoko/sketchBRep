@@ -1,4 +1,5 @@
 #include "sbr/doc/Modeler.h"
+#include "sbr/geom/RoomRegions.h"
 #include "sbr/WallTypes.h"
 #include "sbr/OpeningSymbols.h"
 #include "sbr/ConstructionGuide.h"
@@ -5702,6 +5703,75 @@ void followWallJoins(const Document& document, ChangeSet& changes, const RegenCo
   }
 }
 
+// --- rooms (docs/90 G-07) ------------------------------------------------------------------
+constexpr double kRoomCut = 1100.0;  // a wall bounds rooms on a floor when a plan cut this high meets it
+const FloorLevel* levelAtHeight(const std::vector<FloorLevel>& levels, double z);  // below
+
+struct StoreyWalls {
+  std::vector<geom::PlanWall> plan;
+  std::vector<ObjectId> ids;
+  int unreadable = 0;
+};
+
+StoreyWalls storeyWalls(const Document& document, double floor) {
+  StoreyWalls out;
+  const double cut = floor + kRoomCut;
+  for (const Object& o : document.objects()) {
+    const auto kind = o.attributes.find("kind");
+    if (kind == o.attributes.end() || kind->second != "wall" || o.shape.IsNull()) continue;
+    const auto w = wallBand(document, o);
+    if (!w) {
+      const Bnd_Box box = document.worldBounds(o);
+      if (!box.IsVoid() && box.CornerMin().Z() <= cut && cut < box.CornerMax().Z()) ++out.unreadable;
+      continue;
+    }
+    if (!(w->z0 <= cut && cut < w->z1)) continue;
+    const gp_Pnt end = w->start.Translated(gp_Vec(w->dir) * w->length);
+    out.plan.push_back({{w->start.X(), w->start.Y()}, {end.X(), end.Y()}, w->right, w->leftExt});
+    out.ids.push_back(o.id);
+  }
+  return out;
+}
+
+RoomInfo regionInfo(const Document& document, const gp_Pnt& at) {
+  RoomInfo info;
+  info.at = at;
+  if (const FloorLevel* level = levelAtHeight(document.settings().levels, at.Z())) info.level = level->id;
+  const StoreyWalls walls = storeyWalls(document, at.Z());
+  info.unreadableWalls = walls.unreadable;
+  if (walls.plan.empty()) {
+    info.problem = "No walls made by the wall tool stand at this height";
+    return info;
+  }
+  const geom::RoomRegions regions = geom::roomRegions(walls.plan);
+  const auto found = geom::regionAt(regions, {at.X(), at.Y()});
+  if (!found) {
+    info.problem = "Not enclosed by walls here";
+    // The loose wall ends nearest the place: where the outline is likely open.
+    std::vector<gp_Pnt> ends;
+    for (const geom::PlanPoint& p : regions.looseEnds) ends.emplace_back(p.x, p.y, at.Z());
+    std::sort(ends.begin(), ends.end(), [&](const gp_Pnt& a, const gp_Pnt& b) { return a.Distance(at) < b.Distance(at); });
+    if (ends.size() > 4) ends.resize(4);
+    info.looseEnds = std::move(ends);
+    return info;
+  }
+  const geom::RoomRegion& region = regions.regions[*found];
+  info.closed = true;
+  info.centreArea = region.centreArea;
+  info.innerKnown = region.innerKnown;
+  info.innerArea = region.innerArea;
+  info.innerPerimeter = region.innerPerimeter;
+  for (const geom::PlanPoint& p : region.centre) info.centre.emplace_back(p.x, p.y, at.Z());
+  for (const geom::PlanPoint& p : region.inner) info.inner.emplace_back(p.x, p.y, at.Z());
+  for (std::size_t i : region.walls) info.walls.push_back(walls.ids[i]);
+  return info;
+}
+
+bool isRoomMarker(const Object& o) {
+  const auto kind = o.attributes.find("kind");
+  return kind != o.attributes.end() && kind->second == "room" && std::holds_alternative<TextNote>(o.recipe.base);
+}
+
 // --- walls and slabs on levels (docs/90 G-02) ---------------------------------------------
 constexpr const char* kBaseLevel = "base_level";
 constexpr const char* kTopLevel = "top_level";
@@ -5781,6 +5851,51 @@ void levelUp(const Document& document, ChangeSet& changes, const RegenContext& c
   }
 }
 }  // namespace
+
+RoomInfo Modeler::roomAt(const gp_Pnt& at) const { return regionInfo(document_, at); }
+
+std::vector<RoomInfo> Modeler::rooms() const {
+  std::vector<RoomInfo> out;
+  for (const Object& o : document_.objects()) {
+    if (!isRoomMarker(o)) continue;
+    const TextNote& note = std::get<TextNote>(o.recipe.base);
+    RoomInfo info = regionInfo(document_, note.position.Transformed(document_.worldTransform(o)));
+    info.id = o.id;
+    info.name = note.text;
+    if (info.closed) {
+      // Two markers in one region: the later one says so (areas would be counted twice).
+      for (const RoomInfo& earlier : out) {
+        if (!earlier.closed || earlier.centre.size() != info.centre.size() ||
+            std::abs(earlier.centreArea - info.centreArea) > 1e-6 || std::abs(earlier.at.Z() - info.at.Z()) > 1e-6)
+          continue;
+        bool same = true;
+        for (std::size_t i = 0; same && i < info.centre.size(); ++i) same = earlier.centre[i].Distance(info.centre[i]) < 1e-6;
+        if (same) info.problem = "Shares its region with room '" + earlier.name + "'";
+      }
+    }
+    out.push_back(std::move(info));
+  }
+  return out;
+}
+
+Result<ObjectId> Modeler::createRoom(const gp_Pnt& at, const std::string& name) {
+  using R = Result<ObjectId>;
+  if (name.empty()) return R::failure("A room needs a name");
+  const RoomInfo region = roomAt(at);
+  if (!region.closed) return R::failure(region.problem + " (nothing was closed or added)");
+  for (const RoomInfo& other : rooms()) {
+    if (!other.closed || std::abs(other.at.Z() - at.Z()) > 1e-6 || other.centre.size() != region.centre.size()) continue;
+    bool same = std::abs(other.centreArea - region.centreArea) < 1e-6;
+    for (std::size_t i = 0; same && i < region.centre.size(); ++i) same = other.centre[i].Distance(region.centre[i]) < 1e-6;
+    if (same) return R::failure("Room '" + other.name + "' is already here");
+  }
+  Object o;
+  o.name = uniqueName("Room");
+  o.layer = "Annotations";
+  o.recipe.base = TextNote{at, std::nullopt, name};
+  o.attributes["kind"] = "room";
+  return addObject(std::move(o), "Room");
+}
 
 Status Modeler::attachToLevels(const std::vector<ObjectId>& ids, std::optional<std::string> base,
                                std::optional<std::string> top) {

@@ -56,6 +56,25 @@ struct DeleteOutcome {
   int openings = 0;               // openings removed (their walls made whole there)
 };
 
+// A room (docs/90 G-07, docs/98): the region its marker stands in, read from the walls as they
+// are now. Nothing of it is stored but the marker (a point and a name): areas are never stale.
+struct RoomInfo {
+  ObjectId id;        // the marker; empty for a region asked about without one
+  std::string name;
+  std::string level;  // id of the level the marker's height is at, if any
+  gp_Pnt at;          // the marker (world)
+  bool closed = false;
+  std::string problem;  // why not closed, or what else is wrong (e.g. shares its region); empty when fine
+  double centreArea = 0.0;  // mm2 within the wall lines (壁芯)
+  bool innerKnown = false;  // false: the wall faces give no simple outline here (not evaluated)
+  double innerArea = 0.0;   // mm2 within the wall faces (内法)
+  double innerPerimeter = 0.0;
+  std::vector<gp_Pnt> centre, inner;  // outlines at the marker's height (outer ones)
+  std::vector<ObjectId> walls;        // the walls around it
+  std::vector<gp_Pnt> looseEnds;      // not closed: the wall ends nearest the marker that meet nothing
+  int unreadableWalls = 0;            // walls of this storey no longer the shape their tool made (not counted as walls)
+};
+
 // What a move of walls did to the walls joined to them (docs/90 G-05).
 struct JoinFollow {
   int followed = 0;               // walls made longer / shorter to stay joined
@@ -383,6 +402,17 @@ class Modeler {
   // it was: the move itself is never refused for it. Rotations leave joints alone.
   Status transform(const std::vector<ObjectId>& ids, const gp_Trsf& worldDelta,
                    const std::string& commandName = "Move");
+  // --- rooms (docs/90 G-07) -------------------------------------------------
+  // The region `at` is in, bounded by the walls made by the wall tool that stand at its
+  // height (those cut by a plan 1100 above it). closed = false with `problem` when no walls
+  // enclose it: nothing is closed for the user.
+  RoomInfo roomAt(const gp_Pnt& at) const;
+  // Puts a room marker (a text note, attribute kind = room) there. Refused when the place is
+  // not enclosed, or already has a room. One undo step.
+  Result<ObjectId> createRoom(const gp_Pnt& at, const std::string& name);
+  // Every room marker with its region as the walls are now.
+  std::vector<RoomInfo> rooms() const;
+
   // Whether moves keep wall joints (on by default; a setting of the session, not saved).
   void setKeepWallJoins(bool on) { keepWallJoins_ = on; }
   bool keepWallJoins() const { return keepWallJoins_; }

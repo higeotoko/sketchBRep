@@ -348,6 +348,7 @@ class GuiPhase1 : public QObject {
   void partSectionShowsAWallInItsOwnWords();
   void moveToolSlidesAnOpeningWithinItsWall();
   void movedWallKeepsItsCornersAndSaysSo();
+  void roomToolPlacesARoomWhoseAreaFollowsTheWalls();
   void wallAndSlabFollowTheirLevelsFromThePanel();
   void wallQuantityInputsComparisonSaveAndStaleModel();
   void panelDragPreviewKeepsTheModelViewStill();
@@ -11256,4 +11257,79 @@ void GuiPhase1::movedWallKeepsItsCornersAndSaysSo() {
   QVERIFY(m.undo());
   joins->setChecked(true);
   QVERIFY(m.keepWallJoins());
+}
+
+// docs/90 G-07: the room tool shows the region the walls enclose with its areas, a click puts
+// the room there, the name typed right after replaces the default; the properties and the
+// list read the areas from the walls as they are; an open outline is said, never closed.
+void GuiPhase1::roomToolPlacesARoomWhoseAreaFollowsTheWalls() {
+  Fixture f;QVERIFY(f.setUp(3000,2000));auto& m=f.window.modeler();
+  const auto walls=m.createWalls({gp_Pnt(0,0,0),gp_Pnt(6000,0,0),gp_Pnt(6000,4000,0),gp_Pnt(0,4000,0),gp_Pnt(0,0,0)},200,3000,0);
+  QVERIFY2(walls,walls?"":walls.error().c_str());
+  f.vp->syncNow();
+  const auto steps=m.history().undoCount();
+  auto* action=f.window.findChild<QAction*>(QStringLiteral("architectureRoomAction"));QVERIFY(action);
+  action->trigger();
+  // Pointing inside: both areas before anything is placed.
+  move(f.vp,f.vp->toWidget(gp_Pnt(3000,2000,0)));
+  QVERIFY2(f.window.statusText().contains(QStringLiteral("24.00"))&&f.window.statusText().contains(QStringLiteral("22.04")),
+           qPrintable(f.window.statusText()));
+  // Outside: said, nothing placed.
+  click(f.vp,f.vp->toWidget(gp_Pnt(8500,2000,0)));
+  QVERIFY(!f.window.lastError().isEmpty());
+  f.window.clearLastError();
+  QVERIFY(m.rooms().empty());
+  QCOMPARE(m.history().undoCount(),steps);
+  // Inside: a room with a default name; the name typed right after replaces it (one step).
+  click(f.vp,f.vp->toWidget(gp_Pnt(3000,2000,0)));
+  QVERIFY2(f.window.lastError().isEmpty(),qPrintable(f.window.lastError()));
+  QCOMPARE(m.rooms().size(),std::size_t(1));
+  QCOMPARE(f.window.focusWidget(),static_cast<QWidget*>(f.window.measurementBox()));
+  f.window.measurementBox()->setText(QStringLiteral("LDK"));
+  emit f.window.measurementBox()->returnPressed();
+  QTest::qWait(30);
+  QCOMPARE(QString::fromStdString(m.rooms().front().name),QStringLiteral("LDK"));
+  QCOMPARE(m.history().undoCount(),steps+1);
+  const doc::ObjectId room=m.rooms().front().id;
+  // A second room in the same place is refused.
+  click(f.vp,f.vp->toWidget(gp_Pnt(1500,1500,0)));
+  QVERIFY(!f.window.lastError().isEmpty());
+  f.window.clearLastError();
+  QCOMPARE(m.rooms().size(),std::size_t(1));
+  // The properties: the areas as the walls are.
+  auto label=[&](const char* name){auto* l=f.window.findChild<QLabel*>(QLatin1String(name));return l?l->text():QString();};
+  f.window.activateTool(MainWindow::ToolId::Select);
+  f.window.setSelection({room});
+  QApplication::processEvents();
+  QVERIFY2(label("partTitle").contains(QStringLiteral("室")),qPrintable(label("partTitle")));
+  QVERIFY2(label("roomAreaCentre").contains(QStringLiteral("24.00")),qPrintable(label("roomAreaCentre")));
+  QVERIFY2(label("roomAreaInner").contains(QStringLiteral("22.04")),qPrintable(label("roomAreaInner")));
+  // The south wall 455 out (its neighbours follow): the room is bigger.
+  QVERIFY(m.move({walls->at(0)},gp_Vec(0,-455,0)));
+  f.window.setSelection({room});
+  QApplication::processEvents();
+  QVERIFY2(label("roomAreaCentre").contains(QStringLiteral("26.73")),qPrintable(label("roomAreaCentre")));
+  QVERIFY2(label("roomAreaInner").contains(QStringLiteral("24.68")),qPrintable(label("roomAreaInner")));
+  // The list.
+  bool listed=false;
+  QTimer::singleShot(300,&f.window,[&]{
+    auto* dialog=f.window.findChild<QDialog*>(QStringLiteral("roomsDialog"));
+    if(!dialog)return;
+    auto* table=dialog->findChild<QTableWidget*>(QStringLiteral("roomsTable"));
+    auto* total=dialog->findChild<QLabel*>(QStringLiteral("roomsTotal"));
+    listed=table&&total&&table->rowCount()==1&&table->item(0,0)->text()==QStringLiteral("LDK")&&
+           table->item(0,2)->text()==QStringLiteral("26.73")&&table->item(0,3)->text()==QStringLiteral("24.68")&&
+           total->text().contains(QStringLiteral("26.73"));
+    dialog->reject();
+  });
+  {auto* list=f.window.findChild<QAction*>(QStringLiteral("roomsListAction"));QVERIFY(list);list->trigger();}
+  QVERIFY(listed);
+  // A wall taken away: the room says it is open and shows no area.
+  QVERIFY(m.remove({walls->at(1)}));
+  f.window.setSelection({room});
+  QApplication::processEvents();
+  QVERIFY(label("roomAreaCentre").isEmpty());
+  QVERIFY2(label("roomProblem").contains(QStringLiteral("閉じていません")),qPrintable(label("roomProblem")));
+  QVERIFY(m.undo());
+  QVERIFY(m.rooms().front().closed);
 }

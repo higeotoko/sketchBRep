@@ -583,6 +583,27 @@ class TextTool : public DrawingTool {
   std::optional<doc::ObjectId> lastCreated_;
 };
 
+// Room (docs/90 G-07): point inside walls on the floor being drawn on; the region they
+// enclose is shown with its areas, a click puts the room's marker there, and a name typed
+// right after replaces the default one. Nothing is closed for the user: where the walls are
+// open the tool says so.
+class RoomTool : public DrawingTool {
+ public:
+  using DrawingTool::DrawingTool;
+  QString name() const override;
+  QCursor cursor() const override;
+  void activate() override;
+  void cancel() override;
+  void mousePress(const ToolEvent& e) override;
+  void mouseMove(const ToolEvent& e) override;
+  void applyMeasurement(const QString& text) override;
+
+ private:
+  // The point on the floor under the cursor.
+  std::optional<gp_Pnt> floorPoint(const ToolEvent& e);
+  std::optional<doc::ObjectId> lastCreated_;
+};
+
 // Section plane: click a face, then move inwards (or type the depth). The
 // model is shown cut there, the side the face looks at removed.
 class SectionTool : public Tool {
