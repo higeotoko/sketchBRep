@@ -539,6 +539,12 @@ class Modeler {
   // {"type":"swing_single","hinge":"left","swing":"in"}; applies to `indices` (1-based, all
   // when empty). Stored on the host as attribute "opening_fittings". One undo step.
   Status setOpeningFittings(const ObjectId& host, const std::vector<std::size_t>& indices, const std::string& fitting);
+  // A mark of one's own and a product number for openings (docs/109): kept under the openings'
+  // ids as attribute "opening_marks" on the host, and used by the schedule and the plan tags
+  // instead of the mark worked out from kind and size. Both empty: back to the worked-out
+  // mark. Applies to `indices` (1-based, all when empty). One undo step.
+  Status setOpeningMarks(const ObjectId& host, const std::vector<std::size_t>& indices, const std::string& mark,
+                         const std::string& product);
   // Resizes openings (all when `indices` is empty) keeping the horizontal
   // centre and the sill (keepCenter = false) or the centre (true) in place.
   // One undo step; the parameters stay editable.

@@ -4274,7 +4274,7 @@ void MainWindow::showSchedulesDialog() {
     // Doors and windows: one line per mark, then every opening.
     auto* page = new QWidget;
     auto* box = new QVBoxLayout(page);
-    auto* types = makeTable("openingTypesTable", {tr("符号"), tr("種類"), tr("建具"), tr("幅"), tr("高さ"), tr("数"), tr("腰高")},
+    auto* types = makeTable("openingTypesTable", {tr("符号"), tr("種類"), tr("建具"), tr("幅"), tr("高さ"), tr("数"), tr("腰高"), tr("品番"), tr("注")},
                             static_cast<int>(openings.types.size()));
     int total = 0;
     for (int row = 0; row < static_cast<int>(openings.types.size()); ++row) {
@@ -4282,7 +4282,8 @@ void MainWindow::showSchedulesDialog() {
       QStringList sills;
       for (double s : t.sills) sills << length(s);
       const QStringList cells{QString::fromStdString(t.mark), kindText(t.kind), QString::fromStdString(t.fitting), length(t.width),
-                              length(t.height), QString::number(t.count), sills.join(QStringLiteral(" / "))};
+                              length(t.height), QString::number(t.count), sills.join(QStringLiteral(" / ")), QString::fromStdString(t.product),
+                              t.mixed ? tr("種類・建具・大きさ・品番の違う開口が混ざっています") : t.ownMark ? tr("手で決めた符号") : QString()};
       for (int c = 0; c < cells.size(); ++c) types->setItem(row, c, new QTableWidgetItem(cells[c]));
       total += t.count;
     }
@@ -4304,7 +4305,7 @@ void MainWindow::showSchedulesDialog() {
     box->addWidget(each, 1);
     box->addWidget(note("openingScheduleTotal",
                         tr("合計 %1 か所・符号 %2 種類。符号は、種類・建具・幅・高さが同じ開口に同じものを付けます（W = 窓、D = 扉、O = 建具のない開口）。"
-                           "平面に出る符号と同じです。モデルを変えると付け直します。品番・材質は入っていません。")
+                           "平面に出る符号と同じです。モデルを変えると付け直します。手で決めた符号と品番（今は AI から：set_opening_mark）は、そのまま残ります。")
                             .arg(total).arg(openings.types.size())));
     tabs->addTab(page, tr("建具表"));
   }

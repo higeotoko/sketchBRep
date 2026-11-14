@@ -5574,6 +5574,41 @@ Status Modeler::setOpeningFittings(const ObjectId& hostId, const std::vector<std
   return Status::success();
 }
 
+Status Modeler::setOpeningMarks(const ObjectId& hostId, const std::vector<std::size_t>& indices, const std::string& mark,
+                                const std::string& product) {
+  const Object* host = document_.find(hostId);
+  if (!host) return Status::failure("Object not found");
+  const auto list = openings(hostId);
+  if (!list) return list.status();
+  if (list->empty()) return Status::failure("This object has no openings");
+  if (mark.size() > 40 || product.size() > 120) return Status::failure("A mark is at most 40 and a product number 120 characters");
+  if (mark.find_first_of("\r\n") != std::string::npos || product.find_first_of("\r\n") != std::string::npos)
+    return Status::failure("A mark or a product number is one line");
+  Object object = *host;
+  ensureOpeningIds(object);
+  nlohmann::json all = nlohmann::json::object();
+  if (const auto stored = object.attributes.find("opening_marks"); stored != object.attributes.end()) {
+    const nlohmann::json parsed = nlohmann::json::parse(stored->second, nullptr, false);
+    if (parsed.is_object()) all = parsed;
+  }
+  std::vector<std::size_t> targets = indices;
+  if (targets.empty())
+    for (const auto& o : *list) targets.push_back(o.index);
+  const std::vector<OpeningRef> refs = rectangularOpenings(object);
+  for (const std::size_t index : targets) {
+    const auto it = std::find_if(refs.begin(), refs.end(), [&](const OpeningRef& o) { return o.index == index; });
+    if (it == refs.end()) return Status::failure("No opening " + std::to_string(index));
+    if (mark.empty() && product.empty()) all.erase(openingKey(*it));
+    else all[openingKey(*it)] = {{"mark", mark}, {"product", product}};
+  }
+  if (all.empty()) object.attributes.erase("opening_marks");
+  else object.attributes["opening_marks"] = all.dump();
+  ChangeSet changes(document_);
+  changes.modify(object);
+  history_.execute(changes.build("Set Opening Mark"));
+  return Status::success();
+}
+
 namespace {
 // A wall as drawn: its pushed-up rectangle (inside any opening cuts) and the line it was drawn on.
 struct WallBand {

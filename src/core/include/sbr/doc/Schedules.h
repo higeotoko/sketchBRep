@@ -15,7 +15,9 @@ namespace sbr::doc {
 
 // One opening of a wall.
 struct OpeningRow {
-  std::string mark;     // W1, D2, O1: the same for openings of one kind, fitting and size
+  std::string mark;     // W1, D2, O1: the same for openings of one kind, fitting and size; or one's own
+  bool ownMark = false; // given by hand (Modeler::setOpeningMarks): it stays whatever is added or changed
+  std::string product;  // product number given by hand, if any
   std::string kind;     // window | door | opening (no fitting)
   std::string fitting;  // the fitting's name for people ("引違い"); empty for a plain opening
   double width = 0.0, height = 0.0, sill = 0.0;
@@ -35,6 +37,11 @@ struct OpeningTypeRow {
   std::string mark, kind, fitting;
   double width = 0.0, height = 0.0;
   int count = 0;
+  bool ownMark = false;
+  std::string product;
+  // Openings given this mark by hand differ in kind, fitting, size or product number: the line
+  // shows the first one's, and says so (nothing is made the same silently).
+  bool mixed = false;
   std::vector<double> sills;  // the different sill heights among them, ascending
 };
 

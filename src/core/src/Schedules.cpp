@@ -80,6 +80,11 @@ OpeningSchedule openingSchedule(const Document& document) {
       const nlohmann::json parsed = nlohmann::json::parse(stored, nullptr, false);
       if (parsed.is_object()) fittings = parsed;
     }
+    nlohmann::json own = nlohmann::json::object();
+    if (const std::string stored = attribute(o, "opening_marks"); !stored.empty()) {
+      const nlohmann::json parsed = nlohmann::json::parse(stored, nullptr, false);
+      if (parsed.is_object()) own = parsed;
+    }
     for (const Modeler::OpeningInfo& op : *openings) {
       if (std::abs(op.normal.Z()) > 1e-6 || op.depth < 1.0) continue;
       OpeningRow row;
@@ -90,6 +95,11 @@ OpeningSchedule openingSchedule(const Document& document) {
       } else {
         row.kind = type != "window" && op.sill < 1.0 ? "door" : "window";
         row.fitting = fittingName(*fitting);
+      }
+      if (const auto given = own.find(op.id); given != own.end() && given->is_object()) {
+        row.mark = given->value("mark", std::string());
+        row.ownMark = !row.mark.empty();
+        row.product = given->value("product", std::string());
       }
       row.width = op.width;
       row.height = op.height;
@@ -112,26 +122,61 @@ OpeningSchedule openingSchedule(const Document& document) {
   auto keyOf = [](const OpeningRow& r) {
     return Key{r.kind == "window" ? 0 : r.kind == "door" ? 1 : 2, tenths(r.width), tenths(r.height), r.fitting};
   };
+  auto sill = [](OpeningTypeRow& t, double value) {
+    if (std::none_of(t.sills.begin(), t.sills.end(), [&](double s) { return tenths(s) == tenths(value); })) t.sills.push_back(value);
+  };
+  // Marks given by hand first: one line per mark, whatever the openings are.
+  std::map<std::string, OpeningTypeRow> given;
+  for (const OpeningRow& r : out.rows) {
+    if (!r.ownMark) continue;
+    const bool first = !given.count(r.mark);
+    OpeningTypeRow& t = given[r.mark];
+    if (first) {
+      t.mark = r.mark;
+      t.ownMark = true;
+      t.kind = r.kind;
+      t.fitting = r.fitting;
+      t.width = r.width;
+      t.height = r.height;
+      t.product = r.product;
+    } else if (t.kind != r.kind || t.fitting != r.fitting || tenths(t.width) != tenths(r.width) ||
+               tenths(t.height) != tenths(r.height) || t.product != r.product) {
+      t.mixed = true;
+    }
+    ++t.count;
+    sill(t, r.sill);
+  }
+  // The others: worked out, skipping numbers taken by hand.
   std::map<Key, OpeningTypeRow> types;
   for (const OpeningRow& r : out.rows) {
+    if (r.ownMark) continue;
     OpeningTypeRow& t = types[keyOf(r)];
     t.kind = r.kind;
     t.fitting = r.fitting;
     t.width = r.width;
     t.height = r.height;
     ++t.count;
-    if (std::none_of(t.sills.begin(), t.sills.end(), [&](double s) { return tenths(s) == tenths(r.sill); })) t.sills.push_back(r.sill);
+    sill(t, r.sill);
   }
   int numbers[3] = {0, 0, 0};
   std::map<Key, std::string> marks;
+  std::vector<OpeningTypeRow> lines;
   for (auto& [key, t] : types) {
     const int k = std::get<0>(key);
-    t.mark = std::string(k == 0 ? "W" : k == 1 ? "D" : "O") + std::to_string(++numbers[k]);
-    std::sort(t.sills.begin(), t.sills.end());
+    do t.mark = std::string(k == 0 ? "W" : k == 1 ? "D" : "O") + std::to_string(++numbers[k]);
+    while (given.count(t.mark));
     marks[key] = t.mark;
-    out.types.push_back(t);
+    lines.push_back(t);
   }
-  for (OpeningRow& r : out.rows) r.mark = marks[keyOf(r)];
+  for (auto& [mark, t] : given) lines.push_back(t);
+  auto order = [](const OpeningTypeRow& t) { return t.kind == "window" ? 0 : t.kind == "door" ? 1 : 2; };
+  std::stable_sort(lines.begin(), lines.end(), [&](const OpeningTypeRow& a, const OpeningTypeRow& b) { return order(a) < order(b); });
+  for (OpeningTypeRow& t : lines) {
+    std::sort(t.sills.begin(), t.sills.end());
+    out.types.push_back(std::move(t));
+  }
+  for (OpeningRow& r : out.rows)
+    if (!r.ownMark) r.mark = marks[keyOf(r)];
   return out;
 }
 
@@ -233,22 +278,23 @@ std::string roomTagText(const RoomRow& room) {
 
 std::string openingScheduleCsv(const OpeningSchedule& schedule) {
   Csv csv;
-  csv.line({"符号", "種類", "建具", "幅(mm)", "高さ(mm)", "数", "腰高(mm)"});
+  csv.line({"符号", "種類", "建具", "幅(mm)", "高さ(mm)", "数", "腰高(mm)", "品番", "注"});
   int total = 0;
   for (const OpeningTypeRow& t : schedule.types) {
     std::string sills;
     for (double s : t.sills) sills += (sills.empty() ? "" : " / ") + number(s, 0);
-    csv.line({t.mark, kindName(t.kind), t.fitting, number(t.width, 0), number(t.height, 0), std::to_string(t.count), sills});
+    csv.line({t.mark, kindName(t.kind), t.fitting, number(t.width, 0), number(t.height, 0), std::to_string(t.count), sills, t.product,
+              t.mixed ? "同じ符号に、種類・建具・大きさ・品番の違う開口があります" : t.ownMark ? "手で決めた符号" : ""});
     total += t.count;
   }
-  csv.line({"合計", "", "", "", "", std::to_string(total), ""});
+  csv.line({"合計", "", "", "", "", std::to_string(total), "", "", ""});
   csv.line({});
-  csv.line({"符号", "種類", "建具", "幅(mm)", "高さ(mm)", "腰高(mm)", "階", "壁", "壁の中の番号"});
+  csv.line({"符号", "種類", "建具", "幅(mm)", "高さ(mm)", "腰高(mm)", "階", "壁", "壁の中の番号", "品番"});
   for (const OpeningRow& r : schedule.rows)
     csv.line({r.mark, kindName(r.kind), r.fitting, number(r.width, 0), number(r.height, 0), number(r.sill, 0), r.level, r.hostName,
-              std::to_string(r.index)});
+              std::to_string(r.index), r.product});
   csv.line({});
-  csv.line({"注", "符号は、種類・建具・幅・高さが同じ開口に同じものを付けています（モデルから毎回読み直します）。建具の品番・材質は入っていません。"});
+  csv.line({"注", "符号は、手で決めたものはそのまま、ほかは種類・建具・幅・高さが同じ開口に同じものを付けています（モデルから毎回読み直します）。"});
   return csv.out.str();
 }
 

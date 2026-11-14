@@ -135,6 +135,8 @@ const Entry kEntries[] = {
     {"Roof pitch must be above 0", "勾配は 0 より大きく、30 寸以下にしてください"},
     {"Roof thickness must be at least 1", "屋根の厚さは 1 以上にしてください"},
     {"Roof overhangs must not be negative", "軒の出・けらばの出は 0 以上にしてください"},
+    {"A mark is at most 40 and a product number 120 characters", "符号は 40 字まで、品番は 120 字までにしてください"},
+    {"A mark or a product number is one line", "符号・品番は 1 行で入れてください"},
     {"A stair turns at right angles only", "階段の曲がり角は、直角だけにしてください（斜めの曲がりは、まだ作れません）"},
     {"of the stair's line is shorter than the turns", "階段の線の、曲がり角の間（または端までの間）が短すぎます。折り返しの間は、階段の幅以上にしてください"},
     {"This line needs at least", "段数が足りません（曲がり角の段と、直の部分ごとに 1 段ずつが要ります）。段数を増やすか、自動にしてください"},

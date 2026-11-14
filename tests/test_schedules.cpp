@@ -83,8 +83,8 @@ TEST_F(Schedules, OpeningsOfOneKindSizeAndFittingShareAMark) {
   for (const json& t : s["types"]) EXPECT_EQ(counted[t["mark"].get<std::string>()], t["count"].get<int>());
   const std::string csv = s["csv"];
   EXPECT_EQ(csv.rfind("\xef\xbb\xbf", 0), 0u);
-  EXPECT_NE(csv.find("W1,窓,引違い,1600,1200,2,900\r\n"), std::string::npos) << csv;
-  EXPECT_NE(csv.find("合計,,,,,5,"), std::string::npos);
+  EXPECT_NE(csv.find("W1,窓,引違い,1600,1200,2,900,,\r\n"), std::string::npos) << csv;
+  EXPECT_NE(csv.find("合計,,,,,5,,,"), std::string::npos);
   EXPECT_FALSE(ok("opening_schedule").contains("csv"));
 
   // The marks on the plan are those of the schedule: as many texts as openings cut by it.
@@ -175,4 +175,55 @@ TEST_F(Schedules, RoomsAndAreasAreReadAsTheWallsAreNow) {
   EXPECT_EQ(areas["levels"][0]["rooms"], 0);
   EXPECT_EQ(areas["levels"][0]["regions"], 1);  // the east half is still enclosed
   EXPECT_NEAR(areas["levels"][0]["enclosed"].get<double>(), 18.0, 1e-9);
+}
+
+TEST_F(Schedules, AMarkGivenByHandStaysAndWorkedOutNumbersSkipIt) {
+  // The two 引違い windows become AW-1 with a product number; the plain window takes "W1" by hand.
+  const auto steps = modeler.history().undoCount();
+  ok("set_opening_mark", {{"host", south}, {"mark", "AW-1"}, {"product", "APW330-16513"}});
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  ok("set_opening_mark", {{"host", north}, {"openings", {1}}, {"mark", "W1"}});
+  json s = ok("opening_schedule", {{"include_csv", true}});
+  std::map<std::string, json> byMark;
+  for (const json& t : s["types"]) byMark[t["mark"].get<std::string>()] = t;
+  ASSERT_EQ(byMark.size(), 4u) << s["types"].dump();
+  EXPECT_EQ(byMark["AW-1"]["count"], 2);
+  EXPECT_TRUE(byMark["AW-1"]["own_mark"].get<bool>());
+  EXPECT_EQ(byMark["AW-1"]["product"], "APW330-16513");
+  EXPECT_FALSE(byMark["AW-1"]["mixed"].get<bool>());
+  EXPECT_EQ(byMark["W1"]["fitting"], "窓");  // the one given by hand
+  EXPECT_TRUE(byMark.count("D1") && byMark.count("O1"));
+  EXPECT_NE(s["csv"].get<std::string>().find("AW-1,窓,引違い,1600,1200,2,900,APW330-16513,手で決めた符号\r\n"), std::string::npos) << s["csv"];
+  // The plan carries them.
+  const auto view = sbr::draw::makeView(modeler.document(), sbr::draw::planView(1100));
+  ASSERT_TRUE(view);
+  int aw = 0;
+  for (const auto& item : view->items)
+    if (item.kind == sbr::draw::Item::Kind::Text && item.text == "AW-1") ++aw;
+  EXPECT_EQ(aw, 2);
+
+  // Another window of a new size: it is W2, not W1 (taken by hand); AW-1 stays.
+  ok("place_openings", {{"host", west}, {"face_normal", {-1, 0, 0}}, {"count", 1}, {"width", 700}, {"height", 700}, {"sill", 1200}});
+  ok("set_opening_fittings", {{"host", west}, {"fitting", {{"type", "window"}}}});
+  s = ok("opening_schedule");
+  bool w2 = false;
+  for (const json& t : s["types"]) {
+    if (t["mark"] == "W2") w2 = t["width"].get<double>() == 700.0;
+    if (t["mark"] == "W1") EXPECT_NEAR(t["width"].get<double>(), 1600, 1e-6);
+    if (t["mark"] == "AW-1") EXPECT_EQ(t["count"], 2);
+  }
+  EXPECT_TRUE(w2) << s["types"].dump();
+  // One of the AW-1 windows made narrower: the mark stays, and the table says they differ.
+  ok("set_opening_size", {{"host", south}, {"openings", {2}}, {"width", 1200}});
+  s = ok("opening_schedule");
+  for (const json& t : s["types"])
+    if (t["mark"] == "AW-1") {
+      EXPECT_EQ(t["count"], 2);
+      EXPECT_TRUE(t["mixed"].get<bool>());
+    }
+  // Taken back: worked out again.
+  ok("set_opening_mark", {{"host", south}});
+  s = ok("opening_schedule");
+  for (const json& t : s["types"]) EXPECT_NE(t["mark"], "AW-1");
+  EXPECT_FALSE(modeler.document().find(south)->attributes.count("opening_marks"));
 }

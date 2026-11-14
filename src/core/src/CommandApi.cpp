@@ -2388,13 +2388,28 @@ const std::vector<CommandDef>& commands() {
          const GridLookup grid(m.document());
          return roomJson(m.roomAt(grid.point(arg(a, "at"), numberOr(a, "base", 0.0))));
        }},
+      {"set_opening_mark",
+       "Give openings of 'host' a mark of your own ('mark', e.g. \"AW-1\") and / or a product number ('product'): "
+       "used by opening_schedule and the plan tags instead of the worked-out mark, and kept when openings are "
+       "added, resized or removed. 'openings': ids or indices (all when omitted). Both empty: back to the "
+       "worked-out mark. One undo step.",
+       SCHEMA({"type": "object", "properties": {"host": {"type": "string"},
+               "openings": {"type": "array", "items": {"type": ["string", "integer"]}}, "mark": {"type": "string"},
+               "product": {"type": "string"}}, "required": ["host"]}),
+       [](doc::Modeler& m, const json& a) {
+         const std::vector<std::size_t> which = openingNumbers(m, a);
+         must(m.setOpeningMarks(text(a, "host"), which, textOr(a, "mark", ""), textOr(a, "product", "")));
+         return json::object();
+       }},
       {"opening_schedule",
        "The door and window schedule read from the walls as they are now. 'types': one line per mark (W1.. "
        "windows, D1.. doors, O1.. plain openings; the same mark for the same kind, fitting, width and height) "
        "with count and the sill heights among them; 'openings': every opening with its mark, host wall, id, "
        "index, level, width, height, sill (mm). A fitting with its sill on the floor is a door, any other "
-       "fitting a window. Marks are worked out again each time (they are the ones drawn on plans); no product "
-       "numbers or materials. include_csv: true adds UTF-8 CSV (BOM) with Japanese headings.",
+       "fitting a window. Marks are worked out again each time (they are the ones drawn on plans) unless given "
+       "by hand (set_opening_mark: own_mark true; they stay, and worked-out numbers skip them). 'mixed' true: "
+       "openings given one mark by hand differ in kind, fitting, size or product (the line shows the first). "
+       "include_csv: true adds UTF-8 CSV (BOM) with Japanese headings.",
        SCHEMA({"type": "object", "properties": {"include_csv": {"type": "boolean"}}}),
        [](doc::Modeler& m, const json& a) {
          const doc::OpeningSchedule s = doc::openingSchedule(m.document());
@@ -2402,13 +2417,15 @@ const std::vector<CommandDef>& commands() {
          int total = 0;
          for (const auto& t : s.types) {
            types.push_back({{"mark", t.mark}, {"kind", t.kind}, {"fitting", t.fitting}, {"width", t.width},
-                            {"height", t.height}, {"count", t.count}, {"sills", t.sills}});
+                            {"height", t.height}, {"count", t.count}, {"sills", t.sills}, {"own_mark", t.ownMark},
+                            {"product", t.product}, {"mixed", t.mixed}});
            total += t.count;
          }
          for (const auto& r : s.rows)
            openings.push_back({{"mark", r.mark}, {"kind", r.kind}, {"fitting", r.fitting}, {"width", r.width},
                                {"height", r.height}, {"sill", r.sill}, {"host", r.host}, {"host_name", r.hostName},
-                               {"id", r.openingId}, {"index", r.index}, {"level", r.level},
+                               {"id", r.openingId}, {"index", r.index}, {"level", r.level}, {"own_mark", r.ownMark},
+                               {"product", r.product},
                                {"center", {r.center.X(), r.center.Y(), r.center.Z()}}});
          json result{{"types", types}, {"openings", openings}, {"count", total}};
          if (a.value("include_csv", false)) result["csv"] = doc::openingScheduleCsv(s);
