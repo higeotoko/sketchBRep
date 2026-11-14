@@ -11259,6 +11259,20 @@ void GuiPhase1::movedWallKeepsItsCornersAndSaysSo() {
   QVERIFY(m.undo());
   joins->setChecked(true);
   QVERIFY(m.keepWallJoins());
+  // docs/102: the length typed in the properties carries the wall at that corner, and says so.
+  f.window.activateTool(MainWindow::ToolId::Select);
+  f.window.setSelection({south});
+  QApplication::processEvents();
+  auto* length=f.window.findChild<QDoubleSpinBox*>(QStringLiteral("partSize_length"));QVERIFY(length);
+  const double eastX=low(east).X();
+  const auto before=m.history().undoCount();
+  length->setValue(length->value()+1000);
+  emit length->editingFinished();
+  QTRY_VERIFY(std::abs(low(east).X()-(eastX+1000))<1e-6);
+  QCOMPARE(m.history().undoCount(),before+1);
+  QTRY_VERIFY2(f.window.statusText().contains(QStringLiteral("角の壁 1 枚")),qPrintable(f.window.statusText()));
+  QVERIFY(m.undo());
+  QVERIFY(std::abs(low(east).X()-eastX)<1e-6);
 }
 
 // docs/90 G-07: the room tool shows the region the walls enclose with its areas, a click puts

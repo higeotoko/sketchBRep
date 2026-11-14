@@ -150,6 +150,9 @@ class Tool {
 };
 
 QString snapLabel(snap::SnapKind kind);
+// What a move or a change of length did to the walls and slabs joined to it (docs/96, docs/102),
+// for the status bar; empty when nothing was joined.
+QString joinFollowText(const doc::JoinFollow& joins);
 
 // The object a pick on `leaf` addresses while `context` is edited (empty:
 // top level): the child of `context` holding it (the root at top level);

@@ -88,6 +88,8 @@ struct RoofInfo {
 // What a move of walls did to the walls joined to them (docs/90 G-05).
 struct JoinFollow {
   int followed = 0;               // walls made longer / shorter to stay joined
+  int carried = 0;                // walls at a corner carried along as they are (a slide, a change of length)
+  int slabs = 0;                  // slabs whose outline went with a wall
   std::vector<std::string> left;  // names of joined walls that could not follow (they stay as they were)
 };
 
@@ -944,6 +946,7 @@ class Modeler {
   // The member object for `spec` (named, not built or added).
   Result<Object> memberObject(const MemberSpec& spec);
   Status commitModified(Object object, const std::string& commandName);
+  Status commitWallChange(Object object, const std::string& commandName, double lengthened);
   bool keepWallJoins_ = true;
   JoinFollow lastJoins_;
   // settleOverlaps' two halves (one object each).

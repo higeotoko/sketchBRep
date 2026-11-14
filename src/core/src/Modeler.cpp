@@ -5615,38 +5615,33 @@ std::optional<std::pair<double, double>> meet(const gp_Pnt& a, const gp_Dir& da,
   return std::make_pair((ex * db.Y() - ey * db.X()) / den, (ex * da.Y() - ey * da.X()) / den);
 }
 
-// --- wall joints follow a moved wall (docs/90 G-05) ----------------------------------------
+// --- wall joints follow moved walls (docs/90 G-05, docs/102) -------------------------------
 // A wall butts against another where its end lies on one of the other's faces (how the wall
-// tool makes corners, and how a partition meets a wall). When the other moves, that end goes
-// to the same face again; the wall's other end, its openings and its height stay.
-void followWallJoins(const Document& document, ChangeSet& changes, const RegenContext& context,
-                     const std::vector<ObjectId>& roots, const gp_Vec& d, JoinFollow& report) {
-  const gp_Vec flat(d.X(), d.Y(), 0);
-  if (flat.Magnitude() < tolerance::kLinear) return;
-  std::set<ObjectId> moved;
-  for (const ObjectId& rootId : roots)
-    for (const ObjectId& id : document.subtree(rootId)) moved.insert(id);
-  std::vector<WallBand> walls;
-  bool any = false;
-  for (const Object& o : document.objects())
-    if (auto w = wallBand(document, o)) {
-      any |= moved.count(o.id) > 0;
-      walls.push_back(std::move(*w));
-    }
-  if (!any) return;
-  const double joined = 1.0;  // an end this near a face is on it
-  for (std::size_t j = 0; j < walls.size(); ++j) {
-    const WallBand& w = walls[j];
-    if (moved.count(w.object->id)) continue;  // goes along as it is
-    double s0 = 0.0, s1 = w.length;
-    bool touched = false;
+// tool makes corners, and how a partition meets a wall).
+//  - A wall moved sideways: the ends on its faces go to the same faces again (those walls get
+//    longer or shorter).
+//  - A wall moved along its own line, or made longer / shorter: the walls at its corners are
+//    carried along (they move as they are), and the walls joined to *them* get longer or shorter.
+//  - Slabs: a corner of a slab's outline standing in a wall goes with that wall's sideways move.
+// Everything is read from the walls as they are before the move.
+struct WallEnd {
+  std::optional<std::size_t> partner;  // the wall this end reaches
+  bool joined = false;                 // ...and lies on one of its faces
+  bool far = false;                    // on the face farther along this wall's line
+  double onPartner = 0.0;              // where along the partner's line
+  double reach = 0.0;
+};
+
+std::vector<std::array<WallEnd, 2>> wallEnds(const std::vector<WallBand>& walls) {
+  std::vector<std::array<WallEnd, 2>> ends(walls.size());
+  for (std::size_t k = 0; k < walls.size(); ++k) {
+    const WallBand& w = walls[k];
     for (int end = 0; end < 2; ++end) {
       const double s = end == 0 ? 0.0 : w.length;
-      // The node: the nearest other wall line this end reaches (as when a build-up changes).
-      std::optional<std::size_t> partner;
-      double bestGap = 1e300, partnerReach = 0.0;
+      WallEnd& e = ends[k][static_cast<std::size_t>(end)];
+      double bestGap = 1e300;
       for (std::size_t i = 0; i < walls.size(); ++i) {
-        if (i == j) continue;
+        if (i == k) continue;
         const WallBand& o = walls[i];
         if (std::min(w.z1, o.z1) - std::max(w.z0, o.z0) < 1.0) continue;  // another storey
         const auto m = meet(w.start, w.dir, o.start, o.dir);
@@ -5655,26 +5650,74 @@ void followWallJoins(const Document& document, ChangeSet& changes, const RegenCo
         const double gap = std::abs(m->first - s);
         if (gap > reach || m->second < -reach || m->second > o.length + reach || gap >= bestGap) continue;
         bestGap = gap;
-        partner = i;
-        partnerReach = reach;
+        e.partner = i;
+        e.onPartner = m->second;
+        e.reach = reach;
       }
-      if (!partner || !moved.count(walls[*partner].object->id)) continue;
-      const WallBand& o = walls[*partner];
-      // The partner's two faces across this wall's line, where it is and where it goes.
-      auto faces = [&](const gp_Vec& shift) -> std::optional<std::pair<double, double>> {
-        const auto a = meet(w.start, w.dir, o.start.Translated(shift + gp_Vec(o.left) * o.leftExt), o.dir);
-        const auto b = meet(w.start, w.dir, o.start.Translated(shift + gp_Vec(o.left) * -o.right), o.dir);
-        if (!a || !b) return std::nullopt;
-        return std::make_pair(std::min(a->first, b->first), std::max(a->first, b->first));
-      };
-      const auto before = faces(gp_Vec()), after = faces(flat);
-      if (!before || !after) continue;
-      const double toNear = std::abs(s - before->first), toFar = std::abs(s - before->second);
-      if (std::min(toNear, toFar) > joined) continue;  // near it, not joined to it
-      // Still beside the partner where it goes? (Moved along itself past this wall: let go.)
-      const auto there = meet(w.start, w.dir, o.start.Translated(flat), o.dir);
-      if (!there || there->second < -partnerReach || there->second > o.length + partnerReach) continue;
-      const double value = toFar < toNear ? after->second : after->first;
+      if (!e.partner) continue;
+      const WallBand& o = walls[*e.partner];
+      const auto a = meet(w.start, w.dir, o.start.Translated(gp_Vec(o.left) * o.leftExt), o.dir);
+      const auto b = meet(w.start, w.dir, o.start.Translated(gp_Vec(o.left) * -o.right), o.dir);
+      if (!a || !b) continue;
+      const double nearFace = std::min(a->first, b->first), farFace = std::max(a->first, b->first);
+      e.far = std::abs(s - farFace) < std::abs(s - nearFace);
+      e.joined = std::min(std::abs(s - farFace), std::abs(s - nearFace)) <= 1.0;  // an end this near a face is on it
+    }
+  }
+  return ends;
+}
+
+// The walls at the corner of wall `i`'s end `end` (0 start, 1 far end).
+std::vector<std::size_t> cornerPartners(const std::vector<WallBand>& walls, const std::vector<std::array<WallEnd, 2>>& ends,
+                                        std::size_t i, int end) {
+  std::vector<std::size_t> out;
+  const WallBand& w = walls[i];
+  // This end on another wall's face, at that wall's end.
+  const WallEnd& mine = ends[i][static_cast<std::size_t>(end)];
+  if (mine.partner && mine.joined) {
+    const WallBand& o = walls[*mine.partner];
+    if (std::abs(mine.onPartner) <= mine.reach || std::abs(mine.onPartner - o.length) <= mine.reach) out.push_back(*mine.partner);
+  }
+  // Another wall's end on this wall's face, at this end.
+  const double s = end == 0 ? 0.0 : w.length;
+  for (std::size_t j = 0; j < walls.size(); ++j) {
+    if (j == i) continue;
+    for (const WallEnd& theirs : ends[j]) {
+      if (!theirs.partner || *theirs.partner != i || !theirs.joined) continue;
+      if (std::abs(theirs.onPartner - s) > theirs.reach) continue;
+      if (std::find(out.begin(), out.end(), j) == out.end()) out.push_back(j);
+    }
+  }
+  return out;
+}
+
+// `displaced`: how each moved wall goes (plan). `primary`: walls moved by the user as they
+// are (never reshaped here). `keepShape`: walls whose own change is being made by the caller.
+void settleWallJoins(const Document& document, ChangeSet& changes, const RegenContext& context,
+                     const std::vector<WallBand>& walls, const std::vector<std::array<WallEnd, 2>>& ends,
+                     std::map<std::size_t, gp_Vec> displaced, const std::set<std::size_t>& primary,
+                     const std::set<std::size_t>& keepShape, const std::set<ObjectId>& movedObjects, JoinFollow& report) {
+  // Walls joined to a displaced wall: the end on its face follows that face.
+  for (std::size_t k = 0; k < walls.size(); ++k) {
+    if (primary.count(k) || keepShape.count(k)) continue;
+    const WallBand& w = walls[k];
+    const gp_Vec own = displaced.count(k) ? displaced.at(k) : gp_Vec();
+    double s0 = 0.0, s1 = w.length;
+    bool touched = false;
+    for (int end = 0; end < 2; ++end) {
+      const WallEnd& e = ends[k][static_cast<std::size_t>(end)];
+      if (!e.partner || !e.joined || !displaced.count(*e.partner)) continue;
+      const gp_Vec relative = displaced.at(*e.partner) - own;  // how the partner goes, seen from this wall
+      if (relative.Magnitude() < tolerance::kLinear) continue;
+      const WallBand& o = walls[*e.partner];
+      const double s = end == 0 ? 0.0 : w.length;
+      const auto a = meet(w.start, w.dir, o.start.Translated(relative + gp_Vec(o.left) * o.leftExt), o.dir);
+      const auto b = meet(w.start, w.dir, o.start.Translated(relative + gp_Vec(o.left) * -o.right), o.dir);
+      if (!a || !b) continue;
+      // Still beside the partner where it goes? (Gone past this wall: let go.)
+      const auto there = meet(w.start, w.dir, o.start.Translated(relative), o.dir);
+      if (!there || there->second < -e.reach || there->second > o.length + e.reach) continue;
+      const double value = e.far ? std::max(a->first, b->first) : std::min(a->first, b->first);
       if (std::abs(value - s) < 1e-9) continue;
       (end == 0 ? s0 : s1) = value;
       touched = true;
@@ -5695,7 +5738,7 @@ void followWallJoins(const Document& document, ChangeSet& changes, const RegenCo
     rect.width = s1 - s0;
     if (w.path.empty()) object.recipe = std::move(recipe);
     else replaceOperand(object.recipe, w.path, 0, std::move(recipe));
-    // Its openings stay where they are: all of them must still be in the wall.
+    // Its openings stay where they are (in the wall's own frame): all must still be in the wall.
     bool inside = true;
     for (const OpeningExtent& e : openingExtents(was, document.worldTransform(was))) {
       const gp_Vec u(gp::DZ().Crossed(e.normal));
@@ -5709,6 +5752,132 @@ void followWallJoins(const Document& document, ChangeSet& changes, const RegenCo
     changes.modify(object);
     ++report.followed;
   }
+  // Slabs: an outline corner standing in a displaced wall goes with its sideways move.
+  for (const Object& o : document.objects()) {
+    const auto kind = o.attributes.find("kind");
+    if (kind == o.attributes.end() || kind->second != "slab" || o.locked || movedObjects.count(o.id)) continue;
+    const auto* polygon = std::get_if<PolygonProfile>(&o.recipe.base);
+    if (!polygon || o.recipe.modifiers.empty() || !std::holds_alternative<ExtrudeOp>(o.recipe.modifiers.front())) continue;
+    const Bnd_Box box = document.worldBounds(o);
+    if (box.IsVoid()) continue;
+    const double top = box.CornerMax().Z(), bottom = box.CornerMin().Z();
+    const gp_Trsf world = document.worldTransform(o);
+    std::vector<gp_Pnt> points = polygon->points;
+    bool any = false;
+    for (gp_Pnt& local : points) {
+      const gp_Pnt p = local.Transformed(world);
+      gp_Vec delta(0, 0, 0);
+      std::vector<gp_Dir> counted;
+      for (const auto& [index, d] : displaced) {
+        const WallBand& w = walls[index];
+        if (top < w.z0 - 1.0 || bottom > w.z1 + 1.0) continue;  // not at this wall's height
+        const gp_Vec sideways = d - gp_Vec(w.dir) * d.Dot(gp_Vec(w.dir));
+        if (sideways.Magnitude() < tolerance::kLinear) continue;
+        const gp_Vec to(w.start, gp_Pnt(p.X(), p.Y(), w.start.Z()));
+        const double along = to.Dot(gp_Vec(w.dir)), across = to.Dot(gp_Vec(w.left));
+        const double thick = w.right + w.leftExt + 1.0;
+        if (along < -thick || along > w.length + thick || across < -w.right - 1.0 || across > w.leftExt + 1.0) continue;
+        if (std::any_of(counted.begin(), counted.end(), [&](const gp_Dir& c) { return c.IsParallel(w.dir, 1e-6); })) continue;
+        counted.push_back(w.dir);
+        delta += sideways;
+      }
+      if (delta.Magnitude() < tolerance::kLinear) continue;
+      local = p.Translated(delta).Transformed(world.Inverted());
+      any = true;
+    }
+    if (!any) continue;
+    const Object* pending = changes.pending(o.id);
+    Object slab = pending ? *pending : o;
+    std::get<PolygonProfile>(slab.recipe.base).points = points;
+    slab.faceMaterials.clear();
+    slab.hiddenEdges.clear();
+    if (!rebuild(slab, context)) {
+      report.left.push_back(o.name);
+      continue;
+    }
+    changes.modify(slab);
+    ++report.slabs;
+  }
+}
+
+// Carries the walls at the corners of displaced walls along with the part of the move that
+// runs along those walls. `ends`: which ends of each wall moved along its line (both for a
+// slide, one for a change of length).
+void carryCorners(const Document& document, ChangeSet& changes, const std::vector<WallBand>& walls,
+                  const std::vector<std::array<WallEnd, 2>>& ends, const std::map<std::size_t, gp_Vec>& along,
+                  const std::map<std::size_t, std::array<bool, 2>>& movedEnds, std::map<std::size_t, gp_Vec>& displaced,
+                  const std::set<std::size_t>& primary, JoinFollow& report) {
+  for (const auto& [i, p] : along) {
+    if (p.Magnitude() < tolerance::kLinear) continue;
+    for (int end = 0; end < 2; ++end) {
+      if (!movedEnds.at(i)[static_cast<std::size_t>(end)]) continue;
+      for (std::size_t j : cornerPartners(walls, ends, i, end)) {
+        if (primary.count(j) || displaced.count(j)) continue;  // moved by the user, or carried already
+        const Object& was = *walls[j].object;
+        if (was.locked) {
+          report.left.push_back(was.name);
+          continue;
+        }
+        gp_Trsf t;
+        t.SetTranslation(p);
+        const Object* pending = changes.pending(was.id);
+        Object o = pending ? *pending : was;
+        o.transform = localDelta(document.parentTransform(o), t) * o.transform;
+        changes.modify(o);
+        displaced[j] = p;
+        ++report.carried;
+      }
+    }
+  }
+}
+
+std::vector<WallBand> allWallBands(const Document& document) {
+  std::vector<WallBand> walls;
+  for (const Object& o : document.objects())
+    if (auto w = wallBand(document, o)) walls.push_back(std::move(*w));
+  return walls;
+}
+
+void followWallJoins(const Document& document, ChangeSet& changes, const RegenContext& context,
+                     const std::vector<ObjectId>& roots, const gp_Vec& d, JoinFollow& report) {
+  const gp_Vec flat(d.X(), d.Y(), 0);
+  if (flat.Magnitude() < tolerance::kLinear) return;
+  std::set<ObjectId> moved;
+  for (const ObjectId& rootId : roots)
+    for (const ObjectId& id : document.subtree(rootId)) moved.insert(id);
+  const std::vector<WallBand> walls = allWallBands(document);
+  std::map<std::size_t, gp_Vec> displaced, along;
+  std::map<std::size_t, std::array<bool, 2>> movedEnds;
+  std::set<std::size_t> primary;
+  for (std::size_t i = 0; i < walls.size(); ++i) {
+    if (!moved.count(walls[i].object->id)) continue;
+    primary.insert(i);
+    displaced[i] = flat;
+    along[i] = gp_Vec(walls[i].dir) * flat.Dot(gp_Vec(walls[i].dir));
+    movedEnds[i] = {true, true};
+  }
+  if (primary.empty()) return;
+  const auto ends = wallEnds(walls);
+  carryCorners(document, changes, walls, ends, along, movedEnds, displaced, primary, report);
+  settleWallJoins(document, changes, context, walls, ends, displaced, primary, {}, moved, report);
+}
+
+// A wall's far end moved along its line by `delta` (its length changed): the walls at that
+// corner are carried, and what is joined to them follows. `wall`'s own shape is the caller's.
+void followWallLength(const Document& document, ChangeSet& changes, const RegenContext& context, const ObjectId& wall,
+                      double delta, JoinFollow& report) {
+  if (std::abs(delta) < tolerance::kLinear) return;
+  const std::vector<WallBand> walls = allWallBands(document);
+  std::optional<std::size_t> index;
+  for (std::size_t i = 0; i < walls.size(); ++i)
+    if (walls[i].object->id == wall) index = i;
+  if (!index) return;
+  const auto ends = wallEnds(walls);
+  std::map<std::size_t, gp_Vec> displaced;
+  const std::map<std::size_t, gp_Vec> along = {{*index, gp_Vec(walls[*index].dir) * delta}};
+  const std::map<std::size_t, std::array<bool, 2>> movedEnds = {{*index, {false, true}}};
+  carryCorners(document, changes, walls, ends, along, movedEnds, displaced, {}, report);
+  settleWallJoins(document, changes, context, walls, ends, displaced, {}, {*index}, {wall}, report);
 }
 
 // --- rooms (docs/90 G-07) ------------------------------------------------------------------
@@ -6817,6 +6986,20 @@ std::optional<Modeler::MemberInfo> Modeler::wallOrSlabInfo(const Object& o) cons
   return info;
 }
 
+// A wall's own change committed; when its far end moved along its line by `lengthened`, the
+// walls at that corner go with it (docs/102), in the same undo step.
+Status Modeler::commitWallChange(Object object, const std::string& commandName, double lengthened) {
+  const ObjectId id = object.id;
+  if (const Status built = rebuild(object, document_.regenContext()); !built) return built;
+  ChangeSet changes(document_);
+  changes.modify(object);
+  lastJoins_ = JoinFollow{};
+  if (keepWallJoins_) followWallLength(document_, changes, document_.regenContext(), id, lengthened, lastJoins_);
+  refitWallsToRoofs(document_, changes, document_.regenContext());
+  history_.execute(changes.build(commandName));
+  return Status::success();
+}
+
 Result<Modeler::MemberInfo> Modeler::changeWallOrSlab(const ObjectId& id, const MemberChange& change) {
   using R = Result<MemberInfo>;
   const Object* current = document_.find(id);
@@ -6855,7 +7038,7 @@ Result<Modeler::MemberInfo> Modeler::changeWallOrSlab(const ObjectId& id, const 
                           " would no longer be inside the wall: move or remove it first (nothing was changed)");
     }
     replaceOperand(object.recipe, band->path, 0, std::move(recipe));
-    const Status committed = commitModified(std::move(object), "Change wall");
+    const Status committed = commitWallChange(std::move(object), "Change wall", change.length ? *change.length - band->length : 0.0);
     if (!committed) return R::failure("The wall was not changed: " + committed.message());
     return memberInfo(id);
   }
@@ -6890,7 +7073,12 @@ Result<Modeler::MemberInfo> Modeler::changeWallOrSlab(const ObjectId& id, const 
       extrude.distance = after;
     }
   }
-  const Status committed = commitModified(std::move(object), "Change " + kind);
+  double lengthened = 0.0;
+  if (kind == "wall" && change.length) {
+    if (const auto band = wallBand(document_, *current)) lengthened = *change.length - band->length;
+  }
+  const Status committed = kind == "wall" ? commitWallChange(std::move(object), "Change wall", lengthened)
+                                          : commitModified(std::move(object), "Change " + kind);
   if (!committed) {
     return R::failure("The " + kind + " was not changed: " + committed.message() +
                       " (the edits made to it could not be redone; its shape can still be edited directly)");

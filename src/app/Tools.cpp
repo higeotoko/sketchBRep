@@ -112,6 +112,19 @@ Status RecentEdit::replace(doc::Modeler& m, const std::function<Status()>& edit)
   return s;
 }
 
+QString joinFollowText(const doc::JoinFollow& joins) {
+  QStringList parts;
+  if (joins.carried > 0) parts << QObject::tr("角の壁 %1 枚を一緒に動かしました").arg(joins.carried);
+  if (joins.followed > 0) parts << QObject::tr("つながっている壁 %1 枚の長さを合わせました").arg(joins.followed);
+  if (joins.slabs > 0) parts << QObject::tr("床 %1 枚の外周を合わせました").arg(joins.slabs);
+  if (!joins.left.empty()) {
+    QStringList names;
+    for (const std::string& n : joins.left) names << QString::fromStdString(n);
+    parts << QObject::tr("%1 は付いてこられませんでした（開口が壁の外になる・ロック中・長さがなくなる）").arg(names.join(QStringLiteral("、")));
+  }
+  return parts.join(QStringLiteral("。"));
+}
+
 QString snapLabel(snap::SnapKind kind) {
   switch (kind) {
     case snap::SnapKind::Endpoint: return QObject::tr("端点");
@@ -3456,16 +3469,7 @@ bool TransformTool::commit(const gp_Trsf& delta, int count) {
       return false;
     }
     // Walls joined to the moved ones: say what happened to them.
-    const doc::JoinFollow& joins = m.lastJoinFollow();
-    if (joins.followed > 0)
-      joinNote_ = QObject::tr("つながっている壁 %1 枚の長さを合わせました").arg(joins.followed);
-    if (!joins.left.empty()) {
-      QStringList names;
-      for (const std::string& n : joins.left) names << QString::fromStdString(n);
-      joinNote_ += (joinNote_.isEmpty() ? QString() : QStringLiteral("。")) +
-                   QObject::tr("%1 は付いてこられませんでした（開口が壁の外になる・ロック中・長さがなくなる）")
-                       .arg(names.join(QStringLiteral("、")));
-    }
+    joinNote_ = joinFollowText(m.lastJoinFollow());
     if (!joinNote_.isEmpty()) host_.setStatus(joinNote_);
   }
   last_ = Last{targets_, edgeTargets_, elementTargets_, delta, copy_, count};

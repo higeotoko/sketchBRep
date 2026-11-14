@@ -1399,8 +1399,9 @@ const std::vector<CommandDef>& commands() {
          must(moved);
          json result = idsResult(ids(a, "ids"));
          const doc::JoinFollow& joins = m.lastJoinFollow();
-         if (joins.followed > 0 || !joins.left.empty())
-           result["joined_walls"] = {{"followed", joins.followed}, {"left", joins.left}};
+         if (joins.followed > 0 || joins.carried > 0 || joins.slabs > 0 || !joins.left.empty())
+           result["joined_walls"] = {{"followed", joins.followed}, {"carried", joins.carried}, {"slabs", joins.slabs},
+                                     {"left", joins.left}};
          return result;
        }},
       {"rotate", "Rotate objects about an axis (degrees).",

@@ -682,6 +682,10 @@ void MainWindow::buildUi() {
               if (!changed) {
                 reportError(tr("寸法を変更できません: %1").arg(userMessage(QString::fromStdString(changed.error()))));
                 refreshPanels();
+              } else if (change.length) {
+                // A wall's length: say what went with its far end (docs/102).
+                const QString joined = joinFollowText(modeler_.lastJoinFollow());
+                if (!joined.isEmpty()) setStatus(joined);
               }
             });
           });
@@ -1281,8 +1285,8 @@ void MainWindow::buildMenus() {
     joins->setObjectName(QStringLiteral("keepWallJoinsAction"));
     joins->setCheckable(true);
     joins->setChecked(modeler_.keepWallJoins());
-    joins->setToolTip(tr("壁を横へ動かした時、角・T 字でつながっている壁の長さを合わせます。"
-                         "外すと、動かした壁だけが動きます（アプリを閉じると、付いてくる設定に戻ります）"));
+    joins->setToolTip(tr("壁を動かした時・長さを変えた時に、角・T 字でつながっている壁と、床の外周を合わせます。"
+                         "外すと、動かした壁だけが変わります（アプリを閉じると、付いてくる設定に戻ります）"));
     connect(joins, &QAction::toggled, this, [this](bool on) {
       modeler_.setKeepWallJoins(on);
       setStatus(on ? tr("壁を動かすと、つながっている壁も付いてきます") : tr("壁を動かしても、つながっている壁はそのままにします"));

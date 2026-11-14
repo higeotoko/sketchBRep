@@ -147,13 +147,8 @@ TEST_F(WallJoins, OnlySidewaysMovesOfWallsAreFollowed) {
     const Box e = box(east), w = box(west), p = box(partition), n = box(north);
     return json{e.x0, e.y0, e.x1, e.y1, w.x0, w.y0, w.x1, w.y1, p.x0, p.y0, p.x1, p.y1, n.x0, n.y0, n.x1, n.y1}.dump();
   };
-  // Along its own line: the wall slides, nothing is stretched.
-  json moved = ok("move", {{"ids", {south}}, {"vector", {700, 0, 0}}});
-  EXPECT_FALSE(moved.contains("joined_walls"));
-  EXPECT_EQ(others(), saved);
-  ASSERT_TRUE(modeler.undo());
   // Up: nothing follows.
-  moved = ok("move", {{"ids", {south}}, {"vector", {0, 0, 500}}});
+  json moved = ok("move", {{"ids", {south}}, {"vector", {0, 0, 500}}});
   EXPECT_FALSE(moved.contains("joined_walls"));
   EXPECT_EQ(others(), saved);
   ASSERT_TRUE(modeler.undo());
@@ -176,6 +171,134 @@ TEST_F(WallJoins, OnlySidewaysMovesOfWallsAreFollowed) {
   moved = ok("move", {{"ids", {block}}, {"vector", {0, -455, 0}}});
   EXPECT_FALSE(moved.contains("joined_walls"));
   EXPECT_EQ(others(), saved);
+}
+
+TEST_F(WallJoins, AWallSlidAlongItsLineCarriesTheWallsAtItsCorners) {
+  // docs/102: the south wall 700 along itself: the east and west walls (at its corners) go
+  // with it as they are; the north wall, joined to those, follows at both ends; the
+  // partition (a T on the south wall, not at a corner) stays.
+  const Box s0 = box(south), e0 = box(east), n0 = box(north), w0 = box(west), p0 = box(partition);
+  const double total = volume(south) + volume(east) + volume(north) + volume(west) + volume(partition);
+  const auto steps = modeler.history().undoCount();
+  const json moved = ok("move", {{"ids", {south}}, {"vector", {700, 0, 0}}});
+  EXPECT_EQ(moved["joined_walls"]["carried"], 2);
+  EXPECT_EQ(moved["joined_walls"]["followed"], 1);
+  EXPECT_TRUE(moved["joined_walls"]["left"].empty());
+  for (const auto& [was, is] : {std::pair{s0, box(south)}, std::pair{e0, box(east)}, std::pair{w0, box(west)}, std::pair{n0, box(north)}}) {
+    EXPECT_NEAR(is.x0, was.x0 + 700, 1e-6);
+    EXPECT_NEAR(is.x1, was.x1 + 700, 1e-6);
+    EXPECT_NEAR(is.y0, was.y0, 1e-6);
+    EXPECT_NEAR(is.y1, was.y1, 1e-6);
+  }
+  EXPECT_NEAR(box(partition).x0, p0.x0, 1e-6);
+  EXPECT_NEAR(volume(south) + volume(east) + volume(north) + volume(west) + volume(partition), total, 10);
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  ASSERT_TRUE(modeler.undo());
+  EXPECT_NEAR(box(east).x0, e0.x0, 1e-6);
+  EXPECT_NEAR(box(north).x0, n0.x0, 1e-6);
+
+  // Slantwise (300 along, 455 out): carried by the part along, made longer by the part across.
+  ok("move", {{"ids", {south}}, {"vector", {300, -455, 0}}});
+  EXPECT_NEAR(box(south).x0, s0.x0 + 300, 1e-6);
+  EXPECT_NEAR(box(south).y0, s0.y0 - 455, 1e-6);
+  EXPECT_NEAR(box(east).x0, e0.x0 + 300, 1e-6);
+  EXPECT_NEAR(box(east).y0, e0.y0 - 455, 1e-6);
+  EXPECT_NEAR(box(east).y1, e0.y1, 1e-6);
+  EXPECT_NEAR(box(west).x0, w0.x0 + 300, 1e-6);
+  EXPECT_NEAR(box(west).y0, w0.y0 - 455, 1e-6);
+  EXPECT_NEAR(box(north).x0, n0.x0 + 300, 1e-6);
+  EXPECT_NEAR(box(north).x1, n0.x1 + 300, 1e-6);
+  EXPECT_NEAR(box(partition).y0, p0.y0 - 455, 1e-6);  // its T follows the south wall's face
+  ASSERT_TRUE(modeler.undo());
+
+  // A locked wall at the corner stays; the rest goes.
+  ok("set_locked", {{"ids", {west}}, {"locked", true}});
+  const json partly = ok("move", {{"ids", {south}}, {"vector", {700, 0, 0}}});
+  EXPECT_EQ(partly["joined_walls"]["carried"], 1);
+  ASSERT_EQ(partly["joined_walls"]["left"].size(), 1u);
+  EXPECT_NEAR(box(west).x0, w0.x0, 1e-6);
+  EXPECT_NEAR(box(east).x0, e0.x0 + 700, 1e-6);
+}
+
+TEST_F(WallJoins, AWallMadeLongerCarriesTheWallAtThatCorner) {
+  // The south wall runs from x = 0 towards x = 6000: 1000 longer, its far end goes east. The
+  // east wall is carried 1000; the north wall, joined to it, gets 1000 longer.
+  const Box s0 = box(south), e0 = box(east), n0 = box(north), w0 = box(west), p0 = box(partition);
+  const double length = ok("member_info", {{"id", south}})["fields"][0]["value"].get<double>();
+  const auto steps = modeler.history().undoCount();
+  ok("change_member", {{"id", south}, {"length", length + 1000}});
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  EXPECT_EQ(modeler.lastJoinFollow().carried, 1);
+  EXPECT_EQ(modeler.lastJoinFollow().followed, 1);
+  EXPECT_NEAR(box(south).x1, s0.x1 + 1000, 1e-6);
+  EXPECT_NEAR(box(south).x0, s0.x0, 1e-6);
+  EXPECT_NEAR(box(east).x0, e0.x0 + 1000, 1e-6);
+  EXPECT_NEAR(box(east).x1, e0.x1 + 1000, 1e-6);
+  EXPECT_NEAR(box(east).y0, e0.y0, 1e-6);
+  EXPECT_NEAR(box(north).x1, n0.x1 + 1000, 1e-6);
+  EXPECT_NEAR(box(north).x0, n0.x0, 1e-6);
+  EXPECT_NEAR(box(west).x0, w0.x0, 1e-6);
+  EXPECT_NEAR(box(partition).x0, p0.x0, 1e-6);
+  // The room is 1000 longer (6000 -> 7000 on the wall lines).
+  EXPECT_NEAR(ok("room_at", {{"at", {4500, 2000}}})["area_centre"].get<double>(), (7.0 - 3.0) * 4.0, 1e-9);
+  ASSERT_TRUE(modeler.undo());  // one step for all of it
+  EXPECT_NEAR(box(east).x0, e0.x0, 1e-6);
+  EXPECT_NEAR(box(north).x1, n0.x1, 1e-6);
+
+  // Shorter, with an opening that would be left outside the north wall: the north wall stays
+  // (said), the rest goes.
+  ok("place_openings", {{"host", north}, {"face_normal", {0, 1, 0}}, {"count", 1}, {"width", 5000}, {"height", 1000}, {"sill", 900}});
+  ok("change_member", {{"id", south}, {"length", length - 1000}});
+  EXPECT_EQ(modeler.lastJoinFollow().carried, 1);
+  ASSERT_EQ(modeler.lastJoinFollow().left.size(), 1u);
+  EXPECT_NEAR(box(east).x0, e0.x0 - 1000, 1e-6);
+  EXPECT_NEAR(box(north).x1, n0.x1, 1e-6);
+  ASSERT_TRUE(modeler.undo());
+
+  // Asked not to keep joints: the wall alone.
+  modeler.setKeepWallJoins(false);
+  ok("change_member", {{"id", south}, {"length", length + 1000}});
+  EXPECT_NEAR(box(south).x1, s0.x1 + 1000, 1e-6);
+  EXPECT_NEAR(box(east).x0, e0.x0, 1e-6);
+  modeler.setKeepWallJoins(true);
+}
+
+TEST_F(WallJoins, ASlabsOutlineGoesWithTheWallsItStandsIn) {
+  // A floor on the wall lines, and a deck beside the house that touches no wall.
+  const std::string floor = ok("create_slab", {{"outline", {{0, 0}, {6000, 0}, {6000, 4000}, {0, 4000}}}, {"top", 0}, {"thickness", 200}})["id"];
+  const std::string deck = ok("create_slab", {{"outline", {{8000, 0}, {9000, 0}, {9000, 1000}, {8000, 1000}}}, {"top", 0}, {"thickness", 100}})["id"];
+  const Box d0 = box(deck);
+  EXPECT_NEAR(volume(floor), 6000.0 * 4000 * 200, 1);
+  // The south wall 455 out: the floor's two south corners go with it.
+  json moved = ok("move", {{"ids", {south}}, {"vector", {0, -455, 0}}});
+  EXPECT_EQ(moved["joined_walls"]["slabs"], 1);
+  EXPECT_NEAR(box(floor).y0, -455, 1e-6);
+  EXPECT_NEAR(box(floor).y1, 4000, 1e-6);
+  EXPECT_NEAR(volume(floor), 6000.0 * 4455 * 200, 1);
+  EXPECT_NEAR(box(floor).z1, 0, 1e-6);  // its top stays
+  EXPECT_NEAR(box(deck).x0, d0.x0, 1e-6);
+  ASSERT_TRUE(modeler.undo());
+  EXPECT_NEAR(volume(floor), 6000.0 * 4000 * 200, 1);
+  // The south wall slid 700: the east and west walls are carried, and the floor with them.
+  moved = ok("move", {{"ids", {south}}, {"vector", {700, 0, 0}}});
+  EXPECT_EQ(moved["joined_walls"]["slabs"], 1);
+  EXPECT_NEAR(box(floor).x0, 700, 1e-6);
+  EXPECT_NEAR(box(floor).x1, 6700, 1e-6);
+  EXPECT_NEAR(volume(floor), 6000.0 * 4000 * 200, 1);
+  ASSERT_TRUE(modeler.undo());
+  // The south wall 1000 longer: the floor's east corners go with the east wall.
+  const double length = ok("member_info", {{"id", south}})["fields"][0]["value"].get<double>();
+  ok("change_member", {{"id", south}, {"length", length + 1000}});
+  EXPECT_EQ(modeler.lastJoinFollow().slabs, 1);
+  EXPECT_NEAR(box(floor).x1, 7000, 1e-6);
+  EXPECT_NEAR(box(floor).x0, 0, 1e-6);
+  EXPECT_NEAR(volume(floor), 7000.0 * 4000 * 200, 1);
+  ASSERT_TRUE(modeler.undo());
+  // The floor moved with the wall: it is not reshaped as well.
+  moved = ok("move", {{"ids", {south, floor}}, {"vector", {0, -455, 0}}});
+  EXPECT_NEAR(volume(floor), 6000.0 * 4000 * 200, 1);
+  EXPECT_NEAR(box(floor).y0, -455, 1e-6);
+  EXPECT_NEAR(box(floor).y1, 3545, 1e-6);
 }
 
 TEST_F(WallJoins, TheWallATeeRunsIntoFollowsNothingButItsOwnCornerPartners) {
