@@ -5,6 +5,7 @@
 #include "FrameCheckPanel.h"
 #include "StructureDiagnosticsPanel.h"
 #include "MainWindow.h"
+#include "sbr/doc/IfcExport.h"
 #include "sbr/WallTypes.h"
 #include "sbr/OpeningSymbols.h"
 #include "sbr/KernelError.h"
@@ -103,7 +104,7 @@ namespace sbr::app {
 namespace {
 std::string utf8(const QString& s) { return s.toUtf8().toStdString(); }
 
-enum class ExchangeType { Step, Stl, Dxf, Dwg, Jww, Iges, Brep, Rhino, Collada, Gltf, Image };
+enum class ExchangeType { Step, Stl, Dxf, Dwg, Jww, Iges, Brep, Rhino, Collada, Gltf, Ifc, Image };
 struct ExchangeFormat {
   ExchangeType type;
   QString filter;
@@ -123,6 +124,7 @@ std::vector<ExchangeFormat> exchangeFormats(bool importing) {
   formats.push_back({ExchangeType::Collada,text("COLLADA・SketchUp 用 (*.dae)"),{"dae"}});
   // Renderers (docs/85_gltf_export): export only.
   if(!importing) formats.push_back({ExchangeType::Gltf,text("glTF・レンダリング用（Blender・Twinmotion・UE） (*.glb *.gltf)"),{"glb","gltf"}});
+  if(!importing) formats.push_back({ExchangeType::Ifc,text("IFC・ほかの BIM 用（階・壁・開口・床・屋根・柱梁・室） (*.ifc)"),{"ifc"}});
   formats.push_back(importing?ExchangeFormat{ExchangeType::Image,text("画像・下敷き (*.png *.jpg *.jpeg *.bmp *.gif)"),{"png","jpg","jpeg","bmp","gif"}}:
                              ExchangeFormat{ExchangeType::Image,text("PNG 画像 (*.png)"),{"png"}});
   return formats;
@@ -4856,6 +4858,7 @@ void MainWindow::importFile() {
     case ExchangeType::Rhino:import3dmFile(path);break;
     case ExchangeType::Collada:importColladaFile(path);break;
     case ExchangeType::Gltf:break; // not offered by the import dialog
+    case ExchangeType::Ifc:break; // not offered by the import dialog
     case ExchangeType::Image:importUnderlay(path);break;
     case ExchangeType::Stl:break; // not offered by the import dialog
   }
@@ -4897,6 +4900,12 @@ void MainWindow::exportFile() {
     case ExchangeType::Rhino:export3dmFile(path);break;
     case ExchangeType::Collada:exportColladaFile(path);break;
     case ExchangeType::Gltf:exportGltfFile(path);break;
+    case ExchangeType::Ifc:
+      exportIfcFile(path);
+      // What was assumed or left out: shown once, so it is not missed.
+      if(!lastIfcNotes_.isEmpty())
+        QMessageBox::information(this,tr("IFC の書き出し"),tr("書き出しました。\n%1\n\n次の点に注意してください。\n・%2").arg(lastIfcSummary_,lastIfcNotes_.join(QStringLiteral("\n・"))));
+      break;
     case ExchangeType::Image:exportImage(path);break;
     case ExchangeType::Dxf:case ExchangeType::Dwg:case ExchangeType::Jww:break; // not offered for export (drawings: File > 図面を書き出す)
   }
@@ -4988,6 +4997,28 @@ void MainWindow::importStepFile(const QString& path) {
   setSelection(ids.value());
   viewport_->syncNow();
   viewport_->fitAll();
+}
+
+void MainWindow::exportIfcFile(const QString& path) {
+  const auto done = doc::exportIfc(modeler_, utf8(path));
+  lastIfcSummary_.clear();
+  lastIfcNotes_.clear();
+  if (!done) {
+    reportError(tr("IFC を書き出せませんでした: %1").arg(userMessage(QString::fromStdString(done.error()))));
+    return;
+  }
+  const doc::IfcSummary& s = done.value();
+  const QString counts = tr("階 %1・壁 %2・開口 %3（窓 %4・扉 %5）・床 %6・屋根 %7・柱 %8・梁 %9")
+                             .arg(s.storeys).arg(s.walls).arg(s.openings).arg(s.windows).arg(s.doors)
+                             .arg(s.slabs).arg(s.roofs).arg(s.columns).arg(s.beams) +
+                         tr("・その他の部材 %1・室 %2・通り芯 %3・その他の立体 %4").arg(s.members).arg(s.spaces).arg(s.grids).arg(s.proxies);
+  lastIfcSummary_ = counts;
+  lastIfcNotes_.clear();
+  statusBar()->showMessage(tr("IFC を書き出しました: %1（%2）").arg(path, counts), 8000);
+  // What was assumed or left out, for the caller to show.
+  QStringList notes;
+  for (const std::string& n : s.notes) notes << userMessage(QString::fromStdString(n));
+  lastIfcNotes_ = notes;
 }
 
 void MainWindow::exportStepFile(const QString& path) {

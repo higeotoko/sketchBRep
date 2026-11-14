@@ -350,6 +350,7 @@ class GuiPhase1 : public QObject {
   void movedWallKeepsItsCornersAndSaysSo();
   void roomToolPlacesARoomWhoseAreaFollowsTheWalls();
   void roofToolDrawsARoofWhoseSizesAreChangedInThePanel();
+  void ifcExportWritesTheBuildingAndSaysWhatItLeftOut();
   void wallAndSlabFollowTheirLevelsFromThePanel();
   void wallQuantityInputsComparisonSaveAndStaleModel();
   void panelDragPreviewKeepsTheModelViewStill();
@@ -11434,4 +11435,35 @@ void GuiPhase1::roofToolDrawsARoofWhoseSizesAreChangedInThePanel() {
     QTRY_VERIFY(std::abs(top(walls->at(3))-2400)<1e-6);
     QVERIFY2(f.window.lastError().isEmpty(),qPrintable(f.window.lastError()));
   }
+}
+
+// docs/90 G-13: File > Export writes an IFC file; the status says what went in, and what was
+// assumed or left out is kept for the message shown after the dialog.
+void GuiPhase1::ifcExportWritesTheBuildingAndSaysWhatItLeftOut() {
+  Fixture f;QVERIFY(f.setUp(3000,2000));auto& m=f.window.modeler();
+  const auto walls=m.createWalls({gp_Pnt(0,0,0),gp_Pnt(6000,0,0),gp_Pnt(6000,4000,0),gp_Pnt(0,4000,0),gp_Pnt(0,0,0)},200,3000,0);
+  QVERIFY2(walls,walls?"":walls.error().c_str());
+  QVERIFY(m.placeOpenings(walls->at(0),gp_Dir(0,-1,0),1,1600,1200,900,std::nullopt,R"({"type":"sliding_double"})"));
+  QVERIFY(m.createRoom(gp_Pnt(3000,2000,0),"LDK"));
+  QTemporaryDir dir;QVERIFY(dir.isValid());
+  const QString path=dir.filePath(QStringLiteral("家.ifc"));
+  f.window.exportIfcFile(path);
+  QVERIFY2(f.window.lastError().isEmpty(),qPrintable(f.window.lastError()));
+  QFile file(path);QVERIFY(file.open(QIODevice::ReadOnly));
+  const QByteArray text=file.readAll();
+  QVERIFY(text.startsWith("ISO-10303-21;"));
+  QVERIFY(text.contains("FILE_SCHEMA(('IFC4'));"));
+  QVERIFY(text.contains("IFCWALL(")&&text.contains("IFCOPENINGELEMENT(")&&text.contains("IFCWINDOW(")&&text.contains("IFCSPACE("));
+  QVERIFY(text.trimmed().endsWith("END-ISO-10303-21;"));
+  QVERIFY2(f.window.lastIfcSummary().contains(QStringLiteral("壁 4"))&&f.window.lastIfcSummary().contains(QStringLiteral("窓 1"))&&
+           f.window.lastIfcSummary().contains(QStringLiteral("室 1")),qPrintable(f.window.lastIfcSummary()));
+  // No levels in this model: said (in Japanese), not silently assumed.
+  QVERIFY2(f.window.lastIfcNotes().join(QLatin1Char('|')).contains(QStringLiteral("レベルが無い")),
+           qPrintable(f.window.lastIfcNotes().join(QLatin1Char('|'))));
+  // Nothing to export: an error, no file.
+  QVERIFY(m.undo());QVERIFY(m.undo());QVERIFY(m.undo());
+  const QString empty=dir.filePath(QStringLiteral("empty.ifc"));
+  f.window.exportIfcFile(empty);
+  QVERIFY(!f.window.lastError().isEmpty());
+  QVERIFY(!QFile::exists(empty));
 }

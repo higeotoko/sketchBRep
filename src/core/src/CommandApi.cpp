@@ -5,6 +5,7 @@
 #include "sbr/ConstructionAssist.h"
 #include "sbr/ConstructionCheck.h"
 #include "sbr/api/CommandApi.h"
+#include "sbr/doc/IfcExport.h"
 #include "sbr/ConstructionGuide.h"
 #include "sbr/KernelError.h"
 #include "sbr/draw/Drawing.h"
@@ -3131,6 +3132,20 @@ const std::vector<CommandDef>& commands() {
                           {"unsupported", report.unsupported}, {"summary", report.summary()}};
          return out;
        }},
+      {"export_ifc",
+       "Export the building as IFC4 (.ifc) for other BIM software: storeys from the levels; walls (create_wall) "
+       "with their openings as voids, and a window / door for each opening with a fitting (a fitting with its "
+       "sill on the floor is a door); slabs; roofs; columns, beams and members; rooms as spaces with their areas; "
+       "grids; other solids as proxies. Lengths in mm. Element ids stay the same when exported again. Returns "
+       "counts and 'notes' (what was assumed or left out). Lines, faces and notes are not exported.",
+       SCHEMA({"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}),
+       [](doc::Modeler& m, const json& a) {
+         const doc::IfcSummary s = must(doc::exportIfc(m, text(a, "path")));
+         return json{{"storeys", s.storeys}, {"walls", s.walls}, {"slabs", s.slabs}, {"roofs", s.roofs}, {"columns", s.columns},
+                     {"beams", s.beams}, {"members", s.members}, {"openings", s.openings}, {"windows", s.windows},
+                     {"doors", s.doors}, {"spaces", s.spaces}, {"grids", s.grids}, {"proxies", s.proxies},
+                     {"skipped", s.skipped}, {"notes", s.notes}};
+       }},
       {"export_step", "Export visible objects (or 'ids') to STEP with names and colours.",
        SCHEMA({"type": "object", "properties": {"path": {"type": "string"},
                "ids": {"type": "array", "items": {"type": "string"}}}, "required": ["path"]}),
@@ -3145,7 +3160,7 @@ const std::vector<CommandDef>& commands() {
 #undef SCHEMA
 
 bool isFileCommand(const std::string& name) {
-  return name == "save" || name == "open" || name == "export_step" || name == "export_stl" || name == "export_3dm" ||
+  return name == "save" || name == "open" || name == "export_ifc" || name == "export_step" || name == "export_stl" || name == "export_3dm" ||
          name == "import_brep" || name == "export_brep" || name == "import_iges" || name == "export_iges" ||
          name == "import_3dm" || name == "import_dxf" || name == "import_jww" || name == "set_material_texture" || name == "export_dae" ||
          name == "import_dae" || name == "export_drawing" || name == "export_gltf";

@@ -278,6 +278,14 @@ class MainWindow : public QMainWindow, public ToolHost {
   void showSlabSettingsDialog();
   void showOpeningSettingsDialog();
   void showRoofSettingsDialog();
+ public:
+  // IFC for other BIM software (docs/90 G-13); what was written goes to the status bar.
+  void exportIfcFile(const QString& path);
+  QString lastIfcSummary() const { return lastIfcSummary_; }
+  QStringList lastIfcNotes() const { return lastIfcNotes_; }
+ private:
+  QString lastIfcSummary_;
+  QStringList lastIfcNotes_;
   // Every room with its areas as the walls are now (docs/90 G-07).
   void showRoomsDialog();
   void showOpeningsDialog();
