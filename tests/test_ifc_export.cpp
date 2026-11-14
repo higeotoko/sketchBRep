@@ -120,7 +120,7 @@ struct Ifc {
 // IFC4: how many attributes each entity written here has.
 const std::map<std::string, std::size_t> kAttributes = {
     {"IFCPROJECT", 9}, {"IFCSITE", 14}, {"IFCBUILDING", 12}, {"IFCBUILDINGSTOREY", 10}, {"IFCSPACE", 11},
-    {"IFCWALL", 9}, {"IFCSLAB", 9}, {"IFCROOF", 9}, {"IFCCOLUMN", 9}, {"IFCBEAM", 9}, {"IFCMEMBER", 9},
+    {"IFCWALL", 9}, {"IFCSLAB", 9}, {"IFCROOF", 9}, {"IFCSTAIR", 9}, {"IFCCOLUMN", 9}, {"IFCBEAM", 9}, {"IFCMEMBER", 9},
     {"IFCBUILDINGELEMENTPROXY", 9}, {"IFCOPENINGELEMENT", 9}, {"IFCWINDOW", 13}, {"IFCDOOR", 13}, {"IFCGRID", 11},
     {"IFCGRIDAXIS", 3}, {"IFCRELAGGREGATES", 6}, {"IFCRELCONTAINEDINSPATIALSTRUCTURE", 6}, {"IFCRELVOIDSELEMENT", 6},
     {"IFCRELFILLSELEMENT", 6}, {"IFCRELDEFINESBYPROPERTIES", 6}, {"IFCPROPERTYSET", 5}, {"IFCPROPERTYSINGLEVALUE", 4},
@@ -177,6 +177,7 @@ TEST_F(IfcExport, AHouseIsWrittenWithItsStoreysPartsAndRelations) {
   ok("set_opening_fittings", {{"host", walls[1]}, {"fitting", {{"type", "swing_single"}, {"hinge", "right"}, {"swing", "in"}}}});
   const std::string slab = ok("create_slab", {{"outline", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}}}, {"top", 3000}, {"thickness", 200}})["id"];
   const std::string roof = ok("create_roof", {{"outline", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}}}, {"kind", "hip"}, {"height", 3000}})["id"];
+  const std::string stair = ok("create_stair", {{"path", {{1000, 1000}, {3000, 1000}, {3000, 2500}}}, {"rise", 3000}})["id"];
   const std::string column = ok("create_member", {{"start", {4000, 3000, 0}}, {"end", {4000, 3000, 2800}}, {"role", "column"},
                                                   {"section", {{"kind", "rectangle"}, {"width", 105}, {"depth", 105}}}})["id"];
   const std::string beam = ok("create_member", {{"start", {0, 3000, 2800}}, {"end", {8000, 3000, 2800}}, {"role", "beam"},
@@ -228,6 +229,11 @@ TEST_F(IfcExport, AHouseIsWrittenWithItsStoreysPartsAndRelations) {
   EXPECT_NEAR(ifc.volume(ifc.of("IFCBUILDINGELEMENTPROXY")[0]), 500.0 * 500 * 500, 1.0);
   for (int opening : ifc.of("IFCOPENINGELEMENT")) EXPECT_GT(ifc.volume(opening), 1e6);
   EXPECT_EQ(ifc.at(ifc.of("IFCROOF")[0]).args[8], ".HIP_ROOF.");
+  // The stair (docs/103): one turn with winders.
+  EXPECT_EQ(summary.stairs, 1);
+  ASSERT_EQ(ifc.of("IFCSTAIR").size(), 1u);
+  EXPECT_EQ(ifc.at(ifc.of("IFCSTAIR")[0]).args[8], ".QUARTER_WINDING_STAIR.");
+  EXPECT_NEAR(ifc.volume(ifc.of("IFCSTAIR")[0]), volume(stair), 1e-6 * volume(stair));
 
   // Each opening voids its own wall; the window and the door fill their openings.
   const int south = ifc.named("IFCWALL", name(walls[0])), east = ifc.named("IFCWALL", name(walls[1]));
@@ -262,7 +268,7 @@ TEST_F(IfcExport, AHouseIsWrittenWithItsStoreysPartsAndRelations) {
   std::map<int, int> times;
   for (const auto& [storey, elements] : contained)
     for (int e : elements) ++times[e];
-  for (const char* type : {"IFCWALL", "IFCSLAB", "IFCROOF", "IFCCOLUMN", "IFCBEAM", "IFCBUILDINGELEMENTPROXY", "IFCWINDOW", "IFCDOOR", "IFCGRID"})
+  for (const char* type : {"IFCWALL", "IFCSLAB", "IFCROOF", "IFCSTAIR", "IFCCOLUMN", "IFCBEAM", "IFCBUILDINGELEMENTPROXY", "IFCWINDOW", "IFCDOOR", "IFCGRID"})
     for (int e : ifc.of(type)) EXPECT_EQ(times[e], 1) << type;
 
   // The room: a space of 1FL with its areas (m2) and a Japanese name written the STEP way.

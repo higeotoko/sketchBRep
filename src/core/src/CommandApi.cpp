@@ -120,6 +120,52 @@ void roofArgs(const json& a, geom::RoofSpec& s) {
   }
 }
 
+// The stair sizes given in `a` put into `s` (the others stay).
+void stairArgs(const json& a, geom::StairSpec& s) {
+  if (a.contains("base")) s.base = number(a, "base");
+  if (a.contains("rise")) s.rise = number(a, "rise");
+  if (a.contains("top")) s.rise = number(a, "top") - s.base;
+  if (a.contains("width")) s.width = number(a, "width");
+  if (a.contains("risers")) s.risers = static_cast<int>(number(a, "risers"));
+  if (a.contains("riser_limit")) s.riserLimit = number(a, "riser_limit");
+  if (a.contains("style")) s.style = text(a, "style");
+  if (a.contains("thickness")) s.thickness = number(a, "thickness");
+  if (a.contains("turns")) {
+    const json& v = a.at("turns");
+    s.turns.clear();
+    auto one = [](const json& t) {
+      if (t.is_number_integer()) return t.get<int>();
+      if (t.is_string() && t.get<std::string>() == "landing") return 1;
+      throw ApiError("'turns': per turn 1 or \"landing\" (a flat landing), or 2 to 6 (winders: treads its corner is cut into)");
+    };
+    if (v.is_array()) for (const json& t : v) s.turns.push_back(one(t));
+    else s.turns.push_back(one(v));
+  }
+}
+
+json stairJson(const doc::StairInfo& r) {
+  json path = json::array(), checks = json::array();
+  for (const gp_Pnt& p : r.spec.path) path.push_back({p.X(), p.Y()});
+  bool allOk = true;
+  for (const auto& c : r.checks) {
+    checks.push_back({{"item", c.item}, {"value", c.value}, {"limit", c.limit}, {"state", c.state}});
+    allOk &= c.state == "ok";
+  }
+  return json{{"path", path}, {"base", r.spec.base}, {"rise", r.spec.rise}, {"width", r.spec.width},
+              {"risers", r.risers}, {"risers_automatic", r.spec.risers == 0}, {"riser_limit", r.spec.riserLimit},
+              {"riser", r.riser}, {"treads", r.treads}, {"going_min", r.goingMin}, {"going_max", r.goingMax},
+              {"winder_going", r.winderGoing}, {"walk_length", r.walkLength}, {"flights", r.flights},
+              {"landings", r.landings}, {"winders", r.winders}, {"turns", r.spec.turns}, {"style", r.spec.style},
+              {"thickness", r.spec.thickness}, {"base_level", r.baseLevel}, {"top_level", r.topLevel},
+              {"opened_slabs", r.openedSlabs}, {"checks", checks}, {"checks_all_ok", allOk},
+              {"checks_basis",
+               "Sizes for a house's own stair (not a shared stair of flats), Building Standards Act Enforcement Order "
+               "arts. 23-25 as recorded in docs/103: riser <= 230, going >= 150 (winders: measured 300 from the narrow "
+               "end, here as the chord of the tread's angle), width >= 750, a landing within every 4000 of height. "
+               "not_evaluated = not measured here (handrails, clear width between finishes, landings of taller stairs): "
+               "never a pass. Other uses of building have other sizes."}};
+}
+
 json roofJson(const doc::RoofInfo& r) {
   json outline = json::array();
   for (const gp_Pnt& p : r.spec.outline) outline.push_back({p.X(), p.Y()});
@@ -2202,6 +2248,98 @@ const std::vector<CommandDef>& commands() {
          result["id"] = text(a, "id");
          return result;
        }},
+      {"create_stair",
+       "A stair along 'path': its walking line in plan ([x, y] or \"X1/Y1\" points), the middle of its width, from "
+       "the foot of the first riser to the edge of the upper floor. Two points: a straight stair; more: it turns "
+       "(right angles only; a U-turn is two turns, the part between them at least 'width' long, exactly 'width' for "
+       "a turn about one point). 'base' (z of the lower floor, default 0) and 'rise' (floor to floor) or 'top' (z). "
+       "'width' (default 800). 'turns': how each turn's corner square is made, one value for all or a list in "
+       "order: 1 or \"landing\" = a flat landing (two in a row with nothing between = one half landing), 2 = two "
+       "triangular winders (45 degrees), 3 = three (30 degrees, default), up to 6. 'risers': their number, or 0 "
+       "(default) = as few as keep each within 'riser_limit' (default 200), worked out again when the rise changes. "
+       "Straight treads are shared out over the flights so that the goings are as even as the line allows. 'style': "
+       "block (one stepped solid, default) or boards (tread boards only); 'thickness' (default 30). 'open_floor': "
+       "true also opens the slabs over it (open_floor_for_stair). Attribute kind=stair; sizes stay changeable "
+       "(change_stair); foot and top at levels' heights follow those levels. Returns riser, goings and 'checks' "
+       "against the sizes for a house's stair (see checks_basis; not_evaluated is never a pass). No handrails, "
+       "stringers or nosings are made.",
+       SCHEMA({"type": "object", "properties": {
+         "path": {"type": "array"}, "base": {"type": "number"}, "rise": {"type": "number"}, "top": {"type": "number"},
+         "width": {"type": "number"}, "turns": {}, "risers": {"type": "integer"}, "riser_limit": {"type": "number"},
+         "style": {"enum": ["block", "boards"]}, "thickness": {"type": "number"}, "open_floor": {"type": "boolean"}},
+         "required": ["path"]}),
+       [](doc::Modeler& m, const json& a) {
+         const GridLookup grid(m.document());
+         geom::StairSpec spec;
+         for (const json& p : arg(a, "path")) spec.path.push_back(grid.point(p, 0.0));
+         stairArgs(a, spec);
+         const bool open = a.contains("open_floor") && a.at("open_floor").is_boolean() && a.at("open_floor").get<bool>();
+         if (open) m.history().beginGroup("Stair");
+         const auto made = m.createStair(spec);
+         if (open && made) {
+           if (const auto opened = m.openFloorForStair(*made); !opened) {
+             m.history().abortGroup();
+             throw ApiError(opened.error() + " (the stair was not made: call without open_floor to make it alone)");
+           }
+         }
+         if (open) made ? m.history().endGroup() : m.history().abortGroup();
+         const std::string id = must(made);
+         json result = stairJson(must(m.stairInfo(id)));
+         result["id"] = id;
+         return result;
+       }},
+      {"stair_info",
+       "A stair made by create_stair as it stands: path, base, rise, width, risers (as built), risers_automatic, "
+       "riser, treads, going_min / going_max (straight treads), winder_going (300 from the narrow end), walk_length, "
+       "flights, landings, winders, turns, style, thickness, base_level, top_level, opened_slabs and checks. Refused "
+       "for a stair reshaped by hand or tilted.",
+       SCHEMA({"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}),
+       [](doc::Modeler& m, const json& a) {
+         json result = stairJson(must(m.stairInfo(text(a, "id"))));
+         result["id"] = text(a, "id");
+         return result;
+       }},
+      {"change_stair",
+       "Change sizes of a stair made by create_stair (any of path, base, rise or top, width, turns, risers, "
+       "riser_limit, style, thickness); the rest stays. The same object; floors opened for it are opened again. "
+       "One undo step.",
+       SCHEMA({"type": "object", "properties": {
+         "id": {"type": "string"}, "path": {"type": "array"}, "base": {"type": "number"}, "rise": {"type": "number"},
+         "top": {"type": "number"}, "width": {"type": "number"}, "turns": {}, "risers": {"type": "integer"},
+         "riser_limit": {"type": "number"}, "style": {"enum": ["block", "boards"]}, "thickness": {"type": "number"}},
+         "required": ["id"]}),
+       [](doc::Modeler& m, const json& a) {
+         const GridLookup grid(m.document());
+         geom::StairSpec spec = must(m.stairInfo(text(a, "id"))).spec;
+         if (a.contains("path")) {
+           spec.path.clear();
+           for (const json& p : a.at("path")) spec.path.push_back(grid.point(p, 0.0));
+         }
+         stairArgs(a, spec);
+         must(m.changeStair(text(a, "id"), spec));
+         json result = stairJson(must(m.stairInfo(text(a, "id"))));
+         result["id"] = text(a, "id");
+         return result;
+       }},
+      {"open_floor_for_stair",
+       "Opens the floors over a stair (slabs made by create_slab): the plan of every tread with less than "
+       "'headroom' (default 2000) up to the slab's underside. 'slabs': ids, or omit for every slab whose thickness "
+       "holds the stair's top. The slab stays a slab; the opening follows the stair and the slab, and closes when "
+       "the stair is deleted. Refused when no such slab lies over it. One undo step.",
+       SCHEMA({"type": "object", "properties": {"stair": {"type": "string"}, "slabs": {"type": "array", "items": {"type": "string"}},
+                                                "headroom": {"type": "number"}}, "required": ["stair"]}),
+       [](doc::Modeler& m, const json& a) {
+         const std::vector<doc::ObjectId> slabs = a.contains("slabs") ? ids(a, "slabs") : std::vector<doc::ObjectId>{};
+         return json{{"stair", text(a, "stair")},
+                     {"slabs", must(m.openFloorForStair(text(a, "stair"), slabs, numberOr(a, "headroom", 2000.0)))}};
+       }},
+      {"close_floor_for_stair",
+       "Closes the floors opened for 'stair' (open_floor_for_stair). One undo step.",
+       SCHEMA({"type": "object", "properties": {"stair": {"type": "string"}}, "required": ["stair"]}),
+       [](doc::Modeler& m, const json& a) {
+         must(m.closeFloorForStair(text(a, "stair")));
+         return json{{"stair", text(a, "stair")}};
+       }},
       {"fit_walls_to_roof",
        "Walls made by create_wall stand up to the underside of 'roof' (create_roof): made tall enough, then cut "
        "to it (gable-end walls get their triangle). 'walls': ids, or omit for every wall under the roof (its line "
@@ -3136,13 +3274,13 @@ const std::vector<CommandDef>& commands() {
       {"export_ifc",
        "Export the building as IFC4 (.ifc) for other BIM software: storeys from the levels; walls (create_wall) "
        "with their openings as voids, and a window / door for each opening with a fitting (a fitting with its "
-       "sill on the floor is a door); slabs; roofs; columns, beams and members; rooms as spaces with their areas; "
+       "sill on the floor is a door); slabs; roofs; stairs; columns, beams and members; rooms as spaces with their areas; "
        "grids; other solids as proxies. Lengths in mm. Element ids stay the same when exported again. Returns "
        "counts and 'notes' (what was assumed or left out). Lines, faces and notes are not exported.",
        SCHEMA({"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}),
        [](doc::Modeler& m, const json& a) {
          const doc::IfcSummary s = must(doc::exportIfc(m, text(a, "path")));
-         return json{{"storeys", s.storeys}, {"walls", s.walls}, {"slabs", s.slabs}, {"roofs", s.roofs}, {"columns", s.columns},
+         return json{{"storeys", s.storeys}, {"walls", s.walls}, {"slabs", s.slabs}, {"roofs", s.roofs}, {"stairs", s.stairs}, {"columns", s.columns},
                      {"beams", s.beams}, {"members", s.members}, {"openings", s.openings}, {"windows", s.windows},
                      {"doors", s.doors}, {"spaces", s.spaces}, {"grids", s.grids}, {"proxies", s.proxies},
                      {"skipped", s.skipped}, {"notes", s.notes}};

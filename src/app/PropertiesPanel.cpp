@@ -340,6 +340,145 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
     }
   }
 
+  // ===== A stair (docs/90 G-09, docs/103): storeys, sizes, what it measures, the floor over it.
+  if (const auto kind = o->attributes.find("kind"); kind != o->attributes.end() && kind->second == "stair") {
+    auto* title = new QLabel(tr("<b>階段</b>"));
+    title->setObjectName(QStringLiteral("partTitle"));
+    form_->addRow(title);
+    const auto stair = modeler.stairInfo(id);
+    if (!stair) {
+      auto* why = new QLabel(userMessage(QString::fromStdString(stair.error())));
+      why->setObjectName(QStringLiteral("stairProblem"));
+      why->setWordWrap(true);
+      form_->addRow(why);
+    } else {
+      auto levelName = [&](const std::string& levelId) {
+        for (const doc::FloorLevel& l : modeler.levels())
+          if (l.id == levelId) return QString::fromStdString(l.name);
+        return tr("レベルなし");
+      };
+      auto* storey = new QLabel(tr("%1 から %2 へ").arg(levelName(stair->baseLevel), levelName(stair->topLevel)));
+      storey->setObjectName(QStringLiteral("partStorey"));
+      storey->setToolTip(tr("レベルの高さで作った階段は、そのレベルの高さを変えると付いてきます（段数が自動なら、段数も変わります）"));
+      form_->addRow(tr("階"), storey);
+      auto* reference = new QLabel(tr("描いた線が幅の真ん中。上がりきった所が、上の階の床の端"));
+      reference->setObjectName(QStringLiteral("partReference"));
+      reference->setWordWrap(true);
+      form_->addRow(tr("基準"), reference);
+      auto size = [&](const QString& label, const char* key, double value, double least, const QString& tip) {
+        auto* spin = lengthSpin(value);
+        spin->setRange(least, 1e9);
+        spin->setValue(value);
+        spin->setObjectName(QStringLiteral("stairSize_") + QLatin1String(key));
+        spin->setToolTip(tip);
+        spin->setEnabled(!o->locked);
+        const QString k = QLatin1String(key);
+        const double initial = spin->value();
+        connect(spin, &QDoubleSpinBox::editingFinished, this, [this, id, spin, k, initial] {
+          if (std::abs(spin->value() - initial) > 1e-9) emit stairEdited(id, k, spin->value(), QString());
+        });
+        form_->addRow(label, spin);
+      };
+      size(tr("幅"), "width", stair->spec.width, 300, tr("階段の幅（描いた線の両側に半分ずつ）"));
+      size(tr("上がる高さ"), "rise", stair->spec.rise, 100, tr("下の階の床から、上の階の床まで"));
+      auto* risers = new QSpinBox;
+      risers->setObjectName(QStringLiteral("stairRisers"));
+      risers->setRange(0, 200);
+      risers->setSpecialValueText(tr("自動（今は %1 段）").arg(stair->risers));
+      risers->setValue(stair->spec.risers);
+      risers->setKeyboardTracking(false);
+      risers->setToolTip(tr("蹴上の数。0（自動）は、蹴上が上限以下になるいちばん少ない段数。階高を変えると数え直します"));
+      risers->setEnabled(!o->locked);
+      const int risersBefore = stair->spec.risers;
+      connect(risers, &QSpinBox::editingFinished, this, [this, id, risers, risersBefore] {
+        if (risers->value() != risersBefore) emit stairEdited(id, QStringLiteral("risers"), risers->value(), QString());
+      });
+      form_->addRow(tr("段数"), risers);
+      size(tr("蹴上の上限"), "riser_limit", stair->spec.riserLimit, 50, tr("段数が自動の時に、蹴上がこれ以下になるようにします"));
+      auto* turn = new QComboBox;
+      turn->setObjectName(QStringLiteral("stairTurn"));
+      turn->addItem(tr("踊り場"), 1);
+      for (int t = 2; t <= 6; ++t) turn->addItem(tr("%1 段回り（%2°）").arg(t).arg(90.0 / t, 0, 'g', 3), t);
+      turn->setCurrentIndex(std::max(0, turn->findData(stair->spec.turns.empty() ? 3 : stair->spec.turns.front())));
+      turn->setToolTip(tr("曲がり角の四角（幅 × 幅）の作り方。回り段は、内側の角から三角の段に分けます。全部の曲がり角に同じものを入れます"));
+      turn->setEnabled(!o->locked && stair->spec.path.size() > 2);
+      connect(turn, &QComboBox::activated, this, [this, id, turn] {
+        emit stairEdited(id, QStringLiteral("turn"), turn->currentData().toInt(), QString());
+      });
+      form_->addRow(tr("曲がり角"), turn);
+      auto* style = new QComboBox;
+      style->setObjectName(QStringLiteral("stairStyle"));
+      style->addItem(tr("段々の塊"), QStringLiteral("block"));
+      style->addItem(tr("踏板だけ"), QStringLiteral("boards"));
+      style->setCurrentIndex(std::max(0, style->findData(QString::fromStdString(stair->spec.style))));
+      style->setEnabled(!o->locked);
+      connect(style, &QComboBox::activated, this, [this, id, style] {
+        emit stairEdited(id, QStringLiteral("style"), 0.0, style->currentData().toString());
+      });
+      form_->addRow(tr("形"), style);
+      size(tr("踏板の厚さ"), "thickness", stair->spec.thickness, 5, tr("踏板の厚さ。段々の塊では、段の裏の厚さ（蹴上より小さく）"));
+      auto row = [&](const QString& label, const QString& text, const char* name) {
+        auto* value = new QLabel(text);
+        value->setObjectName(QLatin1String(name));
+        value->setWordWrap(true);
+        form_->addRow(label, value);
+      };
+      row(tr("蹴上"), tr("%1 mm × %2 段").arg(stair->riser, 0, 'f', 1).arg(stair->risers), "stairRiser");
+      if (stair->goingMin > 0)
+        row(tr("踏面"), std::abs(stair->goingMax - stair->goingMin) < 0.05
+                            ? tr("%1 mm").arg(stair->goingMin, 0, 'f', 1)
+                            : tr("%1〜%2 mm（直の部分ごとに割り付け）").arg(stair->goingMin, 0, 'f', 1).arg(stair->goingMax, 0, 'f', 1),
+            "stairGoing");
+      if (stair->winders > 0)
+        row(tr("回り段の踏面"), stair->winderGoing > 0 ? tr("%1 mm（狭い端から 300 の位置）").arg(stair->winderGoing, 0, 'f', 1)
+                                                       : tr("未評価（幅が 300 以下で測れません）"),
+            "stairWinderGoing");
+      {
+        // Against the sizes for a house's stair: what is not measured is said, never passed.
+        QStringList lines;
+        for (const geom::StairCheck& c : stair->checks) {
+          const QString item = c.item == "riser" ? tr("蹴上") : c.item == "going" ? tr("踏面") : c.item == "winder_going" ? tr("回り段の踏面")
+                               : c.item == "width" ? tr("幅") : c.item == "landing" ? tr("踊場（高さ 4 m ごと）") : tr("手すり");
+          if (c.state == "not_evaluated") {
+            lines << tr("%1：未評価").arg(item);
+            continue;
+          }
+          const bool atMost = c.item == "riser" || c.item == "landing";
+          lines << tr("%1 %2（%3 %4）：%5").arg(item).arg(c.value, 0, 'f', 1).arg(c.limit, 0, 'f', 0)
+                       .arg(atMost ? tr("以下") : tr("以上"), c.state == "ok" ? tr("範囲内") : tr("範囲外"));
+        }
+        auto* checks = new QLabel(lines.join(QStringLiteral("\n")));
+        checks->setObjectName(QStringLiteral("stairChecks"));
+        checks->setWordWrap(true);
+        checks->setToolTip(tr("住宅の階段（共同住宅の共用階段を除く）の寸法との照合です（建築基準法施行令 第 23〜25 条。"
+                              "根拠と確認日は docs/103）。幅は立体の幅で、手すり・仕上げを引いた有効幅ではありません。"
+                              "未評価は、ここでは測っていない項目です。合否の判定ではありません"));
+        form_->addRow(tr("寸法の照合（住宅）"), checks);
+      }
+      {
+        const std::size_t opened = stair->openedSlabs.size();
+        auto* line = new QWidget;
+        auto* box = new QHBoxLayout(line);
+        box->setContentsMargins(0, 0, 0, 0);
+        auto* state = new QLabel(opened > 0 ? tr("%1 枚に開口あり").arg(opened) : tr("開口なし"));
+        state->setObjectName(QStringLiteral("stairFloorState"));
+        auto* open = new QPushButton(tr("あける"));
+        open->setObjectName(QStringLiteral("stairOpenFloor"));
+        open->setToolTip(tr("上がりきった高さにある床（スラブツールで作った床）に、頭の上が 2000 より低くなる段の分だけ開口をあけます。"
+                            "床は床のまま（外周・厚さを直せます）。階段を変える・動かすと開口も付いてきます"));
+        auto* close = new QPushButton(tr("閉じる"));
+        close->setObjectName(QStringLiteral("stairCloseFloor"));
+        close->setEnabled(opened > 0);
+        connect(open, &QPushButton::clicked, this, [this, id] { emit stairFloorRequested(id, true); });
+        connect(close, &QPushButton::clicked, this, [this, id] { emit stairFloorRequested(id, false); });
+        box->addWidget(state, 1);
+        box->addWidget(open);
+        box->addWidget(close);
+        form_->addRow(tr("上の床"), line);
+      }
+    }
+  }
+
   // ===== A wall standing up to a roof (docs/97 N-05): said, and released here.
   if (const auto roofOf = o->attributes.find("top_roof"); roofOf != o->attributes.end()) {
     const doc::Object* roofObject = document.find(roofOf->second);

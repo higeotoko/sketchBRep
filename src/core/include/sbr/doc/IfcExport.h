@@ -13,6 +13,7 @@ namespace sbr::doc {
 class Modeler;
 
 struct IfcSummary {
+  int stairs = 0;
   int storeys = 0, walls = 0, slabs = 0, roofs = 0, columns = 0, beams = 0, members = 0;
   int openings = 0, windows = 0, doors = 0, spaces = 0, grids = 0, proxies = 0;
   int skipped = 0;                 // visible objects without volume (lines, faces, notes, guides)

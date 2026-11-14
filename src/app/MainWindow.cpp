@@ -168,6 +168,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   textTool_ = std::make_unique<TextTool>(*this);
   roomTool_ = std::make_unique<RoomTool>(*this);
   roofTool_ = std::make_unique<RoofTool>(*this);
+  stairTool_ = std::make_unique<StairTool>(*this);
   sectionTool_ = std::make_unique<SectionTool>(*this);
   sectionTool_->setOnPlaced([this] {
     QTimer::singleShot(0, this, [this] { if (active_ == sectionTool_.get()) activateTool(ToolId::Select); });
@@ -735,6 +736,47 @@ void MainWindow::buildUi() {
               }
             });
           });
+  connect(panel_, &PropertiesPanel::stairEdited, this,
+          [this](const doc::ObjectId& id, const QString& key, double value, const QString& text) {
+            QTimer::singleShot(0, this, [this, id, key, value, text] {
+              const auto info = modeler_.stairInfo(id);
+              if (!info) {
+                reportError(tr("階段を変更できません: %1").arg(userMessage(QString::fromStdString(info.error()))));
+                refreshPanels();
+                return;
+              }
+              geom::StairSpec spec = info->spec;
+              if (key == QStringLiteral("width")) spec.width = value;
+              else if (key == QStringLiteral("risers")) spec.risers = static_cast<int>(std::lround(value));
+              else if (key == QStringLiteral("riser_limit")) spec.riserLimit = value;
+              else if (key == QStringLiteral("turn")) spec.turns = {static_cast<int>(std::lround(value))};
+              else if (key == QStringLiteral("style")) spec.style = text.toStdString();
+              else if (key == QStringLiteral("thickness")) spec.thickness = value;
+              else if (key == QStringLiteral("rise")) spec.rise = value;
+              else return;
+              const Status s = modeler_.changeStair(id, spec);
+              if (!s) {
+                reportError(tr("階段を変更できません: %1").arg(userMessage(QString::fromStdString(s.message()))));
+              } else if (const auto now = modeler_.stairInfo(id)) {
+                setStatus(tr("階段を変更しました（%1）").arg(StairTool::summary(*now)));
+              }
+              refreshPanels();
+            });
+          });
+  connect(panel_, &PropertiesPanel::stairFloorRequested, this, [this](const doc::ObjectId& id, bool open) {
+    QTimer::singleShot(0, this, [this, id, open] {
+      if (open) {
+        const auto slabs = modeler_.openFloorForStair(id);
+        if (!slabs) reportError(tr("床に開口をあけられません: %1").arg(userMessage(QString::fromStdString(slabs.error()))));
+        else setStatus(tr("上の床 %1 枚に、階段の開口をあけました（Ctrl+Z で戻せます）").arg(slabs->size()));
+      } else {
+        const Status s = modeler_.closeFloorForStair(id);
+        if (!s) reportError(tr("床の開口を閉じられません: %1").arg(userMessage(QString::fromStdString(s.message()))));
+        else setStatus(tr("階段のためにあけた床の開口を閉じました"));
+      }
+      refreshPanels();
+    });
+  });
   connect(panel_, &PropertiesPanel::levelAttachmentEdited, this,
           [this](const doc::ObjectId& id, bool top, const QString& level) {
             QTimer::singleShot(0, this, [this, id, top, level] {
@@ -1553,6 +1595,26 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
     bar->addWidget(button);
   }
   {
+    // Stair (docs/90 G-09): only here, not in the drawing palette.
+    auto* stair = new QAction(tr("階段"), this);
+    stair->setObjectName(QStringLiteral("architectureStairAction"));
+    stair->setCheckable(true);
+    connect(stair, &QAction::triggered, this, [this] { activateTool(ToolId::Stair); });
+    toolGroup_->addAction(stair);
+    toolActions_[static_cast<int>(ToolId::Stair)] = stair;
+    auto* button = new QToolButton(bar);
+    button->setObjectName(QStringLiteral("architectureStair"));
+    button->setDefaultAction(stair);
+    button->setPopupMode(QToolButton::MenuButtonPopup);
+    button->setToolTip(tr("階段: 下の階の平面で、歩く線（幅の真ん中）を上がり始めから順にクリックして Enter。"
+                          "曲がり角は踊り場か回り段。右の矢印から幅・段数・回り方を設定"));
+    auto* options = new QMenu(button);
+    options->addAction(tr("幅・段数・回り方の設定..."), this, &MainWindow::showStairSettingsDialog)
+        ->setObjectName(QStringLiteral("stairSettingsAction"));
+    button->setMenu(options);
+    bar->addWidget(button);
+  }
+  {
     // Room (docs/90 G-07): only here, not in the drawing palette.
     auto* room = new QAction(tr("室"), this);
     room->setObjectName(QStringLiteral("architectureRoomAction"));
@@ -2100,6 +2162,7 @@ void MainWindow::activateTool(ToolId id) {
     case ToolId::Opening: active_ = openingTool_.get(); break;
     case ToolId::Room: active_ = roomTool_.get(); break;
     case ToolId::Roof: active_ = roofTool_.get(); break;
+    case ToolId::Stair: active_ = stairTool_.get(); break;
     case ToolId::Count: return;
   }
   // Tools without a toolbar button (paste) leave the toolbar unchecked.
@@ -4079,6 +4142,78 @@ void MainWindow::showRoofSettingsDialog() {
   setStatus(roofTool_->settingsText());
 }
 
+void MainWindow::showStairSettingsDialog() {
+  QDialog dialog(this);
+  dialog.setObjectName(QStringLiteral("stairSettingsDialog"));
+  dialog.setWindowTitle(tr("階段の設定"));
+  auto* form = new QFormLayout(&dialog);
+  const StairTool::Settings current = stairTool_->settings();
+  auto field = [&](double v, const char* name) {
+    auto* edit = new QLineEdit(QString::fromStdString(units::formatLength(v, 0)), &dialog);
+    edit->setObjectName(QLatin1String(name));
+    return edit;
+  };
+  auto* width = field(current.width, "stairToolWidth");
+  auto* turn = new QComboBox(&dialog);
+  turn->setObjectName(QStringLiteral("stairToolTurn"));
+  for (int t = 1; t <= 6; ++t) turn->addItem(StairTool::turnText(t), t);
+  turn->setCurrentIndex(std::max(0, turn->findData(current.turn)));
+  auto* risers = new QSpinBox(&dialog);
+  risers->setObjectName(QStringLiteral("stairToolRisers"));
+  risers->setRange(0, 200);
+  risers->setSpecialValueText(tr("自動"));
+  risers->setValue(current.risers);
+  auto* limit = field(current.riserLimit, "stairToolRiserLimit");
+  auto* rise = field(current.rise, "stairToolRise");
+  auto* style = new QComboBox(&dialog);
+  style->setObjectName(QStringLiteral("stairToolStyle"));
+  style->addItem(tr("段々の塊（1 つの立体）"), QStringLiteral("block"));
+  style->addItem(tr("踏板だけ"), QStringLiteral("boards"));
+  style->setCurrentIndex(std::max(0, style->findData(QString::fromStdString(current.style))));
+  auto* thickness = field(current.thickness, "stairToolThickness");
+  auto* open = new QCheckBox(tr("上の床（スラブ）に開口をあける"), &dialog);
+  open->setObjectName(QStringLiteral("stairToolOpenFloor"));
+  open->setChecked(current.openFloor);
+  form->addRow(tr("幅"), width);
+  form->addRow(tr("曲がり角"), turn);
+  form->addRow(tr("段数（蹴上の数）"), risers);
+  form->addRow(tr("自動の時の蹴上の上限"), limit);
+  form->addRow(tr("上がる高さ（0 = 上の階まで）"), rise);
+  form->addRow(tr("形"), style);
+  form->addRow(tr("踏板の厚さ"), thickness);
+  form->addRow(open);
+  auto* note = new QLabel(tr("描いた線が、階段の幅の真ん中になります。曲がり角の四角（幅 × 幅）を、踊り場にするか、"
+                             "内側の角から三角の段（回り段）に分けます。折り返しは、角を 2 つ続けて描きます"
+                             "（間を幅と同じ長さにすると、1 点を中心に回る形になります）。"),
+                          &dialog);
+  note->setWordWrap(true);
+  form->addRow(note);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  form->addRow(buttons);
+  if (dialog.exec() != QDialog::Accepted) return;
+  const auto w = units::parseLength(width->text().toStdString());
+  const auto l = units::parseLength(limit->text().toStdString());
+  const auto r = units::parseLength(rise->text().toStdString());
+  const auto t = units::parseLength(thickness->text().toStdString());
+  if (!w || !l || !r || !t || *w < 300 || *l < 50 || *r < 0 || *t < 5) {
+    reportError(tr("幅は 300 以上、蹴上の上限は 50 以上、上がる高さは 0 以上、厚さは 5 以上の長さで入力してください"));
+    return;
+  }
+  StairTool::Settings next;
+  next.width = *w;
+  next.turn = turn->currentData().toInt();
+  next.risers = risers->value();
+  next.riserLimit = *l;
+  next.rise = *r;
+  next.style = style->currentData().toString().toStdString();
+  next.thickness = *t;
+  next.openFloor = open->isChecked();
+  stairTool_->setSettings(next);
+  setStatus(stairTool_->settingsText());
+}
+
 void MainWindow::showRoomsDialog() {
   const std::vector<doc::RoomInfo> rooms = modeler_.rooms();
   QDialog dialog(this);
@@ -4226,7 +4361,7 @@ void MainWindow::commitMeasurement() {
   userTyping_ = false;
   // Enter without typing finishes a wall run / slab outline (the box only
   // shows the current length then).
-  if (!typed && (active_ == wallTool_.get() || active_ == slabTool_.get() || active_ == roofTool_.get() ||
+  if (!typed && (active_ == wallTool_.get() || active_ == slabTool_.get() || active_ == roofTool_.get() || active_ == stairTool_.get() ||
                  active_ == memberTool_.get() ||
                  dynamic_cast<SurfaceTool*>(active_))) {
     viewport_->toolCall([&] { active_->applyMeasurement(QString()); });
@@ -5015,7 +5150,7 @@ void MainWindow::exportIfcFile(const QString& path) {
   const QString counts = tr("階 %1・壁 %2・開口 %3（窓 %4・扉 %5）・床 %6・屋根 %7・柱 %8・梁 %9")
                              .arg(s.storeys).arg(s.walls).arg(s.openings).arg(s.windows).arg(s.doors)
                              .arg(s.slabs).arg(s.roofs).arg(s.columns).arg(s.beams) +
-                         tr("・その他の部材 %1・室 %2・通り芯 %3・その他の立体 %4").arg(s.members).arg(s.spaces).arg(s.grids).arg(s.proxies);
+                         tr("・階段 %5・その他の部材 %1・室 %2・通り芯 %3・その他の立体 %4").arg(s.members).arg(s.spaces).arg(s.grids).arg(s.proxies).arg(s.stairs);
   lastIfcSummary_ = counts;
   lastIfcNotes_.clear();
   statusBar()->showMessage(tr("IFC を書き出しました: %1（%2）").arg(path, counts), 8000);

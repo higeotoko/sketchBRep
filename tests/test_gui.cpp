@@ -351,6 +351,7 @@ class GuiPhase1 : public QObject {
   void roomToolPlacesARoomWhoseAreaFollowsTheWalls();
   void roofToolDrawsARoofWhoseSizesAreChangedInThePanel();
   void ifcExportWritesTheBuildingAndSaysWhatItLeftOut();
+  void stairToolDrawsAStairWithWindersAndOpensTheFloor();
   void wallAndSlabFollowTheirLevelsFromThePanel();
   void wallQuantityInputsComparisonSaveAndStaleModel();
   void panelDragPreviewKeepsTheModelViewStill();
@@ -11453,6 +11454,109 @@ void GuiPhase1::roofToolDrawsARoofWhoseSizesAreChangedInThePanel() {
 
 // docs/90 G-13: File > Export writes an IFC file; the status says what went in, and what was
 // assumed or left out is kept for the message shown after the dialog.
+// docs/90 G-09, docs/103: the stair tool draws a stair along its walking line; its turn is
+// winders or a landing, its sizes are changed in the properties, and the floor over it opens.
+void GuiPhase1::stairToolDrawsAStairWithWindersAndOpensTheFloor() {
+  Fixture f;QVERIFY(f.setUp(2000,0));auto& m=f.window.modeler();
+  QVERIFY(m.setLevels({{"","1FL",0},{"","2FL",2800}}));
+  auto* action=f.window.findChild<QAction*>(QStringLiteral("architectureStairAction"));QVERIFY(action);
+  QVERIFY(f.window.findChild<QAction*>(QStringLiteral("stairSettingsAction")));
+  const auto steps=m.history().undoCount();
+  action->trigger();
+  // East 2000, then north 1500: an L.
+  click(f.vp,f.vp->toWidget(gp_Pnt(0,-3000,0)));
+  move(f.vp,f.vp->toWidget(gp_Pnt(2000,-3000,0)));
+  type(f.vp,QStringLiteral("2000"));
+  move(f.vp,f.vp->toWidget(gp_Pnt(2000,-1500,0)));
+  type(f.vp,QStringLiteral("1500"));
+  QCOMPARE(m.document().objects().size(),std::size_t(0));
+  QTest::keyClick(f.vp,Qt::Key_Return);
+  QTest::qWait(30);
+  QVERIFY2(f.window.lastError().isEmpty(),qPrintable(f.window.lastError()));
+  QCOMPARE(m.document().objects().size(),std::size_t(1));
+  QCOMPARE(m.history().undoCount(),steps+1);
+  const doc::ObjectId stair=m.document().objects().front().id;
+  QCOMPARE(QString::fromStdString(m.document().find(stair)->attributes.at("kind")),QStringLiteral("stair"));
+  auto info=m.stairInfo(stair);
+  QVERIFY2(info,info?"":info.error().c_str());
+  // Up to 2FL: 14 risers of 200; three winders at the turn; 6 + 4 straight treads.
+  QCOMPARE(info->risers,14);
+  QVERIFY(std::abs(info->spec.rise-2800)<1e-6);
+  QCOMPARE(info->winders,3);
+  QVERIFY2(std::abs(info->goingMin-1600.0/6)<1e-6,qPrintable(QString::number(info->goingMin)));
+  QVERIFY(!info->baseLevel.empty()&&!info->topLevel.empty());
+  QVERIFY2(f.window.statusText().contains(QStringLiteral("階段を作成しました"))&&
+           f.window.statusText().contains(QStringLiteral("蹴上 200.0 × 14 段"))&&
+           f.window.statusText().contains(QStringLiteral("床（スラブ）がまだ無い")),qPrintable(f.window.statusText()));
+  // Selected: its own words, what it measures, and what is not judged.
+  f.window.activateTool(MainWindow::ToolId::Select);
+  auto select=[&]{f.window.setSelection({stair});QApplication::processEvents();};
+  select();
+  auto* title=f.window.findChild<QLabel*>(QStringLiteral("partTitle"));QVERIFY(title);
+  QVERIFY(title->text().contains(QStringLiteral("階段")));
+  auto* storey=f.window.findChild<QLabel*>(QStringLiteral("partStorey"));QVERIFY(storey);
+  QVERIFY2(storey->text().contains(QStringLiteral("1FL"))&&storey->text().contains(QStringLiteral("2FL")),qPrintable(storey->text()));
+  auto* winder=f.window.findChild<QLabel*>(QStringLiteral("stairWinderGoing"));QVERIFY(winder);
+  QVERIFY2(winder->text().contains(QStringLiteral("155.3")),qPrintable(winder->text()));
+  auto* checks=f.window.findChild<QLabel*>(QStringLiteral("stairChecks"));QVERIFY(checks);
+  QVERIFY2(checks->text().contains(QStringLiteral("蹴上 200.0（230 以下）：範囲内"))&&
+           checks->text().contains(QStringLiteral("手すり：未評価")),qPrintable(checks->text()));
+  // The turn as a landing: the same object, one step.
+  auto* turn=f.window.findChild<QComboBox*>(QStringLiteral("stairTurn"));QVERIFY(turn);
+  QCOMPARE(turn->currentData().toInt(),3);
+  turn->setCurrentIndex(turn->findData(1));
+  emit turn->activated(turn->currentIndex());
+  QTRY_VERIFY(m.stairInfo(stair)->landings==1);
+  QCOMPARE(m.stairInfo(stair)->winders,0);
+  QCOMPARE(m.history().undoCount(),steps+2);
+  QVERIFY2(f.window.statusText().contains(QStringLiteral("階段を変更しました")),qPrintable(f.window.statusText()));
+  QVERIFY(m.undo());
+  QCOMPARE(m.stairInfo(stair)->winders,3);
+  // 16 risers: lower ones.
+  select();
+  auto* risers=f.window.findChild<QSpinBox*>(QStringLiteral("stairRisers"));QVERIFY(risers);
+  QCOMPARE(risers->value(),0);  // automatic
+  risers->setValue(16);
+  emit risers->editingFinished();
+  QTRY_VERIFY(m.stairInfo(stair)->risers==16);
+  QVERIFY(std::abs(m.stairInfo(stair)->riser-175)<1e-6);
+  // Wider.
+  select();
+  auto* width=f.window.findChild<QDoubleSpinBox*>(QStringLiteral("stairSize_width"));QVERIFY(width);
+  width->setValue(900);
+  emit width->editingFinished();
+  QTRY_VERIFY(std::abs(m.stairInfo(stair)->spec.width-900)<1e-6);
+  QVERIFY(m.undo());QVERIFY(m.undo());
+  // A floor over it: opened from the stair's properties, and closed again.
+  const auto slab=m.createSlab({gp_Pnt(-1000,-4000,0),gp_Pnt(4000,-4000,0),gp_Pnt(4000,0,0),gp_Pnt(-1000,0,0)},2800,200);
+  QVERIFY(slab);
+  const double full=5000.0*4000*200;
+  auto slabVolume=[&]{return geom::volume(m.document().find(*slab)->shape);};
+  QVERIFY(std::abs(slabVolume()-full)<1.0);
+  select();
+  auto* state=f.window.findChild<QLabel*>(QStringLiteral("stairFloorState"));QVERIFY(state);
+  QVERIFY(state->text().contains(QStringLiteral("開口なし")));
+  auto* open=f.window.findChild<QPushButton*>(QStringLiteral("stairOpenFloor"));QVERIFY(open);
+  auto* close=f.window.findChild<QPushButton*>(QStringLiteral("stairCloseFloor"));QVERIFY(close);
+  QVERIFY(!close->isEnabled());
+  open->click();
+  QTRY_VERIFY(m.stairInfo(stair)->openedSlabs.size()==1);
+  QVERIFY(slabVolume()<full-1e6);
+  QVERIFY(m.memberInfo(*slab));  // still a slab
+  QVERIFY2(f.window.lastError().isEmpty(),qPrintable(f.window.lastError()));
+  select();
+  state=f.window.findChild<QLabel*>(QStringLiteral("stairFloorState"));QVERIFY(state);
+  QVERIFY2(state->text().contains(QStringLiteral("1 枚に開口あり")),qPrintable(state->text()));
+  close=f.window.findChild<QPushButton*>(QStringLiteral("stairCloseFloor"));QVERIFY(close);
+  QVERIFY(close->isEnabled());
+  close->click();
+  QTRY_VERIFY(m.stairInfo(stair)->openedSlabs.empty());
+  QVERIFY(std::abs(slabVolume()-full)<1.0);
+  // The words for the turns.
+  QVERIFY(StairTool::turnText(1).contains(QStringLiteral("踊り場")));
+  QVERIFY(StairTool::turnText(3).contains(QStringLiteral("3 段回り")));
+}
+
 void GuiPhase1::ifcExportWritesTheBuildingAndSaysWhatItLeftOut() {
   Fixture f;QVERIFY(f.setUp(3000,2000));auto& m=f.window.modeler();
   const auto walls=m.createWalls({gp_Pnt(0,0,0),gp_Pnt(6000,0,0),gp_Pnt(6000,4000,0),gp_Pnt(0,4000,0),gp_Pnt(0,0,0)},200,3000,0);

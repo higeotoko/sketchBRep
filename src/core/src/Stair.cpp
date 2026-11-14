@@ -1,0 +1,270 @@
+#include "sbr/geom/Stair.h"
+
+#include <algorithm>
+#include <cmath>
+
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRepCheck_Analyzer.hxx>
+#include <BRepPrimAPI_MakePrism.hxx>
+#include <BRep_Builder.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS_Compound.hxx>
+#include <gp_Vec.hxx>
+
+#include "sbr/geom/Operations.h"
+
+namespace sbr::geom {
+namespace {
+
+using R = Result<StairShape>;
+constexpr double kPi = 3.14159265358979323846;
+constexpr double kMeasureAt = 300.0;  // from a winder's narrow end
+
+struct V2 {
+  double x = 0, y = 0;
+  V2 operator+(const V2& o) const { return {x + o.x, y + o.y}; }
+  V2 operator-(const V2& o) const { return {x - o.x, y - o.y}; }
+  V2 operator*(double s) const { return {x * s, y * s}; }
+  double dot(const V2& o) const { return x * o.x + y * o.y; }
+  double length() const { return std::hypot(x, y); }
+};
+
+struct Tread {
+  std::vector<V2> outline;
+  std::string kind;
+  double going = 0.0;
+  int step = 0;  // 1 = the first tread
+};
+
+struct Layout {
+  int risers = 0;
+  double riser = 0.0;
+  std::vector<Tread> treads;
+  double walk = 0.0;
+  int flights = 0, landings = 0, winders = 0;
+};
+
+Result<Layout> layout(const StairSpec& spec) {
+  using L = Result<Layout>;
+  if (!(spec.width >= 300.0) || !std::isfinite(spec.width)) return L::failure("A stair is at least 300 wide");
+  if (!(spec.rise >= 100.0) || !std::isfinite(spec.rise)) return L::failure("A stair climbs at least 100");
+  if (!(spec.riserLimit >= 50.0)) return L::failure("The riser limit is at least 50");
+  if (spec.risers < 0 || spec.risers > 200) return L::failure("The number of risers is 0 (automatic) to 200");
+  if (spec.style != "block" && spec.style != "boards") return L::failure("Stair style: block or boards");
+  if (!(spec.thickness >= 5.0)) return L::failure("The tread thickness is at least 5");
+  // The line: no repeated points, no points on a straight part.
+  std::vector<V2> pts;
+  for (const gp_Pnt& p : spec.path) {
+    const V2 q{p.X(), p.Y()};
+    if (!std::isfinite(q.x) || !std::isfinite(q.y)) return L::failure("The stair's line has a point that is not a number");
+    if (!pts.empty() && (q - pts.back()).length() < 0.01) continue;
+    if (pts.size() >= 2) {
+      const V2 a = pts.back() - pts[pts.size() - 2], b = q - pts.back();
+      const double cross = a.x * b.y - a.y * b.x;
+      if (std::abs(cross) < 1e-6 * a.length() * b.length() && a.dot(b) > 0) pts.pop_back();
+    }
+    pts.push_back(q);
+  }
+  if (pts.size() < 2) return L::failure("A stair needs a line: where it starts and where it arrives");
+  const std::size_t segments = pts.size() - 1, corners = segments - 1;
+  std::vector<V2> dir(segments);
+  std::vector<double> len(segments);
+  Layout out;
+  for (std::size_t i = 0; i < segments; ++i) {
+    const V2 d = pts[i + 1] - pts[i];
+    len[i] = d.length();
+    dir[i] = d * (1.0 / len[i]);
+    out.walk += len[i];
+    if (i > 0 && std::abs(dir[i - 1].dot(dir[i])) > 1e-6)
+      return L::failure("A stair turns at right angles only (turn " + std::to_string(i) + " is not one)");
+  }
+  std::vector<int> turns(corners, 3);
+  for (std::size_t j = 0; j < corners; ++j) {
+    if (!spec.turns.empty()) turns[j] = spec.turns[std::min(j, spec.turns.size() - 1)];
+    if (turns[j] < 1 || turns[j] > 6) return L::failure("A turn is cut into 1 (a landing) to 6 treads");
+  }
+  const double w = spec.width, half = w / 2;
+  // Straight flights: what is left of each part of the line between the corner squares.
+  std::vector<double> flight(segments);
+  double flightTotal = 0.0;
+  for (std::size_t i = 0; i < segments; ++i) {
+    flight[i] = len[i] - (i > 0 ? half : 0.0) - (i < corners ? half : 0.0);
+    if (flight[i] < -0.01)
+      return L::failure("Part " + std::to_string(i + 1) + " of the stair's line is shorter than the turns at its ends need (" +
+                        std::to_string(static_cast<int>(std::lround((i > 0 ? half : 0.0) + (i < corners ? half : 0.0)))) + " for this width)");
+    if (flight[i] < 1.0) flight[i] = 0.0;
+    else ++out.flights;
+    flightTotal += flight[i];
+  }
+  // Two landings with nothing between them are one landing (a U-turn's half landing).
+  auto joined = [&](std::size_t j) { return j > 0 && turns[j] == 1 && turns[j - 1] == 1 && flight[j] == 0.0; };
+  int cornerTreads = 0;
+  for (std::size_t j = 0; j < corners; ++j) cornerTreads += joined(j) ? 0 : turns[j];
+  const int least = cornerTreads + out.flights + 1;
+  int risers = spec.risers;
+  if (risers == 0) risers = std::max(static_cast<int>(std::ceil(spec.rise / spec.riserLimit - 1e-9)), std::max(least, 2));
+  if (risers < least || risers < 2)
+    return L::failure("This line needs at least " + std::to_string(std::max(least, 2)) + " risers (its turns and flights each take a tread)");
+  out.risers = risers;
+  out.riser = spec.rise / risers;
+  if (spec.style == "block" && spec.thickness >= out.riser)
+    return L::failure("A block stair's thickness is less than its riser (" + std::to_string(static_cast<int>(out.riser)) + ")");
+  // Straight treads over the flights: one each, then always to the flight whose going is longest.
+  int straight = risers - 1 - cornerTreads;
+  std::vector<int> count(segments, 0);
+  for (std::size_t i = 0; i < segments; ++i)
+    if (flight[i] > 0) count[i] = 1, --straight;
+  if (out.flights == 0 && straight > 0)
+    return L::failure("This line has no straight part for " + std::to_string(straight) + " of its treads: fewer risers, or a longer line");
+  for (; straight > 0; --straight) {
+    std::size_t best = segments;
+    for (std::size_t i = 0; i < segments; ++i)
+      if (count[i] > 0 && (best == segments || flight[i] / count[i] > flight[best] / count[best] + 1e-9)) best = i;
+    ++count[best];
+  }
+  // The treads, bottom to top.
+  int step = 0;
+  for (std::size_t i = 0; i < segments; ++i) {
+    const V2 d = dir[i], left{-d.y, d.x};
+    const V2 start = pts[i] + d * (i > 0 ? half : 0.0);
+    const double going = count[i] ? flight[i] / count[i] : 0.0;
+    for (int k = 0; k < count[i]; ++k) {
+      const V2 a = start + d * (going * k), b = start + d * (going * (k + 1));
+      out.treads.push_back({{a - left * half, b - left * half, b + left * half, a + left * half}, "tread", going, ++step});
+    }
+    if (i >= corners) break;
+    const V2 next = dir[i + 1], v = pts[i + 1];
+    if (turns[i] == 1) {
+      if (joined(i)) {
+        // One landing over both squares.
+        const V2 c = (pts[i] + v) * 0.5;  // the squares touch: their centres are a width apart
+        Tread& landing = out.treads.back();
+        landing.outline = {c - d * w - left * half, c + d * w - left * half, c + d * w + left * half, c - d * w + left * half};
+        continue;
+      }
+      out.treads.push_back({{v - d * half - left * half, v + d * half - left * half, v + d * half + left * half, v - d * half + left * half},
+                            "landing", w, ++step});
+      ++out.landings;
+      continue;
+    }
+    // Winders: the square cut from its inner corner, from the side the flight comes in by
+    // (along a) to the side the next one leaves by (along b).
+    const V2 inner = v + (next - d) * half, a = next * -1.0, b = d;
+    const int n = turns[i];
+    auto hit = [&](double degrees) {
+      if (degrees <= 45.0) return inner + a * w + b * (w * std::tan(degrees * kPi / 180.0));
+      return inner + a * (w * std::tan((90.0 - degrees) * kPi / 180.0)) + b * w;
+    };
+    const double wedge = 90.0 / n;
+    const double measured = w > kMeasureAt ? 2.0 * kMeasureAt * std::sin(wedge / 2 * kPi / 180.0) : 0.0;
+    for (int k = 0; k < n; ++k) {
+      const double from = wedge * k, to = wedge * (k + 1);
+      Tread t{{inner, hit(from)}, "winder", measured, ++step};
+      if (from < 45.0 - 1e-9 && to > 45.0 + 1e-9) t.outline.push_back(inner + a * w + b * w);
+      t.outline.push_back(hit(to));
+      out.treads.push_back(std::move(t));
+      ++out.winders;
+    }
+  }
+  return out;
+}
+
+Result<TopoDS_Shape> prism(const std::vector<V2>& outline, double z0, double z1) {
+  BRepBuilderAPI_MakePolygon polygon;
+  for (const V2& p : outline) polygon.Add(gp_Pnt(p.x, p.y, z0));
+  polygon.Close();
+  if (!polygon.IsDone()) return Result<TopoDS_Shape>::failure("A tread could not be built");
+  BRepBuilderAPI_MakeFace face(polygon.Wire(), Standard_True);
+  if (!face.IsDone()) return Result<TopoDS_Shape>::failure("A tread could not be built");
+  BRepPrimAPI_MakePrism solid(face.Face(), gp_Vec(0, 0, z1 - z0));
+  if (!solid.IsDone()) return Result<TopoDS_Shape>::failure("A tread could not be built");
+  return solid.Shape();
+}
+
+StairCheck check(const std::string& item, double value, double limit, bool atMost, bool measurable = true) {
+  StairCheck c{item, value, limit, "not_evaluated"};
+  if (measurable) c.state = (atMost ? value <= limit + 1e-6 : value >= limit - 1e-6) ? "ok" : "ng";
+  return c;
+}
+}  // namespace
+
+Result<StairShape> makeStair(const StairSpec& spec) {
+  const auto made = layout(spec);
+  if (!made) return R::failure(made.error());
+  const Layout& l = made.value();
+  StairShape out;
+  out.risers = l.risers;
+  out.riser = l.riser;
+  out.walkLength = l.walk;
+  out.flights = l.flights;
+  out.landings = l.landings;
+  out.winders = l.winders;
+  std::vector<TopoDS_Shape> bodies;
+  bool winderUnmeasured = false;
+  for (const Tread& t : l.treads) {
+    const double top = spec.base + l.riser * t.step;
+    const double bottom = spec.style == "block" ? std::max(spec.base, top - l.riser - spec.thickness) : top - spec.thickness;
+    auto body = prism(t.outline, bottom, top);
+    if (!body) return R::failure(body.error());
+    bodies.push_back(body.value());
+    StairTread tread;
+    for (const V2& p : t.outline) tread.outline.emplace_back(p.x, p.y, top);
+    tread.kind = t.kind;
+    tread.going = t.going;
+    out.treads.push_back(std::move(tread));
+    if (t.kind == "tread") {
+      out.goingMin = out.goingMin == 0.0 ? t.going : std::min(out.goingMin, t.going);
+      out.goingMax = std::max(out.goingMax, t.going);
+    } else if (t.kind == "winder") {
+      if (t.going == 0.0) winderUnmeasured = true;
+      else out.winderGoing = out.winderGoing == 0.0 ? t.going : std::min(out.winderGoing, t.going);
+    }
+  }
+  if (spec.style == "block" && bodies.size() > 1) {
+    auto all = booleanCombine(BooleanOp::Union, bodies);
+    if (!all) return R::failure("The stair could not be built: " + all.error());
+    int solids = 0;
+    for (TopExp_Explorer e(all.value(), TopAbs_SOLID); e.More(); e.Next()) ++solids;
+    if (solids != 1 || !BRepCheck_Analyzer(all.value()).IsValid()) return R::failure("The stair could not be built as one solid");
+    out.solid = all.value();
+  } else if (bodies.size() == 1) {
+    out.solid = bodies.front();
+  } else {
+    TopoDS_Compound boards;
+    BRep_Builder builder;
+    builder.MakeCompound(boards);
+    for (const TopoDS_Shape& b : bodies) builder.Add(boards, b);
+    out.solid = boards;
+  }
+  // Against the sizes for a house's stair (docs/103): what cannot be measured here is not judged.
+  out.checks.push_back(check("riser", out.riser, 230.0, true));
+  if (out.goingMin > 0.0) out.checks.push_back(check("going", out.goingMin, 150.0, false));
+  if (l.winders > 0) out.checks.push_back(check("winder_going", out.winderGoing, 150.0, false, !winderUnmeasured));
+  out.checks.push_back(check("width", spec.width, 750.0, false));
+  out.checks.push_back(check("landing", spec.rise, 4000.0, true, spec.rise <= 4000.0 + 1e-6));
+  out.checks.push_back(check("handrail", 0.0, 0.0, true, false));
+  return out;
+}
+
+Result<TopoDS_Shape> stairOpening(const StairSpec& spec, double underside, double top, double headroom) {
+  using T = Result<TopoDS_Shape>;
+  const auto made = layout(spec);
+  if (!made) return T::failure(made.error());
+  if (!(top > underside)) return T::failure("The floor has no thickness");
+  std::vector<TopoDS_Shape> bodies;
+  for (const Tread& t : made->treads) {
+    const double tread = spec.base + made->riser * t.step;
+    if (tread > top + 1.0 || underside - tread >= headroom) continue;
+    auto body = prism(t.outline, underside - 10.0, top + 10.0);
+    if (!body) return body;
+    bodies.push_back(body.value());
+  }
+  if (bodies.empty()) return T::failure("No tread of the stair needs this floor open");
+  if (bodies.size() == 1) return bodies.front();
+  auto all = booleanCombine(BooleanOp::Union, bodies);
+  if (!all) return T::failure("The stair's opening could not be built: " + all.error());
+  return all;
+}
+
+}  // namespace sbr::geom

@@ -16,6 +16,7 @@
 #include "sbr/doc/CommandStack.h"
 #include "sbr/doc/Document.h"
 #include "sbr/geom/Roof.h"
+#include "sbr/geom/Stair.h"
 #include "sbr/geom/Rhino3dm.h"
 #include "sbr/geom/Collada.h"
 #include "sbr/geom/Dxf.h"
@@ -83,6 +84,19 @@ struct RoofInfo {
   double ridgeHeight = 0.0, eaveHeight = 0.0;  // world z of its highest point / lowest underside edge
   int parts = 0;
   std::string level;  // id of the level its bearing height follows, if any
+};
+
+// A stair made by createStair (docs/90 G-09, docs/103) as it stands in the world.
+struct StairInfo {
+  geom::StairSpec spec;  // its line and base in world coordinates
+  int risers = 0;        // as built (spec.risers may be 0 = automatic)
+  double riser = 0.0;
+  int treads = 0;
+  double goingMin = 0.0, goingMax = 0.0, winderGoing = 0.0, walkLength = 0.0;
+  int flights = 0, landings = 0, winders = 0;
+  std::vector<geom::StairCheck> checks;
+  std::string baseLevel, topLevel;      // ids of the levels its foot and top follow, if any
+  std::vector<ObjectId> openedSlabs;    // floors opened for it
 };
 
 // What a move of walls did to the walls joined to them (docs/90 G-05).
@@ -437,6 +451,23 @@ class Modeler {
   std::vector<ObjectId> wallsUnderRoof(const ObjectId& roof) const;
   // The walls fitted to this roof now.
   std::vector<ObjectId> wallsFittedToRoof(const ObjectId& roof) const;
+
+  // --- stairs (docs/90 G-09, docs/103) --------------------------------------
+  // A stair along a walking line in plan (geom::makeStair): attribute kind = stair, its sizes
+  // kept (attribute stair_spec) so they can be changed later. Its foot and top at levels'
+  // heights follow those levels: the risers are worked out again when the storey height changes.
+  Result<ObjectId> createStair(const geom::StairSpec& spec);
+  // Refused for an object that is not such a stair any more (its shape edited, or tilted).
+  Result<StairInfo> stairInfo(const ObjectId& id) const;
+  // The same stair with other sizes (the same object); floors opened for it are opened again.
+  Status changeStair(const ObjectId& id, const geom::StairSpec& spec);
+  // Opens floors made by the slab tool over the stair, where a tread has less than `headroom`
+  // to the floor's underside. `slabs` empty: every slab whose thickness holds the stair's top.
+  // The slab stays a slab (outline, thickness); the opening follows the stair and the slab and
+  // closes when the stair is deleted. The slabs opened; refused when there is none.
+  Result<std::vector<ObjectId>> openFloorForStair(const ObjectId& stair, const std::vector<ObjectId>& slabs = {},
+                                                  double headroom = 2000.0);
+  Status closeFloorForStair(const ObjectId& stair);
 
   // --- rooms (docs/90 G-07) -------------------------------------------------
   // The region `at` is in, bounded by the walls made by the wall tool that stand at its

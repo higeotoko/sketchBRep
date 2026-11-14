@@ -450,6 +450,20 @@ Result<std::string> ifcText(const Modeler& modeler, const std::string& fileName,
       element = f.add("IFCROOF(" + head + "$" + tail + ",." + type + ".)");
       ++summary.roofs;
       if (roof) quantities(o.id, element, "Qto_RoofBaseQuantities", {area("GrossArea", roof->slopeArea), area("ProjectedArea", roof->planArea)});
+    } else if (kind == "stair") {
+      // Its shape by its turns: winders or landings, a quarter turn or a half.
+      const auto stair = modeler.stairInfo(o.id);
+      std::string type = "NOTDEFINED";
+      if (stair) {
+        const int turns = stair->winders > 0 && stair->landings > 0 ? -1 : static_cast<int>(stair->spec.path.size()) - 2;
+        const bool winding = stair->winders > 0;
+        if (turns == 0) type = "STRAIGHT_RUN_STAIR";
+        else if (turns == 1) type = winding ? "QUARTER_WINDING_STAIR" : "QUARTER_TURN_STAIR";
+        else if (turns == 2) type = stair->flights == 2 ? (winding ? "HALF_WINDING_STAIR" : "HALF_TURN_STAIR")
+                                                         : (winding ? "TWO_QUARTER_WINDING_STAIR" : "TWO_QUARTER_TURN_STAIR");
+      }
+      element = f.add("IFCSTAIR(" + head + "$" + tail + ",." + type + ".)");
+      ++summary.stairs;
     } else if (columnRoles.count(kind)) {
       element = f.add("IFCCOLUMN(" + head + text(kind) + tail + ",.COLUMN.)");
       ++summary.columns;
@@ -547,7 +561,7 @@ Result<std::string> ifcText(const Modeler& modeler, const std::string& fileName,
   if (meshedAny) summary.notes.push_back("Curved faces are written as triangles");
   if (summary.skipped > 0)
     summary.notes.push_back(std::to_string(summary.skipped) + " visible objects without volume (lines, faces, notes) are not exported");
-  const int elements = summary.walls + summary.slabs + summary.roofs + summary.columns + summary.beams + summary.members + summary.proxies +
+  const int elements = summary.stairs + summary.walls + summary.slabs + summary.roofs + summary.columns + summary.beams + summary.members + summary.proxies +
                        summary.spaces + summary.grids;
   if (elements == 0) return R::failure("Nothing to export: the model has no solids, rooms or grids");
 

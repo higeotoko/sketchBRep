@@ -454,6 +454,43 @@ class RoofTool : public PlanPolylineTool {
   Settings settings_;
 };
 
+// Stairs (docs/90 G-09, docs/103): click the walking line in plan (the middle of the width),
+// from the foot of the first riser to the edge of the upper floor; Enter or a double click
+// finishes. Turns are right angles: landings or winders. Same as create_stair.
+class StairTool : public PlanPolylineTool {
+ public:
+  struct Settings {
+    double width = 800.0;
+    int turn = 3;             // treads each turn's corner is cut into: 1 = a landing
+    int risers = 0;           // 0 = automatic (as few as keep each within riserLimit)
+    double riserLimit = 200.0;
+    double rise = 0.0;        // 0 = up to the next level above the plane drawn on
+    std::string style = "block";
+    double thickness = 30.0;
+    bool openFloor = true;    // open the slabs over it in the same step
+  };
+  using PlanPolylineTool::PlanPolylineTool;
+  QString name() const override;
+  QCursor cursor() const override;
+  const Settings& settings() const { return settings_; }
+  void setSettings(const Settings& s) { settings_ = s; }
+  QString settingsText() const override;
+  static QString turnText(int turn);
+  // Riser, goings and what the turns measure, for the status bar.
+  static QString summary(const doc::StairInfo& info);
+
+ protected:
+  QString startText() const override;
+  QString finishedText(std::size_t created) const override;
+  Result<std::size_t> commit(const std::vector<gp_Pnt>& points, bool closed) override;
+  TopoDS_Shape previewShape(const std::vector<gp_Pnt>& points) const override;
+
+ private:
+  geom::StairSpec spec(const std::vector<gp_Pnt>& points) const;
+  Settings settings_;
+  QString done_;
+};
+
 // Openings (O): hover a vertical face of a wall to see the window / door
 // there (width x height, sill above the face's bottom; snaps to the
 // face's middle and ends, and next to / in line with / between openings

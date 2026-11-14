@@ -69,7 +69,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   // Used by tests and the command line.
   bool openFile(const QString& path);
   bool saveFile(const QString& path);
-  enum class ToolId { Select, Line, Rectangle, PushPull, Move, Rotate, Offset, Curve, Revolve, Measure, Circle, Paint, Eraser, Arc, Dimension, Text, Section, FollowMe, Protractor, Polygon, Scale, Wall, Slab, Opening, Paste, ComponentAxes, RotatedRectangle, Member, Sweep2, EdgeSurface, Patch, Fillet, Chamfer, Shell, Room, Roof, Count };
+  enum class ToolId { Select, Line, Rectangle, PushPull, Move, Rotate, Offset, Curve, Revolve, Measure, Circle, Paint, Eraser, Arc, Dimension, Text, Section, FollowMe, Protractor, Polygon, Scale, Wall, Slab, Opening, Paste, ComponentAxes, RotatedRectangle, Member, Sweep2, EdgeSurface, Patch, Fillet, Chamfer, Shell, Room, Roof, Stair, Count };
   void activateTool(ToolId id);
   // Component placement commands on the instances among `ids`: "unique",
   // "reset", "mirror0".."mirror2" (red / green / blue) or "axes" (tool).
@@ -278,6 +278,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   void showSlabSettingsDialog();
   void showOpeningSettingsDialog();
   void showRoofSettingsDialog();
+  void showStairSettingsDialog();
  public:
   // IFC for other BIM software (docs/90 G-13); what was written goes to the status bar.
   void exportIfcFile(const QString& path);
@@ -401,6 +402,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   std::unique_ptr<TextTool> textTool_;
   std::unique_ptr<RoomTool> roomTool_;
   std::unique_ptr<RoofTool> roofTool_;
+  std::unique_ptr<StairTool> stairTool_;
   std::unique_ptr<SectionTool> sectionTool_;
   std::unique_ptr<FollowMeTool> followMeTool_;
   std::unique_ptr<SurfaceTool> sweep2Tool_, edgeSurfaceTool_, patchTool_, filletTool_, chamferTool_, shellTool_;

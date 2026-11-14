@@ -692,6 +692,13 @@ void followWallJoins(const Document& document, ChangeSet& changes, const RegenCo
 // `changes`; defined with the roof helpers below.
 void refitWallsToRoofs(const Document& document, ChangeSet& changes, const RegenContext& context);
 
+// Floors opened for stairs (docs/103) are opened again when they or their stair are among
+// `changes` (closed when the stair is erased); defined with the stair helpers below.
+void refitStairOpenings(const Document& document, ChangeSet& changes, const RegenContext& context);
+// A stair on levels: its foot moved by `dBase`, its top by `dTop` (the risers worked out again).
+bool shiftStair(const Document& document, const Object& was, Object& o, double dBase, double dTop,
+                const RegenContext& context);
+
 // Walls and slabs on levels (docs/90 G-02) after the levels go from `before` to `after`;
 // defined with the wall helpers below.
 void levelUp(const Document& document, ChangeSet& changes, const RegenContext& context,
@@ -897,6 +904,7 @@ Status Modeler::setLevels(std::vector<FloorLevel> levels) {
   pinUp(document_, changes, document_.regenContext(), before.levels, after.levels);
   levelUp(document_, changes, document_.regenContext(), before.levels, after.levels);
   refitWallsToRoofs(document_, changes, document_.regenContext());
+  refitStairOpenings(document_, changes, document_.regenContext());
   Command command = changes.build("Edit Levels");
   command.settings = SettingsDelta{before, after};
   history_.execute(std::move(command));
@@ -4930,6 +4938,7 @@ Status Modeler::remove(const std::vector<ObjectId>& ids) {
   if (!any) return Status::failure("Nothing selected");
   // Lines of a grid erased: the grid without them (docs/43).
   if (const Status grids = gridUp(document_, changes, document_.regenContext()); !grids) return grids;
+  refitStairOpenings(document_, changes, document_.regenContext());  // a stair erased: its floor closes
   history_.execute(changes.build("Delete"));
   return Status::success();
 }
@@ -4954,6 +4963,7 @@ Status Modeler::transform(const std::vector<ObjectId>& ids, const gp_Trsf& world
     followWallJoins(document_, changes, document_.regenContext(), roots, gp_Vec(worldDelta.TranslationPart()),
                     lastJoins_);
   refitWallsToRoofs(document_, changes, document_.regenContext());
+  refitStairOpenings(document_, changes, document_.regenContext());
   if (const Status settled = settleMoves(document_, changes, document_.regenContext()); !settled) return settled;
   history_.beginGroup(commandName);
   history_.execute(changes.build(commandName));
@@ -5227,6 +5237,27 @@ BooleanOperand& writableOperand(Recipe& recipe, const std::vector<std::size_t>& 
   BooleanOperand& found = writableOperand(*inner, path, depth + 1);
   op.recipe = inner;  // the operand lives in `inner`, which the host now owns
   return found;
+}
+
+// A floor opened for a stair (docs/103): the slab's own recipe is operand 0 of a subtraction
+// whose other operands are the openings, each with the id "stair:<the stair's id>".
+constexpr const char* kStairHole = "stair:";
+
+// A slab's own outline and push: the recipe itself, or what its stair openings are cut from.
+// Null when it is cut by anything else.
+const Recipe* slabCore(const Recipe& recipe) {
+  const auto* cut = std::get_if<BooleanFeature>(&recipe.base);
+  if (!cut) return &recipe;
+  if (cut->kind != BooleanKind::Subtract || cut->operands.size() < 2 || !recipe.modifiers.empty() || !cut->operands.front().recipe)
+    return nullptr;
+  for (std::size_t i = 1; i < cut->operands.size(); ++i)
+    if (cut->operands[i].id.rfind(kStairHole, 0) != 0) return nullptr;
+  return cut->operands.front().recipe.get();
+}
+
+void setSlabCore(Recipe& recipe, Recipe core) {
+  if (auto* cut = std::get_if<BooleanFeature>(&recipe.base)) cut->operands.front().recipe = std::make_shared<const Recipe>(std::move(core));
+  else recipe = std::move(core);
 }
 
 // Removes the operand at `path` (copy on write along the way).
@@ -5756,8 +5787,9 @@ void settleWallJoins(const Document& document, ChangeSet& changes, const RegenCo
   for (const Object& o : document.objects()) {
     const auto kind = o.attributes.find("kind");
     if (kind == o.attributes.end() || kind->second != "slab" || o.locked || movedObjects.count(o.id)) continue;
-    const auto* polygon = std::get_if<PolygonProfile>(&o.recipe.base);
-    if (!polygon || o.recipe.modifiers.empty() || !std::holds_alternative<ExtrudeOp>(o.recipe.modifiers.front())) continue;
+    const Recipe* core = slabCore(o.recipe);
+    const auto* polygon = core ? std::get_if<PolygonProfile>(&core->base) : nullptr;
+    if (!polygon || core->modifiers.empty() || !std::holds_alternative<ExtrudeOp>(core->modifiers.front())) continue;
     const Bnd_Box box = document.worldBounds(o);
     if (box.IsVoid()) continue;
     const double top = box.CornerMax().Z(), bottom = box.CornerMin().Z();
@@ -5788,7 +5820,11 @@ void settleWallJoins(const Document& document, ChangeSet& changes, const RegenCo
     if (!any) continue;
     const Object* pending = changes.pending(o.id);
     Object slab = pending ? *pending : o;
-    std::get<PolygonProfile>(slab.recipe.base).points = points;
+    const Recipe* own = slabCore(slab.recipe);
+    if (!own || !std::holds_alternative<PolygonProfile>(own->base)) continue;
+    Recipe moved = *own;
+    std::get<PolygonProfile>(moved.base).points = points;
+    setSlabCore(slab.recipe, std::move(moved));
     slab.faceMaterials.clear();
     slab.hiddenEdges.clear();
     if (!rebuild(slab, context)) {
@@ -6018,6 +6054,10 @@ void levelUp(const Document& document, ChangeSet& changes, const RegenContext& c
     if (std::abs(dBase) < 1e-9 && std::abs(dTop) < 1e-9) continue;
     const Object* pending = changes.pending(id);
     Object o = pending ? *pending : *was;
+    if (attributeText(*was, "kind") == "stair") {
+      if (shiftStair(document, *was, o, dBase, dTop, context)) changes.modify(o);
+      continue;
+    }
     if (shiftOnLevels(document, *was, o, dBase, dTop, context)) {
       changes.modify(o);
       continue;
@@ -6289,6 +6329,340 @@ Status Modeler::fitWallsToRoof(const std::vector<ObjectId>& walls, const ObjectI
     changes.modify(wall);
   }
   history_.execute(changes.build("Fit Walls To Roof"));
+  return Status::success();
+}
+
+// --- stairs (docs/90 G-09, docs/103) --------------------------------------------------------
+namespace {
+constexpr const char* kStairHeadroom = "opening_headroom";
+
+std::string stairSpecText(const geom::StairSpec& s) {
+  nlohmann::json path = nlohmann::json::array();
+  for (const gp_Pnt& p : s.path) path.push_back({p.X(), p.Y()});
+  return nlohmann::json{{"path", path}, {"base", s.base}, {"rise", s.rise}, {"width", s.width}, {"risers", s.risers},
+                        {"riser_limit", s.riserLimit}, {"turns", s.turns}, {"style", s.style}, {"thickness", s.thickness}}
+      .dump();
+}
+
+std::optional<geom::StairSpec> stairSpecFrom(const std::string& text) {
+  try {
+    const nlohmann::json j = nlohmann::json::parse(text);
+    geom::StairSpec s;
+    for (const auto& p : j.at("path")) s.path.emplace_back(p.at(0).get<double>(), p.at(1).get<double>(), 0.0);
+    s.base = j.at("base").get<double>();
+    s.rise = j.at("rise").get<double>();
+    s.width = j.at("width").get<double>();
+    s.risers = j.at("risers").get<int>();
+    s.riserLimit = j.at("riser_limit").get<double>();
+    s.turns = j.at("turns").get<std::vector<int>>();
+    s.style = j.at("style").get<std::string>();
+    s.thickness = j.at("thickness").get<double>();
+    return s;
+  } catch (const std::exception&) {
+    return std::nullopt;
+  }
+}
+
+// The stored stair (in the object's own coordinates) and where the object stands, or why its
+// sizes can no longer be read. `o` may be a changed copy not in the document yet.
+Result<std::pair<geom::StairSpec, gp_Trsf>> storedStairOf(const Document& document, const Object* o) {
+  using R = Result<std::pair<geom::StairSpec, gp_Trsf>>;
+  if (!o) return R::failure("Object not found");
+  const auto kind = o->attributes.find("kind");
+  const auto text = o->attributes.find("stair_spec");
+  if (kind == o->attributes.end() || kind->second != "stair" || text == o->attributes.end())
+    return R::failure("'" + o->name + "' is not a stair made by the stair tool");
+  if (!std::holds_alternative<ImportedShape>(o->recipe.base) || !o->recipe.modifiers.empty())
+    return R::failure("'" + o->name + "' was reshaped by hand: its stair sizes can no longer be read or changed");
+  const auto spec = stairSpecFrom(text->second);
+  if (!spec) return R::failure("'" + o->name + "': its stair sizes cannot be read");
+  const gp_Trsf world = document.worldTransform(*o);
+  if (std::abs(world.ScaleFactor() - 1.0) > 1e-9 || gp_Vec(0, 0, 1).Transformed(world).Z() < 1.0 - 1e-9)
+    return R::failure("'" + o->name + "' was tilted or scaled: its stair sizes can no longer be read or changed");
+  return std::make_pair(*spec, world);
+}
+
+geom::StairSpec stairInFrame(geom::StairSpec s, const gp_Trsf& t) {
+  for (gp_Pnt& p : s.path) {
+    p.Transform(t);
+    p.SetZ(0);
+  }
+  s.base += t.TranslationPart().Z();
+  return s;
+}
+
+// World z of a slab's underside and top, from its own outline and push.
+bool slabLevels(const Document& document, const Object& slab, double& bottom, double& top) {
+  const Recipe* core = slabCore(slab.recipe);
+  const auto* outline = core ? std::get_if<PolygonProfile>(&core->base) : nullptr;
+  if (!outline || outline->points.empty() || core->modifiers.empty() || !std::holds_alternative<ExtrudeOp>(core->modifiers.front()))
+    return false;
+  const double z = outline->points.front().Transformed(document.worldTransform(slab)).Z();
+  const double push = std::get<ExtrudeOp>(core->modifiers.front()).distance;
+  bottom = std::min(z, z + push);
+  top = std::max(z, z + push);
+  return true;
+}
+
+// What opens `slab` for `stair` (both may be changed copies), in the slab's own coordinates;
+// none when the stair's sizes cannot be read or it needs nothing of this floor.
+std::optional<Recipe> stairHole(const Document& document, const Object& slab, const Object& stair) {
+  const auto stored = storedStairOf(document, &stair);
+  double bottom = 0, top = 0;
+  if (!stored || !slabLevels(document, slab, bottom, top)) return std::nullopt;
+  double headroom = 2000.0;
+  if (const auto it = stair.attributes.find(kStairHeadroom); it != stair.attributes.end()) headroom = std::atof(it->second.c_str());
+  const auto tool = geom::stairOpening(stairInFrame(stored->first, stored->second), bottom, top, headroom);
+  if (!tool) return std::nullopt;
+  Recipe hole;
+  hole.base = ImportedShape{BRepBuilderAPI_Transform(tool.value(), document.worldTransform(slab).Inverted(), Standard_True).Shape(),
+                            "stair-opening"};
+  return hole;
+}
+
+// `slab` with its opening for the stair set to `hole`, or taken away. False for a slab that
+// is no longer the slab its tool made.
+bool setStairHole(Object& slab, const ObjectId& stairId, std::optional<Recipe> hole) {
+  const Recipe* core = slabCore(slab.recipe);
+  if (!core) return false;
+  const std::string id = kStairHole + stairId;
+  if (core == &slab.recipe) {
+    if (!hole) return true;
+    BooleanFeature feature;
+    feature.kind = BooleanKind::Subtract;
+    feature.operands.push_back(BooleanOperand{std::make_shared<const Recipe>(slab.recipe), gp_Trsf(), slab.name, {}});
+    feature.operands.push_back(BooleanOperand{std::make_shared<const Recipe>(std::move(*hole)), gp_Trsf(), "Stair", id});
+    slab.recipe = Recipe{};
+    slab.recipe.base = std::move(feature);
+  } else {
+    auto& cut = std::get<BooleanFeature>(slab.recipe.base);
+    const auto it = std::find_if(cut.operands.begin() + 1, cut.operands.end(), [&](const BooleanOperand& op) { return op.id == id; });
+    if (hole) {
+      if (it != cut.operands.end()) it->recipe = std::make_shared<const Recipe>(std::move(*hole));
+      else cut.operands.push_back(BooleanOperand{std::make_shared<const Recipe>(std::move(*hole)), gp_Trsf(), "Stair", id});
+    } else if (it != cut.operands.end()) {
+      cut.operands.erase(it);
+      if (cut.operands.size() == 1) {
+        const Recipe own = *cut.operands.front().recipe;
+        slab.recipe = own;
+      }
+    }
+  }
+  slab.faceMaterials.clear();
+  slab.hiddenEdges.clear();
+  return true;
+}
+
+// The stairs a slab is opened for.
+std::vector<ObjectId> stairsOpening(const Object& slab) {
+  std::vector<ObjectId> out;
+  const auto* cut = std::get_if<BooleanFeature>(&slab.recipe.base);
+  if (!cut || !slabCore(slab.recipe)) return out;
+  for (std::size_t i = 1; i < cut->operands.size(); ++i) out.push_back(cut->operands[i].id.substr(std::strlen(kStairHole)));
+  return out;
+}
+
+void refitStairOpenings(const Document& document, ChangeSet& changes, const RegenContext& context) {
+  std::vector<ObjectId> slabs;
+  for (const Object& o : document.objects()) {
+    if (attributeText(o, "kind") != "slab" || changes.erased(o.id)) continue;
+    const Object* now = changes.pending(o.id);
+    if (!stairsOpening(now ? *now : o).empty()) slabs.push_back(o.id);
+  }
+  for (const ObjectId& id : slabs) {
+    const Object* was = document.find(id);
+    const Object* pending = changes.pending(id);
+    Object slab = pending ? *pending : *was;
+    if (slab.locked) continue;
+    bool any = false;
+    for (const ObjectId& stairId : stairsOpening(slab)) {
+      if (changes.erased(stairId)) {
+        any |= setStairHole(slab, stairId, std::nullopt);  // the stair is gone: the floor closes
+        continue;
+      }
+      const Object* stairNow = changes.pending(stairId);
+      if (!pending && !stairNow) continue;  // neither changed
+      const Object* stair = stairNow ? stairNow : document.find(stairId);
+      if (!stair || !storedStairOf(document, stair)) continue;  // reshaped by hand: the opening stays
+      any |= setStairHole(slab, stairId, stairHole(document, slab, *stair));
+    }
+    if (any && rebuild(slab, context) && !slab.shape.IsNull()) changes.modify(slab);
+  }
+}
+
+bool shiftStair(const Document& document, const Object& was, Object& o, double dBase, double dTop,
+                const RegenContext& context) {
+  if (std::abs(dBase) > 1e-9) {
+    gp_Trsf t;
+    t.SetTranslation(gp_Vec(0, 0, dBase).Transformed(document.parentTransform(was).Inverted()));
+    o.transform = t * o.transform;
+  }
+  const double grow = dTop - dBase;
+  if (std::abs(grow) < 1e-9) return true;
+  // A stair reshaped by hand, or one that cannot be built to the new height, only moves.
+  const auto stored = storedStairOf(document, &was);
+  if (!stored) return true;
+  geom::StairSpec local = stored->first;
+  local.rise += grow;
+  const auto stair = geom::makeStair(local);
+  if (!stair) return true;
+  o.recipe.base = ImportedShape{stair->solid, "stair"};
+  o.attributes["stair_spec"] = stairSpecText(local);
+  o.faceMaterials.clear();
+  o.hiddenEdges.clear();
+  return static_cast<bool>(rebuild(o, context));
+}
+}  // namespace
+
+Result<ObjectId> Modeler::createStair(const geom::StairSpec& spec) {
+  using R = Result<ObjectId>;
+  const auto stair = geom::makeStair(spec);
+  if (!stair) return R::failure(stair.error());
+  Object o;
+  o.name = uniqueName("Stair");
+  o.recipe.base = ImportedShape{stair->solid, "stair"};
+  o.attributes["kind"] = "stair";
+  o.attributes["stair_spec"] = stairSpecText(spec);
+  const auto& levels = document_.settings().levels;
+  if (const FloorLevel* level = levelAtHeight(levels, spec.base)) o.attributes[kBaseLevel] = level->id;
+  if (const FloorLevel* level = levelAtHeight(levels, spec.base + spec.rise)) o.attributes[kTopLevel] = level->id;
+  return addObject(std::move(o), "Stair");
+}
+
+Result<StairInfo> Modeler::stairInfo(const ObjectId& id) const {
+  using R = Result<StairInfo>;
+  const auto stored = storedStairOf(document_, document_.find(id));
+  if (!stored) return R::failure(stored.error());
+  const auto stair = geom::makeStair(stored->first);
+  if (!stair) return R::failure(stair.error());
+  StairInfo info;
+  info.spec = stairInFrame(stored->first, stored->second);
+  info.risers = stair->risers;
+  info.riser = stair->riser;
+  info.treads = static_cast<int>(stair->treads.size());
+  info.goingMin = stair->goingMin;
+  info.goingMax = stair->goingMax;
+  info.winderGoing = stair->winderGoing;
+  info.walkLength = stair->walkLength;
+  info.flights = stair->flights;
+  info.landings = stair->landings;
+  info.winders = stair->winders;
+  info.checks = stair->checks;
+  const Object& o = *document_.find(id);
+  info.baseLevel = attributeText(o, kBaseLevel);
+  info.topLevel = attributeText(o, kTopLevel);
+  for (const Object& slab : document_.objects()) {
+    if (attributeText(slab, "kind") != "slab") continue;
+    const auto stairs = stairsOpening(slab);
+    if (std::find(stairs.begin(), stairs.end(), id) != stairs.end()) info.openedSlabs.push_back(slab.id);
+  }
+  return info;
+}
+
+Status Modeler::changeStair(const ObjectId& id, const geom::StairSpec& spec) {
+  const auto stored = storedStairOf(document_, document_.find(id));
+  if (!stored) return stored.status();
+  const Object* current = document_.find(id);
+  if (current->locked) return Status::failure("The object is locked");
+  // Kept in the object's own coordinates: the stair stays where it was moved to.
+  const geom::StairSpec local = stairInFrame(spec, stored->second.Inverted());
+  const auto stair = geom::makeStair(local);
+  if (!stair) return stair.status();
+  Object object = *current;
+  object.recipe.base = ImportedShape{stair->solid, "stair"};
+  object.attributes["stair_spec"] = stairSpecText(local);
+  object.faceMaterials.clear();
+  object.hiddenEdges.clear();
+  // A foot or a top typed in: it follows the level at that height, or none.
+  const geom::StairSpec before = stairInFrame(stored->first, stored->second);
+  const auto& levels = document_.settings().levels;
+  auto follow = [&](const char* key, double was, double now) {
+    if (std::abs(was - now) < 1e-6) return;
+    if (const FloorLevel* level = levelAtHeight(levels, now)) object.attributes[key] = level->id;
+    else object.attributes.erase(key);
+  };
+  follow(kBaseLevel, before.base, spec.base);
+  follow(kTopLevel, before.base + before.rise, spec.base + spec.rise);
+  if (const Status built = rebuild(object, document_.regenContext()); !built) return built;
+  ChangeSet changes(document_);
+  changes.modify(object);
+  refitStairOpenings(document_, changes, document_.regenContext());
+  history_.execute(changes.build("Change Stair"));
+  return Status::success();
+}
+
+Result<std::vector<ObjectId>> Modeler::openFloorForStair(const ObjectId& stairId, const std::vector<ObjectId>& slabs,
+                                                         double headroom) {
+  using R = Result<std::vector<ObjectId>>;
+  const auto stored = storedStairOf(document_, document_.find(stairId));
+  if (!stored) return R::failure(stored.error());
+  if (!(headroom >= 0.0) || !std::isfinite(headroom)) return R::failure("The headroom is 0 or more");
+  Object stair = *document_.find(stairId);
+  char text[32];
+  std::snprintf(text, sizeof text, "%.9g", headroom);
+  stair.attributes[kStairHeadroom] = text;
+  const geom::StairSpec world = stairInFrame(stored->first, stored->second);
+  const double arrives = world.base + world.rise;
+  std::vector<ObjectId> candidates = slabs;
+  if (slabs.empty()) {
+    for (const Object& o : document_.objects()) {
+      double bottom = 0, top = 0;
+      if (attributeText(o, "kind") != "slab" || o.locked || !slabLevels(document_, o, bottom, top)) continue;
+      if (arrives > bottom + 1.0 && arrives < top + 1.0) candidates.push_back(o.id);
+    }
+  }
+  ChangeSet changes(document_);
+  changes.modify(stair);
+  std::vector<ObjectId> opened;
+  for (const ObjectId& id : candidates) {
+    const Object* current = document_.find(id);
+    if (!current) return R::failure("Object not found");
+    const bool named = !slabs.empty();
+    if (attributeText(*current, "kind") != "slab" || !slabCore(current->recipe)) {
+      if (named) return R::failure("'" + current->name + "' is not a floor made by the slab tool (nothing was changed)");
+      continue;
+    }
+    if (current->locked) {
+      if (named) return R::failure("'" + current->name + "' is locked");
+      continue;
+    }
+    Object slab = *current;
+    auto hole = stairHole(document_, slab, stair);
+    const double before = geom::volume(slab.shape);
+    if (!hole || !setStairHole(slab, stairId, std::move(hole)) || !rebuild(slab, document_.regenContext()) || slab.shape.IsNull() ||
+        geom::volume(slab.shape) > before - 1.0) {
+      const auto already = stairsOpening(*current);
+      if (std::find(already.begin(), already.end(), stairId) != already.end()) {
+        opened.push_back(id);  // open already and nothing to add
+        continue;
+      }
+      if (named) return R::failure("'" + current->name + "' does not lie over the stair where it needs headroom (nothing was changed)");
+      continue;
+    }
+    changes.modify(slab);
+    opened.push_back(id);
+  }
+  if (opened.empty()) return R::failure("No floor made by the slab tool lies over the top of this stair");
+  history_.execute(changes.build("Open Floor For Stair"));
+  return opened;
+}
+
+Status Modeler::closeFloorForStair(const ObjectId& stairId) {
+  ChangeSet changes(document_);
+  bool any = false;
+  for (const Object& o : document_.objects()) {
+    if (attributeText(o, "kind") != "slab") continue;
+    const auto stairs = stairsOpening(o);
+    if (std::find(stairs.begin(), stairs.end(), stairId) == stairs.end()) continue;
+    if (o.locked) return Status::failure("'" + o.name + "' is locked");
+    Object slab = o;
+    if (!setStairHole(slab, stairId, std::nullopt)) continue;
+    if (const Status built = rebuild(slab, document_.regenContext()); !built) return built;
+    changes.modify(slab);
+    any = true;
+  }
+  if (!any) return Status::failure("No floor is opened for this stair");
+  history_.execute(changes.build("Close Floor For Stair"));
   return Status::success();
 }
 
@@ -6949,6 +7323,14 @@ std::optional<Modeler::MemberInfo> Modeler::wallOrSlabInfo(const Object& o) cons
                           "its openings keep their sill heights and must stay inside the wall"});
     return cut;
   }
+  if (kind == "slab" && std::holds_alternative<BooleanFeature>(o.recipe.base)) {
+    // A floor opened for a stair: its own outline and thickness lie inside the cut.
+    const Recipe* core = slabCore(o.recipe);
+    if (!core) return std::nullopt;
+    Object inner = o;
+    inner.recipe = *core;
+    return wallOrSlabInfo(inner);
+  }
   if (o.recipe.modifiers.empty() || !std::holds_alternative<ExtrudeOp>(o.recipe.modifiers.front())) return std::nullopt;
   const double extrude = std::get<ExtrudeOp>(o.recipe.modifiers.front()).distance;
   MemberInfo info;
@@ -6996,6 +7378,7 @@ Status Modeler::commitWallChange(Object object, const std::string& commandName, 
   lastJoins_ = JoinFollow{};
   if (keepWallJoins_) followWallLength(document_, changes, document_.regenContext(), id, lengthened, lastJoins_);
   refitWallsToRoofs(document_, changes, document_.regenContext());
+  refitStairOpenings(document_, changes, document_.regenContext());
   history_.execute(changes.build(commandName));
   return Status::success();
 }
@@ -7040,6 +7423,33 @@ Result<Modeler::MemberInfo> Modeler::changeWallOrSlab(const ObjectId& id, const 
     replaceOperand(object.recipe, band->path, 0, std::move(recipe));
     const Status committed = commitWallChange(std::move(object), "Change wall", change.length ? *change.length - band->length : 0.0);
     if (!committed) return R::failure("The wall was not changed: " + committed.message());
+    return memberInfo(id);
+  }
+  if (kind == "slab" && std::holds_alternative<BooleanFeature>(object.recipe.base)) {
+    // A floor opened for a stair: the slab inside the cut changes, the opening is made again.
+    const Recipe* core = slabCore(object.recipe);
+    if (!core || !std::holds_alternative<PolygonProfile>(core->base) || core->modifiers.empty() ||
+        !std::holds_alternative<ExtrudeOp>(core->modifiers.front()))
+      return R::failure("This slab is no longer the slab its tool made (nothing was changed)");
+    if (change.length) return R::failure("A slab's outline changes by editing it directly (nothing was changed)");
+    if (change.height) return R::failure("A slab has a thickness, not a height (nothing was changed)");
+    Recipe inner = *core;
+    if (change.thickness) {
+      auto& push = std::get<ExtrudeOp>(inner.modifiers.front());
+      const std::string keep = change.keep.value_or("top");
+      if (keep != "top" && keep != "bottom" && keep != "center") return R::failure("keep: top, bottom or center");
+      const double before = push.distance, after = *change.thickness;
+      const double lift = keep == "bottom" ? 0.0 : keep == "top" ? before - after : (before - after) / 2;
+      for (gp_Pnt& q : std::get<PolygonProfile>(inner.base).points) q.SetZ(q.Z() + lift);
+      push.distance = after;
+    }
+    setSlabCore(object.recipe, std::move(inner));
+    if (const Status built = rebuild(object, document_.regenContext()); !built)
+      return R::failure("The slab was not changed: " + built.message());
+    ChangeSet changes(document_);
+    changes.modify(object);
+    refitStairOpenings(document_, changes, document_.regenContext());
+    history_.execute(changes.build("Change slab"));
     return memberInfo(id);
   }
   auto& extrude = std::get<ExtrudeOp>(object.recipe.modifiers.front());

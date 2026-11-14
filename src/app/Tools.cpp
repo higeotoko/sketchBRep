@@ -2049,6 +2049,93 @@ void TextTool::applyMeasurement(const QString& text) {
 
 // --- Roof ---------------------------------------------------------------------------
 
+QString StairTool::name() const { return QObject::tr("階段"); }
+QCursor StairTool::cursor() const { return toolCursor(CursorKind::Slab); }
+
+QString StairTool::turnText(int turn) {
+  return turn <= 1 ? QObject::tr("踊り場") : QObject::tr("%1 段回り（%2°）").arg(turn).arg(90.0 / turn, 0, 'g', 3);
+}
+
+QString StairTool::settingsText() const {
+  return QObject::tr("幅 %1・曲がり角 %2・段数 %3・%4")
+      .arg(mm(settings_.width), turnText(settings_.turn),
+           settings_.risers > 0 ? QString::number(settings_.risers) : QObject::tr("自動（蹴上 %1 以下）").arg(mm(settings_.riserLimit)),
+           settings_.style == "boards" ? QObject::tr("踏板だけ") : QObject::tr("段々の塊"));
+}
+
+QString StairTool::summary(const doc::StairInfo& info) {
+  QString text = QObject::tr("蹴上 %1 × %2 段").arg(info.riser, 0, 'f', 1).arg(info.risers);
+  if (info.goingMin > 0)
+    text += std::abs(info.goingMax - info.goingMin) < 0.05
+                ? QObject::tr("・踏面 %1").arg(info.goingMin, 0, 'f', 1)
+                : QObject::tr("・踏面 %1〜%2").arg(info.goingMin, 0, 'f', 1).arg(info.goingMax, 0, 'f', 1);
+  if (info.winders > 0 && info.winderGoing > 0)
+    text += QObject::tr("・回り段の踏面 %1（狭い端から 300 の位置）").arg(info.winderGoing, 0, 'f', 1);
+  return text;
+}
+
+QString StairTool::startText() const {
+  return QObject::tr("階段の歩く線（幅の真ん中）を、上がり始めから上の階の床の端まで順にクリック（曲がり角は直角。Enter で確定）: %1")
+      .arg(settingsText());
+}
+
+QString StairTool::finishedText(std::size_t) const { return done_; }
+
+geom::StairSpec StairTool::spec(const std::vector<gp_Pnt>& points) const {
+  geom::StairSpec s;
+  s.path = points;
+  s.base = points.empty() ? 0.0 : points.front().Z();
+  s.rise = settings_.rise;
+  if (!(s.rise > 0)) {
+    // Up to the next level above; none: an ordinary storey.
+    s.rise = 2800.0;
+    double next = 0.0;
+    bool found = false;
+    for (const doc::FloorLevel& l : host_.modeler().levels())
+      if (l.elevation > s.base + 1.0 && (!found || l.elevation < next)) next = l.elevation, found = true;
+    if (found) s.rise = next - s.base;
+  }
+  s.width = settings_.width;
+  s.risers = settings_.risers;
+  s.riserLimit = settings_.riserLimit;
+  s.turns = {settings_.turn};
+  s.style = settings_.style;
+  s.thickness = settings_.thickness;
+  return s;
+}
+
+Result<std::size_t> StairTool::commit(const std::vector<gp_Pnt>& points, bool) {
+  doc::Modeler& m = host_.modeler();
+  m.history().beginGroup("Stair");
+  const auto stair = m.createStair(spec(points));
+  if (!stair) {
+    m.history().abortGroup();
+    return Result<std::size_t>::failure(stair.error());
+  }
+  std::size_t opened = 0;
+  if (settings_.openFloor) {
+    if (const auto slabs = m.openFloorForStair(*stair)) opened = slabs->size();
+  }
+  m.history().endGroup();
+  done_ = QObject::tr("階段を作成しました");
+  if (const auto info = m.stairInfo(*stair)) done_ += QObject::tr("（%1）").arg(summary(*info));
+  done_ += opened > 0 ? QObject::tr("。上の床 %1 枚に開口をあけました").arg(opened)
+                      : settings_.openFloor ? QObject::tr("。上に床（スラブ）がまだ無いので、開口はあけていません") : QString();
+  done_ += QObject::tr("（Ctrl+Z で戻せます。段数などはプロパティで直せます）");
+  return std::size_t(1);
+}
+
+TopoDS_Shape StairTool::previewShape(const std::vector<gp_Pnt>& pts) const {
+  if (pts.size() < 2) return TopoDS_Shape();
+  // The treads as they would be (boards: quick to build); a line that cannot be a stair yet, as a line.
+  geom::StairSpec s = spec(pts);
+  s.style = "boards";
+  if (const auto stair = geom::makeStair(s)) return stair->solid;
+  BRepBuilderAPI_MakePolygon line;
+  for (const gp_Pnt& p : pts) line.Add(p);
+  return line.IsDone() ? TopoDS_Shape(line.Wire()) : TopoDS_Shape();
+}
+
 QString RoofTool::name() const { return QObject::tr("屋根"); }
 QCursor RoofTool::cursor() const { return toolCursor(CursorKind::Slab); }
 
