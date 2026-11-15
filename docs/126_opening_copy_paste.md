@@ -31,9 +31,16 @@
 |---|---|
 | 計算テスト済み | コア全 698 件中 691 件成功・7 件スキップ（ローカル）。新規 1 件（`Schedules.ACopiedOpeningIsPastedWhereClicked`）：同じ壁で 1500 南・高い所をクリック → 壁に沿ってだけ動き、腰高 0 のまま、取り消し 1 回／間仕切りに → そこが中心、高さ 2100、符号・品番・ドアのまま（表に WD-1 が 2 つ）／平面の切断の高さ（1500）でクリックしても壁が見つかる／壁の無い所・無い開口・元と重なる所は断り、何も変わらない |
 | GUI 自動確認済み | 開口を動かす画面テストに追加（ローカル）：平面で穴の面を選ぶ → Ctrl+C（ステータス「開口 1 をコピー」）→ Ctrl+X は断る → Ctrl+V → 別の壁の上でステータス「へ貼る」→ クリックで、その壁に 1 つ（中心 X 4500、腰高 900）、元の壁はそのまま、取り消し 1 回 → Ctrl+Shift+V は断る。開口・コピー・貼り付けまわりの画面テストが成功 |
-| CI | __CI__ |
+| CI | run 43709555914（push、`d480fde`）：Linux 711 件成功、Windows 707 件＋3 件成功・GUI 237 件成功（7 件スキップ） |
 | Windows 実機確認 | まだ（チェック表 12-9） |
 
 ## 配布の記録
 
-__DELIVERY__
+| 項目 | 値 |
+|---|---|
+| コード | `d480fde`（Opus 5.5 で作業） |
+| CI | run 43709555914（push）：Linux・Windows とも成功 |
+| ZIP | `SketchBRep-windows-x64-d480fde-local.zip`（Codex のチャットフォルダの `outputs\`） |
+| サイズ | 72,035,119 bytes |
+| SHA256 | `7a95590d312702161f315fded0d0ad7711bf70ba1875f3e7cdc4a714d32f0f90` |
+| ZIP の検証 | `verify_portable_pads.py`・`verify_portable_mat.py` とも成功（docs/validation/2026-11-15-portable-d480fde*.json） |
