@@ -2405,7 +2405,28 @@ void MainWindow::exitGroup() {
                                                 : std::vector<doc::ObjectId>{});
 }
 
+std::size_t MainWindow::selectedOpening() const {
+  if (elements_.empty() || selection_.size() != 1) return 0;
+  std::size_t found = 0;
+  for (const ElementRef& e : elements_) {
+    if (e.type != TopAbs_FACE || e.objectId != selection_.front()) return 0;
+    const TopoDS_Shape face = viewport_->elementShape(e);
+    if (face.IsNull() || face.ShapeType() != TopAbs_FACE) return 0;
+    const auto index = modeler_.openingOfFace(e.objectId, TopoDS::Face(face));
+    if (!index || (found && *index != found)) return 0;
+    found = *index;
+  }
+  return found;
+}
+
 QString MainWindow::elementSummary() const {
+  if (const std::size_t opening = selectedOpening()) {
+    QString text = tr("開口 %1").arg(opening);
+    for (const doc::OpeningRow& r : doc::openingSchedule(modeler_.document()).rows)
+      if (r.host == selection_.front() && r.index == opening)
+        text = tr("開口 %1（%2  %3 × %4）").arg(opening).arg(QString::fromStdString(r.mark)).arg(r.width, 0, 'f', 0).arg(r.height, 0, 'f', 0);
+    return text;
+  }
   if (elements_.empty()) return {};
   int faces = 0, edges = 0;
   for (const ElementRef& e : elements_) (e.type == TopAbs_FACE ? faces : edges)++;
@@ -2504,7 +2525,7 @@ void MainWindow::refreshPanels() {
                                                       ? std::optional<std::string>(paintTool_->material())
                                                       : std::nullopt);
   }
-  panel_->refresh(modeler_, selection_, elementSummary());
+  panel_->refresh(modeler_, selection_, elementSummary(), selectedOpening());
   const auto& h = modeler_.history();
   undoAction_->setEnabled(h.canUndo());
   redoAction_->setEnabled(h.canRedo());

@@ -11184,6 +11184,11 @@ void GuiPhase1::moveToolSlidesAnOpeningWithinItsWall() {
     f.window.setElementSelection(sillFace);
   }
   QCOMPARE(f.window.elementSelection().size(),std::size_t(1));
+  // docs/110: a face of the hole picked stands for the opening: the properties show it alone.
+  QCOMPARE(f.window.selectedOpening(),std::size_t(1));
+  QApplication::processEvents();
+  QVERIFY(f.window.findChild<QLabel*>(QStringLiteral("openingFocus")));
+  QVERIFY(f.window.findChild<QLineEdit*>(QStringLiteral("openingMark1")));
   f.window.activateTool(MainWindow::ToolId::Move);
   click(f.vp,f.vp->toWidget(at));
   move(f.vp,f.vp->toWidget(at.Translated(gp_Vec(600,0,0))));

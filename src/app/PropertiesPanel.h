@@ -25,8 +25,10 @@ class PropertiesPanel : public QWidget {
   explicit PropertiesPanel(QWidget* parent = nullptr);
 
   // `elementSummary` describes a face/edge selection ("面 1 / エッジ 4").
+  // `opening` > 0: the faces picked are those of that opening of the (one) selected wall
+  // (docs/110): only it is shown in the openings section.
   void refresh(const doc::Modeler& modeler, const std::vector<doc::ObjectId>& selection,
-               const QString& elementSummary = {});
+               const QString& elementSummary = {}, std::size_t opening = 0);
 
  signals:
   void selectionChanged(const std::vector<doc::ObjectId>& ids);
@@ -86,6 +88,7 @@ class PropertiesPanel : public QWidget {
  private:
   void rebuildForm(const doc::Modeler& modeler, const std::vector<doc::ObjectId>& selection,
                    const QString& elementSummary);
+  std::size_t focusOpening_ = 0;  // see refresh
 
   QTreeWidget* tree_ = nullptr;
   // The tree is rebuilt only when the document changed (sequence); a

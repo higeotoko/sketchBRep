@@ -147,7 +147,7 @@ PropertiesPanel::PropertiesPanel(QWidget* parent) : QWidget(parent) {
 
 void PropertiesPanel::refresh(const doc::Modeler& modeler,
                               const std::vector<doc::ObjectId>& selection,
-                              const QString& elementSummary) {
+                              const QString& elementSummary, std::size_t focusOpening) {
   updating_ = true;
   const doc::Document& document = modeler.document();
   bool rebuild = treeDocument_ != &document || document.sequence() == 0;
@@ -226,6 +226,7 @@ void PropertiesPanel::refresh(const doc::Modeler& modeler,
   }
   tree_->viewport()->update();
   updating_ = false;
+  focusOpening_ = focusOpening;
   rebuildForm(modeler, selection, elementSummary);
 }
 
@@ -908,7 +909,17 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
 
   // Openings cut into this object (walls): width x height, editable.
   if (const auto openings = modeler.openings(id); openings && !openings->empty()) {
-    form_->addRow(new QLabel(tr("<b>開口</b>")));
+    if (const std::size_t focusOpening = focusOpening_; focusOpening > 0) {
+      // One opening picked by a face of its hole: it alone (docs/110).
+      auto* heading = new QLabel(tr("<b>開口 %1 を選んでいます</b>").arg(focusOpening));
+      heading->setObjectName(QStringLiteral("openingFocus"));
+      form_->addRow(heading);
+      auto* hint = new QLabel(tr("Delete でふさぐ。移動ツールで穴をつかむと動かせます（Ctrl でコピー）。壁全体はトリプルクリックで選べます"));
+      hint->setWordWrap(true);
+      form_->addRow(hint);
+    } else {
+      form_->addRow(new QLabel(tr("<b>開口</b>")));
+    }
     nlohmann::json fittings = nlohmann::json::object();
     if (const doc::Object* host = modeler.document().find(id)) {
       if (const auto it = host->attributes.find("opening_fittings"); it != host->attributes.end()) {
@@ -926,6 +937,7 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
     for (const doc::OpeningRow& r : schedule.rows)
       if (r.host == id) marks[r.openingId] = &r;
     for (const doc::Modeler::OpeningInfo& op : *openings) {
+      if (focusOpening_ > 0 && op.index != focusOpening_) continue;
       auto* row = new QWidget;
       auto* h = new QHBoxLayout(row);
       h->setContentsMargins(0, 0, 0, 0);

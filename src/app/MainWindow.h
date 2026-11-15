@@ -56,6 +56,9 @@ class MainWindow : public QMainWindow, public ToolHost {
   void setMixedSelection(const std::vector<ElementRef>& elements, const std::vector<doc::ObjectId>& whole) override;
   std::vector<doc::ObjectId> wholeSelection() const override;
   std::vector<ElementRef> elementSelection() const override { return elements_; }
+  // The opening whose hole the picked faces belong to, when they are all faces of one opening
+  // of one wall (docs/110): its number; 0 otherwise.
+  std::size_t selectedOpening() const;
   std::vector<doc::ObjectId> selection() const override { return selection_; }
   std::vector<doc::DeleteTarget> selectionTargets() const override;
   doc::ObjectId editingGroup() const override { return modeler_.activeGroup(); }
