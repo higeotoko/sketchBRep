@@ -1586,6 +1586,31 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
         setStatus(tr("3D で %1 だけを見せています（ほかの階は隠しています。モデルは変わりません）。全部に戻すのは同じメニューから").arg(name));
       });
     }
+    // docs/121: a storey copied to the next level up.
+    for (QMenu* old : menu->findChildren<QMenu*>(QStringLiteral("architectureCopyStorey"), Qt::FindDirectChildrenOnly)) delete old;
+    auto* copyMenu = menu->addMenu(tr("階を上の階へ写す"));
+    copyMenu->setObjectName(QStringLiteral("architectureCopyStorey"));
+    for (std::size_t i = 0; i < sorted.size(); ++i) {
+      if (i > 0 && std::abs(sorted[i].elevation - sorted[i - 1].elevation) < 1e-6) continue;
+      const doc::FloorLevel* above = nullptr;
+      for (std::size_t j = i + 1; j < sorted.size() && !above; ++j)
+        if (sorted[j].elevation > sorted[i].elevation + 1e-6) above = &sorted[j];
+      if (!above) continue;
+      auto* action = copyMenu->addAction(tr("%1 → %2").arg(QString::fromStdString(sorted[i].name), QString::fromStdString(above->name)));
+      action->setObjectName(QStringLiteral("architectureCopyStorey_") + QString::fromStdString(sorted[i].id));
+      connect(action, &QAction::triggered, this, [this, from = sorted[i].id, to = above->id, toName = QString::fromStdString(above->name)] {
+        const auto copied = modeler_.copyStorey(from, to);
+        if (!copied) {
+          reportError(tr("階を写せません: %1").arg(userMessage(QString::fromStdString(copied.error()))));
+          return;
+        }
+        QString text = tr("%1 へ写しました（壁 %2・床 %3・室 %4・ほか %5。Ctrl+Z で戻せます）")
+                           .arg(toName).arg(copied->walls).arg(copied->slabs).arg(copied->rooms).arg(copied->others);
+        if (copied->slabsLeft) text += tr("。%1 には床があったので、床は写していません").arg(toName);
+        setStatus(text);
+      });
+    }
+    if (copyMenu->isEmpty()) copyMenu->setEnabled(false);
     storeys->addSeparator();
     auto* all = storeys->addAction(tr("全部の階を見せる"));
     all->setObjectName(QStringLiteral("architectureShowAllStoreys"));

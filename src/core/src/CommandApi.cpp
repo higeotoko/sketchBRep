@@ -2022,6 +2022,17 @@ const std::vector<CommandDef>& commands() {
          must(m.setOpeningSize(text(a, "host"), which, w, h, keep == "center"));
          return json::object();
        }},
+      {"copy_storey",
+       "Copy a storey to another level (docs/121): 'from' and 'to' (level ids or names). Every top-level solid "
+       "starting in the storey of 'from' (300 under its floor to 300 under the next floor) and its rooms, moved by "
+       "the difference of the levels; their levels follow (what was on a level goes onto the one as far above). "
+       "Slabs are left when the target storey has a slab. Refused when walls already stand there. One undo step.",
+       SCHEMA({"type": "object", "properties": {"from": {"type": "string"}, "to": {"type": "string"}}, "required": ["from", "to"]}),
+       [](doc::Modeler& m, const json& a) {
+         const auto copied = must(m.copyStorey(text(a, "from"), text(a, "to")));
+         return json{{"ids", copied.made}, {"walls", copied.walls}, {"slabs", copied.slabs}, {"rooms", copied.rooms},
+                     {"others", copied.others}, {"slabs_left", copied.slabsLeft}};
+       }},
       {"copy_opening",
        "Copy one opening of 'host' ('opening': id or number from list_openings): the same width, height and "
        "fitting, and its mark / product number when given by hand (set_opening_mark); a new id. Either 'by': "

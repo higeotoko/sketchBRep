@@ -402,3 +402,49 @@ TEST_F(Schedules, AnOpeningWhereAnotherWallEndsIsSaid) {
   EXPECT_FALSE(clear.contains("walls_meeting_openings")) << clear.dump();
   EXPECT_TRUE(modeler.wallsMeetingOpenings(west).empty());
 }
+
+// docs/121: a storey copied to the level above.
+TEST_F(Schedules, AStoreyIsCopiedToTheLevelAbove) {
+  // 1FL: 5 walls with openings, the floor slab (top 0), the room. Add a 3FL so 2FL's walls get a top level.
+  // (Keeping the levels' ids: the walls stay on 1FL.)
+  auto levels = modeler.levels();
+  for (auto& l : levels)
+    if (l.name == "2FL") l.elevation = 3000;
+  levels.push_back({"", "3FL", 6000});
+  ASSERT_TRUE(modeler.setLevels(levels));
+  const auto steps = modeler.history().undoCount();
+  const json copied = ok("copy_storey", {{"from", "1FL"}, {"to", "2FL"}});
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  EXPECT_EQ(copied["walls"], 5);
+  EXPECT_EQ(copied["slabs"], 1);
+  EXPECT_EQ(copied["rooms"], 1);
+  // The copies stand on 2FL: the walls' level follows, the openings and their marks came along.
+  std::string upperLevel;
+  for (const auto& l : modeler.levels())
+    if (l.name == "2FL") upperLevel = l.id;
+  int onUpper = 0;
+  for (const json& id : copied["ids"]) {
+    const auto* o = modeler.document().find(id.get<std::string>());
+    ASSERT_TRUE(o);
+    if (o->attributes.count("base_level") && o->attributes.at("base_level") == upperLevel) ++onUpper;
+  }
+  EXPECT_EQ(onUpper, 5);
+  EXPECT_EQ(ok("opening_schedule")["count"], 10);
+  const json areas = ok("area_table");
+  ASSERT_EQ(areas["levels"].size(), 2u) << areas.dump();
+  EXPECT_NEAR(areas["levels"][1]["enclosed"].get<double>(), areas["levels"][0]["enclosed"].get<double>(), 1e-6);
+  EXPECT_EQ(areas["levels"][1]["rooms"], 1);
+  // Again: refused (walls stand there), nothing changes.
+  EXPECT_FALSE(call("copy_storey", {{"from", "1FL"}, {"to", "2FL"}}).value("ok", true));
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  ASSERT_TRUE(modeler.undo());
+  EXPECT_EQ(ok("opening_schedule")["count"], 5);
+  // A slab already on 2FL: the walls go up, the slab stays behind.
+  ok("create_slab", {{"outline", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}}}, {"top", 3000}, {"thickness", 200}});
+  const json again = ok("copy_storey", {{"from", "1FL"}, {"to", "2FL"}});
+  EXPECT_EQ(again["slabs"], 0);
+  EXPECT_TRUE(again["slabs_left"].get<bool>());
+  EXPECT_EQ(again["walls"], 5);
+  // Nothing to copy from an empty storey.
+  EXPECT_FALSE(call("copy_storey", {{"from", "3FL"}, {"to", "1FL"}}).value("ok", true));
+}

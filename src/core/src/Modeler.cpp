@@ -6008,6 +6008,115 @@ std::vector<WallBand> allWallBands(const Document& document) {
 
 }  // namespace
 
+Result<Modeler::StoreyCopy> Modeler::copyStorey(const std::string& fromLevel, const std::string& toLevel) {
+  using R = Result<StoreyCopy>;
+  const std::vector<FloorLevel>& levels = document_.settings().levels;
+  const auto level = [&](const std::string& id) -> const FloorLevel* {
+    for (const FloorLevel& l : levels)
+      if (l.id == id || l.name == id) return &l;
+    return nullptr;
+  };
+  const FloorLevel* from = level(fromLevel);
+  const FloorLevel* to = level(toLevel);
+  if (!from || !to) return R::failure("No such level");
+  const double dz = to->elevation - from->elevation;
+  if (std::abs(dz) < 1.0) return R::failure("The two levels are at one height");
+  auto ceilingOf = [&](double floor) {
+    std::optional<double> next;
+    for (const FloorLevel& l : levels)
+      if (l.elevation > floor + 1e-6 && (!next || l.elevation < *next)) next = l.elevation;
+    return next;
+  };
+  auto inStorey = [&](double z0, double floor) {
+    const auto ceiling = ceilingOf(floor);
+    return z0 >= floor - 300.0 && (!ceiling || z0 < *ceiling - 300.0);
+  };
+  auto bottom = [&](const Object& o) -> std::optional<double> {
+    const Bnd_Box box = document_.worldBounds(o);
+    if (box.IsVoid()) return std::nullopt;
+    return box.CornerMin().Z() + box.GetGap();
+  };
+  auto kindOf = [](const Object& o) { const auto k = o.attributes.find("kind"); return k == o.attributes.end() ? std::string() : k->second; };
+  // What stands in each storey now.
+  std::vector<ObjectId> picked;
+  bool targetHasSlab = false;
+  for (const Object& o : document_.objects()) {
+    if (!o.parent.empty() || o.attributes.count("grid_part")) continue;
+    const std::string kind = kindOf(o);
+    if (kind == "room") {
+      const auto* note = std::get_if<TextNote>(&o.recipe.base);
+      if (!note) continue;
+      const double z = note->position.Transformed(document_.worldTransform(o)).Z();
+      if (inStorey(z, from->elevation)) picked.push_back(o.id);
+      continue;
+    }
+    const ObjectKind k = o.kind();
+    if (k != ObjectKind::Solid && k != ObjectKind::Shell && k != ObjectKind::Instance && k != ObjectKind::Group) continue;
+    const auto z0 = bottom(o);
+    if (!z0) continue;
+    if (inStorey(*z0, to->elevation)) {
+      if (kind == "wall") return R::failure("Walls already stand on '" + to->name + "': copying would double them (nothing was changed)");
+      if (kind == "slab") targetHasSlab = true;
+    }
+    if (inStorey(*z0, from->elevation)) picked.push_back(o.id);
+  }
+  StoreyCopy out;
+  std::vector<ObjectId> roots;
+  for (const ObjectId& id : picked) {
+    const Object* o = document_.find(id);
+    if (kindOf(*o) == "slab" && targetHasSlab) {
+      out.slabsLeft = true;
+      continue;
+    }
+    roots.push_back(id);
+  }
+  if (roots.empty()) return R::failure("Nothing stands on '" + from->name + "' to copy");
+  history_.beginGroup("Copy Storey");
+  gp_Trsf up;
+  up.SetTranslation(gp_Vec(0, 0, dz));
+  const auto made = copy(roots, up);
+  if (!made) {
+    history_.abortGroup();
+    return R::failure(made.error());
+  }
+  // Levels: what was on a level goes onto the one as far above, or loses it.
+  auto shifted = [&](const std::string& id) -> std::optional<std::string> {
+    for (const FloorLevel& l : levels)
+      if (l.id == id) {
+        for (const FloorLevel& m : levels)
+          if (std::abs(m.elevation - (l.elevation + dz)) < 1e-6) return m.id;
+        return std::nullopt;
+      }
+    return std::nullopt;
+  };
+  ChangeSet changes(document_);
+  bool any = false;
+  for (const ObjectId& id : *made) {
+    const Object* copied = document_.find(id);
+    if (!copied) continue;
+    Object o = *copied;
+    bool changed = false;
+    for (const char* key : {"base_level", "top_level"}) {
+      const auto it = o.attributes.find(key);
+      if (it == o.attributes.end()) continue;
+      const auto now = shifted(it->second);
+      if (now) it->second = *now;
+      else o.attributes.erase(it);
+      changed = true;
+    }
+    if (changed) changes.modify(o), any = true;
+    const std::string kind = kindOf(o);
+    if (kind == "wall") ++out.walls;
+    else if (kind == "slab") ++out.slabs;
+    else if (kind == "room") ++out.rooms;
+    else ++out.others;
+    out.made.push_back(id);
+  }
+  if (any) history_.execute(changes.build("Copy Storey"));
+  history_.endGroup();
+  return out;
+}
+
 std::optional<ObjectId> Modeler::wallAt(const gp_Pnt& p) const {
   std::optional<ObjectId> found;
   double best = 1e300;

@@ -11858,6 +11858,21 @@ void GuiPhase1::oneStoreyShownIn3d() {
   QVERIFY(all->isEnabled());
   all->trigger();
   QVERIFY(shown(down->front())&&shown(*slab)&&shown(upper->front()));
+  // docs/121: 1FL copied to 2FL from the same menu: refused while 2FL has walls, then made.
+  auto copyUp=[&]{
+    emit button->menu()->aboutToShow();
+    auto* action=f.window.findChild<QAction*>(QStringLiteral("architectureCopyStorey_")+QString::fromStdString(m.levels().front().id));
+    QVERIFY(action);action->trigger();
+  };
+  copyUp();
+  QVERIFY(!f.window.lastError().isEmpty());
+  f.window.clearLastError();
+  QVERIFY(m.remove({upper->front()}));
+  const auto before=m.history().undoCount();
+  copyUp();
+  QVERIFY2(f.window.lastError().isEmpty(),qPrintable(f.window.lastError()));
+  QCOMPARE(m.history().undoCount(),before+1);
+  QVERIFY2(f.window.statusText().contains(QStringLiteral("へ写しました（壁 1")),qPrintable(f.window.statusText()));
 }
 
 void GuiPhase1::ifcExportWritesTheBuildingAndSaysWhatItLeftOut() {

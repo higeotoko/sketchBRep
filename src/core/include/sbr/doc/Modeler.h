@@ -596,6 +596,18 @@ class Modeler {
   // the wall would end in the hole. Nothing stops it; a tool or an agent says so. Per opening
   // (its number) the names of those walls.
   std::vector<std::pair<std::size_t, std::string>> wallsMeetingOpenings(const ObjectId& host) const;
+  // A storey copied to another level (docs/97 N-07, docs/121): every top-level solid starting in
+  // the storey of `fromLevel` (300 under its floor to 300 under the next floor, as the 3D storey
+  // view) and its room markers, moved up by the difference of the levels; what was on a level
+  // goes onto the level as far above (or loses it when there is none). Slabs are not copied when
+  // the storey above has a slab already. Refused when walls already stand in the target storey
+  // (they would be doubled). One undo step. The copies made.
+  struct StoreyCopy {
+    std::vector<ObjectId> made;
+    int walls = 0, slabs = 0, rooms = 0, others = 0;
+    bool slabsLeft = false;  // the target had a slab: the storey's slabs were not copied
+  };
+  Result<StoreyCopy> copyStorey(const std::string& fromLevel, const std::string& toLevel);
   // The wall made by the wall tool whose band holds `p` in plan, at its height (docs/119); the
   // nearest line when several do.
   std::optional<ObjectId> wallAt(const gp_Pnt& p) const;
