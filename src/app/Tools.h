@@ -1117,6 +1117,13 @@ class PasteTool : public DrawingTool {
   void setClipboard(const doc::Modeler::Clipboard* clipboard) { clipboard_ = clipboard; }
   // Called with the new ids after placing (the host switches tools).
   void setOnPlaced(std::function<void(const std::vector<doc::ObjectId>&)> f) { onPlaced_ = std::move(f); }
+  // A copied opening instead (docs/126): a click on a wall puts a copy there.
+  struct CopiedOpening {
+    doc::ObjectId host;
+    std::string id;
+    std::size_t index = 0;  // the number it had when copied (for the status bar)
+  };
+  void setOpening(std::optional<CopiedOpening> opening) { opening_ = std::move(opening); }
   void activate() override;
   void cancel() override;
   void mousePress(const ToolEvent& e) override;
@@ -1125,6 +1132,8 @@ class PasteTool : public DrawingTool {
  private:
   const doc::Modeler::Clipboard* clipboard_ = nullptr;
   std::function<void(const std::vector<doc::ObjectId>&)> onPlaced_;
+  std::optional<CopiedOpening> opening_;
+  gp_Pnt openingPoint(const ToolEvent& e);
 };
 
 // Revolve: click a profile face, then two points of the axis. Creates a

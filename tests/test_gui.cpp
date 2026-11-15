@@ -11301,6 +11301,37 @@ void GuiPhase1::moveToolSlidesAnOpeningWithinItsWall() {
     QCOMPARE(m.history().undoCount(),copySteps+1);
     QVERIFY(m.undo());
     QCOMPARE(m.openings(other)->size(),std::size_t(0));
+    // docs/126: the opening selected, Ctrl+C, Ctrl+V, a click on the other wall in the plan.
+    {
+      f.window.activateTool(MainWindow::ToolId::Select);
+      std::vector<ElementRef> hole;
+      for(const ElementRef& el:f.vp->allElements(wall)){
+        if(el.type!=TopAbs_FACE)continue;
+        const TopoDS_Shape shape=f.vp->elementShape(el);
+        if(!shape.IsNull()&&m.openingOfFace(wall,TopoDS::Face(shape))){hole={el};break;}
+      }
+      QCOMPARE(hole.size(),std::size_t(1));
+      f.window.setElementSelection(hole);
+      QCOMPARE(f.window.selectedOpening(),std::size_t(1));
+      QVERIFY(f.window.copySelection());
+      QVERIFY2(f.window.statusText().contains(QStringLiteral("開口 1 をコピー")),qPrintable(f.window.statusText()));
+      QVERIFY(!f.window.cutSelection());  // not cut: said instead
+      f.window.clearLastError();
+      f.window.paste();
+      const gp_Pnt there(4500,3000+60,1500.0);
+      move(f.vp,f.vp->toWidget(there));
+      QVERIFY2(f.window.statusText().contains(QStringLiteral("へ貼る")),qPrintable(f.window.statusText()));
+      click(f.vp,f.vp->toWidget(there));
+      QVERIFY2(f.window.lastError().isEmpty(),qPrintable(f.window.lastError()));
+      QTRY_COMPARE(m.openings(other)->size(),std::size_t(1));
+      QVERIFY(std::abs(m.openings(other)->front().center.X()-4500)<5.0);
+      QVERIFY(std::abs(m.openings(other)->front().sill-900)<1e-6);
+      QCOMPARE(m.openings(wall)->size(),std::size_t(1));
+      QCOMPARE(m.history().undoCount(),copySteps+1);
+      QVERIFY(m.undo());
+      QVERIFY(!f.window.pasteInPlace());  // an opening has no "same place"
+      f.window.clearLastError();
+    }
     QVERIFY(m.undo());  // the second wall
     // Away from any opening: not an opening (the wall itself would move).
     f.vp->setPlanCut(std::nullopt);

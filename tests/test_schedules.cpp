@@ -297,6 +297,55 @@ TEST_F(Schedules, ACopyOfAnOpeningIsTheSameOpeningAgain) {
   EXPECT_TRUE(ok("room_at", {{"at", {2000, 3000}}})["closed"].get<bool>());
 }
 
+// docs/126: an opening copied (Ctrl+C) and pasted where clicked (Ctrl+V).
+TEST_F(Schedules, ACopiedOpeningIsPastedWhereClicked) {
+  ok("set_opening_mark", {{"host", east}, {"openings", {1}}, {"mark", "WD-1"}, {"product", "D-9"}});
+  const auto door = modeler.openings(east);
+  ASSERT_TRUE(door);
+  ASSERT_EQ(door->size(), 1u);
+  const std::string id = door->front().id;
+  const gp_Pnt c = door->front().center;  // on x = 8000, y = 3000
+  const auto steps = modeler.history().undoCount();
+  // The same wall, 1500 to the south and somewhere up the wall: along only, the same sill.
+  auto made = modeler.pasteOpening(east, id, gp_Pnt(8000, c.Y() - 1500, 2500));
+  ASSERT_TRUE(made) << made.error();
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  auto list = modeler.openings(east);
+  ASSERT_EQ(list->size(), 2u);
+  for (const auto& o : *list) {
+    EXPECT_NEAR(o.sill, 0, 1e-6);
+    EXPECT_NEAR(o.width, 900, 1e-6);
+    if (o.id == *made) EXPECT_NEAR(o.center.Y(), c.Y() - 1500, 1e-6);
+  }
+  ASSERT_TRUE(modeler.undo());
+  // The partition, clicked in a plan at the door's height: centred there, its fitting and mark.
+  made = modeler.pasteOpening(east, id, gp_Pnt(4000, 2000, c.Z()));
+  ASSERT_TRUE(made) << made.error();
+  list = modeler.openings(partition);
+  ASSERT_EQ(list->size(), 1u);
+  EXPECT_NEAR(list->front().center.Y(), 2000, 1e-6);
+  EXPECT_NEAR(list->front().height, 2100, 1e-6);
+  int marked = 0;
+  const json table = ok("opening_schedule");
+  for (const json& o : table["openings"])
+    if (o["mark"] == "WD-1") {
+      ++marked;
+      EXPECT_EQ(o["product"], "D-9");
+      EXPECT_EQ(o["kind"], "door");
+    }
+  EXPECT_EQ(marked, 2);
+  // Clicked at the plan's cut height (not the door's): the wall is still found.
+  ASSERT_TRUE(modeler.undo());
+  made = modeler.pasteOpening(east, id, gp_Pnt(4000, 4000, 1500));
+  ASSERT_TRUE(made) << made.error();
+  ASSERT_TRUE(modeler.undo());
+  // No wall there, or the copied opening gone: refused, nothing changes.
+  EXPECT_FALSE(modeler.pasteOpening(east, id, gp_Pnt(2000, 3000, 1000)));
+  EXPECT_FALSE(modeler.pasteOpening(east, "no-such-opening", gp_Pnt(8000, 1000, 1000)));
+  EXPECT_FALSE(modeler.pasteOpening(east, id, gp_Pnt(8000, c.Y() + 100, 1000)));  // on itself: overlaps
+  EXPECT_EQ(modeler.history().undoCount(), steps);
+}
+
 // docs/113: a table on a sheet of its own.
 TEST_F(Schedules, ATableGoesOnASheetOfItsOwn) {
   const sbr::draw::Table table = sbr::doc::scheduleTable(modeler.document(), 0);

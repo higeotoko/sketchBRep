@@ -5078,7 +5078,28 @@ QCursor PasteTool::cursor() const { return toolCursor(CursorKind::Move); }
 void PasteTool::activate() {
   resetTracking();
   host_.viewport().setPickMode(PickMode::None);
+  if (opening_) {
+    host_.setStatus(QObject::tr("開口 %1 を貼る壁の位置をクリック（同じ壁なら壁に沿って、別の壁ならそこを中心に。腰高は同じ。Esc で中止）")
+                        .arg(opening_->index));
+    return;
+  }
   host_.setStatus(QObject::tr("貼り付ける位置をクリック（コピーした物の左下手前の角が吸着点に来ます、Esc で中止）"));
+}
+
+// Where a copied opening goes: looking straight down (a plan), the cursor at the opening's own
+// height; otherwise the snapped point (a wall's face in 3D).
+gp_Pnt PasteTool::openingPoint(const ToolEvent& e) {
+  const snap::Ray ray = host_.viewport().rayAt(e.pos);
+  double z = 0.0;
+  if (const auto list = host_.modeler().openings(opening_->host))
+    for (const auto& o : *list)
+      if (o.id == opening_->id) z = o.center.Z();
+  if (std::abs(ray.direction.Z()) > 0.99)
+    return ray.origin.Translated(gp_Vec(ray.direction) * ((z - ray.origin.Z()) / ray.direction.Z()));
+  const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
+  if (r.valid()) return r.point;
+  if (std::abs(ray.direction.Z()) < 1e-9) return ray.origin;
+  return ray.origin.Translated(gp_Vec(ray.direction) * ((z - ray.origin.Z()) / ray.direction.Z()));
 }
 
 void PasteTool::cancel() {
@@ -5088,6 +5109,12 @@ void PasteTool::cancel() {
 }
 
 void PasteTool::mouseMove(const ToolEvent& e) {
+  if (opening_) {
+    const auto wall = host_.modeler().wallAt(openingPoint(e));
+    host_.setStatus(wall ? QObject::tr("ここでクリック: 開口 %1 を %2 へ貼る").arg(opening_->index).arg(objectName(host_, *wall))
+                         : QObject::tr("開口を貼る壁の上をクリック（Esc で中止）"));
+    return;
+  }
   if (!clipboard_ || clipboard_->empty()) return;
   const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
   if (!r.valid()) return;
@@ -5098,6 +5125,17 @@ void PasteTool::mouseMove(const ToolEvent& e) {
 }
 
 void PasteTool::mousePress(const ToolEvent& e) {
+  if (opening_) {
+    const auto made = host_.modeler().pasteOpening(opening_->host, opening_->id, openingPoint(e));
+    cancel();
+    if (!made) {
+      host_.reportError(QObject::tr("開口を貼り付けられませんでした: %1").arg(userMessage(QString::fromStdString(made.error()))));
+      return;
+    }
+    host_.setStatus(QObject::tr("開口 %1 を貼り付けました（同じ大きさ・建具・符号・腰高）。続けて Ctrl+V で、もう 1 つ").arg(opening_->index));
+    if (onPlaced_) onPlaced_({});
+    return;
+  }
   if (!clipboard_ || clipboard_->empty()) return;
   const snap::SnapResult r = snapAt(e, std::nullopt, std::nullopt);
   if (!r.valid()) return;

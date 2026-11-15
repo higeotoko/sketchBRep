@@ -603,6 +603,12 @@ class Modeler {
   // step. The new opening's id.
   Result<std::string> copyOpening(const ObjectId& host, std::size_t index, const gp_Vec& worldDelta,
                                   const std::optional<ObjectId>& target = std::nullopt);
+  // A copied opening pasted where clicked (Ctrl+C / Ctrl+V, docs/126): `point` on (or over, in a
+  // plan) a wall made by the wall tool. In the opening's own wall it goes along to there, at the
+  // same sill; in another wall it is centred there, at the same sill (copyOpening). `openingId`
+  // is the opening's id, so other openings changing in between do not matter. Refused, nothing
+  // changed, when the opening is gone or no wall is there. One undo step. The new opening's id.
+  Result<std::string> pasteOpening(const ObjectId& host, const std::string& openingId, const gp_Pnt& point);
   // Walls made by the wall tool whose end meets `host` where one of its openings is (docs/118):
   // the wall would end in the hole. Nothing stops it; a tool or an agent says so. Per opening
   // (its number) the names of those walls.

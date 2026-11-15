@@ -392,6 +392,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   std::unique_ptr<SlabTool> slabTool_;
   std::unique_ptr<OpeningTool> openingTool_;
   doc::Modeler::Clipboard clipboard_;
+  // An opening copied with Ctrl+C (docs/126): Ctrl+V pastes it into a wall where clicked.
+  std::optional<PasteTool::CopiedOpening> copiedOpening_;
   // Recipes are checked on a thread of their own after opening a file (a
   // wall with many openings took seconds, which froze the window).
   std::thread verifyThread_;

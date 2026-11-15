@@ -2698,6 +2698,17 @@ bool MainWindow::exportImage(const QString& path) {
 }
 
 bool MainWindow::copySelection() {
+  // A face of an opening's hole picked stands for the opening (docs/110): Ctrl+V pastes the
+  // opening into a wall (docs/126), not the faces.
+  if (const std::size_t index = selectedOpening()) {
+    if (const auto list = modeler_.openings(selection_.front()))
+      for (const auto& o : *list)
+        if (o.index == index) {
+          copiedOpening_ = PasteTool::CopiedOpening{selection_.front(), o.id, index};
+          setStatus(tr("開口 %1 をコピーしました（Ctrl+V で、貼る壁の位置をクリック）").arg(index));
+          return true;
+        }
+  }
   // Faces / edges picked on their own copy just those (CLIP-01), whole
   // objects copy whole: the same targets as Delete.
   const std::vector<doc::DeleteTarget> targets = selectionTargets();
@@ -2708,6 +2719,7 @@ bool MainWindow::copySelection() {
     return false;
   }
   clipboard_ = std::move(clip.value());
+  copiedOpening_.reset();
   const bool partial = std::any_of(targets.begin(), targets.end(), [](const doc::DeleteTarget& t) { return !t.whole; });
   setStatus(partial ? tr("選んだ面・辺をコピーしました（Ctrl+V で貼り付け）")
                     : tr("%1 個をコピーしました（Ctrl+V で貼り付け）").arg(targets.size()));
@@ -2718,6 +2730,10 @@ bool MainWindow::cutSelection() {
   // Copy, then the same Delete as the Delete key (CLIP-02): a face cut
   // from a box takes that face only; refused, nothing changes and the
   // clipboard keeps what it had.
+  if (selectedOpening()) {
+    reportError(tr("開口は切り取れません。移動ツールで動かすか、Ctrl+C でコピーしてください"));
+    return false;
+  }
   const std::vector<doc::DeleteTarget> targets = selectionTargets();
   doc::Modeler::Clipboard previous = clipboard_;
   if (!copySelection()) return false;
@@ -2732,6 +2748,11 @@ bool MainWindow::cutSelection() {
 }
 
 void MainWindow::paste() {
+  pasteTool_->setOpening(copiedOpening_);
+  if (copiedOpening_) {
+    activateTool(ToolId::Paste);
+    return;
+  }
   if (clipboard_.empty()) {
     reportError(tr("貼り付ける物がありません。先にコピーしてください"));
     return;
@@ -2740,6 +2761,10 @@ void MainWindow::paste() {
 }
 
 bool MainWindow::pasteInPlace() {
+  if (copiedOpening_) {
+    reportError(tr("開口は同じ位置には貼れません。Ctrl+V で、貼る壁の位置をクリックしてください"));
+    return false;
+  }
   if (clipboard_.empty()) {
     reportError(tr("貼り付ける物がありません。先にコピーしてください"));
     return false;

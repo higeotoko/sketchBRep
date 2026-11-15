@@ -6238,6 +6238,23 @@ std::vector<std::pair<gp_Pnt, gp_Pnt>> Modeler::wallLayerLines(const Document& d
   return out;
 }
 
+Result<std::string> Modeler::pasteOpening(const ObjectId& host, const std::string& openingId, const gp_Pnt& point) {
+  using R = Result<std::string>;
+  const auto list = openings(host);
+  if (!list) return R::failure("The copied opening is no longer there");
+  const auto original = std::find_if(list->begin(), list->end(), [&](const OpeningInfo& o) { return o.id == openingId; });
+  if (original == list->end()) return R::failure("The copied opening is no longer there");
+  // The point as given (a face of a wall in 3D), else at the opening's own height (a plan).
+  std::optional<ObjectId> into = wallAt(point);
+  if (!into) into = wallAt(gp_Pnt(point.X(), point.Y(), original->center.Z()));
+  if (!into) return R::failure("Click on a wall to paste the opening into");
+  if (*into == host) {
+    const gp_Vec along(point.X() - original->center.X(), point.Y() - original->center.Y(), 0.0);
+    return copyOpening(host, original->index, along);
+  }
+  return copyOpening(host, original->index, gp_Vec(point.XYZ()), *into);
+}
+
 std::optional<ObjectId> Modeler::wallAt(const gp_Pnt& p) const {
   std::optional<ObjectId> found;
   double best = 1e300;

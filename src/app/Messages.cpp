@@ -136,6 +136,8 @@ const Entry kEntries[] = {
     {"Roof thickness must be at least 1", "屋根の厚さは 1 以上にしてください"},
     {"Roof overhangs must not be negative", "軒の出・けらばの出は 0 以上にしてください"},
     {"The copy would lie on the opening itself", "コピーが元の開口と同じ所になります。少し動かしてください"},
+    {"The copied opening is no longer there", "コピーした開口がもうありません（消した・ふさいだ）。もう一度コピーしてください"},
+    {"Click on a wall to paste the opening into", "開口を貼る壁の上をクリックしてください（壁ツールで描いた壁）"},
     {"Only openings in a vertical face can be copied", "コピーできるのは、壁の縦の面の開口だけです"},
     {"No rooms to make ceilings for", "天井を作る室がありません"},
     {"No room has a ceiling height and an outline within its walls", "天井高が入っていて、壁の面の内側の形が分かる室がありません。何も変えていません"},
