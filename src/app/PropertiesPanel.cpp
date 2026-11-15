@@ -397,17 +397,23 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       });
       form_->addRow(tr("段数"), risers);
       size(tr("蹴上の上限"), "riser_limit", stair->spec.riserLimit, 50, tr("段数が自動の時に、蹴上がこれ以下になるようにします"));
-      auto* turn = new QComboBox;
-      turn->setObjectName(QStringLiteral("stairTurn"));
-      turn->addItem(tr("踊り場"), 1);
-      for (int t = 2; t <= 6; ++t) turn->addItem(tr("%1 段回り（%2°）").arg(t).arg(90.0 / t, 0, 'g', 3), t);
-      turn->setCurrentIndex(std::max(0, turn->findData(stair->spec.turns.empty() ? 3 : stair->spec.turns.front())));
-      turn->setToolTip(tr("曲がり角の四角（幅 × 幅）の作り方。回り段は、内側の角から三角の段に分けます。全部の曲がり角に同じものを入れます"));
-      turn->setEnabled(!o->locked && stair->spec.path.size() > 2);
-      connect(turn, &QComboBox::activated, this, [this, id, turn] {
-        emit stairEdited(id, QStringLiteral("turn"), turn->currentData().toInt(), QString());
-      });
-      form_->addRow(tr("曲がり角"), turn);
+      // One choice per turn, in order up the stair (docs/119); a straight stair has none to make.
+      const int corners = std::max(1, static_cast<int>(stair->spec.path.size()) - 2);
+      for (int c = 0; c < corners; ++c) {
+        auto* turn = new QComboBox;
+        turn->setObjectName(c == 0 ? QStringLiteral("stairTurn") : QStringLiteral("stairTurn%1").arg(c + 1));
+        turn->addItem(tr("踊り場"), 1);
+        for (int t = 2; t <= 6; ++t) turn->addItem(tr("%1 段回り（%2°）").arg(t).arg(90.0 / t, 0, 'g', 3), t);
+        const std::vector<int>& turns = stair->spec.turns;
+        const int now = turns.empty() ? 3 : turns[std::min<std::size_t>(static_cast<std::size_t>(c), turns.size() - 1)];
+        turn->setCurrentIndex(std::max(0, turn->findData(now)));
+        turn->setToolTip(tr("曲がり角の四角（幅 × 幅）の作り方。回り段は、内側の角から三角の段に分けます。上りの順に、角ごとに選べます"));
+        turn->setEnabled(!o->locked && stair->spec.path.size() > 2);
+        connect(turn, &QComboBox::activated, this, [this, id, turn, c] {
+          emit stairEdited(id, QStringLiteral("turn%1").arg(c + 1), turn->currentData().toInt(), QString());
+        });
+        form_->addRow(corners > 1 ? tr("曲がり角 %1").arg(c + 1) : tr("曲がり角"), turn);
+      }
       auto* style = new QComboBox;
       style->setObjectName(QStringLiteral("stairStyle"));
       style->addItem(tr("段々の塊"), QStringLiteral("block"));

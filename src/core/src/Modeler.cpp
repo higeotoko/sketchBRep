@@ -6008,6 +6008,21 @@ std::vector<WallBand> allWallBands(const Document& document) {
 
 }  // namespace
 
+std::optional<ObjectId> Modeler::wallAt(const gp_Pnt& p) const {
+  std::optional<ObjectId> found;
+  double best = 1e300;
+  for (const WallBand& w : allWallBands(document_)) {
+    if (p.Z() < w.z0 - tolerance::kLinear || p.Z() > w.z1 + tolerance::kLinear) continue;
+    const gp_Vec to(w.start, gp_Pnt(p.X(), p.Y(), w.start.Z()));
+    const double along = to.Dot(gp_Vec(w.dir)), across = to.Dot(gp_Vec(w.left));
+    if (along < -tolerance::kLinear || along > w.length + tolerance::kLinear) continue;
+    if (across < -w.right - tolerance::kLinear || across > w.leftExt + tolerance::kLinear) continue;
+    const double off = std::abs(across - (w.leftExt - w.right) / 2);
+    if (off < best) best = off, found = w.object->id;
+  }
+  return found;
+}
+
 std::vector<std::pair<std::size_t, std::string>> Modeler::wallsMeetingOpenings(const ObjectId& host) const {
   std::vector<std::pair<std::size_t, std::string>> out;
   const auto list = openings(host);

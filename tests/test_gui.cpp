@@ -11279,6 +11279,28 @@ void GuiPhase1::moveToolSlidesAnOpeningWithinItsWall() {
     QCOMPARE(m.history().undoCount(),undos+1);
     QVERIFY(std::abs(left()-wallLeft)<1e-6);  // the wall stayed
     QVERIFY(m.undo());
+    // docs/119: Ctrl, then a click on another wall: the copy goes into that wall.
+    const auto second=m.createTypedWalls({gp_Pnt(0,3000,0),gp_Pnt(6000,3000,0)},3000,"exterior_siding",105,false);
+    QVERIFY2(second,second?"":second.error().c_str());
+    const doc::ObjectId other=second->front();
+    f.vp->syncNow();
+    const auto copySteps=m.history().undoCount();
+    click(f.vp,f.vp->toWidget(symbol));
+    QTest::keyClick(f.vp,Qt::Key_Control);
+    const gp_Pnt onOther(2000,3000+60,1500.0);
+    move(f.vp,f.vp->toWidget(onOther));
+    QVERIFY2(f.window.statusText().contains(QStringLiteral("へコピー")),qPrintable(f.window.statusText()));
+    click(f.vp,f.vp->toWidget(onOther));
+    QVERIFY2(f.window.lastError().isEmpty(),qPrintable(f.window.lastError()));
+    QTRY_COMPARE(m.openings(other)->size(),std::size_t(1));
+    QCOMPARE(m.openings(wall)->size(),std::size_t(1));  // the original stays
+    QVERIFY(std::abs(m.openings(other)->front().width-1600)<1e-6);
+    QVERIFY(std::abs(m.openings(other)->front().sill-900)<1e-6);
+    QVERIFY(std::abs(m.openings(other)->front().center.X()-2000)<5.0);
+    QCOMPARE(m.history().undoCount(),copySteps+1);
+    QVERIFY(m.undo());
+    QCOMPARE(m.openings(other)->size(),std::size_t(0));
+    QVERIFY(m.undo());  // the second wall
     // Away from any opening: not an opening (the wall itself would move).
     f.vp->setPlanCut(std::nullopt);
   }
@@ -11623,6 +11645,19 @@ void GuiPhase1::stairToolDrawsAStairWithWindersAndOpensTheFloor() {
   QTRY_VERIFY(m.stairInfo(stair)->openedSlabs.empty());
   QVERIFY(std::abs(slabVolume()-full)<1.0);
   // The words for the turns.
+  // docs/119: a U-turn's two turns chosen one by one in the properties.
+  {
+    QVERIFY(m.changeStair(stair,[&]{auto s=m.stairInfo(stair)->spec;s.path={gp_Pnt(0,-3000,0),gp_Pnt(1500,-3000,0),gp_Pnt(1500,-2200,0),gp_Pnt(0,-2200,0)};s.turns={3};return s;}()));
+    f.window.setSelection({stair});
+    QApplication::processEvents();
+    auto* second=f.window.findChild<QComboBox*>(QStringLiteral("stairTurn2"));QVERIFY(second);
+    second->setCurrentIndex(second->findData(1));
+    emit second->activated(second->currentIndex());
+    QTRY_VERIFY(m.stairInfo(stair)->spec.turns==std::vector<int>({3,1}));
+    QCOMPARE(m.stairInfo(stair)->winders,3);
+    QCOMPARE(m.stairInfo(stair)->landings,1);
+    QVERIFY(m.undo());QVERIFY(m.undo());
+  }
   // docs/116: a handrail from the properties.
   {
     f.window.setSelection({stair});

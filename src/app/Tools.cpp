@@ -3609,6 +3609,7 @@ void MoveTool::resetState() {
   stretch_.reset();
   corners_.reset();
   opening_.reset();
+  planCursor_.reset();
   copy_ = false;
   resetLock();
   host_.viewport().clearPreview();
@@ -3647,6 +3648,12 @@ void MoveTool::mouseMove(const ToolEvent& e) {
         std::abs(gp_Vec(host_.viewport().viewDirection()).Dot(gp_Vec(opening_->normal))) < 0.1;
     if (!edgeOn) held = gp_Pln(base_, opening_->normal);
   }
+  if (opening_ && copy_ && edgeOnPlan()) {
+    const snap::Ray ray = host_.viewport().rayAt(e.pos);
+    planCursor_.reset();
+    if (std::abs(ray.direction.Z()) > 1e-9)
+      planCursor_ = ray.origin.Translated(gp_Vec(ray.direction) * ((base_.Z() - ray.origin.Z()) / ray.direction.Z()));
+  }
   const snap::SnapResult r = snapAt(e, base_, held);
   if (!r.valid()) return;
   current_ = r.point;
@@ -3666,6 +3673,16 @@ void MoveTool::mouseMove(const ToolEvent& e) {
     gp_Trsf t;
     t.SetTranslation(d);
     host_.viewport().setPreview(opening_->box.Moved(TopLoc_Location(t)), true);
+    if (copy_ && edgeOnPlan()) {
+      // In a plan, over another wall: the copy goes into that wall (docs/119).
+      const auto other = planCursor_ ? host_.modeler().wallAt(*planCursor_) : std::nullopt;
+      if (other && *other != opening_->host) {
+        host_.setStatus(QObject::tr("開口 %1 を %2 へコピー［コピー］: クリックで、この位置を真ん中にあけます（同じ腰高）")
+                            .arg(opening_->index)
+                            .arg(objectName(host_, *other)) + keys);
+        return;
+      }
+    }
     if (copy_) {
       host_.setStatus(QObject::tr("開口 %1 をコピー［コピー］: クリックで確定、または距離を入力。続けて「*3」で同じ間隔に 3 つ（左端から %2 ／ 腰高 %3）  [%4]")
                           .arg(opening_->index)
@@ -3783,6 +3800,11 @@ void MoveTool::mouseMove(const ToolEvent& e) {
   host_.setMeasurement(QObject::tr("距離"), QString::number(base_.Distance(current_), 'f', 1));
   host_.setStatus(QObject::tr("移動先をクリック、または距離を入力  [%1]").arg(snapLabel(r.kind)) +
                   lockSuffix() + copySuffix());
+}
+
+bool MoveTool::edgeOnPlan() const {
+  // A plan: the opening's wall seen edge-on (as when moving it, the ground plane is used).
+  return opening_ && std::abs(gp_Vec(host_.viewport().viewDirection()).Dot(gp_Vec(opening_->normal))) < 0.1;
 }
 
 gp_Vec MoveTool::openingDelta() const {
@@ -3907,10 +3929,22 @@ bool MoveTool::keyPress(QKeyEvent* event) {
 void MoveTool::finish() {
   if (opening_) {
     const gp_Vec d = openingDelta();
-    if (d.Magnitude() > tolerance::kMinDimension) {
+    // In a plan, over another wall: into that wall, centred where clicked (docs/119).
+    const auto other = copy_ && edgeOnPlan() && planCursor_ ? host_.modeler().wallAt(*planCursor_) : std::nullopt;
+    const bool intoOther = other && *other != opening_->host;
+    if (intoOther || d.Magnitude() > tolerance::kMinDimension) {
       doc::Modeler& m = host_.modeler();
       recent_.begin(m);
-      if (copy_) {
+      if (intoOther) {
+        const auto made = m.copyOpening(opening_->host, opening_->index, gp_Vec(planCursor_->XYZ()), *other);
+        if (made) {
+          recent_.mark(m);
+          lastOpening_.reset();
+          host_.setStatus(QObject::tr("開口 %1 を %2 にコピーしました（同じ大きさ・建具・腰高）").arg(opening_->index).arg(objectName(host_, *other)));
+        } else {
+          host_.reportError(QObject::tr("開口をコピーできませんでした: %1").arg(userMessage(QString::fromStdString(made.error()))));
+        }
+      } else if (copy_) {
         const auto made = m.copyOpening(opening_->host, opening_->index, d);
         if (made) {
           recent_.mark(m);

@@ -1300,6 +1300,10 @@ class MoveTool : public TransformTool {
   std::optional<OpeningGrab> openingAt(const ToolEvent& e);
   // The part of the move that lies in the wall's face.
   gp_Vec openingDelta() const;
+  // The opening's wall is seen edge-on (a plan): a copy may go into another wall (docs/119).
+  bool edgeOnPlan() const;
+  // Where the cursor is on the plan's plane, free of the move's lock (another wall may be there).
+  std::optional<gp_Pnt> planCursor_;
   // The opening move just made: a distance typed right after replaces it.
   struct LastOpening {
     doc::ObjectId host;

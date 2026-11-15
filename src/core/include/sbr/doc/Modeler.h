@@ -596,6 +596,9 @@ class Modeler {
   // the wall would end in the hole. Nothing stops it; a tool or an agent says so. Per opening
   // (its number) the names of those walls.
   std::vector<std::pair<std::size_t, std::string>> wallsMeetingOpenings(const ObjectId& host) const;
+  // The wall made by the wall tool whose band holds `p` in plan, at its height (docs/119); the
+  // nearest line when several do.
+  std::optional<ObjectId> wallAt(const gp_Pnt& p) const;
   // Removes openings: the wall is whole again there. Their fittings go with them; the other
   // openings keep their ids, sizes and fittings. One undo step.
   Status removeOpenings(const ObjectId& host, const std::vector<std::size_t>& indices);

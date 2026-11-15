@@ -752,6 +752,17 @@ void MainWindow::buildUi() {
               else if (key == QStringLiteral("risers")) spec.risers = static_cast<int>(std::lround(value));
               else if (key == QStringLiteral("riser_limit")) spec.riserLimit = value;
               else if (key == QStringLiteral("turn")) spec.turns = {static_cast<int>(std::lround(value))};
+              else if (key.startsWith(QStringLiteral("turn"))) {
+                // One turn (docs/119): the others keep what they were.
+                const int corners = std::max(1, static_cast<int>(spec.path.size()) - 2);
+                const int which = key.mid(4).toInt() - 1;
+                if (which < 0 || which >= corners) return;
+                std::vector<int> turns(static_cast<std::size_t>(corners), 3);
+                for (int c = 0; c < corners; ++c)
+                  if (!spec.turns.empty()) turns[static_cast<std::size_t>(c)] = spec.turns[std::min<std::size_t>(static_cast<std::size_t>(c), spec.turns.size() - 1)];
+                turns[static_cast<std::size_t>(which)] = static_cast<int>(std::lround(value));
+                spec.turns = turns;
+              }
               else if (key == QStringLiteral("style")) spec.style = text.toStdString();
               else if (key == QStringLiteral("handrail")) spec.handrail = text.toStdString();
               else if (key == QStringLiteral("handrail_height")) spec.handrailHeight = value;
