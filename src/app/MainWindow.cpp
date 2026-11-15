@@ -753,6 +753,8 @@ void MainWindow::buildUi() {
               else if (key == QStringLiteral("riser_limit")) spec.riserLimit = value;
               else if (key == QStringLiteral("turn")) spec.turns = {static_cast<int>(std::lround(value))};
               else if (key == QStringLiteral("style")) spec.style = text.toStdString();
+              else if (key == QStringLiteral("handrail")) spec.handrail = text.toStdString();
+              else if (key == QStringLiteral("handrail_height")) spec.handrailHeight = value;
               else if (key == QStringLiteral("thickness")) spec.thickness = value;
               else if (key == QStringLiteral("rise")) spec.rise = value;
               else return;

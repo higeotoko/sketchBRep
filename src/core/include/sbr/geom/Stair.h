@@ -30,6 +30,10 @@ struct StairSpec {
   std::vector<int> turns;
   std::string style = "block";  // block: one stepped solid | boards: tread boards only
   double thickness = 30.0;      // of a tread board; block: of the solid under each riser line
+  // Handrails (docs/116): none | left | right | both, looking up the stair; their top above the
+  // nosing of each tread (vertically), round, 60 in from the side.
+  std::string handrail = "none";
+  double handrailHeight = 850.0;
 };
 
 struct StairTread {
@@ -47,7 +51,8 @@ struct StairCheck {
 };
 
 struct StairShape {
-  TopoDS_Shape solid;  // block: one solid; boards: a compound of boards
+  TopoDS_Shape solid;  // block: one solid; boards: a compound of boards; with handrails: a compound
+  double handrailLength = 0.0;  // of all rails along their axes
   int risers = 0;
   double riser = 0.0;
   std::vector<StairTread> treads;  // bottom to top; the upper floor is the last riser's tread

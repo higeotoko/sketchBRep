@@ -11623,6 +11623,22 @@ void GuiPhase1::stairToolDrawsAStairWithWindersAndOpensTheFloor() {
   QTRY_VERIFY(m.stairInfo(stair)->openedSlabs.empty());
   QVERIFY(std::abs(slabVolume()-full)<1.0);
   // The words for the turns.
+  // docs/116: a handrail from the properties.
+  {
+    f.window.setSelection({stair});
+    QApplication::processEvents();
+    auto* rail=f.window.findChild<QComboBox*>(QStringLiteral("stairHandrail"));QVERIFY(rail);
+    rail->setCurrentIndex(rail->findData(QStringLiteral("right")));
+    emit rail->activated(rail->currentIndex());
+    QTRY_VERIFY(m.stairInfo(stair)->spec.handrail=="right");
+    f.window.setSelection({stair});
+    QApplication::processEvents();
+    auto* checks=f.window.findChild<QLabel*>(QStringLiteral("stairChecks"));QVERIFY(checks);
+    QVERIFY2(checks->text().contains(QStringLiteral("手すり 1.0（1 以上）：範囲内")),qPrintable(checks->text()));
+    QVERIFY(f.window.findChild<QDoubleSpinBox*>(QStringLiteral("stairSize_handrail_height")));
+    QVERIFY(m.undo());
+    QCOMPARE(QString::fromStdString(m.stairInfo(stair)->spec.handrail),QStringLiteral("none"));
+  }
   // docs/112: in a plan the stair carries its walking line, arrow and break (with the symbols).
   {
     f.vp->setPlanCut(std::nullopt);

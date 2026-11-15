@@ -143,6 +143,8 @@ const Entry kEntries[] = {
     {"Not a room made by the room tool", "室ツールで置いた室ではありません"},
     {"A mark is at most 40 and a product number 120 characters", "符号は 40 字まで、品番は 120 字までにしてください"},
     {"A mark or a product number is one line", "符号・品番は 1 行で入れてください"},
+    {"Handrail: none, left, right or both", "手すりは、なし・左・右・両側から選んでください"},
+    {"A handrail is 600 to 1200 above the treads", "手すりの高さは 600〜1200 にしてください"},
     {"A stair turns at right angles only", "階段の曲がり角は、直角だけにしてください（斜めの曲がりは、まだ作れません）"},
     {"of the stair's line is shorter than the turns", "階段の線の、曲がり角の間（または端までの間）が短すぎます。折り返しの間は、階段の幅以上にしてください"},
     {"This line needs at least", "段数が足りません（曲がり角の段と、直の部分ごとに 1 段ずつが要ります）。段数を増やすか、自動にしてください"},

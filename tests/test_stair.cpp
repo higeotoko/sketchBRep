@@ -465,3 +465,64 @@ TEST_F(Stairs, APlanDrawingCarriesTheStairMarks) {
   EXPECT_GE(low.second, 4);
   EXPECT_EQ(count(-500).first, 0);  // below the foot
 }
+
+// docs/116: handrails along the stair, and the check they settle.
+TEST(Stair, AHandrailRunsOverTheNosingsAndSettlesTheCheck) {
+  StairSpec spec = along({gp_Pnt(0, 0, 0), gp_Pnt(2730, 0, 0)});
+  const auto bare = makeStair(spec);
+  ASSERT_TRUE(bare);
+  EXPECT_EQ(state(*bare, "handrail"), "not_evaluated");
+  spec.handrail = "right";
+  const auto railed = makeStair(spec);
+  ASSERT_TRUE(railed) << railed.error();
+  // 13 rises of 210 along, 200 up (front corners of the 13 treads, then the top edge).
+  EXPECT_NEAR(railed->handrailLength, 13 * std::hypot(210.0, 200.0), 1e-6);
+  EXPECT_EQ(solids(railed->solid), 1 + 13);
+  EXPECT_NEAR(sbr::geom::volume(railed->solid) - sbr::geom::volume(bare->solid),
+              std::acos(-1.0) * 17.5 * 17.5 * railed->handrailLength, 50.0);
+  EXPECT_EQ(state(*railed, "handrail"), "ok");
+  // On the right (looking up the +x stair: -y), 60 in from the side, 850 over the nosings.
+  const auto b = sbr::geom::exactBounds(railed->solid);
+  EXPECT_NEAR(b.CornerMin().Y(), -400, 1e-6);  // the stair itself
+  EXPECT_NEAR(b.CornerMax().Z(), 2800 + 850 + 17.5, 15.0);  // the rail's top end
+  // Both sides: twice as long.
+  spec.handrail = "both";
+  const auto both = makeStair(spec);
+  ASSERT_TRUE(both);
+  EXPECT_NEAR(both->handrailLength, 2 * railed->handrailLength, 1e-6);
+  // Around a winder turn, on its inner side, the rail goes up at the corner.
+  StairSpec turn = along({gp_Pnt(0, 0, 0), gp_Pnt(2000, 0, 0), gp_Pnt(2000, 1500, 0)});
+  turn.handrail = "left";
+  const auto inner = makeStair(turn);
+  ASSERT_TRUE(inner) << inner.error();
+  EXPECT_GT(inner->handrailLength, 2000.0);
+  turn.handrail = "right";
+  ASSERT_TRUE(makeStair(turn));
+  // Refused: an unknown side, a height out of range.
+  spec.handrail = "middle";
+  EXPECT_FALSE(makeStair(spec));
+  spec.handrail = "left";
+  spec.handrailHeight = 300;
+  EXPECT_FALSE(makeStair(spec));
+}
+
+TEST_F(Stairs, AHandrailIsChangedOnTheStairAndKept) {
+  const std::string id = ok("create_stair", {{"path", {{1000, 1000}, {3730, 1000}}}, {"rise", 2800}, {"handrail", "right"}})["id"];
+  json info = ok("stair_info", {{"id", id}});
+  EXPECT_EQ(info["handrail"], "right");
+  bool settled = false;
+  for (const json& c : info["checks"])
+    if (c["item"] == "handrail") settled = c["state"] == "ok";
+  EXPECT_TRUE(settled);
+  ok("change_stair", {{"id", id}, {"handrail", "both"}, {"handrail_height", 900}});
+  info = ok("stair_info", {{"id", id}});
+  EXPECT_EQ(info["handrail"], "both");
+  EXPECT_NEAR(info["handrail_height"].get<double>(), 900, 1e-9);
+  // Saved and opened again; and a stair with no handrail key reads as none.
+  const auto file = std::filesystem::temp_directory_path() / "sbr_stair_rail.sbr";
+  ASSERT_TRUE(modeler.save(file.string()));
+  sbr::doc::Modeler other;
+  ASSERT_TRUE(other.load(file.string()));
+  EXPECT_EQ(other.stairInfo(id)->spec.handrail, "both");
+  EXPECT_FALSE(call("change_stair", {{"id", id}, {"handrail_height", 2000}}).value("ok", true));
+}

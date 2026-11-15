@@ -7,6 +7,8 @@
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
+#include <BRepPrimAPI_MakeCylinder.hxx>
+#include <gp_Ax2.hxx>
 #include <BRep_Builder.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS_Compound.hxx>
@@ -52,6 +54,10 @@ Result<Layout> layout(const StairSpec& spec) {
   if (!(spec.riserLimit >= 50.0)) return L::failure("The riser limit is at least 50");
   if (spec.risers < 0 || spec.risers > 200) return L::failure("The number of risers is 0 (automatic) to 200");
   if (spec.style != "block" && spec.style != "boards") return L::failure("Stair style: block or boards");
+  if (spec.handrail != "none" && spec.handrail != "left" && spec.handrail != "right" && spec.handrail != "both")
+    return L::failure("Handrail: none, left, right or both");
+  if (spec.handrail != "none" && !(spec.handrailHeight >= 600.0 && spec.handrailHeight <= 1200.0))
+    return L::failure("A handrail is 600 to 1200 above the treads");
   if (!(spec.thickness >= 5.0)) return L::failure("The tread thickness is at least 5");
   // The line: no repeated points, no points on a straight part.
   std::vector<V2> pts;
@@ -182,6 +188,60 @@ Result<TopoDS_Shape> prism(const std::vector<V2>& outline, double z0, double z1)
   return solid.Shape();
 }
 
+constexpr double kRailRadius = 17.5, kRailInset = 60.0;
+
+// The axis of a handrail on `side` (+1 left, -1 right, looking up): over the front corner of
+// each tread on that side, 60 in, `height` above the tread; then over the top edge.
+std::vector<gp_Pnt> railAxis(const StairSpec& spec, const Layout& l, int side) {
+  std::vector<V2> pts;
+  for (const gp_Pnt& p : spec.path) {
+    const V2 q{p.X(), p.Y()};
+    if (pts.empty() || (q - pts.back()).length() > 0.01) pts.push_back(q);
+  }
+  // The nearest place on the walking line: its station, the point and the direction there.
+  struct Near {
+    double station;
+    V2 at, dir;
+  };
+  auto nearest = [&](const V2& q) {
+    Near best{0, pts.front(), V2{1, 0}};
+    double gap = 1e300, s0 = 0;
+    for (std::size_t i = 1; i < pts.size(); ++i) {
+      const V2 d = pts[i] - pts[i - 1];
+      const double len = d.length();
+      const double t = std::clamp((q - pts[i - 1]).dot(d) / (len * len), 0.0, 1.0);
+      const V2 on = pts[i - 1] + d * t;
+      const double g = (q - on).length();
+      if (g < gap - 1e-9) gap = g, best = {s0 + t * len, on, d * (1.0 / len)};
+      s0 += len;
+    }
+    return best;
+  };
+  std::vector<gp_Pnt> axis;
+  for (const Tread& t : l.treads) {
+    // The corner on that side nearest the foot.
+    std::optional<V2> corner;
+    double first = 1e300;
+    for (const V2& c : t.outline) {
+      const Near n = nearest(c);
+      const V2 left{-n.dir.y, n.dir.x};
+      if ((c - n.at).dot(left) * side < spec.width / 2 - 1.0) continue;
+      if (n.station < first - 1e-6) first = n.station, corner = c;
+    }
+    if (!corner) continue;
+    const Near n = nearest(*corner);
+    const V2 left{-n.dir.y, n.dir.x};
+    const V2 in = *corner - left * (side * kRailInset);
+    axis.emplace_back(in.x, in.y, spec.base + l.riser * t.step + spec.handrailHeight);
+  }
+  // Over the top edge: the end of the walking line, on that side.
+  const V2 end = pts.back(), d = (pts.back() - pts[pts.size() - 2]) * (1.0 / (pts.back() - pts[pts.size() - 2]).length());
+  const V2 left{-d.y, d.x};
+  const V2 top = end + left * (side * (spec.width / 2 - kRailInset));
+  axis.emplace_back(top.x, top.y, spec.base + spec.rise + spec.handrailHeight);
+  return axis;
+}
+
 StairCheck check(const std::string& item, double value, double limit, bool atMost, bool measurable = true) {
   StairCheck c{item, value, limit, "not_evaluated"};
   if (measurable) c.state = (atMost ? value <= limit + 1e-6 : value >= limit - 1e-6) ? "ok" : "ng";
@@ -237,13 +297,37 @@ Result<StairShape> makeStair(const StairSpec& spec) {
     for (const TopoDS_Shape& b : bodies) builder.Add(boards, b);
     out.solid = boards;
   }
+  // Handrails (docs/116): round bars along their axes, with the stair in one compound.
+  if (spec.handrail != "none") {
+    TopoDS_Compound all;
+    BRep_Builder builder;
+    builder.MakeCompound(all);
+    builder.Add(all, out.solid);
+    for (int side : {1, -1}) {
+      if ((side > 0 && spec.handrail == "right") || (side < 0 && spec.handrail == "left")) continue;
+      const std::vector<gp_Pnt> axis = railAxis(spec, l, side);
+      for (std::size_t i = 1; i < axis.size(); ++i) {
+        const gp_Vec v(axis[i - 1], axis[i]);
+        if (v.Magnitude() < 1.0) continue;
+        BRepPrimAPI_MakeCylinder bar(gp_Ax2(axis[i - 1], gp_Dir(v)), kRailRadius, v.Magnitude());
+        bar.Build();  // (made on demand: IsDone is false until built)
+        if (!bar.IsDone()) return R::failure("A handrail could not be built");
+        builder.Add(all, bar.Shape());
+        out.handrailLength += v.Magnitude();
+      }
+    }
+    out.solid = all;
+  }
   // Against the sizes for a house's stair (docs/103): what cannot be measured here is not judged.
   out.checks.push_back(check("riser", out.riser, 230.0, true));
   if (out.goingMin > 0.0) out.checks.push_back(check("going", out.goingMin, 150.0, false));
   if (l.winders > 0) out.checks.push_back(check("winder_going", out.winderGoing, 150.0, false, !winderUnmeasured));
   out.checks.push_back(check("width", spec.width, 750.0, false));
   out.checks.push_back(check("landing", spec.rise, 4000.0, true, spec.rise <= 4000.0 + 1e-6));
-  out.checks.push_back(check("handrail", 0.0, 0.0, true, false));
+  // A handrail on at least one side (令 第 25 条第 1 項, docs/116). None made here: it may be
+  // made otherwise (on a wall), so not judged.
+  if (spec.handrail == "none") out.checks.push_back(check("handrail", 0.0, 1.0, false, false));
+  else out.checks.push_back(check("handrail", spec.handrail == "both" ? 2.0 : 1.0, 1.0, false));
   return out;
 }
 

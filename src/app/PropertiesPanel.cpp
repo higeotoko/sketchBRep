@@ -419,6 +419,24 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       });
       form_->addRow(tr("形"), style);
       size(tr("踏板の厚さ"), "thickness", stair->spec.thickness, 5, tr("踏板の厚さ。段々の塊では、段の裏の厚さ（蹴上より小さく）"));
+      {
+        // docs/116: handrails, looking up the stair.
+        auto* rail = new QComboBox;
+        rail->setObjectName(QStringLiteral("stairHandrail"));
+        rail->addItem(tr("なし"), QStringLiteral("none"));
+        rail->addItem(tr("左"), QStringLiteral("left"));
+        rail->addItem(tr("右"), QStringLiteral("right"));
+        rail->addItem(tr("両側"), QStringLiteral("both"));
+        rail->setCurrentIndex(std::max(0, rail->findData(QString::fromStdString(stair->spec.handrail))));
+        rail->setToolTip(tr("上りの向きに見て、左・右。段の先から上へ測った高さに、丸い手すり（径 35）を付けます"));
+        rail->setEnabled(!o->locked);
+        connect(rail, &QComboBox::activated, this, [this, id, rail] {
+          emit stairEdited(id, QStringLiteral("handrail"), 0.0, rail->currentData().toString());
+        });
+        form_->addRow(tr("手すり"), rail);
+        if (stair->spec.handrail != "none")
+          size(tr("手すりの高さ"), "handrail_height", stair->spec.handrailHeight, 600, tr("段の先から手すりの上まで（600〜1200）"));
+      }
       auto row = [&](const QString& label, const QString& text, const char* name) {
         auto* value = new QLabel(text);
         value->setObjectName(QLatin1String(name));

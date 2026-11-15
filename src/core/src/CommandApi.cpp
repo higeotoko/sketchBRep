@@ -131,6 +131,8 @@ void stairArgs(const json& a, geom::StairSpec& s) {
   if (a.contains("riser_limit")) s.riserLimit = number(a, "riser_limit");
   if (a.contains("style")) s.style = text(a, "style");
   if (a.contains("thickness")) s.thickness = number(a, "thickness");
+  if (a.contains("handrail")) s.handrail = text(a, "handrail");
+  if (a.contains("handrail_height")) s.handrailHeight = number(a, "handrail_height");
   if (a.contains("turns")) {
     const json& v = a.at("turns");
     s.turns.clear();
@@ -157,13 +159,14 @@ json stairJson(const doc::StairInfo& r) {
               {"riser", r.riser}, {"treads", r.treads}, {"going_min", r.goingMin}, {"going_max", r.goingMax},
               {"winder_going", r.winderGoing}, {"walk_length", r.walkLength}, {"flights", r.flights},
               {"landings", r.landings}, {"winders", r.winders}, {"turns", r.spec.turns}, {"style", r.spec.style},
-              {"thickness", r.spec.thickness}, {"base_level", r.baseLevel}, {"top_level", r.topLevel},
+              {"thickness", r.spec.thickness}, {"handrail", r.spec.handrail}, {"handrail_height", r.spec.handrailHeight}, {"base_level", r.baseLevel}, {"top_level", r.topLevel},
               {"opened_slabs", r.openedSlabs}, {"checks", checks}, {"checks_all_ok", allOk},
               {"checks_basis",
                "Sizes for a house's own stair (not a shared stair of flats), Building Standards Act Enforcement Order "
                "arts. 23-25 as recorded in docs/103: riser <= 230, going >= 150 (winders: measured 300 from the narrow "
-               "end, here as the chord of the tread's angle), width >= 750, a landing within every 4000 of height. "
-               "not_evaluated = not measured here (handrails, clear width between finishes, landings of taller stairs): "
+               "end, here as the chord of the tread's angle), width >= 750, a landing within every 4000 of height, a "
+               "handrail on at least one side (none made here: not_evaluated, it may be made otherwise). "
+               "not_evaluated = not measured here (clear width between finishes, landings of taller stairs): "
                "never a pass. Other uses of building have other sizes."}};
 }
 
@@ -2303,13 +2306,15 @@ const std::vector<CommandDef>& commands() {
        "Straight treads are shared out over the flights so that the goings are as even as the line allows. 'style': "
        "block (one stepped solid, default) or boards (tread boards only); 'thickness' (default 30). 'open_floor': "
        "true also opens the slabs over it (open_floor_for_stair). Attribute kind=stair; sizes stay changeable "
-       "(change_stair); foot and top at levels' heights follow those levels. Returns riser, goings and 'checks' "
+       "(change_stair); foot and top at levels' heights follow those levels. 'handrail': none (default), left, right "
+       "or both (looking up), 'handrail_height' above the treads (default 850, 600-1200). Returns riser, goings and 'checks' "
        "against the sizes for a house's stair (see checks_basis; not_evaluated is never a pass). No handrails, "
        "stringers or nosings are made.",
        SCHEMA({"type": "object", "properties": {
          "path": {"type": "array"}, "base": {"type": "number"}, "rise": {"type": "number"}, "top": {"type": "number"},
          "width": {"type": "number"}, "turns": {}, "risers": {"type": "integer"}, "riser_limit": {"type": "number"},
-         "style": {"enum": ["block", "boards"]}, "thickness": {"type": "number"}, "open_floor": {"type": "boolean"}},
+         "style": {"enum": ["block", "boards"]}, "thickness": {"type": "number"}, "open_floor": {"type": "boolean"},
+         "handrail": {"enum": ["none", "left", "right", "both"]}, "handrail_height": {"type": "number"}},
          "required": ["path"]}),
        [](doc::Modeler& m, const json& a) {
          const GridLookup grid(m.document());
@@ -2349,7 +2354,8 @@ const std::vector<CommandDef>& commands() {
        SCHEMA({"type": "object", "properties": {
          "id": {"type": "string"}, "path": {"type": "array"}, "base": {"type": "number"}, "rise": {"type": "number"},
          "top": {"type": "number"}, "width": {"type": "number"}, "turns": {}, "risers": {"type": "integer"},
-         "riser_limit": {"type": "number"}, "style": {"enum": ["block", "boards"]}, "thickness": {"type": "number"}},
+         "riser_limit": {"type": "number"}, "style": {"enum": ["block", "boards"]}, "thickness": {"type": "number"},
+         "handrail": {"enum": ["none", "left", "right", "both"]}, "handrail_height": {"type": "number"}},
          "required": ["id"]}),
        [](doc::Modeler& m, const json& a) {
          const GridLookup grid(m.document());
