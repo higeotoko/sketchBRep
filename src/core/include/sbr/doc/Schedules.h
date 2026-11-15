@@ -109,6 +109,9 @@ std::string roomTagText(const RoomRow& room);
 // mark), 1 the room schedule, 2 the area table, 3 the finish schedule (docs/115); the same
 // values and notes as the CSV.
 draw::Table scheduleTable(const Document& document, int which);
+// Whether a table made by scheduleTable(document, which) has anything in it: openings beyond the
+// total line, rooms, areas, finishes given by hand (docs/125, docs/130).
+bool tableHasContent(const draw::Table& table, int which);
 
 // The tables as CSV for a spreadsheet: UTF-8 with a byte order mark, CRLF, Japanese headings,
 // lengths in mm, areas in m2.

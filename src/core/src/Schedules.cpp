@@ -292,6 +292,17 @@ std::string roomTagText(const RoomRow& room) {
   return room.name + "  " + number(room.centreArea / 1e6, 2) + " m²";
 }
 
+bool tableHasContent(const draw::Table& table, int which) {
+  if (table.rows.empty() || (which == 0 && table.rows.size() <= 1)) return false;  // the openings' total only
+  if (which == 3) {
+    bool any = false;
+    for (const auto& row : table.rows)
+      for (std::size_t c = 2; c < row.size(); ++c) any |= !row[c].empty();
+    return any;  // no finishes given: nothing
+  }
+  return true;
+}
+
 draw::Table scheduleTable(const Document& document, int which) {
   draw::Table t;
   if (which == 0) {
@@ -379,13 +390,7 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& sp
   }
   for (int which : {0, 1, 2, 3}) {
     draw::Table table = scheduleTable(document, which);
-    if (table.rows.empty() || (which == 0 && table.rows.size() <= 1)) continue;  // nothing in it (the openings' total only)
-    if (which == 3) {
-      bool any = false;
-      for (const auto& row : table.rows)
-        for (std::size_t c = 2; c < row.size(); ++c) any |= !row[c].empty();
-      if (!any) continue;  // no finishes given
-    }
+    if (!tableHasContent(table, which)) continue;
     planned.push_back({table.title, std::nullopt, table});
   }
   DrawingSet out;

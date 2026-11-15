@@ -3429,6 +3429,8 @@ const std::vector<CommandDef>& commands() {
        "'project', 'number', 'author', 'date', 'hidden' (hidden lines), 'fill', 'grid', 'levels', "
        "'annotations'. kind:framing with preset:foundation|first_floor|second_floor|roof makes a tag-filtered framing plan. "
        "within scopes a group; tags filters leaf tags, include_hidden includes hidden objects, member_labels adds section marks. "
+       "'tables' (docs/130): any of openings, rooms, areas, finishes, put beside the drawing on the same sheet (to its "
+       "right, or under it when that takes a smaller paper; empty tables are left out). "
        "Returns the paper chosen and notes (what did not fit or was left out).",
        SCHEMA({"type": "object", "properties": {"path": {"type": "string"}, "kind": {"type": "string"},
                "cut_z": {"type": "number"}, "point": {"type": "array"}, "look": {"type": "array"},
@@ -3437,7 +3439,8 @@ const std::vector<CommandDef>& commands() {
                "number": {"type": "string"}, "author": {"type": "string"}, "date": {"type": "string"},
                "hidden": {"type": "boolean"}, "fill": {"type": "boolean"}, "grid": {"type": "boolean"},
                "levels": {"type": "boolean"}, "annotations": {"type": "boolean"}, "preset":{"type":"string"},"within":{"type":"string"},
-               "tags":{"type":"array","items":{"type":"string"}},"include_hidden":{"type":"boolean"},"member_labels":{"type":"boolean"}}, "required": ["path", "kind"]}),
+               "tags":{"type":"array","items":{"type":"string"}},"include_hidden":{"type":"boolean"},"member_labels":{"type":"boolean"},
+               "tables": {"type": "array", "items": {"enum": ["openings", "rooms", "areas", "finishes"]}}}, "required": ["path", "kind"]}),
        [](doc::Modeler& m, const json& a) {
          const std::string kind = text(a, "kind");
          draw::ViewSpec spec;
@@ -3469,16 +3472,30 @@ const std::vector<CommandDef>& commands() {
          sheetSpec.frame = a.value("frame", true);
          sheetSpec.title = {textOr(a, "project", {}), spec.title, textOr(a, "number", {}), textOr(a, "author", {}),
                             textOr(a, "date", {})};
-         const draw::Sheet sheet = must(draw::layoutSheet(view, sheetSpec));
+         std::vector<draw::Table> tables;
+         json leftOut = json::array();
+         if (a.contains("tables")) {
+           if (!a.at("tables").is_array()) throw ApiError("'tables': a list of openings, rooms, areas, finishes");
+           for (const json& t : a.at("tables")) {
+             const std::string which = t.is_string() ? t.get<std::string>() : std::string();
+             const int index = which == "openings" ? 0 : which == "rooms" ? 1 : which == "areas" ? 2 : which == "finishes" ? 3 : -1;
+             if (index < 0) throw ApiError("'tables': openings, rooms, areas or finishes");
+             draw::Table table = doc::scheduleTable(m.document(), index);
+             if (!doc::tableHasContent(table, index)) leftOut.push_back(which);
+             else tables.push_back(std::move(table));
+           }
+         }
+         const draw::Sheet sheet = must(draw::layoutSheetWithTables(view, tables, sheetSpec));
          const std::string path = text(a, "path");
          const std::string ext = path.size() > 4 ? path.substr(path.size() - 4) : std::string();
          if (ext == ".jww" || ext == ".JWW") must(draw::writeJww(sheet, path));
          else if (ext == ".dxf" || ext == ".DXF") must(draw::writeDxf(sheet, path));
          else throw std::runtime_error("The path must end in .dxf or .jww (PDF: from the app's File menu)");
          json notes = json::array();
+         for (const json& w : leftOut) notes.push_back("The " + w.get<std::string>() + " table is empty: left out");
          for (const std::string& n : view.notes) notes.push_back(n);
          for (const std::string& n : sheet.notes) notes.push_back(n);
-         return json{{"paper", sheet.paper}, {"scale", sheet.scale}, {"objects", view.objects}, {"notes", notes}};
+         return json{{"paper", sheet.paper}, {"scale", sheet.scale}, {"objects", view.objects}, {"tables", tables.size()}, {"notes", notes}};
        }},
       {"export_schedule",
        "A table on a sheet of its own as DXF or JWW (by the path's extension): 'table' openings (建具表, one "

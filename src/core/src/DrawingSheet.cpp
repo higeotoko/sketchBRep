@@ -373,26 +373,69 @@ Result<Sheet> layoutSheet(const View& view, const SheetSpec& spec) {
 
 namespace sbr::draw {
 
+namespace {
+constexpr double kTextH = 3.0, kRowH = 7.0, kCellPad = 2.0, kTableTitleH = 10.0, kNoteH = 5.0;
+
+// A table's column widths (paper mm) and the room it takes (with its title and notes).
+struct TableSize {
+  std::vector<double> widths;
+  double tableW = 0, w = 0, h = 0;
+};
+TableSize tableSize(const Table& table) {
+  TableSize out;
+  out.widths.assign(table.headers.size(), 0.0);
+  auto widen = [&](const std::vector<std::string>& cells) {
+    for (std::size_t c = 0; c < out.widths.size() && c < cells.size(); ++c)
+      out.widths[c] = std::max(out.widths[c], textWidth(cells[c], kTextH) + 2 * kCellPad);
+  };
+  widen(table.headers);
+  for (const auto& row : table.rows) widen(row);
+  for (double w : out.widths) out.tableW += w;
+  double noteW = 0;
+  for (const std::string& n : table.notes) noteW = std::max(noteW, textWidth(n, 2.5));
+  out.w = std::max(out.tableW, noteW);
+  out.h = kTableTitleH + kRowH * (table.rows.size() + 1) + kNoteH * table.notes.size();
+  return out;
+}
+
+// The table drawn with its top left corner at (left, top) on paper (mm), into sheet units.
+void drawTable(const Table& table, const TableSize& size, double left, double top, double s, std::vector<Item>& items) {
+  auto P = [&](double x, double y) { return gp_Pnt2d(x * s, y * s); };
+  items.push_back(text(Pen::Text, P(left, top - kTableTitleH / 2), table.title, 5.0, 0, 1));
+  const double gridTop = top - kTableTitleH;
+  const std::size_t lines = table.rows.size() + 1;
+  // Rules: across under the title, under the headings (heavier), under each row; and the columns.
+  for (std::size_t r = 0; r <= lines; ++r) {
+    const double y = gridTop - kRowH * r;
+    items.push_back(line(r == 1 ? Pen::Cut : Pen::Visible, P(left, y), P(left + size.tableW, y)));
+  }
+  double x = left;
+  for (std::size_t c = 0; c <= size.widths.size(); ++c) {
+    items.push_back(line(Pen::Visible, P(x, gridTop), P(x, gridTop - kRowH * lines)));
+    if (c < size.widths.size()) x += size.widths[c];
+  }
+  auto row = [&](std::size_t r, const std::vector<std::string>& cells) {
+    double cx = left;
+    for (std::size_t c = 0; c < size.widths.size(); ++c) {
+      if (c < cells.size() && !cells[c].empty())
+        items.push_back(text(Pen::Text, P(cx + kCellPad, gridTop - kRowH * r - kRowH / 2), cells[c], kTextH, 0, 1));
+      cx += size.widths[c];
+    }
+  };
+  row(0, table.headers);
+  for (std::size_t r = 0; r < table.rows.size(); ++r) row(r + 1, table.rows[r]);
+  for (std::size_t n = 0; n < table.notes.size(); ++n)
+    items.push_back(text(Pen::Text, P(left, gridTop - kRowH * lines - kNoteH * (n + 0.8)), table.notes[n], 2.5, 0, 1));
+}
+}  // namespace
+
 Result<Sheet> tableSheet(const Table& table, const SheetSpec& spec) {
   using R = Result<Sheet>;
   const double s = spec.scale;
   if (!(s > 0) || !std::isfinite(s)) return R::failure("The scale must be positive");
   if (table.headers.empty()) return R::failure("The table has no columns");
-  const double textH = 3.0, rowH = 7.0, pad = 2.0, titleH = 10.0, noteH = 5.0;
-  // Column widths from the longest cell (paper mm).
-  std::vector<double> widths(table.headers.size(), 0.0);
-  auto widen = [&](const std::vector<std::string>& cells) {
-    for (std::size_t c = 0; c < widths.size() && c < cells.size(); ++c)
-      widths[c] = std::max(widths[c], textWidth(cells[c], textH) + 2 * pad);
-  };
-  widen(table.headers);
-  for (const auto& row : table.rows) widen(row);
-  double tableW = 0;
-  for (double w : widths) tableW += w;
-  const double tableH = titleH + rowH * (table.rows.size() + 1) + noteH * table.notes.size();
-  double noteW = 0;
-  for (const std::string& n : table.notes) noteW = std::max(noteW, textWidth(n, 2.5));
-  const double needW = std::max(tableW, noteW), needH = tableH;
+  const TableSize size = tableSize(table);
+  const double needW = size.w, needH = size.h;
   // The paper: the smallest that holds it inside the frame, above the title block.
   Sheet sheet;
   sheet.scale = s;
@@ -425,35 +468,101 @@ Result<Sheet> tableSheet(const Table& table, const SheetSpec& spec) {
   sheet.title = table.title;
   double ax0, ay0, ax1, ay1;
   area(*paper, ax0, ay0, ax1, ay1);
-  auto P = [&](double x, double y) { return gp_Pnt2d(x * s, y * s); };
   std::vector<Item> items;
-  const double left = ax0 + kPad, top = ay1 - kPad;
-  items.push_back(text(Pen::Text, P(left, top - titleH / 2), table.title, 5.0, 0, 1));
-  const double gridTop = top - titleH;
-  const std::size_t lines = table.rows.size() + 1;
-  // Rules: across under the title, under the headings (heavier), under each row; and the columns.
-  for (std::size_t r = 0; r <= lines; ++r) {
-    const double y = gridTop - rowH * r;
-    items.push_back(line(r == 1 ? Pen::Cut : Pen::Visible, P(left, y), P(left + tableW, y)));
-  }
-  double x = left;
-  for (std::size_t c = 0; c <= widths.size(); ++c) {
-    items.push_back(line(Pen::Visible, P(x, gridTop), P(x, gridTop - rowH * lines)));
-    if (c < widths.size()) x += widths[c];
-  }
-  auto row = [&](std::size_t r, const std::vector<std::string>& cells) {
-    double cx = left;
-    for (std::size_t c = 0; c < widths.size(); ++c) {
-      if (c < cells.size() && !cells[c].empty())
-        items.push_back(text(Pen::Text, P(cx + pad, gridTop - rowH * r - rowH / 2), cells[c], textH, 0, 1));
-      cx += widths[c];
-    }
-  };
-  row(0, table.headers);
-  for (std::size_t r = 0; r < table.rows.size(); ++r) row(r + 1, table.rows[r]);
-  for (std::size_t n = 0; n < table.notes.size(); ++n)
-    items.push_back(text(Pen::Text, P(left, gridTop - rowH * lines - noteH * (n + 0.8)), table.notes[n], 2.5, 0, 1));
+  drawTable(table, size, ax0 + kPad, ay1 - kPad, s, items);
   if (spec.frame) frameAndTitle(items, paper, spec, table.title, s);
+  sheet.items = std::move(items);
+  return sheet;
+}
+
+Result<Sheet> layoutSheetWithTables(const View& view, const std::vector<Table>& tables, const SheetSpec& spec) {
+  using R = Result<Sheet>;
+  if (tables.empty()) return layoutSheet(view, spec);
+  const double s = spec.scale;
+  if (!(s > 0) || !std::isfinite(s)) return R::failure("The scale must be positive");
+  for (const Table& t : tables)
+    if (t.headers.empty()) return R::failure("The table has no columns");
+  // The drawing on its own (no frame, no north mark: it goes beside the drawing here).
+  SheetSpec bare = spec;
+  bare.frame = false;
+  bare.north = false;
+  bare.paper = "auto";
+  auto drawn = layoutSheet(view, bare);
+  if (!drawn) return drawn;
+  std::vector<Item> items = drawn->items;
+  Box box;
+  for (const Item& i : items) extentOf(i, s, box);
+  if (view.spec.kind == ViewKind::Plan && spec.north) {
+    // North: just right of the drawing's top.
+    const double cx = box.x1 / s + 10, cy = box.y1 / s - 8;
+    auto P = [&](double x, double y) { return gp_Pnt2d(x * s, y * s); };
+    items.push_back(circle(Pen::Text, P(cx, cy), 6 * s));
+    items.push_back(line(Pen::Text, P(cx, cy - 6), P(cx, cy + 6)));
+    Item arrow;
+    arrow.kind = Item::Kind::Fill;
+    arrow.pen = Pen::Text;
+    arrow.points = {P(cx, cy + 7), P(cx - 2.5, cy + 1), P(cx, cy + 2.5), P(cx + 2.5, cy + 1)};
+    items.push_back(arrow);
+    items.push_back(text(Pen::Text, P(cx, cy + 9.5), "N", 3.5, 1, 0));
+    box.add(P(cx + 6, cy + 13));
+  }
+  const double dW = (box.x1 - box.x0) / s, dH = (box.y1 - box.y0) / s;
+  constexpr double gap = 10.0;  // paper mm between the drawing and the tables, and between tables
+  std::vector<TableSize> sizes;
+  double colW = 0, colH = 0;
+  for (const Table& t : tables) {
+    sizes.push_back(tableSize(t));
+    colW = std::max(colW, sizes.back().w);
+    colH += sizes.back().h + (sizes.size() > 1 ? gap : 0.0);
+  }
+  const double rightW = dW + gap + colW, rightH = std::max(dH, colH);
+  const double belowW = std::max(dW, colW), belowH = dH + gap + colH;
+  auto area = [&](const Paper& p, double& x0, double& y0, double& x1, double& y1) {
+    x0 = spec.frame ? kLeftMargin : kMargin;
+    x1 = p.w - kMargin;
+    y0 = spec.frame ? kMargin + kTitleH + 4 : kMargin;
+    y1 = p.h - kMargin;
+  };
+  Sheet sheet;
+  sheet.scale = s;
+  for (const std::string& n : drawn->notes) sheet.notes.push_back(n);
+  const Paper* paper = nullptr;
+  bool below = false;
+  for (const Paper& p : kPapers) {
+    if (spec.paper != "auto" && spec.paper != p.name) continue;
+    double x0, y0, x1, y1;
+    area(p, x0, y0, x1, y1);
+    const double w = x1 - x0 - 2 * kPad, h = y1 - y0 - 2 * kPad;
+    const bool right = rightW <= w && rightH <= h, under = belowW <= w && belowH <= h;
+    if (spec.paper != "auto" || right || under) {
+      paper = &p;
+      below = !right && under;
+      if (!right && !under) sheet.notes.push_back(std::string("The drawing and its tables do not fit on ") + p.name + ": they run off the frame");
+      break;
+    }
+  }
+  if (!paper) {
+    if (spec.paper != "auto") return R::failure("Unknown paper '" + spec.paper + "' (A4, A3, A2, A1 or auto)");
+    paper = &kPapers[3];
+    sheet.notes.push_back("The drawing and its tables do not fit on A1: choose a smaller scale");
+  }
+  sheet.paper = paper->name;
+  sheet.paperWidth = paper->w;
+  sheet.paperHeight = paper->h;
+  sheet.title = drawn->title;
+  double ax0, ay0, ax1, ay1;
+  area(*paper, ax0, ay0, ax1, ay1);
+  // The drawing at the top left of the frame.
+  const double left = ax0 + kPad, top = ay1 - kPad;
+  const double dx = left * s - box.x0, dy = top * s - box.y1;
+  for (Item& i : items) translate(i, dx, dy);
+  // The tables to its right, or under it.
+  double tx = below ? left : left + dW + gap, ty = below ? top - dH - gap : top;
+  for (std::size_t k = 0; k < tables.size(); ++k) {
+    drawTable(tables[k], sizes[k], tx, ty, s, items);
+    ty -= sizes[k].h + gap;
+  }
+  if (spec.frame) frameAndTitle(items, paper, spec, drawn->title, s);
   sheet.items = std::move(items);
   return sheet;
 }

@@ -187,6 +187,13 @@ Result<Sheet> tableSheet(const Table& table, const SheetSpec& spec);
 // holds it with the title block, else A1 with a note).
 Result<Sheet> layoutSheet(const View& view, const SheetSpec& spec);
 
+// The view with tables beside it on one sheet (docs/130): the drawing (its caption, grids,
+// levels; a plan's north mark at its top right) at the top left of the frame, the tables one
+// under another to its right, or under the drawing when that takes a smaller paper. The paper:
+// the smallest A4..A1 that holds both ("auto"), else the one asked for (with a note when they
+// run off). No tables: as layoutSheet.
+Result<Sheet> layoutSheetWithTables(const View& view, const std::vector<Table>& tables, const SheetSpec& spec);
+
 // Writers. DXF: R12 (AC1009), real size, layers per pen, Japanese text in
 // Shift_JIS ($DWGCODEPAGE ANSI_932) as Jw_cad and AutoCAD read it. JWW:
 // Jw_cad's own format (version 6.00 data), real size with the scale on the

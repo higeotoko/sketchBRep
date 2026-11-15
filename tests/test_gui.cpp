@@ -9349,6 +9349,30 @@ void GuiPhase1::drawingDialogPlanSectionElevationAndExport() {
   int freshCuts = 0;
   for (const draw::Item& i : fresh.sheet()->items) freshCuts += i.pen == draw::Pen::Cut;
   QVERIFY2(freshCuts > cutsBefore, qPrintable(QStringLiteral("%1 %2").arg(freshCuts).arg(cutsBefore)));
+  // docs/130: a wall with a window; the door and window schedule beside the plan on its sheet.
+  {
+    const auto walls = m.createWalls({gp_Pnt(0, 6000, 0), gp_Pnt(4000, 6000, 0)}, 120, 2400, 0);
+    QVERIFY(walls);
+    QVERIFY(m.placeOpenings(walls->front(), gp_Dir(0, -1, 0), 1, 900, 1200, 900));
+    DrawingDialog withTables(m.document(), &f.window);
+    auto* openings = withTables.findChild<QCheckBox*>(QStringLiteral("drawingTableOpenings"));
+    auto* finishes = withTables.findChild<QCheckBox*>(QStringLiteral("drawingTableFinishes"));
+    QVERIFY(openings && finishes);
+    withTables.refreshNow();
+    QVERIFY2(withTables.sheet().has_value(), qPrintable(withTables.lastError()));
+    auto titles = [&](const QString& which) {
+      int n = 0;
+      for (const draw::Item& i : withTables.sheet()->items) n += i.kind == draw::Item::Kind::Text && QString::fromStdString(i.text) == which;
+      return n;
+    };
+    QCOMPARE(titles(QStringLiteral("建具表")), 0);
+    openings->setChecked(true);
+    finishes->setChecked(true);  // nothing in it here: not put on the sheet
+    withTables.refreshNow();
+    QVERIFY2(withTables.sheet().has_value(), qPrintable(withTables.lastError()));
+    QCOMPARE(titles(QStringLiteral("建具表")), 1);
+    QCOMPARE(titles(QStringLiteral("仕上げ表")), 0);
+  }
 }
 
 // File > recent files: saved and opened files, newest first; one click

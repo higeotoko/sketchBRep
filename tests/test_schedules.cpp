@@ -395,6 +395,68 @@ TEST_F(Schedules, ATableGoesOnASheetOfItsOwn) {
   std::filesystem::remove_all(dir);
 }
 
+// docs/130: a plan with its tables beside it on one sheet.
+TEST_F(Schedules, ADrawingCarriesItsTablesOnTheSameSheet) {
+  const auto view = sbr::draw::makeView(modeler.document(), sbr::draw::planView(1200));
+  ASSERT_TRUE(view) << view.error();
+  sbr::draw::SheetSpec spec;
+  spec.title.drawing = "1FL 平面図";
+  const auto alone = sbr::draw::layoutSheet(*view, spec);
+  ASSERT_TRUE(alone);
+  // No tables: the same sheet as on its own.
+  const auto same = sbr::draw::layoutSheetWithTables(*view, {}, spec);
+  ASSERT_TRUE(same);
+  EXPECT_EQ(same->items.size(), alone->items.size());
+  EXPECT_EQ(same->paper, alone->paper);
+  const sbr::draw::Table openings = sbr::doc::scheduleTable(modeler.document(), 0);
+  const sbr::draw::Table rooms = sbr::doc::scheduleTable(modeler.document(), 1);
+  const auto sheet = sbr::draw::layoutSheetWithTables(*view, {openings, rooms}, spec);
+  ASSERT_TRUE(sheet) << sheet.error();
+  EXPECT_TRUE(sheet->notes.empty());
+  // Each table's title once over it; the drawing's name in the title block and its caption.
+  std::map<std::string, int> texts;
+  double drawingRight = -1e300, tableLeft = 1e300;
+  for (const auto& item : sheet->items) {
+    if (item.kind == sbr::draw::Item::Kind::Text) ++texts[item.text];
+    if (item.kind == sbr::draw::Item::Kind::Fill)  // the walls cut by the plan
+      for (const auto& p : item.points) drawingRight = std::max(drawingRight, p.X());
+    if (item.kind == sbr::draw::Item::Kind::Text && (item.text == openings.headers[0] || item.text == rooms.headers[0]))
+      tableLeft = std::min(tableLeft, item.points[0].X());
+  }
+  EXPECT_EQ(texts["建具表"], 1);
+  EXPECT_EQ(texts["室の表"], 1);
+  EXPECT_GE(texts["1FL 平面図"], 1);
+  EXPECT_EQ(texts["N"], 1);  // the north mark, once
+  ASSERT_GT(drawingRight, -1e300);
+  EXPECT_GT(tableLeft, drawingRight);  // beside the drawing, not over it
+  for (const auto& item : sheet->items)
+    for (const auto& p : item.points) {
+      EXPECT_GE(p.X() / sheet->scale, -0.1);
+      EXPECT_LE(p.X() / sheet->scale, sheet->paperWidth + 0.1);
+      EXPECT_GE(p.Y() / sheet->scale, -0.1);
+      EXPECT_LE(p.Y() / sheet->scale, sheet->paperHeight + 0.1);
+    }
+  // At 1:50 on A3 asked for: does not all fit, said.
+  spec.scale = 50;
+  spec.paper = "A4";
+  const auto tight = sbr::draw::layoutSheetWithTables(*view, {openings, rooms}, spec);
+  ASSERT_TRUE(tight);
+  EXPECT_FALSE(tight->notes.empty());
+  // By the API: the finishes table is empty here, left out and said.
+  const auto dir = std::filesystem::temp_directory_path() / "sbr_drawing_tables";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+  const std::string path = (dir / "plan.dxf").u8string();
+  const json r = ok("export_drawing", {{"path", path}, {"kind", "plan"}, {"tables", {"openings", "finishes"}}});
+  EXPECT_EQ(r["tables"], 1);
+  bool said = false;
+  for (const json& n : r["notes"]) said |= n.get<std::string>().find("finishes") != std::string::npos;
+  EXPECT_TRUE(said);
+  EXPECT_GT(std::filesystem::file_size(path), 1000u);
+  EXPECT_FALSE(call("export_drawing", {{"path", path}, {"kind", "plan"}, {"tables", {"walls"}}}).value("ok", true));
+  std::filesystem::remove_all(dir);
+}
+
 // docs/115: a room's use, finishes and ceiling height.
 TEST_F(Schedules, ARoomCarriesItsFinishesIntoTheFinishSchedule) {
   const auto steps = modeler.history().undoCount();

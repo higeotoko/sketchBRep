@@ -7,6 +7,7 @@
 #include <QSignalBlocker>
 #include <set>
 #include "DrawingExport.h"
+#include "sbr/doc/Schedules.h"
 
 #include <chrono>
 #include <cmath>
@@ -367,6 +368,17 @@ DrawingDialog::DrawingDialog(const doc::Document& document, QWidget* parent)
   frame_->setObjectName(QStringLiteral("drawingFrame"));
   frame_->setChecked(true);
   for (QCheckBox* b : {fill_, hidden_, grid_, levels_, annotations_, frame_}) c->addWidget(b);
+  {
+    // docs/130: tables on the same sheet, beside the drawing.
+    const char* names[4] = {"drawingTableOpenings", "drawingTableRooms", "drawingTableAreas", "drawingTableFinishes"};
+    const QString labels[4] = {tr("建具表を並べる"), tr("室の表を並べる"), tr("面積の表を並べる"), tr("仕上げ表を並べる")};
+    for (int k = 0; k < 4; ++k) {
+      tables_[k] = new QCheckBox(labels[k]);
+      tables_[k]->setObjectName(QLatin1String(names[k]));
+      tables_[k]->setToolTip(tr("同じ用紙の、図の右（入らなければ下）に表を置きます。中身の無い表は置きません"));
+      c->addWidget(tables_[k]);
+    }
+  }
   memberLabels_ = new QCheckBox(tr("部材符号・断面"));
   memberLabels_->setObjectName(QStringLiteral("drawingMemberLabels"));
   c->addWidget(memberLabels_);
@@ -491,6 +503,7 @@ DrawingDialog::DrawingDialog(const doc::Document& document, QWidget* parent)
   connect(elevationSide, qOverload<int>(&QComboBox::currentIndexChanged), this, view);
   for (QCheckBox* b : {fill_, hidden_, grid_, levels_, annotations_}) connect(b, &QCheckBox::toggled, this, view);
   connect(frame_, &QCheckBox::toggled, this, layout);
+  for (QCheckBox* b : tables_) connect(b, &QCheckBox::toggled, this, layout);
   connect(scale_, qOverload<int>(&QComboBox::currentIndexChanged), this, layout);
   connect(paper_, qOverload<int>(&QComboBox::currentIndexChanged), this, layout);
   for (QLineEdit* e : {project_, number_, author_, date_}) connect(e, &QLineEdit::textEdited, this, layout);
@@ -623,7 +636,13 @@ void DrawingDialog::layOut() {
   }
   if (!view_) return;
   view_->spec.title = spec->title;
-  auto sheet = draw::layoutSheet(*view_, sheetSpec());
+  std::vector<draw::Table> tables;
+  for (int k = 0; k < 4; ++k)
+    if (tables_[k] && tables_[k]->isChecked()) {
+      draw::Table t = doc::scheduleTable(document_, k);
+      if (doc::tableHasContent(t, k)) tables.push_back(std::move(t));
+    }
+  auto sheet = draw::layoutSheetWithTables(*view_, tables, sheetSpec());
   if (!sheet) {
     sheet_.reset();
     error_ = QString::fromStdString(sheet.error());
