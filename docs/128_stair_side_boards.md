@@ -39,9 +39,16 @@
 | 計算テスト済み | コア全 699 件中 692 件成功・7 件スキップ（ローカル）。新規 1 件（`Stair.SideBoardsRunAlongBothSidesOverTheNosings`）：まっすぐの階段（2730・2800・14 段）で深さ 330、体積が立面の形（上 250〜2850、下は 330 下で床で止まる）× 36 × 2 と一致、両外 ±436、上の端 2850、下の端 0／左だけで半分・右側は幅のまま／手すりと一緒に作れる／回り段・踊り場の L 字で外側の板が角を回る（X 2436・Y −436）／知らない側・薄すぎる板は断る。`Stairs.AHandrailIsChangedOnTheStairAndKept` に追加：`change_stair` で両側・45 → `stair_info` に出る、保存して開き直しても残る、前のファイルはなし、厚さ 500 は断る |
 | GUI 自動確認済み | 階段の画面テストが成功（ローカル）。プロパティの側板の欄を押す画面テストは足していない |
 | AI が配ったアプリで確認 | 作った版の `sbr_cli`（ローカルのビルドを、配った ZIP の部品と一緒に）で、まっすぐの階段と回り段の階段に両側の側板を付け、南の立面を DXF に書いて絵にして見た：板が段の線に沿って上がり、床で止まり、回り段の所で曲がってつながる。段ごとの継ぎ目の線は無い |
-| CI | __CI__ |
+| CI | run 43711993245（push、`340f8ca`）：Linux 712 件成功、Windows 708 件＋3 件成功・GUI 237 件成功（7 件スキップ） |
 | Windows 実機確認 | まだ（チェック表 12-11） |
 
 ## 配布の記録
 
-__DELIVERY__
+| 項目 | 値 |
+|---|---|
+| コード | `340f8ca`（IFC の天井 docs/127 と階段の側板 docs/128。Opus 5.5 で作業） |
+| CI | run 43711993245（push）：Linux・Windows とも成功 |
+| ZIP | `SketchBRep-windows-x64-340f8ca-local.zip`（Codex のチャットフォルダの `outputs\`） |
+| サイズ | 72,069,004 bytes |
+| SHA256 | `ac7779646f1a576153bccf94e185991a357c588b9c20d845b17326d88ad30d7e` |
+| ZIP の検証 | `verify_portable_pads.py`・`verify_portable_mat.py` とも成功（docs/validation/2026-11-15-portable-340f8ca*.json） |
