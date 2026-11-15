@@ -184,7 +184,10 @@ TEST_F(IfcExport, AHouseIsWrittenWithItsStoreysPartsAndRelations) {
                                                 {"section", {{"kind", "rectangle"}, {"width", 105}, {"depth", 240}}}})["id"];
   const std::string block = ok("create_box", {{"origin", {9000, 0, 0}}, {"width", 500}, {"depth", 500}, {"height", 500}})["id"];
   ok("create_line", {{"points", {{0, -2000, 0}, {8000, -2000, 0}}}});  // not a solid: left out
-  ok("create_room", {{"at", {2000, 2000}}, {"name", "居間 LDK"}});
+  const std::string roomId = ok("create_room", {{"at", {2000, 2000}}, {"name", "居間 LDK"}})["id"];
+  // docs/117: a mark and a product on the door, finishes on the room.
+  ok("set_opening_mark", {{"host", walls[1]}, {"mark", "SD-1"}, {"product", "P-900"}});
+  ok("set_room_finish", {{"id", roomId}, {"use", "Living"}, {"floor", "Flooring t15"}, {"ceiling", "PB t9.5"}, {"ceiling_height", 2400}});
   ok("create_grid", {{"x_spacings", {8000}}, {"y_spacings", {6000}}});
 
   sbr::doc::IfcSummary summary;
@@ -245,10 +248,14 @@ TEST_F(IfcExport, AHouseIsWrittenWithItsStoreysPartsAndRelations) {
   EXPECT_EQ(inSouth, 2);
   EXPECT_EQ(inEast, 1);
   const Entity& door = ifc.at(ifc.of("IFCDOOR")[0]);
+  EXPECT_EQ(door.args[2], "'SD-1'");  // its mark as its name (docs/117)
+  EXPECT_EQ(door.args[3], "'P-900'");  // its product number
   EXPECT_EQ(door.args[8], "2100.");  // OverallHeight
   EXPECT_EQ(door.args[9], "900.");   // OverallWidth
   EXPECT_EQ(door.args[11], ".SINGLE_SWING_RIGHT.");
   const Entity& window = ifc.at(ifc.of("IFCWINDOW")[0]);
+  EXPECT_EQ(window.args[2], "'W1'");  // the worked-out mark
+  EXPECT_EQ(window.args[3], "$");
   EXPECT_EQ(window.args[8], "1200.");
   EXPECT_EQ(window.args[9], "1600.");
   EXPECT_EQ(window.args[11], ".DOUBLE_PANEL_VERTICAL.");
@@ -274,6 +281,18 @@ TEST_F(IfcExport, AHouseIsWrittenWithItsStoreysPartsAndRelations) {
   // The room: a space of 1FL with its areas (m2) and a Japanese name written the STEP way.
   const Entity& space = ifc.at(ifc.of("IFCSPACE")[0]);
   EXPECT_EQ(space.args[2], "'\\X2\\5C459593\\X0\\ LDK'");  // 居間 LDK
+  EXPECT_EQ(space.args[4], "'Living'");  // its use (docs/117)
+  {
+    bool floor = false, ceiling = false, height = false, set = false;
+    for (int p : ifc.of("IFCPROPERTYSINGLEVALUE")) {
+      floor |= ifc.at(p).args[0] == "'FloorCovering'" && ifc.at(p).args[2] == "IFCLABEL('Flooring t15')";
+      ceiling |= ifc.at(p).args[0] == "'CeilingCovering'" && ifc.at(p).args[2] == "IFCLABEL('PB t9.5')";
+    }
+    for (int q : ifc.of("IFCQUANTITYLENGTH"))
+      height |= ifc.at(q).args[0] == "'FinishCeilingHeight'" && std::abs(std::stod(ifc.at(q).args[3]) - 2400) < 1e-6;
+    for (int s : ifc.of("IFCPROPERTYSET")) set |= ifc.at(s).args[2] == "'Pset_SpaceCoveringRequirements'";
+    EXPECT_TRUE(floor && ceiling && height && set);
+  }
   const json room = ok("list_rooms")["rooms"][0];
   bool gross = false, net = false;
   for (int q : ifc.of("IFCQUANTITYAREA")) {

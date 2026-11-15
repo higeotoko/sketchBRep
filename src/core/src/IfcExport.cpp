@@ -25,6 +25,7 @@
 #include <nlohmann/json.hpp>
 
 #include "sbr/doc/Modeler.h"
+#include "sbr/doc/Schedules.h"
 #include "sbr/geom/Measure.h"
 #include "sbr/geom/Profile.h"
 
@@ -327,6 +328,11 @@ Result<std::string> ifcText(const Modeler& modeler, const std::string& fileName,
   auto area = [&](const char* name, double mm2) { return f.add("IFCQUANTITYAREA(" + text(name) + ",$,$," + real(mm2 / 1e6) + ",$)"); };
   auto volumeOf = [&](const char* name, double mm3) { return f.add("IFCQUANTITYVOLUME(" + text(name) + ",$,$," + real(mm3 / 1e9) + ",$)"); };
 
+  // The marks and product numbers of the openings, as in the schedule (docs/117).
+  std::map<std::string, const OpeningRow*> marks;
+  const OpeningSchedule schedule = openingSchedule(document);
+  for (const OpeningRow& r : schedule.rows) marks[r.host + ":" + r.openingId] = &r;
+
   // --- elements ---
   bool meshedAny = false;
   auto shapeOf = [&](const TopoDS_Shape& world, double dz) {
@@ -420,7 +426,11 @@ Result<std::string> ifcText(const Modeler& modeler, const std::string& fileName,
           const bool door = type != "window" && op.sill < 1.0;
           const gp_Pnt at(op.center.X(), op.center.Y(), op.bottom - storey.elevation);
           const int fillPlacement = f.placement(storey.placement, at.X(), at.Y(), at.Z());
-          const std::string common = guid("fitting:" + key) + ",$," + text(door ? "Door" : "Window") + ",$," + text(type) + "," +
+          // Name: its mark (W1, AW-1, ...); Description: its product number when given (docs/117).
+          const auto marked = marks.find(o.id + ":" + op.id);
+          const std::string name = marked != marks.end() && !marked->second->mark.empty() ? marked->second->mark : (door ? "Door" : "Window");
+          const std::string product = marked != marks.end() ? marked->second->product : std::string();
+          const std::string common = guid("fitting:" + key) + ",$," + text(name) + "," + (product.empty() ? std::string("$") : text(product)) + "," + text(type) + "," +
                                      ref(fillPlacement) + ",$," + text(op.id) + "," + real(op.height) + "," + real(op.width);
           int fill = 0;
           if (door) {
@@ -509,14 +519,30 @@ Result<std::string> ifcText(const Modeler& modeler, const std::string& fileName,
     const int rep = f.add("IFCSHAPEREPRESENTATION(" + ref(body) + ",'Body','SweptSolid'," + refs({solid}) + ")");
     const int shape = f.add("IFCPRODUCTDEFINITIONSHAPE($,$," + refs({rep}) + ")");
     const int placement = f.placement(storey.placement, 0, 0, 0);
-    const int space = f.add("IFCSPACE(" + guid("object:" + room.id) + ",$," + text(room.name) + ",$,$," + ref(placement) + "," + ref(shape) + "," +
+    // Its use and finishes (docs/115, docs/117): the use as its object type, the finishes in
+    // Pset_SpaceCoveringRequirements, the ceiling height as a quantity.
+    const Object* marker = document.find(room.id);
+    const RoomFinish finish = marker ? roomFinishOf(*marker) : RoomFinish{};
+    const int space = f.add("IFCSPACE(" + guid("object:" + room.id) + ",$," + text(room.name) + ",$," +
+                            (finish.use.empty() ? std::string("$") : text(finish.use)) + "," + ref(placement) + "," + ref(shape) + "," +
                             text(room.name) + ",.ELEMENT.,.SPACE.,$)");
     std::vector<int> q = {area("GrossFloorArea", room.centreArea), length("Height", height)};
     if (room.innerKnown) {
       q.push_back(area("NetFloorArea", room.innerArea));
       q.push_back(length("NetPerimeter", room.innerPerimeter));
     }
+    if (finish.ceilingHeight > 0) q.push_back(length("FinishCeilingHeight", finish.ceilingHeight));
     quantities(room.id, space, "Qto_SpaceBaseQuantities", q);
+    std::vector<int> coverings;
+    auto label = [&](const char* key, const std::string& value) {
+      if (!value.empty()) coverings.push_back(f.add(std::string("IFCPROPERTYSINGLEVALUE('") + key + "',$,IFCLABEL(" + text(value) + "),$)"));
+    };
+    label("FloorCovering", finish.floor);
+    label("WallCovering", finish.wall);
+    label("CeilingCovering", finish.ceiling);
+    if (!coverings.empty())
+      relate("finish:" + room.id, space,
+             f.add("IFCPROPERTYSET(" + guid("pset-finish:" + room.id) + ",$,'Pset_SpaceCoveringRequirements',$," + refs(coverings) + ")"));
     storey.spaces.push_back(space);
     ++summary.spaces;
   }
