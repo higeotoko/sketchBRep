@@ -849,6 +849,14 @@ void MainWindow::buildUi() {
               refreshPanels();
             });
           });
+  connect(panel_, &PropertiesPanel::roomCeilingRequested, this, [this](const doc::ObjectId& id) {
+    QTimer::singleShot(0, this, [this, id] {
+      const auto made = modeler_.makeCeilings({id});
+      if (!made) reportError(tr("天井を作れません: %1").arg(userMessage(QString::fromStdString(made.error()))));
+      else setStatus(tr("天井を作りました（天井高の所、壁の面の内側。Ctrl+Z で戻せます）"));
+      refreshPanels();
+    });
+  });
   connect(panel_, &PropertiesPanel::openingPlaced, this,
           [this](const doc::ObjectId& id, int index, double offset, double sill) {
             QTimer::singleShot(0, this, [this, id, index, offset, sill] {

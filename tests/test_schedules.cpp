@@ -489,3 +489,35 @@ TEST(GridPinLater, MembersDrawnBeforeFollowTheGridOncePinned) {
   EXPECT_NEAR(box(beam).CornerMax().X() - box(beam).CornerMin().X(), 3640 + 910, 1e-6);  // from crossing to crossing
   EXPECT_NEAR((box(loose).CornerMin().X() + box(loose).CornerMax().X()) / 2, 1000, 1e-6);  // not pinned: stays
 }
+
+// docs/123: a room's ceiling as a board at its ceiling height.
+TEST_F(Schedules, ACeilingBoardIsMadeAtTheCeilingHeight) {
+  EXPECT_FALSE(call("make_ceilings", json::object()).value("ok", true));  // no ceiling height yet
+  ok("set_room_finish", {{"id", room}, {"ceiling_height", 2400}});
+  const auto steps = modeler.history().undoCount();
+  json made = ok("make_ceilings", json::object());
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  ASSERT_EQ(made["ids"].size(), 1u);
+  const std::string board = made["ids"][0];
+  const auto* o = modeler.document().find(board);
+  ASSERT_TRUE(o);
+  EXPECT_EQ(o->attributes.at("kind"), "ceiling");
+  EXPECT_EQ(o->attributes.at("room"), room);
+  const auto b = sbr::geom::exactBounds(modeler.document().worldShape(*o));
+  EXPECT_NEAR(b.CornerMin().Z(), 2400, 1e-6);
+  EXPECT_NEAR(b.CornerMax().Z(), 2410, 1e-6);
+  // Within the wall faces: the inner area of the room (3.85 x 5.8 m).
+  const json r = ok("room_schedule", json::object())["rooms"][0];
+  EXPECT_NEAR(sbr::geom::volume(o->shape) / 10.0 / 1e6, r["area_inner"].get<double>(), 1e-6);
+  // Made again at a new height: still one board.
+  ok("set_room_finish", {{"id", room}, {"ceiling_height", 2600}});
+  made = ok("make_ceilings", {{"rooms", {room}}});
+  int boards = 0;
+  for (const auto& obj : modeler.document().objects())
+    if (obj.attributes.count("kind") && obj.attributes.at("kind") == "ceiling") ++boards;
+  EXPECT_EQ(boards, 1);
+  const auto* again = modeler.document().find(made["ids"][0].get<std::string>());
+  EXPECT_NEAR(sbr::geom::exactBounds(modeler.document().worldShape(*again)).CornerMin().Z(), 2600, 1e-6);
+  ASSERT_TRUE(modeler.undo());
+  EXPECT_TRUE(modeler.document().find(board));  // the first board is back
+}

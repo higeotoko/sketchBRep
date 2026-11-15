@@ -55,6 +55,8 @@ class PropertiesPanel : public QWidget {
   // A room's use / finish (key use, floor, wall, ceiling: `text`) or ceiling height (`value`, 0:
   // not given) typed in (docs/115).
   void roomFinishEdited(const doc::ObjectId& id, const QString& key, const QString& text, double value);
+  // The room's ceiling board made (again) at its ceiling height (docs/123).
+  void roomCeilingRequested(const doc::ObjectId& id);
   // One opening put at `offset` from the wall's left end (seen from the side it was cut from)
   // and `sill` above the wall's bottom.
   void openingPlaced(const doc::ObjectId& id, int index, double offset, double sill);

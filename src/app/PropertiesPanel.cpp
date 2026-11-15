@@ -590,6 +590,12 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
           if (std::abs(height->value() - h0) > 1e-9) emit roomFinishEdited(id, QStringLiteral("ceiling_height"), QString(), height->value());
         });
         form_->addRow(tr("天井高"), height);
+        auto* ceiling = new QPushButton(tr("天井を作る（作り直す）"));
+        ceiling->setObjectName(QStringLiteral("roomMakeCeiling"));
+        ceiling->setToolTip(tr("天井高の所に、壁の面の内側の形で天井板（厚さ 10）を作ります。壁を動かした後・天井高を変えた後は、もう一度押すと作り直します"));
+        ceiling->setEnabled(!o->locked && finish.ceilingHeight > 0);
+        connect(ceiling, &QPushButton::clicked, this, [this, id] { emit roomCeilingRequested(id); });
+        form_->addRow(QString(), ceiling);
       }
       break;
     }

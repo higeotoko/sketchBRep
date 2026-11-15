@@ -2524,6 +2524,16 @@ const std::vector<CommandDef>& commands() {
          return json{{"id", text(a, "id")}, {"use", finish.use}, {"floor", finish.floor}, {"wall", finish.wall},
                      {"ceiling", finish.ceiling}, {"ceiling_height", finish.ceilingHeight}};
        }},
+      {"make_ceilings",
+       "Ceilings as boards (docs/123): for each room ('rooms': ids; default all) with a ceiling height "
+       "(set_room_finish) and an outline within its wall faces, a board 10 thick whose underside is at that "
+       "height above the room's floor (attribute kind=ceiling, room=id). A room's ceiling made before is made "
+       "again (call again after moving walls or changing the height). Rooms left are named. One undo step.",
+       SCHEMA({"type": "object", "properties": {"rooms": {"type": "array", "items": {"type": "string"}}}}),
+       [](doc::Modeler& m, const json& a) {
+         const auto made = must(m.makeCeilings(a.contains("rooms") ? ids(a, "rooms") : std::vector<doc::ObjectId>{}));
+         return json{{"ids", made.made}, {"left", made.left}};
+       }},
       {"room_schedule",
        "The room schedule as the walls are now: per room name, level, closed, counted (closed and not sharing "
        "its region), problem, area_centre / area_inner (m2; area_inner null = not evaluated), inner_perimeter "

@@ -137,6 +137,8 @@ const Entry kEntries[] = {
     {"Roof overhangs must not be negative", "軒の出・けらばの出は 0 以上にしてください"},
     {"The copy would lie on the opening itself", "コピーが元の開口と同じ所になります。少し動かしてください"},
     {"Only openings in a vertical face can be copied", "コピーできるのは、壁の縦の面の開口だけです"},
+    {"No rooms to make ceilings for", "天井を作る室がありません"},
+    {"No room has a ceiling height and an outline within its walls", "天井高が入っていて、壁の面の内側の形が分かる室がありません。何も変えていません"},
     {"There are several grids", "通り芯が 2 つ以上あります。付ける通り芯を選んでください"},
     {"There is no grid to pin to", "付ける通り芯がありません"},
     {"No members to pin", "通り芯に付ける柱・梁がありません"},

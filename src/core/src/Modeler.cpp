@@ -7201,6 +7201,60 @@ RoomFinish roomFinishOf(const Object& marker) {
   return out;
 }
 
+Result<Modeler::Ceilings> Modeler::makeCeilings(const std::vector<ObjectId>& rooms) {
+  using R = Result<Ceilings>;
+  constexpr double kBoard = 10.0;
+  Ceilings out;
+  std::vector<RoomInfo> chosen;
+  for (const RoomInfo& r : roomsIn(document_))
+    if (rooms.empty() || std::find(rooms.begin(), rooms.end(), r.id) != rooms.end()) chosen.push_back(r);
+  if (chosen.empty()) return R::failure("No rooms to make ceilings for");
+  history_.beginGroup("Ceilings");
+  for (const RoomInfo& r : chosen) {
+    const Object* marker = document_.find(r.id);
+    const RoomFinish finish = marker ? roomFinishOf(*marker) : RoomFinish{};
+    if (finish.ceilingHeight <= 0 || !r.closed || !r.innerKnown || r.inner.size() < 3) {
+      out.left.push_back(r.name);
+      continue;
+    }
+    // The ceiling made before for this room goes.
+    std::vector<ObjectId> old;
+    for (const Object& o : document_.objects()) {
+      const auto kind = o.attributes.find("kind"), of = o.attributes.find("room");
+      if (kind != o.attributes.end() && kind->second == "ceiling" && of != o.attributes.end() && of->second == r.id) old.push_back(o.id);
+    }
+    if (!old.empty()) {
+      if (const Status gone = remove(old); !gone) {
+        history_.abortGroup();
+        return R::failure(gone.message());
+      }
+    }
+    const double underside = r.at.Z() + finish.ceilingHeight;
+    std::vector<gp_Pnt> outline;
+    for (const gp_Pnt& p : r.inner) outline.emplace_back(p.X(), p.Y(), 0.0);
+    const auto made = createSlab(outline, underside + kBoard, kBoard);
+    if (!made) {
+      history_.abortGroup();
+      return R::failure("The ceiling of '" + r.name + "' could not be made: " + made.error());
+    }
+    Object board = *document_.find(*made);
+    board.name = uniqueName("Ceiling");
+    board.attributes["kind"] = "ceiling";
+    board.attributes["room"] = r.id;
+    board.attributes.erase("top_level");
+    ChangeSet changes(document_);
+    changes.modify(board);
+    history_.execute(changes.build("Ceiling"));
+    out.made.push_back(*made);
+  }
+  if (out.made.empty()) {
+    history_.abortGroup();
+    return R::failure("No room has a ceiling height and an outline within its walls (nothing was changed)");
+  }
+  history_.endGroup();
+  return out;
+}
+
 Status Modeler::setRoomFinish(const ObjectId& room, const RoomFinish& finish) {
   const Object* marker = document_.find(room);
   if (!marker || !isRoomMarker(*marker)) return Status::failure("Not a room made by the room tool");

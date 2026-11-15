@@ -497,6 +497,16 @@ class Modeler {
   // away. Each word at most 60 characters on one line; the ceiling height 0 (not given) or
   // 1000 to 10000. One undo step.
   Status setRoomFinish(const ObjectId& room, const RoomFinish& finish);
+  // Ceilings as boards (docs/97 N-02, docs/123): for each room (all when `rooms` is empty) with a
+  // ceiling height and a known inner outline, a board 10 thick whose underside is at that height
+  // above the room's floor, in the outline within the wall faces (attribute kind = ceiling,
+  // room = the room). A room's ceiling made before is made again. Rooms without a ceiling height
+  // or inner outline are named. One undo step. The ceilings made.
+  struct Ceilings {
+    std::vector<ObjectId> made;
+    std::vector<std::string> left;  // room names
+  };
+  Result<Ceilings> makeCeilings(const std::vector<ObjectId>& rooms = {});
   // The same, from a document alone (tables and drawings run without a Modeler).
   static std::vector<RoomInfo> roomsIn(const Document& document);
   // Everything the walls standing on a floor at height `floor` enclose (壁芯), with or
