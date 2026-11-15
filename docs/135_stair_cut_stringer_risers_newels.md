@@ -35,9 +35,16 @@
 | 計算テスト済み | コア全 706 件中 699 件成功・7 件スキップ（ローカル）。新規 1 件（`Stair.CutStringersRiserBoardsAndNewels`）：ささら桁は幅の中（±400）、いちばん上は最後の踏板と同じ、下は床、体積は踏板＋桁（踏板に食い込まない）／蹴込み板 13 枚、体積が 13 × 800 × 15 × (200 − 30)／側板と親柱で 2 本、回り段と踊り場の L 字で 3 本／段々の塊に蹴込み板・板なしの親柱・20 角の親柱・知らない形は断る。`Stairs.AHandrailIsChangedOnTheStairAndKept` に追加：`change_stair` でささら桁・親柱 → `stair_info` に出る、保存して開き直しても残る、前のファイルは側板、塊の階段に蹴込み板は断る |
 | GUI 自動確認済み | 階段の画面テストが成功（ローカル）。プロパティの新しい欄を押す画面テストは足していない |
 | AI が配ったアプリで確認 | 作った版の `sbr_cli`（ローカルのビルドを、配った ZIP の部品と一緒に）で、まっすぐの階段（側板・親柱・蹴込み板）と回り段の階段（ささら桁・蹴込み板）の南の立面を DXF に書いて絵にして見た：足元の親柱、ささら桁の段の形と踏板・蹴込み |
-| CI | __CI__ |
+| CI | run 43733503878（push、`75b18b0`）：Linux 719 件成功、Windows 715 件＋3 件成功・GUI 237 件成功（7 件スキップ） |
 | Windows 実機確認 | まだ（チェック表 12-18） |
 
 ## 配布の記録
 
-__DELIVERY__
+| 項目 | 値 |
+|---|---|
+| コード | `75b18b0`（Opus 5.5 で作業） |
+| CI | run 43733503878（push）：Linux・Windows とも成功 |
+| ZIP | `SketchBRep-windows-x64-75b18b0-local.zip`（Codex のチャットフォルダの `outputs\`） |
+| サイズ | 72,197,541 bytes |
+| SHA256 | `97305b0f20f9e4e664031d40642f5735e40b3c0fecc3629ea2f2e6e2e829846d` |
+| ZIP の検証 | `verify_portable_pads.py`・`verify_portable_mat.py` とも成功（docs/validation/2026-11-16-portable-75b18b0*.json） |
