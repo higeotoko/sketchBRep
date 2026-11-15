@@ -6646,6 +6646,12 @@ bool shiftStair(const Document& document, const Object& was, Object& o, double d
 }
 }  // namespace
 
+std::optional<geom::StairSpec> stairInWorld(const Document& document, const Object& object) {
+  const auto stored = storedStairOf(document, &object);
+  if (!stored) return std::nullopt;
+  return stairInFrame(stored->first, stored->second);
+}
+
 Result<ObjectId> Modeler::createStair(const geom::StairSpec& spec) {
   using R = Result<ObjectId>;
   const auto stair = geom::makeStair(spec);

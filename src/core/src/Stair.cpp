@@ -247,6 +247,73 @@ Result<StairShape> makeStair(const StairSpec& spec) {
   return out;
 }
 
+Result<StairPlanMarks> stairPlanMarks(const StairSpec& spec, double cutZ) {
+  using M = Result<StairPlanMarks>;
+  const auto made = layout(spec);
+  if (!made) return M::failure(made.error());
+  if (cutZ <= spec.base) return M::failure("The plan cuts below the stair");
+  // The walking line as stations: points with their distance from the foot.
+  std::vector<V2> pts;
+  for (const gp_Pnt& p : spec.path) {
+    const V2 q{p.X(), p.Y()};
+    if (pts.empty() || (q - pts.back()).length() > 0.01) pts.push_back(q);
+  }
+  std::vector<double> at(pts.size(), 0.0);
+  for (std::size_t i = 1; i < pts.size(); ++i) at[i] = at[i - 1] + (pts[i] - pts[i - 1]).length();
+  auto point = [&](double s) {
+    for (std::size_t i = 1; i < pts.size(); ++i)
+      if (s <= at[i] + 1e-9 || i + 1 == pts.size()) {
+        const double t = at[i] - at[i - 1] > 0 ? std::clamp((s - at[i - 1]) / (at[i] - at[i - 1]), 0.0, 1.0) : 0.0;
+        return std::make_pair(pts[i - 1] + (pts[i] - pts[i - 1]) * t, (pts[i] - pts[i - 1]) * (1.0 / (at[i] - at[i - 1])));
+      }
+    return std::make_pair(pts.back(), V2{1, 0});
+  };
+  auto station = [&](const V2& q) {  // the nearest station on the walking line
+    double best = 1e300, s = 0.0;
+    for (std::size_t i = 1; i < pts.size(); ++i) {
+      const V2 d = pts[i] - pts[i - 1];
+      const double len = d.length();
+      const double t = std::clamp((q - pts[i - 1]).dot(d) / (len * len), 0.0, 1.0);
+      const double gap = (q - (pts[i - 1] + d * t)).length();
+      if (gap < best) best = gap, s = at[i - 1] + t * len;
+    }
+    return s;
+  };
+  StairPlanMarks out;
+  double end = at.back();
+  // The first tread whose top is above the cut: the break goes at its front edge.
+  for (const Tread& t : made->treads) {
+    if (spec.base + made->riser * t.step <= cutZ) continue;
+    // Its front edge: the station of the tread's nearest corner to the foot side.
+    double front = 1e300;
+    for (const V2& c : t.outline) front = std::min(front, station(c));
+    end = std::max(0.0, front);
+    out.cut = true;
+    break;
+  }
+  if (!out.cut && spec.base + spec.rise <= cutZ) end = at.back();
+  auto flat = [](const V2& v) { return gp_Pnt(v.x, v.y, 0.0); };
+  for (std::size_t i = 0; i < pts.size() && at[i] < end - 1e-6; ++i) out.walk.push_back(flat(pts[i]));
+  const auto [tip, dir] = point(end);
+  out.walk.push_back(flat(tip));
+  // The arrow head: two strokes back from the tip at 30 degrees.
+  const double head = std::min(200.0, spec.width / 3);
+  const V2 left{-dir.y, dir.x};
+  const double c = std::cos(kPi / 6), s = std::sin(kPi / 6);
+  out.arrow.push_back({flat(tip), flat(tip - dir * (head * c) + left * (head * s))});
+  out.arrow.push_back({flat(tip), flat(tip - dir * (head * c) - left * (head * s))});
+  if (out.cut) {
+    // Across the width, slanted, with a zigzag in the middle (the usual break line).
+    const double half = spec.width / 2 + 150.0, slant = 0.3 * half, zig = 60.0;
+    out.breakLine = {flat(tip - left * half - dir * slant), flat(tip - left * zig - dir * (slant * zig / half)),
+                     flat(tip + dir * (zig * 1.5)), flat(tip - dir * (zig * 1.5)),
+                     flat(tip + left * zig + dir * (slant * zig / half)), flat(tip + left * half + dir * slant)};
+  }
+  const auto [foot, firstDir] = point(0.0);
+  out.label = flat(foot - firstDir * 250.0);
+  return out;
+}
+
 Result<TopoDS_Shape> stairOpening(const StairSpec& spec, double underside, double top, double headroom) {
   using T = Result<TopoDS_Shape>;
   const auto made = layout(spec);

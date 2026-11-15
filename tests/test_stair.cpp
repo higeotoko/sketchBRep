@@ -12,6 +12,7 @@
 #include "sbr/api/CommandApi.h"
 #include "sbr/doc/Modeler.h"
 #include "sbr/geom/Measure.h"
+#include "sbr/draw/Drawing.h"
 #include "sbr/geom/Stair.h"
 
 using json = nlohmann::json;
@@ -404,4 +405,63 @@ TEST_F(Stairs, WhatCannotBeDoneIsRefusedAndNothingChanges) {
   // A stair reshaped by hand keeps its shape; its sizes can no longer be read.
   ok("push_pull", {{"id", id}, {"face", {{"normal", {0, -1, 0}}}}, {"distance", 100}});
   EXPECT_TRUE(refused("stair_info", {{"id", id}}));
+}
+
+// docs/112: the marks a plan draws on a stair.
+TEST(Stair, APlanDrawsTheWalkingLineUpToTheCutAndABreakThere) {
+  const StairSpec straight = along({gp_Pnt(0, 0, 0), gp_Pnt(2730, 0, 0)});
+  // Cut at 1100: treads 1..5 are below it (top 200..1000), the 6th (1200) starts at 5 x 210.
+  const auto marks = sbr::geom::stairPlanMarks(straight, 1100);
+  ASSERT_TRUE(marks) << marks.error();
+  EXPECT_TRUE(marks->cut);
+  ASSERT_EQ(marks->walk.size(), 2u);
+  EXPECT_NEAR(marks->walk.front().X(), 0, 1e-9);
+  EXPECT_NEAR(marks->walk.back().X(), 1050, 1e-6);
+  EXPECT_NEAR(marks->walk.back().Y(), 0, 1e-6);
+  ASSERT_EQ(marks->arrow.size(), 2u);
+  for (const auto& [a, b] : marks->arrow) {
+    EXPECT_NEAR(a.X(), 1050, 1e-6);
+    EXPECT_LT(b.X(), 1050);  // pointing up the stair
+  }
+  ASSERT_GE(marks->breakLine.size(), 2u);
+  // Across the whole width (800) and a little more.
+  EXPECT_LT(marks->breakLine.front().Y(), -400);
+  EXPECT_GT(marks->breakLine.back().Y(), 400);
+  EXPECT_LT(marks->label.X(), 0);  // "上" just before the foot
+  // Seen from above the top (the floor above): the whole line, no break.
+  const auto above = sbr::geom::stairPlanMarks(straight, 4000);
+  ASSERT_TRUE(above);
+  EXPECT_FALSE(above->cut);
+  EXPECT_TRUE(above->breakLine.empty());
+  EXPECT_NEAR(above->walk.back().X(), 2730, 1e-6);
+  // Below the foot: nothing.
+  EXPECT_FALSE(sbr::geom::stairPlanMarks(straight, -10));
+  // An L with winders cut on its second flight: the line turns the corner.
+  const StairSpec l = along({gp_Pnt(0, 0, 0), gp_Pnt(2000, 0, 0), gp_Pnt(2000, 1500, 0)});
+  const auto turned = sbr::geom::stairPlanMarks(l, 2300);  // 11 treads (top 2200) are below
+  ASSERT_TRUE(turned);
+  EXPECT_TRUE(turned->cut);
+  EXPECT_EQ(turned->walk.size(), 3u);
+  EXPECT_NEAR(turned->walk.back().X(), 2000, 1e-6);
+  EXPECT_GT(turned->walk.back().Y(), 400);
+}
+
+TEST_F(Stairs, APlanDrawingCarriesTheStairMarks) {
+  ok("create_stair", {{"path", {{1000, 1000}, {3730, 1000}}}, {"rise", 2800}});
+  auto count = [&](double cut) {
+    const auto view = sbr::draw::makeView(modeler.document(), sbr::draw::planView(cut));
+    int up = 0, slanted = 0;
+    if (view)
+      for (const auto& item : view->items) {
+        if (item.kind == sbr::draw::Item::Kind::Text && item.text == "上") ++up;
+        if (item.kind == sbr::draw::Item::Kind::Line && item.points.size() == 2 &&
+            std::abs(item.points[0].X() - item.points[1].X()) > 1e-6 && std::abs(item.points[0].Y() - item.points[1].Y()) > 1e-6)
+          ++slanted;  // arrow strokes and the break line
+      }
+    return std::make_pair(up, slanted);
+  };
+  const auto low = count(1100);
+  EXPECT_EQ(low.first, 1);
+  EXPECT_GE(low.second, 4);
+  EXPECT_EQ(count(-500).first, 0);  // below the foot
 }

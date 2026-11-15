@@ -99,6 +99,10 @@ struct StairInfo {
   std::vector<ObjectId> openedSlabs;    // floors opened for it
 };
 
+// A stair made by createStair, as it stands in the world (its line, base), read from the
+// document alone; none for an object that is not such a stair any more.
+std::optional<geom::StairSpec> stairInWorld(const Document& document, const Object& object);
+
 // What a move of walls did to the walls joined to them (docs/90 G-05).
 struct JoinFollow {
   int followed = 0;               // walls made longer / shorter to stay joined

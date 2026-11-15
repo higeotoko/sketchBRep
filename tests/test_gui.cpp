@@ -11598,6 +11598,15 @@ void GuiPhase1::stairToolDrawsAStairWithWindersAndOpensTheFloor() {
   QTRY_VERIFY(m.stairInfo(stair)->openedSlabs.empty());
   QVERIFY(std::abs(slabVolume()-full)<1.0);
   // The words for the turns.
+  // docs/112: in a plan the stair carries its walking line, arrow and break (with the symbols).
+  {
+    f.vp->setPlanCut(std::nullopt);
+    QCOMPARE(f.vp->openingSymbolEdgeCount(),std::size_t(0));
+    f.vp->lockView(Viewport::StandardView::Top);
+    f.vp->setPlanCut(1100.0);
+    QVERIFY2(f.vp->openingSymbolEdgeCount()>=7,qPrintable(QString::number(f.vp->openingSymbolEdgeCount())));
+    f.vp->setPlanCut(std::nullopt);
+  }
   QVERIFY(StairTool::turnText(1).contains(QStringLiteral("踊り場")));
   QVERIFY(StairTool::turnText(3).contains(QStringLiteral("3 段回り")));
 }

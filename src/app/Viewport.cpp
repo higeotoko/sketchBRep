@@ -1,6 +1,7 @@
 #include "Viewport.h"
 #include "sbr/OpeningSymbols.h"
 #include "sbr/doc/Schedules.h"
+#include "sbr/geom/Stair.h"
 #include "sbr/KernelError.h"
 
 #include "WheelZoom.h"
@@ -2890,7 +2891,26 @@ void Viewport::syncOpeningSymbols() {
   // Just under the cut (it would clip lines lying on it), drawn over the caps.
   draw::SymbolOptions options;
   options.z = *planCutZ_ - 1.0;
-  const auto edges = draw::openingSymbols(modeler_.document(), options);
+  auto edges = draw::openingSymbols(modeler_.document(), options);
+  // Stairs (docs/112): the walking line, its arrow and the break line where the plan cuts them.
+  for (const doc::Object& o : modeler_.document().objects()) {
+    const auto kind = o.attributes.find("kind");
+    if (kind == o.attributes.end() || kind->second != "stair" || !modeler_.document().isVisible(o.id) || hiddenInView(o)) continue;
+    const auto stair = doc::stairInWorld(modeler_.document(), o);
+    if (!stair) continue;
+    const auto marks = geom::stairPlanMarks(*stair, *planCutZ_);
+    if (!marks) continue;
+    const double z = *planCutZ_ - 1.0;
+    auto at = [z](const gp_Pnt& p) { return gp_Pnt(p.X(), p.Y(), z); };
+    auto add = [&](const gp_Pnt& a, const gp_Pnt& b) {
+      if (a.Distance(b) < 1e-6) return;
+      BRepBuilderAPI_MakeEdge edge(at(a), at(b));
+      if (edge.IsDone()) edges.push_back(edge.Edge());
+    };
+    for (std::size_t i = 1; i < marks->walk.size(); ++i) add(marks->walk[i - 1], marks->walk[i]);
+    for (const auto& [a, b] : marks->arrow) add(a, b);
+    for (std::size_t i = 1; i < marks->breakLine.size(); ++i) add(marks->breakLine[i - 1], marks->breakLine[i]);
+  }
   if (edges.empty()) return;
   TopoDS_Compound compound;
   BRep_Builder builder;

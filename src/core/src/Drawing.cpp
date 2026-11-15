@@ -10,6 +10,8 @@
 
 #include "sbr/OpeningSymbols.h"
 #include "sbr/doc/Schedules.h"
+#include "sbr/doc/Modeler.h"
+#include "sbr/geom/Stair.h"
 
 #include <algorithm>
 #include <cmath>
@@ -540,6 +542,33 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     symbols.only = &drawn;
     for (const TopoDS_Edge& e : openingSymbols(document, symbols))
       addLocalEdge(TopoDS::Edge(e.Moved(TopLoc_Location(proj.toLocal))), Pen::Visible, deflection, view.items);
+    // Stairs (docs/112): the walking line up to the cut with its arrow, the break line, "上".
+    for (const doc::Object& o : document.objects()) {
+      if (!drawn.count(o.id)) continue;
+      const auto kind = o.attributes.find("kind");
+      if (kind == o.attributes.end() || kind->second != "stair") continue;
+      const auto stair = doc::stairInWorld(document, o);
+      if (!stair) continue;
+      const auto marks = geom::stairPlanMarks(*stair, symbols.z);
+      if (!marks) continue;
+      auto uv = [&](const gp_Pnt& p) { return proj.uv(gp_Pnt(p.X(), p.Y(), symbols.z)); };
+      for (std::size_t i = 1; i < marks->walk.size(); ++i)
+        view.items.push_back(line(Pen::Visible, uv(marks->walk[i - 1]), uv(marks->walk[i])));
+      for (const auto& [a, b] : marks->arrow) view.items.push_back(line(Pen::Visible, uv(a), uv(b)));
+      for (std::size_t i = 1; i < marks->breakLine.size(); ++i)
+        view.items.push_back(line(Pen::Visible, uv(marks->breakLine[i - 1]), uv(marks->breakLine[i])));
+      if (spec.annotations) {
+        Item up;
+        up.kind = Item::Kind::Text;
+        up.pen = Pen::Text;
+        up.points = {uv(marks->label)};
+        up.text = "上";
+        up.height = 2.5;
+        up.hAlign = 1;
+        up.vAlign = 1;
+        view.items.push_back(up);
+      }
+    }
     // Their marks, the same as in the door and window schedule (docs/104), beside the
     // opening on the side it was cut from.
     if (spec.annotations) {

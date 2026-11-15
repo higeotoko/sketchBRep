@@ -62,6 +62,19 @@ struct StairShape {
 // than the width allows, or the risers do not fit the line.
 Result<StairShape> makeStair(const StairSpec& spec);
 
+// The marks a plan draws on a stair (docs/112), in plan at z 0: the walking line from the
+// foot up to where the plan cuts it (or to the top when the cut is above it), an arrow head at
+// that end pointing up the stair, and a break line across the width where the cut is.
+struct StairPlanMarks {
+  std::vector<gp_Pnt> walk;                         // the walking line drawn
+  std::vector<std::pair<gp_Pnt, gp_Pnt>> arrow;     // the arrow head (two strokes)
+  std::vector<gp_Pnt> breakLine;                    // across the width; empty when the cut is above the stair
+  gp_Pnt label;                                     // where "上" is written: just before the foot
+  bool cut = false;                                 // the plan cuts the stair
+};
+// Refused for a stair that cannot be built, or a cut below its foot (nothing of it is seen).
+Result<StairPlanMarks> stairPlanMarks(const StairSpec& spec, double cutZ);
+
 // What the stair needs open in a floor whose underside is at `underside` and top at `top`:
 // the plan of every tread with less than `headroom` above it, as one solid through the floor.
 // Refused when no tread needs it.
