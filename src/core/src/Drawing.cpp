@@ -542,6 +542,9 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     symbols.only = &drawn;
     for (const TopoDS_Edge& e : openingSymbols(document, symbols))
       addLocalEdge(TopoDS::Edge(e.Moved(TopLoc_Location(proj.toLocal))), Pen::Visible, deflection, view.items);
+    // Where the layers of walls of a build-up meet, in the cut (docs/124): thin lines.
+    for (const auto& [a, b] : doc::Modeler::wallLayerLines(document, symbols.z, drawn))
+      view.items.push_back(line(Pen::Visible, proj.uv(a), proj.uv(b)));
     // Stairs (docs/112): the walking line up to the cut with its arrow, the break line, "上".
     for (const doc::Object& o : document.objects()) {
       if (!drawn.count(o.id)) continue;

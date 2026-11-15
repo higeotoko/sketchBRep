@@ -4,6 +4,7 @@
 // Every user operation (GUI tools, scripts, future AI agents) goes through this
 // class, so all of them share validation, rollback and undo/redo.
 
+#include <set>
 #include <string>
 #include <vector>
 
@@ -621,6 +622,12 @@ class Modeler {
   // The wall made by the wall tool whose band holds `p` in plan, at its height (docs/119); the
   // nearest line when several do.
   std::optional<ObjectId> wallAt(const gp_Pnt& p) const;
+  // Where the layers of walls of a build-up (set_wall_type, createTypedWalls) meet, cut by a plan
+  // at height `z` (docs/97 G-12, docs/124): lines along each such wall between its layers, broken
+  // where an opening is cut by the plan. Walls whose thickness no longer adds up to their layers
+  // are left out. `only`: those walls (all when empty).
+  static std::vector<std::pair<gp_Pnt, gp_Pnt>> wallLayerLines(const Document& document, double z,
+                                                               const std::set<ObjectId>& only = {});
   // Removes openings: the wall is whole again there. Their fittings go with them; the other
   // openings keep their ids, sizes and fittings. One undo step.
   Status removeOpenings(const ObjectId& host, const std::vector<std::size_t>& indices);

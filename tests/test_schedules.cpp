@@ -521,3 +521,47 @@ TEST_F(Schedules, ACeilingBoardIsMadeAtTheCeilingHeight) {
   ASSERT_TRUE(modeler.undo());
   EXPECT_TRUE(modeler.document().find(board));  // the first board is back
 }
+
+// docs/124: the lines between the layers of a wall of a build-up, in a plan cut.
+TEST(WallLayerLines, ALineBetweenEachTwoLayersBrokenAtOpenings) {
+  sbr::doc::Modeler modeler;
+  CommandApi api{modeler};
+  auto ok = [&](const std::string& command, json args) {
+    json r = json::parse(api.execute(json{{"command", command}, {"args", args}}.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  // Exterior siding: 5 layers (siding 16, batten, plywood, core 105, board) -> 4 lines.
+  const std::string wall = ok("create_wall", {{"points", {{0, 0}, {6000, 0}}}, {"type", "exterior_siding"}, {"height", 3000}})["ids"][0];
+  auto lines = sbr::doc::Modeler::wallLayerLines(modeler.document(), 1100);
+  ASSERT_EQ(lines.size(), 4u);
+  for (const auto& [a, b] : lines) {
+    EXPECT_NEAR(a.Distance(b), 6000, 1e-6);  // the wall's whole length
+    EXPECT_NEAR(a.Z(), 1100, 1e-9);
+  }
+  // The first line is 16 in from the outer face (the siding).
+  const auto box = sbr::geom::exactBounds(modeler.document().worldShape(*modeler.document().find(wall)));
+  std::vector<double> ys;
+  for (const auto& l : lines) ys.push_back(l.first.Y());
+  std::sort(ys.begin(), ys.end());
+  const bool outerLow = std::abs(ys.front() - box.CornerMin().Y() - 16) < 1e-6;
+  const bool outerHigh = std::abs(box.CornerMax().Y() - ys.back() - 16) < 1e-6;
+  EXPECT_TRUE(outerLow || outerHigh) << box.CornerMin().Y() << " " << ys.front() << " " << ys.back() << " " << box.CornerMax().Y();
+  // An opening cut by the plan breaks each line in two; above it, the lines are whole.
+  ok("place_openings", {{"host", wall}, {"face_normal", {0, -1, 0}}, {"count", 1}, {"width", 1600}, {"height", 1200}, {"sill", 900}});
+  lines = sbr::doc::Modeler::wallLayerLines(modeler.document(), 1100);
+  EXPECT_EQ(lines.size(), 8u);
+  EXPECT_EQ(sbr::doc::Modeler::wallLayerLines(modeler.document(), 2500).size(), 4u);
+  // A plain wall (no build-up): no lines.
+  ok("create_wall", {{"points", {{0, 3000}, {6000, 3000}}}, {"thickness", 200}, {"height", 3000}});
+  EXPECT_EQ(sbr::doc::Modeler::wallLayerLines(modeler.document(), 2500).size(), 4u);
+  // The plan drawing carries them: 4 more lines than without the build-up's.
+  const auto view = sbr::draw::makeView(modeler.document(), sbr::draw::planView(2500));
+  ASSERT_TRUE(view);
+  int along = 0;
+  for (const auto& item : view->items)
+    if (item.kind == sbr::draw::Item::Kind::Line && item.points.size() == 2 &&
+        std::abs(item.points[0].Distance(item.points[1]) - 6000) < 1e-3 && item.pen == sbr::draw::Pen::Visible)
+      ++along;
+  EXPECT_GE(along, 4);
+}

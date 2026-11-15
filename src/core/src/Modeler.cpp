@@ -6187,6 +6187,57 @@ Result<Modeler::StoreyCopy> Modeler::copyStorey(const std::string& fromLevel, co
   return out;
 }
 
+std::vector<std::pair<gp_Pnt, gp_Pnt>> Modeler::wallLayerLines(const Document& document, double z,
+                                                               const std::set<ObjectId>& only) {
+  std::vector<std::pair<gp_Pnt, gp_Pnt>> out;
+  for (const WallBand& w : allWallBands(document)) {
+    if (!only.empty() && !only.count(w.object->id)) continue;
+    if (z < w.z0 || z > w.z1) continue;
+    const auto layersText = w.object->attributes.find("wall_layers");
+    const auto outside = w.object->attributes.find("wall_outside");
+    if (layersText == w.object->attributes.end() || outside == w.object->attributes.end()) continue;
+    const nlohmann::json layers = nlohmann::json::parse(layersText->second, nullptr, false);
+    if (!layers.is_array() || layers.size() < 2) continue;
+    double total = 0.0;
+    for (const auto& l : layers) total += l.value("thickness", 0.0);
+    if (std::abs(total - (w.right + w.leftExt)) > 1.0) continue;  // changed since: not the layers any more
+    // Across the wall: from the outer face inwards.
+    const bool outRight = outside->second == "right";
+    std::vector<double> across;
+    double run = 0.0;
+    for (std::size_t i = 0; i + 1 < layers.size(); ++i) {
+      run += layers[i].value("thickness", 0.0);
+      across.push_back(outRight ? -w.right + run : w.leftExt - run);
+    }
+    // Along the wall: its length less the openings the plan passes through.
+    std::vector<std::pair<double, double>> gaps;
+    if (const auto openings = openingsIn(document, w.object->id)) {
+      for (const OpeningInfo& o : *openings) {
+        if (std::abs(o.normal.Z()) > 1e-6 || z < o.bottom || z > o.bottom + o.height) continue;
+        const double c = gp_Vec(w.start, gp_Pnt(o.center.X(), o.center.Y(), w.start.Z())).Dot(gp_Vec(w.dir));
+        gaps.emplace_back(c - o.along / 2, c + o.along / 2);
+      }
+    }
+    std::sort(gaps.begin(), gaps.end());
+    std::vector<std::pair<double, double>> runs;
+    double from = 0.0;
+    for (const auto& [g0, g1] : gaps) {
+      if (g0 > from + 1e-6) runs.emplace_back(from, std::min(g0, w.length));
+      from = std::max(from, g1);
+    }
+    if (from < w.length - 1e-6) runs.emplace_back(from, w.length);
+    for (double a : across)
+      for (const auto& [s0, s1] : runs) {
+        gp_Pnt p0 = w.start.Translated(gp_Vec(w.dir) * s0 + gp_Vec(w.left) * a);
+        gp_Pnt p1 = w.start.Translated(gp_Vec(w.dir) * s1 + gp_Vec(w.left) * a);
+        p0.SetZ(z);
+        p1.SetZ(z);
+        out.emplace_back(p0, p1);
+      }
+  }
+  return out;
+}
+
 std::optional<ObjectId> Modeler::wallAt(const gp_Pnt& p) const {
   std::optional<ObjectId> found;
   double best = 1e300;

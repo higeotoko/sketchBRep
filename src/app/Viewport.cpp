@@ -2892,6 +2892,11 @@ void Viewport::syncOpeningSymbols() {
   draw::SymbolOptions options;
   options.z = *planCutZ_ - 1.0;
   auto edges = draw::openingSymbols(modeler_.document(), options);
+  // Where the layers of walls of a build-up meet (docs/124).
+  for (const auto& [a, b] : doc::Modeler::wallLayerLines(modeler_.document(), *planCutZ_ - 1.0)) {
+    BRepBuilderAPI_MakeEdge edge(a, b);
+    if (edge.IsDone()) edges.push_back(edge.Edge());
+  }
   // Stairs (docs/112): the walking line, its arrow and the break line where the plan cuts them.
   for (const doc::Object& o : modeler_.document().objects()) {
     const auto kind = o.attributes.find("kind");
