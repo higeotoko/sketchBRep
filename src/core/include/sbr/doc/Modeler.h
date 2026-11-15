@@ -574,6 +574,18 @@ class Modeler {
   // mark. Applies to `indices` (1-based, all when empty). One undo step.
   Status setOpeningMarks(const ObjectId& host, const std::vector<std::size_t>& indices, const std::string& mark,
                          const std::string& product);
+  // Kinds of floors and roofs (docs/97 N-08, docs/134): slabs and roofs given one type name
+  // (attribute type_name, e.g. "F1", "R1") are one type. setTypeName names them (empty: no type;
+  // other objects refused); one undo step. changeElementType changes every one of that name:
+  // slabs their thickness (the top kept), roofs their pitch, thickness, eave and gable overhangs
+  // (outline and eave height kept); all or nothing, one undo step; how many. matchElementType:
+  // the others of this one's name take its values; how many (0: it is the only one).
+  Status setTypeName(const std::vector<ObjectId>& ids, const std::string& name);
+  struct ElementTypeChange {
+    std::optional<double> thickness, pitch, eave, gableEave;
+  };
+  Result<int> changeElementType(const std::string& name, const ElementTypeChange& change);
+  Result<int> matchElementType(const ObjectId& id);
   // A kind of opening (docs/97 N-08, docs/133): the openings that share a mark in the door and
   // window schedule (one given by hand, or worked out from kind, fitting and size) are one type.
   // Changed as a type, every one of them takes the new width / height (centre and sill kept),

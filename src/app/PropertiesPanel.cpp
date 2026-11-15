@@ -104,6 +104,38 @@ QDoubleSpinBox* lengthSpin(double value) {
   return spin;
 }
 
+// docs/134: a slab's / roof's type name, and the others of that name made like it.
+void addTypeRow(PropertiesPanel* panel, QFormLayout* form, const doc::Modeler& modeler, const doc::Object& o,
+                const QString& sizes) {
+  const auto found = o.attributes.find("type_name");
+  const QString name = found == o.attributes.end() ? QString() : QString::fromStdString(found->second);
+  auto* edit = new QLineEdit(name);
+  edit->setObjectName(QStringLiteral("typeName"));
+  edit->setPlaceholderText(QObject::tr("種類名（例 F1、R1）"));
+  edit->setToolTip(QObject::tr("同じ種類名の物は 1 つの種類です。1 つを直して「揃える」と、同じ種類の全部が%1になります").arg(sizes));
+  edit->setMaxLength(40);
+  edit->setEnabled(!o.locked);
+  const doc::ObjectId id = o.id;
+  QObject::connect(edit, &QLineEdit::editingFinished, panel, [panel, id, edit, name] {
+    if (edit->text().trimmed() != name) emit panel->typeNameEdited(id, edit->text().trimmed());
+  });
+  form->addRow(QObject::tr("種類名"), edit);
+  if (name.isEmpty()) return;
+  int others = 0;
+  for (const doc::Object& other : modeler.document().objects()) {
+    const auto it = other.attributes.find("type_name");
+    others += other.id != id && it != other.attributes.end() && QString::fromStdString(it->second) == name;
+  }
+  if (others == 0) return;
+  auto* match = new QToolButton;
+  match->setObjectName(QStringLiteral("typeMatch"));
+  match->setText(QObject::tr("同じ種類（%1）のほか %2 個を、これと同じにする").arg(name).arg(others));
+  match->setToolTip(QObject::tr("同じ種類名の物が、これと同じ%1になります。Ctrl+Z 1 回で戻せます").arg(sizes));
+  match->setEnabled(!o.locked);
+  QObject::connect(match, &QToolButton::clicked, panel, [panel, id] { emit panel->typeMatched(id); });
+  form->addRow(match);
+}
+
 }  // namespace
 
 PropertiesPanel::PropertiesPanel(QWidget* parent) : QWidget(parent) {
@@ -306,6 +338,7 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       size(tr("けらばの出"), "gable_eave", roof->spec.gableEave, true, tr("妻側の出（水平）。片流れでは、流れに沿う 2 辺の出。寄棟では使いません"));
       size(tr("厚さ"), "thickness", roof->spec.thickness, true, tr("勾配に直角に測った厚さ"));
       size(tr("軒の高さ"), "height", roof->spec.height, true, tr("屋根の下面が、外周の線の上を通る高さ（壁・桁の上端）"));
+      addTypeRow(this, form_, modeler, *o, tr("勾配・厚さ・軒の出・けらばの出"));
       auto row = [&](const QString& label, const QString& text, const char* name) {
         auto* value = new QLabel(text);
         value->setObjectName(QLatin1String(name));
@@ -688,6 +721,7 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
     });
     form_->addRow(tr("種類"), type);
   }
+  if (partKind == "slab") addTypeRow(this, form_, modeler, *o, tr("厚さ（上の面はそのまま）"));
 
   // The levels a wall or a slab is on (docs/90 G-02): it follows them when a storey height
   // changes. Choosing a level puts that end on it now.

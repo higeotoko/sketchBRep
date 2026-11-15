@@ -405,6 +405,63 @@ TEST_F(Schedules, AnOpeningTypeIsChangedEverywhereAtOnce) {
   for (const auto& row : rowsOf("AW-1")) EXPECT_EQ(row.fitting, "窓");  // the north one is a 窓: so are they now (were 引違い)
 }
 
+// docs/134: kinds of floors and roofs by a type name.
+TEST_F(Schedules, FloorAndRoofTypesChangeTogether) {
+  const auto box = [&](const std::string& id) { return sbr::geom::exactBounds(modeler.document().worldShape(*modeler.document().find(id))); };
+  std::string slab;
+  for (const auto& o : modeler.document().objects())
+    if (o.attributes.count("kind") && o.attributes.at("kind") == "slab") slab = o.id;
+  ASSERT_FALSE(slab.empty());
+  const std::string upper = ok("create_slab", {{"outline", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}}}, {"top", 3000}, {"thickness", 200}})["id"];
+  const std::string roofA = ok("create_roof", {{"outline", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}}}, {"kind", "gable"}, {"height", 3000}})["id"];
+  const std::string roofB = ok("create_roof", {{"outline", {{20000, 0}, {26000, 0}, {26000, 5000}, {20000, 5000}}}, {"kind", "hip"}, {"height", 3000}})["id"];
+  // Names: slabs and roofs only.
+  EXPECT_FALSE(call("set_type_name", {{"ids", {south}}, {"name", "F1"}}).value("ok", true));
+  ok("set_type_name", {{"ids", {slab, upper}}, {"name", "F1"}});
+  ok("set_type_name", {{"ids", {roofA, roofB}}, {"name", "R1"}});
+  // F1 thicker: both, the tops where they were, one undo step.
+  const auto steps = modeler.history().undoCount();
+  json r = ok("change_type", {{"name", "F1"}, {"thickness", 250}});
+  EXPECT_EQ(r["changed"], 2);
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  EXPECT_NEAR(box(slab).CornerMax().Z(), 0, 1e-6);
+  EXPECT_NEAR(box(slab).CornerMin().Z(), -250, 1e-6);
+  EXPECT_NEAR(box(upper).CornerMax().Z(), 3000, 1e-6);
+  EXPECT_NEAR(box(upper).CornerMin().Z(), 2750, 1e-6);
+  ASSERT_TRUE(modeler.undo());
+  EXPECT_NEAR(box(upper).CornerMin().Z(), 2800, 1e-6);
+  // R1 steeper: both roofs, their other sizes as they were.
+  const double eaveB = modeler.roofInfo(roofB)->spec.eave;
+  r = ok("change_type", {{"name", "R1"}, {"pitch", 6}});
+  EXPECT_EQ(r["changed"], 2);
+  EXPECT_NEAR(modeler.roofInfo(roofA)->spec.pitch, 6, 1e-9);
+  EXPECT_NEAR(modeler.roofInfo(roofB)->spec.pitch, 6, 1e-9);
+  EXPECT_EQ(modeler.roofInfo(roofB)->spec.kind, "hip");
+  EXPECT_NEAR(modeler.roofInfo(roofB)->spec.eave, eaveB, 1e-9);
+  // One roof changed by hand; the other made like it.
+  auto spec = modeler.roofInfo(roofA)->spec;
+  spec.eave = 450;
+  spec.thickness = 150;
+  ASSERT_TRUE(modeler.changeRoof(roofA, spec));
+  r = ok("change_type", {{"like", roofA}});
+  EXPECT_EQ(r["changed"], 1);
+  EXPECT_NEAR(modeler.roofInfo(roofB)->spec.eave, 450, 1e-9);
+  EXPECT_NEAR(modeler.roofInfo(roofB)->spec.thickness, 150, 1e-9);
+  // A slab made like the other.
+  ASSERT_TRUE(modeler.changeMember(upper, [] { sbr::doc::Modeler::MemberChange c; c.thickness = 180.0; return c; }()));
+  r = ok("change_type", {{"like", upper}});
+  EXPECT_EQ(r["changed"], 1);
+  EXPECT_NEAR(box(slab).CornerMin().Z(), -180, 1e-6);
+  // Refused: an unknown name; a slab with no name; too thin a roof (nothing changes).
+  EXPECT_FALSE(call("change_type", {{"name", "ZZ"}, {"thickness", 100}}).value("ok", true));
+  ok("set_type_name", {{"ids", {upper}}, {"name", ""}});
+  EXPECT_FALSE(call("change_type", {{"like", upper}}).value("ok", true));
+  const auto before = modeler.history().undoCount();
+  EXPECT_FALSE(call("change_type", {{"name", "R1"}, {"thickness", -5}}).value("ok", true));
+  EXPECT_EQ(modeler.history().undoCount(), before);
+  EXPECT_NEAR(modeler.roofInfo(roofB)->spec.thickness, 150, 1e-9);
+}
+
 // docs/113: a table on a sheet of its own.
 TEST_F(Schedules, ATableGoesOnASheetOfItsOwn) {
   const sbr::draw::Table table = sbr::doc::scheduleTable(modeler.document(), 0);

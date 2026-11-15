@@ -5670,6 +5670,100 @@ Status Modeler::setOpeningFittings(const ObjectId& hostId, const std::vector<std
   return Status::success();
 }
 
+namespace {
+constexpr const char* kTypeName = "type_name";
+}  // namespace
+
+Status Modeler::setTypeName(const std::vector<ObjectId>& ids, const std::string& name) {
+  if (ids.empty()) return Status::failure("Nothing selected");
+  if (name.size() > 40 || name.find_first_of("\r\n") != std::string::npos)
+    return Status::failure("A type name is one line of at most 40 characters");
+  ChangeSet changes(document_);
+  for (const ObjectId& id : ids) {
+    const Object* o = document_.find(id);
+    if (!o) return Status::failure("Object not found");
+    const std::string kind = attributeOf(*o, "kind");
+    if (kind != "slab" && kind != "roof") return Status::failure("Type names are for slabs and roofs ('" + o->name + "' is neither)");
+    if (o->locked) return Status::failure("'" + o->name + "' is locked");
+    Object named = *o;
+    if (name.empty()) named.attributes.erase(kTypeName);
+    else named.attributes[kTypeName] = name;
+    changes.modify(named);
+  }
+  history_.execute(changes.build("Set Type Name"));
+  return Status::success();
+}
+
+Result<int> Modeler::changeElementType(const std::string& name, const ElementTypeChange& change) {
+  using R = Result<int>;
+  if (name.empty()) return R::failure("Name the type to change");
+  std::vector<ObjectId> slabs, roofs;
+  for (const Object& o : document_.objects()) {
+    if (attributeOf(o, kTypeName) != name) continue;
+    const std::string kind = attributeOf(o, "kind");
+    if (kind == "slab") slabs.push_back(o.id);
+    else if (kind == "roof") roofs.push_back(o.id);
+  }
+  if (slabs.empty() && roofs.empty()) return R::failure("Nothing has the type '" + name + "'");
+  history_.beginGroup("Change Type");
+  auto fail = [&](const std::string& why) {
+    history_.abortGroup();
+    return R::failure(why);
+  };
+  int count = 0;
+  for (const ObjectId& id : slabs) {
+    if (change.thickness) {
+      MemberChange c;
+      c.thickness = *change.thickness;
+      c.keep = "top";
+      if (const auto done = changeMember(id, c); !done) return fail(done.error());
+    }
+    ++count;
+  }
+  for (const ObjectId& id : roofs) {
+    const auto info = roofInfo(id);
+    if (!info) return fail(info.error());
+    geom::RoofSpec spec = info->spec;
+    if (change.thickness) spec.thickness = *change.thickness;
+    if (change.pitch) spec.pitch = *change.pitch;
+    if (change.eave) spec.eave = *change.eave;
+    if (change.gableEave) spec.gableEave = *change.gableEave;
+    if (const Status s = changeRoof(id, spec); !s) return fail(s.message());
+    ++count;
+  }
+  history_.endGroup();
+  return count;
+}
+
+Result<int> Modeler::matchElementType(const ObjectId& id) {
+  using R = Result<int>;
+  const Object* o = document_.find(id);
+  if (!o) return R::failure("Object not found");
+  const std::string name = attributeOf(*o, kTypeName);
+  if (name.empty()) return R::failure("It has no type name: give it one first");
+  int others = 0;
+  for (const Object& other : document_.objects()) others += other.id != id && attributeOf(other, kTypeName) == name;
+  if (others == 0) return 0;
+  ElementTypeChange change;
+  if (attributeOf(*o, "kind") == "roof") {
+    const auto info = roofInfo(id);
+    if (!info) return R::failure(info.error());
+    change.thickness = info->spec.thickness;
+    change.pitch = info->spec.pitch;
+    change.eave = info->spec.eave;
+    change.gableEave = info->spec.gableEave;
+  } else {
+    const auto info = memberInfo(id);
+    if (!info) return R::failure(info.error());
+    for (const auto& field : info->fields)
+      if (field.key == "thickness") change.thickness = field.value;
+    if (!change.thickness) return R::failure("Its thickness cannot be read");
+  }
+  const auto changed = changeElementType(name, change);
+  if (!changed) return changed;
+  return others;
+}
+
 Result<int> Modeler::changeOpeningType(const std::string& mark, const OpeningTypeChange& change) {
   using R = Result<int>;
   if (mark.empty()) return R::failure("Name the mark of the openings to change");

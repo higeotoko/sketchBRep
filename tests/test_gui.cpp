@@ -11924,6 +11924,31 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
     QVERIFY(std::abs(o.height-1000)<1e-6);
   }
   QVERIFY2(f.window.statusText().contains(QStringLiteral("1 個")),qPrintable(f.window.statusText()));
+  // docs/134: two slabs; a type name typed in the properties; the other made like the first.
+  {
+    const std::string lower=call("create_slab",{{"outline",{{0,0},{8000,0},{8000,6000},{0,6000}}},{"top",0},{"thickness",150}})["id"];
+    const std::string upper=call("create_slab",{{"outline",{{0,0},{8000,0},{8000,6000},{0,6000}}},{"top",3000},{"thickness",200}})["id"];
+    QVERIFY(!lower.empty()&&!upper.empty());
+    QVERIFY(m.setTypeName({upper},"F1"));
+    f.window.setSelection({lower});
+    QApplication::processEvents();
+    auto* name=f.window.findChild<QLineEdit*>(QStringLiteral("typeName"));
+    QVERIFY(name);
+    QVERIFY(!f.window.findChild<QToolButton*>(QStringLiteral("typeMatch")));  // no name yet: nothing to match
+    name->setText(QStringLiteral("F1"));
+    emit name->editingFinished();
+    QTRY_VERIFY(m.document().find(lower)->attributes.count("type_name"));
+    QApplication::processEvents();
+    QTRY_VERIFY(f.window.findChild<QToolButton*>(QStringLiteral("typeMatch")));
+    auto* match=f.window.findChild<QToolButton*>(QStringLiteral("typeMatch"));
+    QVERIFY2(match->text().contains(QStringLiteral("F1")),qPrintable(match->text()));
+    const auto before=m.history().undoCount();
+    match->click();
+    QTRY_COMPARE(m.history().undoCount(),before+1);
+    const Bnd_Box b=geom::exactBounds(m.document().worldShape(*m.document().find(upper)));
+    QVERIFY(std::abs(b.CornerMax().Z()-3000)<1e-6);
+    QVERIFY(std::abs(b.CornerMin().Z()-2850)<1e-6);  // 150 thick like the lower one, its top kept
+  }
 }
 
 // docs/120 (N-09): in 3D one storey only; the model is not changed.

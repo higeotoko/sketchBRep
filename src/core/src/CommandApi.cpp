@@ -2482,6 +2482,32 @@ const std::vector<CommandDef>& commands() {
          must(m.setOpeningMarks(text(a, "host"), which, textOr(a, "mark", ""), textOr(a, "product", "")));
          return json::object();
        }},
+      {"set_type_name",
+       "Name the type of slabs and roofs (docs/134): 'ids', 'name' (e.g. \"F1\", \"R1\"; empty: no type). Those of one "
+       "name are one type: change_type changes them all. Other objects are refused. One undo step.",
+       SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}}, "name": {"type": "string"}},
+               "required": ["ids"]}),
+       [](doc::Modeler& m, const json& a) {
+         must(m.setTypeName(ids(a, "ids"), textOr(a, "name", "")));
+         return json::object();
+       }},
+      {"change_type",
+       "Change a type of slabs / roofs (set_type_name, docs/134): every one named 'name' takes 'thickness' (slabs: "
+       "the top kept; roofs: across the slope), and roofs 'pitch' (寸), 'eave', 'gable_eave', whichever are given. "
+       "Or 'like': an id: the others of its name take its values. All or nothing, one undo step. Returns how "
+       "many changed.",
+       SCHEMA({"type": "object", "properties": {"name": {"type": "string"}, "thickness": {"type": "number"},
+               "pitch": {"type": "number"}, "eave": {"type": "number"}, "gable_eave": {"type": "number"},
+               "like": {"type": "string"}}}),
+       [](doc::Modeler& m, const json& a) {
+         if (a.contains("like")) return json{{"changed", must(m.matchElementType(text(a, "like")))}};
+         doc::Modeler::ElementTypeChange change;
+         if (a.contains("thickness")) change.thickness = number(a, "thickness");
+         if (a.contains("pitch")) change.pitch = number(a, "pitch");
+         if (a.contains("eave")) change.eave = number(a, "eave");
+         if (a.contains("gable_eave")) change.gableEave = number(a, "gable_eave");
+         return json{{"changed", must(m.changeElementType(text(a, "name"), change))}};
+       }},
       {"change_opening_type",
        "Change a kind of opening (docs/133): every opening with 'mark' in opening_schedule (given by hand or worked "
        "out), in every wall, takes 'width' / 'height' (centre and sill kept), 'fitting' (an object as "

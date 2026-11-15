@@ -836,6 +836,22 @@ void MainWindow::buildUi() {
   connect(panel_, &PropertiesPanel::openingTypeMatched, this, [this](const doc::ObjectId& id, int index) {
     QTimer::singleShot(0, this, [this, id, index] { matchOpeningType(id, index); });
   });
+  connect(panel_, &PropertiesPanel::typeNameEdited, this, [this](const doc::ObjectId& id, const QString& name) {
+    QTimer::singleShot(0, this, [this, id, name] {
+      const Status s = modeler_.setTypeName({id}, name.toStdString());
+      if (!s) reportError(tr("種類名を付けられません: %1").arg(userMessage(QString::fromStdString(s.message()))));
+      else setStatus(name.isEmpty() ? tr("種類名を外しました") : tr("種類名「%1」を付けました（同じ名前の物が 1 つの種類です）").arg(name));
+      refreshPanels();
+    });
+  });
+  connect(panel_, &PropertiesPanel::typeMatched, this, [this](const doc::ObjectId& id) {
+    QTimer::singleShot(0, this, [this, id] {
+      const auto changed = modeler_.matchElementType(id);
+      if (!changed) reportError(tr("同じ種類を揃えられません: %1").arg(userMessage(QString::fromStdString(changed.error()))));
+      else setStatus(tr("同じ種類の %1 個を、これと同じにしました（Ctrl+Z で戻せます）").arg(*changed));
+      refreshPanels();
+    });
+  });
   connect(panel_, &PropertiesPanel::roomFinishEdited, this,
           [this](const doc::ObjectId& id, const QString& key, const QString& text, double value) {
             QTimer::singleShot(0, this, [this, id, key, text, value] {
