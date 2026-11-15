@@ -8,6 +8,7 @@
 #include <sstream>
 #include <tuple>
 
+#include <Bnd_Box.hxx>
 #include <nlohmann/json.hpp>
 
 #include "sbr/OpeningSymbols.h"
@@ -383,6 +384,38 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& sp
     view.title = "平面図";
     planned.push_back({view.title, view, std::nullopt, {}});
   }
+  // Sections (docs/132).
+  struct Cut {
+    std::string label, name;
+    gp_Pnt point;
+    gp_Dir toward;
+  };
+  std::vector<Cut> cuts;
+  if (spec.sections) {
+    for (const SectionPlane& sp : document.settings().sections) {
+      const gp_Vec n(sp.normal[0], sp.normal[1], 0);
+      if (!sp.active || n.Magnitude() < 0.5 * std::hypot(n.Magnitude(), sp.normal[2])) continue;  // vertical planes only
+      const std::string label(1, static_cast<char>('A' + std::min<std::size_t>(cuts.size(), 25)));
+      cuts.push_back({label, label + "-" + label + " 断面図", gp_Pnt(sp.origin[0], sp.origin[1], sp.origin[2]), gp_Dir(n)});
+    }
+    if (cuts.empty()) {
+      Bnd_Box all;
+      for (const Object& o : document.objects())
+        if (!o.shape.IsNull() && document.isVisible(o.id)) all.Add(document.worldBounds(o));
+      if (!all.IsVoid()) {
+        double x0, y0, z0, x1, y1, z1;
+        all.Get(x0, y0, z0, x1, y1, z1);
+        const gp_Pnt c((x0 + x1) / 2, (y0 + y1) / 2, 0);
+        cuts.push_back({"A", "A-A 断面図", c, gp_Dir(0, -1, 0)});
+        cuts.push_back({"B", "B-B 断面図", c, gp_Dir(1, 0, 0)});
+      }
+    }
+  }
+  for (const Cut& c : cuts) {
+    draw::ViewSpec view = draw::sectionView(c.point, c.toward);
+    view.title = c.name;
+    planned.push_back({view.title, view, std::nullopt, {}});
+  }
   const char* sides[4] = {"南立面図", "東立面図", "北立面図", "西立面図"};
   for (int side = 0; side < 4; ++side) {
     draw::ViewSpec view = draw::elevationView(document, side);
@@ -478,7 +511,13 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& sp
     sheetSpec.title.number = number(i + 2);
     Result<draw::Sheet> laid = Result<draw::Sheet>::failure("");
     if (p && p->view) {
-      const auto view = draw::makeView(document, *p->view);
+      draw::ViewSpec viewSpec = *p->view;
+      // Plans: where the sections are cut, with their sheet numbers.
+      if (viewSpec.kind == draw::ViewKind::Plan)
+        for (const Cut& c : cuts)
+          for (std::size_t k = 0; k < names.size(); ++k)
+            if (names[k] == c.name) viewSpec.cutMarks.push_back({c.point, c.toward, c.label, number(k + 2)});
+      const auto view = draw::makeView(document, viewSpec);
       if (view) {
         draw::View named = *view;
         named.spec.title = p->view->title;

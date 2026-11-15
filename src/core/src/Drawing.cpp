@@ -613,6 +613,21 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     for (const gp_Pnt2d& p : i.points) extend(p);
   }
 
+  // Section cut marks (docs/132): plans only.
+  if (spec.kind == ViewKind::Plan)
+    for (const ViewSpec::CutMark& c : spec.cutMarks) {
+      const gp_Dir toward(c.towardsViewer.X(), c.towardsViewer.Y(), 0);
+      const gp_Dir right = gp::DZ().Crossed(toward);
+      const gp_Dir a = proj.localDir(right), l = proj.localDir(toward.Reversed());
+      if (std::hypot(a.X(), a.Y()) < 1e-6 || std::hypot(l.X(), l.Y()) < 1e-6) continue;
+      View::CutLine cut;
+      cut.point = proj.uv(c.point);
+      cut.along = gp_Dir2d(a.X(), a.Y());
+      cut.look = gp_Dir2d(l.X(), l.Y());
+      cut.label = c.label;
+      cut.sheet = c.sheet;
+      view.cuts.push_back(cut);
+    }
   // Grids: lines across the view with their names; spans between them.
   if (spec.grid) {
     for (const doc::Object& o : document.objects()) {

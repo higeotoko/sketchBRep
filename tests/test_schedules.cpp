@@ -841,6 +841,63 @@ TEST_F(Schedules, ASetCanCarryItsTablesOnThePlan) {
   std::filesystem::remove_all(dir);
 }
 
+// docs/132: sections in the set, and where they are cut on the plans.
+TEST_F(Schedules, TheSetHasSectionsMarkedOnThePlans) {
+  sbr::doc::DrawingSetSpec spec;
+  auto set = sbr::doc::drawingSet(modeler.document(), spec);
+  ASSERT_TRUE(set) << set.error();
+  auto index = [&](const std::string& name) {
+    const auto it = std::find(set->names.begin(), set->names.end(), name);
+    return it == set->names.end() ? -1 : static_cast<int>(it - set->names.begin());
+  };
+  // Through the middle: A-A and B-B, after the plans, before the elevations.
+  const int a = index("A-A 断面図"), b = index("B-B 断面図"), plan = index("1FL 平面図"), south = index("南立面図");
+  ASSERT_GE(a, 0);
+  ASSERT_GE(b, 0);
+  EXPECT_TRUE(plan < a && a < b && b < south);
+  // The sections show the walls they cut (filled), each its number in its title block.
+  for (int k : {a, b}) {
+    int fills = 0;
+    bool numbered = false;
+    for (const auto& item : set->sheets[static_cast<std::size_t>(k)].items) {
+      fills += item.kind == sbr::draw::Item::Kind::Fill;
+      numbered |= item.kind == sbr::draw::Item::Kind::Text && item.text == set->numbers[static_cast<std::size_t>(k)];
+    }
+    EXPECT_GT(fills, 0) << set->names[static_cast<std::size_t>(k)];
+    EXPECT_TRUE(numbered);
+  }
+  // The plan: each cut's label twice (both ends) and the section's sheet number twice.
+  std::map<std::string, int> texts;
+  for (const auto& item : set->sheets[static_cast<std::size_t>(plan)].items)
+    if (item.kind == sbr::draw::Item::Kind::Text) ++texts[item.text];
+  EXPECT_EQ(texts["A"], 2);
+  EXPECT_EQ(texts["B"], 2);
+  EXPECT_EQ(texts[set->numbers[static_cast<std::size_t>(a)]], 2);
+  EXPECT_EQ(texts[set->numbers[static_cast<std::size_t>(b)]], 2);
+  // A section plane of the model: that one only.
+  sbr::doc::SectionPlane plane;
+  plane.name = "S1";
+  plane.origin = {2000, 0, 0};
+  plane.normal = {1, 0, 0};
+  modeler.setSection(plane);
+  set = sbr::doc::drawingSet(modeler.document(), spec);
+  ASSERT_TRUE(set);
+  EXPECT_GE(index("A-A 断面図"), 0);
+  EXPECT_LT(index("B-B 断面図"), 0);
+  // None asked for: none, and no marks.
+  spec.sections = false;
+  set = sbr::doc::drawingSet(modeler.document(), spec);
+  ASSERT_TRUE(set);
+  EXPECT_LT(index("A-A 断面図"), 0);
+  // By the API, without sections: the same sheets as above.
+  const auto dir = std::filesystem::temp_directory_path() / "sbr_drawing_set_sections";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+  const json files = ok("export_drawing_set", {{"folder", dir.u8string()}, {"sections", false}});
+  EXPECT_EQ(files["sheets"].size(), set->sheets.size());
+  std::filesystem::remove_all(dir);
+}
+
 // docs/125: drawings written under Japanese names (the app suggests the drawing's name).
 TEST_F(Schedules, DrawingsAreWrittenUnderJapaneseNames) {
   const auto dir = std::filesystem::temp_directory_path() / std::filesystem::u8path(u8"図面テスト");

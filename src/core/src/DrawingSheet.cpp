@@ -231,6 +231,36 @@ Result<Sheet> layoutSheet(const View& view, const SheetSpec& spec) {
       }
     }
   }
+  // Section cuts (docs/132): a line across the drawing, at each end an arrow the way the section
+  // looks, the label and (under it) the sheet it is on.
+  for (const View::CutLine& c : view.cuts) {
+    const gp_Vec2d d(c.along.X(), c.along.Y()), look(c.look.X(), c.look.Y());
+    double t0 = 1e300, t1 = -1e300;
+    for (const gp_Pnt2d& corner : {gp_Pnt2d(model.x0, model.y0), gp_Pnt2d(model.x1, model.y0), gp_Pnt2d(model.x0, model.y1),
+                                   gp_Pnt2d(model.x1, model.y1)}) {
+      const double t = gp_Vec2d(c.point, corner).Dot(d);
+      t0 = std::min(t0, t);
+      t1 = std::max(t1, t);
+    }
+    const gp_Pnt2d e0(c.point.XY() + d.XY() * (t0 - margin)), e1(c.point.XY() + d.XY() * (t1 + margin));
+    items.push_back(line(Pen::Grid, e0, e1));
+    for (const gp_Pnt2d& e : {e0, e1}) {
+      // A thick stub at the end, then the arrow.
+      const gp_Pnt2d tip(e.XY() + look.XY() * (6.0 * s));
+      items.push_back(line(Pen::Cut, e, tip));
+      Item arrow;
+      arrow.kind = Item::Kind::Fill;
+      arrow.pen = Pen::Text;
+      const gp_Vec2d side(look.Y(), -look.X());
+      arrow.points = {gp_Pnt2d(tip.XY() + look.XY() * (2.5 * s)), gp_Pnt2d(tip.XY() + side.XY() * (1.5 * s)),
+                      gp_Pnt2d(tip.XY() - side.XY() * (1.5 * s))};
+      items.push_back(arrow);
+      const bool first = e.IsEqual(e0, 1e-9);
+      const gp_Pnt2d at(e.XY() + d.XY() * ((first ? -4.0 : 4.0) * s));
+      items.push_back(text(Pen::Text, at, c.label, 5.0, 1, 0));
+      if (!c.sheet.empty()) items.push_back(text(Pen::Text, gp_Pnt2d(at.X(), at.Y() - 1.0 * s), c.sheet, 2.5, 1, 2));
+    }
+  }
   // Levels: a line across with its name above, the height below; levels
   // at one height share the line ("GL・1FL").
   std::vector<LevelMark> levels;

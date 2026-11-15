@@ -3529,12 +3529,15 @@ const std::vector<CommandDef>& commands() {
        "sheet list (01), a plan per storey, the four elevations and the tables, numbered 'prefix' (default A-) "
        "01, 02, ...; each file named by its number and drawing name. 'format' dxf (default) or jww; 'scale' "
        "(default 100), 'paper' (auto), 'project', 'author', 'date'. 'tables_with_plan' true (docs/131): the tables "
-       "go beside the lowest storey's plan on its sheet instead of sheets of their own. Files that are there are not replaced: "
+       "go beside the lowest storey's plan on its sheet instead of sheets of their own. 'sections' (default true, docs/132): "
+       "sections after the plans, one per active vertical section plane (set_section) or else A-A (cut east-west, seen "
+       "from the south) and B-B (cut north-south, seen from the east) through the middle; the plans mark where they are "
+       "cut, with the sections' sheet numbers. Files that are there are not replaced: "
        "refused, nothing written. (One PDF of all the sheets: from the app's File menu.)",
        SCHEMA({"type": "object", "properties": {"folder": {"type": "string"}, "format": {"enum": ["dxf", "jww"]},
                "scale": {"type": "number"}, "paper": {"type": "string"}, "prefix": {"type": "string"},
                "project": {"type": "string"}, "author": {"type": "string"}, "date": {"type": "string"},
-               "tables_with_plan": {"type": "boolean"}},
+               "tables_with_plan": {"type": "boolean"}, "sections": {"type": "boolean"}},
                "required": ["folder"]}),
        [](doc::Modeler& m, const json& a) {
          doc::DrawingSetSpec spec;
@@ -3545,6 +3548,7 @@ const std::vector<CommandDef>& commands() {
          spec.title.author = textOr(a, "author", {});
          spec.title.date = textOr(a, "date", {});
          spec.tablesWithPlan = a.value("tables_with_plan", false);
+         spec.sections = a.value("sections", true);
          const std::string format = textOr(a, "format", "dxf");
          if (format != "dxf" && format != "jww") throw ApiError("'format': dxf or jww");
          const auto set = must(doc::drawingSet(m.document(), spec));

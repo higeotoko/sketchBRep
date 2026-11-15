@@ -131,6 +131,11 @@ struct DrawingSetSpec {
   // docs/131: the tables beside the lowest storey's plan on its sheet (draw::layoutSheetWithTables)
   // instead of sheets of their own; that sheet is named "1FL 平面図・建具表・室の表" and so on.
   bool tablesWithPlan = false;
+  // docs/132: sections after the plans: one per active vertical section plane ("A-A 断面図", ...),
+  // or, with none, two through the middle of the model (A-A cut east-west and seen from the south,
+  // B-B cut north-south and seen from the east). The plans show where they are cut, with the
+  // sections' sheet numbers.
+  bool sections = true;
 };
 struct DrawingSet {
   std::vector<draw::Sheet> sheets;

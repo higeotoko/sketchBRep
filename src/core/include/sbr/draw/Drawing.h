@@ -92,6 +92,15 @@ struct ViewSpec {
   bool includeHidden = false;
   bool memberLabels = false;
   std::string framingPreset;     // named framing plan, empty for ordinary views
+  // Plans (docs/132): where sections are cut, drawn as a cut line across the drawing with arrows
+  // the way the section looks and its label and sheet number at both ends.
+  struct CutMark {
+    gp_Pnt point;            // on the cut
+    gp_Dir towardsViewer;    // as sectionView's
+    std::string label;       // "A"
+    std::string sheet;       // "A-08" (empty: none)
+  };
+  std::vector<CutMark> cutMarks;
 };
 
 // The usual views. Plans: cut at `cutZ`, seen from above. Sections: cut on
@@ -129,6 +138,12 @@ struct DimensionMark {
 struct View {
   std::vector<Item> items;  // view coordinates (real mm)
   std::vector<GridMark> grids;
+  struct CutLine {
+    gp_Pnt2d point;
+    gp_Dir2d along{1, 0}, look{0, 1};  // the line; the way the section looks
+    std::string label, sheet;
+  };
+  std::vector<CutLine> cuts;  // plans: spec.cutMarks on the view (docs/132)
   std::vector<LevelMark> levels;
   std::vector<DimensionMark> dimensions;
   struct MemberMark { gp_Pnt2d at; std::string text; };
