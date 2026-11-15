@@ -99,7 +99,7 @@ docs/90 の G 番号に、今回の洗い出しで見つけたもの（N 番号�
 | 4 | 壁の長さ・すべらせた時のつながり、床の外周 | 済（直角の角）。直角でない角・描き始めた側の端はまだ | [docs/102](102_wall_slide_length_and_slabs.md) |
 | 5 | 階段 | 第 1 段は済（直・かね折れ・折り返し、踊り場・回り段（三角の段）、床の開口、階高への追従、階段ツール、プロパティ、AI、IFC）。残りは斜め・らせん、手すり・ささら、平面の記号。**法の数値の原文照合はまだ** | [docs/103](103_stairs.md) |
 | 6 | 建具表・室の表・面積の表・札 | 第 1 段は済（3 つの表と CSV、平面の符号、室の面積の札、AI）。残りは符号を手で決める・品番、表をシートに置く、法の床面積 | [docs/104](104_schedules_and_tags.md) |
-| 7 | 開口だけを選ぶ・コピー、建具の形 | 一部が済（符号を手で決める・品番：[docs/109](109_opening_marks_and_products.md)）。選ぶ・コピー・画面の入力欄はまだ | [docs/106](106_handoff_and_roadmap.md) の A |
+| 7 | 開口だけを選ぶ・コピー、建具の形 | ほぼ済（符号・品番と入力欄：[docs/109](109_opening_marks_and_products.md)、選ぶ・コピー：[docs/110](110_copy_openings.md)）。平面の記号をつかむ・建具の形はまだ | [docs/106](106_handoff_and_roadmap.md) の A |
 | ほか | 斜めの角のつながり・斜めの外周の寄棟 | 済 | [docs/107](107_slanted_wall_corners.md)・[docs/108](108_hip_roof_on_slanted_outline.md) |
 | 8 以降 | — | まだ。道筋と設計は [docs/106](106_handoff_and_roadmap.md) | — |
 
