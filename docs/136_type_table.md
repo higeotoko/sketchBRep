@@ -27,9 +27,16 @@
 |---|---|
 | 計算テスト済み | コア全 707 件中 700 件成功・7 件スキップ（ローカル）。新規 1 件（`Schedules.TheTypesOfFloorsAndRoofsAreListed`）：種類名が無い時は行が無く、注に名前の無い床の数、図面一式に入らない／床 2 枚（200 と 150）を F1・屋根を R1（4.5 寸）→ 2 行、床が先、F1 は 2 枚で「混ざっている」、R1 は「4.5 寸」、注は 1 つ／F1 を 200 にそろえると「混ざっている」が消える／図面一式に「種類の表」、`export_schedule types` で 2 行 |
 | GUI 自動確認済み | 表と札の画面テストを直した（ローカル）：表の窓のタブが 5 つ、種類の表がある。図面・表まわりの画面テストが成功 |
-| CI | __CI__ |
+| CI | run 43736144282（push、`b1f4158`）：Linux 720 件成功、Windows 716 件＋3 件成功・GUI 237 件成功（7 件スキップ） |
 | Windows 実機確認 | まだ（チェック表 12-19） |
 
 ## 配布の記録
 
-__DELIVERY__
+| 項目 | 値 |
+|---|---|
+| コード | `b1f4158`（Opus 5.5 で作業） |
+| CI | run 43736144282（push）：Linux・Windows とも成功 |
+| ZIP | `SketchBRep-windows-x64-b1f4158-local.zip`（Codex のチャットフォルダの `outputs\`） |
+| サイズ | 72,210,943 bytes |
+| SHA256 | `82cf67bbb889a716761eba8eed8beb8742d0cb94280fb49d77fdd5a6dfe10673` |
+| ZIP の検証 | `verify_portable_pads.py`・`verify_portable_mat.py` とも成功（docs/validation/2026-11-16-portable-b1f4158*.json） |
