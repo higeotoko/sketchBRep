@@ -723,6 +723,16 @@ class Modeler {
     std::size_t skipped = 0;
   };
   Result<GridMembers> placeMembersOnGrid(const ObjectId& grid, const GridMemberOptions& options);
+  // Columns, beams and other members drawn before (docs/97 G-06, docs/122) pinned to a grid now:
+  // each end on a crossing (within `tolerance` in plan) is pinned to it, and to the level at its
+  // height; from then on they follow the grid and the levels as placed members do. `ids` empty:
+  // every member not pinned yet. `grid` empty: the only grid. Members whose ends are not both on
+  // crossings, and other things (walls), are left and named. One undo step.
+  struct GridPinning {
+    int pinned = 0;
+    std::vector<std::string> left;  // names
+  };
+  Result<GridPinning> pinToGrid(const std::vector<ObjectId>& ids, const std::string& grid, double tolerance = 10.0);
   // What can be edited of a member as it is now: each value with what it
   // means and where it comes from (the member's parameter, or measured on
   // its shape after other edits). Computed when asked, never kept.

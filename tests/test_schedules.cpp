@@ -9,6 +9,7 @@
 #include "sbr/doc/Modeler.h"
 #include "sbr/doc/Schedules.h"
 #include "sbr/draw/Drawing.h"
+#include "sbr/geom/Measure.h"
 #include <filesystem>
 
 using json = nlohmann::json;
@@ -447,4 +448,44 @@ TEST_F(Schedules, AStoreyIsCopiedToTheLevelAbove) {
   EXPECT_EQ(again["walls"], 5);
   // Nothing to copy from an empty storey.
   EXPECT_FALSE(call("copy_storey", {{"from", "3FL"}, {"to", "1FL"}}).value("ok", true));
+}
+
+// docs/122: members drawn before pinned to a grid afterwards, and following it.
+TEST(GridPinLater, MembersDrawnBeforeFollowTheGridOncePinned) {
+  sbr::doc::Modeler modeler;
+  CommandApi api{modeler};
+  auto call = [&](const std::string& command, json args) {
+    return json::parse(api.execute(json{{"command", command}, {"args", args}}.dump()));
+  };
+  auto ok = [&](const std::string& command, json args) {
+    json r = call(command, args);
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  const json section = {{"kind", "rectangle"}, {"width", 105}, {"depth", 105}};
+  const std::string column = ok("create_member", {{"start", {3640, 0, 0}}, {"end", {3640, 0, 2800}}, {"role", "column"}, {"section", section}})["id"];
+  const std::string beam = ok("create_member", {{"start", {0, 0, 2800}}, {"end", {3640, 0, 2800}}, {"role", "beam"},
+                                                 {"section", {{"kind", "rectangle"}, {"width", 105}, {"depth", 240}}}})["id"];
+  const std::string loose = ok("create_member", {{"start", {1000, 1000, 0}}, {"end", {1000, 1000, 2800}}, {"role", "column"}, {"section", section}})["id"];
+  EXPECT_FALSE(call("pin_to_grid", json::object()).value("ok", true));  // no grid yet
+  const json grid = ok("create_grid", {{"x_spacings", {3640}}, {"y_spacings", {3640}}});
+  const auto steps = modeler.history().undoCount();
+  const json pinned = ok("pin_to_grid", json::object());
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  EXPECT_EQ(pinned["pinned"], 2);
+  ASSERT_EQ(pinned["left"].size(), 1u);
+  EXPECT_TRUE(modeler.document().find(column)->gridPin.has_value());
+  EXPECT_TRUE(modeler.document().find(beam)->gridPin.has_value());
+  EXPECT_FALSE(modeler.document().find(loose)->gridPin.has_value());
+  // The second x line moved out by 910: the column goes with it, the beam gets longer.
+  const auto spec = modeler.gridSpec(grid["grid"].get<std::string>());
+  ASSERT_TRUE(spec);
+  json x = json::array(), y = json::array();
+  for (const auto& a : spec->x) x.push_back({{"id", a.id}, {"name", a.name}, {"position", a.offset + (a.offset > 1 ? 910.0 : 0.0)}});
+  for (const auto& a : spec->y) y.push_back({{"id", a.id}, {"name", a.name}, {"position", a.offset}});
+  ok("set_grid", {{"grid", grid["grid"]}, {"x", x}, {"y", y}});
+  const auto box = [&](const std::string& id) { return sbr::geom::exactBounds(modeler.document().worldShape(*modeler.document().find(id))); };
+  EXPECT_NEAR((box(column).CornerMin().X() + box(column).CornerMax().X()) / 2, 3640 + 910, 1e-6);
+  EXPECT_NEAR(box(beam).CornerMax().X() - box(beam).CornerMin().X(), 3640 + 910, 1e-6);  // from crossing to crossing
+  EXPECT_NEAR((box(loose).CornerMin().X() + box(loose).CornerMax().X()) / 2, 1000, 1e-6);  // not pinned: stays
 }

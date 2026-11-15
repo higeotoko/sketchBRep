@@ -1622,6 +1622,23 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
     menu->addSeparator();
     menu->addAction(findChild<QAction*>(QStringLiteral("editLevelsAction")));
     menu->addAction(findChild<QAction*>(QStringLiteral("createGridAction")));
+    // docs/122: members drawn before, onto the grid's crossings.
+    auto* pin = menu->addAction(tr("柱・梁を通り芯に付ける（選んだ物、無ければ全部）"));
+    pin->setObjectName(QStringLiteral("architecturePinToGrid"));
+    connect(pin, &QAction::triggered, this, [this] {
+      const auto pinned = modeler_.pinToGrid(selection_, {});
+      if (!pinned) {
+        reportError(tr("通り芯に付けられません: %1").arg(userMessage(QString::fromStdString(pinned.error()))));
+        return;
+      }
+      QString text = tr("%1 本を通り芯に付けました（通り芯・レベルを動かすと付いてきます。Ctrl+Z で戻せます）").arg(pinned->pinned);
+      if (!pinned->left.empty()) {
+        QStringList names;
+        for (const std::string& n : pinned->left) names << QString::fromStdString(n);
+        text += tr("。付けなかった物（両端が交点に無い・柱梁でない）：%1").arg(names.join(QStringLiteral("、")));
+      }
+      setStatus(text);
+    });
   });
   bar->addWidget(level);
   bar->addAction(tr("3D"), this, [this] { viewport_->unlockView(); })

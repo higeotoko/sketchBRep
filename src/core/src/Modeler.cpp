@@ -6008,6 +6008,76 @@ std::vector<WallBand> allWallBands(const Document& document) {
 
 }  // namespace
 
+namespace {
+const FloorLevel* levelAtHeight(const std::vector<FloorLevel>& levels, double z);  // with the level helpers
+}  // namespace
+
+Result<Modeler::GridPinning> Modeler::pinToGrid(const std::vector<ObjectId>& ids, const std::string& grid,
+                                                double tolerance) {
+  using R = Result<GridPinning>;
+  // The grid: the one named, or the only one.
+  const Object* gridObject = nullptr;
+  if (!grid.empty()) {
+    gridObject = document_.find(grid);
+    if (!gridObject || !gridSpec(grid)) return R::failure("No grid '" + grid + "'");
+  } else {
+    for (const Object& o : document_.objects()) {
+      if (!gridSpec(o.id)) continue;
+      if (gridObject) return R::failure("There are several grids: name the one to pin to");
+      gridObject = &o;
+    }
+    if (!gridObject) return R::failure("There is no grid to pin to");
+  }
+  const GridSpec& spec = *gridSpec(gridObject->id);
+  const gp_Trsf gridWorld = document_.worldTransform(*gridObject);
+  auto crossingAt = [&](const gp_Pnt& p) -> std::optional<std::pair<std::string, std::string>> {
+    for (const GridAxis& x : spec.x)
+      for (const GridAxis& y : spec.y) {
+        const auto c = crossingOf(spec, gridWorld, x.id, y.id);
+        if (c && std::hypot(c->X() - p.X(), c->Y() - p.Y()) <= tolerance) return std::make_pair(x.id, y.id);
+      }
+    return std::nullopt;
+  };
+  std::vector<ObjectId> targets = ids;
+  if (targets.empty())
+    for (const Object& o : document_.objects())
+      if (std::holds_alternative<LinearMember>(o.recipe.base) && !o.gridPin) targets.push_back(o.id);
+  if (targets.empty()) return R::failure("No members to pin");
+  GridPinning out;
+  ChangeSet changes(document_);
+  for (const ObjectId& id : targets) {
+    const Object* o = document_.find(id);
+    if (!o) return R::failure("Object not found");
+    const auto* member = std::get_if<LinearMember>(&o->recipe.base);
+    if (!member || o->locked) {
+      out.left.push_back(o->name);
+      continue;
+    }
+    const gp_Trsf world = document_.worldTransform(*o);
+    const gp_Pnt a = member->start.Transformed(world), b = member->end.Transformed(world);
+    const auto ca = crossingAt(a), cb = crossingAt(b);
+    if (!ca || !cb) {
+      out.left.push_back(o->name);
+      continue;
+    }
+    GridPin pin;
+    pin.grid = gridObject->id;
+    pin.startX = ca->first;
+    pin.startY = ca->second;
+    pin.endX = cb->first;
+    pin.endY = cb->second;
+    if (const FloorLevel* l = levelAtHeight(document_.settings().levels, a.Z())) pin.startLevel = l->id;
+    if (const FloorLevel* l = levelAtHeight(document_.settings().levels, b.Z())) pin.endLevel = l->id;
+    Object pinned = *o;
+    pinned.gridPin = pin;
+    changes.modify(pinned);
+    ++out.pinned;
+  }
+  if (out.pinned == 0) return R::failure("No member has both ends on crossings of the grid (nothing was changed)");
+  history_.execute(changes.build("Pin To Grid"));
+  return out;
+}
+
 Result<Modeler::StoreyCopy> Modeler::copyStorey(const std::string& fromLevel, const std::string& toLevel) {
   using R = Result<StoreyCopy>;
   const std::vector<FloorLevel>& levels = document_.settings().levels;
