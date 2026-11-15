@@ -905,6 +905,10 @@ void MainWindow::buildMenus() {
     const QString path = QFileDialog::getSaveFileName(this, tr("図面一式を書き出す"), tr("図面一式.pdf"), tr("PDF (*.pdf)"));
     if (!path.isEmpty()) saveDrawingSet(path);
   })->setObjectName(QStringLiteral("exportDrawingSetAction"));
+  file->addAction(tr("図面一式を書き出す（表は 1 階の平面図に並べる、1 つの PDF）..."), this, [this] {
+    const QString path = QFileDialog::getSaveFileName(this, tr("図面一式を書き出す"), tr("図面一式.pdf"), tr("PDF (*.pdf)"));
+    if (!path.isEmpty()) saveDrawingSet(path, true);
+  })->setObjectName(QStringLiteral("exportDrawingSetWithTablesAction"));
   file->addAction(tr("DWG 変換ソフトの設定..."), this, &MainWindow::configureDwgConverter);
   file->addSeparator();
   file->addAction(tr("自動保存とバックアップの設定..."), this, &MainWindow::showAutosaveDialog);
@@ -4445,8 +4449,9 @@ bool MainWindow::saveScheduleCsv(int table, const QString& path) {
   return true;
 }
 
-int MainWindow::saveDrawingSet(const QString& path) {
+int MainWindow::saveDrawingSet(const QString& path, bool tablesWithPlan) {
   doc::DrawingSetSpec spec;
+  spec.tablesWithPlan = tablesWithPlan;
   spec.title.project = QSettings().value(QStringLiteral("drawing/project")).toString().toStdString();
   spec.title.author = QSettings().value(QStringLiteral("drawing/author")).toString().toStdString();
   spec.title.date = QDate::currentDate().toString(QStringLiteral("yyyy-MM-dd")).toStdString();

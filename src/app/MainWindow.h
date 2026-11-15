@@ -292,7 +292,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   // The table on a sheet of its own, as PDF, DXF or JWW by the path's extension (docs/113).
   bool saveScheduleDrawing(int table, const QString& path);
   // Every drawing with sheet numbers in one PDF (docs/125); the sheets written, 0 when refused.
-  int saveDrawingSet(const QString& path);
+  int saveDrawingSet(const QString& path, bool tablesWithPlan = false);
   QString lastIfcSummary() const { return lastIfcSummary_; }
   QStringList lastIfcNotes() const { return lastIfcNotes_; }
  private:

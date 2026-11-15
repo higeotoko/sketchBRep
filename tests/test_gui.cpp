@@ -11837,6 +11837,12 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
     QVERIFY2(sheets>=8,qPrintable(QString::number(sheets)));
     QVERIFY(QFileInfo(set).size()>10000);
     QVERIFY2(f.window.statusText().contains(QStringLiteral("A-01")),qPrintable(f.window.statusText()));
+    // docs/131: the tables beside the 1FL plan: fewer sheets, in the File menu too.
+    QVERIFY(f.window.findChild<QAction*>(QStringLiteral("exportDrawingSetWithTablesAction")));
+    const QString together=dir.filePath(QStringLiteral("set_tables.pdf"));
+    const int fewer=f.window.saveDrawingSet(together,true);
+    QVERIFY2(fewer>0&&fewer<sheets,qPrintable(QStringLiteral("%1 %2").arg(fewer).arg(sheets)));
+    QVERIFY(QFileInfo(together).size()>10000);
   }
   // docs/115: a room's finish typed in its properties goes into the finish schedule.
   {

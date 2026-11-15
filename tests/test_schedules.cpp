@@ -802,6 +802,45 @@ TEST_F(Schedules, ASetOfDrawingsCarriesSheetNumbers) {
   std::filesystem::remove_all(dir);
 }
 
+// docs/131: the set with its tables beside the 1FL plan instead of sheets of their own.
+TEST_F(Schedules, ASetCanCarryItsTablesOnThePlan) {
+  sbr::doc::DrawingSetSpec spec;
+  const auto apart = sbr::doc::drawingSet(modeler.document(), spec);
+  ASSERT_TRUE(apart);
+  spec.tablesWithPlan = true;
+  const auto set = sbr::doc::drawingSet(modeler.document(), spec);
+  ASSERT_TRUE(set) << set.error();
+  // Three table sheets fewer (openings, rooms, areas).
+  EXPECT_EQ(set->sheets.size() + 3, apart->sheets.size());
+  const std::string name = "1FL 平面図・建具表・室の表・面積の表";
+  ASSERT_EQ(set->names[1], name);
+  for (const std::string& n : set->names) EXPECT_EQ(n.find("表") == 0, false) << n;  // no sheet of a table alone
+  // On that sheet: each table's title once, the drawing's own caption, the sheet's name and number in the title block.
+  std::map<std::string, int> texts;
+  for (const auto& item : set->sheets[1].items)
+    if (item.kind == sbr::draw::Item::Kind::Text) ++texts[item.text];
+  EXPECT_EQ(texts["建具表"], 1);
+  EXPECT_EQ(texts["室の表"], 1);
+  EXPECT_EQ(texts["面積の表"], 1);
+  EXPECT_EQ(texts[name], 1);
+  EXPECT_EQ(texts["A-02"], 1);
+  bool caption = false;
+  for (const auto& [text, n] : texts) caption |= text.rfind("1FL 平面図  S=1:", 0) == 0;
+  EXPECT_TRUE(caption);
+  // The list: the plan sheet with its scale, the paper big enough for it.
+  bool listed = false;
+  for (const auto& item : set->sheets.front().items) listed |= item.kind == sbr::draw::Item::Kind::Text && item.text == name;
+  EXPECT_TRUE(listed);
+  EXPECT_NE(set->sheets[1].paper, "A4");
+  // By the API.
+  const auto dir = std::filesystem::temp_directory_path() / "sbr_drawing_set_tables";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+  const json files = ok("export_drawing_set", {{"folder", dir.u8string()}, {"tables_with_plan", true}});
+  EXPECT_EQ(files["sheets"].size(), set->sheets.size());
+  std::filesystem::remove_all(dir);
+}
+
 // docs/125: drawings written under Japanese names (the app suggests the drawing's name).
 TEST_F(Schedules, DrawingsAreWrittenUnderJapaneseNames) {
   const auto dir = std::filesystem::temp_directory_path() / std::filesystem::u8path(u8"図面テスト");

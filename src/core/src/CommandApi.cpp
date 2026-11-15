@@ -3528,11 +3528,13 @@ const std::vector<CommandDef>& commands() {
        "A set of drawings with sheet numbers (docs/125) as DXF or JWW files in 'folder' (which must exist): a "
        "sheet list (01), a plan per storey, the four elevations and the tables, numbered 'prefix' (default A-) "
        "01, 02, ...; each file named by its number and drawing name. 'format' dxf (default) or jww; 'scale' "
-       "(default 100), 'paper' (auto), 'project', 'author', 'date'. Files that are there are not replaced: "
+       "(default 100), 'paper' (auto), 'project', 'author', 'date'. 'tables_with_plan' true (docs/131): the tables "
+       "go beside the lowest storey's plan on its sheet instead of sheets of their own. Files that are there are not replaced: "
        "refused, nothing written. (One PDF of all the sheets: from the app's File menu.)",
        SCHEMA({"type": "object", "properties": {"folder": {"type": "string"}, "format": {"enum": ["dxf", "jww"]},
                "scale": {"type": "number"}, "paper": {"type": "string"}, "prefix": {"type": "string"},
-               "project": {"type": "string"}, "author": {"type": "string"}, "date": {"type": "string"}},
+               "project": {"type": "string"}, "author": {"type": "string"}, "date": {"type": "string"},
+               "tables_with_plan": {"type": "boolean"}},
                "required": ["folder"]}),
        [](doc::Modeler& m, const json& a) {
          doc::DrawingSetSpec spec;
@@ -3542,6 +3544,7 @@ const std::vector<CommandDef>& commands() {
          spec.title.project = textOr(a, "project", {});
          spec.title.author = textOr(a, "author", {});
          spec.title.date = textOr(a, "date", {});
+         spec.tablesWithPlan = a.value("tables_with_plan", false);
          const std::string format = textOr(a, "format", "dxf");
          if (format != "dxf" && format != "jww") throw ApiError("'format': dxf or jww");
          const auto set = must(doc::drawingSet(m.document(), spec));

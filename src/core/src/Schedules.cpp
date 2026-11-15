@@ -360,6 +360,7 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& sp
     std::string name;
     std::optional<draw::ViewSpec> view;
     std::optional<draw::Table> table;
+    std::vector<draw::Table> beside;  // tables on the same sheet (docs/131)
   };
   std::vector<Planned> planned;
   // Plans: one per storey (levels at one height are one storey: the "...FL" one).
@@ -375,27 +376,34 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& sp
     draw::ViewSpec view = draw::planView(levels[i].elevation + 1100.0);
     view.depth = 1100.0 + 400.0;  // down to 400 under its floor: the storeys below are left out
     view.title = levels[i].name + " 平面図";
-    planned.push_back({view.title, view, std::nullopt});
+    planned.push_back({view.title, view, std::nullopt, {}});
   }
   if (levels.empty()) {
     draw::ViewSpec view = draw::planView(1100.0);
     view.title = "平面図";
-    planned.push_back({view.title, view, std::nullopt});
+    planned.push_back({view.title, view, std::nullopt, {}});
   }
   const char* sides[4] = {"南立面図", "東立面図", "北立面図", "西立面図"};
   for (int side = 0; side < 4; ++side) {
     draw::ViewSpec view = draw::elevationView(document, side);
     view.title = sides[side];
-    planned.push_back({view.title, view, std::nullopt});
+    planned.push_back({view.title, view, std::nullopt, {}});
   }
+  // The first planned is the lowest storey's plan.
   for (int which : {0, 1, 2, 3}) {
     draw::Table table = scheduleTable(document, which);
     if (!tableHasContent(table, which)) continue;
-    planned.push_back({table.title, std::nullopt, table});
+    if (spec.tablesWithPlan) {
+      planned.front().name += "・" + table.title;
+      planned.front().beside.push_back(std::move(table));
+    } else {
+      planned.push_back({table.title, std::nullopt, table, {}});
+    }
   }
   DrawingSet out;
   std::vector<draw::Sheet> sheets;
   std::vector<std::string> names;
+  std::vector<bool> tableOnly;
   for (const Planned& p : planned) {
     draw::SheetSpec sheetSpec;
     sheetSpec.scale = spec.scale;
@@ -408,7 +416,10 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& sp
         out.notes.push_back(p.name + ": " + view.error());
         continue;
       }
-      auto laid = draw::layoutSheet(*view, sheetSpec);
+      // The drawing's own name in its caption; the sheet's (with its tables) in the title block.
+      draw::View named = *view;
+      named.spec.title = p.view->title;
+      auto laid = draw::layoutSheetWithTables(named, p.beside, sheetSpec);
       if (!laid) {
         out.notes.push_back(p.name + ": " + laid.error());
         continue;
@@ -425,6 +436,7 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& sp
     }
     for (const std::string& n : sheets.back().notes) out.notes.push_back(p.name + ": " + n);
     names.push_back(p.name);
+    tableOnly.push_back(!p.view);
   }
   if (sheets.empty()) return R::failure("Nothing to draw: the model is empty");
   // Numbers: the list is 01, the drawings 02, 03, ...
@@ -440,8 +452,7 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& sp
   for (std::size_t i = 0; i < sheets.size(); ++i) {
     char scale[32];
     std::snprintf(scale, sizeof scale, "1:%g", sheets[i].scale);
-    const bool table = names[i].find("表") != std::string::npos;
-    list.rows.push_back({number(i + 2), names[i], table ? "" : scale, sheets[i].paper});
+    list.rows.push_back({number(i + 2), names[i], tableOnly[i] ? "" : scale, sheets[i].paper});
   }
   list.notes = {"モデルから作った図面です。図面を変えた時は、もう一度書き出してください。"};
   draw::SheetSpec listSpec;
@@ -468,7 +479,13 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& sp
     Result<draw::Sheet> laid = Result<draw::Sheet>::failure("");
     if (p && p->view) {
       const auto view = draw::makeView(document, *p->view);
-      laid = view ? draw::layoutSheet(*view, sheetSpec) : Result<draw::Sheet>::failure(view.error());
+      if (view) {
+        draw::View named = *view;
+        named.spec.title = p->view->title;
+        laid = draw::layoutSheetWithTables(named, p->beside, sheetSpec);
+      } else {
+        laid = Result<draw::Sheet>::failure(view.error());
+      }
     } else if (p) {
       laid = draw::tableSheet(*p->table, sheetSpec);
     }

@@ -549,7 +549,9 @@ Result<Sheet> layoutSheetWithTables(const View& view, const std::vector<Table>& 
   sheet.paper = paper->name;
   sheet.paperWidth = paper->w;
   sheet.paperHeight = paper->h;
-  sheet.title = drawn->title;
+  // The sheet's name (the drawing's and its tables', when given) in the title block.
+  const std::string sheetName = spec.title.drawing.empty() ? drawn->title : spec.title.drawing;
+  sheet.title = sheetName;
   double ax0, ay0, ax1, ay1;
   area(*paper, ax0, ay0, ax1, ay1);
   // The drawing at the top left of the frame.
@@ -562,7 +564,7 @@ Result<Sheet> layoutSheetWithTables(const View& view, const std::vector<Table>& 
     drawTable(tables[k], sizes[k], tx, ty, s, items);
     ty -= sizes[k].h + gap;
   }
-  if (spec.frame) frameAndTitle(items, paper, spec, drawn->title, s);
+  if (spec.frame) frameAndTitle(items, paper, spec, sheetName, s);
   sheet.items = std::move(items);
   return sheet;
 }

@@ -128,6 +128,9 @@ struct DrawingSetSpec {
   std::string paper = "auto";
   std::string prefix = "A-";
   draw::TitleBlock title;  // project, author, date (the drawing name and number are set per sheet)
+  // docs/131: the tables beside the lowest storey's plan on its sheet (draw::layoutSheetWithTables)
+  // instead of sheets of their own; that sheet is named "1FL 平面図・建具表・室の表" and so on.
+  bool tablesWithPlan = false;
 };
 struct DrawingSet {
   std::vector<draw::Sheet> sheets;
