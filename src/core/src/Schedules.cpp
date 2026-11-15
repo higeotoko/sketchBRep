@@ -29,12 +29,19 @@ std::string levelName(const Document& document, const std::string& id) {
 
 // The name people know a fitting by (OpeningSymbols.h), or its type when it is not on the list.
 std::string fittingName(const nlohmann::json& fitting) {
-  for (const draw::FittingChoice& c : draw::fittingChoices()) {
-    const nlohmann::json choice = nlohmann::json::parse(c.fitting, nullptr, false);
-    if (choice.is_discarded()) continue;
+  // The choices read once (docs/118: read again for every opening, they were most of the time).
+  static const std::vector<std::pair<nlohmann::json, std::string>> choices = [] {
+    std::vector<std::pair<nlohmann::json, std::string>> out;
+    for (const draw::FittingChoice& c : draw::fittingChoices()) {
+      nlohmann::json choice = nlohmann::json::parse(c.fitting, nullptr, false);
+      if (!choice.is_discarded()) out.emplace_back(std::move(choice), c.label);
+    }
+    return out;
+  }();
+  for (const auto& [choice, label] : choices) {
     bool same = true;
     for (const auto& [key, value] : choice.items()) same &= fitting.contains(key) && fitting.at(key) == value;
-    if (same) return c.label;
+    if (same) return label;
   }
   return fitting.value("type", std::string());
 }

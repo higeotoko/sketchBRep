@@ -6117,17 +6117,37 @@ StoreyWalls storeyWalls(const Document& document, double floor) {
   return out;
 }
 
+// The walls of a storey and the regions they enclose, worked out once for every room at that
+// height (docs/118: per room it grew with the square of the rooms).
+struct StoreyRegions {
+  StoreyWalls walls;
+  geom::RoomRegions regions;
+};
+
+StoreyRegions storeyRegions(const Document& document, double floor) {
+  StoreyRegions out;
+  out.walls = storeyWalls(document, floor);
+  if (!out.walls.plan.empty()) out.regions = geom::roomRegions(out.walls.plan);
+  return out;
+}
+
+RoomInfo regionInfo(const Document& document, const gp_Pnt& at, const StoreyRegions& storey);
+
 RoomInfo regionInfo(const Document& document, const gp_Pnt& at) {
+  return regionInfo(document, at, storeyRegions(document, at.Z()));
+}
+
+RoomInfo regionInfo(const Document& document, const gp_Pnt& at, const StoreyRegions& storey) {
   RoomInfo info;
   info.at = at;
   if (const FloorLevel* level = levelAtHeight(document.settings().levels, at.Z())) info.level = level->id;
-  const StoreyWalls walls = storeyWalls(document, at.Z());
+  const StoreyWalls& walls = storey.walls;
   info.unreadableWalls = walls.unreadable;
   if (walls.plan.empty()) {
     info.problem = "No walls made by the wall tool stand at this height";
     return info;
   }
-  const geom::RoomRegions regions = geom::roomRegions(walls.plan);
+  const geom::RoomRegions& regions = storey.regions;
   const auto found = geom::regionAt(regions, {at.X(), at.Y()});
   if (!found) {
     info.problem = "Not enclosed by walls here";
@@ -6946,10 +6966,15 @@ Modeler::EnclosedArea Modeler::enclosedAt(const Document& document, double floor
 
 std::vector<RoomInfo> Modeler::roomsIn(const Document& document_) {
   std::vector<RoomInfo> out;
+  std::map<double, StoreyRegions> storeys;
   for (const Object& o : document_.objects()) {
     if (!isRoomMarker(o)) continue;
     const TextNote& note = std::get<TextNote>(o.recipe.base);
-    RoomInfo info = regionInfo(document_, note.position.Transformed(document_.worldTransform(o)));
+    const gp_Pnt at = note.position.Transformed(document_.worldTransform(o));
+    // One working-out of the walls per height the markers stand at.
+    auto storey = storeys.find(at.Z());
+    if (storey == storeys.end()) storey = storeys.emplace(at.Z(), storeyRegions(document_, at.Z())).first;
+    RoomInfo info = regionInfo(document_, at, storey->second);
     info.id = o.id;
     info.name = note.text;
     if (info.closed) {
