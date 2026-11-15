@@ -11257,6 +11257,31 @@ void GuiPhase1::moveToolSlidesAnOpeningWithinItsWall() {
   QCOMPARE(m.history().undoCount(),steps+1);
   QVERIFY(m.undo());
   QCOMPARE(m.openings(wall)->size(),std::size_t(1));
+
+  // docs/114: in a plan, a click where the opening's symbol is drawn takes the opening.
+  {
+    f.window.activateTool(MainWindow::ToolId::Select);
+    f.window.setSelection({});
+    f.vp->lockView(Viewport::StandardView::Top);
+    f.vp->setPlanCut(1500.0);
+    f.vp->syncNow();
+    f.window.activateTool(MainWindow::ToolId::Move);
+    const auto o=opening();
+    const gp_Vec out(o.normal);
+    const gp_Pnt symbol=gp_Pnt(o.center.X(),o.center.Y(),1500.0).Translated(out*80.0);  // just outside the wall
+    const double before=o.offset;
+    const auto undos=m.history().undoCount();
+    click(f.vp,f.vp->toWidget(symbol));
+    move(f.vp,f.vp->toWidget(symbol.Translated(gp_Vec(gp::DZ().Crossed(o.normal))*300.0)));
+    type(f.vp,QStringLiteral("250"));
+    QVERIFY2(f.window.lastError().isEmpty(),qPrintable(f.window.lastError()));
+    QVERIFY2(std::abs(opening().offset-(before+250))<1e-6,qPrintable(QString::number(opening().offset-before)));
+    QCOMPARE(m.history().undoCount(),undos+1);
+    QVERIFY(std::abs(left()-wallLeft)<1e-6);  // the wall stayed
+    QVERIFY(m.undo());
+    // Away from any opening: not an opening (the wall itself would move).
+    f.vp->setPlanCut(std::nullopt);
+  }
   Q_UNUSED(id0);
 }
 

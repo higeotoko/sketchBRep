@@ -3,6 +3,7 @@
 #include "sbr/WallTypes.h"
 #include <nlohmann/json.hpp>
 #include "sbr/OpeningSymbols.h"
+#include "sbr/doc/Schedules.h"
 
 #include "Messages.h"
 
@@ -3804,21 +3805,45 @@ std::optional<MoveTool::OpeningGrab> MoveTool::openingAt(const ToolEvent& e) {
         if (beside.type == TopAbs_FACE) faces.push_back(beside);
     }
   }
-  if (!element || faces.empty()) return std::nullopt;
-  if (addressedIn(m.document(), element->objectId, host_.editingGroup()) != element->objectId) return std::nullopt;
+  doc::ObjectId hostId;
   std::optional<std::size_t> index;
-  for (const ElementRef& candidate : faces) {
-    const TopoDS_Shape face = host_.viewport().elementShape(candidate);
-    if (!face.IsNull()) index = m.openingOfFace(element->objectId, TopoDS::Face(face));
-    if (index) break;
+  if (element && !faces.empty() &&
+      addressedIn(m.document(), element->objectId, host_.editingGroup()) == element->objectId) {
+    for (const ElementRef& candidate : faces) {
+      const TopoDS_Shape face = host_.viewport().elementShape(candidate);
+      if (!face.IsNull()) index = m.openingOfFace(element->objectId, TopoDS::Face(face));
+      if (index) break;
+    }
+    if (index) hostId = element->objectId;
+  }
+  // In a plan (docs/114): the opening whose place in the plan is under the cursor, where its
+  // symbol and mark are drawn: within its width, from a little outside the wall to a little
+  // inside it, and cut by the plan.
+  const auto cut = host_.viewport().planCut();
+  if (!index && cut && elements.empty() && host_.selection().empty()) {
+    const snap::Ray ray = host_.viewport().rayAt(e.pos);
+    if (std::abs(ray.direction.Z()) > 1e-6) {
+      const double t = (*cut - ray.origin.Z()) / ray.direction.Z();
+      const gp_Pnt p = ray.origin.Translated(gp_Vec(ray.direction) * t);
+      double best = 1e300;
+      for (const doc::OpeningRow& r : doc::openingSchedule(m.document()).rows) {
+        if (*cut < r.bottom || *cut > r.bottom + r.height) continue;
+        if (addressedIn(m.document(), r.host, host_.editingGroup()) != r.host) continue;
+        const gp_Vec to(r.center, gp_Pnt(p.X(), p.Y(), r.center.Z()));
+        const double along = to.Dot(gp_Vec(gp::DZ().Crossed(r.normal))), out = to.Dot(gp_Vec(r.normal));
+        if (std::abs(along) > r.width / 2 + 50.0 || out > 150.0 || out < -r.depth - 150.0) continue;
+        const double d = std::abs(along) + std::abs(out + r.depth / 2);
+        if (d < best) best = d, hostId = r.host, index = r.index;
+      }
+    }
   }
   if (!index) return std::nullopt;
-  const auto list = m.openings(element->objectId);
+  const auto list = m.openings(hostId);
   if (!list) return std::nullopt;
   for (const doc::Modeler::OpeningInfo& o : *list) {
     if (o.index != *index || std::abs(o.normal.Z()) > 1e-6) continue;
     OpeningGrab grab;
-    grab.host = element->objectId;
+    grab.host = hostId;
     grab.index = o.index;
     grab.normal = o.normal;
     grab.along = gp::DZ().Crossed(o.normal);
