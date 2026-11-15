@@ -1562,6 +1562,38 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
         viewport_->setPlanFloor(on ? std::optional<double>(viewport_->workOffset()) : std::nullopt);
       setStatus(on ? tr("平面では下の階を隠します") : tr("平面でも下の階を表示します"));
     });
+    // docs/120: in 3D, one storey only (the others are not shown; the model is not changed).
+    menu->addSeparator();
+    // (The menu is made again each time it opens: the old submenu goes, or its actions linger.)
+    for (QMenu* old : menu->findChildren<QMenu*>(QStringLiteral("architectureShowStorey"), Qt::FindDirectChildrenOnly)) delete old;
+    auto* storeys = menu->addMenu(tr("3D で 1 つの階だけ見せる"));
+    storeys->setObjectName(QStringLiteral("architectureShowStorey"));
+    std::vector<doc::FloorLevel> sorted = modeler_.levels();
+    std::stable_sort(sorted.begin(), sorted.end(), [](const doc::FloorLevel& a, const doc::FloorLevel& b) { return a.elevation < b.elevation; });
+    for (std::size_t i = 0; i < sorted.size(); ++i) {
+      // Levels at one height (GL and 1FL) are one storey.
+      if (i > 0 && std::abs(sorted[i].elevation - sorted[i - 1].elevation) < 1e-6) continue;
+      std::optional<double> ceiling;
+      for (std::size_t j = i + 1; j < sorted.size(); ++j)
+        if (sorted[j].elevation > sorted[i].elevation + 1e-6) { ceiling = sorted[j].elevation; break; }
+      auto* only = storeys->addAction(QString::fromStdString(sorted[i].name));
+      only->setObjectName(QStringLiteral("architectureShowStorey_") + QString::fromStdString(sorted[i].id));
+      const double floor = sorted[i].elevation;
+      const QString name = QString::fromStdString(sorted[i].name);
+      connect(only, &QAction::triggered, this, [this, floor, ceiling, name] {
+        viewport_->unlockView();
+        viewport_->showStorey(Viewport::StoreyShown{floor, ceiling});
+        setStatus(tr("3D で %1 だけを見せています（ほかの階は隠しています。モデルは変わりません）。全部に戻すのは同じメニューから").arg(name));
+      });
+    }
+    storeys->addSeparator();
+    auto* all = storeys->addAction(tr("全部の階を見せる"));
+    all->setObjectName(QStringLiteral("architectureShowAllStoreys"));
+    all->setEnabled(viewport_->shownStorey().has_value());
+    connect(all, &QAction::triggered, this, [this] {
+      viewport_->showStorey(std::nullopt);
+      setStatus(tr("全部の階を見せています"));
+    });
     menu->addSeparator();
     menu->addAction(findChild<QAction*>(QStringLiteral("editLevelsAction")));
     menu->addAction(findChild<QAction*>(QStringLiteral("createGridAction")));

@@ -196,6 +196,16 @@ class Viewport : public QWidget {
   // shows everything again; removing the plan cut does that too.
   void setPlanFloor(std::optional<double> z, double depth = 400.0);
   std::optional<double> planFloor() const { return planFloorZ_; }
+  // One storey only (docs/97 N-09, docs/120): solids starting more than 300 under `floor`, or at
+  // `ceiling` minus 300 and above (the floor and roof of the storey above), are not shown.
+  // nullopt: every storey. The model is not changed.
+  struct StoreyShown {
+    double floor = 0.0;
+    std::optional<double> ceiling;  // none: the top storey
+    bool operator==(const StoreyShown& o) const { return floor == o.floor && ceiling == o.ceiling; }
+  };
+  void showStorey(std::optional<StoreyShown> storey);
+  std::optional<StoreyShown> shownStorey() const { return storey_; }
   // Whether the object is on screen now (not hidden, by the model or by the view).
   bool isDisplayed(const doc::ObjectId& id) const;
   // Door / window symbols of the openings the plan cut passes through (edges shown; 0 without a cut).
@@ -540,6 +550,8 @@ class Viewport : public QWidget {
   std::size_t wallOutlineEdges_ = 0;
   std::size_t wallCutCount_ = 0;
   std::optional<double> planFloorZ_;
+  std::optional<StoreyShown> storey_;
+  bool outsideStorey(const doc::Object& o, const std::optional<StoreyShown>& storey) const;
   double planFloorDepth_ = 400.0;
   bool belowPlanFloor(const doc::Object& o) const;
   void resyncForPlanFloor(std::optional<double> before, double depthBefore);

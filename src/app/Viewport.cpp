@@ -2964,7 +2964,7 @@ void Viewport::unlockView() {
 bool Viewport::hiddenInView(const doc::Object& o) const {
   // A grid's own parts lie on the ground: an elevation shows its datums.
   if (workAxis() > 0 && o.attributes.count("grid_part") > 0) return true;
-  return belowPlanFloor(o);
+  return belowPlanFloor(o) || outsideStorey(o, storey_);
 }
 
 namespace {
@@ -2983,6 +2983,33 @@ bool storeyBelow(const doc::Document& document, const doc::Object& o, double flo
   return z1 - gap <= floor + 1.0 && z0 + gap < floor - depth;
 }
 }  // namespace
+
+bool Viewport::outsideStorey(const doc::Object& o, const std::optional<StoreyShown>& storey) const {
+  if (!storey) return false;
+  const doc::ObjectKind kind = o.kind();
+  if (kind != doc::ObjectKind::Solid && kind != doc::ObjectKind::Shell && kind != doc::ObjectKind::Face &&
+      kind != doc::ObjectKind::Instance)
+    return false;  // lines, notes, dimensions, grids: always shown
+  const Bnd_Box box = modeler_.document().worldBounds(o);
+  if (box.IsVoid()) return false;
+  const double z0 = box.CornerMin().Z() + box.GetGap();
+  // It starts in this storey: from 300 under its floor (the floor slab of the storey, whose top
+  // is at the level) to 300 under the next floor (the floor above and the roof start there).
+  if (z0 < storey->floor - 300.0) return true;
+  return storey->ceiling && z0 >= *storey->ceiling - 300.0;
+}
+
+void Viewport::showStorey(std::optional<StoreyShown> storey) {
+  if (storey == storey_) return;
+  const std::optional<StoreyShown> before = storey_;
+  storey_ = storey;
+  if (view_.IsNull()) return;
+  bool guidesChanged = false;
+  for (const doc::Object& o : modeler_.document().objects())
+    if (outsideStorey(o, before) != outsideStorey(o, storey_)) guidesChanged |= syncObject(o.id);
+  if (guidesChanged) pushGuides();
+  redraw();
+}
 
 bool Viewport::belowPlanFloor(const doc::Object& o) const {
   return planFloorZ_ && storeyBelow(modeler_.document(), o, *planFloorZ_, planFloorDepth_);

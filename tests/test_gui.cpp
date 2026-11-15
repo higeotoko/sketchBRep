@@ -352,6 +352,7 @@ class GuiPhase1 : public QObject {
   void roofToolDrawsARoofWhoseSizesAreChangedInThePanel();
   void ifcExportWritesTheBuildingAndSaysWhatItLeftOut();
   void stairToolDrawsAStairWithWindersAndOpensTheFloor();
+  void oneStoreyShownIn3d();
   void schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan();
   void wallAndSlabFollowTheirLevelsFromThePanel();
   void wallQuantityInputsComparisonSaveAndStaleModel();
@@ -11825,6 +11826,38 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
   QVERIFY(f.window.scheduleCsv(0).contains(QStringLiteral("W1,窓,引違い,1600,1200,2,900")));
   QVERIFY(m.undo());
   QVERIFY(m.document().find(south)->attributes.count("opening_marks"));
+}
+
+// docs/120 (N-09): in 3D one storey only; the model is not changed.
+void GuiPhase1::oneStoreyShownIn3d() {
+  Fixture f;QVERIFY(f.setUp());auto& m=f.window.modeler();
+  QVERIFY(m.setLevels({{"","1FL",0},{"","2FL",2800}}));
+  const auto down=m.createWalls({gp_Pnt(0,0,0),gp_Pnt(4000,0,0)},120,2800);QVERIFY(down);
+  const auto slab=m.createSlab({gp_Pnt(0,0,0),gp_Pnt(4000,0,0),gp_Pnt(4000,3000,0),gp_Pnt(0,3000,0)},2800,200);QVERIFY(slab);
+  std::vector<gp_Pnt> up={gp_Pnt(0,0,2800),gp_Pnt(4000,0,2800)};
+  const auto upper=m.createWalls(up,120,2600);QVERIFY(upper);
+  f.vp->syncNow();
+  auto shown=[&](const doc::ObjectId& id){f.vp->syncNow();return f.vp->isDisplayed(id);};
+  QVERIFY(shown(down->front())&&shown(*slab)&&shown(upper->front()));
+  auto* button=f.window.findChild<QToolButton*>(QStringLiteral("architecturePlanLevel"));QVERIFY(button);
+  emit button->menu()->aboutToShow();
+  auto* first=f.window.findChild<QAction*>(QStringLiteral("architectureShowStorey_")+QString::fromStdString(m.levels().front().id));QVERIFY(first);
+  first->trigger();
+  QVERIFY(shown(down->front()));
+  QVERIFY(!shown(*slab));          // the floor above starts 200 under 2FL
+  QVERIFY(!shown(upper->front()));
+  QVERIFY(f.window.statusText().contains(QStringLiteral("1FL")));
+  QCOMPARE(m.document().objects().size(),std::size_t(3));  // nothing changed
+  emit button->menu()->aboutToShow();
+  auto* second=f.window.findChild<QAction*>(QStringLiteral("architectureShowStorey_")+QString::fromStdString(m.levels().back().id));QVERIFY(second);
+  second->trigger();
+  QVERIFY(!shown(down->front()));
+  QVERIFY(shown(*slab)&&shown(upper->front()));
+  emit button->menu()->aboutToShow();
+  auto* all=f.window.findChild<QAction*>(QStringLiteral("architectureShowAllStoreys"));QVERIFY(all);
+  QVERIFY(all->isEnabled());
+  all->trigger();
+  QVERIFY(shown(down->front())&&shown(*slab)&&shown(upper->front()));
 }
 
 void GuiPhase1::ifcExportWritesTheBuildingAndSaysWhatItLeftOut() {
