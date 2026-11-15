@@ -25,9 +25,16 @@
 | 計算テスト済み | コア全 702 件中 695 件成功・7 件スキップ（ローカル）。新規 1 件（`Schedules.ASetCanCarryItsTablesOnThePlan`）：表を並べると、別の時より 3 枚少ない（建具表・室の表・面積の表）／2 枚目の名前が「1FL 平面図・建具表・室の表・面積の表」／その 1 枚に表の見出しが 1 つずつ、表題欄にその名前と A-02、図の見出し「1FL 平面図 S=1:…」／図面リストにその名前／用紙は A4 より大きい／AI の `export_drawing_set` で同じ枚数のファイル。図面一式の前のテストも成功 |
 | GUI 自動確認済み | 表と札の画面テストに追加（ローカル）：ファイルのメニューに新しい項目がある／表を並べた図面一式の PDF が書けて、別の時より枚数が少ない |
 | AI が配ったアプリで確認 | 作った版の `sbr_cli`（ローカルのビルドを、配った ZIP の部品と一緒に）で、確かめの家（docs/118）の図面一式を表つきで DXF に：A-01〜A-07 の 7 枚（前は 11 枚）。A-02「1FL 平面図・建具表・室の表・面積の表・仕上げ表」（A3）を絵にして見た：図が左上、右に表が 4 つ縦に、表題欄と重ならない |
-| CI | __CI__ |
+| CI | run 43721341632（push、`bddde01`）：Linux 715 件成功、Windows 711 件＋3 件成功・GUI 237 件成功（7 件スキップ） |
 | Windows 実機確認 | まだ（チェック表 12-14） |
 
 ## 配布の記録
 
-__DELIVERY__
+| 項目 | 値 |
+|---|---|
+| コード | `bddde01`（Opus 5.5 で作業） |
+| CI | run 43721341632（push）：Linux・Windows とも成功 |
+| ZIP | `SketchBRep-windows-x64-bddde01-local.zip`（Codex のチャットフォルダの `outputs\`） |
+| サイズ | 72,111,317 bytes |
+| SHA256 | `ffebcceace077a9ee7243326ee2ab69f543163509bac887eeb11f62c23af09bc` |
+| ZIP の検証 | `verify_portable_pads.py`・`verify_portable_mat.py` とも成功（docs/validation/2026-11-15-portable-bddde01*.json） |
