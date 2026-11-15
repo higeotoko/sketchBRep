@@ -41,6 +41,18 @@ struct StairSpec {
   // turn with winders and landings; at the inside of a turn they stop and start again higher.
   std::string stringer = "none";
   double stringerThickness = 36.0;
+  // docs/135: "side" (側板, as above) or "cut" (ささら桁 切り欠き): just inside the width, under
+  // the treads: its top cut in steps (each tread sits on it), its bottom the line of the nosings
+  // less the same depth.
+  std::string stringerStyle = "side";
+  // Riser boards (蹴込み板, docs/135): boards style only; at the front of each tread, from the tread
+  // (or floor) below up to its underside, `riserThickness` (5 to 60) back from the front edge.
+  bool riserBoards = false;
+  double riserThickness = 15.0;
+  // Newel posts (親柱, docs/135): with side boards; square, `newelSize` (60 to 240), at the foot of
+  // each board and where an inside board stops at a turn, from the floor to 100 over the board.
+  bool newels = false;
+  double newelSize = 105.0;
 };
 
 struct StairTread {
@@ -62,6 +74,7 @@ struct StairShape {
   double handrailLength = 0.0;  // of all rails along their axes
   double stringerDepth = 0.0;   // of the side boards, measured vertically (0: none)
   double stringerVolume = 0.0;
+  int riserBoards = 0, newels = 0;
   int risers = 0;
   double riser = 0.0;
   std::vector<StairTread> treads;  // bottom to top; the upper floor is the last riser's tread

@@ -65,6 +65,11 @@ Result<Layout> layout(const StairSpec& spec) {
     return L::failure("Side boards: none, left, right or both");
   if (spec.stringer != "none" && !(spec.stringerThickness >= 15.0 && spec.stringerThickness <= 100.0))
     return L::failure("A side board is 15 to 100 thick");
+  if (spec.stringerStyle != "side" && spec.stringerStyle != "cut") return L::failure("Side boards: side or cut");
+  if (spec.riserBoards && spec.style != "boards") return L::failure("Riser boards are for a stair of tread boards");
+  if (spec.riserBoards && !(spec.riserThickness >= 5.0 && spec.riserThickness <= 60.0)) return L::failure("A riser board is 5 to 60 thick");
+  if (spec.newels && spec.stringer == "none") return L::failure("Newel posts stand with side boards");
+  if (spec.newels && !(spec.newelSize >= 60.0 && spec.newelSize <= 240.0)) return L::failure("A newel post is 60 to 240 square");
   // The line: no repeated points, no points on a straight part.
   std::vector<V2> pts;
   for (const gp_Pnt& p : spec.path) {
@@ -253,7 +258,8 @@ constexpr double kStringerOver = 50.0;  // its top over the line of the nosings
 // The side boards on `side` (+1 left, -1 right, looking up): per tread, a board standing on the
 // part of its outline on that side, its top rising one riser along it. Added to `into`.
 Status sideBoards(const StairSpec& spec, const Layout& l, int side, double depth, BRep_Builder& builder, TopoDS_Compound& into,
-                  double& volume) {
+                  double& volume, int& newels) {
+  const bool cut = spec.stringerStyle == "cut";
   std::vector<V2> pts;
   for (const gp_Pnt& p : spec.path) {
     const V2 q{p.X(), p.Y()};
@@ -324,7 +330,9 @@ Status sideBoards(const StairSpec& spec, const Layout& l, int side, double depth
       std::optional<V2> next;
       if (i + 1 < r.points.size()) next = r.points[i + 1] - b;
       else if (k + 1 < runs.size() && (runs[k + 1].points.front() - b).length() < 1.0) next = runs[k + 1].points[1] - runs[k + 1].points[0];
-      if (next && (e.x * next->y - e.y * next->x) * side < -1e-6 * next->length()) b = b + e * spec.stringerThickness;
+      if (!cut && next && (e.x * next->y - e.y * next->x) * side < -1e-6 * next->length()) b = b + e * spec.stringerThickness;
+      // The top: over the nosings (side boards), or flat under this tread (cut, the step).
+      const double topA = cut ? r.z0 - kStringerOver - spec.thickness : za, topB = cut ? topA : zb;
       BRepBuilderAPI_MakePolygon polygon;
       polygon.Add(gp_Pnt(a.x, a.y, std::max(spec.base, za - depth)));
       // The bottom leaves the floor part way along: a corner there.
@@ -333,16 +341,42 @@ Status sideBoards(const StairSpec& spec, const Layout& l, int side, double depth
         polygon.Add(gp_Pnt(c.x, c.y, spec.base));
       }
       polygon.Add(gp_Pnt(b.x, b.y, std::max(spec.base, zb - depth)));
-      polygon.Add(gp_Pnt(b.x, b.y, zb));
-      polygon.Add(gp_Pnt(a.x, a.y, za));
+      polygon.Add(gp_Pnt(b.x, b.y, topB));
+      polygon.Add(gp_Pnt(a.x, a.y, topA));
       polygon.Close();
       if (!polygon.IsDone()) return Status::failure("A side board could not be built");
       BRepBuilderAPI_MakeFace face(polygon.Wire(), Standard_True);
       if (!face.IsDone()) return Status::failure("A side board could not be built");
-      BRepPrimAPI_MakePrism board(face.Face(), gp_Vec(out.x, out.y, 0) * spec.stringerThickness);
+      // Side boards stand outside the width, cut ones inside it (under the treads).
+      BRepPrimAPI_MakePrism board(face.Face(), gp_Vec(out.x, out.y, 0) * (cut ? -spec.stringerThickness : spec.stringerThickness));
       if (!board.IsDone()) return Status::failure("A side board could not be built");
       pieces.push_back(board.Shape());
       piecesVolume += sbr::geom::volume(board.Shape());
+    }
+  }
+  // Newel posts: at the foot of the board, and where it stops at the inside of a turn (the next
+  // board starts at the same place, higher).
+  if (spec.newels && !runs.empty()) {
+    auto post = [&](const V2& at, const V2& along, double top) -> Status {
+      const V2 e = along * (1.0 / along.length()), o = V2{-e.y, e.x} * static_cast<double>(side);
+      const V2 c = at + o * ((cut ? -1.0 : 1.0) * spec.stringerThickness / 2);
+      const double h = spec.newelSize / 2;
+      std::vector<V2> square = {c - e * h - o * h, c + e * h - o * h, c + e * h + o * h, c - e * h + o * h};
+      auto made = prism(square, spec.base, top);
+      if (!made) return Status::failure("A newel post could not be built");
+      pieces.push_back(made.value());
+      piecesVolume += sbr::geom::volume(made.value());
+      ++newels;
+      return Status::success();
+    };
+    const Run& first = runs.front();
+    if (first.points.size() >= 2)
+      if (const Status s = post(first.points[0], first.points[1] - first.points[0], first.z0 + 100.0); !s) return s;
+    for (std::size_t k = 0; k + 1 < runs.size(); ++k) {
+      const Run& r = runs[k];
+      const Run& n = runs[k + 1];
+      if ((n.points.front() - r.points.back()).length() > 1.0 || n.z0 < r.z0 + 1.5 * l.riser || n.points.size() < 2) continue;
+      if (const Status s = post(n.points[0], n.points[1] - n.points[0], n.z0 + 100.0); !s) return s;
     }
   }
   // One board per side where the pieces meet (no joint at every tread in a drawing).
@@ -354,6 +388,53 @@ Status sideBoards(const StairSpec& spec, const Layout& l, int side, double depth
     }
   for (const TopoDS_Shape& p : pieces) builder.Add(into, p);
   volume += piecesVolume;
+  return Status::success();
+}
+
+// Riser boards: at the front edge of each tread (its edge nearest the foot along the walking
+// line), from the tread below (or the floor) up to this tread's underside, set back into it.
+Status riserBoards(const StairSpec& spec, const Layout& l, BRep_Builder& builder, TopoDS_Compound& into, int& count) {
+  std::vector<V2> pts;
+  for (const gp_Pnt& p : spec.path) {
+    const V2 q{p.X(), p.Y()};
+    if (pts.empty() || (q - pts.back()).length() > 0.01) pts.push_back(q);
+  }
+  auto station = [&](const V2& q) {
+    double gap = 1e300, s0 = 0, best = 0;
+    for (std::size_t i = 1; i < pts.size(); ++i) {
+      const V2 d = pts[i] - pts[i - 1];
+      const double len = d.length();
+      const double t = std::clamp((q - pts[i - 1]).dot(d) / (len * len), 0.0, 1.0);
+      const double g = (q - (pts[i - 1] + d * t)).length();
+      if (g < gap - 1e-9) gap = g, best = s0 + t * len;
+      s0 += len;
+    }
+    return best;
+  };
+  for (const Tread& t : l.treads) {
+    const double top = spec.base + l.riser * (t.step - 1), under = spec.base + l.riser * t.step - spec.thickness;
+    if (under - top < 1.0) continue;
+    const std::size_t n = t.outline.size();
+    std::size_t front = 0;
+    double lowest = 1e300;
+    for (std::size_t i = 0; i < n; ++i) {
+      const V2 mid = (t.outline[i] + t.outline[(i + 1) % n]) * 0.5;
+      const double s = station(mid);
+      if (s < lowest - 1e-6) lowest = s, front = i;
+    }
+    const V2 a = t.outline[front], b = t.outline[(front + 1) % n];
+    const double len = (b - a).length();
+    if (len < 1.0) continue;
+    V2 centroid{0, 0};
+    for (const V2& p : t.outline) centroid = centroid + p * (1.0 / n);
+    const V2 e = (b - a) * (1.0 / len);
+    V2 in{-e.y, e.x};
+    if ((centroid - a).dot(in) < 0) in = in * -1.0;
+    auto board = prism({a, b, b + in * spec.riserThickness, a + in * spec.riserThickness}, top, under);
+    if (!board) return Status::failure("A riser board could not be built");
+    builder.Add(into, board.value());
+    ++count;
+  }
   return Status::success();
 }
 
@@ -413,7 +494,7 @@ Result<StairShape> makeStair(const StairSpec& spec) {
     out.solid = boards;
   }
   // Handrails (docs/116) and side boards (docs/128): with the stair in one compound.
-  if (spec.handrail != "none" || spec.stringer != "none") {
+  if (spec.handrail != "none" || spec.stringer != "none" || spec.riserBoards) {
     TopoDS_Compound all;
     BRep_Builder builder;
     builder.MakeCompound(all);
@@ -422,9 +503,11 @@ Result<StairShape> makeStair(const StairSpec& spec) {
       out.stringerDepth = std::max(240.0, l.riser + spec.thickness + 100.0);
       for (int side : {1, -1}) {
         if ((side > 0 && spec.stringer == "right") || (side < 0 && spec.stringer == "left")) continue;
-        if (const Status s = sideBoards(spec, l, side, out.stringerDepth, builder, all, out.stringerVolume); !s) return R::failure(s.message());
+        if (const Status s = sideBoards(spec, l, side, out.stringerDepth, builder, all, out.stringerVolume, out.newels); !s) return R::failure(s.message());
       }
     }
+    if (spec.riserBoards)
+      if (const Status s = riserBoards(spec, l, builder, all, out.riserBoards); !s) return R::failure(s.message());
     for (int side : {1, -1}) {
       if (spec.handrail == "none") break;
       if ((side > 0 && spec.handrail == "right") || (side < 0 && spec.handrail == "left")) continue;

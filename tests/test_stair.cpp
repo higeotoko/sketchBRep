@@ -566,6 +566,65 @@ TEST(Stair, SideBoardsRunAlongBothSidesOverTheNosings) {
   EXPECT_FALSE(makeStair(spec));
 }
 
+// docs/135: a cut stringer under the treads, riser boards, newel posts.
+TEST(Stair, CutStringersRiserBoardsAndNewels) {
+  StairSpec spec = along({gp_Pnt(0, 0, 0), gp_Pnt(2730, 0, 0)});
+  spec.style = "boards";
+  const auto bare = makeStair(spec);
+  ASSERT_TRUE(bare) << bare.error();
+  // Cut: inside the width (nothing outside it), nothing over the treads (the top is the last tread).
+  spec.stringer = "both";
+  spec.stringerStyle = "cut";
+  const auto cut = makeStair(spec);
+  ASSERT_TRUE(cut) << cut.error();
+  const auto b = sbr::geom::exactBounds(cut->solid);
+  EXPECT_NEAR(b.CornerMin().Y(), -400, 1e-6);
+  EXPECT_NEAR(b.CornerMax().Y(), 400, 1e-6);
+  EXPECT_NEAR(b.CornerMax().Z(), sbr::geom::exactBounds(bare->solid).CornerMax().Z(), 1e-6);  // the last tread
+  EXPECT_NEAR(b.CornerMin().Z(), 0, 1e-6);
+  EXPECT_GT(cut->stringerVolume, 0.0);
+  // Its pieces under the treads, not into them: the stair's volume is the treads' and the boards'.
+  EXPECT_NEAR(sbr::geom::volume(cut->solid), sbr::geom::volume(bare->solid) + cut->stringerVolume, 1.0);
+  // Riser boards: one per tread, 800 wide, 15 thick, from the tread below to this one's underside.
+  spec.stringer = "none";
+  spec.stringerStyle = "side";
+  spec.riserBoards = true;
+  const auto risers = makeStair(spec);
+  ASSERT_TRUE(risers) << risers.error();
+  EXPECT_EQ(risers->riserBoards, 13);
+  EXPECT_NEAR(sbr::geom::volume(risers->solid) - sbr::geom::volume(bare->solid), 13 * 800.0 * 15 * (200 - 30), 1.0);
+  // Newels with side boards: one at the foot of each board.
+  spec.riserBoards = false;
+  spec.stringer = "both";
+  spec.newels = true;
+  const auto posts = makeStair(spec);
+  ASSERT_TRUE(posts) << posts.error();
+  EXPECT_EQ(posts->newels, 2);
+  // Around a turn (winders, then a landing): one more where the inside board stops.
+  for (int turns : {3, 1}) {
+    StairSpec turn = along({gp_Pnt(0, 0, 0), gp_Pnt(2000, 0, 0), gp_Pnt(2000, 1500, 0)});
+    turn.turns = {turns};
+    turn.stringer = "both";
+    turn.newels = true;
+    const auto around = makeStair(turn);
+    ASSERT_TRUE(around) << around.error();
+    EXPECT_EQ(around->newels, 3) << turns;
+  }
+  // Refused: riser boards on a block stair, newels without boards, sizes out of range, an unknown style.
+  StairSpec wrong = along({gp_Pnt(0, 0, 0), gp_Pnt(2730, 0, 0)});
+  wrong.riserBoards = true;
+  EXPECT_FALSE(makeStair(wrong));  // block
+  wrong = along({gp_Pnt(0, 0, 0), gp_Pnt(2730, 0, 0)});
+  wrong.newels = true;
+  EXPECT_FALSE(makeStair(wrong));  // no boards
+  wrong.stringer = "both";
+  wrong.newelSize = 20;
+  EXPECT_FALSE(makeStair(wrong));
+  wrong.newelSize = 105;
+  wrong.stringerStyle = "zigzag";
+  EXPECT_FALSE(makeStair(wrong));
+}
+
 TEST_F(Stairs, AHandrailIsChangedOnTheStairAndKept) {
   const std::string id = ok("create_stair", {{"path", {{1000, 1000}, {3730, 1000}}}, {"rise", 2800}, {"handrail", "right"}})["id"];
   json info = ok("stair_info", {{"id", id}});
@@ -596,5 +655,17 @@ TEST_F(Stairs, AHandrailIsChangedOnTheStairAndKept) {
   EXPECT_NEAR(third.stairInfo(id)->spec.stringerThickness, 45, 1e-9);
   EXPECT_EQ(other.stairInfo(id)->spec.stringer, "none");  // saved before: none
   EXPECT_FALSE(call("change_stair", {{"id", id}, {"stringer_thickness", 500}}).value("ok", true));
+  // docs/135: the cut stringer and newels, kept the same way.
+  ok("change_stair", {{"id", id}, {"stringer_style", "cut"}, {"newels", true}});
+  info = ok("stair_info", {{"id", id}});
+  EXPECT_EQ(info["stringer_style"], "cut");
+  EXPECT_EQ(info["newels"], true);
+  ASSERT_TRUE(modeler.save(file.string()));
+  sbr::doc::Modeler fourth;
+  ASSERT_TRUE(fourth.load(file.string()));
+  EXPECT_EQ(fourth.stairInfo(id)->spec.stringerStyle, "cut");
+  EXPECT_TRUE(fourth.stairInfo(id)->spec.newels);
+  EXPECT_EQ(third.stairInfo(id)->spec.stringerStyle, "side");  // saved before: side
+  EXPECT_FALSE(call("change_stair", {{"id", id}, {"riser_boards", true}}).value("ok", true));  // a block stair
   EXPECT_FALSE(call("change_stair", {{"id", id}, {"handrail_height", 2000}}).value("ok", true));
 }

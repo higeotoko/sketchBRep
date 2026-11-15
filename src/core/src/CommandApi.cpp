@@ -135,6 +135,11 @@ void stairArgs(const json& a, geom::StairSpec& s) {
   if (a.contains("handrail_height")) s.handrailHeight = number(a, "handrail_height");
   if (a.contains("stringer")) s.stringer = text(a, "stringer");
   if (a.contains("stringer_thickness")) s.stringerThickness = number(a, "stringer_thickness");
+  if (a.contains("stringer_style")) s.stringerStyle = text(a, "stringer_style");
+  if (a.contains("riser_boards")) s.riserBoards = a.at("riser_boards").get<bool>();
+  if (a.contains("riser_thickness")) s.riserThickness = number(a, "riser_thickness");
+  if (a.contains("newels")) s.newels = a.at("newels").get<bool>();
+  if (a.contains("newel_size")) s.newelSize = number(a, "newel_size");
   if (a.contains("turns")) {
     const json& v = a.at("turns");
     s.turns.clear();
@@ -162,7 +167,9 @@ json stairJson(const doc::StairInfo& r) {
               {"winder_going", r.winderGoing}, {"walk_length", r.walkLength}, {"flights", r.flights},
               {"landings", r.landings}, {"winders", r.winders}, {"turns", r.spec.turns}, {"style", r.spec.style},
               {"thickness", r.spec.thickness}, {"handrail", r.spec.handrail}, {"handrail_height", r.spec.handrailHeight},
-              {"stringer", r.spec.stringer}, {"stringer_thickness", r.spec.stringerThickness}, {"base_level", r.baseLevel}, {"top_level", r.topLevel},
+              {"stringer", r.spec.stringer}, {"stringer_thickness", r.spec.stringerThickness},
+              {"stringer_style", r.spec.stringerStyle}, {"riser_boards", r.spec.riserBoards}, {"riser_thickness", r.spec.riserThickness},
+              {"newels", r.spec.newels}, {"newel_size", r.spec.newelSize}, {"base_level", r.baseLevel}, {"top_level", r.topLevel},
               {"opened_slabs", r.openedSlabs}, {"checks", checks}, {"checks_all_ok", allOk},
               {"checks_basis",
                "Sizes for a house's own stair (not a shared stair of flats), Building Standards Act Enforcement Order "
@@ -2338,15 +2345,19 @@ const std::vector<CommandDef>& commands() {
        "(change_stair); foot and top at levels' heights follow those levels. 'handrail': none (default), left, right "
        "or both (looking up), 'handrail_height' above the treads (default 850, 600-1200). 'stringer': side boards "
        "(none default, left, right, both) just outside the width, 'stringer_thickness' (default 36, 15-100); their top "
-       "50 over the nosings, deep enough to hold the treads. Returns riser, goings and 'checks' "
-       "against the sizes for a house's stair (see checks_basis; not_evaluated is never a pass). No nosings or risers "
-       "boards are made.",
+       "50 over the nosings, deep enough to hold the treads; 'stringer_style' side (default) or cut (ささら桁: inside "
+       "the width, under the treads, its top cut in steps). 'riser_boards' (boards style; 'riser_thickness' default 15) "
+       "and 'newels' (posts with the side boards at their foot and at the inside of turns; 'newel_size' default 105) "
+       "(docs/135). Returns riser, goings and 'checks' "
+       "against the sizes for a house's stair (see checks_basis; not_evaluated is never a pass). No nosings are made.",
        SCHEMA({"type": "object", "properties": {
          "path": {"type": "array"}, "base": {"type": "number"}, "rise": {"type": "number"}, "top": {"type": "number"},
          "width": {"type": "number"}, "turns": {}, "risers": {"type": "integer"}, "riser_limit": {"type": "number"},
          "style": {"enum": ["block", "boards"]}, "thickness": {"type": "number"}, "open_floor": {"type": "boolean"},
          "handrail": {"enum": ["none", "left", "right", "both"]}, "handrail_height": {"type": "number"},
-         "stringer": {"enum": ["none", "left", "right", "both"]}, "stringer_thickness": {"type": "number"}},
+         "stringer": {"enum": ["none", "left", "right", "both"]}, "stringer_thickness": {"type": "number"},
+         "stringer_style": {"enum": ["side", "cut"]}, "riser_boards": {"type": "boolean"}, "riser_thickness": {"type": "number"},
+         "newels": {"type": "boolean"}, "newel_size": {"type": "number"}},
          "required": ["path"]}),
        [](doc::Modeler& m, const json& a) {
          const GridLookup grid(m.document());
@@ -2381,14 +2392,17 @@ const std::vector<CommandDef>& commands() {
        }},
       {"change_stair",
        "Change sizes of a stair made by create_stair (any of path, base, rise or top, width, turns, risers, "
-       "riser_limit, style, thickness, handrail, handrail_height, stringer, stringer_thickness); the rest stays. The same object; floors opened for it are opened again. "
+       "riser_limit, style, thickness, handrail, handrail_height, stringer, stringer_thickness, stringer_style, riser_boards, "
+       "riser_thickness, newels, newel_size); the rest stays. The same object; floors opened for it are opened again. "
        "One undo step.",
        SCHEMA({"type": "object", "properties": {
          "id": {"type": "string"}, "path": {"type": "array"}, "base": {"type": "number"}, "rise": {"type": "number"},
          "top": {"type": "number"}, "width": {"type": "number"}, "turns": {}, "risers": {"type": "integer"},
          "riser_limit": {"type": "number"}, "style": {"enum": ["block", "boards"]}, "thickness": {"type": "number"},
          "handrail": {"enum": ["none", "left", "right", "both"]}, "handrail_height": {"type": "number"},
-         "stringer": {"enum": ["none", "left", "right", "both"]}, "stringer_thickness": {"type": "number"}},
+         "stringer": {"enum": ["none", "left", "right", "both"]}, "stringer_thickness": {"type": "number"},
+         "stringer_style": {"enum": ["side", "cut"]}, "riser_boards": {"type": "boolean"}, "riser_thickness": {"type": "number"},
+         "newels": {"type": "boolean"}, "newel_size": {"type": "number"}},
          "required": ["id"]}),
        [](doc::Modeler& m, const json& a) {
          const GridLookup grid(m.document());

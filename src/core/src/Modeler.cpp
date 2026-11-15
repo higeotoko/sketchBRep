@@ -7104,7 +7104,9 @@ std::string stairSpecText(const geom::StairSpec& s) {
   return nlohmann::json{{"path", path}, {"base", s.base}, {"rise", s.rise}, {"width", s.width}, {"risers", s.risers},
                         {"riser_limit", s.riserLimit}, {"turns", s.turns}, {"style", s.style}, {"thickness", s.thickness},
                         {"handrail", s.handrail}, {"handrail_height", s.handrailHeight},
-                        {"stringer", s.stringer}, {"stringer_thickness", s.stringerThickness}}
+                        {"stringer", s.stringer}, {"stringer_thickness", s.stringerThickness},
+                        {"stringer_style", s.stringerStyle}, {"riser_boards", s.riserBoards}, {"riser_thickness", s.riserThickness},
+                        {"newels", s.newels}, {"newel_size", s.newelSize}}
       .dump();
 }
 
@@ -7124,6 +7126,11 @@ std::optional<geom::StairSpec> stairSpecFrom(const std::string& text) {
     s.handrailHeight = j.value("handrail_height", 850.0);
     s.stringer = j.value("stringer", std::string("none"));  // stairs made before docs/128 have none
     s.stringerThickness = j.value("stringer_thickness", 36.0);
+    s.stringerStyle = j.value("stringer_style", std::string("side"));  // stairs made before docs/135
+    s.riserBoards = j.value("riser_boards", false);
+    s.riserThickness = j.value("riser_thickness", 15.0);
+    s.newels = j.value("newels", false);
+    s.newelSize = j.value("newel_size", 105.0);
     s.thickness = j.at("thickness").get<double>();
     return s;
   } catch (const std::exception&) {

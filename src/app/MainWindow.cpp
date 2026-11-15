@@ -769,6 +769,9 @@ void MainWindow::buildUi() {
               else if (key == QStringLiteral("handrail_height")) spec.handrailHeight = value;
               else if (key == QStringLiteral("stringer")) spec.stringer = text.toStdString();
               else if (key == QStringLiteral("stringer_thickness")) spec.stringerThickness = value;
+              else if (key == QStringLiteral("stringer_style")) spec.stringerStyle = text.toStdString();
+              else if (key == QStringLiteral("riser_boards")) spec.riserBoards = text == QStringLiteral("true");
+              else if (key == QStringLiteral("newels")) spec.newels = text == QStringLiteral("true");
               else if (key == QStringLiteral("thickness")) spec.thickness = value;
               else if (key == QStringLiteral("rise")) spec.rise = value;
               else return;

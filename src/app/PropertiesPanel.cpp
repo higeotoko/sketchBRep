@@ -491,8 +491,38 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
           emit stairEdited(id, QStringLiteral("stringer"), 0.0, sides->currentData().toString());
         });
         form_->addRow(tr("側板（ささら桁）"), sides);
-        if (stair->spec.stringer != "none")
+        if (stair->spec.stringer != "none") {
           size(tr("側板の厚さ"), "stringer_thickness", stair->spec.stringerThickness, 15, tr("側板の厚さ（15〜100）"));
+          // docs/135: side boards or a cut stringer; newel posts.
+          auto* shape = new QComboBox;
+          shape->setObjectName(QStringLiteral("stairStringerStyle"));
+          shape->addItem(tr("側板（段をはさむ）"), QStringLiteral("side"));
+          shape->addItem(tr("ささら桁（段を上に乗せる）"), QStringLiteral("cut"));
+          shape->setCurrentIndex(std::max(0, shape->findData(QString::fromStdString(stair->spec.stringerStyle))));
+          shape->setEnabled(!o->locked);
+          connect(shape, &QComboBox::activated, this, [this, id, shape] {
+            emit stairEdited(id, QStringLiteral("stringer_style"), 0.0, shape->currentData().toString());
+          });
+          form_->addRow(tr("板の形"), shape);
+          auto* newel = new QCheckBox(tr("親柱（足元と、回りの内側の角）"));
+          newel->setObjectName(QStringLiteral("stairNewels"));
+          newel->setChecked(stair->spec.newels);
+          newel->setEnabled(!o->locked);
+          connect(newel, &QCheckBox::toggled, this, [this, id](bool on) {
+            emit stairEdited(id, QStringLiteral("newels"), 0.0, on ? QStringLiteral("true") : QStringLiteral("false"));
+          });
+          form_->addRow(QString(), newel);
+        }
+        if (stair->spec.style == "boards") {
+          auto* risers = new QCheckBox(tr("蹴込み板（段の前の板）"));
+          risers->setObjectName(QStringLiteral("stairRiserBoards"));
+          risers->setChecked(stair->spec.riserBoards);
+          risers->setEnabled(!o->locked);
+          connect(risers, &QCheckBox::toggled, this, [this, id](bool on) {
+            emit stairEdited(id, QStringLiteral("riser_boards"), 0.0, on ? QStringLiteral("true") : QStringLiteral("false"));
+          });
+          form_->addRow(QString(), risers);
+        }
       }
       auto row = [&](const QString& label, const QString& text, const char* name) {
         auto* value = new QLabel(text);
