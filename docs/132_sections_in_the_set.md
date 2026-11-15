@@ -32,9 +32,16 @@
 | 計算テスト済み | コア全 703 件中 696 件成功・7 件スキップ（ローカル）。新規 1 件（`Schedules.TheSetHasSectionsMarkedOnThePlans`）：断面が無い時は A-A・B-B が平面図のあと・南立面図の前／断面図に壁の切断の塗りがあり、表題欄に自分の図番／1FL 平面図に「A」「B」が 2 つずつ、断面図の図番が 2 つずつ／モデルに断面を 1 つ決めると A-A だけ／`sections` を切ると入らない、AI の `export_drawing_set` で同じ枚数。図面一式・表のテストも成功 |
 | GUI 自動確認済み | 図面・表・断面まわりの画面テストが成功（ローカル） |
 | AI が配ったアプリで確認 | 作った版の `sbr_cli`（ローカルのビルドを、配った ZIP の部品と一緒に）で、確かめの家（docs/118）の図面一式を DXF に：A-01〜A-13 の 13 枚（A-04 A-A 断面図、A-05 B-B 断面図）。1FL 平面図と A-A 断面図を絵にして見た：平面図に東西と南北の切る線、端に見る向きの線と A・B の記号・図番。断面図に壁・屋根・階段・レベル |
-| CI | __CI__ |
+| CI | run 43724718094（push、`65a69cb`）：Linux 716 件成功、Windows 712 件＋3 件成功・GUI 237 件成功（7 件スキップ） |
 | Windows 実機確認 | まだ（チェック表 12-15） |
 
 ## 配布の記録
 
-__DELIVERY__
+| 項目 | 値 |
+|---|---|
+| コード | `65a69cb`（Opus 5.5 で作業） |
+| CI | run 43724718094（push）：Linux・Windows とも成功 |
+| ZIP | `SketchBRep-windows-x64-65a69cb-local.zip`（Codex のチャットフォルダの `outputs\`） |
+| サイズ | 72,133,026 bytes |
+| SHA256 | `3d36d43f583e15e597aafd40fb81d5b5e7442ab7e632a3c77b80cba4b2bc7cc4` |
+| ZIP の検証 | `verify_portable_pads.py`・`verify_portable_mat.py` とも成功（docs/validation/2026-11-15-portable-65a69cb*.json） |
