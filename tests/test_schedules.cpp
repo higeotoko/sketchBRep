@@ -539,6 +539,89 @@ TEST(GridPinLater, MembersDrawnBeforeFollowTheGridOncePinned) {
   EXPECT_NEAR((box(loose).CornerMin().X() + box(loose).CornerMax().X()) / 2, 1000, 1e-6);  // not pinned: stays
 }
 
+// docs/129: walls pinned to a grid follow its spacings; the walls joined to them, their openings,
+// the slab and the rooms come along.
+TEST(GridPinLater, WallsOnTheGridFollowItsSpacings) {
+  sbr::doc::Modeler modeler;
+  CommandApi api{modeler};
+  auto call = [&](const std::string& command, json args) {
+    return json::parse(api.execute(json{{"command", command}, {"args", args}}.dump()));
+  };
+  auto ok = [&](const std::string& command, json args) {
+    json r = call(command, args);
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  ASSERT_TRUE(modeler.setLevels({{"", "1FL", 0}, {"", "2FL", 3000}}));
+  const json grid = ok("create_grid", {{"x_spacings", {3640, 3640}}, {"y_spacings", {3640}}});
+  const json walls = ok("create_wall", {{"points", {{0, 0}, {7280, 0}, {7280, 3640}, {0, 3640}, {0, 0}}},
+                                        {"thickness", 120}, {"height", 3000}})["ids"];
+  const std::string south = walls[0], east = walls[1], north = walls[2];
+  const std::string partition = ok("create_wall", {{"points", {{3640, 0}, {3640, 3640}}}, {"thickness", 120}, {"height", 3000}})["ids"][0];
+  const std::string loose = ok("create_wall", {{"points", {{1000, 1000}, {2000, 1000}}}, {"thickness", 120}, {"height", 3000}})["ids"][0];
+  ok("place_openings", {{"host", east}, {"face_normal", {1, 0, 0}}, {"count", 1}, {"width", 900}, {"height", 1200}, {"sill", 900}});
+  ok("place_openings", {{"host", south}, {"face_normal", {0, -1, 0}}, {"count", 1}, {"width", 900}, {"height", 1200}, {"sill", 900}});
+  ok("create_slab", {{"outline", {{-60, -60}, {7340, -60}, {7340, 3700}, {-60, 3700}}}, {"top", 0}, {"thickness", 150}});
+  const std::string room = ok("create_room", {{"at", {5460, 1820}}, {"name", "east"}})["id"];
+  auto area = [&] {
+    const json rooms = ok("list_rooms", json::object());
+    for (const json& r : rooms["rooms"])
+      if (r["id"] == room) return r["area_inner"].get<double>();
+    return 0.0;
+  };
+  const double area0 = area();
+  const auto box = [&](const std::string& id) { return sbr::geom::exactBounds(modeler.document().worldShape(*modeler.document().find(id))); };
+  const double southLength = box(south).CornerMax().X() - box(south).CornerMin().X();
+  const double southWindow = modeler.openings(south)->front().center.X();
+  const double eastWindow = modeler.openings(east)->front().center.Y();
+
+  const auto steps = modeler.history().undoCount();
+  const json pinned = ok("pin_to_grid", json::object());
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  EXPECT_EQ(pinned["walls"], 5);  // the four of the outline and the partition
+  ASSERT_EQ(pinned["left"].size(), 1u);  // the loose wall: not between crossings
+  // X3 out by 910.
+  ASSERT_TRUE(modeler.gridSpec(grid["grid"].get<std::string>()));
+  const sbr::doc::GridSpec original = *modeler.gridSpec(grid["grid"].get<std::string>());
+  const auto* spec = &original;
+  auto setGrid = [&](double moveX2, double moveX3) {
+    json x = json::array(), y = json::array();
+    for (const auto& a : spec->x)
+      x.push_back({{"id", a.id}, {"name", a.name}, {"position", a.offset + (a.offset > 7000 ? moveX3 : a.offset > 1 ? moveX2 : 0.0)}});
+    for (const auto& a : spec->y) y.push_back({{"id", a.id}, {"name", a.name}, {"position", a.offset}});
+    ok("set_grid", {{"grid", grid["grid"]}, {"x", x}, {"y", y}});
+  };
+  setGrid(0, 910);
+  EXPECT_EQ(modeler.history().undoCount(), steps + 2);
+  EXPECT_NEAR((box(east).CornerMin().X() + box(east).CornerMax().X()) / 2, 7280 + 910, 1e-6);  // sideways
+  EXPECT_NEAR(box(south).CornerMax().X() - box(south).CornerMin().X(), southLength + 910, 1e-6);  // longer
+  EXPECT_NEAR(box(north).CornerMax().X() - box(north).CornerMin().X(), southLength + 910, 1e-6);
+  EXPECT_NEAR(modeler.openings(east)->front().center.X(), 7280 + 910 + 60, 1.0);  // its window with it
+  EXPECT_NEAR(modeler.openings(east)->front().center.Y(), eastWindow, 1e-6);
+  EXPECT_NEAR(modeler.openings(south)->front().center.X(), southWindow, 1e-6);   // the south window stays
+  EXPECT_NEAR((box(partition).CornerMin().X() + box(partition).CornerMax().X()) / 2, 3640, 1e-6);
+  EXPECT_NEAR(box(loose).CornerMin().X(), 1000, 1e-6);
+  // The slab's corner in the east wall went with it; the room is larger by 910 x its inner depth.
+  for (const sbr::doc::Object& o : modeler.document().objects())
+    if (o.attributes.count("kind") && o.attributes.at("kind") == "slab") EXPECT_NEAR(box(o.id).CornerMax().X(), 7340 + 910, 1e-6);
+  EXPECT_NEAR(area(), area0 + 910.0 * (3640 - 120) / 1e6, 1e-6);
+  // X2 (the partition's line) by 300: the partition goes, the south and north walls stay.
+  setGrid(300, 910);
+  EXPECT_NEAR((box(partition).CornerMin().X() + box(partition).CornerMax().X()) / 2, 3640 + 300, 1e-6);
+  EXPECT_NEAR(box(south).CornerMax().X() - box(south).CornerMin().X(), southLength + 910, 1e-6);
+  // Undone: as before, one step each.
+  ASSERT_TRUE(modeler.undo());
+  ASSERT_TRUE(modeler.undo());
+  EXPECT_NEAR((box(east).CornerMin().X() + box(east).CornerMax().X()) / 2, 7280, 1e-6);
+  EXPECT_NEAR(area(), area0, 1e-6);
+  // Kept in the file.
+  const auto file = std::filesystem::temp_directory_path() / "sbr_wall_pin.sbr";
+  ASSERT_TRUE(modeler.save(file.string()));
+  sbr::doc::Modeler other;
+  ASSERT_TRUE(other.load(file.string()));
+  EXPECT_TRUE(other.document().find(east)->attributes.count("wall_grid_pin"));
+}
+
 // docs/123: a room's ceiling as a board at its ceiling height.
 TEST_F(Schedules, ACeilingBoardIsMadeAtTheCeilingHeight) {
   EXPECT_FALSE(call("make_ceilings", json::object()).value("ok", true));  // no ceiling height yet

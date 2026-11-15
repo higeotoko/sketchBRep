@@ -748,11 +748,16 @@ class Modeler {
   Result<GridMembers> placeMembersOnGrid(const ObjectId& grid, const GridMemberOptions& options);
   // Columns, beams and other members drawn before (docs/97 G-06, docs/122) pinned to a grid now:
   // each end on a crossing (within `tolerance` in plan) is pinned to it, and to the level at its
-  // height; from then on they follow the grid and the levels as placed members do. `ids` empty:
-  // every member not pinned yet. `grid` empty: the only grid. Members whose ends are not both on
-  // crossings, and other things (walls), are left and named. One undo step.
+  // height; from then on they follow the grid and the levels as placed members do. Walls made by
+  // the wall tool (docs/129): each end of its line to the nearest crossing within its thickness
+  // (+ `tolerance`); when the grid's spacings change each end goes as far as its crossing (the
+  // wall goes sideways, gets longer or shorter; walls joined to it follow). `ids` empty: every
+  // member and wall not pinned yet. `grid` empty: the only grid. Members whose ends are not both
+  // on crossings, walls not between two crossings, and other things are left and named. One undo
+  // step.
   struct GridPinning {
     int pinned = 0;
+    int walls = 0;  // of `pinned`
     std::vector<std::string> left;  // names
   };
   Result<GridPinning> pinToGrid(const std::vector<ObjectId>& ids, const std::string& grid, double tolerance = 10.0);

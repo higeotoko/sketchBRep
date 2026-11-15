@@ -2028,15 +2028,17 @@ const std::vector<CommandDef>& commands() {
       {"pin_to_grid",
        "Pin members drawn before (create_member, columns and beams) to a grid (docs/122): each end on a crossing "
        "(within 'tolerance', default 10 mm in plan) is pinned to it and to the level at its height; they then "
-       "follow set_grid and set_levels as place_members_on_grid members do. 'ids' (default: every member not "
-       "pinned yet), 'grid' (default: the only grid). Members not on crossings at both ends, and walls, are "
-       "left and named. One undo step.",
+       "follow set_grid and set_levels as place_members_on_grid members do. Walls (create_wall) too (docs/129): each "
+       "end of the wall's line to the nearest crossing within its thickness; when set_grid changes the spacings, "
+       "each end goes as far as its crossing (sideways, longer, shorter) and walls joined to it follow. 'ids' "
+       "(default: every member and wall not pinned yet), 'grid' (default: the only grid). Members not on crossings "
+       "at both ends and walls not between two crossings are left and named. One undo step.",
        SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}},
                "grid": {"type": "string"}, "tolerance": {"type": "number"}}}),
        [](doc::Modeler& m, const json& a) {
          const auto pinned = must(m.pinToGrid(a.contains("ids") ? ids(a, "ids") : std::vector<doc::ObjectId>{},
                                                textOr(a, "grid", ""), numberOr(a, "tolerance", 10.0)));
-         return json{{"pinned", pinned.pinned}, {"left", pinned.left}};
+         return json{{"pinned", pinned.pinned}, {"walls", pinned.walls}, {"left", pinned.left}};
        }},
       {"copy_storey",
        "Copy a storey to another level (docs/121): 'from' and 'to' (level ids or names). Every top-level solid "

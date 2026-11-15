@@ -689,6 +689,12 @@ double levelHeight(const std::vector<FloorLevel>& levels, const std::string& id,
 void followWallJoins(const Document& document, ChangeSet& changes, const RegenContext& context,
                      const std::vector<ObjectId>& roots, const gp_Vec& d, JoinFollow& report);
 
+// Walls pinned to a grid (docs/129) after a grid change in `changes`: each end goes as far as
+// its crossing did; walls joined to a wall that went sideways follow. Defined with the wall
+// helpers below.
+void wallPinUp(const Document& document, ChangeSet& changes, const RegenContext& context);
+constexpr const char* kWallGridPin = "wall_grid_pin";
+
 // Walls fitted to a roof (docs/97 N-05) are fitted again when they or their roof are among
 // `changes`; defined with the roof helpers below.
 void refitWallsToRoofs(const Document& document, ChangeSet& changes, const RegenContext& context);
@@ -801,6 +807,7 @@ void pinUp(const Document& document, ChangeSet& changes, const RegenContext& con
 Status settleMoves(const Document& document, ChangeSet& changes, const RegenContext& context) {
   if (const Status grids = gridUp(document, changes, context); !grids) return grids;
   pinUp(document, changes, context, document.settings().levels, document.settings().levels);
+  wallPinUp(document, changes, context);
   followUp(document, changes);
   return Status::success();
 }
@@ -6041,13 +6048,49 @@ Result<Modeler::GridPinning> Modeler::pinToGrid(const std::vector<ObjectId>& ids
   std::vector<ObjectId> targets = ids;
   if (targets.empty())
     for (const Object& o : document_.objects())
-      if (std::holds_alternative<LinearMember>(o.recipe.base) && !o.gridPin) targets.push_back(o.id);
+      if ((std::holds_alternative<LinearMember>(o.recipe.base) && !o.gridPin) ||
+          (attributeOf(o, "kind") == "wall" && !o.attributes.count(kWallGridPin)))
+        targets.push_back(o.id);
   if (targets.empty()) return R::failure("No members to pin");
   GridPinning out;
   ChangeSet changes(document_);
   for (const ObjectId& id : targets) {
     const Object* o = document_.find(id);
     if (!o) return R::failure("Object not found");
+    // A wall (docs/129): each end of its line pinned to the nearest crossing within its thickness
+    // (+ `tolerance`) in plan, the two ends to two crossings.
+    if (attributeOf(*o, "kind") == "wall" && !o->locked) {
+      const auto w = wallBand(document_, *o);
+      if (!w) {
+        out.left.push_back(o->name);
+        continue;
+      }
+      const double reach = w->right + w->leftExt + tolerance;
+      auto nearest = [&](const gp_Pnt& p) -> std::optional<std::pair<std::string, std::string>> {
+        std::optional<std::pair<std::string, std::string>> best;
+        double gap = reach;
+        for (const GridAxis& x : spec.x)
+          for (const GridAxis& y : spec.y) {
+            const auto c = crossingOf(spec, gridWorld, x.id, y.id);
+            if (!c) continue;
+            const double g = std::hypot(c->X() - p.X(), c->Y() - p.Y());
+            if (g <= gap) gap = g, best = std::make_pair(x.id, y.id);
+          }
+        return best;
+      };
+      const auto ca = nearest(w->start), cb = nearest(w->start.Translated(gp_Vec(w->dir) * w->length));
+      if (!ca || !cb || *ca == *cb) {
+        out.left.push_back(o->name);
+        continue;
+      }
+      Object pinned = *o;
+      pinned.attributes[kWallGridPin] =
+          nlohmann::json{{"grid", gridObject->id}, {"ends", nlohmann::json::array({nlohmann::json::array({ca->first, ca->second}), nlohmann::json::array({cb->first, cb->second})})}}.dump();
+      changes.modify(pinned);
+      ++out.pinned;
+      ++out.walls;
+      continue;
+    }
     const auto* member = std::get_if<LinearMember>(&o->recipe.base);
     if (!member || o->locked) {
       out.left.push_back(o->name);
@@ -6073,7 +6116,7 @@ Result<Modeler::GridPinning> Modeler::pinToGrid(const std::vector<ObjectId>& ids
     changes.modify(pinned);
     ++out.pinned;
   }
-  if (out.pinned == 0) return R::failure("No member has both ends on crossings of the grid (nothing was changed)");
+  if (out.pinned == 0) return R::failure("No member or wall has both ends on crossings of the grid (nothing was changed)");
   history_.execute(changes.build("Pin To Grid"));
   return out;
 }
@@ -6347,6 +6390,94 @@ void followWallLength(const Document& document, ChangeSet& changes, const RegenC
   const std::map<std::size_t, std::array<bool, 2>> movedEnds = {{*index, {false, true}}};
   carryCorners(document, changes, walls, ends, along, movedEnds, displaced, {}, report);
   settleWallJoins(document, changes, context, walls, ends, displaced, {}, {*index}, {wall}, report);
+}
+
+void wallPinUp(const Document& document, ChangeSet& changes, const RegenContext& context) {
+  std::vector<WallBand> walls;
+  bool any = false;
+  for (const Object& o : document.objects()) any |= o.attributes.count(kWallGridPin) > 0;
+  if (!any) return;
+  walls = allWallBands(document);
+  // A grid's world placement after `changes`.
+  std::function<gp_Trsf(const ObjectId&)> after = [&](const ObjectId& id) -> gp_Trsf {
+    const Object* p = changes.pending(id);
+    const Object* o = p ? p : document.find(id);
+    if (!o) return gp_Trsf();
+    return o->parent.empty() ? o->transform : after(o->parent) * o->transform;
+  };
+  std::map<std::size_t, gp_Vec> displaced;
+  std::set<std::size_t> pinned;
+  std::set<ObjectId> moved;
+  for (std::size_t i = 0; i < walls.size(); ++i) {
+    const WallBand& w = walls[i];
+    const Object& was = *w.object;
+    const std::string text = attributeOf(was, kWallGridPin);
+    if (text.empty() || was.locked || changes.erased(was.id) || changes.pending(was.id)) continue;
+    const nlohmann::json pin = nlohmann::json::parse(text, nullptr, false);
+    if (!pin.is_object() || !pin.contains("grid") || !pin.contains("ends") || pin.at("ends").size() != 2) continue;
+    const std::string gridId = pin.value("grid", std::string());
+    const Object* gridBefore = document.find(gridId);
+    const Object* gridAfter = changes.erased(gridId) ? nullptr : changes.pending(gridId);
+    if (!gridBefore || !gridAfter) continue;  // the grid is as it was (or gone)
+    const GridSpec* specBefore = gridOf(gridBefore);
+    const GridSpec* specAfter = gridOf(gridAfter);
+    if (!specBefore || !specAfter) continue;
+    gp_Vec d[2];
+    bool found = true;
+    for (int k = 0; k < 2; ++k) {
+      const nlohmann::json& e = pin.at("ends")[static_cast<std::size_t>(k)];
+      if (!e.is_array() || e.size() < 2 || !e[0].is_string() || !e[1].is_string()) {
+        found = false;
+        break;
+      }
+      const auto from = crossingOf(*specBefore, document.worldTransform(*gridBefore), e[0].get<std::string>(), e[1].get<std::string>());
+      const auto to = crossingOf(*specAfter, after(gridId), e[0].get<std::string>(), e[1].get<std::string>());
+      if (!from || !to) {
+        found = false;
+        break;
+      }
+      d[k] = gp_Vec(to->X() - from->X(), to->Y() - from->Y(), 0.0);
+    }
+    if (!found || (d[0].Magnitude() < tolerance::kLinear && d[1].Magnitude() < tolerance::kLinear)) continue;
+    // Across its line both ends go alike (else it would turn: left as it is); along it, each its own way.
+    const double across0 = d[0].Dot(gp_Vec(w.left)), across1 = d[1].Dot(gp_Vec(w.left));
+    if (std::abs(across0 - across1) > tolerance::kLinear) continue;
+    const double s0 = d[0].Dot(gp_Vec(w.dir)), s1 = w.length + d[1].Dot(gp_Vec(w.dir));
+    if (s1 - s0 < tolerance::kMinDimension) continue;
+    Object object = was;
+    if (std::abs(s0) > tolerance::kLinear || std::abs(s1 - w.length) > tolerance::kLinear) {
+      Recipe recipe = w.recipe;
+      auto& rect = std::get<RectangleProfile>(recipe.base);
+      const gp_Pnt p0 = w.start.Translated(gp_Vec(w.dir) * s0), p1 = w.start.Translated(gp_Vec(w.dir) * s1);
+      rect.plane.origin = p0.Translated(gp_Vec(w.left) * -w.right).Transformed(w.toWorld.Inverted());
+      rect.width = s1 - s0;
+      if (w.path.empty()) object.recipe = std::move(recipe);
+      else replaceOperand(object.recipe, w.path, 0, std::move(recipe));
+      // Its openings stay where they are along it: all must still be in the wall.
+      bool inside = true;
+      for (const OpeningExtent& e : openingExtents(was, document.worldTransform(was))) {
+        const gp_Vec u(gp::DZ().Crossed(e.normal));
+        const double a = gp_Vec(p0.XYZ()).Dot(u), b = gp_Vec(p1.XYZ()).Dot(u);
+        inside &= e.u0 >= std::min(a, b) - tolerance::kLinear && e.u1 <= std::max(a, b) + tolerance::kLinear;
+      }
+      if (!inside || !rebuild(object, context)) continue;
+    }
+    const gp_Vec sideways = gp_Vec(w.left) * across0;
+    if (sideways.Magnitude() > tolerance::kLinear) {
+      gp_Trsf t;
+      t.SetTranslation(sideways);
+      object.transform = localDelta(document.parentTransform(was), t) * object.transform;
+      displaced[i] = sideways;
+    }
+    changes.modify(object);
+    pinned.insert(i);
+    moved.insert(was.id);
+  }
+  // Walls (and slab corners) joined to a pinned wall that went sideways follow it.
+  if (!displaced.empty()) {
+    JoinFollow report;
+    settleWallJoins(document, changes, context, walls, wallEnds(walls), displaced, pinned, pinned, moved, report);
+  }
 }
 
 // --- rooms (docs/90 G-07) ------------------------------------------------------------------
