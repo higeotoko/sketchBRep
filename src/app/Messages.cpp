@@ -135,6 +135,8 @@ const Entry kEntries[] = {
     {"Roof pitch must be above 0", "勾配は 0 より大きく、30 寸以下にしてください"},
     {"Roof thickness must be at least 1", "屋根の厚さは 1 以上にしてください"},
     {"Roof overhangs must not be negative", "軒の出・けらばの出は 0 以上にしてください"},
+    {"The copy would lie on the opening itself", "コピーが元の開口と同じ所になります。少し動かしてください"},
+    {"Only openings in a vertical face can be copied", "コピーできるのは、壁の縦の面の開口だけです"},
     {"A mark is at most 40 and a product number 120 characters", "符号は 40 字まで、品番は 120 字までにしてください"},
     {"A mark or a product number is one line", "符号・品番は 1 行で入れてください"},
     {"A stair turns at right angles only", "階段の曲がり角は、直角だけにしてください（斜めの曲がりは、まだ作れません）"},

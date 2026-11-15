@@ -3650,12 +3650,21 @@ void MoveTool::mouseMove(const ToolEvent& e) {
                                    : QObject::tr("（面内を自由に。←→で壁沿い、↑で上下）");
     if (d.Magnitude() <= tolerance::kMinDimension) {
       host_.viewport().clearPreview();
-      host_.setStatus(QObject::tr("開口 %1 を移動: 動かす先をクリック、または距離を入力").arg(opening_->index) + keys);
+      host_.setStatus((copy_ ? QObject::tr("開口 %1 をコピー［コピー］: 置く先をクリック、または距離を入力")
+                             : QObject::tr("開口 %1 を移動: 動かす先をクリック、または距離を入力（Ctrl でコピー）"))
+                          .arg(opening_->index) + keys);
       return;
     }
     gp_Trsf t;
     t.SetTranslation(d);
     host_.viewport().setPreview(opening_->box.Moved(TopLoc_Location(t)), true);
+    if (copy_) {
+      host_.setStatus(QObject::tr("開口 %1 をコピー［コピー］: クリックで確定、または距離を入力。続けて「*3」で同じ間隔に 3 つ（左端から %2 ／ 腰高 %3）  [%4]")
+                          .arg(opening_->index)
+                          .arg(mm(opening_->offset + d.Dot(gp_Vec(opening_->along))), mm(opening_->sill + d.Z()),
+                               snapLabel(r.kind)) + keys);
+      return;
+    }
     const Status possible = host_.modeler().canMoveOpening(opening_->host, opening_->index, d);
     if (possible) {
       host_.setStatus(QObject::tr("開口 %1 を移動: クリックで確定、または距離を入力（左端から %2 ／ 腰高 %3）  [%4]")
@@ -3849,8 +3858,9 @@ bool MoveTool::keyPress(QKeyEvent* event) {
       locked_.reset();
       break;
     case Qt::Key_Control:
-      if (!event->isAutoRepeat())
-        host_.setStatus(QObject::tr("開口のコピーはまだできません。同じ大きさの開口は、開口ツールであけてください"));
+      if (event->isAutoRepeat()) return true;
+      copy_ = !copy_;  // docs/110: the same opening, again where it is put
+      refresh();
       return true;
     case Qt::Key_Shift:
       return true;  // the direction is the wall's: nothing to hold
@@ -3868,12 +3878,23 @@ void MoveTool::finish() {
     if (d.Magnitude() > tolerance::kMinDimension) {
       doc::Modeler& m = host_.modeler();
       recent_.begin(m);
-      const Status s = m.moveOpening(opening_->host, opening_->index, d);
-      if (s) {
-        recent_.mark(m);
-        lastOpening_ = LastOpening{opening_->host, opening_->index, gp_Dir(d)};
+      if (copy_) {
+        const auto made = m.copyOpening(opening_->host, opening_->index, d);
+        if (made) {
+          recent_.mark(m);
+          lastOpening_ = LastOpening{opening_->host, opening_->index, gp_Dir(d), true, d.Magnitude()};
+          host_.setStatus(QObject::tr("開口 %1 をコピーしました（同じ大きさ・建具。続けて「*3」で同じ間隔に増やせます）").arg(opening_->index));
+        } else {
+          host_.reportError(QObject::tr("開口をコピーできませんでした: %1").arg(userMessage(QString::fromStdString(made.error()))));
+        }
       } else {
-        host_.reportError(QObject::tr("開口を動かせませんでした: %1").arg(QString::fromStdString(s.message())));
+        const Status s = m.moveOpening(opening_->host, opening_->index, d);
+        if (s) {
+          recent_.mark(m);
+          lastOpening_ = LastOpening{opening_->host, opening_->index, gp_Dir(d)};
+        } else {
+          host_.reportError(QObject::tr("開口を動かせませんでした: %1").arg(QString::fromStdString(s.message())));
+        }
       }
       host_.setSelection({});  // face indices change with the shape
     }
@@ -4160,14 +4181,43 @@ void MoveTool::applyMeasurement(const QString& text) {
     return;
   }
   if (lastOpening_ && recent_.fresh(host_.modeler())) {
+    const LastOpening last = *lastOpening_;
+    doc::Modeler& m = host_.modeler();
+    if (last.copy) {
+      // "*3" / "x3": that many copies at the same spacing; a distance: the copy at that distance.
+      static const QRegularExpression times(QStringLiteral("^\\s*[*xX×]\\s*(\\d+)\\s*$"));
+      const auto many = times.match(text);
+      const int count = many.hasMatch() ? many.captured(1).toInt() : 1;
+      double spacing = last.distance;
+      if (!many.hasMatch()) {
+        const auto length = units::parseLength(text.toStdString());
+        if (!length || std::abs(*length) < tolerance::kMinDimension) {
+          host_.reportError(QObject::tr("距離、または「*3」のような数を入れてください: %1").arg(text));
+          return;
+        }
+        spacing = *length;
+      }
+      if (count < 1 || count > 100) {
+        host_.reportError(QObject::tr("コピーの数は 1〜100 です"));
+        return;
+      }
+      const Status s = recent_.replace(m, [&]() -> Status {
+        for (int k = 1; k <= count; ++k) {
+          const auto made = m.copyOpening(last.host, last.index, gp_Vec(last.direction) * (spacing * k));
+          if (!made) return Status::failure(made.error());
+        }
+        return Status::success();
+      });
+      if (!s) host_.reportError(QObject::tr("開口をコピーできませんでした: %1").arg(userMessage(QString::fromStdString(s.message()))));
+      else host_.setStatus(QObject::tr("開口 %1 を %2 つコピーしました（間隔 %3）").arg(last.index).arg(count).arg(mm(spacing)));
+      return;
+    }
     // The opening just moved goes that distance instead, the same way (negative: back).
     const auto length = units::parseLength(text.toStdString());
     if (!length || std::abs(*length) < tolerance::kMinDimension) {
       host_.reportError(QObject::tr("距離を解釈できません: %1").arg(text));
       return;
     }
-    const LastOpening last = *lastOpening_;
-    doc::Modeler& m = host_.modeler();
     const Status s = recent_.replace(
         m, [&] { return m.moveOpening(last.host, last.index, gp_Vec(last.direction) * *length); });
     if (!s) host_.reportError(QObject::tr("開口を動かせませんでした: %1").arg(QString::fromStdString(s.message())));

@@ -227,3 +227,70 @@ TEST_F(Schedules, AMarkGivenByHandStaysAndWorkedOutNumbersSkipIt) {
   for (const json& t : s["types"]) EXPECT_NE(t["mark"], "AW-1");
   EXPECT_FALSE(modeler.document().find(south)->attributes.count("opening_marks"));
 }
+
+// docs/110: a copy of an opening has the same size, fitting and hand-given mark, and a new id.
+TEST_F(Schedules, ACopyOfAnOpeningIsTheSameOpeningAgain) {
+  const json before = ok("list_openings", {{"ids", {south}}})["hosts"][0]["openings"];
+  ASSERT_EQ(before.size(), 2u);
+  const std::string firstId = before[0]["id"];
+  const double x0 = before[0]["offset"].get<double>();
+  ok("set_opening_mark", {{"host", south}, {"openings", {1}}, {"mark", "AW-1"}, {"product", "P-1"}});
+  // Within the wall: 1600 wide windows at 1200 and 4400 (from the left end); one copy 1100 to the
+  // left of the first would overlap nothing... the wall is 8000: put it between them.
+  const auto steps = modeler.history().undoCount();
+  json made = ok("copy_opening", {{"host", south}, {"opening", firstId}, {"by", {1600, 0, 0}}});
+  ASSERT_EQ(made["ids"].size(), 1u);
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  json after = ok("list_openings", {{"ids", {south}}})["hosts"][0]["openings"];
+  ASSERT_EQ(after.size(), 3u);
+  const json* copy = nullptr;
+  for (const json& o : after)
+    if (o["id"] == made["ids"][0]) copy = &o;
+  ASSERT_TRUE(copy);
+  EXPECT_NEAR((*copy)["offset"].get<double>(), x0 + 1600, 1e-6);
+  EXPECT_NEAR((*copy)["width"].get<double>(), 1600, 1e-6);
+  EXPECT_NEAR((*copy)["height"].get<double>(), 1200, 1e-6);
+  EXPECT_NEAR((*copy)["sill"].get<double>(), 900, 1e-6);
+  json s = ok("opening_schedule");
+  int aw = 0;
+  for (const json& o : s["openings"])
+    if (o["mark"] == "AW-1") {
+      ++aw;
+      EXPECT_EQ(o["fitting"], "引違い");
+      EXPECT_EQ(o["product"], "P-1");
+    }
+  EXPECT_EQ(aw, 2);  // the original and its copy
+  ASSERT_TRUE(modeler.undo());
+  EXPECT_EQ(ok("list_openings", {{"ids", {south}}})["hosts"][0]["openings"].size(), 2u);
+
+  // Onto an opening already there, or off the wall: refused, nothing changes.
+  EXPECT_FALSE(call("copy_opening", {{"host", south}, {"opening", 1}, {"by", {500, 0, 0}}}).value("ok", true));
+  EXPECT_FALSE(call("copy_opening", {{"host", south}, {"opening", 1}, {"by", {-5000, 0, 0}}}).value("ok", true));
+  EXPECT_FALSE(call("copy_opening", {{"host", south}, {"opening", 1}, {"by", {0, 0, 0}}}).value("ok", true));
+  EXPECT_EQ(modeler.history().undoCount(), steps);
+
+  // An array: the door on the east wall twice more, 1000 apart towards the south, one undo step;
+  // too many to fit and nothing is made.
+  EXPECT_FALSE(call("copy_opening", {{"host", east}, {"opening", 1}, {"by", {0, -1000, 0}}, {"count", 20}}).value("ok", true));
+  EXPECT_EQ(modeler.history().undoCount(), steps);
+  made = ok("copy_opening", {{"host", east}, {"opening", 1}, {"by", {0, -1000, 0}}, {"count", 2}});
+  EXPECT_EQ(made["ids"].size(), 2u);
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  EXPECT_EQ(ok("list_openings", {{"ids", {east}}})["hosts"][0]["openings"].size(), 3u);
+  ASSERT_TRUE(modeler.undo());
+
+  // Into another wall: the door into the partition (a 100 wall), centred at y = 2000.
+  made = ok("copy_opening", {{"host", east}, {"opening", 1}, {"to_host", partition}, {"at", {4000, 2000}}});
+  const json inPartition = ok("list_openings", {{"ids", {partition}}})["hosts"][0]["openings"];
+  ASSERT_EQ(inPartition.size(), 1u);
+  EXPECT_NEAR(inPartition[0]["width"].get<double>(), 900, 1e-6);
+  EXPECT_NEAR(inPartition[0]["height"].get<double>(), 2100, 1e-6);
+  EXPECT_NEAR(inPartition[0]["sill"].get<double>(), 0, 1e-6);
+  s = ok("opening_schedule");
+  int doors = 0;
+  for (const json& o : s["openings"])
+    if (o["kind"] == "door") ++doors;
+  EXPECT_EQ(doors, 2);  // its fitting came with it
+  // The room on the west still closed (a door is an opening, not a gap in the wall line).
+  EXPECT_TRUE(ok("room_at", {{"at", {2000, 3000}}})["closed"].get<bool>());
+}

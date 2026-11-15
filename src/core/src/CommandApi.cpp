@@ -2019,6 +2019,48 @@ const std::vector<CommandDef>& commands() {
          must(m.setOpeningSize(text(a, "host"), which, w, h, keep == "center"));
          return json::object();
        }},
+      {"copy_opening",
+       "Copy one opening of 'host' ('opening': id or number from list_openings): the same width, height and "
+       "fitting, and its mark / product number when given by hand (set_opening_mark); a new id. Either 'by': "
+       "[dx, dy, dz] (world mm) within the same wall (only the part along the wall and up / down counts), or "
+       "'to_host' (another wall) and 'at': [x, y] or [x, y, z], where along that wall it is centred (same sill "
+       "height; cut from the side facing the way the original does). 'count' (default 1) copies along 'by' "
+       "repeatedly (an array). Refused, with nothing changed, where a copy would not fit or would overlap. One "
+       "undo step. Returns the new ids.",
+       SCHEMA({"type": "object", "properties": {"host": {"type": "string"},
+               "opening": {"type": ["string", "integer"]},
+               "by": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+               "to_host": {"type": "string"}, "at": {"type": "array", "items": {"type": "number"}},
+               "count": {"type": "integer"}},
+               "required": ["host", "opening"]}),
+       [](doc::Modeler& m, const json& a) {
+         json one = {{"host", arg(a, "host")}, {"openings", json::array({arg(a, "opening")})}};
+         const std::size_t index = openingNumbers(m, one).front();
+         const bool by = a.contains("by"), to = a.contains("to_host");
+         if (by == to) throw ApiError("Give either 'by' (the same wall) or 'to_host' and 'at'");
+         json made = json::array();
+         if (to) {
+           const json& p = arg(a, "at");
+           if (!p.is_array() || p.size() < 2 || !p[0].is_number() || !p[1].is_number()) throw ApiError("'at' is [x, y] or [x, y, z]");
+           made.push_back(must(m.copyOpening(text(a, "host"), index, gp_Vec(p[0].get<double>(), p[1].get<double>(), 0.0),
+                                             text(a, "to_host"))));
+           return json{{"ids", made}};
+         }
+         const int count = a.contains("count") ? static_cast<int>(number(a, "count")) : 1;
+         if (count < 1 || count > 100) throw ApiError("'count' is 1 to 100");
+         const gp_Vec step(xyz(arg(a, "by"), "by"));
+         m.history().beginGroup("Copy Opening");
+         for (int k = 1; k <= count; ++k) {
+           const auto copy = m.copyOpening(text(a, "host"), index, step * k);
+           if (!copy) {
+             m.history().abortGroup();
+             throw ApiError(copy.error() + (count > 1 ? " (copy " + std::to_string(k) + "; nothing was changed)" : ""));
+           }
+           made.push_back(*copy);
+         }
+         m.history().endGroup();
+         return json{{"ids", made}};
+       }},
       {"move_opening",
        "Move one opening of 'host' within its wall: 'opening' (id or number from list_openings) and either "
        "'by': [dx, dy, dz] (world mm; only the part along the wall and up / down counts) or 'offset' and / "

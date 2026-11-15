@@ -5462,6 +5462,93 @@ Status Modeler::placeOpening(const ObjectId& hostId, std::size_t index, std::opt
   return Status::failure("No opening " + std::to_string(index) + " in this object");
 }
 
+namespace {
+// The left of a wall made by its tool, looking along its line (defined with the wall helpers).
+std::optional<gp_Dir> wallLeftSide(const Document& document, const Object& o);
+}  // namespace
+
+Result<std::string> Modeler::copyOpening(const ObjectId& hostId, std::size_t index, const gp_Vec& worldDelta,
+                                         const std::optional<ObjectId>& target) {
+  using R = Result<std::string>;
+  const auto list = openings(hostId);
+  if (!list) return R::failure(list.status().message());
+  const auto original = std::find_if(list->begin(), list->end(), [&](const OpeningInfo& o) { return o.index == index; });
+  if (original == list->end()) return R::failure("No opening " + std::to_string(index) + " in this object");
+  if (std::abs(original->normal.Z()) > 1e-6) return R::failure("Only openings in a vertical face can be copied");
+  const ObjectId into = target.value_or(hostId);
+  const Object* destination = document_.find(into);
+  if (!destination) return R::failure("Object not found");
+  if (destination->locked) return R::failure("'" + destination->name + "' is locked");
+  gp_Dir normal = original->normal;
+  gp_Pnt at;
+  double sill = original->sill;
+  if (into == hostId) {
+    // In its own face: along the wall and up / down.
+    const gp_Vec u(gp::DZ().Crossed(original->normal));
+    const gp_Vec inFace = u * worldDelta.Dot(u) + gp_Vec(gp::DZ()) * worldDelta.Z();
+    if (inFace.Magnitude() < tolerance::kLinear) return R::failure("The copy would lie on the opening itself");
+    at = original->center.Translated(inFace);
+    sill += inFace.Z();
+    if (sill < -tolerance::kLinear) return R::failure("The opening does not fit on the wall there");
+  } else {
+    // Another wall: the side facing the original's way (a wall made by its tool), at the point given.
+    if (const auto left = wallLeftSide(document_, *destination)) {
+      const double facing = gp_Vec(*left).Dot(gp_Vec(original->normal));
+      normal = facing >= 0 ? *left : left->Reversed();
+    }
+    at = gp_Pnt(worldDelta.XYZ());
+  }
+  // What the openings were before: the new one is the one not among them.
+  std::set<std::string> before;
+  if (const auto there = openings(into)) {
+    for (const OpeningInfo& o : *there) before.insert(o.id);
+  }
+  std::string fitting;
+  if (const auto stored = document_.find(hostId)->attributes.find("opening_fittings");
+      stored != document_.find(hostId)->attributes.end()) {
+    const nlohmann::json all = nlohmann::json::parse(stored->second, nullptr, false);
+    if (all.is_object() && all.contains(original->id)) fitting = all.at(original->id).dump();
+  }
+  std::string mark, product;
+  if (const auto stored = document_.find(hostId)->attributes.find("opening_marks");
+      stored != document_.find(hostId)->attributes.end()) {
+    const nlohmann::json all = nlohmann::json::parse(stored->second, nullptr, false);
+    if (all.is_object() && all.contains(original->id) && all.at(original->id).is_object()) {
+      mark = all.at(original->id).value("mark", std::string());
+      product = all.at(original->id).value("product", std::string());
+    }
+  }
+  history_.beginGroup("Copy Opening");
+  const auto cut = placeOpeningAt(into, normal, at, original->width, original->height, sill);
+  if (!cut) {
+    history_.abortGroup();
+    return R::failure(cut.error());
+  }
+  const auto after = openings(into);
+  std::optional<OpeningInfo> made;
+  if (after)
+    for (const OpeningInfo& o : *after)
+      if (!before.count(o.id)) made = o;
+  if (!made) {
+    history_.abortGroup();
+    return R::failure("The copy could not be found in the wall");
+  }
+  if (!fitting.empty()) {
+    if (const Status s = setOpeningFittings(into, {made->index}, fitting); !s) {
+      history_.abortGroup();
+      return R::failure(s.message());
+    }
+  }
+  if (!mark.empty() || !product.empty()) {
+    if (const Status s = setOpeningMarks(into, {made->index}, mark, product); !s) {
+      history_.abortGroup();
+      return R::failure(s.message());
+    }
+  }
+  history_.endGroup();
+  return made->id;
+}
+
 Status Modeler::removeOpenings(const ObjectId& hostId, const std::vector<std::size_t>& indices) {
   const Object* current = document_.find(hostId);
   if (!current) return Status::failure("Object not found");
@@ -5904,6 +5991,11 @@ void carryCorners(const Document& document, ChangeSet& changes, const std::vecto
       }
     }
   }
+}
+
+std::optional<gp_Dir> wallLeftSide(const Document& document, const Object& o) {
+  const auto band = wallBand(document, o);
+  return band ? std::optional<gp_Dir>(band->left) : std::nullopt;
 }
 
 std::vector<WallBand> allWallBands(const Document& document) {

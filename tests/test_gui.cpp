@@ -11213,6 +11213,45 @@ void GuiPhase1::moveToolSlidesAnOpeningWithinItsWall() {
   QVERIFY(std::abs(opening().offset-offset0)<1e-6);
   QVERIFY(std::abs(opening().sill-900)<1e-6);
   QVERIFY(std::abs(left()-wallLeft)<1e-6);
+
+  // docs/110: Ctrl copies the opening instead; "*3" right after makes more at the same spacing.
+  f.window.activateTool(MainWindow::ToolId::Select);
+  f.window.setSelection({});
+  f.window.activateTool(MainWindow::ToolId::Move);
+  f.vp->syncNow();
+  at=sill();
+  click(f.vp,f.vp->toWidget(at));
+  QTest::keyClick(f.vp,Qt::Key_Control);
+  move(f.vp,f.vp->toWidget(at.Translated(gp_Vec(-700,0,0))));
+  QVERIFY2(f.window.statusText().contains(QStringLiteral("コピー")),qPrintable(f.window.statusText()));
+  type(f.vp,QStringLiteral("1800"));
+  QVERIFY2(f.window.lastError().isEmpty(),qPrintable(f.window.lastError()));
+  QCOMPARE(m.openings(wall)->size(),std::size_t(2));
+  QVERIFY(std::abs(m.openings(wall)->front().offset-offset0)<1e-6);  // the original stayed
+  QCOMPARE(m.history().undoCount(),steps+1);
+  {
+    const auto& attributes=m.document().find(wall)->attributes;
+    const auto fittings=nlohmann::json::parse(attributes.at("opening_fittings"));
+    QCOMPARE(fittings.size(),std::size_t(2));  // the copy has the fitting too
+  }
+  // Two at that spacing do not fit in this 6000 wall: said, and the one copy stays.
+  type(f.vp,QStringLiteral("*2"));
+  QVERIFY(!f.window.lastError().isEmpty());
+  f.window.clearLastError();
+  QCOMPARE(m.openings(wall)->size(),std::size_t(2));
+  // A distance typed right after: the copy goes there instead, still one step.
+  type(f.vp,QStringLiteral("1700"));
+  QVERIFY2(f.window.lastError().isEmpty(),qPrintable(f.window.lastError()));
+  QCOMPARE(m.openings(wall)->size(),std::size_t(2));
+  {
+    double lo=1e300,hi=-1e300;
+    const auto list=m.openings(wall);QVERIFY(list);
+    for(const auto& o:*list){lo=std::min(lo,o.offset);hi=std::max(hi,o.offset);}
+    QVERIFY2(std::abs(hi-lo-1700)<1e-6,qPrintable(QString::number(hi-lo)));
+  }
+  QCOMPARE(m.history().undoCount(),steps+1);
+  QVERIFY(m.undo());
+  QCOMPARE(m.openings(wall)->size(),std::size_t(1));
   Q_UNUSED(id0);
 }
 

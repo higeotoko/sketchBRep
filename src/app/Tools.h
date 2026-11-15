@@ -1305,6 +1305,8 @@ class MoveTool : public TransformTool {
     doc::ObjectId host;
     std::size_t index = 0;
     gp_Dir direction;
+    bool copy = false;      // a copy was made (docs/110): "*3" makes more at the same spacing
+    double distance = 0.0;  // of that copy
   };
   std::optional<LastOpening> lastOpening_;
   // Whether the object pointed at has openings (for the hint), per document state.

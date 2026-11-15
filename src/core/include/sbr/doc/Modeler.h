@@ -565,6 +565,15 @@ class Modeler {
   // The same, to a position: `offset` and / or `sill` as in OpeningInfo.
   Status placeOpening(const ObjectId& host, std::size_t index, std::optional<double> offset,
                       std::optional<double> sill);
+  // A copy of one opening (docs/110): the same width, height and fitting, and the same mark and
+  // product number when given by hand; a new id. Within its wall it goes by the part of
+  // `worldDelta` in the wall's face (along and up / down, as moveOpening); into `target` (another
+  // wall) it is centred along that wall at `worldDelta` taken as a point, at the same sill
+  // height, cut from the side facing the way the original does (or that wall's left side).
+  // Refused, with nothing changed, where it would not fit or would overlap an opening. One undo
+  // step. The new opening's id.
+  Result<std::string> copyOpening(const ObjectId& host, std::size_t index, const gp_Vec& worldDelta,
+                                  const std::optional<ObjectId>& target = std::nullopt);
   // Removes openings: the wall is whole again there. Their fittings go with them; the other
   // openings keep their ids, sizes and fittings. One undo step.
   Status removeOpenings(const ObjectId& host, const std::vector<std::size_t>& indices);
