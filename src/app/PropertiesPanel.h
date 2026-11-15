@@ -52,6 +52,8 @@ class PropertiesPanel : public QWidget {
   // One opening's own mark and product number typed in (docs/109); both empty: the
   // worked-out mark again.
   void openingMarkEdited(const doc::ObjectId& id, int index, const QString& mark, const QString& product);
+  // The other openings of this one's mark made like it (docs/133).
+  void openingTypeMatched(const doc::ObjectId& id, int index);
   // A room's use / finish (key use, floor, wall, ceiling: `text`) or ceiling height (`value`, 0:
   // not given) typed in (docs/115).
   void roomFinishEdited(const doc::ObjectId& id, const QString& key, const QString& text, double value);

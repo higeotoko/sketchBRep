@@ -833,6 +833,9 @@ void MainWindow::buildUi() {
               refreshPanels();
             });
           });
+  connect(panel_, &PropertiesPanel::openingTypeMatched, this, [this](const doc::ObjectId& id, int index) {
+    QTimer::singleShot(0, this, [this, id, index] { matchOpeningType(id, index); });
+  });
   connect(panel_, &PropertiesPanel::roomFinishEdited, this,
           [this](const doc::ObjectId& id, const QString& key, const QString& text, double value) {
             QTimer::singleShot(0, this, [this, id, key, text, value] {
@@ -4446,6 +4449,19 @@ bool MainWindow::saveScheduleCsv(int table, const QString& path) {
   }
   file.close();
   setStatus(tr("表を CSV に保存しました: %1").arg(QDir::toNativeSeparators(path)));
+  return true;
+}
+
+bool MainWindow::matchOpeningType(const doc::ObjectId& host, int index) {
+  if (index < 1) return false;
+  const auto changed = modeler_.matchOpeningType(host, static_cast<std::size_t>(index));
+  if (!changed) {
+    reportError(tr("同じ符号の開口を揃えられません: %1").arg(userMessage(QString::fromStdString(changed.error()))));
+    refreshPanels();
+    return false;
+  }
+  setStatus(tr("同じ符号の開口 %1 個を、開口 %2 と同じ大きさ・建具・品番にしました（Ctrl+Z で戻せます）").arg(*changed).arg(index));
+  refreshPanels();
   return true;
 }
 

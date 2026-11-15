@@ -293,6 +293,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   bool saveScheduleDrawing(int table, const QString& path);
   // Every drawing with sheet numbers in one PDF (docs/125); the sheets written, 0 when refused.
   int saveDrawingSet(const QString& path, bool tablesWithPlan = false);
+  // docs/133: the other openings of this one's mark made like it.
+  bool matchOpeningType(const doc::ObjectId& host, int index);
   QString lastIfcSummary() const { return lastIfcSummary_; }
   QStringList lastIfcNotes() const { return lastIfcNotes_; }
  private:

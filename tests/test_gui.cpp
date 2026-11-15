@@ -11895,6 +11895,35 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
   QVERIFY(f.window.scheduleCsv(0).contains(QStringLiteral("W1,窓,引違い,1600,1200,2,900")));
   QVERIFY(m.undo());
   QVERIFY(m.document().find(south)->attributes.count("opening_marks"));
+  // docs/133: both south windows AW-1; the first made smaller by hand; picked by its hole, the
+  // button makes the other one like it.
+  QVERIFY(m.setOpeningMarks(south,{},"AW-1","P-1"));
+  QVERIFY(m.setOpeningSize(south,{1},1400.0,1000.0));
+  f.window.setSelection({});
+  f.vp->syncNow();
+  {
+    std::vector<ElementRef> hole;
+    for(const ElementRef& el:f.vp->allElements(south)){
+      if(el.type!=TopAbs_FACE)continue;
+      const TopoDS_Shape shape=f.vp->elementShape(el);
+      if(!shape.IsNull()&&m.openingOfFace(south,TopoDS::Face(shape))==std::optional<std::size_t>(1)){hole={el};break;}
+    }
+    QCOMPARE(hole.size(),std::size_t(1));
+    f.window.setElementSelection(hole);
+  }
+  QCOMPARE(f.window.selectedOpening(),std::size_t(1));
+  QApplication::processEvents();
+  auto* match=f.window.findChild<QToolButton*>(QStringLiteral("openingMatchType"));
+  QVERIFY(match);
+  QVERIFY2(match->text().contains(QStringLiteral("AW-1"))&&match->text().contains(QStringLiteral("1 個")),qPrintable(match->text()));
+  const auto steps=m.history().undoCount();
+  match->click();
+  QTRY_COMPARE(m.history().undoCount(),steps+1);
+  for(const auto& o:*m.openings(south)){
+    QVERIFY(std::abs(o.width-1400)<1e-6);
+    QVERIFY(std::abs(o.height-1000)<1e-6);
+  }
+  QVERIFY2(f.window.statusText().contains(QStringLiteral("1 個")),qPrintable(f.window.statusText()));
 }
 
 // docs/120 (N-09): in 3D one storey only; the model is not changed.

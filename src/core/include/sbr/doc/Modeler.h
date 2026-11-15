@@ -574,6 +574,19 @@ class Modeler {
   // mark. Applies to `indices` (1-based, all when empty). One undo step.
   Status setOpeningMarks(const ObjectId& host, const std::vector<std::size_t>& indices, const std::string& mark,
                          const std::string& product);
+  // A kind of opening (docs/97 N-08, docs/133): the openings that share a mark in the door and
+  // window schedule (one given by hand, or worked out from kind, fitting and size) are one type.
+  // Changed as a type, every one of them takes the new width / height (centre and sill kept),
+  // fitting (a JSON object as setOpeningFittings, {"type":"none"} for none) and product number,
+  // in every wall. All or nothing (refused where one would not fit), one undo step. How many.
+  struct OpeningTypeChange {
+    std::optional<double> width, height;
+    std::optional<std::string> fitting, product;
+  };
+  Result<int> changeOpeningType(const std::string& mark, const OpeningTypeChange& change);
+  // The other openings of this one's type take its width, height, fitting and product number
+  // (changeOpeningType with this one's). How many changed (0: it is the only one).
+  Result<int> matchOpeningType(const ObjectId& host, std::size_t index);
   // Resizes openings (all when `indices` is empty) keeping the horizontal
   // centre and the sill (keepCenter = false) or the centre (true) in place.
   // One undo step; the parameters stay editable.

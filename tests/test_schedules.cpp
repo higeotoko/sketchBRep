@@ -346,6 +346,65 @@ TEST_F(Schedules, ACopiedOpeningIsPastedWhereClicked) {
   EXPECT_EQ(modeler.history().undoCount(), steps);
 }
 
+// docs/133: openings of one mark changed as a type.
+TEST_F(Schedules, AnOpeningTypeIsChangedEverywhereAtOnce) {
+  auto rowsOf = [&](const std::string& mark) {
+    std::vector<sbr::doc::OpeningRow> out;
+    for (const auto& r : sbr::doc::openingSchedule(modeler.document()).rows)
+      if (r.mark == mark) out.push_back(r);
+    return out;
+  };
+  // The two 引違い on the south wall share a worked-out mark.
+  std::string sliding;
+  for (const auto& t : sbr::doc::openingSchedule(modeler.document()).types)
+    if (t.fitting == "引違い") sliding = t.mark;
+  ASSERT_FALSE(sliding.empty());
+  ASSERT_EQ(rowsOf(sliding).size(), 2u);
+  const double north0 = modeler.openings(north)->front().width;
+  const auto steps = modeler.history().undoCount();
+  json r = ok("change_opening_type", {{"mark", sliding}, {"width", 1800}, {"product", "AL-1800"}});
+  EXPECT_EQ(r["changed"], 2);
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  for (const auto& o : *modeler.openings(south)) {
+    EXPECT_NEAR(o.width, 1800, 1e-6);
+    EXPECT_NEAR(o.height, 1200, 1e-6);
+    EXPECT_NEAR(o.sill, 900, 1e-6);
+  }
+  EXPECT_NEAR(modeler.openings(north)->front().width, north0, 1e-6);  // another type: as it was
+  int products = 0;
+  for (const auto& row : sbr::doc::openingSchedule(modeler.document()).rows) products += row.product == "AL-1800";
+  EXPECT_EQ(products, 2);
+  ASSERT_TRUE(modeler.undo());
+  for (const auto& o : *modeler.openings(south)) EXPECT_NEAR(o.width, 1600, 1e-6);
+  // Too wide for the wall with two of them: refused, nothing changed; an unknown mark too.
+  EXPECT_FALSE(call("change_opening_type", {{"mark", sliding}, {"width", 4200}}).value("ok", true));
+  EXPECT_FALSE(call("change_opening_type", {{"mark", "ZZ-9"}, {"width", 1000}}).value("ok", true));
+  EXPECT_EQ(modeler.history().undoCount(), steps);
+  for (const auto& o : *modeler.openings(south)) EXPECT_NEAR(o.width, 1600, 1e-6);
+  // A mark given by hand to three windows in two walls; one of them changed by hand; the others
+  // made like it ('like').
+  ok("set_opening_mark", {{"host", south}, {"mark", "AW-1"}});
+  ok("set_opening_mark", {{"host", north}, {"openings", {1}}, {"mark", "AW-1"}});
+  ASSERT_EQ(rowsOf("AW-1").size(), 3u);
+  ok("set_opening_size", {{"host", north}, {"openings", {1}}, {"width", 1200}, {"height", 1100}});
+  bool mixed = false;
+  for (const auto& t : sbr::doc::openingSchedule(modeler.document()).types) mixed |= t.mark == "AW-1" && t.mixed;
+  EXPECT_TRUE(mixed);
+  const auto before = modeler.history().undoCount();
+  r = ok("change_opening_type", {{"like", {{"host", north}, {"opening", 1}}}});
+  EXPECT_EQ(r["changed"], 2);
+  EXPECT_EQ(modeler.history().undoCount(), before + 1);
+  for (const auto& row : rowsOf("AW-1")) {
+    EXPECT_NEAR(row.width, 1200, 1e-6);
+    EXPECT_NEAR(row.height, 1100, 1e-6);
+    EXPECT_EQ(row.fitting, rowsOf("AW-1").front().fitting);
+  }
+  mixed = false;
+  for (const auto& t : sbr::doc::openingSchedule(modeler.document()).types) mixed |= t.mark == "AW-1" && t.mixed;
+  EXPECT_FALSE(mixed);  // one type again
+  for (const auto& row : rowsOf("AW-1")) EXPECT_EQ(row.fitting, "窓");  // the north one is a 窓: so are they now (were 引違い)
+}
+
 // docs/113: a table on a sheet of its own.
 TEST_F(Schedules, ATableGoesOnASheetOfItsOwn) {
   const sbr::draw::Table table = sbr::doc::scheduleTable(modeler.document(), 0);

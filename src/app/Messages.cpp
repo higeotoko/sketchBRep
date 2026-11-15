@@ -137,6 +137,8 @@ const Entry kEntries[] = {
     {"Roof overhangs must not be negative", "軒の出・けらばの出は 0 以上にしてください"},
     {"The copy would lie on the opening itself", "コピーが元の開口と同じ所になります。少し動かしてください"},
     {"No member or wall has both ends on crossings of the grid (nothing was changed)", "両端が通り芯の交点にある柱・梁・壁がありません（何も変えていません）"},
+    {"No openings have the mark", "その符号の開口がありません"},
+    {"Name the mark of the openings to change", "変える開口の符号を指定してください"},
     {"Side boards: none, left, right or both", "側板は、なし・左・右・両側のどれかです"},
     {"A side board is 15 to 100 thick", "側板の厚さは 15〜100 にしてください"},
     {"A side board could not be built", "側板を作れませんでした"},

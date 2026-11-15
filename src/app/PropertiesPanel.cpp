@@ -1123,6 +1123,20 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       lines->addWidget(row);
       lines->addWidget(tag);
       lines->addWidget(place);
+      // docs/133: one picked, others of its mark elsewhere: make them all like this one.
+      if (focusOpening_ > 0 && scheduled) {
+        int same = 0;
+        for (const doc::OpeningRow& r : schedule.rows) same += r.mark == scheduled->mark;
+        if (same > 1) {
+          auto* match = new QToolButton;
+          match->setObjectName(QStringLiteral("openingMatchType"));
+          match->setText(tr("同じ符号（%1）のほか %2 個を、これと同じ大きさ・建具・品番にする").arg(QString::fromStdString(scheduled->mark)).arg(same - 1));
+          match->setToolTip(tr("建具表で同じ符号の開口（どの壁でも）が、この開口の幅・高さ・建具・品番になります。位置と腰高はそのまま。Ctrl+Z 1 回で戻せます"));
+          match->setEnabled(markEdit->isEnabled());
+          connect(match, &QToolButton::clicked, this, [this, id, index] { emit openingTypeMatched(id, index); });
+          lines->addWidget(match);
+        }
+      }
       form_->addRow(tr("開口 %1").arg(index), cell);
     }
   }

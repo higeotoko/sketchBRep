@@ -2482,6 +2482,31 @@ const std::vector<CommandDef>& commands() {
          must(m.setOpeningMarks(text(a, "host"), which, textOr(a, "mark", ""), textOr(a, "product", "")));
          return json::object();
        }},
+      {"change_opening_type",
+       "Change a kind of opening (docs/133): every opening with 'mark' in opening_schedule (given by hand or worked "
+       "out), in every wall, takes 'width' / 'height' (centre and sill kept), 'fitting' (an object as "
+       "set_opening_fittings; {\"type\":\"none\"} for none) and 'product', whichever are given. Or 'like': "
+       "{host, opening}: the others of that opening's mark take its size, fitting and product. All or nothing "
+       "(refused where one would not fit), one undo step. Returns how many changed.",
+       SCHEMA({"type": "object", "properties": {"mark": {"type": "string"}, "width": {"type": "number"},
+               "height": {"type": "number"}, "fitting": {"type": "object"}, "product": {"type": "string"},
+               "like": {"type": "object"}}}),
+       [](doc::Modeler& m, const json& a) {
+         if (a.contains("like")) {
+           const json& like = a.at("like");
+           if (!like.is_object()) throw ApiError("'like': {host, opening}");
+           const std::string host = text(like, "host");
+           const auto which = openingNumbers(m, json{{"host", host}, {"openings", json::array({like.value("opening", json())})}});
+           if (which.size() != 1) throw ApiError("'like': one opening");
+           return json{{"changed", must(m.matchOpeningType(host, which.front()))}};
+         }
+         doc::Modeler::OpeningTypeChange change;
+         if (a.contains("width")) change.width = number(a, "width");
+         if (a.contains("height")) change.height = number(a, "height");
+         if (a.contains("fitting")) change.fitting = a.at("fitting").dump();
+         if (a.contains("product")) change.product = text(a, "product");
+         return json{{"changed", must(m.changeOpeningType(text(a, "mark"), change))}};
+       }},
       {"opening_schedule",
        "The door and window schedule read from the walls as they are now. 'types': one line per mark (W1.. "
        "windows, D1.. doors, O1.. plain openings; the same mark for the same kind, fitting, width and height) "

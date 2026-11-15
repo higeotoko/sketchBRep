@@ -1,4 +1,5 @@
 #include "sbr/doc/Modeler.h"
+#include "sbr/doc/Schedules.h"
 #include "sbr/geom/RoomRegions.h"
 
 #include <BRepBuilderAPI_Transform.hxx>
@@ -5667,6 +5668,89 @@ Status Modeler::setOpeningFittings(const ObjectId& hostId, const std::vector<std
   changes.modify(object);
   history_.execute(changes.build("Set Attribute"));
   return Status::success();
+}
+
+Result<int> Modeler::changeOpeningType(const std::string& mark, const OpeningTypeChange& change) {
+  using R = Result<int>;
+  if (mark.empty()) return R::failure("Name the mark of the openings to change");
+  if (change.width && !(*change.width > 0)) return R::failure("An opening's width and height must be positive");
+  if (change.height && !(*change.height > 0)) return R::failure("An opening's width and height must be positive");
+  if (change.fitting) {
+    const nlohmann::json parsed = nlohmann::json::parse(*change.fitting, nullptr, false);
+    if (!parsed.is_object()) return R::failure("A fitting is a JSON object, e.g. {\"type\":\"window\"}");
+  }
+  // The openings of that mark, by wall, as the schedule has them now (their ids stay theirs).
+  struct Of {
+    std::vector<std::string> ids;
+    bool ownMark = false;
+    std::string mark;
+  };
+  std::map<ObjectId, Of> byHost;
+  int count = 0;
+  for (const OpeningRow& r : openingSchedule(document_).rows) {
+    if (r.mark != mark) continue;
+    Of& of = byHost[r.host];
+    of.ids.push_back(r.openingId);
+    of.ownMark |= r.ownMark;
+    of.mark = r.mark;
+    ++count;
+  }
+  if (count == 0) return R::failure("No openings have the mark '" + mark + "'");
+  for (const auto& [host, of] : byHost)
+    if (const Object* o = document_.find(host); o && o->locked) return R::failure("'" + o->name + "' is locked");
+  history_.beginGroup("Change Opening Type");
+  auto fail = [&](const std::string& why) {
+    history_.abortGroup();
+    return R::failure(why);
+  };
+  for (const auto& [host, of] : byHost) {
+    auto indices = openingIndices(host, of.ids);
+    if (!indices) return fail(indices.error());
+    if (change.width || change.height)
+      if (const Status s = setOpeningSize(host, *indices, change.width, change.height); !s) return fail(s.message());
+    if (change.fitting) {
+      indices = openingIndices(host, of.ids);
+      if (!indices) return fail(indices.error());
+      if (const Status s = setOpeningFittings(host, *indices, *change.fitting); !s) return fail(s.message());
+    }
+    if (change.product) {
+      indices = openingIndices(host, of.ids);
+      if (!indices) return fail(indices.error());
+      // A mark given by hand stays; a worked-out one stays worked out.
+      if (const Status s = setOpeningMarks(host, *indices, of.ownMark ? of.mark : std::string(), *change.product); !s) return fail(s.message());
+    }
+  }
+  history_.endGroup();
+  return count;
+}
+
+Result<int> Modeler::matchOpeningType(const ObjectId& host, std::size_t index) {
+  using R = Result<int>;
+  const auto list = openings(host);
+  if (!list) return R::failure(list.status().message());
+  const auto self = std::find_if(list->begin(), list->end(), [&](const OpeningInfo& o) { return o.index == index; });
+  if (self == list->end()) return R::failure("No opening " + std::to_string(index) + " in this object");
+  const OpeningRow* row = nullptr;
+  const OpeningSchedule schedule = openingSchedule(document_);
+  for (const OpeningRow& r : schedule.rows)
+    if (r.host == host && r.openingId == self->id) row = &r;
+  if (!row) return R::failure("This opening is not in the door and window schedule");
+  int others = 0;
+  for (const OpeningRow& r : schedule.rows) others += r.mark == row->mark && !(r.host == host && r.openingId == self->id);
+  if (others == 0) return 0;
+  std::string fitting = R"({"type":"none"})";
+  if (const auto stored = document_.find(host)->attributes.find("opening_fittings"); stored != document_.find(host)->attributes.end()) {
+    const nlohmann::json all = nlohmann::json::parse(stored->second, nullptr, false);
+    if (all.is_object() && all.contains(self->id)) fitting = all.at(self->id).dump();
+  }
+  OpeningTypeChange change;
+  change.width = self->width;
+  change.height = self->height;
+  change.fitting = fitting;
+  change.product = row->product;
+  const auto changed = changeOpeningType(row->mark, change);
+  if (!changed) return changed;
+  return others;
 }
 
 Status Modeler::setOpeningMarks(const ObjectId& hostId, const std::vector<std::size_t>& indices, const std::string& mark,
