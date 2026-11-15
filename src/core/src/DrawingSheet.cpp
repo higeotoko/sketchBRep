@@ -133,6 +133,51 @@ void dimension(std::vector<Item>& out, const gp_Pnt2d& a, const gp_Pnt2d& b, con
 
 }  // namespace
 
+namespace {
+// The frame and the title block (bottom right, 4 rows), in sheet units (paper mm x s).
+void frameAndTitle(std::vector<Item>& items, const Paper* paper, const SheetSpec& spec, const std::string& title, double s) {
+  auto P = [&](double x, double y) { return gp_Pnt2d(x * s, y * s); };
+    Item border;
+    border.kind = Item::Kind::Polyline;
+    border.pen = Pen::Frame;
+    border.closed = true;
+    border.points = {P(kLeftMargin, kMargin), P(paper->w - kMargin, kMargin), P(paper->w - kMargin, paper->h - kMargin),
+                     P(kLeftMargin, paper->h - kMargin)};
+    items.push_back(border);
+    // Title block, bottom right: 4 rows.
+    const double tx1 = paper->w - kMargin, tx0 = tx1 - kTitleW, ty0 = kMargin, ty1 = kMargin + kTitleH;
+    const double row = kTitleH / 4, label = 20.0, half = (kTitleW - 2 * label) / 2;
+    Item boxLine;
+    boxLine.kind = Item::Kind::Polyline;
+    boxLine.pen = Pen::TitleBlock;
+    boxLine.closed = true;
+    boxLine.points = {P(tx0, ty0), P(tx1, ty0), P(tx1, ty1), P(tx0, ty1)};
+    items.push_back(boxLine);
+    for (int r = 1; r < 4; ++r) items.push_back(line(Pen::TitleBlock, P(tx0, ty0 + r * row), P(tx1, ty0 + r * row)));
+    items.push_back(line(Pen::TitleBlock, P(tx0 + label, ty0), P(tx0 + label, ty1)));
+    const double xMidLabel = tx0 + label + half;
+    items.push_back(line(Pen::TitleBlock, P(xMidLabel, ty0), P(xMidLabel, ty0 + 2 * row)));
+    items.push_back(line(Pen::TitleBlock, P(xMidLabel + label, ty0), P(xMidLabel + label, ty0 + 2 * row)));
+    char scaleRow[48];
+    std::snprintf(scaleRow, sizeof scaleRow, "1:%g (%s)", s, paper->name);
+    struct Cell {
+      double x, y;
+      const char* label;
+      std::string value;
+    };
+    const Cell cells[] = {
+        {tx0, ty0 + 3 * row, "工事名", spec.title.project}, {tx0, ty0 + 2 * row, "図面名", title},
+        {tx0, ty0 + 1 * row, "縮尺", scaleRow},             {xMidLabel, ty0 + 1 * row, "日付", spec.title.date},
+        {tx0, ty0, "図番", spec.title.number},              {xMidLabel, ty0, "作成者", spec.title.author},
+    };
+    for (const Cell& c : cells) {
+      items.push_back(text(Pen::TitleBlock, P(c.x + label / 2, c.y + row / 2), c.label, 2.5, 1, 1));
+      if (!c.value.empty()) items.push_back(text(Pen::TitleBlock, P(c.x + label + 2, c.y + row / 2), c.value, 3.5, 0, 1));
+    }
+  }
+
+}  // namespace
+
 Result<Sheet> layoutSheet(const View& view, const SheetSpec& spec) {
   using R = Result<Sheet>;
   const double s = spec.scale;
@@ -312,45 +357,7 @@ Result<Sheet> layoutSheet(const View& view, const SheetSpec& spec) {
     items.push_back(arrow);
     items.push_back(text(Pen::Text, P(ax1 - 14, ay1 - 6.5), "N", 3.5, 1, 0));
   }
-  if (frame) {
-    Item border;
-    border.kind = Item::Kind::Polyline;
-    border.pen = Pen::Frame;
-    border.closed = true;
-    border.points = {P(kLeftMargin, kMargin), P(paper->w - kMargin, kMargin), P(paper->w - kMargin, paper->h - kMargin),
-                     P(kLeftMargin, paper->h - kMargin)};
-    items.push_back(border);
-    // Title block, bottom right: 4 rows.
-    const double tx1 = paper->w - kMargin, tx0 = tx1 - kTitleW, ty0 = kMargin, ty1 = kMargin + kTitleH;
-    const double row = kTitleH / 4, label = 20.0, half = (kTitleW - 2 * label) / 2;
-    Item boxLine;
-    boxLine.kind = Item::Kind::Polyline;
-    boxLine.pen = Pen::TitleBlock;
-    boxLine.closed = true;
-    boxLine.points = {P(tx0, ty0), P(tx1, ty0), P(tx1, ty1), P(tx0, ty1)};
-    items.push_back(boxLine);
-    for (int r = 1; r < 4; ++r) items.push_back(line(Pen::TitleBlock, P(tx0, ty0 + r * row), P(tx1, ty0 + r * row)));
-    items.push_back(line(Pen::TitleBlock, P(tx0 + label, ty0), P(tx0 + label, ty1)));
-    const double xMidLabel = tx0 + label + half;
-    items.push_back(line(Pen::TitleBlock, P(xMidLabel, ty0), P(xMidLabel, ty0 + 2 * row)));
-    items.push_back(line(Pen::TitleBlock, P(xMidLabel + label, ty0), P(xMidLabel + label, ty0 + 2 * row)));
-    char scaleRow[48];
-    std::snprintf(scaleRow, sizeof scaleRow, "1:%g (%s)", s, paper->name);
-    struct Cell {
-      double x, y;
-      const char* label;
-      std::string value;
-    };
-    const Cell cells[] = {
-        {tx0, ty0 + 3 * row, "工事名", spec.title.project}, {tx0, ty0 + 2 * row, "図面名", title},
-        {tx0, ty0 + 1 * row, "縮尺", scaleRow},             {xMidLabel, ty0 + 1 * row, "日付", spec.title.date},
-        {tx0, ty0, "図番", spec.title.number},              {xMidLabel, ty0, "作成者", spec.title.author},
-    };
-    for (const Cell& c : cells) {
-      items.push_back(text(Pen::TitleBlock, P(c.x + label / 2, c.y + row / 2), c.label, 2.5, 1, 1));
-      if (!c.value.empty()) items.push_back(text(Pen::TitleBlock, P(c.x + label + 2, c.y + row / 2), c.value, 3.5, 0, 1));
-    }
-  }
+  if (frame) frameAndTitle(items, paper, spec, title, s);
   if (!view.spec.framingPreset.empty()) {
     items.push_back(
         text(Pen::Text, P(kLeftMargin + 2, kMargin + 4), "概略検討用／断面・接合未照査", 2.5, 0, 0));
@@ -358,6 +365,95 @@ Result<Sheet> layoutSheet(const View& view, const SheetSpec& spec) {
       items.push_back(
           text(Pen::Text, P(kLeftMargin + 2, kMargin + 9), "基礎形状の有無・寸法は別途確認", 2.5, 0, 0));
   }
+  sheet.items = std::move(items);
+  return sheet;
+}
+
+}  // namespace sbr::draw
+
+namespace sbr::draw {
+
+Result<Sheet> tableSheet(const Table& table, const SheetSpec& spec) {
+  using R = Result<Sheet>;
+  const double s = spec.scale;
+  if (!(s > 0) || !std::isfinite(s)) return R::failure("The scale must be positive");
+  if (table.headers.empty()) return R::failure("The table has no columns");
+  const double textH = 3.0, rowH = 7.0, pad = 2.0, titleH = 10.0, noteH = 5.0;
+  // Column widths from the longest cell (paper mm).
+  std::vector<double> widths(table.headers.size(), 0.0);
+  auto widen = [&](const std::vector<std::string>& cells) {
+    for (std::size_t c = 0; c < widths.size() && c < cells.size(); ++c)
+      widths[c] = std::max(widths[c], textWidth(cells[c], textH) + 2 * pad);
+  };
+  widen(table.headers);
+  for (const auto& row : table.rows) widen(row);
+  double tableW = 0;
+  for (double w : widths) tableW += w;
+  const double tableH = titleH + rowH * (table.rows.size() + 1) + noteH * table.notes.size();
+  double noteW = 0;
+  for (const std::string& n : table.notes) noteW = std::max(noteW, textWidth(n, 2.5));
+  const double needW = std::max(tableW, noteW), needH = tableH;
+  // The paper: the smallest that holds it inside the frame, above the title block.
+  Sheet sheet;
+  sheet.scale = s;
+  const Paper* paper = nullptr;
+  auto area = [&](const Paper& p, double& x0, double& y0, double& x1, double& y1) {
+    x0 = spec.frame ? kLeftMargin : kMargin;
+    x1 = p.w - kMargin;
+    y0 = spec.frame ? kMargin + kTitleH + 4 : kMargin;
+    y1 = p.h - kMargin;
+  };
+  for (const Paper& p : kPapers) {
+    if (spec.paper != "auto" && spec.paper != p.name) continue;
+    double x0, y0, x1, y1;
+    area(p, x0, y0, x1, y1);
+    const bool fits = needW <= x1 - x0 - 2 * kPad && needH <= y1 - y0 - 2 * kPad;
+    if (spec.paper != "auto" || fits) {
+      paper = &p;
+      if (!fits) sheet.notes.push_back(std::string("The table does not fit on ") + p.name + ": it runs off the frame");
+      break;
+    }
+  }
+  if (!paper) {
+    if (spec.paper != "auto") return R::failure("Unknown paper '" + spec.paper + "' (A4, A3, A2, A1 or auto)");
+    paper = &kPapers[3];
+    sheet.notes.push_back("The table does not fit on A1: it runs off the frame");
+  }
+  sheet.paper = paper->name;
+  sheet.paperWidth = paper->w;
+  sheet.paperHeight = paper->h;
+  sheet.title = table.title;
+  double ax0, ay0, ax1, ay1;
+  area(*paper, ax0, ay0, ax1, ay1);
+  auto P = [&](double x, double y) { return gp_Pnt2d(x * s, y * s); };
+  std::vector<Item> items;
+  const double left = ax0 + kPad, top = ay1 - kPad;
+  items.push_back(text(Pen::Text, P(left, top - titleH / 2), table.title, 5.0, 0, 1));
+  const double gridTop = top - titleH;
+  const std::size_t lines = table.rows.size() + 1;
+  // Rules: across under the title, under the headings (heavier), under each row; and the columns.
+  for (std::size_t r = 0; r <= lines; ++r) {
+    const double y = gridTop - rowH * r;
+    items.push_back(line(r == 1 ? Pen::Cut : Pen::Visible, P(left, y), P(left + tableW, y)));
+  }
+  double x = left;
+  for (std::size_t c = 0; c <= widths.size(); ++c) {
+    items.push_back(line(Pen::Visible, P(x, gridTop), P(x, gridTop - rowH * lines)));
+    if (c < widths.size()) x += widths[c];
+  }
+  auto row = [&](std::size_t r, const std::vector<std::string>& cells) {
+    double cx = left;
+    for (std::size_t c = 0; c < widths.size(); ++c) {
+      if (c < cells.size() && !cells[c].empty())
+        items.push_back(text(Pen::Text, P(cx + pad, gridTop - rowH * r - rowH / 2), cells[c], textH, 0, 1));
+      cx += widths[c];
+    }
+  };
+  row(0, table.headers);
+  for (std::size_t r = 0; r < table.rows.size(); ++r) row(r + 1, table.rows[r]);
+  for (std::size_t n = 0; n < table.notes.size(); ++n)
+    items.push_back(text(Pen::Text, P(left, gridTop - rowH * lines - noteH * (n + 0.8)), table.notes[n], 2.5, 0, 1));
+  if (spec.frame) frameAndTitle(items, paper, spec, table.title, s);
   sheet.items = std::move(items);
   return sheet;
 }

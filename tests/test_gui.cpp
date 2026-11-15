@@ -11691,6 +11691,13 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
   QVERIFY2(f.window.statusText().contains(QStringLiteral("CSV に保存しました")),qPrintable(f.window.statusText()));
   QVERIFY(f.window.scheduleCsv(1).contains(QStringLiteral("LDK,1FL,48.00")));
   QVERIFY(f.window.scheduleCsv(2).contains(QStringLiteral("未評価")));
+  // docs/113: the table as a drawing (PDF), from the same window.
+  {
+    const QString pdf=dir.filePath(QStringLiteral("doors.pdf"));
+    QVERIFY(f.window.saveScheduleDrawing(0,pdf));
+    QVERIFY(QFileInfo(pdf).size()>1000);
+    QVERIFY2(f.window.statusText().contains(QStringLiteral("図面（A4）")),qPrintable(f.window.statusText()));
+  }
   // docs/109: a mark and a product number typed in the wall's properties.
   f.window.setSelection({south});
   QApplication::processEvents();

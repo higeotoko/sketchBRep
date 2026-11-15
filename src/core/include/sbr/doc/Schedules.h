@@ -10,6 +10,7 @@
 #include <gp_Pnt.hxx>
 
 #include "sbr/doc/Document.h"
+#include "sbr/draw/Drawing.h"
 
 namespace sbr::doc {
 
@@ -101,6 +102,10 @@ AreaTable areaTable(const Document& document);
 // lines (壁芯) as the walls are now; a room no longer enclosed says so. The unit is written
 // "m²": the view's font has no glyph for the one-character square metre sign.
 std::string roomTagText(const RoomRow& room);
+
+// The tables for a sheet of their own (docs/113): 0 the door and window schedule (one line per
+// mark), 1 the room schedule, 2 the area table; the same values and notes as the CSV.
+draw::Table scheduleTable(const Document& document, int which);
 
 // The tables as CSV for a spreadsheet: UTF-8 with a byte order mark, CRLF, Japanese headings,
 // lengths in mm, areas in m2.

@@ -169,6 +169,20 @@ struct Sheet {
   std::vector<std::string> notes;  // e.g. "does not fit A1 at 1:50"
 };
 
+// A table for a sheet of its own (docs/113): the door and window schedule, the room schedule,
+// the area table. Cells are text as shown; the first row of `rows` comes under `headers`.
+struct Table {
+  std::string title;  // e.g. "建具表"
+  std::vector<std::string> headers;
+  std::vector<std::vector<std::string>> rows;
+  std::vector<std::string> notes;  // under the table
+};
+
+// The table on the smallest paper A4..A1 that holds it (or the paper asked for), in the frame
+// with the title block, at the top left of the drawing area. Sheet units are real mm at
+// spec.scale like a view's (so the writers treat it the same); text 3 mm on paper.
+Result<Sheet> tableSheet(const Table& table, const SheetSpec& spec);
+
 // The paper the view fits at that scale ("auto": the smallest A4..A1 that
 // holds it with the title block, else A1 with a note).
 Result<Sheet> layoutSheet(const View& view, const SheetSpec& spec);

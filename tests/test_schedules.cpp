@@ -9,6 +9,7 @@
 #include "sbr/doc/Modeler.h"
 #include "sbr/doc/Schedules.h"
 #include "sbr/draw/Drawing.h"
+#include <filesystem>
 
 using json = nlohmann::json;
 using sbr::api::CommandApi;
@@ -293,4 +294,53 @@ TEST_F(Schedules, ACopyOfAnOpeningIsTheSameOpeningAgain) {
   EXPECT_EQ(doors, 2);  // its fitting came with it
   // The room on the west still closed (a door is an opening, not a gap in the wall line).
   EXPECT_TRUE(ok("room_at", {{"at", {2000, 3000}}})["closed"].get<bool>());
+}
+
+// docs/113: a table on a sheet of its own.
+TEST_F(Schedules, ATableGoesOnASheetOfItsOwn) {
+  const sbr::draw::Table table = sbr::doc::scheduleTable(modeler.document(), 0);
+  EXPECT_EQ(table.title, "建具表");
+  ASSERT_EQ(table.rows.size(), 5u);  // W1, W2, D1, O1 and the total
+  EXPECT_EQ(table.rows.front().front(), "W1");
+  EXPECT_EQ(table.rows.back()[5], "5");
+  sbr::draw::SheetSpec spec;
+  spec.title.drawing = table.title;
+  const auto sheet = sbr::draw::tableSheet(table, spec);
+  ASSERT_TRUE(sheet) << sheet.error();
+  EXPECT_EQ(sheet->paper, "A4");
+  std::map<std::string, int> texts;
+  int rules = 0;
+  for (const auto& item : sheet->items) {
+    if (item.kind == sbr::draw::Item::Kind::Text) ++texts[item.text];
+    if (item.kind == sbr::draw::Item::Kind::Line) ++rules;
+  }
+  EXPECT_EQ(texts["W1"], 1);
+  EXPECT_EQ(texts["引違い"], 1);
+  EXPECT_GE(texts["建具表"], 2);  // over the table and in the title block
+  EXPECT_GE(rules, 7 + 10);  // 7 rules across (title, headings, 5 rows), 10 columns
+  // Everything inside the paper.
+  for (const auto& item : sheet->items)
+    for (const auto& p : item.points) {
+      EXPECT_GE(p.X() / sheet->scale, -0.1);
+      EXPECT_LE(p.X() / sheet->scale, sheet->paperWidth + 0.1);
+      EXPECT_GE(p.Y() / sheet->scale, -0.1);
+      EXPECT_LE(p.Y() / sheet->scale, sheet->paperHeight + 0.1);
+    }
+  // The rooms and areas tables too, and as files.
+  EXPECT_EQ(sbr::doc::scheduleTable(modeler.document(), 1).rows.front().front(), "居間");
+  EXPECT_EQ(sbr::doc::scheduleTable(modeler.document(), 2).rows.front().back(), "未評価");
+  const auto dir = std::filesystem::temp_directory_path() / "sbr_schedule_sheet";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+  for (const char* which : {"openings", "rooms", "areas"}) {
+    for (const char* ext : {".dxf", ".jww"}) {
+      const std::string path = (dir / (std::string(which) + ext)).u8string();
+      const json r = ok("export_schedule", {{"path", path}, {"table", which}});
+      EXPECT_EQ(r["paper"], "A4") << which;
+      EXPECT_GT(std::filesystem::file_size(path), 500u) << path;
+    }
+  }
+  EXPECT_FALSE(call("export_schedule", {{"path", (dir / "x.txt").u8string()}, {"table", "openings"}}).value("ok", true));
+  EXPECT_FALSE(call("export_schedule", {{"path", (dir / "x.dxf").u8string()}, {"table", "walls"}}).value("ok", true));
+  std::filesystem::remove_all(dir);
 }

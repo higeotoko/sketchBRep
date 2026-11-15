@@ -3401,6 +3401,33 @@ const std::vector<CommandDef>& commands() {
          for (const std::string& n : sheet.notes) notes.push_back(n);
          return json{{"paper", sheet.paper}, {"scale", sheet.scale}, {"objects", view.objects}, {"notes", notes}};
        }},
+      {"export_schedule",
+       "A table on a sheet of its own as DXF or JWW (by the path's extension): 'table' openings (建具表, one "
+       "line per mark), rooms (室の表) or areas (面積の表), read from the model as it is (as opening_schedule / "
+       "room_schedule / area_table). 'paper' (auto, A4-A1), 'frame' (default true), 'project', 'number', "
+       "'author', 'date' for the title block.",
+       SCHEMA({"type": "object", "properties": {"path": {"type": "string"}, "table": {"enum": ["openings", "rooms", "areas"]},
+               "paper": {"type": "string"}, "frame": {"type": "boolean"}, "project": {"type": "string"},
+               "number": {"type": "string"}, "author": {"type": "string"}, "date": {"type": "string"}},
+               "required": ["path", "table"]}),
+       [](doc::Modeler& m, const json& a) {
+         const std::string which = text(a, "table");
+         const int index = which == "openings" ? 0 : which == "rooms" ? 1 : which == "areas" ? 2 : -1;
+         if (index < 0) throw ApiError("'table': openings, rooms or areas");
+         const draw::Table table = doc::scheduleTable(m.document(), index);
+         draw::SheetSpec sheetSpec;
+         sheetSpec.paper = textOr(a, "paper", "auto");
+         sheetSpec.frame = a.value("frame", true);
+         sheetSpec.title = {textOr(a, "project", {}), table.title, textOr(a, "number", {}), textOr(a, "author", {}),
+                            textOr(a, "date", {})};
+         const draw::Sheet sheet = must(draw::tableSheet(table, sheetSpec));
+         const std::string path = text(a, "path");
+         const std::string ext = path.size() > 4 ? path.substr(path.size() - 4) : std::string();
+         if (ext == ".jww" || ext == ".JWW") must(draw::writeJww(sheet, path));
+         else if (ext == ".dxf" || ext == ".DXF") must(draw::writeDxf(sheet, path));
+         else throw ApiError("The path must end in .dxf or .jww (PDF: from the tables window in the app)");
+         return json{{"paper", sheet.paper}, {"rows", table.rows.size()}, {"notes", sheet.notes}};
+       }},
       {"import_dae",
        "Import a COLLADA (.dae) file (e.g. exported from SketchUp Pro): each mesh an object, triangles joined "
        "into faces, closed meshes solids, colours from the materials, units and up axis converted (mm, Z up), "
@@ -3446,7 +3473,7 @@ bool isFileCommand(const std::string& name) {
   return name == "save" || name == "save_copy" || name == "open" || name == "export_ifc" || name == "export_step" || name == "export_stl" || name == "export_3dm" ||
          name == "import_brep" || name == "export_brep" || name == "import_iges" || name == "export_iges" ||
          name == "import_3dm" || name == "import_dxf" || name == "import_jww" || name == "set_material_texture" || name == "export_dae" ||
-         name == "import_dae" || name == "export_drawing" || name == "export_gltf";
+         name == "import_dae" || name == "export_drawing" || name == "export_schedule" || name == "export_gltf";
 }
 
 CommandApi::Effect builtinEffect(const std::string& name) {

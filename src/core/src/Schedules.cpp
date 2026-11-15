@@ -276,6 +276,50 @@ std::string roomTagText(const RoomRow& room) {
   return room.name + "  " + number(room.centreArea / 1e6, 2) + " m²";
 }
 
+draw::Table scheduleTable(const Document& document, int which) {
+  draw::Table t;
+  if (which == 0) {
+    const OpeningSchedule s = openingSchedule(document);
+    t.title = "建具表";
+    t.headers = {"符号", "種類", "建具", "幅", "高さ", "数", "腰高", "品番", "注"};
+    int total = 0;
+    for (const OpeningTypeRow& r : s.types) {
+      std::string sills;
+      for (double v : r.sills) sills += (sills.empty() ? "" : " / ") + number(v, 0);
+      t.rows.push_back({r.mark, kindName(r.kind), r.fitting, number(r.width, 0), number(r.height, 0), std::to_string(r.count), sills,
+                        r.product, r.mixed ? "大きさ・建具・品番の違う開口が混ざっています" : ""});
+      total += r.count;
+    }
+    t.rows.push_back({"合計", "", "", "", "", std::to_string(total), "", "", ""});
+    t.notes = {"寸法は mm。符号は、手で決めたものはそのまま、ほかは種類・建具・幅・高さが同じ開口に同じものを付けています。",
+               "平面図の開口の横の符号と同じです。モデルから読んだ今の値です。"};
+  } else if (which == 1) {
+    const RoomSchedule s = roomSchedule(document);
+    t.title = "室の表";
+    t.headers = {"室名", "階", "壁芯 (m2)", "内法 (m2)", "内法の周長 (m)", "状態"};
+    for (const RoomRow& r : s.rows)
+      t.rows.push_back({r.name, r.level, r.closed ? number(r.centreArea / 1e6, 2) : "",
+                        r.closed ? (r.innerKnown ? number(r.innerArea / 1e6, 2) : "未評価") : "",
+                        r.closed && r.innerKnown ? number(r.innerPerimeter / 1e3, 2) : "",
+                        r.counted ? "閉じている" : !r.closed ? "閉じていない" : "ほかの室と同じ場所"});
+    t.rows.push_back({"合計（閉じている室だけ）", "", number(s.centreTotal / 1e6, 2), s.innerMissing == 0 ? number(s.innerTotal / 1e6, 2) : "未評価", "", ""});
+    t.notes = {"壁芯＝壁を描いた線の内側、内法＝壁の面の内側。法の床面積（算入・不算入の決まり）ではありません。"};
+  } else {
+    const AreaTable a = areaTable(document);
+    t.title = "面積の表";
+    t.headers = {"階", "壁で囲まれた面積・壁芯 (m2)", "室の数", "室のない閉じた所", "室の合計・壁芯 (m2)", "室の合計・内法 (m2)",
+                 "床スラブ (m2)", "法の床面積"};
+    for (const AreaRow& r : a.rows)
+      t.rows.push_back({r.level.empty() ? "（レベルなし）" : r.level, r.enclosedKnown ? number(r.enclosedArea / 1e6, 2) : "",
+                        std::to_string(r.rooms), r.enclosedKnown ? std::to_string(r.regionsWithoutRoom) : "",
+                        number(r.roomCentre / 1e6, 2), r.innerMissing == 0 ? number(r.roomInner / 1e6, 2) : "未評価",
+                        number(r.slabArea / 1e6, 2), "未評価"});
+    t.rows.push_back({"合計", number(a.enclosedTotal / 1e6, 2), "", "", number(a.roomCentreTotal / 1e6, 2), "", number(a.slabTotal / 1e6, 2), "未評価"});
+    t.notes = {"モデルから測った面積です。法の床面積・建築面積（算入・不算入の決まり、吹抜け・階段・庇の扱い）は見ていないので未評価です。"};
+  }
+  return t;
+}
+
 std::string openingScheduleCsv(const OpeningSchedule& schedule) {
   Csv csv;
   csv.line({"符号", "種類", "建具", "幅(mm)", "高さ(mm)", "数", "腰高(mm)", "品番", "注"});
