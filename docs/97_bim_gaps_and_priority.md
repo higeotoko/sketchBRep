@@ -101,6 +101,7 @@ docs/90 の G 番号に、今回の洗い出しで見つけたもの（N 番号�
 | 6 | 建具表・室の表・面積の表・札 | 第 1 段は済（3 つの表と CSV、平面の符号、室の面積の札、AI）。残りは符号を手で決める・品番、表をシートに置く、法の床面積 | [docs/104](104_schedules_and_tags.md) |
 | 7 | 開口だけを選ぶ・コピー、建具の形 | ほぼ済（符号・品番と入力欄：[docs/109](109_opening_marks_and_products.md)、選ぶ・コピー：[docs/110](110_copy_openings.md)）。平面の記号をつかむ・建具の形はまだ | [docs/106](106_handoff_and_roadmap.md) の A |
 | ほか | 斜めの角のつながり・斜めの外周の寄棟 | 済 | [docs/107](107_slanted_wall_corners.md)・[docs/108](108_hip_roof_on_slanted_outline.md) |
+| ほか | 階段の平面の記号・表を図面に・平面で開口をつかむ・室の仕上げと仕上げ表（N-02 の一部） | 済 | [docs/112](112_stair_plan_marks.md)〜[docs/115](115_room_finishes.md) |
 | 8 以降 | — | まだ。道筋と設計は [docs/106](106_handoff_and_roadmap.md) | — |
 
 ## 6. 決まり
