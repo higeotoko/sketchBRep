@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -384,7 +385,8 @@ Status writeJww(const Sheet& sheet, const std::string& path) {
     }
   }
   a.count(0);  // no block definitions
-  std::ofstream f(path, std::ios::binary);
+  // UTF-8 path (a Japanese file or folder name; docs/125: a narrow path could not open them on Windows).
+  std::ofstream f(std::filesystem::u8path(path), std::ios::binary);
   if (!f) return Status::failure("Cannot write " + path);
   f.write(reinterpret_cast<const char*>(a.data().data()), static_cast<std::streamsize>(a.data().size()));
   if (!f) return Status::failure("Writing " + path + " failed");

@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 
@@ -212,7 +213,8 @@ Status writeDxf(const Sheet& sheet, const std::string& path) {
   }
   o.code(0, "ENDSEC");
   o.code(0, "EOF");
-  std::ofstream f(path, std::ios::binary);
+  // UTF-8 path (a Japanese file or folder name; docs/125: a narrow path could not open them on Windows).
+  std::ofstream f(std::filesystem::u8path(path), std::ios::binary);
   if (!f) return Status::failure("Cannot write " + path);
   const std::string text = o.str();
   f.write(text.data(), static_cast<std::streamsize>(text.size()));
