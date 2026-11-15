@@ -64,6 +64,8 @@ struct RoomRow {
   bool innerKnown = false;
   double innerArea = 0.0, innerPerimeter = 0.0;  // mm2, mm (内法)
   gp_Pnt at;
+  std::string use, floor, wall, ceiling;  // docs/115: as given on the room
+  double ceilingHeight = 0.0;              // 0: not given
 };
 
 struct RoomSchedule {
@@ -104,7 +106,8 @@ AreaTable areaTable(const Document& document);
 std::string roomTagText(const RoomRow& room);
 
 // The tables for a sheet of their own (docs/113): 0 the door and window schedule (one line per
-// mark), 1 the room schedule, 2 the area table; the same values and notes as the CSV.
+// mark), 1 the room schedule, 2 the area table, 3 the finish schedule (docs/115); the same
+// values and notes as the CSV.
 draw::Table scheduleTable(const Document& document, int which);
 
 // The tables as CSV for a spreadsheet: UTF-8 with a byte order mark, CRLF, Japanese headings,
@@ -112,5 +115,7 @@ draw::Table scheduleTable(const Document& document, int which);
 std::string openingScheduleCsv(const OpeningSchedule& schedule);
 std::string roomScheduleCsv(const RoomSchedule& schedule);
 std::string areaTableCsv(const AreaTable& table);
+// Any of the tables as CSV, in the same form (docs/115: the finish schedule).
+std::string tableCsv(const draw::Table& table);
 
 }  // namespace sbr::doc

@@ -344,3 +344,43 @@ TEST_F(Schedules, ATableGoesOnASheetOfItsOwn) {
   EXPECT_FALSE(call("export_schedule", {{"path", (dir / "x.dxf").u8string()}, {"table", "walls"}}).value("ok", true));
   std::filesystem::remove_all(dir);
 }
+
+// docs/115: a room's use, finishes and ceiling height.
+TEST_F(Schedules, ARoomCarriesItsFinishesIntoTheFinishSchedule) {
+  const auto steps = modeler.history().undoCount();
+  json set = ok("set_room_finish", {{"id", room}, {"use", "居間"}, {"floor", "フローリング t15"}, {"ceiling_height", 2400}});
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  // Keys not given stay; an empty word takes one away.
+  ok("set_room_finish", {{"id", room}, {"wall", "PB t12.5 クロス貼り"}, {"ceiling", "PB t9.5 クロス貼り"}});
+  json rooms = ok("room_schedule", {{"include_csv", true}});
+  const json& r = rooms["rooms"][0];
+  EXPECT_EQ(r["use"], "居間");
+  EXPECT_EQ(r["floor"], "フローリング t15");
+  EXPECT_EQ(r["wall"], "PB t12.5 クロス貼り");
+  EXPECT_NEAR(r["ceiling_height"].get<double>(), 2400, 1e-9);
+  EXPECT_NE(rooms["csv"].get<std::string>().find("閉じている,居間,フローリング t15,PB t12.5 クロス貼り,PB t9.5 クロス貼り,2400"), std::string::npos)
+      << rooms["csv"];
+  const sbr::draw::Table finishes = sbr::doc::scheduleTable(modeler.document(), 3);
+  EXPECT_EQ(finishes.title, "仕上げ表");
+  ASSERT_EQ(finishes.rows.size(), 1u);
+  EXPECT_EQ(finishes.rows[0][3], "フローリング t15");
+  EXPECT_EQ(finishes.rows[0][6], "2400");
+  EXPECT_NE(sbr::doc::tableCsv(finishes).find("居間,1FL,居間,フローリング t15"), std::string::npos);
+  ok("set_room_finish", {{"id", room}, {"wall", ""}});
+  EXPECT_EQ(ok("room_schedule")["rooms"][0]["wall"], "");
+  // Refused: a ceiling too low, a word over two lines, not a room. Nothing changes.
+  const auto before = modeler.history().undoCount();
+  EXPECT_FALSE(call("set_room_finish", {{"id", room}, {"ceiling_height", 500}}).value("ok", true));
+  EXPECT_FALSE(call("set_room_finish", {{"id", room}, {"floor", "a\nb"}}).value("ok", true));
+  EXPECT_FALSE(call("set_room_finish", {{"id", south}, {"floor", "x"}}).value("ok", true));
+  EXPECT_EQ(modeler.history().undoCount(), before);
+  // The sheet and the file.
+  const auto dir = std::filesystem::temp_directory_path() / "sbr_finish_sheet";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+  EXPECT_EQ(ok("export_schedule", {{"path", (dir / "f.dxf").u8string()}, {"table", "finishes"}})["paper"], "A4");
+  std::filesystem::remove_all(dir);
+  // All taken away: the attribute goes.
+  ok("set_room_finish", {{"id", room}, {"use", ""}, {"floor", ""}, {"ceiling", ""}, {"ceiling_height", 0}});
+  EXPECT_FALSE(modeler.document().find(room)->attributes.count("room_finish"));
+}

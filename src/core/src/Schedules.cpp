@@ -195,6 +195,14 @@ RoomSchedule roomSchedule(const Document& document) {
     row.innerArea = r.innerArea;
     row.innerPerimeter = r.innerPerimeter;
     row.at = r.at;
+    if (const Object* marker = document.find(r.id)) {
+      const RoomFinish finish = roomFinishOf(*marker);
+      row.use = finish.use;
+      row.floor = finish.floor;
+      row.wall = finish.wall;
+      row.ceiling = finish.ceiling;
+      row.ceilingHeight = finish.ceilingHeight;
+    }
     if (row.counted) {
       out.centreTotal += r.centreArea;
       if (r.innerKnown) out.innerTotal += r.innerArea;
@@ -304,6 +312,13 @@ draw::Table scheduleTable(const Document& document, int which) {
                         r.counted ? "閉じている" : !r.closed ? "閉じていない" : "ほかの室と同じ場所"});
     t.rows.push_back({"合計（閉じている室だけ）", "", number(s.centreTotal / 1e6, 2), s.innerMissing == 0 ? number(s.innerTotal / 1e6, 2) : "未評価", "", ""});
     t.notes = {"壁芯＝壁を描いた線の内側、内法＝壁の面の内側。法の床面積（算入・不算入の決まり）ではありません。"};
+  } else if (which == 3) {
+    const RoomSchedule s = roomSchedule(document);
+    t.title = "仕上げ表";
+    t.headers = {"室名", "階", "用途", "床", "壁", "天井", "天井高"};
+    for (const RoomRow& r : s.rows)
+      t.rows.push_back({r.name, r.level, r.use, r.floor, r.wall, r.ceiling, r.ceilingHeight > 0 ? number(r.ceilingHeight, 0) : ""});
+    t.notes = {"室ごとに入れた用途・仕上げ・天井高です（空欄：まだ入れていない）。天井高は床から mm。"};
   } else {
     const AreaTable a = areaTable(document);
     t.title = "面積の表";
@@ -318,6 +333,17 @@ draw::Table scheduleTable(const Document& document, int which) {
     t.notes = {"モデルから測った面積です。法の床面積・建築面積（算入・不算入の決まり、吹抜け・階段・庇の扱い）は見ていないので未評価です。"};
   }
   return t;
+}
+
+std::string tableCsv(const draw::Table& table) {
+  Csv csv;
+  csv.line(table.headers);
+  for (const auto& row : table.rows) csv.line(row);
+  if (!table.notes.empty()) {
+    csv.line({});
+    for (const std::string& n : table.notes) csv.line({"注", n});
+  }
+  return csv.out.str();
 }
 
 std::string openingScheduleCsv(const OpeningSchedule& schedule) {
@@ -344,12 +370,13 @@ std::string openingScheduleCsv(const OpeningSchedule& schedule) {
 
 std::string roomScheduleCsv(const RoomSchedule& schedule) {
   Csv csv;
-  csv.line({"室名", "階", "壁芯(m2)", "内法(m2)", "内法の周長(m)", "状態"});
+  csv.line({"室名", "階", "壁芯(m2)", "内法(m2)", "内法の周長(m)", "状態", "用途", "床", "壁", "天井", "天井高(mm)"});
   for (const RoomRow& r : schedule.rows) {
     csv.line({r.name, r.level, r.closed ? number(r.centreArea / 1e6, 2) : "",
               r.closed ? (r.innerKnown ? number(r.innerArea / 1e6, 2) : "未評価") : "",
               r.closed && r.innerKnown ? number(r.innerPerimeter / 1e3, 2) : "",
-              r.counted ? "閉じている" : !r.closed ? "閉じていない" : "ほかの室と同じ場所"});
+              r.counted ? "閉じている" : !r.closed ? "閉じていない" : "ほかの室と同じ場所", r.use, r.floor, r.wall, r.ceiling,
+              r.ceilingHeight > 0 ? number(r.ceilingHeight, 0) : ""});
   }
   csv.line({"合計（閉じている室だけ）", "", number(schedule.centreTotal / 1e6, 2),
             schedule.innerMissing == 0 ? number(schedule.innerTotal / 1e6, 2) : "未評価（内法が出ない室があります）", "", ""});

@@ -2473,6 +2473,27 @@ const std::vector<CommandDef>& commands() {
          if (a.value("include_csv", false)) result["csv"] = doc::openingScheduleCsv(s);
          return result;
        }},
+      {"set_room_finish",
+       "A room's (create_room) use and finishes (docs/115): any of 'use' (用途, e.g. 居間), 'floor', 'wall', "
+       "'ceiling' (words as on a finish schedule, e.g. フローリング t15) and 'ceiling_height' (mm from the floor, "
+       "1000 to 10000; 0 takes it away). Keys not given stay; an empty word takes it away. Shown in room_schedule "
+       "and the finish schedule (export_schedule table finishes). One undo step.",
+       SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "use": {"type": "string"}, "floor": {"type": "string"},
+               "wall": {"type": "string"}, "ceiling": {"type": "string"}, "ceiling_height": {"type": "number"}},
+               "required": ["id"]}),
+       [](doc::Modeler& m, const json& a) {
+         const doc::Object* marker = m.document().find(text(a, "id"));
+         if (!marker) throw ApiError("Object not found");
+         doc::RoomFinish finish = doc::roomFinishOf(*marker);
+         if (a.contains("use")) finish.use = text(a, "use");
+         if (a.contains("floor")) finish.floor = text(a, "floor");
+         if (a.contains("wall")) finish.wall = text(a, "wall");
+         if (a.contains("ceiling")) finish.ceiling = text(a, "ceiling");
+         if (a.contains("ceiling_height")) finish.ceilingHeight = number(a, "ceiling_height");
+         must(m.setRoomFinish(text(a, "id"), finish));
+         return json{{"id", text(a, "id")}, {"use", finish.use}, {"floor", finish.floor}, {"wall", finish.wall},
+                     {"ceiling", finish.ceiling}, {"ceiling_height", finish.ceilingHeight}};
+       }},
       {"room_schedule",
        "The room schedule as the walls are now: per room name, level, closed, counted (closed and not sharing "
        "its region), problem, area_centre / area_inner (m2; area_inner null = not evaluated), inner_perimeter "
@@ -2485,7 +2506,8 @@ const std::vector<CommandDef>& commands() {
          json rooms = json::array();
          for (const auto& r : s.rows) {
            json row{{"id", r.id}, {"name", r.name}, {"level", r.level}, {"closed", r.closed}, {"counted", r.counted},
-                    {"problem", r.problem}, {"tag", doc::roomTagText(r)}};
+                    {"problem", r.problem}, {"tag", doc::roomTagText(r)}, {"use", r.use}, {"floor", r.floor},
+                    {"wall", r.wall}, {"ceiling", r.ceiling}, {"ceiling_height", r.ceilingHeight}};
            if (r.closed) {
              row["area_centre"] = r.centreArea / 1e6;
              row["area_inner"] = r.innerKnown ? json(r.innerArea / 1e6) : json(nullptr);
@@ -3403,17 +3425,17 @@ const std::vector<CommandDef>& commands() {
        }},
       {"export_schedule",
        "A table on a sheet of its own as DXF or JWW (by the path's extension): 'table' openings (建具表, one "
-       "line per mark), rooms (室の表) or areas (面積の表), read from the model as it is (as opening_schedule / "
+       "line per mark), rooms (室の表), areas (面積の表) or finishes (仕上げ表, set_room_finish), read from the model as it is (as opening_schedule / "
        "room_schedule / area_table). 'paper' (auto, A4-A1), 'frame' (default true), 'project', 'number', "
        "'author', 'date' for the title block.",
-       SCHEMA({"type": "object", "properties": {"path": {"type": "string"}, "table": {"enum": ["openings", "rooms", "areas"]},
+       SCHEMA({"type": "object", "properties": {"path": {"type": "string"}, "table": {"enum": ["openings", "rooms", "areas", "finishes"]},
                "paper": {"type": "string"}, "frame": {"type": "boolean"}, "project": {"type": "string"},
                "number": {"type": "string"}, "author": {"type": "string"}, "date": {"type": "string"}},
                "required": ["path", "table"]}),
        [](doc::Modeler& m, const json& a) {
          const std::string which = text(a, "table");
-         const int index = which == "openings" ? 0 : which == "rooms" ? 1 : which == "areas" ? 2 : -1;
-         if (index < 0) throw ApiError("'table': openings, rooms or areas");
+         const int index = which == "openings" ? 0 : which == "rooms" ? 1 : which == "areas" ? 2 : which == "finishes" ? 3 : -1;
+         if (index < 0) throw ApiError("'table': openings, rooms, areas or finishes");
          const draw::Table table = doc::scheduleTable(m.document(), index);
          draw::SheetSpec sheetSpec;
          sheetSpec.paper = textOr(a, "paper", "auto");

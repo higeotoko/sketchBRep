@@ -77,6 +77,16 @@ struct RoomInfo {
   int unreadableWalls = 0;            // walls of this storey no longer the shape their tool made (not counted as walls)
 };
 
+// What a room is used for and its finishes (docs/97 N-02, docs/115): words as people write them
+// on a finish schedule; the ceiling height from the floor (0: not given).
+struct RoomFinish {
+  std::string use, floor, wall, ceiling;
+  double ceilingHeight = 0.0;
+  bool empty() const { return use.empty() && floor.empty() && wall.empty() && ceiling.empty() && ceilingHeight <= 0.0; }
+};
+// Read from a room marker (attribute room_finish); empty when none is given.
+RoomFinish roomFinishOf(const Object& marker);
+
 // A roof made by createRoof (docs/90 G-08, docs/99) as it stands in the world.
 struct RoofInfo {
   geom::RoofSpec spec;  // outline, height and fall direction in world coordinates
@@ -483,6 +493,10 @@ class Modeler {
   Result<ObjectId> createRoom(const gp_Pnt& at, const std::string& name);
   // Every room marker with its region as the walls are now.
   std::vector<RoomInfo> rooms() const;
+  // A room's use, finishes and ceiling height (docs/115), kept on its marker. All empty: taken
+  // away. Each word at most 60 characters on one line; the ceiling height 0 (not given) or
+  // 1000 to 10000. One undo step.
+  Status setRoomFinish(const ObjectId& room, const RoomFinish& finish);
   // The same, from a document alone (tables and drawings run without a Modeler).
   static std::vector<RoomInfo> roomsIn(const Document& document);
   // Everything the walls standing on a floor at height `floor` enclose (壁芯), with or

@@ -6926,6 +6926,49 @@ std::vector<RoomInfo> Modeler::roomsIn(const Document& document_) {
   return out;
 }
 
+RoomFinish roomFinishOf(const Object& marker) {
+  RoomFinish out;
+  const auto stored = marker.attributes.find("room_finish");
+  if (stored == marker.attributes.end()) return out;
+  const nlohmann::json j = nlohmann::json::parse(stored->second, nullptr, false);
+  if (!j.is_object()) return out;
+  out.use = j.value("use", std::string());
+  out.floor = j.value("floor", std::string());
+  out.wall = j.value("wall", std::string());
+  out.ceiling = j.value("ceiling", std::string());
+  out.ceilingHeight = j.value("ceiling_height", 0.0);
+  return out;
+}
+
+Status Modeler::setRoomFinish(const ObjectId& room, const RoomFinish& finish) {
+  const Object* marker = document_.find(room);
+  if (!marker || !isRoomMarker(*marker)) return Status::failure("Not a room made by the room tool");
+  if (marker->locked) return Status::failure("The object is locked");
+  for (const std::string* word : {&finish.use, &finish.floor, &finish.wall, &finish.ceiling}) {
+    if (word->size() > 180) return Status::failure("A finish is at most 60 characters");
+    if (word->find_first_of("\r\n") != std::string::npos) return Status::failure("A finish is one line");
+  }
+  if (!std::isfinite(finish.ceilingHeight) || finish.ceilingHeight < 0 ||
+      (finish.ceilingHeight > 0 && (finish.ceilingHeight < 1000 || finish.ceilingHeight > 10000)))
+    return Status::failure("A ceiling height is 1000 to 10000 (or 0: not given)");
+  Object object = *marker;
+  if (finish.empty()) {
+    object.attributes.erase("room_finish");
+  } else {
+    nlohmann::json j = nlohmann::json::object();
+    if (!finish.use.empty()) j["use"] = finish.use;
+    if (!finish.floor.empty()) j["floor"] = finish.floor;
+    if (!finish.wall.empty()) j["wall"] = finish.wall;
+    if (!finish.ceiling.empty()) j["ceiling"] = finish.ceiling;
+    if (finish.ceilingHeight > 0) j["ceiling_height"] = finish.ceilingHeight;
+    object.attributes["room_finish"] = j.dump();
+  }
+  ChangeSet changes(document_);
+  changes.modify(object);
+  history_.execute(changes.build("Room Finish"));
+  return Status::success();
+}
+
 Result<ObjectId> Modeler::createRoom(const gp_Pnt& at, const std::string& name) {
   using R = Result<ObjectId>;
   if (name.empty()) return R::failure("A room needs a name");

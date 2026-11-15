@@ -11692,7 +11692,7 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
     auto* note=dialog->findChild<QLabel*>(QStringLiteral("areaTableNote"));
     auto* save=dialog->findChild<QPushButton*>(QStringLiteral("scheduleSaveCsv"));
     if(!tabs||!types||!each||!rooms||!areas||!note||!save){why=QStringLiteral("a table is missing");dialog->reject();return;}
-    shown=tabs->count()==3&&types->rowCount()==2&&types->item(0,0)->text()==QStringLiteral("W1")&&
+    shown=tabs->count()==4&&types->rowCount()==2&&types->item(0,0)->text()==QStringLiteral("W1")&&
           types->item(0,2)->text()==QStringLiteral("引違い")&&types->item(0,5)->text()==QStringLiteral("2")&&
           types->item(1,0)->text()==QStringLiteral("D1")&&types->item(1,1)->text()==QStringLiteral("扉")&&
           each->rowCount()==3&&
@@ -11722,6 +11722,25 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
     QVERIFY(f.window.saveScheduleDrawing(0,pdf));
     QVERIFY(QFileInfo(pdf).size()>1000);
     QVERIFY2(f.window.statusText().contains(QStringLiteral("図面（A4）")),qPrintable(f.window.statusText()));
+  }
+  // docs/115: a room's finish typed in its properties goes into the finish schedule.
+  {
+    f.window.setSelection({room});
+    QApplication::processEvents();
+    auto* floorEdit=f.window.findChild<QLineEdit*>(QStringLiteral("roomFinish_floor"));QVERIFY(floorEdit);
+    auto* height=f.window.findChild<QDoubleSpinBox*>(QStringLiteral("roomFinish_ceiling_height"));QVERIFY(height);
+    const auto before=m.history().undoCount();
+    floorEdit->setText(QStringLiteral("フローリング t15"));
+    emit floorEdit->editingFinished();
+    QTRY_VERIFY(m.document().find(room)->attributes.count("room_finish"));
+    QCOMPARE(m.history().undoCount(),before+1);
+    f.window.setSelection({room});
+    QApplication::processEvents();
+    height=f.window.findChild<QDoubleSpinBox*>(QStringLiteral("roomFinish_ceiling_height"));QVERIFY(height);
+    height->setValue(2400);
+    emit height->editingFinished();
+    QTRY_VERIFY(f.window.scheduleCsv(3).contains(QStringLiteral("フローリング t15,,,2400")));
+    QVERIFY2(f.window.statusText().contains(QStringLiteral("仕上げ")),qPrintable(f.window.statusText()));
   }
   // docs/109: a mark and a product number typed in the wall's properties.
   f.window.setSelection({south});

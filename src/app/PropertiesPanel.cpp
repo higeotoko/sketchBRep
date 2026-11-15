@@ -535,6 +535,38 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
         if (room.unreadableWalls > 0) why += tr("。形を直接変えた壁 %1 枚は壁として数えていません").arg(room.unreadableWalls);
         row(tr("面積"), tr("なし（%1）").arg(why), "roomProblem", QString());
       }
+      {
+        // docs/115: its use and finishes, for the finish schedule.
+        const doc::RoomFinish finish = doc::roomFinishOf(*o);
+        auto word = [&](const QString& label, const char* key, const std::string& value, const QString& hint) {
+          auto* edit = new QLineEdit(QString::fromStdString(value));
+          edit->setObjectName(QStringLiteral("roomFinish_") + QLatin1String(key));
+          edit->setPlaceholderText(hint);
+          edit->setMaxLength(60);
+          edit->setEnabled(!o->locked);
+          const QString k = QLatin1String(key), before = QString::fromStdString(value);
+          connect(edit, &QLineEdit::editingFinished, this, [this, id, edit, k, before] {
+            if (edit->text().trimmed() != before) emit roomFinishEdited(id, k, edit->text(), 0.0);
+          });
+          form_->addRow(label, edit);
+        };
+        word(tr("用途"), "use", finish.use, tr("例：居間"));
+        word(tr("床"), "floor", finish.floor, tr("例：フローリング t15"));
+        word(tr("壁"), "wall", finish.wall, tr("例：PB t12.5 クロス貼り"));
+        word(tr("天井"), "ceiling", finish.ceiling, tr("例：PB t9.5 クロス貼り"));
+        auto* height = lengthSpin(finish.ceilingHeight);
+        height->setObjectName(QStringLiteral("roomFinish_ceiling_height"));
+        height->setRange(0, 10000);
+        height->setSpecialValueText(tr("未入力"));
+        height->setValue(finish.ceilingHeight);
+        height->setToolTip(tr("床から天井まで（mm）。0 で消します"));
+        height->setEnabled(!o->locked);
+        const double h0 = finish.ceilingHeight;
+        connect(height, &QDoubleSpinBox::editingFinished, this, [this, id, height, h0] {
+          if (std::abs(height->value() - h0) > 1e-9) emit roomFinishEdited(id, QStringLiteral("ceiling_height"), QString(), height->value());
+        });
+        form_->addRow(tr("天井高"), height);
+      }
       break;
     }
   }
