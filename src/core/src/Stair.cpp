@@ -304,7 +304,7 @@ Result<StairPlanMarks> stairPlanMarks(const StairSpec& spec, double cutZ) {
   out.arrow.push_back({flat(tip), flat(tip - dir * (head * c) - left * (head * s))});
   if (out.cut) {
     // Across the width, slanted, with a zigzag in the middle (the usual break line).
-    const double half = spec.width / 2 + 150.0, slant = 0.3 * half, zig = 60.0;
+    const double half = spec.width / 2 + 60.0, slant = 0.3 * half, zig = 60.0;  // a little past the sides, not into the walls
     out.breakLine = {flat(tip - left * half - dir * slant), flat(tip - left * zig - dir * (slant * zig / half)),
                      flat(tip + dir * (zig * 1.5)), flat(tip - dir * (zig * 1.5)),
                      flat(tip + left * zig + dir * (slant * zig / half)), flat(tip + left * half + dir * slant)};
