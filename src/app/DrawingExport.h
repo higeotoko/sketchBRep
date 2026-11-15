@@ -37,6 +37,8 @@ namespace sbr::app {
 // Paints the sheet into `target` (keeping the paper's proportions).
 void renderSheet(QPainter& painter, const draw::Sheet& sheet, const QRectF& target);
 Status writePdf(const draw::Sheet& sheet, const QString& path);
+// Several sheets as the pages of one PDF, each on its own paper size (docs/125).
+Status writePdfPages(const std::vector<draw::Sheet>& sheets, const QString& path);
 // Printing: the printer set to the sheet's paper (landscape, no margins),
 // then the sheet at real size; shrunk to fit a smaller paper (*scaled).
 void setUpPrinter(const draw::Sheet& sheet, QPrinter& printer);

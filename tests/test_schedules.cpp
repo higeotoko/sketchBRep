@@ -565,3 +565,59 @@ TEST(WallLayerLines, ALineBetweenEachTwoLayersBrokenAtOpenings) {
       ++along;
   EXPECT_GE(along, 4);
 }
+
+// docs/125: a set of drawings with sheet numbers.
+TEST_F(Schedules, ASetOfDrawingsCarriesSheetNumbers) {
+  sbr::doc::DrawingSetSpec spec;
+  spec.title.project = "Test";
+  const auto set = sbr::doc::drawingSet(modeler.document(), spec);
+  ASSERT_TRUE(set) << set.error();
+  // The list, the 1FL plan (2FL has nothing: its plan is left out with a note), 4 elevations,
+  // the door / room / area tables (no finishes given).
+  ASSERT_GE(set->sheets.size(), 9u);
+  EXPECT_EQ(set->numbers.front(), "A-01");
+  EXPECT_EQ(set->names.front(), "図面リスト");
+  for (std::size_t i = 0; i < set->numbers.size(); ++i) {
+    char want[8];
+    std::snprintf(want, sizeof want, "A-%02zu", i + 1);
+    EXPECT_EQ(set->numbers[i], want);
+  }
+  auto has = [&](const std::string& name) { return std::find(set->names.begin(), set->names.end(), name) != set->names.end(); };
+  EXPECT_TRUE(has("1FL 平面図"));
+  EXPECT_TRUE(has("南立面図") && has("西立面図"));
+  EXPECT_TRUE(has("建具表") && has("室の表") && has("面積の表"));
+  EXPECT_FALSE(has("仕上げ表"));
+  // Each sheet's title block carries its number; the list names every sheet.
+  for (std::size_t i = 0; i < set->sheets.size(); ++i) {
+    bool numbered = false;
+    for (const auto& item : set->sheets[i].items) numbered |= item.kind == sbr::draw::Item::Kind::Text && item.text == set->numbers[i];
+    EXPECT_TRUE(numbered) << set->numbers[i];
+  }
+  int listed = 0;
+  for (const auto& item : set->sheets.front().items)
+    for (const auto& n : set->numbers) listed += item.kind == sbr::draw::Item::Kind::Text && item.text == n ? 1 : 0;
+  EXPECT_GE(listed, static_cast<int>(set->numbers.size()));
+  // As files: one per sheet; written again they are refused (nothing replaced).
+  const auto dir = std::filesystem::temp_directory_path() / "sbr_drawing_set";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+  const json files = ok("export_drawing_set", {{"folder", dir.u8string()}, {"format", "dxf"}});
+  EXPECT_EQ(files["sheets"].size(), set->sheets.size());
+  for (const json& f : files["sheets"]) EXPECT_TRUE(std::filesystem::exists(std::filesystem::u8path(f["path"].get<std::string>())));
+  EXPECT_FALSE(call("export_drawing_set", {{"folder", dir.u8string()}}).value("ok", true));
+  std::filesystem::remove_all(dir);
+}
+
+// docs/125: drawings written under Japanese names (the app suggests the drawing's name).
+TEST_F(Schedules, DrawingsAreWrittenUnderJapaneseNames) {
+  const auto dir = std::filesystem::temp_directory_path() / std::filesystem::u8path(u8"図面テスト");
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+  for (const char* ext : {".dxf", ".jww"}) {
+    const std::string path = (dir / std::filesystem::u8path(std::string(u8"1FL 平面図") + ext)).u8string();
+    const json r = call("export_drawing", {{"path", path}, {"kind", "plan"}, {"cut_z", 1100}});
+    EXPECT_TRUE(r.value("ok", false)) << ext << ": " << r.dump();
+    EXPECT_TRUE(std::filesystem::exists(std::filesystem::u8path(path))) << ext;
+  }
+  std::filesystem::remove_all(dir);
+}

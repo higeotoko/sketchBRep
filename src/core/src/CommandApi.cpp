@@ -3498,6 +3498,46 @@ const std::vector<CommandDef>& commands() {
          else throw ApiError("The path must end in .dxf or .jww (PDF: from the tables window in the app)");
          return json{{"paper", sheet.paper}, {"rows", table.rows.size()}, {"notes", sheet.notes}};
        }},
+      {"export_drawing_set",
+       "A set of drawings with sheet numbers (docs/125) as DXF or JWW files in 'folder' (which must exist): a "
+       "sheet list (01), a plan per storey, the four elevations and the tables, numbered 'prefix' (default A-) "
+       "01, 02, ...; each file named by its number and drawing name. 'format' dxf (default) or jww; 'scale' "
+       "(default 100), 'paper' (auto), 'project', 'author', 'date'. Files that are there are not replaced: "
+       "refused, nothing written. (One PDF of all the sheets: from the app's File menu.)",
+       SCHEMA({"type": "object", "properties": {"folder": {"type": "string"}, "format": {"enum": ["dxf", "jww"]},
+               "scale": {"type": "number"}, "paper": {"type": "string"}, "prefix": {"type": "string"},
+               "project": {"type": "string"}, "author": {"type": "string"}, "date": {"type": "string"}},
+               "required": ["folder"]}),
+       [](doc::Modeler& m, const json& a) {
+         doc::DrawingSetSpec spec;
+         spec.scale = numberOr(a, "scale", 100.0);
+         spec.paper = textOr(a, "paper", "auto");
+         spec.prefix = textOr(a, "prefix", "A-");
+         spec.title.project = textOr(a, "project", {});
+         spec.title.author = textOr(a, "author", {});
+         spec.title.date = textOr(a, "date", {});
+         const std::string format = textOr(a, "format", "dxf");
+         if (format != "dxf" && format != "jww") throw ApiError("'format': dxf or jww");
+         const auto set = must(doc::drawingSet(m.document(), spec));
+         const std::filesystem::path folder = std::filesystem::u8path(text(a, "folder"));
+         std::error_code error;
+         if (!std::filesystem::is_directory(folder, error)) throw ApiError("The folder does not exist");
+         std::vector<std::filesystem::path> paths;
+         for (std::size_t i = 0; i < set.sheets.size(); ++i) {
+           std::string name = set.numbers[i] + "_" + set.names[i] + "." + format;
+           for (char& c : name)
+             if (std::string("\\/:*?\"<>|").find(c) != std::string::npos) c = '_';
+           paths.push_back(folder / std::filesystem::u8path(name));
+           if (std::filesystem::exists(paths.back(), error)) throw ApiError("'" + paths.back().filename().u8string() + "' is there already (nothing was written)");
+         }
+         json files = json::array();
+         for (std::size_t i = 0; i < set.sheets.size(); ++i) {
+           const std::string path = paths[i].u8string();
+           must(format == "jww" ? draw::writeJww(set.sheets[i], path) : draw::writeDxf(set.sheets[i], path));
+           files.push_back({{"number", set.numbers[i]}, {"name", set.names[i]}, {"path", path}, {"paper", set.sheets[i].paper}});
+         }
+         return json{{"sheets", files}, {"notes", set.notes}};
+       }},
       {"import_dae",
        "Import a COLLADA (.dae) file (e.g. exported from SketchUp Pro): each mesh an object, triangles joined "
        "into faces, closed meshes solids, colours from the materials, units and up axis converted (mm, Z up), "
@@ -3543,7 +3583,7 @@ bool isFileCommand(const std::string& name) {
   return name == "save" || name == "save_copy" || name == "open" || name == "export_ifc" || name == "export_step" || name == "export_stl" || name == "export_3dm" ||
          name == "import_brep" || name == "export_brep" || name == "import_iges" || name == "export_iges" ||
          name == "import_3dm" || name == "import_dxf" || name == "import_jww" || name == "set_material_texture" || name == "export_dae" ||
-         name == "import_dae" || name == "export_drawing" || name == "export_schedule" || name == "export_gltf";
+         name == "import_dae" || name == "export_drawing" || name == "export_schedule" || name == "export_drawing_set" || name == "export_gltf";
 }
 
 CommandApi::Effect builtinEffect(const std::string& name) {

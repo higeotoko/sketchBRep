@@ -34,6 +34,7 @@
 #include <QDir>
 #include <QUrl>
 #include <QSettings>
+#include <QDate>
 #include <QImage>
 
 #include <Standard_Version.hxx>
@@ -898,6 +899,10 @@ void MainWindow::buildMenus() {
   file->addAction(tr("エクスポート..."),this,&MainWindow::exportFile);
   file->addAction(tr("図面を書き出す（平面・断面・立面・伏図）..."), this, &MainWindow::showDrawingDialog)
       ->setObjectName(QStringLiteral("exportDrawingAction"));
+  file->addAction(tr("図面一式を書き出す（図番つき、1 つの PDF）..."), this, [this] {
+    const QString path = QFileDialog::getSaveFileName(this, tr("図面一式を書き出す"), tr("図面一式.pdf"), tr("PDF (*.pdf)"));
+    if (!path.isEmpty()) saveDrawingSet(path);
+  })->setObjectName(QStringLiteral("exportDrawingSetAction"));
   file->addAction(tr("DWG 変換ソフトの設定..."), this, &MainWindow::configureDwgConverter);
   file->addSeparator();
   file->addAction(tr("自動保存とバックアップの設定..."), this, &MainWindow::showAutosaveDialog);
@@ -4410,6 +4415,30 @@ bool MainWindow::saveScheduleCsv(int table, const QString& path) {
   file.close();
   setStatus(tr("表を CSV に保存しました: %1").arg(QDir::toNativeSeparators(path)));
   return true;
+}
+
+int MainWindow::saveDrawingSet(const QString& path) {
+  doc::DrawingSetSpec spec;
+  spec.title.project = QSettings().value(QStringLiteral("drawing/project")).toString().toStdString();
+  spec.title.author = QSettings().value(QStringLiteral("drawing/author")).toString().toStdString();
+  spec.title.date = QDate::currentDate().toString(QStringLiteral("yyyy-MM-dd")).toStdString();
+  const auto set = doc::drawingSet(modeler_.document(), spec);
+  if (!set) {
+    reportError(tr("図面一式を作れませんでした: %1").arg(userMessage(QString::fromStdString(set.error()))));
+    return 0;
+  }
+  const Status s = writePdfPages(set->sheets, path);
+  if (!s) {
+    reportError(tr("図面一式を保存できませんでした: %1").arg(userMessage(QString::fromStdString(s.message()))));
+    return 0;
+  }
+  QString text = tr("図面一式（%1 枚、%2〜%3）を保存しました: %4")
+                     .arg(set->sheets.size())
+                     .arg(QString::fromStdString(set->numbers.front()), QString::fromStdString(set->numbers.back()),
+                          QDir::toNativeSeparators(path));
+  if (!set->notes.empty()) text += tr("（注意 %1 件。図面リストに出ていない図面があります）").arg(set->notes.size());
+  setStatus(text);
+  return static_cast<int>(set->sheets.size());
 }
 
 bool MainWindow::saveScheduleDrawing(int table, const QString& path) {

@@ -115,6 +115,24 @@ draw::Table scheduleTable(const Document& document, int which);
 std::string openingScheduleCsv(const OpeningSchedule& schedule);
 std::string roomScheduleCsv(const RoomSchedule& schedule);
 std::string areaTableCsv(const AreaTable& table);
+// A set of drawings with sheet numbers (docs/97 N-12, docs/125): a sheet list first, then a
+// plan per storey (cut 1100 above its floor, the storeys below left out), the four elevations
+// and the tables (doors and windows, rooms, areas, finishes when given). Each sheet's title
+// block carries its number (prefix + 01, 02, ...) and name; the list names them all. Views with
+// nothing to draw are left out (said in `notes`).
+struct DrawingSetSpec {
+  double scale = 100.0;
+  std::string paper = "auto";
+  std::string prefix = "A-";
+  draw::TitleBlock title;  // project, author, date (the drawing name and number are set per sheet)
+};
+struct DrawingSet {
+  std::vector<draw::Sheet> sheets;
+  std::vector<std::string> numbers, names;  // per sheet
+  std::vector<std::string> notes;
+};
+Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& spec);
+
 // Any of the tables as CSV, in the same form (docs/115: the finish schedule).
 std::string tableCsv(const draw::Table& table);
 

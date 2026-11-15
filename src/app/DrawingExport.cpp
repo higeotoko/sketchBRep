@@ -167,6 +167,30 @@ Status writePdf(const draw::Sheet& sheet, const QString& path) {
   return QFileInfo(path).size() > 0 ? Status::success() : Status::failure("Writing " + path.toStdString() + " failed");
 }
 
+Status writePdfPages(const std::vector<draw::Sheet>& sheets, const QString& path) {
+  if (sheets.empty()) return Status::failure("Nothing to write");
+  QPdfWriter pdf(path);
+  auto pageOf = [](const draw::Sheet& s) {
+    return QPageSize(QSizeF(s.paperWidth, s.paperHeight), QPageSize::Millimeter, QString::fromStdString(s.paper));
+  };
+  pdf.setPageSize(pageOf(sheets.front()));
+  pdf.setPageMargins(QMarginsF(0, 0, 0, 0));
+  pdf.setResolution(600);
+  pdf.setTitle(QString::fromStdString(sheets.front().title));
+  pdf.setCreator(QStringLiteral("SketchBRep"));
+  QPainter painter;
+  if (!painter.begin(&pdf)) return Status::failure("Cannot write " + path.toStdString());
+  for (std::size_t i = 0; i < sheets.size(); ++i) {
+    if (i > 0) {
+      pdf.setPageSize(pageOf(sheets[i]));  // before the new page: it takes this size
+      pdf.newPage();
+    }
+    renderSheet(painter, sheets[i], QRectF(0, 0, pdf.width(), pdf.height()));
+  }
+  painter.end();
+  return QFileInfo(path).size() > 0 ? Status::success() : Status::failure("Writing " + path.toStdString() + " failed");
+}
+
 void setUpPrinter(const draw::Sheet& sheet, QPrinter& printer) {
   // The page size is given upright; the orientation turns it.
   const double shortSide = std::min(sheet.paperWidth, sheet.paperHeight);

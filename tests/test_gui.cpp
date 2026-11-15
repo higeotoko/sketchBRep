@@ -11775,6 +11775,14 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
     QVERIFY(QFileInfo(pdf).size()>1000);
     QVERIFY2(f.window.statusText().contains(QStringLiteral("図面（A4）")),qPrintable(f.window.statusText()));
   }
+  // docs/125: every drawing in one PDF with sheet numbers.
+  {
+    const QString set=dir.filePath(QStringLiteral("set.pdf"));
+    const int sheets=f.window.saveDrawingSet(set);
+    QVERIFY2(sheets>=8,qPrintable(QString::number(sheets)));
+    QVERIFY(QFileInfo(set).size()>10000);
+    QVERIFY2(f.window.statusText().contains(QStringLiteral("A-01")),qPrintable(f.window.statusText()));
+  }
   // docs/115: a room's finish typed in its properties goes into the finish schedule.
   {
     f.window.setSelection({room});

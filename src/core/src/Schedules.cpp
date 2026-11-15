@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <map>
+#include <optional>
 #include <sstream>
 #include <tuple>
 
@@ -340,6 +341,137 @@ draw::Table scheduleTable(const Document& document, int which) {
     t.notes = {"モデルから測った面積です。法の床面積・建築面積（算入・不算入の決まり、吹抜け・階段・庇の扱い）は見ていないので未評価です。"};
   }
   return t;
+}
+
+Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& spec) {
+  using R = Result<DrawingSet>;
+  struct Planned {
+    std::string name;
+    std::optional<draw::ViewSpec> view;
+    std::optional<draw::Table> table;
+  };
+  std::vector<Planned> planned;
+  // Plans: one per storey (levels at one height are one storey: the "...FL" one).
+  std::vector<FloorLevel> levels = document.settings().levels;
+  std::stable_sort(levels.begin(), levels.end(), [](const FloorLevel& a, const FloorLevel& b) { return a.elevation < b.elevation; });
+  auto isFloor = [](const FloorLevel& l) { return l.name.size() >= 2 && l.name.compare(l.name.size() - 2, 2, "FL") == 0; };
+  for (std::size_t i = 0; i < levels.size(); ++i) {
+    bool shadowed = false;
+    for (std::size_t j = 0; j < levels.size(); ++j)
+      if (j != i && std::abs(levels[j].elevation - levels[i].elevation) < 1e-6 && (isFloor(levels[j]) && !isFloor(levels[i]) || (isFloor(levels[j]) == isFloor(levels[i]) && j < i)))
+        shadowed = true;
+    if (shadowed) continue;
+    draw::ViewSpec view = draw::planView(levels[i].elevation + 1100.0);
+    view.depth = 1100.0 + 400.0;  // down to 400 under its floor: the storeys below are left out
+    view.title = levels[i].name + " 平面図";
+    planned.push_back({view.title, view, std::nullopt});
+  }
+  if (levels.empty()) {
+    draw::ViewSpec view = draw::planView(1100.0);
+    view.title = "平面図";
+    planned.push_back({view.title, view, std::nullopt});
+  }
+  const char* sides[4] = {"南立面図", "東立面図", "北立面図", "西立面図"};
+  for (int side = 0; side < 4; ++side) {
+    draw::ViewSpec view = draw::elevationView(document, side);
+    view.title = sides[side];
+    planned.push_back({view.title, view, std::nullopt});
+  }
+  for (int which : {0, 1, 2, 3}) {
+    draw::Table table = scheduleTable(document, which);
+    if (table.rows.empty() || (which == 0 && table.rows.size() <= 1)) continue;  // nothing in it (the openings' total only)
+    if (which == 3) {
+      bool any = false;
+      for (const auto& row : table.rows)
+        for (std::size_t c = 2; c < row.size(); ++c) any |= !row[c].empty();
+      if (!any) continue;  // no finishes given
+    }
+    planned.push_back({table.title, std::nullopt, table});
+  }
+  DrawingSet out;
+  std::vector<draw::Sheet> sheets;
+  std::vector<std::string> names;
+  for (const Planned& p : planned) {
+    draw::SheetSpec sheetSpec;
+    sheetSpec.scale = spec.scale;
+    sheetSpec.paper = spec.paper;
+    sheetSpec.title = spec.title;
+    sheetSpec.title.drawing = p.name;
+    if (p.view) {
+      const auto view = draw::makeView(document, *p.view);
+      if (!view) {
+        out.notes.push_back(p.name + ": " + view.error());
+        continue;
+      }
+      auto laid = draw::layoutSheet(*view, sheetSpec);
+      if (!laid) {
+        out.notes.push_back(p.name + ": " + laid.error());
+        continue;
+      }
+      sheets.push_back(std::move(*laid));
+    } else {
+      sheetSpec.paper = "auto";
+      auto laid = draw::tableSheet(*p.table, sheetSpec);
+      if (!laid) {
+        out.notes.push_back(p.name + ": " + laid.error());
+        continue;
+      }
+      sheets.push_back(std::move(*laid));
+    }
+    for (const std::string& n : sheets.back().notes) out.notes.push_back(p.name + ": " + n);
+    names.push_back(p.name);
+  }
+  if (sheets.empty()) return R::failure("Nothing to draw: the model is empty");
+  // Numbers: the list is 01, the drawings 02, 03, ...
+  auto number = [&](std::size_t k) {
+    char text[16];
+    std::snprintf(text, sizeof text, "%02zu", k);
+    return spec.prefix + text;
+  };
+  draw::Table list;
+  list.title = "図面リスト";
+  list.headers = {"図番", "図面名", "縮尺", "用紙"};
+  list.rows.push_back({number(1), "図面リスト", "", ""});
+  for (std::size_t i = 0; i < sheets.size(); ++i) {
+    char scale[32];
+    std::snprintf(scale, sizeof scale, "1:%g", sheets[i].scale);
+    const bool table = names[i].find("表") != std::string::npos;
+    list.rows.push_back({number(i + 2), names[i], table ? "" : scale, sheets[i].paper});
+  }
+  list.notes = {"モデルから作った図面です。図面を変えた時は、もう一度書き出してください。"};
+  draw::SheetSpec listSpec;
+  listSpec.title = spec.title;
+  listSpec.title.drawing = list.title;
+  listSpec.title.number = number(1);
+  const auto listSheet = draw::tableSheet(list, listSpec);
+  if (!listSheet) return R::failure(listSheet.error());
+  out.sheets.push_back(*listSheet);
+  out.numbers.push_back(number(1));
+  out.names.push_back(list.title);
+  // The drawings again with their numbers in the title block.
+  for (std::size_t i = 0; i < sheets.size(); ++i) {
+    // Lay out again with the number (the title block is drawn in the layout).
+    const Planned* p = nullptr;
+    for (const Planned& q : planned)
+      if (q.name == names[i]) p = &q;
+    draw::SheetSpec sheetSpec;
+    sheetSpec.scale = spec.scale;
+    sheetSpec.paper = p && p->table ? "auto" : spec.paper;
+    sheetSpec.title = spec.title;
+    sheetSpec.title.drawing = names[i];
+    sheetSpec.title.number = number(i + 2);
+    Result<draw::Sheet> laid = Result<draw::Sheet>::failure("");
+    if (p && p->view) {
+      const auto view = draw::makeView(document, *p->view);
+      laid = view ? draw::layoutSheet(*view, sheetSpec) : Result<draw::Sheet>::failure(view.error());
+    } else if (p) {
+      laid = draw::tableSheet(*p->table, sheetSpec);
+    }
+    out.sheets.push_back(laid ? *laid : sheets[i]);
+    out.numbers.push_back(number(i + 2));
+    out.names.push_back(names[i]);
+  }
+  return out;
 }
 
 std::string tableCsv(const draw::Table& table) {
