@@ -6006,6 +6006,45 @@ std::vector<WallBand> allWallBands(const Document& document) {
   return walls;
 }
 
+}  // namespace
+
+std::vector<std::pair<std::size_t, std::string>> Modeler::wallsMeetingOpenings(const ObjectId& host) const {
+  std::vector<std::pair<std::size_t, std::string>> out;
+  const auto list = openings(host);
+  if (!list || list->empty()) return out;
+  const std::vector<WallBand> walls = allWallBands(document_);
+  std::optional<std::size_t> hostIndex;
+  for (std::size_t i = 0; i < walls.size(); ++i)
+    if (walls[i].object->id == host) hostIndex = i;
+  if (!hostIndex) return out;
+  const auto ends = wallEnds(walls);
+  for (std::size_t k = 0; k < walls.size(); ++k) {
+    if (k == *hostIndex) continue;
+    const WallBand& w = walls[k];
+    for (int end = 0; end < 2; ++end) {
+      const WallEnd& e = ends[k][static_cast<std::size_t>(end)];
+      // Its end at the host: on a face of it, or inside it (drawn to the host's line).
+      if (!e.partner || *e.partner != *hostIndex) continue;
+      // Where its line meets the host, and how wide it is along the host.
+      const gp_Pnt at = w.start.Translated(gp_Vec(w.dir) * (end == 0 ? 0.0 : w.length));
+      const double half = (w.right + w.leftExt) / 2;
+      for (const OpeningInfo& o : *list) {
+        if (std::abs(o.normal.Z()) > 1e-6) continue;
+        const gp_Vec u(gp::DZ().Crossed(o.normal));
+        const double du = gp_Vec(o.center, gp_Pnt(at.X(), at.Y(), o.center.Z())).Dot(u);
+        if (std::abs(du) >= o.along / 2 + half - tolerance::kLinear) continue;
+        if (w.z1 <= o.bottom + tolerance::kLinear || w.z0 >= o.bottom + o.height - tolerance::kLinear) continue;
+        out.emplace_back(o.index, w.object->name);
+      }
+    }
+  }
+  std::sort(out.begin(), out.end());
+  out.erase(std::unique(out.begin(), out.end()), out.end());
+  return out;
+}
+
+namespace {
+
 void followWallJoins(const Document& document, ChangeSet& changes, const RegenContext& context,
                      const std::vector<ObjectId>& roots, const gp_Vec& d, JoinFollow& report) {
   const gp_Vec flat(d.X(), d.Y(), 0);

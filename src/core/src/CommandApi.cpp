@@ -3173,19 +3173,27 @@ const std::vector<CommandDef>& commands() {
          // A door / window fitting for the new openings (as set_opening_fittings), same step.
          const std::string fitting = a.contains("fitting") ? a.at("fitting").dump() : R"({"type":"none"})";
          if (a.contains("fitting") && !a.at("fitting").is_object()) throw ApiError("'fitting' must be an object");
+         // Walls whose end meets the host where an opening is (docs/118): said, not stopped.
+         auto said = [&](json result) {
+           json meeting = json::array();
+           for (const auto& [index, wall] : m.wallsMeetingOpenings(text(a, "host")))
+             meeting.push_back({{"opening", index}, {"wall", wall}});
+           if (!meeting.empty()) result["walls_meeting_openings"] = meeting;
+           return result;
+         };
          if (a.contains("at")) {
-           return idResult(must(m.placeOpeningAt(text(a, "host"), direction(a, "face_normal", gp::DY()),
-                                                 point(a, "at"), number(a, "width"), number(a, "height"),
-                                                 numberOr(a, "sill", 0.0), fitting)));
+           return said(idResult(must(m.placeOpeningAt(text(a, "host"), direction(a, "face_normal", gp::DY()),
+                                                       point(a, "at"), number(a, "width"), number(a, "height"),
+                                                       numberOr(a, "sill", 0.0), fitting))));
          }
          const json& count = arg(a, "count");
          if (!count.is_number_integer()) throw ApiError("'count' must be an integer");
-         return idResult(must(m.placeOpenings(text(a, "host"), direction(a, "face_normal", gp::DY()),
-                                              count.get<int>(), number(a, "width"), number(a, "height"),
-                                              numberOr(a, "sill", 0.0),
-                                              a.contains("spacing") ? std::optional<double>(number(a, "spacing"))
-                                                                    : std::nullopt,
-                                              fitting)));
+         return said(idResult(must(m.placeOpenings(text(a, "host"), direction(a, "face_normal", gp::DY()),
+                                                    count.get<int>(), number(a, "width"), number(a, "height"),
+                                                    numberOr(a, "sill", 0.0),
+                                                    a.contains("spacing") ? std::optional<double>(number(a, "spacing"))
+                                                                          : std::nullopt,
+                                                    fitting))));
        }},
       {"place_on_grid",
        "Copy 'source' (e.g. a column) to crossings of grid lines (from create_grid): 'x' and 'y' are line "

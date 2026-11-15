@@ -384,3 +384,21 @@ TEST_F(Schedules, ARoomCarriesItsFinishesIntoTheFinishSchedule) {
   ok("set_room_finish", {{"id", room}, {"use", ""}, {"floor", ""}, {"ceiling", ""}, {"ceiling_height", 0}});
   EXPECT_FALSE(modeler.document().find(room)->attributes.count("room_finish"));
 }
+
+// docs/118: an opening where another wall ends is said, not stopped.
+TEST_F(Schedules, AnOpeningWhereAnotherWallEndsIsSaid) {
+  // The partition (x = 4000, 100 thick) ends on the south and north walls. The south windows are
+  // clear of it; a door in the middle of the north wall is not.
+  EXPECT_TRUE(modeler.wallsMeetingOpenings(south).empty());
+  const json placed = ok("place_openings", {{"host", north}, {"face_normal", {0, 1, 0}}, {"at", {4000, 6000, 0}}, {"width", 900}, {"height", 2000}, {"sill", 0}});
+  ASSERT_TRUE(placed.contains("walls_meeting_openings")) << placed.dump();
+  EXPECT_EQ(placed["walls_meeting_openings"].size(), 1u);
+  EXPECT_EQ(placed["walls_meeting_openings"][0]["wall"], modeler.document().find(partition)->name);
+  // The opening was made all the same.
+  EXPECT_EQ(ok("list_openings", {{"ids", {north}}})["hosts"][0]["openings"].size(), 3u);
+  // Where no wall ends (the middle of the west wall): nothing said.
+  ASSERT_TRUE(modeler.undo());
+  const json clear = ok("place_openings", {{"host", west}, {"face_normal", {-1, 0, 0}}, {"at", {0, 3000, 0}}, {"width", 900}, {"height", 2000}, {"sill", 0}});
+  EXPECT_FALSE(clear.contains("walls_meeting_openings")) << clear.dump();
+  EXPECT_TRUE(modeler.wallsMeetingOpenings(west).empty());
+}

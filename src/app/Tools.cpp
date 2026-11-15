@@ -1690,7 +1690,14 @@ bool OpeningTool::place(const Target& t) {
   host_.viewport().setRoleShapes({});
   last_ = t;
   recent_.mark(host_.modeler());
-  host_.setStatus(QObject::tr("開口をあけました（%1）。続けて入力するとこの開口の大きさを変更").arg(settingsText()));
+  QString status = QObject::tr("開口をあけました（%1）。続けて入力するとこの開口の大きさを変更").arg(settingsText());
+  // docs/118: another wall ending in the hole is said (the opening stays).
+  QStringList meeting;
+  for (const auto& [index, wall] : host_.modeler().wallsMeetingOpenings(t.host)) meeting << QString::fromStdString(wall);
+  meeting.removeDuplicates();
+  if (!meeting.isEmpty())
+    status += QObject::tr("。注意：%1 の端が、この壁の開口の所に当たっています（壁の端が穴の中に来ます）").arg(meeting.join(QStringLiteral("、")));
+  host_.setStatus(status);
   return true;
 }
 

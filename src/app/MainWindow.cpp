@@ -4081,7 +4081,13 @@ bool MainWindow::placeOpeningsOnSelection(int count, double width, double height
   }
   elements_.clear();
   setSelection({r.value()});
-  setStatus(tr("開口を %1 か所あけました（サイズはプロパティで変更できます）").arg(count));
+  QString status = tr("開口を %1 か所あけました（サイズはプロパティで変更できます）").arg(count);
+  QStringList meeting;
+  for (const auto& [index, wall] : modeler_.wallsMeetingOpenings(host)) meeting << QString::fromStdString(wall);
+  meeting.removeDuplicates();
+  if (!meeting.isEmpty())
+    status += tr("。注意：%1 の端が、開口の所に当たっています（壁の端が穴の中に来ます）").arg(meeting.join(QStringLiteral("、")));
+  setStatus(status);
   return true;
 }
 

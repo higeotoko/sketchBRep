@@ -592,6 +592,10 @@ class Modeler {
   // step. The new opening's id.
   Result<std::string> copyOpening(const ObjectId& host, std::size_t index, const gp_Vec& worldDelta,
                                   const std::optional<ObjectId>& target = std::nullopt);
+  // Walls made by the wall tool whose end meets `host` where one of its openings is (docs/118):
+  // the wall would end in the hole. Nothing stops it; a tool or an agent says so. Per opening
+  // (its number) the names of those walls.
+  std::vector<std::pair<std::size_t, std::string>> wallsMeetingOpenings(const ObjectId& host) const;
   // Removes openings: the wall is whole again there. Their fittings go with them; the other
   // openings keep their ids, sizes and fittings. One undo step.
   Status removeOpenings(const ObjectId& host, const std::vector<std::size_t>& indices);
