@@ -772,6 +772,7 @@ void MainWindow::buildUi() {
               else if (key == QStringLiteral("stringer_style")) spec.stringerStyle = text.toStdString();
               else if (key == QStringLiteral("riser_boards")) spec.riserBoards = text == QStringLiteral("true");
               else if (key == QStringLiteral("newels")) spec.newels = text == QStringLiteral("true");
+              else if (key == QStringLiteral("nosing")) spec.nosing = value;
               else if (key == QStringLiteral("thickness")) spec.thickness = value;
               else if (key == QStringLiteral("rise")) spec.rise = value;
               else return;

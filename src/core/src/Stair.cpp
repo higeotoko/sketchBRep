@@ -70,6 +70,7 @@ Result<Layout> layout(const StairSpec& spec) {
   if (spec.riserBoards && !(spec.riserThickness >= 5.0 && spec.riserThickness <= 60.0)) return L::failure("A riser board is 5 to 60 thick");
   if (spec.newels && spec.stringer == "none") return L::failure("Newel posts stand with side boards");
   if (spec.newels && !(spec.newelSize >= 60.0 && spec.newelSize <= 240.0)) return L::failure("A newel post is 60 to 240 square");
+  if (!(spec.nosing >= 0.0 && spec.nosing <= 50.0)) return L::failure("A nosing is 0 to 50");
   // The line: no repeated points, no points on a straight part.
   std::vector<V2> pts;
   for (const gp_Pnt& p : spec.path) {
@@ -391,9 +392,14 @@ Status sideBoards(const StairSpec& spec, const Layout& l, int side, double depth
   return Status::success();
 }
 
-// Riser boards: at the front edge of each tread (its edge nearest the foot along the walking
-// line), from the tread below (or the floor) up to this tread's underside, set back into it.
-Status riserBoards(const StairSpec& spec, const Layout& l, BRep_Builder& builder, TopoDS_Compound& into, int& count) {
+// A tread's front edge (its edge nearest the foot along the walking line): its first point's
+// index in the outline, and the way into the tread across it.
+struct FrontEdge {
+  std::size_t index = 0;
+  V2 in{0, 0};
+  bool ok = false;
+};
+FrontEdge frontEdge(const StairSpec& spec, const Tread& t) {
   std::vector<V2> pts;
   for (const gp_Pnt& p : spec.path) {
     const V2 q{p.X(), p.Y()};
@@ -404,32 +410,44 @@ Status riserBoards(const StairSpec& spec, const Layout& l, BRep_Builder& builder
     for (std::size_t i = 1; i < pts.size(); ++i) {
       const V2 d = pts[i] - pts[i - 1];
       const double len = d.length();
-      const double t = std::clamp((q - pts[i - 1]).dot(d) / (len * len), 0.0, 1.0);
-      const double g = (q - (pts[i - 1] + d * t)).length();
-      if (g < gap - 1e-9) gap = g, best = s0 + t * len;
+      const double u = std::clamp((q - pts[i - 1]).dot(d) / (len * len), 0.0, 1.0);
+      const double g = (q - (pts[i - 1] + d * u)).length();
+      if (g < gap - 1e-9) gap = g, best = s0 + u * len;
       s0 += len;
     }
     return best;
   };
+  FrontEdge out;
+  const std::size_t n = t.outline.size();
+  double lowest = 1e300;
+  for (std::size_t i = 0; i < n; ++i) {
+    const V2 mid = (t.outline[i] + t.outline[(i + 1) % n]) * 0.5;
+    const double s = station(mid);
+    if (s < lowest - 1e-6) lowest = s, out.index = i;
+  }
+  const V2 a = t.outline[out.index], b = t.outline[(out.index + 1) % n];
+  const double len = (b - a).length();
+  if (len < 1.0) return out;
+  V2 centroid{0, 0};
+  for (const V2& p : t.outline) centroid = centroid + p * (1.0 / n);
+  const V2 e = (b - a) * (1.0 / len);
+  out.in = V2{-e.y, e.x};
+  if ((centroid - a).dot(out.in) < 0) out.in = out.in * -1.0;
+  out.ok = true;
+  return out;
+}
+
+// Riser boards: at the front edge of each tread, from the tread below (or the floor) up to this
+// tread's underside, set back into it.
+Status riserBoards(const StairSpec& spec, const Layout& l, BRep_Builder& builder, TopoDS_Compound& into, int& count) {
   for (const Tread& t : l.treads) {
     const double top = spec.base + l.riser * (t.step - 1), under = spec.base + l.riser * t.step - spec.thickness;
     if (under - top < 1.0) continue;
     const std::size_t n = t.outline.size();
-    std::size_t front = 0;
-    double lowest = 1e300;
-    for (std::size_t i = 0; i < n; ++i) {
-      const V2 mid = (t.outline[i] + t.outline[(i + 1) % n]) * 0.5;
-      const double s = station(mid);
-      if (s < lowest - 1e-6) lowest = s, front = i;
-    }
-    const V2 a = t.outline[front], b = t.outline[(front + 1) % n];
-    const double len = (b - a).length();
-    if (len < 1.0) continue;
-    V2 centroid{0, 0};
-    for (const V2& p : t.outline) centroid = centroid + p * (1.0 / n);
-    const V2 e = (b - a) * (1.0 / len);
-    V2 in{-e.y, e.x};
-    if ((centroid - a).dot(in) < 0) in = in * -1.0;
+    const FrontEdge f = frontEdge(spec, t);
+    if (!f.ok) continue;
+    const V2 a = t.outline[f.index], b = t.outline[(f.index + 1) % n];
+    const V2 in = f.in;
     auto board = prism({a, b, b + in * spec.riserThickness, a + in * spec.riserThickness}, top, under);
     if (!board) return Status::failure("A riser board could not be built");
     builder.Add(into, board.value());
@@ -461,7 +479,14 @@ Result<StairShape> makeStair(const StairSpec& spec) {
   for (const Tread& t : l.treads) {
     const double top = spec.base + l.riser * t.step;
     const double bottom = spec.style == "block" ? std::max(spec.base, top - l.riser - spec.thickness) : top - spec.thickness;
-    auto body = prism(t.outline, bottom, top);
+    // The nosing: the front edge moved out (the board / step only; the tread in plan stays).
+    std::vector<V2> outline = t.outline;
+    if (spec.nosing > 0.0)
+      if (const FrontEdge f = frontEdge(spec, t); f.ok) {
+        outline[f.index] = outline[f.index] - f.in * spec.nosing;
+        outline[(f.index + 1) % outline.size()] = outline[(f.index + 1) % outline.size()] - f.in * spec.nosing;
+      }
+    auto body = prism(outline, bottom, top);
     if (!body) return R::failure(body.error());
     bodies.push_back(body.value());
     StairTread tread;

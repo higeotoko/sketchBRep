@@ -7106,7 +7106,7 @@ std::string stairSpecText(const geom::StairSpec& s) {
                         {"handrail", s.handrail}, {"handrail_height", s.handrailHeight},
                         {"stringer", s.stringer}, {"stringer_thickness", s.stringerThickness},
                         {"stringer_style", s.stringerStyle}, {"riser_boards", s.riserBoards}, {"riser_thickness", s.riserThickness},
-                        {"newels", s.newels}, {"newel_size", s.newelSize}}
+                        {"newels", s.newels}, {"newel_size", s.newelSize}, {"nosing", s.nosing}}
       .dump();
 }
 
@@ -7131,6 +7131,7 @@ std::optional<geom::StairSpec> stairSpecFrom(const std::string& text) {
     s.riserThickness = j.value("riser_thickness", 15.0);
     s.newels = j.value("newels", false);
     s.newelSize = j.value("newel_size", 105.0);
+    s.nosing = j.value("nosing", 0.0);  // stairs made before docs/137
     s.thickness = j.at("thickness").get<double>();
     return s;
   } catch (const std::exception&) {

@@ -144,6 +144,7 @@ const Entry kEntries[] = {
     {"A type name is one line of at most 40 characters", "種類名は 1 行・40 文字までです"},
     {"Name the mark of the openings to change", "変える開口の符号を指定してください"},
     {"Side boards: side or cut", "板の形は、側板か、ささら桁です"},
+    {"A nosing is 0 to 50", "段鼻の出は 0〜50 にしてください"},
     {"Riser boards are for a stair of tread boards", "蹴込み板は、形が「踏板」の階段に付けられます"},
     {"A riser board is 5 to 60 thick", "蹴込み板の厚さは 5〜60 にしてください"},
     {"Newel posts stand with side boards", "親柱は、側板（ささら桁）といっしょに付けます"},

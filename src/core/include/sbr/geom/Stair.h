@@ -53,6 +53,9 @@ struct StairSpec {
   // each board and where an inside board stops at a turn, from the floor to 100 over the board.
   bool newels = false;
   double newelSize = 105.0;
+  // Nosing (段鼻の出, docs/137): 0 to 50, each tread (its board or its step) runs on this far past
+  // its front edge. The goings are measured without it (as the treads in plan).
+  double nosing = 0.0;
 };
 
 struct StairTread {
