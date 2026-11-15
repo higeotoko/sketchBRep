@@ -25,9 +25,16 @@
 |---|---|
 | 計算テスト済み | コア全 708 件中 701 件成功・7 件スキップ（ローカル）。新規 1 件（`Stair.ANosingRunsOnPastTheFrontEdge`）：踏板の階段（13 段）に 20 → 体積が 13 × 20 × 800 × 30 増える、いちばん下の段が足元より 20 前（X −20）、踏面の最小・最大は同じ／蹴込み板と一緒でも 13 枚／段々の塊・回り段でも作れる／80 と −1 は断る。`Stairs.AHandrailIsChangedOnTheStairAndKept` に追加：`change_stair` で 20 → `stair_info` に出る |
 | GUI 自動確認済み | 階段の画面テストが成功（ローカル）。プロパティの欄を押す画面テストは足していない |
-| CI | __CI__ |
+| CI | run 43738309397（push、`a7aebbd`）：Linux 721 件成功、Windows 717 件＋3 件成功・GUI 237 件成功（7 件スキップ） |
 | Windows 実機確認 | まだ（チェック表 12-20） |
 
 ## 配布の記録
 
-__DELIVERY__
+| 項目 | 値 |
+|---|---|
+| コード | `a7aebbd`（Opus 5.5 で作業） |
+| CI | run 43738309397（push）：Linux・Windows とも成功 |
+| ZIP | `SketchBRep-windows-x64-a7aebbd-local.zip`（Codex のチャットフォルダの `outputs\`） |
+| サイズ | 72,217,541 bytes |
+| SHA256 | `3f11c71a3fdf3ad2569681a17580d3f7aa21418e675877f71c1cbf6d9d0c1589` |
+| ZIP の検証 | `verify_portable_pads.py`・`verify_portable_mat.py` とも成功（docs/validation/2026-11-16-portable-a7aebbd*.json） |
