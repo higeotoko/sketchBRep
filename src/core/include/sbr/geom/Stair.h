@@ -34,6 +34,13 @@ struct StairSpec {
   // nosing of each tread (vertically), round, 60 in from the side.
   std::string handrail = "none";
   double handrailHeight = 850.0;
+  // Side boards (ささら桁・側板, docs/128): none | left | right | both, looking up the stair;
+  // just outside the width, `stringerThickness` thick (15 to 100). Their top runs 50 over the
+  // line of the nosings; they reach down far enough to hold each tread (riser + tread + 100,
+  // at least 240), and stop at the floor at the foot. Per tread they follow its side, so they
+  // turn with winders and landings; at the inside of a turn they stop and start again higher.
+  std::string stringer = "none";
+  double stringerThickness = 36.0;
 };
 
 struct StairTread {
@@ -53,6 +60,8 @@ struct StairCheck {
 struct StairShape {
   TopoDS_Shape solid;  // block: one solid; boards: a compound of boards; with handrails: a compound
   double handrailLength = 0.0;  // of all rails along their axes
+  double stringerDepth = 0.0;   // of the side boards, measured vertically (0: none)
+  double stringerVolume = 0.0;
   int risers = 0;
   double riser = 0.0;
   std::vector<StairTread> treads;  // bottom to top; the upper floor is the last riser's tread

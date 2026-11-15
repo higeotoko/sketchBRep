@@ -506,6 +506,66 @@ TEST(Stair, AHandrailRunsOverTheNosingsAndSettlesTheCheck) {
   EXPECT_FALSE(makeStair(spec));
 }
 
+// docs/128: side boards (ささら桁・側板) just outside the width, 50 over the nosings, deep enough
+// to hold the treads, stopped at the floor at the foot.
+TEST(Stair, SideBoardsRunAlongBothSidesOverTheNosings) {
+  StairSpec spec = along({gp_Pnt(0, 0, 0), gp_Pnt(2730, 0, 0)});
+  const auto bare = makeStair(spec);
+  ASSERT_TRUE(bare);
+  EXPECT_EQ(bare->stringerDepth, 0.0);
+  spec.stringer = "both";
+  const auto boarded = makeStair(spec);
+  ASSERT_TRUE(boarded) << boarded->riser;
+  const double riser = boarded->riser;  // 2800 / 14 = 200
+  EXPECT_NEAR(riser, 200, 1e-9);
+  // Deep enough for a riser, a tread and 100: 200 + 30 + 100.
+  EXPECT_NEAR(boarded->stringerDepth, riser + spec.thickness + 100, 1e-9);
+  // Its side in elevation: the top from 250 (the first nosing + 50) to 2850 over the 2730 of the
+  // treads, the bottom 330 under it but not under the floor.
+  const double depth = boarded->stringerDepth, k = 13 * riser / 2730.0, top0 = riser + 50;
+  const double clipped = (depth - top0) / k;  // where the bottom leaves the floor
+  const double area = top0 * clipped + k * clipped * clipped / 2 + (2730 - clipped) * depth;
+  EXPECT_NEAR(boarded->stringerVolume, 2 * 36 * area, 1.0);
+  EXPECT_NEAR(sbr::geom::volume(boarded->solid) - sbr::geom::volume(bare->solid), boarded->stringerVolume, 1.0);
+  const auto b = sbr::geom::exactBounds(boarded->solid);
+  EXPECT_NEAR(b.CornerMin().Y(), -400 - 36, 1e-6);
+  EXPECT_NEAR(b.CornerMax().Y(), 400 + 36, 1e-6);
+  EXPECT_NEAR(b.CornerMin().Z(), 0, 1e-6);
+  EXPECT_NEAR(b.CornerMax().Z(), 2800 + 50, 1e-6);
+  // One side only: half.
+  spec.stringer = "left";
+  const auto left = makeStair(spec);
+  ASSERT_TRUE(left);
+  EXPECT_NEAR(left->stringerVolume, boarded->stringerVolume / 2, 1.0);
+  EXPECT_NEAR(sbr::geom::exactBounds(left->solid).CornerMax().Y(), 400 + 36, 1e-6);
+  EXPECT_NEAR(sbr::geom::exactBounds(left->solid).CornerMin().Y(), -400, 1e-6);
+  // With handrails too: both in one compound.
+  spec.handrail = "right";
+  const auto railed = makeStair(spec);
+  ASSERT_TRUE(railed);
+  EXPECT_GT(railed->handrailLength, 2000.0);
+  EXPECT_NEAR(railed->stringerVolume, left->stringerVolume, 1e-6);
+  // Around winders and a landing: the outer board turns the corner (its corner filled), the inner one
+  // stops at the corner.
+  for (int turns : {3, 1}) {
+    StairSpec turn = along({gp_Pnt(0, 0, 0), gp_Pnt(2000, 0, 0), gp_Pnt(2000, 1500, 0)});
+    turn.turns = {turns};
+    turn.stringer = "both";
+    const auto around = makeStair(turn);
+    ASSERT_TRUE(around) << around.error();
+    const auto box = sbr::geom::exactBounds(around->solid);
+    EXPECT_NEAR(box.CornerMax().X(), 2000 + 400 + 36, 1e-6) << turns;
+    EXPECT_NEAR(box.CornerMin().Y(), -400 - 36, 1e-6) << turns;
+    EXPECT_GT(around->stringerVolume, 0.0);
+  }
+  // Refused: an unknown side, a board too thin.
+  spec.stringer = "middle";
+  EXPECT_FALSE(makeStair(spec));
+  spec.stringer = "both";
+  spec.stringerThickness = 5;
+  EXPECT_FALSE(makeStair(spec));
+}
+
 TEST_F(Stairs, AHandrailIsChangedOnTheStairAndKept) {
   const std::string id = ok("create_stair", {{"path", {{1000, 1000}, {3730, 1000}}}, {"rise", 2800}, {"handrail", "right"}})["id"];
   json info = ok("stair_info", {{"id", id}});
@@ -524,5 +584,17 @@ TEST_F(Stairs, AHandrailIsChangedOnTheStairAndKept) {
   sbr::doc::Modeler other;
   ASSERT_TRUE(other.load(file.string()));
   EXPECT_EQ(other.stairInfo(id)->spec.handrail, "both");
+  // docs/128: side boards, changed and kept the same way.
+  ok("change_stair", {{"id", id}, {"stringer", "both"}, {"stringer_thickness", 45}});
+  info = ok("stair_info", {{"id", id}});
+  EXPECT_EQ(info["stringer"], "both");
+  EXPECT_NEAR(info["stringer_thickness"].get<double>(), 45, 1e-9);
+  ASSERT_TRUE(modeler.save(file.string()));
+  sbr::doc::Modeler third;
+  ASSERT_TRUE(third.load(file.string()));
+  EXPECT_EQ(third.stairInfo(id)->spec.stringer, "both");
+  EXPECT_NEAR(third.stairInfo(id)->spec.stringerThickness, 45, 1e-9);
+  EXPECT_EQ(other.stairInfo(id)->spec.stringer, "none");  // saved before: none
+  EXPECT_FALSE(call("change_stair", {{"id", id}, {"stringer_thickness", 500}}).value("ok", true));
   EXPECT_FALSE(call("change_stair", {{"id", id}, {"handrail_height", 2000}}).value("ok", true));
 }

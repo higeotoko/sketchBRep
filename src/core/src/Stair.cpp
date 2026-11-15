@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
@@ -14,6 +15,7 @@
 #include <TopoDS_Compound.hxx>
 #include <gp_Vec.hxx>
 
+#include "sbr/geom/Measure.h"
 #include "sbr/geom/Operations.h"
 
 namespace sbr::geom {
@@ -59,6 +61,10 @@ Result<Layout> layout(const StairSpec& spec) {
   if (spec.handrail != "none" && !(spec.handrailHeight >= 600.0 && spec.handrailHeight <= 1200.0))
     return L::failure("A handrail is 600 to 1200 above the treads");
   if (!(spec.thickness >= 5.0)) return L::failure("The tread thickness is at least 5");
+  if (spec.stringer != "none" && spec.stringer != "left" && spec.stringer != "right" && spec.stringer != "both")
+    return L::failure("Side boards: none, left, right or both");
+  if (spec.stringer != "none" && !(spec.stringerThickness >= 15.0 && spec.stringerThickness <= 100.0))
+    return L::failure("A side board is 15 to 100 thick");
   // The line: no repeated points, no points on a straight part.
   std::vector<V2> pts;
   for (const gp_Pnt& p : spec.path) {
@@ -242,6 +248,115 @@ std::vector<gp_Pnt> railAxis(const StairSpec& spec, const Layout& l, int side) {
   return axis;
 }
 
+constexpr double kStringerOver = 50.0;  // its top over the line of the nosings
+
+// The side boards on `side` (+1 left, -1 right, looking up): per tread, a board standing on the
+// part of its outline on that side, its top rising one riser along it. Added to `into`.
+Status sideBoards(const StairSpec& spec, const Layout& l, int side, double depth, BRep_Builder& builder, TopoDS_Compound& into,
+                  double& volume) {
+  std::vector<V2> pts;
+  for (const gp_Pnt& p : spec.path) {
+    const V2 q{p.X(), p.Y()};
+    if (pts.empty() || (q - pts.back()).length() > 0.01) pts.push_back(q);
+  }
+  // On that side: at least half the width out from the walking line (its nearest part), and
+  // how far along the line it is.
+  auto onSide = [&](const V2& q, double& station) {
+    double gap = 1e300, s0 = 0, lateral = 0;
+    for (std::size_t i = 1; i < pts.size(); ++i) {
+      const V2 d = pts[i] - pts[i - 1];
+      const double len = d.length();
+      const double t = std::clamp((q - pts[i - 1]).dot(d) / (len * len), 0.0, 1.0);
+      const V2 on = pts[i - 1] + d * t;
+      const double g = (q - on).length();
+      if (g < gap - 1e-9) {
+        gap = g;
+        station = s0 + t * len;
+        const V2 u = d * (1.0 / len);
+        lateral = (q - on).dot(V2{-u.y, u.x});
+      }
+      s0 += len;
+    }
+    return lateral * side > spec.width / 2 - 1.0;
+  };
+  // Each tread's run of edges on that side, in walking order.
+  struct Run {
+    std::vector<V2> points;
+    double z0 = 0.0;  // the top of the board at its start
+  };
+  std::vector<Run> runs;
+  for (const Tread& t : l.treads) {
+    const std::size_t n = t.outline.size();
+    std::vector<bool> in(n);
+    std::vector<double> station(n);
+    for (std::size_t i = 0; i < n; ++i) in[i] = onSide(t.outline[i], station[i]);
+    // Start after a point not on that side: the run is contiguous (the treads are convex).
+    std::size_t start = n;
+    for (std::size_t i = 0; i < n; ++i)
+      if (!in[i] && in[(i + 1) % n]) start = (i + 1) % n;
+    if (start == n) continue;
+    std::vector<std::size_t> run;
+    for (std::size_t k = 0; k < n && in[(start + k) % n]; ++k) run.push_back((start + k) % n);
+    if (run.size() < 2) continue;  // the inside of a turn: a point only
+    if (station[run.front()] > station[run.back()]) std::reverse(run.begin(), run.end());
+    Run r;
+    for (std::size_t i : run) r.points.push_back(t.outline[i]);
+    r.z0 = spec.base + l.riser * t.step + kStringerOver;
+    runs.push_back(std::move(r));
+  }
+  std::vector<TopoDS_Shape> pieces;
+  double piecesVolume = 0.0;
+  for (std::size_t k = 0; k < runs.size(); ++k) {
+    const Run& r = runs[k];
+    double total = 0.0;
+    for (std::size_t i = 1; i < r.points.size(); ++i) total += (r.points[i] - r.points[i - 1]).length();
+    if (total < 1.0) continue;
+    double along = 0.0;
+    for (std::size_t i = 1; i < r.points.size(); ++i) {
+      V2 a = r.points[i - 1], b = r.points[i];
+      const double len = (b - a).length();
+      if (len < 1.0) continue;
+      const V2 e = (b - a) * (1.0 / len), out = V2{-e.y, e.x} * static_cast<double>(side);
+      const double za = r.z0 + l.riser * along / total;
+      along += len;
+      const double zb = r.z0 + l.riser * along / total;
+      // An outside corner (the next edge turns in): this board runs on over the next one's end.
+      std::optional<V2> next;
+      if (i + 1 < r.points.size()) next = r.points[i + 1] - b;
+      else if (k + 1 < runs.size() && (runs[k + 1].points.front() - b).length() < 1.0) next = runs[k + 1].points[1] - runs[k + 1].points[0];
+      if (next && (e.x * next->y - e.y * next->x) * side < -1e-6 * next->length()) b = b + e * spec.stringerThickness;
+      BRepBuilderAPI_MakePolygon polygon;
+      polygon.Add(gp_Pnt(a.x, a.y, std::max(spec.base, za - depth)));
+      // The bottom leaves the floor part way along: a corner there.
+      if (za - depth < spec.base - 1e-6 && zb - depth > spec.base + 1e-6) {
+        const V2 c = a + e * (len * (spec.base - (za - depth)) / (zb - za));
+        polygon.Add(gp_Pnt(c.x, c.y, spec.base));
+      }
+      polygon.Add(gp_Pnt(b.x, b.y, std::max(spec.base, zb - depth)));
+      polygon.Add(gp_Pnt(b.x, b.y, zb));
+      polygon.Add(gp_Pnt(a.x, a.y, za));
+      polygon.Close();
+      if (!polygon.IsDone()) return Status::failure("A side board could not be built");
+      BRepBuilderAPI_MakeFace face(polygon.Wire(), Standard_True);
+      if (!face.IsDone()) return Status::failure("A side board could not be built");
+      BRepPrimAPI_MakePrism board(face.Face(), gp_Vec(out.x, out.y, 0) * spec.stringerThickness);
+      if (!board.IsDone()) return Status::failure("A side board could not be built");
+      pieces.push_back(board.Shape());
+      piecesVolume += sbr::geom::volume(board.Shape());
+    }
+  }
+  // One board per side where the pieces meet (no joint at every tread in a drawing).
+  if (pieces.size() > 1)
+    if (const auto fused = booleanCombine(BooleanOp::Union, pieces)) {
+      builder.Add(into, fused.value());
+      volume += sbr::geom::volume(fused.value());  // (pieces overlap at outside corners)
+      return Status::success();
+    }
+  for (const TopoDS_Shape& p : pieces) builder.Add(into, p);
+  volume += piecesVolume;
+  return Status::success();
+}
+
 StairCheck check(const std::string& item, double value, double limit, bool atMost, bool measurable = true) {
   StairCheck c{item, value, limit, "not_evaluated"};
   if (measurable) c.state = (atMost ? value <= limit + 1e-6 : value >= limit - 1e-6) ? "ok" : "ng";
@@ -297,13 +412,21 @@ Result<StairShape> makeStair(const StairSpec& spec) {
     for (const TopoDS_Shape& b : bodies) builder.Add(boards, b);
     out.solid = boards;
   }
-  // Handrails (docs/116): round bars along their axes, with the stair in one compound.
-  if (spec.handrail != "none") {
+  // Handrails (docs/116) and side boards (docs/128): with the stair in one compound.
+  if (spec.handrail != "none" || spec.stringer != "none") {
     TopoDS_Compound all;
     BRep_Builder builder;
     builder.MakeCompound(all);
     builder.Add(all, out.solid);
+    if (spec.stringer != "none") {
+      out.stringerDepth = std::max(240.0, l.riser + spec.thickness + 100.0);
+      for (int side : {1, -1}) {
+        if ((side > 0 && spec.stringer == "right") || (side < 0 && spec.stringer == "left")) continue;
+        if (const Status s = sideBoards(spec, l, side, out.stringerDepth, builder, all, out.stringerVolume); !s) return R::failure(s.message());
+      }
+    }
     for (int side : {1, -1}) {
+      if (spec.handrail == "none") break;
       if ((side > 0 && spec.handrail == "right") || (side < 0 && spec.handrail == "left")) continue;
       const std::vector<gp_Pnt> axis = railAxis(spec, l, side);
       for (std::size_t i = 1; i < axis.size(); ++i) {

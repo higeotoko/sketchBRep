@@ -347,6 +347,7 @@ Result<std::string> ifcText(const Modeler& modeler, const std::string& fileName,
   std::set<std::string> beamRoles = {"beam", "girder", "floor_beam", "rim_beam", "eave_beam", "roof_beam", "sill",
                                      "ridge", "purlin", "floor_girder", "lintel"};
   std::set<std::string> memberRoles = {"joist", "rafter", "stud", "brace"};
+  std::vector<std::pair<std::string, int>> ceilings;  // (room id, covering): related to the room's space below
   for (const Object& o : document.objects()) {
     if (o.isContainer() || !document.isVisible(o.id)) continue;
     const std::string kind = attribute(o, "kind");
@@ -474,6 +475,11 @@ Result<std::string> ifcText(const Modeler& modeler, const std::string& fileName,
       }
       element = f.add("IFCSTAIR(" + head + "$" + tail + ",." + type + ".)");
       ++summary.stairs;
+    } else if (kind == "ceiling") {
+      // A ceiling board (docs/123): a covering of its room (docs/127).
+      element = f.add("IFCCOVERING(" + head + "$" + tail + ",.CEILING.)");
+      ++summary.coverings;
+      if (const std::string roomId = attribute(o, "room"); !roomId.empty()) ceilings.emplace_back(roomId, element);
     } else if (columnRoles.count(kind)) {
       element = f.add("IFCCOLUMN(" + head + text(kind) + tail + ",.COLUMN.)");
       ++summary.columns;
@@ -545,6 +551,10 @@ Result<std::string> ifcText(const Modeler& modeler, const std::string& fileName,
              f.add("IFCPROPERTYSET(" + guid("pset-finish:" + room.id) + ",$,'Pset_SpaceCoveringRequirements',$," + refs(coverings) + ")"));
     storey.spaces.push_back(space);
     ++summary.spaces;
+    std::vector<int> covered;
+    for (const auto& [roomId, covering] : ceilings)
+      if (roomId == room.id) covered.push_back(covering);
+    if (!covered.empty()) f.add("IFCRELCOVERSSPACES(" + guid("rel:covers:" + room.id) + ",$,$,$," + ref(space) + "," + refs(covered) + ")");
   }
 
   // --- grids ---
@@ -587,7 +597,7 @@ Result<std::string> ifcText(const Modeler& modeler, const std::string& fileName,
   if (meshedAny) summary.notes.push_back("Curved faces are written as triangles");
   if (summary.skipped > 0)
     summary.notes.push_back(std::to_string(summary.skipped) + " visible objects without volume (lines, faces, notes) are not exported");
-  const int elements = summary.stairs + summary.walls + summary.slabs + summary.roofs + summary.columns + summary.beams + summary.members + summary.proxies +
+  const int elements = summary.stairs + summary.walls + summary.slabs + summary.roofs + summary.columns + summary.beams + summary.members + summary.proxies + summary.coverings +
                        summary.spaces + summary.grids;
   if (elements == 0) return R::failure("Nothing to export: the model has no solids, rooms or grids");
 

@@ -767,6 +767,8 @@ void MainWindow::buildUi() {
               else if (key == QStringLiteral("style")) spec.style = text.toStdString();
               else if (key == QStringLiteral("handrail")) spec.handrail = text.toStdString();
               else if (key == QStringLiteral("handrail_height")) spec.handrailHeight = value;
+              else if (key == QStringLiteral("stringer")) spec.stringer = text.toStdString();
+              else if (key == QStringLiteral("stringer_thickness")) spec.stringerThickness = value;
               else if (key == QStringLiteral("thickness")) spec.thickness = value;
               else if (key == QStringLiteral("rise")) spec.rise = value;
               else return;
@@ -5591,7 +5593,7 @@ void MainWindow::exportIfcFile(const QString& path) {
   const QString counts = tr("階 %1・壁 %2・開口 %3（窓 %4・扉 %5）・床 %6・屋根 %7・柱 %8・梁 %9")
                              .arg(s.storeys).arg(s.walls).arg(s.openings).arg(s.windows).arg(s.doors)
                              .arg(s.slabs).arg(s.roofs).arg(s.columns).arg(s.beams) +
-                         tr("・階段 %5・その他の部材 %1・室 %2・通り芯 %3・その他の立体 %4").arg(s.members).arg(s.spaces).arg(s.grids).arg(s.proxies).arg(s.stairs);
+                         tr("・階段 %5・天井 %6・その他の部材 %1・室 %2・通り芯 %3・その他の立体 %4").arg(s.members).arg(s.spaces).arg(s.grids).arg(s.proxies).arg(s.stairs).arg(s.coverings);
   lastIfcSummary_ = counts;
   lastIfcNotes_.clear();
   statusBar()->showMessage(tr("IFC を書き出しました: %1（%2）").arg(path, counts), 8000);

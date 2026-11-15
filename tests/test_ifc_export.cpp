@@ -129,7 +129,7 @@ const std::map<std::string, std::size_t> kAttributes = {
     {"IFCGEOMETRICREPRESENTATIONSUBCONTEXT", 10}, {"IFCAXIS2PLACEMENT3D", 3}, {"IFCLOCALPLACEMENT", 2},
     {"IFCCARTESIANPOINT", 1}, {"IFCDIRECTION", 1}, {"IFCSHAPEREPRESENTATION", 4}, {"IFCPRODUCTDEFINITIONSHAPE", 3},
     {"IFCFACETEDBREP", 1}, {"IFCCLOSEDSHELL", 1}, {"IFCFACE", 1}, {"IFCFACEOUTERBOUND", 2}, {"IFCFACEBOUND", 2},
-    {"IFCPOLYLOOP", 1}, {"IFCPOLYLINE", 1}, {"IFCARBITRARYCLOSEDPROFILEDEF", 3}, {"IFCEXTRUDEDAREASOLID", 4}};
+    {"IFCPOLYLOOP", 1}, {"IFCCOVERING", 9}, {"IFCRELCOVERSSPACES", 6}, {"IFCPOLYLINE", 1}, {"IFCARBITRARYCLOSEDPROFILEDEF", 3}, {"IFCEXTRUDEDAREASOLID", 4}};
 
 void expectWellFormed(const Ifc& ifc) {
   std::set<std::string> ids;
@@ -188,6 +188,7 @@ TEST_F(IfcExport, AHouseIsWrittenWithItsStoreysPartsAndRelations) {
   // docs/117: a mark and a product on the door, finishes on the room.
   ok("set_opening_mark", {{"host", walls[1]}, {"mark", "SD-1"}, {"product", "P-900"}});
   ok("set_room_finish", {{"id", roomId}, {"use", "Living"}, {"floor", "Flooring t15"}, {"ceiling", "PB t9.5"}, {"ceiling_height", 2400}});
+  ok("make_ceilings", {{"rooms", {roomId}}});  // docs/127: a ceiling of the room
   ok("create_grid", {{"x_spacings", {8000}}, {"y_spacings", {6000}}});
 
   sbr::doc::IfcSummary summary;
@@ -211,6 +212,7 @@ TEST_F(IfcExport, AHouseIsWrittenWithItsStoreysPartsAndRelations) {
   EXPECT_EQ(summary.proxies, 1);
   EXPECT_EQ(summary.spaces, 1);
   EXPECT_EQ(summary.grids, 1);
+  EXPECT_EQ(summary.coverings, 1);
   EXPECT_EQ(ifc.of("IFCWALL").size(), 5u);
   EXPECT_EQ(ifc.of("IFCOPENINGELEMENT").size(), 3u);
   EXPECT_EQ(ifc.of("IFCRELVOIDSELEMENT").size(), 3u);
@@ -302,6 +304,17 @@ TEST_F(IfcExport, AHouseIsWrittenWithItsStoreysPartsAndRelations) {
   }
   EXPECT_TRUE(gross);
   EXPECT_TRUE(net);
+  // docs/127: the ceiling board is the room's ceiling (a covering of the space), on 1FL, 10 thick.
+  ASSERT_EQ(ifc.of("IFCCOVERING").size(), 1u);
+  const int covering = ifc.of("IFCCOVERING")[0];
+  EXPECT_EQ(ifc.at(covering).args[8], ".CEILING.");
+  EXPECT_NEAR(ifc.volume(covering), room["area_inner"].get<double>() * 1e6 * 10, 1e-3 * room["area_inner"].get<double>() * 1e7);
+  ASSERT_EQ(ifc.of("IFCRELCOVERSSPACES").size(), 1u);
+  const Entity& covers = ifc.at(ifc.of("IFCRELCOVERSSPACES")[0]);
+  EXPECT_EQ(refsIn(covers.args[4])[0], ifc.of("IFCSPACE")[0]);
+  EXPECT_EQ(refsIn(covers.args[5]), std::vector<int>{covering});
+  EXPECT_TRUE(contained[first].count(covering));
+  EXPECT_EQ(times[covering], 1);
   const Entity& solid = ifc.at(ifc.of("IFCEXTRUDEDAREASOLID")[0]);
   EXPECT_EQ(solid.args[3], "3000.");  // up to 2FL
 

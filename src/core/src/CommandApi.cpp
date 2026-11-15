@@ -133,6 +133,8 @@ void stairArgs(const json& a, geom::StairSpec& s) {
   if (a.contains("thickness")) s.thickness = number(a, "thickness");
   if (a.contains("handrail")) s.handrail = text(a, "handrail");
   if (a.contains("handrail_height")) s.handrailHeight = number(a, "handrail_height");
+  if (a.contains("stringer")) s.stringer = text(a, "stringer");
+  if (a.contains("stringer_thickness")) s.stringerThickness = number(a, "stringer_thickness");
   if (a.contains("turns")) {
     const json& v = a.at("turns");
     s.turns.clear();
@@ -159,7 +161,8 @@ json stairJson(const doc::StairInfo& r) {
               {"riser", r.riser}, {"treads", r.treads}, {"going_min", r.goingMin}, {"going_max", r.goingMax},
               {"winder_going", r.winderGoing}, {"walk_length", r.walkLength}, {"flights", r.flights},
               {"landings", r.landings}, {"winders", r.winders}, {"turns", r.spec.turns}, {"style", r.spec.style},
-              {"thickness", r.spec.thickness}, {"handrail", r.spec.handrail}, {"handrail_height", r.spec.handrailHeight}, {"base_level", r.baseLevel}, {"top_level", r.topLevel},
+              {"thickness", r.spec.thickness}, {"handrail", r.spec.handrail}, {"handrail_height", r.spec.handrailHeight},
+              {"stringer", r.spec.stringer}, {"stringer_thickness", r.spec.stringerThickness}, {"base_level", r.baseLevel}, {"top_level", r.topLevel},
               {"opened_slabs", r.openedSlabs}, {"checks", checks}, {"checks_all_ok", allOk},
               {"checks_basis",
                "Sizes for a house's own stair (not a shared stair of flats), Building Standards Act Enforcement Order "
@@ -2331,14 +2334,17 @@ const std::vector<CommandDef>& commands() {
        "block (one stepped solid, default) or boards (tread boards only); 'thickness' (default 30). 'open_floor': "
        "true also opens the slabs over it (open_floor_for_stair). Attribute kind=stair; sizes stay changeable "
        "(change_stair); foot and top at levels' heights follow those levels. 'handrail': none (default), left, right "
-       "or both (looking up), 'handrail_height' above the treads (default 850, 600-1200). Returns riser, goings and 'checks' "
-       "against the sizes for a house's stair (see checks_basis; not_evaluated is never a pass). No handrails, "
-       "stringers or nosings are made.",
+       "or both (looking up), 'handrail_height' above the treads (default 850, 600-1200). 'stringer': side boards "
+       "(none default, left, right, both) just outside the width, 'stringer_thickness' (default 36, 15-100); their top "
+       "50 over the nosings, deep enough to hold the treads. Returns riser, goings and 'checks' "
+       "against the sizes for a house's stair (see checks_basis; not_evaluated is never a pass). No nosings or risers "
+       "boards are made.",
        SCHEMA({"type": "object", "properties": {
          "path": {"type": "array"}, "base": {"type": "number"}, "rise": {"type": "number"}, "top": {"type": "number"},
          "width": {"type": "number"}, "turns": {}, "risers": {"type": "integer"}, "riser_limit": {"type": "number"},
          "style": {"enum": ["block", "boards"]}, "thickness": {"type": "number"}, "open_floor": {"type": "boolean"},
-         "handrail": {"enum": ["none", "left", "right", "both"]}, "handrail_height": {"type": "number"}},
+         "handrail": {"enum": ["none", "left", "right", "both"]}, "handrail_height": {"type": "number"},
+         "stringer": {"enum": ["none", "left", "right", "both"]}, "stringer_thickness": {"type": "number"}},
          "required": ["path"]}),
        [](doc::Modeler& m, const json& a) {
          const GridLookup grid(m.document());
@@ -2373,13 +2379,14 @@ const std::vector<CommandDef>& commands() {
        }},
       {"change_stair",
        "Change sizes of a stair made by create_stair (any of path, base, rise or top, width, turns, risers, "
-       "riser_limit, style, thickness); the rest stays. The same object; floors opened for it are opened again. "
+       "riser_limit, style, thickness, handrail, handrail_height, stringer, stringer_thickness); the rest stays. The same object; floors opened for it are opened again. "
        "One undo step.",
        SCHEMA({"type": "object", "properties": {
          "id": {"type": "string"}, "path": {"type": "array"}, "base": {"type": "number"}, "rise": {"type": "number"},
          "top": {"type": "number"}, "width": {"type": "number"}, "turns": {}, "risers": {"type": "integer"},
          "riser_limit": {"type": "number"}, "style": {"enum": ["block", "boards"]}, "thickness": {"type": "number"},
-         "handrail": {"enum": ["none", "left", "right", "both"]}, "handrail_height": {"type": "number"}},
+         "handrail": {"enum": ["none", "left", "right", "both"]}, "handrail_height": {"type": "number"},
+         "stringer": {"enum": ["none", "left", "right", "both"]}, "stringer_thickness": {"type": "number"}},
          "required": ["id"]}),
        [](doc::Modeler& m, const json& a) {
          const GridLookup grid(m.document());
@@ -3555,7 +3562,7 @@ const std::vector<CommandDef>& commands() {
       {"export_ifc",
        "Export the building as IFC4 (.ifc) for other BIM software: storeys from the levels; walls (create_wall) "
        "with their openings as voids, and a window / door for each opening with a fitting (a fitting with its "
-       "sill on the floor is a door); slabs; roofs; stairs; columns, beams and members; rooms as spaces with their areas; "
+       "sill on the floor is a door); slabs; roofs; stairs; ceiling boards (make_ceilings) as ceilings of their rooms; columns, beams and members; rooms as spaces with their areas; "
        "grids; other solids as proxies. Lengths in mm. Element ids stay the same when exported again. Returns "
        "counts and 'notes' (what was assumed or left out). Lines, faces and notes are not exported.",
        SCHEMA({"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}),
@@ -3564,7 +3571,7 @@ const std::vector<CommandDef>& commands() {
          return json{{"storeys", s.storeys}, {"walls", s.walls}, {"slabs", s.slabs}, {"roofs", s.roofs}, {"stairs", s.stairs}, {"columns", s.columns},
                      {"beams", s.beams}, {"members", s.members}, {"openings", s.openings}, {"windows", s.windows},
                      {"doors", s.doors}, {"spaces", s.spaces}, {"grids", s.grids}, {"proxies", s.proxies},
-                     {"skipped", s.skipped}, {"notes", s.notes}};
+                     {"ceilings", s.coverings}, {"skipped", s.skipped}, {"notes", s.notes}};
        }},
       {"export_step", "Export visible objects (or 'ids') to STEP with names and colours.",
        SCHEMA({"type": "object", "properties": {"path": {"type": "string"},

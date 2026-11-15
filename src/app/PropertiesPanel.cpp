@@ -443,6 +443,24 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
         if (stair->spec.handrail != "none")
           size(tr("手すりの高さ"), "handrail_height", stair->spec.handrailHeight, 600, tr("段の先から手すりの上まで（600〜1200）"));
       }
+      {
+        // docs/128: side boards (ささら桁・側板), looking up the stair.
+        auto* sides = new QComboBox;
+        sides->setObjectName(QStringLiteral("stairStringer"));
+        sides->addItem(tr("なし"), QStringLiteral("none"));
+        sides->addItem(tr("左"), QStringLiteral("left"));
+        sides->addItem(tr("右"), QStringLiteral("right"));
+        sides->addItem(tr("両側"), QStringLiteral("both"));
+        sides->setCurrentIndex(std::max(0, sides->findData(QString::fromStdString(stair->spec.stringer))));
+        sides->setToolTip(tr("上りの向きに見て、左・右。幅のすぐ外に側板を付けます（上は段の先の線より 50 上、段板をくわえる深さ）"));
+        sides->setEnabled(!o->locked);
+        connect(sides, &QComboBox::activated, this, [this, id, sides] {
+          emit stairEdited(id, QStringLiteral("stringer"), 0.0, sides->currentData().toString());
+        });
+        form_->addRow(tr("側板（ささら桁）"), sides);
+        if (stair->spec.stringer != "none")
+          size(tr("側板の厚さ"), "stringer_thickness", stair->spec.stringerThickness, 15, tr("側板の厚さ（15〜100）"));
+      }
       auto row = [&](const QString& label, const QString& text, const char* name) {
         auto* value = new QLabel(text);
         value->setObjectName(QLatin1String(name));

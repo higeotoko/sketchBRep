@@ -6794,7 +6794,8 @@ std::string stairSpecText(const geom::StairSpec& s) {
   for (const gp_Pnt& p : s.path) path.push_back({p.X(), p.Y()});
   return nlohmann::json{{"path", path}, {"base", s.base}, {"rise", s.rise}, {"width", s.width}, {"risers", s.risers},
                         {"riser_limit", s.riserLimit}, {"turns", s.turns}, {"style", s.style}, {"thickness", s.thickness},
-                        {"handrail", s.handrail}, {"handrail_height", s.handrailHeight}}
+                        {"handrail", s.handrail}, {"handrail_height", s.handrailHeight},
+                        {"stringer", s.stringer}, {"stringer_thickness", s.stringerThickness}}
       .dump();
 }
 
@@ -6812,6 +6813,8 @@ std::optional<geom::StairSpec> stairSpecFrom(const std::string& text) {
     s.style = j.at("style").get<std::string>();
     s.handrail = j.value("handrail", std::string("none"));  // stairs made before docs/116 have none
     s.handrailHeight = j.value("handrail_height", 850.0);
+    s.stringer = j.value("stringer", std::string("none"));  // stairs made before docs/128 have none
+    s.stringerThickness = j.value("stringer_thickness", 36.0);
     s.thickness = j.at("thickness").get<double>();
     return s;
   } catch (const std::exception&) {
