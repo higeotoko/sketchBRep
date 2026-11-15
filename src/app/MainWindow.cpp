@@ -805,6 +805,18 @@ void MainWindow::buildUi() {
               if (!setOpeningFitting(id, index, fitting)) refreshPanels();
             });
           });
+  connect(panel_, &PropertiesPanel::openingMarkEdited, this,
+          [this](const doc::ObjectId& id, int index, const QString& mark, const QString& product) {
+            QTimer::singleShot(0, this, [this, id, index, mark, product] {
+              if (index < 1) return;
+              const Status s = modeler_.setOpeningMarks(id, {static_cast<std::size_t>(index)}, mark.toStdString(),
+                                                        product.toStdString());
+              if (!s) reportError(tr("符号・品番を変えられません: %1").arg(userMessage(QString::fromStdString(s.message()))));
+              else if (mark.isEmpty() && product.isEmpty()) setStatus(tr("開口 %1 の符号を、自動で付ける符号に戻しました").arg(index));
+              else setStatus(tr("開口 %1 の符号・品番を決めました（建具表と平面の札に出ます。Ctrl+Z で戻せます）").arg(index));
+              refreshPanels();
+            });
+          });
   connect(panel_, &PropertiesPanel::openingPlaced, this,
           [this](const doc::ObjectId& id, int index, double offset, double sill) {
             QTimer::singleShot(0, this, [this, id, index, offset, sill] {
@@ -4305,7 +4317,7 @@ void MainWindow::showSchedulesDialog() {
     box->addWidget(each, 1);
     box->addWidget(note("openingScheduleTotal",
                         tr("合計 %1 か所・符号 %2 種類。符号は、種類・建具・幅・高さが同じ開口に同じものを付けます（W = 窓、D = 扉、O = 建具のない開口）。"
-                           "平面に出る符号と同じです。モデルを変えると付け直します。手で決めた符号と品番（今は AI から：set_opening_mark）は、そのまま残ります。")
+                           "平面に出る符号と同じです。モデルを変えると付け直します。手で決めた符号と品番（壁のプロパティの「開口」で入れる）は、そのまま残ります。")
                             .arg(total).arg(openings.types.size())));
     tabs->addTab(page, tr("建具表"));
   }

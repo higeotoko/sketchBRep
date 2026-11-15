@@ -30,6 +30,7 @@
 #include "sbr/Units.h"
 #include "sbr/WallTypes.h"
 #include "sbr/OpeningSymbols.h"
+#include "sbr/doc/Schedules.h"
 #include "sbr/geom/Measure.h"
 #include "sbr/geom/Validation.h"
 
@@ -919,6 +920,11 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
     // opening was made from, 内 = the other side; left / right as seen from the side it opens to.
     std::vector<std::pair<QString, std::string>> kinds;
     for (const auto& c : draw::fittingChoices()) kinds.emplace_back(QString::fromStdString(c.label), c.fitting);
+    // Their marks as the schedule has them (docs/104, docs/109): one's own, or worked out.
+    std::map<std::string, const doc::OpeningRow*> marks;
+    const doc::OpeningSchedule schedule = doc::openingSchedule(modeler.document());
+    for (const doc::OpeningRow& r : schedule.rows)
+      if (r.host == id) marks[r.openingId] = &r;
     for (const doc::Modeler::OpeningInfo& op : *openings) {
       auto* row = new QWidget;
       auto* h = new QHBoxLayout(row);
@@ -985,12 +991,45 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       connect(remove, &QToolButton::clicked, this, [this, id, index] { emit openingRemoved(id, index); });
       ph->addWidget(remove);
       place->setObjectName(QStringLiteral("openingPlace%1").arg(index));
-      // One row per opening: its size and fitting, then where it sits.
+      // Its mark and product number (docs/109): typed in, they stay whatever else changes;
+      // left empty, the mark is worked out from kind and size (shown greyed).
+      auto* tag = new QWidget;
+      auto* th = new QHBoxLayout(tag);
+      th->setContentsMargins(0, 0, 0, 0);
+      const auto found = marks.find(op.id);
+      const doc::OpeningRow* scheduled = found != marks.end() ? found->second : nullptr;
+      const QString own = scheduled && scheduled->ownMark ? QString::fromStdString(scheduled->mark) : QString();
+      const QString product = scheduled ? QString::fromStdString(scheduled->product) : QString();
+      auto* markEdit = new QLineEdit(own);
+      markEdit->setObjectName(QStringLiteral("openingMark%1").arg(index));
+      markEdit->setPlaceholderText(scheduled && !scheduled->ownMark ? tr("符号 %1（自動）").arg(QString::fromStdString(scheduled->mark))
+                                                                     : tr("符号"));
+      markEdit->setToolTip(tr("建具表と平面の札に出る符号。入れると、開口を足したり大きさを変えたりしても変わりません。"
+                              "空にすると、種類・建具・大きさから自動で付けます"));
+      markEdit->setMaxLength(40);
+      auto* productEdit = new QLineEdit(product);
+      productEdit->setObjectName(QStringLiteral("openingProduct%1").arg(index));
+      productEdit->setPlaceholderText(tr("品番"));
+      productEdit->setToolTip(tr("建具表と CSV の「品番」の列に出ます"));
+      productEdit->setMaxLength(120);
+      markEdit->setEnabled(!modeler.document().find(id) || !modeler.document().find(id)->locked);
+      productEdit->setEnabled(markEdit->isEnabled());
+      th->addWidget(markEdit, 1);
+      th->addWidget(productEdit, 2);
+      auto named = [this, id, index, markEdit, productEdit, own, product] {
+        const QString m = markEdit->text().trimmed(), p = productEdit->text().trimmed();
+        if (m != own || p != product) emit openingMarkEdited(id, index, m, p);
+      };
+      connect(markEdit, &QLineEdit::editingFinished, this, named);
+      connect(productEdit, &QLineEdit::editingFinished, this, named);
+      tag->setObjectName(QStringLiteral("openingTag%1").arg(index));
+      // One row per opening: its size and fitting, its mark, then where it sits.
       auto* cell = new QWidget;
       auto* lines = new QVBoxLayout(cell);
       lines->setContentsMargins(0, 0, 0, 0);
       lines->setSpacing(2);
       lines->addWidget(row);
+      lines->addWidget(tag);
       lines->addWidget(place);
       form_->addRow(tr("開口 %1").arg(index), cell);
     }

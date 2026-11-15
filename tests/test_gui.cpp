@@ -11638,6 +11638,38 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
   QVERIFY2(f.window.statusText().contains(QStringLiteral("CSV に保存しました")),qPrintable(f.window.statusText()));
   QVERIFY(f.window.scheduleCsv(1).contains(QStringLiteral("LDK,1FL,48.00")));
   QVERIFY(f.window.scheduleCsv(2).contains(QStringLiteral("未評価")));
+  // docs/109: a mark and a product number typed in the wall's properties.
+  f.window.setSelection({south});
+  QApplication::processEvents();
+  auto* mark=f.window.findChild<QLineEdit*>(QStringLiteral("openingMark1"));QVERIFY(mark);
+  auto* product=f.window.findChild<QLineEdit*>(QStringLiteral("openingProduct1"));QVERIFY(product);
+  QVERIFY2(mark->text().isEmpty()&&mark->placeholderText().contains(QStringLiteral("W1")),qPrintable(mark->placeholderText()));
+  const auto before=m.history().undoCount();
+  mark->setText(QStringLiteral("AW-1"));
+  product->setText(QStringLiteral("APW330"));
+  emit mark->editingFinished();
+  QTRY_VERIFY(m.document().find(south)->attributes.count("opening_marks"));
+  QCOMPARE(m.history().undoCount(),before+1);
+  QVERIFY2(f.window.statusText().contains(QStringLiteral("符号・品番を決めました")),qPrintable(f.window.statusText()));
+  const QString csv=f.window.scheduleCsv(0);
+  QVERIFY2(csv.contains(QStringLiteral("AW-1,窓,引違い,1600,1200,1,900,APW330,手で決めた符号")),qPrintable(csv));
+  QVERIFY(csv.contains(QStringLiteral("W1,窓,引違い,1600,1200,1,900,,")));  // the other one keeps the worked-out mark
+  f.vp->setPlanCut(1100.0);
+  QApplication::processEvents();
+  {const auto& tags=f.vp->openingTagTexts();QVERIFY(std::count(tags.begin(),tags.end(),QStringLiteral("AW-1"))==1);}
+  // Shown again: what was typed; emptied: worked out again.
+  f.window.setSelection({});QApplication::processEvents();
+  f.window.setSelection({south});QApplication::processEvents();
+  mark=f.window.findChild<QLineEdit*>(QStringLiteral("openingMark1"));QVERIFY(mark);
+  product=f.window.findChild<QLineEdit*>(QStringLiteral("openingProduct1"));QVERIFY(product);
+  QCOMPARE(mark->text(),QStringLiteral("AW-1"));
+  QCOMPARE(product->text(),QStringLiteral("APW330"));
+  mark->clear();product->clear();
+  emit product->editingFinished();
+  QTRY_VERIFY(!m.document().find(south)->attributes.count("opening_marks"));
+  QVERIFY(f.window.scheduleCsv(0).contains(QStringLiteral("W1,窓,引違い,1600,1200,2,900")));
+  QVERIFY(m.undo());
+  QVERIFY(m.document().find(south)->attributes.count("opening_marks"));
 }
 
 void GuiPhase1::ifcExportWritesTheBuildingAndSaysWhatItLeftOut() {

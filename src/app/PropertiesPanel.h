@@ -47,6 +47,9 @@ class PropertiesPanel : public QWidget {
   void openingSizeEdited(const doc::ObjectId& id, int index, double width, double height);
   // Door / window kind of one opening (plan symbol): a fitting JSON (OpeningSymbols.h).
   void openingFittingEdited(const doc::ObjectId& id, int index, const QString& fitting);
+  // One opening's own mark and product number typed in (docs/109); both empty: the
+  // worked-out mark again.
+  void openingMarkEdited(const doc::ObjectId& id, int index, const QString& mark, const QString& product);
   // One opening put at `offset` from the wall's left end (seen from the side it was cut from)
   // and `sill` above the wall's bottom.
   void openingPlaced(const doc::ObjectId& id, int index, double offset, double sill);
