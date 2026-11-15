@@ -110,7 +110,7 @@ class DrawingDialog : public QDialog {
   QCheckBox* annotations_ = nullptr;
   QCheckBox* frame_ = nullptr;
   // docs/130: tables beside the drawing (openings, rooms, areas, finishes).
-  QCheckBox* tables_[4] = {nullptr, nullptr, nullptr, nullptr};
+  QCheckBox* tables_[5] = {nullptr, nullptr, nullptr, nullptr, nullptr};
   QCheckBox* memberLabels_ = nullptr;
   QCheckBox* includeHidden_ = nullptr;
   QComboBox* within_ = nullptr;

@@ -462,6 +462,50 @@ TEST_F(Schedules, FloorAndRoofTypesChangeTogether) {
   EXPECT_NEAR(modeler.roofInfo(roofB)->spec.thickness, 150, 1e-9);
 }
 
+// docs/136: the table of floor and roof types.
+TEST_F(Schedules, TheTypesOfFloorsAndRoofsAreListed) {
+  // Nothing named yet: no lines, said in the notes; not in the drawing set.
+  sbr::draw::Table t = sbr::doc::scheduleTable(modeler.document(), 4);
+  EXPECT_EQ(t.title, "種類の表");
+  EXPECT_TRUE(t.rows.empty());
+  ASSERT_EQ(t.notes.size(), 2u);  // the one slab without a name
+  EXPECT_FALSE(sbr::doc::tableHasContent(t, 4));
+  std::string slab;
+  for (const auto& o : modeler.document().objects())
+    if (o.attributes.count("kind") && o.attributes.at("kind") == "slab") slab = o.id;
+  const std::string upper = ok("create_slab", {{"outline", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}}}, {"top", 3000}, {"thickness", 150}})["id"];
+  const std::string roof = ok("create_roof", {{"outline", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}}}, {"kind", "gable"}, {"height", 3000}, {"pitch", 4.5}})["id"];
+  ok("set_type_name", {{"ids", {slab, upper}}, {"name", "F1"}});
+  ok("set_type_name", {{"ids", {roof}}, {"name", "R1"}});
+  t = sbr::doc::scheduleTable(modeler.document(), 4);
+  ASSERT_EQ(t.rows.size(), 2u);
+  // Floors first: F1, 2 of them, thicknesses differ (200 and 150): said.
+  EXPECT_EQ(t.rows[0][0], "F1");
+  EXPECT_EQ(t.rows[0][1], "床");
+  EXPECT_EQ(t.rows[0][2], "2");
+  EXPECT_FALSE(t.rows[0][7].empty());
+  EXPECT_EQ(t.rows[1][0], "R1");
+  EXPECT_EQ(t.rows[1][1], "屋根");
+  EXPECT_EQ(t.rows[1][4], "4.5 寸");
+  EXPECT_TRUE(t.rows[1][7].empty());
+  ASSERT_EQ(t.notes.size(), 1u);  // every one named
+  // Made alike: no longer mixed.
+  ok("change_type", {{"name", "F1"}, {"thickness", 200}});
+  t = sbr::doc::scheduleTable(modeler.document(), 4);
+  EXPECT_EQ(t.rows[0][3], "200");
+  EXPECT_TRUE(t.rows[0][7].empty());
+  // In the drawing set and as a file.
+  const auto set = sbr::doc::drawingSet(modeler.document(), {});
+  ASSERT_TRUE(set);
+  EXPECT_NE(std::find(set->names.begin(), set->names.end(), "種類の表"), set->names.end());
+  const auto dir = std::filesystem::temp_directory_path() / "sbr_type_table";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+  const json r = ok("export_schedule", {{"path", (dir / "types.dxf").u8string()}, {"table", "types"}});
+  EXPECT_EQ(r["rows"], 2);
+  std::filesystem::remove_all(dir);
+}
+
 // docs/113: a table on a sheet of its own.
 TEST_F(Schedules, ATableGoesOnASheetOfItsOwn) {
   const sbr::draw::Table table = sbr::doc::scheduleTable(modeler.document(), 0);

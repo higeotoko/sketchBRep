@@ -106,7 +106,8 @@ AreaTable areaTable(const Document& document);
 std::string roomTagText(const RoomRow& room);
 
 // The tables for a sheet of their own (docs/113): 0 the door and window schedule (one line per
-// mark), 1 the room schedule, 2 the area table, 3 the finish schedule (docs/115); the same
+// mark), 1 the room schedule, 2 the area table, 3 the finish schedule (docs/115), 4 the types of
+// floors and roofs (docs/136: one line per type name and part, its count and sizes); the same
 // values and notes as the CSV.
 draw::Table scheduleTable(const Document& document, int which);
 // Whether a table made by scheduleTable(document, which) has anything in it: openings beyond the

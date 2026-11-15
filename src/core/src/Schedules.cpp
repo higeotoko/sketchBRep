@@ -332,6 +332,50 @@ draw::Table scheduleTable(const Document& document, int which) {
                         r.counted ? "閉じている" : !r.closed ? "閉じていない" : "ほかの室と同じ場所"});
     t.rows.push_back({"合計（閉じている室だけ）", "", number(s.centreTotal / 1e6, 2), s.innerMissing == 0 ? number(s.innerTotal / 1e6, 2) : "未評価", "", ""});
     t.notes = {"壁芯＝壁を描いた線の内側、内法＝壁の面の内側。法の床面積（算入・不算入の決まり）ではありません。"};
+  } else if (which == 4) {
+    // Types of floors and roofs (docs/134, docs/136): read from the objects as they are now.
+    t.title = "種類の表";
+    t.headers = {"種類名", "部位", "数", "厚さ", "勾配", "軒の出", "けらばの出", "注"};
+    struct Values {
+      int count = 0;
+      bool mixed = false;
+      std::vector<double> v;  // thickness[, pitch, eave, gable eave]
+    };
+    std::map<std::pair<int, std::string>, Values> types;  // (0 floor / 1 roof, name)
+    int unnamed = 0;
+    for (const Object& o : document.objects()) {
+      const auto kind = o.attributes.find("kind");
+      if (kind == o.attributes.end() || (kind->second != "slab" && kind->second != "roof")) continue;
+      const auto name = o.attributes.find("type_name");
+      if (name == o.attributes.end() || name->second.empty()) {
+        ++unnamed;
+        continue;
+      }
+      std::vector<double> v;
+      if (kind->second == "slab") {
+        const Bnd_Box box = document.worldBounds(o);
+        if (box.IsVoid()) continue;
+        v = {box.CornerMax().Z() - box.CornerMin().Z()};
+      } else {
+        const auto spec = o.attributes.find("roof_spec");
+        const nlohmann::json j = spec == o.attributes.end() ? nlohmann::json() : nlohmann::json::parse(spec->second, nullptr, false);
+        if (!j.is_object()) continue;
+        v = {j.value("thickness", 0.0), j.value("pitch", 0.0), j.value("eave", 0.0), j.value("gable_eave", 0.0)};
+      }
+      Values& at = types[{kind->second == "slab" ? 0 : 1, name->second}];
+      if (at.count == 0) at.v = v;
+      else
+        for (std::size_t i = 0; i < v.size() && i < at.v.size(); ++i) at.mixed |= std::abs(v[i] - at.v[i]) > 0.5;
+      ++at.count;
+    }
+    for (const auto& [key, at] : types) {
+      const bool roof = key.first == 1;
+      t.rows.push_back({key.second, roof ? "屋根" : "床", std::to_string(at.count), number(at.v[0], 0),
+                        roof ? number(at.v[1], 1) + " 寸" : "", roof ? number(at.v[2], 0) : "", roof ? number(at.v[3], 0) : "",
+                        at.mixed ? "値の違う物が混ざっています（1 つ目の値）" : ""});
+    }
+    t.notes = {"床（スラブ）・屋根に付けた種類名ごとです。寸法は mm。同じ種類名の物は「同じ種類の…にする」でそろえられます。"};
+    if (unnamed > 0) t.notes.push_back("種類名の無い床・屋根が " + std::to_string(unnamed) + " 個あります（この表には入っていません）。");
   } else if (which == 3) {
     const RoomSchedule s = roomSchedule(document);
     t.title = "仕上げ表";
@@ -423,7 +467,7 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& sp
     planned.push_back({view.title, view, std::nullopt, {}});
   }
   // The first planned is the lowest storey's plan.
-  for (int which : {0, 1, 2, 3}) {
+  for (int which : {0, 1, 2, 3, 4}) {
     draw::Table table = scheduleTable(document, which);
     if (!tableHasContent(table, which)) continue;
     if (spec.tablesWithPlan) {

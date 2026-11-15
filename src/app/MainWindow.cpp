@@ -4454,7 +4454,7 @@ std::string scheduleBytes(const doc::Document& d, int table) {
   return table == 0   ? doc::openingScheduleCsv(doc::openingSchedule(d))
          : table == 1 ? doc::roomScheduleCsv(doc::roomSchedule(d))
          : table == 2 ? doc::areaTableCsv(doc::areaTable(d))
-                      : doc::tableCsv(doc::scheduleTable(d, 3));
+                      : doc::tableCsv(doc::scheduleTable(d, table));
 }
 }  // namespace
 
@@ -4675,11 +4675,42 @@ void MainWindow::showSchedulesDialog() {
     box->addWidget(note("finishTableNote", tr("用途・床・壁・天井・天井高は、室を選んでプロパティで入れます。空欄は、まだ入れていない所です。")));
     tabs->addTab(page, tr("仕上げ表"));
   }
+  {
+    // docs/136: the types of floors and roofs (type names given in their properties).
+    const draw::Table types = doc::scheduleTable(document, 4);
+    auto* page = new QWidget;
+    auto* box = new QVBoxLayout(page);
+    QStringList headers;
+    for (const std::string& h : types.headers) headers << QString::fromStdString(h);
+    auto* table = makeTable("typeTable", headers, static_cast<int>(types.rows.size()));
+    for (int row = 0; row < static_cast<int>(types.rows.size()); ++row)
+      for (int c = 0; c < static_cast<int>(types.rows[static_cast<std::size_t>(row)].size()); ++c)
+        table->setItem(row, c, new QTableWidgetItem(QString::fromStdString(types.rows[static_cast<std::size_t>(row)][static_cast<std::size_t>(c)])));
+    table->resizeColumnsToContents();
+    // A row clicked: those of that type selected.
+    connect(table, &QTableWidget::cellClicked, this, [this, types](int row, int) {
+      if (row < 0 || row >= static_cast<int>(types.rows.size())) return;
+      const std::string name = types.rows[static_cast<std::size_t>(row)][0];
+      const std::string part = types.rows[static_cast<std::size_t>(row)][1] == "屋根" ? "roof" : "slab";
+      std::vector<doc::ObjectId> ids;
+      for (const doc::Object& o : modeler_.document().objects()) {
+        const auto n = o.attributes.find("type_name");
+        const auto k = o.attributes.find("kind");
+        if (n != o.attributes.end() && n->second == name && k != o.attributes.end() && k->second == part) ids.push_back(o.id);
+      }
+      setSelection(ids);
+    });
+    QString text;
+    for (const std::string& n : types.notes) text += (text.isEmpty() ? QString() : QStringLiteral("\n")) + QString::fromStdString(n);
+    box->addWidget(table, 1);
+    box->addWidget(note("typeTableNote", text));
+    tabs->addTab(page, tr("種類の表"));
+  }
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
   auto* save = buttons->addButton(tr("この表を CSV に保存..."), QDialogButtonBox::ActionRole);
   save->setObjectName(QStringLiteral("scheduleSaveCsv"));
   connect(save, &QPushButton::clicked, &dialog, [this, tabs, &dialog] {
-    const QString names[] = {tr("建具表"), tr("室の表"), tr("面積の表"), tr("仕上げ表")};
+    const QString names[] = {tr("建具表"), tr("室の表"), tr("面積の表"), tr("仕上げ表"), tr("種類の表")};
     const QString path = QFileDialog::getSaveFileName(&dialog, tr("表を CSV に保存"), names[tabs->currentIndex()] + QStringLiteral(".csv"),
                                                       tr("CSV (*.csv)"));
     if (!path.isEmpty()) saveScheduleCsv(tabs->currentIndex(), path);
@@ -4687,7 +4718,7 @@ void MainWindow::showSchedulesDialog() {
   auto* drawing = buttons->addButton(tr("この表を図面に保存..."), QDialogButtonBox::ActionRole);
   drawing->setObjectName(QStringLiteral("scheduleSaveDrawing"));
   connect(drawing, &QPushButton::clicked, &dialog, [this, tabs, &dialog] {
-    const QString names[] = {tr("建具表"), tr("室の表"), tr("面積の表"), tr("仕上げ表")};
+    const QString names[] = {tr("建具表"), tr("室の表"), tr("面積の表"), tr("仕上げ表"), tr("種類の表")};
     const QString path = QFileDialog::getSaveFileName(&dialog, tr("表を図面に保存"), names[tabs->currentIndex()] + QStringLiteral(".pdf"),
                                                       tr("PDF (*.pdf);;DXF (*.dxf);;Jw_cad (*.jww)"));
     if (!path.isEmpty()) saveScheduleDrawing(tabs->currentIndex(), path);
