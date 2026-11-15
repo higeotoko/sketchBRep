@@ -10,6 +10,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <filesystem>
 #include <unordered_set>
 #include <deque>
 #include <cmath>
@@ -8749,6 +8750,18 @@ void Modeler::newDocument() {
   activeGroup_.clear();
   history_.clear();
   document_.clear();
+}
+
+Status Modeler::saveCopy(const std::string& path) const {
+  const std::filesystem::path p = std::filesystem::u8path(path);
+  std::string extension = p.extension().u8string();
+  std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return std::tolower(c); });
+  if (extension != ".sbr") return Status::failure("A copy is saved as a .sbr file");
+  if (!p.is_absolute()) return Status::failure("Give the copy's full path");
+  std::error_code error;
+  if (std::filesystem::exists(p, error)) return Status::failure("A file is there already: a copy never replaces one");
+  if (!std::filesystem::is_directory(p.parent_path(), error)) return Status::failure("The folder for the copy does not exist");
+  return saveDocument(document_, path);
 }
 
 Status Modeler::save(const std::string& path) {

@@ -44,6 +44,7 @@ add_executable(sbr_core_tests
   test_roof.cpp
   test_stair.cpp
   test_schedules.cpp
+  test_command_api_files.cpp
   test_ifc_export.cpp
   test_level_attachment.cpp
   test_wall_types.cpp

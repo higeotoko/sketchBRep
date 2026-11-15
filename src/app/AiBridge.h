@@ -35,6 +35,9 @@ class AiBridge : public QObject {
   void setHooks(std::function<void()> before, std::function<void()> after);
 
   bool setEnabled(bool enabled);  // false if the server could not listen
+  // Whether an agent may save a copy of the model as a new file (docs/111).
+  void setAllowSaveCopy(bool allow) { api_.setAllowSaveCopy(allow); }
+  bool allowsSaveCopy() const { return api_.allowsSaveCopy(); }
   bool isEnabled() const;
   QString serverName() const;
   QString lastError() const { return lastError_; }

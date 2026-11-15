@@ -1410,6 +1410,22 @@ void MainWindow::buildMenus() {
   aiAction_->setCheckable(true);
   aiAction_->setToolTip(tr("ローカルMCPと、有効にしたリモートMCP接続からモデルを操作できるようにします"));
   connect(aiAction_, &QAction::toggled, this, [this](bool on) { setAiAccess(on); });
+  {
+    // docs/111: a copy as a new file only (never over a file, the user's own file untouched).
+    auto* saveCopy = ai->addAction(tr("AI に別名保存を許可（上書きはしない）"));
+    saveCopy->setObjectName(QStringLiteral("aiSaveCopyAction"));
+    saveCopy->setCheckable(true);
+    saveCopy->setToolTip(tr("AI が、今のモデルを新しい名前の .sbr ファイルに保存できます。すでにあるファイルには書きません。"
+                            "開いているファイル（あなたの保存）は変わりません"));
+    const bool allowed = QSettings().value(QStringLiteral("ai/allowSaveCopy"), true).toBool();
+    saveCopy->setChecked(allowed);
+    aiBridge_->setAllowSaveCopy(allowed);
+    connect(saveCopy, &QAction::toggled, this, [this](bool on) {
+      aiBridge_->setAllowSaveCopy(on);
+      QSettings().setValue(QStringLiteral("ai/allowSaveCopy"), on);
+      setStatus(on ? tr("AI の別名保存を許可しました（上書きはしません）") : tr("AI の別名保存を止めました"));
+    });
+  }
   ai->addAction(tr("MCP 接続設定をコピー"), this, [this] {
     QString exe = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("sbr_mcp"));
 #ifdef Q_OS_WIN
@@ -1427,7 +1443,8 @@ void MainWindow::buildMenus() {
         tr("「外部 AI からの操作を許可」を ON にすると、このパソコン上の AI クライアントが "
            "sbr_mcp（MCP サーバー）経由でモデルを操作できます。<br><br>"
            "・AI の操作も GUI と同じコマンドで実行され、形状チェック・失敗時の取り消し・Ctrl+Z が効きます<br>"
-           "・AI はファイルの保存・開く・書き出しはできません（保存はあなたが行います）<br>"
+           "・AI はファイルを開く・上書き保存・書き出しはできません（保存はあなたが行います）。"
+           "「AI に別名保存を許可」が ON の時だけ、新しい名前の .sbr ファイルに写しを保存できます（すでにあるファイルには書きません）<br>"
            "・通常のMCP接続は同じユーザーのローカルプロセスのみです。リモートMCP接続を開始した場合は専用URLからも操作できます<br><br>"
            "AIクライアントは利用者が選べます。特定のAIモデルや有料AI API、OpenAI APIキーは必須ではありません。<br>設定: ローカルMCPは sbr_mcp を各クライアントの手順で登録し、外部クライアントは「リモートMCP接続...」を使います。操作の可否はサービス・プラン・環境に依存します。"));
   });

@@ -938,6 +938,9 @@ class Modeler {
   // --- files --------------------------------------------------------------
   void newDocument();
   Status save(const std::string& path);
+  // A copy of the model in a new .sbr file (docs/111): never over a file that is there, and the
+  // document stays as it is (not marked saved; the user's own file is untouched).
+  Status saveCopy(const std::string& path) const;
   // verifyRecipes = false opens with the stored geometry only (fast for
   // large models); verify later with verifyRecipes(cursor, budget).
   Status load(const std::string& path, std::vector<std::string>* warnings = nullptr, bool verifyRecipes = true);

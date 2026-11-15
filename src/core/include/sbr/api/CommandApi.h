@@ -24,6 +24,9 @@ class CommandApi {
     // save / open / export_step. The in-app bridge turns these off so an
     // agent cannot replace or overwrite the user's files.
     bool allowFileCommands = true;
+    // save_copy alone, where the other file commands are off (docs/111): a new .sbr file,
+    // never over one that is there; the user's document is not touched.
+    bool allowSaveCopy = false;
   };
 
   // What a command may touch (review C). Ordered: a batch has the largest
@@ -51,6 +54,8 @@ class CommandApi {
   CommandApi(doc::Modeler& modeler, Options options) : modeler_(modeler), options_(options) {}
 
   void addExtension(Extension extension) { extensions_.push_back(std::move(extension)); }
+  void setAllowSaveCopy(bool allow) { options_.allowSaveCopy = allow; }
+  bool allowsSaveCopy() const { return options_.allowFileCommands || options_.allowSaveCopy; }
 
   // Executes one request (or a "batch"). Never throws.
   std::string execute(const std::string& requestJson);

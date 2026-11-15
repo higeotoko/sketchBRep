@@ -3223,6 +3223,15 @@ const std::vector<CommandDef>& commands() {
          must(m.save(text(a, "path")));
          return json::object();
        }},
+      {"save_copy",
+       "Save a copy of the model as a new .sbr file at 'path' (full path, the folder must exist). Never "
+       "replaces a file that is there (pick another name); the user's own file and its saved state are not "
+       "touched. In the app this is allowed by the menu AI 連携 > AI に別名保存を許可.",
+       SCHEMA({"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}),
+       [](doc::Modeler& m, const json& a) {
+         must(m.saveCopy(text(a, "path")));
+         return json{{"path", text(a, "path")}};
+       }},
       {"open", "Open a project (.sbr), replacing the current model.",
        SCHEMA({"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}),
        [](doc::Modeler& m, const json& a) {
@@ -3434,7 +3443,7 @@ const std::vector<CommandDef>& commands() {
 #undef SCHEMA
 
 bool isFileCommand(const std::string& name) {
-  return name == "save" || name == "open" || name == "export_ifc" || name == "export_step" || name == "export_stl" || name == "export_3dm" ||
+  return name == "save" || name == "save_copy" || name == "open" || name == "export_ifc" || name == "export_step" || name == "export_stl" || name == "export_3dm" ||
          name == "import_brep" || name == "export_brep" || name == "import_iges" || name == "export_iges" ||
          name == "import_3dm" || name == "import_dxf" || name == "import_jww" || name == "set_material_texture" || name == "export_dae" ||
          name == "import_dae" || name == "export_drawing" || name == "export_gltf";
@@ -3701,6 +3710,7 @@ json runPreview(const Context& c, const json& args) {
   scratch.copyFrom(c.modeler);
   CommandApi::Options trial = c.options;
   trial.allowFileCommands = false;
+  trial.allowSaveCopy = false;
   CommandApi api(scratch, trial);
   json batch = {{"command", "batch"}, {"args", {{"commands", arg(args, "commands")}}}};
   const json outcome = json::parse(api.execute(batch.dump()));
@@ -3739,7 +3749,7 @@ json run(const Context& c, const json& request, int depth) {
       if (depth > 0) throw ApiError("preview cannot be nested");
       return json{{"ok", true}, {"result", runPreview(c, args)}};
     }
-    if (isFileCommand(name) && !c.options.allowFileCommands) {
+    if (isFileCommand(name) && !c.options.allowFileCommands && !(name == "save_copy" && c.options.allowSaveCopy)) {
       throw ApiError("'" + name + "' is disabled here (the user opens and saves files)");
     }
     for (const CommandDef& def : commands()) {
@@ -3826,7 +3836,7 @@ CommandApi::Effect CommandApi::effectOf(const std::string& requestJson) const {
 std::string CommandApi::schemaJson() const {
   json list = json::array();
   for (const CommandDef& c : commands()) {
-    if (isFileCommand(c.name) && !options_.allowFileCommands) continue;
+    if (isFileCommand(c.name) && !options_.allowFileCommands && !(c.name == "save_copy" && options_.allowSaveCopy)) continue;
     list.push_back({{"name", c.name},
                     {"description", c.description},
                     {"input_schema", json::parse(c.schema)},
