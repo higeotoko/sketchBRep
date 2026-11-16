@@ -791,6 +791,9 @@ class Modeler {
     std::vector<std::string> left;  // names
   };
   Result<GridPinning> pinToGrid(const std::vector<ObjectId>& ids, const std::string& grid, double tolerance = 10.0);
+  // Members and walls let go of their grid (docs/144): they stay where they are and no longer
+  // follow it (nor the levels pinned with it). `ids` empty: every one pinned. One undo step. How many.
+  Result<int> unpinFromGrid(const std::vector<ObjectId>& ids);
   // What can be edited of a member as it is now: each value with what it
   // means and where it comes from (the member's parameter, or measured on
   // its shape after other edits). Computed when asked, never kept.

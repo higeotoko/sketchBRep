@@ -2065,6 +2065,12 @@ QString StairTool::turnText(int turn) {
 }
 
 QString StairTool::settingsText() const {
+  if (settings_.spiral)
+    return QObject::tr("らせん・幅 %1・回る角度 %2°・段数 %3・%4")
+        .arg(mm(settings_.width))
+        .arg(settings_.sweep, 0, 'g', 4)
+        .arg(settings_.risers > 0 ? QString::number(settings_.risers) : QObject::tr("自動（蹴上 %1 以下）").arg(mm(settings_.riserLimit)))
+        .arg(settings_.style == "boards" ? QObject::tr("踏板だけ") : QObject::tr("段々の塊"));
   return QObject::tr("幅 %1・曲がり角 %2・段数 %3・%4")
       .arg(mm(settings_.width), turnText(settings_.turn),
            settings_.risers > 0 ? QString::number(settings_.risers) : QObject::tr("自動（蹴上 %1 以下）").arg(mm(settings_.riserLimit)),
@@ -2083,6 +2089,9 @@ QString StairTool::summary(const doc::StairInfo& info) {
 }
 
 QString StairTool::startText() const {
+  if (settings_.spiral)
+    return QObject::tr("らせん階段：中心をクリック、次に歩く線の上がり始め（中心からの距離が歩く線の半径）をクリックして Enter: %1")
+        .arg(settingsText());
   return QObject::tr("階段の歩く線（幅の真ん中）を、上がり始めから上の階の床の端まで順にクリック（曲がり角は直角。Enter で確定）: %1")
       .arg(settingsText());
 }
@@ -2092,6 +2101,12 @@ QString StairTool::finishedText(std::size_t) const { return done_; }
 geom::StairSpec StairTool::spec(const std::vector<gp_Pnt>& points) const {
   geom::StairSpec s;
   s.path = points;
+  if (settings_.spiral) {
+    // docs/143: the centre and the foot (more points clicked: the first two).
+    s.shape = "spiral";
+    s.sweep = settings_.sweep;
+    if (s.path.size() > 2) s.path.resize(2);
+  }
   s.base = points.empty() ? 0.0 : points.front().Z();
   s.rise = settings_.rise;
   if (!(s.rise > 0)) {
@@ -2135,6 +2150,7 @@ Result<std::size_t> StairTool::commit(const std::vector<gp_Pnt>& points, bool) {
 
 TopoDS_Shape StairTool::previewShape(const std::vector<gp_Pnt>& pts) const {
   if (pts.size() < 2) return TopoDS_Shape();
+  if (settings_.spiral && pts.size() >= 2 && pts[0].Distance(pts[1]) < 1.0) return TopoDS_Shape();
   // The treads as they would be (boards: quick to build); a line that cannot be a stair yet, as a line.
   geom::StairSpec s = spec(pts);
   s.style = "boards";

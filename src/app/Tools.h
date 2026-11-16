@@ -468,6 +468,9 @@ class StairTool : public PlanPolylineTool {
     std::string style = "block";
     double thickness = 30.0;
     bool openFloor = true;    // open the slabs over it in the same step
+    // docs/143: a spiral: the first click the centre, the second the foot of the walking line.
+    bool spiral = false;
+    double sweep = 270.0;     // degrees, + counter-clockwise going up
   };
   using PlanPolylineTool::PlanPolylineTool;
   QString name() const override;

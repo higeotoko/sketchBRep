@@ -1697,6 +1697,17 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
       }
       setStatus(text);
     });
+    // docs/144: and let go again.
+    auto* unpin = menu->addAction(tr("通り芯から外す（選んだ物、無ければ全部）"));
+    unpin->setObjectName(QStringLiteral("architectureUnpinFromGrid"));
+    connect(unpin, &QAction::triggered, this, [this] {
+      const auto freed = modeler_.unpinFromGrid(selection_);
+      if (!freed) {
+        reportError(tr("通り芯から外せません: %1").arg(userMessage(QString::fromStdString(freed.error()))));
+        return;
+      }
+      setStatus(tr("%1 つを通り芯から外しました（その場に残り、通り芯を動かしても付いてきません。Ctrl+Z で戻せます）").arg(*freed));
+    });
   });
   bar->addWidget(level);
   bar->addAction(tr("3D"), this, [this] { viewport_->unlockView(); })
@@ -4423,6 +4434,21 @@ void MainWindow::showStairSettingsDialog() {
   auto* open = new QCheckBox(tr("上の床（スラブ）に開口をあける"), &dialog);
   open->setObjectName(QStringLiteral("stairToolOpenFloor"));
   open->setChecked(current.openFloor);
+  // docs/143: a spiral stair drawn by its centre and foot.
+  auto* shape = new QComboBox(&dialog);
+  shape->setObjectName(QStringLiteral("stairToolShape"));
+  shape->addItem(tr("歩く線（直線・曲がり角）"), false);
+  shape->addItem(tr("らせん（中心 → 上がり始め）"), true);
+  shape->setCurrentIndex(current.spiral ? 1 : 0);
+  auto* sweep = new QDoubleSpinBox(&dialog);
+  sweep->setObjectName(QStringLiteral("stairToolSweep"));
+  sweep->setRange(-720, 720);
+  sweep->setDecimals(1);
+  sweep->setSuffix(tr(" °"));
+  sweep->setValue(current.sweep);
+  sweep->setToolTip(tr("らせん階段が上りながら回る角度（90〜720、正：反時計回り、負：時計回り）"));
+  form->addRow(tr("階段の形"), shape);
+  form->addRow(tr("らせんの回る角度"), sweep);
   form->addRow(tr("幅"), width);
   form->addRow(tr("曲がり角"), turn);
   form->addRow(tr("段数（蹴上の数）"), risers);
@@ -4459,6 +4485,12 @@ void MainWindow::showStairSettingsDialog() {
   next.style = style->currentData().toString().toStdString();
   next.thickness = *t;
   next.openFloor = open->isChecked();
+  next.spiral = shape->currentData().toBool();
+  next.sweep = sweep->value();
+  if (next.spiral && !(std::abs(next.sweep) >= 90.0 && std::abs(next.sweep) <= 720.0)) {
+    reportError(tr("らせん階段の回る角度は 90〜720° にしてください"));
+    return;
+  }
   stairTool_->setSettings(next);
   setStatus(stairTool_->settingsText());
 }

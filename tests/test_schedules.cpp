@@ -831,6 +831,10 @@ TEST(GridPinLater, MembersDrawnBeforeFollowTheGridOncePinned) {
   EXPECT_NEAR((box(column).CornerMin().X() + box(column).CornerMax().X()) / 2, 3640 + 910, 1e-6);
   EXPECT_NEAR(box(beam).CornerMax().X() - box(beam).CornerMin().X(), 3640 + 910, 1e-6);  // from crossing to crossing
   EXPECT_NEAR((box(loose).CornerMin().X() + box(loose).CornerMax().X()) / 2, 1000, 1e-6);  // not pinned: stays
+  // docs/144: every one let go at once.
+  EXPECT_EQ(ok("unpin_from_grid", json::object())["unpinned"], 2);
+  EXPECT_FALSE(modeler.document().find(column)->gridPin.has_value());
+  EXPECT_FALSE(call("unpin_from_grid", json::object()).value("ok", true));  // none left
 }
 
 // docs/129: walls pinned to a grid follow its spacings; the walls joined to them, their openings,
@@ -908,6 +912,20 @@ TEST(GridPinLater, WallsOnTheGridFollowItsSpacings) {
   ASSERT_TRUE(modeler.undo());
   EXPECT_NEAR((box(east).CornerMin().X() + box(east).CornerMax().X()) / 2, 7280, 1e-6);
   EXPECT_NEAR(area(), area0, 1e-6);
+  // docs/144: the east wall let go: it no longer follows; the others still do. One undo step.
+  {
+    const auto before = modeler.history().undoCount();
+    const json freed = ok("unpin_from_grid", {{"ids", {east}}});
+    EXPECT_EQ(freed["unpinned"], 1);
+    EXPECT_EQ(modeler.history().undoCount(), before + 1);
+    EXPECT_FALSE(modeler.document().find(east)->attributes.count("wall_grid_pin"));
+    setGrid(0, 455);
+    EXPECT_NEAR((box(east).CornerMin().X() + box(east).CornerMax().X()) / 2, 7280, 1e-6);  // stayed
+    ASSERT_TRUE(modeler.undo());  // the grid
+    ASSERT_TRUE(modeler.undo());  // the letting go
+    EXPECT_TRUE(modeler.document().find(east)->attributes.count("wall_grid_pin"));
+    EXPECT_FALSE(call("unpin_from_grid", {{"ids", {loose}}}).value("ok", true));  // never pinned
+  }
   // Kept in the file.
   const auto file = std::filesystem::temp_directory_path() / "sbr_wall_pin.sbr";
   ASSERT_TRUE(modeler.save(file.string()));

@@ -11605,6 +11605,31 @@ void GuiPhase1::roofToolDrawsARoofWhoseSizesAreChangedInThePanel() {
 // docs/90 G-09, docs/103: the stair tool draws a stair along its walking line; its turn is
 // winders or a landing, its sizes are changed in the properties, and the floor over it opens.
 void GuiPhase1::stairToolDrawsAStairWithWindersAndOpensTheFloor() {
+  // docs/143: a spiral one first: the centre, then the foot, Enter.
+  {
+    Fixture f;QVERIFY(f.setUp(2000,0));auto& m=f.window.modeler();
+    QVERIFY(m.setLevels({{"","1FL",0},{"","2FL",2800}}));
+    StairTool::Settings s=f.window.stairTool().settings();
+    s.spiral=true;
+    s.sweep=270;
+    f.window.stairTool().setSettings(s);
+    QVERIFY(f.window.stairTool().settingsText().contains(QStringLiteral("らせん")));
+    f.window.findChild<QAction*>(QStringLiteral("architectureStairAction"))->trigger();
+    QVERIFY2(f.window.statusText().contains(QStringLiteral("中心")),qPrintable(f.window.statusText()));
+    click(f.vp,f.vp->toWidget(gp_Pnt(0,-3000,0)));
+    move(f.vp,f.vp->toWidget(gp_Pnt(900,-3000,0)));
+    type(f.vp,QStringLiteral("900"));
+    QTest::keyClick(f.vp,Qt::Key_Return);
+    QTest::qWait(30);
+    QVERIFY2(f.window.lastError().isEmpty(),qPrintable(f.window.lastError()));
+    QCOMPARE(m.document().objects().size(),std::size_t(1));
+    const auto info=m.stairInfo(m.document().objects().front().id);
+    QVERIFY2(info,info?"":info.error().c_str());
+    QCOMPARE(QString::fromStdString(info->spec.shape),QStringLiteral("spiral"));
+    QVERIFY(std::abs(info->spec.sweep-270)<1e-9);
+    QVERIFY(std::abs(info->spec.path[0].Distance(info->spec.path[1])-900)<1.0);
+    QCOMPARE(info->winders,13);
+  }
   Fixture f;QVERIFY(f.setUp(2000,0));auto& m=f.window.modeler();
   QVERIFY(m.setLevels({{"","1FL",0},{"","2FL",2800}}));
   auto* action=f.window.findChild<QAction*>(QStringLiteral("architectureStairAction"));QVERIFY(action);

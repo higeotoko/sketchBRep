@@ -6301,6 +6301,33 @@ Result<Modeler::GridPinning> Modeler::pinToGrid(const std::vector<ObjectId>& ids
   return out;
 }
 
+Result<int> Modeler::unpinFromGrid(const std::vector<ObjectId>& ids) {
+  using R = Result<int>;
+  ChangeSet changes(document_);
+  int count = 0;
+  auto letGo = [&](const Object& o) {
+    if (!o.gridPin && !o.attributes.count(kWallGridPin)) return;
+    if (o.locked) return;
+    Object free = o;
+    free.gridPin.reset();
+    free.attributes.erase(kWallGridPin);
+    changes.modify(free);
+    ++count;
+  };
+  if (ids.empty()) {
+    for (const Object& o : document_.objects()) letGo(o);
+  } else {
+    for (const ObjectId& id : ids) {
+      const Object* o = document_.find(id);
+      if (!o) return R::failure("Object not found");
+      letGo(*o);
+    }
+  }
+  if (count == 0) return R::failure("Nothing here is pinned to a grid");
+  history_.execute(changes.build("Unpin From Grid"));
+  return count;
+}
+
 Result<Modeler::StoreyCopy> Modeler::copyStorey(const std::string& fromLevel, const std::string& toLevel) {
   using R = Result<StoreyCopy>;
   const std::vector<FloorLevel>& levels = document_.settings().levels;

@@ -2063,6 +2063,13 @@ const std::vector<CommandDef>& commands() {
                                                textOr(a, "grid", ""), numberOr(a, "tolerance", 10.0)));
          return json{{"pinned", pinned.pinned}, {"walls", pinned.walls}, {"left", pinned.left}};
        }},
+      {"unpin_from_grid",
+       "Let members and walls go of their grid (docs/144): they stay where they are and no longer follow set_grid "
+       "(nor the levels pinned with it). 'ids' (default: every pinned one). One undo step. Returns how many.",
+       SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}}}}),
+       [](doc::Modeler& m, const json& a) {
+         return json{{"unpinned", must(m.unpinFromGrid(a.contains("ids") ? ids(a, "ids") : std::vector<doc::ObjectId>{}))}};
+       }},
       {"copy_storey",
        "Copy a storey to another level (docs/121): 'from' and 'to' (level ids or names). Every top-level solid "
        "starting in the storey of 'from' (300 under its floor to 300 under the next floor) and its rooms, moved by "

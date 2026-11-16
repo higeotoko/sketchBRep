@@ -180,6 +180,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   // Architectural helpers behind the Tools menu (also used by tests).
   WallTool& wallTool() { return *wallTool_; }
   MemberTool& memberTool() { return *memberTool_; }
+  StairTool& stairTool() { return *stairTool_; }
   // Tools > Member settings (section family, size search, anchor, role).
   // True when accepted (the settings taken).
   bool showMemberSettingsDialog();

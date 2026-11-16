@@ -145,6 +145,7 @@ const Entry kEntries[] = {
     {"Name the mark of the openings to change", "変える開口の符号を指定してください"},
     {"Side boards: side or cut", "板の形は、側板か、ささら桁です"},
     {"A nosing is 0 to 50", "段鼻の出は 0〜50 にしてください"},
+    {"Nothing here is pinned to a grid", "通り芯に付いている物がありません"},
     {"Stair shape: line or spiral", "階段の形は、折れ線か、らせんです"},
     {"A spiral stair needs its centre and the foot of its walking line", "らせん階段には、中心と歩く線の始まりの点が要ります"},
     {"A spiral stair's inside (radius less half the width) is at least 50", "らせん階段の内側（半径から幅の半分を引いた所）は 50 以上にしてください"},
