@@ -843,6 +843,33 @@ TEST_F(Schedules, ACanopyOverADoorAndTheBuildingArea) {
         EXPECT_NEAR(sbr::geom::exactBounds(modeler.document().worldShape(obj)).CornerMin().X(), 8400, 1e-6);
     ASSERT_TRUE(modeler.undo());
   }
+  // docs/154: its sizes changed: made again over the same door, its name kept, one undo step.
+  {
+    std::string id, name;
+    for (const auto& obj : modeler.document().objects())
+      if (obj.attributes.count("kind") && obj.attributes.at("kind") == "canopy") id = obj.id, name = obj.name;
+    ASSERT_FALSE(id.empty());
+    const auto steps = modeler.history().undoCount();
+    const std::string again = ok("change_canopy", {{"id", id}, {"depth", 900}, {"above", 300}})["id"];
+    EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+    EXPECT_FALSE(modeler.document().find(id));
+    const auto* c = modeler.document().find(again);
+    ASSERT_TRUE(c);
+    EXPECT_EQ(c->name, name);
+    const auto spec = modeler.canopySpec(again);
+    ASSERT_TRUE(spec);
+    EXPECT_NEAR(spec->depth, 900, 1e-9);
+    EXPECT_NEAR(spec->above, 300, 1e-9);
+    const auto cb = sbr::geom::exactBounds(modeler.document().worldShape(*c));
+    const auto door = modeler.openings(east)->front();
+    EXPECT_NEAR(cb.CornerMax().X() - cb.CornerMin().X(), 900, 1e-6);
+    EXPECT_NEAR(cb.CornerMin().Z(), door.bottom + door.height + 300, 1e-6);
+    EXPECT_FALSE(call("change_canopy", {{"id", again}, {"thickness", 900}}).value("ok", true));  // too thick: as it was
+    EXPECT_TRUE(modeler.document().find(again));
+    ASSERT_TRUE(modeler.undo());
+    EXPECT_TRUE(modeler.document().find(id));
+    EXPECT_FALSE(modeler.document().find(again));
+  }
   // Refused: no such opening, a canopy too deep.
   EXPECT_FALSE(call("make_canopy", {{"host", east}, {"opening", 9}}).value("ok", true));
   EXPECT_FALSE(call("make_canopy", {{"host", east}, {"opening", 1}, {"depth", 9000}}).value("ok", true));

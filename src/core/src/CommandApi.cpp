@@ -2611,6 +2611,20 @@ const std::vector<CommandDef>& commands() {
          must(m.removeElementType(text(a, "name")));
          return json::object();
        }},
+      {"change_canopy",
+       "Change a canopy's sizes (docs/154): 'id', and any of 'depth', 'thickness', 'extra', 'above' (as make_canopy; "
+       "the others kept). Made again over its opening, its name kept. One undo step. Returns its (new) id.",
+       SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "depth": {"type": "number"},
+               "thickness": {"type": "number"}, "extra": {"type": "number"}, "above": {"type": "number"}},
+               "required": ["id"]}),
+       [](doc::Modeler& m, const json& a) {
+         doc::Modeler::CanopySpec spec = must(m.canopySpec(text(a, "id")));
+         if (a.contains("depth")) spec.depth = number(a, "depth");
+         if (a.contains("thickness")) spec.thickness = number(a, "thickness");
+         if (a.contains("extra")) spec.extra = number(a, "extra");
+         if (a.contains("above")) spec.above = number(a, "above");
+         return json{{"id", must(m.changeCanopy(text(a, "id"), spec))}};
+       }},
       {"make_canopy",
        "A canopy (庇, docs/147) over an opening: a board out from the face the opening was cut from. 'host', "
        "'opening' (id or number), 'depth' (out from the face, default 600), 'thickness' (60), 'extra' (longer at "

@@ -417,6 +417,37 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
     }
   }
 
+  // ===== A canopy (docs/147, docs/154): its sizes, made again over its opening when changed.
+  if (const auto kind = o->attributes.find("kind"); kind != o->attributes.end() && kind->second == "canopy") {
+    auto* title = new QLabel(tr("<b>庇</b>"));
+    title->setObjectName(QStringLiteral("partTitle"));
+    form_->addRow(title);
+    const auto spec = modeler.canopySpec(id);
+    if (!spec) {
+      auto* why = new QLabel(userMessage(QString::fromStdString(spec.error())));
+      why->setWordWrap(true);
+      form_->addRow(why);
+    } else {
+      auto size = [&](const QString& label, const char* key, double value, double low, double high, const QString& tip) {
+        auto* spin = lengthSpin(value);
+        spin->setRange(low, high);
+        spin->setValue(value);
+        spin->setObjectName(QStringLiteral("canopySize_") + QLatin1String(key));
+        spin->setToolTip(tip);
+        spin->setEnabled(!o->locked);
+        const QString k = QLatin1String(key);
+        connect(spin, &QDoubleSpinBox::editingFinished, this, [this, id, spin, k, value] {
+          if (std::abs(spin->value() - value) > 1e-9) emit canopyEdited(id, k, spin->value());
+        });
+        form_->addRow(label, spin);
+      };
+      size(tr("出"), "depth", spec->depth, 100, 5000, tr("開口をあけた面から先まで（水平）"));
+      size(tr("厚さ"), "thickness", spec->thickness, 10, 500, tr("板の厚さ"));
+      size(tr("両側の長さ"), "extra", spec->extra, 0, 2000, tr("開口の幅より、片側でどれだけ長いか"));
+      size(tr("開口の上から"), "above", spec->above, 0, 2000, tr("開口の上端から、庇の下の面まで"));
+    }
+  }
+
   // ===== A stair (docs/90 G-09, docs/103): storeys, sizes, what it measures, the floor over it.
   if (const auto kind = o->attributes.find("kind"); kind != o->attributes.end() && kind->second == "stair") {
     auto* title = new QLabel(tr("<b>階段</b>"));

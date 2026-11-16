@@ -855,6 +855,26 @@ void MainWindow::buildUi() {
   connect(panel_, &PropertiesPanel::openingTypeMatched, this, [this](const doc::ObjectId& id, int index) {
     QTimer::singleShot(0, this, [this, id, index] { matchOpeningType(id, index); });
   });
+  connect(panel_, &PropertiesPanel::canopyEdited, this, [this](const doc::ObjectId& id, const QString& key, double value) {
+    QTimer::singleShot(0, this, [this, id, key, value] {
+      const auto found = modeler_.canopySpec(id);
+      if (!found) return;
+      doc::Modeler::CanopySpec spec = *found;
+      if (key == QStringLiteral("depth")) spec.depth = value;
+      else if (key == QStringLiteral("thickness")) spec.thickness = value;
+      else if (key == QStringLiteral("extra")) spec.extra = value;
+      else if (key == QStringLiteral("above")) spec.above = value;
+      const auto changed = modeler_.changeCanopy(id, spec);
+      if (!changed) {
+        reportError(tr("庇を変えられません: %1").arg(userMessage(QString::fromStdString(changed.error()))));
+        refreshPanels();
+        return;
+      }
+      setSelection({*changed});
+      setStatus(tr("庇の大きさを変えました（Ctrl+Z で戻せます）"));
+      refreshPanels();
+    });
+  });
   connect(panel_, &PropertiesPanel::canopyRequested, this, [this](const doc::ObjectId& id, int index) {
     QTimer::singleShot(0, this, [this, id, index] {
       if (index < 1) return;

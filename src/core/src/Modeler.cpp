@@ -5999,6 +5999,52 @@ Result<ObjectId> Modeler::makeCanopy(const ObjectId& host, std::size_t index, co
   return *made;
 }
 
+Result<Modeler::CanopySpec> Modeler::canopySpec(const ObjectId& id) const {
+  using R = Result<CanopySpec>;
+  const Object* c = document_.find(id);
+  if (!c) return R::failure("Object not found");
+  if (attributeOf(*c, "kind") != "canopy") return R::failure("It is not a canopy");
+  const nlohmann::json j = nlohmann::json::parse(attributeOf(*c, "canopy"), nullptr, false);
+  if (!j.is_object()) return R::failure("Its sizes are not kept: make the canopy again");
+  CanopySpec spec;
+  spec.depth = j.value("depth", spec.depth);
+  spec.thickness = j.value("thickness", spec.thickness);
+  spec.extra = j.value("extra", spec.extra);
+  spec.above = j.value("above", spec.above);
+  return spec;
+}
+
+Result<ObjectId> Modeler::changeCanopy(const ObjectId& id, const CanopySpec& spec) {
+  using R = Result<ObjectId>;
+  const Object* c = document_.find(id);
+  if (!c) return R::failure("Object not found");
+  if (attributeOf(*c, "kind") != "canopy") return R::failure("It is not a canopy");
+  if (c->locked) return R::failure("'" + c->name + "' is locked");
+  const std::string host = attributeOf(*c, "host"), openingId = attributeOf(*c, "opening"), name = c->name;
+  const auto list = openings(host);
+  const auto op = !list ? std::vector<OpeningInfo>::const_iterator() :
+                          std::find_if(list->begin(), list->end(), [&](const OpeningInfo& x) { return x.id == openingId; });
+  if (!list || op == list->end()) return R::failure("Its opening is gone: make the canopy again");
+  const std::size_t index = op->index;
+  history_.beginGroup("Change Canopy");
+  if (const Status s = remove({id}); !s) {
+    history_.abortGroup();
+    return R::failure(s.message());
+  }
+  const auto made = makeCanopy(host, index, spec);
+  if (!made) {
+    history_.abortGroup();  // the old one back
+    return R::failure(made.error());
+  }
+  Object renamed = *document_.find(*made);
+  renamed.name = name;
+  ChangeSet changes(document_);
+  changes.modify(renamed);
+  history_.execute(changes.build("Change Canopy"));
+  history_.endGroup();
+  return *made;
+}
+
 Result<int> Modeler::changeOpeningType(const std::string& mark, const OpeningTypeChange& change) {
   using R = Result<int>;
   if (mark.empty()) return R::failure("Name the mark of the openings to change");

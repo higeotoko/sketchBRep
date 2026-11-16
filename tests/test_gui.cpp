@@ -11310,6 +11310,29 @@ void GuiPhase1::moveToolSlidesAnOpeningWithinItsWall() {
     QTRY_COMPARE(m.document().objects().size(),objects+1);
     QCOMPARE(m.history().undoCount(),before+1);
     QVERIFY2(f.window.statusText().contains(QStringLiteral("庇")),qPrintable(f.window.statusText()));
+    // docs/154: the canopy picked; its depth changed in the properties: made again, one undo step.
+    {
+      std::string made;
+      for(const auto& o:m.document().objects())
+        if(o.attributes.count("kind")&&o.attributes.at("kind")=="canopy") made=o.id;
+      QVERIFY(!made.empty());
+      f.window.setSelection({made});
+      QApplication::processEvents();
+      auto* depth=f.window.findChild<QDoubleSpinBox*>(QStringLiteral("canopySize_depth"));
+      QVERIFY(depth);
+      QVERIFY(std::abs(depth->value()-600)<1e-9);
+      const auto steps2=m.history().undoCount();
+      depth->setValue(900);
+      emit depth->editingFinished();
+      QTRY_COMPARE(m.history().undoCount(),steps2+1);
+      QVERIFY2(f.window.lastError().isEmpty(),qPrintable(f.window.lastError()));
+      std::string now;
+      for(const auto& o:m.document().objects())
+        if(o.attributes.count("kind")&&o.attributes.at("kind")=="canopy") now=o.id;
+      QVERIFY(m.canopySpec(now)&&std::abs(m.canopySpec(now)->depth-900)<1e-9);
+      QCOMPARE(m.document().objects().size(),objects+1);
+      QVERIFY(m.undo());
+    }
     QVERIFY(m.undo());
     QCOMPARE(m.document().objects().size(),objects);
     f.window.setElementSelection(f.window.elementSelection());

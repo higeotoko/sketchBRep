@@ -627,6 +627,10 @@ class Modeler {
     double depth = 600.0, thickness = 60.0, extra = 150.0, above = 100.0;
   };
   Result<ObjectId> makeCanopy(const ObjectId& host, std::size_t index, const CanopySpec& spec);
+  // A canopy's sizes as made (docs/154), and made again with other sizes over the same opening
+  // (its name kept; a new id, returned). One undo step. Refused when its opening is gone.
+  Result<CanopySpec> canopySpec(const ObjectId& id) const;
+  Result<ObjectId> changeCanopy(const ObjectId& id, const CanopySpec& spec);
   // A kind of opening (docs/97 N-08, docs/133): the openings that share a mark in the door and
   // window schedule (one given by hand, or worked out from kind, fitting and size) are one type.
   // Changed as a type, every one of them takes the new width / height (centre and sill kept),
