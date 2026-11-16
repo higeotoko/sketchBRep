@@ -2,6 +2,7 @@
 // Gable (切妻), hip (寄棟) and shed (片流れ) over outlines whose corners are all right angles.
 #pragma once
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -27,7 +28,14 @@ struct RoofSpec {
   // A gable roof over an outline with slanted sides (docs/138): the sides (0-based: side i runs
   // from outline corner i to i + 1) that end in gables. Empty: the shorter pair of parallel
   // opposite sides (the longer pair with ridge "short"). Not used for right-angled outlines.
+  // With inward corners and none given: the ends of the wings (docs/160).
   std::vector<int> gableSides;
+  // Sides with a pitch / an overhang of their own (docs/160), by side number as above. A side
+  // not named has `pitch` and `eave` (`gableEave` where it stands upright). The overhang of a
+  // gable side is its verge; a pitch there, and any in a shed roof, is not used. With either
+  // given, a right-angled outline is worked out the way outlines with slanted sides are.
+  std::map<int, double> sidePitch;
+  std::map<int, double> sideEave;
 };
 
 struct RoofShape {

@@ -341,6 +341,46 @@ TEST_F(Roofs, ARoofIsOnePartWhoseSizesCanBeChanged) {
   EXPECT_TRUE(refused("change_roof", {{"id", id}, {"pitch", 6}}));
 }
 
+// docs/160: sides with a pitch / an overhang of their own, through the API.
+TEST_F(Roofs, SidesWithTheirOwnPitchAndOverhangAreKept) {
+  const json outline = {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}};
+  const json made = ok("create_roof", {{"outline", outline}, {"kind", "gable"}, {"height", 3000},
+                                       {"sides", {{{"side", 0}, {"pitch", 8}}, {{"side", 2}, {"eave", 300}}}}});
+  const std::string id = made["id"];
+  ASSERT_EQ(made["sides"].size(), 2u);
+  EXPECT_NEAR(made["plan_area"].get<double>(), 8.6 * 6.9, 1e-6);
+  EXPECT_NEAR(made["eave_height"].get<double>(), 3000 - 0.8 * 600, 1e-4);
+  const auto steps = modeler.history().undoCount();
+  // Another size: the sides stay.
+  json changed = ok("change_roof", {{"id", id}, {"gable_eave", 0}});
+  EXPECT_EQ(changed["sides"].size(), 2u);
+  EXPECT_NEAR(changed["plan_area"].get<double>(), 8.0 * 6.9, 1e-6);
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  // Moved and read again: the same sides (kept in the roof's own words).
+  ok("move", {{"ids", {id}}, {"vector", {500, 0, 0}}});
+  json info = ok("roof_info", {{"id", id}});
+  EXPECT_EQ(info["sides"].size(), 2u);
+  EXPECT_NE(modeler.document().find(id)->attributes.at("roof_spec").find("\"sides\""), std::string::npos);
+  // A new list replaces the old one; an empty one takes them away.
+  changed = ok("change_roof", {{"id", id}, {"sides", {{{"side", 1}, {"eave", 450}}}}});
+  ASSERT_EQ(changed["sides"].size(), 1u);
+  EXPECT_NEAR(changed["plan_area"].get<double>(), (8.0 + 0.45) * 7.2, 1e-6);
+  changed = ok("change_roof", {{"id", id}, {"sides", json::array()}});
+  EXPECT_TRUE(changed["sides"].empty());
+  EXPECT_EQ(modeler.document().find(id)->attributes.at("roof_spec").find("\"sides\""), std::string::npos);
+  // A new outline without them: none.
+  ok("change_roof", {{"id", id}, {"sides", {{{"side", 3}, {"eave", 450}}}}});
+  changed = ok("change_roof", {{"id", id}, {"outline", {{0, 0}, {9000, 0}, {9000, 6000}, {0, 6000}}}});
+  EXPECT_TRUE(changed["sides"].empty());
+  // Refused: not a list, a side the outline does not have, a word that is not known.
+  const double before = top(id);
+  EXPECT_TRUE(refused("change_roof", {{"id", id}, {"sides", 3}}));
+  EXPECT_TRUE(refused("change_roof", {{"id", id}, {"sides", {{{"side", 9}, {"eave", 450}}}}}));
+  EXPECT_TRUE(refused("change_roof", {{"id", id}, {"sides", {{{"side", 0}, {"slope", 5}}}}}));
+  EXPECT_TRUE(refused("change_roof", {{"id", id}, {"sides", {{{"side", 0}, {"pitch", 0}}}}}));
+  EXPECT_NEAR(top(id), before, 1e-9);
+}
+
 TEST_F(Roofs, OnGridLinesAndNotOnOtherThings) {
   ok("create_grid", {{"x_spacings", {7280}}, {"y_spacings", {5460}}});
   const json made = ok("create_roof", {{"grid", {{"x", {"X1", "X2"}}, {"y", {"Y1", "Y2"}}}}, {"kind", "hip"}, {"height", 5800},
@@ -536,8 +576,8 @@ TEST(Roof, AHipRoofCoversAnOutlineWithSlantedSides) {
 
   // What it takes from walls under it (walls up to the roof) is built the same way.
   EXPECT_TRUE(sbr::geom::roofSpaceAbove(spec, 100000.0));
-  // Since docs/138: gable over slanted sides, and a hip with inward corners; a gable with
-  // inward corners and slanted sides is still refused.
+  // Since docs/138: gable over slanted sides, and a hip with inward corners. Since docs/160 a
+  // gable with inward corners too, when it has wing ends to make gables of (this one has none).
   spec.kind = "gable";
   ASSERT_TRUE(makeRoof(spec));
   RoofSpec dented;
@@ -548,5 +588,200 @@ TEST(Roof, AHipRoofCoversAnOutlineWithSlantedSides) {
   dented.kind = "gable";
   const auto refused = makeRoof(dented);
   ASSERT_FALSE(refused);
-  EXPECT_NE(refused.error().find("no inward corners"), std::string::npos);
+  EXPECT_NE(refused.error().find("wing ends"), std::string::npos);
+}
+
+namespace {
+// The outline (counter-clockwise) with side i moved out by d[i], corners mitred: its area, mm2.
+double grownAreaBy(const std::vector<gp_Pnt>& p, const std::vector<double>& d) {
+  const std::size_t n = p.size();
+  std::vector<gp_Pnt> q;
+  for (std::size_t i = 0; i < n; ++i) {
+    auto line = [&](std::size_t k) {
+      const gp_Vec dk = gp_Vec(p[k], p[(k + 1) % n]).Normalized();
+      return std::make_pair(p[k].Translated(gp_Vec(dk.Y(), -dk.X(), 0) * d[k]), dk);
+    };
+    const auto [a, da] = line((i + n - 1) % n);
+    const auto [b, db] = line(i);
+    const double den = da.X() * db.Y() - da.Y() * db.X();
+    const gp_Vec w(a, b);
+    q.push_back(a.Translated(da * ((w.X() * db.Y() - w.Y() * db.X()) / den)));
+  }
+  double area = 0.0;
+  for (std::size_t i = 0; i < n; ++i) area += q[i].X() * q[(i + 1) % n].Y() - q[(i + 1) % n].X() * q[i].Y();
+  return area / 2;
+}
+}  // namespace
+
+// docs/160: sides with a pitch / an overhang of their own; gable and shed roofs over outlines
+// with slanted sides and inward corners.
+TEST(Roof, SidesWithTheirOwnPitchAndOverhang) {
+  const double r4 = 100 * std::sqrt(1.16), r8 = 100 * std::sqrt(1.64);
+  RoofSpec s;
+  s.kind = "gable";
+  s.height = 3000;
+  s.outline = {gp_Pnt(0, 0, 0), gp_Pnt(8000, 0, 0), gp_Pnt(8000, 6000, 0), gp_Pnt(0, 6000, 0)};
+  const auto plain = makeRoof(s);
+  ASSERT_TRUE(plain);
+  // The south side at 8 in 10, the north one at 4: the ridge off the middle (招き屋根). Under the
+  // roof the planes meet over y = 2000; on top (each lifted by its own thickness upright) over yu.
+  s.sidePitch = {{0, 8.0}};
+  auto roof = makeRoof(s);
+  ASSERT_TRUE(roof) << roof.error();
+  const double yu = (0.4 * 6000 + r4 - r8) / 1.2;
+  EXPECT_NEAR(roof->ridgeHeight, 3000 + 0.8 * yu + r8, 1e-3);
+  EXPECT_NEAR(roof->eaveHeight, 3000 - 0.8 * 600, 1e-3);
+  EXPECT_NEAR(roof->planArea, 8600.0 * 7200.0, 1.0);
+  EXPECT_NEAR(roof->slopeArea, 8600.0 * ((yu + 600) * std::sqrt(1.64) + (6600 - yu) * std::sqrt(1.16)), 1.0);
+  expectBounds(roof->solid, -300, -600, 3000 - 0.8 * 600, 8300, 6600, 3000 + 0.8 * yu + r8);
+  // The same thickness on both slopes: the volume is each slope's area times 100, less the
+  // wedge the two slabs share at the ridge and plus nothing at the eaves (cut upright) - within
+  // a slab's width of the ridge, so only roughly.
+  EXPECT_NEAR(sbr::geom::volume(roof->solid), roof->slopeArea * 100.0, roof->slopeArea * 100.0 * 0.02);
+  int solids = 0;
+  for (TopExp_Explorer e(roof->solid, TopAbs_SOLID); e.More(); e.Next()) ++solids;
+  EXPECT_EQ(solids, 1);
+  EXPECT_TRUE(BRepCheck_Analyzer(roof->solid).IsValid());
+  // Drawn the other way round, the side has another number: the same roof.
+  RoofSpec back = s;
+  std::reverse(back.outline.begin(), back.outline.end());
+  back.sidePitch = {{(2 * 4 - 2 - 0) % 4, 8.0}};
+  const auto same = makeRoof(back);
+  ASSERT_TRUE(same) << same.error();
+  EXPECT_NEAR(same->ridgeHeight, roof->ridgeHeight, 1e-3);
+  EXPECT_NEAR(same->slopeArea, roof->slopeArea, 1.0);
+  // What walls under it lose is built from the same planes.
+  EXPECT_TRUE(sbr::geom::roofSpaceAbove(s, 100000.0));
+  // A pitch on a gable side is not used.
+  s.sidePitch = {{1, 8.0}};
+  roof = makeRoof(s);
+  ASSERT_TRUE(roof) << roof.error();
+  EXPECT_NEAR(roof->ridgeHeight, plain->ridgeHeight, 1e-3);
+  EXPECT_NEAR(roof->planArea, plain->planArea, 1.0);
+
+  // Overhangs: the north eave 300, the east verge 0.
+  s.sidePitch.clear();
+  s.sideEave = {{2, 300.0}, {1, 0.0}};
+  roof = makeRoof(s);
+  ASSERT_TRUE(roof) << roof.error();
+  expectBounds(roof->solid, -300, -600, 3000 - 0.4 * 600, 8000, 6300, 3000 + 0.4 * 3000 + r4);
+  EXPECT_NEAR(roof->planArea, 8300.0 * 6900.0, 1.0);
+  EXPECT_NEAR(roof->slopeArea, 8300.0 * 6900.0 * std::sqrt(1.16), 1.0);
+  // A hip: every side an eave of its own.
+  s.kind = "hip";
+  s.sideEave = {{0, 900.0}};
+  roof = makeRoof(s);
+  ASSERT_TRUE(roof) << roof.error();
+  EXPECT_NEAR(roof->planArea, 9200.0 * 7500.0, 1.0);
+  EXPECT_NEAR(roof->eaveHeight, 3000 - 0.4 * 900, 1e-3);
+  // A shed: its one pitch (a side's pitch is not used); the high side with no overhang.
+  s.kind = "shed";
+  s.fallX = 0;
+  s.fallY = -1;
+  s.sidePitch = {{0, 8.0}};
+  s.sideEave = {{2, 0.0}};
+  roof = makeRoof(s);
+  ASSERT_TRUE(roof) << roof.error();
+  expectBounds(roof->solid, -300, -600, 3000 - 0.4 * 600, 8300, 6000, 3000 + 0.4 * 6000 + r4);
+
+  // Refused with the reason.
+  s.kind = "gable";
+  s.sideEave.clear();
+  s.sidePitch = {{9, 5.0}};
+  EXPECT_NE(makeRoof(s).error().find("number of a side"), std::string::npos);
+  s.sidePitch = {{0, 0.0}};
+  EXPECT_FALSE(makeRoof(s));
+  s.sidePitch.clear();
+  s.sideEave = {{0, -1.0}};
+  EXPECT_FALSE(makeRoof(s));
+  s.sideEave = {{4, 100.0}};
+  EXPECT_FALSE(makeRoof(s));
+}
+
+TEST(Roof, GableAndShedOverSlantedSidesWithInwardCorners) {
+  const double r4 = 100 * std::sqrt(1.16);
+  // An L whose upper wing leans: wing A 10000 x 4000 along x, wing B up from its west end
+  // between two parallel slanted sides.
+  RoofSpec s;
+  s.kind = "gable";
+  s.height = 3000;
+  s.outline = {gp_Pnt(0, 0, 0),       gp_Pnt(10000, 0, 0),   gp_Pnt(10000, 4000, 0), gp_Pnt(4000, 4000, 0),
+               gp_Pnt(5000, 9000, 0), gp_Pnt(1000, 9000, 0), gp_Pnt(0, 4000, 0)};
+  // Gables chosen: the ends of the wings (the east side 1 and the top side 4); a hip at the
+  // outer corner, a valley at the inner one.
+  auto roof = makeRoof(s);
+  ASSERT_TRUE(roof) << roof.error();
+  EXPECT_EQ(roof->parts, 2);
+  EXPECT_NEAR(roof->planArea, grownAreaBy(s.outline, {600, 300, 600, 600, 300, 600, 600}), 1.0);
+  EXPECT_NEAR(roof->slopeArea, roof->planArea * std::sqrt(1.16), 1.0);
+  EXPECT_NEAR(roof->eaveHeight, 3000 - 0.4 * 600, 1e-3);
+  EXPECT_NEAR(roof->ridgeHeight, 3000 + 0.4 * 2000 + r4, 1e-3);  // wing A's ridge (B is narrower across)
+  auto b = sbr::geom::exactBounds(roof->solid);
+  EXPECT_NEAR(b.CornerMax().X(), 10300, 1e-3);
+  EXPECT_NEAR(b.CornerMax().Y(), 9300, 1e-3);
+  EXPECT_NEAR(b.CornerMin().X(), -600, 1e-3);
+  EXPECT_NEAR(b.CornerMin().Y(), -600, 1e-3);
+  EXPECT_TRUE(sbr::geom::roofSpaceAbove(s, 100000.0));
+  // Chosen by hand, the same sides: the same roof.
+  RoofSpec hand = s;
+  hand.gableSides = {1, 4};
+  const auto same = makeRoof(hand);
+  ASSERT_TRUE(same) << same.error();
+  EXPECT_NEAR(same->planArea, roof->planArea, 1.0);
+  // Drawn the other way round.
+  RoofSpec back = s;
+  std::reverse(back.outline.begin(), back.outline.end());
+  const auto turned = makeRoof(back);
+  ASSERT_TRUE(turned) << turned.error();
+  EXPECT_NEAR(turned->planArea, roof->planArea, 1.0);
+  // The west end a gable too (side 6): wing A's ridge runs to it.
+  hand.gableSides = {1, 4, 6};
+  const auto three = makeRoof(hand);
+  ASSERT_TRUE(three) << three.error();
+  EXPECT_NEAR(three->planArea, grownAreaBy(s.outline, {600, 300, 600, 600, 300, 600, 300}), 1.0);
+  // A hip over the same outline covers it grown by the eaves all round.
+  RoofSpec hip = s;
+  hip.kind = "hip";
+  const auto hipped = makeRoof(hip);
+  ASSERT_TRUE(hipped) << hipped.error();
+  EXPECT_NEAR(hipped->planArea, grownAreaBy(s.outline, std::vector<double>(7, 600.0)), 1.0);
+  // The wing ends with pitches and overhangs of their own.
+  RoofSpec own = s;
+  own.sideEave = {{0, 900.0}, {4, 150.0}};
+  own.sidePitch = {{2, 6.0}};
+  const auto mixed = makeRoof(own);
+  ASSERT_TRUE(mixed) << mixed.error();
+  EXPECT_NEAR(mixed->planArea, grownAreaBy(s.outline, {900, 300, 600, 600, 150, 600, 600}), 1.0);
+  EXPECT_NEAR(mixed->eaveHeight, 3000 - 0.4 * 900, 1e-3);
+  EXPECT_GT(mixed->slopeArea, mixed->planArea * std::sqrt(1.16));
+  EXPECT_LT(mixed->slopeArea, mixed->planArea * std::sqrt(1.36));
+
+  // A shed falling south over it: one plane from the south eave up; eaves at the sides facing
+  // south or north (0, 2, 4), verges at the others.
+  RoofSpec shed = s;
+  shed.kind = "shed";
+  shed.fallX = 0;
+  shed.fallY = -1;
+  roof = makeRoof(shed);
+  ASSERT_TRUE(roof) << roof.error();
+  EXPECT_NEAR(roof->planArea, grownAreaBy(s.outline, {600, 300, 600, 300, 600, 300, 300}), 1.0);
+  EXPECT_NEAR(roof->eaveHeight, 3000 - 0.4 * 600, 1e-3);
+  EXPECT_NEAR(roof->ridgeHeight, 3000 + 0.4 * 9600 + r4, 1e-3);
+  EXPECT_NEAR(roof->slopeArea, roof->planArea * std::sqrt(1.16), 1.0);
+
+  // A right-angled L with an overhang of its own is worked out the same way: gables at the
+  // wing ends, a hip at the outer corner.
+  RoofSpec ell;
+  ell.kind = "gable";
+  ell.height = 3000;
+  ell.outline = {gp_Pnt(0, 0, 0), gp_Pnt(10000, 0, 0), gp_Pnt(10000, 4000, 0), gp_Pnt(4000, 4000, 0), gp_Pnt(4000, 9000, 0), gp_Pnt(0, 9000, 0)};
+  ell.sideEave = {{0, 900.0}};
+  roof = makeRoof(ell);
+  ASSERT_TRUE(roof) << roof.error();
+  EXPECT_NEAR(roof->planArea, grownAreaBy(ell.outline, {900, 300, 600, 600, 300, 600}), 1.0);
+  EXPECT_NEAR(roof->eaveHeight, 3000 - 0.4 * 900, 1e-3);
+  EXPECT_NEAR(roof->ridgeHeight, 3000 + 0.4 * 2000 + r4, 1e-3);
+  b = sbr::geom::exactBounds(roof->solid);
+  EXPECT_NEAR(b.CornerMin().Y(), -900, 1e-3);
+  EXPECT_NEAR(b.CornerMax().X(), 10300, 1e-3);
 }

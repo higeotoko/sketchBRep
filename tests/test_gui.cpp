@@ -11732,6 +11732,44 @@ void GuiPhase1::roofToolDrawsARoofWhoseSizesAreChangedInThePanel() {
   QVERIFY(m.undo());QVERIFY(m.undo());QVERIFY(m.undo());
   QVERIFY(std::abs(m.roofInfo(roof)->planArea-4600.0*3200)<1.0);
   QCOMPARE(QString::fromStdString(m.roofInfo(roof)->spec.kind),QStringLiteral("gable"));
+  // docs/160: sides with an overhang / a pitch of their own, typed as "side:value" pairs.
+  {
+    f.window.setSelection({roof});
+    QApplication::processEvents();
+    auto edit=[&](const char* name){return f.window.findChild<QLineEdit*>(QLatin1String(name));};
+    QVERIFY(edit("roofSideEave")&&edit("roofSidePitch"));
+    QVERIFY(edit("roofSideEave")->text().isEmpty());
+    const auto before=m.history().undoCount();
+    edit("roofSideEave")->setText(QStringLiteral("1:900, 2: 900、3：900 4=900"));
+    emit edit("roofSideEave")->editingFinished();
+    QTRY_VERIFY(std::abs(m.roofInfo(roof)->planArea-5800.0*3800)<1.0);
+    QCOMPARE(m.history().undoCount(),before+1);
+    QCOMPARE(m.roofInfo(roof)->spec.sideEave.size(),std::size_t(4));
+    // Shown again the same way.
+    f.window.setSelection({roof});
+    QApplication::processEvents();
+    QVERIFY(edit("roofSideEave"));
+    QCOMPARE(edit("roofSideEave")->text(),QStringLiteral("1:900, 2:900, 3:900, 4:900"));
+    // Not pairs: said, nothing changes.
+    edit("roofSideEave")->setText(QStringLiteral("900"));
+    emit edit("roofSideEave")->editingFinished();
+    QTRY_VERIFY(f.window.lastError().contains(QStringLiteral("辺ごとの値")));
+    f.window.clearLastError();
+    QCOMPARE(m.history().undoCount(),before+1);
+    // One side steeper: the ridge leaves the middle, the roof is higher on that side's plane.
+    f.window.setSelection({roof});
+    QApplication::processEvents();
+    QVERIFY(edit("roofSidePitch"));
+    const double ridge=m.roofInfo(roof)->ridgeHeight;
+    edit("roofSidePitch")->setText(QStringLiteral("1:8,3:8"));
+    emit edit("roofSidePitch")->editingFinished();
+    QTRY_COMPARE(m.roofInfo(roof)->spec.sidePitch.size(),std::size_t(2));
+    QVERIFY(m.roofInfo(roof)->ridgeHeight>ridge+100||std::abs(m.roofInfo(roof)->ridgeHeight-ridge)<1e-6);  // eave sides: higher; gable sides: the same
+    QCOMPARE(m.history().undoCount(),before+2);
+    QVERIFY(m.undo());QVERIFY(m.undo());
+    QVERIFY(std::abs(m.roofInfo(roof)->planArea-4600.0*3200)<1.0);
+    QVERIFY(m.roofInfo(roof)->spec.sideEave.empty());
+  }
   // docs/97 N-05: walls under the roof stand up to it from the roof's properties, and come
   // back flat. (The roof was drawn at height 0: lift it onto walls 2400 high.)
   {

@@ -758,6 +758,11 @@ TEST(LegalAreas, FloorAndBuildingAreasByTheOrder) {
   ok("change_roof", {{"id", roof}, {"eave", 900}});
   table = sbr::doc::areaTable(modeler.document());
   EXPECT_NEAR(table.buildingArea / 1e6, 48.0, 1e-6);
+  // docs/160: one side's eave 1400 (the south side, 8 m long): 400 beyond 1 m along it.
+  ok("change_roof", {{"id", roof}, {"sides", {{{"side", 0}, {"eave", 1400}}}}});
+  table = sbr::doc::areaTable(modeler.document());
+  EXPECT_NEAR(table.buildingArea / 1e6, 48.0 + 8.0 * 0.4, 1e-6);
+  ok("change_roof", {{"id", roof}, {"sides", json::array()}});
   // The API says the same, and the table sheet carries the numbers.
   const json areas = ok("area_table", json::object());
   EXPECT_NEAR(areas["total_legal_floor"].get<double>(), 86.8, 1e-6);

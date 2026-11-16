@@ -380,6 +380,29 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
         });
         form_->addRow(tr("妻の辺"), gables);
       }
+      // docs/160: sides with a pitch / an overhang of their own, as "side:value" pairs.
+      auto own = [&](const QString& label, const char* name, const char* key, const std::map<int, double>& values, const QString& tip) {
+        QStringList pairs;
+        for (const auto& [side, value] : values) pairs << QStringLiteral("%1:%2").arg(side + 1).arg(value, 0, 'g', 6);
+        auto* edit = new QLineEdit(pairs.join(QStringLiteral(", ")));
+        edit->setObjectName(QLatin1String(name));
+        edit->setPlaceholderText(tr("なし（どの辺も同じ）"));
+        edit->setToolTip(tip);
+        edit->setEnabled(!o->locked);
+        const QString initial = edit->text();
+        const QString k = QLatin1String(key);
+        connect(edit, &QLineEdit::editingFinished, this, [this, id, edit, initial, k] {
+          if (edit->text().trimmed() != initial) emit roofEdited(id, k, 0.0, edit->text().trimmed());
+        });
+        form_->addRow(label, edit);
+      };
+      if (roof->spec.kind != "shed")
+        own(tr("辺ごとの勾配"), "roofSidePitch", "side_pitch", roof->spec.sidePitch,
+            tr("辺の番号と勾配を「1:6, 3:2.5」のように（1 番目の角から 2 番目の角までが 1）。書かない辺は上の「勾配」。"
+               "妻の辺に書いた勾配は使いません。入れると、直角だけの外周も斜めの外周と同じ作り方になります（L 字の外の角は隅棟）"));
+      own(tr("辺ごとの出"), "roofSideEave", "side_eave", roof->spec.sideEave,
+          tr("辺の番号と出（mm）を「1:900, 3:300」のように。書かない辺は上の「軒の出」（妻・けらばの辺は「けらばの出」）。"
+             "入れると、直角だけの外周も斜めの外周と同じ作り方になります"));
       addTypeRow(this, form_, modeler, *o, tr("勾配・厚さ・軒の出・けらばの出"));
       auto row = [&](const QString& label, const QString& text, const char* name) {
         auto* value = new QLabel(text);

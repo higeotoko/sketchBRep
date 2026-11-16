@@ -440,7 +440,14 @@ AreaTable areaTable(const Document& document) {
     if (outline.size() < 3) continue;
     const std::string kind = spec.value("kind", std::string("gable"));
     const double eave = spec.value("eave", 600.0), verge = spec.value("gable_eave", 300.0);
-    if (std::max(eave, verge) < 1000.0) continue;  // nothing 1 m out or more
+    // docs/160: sides with an overhang of their own.
+    std::map<int, double> own;
+    if (spec.contains("sides") && spec.at("sides").is_array())
+      for (const auto& one : spec.at("sides"))
+        if (one.is_object() && one.contains("side") && one.contains("eave")) own[one.at("side").get<int>()] = one.at("eave").get<double>();
+    double furthest = std::max(eave, verge);
+    for (const auto& [side, out] : own) furthest = std::max(furthest, out);
+    if (furthest < 1000.0) continue;  // nothing 1 m out or more
     const std::size_t n = outline.size();
     auto dir = [&](std::size_t i) { return gp_Vec(outline[i], outline[(i + 1) % n]).Normalized(); };
     std::vector<double> overhang(n, eave);
@@ -473,6 +480,8 @@ AreaTable areaTable(const Document& document) {
         continue;
       }
     }
+    for (const auto& [side, out] : own)
+      if (side >= 0 && side < static_cast<int>(n)) overhang[static_cast<std::size_t>(side)] = out;
     std::vector<double> beyond(n);
     bool any = false;
     for (std::size_t i = 0; i < n; ++i) {

@@ -745,6 +745,25 @@ void MainWindow::buildUi() {
                   spec.gableSides.push_back(side - 1);
                 }
               }
+              else if (key == QStringLiteral("side_pitch") || key == QStringLiteral("side_eave")) {
+                // docs/160: "side:value" pairs; people count sides from 1; empty: none.
+                std::map<int, double>& values = key == QStringLiteral("side_pitch") ? spec.sidePitch : spec.sideEave;
+                values.clear();
+                QString pairs = kind;
+                pairs.replace(QRegularExpression(QStringLiteral("\\s*[:：=]\\s*")), QStringLiteral(":"));
+                for (const QString& part : pairs.split(QRegularExpression(QStringLiteral("[,、\\s]+")), Qt::SkipEmptyParts)) {
+                  const QStringList pair = part.split(QRegularExpression(QStringLiteral("[:：=]")));
+                  bool okSide = false, okValue = false;
+                  const int side = pair.value(0).toInt(&okSide);
+                  const double value = pair.value(1).toDouble(&okValue);
+                  if (pair.size() != 2 || !okSide || !okValue || side < 1) {
+                    reportError(tr("辺ごとの値は、辺の番号と値を「1:6, 3:2.5」のように入れてください（番号は 1 から）"));
+                    refreshPanels();
+                    return;
+                  }
+                  values[side - 1] = value;
+                }
+              }
               else return;
               const Status s = modeler_.changeRoof(id, spec);
               if (!s) {

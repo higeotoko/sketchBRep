@@ -7223,10 +7223,20 @@ namespace {
 std::string roofSpecText(const geom::RoofSpec& s) {
   nlohmann::json outline = nlohmann::json::array();
   for (const gp_Pnt& p : s.outline) outline.push_back({p.X(), p.Y()});
-  return nlohmann::json{{"kind", s.kind}, {"outline", outline}, {"height", s.height}, {"pitch", s.pitch},
-                        {"eave", s.eave}, {"gable_eave", s.gableEave}, {"thickness", s.thickness},
-                        {"ridge", s.ridge}, {"fall", {s.fallX, s.fallY}}, {"gable_sides", s.gableSides}}
-      .dump();
+  nlohmann::json j{{"kind", s.kind}, {"outline", outline}, {"height", s.height}, {"pitch", s.pitch},
+                   {"eave", s.eave}, {"gable_eave", s.gableEave}, {"thickness", s.thickness},
+                   {"ridge", s.ridge}, {"fall", {s.fallX, s.fallY}}, {"gable_sides", s.gableSides}};
+  // docs/160: sides with a pitch / an overhang of their own (left out when there are none).
+  nlohmann::json sides = nlohmann::json::array();
+  for (const auto& [side, pitch] : s.sidePitch) {
+    nlohmann::json one{{"side", side}, {"pitch", pitch}};
+    if (const auto it = s.sideEave.find(side); it != s.sideEave.end()) one["eave"] = it->second;
+    sides.push_back(one);
+  }
+  for (const auto& [side, eave] : s.sideEave)
+    if (!s.sidePitch.count(side)) sides.push_back({{"side", side}, {"eave", eave}});
+  if (!sides.empty()) j["sides"] = sides;
+  return j.dump();
 }
 
 std::optional<geom::RoofSpec> roofSpecFrom(const std::string& text) {
@@ -7244,6 +7254,12 @@ std::optional<geom::RoofSpec> roofSpecFrom(const std::string& text) {
     s.fallX = j.at("fall").at(0).get<double>();
     s.fallY = j.at("fall").at(1).get<double>();
     s.gableSides = j.value("gable_sides", std::vector<int>{});  // roofs made before docs/138: chosen
+    if (j.contains("sides"))
+      for (const auto& one : j.at("sides")) {
+        const int side = one.at("side").get<int>();
+        if (one.contains("pitch")) s.sidePitch[side] = one.at("pitch").get<double>();
+        if (one.contains("eave")) s.sideEave[side] = one.at("eave").get<double>();
+      }
     return s;
   } catch (const std::exception&) {
     return std::nullopt;

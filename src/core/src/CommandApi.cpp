@@ -132,6 +132,31 @@ void roofArgs(const json& a, geom::RoofSpec& s) {
   } else if (a.contains("outline")) {
     s.gableSides.clear();
   }
+  // docs/160: sides with a pitch / an overhang of their own; the list replaces the one before.
+  if (a.contains("sides")) {
+    const json& v = a.at("sides");
+    const char* shape = "'sides' is a list of {side, pitch, eave} (side 0: from corner 0 to corner 1; pitch and eave may be left out)";
+    if (!v.is_array()) throw ApiError(shape);
+    s.sidePitch.clear();
+    s.sideEave.clear();
+    for (const json& one : v) {
+      if (!one.is_object() || !one.contains("side") || !one.at("side").is_number_integer()) throw ApiError(shape);
+      for (const auto& [key, value] : one.items())
+        if (key != "side" && key != "pitch" && key != "eave") throw ApiError(shape);
+      const int side = one.at("side").get<int>();
+      if (one.contains("pitch")) {
+        if (!one.at("pitch").is_number()) throw ApiError(shape);
+        s.sidePitch[side] = one.at("pitch").get<double>();
+      }
+      if (one.contains("eave")) {
+        if (!one.at("eave").is_number()) throw ApiError(shape);
+        s.sideEave[side] = one.at("eave").get<double>();
+      }
+    }
+  } else if (a.contains("outline")) {
+    s.sidePitch.clear();
+    s.sideEave.clear();
+  }
 }
 
 // The stair sizes given in `a` put into `s` (the others stay).
@@ -199,9 +224,17 @@ json stairJson(const doc::StairInfo& r) {
 json roofJson(const doc::RoofInfo& r) {
   json outline = json::array();
   for (const gp_Pnt& p : r.spec.outline) outline.push_back({p.X(), p.Y()});
+  json sides = json::array();
+  for (const auto& [side, pitch] : r.spec.sidePitch) {
+    json one{{"side", side}, {"pitch", pitch}};
+    if (const auto it = r.spec.sideEave.find(side); it != r.spec.sideEave.end()) one["eave"] = it->second;
+    sides.push_back(one);
+  }
+  for (const auto& [side, eave] : r.spec.sideEave)
+    if (!r.spec.sidePitch.count(side)) sides.push_back({{"side", side}, {"eave", eave}});
   return json{{"kind", r.spec.kind}, {"outline", outline}, {"height", r.spec.height}, {"pitch", r.spec.pitch},
               {"eave", r.spec.eave}, {"gable_eave", r.spec.gableEave}, {"thickness", r.spec.thickness},
-              {"ridge", r.spec.ridge}, {"fall", {r.spec.fallX, r.spec.fallY}}, {"gable_sides", r.spec.gableSides}, {"plan_area", r.planArea / 1e6},
+              {"ridge", r.spec.ridge}, {"fall", {r.spec.fallX, r.spec.fallY}}, {"gable_sides", r.spec.gableSides}, {"sides", sides}, {"plan_area", r.planArea / 1e6},
               {"slope_area", r.slopeArea / 1e6}, {"ridge_height", r.ridgeHeight}, {"eave_height", r.eaveHeight},
               {"parts", r.parts}, {"level", r.level}};
 }
@@ -2291,9 +2324,11 @@ const std::vector<CommandDef>& commands() {
        }},
       {"create_roof",
        "A roof as one solid over a plan 'outline' ([x, y] or \"X1/Y1\" points: right-angled ones (rectangles, L, T, "
-       "U shapes) or with slanted sides (docs/108, docs/138: hip with up to four inward corners; gable and shed with "
-       "none; gable: 'gable_sides', 0-based side numbers, side i from corner i to i+1, default the shorter pair of "
-       "parallel opposite sides)) or 'grid' {x: [..2 names], y: [..2 names]}. 'kind': gable (切妻, default), "
+       "U shapes) or with slanted sides (docs/108, docs/138, docs/160: up to four inward corners; "
+       "gable: 'gable_sides', 0-based side numbers, side i from corner i to i+1, default the shorter pair of "
+       "parallel opposite sides, with inward corners the ends of the wings). 'sides': [{side, pitch, eave}] gives "
+       "sides a pitch / an overhang of their own (the overhang of a gable side is its verge; with 'sides' a "
+       "right-angled outline is worked out like a slanted one: an L's outer corner gets a hip)) or 'grid' {x: [..2 names], y: [..2 names]}. 'kind': gable (切妻, default), "
        "hip (寄棟) or shed (片流れ). 'height' (mm): z of the roof's underside above the outline (the top of the "
        "walls / plates). 'pitch': rise per 10 of run (寸勾配, default 4). 'eave': overhang at eaves in plan "
        "(default 600); 'gable_eave': at gable ends (default 300; shed: at the sloping sides). 'thickness' at "
@@ -2305,7 +2340,7 @@ const std::vector<CommandDef>& commands() {
          "outline": {"type": "array"}, "grid": {"type": "object"}, "kind": {"enum": ["gable", "hip", "shed"]},
          "height": {"type": "number"}, "pitch": {"type": "number"}, "eave": {"type": "number"},
          "gable_eave": {"type": "number"}, "thickness": {"type": "number"}, "ridge": {"enum": ["long", "short"]},
-         "fall": {"type": "array"}, "gable_sides": {"type": "array", "items": {"type": "integer"}}}, "required": ["height"]}),
+         "fall": {"type": "array"}, "gable_sides": {"type": "array", "items": {"type": "integer"}}, "sides": {"type": "array", "items": {"type": "object"}}}, "required": ["height"]}),
        [](doc::Modeler& m, const json& a) {
          const GridLookup grid(m.document());
          geom::RoofSpec spec;
@@ -2341,7 +2376,7 @@ const std::vector<CommandDef>& commands() {
          "id": {"type": "string"}, "outline": {"type": "array"}, "kind": {"enum": ["gable", "hip", "shed"]},
          "height": {"type": "number"}, "pitch": {"type": "number"}, "eave": {"type": "number"},
          "gable_eave": {"type": "number"}, "thickness": {"type": "number"}, "ridge": {"enum": ["long", "short"]},
-         "fall": {"type": "array"}, "gable_sides": {"type": "array", "items": {"type": "integer"}}}, "required": ["id"]}),
+         "fall": {"type": "array"}, "gable_sides": {"type": "array", "items": {"type": "integer"}}, "sides": {"type": "array", "items": {"type": "object"}}}, "required": ["id"]}),
        [](doc::Modeler& m, const json& a) {
          const GridLookup grid(m.document());
          geom::RoofSpec spec = must(m.roofInfo(text(a, "id"))).spec;
