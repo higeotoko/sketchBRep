@@ -129,7 +129,7 @@ const std::map<std::string, std::size_t> kAttributes = {
     {"IFCGEOMETRICREPRESENTATIONSUBCONTEXT", 10}, {"IFCAXIS2PLACEMENT3D", 3}, {"IFCLOCALPLACEMENT", 2},
     {"IFCCARTESIANPOINT", 1}, {"IFCDIRECTION", 1}, {"IFCSHAPEREPRESENTATION", 4}, {"IFCPRODUCTDEFINITIONSHAPE", 3},
     {"IFCFACETEDBREP", 1}, {"IFCCLOSEDSHELL", 1}, {"IFCFACE", 1}, {"IFCFACEOUTERBOUND", 2}, {"IFCFACEBOUND", 2},
-    {"IFCPOLYLOOP", 1}, {"IFCCOVERING", 9}, {"IFCRELCOVERSSPACES", 6}, {"IFCPOLYLINE", 1}, {"IFCARBITRARYCLOSEDPROFILEDEF", 3}, {"IFCEXTRUDEDAREASOLID", 4}};
+    {"IFCPOLYLOOP", 1}, {"IFCCOVERING", 9}, {"IFCRELCOVERSSPACES", 6}, {"IFCRELCONNECTSELEMENTS", 7}, {"IFCPOLYLINE", 1}, {"IFCARBITRARYCLOSEDPROFILEDEF", 3}, {"IFCEXTRUDEDAREASOLID", 4}};
 
 void expectWellFormed(const Ifc& ifc) {
   std::set<std::string> ids;
@@ -189,6 +189,7 @@ TEST_F(IfcExport, AHouseIsWrittenWithItsStoreysPartsAndRelations) {
   ok("set_opening_mark", {{"host", walls[1]}, {"mark", "SD-1"}, {"product", "P-900"}});
   ok("set_room_finish", {{"id", roomId}, {"use", "Living"}, {"floor", "Flooring t15"}, {"ceiling", "PB t9.5"}, {"ceiling_height", 2400}});
   ok("make_ceilings", {{"rooms", {roomId}}});  // docs/127: a ceiling of the room
+  ok("make_canopy", {{"host", walls[1]}, {"opening", 1}});  // docs/155: a canopy over the door
   ok("create_grid", {{"x_spacings", {8000}}, {"y_spacings", {6000}}});
 
   sbr::doc::IfcSummary summary;
@@ -213,6 +214,11 @@ TEST_F(IfcExport, AHouseIsWrittenWithItsStoreysPartsAndRelations) {
   EXPECT_EQ(summary.spaces, 1);
   EXPECT_EQ(summary.grids, 1);
   EXPECT_EQ(summary.coverings, 1);
+  EXPECT_EQ(summary.canopies, 1);  // a slab of its own kind, not a proxy, connected to its wall
+  EXPECT_EQ(ifc.of("IFCSLAB").size(), 2u);
+  EXPECT_EQ(ifc.of("IFCRELCONNECTSELEMENTS").size(), 1u);
+  EXPECT_NE(text->find("'CANOPY'"), std::string::npos);
+  EXPECT_NE(text->find(".USERDEFINED.)"), std::string::npos);
   EXPECT_EQ(ifc.of("IFCWALL").size(), 5u);
   EXPECT_EQ(ifc.of("IFCOPENINGELEMENT").size(), 3u);
   EXPECT_EQ(ifc.of("IFCRELVOIDSELEMENT").size(), 3u);

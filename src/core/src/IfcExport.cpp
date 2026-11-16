@@ -348,6 +348,8 @@ Result<std::string> ifcText(const Modeler& modeler, const std::string& fileName,
                                      "ridge", "purlin", "floor_girder", "lintel"};
   std::set<std::string> memberRoles = {"joist", "rafter", "stud", "brace"};
   std::vector<std::pair<std::string, int>> ceilings;  // (room id, covering): related to the room's space below
+  std::vector<std::pair<std::string, int>> canopies;  // (wall id, canopy): connected to their walls (docs/155)
+  std::map<std::string, int> written;                 // object id -> its element
   for (const Object& o : document.objects()) {
     if (o.isContainer() || !document.isVisible(o.id)) continue;
     const std::string kind = attribute(o, "kind");
@@ -475,6 +477,12 @@ Result<std::string> ifcText(const Modeler& modeler, const std::string& fileName,
       }
       element = f.add("IFCSTAIR(" + head + "$" + tail + ",." + type + ".)");
       ++summary.stairs;
+    } else if (kind == "canopy") {
+      // A canopy (docs/147): a slab of its own kind, connected to the wall it stands out from (docs/155).
+      element = f.add("IFCSLAB(" + head + text("CANOPY") + tail + ",.USERDEFINED.)");
+      ++summary.canopies;
+      quantities(o.id, element, "Qto_SlabBaseQuantities", {length("Width", z1 - z0), volumeOf("NetVolume", geom::volume(world))});
+      if (const std::string host = attribute(o, "host"); !host.empty()) canopies.emplace_back(host, element);
     } else if (kind == "ceiling") {
       // A ceiling board (docs/123): a covering of its room (docs/127).
       element = f.add("IFCCOVERING(" + head + "$" + tail + ",.CEILING.)");
@@ -495,6 +503,13 @@ Result<std::string> ifcText(const Modeler& modeler, const std::string& fileName,
       ++summary.proxies;
     }
     storey.elements.push_back(element);
+    written[o.id] = element;
+  }
+  for (const auto& [host, canopy] : canopies) {
+    const auto wall = written.find(host);
+    if (wall == written.end()) continue;
+    f.add("IFCRELCONNECTSELEMENTS(" + guid("canopy:" + host + ":" + std::to_string(canopy)) + ",$,$,$,$," + ref(wall->second) + "," +
+          ref(canopy) + ")");
   }
 
   // --- rooms as spaces ---

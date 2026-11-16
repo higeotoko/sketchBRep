@@ -3785,7 +3785,7 @@ const std::vector<CommandDef>& commands() {
       {"export_ifc",
        "Export the building as IFC4 (.ifc) for other BIM software: storeys from the levels; walls (create_wall) "
        "with their openings as voids, and a window / door for each opening with a fitting (a fitting with its "
-       "sill on the floor is a door); slabs; roofs; stairs; ceiling boards (make_ceilings) as ceilings of their rooms; columns, beams and members; rooms as spaces with their areas; "
+       "sill on the floor is a door); slabs; roofs; stairs; ceiling boards (make_ceilings) as ceilings of their rooms; canopies (make_canopy) as slabs of type CANOPY connected to their walls; columns, beams and members; rooms as spaces with their areas; "
        "grids; other solids as proxies. Lengths in mm. Element ids stay the same when exported again. Returns "
        "counts and 'notes' (what was assumed or left out). Lines, faces and notes are not exported.",
        SCHEMA({"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}),
@@ -3794,7 +3794,7 @@ const std::vector<CommandDef>& commands() {
          return json{{"storeys", s.storeys}, {"walls", s.walls}, {"slabs", s.slabs}, {"roofs", s.roofs}, {"stairs", s.stairs}, {"columns", s.columns},
                      {"beams", s.beams}, {"members", s.members}, {"openings", s.openings}, {"windows", s.windows},
                      {"doors", s.doors}, {"spaces", s.spaces}, {"grids", s.grids}, {"proxies", s.proxies},
-                     {"ceilings", s.coverings}, {"skipped", s.skipped}, {"notes", s.notes}};
+                     {"ceilings", s.coverings}, {"canopies", s.canopies}, {"skipped", s.skipped}, {"notes", s.notes}};
        }},
       {"export_step", "Export visible objects (or 'ids') to STEP with names and colours.",
        SCHEMA({"type": "object", "properties": {"path": {"type": "string"},
