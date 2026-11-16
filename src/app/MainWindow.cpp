@@ -4649,24 +4649,31 @@ void MainWindow::showSchedulesDialog() {
     auto* box = new QVBoxLayout(page);
     auto* table = makeTable("areaTable", {tr("階"), tr("壁で囲まれた面積（壁芯）㎡"), tr("室の数"), tr("室のない閉じた所"), tr("室の合計（壁芯）㎡"),
                                           tr("室の合計（内法）㎡"), tr("床スラブ ㎡"), tr("法の床面積")},
-                            static_cast<int>(areas.rows.size()) + 1);
+                            static_cast<int>(areas.rows.size()) + 2);
     for (int row = 0; row < static_cast<int>(areas.rows.size()); ++row) {
       const doc::AreaRow& r = areas.rows[static_cast<std::size_t>(row)];
       const QStringList cells{r.level.empty() ? tr("（レベルなし）") : QString::fromStdString(r.level),
                               r.enclosedKnown ? area(r.enclosedArea) : tr("—"), QString::number(r.rooms),
                               r.enclosedKnown ? QString::number(r.regionsWithoutRoom) : tr("—"), area(r.roomCentre),
-                              r.innerMissing == 0 ? area(r.roomInner) : tr("未評価"), area(r.slabArea), tr("未評価")};
+                              r.innerMissing == 0 ? area(r.roomInner) : tr("未評価"), area(r.slabArea),
+                              !r.enclosedKnown ? tr("—") : r.legalKnown ? area(r.legalFloor) : tr("未評価")};
       for (int c = 0; c < cells.size(); ++c) table->setItem(row, c, new QTableWidgetItem(cells[c]));
     }
     const int last = static_cast<int>(areas.rows.size());
-    const QStringList totals{tr("合計"), area(areas.enclosedTotal), QString(), QString(), area(areas.roomCentreTotal), QString(),
-                             area(areas.slabTotal), tr("未評価")};
+    bool allKnown = true;
+    for (const doc::AreaRow& r : areas.rows) allKnown = allKnown && (!r.enclosedKnown || r.legalKnown);
+    // docs/141: the total of the floor areas is the 延べ面積; the 建築面積 under it.
+    const QStringList totals{tr("合計（延べ面積）"), area(areas.enclosedTotal), QString(), QString(), area(areas.roomCentreTotal), QString(),
+                             area(areas.slabTotal), allKnown ? area(areas.legalTotal) : tr("未評価")};
     for (int c = 0; c < totals.size(); ++c) table->setItem(last, c, new QTableWidgetItem(totals[c]));
+    table->setItem(last + 1, 0, new QTableWidgetItem(tr("建築面積")));
+    table->setItem(last + 1, 7, new QTableWidgetItem(areas.buildingKnown ? area(areas.buildingArea) : tr("未評価")));
     table->resizeColumnsToContents();
     int unreadable = 0;
     for (const doc::AreaRow& r : areas.rows) unreadable += r.unreadableWalls;
     QString text = tr("モデルから測った面積です。「壁で囲まれた面積」は、その階に立つ壁（壁ツールの壁）が囲む所の全部（室を置いていない所も含む）。"
-                      "法の床面積・建築面積（算入・不算入の決まり、吹抜け・階段・庇の扱い）は見ていないので、未評価です。");
+                      "法の床面積・延べ面積・建築面積は、下の決まりで出しました（確認申請に使う時は、特定行政庁・確認検査機関の取扱いを確かめてください）。");
+    for (const std::string& n : areas.legalNotes) text += QStringLiteral("\n") + QString::fromStdString(n);
     if (unreadable > 0) text += tr("\n形を直接変えた壁が %1 枚あり、壁として読んでいません（面積に入っていない所があるかもしれません）。").arg(unreadable);
     box->addWidget(table, 1);
     box->addWidget(note("areaTableNote", text));

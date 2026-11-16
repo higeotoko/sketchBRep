@@ -518,6 +518,8 @@ class Modeler {
     int unreadableWalls = 0;
   };
   static EnclosedArea enclosedAt(const Document& document, double floor);
+  // The outlines of those regions on the wall lines (壁芯), at z 0 (docs/141).
+  static std::vector<std::vector<gp_Pnt>> enclosedOutlines(const Document& document, double floor);
 
   // Whether moves keep wall joints (on by default; a setting of the session, not saved).
   void setKeepWallJoins(bool on) { keepWallJoins_ = on; }

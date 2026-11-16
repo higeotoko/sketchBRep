@@ -90,14 +90,26 @@ struct AreaRow {
   int unreadableWalls = 0;      // walls reshaped by hand at this storey: not read as walls
   double slabArea = 0.0;        // mm2 in plan of the slabs whose top lies on this level (openings taken out)
   int slabs = 0;
+  // 床面積 (令 2 条 1 項 3 号, docs/141): within the wall lines, where there is a floor (the slabs of
+  // this storey and the stairs arriving at it); every enclosed part when the storey has no slab.
+  bool legalKnown = false;
+  double legalFloor = 0.0;  // mm2
 };
 
 struct AreaTable {
   std::vector<AreaRow> rows;  // bottom to top
   double enclosedTotal = 0.0, roomCentreTotal = 0.0, slabTotal = 0.0;
+  // 延べ面積 (令 2 条 1 項 4 号): the floor areas added (the exclusions for the floor area ratio not
+  // looked at). 建築面積 (同 2 号): the plan of every storey within the wall lines, and the eaves
+  // and the like beyond 1 m from them (back 1 m from their ends). docs/141.
+  double legalTotal = 0.0;
+  bool buildingKnown = false;
+  double buildingArea = 0.0;
+  std::vector<std::string> legalNotes;  // what was assumed and what is not evaluated, with the basis
 };
-// Areas measured from the model. Not the floor area or building area of the Building
-// Standards Act (what counts and what does not is not looked at): those are not evaluated.
+// Areas measured from the model, and the floor and building areas by the Building Standards Act
+// Enforcement Order art. 2 (1) ii-iv as read on e-Gov (version in force 2026-11-01) — docs/141 for
+// what is and is not looked at.
 AreaTable areaTable(const Document& document);
 
 // What a room's tag says on screen and on drawings: its name and its area within the wall

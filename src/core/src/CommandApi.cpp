@@ -2661,9 +2661,12 @@ const std::vector<CommandDef>& commands() {
        "Areas by storey measured from the model (m2): per level 'enclosed' (everything the walls standing on it "
        "enclose, within the wall lines, with or without rooms), regions, rooms, regions_without_room, room_centre, "
        "room_inner (null = not evaluated), slab (plan area of the slabs whose top lies on the level, openings "
-       "taken out), slabs, unreadable_walls (walls reshaped by hand: not read). legal_floor_area and "
-       "building_area are always \"not_evaluated\": what counts under the Building Standards Act is not looked "
-       "at. include_csv: true adds UTF-8 CSV (BOM).",
+       "taken out), slabs, unreadable_walls (walls reshaped by hand: not read), legal_floor (床面積 by the Building "
+       "Standards Act Enforcement Order art. 2 (1) iii: within the wall lines where there is a floor; "
+       "\"not_evaluated\" when it cannot be read). total_legal_floor (延べ面積, iv; the exclusions for the floor "
+       "area ratio not looked at) and building_area (建築面積, ii: every storey within the wall lines plus eaves "
+       "beyond 1 m, back 1 m) with 'legal_notes' (the basis, what was assumed and what is not evaluated; docs/141). "
+       "include_csv: true adds UTF-8 CSV (BOM).",
        SCHEMA({"type": "object", "properties": {"include_csv": {"type": "boolean"}}}),
        [](doc::Modeler& m, const json& a) {
          const doc::AreaTable t = doc::areaTable(m.document());
@@ -2674,9 +2677,15 @@ const std::vector<CommandDef>& commands() {
                            {"rooms", r.rooms}, {"regions_without_room", r.regionsWithoutRoom},
                            {"room_centre", r.roomCentre / 1e6},
                            {"room_inner", r.innerMissing == 0 ? json(r.roomInner / 1e6) : json(nullptr)},
-                           {"slab", r.slabArea / 1e6}, {"slabs", r.slabs}, {"unreadable_walls", r.unreadableWalls}});
+                           {"slab", r.slabArea / 1e6}, {"slabs", r.slabs}, {"unreadable_walls", r.unreadableWalls},
+                           {"legal_floor", !r.enclosedKnown ? json(nullptr) : r.legalKnown ? json(r.legalFloor / 1e6) : json("not_evaluated")}});
+         bool allKnown = true;
+         for (const auto& r : t.rows) allKnown = allKnown && (!r.enclosedKnown || r.legalKnown);
          json result{{"levels", rows}, {"total_enclosed", t.enclosedTotal / 1e6}, {"total_room_centre", t.roomCentreTotal / 1e6},
-                     {"total_slab", t.slabTotal / 1e6}, {"legal_floor_area", "not_evaluated"}, {"building_area", "not_evaluated"}};
+                     {"total_slab", t.slabTotal / 1e6},
+                     {"total_legal_floor", allKnown ? json(t.legalTotal / 1e6) : json("not_evaluated")},
+                     {"building_area", t.buildingKnown ? json(t.buildingArea / 1e6) : json("not_evaluated")},
+                     {"legal_notes", t.legalNotes}};
          if (a.value("include_csv", false)) result["csv"] = doc::areaTableCsv(t);
          return result;
        }},

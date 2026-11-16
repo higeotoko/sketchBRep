@@ -7595,6 +7595,18 @@ Modeler::EnclosedArea Modeler::enclosedAt(const Document& document, double floor
   return out;
 }
 
+std::vector<std::vector<gp_Pnt>> Modeler::enclosedOutlines(const Document& document, double floor) {
+  std::vector<std::vector<gp_Pnt>> out;
+  const StoreyWalls walls = storeyWalls(document, floor);
+  if (walls.plan.empty()) return out;
+  for (const geom::RoomRegion& region : geom::roomRegions(walls.plan).regions) {
+    std::vector<gp_Pnt> outline;
+    for (const geom::PlanPoint& p : region.centre) outline.emplace_back(p.x, p.y, 0.0);
+    if (outline.size() >= 3) out.push_back(std::move(outline));
+  }
+  return out;
+}
+
 std::vector<RoomInfo> Modeler::roomsIn(const Document& document_) {
   std::vector<RoomInfo> out;
   std::map<double, StoreyRegions> storeys;

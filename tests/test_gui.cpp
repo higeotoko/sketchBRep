@@ -11805,9 +11805,11 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
           types->item(1,0)->text()==QStringLiteral("D1")&&types->item(1,1)->text()==QStringLiteral("扉")&&
           each->rowCount()==3&&
           rooms->rowCount()==1&&rooms->item(0,0)->text()==QStringLiteral("LDK")&&rooms->item(0,2)->text()==QStringLiteral("48.00")&&
-          areas->rowCount()==2&&areas->item(0,0)->text()==QStringLiteral("1FL")&&areas->item(0,1)->text()==QStringLiteral("48.00")&&
-          areas->item(0,7)->text()==QStringLiteral("未評価")&&areas->item(1,0)->text()==QStringLiteral("合計")&&
-          note->text().contains(QStringLiteral("未評価"));
+          areas->rowCount()==3&&areas->item(0,0)->text()==QStringLiteral("1FL")&&areas->item(0,1)->text()==QStringLiteral("48.00")&&
+          // docs/141: no slab here: every enclosed part counted (said in the note); the building area.
+          areas->item(0,7)->text()==QStringLiteral("48.00")&&areas->item(1,0)->text().startsWith(QStringLiteral("合計"))&&
+          areas->item(2,0)->text()==QStringLiteral("建築面積")&&areas->item(2,7)->text()==QStringLiteral("48.00")&&
+          note->text().contains(QStringLiteral("施行令"))&&note->text().contains(QStringLiteral("未評価"));
     if(!shown)why=QStringLiteral("types %1, each %2, rooms %3, areas %4").arg(types->rowCount()).arg(each->rowCount()).arg(rooms->rowCount()).arg(areas->rowCount());
     dialog->reject();
   });

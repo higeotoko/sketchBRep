@@ -8,12 +8,22 @@
 #include <sstream>
 #include <tuple>
 
+#include <BRepAlgoAPI_Common.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
+#include <BRepPrimAPI_MakeBox.hxx>
+#include <BRepPrimAPI_MakePrism.hxx>
 #include <Bnd_Box.hxx>
+#include <TopExp_Explorer.hxx>
+#include <gp_Trsf.hxx>
 #include <nlohmann/json.hpp>
 
 #include "sbr/OpeningSymbols.h"
 #include "sbr/doc/Modeler.h"
 #include "sbr/geom/Measure.h"
+#include "sbr/geom/Operations.h"
+#include "sbr/geom/Stair.h"
 
 namespace sbr::doc {
 namespace {
@@ -224,6 +234,77 @@ RoomSchedule roomSchedule(const Document& document) {
   return out;
 }
 
+namespace {
+// docs/141: areas in plan as 1 mm thick slices (z 0 to 1), so that unions and overlaps are solids
+// and their volume is the area (mm2).
+std::optional<TopoDS_Shape> slice(const std::vector<gp_Pnt>& outline) {
+  if (outline.size() < 3) return std::nullopt;
+  BRepBuilderAPI_MakePolygon polygon;
+  for (const gp_Pnt& p : outline) polygon.Add(gp_Pnt(p.X(), p.Y(), 0.0));
+  polygon.Close();
+  if (!polygon.IsDone()) return std::nullopt;
+  BRepBuilderAPI_MakeFace face(polygon.Wire(), Standard_True);
+  if (!face.IsDone()) return std::nullopt;
+  BRepPrimAPI_MakePrism prism(face.Face(), gp_Vec(0, 0, 1));
+  if (!prism.IsDone()) return std::nullopt;
+  return prism.Shape();
+}
+
+// A solid's plan at height z, as such a slice.
+std::optional<TopoDS_Shape> sliceOf(const TopoDS_Shape& solid, double z) {
+  const Bnd_Box box = geom::exactBounds(solid);
+  if (box.IsVoid()) return std::nullopt;
+  const gp_Pnt lo(box.CornerMin().X() - 10, box.CornerMin().Y() - 10, z - 0.5), hi(box.CornerMax().X() + 10, box.CornerMax().Y() + 10, z + 0.5);
+  BRepAlgoAPI_Common cut(solid, BRepPrimAPI_MakeBox(lo, hi).Shape());
+  if (!cut.IsDone() || cut.HasErrors()) return std::nullopt;
+  gp_Trsf down;
+  down.SetTranslation(gp_Vec(0, 0, -(z - 0.5)));
+  const TopoDS_Shape moved = BRepBuilderAPI_Transform(cut.Shape(), down, Standard_True).Shape();
+  if (!TopExp_Explorer(moved, TopAbs_SOLID).More()) return std::nullopt;
+  return moved;
+}
+
+std::optional<TopoDS_Shape> joined(const std::vector<TopoDS_Shape>& parts) {
+  if (parts.empty()) return std::nullopt;
+  if (parts.size() == 1) return parts.front();
+  const auto all = geom::booleanCombine(geom::BooleanOp::Union, parts);
+  if (!all) return std::nullopt;
+  return all.value();
+}
+
+double areaOf(const std::optional<TopoDS_Shape>& slice) { return slice ? geom::volume(*slice) : 0.0; }
+
+// The outline with each side moved out by its offset (corners where the moved sides meet).
+std::vector<gp_Pnt> grownOutline(std::vector<gp_Pnt> p, std::vector<double> offsets) {
+  double twice = 0.0;
+  for (std::size_t i = 0; i < p.size(); ++i) twice += p[i].X() * p[(i + 1) % p.size()].Y() - p[(i + 1) % p.size()].X() * p[i].Y();
+  if (twice < 0) {
+    std::reverse(p.begin(), p.end());
+    std::vector<double> o(offsets.size());
+    for (std::size_t k = 0; k < offsets.size(); ++k) o[k] = offsets[(2 * offsets.size() - 2 - k) % offsets.size()];
+    offsets = o;
+  }
+  const std::size_t n = p.size();
+  std::vector<gp_Pnt> out;
+  for (std::size_t i = 0; i < n; ++i) {
+    auto line = [&](std::size_t k) {
+      const gp_Vec d = gp_Vec(p[k], p[(k + 1) % n]).Normalized();
+      return std::make_pair(p[k].Translated(gp_Vec(d.Y(), -d.X(), 0) * offsets[k]), d);
+    };
+    const auto [a, da] = line((i + n - 1) % n);
+    const auto [b, db] = line(i);
+    const double den = da.X() * db.Y() - da.Y() * db.X();
+    if (std::abs(den) < 1e-9) {
+      out.push_back(b);
+      continue;
+    }
+    const gp_Vec w(a, b);
+    out.push_back(a.Translated(da * ((w.X() * db.Y() - w.Y() * db.X()) / den)));
+  }
+  return out;
+}
+}  // namespace
+
 AreaTable areaTable(const Document& document) {
   AreaTable out;
   const RoomSchedule rooms = roomSchedule(document);
@@ -248,6 +329,9 @@ AreaTable areaTable(const Document& document) {
     }
     return *chosen;
   };
+  std::vector<TopoDS_Shape> storeyPlans;  // within the wall lines, per storey (for the building area)
+  std::vector<std::string> noSlab, voids, noWalls;
+  bool stairsArriving = false;
   for (const FloorLevel& level : levels) {
     if (&storeyOf(level) != &level) continue;
     AreaRow row;
@@ -274,16 +358,161 @@ AreaTable areaTable(const Document& document) {
     }
     if (row.regions == 0 && row.rooms == 0 && row.slabs == 0 && row.unreadableWalls == 0) continue;
     row.regionsWithoutRoom = std::max(0, row.regions - row.rooms);
+    // 床面積 (令 2 条 1 項 3 号, docs/141): within the wall lines, where there is a floor.
+    std::vector<TopoDS_Shape> enclosedParts;
+    for (const auto& outline : Modeler::enclosedOutlines(document, level.elevation))
+      if (const auto s = slice(outline)) enclosedParts.push_back(*s);
+    const auto enclosedSlice = joined(enclosedParts);
+    if (enclosedSlice) storeyPlans.push_back(*enclosedSlice);
+    std::vector<TopoDS_Shape> floorParts;
+    for (const Object& o : document.objects()) {
+      const std::string kind = attribute(o, "kind");
+      if (kind == "slab" && !o.shape.IsNull()) {
+        const std::string top = attribute(o, "top_level");
+        bool here = false;
+        for (const FloorLevel& l : levels) here |= l.id == top && &storeyOf(l) == &level;
+        if (!here) continue;
+        const TopoDS_Shape world = document.worldShape(o);
+        const Bnd_Box box = geom::exactBounds(world);
+        if (box.IsVoid()) continue;
+        if (const auto s = sliceOf(world, (box.CornerMin().Z() + box.CornerMax().Z()) / 2)) floorParts.push_back(*s);
+      } else if (kind == "stair") {
+        // A stair arriving at this floor: its plan counts here too (the opening it needs is floor).
+        const auto spec = stairInWorld(document, o);
+        if (!spec || std::abs(spec->base + spec->rise - level.elevation) > 1.0) continue;
+        if (const auto made = geom::makeStair(*spec))
+          for (const auto& t : made->treads)
+            if (const auto s = slice(t.outline)) floorParts.push_back(*s);
+        stairsArriving = true;
+      }
+    }
+    if (enclosedSlice) {
+      row.legalKnown = true;
+      if (row.slabs == 0) {
+        row.legalFloor = areaOf(enclosedSlice);
+        noSlab.push_back(level.name);
+      } else if (const auto floor = joined(floorParts)) {
+        const auto both = geom::booleanCombine(geom::BooleanOp::Intersect, {*enclosedSlice, *floor});
+        if (both) row.legalFloor = geom::volume(both.value());
+        else row.legalKnown = false;
+        if (both && areaOf(enclosedSlice) - row.legalFloor > 1e4) voids.push_back(level.name);  // more than 0.01 m2 without floor
+      }
+    } else if (row.unreadableWalls == 0) {
+      // No walls enclose anything on this storey (a floor only, a roof deck): no floor area.
+      row.legalKnown = true;
+      row.legalFloor = 0.0;
+      if (row.slabs > 0) noWalls.push_back(level.name);
+    }
+    if (row.unreadableWalls > 0) row.legalKnown = false;
     out.rows.push_back(std::move(row));
   }
   AreaRow loose;  // rooms whose marker is at no level's height
   addRooms(loose, "");
   if (loose.rooms > 0) out.rows.push_back(std::move(loose));
+  bool everyKnown = !out.rows.empty();
   for (const AreaRow& r : out.rows) {
     out.enclosedTotal += r.enclosedArea;
     out.roomCentreTotal += r.roomCentre;
     out.slabTotal += r.slabArea;
+    if (!r.enclosedKnown) continue;  // rooms at no level's height: no storey
+    out.legalTotal += r.legalFloor;
+    everyKnown = everyKnown && r.legalKnown;
   }
+  // 建築面積 (令 2 条 1 項 2 号): every storey's plan within the wall lines, and roofs' eaves beyond
+  // 1 m from the line they bear on, back 1 m from their ends.
+  std::vector<TopoDS_Shape> plan = storeyPlans;
+  bool eavesUnknown = false;
+  int eaves = 0;
+  for (const Object& o : document.objects()) {
+    if (attribute(o, "kind") != "roof") continue;
+    const nlohmann::json spec = nlohmann::json::parse(attribute(o, "roof_spec"), nullptr, false);
+    if (!spec.is_object() || !spec.contains("outline")) {
+      eavesUnknown = true;
+      continue;
+    }
+    const gp_Trsf world = document.worldTransform(o);
+    std::vector<gp_Pnt> outline;
+    for (const auto& p : spec.at("outline")) {
+      const gp_Pnt q = gp_Pnt(p.at(0).get<double>(), p.at(1).get<double>(), 0.0).Transformed(world);
+      if (outline.empty() || outline.back().Distance(q) > 0.01) outline.emplace_back(q.X(), q.Y(), 0.0);
+    }
+    if (outline.size() > 1 && outline.front().Distance(outline.back()) <= 0.01) outline.pop_back();
+    if (outline.size() < 3) continue;
+    const std::string kind = spec.value("kind", std::string("gable"));
+    const double eave = spec.value("eave", 600.0), verge = spec.value("gable_eave", 300.0);
+    if (std::max(eave, verge) < 1000.0) continue;  // nothing 1 m out or more
+    const std::size_t n = outline.size();
+    auto dir = [&](std::size_t i) { return gp_Vec(outline[i], outline[(i + 1) % n]).Normalized(); };
+    std::vector<double> overhang(n, eave);
+    bool slanted = false;
+    for (std::size_t i = 0; i < n; ++i) slanted |= std::abs(dir(i).X()) > 1e-6 && std::abs(dir(i).Y()) > 1e-6 &&
+                                                   std::abs(dir(i).Dot(dir(0))) > 1e-6 && std::abs(dir(i).Dot(dir(0))) < 1 - 1e-6;
+    if (kind == "shed") {
+      gp_Vec fall(spec.value("fall", nlohmann::json::array({0.0, -1.0}))[0].get<double>(),
+                  spec.value("fall", nlohmann::json::array({0.0, -1.0}))[1].get<double>(), 0);
+      fall.Transform(world);
+      if (fall.Magnitude() < 1e-9) {
+        eavesUnknown = true;
+        continue;
+      }
+      fall.Normalize();
+      for (std::size_t i = 0; i < n; ++i) overhang[i] = std::abs(gp_Vec(dir(i).Y(), -dir(i).X(), 0).Dot(fall)) >= 0.5 ? eave : verge;
+    } else if (kind == "gable") {
+      const std::vector<int> sides = spec.value("gable_sides", std::vector<int>{});
+      if (!sides.empty()) {
+        for (const int g : sides)
+          if (g >= 0 && g < static_cast<int>(n)) overhang[static_cast<std::size_t>(g)] = verge;
+      } else if (n == 4 && !slanted) {
+        // One rectangle: the gables at the ends of the ridge (along the longer side, or the shorter one).
+        const double a = outline[0].Distance(outline[1]), b = outline[1].Distance(outline[2]);
+        const bool ridgeShort = spec.value("ridge", std::string("long")) == "short";
+        const bool firstAlong = (a >= b) != ridgeShort;  // side 0 runs along the ridge
+        for (std::size_t i = 0; i < n; ++i) overhang[i] = (i % 2 == 0) == firstAlong ? eave : verge;
+      } else {
+        eavesUnknown = true;  // which sides end in gables is the roof's working-out: not read here
+        continue;
+      }
+    }
+    std::vector<double> beyond(n);
+    bool any = false;
+    for (std::size_t i = 0; i < n; ++i) {
+      beyond[i] = std::max(0.0, overhang[i] - 1000.0);
+      any |= beyond[i] > 0.0;
+    }
+    if (!any) continue;
+    if (const auto s = slice(grownOutline(outline, beyond))) {
+      plan.push_back(*s);
+      ++eaves;
+    }
+  }
+  if (const auto all = joined(plan)) {
+    out.buildingArea = areaOf(all);
+    out.buildingKnown = !eavesUnknown;
+  }
+  // What was taken as given, and what was not looked at.
+  out.legalNotes.push_back("根拠：建築基準法施行令 第 2 条 第 1 項 第 2 号（建築面積）・第 3 号（床面積）・第 4 号（延べ面積）、e-Gov 法令検索で 2026-11-16 に読んだ版（令和 8 年 11 月 1 日施行）。");
+  out.legalNotes.push_back("床面積：壁（壁ツールの壁）の中心線で囲まれた所のうち、床（その階のスラブ）のある所。吹抜けは入れない。階段は、着く上の階でも入れた（一般的な扱い。特定行政庁の取扱いを確かめてください）。");
+  if (!noSlab.empty()) {
+    std::string names;
+    for (const auto& n : noSlab) names += (names.empty() ? "" : "・") + n;
+    out.legalNotes.push_back(names + "：床（スラブ）が無いので、壁で囲まれた所を全部床として数えた。");
+  }
+  if (!noWalls.empty()) {
+    std::string names;
+    for (const auto& n : noWalls) names += (names.empty() ? "" : "・") + n;
+    out.legalNotes.push_back(names + "：床（スラブ）はあるが、壁で囲まれた所が無いので、床面積は 0 とした（屋上・バルコニーなどなら、その扱いは未評価）。");
+  }
+  if (!voids.empty()) {
+    std::string names;
+    for (const auto& n : voids) names += (names.empty() ? "" : "・") + n;
+    out.legalNotes.push_back(names + "：壁の中に床の無い所（吹抜けなど）があり、入れていない。");
+  }
+  out.legalNotes.push_back("未評価：壁で囲まれていない所（バルコニー・ポーチ・ピロティなど、開放性による扱い）、柱だけで囲まれた部分、地階（地盤面上 1 m 以下の部分の建築面積）、特例軒等、高い開放性の指定（同 2 号ただし書）。");
+  out.legalNotes.push_back("延べ面積は各階の床面積の合計。容積率の算定で入れない部分（自動車車庫等 1/5 など、同 4 号ただし書・第 3 項）は見ていない（未評価）。");
+  if (eaves > 0) out.legalNotes.push_back("建築面積：1 m 以上出た軒は、その先から 1 m 下がった線まで入れた（屋根を載せた線から測った）。");
+  if (eavesUnknown) out.legalNotes.push_back("建築面積は未評価：1 m 以上出た軒のどこが妻かを読めない屋根がある（L 字などの切妻）。");
+  if (!everyKnown) out.legalNotes.push_back("床面積を出せない階がある（形を直接変えて壁として読めない壁がある）：その階と延べ面積は未評価。");
+  (void)stairsArriving;
   return out;
 }
 
@@ -392,9 +621,14 @@ draw::Table scheduleTable(const Document& document, int which) {
       t.rows.push_back({r.level.empty() ? "（レベルなし）" : r.level, r.enclosedKnown ? number(r.enclosedArea / 1e6, 2) : "",
                         std::to_string(r.rooms), r.enclosedKnown ? std::to_string(r.regionsWithoutRoom) : "",
                         number(r.roomCentre / 1e6, 2), r.innerMissing == 0 ? number(r.roomInner / 1e6, 2) : "未評価",
-                        number(r.slabArea / 1e6, 2), "未評価"});
-    t.rows.push_back({"合計", number(a.enclosedTotal / 1e6, 2), "", "", number(a.roomCentreTotal / 1e6, 2), "", number(a.slabTotal / 1e6, 2), "未評価"});
-    t.notes = {"モデルから測った面積です。法の床面積・建築面積（算入・不算入の決まり、吹抜け・階段・庇の扱い）は見ていないので未評価です。"};
+                        number(r.slabArea / 1e6, 2), !r.enclosedKnown ? "" : r.legalKnown ? number(r.legalFloor / 1e6, 2) : "未評価"});
+    bool allKnown = true;
+    for (const AreaRow& r : a.rows) allKnown = allKnown && (!r.enclosedKnown || r.legalKnown);
+    t.rows.push_back({"合計（延べ面積）", number(a.enclosedTotal / 1e6, 2), "", "", number(a.roomCentreTotal / 1e6, 2), "", number(a.slabTotal / 1e6, 2),
+                      allKnown ? number(a.legalTotal / 1e6, 2) : "未評価"});
+    t.rows.push_back({"建築面積", "", "", "", "", "", "", a.buildingKnown ? number(a.buildingArea / 1e6, 2) : "未評価"});
+    t.notes = {"モデルから測った面積です。法の床面積・延べ面積・建築面積は、下の決まりで出しました（確認申請に使う時は、特定行政庁・確認検査機関の取扱いを確かめてください）。"};
+    for (const std::string& n : a.legalNotes) t.notes.push_back(n);
   }
   return t;
 }
@@ -638,12 +872,16 @@ std::string areaTableCsv(const AreaTable& table) {
               r.enclosedKnown ? number(r.enclosedArea / 1e6, 2) : "", r.enclosedKnown ? std::to_string(r.regions) : "",
               std::to_string(r.rooms), r.enclosedKnown ? std::to_string(r.regionsWithoutRoom) : "", number(r.roomCentre / 1e6, 2),
               r.innerMissing == 0 ? number(r.roomInner / 1e6, 2) : "未評価", number(r.slabArea / 1e6, 2), std::to_string(r.slabs),
-              std::to_string(r.unreadableWalls), "未評価", "未評価"});
+              std::to_string(r.unreadableWalls), !r.enclosedKnown ? "" : r.legalKnown ? number(r.legalFloor / 1e6, 2) : "未評価", ""});
   }
+  bool allKnown = true;
+  for (const AreaRow& r : table.rows) allKnown = allKnown && (!r.enclosedKnown || r.legalKnown);
   csv.line({"合計", "", number(table.enclosedTotal / 1e6, 2), "", "", "", number(table.roomCentreTotal / 1e6, 2), "",
-            number(table.slabTotal / 1e6, 2), "", "", "未評価", "未評価"});
+            number(table.slabTotal / 1e6, 2), "", "", allKnown ? number(table.legalTotal / 1e6, 2) : "未評価",
+            table.buildingKnown ? number(table.buildingArea / 1e6, 2) : "未評価"});
   csv.line({});
-  csv.line({"注", "モデルから測った面積です。法の床面積・建築面積（算入・不算入の決まり、吹抜け・階段・庇などの扱い）は見ていないので未評価です。"});
+  csv.line({"注", "モデルから測った面積です。法の床面積・延べ面積・建築面積は、下の決まりで出しました（確認申請に使う時は、特定行政庁・確認検査機関の取扱いを確かめてください）。"});
+  for (const std::string& n : table.legalNotes) csv.line({"", n});
   return csv.out.str();
 }
 

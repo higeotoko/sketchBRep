@@ -146,9 +146,13 @@ TEST_F(Schedules, RoomsAndAreasAreReadAsTheWallsAreNow) {
   EXPECT_NEAR(first["room_centre"].get<double>(), 24.0, 1e-9);
   EXPECT_NEAR(first["slab"].get<double>(), 48.0, 1e-6);
   EXPECT_EQ(first["slabs"], 1);
-  EXPECT_EQ(areas["legal_floor_area"], "not_evaluated");  // never a number
-  EXPECT_EQ(areas["building_area"], "not_evaluated");
-  EXPECT_NE(areas["csv"].get<std::string>().find("1FL,0,48.00,2,1,1,24.00,22.33,48.00,1,0,未評価,未評価"), std::string::npos) << areas["csv"];
+  // docs/141: the floor area by art. 2 (1) iii: within the wall lines, on the slab: 48; the
+  // building area the same (eaves within 1 m); every note says its basis.
+  EXPECT_NEAR(first["legal_floor"].get<double>(), 48.0, 1e-6);
+  EXPECT_NEAR(areas["total_legal_floor"].get<double>(), 48.0, 1e-6);
+  EXPECT_NEAR(areas["building_area"].get<double>(), 48.0, 1e-6);
+  EXPECT_FALSE(areas["legal_notes"].empty());
+  EXPECT_NE(areas["csv"].get<std::string>().find("1FL,0,48.00,2,1,1,24.00,22.33,48.00,1,0,48.00,"), std::string::npos) << areas["csv"];
 
   // The room's tag on a plan drawing is its name and area.
   auto tagOnPlan = [&] {
@@ -506,6 +510,74 @@ TEST_F(Schedules, TheTypesOfFloorsAndRoofsAreListed) {
   std::filesystem::remove_all(dir);
 }
 
+// docs/141: floor areas, the total and the building area by the Enforcement Order art. 2 (1).
+TEST(LegalAreas, FloorAndBuildingAreasByTheOrder) {
+  sbr::doc::Modeler modeler;
+  CommandApi api{modeler};
+  auto ok = [&](const std::string& command, json args) {
+    json r = json::parse(api.execute(json{{"command", command}, {"args", args}}.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  ASSERT_TRUE(modeler.setLevels({{"", "1FL", 0}, {"", "2FL", 3000}, {"", "RFL", 6000}}));
+  const json rect = {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}, {0, 0}};
+  ok("create_wall", {{"points", rect}, {"thickness", 120}, {"height", 3000}});
+  ok("create_wall", {{"points", rect}, {"thickness", 120}, {"height", 3000}, {"base", 3000}});
+  ok("create_slab", {{"outline", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}}}, {"top", 0}, {"thickness", 150}});
+  // Upstairs the floor covers x 0..6000 only: the strip x 6000..8000 is open (a void) but for a
+  // stair arriving there (800 wide, along x 7000 from y 500 to 4000).
+  ok("create_slab", {{"outline", {{0, 0}, {6000, 0}, {6000, 6000}, {0, 6000}}}, {"top", 3000}, {"thickness", 200}});
+  ok("create_stair", {{"path", {{7000, 500}, {7000, 4000}}}, {"rise", 3000}, {"width", 800}});
+  auto table = sbr::doc::areaTable(modeler.document());
+  ASSERT_EQ(table.rows.size(), 2u);
+  EXPECT_TRUE(table.rows[0].legalKnown);
+  EXPECT_NEAR(table.rows[0].legalFloor / 1e6, 48.0, 1e-6);
+  EXPECT_TRUE(table.rows[1].legalKnown);
+  EXPECT_NEAR(table.rows[1].legalFloor / 1e6, 36.0 + 0.8 * 3.5, 1e-6);  // the floor and the stair, not the void
+  EXPECT_NEAR(table.legalTotal / 1e6, 48.0 + 38.8, 1e-6);
+  EXPECT_TRUE(table.buildingKnown);
+  EXPECT_NEAR(table.buildingArea / 1e6, 48.0, 1e-6);
+  bool basis = false, voidSaid = false;
+  for (const auto& n : table.legalNotes) {
+    basis |= n.find("施行令 第 2 条") != std::string::npos && n.find("2026-11-16") != std::string::npos;
+    voidSaid |= n.find("2FL") != std::string::npos && n.find("吹抜け") != std::string::npos;
+  }
+  EXPECT_TRUE(basis);
+  EXPECT_TRUE(voidSaid);
+  // A floor with no walls on it (a deck at RFL): 0, said; the total still known.
+  ok("create_slab", {{"outline", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}}}, {"top", 6000}, {"thickness", 150}});
+  table = sbr::doc::areaTable(modeler.document());
+  ASSERT_EQ(table.rows.size(), 3u);
+  EXPECT_TRUE(table.rows[2].legalKnown);
+  EXPECT_NEAR(table.rows[2].legalFloor, 0.0, 1e-9);
+  EXPECT_NEAR(table.legalTotal / 1e6, 86.8, 1e-6);
+  bool deckSaid = false;
+  for (const auto& n : table.legalNotes) deckSaid |= n.find("RFL") != std::string::npos && n.find("0 とした") != std::string::npos;
+  EXPECT_TRUE(deckSaid);
+  // A hip roof with eaves 1200 (200 beyond 1 m): the building area grows by that ring.
+  const std::string roof = ok("create_roof", {{"outline", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}}}, {"kind", "hip"}, {"height", 6000}, {"eave", 1200}})["id"];
+  table = sbr::doc::areaTable(modeler.document());
+  EXPECT_NEAR(table.buildingArea / 1e6, 8.4 * 6.4, 1e-6);
+  // Gable over the rectangle (ridge along x): only the eaves (south, north) count; the gables (300) do not.
+  ok("change_roof", {{"id", roof}, {"kind", "gable"}, {"gable_eave", 1100}});
+  table = sbr::doc::areaTable(modeler.document());
+  EXPECT_NEAR(table.buildingArea / 1e6, 8.2 * 6.4, 1e-6);  // gables 1100: 100 each way
+  ok("change_roof", {{"id", roof}, {"gable_eave", 300}});
+  table = sbr::doc::areaTable(modeler.document());
+  EXPECT_NEAR(table.buildingArea / 1e6, 8.0 * 6.4, 1e-6);
+  // Eaves within 1 m: the walls' plan only.
+  ok("change_roof", {{"id", roof}, {"eave", 900}});
+  table = sbr::doc::areaTable(modeler.document());
+  EXPECT_NEAR(table.buildingArea / 1e6, 48.0, 1e-6);
+  // The API says the same, and the table sheet carries the numbers.
+  const json areas = ok("area_table", json::object());
+  EXPECT_NEAR(areas["total_legal_floor"].get<double>(), 86.8, 1e-6);
+  EXPECT_NEAR(areas["building_area"].get<double>(), 48.0, 1e-6);
+  const auto sheet = sbr::doc::scheduleTable(modeler.document(), 2);
+  EXPECT_EQ(sheet.rows.back().front(), "建築面積");
+  EXPECT_EQ(sheet.rows.back().back(), "48.00");
+}
+
 // docs/113: a table on a sheet of its own.
 TEST_F(Schedules, ATableGoesOnASheetOfItsOwn) {
   const sbr::draw::Table table = sbr::doc::scheduleTable(modeler.document(), 0);
@@ -538,7 +610,7 @@ TEST_F(Schedules, ATableGoesOnASheetOfItsOwn) {
     }
   // The rooms and areas tables too, and as files.
   EXPECT_EQ(sbr::doc::scheduleTable(modeler.document(), 1).rows.front().front(), "居間");
-  EXPECT_EQ(sbr::doc::scheduleTable(modeler.document(), 2).rows.front().back(), "未評価");
+  EXPECT_EQ(sbr::doc::scheduleTable(modeler.document(), 2).rows.front().back(), "48.00");  // docs/141
   const auto dir = std::filesystem::temp_directory_path() / "sbr_schedule_sheet";
   std::filesystem::remove_all(dir);
   std::filesystem::create_directories(dir);
