@@ -192,6 +192,16 @@ void CommandStack::execute(Command command) {
 }
 
 void CommandStack::record(Command command) {
+  if (!onRecorded_) {
+    recordStep(std::move(command));
+    return;
+  }
+  Command seen = command;  // (what the listener is told about; the step itself may be merged)
+  recordStep(std::move(command));
+  onRecorded_(seen);
+}
+
+void CommandStack::recordStep(Command command) {
   redo_.clear();
   redoRevisions_.clear();
   revision_ = nextRevision_++;

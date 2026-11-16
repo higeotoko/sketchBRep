@@ -507,6 +507,9 @@ class Modeler {
     std::vector<ObjectId> made;
     std::vector<std::string> left;  // room names
   };
+  // Boards made from docs/142 on remember what they were made as (attribute ceiling_made); while
+  // they are still that (not moved, cut or resized by hand), they follow their room when its
+  // walls or its ceiling height change, in the same undo step. Changed by hand, they stay.
   Result<Ceilings> makeCeilings(const std::vector<ObjectId>& rooms = {});
   // The same, from a document alone (tables and drawings run without a Modeler).
   static std::vector<RoomInfo> roomsIn(const Document& document);
@@ -1108,6 +1111,10 @@ class Modeler {
   Result<Object> memberObject(const MemberSpec& spec);
   Status commitModified(Object object, const std::string& commandName);
   Status commitWallChange(Object object, const std::string& commandName, double lengthened);
+  // docs/142: after a step that changed walls or rooms, the ceiling boards still as they were made
+  // are made again over their rooms as they are now, in the same undo step.
+  void followCeilings(const Command& step);
+  bool followingCeilings_ = false;
   bool keepWallJoins_ = true;
   JoinFollow lastJoins_;
   // settleOverlaps' two halves (one object each).

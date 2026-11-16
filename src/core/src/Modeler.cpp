@@ -305,7 +305,9 @@ gp_Trsf localDelta(const gp_Trsf& parentWorld, const gp_Trsf& worldDelta) {
 
 }  // namespace
 
-Modeler::Modeler() : history_(document_) {}
+Modeler::Modeler() : history_(document_) {
+  history_.setOnRecorded([this](const Command& step) { followCeilings(step); });
+}
 
 std::string Modeler::uniqueName(const std::string& base) const {
   // Names taken, gathered once (each candidate checked against every object
@@ -7691,6 +7693,10 @@ Result<Modeler::Ceilings> Modeler::makeCeilings(const std::vector<ObjectId>& roo
     board.attributes["kind"] = "ceiling";
     board.attributes["room"] = r.id;
     board.attributes.erase("top_level");
+    // What it was made as (docs/142): followed while it is still that.
+    nlohmann::json made_ = {{"underside", underside}, {"outline", nlohmann::json::array()}};
+    for (const gp_Pnt& p : outline) made_["outline"].push_back({p.X(), p.Y()});
+    board.attributes["ceiling_made"] = made_.dump();
     ChangeSet changes(document_);
     changes.modify(board);
     history_.execute(changes.build("Ceiling"));
@@ -7702,6 +7708,75 @@ Result<Modeler::Ceilings> Modeler::makeCeilings(const std::vector<ObjectId>& roo
   }
   history_.endGroup();
   return out;
+}
+
+void Modeler::followCeilings(const Command& step) {
+  if (followingCeilings_) return;
+  // Only a step that changed walls or rooms (or their finishes) moves ceilings.
+  bool relevant = false;
+  for (const ObjectDelta& d : step.deltas) {
+    for (const auto* o : {d.before ? &*d.before : nullptr, d.after ? &*d.after : nullptr}) {
+      if (!o) continue;
+      const std::string kind = attributeOf(*o, "kind");
+      relevant |= kind == "wall" || isRoomMarker(*o);
+    }
+    if (relevant) break;
+  }
+  if (!relevant) return;
+  struct Follow {
+    ObjectId ceiling;
+    RoomInfo room;
+    double underside = 0.0;
+  };
+  std::vector<Follow> follow;
+  std::optional<std::vector<RoomInfo>> rooms;
+  for (const Object& o : document_.objects()) {
+    if (attributeOf(o, "kind") != "ceiling" || o.locked) continue;
+    const nlohmann::json made = nlohmann::json::parse(attributeOf(o, "ceiling_made"), nullptr, false);
+    if (!made.is_object() || !made.contains("outline")) continue;  // made before docs/142, or not by makeCeilings
+    // Still as made: its plan bounds, height and volume those of the outline it was made over.
+    const double underside = made.value("underside", 0.0);
+    std::vector<gp_Pnt> was;
+    for (const auto& p : made.at("outline")) was.emplace_back(p.at(0).get<double>(), p.at(1).get<double>(), 0.0);
+    if (was.size() < 3) continue;
+    double twice = 0.0, x0 = 1e300, x1 = -1e300, y0 = 1e300, y1 = -1e300;
+    for (std::size_t i = 0; i < was.size(); ++i) {
+      const gp_Pnt &p = was[i], &q = was[(i + 1) % was.size()];
+      twice += p.X() * q.Y() - q.X() * p.Y();
+      x0 = std::min(x0, p.X()), x1 = std::max(x1, p.X()), y0 = std::min(y0, p.Y()), y1 = std::max(y1, p.Y());
+    }
+    const TopoDS_Shape shape = document_.worldShape(o);
+    if (shape.IsNull()) continue;
+    const Bnd_Box box = geom::exactBounds(shape);
+    if (box.IsVoid()) continue;
+    const bool asMade = std::abs(box.CornerMin().Z() - underside) < 0.5 && std::abs(box.CornerMax().Z() - underside - 10.0) < 0.5 &&
+                        std::abs(box.CornerMin().X() - x0) < 0.5 && std::abs(box.CornerMax().X() - x1) < 0.5 &&
+                        std::abs(box.CornerMin().Y() - y0) < 0.5 && std::abs(box.CornerMax().Y() - y1) < 0.5 &&
+                        std::abs(geom::volume(shape) - std::abs(twice) / 2 * 10.0) < 1.0 + 1e-6 * std::abs(twice);
+    if (!asMade) continue;  // changed by hand: it stays
+    if (!rooms) rooms = roomsIn(document_);
+    const std::string roomId = attributeOf(o, "room");
+    const auto r = std::find_if(rooms->begin(), rooms->end(), [&](const RoomInfo& x) { return x.id == roomId; });
+    if (r == rooms->end() || !r->closed || !r->innerKnown || r->inner.size() < 3) continue;  // nothing to follow: stays
+    const Object* marker = document_.find(r->id);
+    const RoomFinish finish = marker ? roomFinishOf(*marker) : RoomFinish{};
+    if (finish.ceilingHeight <= 0) continue;
+    const double now = r->at.Z() + finish.ceilingHeight;
+    bool same = std::abs(now - underside) < 0.5 && r->inner.size() == was.size();
+    for (std::size_t i = 0; same && i < was.size(); ++i)
+      same = std::hypot(r->inner[i].X() - was[i].X(), r->inner[i].Y() - was[i].Y()) < 0.5;
+    if (!same) follow.push_back({o.id, *r, now});
+  }
+  if (follow.empty()) return;
+  followingCeilings_ = true;
+  const bool wasAmending = history_.amending();
+  history_.beginAmend();  // into the step just recorded
+  std::vector<ObjectId> rooms_;
+  for (const Follow& f : follow) rooms_.push_back(f.room.id);
+  const auto remade = makeCeilings(rooms_);
+  (void)remade;  // a room that cannot have one now keeps the board it had (makeCeilings leaves it)
+  if (!wasAmending) history_.endAmend();
+  followingCeilings_ = false;
 }
 
 Status Modeler::setRoomFinish(const ObjectId& room, const RoomFinish& finish) {

@@ -935,7 +935,8 @@ TEST_F(Schedules, ACeilingBoardIsMadeAtTheCeilingHeight) {
   // Within the wall faces: the inner area of the room (3.85 x 5.8 m).
   const json r = ok("room_schedule", json::object())["rooms"][0];
   EXPECT_NEAR(sbr::geom::volume(o->shape) / 10.0 / 1e6, r["area_inner"].get<double>(), 1e-6);
-  // Made again at a new height: still one board.
+  // Made again at a new height: still one board (since docs/142 the board follows the new
+  // height by itself; made again by hand it stays one).
   ok("set_room_finish", {{"id", room}, {"ceiling_height", 2600}});
   made = ok("make_ceilings", {{"rooms", {room}}});
   int boards = 0;
@@ -944,8 +945,52 @@ TEST_F(Schedules, ACeilingBoardIsMadeAtTheCeilingHeight) {
   EXPECT_EQ(boards, 1);
   const auto* again = modeler.document().find(made["ids"][0].get<std::string>());
   EXPECT_NEAR(sbr::geom::exactBounds(modeler.document().worldShape(*again)).CornerMin().Z(), 2600, 1e-6);
-  ASSERT_TRUE(modeler.undo());
+  ASSERT_TRUE(modeler.undo());  // making it again
+  ASSERT_TRUE(modeler.undo());  // the new height (and the board that followed it)
   EXPECT_TRUE(modeler.document().find(board));  // the first board is back
+}
+
+// docs/142: a ceiling board still as made follows its room's walls and ceiling height, in the
+// same undo step; one changed by hand stays.
+TEST_F(Schedules, ACeilingAsMadeFollowsItsRoom) {
+  ok("set_room_finish", {{"id", room}, {"ceiling_height", 2400}});
+  ok("make_ceilings", {{"rooms", {room}}});
+  auto board = [&]() -> const sbr::doc::Object* {
+    for (const auto& o : modeler.document().objects())
+      if (o.attributes.count("kind") && o.attributes.at("kind") == "ceiling") return &o;
+    return nullptr;
+  };
+  auto area = [&] { return sbr::geom::volume(modeler.document().worldShape(*board())) / 10.0 / 1e6; };
+  auto inner = [&] {
+    const json rooms = ok("room_schedule", json::object());
+    return rooms["rooms"][0]["area_inner"].get<double>();
+  };
+  ASSERT_TRUE(board());
+  EXPECT_NEAR(area(), inner(), 1e-6);
+  const double before = area();
+  // The partition (x = 4000) 500 east: the room is larger; the board with it; one undo step.
+  const auto steps = modeler.history().undoCount();
+  ASSERT_TRUE(modeler.move({partition}, gp_Vec(500, 0, 0)));
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  ASSERT_TRUE(board());
+  EXPECT_NEAR(area(), inner(), 1e-6);
+  EXPECT_GT(area(), before + 2.5);  // 0.5 m x about 5.8 m more
+  int boards = 0;
+  for (const auto& o : modeler.document().objects()) boards += o.attributes.count("kind") && o.attributes.at("kind") == "ceiling";
+  EXPECT_EQ(boards, 1);
+  ASSERT_TRUE(modeler.undo());
+  EXPECT_NEAR(area(), before, 1e-6);  // the wall and the board as they were, in one go
+  // The ceiling height: the board goes to it.
+  ok("set_room_finish", {{"id", room}, {"ceiling_height", 2550}});
+  EXPECT_NEAR(sbr::geom::exactBounds(modeler.document().worldShape(*board())).CornerMin().Z(), 2550, 1e-6);
+  // Moved by hand (a lowered ceiling): it stays when the walls move.
+  ASSERT_TRUE(modeler.move({board()->id}, gp_Vec(0, 0, -150)));
+  const std::string kept = board()->id;
+  ASSERT_TRUE(modeler.move({partition}, gp_Vec(500, 0, 0)));
+  ASSERT_TRUE(board());
+  EXPECT_EQ(board()->id, kept);
+  EXPECT_NEAR(area(), before, 1e-6);
+  EXPECT_NEAR(sbr::geom::exactBounds(modeler.document().worldShape(*board())).CornerMin().Z(), 2400, 1e-6);
 }
 
 // docs/124: the lines between the layers of a wall of a build-up, in a plan cut.

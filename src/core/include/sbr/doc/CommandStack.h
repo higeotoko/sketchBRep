@@ -7,6 +7,7 @@
 
 #include <optional>
 #include <string>
+#include <functional>
 #include <vector>
 
 #include "sbr/doc/Document.h"
@@ -80,6 +81,10 @@ class CommandStack {
   // step and gets the newest one after.
   void beginAmend() { amending_ = true; }
   void endAmend() { amending_ = false; }
+  bool amending() const { return amending_; }
+  // Called with each step just recorded (not on undo / redo), e.g. to bring along what follows it
+  // into the same step by amending (docs/142).
+  void setOnRecorded(std::function<void(const Command&)> f) { onRecorded_ = std::move(f); }
   bool undo();
   bool redo();
   void clear();
@@ -103,8 +108,9 @@ class CommandStack {
  private:
   void applyAfter(const Command& command);
   void applyBefore(const Command& command);
-  // Records an applied command: new undo step, or merged while amending.
+  // Records an applied command: new undo step, or merged while amending; then tells onRecorded_.
   void record(Command command);
+  void recordStep(Command command);
 
   Document& document_;
   std::size_t limit_;
@@ -117,6 +123,7 @@ class CommandStack {
   std::vector<long long> redoRevisions_;
   int groupDepth_ = 0;
   bool amending_ = false;
+  std::function<void(const Command&)> onRecorded_;
   std::string groupName_;
   std::optional<Command> group_;
   static void compress(Command& command);
