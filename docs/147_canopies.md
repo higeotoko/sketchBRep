@@ -34,9 +34,16 @@
 |---|---|
 | 計算テスト済み | コア全 715 件中 708 件成功・7 件スキップ（ローカル）。新規 1 件（`Schedules.ACanopyOverADoorAndTheBuildingArea`）：東の扉（900 × 2100、壁 200）に庇 → 取り消し 1 回、kind = canopy、X 8100〜8700（外の面から 600）、幅 1200、下 2200・上 2260／中心線から 700 なので建築面積は変わらない／取り消すと消える／出 1500 → 中心線から 1600、建築面積が 500 × 1200 増え、注に「庇」／無い開口・出 9000 は断る |
 | GUI 自動確認済み | 開口の画面テストに追加（ローカル）：穴の面を選ぶとボタンがあり、押すと物が 1 つ増え、取り消し 1 回、ステータスに「庇」、取り消すと元どおり。開口まわりの画面テストが成功 |
-| CI | __CI__ |
+| CI | run 43814838529（push、`a268ab1`）：Linux 728 件成功、Windows 724 件＋3 件成功・GUI 237 件成功（7 件スキップ） |
 | Windows 実機確認 | まだ（チェック表 12-30） |
 
 ## 配布の記録
 
-__DELIVERY__
+| 項目 | 値 |
+|---|---|
+| コード | `a268ab1`（庇 docs/147。Opus 5.5 で作業） |
+| CI | run 43814838529（push）：Linux・Windows とも成功 |
+| ZIP | `SketchBRep-windows-x64-a268ab1-local.zip`（Codex のチャットフォルダの `outputs\`） |
+| サイズ | 72,403,014 bytes |
+| SHA256 | `f77cf72d676e48ba1ca0756d43f3d68cd67d58aa242dac2bacc99a7fc70b4101` |
+| ZIP の検証 | `verify_portable_pads.py`・`verify_portable_mat.py` とも成功（docs/validation/2026-11-16-portable-a268ab1*.json） |
