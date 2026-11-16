@@ -628,6 +628,33 @@ TEST_F(Schedules, ACanopyOverADoorAndTheBuildingArea) {
   bool said = false;
   for (const auto& n : t.legalNotes) said |= n.find("庇") != std::string::npos;
   EXPECT_TRUE(said);
+  // docs/148: it goes with its door: the door 600 along the wall (one undo step), then the wall 300 out.
+  {
+    const auto before = modeler.history().undoCount();
+    ASSERT_TRUE(modeler.moveOpening(east, 1, gp_Vec(0, -600, 0)));
+    EXPECT_EQ(modeler.history().undoCount(), before + 1);
+    const sbr::doc::Object* now = nullptr;
+    for (const auto& obj : modeler.document().objects())
+      if (obj.attributes.count("kind") && obj.attributes.at("kind") == "canopy") now = &obj;
+    ASSERT_TRUE(now);
+    const auto door = modeler.openings(east)->front();
+    const auto cb = sbr::geom::exactBounds(modeler.document().worldShape(*now));
+    EXPECT_NEAR((cb.CornerMin().Y() + cb.CornerMax().Y()) / 2, door.center.Y(), 1e-6);
+    EXPECT_NEAR(cb.CornerMin().X(), 8100, 1e-6);
+    ASSERT_TRUE(modeler.undo());  // the door and the canopy back in one go
+    const sbr::doc::Object* back = nullptr;
+    for (const auto& obj : modeler.document().objects())
+      if (obj.attributes.count("kind") && obj.attributes.at("kind") == "canopy") back = &obj;
+    ASSERT_TRUE(back);
+    EXPECT_NEAR((sbr::geom::exactBounds(modeler.document().worldShape(*back)).CornerMin().Y() +
+                 sbr::geom::exactBounds(modeler.document().worldShape(*back)).CornerMax().Y()) / 2,
+                modeler.openings(east)->front().center.Y(), 1e-6);
+    ASSERT_TRUE(modeler.move({east}, gp_Vec(300, 0, 0)));
+    for (const auto& obj : modeler.document().objects())
+      if (obj.attributes.count("kind") && obj.attributes.at("kind") == "canopy")
+        EXPECT_NEAR(sbr::geom::exactBounds(modeler.document().worldShape(obj)).CornerMin().X(), 8400, 1e-6);
+    ASSERT_TRUE(modeler.undo());
+  }
   // Refused: no such opening, a canopy too deep.
   EXPECT_FALSE(call("make_canopy", {{"host", east}, {"opening", 9}}).value("ok", true));
   EXPECT_FALSE(call("make_canopy", {{"host", east}, {"opening", 1}, {"depth", 9000}}).value("ok", true));

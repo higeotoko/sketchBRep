@@ -5798,7 +5798,8 @@ Result<ObjectId> Modeler::makeCanopy(const ObjectId& host, std::size_t index, co
   board.attributes.erase("base_level");
   // Where it stands out from (the face; the wall's line half its depth behind), for the building area.
   board.attributes["canopy"] = nlohmann::json{{"face", {face.X(), face.Y()}}, {"out", {n.X(), n.Y()}}, {"width", 2 * half},
-                                              {"depth", spec.depth}, {"behind", o->depth / 2}}
+                                              {"depth", spec.depth}, {"behind", o->depth / 2}, {"top", top},
+                                              {"thickness", spec.thickness}, {"extra", spec.extra}, {"above", spec.above}}
                                    .dump();
   ChangeSet changes(document_);
   changes.modify(board);
@@ -7791,6 +7792,65 @@ void Modeler::followCeilings(const Command& step) {
     if (relevant) break;
   }
   if (!relevant) return;
+  // Canopies still as made (docs/148) go with their opening: made again over it as it is now.
+  struct Canopy {
+    ObjectId id, host;
+    std::size_t index = 0;
+    CanopySpec spec;
+  };
+  std::vector<Canopy> canopies;
+  for (const Object& o : document_.objects()) {
+    if (attributeOf(o, "kind") != "canopy" || o.locked) continue;
+    const nlohmann::json c = nlohmann::json::parse(attributeOf(o, "canopy"), nullptr, false);
+    if (!c.is_object() || !c.contains("top") || !c.contains("face")) continue;  // made before docs/148
+    const std::string host = attributeOf(o, "host"), openingId = attributeOf(o, "opening");
+    const auto list = openings(host);
+    if (!list) continue;
+    const auto op = std::find_if(list->begin(), list->end(), [&](const OpeningInfo& x) { return x.id == openingId; });
+    if (op == list->end() || std::abs(op->normal.Z()) > 1e-6) continue;  // the opening is gone: it stays
+    CanopySpec spec;
+    spec.depth = c.value("depth", spec.depth);
+    spec.thickness = c.value("thickness", spec.thickness);
+    spec.extra = c.value("extra", spec.extra);
+    spec.above = c.value("above", spec.above);
+    // As made: its bounds those of the board it was made as.
+    const gp_Pnt face(c.at("face")[0].get<double>(), c.at("face")[1].get<double>(), 0);
+    const gp_Vec n(c.at("out")[0].get<double>(), c.at("out")[1].get<double>(), 0), u = gp_Vec(0, 0, 1).Crossed(n);
+    const double half = c.value("width", 0.0) / 2, top = c.value("top", 0.0);
+    Bnd_Box was;
+    for (const gp_Pnt& p : {face.Translated(u * -half), face.Translated(u * half), face.Translated(u * half + n * spec.depth),
+                            face.Translated(u * -half + n * spec.depth)}) {
+      was.Add(gp_Pnt(p.X(), p.Y(), top));
+      was.Add(gp_Pnt(p.X(), p.Y(), top - spec.thickness));
+    }
+    const TopoDS_Shape shape = document_.worldShape(o);
+    if (shape.IsNull()) continue;
+    const Bnd_Box now = geom::exactBounds(shape);
+    if (now.IsVoid() || now.CornerMin().Distance(was.CornerMin()) > 0.5 || now.CornerMax().Distance(was.CornerMax()) > 0.5) continue;
+    // Where it would be now.
+    const gp_Pnt to(op->center.X(), op->center.Y(), 0);
+    const double topNow = op->bottom + op->height + spec.above + spec.thickness;
+    const bool moved = to.Distance(face) > 0.5 || std::abs(topNow - top) > 0.5 || std::abs(op->width / 2 + spec.extra - half) > 0.5 ||
+                       gp_Vec(op->normal.X(), op->normal.Y(), 0).Angle(n) > 1e-6;
+    if (moved) canopies.push_back({o.id, host, op->index, spec});
+  }
+  if (!canopies.empty()) {
+    followingCeilings_ = true;
+    const bool wasAmending = history_.amending();
+    history_.beginAmend();
+    history_.beginGroup("Canopies Follow");
+    bool ok = true;
+    for (const Canopy& c : canopies) {
+      if (!remove({c.id}) || !makeCanopy(c.host, c.index, c.spec)) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) history_.endGroup();
+    else history_.abortGroup();  // as they were
+    if (!wasAmending) history_.endAmend();
+    followingCeilings_ = false;
+  }
   struct Follow {
     ObjectId ceiling;
     RoomInfo room;

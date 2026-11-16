@@ -595,6 +595,8 @@ class Modeler {
   // was cut from, `depth` out, `thickness` thick, `extra` longer at each side than the opening, its
   // underside `above` over the opening's head. Attribute kind = canopy, host / opening, and
   // `canopy` (where it stands out from the wall's line: for the building area). One undo step.
+  // While it is as made (docs/148) it goes with its opening and wall (moved, resized, the wall
+  // moved), in the same undo step; moved or reshaped by hand, or its opening gone, it stays.
   struct CanopySpec {
     double depth = 600.0, thickness = 60.0, extra = 150.0, above = 100.0;
   };
