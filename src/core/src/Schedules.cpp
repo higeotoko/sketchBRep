@@ -799,6 +799,15 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& sp
       if (view) {
         draw::View named = *view;
         named.spec.title = p->view->title;
+        // docs/145: a section names the plan sheets it is marked on (where it is cut).
+        if (viewSpec.kind == draw::ViewKind::Section) {
+          std::string plans;
+          for (std::size_t k = 0; k < names.size(); ++k)
+            for (const Planned& q : planned)
+              if (q.name == names[k] && q.view && q.view->kind == draw::ViewKind::Plan)
+                plans += (plans.empty() ? "" : "・") + number(k + 2);
+          if (!plans.empty()) named.spec.title += "（切る位置：" + plans + "）";
+        }
         laid = draw::layoutSheetWithTables(named, p->beside, sheetSpec);
       } else {
         laid = Result<draw::Sheet>::failure(view.error());

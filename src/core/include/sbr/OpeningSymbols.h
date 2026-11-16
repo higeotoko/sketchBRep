@@ -4,6 +4,7 @@
 #include <vector>
 
 #include <TopoDS_Edge.hxx>
+#include <TopoDS_Shape.hxx>
 
 #include "sbr/doc/Document.h"
 
@@ -37,4 +38,15 @@ struct SymbolOptions {
 };
 // World edges (lines and arcs at height z) for every fitted opening the plane z passes through.
 std::vector<TopoDS_Edge> openingSymbols(const doc::Document& document, const SymbolOptions& options);
+
+// The fittings as solids (docs/97 N-01, docs/146), for the 3D view and elevations / sections:
+// a frame lining the opening (30 wide, through the wall; no bottom rail for doors), and closed:
+// glass (6 thick) for windows, leaves (40 thick) for doors, as the fitting's type has them.
+// Display only: not objects of the model. A fitting with its sill on the floor is a door.
+struct FittingSolid {
+  TopoDS_Shape shape;
+  std::string part;  // frame | glass | leaf
+  doc::ObjectId host;
+};
+std::vector<FittingSolid> fittingSolids(const doc::Document& document, const std::set<std::string>* only = nullptr);
 }  // namespace sbr::draw

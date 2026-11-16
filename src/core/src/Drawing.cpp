@@ -493,6 +493,20 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     }
   }
 
+  // The fittings of the openings (docs/146): seen in elevations, and in sections where they lie
+  // wholly on the kept side (the cut itself goes through the hole).
+  if (spec.kind != ViewKind::Plan && anySeen) {
+    std::set<std::string> hosts(drawn.begin(), drawn.end());
+    for (const FittingSolid& f : fittingSolids(document, &hosts)) {
+      Bnd_Box local;
+      BRepBndLib::Add(f.shape.Moved(TopLoc_Location(proj.toLocal)), local);
+      if (local.IsVoid()) continue;
+      double ux0, uy0, uz0, ux1, uy1, uz1;
+      local.Get(ux0, uy0, uz0, ux1, uy1, uz1);
+      if (cutting && uz1 > kOnPlane) continue;
+      builder.Add(seen, f.shape);
+    }
+  }
   // Seen beyond, hidden lines removed (all bodies together: each hides the others).
   std::vector<Item> visible, hidden;
   if (anySeen) {

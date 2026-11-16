@@ -11787,6 +11787,9 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
   call("set_opening_fittings",{{"host",east},{"fitting",{{"type","swing_single"},{"hinge","left"},{"swing","in"}}}});
   const std::string room=call("create_room",{{"at",{4000,3000}},{"name","LDK"}})["id"];
   QVERIFY(!room.empty());
+  // docs/146: the fittings as solids in 3D: 3 frames, 4 sliding panes, 1 door leaf.
+  f.vp->syncNow();
+  QCOMPARE(f.vp->fittingSolidCount(),std::size_t(8));
   QApplication::processEvents();
   // The room's tag: its name and its area on the wall lines; it follows the walls.
   QTRY_COMPARE(f.vp->annotationText(room),QStringLiteral("LDK  48.00 m²"));

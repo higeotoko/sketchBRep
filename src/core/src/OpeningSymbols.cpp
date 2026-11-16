@@ -3,7 +3,11 @@
 #include <cmath>
 #include <set>
 
+#include <BRepAlgoAPI_Cut.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRepPrimAPI_MakePrism.hxx>
 #include <GC_MakeArcOfCircle.hxx>
 #include <gp_Vec.hxx>
 #include <nlohmann/json.hpp>
@@ -148,4 +152,82 @@ std::vector<TopoDS_Edge> openingSymbols(const doc::Document& d, const SymbolOpti
   }
   return out;
 }
+std::vector<FittingSolid> fittingSolids(const doc::Document& d, const std::set<std::string>* only) {
+  constexpr double kFrame = 30.0, kPane = 6.0, kLeaf = 40.0;
+  std::vector<FittingSolid> out;
+  for (const auto& host : d.objects()) {
+    const auto stored = host.attributes.find("opening_fittings");
+    if (stored == host.attributes.end()) continue;
+    if (only ? !only->count(host.id) : !d.isVisible(host.id)) continue;
+    const json fittings = json::parse(stored->second, nullptr, false);
+    if (!fittings.is_object()) continue;
+    const auto list = doc::Modeler::openingsIn(d, host.id);
+    if (!list) continue;
+    for (const auto& o : *list) {
+      const auto it = fittings.find(o.id);
+      if (it == fittings.end() || !it->is_object()) continue;
+      const std::string type = it->value("type", std::string("none"));
+      if (type == "none" || std::abs(o.normal.Z()) > 1e-6 || o.depth <= 0) continue;
+      const gp_Vec n(o.normal.X(), o.normal.Y(), 0), u = gp_Vec(0, 0, 1).Crossed(n);
+      const double w = o.width, h = o.height, t = o.depth, z0 = o.bottom;
+      if (w <= 2 * kFrame + 10 || h <= 2 * kFrame + 10) continue;
+      const bool door = type != "window" && o.sill < 1.0;
+      const gp_Pnt face(o.center.X(), o.center.Y(), 0.0);
+      // A box: along the wall s0..s1 from the middle, up z0..z1, into the wall d0..d1 from the face.
+      auto box = [&](double s0, double s1, double za, double zb, double d0, double d1) -> TopoDS_Shape {
+        BRepBuilderAPI_MakePolygon polygon;
+        for (const auto& [s, dd] : {std::pair{s0, d0}, std::pair{s1, d0}, std::pair{s1, d1}, std::pair{s0, d1}}) {
+          const gp_Pnt p = face.Translated(u * s - n * dd);
+          polygon.Add(gp_Pnt(p.X(), p.Y(), za));
+        }
+        polygon.Close();
+        if (!polygon.IsDone()) return TopoDS_Shape();
+        BRepBuilderAPI_MakeFace f(polygon.Wire(), Standard_True);
+        if (!f.IsDone()) return TopoDS_Shape();
+        BRepPrimAPI_MakePrism prism(f.Face(), gp_Vec(0, 0, zb - za));
+        return prism.IsDone() ? prism.Shape() : TopoDS_Shape();
+      };
+      auto add = [&](const TopoDS_Shape& shape, const char* part) {
+        if (!shape.IsNull()) out.push_back({shape, part, host.id});
+      };
+      // The frame: the opening's lining, less what is inside it.
+      const double iw = w - 2 * kFrame, bottom = door ? 0.0 : kFrame, ih = h - kFrame - bottom;
+      const TopoDS_Shape outer = box(-w / 2, w / 2, z0, z0 + h, 0, t);
+      const TopoDS_Shape inner = box(-iw / 2, iw / 2, z0 + bottom - (door ? 1.0 : 0.0), z0 + bottom + ih, -1, t + 1);
+      if (!outer.IsNull() && !inner.IsNull()) {
+        BRepAlgoAPI_Cut frame(outer, inner);
+        if (frame.IsDone()) add(frame.Shape(), "frame");
+      }
+      const double zi0 = z0 + bottom, zi1 = z0 + bottom + ih, mid = t / 2;
+      if (!door) {
+        if (type == "sliding_double") {
+          // 引違い: two panes on two tracks, overlapping in the middle.
+          add(box(-iw / 2, 25, zi0, zi1, mid - 15 - kPane / 2, mid - 15 + kPane / 2), "glass");
+          add(box(-25, iw / 2, zi0, zi1, mid + 15 - kPane / 2, mid + 15 + kPane / 2), "glass");
+        } else {
+          add(box(-iw / 2, iw / 2, zi0, zi1, mid - kPane / 2, mid + kPane / 2), "glass");
+        }
+        continue;
+      }
+      const bool outward = it->value("swing", std::string("in")) == "out";
+      if (type == "swing_single") {
+        add(outward ? box(-iw / 2, iw / 2, zi0, zi1, 0, kLeaf) : box(-iw / 2, iw / 2, zi0, zi1, t - kLeaf, t), "leaf");
+      } else if (type == "swing_double") {
+        const double d0 = outward ? 0.0 : t - kLeaf;
+        add(box(-iw / 2, 0, zi0, zi1, d0, d0 + kLeaf), "leaf");
+        add(box(0, iw / 2, zi0, zi1, d0, d0 + kLeaf), "leaf");
+      } else if (type == "sliding_double") {
+        add(box(-iw / 2, 25, zi0, zi1, mid - 20 - kLeaf / 2, mid - 20 + kLeaf / 2), "leaf");
+        add(box(-25, iw / 2, zi0, zi1, mid + 20 - kLeaf / 2, mid + 20 + kLeaf / 2), "leaf");
+      } else if (type == "sliding_bi") {
+        add(box(-iw / 2, 0, zi0, zi1, mid - kLeaf / 2, mid + kLeaf / 2), "leaf");
+        add(box(0, iw / 2, zi0, zi1, mid - kLeaf / 2, mid + kLeaf / 2), "leaf");
+      } else {
+        add(box(-iw / 2, iw / 2, zi0, zi1, mid - kLeaf / 2, mid + kLeaf / 2), "leaf");  // 片引き and others: one leaf
+      }
+    }
+  }
+  return out;
+}
+
 }  // namespace sbr::draw

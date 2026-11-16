@@ -8,6 +8,7 @@
 #include "sbr/api/CommandApi.h"
 #include "sbr/doc/Modeler.h"
 #include "sbr/doc/Schedules.h"
+#include "sbr/OpeningSymbols.h"
 #include "sbr/draw/Drawing.h"
 #include "sbr/geom/Measure.h"
 #include <filesystem>
@@ -576,6 +577,29 @@ TEST(LegalAreas, FloorAndBuildingAreasByTheOrder) {
   const auto sheet = sbr::doc::scheduleTable(modeler.document(), 2);
   EXPECT_EQ(sheet.rows.back().front(), "建築面積");
   EXPECT_EQ(sheet.rows.back().back(), "48.00");
+}
+
+// docs/146: the fittings as solids: frames, glass, door leaves; seen in elevations.
+TEST_F(Schedules, FittingsAreSolidsInElevations) {
+  const auto solids = sbr::draw::fittingSolids(modeler.document());
+  std::map<std::string, int> parts;
+  for (const auto& s : solids) ++parts[s.part];
+  EXPECT_EQ(parts["frame"], 4);  // south 2 (引違い), north 1 (window), east door; the plain opening none
+  EXPECT_EQ(parts["glass"], 5);  // 2 x 2 sliding panes, 1 fixed pane
+  EXPECT_EQ(parts["leaf"], 1);   // the door
+  // The door's frame: 900 x 2100 through the 200 wall, less the 840 x 2070 inside (no bottom rail).
+  for (const auto& s : solids)
+    if (s.host == east && s.part == "frame") EXPECT_NEAR(sbr::geom::volume(s.shape), (900.0 * 2100 - 840.0 * 2070) * 200, 1.0);
+    else if (s.host == east && s.part == "leaf") EXPECT_NEAR(sbr::geom::volume(s.shape), 840.0 * 2070 * 40, 1.0);
+  // The east elevation carries them: more lines than with the door's fitting taken off.
+  auto lines = [&] {
+    const auto view = sbr::draw::makeView(modeler.document(), sbr::draw::elevationView(modeler.document(), 1));
+    EXPECT_TRUE(view);
+    return view ? view->items.size() : 0u;
+  };
+  const std::size_t with = lines();
+  ok("set_opening_fittings", {{"host", east}, {"fitting", {{"type", "none"}}}});
+  EXPECT_LT(lines(), with);
 }
 
 // docs/113: a table on a sheet of its own.
@@ -1194,6 +1218,13 @@ TEST_F(Schedules, TheSetHasSectionsMarkedOnThePlans) {
     }
     EXPECT_GT(fills, 0) << set->names[static_cast<std::size_t>(k)];
     EXPECT_TRUE(numbered);
+  }
+  // docs/145: each section's caption names the plan sheet it is marked on.
+  for (int k : {a, b}) {
+    bool named = false;
+    for (const auto& item : set->sheets[static_cast<std::size_t>(k)].items)
+      named |= item.kind == sbr::draw::Item::Kind::Text && item.text.find("切る位置：" + set->numbers[static_cast<std::size_t>(plan)]) != std::string::npos;
+    EXPECT_TRUE(named) << set->names[static_cast<std::size_t>(k)];
   }
   // The plan: each cut's label twice (both ends) and the section's sheet number twice.
   std::map<std::string, int> texts;

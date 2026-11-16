@@ -2859,8 +2859,45 @@ void Viewport::syncRoomTags() {
   }
 }
 
+void Viewport::syncFittings() {
+  for (const Handle(AIS_Shape)& f : fittings_) context_->Remove(f, Standard_False);
+  fittings_.clear();
+  fittingSolidCount_ = 0;
+  if (planCutZ_) return;  // plans draw their symbols instead
+  std::set<std::string> shown;
+  for (const doc::Object& o : modeler_.document().objects())
+    if (o.attributes.count("opening_fittings") && modeler_.document().isVisible(o.id) && !hiddenInView(o)) shown.insert(o.id);
+  if (shown.empty()) return;
+  const auto solids = draw::fittingSolids(modeler_.document(), &shown);
+  struct Look {
+    const char* part;
+    Quantity_Color color;
+    float transparency;
+  };
+  const Look looks[] = {{"frame", Quantity_Color(0.30, 0.30, 0.32, Quantity_TOC_RGB), 0.0f},
+                        {"glass", Quantity_Color(0.62, 0.80, 0.92, Quantity_TOC_RGB), 0.55f},
+                        {"leaf", Quantity_Color(0.72, 0.56, 0.38, Quantity_TOC_RGB), 0.0f}};
+  for (const Look& look : looks) {
+    TopoDS_Compound compound;
+    BRep_Builder builder;
+    builder.MakeCompound(compound);
+    std::size_t n = 0;
+    for (const auto& s : solids)
+      if (s.part == look.part) builder.Add(compound, s.shape), ++n;
+    if (n == 0) continue;
+    Handle(AIS_Shape) shape = new AIS_Shape(compound);
+    shape->SetColor(look.color);
+    if (look.transparency > 0) shape->SetTransparency(look.transparency);
+    context_->Display(shape, AIS_Shaded, -1, Standard_False);
+    context_->Deactivate(shape);
+    fittings_.push_back(shape);
+    fittingSolidCount_ += n;
+  }
+}
+
 void Viewport::syncOpeningSymbols() {
   if (view_.IsNull()) return;
+  syncFittings();
   if (!openingSymbols_.IsNull()) {
     context_->Remove(openingSymbols_, Standard_False);
     openingSymbols_.Nullify();
