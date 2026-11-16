@@ -282,6 +282,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   void showSlabSettingsDialog();
   void showOpeningSettingsDialog();
   void showRoofSettingsDialog();
+  void showElementTypesDialog();  // registered floor / roof types and their layers (docs/153)
   void showStairSettingsDialog();
   void showSchedulesDialog();
  public:

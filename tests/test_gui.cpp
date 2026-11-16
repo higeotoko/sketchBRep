@@ -6274,6 +6274,46 @@ void GuiPhase1::slabToolAndOpeningTool() {
     QVERIFY(m.undo());
     f.window.slabTool().setTypeName("");
     f.window.activateTool(MainWindow::ToolId::Select);
+    // docs/153: the window of registered types: F9 listed; a new floor type F5 with two layers
+    // registered (its thickness their sum); then taken off again.
+    QString firstName, sumText;
+    std::size_t afterApply = 0, afterRemove = 0;
+    std::optional<doc::Modeler::ElementTypeDefinition> f5;
+    QTimer::singleShot(0, [&] {
+      auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+      if (!dialog || dialog->objectName() != QStringLiteral("elementTypesDialog")) return;
+      firstName = dialog->findChild<QLineEdit*>(QStringLiteral("typeEditName"))->text();
+      dialog->findChild<QPushButton*>(QStringLiteral("typeNew"))->click();
+      dialog->findChild<QLineEdit*>(QStringLiteral("typeEditName"))->setText(QStringLiteral("F5"));
+      auto* table = dialog->findChild<QTableWidget*>(QStringLiteral("typeEditLayers"));
+      auto* add = dialog->findChild<QPushButton*>(QStringLiteral("typeLayerAdd"));
+      add->click();
+      table->item(0, 0)->setText(QStringLiteral("フローリング"));
+      table->item(0, 1)->setText(QStringLiteral("15"));
+      add->click();
+      table->item(1, 0)->setText(QStringLiteral("合板"));
+      table->item(1, 1)->setText(QStringLiteral("24"));
+      sumText = dialog->findChild<QLabel*>(QStringLiteral("typeLayerSum"))->text();
+      if (const QString dir = qEnvironmentVariable("SBR_SHOT_DIR"); !dir.isEmpty()) dialog->grab().save(dir + QStringLiteral("/element-types.png"));
+      dialog->findChild<QPushButton*>(QStringLiteral("typeApply"))->click();
+      afterApply = m.elementTypes().size();
+      for (const auto& t : m.elementTypes())
+        if (t.name == "F5") f5 = t;
+      dialog->findChild<QPushButton*>(QStringLiteral("typeRemove"))->click();  // F5 is the one selected
+      afterRemove = m.elementTypes().size();
+      dialog->findChild<QPushButton*>(QStringLiteral("typeClose"))->click();
+    });
+    QAction* typesAction = f.window.findChild<QAction*>(QStringLiteral("elementTypesAction"));
+    QVERIFY(typesAction);
+    typesAction->trigger();
+    QCOMPARE(firstName, QStringLiteral("F9"));
+    QVERIFY2(sumText.contains(QStringLiteral("39")), qPrintable(sumText));
+    QCOMPARE(afterApply, std::size_t(2));
+    QVERIFY(f5 && f5->part == "floor" && f5->values.thickness && std::abs(*f5->values.thickness - 39) < 1e-9);
+    QCOMPARE(f5->layers.size(), std::size_t(2));
+    QCOMPARE(f5->layers[0].name, std::string("フローリング"));
+    QCOMPARE(afterRemove, std::size_t(1));
+    QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
   }
 
   // Opening tool: hover the wall's front face, click: a door where clicked.

@@ -1501,6 +1501,8 @@ void MainWindow::buildMenus() {
   settingsMenu->addAction(tr("部材の設定..."), this, &MainWindow::showMemberSettingsDialog);
   settingsMenu->addAction(tr("スラブの設定..."), this, &MainWindow::showSlabSettingsDialog);
   settingsMenu->addAction(tr("開口の設定..."), this, &MainWindow::showOpeningSettingsDialog);
+  settingsMenu->addAction(tr("床・屋根の種類（登録・層）..."), this, &MainWindow::showElementTypesDialog)
+      ->setObjectName(QStringLiteral("elementTypesAction"));
   QMenu* alignMenu = tools->addMenu(tr("整列（最初に選んだ物に揃える）"));
   const char* axisNames[] = {"X", "Y", "Z"};
   for (int axis = 0; axis < 3; ++axis) {
@@ -1817,6 +1819,7 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
     auto* options = new QMenu(button);
     options->addAction(tr("種類・勾配・軒の出の設定..."), this, &MainWindow::showRoofSettingsDialog)
         ->setObjectName(QStringLiteral("roofSettingsAction"));
+    options->addAction(tr("床・屋根の種類（登録・層）..."), this, &MainWindow::showElementTypesDialog);
     button->setMenu(options);
     bar->addWidget(button);
   }
@@ -4469,6 +4472,243 @@ void MainWindow::showRoofSettingsDialog() {
   next.typeName = chooser->currentData().toString().toStdString();
   roofTool_->setSettings(next);
   setStatus(roofTool_->settingsText());
+}
+
+void MainWindow::showElementTypesDialog() {
+  QDialog dialog(this);
+  dialog.setObjectName(QStringLiteral("elementTypesDialog"));
+  dialog.setWindowTitle(tr("床・屋根の種類"));
+  auto* layout = new QHBoxLayout(&dialog);
+  auto* list = new QListWidget(&dialog);
+  list->setObjectName(QStringLiteral("typesList"));
+  list->setMinimumWidth(140);
+  layout->addWidget(list);
+  auto* right = new QVBoxLayout;
+  layout->addLayout(right, 1);
+  auto* form = new QFormLayout;
+  right->addLayout(form);
+  auto* name = new QLineEdit(&dialog);
+  name->setObjectName(QStringLiteral("typeEditName"));
+  name->setMaxLength(40);
+  name->setPlaceholderText(tr("例 F1、R1"));
+  auto* part = new QComboBox(&dialog);
+  part->setObjectName(QStringLiteral("typeEditPart"));
+  part->addItem(tr("床"), QStringLiteral("floor"));
+  part->addItem(tr("屋根"), QStringLiteral("roof"));
+  auto field = [&](const char* objectName, const QString& hint) {
+    auto* edit = new QLineEdit(&dialog);
+    edit->setObjectName(QLatin1String(objectName));
+    edit->setPlaceholderText(hint);
+    return edit;
+  };
+  auto* thickness = field("typeEditThickness", tr("層を入れると、その合計"));
+  auto* pitch = field("typeEditPitch", tr("空：決めない（寸）"));
+  auto* eave = field("typeEditEave", tr("空：決めない"));
+  auto* gableEave = field("typeEditGableEave", tr("空：決めない"));
+  form->addRow(tr("種類名"), name);
+  form->addRow(tr("部位"), part);
+  form->addRow(tr("厚さ"), thickness);
+  form->addRow(tr("勾配（寸）"), pitch);
+  form->addRow(tr("軒の出"), eave);
+  form->addRow(tr("けらばの出"), gableEave);
+  auto* layers = new QTableWidget(0, 2, &dialog);
+  layers->setObjectName(QStringLiteral("typeEditLayers"));
+  layers->setHorizontalHeaderLabels({tr("層（上から）"), tr("厚さ")});
+  layers->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+  layers->verticalHeader()->setVisible(false);
+  layers->setMinimumHeight(140);
+  right->addWidget(layers);
+  auto* layerButtons = new QHBoxLayout;
+  auto* addLayer = new QPushButton(tr("層を足す"), &dialog);
+  addLayer->setObjectName(QStringLiteral("typeLayerAdd"));
+  auto* removeLayer = new QPushButton(tr("選んだ層を消す"), &dialog);
+  removeLayer->setObjectName(QStringLiteral("typeLayerRemove"));
+  auto* sum = new QLabel(&dialog);
+  sum->setObjectName(QStringLiteral("typeLayerSum"));
+  layerButtons->addWidget(addLayer);
+  layerButtons->addWidget(removeLayer);
+  layerButtons->addWidget(sum, 1);
+  right->addLayout(layerButtons);
+  auto* note = new QLabel(tr("登録した種類は図面といっしょに保存されます。登録すると、その種類名の床・屋根が全部その値になります"
+                             "（Ctrl+Z 1 回で戻せます）。層は断面図に境目の線として出ます（屋根は勾配に直角の厚さ）。"),
+                          &dialog);
+  note->setWordWrap(true);
+  right->addWidget(note);
+  auto* buttons = new QHBoxLayout;
+  auto* fresh = new QPushButton(tr("新しく"), &dialog);
+  fresh->setObjectName(QStringLiteral("typeNew"));
+  auto* apply = new QPushButton(tr("登録する"), &dialog);
+  apply->setObjectName(QStringLiteral("typeApply"));
+  apply->setDefault(true);
+  auto* drop = new QPushButton(tr("登録を外す"), &dialog);
+  drop->setObjectName(QStringLiteral("typeRemove"));
+  auto* close = new QPushButton(tr("閉じる"), &dialog);
+  close->setObjectName(QStringLiteral("typeClose"));
+  buttons->addWidget(fresh);
+  buttons->addWidget(apply);
+  buttons->addWidget(drop);
+  buttons->addStretch(1);
+  buttons->addWidget(close);
+  right->addLayout(buttons);
+  connect(close, &QPushButton::clicked, &dialog, &QDialog::accept);
+
+  auto length = [](double v) { return QString::fromStdString(units::formatLength(v, 0)); };
+  // The sum of the layers; with layers, the thickness is theirs.
+  auto layerSum = [layers](bool* ok) {
+    double total = 0.0;
+    *ok = true;
+    int rows = 0;
+    for (int r = 0; r < layers->rowCount(); ++r) {
+      const QString text = layers->item(r, 1) ? layers->item(r, 1)->text().trimmed() : QString();
+      const QString what = layers->item(r, 0) ? layers->item(r, 0)->text().trimmed() : QString();
+      if (text.isEmpty() && what.isEmpty()) continue;
+      const auto t = units::parseLength(text.toStdString());
+      if (!t) *ok = false;
+      else total += *t;
+      ++rows;
+    }
+    return rows == 0 ? -1.0 : total;
+  };
+  auto showSum = [=] {
+    bool ok = true;
+    const double total = layerSum(&ok);
+    thickness->setEnabled(total < 0);
+    if (total < 0) sum->setText(tr("層なし"));
+    else if (!ok) sum->setText(tr("厚さの読めない層があります"));
+    else {
+      sum->setText(tr("合計 %1").arg(length(total)));
+      thickness->setText(length(total));
+    }
+  };
+  connect(layers, &QTableWidget::itemChanged, &dialog, [=] { showSum(); });
+  auto addRow = [layers](const QString& what, const QString& t) {
+    const int r = layers->rowCount();
+    layers->insertRow(r);
+    layers->setItem(r, 0, new QTableWidgetItem(what));
+    layers->setItem(r, 1, new QTableWidgetItem(t));
+  };
+  connect(addLayer, &QPushButton::clicked, &dialog, [=] {
+    addRow(QString(), QString());
+    layers->setCurrentCell(layers->rowCount() - 1, 0);
+    showSum();
+  });
+  connect(removeLayer, &QPushButton::clicked, &dialog, [=] {
+    if (layers->currentRow() >= 0) layers->removeRow(layers->currentRow());
+    showSum();
+  });
+  auto roofFields = [=] {
+    const bool roof = part->currentData().toString() == QStringLiteral("roof");
+    pitch->setEnabled(roof);
+    eave->setEnabled(roof);
+    gableEave->setEnabled(roof);
+  };
+  connect(part, &QComboBox::currentIndexChanged, &dialog, [=] { roofFields(); });
+  auto load = [=](const QString& which) {
+    const QSignalBlocker block(layers);
+    name->clear();
+    thickness->clear();
+    pitch->clear();
+    eave->clear();
+    gableEave->clear();
+    layers->setRowCount(0);
+    part->setCurrentIndex(0);
+    for (const auto& t : modeler_.elementTypes()) {
+      if (QString::fromStdString(t.name) != which) continue;
+      name->setText(which);
+      part->setCurrentIndex(std::max(0, part->findData(QString::fromStdString(t.part))));
+      if (t.values.thickness) thickness->setText(length(*t.values.thickness));
+      if (t.values.pitch) pitch->setText(QString::number(*t.values.pitch));
+      if (t.values.eave) eave->setText(length(*t.values.eave));
+      if (t.values.gableEave) gableEave->setText(length(*t.values.gableEave));
+      for (const auto& l : t.layers) addRow(QString::fromStdString(l.name), length(l.thickness));
+    }
+    roofFields();
+    showSum();
+  };
+  auto refill = [=](const QString& select) {
+    const QSignalBlocker block(list);
+    list->clear();
+    for (const auto& t : modeler_.elementTypes())
+      list->addItem(QStringLiteral("%1（%2）").arg(QString::fromStdString(t.name), t.part == "roof" ? tr("屋根") : tr("床")));
+    const auto all = modeler_.elementTypes();
+    for (std::size_t i = 0; i < all.size(); ++i)
+      if (QString::fromStdString(all[i].name) == select) list->setCurrentRow(static_cast<int>(i));
+    drop->setEnabled(list->currentRow() >= 0);
+  };
+  connect(list, &QListWidget::currentRowChanged, &dialog, [=](int row) {
+    const auto all = modeler_.elementTypes();
+    if (row >= 0 && row < static_cast<int>(all.size())) load(QString::fromStdString(all[static_cast<std::size_t>(row)].name));
+    drop->setEnabled(row >= 0);
+  });
+  connect(fresh, &QPushButton::clicked, &dialog, [=] {
+    list->setCurrentRow(-1);
+    load(QString());
+    name->setFocus();
+  });
+  connect(apply, &QPushButton::clicked, &dialog, [=] {
+    const std::string typeName = name->text().trimmed().toStdString();
+    const std::string partName = part->currentData().toString().toStdString();
+    doc::Modeler::ElementTypeChange values;
+    auto read = [&](QLineEdit* edit, std::optional<double>& into, bool isLength) {
+      const QString text = edit->text().trimmed();
+      if (text.isEmpty() || !edit->isEnabled()) return true;
+      if (isLength) {
+        const auto v = units::parseLength(text.toStdString());
+        if (!v) return false;
+        into = *v;
+      } else {
+        bool ok = false;
+        into = text.toDouble(&ok);
+        if (!ok) return false;
+      }
+      return true;
+    };
+    std::vector<doc::Modeler::TypeLayer> given;
+    for (int r = 0; r < layers->rowCount(); ++r) {
+      const QString what = layers->item(r, 0) ? layers->item(r, 0)->text().trimmed() : QString();
+      const QString text = layers->item(r, 1) ? layers->item(r, 1)->text().trimmed() : QString();
+      if (what.isEmpty() && text.isEmpty()) continue;
+      const auto t = units::parseLength(text.toStdString());
+      if (!t) {
+        reportError(tr("層「%1」の厚さが読めません").arg(what));
+        return;
+      }
+      given.push_back({what.toStdString(), *t});
+    }
+    if ((given.empty() && !read(thickness, values.thickness, true)) || !read(pitch, values.pitch, false) ||
+        !read(eave, values.eave, true) || !read(gableEave, values.gableEave, true)) {
+      reportError(tr("厚さ・勾配・出が読めません"));
+      return;
+    }
+    const auto changed = modeler_.defineElementType(typeName, partName, values, given);
+    if (!changed) {
+      reportError(tr("種類を登録できません: %1").arg(userMessage(QString::fromStdString(changed.error()))));
+      return;
+    }
+    setStatus(tr("種類 %1 を登録しました（その種類名の %2 個がその値に。Ctrl+Z で戻せます）")
+                  .arg(QString::fromStdString(typeName))
+                  .arg(*changed));
+    refill(QString::fromStdString(typeName));
+    load(QString::fromStdString(typeName));
+  });
+  connect(drop, &QPushButton::clicked, &dialog, [=] {
+    const auto all = modeler_.elementTypes();
+    const int row = list->currentRow();
+    if (row < 0 || row >= static_cast<int>(all.size())) return;
+    const std::string typeName = all[static_cast<std::size_t>(row)].name;
+    if (const Status s = modeler_.removeElementType(typeName); !s) {
+      reportError(tr("登録を外せません: %1").arg(userMessage(QString::fromStdString(s.message()))));
+      return;
+    }
+    setStatus(tr("種類 %1 の登録を外しました（床・屋根の種類名と寸法はそのまま。Ctrl+Z で戻せます）").arg(QString::fromStdString(typeName)));
+    refill(QString());
+    load(QString());
+  });
+  refill(QString());
+  if (list->count() > 0) list->setCurrentRow(0);
+  else load(QString());
+  dialog.exec();
+  refreshPanels();
 }
 
 void MainWindow::showStairSettingsDialog() {
