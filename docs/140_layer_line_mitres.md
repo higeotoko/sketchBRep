@@ -32,9 +32,16 @@
 | 計算テスト済み | コア全 711 件中 704 件成功・7 件スキップ（ローカル）。新規 1 件（`WallLayerLines.LayerLinesMeetAsAMitreAtCorners`）：外壁 サイディングの 6000 × 4000 の部屋 → 線 16 本、どの線の端も、角の向こうのちょうど 1 本の線の端と同じ点、その点は角の対角線の上（\|dx\| = \|dy\|）／内壁の間仕切りを足しても線が増えるだけ（留めない）。前の層の線のテストもそのまま成功 |
 | GUI 自動確認済み | （画面の処理は変えていない。平面モードは同じ関数の線を出す） |
 | AI が配ったアプリで確認 | 作った版の `sbr_cli`（ローカルのビルドを、配った ZIP の部品と一緒に）で、外壁 サイディングの部屋の平面図（1:20）を DXF に書き、角を拡大して見た：層の線が入れ子の L 字になって、角の対角線の上で止まる。2 枚の壁の継ぎ目の線は残っている（上の「まだ」） |
-| CI | __CI__ |
+| CI | run 43791526373（push、`dd51461`）：Linux 724 件成功、Windows 720 件＋3 件成功・GUI 237 件成功（7 件スキップ） |
 | Windows 実機確認 | まだ（チェック表 12-23） |
 
 ## 配布の記録
 
-__DELIVERY__
+| 項目 | 値 |
+|---|---|
+| コード | `dd51461`（Opus 5.5 で作業） |
+| CI | run 43791526373（push）：Linux・Windows とも成功 |
+| ZIP | `SketchBRep-windows-x64-dd51461-local.zip`（Codex のチャットフォルダの `outputs\`） |
+| サイズ | 72,287,895 bytes |
+| SHA256 | `e2a79ac13201254d037c76e951ff282b253bd9be474cc8bb376b5d2ea4a048d6` |
+| ZIP の検証 | `verify_portable_pads.py`・`verify_portable_mat.py` とも成功（docs/validation/2026-11-16-portable-dd51461*.json） |
