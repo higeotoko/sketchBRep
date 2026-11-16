@@ -731,6 +731,20 @@ void MainWindow::buildUi() {
               else if (key == QStringLiteral("gable_eave")) spec.gableEave = value;
               else if (key == QStringLiteral("thickness")) spec.thickness = value;
               else if (key == QStringLiteral("height")) spec.height = value;
+              else if (key == QStringLiteral("gable_sides")) {
+                // People count sides from 1; empty: chosen by the program.
+                spec.gableSides.clear();
+                for (const QString& part : kind.split(QRegularExpression(QStringLiteral("[,、\\s]+")), Qt::SkipEmptyParts)) {
+                  bool ok = false;
+                  const int side = part.toInt(&ok);
+                  if (!ok || side < 1) {
+                    reportError(tr("妻の辺は、1 から始まる辺の番号を「1,3」のように入れてください"));
+                    refreshPanels();
+                    return;
+                  }
+                  spec.gableSides.push_back(side - 1);
+                }
+              }
               else return;
               const Status s = modeler_.changeRoof(id, spec);
               if (!s) {

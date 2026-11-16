@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
+#include <optional>
+#include <string>
 
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
@@ -77,61 +80,161 @@ Result<TopoDS_Shape> ridgeBody(const Frame& f, const Rect& r, bool alongA, doubl
 namespace {
 Result<RoofShape> build(const RoofSpec& spec, double riseGiven);
 
-// A hip roof over an outline with slanted sides (docs/108): every side carries a plane rising
-// inwards from its eave, and the roof is what lies under all of them. The outline must have
-// no inward corners (the planes of an inward corner would cut the roof away beyond it).
-Result<RoofShape> slantedHip(const RoofSpec& spec, std::vector<gp_Pnt> points, double riseGiven) {
-  if (spec.kind != "hip")
-    return R::failure("A roof over an outline with slanted sides is a hip roof for now (gable and shed roofs need "
-                      "right-angled corners)");
-  double twice = 0.0, around = 0.0;
-  for (std::size_t i = 0; i < points.size(); ++i) {
-    const gp_Pnt &p = points[i], &q = points[(i + 1) % points.size()];
-    twice += p.X() * q.Y() - q.X() * p.Y();
-    around += p.Distance(q);
-    if (p.Distance(q) < 1.0) return R::failure("Two roof outline corners coincide");
+// Outlines with slanted sides (docs/108, docs/138). Polygons in plan (z 0), counter-clockwise.
+using Poly = std::vector<gp_Pnt>;
+
+double twiceArea(const Poly& p) {
+  double a = 0.0;
+  for (std::size_t i = 0; i < p.size(); ++i) {
+    const gp_Pnt &u = p[i], &w = p[(i + 1) % p.size()];
+    a += u.X() * w.Y() - w.X() * u.Y();
   }
-  if (std::abs(twice) < 2.0) return R::failure("The roof outline encloses nothing");
-  if (twice < 0) std::reverse(points.begin(), points.end());  // counter-clockwise: inside on the left
-  const std::size_t n = points.size();
-  for (std::size_t i = 0; i < n; ++i) {
-    const gp_Vec a(points[i], points[(i + 1) % n]), b(points[(i + 1) % n], points[(i + 2) % n]);
-    if (a.Crossed(b).Z() < -1e-6 * a.Magnitude() * b.Magnitude())
-      return R::failure("A roof outline with slanted sides must have no inward corners yet (L, T and U shapes need "
-                        "right-angled corners)");
+  return a;
+}
+
+bool reflexAt(const Poly& p, std::size_t i) {
+  const std::size_t n = p.size();
+  const gp_Vec a(p[(i + n - 1) % n], p[i]), b(p[i], p[(i + 1) % n]);
+  return a.Crossed(b).Z() < -1e-6 * a.Magnitude() * b.Magnitude();
+}
+
+// Cut at reflex corner i along the extension of its incoming side (incoming) or of its outgoing
+// side backwards, up to where that line first meets the outline: two polygons.
+std::optional<std::pair<Poly, Poly>> splitAt(const Poly& p, std::size_t i, bool incoming) {
+  const std::size_t n = p.size();
+  const gp_Pnt v = p[i];
+  gp_Vec d = incoming ? gp_Vec(p[(i + n - 1) % n], v) : gp_Vec(p[(i + 1) % n], v);
+  if (d.Magnitude() < 1e-9) return std::nullopt;
+  d.Normalize();
+  double best = 1e300, bestS = 0.0;
+  std::size_t edge = n;
+  for (std::size_t j = 0; j < n; ++j) {
+    if (j == i || (j + 1) % n == i) continue;  // the sides at the corner
+    const gp_Pnt &a = p[j], &b = p[(j + 1) % n];
+    const gp_Vec e(a, b);
+    const double den = d.X() * e.Y() - d.Y() * e.X();
+    if (std::abs(den) < 1e-12) continue;
+    const gp_Vec w(v, a);
+    const double t = (w.X() * e.Y() - w.Y() * e.X()) / den;  // along the ray
+    const double s = (w.X() * d.Y() - w.Y() * d.X()) / den;  // along the side
+    if (t > 1.0 && s >= -1e-9 && s <= 1.0 + 1e-9 && t < best) best = t, bestS = s, edge = j;
   }
-  const double slope = spec.pitch / 10.0;
-  const double rise = riseGiven > 0 ? riseGiven : spec.thickness * std::sqrt(1.0 + slope * slope);
-  const double lowest = spec.height - slope * spec.eave;
-  const double base = lowest - rise - 100.0;  // well below: the lifted copy must still reach under it
-  const double far = around + spec.eave + 1000.0;  // beyond the outline from any side
-  std::vector<TopoDS_Shape> bodies;
+  if (edge == n) return std::nullopt;
+  const gp_Pnt hit = v.Translated(d * best);
+  Poly a, b;
+  // a: from the corner forwards to the side hit, then the hit point.
+  for (std::size_t k = i;; k = (k + 1) % n) {
+    a.push_back(p[k]);
+    if (k == edge) break;
+  }
+  if (hit.Distance(a.back()) > 0.5) a.push_back(hit);
+  // b: from the hit point on to the corner.
+  if (hit.Distance(p[(edge + 1) % n]) > 0.5) b.push_back(hit);
+  for (std::size_t k = (edge + 1) % n;; k = (k + 1) % n) {
+    b.push_back(p[k]);
+    if (k == i) break;
+  }
+  if (a.size() < 3 || b.size() < 3 || twiceArea(a) < 2.0 || twiceArea(b) < 2.0) return std::nullopt;
+  return std::make_pair(a, b);
+}
+
+std::string polyKey(Poly p) {
+  std::vector<std::pair<long long, long long>> q;
+  for (const gp_Pnt& v : p) q.push_back({std::llround(v.X()), std::llround(v.Y())});
+  std::sort(q.begin(), q.end());
+  std::string key;
+  for (const auto& [x, y] : q) key += std::to_string(x) + "," + std::to_string(y) + ";";
+  return key;
+}
+
+// Every convex piece any way of cutting at the reflex corners gives (the pieces of one way cover
+// the outline; all of them, the largest kept, overlap the way the right-angled roof's largest
+// rectangles do).
+void convexPieces(const Poly& p, int depth, std::map<std::string, Poly>& out, int& work) {
+  if (++work > 400) return;
+  bool convex = true;
+  for (std::size_t i = 0; i < p.size() && convex; ++i) convex = !reflexAt(p, i);
+  if (convex) {
+    out.emplace(polyKey(p), p);
+    return;
+  }
+  if (depth > 8) return;
+  for (std::size_t i = 0; i < p.size(); ++i) {
+    if (!reflexAt(p, i)) continue;
+    for (bool incoming : {true, false})
+      if (const auto parts = splitAt(p, i, incoming)) {
+        convexPieces(parts->first, depth + 1, out, work);
+        convexPieces(parts->second, depth + 1, out, work);
+      }
+  }
+}
+
+bool insideConvex(const Poly& p, const gp_Pnt& q) {
+  for (std::size_t i = 0; i < p.size(); ++i) {
+    const gp_Vec e(p[i], p[(i + 1) % p.size()]), w(p[i], q);
+    if (e.Crossed(w).Z() < -0.5 * e.Magnitude()) return false;
+  }
+  return true;
+}
+
+// The polygon with each side i moved out by offsets[i] (convex: the corners where the moved
+// sides meet).
+std::optional<Poly> grown(const Poly& p, const std::vector<double>& offsets) {
+  const std::size_t n = p.size();
+  Poly out;
   for (std::size_t i = 0; i < n; ++i) {
-    const gp_Pnt &p = points[i], &q = points[(i + 1) % n];
-    const gp_Vec d = gp_Vec(p, q).Normalized();
-    const gp_Vec in(-d.Y(), d.X(), 0);
-    const gp_Pnt s = p.Translated(d * -far);
-    auto at = [&](double inwards, double z) {
-      const gp_Pnt o = s.Translated(in * inwards);
-      return gp_Pnt(o.X(), o.Y(), z);
+    const std::size_t h = (i + n - 1) % n;
+    auto line = [&](std::size_t k) {
+      const gp_Vec d = gp_Vec(p[k], p[(k + 1) % n]).Normalized();
+      const gp_Vec outward(d.Y(), -d.X(), 0);
+      return std::make_pair(p[k].Translated(outward * offsets[k]), d);
     };
-    auto body = prism({at(-spec.eave, base), at(far, base), at(far, spec.height + slope * far), at(-spec.eave, lowest)},
-                      d * (p.Distance(q) + 2 * far));
-    if (!body) return R::failure(body.error());
-    bodies.push_back(body.value());
+    const auto [a, da] = line(h);
+    const auto [b, db] = line(i);
+    const double den = da.X() * db.Y() - da.Y() * db.X();
+    if (std::abs(den) < 1e-9) {
+      out.push_back(b);  // straight on: the moved side's start
+      continue;
+    }
+    const gp_Vec w(a, b);
+    const double t = (w.X() * db.Y() - w.Y() * db.X()) / den;
+    out.push_back(a.Translated(da * t));
   }
-  auto under = booleanCombine(BooleanOp::Intersect, bodies);
-  if (!under) return R::failure("Hip roof could not be built: " + under.error());
+  return out;
+}
+
+Result<TopoDS_Shape> upright(const Poly& p, double z0, double z1) {
+  Poly section;
+  for (const gp_Pnt& v : p) section.emplace_back(v.X(), v.Y(), z0);
+  return prism(section, gp_Vec(0, 0, z1 - z0));
+}
+
+// What lies under the plane rising inwards from side (p -> q) at `slope`, its eave `eave` out
+// from the side at `low`, far enough along and across to cover everything.
+Result<TopoDS_Shape> underSlope(const gp_Pnt& p, const gp_Pnt& q, double slope, double eave, double height, double base, double far) {
+  const gp_Vec d = gp_Vec(p, q).Normalized();
+  const gp_Vec in(-d.Y(), d.X(), 0);
+  const gp_Pnt s = p.Translated(d * -far);
+  auto at = [&](double inwards, double z) {
+    const gp_Pnt o = s.Translated(in * inwards);
+    return gp_Pnt(o.X(), o.Y(), z);
+  };
+  return prism({at(-eave, base), at(far, base), at(far, height + slope * far), at(-eave, height - slope * eave)},
+               d * (p.Distance(q) + 2 * far));
+}
+
+// The roof from the body under it: the body lifted by `rise` less the body.
+R fromBody(const TopoDS_Shape& under, double rise, double slope, int parts) {
   gp_Trsf lift;
   lift.SetTranslation(gp_Vec(0, 0, rise));
-  const TopoDS_Shape lifted = BRepBuilderAPI_Transform(under.value(), lift, Standard_True).Shape();
-  auto roof = booleanCombine(BooleanOp::Subtract, {lifted, under.value()});
+  const TopoDS_Shape lifted = BRepBuilderAPI_Transform(under, lift, Standard_True).Shape();
+  auto roof = booleanCombine(BooleanOp::Subtract, {lifted, under});
   if (!roof) return R::failure("Roof could not be built: " + roof.error());
   int solids = 0;
   for (TopExp_Explorer e(roof.value(), TopAbs_SOLID); e.More(); e.Next()) ++solids;
   if (solids != 1 || !BRepCheck_Analyzer(roof.value()).IsValid()) return R::failure("Roof could not be built as one solid");
   RoofShape out;
-  out.parts = 1;
+  out.parts = parts;
   out.solid = roof.value();
   out.planArea = volume(out.solid) / rise;
   out.slopeArea = out.planArea * std::sqrt(1.0 + slope * slope);
@@ -139,6 +242,146 @@ Result<RoofShape> slantedHip(const RoofSpec& spec, std::vector<gp_Pnt> points, d
   out.ridgeHeight = box.CornerMax().Z();
   out.eaveHeight = box.CornerMin().Z();
   return out;
+}
+
+Result<RoofShape> slantedRoof(const RoofSpec& spec, Poly points, double riseGiven) {
+  double around = 0.0;
+  for (std::size_t i = 0; i < points.size(); ++i) {
+    around += points[i].Distance(points[(i + 1) % points.size()]);
+    if (points[i].Distance(points[(i + 1) % points.size()]) < 1.0) return R::failure("Two roof outline corners coincide");
+  }
+  const double twice = twiceArea(points);
+  if (std::abs(twice) < 2.0) return R::failure("The roof outline encloses nothing");
+  const std::size_t n = points.size();
+  // Side numbers as drawn; counter-clockwise from here on (inside on the left).
+  std::vector<int> sideOf(n);
+  for (std::size_t i = 0; i < n; ++i) sideOf[i] = static_cast<int>(i);
+  if (twice < 0) {
+    // Reversed: corner k was corner n-1-k; side k (k -> k+1) was side n-2-k (mod n).
+    std::reverse(points.begin(), points.end());
+    for (std::size_t k = 0; k < n; ++k) sideOf[k] = static_cast<int>((2 * n - 2 - k) % n);
+  }
+  int reflex = 0;
+  for (std::size_t i = 0; i < n; ++i) reflex += reflexAt(points, i);
+  const double slope = spec.pitch / 10.0;
+  const double rise = riseGiven > 0 ? riseGiven : spec.thickness * std::sqrt(1.0 + slope * slope);
+  const double lowest = spec.height - slope * spec.eave;
+  const double far = around + std::max(spec.eave, spec.gableEave) + 1000.0;  // beyond the outline from any side
+  const double base = lowest - rise - slope * far - 100.0;  // well below anything
+  const double top = spec.height + slope * far + rise + 1000.0;
+  auto dir = [&](std::size_t i) { return gp_Vec(points[i], points[(i + 1) % n]).Normalized(); };
+
+  if (spec.kind == "hip") {
+    // Each convex piece: under every one of its sides' planes; the pieces' roofs together
+    // (valleys where they meet).
+    std::map<std::string, Poly> pieces;
+    int work = 0;
+    if (reflex == 0) pieces.emplace(polyKey(points), points);
+    else {
+      if (reflex > 4) return R::failure("A roof outline with slanted sides may have at most four inward corners");
+      convexPieces(points, 0, pieces, work);
+      if (pieces.empty() || work > 400) return R::failure("The roof outline could not be cut into convex parts");
+    }
+    // Only the largest: a piece inside another adds nothing.
+    std::vector<Poly> kept;
+    for (const auto& [key, piece] : pieces) {
+      bool within = false;
+      for (const auto& [other, bigger] : pieces) {
+        if (other == key) continue;
+        bool all = true;
+        for (const gp_Pnt& v : piece) all = all && insideConvex(bigger, v);
+        if (all && std::abs(twiceArea(bigger)) > std::abs(twiceArea(piece)) + 1.0) within = true;
+      }
+      if (!within) kept.push_back(piece);
+    }
+    std::vector<TopoDS_Shape> bodies;
+    for (const Poly& piece : kept) {
+      std::vector<TopoDS_Shape> planes;
+      for (std::size_t i = 0; i < piece.size(); ++i) {
+        auto body = underSlope(piece[i], piece[(i + 1) % piece.size()], slope, spec.eave, spec.height, base, far);
+        if (!body) return R::failure(body.error());
+        planes.push_back(body.value());
+      }
+      auto under = booleanCombine(BooleanOp::Intersect, planes);
+      if (!under) return R::failure("Hip roof could not be built: " + under.error());
+      bodies.push_back(under.value());
+    }
+    TopoDS_Shape under = bodies.front();
+    if (bodies.size() > 1) {
+      auto all = booleanCombine(BooleanOp::Union, bodies);
+      if (!all) return R::failure("Roof parts could not be joined: " + all.error());
+      under = all.value();
+    }
+    return fromBody(under, rise, slope, static_cast<int>(kept.size()));
+  }
+  if (reflex > 0)
+    return R::failure("A gable or shed roof over an outline with slanted sides needs one with no inward corners yet "
+                      "(a hip roof can have them)");
+  std::vector<double> offsets(n, spec.eave);
+  std::vector<TopoDS_Shape> parts;
+  if (spec.kind == "gable") {
+    // The gable sides: as given, or the shorter pair of parallel opposite sides.
+    std::vector<bool> gable(n, false);
+    if (!spec.gableSides.empty()) {
+      for (const int g : spec.gableSides) {
+        if (g < 0 || g >= static_cast<int>(n)) return R::failure("A gable side is a number of a side of the outline");
+        for (std::size_t k = 0; k < n; ++k)
+          if (sideOf[k] == g) gable[k] = true;
+      }
+    } else {
+      double best = 1e300;
+      std::pair<std::size_t, std::size_t> pair{n, n};
+      for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = i + 1; j < n; ++j) {
+          if (dir(i).Dot(dir(j)) > -1.0 + 1e-6) continue;  // opposite sides run opposite ways
+          const double length = points[i].Distance(points[(i + 1) % n]) + points[j].Distance(points[(j + 1) % n]);
+          const double score = spec.ridge == "short" ? -length : length;
+          if (score < best) best = score, pair = {i, j};
+        }
+      if (pair.first == n) return R::failure("This outline has no parallel opposite sides: choose the gable sides");
+      gable[pair.first] = gable[pair.second] = true;
+    }
+    int eaves = 0;
+    for (std::size_t i = 0; i < n; ++i) {
+      if (gable[i]) {
+        offsets[i] = spec.gableEave;
+        continue;
+      }
+      ++eaves;
+      auto body = underSlope(points[i], points[(i + 1) % n], slope, spec.eave, spec.height, base, far);
+      if (!body) return R::failure(body.error());
+      parts.push_back(body.value());
+    }
+    if (eaves == 0) return R::failure("A gable roof needs sides that are not gables");
+  } else {
+    // Shed: one plane rising from the side the roof falls to (the side facing the fall most).
+    const gp_Vec fall(spec.fallX, spec.fallY, 0);
+    if (fall.Magnitude() < 1e-9) return R::failure("Give the direction the shed roof falls towards");
+    std::size_t low = 0;
+    double facing = -1e300;
+    for (std::size_t i = 0; i < n; ++i) {
+      const gp_Vec outward(dir(i).Y(), -dir(i).X(), 0);
+      const double f = outward.Dot(fall.Normalized());
+      if (f > facing + 1e-9) facing = f, low = i;
+    }
+    const gp_Vec lowOut(dir(low).Y(), -dir(low).X(), 0);
+    for (std::size_t i = 0; i < n; ++i) {
+      const gp_Vec outward(dir(i).Y(), -dir(i).X(), 0);
+      offsets[i] = std::abs(outward.Dot(lowOut)) >= 0.5 ? spec.eave : spec.gableEave;  // eaves low and high, verges at the sides
+    }
+    auto body = underSlope(points[low], points[(low + 1) % n], slope, spec.eave, spec.height, base, far);
+    if (!body) return R::failure(body.error());
+    parts.push_back(body.value());
+  }
+  // Within the outline grown by its overhangs (the gables / verges stand up there).
+  const auto outline = grown(points, offsets);
+  if (!outline) return R::failure("The roof outline could not be grown by its overhangs");
+  auto walls = upright(*outline, base, top);
+  if (!walls) return R::failure(walls.error());
+  parts.push_back(walls.value());
+  auto under = booleanCombine(BooleanOp::Intersect, parts);
+  if (!under) return R::failure("Roof could not be built: " + under.error());
+  return fromBody(under.value(), rise, slope, 1);
 }
 }
 
@@ -180,7 +423,7 @@ Result<RoofShape> build(const RoofSpec& spec, double riseGiven) {
     const auto& p = poly[i];
     const auto& q = poly[(i + 1) % poly.size()];
     const double da = std::abs(q.first - p.first), db = std::abs(q.second - p.second);
-    if (std::min(da, db) > 0.01) return slantedHip(spec, points, riseGiven);  // a slanted side
+    if (std::min(da, db) > 0.01) return slantedRoof(spec, points, riseGiven);  // a slanted side
     if (std::max(da, db) < 1.0) return R::failure("Two roof outline corners coincide");
   }
   // Snap to exact lines (a side 0.005 off would make slivers).

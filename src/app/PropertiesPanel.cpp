@@ -338,6 +338,22 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       size(tr("けらばの出"), "gable_eave", roof->spec.gableEave, true, tr("妻側の出（水平）。片流れでは、流れに沿う 2 辺の出。寄棟では使いません"));
       size(tr("厚さ"), "thickness", roof->spec.thickness, true, tr("勾配に直角に測った厚さ"));
       size(tr("軒の高さ"), "height", roof->spec.height, true, tr("屋根の下面が、外周の線の上を通る高さ（壁・桁の上端）"));
+      if (roof->spec.kind == "gable") {
+        // docs/138: which sides end in gables, for outlines with slanted sides.
+        QStringList sides;
+        for (const int g : roof->spec.gableSides) sides << QString::number(g + 1);
+        auto* gables = new QLineEdit(sides.join(QStringLiteral(",")));
+        gables->setObjectName(QStringLiteral("roofGableSides"));
+        gables->setPlaceholderText(tr("自動（向かい合う平行な辺の短い方）"));
+        gables->setToolTip(tr("斜めの辺がある外周で、妻（切妻の三角の面）にする辺の番号。1 番目の角から 2 番目の角までが 1。"
+                              "「1,3」のように。空：向かい合う平行な 2 辺のうち短い方の組（棟が長い方になる）。直角だけの外周では使いません"));
+        gables->setEnabled(!o->locked);
+        const QString initial = gables->text();
+        connect(gables, &QLineEdit::editingFinished, this, [this, id, gables, initial] {
+          if (gables->text().trimmed() != initial) emit roofEdited(id, QStringLiteral("gable_sides"), 0.0, gables->text().trimmed());
+        });
+        form_->addRow(tr("妻の辺"), gables);
+      }
       addTypeRow(this, form_, modeler, *o, tr("勾配・厚さ・軒の出・けらばの出"));
       auto row = [&](const QString& label, const QString& text, const char* name) {
         auto* value = new QLabel(text);

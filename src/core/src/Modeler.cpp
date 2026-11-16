@@ -6838,7 +6838,7 @@ std::string roofSpecText(const geom::RoofSpec& s) {
   for (const gp_Pnt& p : s.outline) outline.push_back({p.X(), p.Y()});
   return nlohmann::json{{"kind", s.kind}, {"outline", outline}, {"height", s.height}, {"pitch", s.pitch},
                         {"eave", s.eave}, {"gable_eave", s.gableEave}, {"thickness", s.thickness},
-                        {"ridge", s.ridge}, {"fall", {s.fallX, s.fallY}}}
+                        {"ridge", s.ridge}, {"fall", {s.fallX, s.fallY}}, {"gable_sides", s.gableSides}}
       .dump();
 }
 
@@ -6856,6 +6856,7 @@ std::optional<geom::RoofSpec> roofSpecFrom(const std::string& text) {
     s.ridge = j.at("ridge").get<std::string>();
     s.fallX = j.at("fall").at(0).get<double>();
     s.fallY = j.at("fall").at(1).get<double>();
+    s.gableSides = j.value("gable_sides", std::vector<int>{});  // roofs made before docs/138: chosen
     return s;
   } catch (const std::exception&) {
     return std::nullopt;

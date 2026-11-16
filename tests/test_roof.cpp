@@ -137,10 +137,115 @@ TEST(Roof, TurnedInPlanItIsTheSameRoof) {
   EXPECT_NEAR(roof->eaveHeight, straight->eaveHeight, 1e-4);
 }
 
+// docs/138: gable and shed roofs over an outline with slanted sides, and a hip roof over one
+// with an inward corner.
+namespace {
+// The outline's area grown by `d` at every side (corners mitred), mm2.
+double grownArea(std::vector<gp_Pnt> p, double d) {
+  double twice = 0.0;
+  for (std::size_t i = 0; i < p.size(); ++i) twice += p[i].X() * p[(i + 1) % p.size()].Y() - p[(i + 1) % p.size()].X() * p[i].Y();
+  if (twice < 0) std::reverse(p.begin(), p.end());
+  const std::size_t n = p.size();
+  std::vector<gp_Pnt> q;
+  for (std::size_t i = 0; i < n; ++i) {
+    auto line = [&](std::size_t k) {
+      const gp_Vec dk = gp_Vec(p[k], p[(k + 1) % n]).Normalized();
+      return std::make_pair(p[k].Translated(gp_Vec(dk.Y(), -dk.X(), 0) * d), dk);
+    };
+    const auto [a, da] = line((i + n - 1) % n);
+    const auto [b, db] = line(i);
+    const double den = da.X() * db.Y() - da.Y() * db.X();
+    const gp_Vec w(a, b);
+    q.push_back(a.Translated(da * ((w.X() * db.Y() - w.Y() * db.X()) / den)));
+  }
+  double area = 0.0;
+  for (std::size_t i = 0; i < n; ++i) area += q[i].X() * q[(i + 1) % n].Y() - q[(i + 1) % n].X() * q[i].Y();
+  return area / 2;
+}
+}  // namespace
+
+TEST(Roof, GableAndShedOverSlantedSidesAndAHipWithAnInwardCorner) {
+  const double kSlope = 0.4, kRiseUp = 100 * std::sqrt(1.16);
+  // 8000 x 6000 with its south-east corner cut 2000 x 2000.
+  RoofSpec s;
+  s.kind = "gable";
+  s.height = 3000;
+  s.outline = {gp_Pnt(0, 0, 0), gp_Pnt(6000, 0, 0), gp_Pnt(8000, 2000, 0), gp_Pnt(8000, 6000, 0), gp_Pnt(0, 6000, 0)};
+  // Gables chosen: the shorter parallel pair (east and west): ridge along x, over the middle.
+  auto roof = makeRoof(s);
+  ASSERT_TRUE(roof) << roof.error();
+  auto b = sbr::geom::exactBounds(roof->solid);
+  EXPECT_NEAR(b.CornerMin().X(), -300, 1e-4);  // the gable overhang
+  EXPECT_NEAR(b.CornerMax().X(), 8300, 1e-4);
+  EXPECT_NEAR(b.CornerMin().Y(), -600, 1e-4);  // the eaves
+  EXPECT_NEAR(b.CornerMax().Y(), 6600, 1e-4);
+  EXPECT_NEAR(roof->ridgeHeight, 3000 + kSlope * 3000 + kRiseUp, 1e-3);
+  EXPECT_NEAR(roof->eaveHeight, 3000 - kSlope * 600, 1e-3);
+  // Drawn the other way round: the same roof.
+  RoofSpec back = s;
+  std::reverse(back.outline.begin(), back.outline.end());
+  const auto same = makeRoof(back);
+  ASSERT_TRUE(same);
+  EXPECT_NEAR(same->planArea, roof->planArea, 1.0);
+  // Gables chosen by hand: south (side 0) and north (side 3): ridge along y, over x = 4000.
+  s.gableSides = {0, 3};
+  roof = makeRoof(s);
+  ASSERT_TRUE(roof) << roof.error();
+  b = sbr::geom::exactBounds(roof->solid);
+  EXPECT_NEAR(b.CornerMin().Y(), -300, 1e-4);
+  EXPECT_NEAR(b.CornerMax().Y(), 6300, 1e-4);
+  EXPECT_NEAR(b.CornerMin().X(), -600, 1e-4);
+  EXPECT_NEAR(roof->ridgeHeight, 3000 + kSlope * 4000 + kRiseUp, 1e-3);
+  // The same numbers drawn the other way round mean the same sides as drawn there.
+  back.gableSides = {static_cast<int>((2 * 5 - 2 - 0) % 5), static_cast<int>((2 * 5 - 2 - 3) % 5)};
+  const auto sameHand = makeRoof(back);
+  ASSERT_TRUE(sameHand) << sameHand.error();
+  EXPECT_NEAR(sameHand->ridgeHeight, roof->ridgeHeight, 1e-3);
+  s.gableSides = {7};
+  EXPECT_FALSE(makeRoof(s));
+  // Shed falling south: from the south eave up to the north one; verges at east and west.
+  s.kind = "shed";
+  s.gableSides.clear();
+  s.fallX = 0;
+  s.fallY = -1;
+  roof = makeRoof(s);
+  ASSERT_TRUE(roof) << roof.error();
+  b = sbr::geom::exactBounds(roof->solid);
+  EXPECT_NEAR(b.CornerMin().X(), -300, 1e-4);
+  EXPECT_NEAR(b.CornerMax().Y(), 6600, 1e-4);
+  EXPECT_NEAR(roof->eaveHeight, 3000 - kSlope * 600, 1e-3);
+  EXPECT_NEAR(roof->ridgeHeight, 3000 + kSlope * 6600 + kRiseUp, 1e-3);
+  // Hip over an outline with a slanted side and an inward corner: one solid, valleys; seen from
+  // above it covers the outline grown by the eaves.
+  RoofSpec dented;
+  dented.kind = "hip";
+  dented.height = 3000;
+  dented.outline = {gp_Pnt(0, 0, 0), gp_Pnt(8000, 0, 0), gp_Pnt(8000, 4000, 0), gp_Pnt(5000, 4000, 0), gp_Pnt(3000, 8000, 0),
+                    gp_Pnt(0, 8000, 0)};
+  const auto hip = makeRoof(dented);
+  ASSERT_TRUE(hip) << hip.error();
+  EXPECT_GE(hip->parts, 2);
+  EXPECT_NEAR(hip->planArea, grownArea(dented.outline, 600), 1.0);
+  EXPECT_NEAR(hip->eaveHeight, 3000 - kSlope * 600, 1e-3);
+  EXPECT_NEAR(hip->slopeArea, hip->planArea * std::sqrt(1.16), 1.0);
+  // The walls under it can be cut to it too.
+  EXPECT_TRUE(sbr::geom::roofSpaceAbove(dented, 100000.0));
+  // Five inward corners with slanted sides: refused with the reason.
+  RoofSpec star;
+  star.kind = "hip";
+  star.height = 3000;
+  for (int i = 0; i < 12; ++i) {
+    const double r = i % 2 == 0 ? 6000 : 3000, a = std::acos(-1.0) / 6 * i;
+    star.outline.emplace_back(r * std::cos(a), r * std::sin(a), 0);
+  }
+  EXPECT_FALSE(makeRoof(star));
+}
+
 TEST(Roof, WhatCannotBeBuiltIsRefusedWithTheReason) {
   RoofSpec s = rect("gable");
-  s.outline[2] = gp_Pnt(8000, 5000, 0);  // a slanted side
-  EXPECT_NE(makeRoof(s).error().find("right-angled"), std::string::npos);
+  // Slanted sides with no parallel opposite pair: the gable sides must be chosen (docs/138).
+  s.outline = {gp_Pnt(0, 0, 0), gp_Pnt(8000, 0, 0), gp_Pnt(9000, 5000, 0), gp_Pnt(1000, 7000, 0)};
+  EXPECT_NE(makeRoof(s).error().find("parallel"), std::string::npos);
   s = rect("gable");
   s.outline.pop_back();
   EXPECT_FALSE(makeRoof(s));
@@ -227,7 +332,7 @@ TEST_F(Roofs, ARoofIsOnePartWhoseSizesCanBeChanged) {
   // Refused changes change nothing.
   const double before = top(id);
   EXPECT_TRUE(refused("change_roof", {{"id", id}, {"pitch", 0}}));
-  EXPECT_TRUE(refused("change_roof", {{"id", id}, {"outline", {{0, 0}, {8000, 0}, {8000, 5000}, {0, 6000}}}}));
+  EXPECT_TRUE(refused("change_roof", {{"id", id}, {"outline", {{0, 0}, {8000, 0}, {8000, 6000}, {4000, 3000}, {0, 6000}}}}));
   EXPECT_NEAR(top(id), before, 1e-9);
 
   // Reshaped by hand it is no longer read as a roof, and says so.
@@ -409,15 +514,16 @@ TEST(Roof, AHipRoofCoversAnOutlineWithSlantedSides) {
 
   // What it takes from walls under it (walls up to the roof) is built the same way.
   EXPECT_TRUE(sbr::geom::roofSpaceAbove(spec, 100000.0));
-  // Not yet: gable or shed over slanted sides, and inward corners with slanted sides.
+  // Since docs/138: gable over slanted sides, and a hip with inward corners; a gable with
+  // inward corners and slanted sides is still refused.
   spec.kind = "gable";
-  const auto gable = makeRoof(spec);
-  ASSERT_FALSE(gable);
-  EXPECT_NE(gable.error().find("hip roof for now"), std::string::npos);
+  ASSERT_TRUE(makeRoof(spec));
   RoofSpec dented;
   dented.kind = "hip";
   dented.height = 3000;
   dented.outline = {gp_Pnt(0, 0, 0), gp_Pnt(8000, 0, 0), gp_Pnt(8000, 6000, 0), gp_Pnt(4000, 3000, 0), gp_Pnt(0, 6000, 0)};
+  ASSERT_TRUE(makeRoof(dented)) << makeRoof(dented).error();
+  dented.kind = "gable";
   const auto refused = makeRoof(dented);
   ASSERT_FALSE(refused);
   EXPECT_NE(refused.error().find("no inward corners"), std::string::npos);

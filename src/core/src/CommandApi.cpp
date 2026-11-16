@@ -119,6 +119,19 @@ void roofArgs(const json& a, geom::RoofSpec& s) {
     s.fallX = v[0].get<double>();
     s.fallY = v[1].get<double>();
   }
+  // docs/138: the gable sides of an outline with slanted sides (0-based); a new outline without
+  // them: chosen again.
+  if (a.contains("gable_sides")) {
+    const json& v = a.at("gable_sides");
+    if (!v.is_array()) throw ApiError("'gable_sides' is a list of side numbers (0: from corner 0 to corner 1)");
+    s.gableSides.clear();
+    for (const json& g : v) {
+      if (!g.is_number_integer()) throw ApiError("'gable_sides' is a list of side numbers (0: from corner 0 to corner 1)");
+      s.gableSides.push_back(g.get<int>());
+    }
+  } else if (a.contains("outline")) {
+    s.gableSides.clear();
+  }
 }
 
 // The stair sizes given in `a` put into `s` (the others stay).
@@ -186,7 +199,7 @@ json roofJson(const doc::RoofInfo& r) {
   for (const gp_Pnt& p : r.spec.outline) outline.push_back({p.X(), p.Y()});
   return json{{"kind", r.spec.kind}, {"outline", outline}, {"height", r.spec.height}, {"pitch", r.spec.pitch},
               {"eave", r.spec.eave}, {"gable_eave", r.spec.gableEave}, {"thickness", r.spec.thickness},
-              {"ridge", r.spec.ridge}, {"fall", {r.spec.fallX, r.spec.fallY}}, {"plan_area", r.planArea / 1e6},
+              {"ridge", r.spec.ridge}, {"fall", {r.spec.fallX, r.spec.fallY}}, {"gable_sides", r.spec.gableSides}, {"plan_area", r.planArea / 1e6},
               {"slope_area", r.slopeArea / 1e6}, {"ridge_height", r.ridgeHeight}, {"eave_height", r.eaveHeight},
               {"parts", r.parts}, {"level", r.level}};
 }
@@ -2268,8 +2281,10 @@ const std::vector<CommandDef>& commands() {
                                              textOr(a, "outside", "auto"))));
        }},
       {"create_roof",
-       "A roof as one solid over a plan 'outline' ([x, y] or \"X1/Y1\" points; right-angled corners only: "
-       "rectangles, L, T, U shapes) or 'grid' {x: [..2 names], y: [..2 names]}. 'kind': gable (切妻, default), "
+       "A roof as one solid over a plan 'outline' ([x, y] or \"X1/Y1\" points: right-angled ones (rectangles, L, T, "
+       "U shapes) or with slanted sides (docs/108, docs/138: hip with up to four inward corners; gable and shed with "
+       "none; gable: 'gable_sides', 0-based side numbers, side i from corner i to i+1, default the shorter pair of "
+       "parallel opposite sides)) or 'grid' {x: [..2 names], y: [..2 names]}. 'kind': gable (切妻, default), "
        "hip (寄棟) or shed (片流れ). 'height' (mm): z of the roof's underside above the outline (the top of the "
        "walls / plates). 'pitch': rise per 10 of run (寸勾配, default 4). 'eave': overhang at eaves in plan "
        "(default 600); 'gable_eave': at gable ends (default 300; shed: at the sloping sides). 'thickness' at "
@@ -2281,7 +2296,7 @@ const std::vector<CommandDef>& commands() {
          "outline": {"type": "array"}, "grid": {"type": "object"}, "kind": {"enum": ["gable", "hip", "shed"]},
          "height": {"type": "number"}, "pitch": {"type": "number"}, "eave": {"type": "number"},
          "gable_eave": {"type": "number"}, "thickness": {"type": "number"}, "ridge": {"enum": ["long", "short"]},
-         "fall": {"type": "array"}}, "required": ["height"]}),
+         "fall": {"type": "array"}, "gable_sides": {"type": "array", "items": {"type": "integer"}}}, "required": ["height"]}),
        [](doc::Modeler& m, const json& a) {
          const GridLookup grid(m.document());
          geom::RoofSpec spec;
@@ -2317,7 +2332,7 @@ const std::vector<CommandDef>& commands() {
          "id": {"type": "string"}, "outline": {"type": "array"}, "kind": {"enum": ["gable", "hip", "shed"]},
          "height": {"type": "number"}, "pitch": {"type": "number"}, "eave": {"type": "number"},
          "gable_eave": {"type": "number"}, "thickness": {"type": "number"}, "ridge": {"enum": ["long", "short"]},
-         "fall": {"type": "array"}}, "required": ["id"]}),
+         "fall": {"type": "array"}, "gable_sides": {"type": "array", "items": {"type": "integer"}}}, "required": ["id"]}),
        [](doc::Modeler& m, const json& a) {
          const GridLookup grid(m.document());
          geom::RoofSpec spec = must(m.roofInfo(text(a, "id"))).spec;

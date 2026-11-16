@@ -24,6 +24,10 @@ struct RoofSpec {
   std::string ridge = "long";
   // shed: the plan direction the roof falls towards (snapped to the outline's nearer side direction).
   double fallX = 0.0, fallY = -1.0;
+  // A gable roof over an outline with slanted sides (docs/138): the sides (0-based: side i runs
+  // from outline corner i to i + 1) that end in gables. Empty: the shorter pair of parallel
+  // opposite sides (the longer pair with ridge "short"). Not used for right-angled outlines.
+  std::vector<int> gableSides;
 };
 
 struct RoofShape {
