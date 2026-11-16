@@ -2551,6 +2551,51 @@ const std::vector<CommandDef>& commands() {
          if (a.contains("gable_eave")) change.gableEave = number(a, "gable_eave");
          return json{{"changed", must(m.changeElementType(text(a, "name"), change))}};
        }},
+      {"define_type",
+       "Register a floor / roof type (docs/149), kept with the model: 'name', 'part' (floor | roof), 'thickness' "
+       "(floor: the only value), roofs 'pitch' (寸), 'eave', 'gable_eave', whichever are given. Or 'like': an id: "
+       "its type name and values. Every slab / roof of that name takes the values; set_type_name with a registered "
+       "name gives them too. All or nothing, one undo step. Returns how many changed.",
+       SCHEMA({"type": "object", "properties": {"name": {"type": "string"}, "part": {"type": "string", "enum": ["floor", "roof"]},
+               "thickness": {"type": "number"}, "pitch": {"type": "number"}, "eave": {"type": "number"},
+               "gable_eave": {"type": "number"}, "like": {"type": "string"}}}),
+       [](doc::Modeler& m, const json& a) {
+         if (a.contains("like")) return json{{"changed", must(m.registerElementType(text(a, "like")))}};
+         doc::Modeler::ElementTypeChange change;
+         if (a.contains("thickness")) change.thickness = number(a, "thickness");
+         if (a.contains("pitch")) change.pitch = number(a, "pitch");
+         if (a.contains("eave")) change.eave = number(a, "eave");
+         if (a.contains("gable_eave")) change.gableEave = number(a, "gable_eave");
+         return json{{"changed", must(m.defineElementType(text(a, "name"), text(a, "part"), change))}};
+       }},
+      {"list_types",
+       "The registered floor / roof types (define_type, docs/149): name, part, values given, and how many slabs / "
+       "roofs have the name.",
+       SCHEMA({"type": "object", "properties": {}}),
+       [](doc::Modeler& m, const json&) {
+         json out = json::array();
+         for (const auto& t : m.elementTypes()) {
+           int count = 0;
+           for (const auto& o : m.document().objects()) {
+             const auto it = o.attributes.find("type_name");
+             count += it != o.attributes.end() && it->second == t.name;
+           }
+           json row{{"name", t.name}, {"part", t.part}, {"count", count}};
+           if (t.values.thickness) row["thickness"] = *t.values.thickness;
+           if (t.values.pitch) row["pitch"] = *t.values.pitch;
+           if (t.values.eave) row["eave"] = *t.values.eave;
+           if (t.values.gableEave) row["gable_eave"] = *t.values.gableEave;
+           out.push_back(row);
+         }
+         return json{{"types", out}};
+       }},
+      {"remove_type",
+       "Take a type off the register (docs/149): 'name'. The slabs / roofs keep their name and sizes. One undo step.",
+       SCHEMA({"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}),
+       [](doc::Modeler& m, const json& a) {
+         must(m.removeElementType(text(a, "name")));
+         return json::object();
+       }},
       {"make_canopy",
        "A canopy (庇, docs/147) over an opening: a board out from the face the opening was cut from. 'host', "
        "'opening' (id or number), 'depth' (out from the face, default 600), 'thickness' (60), 'extra' (longer at "

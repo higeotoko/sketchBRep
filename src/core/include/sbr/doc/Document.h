@@ -86,6 +86,8 @@ struct DocumentSettings {
   std::map<std::string, std::string> constructionOverrides;  // system -> JSON merge patch
   std::string wallCalculation = "{}";  // designations, loads and pinned coefficient table
   geom::SunSettings sun;               // date, time, place, north (docs/82)
+  // Registered floor / roof types (docs/149): {"F1": {"part": "floor", "thickness": 200}, ...}.
+  std::string elementTypes = "{}";
 };
 
 // The part of the settings that belongs to the model's state (saved, undone
@@ -99,10 +101,11 @@ struct PersistentSettings {
   std::map<std::string, std::string> constructionOverrides;
   std::string wallCalculation = "{}";
   geom::SunSettings sun;
+  std::string elementTypes = "{}";
 
   static PersistentSettings of(const DocumentSettings& s) {
     return {s.scenes,         s.sections, s.sectionDisplay, s.hiddenTags, s.levels, s.constructionOverrides,
-            s.wallCalculation, s.sun};
+            s.wallCalculation, s.sun,     s.elementTypes};
   }
   void applyTo(DocumentSettings& s) const {
     s.scenes = scenes;
@@ -113,12 +116,13 @@ struct PersistentSettings {
     s.constructionOverrides = constructionOverrides;
     s.wallCalculation = wallCalculation;
     s.sun = sun;
+    s.elementTypes = elementTypes;
   }
   bool operator==(const PersistentSettings& o) const {
     return scenes == o.scenes && sections == o.sections && sectionDisplay == o.sectionDisplay &&
            hiddenTags == o.hiddenTags && levels == o.levels &&
            constructionOverrides == o.constructionOverrides && wallCalculation == o.wallCalculation &&
-           sun == o.sun;
+           sun == o.sun && elementTypes == o.elementTypes;
   }
   bool operator!=(const PersistentSettings& o) const { return !(*this == o); }
 };

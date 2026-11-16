@@ -11993,6 +11993,30 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
     const Bnd_Box b=geom::exactBounds(m.document().worldShape(*m.document().find(upper)));
     QVERIFY(std::abs(b.CornerMax().Z()-3000)<1e-6);
     QVERIFY(std::abs(b.CornerMin().Z()-2850)<1e-6);  // 150 thick like the lower one, its top kept
+    // docs/149: registered from the lower one; a third slab named F1 takes 150.
+    f.window.setSelection({lower});
+    QApplication::processEvents();
+    QTRY_VERIFY(f.window.findChild<QToolButton*>(QStringLiteral("typeRegister")));
+    auto* reg=f.window.findChild<QToolButton*>(QStringLiteral("typeRegister"));
+    QVERIFY2(reg->text().contains(QStringLiteral("登録する")),qPrintable(reg->text()));
+    const auto steps2=m.history().undoCount();
+    reg->click();
+    QTRY_COMPARE(m.history().undoCount(),steps2+1);
+    QCOMPARE(m.elementTypes().size(),std::size_t(1));
+    QApplication::processEvents();
+    QTRY_VERIFY(f.window.findChild<QToolButton*>(QStringLiteral("typeRegister")));
+    QVERIFY2(f.window.findChild<QToolButton*>(QStringLiteral("typeRegister"))->text().contains(QStringLiteral("登録を")),
+             qPrintable(f.window.findChild<QToolButton*>(QStringLiteral("typeRegister"))->text()));
+    const std::string third=call("create_slab",{{"outline",{{0,0},{8000,0},{8000,6000},{0,6000}}},{"top",6000},{"thickness",300}})["id"];
+    f.window.setSelection({third});
+    QApplication::processEvents();
+    auto* name3=f.window.findChild<QLineEdit*>(QStringLiteral("typeName"));
+    QVERIFY(name3&&name3->completer());  // the registered names offered
+    name3->setText(QStringLiteral("F1"));
+    emit name3->editingFinished();
+    QTRY_VERIFY(m.document().find(third)->attributes.count("type_name"));
+    const Bnd_Box c=geom::exactBounds(m.document().worldShape(*m.document().find(third)));
+    QVERIFY(std::abs(c.CornerMin().Z()-5850)<1e-6);
   }
 }
 

@@ -7,6 +7,7 @@
 
 #include "sbr/api/CommandApi.h"
 #include "sbr/doc/Modeler.h"
+#include "sbr/doc/NativeFormat.h"
 #include "sbr/doc/Schedules.h"
 #include "sbr/OpeningSymbols.h"
 #include "sbr/draw/Drawing.h"
@@ -509,6 +510,81 @@ TEST_F(Schedules, TheTypesOfFloorsAndRoofsAreListed) {
   const json r = ok("export_schedule", {{"path", (dir / "types.dxf").u8string()}, {"table", "types"}});
   EXPECT_EQ(r["rows"], 2);
   std::filesystem::remove_all(dir);
+}
+
+// docs/149: registered floor / roof types.
+TEST_F(Schedules, RegisteredTypesGiveTheirValues) {
+  const auto box = [&](const std::string& id) { return sbr::geom::exactBounds(modeler.document().worldShape(*modeler.document().find(id))); };
+  std::string slab;
+  for (const auto& o : modeler.document().objects())
+    if (o.attributes.count("kind") && o.attributes.at("kind") == "slab") slab = o.id;
+  ASSERT_FALSE(slab.empty());
+  // Registered with nothing using it yet: one undo step, in the table as "only registered".
+  auto steps = modeler.history().undoCount();
+  json r = ok("define_type", {{"name", "F2"}, {"part", "floor"}, {"thickness", 240}});
+  EXPECT_EQ(r["changed"], 0);
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  ok("define_type", {{"name", "R1"}, {"part", "roof"}, {"pitch", 3}, {"eave", 900}});
+  json list = ok("list_types");
+  ASSERT_EQ(list["types"].size(), 2u);
+  sbr::draw::Table t = sbr::doc::scheduleTable(modeler.document(), 4);
+  ASSERT_EQ(t.rows.size(), 2u);
+  EXPECT_EQ(t.rows[0][0], "F2");
+  EXPECT_EQ(t.rows[0][2], "0");
+  EXPECT_EQ(t.rows[0][3], "240");
+  EXPECT_EQ(t.rows[0][7], "登録だけ（まだ使っていない）");
+  EXPECT_EQ(t.rows[1][4], "3.0 寸");
+  // A slab named F2 takes 240, its top kept, in the same step as the name.
+  steps = modeler.history().undoCount();
+  ok("set_type_name", {{"ids", {slab}}, {"name", "F2"}});
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  EXPECT_NEAR(box(slab).CornerMax().Z(), 0, 1e-6);
+  EXPECT_NEAR(box(slab).CornerMin().Z(), -240, 1e-6);
+  ASSERT_TRUE(modeler.undo());  // the name and the thickness back
+  EXPECT_FALSE(modeler.document().find(slab)->attributes.count("type_name"));
+  EXPECT_NEAR(box(slab).CornerMin().Z(), -200, 1e-6);
+  ok("set_type_name", {{"ids", {slab}}, {"name", "F2"}});
+  // A roof named R1 takes the pitch and eave given, keeps its thickness; a floor type on a roof: refused.
+  const std::string roof = ok("create_roof", {{"outline", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}}}, {"kind", "gable"}, {"height", 3000}})["id"];
+  const double thick = modeler.roofInfo(roof)->spec.thickness;
+  EXPECT_FALSE(call("set_type_name", {{"ids", {roof}}, {"name", "F2"}}).value("ok", true));
+  ok("set_type_name", {{"ids", {roof}}, {"name", "R1"}});
+  EXPECT_NEAR(modeler.roofInfo(roof)->spec.pitch, 3, 1e-9);
+  EXPECT_NEAR(modeler.roofInfo(roof)->spec.eave, 900, 1e-9);
+  EXPECT_NEAR(modeler.roofInfo(roof)->spec.thickness, thick, 1e-9);
+  // Changing the type changes the register too; the table agrees.
+  ok("change_type", {{"name", "F2"}, {"thickness", 260}});
+  t = sbr::doc::scheduleTable(modeler.document(), 4);
+  EXPECT_EQ(t.rows[0][3], "260");
+  EXPECT_EQ(t.rows[0][7], "登録済み");
+  // One changed by hand: said in the table; registered again from it: the register follows.
+  ASSERT_TRUE(modeler.changeMember(slab, [] { sbr::doc::Modeler::MemberChange c; c.thickness = 180.0; c.keep = "top"; return c; }()));
+  t = sbr::doc::scheduleTable(modeler.document(), 4);
+  EXPECT_EQ(t.rows[0][7], "登録済み・登録した値と違う物があります");
+  r = ok("define_type", {{"like", slab}});
+  EXPECT_EQ(r["changed"], 0);  // no others
+  t = sbr::doc::scheduleTable(modeler.document(), 4);
+  EXPECT_EQ(t.rows[0][3], "180");
+  EXPECT_EQ(t.rows[0][7], "登録済み");
+  // Saved and read back with the model.
+  sbr::doc::Document read;
+  ASSERT_TRUE(sbr::doc::deserializeDocument(sbr::doc::serializeDocument(modeler.document()), read));
+  EXPECT_EQ(read.settings().elementTypes, modeler.document().settings().elementTypes);
+  // Refused: a roof value on a floor, a used name of the other part, bad values; nothing changes.
+  steps = modeler.history().undoCount();
+  EXPECT_FALSE(call("define_type", {{"name", "F3"}, {"part", "floor"}, {"pitch", 4}}).value("ok", true));
+  EXPECT_FALSE(call("define_type", {{"name", "F2"}, {"part", "roof"}, {"pitch", 4}}).value("ok", true));
+  EXPECT_FALSE(call("define_type", {{"name", "R1"}, {"part", "roof"}, {"pitch", 40}}).value("ok", true));
+  EXPECT_FALSE(call("define_type", {{"name", "X"}, {"part", "wall"}, {"thickness", 100}}).value("ok", true));
+  EXPECT_EQ(modeler.history().undoCount(), steps);
+  // Taken off the register: the slab keeps its name and thickness.
+  ok("remove_type", {{"name", "F2"}});
+  EXPECT_EQ(ok("list_types")["types"].size(), 1u);
+  EXPECT_EQ(modeler.document().find(slab)->attributes.at("type_name"), "F2");
+  EXPECT_NEAR(box(slab).CornerMin().Z(), -180, 1e-6);
+  EXPECT_FALSE(call("remove_type", {{"name", "F2"}}).value("ok", true));
+  ASSERT_TRUE(modeler.undo());
+  EXPECT_EQ(ok("list_types")["types"].size(), 2u);
 }
 
 // docs/141: floor areas, the total and the building area by the Enforcement Order art. 2 (1).

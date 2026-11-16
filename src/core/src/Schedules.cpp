@@ -595,8 +595,22 @@ draw::Table scheduleTable(const Document& document, int which) {
       int count = 0;
       bool mixed = false;
       std::vector<double> v;  // thickness[, pitch, eave, gable eave]
+      bool registered = false, differs = false;
+      std::vector<std::optional<double>> want;  // the registered values (docs/149)
     };
     std::map<std::pair<int, std::string>, Values> types;  // (0 floor / 1 roof, name)
+    const nlohmann::json reg = nlohmann::json::parse(document.settings().elementTypes, nullptr, false);
+    if (reg.is_object())
+      for (const auto& [name, entry] : reg.items()) {
+        if (!entry.is_object()) continue;
+        const bool roof = entry.value("part", "") == "roof";
+        Values& at = types[{roof ? 1 : 0, name}];
+        at.registered = true;
+        for (const char* key : {"thickness", "pitch", "eave", "gable_eave"}) {
+          if (!roof && at.want.size() == 1) break;
+          at.want.push_back(entry.contains(key) ? std::optional<double>(entry.at(key).get<double>()) : std::nullopt);
+        }
+      }
     int unnamed = 0;
     for (const Object& o : document.objects()) {
       const auto kind = o.attributes.find("kind");
@@ -621,15 +635,28 @@ draw::Table scheduleTable(const Document& document, int which) {
       if (at.count == 0) at.v = v;
       else
         for (std::size_t i = 0; i < v.size() && i < at.v.size(); ++i) at.mixed |= std::abs(v[i] - at.v[i]) > 0.5;
+      for (std::size_t i = 0; i < v.size() && i < at.want.size(); ++i)
+        at.differs |= at.want[i] && std::abs(v[i] - *at.want[i]) > 0.5;
       ++at.count;
     }
+    bool anyRegistered = false;
     for (const auto& [key, at] : types) {
       const bool roof = key.first == 1;
-      t.rows.push_back({key.second, roof ? "屋根" : "床", std::to_string(at.count), number(at.v[0], 0),
-                        roof ? number(at.v[1], 1) + " 寸" : "", roof ? number(at.v[2], 0) : "", roof ? number(at.v[3], 0) : "",
-                        at.mixed ? "値の違う物が混ざっています（1 つ目の値）" : ""});
+      anyRegistered |= at.registered;
+      // A registered type shows its registered values; otherwise those of its first object.
+      auto value = [&](std::size_t i, int digits) -> std::string {
+        if (i < at.want.size() && at.want[i]) return number(*at.want[i], digits);
+        return i < at.v.size() ? number(at.v[i], digits) : std::string();
+      };
+      std::string note;
+      if (at.registered) note = at.count == 0 ? "登録だけ（まだ使っていない）" : at.differs ? "登録済み・登録した値と違う物があります" : "登録済み";
+      else if (at.mixed) note = "値の違う物が混ざっています（1 つ目の値）";
+      const std::string pitch = roof ? value(1, 1) : "";
+      t.rows.push_back({key.second, roof ? "屋根" : "床", std::to_string(at.count), value(0, 0),
+                        pitch.empty() ? "" : pitch + " 寸", roof ? value(2, 0) : "", roof ? value(3, 0) : "", note});
     }
     t.notes = {"床（スラブ）・屋根に付けた種類名ごとです。寸法は mm。同じ種類名の物は「同じ種類の…にする」でそろえられます。"};
+    if (anyRegistered) t.notes.push_back("登録した種類は、その種類名を付けた床・屋根がその値になります（docs/149）。");
     if (unnamed > 0) t.notes.push_back("種類名の無い床・屋根が " + std::to_string(unnamed) + " 個あります（この表には入っていません）。");
   } else if (which == 3) {
     const RoomSchedule s = roomSchedule(document);

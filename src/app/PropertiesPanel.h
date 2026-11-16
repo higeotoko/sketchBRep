@@ -59,6 +59,7 @@ class PropertiesPanel : public QWidget {
   // A slab's / roof's type name typed in, and the others of its name made like it (docs/134).
   void typeNameEdited(const doc::ObjectId& id, const QString& name);
   void typeMatched(const doc::ObjectId& id);
+  void typeRegistered(const doc::ObjectId& id);
   // A room's use / finish (key use, floor, wall, ceiling: `text`) or ceiling height (`value`, 0:
   // not given) typed in (docs/115).
   void roomFinishEdited(const doc::ObjectId& id, const QString& key, const QString& text, double value);

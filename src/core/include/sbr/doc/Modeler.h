@@ -591,6 +591,20 @@ class Modeler {
   };
   Result<int> changeElementType(const std::string& name, const ElementTypeChange& change);
   Result<int> matchElementType(const ObjectId& id);
+  // Registered types (docs/149): a name, its part ("floor" or "roof") and its values, kept with
+  // the model (saved, undone). Naming a slab / roof with a registered name gives it those values
+  // (setTypeName, same undo step); changing or matching a registered type changes the register too.
+  // defineElementType registers or changes one: every one of that name takes the values (one undo
+  // step; refused if objects of the other part have the name); registerElementType: from an
+  // object's own values under its name. Returns how many objects changed.
+  struct ElementTypeDefinition {
+    std::string name, part;
+    ElementTypeChange values;
+  };
+  std::vector<ElementTypeDefinition> elementTypes() const;
+  Result<int> defineElementType(const std::string& name, const std::string& part, const ElementTypeChange& values);
+  Result<int> registerElementType(const ObjectId& id);
+  Status removeElementType(const std::string& name);
   // A canopy over an opening (庇, docs/97 N-03, docs/147): a board out from the face the opening
   // was cut from, `depth` out, `thickness` thick, `extra` longer at each side than the opening, its
   // underside `above` over the opening's head. Attribute kind = canopy, host / opening, and
@@ -1109,6 +1123,8 @@ class Modeler {
   std::vector<ObjectId> topmost(const std::vector<ObjectId>& ids) const;
 
  private:
+  // Those of `ids` that are slabs take `change`'s thickness, roofs its values; no group of its own.
+  Status applyElementValues(const std::vector<ObjectId>& ids, const ElementTypeChange& change);
   // Push/pull with the starting face kept, on an open shape: a new solid
   // from that face (its own object, distance editable), the face taken out
   // of the open shape (no duplicate faces), nothing else changed or filled.

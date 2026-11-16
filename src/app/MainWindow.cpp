@@ -875,6 +875,14 @@ void MainWindow::buildUi() {
       refreshPanels();
     });
   });
+  connect(panel_, &PropertiesPanel::typeRegistered, this, [this](const doc::ObjectId& id) {
+    QTimer::singleShot(0, this, [this, id] {
+      const auto changed = modeler_.registerElementType(id);
+      if (!changed) reportError(tr("種類を登録できません: %1").arg(userMessage(QString::fromStdString(changed.error()))));
+      else setStatus(tr("種類を登録しました（同じ種類のほか %1 個も同じ値に。Ctrl+Z で戻せます）").arg(*changed));
+      refreshPanels();
+    });
+  });
   connect(panel_, &PropertiesPanel::typeMatched, this, [this](const doc::ObjectId& id) {
     QTimer::singleShot(0, this, [this, id] {
       const auto changed = modeler_.matchElementType(id);

@@ -5674,12 +5674,44 @@ Status Modeler::setOpeningFittings(const ObjectId& hostId, const std::vector<std
 
 namespace {
 constexpr const char* kTypeName = "type_name";
+
+nlohmann::json typeRegister(const Document& d) {
+  nlohmann::json j = nlohmann::json::parse(d.settings().elementTypes, nullptr, false);
+  return j.is_object() ? j : nlohmann::json::object();
+}
+const char* partOfKind(const std::string& kind) { return kind == "slab" ? "floor" : kind == "roof" ? "roof" : ""; }
+void putValues(nlohmann::json& entry, const Modeler::ElementTypeChange& c) {
+  if (c.thickness) entry["thickness"] = *c.thickness;
+  if (c.pitch) entry["pitch"] = *c.pitch;
+  if (c.eave) entry["eave"] = *c.eave;
+  if (c.gableEave) entry["gable_eave"] = *c.gableEave;
+}
+Modeler::ElementTypeChange valuesOf(const nlohmann::json& entry) {
+  Modeler::ElementTypeChange c;
+  if (entry.contains("thickness")) c.thickness = entry.at("thickness").get<double>();
+  if (entry.contains("pitch")) c.pitch = entry.at("pitch").get<double>();
+  if (entry.contains("eave")) c.eave = entry.at("eave").get<double>();
+  if (entry.contains("gable_eave")) c.gableEave = entry.at("gable_eave").get<double>();
+  return c;
+}
+std::string typeValuesError(const std::string& part, const Modeler::ElementTypeChange& c) {
+  if (part != "floor" && part != "roof") return "A type is for a floor or a roof";
+  if (part == "floor" && (c.pitch || c.eave || c.gableEave)) return "A floor type has a thickness only";
+  if (!c.thickness && !c.pitch && !c.eave && !c.gableEave) return "Give the type a value (thickness, pitch, eaves)";
+  auto in = [](const std::optional<double>& v, double lo, double hi) { return !v || (std::isfinite(*v) && *v >= lo && *v <= hi); };
+  if (!in(c.thickness, 10.0, 2000.0)) return "A type's thickness is 10 to 2000";
+  if (c.pitch && !(std::isfinite(*c.pitch) && *c.pitch > 0.0 && *c.pitch <= 30.0)) return "A roof's pitch is above 0 and at most 30";
+  if (!in(c.eave, 0.0, 3000.0) || !in(c.gableEave, 0.0, 3000.0)) return "A roof's overhangs are 0 to 3000";
+  return {};
+}
 }  // namespace
 
 Status Modeler::setTypeName(const std::vector<ObjectId>& ids, const std::string& name) {
   if (ids.empty()) return Status::failure("Nothing selected");
   if (name.size() > 40 || name.find_first_of("\r\n") != std::string::npos)
     return Status::failure("A type name is one line of at most 40 characters");
+  const nlohmann::json reg = typeRegister(document_);
+  const nlohmann::json* registered = !name.empty() && reg.contains(name) ? &reg.at(name) : nullptr;
   ChangeSet changes(document_);
   for (const ObjectId& id : ids) {
     const Object* o = document_.find(id);
@@ -5687,12 +5719,124 @@ Status Modeler::setTypeName(const std::vector<ObjectId>& ids, const std::string&
     const std::string kind = attributeOf(*o, "kind");
     if (kind != "slab" && kind != "roof") return Status::failure("Type names are for slabs and roofs ('" + o->name + "' is neither)");
     if (o->locked) return Status::failure("'" + o->name + "' is locked");
+    if (registered && registered->value("part", "") != partOfKind(kind))
+      return Status::failure("'" + name + "' is registered as a " + registered->value("part", "") + " type ('" + o->name + "' is not one)");
     Object named = *o;
     if (name.empty()) named.attributes.erase(kTypeName);
     else named.attributes[kTypeName] = name;
     changes.modify(named);
   }
+  if (!registered) {
+    history_.execute(changes.build("Set Type Name"));
+    return Status::success();
+  }
+  // A registered type: named and given its values, in one step.
+  history_.beginGroup("Set Type Name");
   history_.execute(changes.build("Set Type Name"));
+  if (const Status s = applyElementValues(ids, valuesOf(*registered)); !s) {
+    history_.abortGroup();
+    return s;
+  }
+  history_.endGroup();
+  return Status::success();
+}
+
+Status Modeler::applyElementValues(const std::vector<ObjectId>& ids, const ElementTypeChange& change) {
+  for (const ObjectId& id : ids) {
+    const Object* o = document_.find(id);
+    if (!o) return Status::failure("Object not found");
+    const std::string kind = attributeOf(*o, "kind");
+    if (kind == "slab") {
+      if (!change.thickness) continue;
+      MemberChange c;
+      c.thickness = *change.thickness;
+      c.keep = "top";
+      if (const auto done = changeMember(id, c); !done) return Status::failure(done.error());
+    } else if (kind == "roof") {
+      const auto info = roofInfo(id);
+      if (!info) return Status::failure(info.error());
+      geom::RoofSpec spec = info->spec;
+      if (change.thickness) spec.thickness = *change.thickness;
+      if (change.pitch) spec.pitch = *change.pitch;
+      if (change.eave) spec.eave = *change.eave;
+      if (change.gableEave) spec.gableEave = *change.gableEave;
+      if (const Status s = changeRoof(id, spec); !s) return s;
+    }
+  }
+  return Status::success();
+}
+
+std::vector<Modeler::ElementTypeDefinition> Modeler::elementTypes() const {
+  std::vector<ElementTypeDefinition> out;
+  const nlohmann::json reg = typeRegister(document_);  // kept: items() refers into it
+  for (const auto& [name, entry] : reg.items())
+    if (entry.is_object()) out.push_back({name, entry.value("part", ""), valuesOf(entry)});
+  return out;
+}
+
+Result<int> Modeler::defineElementType(const std::string& name, const std::string& part, const ElementTypeChange& values) {
+  using R = Result<int>;
+  if (name.empty() || name.size() > 40 || name.find_first_of("\r\n") != std::string::npos)
+    return R::failure("A type name is one line of at most 40 characters");
+  if (const std::string error = typeValuesError(part, values); !error.empty()) return R::failure(error);
+  std::vector<ObjectId> named;
+  for (const Object& o : document_.objects()) {
+    if (attributeOf(o, kTypeName) != name) continue;
+    const std::string kind = attributeOf(o, "kind");
+    if (kind != "slab" && kind != "roof") continue;
+    if (partOfKind(kind) != part) return R::failure("'" + name + "' is used by " + (part == "floor" ? "roofs" : "floors"));
+    if (o.locked) return R::failure("'" + o.name + "' is locked");
+    named.push_back(o.id);
+  }
+  nlohmann::json reg = typeRegister(document_);
+  nlohmann::json entry = reg.contains(name) && reg.at(name).value("part", "") == part ? reg.at(name) : nlohmann::json::object();
+  entry["part"] = part;
+  putValues(entry, values);
+  reg[name] = entry;
+  history_.beginGroup("Define Type");
+  editSettings(document_, history_, "Define Type", [&](PersistentSettings& s) { s.elementTypes = reg.dump(); });
+  if (const Status s = applyElementValues(named, values); !s) {
+    history_.abortGroup();
+    return R::failure(s.message());
+  }
+  history_.endGroup();
+  return static_cast<int>(named.size());
+}
+
+Result<int> Modeler::registerElementType(const ObjectId& id) {
+  using R = Result<int>;
+  const Object* o = document_.find(id);
+  if (!o) return R::failure("Object not found");
+  const std::string name = attributeOf(*o, kTypeName);
+  if (name.empty()) return R::failure("It has no type name: give it one first");
+  const std::string kind = attributeOf(*o, "kind");
+  ElementTypeChange values;
+  if (kind == "roof") {
+    const auto info = roofInfo(id);
+    if (!info) return R::failure(info.error());
+    values.thickness = info->spec.thickness;
+    values.pitch = info->spec.pitch;
+    values.eave = info->spec.eave;
+    values.gableEave = info->spec.gableEave;
+  } else if (kind == "slab") {
+    const auto info = memberInfo(id);
+    if (!info) return R::failure(info.error());
+    for (const auto& field : info->fields)
+      if (field.key == "thickness") values.thickness = field.value;
+    if (!values.thickness) return R::failure("Its thickness cannot be read");
+  } else {
+    return R::failure("Types are for slabs and roofs");
+  }
+  const auto changed = defineElementType(name, partOfKind(kind), values);
+  if (!changed) return changed;
+  return *changed - 1;  // the others
+}
+
+Status Modeler::removeElementType(const std::string& name) {
+  nlohmann::json reg = typeRegister(document_);
+  if (!reg.contains(name)) return Status::failure("No type '" + name + "' is registered");
+  reg.erase(name);
+  editSettings(document_, history_, "Remove Type", [&](PersistentSettings& s) { s.elementTypes = reg.dump(); });
   return Status::success();
 }
 
@@ -5708,33 +5852,22 @@ Result<int> Modeler::changeElementType(const std::string& name, const ElementTyp
   }
   if (slabs.empty() && roofs.empty()) return R::failure("Nothing has the type '" + name + "'");
   history_.beginGroup("Change Type");
-  auto fail = [&](const std::string& why) {
+  std::vector<ObjectId> all = slabs;
+  all.insert(all.end(), roofs.begin(), roofs.end());
+  if (const Status s = applyElementValues(all, change); !s) {
     history_.abortGroup();
-    return R::failure(why);
-  };
-  int count = 0;
-  for (const ObjectId& id : slabs) {
-    if (change.thickness) {
-      MemberChange c;
-      c.thickness = *change.thickness;
-      c.keep = "top";
-      if (const auto done = changeMember(id, c); !done) return fail(done.error());
-    }
-    ++count;
+    return R::failure(s.message());
   }
-  for (const ObjectId& id : roofs) {
-    const auto info = roofInfo(id);
-    if (!info) return fail(info.error());
-    geom::RoofSpec spec = info->spec;
-    if (change.thickness) spec.thickness = *change.thickness;
-    if (change.pitch) spec.pitch = *change.pitch;
-    if (change.eave) spec.eave = *change.eave;
-    if (change.gableEave) spec.gableEave = *change.gableEave;
-    if (const Status s = changeRoof(id, spec); !s) return fail(s.message());
-    ++count;
+  // A registered type (docs/149) changes with them.
+  nlohmann::json reg = typeRegister(document_);
+  if (reg.contains(name)) {
+    ElementTypeChange kept = change;
+    if (reg.at(name).value("part", "") == "floor") kept.pitch = kept.eave = kept.gableEave = std::nullopt;
+    putValues(reg[name], kept);
+    editSettings(document_, history_, "Change Type", [&](PersistentSettings& s) { s.elementTypes = reg.dump(); });
   }
   history_.endGroup();
-  return count;
+  return static_cast<int>(all.size());
 }
 
 Result<int> Modeler::matchElementType(const ObjectId& id) {

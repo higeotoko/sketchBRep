@@ -22,6 +22,7 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QCompleter>
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -116,11 +117,36 @@ void addTypeRow(PropertiesPanel* panel, QFormLayout* form, const doc::Modeler& m
   edit->setMaxLength(40);
   edit->setEnabled(!o.locked);
   const doc::ObjectId id = o.id;
+  // Registered types of this part (docs/149) are offered as the name is typed.
+  const std::string kind = o.attributes.count("kind") ? o.attributes.at("kind") : std::string();
+  const std::string part = kind == "slab" ? "floor" : "roof";
+  QStringList registered;
+  std::optional<doc::Modeler::ElementTypeDefinition> mine;
+  for (const auto& t : modeler.elementTypes()) {
+    if (t.part != part) continue;
+    registered << QString::fromStdString(t.name);
+    if (QString::fromStdString(t.name) == name) mine = t;
+  }
+  if (!registered.isEmpty()) {
+    auto* completer = new QCompleter(registered, edit);
+    completer->setCaseSensitivity(Qt::CaseInsensitive);
+    completer->setCompletionMode(QCompleter::UnfilteredPopupCompletion);
+    edit->setCompleter(completer);
+    edit->setToolTip(edit->toolTip() + QObject::tr("。登録した種類（%1）の名前を付けると、その値になります").arg(registered.join(QStringLiteral("・"))));
+  }
   QObject::connect(edit, &QLineEdit::editingFinished, panel, [panel, id, edit, name] {
     if (edit->text().trimmed() != name) emit panel->typeNameEdited(id, edit->text().trimmed());
   });
   form->addRow(QObject::tr("種類名"), edit);
   if (name.isEmpty()) return;
+  auto* reg = new QToolButton;
+  reg->setObjectName(QStringLiteral("typeRegister"));
+  reg->setText(mine ? QObject::tr("種類 %1 の登録を、これの値にする").arg(name) : QObject::tr("種類 %1 を、これの値で登録する").arg(name));
+  reg->setToolTip(QObject::tr("登録した種類は図面といっしょに保存されます。あとでこの種類名を付けた物は、登録した%1になります。"
+                              "同じ種類名の物も、これと同じになります。Ctrl+Z 1 回で戻せます").arg(sizes));
+  reg->setEnabled(!o.locked);
+  QObject::connect(reg, &QToolButton::clicked, panel, [panel, id] { emit panel->typeRegistered(id); });
+  form->addRow(reg);
   int others = 0;
   for (const doc::Object& other : modeler.document().objects()) {
     const auto it = other.attributes.find("type_name");

@@ -1146,6 +1146,7 @@ std::string serializeDocument(const Document& document) {
       {"levels", levelsJson},
       {"constructionOverrides", s.constructionOverrides},
       {"wallCalculation", s.wallCalculation},
+      {"elementTypes", s.elementTypes},
       {"sun",
        {{"month", s.sun.month},
         {"day", s.sun.day},
@@ -1221,6 +1222,11 @@ Status deserializeDocument(const std::string& text, Document& document,
     if (root.contains("wallCalculation")) {
       const auto value = root.at("wallCalculation").get<std::string>();
       s.wallCalculation = value == "{}" ? value : construction::normalizeWallInputs(value);
+    }
+    if (root.contains("elementTypes")) {
+      const auto value = root.at("elementTypes").get<std::string>();
+      if (!json::parse(value, nullptr, false).is_object()) throw std::runtime_error("elementTypes: not an object");
+      s.elementTypes = value;
     }
     if (root.contains("constructionOverrides")) {
       s.constructionOverrides = root.at("constructionOverrides").get<std::map<std::string, std::string>>();
