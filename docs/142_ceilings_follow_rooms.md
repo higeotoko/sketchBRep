@@ -40,9 +40,16 @@ docs/123 では「自動ではついてこない（押し直す）」と決め�
 |---|---|
 | 計算テスト済み | コア全 713 件中 706 件成功・7 件スキップ（ローカル）。新規 1 件（`Schedules.ACeilingAsMadeFollowsItsRoom`）：天井 2400 の天井板 → 間仕切りを 500 東へ → 取り消しの数は 1 つだけ増える、板は 1 枚、面積が室の内法の面積と同じ（2.5 m² 以上広がる）／Ctrl+Z 1 回で壁も板も元の面積／天井高 2550 → 板の下の面が 2550／板を手で 150 下げる → 壁を動かしても板は同じ物・同じ面積・2400 のまま。`Schedules.ACeilingBoardIsMadeAtTheCeilingHeight` を今の動き（天井高を変えると板がついてくる）に合わせて直した |
 | GUI 自動確認済み | 画面テスト 244 件中 236 件成功・7 件スキップ・1 件失敗（`lineToolCrossingLinesMakeFace`、前からの手元の 1 倍表示だけで落ちる物。CI では成功している） |
-| CI | __CI__ |
+| CI | run 43806448666（push、`fa29388`）：Linux 726 件成功、Windows 722 件＋3 件成功・GUI 237 件成功（7 件スキップ） |
 | Windows 実機確認 | まだ（チェック表 12-25） |
 
 ## 配布の記録
 
-__DELIVERY__
+| 項目 | 値 |
+|---|---|
+| コード | `fa29388`（Opus 5.5 で作業） |
+| CI | run 43806448666（push）：Linux・Windows とも成功 |
+| ZIP | `SketchBRep-windows-x64-fa29388-local.zip`（Codex のチャットフォルダの `outputs\`） |
+| サイズ | 72,348,682 bytes |
+| SHA256 | `9b9b0990c6bc34376f5c006855067ffd001b14e249d82acccb149deb6028e57b` |
+| ZIP の検証 | `verify_portable_pads.py`・`verify_portable_mat.py` とも成功（docs/validation/2026-11-16-portable-fa29388*.json） |
