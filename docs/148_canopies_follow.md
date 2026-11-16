@@ -30,9 +30,16 @@
 |---|---|
 | 計算テスト済み | コア全 715 件中 708 件成功・7 件スキップ（ローカル）。`Schedules.ACanopyOverADoorAndTheBuildingArea` に追加：扉を壁に沿って 600 動かす → 取り消し 1 回で、庇の真ん中が扉の真ん中・外の面から出る（X 8100）／取り消すと扉と庇がいっしょに戻る／壁を 300 外へ → 庇の X が 8400 から |
 | GUI 自動確認済み | 開口まわりの画面テスト（ローカル）が成功 |
-| CI | __CI__ |
+| CI | run 43817946327（push、`83761cb`）：Linux 728 件成功、Windows 724 件＋3 件成功・GUI 237 件成功（7 件スキップ） |
 | Windows 実機確認 | まだ（チェック表 12-31） |
 
 ## 配布の記録
 
-__DELIVERY__
+| 項目 | 値 |
+|---|---|
+| コード | `83761cb`（庇がついてくる docs/148。Opus 5.5 で作業） |
+| CI | run 43817946327（push）：Linux・Windows とも成功 |
+| ZIP | `SketchBRep-windows-x64-83761cb-local.zip`（Codex のチャットフォルダの `outputs\`） |
+| サイズ | 72,414,506 bytes |
+| SHA256 | `19c3acccb63030055bb325dd92cbf4ceb4fc44619c31164de8b8f31490af9bcc` |
+| ZIP の検証 | `verify_portable_pads.py`・`verify_portable_mat.py` とも成功（docs/validation/2026-11-16-portable-83761cb*.json） |
