@@ -6199,6 +6199,27 @@ void GuiPhase1::wallToolAndArchitectureMenus() {
   m.undo();
   geom::exactBounds(m.document().worldShape(*m.document().find(*slab))).Get(x0, y0, z0, x1, y1, z1);
   QVERIFY(std::abs(z0 + 700) < 1e-6);
+  // docs/159: the menu mitres the corners of all walls (nothing picked), and takes the mitres off again.
+  {
+    const auto room = m.createWalls({gp_Pnt(20000, 0, 0), gp_Pnt(26000, 0, 0), gp_Pnt(26000, 4000, 0), gp_Pnt(20000, 4000, 0), gp_Pnt(20000, 0, 0)}, 200, 3000);
+    QVERIFY(room && room->size() == 4);
+    const double square = geom::volume(m.document().find(room->front())->shape);
+    f.window.setSelection({});
+    auto* on = f.window.findChild<QAction*>(QStringLiteral("mitreWallCornersAction"));
+    auto* off = f.window.findChild<QAction*>(QStringLiteral("squareWallCornersAction"));
+    QVERIFY(on && off);
+    const std::size_t steps = m.history().undoCount();
+    const QString errorBefore = f.window.lastError();  // (an error shown on purpose earlier in this test)
+    on->trigger();
+    QCOMPARE(f.window.lastError(), errorBefore);
+    QCOMPARE(m.history().undoCount(), steps + 1);
+    QVERIFY2(f.window.statusText().contains(QStringLiteral("留め")), qPrintable(f.window.statusText()));
+    const double mitred = geom::volume(m.document().find(room->front())->shape);
+    QVERIFY2(std::abs(mitred - (6200.0 + 5800.0) / 2 * 200 * 3000) < 1.0, qPrintable(QString::number(mitred)));
+    off->trigger();
+    QVERIFY(std::abs(geom::volume(m.document().find(room->front())->shape) - square) < 1.0);
+    QCOMPARE(m.history().undoCount(), steps + 2);
+  }
 }
 
 void GuiPhase1::slabToolAndOpeningTool() {

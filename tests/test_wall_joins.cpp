@@ -3,6 +3,7 @@
 // stay where they are; a wall that cannot follow stays as it was and the move still happens.
 #include <cmath>
 #include <gtest/gtest.h>
+#include <TopExp_Explorer.hxx>
 #include <nlohmann/json.hpp>
 
 #include "sbr/api/CommandApi.h"
@@ -349,11 +350,175 @@ TEST(SkewWallJoins, ACornerThatIsNotARightAngleStaysClosed) {
   EXPECT_NEAR(area(), 46.0, 1e-6);
   // The diagonal 500 * sqrt(2) outwards: it gets shorter between the walls it joins,
   // which get longer; the corner cut is 1000 x 1000.
+  const double diagonalBefore = sbr::geom::volume(modeler.document().find(diagonal)->shape);
   ok("move", {{"ids", {diagonal}}, {"vector", {500, -500, 0}}});
   EXPECT_NEAR(area(), 48.0 - 0.5, 1e-6);
+  // The wall itself is half as long (docs/159: it used to keep its length and stick out through both corners).
+  EXPECT_NEAR(sbr::geom::volume(modeler.document().find(diagonal)->shape), diagonalBefore / 2, 1.0);
   ASSERT_TRUE(modeler.undo());
   EXPECT_NEAR(area(), 46.0, 1e-6);
   // Inwards as well.
   ok("move", {{"ids", {diagonal}}, {"vector", {-500, 500, 0}}});
   EXPECT_NEAR(area(), 48.0 - 4.5, 1e-6);
+}
+
+// docs/159: mitred corners. The walls stay walls as drawn; their solids end on the corner's diagonal.
+namespace {
+int faces(const sbr::doc::Modeler& m, const std::string& id) {
+  int n = 0;
+  for (TopExp_Explorer e(m.document().find(id)->shape, TopAbs_FACE); e.More(); e.Next()) ++n;
+  return n;
+}
+}  // namespace
+
+TEST_F(WallJoins, MitredCornersMeetOnTheDiagonal) {
+  const Box s0 = box(south), p0 = box(partition);
+  const double total = volume(south) + volume(east) + volume(north) + volume(west);
+  const double squareSouth = volume(south);
+  const auto steps = modeler.history().undoCount();
+  // Every wall marked: the four corners (the partition's ends are T joints: as they are).
+  EXPECT_EQ(ok("mitre_wall_corners")["corners"], 4);
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  // Each wall a trapezoid in plan: outside face 200 longer than the inside face.
+  EXPECT_NEAR(volume(south), (6200.0 + 5800.0) / 2 * 200 * 3000, 1.0);
+  EXPECT_NEAR(volume(north), (6200.0 + 5800.0) / 2 * 200 * 3000, 1.0);
+  EXPECT_NEAR(volume(east), (4200.0 + 3800.0) / 2 * 200 * 3000, 1.0);
+  EXPECT_NEAR(volume(west), (4200.0 + 3800.0) / 2 * 200 * 3000, 1.0);
+  EXPECT_NEAR(volume(south) + volume(east) + volume(north) + volume(west), total, 1.0);
+  for (const std::string& id : {south, east, north, west}) EXPECT_EQ(faces(modeler, id), 6) << id;  // no seams left
+  EXPECT_NEAR(box(south).x0, -100, 1e-6);
+  EXPECT_NEAR(box(south).x1, 6100, 1e-6);
+  EXPECT_NEAR(box(east).y0, -100, 1e-6);
+  EXPECT_NEAR(box(east).y1, 4100, 1e-6);
+  EXPECT_NEAR(box(partition).y0, p0.y0, 1e-6);
+  EXPECT_NEAR(volume(partition), 100.0 * 3800 * 3000, 1.0);
+  // Still walls: the room is found, an opening can be cut, the joins follow a move (one undo step),
+  // and the corners are mitred again where the walls are now.
+  json room = ok("room_at", {{"at", {1500, 2000}}});
+  EXPECT_TRUE(room.value("closed", false));
+  ok("place_openings", {{"host", south}, {"face_normal", {0, -1, 0}}, {"count", 1}, {"width", 900}, {"height", 2000}, {"sill", 0}});
+  EXPECT_EQ(ok("list_openings", {{"ids", {south}}})["hosts"][0]["openings"].size(), 1u);
+  EXPECT_NEAR(volume(south), (6200.0 + 5800.0) / 2 * 200 * 3000 - 900.0 * 2000 * 200, 1.0);
+  const auto before = modeler.history().undoCount();
+  ok("move", {{"ids", {south}}, {"vector", {0, -455, 0}}});
+  EXPECT_EQ(modeler.history().undoCount(), before + 1);
+  EXPECT_NEAR(box(south).y0, s0.y0 - 455, 1e-6);
+  EXPECT_NEAR(volume(east), (4655.0 + 4255.0) / 2 * 200 * 3000, 1.0);
+  EXPECT_NEAR(volume(west), (4655.0 + 4255.0) / 2 * 200 * 3000, 1.0);
+  EXPECT_NEAR(box(east).y0, -555, 1e-6);
+  EXPECT_EQ(faces(modeler, east), 6);
+  ASSERT_TRUE(modeler.undo());
+  EXPECT_NEAR(volume(east), (4200.0 + 3800.0) / 2 * 200 * 3000, 1.0);
+  // A wall of the corner erased: the other wall's end is square again there.
+  ok("delete", {{"ids", {east}}});
+  EXPECT_NEAR(box(north).x1, 5900, 1e-6);  // as drawn: it started at the east wall's inner face
+  EXPECT_NEAR(volume(north), (6000.0 + 5800.0) / 2 * 200 * 3000, 1.0);  // mitred at the west end only
+  ASSERT_TRUE(modeler.undo());
+  EXPECT_NEAR(volume(north), (6200.0 + 5800.0) / 2 * 200 * 3000, 1.0);
+  // Taken off again: square ends as drawn (the opening stays).
+  EXPECT_EQ(ok("mitre_wall_corners", {{"on", false}})["corners"], 0);
+  EXPECT_NEAR(volume(south), squareSouth - 900.0 * 2000 * 200, 1.0);
+  EXPECT_FALSE(modeler.document().find(south)->attributes.count("corner_mitre_made"));
+  EXPECT_EQ(faces(modeler, east), 6);
+  // Only one wall of a corner marked: nothing is mitred.
+  EXPECT_EQ(ok("mitre_wall_corners", {{"walls", {east}}})["corners"], 0);
+  EXPECT_NEAR(volume(east) + volume(north) + volume(west) + volume(south), total - 900.0 * 2000 * 200, 1.0);
+  // Refused: not a wall.
+  const std::string block = ok("create_box", {{"origin", {9000, 0, 0}}, {"width", 500}, {"depth", 500}, {"height", 500}})["id"];
+  EXPECT_FALSE(call("mitre_wall_corners", {{"walls", {block}}}).value("ok", true));
+}
+
+// At corners that are not right angles the mitred walls leave no gap and do not overlap: together
+// they are the outline's band (perimeter x thickness), exactly.
+TEST(SkewWallJoins, MitredCornersCloseSlantedCorners) {
+  sbr::doc::Modeler modeler;
+  CommandApi api{modeler};
+  auto ok = [&](const std::string& command, json args) {
+    json r = json::parse(api.execute(json{{"command", command}, {"args", args}}.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  const json ids = ok("create_wall", {{"points", {{0, 0}, {6000, 0}, {8000, 2000}, {8000, 6000}, {0, 6000}, {0, 0}}},
+                                      {"thickness", 200}, {"height", 3000}})["ids"];
+  ASSERT_EQ(ids.size(), 5u);
+  EXPECT_EQ(ok("mitre_wall_corners", json::object())["corners"], 5);
+  double total = 0.0;
+  for (const json& id : ids) {
+    total += sbr::geom::volume(modeler.document().find(id)->shape);
+    EXPECT_EQ(faces(modeler, id), 6) << id;
+  }
+  const double perimeter = 6000 + 2000 * std::sqrt(2.0) + 4000 + 8000 + 6000;
+  EXPECT_NEAR(total, perimeter * 200 * 3000, 10.0);
+  // The slanted wall moved out: mitred again, still the band of the new outline
+  // (the corner cut is 1000 x 1000: perimeter 7000 + 1000 sqrt 2 + 5000 + 8000 + 6000).
+  ok("move", {{"ids", {ids[1]}}, {"vector", {500, -500, 0}}});
+  total = 0.0;
+  for (const json& id : ids) total += sbr::geom::volume(modeler.document().find(id)->shape);
+  EXPECT_NEAR(total, (7000 + 1000 * std::sqrt(2.0) + 5000 + 8000 + 6000) * 200 * 3000, 10.0);
+  const json room = ok("room_at", {{"at", {3000, 3000}}});
+  EXPECT_TRUE(room.value("closed", false));
+  EXPECT_NEAR(room["area_centre"].get<double>(), 48.0 - 0.5, 1e-6);
+}
+
+// docs/159: mitred walls under a roof, with a build-up, saved and read again.
+TEST(MitredWalls, WithARoofABuildUpAndSavedAgain) {
+  sbr::doc::Modeler modeler;
+  CommandApi api{modeler};
+  auto ok = [&](const std::string& command, json args) {
+    json r = json::parse(api.execute(json{{"command", command}, {"args", args}}.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  auto total = [&](const json& ids) {
+    double v = 0.0;
+    for (const json& id : ids) v += sbr::geom::volume(modeler.document().find(id)->shape);
+    return v;
+  };
+  // Clockwise: the siding outside. A gable roof over it, the walls fitted to it.
+  const json ids = ok("create_wall", {{"points", {{0, 0}, {0, 6000}, {8000, 6000}, {8000, 0}, {0, 0}}},
+                                      {"type", "exterior_siding"}, {"height", 3000}})["ids"];
+  const std::string roof = ok("create_roof", {{"outline", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}}}, {"kind", "gable"}, {"height", 3000}})["id"];
+  ok("fit_walls_to_roof", {{"roof", roof}});
+  const double fitted = total(ids);
+  // Mitred: the same material in all (each corner shared out along its diagonal), one solid each.
+  EXPECT_EQ(ok("mitre_wall_corners", json::object())["corners"], 4);
+  EXPECT_NEAR(total(ids), fitted, 1e-6 * fitted);
+  for (const json& id : ids) {
+    int solids = 0;
+    for (TopExp_Explorer e(modeler.document().find(id)->shape, TopAbs_SOLID); e.More(); e.Next()) ++solids;
+    EXPECT_EQ(solids, 1) << id;
+  }
+  // A steeper roof: the walls are fitted and mitred again (taller corner pieces), still one solid's worth.
+  auto spec = modeler.roofInfo(roof)->spec;
+  spec.pitch = 6;
+  ASSERT_TRUE(modeler.changeRoof(roof, spec));
+  const double steeper = total(ids);
+  EXPECT_GT(steeper, fitted);
+  ok("mitre_wall_corners", {{"on", false}});
+  EXPECT_NEAR(total(ids), steeper, 1e-6 * steeper);  // square again: the same material
+  ok("mitre_wall_corners", json::object());
+  // Another build-up (thicker): mitred again in the same undo step; the layer lines as before (4).
+  const auto steps = modeler.history().undoCount();
+  ok("set_wall_type", {{"ids", ids}, {"type", "exterior_lath_mortar"}});
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  const double mortar = total(ids);
+  ok("mitre_wall_corners", {{"on", false}});
+  EXPECT_NEAR(total(ids), mortar, 1e-6 * mortar);
+  ASSERT_TRUE(modeler.undo());
+  // Saved and read again: the same solids, still walls (a move is followed and mitred again).
+  sbr::doc::Modeler again;
+  {
+    sbr::doc::Document read;
+    ASSERT_TRUE(sbr::doc::deserializeDocument(sbr::doc::serializeDocument(modeler.document()), read));
+    double v = 0.0;
+    for (const json& id : ids) v += sbr::geom::volume(read.worldShape(*read.find(id)));
+    EXPECT_NEAR(v, mortar, 1e-6 * mortar);
+  }
+  const std::string room = ok("create_room", {{"at", {4000, 3000}}, {"name", "A"}})["id"];
+  EXPECT_FALSE(room.empty());
+  const json moved = ok("move", {{"ids", {ids[0]}}, {"vector", {-500, 0, 0}}});
+  EXPECT_EQ(moved["joined_walls"]["followed"], 2);
+  const double wider = total(ids);
+  ok("mitre_wall_corners", {{"on", false}});
+  EXPECT_NEAR(total(ids), wider, 1e-6 * wider);
 }

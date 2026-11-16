@@ -1477,6 +1477,32 @@ void MainWindow::buildMenus() {
       setStatus(on ? tr("壁を動かすと、つながっている壁も付いてきます") : tr("壁を動かしても、つながっている壁はそのままにします"));
     });
   }
+  {
+    // docs/159: mitred corners, for the walls picked or for all of them.
+    auto mitre = [this](bool on) {
+      std::vector<doc::ObjectId> walls;
+      for (const doc::ObjectId& id : selection_)
+        if (const doc::Object* o = modeler_.document().find(id); o && o->attributes.count("kind") && o->attributes.at("kind") == "wall")
+          walls.push_back(id);
+      const auto corners = modeler_.mitreWallCorners(walls, on);
+      if (!corners) {
+        reportError(tr("壁の角を変えられません: %1").arg(userMessage(QString::fromStdString(corners.error()))));
+        return;
+      }
+      const QString which = walls.empty() ? tr("全部の壁") : tr("選んだ壁 %1 枚").arg(walls.size());
+      setStatus(on ? tr("%1の角を留めにしました（留めの角は全部で %2 か所。両方の壁を留めにした角だけ。T 字はそのまま。Ctrl+Z で戻せます）").arg(which).arg(*corners)
+                   : tr("%1の角の留めを外しました（Ctrl+Z で戻せます）").arg(which));
+      refreshPanels();
+    };
+    auto* on = tools->addAction(tr("壁の角を留めにする（選んだ壁、無ければ全部）"));
+    on->setObjectName(QStringLiteral("mitreWallCornersAction"));
+    on->setToolTip(tr("2 枚の壁が合う角で、両方の壁の端を角の対角線で切ります。壁の面に継ぎ目の線が出ず、"
+                      "斜めの角のすき間・重なりも無くなります。壁は壁のまま（長さ・開口・室はそのまま）で、動かすと留めも作り直します"));
+    connect(on, &QAction::triggered, this, [mitre] { mitre(true); });
+    auto* off = tools->addAction(tr("壁の角の留めを外す（選んだ壁、無ければ全部）"));
+    off->setObjectName(QStringLiteral("squareWallCornersAction"));
+    connect(off, &QAction::triggered, this, [mitre] { mitre(false); });
+  }
   QMenu* timber = tools->addMenu(tr("木造"));
   timber->setObjectName(QStringLiteral("timberToolsMenu"));
   timber->addAction(tr("木造架構を作成・作り直し..."), this, &MainWindow::showTimberFrameDialog)->setObjectName(QStringLiteral("timberFrameAction"));

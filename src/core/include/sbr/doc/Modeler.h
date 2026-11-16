@@ -459,6 +459,13 @@ class Modeler {
   // moves they are fitted again. Walls that cannot be fitted (reshaped by hand, wholly above
   // the roof) are refused by name and nothing changes. One undo step.
   Status fitWallsToRoof(const std::vector<ObjectId>& walls, const ObjectId& roof);
+  // Mitred corners (docs/159): the walls (all when empty) are marked; where exactly two marked
+  // walls meet at a corner, both end on the line through the inner and the outer corner point
+  // instead of one butting against the other (no seam on the faces, no gap or overlap at corners
+  // that are not right angles). The walls stay walls as drawn (their lengths, joins, openings,
+  // rooms as before) and are mitred again when they or their neighbours change. `on` false: square
+  // again. One undo step. Returns the corners mitred now among all marked walls.
+  Result<int> mitreWallCorners(const std::vector<ObjectId>& walls, bool on = true);
   // Flat tops again, at the height the walls had before.
   Status releaseWallsFromRoof(const std::vector<ObjectId>& walls);
   // Walls made by the wall tool whose line lies within the roof's outline (or on it) and that

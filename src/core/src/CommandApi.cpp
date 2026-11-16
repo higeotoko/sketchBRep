@@ -2465,6 +2465,18 @@ const std::vector<CommandDef>& commands() {
          must(m.closeFloorForStair(text(a, "stair")));
          return json{{"stair", text(a, "stair")}};
        }},
+      {"mitre_wall_corners",
+       "Mitre the corners of walls (docs/159): 'walls' (ids, default all) are marked; where exactly two marked "
+       "walls meet at a corner both end on the diagonal of the corner (inner to outer corner point) instead of "
+       "one butting against the other: no seam on the faces, no gap / overlap at corners that are not right "
+       "angles. The walls stay walls (lengths, joins, openings, rooms as before) and are mitred again when they "
+       "or their neighbours change. 'on': false takes the mark off (square ends again). T-junctions and corners "
+       "of three walls stay as they are. One undo step. Returns 'corners': those mitred now.",
+       SCHEMA({"type": "object", "properties": {"walls": {"type": "array", "items": {"type": "string"}}, "on": {"type": "boolean"}}}),
+       [](doc::Modeler& m, const json& a) {
+         const std::vector<doc::ObjectId> walls = a.contains("walls") ? ids(a, "walls") : std::vector<doc::ObjectId>{};
+         return json{{"corners", must(m.mitreWallCorners(walls, a.value("on", true)))}};
+       }},
       {"fit_walls_to_roof",
        "Walls made by create_wall stand up to the underside of 'roof' (create_roof): made tall enough, then cut "
        "to it (gable-end walls get their triangle). 'walls': ids, or omit for every wall under the roof (its line "

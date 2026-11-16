@@ -30,6 +30,9 @@
 #include <BRep_Tool.hxx>
 #include <Geom_Curve.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <GCPnts_AbscissaPoint.hxx>
 #include <GeomAPI_ProjectPointOnCurve.hxx>
@@ -4950,6 +4953,7 @@ Status Modeler::remove(const std::vector<ObjectId>& ids) {
   // Lines of a grid erased: the grid without them (docs/43).
   if (const Status grids = gridUp(document_, changes, document_.regenContext()); !grids) return grids;
   refitStairOpenings(document_, changes, document_.regenContext());  // a stair erased: its floor closes
+  refitWallsToRoofs(document_, changes, document_.regenContext());   // a wall erased: its neighbours' mitres (docs/159)
   history_.execute(changes.build("Delete"));
   return Status::success();
 }
@@ -6164,6 +6168,21 @@ Status Modeler::setOpeningMarks(const ObjectId& hostId, const std::vector<std::s
 }
 
 namespace {
+// Mitred corners (docs/159): the wall's own rectangle is united with "corner-fill" pieces and
+// "corner-trim" pieces are taken from it, innermost of all its cuts. The rectangle stays the
+// wall as drawn: joins, rooms, lengths and openings read it as before.
+constexpr const char* kCornerFill = "corner-fill";
+constexpr const char* kCornerTrim = "corner-trim";
+
+// A Boolean of `kind` whose operands after the first all are corner pieces of that prefix.
+bool cornerNode(const Recipe& r, BooleanKind kind, const char* prefix) {
+  const auto* b = std::get_if<BooleanFeature>(&r.base);
+  if (!b || b->kind != kind || b->operands.size() < 2 || !r.modifiers.empty()) return false;
+  for (std::size_t i = 1; i < b->operands.size(); ++i)
+    if (b->operands[i].id.rfind(prefix, 0) != 0) return false;
+  return true;
+}
+
 // A wall as drawn: its pushed-up rectangle (inside any opening cuts) and the line it was drawn on.
 struct WallBand {
   const Object* object = nullptr;
@@ -6186,8 +6205,8 @@ std::optional<WallBand> wallBand(const Document& document, const Object& o) {
   const Recipe* recipe = &o.recipe;
   gp_Trsf placement;
   while (const auto* cut = std::get_if<BooleanFeature>(&recipe->base)) {
-    if (!recipe->modifiers.empty() || cut->kind != BooleanKind::Subtract || cut->operands.empty() ||
-        !cut->operands.front().recipe)
+    const bool cuts = cut->kind == BooleanKind::Subtract, fills = cornerNode(*recipe, BooleanKind::Union, kCornerFill);
+    if (!recipe->modifiers.empty() || (!cuts && !fills) || cut->operands.empty() || !cut->operands.front().recipe)
       return std::nullopt;
     placement = placement * cut->operands.front().placement;
     w.path.push_back(0);
@@ -6338,9 +6357,12 @@ void settleWallJoins(const Document& document, ChangeSet& changes, const RegenCo
       const auto a = meet(w.start, w.dir, o.start.Translated(relative + gp_Vec(o.left) * o.leftExt), o.dir);
       const auto b = meet(w.start, w.dir, o.start.Translated(relative + gp_Vec(o.left) * -o.right), o.dir);
       if (!a || !b) continue;
-      // Still beside the partner where it goes? (Gone past this wall: let go.)
+      // Still beside the partner where it goes? (Gone past this wall: let go.) Not asked at a
+      // corner, where the partner's own end follows this wall (docs/159: a slanted wall moved
+      // outwards used to let go of both corners and stick out through them).
       const auto there = meet(w.start, w.dir, o.start.Translated(relative), o.dir);
-      if (!there || there->second < -e.reach || there->second > o.length + e.reach) continue;
+      const bool corner = std::abs(e.onPartner) <= e.reach || std::abs(e.onPartner - o.length) <= e.reach;
+      if (!there || (!corner && (there->second < -e.reach || there->second > o.length + e.reach))) continue;
       const double value = e.far ? std::max(a->first, b->first) : std::min(a->first, b->first);
       if (std::abs(value - s) < 1e-6) continue;
       (end == 0 ? s0 : s1) = value;
@@ -7253,6 +7275,204 @@ Result<std::pair<geom::RoofSpec, gp_Trsf>> storedRoof(const Document& document, 
 
 geom::RoofSpec roofInFrame(geom::RoofSpec s, const gp_Trsf& t);
 
+// --- mitred wall corners (docs/159) --------------------------------------------------------
+constexpr const char* kMitre = "corner_mitre";           // on a wall: its corners are mitred where the other wall's are too
+constexpr const char* kMitreMade = "corner_mitre_made";  // what was made for it: made again only when this changes
+
+// The mitre of wall `w`'s end (0 start, 1 far end) with `o` at their corner, in plan (world):
+// `fill` is the wall's band from just inside its body up to the mitre line (the line through the
+// points where the walls' faces meet on the inside and on the outside of the corner), `trim`
+// what lies beyond that line. Nothing for turns too shallow to be a corner.
+struct MitrePieces {
+  std::vector<gp_Pnt> fill, trim;
+};
+
+std::optional<MitrePieces> mitreAt(const WallBand& w, int end, const WallBand& o) {
+  if (std::abs(gp_Vec(w.dir).Crossed(gp_Vec(o.dir)).Z()) < 0.25) return std::nullopt;
+  auto face = [](const WallBand& b, int left) { return b.start.Translated(gp_Vec(b.left) * (left ? b.leftExt : -b.right)); };
+  gp_Pnt q[2][2];
+  gp_XYZ sum(0, 0, 0);
+  for (int a = 0; a < 2; ++a) {
+    for (int b = 0; b < 2; ++b) {
+      const auto m = meet(face(w, a), w.dir, face(o, b), o.dir);
+      if (!m) return std::nullopt;
+      q[a][b] = face(w, a).Translated(gp_Vec(w.dir) * m->first);
+      sum += q[a][b].XYZ();
+    }
+  }
+  const gp_Pnt centre(sum / 4.0);
+  // Into each wall's body from the corner.
+  const gp_Vec intoW = gp_Vec(w.dir) * (end == 0 ? 1.0 : -1.0);
+  const gp_Vec intoO = gp_Vec(o.dir) * (gp_Vec(o.start, centre).Dot(gp_Vec(o.dir)) < o.length / 2 ? 1.0 : -1.0);
+  auto cross = [](const gp_Vec& a, const gp_Vec& b) { return a.X() * b.Y() - a.Y() * b.X(); };
+  // The diagonal of the corner's quadrilateral with the two bodies on opposite sides.
+  gp_Pnt m0, m1;
+  bool found = false;
+  for (int k = 0; k < 2 && !found; ++k) {
+    m0 = q[0][k];      // on w's right face
+    m1 = q[1][1 - k];  // on w's left face
+    const gp_Vec d(m0, m1);
+    if (d.Magnitude() < 1e-6) return std::nullopt;
+    found = cross(d, intoW) * cross(d, intoO) < 0;
+  }
+  if (!found) return std::nullopt;
+  const double p0 = gp_Vec(w.start, m0).Dot(gp_Vec(w.dir)), p1 = gp_Vec(w.start, m1).Dot(gp_Vec(w.dir));
+  const double inside = 10.0;  // the fill overlaps the wall's own body by this much
+  const double target = end == 1 ? std::min({p0, p1, w.length}) - inside : std::max({p0, p1, 0.0}) + inside;
+  if (end == 1 ? target <= 0.0 : target >= w.length) return std::nullopt;  // shorter than its corner
+  MitrePieces out;
+  out.fill = {m0, m1, m1.Translated(gp_Vec(w.dir) * (target - p1)), m0.Translated(gp_Vec(w.dir) * (target - p0))};
+  const gp_Vec along = gp_Vec(m0, m1).Normalized();
+  const double thickness = w.right + w.leftExt + o.right + o.leftExt;
+  const double at = end == 1 ? w.length : 0.0;
+  const double beyond = std::abs(at - p0) + std::abs(at - p1) + 2 * thickness + 500.0;
+  const gp_Pnt a = m0.Translated(along * -500.0), b = m1.Translated(along * 500.0);
+  out.trim = {a, b, b.Translated(intoW * -beyond), a.Translated(intoW * -beyond)};
+  return out;
+}
+
+// A prism over a plan polygon (world) from z0 to z1, in the frame `toLocal` leads to.
+TopoDS_Shape planPrism(std::vector<gp_Pnt> polygon, double z0, double z1, const gp_Trsf& toLocal) {
+  double area2 = 0.0;
+  for (std::size_t i = 0; i < polygon.size(); ++i) {
+    const gp_Pnt& p = polygon[i];
+    const gp_Pnt& n = polygon[(i + 1) % polygon.size()];
+    area2 += p.X() * n.Y() - n.X() * p.Y();
+  }
+  if (std::abs(area2) < 1e-6 || z1 - z0 < 1e-6) return {};
+  if (area2 < 0) std::reverse(polygon.begin(), polygon.end());
+  BRepBuilderAPI_MakePolygon wire;
+  for (const gp_Pnt& p : polygon) wire.Add(gp_Pnt(p.X(), p.Y(), z0));
+  wire.Close();
+  if (!wire.IsDone()) return {};
+  BRepBuilderAPI_MakeFace face(wire.Wire(), Standard_True);
+  if (!face.IsDone()) return {};
+  BRepPrimAPI_MakePrism prism(face.Face(), gp_Vec(0, 0, z1 - z0));
+  if (!prism.IsDone()) return {};
+  return BRepBuilderAPI_Transform(prism.Shape(), toLocal, Standard_True).Shape();
+}
+
+// The recipe `depth` operands down the first operands.
+const Recipe* firstOperandDown(const Recipe& root, std::size_t depth) {
+  const Recipe* r = &root;
+  for (std::size_t i = 0; i < depth; ++i) {
+    const auto* b = std::get_if<BooleanFeature>(&r->base);
+    if (!b || b->operands.empty() || !b->operands.front().recipe) return nullptr;
+    r = b->operands.front().recipe.get();
+  }
+  return r;
+}
+
+// The wall's own rectangle with these corner pieces (given in its frame), or bare without any.
+void setCornerPieces(Object& o, const WallBand& band, const std::vector<TopoDS_Shape>& fills,
+                     const std::vector<TopoDS_Shape>& trims) {
+  // Where the rectangle (with the corner pieces it has now) sits in the chain of cuts.
+  std::size_t depth = band.path.size();
+  if (depth > 0) {
+    const Recipe* parent = firstOperandDown(o.recipe, depth - 1);
+    if (parent && cornerNode(*parent, BooleanKind::Union, kCornerFill)) {
+      --depth;
+      if (depth > 0) {
+        const Recipe* outer = firstOperandDown(o.recipe, depth - 1);
+        if (outer && cornerNode(*outer, BooleanKind::Subtract, kCornerTrim)) --depth;
+      }
+    }
+  }
+  Recipe node = band.recipe;
+  if (!fills.empty() && !trims.empty()) {
+    auto piece = [](const TopoDS_Shape& shape, const char* id, std::size_t i) {
+      Recipe r;
+      r.base = ImportedShape{shape, id};
+      return BooleanOperand{std::make_shared<const Recipe>(std::move(r)), gp_Trsf(), "Corner", std::string(id) + "-" + std::to_string(i)};
+    };
+    BooleanFeature filled;
+    filled.kind = BooleanKind::Union;
+    filled.operands.push_back(BooleanOperand{std::make_shared<const Recipe>(band.recipe), gp_Trsf(), o.name, {}});
+    for (std::size_t i = 0; i < fills.size(); ++i) filled.operands.push_back(piece(fills[i], kCornerFill, i));
+    Recipe inner;
+    inner.base = std::move(filled);
+    BooleanFeature trimmed;
+    trimmed.kind = BooleanKind::Subtract;
+    trimmed.operands.push_back(BooleanOperand{std::make_shared<const Recipe>(std::move(inner)), gp_Trsf(), o.name, {}});
+    for (std::size_t i = 0; i < trims.size(); ++i) trimmed.operands.push_back(piece(trims[i], kCornerTrim, i));
+    node = Recipe{};
+    node.base = std::move(trimmed);
+  }
+  if (depth == 0) o.recipe = std::move(node);
+  else replaceOperand(o.recipe, std::vector<std::size_t>(depth, 0), 0, std::move(node));
+}
+
+// Walls with mitred corners after the changes in `changes` (moved, longer, thicker, their
+// neighbour gone, the flag set or taken off): their corner pieces made again. A corner is
+// mitred when exactly two walls meet there and both have the flag. Returns the wall ends mitred.
+int refitWallCorners(const Document& document, ChangeSet& changes, const RegenContext& context) {
+  std::vector<const Object*> objects;
+  bool any = false;
+  for (const Object& stored : document.objects()) {
+    if (changes.erased(stored.id)) continue;
+    const Object* now = changes.pending(stored.id);
+    if (!now) now = &stored;
+    if (attributeOf(*now, "kind") != "wall") continue;
+    objects.push_back(now);
+    any = any || now->attributes.count(kMitre) || now->attributes.count(kMitreMade);
+  }
+  if (!any) return 0;
+  std::vector<WallBand> bands;
+  for (const Object* o : objects)
+    if (const auto band = wallBand(document, *o)) bands.push_back(*band);
+  const auto ends = wallEnds(bands);
+  struct Plan {
+    ObjectId id;
+    std::vector<TopoDS_Shape> fills, trims;
+    std::string made;
+  };
+  std::vector<Plan> plans;
+  int mitred = 0;
+  for (std::size_t k = 0; k < bands.size(); ++k) {
+    const WallBand& w = bands[k];
+    const bool flagged = w.object->attributes.count(kMitre) > 0;
+    if (!flagged && !w.object->attributes.count(kMitreMade)) continue;
+    Plan plan{w.object->id, {}, {}, {}};
+    // The wall's own push: from its foot (its present top may be cut by a roof).
+    const double foot = w.start.Z();
+    const double push = std::get<ExtrudeOp>(w.recipe.modifiers.front()).distance;
+    const double z0 = std::min(foot, foot + push), z1 = std::max(foot, foot + push);
+    const gp_Trsf toLocal = w.toWorld.Inverted();
+    for (int end = 0; end < 2 && flagged; ++end) {
+      const auto partners = cornerPartners(bands, ends, k, end);
+      if (partners.size() != 1 || !bands[partners.front()].object->attributes.count(kMitre)) continue;
+      const auto pieces = mitreAt(w, end, bands[partners.front()]);
+      if (!pieces) continue;
+      const TopoDS_Shape fill = planPrism(pieces->fill, z0, z1, toLocal);
+      const TopoDS_Shape trim = planPrism(pieces->trim, z0 - 50.0, z1 + 50.0, toLocal);
+      if (fill.IsNull() || trim.IsNull()) continue;
+      plan.fills.push_back(fill);
+      plan.trims.push_back(trim);
+      char text[200];
+      std::snprintf(text, sizeof text, "%d:%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f;", end, pieces->fill[0].X(), pieces->fill[0].Y(),
+                    pieces->fill[1].X(), pieces->fill[1].Y(), pieces->fill[2].X(), pieces->fill[2].Y(), z0, z1);
+      plan.made += text;
+      ++mitred;
+    }
+    if (plan.made == attributeOf(*w.object, kMitreMade)) continue;  // as it is
+    plans.push_back(std::move(plan));
+  }
+  for (const Plan& plan : plans) {
+    const Object* now = changes.pending(plan.id);
+    Object wall = now ? *now : *document.find(plan.id);
+    if (wall.locked) continue;
+    const auto band = wallBand(document, wall);
+    if (!band) continue;
+    setCornerPieces(wall, *band, plan.fills, plan.trims);
+    if (plan.made.empty()) wall.attributes.erase(kMitreMade);
+    else wall.attributes[kMitreMade] = plan.made;
+    wall.hiddenEdges.clear();
+    if (!rebuild(wall, context) || wall.shape.IsNull() || !TopExp_Explorer(wall.shape, TopAbs_SOLID).More()) continue;
+    changes.modify(wall);
+  }
+  return mitred;
+}
+
 // --- walls up to a roof (docs/97 N-05) -----------------------------------------------------
 constexpr const char* kTopRoof = "top_roof";            // on a wall: the roof it stands up to
 constexpr const char* kRoofTrim = "roof-trim";          // id of the operand that takes the wall's top away
@@ -7364,6 +7584,8 @@ void refitWallsToRoofs(const Document& document, ChangeSet& changes, const Regen
     if (wall.locked) continue;
     if (fitWallToRoof(document, wall, *cuts[roofId], context)) changes.modify(wall);
   }
+  // Mitred corners (docs/159) after the same changes; after the roofs, which set the walls' heights.
+  refitWallCorners(document, changes, context);
 }
 
 geom::RoofSpec roofInFrame(geom::RoofSpec s, const gp_Trsf& t) {
@@ -7437,6 +7659,30 @@ Status Modeler::changeRoof(const ObjectId& id, const geom::RoofSpec& spec) {
   refitWallsToRoofs(document_, changes, document_.regenContext());
   history_.execute(changes.build("Change Roof"));
   return Status::success();
+}
+
+Result<int> Modeler::mitreWallCorners(const std::vector<ObjectId>& walls, bool on) {
+  using R = Result<int>;
+  std::vector<ObjectId> ids = walls;
+  if (ids.empty())
+    for (const Object& o : document_.objects())
+      if (wallBand(document_, o) && !o.locked) ids.push_back(o.id);
+  if (ids.empty()) return R::failure("There are no walls");
+  ChangeSet changes(document_);
+  for (const ObjectId& id : ids) {
+    const Object* current = document_.find(id);
+    if (!current) return R::failure("Object not found");
+    if (!wallBand(document_, *current)) return R::failure("'" + current->name + "' is not a wall as its tool made it");
+    if (current->locked) return R::failure("'" + current->name + "' is locked");
+    if ((current->attributes.count(kMitre) > 0) == on) continue;
+    Object wall = *current;
+    if (on) wall.attributes[kMitre] = "1";
+    else wall.attributes.erase(kMitre);
+    changes.modify(wall);
+  }
+  const int ends = refitWallCorners(document_, changes, document_.regenContext());
+  history_.execute(changes.build(on ? "Mitre Wall Corners" : "Square Wall Corners"));
+  return ends / 2;
 }
 
 Status Modeler::fitWallsToRoof(const std::vector<ObjectId>& walls, const ObjectId& roofId) {
@@ -8422,7 +8668,13 @@ Result<std::vector<ObjectId>> Modeler::setWallType(const std::vector<ObjectId>& 
     command.deltas.push_back(ObjectDelta{object.id, *w.object, object, document_.indexOf(object.id)});
     out.push_back(object.id);
   }
+  // Mitred corners (docs/159) are made again for the new thicknesses, in the same undo step.
+  history_.beginGroup(command.name);
   history_.execute(std::move(command));
+  ChangeSet corners(document_);
+  refitWallCorners(document_, corners, document_.regenContext());
+  history_.execute(corners.build("Wall Type"));
+  history_.endGroup();
   return out;
 }
 
