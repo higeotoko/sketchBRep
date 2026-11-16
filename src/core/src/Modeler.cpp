@@ -7888,11 +7888,18 @@ std::vector<ObjectId> Modeler::wallsUnderRoof(const ObjectId& roofId) const {
     }
     return in || nearest < 300.0;
   };
+  // The storey under the roof (docs/158): the highest level below its bearing height. Walls of
+  // the storeys further down are not "under" it (fitted, they would stand up through the storeys
+  // between), unless they reach the bearing height themselves (walls through several storeys).
+  std::optional<double> storey;
+  for (const FloorLevel& l : document_.settings().levels)
+    if (l.elevation < roof.height - 1.0 && (!storey || l.elevation > *storey)) storey = l.elevation;
   for (const Object& o : document_.objects()) {
     const auto band = wallBand(document_, o);
     if (!band) continue;
     const gp_Pnt foot = std::get<RectangleProfile>(band->recipe.base).plane.origin.Transformed(band->toWorld);
     if (foot.Z() >= roof.height - 1.0) continue;  // stands on or above the bearing height: another storey
+    if (storey && foot.Z() < *storey - 1.0 && band->z1 < roof.height - 1.0) continue;  // a storey further down
     const gp_Pnt mid = band->start.Translated(gp_Vec(band->dir) * (band->length / 2));
     if (within(mid)) out.push_back(o.id);
   }

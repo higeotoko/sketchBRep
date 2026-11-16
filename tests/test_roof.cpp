@@ -449,6 +449,28 @@ TEST_F(WallsUnderRoof, GableEndWallsGetTheirTriangleAndStayWalls) {
   EXPECT_TRUE(refused("release_walls_from_roof", {{"roof", roof}}));
 }
 
+// docs/158: with storeys, only the walls of the storey under the roof (and walls reaching its
+// bearing height) are under it: the lower storey's walls are not stretched up through the upper one.
+TEST_F(WallsUnderRoof, TheLowerStoreysWallsStayAsTheyAre) {
+  ok("set_levels", {{"levels", {{{"name", "1FL"}, {"elevation", 0}}, {{"name", "2FL"}, {"elevation", 3000}}}}});
+  const json upper = ok("create_wall", {{"points", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}, {0, 0}}},
+                                        {"thickness", 200}, {"height", 3000}, {"base", 3000}})["ids"];
+  const std::string through = ok("create_wall", {{"points", {{4000, 100}, {4000, 5900}}}, {"thickness", 100}, {"height", 6000}})["ids"][0];
+  const std::string knee = ok("create_wall", {{"points", {{2000, 100}, {2000, 5900}}}, {"thickness", 100}, {"height", 2000}, {"base", 3000}})["ids"][0];
+  const std::string top = ok("create_roof", {{"outline", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}}}, {"kind", "gable"}, {"height", 6000}})["id"];
+  const json fitted = ok("fit_walls_to_roof", {{"roof", top}});
+  // The four upper walls, the wall through both storeys and the low wall on the upper storey; not the four below.
+  EXPECT_EQ(fitted["walls"].size(), 6u);
+  EXPECT_NEAR(box(south).z1, 3000, 1e-6);
+  EXPECT_NEAR(box(east).z1, 3000, 1e-6);
+  EXPECT_NEAR(box(upper[1]).z1, 7200, 1e-4);   // the upper gable end wall up to the ridge
+  EXPECT_NEAR(box(through).z1, 7200, 1e-4);
+  EXPECT_NEAR(box(knee).z1, 7200, 1e-4);       // it runs across under the ridge too
+  // The lower roof of the fixture (bearing at 3000) still takes the walls standing on 1FL, its
+  // storey: the four and the wall through both storeys.
+  EXPECT_EQ(modeler.wallsUnderRoof(roof).size(), 5u);
+}
+
 TEST_F(WallsUnderRoof, WhatCannotBeFittedIsRefusedAndNothingChanges) {
   // A wall on the storey above the bearing height is not "under" the roof, and cannot be fitted.
   const std::string high = ok("create_wall", {{"points", {{1000, 3000}, {7000, 3000}}}, {"thickness", 100}, {"height", 500}, {"base", 6000}})["ids"][0];
