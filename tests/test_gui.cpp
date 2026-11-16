@@ -6230,6 +6230,52 @@ void GuiPhase1::slabToolAndOpeningTool() {
   geom::exactBounds(slab.shape).Get(x0, y0, z0, x1, y1, z1);
   QVERIFY(std::abs(z1) < 1e-6 && std::abs(z0 + 150) < 1e-6);
 
+  // docs/150: a registered floor type picked in the slab settings; the next slab drawn is of it.
+  {
+    doc::Modeler::ElementTypeChange f9;
+    f9.thickness = 180.0;
+    QVERIFY(m.defineElementType("F9", "floor", f9));
+    QString shown;
+    QTimer::singleShot(0, [&] {
+      auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+      if (!dialog) return;
+      auto* chooser = dialog->findChild<QComboBox*>(QStringLiteral("toolTypeName"));
+      auto* thick = dialog->findChild<QLineEdit*>(QStringLiteral("slabToolThickness"));
+      if (!chooser || !thick) return dialog->reject();
+      chooser->setCurrentIndex(chooser->findData(QStringLiteral("F9")));
+      shown = thick->text();
+      dialog->accept();
+    });
+    auto* settingsMenu = f.window.findChild<QMenu*>(QStringLiteral("toolSettingsMenu"));
+    QVERIFY(settingsMenu);
+    QAction* slabSettings = nullptr;
+    for (QAction* a : settingsMenu->actions())
+      if (a->text().startsWith(QStringLiteral("スラブ"))) slabSettings = a;
+    QVERIFY(slabSettings);
+    slabSettings->trigger();
+    QVERIFY2(shown.startsWith(QStringLiteral("180")), qPrintable(shown));
+    QCOMPARE(f.window.slabTool().typeName(), std::string("F9"));
+    f.window.activateTool(MainWindow::ToolId::Slab);
+    const std::size_t steps = m.history().undoCount();
+    click(f.vp, f.vp->toWidget(gp_Pnt(0, -8000, 0)));
+    move(f.vp, f.vp->toWidget(gp_Pnt(2000, -8000, 0)));
+    type(f.vp, QStringLiteral("2000"));
+    move(f.vp, f.vp->toWidget(gp_Pnt(2000, -6000, 0)));
+    type(f.vp, QStringLiteral("2000"));
+    move(f.vp, f.vp->toWidget(gp_Pnt(0, -6000, 0)));
+    type(f.vp, QStringLiteral("2000"));
+    QTest::keyClick(f.vp, Qt::Key_Return);
+    QTest::qWait(30);
+    QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+    QCOMPARE(m.history().undoCount(), steps + 1);
+    const doc::Object& typed = m.document().objects().back();
+    QCOMPARE(QString::fromStdString(typed.attributes.at("type_name")), QStringLiteral("F9"));
+    QVERIFY2(std::abs(geom::volume(typed.shape) - 2000.0 * 2000 * 180) < 1.0, qPrintable(QString::number(geom::volume(typed.shape))));
+    QVERIFY(m.undo());
+    f.window.slabTool().setTypeName("");
+    f.window.activateTool(MainWindow::ToolId::Select);
+  }
+
   // Opening tool: hover the wall's front face, click: a door where clicked.
   const doc::ObjectId wall = f.box(0, 0, 4000, 200, 3000);
   f.window.activateTool(MainWindow::ToolId::Opening);

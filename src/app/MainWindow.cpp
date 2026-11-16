@@ -3669,18 +3669,53 @@ bool MainWindow::showMemberSettingsDialog() {
   return true;
 }
 
+namespace {
+// The registered types of one part (docs/150), first "none": picking one fills the values in.
+QComboBox* typeChooser(QDialog* dialog, const doc::Modeler& m, const std::string& part, const std::string& current) {
+  auto* box = new QComboBox(dialog);
+  box->setObjectName(QStringLiteral("toolTypeName"));
+  box->addItem(QObject::tr("なし"), QString());
+  for (const auto& t : m.elementTypes())
+    if (t.part == part) box->addItem(QString::fromStdString(t.name), QString::fromStdString(t.name));
+  box->setCurrentIndex(std::max(0, box->findData(QString::fromStdString(current))));
+  box->setEnabled(box->count() > 1);
+  box->setToolTip(box->count() > 1 ? QObject::tr("登録した種類（docs/149）で描きます。描いた物にその種類名が付き、登録した値になります")
+                                   : QObject::tr("登録した種類がありません（床・屋根を選んで、プロパティの「…を登録する」で登録できます）"));
+  return box;
+}
+std::optional<doc::Modeler::ElementTypeDefinition> typeNamed(const doc::Modeler& m, const QString& name) {
+  for (const auto& t : m.elementTypes())
+    if (QString::fromStdString(t.name) == name) return t;
+  return std::nullopt;
+}
+}  // namespace
+
 void MainWindow::showSlabSettingsDialog() {
-  bool ok = false;
-  const QString text = QInputDialog::getText(this, tr("スラブの設定"), tr("厚さ（天端はクリックした高さ。単位 m も可）"),
-                                             QLineEdit::Normal,
-                                             QString::fromStdString(units::formatLength(slabTool_->thickness(), 0)), &ok);
-  if (!ok) return;
-  const auto t = units::parseLength(text.toStdString());
+  QDialog dialog(this);
+  dialog.setObjectName(QStringLiteral("slabSettingsDialog"));
+  dialog.setWindowTitle(tr("スラブの設定"));
+  auto* form = new QFormLayout(&dialog);
+  auto* chooser = typeChooser(&dialog, modeler_, "floor", slabTool_->typeName());
+  auto* thickness = new QLineEdit(QString::fromStdString(units::formatLength(slabTool_->thickness(), 0)), &dialog);
+  thickness->setObjectName(QStringLiteral("slabToolThickness"));
+  connect(chooser, &QComboBox::currentIndexChanged, &dialog, [this, chooser, thickness] {
+    const auto t = typeNamed(modeler_, chooser->currentData().toString());
+    if (t && t->values.thickness) thickness->setText(QString::fromStdString(units::formatLength(*t->values.thickness, 0)));
+  });
+  form->addRow(tr("種類"), chooser);
+  form->addRow(tr("厚さ（天端はクリックした高さ。単位 m も可）"), thickness);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  form->addRow(buttons);
+  if (dialog.exec() != QDialog::Accepted) return;
+  const auto t = units::parseLength(thickness->text().toStdString());
   if (!t || *t <= 0) {
     reportError(tr("厚さは正の長さで入力してください"));
     return;
   }
   slabTool_->setThickness(*t);
+  slabTool_->setTypeName(chooser->currentData().toString().toStdString());
   setStatus(slabTool_->settingsText());
 }
 
@@ -4392,6 +4427,19 @@ void MainWindow::showRoofSettingsDialog() {
   auto* eave = field(current.eave, "roofToolEave");
   auto* gableEave = field(current.gableEave, "roofToolGableEave");
   auto* thickness = field(current.thickness, "roofToolThickness");
+  auto* chooser = typeChooser(&dialog, modeler_, "roof", current.typeName);
+  connect(chooser, &QComboBox::currentIndexChanged, &dialog, [this, chooser, pitch, eave, gableEave, thickness] {
+    const auto t = typeNamed(modeler_, chooser->currentData().toString());
+    if (!t) return;
+    auto put = [](QLineEdit* edit, const std::optional<double>& v) {
+      if (v) edit->setText(QString::fromStdString(units::formatLength(*v, 0)));
+    };
+    if (t->values.pitch) pitch->setValue(*t->values.pitch);
+    put(eave, t->values.eave);
+    put(gableEave, t->values.gableEave);
+    put(thickness, t->values.thickness);
+  });
+  form->addRow(tr("登録した種類"), chooser);
   form->addRow(tr("種類"), kind);
   form->addRow(tr("勾配（10 に対する立ち上がり）"), pitch);
   form->addRow(tr("軒の出"), eave);
@@ -4418,6 +4466,7 @@ void MainWindow::showRoofSettingsDialog() {
   next.eave = *e;
   next.gableEave = *g;
   next.thickness = *t;
+  next.typeName = chooser->currentData().toString().toStdString();
   roofTool_->setSettings(next);
   setStatus(roofTool_->settingsText());
 }

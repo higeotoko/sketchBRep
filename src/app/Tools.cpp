@@ -1399,7 +1399,34 @@ void MemberTool::applyMeasurement(const QString& text) {
 QString SlabTool::name() const { return QObject::tr("スラブ"); }
 QCursor SlabTool::cursor() const { return toolCursor(CursorKind::Slab); }
 
-QString SlabTool::settingsText() const { return QObject::tr("厚さ %1（天端がクリックした高さ）").arg(mm(thickness_)); }
+QString SlabTool::settingsText() const {
+  const QString text = QObject::tr("厚さ %1（天端がクリックした高さ）").arg(mm(thickness_));
+  return typeName_.empty() ? text : QObject::tr("種類 %1・").arg(QString::fromStdString(typeName_)) + text;
+}
+
+namespace {
+// Made and named in one undo step (docs/150): a registered name gives its values.
+Result<std::size_t> madeAndNamed(doc::Modeler& m, const std::string& typeName,
+                                 const std::function<Result<doc::ObjectId>()>& make) {
+  if (typeName.empty()) {
+    const auto id = make();
+    if (!id) return Result<std::size_t>::failure(id.error());
+    return std::size_t(1);
+  }
+  m.history().beginGroup("Draw Typed");
+  const auto id = make();
+  if (!id) {
+    m.history().abortGroup();
+    return Result<std::size_t>::failure(id.error());
+  }
+  if (const Status s = m.setTypeName({*id}, typeName); !s) {
+    m.history().abortGroup();
+    return Result<std::size_t>::failure(s.message());
+  }
+  m.history().endGroup();
+  return std::size_t(1);
+}
+}  // namespace
 
 QString SlabTool::startText() const {
   return QObject::tr("スラブの角をクリック（地面、または壁の上端で 2 階の床）");
@@ -1408,9 +1435,7 @@ QString SlabTool::startText() const {
 QString SlabTool::finishedText(std::size_t) const { return QObject::tr("スラブを作成しました（Ctrl+Z で戻せます）"); }
 
 Result<std::size_t> SlabTool::commit(const std::vector<gp_Pnt>& points, bool) {
-  auto slab = host_.modeler().createSlab(points, points.front().Z(), thickness_);
-  if (!slab) return Result<std::size_t>::failure(slab.error());
-  return std::size_t(1);
+  return madeAndNamed(host_.modeler(), typeName_, [&] { return host_.modeler().createSlab(points, points.front().Z(), thickness_); });
 }
 
 TopoDS_Shape SlabTool::previewShape(const std::vector<gp_Pnt>& pts) const {
@@ -2168,10 +2193,11 @@ QString RoofTool::kindText(const std::string& kind) {
 }
 
 QString RoofTool::settingsText() const {
-  return QObject::tr("%1・%2 寸勾配・軒の出 %3・けらばの出 %4・厚さ %5")
-      .arg(kindText(settings_.kind))
-      .arg(settings_.pitch, 0, 'g', 4)
-      .arg(mm(settings_.eave), mm(settings_.gableEave), mm(settings_.thickness));
+  const QString text = QObject::tr("%1・%2 寸勾配・軒の出 %3・けらばの出 %4・厚さ %5")
+                           .arg(kindText(settings_.kind))
+                           .arg(settings_.pitch, 0, 'g', 4)
+                           .arg(mm(settings_.eave), mm(settings_.gableEave), mm(settings_.thickness));
+  return settings_.typeName.empty() ? text : QObject::tr("種類 %1・").arg(QString::fromStdString(settings_.typeName)) + text;
 }
 
 QString RoofTool::startText() const {
@@ -2207,9 +2233,7 @@ geom::RoofSpec RoofTool::spec(const std::vector<gp_Pnt>& points) const {
 }
 
 Result<std::size_t> RoofTool::commit(const std::vector<gp_Pnt>& points, bool) {
-  auto roof = host_.modeler().createRoof(spec(points));
-  if (!roof) return Result<std::size_t>::failure(roof.error());
-  return std::size_t(1);
+  return madeAndNamed(host_.modeler(), settings_.typeName, [&] { return host_.modeler().createRoof(spec(points)); });
 }
 
 TopoDS_Shape RoofTool::previewShape(const std::vector<gp_Pnt>& pts) const {

@@ -411,6 +411,9 @@ class SlabTool : public PlanPolylineTool {
   QCursor cursor() const override;
   void setThickness(double t) { thickness_ = t; }
   double thickness() const { return thickness_; }
+  // A registered floor type (docs/150): each slab drawn gets the name (and so its values).
+  void setTypeName(const std::string& name) { typeName_ = name; }
+  const std::string& typeName() const { return typeName_; }
   QString settingsText() const override;
 
  protected:
@@ -422,6 +425,7 @@ class SlabTool : public PlanPolylineTool {
 
  private:
   double thickness_ = 200.0;
+  std::string typeName_;
 };
 
 // Roof (docs/90 G-08): the outline of the walls it bears on, drawn on the level of their
@@ -433,6 +437,7 @@ class RoofTool : public PlanPolylineTool {
     std::string kind = "gable";  // gable | hip | shed
     double pitch = 4.0;          // rise per 10
     double eave = 600.0, gableEave = 300.0, thickness = 100.0;
+    std::string typeName;  // a registered roof type (docs/150): each roof drawn gets it
   };
   using PlanPolylineTool::PlanPolylineTool;
   QString name() const override;
