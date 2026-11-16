@@ -54,6 +54,8 @@ class PropertiesPanel : public QWidget {
   void openingMarkEdited(const doc::ObjectId& id, int index, const QString& mark, const QString& product);
   // The other openings of this one's mark made like it (docs/133).
   void openingTypeMatched(const doc::ObjectId& id, int index);
+  // A canopy over this opening (docs/147).
+  void canopyRequested(const doc::ObjectId& id, int index);
   // A slab's / roof's type name typed in, and the others of its name made like it (docs/134).
   void typeNameEdited(const doc::ObjectId& id, const QString& name);
   void typeMatched(const doc::ObjectId& id);

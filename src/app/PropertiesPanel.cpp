@@ -1221,6 +1221,17 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       lines->addWidget(row);
       lines->addWidget(tag);
       lines->addWidget(place);
+      // docs/147: a canopy over it.
+      if (focusOpening_ > 0) {
+        auto* canopy = new QToolButton;
+        canopy->setObjectName(QStringLiteral("openingCanopy"));
+        canopy->setText(tr("この開口に庇を付ける（出 600）"));
+        canopy->setToolTip(tr("開口をあけた面の側に、出 600・厚さ 60・両側に 150 長い庇を、開口の上端より 100 上に付けます。"
+                              "大きさは庇を選んで変えられます（AI からは make_canopy）"));
+        canopy->setEnabled(markEdit->isEnabled());
+        connect(canopy, &QToolButton::clicked, this, [this, id, index] { emit canopyRequested(id, index); });
+        lines->addWidget(canopy);
+      }
       // docs/133: one picked, others of its mark elsewhere: make them all like this one.
       if (focusOpening_ > 0 && scheduled) {
         int same = 0;

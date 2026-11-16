@@ -855,6 +855,18 @@ void MainWindow::buildUi() {
   connect(panel_, &PropertiesPanel::openingTypeMatched, this, [this](const doc::ObjectId& id, int index) {
     QTimer::singleShot(0, this, [this, id, index] { matchOpeningType(id, index); });
   });
+  connect(panel_, &PropertiesPanel::canopyRequested, this, [this](const doc::ObjectId& id, int index) {
+    QTimer::singleShot(0, this, [this, id, index] {
+      if (index < 1) return;
+      const auto made = modeler_.makeCanopy(id, static_cast<std::size_t>(index), {});
+      if (!made) {
+        reportError(tr("庇を付けられません: %1").arg(userMessage(QString::fromStdString(made.error()))));
+        return;
+      }
+      setStatus(tr("開口 %1 に庇を付けました（出 600。Ctrl+Z で戻せます）").arg(index));
+      refreshPanels();
+    });
+  });
   connect(panel_, &PropertiesPanel::typeNameEdited, this, [this](const doc::ObjectId& id, const QString& name) {
     QTimer::singleShot(0, this, [this, id, name] {
       const Status s = modeler_.setTypeName({id}, name.toStdString());

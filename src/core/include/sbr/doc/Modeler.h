@@ -591,6 +591,14 @@ class Modeler {
   };
   Result<int> changeElementType(const std::string& name, const ElementTypeChange& change);
   Result<int> matchElementType(const ObjectId& id);
+  // A canopy over an opening (庇, docs/97 N-03, docs/147): a board out from the face the opening
+  // was cut from, `depth` out, `thickness` thick, `extra` longer at each side than the opening, its
+  // underside `above` over the opening's head. Attribute kind = canopy, host / opening, and
+  // `canopy` (where it stands out from the wall's line: for the building area). One undo step.
+  struct CanopySpec {
+    double depth = 600.0, thickness = 60.0, extra = 150.0, above = 100.0;
+  };
+  Result<ObjectId> makeCanopy(const ObjectId& host, std::size_t index, const CanopySpec& spec);
   // A kind of opening (docs/97 N-08, docs/133): the openings that share a mark in the door and
   // window schedule (one given by hand, or worked out from kind, fitting and size) are one type.
   // Changed as a type, every one of them takes the new width / height (centre and sill kept),

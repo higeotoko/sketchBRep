@@ -11214,6 +11214,20 @@ void GuiPhase1::moveToolSlidesAnOpeningWithinItsWall() {
   QApplication::processEvents();
   QVERIFY(f.window.findChild<QLabel*>(QStringLiteral("openingFocus")));
   QVERIFY(f.window.findChild<QLineEdit*>(QStringLiteral("openingMark1")));
+  // docs/147: a canopy over it from here; one step, taken back again.
+  {
+    auto* canopy=f.window.findChild<QToolButton*>(QStringLiteral("openingCanopy"));
+    QVERIFY(canopy);
+    const auto before=m.history().undoCount();
+    const auto objects=m.document().objects().size();
+    canopy->click();
+    QTRY_COMPARE(m.document().objects().size(),objects+1);
+    QCOMPARE(m.history().undoCount(),before+1);
+    QVERIFY2(f.window.statusText().contains(QStringLiteral("庇")),qPrintable(f.window.statusText()));
+    QVERIFY(m.undo());
+    QCOMPARE(m.document().objects().size(),objects);
+    f.window.setElementSelection(f.window.elementSelection());
+  }
   f.window.activateTool(MainWindow::ToolId::Move);
   click(f.vp,f.vp->toWidget(at));
   move(f.vp,f.vp->toWidget(at.Translated(gp_Vec(600,0,0))));

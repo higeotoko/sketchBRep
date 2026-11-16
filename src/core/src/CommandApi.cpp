@@ -2551,6 +2551,25 @@ const std::vector<CommandDef>& commands() {
          if (a.contains("gable_eave")) change.gableEave = number(a, "gable_eave");
          return json{{"changed", must(m.changeElementType(text(a, "name"), change))}};
        }},
+      {"make_canopy",
+       "A canopy (庇, docs/147) over an opening: a board out from the face the opening was cut from. 'host', "
+       "'opening' (id or number), 'depth' (out from the face, default 600), 'thickness' (60), 'extra' (longer at "
+       "each side than the opening, 150), 'above' (its underside over the opening's head, 100). Attribute "
+       "kind=canopy. Canopies standing out 1 m or more from the wall's line count in the building area "
+       "(area_table). One undo step. Returns its id.",
+       SCHEMA({"type": "object", "properties": {"host": {"type": "string"}, "opening": {"type": ["string", "integer"]},
+               "depth": {"type": "number"}, "thickness": {"type": "number"}, "extra": {"type": "number"},
+               "above": {"type": "number"}}, "required": ["host", "opening"]}),
+       [](doc::Modeler& m, const json& a) {
+         const auto which = openingNumbers(m, json{{"host", text(a, "host")}, {"openings", json::array({a.at("opening")})}});
+         if (which.size() != 1) throw ApiError("'opening': one opening");
+         doc::Modeler::CanopySpec spec;
+         spec.depth = numberOr(a, "depth", spec.depth);
+         spec.thickness = numberOr(a, "thickness", spec.thickness);
+         spec.extra = numberOr(a, "extra", spec.extra);
+         spec.above = numberOr(a, "above", spec.above);
+         return json{{"id", must(m.makeCanopy(text(a, "host"), which.front(), spec))}};
+       }},
       {"change_opening_type",
        "Change a kind of opening (docs/133): every opening with 'mark' in opening_schedule (given by hand or worked "
        "out), in every wall, takes 'width' / 'height' (centre and sill kept), 'fitting' (an object as "

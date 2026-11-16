@@ -5766,6 +5766,47 @@ Result<int> Modeler::matchElementType(const ObjectId& id) {
   return others;
 }
 
+Result<ObjectId> Modeler::makeCanopy(const ObjectId& host, std::size_t index, const CanopySpec& spec) {
+  using R = Result<ObjectId>;
+  if (!(spec.depth >= 100.0 && spec.depth <= 5000.0)) return R::failure("A canopy stands out 100 to 5000");
+  if (!(spec.thickness >= 10.0 && spec.thickness <= 500.0)) return R::failure("A canopy is 10 to 500 thick");
+  if (!(spec.extra >= 0.0 && spec.extra <= 2000.0) || !(spec.above >= 0.0 && spec.above <= 2000.0))
+    return R::failure("A canopy's overhang at the sides and height over the opening are 0 to 2000");
+  const auto list = openings(host);
+  if (!list) return R::failure(list.status().message());
+  const auto o = std::find_if(list->begin(), list->end(), [&](const OpeningInfo& x) { return x.index == index; });
+  if (o == list->end()) return R::failure("No opening " + std::to_string(index) + " in this object");
+  if (std::abs(o->normal.Z()) > 1e-6) return R::failure("A canopy goes over an opening in a wall");
+  const gp_Vec n(o->normal.X(), o->normal.Y(), 0), u = gp_Vec(0, 0, 1).Crossed(n);
+  const double half = o->width / 2 + spec.extra;
+  const gp_Pnt face(o->center.X(), o->center.Y(), 0.0);
+  const std::vector<gp_Pnt> outline = {face.Translated(u * -half), face.Translated(u * half), face.Translated(u * half + n * spec.depth),
+                                       face.Translated(u * -half + n * spec.depth)};
+  const double top = o->bottom + o->height + spec.above + spec.thickness;
+  history_.beginGroup("Canopy");
+  const auto made = createSlab(outline, top, spec.thickness);
+  if (!made) {
+    history_.abortGroup();
+    return R::failure(made.error());
+  }
+  Object board = *document_.find(*made);
+  board.name = uniqueName("Canopy");
+  board.attributes["kind"] = "canopy";
+  board.attributes["host"] = host;
+  board.attributes["opening"] = o->id;
+  board.attributes.erase("top_level");
+  board.attributes.erase("base_level");
+  // Where it stands out from (the face; the wall's line half its depth behind), for the building area.
+  board.attributes["canopy"] = nlohmann::json{{"face", {face.X(), face.Y()}}, {"out", {n.X(), n.Y()}}, {"width", 2 * half},
+                                              {"depth", spec.depth}, {"behind", o->depth / 2}}
+                                   .dump();
+  ChangeSet changes(document_);
+  changes.modify(board);
+  history_.execute(changes.build("Canopy"));
+  history_.endGroup();
+  return *made;
+}
+
 Result<int> Modeler::changeOpeningType(const std::string& mark, const OpeningTypeChange& change) {
   using R = Result<int>;
   if (mark.empty()) return R::failure("Name the mark of the openings to change");

@@ -602,6 +602,37 @@ TEST_F(Schedules, FittingsAreSolidsInElevations) {
   EXPECT_LT(lines(), with);
 }
 
+// docs/147: a canopy over the east door; counted in the building area once it stands out 1 m.
+TEST_F(Schedules, ACanopyOverADoorAndTheBuildingArea) {
+  const double area0 = sbr::doc::areaTable(modeler.document()).buildingArea;
+  const auto steps = modeler.history().undoCount();
+  std::string canopy = ok("make_canopy", {{"host", east}, {"opening", 1}})["id"];
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  const auto* o = modeler.document().find(canopy);
+  ASSERT_TRUE(o);
+  EXPECT_EQ(o->attributes.at("kind"), "canopy");
+  auto b = sbr::geom::exactBounds(modeler.document().worldShape(*o));
+  EXPECT_NEAR(b.CornerMin().X(), 8100, 1e-6);   // the east wall's outer face (8000 + 100)
+  EXPECT_NEAR(b.CornerMax().X(), 8700, 1e-6);   // 600 out
+  EXPECT_NEAR(b.CornerMax().Y() - b.CornerMin().Y(), 900 + 300, 1e-6);
+  EXPECT_NEAR(b.CornerMin().Z(), 2100 + 100, 1e-6);
+  EXPECT_NEAR(b.CornerMax().Z(), 2100 + 100 + 60, 1e-6);
+  // 600 + 100 (half the wall) from the wall's line: under 1 m, not counted.
+  EXPECT_NEAR(sbr::doc::areaTable(modeler.document()).buildingArea, area0, 1e-3);
+  ASSERT_TRUE(modeler.undo());
+  EXPECT_FALSE(modeler.document().find(canopy));
+  // 1500 out: 1600 from the line; back 1 m from its end: 500 out x 1200 counts.
+  canopy = ok("make_canopy", {{"host", east}, {"opening", 1}, {"depth", 1500}})["id"];
+  const auto t = sbr::doc::areaTable(modeler.document());
+  EXPECT_NEAR(t.buildingArea, area0 + 500.0 * 1200, 1.0);
+  bool said = false;
+  for (const auto& n : t.legalNotes) said |= n.find("庇") != std::string::npos;
+  EXPECT_TRUE(said);
+  // Refused: no such opening, a canopy too deep.
+  EXPECT_FALSE(call("make_canopy", {{"host", east}, {"opening", 9}}).value("ok", true));
+  EXPECT_FALSE(call("make_canopy", {{"host", east}, {"opening", 1}, {"depth", 9000}}).value("ok", true));
+}
+
 // docs/113: a table on a sheet of its own.
 TEST_F(Schedules, ATableGoesOnASheetOfItsOwn) {
   const sbr::draw::Table table = sbr::doc::scheduleTable(modeler.document(), 0);

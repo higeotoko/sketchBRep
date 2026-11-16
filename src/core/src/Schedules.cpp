@@ -485,6 +485,31 @@ AreaTable areaTable(const Document& document) {
       ++eaves;
     }
   }
+  // Canopies (ひさし, docs/147) standing out 1 m or more from the wall's line: back 1 m from their ends.
+  int canopies = 0;
+  for (const Object& o : document.objects()) {
+    if (attribute(o, "kind") != "canopy") continue;
+    const nlohmann::json c = nlohmann::json::parse(attribute(o, "canopy"), nullptr, false);
+    if (!c.is_object()) continue;
+    const double reach = c.value("depth", 0.0) + c.value("behind", 0.0);
+    if (reach < 1000.0) continue;
+    const gp_Trsf world = document.worldTransform(o);
+    const gp_Pnt face = gp_Pnt(c.at("face")[0].get<double>(), c.at("face")[1].get<double>(), 0).Transformed(world);
+    gp_Vec out(c.at("out")[0].get<double>(), c.at("out")[1].get<double>(), 0);
+    out.Transform(world);
+    if (out.Magnitude() < 1e-9) continue;
+    out.Normalize();
+    const gp_Vec along = gp_Vec(0, 0, 1).Crossed(out);
+    const double half = c.value("width", 0.0) / 2, upTo = c.value("depth", 0.0) - 1000.0;
+    if (upTo <= 0.0) continue;  // within the wall: already counted
+    const std::vector<gp_Pnt> part = {gp_Pnt(face.X(), face.Y(), 0).Translated(along * -half), gp_Pnt(face.X(), face.Y(), 0).Translated(along * half),
+                                      gp_Pnt(face.X(), face.Y(), 0).Translated(along * half + out * upTo),
+                                      gp_Pnt(face.X(), face.Y(), 0).Translated(along * -half + out * upTo)};
+    if (const auto s = slice(part)) {
+      plan.push_back(*s);
+      ++canopies;
+    }
+  }
   if (const auto all = joined(plan)) {
     out.buildingArea = areaOf(all);
     out.buildingKnown = !eavesUnknown;
@@ -510,6 +535,7 @@ AreaTable areaTable(const Document& document) {
   out.legalNotes.push_back("未評価：壁で囲まれていない所（バルコニー・ポーチ・ピロティなど、開放性による扱い）、柱だけで囲まれた部分、地階（地盤面上 1 m 以下の部分の建築面積）、特例軒等、高い開放性の指定（同 2 号ただし書）。");
   out.legalNotes.push_back("延べ面積は各階の床面積の合計。容積率の算定で入れない部分（自動車車庫等 1/5 など、同 4 号ただし書・第 3 項）は見ていない（未評価）。");
   if (eaves > 0) out.legalNotes.push_back("建築面積：1 m 以上出た軒は、その先から 1 m 下がった線まで入れた（屋根を載せた線から測った）。");
+  if (canopies > 0) out.legalNotes.push_back("建築面積：壁の中心線から 1 m 以上出た庇は、その先から 1 m 下がった線まで入れた。");
   if (eavesUnknown) out.legalNotes.push_back("建築面積は未評価：1 m 以上出た軒のどこが妻かを読めない屋根がある（L 字などの切妻）。");
   if (!everyKnown) out.legalNotes.push_back("床面積を出せない階がある（形を直接変えて壁として読めない壁がある）：その階と延べ面積は未評価。");
   (void)stairsArriving;
