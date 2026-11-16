@@ -587,6 +587,69 @@ TEST_F(Schedules, RegisteredTypesGiveTheirValues) {
   EXPECT_EQ(ok("list_types")["types"].size(), 2u);
 }
 
+// docs/151: a floor type's layers; lines where they meet in sections.
+TEST_F(Schedules, FloorTypeLayersInSections) {
+  std::string slab;
+  for (const auto& o : modeler.document().objects())
+    if (o.attributes.count("kind") && o.attributes.at("kind") == "slab") slab = o.id;
+  ASSERT_FALSE(slab.empty());
+  const double top = sbr::geom::exactBounds(modeler.document().worldShape(*modeler.document().find(slab))).CornerMax().Z();
+  // Thin horizontal lines across the section, `below` under the slab's top, at least 1000 long.
+  auto linesAt = [&](double below) {
+    const auto view = sbr::draw::makeView(modeler.document(), sbr::draw::sectionView(gp_Pnt(2000, 3000, 0), gp_Dir(0, -1, 0)));
+    int count = 0;
+    if (!view) return -1;
+    for (const auto& item : view->items)
+      if (item.kind == sbr::draw::Item::Kind::Line && item.pen == sbr::draw::Pen::Visible && item.points.size() == 2 &&
+          std::abs(item.points[0].Y() - (top - below)) < 1e-6 && std::abs(item.points[1].Y() - (top - below)) < 1e-6 &&
+          item.points[0].Distance(item.points[1]) > 1000)
+        ++count;
+    return count;
+  };
+  EXPECT_EQ(linesAt(15), 0);
+  // Layers given: the thickness is their sum; a slab of the type takes it.
+  json r = ok("define_type", {{"name", "F1"}, {"part", "floor"},
+                              {"layers", {{{"name", "フローリング"}, {"thickness", 15}}, {{"name", "合板"}, {"thickness", 24}},
+                                          {{"name", "床梁"}, {"thickness", 105}}}}});
+  json list = ok("list_types");
+  ASSERT_EQ(list["types"].size(), 1u);
+  EXPECT_NEAR(list["types"][0]["thickness"].get<double>(), 144, 1e-9);
+  EXPECT_EQ(list["types"][0]["layers"].size(), 3u);
+  ok("set_type_name", {{"ids", {slab}}, {"name", "F1"}});
+  EXPECT_NEAR(sbr::geom::exactBounds(modeler.document().worldShape(*modeler.document().find(slab))).CornerMin().Z(), top - 144, 1e-6);
+  EXPECT_EQ(sbr::doc::Modeler::floorLayerDepths(modeler.document(), *modeler.document().find(slab)), (std::vector<double>{15, 39}));
+  EXPECT_GE(linesAt(15), 1);
+  EXPECT_GE(linesAt(39), 1);
+  EXPECT_EQ(linesAt(144), 0);  // the bottom is the cut line, not a layer line
+  // The build-up in the types table's notes.
+  sbr::draw::Table t = sbr::doc::scheduleTable(modeler.document(), 4);
+  bool said = false;
+  for (const auto& n : t.notes) said |= n.find("F1 の構成（上から）：フローリング 15・合板 24・床梁 105（計 144）") != std::string::npos;
+  EXPECT_TRUE(said);
+  // Made thicker by hand: no layer lines (they would be wrong), said in the notes once the type changes.
+  ASSERT_TRUE(modeler.changeMember(slab, [] { sbr::doc::Modeler::MemberChange c; c.thickness = 200.0; c.keep = "top"; return c; }()));
+  EXPECT_TRUE(sbr::doc::Modeler::floorLayerDepths(modeler.document(), *modeler.document().find(slab)).empty());
+  EXPECT_EQ(linesAt(15), 0);
+  ok("change_type", {{"name", "F1"}, {"thickness", 200}});
+  t = sbr::doc::scheduleTable(modeler.document(), 4);
+  said = false;
+  for (const auto& n : t.notes) said |= n.find("厚さと合いません") != std::string::npos;
+  EXPECT_TRUE(said);
+  // New layers that add up: lines again. Refused: layers not adding up to a thickness given, on a roof,
+  // a layer of no thickness.
+  ok("define_type", {{"name", "F1"}, {"part", "floor"},
+                     {"layers", {{{"name", "フローリング"}, {"thickness", 15}}, {{"name", "合板"}, {"thickness", 185}}}}});
+  EXPECT_GE(linesAt(15), 1);
+  EXPECT_FALSE(call("define_type", {{"name", "F1"}, {"part", "floor"}, {"thickness", 150},
+                                    {"layers", {{{"name", "a"}, {"thickness", 100}}}}}).value("ok", true));
+  EXPECT_FALSE(call("define_type", {{"name", "R9"}, {"part", "roof"}, {"layers", {{{"name", "a"}, {"thickness", 100}}}}}).value("ok", true));
+  EXPECT_FALSE(call("define_type", {{"name", "F1"}, {"part", "floor"}, {"layers", {{{"name", "a"}, {"thickness", 0}}}}}).value("ok", true));
+  // Taken off: no lines; the thickness stays.
+  ok("define_type", {{"name", "F1"}, {"part", "floor"}, {"layers", json::array()}});
+  EXPECT_EQ(linesAt(15), 0);
+  EXPECT_FALSE(ok("list_types")["types"][0].contains("layers"));
+}
+
 // docs/141: floor areas, the total and the building area by the Enforcement Order art. 2 (1).
 TEST(LegalAreas, FloorAndBuildingAreasByTheOrder) {
   sbr::doc::Modeler modeler;

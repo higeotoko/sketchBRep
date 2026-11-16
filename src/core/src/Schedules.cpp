@@ -657,6 +657,23 @@ draw::Table scheduleTable(const Document& document, int which) {
     }
     t.notes = {"床（スラブ）・屋根に付けた種類名ごとです。寸法は mm。同じ種類名の物は「同じ種類の…にする」でそろえられます。"};
     if (anyRegistered) t.notes.push_back("登録した種類は、その種類名を付けた床・屋根がその値になります（docs/149）。");
+    // The build-ups of floor types with layers (docs/151), top to bottom.
+    if (reg.is_object())
+      for (const auto& [name, entry] : reg.items()) {
+        if (!entry.is_object() || !entry.contains("layers") || !entry.at("layers").is_array() || entry.at("layers").empty()) continue;
+        std::string text = name + " の構成（上から）：";
+        double sum = 0.0;
+        bool first = true;
+        for (const auto& l : entry.at("layers")) {
+          text += (first ? "" : "・") + l.value("name", std::string()) + " " + number(l.value("thickness", 0.0), 0);
+          sum += l.value("thickness", 0.0);
+          first = false;
+        }
+        text += "（計 " + number(sum, 0) + "）";
+        if (entry.contains("thickness") && std::abs(entry.at("thickness").get<double>() - sum) > 0.5)
+          text += "。厚さと合いません（図面に層の線は出ません）";
+        t.notes.push_back(text + "。");
+      }
     if (unnamed > 0) t.notes.push_back("種類名の無い床・屋根が " + std::to_string(unnamed) + " 個あります（この表には入っていません）。");
   } else if (which == 3) {
     const RoomSchedule s = roomSchedule(document);

@@ -2553,12 +2553,16 @@ const std::vector<CommandDef>& commands() {
        }},
       {"define_type",
        "Register a floor / roof type (docs/149), kept with the model: 'name', 'part' (floor | roof), 'thickness' "
-       "(floor: the only value), roofs 'pitch' (寸), 'eave', 'gable_eave', whichever are given. Or 'like': an id: "
-       "its type name and values. Every slab / roof of that name takes the values; set_type_name with a registered "
-       "name gives them too. All or nothing, one undo step. Returns how many changed.",
+       "(floor: the only value), roofs 'pitch' (寸), 'eave', 'gable_eave', whichever are given. Floors may have "
+       "'layers' (docs/151): [{name, thickness}] top to bottom; the thickness is their sum, and sections draw a "
+       "line where two meet ([] takes them off). Or 'like': an id: its type name and values. Every slab / roof "
+       "of that name takes the values; set_type_name with a registered name gives them too. All or nothing, one "
+       "undo step. Returns how many changed.",
        SCHEMA({"type": "object", "properties": {"name": {"type": "string"}, "part": {"type": "string", "enum": ["floor", "roof"]},
                "thickness": {"type": "number"}, "pitch": {"type": "number"}, "eave": {"type": "number"},
-               "gable_eave": {"type": "number"}, "like": {"type": "string"}}}),
+               "gable_eave": {"type": "number"}, "like": {"type": "string"},
+               "layers": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"},
+                          "thickness": {"type": "number"}}, "required": ["name", "thickness"]}}}}),
        [](doc::Modeler& m, const json& a) {
          if (a.contains("like")) return json{{"changed", must(m.registerElementType(text(a, "like")))}};
          doc::Modeler::ElementTypeChange change;
@@ -2566,7 +2570,14 @@ const std::vector<CommandDef>& commands() {
          if (a.contains("pitch")) change.pitch = number(a, "pitch");
          if (a.contains("eave")) change.eave = number(a, "eave");
          if (a.contains("gable_eave")) change.gableEave = number(a, "gable_eave");
-         return json{{"changed", must(m.defineElementType(text(a, "name"), text(a, "part"), change))}};
+         std::optional<std::vector<doc::Modeler::TypeLayer>> layers;
+         if (a.contains("layers")) {
+           if (!a.at("layers").is_array()) throw std::runtime_error("'layers' must be an array");
+           layers.emplace();
+           for (const json& l : a.at("layers"))
+             layers->push_back({l.value("name", std::string()), l.value("thickness", 0.0)});
+         }
+         return json{{"changed", must(m.defineElementType(text(a, "name"), text(a, "part"), change, layers))}};
        }},
       {"list_types",
        "The registered floor / roof types (define_type, docs/149): name, part, values given, and how many slabs / "
@@ -2585,6 +2596,10 @@ const std::vector<CommandDef>& commands() {
            if (t.values.pitch) row["pitch"] = *t.values.pitch;
            if (t.values.eave) row["eave"] = *t.values.eave;
            if (t.values.gableEave) row["gable_eave"] = *t.values.gableEave;
+           if (!t.layers.empty()) {
+             row["layers"] = json::array();
+             for (const auto& l : t.layers) row["layers"].push_back({{"name", l.name}, {"thickness", l.thickness}});
+           }
            out.push_back(row);
          }
          return json{{"types", out}};

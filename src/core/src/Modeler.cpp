@@ -5769,15 +5769,61 @@ Status Modeler::applyElementValues(const std::vector<ObjectId>& ids, const Eleme
 std::vector<Modeler::ElementTypeDefinition> Modeler::elementTypes() const {
   std::vector<ElementTypeDefinition> out;
   const nlohmann::json reg = typeRegister(document_);  // kept: items() refers into it
-  for (const auto& [name, entry] : reg.items())
-    if (entry.is_object()) out.push_back({name, entry.value("part", ""), valuesOf(entry)});
+  for (const auto& [name, entry] : reg.items()) {
+    if (!entry.is_object()) continue;
+    ElementTypeDefinition t{name, entry.value("part", ""), valuesOf(entry), {}};
+    if (entry.contains("layers") && entry.at("layers").is_array())
+      for (const auto& l : entry.at("layers")) t.layers.push_back({l.value("name", ""), l.value("thickness", 0.0)});
+    out.push_back(std::move(t));
+  }
   return out;
 }
 
-Result<int> Modeler::defineElementType(const std::string& name, const std::string& part, const ElementTypeChange& values) {
+std::vector<double> Modeler::floorLayerDepths(const Document& document, const Object& slab) {
+  if (attributeOf(slab, "kind") != "slab") return {};
+  const std::string name = attributeOf(slab, kTypeName);
+  if (name.empty()) return {};
+  const nlohmann::json reg = typeRegister(document);
+  if (!reg.contains(name)) return {};
+  const nlohmann::json& entry = reg.at(name);
+  if (entry.value("part", "") != "floor" || !entry.contains("layers") || !entry.at("layers").is_array()) return {};
+  std::vector<double> depths;
+  double sum = 0.0;
+  for (const auto& l : entry.at("layers")) depths.push_back(sum += l.value("thickness", 0.0));
+  if (depths.size() < 2) return {};
+  depths.pop_back();
+  const TopoDS_Shape shape = document.worldShape(slab);
+  if (shape.IsNull()) return {};
+  const Bnd_Box b = geom::exactBounds(shape);
+  if (b.IsVoid() || std::abs(b.CornerMax().Z() - b.CornerMin().Z() - sum) > 0.5) return {};
+  return depths;
+}
+
+Result<int> Modeler::defineElementType(const std::string& name, const std::string& part, const ElementTypeChange& given,
+                                       const std::optional<std::vector<TypeLayer>>& layers) {
   using R = Result<int>;
   if (name.empty() || name.size() > 40 || name.find_first_of("\r\n") != std::string::npos)
     return R::failure("A type name is one line of at most 40 characters");
+  ElementTypeChange values = given;
+  nlohmann::json layerList = nlohmann::json::array();
+  if (layers && !layers->empty()) {
+    if (part != "floor") return R::failure("Layers are for floor types (for now)");
+    double sum = 0.0;
+    for (const TypeLayer& l : *layers) {
+      if (l.name.empty() || l.name.size() > 40 || l.name.find_first_of("\r\n") != std::string::npos)
+        return R::failure("A layer's name is one line of at most 40 characters");
+      if (!(std::isfinite(l.thickness) && l.thickness > 0.0 && l.thickness <= 1000.0)) return R::failure("A layer is above 0 and at most 1000 thick");
+      sum += l.thickness;
+      layerList.push_back({{"name", l.name}, {"thickness", l.thickness}});
+    }
+    if (values.thickness && std::abs(*values.thickness - sum) > 0.5)
+      return R::failure("The layers add up to " + std::to_string(static_cast<int>(std::lround(sum))) + ", not the thickness given");
+    values.thickness = sum;
+  } else if (layers && !values.thickness && !values.pitch && !values.eave && !values.gableEave) {
+    // Only taking the layers off: the thickness as registered.
+    const nlohmann::json reg = typeRegister(document_);
+    if (reg.contains(name) && reg.at(name).contains("thickness")) values.thickness = reg.at(name).at("thickness").get<double>();
+  }
   if (const std::string error = typeValuesError(part, values); !error.empty()) return R::failure(error);
   std::vector<ObjectId> named;
   for (const Object& o : document_.objects()) {
@@ -5792,6 +5838,8 @@ Result<int> Modeler::defineElementType(const std::string& name, const std::strin
   nlohmann::json entry = reg.contains(name) && reg.at(name).value("part", "") == part ? reg.at(name) : nlohmann::json::object();
   entry["part"] = part;
   putValues(entry, values);
+  if (layers && layers->empty()) entry.erase("layers");
+  else if (layers) entry["layers"] = layerList;
   reg[name] = entry;
   history_.beginGroup("Define Type");
   editSettings(document_, history_, "Define Type", [&](PersistentSettings& s) { s.elementTypes = reg.dump(); });

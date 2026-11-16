@@ -11,6 +11,7 @@
 #include "sbr/OpeningSymbols.h"
 #include "sbr/doc/Schedules.h"
 #include "sbr/doc/Modeler.h"
+#include "sbr/geom/Measure.h"
 #include "sbr/geom/Stair.h"
 
 #include <algorithm>
@@ -390,7 +391,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
   TopoDS_Compound seen;
   builder.MakeCompound(seen);
   bool anySeen = false;
-  std::vector<Item> cut, fills, loose;
+  std::vector<Item> cut, fills, loose, layerLines;
   std::set<doc::ObjectId> drawn, gridIds;
   for (const doc::Object& o : document.objects()) {
     if (o.shape.IsNull() || !selected(document, o, spec)) continue;
@@ -458,6 +459,22 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
       section.SetNonDestructive(Standard_True);
       section.Build();
       if (section.IsDone()) addLocalEdges(section.Shape().Moved(TopLoc_Location(proj.toLocal)), Pen::Cut, deflection, cut);
+      // A floor of a type with layers (docs/151), cut upright: thin lines where its layers meet,
+      // under its top along the cut.
+      if (section.IsDone() && std::abs(n.Z()) < 1e-9) {
+        const std::vector<double> depths = doc::Modeler::floorLayerDepths(document, o);
+        if (!depths.empty()) {
+          const double top = geom::exactBounds(world).CornerMax().Z();
+          for (TopExp_Explorer e(section.Shape(), TopAbs_EDGE); e.More(); e.Next()) {
+            BRepAdaptor_Curve c(TopoDS::Edge(e.Current()));
+            if (c.GetType() != GeomAbs_Line) continue;
+            const gp_Pnt a = c.Value(c.FirstParameter()), b = c.Value(c.LastParameter());
+            if (std::abs(a.Z() - top) > 1e-6 || std::abs(b.Z() - top) > 1e-6 || a.Distance(b) < 1e-6) continue;
+            for (const double d : depths)
+              layerLines.push_back(line(Pen::Visible, proj.uv(a.Translated(gp_Vec(0, 0, -d))), proj.uv(b.Translated(gp_Vec(0, 0, -d)))));
+          }
+        }
+      }
       BRepAlgoAPI_Common kept;
       {
         TopTools_ListOfShape arguments, tools;
@@ -548,6 +565,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
   }
   for (Item& h : hidden) view.items.push_back(std::move(h));
   for (Item& l : loose) view.items.push_back(std::move(l));
+  for (Item& l : layerLines) view.items.push_back(std::move(l));  // over the fills
   // Door / window symbols of the openings this plan cuts through, to their real width and
   // the wall's thickness (OpeningSymbols.h).
   if (spec.kind == ViewKind::Plan && std::abs(n.Z()) > 1 - 1e-9) {

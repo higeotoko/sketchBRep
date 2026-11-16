@@ -597,12 +597,23 @@ class Modeler {
   // defineElementType registers or changes one: every one of that name takes the values (one undo
   // step; refused if objects of the other part have the name); registerElementType: from an
   // object's own values under its name. Returns how many objects changed.
+  // A floor type may have its layers, top to bottom (docs/151): its thickness is their sum.
+  struct TypeLayer {
+    std::string name;
+    double thickness = 0.0;
+  };
   struct ElementTypeDefinition {
     std::string name, part;
     ElementTypeChange values;
+    std::vector<TypeLayer> layers;
   };
   std::vector<ElementTypeDefinition> elementTypes() const;
-  Result<int> defineElementType(const std::string& name, const std::string& part, const ElementTypeChange& values);
+  // `layers`: none given, those kept; an empty list takes them off.
+  Result<int> defineElementType(const std::string& name, const std::string& part, const ElementTypeChange& values,
+                                const std::optional<std::vector<TypeLayer>>& layers = std::nullopt);
+  // The depths below its top where the layers of a slab of a registered floor type meet
+  // (docs/151); empty when it has none, or its thickness no longer adds up to them.
+  static std::vector<double> floorLayerDepths(const Document& document, const Object& slab);
   Result<int> registerElementType(const ObjectId& id);
   Status removeElementType(const std::string& name);
   // A canopy over an opening (庇, docs/97 N-03, docs/147): a board out from the face the opening
