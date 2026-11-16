@@ -33,9 +33,16 @@
 |---|---|
 | 計算テスト済み | コア全 719 件中 712 件成功・7 件スキップ（ローカル）。`Schedules.FittingsAreSolidsInElevations` に追加：東の扉（900 × 2100、壁 200）を枠 50・扉 30 に → 枠の体積 (900 × 2100 − 800 × 2050) × 200、扉の板 800 × 2050 × 30／`list_openings` に frame 50／枠 300・文字の枠は断る |
 | GUI 自動確認済み | 建具の画面テストに追加（ローカル）：片開き 右吊元の扉で、プロパティの「枠」が 30 → 50 にすると取り消し 1 回で建具に frame 50、建具の種類の欄は同じ種類のまま → 左吊元に変えても frame 50 のまま → 取り消し 2 回で元どおり。開口・建具まわりの画面テスト 16 条件が成功 |
-| CI | __CI__ |
+| CI | run 43878165585（push、`4b4ae16`）：Linux 732 件成功、Windows 728 件＋3 件成功・GUI 237 件成功（7 件スキップ） |
 | Windows 実機確認 | まだ（チェック表 12-39） |
 
 ## 配布の記録
 
-__DELIVERY__
+| 項目 | 値 |
+|---|---|
+| コード | `4b4ae16`（建具の寸法 docs/157。Opus 5.5 で作業） |
+| CI | run 43878165585（push）：Linux・Windows とも成功 |
+| ZIP | `SketchBRep-windows-x64-4b4ae16-local.zip`（Codex のチャットフォルダの `outputs\`） |
+| サイズ | 72,558,942 bytes |
+| SHA256 | `8bd6168fdb7dfd92f797687294d49c4f7f114a2b3548626faeeb4b8ceb8b64ca` |
+| ZIP の検証 | `verify_portable_pads.py`・`verify_portable_mat.py` とも成功（docs/validation/2026-11-16-portable-4b4ae16*.json） |
