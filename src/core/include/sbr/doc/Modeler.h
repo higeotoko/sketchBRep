@@ -611,9 +611,10 @@ class Modeler {
   // `layers`: none given, those kept; an empty list takes them off.
   Result<int> defineElementType(const std::string& name, const std::string& part, const ElementTypeChange& values,
                                 const std::optional<std::vector<TypeLayer>>& layers = std::nullopt);
-  // The depths below its top where the layers of a slab of a registered floor type meet
-  // (docs/151); empty when it has none, or its thickness no longer adds up to them.
-  static std::vector<double> floorLayerDepths(const Document& document, const Object& slab);
+  // The depths below its top where the layers of a slab / roof of a registered type meet
+  // (docs/151, roofs across the slope docs/152); empty when it has none, or its thickness no
+  // longer adds up to them.
+  static std::vector<double> typeLayerDepths(const Document& document, const Object& element);
   Result<int> registerElementType(const ObjectId& id);
   Status removeElementType(const std::string& name);
   // A canopy over an opening (庇, docs/97 N-03, docs/147): a board out from the face the opening

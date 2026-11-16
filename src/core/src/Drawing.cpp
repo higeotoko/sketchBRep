@@ -6,6 +6,7 @@
 #include <set>
 #include "sbr/draw/Drawing.h"
 #include <map>
+#include <functional>
 #include <optional>
 
 #include "sbr/OpeningSymbols.h"
@@ -92,6 +93,68 @@ std::vector<double> penDashes(Pen pen) {
 }
 
 namespace {
+// Where the layers under the upper faces of `world` meet, cut by the upright `plane` (docs/151,
+// docs/152): each upper face's cut moved `depth` into the solid at right angles to the face;
+// those of two faces meeting at a point (a ridge, a hip) end where they cross.
+void layerLinesUnderTops(const TopoDS_Shape& world, const gp_Pln& plane, const std::vector<double>& depths,
+                         const std::function<void(const gp_Pnt&, const gp_Pnt&)>& add) {
+  struct Top {
+    gp_Pnt a, b;
+    gp_Vec m;  // in the plane, at right angles to a-b, moving 1 into the solid at right angles to the face
+  };
+  std::vector<Top> tops;
+  const gp_Dir cutNormal = plane.Axis().Direction();
+  for (TopExp_Explorer f(world, TopAbs_FACE); f.More(); f.Next()) {
+    const TopoDS_Face face = TopoDS::Face(f.Current());
+    BRepAdaptor_Surface s(face);
+    if (s.GetType() != GeomAbs_Plane) continue;
+    gp_Dir out = s.Plane().Axis().Direction();
+    if (face.Orientation() == TopAbs_REVERSED) out.Reverse();
+    if (out.Z() < 0.05) continue;  // not an upper face
+    BRepAlgoAPI_Section cut(face, plane, Standard_False);
+    cut.SetNonDestructive(Standard_True);
+    cut.Build();
+    if (!cut.IsDone()) continue;
+    for (TopExp_Explorer e(cut.Shape(), TopAbs_EDGE); e.More(); e.Next()) {
+      BRepAdaptor_Curve c(TopoDS::Edge(e.Current()));
+      if (c.GetType() != GeomAbs_Line) continue;
+      const gp_Pnt a = c.Value(c.FirstParameter()), b = c.Value(c.LastParameter());
+      if (a.Distance(b) < 1e-6) continue;
+      gp_Vec w = gp_Vec(cutNormal).Crossed(gp_Vec(a, b).Normalized());
+      const double along = w.Dot(gp_Vec(out));
+      if (std::abs(along) < 1e-6) continue;
+      tops.push_back({a, b, w / -along});  // w / along points out: into the solid is the other way
+    }
+  }
+  // Where the lines through p + s u and q + r v cross (in the plane); nothing when parallel.
+  auto cross = [](const gp_Pnt& p, const gp_Vec& u, const gp_Pnt& q, const gp_Vec& v) -> std::optional<gp_Pnt> {
+    const gp_Vec uv = u.Crossed(v);
+    if (uv.SquareMagnitude() < 1e-12 * u.SquareMagnitude() * v.SquareMagnitude()) return std::nullopt;
+    const double s = gp_Vec(p, q).Crossed(v).Dot(uv) / uv.SquareMagnitude();
+    return p.Translated(u * s);
+  };
+  for (const double d : depths) {
+    std::vector<std::pair<gp_Pnt, gp_Pnt>> lines;
+    for (const Top& t : tops) lines.emplace_back(t.a.Translated(t.m * d), t.b.Translated(t.m * d));
+    for (std::size_t i = 0; i < tops.size(); ++i) {
+      for (std::size_t j = i + 1; j < tops.size(); ++j) {
+        const gp_Pnt* ends[2][2] = {{&tops[i].a, &tops[i].b}, {&tops[j].a, &tops[j].b}};
+        for (int ei = 0; ei < 2; ++ei) {
+          for (int ej = 0; ej < 2; ++ej) {
+            if (ends[0][ei]->Distance(*ends[1][ej]) > 1e-6) continue;
+            const auto at = cross(lines[i].first, gp_Vec(lines[i].first, lines[i].second), lines[j].first,
+                                  gp_Vec(lines[j].first, lines[j].second));
+            if (!at) continue;
+            (ei == 0 ? lines[i].first : lines[i].second) = *at;
+            (ej == 0 ? lines[j].first : lines[j].second) = *at;
+          }
+        }
+      }
+    }
+    for (const auto& [a, b] : lines)
+      if (a.Distance(b) > 1e-6) add(a, b);
+  }
+}
 
 constexpr double kOnPlane = 1e-4;  // mm: an edge / face on the cut plane
 
@@ -459,21 +522,13 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
       section.SetNonDestructive(Standard_True);
       section.Build();
       if (section.IsDone()) addLocalEdges(section.Shape().Moved(TopLoc_Location(proj.toLocal)), Pen::Cut, deflection, cut);
-      // A floor of a type with layers (docs/151), cut upright: thin lines where its layers meet,
-      // under its top along the cut.
+      // A floor / roof of a type with layers (docs/151, docs/152), cut upright: thin lines where
+      // its layers meet, under its upper faces (across a roof's slope), mitred where two meet.
       if (section.IsDone() && std::abs(n.Z()) < 1e-9) {
-        const std::vector<double> depths = doc::Modeler::floorLayerDepths(document, o);
-        if (!depths.empty()) {
-          const double top = geom::exactBounds(world).CornerMax().Z();
-          for (TopExp_Explorer e(section.Shape(), TopAbs_EDGE); e.More(); e.Next()) {
-            BRepAdaptor_Curve c(TopoDS::Edge(e.Current()));
-            if (c.GetType() != GeomAbs_Line) continue;
-            const gp_Pnt a = c.Value(c.FirstParameter()), b = c.Value(c.LastParameter());
-            if (std::abs(a.Z() - top) > 1e-6 || std::abs(b.Z() - top) > 1e-6 || a.Distance(b) < 1e-6) continue;
-            for (const double d : depths)
-              layerLines.push_back(line(Pen::Visible, proj.uv(a.Translated(gp_Vec(0, 0, -d))), proj.uv(b.Translated(gp_Vec(0, 0, -d)))));
-          }
-        }
+        const std::vector<double> depths = doc::Modeler::typeLayerDepths(document, o);
+        if (!depths.empty()) layerLinesUnderTops(world, plane, depths, [&](const gp_Pnt& a, const gp_Pnt& b) {
+          layerLines.push_back(line(Pen::Visible, proj.uv(a), proj.uv(b)));
+        });
       }
       BRepAlgoAPI_Common kept;
       {

@@ -5779,23 +5779,34 @@ std::vector<Modeler::ElementTypeDefinition> Modeler::elementTypes() const {
   return out;
 }
 
-std::vector<double> Modeler::floorLayerDepths(const Document& document, const Object& slab) {
-  if (attributeOf(slab, "kind") != "slab") return {};
-  const std::string name = attributeOf(slab, kTypeName);
+std::vector<double> Modeler::typeLayerDepths(const Document& document, const Object& element) {
+  const std::string kind = attributeOf(element, "kind");
+  if (kind != "slab" && kind != "roof") return {};
+  const std::string name = attributeOf(element, kTypeName);
   if (name.empty()) return {};
   const nlohmann::json reg = typeRegister(document);
   if (!reg.contains(name)) return {};
   const nlohmann::json& entry = reg.at(name);
-  if (entry.value("part", "") != "floor" || !entry.contains("layers") || !entry.at("layers").is_array()) return {};
+  if (entry.value("part", "") != partOfKind(kind) || !entry.contains("layers") || !entry.at("layers").is_array()) return {};
   std::vector<double> depths;
   double sum = 0.0;
   for (const auto& l : entry.at("layers")) depths.push_back(sum += l.value("thickness", 0.0));
   if (depths.size() < 2) return {};
   depths.pop_back();
-  const TopoDS_Shape shape = document.worldShape(slab);
-  if (shape.IsNull()) return {};
-  const Bnd_Box b = geom::exactBounds(shape);
-  if (b.IsVoid() || std::abs(b.CornerMax().Z() - b.CornerMin().Z() - sum) > 0.5) return {};
+  double thickness = 0.0;
+  if (kind == "roof") {
+    // Across the slope, as the roof was made.
+    const nlohmann::json spec = nlohmann::json::parse(attributeOf(element, "roof_spec"), nullptr, false);
+    if (!spec.is_object()) return {};
+    thickness = spec.value("thickness", 0.0);
+  } else {
+    const TopoDS_Shape shape = document.worldShape(element);
+    if (shape.IsNull()) return {};
+    const Bnd_Box b = geom::exactBounds(shape);
+    if (b.IsVoid()) return {};
+    thickness = b.CornerMax().Z() - b.CornerMin().Z();
+  }
+  if (std::abs(thickness - sum) > 0.5) return {};
   return depths;
 }
 
@@ -5807,7 +5818,6 @@ Result<int> Modeler::defineElementType(const std::string& name, const std::strin
   ElementTypeChange values = given;
   nlohmann::json layerList = nlohmann::json::array();
   if (layers && !layers->empty()) {
-    if (part != "floor") return R::failure("Layers are for floor types (for now)");
     double sum = 0.0;
     for (const TypeLayer& l : *layers) {
       if (l.name.empty() || l.name.size() > 40 || l.name.find_first_of("\r\n") != std::string::npos)

@@ -617,7 +617,7 @@ TEST_F(Schedules, FloorTypeLayersInSections) {
   EXPECT_EQ(list["types"][0]["layers"].size(), 3u);
   ok("set_type_name", {{"ids", {slab}}, {"name", "F1"}});
   EXPECT_NEAR(sbr::geom::exactBounds(modeler.document().worldShape(*modeler.document().find(slab))).CornerMin().Z(), top - 144, 1e-6);
-  EXPECT_EQ(sbr::doc::Modeler::floorLayerDepths(modeler.document(), *modeler.document().find(slab)), (std::vector<double>{15, 39}));
+  EXPECT_EQ(sbr::doc::Modeler::typeLayerDepths(modeler.document(), *modeler.document().find(slab)), (std::vector<double>{15, 39}));
   EXPECT_GE(linesAt(15), 1);
   EXPECT_GE(linesAt(39), 1);
   EXPECT_EQ(linesAt(144), 0);  // the bottom is the cut line, not a layer line
@@ -628,26 +628,75 @@ TEST_F(Schedules, FloorTypeLayersInSections) {
   EXPECT_TRUE(said);
   // Made thicker by hand: no layer lines (they would be wrong), said in the notes once the type changes.
   ASSERT_TRUE(modeler.changeMember(slab, [] { sbr::doc::Modeler::MemberChange c; c.thickness = 200.0; c.keep = "top"; return c; }()));
-  EXPECT_TRUE(sbr::doc::Modeler::floorLayerDepths(modeler.document(), *modeler.document().find(slab)).empty());
+  EXPECT_TRUE(sbr::doc::Modeler::typeLayerDepths(modeler.document(), *modeler.document().find(slab)).empty());
   EXPECT_EQ(linesAt(15), 0);
   ok("change_type", {{"name", "F1"}, {"thickness", 200}});
   t = sbr::doc::scheduleTable(modeler.document(), 4);
   said = false;
   for (const auto& n : t.notes) said |= n.find("厚さと合いません") != std::string::npos;
   EXPECT_TRUE(said);
-  // New layers that add up: lines again. Refused: layers not adding up to a thickness given, on a roof,
-  // a layer of no thickness.
+  // New layers that add up: lines again. Refused: layers not adding up to a thickness given, a layer
+  // of no thickness.
   ok("define_type", {{"name", "F1"}, {"part", "floor"},
                      {"layers", {{{"name", "フローリング"}, {"thickness", 15}}, {{"name", "合板"}, {"thickness", 185}}}}});
   EXPECT_GE(linesAt(15), 1);
   EXPECT_FALSE(call("define_type", {{"name", "F1"}, {"part", "floor"}, {"thickness", 150},
                                     {"layers", {{{"name", "a"}, {"thickness", 100}}}}}).value("ok", true));
-  EXPECT_FALSE(call("define_type", {{"name", "R9"}, {"part", "roof"}, {"layers", {{{"name", "a"}, {"thickness", 100}}}}}).value("ok", true));
   EXPECT_FALSE(call("define_type", {{"name", "F1"}, {"part", "floor"}, {"layers", {{{"name", "a"}, {"thickness", 0}}}}}).value("ok", true));
   // Taken off: no lines; the thickness stays.
   ok("define_type", {{"name", "F1"}, {"part", "floor"}, {"layers", json::array()}});
   EXPECT_EQ(linesAt(15), 0);
   EXPECT_FALSE(ok("list_types")["types"][0].contains("layers"));
+}
+
+// docs/152: a roof type's layers, across the slope; mitred at the ridge.
+TEST_F(Schedules, RoofTypeLayersAcrossTheSlope) {
+  // A gable roof over 8000 x 6000, the ridge along X (the long side), 4 寸, 120 thick.
+  const std::string roof = ok("create_roof", {{"outline", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}}}, {"kind", "gable"},
+                                              {"height", 3000}, {"pitch", 4}, {"thickness", 120}})["id"];
+  // Cut across the ridge (looking along X): the sloped thin lines, longer than 1000.
+  auto sloped = [&] {
+    const auto view = sbr::draw::makeView(modeler.document(), sbr::draw::sectionView(gp_Pnt(6000, 3000, 0), gp_Dir(1, 0, 0)));
+    std::vector<std::pair<gp_Pnt2d, gp_Pnt2d>> out;
+    if (!view) return out;
+    for (const auto& item : view->items)
+      if (item.kind == sbr::draw::Item::Kind::Line && item.pen == sbr::draw::Pen::Visible && item.points.size() == 2 &&
+          std::abs(item.points[0].Y() - item.points[1].Y()) > 100 && item.points[0].Distance(item.points[1]) > 1000)
+        out.emplace_back(item.points[0], item.points[1]);
+    return out;
+  };
+  const std::size_t before = sloped().size();
+  ok("define_type", {{"name", "R1"}, {"part", "roof"},
+                     {"layers", {{{"name", "ガルバリウム"}, {"thickness", 20}}, {{"name", "野地板"}, {"thickness", 12}},
+                                 {{"name", "垂木"}, {"thickness", 88}}}}});
+  ok("set_type_name", {{"ids", {roof}}, {"name", "R1"}});
+  EXPECT_NEAR(modeler.roofInfo(roof)->spec.thickness, 120, 1e-9);
+  EXPECT_EQ(sbr::doc::Modeler::typeLayerDepths(modeler.document(), *modeler.document().find(roof)), (std::vector<double>{20, 32}));
+  const auto with = sloped();
+  ASSERT_EQ(with.size(), before + 4);  // 2 boundaries x 2 slopes
+  // Each new line lies 20 or 32 under its slope at right angles, and the two of one depth meet below
+  // the ridge (mitred): an end at the middle (Y 3000 in the plan is the sheet's X... found by matching ends).
+  const double rise = 0.4, cosine = 1.0 / std::sqrt(1 + rise * rise);
+  int met = 0;
+  for (std::size_t i = 0; i < with.size(); ++i)
+    for (std::size_t j = i + 1; j < with.size(); ++j)
+      for (const auto& p : {with[i].first, with[i].second})
+        for (const auto& q : {with[j].first, with[j].second})
+          met += p.Distance(q) < 1e-6;
+  EXPECT_GE(met, 2);  // the 20 pair and the 32 pair each end at one point
+  // That point: under the ridge by 20 / cos and 32 / cos.
+  const double ridgeTop = modeler.roofInfo(roof)->ridgeHeight;
+  int under = 0;
+  for (const auto& [a, b] : with)
+    for (const auto& p : {a, b})
+      for (const double d : {20.0, 32.0}) under += std::abs(p.Y() - (ridgeTop - d / cosine)) < 1e-3;
+  EXPECT_GE(under, 4);
+  // A thicker roof by hand no longer adds up: no lines.
+  auto spec = modeler.roofInfo(roof)->spec;
+  spec.thickness = 150;
+  ASSERT_TRUE(modeler.changeRoof(roof, spec));
+  EXPECT_TRUE(sbr::doc::Modeler::typeLayerDepths(modeler.document(), *modeler.document().find(roof)).empty());
+  EXPECT_EQ(sloped().size(), before);
 }
 
 // docs/141: floor areas, the total and the building area by the Enforcement Order art. 2 (1).
