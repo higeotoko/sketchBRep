@@ -20,9 +20,16 @@
 |---|---|
 | 計算テスト済み | （コアは変えていない。らせんの形は docs/139 のテスト） |
 | GUI 自動確認済み | 階段ツールの画面テストに追加（ローカル）：設定をらせん・270° に → ステータスに「中心」→ 中心をクリック、900 東へ動かして「900」と打ち、Enter → 階段が 1 つ、形はらせん、回る角度 270、半径 900、扇 13。階段まわりの画面テストが成功 |
-| CI | __CI__ |
+| CI | run 43809475149（push、`64b51ef`）：Linux 726 件成功、Windows 722 件＋3 件成功・GUI 237 件成功（7 件スキップ） |
 | Windows 実機確認 | まだ（チェック表 12-26） |
 
 ## 配布の記録
 
-__DELIVERY__
+| 項目 | 値 |
+|---|---|
+| コード | `64b51ef`（らせん階段を階段ツールで docs/143 と通り芯から外す docs/144。Opus 5.5 で作業） |
+| CI | run 43809475149（push）：Linux・Windows とも成功 |
+| ZIP | `SketchBRep-windows-x64-64b51ef-local.zip`（Codex のチャットフォルダの `outputs\`） |
+| サイズ | 72,359,043 bytes |
+| SHA256 | `16e94fc214ebea5d5d8ad9a8ff2c137301088b4dcd5e72c9f1d41287bf025c1a` |
+| ZIP の検証 | `verify_portable_pads.py`・`verify_portable_mat.py` とも成功（docs/validation/2026-11-16-portable-64b51ef*.json） |

@@ -21,9 +21,16 @@
 |---|---|
 | 計算テスト済み | `GridPinLater.WallsOnTheGridFollowItsSpacings` に追加：東の壁だけ外す → 取り消し 1 回、属性が消える、X3 を動かしても東の壁は 7280 のまま／取り消すと付いた状態に戻る／付けていない壁を外すのは断る。`GridPinLater.MembersDrawnBeforeFollowTheGridOncePinned` に追加：全部外す → 2 本、柱の付き先が消える、もう一度は断る |
 | GUI 自動確認済み | （メニューを 1 つ足しただけ。押す画面テストは足していない） |
-| CI | __CI__ |
+| CI | run 43809475149（push、`64b51ef`）：Linux 726 件成功、Windows 722 件＋3 件成功・GUI 237 件成功（7 件スキップ） |
 | Windows 実機確認 | まだ（チェック表 12-27） |
 
 ## 配布の記録
 
-__DELIVERY__
+| 項目 | 値 |
+|---|---|
+| コード | `64b51ef`（らせん階段を階段ツールで docs/143 と通り芯から外す docs/144。Opus 5.5 で作業） |
+| CI | run 43809475149（push）：Linux・Windows とも成功 |
+| ZIP | `SketchBRep-windows-x64-64b51ef-local.zip`（Codex のチャットフォルダの `outputs\`） |
+| サイズ | 72,359,043 bytes |
+| SHA256 | `16e94fc214ebea5d5d8ad9a8ff2c137301088b4dcd5e72c9f1d41287bf025c1a` |
+| ZIP の検証 | `verify_portable_pads.py`・`verify_portable_mat.py` とも成功（docs/validation/2026-11-16-portable-64b51ef*.json） |
