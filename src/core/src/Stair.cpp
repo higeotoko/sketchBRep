@@ -71,9 +71,47 @@ Result<Layout> layout(const StairSpec& spec) {
   if (spec.newels && spec.stringer == "none") return L::failure("Newel posts stand with side boards");
   if (spec.newels && !(spec.newelSize >= 60.0 && spec.newelSize <= 240.0)) return L::failure("A newel post is 60 to 240 square");
   if (!(spec.nosing >= 0.0 && spec.nosing <= 50.0)) return L::failure("A nosing is 0 to 50");
+  if (spec.shape != "line" && spec.shape != "spiral") return L::failure("Stair shape: line or spiral");
+  if (spec.shape == "spiral") {
+    // Equal wedges about the centre, from the foot round by `sweep` (docs/139).
+    if (spec.path.size() < 2) return L::failure("A spiral stair needs its centre and the foot of its walking line");
+    const V2 c{spec.path[0].X(), spec.path[0].Y()}, foot{spec.path[1].X(), spec.path[1].Y()};
+    const double r = (foot - c).length();
+    if (!std::isfinite(r)) return L::failure("The stair's line has a point that is not a number");
+    const double inner = r - spec.width / 2, outer = r + spec.width / 2;
+    if (inner < 50.0) return L::failure("A spiral stair's inside (radius less half the width) is at least 50");
+    if (!(std::abs(spec.sweep) >= 90.0 && std::abs(spec.sweep) <= 720.0)) return L::failure("A spiral stair turns 90 to 720 degrees");
+    Layout out;
+    int risers = spec.risers;
+    if (risers == 0) risers = std::max(static_cast<int>(std::ceil(spec.rise / spec.riserLimit - 1e-9)), 3);
+    if (risers < 3) return L::failure("A spiral stair has at least 3 risers");
+    out.risers = risers;
+    out.riser = spec.rise / risers;
+    if (spec.style == "block" && spec.thickness >= out.riser)
+      return L::failure("A block stair's thickness is less than its riser (" + std::to_string(static_cast<int>(out.riser)) + ")");
+    const int treads = risers - 1;
+    const double a0 = std::atan2(foot.y - c.y, foot.x - c.x), sweep = spec.sweep * kPi / 180.0, wedge = sweep / treads;
+    auto at = [&](double radius, double angle) { return c + V2{std::cos(angle), std::sin(angle)} * radius; };
+    const double measured = spec.width > kMeasureAt ? 2.0 * (inner + kMeasureAt) * std::sin(std::abs(wedge) / 2) : 0.0;
+    for (int k = 0; k < treads; ++k) {
+      const double from = a0 + wedge * k, to = a0 + wedge * (k + 1);
+      const int parts = std::max(1, static_cast<int>(std::ceil(std::abs(to - from) / (5.0 * kPi / 180.0))));
+      Tread t;
+      t.kind = "winder";
+      t.going = measured;
+      t.step = k + 1;
+      for (int i = 0; i <= parts; ++i) t.outline.push_back(at(outer, from + (to - from) * i / parts));
+      for (int i = parts; i >= 0; --i) t.outline.push_back(at(inner, from + (to - from) * i / parts));
+      out.treads.push_back(std::move(t));
+    }
+    out.walk = r * std::abs(sweep);
+    out.flights = 1;
+    out.winders = treads;
+    return out;
+  }
   // The line: no repeated points, no points on a straight part.
   std::vector<V2> pts;
-  for (const gp_Pnt& p : spec.path) {
+  for (const gp_Pnt& p : walkingLine(spec)) {
     const V2 q{p.X(), p.Y()};
     if (!std::isfinite(q.x) || !std::isfinite(q.y)) return L::failure("The stair's line has a point that is not a number");
     if (!pts.empty() && (q - pts.back()).length() < 0.01) continue;
@@ -206,7 +244,7 @@ constexpr double kRailRadius = 17.5, kRailInset = 60.0;
 // each tread on that side, 60 in, `height` above the tread; then over the top edge.
 std::vector<gp_Pnt> railAxis(const StairSpec& spec, const Layout& l, int side) {
   std::vector<V2> pts;
-  for (const gp_Pnt& p : spec.path) {
+  for (const gp_Pnt& p : walkingLine(spec)) {
     const V2 q{p.X(), p.Y()};
     if (pts.empty() || (q - pts.back()).length() > 0.01) pts.push_back(q);
   }
@@ -262,7 +300,7 @@ Status sideBoards(const StairSpec& spec, const Layout& l, int side, double depth
                   double& volume, int& newels) {
   const bool cut = spec.stringerStyle == "cut";
   std::vector<V2> pts;
-  for (const gp_Pnt& p : spec.path) {
+  for (const gp_Pnt& p : walkingLine(spec)) {
     const V2 q{p.X(), p.Y()};
     if (pts.empty() || (q - pts.back()).length() > 0.01) pts.push_back(q);
   }
@@ -401,7 +439,7 @@ struct FrontEdge {
 };
 FrontEdge frontEdge(const StairSpec& spec, const Tread& t) {
   std::vector<V2> pts;
-  for (const gp_Pnt& p : spec.path) {
+  for (const gp_Pnt& p : walkingLine(spec)) {
     const V2 q{p.X(), p.Y()};
     if (pts.empty() || (q - pts.back()).length() > 0.01) pts.push_back(q);
   }
@@ -463,6 +501,20 @@ StairCheck check(const std::string& item, double value, double limit, bool atMos
 }
 }  // namespace
 
+std::vector<gp_Pnt> walkingLine(const StairSpec& spec) {
+  if (spec.shape != "spiral" || spec.path.size() < 2) return spec.path;
+  const gp_Pnt c(spec.path[0].X(), spec.path[0].Y(), 0), foot(spec.path[1].X(), spec.path[1].Y(), 0);
+  const double r = c.Distance(foot);
+  const double a0 = std::atan2(foot.Y() - c.Y(), foot.X() - c.X()), sweep = spec.sweep * kPi / 180.0;
+  const int parts = std::max(2, static_cast<int>(std::ceil(std::abs(spec.sweep) / 5.0)));
+  std::vector<gp_Pnt> out;
+  for (int i = 0; i <= parts; ++i) {
+    const double a = a0 + sweep * i / parts;
+    out.emplace_back(c.X() + r * std::cos(a), c.Y() + r * std::sin(a), 0);
+  }
+  return out;
+}
+
 Result<StairShape> makeStair(const StairSpec& spec) {
   const auto made = layout(spec);
   if (!made) return R::failure(made.error());
@@ -519,11 +571,20 @@ Result<StairShape> makeStair(const StairSpec& spec) {
     out.solid = boards;
   }
   // Handrails (docs/116) and side boards (docs/128): with the stair in one compound.
-  if (spec.handrail != "none" || spec.stringer != "none" || spec.riserBoards) {
+  const bool spiral = spec.shape == "spiral";
+  if (spec.handrail != "none" || spec.stringer != "none" || spec.riserBoards || spiral) {
     TopoDS_Compound all;
     BRep_Builder builder;
     builder.MakeCompound(all);
     builder.Add(all, out.solid);
+    if (spiral) {
+      // The round post at the centre, up the whole rise (docs/139).
+      out.postRadius = spec.path[0].Distance(gp_Pnt(spec.path[1].X(), spec.path[1].Y(), spec.path[0].Z())) - spec.width / 2;
+      BRepPrimAPI_MakeCylinder post(gp_Ax2(gp_Pnt(spec.path[0].X(), spec.path[0].Y(), spec.base), gp::DZ()), out.postRadius, spec.rise);
+      post.Build();
+      if (!post.IsDone()) return R::failure("A spiral stair's post could not be built");
+      builder.Add(all, post.Shape());
+    }
     if (spec.stringer != "none") {
       out.stringerDepth = std::max(240.0, l.riser + spec.thickness + 100.0);
       for (int side : {1, -1}) {
@@ -569,7 +630,7 @@ Result<StairPlanMarks> stairPlanMarks(const StairSpec& spec, double cutZ) {
   if (cutZ <= spec.base) return M::failure("The plan cuts below the stair");
   // The walking line as stations: points with their distance from the foot.
   std::vector<V2> pts;
-  for (const gp_Pnt& p : spec.path) {
+  for (const gp_Pnt& p : walkingLine(spec)) {
     const V2 q{p.X(), p.Y()};
     if (pts.empty() || (q - pts.back()).length() > 0.01) pts.push_back(q);
   }

@@ -154,6 +154,8 @@ void stairArgs(const json& a, geom::StairSpec& s) {
   if (a.contains("newels")) s.newels = a.at("newels").get<bool>();
   if (a.contains("newel_size")) s.newelSize = number(a, "newel_size");
   if (a.contains("nosing")) s.nosing = number(a, "nosing");
+  if (a.contains("shape")) s.shape = text(a, "shape");
+  if (a.contains("sweep")) s.sweep = number(a, "sweep");
   if (a.contains("turns")) {
     const json& v = a.at("turns");
     s.turns.clear();
@@ -183,7 +185,7 @@ json stairJson(const doc::StairInfo& r) {
               {"thickness", r.spec.thickness}, {"handrail", r.spec.handrail}, {"handrail_height", r.spec.handrailHeight},
               {"stringer", r.spec.stringer}, {"stringer_thickness", r.spec.stringerThickness},
               {"stringer_style", r.spec.stringerStyle}, {"riser_boards", r.spec.riserBoards}, {"riser_thickness", r.spec.riserThickness},
-              {"newels", r.spec.newels}, {"newel_size", r.spec.newelSize}, {"nosing", r.spec.nosing}, {"base_level", r.baseLevel}, {"top_level", r.topLevel},
+              {"newels", r.spec.newels}, {"newel_size", r.spec.newelSize}, {"nosing", r.spec.nosing}, {"shape", r.spec.shape}, {"sweep", r.spec.sweep}, {"base_level", r.baseLevel}, {"top_level", r.topLevel},
               {"opened_slabs", r.openedSlabs}, {"checks", checks}, {"checks_all_ok", allOk},
               {"checks_basis",
                "Sizes for a house's own stair (not a shared stair of flats), Building Standards Act Enforcement Order "
@@ -2364,7 +2366,9 @@ const std::vector<CommandDef>& commands() {
        "50 over the nosings, deep enough to hold the treads; 'stringer_style' side (default) or cut (ささら桁: inside "
        "the width, under the treads, its top cut in steps). 'riser_boards' (boards style; 'riser_thickness' default 15) "
        "and 'newels' (posts with the side boards at their foot and at the inside of turns; 'newel_size' default 105) "
-       "(docs/135). 'nosing' 0-50 (段鼻の出, docs/137; goings are measured without it). Returns riser, goings and 'checks' "
+       "(docs/135). 'nosing' 0-50 (段鼻の出, docs/137; goings are measured without it). 'shape' spiral (らせん, docs/139): "
+       "'path' is then [centre, foot of the walking line] and 'sweep' the degrees it turns going up (positive "
+       "counter-clockwise, 90-720, default 270); a round post inside. Returns riser, goings and 'checks' "
        "against the sizes for a house's stair (see checks_basis; not_evaluated is never a pass).",
        SCHEMA({"type": "object", "properties": {
          "path": {"type": "array"}, "base": {"type": "number"}, "rise": {"type": "number"}, "top": {"type": "number"},
@@ -2373,7 +2377,8 @@ const std::vector<CommandDef>& commands() {
          "handrail": {"enum": ["none", "left", "right", "both"]}, "handrail_height": {"type": "number"},
          "stringer": {"enum": ["none", "left", "right", "both"]}, "stringer_thickness": {"type": "number"},
          "stringer_style": {"enum": ["side", "cut"]}, "riser_boards": {"type": "boolean"}, "riser_thickness": {"type": "number"},
-         "newels": {"type": "boolean"}, "newel_size": {"type": "number"}, "nosing": {"type": "number"}},
+         "newels": {"type": "boolean"}, "newel_size": {"type": "number"}, "nosing": {"type": "number"},
+         "shape": {"enum": ["line", "spiral"]}, "sweep": {"type": "number"}},
          "required": ["path"]}),
        [](doc::Modeler& m, const json& a) {
          const GridLookup grid(m.document());
@@ -2409,7 +2414,7 @@ const std::vector<CommandDef>& commands() {
       {"change_stair",
        "Change sizes of a stair made by create_stair (any of path, base, rise or top, width, turns, risers, "
        "riser_limit, style, thickness, handrail, handrail_height, stringer, stringer_thickness, stringer_style, riser_boards, "
-       "riser_thickness, newels, newel_size, nosing); the rest stays. The same object; floors opened for it are opened again. "
+       "riser_thickness, newels, newel_size, nosing, shape, sweep); the rest stays. The same object; floors opened for it are opened again. "
        "One undo step.",
        SCHEMA({"type": "object", "properties": {
          "id": {"type": "string"}, "path": {"type": "array"}, "base": {"type": "number"}, "rise": {"type": "number"},
@@ -2418,7 +2423,8 @@ const std::vector<CommandDef>& commands() {
          "handrail": {"enum": ["none", "left", "right", "both"]}, "handrail_height": {"type": "number"},
          "stringer": {"enum": ["none", "left", "right", "both"]}, "stringer_thickness": {"type": "number"},
          "stringer_style": {"enum": ["side", "cut"]}, "riser_boards": {"type": "boolean"}, "riser_thickness": {"type": "number"},
-         "newels": {"type": "boolean"}, "newel_size": {"type": "number"}, "nosing": {"type": "number"}},
+         "newels": {"type": "boolean"}, "newel_size": {"type": "number"}, "nosing": {"type": "number"},
+         "shape": {"enum": ["line", "spiral"]}, "sweep": {"type": "number"}},
          "required": ["id"]}),
        [](doc::Modeler& m, const json& a) {
          const GridLookup grid(m.document());

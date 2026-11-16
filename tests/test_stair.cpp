@@ -655,6 +655,70 @@ TEST(Stair, ANosingRunsOnPastTheFrontEdge) {
   EXPECT_FALSE(makeStair(spec));
 }
 
+// docs/139: a spiral stair: equal wedges about a centre, a round post, goings 300 from the narrow end.
+TEST(Stair, ASpiralStairTurnsAboutItsPost) {
+  StairSpec spec;
+  spec.shape = "spiral";
+  spec.path = {gp_Pnt(0, 0, 0), gp_Pnt(900, 0, 0)};  // centre, foot of the walking line (radius 900)
+  spec.rise = 2800;
+  spec.width = 800;
+  spec.sweep = 270;
+  const auto made = makeStair(spec);
+  ASSERT_TRUE(made) << made.error();
+  EXPECT_EQ(made->risers, 14);
+  EXPECT_EQ(made->winders, 13);
+  EXPECT_NEAR(made->walkLength, 900 * 1.5 * std::acos(-1.0), 1e-6);
+  EXPECT_NEAR(made->postRadius, 500, 1e-9);
+  // The going: the chord of one wedge 300 out from the inside (radius 800).
+  const double wedge = 1.5 * std::acos(-1.0) / 13;
+  EXPECT_NEAR(made->winderGoing, 2 * 800 * std::sin(wedge / 2), 1e-6);
+  EXPECT_EQ(state(*made, "winder_going"), "ok");
+  // Within the outside radius; the post up the whole rise.
+  const auto b = sbr::geom::exactBounds(made->solid);
+  EXPECT_LE(b.CornerMax().X(), 1300 + 1e-6);
+  EXPECT_GE(b.CornerMin().Y(), -1300 - 1e-6);
+  EXPECT_NEAR(b.CornerMax().Z(), 2800, 1e-6);
+  // Every tread's corners at the inside or the outside radius.
+  for (const auto& t : made->treads)
+    for (const auto& p : t.outline) {
+      const double r = std::hypot(p.X(), p.Y());
+      EXPECT_TRUE(std::abs(r - 500) < 1e-6 || std::abs(r - 1300) < 1e-6) << r;
+    }
+  // A tight one: the goings too short (said, not built otherwise).
+  StairSpec tight = spec;
+  tight.path[1] = gp_Pnt(450, 0, 0);
+  const auto narrow = makeStair(tight);
+  ASSERT_TRUE(narrow) << narrow.error();
+  EXPECT_EQ(state(*narrow, "winder_going"), "ng");
+  // Plan marks along the arc; a floor opening; handrails, side boards, riser boards and a nosing.
+  const auto marks = sbr::geom::stairPlanMarks(spec, 1100);
+  ASSERT_TRUE(marks) << marks.error();
+  for (const auto& p : marks->walk) EXPECT_NEAR(std::hypot(p.X(), p.Y()), 900, 1.0);
+  EXPECT_TRUE(marks->cut);
+  EXPECT_TRUE(sbr::geom::stairOpening(spec, 2600, 2800, 2000));
+  StairSpec dressed = spec;
+  dressed.style = "boards";
+  dressed.handrail = "both";
+  dressed.stringer = "both";
+  dressed.riserBoards = true;
+  dressed.nosing = 20;
+  const auto full = makeStair(dressed);
+  ASSERT_TRUE(full) << full.error();
+  EXPECT_EQ(full->riserBoards, 13);
+  EXPECT_GT(full->handrailLength, 2 * 900 * 1.5 * std::acos(-1.0) * 0.8);
+  EXPECT_GT(full->stringerVolume, 0.0);
+  // Refused: the inside under 50, too little a turn, an unknown shape.
+  StairSpec wrong = spec;
+  wrong.path[1] = gp_Pnt(420, 0, 0);
+  EXPECT_FALSE(makeStair(wrong));
+  wrong = spec;
+  wrong.sweep = 60;
+  EXPECT_FALSE(makeStair(wrong));
+  wrong = spec;
+  wrong.shape = "zigzag";
+  EXPECT_FALSE(makeStair(wrong));
+}
+
 TEST_F(Stairs, AHandrailIsChangedOnTheStairAndKept) {
   const std::string id = ok("create_stair", {{"path", {{1000, 1000}, {3730, 1000}}}, {"rise", 2800}, {"handrail", "right"}})["id"];
   json info = ok("stair_info", {{"id", id}});
@@ -699,5 +763,17 @@ TEST_F(Stairs, AHandrailIsChangedOnTheStairAndKept) {
   EXPECT_FALSE(call("change_stair", {{"id", id}, {"riser_boards", true}}).value("ok", true));  // a block stair
   ok("change_stair", {{"id", id}, {"nosing", 20}});
   EXPECT_NEAR(ok("stair_info", {{"id", id}})["nosing"].get<double>(), 20, 1e-9);
+  // docs/139: a spiral one by the API, kept in the file.
+  const std::string spiral = ok("create_stair", {{"path", {{6000, 6000}, {6900, 6000}}}, {"rise", 2800}, {"shape", "spiral"}, {"sweep", 360}})["id"];
+  info = ok("stair_info", {{"id", spiral}});
+  EXPECT_EQ(info["shape"], "spiral");
+  EXPECT_NEAR(info["sweep"].get<double>(), 360, 1e-9);
+  ok("change_stair", {{"id", spiral}, {"sweep", 300}});
+  ASSERT_TRUE(modeler.save(file.string()));
+  sbr::doc::Modeler fifth;
+  ASSERT_TRUE(fifth.load(file.string()));
+  EXPECT_EQ(fifth.stairInfo(spiral)->spec.shape, "spiral");
+  EXPECT_NEAR(fifth.stairInfo(spiral)->spec.sweep, 300, 1e-9);
+  EXPECT_EQ(fifth.stairInfo(id)->spec.shape, "line");
   EXPECT_FALSE(call("change_stair", {{"id", id}, {"handrail_height", 2000}}).value("ok", true));
 }

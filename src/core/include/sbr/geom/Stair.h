@@ -56,7 +56,18 @@ struct StairSpec {
   // Nosing (段鼻の出, docs/137): 0 to 50, each tread (its board or its step) runs on this far past
   // its front edge. The goings are measured without it (as the treads in plan).
   double nosing = 0.0;
+  // A spiral stair (らせん階段, docs/139): "spiral" instead of "line". `path` is then the centre
+  // and the foot of the walking line (its radius: the distance between them); it turns `sweep`
+  // degrees going up (positive counter-clockwise, 90 to 720). The width is shared about the
+  // walking line; the inside (radius less half the width, at least 50) is a round post. The
+  // treads are equal wedges; their going is measured 300 from the narrow end (as winders).
+  std::string shape = "line";
+  double sweep = 270.0;
 };
+
+// The walking line the stair is laid along (docs/139): `path` itself for a straight / turning
+// stair; for a spiral its arc as a fine polyline (every 5 degrees).
+std::vector<gp_Pnt> walkingLine(const StairSpec& spec);
 
 struct StairTread {
   std::vector<gp_Pnt> outline;  // in plan, at the height of its top
@@ -78,6 +89,7 @@ struct StairShape {
   double stringerDepth = 0.0;   // of the side boards, measured vertically (0: none)
   double stringerVolume = 0.0;
   int riserBoards = 0, newels = 0;
+  double postRadius = 0.0;  // a spiral's round post (0: none)
   int risers = 0;
   double riser = 0.0;
   std::vector<StairTread> treads;  // bottom to top; the upper floor is the last riser's tread

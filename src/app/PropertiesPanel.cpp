@@ -475,6 +475,23 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       form_->addRow(tr("形"), style);
       size(tr("踏板の厚さ"), "thickness", stair->spec.thickness, 5, tr("踏板の厚さ。段々の塊では、段の裏の厚さ（蹴上より小さく）"));
       size(tr("段鼻の出"), "nosing", stair->spec.nosing, 0, tr("踏板が前の縁から前へ出る長さ（0〜50）。踏面の寸法（法の照合）には入れません"));
+      if (stair->spec.shape == "spiral") {
+        // docs/139: how far it turns (degrees, + counter-clockwise going up).
+        auto* sweep = new QDoubleSpinBox;
+        sweep->setObjectName(QStringLiteral("stairSweep"));
+        sweep->setRange(-720, 720);
+        sweep->setDecimals(1);
+        sweep->setSuffix(tr(" °"));
+        sweep->setKeyboardTracking(false);
+        sweep->setValue(stair->spec.sweep);
+        sweep->setToolTip(tr("らせん階段が上りながら回る角度（90〜720、正：反時計回り、負：時計回り）"));
+        sweep->setEnabled(!o->locked);
+        const double initial = stair->spec.sweep;
+        connect(sweep, &QDoubleSpinBox::editingFinished, this, [this, id, sweep, initial] {
+          if (std::abs(sweep->value() - initial) > 1e-9) emit stairEdited(id, QStringLiteral("sweep"), sweep->value(), QString());
+        });
+        form_->addRow(tr("回る角度"), sweep);
+      }
       {
         // docs/116: handrails, looking up the stair.
         auto* rail = new QComboBox;
