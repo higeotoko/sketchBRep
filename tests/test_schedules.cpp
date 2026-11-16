@@ -1352,6 +1352,38 @@ TEST(WallLayerLines, ALineBetweenEachTwoLayersBrokenAtOpenings) {
   EXPECT_GE(along, 4);
 }
 
+// docs/156: in a section, upright lines where a wall's layers meet, broken at its openings.
+TEST(WallLayerLines, UprightLinesInSections) {
+  sbr::doc::Modeler modeler;
+  CommandApi api{modeler};
+  auto ok = [&](const std::string& command, json args) {
+    json r = json::parse(api.execute(json{{"command", command}, {"args", args}}.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  const std::string wall = ok("create_wall", {{"points", {{0, 0}, {6000, 0}}}, {"type", "exterior_siding"}, {"height", 3000}})["ids"][0];
+  ok("place_openings", {{"host", wall}, {"face_normal", {0, -1, 0}}, {"count", 1}, {"width", 1600}, {"height", 1200}, {"sill", 900}});
+  EXPECT_EQ(sbr::doc::Modeler::wallLayerPlanes(modeler.document(), *modeler.document().find(wall)).size(), 4u);
+  // Upright thin lines of one length in a section across the wall at x.
+  auto uprights = [&](double x, double length) {
+    const auto view = sbr::draw::makeView(modeler.document(), sbr::draw::sectionView(gp_Pnt(x, 0, 0), gp_Dir(-1, 0, 0)));
+    int count = 0;
+    if (!view) return -1;
+    for (const auto& item : view->items)
+      if (item.kind == sbr::draw::Item::Kind::Line && item.pen == sbr::draw::Pen::Visible && item.points.size() == 2 &&
+          std::abs(item.points[0].X() - item.points[1].X()) < 1e-6 && std::abs(item.points[0].Distance(item.points[1]) - length) < 1e-3)
+        ++count;
+    return count;
+  };
+  EXPECT_EQ(uprights(1000, 3000), 4);  // away from the window: whole height
+  EXPECT_EQ(uprights(3000, 900), 8);   // through it: under the sill and over the head (900 each)
+  EXPECT_EQ(uprights(3000, 3000), 0);
+  // A plain wall: none.
+  const std::string plain = ok("create_wall", {{"points", {{0, 3000}, {6000, 3000}}}, {"thickness", 200}, {"height", 3000}})["ids"][0];
+  EXPECT_TRUE(sbr::doc::Modeler::wallLayerPlanes(modeler.document(), *modeler.document().find(plain)).empty());
+  EXPECT_EQ(uprights(1000, 3000), 4);
+}
+
 // docs/140: at the corners of walls of one build-up the layer lines meet as a mitre.
 TEST(WallLayerLines, LayerLinesMeetAsAMitreAtCorners) {
   sbr::doc::Modeler modeler;

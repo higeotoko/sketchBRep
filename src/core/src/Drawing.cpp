@@ -23,6 +23,7 @@
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Common.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
 #include <TopTools_ListOfShape.hxx>
 #include <BRepAlgoAPI_Section.hxx>
 #include <BRepBndLib.hxx>
@@ -529,6 +530,30 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
         if (!depths.empty()) layerLinesUnderTops(world, plane, depths, [&](const gp_Pnt& a, const gp_Pnt& b) {
           layerLines.push_back(line(Pen::Visible, proj.uv(a), proj.uv(b)));
         });
+        // A wall of a build-up (docs/156): upright lines where its layers cross the cut, broken
+        // where the cut passes through its openings.
+        const auto planes = doc::Modeler::wallLayerPlanes(document, o);
+        if (!planes.empty()) {
+          const Bnd_Box box = geom::exactBounds(world);
+          const gp_Pnt c = plane.Location();
+          for (const auto& [p, m] : planes) {
+            // Both planes upright: they meet in an upright line through (x, y).
+            const double a1 = n.X(), b1 = n.Y(), c1 = a1 * c.X() + b1 * c.Y();
+            const double a2 = m.X(), b2 = m.Y(), c2 = a2 * p.X() + b2 * p.Y();
+            const double det = a1 * b2 - a2 * b1;
+            if (std::abs(det) < 1e-9) continue;  // the cut runs along the wall
+            const double x = (c1 * b2 - c2 * b1) / det, y = (a1 * c2 - a2 * c1) / det;
+            BRepBuilderAPI_MakeEdge upright(gp_Pnt(x, y, box.CornerMin().Z() - 1), gp_Pnt(x, y, box.CornerMax().Z() + 1));
+            if (!upright.IsDone()) continue;
+            BRepAlgoAPI_Common inside(upright.Edge(), world);
+            if (!inside.IsDone()) continue;
+            for (TopExp_Explorer e(inside.Shape(), TopAbs_EDGE); e.More(); e.Next()) {
+              BRepAdaptor_Curve curve(TopoDS::Edge(e.Current()));
+              const gp_Pnt e0 = curve.Value(curve.FirstParameter()), e1 = curve.Value(curve.LastParameter());
+              if (e0.Distance(e1) > 1e-6) layerLines.push_back(line(Pen::Visible, proj.uv(e0), proj.uv(e1)));
+            }
+          }
+        }
       }
       BRepAlgoAPI_Common kept;
       {

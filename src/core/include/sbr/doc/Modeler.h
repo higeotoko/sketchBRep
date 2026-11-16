@@ -704,6 +704,9 @@ class Modeler {
   // are left out. `only`: those walls (all when empty).
   static std::vector<std::pair<gp_Pnt, gp_Pnt>> wallLayerLines(const Document& document, double z,
                                                                const std::set<ObjectId>& only = {});
+  // The upright planes where a wall's layers meet (docs/156): a point on each and its normal
+  // (across the wall). Empty as for wallLayerLines. Sections draw where they cross the cut.
+  static std::vector<std::pair<gp_Pnt, gp_Dir>> wallLayerPlanes(const Document& document, const Object& wall);
   // Removes openings: the wall is whole again there. Their fittings go with them; the other
   // openings keep their ids, sizes and fittings. One undo step.
   Status removeOpenings(const ObjectId& host, const std::vector<std::size_t>& indices);

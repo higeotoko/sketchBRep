@@ -6716,13 +6716,10 @@ Result<Modeler::StoreyCopy> Modeler::copyStorey(const std::string& fromLevel, co
   return out;
 }
 
-std::vector<std::pair<gp_Pnt, gp_Pnt>> Modeler::wallLayerLines(const Document& document, double z,
-                                                               const std::set<ObjectId>& only) {
-  std::vector<std::pair<gp_Pnt, gp_Pnt>> out;
-  const std::vector<WallBand> walls = allWallBands(document);
-  // A wall's layer lines across it (from its outer face inwards), empty when it has no layers
-  // (or they no longer add up to its thickness).
-  auto acrossOf = [](const WallBand& w) {
+namespace {
+// A wall's layer lines across it (from its outer face inwards), empty when it has no layers
+// (or they no longer add up to its thickness).
+std::vector<double> layerAcross(const WallBand& w) {
     std::vector<double> across;
     const auto layersText = w.object->attributes.find("wall_layers");
     const auto outside = w.object->attributes.find("wall_outside");
@@ -6739,7 +6736,22 @@ std::vector<std::pair<gp_Pnt, gp_Pnt>> Modeler::wallLayerLines(const Document& d
       across.push_back(outRight ? -w.right + run : w.leftExt - run);
     }
     return across;
-  };
+}
+}  // namespace
+
+std::vector<std::pair<gp_Pnt, gp_Dir>> Modeler::wallLayerPlanes(const Document& document, const Object& wall) {
+  std::vector<std::pair<gp_Pnt, gp_Dir>> out;
+  const auto w = wallBand(document, wall);
+  if (!w) return out;
+  for (const double a : layerAcross(*w)) out.emplace_back(w->start.Translated(gp_Vec(w->left) * a), w->left);
+  return out;
+}
+
+std::vector<std::pair<gp_Pnt, gp_Pnt>> Modeler::wallLayerLines(const Document& document, double z,
+                                                               const std::set<ObjectId>& only) {
+  std::vector<std::pair<gp_Pnt, gp_Pnt>> out;
+  const std::vector<WallBand> walls = allWallBands(document);
+  const auto acrossOf = [](const WallBand& w) { return layerAcross(w); };
   const auto ends = wallEnds(walls);
   for (std::size_t wi = 0; wi < walls.size(); ++wi) {
     const WallBand& w = walls[wi];
