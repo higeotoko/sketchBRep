@@ -920,6 +920,40 @@ TEST(WallLayerLines, ALineBetweenEachTwoLayersBrokenAtOpenings) {
   EXPECT_GE(along, 4);
 }
 
+// docs/140: at the corners of walls of one build-up the layer lines meet as a mitre.
+TEST(WallLayerLines, LayerLinesMeetAsAMitreAtCorners) {
+  sbr::doc::Modeler modeler;
+  CommandApi api{modeler};
+  auto ok = [&](const std::string& command, json args) {
+    json r = json::parse(api.execute(json{{"command", command}, {"args", args}}.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  ok("create_wall", {{"points", {{0, 0}, {6000, 0}, {6000, 4000}, {0, 4000}, {0, 0}}}, {"type", "exterior_siding"}, {"height", 3000}});
+  const auto lines = sbr::doc::Modeler::wallLayerLines(modeler.document(), 1100);
+  ASSERT_EQ(lines.size(), 16u);  // 4 walls, 4 lines each
+  // Every end of every line is the end of exactly one other line (its partner round the corner),
+  // and the two meet on the corner's diagonal.
+  int paired = 0;
+  for (std::size_t i = 0; i < lines.size(); ++i)
+    for (const gp_Pnt& p : {lines[i].first, lines[i].second}) {
+      int same = 0;
+      for (std::size_t j = 0; j < lines.size(); ++j)
+        if (j != i && (lines[j].first.Distance(p) < 1e-6 || lines[j].second.Distance(p) < 1e-6)) ++same;
+      EXPECT_EQ(same, 1) << p.X() << " " << p.Y();
+      paired += same;
+      // On a diagonal through a corner of the walls' lines (0/6000, 0/4000): |dx| = |dy|.
+      const double cx = p.X() < 3000 ? 0 : 6000, cy = p.Y() < 2000 ? 0 : 4000;
+      EXPECT_NEAR(std::abs(p.X() - cx), std::abs(p.Y() - cy), 1e-6) << p.X() << " " << p.Y();
+    }
+  EXPECT_EQ(paired, 32);
+  // A partition meeting a wall (a T) keeps its lines to its own end; walls of other build-ups
+  // are not mitred to these.
+  ok("create_wall", {{"points", {{3000, 0}, {3000, 4000}}}, {"type", "interior_board"}, {"height", 3000}});
+  const auto more = sbr::doc::Modeler::wallLayerLines(modeler.document(), 1100);
+  EXPECT_GT(more.size(), lines.size());
+}
+
 // docs/125: a set of drawings with sheet numbers.
 TEST_F(Schedules, ASetOfDrawingsCarriesSheetNumbers) {
   sbr::doc::DrawingSetSpec spec;

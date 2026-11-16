@@ -6411,24 +6411,65 @@ Result<Modeler::StoreyCopy> Modeler::copyStorey(const std::string& fromLevel, co
 std::vector<std::pair<gp_Pnt, gp_Pnt>> Modeler::wallLayerLines(const Document& document, double z,
                                                                const std::set<ObjectId>& only) {
   std::vector<std::pair<gp_Pnt, gp_Pnt>> out;
-  for (const WallBand& w : allWallBands(document)) {
-    if (!only.empty() && !only.count(w.object->id)) continue;
-    if (z < w.z0 || z > w.z1) continue;
+  const std::vector<WallBand> walls = allWallBands(document);
+  // A wall's layer lines across it (from its outer face inwards), empty when it has no layers
+  // (or they no longer add up to its thickness).
+  auto acrossOf = [](const WallBand& w) {
+    std::vector<double> across;
     const auto layersText = w.object->attributes.find("wall_layers");
     const auto outside = w.object->attributes.find("wall_outside");
-    if (layersText == w.object->attributes.end() || outside == w.object->attributes.end()) continue;
+    if (layersText == w.object->attributes.end() || outside == w.object->attributes.end()) return across;
     const nlohmann::json layers = nlohmann::json::parse(layersText->second, nullptr, false);
-    if (!layers.is_array() || layers.size() < 2) continue;
+    if (!layers.is_array() || layers.size() < 2) return across;
     double total = 0.0;
     for (const auto& l : layers) total += l.value("thickness", 0.0);
-    if (std::abs(total - (w.right + w.leftExt)) > 1.0) continue;  // changed since: not the layers any more
-    // Across the wall: from the outer face inwards.
+    if (std::abs(total - (w.right + w.leftExt)) > 1.0) return across;  // changed since: not the layers any more
     const bool outRight = outside->second == "right";
-    std::vector<double> across;
     double run = 0.0;
     for (std::size_t i = 0; i + 1 < layers.size(); ++i) {
       run += layers[i].value("thickness", 0.0);
       across.push_back(outRight ? -w.right + run : w.leftExt - run);
+    }
+    return across;
+  };
+  const auto ends = wallEnds(walls);
+  for (std::size_t wi = 0; wi < walls.size(); ++wi) {
+    const WallBand& w = walls[wi];
+    if (!only.empty() && !only.count(w.object->id)) continue;
+    if (z < w.z0 || z > w.z1) continue;
+    const std::vector<double> across = acrossOf(w);
+    if (across.empty()) continue;
+    // Corners with a wall of the same build-up (docs/140): each layer line ends where it meets
+    // the same layer's line of the other wall (counted from the outer faces), as a mitre.
+    std::vector<std::array<double, 2>> endAt(across.size(), {0.0, w.length});
+    for (int end = 0; end < 2; ++end) {
+      for (const std::size_t j : cornerPartners(walls, ends, wi, end)) {
+        const WallBand& o = walls[j];
+        if (o.object->attributes.count("wall_layers") == 0 ||
+            o.object->attributes.at("wall_layers") != w.object->attributes.at("wall_layers"))
+          continue;
+        const std::vector<double> other = acrossOf(o);
+        if (other.size() != across.size()) continue;
+        // The outer faces must meet at the outside of the corner: the outermost lines' meeting
+        // point is the farthest from the inside of the corner, i.e. along each wall it lies
+        // beyond the innermost lines' meeting point.
+        std::vector<double> at(across.size());
+        bool fits = true;
+        for (std::size_t k = 0; k < across.size() && fits; ++k) {
+          const auto m = meet(w.start.Translated(gp_Vec(w.left) * across[k]), w.dir, o.start.Translated(gp_Vec(o.left) * other[k]), o.dir);
+          if (!m) fits = false;
+          else at[k] = m->first;
+        }
+        if (!fits) continue;
+        const double s = end == 0 ? 0.0 : w.length, reach = w.right + w.leftExt + o.right + o.leftExt;
+        bool near = true;
+        for (const double a : at) near = near && std::abs(a - s) <= reach;
+        // Outermost beyond innermost (seen from the wall's middle): the outer faces are on one side.
+        const bool outward = end == 0 ? at.front() <= at.back() + 1e-6 : at.front() >= at.back() - 1e-6;
+        if (!near || !outward) continue;
+        for (std::size_t k = 0; k < across.size(); ++k) endAt[k][static_cast<std::size_t>(end)] = at[k];
+        break;
+      }
     }
     // Along the wall: its length less the openings the plan passes through.
     std::vector<std::pair<double, double>> gaps;
@@ -6447,8 +6488,12 @@ std::vector<std::pair<gp_Pnt, gp_Pnt>> Modeler::wallLayerLines(const Document& d
       from = std::max(from, g1);
     }
     if (from < w.length - 1e-6) runs.emplace_back(from, w.length);
-    for (double a : across)
-      for (const auto& [s0, s1] : runs) {
+    for (std::size_t k = 0; k < across.size(); ++k)
+      for (const auto& [r0, r1] : runs) {
+        const double a = across[k];
+        // The wall's own ends moved to the mitre (a run starting / ending at an opening stays).
+        const double s0 = r0 <= 1e-6 ? endAt[k][0] : r0, s1 = r1 >= w.length - 1e-6 ? endAt[k][1] : r1;
+        if (s1 - s0 < 1e-6) continue;
         gp_Pnt p0 = w.start.Translated(gp_Vec(w.dir) * s0 + gp_Vec(w.left) * a);
         gp_Pnt p1 = w.start.Translated(gp_Vec(w.dir) * s1 + gp_Vec(w.left) * a);
         p0.SetZ(z);
