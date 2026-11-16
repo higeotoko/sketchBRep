@@ -21,7 +21,7 @@
 
 ## まだやっていないこと
 
-- IFC で庇を屋根・板の種類として書くこと（今は「その他の立体」）。
+- IFC で庇を屋根・板の種類として書くこと（→ docs/155）。
 
 ## 確かめたこと
 
@@ -29,9 +29,16 @@
 |---|---|
 | 計算テスト済み | コア全 718 件中 711 件成功・7 件スキップ（ローカル）。`Schedules.ACanopyOverADoorAndTheBuildingArea` に追加：`change_canopy` で出 900・上 300 → 取り消し 1 回、前の id は無く新しい id、名前そのまま、出 900、下の面が開口の上端より 300 上／厚さ 900 は断り、庇はそのまま／取り消すと前の庇に戻る |
 | GUI 自動確認済み | 開口の画面テストに追加（ローカル）：庇を付けて選ぶとプロパティに「出」600 → 900 にすると取り消し 1 回で出 900 の庇、物の数は同じ、エラー無し。開口まわりの画面テスト 16 条件が成功 |
-| CI | __CI__ |
+| CI | run 43846777798（push、`09dcf19`）：Linux 731 件成功、Windows 727 件＋3 件成功・GUI 237 件成功（7 件スキップ） |
 | Windows 実機確認 | まだ（チェック表 12-37） |
 
 ## 配布の記録
 
-__DELIVERY__
+| 項目 | 値 |
+|---|---|
+| コード | `09dcf19`（庇の大きさ docs/154。Opus 5.5 で作業） |
+| CI | run 43846777798（push）：Linux・Windows とも成功 |
+| ZIP | `SketchBRep-windows-x64-09dcf19-local.zip`（Codex のチャットフォルダの `outputs\`） |
+| サイズ | 72,538,166 bytes |
+| SHA256 | `89da9ad61e5ea9f85a3623a3175f7c9b40bc062096b4725faf6cb8b2948c6297` |
+| ZIP の検証 | `verify_portable_pads.py`・`verify_portable_mat.py` とも成功（docs/validation/2026-11-16-portable-09dcf19*.json） |

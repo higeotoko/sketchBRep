@@ -29,9 +29,16 @@
 |---|---|
 | 計算テスト済み | コア全 718 件中 711 件成功・7 件スキップ（ローカル）。`IfcExport.AHouseIsWrittenWithItsStoreysPartsAndRelations` に追加：扉に庇を付けた家 → `canopies` 1、その他（proxies）は前のまま 1、`IFCSLAB` 2 つ（床と庇）、`IFCRELCONNECTSELEMENTS` 1 つ、文の中に `'CANOPY'` と `.USERDEFINED.)`。どの要素も IFC4 の属性の数どおり（`IfcRelConnectsElements` は 7） |
 | GUI 自動確認済み | 画面は変えていない |
-| CI | __CI__ |
+| CI | run 43850423362（push、`3726975`）：Linux 731 件成功、Windows 727 件＋3 件成功・GUI 237 件成功（7 件スキップ） |
 | Windows 実機確認 | まだ（チェック表 7-3。ビューアで庇が床板として、壁とつながって見えるか） |
 
 ## 配布の記録
 
-__DELIVERY__
+| 項目 | 値 |
+|---|---|
+| コード | `3726975`（IFC の庇 docs/155。Opus 5.5 で作業） |
+| CI | run 43850423362（push）：Linux・Windows とも成功 |
+| ZIP | `SketchBRep-windows-x64-3726975-local.zip`（Codex のチャットフォルダの `outputs\`） |
+| サイズ | 72,544,146 bytes |
+| SHA256 | `498a9b40043c3ce853d21918863499e2d99cba998fb60924e04c148b85216e82` |
+| ZIP の検証 | `verify_portable_pads.py`・`verify_portable_mat.py` とも成功（docs/validation/2026-11-16-portable-3726975*.json） |
