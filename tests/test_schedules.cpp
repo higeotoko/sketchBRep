@@ -779,6 +779,30 @@ TEST_F(Schedules, FittingsAreSolidsInElevations) {
   for (const auto& s : solids)
     if (s.host == east && s.part == "frame") EXPECT_NEAR(sbr::geom::volume(s.shape), (900.0 * 2100 - 840.0 * 2070) * 200, 1.0);
     else if (s.host == east && s.part == "leaf") EXPECT_NEAR(sbr::geom::volume(s.shape), 840.0 * 2070 * 40, 1.0);
+  // docs/157: the door's own sizes: a 50 frame and a 30 leaf.
+  {
+    ok("set_opening_fittings", {{"host", east}, {"fitting", {{"type", "swing_single"}, {"frame", 50}, {"leaf", 30}}}});
+    int found = 0;
+    for (const auto& s : sbr::draw::fittingSolids(modeler.document())) {
+      if (s.host != east) continue;
+      if (s.part == "frame") {
+        EXPECT_NEAR(sbr::geom::volume(s.shape), (900.0 * 2100 - 800.0 * 2050) * 200, 1.0);
+        ++found;
+      }
+      if (s.part == "leaf") {
+        EXPECT_NEAR(sbr::geom::volume(s.shape), 800.0 * 2050 * 30, 1.0);
+        ++found;
+      }
+    }
+    EXPECT_EQ(found, 2);
+    // Kept with the fitting, shown in the list of openings.
+    const json listed = ok("list_openings", {{"host", east}});
+    EXPECT_NE(listed.dump().find("\"frame\":50"), std::string::npos) << listed.dump();
+    // Refused: out of range, a size of no known kind.
+    EXPECT_FALSE(call("set_opening_fittings", {{"host", east}, {"fitting", {{"type", "window"}, {"frame", 300}}}}).value("ok", true));
+    EXPECT_FALSE(call("set_opening_fittings", {{"host", east}, {"fitting", {{"type", "window"}, {"frame", "wide"}}}}).value("ok", true));
+    ok("set_opening_fittings", {{"host", east}, {"fitting", {{"type", "swing_single"}}}});
+  }
   // The east elevation carries them: more lines than with the door's fitting taken off.
   auto lines = [&] {
     const auto view = sbr::draw::makeView(modeler.document(), sbr::draw::elevationView(modeler.document(), 1));

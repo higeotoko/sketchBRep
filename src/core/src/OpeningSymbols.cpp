@@ -41,9 +41,25 @@ Result<std::string> normalizeFitting(const std::string& text) {
     out[key] = v;
     return true;
   };
-  for (const auto& [key, unused] : in.items())
-    if (key != "type" && key != "hinge" && key != "swing" && key != "slide")
-      return Result<std::string>::failure("Unknown fitting field: " + key);
+  // Sizes of the fitting's shape (docs/157), each optional: the frame's face width, a door
+  // leaf's thickness, the glass.
+  struct Size {
+    const char* key;
+    double low, high;
+  };
+  static const Size sizes[] = {{"frame", 10.0, 200.0}, {"leaf", 10.0, 100.0}, {"glass", 3.0, 30.0}};
+  for (const auto& [key, unused] : in.items()) {
+    if (key == "type" || key == "hinge" || key == "swing" || key == "slide") continue;
+    const Size* size = nullptr;
+    for (const Size& s : sizes)
+      if (key == s.key) size = &s;
+    if (!size) return Result<std::string>::failure("Unknown fitting field: " + key);
+    const json& v = in.at(key);
+    if (!v.is_number() || !(v.get<double>() >= size->low && v.get<double>() <= size->high))
+      return Result<std::string>::failure(std::string("A fitting's ") + key + " is " + std::to_string(static_cast<int>(size->low)) +
+                                          " to " + std::to_string(static_cast<int>(size->high)));
+    if (type != "none") out[key] = v.get<double>();
+  }
   if (type == "swing_single" && !(choose("hinge", "left", "right", "left") && choose("swing", "in", "out", "in")))
     return Result<std::string>::failure("hinge is left|right and swing in|out");
   if (type == "swing_double" && !choose("swing", "in", "out", "in"))
@@ -153,7 +169,6 @@ std::vector<TopoDS_Edge> openingSymbols(const doc::Document& d, const SymbolOpti
   return out;
 }
 std::vector<FittingSolid> fittingSolids(const doc::Document& d, const std::set<std::string>* only) {
-  constexpr double kFrame = 30.0, kPane = 6.0, kLeaf = 40.0;
   std::vector<FittingSolid> out;
   for (const auto& host : d.objects()) {
     const auto stored = host.attributes.find("opening_fittings");
@@ -168,6 +183,8 @@ std::vector<FittingSolid> fittingSolids(const doc::Document& d, const std::set<s
       if (it == fittings.end() || !it->is_object()) continue;
       const std::string type = it->value("type", std::string("none"));
       if (type == "none" || std::abs(o.normal.Z()) > 1e-6 || o.depth <= 0) continue;
+      // The drawing sizes (docs/146), or the fitting's own (docs/157).
+      const double kFrame = it->value("frame", 30.0), kPane = it->value("glass", 6.0), kLeaf = it->value("leaf", 40.0);
       const gp_Vec n(o.normal.X(), o.normal.Y(), 0), u = gp_Vec(0, 0, 1).Crossed(n);
       const double w = o.width, h = o.height, t = o.depth, z0 = o.bottom;
       if (w <= 2 * kFrame + 10 || h <= 2 * kFrame + 10) continue;
@@ -217,8 +234,8 @@ std::vector<FittingSolid> fittingSolids(const doc::Document& d, const std::set<s
         add(box(-iw / 2, 0, zi0, zi1, d0, d0 + kLeaf), "leaf");
         add(box(0, iw / 2, zi0, zi1, d0, d0 + kLeaf), "leaf");
       } else if (type == "sliding_double") {
-        add(box(-iw / 2, 25, zi0, zi1, mid - 20 - kLeaf / 2, mid - 20 + kLeaf / 2), "leaf");
-        add(box(-25, iw / 2, zi0, zi1, mid + 20 - kLeaf / 2, mid + 20 + kLeaf / 2), "leaf");
+        add(box(-iw / 2, 25, zi0, zi1, mid - kLeaf, mid), "leaf");  // two tracks, side by side
+        add(box(-25, iw / 2, zi0, zi1, mid, mid + kLeaf), "leaf");
       } else if (type == "sliding_bi") {
         add(box(-iw / 2, 0, zi0, zi1, mid - kLeaf / 2, mid + kLeaf / 2), "leaf");
         add(box(0, iw / 2, zi0, zi1, mid - kLeaf / 2, mid + kLeaf / 2), "leaf");

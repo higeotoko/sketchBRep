@@ -10187,6 +10187,31 @@ void GuiPhase1::openingFittingFromPanelShowsInPlanCut() {
   const json stored=json::parse(m.document().find(*host)->attributes.at("opening_fittings"));
   QCOMPARE(stored.size(),std::size_t(1));  // kept under the opening's id, not its number
   QCOMPARE(stored.begin().value().at("hinge").get<std::string>(),std::string("right"));
+  // docs/157: the frame's size typed in; another kind keeps it; both undone again.
+  {
+    QApplication::processEvents();
+    auto* frame=f.window.findChild<QDoubleSpinBox*>(QStringLiteral("opening_frame_1"));QVERIFY(frame);
+    QVERIFY(frame->isEnabled());
+    QVERIFY(std::abs(frame->value()-30)<1e-9);
+    const auto steps=m.history().undoCount();
+    frame->setValue(50);
+    emit frame->editingFinished();
+    QTRY_COMPARE(m.history().undoCount(),steps+1);
+    auto fitting=[&]{return json::parse(m.document().find(*host)->attributes.at("opening_fittings")).begin().value();};
+    QCOMPARE(fitting().value("frame",0.0),50.0);
+    QApplication::processEvents();
+    auto* kind2=f.window.findChild<QComboBox*>(QStringLiteral("openingFitting1"));QVERIFY(kind2);
+    QCOMPARE(kind2->currentText(),QStringLiteral("片開き 右吊元・内開き"));  // still found with its size
+    const int left=kind2->findText(QStringLiteral("片開き 左吊元・内開き"));QVERIFY(left>0);
+    kind2->setCurrentIndex(left);
+    emit kind2->activated(left);
+    QTRY_COMPARE(m.history().undoCount(),steps+2);
+    QCOMPARE(fitting().value("hinge",std::string()),std::string("left"));
+    QCOMPARE(fitting().value("frame",0.0),50.0);
+    QVERIFY(m.undo());
+    QVERIFY(m.undo());
+    QVERIFY(!fitting().contains("frame"));
+  }
   f.vp->syncNow();
   QCOMPARE(f.vp->openingSymbolEdgeCount(),std::size_t(0));  // 3D: no symbols
   f.vp->lockView(Viewport::StandardView::Top);

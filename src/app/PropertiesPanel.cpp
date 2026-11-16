@@ -1198,15 +1198,50 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       kind->setToolTip(tr("平面（切断）と平面図に建具の記号を描きます。外＝開口をあけた面の側、内＝反対側。"
                           "左右は開く側から見て（引戸は開口をあけた面の側から見て）"));
       const nlohmann::json current = fittings.contains(op.id) ? fittings.at(op.id) : nlohmann::json{{"type", "none"}};
+      // The kind without its sizes (docs/157), to find it among the choices.
+      nlohmann::json kindOnly = current;
+      for (const char* key : {"frame", "leaf", "glass"}) kindOnly.erase(key);
       for (const auto& [label, value] : kinds) {
         kind->addItem(label, QString::fromStdString(value));
-        if (nlohmann::json::parse(value) == current) kind->setCurrentIndex(kind->count() - 1);
+        if (nlohmann::json::parse(value) == kindOnly) kind->setCurrentIndex(kind->count() - 1);
       }
-      connect(kind, &QComboBox::activated, this, [this, id, index, kind] {
-        emit openingFittingEdited(id, index, kind->currentData().toString());
+      // Another kind keeps the sizes given.
+      connect(kind, &QComboBox::activated, this, [this, id, index, kind, current] {
+        nlohmann::json next = nlohmann::json::parse(kind->currentData().toString().toStdString());
+        if (next.value("type", std::string("none")) != "none")
+          for (const char* key : {"frame", "leaf", "glass"})
+            if (current.contains(key)) next[key] = current.at(key);
+        emit openingFittingEdited(id, index, QString::fromStdString(next.dump()));
       });
       h->addWidget(kind, 1);
       row->setObjectName(QStringLiteral("opening%1").arg(index));
+      // Its fitting's sizes (docs/157): the frame's face, a door leaf, the glass (3D and elevations).
+      auto* sizesRow = new QWidget;
+      auto* sh = new QHBoxLayout(sizesRow);
+      sh->setContentsMargins(0, 0, 0, 0);
+      const bool fitted = current.value("type", std::string("none")) != "none";
+      auto sizeSpin = [&](const char* key, double fallback, double low, double high, const QString& prefix, const QString& tip) {
+        auto* spin = lengthSpin(current.value(key, fallback));
+        spin->setRange(low, high);
+        spin->setValue(current.value(key, fallback));
+        spin->setPrefix(prefix);
+        spin->setObjectName(QStringLiteral("opening_%1_%2").arg(QLatin1String(key)).arg(index));
+        spin->setToolTip(tip);
+        spin->setEnabled(fitted);
+        const double before = spin->value();
+        const QString k = QLatin1String(key);
+        connect(spin, &QDoubleSpinBox::editingFinished, this, [this, id, index, spin, k, before, current] {
+          if (std::abs(spin->value() - before) < 1e-9) return;
+          nlohmann::json next = current;
+          next[k.toStdString()] = spin->value();
+          emit openingFittingEdited(id, index, QString::fromStdString(next.dump()));
+        });
+        sh->addWidget(spin);
+      };
+      sizeSpin("frame", 30, 10, 200, tr("枠 "), tr("枠の見付（開口の内側に出る幅）。3D・立面の建具の形"));
+      sizeSpin("leaf", 40, 10, 100, tr("扉 "), tr("扉の板の厚さ（下端が床の建具）"));
+      sizeSpin("glass", 6, 3, 30, tr("ガラス "), tr("ガラスの厚さ（窓）"));
+      sizesRow->setObjectName(QStringLiteral("openingSizes%1").arg(index));
       // Where it sits in the wall, and removing it. The opening keeps its fitting when it moves,
       // and the other openings keep theirs when it is removed (they are kept by id, not number).
       auto* place = new QWidget;
@@ -1276,6 +1311,7 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       lines->setContentsMargins(0, 0, 0, 0);
       lines->setSpacing(2);
       lines->addWidget(row);
+      lines->addWidget(sizesRow);
       lines->addWidget(tag);
       lines->addWidget(place);
       // docs/147: a canopy over it.
