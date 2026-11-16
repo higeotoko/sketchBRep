@@ -1494,12 +1494,14 @@ void MainWindow::buildMenus() {
                    : tr("%1の角の留めを外しました（Ctrl+Z で戻せます）").arg(which));
       refreshPanels();
     };
-    auto* on = tools->addAction(tr("壁の角を留めにする（選んだ壁、無ければ全部）"));
+    QMenu* corners = tools->addMenu(tr("壁の角（留め）"));
+    corners->setObjectName(QStringLiteral("wallCornersMenu"));
+    auto* on = corners->addAction(tr("壁の角を留めにする（選んだ壁、無ければ全部）"));
     on->setObjectName(QStringLiteral("mitreWallCornersAction"));
     on->setToolTip(tr("2 枚の壁が合う角で、両方の壁の端を角の対角線で切ります。壁の面に継ぎ目の線が出ず、"
                       "斜めの角のすき間・重なりも無くなります。壁は壁のまま（長さ・開口・室はそのまま）で、動かすと留めも作り直します"));
     connect(on, &QAction::triggered, this, [mitre] { mitre(true); });
-    auto* off = tools->addAction(tr("壁の角の留めを外す（選んだ壁、無ければ全部）"));
+    auto* off = corners->addAction(tr("壁の角の留めを外す（選んだ壁、無ければ全部）"));
     off->setObjectName(QStringLiteral("squareWallCornersAction"));
     connect(off, &QAction::triggered, this, [mitre] { mitre(false); });
   }
