@@ -120,7 +120,7 @@ struct Ifc {
 // IFC4: how many attributes each entity written here has.
 const std::map<std::string, std::size_t> kAttributes = {
     {"IFCPROJECT", 9}, {"IFCSITE", 14}, {"IFCBUILDING", 12}, {"IFCBUILDINGSTOREY", 10}, {"IFCSPACE", 11},
-    {"IFCWALL", 9}, {"IFCSLAB", 9}, {"IFCROOF", 9}, {"IFCSTAIR", 9}, {"IFCCOLUMN", 9}, {"IFCRAILING", 9}, {"IFCBEAM", 9}, {"IFCMEMBER", 9},
+    {"IFCWALL", 9}, {"IFCSLAB", 9}, {"IFCROOF", 9}, {"IFCSTAIR", 9}, {"IFCCOLUMN", 9}, {"IFCRAILING", 9}, {"IFCMATERIAL", 3}, {"IFCMATERIALLAYER", 7}, {"IFCMATERIALLAYERSET", 3}, {"IFCMATERIALLAYERSETUSAGE", 5}, {"IFCRELASSOCIATESMATERIAL", 6}, {"IFCBEAM", 9}, {"IFCMEMBER", 9},
     {"IFCBUILDINGELEMENTPROXY", 9}, {"IFCOPENINGELEMENT", 9}, {"IFCWINDOW", 13}, {"IFCDOOR", 13}, {"IFCGRID", 11},
     {"IFCGRIDAXIS", 3}, {"IFCRELAGGREGATES", 6}, {"IFCRELCONTAINEDINSPATIALSTRUCTURE", 6}, {"IFCRELVOIDSELEMENT", 6},
     {"IFCRELFILLSELEMENT", 6}, {"IFCRELDEFINESBYPROPERTIES", 6}, {"IFCPROPERTYSET", 5}, {"IFCPROPERTYSINGLEVALUE", 4},
@@ -438,4 +438,44 @@ TEST_F(IfcExport, ABalconyIsASlabARailingAndPosts) {
   bool said = false;
   for (const auto& n : summary.notes) said |= n.find("moved or reshaped by hand") != std::string::npos;
   EXPECT_TRUE(said);
+}
+
+// docs/170: the layers of walls of a build-up and of floors / roofs of a registered type with
+// layers go into IFC as material layer sets; one material per layer name.
+TEST_F(IfcExport, LayersAreMaterialLayerSets) {
+  ASSERT_TRUE(modeler.setLevels({{"", "1FL", 0}}));
+  ok("create_wall", {{"points", {{0, 0}, {6000, 0}, {6000, 4000}, {0, 4000}, {0, 0}}}, {"type", "exterior_siding"}, {"height", 2800}});
+  ok("create_wall", {{"points", {{3000, 65}, {3000, 3935}}}, {"type", "interior_board"}, {"height", 2800}});
+  ok("create_wall", {{"points", {{0, -3000}, {4000, -3000}}}, {"thickness", 150}, {"height", 2800}});  // no layers
+  ok("define_type", {{"name", "F1"}, {"part", "floor"}, {"layers", {{{"name", "flooring"}, {"thickness", 15}}, {{"name", "ply"}, {"thickness", 24}}, {{"name", "joist"}, {"thickness", 105}}}}});
+  ok("batch", {{"commands", {{{"command", "create_slab"}, {"args", {{"outline", {{0, 0}, {6000, 0}, {6000, 4000}, {0, 4000}}}, {"top", 0}, {"thickness", 144}}}},
+                             {{"command", "set_type_name"}, {"args", {{"ids", {"$1.id"}}, {"name", "F1"}}}}}}});
+  sbr::doc::IfcSummary summary;
+  const auto text = sbr::doc::ifcText(modeler, "layers.ifc", &summary);
+  ASSERT_TRUE(text) << text.error();
+  const Ifc ifc(*text);
+  expectWellFormed(ifc);
+  // 4 sided walls, the partition and the floor; not the plain wall.
+  EXPECT_EQ(summary.layerSets, 6);
+  EXPECT_EQ(ifc.of("IFCMATERIALLAYERSETUSAGE").size(), 6u);
+  EXPECT_EQ(ifc.of("IFCRELASSOCIATESMATERIAL").size(), 6u);
+  // Sided: 5 layers; board: 3; floor: 3 - and the board (石膏ボード) and the stud (柱) shared
+  // between the two build-ups: one material each.
+  EXPECT_EQ(ifc.of("IFCMATERIALLAYER").size(), 4u * 5 + 3 + 3);
+  std::set<std::string> names;
+  for (const int m : ifc.of("IFCMATERIAL")) names.insert(ifc.at(m).args[0]);
+  EXPECT_EQ(names.size(), ifc.of("IFCMATERIAL").size());  // no name twice
+  EXPECT_EQ(ifc.of("IFCMATERIAL").size(), 5u + 3);         // the board's two layers are the sided wall's board and stud
+  // The floor's layers in order, top down, adding up to its thickness.
+  bool floorSet = false;
+  for (const int s : ifc.of("IFCMATERIALLAYERSET")) {
+    if (ifc.at(s).args[1] != "'F1'") continue;
+    floorSet = true;
+    double sum = 0.0;
+    for (const int l : refsIn(ifc.at(s).args[0])) sum += std::stod(ifc.at(l).args[1]);
+    EXPECT_NEAR(sum, 144.0, 1e-9);
+  }
+  EXPECT_TRUE(floorSet);
+  EXPECT_NE(text->find(".AXIS3.,.NEGATIVE."), std::string::npos);
+  EXPECT_NE(text->find(".AXIS2."), std::string::npos);
 }

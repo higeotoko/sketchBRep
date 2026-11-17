@@ -138,6 +138,8 @@ struct JoinFollow {
   int followed = 0;               // walls made longer / shorter to stay joined
   int carried = 0;                // walls at a corner carried along as they are (a slide, a change of length)
   int slabs = 0;                  // slabs whose outline went with a wall
+  int members = 0;                // columns / beams standing in or lying along a wall that went with it (docs/169)
+  int roofs = 0;                  // roofs whose outline went with a wall (docs/169)
   std::vector<std::string> left;  // names of joined walls that could not follow (they stay as they were)
 };
 
@@ -780,6 +782,18 @@ class Modeler {
   // The upright planes where a wall's layers meet (docs/156): a point on each and its normal
   // (across the wall). Empty as for wallLayerLines. Sections draw where they cross the cut.
   static std::vector<std::pair<gp_Pnt, gp_Dir>> wallLayerPlanes(const Document& document, const Object& wall);
+  // The layers of a wall, floor or roof as they are now (docs/170): names and thicknesses in
+  // order (a wall from its outer face in, a floor / roof from its top down), the set's name, and
+  // for a wall where the first layer starts from its drawn line (`offset`, mm to its left) and
+  // which way the layers go (`towardsLeft`). Empty when it has none or they no longer add up.
+  struct LayerUsage {
+    std::string setName;
+    std::vector<TypeLayer> layers;
+    bool wall = false;
+    double offset = 0.0;
+    bool towardsLeft = false;
+  };
+  static std::optional<LayerUsage> layerUsage(const Document& document, const Object& element);
   // Removes openings: the wall is whole again there. Their fittings go with them; the other
   // openings keep their ids, sizes and fittings. One undo step.
   Status removeOpenings(const ObjectId& host, const std::vector<std::size_t>& indices);

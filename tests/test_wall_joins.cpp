@@ -302,6 +302,52 @@ TEST_F(WallJoins, ASlabsOutlineGoesWithTheWallsItStandsIn) {
   EXPECT_NEAR(box(floor).y1, 3545, 1e-6);
 }
 
+// docs/169: columns standing in a wall, beams along one and a roof bearing on the walls go with
+// a wall moved sideways; a beam across the walls stays.
+TEST_F(WallJoins, ColumnsBeamsAndRoofsGoWithAWallMovedSideways) {
+  auto member = [&](std::vector<double> a, std::vector<double> b, const char* role, double depth) {
+    return ok("create_member", {{"start", a}, {"end", b}, {"role", role}, {"section", {{"kind", "rectangle"}, {"width", 105}, {"depth", depth}}}})["id"]
+        .get<std::string>();
+  };
+  const std::string corner = member({0, 0, 0}, {0, 0, 3000}, "column", 105);        // in the south-west corner
+  const std::string middle = member({1500, 0, 0}, {1500, 0, 3000}, "column", 105);   // in the south wall
+  const std::string inside = member({1500, 2000, 0}, {1500, 2000, 3000}, "column", 105);  // in the room: stays
+  const std::string along = member({0, 0, 3000}, {6000, 0, 3000}, "beam", 240);      // on the south wall
+  const std::string across = member({1500, 0, 3000}, {1500, 4000, 3000}, "beam", 240);  // from wall to wall: stays
+  const std::string roof = ok("create_roof", {{"outline", {{0, 0}, {6000, 0}, {6000, 4000}, {0, 4000}}}, {"kind", "hip"}, {"height", 3000}})["id"];
+  const Box c0 = box(corner), m0 = box(middle), i0 = box(inside), a0 = box(along), x0 = box(across), r0 = box(roof);
+  const auto steps = modeler.history().undoCount();
+  const json moved = ok("move", {{"ids", {south}}, {"vector", {0, -455, 0}}});
+  EXPECT_EQ(moved["joined_walls"]["members"], 3);  // the two columns and the beam along it
+  EXPECT_EQ(moved["joined_walls"]["roofs"], 1);
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  EXPECT_NEAR(box(corner).y0, c0.y0 - 455, 1e-6);
+  EXPECT_NEAR(box(corner).x0, c0.x0, 1e-6);  // the west wall did not go sideways
+  EXPECT_NEAR(box(middle).y0, m0.y0 - 455, 1e-6);
+  EXPECT_NEAR(box(inside).y0, i0.y0, 1e-6);
+  EXPECT_NEAR(box(along).y0, a0.y0 - 455, 1e-6);
+  EXPECT_NEAR(box(across).y0, x0.y0, 1e-6);
+  EXPECT_NEAR(box(across).y1, x0.y1, 1e-6);
+  // The roof's south eave 455 further south; its north eave where it was.
+  EXPECT_NEAR(box(roof).y0, r0.y0 - 455, 1e-6);
+  EXPECT_NEAR(box(roof).y1, r0.y1, 1e-6);
+  EXPECT_NEAR(ok("roof_info", {{"id", roof}})["outline"][0][1].get<double>(), -455, 1e-6);
+  // Back in one step.
+  ASSERT_TRUE(modeler.undo());
+  EXPECT_NEAR(box(corner).y0, c0.y0, 1e-6);
+  EXPECT_NEAR(box(roof).y0, r0.y0, 1e-6);
+  // The west wall out by 300: the corner column goes both ways' sum when both walls go (here one).
+  ok("move", {{"ids", {west}}, {"vector", {-300, 0, 0}}});
+  EXPECT_NEAR(box(corner).x0, c0.x0 - 300, 1e-6);
+  EXPECT_NEAR(box(middle).x0, m0.x0, 1e-6);  // not in the west wall
+  // Turned off: only the wall moves.
+  ASSERT_TRUE(modeler.undo());
+  const json alone = ok("move", {{"ids", {south}}, {"vector", {0, -455, 0}}, {"keep_joins", false}});
+  EXPECT_NEAR(box(corner).y0, c0.y0, 1e-6);
+  EXPECT_NEAR(box(roof).y0, r0.y0, 1e-6);
+  (void)alone;
+}
+
 TEST_F(WallJoins, TheWallATeeRunsIntoFollowsNothingButItsOwnCornerPartners) {
   // The partition moved along the room (sideways for it): it slides along the south and north
   // walls, which are not joined *to* it; nothing is stretched.

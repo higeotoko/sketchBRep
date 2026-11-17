@@ -1565,9 +1565,9 @@ const std::vector<CommandDef>& commands() {
          must(moved);
          json result = idsResult(ids(a, "ids"));
          const doc::JoinFollow& joins = m.lastJoinFollow();
-         if (joins.followed > 0 || joins.carried > 0 || joins.slabs > 0 || !joins.left.empty())
+         if (joins.followed > 0 || joins.carried > 0 || joins.slabs > 0 || joins.members > 0 || joins.roofs > 0 || !joins.left.empty())
            result["joined_walls"] = {{"followed", joins.followed}, {"carried", joins.carried}, {"slabs", joins.slabs},
-                                     {"left", joins.left}};
+                                     {"members", joins.members}, {"roofs", joins.roofs}, {"left", joins.left}};
          return result;
        }},
       {"rotate", "Rotate objects about an axis (degrees).",
@@ -3962,7 +3962,7 @@ const std::vector<CommandDef>& commands() {
          return json{{"storeys", s.storeys}, {"walls", s.walls}, {"slabs", s.slabs}, {"roofs", s.roofs}, {"stairs", s.stairs}, {"columns", s.columns},
                      {"beams", s.beams}, {"members", s.members}, {"openings", s.openings}, {"windows", s.windows},
                      {"doors", s.doors}, {"spaces", s.spaces}, {"grids", s.grids}, {"proxies", s.proxies},
-                     {"ceilings", s.coverings}, {"canopies", s.canopies}, {"balconies", s.balconies}, {"railings", s.railings}, {"skipped", s.skipped}, {"notes", s.notes}};
+                     {"ceilings", s.coverings}, {"canopies", s.canopies}, {"balconies", s.balconies}, {"railings", s.railings}, {"layer_sets", s.layerSets}, {"skipped", s.skipped}, {"notes", s.notes}};
        }},
       {"export_step", "Export visible objects (or 'ids') to STEP with names and colours.",
        SCHEMA({"type": "object", "properties": {"path": {"type": "string"},

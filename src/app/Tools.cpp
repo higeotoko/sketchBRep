@@ -118,6 +118,8 @@ QString joinFollowText(const doc::JoinFollow& joins) {
   if (joins.carried > 0) parts << QObject::tr("角の壁 %1 枚を一緒に動かしました").arg(joins.carried);
   if (joins.followed > 0) parts << QObject::tr("つながっている壁 %1 枚の長さを合わせました").arg(joins.followed);
   if (joins.slabs > 0) parts << QObject::tr("床 %1 枚の外周を合わせました").arg(joins.slabs);
+  if (joins.members > 0) parts << QObject::tr("柱・梁 %1 本を一緒に動かしました").arg(joins.members);
+  if (joins.roofs > 0) parts << QObject::tr("屋根 %1 つの外周を合わせました").arg(joins.roofs);
   if (!joins.left.empty()) {
     QStringList names;
     for (const std::string& n : joins.left) names << QString::fromStdString(n);

@@ -18,7 +18,8 @@ struct IfcSummary {
   int openings = 0, windows = 0, doors = 0, spaces = 0, grids = 0, proxies = 0;
   int coverings = 0;               // ceiling boards (make_ceilings) as IfcCovering CEILING (docs/127)
   int canopies = 0;                // canopies (make_canopy) as IfcSlab USERDEFINED "CANOPY" (docs/155)
-  int balconies = 0, railings = 0;  // balconies (create_balcony): IfcSlab "BALCONY", IfcRailing, posts as IfcColumn (docs/167)
+  int balconies = 0, railings = 0;
+  int layerSets = 0;               // walls / floors / roofs with their layers as IfcMaterialLayerSetUsage (docs/170)  // balconies (create_balcony): IfcSlab "BALCONY", IfcRailing, posts as IfcColumn (docs/167)
   int skipped = 0;                 // visible objects without volume (lines, faces, notes, guides)
   std::vector<std::string> notes;  // what was assumed or left out, for the user
 };

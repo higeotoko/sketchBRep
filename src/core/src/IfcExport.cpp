@@ -350,6 +350,7 @@ Result<std::string> ifcText(const Modeler& modeler, const std::string& fileName,
   std::vector<std::pair<std::string, int>> ceilings;  // (room id, covering): related to the room's space below
   std::vector<std::pair<std::string, int>> canopies;  // (wall id, canopy): connected to their walls (docs/155)
   std::map<std::string, int> written;                 // object id -> its element
+  std::map<std::string, int> materials;               // layer name -> IfcMaterial (docs/170)
   for (const Object& o : document.objects()) {
     if (o.isContainer() || !document.isVisible(o.id)) continue;
     const std::string kind = attribute(o, "kind");
@@ -538,6 +539,21 @@ Result<std::string> ifcText(const Modeler& modeler, const std::string& fileName,
     }
     storey.elements.push_back(element);
     written[o.id] = element;
+    // docs/170: its layers as materials (a wall from its drawn line, a floor / roof from its top).
+    if (const auto usage = Modeler::layerUsage(document, o)) {
+      std::vector<int> layers;
+      for (const Modeler::TypeLayer& l : usage->layers) {
+        int& material = materials[l.name];
+        if (!material) material = f.add("IFCMATERIAL(" + text(l.name) + ",$,$)");
+        layers.push_back(f.add("IFCMATERIALLAYER(" + ref(material) + "," + real(l.thickness) + ",$," + text(l.name) + ",$,$,$)"));
+      }
+      const int set = f.add("IFCMATERIALLAYERSET(" + refs(layers) + "," + (usage->setName.empty() ? std::string("$") : text(usage->setName)) + ",$)");
+      const std::string direction = usage->wall ? ".AXIS2." : ".AXIS3.";
+      const std::string sense = usage->wall ? (usage->towardsLeft ? ".POSITIVE." : ".NEGATIVE.") : ".NEGATIVE.";
+      const int use = f.add("IFCMATERIALLAYERSETUSAGE(" + ref(set) + "," + direction + "," + sense + "," + real(usage->wall ? usage->offset : 0.0) + ",$)");
+      f.add("IFCRELASSOCIATESMATERIAL(" + guid("material:" + o.id) + ",$,$,$," + refs({element}) + "," + ref(use) + ")");
+      ++summary.layerSets;
+    }
   }
   for (const auto& [host, canopy] : canopies) {
     const auto wall = written.find(host);

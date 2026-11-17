@@ -6332,6 +6332,10 @@ std::vector<std::size_t> cornerPartners(const std::vector<WallBand>& walls, cons
 
 // `displaced`: how each moved wall goes (plan). `primary`: walls moved by the user as they
 // are (never reshaped here). `keepShape`: walls whose own change is being made by the caller.
+std::string roofSpecText(const geom::RoofSpec& s);                                            // roofs, below
+Result<std::pair<geom::RoofSpec, gp_Trsf>> storedRoofOf(const Document& document, const Object* o);  // roofs, below
+geom::RoofSpec roofInFrame(geom::RoofSpec s, const gp_Trsf& t);                                // roofs, below
+
 void settleWallJoins(const Document& document, ChangeSet& changes, const RegenContext& context,
                      const std::vector<WallBand>& walls, const std::vector<std::array<WallEnd, 2>>& ends,
                      std::map<std::size_t, gp_Vec> displaced, const std::set<std::size_t>& primary,
@@ -6448,6 +6452,93 @@ void settleWallJoins(const Document& document, ChangeSet& changes, const RegenCo
     }
     changes.modify(slab);
     ++report.slabs;
+  }
+  // docs/169: the sideways move of the displaced walls a plan point stands in (within a wall's
+  // thickness, and at a corner the other wall's too; two walls of one direction count once),
+  // when `z0`..`z1` is within `reach` of the wall's height.
+  auto sidewaysAt = [&](const gp_Pnt& p, double z0, double z1, double above) {
+    gp_Vec delta(0, 0, 0);
+    std::vector<gp_Dir> counted;
+    for (const auto& [index, d] : displaced) {
+      const WallBand& w = walls[index];
+      if (z1 < w.z0 - 1.0 || z0 > w.z1 + above) continue;
+      const gp_Vec sideways = d - gp_Vec(w.dir) * d.Dot(gp_Vec(w.dir));
+      if (sideways.Magnitude() < tolerance::kLinear) continue;
+      const gp_Vec to(w.start, gp_Pnt(p.X(), p.Y(), w.start.Z()));
+      const double along = to.Dot(gp_Vec(w.dir)), across = to.Dot(gp_Vec(w.left));
+      const double thick = w.right + w.leftExt + 1.0;
+      if (along < -thick || along > w.length + thick || across < -w.right - 1.0 || across > w.leftExt + 1.0) continue;
+      if (std::any_of(counted.begin(), counted.end(), [&](const gp_Dir& c) { return c.IsParallel(w.dir, 1e-6); })) continue;
+      counted.push_back(w.dir);
+      delta += sideways;
+    }
+    return delta;
+  };
+  // Columns standing in a wall, and beams lying along one (on it or in it): moved with its
+  // sideways move, as they are. Beams across a wall (their length would change) stay.
+  for (const Object& o : document.objects()) {
+    if (o.locked || movedObjects.count(o.id) || changes.erased(o.id)) continue;
+    const auto* m = std::get_if<LinearMember>(&o.recipe.base);
+    if (!m) continue;
+    const gp_Trsf world = document.worldTransform(o);
+    const gp_Pnt a = m->start.Transformed(world), b = m->end.Transformed(world);
+    const gp_Vec axis(a, b);
+    if (axis.Magnitude() < tolerance::kLinear) continue;
+    const gp_Dir dir(axis);
+    gp_Vec delta(0, 0, 0);
+    if (std::abs(dir.Z()) > 0.999) {
+      // A column: its axis in the wall, its height overlapping the wall's.
+      delta = sidewaysAt(a, std::min(a.Z(), b.Z()), std::max(a.Z(), b.Z()), 1.0);
+    } else if (std::abs(dir.Z()) < 1e-3) {
+      // A beam: both ends in the same walls, along them (on the wall: up to 600 over its top).
+      const gp_Vec da = sidewaysAt(a, a.Z(), a.Z(), 600.0), db = sidewaysAt(b, b.Z(), b.Z(), 600.0);
+      if (da.Magnitude() < tolerance::kLinear || (da - db).Magnitude() > tolerance::kLinear) continue;
+      // Along a displaced wall: the move is across the beam, not along it.
+      if (std::abs(gp_Vec(dir).Dot(da.Normalized())) > 1e-3) continue;
+      delta = da;
+    }
+    if (delta.Magnitude() < tolerance::kLinear) continue;
+    const Object* pending = changes.pending(o.id);
+    Object member = pending ? *pending : o;
+    gp_Trsf shift;
+    shift.SetTranslation(delta);
+    member.transform = localDelta(document.parentTransform(o), shift) * member.transform;
+    changes.modify(member);
+    ++report.members;
+  }
+  // Roofs: an outline corner standing in a displaced wall (the roof bearing on it) goes with it.
+  for (const Object& o : document.objects()) {
+    const auto kind = o.attributes.find("kind");
+    if (kind == o.attributes.end() || kind->second != "roof" || o.locked || movedObjects.count(o.id) || changes.erased(o.id)) continue;
+    const auto stored = storedRoofOf(document, &o);
+    if (!stored) continue;
+    geom::RoofSpec spec = roofInFrame(stored->first, stored->second);
+    bool any = false;
+    for (gp_Pnt& p : spec.outline) {
+      const gp_Vec delta = sidewaysAt(p, spec.height, spec.height, 1.0);
+      if (delta.Magnitude() < tolerance::kLinear) continue;
+      p.Translate(gp_Vec(delta.X(), delta.Y(), 0));
+      any = true;
+    }
+    if (!any) continue;
+    const geom::RoofSpec local = roofInFrame(spec, stored->second.Inverted());
+    const auto roof = geom::makeRoof(local);
+    if (!roof) {
+      report.left.push_back(o.name);
+      continue;
+    }
+    const Object* pending = changes.pending(o.id);
+    Object object = pending ? *pending : o;
+    object.recipe.base = ImportedShape{roof->solid, "roof"};
+    object.attributes["roof_spec"] = roofSpecText(local);
+    object.faceMaterials.clear();
+    object.hiddenEdges.clear();
+    if (!rebuild(object, context)) {
+      report.left.push_back(o.name);
+      continue;
+    }
+    changes.modify(object);
+    ++report.roofs;
   }
 }
 
@@ -6760,6 +6851,32 @@ std::vector<double> layerAcross(const WallBand& w) {
     return across;
 }
 }  // namespace
+
+std::optional<Modeler::LayerUsage> Modeler::layerUsage(const Document& document, const Object& element) {
+  const std::string kind = attributeOf(element, "kind");
+  LayerUsage usage;
+  if (kind == "wall") {
+    const auto w = wallBand(document, element);
+    if (!w || layerAcross(*w).empty()) return std::nullopt;  // none, or they no longer add up
+    const nlohmann::json layers = nlohmann::json::parse(attributeOf(element, "wall_layers"), nullptr, false);
+    for (const auto& l : layers) usage.layers.push_back({l.value("name", std::string()), l.value("thickness", 0.0)});
+    usage.wall = true;
+    usage.setName = attributeOf(element, "wall_type_name");
+    if (usage.setName.empty()) usage.setName = attributeOf(element, "wall_type");
+    // From its outer face: on the left of the drawn line the layers go right, and the other way.
+    const bool outRight = attributeOf(element, "wall_outside") == "right";
+    usage.offset = outRight ? -w->right : w->leftExt;
+    usage.towardsLeft = outRight;
+    return usage;
+  }
+  if (kind != "slab" && kind != "roof") return std::nullopt;
+  if (typeLayerDepths(document, element).empty()) return std::nullopt;
+  const std::string name = attributeOf(element, kTypeName);
+  const nlohmann::json reg = typeRegister(document);
+  for (const auto& l : reg.at(name).at("layers")) usage.layers.push_back({l.value("name", std::string()), l.value("thickness", 0.0)});
+  usage.setName = name;
+  return usage;
+}
 
 std::vector<std::pair<gp_Pnt, gp_Dir>> Modeler::wallLayerPlanes(const Document& document, const Object& wall) {
   std::vector<std::pair<gp_Pnt, gp_Dir>> out;
