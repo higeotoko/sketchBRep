@@ -2774,9 +2774,15 @@ const std::vector<CommandDef>& commands() {
        "A room's (create_room) use and finishes (docs/115): any of 'use' (用途, e.g. 居間), 'floor', 'wall', "
        "'ceiling' (words as on a finish schedule, e.g. フローリング t15) and 'ceiling_height' (mm from the floor, "
        "1000 to 10000; 0 takes it away). Keys not given stay; an empty word takes it away. Shown in room_schedule "
-       "and the finish schedule (export_schedule table finishes). One undo step.",
+       "and the finish schedule (export_schedule table finishes). 'ratio_part' (docs/162): the room is a part left "
+       "out of the floor area the floor area ratio (容積率) is worked out from: garage (自動車車庫等, up to 1/5 of "
+       "the total floor area), stockpile (備蓄倉庫, 1/50), battery (蓄電池, 1/50), generator (自家発電設備, 1/100), "
+       "water_tank (貯水槽, 1/100), delivery_box (宅配ボックス, 1/100), elevator (エレベーターの昇降路, all), "
+       "common_hall (共同住宅等の共用の廊下・階段, all); empty: counted. Whether the room really is such a part is "
+       "not checked. One undo step.",
        SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "use": {"type": "string"}, "floor": {"type": "string"},
-               "wall": {"type": "string"}, "ceiling": {"type": "string"}, "ceiling_height": {"type": "number"}},
+               "wall": {"type": "string"}, "ceiling": {"type": "string"}, "ceiling_height": {"type": "number"},
+               "ratio_part": {"type": "string"}},
                "required": ["id"]}),
        [](doc::Modeler& m, const json& a) {
          const doc::Object* marker = m.document().find(text(a, "id"));
@@ -2787,9 +2793,10 @@ const std::vector<CommandDef>& commands() {
          if (a.contains("wall")) finish.wall = text(a, "wall");
          if (a.contains("ceiling")) finish.ceiling = text(a, "ceiling");
          if (a.contains("ceiling_height")) finish.ceilingHeight = number(a, "ceiling_height");
+         if (a.contains("ratio_part")) finish.ratioPart = text(a, "ratio_part");
          must(m.setRoomFinish(text(a, "id"), finish));
          return json{{"id", text(a, "id")}, {"use", finish.use}, {"floor", finish.floor}, {"wall", finish.wall},
-                     {"ceiling", finish.ceiling}, {"ceiling_height", finish.ceilingHeight}};
+                     {"ceiling", finish.ceiling}, {"ceiling_height", finish.ceilingHeight}, {"ratio_part", finish.ratioPart}};
        }},
       {"make_ceilings",
        "Ceilings as boards (docs/123): for each room ('rooms': ids; default all) with a ceiling height "
@@ -2834,8 +2841,9 @@ const std::vector<CommandDef>& commands() {
        "room_inner (null = not evaluated), slab (plan area of the slabs whose top lies on the level, openings "
        "taken out), slabs, unreadable_walls (walls reshaped by hand: not read), legal_floor (床面積 by the Building "
        "Standards Act Enforcement Order art. 2 (1) iii: within the wall lines where there is a floor; "
-       "\"not_evaluated\" when it cannot be read). total_legal_floor (延べ面積, iv; the exclusions for the floor "
-       "area ratio not looked at) and building_area (建築面積, ii: every storey within the wall lines plus eaves "
+       "\"not_evaluated\" when it cannot be read). total_legal_floor (延べ面積, iv), ratio_floor_area (the total "
+       "the floor area ratio is worked out from: less the rooms marked with set_room_finish ratio_part, each kind "
+       "up to its share, listed in ratio_parts; docs/162) and building_area (建築面積, ii: every storey within the wall lines plus eaves "
        "beyond 1 m, back 1 m) with 'legal_notes' (the basis, what was assumed and what is not evaluated; docs/141). "
        "include_csv: true adds UTF-8 CSV (BOM).",
        SCHEMA({"type": "object", "properties": {"include_csv": {"type": "boolean"}}}),
@@ -2856,7 +2864,13 @@ const std::vector<CommandDef>& commands() {
                      {"total_slab", t.slabTotal / 1e6},
                      {"total_legal_floor", allKnown ? json(t.legalTotal / 1e6) : json("not_evaluated")},
                      {"building_area", t.buildingKnown ? json(t.buildingArea / 1e6) : json("not_evaluated")},
+                     {"ratio_floor_area", t.ratioKnown ? json(t.ratioTotal / 1e6) : json("not_evaluated")},
                      {"legal_notes", t.legalNotes}};
+         json parts = json::array();
+         for (const auto& part : t.ratioParts)
+           parts.push_back({{"part", part.code}, {"label", part.label}, {"basis", part.basis}, {"rooms", part.rooms}, {"area", part.area / 1e6},
+                            {"limit", part.limit >= 0.0 ? json(part.limit / 1e6) : json(nullptr)}, {"excluded", part.excluded / 1e6}});
+         result["ratio_parts"] = parts;
          if (a.value("include_csv", false)) result["csv"] = doc::areaTableCsv(t);
          return result;
        }},

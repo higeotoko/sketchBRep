@@ -66,6 +66,7 @@ struct RoomRow {
   gp_Pnt at;
   std::string use, floor, wall, ceiling;  // docs/115: as given on the room
   double ceilingHeight = 0.0;              // 0: not given
+  std::string ratioPart;                   // docs/162: a code of floorRatioParts(), or empty
 };
 
 struct RoomSchedule {
@@ -106,6 +107,18 @@ struct AreaTable {
   bool buildingKnown = false;
   double buildingArea = 0.0;
   std::vector<std::string> legalNotes;  // what was assumed and what is not evaluated, with the basis
+  // docs/162: the total the floor area ratio (容積率) is worked out from: legalTotal less the rooms
+  // marked as parts that are left out, each kind up to its share of legalTotal.
+  struct RatioPart {
+    std::string code, label, basis;
+    int rooms = 0;
+    double area = 0.0;      // mm2 of the rooms marked so (within the wall lines)
+    double limit = -1.0;    // mm2 at most left out; below 0: no limit
+    double excluded = 0.0;  // mm2 left out
+  };
+  std::vector<RatioPart> ratioParts;  // the kinds that have rooms
+  bool ratioKnown = false;            // false: a floor area or a marked room cannot be read
+  double ratioTotal = 0.0;            // mm2
 };
 // Areas measured from the model, and the floor and building areas by the Building Standards Act
 // Enforcement Order art. 2 (1) ii-iv as read on e-Gov (version in force 2026-11-01) — docs/141 for

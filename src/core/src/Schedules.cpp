@@ -221,6 +221,7 @@ RoomSchedule roomSchedule(const Document& document) {
       row.wall = finish.wall;
       row.ceiling = finish.ceiling;
       row.ceilingHeight = finish.ceilingHeight;
+      row.ratioPart = finish.ratioPart;
     }
     if (row.counted) {
       out.centreTotal += r.centreArea;
@@ -544,7 +545,55 @@ AreaTable areaTable(const Document& document) {
     out.legalNotes.push_back(names + "：壁の中に床の無い所（吹抜けなど）があり、入れていない。");
   }
   out.legalNotes.push_back("未評価：壁で囲まれていない所（バルコニー・ポーチ・ピロティなど、開放性による扱い）、柱だけで囲まれた部分、地階（地盤面上 1 m 以下の部分の建築面積）、特例軒等、高い開放性の指定（同 2 号ただし書）。");
-  out.legalNotes.push_back("延べ面積は各階の床面積の合計。容積率の算定で入れない部分（自動車車庫等 1/5 など、同 4 号ただし書・第 3 項）は見ていない（未評価）。");
+  // docs/162: the total the floor area ratio is worked out from.
+  std::vector<std::string> unreadRooms;
+  for (const FloorRatioPart& kind : floorRatioParts()) {
+    AreaTable::RatioPart part;
+    part.code = kind.code;
+    part.label = kind.label;
+    part.basis = kind.basis;
+    for (const RoomRow& r : rooms.rows) {
+      if (r.ratioPart != kind.code) continue;
+      if (!r.counted) {
+        unreadRooms.push_back(r.name);
+        continue;
+      }
+      ++part.rooms;
+      part.area += r.centreArea;
+    }
+    if (part.rooms == 0) continue;
+    if (kind.share > 0.0) part.limit = out.legalTotal * kind.share;
+    part.excluded = part.limit >= 0.0 ? std::min(part.area, part.limit) : part.area;
+    out.ratioParts.push_back(part);
+  }
+  out.ratioKnown = everyKnown && unreadRooms.empty();
+  out.ratioTotal = out.legalTotal;
+  for (const AreaTable::RatioPart& part : out.ratioParts) out.ratioTotal -= part.excluded;
+  out.ratioTotal = std::max(0.0, out.ratioTotal);
+  out.legalNotes.push_back("延べ面積は各階の床面積の合計。容積率の算定の延べ面積は、そこから「容積率の区分」を付けた室の面積（壁芯）を引いた値"
+                           "（区分ごとに、延べ面積に割合を掛けた面積まで）。根拠：施行令 第 2 条 第 1 項 第 4 号ただし書・第 3 項、建築基準法 第 52 条 第 6 項 "
+                           "第 1 号・第 2 号、施行令 第 135 条の 16、e-Gov 法令検索で 2026-11-17 に読んだ版（令：令和 8 年 11 月 1 日施行、法：令和 8 年 5 月 27 日施行）。");
+  if (out.ratioParts.empty()) {
+    out.legalNotes.push_back("容積率の区分を付けた室が無いので、容積率の算定の延べ面積は延べ面積と同じ（車庫・備蓄倉庫・昇降路・共用廊下などがあれば、室のプロパティで区分を付けてください）。");
+  } else {
+    for (const AreaTable::RatioPart& part : out.ratioParts) {
+      std::string line = "容積率の算定で入れない部分：" + part.label + " " + std::to_string(part.rooms) + " 室 " + number(part.area / 1e6, 2) + " ㎡";
+      if (part.limit >= 0.0)
+        line += "、限度 " + number(part.limit / 1e6, 2) + " ㎡ → " + number(part.excluded / 1e6, 2) + " ㎡ を引いた";
+      else
+        line += "（限度なし）を引いた";
+      out.legalNotes.push_back(line + "（" + part.basis + "）。");
+    }
+    out.legalNotes.push_back("区分を付けた室は、室の面積（壁芯）をそのまま引いた（室の中に床の無い所があれば、その分多く引いている）。その部分が条文の用途に当たるか"
+                             "（専ら駐車のため、専ら防災のため、床に据え付ける蓄電池、など）は見ていない。");
+  }
+  if (!unreadRooms.empty()) {
+    std::string names;
+    for (const std::string& n : unreadRooms) names += (names.empty() ? "" : "・") + n;
+    out.legalNotes.push_back("容積率の算定の延べ面積は未評価：区分を付けた室（" + names + "）が閉じていない、または同じ所に室が 2 つある。");
+  }
+  out.legalNotes.push_back("未評価：地階の住宅・老人ホーム等の部分（法 第 52 条 第 3 項、その用途の床面積の合計の 1/3 まで。地階と用途の合計を持っていない）、"
+                           "特定行政庁が認める機械室等（同 第 6 項 第 3 号）、同じ敷地のほかの建築物の床面積、容積率の最低限度の算定。");
   if (eaves > 0) out.legalNotes.push_back("建築面積：1 m 以上出た軒は、その先から 1 m 下がった線まで入れた（屋根を載せた線から測った）。");
   if (canopies > 0) out.legalNotes.push_back("建築面積：壁の中心線から 1 m 以上出た庇は、その先から 1 m 下がった線まで入れた。");
   if (eavesUnknown) out.legalNotes.push_back("建築面積は未評価：1 m 以上出た軒のどこが妻かを読めない屋根がある（L 字などの切妻）。");
@@ -707,9 +756,31 @@ draw::Table scheduleTable(const Document& document, int which) {
     for (const AreaRow& r : a.rows) allKnown = allKnown && (!r.enclosedKnown || r.legalKnown);
     t.rows.push_back({"合計（延べ面積）", number(a.enclosedTotal / 1e6, 2), "", "", number(a.roomCentreTotal / 1e6, 2), "", number(a.slabTotal / 1e6, 2),
                       allKnown ? number(a.legalTotal / 1e6, 2) : "未評価"});
+    t.rows.push_back({"容積率の算定の延べ面積", "", "", "", "", "", "", a.ratioKnown ? number(a.ratioTotal / 1e6, 2) : "未評価"});
     t.rows.push_back({"建築面積", "", "", "", "", "", "", a.buildingKnown ? number(a.buildingArea / 1e6, 2) : "未評価"});
     t.notes = {"モデルから測った面積です。法の床面積・延べ面積・建築面積は、下の決まりで出しました（確認申請に使う時は、特定行政庁・確認検査機関の取扱いを確かめてください）。"};
-    for (const std::string& n : a.legalNotes) t.notes.push_back(n);
+    // On a sheet a note is one line: long ones are broken after a 。 or a 、 (about 100 characters a line).
+    for (const std::string& n : a.legalNotes) {
+      std::string line;
+      std::size_t count = 0, breakAt = 0;  // characters in `line`; bytes of `line` up to the last 。/、
+      for (std::size_t i = 0; i < n.size();) {
+        const unsigned char c = static_cast<unsigned char>(n[i]);
+        const std::size_t bytes = c < 0x80 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4;
+        const std::string ch = n.substr(i, bytes);
+        i += bytes;
+        line += ch;
+        ++count;
+        if (ch == "。" || ch == "、") breakAt = line.size();
+        if (count >= 100 && breakAt > 0 && i < n.size()) {
+          t.notes.push_back(line.substr(0, breakAt));
+          line = "　" + line.substr(breakAt);
+          count = 0;
+          for (std::size_t k = 0; k < line.size(); ++k) count += (static_cast<unsigned char>(line[k]) & 0xC0) != 0x80;
+          breakAt = 0;
+        }
+      }
+      if (!line.empty()) t.notes.push_back(line);
+    }
   }
   return t;
 }
@@ -969,6 +1040,10 @@ std::string areaTableCsv(const AreaTable& table) {
   csv.line({"合計", "", number(table.enclosedTotal / 1e6, 2), "", "", "", number(table.roomCentreTotal / 1e6, 2), "",
             number(table.slabTotal / 1e6, 2), "", "", allKnown ? number(table.legalTotal / 1e6, 2) : "未評価",
             table.buildingKnown ? number(table.buildingArea / 1e6, 2) : "未評価"});
+  csv.line({"容積率の算定の延べ面積", "", "", "", "", "", "", "", "", "", "", table.ratioKnown ? number(table.ratioTotal / 1e6, 2) : "未評価", ""});
+  for (const AreaTable::RatioPart& part : table.ratioParts)
+    csv.line({"  入れない部分：" + part.label, "", "", "", std::to_string(part.rooms), "", number(part.area / 1e6, 2), "", "", "", "",
+              "-" + number(part.excluded / 1e6, 2), ""});
   csv.line({});
   csv.line({"注", "モデルから測った面積です。法の床面積・延べ面積・建築面積は、下の決まりで出しました（確認申請に使う時は、特定行政庁・確認検査機関の取扱いを確かめてください）。"});
   for (const std::string& n : table.legalNotes) csv.line({"", n});

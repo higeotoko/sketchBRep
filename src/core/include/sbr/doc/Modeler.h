@@ -83,8 +83,25 @@ struct RoomInfo {
 struct RoomFinish {
   std::string use, floor, wall, ceiling;
   double ceilingHeight = 0.0;
-  bool empty() const { return use.empty() && floor.empty() && wall.empty() && ceiling.empty() && ceilingHeight <= 0.0; }
+  // docs/162: the part of the building the room is, for the floor area the floor area ratio is
+  // worked out from (a code of floorRatioParts(); empty: counted like any room).
+  std::string ratioPart;
+  bool empty() const {
+    return use.empty() && floor.empty() && wall.empty() && ceiling.empty() && ceilingHeight <= 0.0 && ratioPart.empty();
+  }
 };
+// The parts of a building whose floor area is left out of the total the floor area ratio (容積率)
+// is worked out from (docs/162). `share`: at most this share of the total of every storey's floor
+// area is left out (0: all of it). As read on e-Gov on 2026-11-17: Building Standards Act
+// Enforcement Order art. 2 (1) iv proviso and (3) (in force 2026-11-01), the Act art. 52 (6) i, ii
+// (in force 2026-05-27) and the Order art. 135-16 (the lift of art. 52 (6) i is an elevator).
+struct FloorRatioPart {
+  const char* code;
+  const char* label;  // Japanese, as the Order names it
+  double share;
+  const char* basis;
+};
+const std::vector<FloorRatioPart>& floorRatioParts();
 // Read from a room marker (attribute room_finish); empty when none is given.
 RoomFinish roomFinishOf(const Object& marker);
 

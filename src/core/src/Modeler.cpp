@@ -8275,6 +8275,20 @@ std::vector<RoomInfo> Modeler::roomsIn(const Document& document_) {
   return out;
 }
 
+const std::vector<FloorRatioPart>& floorRatioParts() {
+  static const std::vector<FloorRatioPart> parts = {
+      {"garage", "自動車車庫等", 1.0 / 5, "令 2 条 1 項 4 号イ・3 項 1 号"},
+      {"stockpile", "備蓄倉庫", 1.0 / 50, "令 2 条 1 項 4 号ロ・3 項 2 号"},
+      {"battery", "蓄電池", 1.0 / 50, "令 2 条 1 項 4 号ハ・3 項 3 号"},
+      {"generator", "自家発電設備", 1.0 / 100, "令 2 条 1 項 4 号ニ・3 項 4 号"},
+      {"water_tank", "貯水槽", 1.0 / 100, "令 2 条 1 項 4 号ホ・3 項 5 号"},
+      {"delivery_box", "宅配ボックス", 1.0 / 100, "令 2 条 1 項 4 号ヘ・3 項 6 号"},
+      {"elevator", "エレベーターの昇降路", 0.0, "法 52 条 6 項 1 号・令 135 条の 16"},
+      {"common_hall", "共同住宅・老人ホーム等の共用の廊下・階段", 0.0, "法 52 条 6 項 2 号"},
+  };
+  return parts;
+}
+
 RoomFinish roomFinishOf(const Object& marker) {
   RoomFinish out;
   const auto stored = marker.attributes.find("room_finish");
@@ -8286,6 +8300,7 @@ RoomFinish roomFinishOf(const Object& marker) {
   out.wall = j.value("wall", std::string());
   out.ceiling = j.value("ceiling", std::string());
   out.ceilingHeight = j.value("ceiling_height", 0.0);
+  out.ratioPart = j.value("ratio_part", std::string());
   return out;
 }
 
@@ -8486,6 +8501,11 @@ Status Modeler::setRoomFinish(const ObjectId& room, const RoomFinish& finish) {
   if (!std::isfinite(finish.ceilingHeight) || finish.ceilingHeight < 0 ||
       (finish.ceilingHeight > 0 && (finish.ceilingHeight < 1000 || finish.ceilingHeight > 10000)))
     return Status::failure("A ceiling height is 1000 to 10000 (or 0: not given)");
+  if (!finish.ratioPart.empty()) {
+    bool known = false;
+    for (const FloorRatioPart& part : floorRatioParts()) known = known || finish.ratioPart == part.code;
+    if (!known) return Status::failure("A room's part for the floor area ratio is one of the listed codes");
+  }
   Object object = *marker;
   if (finish.empty()) {
     object.attributes.erase("room_finish");
@@ -8496,6 +8516,7 @@ Status Modeler::setRoomFinish(const ObjectId& room, const RoomFinish& finish) {
     if (!finish.wall.empty()) j["wall"] = finish.wall;
     if (!finish.ceiling.empty()) j["ceiling"] = finish.ceiling;
     if (finish.ceilingHeight > 0) j["ceiling_height"] = finish.ceilingHeight;
+    if (!finish.ratioPart.empty()) j["ratio_part"] = finish.ratioPart;
     object.attributes["room_finish"] = j.dump();
   }
   ChangeSet changes(document_);

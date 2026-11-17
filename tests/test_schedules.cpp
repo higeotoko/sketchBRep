@@ -699,6 +699,82 @@ TEST_F(Schedules, RoofTypeLayersAcrossTheSlope) {
   EXPECT_EQ(sloped().size(), before);
 }
 
+// docs/162: the total the floor area ratio is worked out from: rooms marked as parts that are
+// left out, each kind up to its share of the total floor area (Order art. 2 (1) iv, (3); Act
+// art. 52 (6) i, ii).
+TEST(LegalAreas, TheFloorAreaForTheRatioLeavesMarkedRoomsOut) {
+  sbr::doc::Modeler modeler;
+  CommandApi api{modeler};
+  auto call = [&](const std::string& command, json args) { return json::parse(api.execute(json{{"command", command}, {"args", args}}.dump())); };
+  auto ok = [&](const std::string& command, json args) {
+    json r = call(command, args);
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  ASSERT_TRUE(modeler.setLevels({{"", "1FL", 0}}));
+  // 10000 x 6000 cut at x = 4000 and x = 5000: 24, 6 and 30 m2; 60 in all.
+  ok("create_wall", {{"points", {{0, 0}, {10000, 0}, {10000, 6000}, {0, 6000}, {0, 0}}}, {"thickness", 120}, {"height", 3000}});
+  const std::string cut = ok("create_wall", {{"points", {{4000, 0}, {4000, 6000}}}, {"thickness", 120}, {"height", 3000}})["ids"][0];
+  ok("create_wall", {{"points", {{5000, 0}, {5000, 6000}}}, {"thickness", 120}, {"height", 3000}});
+  const std::string garage = ok("create_room", {{"at", {2000, 3000}}, {"name", "車庫"}})["id"];
+  const std::string store = ok("create_room", {{"at", {4500, 3000}}, {"name", "備蓄倉庫"}})["id"];
+  const std::string living = ok("create_room", {{"at", {7500, 3000}}, {"name", "居間"}})["id"];
+  // No room marked: the same as the total, and the note says so.
+  json areas = ok("area_table", json::object());
+  EXPECT_NEAR(areas["total_legal_floor"].get<double>(), 60.0, 1e-6);
+  EXPECT_NEAR(areas["ratio_floor_area"].get<double>(), 60.0, 1e-6);
+  EXPECT_TRUE(areas["ratio_parts"].empty());
+  EXPECT_NE(areas["legal_notes"].dump().find("区分を付けた室が無い"), std::string::npos);
+  EXPECT_NE(areas["legal_notes"].dump().find("第 52 条 第 3 項"), std::string::npos);  // still not evaluated, said
+  // The garage 24 m2: at most 60 / 5 = 12 left out. The store 6 m2: at most 60 / 50 = 1.2.
+  const auto steps = modeler.history().undoCount();
+  EXPECT_EQ(ok("set_room_finish", {{"id", garage}, {"ratio_part", "garage"}})["ratio_part"], "garage");
+  ok("set_room_finish", {{"id", store}, {"ratio_part", "stockpile"}, {"use", "倉庫"}});
+  EXPECT_EQ(modeler.history().undoCount(), steps + 2);
+  areas = ok("area_table", json::object());
+  EXPECT_NEAR(areas["total_legal_floor"].get<double>(), 60.0, 1e-6);  // the total itself is not changed
+  EXPECT_NEAR(areas["ratio_floor_area"].get<double>(), 60.0 - 12.0 - 1.2, 1e-6);
+  ASSERT_EQ(areas["ratio_parts"].size(), 2u);
+  EXPECT_EQ(areas["ratio_parts"][0]["part"], "garage");
+  EXPECT_NEAR(areas["ratio_parts"][0]["area"].get<double>(), 24.0, 1e-6);
+  EXPECT_NEAR(areas["ratio_parts"][0]["limit"].get<double>(), 12.0, 1e-6);
+  EXPECT_NEAR(areas["ratio_parts"][0]["excluded"].get<double>(), 12.0, 1e-6);
+  EXPECT_NEAR(areas["ratio_parts"][1]["excluded"].get<double>(), 1.2, 1e-6);
+  EXPECT_NE(areas["legal_notes"].dump().find("自動車車庫等 1 室 24.00"), std::string::npos) << areas["legal_notes"].dump();
+  // Kept with the room's other words; a part within its share is left out whole.
+  EXPECT_EQ(sbr::doc::roomFinishOf(*modeler.document().find(store)).use, "倉庫");
+  ok("set_room_finish", {{"id", garage}, {"ratio_part", ""}});
+  ok("set_room_finish", {{"id", store}, {"ratio_part", "delivery_box"}});  // 6 > 60 / 100
+  areas = ok("area_table", json::object());
+  EXPECT_NEAR(areas["ratio_floor_area"].get<double>(), 60.0 - 0.6, 1e-6);
+  // A lift shaft and common halls have no share: all of it.
+  ok("set_room_finish", {{"id", store}, {"ratio_part", "elevator"}});
+  ok("set_room_finish", {{"id", living}, {"ratio_part", "common_hall"}});
+  areas = ok("area_table", json::object());
+  EXPECT_NEAR(areas["ratio_floor_area"].get<double>(), 60.0 - 6.0 - 30.0, 1e-6);
+  EXPECT_TRUE(areas["ratio_parts"][0]["limit"].is_null());
+  // The table on a sheet and the CSV carry it.
+  const auto sheet = sbr::doc::scheduleTable(modeler.document(), 2);
+  ASSERT_GE(sheet.rows.size(), 3u);
+  EXPECT_EQ(sheet.rows[sheet.rows.size() - 2].front(), "容積率の算定の延べ面積");
+  EXPECT_EQ(sheet.rows[sheet.rows.size() - 2].back(), "24.00");
+  EXPECT_EQ(sheet.rows.back().front(), "建築面積");
+  for (const std::string& n : sheet.notes) EXPECT_LE(n.size(), 3 * 125u) << n;  // long notes are broken
+  const std::string csv = sbr::doc::areaTableCsv(sbr::doc::areaTable(modeler.document()));
+  EXPECT_NE(csv.find("容積率の算定の延べ面積"), std::string::npos);
+  EXPECT_NE(csv.find("エレベーターの昇降路"), std::string::npos);
+  // A code that is not listed is refused.
+  EXPECT_FALSE(call("set_room_finish", {{"id", living}, {"ratio_part", "attic"}}).value("ok", true));
+  // The marked room no longer a region of its own (the wall between it and the next taken away):
+  // not evaluated, and the note names it.
+  ok("set_room_finish", {{"id", garage}, {"ratio_part", "garage"}});
+  ok("delete", {{"ids", {cut}}});
+  areas = ok("area_table", json::object());
+  EXPECT_EQ(areas["ratio_floor_area"], "not_evaluated") << areas.dump();
+  EXPECT_NE(areas["legal_notes"].dump().find("車庫"), std::string::npos);
+  EXPECT_NEAR(areas["total_legal_floor"].get<double>(), 60.0, 1e-6);
+}
+
 // docs/141: floor areas, the total and the building area by the Enforcement Order art. 2 (1).
 TEST(LegalAreas, FloorAndBuildingAreasByTheOrder) {
   sbr::doc::Modeler modeler;

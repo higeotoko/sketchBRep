@@ -968,6 +968,10 @@ void MainWindow::buildUi() {
               else if (key == QStringLiteral("wall")) finish.wall = word;
               else if (key == QStringLiteral("ceiling")) finish.ceiling = word;
               else if (key == QStringLiteral("ceiling_height")) finish.ceilingHeight = value;
+              else if (key == QStringLiteral("ratio_part")) {
+                if (finish.ratioPart == word) return;
+                finish.ratioPart = word;
+              }
               else return;
               const Status s = modeler_.setRoomFinish(id, finish);
               if (!s) reportError(tr("仕上げを変えられません: %1").arg(userMessage(QString::fromStdString(s.message()))));
@@ -5083,7 +5087,7 @@ void MainWindow::showSchedulesDialog() {
     auto* box = new QVBoxLayout(page);
     auto* table = makeTable("areaTable", {tr("階"), tr("壁で囲まれた面積（壁芯）㎡"), tr("室の数"), tr("室のない閉じた所"), tr("室の合計（壁芯）㎡"),
                                           tr("室の合計（内法）㎡"), tr("床スラブ ㎡"), tr("法の床面積")},
-                            static_cast<int>(areas.rows.size()) + 2);
+                            static_cast<int>(areas.rows.size()) + 3);
     for (int row = 0; row < static_cast<int>(areas.rows.size()); ++row) {
       const doc::AreaRow& r = areas.rows[static_cast<std::size_t>(row)];
       const QStringList cells{r.level.empty() ? tr("（レベルなし）") : QString::fromStdString(r.level),
@@ -5100,8 +5104,11 @@ void MainWindow::showSchedulesDialog() {
     const QStringList totals{tr("合計（延べ面積）"), area(areas.enclosedTotal), QString(), QString(), area(areas.roomCentreTotal), QString(),
                              area(areas.slabTotal), allKnown ? area(areas.legalTotal) : tr("未評価")};
     for (int c = 0; c < totals.size(); ++c) table->setItem(last, c, new QTableWidgetItem(totals[c]));
-    table->setItem(last + 1, 0, new QTableWidgetItem(tr("建築面積")));
-    table->setItem(last + 1, 7, new QTableWidgetItem(areas.buildingKnown ? area(areas.buildingArea) : tr("未評価")));
+    // docs/162: the total the floor area ratio is worked out from.
+    table->setItem(last + 1, 0, new QTableWidgetItem(tr("容積率の算定の延べ面積")));
+    table->setItem(last + 1, 7, new QTableWidgetItem(areas.ratioKnown ? area(areas.ratioTotal) : tr("未評価")));
+    table->setItem(last + 2, 0, new QTableWidgetItem(tr("建築面積")));
+    table->setItem(last + 2, 7, new QTableWidgetItem(areas.buildingKnown ? area(areas.buildingArea) : tr("未評価")));
     table->resizeColumnsToContents();
     int unreadable = 0;
     for (const doc::AreaRow& r : areas.rows) unreadable += r.unreadableWalls;

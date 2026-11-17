@@ -160,6 +160,7 @@ const Entry kEntries[] = {
     {"A gable or shed roof over an outline with slanted sides needs one with no inward corners yet", "斜めの辺がある外周の切妻・片流れは、まだへこんだ角の無い形だけです（寄棟ならへこんだ角があっても作れます）"},
     {"A roof outline with slanted sides may have at most four inward corners", "斜めの辺がある外周（辺ごとの勾配・出を入れた外周も）のへこんだ角は 4 つまでです"},
     {"This outline has no wing ends to make gables of: choose the gable sides", "この外周では、妻にする辺（建物の翼の先の辺）が決まりません。妻の辺を選んでください"},
+    {"A room's part for the floor area ratio is one of the listed codes", "容積率の区分は、一覧にある物から選んでください"},
     {"A side against a wall is a number of a side of the outline", "壁に付く辺は、外周の辺の番号で入れてください"},
     {"A roof needs sides that are eaves (not gables, not against walls)", "屋根には、軒の辺（妻でも、壁に付く辺でもない辺）が要ります"},
     {"A side's pitch is for a number of a side of the outline", "辺ごとの勾配は、外周の辺の番号で入れてください"},

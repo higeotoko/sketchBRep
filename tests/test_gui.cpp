@@ -97,6 +97,7 @@
 #include "Viewport.h"
 #include "sbr/api/CommandApi.h"
 #include "sbr/doc/NativeFormat.h"
+#include "sbr/doc/Schedules.h"
 #include "sbr/doc/ChangeSummary.h"
 #include "sbr/geom/Measure.h"
 #include "sbr/geom/Operations.h"
@@ -12060,10 +12061,12 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
           types->item(1,0)->text()==QStringLiteral("D1")&&types->item(1,1)->text()==QStringLiteral("扉")&&
           each->rowCount()==3&&
           rooms->rowCount()==1&&rooms->item(0,0)->text()==QStringLiteral("LDK")&&rooms->item(0,2)->text()==QStringLiteral("48.00")&&
-          areas->rowCount()==3&&areas->item(0,0)->text()==QStringLiteral("1FL")&&areas->item(0,1)->text()==QStringLiteral("48.00")&&
+          areas->rowCount()==4&&areas->item(0,0)->text()==QStringLiteral("1FL")&&areas->item(0,1)->text()==QStringLiteral("48.00")&&
           // docs/141: no slab here: every enclosed part counted (said in the note); the building area.
           areas->item(0,7)->text()==QStringLiteral("48.00")&&areas->item(1,0)->text().startsWith(QStringLiteral("合計"))&&
-          areas->item(2,0)->text()==QStringLiteral("建築面積")&&areas->item(2,7)->text()==QStringLiteral("48.00")&&
+          // docs/162: the total the floor area ratio is worked out from (no room marked: the same).
+          areas->item(2,0)->text()==QStringLiteral("容積率の算定の延べ面積")&&areas->item(2,7)->text()==QStringLiteral("48.00")&&
+          areas->item(3,0)->text()==QStringLiteral("建築面積")&&areas->item(3,7)->text()==QStringLiteral("48.00")&&
           note->text().contains(QStringLiteral("施行令"))&&note->text().contains(QStringLiteral("未評価"));
     if(!shown)why=QStringLiteral("types %1, each %2, rooms %3, areas %4").arg(types->rowCount()).arg(each->rowCount()).arg(rooms->rowCount()).arg(areas->rowCount());
     dialog->reject();
@@ -12120,6 +12123,26 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
     emit height->editingFinished();
     QTRY_VERIFY(f.window.scheduleCsv(3).contains(QStringLiteral("フローリング t15,,,2400")));
     QVERIFY2(f.window.statusText().contains(QStringLiteral("仕上げ")),qPrintable(f.window.statusText()));
+    // docs/162: the room as a garage: left out of the floor area for the ratio up to 1/5 of the total.
+    f.window.setSelection({room});
+    QApplication::processEvents();
+    auto* part=f.window.findChild<QComboBox*>(QStringLiteral("roomRatioPart"));QVERIFY(part);
+    QCOMPARE(part->currentIndex(),0);
+    QCOMPARE(part->count(),9);
+    const auto steps=m.history().undoCount();
+    part->setCurrentIndex(part->findData(QStringLiteral("garage")));
+    emit part->activated(part->currentIndex());
+    QTRY_VERIFY(doc::roomFinishOf(*m.document().find(room)).ratioPart=="garage");
+    QCOMPARE(m.history().undoCount(),steps+1);
+    const doc::AreaTable marked=doc::areaTable(m.document());
+    QVERIFY(marked.ratioKnown);
+    QVERIFY2(std::abs(marked.ratioTotal-(marked.legalTotal-marked.legalTotal/5))<1.0,qPrintable(QString::number(marked.ratioTotal)));
+    f.window.setSelection({room});
+    QApplication::processEvents();
+    part=f.window.findChild<QComboBox*>(QStringLiteral("roomRatioPart"));QVERIFY(part);
+    QCOMPARE(part->currentData().toString(),QStringLiteral("garage"));
+    QVERIFY(m.undo());
+    QVERIFY(doc::roomFinishOf(*m.document().find(room)).ratioPart.empty());
   }
   // docs/109: a mark and a product number typed in the wall's properties.
   f.window.setSelection({south});

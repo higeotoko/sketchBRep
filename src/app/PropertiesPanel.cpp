@@ -796,6 +796,24 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
           form_->addRow(label, edit);
         };
         word(tr("用途"), "use", finish.use, tr("例：居間"));
+        {
+          // docs/162: a part left out of the floor area the floor area ratio is worked out from.
+          auto* part = new QComboBox;
+          part->setObjectName(QStringLiteral("roomRatioPart"));
+          part->addItem(tr("入れる（ふつうの室）"), QString());
+          for (const doc::FloorRatioPart& kind : doc::floorRatioParts())
+            part->addItem(kind.share > 0.0 ? tr("%1（延べ面積の 1/%2 まで入れない）").arg(QString::fromUtf8(kind.label)).arg(qRound(1.0 / kind.share))
+                                           : tr("%1（入れない）").arg(QString::fromUtf8(kind.label)),
+                          QString::fromLatin1(kind.code));
+          part->setCurrentIndex(std::max(0, part->findData(QString::fromStdString(finish.ratioPart))));
+          part->setToolTip(tr("容積率の算定の延べ面積に入れない部分なら、ここで選びます（面積の表の「容積率の算定の延べ面積」に効きます）。"
+                              "その室が本当に条文の用途に当たるかは、アプリでは見ていません"));
+          part->setEnabled(!o->locked);
+          connect(part, qOverload<int>(&QComboBox::activated), this, [this, id, part](int) {
+            emit roomFinishEdited(id, QStringLiteral("ratio_part"), part->currentData().toString(), 0.0);
+          });
+          form_->addRow(tr("容積率の区分"), part);
+        }
         word(tr("床"), "floor", finish.floor, tr("例：フローリング t15"));
         word(tr("壁"), "wall", finish.wall, tr("例：PB t12.5 クロス貼り"));
         word(tr("天井"), "ceiling", finish.ceiling, tr("例：PB t9.5 クロス貼り"));
