@@ -2813,6 +2813,22 @@ const std::vector<CommandDef>& commands() {
          for (const auto& [name, fitting] : m.fittingTypes()) out.push_back({{"name", name}, {"fitting", json::parse(fitting)}});
          return json{{"types", out}};
        }},
+      {"layer_quantities",
+       "The quantities of the layers of walls (of a build-up), floors and roofs (of a registered type with layers), "
+       "docs/172: per part and layer name and thickness, how many elements, area (m2: each element's volume over "
+       "its thickness, openings out, roofs along the slope) and volume (m3). An estimate: corners' differences "
+       "between the outer and inner layers are not looked at. include_csv adds UTF-8 CSV (BOM).",
+       SCHEMA({"type": "object", "properties": {"include_csv": {"type": "boolean"}}}),
+       [](doc::Modeler& m, const json& a) {
+         const doc::LayerQuantities q = doc::layerQuantities(m.document());
+         json rows = json::array();
+         for (const auto& r : q.rows)
+           rows.push_back({{"part", r.part}, {"layer", r.name}, {"thickness", r.thickness}, {"elements", r.elements},
+                           {"area", r.area / 1e6}, {"volume", r.volume / 1e9}});
+         json result{{"rows", rows}, {"without_layers", q.withoutLayers}, {"notes", q.notes}};
+         if (a.value("include_csv", false)) result["csv"] = doc::tableCsv(doc::scheduleTable(m.document(), 5));
+         return result;
+       }},
       {"remove_fitting_type",
        "Removes a fitting type: the fittings of that name stay as they are, without the name. One undo step.",
        SCHEMA({"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}),
@@ -3826,7 +3842,7 @@ const std::vector<CommandDef>& commands() {
                "hidden": {"type": "boolean"}, "fill": {"type": "boolean"}, "grid": {"type": "boolean"},
                "levels": {"type": "boolean"}, "annotations": {"type": "boolean"}, "preset":{"type":"string"},"within":{"type":"string"},
                "tags":{"type":"array","items":{"type":"string"}},"include_hidden":{"type":"boolean"},"member_labels":{"type":"boolean"},
-               "tables": {"type": "array", "items": {"enum": ["openings", "rooms", "areas", "finishes", "types"]}}}, "required": ["path", "kind"]}),
+               "tables": {"type": "array", "items": {"enum": ["openings", "rooms", "areas", "finishes", "types", "layers"]}}}, "required": ["path", "kind"]}),
        [](doc::Modeler& m, const json& a) {
          const std::string kind = text(a, "kind");
          draw::ViewSpec spec;
@@ -3864,7 +3880,7 @@ const std::vector<CommandDef>& commands() {
            if (!a.at("tables").is_array()) throw ApiError("'tables': a list of openings, rooms, areas, finishes");
            for (const json& t : a.at("tables")) {
              const std::string which = t.is_string() ? t.get<std::string>() : std::string();
-             const int index = which == "openings" ? 0 : which == "rooms" ? 1 : which == "areas" ? 2 : which == "finishes" ? 3 : which == "types" ? 4 : -1;
+             const int index = which == "openings" ? 0 : which == "rooms" ? 1 : which == "areas" ? 2 : which == "finishes" ? 3 : which == "types" ? 4 : which == "layers" ? 5 : -1;
              if (index < 0) throw ApiError("'tables': openings, rooms, areas, finishes or types");
              draw::Table table = doc::scheduleTable(m.document(), index);
              if (!doc::tableHasContent(table, index)) leftOut.push_back(which);
@@ -3889,14 +3905,14 @@ const std::vector<CommandDef>& commands() {
        "set_type_name), read from the model as it is (as opening_schedule / "
        "room_schedule / area_table). 'paper' (auto, A4-A1), 'frame' (default true), 'project', 'number', "
        "'author', 'date' for the title block.",
-       SCHEMA({"type": "object", "properties": {"path": {"type": "string"}, "table": {"enum": ["openings", "rooms", "areas", "finishes", "types"]},
+       SCHEMA({"type": "object", "properties": {"path": {"type": "string"}, "table": {"enum": ["openings", "rooms", "areas", "finishes", "types", "layers"]},
                "paper": {"type": "string"}, "frame": {"type": "boolean"}, "project": {"type": "string"},
                "number": {"type": "string"}, "author": {"type": "string"}, "date": {"type": "string"}},
                "required": ["path", "table"]}),
        [](doc::Modeler& m, const json& a) {
          const std::string which = text(a, "table");
-         const int index = which == "openings" ? 0 : which == "rooms" ? 1 : which == "areas" ? 2 : which == "finishes" ? 3 : which == "types" ? 4 : -1;
-         if (index < 0) throw ApiError("'table': openings, rooms, areas, finishes or types");
+         const int index = which == "openings" ? 0 : which == "rooms" ? 1 : which == "areas" ? 2 : which == "finishes" ? 3 : which == "types" ? 4 : which == "layers" ? 5 : -1;
+         if (index < 0) throw ApiError("'table': openings, rooms, areas, finishes, types or layers");
          const draw::Table table = doc::scheduleTable(m.document(), index);
          draw::SheetSpec sheetSpec;
          sheetSpec.paper = textOr(a, "paper", "auto");

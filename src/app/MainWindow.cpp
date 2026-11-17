@@ -5236,11 +5236,29 @@ void MainWindow::showSchedulesDialog() {
     box->addWidget(note("typeTableNote", text));
     tabs->addTab(page, tr("種類の表"));
   }
+  {
+    // docs/172: the quantities of the layers of walls, floors and roofs.
+    const draw::Table layers = doc::scheduleTable(document, 5);
+    auto* page = new QWidget;
+    auto* box = new QVBoxLayout(page);
+    QStringList headers;
+    for (const std::string& h : layers.headers) headers << QString::fromStdString(h);
+    auto* table = makeTable("layerQuantityTable", headers, static_cast<int>(layers.rows.size()));
+    for (int row = 0; row < static_cast<int>(layers.rows.size()); ++row)
+      for (int c = 0; c < static_cast<int>(layers.rows[static_cast<std::size_t>(row)].size()); ++c)
+        table->setItem(row, c, new QTableWidgetItem(QString::fromStdString(layers.rows[static_cast<std::size_t>(row)][static_cast<std::size_t>(c)])));
+    table->resizeColumnsToContents();
+    QString text;
+    for (const std::string& n : layers.notes) text += (text.isEmpty() ? QString() : QStringLiteral("\n")) + QString::fromStdString(n);
+    box->addWidget(table, 1);
+    box->addWidget(note("layerQuantityNote", text));
+    tabs->addTab(page, tr("層の数量"));
+  }
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
   auto* save = buttons->addButton(tr("この表を CSV に保存..."), QDialogButtonBox::ActionRole);
   save->setObjectName(QStringLiteral("scheduleSaveCsv"));
   connect(save, &QPushButton::clicked, &dialog, [this, tabs, &dialog] {
-    const QString names[] = {tr("建具表"), tr("室の表"), tr("面積の表"), tr("仕上げ表"), tr("種類の表")};
+    const QString names[] = {tr("建具表"), tr("室の表"), tr("面積の表"), tr("仕上げ表"), tr("種類の表"), tr("層の数量")};
     const QString path = QFileDialog::getSaveFileName(&dialog, tr("表を CSV に保存"), names[tabs->currentIndex()] + QStringLiteral(".csv"),
                                                       tr("CSV (*.csv)"));
     if (!path.isEmpty()) saveScheduleCsv(tabs->currentIndex(), path);
@@ -5248,7 +5266,7 @@ void MainWindow::showSchedulesDialog() {
   auto* drawing = buttons->addButton(tr("この表を図面に保存..."), QDialogButtonBox::ActionRole);
   drawing->setObjectName(QStringLiteral("scheduleSaveDrawing"));
   connect(drawing, &QPushButton::clicked, &dialog, [this, tabs, &dialog] {
-    const QString names[] = {tr("建具表"), tr("室の表"), tr("面積の表"), tr("仕上げ表"), tr("種類の表")};
+    const QString names[] = {tr("建具表"), tr("室の表"), tr("面積の表"), tr("仕上げ表"), tr("種類の表"), tr("層の数量")};
     const QString path = QFileDialog::getSaveFileName(&dialog, tr("表を図面に保存"), names[tabs->currentIndex()] + QStringLiteral(".pdf"),
                                                       tr("PDF (*.pdf);;DXF (*.dxf);;Jw_cad (*.jww)"));
     if (!path.isEmpty()) saveScheduleDrawing(tabs->currentIndex(), path);

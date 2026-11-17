@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <map>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <tuple>
 
@@ -793,6 +794,50 @@ bool tableHasContent(const draw::Table& table, int which) {
   return true;
 }
 
+LayerQuantities layerQuantities(const Document& document) {
+  LayerQuantities out;
+  std::map<std::tuple<int, std::string, long long>, std::size_t> at;  // (part order, name, thickness in 0.01 mm) -> row
+  for (const Object& o : document.objects()) {
+    const std::string kind = attribute(o, "kind");
+    if (kind != "wall" && kind != "slab" && kind != "roof") continue;
+    if (o.shape.IsNull()) continue;
+    const auto usage = Modeler::layerUsage(document, o);
+    if (!usage) {
+      ++out.withoutLayers;
+      continue;
+    }
+    double thickness = 0.0;
+    for (const auto& l : usage->layers) thickness += l.thickness;
+    if (thickness <= 0.0) continue;
+    const double area = geom::volume(document.worldShape(o)) / thickness;
+    const int order = kind == "wall" ? 0 : kind == "slab" ? 1 : 2;
+    const std::string part = kind == "wall" ? "壁" : kind == "slab" ? "床" : "屋根";
+    std::set<std::size_t> counted;
+    for (const auto& l : usage->layers) {
+      const auto key = std::make_tuple(order, l.name, std::llround(l.thickness * 100));
+      auto found = at.find(key);
+      if (found == at.end()) {
+        found = at.emplace(key, out.rows.size()).first;
+        out.rows.push_back({part, l.name, l.thickness, 0, 0.0, 0.0});
+      }
+      LayerQuantityRow& row = out.rows[found->second];
+      if (counted.insert(found->second).second) ++row.elements;  // a layer twice in one element (board both sides): one element
+      row.area += area;
+      row.volume += area * l.thickness;
+    }
+  }
+  std::stable_sort(out.rows.begin(), out.rows.end(), [](const LayerQuantityRow& a, const LayerQuantityRow& b) {
+    auto rank = [](const std::string& p) { return p == "壁" ? 0 : p == "床" ? 1 : 2; };
+    return rank(a.part) < rank(b.part);
+  });
+  out.notes.push_back("面積は、部材の体積を厚さで割った値（開口の分は引いてある。屋根は勾配なりの面積）。体積は、その面積に層の厚さを掛けた値。");
+  out.notes.push_back("壁の角で、外側の層が内側の層より長い分（入隅・出隅の差）は見ていない。概算として使ってください（ロス・割付は入っていない）。");
+  out.notes.push_back("同じ部材に同じ層が 2 枚ある時（石膏ボード両面など）は、面積を 2 回数え、部材の数は 1 つ。");
+  if (out.withoutLayers > 0)
+    out.notes.push_back("層の無い壁・床・屋根（仕様・種類の層が無い、または厚さを変えて層の合計と合わない物）" + std::to_string(out.withoutLayers) + " 個は入っていない。");
+  return out;
+}
+
 draw::Table scheduleTable(const Document& document, int which) {
   draw::Table t;
   if (which == 0) {
@@ -821,6 +866,15 @@ draw::Table scheduleTable(const Document& document, int which) {
                         r.counted ? "閉じている" : !r.closed ? "閉じていない" : "ほかの室と同じ場所"});
     t.rows.push_back({"合計（閉じている室だけ）", "", number(s.centreTotal / 1e6, 2), s.innerMissing == 0 ? number(s.innerTotal / 1e6, 2) : "未評価", "", ""});
     t.notes = {"壁芯＝壁を描いた線の内側、内法＝壁の面の内側。法の床面積（算入・不算入の決まり）ではありません。"};
+  } else if (which == 5) {
+    // docs/172: the quantities of the layers.
+    const LayerQuantities q = layerQuantities(document);
+    t.title = "層の数量";
+    t.headers = {"部位", "層", "厚さ (mm)", "部材の数", "面積 (m2)", "体積 (m3)"};
+    for (const LayerQuantityRow& r : q.rows)
+      t.rows.push_back({r.part, r.name, number(r.thickness, r.thickness == std::floor(r.thickness) ? 0 : 1), std::to_string(r.elements),
+                        number(r.area / 1e6, 2), number(r.volume / 1e9, 3)});
+    t.notes = q.notes;
   } else if (which == 4) {
     // Types of floors and roofs (docs/134, docs/136): read from the objects as they are now.
     t.title = "種類の表";

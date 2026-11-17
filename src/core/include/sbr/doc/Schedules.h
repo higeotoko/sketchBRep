@@ -146,9 +146,27 @@ std::string roomTagText(const RoomRow& room);
 
 // The tables for a sheet of their own (docs/113): 0 the door and window schedule (one line per
 // mark), 1 the room schedule, 2 the area table, 3 the finish schedule (docs/115), 4 the types of
-// floors and roofs (docs/136: one line per type name and part, its count and sizes); the same
-// values and notes as the CSV.
+// floors and roofs (docs/136: one line per type name and part, its count and sizes), 5 the
+// quantities of the layers (docs/172); the same values and notes as the CSV.
 draw::Table scheduleTable(const Document& document, int which);
+
+// The quantities of the layers of walls, floors and roofs (docs/172): per part and layer name,
+// how many elements have it, its area (each element's volume over its thickness: openings out,
+// a roof's along its slope) and its volume (that area times the layer's thickness).
+struct LayerQuantityRow {
+  std::string part;   // 壁 / 床 / 屋根
+  std::string name;   // the layer's name
+  double thickness = 0.0;  // mm (the same name may come with several: one row each)
+  int elements = 0;
+  double area = 0.0;    // mm2
+  double volume = 0.0;  // mm3
+};
+struct LayerQuantities {
+  std::vector<LayerQuantityRow> rows;
+  int withoutLayers = 0;  // walls / floors / roofs with no layers, or layers that no longer add up
+  std::vector<std::string> notes;
+};
+LayerQuantities layerQuantities(const Document& document);
 // Whether a table made by scheduleTable(document, which) has anything in it: openings beyond the
 // total line, rooms, areas, finishes given by hand (docs/125, docs/130).
 bool tableHasContent(const draw::Table& table, int which);

@@ -875,6 +875,63 @@ TEST(LegalAreas, BasementsAgainstTheGround) {
   (void)call;
 }
 
+// docs/172: the quantities of the layers: per part, layer name and thickness, the elements, the
+// area (volume over thickness) and the volume; all the layers of an element add up to its volume.
+TEST(LayerQuantities, PerLayerAreasAndVolumes) {
+  sbr::doc::Modeler modeler;
+  CommandApi api{modeler};
+  auto ok = [&](const std::string& command, json args) {
+    json r = json::parse(api.execute(json{{"command", command}, {"args", args}}.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  const json sided = ok("create_wall", {{"points", {{0, 0}, {6000, 0}, {6000, 4000}, {0, 4000}, {0, 0}}}, {"type", "exterior_siding"}, {"height", 2800}})["ids"];
+  const std::string partition = ok("create_wall", {{"points", {{3000, 65}, {3000, 3935}}}, {"type", "interior_board"}, {"height", 2800}})["ids"][0];
+  ok("create_wall", {{"points", {{0, -3000}, {4000, -3000}}}, {"thickness", 150}, {"height", 2800}});  // no layers
+  ok("define_type", {{"name", "F1"}, {"part", "floor"}, {"layers", {{{"name", "flooring"}, {"thickness", 15}}, {{"name", "ply"}, {"thickness", 24}}, {{"name", "joist"}, {"thickness", 105}}}}});
+  ok("batch", {{"commands", {{{"command", "create_slab"}, {"args", {{"outline", {{0, 0}, {6000, 0}, {6000, 4000}, {0, 4000}}}, {"top", 0}, {"thickness", 144}}}},
+                             {{"command", "set_type_name"}, {"args", {{"ids", {"$1.id"}}, {"name", "F1"}}}}}}});
+  auto volumeOf = [&](const std::string& id) { return sbr::geom::volume(modeler.document().worldShape(*modeler.document().find(id))); };
+  double sidedVolume = 0.0;
+  for (const auto& id : sided) sidedVolume += volumeOf(id);
+  const double sidedArea = sidedVolume / 160.5, partitionArea = 3870.0 * 2800;  // 160.5 thick; the partition 130 thick
+  const json q = ok("layer_quantities", {{"include_csv", true}});
+  EXPECT_EQ(q["without_layers"], 1);
+  double wallVolume = 0.0, floorVolume = 0.0;
+  int board = 0, floorRows = 0;
+  for (const json& r : q["rows"]) {
+    if (r["part"] == "壁") wallVolume += r["volume"].get<double>();
+    if (r["part"] == "床") {
+      floorVolume += r["volume"].get<double>();
+      ++floorRows;
+      EXPECT_NEAR(r["area"].get<double>(), 24.0, 1e-6);
+      EXPECT_EQ(r["elements"], 1);
+    }
+    if (r["part"] == "壁" && std::abs(r["thickness"].get<double>() - 16.0) < 1e-9) {
+      // The siding: on the four outer walls only.
+      EXPECT_EQ(r["elements"], 4);
+      EXPECT_NEAR(r["area"].get<double>(), sidedArea / 1e6, 1e-6);
+    }
+    if (r["part"] == "壁" && std::abs(r["thickness"].get<double>() - 12.5) < 1e-9) {
+      // The board: inside the outer walls and on both faces of the partition (5 walls).
+      ++board;
+      EXPECT_EQ(r["elements"], 5);
+      EXPECT_NEAR(r["area"].get<double>(), (sidedArea + 2 * partitionArea) / 1e6, 1e-6);
+    }
+  }
+  EXPECT_EQ(board, 1);
+  EXPECT_EQ(floorRows, 3);
+  // All the layers make up the elements: the walls' volume, the floor's.
+  EXPECT_NEAR(wallVolume, (sidedVolume + volumeOf(partition)) / 1e9, 1e-6);
+  EXPECT_NEAR(floorVolume, 6000.0 * 4000 * 144 / 1e9, 1e-6);
+  EXPECT_NE(q["csv"].get<std::string>().find("部材の数"), std::string::npos);  // its headings
+  EXPECT_NE(q["notes"].dump().find("概算"), std::string::npos);
+  // As a table for a sheet of its own.
+  const auto sheet = sbr::doc::scheduleTable(modeler.document(), 5);
+  EXPECT_EQ(sheet.title, "層の数量");
+  EXPECT_EQ(sheet.rows.size(), q["rows"].size());
+}
+
 // docs/141: floor areas, the total and the building area by the Enforcement Order art. 2 (1).
 TEST(LegalAreas, FloorAndBuildingAreasByTheOrder) {
   sbr::doc::Modeler modeler;
