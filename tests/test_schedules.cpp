@@ -1197,6 +1197,76 @@ TEST_F(Schedules, ABalconyOnAWallAndTheAreas) {
   EXPECT_FALSE(onSouth().empty());
 }
 
+// docs/168: a balcony round the outer corner where the south wall meets the east one (an L).
+TEST_F(Schedules, ABalconyGoesRoundACorner) {
+  auto bounds = [&](const std::string& id) { return sbr::geom::exactBounds(modeler.document().worldShape(*modeler.document().find(id))); };
+  auto solidVolume = [&](const std::string& id) { return sbr::geom::volume(modeler.document().worldShape(*modeler.document().find(id))); };
+  auto only = [&] {
+    std::vector<std::string> ids;
+    for (const auto& o : modeler.document().objects())
+      if (o.attributes.count("kind") && o.attributes.at("kind") == "balcony") ids.push_back(o.id);
+    EXPECT_EQ(ids.size(), 1u);
+    return ids.empty() ? std::string() : ids.front();
+  };
+  const auto steps = modeler.history().undoCount();
+  // Along the south wall from x 2635 (its middle at 4000, 2730 wide) to the corner (8100, -100),
+  // then 1820 along the east wall's outer face (x 8100) northwards; 910 out.
+  json made = ok("create_balcony", {{"host", south}, {"at", {4000, -500}}, {"wrap", "end"}});
+  std::string id = made["id"];
+  EXPECT_EQ(made["wrap"], "end");
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  auto b = bounds(id);
+  EXPECT_NEAR(b.CornerMin().X(), 2635, 1e-4);
+  EXPECT_NEAR(b.CornerMax().X(), 8100 + 910, 1e-4);
+  EXPECT_NEAR(b.CornerMin().Y(), -100 - 910, 1e-4);
+  EXPECT_NEAR(b.CornerMax().Y(), -100 + 1820, 1e-4);
+  const double floorArea = 6375.0 * 910 + 910.0 * 1820;
+  // The floor and a parapet 100 thick along its four free edges (overlapping at three corners).
+  const double parapet = 100.0 * (910 + 6375 + 2730 + 910) - 3 * 100.0 * 100;
+  EXPECT_NEAR(solidVolume(id), floorArea * 150 + parapet * 1100, 10.0);
+  auto table = sbr::doc::areaTable(modeler.document());
+  EXPECT_NEAR(table.balconyArea, floorArea, 1.0);
+  EXPECT_NEAR(table.buildingArea / 1e6, 48.0, 1e-6);  // 910 + 100: nothing back 1 m from its end beyond the faces
+  // 1500 out: both legs count, 500 beyond the faces.
+  id = ok("change_balcony", {{"id", id}, {"depth", 1500}})["id"];
+  table = sbr::doc::areaTable(modeler.document());
+  EXPECT_NEAR(table.buildingArea / 1e6, 48.0 + (5965.0 * 500 + 500.0 * 1820) / 1e6, 1e-6);
+  id = ok("change_balcony", {{"id", id}, {"depth", 910}})["id"];
+  // It goes with both walls: the east wall 300 east, the south wall 300 south.
+  auto before = modeler.history().undoCount();
+  ok("move", {{"ids", {east}}, {"vector", {300, 0, 0}}});
+  EXPECT_NEAR(bounds(only()).CornerMax().X(), 8400 + 910, 1e-4);
+  EXPECT_EQ(modeler.history().undoCount(), before + 1);
+  ok("move", {{"ids", {south}}, {"vector", {0, -300, 0}}});
+  EXPECT_NEAR(bounds(only()).CornerMin().Y(), -400 - 910, 1e-4);
+  ASSERT_TRUE(modeler.undo());
+  ASSERT_TRUE(modeler.undo());
+  id = only();
+  EXPECT_NEAR(bounds(id).CornerMax().X(), 8100 + 910, 1e-4);
+  // On posts: three, under its far corners, from 1FL (0) up to its floor at 3000.
+  id = ok("change_balcony", {{"id", id}, {"top", 3000}, {"posts", 2}, {"rail", "none"}})["id"];
+  EXPECT_NEAR(solidVolume(id), floorArea * 150 + 3 * 105.0 * 105 * 2850, 10.0);
+  EXPECT_NEAR(bounds(id).CornerMin().Z(), 0, 1e-4);
+  table = sbr::doc::areaTable(modeler.document());
+  EXPECT_NEAR(table.buildingArea / 1e6, 48.0 + (6322.5 * 857.5 + 857.5 * 1820) / 1e6, 1e-6);  // to the posts' centre line
+  // Straight again.
+  id = ok("change_balcony", {{"id", id}, {"wrap", ""}, {"posts", 0}})["id"];
+  EXPECT_NEAR(bounds(id).CornerMax().X(), 4000 + 1365, 1e-4);
+  // Refused, nothing changed: on the inner face, too short round the corner, an end that is not one, a wall alone.
+  EXPECT_FALSE(call("change_balcony", {{"id", id}, {"wrap", "end"}, {"side", 1}}).value("ok", true));
+  EXPECT_FALSE(call("change_balcony", {{"id", id}, {"wrap", "end"}, {"wrap_length", 100}}).value("ok", true));
+  EXPECT_FALSE(call("change_balcony", {{"id", id}, {"wrap", "around"}}).value("ok", true));
+  const std::string loose = ok("create_wall", {{"points", {{0, -5000}, {4000, -5000}}}, {"thickness", 200}, {"height", 3000}})["ids"][0];
+  EXPECT_FALSE(call("create_balcony", {{"host", loose}, {"wrap", "end"}}).value("ok", true));
+  EXPECT_TRUE(modeler.document().find(id));
+  // Round the other way: at the south wall's start, onto the west wall.
+  made = ok("change_balcony", {{"id", id}, {"wrap", "start"}, {"wrap_length", 910}});
+  b = bounds(made["id"]);
+  EXPECT_NEAR(b.CornerMin().X(), -100 - 910, 1e-4);
+  EXPECT_NEAR(b.CornerMax().X(), 4000 + 1365, 1e-4);
+  EXPECT_NEAR(b.CornerMax().Y(), -100 + 910, 1e-4);
+}
+
 // docs/113: a table on a sheet of its own.
 TEST_F(Schedules, ATableGoesOnASheetOfItsOwn) {
   const sbr::draw::Table table = sbr::doc::scheduleTable(modeler.document(), 0);

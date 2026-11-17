@@ -680,6 +680,12 @@ class Modeler {
     // outer corners), `postSize` square, from the next level below its floor up to its floor.
     int posts = 0;
     double postSize = 105.0;
+    // docs/168: round the outer corner where its wall meets another at its "start" or "end" (an
+    // L): along its wall from (along - width / 2) towards that end up to the corner (the other way
+    // round for "start", from along + width / 2), then `wrapLength` along the other wall's outer
+    // face from the corner. Empty: straight on its wall.
+    std::string wrap;
+    double wrapLength = 1820.0;
   };
   // The parts of a balcony as made (docs/167): its floor, its rail and its posts (world; a part
   // it has not is null). Refused when it was moved or reshaped by hand (no longer as made).

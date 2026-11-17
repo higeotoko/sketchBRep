@@ -8253,9 +8253,159 @@ Status balconySizes(const Modeler::BalconySpec& s) {
   if (!s.floorArea.empty() && s.floorArea != "count" && s.floorArea != "exclude")
     return Status::failure("A balcony's floor area: count, exclude or empty (not evaluated)");
   if (s.posts != 0 && (s.posts < 2 || s.posts > 6)) return Status::failure("A balcony has no posts or 2 to 6");
+  if (!s.wrap.empty() && s.wrap != "start" && s.wrap != "end") return Status::failure("A balcony goes round the corner at the wall's start or end");
   if (s.posts > 0 && !(s.postSize >= 50.0 && s.postSize <= 500.0 && s.postSize <= s.depth && s.postSize * s.posts <= s.width))
     return Status::failure("A balcony's posts are 50 to 500 square and fit under its front");
   return Status::success();
+}
+
+using Poly = std::vector<gp_Pnt>;
+
+// A balcony's plan (docs/163, docs/168): its floor's outline, the edges of it not on a wall
+// (where its rail goes), and the part of it counted in the building area. Straight on one wall,
+// or round the outer corner where its wall meets another (an L).
+struct BalconyPlan {
+  Poly floor;                                   // world, z 0
+  std::vector<std::pair<gp_Pnt, gp_Pnt>> free;  // along the floor's outline, not on a wall
+  std::vector<gp_Pnt> corners;                  // the far corners (where posts go)
+  Poly counted;                                 // in the building area (empty: none)
+  bool wraps = false;
+};
+
+double polyArea2(const Poly& p) {
+  double a = 0.0;
+  for (std::size_t i = 0; i < p.size(); ++i) a += p[i].X() * p[(i + 1) % p.size()].Y() - p[(i + 1) % p.size()].X() * p[i].Y();
+  return a;
+}
+
+std::optional<gp_Pnt> crossing(const gp_Pnt& a, const gp_Vec& da, const gp_Pnt& b, const gp_Vec& db) {
+  const auto m = meet(a, gp_Dir(da), b, gp_Dir(db));
+  if (!m) return std::nullopt;
+  return a.Translated(gp_Vec(gp_Dir(da)) * m->first);
+}
+
+Result<BalconyPlan> balconyPlan(const Document& document, const Modeler::BalconySpec& s, const BalconyPlace& at) {
+  using R = Result<BalconyPlan>;
+  BalconyPlan plan;
+  const double half = s.width / 2;
+  // How far out from the faces the building area takes it: on posts to their centre line, else
+  // back 1 m from its end (counted only beyond the wall's line by 1 m or more).
+  const double counted = s.posts > 0 ? s.depth - s.postSize / 2 : (s.depth + at.behind >= 1000.0 ? s.depth - 1000.0 : 0.0);
+  if (s.wrap.empty()) {
+    const gp_Pnt a0 = at.face.Translated(at.u * -half), a1 = at.face.Translated(at.u * half);
+    plan.floor = {a0, a1, a1.Translated(at.n * s.depth), a0.Translated(at.n * s.depth)};
+    plan.free = {{a1, a1.Translated(at.n * s.depth)}, {a1.Translated(at.n * s.depth), a0.Translated(at.n * s.depth)}, {a0.Translated(at.n * s.depth), a0}};
+    plan.corners = {a0.Translated(at.n * s.depth), a1.Translated(at.n * s.depth)};
+    if (counted > 1e-6) plan.counted = {a0, a1, a1.Translated(at.n * counted), a0.Translated(at.n * counted)};
+    return plan;
+  }
+  // Round the corner at the wall's start or end: the wall it meets there.
+  if (s.wrap != "start" && s.wrap != "end") return R::failure("A balcony goes round the corner at the wall's start or end");
+  const std::vector<WallBand> walls = allWallBands(document);
+  std::optional<std::size_t> hi;
+  for (std::size_t i = 0; i < walls.size(); ++i)
+    if (walls[i].object->id == s.host) hi = i;
+  if (!hi) return R::failure("A balcony goes on a wall made by the wall tool");
+  const auto ends = wallEnds(walls);
+  const int end = s.wrap == "start" ? 0 : 1;
+  const auto partners = cornerPartners(walls, ends, *hi, end);
+  if (partners.empty()) return R::failure("No wall meets this wall at that end: the balcony cannot go round the corner");
+  const WallBand& w = walls[*hi];
+  const WallBand& o = walls[partners.front()];
+  // Its other face: the one away from this wall's body.
+  const gp_Pnt middle = w.start.Translated(gp_Vec(w.dir) * (w.length / 2));
+  const double side = gp_Vec(o.start, gp_Pnt(middle.X(), middle.Y(), o.start.Z())).Dot(gp_Vec(o.left));
+  const gp_Vec nb = gp_Vec(o.left) * (side > 0 ? -1.0 : 1.0);
+  const gp_Pnt oFace = o.start.Translated(gp_Vec(o.left) * (side > 0 ? -o.right : o.leftExt));
+  const gp_Vec towards = at.u * (end == 0 ? -1.0 : 1.0);  // along this wall, to the corner
+  // Round an outer corner only: the other wall runs back from the corner on this wall's inner side.
+  gp_Vec db(o.dir);
+  if (db.Dot(at.n) > 0) db.Reverse();
+  const gp_Pnt here(at.face.X(), at.face.Y(), 0), oFlat(oFace.X(), oFace.Y(), 0);
+  // The other wall's far end lies behind this face (on the building's side): an outer corner.
+  const gp_Pnt oEnd0(o.start.X(), o.start.Y(), 0), oEnd1 = oEnd0.Translated(gp_Vec(o.dir) * o.length);
+  const double behind0 = gp_Vec(here, oEnd0).Dot(at.n), behind1 = gp_Vec(here, oEnd1).Dot(at.n);
+  if (nb.Dot(towards) <= 1e-6 || db.Dot(at.n) > -1e-6 || std::min(behind0, behind1) > -300.0)
+    return R::failure("A balcony goes round an outer corner only");
+  const auto corner = crossing(here, towards, oFlat, db);
+  if (!corner) return R::failure("A balcony goes round an outer corner only");
+  const gp_Pnt a0 = here.Translated(towards * -half);  // the far end of the leg along this wall
+  if (gp_Vec(a0, *corner).Dot(towards) < 300.0) return R::failure("A balcony round a corner needs 300 or more along its wall up to the corner");
+  if (!(s.wrapLength >= 300.0 && s.wrapLength <= 20000.0)) return R::failure("A balcony goes 300 to 20000 round the corner");
+  auto outline = [&](double d) -> std::optional<Poly> {
+    const auto outer = crossing(a0.Translated(at.n * d), towards, corner->Translated(nb * d), db);
+    if (!outer) return std::nullopt;
+    const gp_Pnt b1 = corner->Translated(db * s.wrapLength);
+    return Poly{a0, a0.Translated(at.n * d), *outer, b1.Translated(nb * d), b1, *corner};
+  };
+  const auto floor = outline(s.depth);
+  if (!floor) return R::failure("The balcony could not be built");
+  plan.floor = *floor;
+  plan.wraps = true;
+  for (std::size_t k = 0; k < 4; ++k) plan.free.push_back({plan.floor[k], plan.floor[k + 1]});
+  plan.corners = {plan.floor[1], plan.floor[2], plan.floor[3]};
+  if (counted > 1e-6)
+    if (const auto c = outline(counted)) plan.counted = *c;
+  return plan;
+}
+
+// A square post of `size` at a corner of the outline, inside it (its sides along the edges there).
+Poly postAt(const Poly& floor, std::size_t k, double size) {
+  const std::size_t n = floor.size();
+  const gp_Pnt v = floor[k];
+  gp_Vec in1(v, floor[(k + n - 1) % n]), in2(v, floor[(k + 1) % n]);
+  if (in1.Magnitude() < 1e-9 || in2.Magnitude() < 1e-9) return {};
+  in1.Normalize();
+  in2.Normalize();
+  return {v, v.Translated(in2 * size), v.Translated(in1 * size + in2 * size), v.Translated(in1 * size)};
+}
+
+// The solid of a balcony round a corner (docs/168): the floor, a rail along its free edges, posts
+// under its far corners.
+Result<TopoDS_Shape> wrappedSolid(const BalconyPlan& plan, const Modeler::BalconySpec& s, double postBase) {
+  using R = Result<TopoDS_Shape>;
+  Poly floor = plan.floor;
+  const bool ccw = polyArea2(floor) > 0;
+  std::vector<TopoDS_Shape> parts{planPrism(floor, s.top - s.thickness, s.top, gp_Trsf())};
+  // A strip inside the floor along an edge, `t` wide.
+  auto strip = [&](const gp_Pnt& a, const gp_Pnt& b, double t, double z0, double z1) {
+    gp_Vec d(a, b);
+    if (d.Magnitude() < 1e-9) return TopoDS_Shape();
+    d.Normalize();
+    const gp_Vec in = ccw ? gp_Vec(-d.Y(), d.X(), 0) : gp_Vec(d.Y(), -d.X(), 0);
+    return planPrism({a, b, b.Translated(in * t), a.Translated(in * t)}, z0, z1, gp_Trsf());
+  };
+  if (s.rail == "wall") {
+    const double t = std::min(100.0, s.depth / 2);
+    for (const auto& [a, b] : plan.free) parts.push_back(strip(a, b, t, s.top, s.top + s.railHeight));
+  } else if (s.rail == "bars") {
+    const double b = 50.0, z1 = s.top + s.railHeight;
+    for (const auto& [p, q] : plan.free) {
+      parts.push_back(strip(p, q, b, z1 - b, z1));
+      // Posts no more than 1000 apart along it, from its start to its end.
+      const double length = p.Distance(q);
+      const int bays = std::max(1, static_cast<int>(std::ceil((length - b) / 1000.0 - 1e-9)));
+      gp_Vec d(p, q);
+      d.Normalize();
+      for (int i = 0; i <= bays; ++i) {
+        const gp_Pnt at = p.Translated(d * ((length - b) * i / bays));
+        parts.push_back(strip(at, at.Translated(d * b), b, s.top, z1 - b));
+      }
+    }
+  }
+  if (s.posts > 0) {
+    for (std::size_t k = 1; k + 2 < floor.size(); ++k) {  // the far corners (not those on the walls)
+      const Poly square = postAt(floor, k, s.postSize);
+      if (square.empty()) return R::failure("The balcony could not be built");
+      parts.push_back(planPrism(square, postBase, s.top - s.thickness, gp_Trsf()));
+    }
+  }
+  for (const TopoDS_Shape& part : parts)
+    if (part.IsNull()) return R::failure("The balcony could not be built");
+  if (parts.size() == 1) return parts.front();  // the floor alone
+  auto all = geom::booleanCombine(geom::BooleanOp::Union, parts);
+  if (!all) return R::failure("The balcony could not be built: " + all.error());
+  return all.value();
 }
 
 // Where a balcony's posts stand (docs/167): the highest level below its floor; else 0 when its
@@ -8313,8 +8463,16 @@ Result<TopoDS_Shape> balconySolid(const BalconyPlace& at, const Modeler::Balcony
   return all.value();
 }
 
-std::string balconyText(const Modeler::BalconySpec& s, const BalconyPlace& at, const Bnd_Box& box, double postBase) {
-  return nlohmann::json{{"along", s.along}, {"side", s.side >= 0 ? 1 : -1}, {"width", s.width}, {"depth", s.depth},
+nlohmann::json pointsJson(const Poly& p) {
+  nlohmann::json out = nlohmann::json::array();
+  for (const gp_Pnt& q : p) out.push_back({q.X(), q.Y()});
+  return out;
+}
+
+std::string balconyText(const Modeler::BalconySpec& s, const BalconyPlace& at, const Bnd_Box& box, double postBase, const BalconyPlan& plan) {
+  return nlohmann::json{{"wrap", s.wrap}, {"wrap_length", s.wrapLength}, {"outline", pointsJson(plan.floor)}, {"counted", pointsJson(plan.counted)},
+                        {"plan_area", std::abs(polyArea2(plan.floor)) / 2},
+                        {"along", s.along}, {"side", s.side >= 0 ? 1 : -1}, {"width", s.width}, {"depth", s.depth},
                         {"top", s.top}, {"thickness", s.thickness}, {"rail_height", s.railHeight}, {"rail", s.rail},
                         {"floor_area", s.floorArea}, {"posts", s.posts}, {"post_size", s.postSize}, {"post_base", postBase},
                         // As made: where it stands out from (for the building area, and to tell whether it was moved by hand).
@@ -8361,14 +8519,16 @@ Result<ObjectId> Modeler::createBalcony(const BalconySpec& spec) {
     if (!base) return R::failure("A balcony's posts need a floor below it to stand on");
     postBase = *base;
   }
-  const auto solid = balconySolid(place.value(), spec, postBase);
+  const auto plan = balconyPlan(document_, spec, place.value());
+  if (!plan) return R::failure(plan.error());
+  const auto solid = plan->wraps ? wrappedSolid(*plan, spec, postBase) : balconySolid(place.value(), spec, postBase);
   if (!solid) return R::failure(solid.error());
   Object o;
   o.name = uniqueName("Balcony");
   o.recipe.base = ImportedShape{solid.value(), "balcony"};
   o.attributes["kind"] = "balcony";
   o.attributes["host"] = spec.host;
-  o.attributes["balcony"] = balconyText(spec, place.value(), geom::exactBounds(solid.value()), postBase);
+  o.attributes["balcony"] = balconyText(spec, place.value(), geom::exactBounds(solid.value()), postBase, *plan);
   return addObject(std::move(o), "Balcony");
 }
 
@@ -8392,6 +8552,8 @@ Result<Modeler::BalconySpec> Modeler::balconySpec(const ObjectId& id) const {
   spec.floorArea = j.value("floor_area", std::string());
   spec.posts = j.value("posts", 0);
   spec.postSize = j.value("post_size", spec.postSize);
+  spec.wrap = j.value("wrap", std::string());
+  spec.wrapLength = j.value("wrap_length", spec.wrapLength);
   return spec;
 }
 
@@ -8697,7 +8859,17 @@ void Modeler::followCeilings(const Command& step) {
       if (!place) continue;
       const gp_Pnt face(j.at("face")[0].get<double>(), j.at("face")[1].get<double>(), 0);
       const gp_Vec out(j.at("out")[0].get<double>(), j.at("out")[1].get<double>(), 0);
-      if (place->face.Distance(face) <= 0.5 && place->n.Angle(out) <= 1e-6 && std::abs(place->behind - j.value("behind", 0.0)) <= 0.5) continue;
+      if (j.contains("outline") && j.at("outline").is_array()) {
+        // docs/168: as it would be made now (round a corner: the other wall counts too).
+        const auto plan = balconyPlan(document_, now, *place);
+        if (!plan) continue;  // no longer makes a balcony there: it stays
+        bool same = plan->floor.size() == j.at("outline").size() && std::abs(place->behind - j.value("behind", 0.0)) <= 0.5;
+        for (std::size_t k = 0; same && k < plan->floor.size(); ++k)
+          same = plan->floor[k].Distance(gp_Pnt(j.at("outline")[k][0].get<double>(), j.at("outline")[k][1].get<double>(), 0)) <= 0.5;
+        if (same) continue;
+      } else if (place->face.Distance(face) <= 0.5 && place->n.Angle(out) <= 1e-6 && std::abs(place->behind - j.value("behind", 0.0)) <= 0.5) {
+        continue;
+      }
       // As made: its bounds those it was made with.
       const TopoDS_Shape shape = document_.worldShape(o);
       if (shape.IsNull()) continue;

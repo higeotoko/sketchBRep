@@ -476,7 +476,7 @@ AreaTable areaTable(const Document& document) {
     if (attribute(o, "kind") != "balcony") continue;
     const nlohmann::json b = nlohmann::json::parse(attribute(o, "balcony"), nullptr, false);
     if (!b.is_object()) continue;
-    const double area = b.value("width", 0.0) * b.value("depth", 0.0);
+    const double area = b.value("plan_area", b.value("width", 0.0) * b.value("depth", 0.0));  // docs/168: an L's own area
     ++out.balconies;
     out.balconyArea += area;
     const std::string how = b.value("floor_area", std::string());
@@ -609,6 +609,18 @@ AreaTable areaTable(const Document& document) {
     if (attribute(o, "kind") != "balcony") continue;
     const nlohmann::json b = nlohmann::json::parse(attribute(o, "balcony"), nullptr, false);
     if (!b.is_object() || !b.contains("face") || !b.contains("out")) continue;
+    // docs/168: the part counted, as worked out when it was made (round a corner too).
+    if (b.contains("counted") && b.at("counted").is_array()) {
+      if (b.at("counted").size() < 3) continue;
+      std::vector<gp_Pnt> part;
+      for (const auto& q : b.at("counted")) part.emplace_back(q.at(0).get<double>(), q.at(1).get<double>(), 0.0);
+      if (const auto s = slice(part)) {
+        plan.push_back(*s);
+        ++balconiesInBuilding;
+        if (b.value("posts", 0) > 0) ++balconiesOnPosts;
+      }
+      continue;
+    }
     const double depth = b.value("depth", 0.0);
     // docs/167: on posts, up to their centre line (柱の中心線); else as はね出し縁, back 1 m from its end.
     const bool onPosts = b.value("posts", 0) > 0;

@@ -552,6 +552,12 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
               {tr("4 本"), QStringLiteral("4")}},
              tr("先の辺の下に立てる柱。下の階のレベルから床の下まで。柱があると、建築面積は柱の中心線まで全部入れます"));
       if (spec->posts > 0) size(tr("柱の太さ"), "post_size", spec->postSize, 50, 500, tr("柱の角の寸法（正方形）"));
+      // docs/168: round the outer corner.
+      choice(tr("角を回る"), "wrap", QString::fromStdString(spec->wrap),
+             {{tr("回らない"), QString()}, {tr("描き始めの端で回る"), QStringLiteral("start")}, {tr("描き終わりの端で回る"), QStringLiteral("end")}},
+             tr("壁の端の外の角で、となりの壁にまたがる L 字にします。壁に沿っては「幅」の向こうの端から角まで、となりの壁には下の「回った先の長さ」"));
+      if (!spec->wrap.empty())
+        size(tr("回った先の長さ"), "wrap_length", spec->wrapLength, 300, 20000, tr("角から、となりの壁の外の面に沿った長さ"));
       choice(tr("床面積"), "floor_area", QString::fromStdString(spec->floorArea),
              {{tr("未評価（入れない）"), QString()}, {tr("入れる"), QStringLiteral("count")}, {tr("入れない"), QStringLiteral("exclude")}},
              tr("法の床面積に入れるかどうか。バルコニーは開放性などで扱いが変わります（通達・特定行政庁の取扱い）。アプリは決めないので、ここで選びます。"

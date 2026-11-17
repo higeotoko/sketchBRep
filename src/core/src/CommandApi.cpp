@@ -206,12 +206,14 @@ void balconyArgs(const doc::Modeler& m, const json& a, doc::Modeler::BalconySpec
     s.posts = a.at("posts").get<int>();
   }
   if (a.contains("post_size")) s.postSize = number(a, "post_size");
+  if (a.contains("wrap")) s.wrap = text(a, "wrap");
+  if (a.contains("wrap_length")) s.wrapLength = number(a, "wrap_length");
 }
 
 json balconyJson(const std::string& id, const doc::Modeler::BalconySpec& s) {
   return json{{"id", id}, {"host", s.host}, {"along", s.along}, {"side", s.side}, {"width", s.width}, {"depth", s.depth}, {"top", s.top},
               {"thickness", s.thickness}, {"rail", s.rail}, {"rail_height", s.railHeight}, {"floor_area", s.floorArea},
-              {"posts", s.posts}, {"post_size", s.postSize}};
+              {"posts", s.posts}, {"post_size", s.postSize}, {"wrap", s.wrap}, {"wrap_length", s.wrapLength}};
 }
 
 // The stair sizes given in `a` put into `s` (the others stay).
@@ -2760,12 +2762,15 @@ const std::vector<CommandDef>& commands() {
        "exclude or \"\" (default: not evaluated - whether a balcony is floor area depends on how open it is; "
        "the app does not decide). 1 m or more out from the wall's line it counts in the building area (back 1 m "
        "from its end; on posts, up to their centre line). 'posts': 0 (default) or 2 to 6 under its front edge, "
-       "'post_size' (105 square), from the next level below its floor (docs/167). It goes with its wall. In IFC: "
+       "'post_size' (105 square), from the next level below its floor (docs/167). 'wrap': \"start\" or \"end\" takes "
+       "it round the outer corner where its wall meets another at that end (an L: along its wall from the far side "
+       "of 'width' up to the corner, then 'wrap_length' (1820) along the other wall; posts at its far corners; "
+       "docs/168), \"\" straight. It goes with its wall(s). In IFC: "
        "a slab BALCONY, a railing, its posts columns. One undo step.",
        SCHEMA({"type": "object", "properties": {"host": {"type": "string"}, "at": {"type": "array"}, "along": {"type": "number"},
                "side": {"type": "integer"}, "width": {"type": "number"}, "depth": {"type": "number"}, "top": {"type": "number"},
                "thickness": {"type": "number"}, "rail": {"type": "string"}, "rail_height": {"type": "number"},
-               "floor_area": {"type": "string"}, "posts": {"type": "integer"}, "post_size": {"type": "number"}}, "required": ["host"]}),
+               "floor_area": {"type": "string"}, "posts": {"type": "integer"}, "post_size": {"type": "number"}, "wrap": {"type": "string"}, "wrap_length": {"type": "number"}}, "required": ["host"]}),
        [](doc::Modeler& m, const json& a) {
          doc::Modeler::BalconySpec spec = must(m.defaultBalcony(text(a, "host")));
          balconyArgs(m, a, spec);
@@ -2778,7 +2783,7 @@ const std::vector<CommandDef>& commands() {
        SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "at": {"type": "array"}, "along": {"type": "number"},
                "side": {"type": "integer"}, "width": {"type": "number"}, "depth": {"type": "number"}, "top": {"type": "number"},
                "thickness": {"type": "number"}, "rail": {"type": "string"}, "rail_height": {"type": "number"},
-               "floor_area": {"type": "string"}, "posts": {"type": "integer"}, "post_size": {"type": "number"}}, "required": ["id"]}),
+               "floor_area": {"type": "string"}, "posts": {"type": "integer"}, "post_size": {"type": "number"}, "wrap": {"type": "string"}, "wrap_length": {"type": "number"}}, "required": ["id"]}),
        [](doc::Modeler& m, const json& a) {
          doc::Modeler::BalconySpec spec = must(m.balconySpec(text(a, "id")));
          balconyArgs(m, a, spec);
