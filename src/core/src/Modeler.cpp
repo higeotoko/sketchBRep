@@ -5651,7 +5651,22 @@ Status Modeler::setOpeningFittings(const ObjectId& hostId, const std::vector<std
   const auto list = openings(hostId);
   if (!list) return list.status();
   if (list->empty()) return Status::failure("This object has no openings");
-  const auto checked = draw::normalizeFitting(fitting);
+  // docs/171: a fitting type by its name: its kind and sizes, the hands given kept.
+  std::string given = fitting;
+  {
+    const nlohmann::json in = nlohmann::json::parse(fitting, nullptr, false);
+    if (in.is_object() && in.contains("type_name") && !in.contains("type")) {
+      const auto types = fittingTypes();
+      const auto found = in.at("type_name").is_string() ? types.find(in.at("type_name").get<std::string>()) : types.end();
+      if (found == types.end()) return Status::failure("No fitting type of that name is registered");
+      nlohmann::json merged = nlohmann::json::parse(found->second);
+      for (const char* hand : {"hinge", "swing", "slide"})
+        if (in.contains(hand)) merged[hand] = in.at(hand);
+      merged["type_name"] = found->first;
+      given = merged.dump();
+    }
+  }
+  const auto checked = draw::normalizeFitting(given);
   if (!checked) return checked.status();
   // Fittings are kept under the openings' ids, so they stay with their openings when another
   // one is removed. Openings from before ids existed get theirs here.
@@ -5774,7 +5789,7 @@ std::vector<Modeler::ElementTypeDefinition> Modeler::elementTypes() const {
   std::vector<ElementTypeDefinition> out;
   const nlohmann::json reg = typeRegister(document_);  // kept: items() refers into it
   for (const auto& [name, entry] : reg.items()) {
-    if (!entry.is_object()) continue;
+    if (!entry.is_object() || entry.value("part", "") == "fitting") continue;  // fitting types: fittingTypes()
     ElementTypeDefinition t{name, entry.value("part", ""), valuesOf(entry), {}};
     if (entry.contains("layers") && entry.at("layers").is_array())
       for (const auto& l : entry.at("layers")) t.layers.push_back({l.value("name", ""), l.value("thickness", 0.0)});
@@ -5894,9 +5909,109 @@ Result<int> Modeler::registerElementType(const ObjectId& id) {
   return *changed - 1;  // the others
 }
 
+std::map<std::string, std::string> Modeler::fittingTypes() const {
+  std::map<std::string, std::string> out;
+  const nlohmann::json reg = typeRegister(document_);
+  for (const auto& [name, entry] : reg.items())
+    if (entry.is_object() && entry.value("part", "") == "fitting" && entry.contains("fitting")) out[name] = entry.at("fitting").dump();
+  return out;
+}
+
+namespace {
+// Every wall's fittings of a type's name, rewritten by `rewrite` (nullopt: as they are).
+ChangeSet fittingsOfType(const Document& document, const std::string& name,
+                         const std::function<std::optional<nlohmann::json>(const nlohmann::json&)>& rewrite, int& count) {
+  ChangeSet changes(document);
+  for (const Object& o : document.objects()) {
+    const auto stored = o.attributes.find("opening_fittings");
+    if (stored == o.attributes.end()) continue;
+    nlohmann::json all = nlohmann::json::parse(stored->second, nullptr, false);
+    if (!all.is_object()) continue;
+    bool any = false;
+    for (auto& [key, fitting] : all.items()) {
+      if (!fitting.is_object() || fitting.value("type_name", std::string()) != name) continue;
+      if (const auto next = rewrite(fitting)) {
+        fitting = *next;
+        any = true;
+        ++count;
+      }
+    }
+    if (!any) continue;
+    Object object = o;
+    object.attributes["opening_fittings"] = all.dump();
+    changes.modify(object);
+  }
+  return changes;
+}
+}  // namespace
+
+Result<int> Modeler::defineFittingType(const std::string& name, const std::string& fitting, const ObjectId& host, std::size_t index) {
+  using R = Result<int>;
+  if (name.empty() || name.size() > 120 || name.find_first_of("\r\n") != std::string::npos)
+    return R::failure("A type name is one line of at most 40 characters");
+  nlohmann::json in = nlohmann::json::parse(fitting, nullptr, false);
+  if (!in.is_object()) return R::failure("fitting needs {\"type\": ...}");
+  // The type is its kind and sizes; the hands are each opening's own.
+  for (const char* key : {"type_name", "hinge", "swing", "slide"}) in.erase(key);
+  const auto checked = draw::normalizeFitting(in.dump());
+  if (!checked) return R::failure(checked.error());
+  nlohmann::json type = nlohmann::json::parse(*checked);
+  for (const char* key : {"hinge", "swing", "slide"}) type.erase(key);
+  if (type.value("type", std::string()) == "none") return R::failure("A fitting type is a door or a window, not none");
+  nlohmann::json reg = typeRegister(document_);
+  if (reg.contains(name) && reg.at(name).value("part", "") != "fitting") return R::failure("'" + name + "' is a type of floors or roofs");
+  reg[name] = {{"part", "fitting"}, {"fitting", type}};
+  int count = 0;
+  ChangeSet changes = fittingsOfType(document_, name, [&](const nlohmann::json& old) -> std::optional<nlohmann::json> {
+    nlohmann::json next = type;
+    for (const char* hand : {"hinge", "swing", "slide"})
+      if (old.contains(hand)) next[hand] = old.at(hand);
+    next["type_name"] = name;
+    const auto again = draw::normalizeFitting(next.dump());
+    if (!again) return std::nullopt;
+    return nlohmann::json::parse(*again);
+  }, count);
+  history_.beginGroup("Define Fitting Type");
+  editSettings(document_, history_, "Define Fitting Type", [&](PersistentSettings& s) { s.elementTypes = reg.dump(); });
+  if (count > 0) history_.execute(changes.build("Define Fitting Type"));
+  if (!host.empty()) {
+    // The opening it was registered from takes the name (its hands kept).
+    nlohmann::json own = {{"type_name", name}};
+    const nlohmann::json given = nlohmann::json::parse(fitting, nullptr, false);
+    for (const char* hand : {"hinge", "swing", "slide"})
+      if (given.is_object() && given.contains(hand)) own[hand] = given.at(hand);
+    if (const Status s = setOpeningFittings(host, {index}, own.dump()); !s) {
+      history_.abortGroup();
+      return R::failure(s.message());
+    }
+    ++count;
+  }
+  history_.endGroup();
+  return count;
+}
+
+Result<int> Modeler::removeFittingType(const std::string& name) {
+  using R = Result<int>;
+  nlohmann::json reg = typeRegister(document_);
+  if (!reg.contains(name) || reg.at(name).value("part", "") != "fitting") return R::failure("No fitting type '" + name + "' is registered");
+  reg.erase(name);
+  int count = 0;
+  ChangeSet changes = fittingsOfType(document_, name, [](const nlohmann::json& old) -> std::optional<nlohmann::json> {
+    nlohmann::json next = old;
+    next.erase("type_name");
+    return next;
+  }, count);
+  history_.beginGroup("Remove Fitting Type");
+  editSettings(document_, history_, "Remove Fitting Type", [&](PersistentSettings& s) { s.elementTypes = reg.dump(); });
+  if (count > 0) history_.execute(changes.build("Remove Fitting Type"));
+  history_.endGroup();
+  return count;
+}
+
 Status Modeler::removeElementType(const std::string& name) {
   nlohmann::json reg = typeRegister(document_);
   if (!reg.contains(name)) return Status::failure("No type '" + name + "' is registered");
+  if (reg.at(name).value("part", "") == "fitting") return Status::failure("'" + name + "' is a fitting type: remove it as one");
   reg.erase(name);
   editSettings(document_, history_, "Remove Type", [&](PersistentSettings& s) { s.elementTypes = reg.dump(); });
   return Status::success();

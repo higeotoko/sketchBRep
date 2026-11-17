@@ -1342,7 +1342,7 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       const nlohmann::json current = fittings.contains(op.id) ? fittings.at(op.id) : nlohmann::json{{"type", "none"}};
       // The kind without its sizes (docs/157), to find it among the choices.
       nlohmann::json kindOnly = current;
-      for (const char* key : {"frame", "leaf", "glass"}) kindOnly.erase(key);
+      for (const char* key : {"frame", "leaf", "glass", "type_name"}) kindOnly.erase(key);
       for (const auto& [label, value] : kinds) {
         kind->addItem(label, QString::fromStdString(value));
         if (nlohmann::json::parse(value) == kindOnly) kind->setCurrentIndex(kind->count() - 1);
@@ -1353,6 +1353,7 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
         if (next.value("type", std::string("none")) != "none")
           for (const char* key : {"frame", "leaf", "glass"})
             if (current.contains(key)) next[key] = current.at(key);
+        // Another kind by hand: no longer its fitting type (docs/171).
         emit openingFittingEdited(id, index, QString::fromStdString(next.dump()));
       });
       h->addWidget(kind, 1);
@@ -1376,6 +1377,7 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
           if (std::abs(spin->value() - before) < 1e-9) return;
           nlohmann::json next = current;
           next[k.toStdString()] = spin->value();
+          next.erase("type_name");  // a size by hand: no longer its fitting type (docs/171)
           emit openingFittingEdited(id, index, QString::fromStdString(next.dump()));
         });
         sh->addWidget(spin);
@@ -1384,6 +1386,46 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       sizeSpin("leaf", 40, 10, 100, tr("扉 "), tr("扉の板の厚さ（下端が床の建具）"));
       sizeSpin("glass", 6, 3, 30, tr("ガラス "), tr("ガラスの厚さ（窓）"));
       sizesRow->setObjectName(QStringLiteral("openingSizes%1").arg(index));
+      // Its fitting type (docs/171): one registered by name, or this one registered.
+      auto* typeRow = new QWidget;
+      auto* typeLine = new QHBoxLayout(typeRow);
+      typeLine->setContentsMargins(0, 0, 0, 0);
+      auto* fittingType = new QComboBox;
+      fittingType->setObjectName(QStringLiteral("openingFittingType%1").arg(index));
+      fittingType->addItem(tr("型なし"), QString());
+      const std::string currentType = current.value("type_name", std::string());
+      for (const auto& [name, unused] : modeler.fittingTypes()) {
+        fittingType->addItem(QString::fromStdString(name), QString::fromStdString(name));
+        if (name == currentType) fittingType->setCurrentIndex(fittingType->count() - 1);
+      }
+      fittingType->setToolTip(tr("登録した建具の型。選ぶと、その型の種類と寸法（枠・扉・ガラス）になります。吊元・開き勝手は、この開口のまま。"
+                                 "型を登録し直すと、その型の建具が全部の壁で直ります。種類や寸法を手で変えると、型から外れます"));
+      fittingType->setEnabled(!o->locked && !modeler.fittingTypes().empty());
+      connect(fittingType, &QComboBox::activated, this, [this, id, index, fittingType, current, currentType] {
+        const std::string chosen = fittingType->currentData().toString().toStdString();
+        if (chosen == currentType) return;
+        nlohmann::json next;
+        if (chosen.empty()) {
+          next = current;
+          next.erase("type_name");
+        } else {
+          next = {{"type_name", chosen}};
+          for (const char* hand : {"hinge", "swing", "slide"})
+            if (current.contains(hand)) next[hand] = current.at(hand);
+        }
+        emit openingFittingEdited(id, index, QString::fromStdString(next.dump()));
+      });
+      auto* registerType = new QPushButton(tr("型として登録"));
+      registerType->setObjectName(QStringLiteral("openingRegisterFittingType%1").arg(index));
+      registerType->setToolTip(tr("この建具の種類と寸法を、名前を付けて建具の型にします（同じ名前の型があれば、それを直します）"));
+      registerType->setEnabled(!o->locked && fitted);
+      connect(registerType, &QPushButton::clicked, this, [this, id, index, current] {
+        emit fittingTypeRegistered(id, index, QString::fromStdString(current.dump()));
+      });
+      typeLine->addWidget(new QLabel(tr("型")));
+      typeLine->addWidget(fittingType, 1);
+      typeLine->addWidget(registerType);
+      typeRow->setObjectName(QStringLiteral("openingTypeRow%1").arg(index));
       // Where it sits in the wall, and removing it. The opening keeps its fitting when it moves,
       // and the other openings keep theirs when it is removed (they are kept by id, not number).
       auto* place = new QWidget;
@@ -1454,6 +1496,7 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       lines->setSpacing(2);
       lines->addWidget(row);
       lines->addWidget(sizesRow);
+      lines->addWidget(typeRow);
       lines->addWidget(tag);
       lines->addWidget(place);
       // docs/147: a canopy over it.

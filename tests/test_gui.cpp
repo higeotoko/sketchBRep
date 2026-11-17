@@ -10233,6 +10233,24 @@ void GuiPhase1::openingFittingFromPanelShowsInPlanCut() {
     QVERIFY(m.undo());
     QVERIFY(m.undo());
     QVERIFY(!fitting().contains("frame"));
+    // docs/171: this door registered as a fitting type (one step), then the type chosen again.
+    QApplication::processEvents();
+    QVERIFY(f.window.findChild<QPushButton*>(QStringLiteral("openingRegisterFittingType1")));
+    const auto before=m.history().undoCount();
+    QVERIFY(f.window.registerFittingType(*host,1,QString::fromStdString(fitting().dump()),QStringLiteral("SD-1")));
+    QCOMPARE(m.history().undoCount(),before+1);
+    QCOMPARE(fitting().value("type_name",std::string()),std::string("SD-1"));
+    QCOMPARE(fitting().value("hinge",std::string()),std::string("right"));
+    QApplication::processEvents();
+    auto* type=f.window.findChild<QComboBox*>(QStringLiteral("openingFittingType1"));QVERIFY(type);
+    QCOMPARE(type->currentText(),QStringLiteral("SD-1"));
+    // "型なし": the name off, the door as it is.
+    type->setCurrentIndex(0);
+    emit type->activated(0);
+    QTRY_VERIFY(!fitting().contains("type_name"));
+    QCOMPARE(fitting().value("type",std::string()),std::string("swing_single"));
+    QVERIFY(m.undo());
+    QVERIFY(m.undo());
   }
   f.vp->syncNow();
   QCOMPARE(f.vp->openingSymbolEdgeCount(),std::size_t(0));  // 3D: no symbols

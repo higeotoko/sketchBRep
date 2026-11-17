@@ -232,6 +232,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   bool removeOpening(const doc::ObjectId& host, int index);
   // Door / window kind of opening `index` of `host` (fitting JSON, OpeningSymbols.h); one undo step.
   bool setOpeningFitting(const doc::ObjectId& host, int index, const QString& fitting);
+  // docs/171: an opening's fitting registered as the fitting type `name` (and the opening given it).
+  bool registerFittingType(const doc::ObjectId& host, int index, const QString& fitting, const QString& name);
   // A build-up for the selected walls (or `id` alone when it is not selected); one undo step.
   bool setWallTypeOfWalls(const doc::ObjectId& id, const std::string& type);
 

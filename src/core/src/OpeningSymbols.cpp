@@ -50,6 +50,15 @@ Result<std::string> normalizeFitting(const std::string& text) {
   static const Size sizes[] = {{"frame", 10.0, 200.0}, {"leaf", 10.0, 100.0}, {"glass", 3.0, 30.0}};
   for (const auto& [key, unused] : in.items()) {
     if (key == "type" || key == "hinge" || key == "swing" || key == "slide") continue;
+    if (key == "type_name") {
+      // The registered fitting type it was made from (docs/171): a label, one line.
+      const json& v = in.at(key);
+      if (!v.is_string() || v.get<std::string>().empty() || v.get<std::string>().size() > 120 ||
+          v.get<std::string>().find_first_of("\r\n") != std::string::npos)
+        return Result<std::string>::failure("A fitting type's name is one line of at most 40 characters");
+      if (type != "none") out[key] = v;
+      continue;
+    }
     const Size* size = nullptr;
     for (const Size& s : sizes)
       if (key == s.key) size = &s;

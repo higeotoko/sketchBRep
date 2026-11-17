@@ -605,6 +605,15 @@ class Modeler {
   // {"type":"swing_single","hinge":"left","swing":"in"}; applies to `indices` (1-based, all
   // when empty). Stored on the host as attribute "opening_fittings". One undo step.
   Status setOpeningFittings(const ObjectId& host, const std::vector<std::size_t>& indices, const std::string& fitting);
+  // Fitting types (docs/171): a fitting's kind and sizes (frame, leaf, glass) kept under a name in
+  // the register of types (part "fitting"). A fitting given as {"type_name": name} (with its own
+  // hinge / swing / slide if wanted) takes the type's kind and sizes and keeps the name; defining
+  // the type again changes every fitting of that name in every wall, the hands kept (one undo
+  // step; how many). Removing it leaves the fittings as they are, without the name.
+  // `host` / `index` (1-based): that opening's fitting takes the type's name too, in the same step.
+  Result<int> defineFittingType(const std::string& name, const std::string& fitting, const ObjectId& host = {}, std::size_t index = 0);
+  std::map<std::string, std::string> fittingTypes() const;  // name -> its fitting (JSON)
+  Result<int> removeFittingType(const std::string& name);
   // A mark of one's own and a product number for openings (docs/109): kept under the openings'
   // ids as attribute "opening_marks" on the host, and used by the schedule and the plan tags
   // instead of the mark worked out from kind and size. Both empty: back to the worked-out

@@ -1283,6 +1283,58 @@ TEST_F(Schedules, ABalconyGoesRoundACorner) {
   EXPECT_NEAR(b.CornerMax().Y(), -100 + 910, 1e-4);
 }
 
+// docs/171: fitting types: a kind and sizes under a name, given to openings in any wall; defined
+// again, all of them change, each keeping its own hands; removed, they stay as they are.
+TEST_F(Schedules, FittingTypesAreKindsAndSizesByName) {
+  auto fittingOf = [&](const std::string& host, int k) {
+    return ok("list_openings", {{"ids", {host}}})["hosts"][0]["openings"][k]["fitting"];
+  };
+  const auto steps = modeler.history().undoCount();
+  EXPECT_EQ(ok("define_fitting_type", {{"name", "AW-1"}, {"fitting", {{"type", "sliding_double"}, {"frame", 40}, {"glass", 8}}}})["changed"], 0);
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  ok("set_opening_fittings", {{"host", south}, {"fitting", {{"type_name", "AW-1"}}}});  // both south windows
+  for (int k : {0, 1}) {
+    const json f = fittingOf(south, k);
+    EXPECT_EQ(f["type"], "sliding_double");
+    EXPECT_EQ(f["frame"], 40.0);
+    EXPECT_EQ(f["glass"], 8.0);
+    EXPECT_EQ(f["type_name"], "AW-1");
+  }
+  // Defined again: both change, in one step; undone, both as they were.
+  const auto before = modeler.history().undoCount();
+  EXPECT_EQ(ok("define_fitting_type", {{"name", "AW-1"}, {"fitting", {{"type", "sliding_double"}, {"frame", 50}, {"glass", 8}}}})["changed"], 2);
+  EXPECT_EQ(modeler.history().undoCount(), before + 1);
+  EXPECT_EQ(fittingOf(south, 1)["frame"], 50.0);
+  ASSERT_TRUE(modeler.undo());
+  EXPECT_EQ(fittingOf(south, 0)["frame"], 40.0);
+  ASSERT_TRUE(modeler.redo());
+  // A door type: its hands are each door's own (the type keeps none).
+  ok("define_fitting_type", {{"name", "SD"}, {"fitting", {{"type", "swing_single"}, {"hinge", "right"}, {"leaf", 30}}}});
+  EXPECT_FALSE(ok("list_fitting_types")["types"][1]["fitting"].contains("hinge"));
+  ok("set_opening_fittings", {{"host", east}, {"fitting", {{"type_name", "SD"}, {"hinge", "left"}, {"swing", "out"}}}});
+  EXPECT_EQ(fittingOf(east, 0)["hinge"], "left");
+  EXPECT_EQ(fittingOf(east, 0)["swing"], "out");
+  EXPECT_EQ(fittingOf(east, 0)["leaf"], 30.0);
+  ok("define_fitting_type", {{"name", "SD"}, {"fitting", {{"type", "swing_single"}, {"leaf", 35}}}});
+  EXPECT_EQ(fittingOf(east, 0)["leaf"], 35.0);
+  EXPECT_EQ(fittingOf(east, 0)["hinge"], "left");  // kept
+  // The door's leaf in the solids follows the type.
+  for (const auto& s : sbr::draw::fittingSolids(modeler.document()))
+    if (s.host == east && s.part == "leaf") EXPECT_NEAR(sbr::geom::volume(s.shape), 840.0 * 2070 * 35, 1.0);
+  // Not among the floor / roof types.
+  for (const auto& t : ok("list_types")["types"]) EXPECT_NE(t["name"], "AW-1");
+  // Refused: an unknown name, none as a type, a name that is a floor type.
+  EXPECT_FALSE(call("set_opening_fittings", {{"host", north}, {"fitting", {{"type_name", "W-9"}}}}).value("ok", true));
+  EXPECT_FALSE(call("define_fitting_type", {{"name", "X"}, {"fitting", {{"type", "none"}}}}).value("ok", true));
+  ok("define_type", {{"name", "F1"}, {"part", "floor"}, {"thickness", 150}});
+  EXPECT_FALSE(call("define_fitting_type", {{"name", "F1"}, {"fitting", {{"type", "window"}}}}).value("ok", true));
+  // Removed: the windows keep their kind and sizes, without the name.
+  EXPECT_EQ(ok("remove_fitting_type", {{"name", "AW-1"}})["unnamed"], 2);
+  EXPECT_EQ(fittingOf(south, 0)["frame"], 50.0);
+  EXPECT_FALSE(fittingOf(south, 0).contains("type_name"));
+  EXPECT_EQ(ok("list_fitting_types")["types"].size(), 1u);
+}
+
 // docs/113: a table on a sheet of its own.
 TEST_F(Schedules, ATableGoesOnASheetOfItsOwn) {
   const sbr::draw::Table table = sbr::doc::scheduleTable(modeler.document(), 0);

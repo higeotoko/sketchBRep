@@ -2795,6 +2795,28 @@ const std::vector<CommandDef>& commands() {
        "rail_height, floor_area.",
        SCHEMA({"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}),
        [](doc::Modeler& m, const json& a) { return balconyJson(text(a, "id"), must(m.balconySpec(text(a, "id")))); }},
+      {"define_fitting_type",
+       "A fitting type (docs/171): a door's or window's kind and sizes ('fitting' as set_opening_fittings: type, "
+       "frame, leaf, glass; hands are left out) under 'name'. set_opening_fittings with fitting {\"type_name\": name} "
+       "(and its own hinge / swing / slide) gives an opening that kind and those sizes. Defined again, every fitting "
+       "of that name in every wall changes, the hands kept. One undo step. Returns how many fittings changed.",
+       SCHEMA({"type": "object", "properties": {"name": {"type": "string"}, "fitting": {"type": "object"}}, "required": ["name", "fitting"]}),
+       [](doc::Modeler& m, const json& a) {
+         if (!a.contains("fitting") || !a.at("fitting").is_object()) throw ApiError("'fitting' is an object");
+         return json{{"name", text(a, "name")}, {"changed", must(m.defineFittingType(text(a, "name"), a.at("fitting").dump()))}};
+       }},
+      {"list_fitting_types",
+       "The fitting types registered (define_fitting_type): name and fitting.",
+       SCHEMA({"type": "object", "properties": {}}),
+       [](doc::Modeler& m, const json&) {
+         json out = json::array();
+         for (const auto& [name, fitting] : m.fittingTypes()) out.push_back({{"name", name}, {"fitting", json::parse(fitting)}});
+         return json{{"types", out}};
+       }},
+      {"remove_fitting_type",
+       "Removes a fitting type: the fittings of that name stay as they are, without the name. One undo step.",
+       SCHEMA({"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}),
+       [](doc::Modeler& m, const json& a) { return json{{"name", text(a, "name")}, {"unnamed", must(m.removeFittingType(text(a, "name")))}}; }},
       {"change_opening_type",
        "Change a kind of opening (docs/133): every opening with 'mark' in opening_schedule (given by hand or worked "
        "out), in every wall, takes 'width' / 'height' (centre and sill kept), 'fitting' (an object as "

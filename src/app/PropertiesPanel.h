@@ -56,6 +56,8 @@ class PropertiesPanel : public QWidget {
   void openingTypeMatched(const doc::ObjectId& id, int index);
   // A canopy over this opening (docs/147).
   void canopyRequested(const doc::ObjectId& id, int index);
+  // This opening's fitting registered as a fitting type (docs/171): the name is asked for.
+  void fittingTypeRegistered(const doc::ObjectId& id, int index, const QString& fitting);
   void canopyEdited(const doc::ObjectId& id, const QString& key, double value);
   // A balcony on this wall (docs/163), and one of a balcony's sizes or choices changed.
   void balconyRequested(const doc::ObjectId& wall);

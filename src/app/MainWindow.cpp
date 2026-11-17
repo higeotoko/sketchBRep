@@ -885,6 +885,17 @@ void MainWindow::buildUi() {
               if (!setOpeningFitting(id, index, fitting)) refreshPanels();
             });
           });
+  connect(panel_, &PropertiesPanel::fittingTypeRegistered, this, [this](const doc::ObjectId& id, int index, const QString& fitting) {
+    QTimer::singleShot(0, this, [this, id, index, fitting] {
+      const nlohmann::json current = nlohmann::json::parse(fitting.toStdString(), nullptr, false);
+      const QString suggested = current.is_object() ? QString::fromStdString(current.value("type_name", std::string())) : QString();
+      bool ok = false;
+      const QString name = QInputDialog::getText(this, tr("建具の型として登録"), tr("型の名前（同じ名前の型があれば、それを直します）"),
+                                                 QLineEdit::Normal, suggested, &ok);
+      if (!ok || name.trimmed().isEmpty()) return;
+      registerFittingType(id, index, fitting, name.trimmed());
+    });
+  });
   connect(panel_, &PropertiesPanel::openingMarkEdited, this,
           [this](const doc::ObjectId& id, int index, const QString& mark, const QString& product) {
             QTimer::singleShot(0, this, [this, id, index, mark, product] {
@@ -4531,6 +4542,18 @@ bool MainWindow::setWallTypeOfWalls(const doc::ObjectId& id, const std::string& 
                 .arg(walls.size())
                 .arg(t ? QString::fromStdString(t->name) : QString::fromStdString(type))
                 .arg(r->size()));
+  return true;
+}
+
+bool MainWindow::registerFittingType(const doc::ObjectId& host, int index, const QString& fitting, const QString& name) {
+  const auto changed = modeler_.defineFittingType(name.toStdString(), fitting.toStdString(), host, static_cast<std::size_t>(std::max(index, 1)));
+  if (!changed) {
+    reportError(tr("建具の型を登録できません: %1").arg(userMessage(QString::fromStdString(changed.error()))));
+    refreshPanels();
+    return false;
+  }
+  setStatus(tr("建具の型「%1」を登録しました（この型の建具 %2 か所。Ctrl+Z で戻せます）").arg(name).arg(*changed));
+  refreshPanels();
   return true;
 }
 
