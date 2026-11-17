@@ -341,6 +341,128 @@ TEST_F(Roofs, ARoofIsOnePartWhoseSizesCanBeChanged) {
   EXPECT_TRUE(refused("change_roof", {{"id", id}, {"pitch", 6}}));
 }
 
+namespace {
+// The outline (counter-clockwise) with side i moved out by d[i], corners mitred: its area, mm2.
+double grownAreaBy(const std::vector<gp_Pnt>& p, const std::vector<double>& d) {
+  const std::size_t n = p.size();
+  std::vector<gp_Pnt> q;
+  for (std::size_t i = 0; i < n; ++i) {
+    auto line = [&](std::size_t k) {
+      const gp_Vec dk = gp_Vec(p[k], p[(k + 1) % n]).Normalized();
+      return std::make_pair(p[k].Translated(gp_Vec(dk.Y(), -dk.X(), 0) * d[k]), dk);
+    };
+    const auto [a, da] = line((i + n - 1) % n);
+    const auto [b, db] = line(i);
+    const double den = da.X() * db.Y() - da.Y() * db.X();
+    const gp_Vec w(a, b);
+    q.push_back(a.Translated(da * ((w.X() * db.Y() - w.Y() * db.X()) / den)));
+  }
+  double area = 0.0;
+  for (std::size_t i = 0; i < n; ++i) area += q[i].X() * q[(i + 1) % n].Y() - q[(i + 1) % n].X() * q[i].Y();
+  return area / 2;
+}
+}  // namespace
+
+// docs/161: a lower roof that ends against the upper storey's walls.
+TEST(Roof, SidesAgainstAHigherWall) {
+  const double r4 = 100 * std::sqrt(1.16);
+  // A lean-to 6000 x 2000 falling south, its north side at the wall.
+  RoofSpec s;
+  s.kind = "shed";
+  s.height = 3000;
+  s.fallX = 0;
+  s.fallY = -1;
+  s.outline = {gp_Pnt(0, 0, 0), gp_Pnt(6000, 0, 0), gp_Pnt(6000, 2000, 0), gp_Pnt(0, 2000, 0)};
+  s.wallSides = {2};
+  auto roof = makeRoof(s);
+  ASSERT_TRUE(roof) << roof.error();
+  expectBounds(roof->solid, -300, -600, 3000 - 0.4 * 600, 6300, 2000, 3000 + 0.4 * 2000 + r4);
+  EXPECT_NEAR(roof->planArea, 6600.0 * 2600.0, 1.0);
+  // A hip there: planes from the three free sides, cut upright at the wall.
+  s.kind = "hip";
+  roof = makeRoof(s);
+  ASSERT_TRUE(roof) << roof.error();
+  expectBounds(roof->solid, -600, -600, 3000 - 0.4 * 600, 6600, 2000, 3000 + 0.4 * 2000 + r4);
+  EXPECT_NEAR(roof->planArea, 7200.0 * 2600.0, 1.0);
+  EXPECT_NEAR(roof->slopeArea, roof->planArea * std::sqrt(1.16), 1.0);
+  // A gable with its ridge running into the wall (the west side): the far end is a gable, the
+  // wall end has no verge.
+  s.kind = "gable";
+  s.wallSides = {3};
+  roof = makeRoof(s);
+  ASSERT_TRUE(roof) << roof.error();
+  expectBounds(roof->solid, 0, -600, 3000 - 0.4 * 600, 6300, 2600, 3000 + 0.4 * 1000 + r4);
+  // An overhang typed for a side against a wall is not used.
+  s.sideEave = {{3, 500.0}};
+  roof = makeRoof(s);
+  ASSERT_TRUE(roof) << roof.error();
+  EXPECT_NEAR(sbr::geom::exactBounds(roof->solid).CornerMin().X(), 0, 1e-4);
+  s.sideEave.clear();
+
+  // Round the corner of an upper storey standing on (0..6000, 2000..6000): an L, its two inner
+  // sides at the walls. A hip: eaves on the four outer sides, a hip line at the outer corner.
+  RoofSpec ell;
+  ell.kind = "hip";
+  ell.height = 3000;
+  ell.outline = {gp_Pnt(0, 0, 0), gp_Pnt(8000, 0, 0), gp_Pnt(8000, 6000, 0), gp_Pnt(6000, 6000, 0), gp_Pnt(6000, 2000, 0), gp_Pnt(0, 2000, 0)};
+  ell.wallSides = {3, 4};
+  roof = makeRoof(ell);
+  ASSERT_TRUE(roof) << roof.error();
+  EXPECT_NEAR(roof->planArea, grownAreaBy(ell.outline, {600, 600, 600, 0, 0, 600}), 1.0);
+  EXPECT_NEAR(roof->ridgeHeight, 3000 + 0.4 * 2000 + r4, 1e-3);  // highest along the walls
+  EXPECT_NEAR(roof->eaveHeight, 3000 - 0.4 * 600, 1e-3);
+  int solids = 0;
+  for (TopExp_Explorer e(roof->solid, TopAbs_SOLID); e.More(); e.Next()) ++solids;
+  EXPECT_EQ(solids, 1);
+  EXPECT_TRUE(sbr::geom::roofSpaceAbove(ell, 100000.0));
+  // Drawn the other way round, the same sides have other numbers.
+  RoofSpec back = ell;
+  std::reverse(back.outline.begin(), back.outline.end());
+  back.wallSides = {static_cast<int>((2 * 6 - 2 - 3) % 6), static_cast<int>((2 * 6 - 2 - 4) % 6)};
+  const auto same = makeRoof(back);
+  ASSERT_TRUE(same) << same.error();
+  EXPECT_NEAR(same->planArea, roof->planArea, 1.0);
+
+  // Refused: a number the outline does not have; no side left to be an eave.
+  ell.wallSides = {9};
+  EXPECT_NE(makeRoof(ell).error().find("against a wall"), std::string::npos);
+  ell.wallSides = {0, 1, 2, 3, 4, 5};
+  EXPECT_NE(makeRoof(ell).error().find("eaves"), std::string::npos);
+}
+
+TEST_F(Roofs, TheSidesAtTheUpperStoreysWallsAreFound) {
+  // The upper storey: walls 3000 high standing at 3000 on (0..6000, 2000..6000).
+  ok("create_wall", {{"points", {{0, 2000}, {6000, 2000}, {6000, 6000}, {0, 6000}, {0, 2000}}}, {"thickness", 200}, {"height", 3000}, {"base", 3000}});
+  // A low wall under the roof does not count.
+  ok("create_wall", {{"points", {{0, 0}, {8000, 0}}}, {"thickness", 200}, {"height", 2700}});
+  const json outline = {{0, 0}, {8000, 0}, {8000, 6000}, {6000, 6000}, {6000, 2000}, {0, 2000}};
+  const json made = ok("create_roof", {{"outline", outline}, {"kind", "hip"}, {"height", 2700}, {"wall_sides", "auto"}});
+  const std::string id = made["id"];
+  EXPECT_EQ(made["wall_sides"], json({3, 4})) << made.dump();
+  EXPECT_NEAR(made["plan_area"].get<double>(), (9.2 * 2.6 + 2.6 * 4.6), 1e-6);  // the south strip (-600..8600 x -600..2000) and the east strip (6000..8600 x 2000..6600)
+  const auto b = sbr::geom::exactBounds(modeler.document().worldShape(*modeler.document().find(id)));
+  EXPECT_NEAR(b.CornerMin().Y(), -600, 1e-4);
+  EXPECT_NEAR(b.CornerMax().X(), 8600, 1e-4);
+  EXPECT_NE(modeler.document().find(id)->attributes.at("roof_spec").find("\"wall_sides\""), std::string::npos);
+  const auto steps = modeler.history().undoCount();
+  // Taken away, typed, found again.
+  json changed = ok("change_roof", {{"id", id}, {"wall_sides", json::array()}});
+  EXPECT_TRUE(changed["wall_sides"].empty());
+  EXPECT_EQ(modeler.document().find(id)->attributes.at("roof_spec").find("\"wall_sides\""), std::string::npos);
+  changed = ok("change_roof", {{"id", id}, {"wall_sides", {4}}});
+  EXPECT_EQ(changed["wall_sides"], json({4}));
+  changed = ok("change_roof", {{"id", id}, {"wall_sides", "auto"}});
+  EXPECT_EQ(changed["wall_sides"], json({3, 4}));
+  EXPECT_EQ(modeler.history().undoCount(), steps + 3);
+  // A roof up at the upper storey's eaves has no wall standing higher along it.
+  const json top = ok("create_roof", {{"outline", {{0, 2000}, {6000, 2000}, {6000, 6000}, {0, 6000}}}, {"kind", "gable"}, {"height", 6000}, {"wall_sides", "auto"}});
+  EXPECT_TRUE(top["wall_sides"].empty());
+  // Refused.
+  EXPECT_TRUE(refused("change_roof", {{"id", id}, {"wall_sides", "all"}}));
+  EXPECT_TRUE(refused("change_roof", {{"id", id}, {"wall_sides", {9}}}));
+  EXPECT_TRUE(refused("change_roof", {{"id", id}, {"wall_sides", 3}}));
+}
+
 // docs/160: sides with a pitch / an overhang of their own, through the API.
 TEST_F(Roofs, SidesWithTheirOwnPitchAndOverhangAreKept) {
   const json outline = {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}};
@@ -590,28 +712,6 @@ TEST(Roof, AHipRoofCoversAnOutlineWithSlantedSides) {
   ASSERT_FALSE(refused);
   EXPECT_NE(refused.error().find("wing ends"), std::string::npos);
 }
-
-namespace {
-// The outline (counter-clockwise) with side i moved out by d[i], corners mitred: its area, mm2.
-double grownAreaBy(const std::vector<gp_Pnt>& p, const std::vector<double>& d) {
-  const std::size_t n = p.size();
-  std::vector<gp_Pnt> q;
-  for (std::size_t i = 0; i < n; ++i) {
-    auto line = [&](std::size_t k) {
-      const gp_Vec dk = gp_Vec(p[k], p[(k + 1) % n]).Normalized();
-      return std::make_pair(p[k].Translated(gp_Vec(dk.Y(), -dk.X(), 0) * d[k]), dk);
-    };
-    const auto [a, da] = line((i + n - 1) % n);
-    const auto [b, db] = line(i);
-    const double den = da.X() * db.Y() - da.Y() * db.X();
-    const gp_Vec w(a, b);
-    q.push_back(a.Translated(da * ((w.X() * db.Y() - w.Y() * db.X()) / den)));
-  }
-  double area = 0.0;
-  for (std::size_t i = 0; i < n; ++i) area += q[i].X() * q[(i + 1) % n].Y() - q[(i + 1) % n].X() * q[i].Y();
-  return area / 2;
-}
-}  // namespace
 
 // docs/160: sides with a pitch / an overhang of their own; gable and shed roofs over outlines
 // with slanted sides and inward corners.

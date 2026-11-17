@@ -7236,6 +7236,7 @@ std::string roofSpecText(const geom::RoofSpec& s) {
   for (const auto& [side, eave] : s.sideEave)
     if (!s.sidePitch.count(side)) sides.push_back({{"side", side}, {"eave", eave}});
   if (!sides.empty()) j["sides"] = sides;
+  if (!s.wallSides.empty()) j["wall_sides"] = s.wallSides;  // docs/161
   return j.dump();
 }
 
@@ -7254,6 +7255,7 @@ std::optional<geom::RoofSpec> roofSpecFrom(const std::string& text) {
     s.fallX = j.at("fall").at(0).get<double>();
     s.fallY = j.at("fall").at(1).get<double>();
     s.gableSides = j.value("gable_sides", std::vector<int>{});  // roofs made before docs/138: chosen
+    s.wallSides = j.value("wall_sides", std::vector<int>{});
     if (j.contains("sides"))
       for (const auto& one : j.at("sides")) {
         const int side = one.at("side").get<int>();
@@ -8164,6 +8166,54 @@ std::vector<ObjectId> Modeler::wallsUnderRoof(const ObjectId& roofId) const {
     if (storey && foot.Z() < *storey - 1.0 && band->z1 < roof.height - 1.0) continue;  // a storey further down
     const gp_Pnt mid = band->start.Translated(gp_Vec(band->dir) * (band->length / 2));
     if (within(mid)) out.push_back(o.id);
+  }
+  return out;
+}
+
+std::vector<int> Modeler::roofSidesAtWalls(const geom::RoofSpec& roof) const {
+  // The outline without repeated points, as the roof numbers its sides.
+  std::vector<gp_Pnt> points;
+  for (const gp_Pnt& p : roof.outline) {
+    const gp_Pnt flat(p.X(), p.Y(), 0);
+    if (points.empty() || points.back().Distance(flat) > 0.01) points.push_back(flat);
+  }
+  if (points.size() > 1 && points.front().Distance(points.back()) <= 0.01) points.pop_back();
+  std::vector<int> out;
+  const std::size_t n = points.size();
+  if (n < 3) return out;
+  // Walls that stand well above the roof's bearing height and start no more than a metre above it.
+  std::vector<WallBand> walls;
+  for (const Object& o : document_.objects())
+    if (const auto band = wallBand(document_, o); band && band->z1 > roof.height + 500.0 && band->z0 < roof.height + 1000.0) walls.push_back(*band);
+  for (std::size_t k = 0; k < n; ++k) {
+    const gp_Pnt &a = points[k], &b = points[(k + 1) % n];
+    const double length = a.Distance(b);
+    if (length < 1.0) continue;
+    // The parts of the side that lie along a wall, within its thickness.
+    std::vector<std::pair<double, double>> parts;
+    for (const WallBand& w : walls) {
+      const gp_Vec along(w.dir), across(w.left);
+      const gp_Pnt start(w.start.X(), w.start.Y(), 0);
+      const double ca = gp_Vec(start, a).Dot(across), cb = gp_Vec(start, b).Dot(across);
+      if (std::abs(ca - cb) > 1.0 + length * 1e-3) continue;  // not along it
+      if (std::min(ca, cb) < -w.right - 1.0 || std::max(ca, cb) > w.leftExt + 1.0) continue;
+      double t0 = gp_Vec(start, a).Dot(along), t1 = gp_Vec(start, b).Dot(along);
+      const bool back = t0 > t1;
+      if (back) std::swap(t0, t1);
+      // The wall's own length, and its thickness more at each end (the corner it runs into).
+      const double reach = w.right + w.leftExt;
+      const double from = std::max(t0, -reach), to = std::min(t1, w.length + reach);
+      if (to - from < 1.0) continue;
+      parts.push_back(back ? std::make_pair(t1 - to, t1 - from) : std::make_pair(from - t0, to - t0));
+    }
+    std::sort(parts.begin(), parts.end());
+    double covered = 0.0, upTo = 0.0;
+    for (const auto& [from, to] : parts) {
+      if (to <= upTo) continue;
+      covered += to - std::max(from, upTo);
+      upTo = to;
+    }
+    if (covered >= 0.9 * length) out.push_back(static_cast<int>(k));
   }
   return out;
 }

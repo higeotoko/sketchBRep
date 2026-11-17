@@ -482,6 +482,8 @@ AreaTable areaTable(const Document& document) {
     }
     for (const auto& [side, out] : own)
       if (side >= 0 && side < static_cast<int>(n)) overhang[static_cast<std::size_t>(side)] = out;
+    for (const int side : spec.value("wall_sides", std::vector<int>{}))  // docs/161: against a wall: none
+      if (side >= 0 && side < static_cast<int>(n)) overhang[static_cast<std::size_t>(side)] = 0.0;
     std::vector<double> beyond(n);
     bool any = false;
     for (std::size_t i = 0; i < n; ++i) {

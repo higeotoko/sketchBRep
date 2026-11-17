@@ -11769,6 +11769,26 @@ void GuiPhase1::roofToolDrawsARoofWhoseSizesAreChangedInThePanel() {
     QVERIFY(m.undo());QVERIFY(m.undo());
     QVERIFY(std::abs(m.roofInfo(roof)->planArea-4600.0*3200)<1.0);
     QVERIFY(m.roofInfo(roof)->spec.sideEave.empty());
+    // docs/161: sides against a higher wall: typed; "find" says so when no wall stands there.
+    f.window.setSelection({roof});
+    QApplication::processEvents();
+    QVERIFY(edit("roofWallSides"));
+    auto* find=f.window.findChild<QPushButton*>(QStringLiteral("roofFindWallSides"));QVERIFY(find);
+    const double planBefore=m.roofInfo(roof)->planArea;
+    edit("roofWallSides")->setText(QStringLiteral("1"));
+    emit edit("roofWallSides")->editingFinished();
+    QTRY_COMPARE(m.roofInfo(roof)->spec.wallSides.size(),std::size_t(1));
+    QVERIFY(m.roofInfo(roof)->planArea<planBefore-1.0);  // no overhang on that side
+    QCOMPARE(m.history().undoCount(),before+1);
+    f.window.setSelection({roof});
+    QApplication::processEvents();
+    find=f.window.findChild<QPushButton*>(QStringLiteral("roofFindWallSides"));QVERIFY(find);
+    find->click();
+    QTRY_VERIFY(f.window.lastError().contains(QStringLiteral("見つかりません")));
+    f.window.clearLastError();
+    QCOMPARE(m.history().undoCount(),before+1);
+    QVERIFY(m.undo());
+    QVERIFY(m.roofInfo(roof)->spec.wallSides.empty());
   }
   // docs/97 N-05: walls under the roof stand up to it from the roof's properties, and come
   // back flat. (The roof was drawn at height 0: lift it onto walls 2400 high.)

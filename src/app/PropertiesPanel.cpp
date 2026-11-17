@@ -403,6 +403,32 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       own(tr("辺ごとの出"), "roofSideEave", "side_eave", roof->spec.sideEave,
           tr("辺の番号と出（mm）を「1:900, 3:300」のように。書かない辺は上の「軒の出」（妻・けらばの辺は「けらばの出」）。"
              "入れると、直角だけの外周も斜めの外周と同じ作り方になります"));
+      {
+        // docs/161: sides against a wall standing higher (a lower roof at the upper storey).
+        QStringList sides;
+        for (const int g : roof->spec.wallSides) sides << QString::number(g + 1);
+        auto* line = new QWidget;
+        auto* box = new QHBoxLayout(line);
+        box->setContentsMargins(0, 0, 0, 0);
+        auto* edit = new QLineEdit(sides.join(QStringLiteral(",")));
+        edit->setObjectName(QStringLiteral("roofWallSides"));
+        edit->setPlaceholderText(tr("なし"));
+        edit->setToolTip(tr("屋根が、もっと高い壁（上の階の壁など）に当たって終わる辺の番号。「2,3」のように。"
+                            "その辺では軒もけらばも出さず、縦に切ります（切妻・寄棟・片流れのどれでも）"));
+        edit->setEnabled(!o->locked);
+        const QString initial = edit->text();
+        connect(edit, &QLineEdit::editingFinished, this, [this, id, edit, initial] {
+          if (edit->text().trimmed() != initial) emit roofEdited(id, QStringLiteral("wall_sides"), 0.0, edit->text().trimmed());
+        });
+        auto* find = new QPushButton(tr("見つける"));
+        find->setObjectName(QStringLiteral("roofFindWallSides"));
+        find->setToolTip(tr("外周の辺のうち、この屋根の軒の高さより上まで立っている壁に沿っている辺を見つけて入れます"));
+        find->setEnabled(!o->locked);
+        connect(find, &QPushButton::clicked, this, [this, id] { emit roofEdited(id, QStringLiteral("wall_sides_auto"), 0.0, QString()); });
+        box->addWidget(edit, 1);
+        box->addWidget(find);
+        form_->addRow(tr("壁に付く辺"), line);
+      }
       addTypeRow(this, form_, modeler, *o, tr("勾配・厚さ・軒の出・けらばの出"));
       auto row = [&](const QString& label, const QString& text, const char* name) {
         auto* value = new QLabel(text);

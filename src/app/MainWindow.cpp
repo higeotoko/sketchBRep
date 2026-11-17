@@ -745,6 +745,32 @@ void MainWindow::buildUi() {
                   spec.gableSides.push_back(side - 1);
                 }
               }
+              else if (key == QStringLiteral("wall_sides")) {
+                spec.wallSides.clear();
+                for (const QString& part : kind.split(QRegularExpression(QStringLiteral("[,、\\s]+")), Qt::SkipEmptyParts)) {
+                  bool ok = false;
+                  const int side = part.toInt(&ok);
+                  if (!ok || side < 1) {
+                    reportError(tr("壁に付く辺は、1 から始まる辺の番号を「2,3」のように入れてください"));
+                    refreshPanels();
+                    return;
+                  }
+                  spec.wallSides.push_back(side - 1);
+                }
+              }
+              else if (key == QStringLiteral("wall_sides_auto")) {
+                const std::vector<int> found = modeler_.roofSidesAtWalls(spec);
+                if (found.empty()) {
+                  reportError(tr("この屋根の外周に沿って、軒の高さより上まで立っている壁が見つかりません"));
+                  refreshPanels();
+                  return;
+                }
+                if (found == spec.wallSides) {
+                  setStatus(tr("壁に付く辺は、今のままで合っています"));
+                  return;
+                }
+                spec.wallSides = found;
+              }
               else if (key == QStringLiteral("side_pitch") || key == QStringLiteral("side_eave")) {
                 // docs/160: "side:value" pairs; people count sides from 1; empty: none.
                 std::map<int, double>& values = key == QStringLiteral("side_pitch") ? spec.sidePitch : spec.sideEave;

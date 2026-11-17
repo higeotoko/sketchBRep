@@ -132,6 +132,19 @@ void roofArgs(const json& a, geom::RoofSpec& s) {
   } else if (a.contains("outline")) {
     s.gableSides.clear();
   }
+  // docs/161: sides against a higher wall ("auto" is worked out by the command itself).
+  if (a.contains("wall_sides") && !a.at("wall_sides").is_string()) {
+    const json& v = a.at("wall_sides");
+    const char* shape = "'wall_sides' is a list of side numbers (0: from corner 0 to corner 1) or \"auto\"";
+    if (!v.is_array()) throw ApiError(shape);
+    s.wallSides.clear();
+    for (const json& g : v) {
+      if (!g.is_number_integer()) throw ApiError(shape);
+      s.wallSides.push_back(g.get<int>());
+    }
+  } else if (a.contains("outline") && !a.contains("wall_sides")) {
+    s.wallSides.clear();
+  }
   // docs/160: sides with a pitch / an overhang of their own; the list replaces the one before.
   if (a.contains("sides")) {
     const json& v = a.at("sides");
@@ -157,6 +170,13 @@ void roofArgs(const json& a, geom::RoofSpec& s) {
     s.sidePitch.clear();
     s.sideEave.clear();
   }
+}
+
+// docs/161: 'wall_sides': "auto": the sides lying along walls that stand higher than the roof.
+void wallSidesAuto(const doc::Modeler& m, const json& a, geom::RoofSpec& s) {
+  if (!a.contains("wall_sides") || !a.at("wall_sides").is_string()) return;
+  if (a.at("wall_sides").get<std::string>() != "auto") throw ApiError("'wall_sides' is a list of side numbers (0: from corner 0 to corner 1) or \"auto\"");
+  s.wallSides = m.roofSidesAtWalls(s);
 }
 
 // The stair sizes given in `a` put into `s` (the others stay).
@@ -234,7 +254,7 @@ json roofJson(const doc::RoofInfo& r) {
     if (!r.spec.sidePitch.count(side)) sides.push_back({{"side", side}, {"eave", eave}});
   return json{{"kind", r.spec.kind}, {"outline", outline}, {"height", r.spec.height}, {"pitch", r.spec.pitch},
               {"eave", r.spec.eave}, {"gable_eave", r.spec.gableEave}, {"thickness", r.spec.thickness},
-              {"ridge", r.spec.ridge}, {"fall", {r.spec.fallX, r.spec.fallY}}, {"gable_sides", r.spec.gableSides}, {"sides", sides}, {"plan_area", r.planArea / 1e6},
+              {"ridge", r.spec.ridge}, {"fall", {r.spec.fallX, r.spec.fallY}}, {"gable_sides", r.spec.gableSides}, {"sides", sides}, {"wall_sides", r.spec.wallSides}, {"plan_area", r.planArea / 1e6},
               {"slope_area", r.slopeArea / 1e6}, {"ridge_height", r.ridgeHeight}, {"eave_height", r.eaveHeight},
               {"parts", r.parts}, {"level", r.level}};
 }
@@ -2328,7 +2348,9 @@ const std::vector<CommandDef>& commands() {
        "gable: 'gable_sides', 0-based side numbers, side i from corner i to i+1, default the shorter pair of "
        "parallel opposite sides, with inward corners the ends of the wings). 'sides': [{side, pitch, eave}] gives "
        "sides a pitch / an overhang of their own (the overhang of a gable side is its verge; with 'sides' a "
-       "right-angled outline is worked out like a slanted one: an L's outer corner gets a hip)) or 'grid' {x: [..2 names], y: [..2 names]}. 'kind': gable (切妻, default), "
+       "right-angled outline is worked out like a slanted one: an L's outer corner gets a hip); 'wall_sides': side "
+       "numbers, or \"auto\", where the roof ends against a wall standing higher (a lower roof at the upper "
+       "storey's wall, docs/161: upright there, no overhang, for every kind)) or 'grid' {x: [..2 names], y: [..2 names]}. 'kind': gable (切妻, default), "
        "hip (寄棟) or shed (片流れ). 'height' (mm): z of the roof's underside above the outline (the top of the "
        "walls / plates). 'pitch': rise per 10 of run (寸勾配, default 4). 'eave': overhang at eaves in plan "
        "(default 600); 'gable_eave': at gable ends (default 300; shed: at the sloping sides). 'thickness' at "
@@ -2340,7 +2362,7 @@ const std::vector<CommandDef>& commands() {
          "outline": {"type": "array"}, "grid": {"type": "object"}, "kind": {"enum": ["gable", "hip", "shed"]},
          "height": {"type": "number"}, "pitch": {"type": "number"}, "eave": {"type": "number"},
          "gable_eave": {"type": "number"}, "thickness": {"type": "number"}, "ridge": {"enum": ["long", "short"]},
-         "fall": {"type": "array"}, "gable_sides": {"type": "array", "items": {"type": "integer"}}, "sides": {"type": "array", "items": {"type": "object"}}}, "required": ["height"]}),
+         "fall": {"type": "array"}, "gable_sides": {"type": "array", "items": {"type": "integer"}}, "sides": {"type": "array", "items": {"type": "object"}}, "wall_sides": {}}, "required": ["height"]}),
        [](doc::Modeler& m, const json& a) {
          const GridLookup grid(m.document());
          geom::RoofSpec spec;
@@ -2354,6 +2376,7 @@ const std::vector<CommandDef>& commands() {
            for (const json& p : arg(a, "outline")) spec.outline.push_back(grid.point(p, 0.0));
          }
          roofArgs(a, spec);
+         wallSidesAuto(m, a, spec);
          const std::string id = must(m.createRoof(spec));
          json result = roofJson(must(m.roofInfo(id)));
          result["id"] = id;
@@ -2376,7 +2399,7 @@ const std::vector<CommandDef>& commands() {
          "id": {"type": "string"}, "outline": {"type": "array"}, "kind": {"enum": ["gable", "hip", "shed"]},
          "height": {"type": "number"}, "pitch": {"type": "number"}, "eave": {"type": "number"},
          "gable_eave": {"type": "number"}, "thickness": {"type": "number"}, "ridge": {"enum": ["long", "short"]},
-         "fall": {"type": "array"}, "gable_sides": {"type": "array", "items": {"type": "integer"}}, "sides": {"type": "array", "items": {"type": "object"}}}, "required": ["id"]}),
+         "fall": {"type": "array"}, "gable_sides": {"type": "array", "items": {"type": "integer"}}, "sides": {"type": "array", "items": {"type": "object"}}, "wall_sides": {}}, "required": ["id"]}),
        [](doc::Modeler& m, const json& a) {
          const GridLookup grid(m.document());
          geom::RoofSpec spec = must(m.roofInfo(text(a, "id"))).spec;
@@ -2385,6 +2408,7 @@ const std::vector<CommandDef>& commands() {
            for (const json& p : a.at("outline")) spec.outline.push_back(grid.point(p, 0.0));
          }
          roofArgs(a, spec);
+         wallSidesAuto(m, a, spec);
          must(m.changeRoof(text(a, "id"), spec));
          json result = roofJson(must(m.roofInfo(text(a, "id"))));
          result["id"] = text(a, "id");

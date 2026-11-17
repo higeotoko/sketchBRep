@@ -365,6 +365,14 @@ Result<RoofShape> slantedRoof(const RoofSpec& spec, Poly points, double riseGive
   auto dir = [&](std::size_t i) { return gp_Vec(points[i], points[(i + 1) % n]).Normalized(); };
   auto length = [&](std::size_t i) { return points[i].Distance(points[(i + 1) % n]); };
 
+  // Sides against a higher wall (docs/161).
+  std::vector<bool> wall(n, false);
+  for (const int g : spec.wallSides) {
+    if (g < 0 || g >= static_cast<int>(n)) return R::failure("A side against a wall is a number of a side of the outline");
+    for (std::size_t k = 0; k < n; ++k)
+      if (sideOf[k] == g) wall[k] = true;
+  }
+  const bool walled = !spec.wallSides.empty();
   // Which sides stand upright.
   std::vector<bool> gable(n, false);
   std::size_t low = 0;  // shed: the side the roof falls to
@@ -386,8 +394,8 @@ Result<RoofShape> slantedRoof(const RoofSpec& spec, Poly points, double riseGive
           const double score = spec.ridge == "short" ? -both : both;
           if (score < best) best = score, pair = {i, j};
         }
-      if (pair.first == n) return R::failure("This outline has no parallel opposite sides: choose the gable sides");
-      gable[pair.first] = gable[pair.second] = true;
+      if (pair.first == n && !walled) return R::failure("This outline has no parallel opposite sides: choose the gable sides");
+      if (pair.first != n) gable[pair.first] = gable[pair.second] = true;
     } else {
       // Inward corners: the ends of the wings. A side between two outward corners whose
       // neighbours run back alongside each other, and no longer than they are.
@@ -400,11 +408,8 @@ Result<RoofShape> slantedRoof(const RoofSpec& spec, Poly points, double riseGive
         gable[k] = true;
         any = true;
       }
-      if (!any) return R::failure("This outline has no wing ends to make gables of: choose the gable sides");
+      if (!any && !walled) return R::failure("This outline has no wing ends to make gables of: choose the gable sides");
     }
-    bool eaves = false;
-    for (std::size_t k = 0; k < n; ++k) eaves = eaves || !gable[k];
-    if (!eaves) return R::failure("A gable roof needs sides that are not gables");
   } else if (spec.kind == "shed") {
     // One plane rising from the side the roof falls to: the side facing the fall most (of
     // several, the one furthest that way).
@@ -423,6 +428,14 @@ Result<RoofShape> slantedRoof(const RoofSpec& spec, Poly points, double riseGive
       gable[i] = std::abs(outward.Dot(lowOut)) < 0.5;  // eaves low and high, verges at the sides
     }
   }
+  if (spec.kind != "shed") {
+    bool eaves = false;
+    for (std::size_t k = 0; k < n; ++k) {
+      if (wall[k]) gable[k] = true;
+      eaves = eaves || !gable[k];
+    }
+    if (!eaves) return R::failure(walled ? "A roof needs sides that are eaves (not gables, not against walls)" : "A gable roof needs sides that are not gables");
+  }
   std::vector<SideRule> rules(n);
   double steepest = slope, furthest = std::max(spec.eave, spec.gableEave);
   bool oneSlope = true;
@@ -432,6 +445,7 @@ Result<RoofShape> slantedRoof(const RoofSpec& spec, Poly points, double riseGive
     r.slope = slope;
     r.out = gable[k] ? spec.gableEave : spec.eave;
     if (const auto it = spec.sideEave.find(sideOf[k]); it != spec.sideEave.end()) r.out = it->second;
+    if (wall[k]) r.out = 0.0;
     if (const auto it = spec.sidePitch.find(sideOf[k]); it != spec.sidePitch.end() && !gable[k] && spec.kind != "shed") {
       r.slope = it->second / 10.0;
       if (std::abs(r.slope - slope) > 1e-9) oneSlope = false;
@@ -579,7 +593,7 @@ Result<RoofShape> build(const RoofSpec& spec, double riseGiven) {
   if (points.size() > 1 && points.front().Distance(points.back()) <= 0.01) points.pop_back();
   if (points.size() < 4) return R::failure("A roof outline needs at least four corners");
   // Sides with a pitch or an overhang of their own (docs/160): worked out side by side.
-  if (!spec.sidePitch.empty() || !spec.sideEave.empty()) return slantedRoof(spec, points, riseGiven);
+  if (!spec.sidePitch.empty() || !spec.sideEave.empty() || !spec.wallSides.empty()) return slantedRoof(spec, points, riseGiven);
   // Its frame: along the first side. Every side must run along the frame.
   Frame frame;
   frame.u = gp_Vec(points[0], points[1]).Normalized();

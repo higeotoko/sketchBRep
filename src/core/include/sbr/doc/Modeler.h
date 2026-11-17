@@ -471,6 +471,10 @@ class Modeler {
   // Walls made by the wall tool whose line lies within the roof's outline (or on it) and that
   // start below its bearing height: what "fit the walls under this roof" means.
   std::vector<ObjectId> wallsUnderRoof(const ObjectId& roof) const;
+  // docs/161: the sides of this roof outline (world coordinates; side i from corner i to i + 1)
+  // that lie along a wall standing well above the roof's bearing height: where a lower roof
+  // ends against the upper storey. What RoofSpec::wallSides is meant to hold.
+  std::vector<int> roofSidesAtWalls(const geom::RoofSpec& roof) const;
   // The walls fitted to this roof now.
   std::vector<ObjectId> wallsFittedToRoof(const ObjectId& roof) const;
 

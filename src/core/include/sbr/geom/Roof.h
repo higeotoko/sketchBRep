@@ -36,6 +36,10 @@ struct RoofSpec {
   // given, a right-angled outline is worked out the way outlines with slanted sides are.
   std::map<int, double> sidePitch;
   std::map<int, double> sideEave;
+  // Sides where the roof ends against a wall that stands higher (docs/161: a lower roof at the
+  // upper storey's wall), by side number as above, for every kind: upright there, no overhang,
+  // no plane rising from it. With any given, the outline is worked out side by side too.
+  std::vector<int> wallSides;
 };
 
 struct RoofShape {
