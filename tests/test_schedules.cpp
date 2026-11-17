@@ -692,6 +692,22 @@ TEST_F(Schedules, RoofTypeLayersAcrossTheSlope) {
     for (const auto& p : {a, b})
       for (const double d : {20.0, 32.0}) under += std::abs(p.Y() - (ridgeTop - d / cosine)) < 1e-3;
   EXPECT_GE(under, 4);
+  // Cut along the ridge (docs/152's leftover): at y 1500 the south slope is a level band; its
+  // layers level lines 20 / cos and 32 / cos under its top, as long as the roof (8000 and the
+  // gable overhangs 300 each side).
+  {
+    const auto view = sbr::draw::makeView(modeler.document(), sbr::draw::sectionView(gp_Pnt(4000, 1500, 0), gp_Dir(0, -1, 0)));
+    ASSERT_TRUE(view) << view.error();
+    const double top = 3000 + rise * 1500 + 120 / cosine;
+    int found = 0;
+    for (const double d : {20.0, 32.0})
+      for (const auto& item : view->items)
+        if (item.kind == sbr::draw::Item::Kind::Line && item.pen == sbr::draw::Pen::Visible && item.points.size() == 2 &&
+            std::abs(item.points[0].Y() - item.points[1].Y()) < 1e-6 && std::abs(item.points[0].Y() - (top - d / cosine)) < 1e-3 &&
+            std::abs(std::abs(item.points[0].X() - item.points[1].X()) - 8600.0) < 1e-3)
+          ++found;
+    EXPECT_EQ(found, 2);
+  }
   // A thicker roof by hand no longer adds up: no lines.
   auto spec = modeler.roofInfo(roof)->spec;
   spec.thickness = 150;
