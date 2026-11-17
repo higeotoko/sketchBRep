@@ -12,6 +12,7 @@ add_library(sbr_core STATIC
   src/OpeningSymbols.cpp
   src/RoomRegions.cpp
   src/Roof.cpp
+  src/RoofSkeleton.cpp
   src/Stair.cpp
   src/Schedules.cpp
   src/IfcExport.cpp

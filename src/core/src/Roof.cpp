@@ -2,25 +2,32 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
 
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRepBuilderAPI_MakeSolid.hxx>
+#include <BRepBuilderAPI_Sewing.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepGProp_Face.hxx>
+#include <BRepLib.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepTools.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Face.hxx>
+#include <TopoDS_Shell.hxx>
+#include <TopoDS_Solid.hxx>
 #include <gp_Trsf.hxx>
 #include <gp_Vec.hxx>
 
 #include "sbr/geom/Measure.h"
 #include "sbr/geom/Operations.h"
+#include "sbr/geom/RoofSkeleton.h"
 
 namespace sbr::geom {
 namespace {
@@ -272,6 +279,17 @@ Result<TopoDS_Shape> underSlope(const gp_Pnt& p, const gp_Pnt& q, double slope, 
 R checked(const TopoDS_Shape& roof) {
   int solids = 0;
   for (TopExp_Explorer e(roof, TopAbs_SOLID); e.More(); e.Next()) ++solids;
+  if (solids > 1) {
+    // Crumbs of next to no volume beside the roof (where cut faces all but touch) are left out.
+    TopoDS_Shape largest;
+    double most = 0.0, rest = 0.0;
+    for (TopExp_Explorer e(roof, TopAbs_SOLID); e.More(); e.Next()) {
+      const double v = std::abs(volume(e.Current()));
+      if (v > most) rest += most, most = v, largest = e.Current();
+      else rest += v;
+    }
+    if (!largest.IsNull() && rest <= 1e-7 * most) return checked(largest);
+  }
   if (solids != 1 || !BRepCheck_Analyzer(roof).IsValid()) return R::failure("Roof could not be built as one solid");
   RoofShape out;
   out.solid = roof;
@@ -300,10 +318,16 @@ R fromBody(const TopoDS_Shape& under, double rise, double slope, int parts) {
 // The roof between the body under it and the body under its upper surface (sides with pitches
 // of their own: each plane lifted by its own amount, so the thickness is the same everywhere).
 // Its areas are read from the faces that look up.
+R measuredSlab(const TopoDS_Shape& roof, int parts);
 R betweenBodies(const TopoDS_Shape& upper, const TopoDS_Shape& under, int parts) {
   auto roof = booleanCombine(BooleanOp::Subtract, {upper, under});
   if (!roof) return R::failure("Roof could not be built: " + roof.error());
-  R out = checked(roof.value());
+  return measuredSlab(roof.value(), parts);
+}
+
+// A roof whose slopes differ: its areas read from the faces that look up.
+R measuredSlab(const TopoDS_Shape& roof, int parts) {
+  R out = checked(roof);
   if (!out) return out;
   RoofShape shape = out.value();
   shape.parts = parts;
@@ -323,6 +347,151 @@ R betweenBodies(const TopoDS_Shape& upper, const TopoDS_Shape& under, int parts)
     shape.planArea += a * up;
   }
   return shape;
+}
+
+// A roof slab put together from its faces (docs/164): the faces of its upper surface and of its
+// underside (each a side's plane over the part of the plan it roofs, as worked out by moving
+// the sides inwards), and upright faces between them along the outline grown by the overhangs.
+// `zUnder` / `zUpper`: the height of side k's plane (underside / upper surface) over a point.
+using PlanFaces = std::vector<std::vector<SkeletonPoint>>;
+std::optional<TopoDS_Shape> sewnSlab(const PlanFaces& under, const PlanFaces& upper, const Poly& boundary,
+                                     const std::function<double(std::size_t, const SkeletonPoint&)>& zUnder,
+                                     const std::function<double(std::size_t, const SkeletonPoint&)>& zUpper) {
+  const double eps = 1e-3;
+  // Every corner of every face of a layer put into the edges it lies on (faces meet edge to edge).
+  auto conformed = [&](const PlanFaces& faces) {
+    std::vector<SkeletonPoint> all;
+    for (const auto& face : faces)
+      for (const SkeletonPoint& q : face) all.push_back(q);
+    PlanFaces out(faces.size());
+    for (std::size_t k = 0; k < faces.size(); ++k) {
+      const auto& face = faces[k];
+      for (std::size_t i = 0; i < face.size(); ++i) {
+        const SkeletonPoint &a = face[i], &b = face[(i + 1) % face.size()];
+        const double dx = b.x - a.x, dy = b.y - a.y, length = std::hypot(dx, dy);
+        out[k].push_back(a);
+        if (length < eps) continue;
+        std::vector<std::pair<double, SkeletonPoint>> on;
+        for (const SkeletonPoint& q : all) {
+          const double along = ((q.x - a.x) * dx + (q.y - a.y) * dy) / length;
+          const double off = ((q.x - a.x) * dy - (q.y - a.y) * dx) / length;
+          if (std::abs(off) <= eps && along > eps && along < length - eps) on.push_back({along, q});
+        }
+        std::sort(on.begin(), on.end(), [](const auto& l, const auto& r) { return l.first < r.first; });
+        double last = 0.0;
+        for (const auto& [along, q] : on) {
+          if (along - last <= eps) continue;
+          out[k].push_back(q);
+          last = along;
+        }
+      }
+    }
+    return out;
+  };
+  const PlanFaces low = conformed(under), high = conformed(upper);
+  BRepBuilderAPI_Sewing sewing(1e-3);
+  int faces = 0;
+  auto add = [&](const std::vector<gp_Pnt>& corners) {
+    if (corners.size() < 3) return false;
+    BRepBuilderAPI_MakePolygon polygon;
+    for (const gp_Pnt& q : corners) polygon.Add(q);
+    polygon.Close();
+    if (!polygon.IsDone()) return false;
+    BRepBuilderAPI_MakeFace face(polygon.Wire(), Standard_True);
+    if (!face.IsDone()) return false;
+    sewing.Add(face.Face());
+    ++faces;
+    return true;
+  };
+  for (std::size_t k = 0; k < low.size(); ++k) {
+    if (low[k].empty()) continue;
+    std::vector<gp_Pnt> corners;
+    for (const SkeletonPoint& q : low[k]) corners.emplace_back(q.x, q.y, zUnder(k, q));
+    if (!add(corners)) return std::nullopt;
+  }
+  for (std::size_t k = 0; k < high.size(); ++k) {
+    if (high[k].empty()) continue;
+    std::vector<gp_Pnt> corners;
+    for (const SkeletonPoint& q : high[k]) corners.emplace_back(q.x, q.y, zUpper(k, q));
+    if (!add(corners)) return std::nullopt;
+  }
+  // Where two faces of one layer share an edge at different heights (neighbouring eaves of
+  // different heights: the corner slides along the higher one's line for a while), an upright
+  // step closes the gap between them.
+  auto steps = [&](const PlanFaces& layer, const std::function<double(std::size_t, const SkeletonPoint&)>& z) {
+    for (std::size_t k = 0; k < layer.size(); ++k)
+      for (std::size_t j = k + 1; j < layer.size(); ++j)
+        for (std::size_t i = 0; i < layer[k].size(); ++i) {
+          const SkeletonPoint &a = layer[k][i], &b = layer[k][(i + 1) % layer[k].size()];
+          for (std::size_t m = 0; m < layer[j].size(); ++m) {
+            const SkeletonPoint &c = layer[j][m], &d = layer[j][(m + 1) % layer[j].size()];
+            if (std::hypot(a.x - d.x, a.y - d.y) > eps || std::hypot(b.x - c.x, b.y - c.y) > eps) continue;
+            const double ak = z(k, a), bk = z(k, b), aj = z(j, a), bj = z(j, b);
+            if (std::abs(ak - aj) <= 0.01 && std::abs(bk - bj) <= 0.01) continue;
+            std::vector<gp_Pnt> corners;
+            for (const gp_Pnt& q : {gp_Pnt(a.x, a.y, ak), gp_Pnt(b.x, b.y, bk), gp_Pnt(b.x, b.y, bj), gp_Pnt(a.x, a.y, aj)})
+              if (corners.empty() || (corners.back().Distance(q) > eps && corners.front().Distance(q) > eps)) corners.push_back(q);
+            if (corners.size() >= 3 && !add(corners)) return false;
+          }
+        }
+    return true;
+  };
+  if (!steps(low, zUnder) || !steps(high, zUpper)) return std::nullopt;
+  // Along each side of the grown outline: the underside's edge there, and the upper surface's.
+  const std::size_t n = boundary.size();
+  for (std::size_t i = 0; i < n; ++i) {
+    const gp_Pnt &a = boundary[i], &b = boundary[(i + 1) % n];
+    const double dx = b.X() - a.X(), dy = b.Y() - a.Y(), length = std::hypot(dx, dy);
+    if (length < eps) continue;
+    auto profile = [&](const PlanFaces& layer, const std::function<double(std::size_t, const SkeletonPoint&)>& z)
+        -> std::optional<std::vector<gp_Pnt>> {
+      std::vector<std::pair<double, gp_Pnt>> found;
+      for (std::size_t k = 0; k < layer.size(); ++k)
+        for (std::size_t j = 0; j < layer[k].size(); ++j) {
+          const SkeletonPoint &p = layer[k][j], &q = layer[k][(j + 1) % layer[k].size()];
+          auto place = [&](const SkeletonPoint& s) -> std::optional<double> {
+            const double along = ((s.x - a.X()) * dx + (s.y - a.Y()) * dy) / length;
+            const double off = ((s.x - a.X()) * dy - (s.y - a.Y()) * dx) / length;
+            if (std::abs(off) > eps || along < -eps || along > length + eps) return std::nullopt;
+            return along;
+          };
+          const auto tp = place(p), tq = place(q);
+          if (!tp || !tq || std::abs(*tp - *tq) <= eps) continue;
+          found.push_back({*tp, gp_Pnt(p.x, p.y, z(k, p))});
+          found.push_back({*tq, gp_Pnt(q.x, q.y, z(k, q))});
+        }
+      std::sort(found.begin(), found.end(), [](const auto& l, const auto& r) { return l.first < r.first; });
+      std::vector<gp_Pnt> line;
+      double last = -1e300;
+      for (const auto& [along, point] : found) {
+        if (along - last <= eps) {
+          if (std::abs(line.back().Z() - point.Z()) > 0.01) return std::nullopt;  // a step in the edge
+          continue;
+        }
+        line.push_back(point);
+        last = along;
+      }
+      if (line.size() < 2 || found.front().first > eps || found.back().first < length - eps) return std::nullopt;  // not the whole side
+      return line;
+    };
+    const auto bottom = profile(low, zUnder), topLine = profile(high, zUpper);
+    if (!bottom || !topLine) return std::nullopt;
+    std::vector<gp_Pnt> corners = *bottom;
+    corners.insert(corners.end(), topLine->rbegin(), topLine->rend());
+    if (!add(corners)) return std::nullopt;
+  }
+  sewing.Perform();
+  TopoDS_Shape sewn = sewing.SewedShape();
+  TopoDS_Shell shell;
+  int shells = 0;
+  for (TopExp_Explorer e(sewn, TopAbs_SHELL); e.More(); e.Next()) shell = TopoDS::Shell(e.Current()), ++shells;
+  if (shells != 1 || sewing.NbFreeEdges() > 0) return std::nullopt;
+  BRepBuilderAPI_MakeSolid make(shell);
+  if (!make.IsDone()) return std::nullopt;
+  TopoDS_Solid solid = make.Solid();
+  if (!BRepLib::OrientClosedSolid(solid)) return std::nullopt;
+  if (!BRepCheck_Analyzer(solid).IsValid() || volume(solid) <= 0.0) return std::nullopt;
+  return solid;
 }
 
 // How one side of the outline is roofed.
@@ -511,6 +680,75 @@ Result<RoofShape> slantedRoof(const RoofSpec& spec, Poly points, double riseGive
     auto under = booleanCombine(BooleanOp::Intersect, {plane.value(), plan.value()});
     if (!under) return R::failure("Roof could not be built: " + under.error());
     return fromBody(under.value(), rise, slope, parts);
+  }
+
+  // Gable and hip over an outline with inward corners (docs/164): every side moved inwards at its
+  // own pitch gives each side the part of the plan its plane roofs; under each plane over its
+  // part, together. Used when it works out and is one sound solid; otherwise the parts below.
+  if (reflex > 0) {
+    auto skeletonFaces = [&](bool lifted) {
+      std::vector<SkeletonSide> sides;
+      for (std::size_t k = 0; k < n; ++k) {
+        const gp_Pnt &a = points[k], &b = points[(k + 1) % n];
+        SkeletonSide side;
+        side.a = {a.X(), a.Y()};
+        side.b = {b.X(), b.Y()};
+        side.moving = !rules[k].gable;
+        side.slope = rules[k].slope;
+        side.out = rules[k].out;
+        side.start = spec.height + (lifted ? upOf(rules[k].slope) : 0.0) - rules[k].slope * rules[k].out;
+        sides.push_back(side);
+      }
+      return roofSkeletonFaces(sides);
+    };
+    if (const auto under = skeletonFaces(false)) {
+      int faces = 0;
+      for (const auto& face : *under) faces += !face.empty();
+      if (oneSlope || riseGiven > 0) {
+        // One pitch: under each side's plane over its face, together; lifted by the thickness, less itself.
+        std::vector<TopoDS_Shape> bodies;
+        double volumes = 0.0;
+        bool ok = faces > 0;
+        for (std::size_t k = 0; k < n && ok; ++k) {
+          if ((*under)[k].empty()) continue;
+          Poly plan;
+          for (const SkeletonPoint& p : (*under)[k]) plan.emplace_back(p.x, p.y, 0.0);
+          auto walls = upright(plan, base, top);
+          auto plane = underSlope(points[k], points[(k + 1) % n], rules[k].slope, far, spec.height, base, far);
+          auto part = walls && plane ? booleanCombine(BooleanOp::Intersect, {walls.value(), plane.value()}) : Result<TopoDS_Shape>::failure("");
+          if (!part) {
+            ok = false;
+            break;
+          }
+          volumes += volume(part.value());
+          bodies.push_back(part.value());
+        }
+        if (ok) {
+          // Together, when nothing was lost or doubled on the way.
+          auto all = bodies.size() == 1 ? Result<TopoDS_Shape>(bodies.front()) : booleanCombine(BooleanOp::Union, bodies);
+          if (all && std::abs(volume(all.value()) - volumes) <= 1e-6 * volumes)
+            if (R roof = fromBody(all.value(), rise, slope, faces)) return roof;
+        }
+      } else if (const auto upper = skeletonFaces(true)) {
+        // Pitches of their own: the slab put together from its faces (the upper surface worked
+        // out with each plane lifted by its own thickness), without taking bodies from each other.
+        std::vector<double> outs;
+        for (std::size_t k = 0; k < n; ++k) outs.push_back(rules[k].out);
+        auto height = [&](std::size_t k, const SkeletonPoint& p, bool lifted) {
+          const gp_Vec d = dir(k), in(-d.Y(), d.X(), 0);
+          return spec.height + (lifted ? upOf(rules[k].slope) : 0.0) + rules[k].slope * gp_Vec(points[k], gp_Pnt(p.x, p.y, 0)).Dot(in);
+        };
+        if (const auto boundary = grown(points, outs)) {
+          const auto slab = sewnSlab(*under, *upper, *boundary, [&](std::size_t k, const SkeletonPoint& p) { return height(k, p, false); },
+                                     [&](std::size_t k, const SkeletonPoint& p) { return height(k, p, true); });
+          if (slab) {
+            R roof = measuredSlab(*slab, faces);
+            // Seen from above it covers the outline grown by the overhangs, no more and no less.
+            if (roof && std::abs(roof->planArea - std::abs(twiceArea(*boundary)) / 2) <= 1e-6 * roof->planArea + 2.0) return roof;
+          }
+        }
+      }
+    }
   }
 
   // Gable and hip: each part lies under the planes of its sides (upright at its gables); the

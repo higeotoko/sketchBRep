@@ -811,7 +811,7 @@ TEST(Roof, GableAndShedOverSlantedSidesWithInwardCorners) {
   // outer corner, a valley at the inner one.
   auto roof = makeRoof(s);
   ASSERT_TRUE(roof) << roof.error();
-  EXPECT_EQ(roof->parts, 2);
+  EXPECT_EQ(roof->parts, 5);  // a face for every side that is not a gable (docs/164)
   EXPECT_NEAR(roof->planArea, grownAreaBy(s.outline, {600, 300, 600, 600, 300, 600, 600}), 1.0);
   EXPECT_NEAR(roof->slopeArea, roof->planArea * std::sqrt(1.16), 1.0);
   EXPECT_NEAR(roof->eaveHeight, 3000 - 0.4 * 600, 1e-3);
@@ -853,6 +853,7 @@ TEST(Roof, GableAndShedOverSlantedSidesWithInwardCorners) {
   ASSERT_TRUE(mixed) << mixed.error();
   EXPECT_NEAR(mixed->planArea, grownAreaBy(s.outline, {900, 300, 600, 600, 150, 600, 600}), 1.0);
   EXPECT_NEAR(mixed->eaveHeight, 3000 - 0.4 * 900, 1e-3);
+  EXPECT_EQ(mixed->parts, 5);  // docs/164: a face for every side that is not a gable, pitches of their own too
   EXPECT_GT(mixed->slopeArea, mixed->planArea * std::sqrt(1.16));
   EXPECT_LT(mixed->slopeArea, mixed->planArea * std::sqrt(1.36));
 

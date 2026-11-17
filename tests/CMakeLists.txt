@@ -42,6 +42,7 @@ add_executable(sbr_core_tests
   test_wall_joins.cpp
   test_rooms.cpp
   test_roof.cpp
+  test_roof_skeleton.cpp
   test_stair.cpp
   test_schedules.cpp
   test_command_api_files.cpp
