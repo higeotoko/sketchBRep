@@ -8466,6 +8466,8 @@ const std::vector<FloorRatioPart>& floorRatioParts() {
       {"delivery_box", "宅配ボックス", 1.0 / 100, "令 2 条 1 項 4 号ヘ・3 項 6 号"},
       {"elevator", "エレベーターの昇降路", 0.0, "法 52 条 6 項 1 号・令 135 条の 16"},
       {"common_hall", "共同住宅・老人ホーム等の共用の廊下・階段", 0.0, "法 52 条 6 項 2 号"},
+      // docs/166: only where the room is in a basement whose ceiling is 1 m or less over the ground.
+      {"basement_dwelling", "地階の住宅・老人ホーム等の部分", 1.0 / 3, "法 52 条 3 項"},
   };
   return parts;
 }

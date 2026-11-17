@@ -95,6 +95,14 @@ struct AreaRow {
   // this storey and the stairs arriving at it); every enclosed part when the storey has no slab.
   bool legalKnown = false;
   double legalFloor = 0.0;  // mm2
+  // docs/166: a basement (令 1 条 2 号: its floor below the ground, the ground 1/3 or more of its
+  // ceiling height above the floor), the ground being the level named GL. `ceiling`: the rooms'
+  // ceiling heights averaged by area when all have one, else the height up to the next level.
+  bool basement = false;
+  double ceiling = 0.0;           // mm, 0: not known
+  bool ceilingFromRooms = false;
+  double top = 0.0;               // z of the next level (the top of the storey), when there is one
+  bool hasTop = false;
 };
 
 struct AreaTable {
@@ -119,6 +127,9 @@ struct AreaTable {
   // docs/163: balconies (kind = balcony). Counted as floor area only where the person said so.
   int balconies = 0, balconiesCounted = 0, balconiesExcluded = 0;
   double balconyArea = 0.0;  // mm2 in plan of all of them (width x depth)
+  // docs/166: the ground (the level named GL), when there is one.
+  bool groundKnown = false;
+  double ground = 0.0;
   std::vector<RatioPart> ratioParts;  // the kinds that have rooms
   bool ratioKnown = false;            // false: a floor area or a marked room cannot be read
   double ratioTotal = 0.0;            // mm2

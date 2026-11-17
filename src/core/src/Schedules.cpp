@@ -330,11 +330,46 @@ AreaTable areaTable(const Document& document) {
     }
     return *chosen;
   };
+  // docs/166: the ground (地盤面) is the level named GL; the top of a storey the next level up.
+  auto isGround = [](const FloorLevel& l) {
+    std::string name = l.name;
+    name.erase(std::remove(name.begin(), name.end(), ' '), name.end());
+    std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    return name == "GL";
+  };
+  std::optional<double> ground;
+  for (const FloorLevel& l : levels)
+    if (isGround(l)) ground = l.elevation;
+  if (ground) out.groundKnown = true, out.ground = *ground;
+  // The next floor up (the ground level is not a floor).
+  auto nextAbove = [&](double z) -> std::optional<double> {
+    std::optional<double> best;
+    for (const FloorLevel& l : levels)
+      if (!isGround(l) && l.elevation > z + 1.0 && (!best || l.elevation < *best)) best = l.elevation;
+    return best;
+  };
+  std::vector<std::string> basementsLeftOut, basementsKept;
   std::vector<TopoDS_Shape> storeyPlans;  // within the wall lines, per storey (for the building area)
   std::vector<std::string> noSlab, voids, noWalls;
   bool stairsArriving = false;
   for (const FloorLevel& level : levels) {
     if (&storeyOf(level) != &level) continue;
+    // The ground level alone at its height is not a floor (docs/166): a storey only where walls
+    // stand on it or a slab's top lies on it.
+    if (isGround(level)) {
+      bool floor = false;
+      for (const Object& o : document.objects()) {
+        const std::string kind = attribute(o, "kind");
+        if (kind != "wall" && kind != "slab") continue;
+        if (kind == "slab" && attribute(o, "top_level") == level.id) floor = true;
+        if (kind == "wall" && !o.shape.IsNull()) {
+          const Bnd_Box box = geom::exactBounds(document.worldShape(o));
+          if (!box.IsVoid() && std::abs(box.CornerMin().Z() - level.elevation) < 1.0) floor = true;
+        }
+        if (floor) break;
+      }
+      if (!floor) continue;
+    }
     AreaRow row;
     row.level = level.name;
     row.elevation = level.elevation;
@@ -364,7 +399,31 @@ AreaTable areaTable(const Document& document) {
     for (const auto& outline : Modeler::enclosedOutlines(document, level.elevation))
       if (const auto s = slice(outline)) enclosedParts.push_back(*s);
     const auto enclosedSlice = joined(enclosedParts);
-    if (enclosedSlice) storeyPlans.push_back(*enclosedSlice);
+    // docs/166: its ceiling height, and whether it is a basement.
+    if (const auto above = nextAbove(level.elevation)) row.top = *above, row.hasTop = true;
+    {
+      double area = 0.0, weighted = 0.0;
+      bool all = row.rooms > 0;
+      for (const RoomRow& r : rooms.rows) {
+        if (!r.counted || r.level != level.name) continue;
+        if (r.ceilingHeight <= 0.0) all = false;
+        area += r.centreArea;
+        weighted += r.centreArea * r.ceilingHeight;
+      }
+      if (all && area > 0.0) row.ceiling = weighted / area, row.ceilingFromRooms = true;
+      else if (row.hasTop) row.ceiling = row.top - level.elevation;
+    }
+    if (ground && row.ceiling > 0.0 && level.elevation < *ground - 1e-6)
+      row.basement = *ground - level.elevation >= row.ceiling / 3 - 1e-6;
+    // 令 2 条 1 項 2 号: a basement 1 m or less above the ground is not in the building area.
+    const bool lowBasement = row.basement && row.hasTop && row.top <= *ground + 1000.0 + 1e-6;
+    if (enclosedSlice) {
+      if (lowBasement) basementsLeftOut.push_back(level.name);
+      else {
+        storeyPlans.push_back(*enclosedSlice);
+        if (row.basement) basementsKept.push_back(level.name);
+      }
+    }
     std::vector<TopoDS_Shape> floorParts;
     for (const Object& o : document.objects()) {
       const std::string kind = attribute(o, "kind");
@@ -591,9 +650,9 @@ AreaTable areaTable(const Document& document) {
     for (const auto& n : voids) names += (names.empty() ? "" : "・") + n;
     out.legalNotes.push_back(names + "：壁の中に床の無い所（吹抜けなど）があり、入れていない。");
   }
-  out.legalNotes.push_back("未評価：壁で囲まれていない所（バルコニー・ポーチ・ピロティなど、開放性による扱い）、柱だけで囲まれた部分、地階（地盤面上 1 m 以下の部分の建築面積）、特例軒等、高い開放性の指定（同 2 号ただし書）。");
+  out.legalNotes.push_back("未評価：壁で囲まれていない所（バルコニー・ポーチ・ピロティなど、開放性による扱い）、柱だけで囲まれた部分、特例軒等、高い開放性の指定（同 2 号ただし書）。");
   // docs/162: the total the floor area ratio is worked out from.
-  std::vector<std::string> unreadRooms;
+  std::vector<std::string> unreadRooms, notBasement;
   for (const FloorRatioPart& kind : floorRatioParts()) {
     AreaTable::RatioPart part;
     part.code = kind.code;
@@ -604,6 +663,17 @@ AreaTable areaTable(const Document& document) {
       if (!r.counted) {
         unreadRooms.push_back(r.name);
         continue;
+      }
+      if (part.code == "basement_dwelling") {
+        // In a basement whose ceiling is 1 m or less above the ground (法 52 条 3 項).
+        const AreaRow* storey = nullptr;
+        for (const AreaRow& row : out.rows)
+          if (row.enclosedKnown && row.level == r.level) storey = &row;
+        const double ceiling = r.ceilingHeight > 0.0 ? r.ceilingHeight : storey ? storey->ceiling : 0.0;
+        if (!storey || !storey->basement || ceiling <= 0.0 || storey->elevation + ceiling > out.ground + 1000.0 + 1e-6) {
+          notBasement.push_back(r.name);
+          continue;
+        }
       }
       ++part.rooms;
       part.area += r.centreArea;
@@ -639,10 +709,38 @@ AreaTable areaTable(const Document& document) {
     for (const std::string& n : unreadRooms) names += (names.empty() ? "" : "・") + n;
     out.legalNotes.push_back("容積率の算定の延べ面積は未評価：区分を付けた室（" + names + "）が閉じていない、または同じ所に室が 2 つある。");
   }
-  out.legalNotes.push_back("未評価：地階の住宅・老人ホーム等の部分（法 第 52 条 第 3 項、その用途の床面積の合計の 1/3 まで。地階と用途の合計を持っていない）、"
-                           "特定行政庁が認める機械室等（同 第 6 項 第 3 号）、同じ敷地のほかの建築物の床面積、容積率の最低限度の算定。");
+  if (!notBasement.empty()) {
+    std::string names;
+    for (const std::string& n : notBasement) names += (names.empty() ? "" : "・") + n;
+    out.legalNotes.push_back("「地階の住宅等」を付けた室のうち " + names + " は、地階で天井が地盤面から 1 m 以下の室でない（または地盤面・天井の高さが分からない）ので引いていない。");
+  }
+  for (const AreaTable::RatioPart& part : out.ratioParts)
+    if (part.code == "basement_dwelling")
+      out.legalNotes.push_back("地階の住宅等の限度は、建物全体を住宅等として延べ面積の 1/3 にした（住宅等でない部分があれば、限度はその分小さい）。天井の高さは室の天井高、無ければ次のレベルまでの高さ。");
+  out.legalNotes.push_back("未評価：特定行政庁が認める機械室等（同 第 6 項 第 3 号）、同じ敷地のほかの建築物の床面積、容積率の最低限度の算定。");
   if (eaves > 0) out.legalNotes.push_back("建築面積：1 m 以上出た軒は、その先から 1 m 下がった線まで入れた（屋根を載せた線から測った）。");
   if (canopies > 0) out.legalNotes.push_back("建築面積：壁の中心線から 1 m 以上出た庇は、その先から 1 m 下がった線まで入れた。");
+  // docs/166: the ground and the basements.
+  if (!ground) {
+    out.legalNotes.push_back("地盤面：「GL」という名前のレベルが無いので、地階かどうかは見ていない（未評価。地階の建築面積・法 52 条 3 項）。");
+  } else {
+    out.legalNotes.push_back("地盤面：レベル「GL」の高さ " + number(*ground, 0) + " とした（建物が周りの地面と接する位置の平均の高さ、令 2 条 2 項。高低差が 3 m を超える時の扱いは見ていない）。"
+                             "地階は令 1 条 2 号（床が地盤面下で、床から地盤面までが天井の高さの 1/3 以上）、e-Gov 法令検索で 2026-11-17 に読んだ版。");
+    for (const AreaRow& r : out.rows)
+      if (r.basement)
+        out.legalNotes.push_back(r.level + "：地階（床から地盤面まで " + number(*ground - r.elevation, 0) + "、天井の高さ " + number(r.ceiling, 0) +
+                                 (r.ceilingFromRooms ? "（室の天井高の平均）" : "（次のレベルまで）") + "）。");
+    if (!basementsLeftOut.empty()) {
+      std::string names;
+      for (const std::string& n : basementsLeftOut) names += (names.empty() ? "" : "・") + n;
+      out.legalNotes.push_back("建築面積：地階で地盤面上 1 m 以下の " + names + " は入れていない（上の階で覆われている所は、上の階として入る）。");
+    }
+    if (!basementsKept.empty()) {
+      std::string names;
+      for (const std::string& n : basementsKept) names += (names.empty() ? "" : "・") + n;
+      out.legalNotes.push_back("建築面積：地階の " + names + " は、上の端（次のレベル）が地盤面から 1 m を超えるので入れた。");
+    }
+  }
   if (balconiesInBuilding > 0) out.legalNotes.push_back("建築面積：壁の中心線から 1 m 以上出たバルコニーは、その先から 1 m 下がった線まで入れた（はね出し縁の類として）。");
   if (out.balconies > 0) {
     const int open = out.balconies - out.balconiesCounted - out.balconiesExcluded - balconiesLoose;

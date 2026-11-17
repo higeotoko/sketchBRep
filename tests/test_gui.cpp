@@ -12128,7 +12128,7 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
     QApplication::processEvents();
     auto* part=f.window.findChild<QComboBox*>(QStringLiteral("roomRatioPart"));QVERIFY(part);
     QCOMPARE(part->currentIndex(),0);
-    QCOMPARE(part->count(),9);
+    QCOMPARE(part->count(),10);  // docs/166: the basements of dwellings too
     const auto steps=m.history().undoCount();
     part->setCurrentIndex(part->findData(QStringLiteral("garage")));
     emit part->activated(part->currentIndex());

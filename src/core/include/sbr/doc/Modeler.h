@@ -95,6 +95,8 @@ struct RoomFinish {
 // area is left out (0: all of it). As read on e-Gov on 2026-11-17: Building Standards Act
 // Enforcement Order art. 2 (1) iv proviso and (3) (in force 2026-11-01), the Act art. 52 (6) i, ii
 // (in force 2026-05-27) and the Order art. 135-16 (the lift of art. 52 (6) i is an elevator).
+// docs/166: basement_dwelling (Act art. 52 (3)) counts only in a basement whose ceiling is 1 m or
+// less above the ground (the level named GL), up to 1/3 (of the whole: the building taken as a dwelling).
 struct FloorRatioPart {
   const char* code;
   const char* label;  // Japanese, as the Order names it

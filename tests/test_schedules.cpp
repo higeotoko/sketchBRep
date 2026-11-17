@@ -726,7 +726,7 @@ TEST(LegalAreas, TheFloorAreaForTheRatioLeavesMarkedRoomsOut) {
   EXPECT_NEAR(areas["ratio_floor_area"].get<double>(), 60.0, 1e-6);
   EXPECT_TRUE(areas["ratio_parts"].empty());
   EXPECT_NE(areas["legal_notes"].dump().find("区分を付けた室が無い"), std::string::npos);
-  EXPECT_NE(areas["legal_notes"].dump().find("第 52 条 第 3 項"), std::string::npos);  // still not evaluated, said
+  EXPECT_NE(areas["legal_notes"].dump().find("「GL」という名前のレベルが無い"), std::string::npos);  // basements not looked at (docs/166), said
   // The garage 24 m2: at most 60 / 5 = 12 left out. The store 6 m2: at most 60 / 50 = 1.2.
   const auto steps = modeler.history().undoCount();
   EXPECT_EQ(ok("set_room_finish", {{"id", garage}, {"ratio_part", "garage"}})["ratio_part"], "garage");
@@ -774,6 +774,89 @@ TEST(LegalAreas, TheFloorAreaForTheRatioLeavesMarkedRoomsOut) {
   EXPECT_EQ(areas["ratio_floor_area"], "not_evaluated") << areas.dump();
   EXPECT_NE(areas["legal_notes"].dump().find("車庫"), std::string::npos);
   EXPECT_NEAR(areas["total_legal_floor"].get<double>(), 60.0, 1e-6);
+}
+
+// docs/166: basements (令 1 条 2 号), with the ground at the level named GL: left out of the building
+// area when 1 m or less above the ground (令 2 条 1 項 2 号); a dwelling's basement left out of the
+// floor area for the ratio, up to 1/3 (法 52 条 3 項).
+TEST(LegalAreas, BasementsAgainstTheGround) {
+  sbr::doc::Modeler modeler;
+  CommandApi api{modeler};
+  auto call = [&](const std::string& command, json args) { return json::parse(api.execute(json{{"command", command}, {"args", args}}.dump())); };
+  auto ok = [&](const std::string& command, json args) {
+    json r = call(command, args);
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  auto notes = [&](const json& areas) { return areas["legal_notes"].dump(); };
+  // A basement 8000 x 6000 from -2500 (walls up to 500), and over it a ground floor 6000 x 6000 from 500.
+  ASSERT_TRUE(modeler.setLevels({{"", "B1FL", -2500}, {"", "GL", 0}, {"", "1FL", 500}}));
+  ok("create_wall", {{"points", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}, {0, 0}}}, {"thickness", 150}, {"height", 3000}, {"base", -2500}});
+  ok("create_wall", {{"points", {{0, 0}, {6000, 0}, {6000, 6000}, {0, 6000}, {0, 0}}}, {"thickness", 150}, {"height", 3000}, {"base", 500}});
+  const std::string below = ok("create_room", {{"at", {4000, 3000}}, {"base", -2500}, {"name", "地下室"}})["id"];
+  const std::string above = ok("create_room", {{"at", {3000, 3000}}, {"base", 500}, {"name", "居間"}})["id"];
+  json areas = ok("area_table", json::object());
+  EXPECT_NEAR(areas["ground"].get<double>(), 0.0, 1e-9);
+  ASSERT_EQ(areas["levels"].size(), 2u) << areas.dump();
+  // B1: the ground 2500 over its floor, its ceiling 3000 (up to 1FL): a basement; its top 500 over
+  // the ground: not in the building area. The ground floor only: 36.
+  EXPECT_TRUE(areas["levels"][0]["basement"].get<bool>());
+  EXPECT_NEAR(areas["levels"][0]["ceiling"].get<double>(), 3000, 1e-6);
+  EXPECT_FALSE(areas["levels"][1]["basement"].get<bool>());
+  EXPECT_NEAR(areas["building_area"].get<double>(), 36.0, 1e-6);
+  EXPECT_NEAR(areas["total_legal_floor"].get<double>(), 48.0 + 36.0, 1e-6);  // floor area all the same
+  EXPECT_NE(notes(areas).find("B1FL：地階"), std::string::npos) << notes(areas);
+  EXPECT_NE(notes(areas).find("地盤面上 1 m 以下の B1FL は入れていない"), std::string::npos);
+  // The ground floor 1500 up: the basement stands 1.5 m out of the ground: in the building area.
+  ASSERT_TRUE(modeler.setLevels({{"", "B1FL", -2500}, {"", "GL", 0}, {"", "1FL", 1500}}));
+  areas = ok("area_table", json::object());
+  EXPECT_NEAR(areas["building_area"].get<double>(), 48.0, 1e-6);
+  EXPECT_NE(notes(areas).find("1 m を超えるので入れた"), std::string::npos);
+  ASSERT_TRUE(modeler.setLevels({{"", "B1FL", -2500}, {"", "GL", 0}, {"", "1FL", 500}}));
+  // Shallow: the ground 900 over the floor; up to the next level 3000 (900 < 1000): not a basement.
+  ASSERT_TRUE(modeler.setLevels({{"", "B1FL", -2500}, {"", "GL", -1600}, {"", "1FL", 500}}));
+  areas = ok("area_table", json::object());
+  EXPECT_FALSE(areas["levels"][0]["basement"].get<bool>());
+  EXPECT_NEAR(areas["building_area"].get<double>(), 48.0, 1e-6);
+  // With the room's ceiling 2400 (the rooms' ceilings, by area): 900 >= 800: a basement; its top
+  // 2100 over the ground: in the building area still. Exactly 1/3 counts (以上).
+  ok("set_room_finish", {{"id", below}, {"ceiling_height", 2400}});
+  areas = ok("area_table", json::object());
+  EXPECT_NEAR(areas["levels"][0]["ceiling"].get<double>(), 2400, 1e-6);
+  EXPECT_TRUE(areas["levels"][0]["basement"].get<bool>());
+  EXPECT_NEAR(areas["building_area"].get<double>(), 48.0, 1e-6);
+  ASSERT_TRUE(modeler.setLevels({{"", "B1FL", -2500}, {"", "GL", -1700}, {"", "1FL", 500}}));
+  EXPECT_TRUE(ok("area_table", json::object())["levels"][0]["basement"].get<bool>());  // 800 = 2400 / 3
+  ASSERT_TRUE(modeler.setLevels({{"", "B1FL", -2500}, {"", "GL", 0}, {"", "1FL", 500}}));
+
+  // A dwelling's basement, its ceiling (2400 over -2500) under the ground: out of the floor area
+  // for the ratio, up to 1/3 of the total (84 / 3 = 28 of its 48).
+  EXPECT_EQ(ok("set_room_finish", {{"id", below}, {"ratio_part", "basement_dwelling"}})["ratio_part"], "basement_dwelling");
+  areas = ok("area_table", json::object());
+  EXPECT_NEAR(areas["ratio_floor_area"].get<double>(), 84.0 - 28.0, 1e-6);
+  ASSERT_EQ(areas["ratio_parts"].size(), 1u);
+  EXPECT_NEAR(areas["ratio_parts"][0]["limit"].get<double>(), 28.0, 1e-6);
+  EXPECT_NE(notes(areas).find("建物全体を住宅等として"), std::string::npos);
+  // Its ceiling 3600 over its floor (1.1 m over the ground): not left out, and said.
+  ok("set_room_finish", {{"id", below}, {"ceiling_height", 3600}});
+  areas = ok("area_table", json::object());
+  EXPECT_NEAR(areas["ratio_floor_area"].get<double>(), 84.0, 1e-6);
+  EXPECT_NE(notes(areas).find("地下室 は、地階で天井が地盤面から 1 m 以下の室でない"), std::string::npos) << notes(areas);
+  // The ground floor's room marked so: not a basement: not left out.
+  ok("set_room_finish", {{"id", below}, {"ratio_part", ""}, {"ceiling_height", 0}});
+  ok("set_room_finish", {{"id", above}, {"ratio_part", "basement_dwelling"}});
+  areas = ok("area_table", json::object());
+  EXPECT_NEAR(areas["ratio_floor_area"].get<double>(), 84.0, 1e-6);
+  EXPECT_NE(notes(areas).find("居間 は"), std::string::npos);
+
+  // No level named GL: basements are not looked at (said), the areas as before.
+  ASSERT_TRUE(modeler.setLevels({{"", "B1FL", -2500}, {"", "1FL", 500}}));
+  areas = ok("area_table", json::object());
+  EXPECT_EQ(areas["ground"], "not_evaluated");
+  EXPECT_FALSE(areas["levels"][0]["basement"].get<bool>());
+  EXPECT_NEAR(areas["building_area"].get<double>(), 48.0, 1e-6);
+  EXPECT_NE(notes(areas).find("「GL」という名前のレベルが無い"), std::string::npos);
+  (void)call;
 }
 
 // docs/141: floor areas, the total and the building area by the Enforcement Order art. 2 (1).

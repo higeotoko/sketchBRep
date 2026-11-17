@@ -2845,7 +2845,8 @@ const std::vector<CommandDef>& commands() {
        "out of the floor area the floor area ratio (容積率) is worked out from: garage (自動車車庫等, up to 1/5 of "
        "the total floor area), stockpile (備蓄倉庫, 1/50), battery (蓄電池, 1/50), generator (自家発電設備, 1/100), "
        "water_tank (貯水槽, 1/100), delivery_box (宅配ボックス, 1/100), elevator (エレベーターの昇降路, all), "
-       "common_hall (共同住宅等の共用の廊下・階段, all); empty: counted. Whether the room really is such a part is "
+       "common_hall (共同住宅等の共用の廊下・階段, all), basement_dwelling (地階の住宅等, 1/3, only in a basement whose "
+       "ceiling is 1 m or less above the level named GL; docs/166); empty: counted. Whether the room really is such a part is "
        "not checked. One undo step.",
        SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "use": {"type": "string"}, "floor": {"type": "string"},
                "wall": {"type": "string"}, "ceiling": {"type": "string"}, "ceiling_height": {"type": "number"},
@@ -2924,7 +2925,8 @@ const std::vector<CommandDef>& commands() {
                            {"room_centre", r.roomCentre / 1e6},
                            {"room_inner", r.innerMissing == 0 ? json(r.roomInner / 1e6) : json(nullptr)},
                            {"slab", r.slabArea / 1e6}, {"slabs", r.slabs}, {"unreadable_walls", r.unreadableWalls},
-                           {"legal_floor", !r.enclosedKnown ? json(nullptr) : r.legalKnown ? json(r.legalFloor / 1e6) : json("not_evaluated")}});
+                           {"legal_floor", !r.enclosedKnown ? json(nullptr) : r.legalKnown ? json(r.legalFloor / 1e6) : json("not_evaluated")},
+                           {"basement", r.basement}, {"ceiling", r.ceiling > 0 ? json(r.ceiling) : json(nullptr)}});
          bool allKnown = true;
          for (const auto& r : t.rows) allKnown = allKnown && (!r.enclosedKnown || r.legalKnown);
          json result{{"levels", rows}, {"total_enclosed", t.enclosedTotal / 1e6}, {"total_room_centre", t.roomCentreTotal / 1e6},
@@ -2932,6 +2934,7 @@ const std::vector<CommandDef>& commands() {
                      {"total_legal_floor", allKnown ? json(t.legalTotal / 1e6) : json("not_evaluated")},
                      {"building_area", t.buildingKnown ? json(t.buildingArea / 1e6) : json("not_evaluated")},
                      {"ratio_floor_area", t.ratioKnown ? json(t.ratioTotal / 1e6) : json("not_evaluated")},
+                     {"ground", t.groundKnown ? json(t.ground) : json("not_evaluated")},
                      {"legal_notes", t.legalNotes}};
          json parts = json::array();
          for (const auto& part : t.ratioParts)
