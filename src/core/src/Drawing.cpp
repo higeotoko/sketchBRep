@@ -457,6 +457,13 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
   bool anySeen = false;
   std::vector<Item> cut, fills, loose, layerLines;
   std::set<doc::ObjectId> drawn, gridIds;
+  // docs/165: in plans, the cut lines of each wall of a build-up (its layers as the key), so
+  // that where two walls of one build-up touch, the line between them can be left out.
+  struct WallCut {
+    std::string layers;
+    std::size_t from = 0, to = 0;  // its items in `cut`
+  };
+  std::vector<WallCut> wallCuts;
   for (const doc::Object& o : document.objects()) {
     if (o.shape.IsNull() || !selected(document, o, spec)) continue;
     if (o.gridPin) gridIds.insert(o.gridPin->grid);
@@ -522,7 +529,13 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
       BRepAlgoAPI_Section section(world, plane, Standard_False);
       section.SetNonDestructive(Standard_True);
       section.Build();
+      const std::size_t cutFrom = cut.size();
       if (section.IsDone()) addLocalEdges(section.Shape().Moved(TopLoc_Location(proj.toLocal)), Pen::Cut, deflection, cut);
+      if (spec.kind == ViewKind::Plan && std::abs(n.Z()) > 1 - 1e-9) {
+        const auto kindAttr = o.attributes.find("kind"), layersAttr = o.attributes.find("wall_layers");
+        if (kindAttr != o.attributes.end() && kindAttr->second == "wall" && layersAttr != o.attributes.end() && !layersAttr->second.empty())
+          wallCuts.push_back({layersAttr->second, cutFrom, cut.size()});
+      }
       // A floor / roof of a type with layers (docs/151, docs/152), cut upright: thin lines where
       // its layers meet, under its upper faces (across a roof's slope), mitred where two meet.
       if (section.IsDone() && std::abs(n.Z()) < 1e-9) {
@@ -604,6 +617,59 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
       builder.Add(seen, f.shape);
     }
   }
+  // Where two walls of one build-up touch in the cut (a corner, mitred or butted, or two walls in
+  // one line), the line between them is left out of both: the walls read as one (docs/165).
+  std::vector<Item> seams;
+  {
+    const double same = std::max(1e-3, diag * 1e-7);
+    // The parts of straight line `a` that lie on straight line `b` (parameters along a, 0..1).
+    auto overlap = [&](const Item& a, const Item& b) -> std::optional<std::pair<double, double>> {
+      if (a.kind != Item::Kind::Line || b.kind != Item::Kind::Line) return std::nullopt;
+      const gp_Pnt2d &p = a.points[0], &q = a.points[1];
+      const gp_Vec2d d(p, q);
+      const double len = d.Magnitude();
+      if (len < same) return std::nullopt;
+      const gp_Vec2d u = d / len;
+      auto off = [&](const gp_Pnt2d& r) { return std::abs(u.Crossed(gp_Vec2d(p, r))); };
+      if (off(b.points[0]) > same || off(b.points[1]) > same) return std::nullopt;
+      double t0 = u.Dot(gp_Vec2d(p, b.points[0])) / len, t1 = u.Dot(gp_Vec2d(p, b.points[1])) / len;
+      if (t0 > t1) std::swap(t0, t1);
+      t0 = std::max(t0, 0.0);
+      t1 = std::min(t1, 1.0);
+      if ((t1 - t0) * len < same) return std::nullopt;
+      return std::make_pair(t0, t1);
+    };
+    std::vector<std::vector<std::pair<double, double>>> drop(cut.size());
+    for (std::size_t i = 0; i < wallCuts.size(); ++i)
+      for (std::size_t j = 0; j < wallCuts.size(); ++j) {
+        if (i == j || wallCuts[i].layers != wallCuts[j].layers) continue;
+        for (std::size_t a = wallCuts[i].from; a < wallCuts[i].to; ++a)
+          for (std::size_t b = wallCuts[j].from; b < wallCuts[j].to; ++b)
+            if (const auto o = overlap(cut[a], cut[b])) drop[a].push_back(*o);
+      }
+    std::vector<Item> kept;
+    for (std::size_t a = 0; a < cut.size(); ++a) {
+      if (drop[a].empty()) {
+        kept.push_back(std::move(cut[a]));
+        continue;
+      }
+      std::sort(drop[a].begin(), drop[a].end());
+      const gp_Pnt2d p = cut[a].points[0], q = cut[a].points[1];
+      auto at = [&](double s) { return gp_Pnt2d(p.XY() + (q.XY() - p.XY()) * s); };
+      double from = 0.0;
+      for (const auto& [d0, d1] : drop[a]) {
+        if (d0 > from) kept.push_back(line(cut[a].pen, at(from), at(d0)));
+        if (d1 > from) seams.push_back(line(cut[a].pen, at(std::max(from, d0)), at(d1)));
+        from = std::max(from, d1);
+      }
+      if (from < 1.0) kept.push_back(line(cut[a].pen, at(from), at(1.0)));
+    }
+    // Pieces shorter than the tolerance left by the splitting are not lines.
+    cut.clear();
+    for (Item& k : kept)
+      if (k.kind != Item::Kind::Line || k.points[0].Distance(k.points[1]) >= same) cut.push_back(std::move(k));
+  }
+
   // Seen beyond, hidden lines removed (all bodies together: each hides the others).
   std::vector<Item> visible, hidden;
   if (anySeen) {
@@ -640,8 +706,22 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     return true;
   };
   for (Item& f : fills) view.items.push_back(std::move(f));
+  auto onSeam = [&](const Item& item) {
+    if (seams.empty()) return false;
+    for (const gp_Pnt2d& p : samples(item)) {
+      bool on = false;
+      for (const Item& s : seams) {
+        if (distanceTo(s, p) < same) {
+          on = true;
+          break;
+        }
+      }
+      if (!on) return false;
+    }
+    return true;
+  };
   for (Item& v : visible) {
-    if (cut.empty() || !onCut(v)) view.items.push_back(std::move(v));
+    if ((cut.empty() || !onCut(v)) && !onSeam(v)) view.items.push_back(std::move(v));
   }
   for (Item& h : hidden) view.items.push_back(std::move(h));
   for (Item& l : loose) view.items.push_back(std::move(l));

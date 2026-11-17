@@ -1628,6 +1628,67 @@ TEST(WallLayerLines, LayerLinesMeetAsAMitreAtCorners) {
   EXPECT_GT(more.size(), lines.size());
 }
 
+// docs/165: in a plan, walls of one build-up that touch read as one: the line between them is
+// left out (corners butted or mitred, a wall in two pieces in one line); walls of other
+// build-ups keep theirs. Checked by the length of the cut lines.
+TEST(WallLayerLines, NoSeamBetweenWallsOfOneBuildUpInPlans) {
+  sbr::doc::Modeler modeler;
+  CommandApi api{modeler};
+  auto ok = [&](const std::string& command, json args) {
+    json r = json::parse(api.execute(json{{"command", command}, {"args", args}}.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  auto cutLength = [&] {
+    const auto view = sbr::draw::makeView(modeler.document(), sbr::draw::planView(1100));
+    EXPECT_TRUE(view) << view.error();
+    double total = 0.0;
+    for (const auto& item : view->items)
+      if (item.pen == sbr::draw::Pen::Cut && item.kind == sbr::draw::Item::Kind::Line) total += item.points[0].Distance(item.points[1]);
+    return total;
+  };
+  // exterior_siding: 160.5 thick, its line 95.5 in from the outer face (65 out from the inner).
+  const json room = ok("create_wall", {{"points", {{0, 0}, {6000, 0}, {6000, 4000}, {0, 4000}, {0, 0}}}, {"type", "exterior_siding"}, {"height", 3000}});
+  const double outer = 2 * (6191.0 + 4191.0), inner = 2 * (5870.0 + 3870.0);
+  EXPECT_NEAR(cutLength(), outer + inner, 0.5);  // butted corners: no seam
+  ok("mitre_wall_corners", json::object());
+  EXPECT_NEAR(cutLength(), outer + inner, 0.5);  // mitred: no diagonal either
+  // No thin line left where a seam was (the top of the cut walls seen from above).
+  {
+    const auto view = sbr::draw::makeView(modeler.document(), sbr::draw::planView(1100));
+    ASSERT_TRUE(view);
+    for (const auto& item : view->items) {
+      if (item.kind != sbr::draw::Item::Kind::Line || item.pen == sbr::draw::Pen::Cut) continue;
+      const gp_Pnt2d &a = item.points[0], &b = item.points[1];
+      const bool across = std::abs(a.X() - b.X()) > 1e-6 && std::abs(a.Y() - b.Y()) > 1e-6;  // a diagonal
+      EXPECT_FALSE(across) << a.X() << " " << a.Y() << " - " << b.X() << " " << b.Y();
+    }
+  }
+  // A partition of another build-up to the inner face: its own outline, and the wall's inner
+  // face stays whole across its end (two build-ups: two parts).
+  ok("create_wall", {{"points", {{3000, 65}, {3000, 3935}}}, {"type", "interior_board"}, {"height", 3000}});
+  EXPECT_NEAR(cutLength(), outer + inner + 2 * 3870.0 + 2 * 130.0, 0.5);
+  // A wall in two pieces in one line, both of one build-up: one wall to read.
+  sbr::doc::Modeler two;
+  CommandApi api2{two};
+  auto ok2 = [&](const std::string& command, json args) {
+    json r = json::parse(api2.execute(json{{"command", command}, {"args", args}}.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  ok2("create_wall", {{"points", {{0, 0}, {3000, 0}}}, {"type", "interior_board"}, {"height", 3000}});
+  ok2("create_wall", {{"points", {{3000, 0}, {6000, 0}}}, {"type", "interior_board"}, {"height", 3000}});
+  {
+    const auto view = sbr::draw::makeView(two.document(), sbr::draw::planView(1100));
+    ASSERT_TRUE(view) << view.error();
+    double total = 0.0;
+    for (const auto& item : view->items)
+      if (item.pen == sbr::draw::Pen::Cut && item.kind == sbr::draw::Item::Kind::Line) total += item.points[0].Distance(item.points[1]);
+    EXPECT_NEAR(total, 2 * 6000.0 + 2 * 130.0, 0.5);  // the two long faces and the two far ends
+  }
+  (void)room;
+}
+
 // docs/125: a set of drawings with sheet numbers.
 TEST_F(Schedules, ASetOfDrawingsCarriesSheetNumbers) {
   sbr::doc::DrawingSetSpec spec;
