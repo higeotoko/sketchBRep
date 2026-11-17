@@ -1163,9 +1163,38 @@ TEST_F(Schedules, ABalconyOnAWallAndTheAreas) {
   EXPECT_FALSE(call("create_balcony", {{"host", south}, {"rail", "glass"}}).value("ok", true));
   EXPECT_FALSE(call("change_balcony", {{"id", id}, {"floor_area", "half"}}).value("ok", true));
   EXPECT_TRUE(modeler.document().find(id));
+  // docs/167: on two posts from the level below: the building area takes all of it up to the
+  // posts' centre line. The fixture's floors: 1FL 0, 2FL 3000: on 2FL, posts from 1FL.
+  id = ok("change_balcony", {{"id", id}, {"top", 3000}, {"posts", 2}, {"rail", "wall"}, {"depth", 910}})["id"];
+  EXPECT_EQ(ok("balcony_info", {{"id", id}})["posts"], 2);
+  EXPECT_NEAR(bounds(id).CornerMin().Z(), 0, 1e-4);  // the posts stand on 1FL
+  EXPECT_NEAR(solidVolume(id), 2730.0 * 910 * 150 + (2730.0 * 100 + 2 * 100.0 * 810) * 1000 + 2 * 105.0 * 105 * 2850, 10.0);  // the rail 1000 high since above
+  table = sbr::doc::areaTable(modeler.document());
+  EXPECT_NEAR(table.buildingArea / 1e6, 48.0 + 2.73 * (0.91 - 0.0525), 1e-6);  // face (y -100) to the posts' centre
+  said = false;
+  for (const auto& n : table.legalNotes) said |= n.find("柱で支えたバルコニー 1 個") != std::string::npos;
+  EXPECT_TRUE(said);
+  // It goes with its wall, posts and all (the north wall's balcony stays where it is).
+  auto onSouth = [&] {
+    for (const std::string& b : balconies())
+      if (modeler.document().find(b)->attributes.at("host") == south) return b;
+    return std::string();
+  };
+  const auto steps2 = modeler.history().undoCount();
+  ok("move", {{"ids", {south}}, {"vector", {0, -300, 0}}});
+  ASSERT_FALSE(onSouth().empty());
+  EXPECT_NEAR(bounds(onSouth()).CornerMax().Y(), -400, 1e-4);
+  EXPECT_NEAR(bounds(onSouth()).CornerMin().Z(), 0, 1e-4);
+  EXPECT_EQ(modeler.history().undoCount(), steps2 + 1);
+  ASSERT_TRUE(modeler.undo());
+  // Refused: one post, posts wider than the balcony, posts with nothing below.
+  EXPECT_FALSE(call("change_balcony", {{"id", id}, {"posts", 1}}).value("ok", true));
+  EXPECT_FALSE(call("change_balcony", {{"id", id}, {"posts", 6}, {"post_size", 500}}).value("ok", true));
+  EXPECT_FALSE(call("change_balcony", {{"id", id}, {"top", 0}}).value("ok", true));
+  ok("change_balcony", {{"id", id}, {"posts", 0}});
   // Its wall deleted: it stays.
   ok("delete", {{"ids", {south}}});
-  EXPECT_TRUE(modeler.document().find(id));
+  EXPECT_FALSE(onSouth().empty());
 }
 
 // docs/113: a table on a sheet of its own.

@@ -676,7 +676,17 @@ class Modeler {
     // How it counts as floor area (令 2 条 1 項 3 号): "count", "exclude", or empty: not
     // evaluated (the notice on open balconies is not built in: the person decides).
     std::string floorArea;
+    // docs/167: posts under its front edge (0: none, else 2 to 6 spread along it, the two at the
+    // outer corners), `postSize` square, from the next level below its floor up to its floor.
+    int posts = 0;
+    double postSize = 105.0;
   };
+  // The parts of a balcony as made (docs/167): its floor, its rail and its posts (world; a part
+  // it has not is null). Refused when it was moved or reshaped by hand (no longer as made).
+  struct BalconyParts {
+    TopoDS_Shape floor, rail, posts;
+  };
+  Result<BalconyParts> balconyParts(const ObjectId& id) const;
   // In the middle of the wall, on its left face, its floor at the wall's foot.
   Result<BalconySpec> defaultBalcony(const ObjectId& wall) const;
   // For a point in plan: how far along the wall's line it is (kept within the wall) and the side

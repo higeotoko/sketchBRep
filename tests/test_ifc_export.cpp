@@ -120,7 +120,7 @@ struct Ifc {
 // IFC4: how many attributes each entity written here has.
 const std::map<std::string, std::size_t> kAttributes = {
     {"IFCPROJECT", 9}, {"IFCSITE", 14}, {"IFCBUILDING", 12}, {"IFCBUILDINGSTOREY", 10}, {"IFCSPACE", 11},
-    {"IFCWALL", 9}, {"IFCSLAB", 9}, {"IFCROOF", 9}, {"IFCSTAIR", 9}, {"IFCCOLUMN", 9}, {"IFCBEAM", 9}, {"IFCMEMBER", 9},
+    {"IFCWALL", 9}, {"IFCSLAB", 9}, {"IFCROOF", 9}, {"IFCSTAIR", 9}, {"IFCCOLUMN", 9}, {"IFCRAILING", 9}, {"IFCBEAM", 9}, {"IFCMEMBER", 9},
     {"IFCBUILDINGELEMENTPROXY", 9}, {"IFCOPENINGELEMENT", 9}, {"IFCWINDOW", 13}, {"IFCDOOR", 13}, {"IFCGRID", 11},
     {"IFCGRIDAXIS", 3}, {"IFCRELAGGREGATES", 6}, {"IFCRELCONTAINEDINSPATIALSTRUCTURE", 6}, {"IFCRELVOIDSELEMENT", 6},
     {"IFCRELFILLSELEMENT", 6}, {"IFCRELDEFINESBYPROPERTIES", 6}, {"IFCPROPERTYSET", 5}, {"IFCPROPERTYSINGLEVALUE", 4},
@@ -394,3 +394,48 @@ TEST_F(IfcExport, CurvedSolidsRoomsLeftOpenAndEmptyModels) {
   std::filesystem::remove(path);
 }
 }  // namespace
+
+// docs/167: a balcony is its floor (a slab BALCONY), its rail (a railing) and its posts
+// (columns), connected to its wall and to each other; moved by hand, one slab and a note.
+TEST_F(IfcExport, ABalconyIsASlabARailingAndPosts) {
+  ASSERT_TRUE(modeler.setLevels({{"", "1FL", 0}, {"", "2FL", 2800}}));
+  const json walls = ok("create_wall", {{"points", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}, {0, 0}}},
+                                        {"thickness", 200}, {"height", 2700}, {"base", 2800}})["ids"];
+  const std::string balcony = ok("create_balcony", {{"host", walls[0]}, {"at", {4000, -800}}, {"top", 2800}, {"posts", 2}})["id"];
+  sbr::doc::IfcSummary summary;
+  auto text = sbr::doc::ifcText(modeler, "balcony.ifc", &summary);
+  ASSERT_TRUE(text) << text.error();
+  Ifc ifc(*text);
+  expectWellFormed(ifc);
+  EXPECT_EQ(summary.balconies, 1);
+  EXPECT_EQ(summary.railings, 1);
+  EXPECT_EQ(summary.columns, 2);
+  EXPECT_EQ(summary.proxies, 0);
+  ASSERT_EQ(ifc.of("IFCSLAB").size(), 1u);
+  ASSERT_EQ(ifc.of("IFCRAILING").size(), 1u);
+  ASSERT_EQ(ifc.of("IFCCOLUMN").size(), 2u);
+  // The floor 2730 x 910 x 150; the parapet 100 thick on three sides, 1100 high; the posts 105
+  // square from 1FL (0) up to the floor's underside (2650). Together: the balcony's own volume.
+  const double floor = 2730.0 * 910 * 150, rail = (2730.0 * 100 + 2 * 100.0 * 810) * 1100, post = 105.0 * 105 * 2650;
+  EXPECT_NEAR(ifc.volume(ifc.of("IFCSLAB")[0]), floor, 10.0);
+  EXPECT_NEAR(ifc.volume(ifc.of("IFCRAILING")[0]), rail, 10.0);
+  for (const int c : ifc.of("IFCCOLUMN")) EXPECT_NEAR(ifc.volume(c), post, 10.0);
+  EXPECT_NEAR(volume(balcony), floor + rail + 2 * post, 10.0);
+  // The wall to the floor, the floor to the rail and to each post.
+  EXPECT_EQ(ifc.of("IFCRELCONNECTSELEMENTS").size(), 4u);
+  EXPECT_NE(text->find("'BALCONY'"), std::string::npos);
+  EXPECT_NE(text->find(".GUARDRAIL."), std::string::npos);
+  // Moved by hand: no longer as made: one slab, said in the notes.
+  ok("move", {{"ids", {balcony}}, {"vector", {0, 0, 100}}});
+  summary = {};
+  text = sbr::doc::ifcText(modeler, "balcony.ifc", &summary);
+  ASSERT_TRUE(text) << text.error();
+  Ifc moved(*text);
+  expectWellFormed(moved);
+  EXPECT_EQ(summary.balconies, 1);
+  EXPECT_EQ(summary.railings, 0);
+  EXPECT_EQ(moved.of("IFCSLAB").size(), 1u);
+  bool said = false;
+  for (const auto& n : summary.notes) said |= n.find("moved or reshaped by hand") != std::string::npos;
+  EXPECT_TRUE(said);
+}

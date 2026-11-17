@@ -947,6 +947,8 @@ void MainWindow::buildUi() {
       else if (key == QStringLiteral("side")) spec.side = text.toInt() >= 0 ? 1 : -1;
       else if (key == QStringLiteral("rail")) spec.rail = text.toStdString();
       else if (key == QStringLiteral("floor_area")) spec.floorArea = text.toStdString();
+      else if (key == QStringLiteral("posts")) spec.posts = text.toInt();
+      else if (key == QStringLiteral("post_size")) spec.postSize = value;
       else return;
       const auto changed = modeler_.changeBalcony(id, spec);
       if (!changed) {

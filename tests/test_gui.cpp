@@ -12290,6 +12290,7 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
     QCOMPARE(doc::areaTable(m.document()).balconiesCounted,1);
     auto* rail=f.window.findChild<QComboBox*>(QStringLiteral("balcony_rail"));QVERIFY(rail);
     QVERIFY(f.window.findChild<QComboBox*>(QStringLiteral("balcony_side")));
+    QVERIFY(f.window.findChild<QComboBox*>(QStringLiteral("balcony_posts")));  // docs/167
     QVERIFY(m.undo());QVERIFY(m.undo());QVERIFY(m.undo());
     QVERIFY(balcony().empty());
   }

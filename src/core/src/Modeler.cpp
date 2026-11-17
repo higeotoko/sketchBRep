@@ -8252,11 +8252,26 @@ Status balconySizes(const Modeler::BalconySpec& s) {
   if (!std::isfinite(s.top) || !std::isfinite(s.along)) return Status::failure("A balcony's height and place are numbers");
   if (!s.floorArea.empty() && s.floorArea != "count" && s.floorArea != "exclude")
     return Status::failure("A balcony's floor area: count, exclude or empty (not evaluated)");
+  if (s.posts != 0 && (s.posts < 2 || s.posts > 6)) return Status::failure("A balcony has no posts or 2 to 6");
+  if (s.posts > 0 && !(s.postSize >= 50.0 && s.postSize <= 500.0 && s.postSize <= s.depth && s.postSize * s.posts <= s.width))
+    return Status::failure("A balcony's posts are 50 to 500 square and fit under its front");
   return Status::success();
 }
 
-// Its floor, and its rail on the three sides away from the wall, as one solid (world).
-Result<TopoDS_Shape> balconySolid(const BalconyPlace& at, const Modeler::BalconySpec& s) {
+// Where a balcony's posts stand (docs/167): the highest level below its floor; else 0 when its
+// floor is above it. nullopt: nothing to stand on.
+std::optional<double> balconyPostBase(const Document& document, const Modeler::BalconySpec& s) {
+  const double bottom = s.top - s.thickness;
+  std::optional<double> best;
+  for (const FloorLevel& l : document.settings().levels)
+    if (l.elevation < bottom - 100.0 && (!best || l.elevation > *best)) best = l.elevation;
+  if (!best && bottom > 100.0) best = 0.0;
+  return best;
+}
+
+// Its floor, its rail on the three sides away from the wall and its posts (from `postBase`), as
+// one solid (world).
+Result<TopoDS_Shape> balconySolid(const BalconyPlace& at, const Modeler::BalconySpec& s, double postBase = 0.0) {
   using R = Result<TopoDS_Shape>;
   const double half = s.width / 2;
   // A box from (u0, n0) to (u1, n1) in the balcony's frame, z0 to z1.
@@ -8285,6 +8300,11 @@ Result<TopoDS_Shape> balconySolid(const BalconyPlace& at, const Modeler::Balcony
     }
     for (const double u0 : {-half, half - b}) parts.push_back(box(u0, 0, u0 + b, b, s.top, z1 - b));
   }
+  // Posts (docs/167): under the front edge, the outer two at its corners, the others between.
+  for (int i = 0; i < s.posts; ++i) {
+    const double u0 = -half + (s.width - s.postSize) * i / (s.posts - 1);
+    parts.push_back(box(u0, s.depth - s.postSize, u0 + s.postSize, s.depth, postBase, s.top - s.thickness));
+  }
   for (const TopoDS_Shape& part : parts)
     if (part.IsNull()) return R::failure("The balcony could not be built");
   if (parts.size() == 1) return parts.front();
@@ -8293,10 +8313,10 @@ Result<TopoDS_Shape> balconySolid(const BalconyPlace& at, const Modeler::Balcony
   return all.value();
 }
 
-std::string balconyText(const Modeler::BalconySpec& s, const BalconyPlace& at, const Bnd_Box& box) {
+std::string balconyText(const Modeler::BalconySpec& s, const BalconyPlace& at, const Bnd_Box& box, double postBase) {
   return nlohmann::json{{"along", s.along}, {"side", s.side >= 0 ? 1 : -1}, {"width", s.width}, {"depth", s.depth},
                         {"top", s.top}, {"thickness", s.thickness}, {"rail_height", s.railHeight}, {"rail", s.rail},
-                        {"floor_area", s.floorArea},
+                        {"floor_area", s.floorArea}, {"posts", s.posts}, {"post_size", s.postSize}, {"post_base", postBase},
                         // As made: where it stands out from (for the building area, and to tell whether it was moved by hand).
                         {"face", {at.face.X(), at.face.Y()}}, {"out", {at.n.X(), at.n.Y()}}, {"behind", at.behind},
                         {"min", {box.CornerMin().X(), box.CornerMin().Y(), box.CornerMin().Z()}},
@@ -8335,14 +8355,20 @@ Result<ObjectId> Modeler::createBalcony(const BalconySpec& spec) {
   if (const Status s = balconySizes(spec); !s) return R::failure(s.message());
   const auto place = balconyPlace(document_, spec);
   if (!place) return R::failure(place.error());
-  const auto solid = balconySolid(place.value(), spec);
+  double postBase = 0.0;
+  if (spec.posts > 0) {
+    const auto base = balconyPostBase(document_, spec);
+    if (!base) return R::failure("A balcony's posts need a floor below it to stand on");
+    postBase = *base;
+  }
+  const auto solid = balconySolid(place.value(), spec, postBase);
   if (!solid) return R::failure(solid.error());
   Object o;
   o.name = uniqueName("Balcony");
   o.recipe.base = ImportedShape{solid.value(), "balcony"};
   o.attributes["kind"] = "balcony";
   o.attributes["host"] = spec.host;
-  o.attributes["balcony"] = balconyText(spec, place.value(), geom::exactBounds(solid.value()));
+  o.attributes["balcony"] = balconyText(spec, place.value(), geom::exactBounds(solid.value()), postBase);
   return addObject(std::move(o), "Balcony");
 }
 
@@ -8364,7 +8390,44 @@ Result<Modeler::BalconySpec> Modeler::balconySpec(const ObjectId& id) const {
   spec.railHeight = j.value("rail_height", spec.railHeight);
   spec.rail = j.value("rail", spec.rail);
   spec.floorArea = j.value("floor_area", std::string());
+  spec.posts = j.value("posts", 0);
+  spec.postSize = j.value("post_size", spec.postSize);
   return spec;
+}
+
+Result<Modeler::BalconyParts> Modeler::balconyParts(const ObjectId& id) const {
+  using R = Result<BalconyParts>;
+  const auto spec = balconySpec(id);
+  if (!spec) return R::failure(spec.error());
+  const Object* b = document_.find(id);
+  const nlohmann::json j = nlohmann::json::parse(attributeOf(*b, "balcony"), nullptr, false);
+  const TopoDS_Shape world = document_.worldShape(*b);
+  if (world.IsNull() || !j.contains("min") || !j.contains("max")) return R::failure("Its sizes are not kept: make the balcony again");
+  const Bnd_Box box = geom::exactBounds(world);
+  const gp_Pnt low(j.at("min")[0].get<double>(), j.at("min")[1].get<double>(), j.at("min")[2].get<double>());
+  const gp_Pnt high(j.at("max")[0].get<double>(), j.at("max")[1].get<double>(), j.at("max")[2].get<double>());
+  if (box.IsVoid() || box.CornerMin().Distance(low) > 0.5 || box.CornerMax().Distance(high) > 0.5)
+    return R::failure("The balcony was moved or reshaped by hand");
+  // Cut apart by height: the posts below its floor, the floor, the rail above it.
+  const double floorBottom = spec->top - spec->thickness, floorTop = spec->top;
+  const double far = box.CornerMin().Distance(box.CornerMax()) + 1000.0;
+  auto slab = [&](double z0, double z1) -> TopoDS_Shape {
+    if (z1 - z0 < 1e-6) return {};
+    const gp_Pnt c((box.CornerMin().X() + box.CornerMax().X()) / 2, (box.CornerMin().Y() + box.CornerMax().Y()) / 2, 0);
+    const TopoDS_Shape cutter = planPrism({gp_Pnt(c.X() - far, c.Y() - far, 0), gp_Pnt(c.X() + far, c.Y() - far, 0),
+                                           gp_Pnt(c.X() + far, c.Y() + far, 0), gp_Pnt(c.X() - far, c.Y() + far, 0)},
+                                          z0, z1, gp_Trsf());
+    if (cutter.IsNull()) return {};
+    const auto part = geom::booleanCombine(geom::BooleanOp::Intersect, {world, cutter});
+    if (!part || geom::volume(part.value()) < 1.0) return {};
+    return part.value();
+  };
+  BalconyParts parts;
+  parts.floor = slab(floorBottom, floorTop);
+  if (parts.floor.IsNull()) return R::failure("The balcony's floor could not be read");
+  if (spec->rail != "none") parts.rail = slab(floorTop, box.CornerMax().Z() + 1.0);
+  if (spec->posts > 0) parts.posts = slab(box.CornerMin().Z() - 1.0, floorBottom);
+  return parts;
 }
 
 Result<ObjectId> Modeler::changeBalcony(const ObjectId& id, const BalconySpec& spec) {

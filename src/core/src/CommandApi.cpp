@@ -201,11 +201,17 @@ void balconyArgs(const doc::Modeler& m, const json& a, doc::Modeler::BalconySpec
   if (a.contains("rail")) s.rail = text(a, "rail");
   if (a.contains("rail_height")) s.railHeight = number(a, "rail_height");
   if (a.contains("floor_area")) s.floorArea = text(a, "floor_area");
+  if (a.contains("posts")) {
+    if (!a.at("posts").is_number_integer()) throw ApiError("'posts' is 0 or 2 to 6");
+    s.posts = a.at("posts").get<int>();
+  }
+  if (a.contains("post_size")) s.postSize = number(a, "post_size");
 }
 
 json balconyJson(const std::string& id, const doc::Modeler::BalconySpec& s) {
   return json{{"id", id}, {"host", s.host}, {"along", s.along}, {"side", s.side}, {"width", s.width}, {"depth", s.depth}, {"top", s.top},
-              {"thickness", s.thickness}, {"rail", s.rail}, {"rail_height", s.railHeight}, {"floor_area", s.floorArea}};
+              {"thickness", s.thickness}, {"rail", s.rail}, {"rail_height", s.railHeight}, {"floor_area", s.floorArea},
+              {"posts", s.posts}, {"post_size", s.postSize}};
 }
 
 // The stair sizes given in `a` put into `s` (the others stay).
@@ -2752,12 +2758,14 @@ const std::vector<CommandDef>& commands() {
        "(2730), 'depth' (out from the face, 910), 'top' (z of its floor, default the wall's foot), 'thickness' "
        "(150), 'rail': wall (a parapet, default), bars or none, 'rail_height' (1100). 'floor_area': count, "
        "exclude or \"\" (default: not evaluated - whether a balcony is floor area depends on how open it is; "
-       "the app does not decide). 1 m or more out from the wall's line it counts in the building area. It goes "
-       "with its wall. One undo step.",
+       "the app does not decide). 1 m or more out from the wall's line it counts in the building area (back 1 m "
+       "from its end; on posts, up to their centre line). 'posts': 0 (default) or 2 to 6 under its front edge, "
+       "'post_size' (105 square), from the next level below its floor (docs/167). It goes with its wall. In IFC: "
+       "a slab BALCONY, a railing, its posts columns. One undo step.",
        SCHEMA({"type": "object", "properties": {"host": {"type": "string"}, "at": {"type": "array"}, "along": {"type": "number"},
                "side": {"type": "integer"}, "width": {"type": "number"}, "depth": {"type": "number"}, "top": {"type": "number"},
                "thickness": {"type": "number"}, "rail": {"type": "string"}, "rail_height": {"type": "number"},
-               "floor_area": {"type": "string"}}, "required": ["host"]}),
+               "floor_area": {"type": "string"}, "posts": {"type": "integer"}, "post_size": {"type": "number"}}, "required": ["host"]}),
        [](doc::Modeler& m, const json& a) {
          doc::Modeler::BalconySpec spec = must(m.defaultBalcony(text(a, "host")));
          balconyArgs(m, a, spec);
@@ -2770,7 +2778,7 @@ const std::vector<CommandDef>& commands() {
        SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "at": {"type": "array"}, "along": {"type": "number"},
                "side": {"type": "integer"}, "width": {"type": "number"}, "depth": {"type": "number"}, "top": {"type": "number"},
                "thickness": {"type": "number"}, "rail": {"type": "string"}, "rail_height": {"type": "number"},
-               "floor_area": {"type": "string"}}, "required": ["id"]}),
+               "floor_area": {"type": "string"}, "posts": {"type": "integer"}, "post_size": {"type": "number"}}, "required": ["id"]}),
        [](doc::Modeler& m, const json& a) {
          doc::Modeler::BalconySpec spec = must(m.balconySpec(text(a, "id")));
          balconyArgs(m, a, spec);
@@ -3949,7 +3957,7 @@ const std::vector<CommandDef>& commands() {
          return json{{"storeys", s.storeys}, {"walls", s.walls}, {"slabs", s.slabs}, {"roofs", s.roofs}, {"stairs", s.stairs}, {"columns", s.columns},
                      {"beams", s.beams}, {"members", s.members}, {"openings", s.openings}, {"windows", s.windows},
                      {"doors", s.doors}, {"spaces", s.spaces}, {"grids", s.grids}, {"proxies", s.proxies},
-                     {"ceilings", s.coverings}, {"canopies", s.canopies}, {"skipped", s.skipped}, {"notes", s.notes}};
+                     {"ceilings", s.coverings}, {"canopies", s.canopies}, {"balconies", s.balconies}, {"railings", s.railings}, {"skipped", s.skipped}, {"notes", s.notes}};
        }},
       {"export_step", "Export visible objects (or 'ids') to STEP with names and colours.",
        SCHEMA({"type": "object", "properties": {"path": {"type": "string"},

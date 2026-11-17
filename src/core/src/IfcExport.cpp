@@ -483,6 +483,40 @@ Result<std::string> ifcText(const Modeler& modeler, const std::string& fileName,
       ++summary.canopies;
       quantities(o.id, element, "Qto_SlabBaseQuantities", {length("Width", z1 - z0), volumeOf("NetVolume", geom::volume(world))});
       if (const std::string host = attribute(o, "host"); !host.empty()) canopies.emplace_back(host, element);
+    } else if (kind == "balcony") {
+      // A balcony (docs/163, docs/167): its floor a slab of its own kind, its rail a railing, its
+      // posts columns, connected to the wall it stands out from. Moved or reshaped by hand: one slab.
+      const auto parts = modeler.balconyParts(o.id);
+      const int floorShape = parts ? shapeOf(parts->floor, storey.elevation) : shape;
+      element = f.add("IFCSLAB(" + head + text("BALCONY") + "," + ref(placement) + "," + ref(floorShape ? floorShape : shape) + "," + text(o.id) +
+                      ",.USERDEFINED.)");
+      ++summary.balconies;
+      if (!parts) summary.notes.push_back("Balcony '" + o.name + "': " + parts.error() + " - written as one slab");
+      std::vector<int> others;
+      if (parts && !parts->rail.IsNull())
+        if (const int railShape = shapeOf(parts->rail, storey.elevation)) {
+          const int rail = f.add("IFCRAILING(" + guid("rail:" + o.id) + ",$," + text(o.name + " rail") + ",$,$," + ref(placement) + "," + ref(railShape) +
+                                 "," + text(o.id + ":rail") + ",.GUARDRAIL.)");
+          ++summary.railings;
+          storey.elements.push_back(rail);
+          others.push_back(rail);
+        }
+      if (parts && !parts->posts.IsNull()) {
+        int n = 0;
+        for (TopExp_Explorer e(parts->posts, TopAbs_SOLID); e.More(); e.Next(), ++n) {
+          const int postShape = shapeOf(e.Current(), storey.elevation);
+          if (!postShape) continue;
+          const int post = f.add("IFCCOLUMN(" + guid("post:" + o.id + ":" + std::to_string(n)) + ",$," + text(o.name + " post " + std::to_string(n + 1)) +
+                                 ",$," + text("balcony_post") + "," + ref(placement) + "," + ref(postShape) + "," + text(o.id + ":post") + ",.COLUMN.)");
+          ++summary.columns;
+          storey.elements.push_back(post);
+          others.push_back(post);
+        }
+      }
+      for (const int other : others)
+        f.add("IFCRELCONNECTSELEMENTS(" + guid("balcony:" + o.id + ":" + std::to_string(other)) + ",$,$,$,$," + ref(element) + "," + ref(other) + ")");
+      quantities(o.id, element, "Qto_SlabBaseQuantities", {volumeOf("NetVolume", geom::volume(parts ? parts->floor : world))});
+      if (const std::string host = attribute(o, "host"); !host.empty()) canopies.emplace_back(host, element);
     } else if (kind == "ceiling") {
       // A ceiling board (docs/123): a covering of its room (docs/127).
       element = f.add("IFCCOVERING(" + head + "$" + tail + ",.CEILING.)");

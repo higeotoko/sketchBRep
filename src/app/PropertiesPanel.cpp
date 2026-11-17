@@ -546,6 +546,12 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
              {{tr("腰壁"), QStringLiteral("wall")}, {tr("手すり（笠木と柱）"), QStringLiteral("bars")}, {tr("なし"), QStringLiteral("none")}},
              tr("壁でない 3 方に付けます"));
       if (spec->rail != "none") size(tr("手すりの高さ"), "rail_height", spec->railHeight, 300, 2000, tr("床の上の面から、手すり・腰壁の上端まで"));
+      // docs/167: posts under its front edge.
+      choice(tr("柱"), "posts", QString::number(spec->posts),
+             {{tr("なし（壁から持ち出し）"), QStringLiteral("0")}, {tr("2 本（先の角）"), QStringLiteral("2")}, {tr("3 本"), QStringLiteral("3")},
+              {tr("4 本"), QStringLiteral("4")}},
+             tr("先の辺の下に立てる柱。下の階のレベルから床の下まで。柱があると、建築面積は柱の中心線まで全部入れます"));
+      if (spec->posts > 0) size(tr("柱の太さ"), "post_size", spec->postSize, 50, 500, tr("柱の角の寸法（正方形）"));
       choice(tr("床面積"), "floor_area", QString::fromStdString(spec->floorArea),
              {{tr("未評価（入れない）"), QString()}, {tr("入れる"), QStringLiteral("count")}, {tr("入れない"), QStringLiteral("exclude")}},
              tr("法の床面積に入れるかどうか。バルコニーは開放性などで扱いが変わります（通達・特定行政庁の取扱い）。アプリは決めないので、ここで選びます。"

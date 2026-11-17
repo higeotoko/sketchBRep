@@ -471,7 +471,7 @@ AreaTable areaTable(const Document& document) {
   if (loose.rooms > 0) out.rows.push_back(std::move(loose));
   // docs/163: balconies. Floor area only where the person said "count": added to the storey
   // whose level is at the balcony's floor.
-  int balconiesLoose = 0, balconiesInBuilding = 0;
+  int balconiesLoose = 0, balconiesInBuilding = 0, balconiesOnPosts = 0;
   for (const Object& o : document.objects()) {
     if (attribute(o, "kind") != "balcony") continue;
     const nlohmann::json b = nlohmann::json::parse(attribute(o, "balcony"), nullptr, false);
@@ -610,9 +610,12 @@ AreaTable areaTable(const Document& document) {
     const nlohmann::json b = nlohmann::json::parse(attribute(o, "balcony"), nullptr, false);
     if (!b.is_object() || !b.contains("face") || !b.contains("out")) continue;
     const double depth = b.value("depth", 0.0);
-    if (depth + b.value("behind", 0.0) < 1000.0) continue;
-    const double upTo = depth - 1000.0;
+    // docs/167: on posts, up to their centre line (柱の中心線); else as はね出し縁, back 1 m from its end.
+    const bool onPosts = b.value("posts", 0) > 0;
+    if (!onPosts && depth + b.value("behind", 0.0) < 1000.0) continue;
+    const double upTo = onPosts ? depth - b.value("post_size", 105.0) / 2 : depth - 1000.0;
     if (upTo <= 0.0) continue;  // within the wall: already counted
+    if (onPosts) ++balconiesOnPosts;
     const gp_Trsf world = document.worldTransform(o);
     const gp_Pnt face = gp_Pnt(b.at("face")[0].get<double>(), b.at("face")[1].get<double>(), 0);
     gp_Vec n(b.at("out")[0].get<double>(), b.at("out")[1].get<double>(), 0);
@@ -741,7 +744,9 @@ AreaTable areaTable(const Document& document) {
       out.legalNotes.push_back("建築面積：地階の " + names + " は、上の端（次のレベル）が地盤面から 1 m を超えるので入れた。");
     }
   }
-  if (balconiesInBuilding > 0) out.legalNotes.push_back("建築面積：壁の中心線から 1 m 以上出たバルコニーは、その先から 1 m 下がった線まで入れた（はね出し縁の類として）。");
+  if (balconiesInBuilding > balconiesOnPosts) out.legalNotes.push_back("建築面積：壁の中心線から 1 m 以上出たバルコニーは、その先から 1 m 下がった線まで入れた（はね出し縁の類として）。");
+  if (balconiesOnPosts > 0)
+    out.legalNotes.push_back("建築面積：柱で支えたバルコニー " + std::to_string(balconiesOnPosts) + " 個は、柱の中心線まで全部入れた（令 2 条 1 項 2 号「外壁又はこれに代わる柱の中心線」。特定行政庁の取扱いを確かめてください）。");
   if (out.balconies > 0) {
     const int open = out.balconies - out.balconiesCounted - out.balconiesExcluded - balconiesLoose;
     std::string line = "バルコニー " + std::to_string(out.balconies) + " 個（幅 × 出の合計 " + number(out.balconyArea / 1e6, 2) + " ㎡）：";
