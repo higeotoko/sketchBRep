@@ -53,9 +53,16 @@
 | 計算テスト済み | コア全 735 件中 728 件成功・7 件スキップ（ローカル）。新規 5 件（`tests/test_roof_skeleton.cpp`）。`RoofSkeleton.OverAConvexOutlineEachPointIsUnderTheLowestPlane`：長方形・斜めの辺のある五角形・六角形で、辺ごとの勾配・動かない辺（妻）・軒の出 600 の 4 通り → どの面の角・真ん中も、その面の勾配の面がいちばん低い（出っ張った形なら、これが正しい屋根）、面の合計 = 外周を出だけ広げた面積、面の継ぎ目に段が無い。`AnLHasAHipOutsideAndAValleyInside`：L 字の面ごとの面積と点（台形・三角）が手計算と一致、別の角から描いても同じ／幅の違う L 字の西の面 9 ㎡・点 (1000, 3000) (2000, 2000)。`AnInwardCornerThatReachesTheSideAcrossSplitsTheRoofInTwo`：V 字の切り込みで南の面に会う点、面の合計、左右対称。`ShapesWithManyInwardCornersAndWhatIsRefused`：十字（4 回対称）・コの字（勾配 5 寸・出 450）・Z 字、一直線に 2 つに分かれた辺、同じ線で勾配の違う辺・動く辺が無い外周は断る。`TheSolidOverInwardCorners`：L 字の寄棟で、長方形ごとの作り方（docs/99）と水平投影・体積・棟の高さが一致、面 6 枚／辺ごとの勾配 8 寸・6 寸 → 面を直接つないだ板、面 18 枚、立体 1 つで正しい、体積 ≒ 屋根面積 × 厚さ。docs/138・160 のテスト（部分の数）を、面の数に直した。翼が斜めの L 字で、勾配 6 寸の辺と 4 寸の辺がへこんだ角で隣り合う形は、段の面を入れて新しい作り方で通る（水平投影が外周を出だけ広げた形とぴったり一致） |
 | GUI 自動確認済み | 屋根の画面テスト（ローカル）が成功。足した画面テストは無い（作り方が変わっただけで、画面の操作は同じ） |
 | AI が配ったアプリで確認 | 作った版の `sbr_cli` で 8 通り（幅の違う L 字・T 字の寄棟と切妻・Z 字・V 字の切り込み・斜めの L 字の寄棟と切妻・辺ごとの値を混ぜた斜めの L 字）を作り、上から見た図と南・東の立面を絵にして見た：細い翼の棟が谷の所で終わる、V 字の切り込みで屋根が 2 つに分かれる、Z 字の 2 つの寄棟が谷でつながる |
-| CI | （記録待ち） |
+| CI | run 44028921391（push、`54bdd16`）：Linux 748 件成功、Windows 744 件＋3 件成功・GUI 237 件成功（7 件スキップ） |
 | Windows 実機確認 | まだ（チェック表 4-8） |
 
 ## 配布の記録
 
-（記録待ち）
+| 項目 | 値 |
+|---|---|
+| コード | `54bdd16`（直線スケルトン docs/164。Fable 5.2 で作業、Opus 5.5 で仕上げ） |
+| CI | run 44028921391（push）：Linux・Windows とも成功 |
+| ZIP | `SketchBRep-windows-x64-54bdd16-local.zip`（Codex のチャットフォルダの `outputs\`） |
+| サイズ | 72,836,495 bytes |
+| SHA256 | `93827ef3e8e7e041b96451d99a8892954a022b8315578bcfccd091ebd345a532` |
+| ZIP の検証 | `verify_portable_pads.py`・`verify_portable_mat.py` とも成功（docs/validation/2026-11-17-portable-54bdd16*.json） |
