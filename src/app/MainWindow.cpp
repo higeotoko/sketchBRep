@@ -920,6 +920,45 @@ void MainWindow::buildUi() {
       refreshPanels();
     });
   });
+  connect(panel_, &PropertiesPanel::balconyRequested, this, [this](const doc::ObjectId& wall) {
+    QTimer::singleShot(0, this, [this, wall] {
+      const auto spec = modeler_.defaultBalcony(wall);
+      const auto made = spec ? modeler_.createBalcony(*spec) : Result<doc::ObjectId>::failure(spec.error());
+      if (!made) {
+        reportError(tr("バルコニーを付けられません: %1").arg(userMessage(QString::fromStdString(made.error()))));
+        return;
+      }
+      setSelection({*made});
+      setStatus(tr("壁の真ん中にバルコニーを付けました（幅 %1・出 %2。プロパティで直せます。Ctrl+Z で戻せます）").arg(spec->width, 0, 'f', 0).arg(spec->depth, 0, 'f', 0));
+      refreshPanels();
+    });
+  });
+  connect(panel_, &PropertiesPanel::balconyEdited, this, [this](const doc::ObjectId& id, const QString& key, double value, const QString& text) {
+    QTimer::singleShot(0, this, [this, id, key, value, text] {
+      const auto found = modeler_.balconySpec(id);
+      if (!found) return;
+      doc::Modeler::BalconySpec spec = *found;
+      if (key == QStringLiteral("along")) spec.along = value;
+      else if (key == QStringLiteral("width")) spec.width = value;
+      else if (key == QStringLiteral("depth")) spec.depth = value;
+      else if (key == QStringLiteral("top")) spec.top = value;
+      else if (key == QStringLiteral("thickness")) spec.thickness = value;
+      else if (key == QStringLiteral("rail_height")) spec.railHeight = value;
+      else if (key == QStringLiteral("side")) spec.side = text.toInt() >= 0 ? 1 : -1;
+      else if (key == QStringLiteral("rail")) spec.rail = text.toStdString();
+      else if (key == QStringLiteral("floor_area")) spec.floorArea = text.toStdString();
+      else return;
+      const auto changed = modeler_.changeBalcony(id, spec);
+      if (!changed) {
+        reportError(tr("バルコニーを変えられません: %1").arg(userMessage(QString::fromStdString(changed.error()))));
+        refreshPanels();
+        return;
+      }
+      setSelection({*changed});
+      setStatus(tr("バルコニーを変えました（Ctrl+Z で戻せます）"));
+      refreshPanels();
+    });
+  });
   connect(panel_, &PropertiesPanel::canopyRequested, this, [this](const doc::ObjectId& id, int index) {
     QTimer::singleShot(0, this, [this, id, index] {
       if (index < 1) return;

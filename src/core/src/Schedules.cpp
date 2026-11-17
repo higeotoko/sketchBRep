@@ -410,6 +410,29 @@ AreaTable areaTable(const Document& document) {
   AreaRow loose;  // rooms whose marker is at no level's height
   addRooms(loose, "");
   if (loose.rooms > 0) out.rows.push_back(std::move(loose));
+  // docs/163: balconies. Floor area only where the person said "count": added to the storey
+  // whose level is at the balcony's floor.
+  int balconiesLoose = 0, balconiesInBuilding = 0;
+  for (const Object& o : document.objects()) {
+    if (attribute(o, "kind") != "balcony") continue;
+    const nlohmann::json b = nlohmann::json::parse(attribute(o, "balcony"), nullptr, false);
+    if (!b.is_object()) continue;
+    const double area = b.value("width", 0.0) * b.value("depth", 0.0);
+    ++out.balconies;
+    out.balconyArea += area;
+    const std::string how = b.value("floor_area", std::string());
+    if (how == "exclude") ++out.balconiesExcluded;
+    if (how != "count") continue;
+    AreaRow* storey = nullptr;
+    for (AreaRow& r : out.rows)
+      if (r.enclosedKnown && std::abs(r.elevation - b.value("top", 0.0)) < 1.0) storey = &r;
+    if (!storey) {
+      ++balconiesLoose;
+      continue;
+    }
+    storey->legalFloor += area;
+    ++out.balconiesCounted;
+  }
   bool everyKnown = !out.rows.empty();
   for (const AreaRow& r : out.rows) {
     out.enclosedTotal += r.enclosedArea;
@@ -522,6 +545,30 @@ AreaTable areaTable(const Document& document) {
       ++canopies;
     }
   }
+  // Balconies (はね出し縁の類, docs/163) standing out 1 m or more from the wall's line: back 1 m from their ends.
+  for (const Object& o : document.objects()) {
+    if (attribute(o, "kind") != "balcony") continue;
+    const nlohmann::json b = nlohmann::json::parse(attribute(o, "balcony"), nullptr, false);
+    if (!b.is_object() || !b.contains("face") || !b.contains("out")) continue;
+    const double depth = b.value("depth", 0.0);
+    if (depth + b.value("behind", 0.0) < 1000.0) continue;
+    const double upTo = depth - 1000.0;
+    if (upTo <= 0.0) continue;  // within the wall: already counted
+    const gp_Trsf world = document.worldTransform(o);
+    const gp_Pnt face = gp_Pnt(b.at("face")[0].get<double>(), b.at("face")[1].get<double>(), 0);
+    gp_Vec n(b.at("out")[0].get<double>(), b.at("out")[1].get<double>(), 0);
+    if (n.Magnitude() < 1e-9) continue;
+    n.Normalize();
+    const gp_Vec along = gp_Vec(0, 0, 1).Crossed(n);
+    const double half = b.value("width", 0.0) / 2;
+    (void)world;  // kept where it was made: a balcony moved by hand is read where its sizes say
+    const std::vector<gp_Pnt> part = {face.Translated(along * -half), face.Translated(along * half), face.Translated(along * half + n * upTo),
+                                      face.Translated(along * -half + n * upTo)};
+    if (const auto s = slice(part)) {
+      plan.push_back(*s);
+      ++balconiesInBuilding;
+    }
+  }
   if (const auto all = joined(plan)) {
     out.buildingArea = areaOf(all);
     out.buildingKnown = !eavesUnknown;
@@ -596,6 +643,18 @@ AreaTable areaTable(const Document& document) {
                            "特定行政庁が認める機械室等（同 第 6 項 第 3 号）、同じ敷地のほかの建築物の床面積、容積率の最低限度の算定。");
   if (eaves > 0) out.legalNotes.push_back("建築面積：1 m 以上出た軒は、その先から 1 m 下がった線まで入れた（屋根を載せた線から測った）。");
   if (canopies > 0) out.legalNotes.push_back("建築面積：壁の中心線から 1 m 以上出た庇は、その先から 1 m 下がった線まで入れた。");
+  if (balconiesInBuilding > 0) out.legalNotes.push_back("建築面積：壁の中心線から 1 m 以上出たバルコニーは、その先から 1 m 下がった線まで入れた（はね出し縁の類として）。");
+  if (out.balconies > 0) {
+    const int open = out.balconies - out.balconiesCounted - out.balconiesExcluded - balconiesLoose;
+    std::string line = "バルコニー " + std::to_string(out.balconies) + " 個（幅 × 出の合計 " + number(out.balconyArea / 1e6, 2) + " ㎡）：";
+    line += "床面積に入れた " + std::to_string(out.balconiesCounted) + " 個、入れないとした " + std::to_string(out.balconiesExcluded) + " 個、未評価 " +
+            std::to_string(open + balconiesLoose) + " 個。";
+    out.legalNotes.push_back(line);
+    out.legalNotes.push_back("バルコニーを床面積に入れるかは、開放性などによる（通達・特定行政庁の取扱い）。アプリは決めず、バルコニーのプロパティで選んだとおりにした。"
+                             "未評価の物は床面積に入れていない。");
+    if (balconiesLoose > 0)
+      out.legalNotes.push_back("床面積に入れるとしたバルコニーのうち " + std::to_string(balconiesLoose) + " 個は、床の高さにレベル（階）が無いので入れていない。");
+  }
   if (eavesUnknown) out.legalNotes.push_back("建築面積は未評価：1 m 以上出た軒のどこが妻かを読めない屋根がある（L 字などの切妻）。");
   if (!everyKnown) out.legalNotes.push_back("床面積を出せない階がある（形を直接変えて壁として読めない壁がある）：その階と延べ面積は未評価。");
   (void)stairsArriving;

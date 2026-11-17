@@ -116,6 +116,9 @@ struct AreaTable {
     double limit = -1.0;    // mm2 at most left out; below 0: no limit
     double excluded = 0.0;  // mm2 left out
   };
+  // docs/163: balconies (kind = balcony). Counted as floor area only where the person said so.
+  int balconies = 0, balconiesCounted = 0, balconiesExcluded = 0;
+  double balconyArea = 0.0;  // mm2 in plan of all of them (width x depth)
   std::vector<RatioPart> ratioParts;  // the kinds that have rooms
   bool ratioKnown = false;            // false: a floor area or a marked room cannot be read
   double ratioTotal = 0.0;            // mm2

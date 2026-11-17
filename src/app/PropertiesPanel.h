@@ -57,6 +57,9 @@ class PropertiesPanel : public QWidget {
   // A canopy over this opening (docs/147).
   void canopyRequested(const doc::ObjectId& id, int index);
   void canopyEdited(const doc::ObjectId& id, const QString& key, double value);
+  // A balcony on this wall (docs/163), and one of a balcony's sizes or choices changed.
+  void balconyRequested(const doc::ObjectId& wall);
+  void balconyEdited(const doc::ObjectId& id, const QString& key, double value, const QString& text);
   // A slab's / roof's type name typed in, and the others of its name made like it (docs/134).
   void typeNameEdited(const doc::ObjectId& id, const QString& name);
   void typeMatched(const doc::ObjectId& id);

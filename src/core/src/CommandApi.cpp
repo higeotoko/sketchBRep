@@ -179,6 +179,35 @@ void wallSidesAuto(const doc::Modeler& m, const json& a, geom::RoofSpec& s) {
   s.wallSides = m.roofSidesAtWalls(s);
 }
 
+// docs/163: the balcony sizes given in `a` put into `s` (the others stay).
+void balconyArgs(const doc::Modeler& m, const json& a, doc::Modeler::BalconySpec& s) {
+  if (a.contains("at")) {
+    const json& v = a.at("at");
+    if (!v.is_array() || v.size() < 2 || !v[0].is_number() || !v[1].is_number()) throw ApiError("'at' is [x, y]");
+    const auto near = m.balconyNear(s.host, gp_Pnt(v[0].get<double>(), v[1].get<double>(), 0.0));
+    if (!near) throw ApiError(near.error());
+    s.along = near->first;
+    s.side = near->second;
+  }
+  if (a.contains("along")) s.along = number(a, "along");
+  if (a.contains("side")) {
+    if (!a.at("side").is_number_integer() || (a.at("side").get<int>() != 1 && a.at("side").get<int>() != -1)) throw ApiError("'side' is 1 or -1");
+    s.side = a.at("side").get<int>();
+  }
+  if (a.contains("width")) s.width = number(a, "width");
+  if (a.contains("depth")) s.depth = number(a, "depth");
+  if (a.contains("top")) s.top = number(a, "top");
+  if (a.contains("thickness")) s.thickness = number(a, "thickness");
+  if (a.contains("rail")) s.rail = text(a, "rail");
+  if (a.contains("rail_height")) s.railHeight = number(a, "rail_height");
+  if (a.contains("floor_area")) s.floorArea = text(a, "floor_area");
+}
+
+json balconyJson(const std::string& id, const doc::Modeler::BalconySpec& s) {
+  return json{{"id", id}, {"host", s.host}, {"along", s.along}, {"side", s.side}, {"width", s.width}, {"depth", s.depth}, {"top", s.top},
+              {"thickness", s.thickness}, {"rail", s.rail}, {"rail_height", s.railHeight}, {"floor_area", s.floorArea}};
+}
+
 // The stair sizes given in `a` put into `s` (the others stay).
 void stairArgs(const json& a, geom::StairSpec& s) {
   if (a.contains("base")) s.base = number(a, "base");
@@ -2715,6 +2744,44 @@ const std::vector<CommandDef>& commands() {
          spec.above = numberOr(a, "above", spec.above);
          return json{{"id", must(m.makeCanopy(text(a, "host"), which.front(), spec))}};
        }},
+      {"create_balcony",
+       "A balcony (バルコニー, docs/163) on a wall made by create_wall: a floor out from one face with a rail on "
+       "its three other sides, one solid (attribute kind=balcony). 'host': the wall. 'at': [x, y] near where its "
+       "middle goes (put onto the wall's line; the side of the wall the point is on is the side the balcony "
+       "stands out on), or 'along' (mm from the wall's start) and 'side' (1 left of the line, -1 right). 'width' "
+       "(2730), 'depth' (out from the face, 910), 'top' (z of its floor, default the wall's foot), 'thickness' "
+       "(150), 'rail': wall (a parapet, default), bars or none, 'rail_height' (1100). 'floor_area': count, "
+       "exclude or \"\" (default: not evaluated - whether a balcony is floor area depends on how open it is; "
+       "the app does not decide). 1 m or more out from the wall's line it counts in the building area. It goes "
+       "with its wall. One undo step.",
+       SCHEMA({"type": "object", "properties": {"host": {"type": "string"}, "at": {"type": "array"}, "along": {"type": "number"},
+               "side": {"type": "integer"}, "width": {"type": "number"}, "depth": {"type": "number"}, "top": {"type": "number"},
+               "thickness": {"type": "number"}, "rail": {"type": "string"}, "rail_height": {"type": "number"},
+               "floor_area": {"type": "string"}}, "required": ["host"]}),
+       [](doc::Modeler& m, const json& a) {
+         doc::Modeler::BalconySpec spec = must(m.defaultBalcony(text(a, "host")));
+         balconyArgs(m, a, spec);
+         const std::string id = must(m.createBalcony(spec));
+         return balconyJson(id, must(m.balconySpec(id)));
+       }},
+      {"change_balcony",
+       "A balcony made by create_balcony with other sizes or on another place of its wall: any of the words of "
+       "create_balcony but 'host'. It is made again (its name kept): the new id is returned. One undo step.",
+       SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "at": {"type": "array"}, "along": {"type": "number"},
+               "side": {"type": "integer"}, "width": {"type": "number"}, "depth": {"type": "number"}, "top": {"type": "number"},
+               "thickness": {"type": "number"}, "rail": {"type": "string"}, "rail_height": {"type": "number"},
+               "floor_area": {"type": "string"}}, "required": ["id"]}),
+       [](doc::Modeler& m, const json& a) {
+         doc::Modeler::BalconySpec spec = must(m.balconySpec(text(a, "id")));
+         balconyArgs(m, a, spec);
+         const std::string id = must(m.changeBalcony(text(a, "id"), spec));
+         return balconyJson(id, must(m.balconySpec(id)));
+       }},
+      {"balcony_info",
+       "A balcony made by create_balcony as it stands: host, along, side, width, depth, top, thickness, rail, "
+       "rail_height, floor_area.",
+       SCHEMA({"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}),
+       [](doc::Modeler& m, const json& a) { return balconyJson(text(a, "id"), must(m.balconySpec(text(a, "id")))); }},
       {"change_opening_type",
        "Change a kind of opening (docs/133): every opening with 'mark' in opening_schedule (given by hand or worked "
        "out), in every wall, takes 'width' / 'height' (centre and sill kept), 'fitting' (an object as "

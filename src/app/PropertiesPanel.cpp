@@ -497,6 +497,62 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
     }
   }
 
+  // ===== A balcony (docs/163): its place on its wall, its sizes, its rail, how it counts as floor area.
+  if (const auto kind = o->attributes.find("kind"); kind != o->attributes.end() && kind->second == "balcony") {
+    auto* title = new QLabel(tr("<b>バルコニー</b>"));
+    title->setObjectName(QStringLiteral("partTitle"));
+    form_->addRow(title);
+    const auto spec = modeler.balconySpec(id);
+    if (!spec) {
+      auto* why = new QLabel(userMessage(QString::fromStdString(spec.error())));
+      why->setWordWrap(true);
+      form_->addRow(why);
+    } else {
+      auto size = [&](const QString& label, const char* key, double value, double low, double high, const QString& tip) {
+        auto* spin = lengthSpin(value);
+        spin->setRange(low, high);
+        spin->setValue(value);
+        spin->setObjectName(QStringLiteral("balconySize_") + QLatin1String(key));
+        spin->setToolTip(tip);
+        spin->setEnabled(!o->locked);
+        const QString k = QLatin1String(key);
+        connect(spin, &QDoubleSpinBox::editingFinished, this, [this, id, spin, k, value] {
+          if (std::abs(spin->value() - value) > 1e-9) emit balconyEdited(id, k, spin->value(), QString());
+        });
+        form_->addRow(label, spin);
+      };
+      auto choice = [&](const QString& label, const char* key, const QString& current, const QList<QPair<QString, QString>>& items, const QString& tip) {
+        auto* combo = new QComboBox;
+        combo->setObjectName(QStringLiteral("balcony_") + QLatin1String(key));
+        for (const auto& item : items) combo->addItem(item.first, item.second);
+        combo->setCurrentIndex(std::max(0, combo->findData(current)));
+        combo->setToolTip(tip);
+        combo->setEnabled(!o->locked);
+        const QString k = QLatin1String(key);
+        connect(combo, qOverload<int>(&QComboBox::activated), this, [this, id, combo, k, current](int) {
+          if (combo->currentData().toString() != current) emit balconyEdited(id, k, 0.0, combo->currentData().toString());
+        });
+        form_->addRow(label, combo);
+      };
+      size(tr("壁の上の位置"), "along", spec->along, 0, 100000, tr("壁の描き始めの端から、バルコニーの真ん中まで（壁の線に沿って）"));
+      choice(tr("付く面"), "side", QString::number(spec->side >= 0 ? 1 : -1),
+             {{tr("壁の線の左（描いた向きに見て）"), QStringLiteral("1")}, {tr("壁の線の右"), QStringLiteral("-1")}},
+             tr("壁のどちらの面から出すか。仕様のある外壁は、左が外です"));
+      size(tr("幅"), "width", spec->width, 300, 20000, tr("壁に沿った長さ"));
+      size(tr("出"), "depth", spec->depth, 300, 5000, tr("壁の面から先まで（水平）"));
+      size(tr("床の高さ"), "top", spec->top, -100000, 100000, tr("バルコニーの床の上の面の高さ"));
+      size(tr("床の厚さ"), "thickness", spec->thickness, 50, 500, tr("床の板の厚さ"));
+      choice(tr("手すり"), "rail", QString::fromStdString(spec->rail),
+             {{tr("腰壁"), QStringLiteral("wall")}, {tr("手すり（笠木と柱）"), QStringLiteral("bars")}, {tr("なし"), QStringLiteral("none")}},
+             tr("壁でない 3 方に付けます"));
+      if (spec->rail != "none") size(tr("手すりの高さ"), "rail_height", spec->railHeight, 300, 2000, tr("床の上の面から、手すり・腰壁の上端まで"));
+      choice(tr("床面積"), "floor_area", QString::fromStdString(spec->floorArea),
+             {{tr("未評価（入れない）"), QString()}, {tr("入れる"), QStringLiteral("count")}, {tr("入れない"), QStringLiteral("exclude")}},
+             tr("法の床面積に入れるかどうか。バルコニーは開放性などで扱いが変わります（通達・特定行政庁の取扱い）。アプリは決めないので、ここで選びます。"
+                "建築面積は、壁の中心線から 1 m 以上出た分を、先から 1 m 下がった線まで自動で入れます"));
+    }
+  }
+
   // ===== A stair (docs/90 G-09, docs/103): storeys, sizes, what it measures, the floor over it.
   if (const auto kind = o->attributes.find("kind"); kind != o->attributes.end() && kind->second == "stair") {
     auto* title = new QLabel(tr("<b>階段</b>"));
@@ -908,6 +964,13 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       if (!value.isEmpty()) emit wallTypeEdited(id, value);
     });
     form_->addRow(tr("種類"), type);
+    // docs/163: a balcony on this wall.
+    auto* balcony = new QPushButton(tr("バルコニーを付ける"));
+    balcony->setObjectName(QStringLiteral("wallAddBalcony"));
+    balcony->setToolTip(tr("この壁の真ん中に、バルコニー（床と腰壁）を付けます。付けた後、バルコニーを選ぶと、位置・幅・出・床の高さ・手すりを直せます"));
+    balcony->setEnabled(!o->locked);
+    connect(balcony, &QPushButton::clicked, this, [this, id] { emit balconyRequested(id); });
+    form_->addRow(tr("付属"), balcony);
   }
   if (partKind == "slab") addTypeRow(this, form_, modeler, *o, tr("厚さ（上の面はそのまま）"));
 

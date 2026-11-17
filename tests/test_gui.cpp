@@ -12254,6 +12254,45 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
     const Bnd_Box c=geom::exactBounds(m.document().worldShape(*m.document().find(third)));
     QVERIFY(std::abs(c.CornerMin().Z()-5850)<1e-6);
   }
+  // docs/163: a balcony from the wall's properties; its sizes and how it counts in its own.
+  {
+    f.window.clearLastError();
+    f.window.setSelection({south});
+    QApplication::processEvents();
+    auto* add=f.window.findChild<QPushButton*>(QStringLiteral("wallAddBalcony"));QVERIFY(add);
+    const auto before=m.history().undoCount();
+    add->click();
+    auto balcony=[&]{
+      for(const doc::Object& o:m.document().objects())
+        if(o.attributes.count("kind")&&o.attributes.at("kind")=="balcony")return o.id;
+      return doc::ObjectId();
+    };
+    QTRY_VERIFY(!balcony().empty());
+    QVERIFY2(f.window.lastError().isEmpty(),qPrintable(f.window.lastError()));
+    QCOMPARE(m.history().undoCount(),before+1);
+    QTRY_VERIFY(f.window.selection().size()==1&&f.window.selection().front()==balcony());
+    QApplication::processEvents();
+    auto* title=f.window.findChild<QLabel*>(QStringLiteral("partTitle"));QVERIFY(title);
+    QVERIFY2(title->text().contains(QStringLiteral("バルコニー")),qPrintable(title->text()));
+    auto* depth=f.window.findChild<QDoubleSpinBox*>(QStringLiteral("balconySize_depth"));QVERIFY(depth);
+    QVERIFY(std::abs(depth->value()-910)<1e-9);
+    depth->setValue(1500);
+    emit depth->editingFinished();
+    QTRY_VERIFY(m.balconySpec(balcony())&&std::abs(m.balconySpec(balcony())->depth-1500)<1e-9);
+    QCOMPARE(m.history().undoCount(),before+2);
+    QTRY_VERIFY(f.window.selection().size()==1&&f.window.selection().front()==balcony());
+    QApplication::processEvents();
+    auto* how=f.window.findChild<QComboBox*>(QStringLiteral("balcony_floor_area"));QVERIFY(how);
+    QCOMPARE(how->currentIndex(),0);
+    how->setCurrentIndex(how->findData(QStringLiteral("count")));
+    emit how->activated(how->currentIndex());
+    QTRY_VERIFY(m.balconySpec(balcony())&&m.balconySpec(balcony())->floorArea=="count");
+    QCOMPARE(doc::areaTable(m.document()).balconiesCounted,1);
+    auto* rail=f.window.findChild<QComboBox*>(QStringLiteral("balcony_rail"));QVERIFY(rail);
+    QVERIFY(f.window.findChild<QComboBox*>(QStringLiteral("balcony_side")));
+    QVERIFY(m.undo());QVERIFY(m.undo());QVERIFY(m.undo());
+    QVERIFY(balcony().empty());
+  }
 }
 
 // docs/120 (N-09): in 3D one storey only; the model is not changed.

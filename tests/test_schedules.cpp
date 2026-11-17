@@ -3,6 +3,7 @@
 #include <cmath>
 #include <map>
 #include <gtest/gtest.h>
+#include <TopExp_Explorer.hxx>
 #include <nlohmann/json.hpp>
 
 #include "sbr/api/CommandApi.h"
@@ -978,6 +979,110 @@ TEST_F(Schedules, ACanopyOverADoorAndTheBuildingArea) {
   // Refused: no such opening, a canopy too deep.
   EXPECT_FALSE(call("make_canopy", {{"host", east}, {"opening", 9}}).value("ok", true));
   EXPECT_FALSE(call("make_canopy", {{"host", east}, {"opening", 1}, {"depth", 9000}}).value("ok", true));
+}
+
+// docs/163: a balcony on a wall: its solid, the areas, going with its wall.
+TEST_F(Schedules, ABalconyOnAWallAndTheAreas) {
+  auto balconies = [&] {
+    std::vector<std::string> ids;
+    for (const auto& o : modeler.document().objects())
+      if (o.attributes.count("kind") && o.attributes.at("kind") == "balcony") ids.push_back(o.id);
+    return ids;
+  };
+  auto bounds = [&](const std::string& id) { return sbr::geom::exactBounds(modeler.document().worldShape(*modeler.document().find(id))); };
+  auto solidVolume = [&](const std::string& id) { return sbr::geom::volume(modeler.document().worldShape(*modeler.document().find(id))); };
+  const auto steps = modeler.history().undoCount();
+  // Pointed at outside the south wall (drawn along +x: its outside is on the right of its line).
+  json made = ok("create_balcony", {{"host", south}, {"at", {4000, -500}}});
+  std::string id = made["id"];
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  EXPECT_NEAR(made["along"].get<double>(), 3900, 1e-6);  // from the wall's own start (x = 100: it butts against the west wall)
+  EXPECT_EQ(made["side"], -1);
+  EXPECT_NEAR(made["top"].get<double>(), 0, 1e-6);  // the wall's foot
+  EXPECT_EQ(made["floor_area"], "");
+  EXPECT_EQ(modeler.document().find(id)->attributes.at("kind"), "balcony");
+  auto b = bounds(id);
+  EXPECT_NEAR(b.CornerMin().X(), 4000 - 1365, 1e-4);
+  EXPECT_NEAR(b.CornerMax().X(), 4000 + 1365, 1e-4);
+  EXPECT_NEAR(b.CornerMax().Y(), -100, 1e-4);  // the wall's outer face (200 thick on its line)
+  EXPECT_NEAR(b.CornerMin().Y(), -100 - 910, 1e-4);
+  EXPECT_NEAR(b.CornerMin().Z(), -150, 1e-4);
+  EXPECT_NEAR(b.CornerMax().Z(), 1100, 1e-4);
+  // The floor and a parapet 100 thick on three sides.
+  EXPECT_NEAR(solidVolume(id), 2730.0 * 910 * 150 + (2730.0 * 100 + 2 * 100.0 * 810) * 1100, 10.0);
+  int solids = 0;
+  for (TopExp_Explorer e(modeler.document().worldShape(*modeler.document().find(id)), TopAbs_SOLID); e.More(); e.Next()) ++solids;
+  EXPECT_EQ(solids, 1);
+  // 1010 from the wall's line: not 1 m beyond... it is: but nothing lies back 1 m from its end past the face.
+  auto table = sbr::doc::areaTable(modeler.document());
+  EXPECT_NEAR(table.buildingArea / 1e6, 48.0, 1e-6);
+  EXPECT_EQ(table.balconies, 1);
+  EXPECT_EQ(table.balconiesCounted, 0);
+  EXPECT_NEAR(table.rows[0].legalFloor / 1e6, 48.0, 1e-6);  // not floor area unless said
+  bool said = false;
+  for (const auto& n : table.legalNotes) said |= n.find("バルコニー 1 個") != std::string::npos && n.find("未評価 1 個") != std::string::npos;
+  EXPECT_TRUE(said);
+  // 1500 out: the building area takes it up to 1 m back from its end (500 beyond the face).
+  made = ok("change_balcony", {{"id", id}, {"depth", 1500}});
+  EXPECT_FALSE(modeler.document().find(id));
+  id = made["id"];
+  table = sbr::doc::areaTable(modeler.document());
+  EXPECT_NEAR(table.buildingArea / 1e6, 48.0 + 2.73 * 0.5, 1e-6);
+  // Said to count as floor area: added to the storey its floor is at.
+  id = ok("change_balcony", {{"id", id}, {"floor_area", "count"}})["id"];
+  table = sbr::doc::areaTable(modeler.document());
+  EXPECT_NEAR(table.rows[0].legalFloor / 1e6, 48.0 + 2.73 * 1.5, 1e-6);
+  EXPECT_EQ(table.balconiesCounted, 1);
+  EXPECT_NEAR(ok("area_table")["total_legal_floor"].get<double>(), 48.0 + 2.73 * 1.5, 1e-6);
+  // Its floor at a height with no storey: not counted, and said.
+  id = ok("change_balcony", {{"id", id}, {"top", 1234}})["id"];
+  table = sbr::doc::areaTable(modeler.document());
+  EXPECT_NEAR(table.rows[0].legalFloor / 1e6, 48.0, 1e-6);
+  said = false;
+  for (const auto& n : table.legalNotes) said |= n.find("レベル（階）が無い") != std::string::npos;
+  EXPECT_TRUE(said);
+  id = ok("change_balcony", {{"id", id}, {"top", 0}, {"floor_area", "exclude"}, {"depth", 910}})["id"];
+  EXPECT_EQ(sbr::doc::areaTable(modeler.document()).balconiesExcluded, 1);
+  // Bars: a top rail on posts; none: the floor only.
+  id = ok("change_balcony", {{"id", id}, {"rail", "bars"}, {"rail_height", 1000}})["id"];
+  EXPECT_NEAR(bounds(id).CornerMax().Z(), 1000, 1e-4);
+  EXPECT_LT(solidVolume(id), 2730.0 * 910 * 150 + (2730.0 * 100 + 2 * 100.0 * 810) * 1100 * 0.2);
+  id = ok("change_balcony", {{"id", id}, {"rail", "none"}})["id"];
+  EXPECT_NEAR(solidVolume(id), 2730.0 * 910 * 150, 1.0);
+  EXPECT_EQ(ok("balcony_info", {{"id", id}})["rail"], "none");
+
+  // The wall moved 500 outwards: the balcony goes with it, in the same undo step.
+  const auto before = modeler.history().undoCount();
+  ok("move", {{"ids", {south}}, {"vector", {0, -500, 0}}});
+  ASSERT_EQ(balconies().size(), 1u);
+  EXPECT_FALSE(modeler.document().find(id));
+  std::string followed = balconies().front();
+  EXPECT_NEAR(bounds(followed).CornerMax().Y(), -600, 1e-4);
+  EXPECT_EQ(modeler.history().undoCount(), before + 1);
+  ASSERT_TRUE(modeler.undo());
+  ASSERT_TRUE(modeler.document().find(id));
+  EXPECT_NEAR(bounds(id).CornerMax().Y(), -100, 1e-4);
+  // Moved by hand it is no longer as made: it stays when the wall moves.
+  ok("move", {{"ids", {id}}, {"vector", {0, 0, 300}}});
+  ok("move", {{"ids", {south}}, {"vector", {0, -500, 0}}});
+  ASSERT_TRUE(modeler.document().find(id));
+  EXPECT_NEAR(bounds(id).CornerMax().Y(), -100, 1e-4);
+  ASSERT_TRUE(modeler.undo());
+  ASSERT_TRUE(modeler.undo());
+  // On the other face; in the middle of the wall by default.
+  made = ok("create_balcony", {{"host", north}, {"side", -1}, {"width", 1820}});
+  EXPECT_NEAR((bounds(made["id"]).CornerMin().X() + bounds(made["id"]).CornerMax().X()) / 2, 3900, 1e-4);  // the middle of the wall as it stands (one end butts, the other runs through)
+  EXPECT_NEAR(bounds(made["id"]).CornerMin().Y(), 6100, 1e-4);  // north wall drawn along -x: its right is outside
+  // Refused: not a wall, too narrow, beyond the wall, a rail that is not known.
+  EXPECT_FALSE(call("create_balcony", {{"host", room}}).value("ok", true));
+  EXPECT_FALSE(call("create_balcony", {{"host", south}, {"width", 100}}).value("ok", true));
+  EXPECT_FALSE(call("create_balcony", {{"host", south}, {"along", 9000}}).value("ok", true));
+  EXPECT_FALSE(call("create_balcony", {{"host", south}, {"rail", "glass"}}).value("ok", true));
+  EXPECT_FALSE(call("change_balcony", {{"id", id}, {"floor_area", "half"}}).value("ok", true));
+  EXPECT_TRUE(modeler.document().find(id));
+  // Its wall deleted: it stays.
+  ok("delete", {{"ids", {south}}});
+  EXPECT_TRUE(modeler.document().find(id));
 }
 
 // docs/113: a table on a sheet of its own.

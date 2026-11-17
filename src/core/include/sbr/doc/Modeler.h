@@ -657,6 +657,33 @@ class Modeler {
   Result<ObjectId> makeCanopy(const ObjectId& host, std::size_t index, const CanopySpec& spec);
   // A canopy's sizes as made (docs/154), and made again with other sizes over the same opening
   // (its name kept; a new id, returned). One undo step. Refused when its opening is gone.
+  // A balcony on a wall (バルコニー, docs/97 N-03, docs/163): a floor out from one face of a wall
+  // made by the wall tool, with a rail on its three other sides, as one solid. Attribute kind =
+  // balcony, host, and `balcony` (its sizes, and where it stands out from the wall's line: for the
+  // building area). While it is as made it goes with its wall when the wall moves or changes, in
+  // the same undo step; moved or reshaped by hand, or its wall gone, it stays.
+  struct BalconySpec {
+    ObjectId host;
+    double along = 0.0;        // its middle, from the wall's start along its line
+    int side = 1;              // 1: on the wall's left face (looking along its line), -1: its right
+    double width = 2730.0, depth = 910.0;
+    double top = 0.0;          // z of its floor's top (world)
+    double thickness = 150.0;  // of its floor
+    double railHeight = 1100.0;  // above its floor's top
+    std::string rail = "wall";   // wall (a parapet), bars (a top rail on posts) or none
+    // How it counts as floor area (令 2 条 1 項 3 号): "count", "exclude", or empty: not
+    // evaluated (the notice on open balconies is not built in: the person decides).
+    std::string floorArea;
+  };
+  // In the middle of the wall, on its left face, its floor at the wall's foot.
+  Result<BalconySpec> defaultBalcony(const ObjectId& wall) const;
+  // For a point in plan: how far along the wall's line it is (kept within the wall) and the side
+  // of the line it is on (1 left, -1 right): where a balcony pointed at there goes.
+  Result<std::pair<double, int>> balconyNear(const ObjectId& wall, const gp_Pnt& at) const;
+  Result<ObjectId> createBalcony(const BalconySpec& spec);
+  Result<BalconySpec> balconySpec(const ObjectId& id) const;
+  // Made again with other sizes (its name kept; a new id, returned). One undo step.
+  Result<ObjectId> changeBalcony(const ObjectId& id, const BalconySpec& spec);
   Result<CanopySpec> canopySpec(const ObjectId& id) const;
   Result<ObjectId> changeCanopy(const ObjectId& id, const CanopySpec& spec);
   // A kind of opening (docs/97 N-08, docs/133): the openings that share a mark in the door and

@@ -8218,6 +8218,187 @@ std::vector<int> Modeler::roofSidesAtWalls(const geom::RoofSpec& roof) const {
   return out;
 }
 
+// --- balconies (docs/97 N-03, docs/163) ------------------------------------------------------
+namespace {
+struct BalconyPlace {
+  gp_Pnt face;  // on the wall's face, under the middle of the balcony (z 0)
+  gp_Vec u, n;  // along the wall, and out from the face
+  double behind = 0.0;  // from the wall's drawn line to that face
+};
+
+Result<BalconyPlace> balconyPlace(const Document& document, const Modeler::BalconySpec& spec) {
+  using R = Result<BalconyPlace>;
+  const Object* host = document.find(spec.host);
+  if (!host) return R::failure("Object not found");
+  const auto band = wallBand(document, *host);
+  if (!band) return R::failure("A balcony goes on a wall made by the wall tool");
+  if (spec.along < -0.5 || spec.along > band->length + 0.5) return R::failure("The middle of a balcony is within its wall's length");
+  BalconyPlace place;
+  const bool left = spec.side >= 0;
+  place.behind = left ? band->leftExt : band->right;
+  place.u = gp_Vec(band->dir);
+  place.n = gp_Vec(band->left) * (left ? 1.0 : -1.0);
+  const gp_Pnt on = band->start.Translated(place.u * spec.along + place.n * place.behind);
+  place.face = gp_Pnt(on.X(), on.Y(), 0.0);
+  return place;
+}
+
+Status balconySizes(const Modeler::BalconySpec& s) {
+  if (!(s.width >= 300.0 && s.width <= 20000.0)) return Status::failure("A balcony is 300 to 20000 wide");
+  if (!(s.depth >= 300.0 && s.depth <= 5000.0)) return Status::failure("A balcony stands out 300 to 5000");
+  if (!(s.thickness >= 50.0 && s.thickness <= 500.0)) return Status::failure("A balcony's floor is 50 to 500 thick");
+  if (s.rail != "wall" && s.rail != "bars" && s.rail != "none") return Status::failure("A balcony's rail: wall, bars or none");
+  if (s.rail != "none" && !(s.railHeight >= 300.0 && s.railHeight <= 2000.0)) return Status::failure("A balcony's rail is 300 to 2000 high");
+  if (!std::isfinite(s.top) || !std::isfinite(s.along)) return Status::failure("A balcony's height and place are numbers");
+  if (!s.floorArea.empty() && s.floorArea != "count" && s.floorArea != "exclude")
+    return Status::failure("A balcony's floor area: count, exclude or empty (not evaluated)");
+  return Status::success();
+}
+
+// Its floor, and its rail on the three sides away from the wall, as one solid (world).
+Result<TopoDS_Shape> balconySolid(const BalconyPlace& at, const Modeler::BalconySpec& s) {
+  using R = Result<TopoDS_Shape>;
+  const double half = s.width / 2;
+  // A box from (u0, n0) to (u1, n1) in the balcony's frame, z0 to z1.
+  auto box = [&](double u0, double n0, double u1, double n1, double z0, double z1) {
+    auto p = [&](double u, double n) { return at.face.Translated(at.u * u + at.n * n); };
+    return planPrism({p(u0, n0), p(u1, n0), p(u1, n1), p(u0, n1)}, z0, z1, gp_Trsf());
+  };
+  std::vector<TopoDS_Shape> parts{box(-half, 0, half, s.depth, s.top - s.thickness, s.top)};
+  if (s.rail == "wall") {
+    const double t = std::min(100.0, std::min(s.depth, s.width / 2) / 2);  // the parapet's thickness
+    const double z1 = s.top + s.railHeight;
+    parts.push_back(box(-half, s.depth - t, half, s.depth, s.top, z1));
+    parts.push_back(box(-half, 0, -half + t, s.depth - t, s.top, z1));
+    parts.push_back(box(half - t, 0, half, s.depth - t, s.top, z1));
+  } else if (s.rail == "bars") {
+    const double b = 50.0;  // top rail and posts, square
+    const double z1 = s.top + s.railHeight;
+    parts.push_back(box(-half, s.depth - b, half, s.depth, z1 - b, z1));
+    parts.push_back(box(-half, 0, -half + b, s.depth - b, z1 - b, z1));
+    parts.push_back(box(half - b, 0, half, s.depth - b, z1 - b, z1));
+    // Posts: at the corners, at the wall, and no more than 1000 apart along the front.
+    const int bays = std::max(1, static_cast<int>(std::ceil((s.width - b) / 1000.0 - 1e-9)));
+    for (int i = 0; i <= bays; ++i) {
+      const double u0 = -half + (s.width - b) * i / bays;
+      parts.push_back(box(u0, s.depth - b, u0 + b, s.depth, s.top, z1 - b));
+    }
+    for (const double u0 : {-half, half - b}) parts.push_back(box(u0, 0, u0 + b, b, s.top, z1 - b));
+  }
+  for (const TopoDS_Shape& part : parts)
+    if (part.IsNull()) return R::failure("The balcony could not be built");
+  if (parts.size() == 1) return parts.front();
+  auto all = geom::booleanCombine(geom::BooleanOp::Union, parts);
+  if (!all) return R::failure("The balcony could not be built: " + all.error());
+  return all.value();
+}
+
+std::string balconyText(const Modeler::BalconySpec& s, const BalconyPlace& at, const Bnd_Box& box) {
+  return nlohmann::json{{"along", s.along}, {"side", s.side >= 0 ? 1 : -1}, {"width", s.width}, {"depth", s.depth},
+                        {"top", s.top}, {"thickness", s.thickness}, {"rail_height", s.railHeight}, {"rail", s.rail},
+                        {"floor_area", s.floorArea},
+                        // As made: where it stands out from (for the building area, and to tell whether it was moved by hand).
+                        {"face", {at.face.X(), at.face.Y()}}, {"out", {at.n.X(), at.n.Y()}}, {"behind", at.behind},
+                        {"min", {box.CornerMin().X(), box.CornerMin().Y(), box.CornerMin().Z()}},
+                        {"max", {box.CornerMax().X(), box.CornerMax().Y(), box.CornerMax().Z()}}}
+      .dump();
+}
+}  // namespace
+
+Result<Modeler::BalconySpec> Modeler::defaultBalcony(const ObjectId& wall) const {
+  using R = Result<BalconySpec>;
+  const Object* host = document_.find(wall);
+  if (!host) return R::failure("Object not found");
+  const auto band = wallBand(document_, *host);
+  if (!band) return R::failure("A balcony goes on a wall made by the wall tool");
+  BalconySpec spec;
+  spec.host = wall;
+  spec.along = band->length / 2;
+  spec.width = std::max(300.0, std::min(spec.width, band->length));
+  spec.top = band->z0;
+  return spec;
+}
+
+Result<std::pair<double, int>> Modeler::balconyNear(const ObjectId& wall, const gp_Pnt& at) const {
+  using R = Result<std::pair<double, int>>;
+  const Object* host = document_.find(wall);
+  if (!host) return R::failure("Object not found");
+  const auto band = wallBand(document_, *host);
+  if (!band) return R::failure("A balcony goes on a wall made by the wall tool");
+  const gp_Vec to(gp_Pnt(band->start.X(), band->start.Y(), 0), gp_Pnt(at.X(), at.Y(), 0));
+  const double middle = (band->leftExt - band->right) / 2;  // of the wall's thickness, from its line
+  return std::make_pair(std::clamp(to.Dot(gp_Vec(band->dir)), 0.0, band->length), to.Dot(gp_Vec(band->left)) >= middle ? 1 : -1);
+}
+
+Result<ObjectId> Modeler::createBalcony(const BalconySpec& spec) {
+  using R = Result<ObjectId>;
+  if (const Status s = balconySizes(spec); !s) return R::failure(s.message());
+  const auto place = balconyPlace(document_, spec);
+  if (!place) return R::failure(place.error());
+  const auto solid = balconySolid(place.value(), spec);
+  if (!solid) return R::failure(solid.error());
+  Object o;
+  o.name = uniqueName("Balcony");
+  o.recipe.base = ImportedShape{solid.value(), "balcony"};
+  o.attributes["kind"] = "balcony";
+  o.attributes["host"] = spec.host;
+  o.attributes["balcony"] = balconyText(spec, place.value(), geom::exactBounds(solid.value()));
+  return addObject(std::move(o), "Balcony");
+}
+
+Result<Modeler::BalconySpec> Modeler::balconySpec(const ObjectId& id) const {
+  using R = Result<BalconySpec>;
+  const Object* b = document_.find(id);
+  if (!b) return R::failure("Object not found");
+  if (attributeOf(*b, "kind") != "balcony") return R::failure("It is not a balcony");
+  const nlohmann::json j = nlohmann::json::parse(attributeOf(*b, "balcony"), nullptr, false);
+  if (!j.is_object()) return R::failure("Its sizes are not kept: make the balcony again");
+  BalconySpec spec;
+  spec.host = attributeOf(*b, "host");
+  spec.along = j.value("along", 0.0);
+  spec.side = j.value("side", 1);
+  spec.width = j.value("width", spec.width);
+  spec.depth = j.value("depth", spec.depth);
+  spec.top = j.value("top", 0.0);
+  spec.thickness = j.value("thickness", spec.thickness);
+  spec.railHeight = j.value("rail_height", spec.railHeight);
+  spec.rail = j.value("rail", spec.rail);
+  spec.floorArea = j.value("floor_area", std::string());
+  return spec;
+}
+
+Result<ObjectId> Modeler::changeBalcony(const ObjectId& id, const BalconySpec& spec) {
+  using R = Result<ObjectId>;
+  const Object* b = document_.find(id);
+  if (!b) return R::failure("Object not found");
+  if (attributeOf(*b, "kind") != "balcony") return R::failure("It is not a balcony");
+  if (b->locked) return R::failure("'" + b->name + "' is locked");
+  if (const Status s = balconySizes(spec); !s) return R::failure(s.message());
+  if (const auto place = balconyPlace(document_, spec); !place) return R::failure(place.error());
+  const std::string name = b->name;
+  const std::map<std::string, std::string> kept = b->attributes;
+  history_.beginGroup("Change Balcony");
+  if (const Status s = remove({id}); !s) {
+    history_.abortGroup();
+    return R::failure(s.message());
+  }
+  const auto made = createBalcony(spec);
+  if (!made) {
+    history_.abortGroup();
+    return R::failure(made.error());
+  }
+  // Its name, and what else was put on it (a tag, a material name), stay.
+  Object again = *document_.find(*made);
+  again.name = name;
+  for (const auto& [key, value] : kept)
+    if (key != "kind" && key != "host" && key != "balcony") again.attributes[key] = value;
+  ChangeSet changes(document_);
+  changes.modify(again);
+  history_.execute(changes.build("Change Balcony"));
+  history_.endGroup();
+  return *made;
+}
+
 RoomInfo Modeler::roomAt(const gp_Pnt& at) const { return regionInfo(document_, at); }
 
 std::vector<RoomInfo> Modeler::rooms() const { return roomsIn(document_); }
@@ -8433,6 +8614,46 @@ void Modeler::followCeilings(const Command& step) {
     else history_.abortGroup();  // as they were
     if (!wasAmending) history_.endAmend();
     followingCeilings_ = false;
+  }
+  // Balconies still as made (docs/163) go with their wall: made again on it as it is now.
+  {
+    std::vector<std::pair<ObjectId, BalconySpec>> balconies;
+    for (const Object& o : document_.objects()) {
+      if (attributeOf(o, "kind") != "balcony" || o.locked) continue;
+      const auto spec = balconySpec(o.id);
+      const nlohmann::json j = nlohmann::json::parse(attributeOf(o, "balcony"), nullptr, false);
+      if (!spec || !j.is_object() || !j.contains("face") || !j.contains("min") || !j.contains("max")) continue;
+      BalconySpec now = *spec;
+      const Object* host = document_.find(now.host);
+      const auto band = host ? wallBand(document_, *host) : std::nullopt;
+      if (!band) continue;  // its wall is gone, or no longer read as a wall: it stays
+      now.along = std::clamp(now.along, 0.0, band->length);
+      const auto place = balconyPlace(document_, now);
+      if (!place) continue;
+      const gp_Pnt face(j.at("face")[0].get<double>(), j.at("face")[1].get<double>(), 0);
+      const gp_Vec out(j.at("out")[0].get<double>(), j.at("out")[1].get<double>(), 0);
+      if (place->face.Distance(face) <= 0.5 && place->n.Angle(out) <= 1e-6 && std::abs(place->behind - j.value("behind", 0.0)) <= 0.5) continue;
+      // As made: its bounds those it was made with.
+      const TopoDS_Shape shape = document_.worldShape(o);
+      if (shape.IsNull()) continue;
+      const Bnd_Box box = geom::exactBounds(shape);
+      const gp_Pnt low(j.at("min")[0].get<double>(), j.at("min")[1].get<double>(), j.at("min")[2].get<double>());
+      const gp_Pnt high(j.at("max")[0].get<double>(), j.at("max")[1].get<double>(), j.at("max")[2].get<double>());
+      if (box.IsVoid() || box.CornerMin().Distance(low) > 0.5 || box.CornerMax().Distance(high) > 0.5) continue;
+      balconies.push_back({o.id, now});
+    }
+    if (!balconies.empty()) {
+      followingCeilings_ = true;
+      const bool wasAmending = history_.amending();
+      history_.beginAmend();
+      history_.beginGroup("Balconies Follow");
+      bool ok = true;
+      for (const auto& [id, spec] : balconies) ok = ok && changeBalcony(id, spec);
+      if (ok) history_.endGroup();
+      else history_.abortGroup();  // as they were
+      if (!wasAmending) history_.endAmend();
+      followingCeilings_ = false;
+    }
   }
   struct Follow {
     ObjectId ceiling;
