@@ -1996,6 +1996,81 @@ TEST(WallLayerLines, NoSeamBetweenWallsOfOneBuildUpInPlans) {
   (void)room;
 }
 
+// docs/173: the cut layers hatched in drawings at a scale: structural timber (the wall's core, a
+// floor's joists) crossed, plywood single lines; finishes and boards not; nothing without a scale.
+TEST(WallLayerLines, CutLayersAreHatchedAtAScale) {
+  sbr::doc::Modeler modeler;
+  CommandApi api{modeler};
+  auto ok = [&](const std::string& command, json args) {
+    json r = json::parse(api.execute(json{{"command", command}, {"args", args}}.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  ok("create_wall", {{"points", {{0, 0}, {6000, 0}, {6000, 4000}, {0, 4000}, {0, 0}}}, {"type", "exterior_siding"}, {"height", 3000}});
+  ok("define_type", {{"name", "F1"}, {"part", "floor"}, {"layers", {{{"name", "フローリング"}, {"thickness", 15}}, {{"name", "構造用合板"}, {"thickness", 24}}, {{"name", "根太"}, {"thickness", 105}}}}});
+  ok("batch", {{"commands", {{{"command", "create_slab"}, {"args", {{"outline", {{0, 0}, {6000, 0}, {6000, 4000}, {0, 4000}}}, {"top", 0}, {"thickness", 144}}}},
+                             {{"command", "set_type_name"}, {"args", {{"ids", {"$1.id"}}, {"name", "F1"}}}}}}});
+  // The diagonal thin lines of a view: (rising, falling) with their ends.
+  struct Diag {
+    gp_Pnt2d a, b;
+    bool rising;
+  };
+  auto diagonals = [&](sbr::draw::ViewSpec spec, double scale) {
+    spec.hatchScale = scale;
+    const auto view = sbr::draw::makeView(modeler.document(), spec);
+    EXPECT_TRUE(view) << view.error();
+    std::vector<Diag> out;
+    for (const auto& item : view->items) {
+      if (item.kind != sbr::draw::Item::Kind::Line || item.pen != sbr::draw::Pen::Visible) continue;
+      const double dx = item.points[1].X() - item.points[0].X(), dy = item.points[1].Y() - item.points[0].Y();
+      if (std::abs(std::abs(dx) - std::abs(dy)) < 1e-6 && std::abs(dx) > 1e-6) out.push_back({item.points[0], item.points[1], dx * dy > 0});
+    }
+    return out;
+  };
+  // Plan 1:20: along the south wall (x 300..5700), the exterior is below y 0 (its line on the core's middle).
+  const auto plan = diagonals(sbr::draw::planView(1100), 20);
+  int core = 0, ply = 0;
+  for (const Diag& d : plan) {
+    if (std::min(d.a.X(), d.b.X()) < 300 || std::max(d.a.X(), d.b.X()) > 5700 || std::max(d.a.Y(), d.b.Y()) > 200) continue;
+    const double y0 = std::min(d.a.Y(), d.b.Y()), y1 = std::max(d.a.Y(), d.b.Y());
+    if (!d.rising) {
+      // Falling lines are crossed hatching only: the core 105, y -52.5..52.5.
+      EXPECT_GE(y0, -52.5 - 1e-6);
+      EXPECT_LE(y1, 52.5 + 1e-6);
+      ++core;
+    } else if (y1 <= -52.5 + 1e-6) {
+      ++ply;  // plywood, outside the core
+    }
+    // Nothing in the board (inside, 52.5..65) or the siding (outermost 16).
+    EXPECT_LE(y1, 52.5 + 1e-6);
+    EXPECT_GE(y0, -95.5 + 16 + 18 - 1e-6) << "the batten (18) and the siding (16) are not hatched";
+  }
+  EXPECT_GT(core, 20);
+  EXPECT_GT(ply, 20);
+  // 1:50: the same pattern, 2.5 times as far apart.
+  const auto coarse = diagonals(sbr::draw::planView(1100), 50);
+  EXPECT_LT(coarse.size() * 2, plan.size());
+  // Without a scale (the screen): none.
+  EXPECT_TRUE(diagonals(sbr::draw::planView(1100), 0).empty());
+  // A section across the floor, looking east: the joists (z -144..-39) crossed, the plywood
+  // (-39..-15) single lines, the flooring not.
+  const auto section = diagonals(sbr::draw::sectionView(gp_Pnt(3000, 2000, 0), gp_Dir(1, 0, 0)), 20);
+  int joists = 0, plywood = 0;
+  for (const Diag& d : section) {
+    const double z0 = std::min(d.a.Y(), d.b.Y()), z1 = std::max(d.a.Y(), d.b.Y());
+    if (z1 > 1e-6 || z0 < -144 - 1e-6) continue;  // not in the floor
+    if (!d.rising) {
+      EXPECT_LE(z1, -39 + 1e-6);
+      ++joists;
+    } else if (z0 >= -39 - 1e-6) {
+      EXPECT_LE(z1, -15 + 1e-6);
+      ++plywood;
+    }
+  }
+  EXPECT_GT(joists, 20);
+  EXPECT_GT(plywood, 20);
+}
+
 // docs/125: a set of drawings with sheet numbers.
 TEST_F(Schedules, ASetOfDrawingsCarriesSheetNumbers) {
   sbr::doc::DrawingSetSpec spec;

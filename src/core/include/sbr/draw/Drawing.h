@@ -101,6 +101,9 @@ struct ViewSpec {
     std::string sheet;       // "A-08" (empty: none)
   };
   std::vector<CutMark> cutMarks;
+  // docs/173: > 0: the cut layers of walls and floors hatched (structural timber crossed, plywood
+  // with single lines), spaced on paper at this scale (1:hatchScale); 0: no hatching (the screen).
+  double hatchScale = 0.0;
 };
 
 // The usual views. Plans: cut at `cutZ`, seen from above. Sections: cut on

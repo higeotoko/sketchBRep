@@ -1102,7 +1102,9 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& sp
     sheetSpec.title = spec.title;
     sheetSpec.title.drawing = p.name;
     if (p.view) {
-      const auto view = draw::makeView(document, *p.view);
+      draw::ViewSpec hatched = *p.view;
+      hatched.hatchScale = spec.scale;  // docs/173
+      const auto view = draw::makeView(document, hatched);
       if (!view) {
         out.notes.push_back(p.name + ": " + view.error());
         continue;
@@ -1170,6 +1172,7 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& sp
     Result<draw::Sheet> laid = Result<draw::Sheet>::failure("");
     if (p && p->view) {
       draw::ViewSpec viewSpec = *p->view;
+      viewSpec.hatchScale = spec.scale;  // docs/173
       // Plans: where the sections are cut, with their sheet numbers.
       if (viewSpec.kind == draw::ViewKind::Plan)
         for (const Cut& c : cuts)

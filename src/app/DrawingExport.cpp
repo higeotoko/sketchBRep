@@ -504,7 +504,7 @@ DrawingDialog::DrawingDialog(const doc::Document& document, QWidget* parent)
   for (QCheckBox* b : {fill_, hidden_, grid_, levels_, annotations_}) connect(b, &QCheckBox::toggled, this, view);
   connect(frame_, &QCheckBox::toggled, this, layout);
   for (QCheckBox* b : tables_) connect(b, &QCheckBox::toggled, this, layout);
-  connect(scale_, qOverload<int>(&QComboBox::currentIndexChanged), this, layout);
+  connect(scale_, qOverload<int>(&QComboBox::currentIndexChanged), this, view);  // the hatching's spacing depends on it
   connect(paper_, qOverload<int>(&QComboBox::currentIndexChanged), this, layout);
   for (QLineEdit* e : {project_, number_, author_, date_}) connect(e, &QLineEdit::textEdited, this, layout);
   connect(drawingName_, &QLineEdit::textEdited, this, [this, layout] {
@@ -550,6 +550,7 @@ std::optional<draw::ViewSpec> DrawingDialog::viewSpec(QString* why) const {
       spec.tags.push_back(tags_->item(i)->text().toStdString());
   spec.includeHidden = includeHidden_->isChecked();
   spec.memberLabels = memberLabels_->isChecked();
+  spec.hatchScale = scale_->currentData().toDouble();  // docs/173: the layers hatched for this scale
   if (k >= 3) {
     static const char* presets[] = {"foundation", "first_floor", "second_floor", "roof"};
     const auto framing =

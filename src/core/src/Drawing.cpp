@@ -345,6 +345,82 @@ void addFill(const TopoDS_Face& face, double deflection, std::vector<Item>& out)
   if (fill.points.size() >= 3) out.push_back(fill);
 }
 
+// docs/173: hatching of the cut layers. A band of a cut face: where `across` (affine in the
+// sheet's x, y: across = a0 + au x + av y) lies between lo and hi; `pattern` 1 single lines, 2
+// crossed. Lines at 45 degrees on the sheet, `spacing` apart (view mm), clipped to the face's
+// polygon (outer loop and holes, even-odd) and to the band.
+struct HatchBand {
+  double lo = 0.0, hi = 0.0;
+  int pattern = 0;
+};
+void hatchFace(const Item& fill, double a0, double au, double av, const std::vector<HatchBand>& bands, double spacing, std::vector<Item>& out) {
+  if (fill.points.size() < 3 || spacing <= 0.0) return;
+  std::vector<const std::vector<gp_Pnt2d>*> loops{&fill.points};
+  for (const auto& h : fill.holes) loops.push_back(&h);
+  double x0 = 1e300, y0 = 1e300, x1 = -1e300, y1 = -1e300;
+  for (const gp_Pnt2d& q : fill.points) x0 = std::min(x0, q.X()), y0 = std::min(y0, q.Y()), x1 = std::max(x1, q.X()), y1 = std::max(y1, q.Y());
+  for (const HatchBand& band : bands) {
+    if (band.pattern == 0) continue;
+    const double step = band.pattern == 2 ? spacing * 2 : spacing;
+    for (const double angle : band.pattern == 2 ? std::vector<double>{M_PI / 4, -M_PI / 4} : std::vector<double>{M_PI / 4}) {
+      const gp_Vec2d d(std::cos(angle), std::sin(angle)), n(-d.Y(), d.X());
+      // The lines n . p = c, c over the face's extent, on a grid through the origin (so that
+      // neighbouring faces' lines line up).
+      double c0 = 1e300, c1 = -1e300;
+      for (const double x : {x0, x1})
+        for (const double y : {y0, y1}) {
+          const double c = n.X() * x + n.Y() * y;
+          c0 = std::min(c0, c), c1 = std::max(c1, c);
+        }
+      if ((c1 - c0) / step > 20000) continue;  // far too many: left out
+      for (double c = std::ceil(c0 / step) * step; c <= c1; c += step) {
+        const gp_Pnt2d base(n.X() * c, n.Y() * c);
+        // Where the line crosses the loops' edges (parameters along d).
+        std::vector<double> ts;
+        for (const auto* loop : loops) {
+          const std::size_t m = loop->size();
+          for (std::size_t k = 0; k < m; ++k) {
+            const gp_Pnt2d& p = (*loop)[k];
+            const gp_Pnt2d& q = (*loop)[(k + 1) % m];
+            const double sp = n.X() * p.X() + n.Y() * p.Y() - c, sq = n.X() * q.X() + n.Y() * q.Y() - c;
+            if ((sp > 0) == (sq > 0)) continue;  // not crossed (half-open: a vertex on the line counts once)
+            const double s = sp / (sp - sq);
+            const gp_Pnt2d at(p.X() + (q.X() - p.X()) * s, p.Y() + (q.Y() - p.Y()) * s);
+            ts.push_back(d.X() * (at.X() - base.X()) + d.Y() * (at.Y() - base.Y()));
+          }
+        }
+        std::sort(ts.begin(), ts.end());
+        // across along the line: A + B t.
+        const double A = a0 + au * base.X() + av * base.Y(), B = au * d.X() + av * d.Y();
+        for (std::size_t k = 0; k + 1 < ts.size(); k += 2) {
+          double t0 = ts[k], t1 = ts[k + 1];
+          if (std::abs(B) < 1e-12) {
+            if (A < band.lo || A > band.hi) continue;
+          } else {
+            double u0 = (band.lo - A) / B, u1 = (band.hi - A) / B;
+            if (u0 > u1) std::swap(u0, u1);
+            t0 = std::max(t0, u0);
+            t1 = std::min(t1, u1);
+          }
+          if (t1 - t0 < spacing * 0.05) continue;
+          out.push_back(line(Pen::Visible, gp_Pnt2d(base.X() + d.X() * t0, base.Y() + d.Y() * t0),
+                             gp_Pnt2d(base.X() + d.X() * t1, base.Y() + d.Y() * t1)));
+        }
+      }
+    }
+  }
+}
+
+// Which layers are hatched: structural timber crossed, plywood single lines (docs/173).
+int hatchPattern(const std::string& name, const std::string& role) {
+  if (role == "core") return 2;
+  for (const char* word : {"柱", "間柱", "根太", "垂木", "大引", "梁", "土台"})
+    if (name.find(word) != std::string::npos) return 2;
+  for (const char* word : {"合板", "野地板"})
+    if (name.find(word) != std::string::npos) return 1;
+  return 0;
+}
+
 std::string formatMm(double v) {
   char b[32];
   std::snprintf(b, sizeof b, "%.0f", std::round(v) == 0 ? 0.0 : v);
@@ -455,7 +531,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
   TopoDS_Compound seen;
   builder.MakeCompound(seen);
   bool anySeen = false;
-  std::vector<Item> cut, fills, loose, layerLines;
+  std::vector<Item> cut, fills, loose, layerLines, hatches;
   std::set<doc::ObjectId> drawn, gridIds;
   // docs/165: in plans, the cut lines of each wall of a build-up (its layers as the key), so
   // that where two walls of one build-up touch, the line between them can be left out.
@@ -583,15 +659,57 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
         builder.Add(seen, world);
       } else {
         builder.Add(seen, kept.Shape());
+        // docs/173: the bands of its layers on the cut, as an affine function of the world point.
+        std::vector<HatchBand> bands;
+        std::function<double(const gp_Pnt&)> acrossOf;
+        if (spec.hatchScale > 0.0) {
+          const auto usage = doc::Modeler::layerUsage(document, o);
+          if (usage && usage->wall) {
+            const auto planes = doc::Modeler::wallLayerPlanes(document, o);
+            const nlohmann::json layers = nlohmann::json::parse(o.attributes.count("wall_layers") ? o.attributes.at("wall_layers") : "[]", nullptr, false);
+            if (!planes.empty() && layers.is_array() && layers.size() == usage->layers.size()) {
+              // Across the wall from its drawn line (to its left): the layers' edges e0, e1, ...
+              std::vector<double> e{usage->offset};
+              for (const auto& l : usage->layers) e.push_back(e.back() + (usage->towardsLeft ? l.thickness : -l.thickness));
+              const gp_Pnt p0 = planes.front().first;
+              const gp_Vec m(planes.front().second);
+              const double e1 = e[1];
+              acrossOf = [p0, m, e1](const gp_Pnt& w) { return gp_Vec(p0, w).Dot(m) + e1; };
+              for (std::size_t k = 0; k < usage->layers.size(); ++k)
+                bands.push_back({std::min(e[k], e[k + 1]), std::max(e[k], e[k + 1]),
+                                 hatchPattern(usage->layers[k].name, layers[k].value("role", std::string()))});
+            }
+          } else if (usage && o.attributes.count("kind") && o.attributes.at("kind") == "slab" && std::abs(n.Z()) < 0.5) {
+            // A floor cut upright: its layers from its top down.
+            const double top = geom::exactBounds(world).CornerMax().Z();
+            acrossOf = [top](const gp_Pnt& w) { return top - w.Z(); };
+            double d = 0.0;
+            for (const auto& l : usage->layers) {
+              bands.push_back({d, d + l.thickness, hatchPattern(l.name, "")});
+              d += l.thickness;
+            }
+          }
+        }
         // The cut areas: faces of the kept part on the plane (solids only).
-        if (spec.fill && (kind == doc::ObjectKind::Solid || kind == doc::ObjectKind::Instance)) {
+        if ((spec.fill || !bands.empty()) && (kind == doc::ObjectKind::Solid || kind == doc::ObjectKind::Instance)) {
           for (TopExp_Explorer f(kept.Shape(), TopAbs_FACE); f.More(); f.Next()) {
             const TopoDS_Face face = TopoDS::Face(f.Current());
             BRepAdaptor_Surface s(face);
             if (s.GetType() != GeomAbs_Plane) continue;
             const gp_Pln p = s.Plane();
             if (!p.Axis().Direction().IsParallel(n, 1e-9) || plane.Distance(p.Location()) > kOnPlane) continue;
-            addFill(TopoDS::Face(face.Moved(TopLoc_Location(proj.toLocal))), deflection, fills);
+            std::vector<Item> faceFill;
+            addFill(TopoDS::Face(face.Moved(TopLoc_Location(proj.toLocal))), deflection, faceFill);
+            if (!bands.empty() && acrossOf && !faceFill.empty()) {
+              // across(x, y) on the sheet: the world point of (x, y) on the cut.
+              const gp_Trsf toWorld = proj.toLocal.Inverted();
+              const double c0 = acrossOf(gp_Pnt(0, 0, 0).Transformed(toWorld));
+              const double cu = acrossOf(gp_Pnt(1, 0, 0).Transformed(toWorld)) - c0;
+              const double cv = acrossOf(gp_Pnt(0, 1, 0).Transformed(toWorld)) - c0;
+              hatchFace(faceFill.front(), c0, cu, cv, bands, 1.5 * spec.hatchScale, hatches);
+            }
+            if (spec.fill)
+              for (Item& f : faceFill) fills.push_back(std::move(f));
           }
         }
       }
@@ -726,6 +844,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
   for (Item& h : hidden) view.items.push_back(std::move(h));
   for (Item& l : loose) view.items.push_back(std::move(l));
   for (Item& l : layerLines) view.items.push_back(std::move(l));  // over the fills
+  for (Item& h : hatches) view.items.push_back(std::move(h));     // docs/173
   // Door / window symbols of the openings this plan cuts through, to their real width and
   // the wall's thickness (OpeningSymbols.h).
   if (spec.kind == ViewKind::Plan && std::abs(n.Z()) > 1 - 1e-9) {

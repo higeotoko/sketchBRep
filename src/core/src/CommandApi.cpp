@@ -3829,13 +3829,15 @@ const std::vector<CommandDef>& commands() {
        "[x,y,z] towards the viewer, horizontal) or 'elevation' ('side': 0 south, 1 east, 2 north, 3 west). "
        "'scale' (denominator, default 100), 'paper' (auto, A4-A1), 'frame' (default true), 'title', "
        "'project', 'number', 'author', 'date', 'hidden' (hidden lines), 'fill', 'grid', 'levels', "
-       "'annotations'. kind:framing with preset:foundation|first_floor|second_floor|roof makes a tag-filtered framing plan. "
+       "'annotations', 'hatch' (default true: the cut layers of walls of a build-up and floors of a type with layers "
+       "hatched for the scale - structural timber crossed, plywood single lines; docs/173). kind:framing with "
+       "preset:foundation|first_floor|second_floor|roof makes a tag-filtered framing plan. "
        "within scopes a group; tags filters leaf tags, include_hidden includes hidden objects, member_labels adds section marks. "
        "'tables' (docs/130): any of openings, rooms, areas, finishes, put beside the drawing on the same sheet (to its "
        "right, or under it when that takes a smaller paper; empty tables are left out). "
        "Returns the paper chosen and notes (what did not fit or was left out).",
        SCHEMA({"type": "object", "properties": {"path": {"type": "string"}, "kind": {"type": "string"},
-               "cut_z": {"type": "number"}, "point": {"type": "array"}, "look": {"type": "array"},
+               "cut_z": {"type": "number"}, "point": {"type": "array"}, "look": {"type": "array"}, "hatch": {"type": "boolean"},
                "side": {"type": "integer"}, "scale": {"type": "number"}, "paper": {"type": "string"},
                "frame": {"type": "boolean"}, "title": {"type": "string"}, "project": {"type": "string"},
                "number": {"type": "string"}, "author": {"type": "string"}, "date": {"type": "string"},
@@ -3867,6 +3869,7 @@ const std::vector<CommandDef>& commands() {
          spec.grid = a.value("grid", true);
          spec.levels = a.value("levels", true);
          spec.annotations = a.value("annotations", true);
+         if (a.value("hatch", true)) spec.hatchScale = numberOr(a, "scale", 100.0);  // docs/173
          const draw::View view = must(draw::makeView(m.document(), spec));
          draw::SheetSpec sheetSpec;
          sheetSpec.scale = numberOr(a, "scale", 100.0);
