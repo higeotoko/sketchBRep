@@ -1585,6 +1585,12 @@ void OpeningTool::activate() {
 }
 
 void OpeningTool::cancel() {
+  if (choosing_) {  // docs/189: kept as placed, with the way it was given
+    choosing_.reset();
+    host_.viewport().clearPreview();
+    host_.setStatus(QObject::tr("最初の開き方のまま置きました。続けて次の壁をクリック"));
+    return;
+  }
   hover_.reset();
   host_.viewport().clearPreview();
   host_.viewport().setRoleShapes({});
@@ -1749,6 +1755,10 @@ std::optional<OpeningTool::Target> OpeningTool::targetAt(const ToolEvent& e) {
 }
 
 void OpeningTool::mouseMove(const ToolEvent& e) {
+  if (choosing_) {  // docs/189
+    chooseWay(e, false);
+    return;
+  }
   hover_ = targetAt(e);
   Viewport& vp = host_.viewport();
   vp.setRoleShapes({});
@@ -1829,6 +1839,22 @@ bool OpeningTool::place(const Target& t) {
   last_ = t;
   recent_.mark(host_.modeler());
   QString status = QObject::tr("開口をあけました（%1）。続けて入力するとこの開口の大きさを変更").arg(settingsText());
+  // docs/189: a door with a way to open: chosen next by the mouse (the opening just made).
+  const nlohmann::json fit = nlohmann::json::parse(settings_.fitting, nullptr, false);
+  if (fit.is_object() && !draw::fittingWays(fit.value("type", std::string())).empty()) {
+    if (const auto list = host_.modeler().openings(t.host)) {
+      double best = 1e300;
+      for (const auto& op : *list) {
+        const double d = std::hypot(op.center.X() - t.at.X(), op.center.Y() - t.at.Y());
+        if (d < best) best = d, choosing_ = std::make_pair(t.host, op.id);
+      }
+    }
+    if (choosing_) {
+      chosen_.clear();
+      host_.setStatus(QObject::tr("開口をあけました。マウスを、開く側・吊元にしたい半分へ動かしてクリック（Esc でこのまま）"));
+      return true;
+    }
+  }
   // docs/118: another wall ending in the hole is said (the opening stays).
   QStringList meeting;
   for (const auto& [index, wall] : host_.modeler().wallsMeetingOpenings(t.host)) meeting << QString::fromStdString(wall);
@@ -1839,7 +1865,61 @@ bool OpeningTool::place(const Target& t) {
   return true;
 }
 
+// docs/189: the way the door just placed opens, from where the mouse is (as the door swing tool):
+// drawn as it would be; with `keep`, placed again that way (the same undo step).
+bool OpeningTool::chooseWay(const ToolEvent& e, bool keep) {
+  doc::Modeler& m = host_.modeler();
+  const auto list = m.openings(choosing_->first);
+  const doc::Modeler::OpeningInfo* op = nullptr;
+  if (list)
+    for (const auto& o : *list)
+      if (o.id == choosing_->second) op = &o;
+  if (!op) {
+    choosing_.reset();
+    return false;
+  }
+  const snap::Ray ray = host_.viewport().rayAt(e.pos);
+  if (std::abs(ray.direction.Z()) < 1e-9) return false;
+  const double z = op->bottom + std::min(1000.0, op->height / 2);
+  const gp_Pnt p = ray.origin.Translated(gp_Vec(ray.direction) * ((z - ray.origin.Z()) / ray.direction.Z()));
+  const auto way = draw::fittingTowards(settings_.fitting, op->center, op->normal, op->depth, p);
+  if (!way) return false;
+  chosen_ = *way;
+  if (!keep) {
+    const std::set<std::string> only{choosing_->first};
+    draw::SymbolOptions options;
+    options.z = z;
+    options.only = &only;
+    options.onlyOpening = op->id;
+    options.fittingOverride = chosen_;
+    BRep_Builder builder;
+    TopoDS_Compound preview;
+    builder.MakeCompound(preview);
+    for (const TopoDS_Edge& edge : draw::openingSymbols(m.document(), options)) builder.Add(preview, edge);
+    host_.viewport().setPreview(preview);
+    host_.setStatus(QObject::tr("この開き方でよければクリック（Esc で最初の開き方のまま）"));
+    return true;
+  }
+  // Placed again with the way chosen, in the same undo step; the next ones open the same way.
+  choosing_.reset();
+  host_.viewport().clearPreview();
+  if (chosen_ == settings_.fitting || !last_ || !recent_.fresh(m)) return true;
+  const Target again = *last_;
+  const std::string before = settings_.fitting;
+  settings_.fitting = chosen_;
+  const Status s = recent_.replace(m, [&] { return place(again) ? Status::success() : Status::failure(""); });
+  choosing_.reset();  // placing again would ask again
+  host_.viewport().clearPreview();
+  if (!s) settings_.fitting = before;
+  else host_.setStatus(QObject::tr("開口と建具を入れました（Ctrl+Z で戻せます）。続けて次の壁をクリック"));
+  return true;
+}
+
 void OpeningTool::mousePress(const ToolEvent& e) {
+  if (choosing_) {
+    chooseWay(e, true);
+    return;
+  }
   const auto t = targetAt(e);
   if (!t) {
     host_.setStatus(ambiguousPlan_ ? QObject::tr("壁が重なっています。交点から離すか、3D・立面で壁面を選んでください") :

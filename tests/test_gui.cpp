@@ -401,6 +401,7 @@ class GuiPhase1 : public QObject {
   void followMeAlongSelectedEdges();
   void wallToolAndArchitectureMenus();
   void doorSwingToolPicksInPlan();
+  void fittingPlacedWithItsWayInPlan();
   void slabToolAndOpeningTool();
   void typedRevisionOnlyRightAfter();
   void escStepsBackAndConstraintsShow();
@@ -6248,6 +6249,59 @@ void GuiPhase1::wallToolAndArchitectureMenus() {
 
 // docs/188: the way a door opens chosen in plan by pointing beside it (the owner's SketchUp
 // extension's way): the symbol drawn as it would be, a click keeps it.
+// docs/189: a fitting chosen beside the opening button, a click on a wall in plan puts the opening
+// and the door in, the mouse shows the way it opens, a second click keeps it: one undo step.
+void GuiPhase1::fittingPlacedWithItsWayInPlan() {
+  Fixture f;
+  QVERIFY(f.setUp(2000, 1000));
+  auto& m = f.window.modeler();
+  const auto wall = m.createWalls({{0, 0, 0}, {5000, 0, 0}}, 200, 3000);
+  QVERIFY(wall);
+  f.vp->lockView(Viewport::StandardView::Top);
+  f.vp->setWorkOffset(0);
+  auto* list = f.window.findChild<QComboBox*>(QStringLiteral("architectureOpeningFitting"));
+  QVERIFY(list);
+  const int door = list->findText(QStringLiteral("片開きドア 800×2000"));
+  QVERIFY(door > 0);
+  list->setCurrentIndex(door);
+  emit list->activated(door);
+  QVERIFY(f.window.findChild<QAction*>(QStringLiteral("architectureDoorSwingAction")));
+  QCOMPARE(f.window.openingTool().settings().width, 800.0);
+  f.vp->syncNow();
+  QTest::qWait(50);
+  const auto steps = m.history().undoCount();
+  click(f.vp, f.vp->toWidget(gp_Pnt(2500, 0, 0)));
+  QVERIFY2(f.window.lastError().isEmpty(), qPrintable(f.window.lastError()));
+  QCOMPARE(m.openings(wall->front())->size(), std::size_t(1));
+  QVERIFY(f.window.openingTool().choosingWay());
+  // The mouse beside it (+y side, +x half): the way drawn; a click keeps it, in the same step.
+  move(f.vp, f.vp->toWidget(gp_Pnt(2700, 700, 1000)));
+  QVERIFY(!f.vp->previewShape().IsNull());
+  QVERIFY2(f.window.statusText().contains(QStringLiteral("クリック")), qPrintable(f.window.statusText()));
+  click(f.vp, f.vp->toWidget(gp_Pnt(2700, 700, 1000)));
+  QVERIFY(!f.window.openingTool().choosingWay());
+  QCOMPARE(m.history().undoCount(), steps + 1);
+  const auto list2 = m.openings(wall->front());
+  QVERIFY(list2 && list2->size() == 1);
+  QCOMPARE(list2->front().width, 800.0);
+  const nlohmann::json fit = nlohmann::json::parse(m.document().find(wall->front())->attributes.at("opening_fittings")).begin().value();
+  QCOMPARE(fit.value("type", std::string()), std::string("swing_single"));
+  const std::string side = fit.value("swing", std::string());
+  // The next door the other side: opens the other way.
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 0, 0)));
+  QVERIFY(f.window.openingTool().choosingWay());
+  click(f.vp, f.vp->toWidget(gp_Pnt(1100, -700, 1000)));
+  QCOMPARE(m.history().undoCount(), steps + 2);
+  bool other = false;
+  const nlohmann::json all = nlohmann::json::parse(m.document().find(wall->front())->attributes.at("opening_fittings"));
+  for (const auto& [id, value] : all.items())
+    other = other || value.value("swing", std::string()) != side;
+  QVERIFY(other);
+  // One undo: that door and its opening gone together.
+  QVERIFY(m.undo());
+  QCOMPARE(m.openings(wall->front())->size(), std::size_t(1));
+}
+
 void GuiPhase1::doorSwingToolPicksInPlan() {
   Fixture f;
   QVERIFY(f.setUp(2000, 0));

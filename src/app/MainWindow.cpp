@@ -1976,6 +1976,69 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
   findChild<QToolButton*>(QStringLiteral("architectureOpening"))->setToolTip(
       tr("開口: 平面の壁、または3D・立面の壁面をクリック。右の矢印から幅・高さ・腰高を設定"));
   {
+    // docs/189: the fitting to put in, right by the opening button: choosing one sets the size and
+    // the kind and takes the opening tool (a click on a wall puts the opening and the fitting in,
+    // then the mouse chooses the way a door opens).
+    struct Preset {
+      const char* label;
+      double width, height, sill;
+      const char* fitting;
+    };
+    static const Preset presets[] = {
+        {"片開きドア 800×2000", 800, 2000, 0, R"({"type":"swing_single"})"},
+        {"親子ドア 1200×2000", 1200, 2000, 0, R"({"type":"swing_unequal","child":400})"},
+        {"両開きドア 1600×2000", 1600, 2000, 0, R"({"type":"swing_double"})"},
+        {"片引き戸 1600×2000", 1600, 2000, 0, R"({"type":"sliding_single"})"},
+        {"引違い戸 1690×2000", 1690, 2000, 0, R"({"type":"sliding_double"})"},
+        {"折れ戸 1200×2000", 1200, 2000, 0, R"({"type":"folding"})"},
+        {"引違い窓 1690×1170・腰 900", 1690, 1170, 900, R"({"type":"sliding_double"})"},
+        {"掃き出し窓 1690×2000", 1690, 2000, 0, R"({"type":"sliding_double"})"},
+        {"はめ殺し窓 600×600・腰 1200", 600, 600, 1200, R"({"type":"window"})"},
+        {"開口だけ 900×2100", 900, 2100, 0, R"({"type":"none"})"},
+    };
+    auto* fittingKind = new QComboBox(bar);
+    fittingKind->setObjectName(QStringLiteral("architectureOpeningFitting"));
+    fittingKind->addItem(tr("建具を選ぶ…"));
+    for (const Preset& p : presets) fittingKind->addItem(tr(p.label));
+    fittingKind->setToolTip(tr("建具を選ぶと、大きさと形式が開口の道具に入ります。平面の壁をクリックすると開口と建具が一緒に入り、"
+                               "扉はマウスで開き方を選んでもう一度クリック"));
+    fittingKind->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    bar->addWidget(fittingKind);
+    connect(fittingKind, &QComboBox::activated, this, [this, fittingKind](int index) {
+      if (index < 1 || index > static_cast<int>(std::size(presets))) return;
+      const Preset& p = presets[index - 1];
+      OpeningTool::Settings s = openingTool_->settings();
+      s.width = p.width;
+      s.height = p.height;
+      s.sill = p.sill;
+      s.fitting = p.fitting;
+      openingTool_->setSettings(s);
+      activateTool(ToolId::Opening);
+      setStatus(tr("%1：平面の壁をクリック").arg(fittingKind->itemText(index)));
+    });
+    // The fitting types registered in the model (docs/171), from the opening button's menu: the
+    // kind and sizes, at the opening tool's size.
+    if (auto* opening = findChild<QToolButton*>(QStringLiteral("architectureOpening")); opening && opening->menu()) {
+      QMenu* types = opening->menu()->addMenu(tr("登録した建具の型"));
+      types->setObjectName(QStringLiteral("architectureOpeningTypes"));
+      connect(types, &QMenu::aboutToShow, this, [this, types] {
+        types->clear();
+        const auto registered = modeler_.fittingTypes();
+        if (registered.empty()) types->addAction(tr("（登録した型はありません：開口のプロパティの「型として登録」から）"))->setEnabled(false);
+        for (const auto& [name, fitting] : registered) {
+          const std::string json = fitting;
+          types->addAction(QString::fromStdString(name), this, [this, json, name] {
+            OpeningTool::Settings s = openingTool_->settings();
+            s.fitting = json;
+            openingTool_->setSettings(s);
+            activateTool(ToolId::Opening);
+            setStatus(tr("建具の型「%1」：平面の壁をクリック").arg(QString::fromStdString(name)));
+          });
+        }
+      });
+    }
+  }
+  {
     // docs/188: the way a door opens, chosen in plan by pointing beside it.
     auto* swing = new QAction(tr("開き勝手"), this);
     swing->setObjectName(QStringLiteral("architectureDoorSwingAction"));

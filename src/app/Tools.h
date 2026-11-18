@@ -552,8 +552,14 @@ class OpeningTool : public Tool {
   void setSettings(const Settings& s) { settings_ = s; }
   const Settings& settings() const { return settings_; }
   QString settingsText() const;
+  // docs/189: right after placing a door, the way it opens is being chosen by the mouse.
+  bool choosingWay() const { return choosing_.has_value(); }
 
  private:
+  // docs/189: the opening just placed, whose way to open the mouse chooses (host, opening id).
+  std::optional<std::pair<doc::ObjectId, std::string>> choosing_;
+  std::string chosen_;
+  bool chooseWay(const ToolEvent& e, bool keep);
   struct Target {
     doc::ObjectId host;
     gp_Dir normal;
