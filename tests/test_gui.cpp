@@ -10257,10 +10257,20 @@ void GuiPhase1::openingFittingFromPanelShowsInPlanCut() {
   QApplication::processEvents();
   auto* kind=f.window.findChild<QComboBox*>(QStringLiteral("openingFitting1"));QVERIFY(kind);
   QCOMPARE(kind->currentIndex(),0);  // なし
-  const int swing=kind->findText(QStringLiteral("片開き 右吊元・内開き"));QVERIFY(swing>0);
+  // docs/188: the kind, then the way it opens.
+  const int swing=kind->findText(QStringLiteral("片開き"));QVERIFY(swing>0);
   kind->setCurrentIndex(swing);
   emit kind->activated(swing);
   QTRY_VERIFY(m.document().find(*host)->attributes.count("opening_fittings"));
+  QApplication::processEvents();
+  {
+    auto* way=f.window.findChild<QComboBox*>(QStringLiteral("openingWay1"));QVERIFY(way);
+    QVERIFY(f.window.findChild<QToolButton*>(QStringLiteral("openingWayInPlan1")));
+    const int right=way->findText(QStringLiteral("右吊元・内開き"));QVERIFY(right>=0);
+    way->setCurrentIndex(right);
+    emit way->activated(right);
+    QTRY_COMPARE(json::parse(m.document().find(*host)->attributes.at("opening_fittings")).begin().value().value("hinge",std::string()),std::string("right"));
+  }
   const json stored=json::parse(m.document().find(*host)->attributes.at("opening_fittings"));
   QCOMPARE(stored.size(),std::size_t(1));  // kept under the opening's id, not its number
   QCOMPARE(stored.begin().value().at("hinge").get<std::string>(),std::string("right"));
@@ -10278,10 +10288,12 @@ void GuiPhase1::openingFittingFromPanelShowsInPlanCut() {
     QCOMPARE(fitting().value("frame",0.0),50.0);
     QApplication::processEvents();
     auto* kind2=f.window.findChild<QComboBox*>(QStringLiteral("openingFitting1"));QVERIFY(kind2);
-    QCOMPARE(kind2->currentText(),QStringLiteral("片開き 右吊元・内開き"));  // still found with its size
-    const int left=kind2->findText(QStringLiteral("片開き 左吊元・内開き"));QVERIFY(left>0);
-    kind2->setCurrentIndex(left);
-    emit kind2->activated(left);
+    QCOMPARE(kind2->currentText(),QStringLiteral("片開き"));  // still found with its size
+    auto* way2=f.window.findChild<QComboBox*>(QStringLiteral("openingWay1"));QVERIFY(way2);
+    QCOMPARE(way2->currentText(),QStringLiteral("右吊元・内開き"));
+    const int left=way2->findText(QStringLiteral("左吊元・内開き"));QVERIFY(left>=0);
+    way2->setCurrentIndex(left);
+    emit way2->activated(left);
     QTRY_COMPARE(m.history().undoCount(),steps+2);
     QCOMPARE(fitting().value("hinge",std::string()),std::string("left"));
     QCOMPARE(fitting().value("frame",0.0),50.0);
@@ -10315,7 +10327,7 @@ void GuiPhase1::openingFittingFromPanelShowsInPlanCut() {
   f.vp->setPlanCut(2500.0);
   QCOMPARE(f.vp->openingSymbolEdgeCount(),std::size_t(0));  // above the door
   f.vp->setPlanCut(1100.0);
-  m.undo();f.vp->syncNow();
+  m.undo();m.undo();f.vp->syncNow();  // the way, then the kind (docs/188: two choices)
   QCOMPARE(f.vp->openingSymbolEdgeCount(),std::size_t(0));  // undone with the fitting
   f.vp->setPlanCut(std::nullopt);
   // The panel also moves and removes one opening; the other keeps its fitting (docs/90 G-01).

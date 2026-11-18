@@ -1345,28 +1345,61 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       };
       connect(w, &QDoubleSpinBox::editingFinished, this, commit);
       connect(ht, &QDoubleSpinBox::editingFinished, this, commit);
+      // docs/188 (as the owner's SketchUp extension has it): the kind, then the way it opens (only
+      // those the kind has), or the way chosen in plan with the door swing tool.
       auto* kind = new QComboBox;
       kind->setObjectName(QStringLiteral("openingFitting%1").arg(index));
-      kind->setToolTip(tr("平面（切断）と平面図に建具の記号を描きます。外＝開口をあけた面の側、内＝反対側。"
-                          "左右は開く側から見て（引戸は開口をあけた面の側から見て）"));
+      kind->setToolTip(tr("建具の形式。平面（切断）と平面図に記号を描きます。開き方は右の欄か「平面で」"));
       const nlohmann::json current = fittings.contains(op.id) ? fittings.at(op.id) : nlohmann::json{{"type", "none"}};
-      // The kind without its sizes (docs/157), to find it among the choices.
-      nlohmann::json kindOnly = current;
-      for (const char* key : {"frame", "leaf", "glass", "type_name"}) kindOnly.erase(key);
-      for (const auto& [label, value] : kinds) {
-        kind->addItem(label, QString::fromStdString(value));
-        if (nlohmann::json::parse(value) == kindOnly) kind->setCurrentIndex(kind->count() - 1);
+      const std::string currentKind = current.value("type", std::string("none"));
+      for (const auto& c : draw::fittingKinds()) {
+        kind->addItem(QString::fromStdString(c.label), QString::fromStdString(c.fitting));
+        if (nlohmann::json::parse(c.fitting).value("type", std::string()) == currentKind) kind->setCurrentIndex(kind->count() - 1);
       }
-      // Another kind keeps the sizes given.
+      // Another kind keeps the sizes given and the way it opened, where it has one.
       connect(kind, &QComboBox::activated, this, [this, id, index, kind, current] {
         nlohmann::json next = nlohmann::json::parse(kind->currentData().toString().toStdString());
         if (next.value("type", std::string("none")) != "none")
-          for (const char* key : {"frame", "leaf", "glass"})
+          for (const char* key : {"frame", "leaf", "glass", "hinge", "swing", "slide", "fold", "child"})
             if (current.contains(key)) next[key] = current.at(key);
+        if (next.value("type", std::string()) == "folding" && !next.contains("fold") && current.contains("hinge"))
+          next["fold"] = current.at("hinge");
+        const auto valid = draw::normalizeFitting(next.dump());
+        if (!valid) {  // a way this kind does not have: its first
+          for (const char* key : {"hinge", "swing", "slide", "fold", "child"}) next.erase(key);
+        }
         // Another kind by hand: no longer its fitting type (docs/171).
         emit openingFittingEdited(id, index, QString::fromStdString(next.dump()));
       });
       h->addWidget(kind, 1);
+      const auto ways = draw::fittingWays(currentKind);
+      if (!ways.empty()) {
+        auto* way = new QComboBox;
+        way->setObjectName(QStringLiteral("openingWay%1").arg(index));
+        way->setToolTip(tr("開き方。外＝開口をあけた面の側、内＝反対側。左右は開く側から見て（引戸は開口をあけた面の側から見て）。"
+                           "迷ったら「平面で」：扉の横にマウスを乗せると、その開き方を描きます"));
+        for (const auto& c : ways) {
+          way->addItem(QString::fromStdString(c.label), QString::fromStdString(c.fitting));
+          bool same = true;
+          const nlohmann::json keys = nlohmann::json::parse(c.fitting);  // kept: a loop over a temporary's items would dangle
+          for (const auto& [key, value] : keys.items())
+            same = same && current.contains(key) && current.at(key) == value;
+          if (same) way->setCurrentIndex(way->count() - 1);
+        }
+        connect(way, &QComboBox::activated, this, [this, id, index, way, current] {
+          nlohmann::json next = current;
+          const nlohmann::json chosen = nlohmann::json::parse(way->currentData().toString().toStdString());
+          for (const auto& [key, value] : chosen.items()) next[key] = value;
+          emit openingFittingEdited(id, index, QString::fromStdString(next.dump()));
+        });
+        h->addWidget(way, 1);
+        auto* pick = new QToolButton;
+        pick->setObjectName(QStringLiteral("openingWayInPlan%1").arg(index));
+        pick->setText(tr("平面で"));
+        pick->setToolTip(tr("開き勝手の道具：扉の横で、開く側・吊元にしたい半分にマウスを乗せると、その開き方を描きます。クリックで決めます"));
+        connect(pick, &QToolButton::clicked, this, [this] { emit doorSwingRequested(); });
+        h->addWidget(pick);
+      }
       row->setObjectName(QStringLiteral("opening%1").arg(index));
       // Its fitting's sizes (docs/157): the frame's face, a door leaf, the glass (3D and elevations).
       auto* sizesRow = new QWidget;

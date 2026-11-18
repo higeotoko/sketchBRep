@@ -120,6 +120,29 @@ Result<std::string> fittingTowards(const std::string& current, const gp_Pnt& cen
   return normalizeFitting(out.dump());
 }
 
+const std::vector<FittingChoice>& fittingKinds() {
+  static const std::vector<FittingChoice> kinds = {
+      {"なし（開口だけ）", R"({"type":"none"})"},     {"窓", R"({"type":"window"})"},
+      {"片開き", R"({"type":"swing_single"})"},       {"両開き", R"({"type":"swing_double"})"},
+      {"親子開き", R"({"type":"swing_unequal"})"},    {"折れ戸", R"({"type":"folding"})"},
+      {"片引き", R"({"type":"sliding_single"})"},     {"引違い", R"({"type":"sliding_double"})"},
+      {"両引き", R"({"type":"sliding_bi"})"},
+  };
+  return kinds;
+}
+
+std::vector<FittingChoice> fittingWays(const std::string& type) {
+  if (type == "swing_single" || type == "swing_unequal")
+    return {{"左吊元・内開き", R"({"hinge":"left","swing":"in"})"}, {"右吊元・内開き", R"({"hinge":"right","swing":"in"})"},
+            {"左吊元・外開き", R"({"hinge":"left","swing":"out"})"}, {"右吊元・外開き", R"({"hinge":"right","swing":"out"})"}};
+  if (type == "swing_double") return {{"内開き", R"({"swing":"in"})"}, {"外開き", R"({"swing":"out"})"}};
+  if (type == "folding")
+    return {{"左へたたむ・内開き", R"({"fold":"left","swing":"in"})"}, {"右へたたむ・内開き", R"({"fold":"right","swing":"in"})"},
+            {"左へたたむ・外開き", R"({"fold":"left","swing":"out"})"}, {"右へたたむ・外開き", R"({"fold":"right","swing":"out"})"}};
+  if (type == "sliding_single") return {{"左へ引く", R"({"slide":"left"})"}, {"右へ引く", R"({"slide":"right"})"}};
+  return {};
+}
+
 const std::vector<FittingChoice>& fittingChoices() {
   static const std::vector<FittingChoice> choices = {
       {"なし（開口だけ）", R"({"type":"none"})"},

@@ -38,6 +38,10 @@ struct FittingChoice {
 Result<std::string> fittingTowards(const std::string& current, const gp_Pnt& center, const gp_Dir& normal, double depth,
                                    const gp_Pnt& point);
 const std::vector<FittingChoice>& fittingChoices();
+// docs/188 (as the owner's SketchUp extension asks): the kinds alone ({"type": ...}), and for a
+// kind the ways it can open (the keys that say so: hinge / swing / slide / fold), labelled.
+const std::vector<FittingChoice>& fittingKinds();
+std::vector<FittingChoice> fittingWays(const std::string& type);
 
 struct SymbolOptions {
   double z = 0.0;                       // plan height (the cut): openings it passes through

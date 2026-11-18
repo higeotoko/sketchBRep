@@ -80,6 +80,8 @@ class PropertiesPanel : public QWidget {
   void wallTypeEdited(const doc::ObjectId& id, const QString& type);
   // A wall's mark for mitred corners and T joints (docs/159, docs/177, docs/180) ticked or not.
   void wallMitreEdited(const doc::ObjectId& id, bool on);
+  // docs/188: the "in plan" button beside a door's way: the door swing tool.
+  void doorSwingRequested();
   // A wall's foot (top = false) or a wall's / slab's top put on the level `level` (its id;
   // empty: let go of its level).
   void levelAttachmentEdited(const doc::ObjectId& id, bool top, const QString& level);

@@ -62,7 +62,7 @@
   2. 「平面の点から開き勝手を決める」計算をコアに：開口と平面の点 → 点が壁のどちら側か（内開き・外開き）、開口のどちら半分か（吊元・引く向き）→ fitting の JSON。テストできる形。
   3. 画面の道具「開き勝手を平面で決める」：開口にマウスを乗せると 2 の結果の記号をその場で描き、クリックで決める。`plan_opening_pick.rb` と同じ使い勝手。
   4. プロパティの建具の欄を「形式」と「向き」に分ける。
-- 済：1・2・3（docs/188。`swing_unequal`・`folding`、`draw::fittingTowards`、AI `point_opening_fitting`、建築ツールバー「開き勝手」`DoorSwingTool`）。残り：4（プロパティを形式と向きに分ける）と docs/188 の「まだ」。
+- 済：1・2・3（docs/188。`swing_unequal`・`folding`、`draw::fittingTowards`、AI `point_opening_fitting`、建築ツールバー「開き勝手」`DoorSwingTool`）。4 も済（プロパティの「形式」「開き方」「平面で」）。残りは docs/188 の「まだ」。
 
 ## オーナーにしかできない事
 

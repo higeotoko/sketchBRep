@@ -882,6 +882,7 @@ void MainWindow::buildUi() {
       if (!setWallTypeOfWalls(id, type.toStdString())) refreshPanels();
     });
   });
+  connect(panel_, &PropertiesPanel::doorSwingRequested, this, [this] { activateTool(ToolId::DoorSwing); });
   connect(panel_, &PropertiesPanel::wallMitreEdited, this, [this](const doc::ObjectId& id, bool on) {
     QTimer::singleShot(0, this, [this, id, on] {
       const auto corners = modeler_.mitreWallCorners({id}, on);
