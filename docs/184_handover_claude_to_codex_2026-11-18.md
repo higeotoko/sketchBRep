@@ -51,6 +51,19 @@
 - 部品の受け渡しは COLLADA と同じ `geom::ColladaPart`（形・名前・色・面ごとの色・タグ・属性）。読み込みの面の縫い合わせは `geom::joinFaces`（`Collada.cpp`）。
 - テスト：`tests/test_skp.cpp`（SDK が無いとスキップ。CI では `Skp.SaysSoWithoutTheSdk` だけ動く）。
 
+## 進めている事：平面の建具の表記を、オーナーの SketchUp 拡張から流用（2026-11-18 オーナーの依頼）
+
+オーナーの言葉：「平面の扉の開き方とか、SketchUPbuildingTool を途中まで作ってて、流用できるシステムがあれば流用して。平面上の表記が手動だとどれを使っていいか分からない」。
+
+- オーナーの SketchUp 拡張：GitHub `higeotoko/sketchup-building-tools`（公開、main = v1.40.1）、作業コピー `C:\Users\enomo\Documents\Codex\2026-11-09\su\work\github`。扉は `extension/sbr_architecture/doors.rb`（形式 8 つ：片開き・両開き・親子開き・片引き（壁付け）・引違い・引分け・折れ戸・開口のみ、と形式ごとの開き勝手、平面の記号の線）、`openings.rb`（`DOOR_SWINGS`、窓の形式）、`plan_opening_pick.rb`（平面で開口にマウスを乗せると記号をその場で描いて見せ、クリックで決める道具）。
+- SketchBRep の今：`src/core/src/OpeningSymbols.cpp` の `fittingChoices()` が 12 個を 1 列（「片開き 左吊元・内開き」など。左右・内外がどちらから見てか分かりにくい）。種類は none・window・swing_single・swing_double・sliding_single・sliding_double・sliding_bi。
+- 計画（Claude の）：
+  1. 形式を足す：親子開き `swing_unequal`（子扉の幅 `child`、親の吊元 `hinge`、`swing`）、折れ戸 `folding`（たたむ側 `fold` left/right、`swing`）。平面の記号（`openingSymbols`）と立体（`fittingSolids`）。`doors.rb` の `panes`・`leaf_paths`（折れ戸のジグザグ）を参考に。
+  2. 「平面の点から開き勝手を決める」計算をコアに：開口と平面の点 → 点が壁のどちら側か（内開き・外開き）、開口のどちら半分か（吊元・引く向き）→ fitting の JSON。テストできる形。
+  3. 画面の道具「開き勝手を平面で決める」：開口にマウスを乗せると 2 の結果の記号をその場で描き、クリックで決める。`plan_opening_pick.rb` と同じ使い勝手。
+  4. プロパティの建具の欄を「形式」と「向き」に分ける。
+- どこまで済んだかは、コミットと docs/188 以降を見る。
+
 ## オーナーにしかできない事
 
 - docs/105 のチェック表（特に 13 章：SketchUp で開く・SketchUp の物を読む・SDK の無い PC）。
