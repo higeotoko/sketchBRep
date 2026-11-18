@@ -65,9 +65,16 @@ AI：`point_opening_fitting {host, opening, point}`（同じ計算。指した�
 |---|---|
 | 計算テスト済み | コア全 760 件中 752 件成功・8 件スキップ（ローカル）。新規 1 件（`DoorsInPlan.ChosenByAPointAndTheNewKinds`）：x 方向の壁（厚さ 200）の扉（幅 900、−y 側から開けた）→ −y 側を指す＝外開き、半分を変えると吊元が変わる、+y 側＝内開き／記号の扉の線（壁に直角）が指した半分の枠（x 2450・1550）／片引きは指した側へ引く／引違いは断る／親子開き：記号 4 本（扉 2・円弧 2）、扉の立体 2 枚、子扉 100 は断る／折れ戸：記号 3 本、パネル 4 枚 |
 | GUI 自動確認済み | 新規 1 件（`doorSwingToolPicksInPlan`）：「開き勝手」を選ぶとボタンが押された状態、扉の横にマウス → ステータスに「片開き」・下書きの記号、クリックで取り消し 1 回、反対側をクリック → 逆に開く。プロパティの建具のテストを「形式」→「開き方」に直した（`openingFittingFromPanelShowsInPlanCut`：「片開き」→「右吊元・内開き」、寸法を変えても形式・開き方が残る、取り消しは 2 回）。開口・建具・表・平面・プロパティまわりの画面テストが成功（ローカル。`fixedElevationPansAndDrawsOnItsPlane` はまとめて走らせた時だけ落ち、単独で成功） |
-| CI | （記録待ち） |
+| CI | run 44278615114（push、`54e5c3e`）：Linux 773 件成功、Windows 769 件＋3 件成功・GUI 238 件成功（7 件スキップ）。CI には SketchUp SDK が無いので、SKP・LayOut のテストはスキップ |
 | Windows 実機確認 | まだ（チェック表 13-7） |
 
 ## 配布の記録
 
-（記録待ち）
+| 項目 | 値 |
+|---|---|
+| コード | `7e0ea86`（開き勝手の道具・親子開き・折れ戸）・`54e5c3e`（プロパティの形式と開き方）。Opus 5.5 で作業。まとめて配ったのは `54e5c3e` |
+| CI | run 44278615114（push、`54e5c3e`）：Linux・Windows とも成功 |
+| ZIP | `SketchBRep-windows-x64-54e5c3e-local.zip`（Codex のチャットフォルダの `outputs\`）。SketchUp SDK の DLL 2 つ入り（LayOut は入れていない） |
+| サイズ | 81,771,001 bytes |
+| SHA256 | `e5cd445e41f9fc7169e1b5fedc60f1ae6c4b0afd431e38ee8806a56cc92ae56a` |
+| ZIP の検証 | `verify_portable_pads.py`・`verify_portable_mat.py` とも成功（docs/validation/2026-11-18-portable-54e5c3e*.json） |

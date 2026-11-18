@@ -49,9 +49,16 @@ SketchUp 連携の案の 5。[docs/181](181_sketchup_skp.md)・[docs/183](183_sk
 | SketchUp 本体で確認（SketchUp の MCP、2026-11-18） | 例題 A を `sbr_cli` で SKP に書き出し、**SketchUp 2026 で開いた**：グループ 23、名前・材質・属性「SketchBRep」（`sbr_id`・`kind = wall`・`wall_type = exterior_siding`）、大きさ（mm）が合い、22 個がソリッド、`exported_ids` 23。SketchUp の中で（Ruby で）1 階の西の壁を西へ 1000 動かし、天井 1 枚を消し、別の天井の上面を 200 プッシュプルし、箱「Desk」（600 × 600 × 700）を描いて保存 → SketchBRep で `sync_skp`：動かした＝西の壁（壁のまま −1000、南北の壁と床がその分伸び、1 階の天井は広がった部屋に作り直し）、形を変えた＝プッシュプルした天井、消した物＝消した天井、足した＝Desk、ほか 20 はそのまま。SketchUp は新しいモデルに戻した |
 | オーナーの確認 | オーナーが SketchUp で直して戻した版（`例題A_2階建ての家_SKP変更版.sbr`）：西の壁（1 階・2 階）が 2301.9 動き、南北の壁・床・屋根がついてきていた。2 階の天井が消える不具合が見つかった → docs/187 で直した |
 | GUI 自動確認済み | ファイル・メニュー・読み書き・図面・壁まわりの画面テスト 40 条件が成功（ローカル）。「SketchUp で直した物を戻す...」の画面のテストは無い（CI に SDK が無いので出ない） |
-| CI | （記録待ち） |
+| CI | run 44278615114（push、`54e5c3e`）：Linux 773 件成功、Windows 769 件＋3 件成功・GUI 238 件成功（7 件スキップ）。CI には SketchUp SDK が無いので、SKP・LayOut のテストはスキップ |
 | Windows 実機確認 | まだ（チェック表 13-6） |
 
 ## 配布の記録
 
-（記録待ち）
+| 項目 | 値 |
+|---|---|
+| コード | `7a7a009`（SketchUp で直した物を戻す）。Opus 5.5 で作業。まとめて配ったのは `54e5c3e` |
+| CI | run 44278615114（push、`54e5c3e`）：Linux・Windows とも成功 |
+| ZIP | `SketchBRep-windows-x64-54e5c3e-local.zip`（Codex のチャットフォルダの `outputs\`）。SketchUp SDK の DLL 2 つ入り（LayOut は入れていない） |
+| サイズ | 81,771,001 bytes |
+| SHA256 | `e5cd445e41f9fc7169e1b5fedc60f1ae6c4b0afd431e38ee8806a56cc92ae56a` |
+| ZIP の検証 | `verify_portable_pads.py`・`verify_portable_mat.py` とも成功（docs/validation/2026-11-18-portable-54e5c3e*.json） |

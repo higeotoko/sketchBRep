@@ -34,9 +34,16 @@
 | 段階 | 内容 |
 |---|---|
 | 計算テスト済み | SKP・DAE のテスト 11 件中 10 件成功・1 件スキップ（ローカル、SDK あり）。新規 1 件（`Skp.TagsAndInformationGoAndComeBack`）：外壁 サイディングの壁（タグ「1F 外壁」）と箱を書き出して読み戻す → どちらも `skp_source_id` が元の id、壁はタグ「1F 外壁」、箱は「Default」、壁の `skp_attributes` に `wall_type = exterior_siding`・`kind = wall`・層の名前（窯業系サイディング）、物の属性には `kind`・`wall_type` を戻していない／もう一度書き出して読み戻してもタグが同じ。新規 1 件（`Skp.ComponentsAreShared`）：柱（105 × 105 × 2700）をコンポーネント「柱 105」にして 910 おきに 4 本 → 書き出すと SketchUp のインスタンス 4・グループ 0、読み戻すと 4 本とも体積ぴったり、x 0・910・1820・2730、名前は「柱」から。コア全 756 件中 748 件成功・8 件スキップ |
-| CI | （記録待ち） |
+| CI | run 44278615114（push、`54e5c3e`）：Linux 773 件成功、Windows 769 件＋3 件成功・GUI 238 件成功（7 件スキップ）。CI には SketchUp SDK が無いので、SKP・LayOut のテストはスキップ |
 | Windows 実機確認 | まだ（チェック表 13-4） |
 
 ## 配布の記録
 
-（記録待ち）
+| 項目 | 値 |
+|---|---|
+| コード | `1597527`（タグと物の情報）・`84ad3df`（コンポーネント）。Opus 5.5 で作業。まとめて配ったのは `54e5c3e` |
+| CI | run 44278615114（push、`54e5c3e`）：Linux・Windows とも成功 |
+| ZIP | `SketchBRep-windows-x64-54e5c3e-local.zip`（Codex のチャットフォルダの `outputs\`）。SketchUp SDK の DLL 2 つ入り（LayOut は入れていない） |
+| サイズ | 81,771,001 bytes |
+| SHA256 | `e5cd445e41f9fc7169e1b5fedc60f1ae6c4b0afd431e38ee8806a56cc92ae56a` |
+| ZIP の検証 | `verify_portable_pads.py`・`verify_portable_mat.py` とも成功（docs/validation/2026-11-18-portable-54e5c3e*.json） |

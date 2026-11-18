@@ -43,9 +43,16 @@ SketchUp 連携の案の 4。[docs/181](181_sketchup_skp.md)・[docs/182](182_sk
 | 計算テスト済み | コア全 757 件中 749 件成功・8 件スキップ（ローカル、SDK あり）。新規 1 件（`Layout.DrawingsAsLayOutPages`）：外壁 サイディングの部屋に窓 → `export_drawing` で `.layout`（1 ページ）、`export_drawing_set` で LayOut 1 文書（ページ数が図面の枚数と同じ、5 枚以上）、LayOut 自身に読ませて PDF に書き出せる |
 | AI が配ったアプリで確認 | テストで LayOut が書いた PDF（11 ページ、A4 横）を絵にして見た：図面リスト（表・日本語）、平面図（壁の太線・切る位置 A・B・方位記号の円）、断面図、立面図、建具表、どのページにも枠と表題欄（図番・図面名・縮尺） |
 | GUI 自動確認済み | 全部の画面テストで、この PC だけの線ツール 1 件・クリップボード 2 件と、まとめて走らせた時だけのフォローミー 2 件が失敗（フォローミーは単独で 4 条件とも成功）。図面の窓の形式の一覧はテストしていない |
-| CI | （記録待ち） |
+| CI | run 44278615114（push、`54e5c3e`）：Linux 773 件成功、Windows 769 件＋3 件成功・GUI 238 件成功（7 件スキップ）。CI には SketchUp SDK が無いので、SKP・LayOut のテストはスキップ |
 | Windows 実機確認 | まだ（チェック表 13-5） |
 
 ## 配布の記録
 
-（記録待ち）
+| 項目 | 値 |
+|---|---|
+| コード | `66957ee`・`4c79ce3`（LayOut、お知らせを標準出力からよける）。ZIP から LayOut の DLL を外したのは `7a7a009`。Opus 5.5 で作業。まとめて配ったのは `54e5c3e` |
+| CI | run 44278615114（push、`54e5c3e`）：Linux・Windows とも成功 |
+| ZIP | `SketchBRep-windows-x64-54e5c3e-local.zip`（Codex のチャットフォルダの `outputs\`）。SketchUp SDK の DLL 2 つ入り（LayOut は入れていない） |
+| サイズ | 81,771,001 bytes |
+| SHA256 | `e5cd445e41f9fc7169e1b5fedc60f1ae6c4b0afd431e38ee8806a56cc92ae56a` |
+| ZIP の検証 | `verify_portable_pads.py`・`verify_portable_mat.py` とも成功（docs/validation/2026-11-18-portable-54e5c3e*.json） |

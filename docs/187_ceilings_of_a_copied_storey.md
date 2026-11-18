@@ -26,9 +26,16 @@
 |---|---|
 | 計算テスト済み | 新規 1 件（`Schedules.CeilingsOfACopiedStoreyFollowTheirOwnRooms`）：天井のある 1 階をコピー → 2 階の天井は 2 階の部屋を指す／両方の階の間仕切りを 500 動かす → 天井は 2 枚のまま、高さ 2400・5400、どちらも広がる。天井・階のコピーの今までのテストも成功 |
 | AI が配ったアプリで確認 | 作った版の `sbr_cli` で、例題 A の 1 階・2 階の西の壁を 2301.9 動かす → 2 階の天井（Ceiling 1）が残る（直す前は消えていた）。1 階の天井は作り直される |
-| CI | （記録待ち） |
+| CI | run 44278615114（push、`54e5c3e`）：Linux 773 件成功、Windows 769 件＋3 件成功・GUI 238 件成功（7 件スキップ）。CI には SketchUp SDK が無いので、SKP・LayOut のテストはスキップ |
 | Windows 実機確認 | まだ（チェック表 13-6 の中で） |
 
 ## 配布の記録
 
-（記録待ち）
+| 項目 | 値 |
+|---|---|
+| コード | `7e22406`（上の階の天井が消える不具合）。Opus 5.5 で作業。まとめて配ったのは `54e5c3e` |
+| CI | run 44278615114（push、`54e5c3e`）：Linux・Windows とも成功 |
+| ZIP | `SketchBRep-windows-x64-54e5c3e-local.zip`（Codex のチャットフォルダの `outputs\`）。SketchUp SDK の DLL 2 つ入り（LayOut は入れていない） |
+| サイズ | 81,771,001 bytes |
+| SHA256 | `e5cd445e41f9fc7169e1b5fedc60f1ae6c4b0afd431e38ee8806a56cc92ae56a` |
+| ZIP の検証 | `verify_portable_pads.py`・`verify_portable_mat.py` とも成功（docs/validation/2026-11-18-portable-54e5c3e*.json） |
