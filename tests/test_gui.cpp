@@ -400,6 +400,7 @@ class GuiPhase1 : public QObject {
   void followMeAroundTopFace();
   void followMeAlongSelectedEdges();
   void wallToolAndArchitectureMenus();
+  void doorSwingToolPicksInPlan();
   void slabToolAndOpeningTool();
   void typedRevisionOnlyRightAfter();
   void escStepsBackAndConstraintsShow();
@@ -6243,6 +6244,38 @@ void GuiPhase1::wallToolAndArchitectureMenus() {
     QVERIFY(std::abs(geom::volume(m.document().find(room->front())->shape) - square) < 1.0);
     QCOMPARE(m.history().undoCount(), steps + 2);
   }
+}
+
+// docs/188: the way a door opens chosen in plan by pointing beside it (the owner's SketchUp
+// extension's way): the symbol drawn as it would be, a click keeps it.
+void GuiPhase1::doorSwingToolPicksInPlan() {
+  Fixture f;
+  QVERIFY(f.setUp(2000, 0));
+  doc::Modeler& m = f.window.modeler();
+  const auto wall = m.createWalls({gp_Pnt(0, 0, 0), gp_Pnt(4000, 0, 0)}, 200, 2700);
+  QVERIFY(wall && wall->size() == 1);
+  const doc::ObjectId host = wall->front();
+  f.window.setSelection({host});
+  QVERIFY(f.window.placeOpeningsOnSelection(1, 900, 2000, 0));
+  QVERIFY(m.setOpeningFittings(host, {1}, R"({"type":"swing_single"})"));
+  f.window.activateTool(MainWindow::ToolId::DoorSwing);
+  auto* action = f.window.findChild<QAction*>(QStringLiteral("architectureDoorSwingAction"));
+  QVERIFY(action && action->isChecked());
+  // Beside the door on the +y side, over the +x half (at the plan height the tool looks at).
+  move(f.vp, f.vp->toWidget(gp_Pnt(2250, 600, 1000)));
+  QVERIFY2(f.window.statusText().contains(QStringLiteral("片開き")), qPrintable(f.window.statusText()));
+  QVERIFY(!f.vp->previewShape().IsNull());
+  const std::size_t steps = m.history().undoCount();
+  click(f.vp, f.vp->toWidget(gp_Pnt(2250, 600, 1000)));
+  QCOMPARE(m.history().undoCount(), steps + 1);
+  const nlohmann::json fittings = nlohmann::json::parse(m.document().find(host)->attributes.at("opening_fittings"));
+  const nlohmann::json fit = fittings.begin().value();
+  const std::string side = fit.value("swing", "");
+  // The other side: the other way.
+  click(f.vp, f.vp->toWidget(gp_Pnt(2250, -600, 1000)));
+  const nlohmann::json again = nlohmann::json::parse(m.document().find(host)->attributes.at("opening_fittings")).begin().value();
+  QVERIFY(again.value("swing", "") != side);
+  QVERIFY2(f.window.statusText().contains(QStringLiteral("Ctrl+Z")), qPrintable(f.window.statusText()));
 }
 
 void GuiPhase1::slabToolAndOpeningTool() {

@@ -2376,3 +2376,71 @@ TEST_F(Schedules, DrawingsAreWrittenUnderJapaneseNames) {
   }
   std::filesystem::remove_all(dir);
 }
+
+// docs/188 (from the owner's SketchUp extension): the way a door opens chosen by a point in plan,
+// and 親子開き / 折れ戸 with their plan symbols and leaves.
+TEST(DoorsInPlan, ChosenByAPointAndTheNewKinds) {
+  sbr::doc::Modeler modeler;
+  CommandApi api{modeler};
+  auto ok = [&](const std::string& command, json args) {
+    json r = json::parse(api.execute(json{{"command", command}, {"args", args}}.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  // A wall along x (0..4000), 200 thick, the door cut from its -y face (the face normal -y).
+  const std::string wall = ok("create_wall", {{"points", {{0, 0}, {4000, 0}}}, {"thickness", 200}, {"height", 2700}})["ids"][0];
+  ok("place_openings", {{"host", wall}, {"face_normal", {0, -1, 0}}, {"count", 1}, {"width", 900}, {"height", 2000}, {"sill", 0}});
+  ok("set_opening_fittings", {{"host", wall}, {"openings", {1}}, {"fitting", {{"type", "swing_single"}}}});
+  auto point = [&](double x, double y) { return ok("point_opening_fitting", {{"host", wall}, {"opening", 1}, {"point", {x, y}}})["fitting"]; };
+  // The opening's middle at x 2000. -y is its face side ("out"); the hinge on the half pointed at.
+  json f = point(2300, -600);
+  EXPECT_EQ(f["swing"], "out");
+  const std::string outHinge = f["hinge"];
+  f = point(1700, -600);
+  EXPECT_EQ(f["swing"], "out");
+  EXPECT_NE(f["hinge"], outHinge);  // the other half: the other hinge
+  f = point(2300, 600);
+  EXPECT_EQ(f["swing"], "in");
+  // The symbol drawn: its hinge (the leaf's line from it, square to the wall) on the half pointed at.
+  auto hingeX = [&] {
+    const auto edges = sbr::draw::openingSymbols(modeler.document(), {1000.0, nullptr});
+    double x = 0;
+    for (const auto& e : edges) {
+      const Bnd_Box box = sbr::geom::exactBounds(e);
+      if (std::abs(box.CornerMax().X() - box.CornerMin().X()) < 1e-6 && box.CornerMax().Y() - box.CornerMin().Y() > 800) x = box.CornerMin().X();
+    }
+    return x;
+  };
+  point(2300, 600);
+  EXPECT_NEAR(hingeX(), 2450, 1e-6);  // the right jamb (900 wide about 2000), on the +y side
+  point(1700, -600);
+  EXPECT_NEAR(hingeX(), 1550, 1e-6);
+  // 片引き: opens towards the side pointed at.
+  ok("set_opening_fittings", {{"host", wall}, {"openings", {1}}, {"fitting", {{"type", "sliding_single"}}}});
+  const std::string towards = point(2400, -600)["slide"];
+  EXPECT_NE(point(1600, -600)["slide"], towards);
+  // 引違い: nothing to choose.
+  ok("set_opening_fittings", {{"host", wall}, {"openings", {1}}, {"fitting", {{"type", "sliding_double"}}}});
+  EXPECT_FALSE(json::parse(api.execute(json{{"command", "point_opening_fitting"}, {"args", {{"host", wall}, {"opening", 1}, {"point", {2000, -600}}}}}.dump()))
+                   .value("ok", true));
+  // 親子開き: two arcs (parent 600, child 300), two leaves; 折れ戸: lines, four panels.
+  auto symbols = [&] { return sbr::draw::openingSymbols(modeler.document(), {1000.0, nullptr}).size(); };
+  auto leaves = [&] {
+    int n = 0;
+    for (const auto& s : sbr::draw::fittingSolids(modeler.document())) n += s.part == "leaf";
+    return n;
+  };
+  ok("set_opening_fittings", {{"host", wall}, {"openings", {1}}, {"fitting", {{"type", "swing_unequal"}, {"child", 300}}}});
+  EXPECT_EQ(symbols(), 4u);  // two leaves, two arcs
+  EXPECT_EQ(leaves(), 2);
+  f = point(2300, -600);
+  EXPECT_EQ(f["type"], "swing_unequal");
+  EXPECT_EQ(f["child"], 300.0);
+  EXPECT_FALSE(json::parse(api.execute(json{{"command", "set_opening_fittings"}, {"args", {{"host", wall}, {"openings", {1}},
+                                                {"fitting", {{"type", "swing_unequal"}, {"child", 100}}}}}}.dump()))
+                   .value("ok", true));
+  ok("set_opening_fittings", {{"host", wall}, {"openings", {1}}, {"fitting", {{"type", "folding"}}}});
+  EXPECT_EQ(symbols(), 3u);  // the closed line and the zigzag
+  EXPECT_EQ(leaves(), 4);
+  EXPECT_EQ(point(2400, 600)["swing"], "in");
+}

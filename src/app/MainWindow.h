@@ -72,7 +72,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   // Used by tests and the command line.
   bool openFile(const QString& path);
   bool saveFile(const QString& path);
-  enum class ToolId { Select, Line, Rectangle, PushPull, Move, Rotate, Offset, Curve, Revolve, Measure, Circle, Paint, Eraser, Arc, Dimension, Text, Section, FollowMe, Protractor, Polygon, Scale, Wall, Slab, Opening, Paste, ComponentAxes, RotatedRectangle, Member, Sweep2, EdgeSurface, Patch, Fillet, Chamfer, Shell, Room, Roof, Stair, Count };
+  enum class ToolId { Select, Line, Rectangle, PushPull, Move, Rotate, Offset, Curve, Revolve, Measure, Circle, Paint, Eraser, Arc, Dimension, Text, Section, FollowMe, Protractor, Polygon, Scale, Wall, Slab, Opening, Paste, ComponentAxes, RotatedRectangle, Member, Sweep2, EdgeSurface, Patch, Fillet, Chamfer, Shell, Room, Roof, Stair, DoorSwing, Count };
   void activateTool(ToolId id);
   // Component placement commands on the instances among `ids`: "unique",
   // "reset", "mirror0".."mirror2" (red / green / blue) or "axes" (tool).
@@ -325,6 +325,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   void importSkpFile(const QString& path);
   void exportSkpFile(const QString& path);
   void syncSkpFile();
+  DoorSwingTool& doorSwingTool() { return *doorSwingTool_; }
  public:
   bool exportGltfFile(const QString& path);  // docs/85_gltf_export (public for checks)
  private:
@@ -400,6 +401,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   std::unique_ptr<MemberTool> memberTool_;
   std::unique_ptr<SlabTool> slabTool_;
   std::unique_ptr<OpeningTool> openingTool_;
+  std::unique_ptr<DoorSwingTool> doorSwingTool_;  // docs/188
   doc::Modeler::Clipboard clipboard_;
   // An opening copied with Ctrl+C (docs/126): Ctrl+V pastes it into a wall where clicked.
   std::optional<PasteTool::CopiedOpening> copiedOpening_;

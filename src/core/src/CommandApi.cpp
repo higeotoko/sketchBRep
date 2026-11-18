@@ -6,6 +6,7 @@
 #include "sbr/ConstructionAssist.h"
 #include "sbr/ConstructionCheck.h"
 #include "sbr/api/CommandApi.h"
+#include "sbr/OpeningSymbols.h"
 #include "sbr/doc/IfcExport.h"
 #include "sbr/ConstructionGuide.h"
 #include "sbr/KernelError.h"
@@ -2257,12 +2258,43 @@ const std::vector<CommandDef>& commands() {
          must(m.removeOpenings(text(a, "host"), which));
          return json{{"remaining", must(m.openings(text(a, "host"))).size()}};
        }},
+      {"point_opening_fitting",
+       "Choose the way an opening's door opens by a point in plan (docs/188), as clicking beside it does: the side "
+       "of the wall the point is on gives in / out, the half of the opening it is over gives the hinge (swing_single, "
+       "swing_unequal), the jamb a 折れ戸 gathers at, the way a 片引き opens. 'host', 'opening' (id or number from "
+       "list_openings), 'point' [x, y]. The fitting's type stays (give it first with set_opening_fittings). One undo "
+       "step. Returns the fitting now.",
+       SCHEMA({"type": "object", "properties": {"host": {"type": "string"}, "opening": {"type": ["string", "integer"]},
+               "point": {"type": "array"}}, "required": ["host", "opening", "point"]}),
+       [](doc::Modeler& m, const json& a) {
+         const auto list = must(m.openings(text(a, "host")));
+         const json& which = arg(a, "opening");
+         const doc::Modeler::OpeningInfo* op = nullptr;
+         for (const auto& o : list)
+           if ((which.is_string() && o.id == which.get<std::string>()) ||
+               (which.is_number_integer() && static_cast<long long>(o.index) == which.get<long long>()))
+             op = &o;
+         if (!op) throw ApiError("No such opening on that host");
+         const doc::Object* host = m.document().find(text(a, "host"));
+         const auto stored = host->attributes.find("opening_fittings");
+         const json fittings = stored == host->attributes.end() ? json() : json::parse(stored->second, nullptr, false);
+         if (!fittings.is_object() || !fittings.contains(op->id))
+           throw ApiError("The opening has no door yet: give it one with set_opening_fittings first");
+         const json& p = arg(a, "point");
+         if (!p.is_array() || p.size() < 2 || !p[0].is_number() || !p[1].is_number()) throw ApiError("'point' is [x, y]");
+         const std::string fitting = must(draw::fittingTowards(fittings.at(op->id).dump(), op->center, op->normal, op->depth,
+                                                               gp_Pnt(p[0].get<double>(), p[1].get<double>(), op->center.Z())));
+         must(m.setOpeningFittings(text(a, "host"), {op->index}, fitting));
+         return json{{"fitting", json::parse(fitting)}};
+       }},
       {"set_opening_fittings",
        "Door / window kind of openings of 'host' ('openings': ids or numbers from list_openings, default all), "
        "drawn as plan symbols in the plan cut and on plan drawings (DXF / JWW / PDF) to the real width and "
        "wall thickness. 'fitting': {\"type\": none | window | swing_single (\"hinge\": left|right, "
-       "\"swing\": in|out) | swing_double (\"swing\") | sliding_single (\"slide\": left|right; 片引き) | "
-       "sliding_double (引違い) | sliding_bi (両引き)}. \"out\" is the side the opening was cut from (its "
+       "\"swing\": in|out) | swing_double (\"swing\") | swing_unequal (親子開き: \"hinge\" of the parent leaf, "
+       "\"swing\", \"child\" leaf width 150-900, default 300) | folding (折れ戸: \"fold\": left|right, the jamb it "
+       "gathers at; \"swing\") | sliding_single (\"slide\": left|right; 片引き) | "
+       "sliding_double (引違い) | sliding_bi (両引き)}. point_opening_fitting chooses the way it opens by a point. \"out\" is the side the opening was cut from (its "
        "normal); left / right as seen from the side a door opens to, or from the cut side for sliding doors. "
        "\"none\" removes it. One undo step; combine with place_openings in a batch.",
        SCHEMA({"type": "object", "properties": {"host": {"type": "string"},

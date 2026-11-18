@@ -158,6 +158,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   memberTool_ = std::make_unique<MemberTool>(*this);
   slabTool_ = std::make_unique<SlabTool>(*this);
   openingTool_ = std::make_unique<OpeningTool>(*this);
+  doorSwingTool_ = std::make_unique<DoorSwingTool>(*this);
   pasteTool_->setClipboard(&clipboard_);
   pasteTool_->setOnPlaced([this](const std::vector<doc::ObjectId>&) {
     // Leave the paste tool after the current event has been handled.
@@ -1974,6 +1975,20 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
   findChild<QToolButton*>(QStringLiteral("architectureOpening"))->setToolTip(
       tr("開口: 平面の壁、または3D・立面の壁面をクリック。右の矢印から幅・高さ・腰高を設定"));
   {
+    // docs/188: the way a door opens, chosen in plan by pointing beside it.
+    auto* swing = new QAction(tr("開き勝手"), this);
+    swing->setObjectName(QStringLiteral("architectureDoorSwingAction"));
+    swing->setCheckable(true);
+    swing->setToolTip(tr("開き勝手: 扉の横で、開く側・吊元にしたい半分にマウスを乗せると、その開き方を平面に描きます。クリックで決めます"));
+    connect(swing, &QAction::triggered, this, [this] { activateTool(ToolId::DoorSwing); });
+    toolGroup_->addAction(swing);
+    toolActions_[static_cast<int>(ToolId::DoorSwing)] = swing;
+    auto* button = new QToolButton(bar);
+    button->setObjectName(QStringLiteral("architectureDoorSwing"));
+    button->setDefaultAction(swing);
+    bar->addWidget(button);
+  }
+  {
     // Roof (docs/90 G-08): only here, not in the drawing palette.
     auto* roof = new QAction(tr("屋根"), this);
     roof->setObjectName(QStringLiteral("architectureRoofAction"));
@@ -2561,6 +2576,7 @@ void MainWindow::activateTool(ToolId id) {
       break;
     case ToolId::Slab: active_ = slabTool_.get(); break;
     case ToolId::Opening: active_ = openingTool_.get(); break;
+    case ToolId::DoorSwing: active_ = doorSwingTool_.get(); break;
     case ToolId::Room: active_ = roomTool_.get(); break;
     case ToolId::Roof: active_ = roofTool_.get(); break;
     case ToolId::Stair: active_ = stairTool_.get(); break;

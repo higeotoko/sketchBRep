@@ -22,7 +22,8 @@ constexpr double kTrack = 20;    // half the gap between the two tracks of 引�
 constexpr double kOverlap = 25;  // a sliding leaf runs past the jamb / the other leaf
 constexpr double kGlass = 15;    // half the gap between the two glass lines of a window
 
-const std::set<std::string> kTypes = {"none", "window", "swing_single", "swing_double",
+// docs/188: 親子開き (swing_unequal) and 折れ戸 (folding), as the owner's SketchUp extension has them.
+const std::set<std::string> kTypes = {"none", "window", "swing_single", "swing_double", "swing_unequal", "folding",
                                       "sliding_single", "sliding_double", "sliding_bi"};
 
 TopoDS_Edge line(const gp_Pnt& a, const gp_Pnt& b) { return BRepBuilderAPI_MakeEdge(a, b).Edge(); }
@@ -49,7 +50,7 @@ Result<std::string> normalizeFitting(const std::string& text) {
   };
   static const Size sizes[] = {{"frame", 10.0, 200.0}, {"leaf", 10.0, 100.0}, {"glass", 3.0, 30.0}, {"sash", 10.0, 100.0}};
   for (const auto& [key, unused] : in.items()) {
-    if (key == "type" || key == "hinge" || key == "swing" || key == "slide") continue;
+    if (key == "type" || key == "hinge" || key == "swing" || key == "slide" || key == "fold" || key == "child") continue;
     if (key == "type_name") {
       // The registered fitting type it was made from (docs/171): a label, one line.
       const json& v = in.at(key);
@@ -75,7 +76,48 @@ Result<std::string> normalizeFitting(const std::string& text) {
     return Result<std::string>::failure("swing is in|out");
   if (type == "sliding_single" && !choose("slide", "left", "right", "left"))
     return Result<std::string>::failure("slide is left|right");
+  if (type == "swing_unequal") {
+    // The parent leaf's hinge, the way both open, and the child leaf's width (docs/188).
+    if (!(choose("hinge", "left", "right", "left") && choose("swing", "in", "out", "in")))
+      return Result<std::string>::failure("hinge is left|right and swing in|out");
+    const json child = in.value("child", json(300.0));
+    if (!child.is_number() || !(child.get<double>() >= 150 && child.get<double>() <= 900))
+      return Result<std::string>::failure("A child leaf (child) is 150 to 900 wide");
+    out["child"] = child.get<double>();
+  }
+  if (type == "folding" && !(choose("fold", "left", "right", "left") && choose("swing", "in", "out", "in")))
+    return Result<std::string>::failure("fold is left|right and swing in|out");
   return out.dump();
+}
+
+Result<std::string> fittingTowards(const std::string& current, const gp_Pnt& center, const gp_Dir& normal, double depth,
+                                   const gp_Pnt& point) {
+  const json in = json::parse(current, nullptr, false);
+  if (!in.is_object()) return Result<std::string>::failure("No fitting");
+  json out = in;
+  const std::string type = in.value("type", std::string("none"));
+  // The opening's face is on its `normal` side; the wall's middle `depth / 2` into it.
+  const gp_Vec n(normal.X(), normal.Y(), 0), u = gp_Vec(0, 0, 1).Crossed(n);
+  const gp_Vec to(gp_Pnt(center.X(), center.Y(), 0), gp_Pnt(point.X(), point.Y(), 0));
+  const double across = to.Dot(n) + depth / 2;  // > 0: on the face side (outward)
+  const double along = to.Dot(u);               // > 0: the +u half
+  const bool outward = across > 0;
+  // Seen from the side it opens to: from outside, right is +u; from inside, right is -u (as drawn).
+  const bool rightHalf = outward ? along > 0 : along < 0;
+  if (type == "swing_single" || type == "swing_unequal") {
+    out["swing"] = outward ? "out" : "in";
+    out["hinge"] = rightHalf ? "right" : "left";
+  } else if (type == "swing_double") {
+    out["swing"] = outward ? "out" : "in";
+  } else if (type == "folding") {
+    out["swing"] = outward ? "out" : "in";
+    out["fold"] = along > 0 ? "right" : "left";  // gathers at the jamb on the side pointed at
+  } else if (type == "sliding_single") {
+    out["slide"] = along > 0 ? "right" : "left";  // opens towards the side pointed at
+  } else {
+    return Result<std::string>::failure("This fitting has no way to open to choose");
+  }
+  return normalizeFitting(out.dump());
 }
 
 const std::vector<FittingChoice>& fittingChoices() {
@@ -88,6 +130,10 @@ const std::vector<FittingChoice>& fittingChoices() {
       {"片開き 右吊元・外開き", R"({"type":"swing_single","hinge":"right","swing":"out"})"},
       {"両開き 内開き", R"({"type":"swing_double","swing":"in"})"},
       {"両開き 外開き", R"({"type":"swing_double","swing":"out"})"},
+      {"親子開き 内開き", R"({"type":"swing_unequal","hinge":"left","swing":"in","child":300})"},
+      {"親子開き 外開き", R"({"type":"swing_unequal","hinge":"left","swing":"out","child":300})"},
+      {"折れ戸 内開き", R"({"type":"folding","fold":"left","swing":"in"})"},
+      {"折れ戸 外開き", R"({"type":"folding","fold":"left","swing":"out"})"},
       {"片引き 左へ引く", R"({"type":"sliding_single","slide":"left"})"},
       {"片引き 右へ引く", R"({"type":"sliding_single","slide":"right"})"},
       {"引違い", R"({"type":"sliding_double"})"},
@@ -107,8 +153,13 @@ std::vector<TopoDS_Edge> openingSymbols(const doc::Document& d, const SymbolOpti
     const auto list = doc::Modeler::openingsIn(d, host.id);
     if (!list) continue;
     for (const auto& o : *list) {
-      const auto it = fittings.find(o.id);  // the opening's id (its number for walls from before ids)
-      if (it == fittings.end() || !it->is_object()) continue;
+      if (!options.onlyOpening.empty() && o.id != options.onlyOpening) continue;
+      const auto stored = fittings.find(o.id);  // the opening's id (its number for walls from before ids)
+      json overridden;
+      if (!options.fittingOverride.empty()) overridden = json::parse(options.fittingOverride, nullptr, false);
+      const json* fit = overridden.is_object() ? &overridden : stored == fittings.end() ? nullptr : &*stored;
+      if (!fit || !fit->is_object()) continue;
+      const json* it = fit;
       const std::string type = it->value("type", std::string("none"));
       // Only openings the plan cut passes through (a high window above the cut is not drawn).
       if (!(o.bottom < options.z && options.z < o.bottom + o.height)) continue;
@@ -157,6 +208,27 @@ std::vector<TopoDS_Edge> openingSymbols(const doc::Document& d, const SymbolOpti
         const bool outward = it->value("swing", std::string("in")) == "out";
         leaf(-w / 2, 0, w / 2, outward);
         leaf(w / 2, 0, w / 2, outward);
+      } else if (type == "swing_unequal") {
+        // 親子開き (docs/188): the parent leaf from its hinge, the child from the other jamb, meeting
+        // where the child ends; both arcs on the side they open to.
+        const bool outward = it->value("swing", std::string("in")) == "out";
+        const bool hingeHigh = (it->value("hinge", std::string("left")) == "right") == outward;
+        const double child = std::min(it->value("child", 300.0), w / 2 - 1.0);
+        const double h = hingeHigh ? w / 2 : -w / 2, meet = hingeHigh ? -w / 2 + child : w / 2 - child;
+        leaf(h, meet, w - child, outward);
+        leaf(-h, meet, child, outward);
+      } else if (type == "folding") {
+        // 折れ戸 (docs/188, as doors.rb draws it): the closed line across, and the leaves folded to
+        // the jamb they gather at, a zigzag on the side they open to.
+        const bool outward = it->value("swing", std::string("in")) == "out";
+        const double side = it->value("fold", std::string("left")) == "right" ? 1 : -1;  // seen from the cut side
+        const double first = side * w / 2, last = -side * w / 2;
+        out.push_back(line(at(-w / 2, t / 2), at(w / 2, t / 2)));
+        const double faceDepth = outward ? 0.0 : t, swing = outward ? -1.0 : 1.0;  // depth grows into the wall
+        const gp_Pnt a = at(first, faceDepth), b = at(first + (last - first) * 0.32, faceDepth + swing * w * 0.26),
+                     c = at(first + (last - first) * 0.64, faceDepth);
+        out.push_back(line(a, b));
+        out.push_back(line(b, c));
       } else if (type == "sliding_single") {
         // Seen from the cut side (+n): right is +u.
         const double sign = it->value("slide", std::string("left")) == "right" ? 1 : -1;
@@ -275,6 +347,19 @@ std::vector<FittingSolid> fittingSolids(const doc::Document& d, const std::set<s
         add(box(0, iw / 2, zi0, zi1, d0, d0 + kLeaf), "leaf");
         handle(0, -1.0, d0);  // the left leaf's, at the meeting edge
         handle(0, 1.0, d0);   // the right leaf's
+      } else if (type == "swing_unequal") {
+        // 親子開き (docs/188): the parent leaf and the child leaf side by side, closed.
+        const double d0 = outward ? 0.0 : t - kLeaf;
+        const bool hingeHigh = (it->value("hinge", std::string("left")) == "right") == outward;
+        const double child = std::min(it->value("child", 300.0), iw / 2 - 1.0);
+        const double meet = hingeHigh ? -iw / 2 + child : iw / 2 - child;
+        add(box(std::min(meet, hingeHigh ? iw / 2 : -iw / 2), std::max(meet, hingeHigh ? iw / 2 : -iw / 2), zi0, zi1, d0, d0 + kLeaf), "leaf");
+        add(box(std::min(meet, hingeHigh ? -iw / 2 : iw / 2), std::max(meet, hingeHigh ? -iw / 2 : iw / 2), zi0, zi1, d0, d0 + kLeaf), "leaf");
+        handle(meet, hingeHigh ? 1.0 : -1.0, d0);  // the parent's, at the meeting edge
+      } else if (type == "folding") {
+        // 折れ戸 (docs/188): four panels across, closed, in the middle of the wall.
+        const double panel = iw / 4;
+        for (int k = 0; k < 4; ++k) add(box(-iw / 2 + k * panel, -iw / 2 + (k + 1) * panel, zi0, zi1, mid - kLeaf / 2, mid + kLeaf / 2), "leaf");
       } else if (type == "sliding_double") {
         add(box(-iw / 2, 25, zi0, zi1, mid - kLeaf, mid), "leaf");  // two tracks, side by side
         add(box(-25, iw / 2, zi0, zi1, mid, mid + kLeaf), "leaf");

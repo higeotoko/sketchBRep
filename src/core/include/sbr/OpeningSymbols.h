@@ -30,11 +30,21 @@ struct FittingChoice {
   std::string label;
   std::string fitting;
 };
+// The way a fitting opens, from a point in plan (docs/188, as the owner's SketchUp extension picks
+// it): on which side of the wall the point is (in / out), and over which half of the opening (the
+// hinge, the side a 折れ戸 gathers at, the way a 片引き opens). `center` and `normal`: the
+// opening's middle on its face and the face's direction (OpeningInfo), `depth` the wall's
+// thickness there. The fitting's type and sizes stay. Refused for fittings with no way to choose.
+Result<std::string> fittingTowards(const std::string& current, const gp_Pnt& center, const gp_Dir& normal, double depth,
+                                   const gp_Pnt& point);
 const std::vector<FittingChoice>& fittingChoices();
 
 struct SymbolOptions {
   double z = 0.0;                       // plan height (the cut): openings it passes through
   const std::set<std::string>* only = nullptr;  // host ids to draw (all when null)
+  // docs/188: only this opening (its id), drawn with this fitting instead of its own (a preview).
+  std::string onlyOpening;
+  std::string fittingOverride;
 };
 // World edges (lines and arcs at height z) for every fitted opening the plane z passes through.
 std::vector<TopoDS_Edge> openingSymbols(const doc::Document& document, const SymbolOptions& options);

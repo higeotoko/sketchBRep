@@ -1156,6 +1156,112 @@ QString WallTool::settingsText() const {
   return QObject::tr("厚さ %1 / 高さ %2 / %3").arg(mm(settings_.thickness), mm(settings_.height), just);
 }
 
+// --- DoorSwingTool (docs/188) -------------------------------------------------------------
+
+namespace {
+QString fittingLabel(const std::string& fitting) {
+  const nlohmann::json f = nlohmann::json::parse(fitting, nullptr, false);
+  if (!f.is_object()) return {};
+  const std::string type = f.value("type", std::string());
+  const QString way = f.value("swing", std::string("in")) == "out" ? QObject::tr("外開き") : QObject::tr("内開き");
+  if (type == "swing_single") return QObject::tr("片開き・%1").arg(way);
+  if (type == "swing_double") return QObject::tr("両開き・%1").arg(way);
+  if (type == "swing_unequal") return QObject::tr("親子開き・%1").arg(way);
+  if (type == "folding") return QObject::tr("折れ戸・%1").arg(way);
+  if (type == "sliding_single") return QObject::tr("片引き");
+  return {};
+}
+}  // namespace
+
+QString DoorSwingTool::name() const { return QObject::tr("開き勝手"); }
+
+QCursor DoorSwingTool::cursor() const { return QCursor(Qt::PointingHandCursor); }
+
+void DoorSwingTool::activate() {
+  hover_.reset();
+  host_.viewport().clearPreview();
+  host_.setStatus(QObject::tr("扉の横で、開く側・吊元にしたい半分にマウスを乗せると、その開き方を描きます。クリックで決めます"
+                              "（扉の無い開口は、先にプロパティで扉の形式を選んでください）"));
+}
+
+void DoorSwingTool::cancel() {
+  hover_.reset();
+  host_.viewport().clearPreview();
+}
+
+std::optional<DoorSwingTool::Pick> DoorSwingTool::pickAt(const ToolEvent& e) const {
+  static const std::set<std::string> choosable = {"swing_single", "swing_double", "swing_unequal", "folding", "sliding_single"};
+  doc::Modeler& m = host_.modeler();
+  const snap::Ray ray = host_.viewport().rayAt(e.pos);
+  if (std::abs(ray.direction.Z()) < 1e-9) return std::nullopt;
+  std::optional<Pick> best;
+  double nearest = 1e300;
+  for (const doc::Object& o : m.document().objects()) {
+    const auto stored = o.attributes.find("opening_fittings");
+    if (stored == o.attributes.end() || o.locked || !m.document().isVisible(o.id)) continue;
+    const nlohmann::json fittings = nlohmann::json::parse(stored->second, nullptr, false);
+    if (!fittings.is_object()) continue;
+    const auto list = m.openings(o.id);
+    if (!list) continue;
+    for (const auto& op : *list) {
+      if (!fittings.contains(op.id) || std::abs(op.normal.Z()) > 1e-6) continue;
+      const nlohmann::json& fit = fittings.at(op.id);
+      if (!fit.is_object() || !choosable.count(fit.value("type", std::string()))) continue;
+      // Where the ray meets the plan through the opening (at most 1000 up).
+      const double z = op.bottom + std::min(1000.0, op.height / 2);
+      const double t = (z - ray.origin.Z()) / ray.direction.Z();
+      const gp_Pnt p = ray.origin.Translated(gp_Vec(ray.direction) * t);
+      const gp_Vec n(op.normal.X(), op.normal.Y(), 0), u = gp_Vec(0, 0, 1).Crossed(n);
+      const gp_Vec to(gp_Pnt(op.center.X(), op.center.Y(), 0), gp_Pnt(p.X(), p.Y(), 0));
+      const double along = to.Dot(u), across = to.Dot(n) + op.depth / 2;
+      if (std::abs(along) > op.along / 2 + 100 || std::abs(across) > op.depth / 2 + 2000) continue;
+      if (std::abs(across) >= nearest) continue;
+      const auto chosen = draw::fittingTowards(fit.dump(), op.center, op.normal, op.depth, p);
+      if (!chosen) continue;
+      nearest = std::abs(across);
+      best = Pick{o.id, op.index, op.id, *chosen};
+    }
+  }
+  return best;
+}
+
+void DoorSwingTool::mouseMove(const ToolEvent& e) {
+  hover_ = pickAt(e);
+  Viewport& vp = host_.viewport();
+  if (!hover_) {
+    vp.clearPreview();
+    host_.setStatus(QObject::tr("扉の横（開く側）にマウスを乗せてください"));
+    return;
+  }
+  // The symbol as it would be.
+  const std::set<std::string> only{hover_->host};
+  const auto list = host_.modeler().openings(hover_->host);
+  double z = 1000.0;
+  if (list)
+    for (const auto& op : *list)
+      if (op.id == hover_->opening) z = op.bottom + std::min(1000.0, op.height / 2);
+  draw::SymbolOptions options;
+  options.z = z;
+  options.only = &only;
+  options.onlyOpening = hover_->opening;
+  options.fittingOverride = hover_->fitting;
+  BRep_Builder builder;
+  TopoDS_Compound preview;
+  builder.MakeCompound(preview);
+  for (const TopoDS_Edge& edge : draw::openingSymbols(host_.modeler().document(), options)) builder.Add(preview, edge);
+  vp.setPreview(preview);
+  host_.setStatus(QObject::tr("%1：クリックで決めます").arg(fittingLabel(hover_->fitting)));
+}
+
+void DoorSwingTool::mousePress(const ToolEvent& e) {
+  hover_ = pickAt(e);
+  if (!hover_) return;
+  const Status s = host_.modeler().setOpeningFittings(hover_->host, {hover_->index}, hover_->fitting);
+  host_.viewport().clearPreview();
+  host_.setStatus(s ? QObject::tr("%1 にしました（Ctrl+Z で戻せます）").arg(fittingLabel(hover_->fitting))
+                    : QObject::tr("開き勝手を変えられません: %1").arg(QString::fromStdString(s.message())));
+}
+
 QString WallTool::startText() const { return QObject::tr("壁の始点をクリック（ツール > 壁の設定で寸法を変更）"); }
 
 QString WallTool::finishedText(std::size_t created) const {

@@ -508,6 +508,30 @@ class StairTool : public PlanPolylineTool {
 // Typing "w,h" or "w,h,sill"
 // sets the size, and right after a click redoes that opening at the new
 // size. Same as place_openings with 'at'.
+// docs/188: the way a door opens, chosen in plan by pointing beside it (as the owner's SketchUp
+// extension picks it): the side of the wall gives in / out, the half of the opening the hinge (or
+// where a 折れ戸 gathers, the way a 片引き opens); the symbol is drawn as it would be, a click
+// keeps it (one undo step).
+class DoorSwingTool : public Tool {
+ public:
+  using Tool::Tool;
+  QString name() const override;
+  QCursor cursor() const override;
+  void activate() override;
+  void cancel() override;
+  void mouseMove(const ToolEvent& e) override;
+  void mousePress(const ToolEvent& e) override;
+
+ private:
+  struct Pick {
+    doc::ObjectId host;
+    std::size_t index = 0;
+    std::string opening, fitting;
+  };
+  std::optional<Pick> pickAt(const ToolEvent& e) const;
+  std::optional<Pick> hover_;
+};
+
 class OpeningTool : public Tool {
  public:
   struct Settings {
