@@ -1932,6 +1932,46 @@ TEST_F(Schedules, ACeilingAsMadeFollowsItsRoom) {
   EXPECT_NEAR(sbr::geom::exactBounds(modeler.document().worldShape(*board())).CornerMin().Z(), 2400, 1e-6);
 }
 
+// docs/186 (found bringing back from SketchUp): a storey with its ceiling copied up, then the
+// walls of both storeys moved: each storey's ceiling follows its own room, none goes missing.
+TEST_F(Schedules, CeilingsOfACopiedStoreyFollowTheirOwnRooms) {
+  auto levels = modeler.levels();
+  for (auto& l : levels)
+    if (l.name == "2FL") l.elevation = 3000;
+  levels.push_back({"", "3FL", 6000});
+  ASSERT_TRUE(modeler.setLevels(levels));
+  ok("set_room_finish", {{"id", room}, {"ceiling_height", 2400}});
+  ok("make_ceilings", {{"rooms", {room}}});
+  ok("copy_storey", {{"from", "1FL"}, {"to", "2FL"}});
+  auto boards = [&] {
+    std::vector<const sbr::doc::Object*> out;
+    for (const auto& o : modeler.document().objects())
+      if (o.attributes.count("kind") && o.attributes.at("kind") == "ceiling") out.push_back(&o);
+    std::sort(out.begin(), out.end(), [&](auto* a, auto* b) {
+      return modeler.document().worldBounds(*a).CornerMin().Z() < modeler.document().worldBounds(*b).CornerMin().Z();
+    });
+    return out;
+  };
+  ASSERT_EQ(boards().size(), 2u);
+  // The upper ceiling names the upper room (not the one it was copied from).
+  EXPECT_NE(boards()[1]->attributes.at("room"), room);
+  const double lower = sbr::geom::volume(modeler.document().worldShape(*boards()[0]));
+  // Both partitions 500 east (as one move): both rooms larger, both ceilings with them.
+  std::vector<sbr::doc::ObjectId> partitions;
+  for (const auto& o : modeler.document().objects()) {
+    const auto b = modeler.document().worldBounds(o);
+    if (o.attributes.count("kind") && o.attributes.at("kind") == "wall" && !b.IsVoid() && std::abs(b.CornerMin().X() - 3950) < 1e-6)
+      partitions.push_back(o.id);
+  }
+  ASSERT_EQ(partitions.size(), 2u);
+  ASSERT_TRUE(modeler.move(partitions, gp_Vec(500, 0, 0)));
+  const auto now = boards();
+  ASSERT_EQ(now.size(), 2u);
+  EXPECT_NEAR(modeler.document().worldBounds(*now[0]).CornerMin().Z(), 2400, 1e-6);
+  EXPECT_NEAR(modeler.document().worldBounds(*now[1]).CornerMin().Z(), 5400, 1e-6);
+  for (const auto* b : now) EXPECT_GT(sbr::geom::volume(modeler.document().worldShape(*b)), lower + 2.5e6 * 10);
+}
+
 // docs/124: the lines between the layers of a wall of a build-up, in a plan cut.
 TEST(WallLayerLines, ALineBetweenEachTwoLayersBrokenAtOpenings) {
   sbr::doc::Modeler modeler;

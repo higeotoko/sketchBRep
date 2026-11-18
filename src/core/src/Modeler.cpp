@@ -6936,6 +6936,28 @@ Result<Modeler::StoreyCopy> Modeler::copyStorey(const std::string& fromLevel, co
       }
     return std::nullopt;
   };
+  // docs/186: each room copied, by the room it was copied from (the same place, dz higher).
+  std::map<ObjectId, ObjectId> roomCopies;
+  auto notePoint = [&](const Object& o) -> std::optional<gp_Pnt> {
+    const auto* note = std::get_if<TextNote>(&o.recipe.base);
+    if (!note) return std::nullopt;
+    return note->position.Transformed(document_.worldTransform(o));
+  };
+  for (const ObjectId& id : *made) {
+    const Object* copied = document_.find(id);
+    if (!copied || kindOf(*copied) != "room") continue;
+    const auto at = notePoint(*copied);
+    if (!at) continue;
+    for (const ObjectId& original : roots) {
+      const Object* was = document_.find(original);
+      if (!was || kindOf(*was) != "room" || roomCopies.count(original)) continue;
+      const auto from = notePoint(*was);
+      if (from && from->Translated(gp_Vec(0, 0, dz)).Distance(*at) < 1e-6) {
+        roomCopies[original] = id;
+        break;
+      }
+    }
+  }
   ChangeSet changes(document_);
   bool any = false;
   for (const ObjectId& id : *made) {
@@ -6943,6 +6965,17 @@ Result<Modeler::StoreyCopy> Modeler::copyStorey(const std::string& fromLevel, co
     if (!copied) continue;
     Object o = *copied;
     bool changed = false;
+    if (kindOf(o) == "ceiling") {
+      // It belongs to the copied room, and was made dz higher (so it still follows that room).
+      const auto room = o.attributes.find("room");
+      if (room != o.attributes.end() && roomCopies.count(room->second)) room->second = roomCopies.at(room->second), changed = true;
+      nlohmann::json madeAs = nlohmann::json::parse(attributeOf(o, "ceiling_made"), nullptr, false);
+      if (madeAs.is_object() && madeAs.contains("underside")) {
+        madeAs["underside"] = madeAs.value("underside", 0.0) + dz;
+        o.attributes["ceiling_made"] = madeAs.dump();
+        changed = true;
+      }
+    }
     for (const char* key : {"base_level", "top_level"}) {
       const auto it = o.attributes.find(key);
       if (it == o.attributes.end()) continue;
@@ -9151,11 +9184,16 @@ Result<Modeler::Ceilings> Modeler::makeCeilings(const std::vector<ObjectId>& roo
       out.left.push_back(r.name);
       continue;
     }
-    // The ceiling made before for this room goes.
+    // The ceiling made before for this room goes; only one in this room's storey (a storey copied
+    // before docs/186 left the upper ceilings naming the rooms below).
     std::vector<ObjectId> old;
+    const double top = r.at.Z() + finish.ceilingHeight;
     for (const Object& o : document_.objects()) {
       const auto kind = o.attributes.find("kind"), of = o.attributes.find("room");
-      if (kind != o.attributes.end() && kind->second == "ceiling" && of != o.attributes.end() && of->second == r.id) old.push_back(o.id);
+      if (kind == o.attributes.end() || kind->second != "ceiling" || of == o.attributes.end() || of->second != r.id) continue;
+      const Bnd_Box box = document_.worldBounds(o);
+      if (!box.IsVoid() && (box.CornerMin().Z() < r.at.Z() - 1.0 || box.CornerMin().Z() > top + 1000.0)) continue;  // another storey's
+      old.push_back(o.id);
     }
     if (!old.empty()) {
       if (const Status gone = remove(old); !gone) {
