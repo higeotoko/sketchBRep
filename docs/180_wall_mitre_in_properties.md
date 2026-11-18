@@ -22,9 +22,16 @@
 |---|---|
 | 計算テスト済み | コアは変えていない（`mitre_wall_corners` と同じ命令を 1 枚に使う） |
 | GUI 自動確認済み | 壁ツールの画面テストに追加：壁ツールで描いた部屋の 1 枚を選ぶと「角を留めにする」に印、外すと取り消し 1 回で印と作った留めが消え、ステータスに「外しました」、Ctrl+Z で戻る。プロパティ・壁・バルコニー・レベルまわりの画面テスト 34 条件が成功（ローカル） |
-| CI | （記録待ち） |
+| CI | run 44242259578（push、`4d9cc62`）：Linux 763 件成功、Windows 759 件＋3 件成功・GUI 237 件成功（7 件スキップ） |
 | Windows 実機確認 | まだ（チェック表 2-11） |
 
 ## 配布の記録
 
-（記録待ち）
+| 項目 | 値 |
+|---|---|
+| コード | `7d78a19`（壁のプロパティに「角を留めにする」docs/180。Opus 5.5 で作業）。配ったのは docs/179 の記録を足した `4d9cc62` |
+| CI | run 44242259578（push、`4d9cc62`）：Linux・Windows とも成功 |
+| ZIP | `SketchBRep-windows-x64-4d9cc62-local.zip`（Codex のチャットフォルダの `outputs\`） |
+| サイズ | 73,117,258 bytes |
+| SHA256 | `2ae9b5d0386d89b396b9df22688eac64d4b1e3d5092c0b8ad21b4357a6e06dc1` |
+| ZIP の検証 | `verify_portable_pads.py`・`verify_portable_mat.py` とも成功（docs/validation/2026-11-18-portable-4d9cc62*.json） |
