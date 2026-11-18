@@ -262,7 +262,7 @@ TEST_F(IfcExport, AHouseIsWrittenWithItsStoreysPartsAndRelations) {
   EXPECT_EQ(door.args[9], "900.");   // OverallWidth
   EXPECT_EQ(door.args[11], ".SINGLE_SWING_RIGHT.");
   const Entity& window = ifc.at(ifc.of("IFCWINDOW")[0]);
-  EXPECT_EQ(window.args[2], "'W1'");  // the worked-out mark
+  EXPECT_EQ(window.args[2], "'AW1'");  // the worked-out mark
   EXPECT_EQ(window.args[3], "$");
   EXPECT_EQ(window.args[8], "1200.");
   EXPECT_EQ(window.args[9], "1600.");

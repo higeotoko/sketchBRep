@@ -12056,7 +12056,7 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
   QStringList marks;
   for(const QString& t:f.vp->openingTagTexts())marks<<t;
   marks.sort();
-  QCOMPARE(marks,QStringList({QStringLiteral("D1"),QStringLiteral("W1"),QStringLiteral("W1")}));
+  QCOMPARE(marks,QStringList({QStringLiteral("AD1"),QStringLiteral("AW1"),QStringLiteral("AW1")}));
   f.vp->setPlanCut(500.0);  // under the windows' sills
   QApplication::processEvents();
   QCOMPARE(f.vp->openingTagTexts().size(),std::size_t(1));
@@ -12074,9 +12074,9 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
     auto* save=dialog->findChild<QPushButton*>(QStringLiteral("scheduleSaveCsv"));
     if(!tabs||!types||!each||!rooms||!areas||!note||!save){why=QStringLiteral("a table is missing");dialog->reject();return;}
     // docs/136: the types of floors and roofs as the fifth tab.
-    shown=tabs->count()==6&&dialog->findChild<QTableWidget*>(QStringLiteral("layerQuantityTable"))&&dialog->findChild<QTableWidget*>(QStringLiteral("typeTable"))&&types->rowCount()==2&&types->item(0,0)->text()==QStringLiteral("W1")&&
+    shown=tabs->count()==6&&dialog->findChild<QTableWidget*>(QStringLiteral("layerQuantityTable"))&&dialog->findChild<QTableWidget*>(QStringLiteral("typeTable"))&&types->rowCount()==2&&types->item(0,0)->text()==QStringLiteral("AW1")&&
           types->item(0,2)->text()==QStringLiteral("引違い")&&types->item(0,5)->text()==QStringLiteral("2")&&
-          types->item(1,0)->text()==QStringLiteral("D1")&&types->item(1,1)->text()==QStringLiteral("扉")&&
+          types->item(1,0)->text()==QStringLiteral("AD1")&&types->item(1,1)->text()==QStringLiteral("扉")&&
           each->rowCount()==3&&
           rooms->rowCount()==1&&rooms->item(0,0)->text()==QStringLiteral("LDK")&&rooms->item(0,2)->text()==QStringLiteral("48.00")&&
           areas->rowCount()==4&&areas->item(0,0)->text()==QStringLiteral("1FL")&&areas->item(0,1)->text()==QStringLiteral("48.00")&&
@@ -12098,7 +12098,7 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
   QFile file(path);QVERIFY(file.open(QIODevice::ReadOnly));
   const QByteArray bytes=file.readAll();
   QVERIFY(bytes.startsWith(QByteArray::fromHex("efbbbf")));
-  QVERIFY2(QString::fromUtf8(bytes).contains(QStringLiteral("W1,窓,引違い,1600,1200,2,900")),bytes.constData());
+  QVERIFY2(QString::fromUtf8(bytes).contains(QStringLiteral("AW1,窓,引違い,1600,1200,2,900")),bytes.constData());
   QVERIFY2(f.window.statusText().contains(QStringLiteral("CSV に保存しました")),qPrintable(f.window.statusText()));
   QVERIFY(f.window.scheduleCsv(1).contains(QStringLiteral("LDK,1FL,48.00")));
   QVERIFY(f.window.scheduleCsv(2).contains(QStringLiteral("未評価")));
@@ -12167,7 +12167,7 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
   QApplication::processEvents();
   auto* mark=f.window.findChild<QLineEdit*>(QStringLiteral("openingMark1"));QVERIFY(mark);
   auto* product=f.window.findChild<QLineEdit*>(QStringLiteral("openingProduct1"));QVERIFY(product);
-  QVERIFY2(mark->text().isEmpty()&&mark->placeholderText().contains(QStringLiteral("W1")),qPrintable(mark->placeholderText()));
+  QVERIFY2(mark->text().isEmpty()&&mark->placeholderText().contains(QStringLiteral("AW1")),qPrintable(mark->placeholderText()));
   const auto before=m.history().undoCount();
   mark->setText(QStringLiteral("AW-1"));
   product->setText(QStringLiteral("APW330"));
@@ -12177,7 +12177,7 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
   QVERIFY2(f.window.statusText().contains(QStringLiteral("符号・品番を決めました")),qPrintable(f.window.statusText()));
   const QString csv=f.window.scheduleCsv(0);
   QVERIFY2(csv.contains(QStringLiteral("AW-1,窓,引違い,1600,1200,1,900,APW330,手で決めた符号")),qPrintable(csv));
-  QVERIFY(csv.contains(QStringLiteral("W1,窓,引違い,1600,1200,1,900,,")));  // the other one keeps the worked-out mark
+  QVERIFY(csv.contains(QStringLiteral("AW1,窓,引違い,1600,1200,1,900,,")));  // the other one keeps the worked-out mark
   f.vp->setPlanCut(1100.0);
   QApplication::processEvents();
   {const auto& tags=f.vp->openingTagTexts();QVERIFY(std::count(tags.begin(),tags.end(),QStringLiteral("AW-1"))==1);}
@@ -12191,7 +12191,7 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
   mark->clear();product->clear();
   emit product->editingFinished();
   QTRY_VERIFY(!m.document().find(south)->attributes.count("opening_marks"));
-  QVERIFY(f.window.scheduleCsv(0).contains(QStringLiteral("W1,窓,引違い,1600,1200,2,900")));
+  QVERIFY(f.window.scheduleCsv(0).contains(QStringLiteral("AW1,窓,引違い,1600,1200,2,900")));
   QVERIFY(m.undo());
   QVERIFY(m.document().find(south)->attributes.count("opening_marks"));
   // docs/133: both south windows AW-1; the first made smaller by hand; picked by its hole, the

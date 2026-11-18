@@ -16,10 +16,13 @@ namespace sbr::doc {
 
 // One opening of a wall.
 struct OpeningRow {
-  std::string mark;     // W1, D2, O1: the same for openings of one kind, fitting and size; or one's own
+  // AW1, AD2, WD1, WW1, O1 (docs/176): the same for openings of one kind, fitting, size and side
+  // (A: in an outer wall, W: in an inner one); or one's own.
+  std::string mark;
   bool ownMark = false; // given by hand (Modeler::setOpeningMarks): it stays whatever is added or changed
   std::string product;  // product number given by hand, if any
   std::string kind;     // window | door | opening (no fitting)
+  bool inner = false;   // in a wall of an inner build-up (interior_*): WD / WW; else AD / AW
   std::string fitting;  // the fitting's name for people ("引違い"); empty for a plain opening
   double width = 0.0, height = 0.0, sill = 0.0;
   ObjectId host;
@@ -36,6 +39,7 @@ struct OpeningRow {
 // One line of the door and window schedule: a mark and how many there are.
 struct OpeningTypeRow {
   std::string mark, kind, fitting;
+  bool inner = false;
   double width = 0.0, height = 0.0;
   int count = 0;
   bool ownMark = false;

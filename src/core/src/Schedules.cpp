@@ -124,6 +124,8 @@ OpeningSchedule openingSchedule(const Document& document) {
       row.width = op.width;
       row.height = op.height;
       row.sill = op.sill;
+      // docs/176: inner walls (an inner build-up) give WD / WW; outer ones and walls without one AD / AW.
+      row.inner = attribute(o, "wall_type").rfind("interior", 0) == 0;
       row.host = o.id;
       row.hostName = o.name;
       row.openingId = op.id;
@@ -136,12 +138,16 @@ OpeningSchedule openingSchedule(const Document& document) {
       out.rows.push_back(std::move(row));
     }
   }
-  // Marks: one per kind, size and fitting; numbered in a fixed order so that the same model
-  // always gives the same marks.
+  // Marks: one per kind and side, size and fitting; numbered in a fixed order so that the same
+  // model always gives the same marks. The prefixes as drawings usually have them (docs/176):
+  // AW / AD in outer walls, WW / WD in inner ones, O for a plain opening.
   using Key = std::tuple<int, long, long, std::string>;
-  auto keyOf = [](const OpeningRow& r) {
-    return Key{r.kind == "window" ? 0 : r.kind == "door" ? 1 : 2, tenths(r.width), tenths(r.height), r.fitting};
+  auto groupOf = [](const OpeningRow& r) {
+    if (r.kind == "window") return r.inner ? 1 : 0;
+    if (r.kind == "door") return r.inner ? 3 : 2;
+    return 4;
   };
+  auto keyOf = [&](const OpeningRow& r) { return Key{groupOf(r), tenths(r.width), tenths(r.height), r.fitting}; };
   auto sill = [](OpeningTypeRow& t, double value) {
     if (std::none_of(t.sills.begin(), t.sills.end(), [&](double s) { return tenths(s) == tenths(value); })) t.sills.push_back(value);
   };
@@ -172,18 +178,20 @@ OpeningSchedule openingSchedule(const Document& document) {
     if (r.ownMark) continue;
     OpeningTypeRow& t = types[keyOf(r)];
     t.kind = r.kind;
+    t.inner = r.inner;
     t.fitting = r.fitting;
     t.width = r.width;
     t.height = r.height;
     ++t.count;
     sill(t, r.sill);
   }
-  int numbers[3] = {0, 0, 0};
+  int numbers[5] = {0, 0, 0, 0, 0};
+  static const char* const prefixes[5] = {"AW", "WW", "AD", "WD", "O"};
   std::map<Key, std::string> marks;
   std::vector<OpeningTypeRow> lines;
   for (auto& [key, t] : types) {
     const int k = std::get<0>(key);
-    do t.mark = std::string(k == 0 ? "W" : k == 1 ? "D" : "O") + std::to_string(++numbers[k]);
+    do t.mark = std::string(prefixes[k]) + std::to_string(++numbers[k]);
     while (given.count(t.mark));
     marks[key] = t.mark;
     lines.push_back(t);

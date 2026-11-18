@@ -63,17 +63,17 @@ TEST_F(Schedules, OpeningsOfOneKindSizeAndFittingShareAMark) {
   ASSERT_EQ(s["types"].size(), 4u) << s["types"].dump();
   // Windows first (by width, height, fitting), then doors, then plain openings.
   const json& w1 = s["types"][0];
-  EXPECT_EQ(w1["mark"], "W1");
+  EXPECT_EQ(w1["mark"], "AW1");
   EXPECT_EQ(w1["kind"], "window");
   EXPECT_EQ(w1["fitting"], "引違い");
   EXPECT_EQ(w1["count"], 2);
   EXPECT_NEAR(w1["width"].get<double>(), 1600, 1e-6);
   ASSERT_EQ(w1["sills"].size(), 1u);
   EXPECT_NEAR(w1["sills"][0].get<double>(), 900, 1e-6);
-  EXPECT_EQ(s["types"][1]["mark"], "W2");  // the same size, another fitting
+  EXPECT_EQ(s["types"][1]["mark"], "AW2");  // the same size, another fitting
   EXPECT_EQ(s["types"][1]["fitting"], "窓");
   EXPECT_EQ(s["types"][1]["count"], 1);
-  EXPECT_EQ(s["types"][2]["mark"], "D1");
+  EXPECT_EQ(s["types"][2]["mark"], "AD1");
   EXPECT_EQ(s["types"][2]["kind"], "door");
   EXPECT_EQ(s["types"][2]["fitting"], "片開き 左吊元・内開き");
   EXPECT_EQ(s["types"][3]["mark"], "O1");  // no fitting
@@ -89,7 +89,7 @@ TEST_F(Schedules, OpeningsOfOneKindSizeAndFittingShareAMark) {
   for (const json& t : s["types"]) EXPECT_EQ(counted[t["mark"].get<std::string>()], t["count"].get<int>());
   const std::string csv = s["csv"];
   EXPECT_EQ(csv.rfind("\xef\xbb\xbf", 0), 0u);
-  EXPECT_NE(csv.find("W1,窓,引違い,1600,1200,2,900,,\r\n"), std::string::npos) << csv;
+  EXPECT_NE(csv.find("AW1,窓,引違い,1600,1200,2,900,,\r\n"), std::string::npos) << csv;
   EXPECT_NE(csv.find("合計,,,,,5,,,"), std::string::npos);
   EXPECT_FALSE(ok("opening_schedule").contains("csv"));
 
@@ -99,9 +99,9 @@ TEST_F(Schedules, OpeningsOfOneKindSizeAndFittingShareAMark) {
   std::map<std::string, int> drawn;
   for (const auto& item : view->items)
     if (item.kind == sbr::draw::Item::Kind::Text) ++drawn[item.text];
-  EXPECT_EQ(drawn["W1"], 2);
-  EXPECT_EQ(drawn["W2"], 1);
-  EXPECT_EQ(drawn["D1"], 1);
+  EXPECT_EQ(drawn["AW1"], 2);
+  EXPECT_EQ(drawn["AW2"], 1);
+  EXPECT_EQ(drawn["AD1"], 1);
   EXPECT_EQ(drawn["O1"], 1);
   // A plan under the sills (the plain opening kept its 900 too) cuts the door only.
   const auto low = sbr::draw::makeView(modeler.document(), sbr::draw::planView(500));
@@ -109,8 +109,8 @@ TEST_F(Schedules, OpeningsOfOneKindSizeAndFittingShareAMark) {
   drawn.clear();
   for (const auto& item : low->items)
     if (item.kind == sbr::draw::Item::Kind::Text) ++drawn[item.text];
-  EXPECT_EQ(drawn["W1"], 0);
-  EXPECT_EQ(drawn["D1"], 1);
+  EXPECT_EQ(drawn["AW1"], 0);
+  EXPECT_EQ(drawn["AD1"], 1);
   EXPECT_EQ(drawn["O1"], 0);
 
   // A window made as wide as the others' kind changes: marks are read again from the model.
@@ -187,12 +187,51 @@ TEST_F(Schedules, RoomsAndAreasAreReadAsTheWallsAreNow) {
   EXPECT_NEAR(areas["levels"][0]["enclosed"].get<double>(), 18.0, 1e-9);
 }
 
+// docs/176: the marks' prefixes as drawings usually have them: AW / AD in outer walls (and walls
+// without a build-up), WW / WD in walls of an inner build-up.
+TEST(OpeningMarks, PrefixesByTheWallsSide) {
+  sbr::doc::Modeler modeler;
+  CommandApi api{modeler};
+  auto ok = [&](const std::string& command, json args) {
+    json r = json::parse(api.execute(json{{"command", command}, {"args", args}}.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  const json outer = ok("create_wall", {{"points", {{0, 0}, {0, 4000}, {6000, 4000}, {6000, 0}, {0, 0}}}, {"type", "exterior_siding"}, {"height", 2700}})["ids"];
+  const std::string inner = ok("create_wall", {{"points", {{3000, 65}, {3000, 3935}}}, {"type", "interior_board"}, {"height", 2700}})["ids"][0];
+  const std::string south = outer[3];  // drawn clockwise: west, north, east, south
+  ok("place_openings", {{"host", south}, {"face_normal", {0, -1, 0}}, {"count", 2}, {"width", 1690}, {"height", 1170}, {"sill", 900}});
+  ok("set_opening_fittings", {{"host", south}, {"openings", {1}}, {"fitting", {{"type", "sliding_double"}}}});
+  ok("set_opening_size", {{"host", south}, {"openings", {2}}, {"width", 780}, {"height", 2000}});
+  ok("place_openings", {{"host", inner}, {"face_normal", {1, 0, 0}}, {"count", 2}, {"width", 780}, {"height", 2000}, {"sill", 0}});
+  ok("set_opening_fittings", {{"host", inner}, {"openings", {1}}, {"fitting", {{"type", "swing_single"}}}});
+  ok("set_opening_fittings", {{"host", inner}, {"openings", {2}}, {"fitting", {{"type", "window"}}}});
+  ok("set_opening_size", {{"host", inner}, {"openings", {2}}, {"width", 600, }, {"height", 600}});
+  const json s = ok("opening_schedule", json::object());
+  std::set<std::string> marks;
+  for (const json& t : s["types"]) marks.insert(t["mark"].get<std::string>());
+  // The south window AW1, its plain opening O1; the partition's door WD1 and its window WW1.
+  EXPECT_TRUE(marks.count("AW1")) << s["types"].dump();
+  EXPECT_TRUE(marks.count("O1"));
+  EXPECT_TRUE(marks.count("WD1"));
+  EXPECT_TRUE(marks.count("WW1"));
+  EXPECT_FALSE(marks.count("AD1"));
+  // A door in an outer wall (the north one, from the floor): AD1.
+  const std::string north = outer[1];
+  ok("place_openings", {{"host", north}, {"face_normal", {0, 1, 0}}, {"count", 1}, {"width", 780}, {"height", 2000}, {"sill", 0}});
+  ok("set_opening_fittings", {{"host", north}, {"fitting", {{"type", "swing_single"}}}});
+  std::set<std::string> again;
+  const json next = ok("opening_schedule", json::object());  // kept: a loop over a temporary's member would dangle
+  for (const json& t : next["types"]) again.insert(t["mark"].get<std::string>());
+  EXPECT_TRUE(again.count("AD1")) << again.size();
+}
+
 TEST_F(Schedules, AMarkGivenByHandStaysAndWorkedOutNumbersSkipIt) {
-  // The two 引違い windows become AW-1 with a product number; the plain window takes "W1" by hand.
+  // The two 引違い windows become AW-1 with a product number; the plain window takes "AW1" by hand (docs/176: worked-out marks are AW.. too).
   const auto steps = modeler.history().undoCount();
   ok("set_opening_mark", {{"host", south}, {"mark", "AW-1"}, {"product", "APW330-16513"}});
   EXPECT_EQ(modeler.history().undoCount(), steps + 1);
-  ok("set_opening_mark", {{"host", north}, {"openings", {1}}, {"mark", "W1"}});
+  ok("set_opening_mark", {{"host", north}, {"openings", {1}}, {"mark", "AW1"}});
   json s = ok("opening_schedule", {{"include_csv", true}});
   std::map<std::string, json> byMark;
   for (const json& t : s["types"]) byMark[t["mark"].get<std::string>()] = t;
@@ -201,8 +240,8 @@ TEST_F(Schedules, AMarkGivenByHandStaysAndWorkedOutNumbersSkipIt) {
   EXPECT_TRUE(byMark["AW-1"]["own_mark"].get<bool>());
   EXPECT_EQ(byMark["AW-1"]["product"], "APW330-16513");
   EXPECT_FALSE(byMark["AW-1"]["mixed"].get<bool>());
-  EXPECT_EQ(byMark["W1"]["fitting"], "窓");  // the one given by hand
-  EXPECT_TRUE(byMark.count("D1") && byMark.count("O1"));
+  EXPECT_EQ(byMark["AW1"]["fitting"], "窓");  // the one given by hand
+  EXPECT_TRUE(byMark.count("AD1") && byMark.count("O1"));
   EXPECT_NE(s["csv"].get<std::string>().find("AW-1,窓,引違い,1600,1200,2,900,APW330-16513,手で決めた符号\r\n"), std::string::npos) << s["csv"];
   // The plan carries them.
   const auto view = sbr::draw::makeView(modeler.document(), sbr::draw::planView(1100));
@@ -212,14 +251,14 @@ TEST_F(Schedules, AMarkGivenByHandStaysAndWorkedOutNumbersSkipIt) {
     if (item.kind == sbr::draw::Item::Kind::Text && item.text == "AW-1") ++aw;
   EXPECT_EQ(aw, 2);
 
-  // Another window of a new size: it is W2, not W1 (taken by hand); AW-1 stays.
+  // Another window of a new size: it is AW2, not AW1 (taken by hand); AW-1 stays.
   ok("place_openings", {{"host", west}, {"face_normal", {-1, 0, 0}}, {"count", 1}, {"width", 700}, {"height", 700}, {"sill", 1200}});
   ok("set_opening_fittings", {{"host", west}, {"fitting", {{"type", "window"}}}});
   s = ok("opening_schedule");
   bool w2 = false;
   for (const json& t : s["types"]) {
-    if (t["mark"] == "W2") w2 = t["width"].get<double>() == 700.0;
-    if (t["mark"] == "W1") EXPECT_NEAR(t["width"].get<double>(), 1600, 1e-6);
+    if (t["mark"] == "AW2") w2 = t["width"].get<double>() == 700.0;
+    if (t["mark"] == "AW1") EXPECT_NEAR(t["width"].get<double>(), 1600, 1e-6);
     if (t["mark"] == "AW-1") EXPECT_EQ(t["count"], 2);
   }
   EXPECT_TRUE(w2) << s["types"].dump();
@@ -1464,8 +1503,8 @@ TEST_F(Schedules, SashesAndHandles) {
 TEST_F(Schedules, ATableGoesOnASheetOfItsOwn) {
   const sbr::draw::Table table = sbr::doc::scheduleTable(modeler.document(), 0);
   EXPECT_EQ(table.title, "建具表");
-  ASSERT_EQ(table.rows.size(), 5u);  // W1, W2, D1, O1 and the total
-  EXPECT_EQ(table.rows.front().front(), "W1");
+  ASSERT_EQ(table.rows.size(), 5u);  // AW1, AW2, AD1, O1 and the total
+  EXPECT_EQ(table.rows.front().front(), "AW1");
   EXPECT_EQ(table.rows.back()[5], "5");
   sbr::draw::SheetSpec spec;
   spec.title.drawing = table.title;
@@ -1478,7 +1517,7 @@ TEST_F(Schedules, ATableGoesOnASheetOfItsOwn) {
     if (item.kind == sbr::draw::Item::Kind::Text) ++texts[item.text];
     if (item.kind == sbr::draw::Item::Kind::Line) ++rules;
   }
-  EXPECT_EQ(texts["W1"], 1);
+  EXPECT_EQ(texts["AW1"], 1);
   EXPECT_EQ(texts["引違い"], 1);
   EXPECT_GE(texts["建具表"], 2);  // over the table and in the title block
   EXPECT_GE(rules, 7 + 10);  // 7 rules across (title, headings, 5 rows), 10 columns

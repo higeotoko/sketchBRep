@@ -147,4 +147,4 @@ docs/102 の「まだ」。`settleWallJoins`・`carryCorners`（Modeler.cpp、do
 1. [docs/105](105_hands_on_checklist.md) のチェック表（約 80 項目。1・2 は済）。
 2. e-Gov で施行令 第 23〜25 条を見る（docs/103 の表）。
 3. CSV を Excel で開く。IFC をほかのソフトで開く。
-4. A の「符号と品番」で、符号の頭文字（W・D のままか、AW・WD などか）を決める。
+4. ~~符号の頭文字を決める~~ → 済（2026-11-18、オーナー「図面上共通の通りがいい符号」→ docs/176：外壁 AW・AD、内壁 WW・WD）。

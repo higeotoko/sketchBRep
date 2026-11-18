@@ -430,7 +430,7 @@ Result<std::string> ifcText(const Modeler& modeler, const std::string& fileName,
           const bool door = type != "window" && op.sill < 1.0;
           const gp_Pnt at(op.center.X(), op.center.Y(), op.bottom - storey.elevation);
           const int fillPlacement = f.placement(storey.placement, at.X(), at.Y(), at.Z());
-          // Name: its mark (W1, AW-1, ...); Description: its product number when given (docs/117).
+          // Name: its mark (AW1, WD2, AW-1, ...); Description: its product number when given (docs/117).
           const auto marked = marks.find(o.id + ":" + op.id);
           const std::string name = marked != marks.end() && !marked->second->mark.empty() ? marked->second->mark : (door ? "Door" : "Window");
           const std::string product = marked != marks.end() ? marked->second->product : std::string();

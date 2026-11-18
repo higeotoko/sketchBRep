@@ -2859,8 +2859,10 @@ const std::vector<CommandDef>& commands() {
          return json{{"changed", must(m.changeOpeningType(text(a, "mark"), change))}};
        }},
       {"opening_schedule",
-       "The door and window schedule read from the walls as they are now. 'types': one line per mark (W1.. "
-       "windows, D1.. doors, O1.. plain openings; the same mark for the same kind, fitting, width and height) "
+       "The door and window schedule read from the walls as they are now. 'types': one line per mark (AW1.. "
+       "windows and AD1.. doors in outer walls (walls without a build-up count as outer), WW1.. / WD1.. in inner "
+       "ones (interior build-ups), O1.. plain openings, docs/176; the same mark for the same kind, side, fitting, "
+       "width and height) "
        "with count and the sill heights among them; 'openings': every opening with its mark, host wall, id, "
        "index, level, width, height, sill (mm). A fitting with its sill on the floor is a door, any other "
        "fitting a window. Marks are worked out again each time (they are the ones drawn on plans) unless given "
