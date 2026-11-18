@@ -33,7 +33,10 @@
 - `84ad3df`：コンポーネントの共有（`Skp.ComponentsAreShared`）。
 - その次のコミット：LayOut への図面の書き出し（docs/185、`src/core/src/DrawingLayout.cpp`、`Layout.DrawingsAsLayOutPages`）。ZIP に LayOut の DLL（`layout` フォルダ）。
 - `1597527` の CI は成功（run 44259529231：Linux 768、Windows 764＋3、GUI 237）。`84ad3df`・`66957ee` を push 済み。ZIP `SketchBRep-windows-x64-66957ee-local.zip`（130,373,620 bytes、LayOut の DLL 入り、検証は両方成功）。CI は 66957ee で走っている。
-- `4c79ce3`（手元、未 push）：LayOut の DLL のお知らせを標準出力からよける（`QuietStdout`）。66957ee の CI が終わってから push → ZIP → 検証 → CI → docs/183・185 の記録（CI と ZIP は最後の版の物を書き、`docs/validation/2026-11-18-portable-1597527*`・`-66957ee*` もコミットする）。docs/185 に `QuietStdout` の説明を足してある（未コミット）。
+- `4c79ce3`：LayOut のお知らせを標準出力からよける。`66957ee` の CI は成功（run 44263143150：Linux 770、Windows 766＋3、GUI 237）。
+- `7a7a009`：SketchUp で直した物を戻す（docs/186、`sync_skp`）、ZIP から LayOut の DLL を外す（オーナーの決定）。push 済み、ZIP `SketchBRep-windows-x64-7a7a009-local.zip`（81,727,723 bytes、検証は両方成功）。CI run 44267080199。
+- `7e22406`（手元、未 push）：階をコピーした後に上の階の天井が消える不具合（docs/187）。SketchUp の MCP で、本物の SketchUp 2026 での行って来いを確かめた（docs/186）。
+- 残り：7a7a009 の CI を見て push → ZIP → 検証 → CI → docs/183・185・186・187 の記録（CI と ZIP は最後の版の物。`docs/validation` の 1597527・66957ee・7a7a009 の json もコミット）。
 
 ## 次にやる事（オーナーが選んだ順：SketchUp 連携の 1 → 2 → 4）
 
