@@ -16,6 +16,8 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <cstdio>
+#include <io.h>
 
 #include <LayOutAPI/layout.h>
 
@@ -133,11 +135,38 @@ const Api* api(std::string* why) {
 constexpr double kInch = 25.4;
 constexpr double kPointsPerMm = 72.0 / 25.4;
 
+// LayOut's DLLs write notes of their own (graphics cards...) to the standard output, where the CLI
+// and the MCP server answer in JSON: while they run, the standard output goes to the standard
+// error (both the C runtime's and Windows' handle), and comes back after.
+struct QuietStdout {
+  int saved = -1;
+  HANDLE savedHandle = nullptr;
+  QuietStdout() {
+    std::fflush(stdout);
+    saved = _dup(1);
+    if (saved >= 0) _dup2(2, 1);
+    savedHandle = GetStdHandle(STD_OUTPUT_HANDLE);
+    SetStdHandle(STD_OUTPUT_HANDLE, GetStdHandle(STD_ERROR_HANDLE));
+  }
+  ~QuietStdout() {
+    std::fflush(stdout);
+    if (saved >= 0) {
+      _dup2(saved, 1);
+      _close(saved);
+    }
+    SetStdHandle(STD_OUTPUT_HANDLE, savedHandle);
+  }
+};
+
 }  // namespace
 
-bool layoutAvailable(std::string* why) { return api(why) != nullptr; }
+bool layoutAvailable(std::string* why) {
+  QuietStdout quiet;
+  return api(why) != nullptr;
+}
 
 Result<int> layoutPageCount(const std::string& path) {
+  QuietStdout quiet;
   std::string why;
   const Api* loaded = api(&why);
   if (!loaded) return Result<int>::failure(why);
@@ -156,6 +185,7 @@ Result<int> layoutPageCount(const std::string& path) {
 }
 
 Status layoutToPdf(const std::string& layout, const std::string& pdf) {
+  QuietStdout quiet;
   std::string why;
   const Api* loaded = api(&why);
   if (!loaded) return Status::failure(why);
@@ -169,6 +199,7 @@ Status layoutToPdf(const std::string& layout, const std::string& pdf) {
 }
 
 Status writeLayout(const std::vector<Sheet>& sheets, const std::vector<std::string>& names, const std::string& path) {
+  QuietStdout quiet;
   std::string why;
   const Api* loaded = api(&why);
   if (!loaded) return Status::failure(why);
