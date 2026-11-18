@@ -2,6 +2,7 @@
 // and window schedule, the room schedule, areas by storey, and the marks on plans.
 #include <cmath>
 #include <map>
+#include <set>
 #include <gtest/gtest.h>
 #include <TopExp_Explorer.hxx>
 #include <nlohmann/json.hpp>
@@ -1390,6 +1391,49 @@ TEST_F(Schedules, FittingTypesAreKindsAndSizesByName) {
   EXPECT_EQ(fittingOf(south, 0)["frame"], 50.0);
   EXPECT_FALSE(fittingOf(south, 0).contains("type_name"));
   EXPECT_EQ(ok("list_fitting_types")["types"].size(), 1u);
+}
+
+// docs/174: sliding windows' sashes (stiles and rails round their panes) and hinged doors'
+// lever handles on both faces.
+TEST_F(Schedules, SashesAndHandles) {
+  std::map<std::string, std::vector<double>> parts;  // part -> volumes
+  auto read = [&] {
+    parts.clear();
+    for (const auto& s : sbr::draw::fittingSolids(modeler.document())) parts[s.part].push_back(sbr::geom::volume(s.shape));
+  };
+  read();
+  // The two 引違い windows on the south: two sashes each; the plain window none.
+  ASSERT_EQ(parts["sash"].size(), 4u);
+  const double sash = (795.0 * 1140 - 725.0 * 1070) * 30;  // 1600 x 1200 in a 30 frame: each sash 795 x 1140
+  for (const double v : parts["sash"]) EXPECT_NEAR(v, sash, 1.0);
+  int smallPanes = 0;
+  for (const double v : parts["glass"]) smallPanes += std::abs(v - 725.0 * 1070 * 6) < 1.0;
+  EXPECT_EQ(smallPanes, 4);  // the panes inside the sashes
+  // The east door (hinged): a rose and a lever on each face.
+  ASSERT_EQ(parts["handle"].size(), 4u);
+  std::multiset<long long> sizes;
+  for (const double v : parts["handle"]) sizes.insert(std::llround(v));
+  EXPECT_EQ(sizes.count(125000), 2u);  // roses 50 x 50 x 50
+  EXPECT_EQ(sizes.count(48000), 2u);   // levers 120 x 20 x 20
+  // 900 above the floor, outside the leaf's faces, near the edge away from the hinge.
+  for (const auto& s : sbr::draw::fittingSolids(modeler.document())) {
+    if (s.part != "handle") continue;
+    const auto b = sbr::geom::exactBounds(s.shape);
+    EXPECT_NEAR((b.CornerMin().Z() + b.CornerMax().Z()) / 2, 900, 1e-6);
+  }
+  // Wider stiles: 50.
+  ok("set_opening_fittings", {{"host", south}, {"fitting", {{"type", "sliding_double"}, {"sash", 50}}}});
+  read();
+  for (const double v : parts["sash"]) EXPECT_NEAR(v, (795.0 * 1140 - 695.0 * 1040) * 30, 1.0);
+  // A double door: a handle pair on each leaf, at the meeting edge.
+  ok("set_opening_fittings", {{"host", east}, {"fitting", {{"type", "swing_double"}}}});
+  read();
+  EXPECT_EQ(parts["handle"].size(), 8u);
+  // A sliding door: none (pulls not made yet).
+  ok("set_opening_fittings", {{"host", east}, {"fitting", {{"type", "sliding_single"}}}});
+  read();
+  EXPECT_TRUE(parts["handle"].empty());
+  EXPECT_FALSE(call("set_opening_fittings", {{"host", south}, {"fitting", {{"type", "sliding_double"}, {"sash", 5}}}}).value("ok", true));
 }
 
 // docs/113: a table on a sheet of its own.

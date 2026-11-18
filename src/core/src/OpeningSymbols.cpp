@@ -47,7 +47,7 @@ Result<std::string> normalizeFitting(const std::string& text) {
     const char* key;
     double low, high;
   };
-  static const Size sizes[] = {{"frame", 10.0, 200.0}, {"leaf", 10.0, 100.0}, {"glass", 3.0, 30.0}};
+  static const Size sizes[] = {{"frame", 10.0, 200.0}, {"leaf", 10.0, 100.0}, {"glass", 3.0, 30.0}, {"sash", 10.0, 100.0}};
   for (const auto& [key, unused] : in.items()) {
     if (key == "type" || key == "hinge" || key == "swing" || key == "slide") continue;
     if (key == "type_name") {
@@ -194,6 +194,7 @@ std::vector<FittingSolid> fittingSolids(const doc::Document& d, const std::set<s
       if (type == "none" || std::abs(o.normal.Z()) > 1e-6 || o.depth <= 0) continue;
       // The drawing sizes (docs/146), or the fitting's own (docs/157).
       const double kFrame = it->value("frame", 30.0), kPane = it->value("glass", 6.0), kLeaf = it->value("leaf", 40.0);
+      const double kSash = it->value("sash", 35.0);  // docs/174: a sliding sash's stiles and rails, on the face
       const gp_Vec n(o.normal.X(), o.normal.Y(), 0), u = gp_Vec(0, 0, 1).Crossed(n);
       const double w = o.width, h = o.height, t = o.depth, z0 = o.bottom;
       if (w <= 2 * kFrame + 10 || h <= 2 * kFrame + 10) continue;
@@ -227,21 +228,53 @@ std::vector<FittingSolid> fittingSolids(const doc::Document& d, const std::set<s
       const double zi0 = z0 + bottom, zi1 = z0 + bottom + ih, mid = t / 2;
       if (!door) {
         if (type == "sliding_double") {
-          // 引違い: two panes on two tracks, overlapping in the middle.
-          add(box(-iw / 2, 25, zi0, zi1, mid - 15 - kPane / 2, mid - 15 + kPane / 2), "glass");
-          add(box(-25, iw / 2, zi0, zi1, mid + 15 - kPane / 2, mid + 15 + kPane / 2), "glass");
+          // 引違い: two sashes on two tracks, overlapping in the middle (docs/174): each a frame
+          // (stiles and rails kSash wide, 30 deep) with its pane inside.
+          for (const auto& [s0, s1, track] : {std::tuple{-iw / 2, 25.0, mid - 15}, std::tuple{-25.0, iw / 2, mid + 15}}) {
+            if (s1 - s0 > 2 * kSash + 10 && zi1 - zi0 > 2 * kSash + 10) {
+              const TopoDS_Shape sashOuter = box(s0, s1, zi0, zi1, track - 15, track + 15);
+              const TopoDS_Shape sashInner = box(s0 + kSash, s1 - kSash, zi0 + kSash, zi1 - kSash, track - 16, track + 16);
+              if (!sashOuter.IsNull() && !sashInner.IsNull()) {
+                BRepAlgoAPI_Cut sash(sashOuter, sashInner);
+                if (sash.IsDone()) add(sash.Shape(), "sash");
+              }
+              add(box(s0 + kSash, s1 - kSash, zi0 + kSash, zi1 - kSash, track - kPane / 2, track + kPane / 2), "glass");
+            } else {
+              add(box(s0, s1, zi0, zi1, track - kPane / 2, track + kPane / 2), "glass");
+            }
+          }
         } else {
           add(box(-iw / 2, iw / 2, zi0, zi1, mid - kPane / 2, mid + kPane / 2), "glass");
         }
         continue;
       }
       const bool outward = it->value("swing", std::string("in")) == "out";
+      // docs/174: a lever handle on both faces of a hinged leaf (its face d0..d0 + kLeaf): a rose
+      // 50 square and a lever 120 long pointing to the hinge, 900 above the floor, 60 from the
+      // closing edge `edge` (the lever runs the way `toHinge` says).
+      auto handle = [&](double edge, double toHinge, double d0) {
+        const double c = edge + toHinge * 60, hz = z0 + 900;
+        if (hz + 30 > zi1) return;
+        for (const double side : {-1.0, 1.0}) {
+          const double face = side < 0 ? d0 : d0 + kLeaf;  // the leaf's face this side
+          const double out0 = face + side * 0, out1 = face + side * 50;
+          add(box(c - 25, c + 25, hz - 25, hz + 25, std::min(out0, out1), std::max(out0, out1)), "handle");
+          const double l0 = face + side * 40, l1 = face + side * 60;
+          add(box(std::min(c, c + toHinge * 120), std::max(c, c + toHinge * 120), hz - 10, hz + 10, std::min(l0, l1), std::max(l0, l1)), "handle");
+        }
+      };
       if (type == "swing_single") {
-        add(outward ? box(-iw / 2, iw / 2, zi0, zi1, 0, kLeaf) : box(-iw / 2, iw / 2, zi0, zi1, t - kLeaf, t), "leaf");
+        const double d0 = outward ? 0.0 : t - kLeaf;
+        add(box(-iw / 2, iw / 2, zi0, zi1, d0, d0 + kLeaf), "leaf");
+        // The hinge side as the plan symbol has it (seen from the side it opens to).
+        const bool hingeHigh = (it->value("hinge", std::string("left")) == "right") == outward;
+        handle(hingeHigh ? -iw / 2 : iw / 2, hingeHigh ? 1.0 : -1.0, d0);
       } else if (type == "swing_double") {
         const double d0 = outward ? 0.0 : t - kLeaf;
         add(box(-iw / 2, 0, zi0, zi1, d0, d0 + kLeaf), "leaf");
         add(box(0, iw / 2, zi0, zi1, d0, d0 + kLeaf), "leaf");
+        handle(0, -1.0, d0);  // the left leaf's, at the meeting edge
+        handle(0, 1.0, d0);   // the right leaf's
       } else if (type == "sliding_double") {
         add(box(-iw / 2, 25, zi0, zi1, mid - kLeaf, mid), "leaf");  // two tracks, side by side
         add(box(-25, iw / 2, zi0, zi1, mid, mid + kLeaf), "leaf");
