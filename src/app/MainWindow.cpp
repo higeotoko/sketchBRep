@@ -3455,6 +3455,10 @@ void MainWindow::showWallSettingsDialog() {
   auto* outside = new QComboBox(&dialog);
   outside->addItems({tr("進む向きの左"), tr("進む向きの右")});
   outside->setCurrentIndex(current.outsideRight ? 1 : 0);
+  auto* mitre = new QCheckBox(tr("2 枚の壁が合う角を留め（対角線）にする"), &dialog);
+  mitre->setObjectName(QStringLiteral("wallSettingsMitre"));
+  mitre->setChecked(current.mitre);
+  mitre->setToolTip(tr("外すと、片方の壁が通り、もう片方が突き付く角になります（ツール > 壁の角（留め）で後から変えられます）"));
   auto syncEnabled = [type, core, outside, thickness, justification] {
     const bool typed = !type->currentData().toString().isEmpty();
     core->setEnabled(typed);
@@ -3470,6 +3474,7 @@ void MainWindow::showWallSettingsDialog() {
   form->addRow(tr("厚さ"), thickness);
   form->addRow(tr("高さ"), height);
   form->addRow(tr("基準線"), justification);
+  form->addRow(tr("角"), mitre);
   form->addRow(new QLabel(tr("進む向きに見て左右。単位 m も可"), &dialog));
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
   form->addRow(buttons);
@@ -3486,6 +3491,7 @@ void MainWindow::showWallSettingsDialog() {
   next.type = type->currentData().toString().toStdString();
   next.core = core->currentIndex() == 1 ? 120.0 : 105.0;
   next.outsideRight = outside->currentIndex() == 1;
+  next.mitre = mitre->isChecked();
   wallTool_->setSettings(next);
   if (auto* bar = findChild<QComboBox*>(QStringLiteral("architectureWallType")))
     bar->setCurrentIndex(std::max(0, bar->findData(QString::fromStdString(next.type))));

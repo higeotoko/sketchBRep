@@ -6166,6 +6166,11 @@ void GuiPhase1::wallToolAndArchitectureMenus() {
   // Ring 4200 x 3200 outside, 3800 x 2800 inside, 3 m high (clicked
   // points are within a pixel).
   QVERIFY2(std::abs(volume - 2.8e6 * 3000) < 0.005 * 2.8e6 * 3000, qPrintable(QString::number(volume)));
+  // docs/177: the wall tool mitres the corners from the start (in the same undo step).
+  QVERIFY(f.window.wallTool().settings().mitre);
+  for (const doc::ObjectId& id : walls)
+    QVERIFY2(m.document().find(id)->attributes.count("corner_mitre_made"), id.c_str());
+  QVERIFY(!m.mitreNewWalls());  // only while the tool makes them
 
   // Two windows into the first wall (along X; its largest vertical face).
   f.window.activateTool(MainWindow::ToolId::Select);

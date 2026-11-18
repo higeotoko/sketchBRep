@@ -1165,10 +1165,15 @@ QString WallTool::finishedText(std::size_t created) const {
 Result<std::size_t> WallTool::commit(const std::vector<gp_Pnt>& points, bool closed) {
   std::vector<gp_Pnt> pts = points;
   if (closed) pts.push_back(points.front());
+  // docs/177: mitred corners from the start (the wall settings); the modeler's setting put back.
+  doc::Modeler& modeler = host_.modeler();
+  const bool was = modeler.mitreNewWalls();
+  modeler.setMitreNewWalls(settings_.mitre);
   auto walls = settings_.type.empty()
                    ? host_.modeler().createWalls(pts, settings_.thickness, settings_.height, settings_.justification)
                    : host_.modeler().createTypedWalls(pts, settings_.height, settings_.type, settings_.core,
                                                       settings_.outsideRight);
+  modeler.setMitreNewWalls(was);
   if (!walls) return Result<std::size_t>::failure(walls.error());
   return walls->size();
 }

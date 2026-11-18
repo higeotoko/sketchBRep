@@ -474,6 +474,133 @@ TEST_F(WallJoins, MitredCornersMeetOnTheDiagonal) {
   EXPECT_FALSE(call("mitre_wall_corners", {{"walls", {block}}}).value("ok", true));
 }
 
+// docs/177: walls mitred from the start (the wall tool's default; 'mitre' in create_wall), in the
+// same undo step as they are made; walls drawn on from them later are mitred where they meet.
+TEST(MitredWalls, MitredAsTheyAreDrawn) {
+  sbr::doc::Modeler modeler;
+  CommandApi api{modeler};
+  auto ok = [&](const std::string& command, json args) {
+    json r = json::parse(api.execute(json{{"command", command}, {"args", args}}.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  auto volume = [&](const std::string& id) { return sbr::geom::volume(modeler.document().find(id)->shape); };
+  auto bounds = [&](const std::string& id) {
+    return sbr::geom::exactBounds(modeler.document().worldShape(*modeler.document().find(id)));
+  };
+  const auto steps = modeler.history().undoCount();
+  // An L of two walls, mitred as drawn: one undo step, both trapezoids reaching the corner's
+  // outer point (6100, -100); the open ends square on the drawn points.
+  const json l = ok("create_wall", {{"points", {{0, 0}, {6000, 0}, {6000, 4000}}}, {"thickness", 200}, {"height", 3000}, {"mitre", true}})["ids"];
+  ASSERT_EQ(l.size(), 2u);
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  EXPECT_FALSE(modeler.mitreNewWalls());  // the setting is put back
+  const std::string south = l[0], east = l[1];
+  EXPECT_EQ(faces(modeler, south), 6);
+  EXPECT_EQ(faces(modeler, east), 6);
+  EXPECT_NEAR(volume(south), (6100.0 + 5900.0) / 2 * 200 * 3000, 1.0);
+  EXPECT_NEAR(volume(east), (4100.0 + 3900.0) / 2 * 200 * 3000, 1.0);
+  EXPECT_NEAR(bounds(east).CornerMin().Y(), -100, 1e-6);  // butt-joined it would start at 100
+  ASSERT_TRUE(modeler.undo());
+  // A closed room of a build-up, mitred as drawn, and a partition across it: four corners mitred
+  // (each wall a trapezoid, no seams); at the T joints the partition's core goes on to the outer
+  // walls' core (docs/177).
+  const json room = ok("create_wall", {{"points", {{0, 0}, {0, 4000}, {6000, 4000}, {6000, 0}, {0, 0}}}, {"type", "exterior_siding"},
+                                       {"height", 2700}, {"mitre", true}})["ids"];
+  ASSERT_EQ(room.size(), 4u);
+  const std::string inner = ok("create_wall", {{"points", {{3000, 65}, {3000, 3935}}}, {"type", "interior_board"}, {"height", 2700}, {"mitre", true}})["ids"][0];
+  for (std::size_t i = 0; i < room.size(); ++i) {
+    const json& id = room[i];
+    // West and east: no seams (6 faces); north and south: also the notch of the T joint (4 more).
+    EXPECT_EQ(faces(modeler, id.get<std::string>()), i % 2 == 0 ? 6 : 10) << id;
+    EXPECT_TRUE(modeler.document().find(id.get<std::string>())->attributes.count("corner_mitre_made")) << id;
+  }
+  EXPECT_TRUE(modeler.document().find(inner)->attributes.count("corner_mitre_made"));
+  EXPECT_NEAR(bounds(inner).CornerMin().Y(), 52.5, 1e-6);  // the outer wall's core face (its board 12.5 inside it)
+  // Without 'mitre': butt-joined as before.
+  const json plain = ok("create_wall", {{"points", {{10000, 0}, {16000, 0}, {16000, 4000}}}, {"thickness", 200}, {"height", 3000}})["ids"];
+  EXPECT_NEAR(volume(plain[0].get<std::string>()), 6100.0 * 200 * 3000, 1.0);
+  EXPECT_NEAR(volume(plain[1].get<std::string>()), 3900.0 * 200 * 3000, 1.0);
+  EXPECT_FALSE(modeler.document().find(plain[0].get<std::string>())->attributes.count("corner_mitre"));
+}
+
+// docs/177: where a partition of a build-up meets an outer wall at a T (both mitred), the
+// partition's core (柱) goes on through the outer wall's board up to its core, and the outer
+// wall gives up its board over the partition's core: the boards turn the corner. Together the
+// walls are as much as before; the layer lines in plans follow.
+TEST(MitredWalls, PartitionsCoreRunsIntoTheWallAtATee) {
+  sbr::doc::Modeler modeler;
+  CommandApi api{modeler};
+  auto ok = [&](const std::string& command, json args) {
+    json r = json::parse(api.execute(json{{"command", command}, {"args", args}}.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  auto volume = [&](const std::string& id) { return sbr::geom::volume(modeler.document().find(id)->shape); };
+  // Drawn clockwise: west, north, east, south; the partition from the south wall's inner face
+  // (core 105 / 2 + board 12.5 = 65) to the north wall's.
+  const json room = ok("create_wall", {{"points", {{0, 0}, {0, 4000}, {6000, 4000}, {6000, 0}, {0, 0}}}, {"type", "exterior_siding"}, {"height", 2700}})["ids"];
+  const std::string north = room[1], south = room[3];
+  const std::string inner = ok("create_wall", {{"points", {{3000, 65}, {3000, 3935}}}, {"type", "interior_board"}, {"height", 2700}})["ids"][0];
+  double total = volume(inner);
+  for (const json& id : room) total += volume(id.get<std::string>());
+  const double partition = volume(inner), southBefore = volume(south);
+  // Only the corners' walls marked: the T joints stay as they are.
+  ok("mitre_wall_corners", {{"walls", room}});
+  EXPECT_NEAR(volume(inner), partition, 1.0);
+  const double southMitred = volume(south);
+  // All marked: the partition's core 105 wide goes 12.5 into each outer wall.
+  const auto steps = modeler.history().undoCount();
+  ok("mitre_wall_corners", {{"walls", {inner}}});
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  const double piece = 105.0 * 12.5 * 2700;
+  EXPECT_NEAR(volume(inner), partition + 2 * piece, 1.0);
+  EXPECT_NEAR(volume(south), southMitred - piece, 1.0);
+  EXPECT_NEAR(volume(north), southMitred - piece, 1.0);  // the same as the south wall
+  double after = volume(inner);
+  for (const json& id : room) after += volume(id.get<std::string>());
+  EXPECT_NEAR(after, total, 1.0);
+  (void)southBefore;
+  // In the plan: the partition's core lines (x 2947.5, 3052.5) run from core face to core face;
+  // the outer walls' lines stay whole (on that side they have only the board).
+  auto coreLines = [&] {
+    double y0 = 1e300, y1 = -1e300;
+    int n = 0;
+    for (const auto& [a, b] : sbr::doc::Modeler::wallLayerLines(modeler.document(), 1000.0)) {
+      if (std::abs(a.X() - b.X()) > 1e-6) continue;
+      if (std::abs(a.X() - 2947.5) > 1e-6 && std::abs(a.X() - 3052.5) > 1e-6) continue;
+      y0 = std::min({y0, a.Y(), b.Y()});
+      y1 = std::max({y1, a.Y(), b.Y()});
+      ++n;
+    }
+    return std::make_tuple(n, y0, y1);
+  };
+  {
+    const auto [n, y0, y1] = coreLines();
+    EXPECT_EQ(n, 2);
+    EXPECT_NEAR(y0, 52.5, 1e-6);
+    EXPECT_NEAR(y1, 3947.5, 1e-6);
+  }
+  // The partition moved sideways: the pieces go with it (one undo step), the walls still add up.
+  ok("move", {{"ids", {inner}}, {"vector", {455, 0, 0}}});
+  EXPECT_NEAR(volume(inner), partition + 2 * piece, 1.0);
+  EXPECT_NEAR(volume(south), southMitred - piece, 1.0);
+  after = volume(inner);
+  for (const json& id : room) after += volume(id.get<std::string>());
+  EXPECT_NEAR(after, total, 1.0);
+  ASSERT_TRUE(modeler.undo());
+  // Taken off the partition: as it was.
+  ok("mitre_wall_corners", {{"walls", {inner}}, {"on", false}});
+  EXPECT_NEAR(volume(inner), partition, 1.0);
+  EXPECT_NEAR(volume(south), southMitred, 1.0);
+  {
+    const auto [n, y0, y1] = coreLines();
+    EXPECT_EQ(n, 2);
+    EXPECT_NEAR(y0, 65, 1e-6);
+    EXPECT_NEAR(y1, 3935, 1e-6);
+  }
+}
+
 // At corners that are not right angles the mitred walls leave no gap and do not overlap: together
 // they are the outline's band (perimeter x thickness), exactly.
 TEST(SkewWallJoins, MitredCornersCloseSlantedCorners) {

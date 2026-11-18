@@ -559,6 +559,10 @@ class Modeler {
   // Whether moves keep wall joints (on by default; a setting of the session, not saved).
   void setKeepWallJoins(bool on) { keepWallJoins_ = on; }
   bool keepWallJoins() const { return keepWallJoins_; }
+  // Walls made from now on (createWalls, createTypedWalls) get mitred corners (docs/159) in the
+  // same undo step as they are made (docs/177): the wall tool's default. Off unless set.
+  void setMitreNewWalls(bool on) { mitreNewWalls_ = on; }
+  bool mitreNewWalls() const { return mitreNewWalls_; }
   // What the last transform did to joined walls (empty when none were joined).
   const JoinFollow& lastJoinFollow() const { return lastJoins_; }
   Status move(const std::vector<ObjectId>& ids, const gp_Vec& offset);
@@ -1262,6 +1266,7 @@ class Modeler {
   void followCeilings(const Command& step);
   bool followingCeilings_ = false;
   bool keepWallJoins_ = true;
+  bool mitreNewWalls_ = false;
   JoinFollow lastJoins_;
   // settleOverlaps' two halves (one object each).
   Status settleLine(const ObjectId& id, Settled& out);

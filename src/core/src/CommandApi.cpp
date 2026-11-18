@@ -2340,14 +2340,23 @@ const std::vector<CommandDef>& commands() {
        "exterior_lath_mortar, exterior_lath_mortar_direct or interior_board (layers outside -> inside around "
        "the 'core', default 105 = column width); the outside is on the left of the line ('outside': right "
        "swaps), a closed outline turns so it faces out. Layer thicknesses are usual drawing values, not "
-       "product specifications.",
+       "product specifications. 'mitre': true mitres the corners (as mitre_wall_corners, also with walls "
+       "already mitred where they meet), as the wall tool does; default false (butt-joined).",
        SCHEMA({"type": "object", "properties": {
          "points": {"type": "array"}, "thickness": {"type": "number"}, "height": {"type": "number"},
          "base": {"type": "number"}, "justification": {"enum": ["center", "left", "right"]},
-         "type": {"type": "string"}, "core": {"type": "number"}, "outside": {"enum": ["left", "right"]}},
+         "type": {"type": "string"}, "core": {"type": "number"}, "outside": {"enum": ["left", "right"]},
+         "mitre": {"type": "boolean"}},
          "required": ["points", "height"]}),
        [](doc::Modeler& m, const json& a) {
          const GridLookup grid(m.document());
+         // docs/177: mitred corners only when asked; the setting is put back whatever happens.
+         struct Mitre {
+           doc::Modeler& m;
+           bool was;
+           ~Mitre() { m.setMitreNewWalls(was); }
+         } keep{m, m.mitreNewWalls()};
+         m.setMitreNewWalls(a.value("mitre", false));
          const double base = numberOr(a, "base", 0.0);
          std::vector<gp_Pnt> pts;
          const json& list = arg(a, "points");

@@ -6965,6 +6965,108 @@ std::vector<double> layerAcross(const WallBand& w) {
     }
     return across;
 }
+
+// --- mitred corners (docs/159) and T joints (docs/177) of walls -------------------------------
+constexpr const char* kMitre = "corner_mitre";           // on a wall: its corners are mitred where the other wall's are too
+constexpr const char* kMitreMade = "corner_mitre_made";  // what was made for it: made again only when this changes
+
+// A wall's layer edges across it (its left coordinate), from its outer face inwards, and which
+// layer is its core. None without layers that add up, or without a core.
+struct LayerEdges {
+  std::vector<double> edges;  // layer k lies between edges[k] and edges[k + 1]
+  std::size_t core = 0;
+};
+
+std::optional<LayerEdges> layerEdges(const WallBand& w) {
+  if (layerAcross(w).empty()) return std::nullopt;
+  const nlohmann::json layers = nlohmann::json::parse(attributeOf(*w.object, "wall_layers"), nullptr, false);
+  if (!layers.is_array()) return std::nullopt;
+  const bool outRight = attributeOf(*w.object, "wall_outside") == "right";
+  LayerEdges out;
+  double e = outRight ? -w.right : w.leftExt;
+  out.edges.push_back(e);
+  bool found = false;
+  for (std::size_t k = 0; k < layers.size(); ++k) {
+    e += (outRight ? 1.0 : -1.0) * layers[k].value("thickness", 0.0);
+    out.edges.push_back(e);
+    if (!found && layers[k].value("role", std::string()) == "core") {
+      out.core = k;
+      found = true;
+    }
+  }
+  if (!found) return std::nullopt;
+  return out;
+}
+
+// A partition `p` whose end `end` meets wall `e` at a T (docs/177): p's core goes on through e's
+// layers on that side up to e's core, and e gives those layers up over p's core, so that the
+// boards turn the corner. In plan (world).
+struct TeePieces {
+  std::vector<gp_Pnt> fill;  // for p: its core from just inside its end up to e's core face
+  std::vector<gp_Pnt> trim;  // for e: its layers on that side over p's core (and a little beyond its face)
+  double faceAcross = 0.0, coreAcross = 0.0;  // e's face p meets and e's core face there (e's left coordinate)
+  double core[2] = {0.0, 0.0};                // p's core edges (p's left coordinate)
+};
+
+std::optional<TeePieces> teeAt(const WallBand& p, int end, const WallBand& e) {
+  if (std::abs(gp_Vec(p.dir).Crossed(gp_Vec(e.dir)).Z()) < 0.25) return std::nullopt;
+  const auto pe = layerEdges(p), ee = layerEdges(e);
+  if (!pe || !ee) return std::nullopt;
+  const gp_Pnt at = p.start.Translated(gp_Vec(p.dir) * (end == 0 ? 0.0 : p.length));
+  const double across = gp_Vec(e.start, gp_Pnt(at.X(), at.Y(), e.start.Z())).Dot(gp_Vec(e.left));
+  const bool leftFace = std::abs(across - e.leftExt) < std::abs(across + e.right);
+  TeePieces out;
+  out.faceAcross = leftFace ? e.leftExt : -e.right;
+  const double k0 = ee->edges[ee->core], k1 = ee->edges[ee->core + 1];
+  out.coreAcross = std::abs(k0 - out.faceAcross) < std::abs(k1 - out.faceAcross) ? k0 : k1;
+  if (std::abs(out.coreAcross - out.faceAcross) < 1.0) return std::nullopt;  // no layers on that side
+  out.core[0] = pe->edges[pe->core];
+  out.core[1] = pe->edges[pe->core + 1];
+  // Where p's core edge k crosses e's line at `eAcross`.
+  auto point = [&](int k, double eAcross) -> std::optional<gp_Pnt> {
+    const gp_Pnt a = p.start.Translated(gp_Vec(p.left) * out.core[k]);
+    const auto m = meet(a, p.dir, e.start.Translated(gp_Vec(e.left) * eAcross), e.dir);
+    if (!m) return std::nullopt;
+    return a.Translated(gp_Vec(p.dir) * m->first);
+  };
+  const double outward = leftFace ? 50.0 : -50.0;
+  gp_Pnt coreAt[2], faceAt[2], beyond[2];
+  for (int k = 0; k < 2; ++k) {
+    const auto c = point(k, out.coreAcross), f = point(k, out.faceAcross), b = point(k, out.faceAcross + outward);
+    if (!c || !f || !b) return std::nullopt;
+    coreAt[k] = *c;
+    faceAt[k] = *f;
+    beyond[k] = *b;
+  }
+  const gp_Vec in = gp_Vec(p.dir) * (end == 0 ? 10.0 : -10.0);  // the fill overlaps p's own body by this much
+  out.fill = {coreAt[0], coreAt[1], faceAt[1].Translated(in), faceAt[0].Translated(in)};
+  out.trim = {coreAt[0], coreAt[1], beyond[1], beyond[0]};
+  return out;
+}
+
+// The T joints between walls that both have the mark: a wall's end on another's face away from
+// that wall's ends (where it is a corner).
+struct Tee {
+  std::size_t p = 0;
+  int end = 0;
+  std::size_t e = 0;
+  TeePieces pieces;
+};
+
+std::vector<Tee> teeJoins(const std::vector<WallBand>& walls, const std::vector<std::array<WallEnd, 2>>& ends) {
+  std::vector<Tee> out;
+  for (std::size_t k = 0; k < walls.size(); ++k) {
+    if (!walls[k].object->attributes.count(kMitre)) continue;
+    for (int end = 0; end < 2; ++end) {
+      const WallEnd& we = ends[k][static_cast<std::size_t>(end)];
+      if (!we.partner || !we.joined || !walls[*we.partner].object->attributes.count(kMitre)) continue;
+      const auto corner = cornerPartners(walls, ends, k, end);
+      if (std::find(corner.begin(), corner.end(), *we.partner) != corner.end()) continue;
+      if (const auto pieces = teeAt(walls[k], end, walls[*we.partner])) out.push_back({k, end, *we.partner, *pieces});
+    }
+  }
+  return out;
+}
 }  // namespace
 
 std::optional<Modeler::LayerUsage> Modeler::layerUsage(const Document& document, const Object& element) {
@@ -7007,6 +7109,7 @@ std::vector<std::pair<gp_Pnt, gp_Pnt>> Modeler::wallLayerLines(const Document& d
   const std::vector<WallBand> walls = allWallBands(document);
   const auto acrossOf = [](const WallBand& w) { return layerAcross(w); };
   const auto ends = wallEnds(walls);
+  const auto tees = teeJoins(walls, ends);
   for (std::size_t wi = 0; wi < walls.size(); ++wi) {
     const WallBand& w = walls[wi];
     if (!only.empty() && !only.count(w.object->id)) continue;
@@ -7045,6 +7148,30 @@ std::vector<std::pair<gp_Pnt, gp_Pnt>> Modeler::wallLayerLines(const Document& d
         break;
       }
     }
+    // T joints (docs/177): this partition's core lines go on to the other wall's core face; that
+    // wall's lines between its face and its core break over the partition's core.
+    std::vector<std::vector<std::pair<double, double>>> lineGaps(across.size());
+    for (const Tee& t : tees) {
+      if (t.p == wi) {
+        const WallBand& e = walls[t.e];
+        for (std::size_t k = 0; k < across.size(); ++k) {
+          if (std::abs(across[k] - t.pieces.core[0]) > 1e-6 && std::abs(across[k] - t.pieces.core[1]) > 1e-6) continue;
+          const auto m = meet(w.start.Translated(gp_Vec(w.left) * across[k]), w.dir, e.start.Translated(gp_Vec(e.left) * t.pieces.coreAcross), e.dir);
+          if (m) endAt[k][static_cast<std::size_t>(t.end)] = m->first;
+        }
+      }
+      if (t.e == wi) {
+        const WallBand& p = walls[t.p];
+        const double lo = std::min(t.pieces.faceAcross, t.pieces.coreAcross), hi = std::max(t.pieces.faceAcross, t.pieces.coreAcross);
+        for (std::size_t k = 0; k < across.size(); ++k) {
+          if (across[k] <= lo + 1e-6 || across[k] >= hi - 1e-6) continue;
+          const gp_Pnt line = w.start.Translated(gp_Vec(w.left) * across[k]);
+          const auto m0 = meet(line, w.dir, p.start.Translated(gp_Vec(p.left) * t.pieces.core[0]), p.dir);
+          const auto m1 = meet(line, w.dir, p.start.Translated(gp_Vec(p.left) * t.pieces.core[1]), p.dir);
+          if (m0 && m1) lineGaps[k].emplace_back(std::min(m0->first, m1->first), std::max(m0->first, m1->first));
+        }
+      }
+    }
     // Along the wall: its length less the openings the plan passes through.
     std::vector<std::pair<double, double>> gaps;
     if (const auto openings = openingsIn(document, w.object->id)) {
@@ -7054,16 +7181,21 @@ std::vector<std::pair<gp_Pnt, gp_Pnt>> Modeler::wallLayerLines(const Document& d
         gaps.emplace_back(c - o.along / 2, c + o.along / 2);
       }
     }
-    std::sort(gaps.begin(), gaps.end());
-    std::vector<std::pair<double, double>> runs;
-    double from = 0.0;
-    for (const auto& [g0, g1] : gaps) {
-      if (g0 > from + 1e-6) runs.emplace_back(from, std::min(g0, w.length));
-      from = std::max(from, g1);
-    }
-    if (from < w.length - 1e-6) runs.emplace_back(from, w.length);
-    for (std::size_t k = 0; k < across.size(); ++k)
-      for (const auto& [r0, r1] : runs) {
+    auto runsOf = [&](std::vector<std::pair<double, double>> cuts) {
+      std::sort(cuts.begin(), cuts.end());
+      std::vector<std::pair<double, double>> runs;
+      double from = 0.0;
+      for (const auto& [g0, g1] : cuts) {
+        if (g0 > from + 1e-6) runs.emplace_back(from, std::min(g0, w.length));
+        from = std::max(from, g1);
+      }
+      if (from < w.length - 1e-6) runs.emplace_back(from, w.length);
+      return runs;
+    };
+    for (std::size_t k = 0; k < across.size(); ++k) {
+      std::vector<std::pair<double, double>> cuts = gaps;
+      cuts.insert(cuts.end(), lineGaps[k].begin(), lineGaps[k].end());
+      for (const auto& [r0, r1] : runsOf(std::move(cuts))) {
         const double a = across[k];
         // The wall's own ends moved to the mitre (a run starting / ending at an opening stays).
         const double s0 = r0 <= 1e-6 ? endAt[k][0] : r0, s1 = r1 >= w.length - 1e-6 ? endAt[k][1] : r1;
@@ -7074,6 +7206,7 @@ std::vector<std::pair<gp_Pnt, gp_Pnt>> Modeler::wallLayerLines(const Document& d
         p1.SetZ(z);
         out.emplace_back(p0, p1);
       }
+    }
   }
   return out;
 }
@@ -7526,8 +7659,6 @@ Result<std::pair<geom::RoofSpec, gp_Trsf>> storedRoof(const Document& document, 
 geom::RoofSpec roofInFrame(geom::RoofSpec s, const gp_Trsf& t);
 
 // --- mitred wall corners (docs/159) --------------------------------------------------------
-constexpr const char* kMitre = "corner_mitre";           // on a wall: its corners are mitred where the other wall's are too
-constexpr const char* kMitreMade = "corner_mitre_made";  // what was made for it: made again only when this changes
 
 // The mitre of wall `w`'s end (0 start, 1 far end) with `o` at their corner, in plan (world):
 // `fill` is the wall's band from just inside its body up to the mitre line (the line through the
@@ -7617,33 +7748,34 @@ const Recipe* firstOperandDown(const Recipe& root, std::size_t depth) {
 void setCornerPieces(Object& o, const WallBand& band, const std::vector<TopoDS_Shape>& fills,
                      const std::vector<TopoDS_Shape>& trims) {
   // Where the rectangle (with the corner pieces it has now) sits in the chain of cuts.
+  // (Either may be missing: a T joint gives a partition a fill only and its wall a trim only.)
   std::size_t depth = band.path.size();
   if (depth > 0) {
     const Recipe* parent = firstOperandDown(o.recipe, depth - 1);
-    if (parent && cornerNode(*parent, BooleanKind::Union, kCornerFill)) {
-      --depth;
-      if (depth > 0) {
-        const Recipe* outer = firstOperandDown(o.recipe, depth - 1);
-        if (outer && cornerNode(*outer, BooleanKind::Subtract, kCornerTrim)) --depth;
-      }
-    }
+    if (parent && cornerNode(*parent, BooleanKind::Union, kCornerFill)) --depth;
+  }
+  if (depth > 0) {
+    const Recipe* outer = firstOperandDown(o.recipe, depth - 1);
+    if (outer && cornerNode(*outer, BooleanKind::Subtract, kCornerTrim)) --depth;
   }
   Recipe node = band.recipe;
-  if (!fills.empty() && !trims.empty()) {
-    auto piece = [](const TopoDS_Shape& shape, const char* id, std::size_t i) {
-      Recipe r;
-      r.base = ImportedShape{shape, id};
-      return BooleanOperand{std::make_shared<const Recipe>(std::move(r)), gp_Trsf(), "Corner", std::string(id) + "-" + std::to_string(i)};
-    };
+  auto piece = [](const TopoDS_Shape& shape, const char* id, std::size_t i) {
+    Recipe r;
+    r.base = ImportedShape{shape, id};
+    return BooleanOperand{std::make_shared<const Recipe>(std::move(r)), gp_Trsf(), "Corner", std::string(id) + "-" + std::to_string(i)};
+  };
+  if (!fills.empty()) {
     BooleanFeature filled;
     filled.kind = BooleanKind::Union;
-    filled.operands.push_back(BooleanOperand{std::make_shared<const Recipe>(band.recipe), gp_Trsf(), o.name, {}});
+    filled.operands.push_back(BooleanOperand{std::make_shared<const Recipe>(std::move(node)), gp_Trsf(), o.name, {}});
     for (std::size_t i = 0; i < fills.size(); ++i) filled.operands.push_back(piece(fills[i], kCornerFill, i));
-    Recipe inner;
-    inner.base = std::move(filled);
+    node = Recipe{};
+    node.base = std::move(filled);
+  }
+  if (!trims.empty()) {
     BooleanFeature trimmed;
     trimmed.kind = BooleanKind::Subtract;
-    trimmed.operands.push_back(BooleanOperand{std::make_shared<const Recipe>(std::move(inner)), gp_Trsf(), o.name, {}});
+    trimmed.operands.push_back(BooleanOperand{std::make_shared<const Recipe>(std::move(node)), gp_Trsf(), o.name, {}});
     for (std::size_t i = 0; i < trims.size(); ++i) trimmed.operands.push_back(piece(trims[i], kCornerTrim, i));
     node = Recipe{};
     node.base = std::move(trimmed);
@@ -7671,6 +7803,11 @@ int refitWallCorners(const Document& document, ChangeSet& changes, const RegenCo
   for (const Object* o : objects)
     if (const auto band = wallBand(document, *o)) bands.push_back(*band);
   const auto ends = wallEnds(bands);
+  const auto tees = teeJoins(bands, ends);
+  auto pushOf = [](const WallBand& b) {
+    const double foot = b.start.Z(), push = std::get<ExtrudeOp>(b.recipe.modifiers.front()).distance;
+    return std::make_pair(std::min(foot, foot + push), std::max(foot, foot + push));
+  };
   struct Plan {
     ObjectId id;
     std::vector<TopoDS_Shape> fills, trims;
@@ -7703,6 +7840,26 @@ int refitWallCorners(const Document& document, ChangeSet& changes, const RegenCo
                     pieces->fill[1].X(), pieces->fill[1].Y(), pieces->fill[2].X(), pieces->fill[2].Y(), z0, z1);
       plan.made += text;
       ++mitred;
+    }
+    // T joints (docs/177): the partition's core on into the wall, the wall's layers there taken
+    // away, both only as high as the two walls stand together.
+    for (const Tee& t : tees) {
+      if (!flagged || (t.p != k && t.e != k)) continue;
+      const auto [pz0, pz1] = pushOf(bands[t.p]);
+      const auto [ez0, ez1] = pushOf(bands[t.e]);
+      const double lo = std::max(pz0, ez0), hi = std::min(pz1, ez1);
+      if (hi - lo < 1.0) continue;
+      const bool partition = t.p == k;
+      const std::vector<gp_Pnt>& polygon = partition ? t.pieces.fill : t.pieces.trim;
+      // The wall's trim reaches past its own foot and top where the partition stands as high.
+      const double b0 = partition || lo > ez0 + 1e-6 ? lo : lo - 50.0, b1 = partition || hi < ez1 - 1e-6 ? hi : hi + 50.0;
+      const TopoDS_Shape shape = planPrism(polygon, b0, b1, toLocal);
+      if (shape.IsNull()) continue;
+      (partition ? plan.fills : plan.trims).push_back(shape);
+      char text[200];
+      std::snprintf(text, sizeof text, "T%c%d:%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f;", partition ? 'p' : 'e', t.end, polygon[0].X(),
+                    polygon[0].Y(), polygon[1].X(), polygon[1].Y(), polygon[2].X(), polygon[2].Y(), b0, b1);
+      plan.made += text;
     }
     if (plan.made == attributeOf(*w.object, kMitreMade)) continue;  // as it is
     plans.push_back(std::move(plan));
@@ -9734,6 +9891,13 @@ Result<std::vector<ObjectId>> Modeler::createWallBands(std::vector<gp_Pnt> point
   if (!tagged) {
     history_.abortGroup();
     return R::failure(tagged.message());
+  }
+  // docs/177: mitred from the start (the wall tool), with walls already marked where they meet.
+  if (mitreNewWalls_) {
+    if (const auto mitred = mitreWallCorners(walls, true); !mitred) {
+      history_.abortGroup();
+      return R::failure(mitred.error());
+    }
   }
   history_.endGroup();
   return walls;

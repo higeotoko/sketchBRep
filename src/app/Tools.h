@@ -324,6 +324,7 @@ class WallTool : public PlanPolylineTool {
     std::string type;
     double core = 105.0;        // column width
     bool outsideRight = false;  // the outside on the right of the line (default left)
+    bool mitre = true;          // corners mitred from the start (docs/177)
   };
   using PlanPolylineTool::PlanPolylineTool;
   QString name() const override;
