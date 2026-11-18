@@ -6171,6 +6171,23 @@ void GuiPhase1::wallToolAndArchitectureMenus() {
   for (const doc::ObjectId& id : walls)
     QVERIFY2(m.document().find(id)->attributes.count("corner_mitre_made"), id.c_str());
   QVERIFY(!m.mitreNewWalls());  // only while the tool makes them
+  // docs/180: the mark in the wall's properties; unticked, that wall's corners are square again.
+  f.window.activateTool(MainWindow::ToolId::Select);
+  f.window.setSelection({walls.front()});
+  QTest::qWait(30);
+  {
+    auto* mark = f.window.findChild<QCheckBox*>(QStringLiteral("wallMitre"));
+    QVERIFY(mark && mark->isChecked());
+    const std::size_t before = m.history().undoCount();
+    mark->click();
+    QTest::qWait(30);
+    QCOMPARE(m.history().undoCount(), before + 1);
+    QVERIFY(!m.document().find(walls.front())->attributes.count("corner_mitre"));
+    QVERIFY(!m.document().find(walls.front())->attributes.count("corner_mitre_made"));
+    QVERIFY2(f.window.statusText().contains(QStringLiteral("外しました")), qPrintable(f.window.statusText()));
+    QVERIFY(m.undo());
+    QVERIFY(m.document().find(walls.front())->attributes.count("corner_mitre_made"));
+  }
 
   // Two windows into the first wall (along X; its largest vertical face).
   f.window.activateTool(MainWindow::ToolId::Select);

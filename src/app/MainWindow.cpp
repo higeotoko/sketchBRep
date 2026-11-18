@@ -879,6 +879,16 @@ void MainWindow::buildUi() {
       if (!setWallTypeOfWalls(id, type.toStdString())) refreshPanels();
     });
   });
+  connect(panel_, &PropertiesPanel::wallMitreEdited, this, [this](const doc::ObjectId& id, bool on) {
+    QTimer::singleShot(0, this, [this, id, on] {
+      const auto corners = modeler_.mitreWallCorners({id}, on);
+      if (!corners) reportError(tr("壁の角を変えられません: %1").arg(userMessage(QString::fromStdString(corners.error()))));
+      else
+        setStatus(on ? tr("この壁の角を留めにしました（相手の壁にも印がある角だけ。Ctrl+Z で戻せます）")
+                     : tr("この壁の角の留めを外しました（Ctrl+Z で戻せます）"));
+      refreshPanels();
+    });
+  });
   connect(panel_, &PropertiesPanel::openingFittingEdited, this,
           [this](const doc::ObjectId& id, int index, const QString& fitting) {
             QTimer::singleShot(0, this, [this, id, index, fitting] {

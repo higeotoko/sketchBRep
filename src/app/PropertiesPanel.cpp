@@ -977,6 +977,15 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       if (!value.isEmpty()) emit wallTypeEdited(id, value);
     });
     form_->addRow(tr("種類"), type);
+    // docs/180: its mark for mitred corners (and boards turning the corner at T joints).
+    auto* mitre = new QCheckBox(tr("角を留めにする"));
+    mitre->setObjectName(QStringLiteral("wallMitre"));
+    mitre->setChecked(o->attributes.count("corner_mitre") > 0);
+    mitre->setEnabled(!o->locked);
+    mitre->setToolTip(tr("相手の壁にも印がある角は対角線の留めに、仕様のある壁どうしの T 字は間仕切りのボードが回り込む形になります。"
+                         "外すと突き付けに戻ります（壁ツールで描いた壁は初めから入っています）"));
+    connect(mitre, &QCheckBox::toggled, this, [this, id](bool on) { emit wallMitreEdited(id, on); });
+    form_->addRow(tr("角"), mitre);
     // docs/163: a balcony on this wall.
     auto* balcony = new QPushButton(tr("バルコニーを付ける"));
     balcony->setObjectName(QStringLiteral("wallAddBalcony"));

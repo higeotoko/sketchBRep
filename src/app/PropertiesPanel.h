@@ -78,6 +78,8 @@ class PropertiesPanel : public QWidget {
   void openingRemoved(const doc::ObjectId& id, int index);
   // A wall's build-up (WallTypes.h id) chosen in the panel.
   void wallTypeEdited(const doc::ObjectId& id, const QString& type);
+  // A wall's mark for mitred corners and T joints (docs/159, docs/177, docs/180) ticked or not.
+  void wallMitreEdited(const doc::ObjectId& id, bool on);
   // A wall's foot (top = false) or a wall's / slab's top put on the level `level` (its id;
   // empty: let go of its level).
   void levelAttachmentEdited(const doc::ObjectId& id, bool top, const QString& level);
