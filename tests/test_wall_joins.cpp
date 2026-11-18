@@ -579,6 +579,46 @@ TEST(MitredWalls, DrawnOnFromAWallsEnd) {
   EXPECT_NEAR(bounds(again).CornerMin().Y(), 4000, 1e-6);
 }
 
+// docs/179: a run drawn from the middle of another wall's line (or to it) is a T joint: it
+// starts at that wall's face, as partitions are drawn; that wall stays as it is.
+TEST(MitredWalls, DrawnFromTheMiddleOfAWall) {
+  sbr::doc::Modeler modeler;
+  CommandApi api{modeler};
+  auto ok = [&](const std::string& command, json args) {
+    json r = json::parse(api.execute(json{{"command", command}, {"args", args}}.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  auto volume = [&](const std::string& id) { return sbr::geom::volume(modeler.document().find(id)->shape); };
+  auto bounds = [&](const std::string& id) {
+    return sbr::geom::exactBounds(modeler.document().worldShape(*modeler.document().find(id)));
+  };
+  // Plain walls: a 200 room, a 100 partition drawn from the south wall's line to the north wall's.
+  const json room = ok("create_wall", {{"points", {{0, 0}, {0, 4000}, {6000, 4000}, {6000, 0}, {0, 0}}}, {"thickness", 200}, {"height", 3000}})["ids"];
+  double walls = 0;
+  for (const json& id : room) walls += volume(id.get<std::string>());
+  const std::string plain = ok("create_wall", {{"points", {{3000, 0}, {3000, 4000}}}, {"thickness", 100}, {"height", 3000}})["ids"][0];
+  EXPECT_NEAR(bounds(plain).CornerMin().Y(), 100, 1e-6);
+  EXPECT_NEAR(bounds(plain).CornerMax().Y(), 3900, 1e-6);
+  EXPECT_NEAR(volume(plain), 100.0 * 3800 * 3000, 1.0);
+  double after = 0;
+  for (const json& id : room) after += volume(id.get<std::string>());
+  EXPECT_NEAR(after, walls, 1.0);  // the room's walls as they were
+  EXPECT_TRUE(ok("room_at", {{"at", {1500, 2000}}}).value("closed", false));
+  EXPECT_TRUE(ok("room_at", {{"at", {4500, 2000}}}).value("closed", false));
+  // Of a build-up and mitred (the wall tool): it starts at the outer walls' inner face (65 from
+  // their line) and its core runs on to their core (docs/177).
+  const json sided = ok("create_wall", {{"points", {{10000, 0}, {10000, 4000}, {16000, 4000}, {16000, 0}, {10000, 0}}}, {"type", "exterior_siding"},
+                                        {"height", 2700}, {"mitre", true}})["ids"];
+  const std::string inner = ok("create_wall", {{"points", {{13000, 0}, {13000, 4000}}}, {"type", "interior_board"}, {"height", 2700}, {"mitre", true}})["ids"][0];
+  EXPECT_NEAR(volume(inner), 130.0 * 3870 * 2700 + 2 * 105.0 * 12.5 * 2700, 1.0);
+  EXPECT_NEAR(bounds(inner).CornerMin().Y(), 52.5, 1e-6);
+  // Drawn to a wall's line from inside the room (the last point on it): the same.
+  const std::string half = ok("create_wall", {{"points", {{1500, 2000}, {1500, 4000}}}, {"thickness", 100}, {"height", 3000}})["ids"][0];
+  EXPECT_NEAR(bounds(half).CornerMax().Y(), 3900, 1e-6);
+  EXPECT_NEAR(bounds(half).CornerMin().Y(), 2000, 1e-6);
+}
+
 // docs/177: where a partition of a build-up meets an outer wall at a T (both mitred), the
 // partition's core (柱) goes on through the outer wall's board up to its core, and the outer
 // wall gives up its board over the partition's core: the boards turn the corner. Together the

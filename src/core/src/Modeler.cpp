@@ -9867,6 +9867,7 @@ Result<std::vector<ObjectId>> Modeler::createWallBands(std::vector<gp_Pnt> point
     int end = 0;           // that wall's end
     double run = 0.0;      // where that end goes along its line
     double cut = 0.0;      // the new wall's end from the point, into its body (+) or out (-)
+    bool tee = false;      // docs/179: on that wall's line between its ends (that wall stays as it is)
   };
   const std::vector<WallBand> existing = closed ? std::vector<WallBand>{} : allWallBands(document_);
   const auto existingEnds = wallEnds(existing);
@@ -9887,6 +9888,22 @@ Result<std::vector<ObjectId>> Modeler::createWallBands(std::vector<gp_Pnt> point
         j.end = end;
         return j;
       }
+    }
+    // docs/179: on another wall's line between its ends (drawn from its middle): a T joint, the
+    // new wall starting at that wall's face.
+    for (std::size_t k = 0; k < existing.size(); ++k) {
+      const WallBand& w = existing[k];
+      if (std::min(w.z1, base + height) - std::max(w.z0, base) < 1.0) continue;
+      if (std::abs(gp_Vec(w.dir).Crossed(gp_Vec(into)).Z()) < 0.25) continue;
+      const gp_Vec to(w.start, gp_Pnt(at.X(), at.Y(), w.start.Z()));
+      const double along = to.Dot(gp_Vec(w.dir)), across = to.Dot(gp_Vec(w.left));
+      if (std::abs(across) > 0.5 || along < 1.0 || along > w.length - 1.0) continue;
+      EndJoin j;
+      j.wall = k;
+      j.id = w.object->id;
+      j.length = w.length;
+      j.tee = true;
+      return j;
     }
     return std::nullopt;
   };
@@ -9913,7 +9930,8 @@ Result<std::vector<ObjectId>> Modeler::createWallBands(std::vector<gp_Pnt> point
   };
   if (firstJoin && !settle(*firstJoin, points.front(), dirs.front(), dirs.front())) firstJoin.reset();
   if (lastJoin && !settle(*lastJoin, points.back(), dirs.back(), gp_Dir(-gp_Vec(dirs.back())))) lastJoin.reset();
-  if (firstJoin && lastJoin && firstJoin->wall == lastJoin->wall && firstJoin->end == lastJoin->end) lastJoin.reset();
+  if (firstJoin && lastJoin && !firstJoin->tee && !lastJoin->tee && firstJoin->wall == lastJoin->wall && firstJoin->end == lastJoin->end)
+    lastJoin.reset();
   history_.beginGroup("Walls");
   std::vector<ObjectId> walls;
   for (std::size_t i = 0; i < segments; ++i) {
@@ -9972,12 +9990,12 @@ Result<std::vector<ObjectId>> Modeler::createWallBands(std::vector<gp_Pnt> point
     return R::failure(tagged.message());
   }
   // docs/178: the walls drawn on from run on to the new ones.
-  if (firstJoin || lastJoin) {
+  if ((firstJoin && !firstJoin->tee) || (lastJoin && !lastJoin->tee)) {
     // (The bands read before are not used here: their objects may have moved in the document.)
     ChangeSet changes(document_);
     std::map<ObjectId, std::pair<double, double>> runs;
     for (const auto& j : {firstJoin, lastJoin}) {
-      if (!j) continue;
+      if (!j || j->tee) continue;
       auto& r = runs.emplace(j->id, std::make_pair(0.0, j->length)).first->second;
       (j->end == 0 ? r.first : r.second) = j->run;
     }
