@@ -1828,6 +1828,25 @@ void OpeningTool::mouseMove(const ToolEvent& e) {
 }
 
 bool OpeningTool::place(const Target& t) {
+  // A registered type can be redefined or removed after picking it in the toolbar.
+  auto fitting = nlohmann::json::parse(settings_.fitting, nullptr, false);
+  if (fitting.is_object() && fitting.contains("type_name")) {
+    const auto name = fitting.at("type_name").get<std::string>();
+    const auto registered = host_.modeler().fittingTypes();
+    const auto type = registered.find(name);
+    if (type == registered.end()) {
+      fitting.erase("type_name");
+    } else {
+      auto current = nlohmann::json::parse(type->second);
+      if (current.at("type") == fitting.at("type")) {
+        for (const char* hand : {"hinge", "swing", "slide", "fold"})
+          if (fitting.contains(hand)) current[hand] = fitting.at(hand);
+      }
+      current["type_name"] = name;
+      fitting = std::move(current);
+    }
+    settings_.fitting = fitting.dump();
+  }
   auto r = host_.modeler().placeOpeningAt(t.host, t.normal, t.at, settings_.width, settings_.height, settings_.sill,
                                           settings_.fitting);
   if (!r) {

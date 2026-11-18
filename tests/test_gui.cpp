@@ -6300,6 +6300,36 @@ void GuiPhase1::fittingPlacedWithItsWayInPlan() {
   // One undo: that door and its opening gone together.
   QVERIFY(m.undo());
   QCOMPARE(m.openings(wall->front())->size(), std::size_t(1));
+
+  // Registered types appear in the same picker and use the current opening size.
+  const QString typeName = QStringLiteral("試験用片開き");
+  QVERIFY(m.defineFittingType(typeName.toStdString(), R"({"type":"swing_single","frame":45})"));
+  const int registered = list->findData(typeName);
+  QVERIFY(registered > door);
+  list->setCurrentIndex(registered);
+  emit list->activated(registered);
+  QVERIFY(m.defineFittingType(typeName.toStdString(), R"({"type":"swing_single","frame":48})"));
+  const auto registeredSteps = m.history().undoCount();
+  click(f.vp, f.vp->toWidget(gp_Pnt(1000, 0, 0)));
+  QVERIFY(f.window.openingTool().choosingWay());
+  click(f.vp, f.vp->toWidget(gp_Pnt(1100, -700, 1000)));
+  const auto openings = m.openings(wall->front());
+  QVERIFY(openings && openings->size() == 2);
+  const auto& added = openings->back();
+  QCOMPARE(added.width, 800.0);
+  const auto readFitting = [&] {
+    return nlohmann::json::parse(m.document().find(wall->front())->attributes.at("opening_fittings")).at(added.id);
+  };
+  QCOMPARE(readFitting().value("type_name", std::string()), typeName.toStdString());
+  QCOMPARE(readFitting().value("frame", 0.0), 48.0);
+  QCOMPARE(m.history().undoCount(), registeredSteps + 1);
+  QVERIFY(m.defineFittingType(typeName.toStdString(), R"({"type":"swing_single","frame":50})"));
+  QCOMPARE(readFitting().value("frame", 0.0), 50.0);
+  QVERIFY(m.removeFittingType(typeName.toStdString()));
+  QCOMPARE(list->findData(typeName), -1);
+  QCOMPARE(list->currentIndex(), 0);
+  QVERIFY(m.undo());
+  QVERIFY(list->findData(typeName) > door);
 }
 
 void GuiPhase1::doorSwingToolPicksInPlan() {

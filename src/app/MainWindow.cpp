@@ -64,6 +64,7 @@
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QListWidget>
+#include <QPointer>
 #include <QPushButton>
 #include <QMenu>
 #include <QStatusBar>
@@ -2000,11 +2001,47 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
     fittingKind->setObjectName(QStringLiteral("architectureOpeningFitting"));
     fittingKind->addItem(tr("建具を選ぶ…"));
     for (const Preset& p : presets) fittingKind->addItem(tr(p.label));
-    fittingKind->setToolTip(tr("建具を選ぶと、大きさと形式が開口の道具に入ります。平面の壁をクリックすると開口と建具が一緒に入り、"
-                               "扉はマウスで開き方を選んでもう一度クリック"));
+    fittingKind->setToolTip(tr("定番の建具を選ぶと開口の大きさと形式を設定します。登録した型は、今の開口寸法で使います。"
+                               "壁をクリックして配置し、開き方のある扉はマウスを動かしてもう一度クリック"));
     fittingKind->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     bar->addWidget(fittingKind);
-    connect(fittingKind, &QComboBox::activated, this, [this, fittingKind](int index) {
+    auto applyType = [this](const std::string& name) {
+      const auto registered = modeler_.fittingTypes();
+      const auto type = registered.find(name);
+      if (type == registered.end()) return;
+      auto fitting = nlohmann::json::parse(type->second);
+      fitting["type_name"] = name;
+      OpeningTool::Settings s = openingTool_->settings();
+      s.fitting = fitting.dump();
+      openingTool_->setSettings(s);
+      activateTool(ToolId::Opening);
+      setStatus(tr("建具の型「%1」：平面の壁をクリック").arg(QString::fromStdString(name)));
+    };
+    const int standardCount = fittingKind->count();
+    modeler_.document().addListener([this, picker = QPointer<QComboBox>(fittingKind), standardCount,
+                                     names = QStringList()]() mutable {
+      if (!picker) return;
+      QStringList current;
+      for (const auto& [name, fitting] : modeler_.fittingTypes())
+        current.push_back(QString::fromStdString(name));
+      if (names == current) return;
+      names = current;
+      const QString selectedType = picker->currentData().toString();
+      const int selectedStandard = picker->currentIndex();
+      const QSignalBlocker block(picker.data());
+      while (picker->count() > standardCount) picker->removeItem(picker->count() - 1);
+      if (!names.isEmpty()) {
+        picker->insertSeparator(standardCount);
+        for (const QString& name : names) picker->addItem(tr("登録型：%1").arg(name), name);
+      }
+      picker->setCurrentIndex(selectedType.isEmpty() ? selectedStandard : std::max(0, picker->findData(selectedType)));
+    });
+    connect(fittingKind, &QComboBox::activated, this, [this, fittingKind, applyType, standardCount](int index) {
+      if (index >= standardCount) {
+        const QString name = fittingKind->itemData(index).toString();
+        if (!name.isEmpty()) applyType(name.toStdString());
+        return;
+      }
       if (index < 1 || index > static_cast<int>(std::size(presets))) return;
       const Preset& p = presets[index - 1];
       OpeningTool::Settings s = openingTool_->settings();
@@ -2021,19 +2058,13 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
     if (auto* opening = findChild<QToolButton*>(QStringLiteral("architectureOpening")); opening && opening->menu()) {
       QMenu* types = opening->menu()->addMenu(tr("登録した建具の型"));
       types->setObjectName(QStringLiteral("architectureOpeningTypes"));
-      connect(types, &QMenu::aboutToShow, this, [this, types] {
+      connect(types, &QMenu::aboutToShow, this, [this, types, applyType] {
         types->clear();
         const auto registered = modeler_.fittingTypes();
         if (registered.empty()) types->addAction(tr("（登録した型はありません：開口のプロパティの「型として登録」から）"))->setEnabled(false);
-        for (const auto& [name, fitting] : registered) {
-          const std::string json = fitting;
-          types->addAction(QString::fromStdString(name), this, [this, json, name] {
-            OpeningTool::Settings s = openingTool_->settings();
-            s.fitting = json;
-            openingTool_->setSettings(s);
-            activateTool(ToolId::Opening);
-            setStatus(tr("建具の型「%1」：平面の壁をクリック").arg(QString::fromStdString(name)));
-          });
+        for (const auto& entry : registered) {
+          const auto& name = entry.first;
+          types->addAction(QString::fromStdString(name), this, [applyType, name] { applyType(name); });
         }
       });
     }
