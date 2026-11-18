@@ -43,9 +43,16 @@
 |---|---|
 | 計算テスト済み | コア（ローカル）。新規 1 件（`OpeningMarks.PrefixesByTheWallsSide`）：外壁 サイディングの部屋の南の壁の引違い窓 → AW1、建具の無い開口 → O1、石膏ボードの間仕切りの片開き → WD1・窓 → WW1、北の外壁の床からの片開き → AD1。今までの建具表・札・IFC・手で付けた符号のテストを新しい符号に直した（手で AW1 を付けると、自動の次の窓は AW2） |
 | GUI 自動確認済み | 表と札・開口まわりの画面テスト 5 条件が成功（ローカル） |
-| CI | （記録待ち） |
+| CI | run 44229581451（push、`6705b16`）：Linux 761 件成功、Windows 757 件＋3 件成功・GUI 237 件成功（7 件スキップ） |
 | Windows 実機確認 | まだ（チェック表 12-52） |
 
 ## 配布の記録
 
-（記録待ち）
+| 項目 | 値 |
+|---|---|
+| コード | `a087df0`（符号の頭文字 docs/176。配ったのは docs/177 と一緒の `6705b16`。Opus 5.5 で作業） |
+| CI | run 44229581451（push、`6705b16`）：Linux・Windows とも成功 |
+| ZIP | `SketchBRep-windows-x64-6705b16-local.zip`（Codex のチャットフォルダの `outputs\`） |
+| サイズ | 73,092,326 bytes |
+| SHA256 | `b4e344740445203dd2f593ec7ba2d73ffda709cade88a137c5241feba6592db3` |
+| ZIP の検証 | `verify_portable_pads.py`・`verify_portable_mat.py` とも成功（docs/validation/2026-11-18-portable-6705b16*.json） |
