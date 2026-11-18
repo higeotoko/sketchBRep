@@ -10,6 +10,7 @@
 | BREP（.brep / .brp） | ○ | ○ | OCCT の形式 |
 | Rhino（.3dm） | ○ | ○ | |
 | COLLADA（.dae） | ○ | ○ | SketchUp との受け渡しに |
+| SketchUp（.skp） | ○ | ○ | SketchUp の SDK を置いた PC だけ一覧に出ます（下を見てください） |
 | STL（.stl） | | ○ | 3D プリント用 |
 | glTF（.glb / .gltf） | | ○ | レンダリング用（Blender・Twinmotion・Unreal Engine など）。材質の色・透明度・金属感・粗さ付き |
 | IFC（.ifc） | | ○ | ほかの BIM ソフト用（IFC4）。階・壁・開口・窓と扉・床・屋根・柱と梁・室・通り芯 |
@@ -17,6 +18,13 @@
 | DWG（.dwg） | ○ | 図面のみ | ODA File Converter（無料）が必要です |
 | JWW（.jww） | ○ | 図面のみ | Jw_cad の図面の線・円・円弧・寸法線・ブロックを読み込みます |
 | 画像 | 下絵（.png / .jpg / .bmp / .gif） | 画面の画像（.png） | 下絵はトレース用に配置できます |
+
+## SketchUp（.skp）を読み書きするとき
+
+SketchUp のファイルは、Trimble の SketchUp SDK を使って読み書きします。SDK は SketchBRep に入っていません。SDK を置いた PC で、そのフォルダを環境変数 `SBR_SKETCHUP_SDK` に入れる（またはその PC でビルドした版を使う）と、一覧に「SketchUp (*.skp)」が出ます。
+
+- 書き出し：物ごとにグループ（物の名前）。平らな面は 1 枚の面（穴もそのまま）、曲面は滑らかに見える三角形。色は材質。SketchUp 2021 以降で開けます。
+- 読み込み：グループ・コンポーネントごとに物 1 つ。閉じた物は立体。色は材質から。隠した物とテクスチャは読みません（色で表示）。
 
 ## IFC を書き出すとき
 

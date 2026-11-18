@@ -48,6 +48,7 @@ add_library(sbr_core STATIC
   src/Dxf.cpp
   src/Rhino3dm.cpp
   src/Collada.cpp
+  src/Skp.cpp
   src/Drawing.cpp
   src/DrawingSheet.cpp
   src/DrawingDxf.cpp
@@ -109,6 +110,16 @@ target_link_libraries(sbr_core
   PRIVATE
     nlohmann_json::nlohmann_json
 )
+
+if(SBR_SKETCHUP_SDK_DIR)
+  if(NOT WIN32 OR NOT EXISTS "${SBR_SKETCHUP_SDK_DIR}/headers/SketchUpAPI/sketchup.h")
+    message(FATAL_ERROR "SBR_SKETCHUP_SDK_DIR: no SketchUp SDK for Windows at ${SBR_SKETCHUP_SDK_DIR}")
+  endif()
+  # Only Skp.cpp sees the SDK's headers; nothing is linked (the DLL is loaded when needed).
+  set_source_files_properties(src/Skp.cpp PROPERTIES
+    INCLUDE_DIRECTORIES "${SBR_SKETCHUP_SDK_DIR}/headers"
+    COMPILE_DEFINITIONS "SBR_WITH_SKETCHUP;SBR_SKETCHUP_SDK_DIR=\"${SBR_SKETCHUP_SDK_DIR}\"")
+endif()
 
 if(SBR_WITH_OPENNURBS)
   target_link_libraries(sbr_core PRIVATE opennurbsStatic)

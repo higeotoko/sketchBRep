@@ -9,6 +9,10 @@ option(SBR_BUILD_APP   "Build the Qt desktop application" ON)
 option(SBR_BUILD_TESTS "Build automated tests" ON)
 option(SBR_BUILD_TOOLS "Build CLI verification tools" ON)
 option(SBR_WITH_OPENNURBS "Rhino .3dm import/export (downloads openNURBS)" ON)
+# SketchUp .skp import/export (docs/181): the SketchUp SDK folder on this PC (Windows). Its
+# headers are compiled against; SketchUpAPI.dll is loaded from it at run time, never linked or
+# shipped. Empty: no SketchUp support.
+set(SBR_SKETCHUP_SDK_DIR "" CACHE PATH "SketchUp SDK folder (headers/, binaries/sketchup/x64/); empty for none")
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)

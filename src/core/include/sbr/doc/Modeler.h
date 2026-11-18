@@ -20,6 +20,7 @@
 #include "sbr/geom/Stair.h"
 #include "sbr/geom/Rhino3dm.h"
 #include "sbr/geom/Collada.h"
+#include "sbr/geom/Skp.h"
 #include "sbr/geom/Dxf.h"
 #include "sbr/geom/Gltf.h"
 #include "sbr/geom/Jww.h"
@@ -1235,6 +1236,11 @@ class Modeler {
   // Each mesh of the file an object (faces joined, closed ones solids),
   // coloured from its materials; one undo step. `report` says what came.
   Result<std::vector<ObjectId>> importCollada(const std::string& path, geom::ColladaReport* report = nullptr);
+  // SketchUp (.skp, docs/181) through the SketchUp SDK on this PC: as COLLADA, each object a
+  // group (flat faces whole, with their holes); the file's groups and components each an object.
+  Status exportSkp(const std::string& path, const std::vector<ObjectId>& ids = {},
+                   const geom::SkpExportOptions& options = {}) const;
+  Result<std::vector<ObjectId>> importSkp(const std::string& path, geom::SkpReport* report = nullptr);
 
   // --- queries ------------------------------------------------------------
   std::vector<ObjectSummary> listObjects() const;
@@ -1291,6 +1297,11 @@ class Modeler {
   bool facesIntoSolid(const TopoDS_Face& worldFace, const ObjectId& parent) const;
   std::vector<geom::NamedShape> exportParts(const std::vector<ObjectId>& ids) const;
   Result<TopoDS_Shape> exportGeometry(const std::vector<ObjectId>& ids, bool facesOnly = false) const;
+  // The visible objects (or `ids` and what is under them) as coloured parts, for COLLADA and SketchUp.
+  Result<std::vector<geom::ColladaPart>> colouredParts(const std::vector<ObjectId>& ids) const;
+  // Coloured parts read from a file as objects, one undo step.
+  Result<std::vector<ObjectId>> addColouredParts(const std::vector<geom::ColladaPart>& parts, const std::string& path,
+                                                 const std::string& commandName);
   Result<std::vector<ObjectId>> addImported(const std::vector<geom::NamedShape>& parts, const std::string& path,
                                             const std::string& commandName);
   Result<ObjectId> faceFromCurveJunctions(const ObjectId& curveId, bool* loopFound);

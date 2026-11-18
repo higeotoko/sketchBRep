@@ -33,6 +33,7 @@
 #include <TopExp_Explorer.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
+#include <TopoDS_Iterator.hxx>
 #include <TopoDS_Compound.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
@@ -673,7 +674,6 @@ struct Reader {
     if (!faces.empty()) {
       // Faces made one by one (a polygon split into triangles when bent),
       // sewn along shared edges, coplanar ones joined; colours followed.
-      Bnd_Box extent;
       std::vector<std::pair<TopoDS_Face, ColladaColor>> made;
       for (const auto& f : faces) {
         auto add = [&](const std::vector<gp_Pnt>& c) {
@@ -713,71 +713,9 @@ struct Reader {
           for (std::size_t k = 1; k + 1 < f.corners.size(); ++k) add({f.corners[0], f.corners[k], f.corners[k + 1]});
         }
       }
-      for (const auto& [face, color] : made) {
-        for (TopExp_Explorer v(face, TopAbs_VERTEX); v.More(); v.Next()) extent.Add(BRep_Tool::Pnt(TopoDS::Vertex(v.Current())));
-      }
       if (!made.empty()) {
-        const double size = extent.IsVoid() ? 1.0 : std::sqrt(extent.SquareExtent());
-        BRepBuilderAPI_Sewing sewing(std::max(1e-6, std::min(0.01, size * 1e-6)));
-        for (const auto& fc : made) sewing.Add(fc.first);
-        sewing.Perform();
-        TopoDS_Shape sewn = sewing.SewedShape();
-        // Closed shells become solids.
         bool solid = false;
-        if (sewn.ShapeType() == TopAbs_SHELL && BRep_Tool::IsClosed(sewn)) {
-          BRepBuilderAPI_MakeSolid makeSolid(TopoDS::Shell(sewn));
-          if (makeSolid.IsDone()) {
-            TopoDS_Shape s = makeSolid.Solid();
-            BRepLib::OrientClosedSolid(TopoDS::Solid(s));
-            if (BRepCheck_Analyzer(s).IsValid()) {
-              sewn = s;
-              solid = true;
-            }
-          }
-        }
-        ShapeUpgrade_UnifySameDomain unify(sewn, Standard_True, Standard_True, Standard_True);
-        unify.Build();
-        const TopoDS_Shape joined = unify.Shape();
-        // Each resulting face: the colour of the triangles it was made of
-        // (the one covering most of it).
-        std::map<const void*, std::map<ColladaColor, double>> areas;
-        for (const auto& [face, color] : made) {
-          TopoDS_Shape s = sewing.Modified(face);
-          if (s.IsNull()) s = face;
-          for (TopExp_Explorer e(s, TopAbs_FACE); e.More(); e.Next()) {
-            TopoDS_Shape r = unify.History()->IsRemoved(e.Current()) ? TopoDS_Shape() : e.Current();
-            const auto& modified = unify.History()->Modified(e.Current());
-            if (!modified.IsEmpty()) r = modified.First();
-            if (r.IsNull()) continue;
-            GProp_GProps props;
-            BRepGProp::SurfaceProperties(e.Current(), props);
-            areas[r.TShape().get()][color] += props.Mass();
-          }
-        }
-        ColladaPart part;
-        part.shape = joined;
-        part.name = name;
-        std::map<ColladaColor, double> total;
-        TopTools_IndexedMapOfShape result;
-        TopExp::MapShapes(joined, TopAbs_FACE, result);
-        std::vector<std::pair<int, ColladaColor>> perFace;
-        for (int i = 1; i <= result.Extent(); ++i) {
-          const auto it = areas.find(result(i).TShape().get());
-          if (it == areas.end()) continue;
-          const auto best = std::max_element(it->second.begin(), it->second.end(),
-                                             [](const auto& a, const auto& b) { return a.second < b.second; });
-          perFace.emplace_back(i, best->first);
-          for (const auto& [c, a] : it->second) total[c] += a;
-        }
-        if (!total.empty()) {
-          part.color = std::max_element(total.begin(), total.end(), [](const auto& a, const auto& b) {
-                         return a.second < b.second;
-                       })->first;
-        }
-        for (const auto& [i, c] : perFace) {
-          if (!(c == part.color)) part.faceColors.emplace_back(i, c);
-        }
-        parts.push_back(std::move(part));
+        parts.push_back(joinFaces(made, name, &solid));
         if (solid) ++report.solids;
       }
     }
@@ -810,6 +748,106 @@ struct Reader {
 };
 
 }  // namespace
+
+// Faces (each with its colour) sewn into one part (docs/46, docs/181): shared edges joined, a
+// closed shell made a solid, coplanar faces merged; each face of the result coloured as most of
+// the faces it was made of, the part as most of all.
+ColladaPart joinFaces(const std::vector<std::pair<TopoDS_Face, ColladaColor>>& made, const std::string& name, bool* solidOut) {
+  Bnd_Box extent;
+  for (const auto& [face, color] : made) {
+    for (TopExp_Explorer v(face, TopAbs_VERTEX); v.More(); v.Next()) extent.Add(BRep_Tool::Pnt(TopoDS::Vertex(v.Current())));
+  }
+  const double size = extent.IsVoid() ? 1.0 : std::sqrt(extent.SquareExtent());
+  BRepBuilderAPI_Sewing sewing(std::max(1e-6, std::min(0.01, size * 1e-6)));
+  for (const auto& fc : made) sewing.Add(fc.first);
+  sewing.Perform();
+  TopoDS_Shape sewn = sewing.SewedShape();
+  // Closed shells become solids: one, or several apart (a stair's treads and strings, docs/181)
+  // when every shell closes; otherwise the faces stay as they are.
+  if (solidOut) *solidOut = false;
+  {
+    auto solidOf = [](const TopoDS_Shell& shell) -> TopoDS_Shape {
+      if (!BRep_Tool::IsClosed(shell)) return {};
+      BRepBuilderAPI_MakeSolid makeSolid(shell);
+      if (!makeSolid.IsDone()) return {};
+      TopoDS_Shape s = makeSolid.Solid();
+      BRepLib::OrientClosedSolid(TopoDS::Solid(s));
+      return BRepCheck_Analyzer(s).IsValid() ? s : TopoDS_Shape();
+    };
+    std::vector<TopoDS_Shape> solids;
+    bool all = true;
+    if (sewn.ShapeType() == TopAbs_SHELL) {
+      solids.push_back(solidOf(TopoDS::Shell(sewn)));
+      all = !solids.back().IsNull();
+    } else if (sewn.ShapeType() == TopAbs_COMPOUND) {
+      for (TopoDS_Iterator it(sewn); it.More() && all; it.Next()) {
+        if (it.Value().ShapeType() != TopAbs_SHELL) {
+          all = false;
+          break;
+        }
+        solids.push_back(solidOf(TopoDS::Shell(it.Value())));
+        all = !solids.back().IsNull();
+      }
+    } else {
+      all = false;
+    }
+    if (all && !solids.empty()) {
+      if (solids.size() == 1) {
+        sewn = solids.front();
+      } else {
+        BRep_Builder builder;
+        TopoDS_Compound compound;
+        builder.MakeCompound(compound);
+        for (const TopoDS_Shape& s : solids) builder.Add(compound, s);
+        sewn = compound;
+      }
+      if (solidOut) *solidOut = true;
+    }
+  }
+  ShapeUpgrade_UnifySameDomain unify(sewn, Standard_True, Standard_True, Standard_True);
+  unify.Build();
+  const TopoDS_Shape joined = unify.Shape();
+  // Each resulting face: the colour of the triangles it was made of
+  // (the one covering most of it).
+  std::map<const void*, std::map<ColladaColor, double>> areas;
+  for (const auto& [face, color] : made) {
+    TopoDS_Shape s = sewing.Modified(face);
+    if (s.IsNull()) s = face;
+    for (TopExp_Explorer e(s, TopAbs_FACE); e.More(); e.Next()) {
+      TopoDS_Shape r = unify.History()->IsRemoved(e.Current()) ? TopoDS_Shape() : e.Current();
+      const auto& modified = unify.History()->Modified(e.Current());
+      if (!modified.IsEmpty()) r = modified.First();
+      if (r.IsNull()) continue;
+      GProp_GProps props;
+      BRepGProp::SurfaceProperties(e.Current(), props);
+      areas[r.TShape().get()][color] += props.Mass();
+    }
+  }
+  ColladaPart part;
+  part.shape = joined;
+  part.name = name;
+  std::map<ColladaColor, double> total;
+  TopTools_IndexedMapOfShape result;
+  TopExp::MapShapes(joined, TopAbs_FACE, result);
+  std::vector<std::pair<int, ColladaColor>> perFace;
+  for (int i = 1; i <= result.Extent(); ++i) {
+    const auto it = areas.find(result(i).TShape().get());
+    if (it == areas.end()) continue;
+    const auto best = std::max_element(it->second.begin(), it->second.end(),
+                                       [](const auto& a, const auto& b) { return a.second < b.second; });
+    perFace.emplace_back(i, best->first);
+    for (const auto& [c, a] : it->second) total[c] += a;
+  }
+  if (!total.empty()) {
+    part.color = std::max_element(total.begin(), total.end(), [](const auto& a, const auto& b) {
+                   return a.second < b.second;
+                 })->first;
+  }
+  for (const auto& [i, c] : perFace) {
+    if (!(c == part.color)) part.faceColors.emplace_back(i, c);
+  }
+  return part;
+}
 
 Result<std::vector<ColladaPart>> readCollada(const std::string& path, ColladaReport* reportOut) {
   using R = Result<std::vector<ColladaPart>>;

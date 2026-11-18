@@ -322,6 +322,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   void exportGeometry(const QString& path, GeometryFormat format);
   void importColladaFile(const QString& path);
   void exportColladaFile(const QString& path);
+  void importSkpFile(const QString& path);
+  void exportSkpFile(const QString& path);
  public:
   bool exportGltfFile(const QString& path);  // docs/85_gltf_export (public for checks)
  private:

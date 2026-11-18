@@ -11818,8 +11818,21 @@ Status Modeler::export3dm(const std::string& path, const std::vector<ObjectId>& 
 
 Status Modeler::exportCollada(const std::string& path, const std::vector<ObjectId>& ids,
                               const geom::ColladaExportOptions& options) const {
+  const auto parts = colouredParts(ids);
+  if (!parts) return parts.status();
+  return geom::writeCollada(*parts, path, options);
+}
+
+Status Modeler::exportSkp(const std::string& path, const std::vector<ObjectId>& ids, const geom::SkpExportOptions& options) const {
+  const auto parts = colouredParts(ids);
+  if (!parts) return parts.status();
+  return geom::writeSkp(*parts, path, options);
+}
+
+Result<std::vector<geom::ColladaPart>> Modeler::colouredParts(const std::vector<ObjectId>& ids) const {
+  using R = Result<std::vector<geom::ColladaPart>>;
   for (const ObjectId& id : ids) {
-    if (!document_.find(id)) return Status::failure("Object not found");
+    if (!document_.find(id)) return R::failure("Object not found");
   }
   std::vector<ObjectId> wanted;
   if (ids.empty()) {
@@ -11851,17 +11864,28 @@ Status Modeler::exportCollada(const std::string& path, const std::vector<ObjectI
     }
     parts.push_back(std::move(part));
   }
-  if (parts.empty()) return Status::failure("Nothing to export");
-  return geom::writeCollada(parts, path, options);
+  if (parts.empty()) return R::failure("Nothing to export");
+  return parts;
 }
 
 Result<std::vector<ObjectId>> Modeler::importCollada(const std::string& path, geom::ColladaReport* report) {
-  using R = Result<std::vector<ObjectId>>;
   auto parts = geom::readCollada(path, report);
-  if (!parts) return R::failure(parts.error());
+  if (!parts) return Result<std::vector<ObjectId>>::failure(parts.error());
+  return addColouredParts(*parts, path, "Import COLLADA");
+}
+
+Result<std::vector<ObjectId>> Modeler::importSkp(const std::string& path, geom::SkpReport* report) {
+  auto parts = geom::readSkp(path, report);
+  if (!parts) return Result<std::vector<ObjectId>>::failure(parts.error());
+  return addColouredParts(*parts, path, "Import SketchUp");
+}
+
+Result<std::vector<ObjectId>> Modeler::addColouredParts(const std::vector<geom::ColladaPart>& parts, const std::string& path,
+                                                        const std::string& commandName) {
+  using R = Result<std::vector<ObjectId>>;
   ChangeSet changes(document_);
   std::vector<ObjectId> ids;
-  for (const geom::ColladaPart& part : *parts) {
+  for (const geom::ColladaPart& part : parts) {
     Object o;
     o.id = generateObjectId();
     o.name = part.name.empty() ? uniqueName("Imported") : part.name;
@@ -11883,7 +11907,7 @@ Result<std::vector<ObjectId>> Modeler::importCollada(const std::string& path, ge
     ids.push_back(o.id);
     changes.add(o);
   }
-  history_.execute(changes.build("Import COLLADA"));
+  history_.execute(changes.build(commandName));
   return ids;
 }
 

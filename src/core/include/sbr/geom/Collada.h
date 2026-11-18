@@ -20,6 +20,7 @@
 #include <utility>
 #include <vector>
 
+#include <TopoDS_Face.hxx>
 #include <TopoDS_Shape.hxx>
 
 #include "sbr/Types.h"
@@ -71,5 +72,10 @@ struct ColladaReport {
 };
 
 Result<std::vector<ColladaPart>> readCollada(const std::string& path, ColladaReport* report = nullptr);
+
+// Faces (each with its colour) sewn into one part: shared edges joined, a closed shell made a
+// solid (`solid` says so), coplanar faces merged, colours followed. Used by the readers.
+ColladaPart joinFaces(const std::vector<std::pair<TopoDS_Face, ColladaColor>>& faces, const std::string& name,
+                      bool* solid = nullptr);
 
 }  // namespace sbr::geom

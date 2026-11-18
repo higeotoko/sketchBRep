@@ -3819,6 +3819,21 @@ const std::vector<CommandDef>& commands() {
          must(m.exportCollada(text(a, "path"), a.contains("ids") ? ids(a, "ids") : std::vector<ObjectId>{}, options));
          return json::object();
        }},
+      {"export_skp",
+       "Export visible objects (or 'ids') to a SketchUp file (.skp, docs/181) through the SketchUp SDK on this PC "
+       "(fails, saying so, without it): each object a group named as it is, flat faces whole with their holes, "
+       "curved faces as soft triangles, colours as materials, loose lines as edges; SketchUp 2021 format and later. "
+       "'deflection_mm' (default 1) and 'angle_deg' (default 15): how finely curved faces are cut.",
+       SCHEMA({"type": "object", "properties": {"path": {"type": "string"},
+               "ids": {"type": "array", "items": {"type": "string"}}, "deflection_mm": {"type": "number"},
+               "angle_deg": {"type": "number"}}, "required": ["path"]}),
+       [](doc::Modeler& m, const json& a) {
+         geom::SkpExportOptions options;
+         options.linearDeflection = numberOr(a, "deflection_mm", 1.0);
+         options.angularDeflection = numberOr(a, "angle_deg", 15.0) * M_PI / 180.0;
+         must(m.exportSkp(text(a, "path"), a.contains("ids") ? ids(a, "ids") : std::vector<ObjectId>{}, options));
+         return json::object();
+       }},
       {"export_gltf",
        "Export visible objects (or 'ids') to glTF 2.0 for renderers (Blender, Twinmotion, Unreal Engine): "
        "'.glb' (one binary file) or '.gltf' (text and .bin). Metres, Y up as glTF wants; each object's material "
@@ -4002,6 +4017,21 @@ const std::vector<CommandDef>& commands() {
                           {"unsupported", report.unsupported}, {"summary", report.summary()}};
          return out;
        }},
+      {"import_skp",
+       "Import a SketchUp file (.skp, docs/181) through the SketchUp SDK on this PC (fails, saying so, without it): "
+       "the model's loose faces and each group / component (placed, nested) an object, faces joined, closed ones "
+       "solids, colours from the materials, in mm. Hidden items are left out. One undo step; 'report' says what "
+       "was found.",
+       SCHEMA({"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}),
+       [](doc::Modeler& m, const json& a) {
+         geom::SkpReport report;
+         json out = idsResult(must(m.importSkp(text(a, "path"), &report)));
+         out["report"] = {{"groups", report.groups}, {"instances", report.instances}, {"faces", report.faces},
+                          {"lines", report.lines}, {"parts", report.parts}, {"solids", report.solids},
+                          {"left_out", report.leftOut}, {"hidden", report.hidden}, {"textured", report.textured},
+                          {"summary", report.summary()}};
+         return out;
+       }},
       {"export_ifc",
        "Export the building as IFC4 (.ifc) for other BIM software: storeys from the levels; walls (create_wall) "
        "with their openings as voids, and a window / door for each opening with a fitting (a fitting with its "
@@ -4033,7 +4063,7 @@ bool isFileCommand(const std::string& name) {
   return name == "save" || name == "save_copy" || name == "open" || name == "export_ifc" || name == "export_step" || name == "export_stl" || name == "export_3dm" ||
          name == "import_brep" || name == "export_brep" || name == "import_iges" || name == "export_iges" ||
          name == "import_3dm" || name == "import_dxf" || name == "import_jww" || name == "set_material_texture" || name == "export_dae" ||
-         name == "import_dae" || name == "export_drawing" || name == "export_schedule" || name == "export_drawing_set" || name == "export_gltf";
+         name == "import_dae" || name == "export_skp" || name == "import_skp" || name == "export_drawing" || name == "export_schedule" || name == "export_drawing_set" || name == "export_gltf";
 }
 
 CommandApi::Effect builtinEffect(const std::string& name) {

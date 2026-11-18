@@ -59,6 +59,7 @@ add_executable(sbr_core_tests
   test_grid.cpp
   test_levels.cpp
   test_collada.cpp
+  test_skp.cpp
   test_surfaces.cpp
   test_curved_pushpull.cpp
   test_drawing.cpp

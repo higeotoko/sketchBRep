@@ -107,7 +107,7 @@ namespace sbr::app {
 namespace {
 std::string utf8(const QString& s) { return s.toUtf8().toStdString(); }
 
-enum class ExchangeType { Step, Stl, Dxf, Dwg, Jww, Iges, Brep, Rhino, Collada, Gltf, Ifc, Image };
+enum class ExchangeType { Step, Stl, Dxf, Dwg, Jww, Iges, Brep, Rhino, Collada, Skp, Gltf, Ifc, Image };
 struct ExchangeFormat {
   ExchangeType type;
   QString filter;
@@ -125,6 +125,8 @@ std::vector<ExchangeFormat> exchangeFormats(bool importing) {
   formats.push_back({ExchangeType::Brep,text("BREP ファイル (*.brep *.brp)"),{"brep","brp"}});
   formats.push_back({ExchangeType::Rhino,text("Rhino 3DM ファイル (*.3dm)"),{"3dm"}});
   formats.push_back({ExchangeType::Collada,text("COLLADA・SketchUp 用 (*.dae)"),{"dae"}});
+  // docs/181: only where the SketchUp SDK is on this PC.
+  if(geom::skpAvailable()) formats.push_back({ExchangeType::Skp,text("SketchUp (*.skp)"),{"skp"}});
   // Renderers (docs/85_gltf_export): export only.
   if(!importing) formats.push_back({ExchangeType::Gltf,text("glTF・レンダリング用（Blender・Twinmotion・UE） (*.glb *.gltf)"),{"glb","gltf"}});
   if(!importing) formats.push_back({ExchangeType::Ifc,text("IFC・ほかの BIM 用（階・壁・開口・床・屋根・柱梁・室） (*.ifc)"),{"ifc"}});
@@ -6075,6 +6077,7 @@ void MainWindow::importFile() {
     case ExchangeType::Brep:importGeometryFile(path,GeometryFormat::Brep);break;
     case ExchangeType::Rhino:import3dmFile(path);break;
     case ExchangeType::Collada:importColladaFile(path);break;
+    case ExchangeType::Skp:importSkpFile(path);break;
     case ExchangeType::Gltf:break; // not offered by the import dialog
     case ExchangeType::Ifc:break; // not offered by the import dialog
     case ExchangeType::Image:importUnderlay(path);break;
@@ -6117,6 +6120,7 @@ void MainWindow::exportFile() {
     case ExchangeType::Brep:exportGeometry(path,GeometryFormat::Brep);break;
     case ExchangeType::Rhino:export3dmFile(path);break;
     case ExchangeType::Collada:exportColladaFile(path);break;
+    case ExchangeType::Skp:exportSkpFile(path);break;
     case ExchangeType::Gltf:exportGltfFile(path);break;
     case ExchangeType::Ifc:
       exportIfcFile(path);
@@ -6389,6 +6393,35 @@ void MainWindow::exportColladaFile(const QString& path) {
     return;
   }
   statusBar()->showMessage(tr("COLLADA を書き出しました（SketchUp の ファイル > インポート で開けます）: %1").arg(path), 5000);
+}
+
+void MainWindow::importSkpFile(const QString& path) {
+  geom::SkpReport report;
+  const auto ids = modeler_.importSkp(utf8(path), &report);
+  if (!ids) {
+    reportError(tr("SketchUp のファイルを読み込めませんでした: %1").arg(QString::fromStdString(ids.error())));
+    return;
+  }
+  setSelection(*ids);
+  viewport_->fitObjects(*ids);
+  QString text = tr("SketchUp から %1 個を読み込みました（グループ %2・コンポーネント %3、うち立体 %4 個、単位はインチ → mm）")
+                     .arg(ids->size())
+                     .arg(report.groups)
+                     .arg(report.instances)
+                     .arg(report.solids);
+  if (report.leftOut > 0) text += tr("。作れない面 %1 枚は省きました").arg(report.leftOut);
+  if (report.hidden > 0) text += tr("。隠した物 %1 個は省きました").arg(report.hidden);
+  if (report.textured > 0) text += tr("。テクスチャ %1 個は色で表示します").arg(report.textured);
+  setStatus(text);
+}
+
+void MainWindow::exportSkpFile(const QString& path) {
+  const Status s = modeler_.exportSkp(utf8(path), selection_);
+  if (!s) {
+    reportError(tr("SketchUp のファイルを書き出せませんでした: %1").arg(QString::fromStdString(s.message())));
+    return;
+  }
+  statusBar()->showMessage(tr("SketchUp のファイルを書き出しました（物ごとにグループ）: %1").arg(path), 5000);
 }
 
 bool MainWindow::exportGltfFile(const QString& path) {
