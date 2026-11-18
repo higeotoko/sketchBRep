@@ -30,13 +30,15 @@
 ### 最後に済んだ事
 
 - `1597527`：タグと情報（docs/183 の前半）、この引き継ぎ書。ZIP `SketchBRep-windows-x64-1597527-local.zip`（81,640,950 bytes、検証は両方成功）。CI run 44259529231 の結果を見て docs/183 に記録する。
-- その次のコミット：コンポーネントの共有（`Skp.ComponentsAreShared`）。CI が終わってから push → ZIP → 検証 → CI → docs/183 の記録。
+- `84ad3df`：コンポーネントの共有（`Skp.ComponentsAreShared`）。
+- その次のコミット：LayOut への図面の書き出し（docs/185、`src/core/src/DrawingLayout.cpp`、`Layout.DrawingsAsLayOutPages`）。ZIP に LayOut の DLL（`layout` フォルダ）。
+- この 2 つは、`1597527` の CI が終わってから push → ZIP → 検証 → CI → docs/183・185 の記録。
 
 ## 次にやる事（オーナーが選んだ順：SketchUp 連携の 1 → 2 → 4）
 
 1. ~~物の情報を SketchUp の属性に~~（docs/183）
 2. ~~タグ・コンポーネントの共有の書き出し~~（docs/183）。残り：読み込みで SketchUp のコンポーネントを SketchBRep のコンポーネントに戻す（`Reader` と `Modeler::addColouredParts`、`Modeler::makeComponent`）。
-3. **LayOut（.layout）に図面一式を書き出す**：SDK の `headers/LayOutAPI`・`binaries/layout/x64`。SketchUp と同じく、Git にヘッダを入れず、動く時に DLL を読み込む作り（`Skp.cpp` の `SBR_SU_FUNCTIONS` と同じやり方）。図面は `doc::DrawingView`（`Drawing.cpp`）と図面一式（docs/125・130・131）から。
+3. ~~LayOut に図面一式を書き出す~~（docs/185）。残りは docs/185 の「まだ」（文字の向き、塗りの穴、SketchUp のモデルを置く、寸法、レイヤ）。元の説明：SDK の `headers/LayOutAPI`・`binaries/layout/x64`。SketchUp と同じく、Git にヘッダを入れず、動く時に DLL を読み込む作り（`Skp.cpp` の `SBR_SU_FUNCTIONS` と同じやり方）。図面は `doc::DrawingView`（`Drawing.cpp`）と図面一式（docs/125・130・131）から。
 4. その先の案（オーナーにまだ聞いていない）：テクスチャ、SketchUp で直した物を戻す（`skp_source_id` を使う）、SketchUp の Ruby 拡張とのライブ連携、シーン・断面、寸法、敷地の位置。
 
 ### SketchUp まわりの作り（docs/181〜183）

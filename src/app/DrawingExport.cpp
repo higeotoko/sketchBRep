@@ -763,6 +763,7 @@ Status DrawingDialog::exportTo(const QString& path) {
   if (ext == QLatin1String("pdf")) s = writePdf(*sheet_, path);
   else if (ext == QLatin1String("dxf")) s = draw::writeDxf(*sheet_, path.toStdString());
   else if (ext == QLatin1String("jww")) s = draw::writeJww(*sheet_, path.toStdString());
+  else if (ext == QLatin1String("layout")) s = draw::writeLayout({*sheet_}, {sheet_->title}, path.toUtf8().toStdString());  // docs/185
   else if (ext == QLatin1String("dwg")) {
     // DWG: our DXF converted by ODA File Converter (installed separately).
     QTemporaryDir temp;
@@ -811,11 +812,14 @@ void DrawingDialog::choosePrinterAndPrint() {
 void DrawingDialog::chooseFileAndExport() {
   QSettings settings;
   const QString last = settings.value("drawing/format", QStringLiteral("pdf")).toString();
-  const QStringList filters{tr("PDF（印刷用） (*.pdf)"), tr("DXF（AutoCAD・Jw_cad など） (*.dxf)"), tr("Jw_cad (*.jww)"),
-                            tr("DWG（ODA File Converter で変換） (*.dwg)")};
+  QStringList filters{tr("PDF（印刷用） (*.pdf)"), tr("DXF（AutoCAD・Jw_cad など） (*.dxf)"), tr("Jw_cad (*.jww)"),
+                      tr("DWG（ODA File Converter で変換） (*.dwg)")};
+  // docs/185: LayOut, where the SketchUp SDK's LayOut part is there.
+  if (draw::layoutAvailable()) filters << tr("LayOut (*.layout)");
   QString selected = last == QLatin1String("dxf")   ? filters[1]
                      : last == QLatin1String("jww") ? filters[2]
                      : last == QLatin1String("dwg") ? filters[3]
+                     : last == QLatin1String("layout") && filters.size() > 4 ? filters[4]
                                                     : filters[0];
   QString name = drawingName_->text().trimmed();
   if (name.isEmpty()) name = tr("図面");
@@ -826,6 +830,7 @@ void DrawingDialog::chooseFileAndExport() {
   const QString ext = selected == filters[1]   ? QStringLiteral("dxf")
                       : selected == filters[2] ? QStringLiteral("jww")
                       : selected == filters[3] ? QStringLiteral("dwg")
+                      : filters.size() > 4 && selected == filters[4] ? QStringLiteral("layout")
                                                : QStringLiteral("pdf");
   if (QFileInfo(path).suffix().isEmpty()) path += QLatin1Char('.') + ext;
   if (QFileInfo(path).suffix().toLower() == QLatin1String("dwg") &&

@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 
 #include <BRepGProp.hxx>
 #include <GProp_GProps.hxx>
@@ -18,6 +19,7 @@
 #include "sbr/doc/Modeler.h"
 #include "sbr/geom/Measure.h"
 #include "sbr/geom/Skp.h"
+#include "sbr/draw/Drawing.h"
 
 using namespace sbr;
 using namespace sbr::doc;
@@ -277,4 +279,39 @@ TEST(Skp, ComponentsAreShared) {
   std::sort(xs.begin(), xs.end());
   for (std::size_t i = 0; i < xs.size(); ++i) EXPECT_NEAR(xs[i], 910.0 * i, 1e-6);
   EXPECT_EQ(back.document().find(ids->front())->name.find("柱"), 0u) << back.document().find(ids->front())->name;
+}
+
+// docs/185: drawings to LayOut: one drawing (export_drawing to .layout) and the drawing set as one
+// document, a page per sheet.
+TEST(Layout, DrawingsAsLayOutPages) {
+  if (std::string why; !draw::layoutAvailable(&why)) GTEST_SKIP() << why;
+  Modeler m;
+  sbr::api::CommandApi api{m};
+  auto ok = [&](const std::string& command, json args) {
+    json r = json::parse(api.execute(json{{"command", command}, {"args", args}}.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  ok("create_wall", {{"points", {{0, 0}, {0, 4000}, {6000, 4000}, {6000, 0}, {0, 0}}}, {"type", "exterior_siding"}, {"height", 2700}});
+  ok("place_openings", {{"host", ok("list_objects", json::object())["objects"][0]["id"]}, {"face_normal", {-1, 0, 0}}, {"count", 1},
+                        {"width", 1690}, {"height", 1170}, {"sill", 900}});
+  const std::string one = ::testing::TempDir() + "plan.layout";
+  std::filesystem::remove(std::filesystem::u8path(one));
+  ok("export_drawing", {{"path", one}, {"kind", "plan"}, {"cut_z", 1200}, {"scale", 50}});
+  const auto pages = draw::layoutPageCount(one);
+  ASSERT_TRUE(pages) << pages.error();
+  EXPECT_EQ(*pages, 1);
+  const std::filesystem::path folder = std::filesystem::u8path(::testing::TempDir()) / "layout-set";
+  std::filesystem::remove_all(folder);
+  std::filesystem::create_directories(folder);
+  const json set = ok("export_drawing_set", {{"folder", folder.u8string()}, {"format", "layout"}});
+  const auto all = draw::layoutPageCount(set["path"].get<std::string>());
+  ASSERT_TRUE(all) << all.error();
+  EXPECT_EQ(*all, static_cast<int>(set["pages"].size()));
+  EXPECT_GE(*all, 5);  // the list, a plan, four elevations, sections, tables
+  // LayOut reads it back and prints it.
+  const std::string pdf = ::testing::TempDir() + "layout-set.pdf";
+  const Status printed = draw::layoutToPdf(set["path"].get<std::string>(), pdf);
+  ASSERT_TRUE(printed) << printed.message();
+  EXPECT_GT(std::filesystem::file_size(std::filesystem::u8path(pdf)), 1000u);
 }

@@ -3921,7 +3921,9 @@ const std::vector<CommandDef>& commands() {
          const std::string ext = path.size() > 4 ? path.substr(path.size() - 4) : std::string();
          if (ext == ".jww" || ext == ".JWW") must(draw::writeJww(sheet, path));
          else if (ext == ".dxf" || ext == ".DXF") must(draw::writeDxf(sheet, path));
-         else throw std::runtime_error("The path must end in .dxf or .jww (PDF: from the app's File menu)");
+         else if (path.size() > 7 && (path.compare(path.size() - 7, 7, ".layout") == 0 || path.compare(path.size() - 7, 7, ".LAYOUT") == 0))
+           must(draw::writeLayout({sheet}, {sheet.title}, path));  // docs/185
+         else throw std::runtime_error("The path must end in .dxf, .jww or .layout (PDF: from the app's File menu)");
          json notes = json::array();
          for (const json& w : leftOut) notes.push_back("The " + w.get<std::string>() + " table is empty: left out");
          for (const std::string& n : view.notes) notes.push_back(n);
@@ -3965,8 +3967,10 @@ const std::vector<CommandDef>& commands() {
        "sections after the plans, one per active vertical section plane (set_section) or else A-A (cut east-west, seen "
        "from the south) and B-B (cut north-south, seen from the east) through the middle; the plans mark where they are "
        "cut, with the sections' sheet numbers. Files that are there are not replaced: "
-       "refused, nothing written. (One PDF of all the sheets: from the app's File menu.)",
-       SCHEMA({"type": "object", "properties": {"folder": {"type": "string"}, "format": {"enum": ["dxf", "jww"]},
+       "refused, nothing written. (One PDF of all the sheets: from the app's File menu.) 'format' layout (docs/185): "
+       "one LayOut document '<prefix>drawings.layout' in 'folder', a page per sheet named by its number and name "
+       "(needs the LayOut part of the SketchUp SDK).",
+       SCHEMA({"type": "object", "properties": {"folder": {"type": "string"}, "format": {"enum": ["dxf", "jww", "layout"]},
                "scale": {"type": "number"}, "paper": {"type": "string"}, "prefix": {"type": "string"},
                "project": {"type": "string"}, "author": {"type": "string"}, "date": {"type": "string"},
                "tables_with_plan": {"type": "boolean"}, "sections": {"type": "boolean"}},
@@ -3982,11 +3986,23 @@ const std::vector<CommandDef>& commands() {
          spec.tablesWithPlan = a.value("tables_with_plan", false);
          spec.sections = a.value("sections", true);
          const std::string format = textOr(a, "format", "dxf");
-         if (format != "dxf" && format != "jww") throw ApiError("'format': dxf or jww");
+         if (format != "dxf" && format != "jww" && format != "layout") throw ApiError("'format': dxf, jww or layout");
          const auto set = must(doc::drawingSet(m.document(), spec));
          const std::filesystem::path folder = std::filesystem::u8path(text(a, "folder"));
          std::error_code error;
          if (!std::filesystem::is_directory(folder, error)) throw ApiError("The folder does not exist");
+         if (format == "layout") {
+           const std::filesystem::path file = folder / std::filesystem::u8path(spec.prefix + "drawings.layout");
+           if (std::filesystem::exists(file, error)) throw ApiError("'" + file.filename().u8string() + "' is there already (nothing was written)");
+           std::vector<std::string> names;
+           json pages = json::array();
+           for (std::size_t i = 0; i < set.sheets.size(); ++i) {
+             names.push_back(set.numbers[i] + " " + set.names[i]);
+             pages.push_back({{"number", set.numbers[i]}, {"name", set.names[i]}, {"paper", set.sheets[i].paper}});
+           }
+           must(draw::writeLayout(set.sheets, names, file.u8string()));
+           return json{{"path", file.u8string()}, {"pages", pages}, {"notes", set.notes}};
+         }
          std::vector<std::filesystem::path> paths;
          for (std::size_t i = 0; i < set.sheets.size(); ++i) {
            std::string name = set.numbers[i] + "_" + set.names[i] + "." + format;

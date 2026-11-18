@@ -218,6 +218,16 @@ Result<Sheet> layoutSheetWithTables(const View& view, const std::vector<Table>& 
 // layer group, pens as Jw line colours / types, layers per pen.
 Status writeDxf(const Sheet& sheet, const std::string& path);
 Status writeJww(const Sheet& sheet, const std::string& path);
+// LayOut (docs/185): the sheets as the pages of one document (named `names`, else the sheets'
+// titles), lines, arcs, fills and text on paper with the pens' widths and line types, through
+// the LayOut part of the SketchUp SDK (loaded when needed; without it: refused, nothing written).
+// One page size for the document: the largest paper of the sheets.
+bool layoutAvailable(std::string* why = nullptr);
+Status writeLayout(const std::vector<Sheet>& sheets, const std::vector<std::string>& names, const std::string& path);
+// The pages of a LayOut file (to check what was written).
+Result<int> layoutPageCount(const std::string& path);
+// A LayOut file printed to PDF by LayOut itself (to look at what was written).
+Status layoutToPdf(const std::string& layout, const std::string& pdf);
 
 // Line weights on paper (mm) and dash patterns (paper mm, on / off, empty:
 // solid) per pen, shared by every writer.
