@@ -6445,6 +6445,26 @@ std::vector<std::size_t> cornerPartners(const std::vector<WallBand>& walls, cons
   return out;
 }
 
+// Wall `w` with its ends at s0 and s1 along its line (its openings must stay in it): into
+// `object` (a copy of it), rebuilt. False when it cannot be.
+bool reshapeWallBand(const Document& document, const WallBand& w, double s0, double s1, Object& object,
+                     const RegenContext& context) {
+  if (s1 - s0 < tolerance::kMinDimension) return false;
+  Recipe recipe = w.recipe;
+  auto& rect = std::get<RectangleProfile>(recipe.base);
+  const gp_Pnt p0 = w.start.Translated(gp_Vec(w.dir) * s0), p1 = w.start.Translated(gp_Vec(w.dir) * s1);
+  rect.plane.origin = p0.Translated(gp_Vec(w.left) * -w.right).Transformed(w.toWorld.Inverted());
+  rect.width = s1 - s0;
+  if (w.path.empty()) object.recipe = std::move(recipe);
+  else replaceOperand(object.recipe, w.path, 0, std::move(recipe));
+  for (const OpeningExtent& e : openingExtents(*w.object, document.worldTransform(*w.object))) {
+    const gp_Vec u(gp::DZ().Crossed(e.normal));
+    const double a = gp_Vec(p0.XYZ()).Dot(u), b = gp_Vec(p1.XYZ()).Dot(u);
+    if (e.u0 < std::min(a, b) - tolerance::kLinear || e.u1 > std::max(a, b) + tolerance::kLinear) return false;
+  }
+  return static_cast<bool>(rebuild(object, context));
+}
+
 // `displaced`: how each moved wall goes (plan). `primary`: walls moved by the user as they
 // are (never reshaped here). `keepShape`: walls whose own change is being made by the caller.
 std::string roofSpecText(const geom::RoofSpec& s);                                            // roofs, below
@@ -9837,12 +9857,71 @@ Result<std::vector<ObjectId>> Modeler::createWallBands(std::vector<gp_Pnt> point
     const double z = gp_Vec(dirs[in]).Crossed(gp_Vec(dirs[out])).Z();
     return std::abs(z) < 1e-9 ? 0 : (z > 0 ? 1 : -1);
   };
+  // docs/178: an open run's first or last point on the free end of another wall's line (drawn on
+  // from it): a corner with that wall, butt-joined as within one run. That wall runs on to the
+  // far face of the new one; the new one starts at its face.
+  struct EndJoin {
+    std::size_t wall = 0;  // in `existing` (read before the new walls are made)
+    ObjectId id;           // that wall
+    double length = 0.0;   // its length along its line
+    int end = 0;           // that wall's end
+    double run = 0.0;      // where that end goes along its line
+    double cut = 0.0;      // the new wall's end from the point, into its body (+) or out (-)
+  };
+  const std::vector<WallBand> existing = closed ? std::vector<WallBand>{} : allWallBands(document_);
+  const auto existingEnds = wallEnds(existing);
+  // The new wall's body lies from `at` along `into`.
+  auto endJoin = [&](const gp_Pnt& at, const gp_Dir& into) -> std::optional<EndJoin> {
+    for (std::size_t k = 0; k < existing.size(); ++k) {
+      const WallBand& w = existing[k];
+      if (std::min(w.z1, base + height) - std::max(w.z0, base) < 1.0) continue;
+      if (std::abs(gp_Vec(w.dir).Crossed(gp_Vec(into)).Z()) < 0.25) continue;
+      for (int end = 0; end < 2; ++end) {
+        const gp_Pnt e = w.start.Translated(gp_Vec(w.dir) * (end == 0 ? 0.0 : w.length));
+        if (std::hypot(e.X() - at.X(), e.Y() - at.Y()) > 0.5) continue;
+        if (existingEnds[k][static_cast<std::size_t>(end)].joined) continue;  // already at a wall
+        EndJoin j;
+        j.wall = k;
+        j.id = w.object->id;
+        j.length = w.length;
+        j.end = end;
+        return j;
+      }
+    }
+    return std::nullopt;
+  };
+  std::optional<EndJoin> firstJoin, lastJoin;
+  if (!closed) {
+    firstJoin = endJoin(points.front(), dirs.front());
+    lastJoin = endJoin(points.back(), gp_Dir(-gp_Vec(dirs.back())));
+  }
+  // The join's numbers once the new wall's band (offsets o, o + thickness to the left of the
+  // segment's direction `segDir`) is known.
+  auto settle = [&](EndJoin& j, const gp_Pnt& at, const gp_Dir& segDir, const gp_Dir& into) {
+    const WallBand& w = existing[j.wall];
+    const gp_Dir left = gp::DZ().Crossed(segDir);
+    // That wall runs on to the face of the new one farther from its own body.
+    const auto f0 = meet(w.start, w.dir, at.Translated(gp_Vec(left) * o), segDir);
+    const auto f1 = meet(w.start, w.dir, at.Translated(gp_Vec(left) * (o + thickness)), segDir);
+    // The new one starts at that wall's face on its own side.
+    const auto g0 = meet(at, into, w.start.Translated(gp_Vec(w.left) * w.leftExt), w.dir);
+    const auto g1 = meet(at, into, w.start.Translated(gp_Vec(w.left) * -w.right), w.dir);
+    if (!f0 || !f1 || !g0 || !g1) return false;
+    j.run = j.end == 1 ? std::max(f0->first, f1->first) : std::min(f0->first, f1->first);
+    j.cut = std::max(g0->first, g1->first);
+    return true;
+  };
+  if (firstJoin && !settle(*firstJoin, points.front(), dirs.front(), dirs.front())) firstJoin.reset();
+  if (lastJoin && !settle(*lastJoin, points.back(), dirs.back(), gp_Dir(-gp_Vec(dirs.back())))) lastJoin.reset();
+  if (firstJoin && lastJoin && firstJoin->wall == lastJoin->wall && firstJoin->end == lastJoin->end) lastJoin.reset();
   history_.beginGroup("Walls");
   std::vector<ObjectId> walls;
   for (std::size_t i = 0; i < segments; ++i) {
     const gp_Pnt a = points[i], b = points[(i + 1) % points.size()];
     const double length = a.Distance(b);
     double startCut = 0.0, endRun = 0.0;
+    if (i == 0 && firstJoin) startCut = firstJoin->cut;
+    if (i + 1 == segments && lastJoin) endRun = -lastJoin->cut;
     // At a corner that is not a right angle the same faces are farther along the line: the
     // distances grow by 1 / sin(turn), so that each end lies on the other wall's face (and
     // the walls count as joined, docs/107). Nearly straight turns keep the square distances.
@@ -9891,6 +9970,32 @@ Result<std::vector<ObjectId>> Modeler::createWallBands(std::vector<gp_Pnt> point
   if (!tagged) {
     history_.abortGroup();
     return R::failure(tagged.message());
+  }
+  // docs/178: the walls drawn on from run on to the new ones.
+  if (firstJoin || lastJoin) {
+    // (The bands read before are not used here: their objects may have moved in the document.)
+    ChangeSet changes(document_);
+    std::map<ObjectId, std::pair<double, double>> runs;
+    for (const auto& j : {firstJoin, lastJoin}) {
+      if (!j) continue;
+      auto& r = runs.emplace(j->id, std::make_pair(0.0, j->length)).first->second;
+      (j->end == 0 ? r.first : r.second) = j->run;
+    }
+    int changed = 0;
+    for (const auto& [id, r] : runs) {
+      const Object* now = document_.find(id);
+      if (!now || now->locked) continue;
+      const auto band = wallBand(document_, *now);
+      Object wall = *now;
+      if (band && reshapeWallBand(document_, *band, r.first, r.second, wall, document_.regenContext())) {
+        changes.modify(wall);
+        ++changed;
+      }
+    }
+    if (changed) {
+      refitWallCorners(document_, changes, document_.regenContext());  // its mitres where it is now
+      history_.execute(changes.build("Join Walls"));
+    }
   }
   // docs/177: mitred from the start (the wall tool), with walls already marked where they meet.
   if (mitreNewWalls_) {

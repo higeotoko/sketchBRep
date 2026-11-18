@@ -524,6 +524,61 @@ TEST(MitredWalls, MitredAsTheyAreDrawn) {
   EXPECT_FALSE(modeler.document().find(plain[0].get<std::string>())->attributes.count("corner_mitre"));
 }
 
+// docs/178: a run drawn on from the free end of another wall's line makes a corner with it, as
+// within one run (butt-joined; mitred when both are marked), in the same undo step.
+TEST(MitredWalls, DrawnOnFromAWallsEnd) {
+  sbr::doc::Modeler modeler;
+  CommandApi api{modeler};
+  auto ok = [&](const std::string& command, json args) {
+    json r = json::parse(api.execute(json{{"command", command}, {"args", args}}.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  auto volume = [&](const std::string& id) { return sbr::geom::volume(modeler.document().find(id)->shape); };
+  auto bounds = [&](const std::string& id) {
+    return sbr::geom::exactBounds(modeler.document().worldShape(*modeler.document().find(id)));
+  };
+  // Butt-joined: an L, then the north wall drawn on from the east wall's end.
+  const json l = ok("create_wall", {{"points", {{0, 0}, {6000, 0}, {6000, 4000}}}, {"thickness", 200}, {"height", 3000}})["ids"];
+  const std::string east = l[1];
+  EXPECT_NEAR(bounds(east).CornerMax().Y(), 4000, 1e-6);
+  const auto steps = modeler.history().undoCount();
+  const std::string north = ok("create_wall", {{"points", {{6000, 4000}, {0, 4000}}}, {"thickness", 200}, {"height", 3000}})["ids"][0];
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  // The east wall runs on to the north wall's outer face; the north wall starts at its inner face.
+  EXPECT_NEAR(bounds(east).CornerMax().Y(), 4100, 1e-6);
+  EXPECT_NEAR(volume(east), 4000.0 * 200 * 3000, 1.0);
+  EXPECT_NEAR(bounds(north).CornerMax().X(), 5900, 1e-6);
+  EXPECT_NEAR(volume(north), 5900.0 * 200 * 3000, 1.0);
+  // A room found where the walls close it (drawn on again, from the north wall's end to the
+  // south wall's start: both ends joined).
+  const std::string west = ok("create_wall", {{"points", {{0, 4000}, {0, 0}}}, {"thickness", 200}, {"height", 3000}})["ids"][0];
+  EXPECT_NEAR(bounds(north).CornerMin().X(), -100, 1e-6);
+  EXPECT_NEAR(bounds(west).CornerMax().Y(), 3900, 1e-6);
+  EXPECT_NEAR(bounds(west).CornerMin().Y(), 100, 1e-6);
+  EXPECT_NEAR(bounds(l[0].get<std::string>()).CornerMin().X(), -100, 1e-6);
+  EXPECT_TRUE(ok("room_at", {{"at", {3000, 2000}}}).value("closed", false));
+  // One undo takes the west wall and the others' ends back together.
+  ASSERT_TRUE(modeler.undo());
+  EXPECT_NEAR(bounds(north).CornerMin().X(), 0, 1e-6);
+  EXPECT_NEAR(bounds(l[0].get<std::string>()).CornerMin().X(), 0, 1e-6);
+  ASSERT_TRUE(modeler.undo());
+  ASSERT_TRUE(modeler.undo());
+  // Mitred: both reach the corner's outer point, each a trapezoid with 6 faces.
+  const json m = ok("create_wall", {{"points", {{0, 0}, {6000, 0}, {6000, 4000}}}, {"thickness", 200}, {"height", 3000}, {"mitre", true}})["ids"];
+  const std::string me = m[1];
+  const std::string mn = ok("create_wall", {{"points", {{6000, 4000}, {0, 4000}}}, {"thickness", 200}, {"height", 3000}, {"mitre", true}})["ids"][0];
+  EXPECT_NEAR(bounds(me).CornerMax().Y(), 4100, 1e-6);
+  EXPECT_NEAR(bounds(mn).CornerMax().X(), 6100, 1e-6);
+  EXPECT_EQ(faces(modeler, me), 6);
+  EXPECT_EQ(faces(modeler, mn), 6);
+  EXPECT_NEAR(volume(me), (4200.0 + 3800.0) / 2 * 200 * 3000, 1.0);
+  // Not at a free end (the end already at a wall), or along the same line: as before.
+  const std::string again = ok("create_wall", {{"points", {{6000, 4000}, {6000, 6000}}}, {"thickness", 200}, {"height", 3000}})["ids"][0];
+  EXPECT_NEAR(bounds(me).CornerMax().Y(), 4100, 1e-6);
+  EXPECT_NEAR(bounds(again).CornerMin().Y(), 4000, 1e-6);
+}
+
 // docs/177: where a partition of a build-up meets an outer wall at a T (both mitred), the
 // partition's core (柱) goes on through the outer wall's board up to its core, and the outer
 // wall gives up its board over the partition's core: the boards turn the corner. Together the
