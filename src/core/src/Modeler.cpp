@@ -11860,6 +11860,15 @@ Result<std::vector<geom::ColladaPart>> Modeler::colouredParts(const std::vector<
     part.layer = o->layer;
     part.attributes = o->attributes;
     part.attributes["sbr_id"] = o->id;
+    // A placement of a component used as it is: shared in SketchUp (docs/183).
+    if (const auto* instance = std::get_if<ComponentInstance>(&o->recipe.base); instance && instance->plain()) {
+      if (const ComponentDefinition* d = document_.findDefinition(instance->definitionId)) {
+        part.definition = d->id;
+        part.definitionName = d->name;
+        part.localShape = o->shape;
+        part.placement = document_.worldTransform(*o);
+      }
+    }
     part.color = colorOf(document_.inheritedMaterial(*o), document_.displayColor(*o));
     // Faces painted on their own (indices of the local shape are those of
     // the placed one: placing keeps the topology).

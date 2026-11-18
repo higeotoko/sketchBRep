@@ -25,16 +25,17 @@
 | 物 | 状態 |
 |---|---|
 | docs/164〜182 | 済。最新の配布は `8f70653`（CI 成功 run 44250936541、ZIP `SketchBRep-windows-x64-8f70653-local.zip`、記録 `3a33750`） |
-| docs/183（SketchUp にタグと物の情報） | コード・テスト済み（`tests/test_skp.cpp` の `Skp.TagsAndInformationGoAndComeBack`）。コミット・配布は下の「最後に済んだ事」を見る |
+| docs/183（SketchUp にタグ・物の情報・コンポーネント） | タグと情報は `1597527` で push・ZIP 済み（CI run 44259529231 は待ち）。コンポーネントの共有は手元でコミット（push 待ち） |
 
 ### 最後に済んだ事
 
-- （Claude がここを直していく）
+- `1597527`：タグと情報（docs/183 の前半）、この引き継ぎ書。ZIP `SketchBRep-windows-x64-1597527-local.zip`（81,640,950 bytes、検証は両方成功）。CI run 44259529231 の結果を見て docs/183 に記録する。
+- その次のコミット：コンポーネントの共有（`Skp.ComponentsAreShared`）。CI が終わってから push → ZIP → 検証 → CI → docs/183 の記録。
 
 ## 次にやる事（オーナーが選んだ順：SketchUp 連携の 1 → 2 → 4）
 
 1. ~~物の情報を SketchUp の属性に~~（docs/183）
-2. タグは済（docs/183）。残り：**コンポーネントを共有して書き出す**（SketchBRep のコンポーネント＝`ObjectKind::Instance` を SketchUp のコンポーネント定義＋インスタンスに。読み込みでも SketchUp のコンポーネントを SketchBRep のコンポーネントに）。`src/core/src/Skp.cpp` の `writeSkp`・`Reader`、`Modeler::colouredParts`。
+2. ~~タグ・コンポーネントの共有の書き出し~~（docs/183）。残り：読み込みで SketchUp のコンポーネントを SketchBRep のコンポーネントに戻す（`Reader` と `Modeler::addColouredParts`、`Modeler::makeComponent`）。
 3. **LayOut（.layout）に図面一式を書き出す**：SDK の `headers/LayOutAPI`・`binaries/layout/x64`。SketchUp と同じく、Git にヘッダを入れず、動く時に DLL を読み込む作り（`Skp.cpp` の `SBR_SU_FUNCTIONS` と同じやり方）。図面は `doc::DrawingView`（`Drawing.cpp`）と図面一式（docs/125・130・131）から。
 4. その先の案（オーナーにまだ聞いていない）：テクスチャ、SketchUp で直した物を戻す（`skp_source_id` を使う）、SketchUp の Ruby 拡張とのライブ連携、シーン・断面、寸法、敷地の位置。
 

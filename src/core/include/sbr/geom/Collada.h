@@ -21,6 +21,7 @@
 #include <vector>
 
 #include <TopoDS_Face.hxx>
+#include <gp_Trsf.hxx>
 #include <TopoDS_Shape.hxx>
 
 #include "sbr/Types.h"
@@ -48,6 +49,12 @@ struct ColladaPart {
   // them out.
   std::string layer;
   std::map<std::string, std::string> attributes;
+  // A placement of a shared component (docs/183): the definition's id and name, its shape in
+  // the definition's own coordinates and where it is placed. SketchUp writes the shape once per
+  // definition and a component instance per placement; COLLADA uses `shape` (placed) as before.
+  std::string definition, definitionName;
+  TopoDS_Shape localShape;
+  gp_Trsf placement;
 };
 
 struct ColladaExportOptions {

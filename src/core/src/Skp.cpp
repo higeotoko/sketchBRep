@@ -115,7 +115,9 @@ namespace {
   X(SUAttributeDictionaryGetValue) X(SUAttributeDictionaryGetNumKeys) X(SUAttributeDictionaryGetKeys) \
   X(SUTypedValueCreate) X(SUTypedValueRelease) X(SUTypedValueSetString) X(SUTypedValueGetString)      \
   X(SUTypedValueGetType) X(SULayerCreate) X(SULayerSetName) X(SULayerGetName) X(SUModelAddLayers)     \
-  X(SUDrawingElementSetLayer) X(SUDrawingElementGetLayer)
+  X(SUDrawingElementSetLayer) X(SUDrawingElementGetLayer) X(SUComponentDefinitionCreate)              \
+  X(SUComponentDefinitionSetName) X(SUModelAddComponentDefinitions) X(SUComponentDefinitionCreateInstance) \
+  X(SUComponentInstanceSetTransform) X(SUComponentInstanceSetName) X(SUEntitiesAddInstance)
 
 struct Api {
 #define SBR_SU_POINTER(f) decltype(&::f) f = nullptr;
@@ -346,12 +348,42 @@ Status writeSkp(const std::vector<ColladaPart>& parts, const std::string& path, 
   SUEntitiesRef root = SU_INVALID;
   su.SUModelGetEntities(w.model, &root);
   int written = 0;
+  std::map<std::string, SUComponentDefinitionRef> definitions;  // docs/183: shared components
   for (const ColladaPart& part : parts) {
     if (part.shape.IsNull()) continue;
+    // A placement of a shared component, not painted on its own: the definition once, then an
+    // instance where it is placed.
+    const bool shared = !part.definition.empty() && !part.localShape.IsNull() && part.faceColors.empty();
+    const TopoDS_Shape& source = shared ? part.localShape : part.shape;
+    const bool already = shared && definitions.count(part.definition);
+    auto place = [&](SUComponentDefinitionRef definition) {
+      SUComponentInstanceRef instance = SU_INVALID;
+      su.SUComponentDefinitionCreateInstance(definition, &instance);
+      const gp_Trsf& t = part.placement;
+      SUTransformation m{};
+      for (int c = 0; c < 3; ++c)
+        for (int r = 0; r < 3; ++r) m.values[c * 4 + r] = t.Value(r + 1, c + 1);
+      m.values[12] = t.TranslationPart().X() / kInch;
+      m.values[13] = t.TranslationPart().Y() / kInch;
+      m.values[14] = t.TranslationPart().Z() / kInch;
+      m.values[15] = 1.0;
+      su.SUComponentInstanceSetTransform(instance, &m);
+      if (!part.name.empty()) su.SUComponentInstanceSetName(instance, part.name.c_str());
+      su.SUEntitiesAddInstance(root, instance, nullptr);
+      const SUDrawingElementRef element = su.SUComponentInstanceToDrawingElement(instance);
+      su.SUDrawingElementSetMaterial(element, w.material(part.color));
+      if (const auto tag = w.layer(part.layer)) su.SUDrawingElementSetLayer(element, *tag);
+      w.attributes(su.SUComponentInstanceToEntity(instance), part.attributes);
+    };
+    if (already) {
+      place(definitions.at(part.definition));
+      ++written;
+      continue;
+    }
     // Faces from the mesh: flat ones whole (with their holes), curved ones as soft triangles.
-    BRepMesh_IncrementalMesh mesh(part.shape, options.linearDeflection, Standard_False, options.angularDeflection, Standard_True);
+    BRepMesh_IncrementalMesh mesh(source, options.linearDeflection, Standard_False, options.angularDeflection, Standard_True);
     TopTools_IndexedMapOfShape faceMap;
-    TopExp::MapShapes(part.shape, TopAbs_FACE, faceMap);
+    TopExp::MapShapes(source, TopAbs_FACE, faceMap);
     std::map<int, ColladaColor> painted(part.faceColors.begin(), part.faceColors.end());
     // Some of the part's faces (by their index in it), and its loose edges, into `target`.
     auto fill = [&](SUEntitiesRef target, const std::vector<int>& faceIndices, bool withEdges) -> SUResult {
@@ -432,9 +464,9 @@ Status writeSkp(const std::vector<ColladaPart>& parts, const std::string& path, 
       std::vector<std::pair<size_t, size_t>> edges;
       if (withEdges) {
         TopTools_IndexedMapOfShape onFaces;
-        for (TopExp_Explorer fe(part.shape, TopAbs_FACE); fe.More(); fe.Next()) TopExp::MapShapes(fe.Current(), TopAbs_EDGE, onFaces);
+        for (TopExp_Explorer fe(source, TopAbs_FACE); fe.More(); fe.Next()) TopExp::MapShapes(fe.Current(), TopAbs_EDGE, onFaces);
         TopTools_IndexedMapOfShape all;
-        TopExp::MapShapes(part.shape, TopAbs_EDGE, all);
+        TopExp::MapShapes(source, TopAbs_EDGE, all);
         for (int i = 1; i <= all.Extent(); ++i) {
           if (onFaces.Contains(all(i))) continue;
           const TopoDS_Edge& edge = TopoDS::Edge(all(i));
@@ -492,12 +524,22 @@ Status writeSkp(const std::vector<ColladaPart>& parts, const std::string& path, 
       if (!part.name.empty()) su.SUGroupSetName(g, part.name.c_str());
       return g;
     };
-    const SUGroupRef outer = group(root);
-    if (faceMap.Extent() > 0) su.SUDrawingElementSetMaterial(su.SUGroupToDrawingElement(outer), w.material(part.color));
-    if (const auto tag = w.layer(part.layer)) su.SUDrawingElementSetLayer(su.SUGroupToDrawingElement(outer), *tag);
-    w.attributes(su.SUGroupToEntity(outer), part.attributes);
     SUEntitiesRef inside = SU_INVALID;
-    su.SUGroupGetEntities(outer, &inside);
+    SUComponentDefinitionRef definition = SU_INVALID;
+    if (shared) {
+      su.SUComponentDefinitionCreate(&definition);
+      const std::string name = part.definitionName.empty() ? part.name : part.definitionName;
+      if (!name.empty()) su.SUComponentDefinitionSetName(definition, name.c_str());
+      su.SUModelAddComponentDefinitions(w.model, 1, &definition);
+      su.SUComponentDefinitionGetEntities(definition, &inside);
+      definitions.emplace(part.definition, definition);
+    } else {
+      const SUGroupRef outer = group(root);
+      if (faceMap.Extent() > 0) su.SUDrawingElementSetMaterial(su.SUGroupToDrawingElement(outer), w.material(part.color));
+      if (const auto tag = w.layer(part.layer)) su.SUDrawingElementSetLayer(su.SUGroupToDrawingElement(outer), *tag);
+      w.attributes(su.SUGroupToEntity(outer), part.attributes);
+      su.SUGroupGetEntities(outer, &inside);
+    }
     // Several solids apart (a stair's treads and strings): each in a group of its own inside the
     // part's group, with the same name, so that SketchUp does not join the faces they touch with.
     std::vector<int> rest;
@@ -505,9 +547,9 @@ Status writeSkp(const std::vector<ColladaPart>& parts, const std::string& path, 
     {
       std::vector<bool> taken(static_cast<std::size_t>(faceMap.Extent()) + 1, false);
       int count = 0;
-      for (TopExp_Explorer s(part.shape, TopAbs_SOLID); s.More(); s.Next()) ++count;
+      for (TopExp_Explorer s(source, TopAbs_SOLID); s.More(); s.Next()) ++count;
       if (count > 1) {
-        for (TopExp_Explorer s(part.shape, TopAbs_SOLID); s.More(); s.Next()) {
+        for (TopExp_Explorer s(source, TopAbs_SOLID); s.More(); s.Next()) {
           std::vector<int> mine;
           for (TopExp_Explorer f(s.Current(), TopAbs_FACE); f.More(); f.Next()) {
             const int k = faceMap.FindIndex(f.Current());
@@ -533,6 +575,7 @@ Status writeSkp(const std::vector<ColladaPart>& parts, const std::string& path, 
     const SUResult filled = fill(inside, rest, true);
     if (filled != SU_ERROR_NONE && filled != SU_ERROR_NO_DATA)
       return Status::failure("SketchUp could not take the faces of '" + part.name + "' (error " + std::to_string(filled) + ")");
+    if (shared) place(definition);
     ++written;
   }
   if (written == 0) return Status::failure("Nothing to export");

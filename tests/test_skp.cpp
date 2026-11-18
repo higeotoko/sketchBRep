@@ -2,6 +2,7 @@
 // the SDK is not there (CI, a build without SBR_SKETCHUP_SDK_DIR): the SDK is never shipped.
 
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <cmath>
 
 #include <BRepGProp.hxx>
@@ -239,4 +240,41 @@ TEST(Skp, TagsAndInformationGoAndComeBack) {
   ASSERT_TRUE(more) << more.error();
   ASSERT_EQ(more->size(), 1u);
   EXPECT_EQ(third.document().find(more->front())->layer, "1F 外壁");
+}
+
+// docs/183: placements of one component go to SketchUp as one definition and its instances (the
+// shape written once), each where it is placed; back in, each its own object there.
+TEST(Skp, ComponentsAreShared) {
+  SBR_NEEDS_SKETCHUP();
+  Modeler m;
+  sbr::api::CommandApi api{m};
+  auto ok = [&](const std::string& command, json args) {
+    json r = json::parse(api.execute(json{{"command", command}, {"args", args}}.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  const std::string post = ok("create_box", {{"origin", {0, 0, 0}}, {"width", 105}, {"depth", 105}, {"height", 2700}})["id"];
+  const std::string first = ok("make_component", {{"ids", {post}}, {"name", "柱 105"}})["id"];
+  ok("copy_array", {{"ids", {first}}, {"count", 3}, {"vector", {910, 0, 0}}});
+  ASSERT_EQ(m.document().objects().size(), 4u);
+  const std::string path = ::testing::TempDir() + "posts.skp";
+  ok("export_skp", {{"path", path}});
+  Modeler back;
+  geom::SkpReport report;
+  const auto ids = back.importSkp(path, &report);
+  ASSERT_TRUE(ids) << ids.error();
+  EXPECT_EQ(report.instances, 4) << report.summary();
+  EXPECT_EQ(report.groups, 0) << report.summary();
+  ASSERT_EQ(ids->size(), 4u);
+  std::vector<double> xs;
+  for (const ObjectId& id : *ids) {
+    const TopoDS_Shape s = back.document().worldShape(*back.document().find(id));
+    EXPECT_NEAR(geom::volume(s), 105.0 * 105 * 2700, 1.0);
+    const auto b = geom::exactBounds(s);
+    xs.push_back(b.CornerMin().X());
+    EXPECT_NEAR(b.CornerMax().Z(), 2700, 1e-6);
+  }
+  std::sort(xs.begin(), xs.end());
+  for (std::size_t i = 0; i < xs.size(); ++i) EXPECT_NEAR(xs[i], 910.0 * i, 1e-6);
+  EXPECT_EQ(back.document().find(ids->front())->name.find("柱"), 0u) << back.document().find(ids->front())->name;
 }
