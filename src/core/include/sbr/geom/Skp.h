@@ -48,9 +48,16 @@ struct SkpReport {
   int leftOut = 0;     // faces that could not be made (too small, not flat)
   int hidden = 0;      // hidden groups / instances / faces left out
   int textured = 0;    // materials with a texture (their colour used)
+  // The objects the file was written from (docs/186): their ids, as SketchBRep wrote them.
+  std::vector<std::string> exportedIds;
   std::string summary() const;
 };
 
 Result<std::vector<ColladaPart>> readSkp(const std::string& path, SkpReport* report = nullptr);
+
+// For tests and tools (docs/186): in a SketchUp file written by writeSkp, the top-level group
+// carrying the object `id` moved by `move` (world, mm) on top of where it is, or erased; saved
+// in place. As if done in SketchUp.
+Status skpEditGroup(const std::string& path, const std::string& id, const gp_Trsf* move, bool erase);
 
 }  // namespace sbr::geom

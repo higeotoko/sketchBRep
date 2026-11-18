@@ -11893,6 +11893,160 @@ Result<std::vector<ObjectId>> Modeler::importSkp(const std::string& path, geom::
   return addColouredParts(*parts, path, "Import SketchUp");
 }
 
+namespace {
+// A placement written by writeSkp (the 3 x 4 matrix row by row); none when unreadable.
+std::optional<gp_Trsf> placementFrom(const std::string& text) {
+  std::istringstream in(text);
+  double v[12];
+  for (double& x : v)
+    if (!(in >> x)) return std::nullopt;
+  try {
+    gp_Trsf t;
+    t.SetValues(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9], v[10], v[11]);
+    return t;
+  } catch (...) {
+    return std::nullopt;
+  }
+}
+
+bool nearlySame(const gp_Trsf& a, const gp_Trsf& b) {
+  for (int r = 1; r <= 3; ++r) {
+    for (int c = 1; c <= 3; ++c)
+      if (std::abs(a.Value(r, c) - b.Value(r, c)) > 1e-7) return false;
+    if (std::abs(a.Value(r, 4) - b.Value(r, 4)) > 0.01) return false;
+  }
+  return true;
+}
+
+// The same shape, as far as a mesh read back can tell: the same box (1 mm) and, for solids,
+// the same volume (2 %: curved faces come back as facets).
+bool sameShape(const TopoDS_Shape& a, const TopoDS_Shape& b) {
+  const Bnd_Box ba = geom::exactBounds(a), bb = geom::exactBounds(b);
+  if (ba.IsVoid() || bb.IsVoid()) return ba.IsVoid() == bb.IsVoid();
+  double a0, a1, a2, a3, a4, a5, b0, b1, b2, b3, b4, b5;
+  ba.Get(a0, a1, a2, a3, a4, a5);
+  bb.Get(b0, b1, b2, b3, b4, b5);
+  const double d[6] = {a0 - b0, a1 - b1, a2 - b2, a3 - b3, a4 - b4, a5 - b5};
+  for (const double x : d)
+    if (std::abs(x) > 1.0) return false;
+  const double va = geom::volume(a), vb = geom::volume(b);
+  if (std::abs(va) > 1.0 || std::abs(vb) > 1.0)
+    if (std::abs(va - vb) > 0.02 * std::max(std::abs(va), std::abs(vb))) return false;
+  return true;
+}
+}  // namespace
+
+Result<Modeler::SkpSync> Modeler::syncSkp(const std::string& path, bool replaceEdited, bool removeMissing) {
+  using R = Result<SkpSync>;
+  SkpSync out;
+  auto parts = geom::readSkp(path, &out.report);
+  if (!parts) return R::failure(parts.error());
+  // First decide everything against the model as it is; then change it.
+  std::vector<geom::ColladaPart> fresh;
+  std::vector<std::pair<gp_Trsf, std::vector<ObjectId>>> moves;  // objects moved alike, together
+  std::vector<std::pair<ObjectId, const geom::ColladaPart*>> replacements;
+  std::set<ObjectId> seen;
+  for (const geom::ColladaPart& part : *parts) {
+    const auto source = part.attributes.find("sbr_id");
+    const Object* o = source == part.attributes.end() ? nullptr : document_.find(source->second);
+    if (!o || seen.count(o->id)) {
+      fresh.push_back(part);
+      continue;
+    }
+    seen.insert(o->id);
+    if (o->locked) {
+      out.locked.push_back(o->id);
+      continue;
+    }
+    gp_Trsf delta;
+    const auto written = part.attributes.find("sbr_placement");
+    const auto was = written == part.attributes.end() ? std::nullopt : placementFrom(written->second);
+    if (part.placed && was) delta = part.placement * was->Inverted();
+    // Not turned (only the rounding of SketchUp's inches): a plain move, so that joined walls
+    // follow as they do for a move (they do not for a turn).
+    {
+      bool turned = false;
+      for (int r = 1; r <= 3 && !turned; ++r)
+        for (int c = 1; c <= 3; ++c)
+          if (std::abs(delta.Value(r, c) - (r == c ? 1.0 : 0.0)) > 1e-7) turned = true;
+      if (!turned) {
+        const gp_XYZ shift = delta.TranslationPart();
+        delta = gp_Trsf();
+        delta.SetTranslation(gp_Vec(shift));
+      }
+    }
+    // Its shape as SketchUp has it, put back where it was written: the object's own?
+    const TopoDS_Shape back = BRepBuilderAPI_Transform(part.shape, delta.Inverted(), Standard_True).Shape();
+    if (!sameShape(back, document_.worldShape(*o))) {
+      if (replaceEdited) replacements.emplace_back(o->id, &part);
+      else out.edited.push_back(o->id);
+      continue;
+    }
+    if (nearlySame(delta, gp_Trsf())) {
+      out.unchanged.push_back(o->id);
+      continue;
+    }
+    auto group = std::find_if(moves.begin(), moves.end(), [&](const auto& m) { return nearlySame(m.first, delta); });
+    if (group == moves.end()) moves.emplace_back(delta, std::vector<ObjectId>{o->id});
+    else group->second.push_back(o->id);
+  }
+  for (const std::string& id : out.report.exportedIds)
+    if (!seen.count(id) && document_.find(id)) out.missing.push_back(id);
+
+  history_.beginGroup("Update from SketchUp");
+  for (const auto& [delta, ids] : moves) {
+    if (const Status moved = transform(ids, delta, "Move (SketchUp)"); !moved) {
+      history_.abortGroup();
+      return R::failure(moved.message());
+    }
+    out.moved.insert(out.moved.end(), ids.begin(), ids.end());
+  }
+  if (!replacements.empty()) {
+    ChangeSet changes(document_);
+    for (const auto& [id, part] : replacements) {
+      Object o = *document_.find(id);
+      // The shape from SketchUp in the object's own frame; what it was kept as information.
+      const gp_Trsf toLocal = document_.worldTransform(o).Inverted();
+      nlohmann::json carried = nlohmann::json::object();
+      for (const auto& [key, value] : o.attributes) carried[key] = value;
+      o.attributes.clear();
+      o.attributes["skp_attributes"] = carried.dump();
+      o.attributes["skp_source_id"] = id;
+      o.recipe = Recipe{};
+      o.recipe.base = ImportedShape{BRepBuilderAPI_Transform(part->shape, toLocal, Standard_True).Shape(), path};
+      o.faceMaterials.clear();
+      o.hiddenEdges.clear();
+      o.gridPin.reset();
+      o.follow.reset();
+      if (const Status built = rebuild(o); !built) {
+        history_.abortGroup();
+        return R::failure(built.message());
+      }
+      changes.modify(o);
+      out.replaced.push_back(id);
+    }
+    history_.execute(changes.build("Replace From SketchUp"));
+  }
+  if (removeMissing && !out.missing.empty()) {
+    if (const Status gone = remove(out.missing); !gone) {
+      history_.abortGroup();
+      return R::failure(gone.message());
+    }
+    out.removed = std::move(out.missing);
+    out.missing.clear();
+  }
+  if (!fresh.empty()) {
+    const auto added = addColouredParts(fresh, path, "Import SketchUp");
+    if (!added) {
+      history_.abortGroup();
+      return R::failure(added.error());
+    }
+    out.added = *added;
+  }
+  history_.endGroup();
+  return out;
+}
+
 Result<std::vector<ObjectId>> Modeler::addColouredParts(const std::vector<geom::ColladaPart>& parts, const std::string& path,
                                                         const std::string& commandName) {
   using R = Result<std::vector<ObjectId>>;

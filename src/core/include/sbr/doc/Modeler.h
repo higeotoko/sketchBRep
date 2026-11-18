@@ -1241,6 +1241,18 @@ class Modeler {
   Status exportSkp(const std::string& path, const std::vector<ObjectId>& ids = {},
                    const geom::SkpExportOptions& options = {}) const;
   Result<std::vector<ObjectId>> importSkp(const std::string& path, geom::SkpReport* report = nullptr);
+  // A SketchUp file written by exportSkp and changed in SketchUp, back into the model (docs/186):
+  // each group / component carrying an object's id is compared with that object. Moved or turned
+  // in SketchUp (its shape as it was): the object is moved the same way (walls stay walls, their
+  // joins follow). Its shape changed: listed as edited, or with `replaceEdited` the object takes
+  // the shape from SketchUp (it is then a shape, no longer what its tool made). Drawn anew in
+  // SketchUp: added. Written to the file but gone from it: listed, or removed with
+  // `removeMissing`. One undo step.
+  struct SkpSync {
+    std::vector<ObjectId> moved, unchanged, edited, replaced, added, missing, removed, locked;
+    geom::SkpReport report;
+  };
+  Result<SkpSync> syncSkp(const std::string& path, bool replaceEdited = false, bool removeMissing = false);
 
   // --- queries ------------------------------------------------------------
   std::vector<ObjectSummary> listObjects() const;

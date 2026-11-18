@@ -315,3 +315,69 @@ TEST(Layout, DrawingsAsLayOutPages) {
   ASSERT_TRUE(printed) << printed.message();
   EXPECT_GT(std::filesystem::file_size(std::filesystem::u8path(pdf)), 1000u);
 }
+
+// docs/186: a file written by export_skp, changed "in SketchUp" (skpEditGroup: a group moved, one
+// erased) and the model changed since, brought back with sync_skp.
+TEST(Skp, ChangesInSketchUpComeBack) {
+  SBR_NEEDS_SKETCHUP();
+  Modeler m;
+  sbr::api::CommandApi api{m};
+  auto ok = [&](const std::string& command, json args) {
+    json r = json::parse(api.execute(json{{"command", command}, {"args", args}}.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  auto box = [&](const std::string& id) { return geom::exactBounds(m.document().worldShape(*m.document().find(id))); };
+  // Drawn as in WallJoins (anticlockwise): moving the south wall sideways makes east and west longer.
+  const json room = ok("create_wall", {{"points", {{0, 0}, {6000, 0}, {6000, 4000}, {0, 4000}, {0, 0}}}, {"thickness", 200}, {"height", 2700}})["ids"];
+  const std::string south = room[0], east = room[1], north = room[2], west = room[3];
+  const std::string moved = ok("create_box", {{"origin", {9000, 0, 0}}, {"width", 500}, {"depth", 500}, {"height", 500}})["id"];
+  const std::string erased = ok("create_box", {{"origin", {10000, 0, 0}}, {"width", 500}, {"depth", 500}, {"height", 500}})["id"];
+  const std::string resized = ok("create_box", {{"origin", {11000, 0, 0}}, {"width", 500}, {"depth", 500}, {"height", 500}})["id"];
+  const std::string path = ::testing::TempDir() + "roundtrip-sync.skp";
+  ok("export_skp", {{"path", path}});
+  // "In SketchUp": the box moved 1000 to the north, the other erased, the south wall moved 455 south.
+  gp_Trsf north1000;
+  north1000.SetTranslation(gp_Vec(0, 1000, 0));
+  ASSERT_TRUE(geom::skpEditGroup(path, moved, &north1000, false));
+  ASSERT_TRUE(geom::skpEditGroup(path, erased, nullptr, true));
+  gp_Trsf south455;
+  south455.SetTranslation(gp_Vec(0, -455, 0));
+  ASSERT_TRUE(geom::skpEditGroup(path, south, &south455, false));
+  // Here meanwhile: the third box made taller (it no longer matches the file).
+  ok("set_parameter", {{"id", resized}, {"key", "op0.distance"}, {"value", 800}});
+  const double westBefore = sbr::geom::volume(m.document().find(west)->shape);
+  const auto steps = m.history().undoCount();
+  const json s = ok("sync_skp", {{"path", path}});
+  EXPECT_EQ(m.history().undoCount(), steps + 1);
+  EXPECT_EQ(s["moved"].size(), 2u) << s.dump();
+  EXPECT_EQ(s["missing"], json::array({erased})) << s.dump();
+  EXPECT_EQ(s["edited"], json::array({resized})) << s.dump();
+  EXPECT_TRUE(s["added"].empty()) << s.dump();
+  EXPECT_NEAR(box(moved).CornerMin().Y(), 1000, 1e-6);
+  // The wall moved as a wall: still the wall tool's, its neighbours longer by 455 (joins follow).
+  EXPECT_NEAR(box(south).CornerMin().Y(), -100 - 455, 1e-6);
+  EXPECT_EQ(m.document().find(south)->attributes.at("kind"), "wall");
+  EXPECT_NEAR(sbr::geom::volume(m.document().find(west)->shape), westBefore + 455.0 * 200 * 2700, 1.0);
+  EXPECT_TRUE(m.document().find(erased));  // only listed
+  // One undo: all back.
+  ASSERT_TRUE(m.undo());
+  EXPECT_NEAR(box(moved).CornerMin().Y(), 0, 1e-6);
+  EXPECT_NEAR(box(south).CornerMin().Y(), -100, 1e-6);
+  // Again, removing what was erased and taking the edited shape from SketchUp.
+  const json t = ok("sync_skp", {{"path", path}, {"remove_missing", true}, {"replace_edited", true}});
+  EXPECT_EQ(t["removed"], json::array({erased})) << t.dump();
+  EXPECT_EQ(t["replaced"], json::array({resized})) << t.dump();
+  EXPECT_FALSE(m.document().find(erased));
+  EXPECT_NEAR(box(resized).CornerMax().Z(), 500, 1e-6);  // as SketchUp has it
+  EXPECT_TRUE(m.document().find(resized)->attributes.count("skp_attributes"));
+  // Objects from another model's file: added.
+  Modeler other;
+  sbr::api::CommandApi otherApi{other};
+  ASSERT_TRUE(json::parse(otherApi.execute(json{{"command", "create_box"}, {"args", {{"origin", {0, 9000, 0}}, {"width", 300}, {"depth", 300}, {"height", 300}}}}.dump()))
+                  .value("ok", false));
+  const std::string foreign = ::testing::TempDir() + "foreign.skp";
+  ASSERT_TRUE(other.exportSkp(foreign));
+  const json u = ok("sync_skp", {{"path", foreign}});
+  EXPECT_EQ(u["added"].size(), 1u) << u.dump();
+}

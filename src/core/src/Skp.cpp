@@ -85,6 +85,12 @@ Result<std::vector<ColladaPart>> readSkp(const std::string&, SkpReport*) {
   return Result<std::vector<ColladaPart>>::failure(why);
 }
 
+Status skpEditGroup(const std::string&, const std::string&, const gp_Trsf*, bool) {
+  std::string why;
+  skpAvailable(&why);
+  return Status::failure(why);
+}
+
 #else
 
 namespace {
@@ -117,7 +123,8 @@ namespace {
   X(SUTypedValueGetType) X(SULayerCreate) X(SULayerSetName) X(SULayerGetName) X(SUModelAddLayers)     \
   X(SUDrawingElementSetLayer) X(SUDrawingElementGetLayer) X(SUComponentDefinitionCreate)              \
   X(SUComponentDefinitionSetName) X(SUModelAddComponentDefinitions) X(SUComponentDefinitionCreateInstance) \
-  X(SUComponentInstanceSetTransform) X(SUComponentInstanceSetName) X(SUEntitiesAddInstance)
+  X(SUComponentInstanceSetTransform) X(SUComponentInstanceSetName) X(SUEntitiesAddInstance)             \
+  X(SUModelGetAttributeDictionary) X(SUGroupSetTransform) X(SUEntitiesErase)
 
 struct Api {
 #define SBR_SU_POINTER(f) decltype(&::f) f = nullptr;
@@ -216,6 +223,19 @@ constexpr double kInch = 25.4;  // mm in SketchUp's internal unit
 // --- export ------------------------------------------------------------------------------------
 
 constexpr const char* kDictionary = "SketchBRep";  // docs/183: an object's information in SketchUp
+
+// A placement as text (docs/186: where it was written, to see later how SketchUp moved it):
+// the 3 x 4 matrix row by row, mm.
+std::string placementText(const gp_Trsf& t) {
+  std::string out;
+  char buffer[40];
+  for (int r = 1; r <= 3; ++r)
+    for (int c = 1; c <= 4; ++c) {
+      std::snprintf(buffer, sizeof buffer, "%s%.9g", out.empty() ? "" : " ", t.Value(r, c));
+      out += buffer;
+    }
+  return out;
+}
 
 struct Writer {
   const Api& su;
@@ -373,7 +393,9 @@ Status writeSkp(const std::vector<ColladaPart>& parts, const std::string& path, 
       const SUDrawingElementRef element = su.SUComponentInstanceToDrawingElement(instance);
       su.SUDrawingElementSetMaterial(element, w.material(part.color));
       if (const auto tag = w.layer(part.layer)) su.SUDrawingElementSetLayer(element, *tag);
-      w.attributes(su.SUComponentInstanceToEntity(instance), part.attributes);
+      auto values = part.attributes;
+      if (values.count("sbr_id")) values["sbr_placement"] = placementText(part.placement);
+      w.attributes(su.SUComponentInstanceToEntity(instance), values);
     };
     if (already) {
       place(definitions.at(part.definition));
@@ -537,7 +559,9 @@ Status writeSkp(const std::vector<ColladaPart>& parts, const std::string& path, 
       const SUGroupRef outer = group(root);
       if (faceMap.Extent() > 0) su.SUDrawingElementSetMaterial(su.SUGroupToDrawingElement(outer), w.material(part.color));
       if (const auto tag = w.layer(part.layer)) su.SUDrawingElementSetLayer(su.SUGroupToDrawingElement(outer), *tag);
-      w.attributes(su.SUGroupToEntity(outer), part.attributes);
+      auto values = part.attributes;
+      if (values.count("sbr_id")) values["sbr_placement"] = placementText(gp_Trsf());  // written where it is
+      w.attributes(su.SUGroupToEntity(outer), values);
       su.SUGroupGetEntities(outer, &inside);
     }
     // Several solids apart (a stair's treads and strings): each in a group of its own inside the
@@ -579,6 +603,24 @@ Status writeSkp(const std::vector<ColladaPart>& parts, const std::string& path, 
     ++written;
   }
   if (written == 0) return Status::failure("Nothing to export");
+  // docs/186: which objects the file holds (to tell later what was erased in SketchUp).
+  {
+    std::string ids;
+    for (const ColladaPart& part : parts) {
+      const auto id = part.attributes.find("sbr_id");
+      if (id == part.attributes.end()) continue;
+      if (!ids.empty()) ids += "\n";
+      ids += id->second;
+    }
+    SUAttributeDictionaryRef dict = SU_INVALID;
+    if (!ids.empty() && su.SUModelGetAttributeDictionary(w.model, kDictionary, &dict) == SU_ERROR_NONE) {
+      SUTypedValueRef v = SU_INVALID;
+      su.SUTypedValueCreate(&v);
+      su.SUTypedValueSetString(v, ids.c_str());
+      su.SUAttributeDictionarySetValue(dict, "exported_ids", v);
+      su.SUTypedValueRelease(&v);
+    }
+  }
   const SUResult saved = su.SUModelSaveToFileWithVersion(w.model, path.c_str(), SUModelVersion_Current);
   if (saved != SU_ERROR_NONE) return Status::failure("The SketchUp file could not be written: " + path + " (error " + std::to_string(saved) + ")");
   return Status::success();
@@ -615,7 +657,27 @@ gp_Pnt place(const Matrix& m, const SUPoint3D& p) {
 struct Meta {
   std::string layer;
   std::map<std::string, std::string> attributes;
+  bool placed = false;  // docs/186: `where` is the group's / instance's placement (world)
+  gp_Trsf where;
 };
+
+// SketchUp's placement (inches) as a rigid placement in mm; none when it scales or shears.
+std::optional<gp_Trsf> rigid(const Matrix& m) {
+  if (std::abs(m[3]) > 1e-9 || std::abs(m[7]) > 1e-9 || std::abs(m[11]) > 1e-9 || std::abs(m[15] - 1.0) > 1e-9) return std::nullopt;
+  for (int a = 0; a < 3; ++a)
+    for (int b = 0; b < 3; ++b) {
+      double dot = 0;
+      for (int k = 0; k < 3; ++k) dot += m[a * 4 + k] * m[b * 4 + k];
+      if (std::abs(dot - (a == b ? 1.0 : 0.0)) > 1e-6) return std::nullopt;
+    }
+  try {
+    gp_Trsf t;
+    t.SetValues(m[0], m[4], m[8], m[12] * kInch, m[1], m[5], m[9], m[13] * kInch, m[2], m[6], m[10], m[14] * kInch);
+    return t;
+  } catch (...) {
+    return std::nullopt;
+  }
+}
 
 struct Reader {
   const Api& su;
@@ -696,6 +758,8 @@ struct Reader {
     whole.name = name;
     whole.layer = meta.layer;
     whole.attributes = meta.attributes;
+    whole.placed = meta.placed;
+    whole.placement = meta.where;
     BRep_Builder builder;
     TopoDS_Compound compound;
     builder.MakeCompound(compound);
@@ -824,6 +888,8 @@ struct Reader {
       parts.push_back(joinFaces(made, name, &solid));
       parts.back().layer = meta.layer;
       parts.back().attributes = meta.attributes;
+      parts.back().placed = meta.placed;
+      parts.back().placement = meta.where;
       closed.push_back(solid);
       if (solid) ++report.solids;
     }
@@ -885,7 +951,11 @@ struct Reader {
       size_t count = 0;
       if (pieces) su.SUEntitiesGetNumGroups(inside, &count);
       const std::size_t from = parts.size();
-      const Meta carried = this->meta(element, su.SUGroupToEntity(groups[i]));
+      Meta carried = this->meta(element, su.SUGroupToEntity(groups[i]));
+      if (const auto where = rigid(multiply(m, local))) {
+        carried.placed = true;
+        carried.where = *where;
+      }
       entities(inside, multiply(m, local), label, own ? own : inherited, depth + 1, carried);
       if (pieces) combine(from, label, static_cast<int>(count), carried);
     }
@@ -921,8 +991,12 @@ struct Reader {
       const auto own = colorOf(material);
       SUEntitiesRef inside = SU_INVALID;
       su.SUComponentDefinitionGetEntities(definition, &inside);
-      entities(inside, multiply(m, local), instanceName, own ? own : inherited, depth + 1,
-               this->meta(element, su.SUComponentInstanceToEntity(instances[i])));
+      Meta carried = this->meta(element, su.SUComponentInstanceToEntity(instances[i]));
+      if (const auto where = rigid(multiply(m, local))) {
+        carried.placed = true;
+        carried.where = *where;
+      }
+      entities(inside, multiply(m, local), instanceName, own ? own : inherited, depth + 1, carried);
     }
   }
 };
@@ -951,9 +1025,81 @@ Result<std::vector<ColladaPart>> readSkp(const std::string& path, SkpReport* rep
   SUEntitiesRef root = SU_INVALID;
   su.SUModelGetEntities(model, &root);
   reader.entities(root, identity(), "SketchUp", std::nullopt, 0);
+  // docs/186: the objects SketchBRep wrote into it.
+  {
+    SUAttributeDictionaryRef dict = SU_INVALID;
+    if (su.SUModelGetAttributeDictionary(model, kDictionary, &dict) == SU_ERROR_NONE) {
+      SUTypedValueRef v = SU_INVALID;
+      su.SUTypedValueCreate(&v);
+      enum SUTypedValueType type = SUTypedValueType_Empty;
+      if (su.SUAttributeDictionaryGetValue(dict, "exported_ids", &v) == SU_ERROR_NONE && su.SUTypedValueGetType(v, &type) == SU_ERROR_NONE &&
+          type == SUTypedValueType_String) {
+        SUStringRef s = SU_INVALID;
+        su.SUStringCreate(&s);
+        su.SUTypedValueGetString(v, &s);
+        std::string ids = text(su, s);
+        su.SUStringRelease(&s);
+        std::size_t from = 0;
+        while (from <= ids.size()) {
+          const std::size_t end = std::min(ids.find('\n', from), ids.size());
+          if (end > from) report.exportedIds.push_back(ids.substr(from, end - from));
+          from = end + 1;
+        }
+      }
+      su.SUTypedValueRelease(&v);
+    }
+  }
   report.parts = static_cast<int>(reader.parts.size());
   if (reader.parts.empty()) return R::failure("The SketchUp file has nothing to import (" + report.summary() + ")");
   return std::move(reader.parts);
+}
+
+Status skpEditGroup(const std::string& path, const std::string& id, const gp_Trsf* move, bool erase) {
+  std::string why;
+  const Api* loaded = api(&why);
+  if (!loaded) return Status::failure(why);
+  const Api& su = *loaded;
+  SUModelRef model = SU_INVALID;
+  enum SUModelLoadStatus status = SUModelLoadStatus_Success;
+  if (su.SUModelCreateFromFileWithStatus(&model, path.c_str(), &status) != SU_ERROR_NONE) return Status::failure("Cannot read " + path);
+  struct Release {
+    const Api& su;
+    SUModelRef& model;
+    ~Release() { su.SUModelRelease(&model); }
+  } release{su, model};
+  SUEntitiesRef root = SU_INVALID;
+  su.SUModelGetEntities(model, &root);
+  size_t n = 0;
+  su.SUEntitiesGetNumGroups(root, &n);
+  std::vector<SUGroupRef> groups(n, SUGroupRef SU_INVALID);
+  su.SUEntitiesGetGroups(root, n, groups.data(), &n);
+  SkpReport unused;
+  Reader reader{su, unused, {}};
+  for (size_t i = 0; i < n; ++i) {
+    const Meta meta = reader.meta(su.SUGroupToDrawingElement(groups[i]), su.SUGroupToEntity(groups[i]));
+    const auto found = meta.attributes.find("sbr_id");
+    if (found == meta.attributes.end() || found->second != id) continue;
+    if (erase) {
+      SUEntityRef entity = su.SUGroupToEntity(groups[i]);
+      if (su.SUEntitiesErase(root, 1, &entity) != SU_ERROR_NONE) return Status::failure("Cannot erase the group");
+    } else if (move) {
+      SUTransformation now{};
+      su.SUGroupGetTransform(groups[i], &now);
+      Matrix by = identity();
+      for (int c = 0; c < 3; ++c)
+        for (int r = 0; r < 3; ++r) by[c * 4 + r] = move->Value(r + 1, c + 1);
+      for (int r = 0; r < 3; ++r) by[12 + r] = move->Value(r + 1, 4) / kInch;
+      Matrix current;
+      std::copy(std::begin(now.values), std::end(now.values), current.begin());
+      const Matrix next = multiply(by, current);
+      SUTransformation t{};
+      std::copy(next.begin(), next.end(), std::begin(t.values));
+      su.SUGroupSetTransform(groups[i], &t);
+    }
+    const SUResult saved = su.SUModelSaveToFileWithVersion(model, path.c_str(), SUModelVersion_Current);
+    return saved == SU_ERROR_NONE ? Status::success() : Status::failure("Cannot save " + path);
+  }
+  return Status::failure("No group of that object in " + path);
 }
 
 #endif  // SBR_WITH_SKETCHUP

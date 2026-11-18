@@ -55,6 +55,9 @@ struct ColladaPart {
   std::string definition, definitionName;
   TopoDS_Shape localShape;
   gp_Trsf placement;
+  // Read from SketchUp (docs/186): `placement` is where the group / component it came from is
+  // now (world), when that is a rigid placement.
+  bool placed = false;
 };
 
 struct ColladaExportOptions {

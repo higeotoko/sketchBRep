@@ -32,14 +32,15 @@
 - `1597527`：タグと情報（docs/183 の前半）、この引き継ぎ書。ZIP `SketchBRep-windows-x64-1597527-local.zip`（81,640,950 bytes、検証は両方成功）。CI run 44259529231 の結果を見て docs/183 に記録する。
 - `84ad3df`：コンポーネントの共有（`Skp.ComponentsAreShared`）。
 - その次のコミット：LayOut への図面の書き出し（docs/185、`src/core/src/DrawingLayout.cpp`、`Layout.DrawingsAsLayOutPages`）。ZIP に LayOut の DLL（`layout` フォルダ）。
-- この 2 つは、`1597527` の CI が終わってから push → ZIP → 検証 → CI → docs/183・185 の記録。
+- `1597527` の CI は成功（run 44259529231：Linux 768、Windows 764＋3、GUI 237）。`84ad3df`・`66957ee` を push 済み。ZIP `SketchBRep-windows-x64-66957ee-local.zip`（130,373,620 bytes、LayOut の DLL 入り、検証は両方成功）。CI は 66957ee で走っている。
+- `4c79ce3`（手元、未 push）：LayOut の DLL のお知らせを標準出力からよける（`QuietStdout`）。66957ee の CI が終わってから push → ZIP → 検証 → CI → docs/183・185 の記録（CI と ZIP は最後の版の物を書き、`docs/validation/2026-11-18-portable-1597527*`・`-66957ee*` もコミットする）。docs/185 に `QuietStdout` の説明を足してある（未コミット）。
 
 ## 次にやる事（オーナーが選んだ順：SketchUp 連携の 1 → 2 → 4）
 
 1. ~~物の情報を SketchUp の属性に~~（docs/183）
 2. ~~タグ・コンポーネントの共有の書き出し~~（docs/183）。残り：読み込みで SketchUp のコンポーネントを SketchBRep のコンポーネントに戻す（`Reader` と `Modeler::addColouredParts`、`Modeler::makeComponent`）。
-3. ~~LayOut に図面一式を書き出す~~（docs/185）。残りは docs/185 の「まだ」（文字の向き、塗りの穴、SketchUp のモデルを置く、寸法、レイヤ）。元の説明：SDK の `headers/LayOutAPI`・`binaries/layout/x64`。SketchUp と同じく、Git にヘッダを入れず、動く時に DLL を読み込む作り（`Skp.cpp` の `SBR_SU_FUNCTIONS` と同じやり方）。図面は `doc::DrawingView`（`Drawing.cpp`）と図面一式（docs/125・130・131）から。
-4. その先の案（オーナーにまだ聞いていない）：テクスチャ、SketchUp で直した物を戻す（`skp_source_id` を使う）、SketchUp の Ruby 拡張とのライブ連携、シーン・断面、寸法、敷地の位置。
+3. ~~LayOut に図面一式を書き出す~~（docs/185）。**オーナーの決定（2026-11-18）：LayOut の DLL は ZIP から外す、SketchUp の行って来いを優先**。残りは docs/185 の「まだ」（文字の向き、塗りの穴、SketchUp のモデルを置く、寸法、レイヤ）。元の説明：SDK の `headers/LayOutAPI`・`binaries/layout/x64`。SketchUp と同じく、Git にヘッダを入れず、動く時に DLL を読み込む作り（`Skp.cpp` の `SBR_SU_FUNCTIONS` と同じやり方）。図面は `doc::DrawingView`（`Drawing.cpp`）と図面一式（docs/125・130・131）から。
+4. ~~SketchUp で直した物を戻す~~（docs/186、`sync_skp`、`Modeler::syncSkp`、テスト `Skp.ChangesInSketchUpComeBack`）。残りは docs/186 の「まだ」。その先の案（オーナーにまだ聞いていない）：テクスチャ、SketchUp の Ruby 拡張とのライブ連携、シーン・断面、寸法、敷地の位置。
 
 ### SketchUp まわりの作り（docs/181〜183）
 

@@ -54,19 +54,14 @@ def package(args):
             if not (stage / source.name).is_file():
                 shutil.copy2(source, stage / source.name)
                 sketchup.append({"file": source.name, "sha256": sha256(stage / source.name)})
-        # docs/185: the LayOut part, in a folder of its own (its DLLs differ from SketchUp's).
-        layout = args.sketchup_sdk / "binaries" / "layout" / "x64"
-        if layout.is_dir():
-            (stage / "layout").mkdir(exist_ok=True)
-            for dll in sorted(layout.glob("*.dll")):
-                shutil.copy2(dll, stage / "layout" / dll.name)
-                sketchup.append({"file": "layout/" + dll.name, "sha256": sha256(stage / "layout" / dll.name)})
+        # docs/185: the LayOut part (about 150 MB) is not carried (the owner's decision, 2026-11-18):
+        # LayOut export works where the SDK is (SBR_SKETCHUP_SDK or the build's SDK folder).
         notice = stage / "licenses" / "sketchup-sdk"
         notice.mkdir(parents=True, exist_ok=True)
         (notice / "README.md").write_text(
             "# SketchUp SDK\n\n"
-            "SketchUpAPI.dll, SketchUpCommonPreferences.dll and the DLLs in the layout folder are parts of the\n"
-            "SketchUp SDK by Trimble Inc., used here to read and write SketchUp (.skp) and LayOut (.layout) files. They are subject to the Trimble Developer Terms:\n"
+            "SketchUpAPI.dll and SketchUpCommonPreferences.dll are parts of the SketchUp SDK by Trimble Inc.,\n"
+            "used here to read and write SketchUp (.skp) files. They are subject to the Trimble Developer Terms:\n"
             "https://www.trimble.com/legal/developer-terms\n\n"
             "SketchUp is a trademark of Trimble Inc. SketchBRep is not made or endorsed by Trimble.\n",
             encoding="utf-8")

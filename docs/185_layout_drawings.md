@@ -17,7 +17,8 @@ SketchUp 連携の案の 4。[docs/181](181_sketchup_skp.md)・[docs/182](182_sk
 
 - `src/core/src/DrawingLayout.cpp`：`draw::writeLayout(sheets, names, path)`・`layoutAvailable`・`layoutPageCount`・`layoutToPdf`（確かめ用）。SketchUp と同じく、LayOut の関数を名前で引く（リンクしない、ヘッダは Git に入れない）。
 - DLL を探す順：exe の隣の `layout` フォルダ → 環境変数 `SBR_SKETCHUP_SDK` → ビルドした時の SDK。
-- ZIP：SDK の `binaries\layout\x64` の DLL を全部、`layout` フォルダに入れる（SketchUp の DLL と同じ名前で版の違う物があるので分けた）。
+- ZIP：**LayOut の DLL は入れない**（2026-11-18 オーナーの決定「一旦外しちゃっていいや」）。66957ee の ZIP だけ `layout` フォルダに入っていた（81 → 130 MB）。今の線と文字だけの書き出しは、DXF を LayOut で読み込むのと大差ないため。LayOut の書き出しは SDK のある PC（環境変数 `SBR_SKETCHUP_SDK` かビルドした時の SDK）だけで動き、無い PC では図面の窓の形式の一覧に出ない（AI は断る）。
+- LayOut の DLL は、自分のお知らせ（グラフィックスカードの名前など）を標準出力に書く。CLI と MCP は標準出力に JSON で答えるので、LayOut を動かす間だけ標準出力を標準エラーに回す（`QuietStdout`、`4c79ce3`）。作った版の `sbr_cli` で、標準出力が JSON だけになり、お知らせは標準エラーに出ることを確かめた。
 
 ## 決めたこと
 
@@ -26,7 +27,7 @@ SketchUp 連携の案の 4。[docs/181](181_sketchup_skp.md)・[docs/182](182_sk
 | 図面一式 | 1 文書・複数ページ | LayOut は 1 文書に何ページも持つのがふつう。DXF・JWW は 1 枚 1 ファイルのまま |
 | 紙の大きさ | 文書で 1 つ（いちばん大きい紙） | LayOut の紙の大きさは文書ごと。A4 と A3 が混ざると、A4 の図は A3 の紙の左下に置かれる |
 | 文字の大きさ | 図面の文字の高さ（mm）× 1.4 をポイントに | 図面の文字の高さは字の高さで、LayOut はフォントの大きさのため |
-| ZIP の大きさ | LayOut の DLL（約 150 MB、圧縮で増える分は配布の記録を見る）を入れる | オーナーの決定（SDK の DLL は ZIP に入れてよい、2026-11-18）。どの PC でも使えるように |
+| ZIP | LayOut の DLL は入れない | オーナーの決定（2026-11-18）。SketchUp との行って来いを先にする。SketchUp のビューを置く・寸法など、LayOut ならではの所まで作る時に、また考える |
 
 ## まだやっていないこと
 

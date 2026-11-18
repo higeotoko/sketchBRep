@@ -4048,6 +4048,21 @@ const std::vector<CommandDef>& commands() {
                           {"summary", report.summary()}, {"sdk_dll", geom::skpLibrary()}};
          return out;
        }},
+      {"sync_skp",
+       "Bring back a SketchUp file written by export_skp and changed in SketchUp (docs/186): groups / components "
+       "carrying an object's id are compared with it. Moved or turned in SketchUp with its shape as it was: the "
+       "object is moved the same way (walls stay walls, their joins follow). Shape changed: listed in 'edited', or "
+       "with 'replace_edited' true the object takes the shape from SketchUp ('replaced'; it is then a plain shape). "
+       "Drawn anew in SketchUp: added ('added'). Written but gone from the file: listed in 'missing', or removed "
+       "with 'remove_missing' true ('removed'). One undo step.",
+       SCHEMA({"type": "object", "properties": {"path": {"type": "string"}, "replace_edited": {"type": "boolean"},
+               "remove_missing": {"type": "boolean"}}, "required": ["path"]}),
+       [](doc::Modeler& m, const json& a) {
+         const auto s = must(m.syncSkp(text(a, "path"), a.value("replace_edited", false), a.value("remove_missing", false)));
+         return json{{"moved", s.moved}, {"unchanged", s.unchanged}, {"edited", s.edited}, {"replaced", s.replaced},
+                     {"added", s.added}, {"missing", s.missing}, {"removed", s.removed}, {"locked", s.locked},
+                     {"summary", s.report.summary()}};
+       }},
       {"export_ifc",
        "Export the building as IFC4 (.ifc) for other BIM software: storeys from the levels; walls (create_wall) "
        "with their openings as voids, and a window / door for each opening with a fitting (a fitting with its "
@@ -4079,7 +4094,7 @@ bool isFileCommand(const std::string& name) {
   return name == "save" || name == "save_copy" || name == "open" || name == "export_ifc" || name == "export_step" || name == "export_stl" || name == "export_3dm" ||
          name == "import_brep" || name == "export_brep" || name == "import_iges" || name == "export_iges" ||
          name == "import_3dm" || name == "import_dxf" || name == "import_jww" || name == "set_material_texture" || name == "export_dae" ||
-         name == "import_dae" || name == "export_skp" || name == "import_skp" || name == "export_drawing" || name == "export_schedule" || name == "export_drawing_set" || name == "export_gltf";
+         name == "import_dae" || name == "export_skp" || name == "import_skp" || name == "sync_skp" || name == "export_drawing" || name == "export_schedule" || name == "export_drawing_set" || name == "export_gltf";
 }
 
 CommandApi::Effect builtinEffect(const std::string& name) {

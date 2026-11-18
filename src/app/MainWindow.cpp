@@ -1092,6 +1092,13 @@ void MainWindow::buildMenus() {
   file->addSeparator();
   file->addAction(tr("インポート..."),this,&MainWindow::importFile);
   file->addAction(tr("エクスポート..."),this,&MainWindow::exportFile);
+  // docs/186: a SketchUp file written from here and changed in SketchUp, back into the model.
+  if(geom::skpAvailable()) {
+    auto* sync=file->addAction(tr("SketchUp で直した物を戻す..."),this,[this]{syncSkpFile();});
+    sync->setObjectName(QStringLiteral("syncSkpAction"));
+    sync->setToolTip(tr("SketchBRep から書き出した .skp を SketchUp で直した後に選ぶと、動かした物は同じだけ動かし（壁は壁のまま）、"
+                        "新しく描いた物は足します。形を変えた物と消した物は、どうするか聞きます"));
+  }
   file->addAction(tr("図面を書き出す（平面・断面・立面・伏図）..."), this, &MainWindow::showDrawingDialog)
       ->setObjectName(QStringLiteral("exportDrawingAction"));
   file->addAction(tr("図面一式を書き出す（図番つき、1 つの PDF）..."), this, [this] {
@@ -6413,6 +6420,46 @@ void MainWindow::importSkpFile(const QString& path) {
   if (report.hidden > 0) text += tr("。隠した物 %1 個は省きました").arg(report.hidden);
   if (report.textured > 0) text += tr("。テクスチャ %1 個は色で表示します").arg(report.textured);
   setStatus(text);
+}
+
+void MainWindow::syncSkpFile() {
+  const QString path = QFileDialog::getOpenFileName(this, tr("SketchUp で直した物を戻す"), QSettings().value("files/importDirectory").toString(),
+                                                    tr("SketchUp (*.skp)"));
+  if (path.isEmpty()) return;
+  // First look: what changed (nothing is changed by looking, and the look is undone at once).
+  const auto look = modeler_.syncSkp(utf8(path), false, false);
+  if (!look) {
+    reportError(tr("SketchUp のファイルを読めませんでした: %1").arg(QString::fromStdString(look.error())));
+    return;
+  }
+  bool replace = false, remove = false;
+  if (!look->edited.empty() || !look->missing.empty()) {
+    modeler_.undo();  // the look made the moves and additions: ask first, then do it all once
+    QMessageBox box(this);
+    box.setWindowTitle(tr("SketchUp で直した物を戻す"));
+    box.setText(tr("動かした物 %1 個、新しい物 %2 個を戻します。").arg(look->moved.size()).arg(look->added.size()));
+    QStringList more;
+    if (!look->edited.empty()) more << tr("形を変えた物 %1 個：SketchUp の形に置き換えますか（壁ツールの壁などではなくなります）").arg(look->edited.size());
+    if (!look->missing.empty()) more << tr("SketchUp で消した物 %1 個：こちらでも消しますか").arg(look->missing.size());
+    box.setInformativeText(more.join(QLatin1Char('\n')));
+    auto* both = box.addButton(tr("はい（置き換え・消す）"), QMessageBox::AcceptRole);
+    auto* keep = box.addButton(tr("いいえ（動かす・足すだけ）"), QMessageBox::RejectRole);
+    box.addButton(QMessageBox::Cancel);
+    box.exec();
+    if (box.clickedButton() != both && box.clickedButton() != keep) return;
+    replace = remove = box.clickedButton() == both;
+    const auto done = modeler_.syncSkp(utf8(path), replace, remove);
+    if (!done) {
+      reportError(tr("SketchUp の変更を戻せませんでした: %1").arg(QString::fromStdString(done.error())));
+      return;
+    }
+    setStatus(tr("SketchUp から戻しました：動かした %1・足した %2・置き換えた %3・消した %4（Ctrl+Z で戻せます）")
+                  .arg(done->moved.size()).arg(done->added.size()).arg(done->replaced.size()).arg(done->removed.size()));
+  } else {
+    setStatus(tr("SketchUp から戻しました：動かした %1・足した %2・変わらない %3（Ctrl+Z で戻せます）")
+                  .arg(look->moved.size()).arg(look->added.size()).arg(look->unchanged.size()));
+  }
+  refreshPanels();
 }
 
 void MainWindow::exportSkpFile(const QString& path) {
