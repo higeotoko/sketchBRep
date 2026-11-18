@@ -126,6 +126,8 @@ struct AreaTable {
   };
   // docs/163: balconies (kind = balcony). Counted as floor area only where the person said so.
   int balconies = 0, balconiesCounted = 0, balconiesExcluded = 0;
+  int balconiesByNotice = 0;      // docs/175: worked out by the notice (floor area left to it)
+  double balconyFloorArea = 0.0;  // mm2 of balconies counted as floor area
   double balconyArea = 0.0;  // mm2 in plan of all of them (width x depth)
   // docs/166: the ground (the level named GL), when there is one.
   bool groundKnown = false;

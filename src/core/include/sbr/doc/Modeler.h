@@ -684,8 +684,10 @@ class Modeler {
     double thickness = 150.0;  // of its floor
     double railHeight = 1100.0;  // above its floor's top
     std::string rail = "wall";   // wall (a parapet), bars (a top rail on posts) or none
-    // How it counts as floor area (令 2 条 1 項 3 号): "count", "exclude", or empty: not
-    // evaluated (the notice on open balconies is not built in: the person decides).
+    // How it counts as floor area (令 2 条 1 項 3 号): "count", "exclude", or empty: by the notice
+    // on floor areas (昭和 61 年 住指発第 115 号 1 (4)(5), docs/175): open enough (1.1 m or more
+    // and half its ceiling height or more), only beyond 2 m from the wall's centre line counts;
+    // else all of it.
     std::string floorArea;
     // docs/167: posts under its front edge (0: none, else 2 to 6 spread along it, the two at the
     // outer corners), `postSize` square, from the next level below its floor up to its floor.

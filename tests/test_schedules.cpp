@@ -1175,9 +1175,9 @@ TEST_F(Schedules, ABalconyOnAWallAndTheAreas) {
   EXPECT_NEAR(table.buildingArea / 1e6, 48.0, 1e-6);
   EXPECT_EQ(table.balconies, 1);
   EXPECT_EQ(table.balconiesCounted, 0);
-  EXPECT_NEAR(table.rows[0].legalFloor / 1e6, 48.0, 1e-6);  // not floor area unless said
+  EXPECT_NEAR(table.rows[0].legalFloor / 1e6, 48.0, 1e-6);  // by the notice: all within 2 m of the wall's line
   bool said = false;
-  for (const auto& n : table.legalNotes) said |= n.find("バルコニー 1 個") != std::string::npos && n.find("未評価 1 個") != std::string::npos;
+  for (const auto& n : table.legalNotes) said |= n.find("バルコニー 1 個") != std::string::npos && n.find("通達どおりに数えた 1 個") != std::string::npos;
   EXPECT_TRUE(said);
   // 1500 out: the building area takes it up to 1 m back from its end (500 beyond the face).
   made = ok("change_balcony", {{"id", id}, {"depth", 1500}});
@@ -1185,6 +1185,30 @@ TEST_F(Schedules, ABalconyOnAWallAndTheAreas) {
   id = made["id"];
   table = sbr::doc::areaTable(modeler.document());
   EXPECT_NEAR(table.buildingArea / 1e6, 48.0 + 2.73 * 0.5, 1e-6);
+  // docs/175: by the notice (住指発第 115 号 1 (4)(5)): 3000 out (2900 beyond the wall's face plus
+  // its 100 half) - open to the sky: only beyond 2 m from the wall's centre line counts (1100).
+  id = ok("change_balcony", {{"id", id}, {"depth", 3000}})["id"];
+  table = sbr::doc::areaTable(modeler.document());
+  EXPECT_NEAR(table.rows[0].legalFloor / 1e6, 48.0 + 2.73 * 1.1, 1e-6);
+  EXPECT_EQ(table.balconiesCounted, 1);
+  // A floor over it 2250 above (its underside): the parapet 1100 leaves 1150 open, 1.1 m or more
+  // and half of 2250 or more: the same.
+  const std::string over = ok("create_slab", {{"outline", {{0, -3200}, {8000, -3200}, {8000, 0}, {0, 0}}}, {"top", 2400}, {"thickness", 150}})["id"];
+  table = sbr::doc::areaTable(modeler.document());
+  EXPECT_NEAR(table.rows[0].legalFloor / 1e6, 48.0 + 2.73 * 1.1, 1e-6);
+  // A parapet 1200: 1050 open, less than 1.1 m: all of it counts.
+  id = ok("change_balcony", {{"id", id}, {"rail_height", 1200}})["id"];
+  table = sbr::doc::areaTable(modeler.document());
+  EXPECT_NEAR(table.rows[0].legalFloor / 1e6, 48.0 + 2.73 * 3.0, 1e-6);
+  // A rail on posts (open): from the floor, 2250 open: only beyond 2 m again.
+  id = ok("change_balcony", {{"id", id}, {"rail", "bars"}})["id"];
+  table = sbr::doc::areaTable(modeler.document());
+  EXPECT_NEAR(table.rows[0].legalFloor / 1e6, 48.0 + 2.73 * 1.1, 1e-6);
+  said = false;
+  for (const auto& n : table.legalNotes) said |= n.find("住指発第 115 号") != std::string::npos;
+  EXPECT_TRUE(said);
+  ok("delete", {{"ids", {over}}});
+  id = ok("change_balcony", {{"id", id}, {"depth", 1500}, {"rail", "wall"}, {"rail_height", 1100}})["id"];
   // Said to count as floor area: added to the storey its floor is at.
   id = ok("change_balcony", {{"id", id}, {"floor_area", "count"}})["id"];
   table = sbr::doc::areaTable(modeler.document());

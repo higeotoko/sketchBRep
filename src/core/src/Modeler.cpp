@@ -8701,9 +8701,10 @@ nlohmann::json pointsJson(const Poly& p) {
   return out;
 }
 
-std::string balconyText(const Modeler::BalconySpec& s, const BalconyPlace& at, const Bnd_Box& box, double postBase, const BalconyPlan& plan) {
+std::string balconyText(const Modeler::BalconySpec& s, const BalconyPlace& at, const Bnd_Box& box, double postBase, const BalconyPlan& plan,
+                        double within2m) {
   return nlohmann::json{{"wrap", s.wrap}, {"wrap_length", s.wrapLength}, {"outline", pointsJson(plan.floor)}, {"counted", pointsJson(plan.counted)},
-                        {"plan_area", std::abs(polyArea2(plan.floor)) / 2},
+                        {"plan_area", std::abs(polyArea2(plan.floor)) / 2}, {"within_2m_area", within2m},
                         {"along", s.along}, {"side", s.side >= 0 ? 1 : -1}, {"width", s.width}, {"depth", s.depth},
                         {"top", s.top}, {"thickness", s.thickness}, {"rail_height", s.railHeight}, {"rail", s.rail},
                         {"floor_area", s.floorArea}, {"posts", s.posts}, {"post_size", s.postSize}, {"post_base", postBase},
@@ -8760,7 +8761,20 @@ Result<ObjectId> Modeler::createBalcony(const BalconySpec& spec) {
   o.recipe.base = ImportedShape{solid.value(), "balcony"};
   o.attributes["kind"] = "balcony";
   o.attributes["host"] = spec.host;
-  o.attributes["balcony"] = balconyText(spec, place.value(), geom::exactBounds(solid.value()), postBase, *plan);
+  // docs/175: the part within 2 m of the wall's centre line (the notice on open balconies).
+  double within2m = 0.0;
+  {
+    const double d2 = std::min(spec.depth, 2000.0 - place->behind);
+    if (d2 >= spec.depth - 1e-6) {
+      within2m = std::abs(polyArea2(plan->floor)) / 2;
+    } else if (d2 > 1e-6) {
+      BalconySpec near = spec;
+      near.depth = d2;
+      near.posts = 0;
+      if (const auto part = balconyPlan(document_, near, place.value())) within2m = std::abs(polyArea2(part->floor)) / 2;
+    }
+  }
+  o.attributes["balcony"] = balconyText(spec, place.value(), geom::exactBounds(solid.value()), postBase, *plan, within2m);
   return addObject(std::move(o), "Balcony");
 }
 

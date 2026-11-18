@@ -482,7 +482,32 @@ AreaTable areaTable(const Document& document) {
     out.balconyArea += area;
     const std::string how = b.value("floor_area", std::string());
     if (how == "exclude") ++out.balconiesExcluded;
-    if (how != "count") continue;
+    double counted = how == "count" ? area : 0.0;
+    if (how.empty()) {
+      // docs/175: by the notice (住指発第 115 号 1 (5) → (4)). Its ceiling: the underside of what
+      // lies over it (a floor, a roof, a balcony above); nothing: open to the sky.
+      ++out.balconiesByNotice;
+      const double top = b.value("top", 0.0);
+      const Bnd_Box mine = document.worldBounds(o);
+      double above = 1e300;
+      for (const Object& x : document.objects()) {
+        if (x.id == o.id || x.shape.IsNull()) continue;
+        const std::string k = attribute(x, "kind");
+        if (k != "slab" && k != "roof" && k != "balcony" && k != "canopy" && k != "ceiling") continue;
+        const Bnd_Box box = document.worldBounds(x);
+        if (box.IsVoid() || mine.IsVoid()) continue;
+        const bool over = box.CornerMin().X() < mine.CornerMax().X() - 1 && box.CornerMax().X() > mine.CornerMin().X() + 1 &&
+                          box.CornerMin().Y() < mine.CornerMax().Y() - 1 && box.CornerMax().Y() > mine.CornerMin().Y() + 1;
+        if (over && box.CornerMin().Z() > top + 1.0) above = std::min(above, box.CornerMin().Z());
+      }
+      const std::string rail = b.value("rail", std::string("wall"));
+      const double opening = above - top - (rail == "wall" ? b.value("rail_height", 1100.0) : 0.0);
+      const bool open = above >= 1e299 || (opening >= 1100.0 - 1e-6 && opening >= (above - top) / 2 - 1e-6);
+      double within = b.value("within_2m_area", -1.0);
+      if (within < 0.0) within = b.value("width", 0.0) * std::max(0.0, std::min(b.value("depth", 0.0), 2000.0 - b.value("behind", 0.0)));
+      counted = open ? std::max(0.0, area - within) : area;
+    }
+    if (counted <= 0.0) continue;
     AreaRow* storey = nullptr;
     for (AreaRow& r : out.rows)
       if (r.enclosedKnown && std::abs(r.elevation - b.value("top", 0.0)) < 1.0) storey = &r;
@@ -490,7 +515,8 @@ AreaTable areaTable(const Document& document) {
       ++balconiesLoose;
       continue;
     }
-    storey->legalFloor += area;
+    storey->legalFloor += counted;
+    out.balconyFloorArea += counted;
     ++out.balconiesCounted;
   }
   bool everyKnown = !out.rows.empty();
@@ -761,13 +787,15 @@ AreaTable areaTable(const Document& document) {
   if (balconiesOnPosts > 0)
     out.legalNotes.push_back("建築面積：柱で支えたバルコニー " + std::to_string(balconiesOnPosts) + " 個は、柱の中心線まで全部入れた（令 2 条 1 項 2 号「外壁又はこれに代わる柱の中心線」。特定行政庁の取扱いを確かめてください）。");
   if (out.balconies > 0) {
-    const int open = out.balconies - out.balconiesCounted - out.balconiesExcluded - balconiesLoose;
-    std::string line = "バルコニー " + std::to_string(out.balconies) + " 個（幅 × 出の合計 " + number(out.balconyArea / 1e6, 2) + " ㎡）：";
-    line += "床面積に入れた " + std::to_string(out.balconiesCounted) + " 個、入れないとした " + std::to_string(out.balconiesExcluded) + " 個、未評価 " +
-            std::to_string(open + balconiesLoose) + " 個。";
+    std::string line = "バルコニー " + std::to_string(out.balconies) + " 個（床の合計 " + number(out.balconyArea / 1e6, 2) + " ㎡）：";
+    line += "床面積に入れた " + std::to_string(out.balconiesCounted) + " 個（" + number(out.balconyFloorArea / 1e6, 2) + " ㎡）。通達どおりに数えた " +
+            std::to_string(out.balconiesByNotice) + " 個、手で「入れない」とした " + std::to_string(out.balconiesExcluded) + " 個。";
     out.legalNotes.push_back(line);
-    out.legalNotes.push_back("バルコニーを床面積に入れるかは、開放性などによる（通達・特定行政庁の取扱い）。アプリは決めず、バルコニーのプロパティで選んだとおりにした。"
-                             "未評価の物は床面積に入れていない。");
+    out.legalNotes.push_back("バルコニーの床面積：昭和 61 年 4 月 30 日 建設省住指発第 115 号「床面積の算定方法について」1 (5)（吹きさらしの廊下に準じる）・(4)"
+                             "（外気に有効に開放されている部分の高さが 1.1 m 以上かつ天井の高さの 1/2 以上なら、幅 2 m までは算入しない）。国土交通省の通達のページで "
+                             "2026-11-18 に読んだ。2 m は壁の中心線から、天井の高さは真上の床・屋根・バルコニーの下の面まで（上に何も無ければ開放とした）、"
+                             "開放の高さは腰壁の上から（手すり・手すりなしは床から）。");
+    out.legalNotes.push_back("未評価（バルコニー）：隣地・ほかの建物からの離れ（外気に有効に開放か）、2 面以上開放の角、手すりの開放の割合。特定行政庁の取扱いを確かめてください。");
     if (balconiesLoose > 0)
       out.legalNotes.push_back("床面積に入れるとしたバルコニーのうち " + std::to_string(balconiesLoose) + " 個は、床の高さにレベル（階）が無いので入れていない。");
   }

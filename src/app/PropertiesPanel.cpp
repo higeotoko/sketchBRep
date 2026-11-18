@@ -559,8 +559,9 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       if (!spec->wrap.empty())
         size(tr("回った先の長さ"), "wrap_length", spec->wrapLength, 300, 20000, tr("角から、となりの壁の外の面に沿った長さ"));
       choice(tr("床面積"), "floor_area", QString::fromStdString(spec->floorArea),
-             {{tr("未評価（入れない）"), QString()}, {tr("入れる"), QStringLiteral("count")}, {tr("入れない"), QStringLiteral("exclude")}},
-             tr("法の床面積に入れるかどうか。バルコニーは開放性などで扱いが変わります（通達・特定行政庁の取扱い）。アプリは決めないので、ここで選びます。"
+             {{tr("通達どおり（自動）"), QString()}, {tr("全部入れる"), QStringLiteral("count")}, {tr("入れない"), QStringLiteral("exclude")}},
+             tr("法の床面積。自動では、通達（昭和 61 年 住指発第 115 号）どおり：開放の高さが 1.1 m 以上かつ天井の高さの 1/2 以上なら、"
+                "壁の中心線から 2 m までは入れず、その先だけ入れます。足りなければ全部入れます。特定行政庁の取扱いが違う時は、手で選び直してください。"
                 "建築面積は、壁の中心線から 1 m 以上出た分を、先から 1 m 下がった線まで自動で入れます"));
     }
   }
