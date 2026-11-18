@@ -39,10 +39,17 @@ docs/181 では、[docs/53](53_handover_2026-11-04.md) の決まり（SDK のフ
 | 段階 | 内容 |
 |---|---|
 | 計算テスト済み | コア：SKP・DAE のテスト 9 件中 8 件成功・1 件スキップ（SDK がある時の「SDK が無い時」）（ローカル） |
-| AI が配ったアプリで確認 | （記録待ち：展開した ZIP の `sbr_cli` で SKP を書き出して読み戻し、`sdk_dll` が ZIP の中の DLL か） |
-| CI | （記録待ち） |
+| AI が配ったアプリで確認 | 展開した ZIP の `sbr_cli` で、箱を SKP に書き出して読み戻せた（面 6 枚・立体 1）。`sdk_dll` は書き出し・読み込みとも ZIP の中の `SketchBRep\SketchUpAPI.dll`（`C:\Apps\SDK_Win` の物ではない）。ZIP を作る時の依存の検査（109 個）も成功 |
+| CI | run 44250936541（push、`8f70653`）：Linux 767 件成功、Windows 763 件＋3 件成功・GUI 237 件成功（7 件スキップ）。`Skp.SaysSoWithoutTheSdk` が Linux・Windows とも成功 |
 | Windows 実機確認 | まだ（チェック表 13-1・13-2・13-3） |
 
 ## 配布の記録
 
-（記録待ち）
+| 項目 | 値 |
+|---|---|
+| コード | `8f70653`（SketchUp SDK の DLL を ZIP に docs/182。Opus 5.5 で作業） |
+| CI | run 44250936541（push）：Linux・Windows とも成功 |
+| ZIP | `SketchBRep-windows-x64-8f70653-local.zip`（Codex のチャットフォルダの `outputs\`）。SketchUp SDK の DLL 2 つと `msvcp140_codecvt_ids.dll` 入り（`BUILD_INFO.json` に SHA256） |
+| サイズ | 81,622,271 bytes |
+| SHA256 | `8752fc487177688c3dde2a8dbba546f03e30a9fa7fd280b7e6d65e389a9f48a6` |
+| ZIP の検証 | `verify_portable_pads.py`・`verify_portable_mat.py` とも成功（docs/validation/2026-11-18-portable-8f70653*.json） |
