@@ -1,10 +1,11 @@
 #pragma once
 // SketchUp (.skp) export and import (docs/181) through Trimble's SketchUp C API.
 //
-// The SDK is not part of SketchBRep (not in Git, not in the ZIP): a build made with
-// SBR_SKETCHUP_SDK_DIR compiles against its headers, and at run time SketchUpAPI.dll is loaded
-// from the SDK folder on this PC (the environment variable SBR_SKETCHUP_SDK, else the folder the
-// build was made with). Without it, export and import say so and do nothing.
+// The SDK is not in Git: a build made with SBR_SKETCHUP_SDK_DIR compiles against its headers,
+// and at run time SketchUpAPI.dll is loaded (never linked): first the one next to the program
+// (the ZIP carries the SDK's DLLs since docs/182, the owner's decision of 2026-11-18), then the
+// SDK folder (the environment variable SBR_SKETCHUP_SDK, else the folder the build was made
+// with). Without it, export and import say so and do nothing.
 //
 // Export: each part a group named as the object; flat faces as SketchUp faces with their holes,
 // curved ones cut into triangles whose inner edges are soft and smooth; colours as materials
@@ -24,6 +25,8 @@ namespace sbr::geom {
 
 // Whether SketchUp files can be read and written here; `why` says what is missing.
 bool skpAvailable(std::string* why = nullptr);
+// The SketchUpAPI.dll in use (empty when none).
+std::string skpLibrary();
 
 struct SkpExportOptions {
   // Curved faces are cut into flat pieces no further than this from the surface (mm) and no

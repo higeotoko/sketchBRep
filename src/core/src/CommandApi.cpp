@@ -3832,7 +3832,7 @@ const std::vector<CommandDef>& commands() {
          options.linearDeflection = numberOr(a, "deflection_mm", 1.0);
          options.angularDeflection = numberOr(a, "angle_deg", 15.0) * M_PI / 180.0;
          must(m.exportSkp(text(a, "path"), a.contains("ids") ? ids(a, "ids") : std::vector<ObjectId>{}, options));
-         return json::object();
+         return json{{"sdk_dll", geom::skpLibrary()}};
        }},
       {"export_gltf",
        "Export visible objects (or 'ids') to glTF 2.0 for renderers (Blender, Twinmotion, Unreal Engine): "
@@ -4029,7 +4029,7 @@ const std::vector<CommandDef>& commands() {
          out["report"] = {{"groups", report.groups}, {"instances", report.instances}, {"faces", report.faces},
                           {"lines", report.lines}, {"parts", report.parts}, {"solids", report.solids},
                           {"left_out", report.leftOut}, {"hidden", report.hidden}, {"textured", report.textured},
-                          {"summary", report.summary()}};
+                          {"summary", report.summary()}, {"sdk_dll", geom::skpLibrary()}};
          return out;
        }},
       {"export_ifc",

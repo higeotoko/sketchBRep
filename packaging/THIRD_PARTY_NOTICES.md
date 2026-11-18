@@ -13,6 +13,7 @@ SketchBRep は、次のオープンソースソフトウェアを使用してい
 | oneTBB | 並列処理（メモリ管理） | Apache 2.0 | https://github.com/uxlfoundation/oneTBB |
 | ICU、FreeImage、FreeType、libpng、libjpeg、zlib、zstd、OpenEXR ほか | 画像・文字・圧縮 | 各ライセンス（PACKAGES.md 参照） | 各プロジェクト |
 | Microsoft Visual C++ ランタイム | 実行に必要なランタイム | Microsoft の再配布可能コードのライセンス | Microsoft |
+| SketchUp SDK（SketchUpAPI.dll・SketchUpCommonPreferences.dll） | SketchUp（.skp）の読み書き | Trimble Developer Terms（`licenses/sketchup-sdk`） | https://www.trimble.com/legal/developer-terms |
 
 ## GNU LGPL のライブラリについて
 

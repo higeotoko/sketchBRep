@@ -159,6 +159,15 @@ def package() -> int:
         return 1
     cmd = [sys.executable, "-I", str(CONFIG["repo"] / "tools" / "package_windows_local.py"), "--runtime", str(CONFIG["runtime"]),
            "--build", "build", "--stage", str(d / "work" / f"stage-{sha}"), "--output", str(zip_path), "--dumpbin", str(CONFIG["dumpbin"])]
+    # docs/182: the build's SketchUp SDK (CMake cache) -> its DLLs into the ZIP.
+    cache = CONFIG["repo"] / "build" / "CMakeCache.txt"
+    sdk = ""
+    if cache.is_file():
+        for line in cache.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.startswith("SBR_SKETCHUP_SDK_DIR:"):
+                sdk = line.split("=", 1)[1].strip()
+    if sdk:
+        cmd += ["--sketchup-sdk", sdk, "--vc-extra", str(CONFIG["dll_paths"][1] / "msvcp140_codecvt_ids.dll")]
     code, text = run(cmd, LOGS / "package.log", cwd=CONFIG["repo"])
     if code:
         print(f"package FAILED; log: {LOGS / 'package.log'}")
@@ -166,6 +175,8 @@ def package() -> int:
     info = json.loads([l for l in text.splitlines() if l.startswith("{")][-1])
     print(f"ZIP {info['zip']}  {info['bytes']:,} bytes  sha256 {info['sha256']}")
     print(f"  dlls {info['runtime_dlls_verified']} / deps {info['binary_dependencies_checked']}  -> {zip_path}")
+    if info.get("sketchup_sdk"):
+        print("  SketchUp SDK: " + ", ".join(row["file"] for row in info["sketchup_sdk"]))
     return 0
 
 

@@ -39,6 +39,30 @@ def package(args):
         if not any((runtime / "licenses" / name).rglob("*")):
             raise ValueError(f"Missing library license: {name}")
     shutil.copytree(runtime, stage)
+    # docs/182: the SketchUp SDK's DLLs next to the programs (the owner's decision, 2026-11-18;
+    # never in Git), and the VC runtime piece they need when the runtime lacks it.
+    sketchup = []
+    if args.sketchup_sdk:
+        folder = args.sketchup_sdk / "binaries" / "sketchup" / "x64"
+        for name in ["SketchUpAPI.dll", "SketchUpCommonPreferences.dll"]:
+            if not (folder / name).is_file():
+                raise ValueError(f"SketchUp SDK DLL missing: {folder / name}")
+            shutil.copy2(folder / name, stage / name)
+            sketchup.append({"file": name, "sha256": sha256(stage / name)})
+        for name in args.vc_extra or []:
+            source = Path(name)
+            if not (stage / source.name).is_file():
+                shutil.copy2(source, stage / source.name)
+                sketchup.append({"file": source.name, "sha256": sha256(stage / source.name)})
+        notice = stage / "licenses" / "sketchup-sdk"
+        notice.mkdir(parents=True, exist_ok=True)
+        (notice / "README.md").write_text(
+            "# SketchUp SDK\n\n"
+            "SketchUpAPI.dll and SketchUpCommonPreferences.dll are parts of the SketchUp SDK by Trimble Inc.,\n"
+            "used here to read and write SketchUp (.skp) files. They are subject to the Trimble Developer Terms:\n"
+            "https://www.trimble.com/legal/developer-terms\n\n"
+            "SketchUp is a trademark of Trimble Inc. SketchBRep is not made or endorsed by Trimble.\n",
+            encoding="utf-8")
     binaries = {}
     for name, folder in {"SketchBRep.exe": "src/app", "sbr_cli.exe": "tools/cli",
                          "sbr_mcp.exe": "tools/mcp", "sbr_phase0.exe": "tools/phase0"}.items():
@@ -80,7 +104,7 @@ def package(args):
             if not bundled and (runtime_dll or not system):
                 raise ValueError(f"Unresolved dependency: {binary.name} -> {dep}")
     record = {"code_commit": commit, "kind": "local-windows-portable",
-              "runtime_dlls_verified": len(manifest), "binary_dependencies_checked": checked,
+              "runtime_dlls_verified": len(manifest), "binary_dependencies_checked": checked, "sketchup_sdk": sketchup,
               "executables_sha256": binaries, "ci_verified": False, "human_windows_verified": False}
     (stage / "BUILD_INFO.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -103,4 +127,6 @@ if __name__ == "__main__":
     parser.add_argument("--stage", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--dumpbin", type=Path, required=True)
+    parser.add_argument("--sketchup-sdk", type=Path, help="SketchUp SDK folder: its DLLs go into the ZIP (docs/182)")
+    parser.add_argument("--vc-extra", nargs="*", help="VC runtime DLLs the SDK's DLLs need, when the runtime lacks them")
     package(parser.parse_args())

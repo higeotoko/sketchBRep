@@ -71,6 +71,8 @@ bool skpAvailable(std::string* why) {
   return false;
 }
 
+std::string skpLibrary() { return {}; }
+
 Status writeSkp(const std::vector<ColladaPart>&, const std::string&, const SkpExportOptions&) {
   std::string why;
   skpAvailable(&why);
@@ -121,6 +123,16 @@ std::wstring wide(const std::string& s) { return std::filesystem::u8path(s).wstr
 // else the SDK the build was made with.
 std::vector<std::wstring> dllFolders() {
   std::vector<std::wstring> out;
+  // docs/182: next to the program (the ZIP carries the SDK's DLLs since 2026-11-18).
+  {
+    std::wstring exe(MAX_PATH, L'\0');
+    const DWORD n = GetModuleFileNameW(nullptr, exe.data(), static_cast<DWORD>(exe.size()));
+    if (n > 0 && n < exe.size()) {
+      exe.resize(n);
+      const auto slash = exe.find_last_of(L"\\/");
+      if (slash != std::wstring::npos) out.push_back(exe.substr(0, slash));
+    }
+  }
   auto add = [&](std::wstring root) {
     if (root.empty()) return;
     while (!root.empty() && (root.back() == L'\\' || root.back() == L'/')) root.pop_back();
@@ -134,6 +146,11 @@ std::vector<std::wstring> dllFolders() {
   return out;
 }
 
+std::string& loadedFrom() {
+  static std::string path;
+  return path;
+}
+
 const Api* api(std::string* why) {
   static Api a;
   static std::string error;
@@ -145,7 +162,10 @@ const Api* api(std::string* why) {
       const std::wstring dll = folder + L"\\SketchUpAPI.dll";
       if (GetFileAttributesW(dll.c_str()) == INVALID_FILE_ATTRIBUTES) continue;
       module = LoadLibraryExW(dll.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
-      if (module) break;
+      if (module) {
+        loadedFrom() = std::filesystem::path(dll).u8string();
+        break;
+      }
       error = "SketchUpAPI.dll was found but could not be loaded (Windows error " + std::to_string(GetLastError()) + ")";
     }
     if (!module) {
@@ -270,6 +290,8 @@ struct PartGeometry {
 }  // namespace
 
 bool skpAvailable(std::string* why) { return api(why) != nullptr; }
+
+std::string skpLibrary() { return api(nullptr) ? loadedFrom() : std::string(); }
 
 Status writeSkp(const std::vector<ColladaPart>& parts, const std::string& path, const SkpExportOptions& options) {
   std::string why;
