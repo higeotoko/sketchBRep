@@ -180,6 +180,7 @@ docs/95〜104 で「Windows 実機確認：まだ」になっている物を、1
 | 13-1 | 例題 A を「ファイル > エクスポート」で「SketchUp (*.skp)」に書き出し、**SketchUp で開く** | 開けるか。物ごとのグループと名前、色、平らな面に余計な線が無いか、曲面が滑らかか、大きさ（mm）が合うか。階段がグループの中で立体ごとに分かれているか | |
 | 13-2 | SketchUp で作った・もらった .skp を「ファイル > インポート」で読み込む。Ctrl+Z | グループ・コンポーネントが物ごとに来るか。置き場所・大きさ・色が合うか。下の報告（隠した物・テクスチャの数）が分かるか。Ctrl+Z 1 回で消えるか | |
 | 13-3 | **SketchUp の SDK を入れていない別の PC** で ZIP を展開し、13-1・13-2 をする（docs/182） | 一覧に「SketchUp (*.skp)」が出て、読み書きできるか | |
+| 13-4 | タグを付けた壁のある物件を SKP に書き出し、SketchUp でグループを選んで「エンティティ情報」・タグを見る（docs/183） | タグが同じ名前で付いているか。属性「SketchBRep」に壁の仕様などが入っているか（Ruby コンソールで `Sketchup.active_model.entities.grep(Sketchup::Group).first.attribute_dictionary("SketchBRep").to_a`） | |
 
 ## 7. IFC（docs/101、docs/117）
 

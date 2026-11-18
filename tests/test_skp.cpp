@@ -189,3 +189,54 @@ TEST(Skp, AStairOfManySolidsComesBackWhole) {
   const double v = geom::volume(before);
   EXPECT_NEAR(geom::volume(after), v, v * 0.01);  // flat parts exactly; round handrails as facets
 }
+
+// docs/183: an object's tag and information go to SketchUp (its tag, a "SketchBRep" attribute
+// dictionary) and come back: the tag as the object's, the information kept with the id it came from.
+TEST(Skp, TagsAndInformationGoAndComeBack) {
+  SBR_NEEDS_SKETCHUP();
+  Modeler m;
+  sbr::api::CommandApi api{m};
+  auto ok = [&](const std::string& command, json args) {
+    json r = json::parse(api.execute(json{{"command", command}, {"args", args}}.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  const json walls = ok("create_wall", {{"points", {{0, 0}, {0, 4000}, {6000, 4000}}}, {"type", "exterior_siding"}, {"height", 2700}})["ids"];
+  const std::string wall = walls[0];
+  ok("set_tag", {{"id", wall}, {"tag", "1F 外壁"}});
+  const std::string block = ok("create_box", {{"origin", {9000, 0, 0}}, {"width", 500}, {"depth", 500}, {"height", 500}})["id"];
+  const std::string path = ::testing::TempDir() + "tags.skp";
+  ok("export_skp", {{"path", path}});
+  Modeler back;
+  geom::SkpReport report;
+  const auto ids = back.importSkp(path, &report);
+  ASSERT_TRUE(ids) << ids.error();
+  const Object* fromWall = nullptr;
+  const Object* fromBlock = nullptr;
+  for (const ObjectId& id : *ids) {
+    const Object* o = back.document().find(id);
+    const auto source = o->attributes.find("skp_source_id");
+    ASSERT_NE(source, o->attributes.end()) << o->name;
+    if (source->second == wall) fromWall = o;
+    if (source->second == block) fromBlock = o;
+  }
+  ASSERT_TRUE(fromWall);
+  ASSERT_TRUE(fromBlock);
+  EXPECT_EQ(fromWall->layer, "1F 外壁");
+  EXPECT_EQ(fromBlock->layer, "Default");
+  // The wall's build-up came along (kept, not made the object's own: it is a shape now).
+  const json carried = json::parse(fromWall->attributes.at("skp_attributes"));
+  EXPECT_EQ(carried.value("wall_type", ""), "exterior_siding");
+  EXPECT_EQ(carried.value("kind", ""), "wall");
+  EXPECT_NE(carried.value("wall_layers", "").find("窯業系サイディング"), std::string::npos);
+  EXPECT_FALSE(fromWall->attributes.count("kind"));
+  EXPECT_FALSE(fromWall->attributes.count("wall_type"));
+  // Written again and read again: the same information (the source id of the first export).
+  const std::string again = ::testing::TempDir() + "tags2.skp";
+  ASSERT_TRUE(back.exportSkp(again, {fromWall->id}));
+  Modeler third;
+  const auto more = third.importSkp(again);
+  ASSERT_TRUE(more) << more.error();
+  ASSERT_EQ(more->size(), 1u);
+  EXPECT_EQ(third.document().find(more->front())->layer, "1F 外壁");
+}

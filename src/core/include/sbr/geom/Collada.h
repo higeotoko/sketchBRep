@@ -43,6 +43,11 @@ struct ColladaPart {
   std::string name;
   ColladaColor color;
   std::vector<std::pair<int, ColladaColor>> faceColors;
+  // SketchUp (docs/183): the object's tag, and its information (the object's attributes, its id
+  // as "sbr_id"), written to and read from a "SketchBRep" attribute dictionary. COLLADA leaves
+  // them out.
+  std::string layer;
+  std::map<std::string, std::string> attributes;
 };
 
 struct ColladaExportOptions {

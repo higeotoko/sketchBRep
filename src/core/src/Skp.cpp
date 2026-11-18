@@ -109,7 +109,13 @@ namespace {
   X(SULoopInputAddVertexIndex) X(SULoopInputEdgeSetSoft) X(SULoopInputEdgeSetSmooth)                  \
   X(SUMaterialCreate) X(SUMaterialSetName) X(SUMaterialSetColor) X(SUMaterialSetOpacity)              \
   X(SUMaterialSetUseOpacity) X(SUMaterialGetColor) X(SUMaterialGetOpacity) X(SUMaterialGetUseOpacity) \
-  X(SUMaterialGetTexture) X(SUStringCreate) X(SUStringRelease) X(SUStringGetUTF8Length) X(SUStringGetUTF8)
+  X(SUMaterialGetTexture) X(SUStringCreate) X(SUStringRelease) X(SUStringGetUTF8Length) X(SUStringGetUTF8)          \
+  X(SUGroupToEntity) X(SUComponentInstanceToEntity) X(SUEntityAddAttributeDictionary)                 \
+  X(SUEntityGetAttributeDictionary) X(SUAttributeDictionaryCreate) X(SUAttributeDictionarySetValue)   \
+  X(SUAttributeDictionaryGetValue) X(SUAttributeDictionaryGetNumKeys) X(SUAttributeDictionaryGetKeys) \
+  X(SUTypedValueCreate) X(SUTypedValueRelease) X(SUTypedValueSetString) X(SUTypedValueGetString)      \
+  X(SUTypedValueGetType) X(SULayerCreate) X(SULayerSetName) X(SULayerGetName) X(SUModelAddLayers)     \
+  X(SUDrawingElementSetLayer) X(SUDrawingElementGetLayer)
 
 struct Api {
 #define SBR_SU_POINTER(f) decltype(&::f) f = nullptr;
@@ -207,10 +213,40 @@ constexpr double kInch = 25.4;  // mm in SketchUp's internal unit
 
 // --- export ------------------------------------------------------------------------------------
 
+constexpr const char* kDictionary = "SketchBRep";  // docs/183: an object's information in SketchUp
+
 struct Writer {
   const Api& su;
   SUModelRef model = SU_INVALID;
   std::map<ColladaColor, SUMaterialRef> materials;
+  std::map<std::string, SULayerRef> layers;
+
+  // The tag of that name (the default tag: none).
+  std::optional<SULayerRef> layer(const std::string& name) {
+    if (name.empty() || name == "Default") return std::nullopt;
+    const auto found = layers.find(name);
+    if (found != layers.end()) return found->second;
+    SULayerRef l = SU_INVALID;
+    if (su.SULayerCreate(&l) != SU_ERROR_NONE) return std::nullopt;
+    su.SULayerSetName(l, name.c_str());
+    su.SUModelAddLayers(model, 1, &l);
+    layers.emplace(name, l);
+    return l;
+  }
+
+  void attributes(SUEntityRef entity, const std::map<std::string, std::string>& values) {
+    if (values.empty()) return;
+    SUAttributeDictionaryRef dict = SU_INVALID;
+    if (su.SUAttributeDictionaryCreate(&dict, kDictionary) != SU_ERROR_NONE) return;
+    for (const auto& [key, value] : values) {
+      SUTypedValueRef v = SU_INVALID;
+      su.SUTypedValueCreate(&v);
+      su.SUTypedValueSetString(v, value.c_str());
+      su.SUAttributeDictionarySetValue(dict, key.c_str(), v);
+      su.SUTypedValueRelease(&v);
+    }
+    su.SUEntityAddAttributeDictionary(entity, dict);
+  }
 
   SUMaterialRef material(const ColladaColor& c) {
     const auto found = materials.find(c);
@@ -458,6 +494,8 @@ Status writeSkp(const std::vector<ColladaPart>& parts, const std::string& path, 
     };
     const SUGroupRef outer = group(root);
     if (faceMap.Extent() > 0) su.SUDrawingElementSetMaterial(su.SUGroupToDrawingElement(outer), w.material(part.color));
+    if (const auto tag = w.layer(part.layer)) su.SUDrawingElementSetLayer(su.SUGroupToDrawingElement(outer), *tag);
+    w.attributes(su.SUGroupToEntity(outer), part.attributes);
     SUEntitiesRef inside = SU_INVALID;
     su.SUGroupGetEntities(outer, &inside);
     // Several solids apart (a stair's treads and strings): each in a group of its own inside the
@@ -530,11 +568,56 @@ gp_Pnt place(const Matrix& m, const SUPoint3D& p) {
   return gp_Pnt(x / wv * kInch, y / wv * kInch, z / wv * kInch);
 }
 
+// A group's or instance's tag and information (docs/183), given to the objects made from it.
+struct Meta {
+  std::string layer;
+  std::map<std::string, std::string> attributes;
+};
+
 struct Reader {
   const Api& su;
   SkpReport& report;
   std::vector<ColladaPart> parts;
   std::vector<bool> closed;  // each part: a solid
+
+  std::string str(SUStringRef s) { return text(su, s); }
+
+  Meta meta(SUDrawingElementRef element, SUEntityRef entity) {
+    Meta out;
+    SULayerRef l = SU_INVALID;
+    if (su.SUDrawingElementGetLayer(element, &l) == SU_ERROR_NONE && SUIsValid(l)) {
+      SUStringRef s = SU_INVALID;
+      su.SUStringCreate(&s);
+      su.SULayerGetName(l, &s);
+      out.layer = text(su, s);
+      su.SUStringRelease(&s);
+      if (out.layer == "Layer0" || out.layer == "Untagged") out.layer.clear();  // SketchUp's default tag
+    }
+    SUAttributeDictionaryRef dict = SU_INVALID;
+    if (su.SUEntityGetAttributeDictionary(entity, kDictionary, &dict) != SU_ERROR_NONE || SUIsInvalid(dict)) return out;
+    size_t n = 0;
+    su.SUAttributeDictionaryGetNumKeys(dict, &n);
+    std::vector<SUStringRef> keys(n, SUStringRef SU_INVALID);
+    for (SUStringRef& k : keys) su.SUStringCreate(&k);
+    su.SUAttributeDictionaryGetKeys(dict, n, keys.data(), &n);
+    for (size_t i = 0; i < n; ++i) {
+      const std::string key = text(su, keys[i]);
+      SUTypedValueRef v = SU_INVALID;
+      su.SUTypedValueCreate(&v);
+      enum SUTypedValueType type = SUTypedValueType_Empty;
+      if (su.SUAttributeDictionaryGetValue(dict, key.c_str(), &v) == SU_ERROR_NONE && su.SUTypedValueGetType(v, &type) == SU_ERROR_NONE &&
+          type == SUTypedValueType_String) {
+        SUStringRef s = SU_INVALID;
+        su.SUStringCreate(&s);
+        su.SUTypedValueGetString(v, &s);
+        out.attributes[key] = text(su, s);
+        su.SUStringRelease(&s);
+      }
+      su.SUTypedValueRelease(&v);
+    }
+    for (SUStringRef& k : keys) su.SUStringRelease(&k);
+    return out;
+  }
 
   std::string groupName(SUGroupRef g) {
     SUStringRef s = SU_INVALID;
@@ -563,11 +646,13 @@ struct Reader {
 
   // The face parts from `from` on as one part named `name` (a compound of their shapes, each
   // one's colour kept on its faces).
-  void combine(std::size_t from, const std::string& name, int pieces) {
+  void combine(std::size_t from, const std::string& name, int pieces, const Meta& meta) {
     std::vector<ColladaPart> kept;
     std::vector<bool> keptClosed;
     ColladaPart whole;
     whole.name = name;
+    whole.layer = meta.layer;
+    whole.attributes = meta.attributes;
     BRep_Builder builder;
     TopoDS_Compound compound;
     builder.MakeCompound(compound);
@@ -651,7 +736,8 @@ struct Reader {
   }
 
   // One container's own faces and loose edges as a part; its groups and instances as their own.
-  void entities(SUEntitiesRef ents, const Matrix& m, const std::string& name, const std::optional<ColladaColor>& inherited, int depth) {
+  void entities(SUEntitiesRef ents, const Matrix& m, const std::string& name, const std::optional<ColladaColor>& inherited, int depth,
+                const Meta& meta = {}) {
     if (depth > 64) return;
     std::vector<std::pair<TopoDS_Face, ColladaColor>> made;
     size_t nFaces = 0;
@@ -693,6 +779,8 @@ struct Reader {
     if (!made.empty()) {
       bool solid = false;
       parts.push_back(joinFaces(made, name, &solid));
+      parts.back().layer = meta.layer;
+      parts.back().attributes = meta.attributes;
       closed.push_back(solid);
       if (solid) ++report.solids;
     }
@@ -723,6 +811,7 @@ struct Reader {
         ColladaPart part;
         part.shape = lines;
         part.name = name.empty() ? std::string("Lines") : name + " lines";
+        part.layer = meta.layer;
         parts.push_back(std::move(part));
         closed.push_back(false);
       }
@@ -753,8 +842,9 @@ struct Reader {
       size_t count = 0;
       if (pieces) su.SUEntitiesGetNumGroups(inside, &count);
       const std::size_t from = parts.size();
-      entities(inside, multiply(m, local), label, own ? own : inherited, depth + 1);
-      if (pieces) combine(from, label, static_cast<int>(count));
+      const Meta carried = this->meta(element, su.SUGroupToEntity(groups[i]));
+      entities(inside, multiply(m, local), label, own ? own : inherited, depth + 1, carried);
+      if (pieces) combine(from, label, static_cast<int>(count), carried);
     }
     size_t nInstances = 0;
     su.SUEntitiesGetNumInstances(ents, &nInstances);
@@ -788,7 +878,8 @@ struct Reader {
       const auto own = colorOf(material);
       SUEntitiesRef inside = SU_INVALID;
       su.SUComponentDefinitionGetEntities(definition, &inside);
-      entities(inside, multiply(m, local), instanceName, own ? own : inherited, depth + 1);
+      entities(inside, multiply(m, local), instanceName, own ? own : inherited, depth + 1,
+               this->meta(element, su.SUComponentInstanceToEntity(instances[i])));
     }
   }
 };

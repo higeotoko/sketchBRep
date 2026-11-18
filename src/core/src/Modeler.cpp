@@ -11856,6 +11856,10 @@ Result<std::vector<geom::ColladaPart>> Modeler::colouredParts(const std::vector<
     geom::ColladaPart part;
     part.shape = document_.worldShape(*o);
     part.name = o->name;
+    // docs/183: its tag and information (for SketchUp; COLLADA leaves them out).
+    part.layer = o->layer;
+    part.attributes = o->attributes;
+    part.attributes["sbr_id"] = o->id;
     part.color = colorOf(document_.inheritedMaterial(*o), document_.displayColor(*o));
     // Faces painted on their own (indices of the local shape are those of
     // the placed one: placing keeps the topology).
@@ -11889,6 +11893,17 @@ Result<std::vector<ObjectId>> Modeler::addColouredParts(const std::vector<geom::
     Object o;
     o.id = generateObjectId();
     o.name = part.name.empty() ? uniqueName("Imported") : part.name;
+    // docs/183: the tag it came with; the information it carried kept as it was (not as the
+    // object's own: the imported shape is not the wall, roof... its tool made), and the id of
+    // the object it was written from.
+    if (!part.layer.empty()) o.layer = part.layer;
+    if (!part.attributes.empty()) {
+      nlohmann::json carried = nlohmann::json::object();
+      for (const auto& [key, value] : part.attributes) carried[key] = value;
+      o.attributes["skp_attributes"] = carried.dump();
+      const auto source = part.attributes.find("sbr_id");
+      if (source != part.attributes.end()) o.attributes["skp_source_id"] = source->second;
+    }
     o.color = Color{part.color.r, part.color.g, part.color.b};
     if (TopExp_Explorer(part.shape, TopAbs_FACE).More()) {
       o.material = changes.colorMaterialFor(o.color);
