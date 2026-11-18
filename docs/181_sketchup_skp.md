@@ -78,9 +78,16 @@ Trimble の書面の許可が来たら、DLL を ZIP に入れる形にもでき
 | 計算テスト済み | コア全 754 件中 746 件成功・8 件スキップ（ローカル、SDK あり）。新規 4 件（`tests/test_skp.cpp`。SDK が無い時は 3 件がスキップ）。`Skp.BoxCylinderAndLineRoundTrip`：上を赤く塗った箱（名前「箱」）・四角い穴の空いた板・円柱・線 → 書き出して読み戻す → グループ 4、立体 3、作れない面 0、物 4／箱は同じ名前・面 6 枚・体積 1000 × 2000 × 3000 ぴったり・上の面だけ赤／穴の空いた板は面 10 枚・体積ぴったり（穴が残る）／円柱は 3% 以内／線 1／取り消し 1 回で消える。`Skp.ThroughTheCommands`：AI の `export_skp`・`import_skp` と報告。`Skp.AStairOfManySolidsComesBackWhole`：手すり・側板つきの階段（離れた立体がいくつも）→ 物 1 つ、立体の数も同じ、体積 1% 以内。`Skp.SaysSoWithoutTheSdk`：SDK が無い時は断り、何も変えない（この PC ではスキップ。CI で動く）。DAE のテスト 4 件もそのまま成功 |
 | GUI 自動確認済み | 全部の画面テスト 244 件中 236 件成功・7 件スキップ・1 件失敗（ローカル）。失敗は `lineToolCrossingLinesMakeFace`（線ツールのクリックの位置）で、docs/177 で変更を外しても同じく失敗すると確かめた、この PC だけの物 |
 | AI が配ったアプリで確認 | 作った版の `sbr_cli` で：SDK の見本の SketchUp のファイル（面 2 枚）と、SketchUp 2026 のテンプレート（人物のコンポーネント、面 110 枚）を読み込めた（SDK と SketchUp のファイルは、その場所から読んだだけでコピーしていない）。例題 A（2 階建て）・B（斜めの壁と屋根）・C（階段）を SKP に書き出して読み戻す → 物の数が同じ（23・25・6）、全部が立体のまま、外形の大きさが小数 1 桁まで同じ。重さ：A 227 KB・3.8 秒、B 21 KB・0.9 秒、C 370 KB・3.6 秒（開く・書き出す・読み戻すの合計）。`SketchBRep.exe`・`sbr_cli.exe`・`sbr_mcp.exe` が SketchUp の DLL に依存していない（`dumpbin /dependents` で 0 件） |
-| CI | （記録待ち。CI には SDK が無いので、SKP の 3 件はスキップ、「SDK が無い時」の 1 件が動く） |
+| CI | run 44245952451（push、`4543204`）：Linux 767 件成功、Windows 763 件＋3 件成功・GUI 237 件成功（7 件スキップ）。CI には SDK が無いので、SKP の 3 件はスキップ、`Skp.SaysSoWithoutTheSdk`（SDK が無い時は断る）が Linux・Windows とも成功 |
 | Windows 実機確認 | まだ（チェック表 13-1・13-2） |
 
 ## 配布の記録
 
-（記録待ち）
+| 項目 | 値 |
+|---|---|
+| コード | `805c393`（SketchUp の読み書き docs/181。Opus 5.5 で作業）。配ったのは docs/180 の記録を足した `4543204` |
+| CI | run 44245952451（push、`4543204`）：Linux・Windows とも成功 |
+| ZIP | `SketchBRep-windows-x64-4543204-local.zip`（Codex のチャットフォルダの `outputs\`）。この PC でビルドしたので SKP 入り。SDK のファイルは 0 件（ZIP の 580 個のファイルを確かめた） |
+| サイズ | 73,239,404 bytes |
+| SHA256 | `b4ed584455f351d88a1b9554c445a372d4b55be2739d608c1d86eeb5242a29c0` |
+| ZIP の検証 | `verify_portable_pads.py`・`verify_portable_mat.py` とも成功（docs/validation/2026-11-18-portable-4543204*.json）。展開した ZIP の `sbr_cli` で、箱を SKP に書き出して読み戻せた（面 6 枚・立体 1） |
