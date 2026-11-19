@@ -139,7 +139,7 @@ jobs:
         shell: pwsh
         run: |
           $env:PATH = "${{ steps.mamba.outputs.environment-path }}\Library\bin;$env:PATH"
-          ctest --test-dir build --output-on-failure -LE gui
+          ctest --test-dir build --output-on-failure -LE gui --parallel 4
 
       - name: Package portable zip
         shell: pwsh
