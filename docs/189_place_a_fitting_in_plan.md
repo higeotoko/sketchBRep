@@ -55,3 +55,10 @@
 - Windows ZIP `SketchBRep-windows-x64-3c72676-local.zip`、81,796,515 bytes。SHA256 `5cf80d537e6ddd21c4310a5a5b2b07b0bc5080430dc522a91f377c2ab1c97dd2`。
 - ZIP を展開して通常・べた基礎の検証と建具配置の GUI 2 件が成功（`docs/validation/2026-11-19-portable-3c72676*.json`）。人の操作による Windows 実機確認は未実施。
 - GitHub Actions は [run 44430786026](https://github.com/higeotoko/sketchBRep/actions/runs/44430786026) で成功。Linux 773 件、Windows の CTest 769 件＋3 件、GUI 239 件成功・7 件スキップ。
+
+### 3D・立面で開き方を選ぶ版（2026-11-19）
+
+- コア 752 件成功・8 件スキップ。関連 GUI 20 件成功。平面と、3D・正面立面の候補選択を確認した。3D・立面では右吊元・外開き、登録型と枠寸法の保持、開口 ID、取り消し・やり直し、Esc の確定を確認した。
+- Windows ZIP `SketchBRep-windows-x64-ea6b318-local.zip`、81,799,793 bytes。SHA256 `783322df1a73b617a268f4e0510375f5da0f4dbc0ecd0882c5d9a2ecb9f7b216`。
+- ZIP を展開して通常・べた基礎の検証、平面・3D・立面の GUI 3 条件が成功（`docs/validation/2026-11-19-portable-ea6b318*.json`）。人の操作による Windows 実機確認は未実施。
+- GitHub Actions は [run 44442269786](https://github.com/higeotoko/sketchBRep/actions/runs/44442269786) で Linux 773 件成功。Windows はローカルで確認し、GitHub の Windows ジョブは通常 push のためスキップ。
