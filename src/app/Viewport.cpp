@@ -73,6 +73,10 @@
 #include <StdSelect_ViewerSelector3d.hxx>
 #include <TopExp.hxx>
 #include <BRepAdaptor_Curve.hxx>
+#include <ShapeAnalysis_FreeBounds.hxx>
+#include <TopTools_HSequenceOfShape.hxx>
+#include <TopoDS_Wire.hxx>
+#include <BRep_Tool.hxx>
 #include <gp_Lin.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
@@ -2846,11 +2850,14 @@ void Viewport::syncWallCuts() {
 
 void Viewport::syncWallOutlines() {
   if (view_.IsNull()) return;
-  if (!wallOutlines_.IsNull()) {
-    context_->Remove(wallOutlines_, Standard_False);
-    wallOutlines_.Nullify();
+  for (Handle(AIS_Shape)* shown : {&wallOutlines_, &wallFloors_}) {
+    if (!shown->IsNull()) {
+      context_->Remove(*shown, Standard_False);
+      shown->Nullify();
+    }
   }
   wallOutlineEdges_ = 0;
+  wallFloorFaces_ = 0;
   if (!planCutZ_) return;
   // Walls are cut open (syncWallCuts), so nothing draws their faces at the cut: a wall standing
   // on a beam or sill shows its inner face only at its bottom, under the floor boards. Draw the
@@ -2859,9 +2866,10 @@ void Viewport::syncWallOutlines() {
   const gp_Pln cut(gp_Pnt(0, 0, *planCutZ_), gp::DZ());
   gp_Trsf down;
   down.SetTranslation(gp_Vec(0, 0, -1.0));
-  TopoDS_Compound compound;
+  TopoDS_Compound compound, floors;
   BRep_Builder builder;
   builder.MakeCompound(compound);
+  builder.MakeCompound(floors);
   // docs/195: each wall's cut lines with its build-up (its layers; none for a wall of a plain
   // thickness), so that where two walls of one build-up touch (a corner, mitred or butted, or two
   // walls in one line) the line between them is left out, as in the plan drawings (docs/165).
@@ -2887,7 +2895,26 @@ void Viewport::syncWallOutlines() {
     if (!section.IsDone()) continue;
     WallCut wall;
     if (const auto layers = o->attributes.find("wall_layers"); layers != o->attributes.end()) wall.layers = layers->second;
-    for (TopExp_Explorer e(section.Shape(), TopAbs_EDGE); e.More(); e.Next()) wall.edges.push_back(TopoDS::Edge(e.Current()));
+    Handle(TopTools_HSequenceOfShape) loose = new TopTools_HSequenceOfShape();
+    for (TopExp_Explorer e(section.Shape(), TopAbs_EDGE); e.More(); e.Next()) {
+      wall.edges.push_back(TopoDS::Edge(e.Current()));
+      loose->Append(e.Current());
+    }
+    // docs/196: the cut's shape laid at the wall's foot (1 mm up), so that a floor painted under
+    // the open wall does not show through it (nor do the wall's own bottom edges); what stands in
+    // the wall (columns, studs) is above it and still shows.
+    Handle(TopTools_HSequenceOfShape) wires;
+    ShapeAnalysis_FreeBounds::ConnectEdgesToWires(loose, 1e-3, Standard_False, wires);
+    gp_Trsf foot;
+    foot.SetTranslation(gp_Vec(0, 0, z0 + 1.0 - *planCutZ_));
+    for (int w = 1; !wires.IsNull() && w <= wires->Length(); ++w) {
+      const TopoDS_Wire wire = TopoDS::Wire(wires->Value(w));
+      if (!BRep_Tool::IsClosed(wire)) continue;
+      BRepBuilderAPI_MakeFace face(wire, Standard_True);
+      if (!face.IsDone()) continue;
+      builder.Add(floors, face.Face().Moved(TopLoc_Location(foot)));
+      ++wallFloorFaces_;
+    }
     cuts.push_back(std::move(wall));
   }
   constexpr double same = 0.01;  // mm
@@ -2902,38 +2929,61 @@ void Viewport::syncWallOutlines() {
     builder.Add(compound, edge.Moved(TopLoc_Location(down)));
     ++wallOutlineEdges_;
   };
+  // Where straight line [a, b] lies on straight line [p, q]: its span along [p, q] (0..1), and
+  // whether it is inside, clear of both ends (a wall ending against the face of another, a T).
+  struct Along {
+    double t0 = 0, t1 = 0;
+    bool inside = false;
+  };
+  const auto along = [&](const gp_Pnt& p, const gp_Pnt& q, const gp_Pnt& a, const gp_Pnt& b) -> std::optional<Along> {
+    const gp_Vec pq(p, q);
+    const double length = pq.Magnitude();
+    const gp_Vec u = pq / length;
+    const auto off = [&](const gp_Pnt& r) { return gp_Vec(p, r).Crossed(u).Magnitude(); };
+    if (off(a) > same || off(b) > same) return std::nullopt;
+    double s0 = gp_Vec(p, a).Dot(u), s1 = gp_Vec(p, b).Dot(u);
+    if (s0 > s1) std::swap(s0, s1);
+    Along out;
+    out.inside = s0 > same && s1 < length - same;
+    out.t0 = std::max(s0, 0.0) / length;
+    out.t1 = std::min(s1, length) / length;
+    if ((out.t1 - out.t0) * length < same) return std::nullopt;
+    return out;
+  };
   for (std::size_t i = 0; i < cuts.size(); ++i) {
     for (const TopoDS_Edge& edge : cuts[i].edges) {
       gp_Pnt p, q;
-      if (cuts[i].layers.empty() || !straight(edge, p, q)) {
+      if (!straight(edge, p, q)) {
         add(edge);
         continue;
       }
-      // The parts of this line (0..1 along it) that a line of another wall of the build-up covers.
-      const gp_Vec along(p, q);
-      const double length = along.Magnitude();
-      const gp_Dir u(along);
+      // The parts of this line (0..1 along it) not to draw: those a line of another wall of the
+      // build-up covers too, and (docs/196) the end of another wall standing against it (a T: the
+      // wall's face runs on across the other's end in the model, not in a plan); the end line of
+      // such a wall itself is not drawn either.
       std::vector<std::pair<double, double>> drop;
-      for (std::size_t j = 0; j < cuts.size(); ++j) {
-        if (j == i || cuts[j].layers != cuts[i].layers) continue;
+      bool againstAFace = false;
+      for (std::size_t j = 0; j < cuts.size() && !againstAFace; ++j) {
+        if (j == i) continue;
+        const bool sameBuildUp = !cuts[i].layers.empty() && cuts[j].layers == cuts[i].layers;
         for (const TopoDS_Edge& other : cuts[j].edges) {
           gp_Pnt a, b;
           if (!straight(other, a, b)) continue;
-          const auto off = [&](const gp_Pnt& r) { return gp_Vec(p, r).Crossed(gp_Vec(u)).Magnitude(); };
-          if (off(a) > same || off(b) > same) continue;
-          double t0 = gp_Vec(p, a).Dot(gp_Vec(u)) / length, t1 = gp_Vec(p, b).Dot(gp_Vec(u)) / length;
-          if (t0 > t1) std::swap(t0, t1);
-          t0 = std::max(t0, 0.0);
-          t1 = std::min(t1, 1.0);
-          if ((t1 - t0) * length >= same) drop.emplace_back(t0, t1);
+          if (const auto on = along(p, q, a, b); on && (sameBuildUp || on->inside)) drop.emplace_back(on->t0, on->t1);
+          if (const auto mine = along(a, b, p, q); mine && mine->inside) {
+            againstAFace = true;
+            break;
+          }
         }
       }
+      if (againstAFace) continue;
       if (drop.empty()) {
         add(edge);
         continue;
       }
+      const double length = p.Distance(q);
       std::sort(drop.begin(), drop.end());
-      const auto at = [&](double s) { return p.Translated(along * s); };
+      const auto at = [&](double s) { return p.Translated(gp_Vec(p, q) * s); };
       double from = 0.0;
       for (const auto& [d0, d1] : drop) {
         if ((d0 - from) * length >= same) add(BRepBuilderAPI_MakeEdge(at(from), at(d0)).Edge());
@@ -2941,6 +2991,14 @@ void Viewport::syncWallOutlines() {
       }
       if ((1.0 - from) * length >= same) add(BRepBuilderAPI_MakeEdge(at(from), at(1.0)).Edge());
     }
+  }
+  if (wallFloorFaces_ > 0) {
+    wallFloors_ = new AIS_Shape(floors);
+    wallFloors_->SetColor(Quantity_NOC_WHITE);
+    wallFloors_->Attributes()->SetFaceBoundaryDraw(Standard_False);
+    wallFloors_->Attributes()->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);
+    context_->Display(wallFloors_, AIS_Shaded, -1, Standard_False);
+    context_->Deactivate(wallFloors_);
   }
   if (wallOutlineEdges_ == 0) return;
   wallOutlines_ = new AIS_Shape(compound);

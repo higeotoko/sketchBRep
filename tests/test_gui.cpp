@@ -11023,7 +11023,10 @@ void GuiPhase1::planCutLeavesOutSeamsBetweenWallsOfOneBuildUp() {
       {"points",{{0,0},{3640,0},{3640,2730},{0,2730},{0,0}}},{"type","exterior_siding"},{"height",2400},{"mitre",true}}}}.dump()));
   QVERIFY2(made["ok"].get<bool>(),made.dump().c_str());
   QVERIFY(m.createTypedWalls({gp_Pnt(1820,0,0),gp_Pnt(1820,2730,0)},2400,"interior_board"));
-  QVERIFY(m.createSlab({gp_Pnt(0,0,0),gp_Pnt(3640,0,0),gp_Pnt(3640,2730,0),gp_Pnt(0,2730,0)},0,150));
+  const auto slab=m.createSlab({gp_Pnt(0,0,0),gp_Pnt(3640,0,0),gp_Pnt(3640,2730,0),gp_Pnt(0,2730,0)},0,150);
+  QVERIFY(slab);
+  // docs/196: a floor painted dark does not show through the open-cut walls.
+  QVERIFY(Json::parse(api.execute(Json{{"command","paint"},{"args",{{"ids",{*slab}},{"color","#8a5a2b"}}}}.dump()))["ok"].get<bool>());
   f.vp->lockView(Viewport::StandardView::Top);
   f.vp->setPlanCut(1100.0);
   f.vp->syncNow();f.vp->fitAll();QTest::qWait(30);
@@ -11031,7 +11034,7 @@ void GuiPhase1::planCutLeavesOutSeamsBetweenWallsOfOneBuildUp() {
   QVERIFY(!lines.IsNull());
   // No drawn line runs across a corner (along a diagonal) or across the outer walls' band at a
   // corner; the partition (another build-up) still has its line where it meets the outer wall.
-  int diagonals=0,partitionEnds=0;
+  int diagonals=0,partitionEnds=0,acrossTheTee=0;
   for(TopExp_Explorer e(lines,TopAbs_EDGE);e.More();e.Next()) {
     BRepAdaptor_Curve c(TopoDS::Edge(e.Current()));
     if(c.GetType()!=GeomAbs_Line) continue;
@@ -11040,9 +11043,15 @@ void GuiPhase1::planCutLeavesOutSeamsBetweenWallsOfOneBuildUp() {
     if(dx>1 && dy>1) ++diagonals;
     // Across the band (shorter than the wall is thick) near x = 1820: the partition's ends.
     if(std::abs(p.X()-q.X())>1 && p.Distance(q)<200 && std::abs((p.X()+q.X())/2-1820)<150) ++partitionEnds;
+    // docs/196: the outer walls' inner faces (inside the room's lines) do not run on across the
+    // partition's ends (a T).
+    const bool inner=(p.Y()>1 && p.Y()<200) || (p.Y()>2530 && p.Y()<2729);
+    if(dy<1 && inner && std::min(p.X(),q.X())<1820 && std::max(p.X(),q.X())>1820) ++acrossTheTee;
   }
   QCOMPARE(diagonals,0);
-  QVERIFY2(partitionEnds>=2,qPrintable(QString::number(partitionEnds)));
+  QCOMPARE(partitionEnds,0);  // the partition's end lines are not drawn either
+  QCOMPARE(acrossTheTee,0);
+  QVERIFY2(f.vp->wallFloorFaceCount()>=5,qPrintable(QString::number(f.vp->wallFloorFaceCount())));
   // Seen from above through the open cut, nor do the walls' own edges along a corner's diagonal
   // show: each outer wall leaves out the top and bottom of its two mitres.
   for(const auto& id:made["result"]["ids"])

@@ -218,6 +218,7 @@ class Viewport : public QWidget {
   std::size_t wallsCutOpen() const { return wallCutCount_; }
   // Edges of the walls' cut lines drawn in a plan cut (0 without a cut).
   std::size_t wallOutlineEdgeCount() const { return wallOutlineEdges_; }
+  std::size_t wallFloorFaceCount() const { return wallFloorFaces_; }
   // The drawn cut lines of the walls (world, 1 mm under the cut); null when there are none.
   TopoDS_Shape wallOutlineShape() const { return wallOutlines_.IsNull() ? TopoDS_Shape() : wallOutlines_->Shape(); }
   std::size_t diagnosticShapeCount() const { return diagnostics_.size(); }
@@ -555,6 +556,9 @@ class Viewport : public QWidget {
   void syncWallOutlines();
   Handle(AIS_Shape) wallOutlines_;
   std::size_t wallOutlineEdges_ = 0;
+  // docs/196: the cut walls' shapes laid at their feet (plan cut), so floors do not show through.
+  Handle(AIS_Shape) wallFloors_;
+  std::size_t wallFloorFaces_ = 0;
   std::size_t wallCutCount_ = 0;
   std::optional<double> planFloorZ_;
   std::optional<StoreyShown> storey_;
