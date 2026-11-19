@@ -2,9 +2,7 @@ name: CI
 
 # Saving CI minutes (see docs/09_ci.md):
 # - docs-only changes do not run CI; a newer push cancels the older run
-# - repository variable SBR_CI_ECONOMY=true: the Windows job runs only when
-#   started by hand (Actions > CI > Run workflow) or when the PR has the
-#   label "windows"; Linux always runs
+# - branch pushes run Linux; ci-* milestone tags run Linux and Windows
 # - ccache keeps Linux rebuilds short
 on:
   push:
@@ -12,6 +10,7 @@ on:
     # pull_request runs no longer start (docs/71). A push run attaches to the commit
     # and shows on the PR page.
     branches: [main, claude/sketchbrep-modeler-spec-4wnp0b]
+    tags: ['ci-*']
     paths-ignore: ["docs/**", "**/*.md"]
   pull_request:
     types: [opened, synchronize, reopened, labeled]
@@ -88,9 +87,8 @@ jobs:
   windows:
     if: >-
       (github.event_name == 'workflow_dispatch' && inputs.windows) ||
-      (github.event_name != 'workflow_dispatch' && github.event.action != 'labeled' && vars.SBR_CI_ECONOMY != 'true') ||
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'windows') &&
-       (vars.SBR_CI_ECONOMY == 'true' || github.event.action == 'labeled'))
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/ci-')) ||
+      (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'windows')
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4

@@ -38,7 +38,7 @@ Bash の `run_in_background` で回し、終わりの通知を待つ（ポーリ
 ## 変更ごとの流れ
 
 1. 実装 → `build` → 関係するテスト（`test core --filter` / `test gui --match`）→ `test core`（全件）。
-2. コミット（コードだけ。記録の docs は別コミット）→ push。**push で CI が自動起動**する（docs だけの push では起動しない）。
+2. コミット（コードだけ。記録の docs は別コミット）→ push。**通常 push で Linux CI が自動起動**する（docs だけの push を除く）。節目の Windows CI は `ci-*` タグを push する（docs/09）。
 3. `package` → `verify`。ZIP は HEAD のコミット名。
 4. `ci --wait` で緑を確認してから、docs に記録（CI の run 番号と件数、ZIP のサイズ・SHA256、`record` の JSON）→ 別コミット → push。
 5. オーナーに ZIP の場所を渡す。確認は「計算テスト済み／GUI 自動確認済み／Windows 実機確認（人の操作）」に分けて書く。
