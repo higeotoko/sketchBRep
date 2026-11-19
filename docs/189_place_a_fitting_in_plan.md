@@ -51,3 +51,11 @@
 
 - コアテストは 752 件成功、8 件スキップ。
 - GUI の関連 18 件が成功。`fittingPlacedWithItsWayInPlan` で、登録型の表示、選択後に型を更新したときの寸法、開き方を決めた後の型との関連、取り消し 1 回分、登録を削除・取り消したときの一覧更新を確認。
+
+### 開口寸法を型に保存する版の確認（2026-11-19）
+
+- コア 752 件成功・8 件スキップ。開口寸法の保存・再読込、取り消し、再定義時の寸法の保持を確認。
+- 関連 GUI 18 件成功。開口から幅・高さ・腰高を登録し、型を選んで指定寸法の開口を置けることを確認。寸法が未登録の型では、配置ツールの現在値で置ける。
+- Windows ZIP `SketchBRep-windows-x64-3c72676-local.zip`、81,796,515 bytes。SHA256 `5cf80d537e6ddd21c4310a5a5b2b07b0bc5080430dc522a91f377c2ab1c97dd2`。
+- ZIP を展開して通常・べた基礎の検証と建具配置の GUI 2 件が成功（`docs/validation/2026-11-19-portable-3c72676*.json`）。人の操作による Windows 実機確認は未実施。
+- GitHub Actions は [run 44430786026](https://github.com/higeotoko/sketchBRep/actions/runs/44430786026) で成功。Linux 773 件、Windows の CTest 769 件＋3 件、GUI 239 件成功・7 件スキップ。
