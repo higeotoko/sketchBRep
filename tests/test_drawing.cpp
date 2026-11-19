@@ -413,6 +413,31 @@ TEST(Drawing, SiteRoadUsesTheSelectedEdgeAndSavedInput) {
   EXPECT_TRUE(loaded.document().settings().siteBoundary->road);
 }
 
+TEST(Drawing, SiteRoadClearanceUsesTheVisibleCircularArc) {
+  doc::Modeler m;
+  const auto outline = m.createRectangle(geom::SketchPlane::ground(), 10000, 12000);
+  ASSERT_TRUE(outline);
+  ASSERT_TRUE(m.setSiteBoundary(doc::SiteBoundary{*outline, "Survey"}));
+  doc::SiteRoad road;
+  road.source = "Synthetic road register";
+  ASSERT_TRUE(m.setSiteRoad({gp_Pnt(0, 0, 0), gp_Pnt(10000, 0, 0)}, road));
+
+  auto plane = geom::SketchPlane::ground();
+  plane.origin = gp_Pnt(4000, 3500, 0);
+  const auto cylinder = m.createCircle(plane, 1100);
+  ASSERT_TRUE(cylinder && m.extrude(*cylinder, 2800));
+  const auto cutter = box(m, 2500, 2900, 3000, 2000, 3200, -100);
+  ASSERT_TRUE(m.boolean(doc::BooleanKind::Subtract, {*cylinder, cutter}));
+
+  const auto plan = makeView(m.document(), sitePlanView());
+  ASSERT_TRUE(plan);
+  ASSERT_GT(count(*plan, Pen::Visible, Item::Kind::Arc), 0);
+  ASSERT_EQ(plan->dimensions.size(), 1u);
+  EXPECT_EQ(plan->dimensions[0].text, "2.400 m");
+  EXPECT_NEAR(plan->dimensions[0].b.X(), 4000.0, 1e-6);
+  EXPECT_NEAR(plan->dimensions[0].b.Y(), 2400.0, 1e-6);
+}
+
 TEST(Drawing, SiteGroundWeightsTheMeasuredPerimeterAndDetectsStalePoints) {
   doc::Modeler m;
   const auto site = m.createRectangle(geom::SketchPlane::ground(), 10000, 12000);

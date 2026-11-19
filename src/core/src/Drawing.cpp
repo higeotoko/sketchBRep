@@ -278,7 +278,8 @@ std::optional<DimensionMark> roadClearance(const std::array<gp_Pnt2d, 2>& edge,
   builder.MakeCompound(projection);
   for (const Item& item : visible) {
     if (item.kind == Item::Kind::Arc) {
-      const gp_Circ circle(gp_Ax2(inPlane(item.centre), gp_Dir(0, 0, 1)), item.radius);
+      const gp_Ax2 axes(inPlane(item.centre), gp_Dir(0, 0, 1), gp_Dir(1, 0, 0));
+      const gp_Circ circle(axes, item.radius);
       BRepBuilderAPI_MakeEdge arc(circle, item.start, item.start + item.sweep);
       if (arc.IsDone()) builder.Add(projection, arc.Edge());
     } else if (item.kind == Item::Kind::Line || item.kind == Item::Kind::Polyline) {
