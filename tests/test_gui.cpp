@@ -343,6 +343,7 @@ class GuiPhase1 : public QObject {
   void toolsMenuIsGroupedAndProposalBarIsReadable();
   void openingFittingFromPanelShowsInPlanCut();
   void wallTypeFromToolbarAndColumnsShowInPlanCut();
+  void planCutLeavesOutSeamsBetweenWallsOfOneBuildUp();
   void drawnWallsChangeTypeFromToolbarAndPanel();
   void openingToolPlacesWithAFitting();
   void foundationSupportsSelectActualPartsAndInvalidate();
@@ -11009,6 +11010,45 @@ void GuiPhase1::wallTypeFromToolbarAndColumnsShowInPlanCut() {
   f.vp->setPlanCut(std::nullopt);
   QCOMPARE(f.vp->wallsCutOpen(),std::size_t(0));
   QCOMPARE(f.vp->wallOutlineEdgeCount(),std::size_t(0));
+}
+
+// docs/195 (checklist 2-5): in the plan mode on screen the line two walls of one build-up share
+// (the diagonal of a mitred corner, the butt line of a plain corner) is not drawn; walls of
+// different build-ups keep the line between them.
+void GuiPhase1::planCutLeavesOutSeamsBetweenWallsOfOneBuildUp() {
+  Fixture f;QVERIFY(f.setUp(2000,1500));auto& m=f.window.modeler();
+  using Json=nlohmann::json;
+  api::CommandApi api(m);
+  const auto made=Json::parse(api.execute(Json{{"command","create_wall"},{"args",{
+      {"points",{{0,0},{3640,0},{3640,2730},{0,2730},{0,0}}},{"type","exterior_siding"},{"height",2400},{"mitre",true}}}}.dump()));
+  QVERIFY2(made["ok"].get<bool>(),made.dump().c_str());
+  QVERIFY(m.createTypedWalls({gp_Pnt(1820,0,0),gp_Pnt(1820,2730,0)},2400,"interior_board"));
+  QVERIFY(m.createSlab({gp_Pnt(0,0,0),gp_Pnt(3640,0,0),gp_Pnt(3640,2730,0),gp_Pnt(0,2730,0)},0,150));
+  f.vp->lockView(Viewport::StandardView::Top);
+  f.vp->setPlanCut(1100.0);
+  f.vp->syncNow();f.vp->fitAll();QTest::qWait(30);
+  const TopoDS_Shape lines=f.vp->wallOutlineShape();
+  QVERIFY(!lines.IsNull());
+  // No drawn line runs across a corner (along a diagonal) or across the outer walls' band at a
+  // corner; the partition (another build-up) still has its line where it meets the outer wall.
+  int diagonals=0,partitionEnds=0;
+  for(TopExp_Explorer e(lines,TopAbs_EDGE);e.More();e.Next()) {
+    BRepAdaptor_Curve c(TopoDS::Edge(e.Current()));
+    if(c.GetType()!=GeomAbs_Line) continue;
+    const gp_Pnt p=c.Value(c.FirstParameter()),q=c.Value(c.LastParameter());
+    const double dx=std::abs(q.X()-p.X()),dy=std::abs(q.Y()-p.Y());
+    if(dx>1 && dy>1) ++diagonals;
+    // Across the band (shorter than the wall is thick) near x = 1820: the partition's ends.
+    if(std::abs(p.X()-q.X())>1 && p.Distance(q)<200 && std::abs((p.X()+q.X())/2-1820)<150) ++partitionEnds;
+  }
+  QCOMPARE(diagonals,0);
+  QVERIFY2(partitionEnds>=2,qPrintable(QString::number(partitionEnds)));
+  // Seen from above through the open cut, nor do the walls' own edges along a corner's diagonal
+  // show: each outer wall leaves out the top and bottom of its two mitres.
+  for(const auto& id:made["result"]["ids"])
+    QVERIFY2(f.vp->hiddenEdgeCount(id.get<std::string>())>=4,qPrintable(QString::number(f.vp->hiddenEdgeCount(id.get<std::string>()))));
+  const auto capture=qEnvironmentVariable("SBR_SEAM_CAPTURE");
+  if(!capture.isEmpty()) f.window.exportImage(capture);
 }
 
 // Walls already drawn change their build-up from the toolbar picker (with them selected) or

@@ -218,6 +218,8 @@ class Viewport : public QWidget {
   std::size_t wallsCutOpen() const { return wallCutCount_; }
   // Edges of the walls' cut lines drawn in a plan cut (0 without a cut).
   std::size_t wallOutlineEdgeCount() const { return wallOutlineEdges_; }
+  // The drawn cut lines of the walls (world, 1 mm under the cut); null when there are none.
+  TopoDS_Shape wallOutlineShape() const { return wallOutlines_.IsNull() ? TopoDS_Shape() : wallOutlines_->Shape(); }
   std::size_t diagnosticShapeCount() const { return diagnostics_.size(); }
   std::size_t roleShapeCount() const { return roles_.size(); }
   // What the tool preview shows now (null: nothing) - for checks.

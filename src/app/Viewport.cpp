@@ -813,6 +813,55 @@ void Viewport::releaseProto(const Entry& entry) {
   if (it != protos_.end() && --it->second.users <= 0) protos_.erase(it);
 }
 
+namespace {
+// docs/195: the edges of a wall that another wall of the same build-up (its layers) has too and
+// that are not upright: the top and bottom of a mitred corner's diagonal, the line across the
+// tops where two walls of one line meet. Not drawn, so the walls read as one, as in the plan
+// drawings (docs/165); upright edges (real corners) stay. `edges`: the wall's shown edges (world).
+std::vector<int> seamEdgesOfWall(const doc::Document& document, const doc::Object& wall,
+                                 const TopTools_IndexedMapOfShape& edges) {
+  std::vector<int> out;
+  const auto kind = wall.attributes.find("kind"), layers = wall.attributes.find("wall_layers");
+  if (kind == wall.attributes.end() || kind->second != "wall" || layers == wall.attributes.end() || layers->second.empty())
+    return out;
+  constexpr double same = 0.01;  // mm
+  struct Segment {
+    gp_Pnt a, b;
+  };
+  const auto segment = [&](const TopoDS_Shape& shape) -> std::optional<Segment> {
+    BRepAdaptor_Curve curve(TopoDS::Edge(shape));
+    if (curve.GetType() != GeomAbs_Line) return std::nullopt;
+    Segment s{curve.Value(curve.FirstParameter()), curve.Value(curve.LastParameter())};
+    if (s.a.Distance(s.b) < same || std::hypot(s.a.X() - s.b.X(), s.a.Y() - s.b.Y()) < same) return std::nullopt;  // upright
+    return s;
+  };
+  Bnd_Box mine = document.worldBounds(wall);
+  if (mine.IsVoid()) return out;
+  mine.Enlarge(1.0);
+  std::vector<Segment> others;
+  for (const doc::Object& o : document.objects()) {
+    if (o.id == wall.id || o.shape.IsNull()) continue;
+    const auto k = o.attributes.find("kind"), l = o.attributes.find("wall_layers");
+    if (k == o.attributes.end() || k->second != "wall" || l == o.attributes.end() || l->second != layers->second) continue;
+    if (!document.isVisible(o.id) || document.worldBounds(o).IsOut(mine)) continue;
+    for (TopExp_Explorer e(document.worldShape(o), TopAbs_EDGE); e.More(); e.Next())
+      if (const auto s = segment(e.Current())) others.push_back(*s);
+  }
+  if (others.empty()) return out;
+  for (int i = 1; i <= edges.Extent(); ++i) {
+    const auto s = segment(edges(i));
+    if (!s) continue;
+    for (const Segment& t : others) {
+      if ((s->a.Distance(t.a) < same && s->b.Distance(t.b) < same) || (s->a.Distance(t.b) < same && s->b.Distance(t.a) < same)) {
+        out.push_back(i);
+        break;
+      }
+    }
+  }
+  return out;
+}
+}  // namespace
+
 Handle(AIS_Shape) Viewport::makeDisplay(const doc::Object& object, Entry& entry) {
   entry.canonicalWorld = modeler_.document().worldShape(object);
   entry.builtLocation = entry.canonicalWorld.Location();
@@ -866,6 +915,8 @@ Handle(AIS_Shape) Viewport::makeDisplay(const doc::Object& object, Entry& entry)
     showBackSide(ais, object.kind());
   }
   entry.hiddenEdges = doc::hiddenEdgeIndices(object);
+  for (int i : seamEdgesOfWall(modeler_.document(), object, entry.displayEdges))
+    if (std::find(entry.hiddenEdges.begin(), entry.hiddenEdges.end(), i) == entry.hiddenEdges.end()) entry.hiddenEdges.push_back(i);
   ais->Attributes()->SetFaceBoundaryDraw(entry.hiddenEdges.empty() && !faceEdgesHidden() ? Standard_True : Standard_False);
   entry.edgeOverlay.Nullify();
   if (!entry.hiddenEdges.empty()) {
@@ -2811,6 +2862,14 @@ void Viewport::syncWallOutlines() {
   TopoDS_Compound compound;
   BRep_Builder builder;
   builder.MakeCompound(compound);
+  // docs/195: each wall's cut lines with its build-up (its layers; none for a wall of a plain
+  // thickness), so that where two walls of one build-up touch (a corner, mitred or butted, or two
+  // walls in one line) the line between them is left out, as in the plan drawings (docs/165).
+  struct WallCut {
+    std::string layers;
+    std::vector<TopoDS_Edge> edges;
+  };
+  std::vector<WallCut> cuts;
   for (const auto& [id, entry] : entries_) {
     const doc::Object* o = document.find(id);
     if (!o || o->shape.IsNull() || !o->attributes.count("kind") || o->attributes.at("kind") != "wall") continue;
@@ -2826,9 +2885,61 @@ void Viewport::syncWallOutlines() {
     section.Approximation(Standard_False);
     section.Build();
     if (!section.IsDone()) continue;
-    for (TopExp_Explorer e(section.Shape(), TopAbs_EDGE); e.More(); e.Next()) {
-      builder.Add(compound, e.Current().Moved(TopLoc_Location(down)));
-      ++wallOutlineEdges_;
+    WallCut wall;
+    if (const auto layers = o->attributes.find("wall_layers"); layers != o->attributes.end()) wall.layers = layers->second;
+    for (TopExp_Explorer e(section.Shape(), TopAbs_EDGE); e.More(); e.Next()) wall.edges.push_back(TopoDS::Edge(e.Current()));
+    cuts.push_back(std::move(wall));
+  }
+  constexpr double same = 0.01;  // mm
+  const auto straight = [](const TopoDS_Edge& edge, gp_Pnt& p, gp_Pnt& q) {
+    BRepAdaptor_Curve curve(edge);
+    if (curve.GetType() != GeomAbs_Line) return false;
+    p = curve.Value(curve.FirstParameter());
+    q = curve.Value(curve.LastParameter());
+    return p.Distance(q) >= same;
+  };
+  const auto add = [&](const TopoDS_Shape& edge) {
+    builder.Add(compound, edge.Moved(TopLoc_Location(down)));
+    ++wallOutlineEdges_;
+  };
+  for (std::size_t i = 0; i < cuts.size(); ++i) {
+    for (const TopoDS_Edge& edge : cuts[i].edges) {
+      gp_Pnt p, q;
+      if (cuts[i].layers.empty() || !straight(edge, p, q)) {
+        add(edge);
+        continue;
+      }
+      // The parts of this line (0..1 along it) that a line of another wall of the build-up covers.
+      const gp_Vec along(p, q);
+      const double length = along.Magnitude();
+      const gp_Dir u(along);
+      std::vector<std::pair<double, double>> drop;
+      for (std::size_t j = 0; j < cuts.size(); ++j) {
+        if (j == i || cuts[j].layers != cuts[i].layers) continue;
+        for (const TopoDS_Edge& other : cuts[j].edges) {
+          gp_Pnt a, b;
+          if (!straight(other, a, b)) continue;
+          const auto off = [&](const gp_Pnt& r) { return gp_Vec(p, r).Crossed(gp_Vec(u)).Magnitude(); };
+          if (off(a) > same || off(b) > same) continue;
+          double t0 = gp_Vec(p, a).Dot(gp_Vec(u)) / length, t1 = gp_Vec(p, b).Dot(gp_Vec(u)) / length;
+          if (t0 > t1) std::swap(t0, t1);
+          t0 = std::max(t0, 0.0);
+          t1 = std::min(t1, 1.0);
+          if ((t1 - t0) * length >= same) drop.emplace_back(t0, t1);
+        }
+      }
+      if (drop.empty()) {
+        add(edge);
+        continue;
+      }
+      std::sort(drop.begin(), drop.end());
+      const auto at = [&](double s) { return p.Translated(along * s); };
+      double from = 0.0;
+      for (const auto& [d0, d1] : drop) {
+        if ((d0 - from) * length >= same) add(BRepBuilderAPI_MakeEdge(at(from), at(d0)).Edge());
+        from = std::max(from, d1);
+      }
+      if ((1.0 - from) * length >= same) add(BRepBuilderAPI_MakeEdge(at(from), at(1.0)).Edge());
     }
   }
   if (wallOutlineEdges_ == 0) return;
