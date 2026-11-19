@@ -58,6 +58,7 @@
 #include <gp_Ax2.hxx>
 #include <BRepTools.hxx>
 #include <TopoDS.hxx>
+#include <TopoDS_Iterator.hxx>
 
 #include "sbr/doc/NativeFormat.h"
 #include "sbr/doc/ChangeSummary.h"
@@ -4908,11 +4909,50 @@ Status Modeler::clearFaceMaterials(const std::vector<ObjectId>& ids) {
   return Status::success();
 }
 
+namespace {
+
+// buildDefinitionShape adds the leaves in definition order. Map their material
+// assignments to the face indices of the placed compound.
+std::map<int, std::string> componentFaceMaterials(const ComponentDefinition& definition, const TopoDS_Shape& shape) {
+  std::map<int, std::string> materials;
+  TopTools_IndexedMapOfShape allFaces;
+  TopExp::MapShapes(shape, TopAbs_FACE, allFaces);
+  TopoDS_Iterator placed(shape);
+  for (const Object& leaf : definition.objects) {
+    if (leaf.shape.IsNull()) continue;
+    if (!placed.More()) break;
+    TopTools_IndexedMapOfShape faces;
+    TopExp::MapShapes(placed.Value(), TopAbs_FACE, faces);
+    placed.Next();
+    std::string base = leaf.material;
+    for (std::string parent = leaf.parent; base.empty() && !parent.empty();) {
+      const auto group = std::find_if(definition.objects.begin(), definition.objects.end(),
+                                      [&](const Object& child) { return child.id == parent; });
+      if (group == definition.objects.end()) break;
+      base = group->material;
+      parent = group->parent;
+    }
+    const auto resolved = resolveFaceMaterials(leaf).faces;
+    const std::map<int, std::string> painted(resolved.begin(), resolved.end());
+    for (int i = 1; i <= faces.Extent(); ++i) {
+      const auto own = painted.find(i);
+      const std::string& material = own == painted.end() ? base : own->second;
+      if (const int index = allFaces.FindIndex(faces(i)); index > 0 && !material.empty())
+        materials[index] = material;
+    }
+  }
+  return materials;
+}
+
+}  // namespace
+
 Result<Modeler::MaterialAt> Modeler::materialAt(const ObjectId& id, const TopoDS_Face& worldFace) const {
   const Object* o = document_.find(id);
   if (!o) return Result<MaterialAt>::failure("Object not found");
   MaterialAt out;
-  if (!o->faceMaterials.empty() && !o->shape.IsNull()) {
+  const auto* instance = std::get_if<ComponentInstance>(&o->recipe.base);
+  const auto* definition = instance && instance->plain() ? document_.findDefinition(instance->definitionId) : nullptr;
+  if ((!o->faceMaterials.empty() || definition) && !o->shape.IsNull()) {
     TopTools_IndexedMapOfShape faces;
     TopExp::MapShapes(o->shape, TopAbs_FACE, faces);
     const TopoDS_Shape local = worldFace.Moved(TopLoc_Location(document_.worldTransform(*o).Inverted()));
@@ -4923,6 +4963,14 @@ Result<Modeler::MaterialAt> Modeler::materialAt(const ObjectId& id, const TopoDS
     for (const auto& [i, material] : resolveFaceMaterials(*o).faces) {
       if (i == index) {
         out.material = material;
+        out.source = "face";
+      }
+    }
+    if (out.source.empty() && definition && index > 0) {
+      const auto materials = componentFaceMaterials(*definition, o->shape);
+      const auto material = materials.find(index);
+      if (material != materials.end()) {
+        out.material = material->second;
         out.source = "face";
       }
     }
@@ -11927,21 +11975,24 @@ Result<std::vector<geom::ColladaPart>> Modeler::colouredParts(const std::vector<
     part.layer = o->layer;
     part.attributes = o->attributes;
     part.attributes["sbr_id"] = o->id;
-    // A placement of a component used as it is: shared in SketchUp (docs/183).
+    part.color = colorOf(document_.inheritedMaterial(*o), document_.displayColor(*o));
+    std::map<int, geom::ColladaColor> faceColors;
     if (const auto* instance = std::get_if<ComponentInstance>(&o->recipe.base); instance && instance->plain()) {
       if (const ComponentDefinition* d = document_.findDefinition(instance->definitionId)) {
-        part.definition = d->id;
-        part.definitionName = d->name;
-        part.localShape = o->shape;
-        part.placement = document_.worldTransform(*o);
+        if (o->faceMaterials.empty()) {
+          part.definition = d->id;
+          part.definitionName = d->name;
+          part.localShape = o->shape;
+          part.placement = document_.worldTransform(*o);
+        }
+
+        for (const auto& [index, material] : componentFaceMaterials(*d, o->shape))
+          faceColors[index] = colorOf(material, o->color);
       }
     }
-    part.color = colorOf(document_.inheritedMaterial(*o), document_.displayColor(*o));
-    // Faces painted on their own (indices of the local shape are those of
-    // the placed one: placing keeps the topology).
-    for (const auto& [index, material] : resolveFaceMaterials(*o).faces) {
-      part.faceColors.emplace_back(index, colorOf(material, document_.displayColor(*o)));
-    }
+    for (const auto& [index, material] : resolveFaceMaterials(*o).faces)
+      faceColors[index] = colorOf(material, document_.displayColor(*o));
+    part.faceColors.assign(faceColors.begin(), faceColors.end());
     parts.push_back(std::move(part));
   }
   if (parts.empty()) return R::failure("Nothing to export");
@@ -12136,18 +12187,19 @@ Result<std::vector<ObjectId>> Modeler::addColouredParts(const std::vector<geom::
       if (source != part.attributes.end()) o.attributes["skp_source_id"] = source->second;
     }
     o.color = Color{part.color.r, part.color.g, part.color.b};
-    if (TopExp_Explorer(part.shape, TopAbs_FACE).More()) {
-      o.material = changes.colorMaterialFor(o.color);
+    if (TopExp_Explorer(part.shape, TopAbs_FACE).More()) o.material = changes.colorMaterialFor(o.color);
+    auto applyFaceColors = [&](Object& target, const TopoDS_Shape& shape) {
+      if (part.faceColors.empty()) return;
       TopTools_IndexedMapOfShape faces;
-      TopExp::MapShapes(part.shape, TopAbs_FACE, faces);
+      TopExp::MapShapes(shape, TopAbs_FACE, faces);
       for (const auto& [index, color] : part.faceColors) {
         if (index < 1 || index > faces.Extent()) continue;
         if (auto fm = FaceMaterial::of(TopoDS::Face(faces(index)),
-                                       changes.colorMaterialFor(Color{color.r, color.g, color.b}))) {
-          o.faceMaterials.push_back(std::move(*fm));
+                                      changes.colorMaterialFor(Color{color.r, color.g, color.b}))) {
+          target.faceMaterials.push_back(std::move(*fm));
         }
       }
-    }
+    };
     if (!part.definition.empty() && !part.localShape.IsNull()) {
       auto entry = definitions.find(part.definition);
       if (entry == definitions.end()) {
@@ -12158,6 +12210,7 @@ Result<std::vector<ObjectId>> Modeler::addColouredParts(const std::vector<geom::
         leaf.material = o.material;
         leaf.recipe.base = ImportedShape{part.localShape, path};
         if (const Status built = rebuild(leaf); !built) return R::failure(built.message());
+        applyFaceColors(leaf, leaf.shape);
 
         ComponentDefinition definition;
         definition.id = generateObjectId();
@@ -12175,6 +12228,7 @@ Result<std::vector<ObjectId>> Modeler::addColouredParts(const std::vector<geom::
     } else {
       o.recipe.base = ImportedShape{part.shape, path};
       if (const Status built = rebuild(o); !built) return R::failure(built.message());
+      applyFaceColors(o, o.shape);
     }
     ids.push_back(o.id);
     changes.add(o);

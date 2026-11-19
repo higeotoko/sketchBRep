@@ -41,7 +41,7 @@
 ## 次にやる事（オーナーが選んだ順：SketchUp 連携の 1 → 2 → 4）
 
 1. ~~物の情報を SketchUp の属性に~~（docs/183）
-2. ~~タグ・コンポーネントの共有の書き出し~~（docs/183）。読み込みも、入れ子と面ごとの色がなく剛体配置されたコンポーネントの共有に対応（docs/183）。残りは入れ子・複数色・拡大縮小・鏡像など。
+2. ~~タグ・コンポーネントの共有の書き出し~~（docs/183）。読み込みも、入れ子がなく剛体配置されたコンポーネントは、面ごとの色を保って定義を共有できる（docs/183）。残りは入れ子・拡大縮小・鏡像など。
 3. ~~LayOut に図面一式を書き出す~~（docs/185）。**オーナーの決定（2026-11-18）：LayOut の DLL は ZIP から外す、SketchUp の行って来いを優先**。残りは docs/185 の「まだ」（文字の向き、塗りの穴、SketchUp のモデルを置く、寸法、レイヤ）。元の説明：SDK の `headers/LayOutAPI`・`binaries/layout/x64`。SketchUp と同じく、Git にヘッダを入れず、動く時に DLL を読み込む作り（`Skp.cpp` の `SBR_SU_FUNCTIONS` と同じやり方）。図面は `doc::DrawingView`（`Drawing.cpp`）と図面一式（docs/125・130・131）から。
 4. ~~SketchUp で直した物を戻す~~（docs/186、`sync_skp`、`Modeler::syncSkp`、テスト `Skp.ChangesInSketchUpComeBack`）。残りは docs/186 の「まだ」。その先の案（オーナーにまだ聞いていない）：テクスチャ、SketchUp の Ruby 拡張とのライブ連携、シーン・断面、寸法、敷地の位置。
 

@@ -372,9 +372,8 @@ Status writeSkp(const std::vector<ColladaPart>& parts, const std::string& path, 
   std::map<std::string, SUComponentDefinitionRef> definitions;  // docs/183: shared components
   for (const ColladaPart& part : parts) {
     if (part.shape.IsNull()) continue;
-    // A placement of a shared component, not painted on its own: the definition once, then an
-    // instance where it is placed.
-    const bool shared = !part.definition.empty() && !part.localShape.IsNull() && part.faceColors.empty();
+    // The definition's faces and their colours are shared by its placements.
+    const bool shared = !part.definition.empty() && !part.localShape.IsNull();
     const TopoDS_Shape& source = shared ? part.localShape : part.shape;
     const bool already = shared && definitions.count(part.definition);
     auto place = [&](SUComponentDefinitionRef definition) {
@@ -999,19 +998,20 @@ struct Reader {
         carried.placed = true;
         carried.where = *where;
       }
+      const auto baseColor = own ? own : inherited;
       const std::size_t from = parts.size();
-      entities(inside, world, instanceName, own ? own : inherited, depth + 1, carried);
+      entities(inside, world, instanceName, baseColor, depth + 1, carried);
 
-      // Keep the world geometry for syncSkp. A flat, uniform-colour definition with a rigid
-      // placement can also become a shared SketchBRep component without changing its appearance.
+      // Keep the world geometry for syncSkp. A flat definition with a rigid placement can
+      // also become a shared SketchBRep component, with a variant per inherited colour.
       if (!carried.placed || carried.where.IsNegative() || parts.size() != from + 1) continue;
       ColladaPart& part = parts.back();
-      if (!part.faceColors.empty() || !TopExp_Explorer(part.shape, TopAbs_FACE).More()) continue;
+      if (!TopExp_Explorer(part.shape, TopAbs_FACE).More()) continue;
       size_t groups = 0, instancesInside = 0;
       if (su.SUEntitiesGetNumGroups(inside, &groups) != SU_ERROR_NONE || groups ||
           su.SUEntitiesGetNumInstances(inside, &instancesInside) != SU_ERROR_NONE || instancesInside) continue;
       auto& appearances = definitions[definition.ptr];
-      const auto [entry, inserted] = appearances.try_emplace(part.color);
+      const auto [entry, inserted] = appearances.try_emplace(baseColor.value_or(ColladaColor{}));
       if (inserted) entry->second = std::to_string(nextDefinition++);
       part.definition = entry->second;
       part.definitionName = definitionName;

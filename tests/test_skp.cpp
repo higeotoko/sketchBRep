@@ -257,6 +257,16 @@ TEST(Skp, ComponentsAreShared) {
     return r.value("result", json());
   };
   const std::string post = ok("create_box", {{"origin", {0, 0, 0}}, {"width", 105}, {"depth", 105}, {"height", 2700}})["id"];
+  TopoDS_Face top;
+  for (TopExp_Explorer e(m.document().worldShape(*m.document().find(post)), TopAbs_FACE); e.More(); e.Next()) {
+    GProp_GProps face;
+    BRepGProp::SurfaceProperties(e.Current(), face);
+    if (std::abs(face.CentreOfMass().Z() - 2700) < 1e-6) top = TopoDS::Face(e.Current());
+  }
+  ASSERT_FALSE(top.IsNull());
+  const auto red = m.createMaterial("Red", Color{1, 0, 0});
+  ASSERT_TRUE(red);
+  ASSERT_TRUE(m.paintFaces(post, {top}, *red));
   const std::string first = ok("make_component", {{"ids", {post}}, {"name", "柱 105"}})["id"];
   ok("copy_array", {{"ids", {first}}, {"count", 3}, {"vector", {910, 0, 0}}});
   ASSERT_EQ(m.document().objects().size(), 4u);
@@ -274,6 +284,19 @@ TEST(Skp, ComponentsAreShared) {
   ASSERT_EQ(ids->size(), 4u);
   ASSERT_EQ(back.document().definitions().size(), 1u);
   const auto definition = back.document().definitions().front().id;
+  auto hasRedTop = [](const Document& doc) {
+    const auto& leaf = doc.definitions().front().objects.front();
+    const auto colors = resolveFaceMaterials(leaf).faces;
+    if (colors.size() != 1) return false;
+    const Material* red = doc.findMaterial(colors.front().second);
+    if (!red || red->color.r != 1.0 || red->color.g != 0.0 || red->color.b != 0.0) return false;
+    TopTools_IndexedMapOfShape faces;
+    TopExp::MapShapes(leaf.shape, TopAbs_FACE, faces);
+    GProp_GProps face;
+    BRepGProp::SurfaceProperties(faces(colors.front().first), face);
+    return std::abs(face.CentreOfMass().Z() - 2700) < 1e-6;
+  };
+  EXPECT_TRUE(hasRedTop(back.document()));
   EXPECT_EQ(back.document().definitions().front().name, "柱 105");
   std::vector<double> xs;
   for (const ObjectId& id : *ids) {
@@ -286,6 +309,20 @@ TEST(Skp, ComponentsAreShared) {
     ASSERT_NE(source, instance->attributes.end());
     if (source->second == first) EXPECT_NEAR(instance->transform.Value(1, 2), -1.0, 1e-6);
     const TopoDS_Shape s = back.document().worldShape(*instance);
+    bool sampledTop = false;
+    for (TopExp_Explorer e(s, TopAbs_FACE); e.More(); e.Next()) {
+      GProp_GProps face;
+      BRepGProp::SurfaceProperties(e.Current(), face);
+      if (std::abs(face.CentreOfMass().Z() - 2700) >= 1e-6) continue;
+      const auto material = back.materialAt(id, TopoDS::Face(e.Current()));
+      ASSERT_TRUE(material);
+      EXPECT_EQ(material->source, "face");
+      EXPECT_DOUBLE_EQ(material->color.r, 1.0);
+      EXPECT_DOUBLE_EQ(material->color.g, 0.0);
+      EXPECT_DOUBLE_EQ(material->color.b, 0.0);
+      sampledTop = true;
+    }
+    EXPECT_TRUE(sampledTop);
     EXPECT_NEAR(geom::volume(s), 105.0 * 105 * 2700, 1.0);
     const auto b = geom::exactBounds(s);
     xs.push_back(b.CornerMin().X());
@@ -306,11 +343,22 @@ TEST(Skp, ComponentsAreShared) {
   Modeler reopened;
   ASSERT_TRUE(reopened.load(saved));
   ASSERT_EQ(reopened.document().definitions().size(), 1u);
+  EXPECT_TRUE(hasRedTop(reopened.document()));
   for (const Object& instance : reopened.document().objects()) {
     const auto* ref = std::get_if<ComponentInstance>(&instance.recipe.base);
     ASSERT_NE(ref, nullptr);
     EXPECT_EQ(ref->definitionId, definition);
   }
+  const auto exportedAgain = ::testing::TempDir() + "shared-painted-components.skp";
+  ASSERT_TRUE(reopened.exportSkp(exportedAgain));
+  Modeler importedAgain;
+  geom::SkpReport again;
+  ASSERT_TRUE(importedAgain.importSkp(exportedAgain, &again));
+  EXPECT_EQ(again.instances, 4);
+  EXPECT_EQ(again.groups, 0);
+  ASSERT_EQ(importedAgain.document().definitions().size(), 1u);
+  EXPECT_TRUE(hasRedTop(importedAgain.document()));
+  std::filesystem::remove(exportedAgain);
   std::filesystem::remove(saved);
 }
 
