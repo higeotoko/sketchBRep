@@ -657,7 +657,21 @@ TEST(MitredWalls, PartitionsCoreRunsIntoTheWallAtATee) {
   EXPECT_NEAR(after, total, 1.0);
   (void)southBefore;
   // In the plan: the partition's core lines (x 2947.5, 3052.5) run from core face to core face;
-  // the outer walls' lines stay whole (on that side they have only the board).
+  // the outer walls' core-face lines (y 52.5, 3947.5) break over the partition's core, so the
+  // cores meet with no line across the partition (docs/196, the owner's checklist 2-8); their
+  // board lines stay whole.
+  {
+    int across = 0, broken = 0;
+    for (const auto& [a, b] : sbr::doc::Modeler::wallLayerLines(modeler.document(), 1000.0)) {
+      if (std::abs(a.Y() - b.Y()) > 1e-6) continue;
+      if (std::abs(a.Y() - 52.5) > 1e-6 && std::abs(a.Y() - 3947.5) > 1e-6) continue;
+      const double x0 = std::min(a.X(), b.X()), x1 = std::max(a.X(), b.X());
+      if (x0 < 2947.5 + 1e-6 && x1 > 3052.5 - 1e-6) ++across;
+      if (std::abs(x1 - 2947.5) < 1e-6 || std::abs(x0 - 3052.5) < 1e-6) ++broken;
+    }
+    EXPECT_EQ(across, 0);
+    EXPECT_EQ(broken, 4);  // each of the two lines ends at both sides of the partition's core
+  }
   auto coreLines = [&] {
     double y0 = 1e300, y1 = -1e300;
     int n = 0;

@@ -7396,7 +7396,10 @@ std::vector<std::pair<gp_Pnt, gp_Pnt>> Modeler::wallLayerLines(const Document& d
         const WallBand& p = walls[t.p];
         const double lo = std::min(t.pieces.faceAcross, t.pieces.coreAcross), hi = std::max(t.pieces.faceAcross, t.pieces.coreAcross);
         for (std::size_t k = 0; k < across.size(); ++k) {
-          if (across[k] <= lo + 1e-6 || across[k] >= hi - 1e-6) continue;
+          // docs/196 (owner, checklist 2-8): the line of its core face breaks too, so the
+          // partition's core runs into this wall's core with no line across the partition.
+          const bool coreFace = std::abs(across[k] - t.pieces.coreAcross) <= 1e-6;
+          if (!coreFace && (across[k] <= lo + 1e-6 || across[k] >= hi - 1e-6)) continue;
           const gp_Pnt line = w.start.Translated(gp_Vec(w.left) * across[k]);
           const auto m0 = meet(line, w.dir, p.start.Translated(gp_Vec(p.left) * t.pieces.core[0]), p.dir);
           const auto m1 = meet(line, w.dir, p.start.Translated(gp_Vec(p.left) * t.pieces.core[1]), p.dir);
