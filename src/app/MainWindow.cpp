@@ -7016,7 +7016,7 @@ void MainWindow::showPermitWorkflow() {
   auto* dock = new PanelDock(tr("申請図の工程"), this);
   dock->setObjectName(name);
   using Action = PermitWorkflowPanel::Action;
-  auto* panel = new PermitWorkflowPanel(modeler_.document(), [this](Action action) {
+  auto* panel = new PermitWorkflowPanel(modeler_.document(), [this](Action action, const QString& target) {
     const auto trigger = [this](const char* id) {
       if (auto* menuAction = findChild<QAction*>(QString::fromLatin1(id))) menuAction->trigger();
     };
@@ -7033,6 +7033,9 @@ void MainWindow::showPermitWorkflow() {
         [[fallthrough]];
       case Action::Ground: showSiteGroundDialog(); break;
       case Action::Preview: trigger("showSitePlanAction"); break;
+      case Action::Rooms: showRoomsDialog(); break;
+      case Action::Openings: showSchedulesDialog(); break;
+      case Action::SelectRoom: setSelection({target.toStdString()}); break;
       case Action::None: break;
     }
   }, dock);

@@ -81,6 +81,18 @@ struct RoomSchedule {
 };
 RoomSchedule roomSchedule(const Document& document);
 
+struct RoomOpeningInput {
+  RoomRow room;
+  std::vector<std::size_t> openingIndices;  // in RoomOpeningInputs::openings; provisional geometry match
+};
+
+struct RoomOpeningInputs {
+  std::vector<RoomOpeningInput> rooms;
+  std::vector<OpeningRow> openings;
+  std::vector<std::size_t> unmatched;
+};
+RoomOpeningInputs roomOpeningInputs(const Document& document);
+
 // One storey.
 struct AreaRow {
   std::string level;  // name; empty: rooms whose marker is at no level's height

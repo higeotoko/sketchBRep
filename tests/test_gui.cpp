@@ -245,6 +245,7 @@ class GuiPhase1 : public QObject {
   void siteNorthFromTwoPlanPoints();
   void sitePlanFromASelectedBoundary();
   void permitWorkflowTracksSiteInputsAndStaleGround();
+  void permitWorkflowShowsRoomAndOpeningInputs();
   void proposalShowsRotationAndHide();
   void benchViewportSync();
   void benchEnterManyCopies();
@@ -770,6 +771,57 @@ void GuiPhase1::permitWorkflowTracksSiteInputsAndStaleGround() {
   QVERIFY(modeler.redo());
   open->trigger();
   QTRY_COMPARE(state(3), QStringLiteral("要再照合"));
+}
+
+void GuiPhase1::permitWorkflowShowsRoomAndOpeningInputs() {
+  Fixture f;
+  QVERIFY(f.setUp(4000, 3000));
+  auto& modeler = f.window.modeler();
+  using Json = nlohmann::json;
+  api::CommandApi api(modeler);
+  const auto call = [&](const char* command, Json args) {
+    return Json::parse(api.execute(Json{{"command", command}, {"args", std::move(args)}}.dump()));
+  };
+  const auto walls = call("create_wall", {{"points", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}, {0, 0}}},
+                                           {"thickness", 200}, {"height", 3000}});
+  QVERIFY(walls["ok"].get<bool>());
+  const auto south = walls["result"]["ids"][0].get<std::string>();
+  const auto window = call("place_openings", {{"host", south}, {"face_normal", {0, -1, 0}}, {"count", 1},
+                                              {"width", 1600}, {"height", 1200}, {"sill", 900}});
+  QVERIFY(window["ok"].get<bool>());
+  const auto room = modeler.createRoom(gp_Pnt(4000, 3000, 0), "居間");
+  QVERIFY(room);
+
+  auto* open = f.window.findChild<QAction*>(QStringLiteral("permitWorkflowAction"));
+  QVERIFY(open);
+  open->trigger();
+  auto* dock = f.window.findChild<QDockWidget*>(QStringLiteral("permitWorkflowDock"));
+  QVERIFY(dock);
+  auto* phases = dock->findChild<QListWidget*>(QStringLiteral("permitWorkflowPhases"));
+  auto* checks = dock->findChild<QTreeWidget*>(QStringLiteral("permitWorkflowChecks"));
+  auto* details = dock->findChild<QLabel*>(QStringLiteral("permitWorkflowDetails"));
+  auto* edit = dock->findChild<QPushButton*>(QStringLiteral("permitWorkflowEdit"));
+  QVERIFY(phases && checks && details && edit);
+  phases->setCurrentRow(3);
+  QCOMPARE(checks->topLevelItemCount(), 5);
+  QCOMPARE(checks->topLevelItem(0)->text(1), QStringLiteral("入力不足"));
+  QVERIFY(details->text().contains(QStringLiteral("開口候補 1件")));
+  QVERIFY(details->text().contains(QStringLiteral("1600 × 1200 mm")));
+  edit->click();
+  QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{*room});
+  doc::RoomFinish finish;
+  finish.use = "居間";
+  finish.ceilingHeight = 2400;
+  QVERIFY(modeler.setRoomFinish(*room, finish));
+  QTRY_COMPARE(checks->topLevelItem(0)->text(1), QStringLiteral("室データあり"));
+  QCOMPARE(checks->topLevelItem(2)->text(1), QStringLiteral("未評価"));
+  QCOMPARE(checks->topLevelItem(3)->text(1), QStringLiteral("未評価"));
+  QCOMPARE(checks->topLevelItem(4)->text(1), QStringLiteral("未評価"));
+  QVERIFY(modeler.setOpeningSize(south, {1}, 1700, 1200));
+  QTRY_VERIFY(details->text().contains(QStringLiteral("1700 × 1200 mm")));
+  QVERIFY(details->text().contains(QStringLiteral("2.400 m")));
+  const auto capture = qEnvironmentVariable("SBR_ROOM_OPENING_INPUT_CAPTURE");
+  if (!capture.isEmpty()) QVERIFY(dock->grab().save(capture));
 }
 
 // Request "線の移動コピー・等間隔配列・等分割": a selected line copied with

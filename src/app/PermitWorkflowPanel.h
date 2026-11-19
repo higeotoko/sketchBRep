@@ -20,8 +20,9 @@ namespace sbr::app {
 
 class PermitWorkflowPanel : public QWidget {
  public:
-  enum class Action { None, Boundary, North, Road, SavedRoad, Ground, SavedGround, Preview };
-  PermitWorkflowPanel(doc::Document& document, std::function<void(Action)> open, QWidget* parent = nullptr);
+  enum class Action { None, Boundary, North, Road, SavedRoad, Ground, SavedGround, Preview, Rooms, Openings, SelectRoom };
+  PermitWorkflowPanel(doc::Document& document, std::function<void(Action, const QString&)> open,
+                      QWidget* parent = nullptr);
 
  protected:
   void showEvent(QShowEvent* event) override;
@@ -32,11 +33,13 @@ class PermitWorkflowPanel : public QWidget {
     QString button;
     Action action = Action::None;
     bool attention = false;
+    QString target;
   };
 
   void refresh();
   void showSelectedCheck();
   void readSiteChecks();
+  void readRoomOpeningChecks();
 
   doc::Document& document_;
   QListWidget* phases_;

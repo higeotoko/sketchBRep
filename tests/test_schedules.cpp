@@ -126,6 +126,45 @@ TEST_F(Schedules, OpeningsOfOneKindSizeAndFittingShareAMark) {
   EXPECT_EQ(modeler.history().undoCount(), steps);
 }
 
+TEST_F(Schedules, RoomOpeningInputsSeparateAdjacentRoomsAlongOneWall) {
+  const auto unpaired = ok("room_opening_inputs");
+  ASSERT_EQ(unpaired["rooms"].size(), 1u);
+  ASSERT_EQ(unpaired["rooms"][0]["opening_candidates"].size(), 2u) << unpaired.dump();
+  EXPECT_EQ(unpaired["unmatched_openings"].size(), 3u);
+  EXPECT_TRUE(unpaired["rooms"][0]["ceiling_height_mm"].is_null());
+
+  const std::string eastRoom = ok("create_room", {{"at", {6000, 3000}}, {"name", "洋室"}})["id"];
+  sbr::doc::RoomFinish finish;
+  finish.use = "居間";
+  finish.ceilingHeight = 2400;
+  ASSERT_TRUE(modeler.setRoomFinish(room, finish));
+  const auto steps = modeler.history().undoCount();
+  const auto inputs = ok("room_opening_inputs");
+  ASSERT_EQ(inputs["rooms"].size(), 2u);
+  EXPECT_TRUE(inputs["unmatched_openings"].empty()) << inputs.dump();
+  EXPECT_EQ(inputs["daylight"], "未評価");
+  EXPECT_EQ(inputs["natural_ventilation"], "未評価");
+  EXPECT_EQ(inputs["mechanical_ventilation"], "未評価");
+  std::map<std::string, json> byRoom;
+  for (const auto& row : inputs["rooms"]) byRoom.emplace(row.at("id").get<std::string>(), row);
+  const auto& westRoom = byRoom.at(room);
+  EXPECT_EQ(westRoom["use"], "居間");
+  EXPECT_EQ(westRoom["ceiling_height_mm"], 2400);
+  EXPECT_GT(westRoom["inner_area_m2"].get<double>(), 0);
+  std::map<std::string, std::string> southWindows;
+  for (const auto& [id, row] : byRoom) {
+    for (const auto& op : row["opening_candidates"]) {
+      if (op["host"] == south) {
+        EXPECT_EQ(op["width_mm"], 1600);
+        EXPECT_TRUE(southWindows.emplace(id, op.at("id").get<std::string>()).second);
+      }
+    }
+  }
+  ASSERT_EQ(southWindows.size(), 2u);
+  EXPECT_NE(southWindows.at(room), southWindows.at(eastRoom));
+  EXPECT_EQ(modeler.history().undoCount(), steps);
+}
+
 TEST_F(Schedules, RoomsAndAreasAreReadAsTheWallsAreNow) {
   json rooms = ok("room_schedule", {{"include_csv", true}});
   ASSERT_EQ(rooms["rooms"].size(), 1u);

@@ -208,30 +208,57 @@ OpeningSchedule openingSchedule(const Document& document) {
   return out;
 }
 
+namespace {
+RoomRow makeRoomRow(const Document& document, const RoomInfo& r) {
+  RoomRow row;
+  row.id = r.id;
+  row.name = r.name;
+  row.level = levelName(document, r.level);
+  row.closed = r.closed;
+  row.counted = r.closed && r.problem.empty();
+  row.problem = r.problem;
+  row.centreArea = r.centreArea;
+  row.innerKnown = r.innerKnown;
+  row.innerArea = r.innerArea;
+  row.innerPerimeter = r.innerPerimeter;
+  row.at = r.at;
+  if (const Object* marker = document.find(r.id)) {
+    const RoomFinish finish = roomFinishOf(*marker);
+    row.use = finish.use;
+    row.floor = finish.floor;
+    row.wall = finish.wall;
+    row.ceiling = finish.ceiling;
+    row.ceilingHeight = finish.ceilingHeight;
+    row.ratioPart = finish.ratioPart;
+  }
+  return row;
+}
+
+bool facesRoomSegment(const RoomInfo& room, const OpeningRow& opening, double scale) {
+  const double halfWidth = opening.width * scale / 2;
+  const double maxOffset = opening.depth * scale + tolerance::kLinear;
+  const double nx = opening.normal.X(), ny = opening.normal.Y();
+  for (std::size_t i = 0; i < room.centre.size(); ++i) {
+    const auto& a = room.centre[i];
+    const auto& b = room.centre[(i + 1) % room.centre.size()];
+    const double dx = b.X() - a.X(), dy = b.Y() - a.Y();
+    const double length = std::hypot(dx, dy);
+    if (length <= tolerance::kLinear ||
+        std::abs(dx * nx + dy * ny) > length * tolerance::kAngular) continue;
+    const double px = opening.center.X() - a.X(), py = opening.center.Y() - a.Y();
+    const double along = (px * dx + py * dy) / length;
+    const double offset = std::abs(px * dy - py * dx) / length;
+    if (offset <= maxOffset && along - halfWidth >= -tolerance::kLinear &&
+        along + halfWidth <= length + tolerance::kLinear) return true;
+  }
+  return false;
+}
+}  // namespace
+
 RoomSchedule roomSchedule(const Document& document) {
   RoomSchedule out;
   for (const RoomInfo& r : Modeler::roomsIn(document)) {
-    RoomRow row;
-    row.id = r.id;
-    row.name = r.name;
-    row.level = levelName(document, r.level);
-    row.closed = r.closed;
-    row.counted = r.closed && r.problem.empty();
-    row.problem = r.problem;
-    row.centreArea = r.centreArea;
-    row.innerKnown = r.innerKnown;
-    row.innerArea = r.innerArea;
-    row.innerPerimeter = r.innerPerimeter;
-    row.at = r.at;
-    if (const Object* marker = document.find(r.id)) {
-      const RoomFinish finish = roomFinishOf(*marker);
-      row.use = finish.use;
-      row.floor = finish.floor;
-      row.wall = finish.wall;
-      row.ceiling = finish.ceiling;
-      row.ceilingHeight = finish.ceilingHeight;
-      row.ratioPart = finish.ratioPart;
-    }
+    RoomRow row = makeRoomRow(document, r);
     if (row.counted) {
       out.centreTotal += r.centreArea;
       if (r.innerKnown) out.innerTotal += r.innerArea;
@@ -241,6 +268,44 @@ RoomSchedule roomSchedule(const Document& document) {
     }
     out.rows.push_back(std::move(row));
   }
+  return out;
+}
+
+RoomOpeningInputs roomOpeningInputs(const Document& document) {
+  const auto rooms = Modeler::roomsIn(document);
+  RoomOpeningInputs out;
+  out.openings = openingSchedule(document).rows;
+  std::vector<bool> matched(out.openings.size(), false);
+  std::map<ObjectId, std::vector<std::size_t>> byWall;
+  for (std::size_t i = 0; i < out.openings.size(); ++i) byWall[out.openings[i].host].push_back(i);
+  for (const auto& room : rooms) {
+    RoomOpeningInput row{makeRoomRow(document, room), {}};
+    if (row.room.counted) {
+      const double floor = room.at.Z();
+      const auto& levels = document.settings().levels;
+      const auto next = std::upper_bound(levels.begin(), levels.end(), floor + tolerance::kLinear,
+          [](double z, const FloorLevel& level) { return z < level.elevation; });
+      for (const auto& wall : room.walls) {
+        const auto openings = byWall.find(wall);
+        if (openings == byWall.end()) continue;
+        const auto* host = document.find(wall);
+        const double scale = std::abs(document.worldTransform(*host).ScaleFactor());
+        for (std::size_t i : openings->second) {
+          const auto& opening = out.openings[i];
+          if (opening.bottom < floor - tolerance::kLinear ||
+              (next != levels.end() && opening.bottom + opening.height * scale > next->elevation + tolerance::kLinear) ||
+              !facesRoomSegment(room, opening, scale)) continue;
+          row.openingIndices.push_back(i);
+          matched[i] = true;
+        }
+      }
+      std::sort(row.openingIndices.begin(), row.openingIndices.end());
+      row.openingIndices.erase(std::unique(row.openingIndices.begin(), row.openingIndices.end()), row.openingIndices.end());
+    }
+    out.rooms.push_back(std::move(row));
+  }
+  for (std::size_t i = 0; i < matched.size(); ++i)
+    if (!matched[i]) out.unmatched.push_back(i);
   return out;
 }
 

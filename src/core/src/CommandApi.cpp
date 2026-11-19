@@ -3011,6 +3011,33 @@ const std::vector<CommandDef>& commands() {
          if (a.value("include_csv", false)) result["csv"] = doc::roomScheduleCsv(s);
          return result;
        }},
+      {"room_opening_inputs",
+       "Read room data and geometrically associated wall-opening candidates for daylight and ventilation review. "
+       "Candidates are opening rectangles next to a room's wall segment. Exterior exposure, effective areas, "
+       "ventilation equipment, and compliance remain unevaluated. Area is m2; dimensions are mm.",
+       SCHEMA({"type": "object", "properties": {}}),
+       [](doc::Modeler& m, const json&) {
+         const auto data = doc::roomOpeningInputs(m.document());
+         const auto openingJson = [](const doc::OpeningRow& o) {
+           return json{{"id", o.openingId}, {"host", o.host}, {"mark", o.mark}, {"kind", o.kind},
+                       {"fitting", o.fitting}, {"wall_tagged_inner", o.inner}, {"width_mm", o.width},
+                       {"height_mm", o.height}, {"sill_mm", o.sill}};
+         };
+         json rooms = json::array(), unmatched = json::array();
+         for (const auto& entry : data.rooms) {
+           const auto& room = entry.room;
+           json candidates = json::array();
+           for (std::size_t index : entry.openingIndices) candidates.push_back(openingJson(data.openings[index]));
+           rooms.push_back({{"id", room.id}, {"name", room.name}, {"level", room.level}, {"use", room.use},
+               {"closed", room.closed}, {"problem", room.problem},
+               {"inner_area_m2", room.counted && room.innerKnown ? json(room.innerArea / 1e6) : json(nullptr)},
+               {"ceiling_height_mm", room.ceilingHeight > 0 ? json(room.ceilingHeight) : json(nullptr)},
+               {"opening_candidates", std::move(candidates)}});
+         }
+         for (std::size_t index : data.unmatched) unmatched.push_back(openingJson(data.openings[index]));
+         return json{{"rooms", std::move(rooms)}, {"unmatched_openings", std::move(unmatched)},
+                     {"daylight", "未評価"}, {"natural_ventilation", "未評価"}, {"mechanical_ventilation", "未評価"}};
+       }},
       {"area_table",
        "Areas by storey measured from the model (m2): per level 'enclosed' (everything the walls standing on it "
        "enclose, within the wall lines, with or without rooms), regions, rooms, regions_without_room, room_centre, "
@@ -4238,7 +4265,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
       name == "preview" || name == "query_objects" || name == "aggregate" || name == "get_changes" ||
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
       name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" ||
-      name == "get_sun" || name == "get_site_ground_status" ||
+      name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" ||
         name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
     return E::Read;
   }

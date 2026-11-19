@@ -19,6 +19,7 @@
 #include <QVBoxLayout>
 
 #include "sbr/doc/Document.h"
+#include "sbr/doc/Schedules.h"
 
 namespace sbr::app {
 namespace {
@@ -29,7 +30,8 @@ QString metres(double mm) { return QString::number(mm / 1000.0, 'f', 3) + QStrin
 
 }  // namespace
 
-PermitWorkflowPanel::PermitWorkflowPanel(doc::Document& document, std::function<void(Action)> open, QWidget* parent)
+PermitWorkflowPanel::PermitWorkflowPanel(doc::Document& document, std::function<void(Action, const QString&)> open,
+                                         QWidget* parent)
     : QWidget(parent), document_(document), phases_(new QListWidget(this)), next_(new QLabel(this)),
       checks_(new QTreeWidget(this)), details_(new QLabel(this)), edit_(new QPushButton(this)),
       preview_(new QPushButton(translated("検討用の配置図"), this)), refreshTimer_(new QTimer(this)) {
@@ -87,9 +89,9 @@ PermitWorkflowPanel::PermitWorkflowPanel(doc::Document& document, std::function<
   connect(checks_, &QTreeWidget::currentItemChanged, this, [this] { showSelectedCheck(); });
   connect(edit_, &QPushButton::clicked, this, [this, open] {
     const int index = checks_->indexOfTopLevelItem(checks_->currentItem());
-    if (index >= 0 && rows_[index].action != Action::None) open(rows_[index].action);
+    if (index >= 0 && rows_[index].action != Action::None) open(rows_[index].action, rows_[index].target);
   });
-  connect(preview_, &QPushButton::clicked, this, [open = std::move(open)] { open(Action::Preview); });
+  connect(preview_, &QPushButton::clicked, this, [open = std::move(open)] { open(Action::Preview, {}); });
   refreshTimer_->setSingleShot(true);
   connect(refreshTimer_, &QTimer::timeout, this, [this] { refresh(); });
   document_.addListener([panel = QPointer<PermitWorkflowPanel>(this)] {
@@ -193,15 +195,63 @@ void PermitWorkflowPanel::readSiteChecks() {
       translated("申請先・適用ルートと最新の法令を確認します。道路・接道、法令上の地盤面、高低差による区分の確認が残っています。"), {}});
 }
 
+void PermitWorkflowPanel::readRoomOpeningChecks() {
+  const auto data = doc::roomOpeningInputs(document_);
+  const auto missing = translated("未入力");
+  const auto unevaluated = translated("未評価");
+  if (data.rooms.empty()) {
+    rows_.push_back({translated("室"), missing, translated("平面で閉じた壁の内側に室を置き、用途・天井高を設定します。"),
+                     translated("室の一覧を開く"), Action::Rooms, true});
+  }
+  for (const auto& entry : data.rooms) {
+    const auto& room = entry.room;
+    const auto area = room.counted && room.innerKnown
+        ? QString::number(room.innerArea / 1e6, 'f', 3) + QStringLiteral(" m²") : unevaluated;
+    QString details = translated("用途 %1　内法 %2\n天井高 %3")
+        .arg(room.use.empty() ? missing : QString::fromStdString(room.use), area,
+             room.ceilingHeight > 0 ? metres(room.ceilingHeight) : missing);
+    if (room.use.empty() || room.ceilingHeight <= 0)
+      details += translated("\n室を選び、プロパティで用途・天井高を入力します。");
+    if (!room.closed) details += translated("\n室の輪郭が閉じていません。");
+    else if (!room.counted) details += translated("\n同じ範囲に別の室があります。");
+    details += translated("\n開口候補 %1件").arg(entry.openingIndices.size());
+    for (std::size_t i = 0; i < std::min<std::size_t>(entry.openingIndices.size(), 3); ++i) {
+      const auto& opening = data.openings[entry.openingIndices[i]];
+      details += QStringLiteral("\n%1　%2 × %3 mm")
+          .arg(QString::fromStdString(opening.mark), QString::number(opening.width, 'g', 8),
+               QString::number(opening.height, 'g', 8));
+    }
+    if (entry.openingIndices.size() > 3) details += translated("\n残り %1件").arg(entry.openingIndices.size() - 3);
+    QString name = QString::fromStdString(room.name);
+    if (!room.level.empty()) name = QString::fromStdString(room.level) + QStringLiteral("　") + name;
+    const bool incomplete = !room.counted || !room.innerKnown || room.use.empty() || room.ceilingHeight <= 0;
+    rows_.push_back({name, incomplete ? translated("入力不足") : translated("室データあり"), details,
+                     translated("モデルで室を選択"), Action::SelectRoom, incomplete, QString::fromStdString(room.id)});
+  }
+  rows_.push_back({translated("開口候補"), data.openings.empty() ? missing : translated("要照合"),
+      translated("壁の開口 %1件。室の壁区間に対応しなかった開口 %2件。候補の外部への面し方と建具の開き方を照合します。")
+          .arg(data.openings.size()).arg(data.unmatched.size()),
+      translated("建具表を開く"), Action::Openings, true});
+  rows_.push_back({translated("採光"), unevaluated,
+      translated("居室の対象区分、境界や突出部との位置関係、開口の有効面積と補正の根拠を確認します。"), {}});
+  rows_.push_back({translated("自然換気"), unevaluated,
+      translated("建具の開き方と有効開放面積の根拠を確認します。"), {}});
+  rows_.push_back({translated("機械換気"), unevaluated,
+      translated("対象室、給排気経路、換気機器の能力と根拠資料を確認します。"), {}});
+}
+
 void PermitWorkflowPanel::refresh() {
   const int phase = phases_->currentRow();
   if (phase < 0) return;
-  const int selected = phase == previousPhase_ ? checks_->indexOfTopLevelItem(checks_->currentItem()) : -1;
+  int selected = phase == previousPhase_ ? checks_->indexOfTopLevelItem(checks_->currentItem()) : -1;
+  const QString selectedRoom = selected >= 0 ? rows_[static_cast<std::size_t>(selected)].target : QString();
   previousPhase_ = phase;
   rows_.clear();
   canPreview_ = false;
   if (phase == 0) {
     readSiteChecks();
+  } else if (phase == 3) {
+    readRoomOpeningChecks();
   } else {
     const QStringList guides{translated("階と通り芯の対応、壁・柱の参照を照合します。"),
         translated("部屋の閉鎖、開口、寸法、面積の算定根拠を確認します。"),
@@ -215,6 +265,10 @@ void PermitWorkflowPanel::refresh() {
         translated("図番、符号、面積、添付資料とモデル版を突き合わせます。"),
         translated("申請先と必要図書を確かめ、同じモデル版の図面・表・添付をそろえます。")};
     rows_.push_back({translated("工程の確認項目"), translated("未評価"), guides.at(phase - 1), {}});
+  }
+  if (!selectedRoom.isEmpty()) {
+    const auto found = std::find_if(rows_.begin(), rows_.end(), [&](const Check& row) { return row.target == selectedRoom; });
+    selected = found != rows_.end() ? static_cast<int>(std::distance(rows_.begin(), found)) : -1;
   }
 
   const QSignalBlocker block(checks_);
