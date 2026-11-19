@@ -3038,6 +3038,23 @@ const std::vector<CommandDef>& commands() {
          return json{{"rooms", std::move(rooms)}, {"unmatched_openings", std::move(unmatched)},
                      {"daylight", "未評価"}, {"natural_ventilation", "未評価"}, {"mechanical_ventilation", "未評価"}};
        }},
+      {"permit_checks",
+       "Rows of a permit workflow stage (docs/194) read from the model: 'stage' 2 (通り芯: levels, grids, walls "
+       "on levels and on the grid, columns and beams on the grid) or 3 (平面: enclosed regions and rooms per "
+       "storey, rooms that do not close or share, walls reshaped by hand, openings without a fitting). Each row: "
+       "item, state (未入力 / 入力済み / 要確認 / 要修正 / 階待ち / 通り芯待ち), details, targets (object ids), "
+       "attention. What is found or missing only; never a legal judgement.",
+       SCHEMA({"type": "object", "properties": {"stage": {"type": "integer", "enum": [2, 3]}}, "required": ["stage"]}),
+       [](doc::Modeler& m, const json& a) {
+         const int stage = a.at("stage").get<int>();
+         if (stage != 2 && stage != 3) throw std::runtime_error("stage must be 2 or 3");
+         const auto checks = stage == 2 ? doc::permitGridChecks(m.document()) : doc::permitPlanChecks(m.document());
+         json rows = json::array();
+         for (const auto& c : checks)
+           rows.push_back({{"item", c.item}, {"state", c.state}, {"details", c.details}, {"targets", c.targets},
+                           {"attention", c.attention}});
+         return json{{"stage", stage}, {"rows", std::move(rows)}};
+       }},
       {"area_table",
        "Areas by storey measured from the model (m2): per level 'enclosed' (everything the walls standing on it "
        "enclose, within the wall lines, with or without rooms), regions, rooms, regions_without_room, room_centre, "
@@ -4265,7 +4282,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
       name == "preview" || name == "query_objects" || name == "aggregate" || name == "get_changes" ||
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
       name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" ||
-      name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" ||
+      name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" || name == "permit_checks" ||
         name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
     return E::Read;
   }

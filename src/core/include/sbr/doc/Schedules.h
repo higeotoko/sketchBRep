@@ -93,6 +93,20 @@ struct RoomOpeningInputs {
 };
 RoomOpeningInputs roomOpeningInputs(const Document& document);
 
+// docs/194: rows of the permit workflow (申請図の工程) read from the model as it is. A row says what
+// was found and what is missing; never a legal judgement. state: 未入力 / 入力済み / 要確認 / 要修正 /
+// 階待ち / 通り芯待ち. `targets`: the objects the row is about (to select them).
+struct PermitCheck {
+  std::string item, state, details;
+  std::vector<ObjectId> targets;
+  bool attention = false;
+};
+// Stage 2 (通り芯): levels, grids, walls on levels and on the grid, columns and beams on the grid.
+std::vector<PermitCheck> permitGridChecks(const Document& document);
+// Stage 3 (平面): per storey the enclosed regions and rooms, rooms that do not close or share,
+// walls reshaped by hand, openings without a fitting.
+std::vector<PermitCheck> permitPlanChecks(const Document& document);
+
 // One storey.
 struct AreaRow {
   std::string level;  // name; empty: rooms whose marker is at no level's height

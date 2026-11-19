@@ -246,6 +246,7 @@ class GuiPhase1 : public QObject {
   void sitePlanFromASelectedBoundary();
   void permitWorkflowTracksSiteInputsAndStaleGround();
   void permitWorkflowShowsRoomAndOpeningInputs();
+  void permitWorkflowShowsGridAndPlanChecks();
   void proposalShowsRotationAndHide();
   void benchViewportSync();
   void benchEnterManyCopies();
@@ -822,6 +823,66 @@ void GuiPhase1::permitWorkflowShowsRoomAndOpeningInputs() {
   QVERIFY(details->text().contains(QStringLiteral("2.400 m")));
   const auto capture = qEnvironmentVariable("SBR_ROOM_OPENING_INPUT_CAPTURE");
   if (!capture.isEmpty()) QVERIFY(dock->grab().save(capture));
+}
+
+// docs/194: stages 2 (通り芯) and 3 (平面) list what the model has and what is missing; a row's
+// button selects the objects it is about, and the rows follow the model.
+void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
+  Fixture f;
+  QVERIFY(f.setUp(4000, 3000));
+  auto& modeler = f.window.modeler();
+  using Json = nlohmann::json;
+  api::CommandApi api(modeler);
+  const auto call = [&](const char* command, Json args) {
+    return Json::parse(api.execute(Json{{"command", command}, {"args", std::move(args)}}.dump()));
+  };
+  QVERIFY(modeler.setLevels({{"", "1FL", 0}, {"", "2FL", 3000}}));
+  const auto walls = call("create_wall", {{"points", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}, {0, 0}}},
+                                           {"thickness", 200}, {"height", 3000}});
+  QVERIFY(walls["ok"].get<bool>());
+  QVERIFY(call("create_grid", {{"x_spacings", {8000}}, {"y_spacings", {6000}}})["ok"].get<bool>());
+
+  auto* open = f.window.findChild<QAction*>(QStringLiteral("permitWorkflowAction"));
+  QVERIFY(open);
+  open->trigger();
+  auto* dock = f.window.findChild<QDockWidget*>(QStringLiteral("permitWorkflowDock"));
+  QVERIFY(dock);
+  auto* phases = dock->findChild<QListWidget*>(QStringLiteral("permitWorkflowPhases"));
+  auto* checks = dock->findChild<QTreeWidget*>(QStringLiteral("permitWorkflowChecks"));
+  auto* details = dock->findChild<QLabel*>(QStringLiteral("permitWorkflowDetails"));
+  auto* edit = dock->findChild<QPushButton*>(QStringLiteral("permitWorkflowEdit"));
+  auto* next = dock->findChild<QLabel*>(QStringLiteral("permitWorkflowNext"));
+  QVERIFY(phases && checks && details && edit && next);
+  const auto rowOf = [&](const QString& item) {
+    for (int i = 0; i < checks->topLevelItemCount(); ++i)
+      if (checks->topLevelItem(i)->text(0) == item) return checks->topLevelItem(i);
+    return static_cast<QTreeWidgetItem*>(nullptr);
+  };
+
+  phases->setCurrentRow(1);
+  QVERIFY(rowOf(QStringLiteral("階（レベル）")));
+  QCOMPARE(rowOf(QStringLiteral("通り芯"))->text(1), QStringLiteral("入力済み"));
+  auto* pin = rowOf(QStringLiteral("壁と通り芯"));
+  QVERIFY(pin);
+  QCOMPARE(pin->text(1), QStringLiteral("要確認"));
+  QVERIFY(next->text().contains(QStringLiteral("壁と通り芯")));
+  checks->setCurrentItem(pin);
+  QVERIFY(details->text().contains(QStringLiteral("通り芯に付いていない壁 4 枚")));
+  QVERIFY(edit->isVisible());
+  edit->click();
+  QCOMPARE(f.window.selection().size(), std::size_t(4));
+  QVERIFY(call("pin_to_grid", Json::object())["ok"].get<bool>());
+  QTRY_COMPARE(rowOf(QStringLiteral("壁と通り芯"))->text(1), QStringLiteral("入力済み"));
+
+  phases->setCurrentRow(2);
+  auto* storey = rowOf(QStringLiteral("1FL の平面"));
+  QVERIFY(storey);
+  QCOMPARE(storey->text(1), QStringLiteral("要確認"));
+  checks->setCurrentItem(storey);
+  QVERIFY(details->text().contains(QStringLiteral("室を置いていない範囲 1")));
+  QVERIFY(modeler.createRoom(gp_Pnt(4000, 3000, 0), "居間"));
+  QTRY_COMPARE(rowOf(QStringLiteral("1FL の平面"))->text(1), QStringLiteral("入力済み"));
+  QVERIFY(rowOf(QStringLiteral("面積の根拠")));
 }
 
 // Request "線の移動コピー・等間隔配列・等分割": a selected line copied with

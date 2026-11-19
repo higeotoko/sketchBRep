@@ -20,7 +20,9 @@ namespace sbr::app {
 
 class PermitWorkflowPanel : public QWidget {
  public:
-  enum class Action { None, Boundary, North, Road, SavedRoad, Ground, SavedGround, Preview, Rooms, Openings, SelectRoom };
+  // SelectObjects: `target` holds the ids separated by '\n' (docs/194).
+  enum class Action { None, Boundary, North, Road, SavedRoad, Ground, SavedGround, Preview, Rooms, Openings, SelectRoom,
+                      SelectObjects };
   PermitWorkflowPanel(doc::Document& document, std::function<void(Action, const QString&)> open,
                       QWidget* parent = nullptr);
 
@@ -40,6 +42,7 @@ class PermitWorkflowPanel : public QWidget {
   void showSelectedCheck();
   void readSiteChecks();
   void readRoomOpeningChecks();
+  void readModelChecks(int stage);
 
   doc::Document& document_;
   QListWidget* phases_;

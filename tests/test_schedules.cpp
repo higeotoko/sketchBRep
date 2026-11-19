@@ -2501,3 +2501,53 @@ TEST(DoorsInPlan, ChosenByAPointAndTheNewKinds) {
   EXPECT_EQ(leaves(), 4);
   EXPECT_EQ(point(2400, 600)["swing"], "in");
 }
+
+// docs/194: the permit workflow's stages 2 (通り芯) and 3 (平面) read from the model.
+TEST_F(Schedules, PermitChecksReadGridAndPlanStages) {
+  const auto rowOf = [&](int stage, const std::string& item) {
+    const json rows = ok("permit_checks", {{"stage", stage}})["rows"];
+    for (const json& row : rows)
+      if (row["item"] == item) return row;
+    ADD_FAILURE() << "no row " << item << " in " << rows.dump();
+    return json();
+  };
+  const auto steps = modeler.history().undoCount();
+  EXPECT_EQ(rowOf(2, "階（レベル）")["state"], "入力済み");
+  EXPECT_EQ(rowOf(2, "通り芯")["state"], "未入力");
+  EXPECT_EQ(rowOf(2, "壁と階")["state"], "入力済み");  // drawn at 1FL
+  EXPECT_EQ(rowOf(2, "壁と通り芯")["state"], "通り芯待ち");
+  EXPECT_FALSE(call("permit_checks", {{"stage", 4}}).value("ok", true));
+  EXPECT_EQ(modeler.history().undoCount(), steps);  // reading only
+
+  // A grid on the wall lines: the walls are not on it until pinned; a column off the lines stays off.
+  ok("create_grid", {{"x_spacings", {4000, 4000}}, {"y_spacings", {6000}}});
+  const std::string loose = ok("create_member", {{"start", {1000, 1000, 0}}, {"end", {1000, 1000, 2800}}, {"role", "column"},
+                                                 {"section", {{"kind", "rectangle"}, {"width", 105}, {"depth", 105}}}})["id"];
+  json walls = rowOf(2, "壁と通り芯");
+  EXPECT_EQ(walls["state"], "要確認");
+  EXPECT_EQ(walls["targets"].size(), 5u);
+  EXPECT_TRUE(walls["attention"].get<bool>());
+  ok("pin_to_grid", json::object());
+  EXPECT_EQ(rowOf(2, "通り芯")["state"], "入力済み");
+  EXPECT_EQ(rowOf(2, "壁と通り芯")["state"], "入力済み");
+  const json members = rowOf(2, "柱・梁と通り芯");
+  EXPECT_EQ(members["state"], "要確認");
+  ASSERT_EQ(members["targets"].size(), 1u);
+  EXPECT_EQ(members["targets"][0], loose);
+
+  // Plan: the east half has no room; the north wall's second opening has no fitting.
+  json storey = rowOf(3, "1FL の平面");
+  EXPECT_EQ(storey["state"], "要確認");
+  EXPECT_NE(storey["details"].get<std::string>().find("室を置いていない範囲 1"), std::string::npos) << storey.dump();
+  const json openings = rowOf(3, "開口");
+  EXPECT_EQ(openings["state"], "要確認");
+  ASSERT_EQ(openings["targets"].size(), 1u);
+  EXPECT_EQ(openings["targets"][0], north);
+  ok("create_room", {{"at", {6000, 3000}}, {"name", "洋室"}});
+  EXPECT_EQ(rowOf(3, "1FL の平面")["state"], "入力済み");
+  // Without the partition both markers stand in one region: the second is to be put right.
+  ok("delete", {{"ids", {partition}}});
+  const json closing = rowOf(3, "室の閉じ方");
+  EXPECT_EQ(closing["state"], "要修正");
+  ASSERT_EQ(closing["targets"].size(), 1u);
+}

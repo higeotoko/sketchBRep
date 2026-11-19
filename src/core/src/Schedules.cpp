@@ -309,6 +309,159 @@ RoomOpeningInputs roomOpeningInputs(const Document& document) {
   return out;
 }
 
+// --- docs/194: permit workflow stages 2 and 3 ------------------------------------------------
+namespace {
+// "Wall 1、Wall 2、Wall 3 ほか 2" (the first few names of the objects a row is about).
+std::string someNames(const Document& document, const std::vector<ObjectId>& ids) {
+  std::string out;
+  const std::size_t shown = std::min<std::size_t>(ids.size(), 5);
+  for (std::size_t i = 0; i < shown; ++i) {
+    const Object* o = document.find(ids[i]);
+    if (!out.empty()) out += "、";
+    out += o ? o->name : ids[i];
+  }
+  if (ids.size() > shown) out += " ほか " + std::to_string(ids.size() - shown);
+  return out;
+}
+
+std::string m2(double mm2) { return number(mm2 / 1e6, 2) + " m²"; }
+}  // namespace
+
+std::vector<PermitCheck> permitGridChecks(const Document& document) {
+  std::vector<PermitCheck> out;
+  const auto& levels = document.settings().levels;
+  if (levels.empty()) {
+    out.push_back({"階（レベル）", "未入力", "階の名前と床の高さ（1FL 0、2FL 2900 など）を設定します。", {}, true});
+  } else {
+    std::string list;
+    for (const FloorLevel& l : levels)
+      list += (list.empty() ? "" : "　") + l.name + " " + number(l.elevation, 0);
+    out.push_back({"階（レベル）", "入力済み", std::to_string(levels.size()) + " 階　" + list + "（mm）", {}});
+  }
+
+  std::vector<ObjectId> grids, walls, wallsOffLevel, wallsOffGrid, members, membersOffGrid;
+  std::string gridDetails;
+  for (const Object& o : document.objects()) {
+    if (const auto* node = std::get_if<GroupNode>(&o.recipe.base); node && node->grid) {
+      grids.push_back(o.id);
+      if (!gridDetails.empty()) gridDetails += "\n";
+      gridDetails += o.name + "　X 方向 " + std::to_string(node->grid->x.size()) + " 本・Y 方向 " +
+                     std::to_string(node->grid->y.size()) + " 本";
+      continue;
+    }
+    const std::string kind = attribute(o, "kind");
+    if (kind == "wall") {
+      walls.push_back(o.id);
+      if (attribute(o, "base_level").empty()) wallsOffLevel.push_back(o.id);
+      if (attribute(o, "wall_grid_pin").empty()) wallsOffGrid.push_back(o.id);
+    } else if (kind == "column" || kind == "beam") {
+      members.push_back(o.id);
+      if (!o.gridPin) membersOffGrid.push_back(o.id);
+    }
+  }
+  if (grids.empty())
+    out.push_back({"通り芯", "未入力", "通り芯（X・Y の通りと間隔）を作ります。壁・柱・梁は後から通り芯に付けられます。", {}, true});
+  else
+    out.push_back({"通り芯", "入力済み", gridDetails, grids});
+
+  if (walls.empty()) {
+    out.push_back({"壁と階", "未入力", "壁がまだありません。", {}});
+  } else if (levels.empty()) {
+    out.push_back({"壁と階", "階待ち", "階を設定すると、壁がどの階に立つかを照合できます。", {}});
+  } else if (!wallsOffLevel.empty()) {
+    out.push_back({"壁と階", "要確認",
+                   "どの階の高さにも立っていない壁 " + std::to_string(wallsOffLevel.size()) + " 枚（全 " +
+                       std::to_string(walls.size()) + " 枚）：" + someNames(document, wallsOffLevel) +
+                       "\n階の高さに置き直すか、階の高さを見直します。",
+                   wallsOffLevel, true});
+  } else {
+    out.push_back({"壁と階", "入力済み", "壁 " + std::to_string(walls.size()) + " 枚がどれも階の上に立っています。", {}});
+  }
+
+  const auto pinRow = [&](const char* item, const char* what, const std::vector<ObjectId>& all,
+                          const std::vector<ObjectId>& off, const char* unit) {
+    if (all.empty()) return;
+    if (grids.empty()) {
+      out.push_back({item, "通り芯待ち", "通り芯を作ると、通り芯に付いているかを照合できます。", {}});
+    } else if (!off.empty()) {
+      out.push_back({item, "要確認",
+                     std::string("通り芯に付いていない") + what + " " + std::to_string(off.size()) + " " + unit +
+                         "（全 " + std::to_string(all.size()) + " " + unit + "）：" + someNames(document, off) +
+                         "\n通り芯の上にある物は、階のボタン →「柱・梁・壁を通り芯に付ける」で付けられます。"
+                         "通りから外れた物はそのままで構いません。",
+                     off, true});
+    } else {
+      out.push_back({item, "入力済み", std::string(what) + " " + std::to_string(all.size()) + " " + unit +
+                                          "がどれも通り芯に付いています。", {}});
+    }
+  };
+  pinRow("壁と通り芯", "壁", walls, wallsOffGrid, "枚");
+  pinRow("柱・梁と通り芯", "柱・梁", members, membersOffGrid, "本");
+  return out;
+}
+
+std::vector<PermitCheck> permitPlanChecks(const Document& document) {
+  std::vector<PermitCheck> out;
+  const AreaTable areas = areaTable(document);
+  for (const AreaRow& row : areas.rows) {
+    if (!row.enclosedKnown) continue;
+    std::string details = "壁で閉じた範囲 " + std::to_string(row.regions) + "（壁芯 " + m2(row.enclosedArea) +
+                          "）、室 " + std::to_string(row.rooms) + "（壁芯 " + m2(row.roomCentre) + "、内法 " +
+                          m2(row.roomInner) + "）";
+    bool attention = false;
+    if (row.regionsWithoutRoom > 0) {
+      details += "\n室を置いていない範囲 " + std::to_string(row.regionsWithoutRoom) + "。室ツールで中をクリックします。";
+      attention = true;
+    }
+    if (row.innerMissing > 0)
+      details += "\n内法面積を出せない室 " + std::to_string(row.innerMissing) + "（壁の面が単純な形でない）。";
+    if (row.unreadableWalls > 0) {
+      details += "\n形を直接変えた壁 " + std::to_string(row.unreadableWalls) + " 枚は壁として読んでいません。";
+      attention = true;
+    }
+    out.push_back({row.level + " の平面", attention ? "要確認" : "入力済み", details, {}, attention});
+  }
+  if (out.empty())
+    out.push_back({"平面", "未入力", "階を設定し、壁で部屋を閉じてから室を置きます。", {}, true});
+
+  std::vector<ObjectId> open, sharing;
+  for (const RoomRow& r : roomSchedule(document).rows) {
+    if (!r.closed) open.push_back(r.id);
+    else if (!r.counted) sharing.push_back(r.id);
+  }
+  if (!open.empty() || !sharing.empty()) {
+    std::string details;
+    if (!open.empty()) details += "輪郭が閉じていない室 " + std::to_string(open.size()) + "：" + someNames(document, open);
+    if (!sharing.empty())
+      details += std::string(details.empty() ? "" : "\n") + "ほかの室と同じ範囲にある室 " +
+                 std::to_string(sharing.size()) + "：" + someNames(document, sharing);
+    std::vector<ObjectId> targets = open;
+    targets.insert(targets.end(), sharing.begin(), sharing.end());
+    out.push_back({"室の閉じ方", "要修正", details + "\n壁の端をつなぐか、重なった室の札を消します。", targets, true});
+  }
+
+  const auto openings = openingSchedule(document).rows;
+  std::vector<ObjectId> bareHosts;
+  int bare = 0;
+  for (const OpeningRow& o : openings) {
+    if (o.kind != "opening") continue;
+    ++bare;
+    if (std::find(bareHosts.begin(), bareHosts.end(), o.host) == bareHosts.end()) bareHosts.push_back(o.host);
+  }
+  if (openings.empty()) {
+    out.push_back({"開口", "未入力", "壁に窓・扉の開口がまだありません。", {}});
+  } else if (bare > 0) {
+    out.push_back({"開口", "要確認",
+                   "開口 " + std::to_string(openings.size()) + " 件のうち、建具（窓・扉）を決めていない開口 " +
+                       std::to_string(bare) + " 件（壁：" + someNames(document, bareHosts) +
+                       "）。\n建具表と平面の記号に出ません。穴のままでよい物はそのままで構いません。",
+                   bareHosts, true});
+  } else {
+    out.push_back({"開口", "入力済み", "開口 " + std::to_string(openings.size()) + " 件。どれも建具が決まっています。", {}});
+  }
+  return out;
+}
+
 namespace {
 // docs/141: areas in plan as 1 mm thick slices (z 0 to 1), so that unions and overlaps are solids
 // and their volume is the area (mm2).

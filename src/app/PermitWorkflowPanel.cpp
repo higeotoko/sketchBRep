@@ -240,6 +240,23 @@ void PermitWorkflowPanel::readRoomOpeningChecks() {
       translated("対象室、給排気経路、換気機器の能力と根拠資料を確認します。"), {}});
 }
 
+// docs/194: stages 2 (通り芯) and 3 (平面) from the model (doc::permitGridChecks / permitPlanChecks).
+void PermitWorkflowPanel::readModelChecks(int stage) {
+  const auto checks = stage == 2 ? doc::permitGridChecks(document_) : doc::permitPlanChecks(document_);
+  for (const auto& c : checks) {
+    QStringList ids;
+    for (const auto& id : c.targets) ids << QString::fromStdString(id);
+    const bool select = !ids.isEmpty();
+    rows_.push_back({QString::fromStdString(c.item), QString::fromStdString(c.state), QString::fromStdString(c.details),
+                     select ? translated("モデルで %1 個を選択").arg(ids.size()) : QString(),
+                     select ? Action::SelectObjects : Action::None, c.attention, ids.join(QLatin1Char('\n'))});
+  }
+  if (stage == 3)
+    rows_.push_back({translated("面積の根拠"), translated("確認材料あり"),
+                     translated("壁芯・内法の面積と法の床面積は、表の窓の「面積の表」で式と注を確かめます。"),
+                     translated("室の一覧を開く"), Action::Rooms});
+}
+
 void PermitWorkflowPanel::refresh() {
   const int phase = phases_->currentRow();
   if (phase < 0) return;
@@ -250,12 +267,12 @@ void PermitWorkflowPanel::refresh() {
   canPreview_ = false;
   if (phase == 0) {
     readSiteChecks();
+  } else if (phase == 1 || phase == 2) {
+    readModelChecks(phase + 1);
   } else if (phase == 3) {
     readRoomOpeningChecks();
   } else {
-    const QStringList guides{translated("階と通り芯の対応、壁・柱の参照を照合します。"),
-        translated("部屋の閉鎖、開口、寸法、面積の算定根拠を確認します。"),
-        translated("居室の用途、開口と境界の関係、給排気の経路と根拠を確認します。"),
+    const QStringList guides{QString(), QString(), QString(),
         translated("段、幅、クリアランス、手すりを図面で確認します。"),
         translated("突出部の寸法と役割、面積や採光に効く縁を確認します。"),
         translated("階・方向ごとの壁量、四分割、接合部の根拠を確認します。"),

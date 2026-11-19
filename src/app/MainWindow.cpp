@@ -7036,6 +7036,12 @@ void MainWindow::showPermitWorkflow() {
       case Action::Rooms: showRoomsDialog(); break;
       case Action::Openings: showSchedulesDialog(); break;
       case Action::SelectRoom: setSelection({target.toStdString()}); break;
+      case Action::SelectObjects: {
+        std::vector<doc::ObjectId> ids;
+        for (const QString& id : target.split(QLatin1Char('\n'), Qt::SkipEmptyParts)) ids.push_back(id.toStdString());
+        setSelection(ids);
+        break;
+      }
       case Action::None: break;
     }
   }, dock);
