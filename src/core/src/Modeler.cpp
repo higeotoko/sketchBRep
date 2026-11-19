@@ -5945,7 +5945,20 @@ ChangeSet fittingsOfType(const Document& document, const std::string& name,
 }
 }  // namespace
 
-Result<int> Modeler::defineFittingType(const std::string& name, const std::string& fitting, const ObjectId& host, std::size_t index) {
+std::optional<Modeler::FittingOpeningSize> Modeler::fittingOpeningSize(const std::string& name) const {
+  const auto reg = typeRegister(document_);
+  const auto entry = reg.find(name);
+  if (entry == reg.end() || !entry->is_object() || entry->value("part", "") != "fitting") return std::nullopt;
+  const auto size = entry->find("opening_size");
+  if (size == entry->end() || !size->is_object()) return std::nullopt;
+  for (const char* key : {"width", "height", "sill"})
+    if (!size->contains(key) || !size->at(key).is_number()) return std::nullopt;
+  return FittingOpeningSize{size->at("width").get<double>(), size->at("height").get<double>(),
+                            size->at("sill").get<double>()};
+}
+
+Result<int> Modeler::defineFittingType(const std::string& name, const std::string& fitting, const ObjectId& host,
+                                     std::size_t index, std::optional<FittingOpeningSize> openingSize) {
   using R = Result<int>;
   if (name.empty() || name.size() > 120 || name.find_first_of("\r\n") != std::string::npos)
     return R::failure("A type name is one line of at most 40 characters");
@@ -5960,7 +5973,23 @@ Result<int> Modeler::defineFittingType(const std::string& name, const std::strin
   if (type.value("type", std::string()) == "none") return R::failure("A fitting type is a door or a window, not none");
   nlohmann::json reg = typeRegister(document_);
   if (reg.contains(name) && reg.at(name).value("part", "") != "fitting") return R::failure("'" + name + "' is a type of floors or roofs");
+  if (!host.empty()) {
+    const auto list = openings(host);
+    if (!list) return R::failure(list.error());
+    const auto source = std::find_if(list->begin(), list->end(), [index](const OpeningInfo& op) { return op.index == index; });
+    if (source == list->end()) return R::failure("No opening " + std::to_string(index));
+    if (!openingSize) openingSize = FittingOpeningSize{source->width, source->height, source->sill};
+  }
+  if (!openingSize) openingSize = fittingOpeningSize(name);
+  if (openingSize) {
+    const auto [w, h, sill] = *openingSize;
+    if (!std::isfinite(w) || !std::isfinite(h) || !std::isfinite(sill) ||
+        w <= tolerance::kMinDimension || h <= tolerance::kMinDimension || sill < 0)
+      return R::failure("Opening width and height must be positive and sill must be nonnegative");
+  }
   reg[name] = {{"part", "fitting"}, {"fitting", type}};
+  if (openingSize)
+    reg[name]["opening_size"] = {{"width", openingSize->width}, {"height", openingSize->height}, {"sill", openingSize->sill}};
   int count = 0;
   ChangeSet changes = fittingsOfType(document_, name, [&](const nlohmann::json& old) -> std::optional<nlohmann::json> {
     nlohmann::json next = type;

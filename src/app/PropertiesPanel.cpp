@@ -1460,7 +1460,7 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       });
       auto* registerType = new QPushButton(tr("型として登録"));
       registerType->setObjectName(QStringLiteral("openingRegisterFittingType%1").arg(index));
-      registerType->setToolTip(tr("この建具の種類と寸法を、名前を付けて建具の型にします（同じ名前の型があれば、それを直します）"));
+      registerType->setToolTip(tr("この建具の種類と寸法、および開口の幅・高さ・腰高を型として登録します（同じ名前なら上書き）"));
       registerType->setEnabled(!o->locked && fitted);
       connect(registerType, &QPushButton::clicked, this, [this, id, index, current] {
         emit fittingTypeRegistered(id, index, QString::fromStdString(current.dump()));

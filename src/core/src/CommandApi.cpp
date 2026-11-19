@@ -2840,18 +2840,32 @@ const std::vector<CommandDef>& commands() {
        "A fitting type (docs/171): a door's or window's kind and sizes ('fitting' as set_opening_fittings: type, "
        "frame, leaf, glass; hands are left out) under 'name'. set_opening_fittings with fitting {\"type_name\": name} "
        "(and its own hinge / swing / slide) gives an opening that kind and those sizes. Defined again, every fitting "
-       "of that name in every wall changes, the hands kept. One undo step. Returns how many fittings changed.",
-       SCHEMA({"type": "object", "properties": {"name": {"type": "string"}, "fitting": {"type": "object"}}, "required": ["name", "fitting"]}),
+       "of that name in every wall changes, the hands kept. Optional opening_size {width, height, sill} in mm "
+       "sets the placement defaults without resizing any existing opening. One undo step.",
+       SCHEMA({"type": "object", "properties": {"name": {"type": "string"}, "fitting": {"type": "object"},
+               "opening_size": {"type": "object", "properties": {"width": {"type": "number"}, "height": {"type": "number"}, "sill": {"type": "number"}},
+                                "required": ["width", "height", "sill"]}}, "required": ["name", "fitting"]}),
        [](doc::Modeler& m, const json& a) {
          if (!a.contains("fitting") || !a.at("fitting").is_object()) throw ApiError("'fitting' is an object");
-         return json{{"name", text(a, "name")}, {"changed", must(m.defineFittingType(text(a, "name"), a.at("fitting").dump()))}};
+         std::optional<doc::Modeler::FittingOpeningSize> openingSize;
+         if (a.contains("opening_size")) {
+           const auto& size = a.at("opening_size");
+           openingSize = doc::Modeler::FittingOpeningSize{number(size, "width"), number(size, "height"), number(size, "sill")};
+         }
+         const auto name = text(a, "name");
+         return json{{"name", name}, {"changed", must(m.defineFittingType(name, a.at("fitting").dump(), {}, 0, openingSize))}};
        }},
       {"list_fitting_types",
-       "The fitting types registered (define_fitting_type): name and fitting.",
+       "The fitting types registered (define_fitting_type): name, fitting and opening_size if saved.",
        SCHEMA({"type": "object", "properties": {}}),
        [](doc::Modeler& m, const json&) {
          json out = json::array();
-         for (const auto& [name, fitting] : m.fittingTypes()) out.push_back({{"name", name}, {"fitting", json::parse(fitting)}});
+         for (const auto& [name, fitting] : m.fittingTypes()) {
+           json row = {{"name", name}, {"fitting", json::parse(fitting)}};
+           if (const auto size = m.fittingOpeningSize(name))
+             row["opening_size"] = {{"width", size->width}, {"height", size->height}, {"sill", size->sill}};
+           out.push_back(std::move(row));
+         }
          return json{{"types", out}};
        }},
       {"layer_quantities",

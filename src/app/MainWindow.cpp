@@ -2001,7 +2001,7 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
     fittingKind->setObjectName(QStringLiteral("architectureOpeningFitting"));
     fittingKind->addItem(tr("建具を選ぶ…"));
     for (const Preset& p : presets) fittingKind->addItem(tr(p.label));
-    fittingKind->setToolTip(tr("定番の建具を選ぶと開口の大きさと形式を設定します。登録した型は、今の開口寸法で使います。"
+    fittingKind->setToolTip(tr("建具の形式と開口寸法を設定します。開口寸法が未登録の型は、今の開口寸法で使います。"
                                "壁をクリックして配置し、開き方のある扉はマウスを動かしてもう一度クリック"));
     fittingKind->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     bar->addWidget(fittingKind);
@@ -2013,9 +2013,15 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
       fitting["type_name"] = name;
       OpeningTool::Settings s = openingTool_->settings();
       s.fitting = fitting.dump();
+      if (const auto size = modeler_.fittingOpeningSize(name)) {
+        s.width = size->width;
+        s.height = size->height;
+        s.sill = size->sill;
+      }
       openingTool_->setSettings(s);
       activateTool(ToolId::Opening);
-      setStatus(tr("建具の型「%1」：平面の壁をクリック").arg(QString::fromStdString(name)));
+      setStatus(tr("建具の型「%1」（%2）：壁をクリック")
+                    .arg(QString::fromStdString(name), openingTool_->settingsText()));
     };
     const int standardCount = fittingKind->count();
     modeler_.document().addListener([this, picker = QPointer<QComboBox>(fittingKind), standardCount,

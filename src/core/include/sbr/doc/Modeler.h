@@ -615,8 +615,15 @@ class Modeler {
   // hinge / swing / slide if wanted) takes the type's kind and sizes and keeps the name; defining
   // the type again changes every fitting of that name in every wall, the hands kept (one undo
   // step; how many). Removing it leaves the fittings as they are, without the name.
-  // `host` / `index` (1-based): that opening's fitting takes the type's name too, in the same step.
-  Result<int> defineFittingType(const std::string& name, const std::string& fitting, const ObjectId& host = {}, std::size_t index = 0);
+  struct FittingOpeningSize {
+    double width, height, sill;
+  };
+  // The opening size is a placement default. It never resizes existing openings.
+  // A host/index registers that opening's dimensions and gives its fitting the type's name.
+  // Without a source or an explicit size, any saved placement default is kept.
+  Result<int> defineFittingType(const std::string& name, const std::string& fitting, const ObjectId& host = {},
+                                std::size_t index = 0, std::optional<FittingOpeningSize> openingSize = {});
+  std::optional<FittingOpeningSize> fittingOpeningSize(const std::string& name) const;
   std::map<std::string, std::string> fittingTypes() const;  // name -> its fitting (JSON)
   Result<int> removeFittingType(const std::string& name);
   // A mark of one's own and a product number for openings (docs/109): kept under the openings'

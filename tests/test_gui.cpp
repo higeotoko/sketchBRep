@@ -6330,6 +6330,24 @@ void GuiPhase1::fittingPlacedWithItsWayInPlan() {
   QCOMPARE(list->currentIndex(), 0);
   QVERIFY(m.undo());
   QVERIFY(list->findData(typeName) > door);
+
+  // Reselecting a type with opening dimensions loads all three placement values.
+  QVERIFY(m.defineFittingType(typeName.toStdString(), R"({"type":"swing_single","frame":50})",
+                             {}, 0, doc::Modeler::FittingOpeningSize{650, 1500, 250}));
+  const int sized = list->findData(typeName);
+  list->setCurrentIndex(sized);
+  emit list->activated(sized);
+  QCOMPARE(f.window.openingTool().settings().width, 650.0);
+  QCOMPARE(f.window.openingTool().settings().height, 1500.0);
+  QCOMPARE(f.window.openingTool().settings().sill, 250.0);
+  click(f.vp, f.vp->toWidget(gp_Pnt(4000, 0, 0)));
+  QVERIFY(f.window.openingTool().choosingWay());
+  click(f.vp, f.vp->toWidget(gp_Pnt(4200, 700, 1000)));
+  const auto placed = m.openings(wall->front());
+  QVERIFY(placed && placed->size() == 3);
+  QCOMPARE(placed->back().width, 650.0);
+  QCOMPARE(placed->back().height, 1500.0);
+  QCOMPARE(placed->back().sill, 250.0);
 }
 
 void GuiPhase1::doorSwingToolPicksInPlan() {
@@ -10392,6 +10410,12 @@ void GuiPhase1::openingFittingFromPanelShowsInPlanCut() {
     QCOMPARE(m.history().undoCount(),before+1);
     QCOMPARE(fitting().value("type_name",std::string()),std::string("SD-1"));
     QCOMPARE(fitting().value("hinge",std::string()),std::string("right"));
+    const auto saved = m.fittingOpeningSize("SD-1");
+    const auto openings = m.openings(*host);
+    QVERIFY(saved && openings && !openings->empty());
+    QCOMPARE(saved->width, openings->front().width);
+    QCOMPARE(saved->height, openings->front().height);
+    QCOMPARE(saved->sill, openings->front().sill);
     QApplication::processEvents();
     auto* type=f.window.findChild<QComboBox*>(QStringLiteral("openingFittingType1"));QVERIFY(type);
     QCOMPARE(type->currentText(),QStringLiteral("SD-1"));

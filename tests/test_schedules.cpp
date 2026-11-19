@@ -1421,11 +1421,29 @@ TEST_F(Schedules, FittingTypesAreKindsAndSizesByName) {
     EXPECT_EQ(f["glass"], 8.0);
     EXPECT_EQ(f["type_name"], "AW-1");
   }
+  // Placement defaults are independent of existing opening geometry.
+  EXPECT_FALSE(ok("list_fitting_types")["types"][0].contains("opening_size"));
+  const json size = {{"width", 780}, {"height", 1250}, {"sill", 900}};
+  const json shape = {{"type", "sliding_double"}, {"frame", 40}, {"glass", 8}};
+  const auto placed = modeler.openings(south);
+  ASSERT_TRUE(placed && placed->size() == 2);
+  EXPECT_FALSE(call("define_fitting_type", {{"name", "AW-1"}, {"fitting", shape},
+                                            {"opening_size", {{"width", 780}, {"height", 1250}, {"sill", -1}}}})
+                   .value("ok", true));
+  EXPECT_FALSE(ok("list_fitting_types")["types"][0].contains("opening_size"));
+  ok("define_fitting_type", {{"name", "AW-1"}, {"fitting", shape}, {"opening_size", size}});
+  EXPECT_EQ(ok("list_fitting_types")["types"][0]["opening_size"], size);
+  EXPECT_EQ(modeler.openings(south)->front().width, placed->front().width);
+  ASSERT_TRUE(modeler.undo());
+  EXPECT_FALSE(ok("list_fitting_types")["types"][0].contains("opening_size"));
+  ASSERT_TRUE(modeler.redo());
+
   // Defined again: both change, in one step; undone, both as they were.
   const auto before = modeler.history().undoCount();
   EXPECT_EQ(ok("define_fitting_type", {{"name", "AW-1"}, {"fitting", {{"type", "sliding_double"}, {"frame", 50}, {"glass", 8}}}})["changed"], 2);
   EXPECT_EQ(modeler.history().undoCount(), before + 1);
   EXPECT_EQ(fittingOf(south, 1)["frame"], 50.0);
+  EXPECT_EQ(ok("list_fitting_types")["types"][0]["opening_size"], size);
   ASSERT_TRUE(modeler.undo());
   EXPECT_EQ(fittingOf(south, 0)["frame"], 40.0);
   ASSERT_TRUE(modeler.redo());
