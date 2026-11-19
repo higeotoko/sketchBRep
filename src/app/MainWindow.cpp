@@ -6778,8 +6778,21 @@ void MainWindow::showSiteGroundDialog() {
     return;
   }
   const auto& previous = site->ground;
-  const auto outline = selection_.size() == 1 ? selection_.front() :
+  auto outline = selection_.size() == 1 ? selection_.front() :
       selection_.empty() && previous ? previous->outline : doc::ObjectId{};
+  doc::ObjectId selectedBuilding;
+  if (selection_.size() == 2) {
+    for (std::size_t i = 0; i < selection_.size(); ++i) {
+      const auto& perimeter = selection_[i];
+      const auto& candidate = selection_[1 - i];
+      if (perimeter != site->outline && doc.siteGroundBuildingPlacement(perimeter, candidate) &&
+          doc.siteBoundaryGeometry(perimeter)) {
+        outline = perimeter;
+        selectedBuilding = candidate;
+        break;
+      }
+    }
+  }
   if (outline.empty() || outline == site->outline) {
     reportError(tr("敷地境界とは別に、建物が地面に接する閉じた輪郭を1つ選んでください"));
     return;
@@ -6807,6 +6820,49 @@ void MainWindow::showSiteGroundDialog() {
   source->setObjectName(QStringLiteral("siteGroundSource"));
   form->addRow(tr("高さの基準点"), datum);
   form->addRow(tr("確認資料"), source);
+
+  const doc::ObjectId linked = previous && previous->placement ? previous->placement->building : doc::ObjectId{};
+  auto* building = new QComboBox;
+  building->setObjectName(QStringLiteral("siteGroundBuilding"));
+  building->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+  building->setMinimumContentsLength(26);
+  if (linked.empty()) building->addItem(tr("未指定"), QString());
+  for (const auto& object : doc.objects()) {
+    if (!doc.siteGroundBuildingPlacement(outline, object.id)) continue;
+    const auto id = QString::fromStdString(object.id);
+    const auto name = QString::fromStdString(object.name);
+    building->addItem(name.isEmpty() ? id : tr("%1  [%2]").arg(name, id.left(8)), id);
+  }
+  if (!linked.empty()) {
+    const auto id = QString::fromStdString(linked);
+    if (building->findData(id) < 0) building->addItem(tr("以前の建物を参照できません [%1]").arg(id), id);
+    building->setCurrentIndex(building->findData(id));
+  }
+  if (!selectedBuilding.empty())
+    building->setCurrentIndex(building->findData(QString::fromStdString(selectedBuilding)));
+  form->addRow(tr("関連する建物"), building);
+  auto* placementMessage = new QLabel;
+  placementMessage->setWordWrap(true);
+  form->addRow(placementMessage);
+  auto* confirmPlacement = new QCheckBox(tr("現在の建物位置と接地外周・測点を照合した"));
+  confirmPlacement->setObjectName(QStringLiteral("siteGroundConfirmPlacement"));
+  form->addRow(confirmPlacement);
+  const auto refreshPlacement = [&] {
+    const auto chosen = building->currentData().toString().toStdString();
+    const auto status = previous ? doc.checkSiteGroundPlacement(*previous) : Status::success();
+    const bool changed = previous && chosen != linked;
+    confirmPlacement->setChecked(false);
+    confirmPlacement->setVisible(changed || !status);
+    if (!status) {
+      placementMessage->setText(QString::fromStdString(status.message()));
+    } else if (changed) {
+      placementMessage->setText(tr("新しく選んだ建物と測点を照合してください。"));
+    } else {
+      placementMessage->setText(tr("建物を関連付けると、配置が変わったときに再照合を案内します。"));
+    }
+  };
+  connect(building, &QComboBox::currentIndexChanged, &dialog, refreshPlacement);
+  refreshPlacement();
 
   auto* diagram = new QLabel;
   diagram->setFixedSize(460, 175);
@@ -6933,7 +6989,8 @@ void MainWindow::showSiteGroundDialog() {
       const auto& p = vertices[static_cast<std::size_t>(i)];
       input.samples.push_back({p.X(), p.Y(), value});
     }
-    const auto status = modeler_.setSiteGround(input);
+    const auto status = modeler_.setSiteGround(input, building->currentData().toString().toStdString(),
+                                              confirmPlacement->isChecked());
     if (!status) {
       message->setText(QString::fromStdString(status.message()));
       return;
@@ -6942,7 +6999,7 @@ void MainWindow::showSiteGroundDialog() {
   });
   connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
   form->addRow(buttons);
-  dialog.resize(600, 530);
+  dialog.resize(620, 625);
   if (dialog.exec() == QDialog::Accepted) setStatus(tr("接地外周と高さを設定しました。配置図で参考平均を確認できます。"));
 }
 

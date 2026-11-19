@@ -523,7 +523,7 @@ void GuiPhase1::sitePlanFromASelectedBoundary() {
   auto& modeler = f.window.modeler();
   const auto boundary = modeler.createRectangle(geom::SketchPlane::ground(), 10000, 12000);
   QVERIFY(boundary);
-  f.box(1800, 2350, 5600, 7100, 3500);
+  const auto house = f.box(1800, 2350, 5600, 7100, 3500);
   QVERIFY(modeler.setSiteNorth({32, "Survey", "2026-11-19"}));
   f.window.setSelection({*boundary});
 
@@ -567,18 +567,21 @@ void GuiPhase1::sitePlanFromASelectedBoundary() {
   QVERIFY(contact);
   auto* ground = f.window.findChild<QAction*>(QStringLiteral("siteGroundAction"));
   QVERIFY(ground);
-  f.window.setSelection({*contact});
+  f.window.setSelection({house, *contact});
   bool linked = false;
   QTimer::singleShot(0, &f.window, [&] {
     auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
     if (!dialog) return;
     auto* datum = dialog->findChild<QLineEdit*>(QStringLiteral("siteGroundDatum"));
     auto* source = dialog->findChild<QLineEdit*>(QStringLiteral("siteGroundSource"));
+    auto* building = dialog->findChild<QComboBox*>(QStringLiteral("siteGroundBuilding"));
     auto* table = dialog->findChild<QTableWidget*>(QStringLiteral("siteGroundSamples"));
     auto* p3 = dialog->findChild<QToolButton*>(QStringLiteral("siteGroundPoint3"));
     auto* p4 = dialog->findChild<QToolButton*>(QStringLiteral("siteGroundPoint4"));
     auto* buttons = dialog->findChild<QDialogButtonBox*>();
-    if (!datum || !source || !table || !p3 || !p4 || !buttons || table->rowCount() != 5) return dialog->reject();
+    if (!datum || !source || !building || !table || !p3 || !p4 || !buttons || table->rowCount() != 5)
+      return dialog->reject();
+    if (building->currentData().toString() != QString::fromStdString(house)) return dialog->reject();
     datum->setText(QStringLiteral("BM"));
     source->setText(QStringLiteral("架空の高さ測量"));
     buttons->button(QDialogButtonBox::Ok)->click();
@@ -615,6 +618,8 @@ void GuiPhase1::sitePlanFromASelectedBoundary() {
   QVERIFY2(linked, "Selecting a point edits its height; table selection highlights the matching point");
   const auto& savedGround = modeler.document().settings().siteBoundary->ground;
   QVERIFY(savedGround);
+  QVERIFY(savedGround->placement);
+  QCOMPARE(savedGround->placement->building, house);
   QCOMPARE(savedGround->samples.at(0)[2], -120.0);
   QCOMPARE(savedGround->samples.at(1)[2], 0.0);
   QCOMPARE(savedGround->samples.at(2)[2], 165.0);
@@ -645,6 +650,30 @@ void GuiPhase1::sitePlanFromASelectedBoundary() {
   preview->trigger();
   QVERIFY(published);
   QVERIFY(QFileInfo(path).size() > 0);
+
+  gp_Trsf move;
+  move.SetTranslation(gp_Vec(200, 0, 0));
+  QVERIFY(modeler.transform({house}, move));
+  QVERIFY(!modeler.document().checkSiteGroundPlacement(*savedGround));
+  bool prompted = false;
+  QTimer::singleShot(0, &f.window, [&] {
+    auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+    if (!dialog) return;
+    auto* confirm = dialog->findChild<QCheckBox*>(QStringLiteral("siteGroundConfirmPlacement"));
+    auto* buttons = dialog->findChild<QDialogButtonBox*>();
+    if (!confirm || !confirm->isVisible() || confirm->isChecked() || !buttons) return dialog->reject();
+    const auto capture = qEnvironmentVariable("SBR_SITE_GROUND_REVIEW_CAPTURE");
+    const bool captured = capture.isEmpty() || dialog->grab().save(capture);
+    buttons->button(QDialogButtonBox::Ok)->click();
+    if (!dialog->isVisible()) return;
+    prompted = captured;
+    confirm->setChecked(true);
+    buttons->button(QDialogButtonBox::Ok)->click();
+    if (dialog->isVisible()) dialog->reject();
+  });
+  ground->trigger();
+  QVERIFY(prompted);
+  QVERIFY(modeler.document().checkSiteGroundPlacement(*modeler.document().settings().siteBoundary->ground));
 }
 
 // Request "線の移動コピー・等間隔配列・等分割": a selected line copied with

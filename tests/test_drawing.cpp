@@ -491,6 +491,59 @@ TEST(Drawing, SiteGroundWeightsTheMeasuredPerimeterAndDetectsStalePoints) {
   EXPECT_TRUE(loaded.document().settings().siteBoundary->ground);
 }
 
+TEST(Drawing, SiteGroundHoldsAveragesAfterTheAssociatedBuildingMoves) {
+  doc::Modeler m;
+  const auto site = m.createPolyline({gp_Pnt(0, 0, 0), gp_Pnt(10000, 0, 0), gp_Pnt(10000, 12000, 0),
+      gp_Pnt(0, 12000, 0), gp_Pnt(0, 0, 0)});
+  ASSERT_TRUE(site);
+  ASSERT_TRUE(m.setSiteBoundary(doc::SiteBoundary{*site, "Synthetic survey"}));
+  const auto outline = m.createPolyline({gp_Pnt(1000, 1000, 0), gp_Pnt(4000, 1000, 0),
+      gp_Pnt(4000, 5000, 0), gp_Pnt(1000, 5000, 0), gp_Pnt(1000, 1000, 0)});
+  ASSERT_TRUE(outline);
+  const auto building = box(m, 1000, 1000, 3000, 4000, 3500, 50);
+  const auto parent = m.group({building}, "House group");
+  ASSERT_TRUE(parent);
+  const doc::SiteGround input{*outline, "BM", "Synthetic elevation survey",
+      {{1000, 1000, -100}, {4000, 1000, 0}, {4000, 5000, 100}, {1000, 5000, 400}}};
+  EXPECT_FALSE(m.setSiteGround(input, *outline));
+  ASSERT_TRUE(m.setSiteGround(input, building));
+  const auto check = [](const doc::Modeler& model) {
+    const auto view = makeView(model.document(), sitePlanView());
+    return view && view->siteGroundTable.has_value();
+  };
+  EXPECT_TRUE(check(m));
+
+  // Move the parent, so the associated solid's local transform does not change.
+  gp_Trsf move;
+  move.SetTranslation(gp_Vec(100, 0, 0));
+  ASSERT_TRUE(m.transform({*parent}, move));
+  EXPECT_FALSE(check(m));
+  EXPECT_FALSE(m.setSiteGround(input));
+  ASSERT_TRUE(m.undo());
+  EXPECT_TRUE(check(m));
+  ASSERT_TRUE(m.redo());
+  EXPECT_FALSE(check(m));
+
+  const auto path = ::testing::TempDir() + "site-ground-placement.sbr";
+  ASSERT_TRUE(m.save(path));
+  doc::Modeler loaded;
+  ASSERT_TRUE(loaded.load(path));
+  EXPECT_FALSE(check(loaded));
+  ASSERT_TRUE(loaded.setSiteGround(input, {}, true));
+  EXPECT_TRUE(check(loaded));
+
+  gp_Trsf rotation;
+  rotation.SetRotation(gp_Ax1(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1)), 0.1);
+  ASSERT_TRUE(loaded.transform({*parent}, rotation));
+  EXPECT_FALSE(check(loaded));
+  ASSERT_TRUE(loaded.remove({*parent}));
+  EXPECT_FALSE(check(loaded));
+  const auto replacement = box(loaded, 1000, 1000, 3000, 4000, 3500, 50);
+  EXPECT_FALSE(loaded.setSiteGround(input, replacement));
+  ASSERT_TRUE(loaded.setSiteGround(input, replacement, true));
+  EXPECT_TRUE(check(loaded));
+}
+
 TEST(Drawing, CylinderCutIsACircle) {
   doc::Modeler m;
   const doc::ObjectId c = *m.createCircle(geom::SketchPlane::ground(), 300);

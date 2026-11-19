@@ -1172,9 +1172,13 @@ std::string serializeDocument(const Document& document) {
       root["siteBoundary"]["road"] = {{"edge", road->localEdge}, {"kind", road->kind},
                                       {"source", road->source}, {"widthMm", road->widthMm},
                                       {"frontageMm", road->frontageMm}};
-    if (const auto& ground = s.siteBoundary->ground)
+    if (const auto& ground = s.siteBoundary->ground) {
       root["siteBoundary"]["ground"] = {{"outline", ground->outline}, {"datum", ground->datum},
                                         {"source", ground->source}, {"samples", ground->samples}};
+      if (const auto& placement = ground->placement)
+        root["siteBoundary"]["ground"]["placement"] = {
+            {"building", placement->building}, {"worldTransform", placement->worldTransform}};
+    }
   }
   return root.dump(1);
 }
@@ -1279,6 +1283,17 @@ Status deserializeDocument(const std::string& text, Document& document,
         }
         if (ground.outline.empty() || ground.outline == boundary.outline || ground.datum.empty() ||
             ground.source.empty() || ground.samples.size() < 3) throw std::runtime_error("Invalid site ground data");
+        if (g.contains("placement")) {
+          const auto& p = g.at("placement");
+          SiteGroundPlacement placement{p.at("building").get<ObjectId>()};
+          const auto& matrix = p.at("worldTransform");
+          if (placement.building.empty() || !matrix.is_array() || matrix.size() != placement.worldTransform.size())
+            throw std::runtime_error("Invalid site ground placement");
+          placement.worldTransform = matrix.get<decltype(placement.worldTransform)>();
+          for (double value : placement.worldTransform)
+            if (!std::isfinite(value)) throw std::runtime_error("Invalid site ground placement");
+          ground.placement = std::move(placement);
+        }
         boundary.ground = std::move(ground);
       }
       s.siteBoundary = std::move(boundary);

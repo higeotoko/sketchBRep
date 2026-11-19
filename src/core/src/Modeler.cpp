@@ -4042,9 +4042,22 @@ void Modeler::clearSiteRoad() {
   editSettings(document_, history_, "Clear Site Road", [](PersistentSettings& s) { s.siteBoundary->road.reset(); });
 }
 
-Status Modeler::setSiteGround(SiteGround ground) {
+Status Modeler::setSiteGround(SiteGround ground, ObjectId building, bool confirmedPlacement) {
   const auto report = document_.siteGroundReport(ground);
   if (!report) return Status::failure(report.error());
+  const auto& previous = document_.settings().siteBoundary->ground;
+  if (previous) {
+    const ObjectId linked = previous->placement ? previous->placement->building : ObjectId{};
+    if (building.empty()) building = linked;
+    if ((building != linked || !document_.checkSiteGroundPlacement(*previous)) &&
+        !confirmedPlacement) return Status::failure("接地外周・測点と建物の現在位置を照合して確定してください");
+  }
+  ground.placement.reset();
+  if (!building.empty()) {
+    const auto current = document_.siteGroundBuildingPlacement(ground.outline, building);
+    if (!current) return Status::failure(current.error());
+    ground.placement = *current;
+  }
   editSettings(document_, history_, "Site Ground", [&](PersistentSettings& s) { s.siteBoundary->ground = std::move(ground); });
   return Status::success();
 }

@@ -95,14 +95,24 @@ struct SiteRoad {
   }
 };
 
+struct SiteGroundPlacement {
+  ObjectId building;
+  std::array<double, 12> worldTransform{};
+  bool operator==(const SiteGroundPlacement& other) const {
+    return building == other.building && worldTransform == other.worldTransform;
+  }
+};
+
 struct SiteGround {
   ObjectId outline;
   std::string datum;
   std::string source;
   // Perimeter order, no repeated closing point. Each row is world X, world Y, and height from datum (mm).
   std::vector<std::array<double, 3>> samples;
+  std::optional<SiteGroundPlacement> placement = std::nullopt;
   bool operator==(const SiteGround& other) const {
-    return outline == other.outline && datum == other.datum && source == other.source && samples == other.samples;
+    return outline == other.outline && datum == other.datum && source == other.source &&
+           samples == other.samples && placement == other.placement;
   }
 };
 
@@ -248,6 +258,8 @@ class Document {
   Result<SiteBoundaryGeometry> siteBoundaryGeometry(const ObjectId& id) const;
   std::optional<std::array<gp_Pnt, 2>> siteRoadEdge(const SiteBoundaryGeometry& geometry) const;
   Result<SiteGroundReport> siteGroundReport(const SiteGround& ground) const;
+  Result<SiteGroundPlacement> siteGroundBuildingPlacement(const ObjectId& outline, const ObjectId& building) const;
+  Status checkSiteGroundPlacement(const SiteGround& ground) const;
 
   // --- embedded images (by content hash; never edited, only added) ------
   struct Image {

@@ -128,6 +128,40 @@ std::optional<std::array<gp_Pnt, 2>> Document::siteRoadEdge(const SiteBoundaryGe
   return geometry.matchEdge(point(0), point(1));
 }
 
+Result<SiteGroundPlacement> Document::siteGroundBuildingPlacement(const ObjectId& outline, const ObjectId& building) const {
+  using R = Result<SiteGroundPlacement>;
+  const auto* object = find(building);
+  if (!object) return R::failure("関連付けた建物が見つかりません。建物を選び直してください");
+  if (building == outline || (settings().siteBoundary && building == settings().siteBoundary->outline))
+    return R::failure("関連付けには敷地境界・接地外周と別の建物を選んでください");
+  const auto kind = object->kind();
+  if (kind != ObjectKind::Group && kind != ObjectKind::Solid && kind != ObjectKind::Shell && kind != ObjectKind::Instance)
+    return R::failure("関連付けには建物のグループ、立体、シェル、コンポーネントを選んでください");
+  SiteGroundPlacement placement{building};
+  const auto world = worldTransform(*object);
+  std::size_t i = 0;
+  for (int row = 1; row <= 3; ++row) {
+    for (int col = 1; col <= 4; ++col) {
+      const double value = world.Value(row, col);
+      if (!std::isfinite(value)) return R::failure("建物の現在位置を確認できません");
+      placement.worldTransform[i++] = value;
+    }
+  }
+  return placement;
+}
+
+Status Document::checkSiteGroundPlacement(const SiteGround& ground) const {
+  if (!ground.placement) return Status::success();
+  const auto current = siteGroundBuildingPlacement(ground.outline, ground.placement->building);
+  if (!current) return Status::failure(current.error());
+  for (std::size_t i = 0; i < current->worldTransform.size(); ++i) {
+    const double toleranceMmOrRatio = i % 4 == 3 ? tolerance::kLinear : tolerance::kAngular;
+    if (std::abs(current->worldTransform[i] - ground.placement->worldTransform[i]) > toleranceMmOrRatio)
+      return Status::failure("建物の配置が変わりました。接地外周と測点を再照合してください");
+  }
+  return Status::success();
+}
+
 Result<SiteGroundReport> Document::siteGroundReport(const SiteGround& ground) const {
   using R = Result<SiteGroundReport>;
   const auto& boundary = settings().siteBoundary;

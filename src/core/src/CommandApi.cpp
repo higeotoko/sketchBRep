@@ -3504,10 +3504,13 @@ const std::vector<CommandDef>& commands() {
       {"set_site_ground",
        "Save measured heights for a selected building-to-ground perimeter, in one undo step. "
        "Samples are [world X, world Y, height from datum] in mm, in closed perimeter order without repeating "
-       "the first point. The resulting length-weighted average is for reference. Pass clear:true to remove it.",
+       "the first point. Pass building (object id) to record its placement. Review the perimeter and measurements before "
+       "passing confirm_building_placement:true when the saved association or placement changes. An omitted building keeps the "
+       "existing association. The average is for reference. Pass clear:true to remove the assignment.",
        SCHEMA({"type": "object", "properties": {"outline": {"type": "string"}, "datum": {"type": "string"},
                "source": {"type": "string"}, "samples": {"type": "array", "items": {"type": "array",
-               "minItems": 3, "maxItems": 3, "items": {"type": "number"}}}, "clear": {"type": "boolean"}}}),
+               "minItems": 3, "maxItems": 3, "items": {"type": "number"}}}, "building": {"type": "string"},
+               "confirm_building_placement": {"type": "boolean"}, "clear": {"type": "boolean"}}}),
        [](doc::Modeler& m, const json& a) {
          if (a.value("clear", false)) {
            m.clearSiteGround();
@@ -3521,9 +3524,33 @@ const std::vector<CommandDef>& commands() {
            ground.samples.push_back(row.get<std::array<double, 3>>());
          }
          const auto report = must(m.document().siteGroundReport(ground));
-         must(m.setSiteGround(std::move(ground)));
+         must(m.setSiteGround(std::move(ground), textOr(a, "building", {}),
+                              a.value("confirm_building_placement", false)));
          return json{{"perimeter_mm", report.lengthMm}, {"reference_average_mm", report.averageMm()},
                      {"legal_status", "未評価"}};
+       }},
+      {"get_site_ground_status",
+       "Read the current contact perimeter status: unassigned, unlinked, needs_review, or ready. "
+       "A previous reference average is withheld when the outline or associated building needs review.",
+       SCHEMA({"type": "object", "properties": {}}),
+       [](doc::Modeler& m, const json&) {
+         const auto& document = m.document();
+         const auto& site = document.settings().siteBoundary;
+         json result{{"state", "unassigned"}, {"legal_status", "未評価"}};
+         if (!site || !site->ground) return result;
+         const auto& ground = *site->ground;
+         result["outline"] = ground.outline;
+         if (ground.placement) result["building"] = ground.placement->building;
+         const auto placement = document.checkSiteGroundPlacement(ground);
+         const auto report = document.siteGroundReport(ground);
+         if (!placement || !report) {
+           result["state"] = "needs_review";
+           result["reason"] = !placement ? placement.message() : report.error();
+           return result;
+         }
+         result["state"] = ground.placement ? "ready" : "unlinked";
+         result["reference_average_mm"] = report->averageMm();
+         return result;
        }},
       {"get_sun",
        "The sun of the realistic display (docs/82): month, day, hour (local clock, 14.5 = 14:30), latitude, "
@@ -4211,7 +4238,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
       name == "preview" || name == "query_objects" || name == "aggregate" || name == "get_changes" ||
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
       name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" ||
-      name == "get_sun" ||
+      name == "get_sun" || name == "get_site_ground_status" ||
         name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
     return E::Read;
   }

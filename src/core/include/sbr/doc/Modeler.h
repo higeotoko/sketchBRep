@@ -217,7 +217,7 @@ class Modeler {
   Status setSiteBoundary(const std::optional<SiteBoundary>& boundary);
   Status setSiteRoad(const std::array<gp_Pnt, 2>& edge, SiteRoad road);
   void clearSiteRoad();
-  Status setSiteGround(SiteGround ground);
+  Status setSiteGround(SiteGround ground, ObjectId building = {}, bool confirmedPlacement = false);
   void clearSiteGround();
   // The description of a grid group (null: not a grid).
   const GridSpec* gridSpec(const ObjectId& grid) const;

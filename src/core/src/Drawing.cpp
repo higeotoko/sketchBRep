@@ -609,7 +609,10 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     if (source->ground) {
       const auto& ground = *source->ground;
       const auto report = document.siteGroundReport(ground);
-      if (!report) {
+      const auto placement = document.checkSiteGroundPlacement(ground);
+      if (!placement) {
+        view.calculationNotes.push_back("接地外周の参考平均は保留。" + placement.message());
+      } else if (!report) {
         view.calculationNotes.push_back("接地外周は未評価。輪郭と測点を確認してください");
       } else {
         Item contact;
@@ -640,8 +643,9 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
         evidence.rows.push_back({"合計", decimal(report->lengthMm / 1000), "", "", decimal(report->weightedSumMm2 / 1e6)});
         evidence.notes = {"参考平均（辺内を線形補間、長さで重み付け） " + metres(report->averageMm()),
                           "合計・参考平均は表示丸め前の値で計算",
-                          "基準点 " + ground.datum, "確認資料 " + ground.source,
-                          "法令上の地盤面・高低差による区分は未評価"};
+                          "基準点 " + ground.datum, "確認資料 " + ground.source};
+        if (!ground.placement) evidence.notes.push_back("建物との関連付けは未設定");
+        evidence.notes.push_back("法令上の地盤面・高低差による区分は未評価");
         view.siteGroundTable = std::move(evidence);
       }
     } else {
