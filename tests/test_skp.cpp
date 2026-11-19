@@ -8,6 +8,7 @@
 
 #include <BRepGProp.hxx>
 #include <GProp_GProps.hxx>
+#include <gp_Ax1.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
@@ -245,7 +246,7 @@ TEST(Skp, TagsAndInformationGoAndComeBack) {
 }
 
 // docs/183: placements of one component go to SketchUp as one definition and its instances (the
-// shape written once), each where it is placed; back in, each its own object there.
+// shape written once), each where it is placed; back in, one definition again.
 TEST(Skp, ComponentsAreShared) {
   SBR_NEEDS_SKETCHUP();
   Modeler m;
@@ -259,6 +260,9 @@ TEST(Skp, ComponentsAreShared) {
   const std::string first = ok("make_component", {{"ids", {post}}, {"name", "柱 105"}})["id"];
   ok("copy_array", {{"ids", {first}}, {"count", 3}, {"vector", {910, 0, 0}}});
   ASSERT_EQ(m.document().objects().size(), 4u);
+  gp_Trsf turn;
+  turn.SetRotation(gp_Ax1(gp_Pnt(52.5, 52.5, 0), gp_Dir(0, 0, 1)), std::acos(-1.0) / 2);
+  ASSERT_TRUE(m.transform({first}, turn, "Rotate component"));
   const std::string path = ::testing::TempDir() + "posts.skp";
   ok("export_skp", {{"path", path}});
   Modeler back;
@@ -268,9 +272,20 @@ TEST(Skp, ComponentsAreShared) {
   EXPECT_EQ(report.instances, 4) << report.summary();
   EXPECT_EQ(report.groups, 0) << report.summary();
   ASSERT_EQ(ids->size(), 4u);
+  ASSERT_EQ(back.document().definitions().size(), 1u);
+  const auto definition = back.document().definitions().front().id;
+  EXPECT_EQ(back.document().definitions().front().name, "柱 105");
   std::vector<double> xs;
   for (const ObjectId& id : *ids) {
-    const TopoDS_Shape s = back.document().worldShape(*back.document().find(id));
+    const Object* instance = back.document().find(id);
+    ASSERT_NE(instance, nullptr);
+    const auto* ref = std::get_if<ComponentInstance>(&instance->recipe.base);
+    ASSERT_NE(ref, nullptr);
+    EXPECT_EQ(ref->definitionId, definition);
+    const auto source = instance->attributes.find("skp_source_id");
+    ASSERT_NE(source, instance->attributes.end());
+    if (source->second == first) EXPECT_NEAR(instance->transform.Value(1, 2), -1.0, 1e-6);
+    const TopoDS_Shape s = back.document().worldShape(*instance);
     EXPECT_NEAR(geom::volume(s), 105.0 * 105 * 2700, 1.0);
     const auto b = geom::exactBounds(s);
     xs.push_back(b.CornerMin().X());
@@ -279,6 +294,24 @@ TEST(Skp, ComponentsAreShared) {
   std::sort(xs.begin(), xs.end());
   for (std::size_t i = 0; i < xs.size(); ++i) EXPECT_NEAR(xs[i], 910.0 * i, 1e-6);
   EXPECT_EQ(back.document().find(ids->front())->name.find("柱"), 0u) << back.document().find(ids->front())->name;
+  ASSERT_TRUE(back.undo());
+  EXPECT_TRUE(back.document().objects().empty());
+  EXPECT_TRUE(back.document().definitions().empty());
+  ASSERT_TRUE(back.redo());
+  ASSERT_EQ(back.document().objects().size(), 4u);
+  ASSERT_EQ(back.document().definitions().size(), 1u);
+
+  const auto saved = (::testing::TempDir() + "shared-skp-components.sbr");
+  ASSERT_TRUE(back.save(saved));
+  Modeler reopened;
+  ASSERT_TRUE(reopened.load(saved));
+  ASSERT_EQ(reopened.document().definitions().size(), 1u);
+  for (const Object& instance : reopened.document().objects()) {
+    const auto* ref = std::get_if<ComponentInstance>(&instance.recipe.base);
+    ASSERT_NE(ref, nullptr);
+    EXPECT_EQ(ref->definitionId, definition);
+  }
+  std::filesystem::remove(saved);
 }
 
 // docs/185: drawings to LayOut: one drawing (export_drawing to .layout) and the drawing set as one

@@ -12119,6 +12119,7 @@ Result<std::vector<ObjectId>> Modeler::addColouredParts(const std::vector<geom::
   using R = Result<std::vector<ObjectId>>;
   ChangeSet changes(document_);
   std::vector<ObjectId> ids;
+  std::map<std::string, std::pair<ObjectId, TopoDS_Shape>> definitions;
   for (const geom::ColladaPart& part : parts) {
     Object o;
     o.id = generateObjectId();
@@ -12147,8 +12148,34 @@ Result<std::vector<ObjectId>> Modeler::addColouredParts(const std::vector<geom::
         }
       }
     }
-    o.recipe.base = ImportedShape{part.shape, path};
-    if (const Status built = rebuild(o); !built) return R::failure(built.message());
+    if (!part.definition.empty() && !part.localShape.IsNull()) {
+      auto entry = definitions.find(part.definition);
+      if (entry == definitions.end()) {
+        Object leaf;
+        leaf.id = generateObjectId();
+        leaf.name = part.definitionName;
+        leaf.color = o.color;
+        leaf.material = o.material;
+        leaf.recipe.base = ImportedShape{part.localShape, path};
+        if (const Status built = rebuild(leaf); !built) return R::failure(built.message());
+
+        ComponentDefinition definition;
+        definition.id = generateObjectId();
+        definition.name = part.definitionName;
+        definition.objects.push_back(std::move(leaf));
+        const auto shape = buildDefinitionShape(definition);
+        if (!shape) return R::failure(shape.error());
+        definition.shape = *shape;
+        entry = definitions.emplace(part.definition, std::make_pair(definition.id, definition.shape)).first;
+        changes.putDefinition(definition);
+      }
+      o.recipe.base = ComponentInstance{entry->second.first, {}, false};
+      o.transform = part.placement;
+      o.shape = entry->second.second;
+    } else {
+      o.recipe.base = ImportedShape{part.shape, path};
+      if (const Status built = rebuild(o); !built) return R::failure(built.message());
+    }
     ids.push_back(o.id);
     changes.add(o);
   }

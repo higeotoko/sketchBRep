@@ -36,6 +36,7 @@
 #include <Poly_Triangulation.hxx>
 #include <ShapeFix_Face.hxx>
 #include <TopExp.hxx>
+#include <TopLoc_Location.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
@@ -684,6 +685,8 @@ struct Reader {
   SkpReport& report;
   std::vector<ColladaPart> parts;
   std::vector<bool> closed;  // each part: a solid
+  std::map<const void*, std::map<ColladaColor, std::string>> definitions;
+  std::size_t nextDefinition = 0;
 
   std::string str(SUStringRef s) { return text(su, s); }
 
@@ -980,23 +983,39 @@ struct Reader {
       su.SUStringCreate(&s);
       su.SUComponentInstanceGetName(instances[i], &s);
       std::string instanceName = text(su, s);
-      if (instanceName.empty()) {
-        su.SUComponentDefinitionGetName(definition, &s);
-        instanceName = text(su, s);
-      }
+      su.SUComponentDefinitionGetName(definition, &s);
+      std::string definitionName = text(su, s);
       su.SUStringRelease(&s);
-      if (instanceName.empty()) instanceName = "Component";
+      if (definitionName.empty()) definitionName = "Component";
+      if (instanceName.empty()) instanceName = definitionName;
       SUMaterialRef material = SU_INVALID;
       su.SUDrawingElementGetMaterial(element, &material);
       const auto own = colorOf(material);
       SUEntitiesRef inside = SU_INVALID;
       su.SUComponentDefinitionGetEntities(definition, &inside);
       Meta carried = this->meta(element, su.SUComponentInstanceToEntity(instances[i]));
-      if (const auto where = rigid(multiply(m, local))) {
+      const Matrix world = multiply(m, local);
+      if (const auto where = rigid(world)) {
         carried.placed = true;
         carried.where = *where;
       }
-      entities(inside, multiply(m, local), instanceName, own ? own : inherited, depth + 1, carried);
+      const std::size_t from = parts.size();
+      entities(inside, world, instanceName, own ? own : inherited, depth + 1, carried);
+
+      // Keep the world geometry for syncSkp. A flat, uniform-colour definition with a rigid
+      // placement can also become a shared SketchBRep component without changing its appearance.
+      if (!carried.placed || carried.where.IsNegative() || parts.size() != from + 1) continue;
+      ColladaPart& part = parts.back();
+      if (!part.faceColors.empty() || !TopExp_Explorer(part.shape, TopAbs_FACE).More()) continue;
+      size_t groups = 0, instancesInside = 0;
+      if (su.SUEntitiesGetNumGroups(inside, &groups) != SU_ERROR_NONE || groups ||
+          su.SUEntitiesGetNumInstances(inside, &instancesInside) != SU_ERROR_NONE || instancesInside) continue;
+      auto& appearances = definitions[definition.ptr];
+      const auto [entry, inserted] = appearances.try_emplace(part.color);
+      if (inserted) entry->second = std::to_string(nextDefinition++);
+      part.definition = entry->second;
+      part.definitionName = definitionName;
+      part.localShape = part.shape.Moved(TopLoc_Location(carried.where.Inverted()));
     }
   }
 };
