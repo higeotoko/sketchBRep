@@ -18,7 +18,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
-#include <limits>
 #include <map>
 
 #include <BRepAdaptor_Curve.hxx>
@@ -267,20 +266,34 @@ std::string metres(double distanceMm) {
 }
 
 std::optional<DimensionMark> roadClearance(const std::array<gp_Pnt2d, 2>& edge,
-                                           const TopoDS_Shape& visible, const TopoDS_Shape& silhouette) {
+                                           const std::vector<Item>& visible) {
   const auto inPlane = [](const gp_Pnt2d& p) { return gp_Pnt(p.X(), p.Y(), 0); };
-  const auto road = BRepBuilderAPI_MakeEdge(inPlane(edge[0]), inPlane(edge[1])).Edge();
-  double best = std::numeric_limits<double>::infinity();
-  std::optional<DimensionMark> out;
-  for (const auto& shape : {visible, silhouette}) {
-    if (!TopExp_Explorer(shape, TopAbs_EDGE).More()) continue;
-    BRepExtrema_DistShapeShape distance(road, shape);
-    if (!distance.IsDone() || distance.NbSolution() < 1 || distance.Value() >= best) continue;
-    best = distance.Value();
-    const auto a = distance.PointOnShape1(1), b = distance.PointOnShape2(1);
-    out = DimensionMark{gp_Pnt2d(a.X(), a.Y()), gp_Pnt2d(b.X(), b.Y()), gp_Vec2d(0, 0), metres(best)};
+  BRepBuilderAPI_MakeEdge road(inPlane(edge[0]), inPlane(edge[1]));
+  if (!road.IsDone()) return std::nullopt;
+
+  // Rebuild the drawn curves as ordinary planar edges. HLR's projected
+  // topology is not suitable for the B-rep distance solver on older OCCT.
+  BRep_Builder builder;
+  TopoDS_Compound projection;
+  builder.MakeCompound(projection);
+  for (const Item& item : visible) {
+    if (item.kind == Item::Kind::Arc) {
+      const gp_Circ circle(gp_Ax2(inPlane(item.centre), gp_Dir(0, 0, 1)), item.radius);
+      BRepBuilderAPI_MakeEdge arc(circle, item.start, item.start + item.sweep);
+      if (arc.IsDone()) builder.Add(projection, arc.Edge());
+    } else if (item.kind == Item::Kind::Line || item.kind == Item::Kind::Polyline) {
+      for (std::size_t i = 1; i < item.points.size(); ++i) {
+        BRepBuilderAPI_MakeEdge segment(inPlane(item.points[i - 1]), inPlane(item.points[i]));
+        if (segment.IsDone()) builder.Add(projection, segment.Edge());
+      }
+    }
   }
-  return out;
+  if (projection.NbChildren() == 0) return std::nullopt;
+
+  BRepExtrema_DistShapeShape distance(road.Edge(), projection);
+  if (!distance.IsDone() || distance.NbSolution() < 1) return std::nullopt;
+  const auto a = distance.PointOnShape1(1), b = distance.PointOnShape2(1);
+  return DimensionMark{gp_Pnt2d(a.X(), a.Y()), gp_Pnt2d(b.X(), b.Y()), gp_Vec2d(0, 0), metres(distance.Value())};
 }
 
 // The distance from a point to an item's line (lines, arcs, polylines).
@@ -927,7 +940,6 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
       const auto faces = out.VCompound(), silhouette = out.OutLineVCompound();
       addLocalEdges(faces, Pen::Visible, deflection, visible);
       addLocalEdges(silhouette, Pen::Visible, deflection, visible);
-      if (roadEdge) clearance = roadClearance(*roadEdge, faces, silhouette);
       if (spec.hidden) {
         addLocalEdges(out.HCompound(), Pen::Hidden, deflection, hidden);
         addLocalEdges(out.OutLineHCompound(), Pen::Hidden, deflection, hidden);
@@ -937,6 +949,13 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     }
   }
   if (sitePlan) {
+    if (roadEdge) {
+      try {
+        clearance = roadClearance(*roadEdge, visible);
+      } catch (const Standard_Failure& e) {
+        view.notes.push_back("Road clearance could not be worked out: " + kernelMessage(e));
+      }
+    }
     if (visible.empty()) view.calculationNotes[1] = "一点鎖線：敷地境界　建物の上面投影なし";
     if (clearance) {
       view.calculationNotes.push_back("道路側境界から建物上面投影線までの最短距離（参考） " + clearance->text);
