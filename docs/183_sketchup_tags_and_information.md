@@ -54,3 +54,10 @@
 - 関連 GUI 6 件成功。Windows ZIP の通常・べた基礎の検証も成功。展開した ZIP の CLI と同梱 SDK で、SKP から読み込んだ4本が SBR を開き直した後も一つの定義を共有した。
 - Windows ZIP `SketchBRep-windows-x64-a6bf3e9-local.zip`、81,810,822 bytes、SHA256 `09a7bd581d654cf87a124ec5e3d497aa1a7ed7536506be061b22c11c07e31fb7`。記録は `docs/validation/2026-11-19-portable-a6bf3e9*.json`。人の操作による Windows 実機確認は未実施。
 - GitHub Actions は [run 44446849081](https://github.com/higeotoko/sketchBRep/actions/runs/44446849081) で Linux 773 件成功。SKP は同梱 SDK を使って Windows で確認した。
+
+### 共有コンポーネントの面色（2026-11-19）
+
+- コア 752 件成功・8 件スキップ。SKP・DAE・材質の関連 18 件成功・1 件スキップ。上面を赤くした柱を4本配置し、SKP の入出力、SBR の保存・再読込、配置からの色取得で共有定義と赤い上面を確認した。
+- 関連 GUI 15 件成功・1 件スキップ。展開した ZIP で通常・べた基礎の検証に成功。同梱 SDK と CLI で共有定義、保存・再読込後の色取得、SKP への再書き出しを確認した。人の操作による実機確認は未実施。
+- Windows ZIP `SketchBRep-windows-x64-6d88326-local.zip`、81,823,239 bytes、SHA256 `a43bd208080a8909740204f821e95b6ab1fe7adbd8ee383117fd771015344c51`。記録は `docs/validation/2026-11-19-portable-6d88326*.json`。
+- GitHub Actions は [run 44469933701](https://github.com/higeotoko/sketchBRep/actions/runs/44469933701) で Linux 773 件成功。SDK を使う SKP の往復は Windows ZIP で確認した。
