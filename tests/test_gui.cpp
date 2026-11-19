@@ -63,6 +63,7 @@
 #include <QLineEdit>
 #include <QAction>
 #include <QDockWidget>
+#include <QTreeWidget>
 #include <QToolButton>
 #include <QToolBar>
 #include <QScrollArea>
@@ -243,6 +244,7 @@ class GuiPhase1 : public QObject {
   void aiReadsKeepDrawingInProgress();
   void siteNorthFromTwoPlanPoints();
   void sitePlanFromASelectedBoundary();
+  void permitWorkflowTracksSiteInputsAndStaleGround();
   void proposalShowsRotationAndHide();
   void benchViewportSync();
   void benchEnterManyCopies();
@@ -674,6 +676,100 @@ void GuiPhase1::sitePlanFromASelectedBoundary() {
   ground->trigger();
   QVERIFY(prompted);
   QVERIFY(modeler.document().checkSiteGroundPlacement(*modeler.document().settings().siteBoundary->ground));
+}
+
+void GuiPhase1::permitWorkflowTracksSiteInputsAndStaleGround() {
+  Fixture f;
+  QVERIFY(f.setUp(5000, 6000));
+  f.window.resize(1360, 760);
+  auto& modeler = f.window.modeler();
+  auto* open = f.window.findChild<QAction*>(QStringLiteral("permitWorkflowAction"));
+  QVERIFY(open);
+  open->trigger();
+  auto* dock = f.window.findChild<QDockWidget*>(QStringLiteral("permitWorkflowDock"));
+  QVERIFY(dock && dock->isVisible());
+  auto* phases = dock->findChild<QListWidget*>(QStringLiteral("permitWorkflowPhases"));
+  auto* checks = dock->findChild<QTreeWidget*>(QStringLiteral("permitWorkflowChecks"));
+  auto* next = dock->findChild<QLabel*>(QStringLiteral("permitWorkflowNext"));
+  auto* details = dock->findChild<QLabel*>(QStringLiteral("permitWorkflowDetails"));
+  auto* gate = dock->findChild<QLabel*>(QStringLiteral("permitWorkflowGate"));
+  auto* edit = dock->findChild<QPushButton*>(QStringLiteral("permitWorkflowEdit"));
+  auto* preview = dock->findChild<QPushButton*>(QStringLiteral("permitWorkflowPreview"));
+  QVERIFY(phases && checks && next && details && gate && edit && preview);
+  QCOMPARE(phases->count(), 12);
+  const auto state = [&](int row) {
+    const auto* check = checks->topLevelItem(row);
+    return check ? check->text(1) : QString{};
+  };
+  QCOMPARE(state(0), QStringLiteral("未入力"));
+  QVERIFY(next->text().contains(QStringLiteral("敷地境界")));
+  QVERIFY(!preview->isEnabled());
+  QVERIFY(gate->text().contains(QStringLiteral("保留")));
+
+  const auto site = modeler.createPolyline({gp_Pnt(0, 0, 0), gp_Pnt(10000, 0, 0), gp_Pnt(10000, 12000, 0),
+      gp_Pnt(0, 12000, 0), gp_Pnt(0, 0, 0)});
+  QVERIFY(site);
+  QVERIFY(modeler.setSiteBoundary(doc::SiteBoundary{*site, "架空の測量図"}));
+  QVERIFY(modeler.setSiteNorth({25, "架空の測量図", "2026-11-19"}));
+  doc::SiteRoad road;
+  road.source = "架空の道路資料";
+  QVERIFY(modeler.setSiteRoad({gp_Pnt(0, 0, 0), gp_Pnt(10000, 0, 0)}, road));
+  QTRY_COMPARE(state(2), QStringLiteral("入力不足"));
+  road.kind = "検討用道路";
+  road.widthMm = 5200;
+  road.frontageMm = 9400;
+  QVERIFY(modeler.setSiteRoad({gp_Pnt(0, 0, 0), gp_Pnt(10000, 0, 0)}, road));
+  const auto house = f.box(1800, 2350, 5200, 6800, 3500);
+  const auto outline = modeler.createPolyline({gp_Pnt(2000, 2500, 0), gp_Pnt(6800, 2500, 0), gp_Pnt(6800, 9000, 0),
+      gp_Pnt(2000, 9000, 0), gp_Pnt(2000, 2500, 0)});
+  QVERIFY(outline);
+  const doc::SiteGround ground{*outline, "BM", "架空の高さ測量",
+      {{2000, 2500, -120}, {6800, 2500, 0}, {6800, 9000, 160}, {2000, 9000, 320}}};
+  QVERIFY(modeler.setSiteGround(ground, house));
+  QTRY_COMPARE(state(3), QStringLiteral("参考値あり"));
+  QVERIFY(preview->isEnabled());
+  bool openedPreview = false;
+  QTimer::singleShot(0, &f.window, [&] {
+    auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+    if (!dialog) return;
+    openedPreview = qobject_cast<DrawingDialog*>(dialog) != nullptr;
+    dialog->reject();
+  });
+  preview->click();
+  QVERIFY(openedPreview);
+
+  gp_Trsf move;
+  move.SetTranslation(gp_Vec(200, 0, 0));
+  QVERIFY(modeler.transform({house}, move));
+  QTRY_COMPARE(state(3), QStringLiteral("要再照合"));
+  QVERIFY(next->text().contains(QStringLiteral("接地外周・高さ")));
+  checks->setCurrentItem(checks->topLevelItem(3));
+  QVERIFY(details->text().contains(QStringLiteral("保留")));
+  const auto capture = qEnvironmentVariable("SBR_PERMIT_WORKFLOW_CAPTURE");
+  if (!capture.isEmpty()) QVERIFY(dock->grab().save(capture));
+  bool openedReview = false;
+  f.window.setSelection({house});
+  QTimer::singleShot(0, &f.window, [&] {
+    auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+    if (!dialog) return;
+    auto* confirm = dialog->findChild<QCheckBox*>(QStringLiteral("siteGroundConfirmPlacement"));
+    openedReview = confirm && confirm->isVisible() && !confirm->isChecked();
+    dialog->reject();
+  });
+  edit->click();
+  QVERIFY(openedReview);
+  QVERIFY(modeler.undo());
+  QTRY_COMPARE(state(3), QStringLiteral("参考値あり"));
+  phases->setCurrentRow(11);
+  QCOMPARE(state(0), QStringLiteral("未評価"));
+  QVERIFY(!edit->isVisible());
+  QVERIFY(!preview->isVisible());
+  phases->setCurrentRow(0);
+  QCOMPARE(state(3), QStringLiteral("参考値あり"));
+  dock->hide();
+  QVERIFY(modeler.redo());
+  open->trigger();
+  QTRY_COMPARE(state(3), QStringLiteral("要再照合"));
 }
 
 // Request "線の移動コピー・等間隔配列・等分割": a selected line copied with

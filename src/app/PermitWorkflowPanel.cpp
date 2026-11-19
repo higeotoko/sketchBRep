@@ -1,0 +1,257 @@
+#include "PermitWorkflowPanel.h"
+
+#include <algorithm>
+#include <iterator>
+#include <utility>
+
+#include <QCoreApplication>
+#include <QFont>
+#include <QGridLayout>
+#include <QHeaderView>
+#include <QLabel>
+#include <QListWidget>
+#include <QPointer>
+#include <QPushButton>
+#include <QSignalBlocker>
+#include <QStringList>
+#include <QTimer>
+#include <QTreeWidget>
+#include <QVBoxLayout>
+
+#include "sbr/doc/Document.h"
+
+namespace sbr::app {
+namespace {
+
+QString translated(const char* text) { return QCoreApplication::translate("PermitWorkflowPanel", text); }
+
+QString metres(double mm) { return QString::number(mm / 1000.0, 'f', 3) + QStringLiteral(" m"); }
+
+}  // namespace
+
+PermitWorkflowPanel::PermitWorkflowPanel(doc::Document& document, std::function<void(Action)> open, QWidget* parent)
+    : QWidget(parent), document_(document), phases_(new QListWidget(this)), next_(new QLabel(this)),
+      checks_(new QTreeWidget(this)), details_(new QLabel(this)), edit_(new QPushButton(this)),
+      preview_(new QPushButton(translated("検討用の配置図"), this)), refreshTimer_(new QTimer(this)) {
+  setMinimumHeight(350);
+  const QStringList names{translated("敷地・配置図"), translated("通り芯"), translated("平面"),
+      translated("居室・採光・換気"), translated("階段"), translated("屋根・庇・バルコニー"),
+      translated("耐力壁"), translated("基礎"), translated("省エネ・設備"), translated("立面・断面"),
+      translated("一式の突合せ"), translated("申請用出力")};
+  for (int i = 0; i < names.size(); ++i)
+    phases_->addItem(QStringLiteral("%1  %2").arg(i + 1).arg(names[i]));
+  phases_->setObjectName(QStringLiteral("permitWorkflowPhases"));
+  phases_->setMinimumWidth(165);
+  phases_->setMaximumWidth(195);
+  phases_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  phases_->setWordWrap(true);
+  phases_->setAccessibleName(translated("申請図の工程"));
+
+  QFont emphasis = font();
+  emphasis.setBold(true);
+  next_->setFont(emphasis);
+  for (auto* label : {next_, details_}) {
+    label->setWordWrap(true);
+    label->setTextFormat(Qt::PlainText);
+  }
+  next_->setObjectName(QStringLiteral("permitWorkflowNext"));
+  details_->setObjectName(QStringLiteral("permitWorkflowDetails"));
+  checks_->setObjectName(QStringLiteral("permitWorkflowChecks"));
+  checks_->setHeaderLabels({translated("項目"), translated("状態")});
+  checks_->setRootIsDecorated(false);
+  checks_->setUniformRowHeights(true);
+  checks_->setMaximumHeight(180);
+  checks_->header()->setStretchLastSection(false);
+  checks_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+  checks_->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+  edit_->setObjectName(QStringLiteral("permitWorkflowEdit"));
+  preview_->setObjectName(QStringLiteral("permitWorkflowPreview"));
+
+  auto* right = new QVBoxLayout;
+  right->addWidget(next_);
+  right->addWidget(checks_);
+  right->addWidget(details_);
+  right->addWidget(edit_, 0, Qt::AlignLeft);
+  right->addStretch(1);
+  right->addWidget(preview_, 0, Qt::AlignLeft);
+  auto* gate = new QLabel(translated("申請用出力は保留。申請先・適用法令・必要図書の確認が残っています。"), this);
+  gate->setObjectName(QStringLiteral("permitWorkflowGate"));
+  gate->setWordWrap(true);
+  right->addWidget(gate);
+  auto* layout = new QGridLayout(this);
+  layout->addWidget(phases_, 0, 0);
+  layout->addLayout(right, 0, 1);
+  layout->setColumnStretch(1, 1);
+
+  connect(phases_, &QListWidget::currentRowChanged, this, [this] { refresh(); });
+  connect(checks_, &QTreeWidget::currentItemChanged, this, [this] { showSelectedCheck(); });
+  connect(edit_, &QPushButton::clicked, this, [this, open] {
+    const int index = checks_->indexOfTopLevelItem(checks_->currentItem());
+    if (index >= 0 && rows_[index].action != Action::None) open(rows_[index].action);
+  });
+  connect(preview_, &QPushButton::clicked, this, [open = std::move(open)] { open(Action::Preview); });
+  refreshTimer_->setSingleShot(true);
+  connect(refreshTimer_, &QTimer::timeout, this, [this] { refresh(); });
+  document_.addListener([panel = QPointer<PermitWorkflowPanel>(this)] {
+    if (panel && panel->isVisible() && !panel->refreshTimer_->isActive()) panel->refreshTimer_->start(0);
+  });
+  phases_->setCurrentRow(0);
+}
+
+void PermitWorkflowPanel::showEvent(QShowEvent* event) {
+  QWidget::showEvent(event);
+  refresh();
+}
+
+void PermitWorkflowPanel::readSiteChecks() {
+  const auto& settings = document_.settings();
+  const auto& site = settings.siteBoundary;
+  const auto missing = translated("未入力");
+  const auto review = translated("要再照合");
+  const auto entered = translated("入力済み");
+  const auto boundaryHelp = translated("敷地の閉じた折れ線か水平面を1つ選んで登録します。");
+  const auto boundaryEdit = translated("選択した輪郭を登録");
+  const auto geometry = site ? document_.siteBoundaryGeometry(site->outline) :
+      Result<doc::SiteBoundaryGeometry>::failure({});
+  canPreview_ = geometry.ok();
+  if (site) {
+    if (geometry) {
+      rows_.push_back({translated("敷地境界"), entered,
+          translated("指定輪郭 %1 m²\n確認資料 %2")
+              .arg(QString::number(geometry->areaMm2 / 1e6, 'f', 3), QString::fromStdString(site->source)),
+          boundaryEdit, Action::Boundary});
+    } else {
+      rows_.push_back({translated("敷地境界"), review, QString::fromStdString(geometry.error()),
+                       boundaryEdit, Action::Boundary, true});
+    }
+  } else {
+    rows_.push_back({translated("敷地境界"), missing, boundaryHelp, boundaryEdit, Action::Boundary, true});
+  }
+
+  const auto northEdit = translated("真北の角度を入力");
+  if (const auto& north = settings.siteNorth) {
+    rows_.push_back({translated("真北"), entered,
+        translated("モデルの +Y から時計回り %1°\n確認資料 %2\n確認日 %3")
+            .arg(QString::number(north->angle, 'g', 8), QString::fromStdString(north->source),
+                 QString::fromStdString(north->checkedOn)),
+        northEdit, Action::North});
+  } else {
+    rows_.push_back({translated("真北"), missing, translated("真北の角度と確認資料・日付を入力します。"),
+                     northEdit, Action::North, true});
+  }
+
+  const auto roadLabel = translated("道路・接道");
+  const auto groundLabel = translated("接地外周・高さ");
+  if (!canPreview_) {
+    const auto prerequisite = translated("敷地境界を登録すると入力できます。");
+    rows_.push_back({roadLabel, translated("敷地境界待ち"), prerequisite, {}});
+    rows_.push_back({groundLabel, translated("敷地境界待ち"), prerequisite, {}});
+  } else {
+    const auto& road = site->road;
+    const auto roadEdit = translated("道路・接道情報を入力");
+    const auto roadHelp = translated("道路側にある敷地外周の辺を1本選び、確認資料と寸法を入力します。");
+    if (!road) {
+      rows_.push_back({roadLabel, missing, roadHelp, roadEdit, Action::Road, true});
+    } else if (!document_.siteRoadEdge(*geometry)) {
+      rows_.push_back({roadLabel, review, translated("道路側の辺が変わりました。") + roadHelp,
+                       roadEdit, Action::Road, true});
+    } else {
+      const auto kind = road->kind.empty() ? missing : QString::fromStdString(road->kind);
+      const auto width = road->widthMm > 0 ? metres(road->widthMm) : missing;
+      const auto frontage = road->frontageMm > 0 ? metres(road->frontageMm) : missing;
+      const bool partial = road->kind.empty() || road->widthMm <= 0 || road->frontageMm <= 0;
+      rows_.push_back({roadLabel, partial ? translated("入力不足") : entered,
+          translated("種別 %1\n幅員 %2　接道長 %3\n確認資料 %4")
+              .arg(kind, width, frontage, QString::fromStdString(road->source)),
+          roadEdit, Action::SavedRoad, partial});
+    }
+
+    const auto& ground = site->ground;
+    const auto groundEdit = translated("接地外周・高さを開く");
+    if (!ground) {
+      rows_.push_back({groundLabel, missing, translated("建物の接地外周を選び、基準点と測点の高さを入力します。"),
+                       groundEdit, Action::Ground, true});
+    } else {
+      const auto placement = document_.checkSiteGroundPlacement(*ground);
+      const auto report = document_.siteGroundReport(*ground);
+      if (!placement || !report) {
+        rows_.push_back({groundLabel, review, translated("旧参考平均は保留。\n") +
+                            QString::fromStdString(!placement ? placement.message() : report.error()),
+                        report ? groundEdit : translated("選択した接地外周を開く"),
+                        report ? Action::SavedGround : Action::Ground, true});
+      } else {
+        const bool linked = ground->placement.has_value();
+        QString details = translated("参考平均 %1（基準点 %2）\n確認資料 %3")
+            .arg(metres(report->averageMm()), QString::fromStdString(ground->datum), QString::fromStdString(ground->source));
+        if (!linked) details += translated("\n移動時の再照合に使う建物を関連付けてください。");
+        rows_.push_back({groundLabel, linked ? translated("参考値あり") : translated("建物未関連"),
+                         details, groundEdit, Action::SavedGround, !linked});
+      }
+    }
+  }
+  rows_.push_back({translated("申請条件"), translated("未評価"),
+      translated("申請先・適用ルートと最新の法令を確認します。道路・接道、法令上の地盤面、高低差による区分の確認が残っています。"), {}});
+}
+
+void PermitWorkflowPanel::refresh() {
+  const int phase = phases_->currentRow();
+  if (phase < 0) return;
+  const int selected = phase == previousPhase_ ? checks_->indexOfTopLevelItem(checks_->currentItem()) : -1;
+  previousPhase_ = phase;
+  rows_.clear();
+  canPreview_ = false;
+  if (phase == 0) {
+    readSiteChecks();
+  } else {
+    const QStringList guides{translated("階と通り芯の対応、壁・柱の参照を照合します。"),
+        translated("部屋の閉鎖、開口、寸法、面積の算定根拠を確認します。"),
+        translated("居室の用途、開口と境界の関係、給排気の経路と根拠を確認します。"),
+        translated("段、幅、クリアランス、手すりを図面で確認します。"),
+        translated("突出部の寸法と役割、面積や採光に効く縁を確認します。"),
+        translated("階・方向ごとの壁量、四分割、接合部の根拠を確認します。"),
+        translated("架構と基礎の対応、地盤資料、配筋と人通口を確認します。"),
+        translated("適用ルート、断熱範囲、建具性能、機器の資料を照合します。"),
+        translated("地盤と高さ、切断位置、平面との寸法整合を確認します。"),
+        translated("図番、符号、面積、添付資料とモデル版を突き合わせます。"),
+        translated("申請先と必要図書を確かめ、同じモデル版の図面・表・添付をそろえます。")};
+    rows_.push_back({translated("工程の確認項目"), translated("未評価"), guides.at(phase - 1), {}});
+  }
+
+  const QSignalBlocker block(checks_);
+  checks_->clear();
+  for (const auto& row : rows_) {
+    auto* item = new QTreeWidgetItem(checks_, {row.item, row.state});
+    if (row.attention) {
+      QFont weight = checks_->font();
+      weight.setBold(true);
+      item->setFont(1, weight);
+    }
+  }
+  const auto next = std::find_if(rows_.begin(), rows_.end(), [](const Check& row) { return row.attention; });
+  int defaultRow = 0;
+  if (next != rows_.end()) {
+    defaultRow = static_cast<int>(std::distance(rows_.begin(), next));
+    next_->setText(translated("次に確認する項目  %1").arg(next->item));
+  } else {
+    next_->setText(phase == 0 ? translated("申請条件を確認") : phases_->currentItem()->text());
+  }
+  checks_->setCurrentItem(checks_->topLevelItem(selected >= 0 ? selected : defaultRow));
+  preview_->setVisible(phase == 0);
+  preview_->setEnabled(canPreview_);
+  showSelectedCheck();
+}
+
+void PermitWorkflowPanel::showSelectedCheck() {
+  const int index = checks_->indexOfTopLevelItem(checks_->currentItem());
+  if (index < 0) {
+    details_->clear();
+    edit_->hide();
+    return;
+  }
+  const auto& check = rows_[index];
+  details_->setText(check.details);
+  edit_->setText(check.button);
+  edit_->setVisible(check.action != Action::None);
+}
+
+}  // namespace sbr::app

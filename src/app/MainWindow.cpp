@@ -12,6 +12,7 @@
 #include "sbr/doc/Schedules.h"
 #include "sbr/KernelError.h"
 #include "DrawingExport.h"
+#include "PermitWorkflowPanel.h"
 #include "CrashLog.h"
 #include "HelpWindow.h"
 #include "SunDialog.h"
@@ -1147,6 +1148,8 @@ void MainWindow::buildMenus() {
     dialog.resize(1100, 720);
     dialog.exec();
   })->setObjectName(QStringLiteral("showSitePlanAction"));
+  file->addAction(tr("申請図の工程..."), this, &MainWindow::showPermitWorkflow)
+      ->setObjectName(QStringLiteral("permitWorkflowAction"));
   file->addAction(tr("図面一式を書き出す（図番つき、1 つの PDF）..."), this, [this] {
     const QString path = QFileDialog::getSaveFileName(this, tr("図面一式を書き出す"), tr("図面一式.pdf"), tr("PDF (*.pdf)"));
     if (!path.isEmpty()) saveDrawingSet(path);
@@ -7001,6 +7004,44 @@ void MainWindow::showSiteGroundDialog() {
   form->addRow(buttons);
   dialog.resize(620, 625);
   if (dialog.exec() == QDialog::Accepted) setStatus(tr("接地外周と高さを設定しました。配置図で参考平均を確認できます。"));
+}
+
+void MainWindow::showPermitWorkflow() {
+  const auto name = QStringLiteral("permitWorkflowDock");
+  if (auto* existing = findChild<QDockWidget*>(name)) {
+    existing->show();
+    existing->raise();
+    return;
+  }
+  auto* dock = new PanelDock(tr("申請図の工程"), this);
+  dock->setObjectName(name);
+  using Action = PermitWorkflowPanel::Action;
+  auto* panel = new PermitWorkflowPanel(modeler_.document(), [this](Action action) {
+    const auto trigger = [this](const char* id) {
+      if (auto* menuAction = findChild<QAction*>(QString::fromLatin1(id))) menuAction->trigger();
+    };
+    switch (action) {
+      case Action::Boundary: trigger("setSiteBoundaryAction"); break;
+      case Action::North: trigger("siteNorthByAngleAction"); break;
+      case Action::SavedRoad:
+        setSelection({});
+        [[fallthrough]];
+      case Action::Road: showSiteRoadDialog(); break;
+      case Action::SavedGround:
+        if (const auto& site = modeler_.document().settings().siteBoundary; site && site->ground)
+          setSelection({site->ground->outline});
+        [[fallthrough]];
+      case Action::Ground: showSiteGroundDialog(); break;
+      case Action::Preview: trigger("showSitePlanAction"); break;
+      case Action::None: break;
+    }
+  }, dock);
+  dock->setWidget(panel);
+  dock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+  addDockWidget(Qt::RightDockWidgetArea, dock);
+  resizeDocks({dock}, {560}, Qt::Horizontal);
+  resizeDocks({dock}, {420}, Qt::Vertical);
+  dock->show();
 }
 
 void MainWindow::showDrawingDialog() {

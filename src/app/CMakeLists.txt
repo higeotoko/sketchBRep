@@ -28,6 +28,7 @@ add_library(sbr_ui STATIC
   Messages.cpp Messages.h
   ProgressDialog.cpp ProgressDialog.h
   DrawingExport.cpp DrawingExport.h
+  PermitWorkflowPanel.cpp PermitWorkflowPanel.h
   CrashLog.cpp CrashLog.h
   HelpWindow.cpp HelpWindow.h
   SunDialog.cpp SunDialog.h

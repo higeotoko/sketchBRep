@@ -92,6 +92,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   void showDrawingDialog();
   void showSiteRoadDialog();
   void showSiteGroundDialog();
+  void showPermitWorkflow();
   // File > recent files (newest first, those still there; up to 10).
   QStringList recentFiles() const;
   Tool* activeTool() const { return active_; }
