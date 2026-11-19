@@ -72,7 +72,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   // Used by tests and the command line.
   bool openFile(const QString& path);
   bool saveFile(const QString& path);
-  enum class ToolId { Select, Line, Rectangle, PushPull, Move, Rotate, Offset, Curve, Revolve, Measure, Circle, Paint, Eraser, Arc, Dimension, Text, Section, FollowMe, Protractor, Polygon, Scale, Wall, Slab, Opening, Paste, ComponentAxes, RotatedRectangle, Member, Sweep2, EdgeSurface, Patch, Fillet, Chamfer, Shell, Room, Roof, Stair, DoorSwing, Count };
+  enum class ToolId { Select, Line, Rectangle, PushPull, Move, Rotate, Offset, Curve, Revolve, Measure, Circle, Paint, Eraser, Arc, Dimension, Text, Section, FollowMe, Protractor, Polygon, Scale, Wall, Slab, Opening, Paste, ComponentAxes, RotatedRectangle, Member, Sweep2, EdgeSurface, Patch, Fillet, Chamfer, Shell, Room, Roof, Stair, DoorSwing, SiteNorth, Count };
   void activateTool(ToolId id);
   // Component placement commands on the instances among `ids`: "unique",
   // "reset", "mirror0".."mirror2" (red / green / blue) or "axes" (tool).
@@ -90,6 +90,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   HelpWindow* helpWindow() const { return help_; }
   // File > 2D drawings: plans, sections, elevations as PDF / DXF / JWW (docs/50).
   void showDrawingDialog();
+  void showSiteRoadDialog();
+  void showSiteGroundDialog();
   // File > recent files (newest first, those still there; up to 10).
   QStringList recentFiles() const;
   Tool* activeTool() const { return active_; }
@@ -391,6 +393,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   std::unique_ptr<CurveTool> curveTool_;
   std::unique_ptr<RevolveTool> revolveTool_;
   std::unique_ptr<MeasureTool> measureTool_;
+  std::unique_ptr<SiteNorthTool> siteNorthTool_;
   std::unique_ptr<ProtractorTool> protractorTool_;
   std::unique_ptr<PasteTool> pasteTool_;
   std::unique_ptr<PolygonTool> polygonTool_;

@@ -18,12 +18,14 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <map>
 
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepExtrema_DistShapeShape.hxx>
 #include <TopTools_ListOfShape.hxx>
 #include <BRepAlgoAPI_Section.hxx>
 #include <BRepBndLib.hxx>
@@ -163,6 +165,14 @@ constexpr double kOnPlane = 1e-4;  // mm: an edge / face on the cut plane
 bool selected(const doc::Document& d, const doc::Object& o, const ViewSpec& spec) {
   if (!spec.includeHidden && !d.isVisible(o.id)) return false;
   if (!spec.within.empty() && o.id != spec.within && !d.isAncestor(spec.within, o.id)) return false;
+  if (spec.kind == ViewKind::SitePlan) {
+    const auto& boundary = d.settings().siteBoundary;
+    if (boundary && (o.id == boundary->outline || (boundary->ground && o.id == boundary->ground->outline)))
+      return false;
+    const auto kind = o.kind();
+    if (kind != doc::ObjectKind::Solid && kind != doc::ObjectKind::Shell &&
+        kind != doc::ObjectKind::Face && kind != doc::ObjectKind::Instance) return false;
+  }
   return spec.tags.empty() || std::find(spec.tags.begin(), spec.tags.end(), o.layer) != spec.tags.end();
 }
 
@@ -248,6 +258,29 @@ void addLocalEdge(const TopoDS_Edge& edge, Pen pen, double deflection, std::vect
 void addLocalEdges(const TopoDS_Shape& shape, Pen pen, double deflection, std::vector<Item>& out) {
   if (shape.IsNull()) return;
   for (TopExp_Explorer e(shape, TopAbs_EDGE); e.More(); e.Next()) addLocalEdge(TopoDS::Edge(e.Current()), pen, deflection, out);
+}
+
+std::string metres(double distanceMm) {
+  char value[64];
+  std::snprintf(value, sizeof value, "%.3f m", distanceMm / 1000.0);
+  return value;
+}
+
+std::optional<DimensionMark> roadClearance(const std::array<gp_Pnt2d, 2>& edge,
+                                           const TopoDS_Shape& visible, const TopoDS_Shape& silhouette) {
+  const auto inPlane = [](const gp_Pnt2d& p) { return gp_Pnt(p.X(), p.Y(), 0); };
+  const auto road = BRepBuilderAPI_MakeEdge(inPlane(edge[0]), inPlane(edge[1])).Edge();
+  double best = std::numeric_limits<double>::infinity();
+  std::optional<DimensionMark> out;
+  for (const auto& shape : {visible, silhouette}) {
+    if (!TopExp_Explorer(shape, TopAbs_EDGE).More()) continue;
+    BRepExtrema_DistShapeShape distance(road, shape);
+    if (!distance.IsDone() || distance.NbSolution() < 1 || distance.Value() >= best) continue;
+    best = distance.Value();
+    const auto a = distance.PointOnShape1(1), b = distance.PointOnShape2(1);
+    out = DimensionMark{gp_Pnt2d(a.X(), a.Y()), gp_Pnt2d(b.X(), b.Y()), gp_Vec2d(0, 0), metres(best)};
+  }
+  return out;
 }
 
 // The distance from a point to an item's line (lines, arcs, polylines).
@@ -436,6 +469,14 @@ ViewSpec planView(double cutZ) {
   return s;
 }
 
+ViewSpec sitePlanView() {
+  ViewSpec spec = planView(0);
+  spec.kind = ViewKind::SitePlan;
+  spec.title = "配置図（検討用）";
+  spec.fill = spec.grid = spec.levels = spec.annotations = false;
+  return spec;
+}
+
 ViewSpec sectionView(const gp_Pnt& point, const gp_Dir& towardsViewer) {
   ViewSpec s;
   s.kind = ViewKind::Section;
@@ -503,12 +544,97 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     return R::failure("within must name a group");
   View view;
   view.spec = spec;
+  const bool sitePlan = spec.kind == ViewKind::SitePlan;
+  if ((spec.kind == ViewKind::Plan || sitePlan) && document.settings().siteNorth) {
+    const double angle = std::remainder(document.settings().siteNorth->angle, 360.0) * std::acos(-1.0) / 180.0;
+    const gp_Vec worldNorth(std::sin(angle), std::cos(angle), 0);
+    const double u = worldNorth.Dot(gp_Vec(spec.frame.XDirection()));
+    const double v = worldNorth.Dot(gp_Vec(spec.frame.YDirection()));
+    if (std::hypot(u, v) > 1e-9) view.trueNorth = gp_Dir2d(u, v);
+  }
   const Projection proj(spec.frame);
   const gp_Dir n = spec.frame.Direction();
   const gp_Pln plane(spec.frame.Location(), n);
-  const bool cutting = spec.kind != ViewKind::Elevation;
+  const bool cutting = spec.kind == ViewKind::Plan || spec.kind == ViewKind::Section;
   // The whole model's size: the clipping box and the curve deflection.
   Bnd_Box all;
+  std::optional<std::array<gp_Pnt2d, 2>> roadEdge;
+  std::optional<DimensionMark> clearance;
+  if (sitePlan) {
+    const auto& source = document.settings().siteBoundary;
+    if (!source) return R::failure("敷地境界が未入力です。閉じた輪郭を選び、ファイルメニューから指定してください");
+    const auto boundary = document.siteBoundaryGeometry(source->outline);
+    if (!boundary) return R::failure(boundary.error());
+    Item outline;
+    outline.kind = Item::Kind::Polyline;
+    outline.pen = Pen::Grid;
+    outline.closed = true;
+    for (const gp_Pnt& vertex : boundary->vertices) {
+      all.Add(vertex);
+      outline.points.push_back(proj.uv(vertex));
+    }
+    view.items.push_back(std::move(outline));
+    char area[64];
+    std::snprintf(area, sizeof area, "%.3f", boundary->areaMm2 / 1e6);
+    view.calculationNotes.push_back(std::string("敷地面積（指定輪郭） ") + area + " m²");
+    view.calculationNotes.push_back("一点鎖線：敷地境界　実線：建物の上面投影（参考）");
+    if (const auto edge = document.siteRoadEdge(*boundary)) {
+      roadEdge = std::array<gp_Pnt2d, 2>{proj.uv((*edge)[0]), proj.uv((*edge)[1])};
+      view.items.push_back(line(Pen::Cut, (*roadEdge)[0], (*roadEdge)[1]));
+      const auto& road = *source->road;
+      const auto entered = [](double mm) { return mm > 0 ? metres(mm) : std::string("未入力"); };
+      view.calculationNotes.push_back("太実線：道路側境界　道路種別 " +
+          (road.kind.empty() ? std::string("未入力") : road.kind) + "　幅員 " + entered(road.widthMm) +
+          "　接道長（入力） " + entered(road.frontageMm));
+      view.calculationNotes.push_back("道路情報の根拠：" + road.source);
+    } else if (source->road) {
+      view.calculationNotes.push_back("道路側境界を再指定してください（境界の辺が変わりました）");
+    } else {
+      view.calculationNotes.push_back("道路側境界・道路情報は未入力");
+    }
+    if (source->ground) {
+      const auto& ground = *source->ground;
+      const auto report = document.siteGroundReport(ground);
+      if (!report) {
+        view.calculationNotes.push_back("接地外周は未評価。輪郭と測点を確認してください");
+      } else {
+        Item contact;
+        contact.kind = Item::Kind::Polyline;
+        contact.pen = Pen::Hidden;
+        contact.closed = true;
+        Table evidence{"接地外周の高さ（参考）", {"辺", "長さ (m)", "始点高 (m)", "終点高 (m)", "長さ×平均高 (m²)"}, {}, {}};
+        const auto decimal = [](double value) {
+          char buf[96];
+          std::snprintf(buf, sizeof buf, "%.3f", value);
+          return std::string(buf);
+        };
+        const auto label = [](std::size_t i) { return "P" + std::to_string(i + 1); };
+        for (std::size_t i = 0; i < report->vertices.size(); ++i) {
+          const std::size_t j = (i + 1) % report->vertices.size();
+          const auto& vertex = report->vertices[i];
+          all.Add(vertex);
+          contact.points.push_back(proj.uv(vertex));
+          view.members.push_back({contact.points.back(), label(i)});
+          const double a = report->heightsMm[i] / 1000;
+          const double b = report->heightsMm[j] / 1000;
+          const double length = report->lengthsMm[i] / 1000;
+          evidence.rows.push_back({label(i) + "–" + label(j), decimal(length), decimal(a), decimal(b),
+                                   decimal(length * (a / 2 + b / 2))});
+        }
+        view.items.push_back(std::move(contact));
+        view.calculationNotes.push_back("破線・P番号：建物の接地外周と測点");
+        evidence.rows.push_back({"合計", decimal(report->lengthMm / 1000), "", "", decimal(report->weightedSumMm2 / 1e6)});
+        evidence.notes = {"参考平均（辺内を線形補間、長さで重み付け） " + metres(report->averageMm()),
+                          "合計・参考平均は表示丸め前の値で計算",
+                          "基準点 " + ground.datum, "確認資料 " + ground.source,
+                          "法令上の地盤面・高低差による区分は未評価"};
+        view.siteGroundTable = std::move(evidence);
+      }
+    } else {
+      view.calculationNotes.push_back("接地外周・高さは未入力");
+    }
+    if (!view.trueNorth) view.notes.push_back("真北が未入力です");
+  }
   for (const doc::Object& o : document.objects()) {
     if (!o.shape.IsNull() && selected(document, o, spec)) all.Add(document.worldBounds(o));
   }
@@ -565,7 +691,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     double ux0, uy0, uz0, ux1, uy1, uz1;
     local.Get(ux0, uy0, uz0, ux1, uy1, uz1);
     const bool gone = cutting && uz0 > kOnPlane;
-    const bool beyondDepth = uz1 < -keepDepth;
+    const bool beyondDepth = !sitePlan && uz1 < -keepDepth;
     if (gone || beyondDepth) continue;
     const bool across = cutting && uz1 > kOnPlane;
     try {
@@ -798,8 +924,10 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
       hlr->Update();
       hlr->Hide();
       HLRBRep_HLRToShape out(hlr);
-      addLocalEdges(out.VCompound(), Pen::Visible, deflection, visible);
-      addLocalEdges(out.OutLineVCompound(), Pen::Visible, deflection, visible);
+      const auto faces = out.VCompound(), silhouette = out.OutLineVCompound();
+      addLocalEdges(faces, Pen::Visible, deflection, visible);
+      addLocalEdges(silhouette, Pen::Visible, deflection, visible);
+      if (roadEdge) clearance = roadClearance(*roadEdge, faces, silhouette);
       if (spec.hidden) {
         addLocalEdges(out.HCompound(), Pen::Hidden, deflection, hidden);
         addLocalEdges(out.OutLineHCompound(), Pen::Hidden, deflection, hidden);
@@ -807,6 +935,16 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     } catch (const Standard_Failure& e) {
       view.notes.push_back("Hidden lines could not be worked out: " + kernelMessage(e));
     }
+  }
+  if (sitePlan) {
+    if (visible.empty()) view.calculationNotes[1] = "一点鎖線：敷地境界　建物の上面投影なし";
+    if (clearance) {
+      view.calculationNotes.push_back("道路側境界から建物上面投影線までの最短距離（参考） " + clearance->text);
+      if (clearance->a.Distance(clearance->b) > tolerance::kLinear) view.dimensions.push_back(*clearance);
+    } else if (roadEdge) {
+      view.calculationNotes.push_back("道路側境界からの距離は未評価（建物投影を確認してください）");
+    }
+    view.calculationNotes.push_back("法令上の道路・接道、地盤面、離隔・後退は未評価");
   }
   // A seen line lying on a cut line is that cut line: drawn once, thick.
   const double same = std::max(1e-3, diag * 1e-7);
@@ -1041,7 +1179,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     if (!report.at("complete").get<bool>())
       view.notes.push_back("部材情報の不足・編集後の寸法など、拾い出しに未評価があります");
   }
-  if (document.settings().wallCalculation != "{}") {
+  if (!sitePlan && document.settings().wallCalculation != "{}") {
     const auto wall = construction::checkWallQuantity(document);
     if (wall) {
       const auto report = nlohmann::json::parse(*wall);

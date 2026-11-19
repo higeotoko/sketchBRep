@@ -3974,8 +3974,84 @@ Status Modeler::setWallCalculation(const std::string& inputs) {
 
 Status Modeler::setSun(const geom::SunSettings& sun) {
   if (const char* error = geom::sunSettingsError(sun); *error) return Status::failure(error);
-  editSettings(document_, history_, "Sun", [&](PersistentSettings& s) { s.sun = sun; });
+  editSettings(document_, history_, "Sun", [&](PersistentSettings& s) {
+    s.sun = sun;
+    if (s.siteNorth) s.sun.northAngle = s.siteNorth->angle;
+  });
   return Status::success();
+}
+
+Status Modeler::setSiteNorth(const SiteNorth& north) {
+  if (!std::isfinite(north.angle) || north.source.empty() || north.checkedOn.empty())
+    return Status::failure("Site north needs a finite angle, source and confirmation date");
+  editSettings(document_, history_, "Site North", [&](PersistentSettings& s) {
+    s.siteNorth = north;
+    s.siteNorth->angle = std::remainder(north.angle, 360.0);
+    s.sun.northAngle = s.siteNorth->angle;
+  });
+  return Status::success();
+}
+
+Status Modeler::setSiteNorthFromPoints(const gp_Pnt& tail, const gp_Pnt& tip, const std::string& source,
+                                       const std::string& checkedOn) {
+  const double x = tip.X() - tail.X(), y = tip.Y() - tail.Y();
+  if (!std::isfinite(x) || !std::isfinite(y) || std::hypot(x, y) <= tolerance::kMinDimension)
+    return Status::failure("Choose two distinct points in plan");
+  return setSiteNorth({std::atan2(x, y) * 180.0 / std::acos(-1.0), source, checkedOn});
+}
+
+Status Modeler::setSiteBoundary(const std::optional<SiteBoundary>& boundary) {
+  if (boundary) {
+    if (boundary->source.empty()) return Status::failure("敷地境界の確認資料を入力してください");
+    const auto geometry = document_.siteBoundaryGeometry(boundary->outline);
+    if (!geometry) return Status::failure(geometry.error());
+  }
+  editSettings(document_, history_, "Site Boundary", [&](PersistentSettings& s) {
+    auto next = boundary;
+    if (next) {
+      const bool sameOutline = s.siteBoundary && s.siteBoundary->outline == next->outline;
+      next->road = sameOutline ? s.siteBoundary->road : std::nullopt;
+      next->ground = sameOutline ? s.siteBoundary->ground : std::nullopt;
+    }
+    s.siteBoundary = std::move(next);
+  });
+  return Status::success();
+}
+
+Status Modeler::setSiteRoad(const std::array<gp_Pnt, 2>& edge, SiteRoad road) {
+  if (road.source.empty() || !std::isfinite(road.widthMm) || !std::isfinite(road.frontageMm) ||
+      road.widthMm < 0 || road.frontageMm < 0)
+    return Status::failure("道路の根拠と、確認できた寸法を入力してください");
+  const auto& boundary = document_.settings().siteBoundary;
+  if (!boundary) return Status::failure("先に敷地境界を指定してください");
+  const auto geometry = document_.siteBoundaryGeometry(boundary->outline);
+  if (!geometry) return Status::failure(geometry.error());
+  const auto match = geometry->matchEdge(edge[0], edge[1]);
+  if (!match) return Status::failure("敷地境界の外周の辺を1本選んでください");
+  const gp_Trsf toLocal = document_.worldTransform(*document_.find(boundary->outline)).Inverted();
+  for (std::size_t i = 0; i < match->size(); ++i) {
+    const gp_Pnt p = (*match)[i].Transformed(toLocal);
+    road.localEdge[i] = {p.X(), p.Y(), p.Z()};
+  }
+  editSettings(document_, history_, "Site Road", [&](PersistentSettings& s) { s.siteBoundary->road = road; });
+  return Status::success();
+}
+
+void Modeler::clearSiteRoad() {
+  if (!document_.settings().siteBoundary || !document_.settings().siteBoundary->road) return;
+  editSettings(document_, history_, "Clear Site Road", [](PersistentSettings& s) { s.siteBoundary->road.reset(); });
+}
+
+Status Modeler::setSiteGround(SiteGround ground) {
+  const auto report = document_.siteGroundReport(ground);
+  if (!report) return Status::failure(report.error());
+  editSettings(document_, history_, "Site Ground", [&](PersistentSettings& s) { s.siteBoundary->ground = std::move(ground); });
+  return Status::success();
+}
+
+void Modeler::clearSiteGround() {
+  if (!document_.settings().siteBoundary || !document_.settings().siteBoundary->ground) return;
+  editSettings(document_, history_, "Clear Site Ground", [](PersistentSettings& s) { s.siteBoundary->ground.reset(); });
 }
 
 Status Modeler::setConstructionOverrides(const std::string& system, const std::string& patch) {

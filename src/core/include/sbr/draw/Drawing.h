@@ -70,7 +70,7 @@ struct Item {
   int hAlign = 0, vAlign = 0;
 };
 
-enum class ViewKind { Plan, Section, Elevation };
+enum class ViewKind { Plan, Section, Elevation, SitePlan };
 
 struct ViewSpec {
   ViewKind kind = ViewKind::Plan;
@@ -111,6 +111,7 @@ struct ViewSpec {
 // that side. Elevations: from 0 south (looking north, +Y), 1 east (looking
 // west), 2 north, 3 west, before the model's bounds.
 ViewSpec planView(double cutZ);
+ViewSpec sitePlanView();
 ViewSpec sectionView(const gp_Pnt& point, const gp_Dir& towardsViewer);
 ViewSpec elevationView(const doc::Document& document, int side);
 Result<ViewSpec> framingView(const doc::Document& document, const std::string& preset,
@@ -138,6 +139,14 @@ struct DimensionMark {
   std::string text;
 };
 
+// Cells are text as shown; the first row of rows comes under headers.
+struct Table {
+  std::string title;
+  std::vector<std::string> headers;
+  std::vector<std::vector<std::string>> rows;
+  std::vector<std::string> notes;
+};
+
 struct View {
   std::vector<Item> items;  // view coordinates (real mm)
   std::vector<GridMark> grids;
@@ -156,6 +165,8 @@ struct View {
   int objects = 0;            // objects drawn
   std::vector<std::string> notes;  // what was left out, with the reason
   std::vector<std::string> calculationNotes;  // provenance only; no wall-quantity verdict on a geometry sheet
+  std::optional<gp_Dir2d> trueNorth;
+  std::optional<Table> siteGroundTable;
 };
 
 // The view of the visible model. Heavy for large models (hidden lines):
@@ -175,7 +186,7 @@ struct SheetSpec {
   std::string paper = "auto";  // "auto", "A4", "A3", "A2", "A1" (landscape)
   bool frame = true;          // frame and title block
   TitleBlock title;
-  bool north = true;          // north mark on plans (+Y is north)
+  bool north = true;          // north mark on plans
 };
 
 struct Sheet {
@@ -185,15 +196,6 @@ struct Sheet {
   double paperWidth = 420.0, paperHeight = 297.0;  // mm on paper
   std::string title;        // the drawing's name
   std::vector<std::string> notes;  // e.g. "does not fit A1 at 1:50"
-};
-
-// A table for a sheet of its own (docs/113): the door and window schedule, the room schedule,
-// the area table. Cells are text as shown; the first row of `rows` comes under `headers`.
-struct Table {
-  std::string title;  // e.g. "建具表"
-  std::vector<std::string> headers;
-  std::vector<std::vector<std::string>> rows;
-  std::vector<std::string> notes;  // under the table
 };
 
 // The table on the smallest paper A4..A1 that holds it (or the paper asked for), in the frame

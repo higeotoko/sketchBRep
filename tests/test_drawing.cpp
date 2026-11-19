@@ -17,6 +17,7 @@
 #include "sbr/TextEncoding.h"
 #include "sbr/api/CommandApi.h"
 #include "sbr/doc/Modeler.h"
+#include "sbr/doc/Schedules.h"
 #include "sbr/draw/Drawing.h"
 #include "sbr/geom/Dxf.h"
 #include "sbr/geom/Jww.h"
@@ -247,6 +248,222 @@ TEST(Drawing, PlanCutsAndSeesBelow) {
     }
   }
   EXPECT_LT(v->maxV, 2000 + 1e-6);  // nothing of the box above
+}
+
+TEST(Drawing, SiteNorthPersistsAndFollowsThePlanFrame) {
+  doc::Modeler m;
+  box(m, 0, 0, 3000, 5000, 2700);
+  auto sun = m.document().settings().sun;
+  sun.northAngle = 30.0;
+  ASSERT_TRUE(m.setSun(sun));
+  ViewSpec plan = planView(1200);
+  const auto legacy = makeView(m.document(), plan);
+  ASSERT_TRUE(legacy);
+  EXPECT_FALSE(legacy->trueNorth);
+  const auto steps = m.history().undoCount();
+  EXPECT_FALSE(m.setSiteNorthFromPoints(gp_Pnt(0, 0, 0), gp_Pnt(0, 0, 100), "Survey", "2026-11-19"));
+  EXPECT_EQ(m.history().undoCount(), steps);
+  ASSERT_TRUE(m.setSiteNorthFromPoints(gp_Pnt(0, 0, 0), gp_Pnt(100, 0, 0), "Survey", "2026-11-19"));
+  EXPECT_EQ(m.history().undoCount(), steps + 1);
+  const auto east = makeView(m.document(), plan);
+  ASSERT_TRUE(east && east->trueNorth);
+  EXPECT_NEAR(east->trueNorth->X(), 1.0, 1e-10);
+  EXPECT_NEAR(east->trueNorth->Y(), 0.0, 1e-10);
+  EXPECT_EQ(east->objects, legacy->objects);
+  EXPECT_DOUBLE_EQ(east->minU, legacy->minU);
+  EXPECT_DOUBLE_EQ(east->maxV, legacy->maxV);
+
+  auto checkMark = [](const Sheet& sheet) {
+    const Item* arrow = nullptr;
+    for (const Item& item : sheet.items) {
+      if (item.kind == Item::Kind::Fill && item.pen == Pen::Text) arrow = &item;
+      EXPECT_NE(item.text, "仮");
+    }
+    ASSERT_TRUE(arrow);
+    ASSERT_EQ(arrow->points.size(), 4u);
+    EXPECT_GT(arrow->points[0].X(), arrow->points[2].X());
+    EXPECT_NEAR(arrow->points[0].Y(), arrow->points[2].Y(), 1e-10);
+  };
+  const auto single = layoutSheet(*east, {});
+  ASSERT_TRUE(single);
+  checkMark(*single);
+  Table table;
+  table.title = "Area";
+  table.headers = {"Room"};
+  table.rows = {{"1"}};
+  const auto withTable = layoutSheetWithTables(*east, {table}, {});
+  ASSERT_TRUE(withTable);
+  checkMark(*withTable);
+
+  plan.frame.SetXDirection(gp_Dir(0, 1, 0));
+  const auto rotated = makeView(m.document(), plan);
+  ASSERT_TRUE(rotated && rotated->trueNorth);
+  EXPECT_NEAR(rotated->trueNorth->X(), 0.0, 1e-10);
+  EXPECT_NEAR(rotated->trueNorth->Y(), -1.0, 1e-10);
+
+  const std::string path = ::testing::TempDir() + "site-north.sbr";
+  ASSERT_TRUE(m.save(path));
+  doc::Modeler loaded;
+  ASSERT_TRUE(loaded.load(path));
+  EXPECT_EQ(loaded.document().settings().siteNorth, m.document().settings().siteNorth);
+  EXPECT_DOUBLE_EQ(loaded.document().settings().sun.northAngle, 90.0);
+  ASSERT_TRUE(loaded.setSun(sun));
+  EXPECT_DOUBLE_EQ(loaded.document().settings().sun.northAngle, 90.0);
+  ASSERT_TRUE(m.undo());
+  EXPECT_FALSE(m.document().settings().siteNorth);
+  EXPECT_DOUBLE_EQ(m.document().settings().sun.northAngle, 30.0);
+}
+
+TEST(Drawing, SitePlanUsesTheLiveBoundaryAndBuildingProjection) {
+  doc::Modeler m;
+  const auto site = sitePlanView();
+  EXPECT_FALSE(makeView(m.document(), site));
+  const auto open = m.createPolyline({gp_Pnt(0, 0, 0), gp_Pnt(10000, 0, 0), gp_Pnt(10000, 12000, 0)});
+  ASSERT_TRUE(open);
+  EXPECT_FALSE(m.setSiteBoundary(doc::SiteBoundary{*open, "Survey"}));
+  const auto crossing = m.createPolyline({gp_Pnt(0, 0, 0), gp_Pnt(6000, 8000, 0), gp_Pnt(0, 8000, 0),
+                                         gp_Pnt(6000, 0, 0), gp_Pnt(0, 0, 0)});
+  if (crossing) EXPECT_FALSE(m.setSiteBoundary(doc::SiteBoundary{*crossing, "Survey"}));
+  const auto boundary = m.createPolyline({gp_Pnt(0, 0, 0), gp_Pnt(10000, 0, 0), gp_Pnt(10000, 12000, 0),
+                                          gp_Pnt(0, 12000, 0), gp_Pnt(0, 0, 0)});
+  ASSERT_TRUE(boundary);
+  ASSERT_TRUE(m.setSiteBoundary(doc::SiteBoundary{*boundary, "Survey"}));
+  const auto outline = m.document().siteBoundaryGeometry(*boundary);
+  ASSERT_TRUE(outline);
+  EXPECT_NEAR(outline->areaMm2 / 1e6, 120.0, 1e-8);
+  const auto vacant = makeView(m.document(), site);
+  ASSERT_TRUE(vacant);
+  ASSERT_EQ(vacant->items.size(), 1u);
+  EXPECT_TRUE(vacant->items.front().closed);
+  EXPECT_EQ(vacant->items.front().pen, Pen::Grid);
+  EXPECT_FALSE(vacant->trueNorth);
+
+  const auto building = box(m, 1500, 2500, 5200, 6500, 4000, 100000);
+  ASSERT_TRUE(m.setSiteNorth({75, "Survey", "2026-11-19"}));
+  const auto withBuilding = makeView(m.document(), site);
+  ASSERT_TRUE(withBuilding && withBuilding->trueNorth);
+  EXPECT_GT(withBuilding->trueNorth->X(), 0.9);
+  EXPECT_GT(count(*withBuilding, Pen::Visible, Item::Kind::Line), 0);
+  gp_Trsf move;
+  move.SetTranslation(gp_Vec(5000, 0, 0));
+  ASSERT_TRUE(m.transform({building}, move));
+  const auto moved = makeView(m.document(), site);
+  ASSERT_TRUE(moved);
+  EXPECT_GT(moved->maxU, withBuilding->maxU);
+  EXPECT_EQ(moved->calculationNotes.front(), withBuilding->calculationNotes.front());
+
+  const auto group = doc::drawingSet(m.document(), {});
+  ASSERT_TRUE(group);
+  EXPECT_EQ(group->names.at(1), site.title);
+  const std::string path = ::testing::TempDir() + "site-plan.sbr";
+  ASSERT_TRUE(m.save(path));
+  doc::Modeler loaded;
+  ASSERT_TRUE(loaded.load(path));
+  EXPECT_EQ(loaded.document().settings().siteBoundary, m.document().settings().siteBoundary);
+  ASSERT_TRUE(makeView(loaded.document(), site));
+  ASSERT_TRUE(loaded.setSiteBoundary(std::nullopt));
+  EXPECT_FALSE(makeView(loaded.document(), site));
+  ASSERT_TRUE(loaded.undo());
+  EXPECT_TRUE(makeView(loaded.document(), site));
+}
+
+TEST(Drawing, SiteRoadUsesTheSelectedEdgeAndSavedInput) {
+  doc::Modeler m;
+  const auto outline = m.createRectangle(geom::SketchPlane::ground(), 10000, 12000);
+  ASSERT_TRUE(outline);
+  const auto building = box(m, 1500, 2500, 5200, 6500, 3500);
+  ASSERT_TRUE(m.setSiteBoundary(doc::SiteBoundary{*outline, "Survey"}));
+  doc::SiteRoad road;
+  road.kind = "Test road";
+  road.source = "Synthetic road register";
+  road.widthMm = 5200;
+  road.frontageMm = 8800;
+  EXPECT_FALSE(m.setSiteRoad({gp_Pnt(0, 0, 0), gp_Pnt(4000, 0, 0)}, road));
+  ASSERT_TRUE(m.setSiteRoad({gp_Pnt(10000, 0, 0), gp_Pnt(0, 0, 0)}, road));
+  const auto plan = makeView(m.document(), sitePlanView());
+  ASSERT_TRUE(plan);
+  ASSERT_EQ(plan->dimensions.size(), 1u);
+  EXPECT_EQ(plan->dimensions[0].text, "2.500 m");
+  EXPECT_NEAR(plan->dimensions[0].a.Y(), 0.0, 1e-6);
+  EXPECT_NEAR(plan->dimensions[0].b.Y(), 2500.0, 1e-6);
+  EXPECT_NE(plan->calculationNotes[2].find("8.800 m"), std::string::npos);
+
+  gp_Trsf move;
+  move.SetTranslation(gp_Vec(0, -500, 0));
+  ASSERT_TRUE(m.transform({building}, move));
+  const auto updated = makeView(m.document(), sitePlanView());
+  ASSERT_TRUE(updated);
+  ASSERT_EQ(updated->dimensions.size(), 1u);
+  EXPECT_EQ(updated->dimensions[0].text, "2.000 m");
+  move.SetTranslation(gp_Vec(0, 400, 0));
+  ASSERT_TRUE(m.transform({*outline}, move));
+  const auto movedSite = makeView(m.document(), sitePlanView());
+  ASSERT_TRUE(movedSite);
+  ASSERT_EQ(movedSite->dimensions.size(), 1u);
+  EXPECT_EQ(movedSite->dimensions[0].text, "1.600 m");
+
+  const std::string path = ::testing::TempDir() + "site-road.sbr";
+  ASSERT_TRUE(m.save(path));
+  doc::Modeler loaded;
+  ASSERT_TRUE(loaded.load(path));
+  EXPECT_EQ(loaded.document().settings().siteBoundary, m.document().settings().siteBoundary);
+  loaded.clearSiteRoad();
+  EXPECT_FALSE(loaded.document().settings().siteBoundary->road);
+  ASSERT_TRUE(loaded.undo());
+  EXPECT_TRUE(loaded.document().settings().siteBoundary->road);
+}
+
+TEST(Drawing, SiteGroundWeightsTheMeasuredPerimeterAndDetectsStalePoints) {
+  doc::Modeler m;
+  const auto site = m.createRectangle(geom::SketchPlane::ground(), 10000, 12000);
+  ASSERT_TRUE(site);
+  ASSERT_TRUE(m.setSiteBoundary(doc::SiteBoundary{*site, "Survey"}));
+  const auto contact = m.createPolyline({gp_Pnt(1000, 1000, 0), gp_Pnt(3000, 1000, 0), gp_Pnt(5000, 1000, 0),
+      gp_Pnt(5000, 3000, 0), gp_Pnt(1000, 3000, 0), gp_Pnt(1000, 1000, 0)});
+  ASSERT_TRUE(contact);
+  // Reversed order with a different starting vertex. P2 is a point along a straight edge.
+  doc::SiteGround input{*contact, "BM", "Synthetic survey", {
+      {5000, 1000, 0}, {3000, 1000, 600}, {1000, 1000, 0}, {1000, 3000, -100}, {5000, 3000, 0}}};
+  auto bad = input;
+  std::swap(bad.samples[2], bad.samples[3]);
+  EXPECT_FALSE(m.setSiteGround(bad));
+  ASSERT_TRUE(m.setSiteGround(input));
+  const auto measured = m.document().siteGroundReport(input);
+  ASSERT_TRUE(measured);
+  EXPECT_NEAR(measured->lengthMm, 12000, 1e-6);
+  EXPECT_NEAR(measured->averageMm(), 75, 1e-6);
+  const auto view = makeView(m.document(), sitePlanView());
+  ASSERT_TRUE(view && view->siteGroundTable);
+  EXPECT_EQ(view->members.size(), 5u);
+  EXPECT_EQ(view->siteGroundTable->rows.front()[2], "0.000");
+  EXPECT_EQ(view->siteGroundTable->rows.front()[3], "0.600");
+  EXPECT_EQ(view->siteGroundTable->rows.back()[4], "0.900");
+  const auto sheet = layoutSheet(*view, {});
+  ASSERT_TRUE(sheet);
+  EXPECT_TRUE(std::any_of(sheet->items.begin(), sheet->items.end(),
+      [](const Item& item) { return item.text.find("0.075 m") != std::string::npos; }));
+  const auto drawingSet = doc::drawingSet(m.document(), {});
+  ASSERT_TRUE(drawingSet);
+  EXPECT_TRUE(std::any_of(drawingSet->sheets.at(1).items.begin(), drawingSet->sheets.at(1).items.end(),
+      [](const Item& item) { return item.text.find("0.075 m") != std::string::npos; }));
+
+  const auto path = ::testing::TempDir() + "site-ground.sbr";
+  ASSERT_TRUE(m.save(path));
+  doc::Modeler loaded;
+  ASSERT_TRUE(loaded.load(path));
+  EXPECT_EQ(loaded.document().settings().siteBoundary->ground, std::optional<doc::SiteGround>(input));
+  gp_Trsf move;
+  move.SetTranslation(gp_Vec(100, 0, 0));
+  ASSERT_TRUE(loaded.transform({*contact}, move));
+  const auto stale = makeView(loaded.document(), sitePlanView());
+  ASSERT_TRUE(stale);
+  EXPECT_FALSE(stale->siteGroundTable);
+  ASSERT_TRUE(loaded.undo());
+  EXPECT_TRUE(loaded.document().siteGroundReport(input));
+  loaded.clearSiteGround();
+  EXPECT_FALSE(loaded.document().settings().siteBoundary->ground);
+  ASSERT_TRUE(loaded.undo());
+  EXPECT_TRUE(loaded.document().settings().siteBoundary->ground);
 }
 
 TEST(Drawing, CylinderCutIsACircle) {

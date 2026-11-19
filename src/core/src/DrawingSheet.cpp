@@ -69,6 +69,24 @@ std::string mm(double v) {
   return b;
 }
 
+void appendNorthMark(std::vector<Item>& items, const gp_Pnt2d& centre, double scale,
+                     const std::optional<gp_Dir2d>& trueNorth) {
+  const gp_Dir2d north = trueNorth.value_or(gp_Dir2d(0, 1));
+  const gp_Vec2d forward(north), right(north.Y(), -north.X());
+  auto at = [&](double side, double along) {
+    return centre.Translated((right * side + forward * along) * scale);
+  };
+  items.push_back(circle(Pen::Text, centre, 6 * scale));
+  items.push_back(line(Pen::Text, at(0, -6), at(0, 6)));
+  Item arrow;
+  arrow.kind = Item::Kind::Fill;
+  arrow.pen = Pen::Text;
+  arrow.points = {at(0, 7), at(-2.5, 1), at(0, 2.5), at(2.5, 1)};
+  items.push_back(std::move(arrow));
+  items.push_back(text(Pen::Text, at(0, 10.5), "N", 3.5));
+  if (!trueNorth) items.push_back(text(Pen::Text, at(0, -9), "仮", 2.5));
+}
+
 // Characters, for the width text takes (UTF-8: count lead bytes; wide ones twice).
 double textWidth(const std::string& s, double height) {
   double n = 0;
@@ -178,7 +196,7 @@ void frameAndTitle(std::vector<Item>& items, const Paper* paper, const SheetSpec
 
 }  // namespace
 
-Result<Sheet> layoutSheet(const View& view, const SheetSpec& spec) {
+static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
   using R = Result<Sheet>;
   const double s = spec.scale;
   if (!(s > 0) || !std::isfinite(s)) return R::failure("The scale must be positive");
@@ -376,16 +394,8 @@ Result<Sheet> layoutSheet(const View& view, const SheetSpec& spec) {
   for (std::size_t i = 0; i < calculationLines.size(); ++i)
     items.push_back(text(Pen::Text, P(kLeftMargin + 2, paper->h - kMargin - 3 - i * 4.0), calculationLines[i],
                          2.2, 0, 0));
-  if (view.spec.kind == ViewKind::Plan && spec.north) {
-    const gp_Pnt2d c = P(ax1 - 14, ay1 - 16);
-    items.push_back(circle(Pen::Text, c, 6 * s));
-    items.push_back(line(Pen::Text, P(ax1 - 14, ay1 - 22), P(ax1 - 14, ay1 - 10)));
-    Item arrow;
-    arrow.kind = Item::Kind::Fill;
-    arrow.pen = Pen::Text;
-    arrow.points = {P(ax1 - 14, ay1 - 9), P(ax1 - 16.5, ay1 - 15), P(ax1 - 14, ay1 - 13.5), P(ax1 - 11.5, ay1 - 15)};
-    items.push_back(arrow);
-    items.push_back(text(Pen::Text, P(ax1 - 14, ay1 - 6.5), "N", 3.5, 1, 0));
+  if (spec.north && (view.spec.kind == ViewKind::Plan || view.spec.kind == ViewKind::SitePlan)) {
+    appendNorthMark(items, P(ax1 - 15, ay1 - 16), s, view.trueNorth);
   }
   if (frame) frameAndTitle(items, paper, spec, title, s);
   if (!view.spec.framingPreset.empty()) {
@@ -505,9 +515,15 @@ Result<Sheet> tableSheet(const Table& table, const SheetSpec& spec) {
   return sheet;
 }
 
-Result<Sheet> layoutSheetWithTables(const View& view, const std::vector<Table>& tables, const SheetSpec& spec) {
+Result<Sheet> layoutSheet(const View& view, const SheetSpec& spec) {
+  return layoutSheetWithTables(view, {}, spec);
+}
+
+Result<Sheet> layoutSheetWithTables(const View& view, const std::vector<Table>& additionalTables, const SheetSpec& spec) {
   using R = Result<Sheet>;
-  if (tables.empty()) return layoutSheet(view, spec);
+  if (!view.siteGroundTable && additionalTables.empty()) return layoutViewOnly(view, spec);
+  auto tables = additionalTables;
+  if (view.siteGroundTable) tables.insert(tables.begin(), *view.siteGroundTable);
   const double s = spec.scale;
   if (!(s > 0) || !std::isfinite(s)) return R::failure("The scale must be positive");
   for (const Table& t : tables)
@@ -517,24 +533,15 @@ Result<Sheet> layoutSheetWithTables(const View& view, const std::vector<Table>& 
   bare.frame = false;
   bare.north = false;
   bare.paper = "auto";
-  auto drawn = layoutSheet(view, bare);
+  auto drawn = layoutViewOnly(view, bare);
   if (!drawn) return drawn;
   std::vector<Item> items = drawn->items;
   Box box;
   for (const Item& i : items) extentOf(i, s, box);
-  if (view.spec.kind == ViewKind::Plan && spec.north) {
-    // North: just right of the drawing's top.
-    const double cx = box.x1 / s + 10, cy = box.y1 / s - 8;
-    auto P = [&](double x, double y) { return gp_Pnt2d(x * s, y * s); };
-    items.push_back(circle(Pen::Text, P(cx, cy), 6 * s));
-    items.push_back(line(Pen::Text, P(cx, cy - 6), P(cx, cy + 6)));
-    Item arrow;
-    arrow.kind = Item::Kind::Fill;
-    arrow.pen = Pen::Text;
-    arrow.points = {P(cx, cy + 7), P(cx - 2.5, cy + 1), P(cx, cy + 2.5), P(cx + 2.5, cy + 1)};
-    items.push_back(arrow);
-    items.push_back(text(Pen::Text, P(cx, cy + 9.5), "N", 3.5, 1, 0));
-    box.add(P(cx + 6, cy + 13));
+  if (spec.north && (view.spec.kind == ViewKind::Plan || view.spec.kind == ViewKind::SitePlan)) {
+    const std::size_t first = items.size();
+    appendNorthMark(items, gp_Pnt2d(box.x1 + 14 * s, box.y1 - 8 * s), s, view.trueNorth);
+    for (std::size_t i = first; i < items.size(); ++i) extentOf(items[i], s, box);
   }
   const double dW = (box.x1 - box.x0) / s, dH = (box.y1 - box.y0) / s;
   constexpr double gap = 10.0;  // paper mm between the drawing and the tables, and between tables

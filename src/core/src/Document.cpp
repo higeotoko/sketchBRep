@@ -4,17 +4,31 @@
 #include "sbr/geom/Operations.h"
 
 #include <algorithm>
+#include <cmath>
 #include <unordered_set>
 
 #include <sstream>
 
 #include <BRepBndLib.hxx>
+#include <BRepAdaptor_Curve.hxx>
+#include <BRepBuilderAPI_Copy.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
+#include <BRepCheck_Analyzer.hxx>
+#include <BRepGProp.hxx>
+#include <BRepTools.hxx>
+#include <BRepTools_WireExplorer.hxx>
+#include <BRep_Tool.hxx>
 #include <BRep_Builder.hxx>
 #include <Standard_Failure.hxx>
+#include <GProp_GProps.hxx>
 #include <gp_Ax2.hxx>
+#include <gp_Pln.hxx>
+#include <TopoDS.hxx>
 #include <TopLoc_Location.hxx>
 #include <TopoDS_Compound.hxx>
+#include <TopoDS_Wire.hxx>
+#include <gp.hxx>
 
 namespace sbr::doc {
 namespace {
@@ -50,6 +64,120 @@ TopoDS_Shape placed(const TopoDS_Shape& shape, const gp_Trsf& t) {
 }
 
 }  // namespace
+
+Result<SiteBoundaryGeometry> Document::siteBoundaryGeometry(const ObjectId& id) const {
+  using R = Result<SiteBoundaryGeometry>;
+  const auto* object = find(id);
+  if (!object || object->shape.IsNull()) return R::failure("敷地境界の輪郭が見つかりません。指定し直してください");
+  const char* invalid = "敷地境界には、交差しない閉じた水平の折れ線か、水平面を1つ選んでください";
+  try {
+    const TopoDS_Shape shape = BRepBuilderAPI_Copy(worldShape(*object), true, false).Shape();
+    TopoDS_Wire wire;
+    if (shape.ShapeType() == TopAbs_WIRE) {
+      wire = TopoDS::Wire(shape);
+    } else if (shape.ShapeType() == TopAbs_FACE) {
+      // A coplanar building profile can punch an interior hole in this face.
+      // The site is defined by the outside loop, independent of those edits.
+      wire = BRepTools::OuterWire(TopoDS::Face(shape));
+    } else {
+      return R::failure(invalid);
+    }
+    if (wire.IsNull() || !BRep_Tool::IsClosed(wire)) return R::failure(invalid);
+    SiteBoundaryGeometry out;
+    for (BRepTools_WireExplorer edges(wire); edges.More(); edges.Next()) {
+      if (BRepAdaptor_Curve(edges.Current()).GetType() != GeomAbs_Line) return R::failure(invalid);
+      out.vertices.push_back(BRep_Tool::Pnt(edges.CurrentVertex()));
+    }
+    if (out.vertices.size() < 3) return R::failure(invalid);
+    const gp_Pnt& origin = out.vertices.front();
+    for (const gp_Pnt& vertex : out.vertices)
+      if (std::abs(vertex.Z() - origin.Z()) > tolerance::kLinear) return R::failure(invalid);
+    BRepBuilderAPI_MakeFace builder(gp_Pln(origin, gp::DZ()), wire, true);
+    if (!builder.IsDone() || !BRepCheck_Analyzer(builder.Face()).IsValid()) return R::failure(invalid);
+    GProp_GProps props;
+    BRepGProp::SurfaceProperties(builder.Face(), props);
+    out.areaMm2 = props.Mass();
+    if (!std::isfinite(out.areaMm2) || out.areaMm2 <= tolerance::kLinear) return R::failure(invalid);
+    return out;
+  } catch (const Standard_Failure&) {
+    return R::failure(invalid);
+  }
+}
+
+std::optional<std::array<gp_Pnt, 2>> SiteBoundaryGeometry::matchEdge(const gp_Pnt& a, const gp_Pnt& b) const {
+  for (std::size_t i = 0; i < vertices.size(); ++i) {
+    const gp_Pnt& p = vertices[i];
+    const gp_Pnt& q = vertices[(i + 1) % vertices.size()];
+    if ((p.Distance(a) <= tolerance::kLinear && q.Distance(b) <= tolerance::kLinear) ||
+        (p.Distance(b) <= tolerance::kLinear && q.Distance(a) <= tolerance::kLinear))
+      return std::array<gp_Pnt, 2>{p, q};
+  }
+  return std::nullopt;
+}
+
+std::optional<std::array<gp_Pnt, 2>> Document::siteRoadEdge(const SiteBoundaryGeometry& geometry) const {
+  if (!settings().siteBoundary || !settings().siteBoundary->road) return std::nullopt;
+  const auto& boundary = *settings().siteBoundary;
+  const Object* outline = find(boundary.outline);
+  if (!outline) return std::nullopt;
+  const gp_Trsf toWorld = worldTransform(*outline);
+  const auto& edge = boundary.road->localEdge;
+  const auto point = [&](std::size_t i) {
+    return gp_Pnt(edge[i][0], edge[i][1], edge[i][2]).Transformed(toWorld);
+  };
+  return geometry.matchEdge(point(0), point(1));
+}
+
+Result<SiteGroundReport> Document::siteGroundReport(const SiteGround& ground) const {
+  using R = Result<SiteGroundReport>;
+  const auto& boundary = settings().siteBoundary;
+  if (!boundary) return R::failure("先に敷地境界を指定してください");
+  if (boundary->outline == ground.outline) return R::failure("建物が地面に接する輪郭を別に選んでください");
+  if (ground.datum.empty() || ground.source.empty()) return R::failure("高さの基準点と確認資料を入力してください");
+  const auto geometry = siteBoundaryGeometry(ground.outline);
+  if (!geometry) return R::failure("接地外周には、交差しない閉じた水平の折れ線か水平面を指定してください");
+  const auto& samples = ground.samples;
+  const std::size_t n = geometry->vertices.size();
+  const char* mismatch = "接地外周と測点が一致しません。輪郭と高さを確認して再入力してください";
+  if (samples.size() != n) return R::failure(mismatch);
+  for (const auto& row : samples)
+    for (double value : row)
+      if (!std::isfinite(value)) return R::failure("すべての測点に有限の座標と高さを入力してください");
+  const auto matches = [&](std::size_t vertex, std::size_t sample) {
+    const auto& p = geometry->vertices[vertex];
+    const auto& q = samples[sample];
+    return std::hypot(p.X() - q[0], p.Y() - q[1]) <= tolerance::kLinear;
+  };
+  // Accept either traversal and a different start point, keeping point IDs stable in the report.
+  std::vector<gp_Pnt> ordered;
+  for (std::size_t start = 0; start < n && ordered.empty(); ++start) {
+    if (!matches(start, 0)) continue;
+    for (const std::size_t step : {std::size_t{1}, n - 1}) {
+      std::size_t vertex = start;
+      while (ordered.size() < n && matches(vertex, ordered.size())) {
+        ordered.push_back(geometry->vertices[vertex]);
+        vertex = (vertex + step) % n;
+      }
+      if (ordered.size() == n) break;
+      ordered.clear();
+    }
+  }
+  if (ordered.empty()) return R::failure(mismatch);
+  SiteGroundReport out;
+  out.vertices = std::move(ordered);
+  for (std::size_t i = 0; i < n; ++i) {
+    const std::size_t j = (i + 1) % n;
+    const double length = std::hypot(out.vertices[j].X() - out.vertices[i].X(),
+                                     out.vertices[j].Y() - out.vertices[i].Y());
+    out.lengthMm += length;
+    out.heightsMm.push_back(samples[i][2]);
+    out.lengthsMm.push_back(length);
+    out.weightedSumMm2 += length * (samples[i][2] / 2 + samples[j][2] / 2);
+  }
+  if (!(out.lengthMm > 0) || !std::isfinite(out.lengthMm) || !std::isfinite(out.weightedSumMm2) ||
+      !std::isfinite(out.averageMm())) return R::failure("接地外周の参考平均を計算できません");
+  return out;
+}
 
 Result<TopoDS_Shape> buildDefinitionShape(const ComponentDefinition& definition,
                                           const RegenContext& context) {

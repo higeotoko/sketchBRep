@@ -3466,6 +3466,65 @@ const std::vector<CommandDef>& commands() {
          must(m.setGrid(id, spec));
          return json{{"grid", id}, {"lines", gridJson(*m.gridSpec(id))}};
        }},
+      {"set_site_boundary",
+       "Assign a closed horizontal outline object to the draft site plan. Provide its source. "
+       "A null outline clears the assignment. Saves one undo step; returns the outline and its area in m².",
+       SCHEMA({"type": "object", "properties": {"outline": {"type": ["string", "null"]},
+               "source": {"type": "string"}}, "required": ["outline"]}),
+       [](doc::Modeler& m, const json& a) {
+         if (a.at("outline").is_null()) {
+           must(m.setSiteBoundary(std::nullopt));
+           return json{{"outline", nullptr}};
+         }
+         const doc::SiteBoundary boundary{text(a, "outline"), text(a, "source")};
+         must(m.setSiteBoundary(boundary));
+         const auto geometry = must(m.document().siteBoundaryGeometry(boundary.outline));
+         return json{{"outline", boundary.outline}, {"area_m2", geometry.areaMm2 / 1e6}};
+       }},
+      {"set_site_road",
+       "Attach road facts to one outer edge of the assigned site boundary. Edge endpoints are model points "
+       "in mm; width_m and frontage_m are confirmed measurements in metres and may be omitted. "
+       "Pass clear:true to remove the assignment. One undo step.",
+       SCHEMA({"type": "object", "properties": {"start": {"type": "array"}, "end": {"type": "array"},
+               "kind": {"type": "string"}, "source": {"type": "string"}, "width_m": {"type": "number"},
+               "frontage_m": {"type": "number"}, "clear": {"type": "boolean"}}}),
+       [](doc::Modeler& m, const json& a) {
+         if (a.value("clear", false)) {
+           m.clearSiteRoad();
+         } else {
+           doc::SiteRoad road;
+           road.kind = textOr(a, "kind", {});
+           road.source = text(a, "source");
+           road.widthMm = numberOr(a, "width_m", 0.0) * 1000.0;
+           road.frontageMm = numberOr(a, "frontage_m", 0.0) * 1000.0;
+           must(m.setSiteRoad({point(a, "start"), point(a, "end")}, std::move(road)));
+         }
+         return json::object();
+       }},
+      {"set_site_ground",
+       "Save measured heights for a selected building-to-ground perimeter, in one undo step. "
+       "Samples are [world X, world Y, height from datum] in mm, in closed perimeter order without repeating "
+       "the first point. The resulting length-weighted average is for reference. Pass clear:true to remove it.",
+       SCHEMA({"type": "object", "properties": {"outline": {"type": "string"}, "datum": {"type": "string"},
+               "source": {"type": "string"}, "samples": {"type": "array", "items": {"type": "array",
+               "minItems": 3, "maxItems": 3, "items": {"type": "number"}}}, "clear": {"type": "boolean"}}}),
+       [](doc::Modeler& m, const json& a) {
+         if (a.value("clear", false)) {
+           m.clearSiteGround();
+           return json::object();
+         }
+         doc::SiteGround ground{text(a, "outline"), text(a, "datum"), text(a, "source"), {}};
+         const auto& samples = a.at("samples");
+         if (!samples.is_array()) throw std::runtime_error("samples must be an array");
+         for (const auto& row : samples) {
+           if (!row.is_array() || row.size() != 3) throw std::runtime_error("Each sample must be [X, Y, height]");
+           ground.samples.push_back(row.get<std::array<double, 3>>());
+         }
+         const auto report = must(m.document().siteGroundReport(ground));
+         must(m.setSiteGround(std::move(ground)));
+         return json{{"perimeter_mm", report.lengthMm}, {"reference_average_mm", report.averageMm()},
+                     {"legal_status", "未評価"}};
+       }},
       {"get_sun",
        "The sun of the realistic display (docs/82): month, day, hour (local clock, 14.5 = 14:30), latitude, "
        "longitude (degrees, north / east positive), time_zone (hours from UTC), north_angle (degrees from the "
@@ -3898,7 +3957,8 @@ const std::vector<CommandDef>& commands() {
       {"export_drawing",
        "2D drawing (docs/50) as DXF or JWW (Jw_cad), by the path's extension. 'kind': 'plan' (cut at "
        "'cut_z' mm, default 1200, seen from above), 'section' ('point' [x,y,z] on the cut and 'look' "
-       "[x,y,z] towards the viewer, horizontal) or 'elevation' ('side': 0 south, 1 east, 2 north, 3 west). "
+       "[x,y,z] towards the viewer, horizontal), 'elevation' ('side': 0 south, 1 east, 2 north, 3 west) or "
+       "'site' (draft site plan using the outline from set_site_boundary). "
        "'scale' (denominator, default 100), 'paper' (auto, A4-A1), 'frame' (default true), 'title', "
        "'project', 'number', 'author', 'date', 'hidden' (hidden lines), 'fill', 'grid', 'levels', "
        "'annotations', 'hatch' (default true: the cut layers of walls of a build-up and floors of a type with layers "
@@ -3922,6 +3982,8 @@ const std::vector<CommandDef>& commands() {
          draw::ViewSpec spec;
          if (kind == "plan") {
            spec = draw::planView(numberOr(a, "cut_z", 1200.0));
+         } else if (kind == "site") {
+           spec = draw::sitePlanView();
          } else if (kind == "section") {
            spec = draw::sectionView(point(a, "point"), direction(a, "look", gp_Dir(0, -1, 0)));
          } else if (kind == "elevation") {
@@ -3929,7 +3991,7 @@ const std::vector<CommandDef>& commands() {
          } else if(kind=="framing") {
            spec=must(draw::framingView(m.document(),text(a,"preset"),textOr(a,"within",{}),a.value("include_hidden",false),a.value("tags",std::vector<std::string>{})));
          } else {
-           throw std::runtime_error("kind must be plan, section, elevation or framing");
+           throw std::runtime_error("kind must be plan, section, elevation, framing or site");
          }
          spec.within=textOr(a,"within",{});
          if(a.contains("tags") && kind!="framing") spec.tags=a.at("tags").get<std::vector<std::string>>();
@@ -3937,10 +3999,10 @@ const std::vector<CommandDef>& commands() {
          spec.memberLabels=a.value("member_labels",kind=="framing");
          spec.title = textOr(a, "title", spec.title);
          spec.hidden = a.value("hidden", spec.hidden);
-         spec.fill = a.value("fill", true);
-         spec.grid = a.value("grid", true);
-         spec.levels = a.value("levels", true);
-         spec.annotations = a.value("annotations", true);
+         spec.fill = a.value("fill", spec.fill);
+         spec.grid = a.value("grid", spec.grid);
+         spec.levels = a.value("levels", spec.levels);
+         spec.annotations = a.value("annotations", spec.annotations);
          if (a.value("hatch", true)) spec.hatchScale = numberOr(a, "scale", 100.0);  // docs/173
          const draw::View view = must(draw::makeView(m.document(), spec));
          draw::SheetSpec sheetSpec;

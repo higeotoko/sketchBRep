@@ -47,7 +47,7 @@ Status printSheet(const draw::Sheet& sheet, QPrinter& printer, bool* scaled = nu
 class DrawingDialog : public QDialog {
   Q_OBJECT
  public:
-  DrawingDialog(const doc::Document& document, QWidget* parent = nullptr);
+  DrawingDialog(const doc::Document& document, QWidget* parent = nullptr, bool showSitePlan = false);
   ~DrawingDialog() override;
   // True while a view is being made on another thread (the dialog stays
   // usable; the preview shows the last drawing until it is ready).

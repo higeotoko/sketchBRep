@@ -1012,6 +1012,23 @@ class MeasureTool : public DrawingTool {
   std::optional<double> lastDistance_;
 };
 
+class SiteNorthTool : public DrawingTool {
+ public:
+  using DrawingTool::DrawingTool;
+  QString name() const override;
+  QCursor cursor() const override;
+  void setSource(const QString& source) { source_ = source; }
+  void activate() override;
+  void cancel() override;
+  bool stepBack() override;
+  void mousePress(const ToolEvent& e) override;
+  void mouseMove(const ToolEvent& e) override;
+
+ private:
+  QString source_;
+  std::optional<gp_Pnt> tail_;
+};
+
 // The selected component's origin and red axis (SketchUp's Change Axes):
 // click the new origin, then a point the red axis should point toward
 // (turning about the blue axis). Enter after the origin keeps the

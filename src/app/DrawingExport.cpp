@@ -224,7 +224,7 @@ Status printSheet(const draw::Sheet& sheet, QPrinter& printer, bool* scaled) {
   return Status::success();
 }
 
-DrawingDialog::DrawingDialog(const doc::Document& document, QWidget* parent)
+DrawingDialog::DrawingDialog(const doc::Document& document, QWidget* parent, bool showSitePlan)
     : QDialog(parent), document_(document), snapshot_(std::make_shared<const doc::Document>(document)) {
   setWindowTitle(tr("図面を書き出す（平面・断面・立面・伏図）"));
   setObjectName(QStringLiteral("drawingDialog"));
@@ -248,6 +248,8 @@ DrawingDialog::DrawingDialog(const doc::Document& document, QWidget* parent)
       nlohmann::json::parse(construction::guideData("timber")).at("outputs").at("framing_presets");
   for (const auto* key : {"foundation", "first_floor", "second_floor", "roof"})
     kind_->addItem(QString::fromStdString(presets.at(key).at("name").get<std::string>()));
+  kind_->addItem(tr("配置図（検討用）"), QStringLiteral("site"));
+  if (showSitePlan) kind_->setCurrentIndex(kind_->count() - 1);
   form->addRow(tr("種類"), kind_);
   // Plan: level + cut height.
   planRow_ = new QWidget;
@@ -470,7 +472,8 @@ DrawingDialog::DrawingDialog(const doc::Document& document, QWidget* parent)
   auto view = [this] { viewChanged(); };
   auto layout = [this] { layoutChanged(); };
   connect(kind_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this, view] {
-    if (kind_->currentIndex() >= 3) {
+    const bool framing = kind_->currentIndex() >= 3 && kind_->currentData() != QStringLiteral("site");
+    if (framing) {
       static const char* keys[] = {"foundation", "first_floor", "second_floor", "roof"};
       const auto preset = nlohmann::json::parse(construction::guideData("timber"))
                               .at("outputs")
@@ -485,7 +488,7 @@ DrawingDialog::DrawingDialog(const doc::Document& document, QWidget* parent)
       const QSignalBlocker blocker(tags_);
       for (int i = 0; i < tags_->count(); ++i) tags_->item(i)->setCheckState(Qt::Unchecked);
     }
-    memberLabels_->setChecked(kind_->currentIndex() >= 3);
+    memberLabels_->setChecked(framing);
     updateVisibleOptions();
     view();
   });
@@ -517,14 +520,17 @@ DrawingDialog::DrawingDialog(const doc::Document& document, QWidget* parent)
 
 void DrawingDialog::updateVisibleOptions() {
   const int k = kind_->currentIndex();
+  const bool site = kind_->currentData() == QStringLiteral("site");
   planRow_->setEnabled(k == 0);
   sectionRow_->setEnabled(k == 1);
   elevationRow_->setEnabled(k == 2);
+  for (QCheckBox* option : {fill_, grid_, levels_, annotations_, memberLabels_}) option->setEnabled(!site);
 }
 
 std::optional<draw::ViewSpec> DrawingDialog::viewSpec(QString* why) const {
   draw::ViewSpec spec;
   const int k = kind_->currentIndex();
+  const bool site = kind_->currentData() == QStringLiteral("site");
   if (k == 0) {
     const double z = level_->currentData().toDouble() + cutHeight_->value();
     spec = draw::planView(z);
@@ -543,6 +549,8 @@ std::optional<draw::ViewSpec> DrawingDialog::viewSpec(QString* why) const {
     spec = draw::elevationView(*snapshot_, side);
     static const char* const names[] = {"南立面図", "東立面図", "北立面図", "西立面図"};
     spec.title = names[std::clamp(side, 0, 3)];
+  } else if (site) {
+    spec = draw::sitePlanView();
   }
   spec.within = within_->currentData().toString().toStdString();
   for (int i = 0; i < tags_->count(); ++i)
@@ -551,7 +559,7 @@ std::optional<draw::ViewSpec> DrawingDialog::viewSpec(QString* why) const {
   spec.includeHidden = includeHidden_->isChecked();
   spec.memberLabels = memberLabels_->isChecked();
   spec.hatchScale = scale_->currentData().toDouble();  // docs/173: the layers hatched for this scale
-  if (k >= 3) {
+  if (k >= 3 && !site) {
     static const char* presets[] = {"foundation", "first_floor", "second_floor", "roof"};
     const auto framing =
         draw::framingView(*snapshot_, presets[k - 3], spec.within, spec.includeHidden, spec.tags);
@@ -564,10 +572,10 @@ std::optional<draw::ViewSpec> DrawingDialog::viewSpec(QString* why) const {
     spec.memberLabels = labels;
   }
   spec.hidden = hidden_->isChecked();
-  spec.fill = fill_->isChecked();
-  spec.grid = grid_->isChecked();
-  spec.levels = levels_->isChecked();
-  spec.annotations = annotations_->isChecked();
+  spec.fill = !site && fill_->isChecked();
+  spec.grid = !site && grid_->isChecked();
+  spec.levels = !site && levels_->isChecked();
+  spec.annotations = !site && annotations_->isChecked();
   if (!nameEdited_) {
     // The drawing's name follows the choices until it is typed in.
     drawingName_->setText(QString::fromStdString(spec.title));

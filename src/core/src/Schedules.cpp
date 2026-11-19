@@ -1127,6 +1127,10 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& sp
       planned.push_back({table.title, std::nullopt, table, {}});
     }
   }
+  if (document.settings().siteBoundary) {
+    const auto site = draw::sitePlanView();
+    planned.insert(planned.begin(), {site.title, site, std::nullopt, {}});
+  }
   DrawingSet out;
   std::vector<draw::Sheet> sheets;
   std::vector<std::string> names;

@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <tuple>
 #include <cmath>
+#include <QDate>
 #include <map>
 #include <limits>
 #include <set>
@@ -5101,6 +5102,66 @@ void RevolveTool::applyMeasurement(const QString& text) {
 }
 
 // --- Measure ---------------------------------------------------------------------------
+
+QString SiteNorthTool::name() const { return QObject::tr("敷地の真北"); }
+QCursor SiteNorthTool::cursor() const { return toolCursor(CursorKind::Measure); }
+
+void SiteNorthTool::activate() {
+  resetTracking();
+  host_.viewport().setPickMode(PickMode::None);
+  host_.setMeasurement(QObject::tr("方位"), QString());
+  host_.setStatus(QObject::tr("真北を示す矢印の根元をクリック"));
+}
+
+void SiteNorthTool::cancel() {
+  tail_.reset();
+  resetLock();
+  host_.viewport().clearPreview();
+  host_.viewport().hideSnap();
+}
+
+bool SiteNorthTool::stepBack() {
+  if (!tail_) return false;
+  cancel();
+  activate();
+  return true;
+}
+
+void SiteNorthTool::mousePress(const ToolEvent& e) {
+  const auto snap = snapAt(e, tail_, gp_Pln(gp::XOY()));
+  if (!snap.valid()) return;
+  const gp_Pnt point(snap.point.X(), snap.point.Y(), 0.0);
+  if (!tail_) {
+    tail_ = point;
+    host_.setStatus(QObject::tr("真北を示す矢印の先端をクリック"));
+    return;
+  }
+  if (tail_->Distance(point) <= tolerance::kMinDimension) {
+    host_.setStatus(QObject::tr("根元と異なる点をクリック"));
+    return;
+  }
+  const auto result = host_.modeler().setSiteNorthFromPoints(
+      *tail_, point, source_.toStdString(), QDate::currentDate().toString(Qt::ISODate).toStdString());
+  if (!result) {
+    host_.setStatus(QString::fromStdString(result.message()));
+    return;
+  }
+  cancel();
+  const double angle = host_.modeler().document().settings().siteNorth->angle;
+  host_.setMeasurement(QObject::tr("方位"), QString::number(angle, 'f', 2) + QStringLiteral("°"));
+  host_.setStatus(QObject::tr("敷地の真北を設定しました。Escで終了"));
+}
+
+void SiteNorthTool::mouseMove(const ToolEvent& e) {
+  const auto snap = snapAt(e, tail_, gp_Pln(gp::XOY()));
+  if (!tail_ || !snap.valid()) return;
+  const gp_Pnt point(snap.point.X(), snap.point.Y(), 0.0);
+  if (tail_->Distance(point) <= tolerance::kMinDimension) {
+    host_.viewport().clearPreview();
+    return;
+  }
+  host_.viewport().setPreview(BRepBuilderAPI_MakeEdge(*tail_, point).Edge());
+}
 
 QString MeasureTool::name() const { return QObject::tr("メジャー"); }
 QCursor MeasureTool::cursor() const { return toolCursor(CursorKind::Measure); }

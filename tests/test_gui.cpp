@@ -51,6 +51,7 @@
 #include <QListWidget>
 #include <QPushButton>
 #include <QTableWidget>
+#include <QDialogButtonBox>
 #include <QCheckBox>
 #include <QTabBar>
 #include <QTemporaryDir>
@@ -176,7 +177,8 @@ class GuiPhase1 : public QObject {
     QStandardPaths::setTestModeEnabled(true);
     // On Windows, settings without an organisation name are neither read
     // nor written (the app sets it in main): the tests' own name.
-    QCoreApplication::setOrganizationName(QStringLiteral("SketchBRepTests"));
+    QCoreApplication::setOrganizationName(
+        qEnvironmentVariable("SBR_GUI_TEST_ORGANIZATION", QStringLiteral("SketchBRepTests")));
     QSettings().clear();
   }
   void drawPushPullSaveReopen();
@@ -239,6 +241,8 @@ class GuiPhase1 : public QObject {
   void groupEditShowsDottedBox();
   void snapTipNamesTheAdoptedPoint();
   void aiReadsKeepDrawingInProgress();
+  void siteNorthFromTwoPlanPoints();
+  void sitePlanFromASelectedBoundary();
   void proposalShowsRotationAndHide();
   void benchViewportSync();
   void benchEnterManyCopies();
@@ -477,6 +481,165 @@ struct Fixture {
 };
 
 }  // namespace
+
+void GuiPhase1::siteNorthFromTwoPlanPoints() {
+  Fixture f;
+  QVERIFY(f.setUp(1500, 1000));
+  auto& modeler = f.window.modeler();
+  const gp_Pnt tail(500, 500, 0), tip(2500, 500, 0);
+  QVERIFY(modeler.createPolyline({tail, tip}));
+  f.vp->syncNow();
+
+  auto* action = f.window.findChild<QAction*>(QStringLiteral("siteNorthByPointsAction"));
+  QVERIFY(action);
+  QTimer::singleShot(0, &f.window, [] {
+    auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+    if (!dialog) return;
+    auto* field = dialog->findChild<QLineEdit*>();
+    if (!field) return dialog->reject();
+    field->setText(QStringLiteral("架空の測量図"));
+    dialog->accept();
+  });
+  action->trigger();
+  const auto steps = modeler.history().undoCount();
+  click(f.vp, f.vp->toWidget(tail));
+  QTest::keyClick(f.vp, Qt::Key_Escape);
+  QVERIFY(!modeler.document().settings().siteNorth);
+  QCOMPARE(modeler.history().undoCount(), steps);
+  click(f.vp, f.vp->toWidget(tail));
+  click(f.vp, f.vp->toWidget(tip));
+  const auto& north = modeler.document().settings().siteNorth;
+  QVERIFY(north);
+  QVERIFY(std::abs(north->angle - 90.0) < 0.1);
+  QCOMPARE(QString::fromStdString(north->source), QStringLiteral("架空の測量図"));
+  QCOMPARE(modeler.history().undoCount(), steps + 1);
+  QVERIFY(modeler.undo());
+  QVERIFY(!modeler.document().settings().siteNorth);
+}
+
+void GuiPhase1::sitePlanFromASelectedBoundary() {
+  Fixture f;
+  QVERIFY(f.setUp(5000, 6000));
+  auto& modeler = f.window.modeler();
+  const auto boundary = modeler.createRectangle(geom::SketchPlane::ground(), 10000, 12000);
+  QVERIFY(boundary);
+  f.box(1800, 2350, 5600, 7100, 3500);
+  QVERIFY(modeler.setSiteNorth({32, "Survey", "2026-11-19"}));
+  f.window.setSelection({*boundary});
+
+  auto* assign = f.window.findChild<QAction*>(QStringLiteral("setSiteBoundaryAction"));
+  QVERIFY(assign);
+  QTimer::singleShot(0, &f.window, [] {
+    auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+    if (!dialog) return;
+    auto* field = dialog->findChild<QLineEdit*>();
+    if (!field) return dialog->reject();
+    field->setText(QStringLiteral("架空の測量図"));
+    dialog->accept();
+  });
+  assign->trigger();
+  QVERIFY(modeler.document().settings().siteBoundary);
+  QCOMPARE(modeler.document().settings().siteBoundary->outline, *boundary);
+
+  f.window.activateTool(MainWindow::ToolId::Select);
+  f.vp->syncNow();
+  f.vp->setStandardView(Viewport::StandardView::Top);
+  click(f.vp, f.vp->toWidget(gp_Pnt(5000, 0, 0)));
+  auto* road = f.window.findChild<QAction*>(QStringLiteral("siteRoadAction"));
+  QVERIFY(road);
+  QTimer::singleShot(0, &f.window, [] {
+    auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+    if (!dialog) return;
+    auto* source = dialog->findChild<QLineEdit*>(QStringLiteral("siteRoadSource"));
+    if (!source) return dialog->reject();
+    source->setText(QStringLiteral("架空の道路台帳"));
+    dialog->findChild<QLineEdit*>(QStringLiteral("siteRoadKind"))->setText(QStringLiteral("検討用道路"));
+    dialog->findChild<QDoubleSpinBox*>(QStringLiteral("siteRoadWidth"))->setValue(5.2);
+    dialog->findChild<QDoubleSpinBox*>(QStringLiteral("siteRoadFrontage"))->setValue(9.4);
+    dialog->accept();
+  });
+  road->trigger();
+  QVERIFY2(modeler.document().settings().siteBoundary->road, qPrintable(f.window.lastError()));
+  QCOMPARE(modeler.document().settings().siteBoundary->road->widthMm, 5200.0);
+
+  const auto contact = modeler.createPolyline({gp_Pnt(2010, 2590, 0), gp_Pnt(3800, 2590, 0),
+      gp_Pnt(5320, 2590, 0), gp_Pnt(5320, 6900, 0), gp_Pnt(2010, 6900, 0), gp_Pnt(2010, 2590, 0)});
+  QVERIFY(contact);
+  auto* ground = f.window.findChild<QAction*>(QStringLiteral("siteGroundAction"));
+  QVERIFY(ground);
+  f.window.setSelection({*contact});
+  bool linked = false;
+  QTimer::singleShot(0, &f.window, [&] {
+    auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+    if (!dialog) return;
+    auto* datum = dialog->findChild<QLineEdit*>(QStringLiteral("siteGroundDatum"));
+    auto* source = dialog->findChild<QLineEdit*>(QStringLiteral("siteGroundSource"));
+    auto* table = dialog->findChild<QTableWidget*>(QStringLiteral("siteGroundSamples"));
+    auto* p3 = dialog->findChild<QToolButton*>(QStringLiteral("siteGroundPoint3"));
+    auto* p4 = dialog->findChild<QToolButton*>(QStringLiteral("siteGroundPoint4"));
+    auto* buttons = dialog->findChild<QDialogButtonBox*>();
+    if (!datum || !source || !table || !p3 || !p4 || !buttons || table->rowCount() != 5) return dialog->reject();
+    datum->setText(QStringLiteral("BM"));
+    source->setText(QStringLiteral("架空の高さ測量"));
+    buttons->button(QDialogButtonBox::Ok)->click();
+    if (!dialog->isVisible()) return;
+    const QStringList heights{QStringLiteral("-120"), QStringLiteral("0"), QStringLiteral("160"),
+        QStringLiteral("320"), QStringLiteral("-30")};
+    for (int i = 0; i < heights.size(); ++i) table->item(i, 2)->setText(heights[i]);
+    QTest::mouseClick(p3, Qt::LeftButton);
+    auto* editor = qobject_cast<QLineEdit*>(QApplication::focusWidget());
+    if (!editor || !table->isAncestorOf(editor) || table->currentRow() != 2 || table->currentColumn() != 2 ||
+        !p3->isChecked()) return dialog->reject();
+    editor->selectAll();
+    QTest::keyClicks(editor, "165");
+    QTest::mouseClick(p4, Qt::LeftButton);
+    if (table->item(2, 2)->text() != QStringLiteral("165") || !p4->isChecked() || p3->isChecked())
+      return dialog->reject();
+    table->setCurrentCell(2, 2);
+    linked = p3->isChecked() && !p4->isChecked();
+    const auto capture = qEnvironmentVariable("SBR_SITE_GROUND_INPUT_CAPTURE");
+    if (!capture.isEmpty()) {
+      QApplication::processEvents();
+      linked = linked && dialog->grab().save(capture);
+    }
+    buttons->button(QDialogButtonBox::Ok)->click();
+    if (dialog->isVisible()) dialog->reject();
+  });
+  ground->trigger();
+  QVERIFY2(linked, "Selecting a point edits its height; table selection highlights the matching point");
+  const auto& savedGround = modeler.document().settings().siteBoundary->ground;
+  QVERIFY(savedGround);
+  QCOMPARE(savedGround->samples.at(0)[2], -120.0);
+  QCOMPARE(savedGround->samples.at(1)[2], 0.0);
+  QCOMPARE(savedGround->samples.at(2)[2], 165.0);
+
+  auto* preview = f.window.findChild<QAction*>(QStringLiteral("showSitePlanAction"));
+  QVERIFY(preview);
+  QTemporaryDir work;
+  QVERIFY(work.isValid());
+  const QString path = qEnvironmentVariable("SBR_SITE_PLAN_CAPTURE", work.filePath("site-plan.pdf"));
+  bool published = false;
+  QTimer::singleShot(0, &f.window, [&] {
+    auto* modal = QApplication::activeModalWidget();
+    auto* dialog = qobject_cast<DrawingDialog*>(modal);
+    if (!dialog) {
+      if (auto* other = qobject_cast<QDialog*>(modal)) other->reject();
+      return;
+    }
+    dialog->refreshNow();
+    if (dialog->sheet() && dialog->sheet()->title.find("配置図") != std::string::npos) {
+      const auto& items = dialog->sheet()->items;
+      const bool hasGround = std::any_of(items.begin(), items.end(), [](const auto& item) {
+        return item.text == "接地外周の高さ（参考）";
+      });
+      published = hasGround && dialog->exportTo(path).ok();
+    }
+    dialog->accept();
+  });
+  preview->trigger();
+  QVERIFY(published);
+  QVERIFY(QFileInfo(path).size() > 0);
+}
 
 // Request "線の移動コピー・等間隔配列・等分割": a selected line copied with
 // Move + Ctrl and a typed distance, then "*5", "*3", "/3", "/5" typed right

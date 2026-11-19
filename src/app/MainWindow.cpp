@@ -35,6 +35,7 @@
 #include <QUrl>
 #include <QSettings>
 #include <QDate>
+#include <cmath>
 #include <QImage>
 
 #include <Standard_Version.hxx>
@@ -85,6 +86,7 @@
 #include <QTableWidget>
 #include <QHeaderView>
 #include <TopExp_Explorer.hxx>
+#include <BRepAdaptor_Curve.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
 #include <nlohmann/json.hpp>
@@ -149,6 +151,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   curveTool_ = std::make_unique<CurveTool>(*this);
   revolveTool_ = std::make_unique<RevolveTool>(*this);
   measureTool_ = std::make_unique<MeasureTool>(*this);
+  siteNorthTool_ = std::make_unique<SiteNorthTool>(*this);
   protractorTool_ = std::make_unique<ProtractorTool>(*this);
   pasteTool_ = std::make_unique<PasteTool>(*this);
   polygonTool_ = std::make_unique<PolygonTool>(*this);
@@ -1104,6 +1107,46 @@ void MainWindow::buildMenus() {
   }
   file->addAction(tr("図面を書き出す（平面・断面・立面・伏図）..."), this, &MainWindow::showDrawingDialog)
       ->setObjectName(QStringLiteral("exportDrawingAction"));
+  auto* site = file->addMenu(tr("敷地・配置図"));
+  site->addAction(tr("選択した輪郭を敷地境界に指定..."), this, [this] {
+    if (selection_.size() != 1) {
+      reportError(tr("敷地の閉じた折れ線か水平面を1つ選んでください"));
+      return;
+    }
+    const auto outline = selection_.front();
+    const auto geometry = modeler_.document().siteBoundaryGeometry(outline);
+    if (!geometry) {
+      reportError(QString::fromStdString(geometry.error()));
+      return;
+    }
+    const auto& previous = modeler_.document().settings().siteBoundary;
+    bool ok = false;
+    const auto source = QInputDialog::getText(
+        this, tr("敷地境界"), tr("確認に使った資料（測量図など）"), QLineEdit::Normal,
+        previous ? QString::fromStdString(previous->source) : QString(), &ok).trimmed();
+    if (ok && report(modeler_.setSiteBoundary(doc::SiteBoundary{outline, source.toStdString()})))
+      setStatus(tr("敷地境界を設定しました。敷地面積 %1 m²").arg(geometry->areaMm2 / 1e6, 0, 'f', 3));
+  })->setObjectName(QStringLiteral("setSiteBoundaryAction"));
+  site->addAction(tr("敷地境界の指定を解除"), this, [this] {
+    if (report(modeler_.setSiteBoundary(std::nullopt))) setStatus(tr("敷地境界の指定を解除しました"));
+  });
+  site->addAction(tr("道路・接道情報..."), this, &MainWindow::showSiteRoadDialog)
+      ->setObjectName(QStringLiteral("siteRoadAction"));
+  site->addAction(tr("道路情報の指定を解除"), this, [this] {
+    modeler_.clearSiteRoad();
+    setStatus(tr("道路情報の指定を解除しました"));
+  });
+  site->addAction(tr("建物の接地外周・高さ..."), this, &MainWindow::showSiteGroundDialog)
+      ->setObjectName(QStringLiteral("siteGroundAction"));
+  site->addAction(tr("接地外周の指定を解除"), this, [this] {
+    modeler_.clearSiteGround();
+    setStatus(tr("接地外周の指定を解除しました"));
+  });
+  site->addAction(tr("配置図をプレビュー..."), this, [this] {
+    DrawingDialog dialog(modeler_.document(), this, true);
+    dialog.resize(1100, 720);
+    dialog.exec();
+  })->setObjectName(QStringLiteral("showSitePlanAction"));
   file->addAction(tr("図面一式を書き出す（図番つき、1 つの PDF）..."), this, [this] {
     const QString path = QFileDialog::getSaveFileName(this, tr("図面一式を書き出す"), tr("図面一式.pdf"), tr("PDF (*.pdf)"));
     if (!path.isEmpty()) saveDrawingSet(path);
@@ -1448,6 +1491,7 @@ void MainWindow::buildMenus() {
   view->addAction(tr("太陽の位置（日時・場所）..."), this, [this, realistic] {
     realistic->setChecked(true);
     SunDialog dialog(modeler_.document().settings().sun, this);
+    if (modeler_.document().settings().siteNorth) dialog.lockNorthToSite();
     connect(&dialog, &SunDialog::changed, this, [this](const geom::SunSettings& sun) { viewport_->previewSun(sun); });
     const bool ok = dialog.exec() == QDialog::Accepted;
     viewport_->previewSun(std::nullopt);
@@ -1455,6 +1499,38 @@ void MainWindow::buildMenus() {
       if (const Status s = modeler_.setSun(dialog.settings()); !s) reportError(QString::fromStdString(s.message()));
     }
   })->setObjectName(QStringLiteral("sunAction"));
+  auto* siteNorthMenu = view->addMenu(tr("敷地の真北"));
+  auto askNorthSource = [this]() -> QString {
+    bool ok = false;
+    const auto& north = modeler_.document().settings().siteNorth;
+    const QString previous = north ? QString::fromStdString(north->source) : QString();
+    const QString source = QInputDialog::getText(
+        this, tr("敷地の真北"), tr("確認に使った資料（測量図など）"), QLineEdit::Normal,
+        previous, &ok).trimmed();
+    if (ok && source.isEmpty()) setStatus(tr("真北の確認資料を入力してください"));
+    return ok ? source : QString();
+  };
+  siteNorthMenu->addAction(tr("図面の2点から設定..."), this, [this, askNorthSource] {
+    const QString source = askNorthSource();
+    if (source.isEmpty()) return;
+    viewport_->setStandardView(Viewport::StandardView::Top);
+    siteNorthTool_->setSource(source);
+    activateTool(ToolId::SiteNorth);
+  })->setObjectName(QStringLiteral("siteNorthByPointsAction"));
+  siteNorthMenu->addAction(tr("角度を入力..."), this, [this, askNorthSource] {
+    bool ok = false;
+    const auto& settings = modeler_.document().settings();
+    const double angle = QInputDialog::getDouble(
+        this, tr("敷地の真北"), tr("モデルの＋Yから時計回り（度）"),
+        std::remainder(settings.sun.northAngle, 360.0), -360.0, 360.0, 3, &ok);
+    if (!ok) return;
+    const QString source = askNorthSource();
+    if (source.isEmpty()) return;
+    const Status s = modeler_.setSiteNorth(
+        {angle, source.toStdString(), QDate::currentDate().toString(Qt::ISODate).toStdString()});
+    if (!s) reportError(QString::fromStdString(s.message()));
+    else setStatus(tr("敷地の真北を設定しました"));
+  })->setObjectName(QStringLiteral("siteNorthByAngleAction"));
   focusOnDoubleClick_ = view->addAction(tr("中ボタンのダブルクリックでフォーカス"));
   focusOnDoubleClick_->setCheckable(true);
   focusOnDoubleClick_->setChecked(true);
@@ -2647,6 +2723,7 @@ void MainWindow::activateTool(ToolId id) {
     case ToolId::Curve: active_ = curveTool_.get(); break;
     case ToolId::Revolve: active_ = revolveTool_.get(); break;
     case ToolId::Measure: active_ = measureTool_.get(); break;
+    case ToolId::SiteNorth: active_ = siteNorthTool_.get(); break;
     case ToolId::Protractor: active_ = protractorTool_.get(); break;
     case ToolId::Circle: active_ = circleTool_.get(); break;
     case ToolId::Arc: active_ = arcTool_.get(); break;
@@ -6618,6 +6695,257 @@ void MainWindow::closeEvent(QCloseEvent* event) {
 }  // namespace sbr::app
 
 namespace sbr::app {
+void MainWindow::showSiteRoadDialog() {
+  const auto& doc = modeler_.document();
+  const auto& boundary = doc.settings().siteBoundary;
+  if (!boundary) {
+    reportError(tr("先に敷地境界を指定してください"));
+    return;
+  }
+  const auto geometry = doc.siteBoundaryGeometry(boundary->outline);
+  if (!geometry) {
+    reportError(QString::fromStdString(geometry.error()));
+    return;
+  }
+  const auto current = doc.siteRoadEdge(*geometry);
+  auto edge = current;
+  const auto selected = elementSelection();
+  if (!selected.empty()) {
+    edge.reset();
+    if (selected.size() == 1 && selected.front().objectId == boundary->outline &&
+        selected.front().type == TopAbs_EDGE) {
+      const auto shape = viewport_->elementShape(selected.front());
+      if (!shape.IsNull()) {
+        const BRepAdaptor_Curve curve(TopoDS::Edge(shape));
+        if (curve.GetType() == GeomAbs_Line)
+          edge = geometry->matchEdge(curve.Value(curve.FirstParameter()), curve.Value(curve.LastParameter()));
+      }
+    }
+  }
+  if (!edge) {
+    reportError(tr("敷地の外周にある道路側の辺を1本クリックして選んでください"));
+    return;
+  }
+  doc::SiteRoad road;
+  if (current && (*current)[0].Distance((*edge)[0]) <= tolerance::kLinear &&
+      (*current)[1].Distance((*edge)[1]) <= tolerance::kLinear) road = *boundary->road;
+  QDialog dialog(this);
+  dialog.setWindowTitle(tr("道路・接道情報"));
+  auto* form = new QFormLayout(&dialog);
+  form->addRow(new QLabel(tr("選んだ境界辺 %1 m。接道長は確認した値を入力してください。")
+                             .arg((*edge)[0].Distance((*edge)[1]) / 1000.0, 0, 'f', 3)));
+  auto* kind = new QLineEdit(QString::fromStdString(road.kind));
+  kind->setObjectName(QStringLiteral("siteRoadKind"));
+  auto* source = new QLineEdit(QString::fromStdString(road.source));
+  source->setObjectName(QStringLiteral("siteRoadSource"));
+  auto addLength = [&](const QString& label, const char* name, double valueMm) {
+    auto* field = new QDoubleSpinBox;
+    field->setObjectName(QString::fromLatin1(name));
+    field->setDecimals(3);
+    field->setRange(0, 10000);
+    field->setSuffix(QStringLiteral(" m"));
+    field->setSpecialValueText(tr("未入力"));
+    field->setValue(valueMm / 1000.0);
+    form->addRow(label, field);
+    return field;
+  };
+  form->addRow(tr("道路種別"), kind);
+  auto* width = addLength(tr("幅員"), "siteRoadWidth", road.widthMm);
+  auto* frontage = addLength(tr("接道長（確認した値）"), "siteRoadFrontage", road.frontageMm);
+  form->addRow(tr("確認資料"), source);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+  auto* submit = buttons->button(QDialogButtonBox::Ok);
+  submit->setEnabled(!source->text().trimmed().isEmpty());
+  connect(source, &QLineEdit::textChanged, &dialog, [submit](const QString& text) {
+    submit->setEnabled(!text.trimmed().isEmpty());
+  });
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  form->addRow(buttons);
+  if (dialog.exec() != QDialog::Accepted) return;
+  road.kind = kind->text().trimmed().toStdString();
+  road.source = source->text().trimmed().toStdString();
+  road.widthMm = width->value() * 1000.0;
+  road.frontageMm = frontage->value() * 1000.0;
+  if (report(modeler_.setSiteRoad(*edge, std::move(road)))) setStatus(tr("道路・接道情報を設定しました"));
+}
+
+void MainWindow::showSiteGroundDialog() {
+  const auto& doc = modeler_.document();
+  const auto& site = doc.settings().siteBoundary;
+  if (!site) {
+    reportError(tr("先に敷地境界を指定してください"));
+    return;
+  }
+  const auto& previous = site->ground;
+  const auto outline = selection_.size() == 1 ? selection_.front() :
+      selection_.empty() && previous ? previous->outline : doc::ObjectId{};
+  if (outline.empty() || outline == site->outline) {
+    reportError(tr("敷地境界とは別に、建物が地面に接する閉じた輪郭を1つ選んでください"));
+    return;
+  }
+  const auto geometry = doc.siteBoundaryGeometry(outline);
+  if (!geometry) {
+    reportError(tr("接地外周には、交差しない閉じた水平の折れ線か水平面を指定してください"));
+    return;
+  }
+  doc::SiteGround input{outline, {}, {}, {}};
+  auto vertices = geometry->vertices;
+  if (previous && previous->outline == outline) {
+    if (const auto saved = doc.siteGroundReport(*previous)) {
+      input = *previous;
+      vertices = saved->vertices;
+    }
+  }
+  QDialog dialog(this);
+  dialog.setWindowTitle(tr("建物の接地外周・高さ"));
+  auto* form = new QFormLayout(&dialog);
+  form->addRow(new QLabel(tr("図で測点を選び、基準点からの高さを mm で入力します。")));
+  auto* datum = new QLineEdit(QString::fromStdString(input.datum));
+  datum->setObjectName(QStringLiteral("siteGroundDatum"));
+  auto* source = new QLineEdit(QString::fromStdString(input.source));
+  source->setObjectName(QStringLiteral("siteGroundSource"));
+  form->addRow(tr("高さの基準点"), datum);
+  form->addRow(tr("確認資料"), source);
+
+  auto* diagram = new QLabel;
+  diagram->setFixedSize(460, 175);
+  diagram->setAccessibleName(tr("接地外周の平面図"));
+  auto* diagramRow = new QHBoxLayout;
+  diagramRow->addWidget(diagram, 0, Qt::AlignHCenter);
+  form->addRow(diagramRow);
+  double minX = vertices.front().X(), maxX = minX;
+  double minY = vertices.front().Y(), maxY = minY;
+  for (const auto& p : vertices) {
+    minX = std::min(minX, p.X());
+    maxX = std::max(maxX, p.X());
+    minY = std::min(minY, p.Y());
+    maxY = std::max(maxY, p.Y());
+  }
+  const double scale = std::min(380 / (maxX - minX), 117 / (maxY - minY));
+  QPolygonF trace;
+  for (const auto& p : vertices)
+    trace.append(QPointF(230 + (p.X() - (minX / 2 + maxX / 2)) * scale,
+                         87.5 - (p.Y() - (minY / 2 + maxY / 2)) * scale));
+  auto* table = new QTableWidget(static_cast<int>(vertices.size()), 3);
+  table->setObjectName(QStringLiteral("siteGroundSamples"));
+  table->setHorizontalHeaderLabels({tr("X (mm)"), tr("Y (mm)"), tr("高さ (mm)")});
+  table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+  QStringList names;
+  for (int i = 0; i < table->rowCount(); ++i) {
+    names << QStringLiteral("P%1").arg(i + 1);
+    const auto& p = vertices[static_cast<std::size_t>(i)];
+    const auto fixed = [](double value) {
+      auto* item = new QTableWidgetItem(QString::number(value, 'f', 3));
+      item->setFlags(item->flags() & ~Qt::ItemIsEditable);
+      return item;
+    };
+    table->setItem(i, 0, fixed(p.X()));
+    table->setItem(i, 1, fixed(p.Y()));
+    const QString height = input.samples.empty() ? QString() :
+        QString::number(input.samples[static_cast<std::size_t>(i)][2], 'g', 17);
+    table->setItem(i, 2, new QTableWidgetItem(height));
+  }
+  table->setVerticalHeaderLabels(names);
+  form->addRow(table);
+
+  std::vector<QToolButton*> markers;
+  for (int row = 0; row < table->rowCount(); ++row) {
+    auto* marker = new QToolButton(diagram);
+    marker->setText(names[row]);
+    marker->setObjectName(QStringLiteral("siteGroundPoint%1").arg(row + 1));
+    marker->setToolTip(tr("%1 の高さを入力").arg(names[row]));
+    marker->setAccessibleName(marker->toolTip());
+    marker->setFocusPolicy(Qt::NoFocus);
+    marker->setCheckable(true);
+    marker->setCursor(Qt::PointingHandCursor);
+    marker->adjustSize();
+    const QPoint at = trace[row].toPoint();
+    const int w = marker->width(), h = marker->height();
+    const std::array<QPoint, 8> offsets{QPoint(6, -h - 3), QPoint(-w - 6, -h - 3),
+        QPoint(6, 3), QPoint(-w - 6, 3), QPoint(12, -h / 2), QPoint(-w - 12, -h / 2),
+        QPoint(-w / 2, -h - 13), QPoint(-w / 2, 13)};
+    for (const QPoint& offset : offsets) {
+      QRect rect(at + offset, marker->size());
+      rect.moveLeft(std::clamp(rect.left(), 0, diagram->width() - w));
+      rect.moveTop(std::clamp(rect.top(), 0, diagram->height() - h));
+      marker->move(rect.topLeft());
+      if (std::none_of(markers.begin(), markers.end(), [&](const auto* placed) {
+            return placed->geometry().adjusted(-2, -2, 2, 2).intersects(rect);
+          })) break;
+    }
+    markers.push_back(marker);
+    connect(marker, &QToolButton::clicked, &dialog, [table, row] {
+      table->setFocus();
+      table->setCurrentCell(row, 2);
+      table->editItem(table->item(row, 2));
+    });
+  }
+  const auto paintDiagram = [&] {
+    const auto palette = diagram->palette();
+    QPixmap pixmap(diagram->size());
+    pixmap.fill(palette.color(QPalette::Base));
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    const QColor ink = palette.color(QPalette::Text);
+    const QColor accent = palette.color(QPalette::Highlight);
+    painter.setPen(QPen(ink, 1.4));
+    painter.drawPolygon(trace);
+    for (int row = 0; row < table->rowCount(); ++row) {
+      auto* marker = markers[static_cast<std::size_t>(row)];
+      const bool active = row == table->currentRow();
+      marker->setChecked(active);
+      if (active) marker->raise();
+      const QColor color = active ? accent : ink;
+      painter.setPen(QPen(color, active ? 2 : 1));
+      painter.drawLine(trace[row], marker->geometry().center());
+      painter.setBrush(active ? accent : palette.color(QPalette::Base));
+      painter.drawEllipse(trace[row], active ? 5 : 3, active ? 5 : 3);
+    }
+    painter.end();
+    diagram->setPixmap(pixmap);
+  };
+  connect(table, &QTableWidget::currentCellChanged, &dialog, paintDiagram);
+  for (auto* marker : markers)
+    connect(marker, &QToolButton::clicked, &dialog, paintDiagram);
+  paintDiagram();
+
+  const QString legalStatus = tr("法令上の地盤面・高低差による区分は未評価です。");
+  auto* message = new QLabel(legalStatus);
+  form->addRow(message);
+  const auto clearValidation = [message, legalStatus] { message->setText(legalStatus); };
+  connect(table, &QTableWidget::itemChanged, &dialog, clearValidation);
+  connect(datum, &QLineEdit::textEdited, &dialog, clearValidation);
+  connect(source, &QLineEdit::textEdited, &dialog, clearValidation);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
+    input.datum = datum->text().trimmed().toStdString();
+    input.source = source->text().trimmed().toStdString();
+    input.samples.clear();
+    for (int i = 0; i < table->rowCount(); ++i) {
+      bool ok = false;
+      const double value = table->item(i, 2)->text().trimmed().toDouble(&ok);
+      if (!ok || !std::isfinite(value)) {
+        message->setText(tr("P%1 の高さを入力してください。").arg(i + 1));
+        table->setCurrentCell(i, 2);
+        return;
+      }
+      const auto& p = vertices[static_cast<std::size_t>(i)];
+      input.samples.push_back({p.X(), p.Y(), value});
+    }
+    const auto status = modeler_.setSiteGround(input);
+    if (!status) {
+      message->setText(QString::fromStdString(status.message()));
+      return;
+    }
+    dialog.accept();
+  });
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  form->addRow(buttons);
+  dialog.resize(600, 530);
+  if (dialog.exec() == QDialog::Accepted) setStatus(tr("接地外周と高さを設定しました。配置図で参考平均を確認できます。"));
+}
+
 void MainWindow::showDrawingDialog() {
   noteActivity(QStringLiteral("drawing dialog"));
   DrawingDialog dialog(modeler_.document(), this);

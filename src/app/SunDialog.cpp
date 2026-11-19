@@ -162,6 +162,11 @@ SunDialog::SunDialog(const geom::SunSettings& sun, QWidget* parent) : QDialog(pa
   update();
 }
 
+void SunDialog::lockNorthToSite() {
+  north_->setReadOnly(true);
+  north_->setToolTip(tr("表示メニューの「敷地の真北」で変更できます"));
+}
+
 geom::SunSettings SunDialog::settings() const {
   geom::SunSettings s;
   s.month = date_->date().month();

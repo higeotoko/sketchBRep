@@ -1162,6 +1162,20 @@ std::string serializeDocument(const Document& document) {
       {"definitions", definitions},
       {"objects", objects},
   };
+  if (s.siteNorth) {
+    root["siteNorth"] = {{"angle", s.siteNorth->angle}, {"source", s.siteNorth->source},
+                         {"checkedOn", s.siteNorth->checkedOn}};
+  }
+  if (s.siteBoundary) {
+    root["siteBoundary"] = {{"outline", s.siteBoundary->outline}, {"source", s.siteBoundary->source}};
+    if (const auto& road = s.siteBoundary->road)
+      root["siteBoundary"]["road"] = {{"edge", road->localEdge}, {"kind", road->kind},
+                                      {"source", road->source}, {"widthMm", road->widthMm},
+                                      {"frontageMm", road->frontageMm}};
+    if (const auto& ground = s.siteBoundary->ground)
+      root["siteBoundary"]["ground"] = {{"outline", ground->outline}, {"datum", ground->datum},
+                                        {"source", ground->source}, {"samples", ground->samples}};
+  }
   return root.dump(1);
 }
 
@@ -1219,9 +1233,55 @@ Status deserializeDocument(const std::string& text, Document& document,
       if (*geom::sunSettingsError(sun)) throw std::runtime_error(std::string("sun: ") + geom::sunSettingsError(sun));
       s.sun = sun;
     }
+    if (root.contains("siteNorth")) {
+      const json& j = root.at("siteNorth");
+      SiteNorth north{j.at("angle").get<double>(), j.at("source").get<std::string>(),
+                      j.at("checkedOn").get<std::string>()};
+      if (!std::isfinite(north.angle) || north.source.empty() || north.checkedOn.empty())
+        throw std::runtime_error("Invalid site north");
+      north.angle = std::remainder(north.angle, 360.0);
+      s.sun.northAngle = north.angle;
+      s.siteNorth = std::move(north);
+    }
     if (root.contains("wallCalculation")) {
       const auto value = root.at("wallCalculation").get<std::string>();
       s.wallCalculation = value == "{}" ? value : construction::normalizeWallInputs(value);
+    }
+    if (root.contains("siteBoundary")) {
+      const json& j = root.at("siteBoundary");
+      SiteBoundary boundary{j.at("outline").get<ObjectId>(), j.at("source").get<std::string>()};
+      if (boundary.outline.empty() || boundary.source.empty()) throw std::runtime_error("Invalid site boundary");
+      if (j.contains("road")) {
+        const auto& r = j.at("road");
+        SiteRoad road;
+        road.localEdge = r.at("edge").get<decltype(road.localEdge)>();
+        road.kind = r.value("kind", std::string());
+        road.source = r.at("source").get<std::string>();
+        road.widthMm = r.value("widthMm", 0.0);
+        road.frontageMm = r.value("frontageMm", 0.0);
+        for (const auto& p : road.localEdge)
+          for (double x : p)
+            if (!std::isfinite(x)) throw std::runtime_error("Invalid site road edge");
+        if (road.source.empty() || !std::isfinite(road.widthMm) || !std::isfinite(road.frontageMm) ||
+            road.widthMm < 0 || road.frontageMm < 0) throw std::runtime_error("Invalid site road data");
+        boundary.road = std::move(road);
+      }
+      if (j.contains("ground")) {
+        const auto& g = j.at("ground");
+        SiteGround ground{g.at("outline").get<ObjectId>(), g.at("datum").get<std::string>(),
+                          g.at("source").get<std::string>(), {}};
+        for (const auto& row : g.at("samples")) {
+          if (!row.is_array() || row.size() != 3) throw std::runtime_error("Invalid site ground sample");
+          const auto sample = row.get<std::array<double, 3>>();
+          for (double value : sample)
+            if (!std::isfinite(value)) throw std::runtime_error("Invalid site ground sample");
+          ground.samples.push_back(sample);
+        }
+        if (ground.outline.empty() || ground.outline == boundary.outline || ground.datum.empty() ||
+            ground.source.empty() || ground.samples.size() < 3) throw std::runtime_error("Invalid site ground data");
+        boundary.ground = std::move(ground);
+      }
+      s.siteBoundary = std::move(boundary);
     }
     if (root.contains("elementTypes")) {
       const auto value = root.at("elementTypes").get<std::string>();

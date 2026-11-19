@@ -23,6 +23,7 @@ class SunDialog : public QDialog {
  public:
   explicit SunDialog(const geom::SunSettings& sun, QWidget* parent = nullptr);
   geom::SunSettings settings() const;
+  void lockNorthToSite();
   // For checks: the time as on the slider (minutes from midnight).
   void setMinutes(int minutes);
   int minutes() const;

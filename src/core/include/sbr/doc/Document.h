@@ -74,6 +74,63 @@ struct SectionDisplay {
   bool operator!=(const SectionDisplay& o) const { return !(*this == o); }
 };
 
+struct SiteNorth {
+  double angle;  // clockwise degrees from model +Y
+  std::string source;
+  std::string checkedOn;
+  bool operator==(const SiteNorth& other) const {
+    return angle == other.angle && source == other.source && checkedOn == other.checkedOn;
+  }
+};
+
+struct SiteRoad {
+  std::array<std::array<double, 3>, 2> localEdge{};
+  std::string kind;
+  std::string source;
+  double widthMm = 0;     // zero = unknown
+  double frontageMm = 0;  // zero = unknown; user-confirmed, independent of the outline
+  bool operator==(const SiteRoad& other) const {
+    return localEdge == other.localEdge && kind == other.kind && source == other.source &&
+           widthMm == other.widthMm && frontageMm == other.frontageMm;
+  }
+};
+
+struct SiteGround {
+  ObjectId outline;
+  std::string datum;
+  std::string source;
+  // Perimeter order, no repeated closing point. Each row is world X, world Y, and height from datum (mm).
+  std::vector<std::array<double, 3>> samples;
+  bool operator==(const SiteGround& other) const {
+    return outline == other.outline && datum == other.datum && source == other.source && samples == other.samples;
+  }
+};
+
+struct SiteGroundReport {
+  std::vector<gp_Pnt> vertices;
+  std::vector<double> heightsMm;
+  std::vector<double> lengthsMm;
+  double lengthMm = 0;
+  double weightedSumMm2 = 0;
+  double averageMm() const { return weightedSumMm2 / lengthMm; }
+};
+
+struct SiteBoundary {
+  ObjectId outline;
+  std::string source;
+  std::optional<SiteRoad> road = std::nullopt;
+  std::optional<SiteGround> ground = std::nullopt;
+  bool operator==(const SiteBoundary& other) const {
+    return outline == other.outline && source == other.source && road == other.road && ground == other.ground;
+  }
+};
+
+struct SiteBoundaryGeometry {
+  std::vector<gp_Pnt> vertices;  // world coordinates; the first point is not repeated
+  double areaMm2 = 0;
+  std::optional<std::array<gp_Pnt, 2>> matchEdge(const gp_Pnt& a, const gp_Pnt& b) const;
+};
+
 struct DocumentSettings {
   std::string units = "mm";
   double linearTolerance = tolerance::kLinear;
@@ -88,6 +145,8 @@ struct DocumentSettings {
   geom::SunSettings sun;               // date, time, place, north (docs/82)
   // Registered floor / roof types (docs/149): {"F1": {"part": "floor", "thickness": 200}, ...}.
   std::string elementTypes = "{}";
+  std::optional<SiteNorth> siteNorth;
+  std::optional<SiteBoundary> siteBoundary;
 };
 
 // The part of the settings that belongs to the model's state (saved, undone
@@ -102,10 +161,12 @@ struct PersistentSettings {
   std::string wallCalculation = "{}";
   geom::SunSettings sun;
   std::string elementTypes = "{}";
+  std::optional<SiteNorth> siteNorth;
+  std::optional<SiteBoundary> siteBoundary;
 
   static PersistentSettings of(const DocumentSettings& s) {
     return {s.scenes,         s.sections, s.sectionDisplay, s.hiddenTags, s.levels, s.constructionOverrides,
-            s.wallCalculation, s.sun,     s.elementTypes};
+            s.wallCalculation, s.sun,     s.elementTypes, s.siteNorth, s.siteBoundary};
   }
   void applyTo(DocumentSettings& s) const {
     s.scenes = scenes;
@@ -117,12 +178,15 @@ struct PersistentSettings {
     s.wallCalculation = wallCalculation;
     s.sun = sun;
     s.elementTypes = elementTypes;
+    s.siteNorth = siteNorth;
+    s.siteBoundary = siteBoundary;
   }
   bool operator==(const PersistentSettings& o) const {
     return scenes == o.scenes && sections == o.sections && sectionDisplay == o.sectionDisplay &&
            hiddenTags == o.hiddenTags && levels == o.levels &&
            constructionOverrides == o.constructionOverrides && wallCalculation == o.wallCalculation &&
-           sun == o.sun && elementTypes == o.elementTypes;
+           sun == o.sun && elementTypes == o.elementTypes && siteNorth == o.siteNorth &&
+           siteBoundary == o.siteBoundary;
   }
   bool operator!=(const PersistentSettings& o) const { return !(*this == o); }
 };
@@ -181,6 +245,9 @@ class Document {
   // (checks against every object of a large model compare boxes first).
   Bnd_Box worldBounds(const Object& object) const;
   TopoDS_Shape worldShape(const ObjectId& id) const;
+  Result<SiteBoundaryGeometry> siteBoundaryGeometry(const ObjectId& id) const;
+  std::optional<std::array<gp_Pnt, 2>> siteRoadEdge(const SiteBoundaryGeometry& geometry) const;
+  Result<SiteGroundReport> siteGroundReport(const SiteGround& ground) const;
 
   // --- embedded images (by content hash; never edited, only added) ------
   struct Image {

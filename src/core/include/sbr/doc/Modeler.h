@@ -211,6 +211,14 @@ class Modeler {
   Status setWallCalculation(const std::string& inputs);
   // Date, time, place and north for the sun (docs/82); one undo step.
   Status setSun(const geom::SunSettings& sun);
+  Status setSiteNorth(const SiteNorth& north);
+  Status setSiteNorthFromPoints(const gp_Pnt& tail, const gp_Pnt& tip, const std::string& source,
+                                const std::string& checkedOn);
+  Status setSiteBoundary(const std::optional<SiteBoundary>& boundary);
+  Status setSiteRoad(const std::array<gp_Pnt, 2>& edge, SiteRoad road);
+  void clearSiteRoad();
+  Status setSiteGround(SiteGround ground);
+  void clearSiteGround();
   // The description of a grid group (null: not a grid).
   const GridSpec* gridSpec(const ObjectId& grid) const;
   // Gives the grid new lines (names, offsets, added or taken away; ids
