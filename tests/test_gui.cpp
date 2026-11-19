@@ -402,6 +402,8 @@ class GuiPhase1 : public QObject {
   void wallToolAndArchitectureMenus();
   void doorSwingToolPicksInPlan();
   void fittingPlacedWithItsWayInPlan();
+  void fittingPlacedWithItsWayOnWallFace_data();
+  void fittingPlacedWithItsWayOnWallFace();
   void slabToolAndOpeningTool();
   void typedRevisionOnlyRightAfter();
   void escStepsBackAndConstraintsShow();
@@ -6348,6 +6350,89 @@ void GuiPhase1::fittingPlacedWithItsWayInPlan() {
   QCOMPARE(placed->back().width, 650.0);
   QCOMPARE(placed->back().height, 1500.0);
   QCOMPARE(placed->back().sill, 250.0);
+}
+
+void GuiPhase1::fittingPlacedWithItsWayOnWallFace_data() {
+  QTest::addColumn<bool>("elevation");
+  QTest::newRow("iso") << false;
+  QTest::newRow("front-elevation") << true;
+}
+
+void GuiPhase1::fittingPlacedWithItsWayOnWallFace() {
+  QFETCH(bool, elevation);
+  Fixture f;
+  QVERIFY(f.setUp(2500, 1000));
+  auto& modeler = f.window.modeler();
+  const auto walls = modeler.createWalls({{0, 0, 0}, {5000, 0, 0}}, 200, 3000);
+  QVERIFY(walls && walls->size() == 1);
+  const auto wall = walls->front();
+
+  if (elevation) f.vp->lockView(Viewport::StandardView::Front);
+  else f.vp->setStandardView(Viewport::StandardView::Iso);
+  f.vp->syncNow();
+  f.vp->fitAll();
+  QTest::qWait(30);
+
+  OpeningTool::Settings settings{800, 2000, 0};
+  settings.fitting = R"({"type":"swing_single","frame":45})";
+  QVERIFY(modeler.defineFittingType("SD-1", settings.fitting));
+  settings.fitting = R"({"type":"swing_single","frame":45,"type_name":"SD-1"})";
+  f.window.openingTool().setSettings(settings);
+  f.window.activateTool(MainWindow::ToolId::Opening);
+
+  std::string shownId;
+  auto choose = [&](const gp_Pnt& pt, const QString& label) {
+    bool sawMenu = false, selected = false;
+    QTimer::singleShot(0, &f.window, [&] {
+      auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+      if (!menu || menu->objectName() != QStringLiteral("openingWayMenu")) return;
+      sawMenu = true;
+      const auto openings = modeler.openings(wall);
+      if (openings && !openings->empty()) shownId = openings->back().id;
+      for (QAction* action : menu->actions()) {
+        if (!label.isEmpty() && action->text() == label) {
+          menu->setActiveAction(action);
+          QTest::keyClick(menu, Qt::Key_Return);
+          selected = true;
+          return;
+        }
+      }
+      QTest::keyClick(menu, Qt::Key_Escape);
+    });
+    click(f.vp, f.vp->toWidget(pt));
+    return sawMenu && (label.isEmpty() || selected);
+  };
+
+  const auto undoSteps = modeler.history().undoCount();
+  QVERIFY2(choose(gp_Pnt(2500, 0, 1350), QStringLiteral("右吊元・外開き")), qPrintable(f.window.lastError()));
+  QVERIFY(!f.window.openingTool().choosingWay());
+  QCOMPARE(modeler.history().undoCount(), undoSteps + 1);
+  const auto placed = modeler.openings(wall);
+  QVERIFY(placed && placed->size() == 1);
+  QCOMPARE(placed->front().id, shownId);
+  auto fitting = [&](const std::string& id) {
+    return nlohmann::json::parse(modeler.document().find(wall)->attributes.at("opening_fittings")).at(id);
+  };
+  QCOMPARE(fitting(shownId).at("hinge").get<std::string>(), std::string("right"));
+  QCOMPARE(fitting(shownId).at("swing").get<std::string>(), std::string("out"));
+  QCOMPARE(fitting(shownId).at("type_name").get<std::string>(), std::string("SD-1"));
+  QCOMPARE(fitting(shownId).at("frame").get<double>(), 45.0);
+  const auto firstId = shownId;
+  QVERIFY(modeler.undo());
+  QVERIFY(modeler.openings(wall)->empty());
+  QVERIFY(modeler.redo());
+  QCOMPARE(fitting(firstId).at("swing").get<std::string>(), std::string("out"));
+
+  // Escape accepts the current way and leaves that second opening as one undo step.
+  f.vp->syncNow();
+  QVERIFY2(choose(gp_Pnt(3900, 0, 1350), {}), qPrintable(f.window.lastError()));
+  QVERIFY(!f.window.openingTool().choosingWay());
+  QCOMPARE(modeler.history().undoCount(), undoSteps + 2);
+  QCOMPARE(modeler.openings(wall)->size(), std::size_t(2));
+  QVERIFY(shownId != firstId);
+  QCOMPARE(fitting(shownId).at("swing").get<std::string>(), std::string("out"));
+  QVERIFY(modeler.undo());
+  QCOMPARE(modeler.openings(wall)->size(), std::size_t(1));
 }
 
 void GuiPhase1::doorSwingToolPicksInPlan() {

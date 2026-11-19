@@ -21,6 +21,8 @@
 #include <QElapsedTimer>
 #include <QTimer>
 #include <QLineF>
+#include <QMenu>
+#include <QPointer>
 #include <QPolygonF>
 #include <QRegularExpression>
 
@@ -1755,8 +1757,8 @@ std::optional<OpeningTool::Target> OpeningTool::targetAt(const ToolEvent& e) {
 }
 
 void OpeningTool::mouseMove(const ToolEvent& e) {
-  if (choosing_) {  // docs/189
-    chooseWay(e, false);
+  if (choosing_) {
+    chooseWayInPlan(e, false);
     return;
   }
   hover_ = targetAt(e);
@@ -1827,7 +1829,7 @@ void OpeningTool::mouseMove(const ToolEvent& e) {
                   (hover_->snap.isEmpty() ? QString() : QStringLiteral("  [") + hover_->snap + QStringLiteral("]")));
 }
 
-bool OpeningTool::place(const Target& t) {
+bool OpeningTool::place(const Target& t, bool chooseWay) {
   // A registered type can be redefined or removed after picking it in the toolbar.
   auto fitting = nlohmann::json::parse(settings_.fitting, nullptr, false);
   if (fitting.is_object() && fitting.contains("type_name")) {
@@ -1858,20 +1860,15 @@ bool OpeningTool::place(const Target& t) {
   last_ = t;
   recent_.mark(host_.modeler());
   QString status = QObject::tr("開口をあけました（%1）。続けて入力するとこの開口の大きさを変更").arg(settingsText());
-  // docs/189: a door with a way to open: chosen next by the mouse (the opening just made).
-  const nlohmann::json fit = nlohmann::json::parse(settings_.fitting, nullptr, false);
-  if (fit.is_object() && !draw::fittingWays(fit.value("type", std::string())).empty()) {
-    if (const auto list = host_.modeler().openings(t.host)) {
-      double best = 1e300;
-      for (const auto& op : *list) {
-        const double d = std::hypot(op.center.X() - t.at.X(), op.center.Y() - t.at.Y());
-        if (d < best) best = d, choosing_ = std::make_pair(t.host, op.id);
+  choosing_.reset();
+  if (chooseWay && fitting.is_object() && !draw::fittingWays(fitting.value("type", std::string())).empty()) {
+    // placeOpeningAt appends the new opening to the host's ordered openings.
+    if (const auto list = host_.modeler().openings(*r); list && !list->empty()) {
+      choosing_ = std::make_pair(*r, list->back().id);
+      if (host_.viewport().lockedView() == Viewport::StandardView::Top) {
+        host_.setStatus(QObject::tr("開口をあけました。マウスを、開く側・吊元にしたい半分へ動かしてクリック（Esc でこのまま）"));
+        return true;
       }
-    }
-    if (choosing_) {
-      chosen_.clear();
-      host_.setStatus(QObject::tr("開口をあけました。マウスを、開く側・吊元にしたい半分へ動かしてクリック（Esc でこのまま）"));
-      return true;
     }
   }
   // docs/118: another wall ending in the hole is said (the opening stays).
@@ -1884,9 +1881,8 @@ bool OpeningTool::place(const Target& t) {
   return true;
 }
 
-// docs/189: the way the door just placed opens, from where the mouse is (as the door swing tool):
-// drawn as it would be; with `keep`, placed again that way (the same undo step).
-bool OpeningTool::chooseWay(const ToolEvent& e, bool keep) {
+// In plan, the mouse indicates the side and hinge as in the standalone Door Swing tool.
+void OpeningTool::chooseWayInPlan(const ToolEvent& e, bool keep) {
   doc::Modeler& m = host_.modeler();
   const auto list = m.openings(choosing_->first);
   const doc::Modeler::OpeningInfo* op = nullptr;
@@ -1894,58 +1890,95 @@ bool OpeningTool::chooseWay(const ToolEvent& e, bool keep) {
     for (const auto& o : *list)
       if (o.id == choosing_->second) op = &o;
   if (!op) {
-    choosing_.reset();
-    return false;
+    cancel();
+    return;
   }
   const snap::Ray ray = host_.viewport().rayAt(e.pos);
-  if (std::abs(ray.direction.Z()) < 1e-9) return false;
+  if (std::abs(ray.direction.Z()) < 1e-9) return;
   const double z = op->bottom + std::min(1000.0, op->height / 2);
   const gp_Pnt p = ray.origin.Translated(gp_Vec(ray.direction) * ((z - ray.origin.Z()) / ray.direction.Z()));
   const auto way = draw::fittingTowards(settings_.fitting, op->center, op->normal, op->depth, p);
-  if (!way) return false;
-  chosen_ = *way;
-  if (!keep) {
-    const std::set<std::string> only{choosing_->first};
-    draw::SymbolOptions options;
-    options.z = z;
-    options.only = &only;
-    options.onlyOpening = op->id;
-    options.fittingOverride = chosen_;
-    BRep_Builder builder;
-    TopoDS_Compound preview;
-    builder.MakeCompound(preview);
-    for (const TopoDS_Edge& edge : draw::openingSymbols(m.document(), options)) builder.Add(preview, edge);
-    host_.viewport().setPreview(preview);
-    host_.setStatus(QObject::tr("この開き方でよければクリック（Esc で最初の開き方のまま）"));
-    return true;
+  if (!way) return;
+  if (keep) {
+    finishWay(*way);
+    return;
   }
-  // Placed again with the way chosen, in the same undo step; the next ones open the same way.
+  const std::set<std::string> only{choosing_->first};
+  draw::SymbolOptions options;
+  options.z = z;
+  options.only = &only;
+  options.onlyOpening = op->id;
+  options.fittingOverride = *way;
+  BRep_Builder builder;
+  TopoDS_Compound preview;
+  builder.MakeCompound(preview);
+  for (const TopoDS_Edge& edge : draw::openingSymbols(m.document(), options)) builder.Add(preview, edge);
+  host_.viewport().setPreview(preview);
+  host_.setStatus(QObject::tr("この開き方でよければクリック（Esc で最初の開き方のまま）"));
+}
+
+void OpeningTool::showWayMenu(const QPoint& pos) {
+  const auto normalized = draw::normalizeFitting(settings_.fitting);
+  if (!normalized) {
+    cancel();
+    return;
+  }
+  const auto current = nlohmann::json::parse(*normalized);
+  QMenu menu;
+  menu.setObjectName(QStringLiteral("openingWayMenu"));
+  menu.addSection(QObject::tr("開き方（選んだ壁面側が外）"));
+  for (const auto& way : draw::fittingWays(current.at("type").get<std::string>())) {
+    auto candidate = current;
+    candidate.update(nlohmann::json::parse(way.fitting));
+    QAction* action = menu.addAction(QString::fromStdString(way.label));
+    action->setData(QString::fromStdString(candidate.dump()));
+    action->setCheckable(true);
+    action->setChecked(candidate == current);
+  }
+  host_.setStatus(QObject::tr("開き方を選んでください。吊元は扉が開く側から見た左右です（Esc でこのまま）"));
+  const QPointer<Viewport> viewport(&host_.viewport());
+  const QAction* selected = menu.exec(viewport->mapToGlobal(pos + QPoint(12, 8)));
+  if (!viewport || !choosing_) return;
+  if (selected) finishWay(selected->data().toString().toStdString());
+  else cancel();
+}
+
+void OpeningTool::finishWay(const std::string& fitting) {
+  const auto [host, id] = *choosing_;
   choosing_.reset();
   host_.viewport().clearPreview();
-  if (chosen_ == settings_.fitting || !last_ || !recent_.fresh(m)) return true;
-  const Target again = *last_;
-  const std::string before = settings_.fitting;
-  settings_.fitting = chosen_;
-  const Status s = recent_.replace(m, [&] { return place(again) ? Status::success() : Status::failure(""); });
-  choosing_.reset();  // placing again would ask again
-  host_.viewport().clearPreview();
-  if (!s) settings_.fitting = before;
-  else host_.setStatus(QObject::tr("開口と建具を入れました（Ctrl+Z で戻せます）。続けて次の壁をクリック"));
-  return true;
+  doc::Modeler& modeler = host_.modeler();
+  if (!recent_.fresh(modeler)) return;
+  const auto openings = modeler.openings(host);
+  if (!openings) return;
+  const auto opening = std::find_if(openings->begin(), openings->end(), [&](const auto& op) { return op.id == id; });
+  if (opening == openings->end()) return;
+  if (const auto previous = draw::normalizeFitting(settings_.fitting); !previous || *previous != fitting) {
+    // Only the fitting changes. Amend the placement so one undo removes the whole opening.
+    const Status status = recent_.revise(modeler, [&] { return modeler.setOpeningFittings(host, {opening->index}, fitting); });
+    if (!status) {
+      host_.reportError(QString::fromStdString(status.message()));
+      return;
+    }
+  }
+  settings_.fitting = fitting;
+  host_.setStatus(QObject::tr("開口と建具を入れました（Ctrl+Z で戻せます）。続けて次の壁をクリック"));
 }
 
 void OpeningTool::mousePress(const ToolEvent& e) {
-  if (choosing_) {
-    chooseWay(e, true);
+  if (choosing_ && host_.viewport().lockedView() == Viewport::StandardView::Top) {
+    chooseWayInPlan(e, true);
     return;
   }
+  if (choosing_) cancel();
   const auto t = targetAt(e);
   if (!t) {
     host_.setStatus(ambiguousPlan_ ? QObject::tr("壁が重なっています。交点から離すか、3D・立面で壁面を選んでください") :
         QObject::tr("平面の壁、または3D・立面の壁面をクリックしてください"));
     return;
   }
-  place(*t);
+  if (place(*t, true) && choosing_ && host_.viewport().lockedView() != Viewport::StandardView::Top)
+    showWayMenu(e.pos);
 }
 
 void OpeningTool::applyMeasurement(const QString& text) {
@@ -1964,7 +1997,8 @@ void OpeningTool::applyMeasurement(const QString& text) {
   doc::Modeler& m = host_.modeler();
   if (last_ && recent_.fresh(m)) {
     const Target again = *last_;
-    const Status s = recent_.replace(m, [&] { return place(again) ? Status::success() : Status::failure(""); });
+    const bool chooseWay = choosing_.has_value();
+    const Status s = recent_.replace(m, [&] { return place(again, chooseWay) ? Status::success() : Status::failure(""); });
     if (!s) {
       settings_ = previous;
       last_ = again;

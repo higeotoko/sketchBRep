@@ -552,14 +552,15 @@ class OpeningTool : public Tool {
   void setSettings(const Settings& s) { settings_ = s; }
   const Settings& settings() const { return settings_; }
   QString settingsText() const;
-  // docs/189: right after placing a door, the way it opens is being chosen by the mouse.
+  // docs/189: right after placing a door, the way it opens is being chosen.
   bool choosingWay() const { return choosing_.has_value(); }
 
  private:
-  // docs/189: the opening just placed, whose way to open the mouse chooses (host, opening id).
+  // The opening just placed (host and opening id).
   std::optional<std::pair<doc::ObjectId, std::string>> choosing_;
-  std::string chosen_;
-  bool chooseWay(const ToolEvent& e, bool keep);
+  void chooseWayInPlan(const ToolEvent& e, bool keep);
+  void showWayMenu(const QPoint& pos);
+  void finishWay(const std::string& fitting);
   struct Target {
     doc::ObjectId host;
     gp_Dir normal;
@@ -571,7 +572,7 @@ class OpeningTool : public Tool {
   std::optional<Target> targetAt(const ToolEvent& e);
   std::optional<FacePick> planFaceAt(const ToolEvent& e);
   bool ambiguousPlan_ = false;
-  bool place(const Target& t);
+  bool place(const Target& t, bool chooseWay);
 
   Settings settings_;
   std::optional<Target> hover_;
