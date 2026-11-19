@@ -1,0 +1,40 @@
+{
+  "code_commit": "23f7e66e84235d08c0044d59abb884bc8627dd8f",
+  "zip": "SketchBRep-windows-x64-23f7e66-local.zip",
+  "bytes": 81998638,
+  "sha256": "bf6cfb5dae8f6efdad7ac6910753d22e5177e16d4867d805f3483b7bf90dd6fd",
+  "runtime_dlls_verified": 102,
+  "binary_dependencies_checked": 109,
+  "zip_crc_and_executable_hashes": "passed",
+  "path_limited_to_package_and_windows": true,
+  "pads_cli_generated_support_and_save_reopen": "passed",
+  "two_storey_house": {
+    "sample_sbr": "SketchBRep-foundation-pad-house-23f7e66.sbr",
+    "sample_dxf": "SketchBRep-foundation-pad-house-23f7e66.dxf",
+    "real_floor_posts": 6,
+    "missing_before": 2,
+    "pads_generated": 2,
+    "missing_after": 0,
+    "save_reopen": "passed",
+    "foundation_dxf_and_step": "passed"
+  },
+  "foundation_supports_cli_chain_missing_and_save_reopen": "passed",
+  "foundation_cli_net_volume_save_reopen_step": "passed",
+  "foundation_mcp_tools_exposed": "passed",
+  "phase0_step_export": "passed",
+  "cli_3dm_export": "passed",
+  "mcp_initialize_tools_and_create_box": "passed",
+  "wall_bays_cli_save_reopen": "passed",
+  "four_member_contacts_cli_save_reopen": "passed",
+  "gui_actual_conditions": 18,
+  "gui_including_init_cleanup": 20,
+  "gui_failures": 0,
+  "gui_process_exit": 0,
+  "gui_seconds": "27.344",
+  "test_only_files_added_after_extraction": [
+    "sbr_gui_tests.exe",
+    "Qt6Test.dll"
+  ],
+  "ci_verified": false,
+  "human_windows_verified": false
+}
