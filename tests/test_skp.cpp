@@ -273,8 +273,15 @@ TEST(Skp, ComponentsAreShared) {
   gp_Trsf turn;
   turn.SetRotation(gp_Ax1(gp_Pnt(52.5, 52.5, 0), gp_Dir(0, 0, 1)), std::acos(-1.0) / 2);
   ASSERT_TRUE(m.transform({first}, turn, "Rotate component"));
+  const ObjectId enlarged = m.document().objects()[1].id;
+  const ObjectId reduced = m.document().objects()[2].id;
+  ASSERT_TRUE(m.scale({enlarged}, gp_Pnt(910, 0, 0), 2.0));
+  ASSERT_TRUE(m.scale({reduced}, gp_Pnt(1820, 0, 0), 0.5));
   const std::string path = ::testing::TempDir() + "posts.skp";
   ok("export_skp", {{"path", path}});
+  const auto unchanged = m.syncSkp(path, false, false);
+  ASSERT_TRUE(unchanged) << unchanged.error();
+  EXPECT_EQ(unchanged->unchanged.size(), 4u);
   Modeler back;
   geom::SkpReport report;
   const auto ids = back.importSkp(path, &report);
@@ -308,12 +315,18 @@ TEST(Skp, ComponentsAreShared) {
     const auto source = instance->attributes.find("skp_source_id");
     ASSERT_NE(source, instance->attributes.end());
     if (source->second == first) EXPECT_NEAR(instance->transform.Value(1, 2), -1.0, 1e-6);
+    const double factor = source->second == enlarged ? 2.0 : source->second == reduced ? 0.5 : 1.0;
+    EXPECT_NEAR(instance->transform.ScaleFactor(), 1.0, 1e-9);
+    if (factor != 1.0) {
+      ASSERT_EQ(ref->stretches.size(), 1u);
+      EXPECT_NEAR(ref->stretches.front().fx, factor, 1e-9);
+    }
     const TopoDS_Shape s = back.document().worldShape(*instance);
     bool sampledTop = false;
     for (TopExp_Explorer e(s, TopAbs_FACE); e.More(); e.Next()) {
       GProp_GProps face;
       BRepGProp::SurfaceProperties(e.Current(), face);
-      if (std::abs(face.CentreOfMass().Z() - 2700) >= 1e-6) continue;
+      if (std::abs(face.CentreOfMass().Z() - 2700 * factor) >= 1e-6) continue;
       const auto material = back.materialAt(id, TopoDS::Face(e.Current()));
       ASSERT_TRUE(material);
       EXPECT_EQ(material->source, "face");
@@ -323,10 +336,10 @@ TEST(Skp, ComponentsAreShared) {
       sampledTop = true;
     }
     EXPECT_TRUE(sampledTop);
-    EXPECT_NEAR(geom::volume(s), 105.0 * 105 * 2700, 1.0);
+    EXPECT_NEAR(geom::volume(s), 105.0 * 105 * 2700 * factor * factor * factor, 1.0);
     const auto b = geom::exactBounds(s);
     xs.push_back(b.CornerMin().X());
-    EXPECT_NEAR(b.CornerMax().Z(), 2700, 1e-6);
+    EXPECT_NEAR(b.CornerMax().Z(), 2700 * factor, 1e-6);
   }
   std::sort(xs.begin(), xs.end());
   for (std::size_t i = 0; i < xs.size(); ++i) EXPECT_NEAR(xs[i], 910.0 * i, 1e-6);
@@ -358,6 +371,13 @@ TEST(Skp, ComponentsAreShared) {
   EXPECT_EQ(again.groups, 0);
   ASSERT_EQ(importedAgain.document().definitions().size(), 1u);
   EXPECT_TRUE(hasRedTop(importedAgain.document()));
+  std::vector<double> heights;
+  for (const Object& instance : importedAgain.document().objects())
+    heights.push_back(geom::exactBounds(importedAgain.document().worldShape(instance)).CornerMax().Z());
+  std::sort(heights.begin(), heights.end());
+  ASSERT_EQ(heights.size(), 4u);
+  EXPECT_NEAR(heights.front(), 1350.0, 1e-6);
+  EXPECT_NEAR(heights.back(), 5400.0, 1e-6);
   std::filesystem::remove(exportedAgain);
   std::filesystem::remove(saved);
 }

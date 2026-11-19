@@ -26,6 +26,7 @@
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <BRepTools.hxx>
 #include <BRepTools_WireExplorer.hxx>
@@ -661,22 +662,34 @@ struct Meta {
   gp_Trsf where;
 };
 
-// SketchUp's placement (inches) as a rigid placement in mm; none when it scales or shears.
-std::optional<gp_Trsf> rigid(const Matrix& m) {
-  if (std::abs(m[3]) > 1e-9 || std::abs(m[7]) > 1e-9 || std::abs(m[11]) > 1e-9 || std::abs(m[15] - 1.0) > 1e-9) return std::nullopt;
+// SketchUp's affine placement in mm, when its basis has one uniform scale.
+std::optional<gp_Trsf> similarity(Matrix m) {
+  const double w = m[15];
+  if (!std::all_of(m.begin(), m.end(), [](double x) { return std::isfinite(x); }) || std::abs(w) < 1e-12)
+    return std::nullopt;
+  for (double& x : m) x /= w;
+  if (std::abs(m[3]) > 1e-9 || std::abs(m[7]) > 1e-9 || std::abs(m[11]) > 1e-9) return std::nullopt;
+  const double scale = std::hypot(m[0], m[1], m[2]);
+  if (!std::isfinite(scale) || scale < 1e-6) return std::nullopt;
   for (int a = 0; a < 3; ++a)
     for (int b = 0; b < 3; ++b) {
       double dot = 0;
-      for (int k = 0; k < 3; ++k) dot += m[a * 4 + k] * m[b * 4 + k];
-      if (std::abs(dot - (a == b ? 1.0 : 0.0)) > 1e-6) return std::nullopt;
+      for (int k = 0; k < 3; ++k) dot += (m[a * 4 + k] / scale) * (m[b * 4 + k] / scale);
+      if (!std::isfinite(dot) || std::abs(dot - (a == b ? 1.0 : 0.0)) > 1e-6) return std::nullopt;
     }
   try {
     gp_Trsf t;
     t.SetValues(m[0], m[4], m[8], m[12] * kInch, m[1], m[5], m[9], m[13] * kInch, m[2], m[6], m[10], m[14] * kInch);
+    const double factor = t.ScaleFactor();
+    if (std::abs(std::abs(factor) - 1.0) < 1e-9) t.SetScaleFactor(std::copysign(1.0, factor));
     return t;
   } catch (...) {
     return std::nullopt;
   }
+}
+
+bool unitScale(const gp_Trsf& transform) {
+  return std::abs(std::abs(transform.ScaleFactor()) - 1.0) < 1e-9;
 }
 
 struct Reader {
@@ -954,7 +967,7 @@ struct Reader {
       if (pieces) su.SUEntitiesGetNumGroups(inside, &count);
       const std::size_t from = parts.size();
       Meta carried = this->meta(element, su.SUGroupToEntity(groups[i]));
-      if (const auto where = rigid(multiply(m, local))) {
+      if (const auto where = similarity(multiply(m, local)); where && unitScale(*where)) {
         carried.placed = true;
         carried.where = *where;
       }
@@ -994,7 +1007,8 @@ struct Reader {
       su.SUComponentDefinitionGetEntities(definition, &inside);
       Meta carried = this->meta(element, su.SUComponentInstanceToEntity(instances[i]));
       const Matrix world = multiply(m, local);
-      if (const auto where = rigid(world)) {
+      const auto where = similarity(world);
+      if (where && unitScale(*where)) {
         carried.placed = true;
         carried.where = *where;
       }
@@ -1002,9 +1016,8 @@ struct Reader {
       const std::size_t from = parts.size();
       entities(inside, world, instanceName, baseColor, depth + 1, carried);
 
-      // Keep the world geometry for syncSkp. A flat definition with a rigid placement can
-      // also become a shared SketchBRep component, with a variant per inherited colour.
-      if (!carried.placed || carried.where.IsNegative() || parts.size() != from + 1) continue;
+      // Keep the world geometry for syncSkp and the local shape for shared placements.
+      if (!where || where->IsNegative() || parts.size() != from + 1) continue;
       ColladaPart& part = parts.back();
       if (!TopExp_Explorer(part.shape, TopAbs_FACE).More()) continue;
       size_t groups = 0, instancesInside = 0;
@@ -1015,7 +1028,11 @@ struct Reader {
       if (inserted) entry->second = std::to_string(nextDefinition++);
       part.definition = entry->second;
       part.definitionName = definitionName;
-      part.localShape = part.shape.Moved(TopLoc_Location(carried.where.Inverted()));
+      part.placed = true;
+      part.placement = *where;
+      const gp_Trsf inverse = where->Inverted();
+      part.localShape = unitScale(*where) ? part.shape.Moved(TopLoc_Location(inverse))
+                                         : BRepBuilderAPI_Transform(part.shape, inverse, Standard_True).Shape();
     }
   }
 };

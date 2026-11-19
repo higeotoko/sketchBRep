@@ -4911,6 +4911,19 @@ Status Modeler::clearFaceMaterials(const std::vector<ObjectId>& ids) {
 
 namespace {
 
+// A SketchUp placement can express the uniform scales without baking them into the definition.
+std::optional<gp_Trsf> componentUniformScale(const ComponentInstance& instance) {
+  if (!instance.overrides.empty() || instance.mirrored) return std::nullopt;
+  gp_Trsf combined;
+  for (const StretchOp& op : instance.stretches) {
+    if (!std::isfinite(op.fx) || op.fx < 1e-6 || op.fx != op.fy || op.fx != op.fz) return std::nullopt;
+    gp_Trsf scale;
+    scale.SetScale(op.center, op.fx);
+    combined = scale * combined;
+  }
+  return combined;
+}
+
 // buildDefinitionShape adds the leaves in definition order. Map their material
 // assignments to the face indices of the placed compound.
 std::map<int, std::string> componentFaceMaterials(const ComponentDefinition& definition, const TopoDS_Shape& shape) {
@@ -4951,7 +4964,7 @@ Result<Modeler::MaterialAt> Modeler::materialAt(const ObjectId& id, const TopoDS
   if (!o) return Result<MaterialAt>::failure("Object not found");
   MaterialAt out;
   const auto* instance = std::get_if<ComponentInstance>(&o->recipe.base);
-  const auto* definition = instance && instance->plain() ? document_.findDefinition(instance->definitionId) : nullptr;
+  const auto* definition = instance && componentUniformScale(*instance) ? document_.findDefinition(instance->definitionId) : nullptr;
   if ((!o->faceMaterials.empty() || definition) && !o->shape.IsNull()) {
     TopTools_IndexedMapOfShape faces;
     TopExp::MapShapes(o->shape, TopAbs_FACE, faces);
@@ -11977,13 +11990,15 @@ Result<std::vector<geom::ColladaPart>> Modeler::colouredParts(const std::vector<
     part.attributes["sbr_id"] = o->id;
     part.color = colorOf(document_.inheritedMaterial(*o), document_.displayColor(*o));
     std::map<int, geom::ColladaColor> faceColors;
-    if (const auto* instance = std::get_if<ComponentInstance>(&o->recipe.base); instance && instance->plain()) {
-      if (const ComponentDefinition* d = document_.findDefinition(instance->definitionId)) {
+    if (const auto* instance = std::get_if<ComponentInstance>(&o->recipe.base)) {
+      const auto scale = componentUniformScale(*instance);
+      const ComponentDefinition* d = document_.findDefinition(instance->definitionId);
+      if (scale && d) {
         if (o->faceMaterials.empty()) {
           part.definition = d->id;
           part.definitionName = d->name;
-          part.localShape = o->shape;
-          part.placement = document_.worldTransform(*o);
+          part.localShape = d->shape;
+          part.placement = document_.worldTransform(*o) * *scale;
         }
 
         for (const auto& [index, material] : componentFaceMaterials(*d, o->shape))
@@ -12093,9 +12108,11 @@ Result<Modeler::SkpSync> Modeler::syncSkp(const std::string& path, bool replaceE
         delta.SetTranslation(gp_Vec(shift));
       }
     }
-    // Its shape as SketchUp has it, put back where it was written: the object's own?
-    const TopoDS_Shape back = BRepBuilderAPI_Transform(part.shape, delta.Inverted(), Standard_True).Shape();
-    if (!sameShape(back, document_.worldShape(*o))) {
+    // A different scale is an edit. Only a rigid delta can update the existing placement.
+    const bool rigidDelta = std::abs(delta.ScaleFactor() - 1.0) < 1e-7;
+    const TopoDS_Shape back = rigidDelta ? BRepBuilderAPI_Transform(part.shape, delta.Inverted(), Standard_True).Shape()
+                                         : TopoDS_Shape();
+    if (!rigidDelta || !sameShape(back, document_.worldShape(*o))) {
       if (replaceEdited) replacements.emplace_back(o->id, &part);
       else out.edited.push_back(o->id);
       continue;
@@ -12170,7 +12187,7 @@ Result<std::vector<ObjectId>> Modeler::addColouredParts(const std::vector<geom::
   using R = Result<std::vector<ObjectId>>;
   ChangeSet changes(document_);
   std::vector<ObjectId> ids;
-  std::map<std::string, std::pair<ObjectId, TopoDS_Shape>> definitions;
+  std::map<std::string, ComponentDefinition> definitions;
   for (const geom::ColladaPart& part : parts) {
     Object o;
     o.id = generateObjectId();
@@ -12219,12 +12236,21 @@ Result<std::vector<ObjectId>> Modeler::addColouredParts(const std::vector<geom::
         const auto shape = buildDefinitionShape(definition);
         if (!shape) return R::failure(shape.error());
         definition.shape = *shape;
-        entry = definitions.emplace(part.definition, std::make_pair(definition.id, definition.shape)).first;
         changes.putDefinition(definition);
+        entry = definitions.emplace(part.definition, std::move(definition)).first;
       }
-      o.recipe.base = ComponentInstance{entry->second.first, {}, false};
+      const ComponentDefinition& definition = entry->second;
+      ComponentInstance instance{definition.id, {}, false};
       o.transform = part.placement;
-      o.shape = entry->second.second;
+      const double scale = o.transform.ScaleFactor();
+      if (std::abs(scale - 1.0) >= 1e-9) {
+        instance.stretches.push_back(StretchOp{gp::Origin(), gp::DX(), gp::DY(), scale, scale, scale});
+        o.transform.SetScaleFactor(1.0);
+      }
+      const auto shape = buildInstanceShape(definition, instance);
+      if (!shape) return R::failure(shape.error());
+      o.shape = *shape;
+      o.recipe.base = std::move(instance);
     } else {
       o.recipe.base = ImportedShape{part.shape, path};
       if (const Status built = rebuild(o); !built) return R::failure(built.message());
