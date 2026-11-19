@@ -587,8 +587,14 @@ void GuiPhase1::sitePlanFromASelectedBoundary() {
         QStringLiteral("320"), QStringLiteral("-30")};
     for (int i = 0; i < heights.size(); ++i) table->item(i, 2)->setText(heights[i]);
     QTest::mouseClick(p3, Qt::LeftButton);
-    auto* editor = qobject_cast<QLineEdit*>(QApplication::focusWidget());
-    if (!editor || !table->isAncestorOf(editor) || table->currentRow() != 2 || table->currentColumn() != 2 ||
+    QLineEdit* editor = nullptr;
+    for (auto* candidate : table->findChildren<QLineEdit*>()) {
+      if (candidate->isVisible()) {
+        editor = candidate;
+        break;
+      }
+    }
+    if (!editor || table->currentRow() != 2 || table->currentColumn() != 2 ||
         !p3->isChecked()) return dialog->reject();
     editor->selectAll();
     QTest::keyClicks(editor, "165");
@@ -9813,12 +9819,12 @@ void GuiPhase1::drawingDialogPlanSectionElevationAndExport() {
   QVERIFY(dialog.findChild<QPushButton*>(QStringLiteral("drawingPrintButton")));
   {
     QPrinter printer(QPrinter::HighResolution);
+    printer.setOutputFormat(QPrinter::PdfFormat);
     setUpPrinter(*dialog.sheet(), printer);
     QCOMPARE(printer.pageLayout().orientation(), QPageLayout::Landscape);
     const QSizeF mm = printer.pageLayout().fullRect(QPageLayout::Millimeter).size();
     QVERIFY(std::abs(mm.width() - dialog.sheet()->paperWidth) < 1.0);
     QVERIFY(std::abs(mm.height() - dialog.sheet()->paperHeight) < 1.0);
-    printer.setOutputFormat(QPrinter::PdfFormat);
     printer.setOutputFileName(dir.filePath(QStringLiteral("printed.pdf")));
     bool scaled = true;
     const Status s = dialog.printTo(printer, &scaled);
