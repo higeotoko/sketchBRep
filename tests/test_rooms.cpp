@@ -294,4 +294,31 @@ TEST_F(Rooms, TimberWallsOnTheColumnCentreAndWallsNoLongerWalls) {
   r = room();
   if (!r["closed"].get<bool>()) EXPECT_GE(r["unreadable_walls"].get<int>(), 1);
 }
+
+// docs/193: walls and slabs drawn over a loose face at their base (a site outline traced at GL)
+// are made as they are: the face is not cut by them and they do not become regions of it.
+TEST_F(Rooms, WallsAndSlabsOverAFaceLeaveItAlone) {
+  const std::string site =
+      ok("create_polygon", {{"points", {{-5000, -5000, 0}, {15000, -5000, 0}, {15000, 10000, 0}, {-5000, 10000, 0}}}})["id"];
+  const json before = ok("get_object", {{"id", site}});
+  const json walls = outer();
+  ok("create_slab", {{"outline", {{0, 0}, {6000, 0}, {6000, 4000}, {0, 4000}}}, {"top", 0}, {"thickness", 150}});
+  ok("create_room", {{"at", {3000, 2000}}, {"name", "居間"}});
+  const json r = room();
+  EXPECT_TRUE(r["closed"].get<bool>()) << r.dump();
+  EXPECT_EQ(r["unreadable_walls"], 0);
+  EXPECT_NEAR(r["area_centre"].get<double>(), 24.0, 1e-9);
+  for (const json& id : walls) {
+    const json wall = ok("get_object", {{"id", id}});
+    EXPECT_EQ(wall["history"].get<std::string>().rfind("Rectangle", 0), 0u) << wall.dump();
+  }
+  // The site face is the one that was drawn, whole, and nothing else became a face.
+  const json after = ok("get_object", {{"id", site}});
+  EXPECT_EQ(after["history"], before["history"]);
+  EXPECT_NEAR(after["area"].get<double>(), before["area"].get<double>(), 1e-6) << after.dump();
+  int faces = 0;
+  const json objects = ok("list_objects")["objects"];
+  for (const json& o : objects) faces += o["kind"] == "Face";
+  EXPECT_EQ(faces, 1);
+}
 }  // namespace

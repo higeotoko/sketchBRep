@@ -10184,7 +10184,12 @@ Result<std::vector<ObjectId>> Modeler::createWallBands(std::vector<gp_Pnt> point
       history_.abortGroup();
       return R::failure("A wall segment is shorter than the wall is thick");
     }
-    auto id = createRectangle(plane, wallLength, thickness, uniqueName("Wall"));
+    // docs/193: made as it is, not as a sketch: a loose face at its base (a site outline at GL)
+    // is neither cut by it nor merged into it (a wall made of a region of that face is no wall).
+    Object profile;
+    profile.name = uniqueName("Wall");
+    profile.recipe.base = RectangleProfile{plane, wallLength, thickness};
+    auto id = addObject(std::move(profile), "Rectangle");
     if (!id || !extrude(*id, height)) {
       history_.abortGroup();
       return R::failure(id ? "Wall could not be extruded" : id.error());
@@ -10657,7 +10662,11 @@ Result<ObjectId> Modeler::createSlab(const std::vector<gp_Pnt>& outline, double 
   if (std::abs(twiceArea) < tolerance::kMinDimension) return Result<ObjectId>::failure("The slab outline has no area");
   if (twiceArea < 0) std::reverse(pts.begin(), pts.end());
   history_.beginGroup("Slab");
-  auto id = createPolygon(pts, uniqueName("Slab"));
+  // docs/193: made as it is (as the walls): a loose face where it starts keeps no hole of it.
+  Object profile;
+  profile.name = uniqueName("Slab");
+  profile.recipe.base = PolygonProfile{pts};
+  auto id = addObject(std::move(profile), "Face");
   if (!id || !extrude(*id, thickness) || !setAttribute({*id}, "kind", "slab")) {
     history_.abortGroup();
     return Result<ObjectId>::failure(id ? "Slab could not be extruded" : id.error());
