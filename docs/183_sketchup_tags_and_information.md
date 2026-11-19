@@ -61,3 +61,10 @@
 - 関連 GUI 15 件成功・1 件スキップ。展開した ZIP で通常・べた基礎の検証に成功。同梱 SDK と CLI で共有定義、保存・再読込後の色取得、SKP への再書き出しを確認した。人の操作による実機確認は未実施。
 - Windows ZIP `SketchBRep-windows-x64-6d88326-local.zip`、81,823,239 bytes、SHA256 `a43bd208080a8909740204f821e95b6ab1fe7adbd8ee383117fd771015344c51`。記録は `docs/validation/2026-11-19-portable-6d88326*.json`。
 - GitHub Actions は [run 44469933701](https://github.com/higeotoko/sketchBRep/actions/runs/44469933701) で Linux 773 件成功。SDK を使う SKP の往復は Windows ZIP で確認した。
+
+### 等方拡大縮小した配置（2026-11-19）
+
+- コア 752 件成功・8 件スキップ。SKP・DAE・材質関連 18 件成功・1 件スキップ。0.5倍、等倍、2倍で配置した柱4本について、SKPの往復とSBRの保存・再読込を確認した。定義は1つ、上面の色と配置ごとの回転・位置・高さが残った。書き出したままのSKPは `sync_skp` で4本とも変更なしと判定した。
+- 関連 GUI 11 件成功・1 件スキップ。Windows ZIP の通常・べた基礎の検証に成功。展開した ZIP の CLI と同梱 SDK で、定義1つ、高さ1,350・2,700・2,700・5,400 mm、各上面の色を確認した。人の操作による実機確認は未実施。
+- Windows ZIP `SketchBRep-windows-x64-25404fb-local.zip`、81,829,570 bytes、SHA256 `dee0ea3759a476e44b2e6bbe8ca5c1b72928bc34438193386a545cf0798cf279`。検証記録は `docs/validation/2026-11-19-portable-25404fb*.json`。
+- GitHub Actions は [run 44476245664](https://github.com/higeotoko/sketchBRep/actions/runs/44476245664) で Linux 773 件成功。SDK を使う SKP の往復は Windows ZIP で確認した。
