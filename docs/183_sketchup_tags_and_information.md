@@ -47,3 +47,10 @@
 | サイズ | 81,771,001 bytes |
 | SHA256 | `e5cd445e41f9fc7169e1b5fedc60f1ae6c4b0afd431e38ee8806a56cc92ae56a` |
 | ZIP の検証 | `verify_portable_pads.py`・`verify_portable_mat.py` とも成功（docs/validation/2026-11-18-portable-54e5c3e*.json） |
+
+### コンポーネントの読み戻し（2026-11-19）
+
+- コア 752 件成功・8 件スキップ。SDK ありの環境で SKP・DAE 関連 11 件成功・1 件スキップ。柱4本が一つの定義を共有し、位置・回転・元の ID と、取り消し・やり直し、SBR の保存・再読込を確認した。
+- 関連 GUI 6 件成功。Windows ZIP の通常・べた基礎の検証も成功。展開した ZIP の CLI と同梱 SDK で、SKP から読み込んだ4本が SBR を開き直した後も一つの定義を共有した。
+- Windows ZIP `SketchBRep-windows-x64-a6bf3e9-local.zip`、81,810,822 bytes、SHA256 `09a7bd581d654cf87a124ec5e3d497aa1a7ed7536506be061b22c11c07e31fb7`。記録は `docs/validation/2026-11-19-portable-a6bf3e9*.json`。人の操作による Windows 実機確認は未実施。
+- GitHub Actions は [run 44446849081](https://github.com/higeotoko/sketchBRep/actions/runs/44446849081) で Linux 773 件成功。SKP は同梱 SDK を使って Windows で確認した。
