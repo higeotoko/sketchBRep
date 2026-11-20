@@ -6553,6 +6553,41 @@ Status Modeler::setOpeningPerformance(const ObjectId& hostId, const std::vector<
   return Status::success();
 }
 
+Status Modeler::setOpeningVeranda(const ObjectId& hostId, const std::vector<std::size_t>& indices, bool veranda) {
+  const Object* host = document_.find(hostId);
+  if (!host) return Status::failure("Object not found");
+  if (host->locked) return Status::failure("The object is locked");
+  const auto list = openings(hostId);
+  if (!list) return list.status();
+  if (list->empty()) return Status::failure("This object has no openings");
+  Object object = *host;
+  ensureOpeningIds(object);
+  nlohmann::json all = nlohmann::json::object();
+  if (const auto stored = object.attributes.find("opening_daylight"); stored != object.attributes.end()) {
+    const nlohmann::json parsed = nlohmann::json::parse(stored->second, nullptr, false);
+    if (parsed.is_object()) all = parsed;
+  }
+  std::vector<std::size_t> targets = indices;
+  if (targets.empty())
+    for (const auto& o : *list) targets.push_back(o.index);
+  const std::vector<OpeningRef> refs = rectangularOpenings(object);
+  for (const std::size_t index : targets) {
+    const auto it = std::find_if(refs.begin(), refs.end(), [&](const OpeningRef& o) { return o.index == index; });
+    if (it == refs.end()) return Status::failure("No opening " + std::to_string(index));
+    nlohmann::json one = all.contains(openingKey(*it)) && all.at(openingKey(*it)).is_object() ? all.at(openingKey(*it)) : nlohmann::json::object();
+    if (veranda) one["veranda"] = true;
+    else one.erase("veranda");
+    if (one.empty()) all.erase(openingKey(*it));
+    else all[openingKey(*it)] = one;
+  }
+  if (all.empty()) object.attributes.erase("opening_daylight");
+  else object.attributes["opening_daylight"] = all.dump();
+  ChangeSet changes(document_);
+  changes.modify(object);
+  history_.execute(changes.build("Opening Veranda"));
+  return Status::success();
+}
+
 Status Modeler::setOpeningDaylight(const ObjectId& hostId, const std::vector<std::size_t>& indices, double factor,
                                    const std::string& basis, double ventilationM2) {
   const Object* host = document_.find(hostId);
@@ -6602,6 +6637,56 @@ Status Modeler::setOpeningDaylight(const ObjectId& hostId, const std::vector<std
   return Status::success();
 }
 
+Status Modeler::setRoomVentilation(const ObjectId& room, const std::string& joinedWith, double fanM3h) {
+  const Object* marker = document_.find(room);
+  if (!marker || !isRoomMarker(*marker)) return Status::failure("Not a room made by the room tool");
+  if (marker->locked) return Status::failure("The object is locked");
+  if (std::isinf(fanM3h) || fanM3h > 100000) return Status::failure("有効換気量は 0〜100000 m³/h です");
+  const auto stored = [](const Object& o) {
+    const auto it = o.attributes.find("room_daylight");
+    const nlohmann::json j = it == o.attributes.end() ? nlohmann::json() : nlohmann::json::parse(it->second, nullptr, false);
+    return j.is_object() ? j : nlohmann::json::object();
+  };
+  const auto put = [](Object& o, const nlohmann::json& j) {
+    if (j.empty()) o.attributes.erase("room_daylight");
+    else o.attributes["room_daylight"] = j.dump();
+  };
+  ChangeSet changes(document_);
+  Object object = *marker;
+  nlohmann::json mine = stored(object);
+  const std::string before = mine.value("joined_with", std::string());
+  if (joinedWith != before) {
+    // The pair is kept on both rooms; the old partner lets go.
+    if (!joinedWith.empty()) {
+      const Object* other = document_.find(joinedWith);
+      if (!other || !isRoomMarker(*other) || joinedWith == room) return Status::failure("一続きにする相手は、別の室にしてください");
+      Object partner = *other;
+      nlohmann::json theirs = stored(partner);
+      theirs["joined_with"] = room;
+      put(partner, theirs);
+      changes.modify(partner);
+    }
+    if (!before.empty())
+      if (const Object* old = document_.find(before)) {
+        Object partner = *old;
+        nlohmann::json theirs = stored(partner);
+        if (theirs.value("joined_with", std::string()) == room) theirs.erase("joined_with");
+        put(partner, theirs);
+        changes.modify(partner);
+      }
+    if (joinedWith.empty()) mine.erase("joined_with");
+    else mine["joined_with"] = joinedWith;
+  }
+  if (!std::isnan(fanM3h)) {
+    if (fanM3h > 0) mine["fan_m3h"] = fanM3h;
+    else mine.erase("fan_m3h");
+  }
+  put(object, mine);
+  changes.modify(object);
+  history_.execute(changes.build("Room Ventilation"));
+  return Status::success();
+}
+
 Status Modeler::setRoomDaylight(const ObjectId& room, const std::string& kind, const std::string& ventilation) {
   const Object* marker = document_.find(room);
   if (!marker || !isRoomMarker(*marker)) return Status::failure("Not a room made by the room tool");
@@ -6611,14 +6696,18 @@ Status Modeler::setRoomDaylight(const ObjectId& room, const std::string& kind, c
   if (!ventilation.empty() && ventilation != "window" && ventilation != "equipment")
     return Status::failure("A room is ventilated by window or equipment");
   Object object = *marker;
-  if (kind.empty() && ventilation.empty()) {
-    object.attributes.erase("room_daylight");
-  } else {
-    nlohmann::json j = nlohmann::json::object();
-    if (!kind.empty()) j["kind"] = kind;
-    if (!ventilation.empty()) j["ventilation"] = ventilation;
-    object.attributes["room_daylight"] = j.dump();
+  // docs/211: what else is kept there (the room joined to it, the airflow) stays.
+  nlohmann::json j = nlohmann::json::object();
+  if (const auto it = object.attributes.find("room_daylight"); it != object.attributes.end()) {
+    const nlohmann::json parsed = nlohmann::json::parse(it->second, nullptr, false);
+    if (parsed.is_object()) j = parsed;
   }
+  j.erase("kind");
+  j.erase("ventilation");
+  if (!kind.empty()) j["kind"] = kind;
+  if (!ventilation.empty()) j["ventilation"] = ventilation;
+  if (j.empty()) object.attributes.erase("room_daylight");
+  else object.attributes["room_daylight"] = j.dump();
   ChangeSet changes(document_);
   changes.modify(object);
   history_.execute(changes.build("Set Room Daylight"));

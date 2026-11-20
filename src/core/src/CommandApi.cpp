@@ -2775,6 +2775,36 @@ const std::vector<CommandDef>& commands() {
          const int given = must(doc::applyDaylightFactors(m, wanted));
          return json{{"given", given}, {"skipped", std::move(skipped)}};
        }},
+      {"set_room_ventilation",
+       "docs/211: for a room ('id'): 'joined_with' the room it is one with through fusuma / shoji and the like (法 28 条 "
+       "4 項; kept on both; empty string takes it away) and / or 'fan_m3h' the effective airflow of the mechanical "
+       "ventilation serving it (令 20 条の 8; 0 takes it away). Keys not given stay. One undo step.",
+       SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "joined_with": {"type": "string"},
+               "fan_m3h": {"type": "number"}}, "required": ["id"]}),
+       [](doc::Modeler& m, const json& a) {
+         std::string joined;
+         if (a.contains("joined_with")) {
+           joined = text(a, "joined_with");
+         } else if (const doc::Object* marker = m.document().find(text(a, "id"))) {
+           const auto it = marker->attributes.find("room_daylight");
+           const json stored = it == marker->attributes.end() ? json() : json::parse(it->second, nullptr, false);
+           if (stored.is_object()) joined = stored.value("joined_with", std::string());
+         }
+         must(m.setRoomVentilation(text(a, "id"), joined, numberOr(a, "fan_m3h", std::numeric_limits<double>::quiet_NaN())));
+         return json::object();
+       }},
+      {"set_opening_veranda",
+       "docs/211: openings of 'host' ('openings': ids or indices, all when omitted) with ('veranda': true) or without a "
+       "veranda 90 cm wide or more outside them: the daylight factor worked out from the model is then x 0.7 "
+       "(令 20 条 2 項). One undo step.",
+       SCHEMA({"type": "object", "properties": {"host": {"type": "string"},
+               "openings": {"type": "array", "items": {"type": ["string", "integer"]}}, "veranda": {"type": "boolean"}},
+               "required": ["host", "veranda"]}),
+       [](doc::Modeler& m, const json& a) {
+         const std::vector<std::size_t> which = openingNumbers(m, a);
+         must(m.setOpeningVeranda(text(a, "host"), which, a.at("veranda").get<bool>()));
+         return json::object();
+       }},
       {"set_room_daylight",
        "docs/203: a room's ('id', from create_room) 'kind' for daylight: dwelling (住宅の居住のための居室), other "
        "(another kind of 居室), none (not a 居室) or \"\" (not given); and 'ventilation': window or equipment "
@@ -3136,7 +3166,8 @@ const std::vector<CommandDef>& commands() {
                        {"height_mm", o.height}, {"sill_mm", o.sill},
                        {"daylight_factor", o.daylightFactor >= 0 ? json(o.daylightFactor) : json(nullptr)},
                        {"daylight_basis", o.daylightBasis},
-                       {"ventilation_m2", o.ventilationM2 >= 0 ? json(o.ventilationM2) : json(nullptr)}};
+                       {"ventilation_m2", o.ventilationM2 >= 0 ? json(o.ventilationM2) : json(nullptr)},
+                       {"veranda", o.veranda}};
          };
          json rooms = json::array(), unmatched = json::array();
          for (const auto& entry : data.rooms) {
@@ -3151,7 +3182,9 @@ const std::vector<CommandDef>& commands() {
                {"opening_candidates", std::move(candidates)},
                {"daylight_kind", room.daylightKind}, {"ventilation", room.ventilation},
                {"daylight_comparison", {{"state", check.daylightState}, {"text", check.daylightText}}},
-               {"ventilation_comparison", {{"state", check.ventilationState}, {"text", check.ventilationText}}}});
+               {"ventilation_comparison", {{"state", check.ventilationState}, {"text", check.ventilationText}}},
+               {"mechanical_comparison", {{"state", check.mechanicalState}, {"text", check.mechanicalText}}},
+               {"joined_with", room.joinedWith}, {"fan_m3h", room.fanM3h > 0 ? json(room.fanM3h) : json(nullptr)}});
          }
          for (std::size_t index : data.unmatched) unmatched.push_back(openingJson(data.openings[index]));
          return json{{"rooms", std::move(rooms)}, {"unmatched_openings", std::move(unmatched)},

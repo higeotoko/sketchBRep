@@ -144,6 +144,7 @@ OpeningSchedule openingSchedule(const Document& document) {
         row.daylightFactor = given->value("factor", -1.0);
         row.daylightBasis = given->value("basis", std::string());
         row.ventilationM2 = given->value("ventilation_m2", -1.0);
+        row.veranda = given->value("veranda", false);
       }
       row.width = op.width;
       row.height = op.height;
@@ -258,6 +259,8 @@ RoomRow makeRoomRow(const Document& document, const RoomInfo& r) {
     if (daylight.is_object()) {
       row.daylightKind = daylight.value("kind", std::string());
       row.ventilation = daylight.value("ventilation", std::string());
+      row.joinedWith = daylight.value("joined_with", std::string());
+      row.fanM3h = daylight.value("fan_m3h", 0.0);
     }
   }
   return row;
@@ -342,6 +345,20 @@ RoomOpeningInputs roomOpeningInputs(const Document& document) {
   }
   for (std::size_t i = 0; i < matched.size(); ++i)
     if (!matched[i]) out.unmatched.push_back(i);
+  // docs/211: rooms joined by fusuma / shoji and the like are one (法 28 条 4 項).
+  for (RoomOpeningInput& a : out.rooms) {
+    if (a.room.joinedWith.empty()) continue;
+    for (const RoomOpeningInput& b : out.rooms) {
+      if (b.room.id != a.room.joinedWith) continue;
+      a.pairedName = b.room.name;
+      a.pairedFloor = b.room.centreArea;
+      a.pairedCounted = b.room.counted;
+      a.pairedDaylight = b.daylightArea;
+      a.pairedVentilation = b.ventilationArea;
+      a.pairedFactorsMissing = b.factorsMissing;
+      a.pairedVentilationMissing = b.ventilationMissing;
+    }
+  }
   return out;
 }
 
@@ -349,13 +366,50 @@ RoomDaylightCheck roomDaylightCheck(const RoomOpeningInput& input) {
   RoomDaylightCheck out;
   const RoomRow& room = input.room;
   const auto m2 = [](double mm2) { return number(mm2 / 1e6, 2) + " m²"; };
-  if (!room.counted) {
+  // docs/211: the mechanical ventilation (令 20 条の 8), whatever the windows give.
+  const auto mechanical = [&] {
+    if (room.daylightKind.empty()) {
+      out.mechanicalState = "未入力";
+      out.mechanicalText = "居室の区分を入れます。";
+    } else if (room.daylightKind == "none") {
+      out.mechanicalState = "対象外";
+      out.mechanicalText = "居室でない室として入力されています。";
+    } else if (!room.counted) {
+      out.mechanicalState = "未評価";
+      out.mechanicalText = "室の範囲（床面積）を読めません。";
+    } else if (room.ceilingHeight <= 0) {
+      out.mechanicalState = "未評価";
+      out.mechanicalText = "天井高が無いので、必要有効換気量（床面積×天井高×回数）を出せません。室の天井高を入れます。";
+    } else {
+      const double n = room.daylightKind == "dwelling" ? 0.5 : 0.3;
+      const double required = n * room.centreArea / 1e6 * room.ceilingHeight / 1000;
+      const std::string need = "必要有効換気量 " + number(n, 1) + "×" + number(room.centreArea / 1e6, 2) + "×" +
+                               number(room.ceilingHeight / 1000, 2) + " = " + number(required, 1) + " m³/h（令 20 条の 8 第 1 項第 1 号イ（1）、" +
+                               (room.daylightKind == "dwelling" ? "住宅等の居室 0.5" : "その他の居室 0.3") + "。床面積は壁芯）";
+      if (room.fanM3h <= 0) {
+        out.mechanicalState = "未入力";
+        out.mechanicalText = need + "。換気設備の有効換気量を入れます（1台で複数の室をまかなう時は、その合計と比べるのは見ていません）。";
+      } else {
+        out.mechanicalState = room.fanM3h + 1e-9 >= required ? "参考値内" : "参考値を外れる";
+        out.mechanicalText = "有効換気量 " + number(room.fanM3h, 1) + " m³/h／" + need;
+      }
+    }
+  };
+  mechanical();
+  if (!room.counted || (!room.joinedWith.empty() && !input.pairedCounted)) {
     out.daylightState = out.ventilationState = "未評価";
     out.daylightText = out.ventilationText = "室の範囲（床面積）を読めません。";
     return out;
   }
-  const double floor = room.centreArea;
-  const std::string candidates = "開口候補 " + std::to_string(input.openingIndices.size());
+  // 法 28 条 4 項: a room joined to another by fusuma / shoji is one with it.
+  const bool paired = !room.joinedWith.empty() && !input.pairedName.empty();
+  const double floor = room.centreArea + (paired ? input.pairedFloor : 0.0);
+  const double daylight = input.daylightArea + (paired ? input.pairedDaylight : 0.0);
+  const double ventilationArea = input.ventilationArea + (paired ? input.pairedVentilation : 0.0);
+  const int factorsMissing = input.factorsMissing + (paired ? input.pairedFactorsMissing : 0);
+  const int ventilationMissing = input.ventilationMissing + (paired ? input.pairedVentilationMissing : 0);
+  const std::string together = paired ? "（" + input.pairedName + " と一室として、法 28 条 4 項）" : std::string();
+  const std::string candidates = "開口候補 " + std::to_string(input.openingIndices.size()) + (paired ? "＋一続きの室の候補" : "");
   if (room.daylightKind.empty()) {
     out.daylightState = out.ventilationState = "未入力";
     out.daylightText = out.ventilationText = "居室の区分（住宅の居住のための居室／その他の居室／居室でない）を入れます。";
@@ -370,28 +424,28 @@ RoomDaylightCheck roomDaylightCheck(const RoomOpeningInput& input) {
   if (room.daylightKind == "other") {
     out.daylightState = "未評価";
     out.daylightText = "住宅の居住のための居室以外の居室は、令 19 条 3 項の表の種類で割合が違います（1/5〜1/10）。ここでは照らしていません。";
-  } else if (input.factorsMissing > 0) {
+  } else if (factorsMissing > 0) {
     out.daylightState = "未評価";
-    out.daylightText = candidates + " のうち、採光補正係数が無い開口 " + std::to_string(input.factorsMissing) +
+    out.daylightText = candidates + " のうち、採光補正係数が無い開口 " + std::to_string(factorsMissing) +
                        "。開口ごとに、隣地境界線などまでの距離から求めた係数（令 20 条）と根拠を入れます。";
   } else {
     const double required = floor / 7.0;
-    out.daylightState = input.daylightArea + 1e-6 >= required ? "参考値内" : "参考値を外れる";
-    out.daylightText = "採光に有効な面積 " + m2(input.daylightArea) + "／床面積 " + m2(floor) + " の 1/7 = " + m2(required) +
+    out.daylightState = daylight + 1e-6 >= required ? "参考値内" : "参考値を外れる";
+    out.daylightText = "採光に有効な面積 " + m2(daylight) + "／床面積 " + m2(floor) + " の 1/7 = " + m2(required) + together +
                        "（" + candidates + "、令 19 条 3 項 表（三）。大臣の定める措置による 1/10 までの緩和は見ていない）";
   }
   // Ventilation.
   if (room.ventilation == "equipment") {
     out.ventilationState = "換気設備";
-    out.ventilationText = "換気設備を設ける室として入力されています（法 28 条 2 項ただし書き）。設備の技術的基準と機器の能力は未評価です。";
-  } else if (input.ventilationMissing > 0) {
+    out.ventilationText = "換気設備を設ける室として入力されています（法 28 条 2 項ただし書き）。設備の技術的基準は未評価です。";
+  } else if (ventilationMissing > 0) {
     out.ventilationState = "未評価";
-    out.ventilationText = candidates + " のうち、換気に有効な面積が無い開口 " + std::to_string(input.ventilationMissing) +
+    out.ventilationText = candidates + " のうち、換気に有効な面積が無い開口 " + std::to_string(ventilationMissing) +
                           "。開けられる部分の面積（引違いなら片側分など）を入れます。";
   } else {
     const double required = floor / 20.0;
-    out.ventilationState = input.ventilationArea + 1e-6 >= required ? "参考値内" : "参考値を外れる";
-    out.ventilationText = "換気に有効な面積 " + m2(input.ventilationArea) + "／床面積 " + m2(floor) + " の 1/20 = " + m2(required) +
+    out.ventilationState = ventilationArea + 1e-6 >= required ? "参考値内" : "参考値を外れる";
+    out.ventilationText = "換気に有効な面積 " + m2(ventilationArea) + "／床面積 " + m2(floor) + " の 1/20 = " + m2(required) + together +
                           "（法 28 条 2 項）";
   }
   return out;
@@ -592,13 +646,17 @@ std::vector<DaylightFactorEstimate> daylightFactorEstimates(const Document& docu
       f = 0.0;
       rule += "、負なので 0（ハ）";
     }
+    if (row.veranda) {  // docs/211: a veranda 90 cm wide or more outside it
+      f *= 0.7;
+      rule += "、縁側（幅 90 cm 以上）の外なので ×0.7＝" + number(f, 3);
+    }
     if (f > 3.0) {
       f = 3.0;
       rule += "、上限 3.0";
     }
     e.factor = f;
     e.basis = "令 20 条 2 項 " + item + "：" + rule + (e.facesRoad ? "。道の反対側の境界線まで" : "") +
-              "。天窓・縁側・公園や川に面する場合は見ていない";
+              "。天窓・公園や川に面する場合は見ていない";
     out.push_back(e);
   }
   return out;
@@ -2192,14 +2250,16 @@ draw::Table scheduleTable(const Document& document, int which) {
                         r.ventilation != "equipment" && entry.ventilationMissing == 0 && r.counted
                             ? number(entry.ventilationArea / 1e6, 2) + "／必要 " + number(r.centreArea / 20.0 / 1e6, 2)
                             : "",
-                        "採光 " + check.daylightState + "・換気 " + check.ventilationState, ""});
+                        "採光 " + check.daylightState + "・換気 " + check.ventilationState + "・機械換気 " + check.mechanicalState, ""});
     }
     t.notes = {"床面積は室の壁芯の面積。開口は、室の壁の区間に収まる矩形の開口（候補）。開口の面積は建具表の幅×高さ。",
                "採光：住宅の居住のための居室は、採光に有効な面積の合計を床面積の 1/7 と比べる（建築基準法 第 28 条 1 項、施行令 第 19 条 3 項 表（三））。"
                "有効な面積＝開口の面積×採光補正係数（施行令 第 20 条）。",
                "換気：換気に有効な面積の合計を床面積の 1/20 と比べる（建築基準法 第 28 条 2 項）。換気設備の室は、設備の基準を見ていない。",
                "法令は e-Gov 法令検索で 2026-11-20 に確認（建築基準法 令和8年5月27日施行版、施行令 令和8年11月1日施行版）。",
-               "照合は参考で、合否の判定ではない。天窓・縁側・二室一室（法 28 条 4 項）・大臣の定める緩和は見ていない。"};
+               "機械換気：必要有効換気量＝回数（住宅等の居室 0.5、その他 0.3）×床面積×天井高と、入れた有効換気量を比べる（施行令 第 20 条の 8、2026-11-21 確認）。",
+               "ふすま・障子などで一続きにした二室は、合わせて一室として照らす（法 28 条 4 項）。",
+               "照合は参考で、合否の判定ではない。天窓・大臣の定める緩和・1台で複数の室をまかなう換気設備の合計は見ていない。"};
   } else if (which == 5) {
     // docs/172: the quantities of the layers.
     const LayerQuantities q = layerQuantities(document);

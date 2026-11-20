@@ -669,6 +669,14 @@ class Modeler {
   // 居室 / none: not a 居室 / empty: not given) and how it is ventilated (window / equipment /
   // empty), as attribute "room_daylight" on its marker. One undo step.
   Status setRoomDaylight(const ObjectId& room, const std::string& kind, const std::string& ventilation);
+  // docs/211: the room joined to another by fusuma / shoji and the like (法 28 条 4 項: one room for
+  // daylight and ventilation; "" takes it away; kept on both rooms) and the effective airflow of
+  // the mechanical ventilation serving it (m³/h, 令 20 条の 8; 0 or below takes it away; NaN leaves
+  // it). In "room_daylight". One undo step.
+  Status setRoomVentilation(const ObjectId& room, const std::string& joinedWith, double fanM3h);
+  // docs/211: openings with a veranda 90 cm wide or more outside them (令 20 条 2 項: the daylight
+  // factor worked out x 0.7), by opening id in "opening_daylight". One undo step.
+  Status setOpeningVeranda(const ObjectId& host, const std::vector<std::size_t>& indices, bool veranda);
   // Kinds of floors and roofs (docs/97 N-08, docs/134): slabs and roofs given one type name
   // (attribute type_name, e.g. "F1", "R1") are one type. setTypeName names them (empty: no type;
   // other objects refused); one undo step. changeElementType changes every one of that name:

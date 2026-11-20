@@ -3,6 +3,7 @@
 // always gives the same table, and the marks drawn on plans come from the same function.
 #pragma once
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -38,6 +39,7 @@ struct OpeningRow {
   double daylightFactor = -1.0;  // 採光補正係数 (令 20 条)
   std::string daylightBasis;
   double ventilationM2 = -1.0;   // area open for ventilation (法 28 条 2 項), m2
+  bool veranda = false;          // docs/211: a veranda 90 cm wide or more outside it (令 20 条 2 項: x 0.7)
   // docs/210: its performance as given (Modeler::setOpeningPerformance); below 0: not given.
   double uValue = -1.0;  // W/(m2 K)
   std::string glass, performanceSource;
@@ -80,6 +82,8 @@ struct RoomRow {
   std::string ratioPart;                   // docs/162: a code of floorRatioParts(), or empty
   std::string daylightKind;  // docs/203: dwelling / other / none / empty (Modeler::setRoomDaylight)
   std::string ventilation;   // window / equipment / empty
+  ObjectId joinedWith;       // docs/211: the room it is one with (法 28 条 4 項), or empty
+  double fanM3h = 0.0;       // docs/211: effective airflow of its mechanical ventilation (m3/h), 0: not given
 };
 
 struct RoomSchedule {
@@ -98,6 +102,12 @@ struct RoomOpeningInput {
   int factorsMissing = 0;         // candidates with no daylight factor given
   double ventilationArea = 0.0;   // Σ areas open for ventilation
   int ventilationMissing = 0;     // candidates with no such area given
+  // docs/211: the room joined to it (法 28 条 4 項), its floor area and the sums of its candidates;
+  // the comparison then takes both rooms as one.
+  std::string pairedName;
+  double pairedFloor = 0.0, pairedDaylight = 0.0, pairedVentilation = 0.0;
+  int pairedFactorsMissing = 0, pairedVentilationMissing = 0;
+  bool pairedCounted = true;
 };
 
 struct RoomOpeningInputs {
@@ -114,6 +124,10 @@ RoomOpeningInputs roomOpeningInputs(const Document& document);
 struct RoomDaylightCheck {
   std::string daylightState, daylightText;
   std::string ventilationState, ventilationText;
+  // docs/211: the mechanical ventilation against 令 20 条の 8 (Vr = n A h; n 0.5 for a dwelling's
+  // room, 0.3 for others), read on e-Gov 2026-11-21. state: 参考値内 / 参考値を外れる / 未評価 /
+  // 未入力 / 対象外.
+  std::string mechanicalState, mechanicalText;
 };
 RoomDaylightCheck roomDaylightCheck(const RoomOpeningInput& input);
 

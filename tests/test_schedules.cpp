@@ -2880,3 +2880,71 @@ TEST_F(Schedules, EnergyInputsShowInStageNineAndTheirTable) {
   EXPECT_TRUE(window);
   EXPECT_FALSE(call("set_insulation", {{"ids", {room}}, {"material", "x"}, {"thickness_mm", 10}, {"source", "x"}}).value("ok", true));  // a room is no part
 }
+
+// docs/211: two rooms joined by fusuma as one (法 28 条 4 項), the mechanical ventilation
+// (令 20 条の 8: 0.5 x floor x ceiling height for a dwelling's room) and verandas (x 0.7).
+TEST_F(Schedules, JoinedRoomsMechanicalVentilationAndVerandas) {
+  const std::string east = ok("create_room", {{"at", {6000, 3000}}, {"name", "洋室"}})["id"];
+  const auto byName = [&](const std::string& name) {
+    const json inputs = ok("room_opening_inputs");
+    for (const json& r : inputs["rooms"])
+      if (r["name"] == name) return r;
+    ADD_FAILURE() << inputs.dump();
+    return json();
+  };
+  ok("set_room_daylight", {{"id", room}, {"kind", "dwelling"}});
+  ok("set_room_daylight", {{"id", east}, {"kind", "dwelling"}});
+  // Mechanical: no ceiling height yet.
+  EXPECT_EQ(byName("居間")["mechanical_comparison"]["state"], "未評価");
+  ok("set_room_finish", {{"id", room}, {"ceiling_height", 2400}});
+  json r = byName("居間");
+  EXPECT_EQ(r["mechanical_comparison"]["state"], "未入力");
+  EXPECT_NE(r["mechanical_comparison"]["text"].get<std::string>().find("= 28.8 m³/h"), std::string::npos) << r.dump();
+  ok("set_room_ventilation", {{"id", room}, {"fan_m3h", 30}});
+  EXPECT_EQ(byName("居間")["mechanical_comparison"]["state"], "参考値内");
+  ok("set_room_ventilation", {{"id", room}, {"fan_m3h", 20}});
+  EXPECT_EQ(byName("居間")["mechanical_comparison"]["state"], "参考値を外れる");
+  // The kind set again keeps the airflow.
+  ok("set_room_daylight", {{"id", room}, {"kind", "dwelling"}, {"ventilation", "window"}});
+  EXPECT_EQ(byName("居間")["fan_m3h"], 20.0);
+  // Joined: both rooms say so, the floor is 48 m2 (24 + 24), the airflow stays.
+  ok("set_opening_daylight", {{"host", south}, {"factor", 1.0}, {"ventilation_m2", 1.0}});
+  ok("set_opening_daylight", {{"host", north}, {"factor", 1.0}, {"ventilation_m2", 1.0}});
+  ok("set_opening_daylight", {{"host", this->east}, {"factor", 1.0}, {"ventilation_m2", 1.0}});
+  ok("set_room_ventilation", {{"id", room}, {"joined_with", east}});
+  r = byName("居間");
+  EXPECT_EQ(r["joined_with"], east);
+  EXPECT_EQ(byName("洋室")["joined_with"], room);
+  EXPECT_EQ(r["fan_m3h"], 20.0);
+  const std::string text = r["daylight_comparison"]["text"];
+  EXPECT_NE(text.find("床面積 48.00 m²"), std::string::npos) << text;
+  EXPECT_NE(text.find("洋室 と一室として"), std::string::npos) << text;
+  // Let go: each alone again.
+  ok("set_room_ventilation", {{"id", room}, {"joined_with", ""}});
+  EXPECT_EQ(byName("洋室")["joined_with"], "");
+  EXPECT_NE(byName("居間")["daylight_comparison"]["text"].get<std::string>().find("床面積 24.00 m²"), std::string::npos);
+  EXPECT_FALSE(call("set_room_ventilation", {{"id", room}, {"joined_with", room}}).value("ok", true));
+}
+
+// docs/211: a veranda outside the south window: the factor worked out x 0.7 (令 20 条 2 項).
+TEST(DaylightFactors, AVerandaTakesSevenTenths) {
+  sbr::doc::Modeler modeler;
+  CommandApi api{modeler};
+  const auto ok = [&](const std::string& command, json args = json::object()) {
+    const json r = json::parse(api.execute(json{{"command", command}, {"args", args}}.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  const json walls = ok("create_wall", {{"points", {{0, 0}, {8000, 0}, {8000, 5000}, {0, 5000}, {0, 0}}}, {"thickness", 120}, {"height", 5000}})["ids"];
+  const std::string south = walls[0];
+  ok("place_openings", {{"host", south}, {"face_normal", {0, -1, 0}}, {"count", 1}, {"width", 1600}, {"height", 1100}, {"sill", 900}});
+  const std::string outline = ok("create_polygon", {{"points", {{-5000, -1000, 0}, {13000, -1000, 0}, {13000, 10000, 0}, {-5000, 10000, 0}}}})["id"];
+  ok("set_site_boundary", {{"outline", outline}, {"source", "架空"}});
+  ok("set_site_zone", {{"zone", "residential"}, {"source", "架空"}});
+  ok("set_opening_veranda", {{"host", south}, {"veranda", true}});
+  const json rows = ok("daylight_factor_estimates")["openings"];
+  ASSERT_EQ(rows.size(), 1u);
+  EXPECT_NEAR(rows[0]["factor"].get<double>(), (941.0 / 3550.0 * 6 - 1.4) * 0.7, 1e-9);
+  EXPECT_NE(rows[0]["basis"].get<std::string>().find("×0.7"), std::string::npos);
+  EXPECT_TRUE(ok("room_opening_inputs")["unmatched_openings"][0]["veranda"].get<bool>());
+}

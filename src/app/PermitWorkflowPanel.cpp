@@ -227,6 +227,7 @@ void PermitWorkflowPanel::readRoomOpeningChecks() {
   const auto missing = translated("未入力");
   const auto unevaluated = translated("未評価");
   int daylightOff = 0, daylightOpen = 0, ventilationOff = 0, ventilationOpen = 0;  // docs/203
+  int mechanicalOff = 0, mechanicalOpen = 0;                                        // docs/211
   if (data.rooms.empty()) {
     rows_.push_back({translated("室"), missing, translated("平面で閉じた壁の内側に室を置き、用途・天井高を設定します。"),
                      translated("室の一覧を開く"), Action::Rooms, true});
@@ -254,6 +255,9 @@ void PermitWorkflowPanel::readRoomOpeningChecks() {
     const doc::RoomDaylightCheck check = doc::roomDaylightCheck(entry);
     details += translated("\n採光：%1　%2").arg(QString::fromStdString(check.daylightState), QString::fromStdString(check.daylightText));
     details += translated("\n換気：%1　%2").arg(QString::fromStdString(check.ventilationState), QString::fromStdString(check.ventilationText));
+    details += translated("\n機械換気：%1　%2").arg(QString::fromStdString(check.mechanicalState), QString::fromStdString(check.mechanicalText));
+    if (check.mechanicalState == "参考値を外れる") ++mechanicalOff;
+    else if (check.mechanicalState != "参考値内" && check.mechanicalState != "対象外") ++mechanicalOpen;
     if (check.daylightState == "参考値を外れる") ++daylightOff;
     else if (check.daylightState != "参考値内" && check.daylightState != "対象外") ++daylightOpen;
     if (check.ventilationState == "参考値を外れる") ++ventilationOff;
@@ -311,8 +315,11 @@ void PermitWorkflowPanel::readRoomOpeningChecks() {
                      worked > 0 ? translated("計算した係数を開口に入れる") : QString(),
                      worked > 0 ? Action::ApplyDaylightFactors : Action::None, worked == 0 && !estimates.empty()});
   }
-  rows_.push_back({translated("機械換気"), unevaluated,
-      translated("対象室、給排気経路、換気機器の能力と根拠資料を確認します。"), {}});
+  rows_.push_back({translated("機械換気"), summary(mechanicalOff, mechanicalOpen),
+      translated("参考値を外れる室 %1、未入力・未評価の室 %2。室ごとに 回数（住宅等の居室 0.5、その他 0.3）×床面積×天井高 を、"
+                 "入れた有効換気量（AI の set_room_ventilation）と比べます（施行令 第 20 条の 8、e-Gov 2026-11-21 確認）。"
+                 "給排気の経路、1台で複数の室をまかなう時の合計、機器の資料は見ていません。")
+          .arg(mechanicalOff).arg(mechanicalOpen), {}, Action::None, mechanicalOff + mechanicalOpen > 0});
 }
 
 // docs/194, 197-201: stages 2 (通り芯), 3 (平面), 5 (階段), 6 (屋根・庇・バルコニー), 7 (耐力壁), 8 (基礎), 9 (省エネ・設備) and 10 (立面・断面) from the model (doc::permit*Checks).
