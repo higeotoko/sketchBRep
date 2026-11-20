@@ -2778,3 +2778,34 @@ TEST(DaylightFactors, WorkedOutFromTheSiteAndTheBuilding) {
   ASSERT_TRUE(modeler.undo());
   for (const auto& row : sbr::doc::openingSchedule(modeler.document()).rows) EXPECT_LT(row.daylightFactor, 0.0);
 }
+
+// docs/207: the daylight and ventilation table of the rooms given a kind.
+TEST_F(Schedules, DaylightTableListsTheRoomsGivenAKind) {
+  EXPECT_FALSE(sbr::doc::tableHasContent(sbr::doc::scheduleTable(modeler.document(), 6), 6));  // no kind given yet
+  ok("set_room_daylight", {{"id", room}, {"kind", "dwelling"}});
+  ok("set_opening_daylight", {{"host", south}, {"factor", 1.0}, {"basis", "架空の係数"}, {"ventilation_m2", 0.5}});
+  ok("set_opening_daylight", {{"host", north}, {"factor", 1.0}, {"ventilation_m2", 0.5}});
+  ok("set_opening_daylight", {{"host", east}, {"factor", 1.0}, {"ventilation_m2", 0.5}});
+  const auto table = sbr::doc::scheduleTable(modeler.document(), 6);
+  ASSERT_TRUE(sbr::doc::tableHasContent(table, 6));
+  EXPECT_EQ(table.title, "採光・換気計算表");
+  ASSERT_GE(table.rows.size(), 2u);
+  EXPECT_EQ(table.rows[0][0], "居間");
+  EXPECT_EQ(table.rows[0][2], "住宅の居室");
+  EXPECT_EQ(table.rows[0][6], "1.00");
+  const auto& total = table.rows.back();
+  EXPECT_EQ(total[4], "計");
+  EXPECT_NE(total[7].find("／必要 3.43"), std::string::npos) << total[7];  // 24 m2 / 7
+  EXPECT_NE(total[8].find("／必要 1.20"), std::string::npos) << total[8];  // 24 m2 / 20
+  EXPECT_EQ(total[9].rfind("採光 ", 0), 0u);
+  bool basis = false;
+  for (const auto& r : table.rows) basis = basis || r[10] == "架空の係数";
+  EXPECT_TRUE(basis);
+  // As a sheet of its own (DXF) and as CSV.
+  const auto dir = std::filesystem::temp_directory_path() / "sbr-daylight-table";
+  std::filesystem::create_directories(dir);
+  const auto path = (dir / "daylight.dxf").string();
+  ok("export_schedule", {{"path", path}, {"table", "daylight"}});
+  EXPECT_TRUE(std::filesystem::exists(path));
+  EXPECT_NE(sbr::doc::tableCsv(table).find("採光補正係数"), std::string::npos);
+}

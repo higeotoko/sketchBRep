@@ -5529,6 +5529,24 @@ void MainWindow::showSchedulesDialog() {
     box->addWidget(note("layerQuantityNote", text));
     tabs->addTab(page, tr("層の数量"));
   }
+  {
+    // docs/207: daylight and ventilation of the rooms given a kind (tab 6 = table 6 for the CSV).
+    const draw::Table light = doc::scheduleTable(document, 6);
+    auto* page = new QWidget;
+    auto* box = new QVBoxLayout(page);
+    QStringList headers;
+    for (const std::string& h : light.headers) headers << QString::fromStdString(h);
+    auto* table = makeTable("daylightTable", headers, static_cast<int>(light.rows.size()));
+    for (int row = 0; row < static_cast<int>(light.rows.size()); ++row)
+      for (int c = 0; c < static_cast<int>(light.rows[static_cast<std::size_t>(row)].size()); ++c)
+        table->setItem(row, c, new QTableWidgetItem(QString::fromStdString(light.rows[static_cast<std::size_t>(row)][static_cast<std::size_t>(c)])));
+    table->resizeColumnsToContents();
+    QString text = light.rows.empty() ? tr("居室の区分を入れた室がありません（室のプロパティの「居室の区分」）。\n") : QString();
+    for (const std::string& n : light.notes) text += (text.isEmpty() ? QString() : QStringLiteral("\n")) + QString::fromStdString(n);
+    box->addWidget(table, 1);
+    box->addWidget(note("daylightTableNote", text));
+    tabs->addTab(page, tr("採光・換気"));
+  }
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
   auto* save = buttons->addButton(tr("この表を CSV に保存..."), QDialogButtonBox::ActionRole);
   save->setObjectName(QStringLiteral("scheduleSaveCsv"));

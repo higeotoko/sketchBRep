@@ -4142,7 +4142,7 @@ const std::vector<CommandDef>& commands() {
        "hatched for the scale - structural timber crossed, plywood single lines; docs/173). kind:framing with "
        "preset:foundation|first_floor|second_floor|roof makes a tag-filtered framing plan. "
        "within scopes a group; tags filters leaf tags, include_hidden includes hidden objects, member_labels adds section marks. "
-       "'tables' (docs/130): any of openings, rooms, areas, finishes, put beside the drawing on the same sheet (to its "
+       "'tables' (docs/130): any of openings, rooms, areas, finishes, types, layers, daylight (docs/207), put beside the drawing on the same sheet (to its "
        "right, or under it when that takes a smaller paper; empty tables are left out). "
        "Returns the paper chosen and notes (what did not fit or was left out).",
        SCHEMA({"type": "object", "properties": {"path": {"type": "string"}, "kind": {"type": "string"},
@@ -4194,8 +4194,8 @@ const std::vector<CommandDef>& commands() {
            if (!a.at("tables").is_array()) throw ApiError("'tables': a list of openings, rooms, areas, finishes");
            for (const json& t : a.at("tables")) {
              const std::string which = t.is_string() ? t.get<std::string>() : std::string();
-             const int index = which == "openings" ? 0 : which == "rooms" ? 1 : which == "areas" ? 2 : which == "finishes" ? 3 : which == "types" ? 4 : which == "layers" ? 5 : -1;
-             if (index < 0) throw ApiError("'tables': openings, rooms, areas, finishes or types");
+             const int index = which == "openings" ? 0 : which == "rooms" ? 1 : which == "areas" ? 2 : which == "finishes" ? 3 : which == "types" ? 4 : which == "layers" ? 5 : which == "daylight" ? 6 : -1;
+             if (index < 0) throw ApiError("'tables': openings, rooms, areas, finishes, types, layers or daylight");
              draw::Table table = doc::scheduleTable(m.document(), index);
              if (!doc::tableHasContent(table, index)) leftOut.push_back(which);
              else tables.push_back(std::move(table));
@@ -4218,17 +4218,17 @@ const std::vector<CommandDef>& commands() {
       {"export_schedule",
        "A table on a sheet of its own as DXF or JWW (by the path's extension): 'table' openings (建具表, one "
        "line per mark), rooms (室の表), areas (面積の表), finishes (仕上げ表, set_room_finish) or types (種類の表 of floors and roofs, "
-       "set_type_name), read from the model as it is (as opening_schedule / "
+       "set_type_name), layers (層の数量) or daylight (採光・換気計算表, docs/207), read from the model as it is (as opening_schedule / "
        "room_schedule / area_table). 'paper' (auto, A4-A1), 'frame' (default true), 'project', 'number', "
        "'author', 'date' for the title block.",
-       SCHEMA({"type": "object", "properties": {"path": {"type": "string"}, "table": {"enum": ["openings", "rooms", "areas", "finishes", "types", "layers"]},
+       SCHEMA({"type": "object", "properties": {"path": {"type": "string"}, "table": {"enum": ["openings", "rooms", "areas", "finishes", "types", "layers", "daylight"]},
                "paper": {"type": "string"}, "frame": {"type": "boolean"}, "project": {"type": "string"},
                "number": {"type": "string"}, "author": {"type": "string"}, "date": {"type": "string"}},
                "required": ["path", "table"]}),
        [](doc::Modeler& m, const json& a) {
          const std::string which = text(a, "table");
-         const int index = which == "openings" ? 0 : which == "rooms" ? 1 : which == "areas" ? 2 : which == "finishes" ? 3 : which == "types" ? 4 : which == "layers" ? 5 : -1;
-         if (index < 0) throw ApiError("'table': openings, rooms, areas, finishes, types or layers");
+         const int index = which == "openings" ? 0 : which == "rooms" ? 1 : which == "areas" ? 2 : which == "finishes" ? 3 : which == "types" ? 4 : which == "layers" ? 5 : which == "daylight" ? 6 : -1;
+         if (index < 0) throw ApiError("'table': openings, rooms, areas, finishes, types, layers or daylight");
          const draw::Table table = doc::scheduleTable(m.document(), index);
          draw::SheetSpec sheetSpec;
          sheetSpec.paper = textOr(a, "paper", "auto");

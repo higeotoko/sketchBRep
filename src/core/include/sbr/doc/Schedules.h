@@ -253,7 +253,8 @@ std::string roomTagText(const RoomRow& room);
 // The tables for a sheet of their own (docs/113): 0 the door and window schedule (one line per
 // mark), 1 the room schedule, 2 the area table, 3 the finish schedule (docs/115), 4 the types of
 // floors and roofs (docs/136: one line per type name and part, its count and sizes), 5 the
-// quantities of the layers (docs/172); the same values and notes as the CSV.
+// quantities of the layers (docs/172), 6 daylight and ventilation of the rooms given a kind
+// (docs/207); the same values and notes as the CSV.
 draw::Table scheduleTable(const Document& document, int which);
 
 // The quantities of the layers of walls, floors and roofs (docs/172): per part and layer name,

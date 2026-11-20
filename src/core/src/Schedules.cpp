@@ -1938,6 +1938,48 @@ draw::Table scheduleTable(const Document& document, int which) {
                         r.counted ? "閉じている" : !r.closed ? "閉じていない" : "ほかの室と同じ場所"});
     t.rows.push_back({"合計（閉じている室だけ）", "", number(s.centreTotal / 1e6, 2), s.innerMissing == 0 ? number(s.innerTotal / 1e6, 2) : "未評価", "", ""});
     t.notes = {"壁芯＝壁を描いた線の内側、内法＝壁の面の内側。法の床面積（算入・不算入の決まり）ではありません。"};
+  } else if (which == 6) {
+    // docs/207: daylight and ventilation of the rooms (法 28 条, 令 19・20 条; docs/203, 205).
+    const RoomOpeningInputs inputs = roomOpeningInputs(document);
+    t.title = "採光・換気計算表";
+    t.headers = {"室名", "階", "区分", "床面積 (m2)", "開口", "開口の面積 (m2)", "採光補正係数", "採光に有効な面積 (m2)",
+                 "換気に有効な面積 (m2)", "照合", "係数の根拠"};
+    const auto daylightKindName = [](const std::string& k) {
+      return k == "dwelling" ? std::string("住宅の居室") : k == "other" ? std::string("その他の居室") : k == "none" ? std::string("居室でない") : std::string("未入力");
+    };
+    for (const RoomOpeningInput& entry : inputs.rooms) {
+      const RoomRow& r = entry.room;
+      if (r.daylightKind.empty() || r.daylightKind == "none") continue;
+      const RoomDaylightCheck check = roomDaylightCheck(entry);
+      const std::string floor = r.counted ? number(r.centreArea / 1e6, 2) : "未評価";
+      bool first = true;
+      for (std::size_t i : entry.openingIndices) {
+        const OpeningRow& o = inputs.openings[i];
+        const double area = o.width * o.height / 1e6;
+        t.rows.push_back({first ? r.name : "", first ? r.level : "", first ? daylightKindName(r.daylightKind) : "", first ? floor : "",
+                          o.mark, number(area, 2), o.daylightFactor >= 0 ? number(o.daylightFactor, 2) : "未入力",
+                          o.daylightFactor >= 0 ? number(area * o.daylightFactor, 2) : "", o.ventilationM2 >= 0 ? number(o.ventilationM2, 2) : "未入力",
+                          "", o.daylightBasis});
+        first = false;
+      }
+      if (first)
+        t.rows.push_back({r.name, r.level, daylightKindName(r.daylightKind), floor, "（開口候補なし）", "", "", "", "", "", ""});
+      const bool dwelling = r.daylightKind == "dwelling";
+      t.rows.push_back({"", "", "", "", "計", "", "",
+                        dwelling && entry.factorsMissing == 0 && r.counted
+                            ? number(entry.daylightArea / 1e6, 2) + "／必要 " + number(r.centreArea / 7.0 / 1e6, 2)
+                            : "",
+                        r.ventilation != "equipment" && entry.ventilationMissing == 0 && r.counted
+                            ? number(entry.ventilationArea / 1e6, 2) + "／必要 " + number(r.centreArea / 20.0 / 1e6, 2)
+                            : "",
+                        "採光 " + check.daylightState + "・換気 " + check.ventilationState, ""});
+    }
+    t.notes = {"床面積は室の壁芯の面積。開口は、室の壁の区間に収まる矩形の開口（候補）。開口の面積は建具表の幅×高さ。",
+               "採光：住宅の居住のための居室は、採光に有効な面積の合計を床面積の 1/7 と比べる（建築基準法 第 28 条 1 項、施行令 第 19 条 3 項 表（三））。"
+               "有効な面積＝開口の面積×採光補正係数（施行令 第 20 条）。",
+               "換気：換気に有効な面積の合計を床面積の 1/20 と比べる（建築基準法 第 28 条 2 項）。換気設備の室は、設備の基準を見ていない。",
+               "法令は e-Gov 法令検索で 2026-11-20 に確認（建築基準法 令和8年5月27日施行版、施行令 令和8年11月1日施行版）。",
+               "照合は参考で、合否の判定ではない。天窓・縁側・二室一室（法 28 条 4 項）・大臣の定める緩和は見ていない。"};
   } else if (which == 5) {
     // docs/172: the quantities of the layers.
     const LayerQuantities q = layerQuantities(document);
@@ -2153,7 +2195,7 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& sp
     planned.push_back({view.title, view, std::nullopt, {}});
   }
   // The first planned is the lowest storey's plan.
-  for (int which : {0, 1, 2, 3, 4}) {
+  for (int which : {0, 1, 2, 3, 4, 6}) {  // docs/207: and daylight / ventilation when rooms have a kind
     draw::Table table = scheduleTable(document, which);
     if (!tableHasContent(table, which)) continue;
     if (spec.tablesWithPlan) {
