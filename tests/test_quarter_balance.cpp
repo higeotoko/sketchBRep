@@ -1,3 +1,4 @@
+#include <filesystem>
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 #include "sbr/ConstructionWall.h"
@@ -180,4 +181,52 @@ TEST(PermitBraceStage, RowsFollowTheWallQuantityCalculation) {
   EXPECT_NE(quantity.state, "");
   EXPECT_NE(rowOf("照らした値").details.find("告示1100号"), std::string::npos);
   EXPECT_NE(rowOf("まだ確かめていない事").details.find("N値"), std::string::npos);
+}
+
+// docs/208: the wall quantity forms read the same calculation. X: 2 m + 0.5 m of 45x90 braces
+// (ratio 2) = 5 m against 15 m (wind 30 m2 x 50 cm/m2; earthquake 50 m2 x 20 cm/m2 = 10 m);
+// Y: 4 m + 4 m x 2 = 16 m against 10 m.
+TEST(WallQuantityForms, TablesFollowTheCalculation) {
+  Modeler m;
+  api::CommandApi api(m);
+  const json saved = json::parse(api.execute(json{{"command", "set_wall_calculation"},
+      {"args", {{"inputs", inputs({wall("a", "X", {0, 0}, {2000, 0}), wall("b", "X", {0, 4000}, {500, 4000}),
+                                   wall("c", "Y", {0, 0}, {0, 4000}), wall("d", "Y", {10000, 0}, {10000, 4000})})}}}}.dump()));
+  ASSERT_TRUE(saved.value("ok", false)) << saved.dump();
+  const auto quantity = doc::scheduleTable(m.document(), 7);
+  EXPECT_EQ(quantity.title, "壁量計算表");
+  ASSERT_EQ(quantity.rows.size(), 2u);
+  const auto& x = quantity.rows[0];
+  EXPECT_EQ(x[0], "1階");
+  EXPECT_EQ(x[1], "X");
+  EXPECT_EQ(x[2], "50.00");
+  EXPECT_EQ(x[4], "10.00");  // earthquake
+  EXPECT_EQ(x[5], "30.00");
+  EXPECT_EQ(x[7], "15.00");  // wind
+  EXPECT_EQ(x[8], "15.00");
+  EXPECT_EQ(x[9], "5.00");
+  EXPECT_EQ(x[10], "要確認");
+  EXPECT_EQ(quantity.rows[1][9], "16.00");
+  EXPECT_EQ(quantity.rows[1][10], "参考値内");
+  ASSERT_FALSE(quantity.notes.empty());
+  EXPECT_NE(quantity.notes[0].find("告示1100号"), std::string::npos);
+  const auto walls = doc::scheduleTable(m.document(), 8);
+  ASSERT_EQ(walls.rows.size(), 4u);
+  EXPECT_EQ(walls.rows[0][2], "a");
+  EXPECT_NE(walls.rows[0][3].find("45"), std::string::npos) << walls.rows[0][3];
+  EXPECT_EQ(walls.rows[0][4], "2.00");
+  EXPECT_EQ(walls.rows[0][7], "4.00");
+  const auto quarters = doc::scheduleTable(m.document(), 9);
+  ASSERT_GE(quarters.rows.size(), 4u);  // X and Y, two side parts each
+  EXPECT_EQ(quarters.rows[0][0], "1階");
+  EXPECT_EQ(quarters.rows[0][6], "2.00");  // low side: 4 m / 2 m
+  EXPECT_EQ(quarters.rows[1][6], "0.50");
+  EXPECT_EQ(quarters.rows[0][7], "0.25");
+  EXPECT_EQ(quarters.rows[0][8], "要確認");
+  // The same tables through the commands.
+  for (const char* name : {"wall_quantity", "bracing_walls", "quarters"}) {
+    const auto path = (std::filesystem::temp_directory_path() / (std::string(name) + "-form.dxf")).string();
+    const json r = json::parse(api.execute(json{{"command", "export_schedule"}, {"args", {{"path", path}, {"table", name}}}}.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << r.dump();
+  }
 }

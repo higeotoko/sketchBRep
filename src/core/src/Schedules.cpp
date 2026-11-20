@@ -1938,6 +1938,77 @@ draw::Table scheduleTable(const Document& document, int which) {
                         r.counted ? "閉じている" : !r.closed ? "閉じていない" : "ほかの室と同じ場所"});
     t.rows.push_back({"合計（閉じている室だけ）", "", number(s.centreTotal / 1e6, 2), s.innerMissing == 0 ? number(s.innerTotal / 1e6, 2) : "未評価", "", ""});
     t.notes = {"壁芯＝壁を描いた線の内側、内法＝壁の面の内側。法の床面積（算入・不算入の決まり）ではありません。"};
+  } else if (which == 7 || which == 8 || which == 9) {
+    // docs/208: the wall quantity forms, from the same calculation as check_wall_quantity.
+    const auto made = construction::checkWallQuantity(document);
+    const nlohmann::json report = made ? nlohmann::json::parse(*made, nullptr, false) : nlohmann::json();
+    const nlohmann::json inputs = report.is_object() ? report.value("inputs", nlohmann::json::object()) : nlohmann::json::object();
+    std::map<std::string, nlohmann::json> floors;
+    for (const auto& f : inputs.value("floors", nlohmann::json::array()))
+      if (f.is_object() && f.contains("id")) floors[f.at("id").is_string() ? f.at("id").get<std::string>() : f.at("id").dump()] = f;
+    const auto num = [](const nlohmann::json& j, const char* key, int decimals) {
+      return j.is_object() && j.contains(key) && j.at(key).is_number() ? number(j.at(key).get<double>(), decimals) : std::string();
+    };
+    const auto state = [](const std::string& s) {
+      return s == "pass" ? std::string("参考値内") : s == "fail" ? std::string("要確認") : std::string("未評価");
+    };
+    const auto reasons = [](const nlohmann::json& row) {
+      std::string text;
+      for (const auto& r : row.value("reasons", nlohmann::json::array()))
+        if (r.is_string()) text += (text.empty() ? "" : "／") + r.get<std::string>();
+      return text;
+    };
+    const nlohmann::json entries = report.is_object() ? report.value("table_snapshot", nlohmann::json::object()).value("entries", nlohmann::json::object())
+                                                      : nlohmann::json::object();
+    if (which == 7) {
+      t.title = "壁量計算表";
+      t.headers = {"階", "方向", "床面積 (m2)", "地震 係数 (cm/m2)", "地震 必要 (m)", "見付面積 (m2)", "風 係数 (cm/m2)", "風 必要 (m)",
+                   "必要壁量 (m)", "存在壁量 (m)", "照合", "理由"};
+      const std::string windCoefficient = num(inputs, "wind_coefficient_cm_m2", 0);
+      for (const auto& row : report.value("rows", nlohmann::json::array())) {
+        const std::string id = row.value("floor", std::string()), direction = row.value("direction", std::string());
+        if (id.empty()) continue;
+        const nlohmann::json floor = floors.count(id) ? floors.at(id) : nlohmann::json::object();
+        t.rows.push_back({row.value("name", id), direction, num(floor, "area_m2", 2), num(row, "earthquake_cm_m2", 1), num(row, "earthquake_m", 2),
+                          num(floor, direction == "X" ? "wind_x_m2" : "wind_y_m2", 2), windCoefficient, num(row, "wind_m", 2),
+                          num(row, "required_m", 2), num(row, "existing_m", 2), state(row.value("status", std::string())), reasons(row)});
+      }
+    } else if (which == 8) {
+      t.title = "耐力壁の一覧";
+      t.headers = {"階", "方向", "符号", "仕様", "長さ (m)", "倍率", "高さの係数", "有効長さ (m)", "状態", "条件・理由"};
+      for (const auto& w : report.value("walls", nlohmann::json::array())) {
+        const std::string id = w.value("floor", std::string());
+        const nlohmann::json floor = floors.count(id) ? floors.at(id) : nlohmann::json::object();
+        const std::string spec = w.value("spec", std::string());
+        const std::string specName = entries.contains(spec) ? entries.at(spec).value("name", spec) : spec;
+        const std::string why = reasons(w);
+        t.rows.push_back({floor.value("name", id), w.value("direction", std::string()), w.contains("id") && w.at("id").is_string() ? w.at("id").get<std::string>() : std::string(),
+                          specName, w.contains("length_mm") && w.at("length_mm").is_number() ? number(w.at("length_mm").get<double>() / 1000, 2) : std::string(),
+                          num(w, "ratio", 1), num(w, "height_factor", 2), num(w, "effective_m", 2),
+                          w.value("status", std::string()) == "evaluated" ? "計算に入れた" : "未評価",
+                          why.empty() ? w.value("conditions", std::string()) : why});
+      }
+    } else {
+      t.title = "四分割（側端部分）";
+      t.headers = {"階", "方向", "側端", "面積 (m2)", "必要 (m)", "存在 (m)", "充足率", "壁率比", "照合", "見た決まり・理由"};
+      for (const auto& row : report.value("quarter_balance", nlohmann::json::array())) {
+        bool first = true;
+        for (const auto& s : row.value("strips", nlohmann::json::array())) {
+          const std::string side = s.value("side", std::string());
+          t.rows.push_back({first ? row.value("name", std::string()) : "", first ? row.value("direction", std::string()) : "",
+                            side == "low" ? "下側（小さい座標）" : side == "high" ? "上側（大きい座標）" : side, num(s, "area_m2", 2), num(s, "required_m", 2),
+                            num(s, "existing_m", 2), num(s, "ratio", 2), first ? num(row, "wall_ratio", 2) : "",
+                            first ? state(row.value("status", std::string())) : "",
+                            first ? (row.value("basis", std::string()) + (reasons(row).empty() ? "" : "／" + reasons(row))) : ""});
+          first = false;
+        }
+        if (first)
+          t.rows.push_back({row.value("name", std::string()), row.value("direction", std::string()), "", "", "", "", "", "",
+                            state(row.value("status", std::string())), reasons(row)});
+      }
+    }
+    if (report.is_object()) t.notes.push_back(report.value("notice", std::string()));
+    t.notes.push_back("建物全体の安全・法適合の判定ではありません。入力は壁量の計算の入力（set_wall_calculation）のとおりです。");
   } else if (which == 6) {
     // docs/207: daylight and ventilation of the rooms (法 28 条, 令 19・20 条; docs/203, 205).
     const RoomOpeningInputs inputs = roomOpeningInputs(document);
@@ -2195,7 +2266,7 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& sp
     planned.push_back({view.title, view, std::nullopt, {}});
   }
   // The first planned is the lowest storey's plan.
-  for (int which : {0, 1, 2, 3, 4, 6}) {  // docs/207: and daylight / ventilation when rooms have a kind
+  for (int which : {0, 1, 2, 3, 4, 6, 7, 8, 9}) {  // docs/208: and the wall quantity forms when there is a calculation  // docs/207: and daylight / ventilation when rooms have a kind
     draw::Table table = scheduleTable(document, which);
     if (!tableHasContent(table, which)) continue;
     if (spec.tablesWithPlan) {
