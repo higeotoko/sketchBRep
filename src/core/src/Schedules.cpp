@@ -109,6 +109,11 @@ OpeningSchedule openingSchedule(const Document& document) {
       const nlohmann::json parsed = nlohmann::json::parse(stored, nullptr, false);
       if (parsed.is_object()) own = parsed;
     }
+    nlohmann::json performance = nlohmann::json::object();  // docs/210
+    if (const std::string stored = attribute(o, "opening_performance"); !stored.empty()) {
+      const nlohmann::json parsed = nlohmann::json::parse(stored, nullptr, false);
+      if (parsed.is_object()) performance = parsed;
+    }
     nlohmann::json daylight = nlohmann::json::object();  // docs/203
     if (const std::string stored = attribute(o, "opening_daylight"); !stored.empty()) {
       const nlohmann::json parsed = nlohmann::json::parse(stored, nullptr, false);
@@ -129,6 +134,11 @@ OpeningSchedule openingSchedule(const Document& document) {
         row.mark = given->value("mark", std::string());
         row.ownMark = !row.mark.empty();
         row.product = given->value("product", std::string());
+      }
+      if (const auto given = performance.find(op.id); given != performance.end() && given->is_object()) {
+        row.uValue = given->value("u", -1.0);
+        row.glass = given->value("glass", std::string());
+        row.performanceSource = given->value("source", std::string());
       }
       if (const auto given = daylight.find(op.id); given != daylight.end() && given->is_object()) {
         row.daylightFactor = given->value("factor", -1.0);
@@ -1017,15 +1027,47 @@ std::vector<PermitCheck> permitFoundationChecks(const Document& document) {
   return out;
 }
 
+namespace {
+// docs/210: the insulation given to a wall, slab or roof, read as people write it.
+std::string insulationText(const Object& o) {
+  const nlohmann::json j = nlohmann::json::parse(attribute(o, "insulation"), nullptr, false);
+  if (!j.is_object()) return {};
+  std::string text = j.value("material", std::string()) + " " + number(j.value("thickness_mm", 0.0), 0) + " mm";
+  const std::string placement = j.value("placement", std::string());
+  if (!placement.empty()) text += placement == "fill" ? "（充填）" : placement == "outside" ? "（外張り）" : "（内張り）";
+  if (j.contains("resistance")) text += "　R " + number(j.at("resistance").get<double>(), 2);
+  else if (j.contains("conductivity") && j.at("conductivity").get<double>() > 0)
+    text += "　λ " + number(j.at("conductivity").get<double>(), 3) + "（R " +
+            number(j.value("thickness_mm", 0.0) / 1000 / j.at("conductivity").get<double>(), 2) + "）";
+  return text;
+}
+}  // namespace
+
 std::vector<PermitCheck> permitEnergyChecks(const Document& document) {
   std::vector<PermitCheck> out;
-  out.push_back({"適用ルート・地域", "未入力",
-                 "申請先と、どの基準・計算の方法で出すか（仕様基準・性能基準など）、地域の区分を決めます。モデルにはまだ入れる所がありません。",
-                 {}, true});
-  // Walls by build-up: the layers, and whether one of them is insulation.
+  std::string route, region, source;
+  if (const auto& site = document.settings().siteBoundary)
+    if (const Object* outline = document.find(site->outline)) {
+      route = attribute(*outline, "energy_route");
+      region = attribute(*outline, "energy_region");
+      source = attribute(*outline, "energy_source");
+    }
+  if (route.empty() || region.empty()) {
+    out.push_back({"適用ルート・地域", "未入力",
+                   "どの基準・計算の方法で出すか（仕様基準・性能基準など）と、地域の区分（1〜8）を入れます（AI の set_energy_route、"
+                   "敷地境界が要ります）。" +
+                       (route.empty() ? std::string() : "\n適用ルート：入力済み") + (region.empty() ? std::string() : "\n地域：" + region + " 地域"),
+                   {}, true});
+  } else {
+    out.push_back({"適用ルート・地域", "入力済み",
+                   (route == "spec" ? std::string("仕様基準") : route == "performance" ? std::string("性能基準") : std::string("その他")) + "　" + region +
+                       " 地域\n確認資料 " + source + "\n基準の値との比較はしていません。",
+                   {}});
+  }
+  // Walls by build-up: the insulation given, or a layer named as insulation.
   struct BuildUp {
-    std::string name, layers;
-    bool insulated = false;
+    std::string name, layers, insulation;
+    int insulated = 0;
     std::vector<ObjectId> walls;
   };
   std::map<std::string, BuildUp> buildUps;
@@ -1033,49 +1075,64 @@ std::vector<PermitCheck> permitEnergyChecks(const Document& document) {
   for (const Object& o : document.objects()) {
     if (attribute(o, "kind") != "wall") continue;
     const std::string type = attribute(o, "wall_type");
-    if (type.empty()) {
+    if (type.empty() && attribute(o, "insulation").empty()) {
       plain.push_back(o.id);
       continue;
     }
-    BuildUp& b = buildUps[type];
+    BuildUp& b = buildUps[type.empty() ? "(厚さだけ)" : type];
     b.walls.push_back(o.id);
-    if (!b.name.empty()) continue;
-    b.name = attribute(o, "wall_type_name");
-    const nlohmann::json layers = nlohmann::json::parse(attribute(o, "wall_layers"), nullptr, false);
-    for (const auto& l : layers.is_array() ? layers : nlohmann::json::array()) {
-      const std::string n = l.value("name", std::string());
-      b.layers += (b.layers.empty() ? "" : "／") + n + " " + number(l.value("thickness", 0.0), 1);
-      b.insulated = b.insulated || n.find("断熱") != std::string::npos;
+    const std::string given = insulationText(o);
+    bool layered = false;
+    if (b.name.empty()) {
+      b.name = type.empty() ? "厚さだけの壁" : attribute(o, "wall_type_name");
+      const nlohmann::json layers = nlohmann::json::parse(attribute(o, "wall_layers"), nullptr, false);
+      for (const auto& l : layers.is_array() ? layers : nlohmann::json::array()) {
+        const std::string n = l.value("name", std::string());
+        b.layers += (b.layers.empty() ? "" : "／") + n + " " + number(l.value("thickness", 0.0), 1);
+      }
     }
+    layered = b.layers.find("断熱") != std::string::npos;
+    if (!given.empty() || layered) ++b.insulated;
+    if (!given.empty() && b.insulation.find(given) == std::string::npos) b.insulation += (b.insulation.empty() ? "" : "、") + given;
   }
-  for (const auto& [type, b] : buildUps)
-    out.push_back({"壁の仕様：" + (b.name.empty() ? type : b.name), b.insulated ? "入力済み" : "未入力",
-                   std::to_string(b.walls.size()) + " 枚　外→内：" + b.layers +
-                       (b.insulated ? std::string() : "\n断熱材の層がありません。外皮の断熱の仕様と性能（熱抵抗など）は、まだモデルに入っていません。"),
-                   b.walls, !b.insulated});
+  for (const auto& [type, b] : buildUps) {
+    const bool all = b.insulated == static_cast<int>(b.walls.size());
+    std::string details = std::to_string(b.walls.size()) + " 枚" + (b.layers.empty() ? std::string() : "　外→内：" + b.layers);
+    if (!b.insulation.empty()) details += "\n断熱：" + b.insulation;
+    if (!all) details += "\n断熱の入っていない壁 " + std::to_string(b.walls.size() - b.insulated) + " 枚（AI の set_insulation で入れます）";
+    out.push_back({"壁の仕様：" + b.name, all ? "入力済み" : "未入力", details, b.walls, !all});
+  }
   if (!plain.empty())
-    out.push_back({"仕様の無い壁", "未入力", "厚さだけの壁 " + std::to_string(plain.size()) + " 枚。仕様（層）を選ぶと、部位ごとの構成を照らせます。",
-                   plain, true});
-  int typed = 0, parts = 0;
+    out.push_back({"仕様の無い壁", "未入力", "厚さだけで断熱も無い壁 " + std::to_string(plain.size()) + " 枚。仕様（層）か断熱を入れます。", plain, true});
+  std::vector<ObjectId> bare;
+  int parts = 0;
   for (const Object& o : document.objects()) {
     const std::string kind = attribute(o, "kind");
     if (kind != "slab" && kind != "roof") continue;
     ++parts;
-    if (!attribute(o, "type_name").empty()) ++typed;
+    if (attribute(o, "insulation").empty()) bare.push_back(o.id);
   }
   if (parts > 0)
-    out.push_back({"床・屋根の種類", typed == parts ? "入力済み" : "未入力",
-                   "床・屋根 " + std::to_string(parts) + " のうち、種類（層）を付けた物 " + std::to_string(typed) +
-                       "。断熱の仕様と性能は種類の層の名前で書くだけで、性能の値はまだ入れる所がありません。",
-                   {}, typed != parts});
+    out.push_back({"床・屋根の断熱", bare.empty() ? "入力済み" : "未入力",
+                   "床・屋根 " + std::to_string(parts) + " のうち、断熱を入れた物 " + std::to_string(parts - static_cast<int>(bare.size())) + "。",
+                   bare, !bare.empty()});
   const auto openings = openingSchedule(document).rows;
+  int rated = 0;
+  std::vector<ObjectId> hosts;
+  for (const OpeningRow& o : openings) {
+    if (o.uValue >= 0) ++rated;
+    else if (std::find(hosts.begin(), hosts.end(), o.host) == hosts.end()) hosts.push_back(o.host);
+  }
   if (!openings.empty())
-    out.push_back({"建具の性能", "未入力",
-                   "開口 " + std::to_string(openings.size()) + " 件。熱貫流率・日射の値やガラスの仕様は、まだモデルに入れる所がありません（品番の欄に書けます）。",
-                   {}, true});
+    out.push_back({"建具の性能", rated == static_cast<int>(openings.size()) ? "入力済み" : "未入力",
+                   "開口 " + std::to_string(openings.size()) + " 件のうち、熱貫流率を入れた物 " + std::to_string(rated) +
+                       "（AI の set_opening_performance）。",
+                   hosts, rated != static_cast<int>(openings.size())});
   out.push_back({"設備", "未入力", "換気・冷暖房・給湯・照明などの機器は、まだモデルにありません。機器の資料を別に添付します。", {}, true});
   out.push_back({"まだ確かめていない事", "未評価",
-                 "外皮の性能・一次エネルギー消費量などの計算と、省エネ基準への適合（申請先と申請時点の基準で確かめます）。", {}});
+                 "仕様基準の値（地域ごとの断熱材の熱抵抗・開口部の熱貫流率など）との比較、外皮の性能・一次エネルギー消費量の計算、"
+                 "省エネ基準への適合。告示の原文を確かめてから照らします。",
+                 {}});
   return out;
 }
 
@@ -1938,6 +1995,38 @@ draw::Table scheduleTable(const Document& document, int which) {
                         r.counted ? "閉じている" : !r.closed ? "閉じていない" : "ほかの室と同じ場所"});
     t.rows.push_back({"合計（閉じている室だけ）", "", number(s.centreTotal / 1e6, 2), s.innerMissing == 0 ? number(s.innerTotal / 1e6, 2) : "未評価", "", ""});
     t.notes = {"壁芯＝壁を描いた線の内側、内法＝壁の面の内側。法の床面積（算入・不算入の決まり）ではありません。"};
+  } else if (which == 11) {
+    // docs/210: the energy specification as given: each part's insulation and each opening's performance.
+    t.title = "省エネ仕様の表";
+    t.headers = {"部位", "名前", "数", "断熱・性能", "資料"};
+    std::map<std::pair<std::string, std::string>, std::pair<int, std::pair<std::string, std::string>>> parts;
+    for (const Object& o : document.objects()) {
+      const std::string kind = attribute(o, "kind");
+      if (kind != "wall" && kind != "slab" && kind != "roof") continue;
+      const std::string text = insulationText(o);
+      if (text.empty()) continue;
+      const std::string part = kind == "wall" ? "外皮：壁" : kind == "slab" ? "外皮：床" : "外皮：屋根";
+      std::string name = kind == "wall" ? attribute(o, "wall_type_name") : attribute(o, "type_name");
+      if (name.empty()) name = kind == "wall" ? "（仕様なし）" : o.name;
+      const nlohmann::json j = nlohmann::json::parse(attribute(o, "insulation"), nullptr, false);
+      auto& entry = parts[{part, name + "｜" + text}];
+      ++entry.first;
+      entry.second = {text, j.is_object() ? j.value("source", std::string()) : std::string()};
+    }
+    for (const auto& [key, value] : parts)
+      t.rows.push_back({key.first, key.second.substr(0, key.second.find("｜")), std::to_string(value.first), value.second.first, value.second.second});
+    std::map<std::string, std::pair<int, std::pair<std::string, std::string>>> rated;
+    for (const OpeningRow& o : openingSchedule(document).rows) {
+      if (o.uValue < 0) continue;
+      auto& entry = rated[o.mark + "｜" + number(o.uValue, 2) + "｜" + o.glass];
+      ++entry.first;
+      entry.second = {"熱貫流率 " + number(o.uValue, 2) + " W/(m2K)" + (o.glass.empty() ? std::string() : "　" + o.glass), o.performanceSource};
+    }
+    for (const auto& [key, value] : rated)
+      t.rows.push_back({"開口部", key.substr(0, key.find("｜")), std::to_string(value.first), value.second.first, value.second.second});
+    t.notes = {"入れた仕様と資料の一覧です。熱抵抗 R は厚さ÷熱伝導率（入れた時はその値）。",
+               "仕様基準の値（地域ごとの断熱材の熱抵抗・開口部の熱貫流率など）との比較、外皮・一次エネルギーの計算はしていません。"
+               "基準は申請先と申請時点の告示で確かめます。"};
   } else if (which == 10) {
     // docs/209: the outline of the project for the cover, read from the model's data.
     t.title = "計画概要";
@@ -2326,7 +2415,7 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& sp
     planned.push_back({view.title, view, std::nullopt, {}});
   }
   // The first planned is the lowest storey's plan.
-  for (int which : {0, 1, 2, 3, 4, 6, 7, 8, 9}) {  // docs/208: and the wall quantity forms when there is a calculation  // docs/207: and daylight / ventilation when rooms have a kind
+  for (int which : {0, 1, 2, 3, 4, 6, 7, 8, 9, 11}) {  // docs/210: and the energy specification when given  // docs/208: and the wall quantity forms when there is a calculation  // docs/207: and daylight / ventilation when rooms have a kind
     draw::Table table = scheduleTable(document, which);
     if (!tableHasContent(table, which)) continue;
     if (spec.tablesWithPlan) {

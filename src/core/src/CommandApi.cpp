@@ -2691,6 +2691,38 @@ const std::vector<CommandDef>& commands() {
                                    numberOr(a, "ventilation_m2", keep)));
          return json::object();
        }},
+      {"set_energy_route",
+       "docs/210: the route the energy documents follow ('route': spec 仕様基準 / performance 性能基準 / other / \"\"), "
+       "the 'region' (1-8, 0: not given) and 'source'. Kept on the site outline (needs the site boundary). One undo step.",
+       SCHEMA({"type": "object", "properties": {"route": {"enum": ["spec", "performance", "other", ""]}, "region": {"type": "integer"},
+               "source": {"type": "string"}}}),
+       [](doc::Modeler& m, const json& a) {
+         must(m.setEnergyRoute(textOr(a, "route", ""), a.value("region", 0), textOr(a, "source", "")));
+         return json::object();
+       }},
+      {"set_insulation",
+       "docs/210: the insulation of walls, slabs and roofs 'ids': 'material' (\"\" takes it away), 'thickness_mm', "
+       "'conductivity' (λ, W/(m·K)) and / or 'resistance' (R, m²·K/W), 'placement' (fill 充填 / outside 外張り / inside), "
+       "'source' (catalogue, specification). One undo step. Not compared with any standard.",
+       SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}}, "material": {"type": "string"},
+               "thickness_mm": {"type": "number"}, "conductivity": {"type": "number"}, "resistance": {"type": "number"},
+               "placement": {"enum": ["fill", "outside", "inside", ""]}, "source": {"type": "string"}}, "required": ["ids"]}),
+       [](doc::Modeler& m, const json& a) {
+         must(m.setInsulation(ids(a, "ids"), textOr(a, "material", ""), numberOr(a, "thickness_mm", 0.0), numberOr(a, "conductivity", 0.0),
+                              numberOr(a, "resistance", 0.0), textOr(a, "placement", ""), textOr(a, "source", "")));
+         return json::object();
+       }},
+      {"set_opening_performance",
+       "docs/210: the performance of openings of 'host' ('openings': ids or indices, all when omitted): 'u_value' heat "
+       "transmittance (W/(m²·K); below 0 takes it away), 'glass', 'source'. One undo step. Not compared with any standard.",
+       SCHEMA({"type": "object", "properties": {"host": {"type": "string"},
+               "openings": {"type": "array", "items": {"type": ["string", "integer"]}}, "u_value": {"type": "number"},
+               "glass": {"type": "string"}, "source": {"type": "string"}}, "required": ["host", "u_value"]}),
+       [](doc::Modeler& m, const json& a) {
+         const std::vector<std::size_t> which = openingNumbers(m, a);
+         must(m.setOpeningPerformance(text(a, "host"), which, number(a, "u_value"), textOr(a, "glass", ""), textOr(a, "source", "")));
+         return json::object();
+       }},
       {"set_site_zone",
        "docs/205: the group of use zones the site is in, for the daylight factor (令 20 条 2 項): 'zone' residential "
        "(第一種・第二種低層住居専用, 第一種・第二種中高層住居専用, 第一種・第二種住居, 準住居, 田園住居), industrial "
@@ -4154,7 +4186,7 @@ const std::vector<CommandDef>& commands() {
                "levels": {"type": "boolean"}, "annotations": {"type": "boolean"}, "preset":{"type":"string"},"within":{"type":"string"},
                "tags":{"type":"array","items":{"type":"string"}},"include_hidden":{"type":"boolean"},"member_labels":{"type":"boolean"},
                "tables": {"type": "array", "items": {"enum": ["openings", "rooms", "areas", "finishes", "types", "layers", "daylight",
-                                                               "wall_quantity", "bracing_walls", "quarters", "summary"]}},
+                                                               "wall_quantity", "bracing_walls", "quarters", "summary", "energy"]}},
                "bracing_floor": {"type": "string"}}, "required": ["path", "kind"]}),
        [](doc::Modeler& m, const json& a) {
          const std::string kind = text(a, "kind");
@@ -4197,8 +4229,8 @@ const std::vector<CommandDef>& commands() {
            if (!a.at("tables").is_array()) throw ApiError("'tables': a list of openings, rooms, areas, finishes");
            for (const json& t : a.at("tables")) {
              const std::string which = t.is_string() ? t.get<std::string>() : std::string();
-             const int index = which == "openings" ? 0 : which == "rooms" ? 1 : which == "areas" ? 2 : which == "finishes" ? 3 : which == "types" ? 4 : which == "layers" ? 5 : which == "daylight" ? 6 : which == "wall_quantity" ? 7 : which == "bracing_walls" ? 8 : which == "quarters" ? 9 : which == "summary" ? 10 : -1;
-             if (index < 0) throw ApiError("'tables': openings, rooms, areas, finishes, types, layers, daylight, wall_quantity, bracing_walls, quarters or summary");
+             const int index = which == "openings" ? 0 : which == "rooms" ? 1 : which == "areas" ? 2 : which == "finishes" ? 3 : which == "types" ? 4 : which == "layers" ? 5 : which == "daylight" ? 6 : which == "wall_quantity" ? 7 : which == "bracing_walls" ? 8 : which == "quarters" ? 9 : which == "summary" ? 10 : which == "energy" ? 11 : -1;
+             if (index < 0) throw ApiError("'tables': openings, rooms, areas, finishes, types, layers, daylight, wall_quantity, bracing_walls, quarters, summary or energy");
              draw::Table table = doc::scheduleTable(m.document(), index);
              if (!doc::tableHasContent(table, index)) leftOut.push_back(which);
              else tables.push_back(std::move(table));
@@ -4221,17 +4253,17 @@ const std::vector<CommandDef>& commands() {
       {"export_schedule",
        "A table on a sheet of its own as DXF or JWW (by the path's extension): 'table' openings (建具表, one "
        "line per mark), rooms (室の表), areas (面積の表), finishes (仕上げ表, set_room_finish) or types (種類の表 of floors and roofs, "
-       "set_type_name), layers (層の数量), daylight (採光・換気計算表, docs/207), wall_quantity (壁量計算表), bracing_walls (耐力壁の一覧) quarters (四分割, docs/208) or summary (計画概要, docs/209), read from the model as it is (as opening_schedule / "
+       "set_type_name), layers (層の数量), daylight (採光・換気計算表, docs/207), wall_quantity (壁量計算表), bracing_walls (耐力壁の一覧) quarters (四分割, docs/208) , summary (計画概要, docs/209) or energy (省エネ仕様の表, docs/210), read from the model as it is (as opening_schedule / "
        "room_schedule / area_table). 'paper' (auto, A4-A1), 'frame' (default true), 'project', 'number', "
        "'author', 'date' for the title block.",
-       SCHEMA({"type": "object", "properties": {"path": {"type": "string"}, "table": {"enum": ["openings", "rooms", "areas", "finishes", "types", "layers", "daylight", "wall_quantity", "bracing_walls", "quarters", "summary"]},
+       SCHEMA({"type": "object", "properties": {"path": {"type": "string"}, "table": {"enum": ["openings", "rooms", "areas", "finishes", "types", "layers", "daylight", "wall_quantity", "bracing_walls", "quarters", "summary", "energy"]},
                "paper": {"type": "string"}, "frame": {"type": "boolean"}, "project": {"type": "string"},
                "number": {"type": "string"}, "author": {"type": "string"}, "date": {"type": "string"}},
                "required": ["path", "table"]}),
        [](doc::Modeler& m, const json& a) {
          const std::string which = text(a, "table");
-         const int index = which == "openings" ? 0 : which == "rooms" ? 1 : which == "areas" ? 2 : which == "finishes" ? 3 : which == "types" ? 4 : which == "layers" ? 5 : which == "daylight" ? 6 : which == "wall_quantity" ? 7 : which == "bracing_walls" ? 8 : which == "quarters" ? 9 : which == "summary" ? 10 : -1;
-         if (index < 0) throw ApiError("'table': openings, rooms, areas, finishes, types, layers, daylight, wall_quantity, bracing_walls, quarters or summary");
+         const int index = which == "openings" ? 0 : which == "rooms" ? 1 : which == "areas" ? 2 : which == "finishes" ? 3 : which == "types" ? 4 : which == "layers" ? 5 : which == "daylight" ? 6 : which == "wall_quantity" ? 7 : which == "bracing_walls" ? 8 : which == "quarters" ? 9 : which == "summary" ? 10 : which == "energy" ? 11 : -1;
+         if (index < 0) throw ApiError("'table': openings, rooms, areas, finishes, types, layers, daylight, wall_quantity, bracing_walls, quarters, summary or energy");
          const draw::Table table = doc::scheduleTable(m.document(), index);
          draw::SheetSpec sheetSpec;
          sheetSpec.paper = textOr(a, "paper", "auto");

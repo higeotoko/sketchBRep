@@ -4000,6 +4000,68 @@ Status Modeler::setSiteNorthFromPoints(const gp_Pnt& tail, const gp_Pnt& tip, co
   return setSiteNorth({std::atan2(x, y) * 180.0 / std::acos(-1.0), source, checkedOn});
 }
 
+namespace {
+bool oneLine(const std::string& s, std::size_t max) { return s.size() <= max && s.find_first_of("\r\n") == std::string::npos; }
+}  // namespace
+
+Status Modeler::setEnergyRoute(const std::string& route, int region, const std::string& source) {
+  const auto& site = document_.settings().siteBoundary;
+  if (!site) return Status::failure("敷地境界を先に登録してください（地域の区分は敷地に持たせます）");
+  if (!route.empty() && route != "spec" && route != "performance" && route != "other")
+    return Status::failure("適用ルートは spec / performance / other のどれかです");
+  if (region < 0 || region > 8) return Status::failure("地域の区分は 1〜8 です（0：未入力）");
+  if ((!route.empty() || region > 0) && source.empty()) return Status::failure("確認資料を入力してください");
+  if (!oneLine(source, 300)) return Status::failure("確認資料は1行、100 字までです");
+  const Object* outline = document_.find(site->outline);
+  if (!outline) return Status::failure("敷地境界の輪郭が見つかりません");
+  if (outline->locked) return Status::failure("The object is locked");
+  Object object = *outline;
+  for (const char* key : {"energy_route", "energy_region", "energy_source"}) object.attributes.erase(key);
+  if (!route.empty()) object.attributes["energy_route"] = route;
+  if (region > 0) object.attributes["energy_region"] = std::to_string(region);
+  if (!route.empty() || region > 0) object.attributes["energy_source"] = source;
+  ChangeSet changes(document_);
+  changes.modify(object);
+  history_.execute(changes.build("Energy Route"));
+  return Status::success();
+}
+
+Status Modeler::setInsulation(const std::vector<ObjectId>& ids, const std::string& material, double thicknessMm,
+                              double conductivity, double resistance, const std::string& placement, const std::string& source) {
+  if (ids.empty()) return Status::failure("Nothing selected");
+  if (!oneLine(material, 180) || !oneLine(source, 300)) return Status::failure("断熱材の名前・資料は1行です");
+  if (!material.empty()) {
+    if (!(thicknessMm > 0 && thicknessMm <= 1000)) return Status::failure("断熱材の厚さは 0〜1000 mm です");
+    if (!std::isfinite(conductivity) || conductivity < 0 || conductivity > 10) return Status::failure("熱伝導率は 0〜10 W/(m·K) です（0：未入力）");
+    if (!std::isfinite(resistance) || resistance < 0 || resistance > 100) return Status::failure("熱抵抗は 0〜100 m²·K/W です（0：未入力）");
+    if (!placement.empty() && placement != "fill" && placement != "outside" && placement != "inside")
+      return Status::failure("入れ方は fill / outside / inside のどれかです");
+    if (source.empty()) return Status::failure("断熱材の資料（カタログ・仕様書など）を入力してください");
+  }
+  ChangeSet changes(document_);
+  for (const ObjectId& id : ids) {
+    const Object* o = document_.find(id);
+    if (!o) return Status::failure("Object not found");
+    const auto kind = o->attributes.find("kind");
+    if (kind == o->attributes.end() || (kind->second != "wall" && kind->second != "slab" && kind->second != "roof"))
+      return Status::failure("断熱は壁・床・屋根に入れます（" + o->name + " はどれでもありません）");
+    if (o->locked) return Status::failure("The object is locked");
+    Object object = *o;
+    if (material.empty()) {
+      object.attributes.erase("insulation");
+    } else {
+      nlohmann::json j{{"material", material}, {"thickness_mm", thicknessMm}, {"source", source}};
+      if (conductivity > 0) j["conductivity"] = conductivity;
+      if (resistance > 0) j["resistance"] = resistance;
+      if (!placement.empty()) j["placement"] = placement;
+      object.attributes["insulation"] = j.dump();
+    }
+    changes.modify(object);
+  }
+  history_.execute(changes.build("Insulation"));
+  return Status::success();
+}
+
 Status Modeler::setSiteZone(const std::string& zone, const std::string& source) {
   const auto& site = document_.settings().siteBoundary;
   if (!site) return Status::failure("敷地境界を先に登録してください");
@@ -6454,6 +6516,42 @@ Result<int> Modeler::matchOpeningType(const ObjectId& host, std::size_t index) {
 namespace {
 bool isRoomMarker(const Object& o);  // with the rooms below
 }  // namespace
+
+Status Modeler::setOpeningPerformance(const ObjectId& hostId, const std::vector<std::size_t>& indices, double uValue,
+                                      const std::string& glass, const std::string& source) {
+  const Object* host = document_.find(hostId);
+  if (!host) return Status::failure("Object not found");
+  if (host->locked) return Status::failure("The object is locked");
+  const auto list = openings(hostId);
+  if (!list) return list.status();
+  if (list->empty()) return Status::failure("This object has no openings");
+  if (!std::isfinite(uValue) || uValue > 10) return Status::failure("熱貫流率は 0〜10 W/(m²·K) です");
+  if (!oneLine(glass, 180) || !oneLine(source, 300)) return Status::failure("ガラス・資料は1行です");
+  if (uValue >= 0 && source.empty()) return Status::failure("建具の性能の資料（カタログなど）を入力してください");
+  Object object = *host;
+  ensureOpeningIds(object);
+  nlohmann::json all = nlohmann::json::object();
+  if (const auto stored = object.attributes.find("opening_performance"); stored != object.attributes.end()) {
+    const nlohmann::json parsed = nlohmann::json::parse(stored->second, nullptr, false);
+    if (parsed.is_object()) all = parsed;
+  }
+  std::vector<std::size_t> targets = indices;
+  if (targets.empty())
+    for (const auto& o : *list) targets.push_back(o.index);
+  const std::vector<OpeningRef> refs = rectangularOpenings(object);
+  for (const std::size_t index : targets) {
+    const auto it = std::find_if(refs.begin(), refs.end(), [&](const OpeningRef& o) { return o.index == index; });
+    if (it == refs.end()) return Status::failure("No opening " + std::to_string(index));
+    if (uValue < 0) all.erase(openingKey(*it));
+    else all[openingKey(*it)] = {{"u", uValue}, {"glass", glass}, {"source", source}};
+  }
+  if (all.empty()) object.attributes.erase("opening_performance");
+  else object.attributes["opening_performance"] = all.dump();
+  ChangeSet changes(document_);
+  changes.modify(object);
+  history_.execute(changes.build("Opening Performance"));
+  return Status::success();
+}
 
 Status Modeler::setOpeningDaylight(const ObjectId& hostId, const std::vector<std::size_t>& indices, double factor,
                                    const std::string& basis, double ventilationM2) {

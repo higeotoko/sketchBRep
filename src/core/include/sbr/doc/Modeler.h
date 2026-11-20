@@ -220,6 +220,21 @@ class Modeler {
   // residential / industrial / commercial ("" takes it away), with the document it was read from,
   // as attributes "use_zone" / "use_zone_source" on the site outline. One undo step.
   Status setSiteZone(const std::string& zone, const std::string& source);
+  // docs/210: energy inputs. The route the energy documents follow (spec: 仕様基準 / performance:
+  // 性能基準 / other / "" takes it away), the region (1-8; 0: not given) and the source, as
+  // attributes on the site outline ("energy_route", "energy_region", "energy_source").
+  Status setEnergyRoute(const std::string& route, int region, const std::string& source);
+  // The insulation of walls, slabs and roofs (`ids`): material ("" takes it away), thickness (mm),
+  // thermal conductivity λ (W/(m·K), 0: not given) or thermal resistance R (m²·K/W, 0: not given),
+  // placement (fill: 充填 / outside: 外張り / inside / ""), source; as attribute "insulation".
+  // One undo step for all.
+  Status setInsulation(const std::vector<ObjectId>& ids, const std::string& material, double thicknessMm,
+                       double conductivity, double resistance, const std::string& placement, const std::string& source);
+  // An opening's performance: heat transmittance U (W/(m²·K), below 0 takes the whole away), glass
+  // and source, by opening id as attribute "opening_performance" on the host. `indices` 1-based,
+  // all when empty. One undo step.
+  Status setOpeningPerformance(const ObjectId& host, const std::vector<std::size_t>& indices, double uValue,
+                               const std::string& glass, const std::string& source);
   void clearSiteRoad();
   Status setSiteGround(SiteGround ground, ObjectId building = {}, bool confirmedPlacement = false);
   void clearSiteGround();

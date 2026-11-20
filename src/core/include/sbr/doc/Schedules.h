@@ -38,6 +38,9 @@ struct OpeningRow {
   double daylightFactor = -1.0;  // 採光補正係数 (令 20 条)
   std::string daylightBasis;
   double ventilationM2 = -1.0;   // area open for ventilation (法 28 条 2 項), m2
+  // docs/210: its performance as given (Modeler::setOpeningPerformance); below 0: not given.
+  double uValue = -1.0;  // W/(m2 K)
+  std::string glass, performanceSource;
 };
 
 // One line of the door and window schedule: a mark and how many there are.
@@ -256,7 +259,8 @@ std::string roomTagText(const RoomRow& room);
 // quantities of the layers (docs/172), 6 daylight and ventilation of the rooms given a kind
 // (docs/207), 7 the wall quantity table, 8 the list of bracing walls, 9 the quarter-division side
 // parts (docs/208, from check_wall_quantity), 10 the outline of the project (docs/209: site, zone,
-// road, areas and ratios for reference, storeys, highest point, structure); the same values and
+// road, areas and ratios for reference, storeys, highest point, structure), 11 the energy
+// specification as given (docs/210); the same values and
 // notes as the CSV.
 draw::Table scheduleTable(const Document& document, int which);
 

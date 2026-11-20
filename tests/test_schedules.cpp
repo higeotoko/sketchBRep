@@ -2632,13 +2632,13 @@ TEST_F(Schedules, PermitChecksReadTheEnergyAndElevationStages) {
   // 9: nothing about energy in the model yet; the plain walls have no build-up.
   EXPECT_EQ(rowOf(9, "適用ルート・地域")["state"], "未入力");
   EXPECT_EQ(rowOf(9, "仕様の無い壁")["targets"].size(), 5u);
-  EXPECT_EQ(rowOf(9, "床・屋根の種類")["state"], "未入力");
+  EXPECT_EQ(rowOf(9, "床・屋根の断熱")["state"], "未入力");
   EXPECT_EQ(rowOf(9, "建具の性能")["state"], "未入力");
   EXPECT_EQ(rowOf(9, "設備")["state"], "未入力");
   ok("create_wall", {{"points", {{0, 8000}, {4000, 8000}}}, {"type", "exterior_siding"}, {"height", 3000}});
   const json siding = rowOf(9, "壁の仕様：外壁 窯業系サイディング（通気）");
-  EXPECT_EQ(siding["state"], "未入力");  // the presets have no insulation layer
-  EXPECT_NE(siding["details"].get<std::string>().find("断熱材の層がありません"), std::string::npos) << siding.dump();
+  EXPECT_EQ(siding["state"], "未入力");  // the presets have no insulation (docs/210: none given)
+  EXPECT_NE(siding["details"].get<std::string>().find("断熱の入っていない壁 1 枚"), std::string::npos) << siding.dump();
   // 10: no GL yet; the walls' tops (3000) are the highest point; no sections cut by hand; no true north.
   EXPECT_EQ(rowOf(10, "地盤（GL）")["state"], "未入力");
   EXPECT_NE(rowOf(10, "いちばん高い所（参考）")["details"].get<std::string>().find("z = 0 から 3000 mm"), std::string::npos);
@@ -2838,4 +2838,45 @@ TEST_F(Schedules, ProjectOutlineReadsTheSiteAndTheAreas) {
   ASSERT_GE(set->names.size(), 3u);
   EXPECT_EQ(set->names[0], "図面リスト");
   EXPECT_EQ(set->names[1], "計画概要");
+}
+
+// docs/210: energy inputs (route and region, insulation, opening performance), the stage 9 rows
+// and the energy specification table; nothing compared with any standard.
+TEST_F(Schedules, EnergyInputsShowInStageNineAndTheirTable) {
+  const auto rowOf = [&](const std::string& item) {
+    const json all = ok("permit_checks", {{"stage", 9}})["rows"];
+    for (const json& row : all)
+      if (row["item"] == item) return row;
+    ADD_FAILURE() << "no row " << item << " in " << all.dump();
+    return json();
+  };
+  EXPECT_FALSE(call("set_energy_route", {{"route", "spec"}, {"region", 6}, {"source", "x"}}).value("ok", true));  // no site yet
+  const std::string site = ok("create_polygon", {{"points", {{-2000, -2000, 0}, {14000, -2000, 0}, {14000, 10000, 0}, {-2000, 10000, 0}}}})["id"];
+  ok("set_site_boundary", {{"outline", site}, {"source", "架空"}});
+  EXPECT_FALSE(call("set_energy_route", {{"route", "spec"}, {"region", 9}, {"source", "x"}}).value("ok", true));
+  EXPECT_FALSE(call("set_energy_route", {{"route", "spec"}, {"region", 6}}).value("ok", true));  // its source
+  ok("set_energy_route", {{"route", "spec"}, {"region", 6}, {"source", "架空の地域区分表"}});
+  json route = rowOf("適用ルート・地域");
+  EXPECT_EQ(route["state"], "入力済み");
+  EXPECT_NE(route["details"].get<std::string>().find("仕様基準　6 地域"), std::string::npos) << route.dump();
+  // Insulation on all the walls: 100 mm of λ 0.038 -> R 2.63.
+  json walls = json::array({south, east, north, west, partition});
+  EXPECT_FALSE(call("set_insulation", {{"ids", walls}, {"material", "グラスウール"}, {"thickness_mm", 100}}).value("ok", true));  // its source
+  ok("set_insulation", {{"ids", walls}, {"material", "グラスウール 16K"}, {"thickness_mm", 100}, {"conductivity", 0.038},
+                        {"placement", "fill"}, {"source", "架空のカタログ"}});
+  const json insulated = rowOf("壁の仕様：厚さだけの壁");
+  EXPECT_EQ(insulated["state"], "入力済み") << insulated.dump();
+  EXPECT_NE(insulated["details"].get<std::string>().find("R 2.63"), std::string::npos) << insulated.dump();
+  EXPECT_EQ(rowOf("建具の性能")["state"], "未入力");
+  ok("set_opening_performance", {{"host", south}, {"u_value", 2.33}, {"glass", "Low-E 複層"}, {"source", "架空のカタログ"}});
+  const auto table = sbr::doc::scheduleTable(modeler.document(), 11);
+  EXPECT_EQ(table.title, "省エネ仕様の表");
+  bool wall = false, window = false;
+  for (const auto& r : table.rows) {
+    wall = wall || (r[0] == "外皮：壁" && r[2] == "5" && r[3].find("グラスウール 16K 100 mm（充填）") == 0);
+    window = window || (r[0] == "開口部" && r[3].find("熱貫流率 2.33") == 0 && r[4] == "架空のカタログ");
+  }
+  EXPECT_TRUE(wall);
+  EXPECT_TRUE(window);
+  EXPECT_FALSE(call("set_insulation", {{"ids", {room}}, {"material", "x"}, {"thickness_mm", 10}, {"source", "x"}}).value("ok", true));  // a room is no part
 }

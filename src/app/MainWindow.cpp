@@ -5551,7 +5551,8 @@ void MainWindow::showSchedulesDialog() {
   for (const auto& [which, name, label] : {std::tuple<int, const char*, QString>{7, "wallQuantityTable", tr("壁量計算表")},
                                          std::tuple<int, const char*, QString>{8, "bracingWallTable", tr("耐力壁")},
                                          std::tuple<int, const char*, QString>{9, "quarterTable", tr("四分割")},
-                                         std::tuple<int, const char*, QString>{10, "summaryTable", tr("計画概要")}}) {
+                                         std::tuple<int, const char*, QString>{10, "summaryTable", tr("計画概要")},
+                                         std::tuple<int, const char*, QString>{11, "energyTable", tr("省エネ仕様")}}) {
     const draw::Table form = doc::scheduleTable(document, which);
     auto* page = new QWidget;
     auto* box = new QVBoxLayout(page);
@@ -5562,7 +5563,9 @@ void MainWindow::showSchedulesDialog() {
       for (int c = 0; c < static_cast<int>(form.rows[static_cast<std::size_t>(row)].size()); ++c)
         table->setItem(row, c, new QTableWidgetItem(QString::fromStdString(form.rows[static_cast<std::size_t>(row)][static_cast<std::size_t>(c)])));
     table->resizeColumnsToContents();
-    QString text = form.rows.empty() ? tr("壁量の計算の入力がありません（AI の set_wall_calculation、構造の入力）。\n") : QString();
+    QString text = !form.rows.empty() ? QString()
+                   : which == 11      ? tr("断熱・建具の性能がまだ入っていません（AI の set_insulation・set_opening_performance）。\n")
+                                      : tr("壁量の計算の入力がありません（AI の set_wall_calculation、構造の入力）。\n");
     for (const std::string& n : form.notes) text += (text.isEmpty() ? QString() : QStringLiteral("\n")) + QString::fromStdString(n);
     box->addWidget(table, 1);
     box->addWidget(note((std::string(name) + "Note").c_str(), text));
