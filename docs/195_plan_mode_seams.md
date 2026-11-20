@@ -22,8 +22,7 @@
 **GUI 自動確認済み**
 - `planCutLeavesOutSeamsBetweenWallsOfOneBuildUp`：外壁サイディングの部屋（留め）に石膏ボードの間仕切りと床を入れて、FL+1100 で切る。切り口の太線に斜めの線が0本。間仕切りの両端の線は残る。外壁4枚が、それぞれ留めの上下の辺を4本以上描かない。画像でも、角の対角線が消えて、層の線が角でつながって見えることを確かめた。
 - 壁・辺・平面・室・開口まわりの GUI 75件のうち74件が成功（ローカル）。落ちた `topEdgesCopiedDownDivideTheSides` は、表示倍率175%でローカルだけ落ちる既知の8件の1つ（docs/192）。
-- Linux CI（`02a86fa`）：CI_RESULT
-
+- Linux CI（`02a86fa` の上の記録コミット `22e9e7a`）：[run 44516583114](https://github.com/higeotoko/sketchBRep/actions/runs/44516583114)、CTest 782件、失敗0。
 - 展開した ZIP（`02a86fa`）：通常検証18シナリオ、べた基礎4シナリオとも失敗0。記録は [通常検証](validation/2026-11-19-portable-02a86fa.json) と [べた基礎](validation/2026-11-19-portable-02a86fa-mat.json)。
 
 **Windows 実機確認（人の操作）**：2-5 をもう一度（docs/105）。
