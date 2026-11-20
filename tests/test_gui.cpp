@@ -764,7 +764,7 @@ void GuiPhase1::permitWorkflowTracksSiteInputsAndStaleGround() {
   QVERIFY(modeler.undo());
   QTRY_COMPARE(state(3), QStringLiteral("参考値あり"));
   phases->setCurrentRow(11);
-  QCOMPARE(state(0), QStringLiteral("未評価"));
+  QCOMPARE(state(0), QStringLiteral("保留"));  // docs/202: the permit output on hold
   QVERIFY(!edit->isVisible());
   QVERIFY(!preview->isVisible());
   phases->setCurrentRow(0);
@@ -917,6 +917,23 @@ void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
   QCOMPARE(rowOf(QStringLiteral("基礎"))->text(1), QStringLiteral("未入力"));
   checks->setCurrentItem(rowOf(QStringLiteral("まだ確かめていない事")));
   QVERIFY(details->text().contains(QStringLiteral("地盤")));
+
+  // docs/201: stages 9 (省エネ・設備) and 10 (立面・断面).
+  phases->setCurrentRow(8);
+  QCOMPARE(rowOf(QStringLiteral("適用ルート・地域"))->text(1), QStringLiteral("未入力"));
+  QVERIFY(rowOf(QStringLiteral("設備")));
+  phases->setCurrentRow(9);
+  QCOMPARE(rowOf(QStringLiteral("地盤（GL）"))->text(1), QStringLiteral("未入力"));
+  QVERIFY(rowOf(QStringLiteral("いちばん高い所（参考）")));
+  QVERIFY(rowOf(QStringLiteral("断面の切る位置")));
+
+  // docs/202: stages 11 (一式の突合せ) and 12 (申請用出力, on hold).
+  phases->setCurrentRow(10);
+  QVERIFY(rowOf(QStringLiteral("2 通り芯")));
+  QVERIFY(rowOf(QStringLiteral("建具の符号")));
+  phases->setCurrentRow(11);
+  QCOMPARE(rowOf(QStringLiteral("申請用出力"))->text(1), QStringLiteral("保留"));
+  QCOMPARE(rowOf(QStringLiteral("検討用の出力"))->text(1), QStringLiteral("出せます"));
 }
 
 // Request "線の移動コピー・等間隔配列・等分割": a selected line copied with

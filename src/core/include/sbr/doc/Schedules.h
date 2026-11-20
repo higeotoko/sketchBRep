@@ -121,6 +121,19 @@ std::vector<PermitCheck> permitBraceChecks(const Document& document);
 // Stage 8 (基礎, docs/200): the foundation plans made from the sills and whether they are current,
 // the sills' and columns' bases found on supports (geometry only), and what is not assessed.
 std::vector<PermitCheck> permitFoundationChecks(const Document& document);
+// Stage 9 (省エネ・設備, docs/201): what the model has for the envelope (wall build-ups and whether
+// one of their layers is insulation, typed floors and roofs, openings) and what it does not have
+// yet (the route and region, performance values, equipment): mostly 未入力, never a pass.
+std::vector<PermitCheck> permitEnergyChecks(const Document& document);
+// Stage 10 (立面・断面, docs/201): the level GL, the model's highest point above it (not the legal
+// height), where sections are cut, the elevations' orientation, and what is not checked.
+std::vector<PermitCheck> permitElevationChecks(const Document& document);
+// Stage 11 (一式の突合せ, docs/202): per stage read from the model (2, 3, 5-10) how many rows are
+// left to look at, marks given by hand to unlike openings, rooms of a storey with one name.
+std::vector<PermitCheck> permitSetChecks(const Document& document);
+// Stage 12 (申請用出力, docs/202): the permit output stays on hold (with the stages left); study
+// drawings can always be made.
+std::vector<PermitCheck> permitOutputChecks(const Document& document);
 
 // One storey.
 struct AreaRow {

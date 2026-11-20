@@ -2618,3 +2618,59 @@ TEST_F(Schedules, PermitChecksReadTheRoofStage) {
   const json balcony = rowOf(rows(), "バルコニー");
   EXPECT_NE(balcony["details"].get<std::string>().find("通達どおり"), std::string::npos) << balcony.dump();
 }
+
+// docs/201: the permit workflow's stages 9 (省エネ・設備) and 10 (立面・断面).
+TEST_F(Schedules, PermitChecksReadTheEnergyAndElevationStages) {
+  const auto rowOf = [&](int stage, const std::string& item) {
+    const json all = ok("permit_checks", {{"stage", stage}})["rows"];
+    for (const json& row : all)
+      if (row["item"] == item) return row;
+    ADD_FAILURE() << "no row " << item << " in " << all.dump();
+    return json();
+  };
+  // 9: nothing about energy in the model yet; the plain walls have no build-up.
+  EXPECT_EQ(rowOf(9, "適用ルート・地域")["state"], "未入力");
+  EXPECT_EQ(rowOf(9, "仕様の無い壁")["targets"].size(), 5u);
+  EXPECT_EQ(rowOf(9, "床・屋根の種類")["state"], "未入力");
+  EXPECT_EQ(rowOf(9, "建具の性能")["state"], "未入力");
+  EXPECT_EQ(rowOf(9, "設備")["state"], "未入力");
+  ok("create_wall", {{"points", {{0, 8000}, {4000, 8000}}}, {"type", "exterior_siding"}, {"height", 3000}});
+  const json siding = rowOf(9, "壁の仕様：外壁 窯業系サイディング（通気）");
+  EXPECT_EQ(siding["state"], "未入力");  // the presets have no insulation layer
+  EXPECT_NE(siding["details"].get<std::string>().find("断熱材の層がありません"), std::string::npos) << siding.dump();
+  // 10: no GL yet; the walls' tops (3000) are the highest point; no sections cut by hand; no true north.
+  EXPECT_EQ(rowOf(10, "地盤（GL）")["state"], "未入力");
+  EXPECT_NE(rowOf(10, "いちばん高い所（参考）")["details"].get<std::string>().find("z = 0 から 3000 mm"), std::string::npos);
+  EXPECT_NE(rowOf(10, "断面の切る位置")["details"].get<std::string>().find("2 つの断面"), std::string::npos);
+  EXPECT_EQ(rowOf(10, "立面の向き")["state"], "要確認");
+  ASSERT_TRUE(modeler.setLevels({{"", "GL", -500}, {"", "1FL", 0}, {"", "2FL", 3000}}));
+  EXPECT_EQ(rowOf(10, "地盤（GL）")["state"], "入力済み");
+  EXPECT_NE(rowOf(10, "いちばん高い所（参考）")["details"].get<std::string>().find("GLから 3500 mm"), std::string::npos);
+}
+
+// docs/202: the permit workflow's stages 11 (一式の突合せ) and 12 (申請用出力).
+TEST_F(Schedules, PermitChecksSumUpTheStagesAndHoldTheOutput) {
+  const auto rowOf = [&](int stage, const std::string& item) {
+    const json all = ok("permit_checks", {{"stage", stage}})["rows"];
+    for (const json& row : all)
+      if (row["item"] == item) return row;
+    ADD_FAILURE() << "no row " << item << " in " << all.dump();
+    return json();
+  };
+  // No grid: stage 2 has rows left, named in the summary.
+  const json grid = rowOf(11, "2 通り芯");
+  EXPECT_EQ(grid["state"].get<std::string>().rfind("残り ", 0), 0u) << grid.dump();
+  EXPECT_NE(grid["details"].get<std::string>().find("通り芯（未入力）"), std::string::npos) << grid.dump();
+  EXPECT_EQ(rowOf(11, "建具の符号")["state"], "入力済み");
+  // A second room of the same storey with the same name.
+  ok("create_room", {{"at", {6000, 3000}}, {"name", "居間"}});
+  const json twins = rowOf(11, "室名");
+  EXPECT_EQ(twins["state"], "要確認");
+  EXPECT_EQ(twins["targets"].size(), 2u);
+  // The output stays on hold, saying which stages are left; study drawings can be made.
+  const json hold = rowOf(12, "申請用出力");
+  EXPECT_EQ(hold["state"], "保留");
+  EXPECT_NE(hold["details"].get<std::string>().find("2 通り芯"), std::string::npos) << hold.dump();
+  EXPECT_EQ(rowOf(12, "検討用の出力")["state"], "出せます");
+  EXPECT_FALSE(call("permit_checks", {{"stage", 13}}).value("ok", true));
+}

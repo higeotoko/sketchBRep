@@ -3046,20 +3046,28 @@ const std::vector<CommandDef>& commands() {
        "compared) or 6 (屋根・庇・バルコニー, docs/198: roofs' shape, pitch, eaves and walls standing up to them, canopies, "
        "balconies, the building area) or 7 (耐力壁, docs/199: the wall-quantity comparison and quarter-division balance "
        "per storey and direction, as check_wall_quantity) or 8 (基礎, docs/200: foundation plans and whether they are "
-       "current, sills and columns found on supports, as check_foundation and check_foundation_supports). Each row: "
+       "current, sills and columns found on supports, as check_foundation and check_foundation_supports), 9 (省エネ・設備, "
+       "docs/201: wall build-ups and insulation layers, typed floors and roofs, what is not in the model yet) or 10 "
+       "(立面・断面, docs/201: GL, the highest point above it, section cuts, the elevations' orientation), 11 (一式の突合せ, "
+       "docs/202: rows left per stage, unlike openings under one hand-given mark, rooms sharing a name) or 12 (申請用出力, "
+       "docs/202: the permit output on hold and why). Each row: "
        "item, state (未入力 / 入力済み / 要確認 / 要修正 / 階待ち / 通り芯待ち), details, targets (object ids), "
        "attention. What is found or missing only; never a legal judgement.",
-       SCHEMA({"type": "object", "properties": {"stage": {"type": "integer", "enum": [2, 3, 5, 6, 7, 8]}}, "required": ["stage"]}),
+       SCHEMA({"type": "object", "properties": {"stage": {"type": "integer", "enum": [2, 3, 5, 6, 7, 8, 9, 10, 11, 12]}}, "required": ["stage"]}),
        [](doc::Modeler& m, const json& a) {
          const int stage = a.at("stage").get<int>();
-         if (stage != 2 && stage != 3 && (stage < 5 || stage > 8))
-           throw std::runtime_error("stage must be 2, 3, 5, 6, 7 or 8");
+         if (stage != 2 && stage != 3 && (stage < 5 || stage > 12))
+           throw std::runtime_error("stage must be 2, 3 or 5 to 12");
          const auto checks = stage == 2   ? doc::permitGridChecks(m.document())
                              : stage == 3 ? doc::permitPlanChecks(m.document())
                              : stage == 5 ? doc::permitStairChecks(m.document())
                              : stage == 6 ? doc::permitRoofChecks(m.document())
                              : stage == 7 ? doc::permitBraceChecks(m.document())
-                                          : doc::permitFoundationChecks(m.document());
+                             : stage == 8 ? doc::permitFoundationChecks(m.document())
+                             : stage == 9 ? doc::permitEnergyChecks(m.document())
+                             : stage == 10 ? doc::permitElevationChecks(m.document())
+                             : stage == 11 ? doc::permitSetChecks(m.document())
+                                           : doc::permitOutputChecks(m.document());
          json rows = json::array();
          for (const auto& c : checks)
            rows.push_back({{"item", c.item}, {"state", c.state}, {"details", c.details}, {"targets", c.targets},

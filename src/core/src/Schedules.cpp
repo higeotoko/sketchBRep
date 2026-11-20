@@ -716,6 +716,201 @@ std::vector<PermitCheck> permitFoundationChecks(const Document& document) {
   return out;
 }
 
+std::vector<PermitCheck> permitEnergyChecks(const Document& document) {
+  std::vector<PermitCheck> out;
+  out.push_back({"適用ルート・地域", "未入力",
+                 "申請先と、どの基準・計算の方法で出すか（仕様基準・性能基準など）、地域の区分を決めます。モデルにはまだ入れる所がありません。",
+                 {}, true});
+  // Walls by build-up: the layers, and whether one of them is insulation.
+  struct BuildUp {
+    std::string name, layers;
+    bool insulated = false;
+    std::vector<ObjectId> walls;
+  };
+  std::map<std::string, BuildUp> buildUps;
+  std::vector<ObjectId> plain;
+  for (const Object& o : document.objects()) {
+    if (attribute(o, "kind") != "wall") continue;
+    const std::string type = attribute(o, "wall_type");
+    if (type.empty()) {
+      plain.push_back(o.id);
+      continue;
+    }
+    BuildUp& b = buildUps[type];
+    b.walls.push_back(o.id);
+    if (!b.name.empty()) continue;
+    b.name = attribute(o, "wall_type_name");
+    const nlohmann::json layers = nlohmann::json::parse(attribute(o, "wall_layers"), nullptr, false);
+    for (const auto& l : layers.is_array() ? layers : nlohmann::json::array()) {
+      const std::string n = l.value("name", std::string());
+      b.layers += (b.layers.empty() ? "" : "／") + n + " " + number(l.value("thickness", 0.0), 1);
+      b.insulated = b.insulated || n.find("断熱") != std::string::npos;
+    }
+  }
+  for (const auto& [type, b] : buildUps)
+    out.push_back({"壁の仕様：" + (b.name.empty() ? type : b.name), b.insulated ? "入力済み" : "未入力",
+                   std::to_string(b.walls.size()) + " 枚　外→内：" + b.layers +
+                       (b.insulated ? std::string() : "\n断熱材の層がありません。外皮の断熱の仕様と性能（熱抵抗など）は、まだモデルに入っていません。"),
+                   b.walls, !b.insulated});
+  if (!plain.empty())
+    out.push_back({"仕様の無い壁", "未入力", "厚さだけの壁 " + std::to_string(plain.size()) + " 枚。仕様（層）を選ぶと、部位ごとの構成を照らせます。",
+                   plain, true});
+  int typed = 0, parts = 0;
+  for (const Object& o : document.objects()) {
+    const std::string kind = attribute(o, "kind");
+    if (kind != "slab" && kind != "roof") continue;
+    ++parts;
+    if (!attribute(o, "type_name").empty()) ++typed;
+  }
+  if (parts > 0)
+    out.push_back({"床・屋根の種類", typed == parts ? "入力済み" : "未入力",
+                   "床・屋根 " + std::to_string(parts) + " のうち、種類（層）を付けた物 " + std::to_string(typed) +
+                       "。断熱の仕様と性能は種類の層の名前で書くだけで、性能の値はまだ入れる所がありません。",
+                   {}, typed != parts});
+  const auto openings = openingSchedule(document).rows;
+  if (!openings.empty())
+    out.push_back({"建具の性能", "未入力",
+                   "開口 " + std::to_string(openings.size()) + " 件。熱貫流率・日射の値やガラスの仕様は、まだモデルに入れる所がありません（品番の欄に書けます）。",
+                   {}, true});
+  out.push_back({"設備", "未入力", "換気・冷暖房・給湯・照明などの機器は、まだモデルにありません。機器の資料を別に添付します。", {}, true});
+  out.push_back({"まだ確かめていない事", "未評価",
+                 "外皮の性能・一次エネルギー消費量などの計算と、省エネ基準への適合（申請先と申請時点の基準で確かめます）。", {}});
+  return out;
+}
+
+std::vector<PermitCheck> permitElevationChecks(const Document& document) {
+  std::vector<PermitCheck> out;
+  const auto& settings = document.settings();
+  const FloorLevel* gl = nullptr;
+  for (const FloorLevel& l : settings.levels)
+    if (l.name == "GL") gl = &l;
+  if (gl)
+    out.push_back({"地盤（GL）", "入力済み", "レベル GL　" + number(gl->elevation, 0) + " mm（立面・断面の地盤の線と、高さの基準）", {}});
+  else
+    out.push_back({"地盤（GL）", "未入力", "レベルに「GL」がありません。立面・断面に地盤の線を出し、高さを測る基準にするため、GL を足します。", {}, true});
+  // The highest point of the building (walls, roofs, floors and what stands on them).
+  double top = -1e300;
+  ObjectId highest;
+  for (const Object& o : document.objects()) {
+    const std::string kind = attribute(o, "kind");
+    if (kind != "wall" && kind != "roof" && kind != "slab" && kind != "balcony" && kind != "canopy" && kind != "stair" &&
+        kind != "column" && kind != "beam")
+      continue;
+    const Bnd_Box box = document.worldBounds(o);
+    if (box.IsVoid()) continue;
+    if (box.CornerMax().Z() > top) {
+      top = box.CornerMax().Z();
+      highest = o.id;
+    }
+  }
+  if (!highest.empty()) {
+    const double base = gl ? gl->elevation : 0.0;
+    out.push_back({"いちばん高い所（参考）", "参考",
+                   std::string(gl ? "GL" : "z = 0 ") + "から " + number(top - base, 0) + " mm（" + document.find(highest)->name +
+                       "）。法の建築物の高さ・軒の高さの測り方（令 2 条 1 項 6・7 号）による値ではありません。",
+                   {highest}});
+  }
+  const int sections = static_cast<int>(std::count_if(settings.sections.begin(), settings.sections.end(),
+                                                      [](const SectionPlane& s) { return s.active && std::abs(s.normal[2]) < 0.5; }));
+  out.push_back({"断面の切る位置", "入力済み",
+                 sections > 0 ? "断面ツールで決めた縦の断面 " + std::to_string(sections) + " か所。図面一式で断面図になり、平面図に切る位置の線が出ます（docs/132）。"
+                              : std::string("断面ツールで決めた所はありません。図面一式では建物の真ん中を通る 2 つの断面（A-A 東西・B-B 南北）を出します（docs/132）。必要な位置は断面ツールで決めます。"),
+                 {}});
+  if (settings.siteNorth)
+    out.push_back({"立面の向き", "入力済み", "真北はモデルの +Y から時計回り " + number(settings.siteNorth->angle, 1) +
+                                               "°。立面図の名前（南・東・北・西）はモデルの軸に沿った向きです。真北に対して斜めの面の呼び方は確かめます。",
+                   {}});
+  else
+    out.push_back({"立面の向き", "要確認", "真北が未入力です。立面図の名前（南・東・北・西）はモデルの軸に沿った向きで出ます。", {}, true});
+  out.push_back({"まだ確かめていない事", "未評価",
+                 "道路斜線・隣地斜線・北側斜線などの高さの制限、法の高さ・軒の高さ、平面・立面・断面の寸法の突合せ。申請先と申請時点の法令で確かめます。",
+                 {}});
+  return out;
+}
+
+namespace {
+// The stages read from the model alone (the site stage is read in the app: it shows its own rows).
+std::vector<std::pair<std::string, std::vector<PermitCheck>>> modelStages(const Document& document) {
+  return {{"2 通り芯", permitGridChecks(document)},   {"3 平面", permitPlanChecks(document)},
+          {"5 階段", permitStairChecks(document)},     {"6 屋根・庇・バルコニー", permitRoofChecks(document)},
+          {"7 耐力壁", permitBraceChecks(document)},    {"8 基礎", permitFoundationChecks(document)},
+          {"9 省エネ・設備", permitEnergyChecks(document)}, {"10 立面・断面", permitElevationChecks(document)}};
+}
+}  // namespace
+
+std::vector<PermitCheck> permitSetChecks(const Document& document) {
+  std::vector<PermitCheck> out;
+  for (const auto& [stage, rows] : modelStages(document)) {
+    std::map<std::string, int> counts;
+    std::string items;
+    int open = 0;
+    for (const PermitCheck& c : rows) {
+      if (!c.attention) continue;
+      ++open;
+      ++counts[c.state];
+      if (open <= 4) items += "\n・" + c.item + "（" + c.state + "）";
+    }
+    std::string summary;
+    for (const auto& [state, n] : counts) summary += (summary.empty() ? "" : "、") + state + " " + std::to_string(n);
+    if (open > 4) items += "\n・ほか " + std::to_string(open - 4);
+    out.push_back({stage, open == 0 ? "残りなし" : "残り " + std::to_string(open),
+                   open == 0 ? "その工程で見る事は、どれも入力済み・参考値です（未評価の行は残ります）。" : summary + items, {}, open > 0});
+  }
+  // Marks given by hand to openings that are not alike (docs/109): one mark, different openings.
+  std::vector<std::string> mixed;
+  for (const OpeningTypeRow& t : openingSchedule(document).types)
+    if (t.mixed) mixed.push_back(t.mark);
+  if (!mixed.empty()) {
+    std::string marks;
+    for (const auto& m : mixed) marks += (marks.empty() ? "" : "、") + m;
+    out.push_back({"建具の符号", "要確認", "手で付けた同じ符号なのに、種類・建具・大きさ・品番が違う開口があります：" + marks +
+                                              "。建具表では最初の物の値が出ます。",
+                   {}, true});
+  } else {
+    out.push_back({"建具の符号", "入力済み", "同じ符号の開口は、どれも同じ種類・大きさです。", {}});
+  }
+  // Rooms of one storey with the same name: the tables and the plans cannot be told apart.
+  std::map<std::pair<std::string, std::string>, std::vector<ObjectId>> names;
+  for (const RoomRow& r : roomSchedule(document).rows) names[{r.level, r.name}].push_back(r.id);
+  std::vector<ObjectId> twins;
+  std::string twinNames;
+  for (const auto& [key, ids] : names)
+    if (ids.size() > 1) {
+      twins.insert(twins.end(), ids.begin(), ids.end());
+      twinNames += (twinNames.empty() ? "" : "、") + (key.first.empty() ? std::string() : key.first + " ") + key.second;
+    }
+  if (!twins.empty())
+    out.push_back({"室名", "要確認", "同じ階に同じ名前の室があります：" + twinNames + "。表と図で見分けられるよう、名前を変えます。", twins, true});
+  out.push_back({"まだ確かめていない事", "未評価",
+                 "図面と表と外部の添付資料の版、図番と図面リストの突合せ、法令の根拠と確認日、担当者の確認。"
+                 "図面一式（ファイル → 図面一式を書き出す）で同じモデルから図と表をそろえて出し、申請先の図書一覧と照らします。",
+                 {}});
+  return out;
+}
+
+std::vector<PermitCheck> permitOutputChecks(const Document& document) {
+  std::vector<PermitCheck> out;
+  std::string left;
+  int stages = 0;
+  for (const auto& [stage, rows] : modelStages(document)) {
+    const auto open = std::count_if(rows.begin(), rows.end(), [](const PermitCheck& c) { return c.attention; });
+    if (open == 0) continue;
+    ++stages;
+    left += "\n・" + stage + "：残り " + std::to_string(open);
+  }
+  out.push_back({"申請用出力", "保留",
+                 "申請先・適用法令・必要図書を確かめるまで、申請用の出力はしません。" +
+                     (stages == 0 ? std::string("\nモデルから見る工程の残りはありません（敷地・居室の工程と、各工程の未評価の行は残ります）。")
+                                  : "\n残りのある工程：" + left),
+                 {}, true});
+  out.push_back({"検討用の出力", "出せます",
+                 "図面一式（ファイル → 図面一式を書き出す）、配置図のプレビュー、各図面の書き出しは、検討用としていつでも出せます。"
+                 "出力に未評価・要再照合の注が付く所があります。",
+                 {}});
+  out.push_back({"申請先で確かめる事", "未評価", "申請先（確認検査機関・特定行政庁）、申請の区分と適用法令、必要な図書と様式、提出の方法。", {}});
+  return out;
+}
+
 std::vector<PermitCheck> permitStairChecks(const Document& document) {
   std::vector<PermitCheck> out;
   const auto label = [](const std::string& item) -> std::string {
