@@ -192,6 +192,32 @@ void PermitWorkflowPanel::readSiteChecks() {
       }
     }
   }
+  // docs/206: the group of use zones (for the daylight factor, docs/205).
+  {
+    const auto zoneLabel = translated("用途地域の区分");
+    const auto zoneEdit = translated("用途地域の区分を入力");
+    const doc::Object* outline = site ? document_.find(site->outline) : nullptr;
+    const auto value = [&](const char* key) {
+      if (!outline) return std::string();
+      const auto it = outline->attributes.find(key);
+      return it == outline->attributes.end() ? std::string() : it->second;
+    };
+    const std::string zone = value("use_zone");
+    if (!canPreview_) {
+      rows_.push_back({zoneLabel, translated("敷地境界待ち"), translated("敷地境界を登録すると入力できます。"), {}});
+    } else if (zone.empty()) {
+      rows_.push_back({zoneLabel, missing,
+                       translated("住居系・工業系・商業系（指定なしを含む）のどれかと確認資料を入れます。採光補正係数の式（施行令 第 20 条 2 項）を選ぶのに使います。"),
+                       zoneEdit, Action::Zone, true});
+    } else {
+      const auto name = zone == "residential" ? translated("住居系") : zone == "industrial" ? translated("工業系") : translated("商業系・指定なし");
+      rows_.push_back({zoneLabel, entered,
+                       translated("%1\n確認資料 %2\n用途地域そのもの（どの地域か）の確認は申請先で行います。")
+                           .arg(name, QString::fromStdString(value("use_zone_source"))),
+                       zoneEdit, Action::Zone});
+    }
+  }
+
   rows_.push_back({translated("申請条件"), translated("未評価"),
       translated("申請先・適用ルートと最新の法令を確認します。道路・接道、法令上の地盤面、高低差による区分の確認が残っています。"), {}});
 }

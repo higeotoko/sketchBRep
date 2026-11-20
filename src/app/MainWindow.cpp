@@ -1154,6 +1154,38 @@ void MainWindow::buildMenus() {
   });
   site->addAction(tr("道路・接道情報..."), this, &MainWindow::showSiteRoadDialog)
       ->setObjectName(QStringLiteral("siteRoadAction"));
+  // docs/206: the group of use zones, for the daylight factor (令 20 条 2 項, docs/205).
+  site->addAction(tr("用途地域の区分..."), this, [this] {
+    const auto& boundary = modeler_.document().settings().siteBoundary;
+    if (!boundary) {
+      reportError(tr("先に敷地境界を指定してください"));
+      return;
+    }
+    const doc::Object* outline = modeler_.document().find(boundary->outline);
+    const auto attribute = [&](const char* key) {
+      const auto it = outline ? outline->attributes.find(key) : decltype(outline->attributes.end()){};
+      return outline && it != outline->attributes.end() ? QString::fromStdString(it->second) : QString();
+    };
+    const QStringList codes{QStringLiteral("residential"), QStringLiteral("industrial"), QStringLiteral("commercial"), QString()};
+    const QStringList labels{tr("住居系（第一種・第二種低層住居専用、第一種・第二種中高層住居専用、第一種・第二種住居、準住居、田園住居）"),
+                             tr("工業系（準工業、工業、工業専用）"), tr("商業系・指定なし（近隣商業、商業、用途地域の指定のない区域）"),
+                             tr("未入力にする")};
+    bool ok = false;
+    const int now = std::max(0, static_cast<int>(codes.indexOf(attribute("use_zone"))));
+    const QString picked = QInputDialog::getItem(this, tr("用途地域の区分"),
+                                                 tr("採光補正係数の式（施行令 第 20 条 2 項 1〜3 号）を選ぶ区分"), labels,
+                                                 attribute("use_zone").isEmpty() ? 0 : now, false, &ok);
+    if (!ok) return;
+    const QString zone = codes.at(labels.indexOf(picked));
+    QString source;
+    if (!zone.isEmpty()) {
+      source = QInputDialog::getText(this, tr("用途地域の区分"), tr("確認に使った資料（都市計画図など）"), QLineEdit::Normal,
+                                     attribute("use_zone_source"), &ok).trimmed();
+      if (!ok) return;
+    }
+    if (report(modeler_.setSiteZone(zone.toStdString(), source.toStdString())))
+      setStatus(zone.isEmpty() ? tr("用途地域の区分を未入力にしました") : tr("用途地域の区分を決めました（Ctrl+Z で戻せます）"));
+  })->setObjectName(QStringLiteral("siteZoneAction"));
   site->addAction(tr("道路情報の指定を解除"), this, [this] {
     modeler_.clearSiteRoad();
     setStatus(tr("道路情報の指定を解除しました"));
@@ -7044,6 +7076,7 @@ void MainWindow::showPermitWorkflow() {
     switch (action) {
       case Action::Boundary: trigger("setSiteBoundaryAction"); break;
       case Action::North: trigger("siteNorthByAngleAction"); break;
+      case Action::Zone: trigger("siteZoneAction"); break;  // docs/206
       case Action::SavedRoad:
         setSelection({});
         [[fallthrough]];

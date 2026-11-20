@@ -864,6 +864,16 @@ void GuiPhase1::permitWorkflowAppliesDaylightFactors() {
   auto* details = dock->findChild<QLabel*>(QStringLiteral("permitWorkflowDetails"));
   auto* edit = dock->findChild<QPushButton*>(QStringLiteral("permitWorkflowEdit"));
   QVERIFY(phases && checks && details && edit);
+  // docs/206: the zone shows in stage 1, with its source; its button opens the menu's input.
+  phases->setCurrentRow(0);
+  QTreeWidgetItem* zone = nullptr;
+  for (int i = 0; i < checks->topLevelItemCount(); ++i)
+    if (checks->topLevelItem(i)->text(0) == QStringLiteral("用途地域の区分")) zone = checks->topLevelItem(i);
+  QVERIFY(zone);
+  QCOMPARE(zone->text(1), QStringLiteral("入力済み"));
+  checks->setCurrentItem(zone);
+  QVERIFY(details->text().contains(QStringLiteral("住居系")));
+  QVERIFY(f.window.findChild<QAction*>(QStringLiteral("siteZoneAction")));
   phases->setCurrentRow(3);
   QTreeWidgetItem* row = nullptr;
   for (int i = 0; i < checks->topLevelItemCount(); ++i)
