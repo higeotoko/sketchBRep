@@ -911,6 +911,12 @@ void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
   QVERIFY(rowOf(QStringLiteral("照らした値")));
   checks->setCurrentItem(rowOf(QStringLiteral("まだ確かめていない事")));
   QVERIFY(details->text().contains(QStringLiteral("N値")));
+
+  // docs/200: stage 8 (基礎): no foundation yet; what is not assessed.
+  phases->setCurrentRow(7);
+  QCOMPARE(rowOf(QStringLiteral("基礎"))->text(1), QStringLiteral("未入力"));
+  checks->setCurrentItem(rowOf(QStringLiteral("まだ確かめていない事")));
+  QVERIFY(details->text().contains(QStringLiteral("地盤")));
 }
 
 // Request "線の移動コピー・等間隔配列・等分割": a selected line copied with

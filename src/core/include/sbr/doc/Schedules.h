@@ -118,6 +118,9 @@ std::vector<PermitCheck> permitRoofChecks(const Document& document);
 // storey and direction as construction::checkWallQuantity works them out (its pinned table and
 // date), the walls counted, and what it does not assess. A comparison, never a pass.
 std::vector<PermitCheck> permitBraceChecks(const Document& document);
+// Stage 8 (基礎, docs/200): the foundation plans made from the sills and whether they are current,
+// the sills' and columns' bases found on supports (geometry only), and what is not assessed.
+std::vector<PermitCheck> permitFoundationChecks(const Document& document);
 
 // One storey.
 struct AreaRow {

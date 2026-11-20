@@ -20,6 +20,7 @@
 #include <gp_Trsf.hxx>
 #include <nlohmann/json.hpp>
 
+#include "sbr/ConstructionFoundation.h"
 #include "sbr/ConstructionWall.h"
 #include "sbr/OpeningSymbols.h"
 #include "sbr/doc/Modeler.h"
@@ -634,6 +635,83 @@ std::vector<PermitCheck> permitBraceChecks(const Document& document) {
   out.push_back({"まだ確かめていない事", "未評価",
                  (open.empty() ? std::string() : open + "。") +
                      "耐力壁の配置図・壁量計算表・側端の図の書式は、申請先の様式で確かめます。",
+                 {}});
+  return out;
+}
+
+std::vector<PermitCheck> permitFoundationChecks(const Document& document) {
+  std::vector<PermitCheck> out;
+  std::vector<std::string> open;
+  const auto addOpen = [&](const nlohmann::json& list) {
+    for (const auto& u : list)
+      if (u.is_string() && std::find(open.begin(), open.end(), u.get<std::string>()) == open.end()) open.push_back(u.get<std::string>());
+  };
+  const auto made = construction::checkFoundation(document);
+  const nlohmann::json plans = made ? nlohmann::json::parse(*made, nullptr, false).value("plans", nlohmann::json::array())
+                                    : nlohmann::json::array();
+  for (const auto& plan : plans) {
+    const std::string status = plan.value("status", std::string());
+    const std::string id = plan.value("foundation", std::string());
+    std::string details = status == "current" ? "土台から作った基礎で、今の土台と合っています。"
+                          : status == "modified" ? "基礎の形・配置が手で直されています。"
+                          : status == "needs_regeneration" ? "土台が変わりました。基礎を作り直します。"
+                                                           : "基礎の元の土台を読めません。";
+    for (const auto& r : plan.value("reasons", nlohmann::json::array()))
+      if (r.is_string()) details += "\n" + r.get<std::string>();
+    const nlohmann::json quantities = plan.value("quantities", nlohmann::json::object());
+    for (const auto& [key, value] : quantities.items()) {
+      const std::string part = key == "foundation_stem" ? "立上り" : key == "foundation_footing" ? "フーチング"
+                               : key == "foundation_slab" ? "耐圧盤" : key == "foundation_pad" ? "束石" : key;
+      if (value.is_object() && value.contains("volume_m3") && value.at("volume_m3").is_number())
+        details += "\n" + part + "　" + number(value.at("volume_m3").get<double>(), 3) + " m³";
+    }
+    addOpen(plan.value("unassessed", nlohmann::json::array()));
+    std::vector<ObjectId> targets;
+    if (!id.empty() && document.find(id)) targets.push_back(id);
+    out.push_back({plan.value("name", std::string("基礎")), status == "current" ? "入力済み" : "要確認", details, targets,
+                   status != "current"});
+  }
+  if (plans.empty())
+    out.push_back({"基礎", "未入力", "土台を置いてから、基礎を作ります（布基礎・べた基礎）。外部の基礎詳細図を使う時は、その図番を図書に付けます。",
+                   {}, true});
+
+  const auto supports = construction::foundationSupports(document);
+  const nlohmann::json report = supports ? nlohmann::json::parse(*supports, nullptr, false) : nlohmann::json();
+  const nlohmann::json rows = report.is_object() ? report.value("rows", nlohmann::json::array()) : nlohmann::json::array();
+  if (rows.empty()) {
+    out.push_back({"土台・柱の支え", "未評価", "下の面を照らす土台・柱がありません。", {}});
+  } else {
+    std::map<std::string, int> counts;
+    std::vector<ObjectId> looseIds;
+    std::string loose;
+    for (const auto& row : rows) {
+      const std::string status = row.value("status", std::string("not_evaluated"));
+      ++counts[status];
+      if (status == "detected") continue;
+      if (row.contains("id") && row.at("id").is_string() && document.find(row.at("id").get<std::string>()))
+        looseIds.push_back(row.at("id").get<std::string>());
+      if (looseIds.size() <= 5) {
+        loose += "\n" + row.value("name", std::string()) + "　" +
+                 (status == "missing" ? "支えが見つからない" : status == "partial" ? "一部だけ支えに乗る" : status == "not_evaluated" ? "未評価" : status);
+        if (const std::string why = row.value("reason", std::string()); !why.empty()) loose += "（" + why + "）";
+      }
+    }
+    std::string details = "照らした土台・柱 " + std::to_string(rows.size()) + "：下の面が支えに乗る " +
+                          std::to_string(counts["detected"]) + "、それ以外 " + std::to_string(rows.size() - counts["detected"]);
+    details += loose;
+    if (looseIds.size() > 5) details += "\nほか " + std::to_string(looseIds.size() - 5);
+    const bool all = counts["detected"] == static_cast<int>(rows.size());
+    out.push_back({"土台・柱の支え", all ? "形の上で支えあり" : "要確認", details, looseIds, !all});
+    if (report.is_object()) {
+      out.push_back({"照らした事", "参考", report.value("notice", std::string()), {}});
+      addOpen(report.value("unassessed_supports", nlohmann::json::array()));
+    }
+  }
+  std::string list;
+  for (const auto& u : open) list += (list.empty() ? "" : "、") + u;
+  out.push_back({"まだ確かめていない事", "未評価",
+                 (list.empty() ? std::string("地盤・支持力、基礎の構造計算、配筋") : list) +
+                     "。地盤の資料（地盤調査）と基礎伏図・配筋・人通口の記載、または外部の詳細図への参照を、申請先の様式で確かめます。",
                  {}});
   return out;
 }

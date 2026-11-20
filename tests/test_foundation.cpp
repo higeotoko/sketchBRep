@@ -168,3 +168,34 @@ TEST_F(Foundation, ApiEffectsPreserveReadOnlyInspectionAndDefaultPreview) {
   EXPECT_EQ(api.effectOf(R"({"command":"generate_foundation"})"),api::CommandApi::Effect::Read);
   EXPECT_EQ(api.effectOf(R"({"command":"generate_foundation","args":{"preview":false}})"),api::CommandApi::Effect::ModelWrite);
 }
+
+// docs/200: the permit workflow's stage 8 (基礎) reads the same checks: the plan and whether it
+// is current, the sills found on it, and what is not assessed.
+#include "sbr/doc/Schedules.h"
+TEST_F(Foundation, PermitStageReadsThePlanAndTheSupports) {
+  auto rowOf = [&](const std::string& item) {
+    for (const auto& c : doc::permitFoundationChecks(m.document()))
+      if (c.item == item) return c;
+    ADD_FAILURE() << "no row " << item;
+    return doc::PermitCheck{};
+  };
+  EXPECT_EQ(rowOf("基礎").state, "未入力");
+  EXPECT_EQ(rowOf("土台・柱の支え").state, "未評価");  // nothing to rest on anything yet
+  ring();
+  EXPECT_EQ(rowOf("土台・柱の支え").state, "要確認");  // sills with no foundation under them
+  const auto r = generate();
+  const std::string root = r.at("foundation");
+  const std::string name = m.document().find(root)->name;
+  auto plan = rowOf(name);
+  EXPECT_EQ(plan.state, "入力済み") << plan.details;
+  EXPECT_NE(plan.details.find("立上り"), std::string::npos) << plan.details;
+  ASSERT_EQ(plan.targets.size(), 1u);
+  EXPECT_EQ(plan.targets[0], root);
+  EXPECT_EQ(rowOf("土台・柱の支え").state, "形の上で支えあり") << rowOf("土台・柱の支え").details;
+  EXPECT_NE(rowOf("まだ確かめていない事").details.find("地盤"), std::string::npos);
+  // A sill moved: the plan no longer matches it.
+  ASSERT_TRUE(m.move({ids[0]}, gp_Vec(0, -100, 0)));
+  plan = rowOf(name);
+  EXPECT_EQ(plan.state, "要確認");
+  EXPECT_NE(plan.details.find("作り直します"), std::string::npos) << plan.details;
+}
