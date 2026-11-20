@@ -240,11 +240,12 @@ void PermitWorkflowPanel::readRoomOpeningChecks() {
       translated("対象室、給排気経路、換気機器の能力と根拠資料を確認します。"), {}});
 }
 
-// docs/194, 197: stages 2 (通り芯), 3 (平面) and 5 (階段) from the model (doc::permit*Checks).
+// docs/194, 197, 198: stages 2 (通り芯), 3 (平面), 5 (階段) and 6 (屋根・庇・バルコニー) from the model (doc::permit*Checks).
 void PermitWorkflowPanel::readModelChecks(int stage) {
   const auto checks = stage == 2   ? doc::permitGridChecks(document_)
                       : stage == 3 ? doc::permitPlanChecks(document_)
-                                   : doc::permitStairChecks(document_);
+                      : stage == 5 ? doc::permitStairChecks(document_)
+                                   : doc::permitRoofChecks(document_);
   for (const auto& c : checks) {
     QStringList ids;
     for (const auto& id : c.targets) ids << QString::fromStdString(id);
@@ -269,13 +270,12 @@ void PermitWorkflowPanel::refresh() {
   canPreview_ = false;
   if (phase == 0) {
     readSiteChecks();
-  } else if (phase == 1 || phase == 2 || phase == 4) {
+  } else if (phase == 1 || phase == 2 || phase == 4 || phase == 5) {
     readModelChecks(phase + 1);
   } else if (phase == 3) {
     readRoomOpeningChecks();
   } else {
-    const QStringList guides{QString(), QString(), QString(), QString(),
-        translated("突出部の寸法と役割、面積や採光に効く縁を確認します。"),
+    const QStringList guides{QString(), QString(), QString(), QString(), QString(),
         translated("階・方向ごとの壁量、四分割、接合部の根拠を確認します。"),
         translated("架構と基礎の対応、地盤資料、配筋と人通口を確認します。"),
         translated("適用ルート、断熱範囲、建具性能、機器の資料を照合します。"),

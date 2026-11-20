@@ -896,6 +896,14 @@ void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
   QVERIFY(details->text().contains(QStringLiteral("蹴上げ")));
   edit->click();
   QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{stair["result"]["id"].get<std::string>()});
+
+  // docs/198: stage 6 (屋根・庇・バルコニー): no roof yet; the building area read from the model.
+  phases->setCurrentRow(5);
+  QCOMPARE(rowOf(QStringLiteral("屋根"))->text(1), QStringLiteral("未入力"));
+  QVERIFY(rowOf(QStringLiteral("建築面積")));
+  QVERIFY(call("create_roof",{{"outline",{{0,0},{8000,0},{8000,6000},{0,6000}}},{"height",3000}})["ok"].get<bool>());
+  QTRY_VERIFY(!rowOf(QStringLiteral("屋根")));
+  QVERIFY(next->text().contains(QStringLiteral("Roof")));
 }
 
 // Request "線の移動コピー・等間隔配列・等分割": a selected line copied with

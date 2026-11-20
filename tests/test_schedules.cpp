@@ -2583,3 +2583,38 @@ TEST_F(Schedules, PermitChecksReadTheStairStage) {
   ok("change_stair", {{"id", stair}, {"risers", 0}, {"handrail", "none"}});
   EXPECT_EQ(rows()[0]["state"], "未評価あり");
 }
+
+// docs/198: the permit workflow's stage 6 (屋根・庇・バルコニー).
+TEST_F(Schedules, PermitChecksReadTheRoofStage) {
+  const auto rows = [&] { return ok("permit_checks", {{"stage", 6}})["rows"]; };
+  const auto rowOf = [&](const json& all, const std::string& item) {
+    for (const json& row : all)
+      if (row["item"] == item) return row;
+    ADD_FAILURE() << "no row " << item << " in " << all.dump();
+    return json();
+  };
+  json all = rows();
+  EXPECT_EQ(rowOf(all, "屋根")["state"], "未入力");
+  EXPECT_EQ(rowOf(all, "建築面積")["state"], "参考値");
+  EXPECT_EQ(rowOf(all, "まだ確かめていない事")["state"], "未評価");
+  // A gable roof with eaves 1200 on the walls' top: no wall up to it yet.
+  const std::string roof = ok("create_roof", {{"outline", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}}}, {"height", 3000}, {"eave", 1200}})["id"];
+  const std::string name = modeler.document().find(roof)->name;
+  all = rows();
+  json row = rowOf(all, name);
+  EXPECT_EQ(row["state"], "要確認");
+  std::string details = row["details"];
+  EXPECT_NE(details.find("切妻"), std::string::npos) << details;
+  EXPECT_NE(details.find("軒の出 1200 mm"), std::string::npos) << details;
+  EXPECT_NE(details.find("建築面積に入ります"), std::string::npos) << details;
+  EXPECT_NE(details.find("屋根まで立ち上げた壁なし"), std::string::npos);
+  // The walls under it stood up to it: the row lists them and is done.
+  ok("fit_walls_to_roof", {{"roof", roof}});
+  row = rowOf(rows(), name);
+  EXPECT_EQ(row["state"], "入力済み") << row.dump();
+  EXPECT_GE(row["targets"].size(), 5u);  // the roof and its walls
+  // A balcony on the north wall: its row says how it counts.
+  ok("create_balcony", {{"host", north}});
+  const json balcony = rowOf(rows(), "バルコニー");
+  EXPECT_NE(balcony["details"].get<std::string>().find("通達どおり"), std::string::npos) << balcony.dump();
+}

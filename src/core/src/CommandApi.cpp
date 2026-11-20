@@ -3043,16 +3043,18 @@ const std::vector<CommandDef>& commands() {
        "on levels and on the grid, columns and beams on the grid) or 3 (平面: enclosed regions and rooms per "
        "storey, rooms that do not close or share, walls reshaped by hand, openings without a fitting) or 5 (階段, docs/197: "
        "each stair against the sizes for a house's own stair, 令 23-25 read on e-Gov 2026-11-20, the basis and what is not "
-       "compared). Each row: "
+       "compared) or 6 (屋根・庇・バルコニー, docs/198: roofs' shape, pitch, eaves and walls standing up to them, canopies, "
+       "balconies, the building area). Each row: "
        "item, state (未入力 / 入力済み / 要確認 / 要修正 / 階待ち / 通り芯待ち), details, targets (object ids), "
        "attention. What is found or missing only; never a legal judgement.",
-       SCHEMA({"type": "object", "properties": {"stage": {"type": "integer", "enum": [2, 3, 5]}}, "required": ["stage"]}),
+       SCHEMA({"type": "object", "properties": {"stage": {"type": "integer", "enum": [2, 3, 5, 6]}}, "required": ["stage"]}),
        [](doc::Modeler& m, const json& a) {
          const int stage = a.at("stage").get<int>();
-         if (stage != 2 && stage != 3 && stage != 5) throw std::runtime_error("stage must be 2, 3 or 5");
+         if (stage != 2 && stage != 3 && stage != 5 && stage != 6) throw std::runtime_error("stage must be 2, 3, 5 or 6");
          const auto checks = stage == 2   ? doc::permitGridChecks(m.document())
                              : stage == 3 ? doc::permitPlanChecks(m.document())
-                                          : doc::permitStairChecks(m.document());
+                             : stage == 5 ? doc::permitStairChecks(m.document())
+                                          : doc::permitRoofChecks(m.document());
          json rows = json::array();
          for (const auto& c : checks)
            rows.push_back({{"item", c.item}, {"state", c.state}, {"details", c.details}, {"targets", c.targets},

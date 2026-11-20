@@ -462,6 +462,105 @@ std::vector<PermitCheck> permitPlanChecks(const Document& document) {
   return out;
 }
 
+std::vector<PermitCheck> permitRoofChecks(const Document& document) {
+  std::vector<PermitCheck> out;
+  const auto mm = [](double v) { return number(v, 0) + " mm"; };
+  // Walls standing up to each roof (fitted to it, docs/100).
+  std::map<ObjectId, std::vector<ObjectId>> wallsUp;
+  for (const Object& o : document.objects())
+    if (attribute(o, "kind") == "wall" && !attribute(o, "top_roof").empty()) wallsUp[attribute(o, "top_roof")].push_back(o.id);
+  int roofs = 0;
+  for (const Object& o : document.objects()) {
+    if (attribute(o, "kind") != "roof") continue;
+    ++roofs;
+    const nlohmann::json spec = nlohmann::json::parse(attribute(o, "roof_spec"), nullptr, false);
+    if (!spec.is_object()) {
+      out.push_back({o.name, "未評価", "屋根ツールの寸法を読めません（形を直接変えた屋根）。勾配・軒の出は図で確かめます。", {o.id}, true});
+      continue;
+    }
+    const std::string kind = spec.value("kind", std::string("gable"));
+    const std::string shape = kind == "gable" ? "切妻" : kind == "hip" ? "寄棟" : kind == "shed" ? "片流れ" : kind;
+    const double eave = spec.value("eave", 600.0), verge = spec.value("gable_eave", 300.0);
+    std::string details = shape + "　勾配 " + number(spec.value("pitch", 0.0), 1) + " 寸（" + number(spec.value("pitch", 0.0), 1) +
+                          "/10）\n軒の出 " + mm(eave);
+    if (kind != "hip") details += "　けらばの出 " + mm(verge);
+    if (spec.contains("sides") && spec.at("sides").is_array() && !spec.at("sides").empty())
+      details += "\n辺ごとの勾配・出あり " + std::to_string(spec.at("sides").size()) + " 辺";
+    if (spec.contains("wall_sides") && spec.at("wall_sides").is_array() && !spec.at("wall_sides").empty())
+      details += "\n壁に付く辺 " + std::to_string(spec.at("wall_sides").size()) + "（そこには軒が出ません）";
+    if (const std::string type = attribute(o, "type_name"); !type.empty()) details += "\n種類 " + type;
+    std::vector<ObjectId> targets{o.id};
+    const auto up = wallsUp.find(o.id);
+    if (up != wallsUp.end()) {
+      details += "\n屋根まで立ち上げた壁 " + std::to_string(up->second.size()) + " 枚";
+      targets.insert(targets.end(), up->second.begin(), up->second.end());
+    } else {
+      details += "\n屋根まで立ち上げた壁なし（妻壁が三角にならず、壁と屋根の間が空いて見えます。屋根のプロパティ「下の壁：合わせる」）";
+    }
+    double furthest = std::max(eave, kind == "hip" ? 0.0 : verge);
+    if (spec.contains("sides") && spec.at("sides").is_array())
+      for (const auto& one : spec.at("sides"))
+        if (one.is_object()) furthest = std::max(furthest, one.value("eave", 0.0));
+    if (furthest >= 1000.0) details += "\n出が 1 m 以上：先から 1 m を除いた部分が建築面積に入ります（令 2 条 1 項 2 号、docs/141）";
+    out.push_back({o.name, up != wallsUp.end() ? "入力済み" : "要確認", details, targets, up == wallsUp.end()});
+  }
+  if (roofs == 0) out.push_back({"屋根", "未入力", "屋根ツールで外周を描き、勾配と軒の出を入れます。", {}, true});
+
+  std::vector<ObjectId> canopies;
+  std::string canopyDetails;
+  int canopiesOut = 0;
+  for (const Object& o : document.objects()) {
+    if (attribute(o, "kind") != "canopy") continue;
+    const nlohmann::json c = nlohmann::json::parse(attribute(o, "canopy"), nullptr, false);
+    canopies.push_back(o.id);
+    if (!c.is_object()) continue;
+    const double depth = c.value("depth", 0.0);
+    if (depth >= 1000.0) ++canopiesOut;
+    if (canopies.size() <= 5) canopyDetails += "\n" + o.name + "　出 " + mm(depth) + "　幅 " + mm(c.value("width", 0.0));
+  }
+  if (!canopies.empty()) {
+    std::string details = "庇 " + std::to_string(canopies.size()) + " 枚" + canopyDetails;
+    if (canopies.size() > 5) details += "\nほか " + std::to_string(canopies.size() - 5) + " 枚";
+    if (canopiesOut > 0) details += "\n出が 1 m 以上の庇 " + std::to_string(canopiesOut) + " 枚：先から 1 m を除いた部分が建築面積に入ります";
+    out.push_back({"庇", "入力済み", details, canopies});
+  }
+
+  std::vector<ObjectId> balconies;
+  std::string balconyDetails;
+  for (const Object& o : document.objects()) {
+    if (attribute(o, "kind") != "balcony") continue;
+    const nlohmann::json b = nlohmann::json::parse(attribute(o, "balcony"), nullptr, false);
+    balconies.push_back(o.id);
+    if (!b.is_object() || balconies.size() > 5) continue;
+    const std::string how = b.value("floor_area", std::string());
+    const std::string floor = how == "count" ? "床面積に入れる（手で選択）" : how == "exclude" ? "床面積に入れない（手で選択）"
+                                                                         : "床面積は通達どおり（自動）";
+    balconyDetails += "\n" + o.name + "　出 " + mm(b.value("depth", 0.0)) + "　幅 " + mm(b.value("width", 0.0));
+    if (b.value("posts", 0) > 0) balconyDetails += "　柱 " + std::to_string(b.value("posts", 0)) + " 本";
+    balconyDetails += "　" + floor;
+  }
+  if (!balconies.empty()) {
+    std::string details = "バルコニー " + std::to_string(balconies.size()) + " 個" + balconyDetails;
+    if (balconies.size() > 5) details += "\nほか " + std::to_string(balconies.size() - 5) + " 個";
+    details += "\n建築面積・床面積への入り方は面積の表の注にあります（docs/163・167・175）。";
+    out.push_back({"バルコニー", "入力済み", details, balconies});
+  }
+
+  const AreaTable areas = areaTable(document);
+  if (areas.buildingKnown) {
+    std::string details = "建築面積 " + m2(areas.buildingArea) + "（壁芯の各階の平面と、1 m 以上出た軒・庇・バルコニーの先から 1 m を除いた部分を重ねた物）";
+    for (std::size_t i = 0; i < std::min<std::size_t>(areas.legalNotes.size(), 4); ++i) details += "\n" + areas.legalNotes[i];
+    out.push_back({"建築面積", "参考値", details, {}});
+  } else {
+    out.push_back({"建築面積", "未評価", "面積の表で建築面積を出せません。階と壁で閉じた平面を確かめます。", {}, true});
+  }
+  out.push_back({"まだ確かめていない事", "未評価",
+                 "屋根の構造・材料（防火の区域による屋根の性能）、高さの制限（斜線など）、採光に効く軒・庇の出（第 4 工程の採光）、"
+                 "屋根の排水。申請先と申請時点の法令で確かめます。",
+                 {}});
+  return out;
+}
+
 std::vector<PermitCheck> permitStairChecks(const Document& document) {
   std::vector<PermitCheck> out;
   const auto label = [](const std::string& item) -> std::string {

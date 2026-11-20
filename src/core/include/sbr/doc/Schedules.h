@@ -110,6 +110,10 @@ std::vector<PermitCheck> permitPlanChecks(const Document& document);
 // house's own stair (令 23-25, read on e-Gov 2026-11-20: 令和8年11月1日施行版), the basis, and
 // what is not compared. A comparison, never a pass.
 std::vector<PermitCheck> permitStairChecks(const Document& document);
+// Stage 6 (屋根・庇・バルコニー, docs/198): each roof's shape, pitch, eaves and the walls standing up
+// to it; canopies and balconies and how they count; the building area as worked out (docs/141),
+// and what is not looked at.
+std::vector<PermitCheck> permitRoofChecks(const Document& document);
 
 // One storey.
 struct AreaRow {
