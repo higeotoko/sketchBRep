@@ -33,7 +33,7 @@ T字の立体どうしの切り口（外壁の切り欠きの底と、間仕切�
 - `MitredWalls.PartitionsCoreRunsIntoTheWallAtATee`：外壁の柱の面の線（y 52.5・3947.5）が、間仕切りの柱（x 2947.5〜3052.5）を横切らず、その両側で切れる（4か所）。
 - Windows ローカル：コア全件 761件成功・8件スキップ・失敗0。
 - Linux CI（`f7b163a`）：[run 44518465007](https://github.com/higeotoko/sketchBRep/actions/runs/44518465007)、CTest 782件、失敗0。
-- Linux CI（`abcedab`）：CI_RESULT
+- [Linux CI（`122d8d7`、この記録までのコードを含む）](https://github.com/higeotoko/sketchBRep/actions/runs/44671014916)：CTest 785件、失敗0。（`abcedab` 単独の実行は GitHub 側の依存パッケージの取得で止まったので、次の push で取り消された。）
 
 **GUI 自動確認済み**
 - `planCutLeavesOutSeamsBetweenWallsOfOneBuildUp`（docs/195 の物を広げた）：床を茶色に塗った部屋で、外壁の内側の面の線が間仕切りの端（T字）を横切らない。間仕切りの端の線も無い。切った壁ごとの足元の面が5枚以上ある。画像でも確かめた（T字で線が切れ、柱の面の線も消えた）。

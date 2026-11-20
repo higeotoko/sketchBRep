@@ -22,7 +22,7 @@ AI からは `permit_checks` の `stage: 7`。
 **計算テスト済み**
 - `PermitBraceStage.RowsFollowTheWallQuantityCalculation`：入力が無い時は「壁量の入力：未入力」。四分割の手計算のテストと同じ入力（壁率比 0.25）を保存すると、「1階 X 方向の四分割」が「要確認」で「壁率比 0.25」と出る。数えた壁がモデルの物でないので、選ぶ物は無い。壁量の行に「存在壁量」、照らした値に「告示1100号」、まだの行に「N値」が出る。
 - Windows ローカル：コア全件 764件成功・8件スキップ・失敗0。
-- Linux CI：CI_RESULT
+- [Linux CI（`122d8d7`、この記録までのコードを含む）](https://github.com/higeotoko/sketchBRep/actions/runs/44671014916)：CTest 785件、失敗0。
 
 **GUI 自動確認済み**
 - `permitWorkflowShowsGridAndPlanChecks` を広げた：第7工程で「壁量の入力：未入力」と照らした値の行が出て、「まだ確かめていない事」に N値 が出る。

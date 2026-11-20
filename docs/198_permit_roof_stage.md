@@ -22,7 +22,7 @@ AI からは `permit_checks` の `stage: 6`。
 **計算テスト済み**
 - `Schedules.PermitChecksReadTheRoofStage`：屋根が無い時は「屋根：未入力」で、建築面積は「参考値」。軒の出 1200 の切妻を置くと、「切妻」「軒の出 1200 mm」「建築面積に入ります」「屋根まで立ち上げた壁なし」が出て「要確認」。`fit_walls_to_roof` の後は「入力済み」で、屋根と壁が対象に入る。北の壁にバルコニーを付けると「通達どおり」と出る。
 - Windows ローカル：コア全件 763件成功・8件スキップ・失敗0。
-- Linux CI：CI_RESULT
+- [Linux CI（`122d8d7`、この記録までのコードを含む）](https://github.com/higeotoko/sketchBRep/actions/runs/44671014916)：CTest 785件、失敗0。
 
 **GUI 自動確認済み**
 - `permitWorkflowShowsGridAndPlanChecks` を広げた：第6工程で「屋根：未入力」と建築面積の行が出る。屋根を作ると行が屋根の名前に変わり、「次に確認する項目」がその屋根になる。

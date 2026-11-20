@@ -44,7 +44,7 @@ AI からは `permit_checks` の `stage: 5`。
 **計算テスト済み**
 - `Schedules.PermitChecksReadTheStairStage`：階段が無い時は「階段：未入力」。幅 800・手すり両側の直階段は「参考値内」で、「蹴上げ … （230 以下）　参考値内」の行と、e-Gov の確認の行がある。段数を 12（蹴上げ 250）にすると「要確認」で「参考値を外れる」。手すりを無しにすると「未評価あり」。
 - Windows ローカル：コア全件 762件成功・8件スキップ・失敗0。
-- Linux CI：CI_RESULT
+- [Linux CI（`122d8d7`、この記録までのコードを含む）](https://github.com/higeotoko/sketchBRep/actions/runs/44671014916)：CTest 785件、失敗0。
 
 **GUI 自動確認済み**
 - `permitWorkflowShowsGridAndPlanChecks` を広げた：第5工程で、階段が無いと「未入力」。階段を作ると行が変わって「参考値内」になり、詳しい欄に蹴上げが出る。ボタンでその階段が選ばれる。工程パネルまわり6件が成功（ローカル）。
