@@ -1,6 +1,7 @@
 #include "TakeOffDialog.h"
 #include "WallQuantityDialog.h"
 #include "WallBaysDialog.h"
+#include <QDateTime>
 #include <QTextBrowser>
 #include "FoundationSupportsDialog.h"
 #include "sbr/ConstructionQuantity.h"
@@ -8767,6 +8768,16 @@ void GuiPhase1::brandingResourcesLoad() {
   }
 }
 
+// docs/204: the AI bridge of the windows made here gets a name of its own, before anything starts:
+// with the person's app open with AI access on, a request sent by a test must not reach it.
+namespace {
+const bool kOwnBridgeName = [] {
+  qputenv("SBR_AI_BRIDGE_NAME",
+          QByteArray("sketchbrep-ai-test-") + QByteArray::number(static_cast<qint64>(QDateTime::currentMSecsSinceEpoch())));
+  return true;
+}();
+}  // namespace
+
 QTEST_MAIN(GuiPhase1)
 #include "test_gui.moc"
 
@@ -12935,6 +12946,27 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
     QVERIFY(m.undo());
     QVERIFY(doc::roomFinishOf(*m.document().find(room)).ratioPart.empty());
   }
+  // docs/204: the room's kind for daylight and its ventilation chosen in its properties.
+  {
+    f.window.setSelection({room});
+    QApplication::processEvents();
+    auto* kind=f.window.findChild<QComboBox*>(QStringLiteral("roomDaylightKind"));QVERIFY(kind);
+    auto* vent=f.window.findChild<QComboBox*>(QStringLiteral("roomVentilation"));QVERIFY(vent);
+    QCOMPARE(kind->currentIndex(),0);
+    const auto steps=m.history().undoCount();
+    kind->setCurrentIndex(kind->findData(QStringLiteral("dwelling")));
+    emit kind->activated(kind->currentIndex());
+    QTRY_VERIFY(m.document().find(room)->attributes.count("room_daylight"));
+    QCOMPARE(m.history().undoCount(),steps+1);
+    QVERIFY2(f.window.statusText().contains(QStringLiteral("居室の区分")),qPrintable(f.window.statusText()));
+    f.window.setSelection({room});
+    QApplication::processEvents();
+    vent=f.window.findChild<QComboBox*>(QStringLiteral("roomVentilation"));QVERIFY(vent);
+    QCOMPARE(f.window.findChild<QComboBox*>(QStringLiteral("roomDaylightKind"))->currentData().toString(),QStringLiteral("dwelling"));
+    vent->setCurrentIndex(vent->findData(QStringLiteral("equipment")));
+    emit vent->activated(vent->currentIndex());
+    QTRY_VERIFY(m.document().find(room)->attributes.at("room_daylight").find("equipment")!=std::string::npos);
+  }
   // docs/109: a mark and a product number typed in the wall's properties.
   f.window.setSelection({south});
   QApplication::processEvents();
@@ -12967,6 +12999,30 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
   QVERIFY(f.window.scheduleCsv(0).contains(QStringLiteral("AW1,窓,引違い,1600,1200,2,900")));
   QVERIFY(m.undo());
   QVERIFY(m.document().find(south)->attributes.count("opening_marks"));
+  // docs/204: the first south window's daylight factor, its basis and its area open for ventilation.
+  {
+    f.window.setSelection({});QApplication::processEvents();
+    f.window.setSelection({south});QApplication::processEvents();
+    auto* factor=f.window.findChild<QDoubleSpinBox*>(QStringLiteral("openingDaylightFactor1"));QVERIFY(factor);
+    auto* basis=f.window.findChild<QLineEdit*>(QStringLiteral("openingDaylightBasis1"));QVERIFY(basis);
+    auto* vent=f.window.findChild<QDoubleSpinBox*>(QStringLiteral("openingVentilation1"));QVERIFY(vent);
+    QCOMPARE(factor->text(),factor->specialValueText());  // not given yet
+    const auto steps=m.history().undoCount();
+    factor->setValue(1.5);
+    basis->setText(QStringLiteral("架空：D/H から"));
+    vent->setValue(0.9);
+    emit vent->editingFinished();
+    QTRY_VERIFY(m.document().find(south)->attributes.count("opening_daylight"));
+    QCOMPARE(m.history().undoCount(),steps+1);
+    const doc::OpeningSchedule rows=doc::openingSchedule(m.document());
+    const auto first=std::find_if(rows.rows.begin(),rows.rows.end(),[&](const doc::OpeningRow& r){return r.host==south&&r.index==1;});
+    QVERIFY(first!=rows.rows.end());
+    QCOMPARE(first->daylightFactor,1.5);
+    QCOMPARE(first->daylightBasis,std::string("架空：D/H から"));
+    QCOMPARE(first->ventilationM2,0.9);
+    QVERIFY(m.undo());
+    QVERIFY(!m.document().find(south)->attributes.count("opening_daylight"));
+  }
   // docs/133: both south windows AW-1; the first made smaller by hand; picked by its hole, the
   // button makes the other one like it.
   QVERIFY(m.setOpeningMarks(south,{},"AW-1","P-1"));

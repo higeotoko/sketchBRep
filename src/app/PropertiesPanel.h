@@ -69,6 +69,11 @@ class PropertiesPanel : public QWidget {
   // A room's use / finish (key use, floor, wall, ceiling: `text`) or ceiling height (`value`, 0:
   // not given) typed in (docs/115).
   void roomFinishEdited(const doc::ObjectId& id, const QString& key, const QString& text, double value);
+  // docs/204: a room's kind for daylight and how it is ventilated (empty: not given).
+  void roomDaylightEdited(const doc::ObjectId& id, const QString& kind, const QString& ventilation);
+  // docs/204: an opening's daylight factor with its basis and its area open for ventilation (m2);
+  // below 0: taken away.
+  void openingDaylightEdited(const doc::ObjectId& id, int index, double factor, const QString& basis, double ventilationM2);
   // The room's ceiling board made (again) at its ceiling height (docs/123).
   void roomCeilingRequested(const doc::ObjectId& id);
   // One opening put at `offset` from the wall's left end (seen from the side it was cut from)

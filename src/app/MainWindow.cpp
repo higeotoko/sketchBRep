@@ -1029,6 +1029,27 @@ void MainWindow::buildUi() {
       refreshPanels();
     });
   });
+  // docs/204: daylight and ventilation inputs (docs/203) from the properties.
+  connect(panel_, &PropertiesPanel::roomDaylightEdited, this,
+          [this](const doc::ObjectId& id, const QString& kind, const QString& ventilation) {
+            QTimer::singleShot(0, this, [this, id, kind, ventilation] {
+              const Status s = modeler_.setRoomDaylight(id, kind.toStdString(), ventilation.toStdString());
+              if (!s) reportError(tr("居室の区分を変えられません: %1").arg(userMessage(QString::fromStdString(s.message()))));
+              else setStatus(tr("居室の区分・換気を決めました（申請図の工程の「4 居室・採光・換気」に出ます。Ctrl+Z で戻せます）"));
+              refreshPanels();
+            });
+          });
+  connect(panel_, &PropertiesPanel::openingDaylightEdited, this,
+          [this](const doc::ObjectId& id, int index, double factor, const QString& basis, double ventilation) {
+            QTimer::singleShot(0, this, [this, id, index, factor, basis, ventilation] {
+              if (index < 1) return;
+              const Status s = modeler_.setOpeningDaylight(id, {static_cast<std::size_t>(index)}, factor,
+                                                           basis.toStdString(), ventilation);
+              if (!s) reportError(tr("採光・換気の値を変えられません: %1").arg(userMessage(QString::fromStdString(s.message()))));
+              else setStatus(tr("開口 %1 の採光補正係数・換気の面積を決めました（Ctrl+Z で戻せます）").arg(index));
+              refreshPanels();
+            });
+          });
   connect(panel_, &PropertiesPanel::roomFinishEdited, this,
           [this](const doc::ObjectId& id, const QString& key, const QString& text, double value) {
             QTimer::singleShot(0, this, [this, id, key, text, value] {

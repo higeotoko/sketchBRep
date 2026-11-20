@@ -883,6 +883,42 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
           });
           form_->addRow(tr("容積率の区分"), part);
         }
+        {
+          // docs/204: its kind for daylight (法 28 条) and how it is ventilated (docs/203).
+          const nlohmann::json daylight = [&] {
+            const auto it = o->attributes.find("room_daylight");
+            return it == o->attributes.end() ? nlohmann::json() : nlohmann::json::parse(it->second, nullptr, false);
+          }();
+          const QString kind0 = QString::fromStdString(daylight.is_object() ? daylight.value("kind", std::string()) : std::string());
+          const QString vent0 = QString::fromStdString(daylight.is_object() ? daylight.value("ventilation", std::string()) : std::string());
+          auto* kind = new QComboBox;
+          kind->setObjectName(QStringLiteral("roomDaylightKind"));
+          kind->addItem(tr("未入力"), QString());
+          kind->addItem(tr("住宅の居住のための居室"), QStringLiteral("dwelling"));
+          kind->addItem(tr("その他の居室"), QStringLiteral("other"));
+          kind->addItem(tr("居室でない"), QStringLiteral("none"));
+          kind->setCurrentIndex(std::max(0, kind->findData(kind0)));
+          kind->setToolTip(tr("採光・換気の照合に使います（建築基準法 第 28 条、施行令 第 19 条）。住宅の居住のための居室は"
+                              "床面積の 1/7 と比べます。申請図の工程の「4 居室・採光・換気」に出ます"));
+          auto* vent = new QComboBox;
+          vent->setObjectName(QStringLiteral("roomVentilation"));
+          vent->addItem(tr("未入力（窓として照らす）"), QString());
+          vent->addItem(tr("窓"), QStringLiteral("window"));
+          vent->addItem(tr("換気設備"), QStringLiteral("equipment"));
+          vent->setCurrentIndex(std::max(0, vent->findData(vent0)));
+          vent->setToolTip(tr("窓なら、開口の「換気の面積」の合計を床面積の 1/20 と比べます。換気設備（法 28 条 2 項ただし書き）なら、"
+                              "設備の基準は未評価です"));
+          kind->setEnabled(!o->locked);
+          vent->setEnabled(!o->locked);
+          const auto changed = [this, id, kind, vent, kind0, vent0](int) {
+            const QString k = kind->currentData().toString(), v = vent->currentData().toString();
+            if (k != kind0 || v != vent0) emit roomDaylightEdited(id, k, v);
+          };
+          connect(kind, qOverload<int>(&QComboBox::activated), this, changed);
+          connect(vent, qOverload<int>(&QComboBox::activated), this, changed);
+          form_->addRow(tr("居室の区分"), kind);
+          form_->addRow(tr("換気"), vent);
+        }
         word(tr("床"), "floor", finish.floor, tr("例：フローリング t15"));
         word(tr("壁"), "wall", finish.wall, tr("例：PB t12.5 クロス貼り"));
         word(tr("天井"), "ceiling", finish.ceiling, tr("例：PB t9.5 クロス貼り"));
@@ -1532,6 +1568,51 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       connect(markEdit, &QLineEdit::editingFinished, this, named);
       connect(productEdit, &QLineEdit::editingFinished, this, named);
       tag->setObjectName(QStringLiteral("openingTag%1").arg(index));
+      // docs/204: what a person worked out for daylight and ventilation (docs/203).
+      auto* light = new QWidget;
+      auto* lh = new QHBoxLayout(light);
+      lh->setContentsMargins(0, 0, 0, 0);
+      const double f0 = scheduled ? scheduled->daylightFactor : -1.0, v0 = scheduled ? scheduled->ventilationM2 : -1.0;
+      const QString b0 = scheduled ? QString::fromStdString(scheduled->daylightBasis) : QString();
+      auto* factor = new QDoubleSpinBox;
+      factor->setObjectName(QStringLiteral("openingDaylightFactor%1").arg(index));
+      factor->setRange(-0.01, 3.0);
+      factor->setDecimals(2);
+      factor->setSingleStep(0.1);
+      factor->setSpecialValueText(tr("係数 未入力"));
+      factor->setPrefix(tr("採光係数 "));
+      factor->setValue(f0 >= 0 ? f0 : -0.01);
+      factor->setToolTip(tr("採光補正係数（施行令 第 20 条、0〜3.0）。隣地境界線などまでの距離から求めた値を入れます。"
+                            "一番下（未入力）で消します"));
+      auto* basis = new QLineEdit(b0);
+      basis->setObjectName(QStringLiteral("openingDaylightBasis%1").arg(index));
+      basis->setPlaceholderText(tr("係数の根拠"));
+      basis->setMaxLength(100);
+      auto* ventArea = new QDoubleSpinBox;
+      ventArea->setObjectName(QStringLiteral("openingVentilation%1").arg(index));
+      ventArea->setRange(-0.01, 100.0);
+      ventArea->setDecimals(2);
+      ventArea->setSingleStep(0.1);
+      ventArea->setSpecialValueText(tr("換気 未入力"));
+      ventArea->setPrefix(tr("換気 "));
+      ventArea->setSuffix(QStringLiteral(" ㎡"));
+      ventArea->setValue(v0 >= 0 ? v0 : -0.01);
+      ventArea->setToolTip(tr("換気に有効な面積（建築基準法 第 28 条 2 項）。開けられる部分の面積（引違いなら片側分など）を入れます"));
+      for (QWidget* w : {static_cast<QWidget*>(factor), static_cast<QWidget*>(basis), static_cast<QWidget*>(ventArea)})
+        w->setEnabled(markEdit->isEnabled());
+      lh->addWidget(factor, 1);
+      lh->addWidget(basis, 2);
+      lh->addWidget(ventArea, 1);
+      light->setObjectName(QStringLiteral("openingDaylight%1").arg(index));
+      const auto lit = [this, id, index, factor, basis, ventArea, f0, b0, v0] {
+        const double f = factor->value() < 0 ? -1.0 : factor->value(), v = ventArea->value() < 0 ? -1.0 : ventArea->value();
+        const bool fChanged = (f < 0) != (f0 < 0) || (f >= 0 && std::abs(f - f0) > 1e-9);
+        const bool vChanged = (v < 0) != (v0 < 0) || (v >= 0 && std::abs(v - v0) > 1e-9);
+        if (fChanged || vChanged || basis->text().trimmed() != b0) emit openingDaylightEdited(id, index, f, basis->text().trimmed(), v);
+      };
+      connect(factor, &QDoubleSpinBox::editingFinished, this, lit);
+      connect(basis, &QLineEdit::editingFinished, this, lit);
+      connect(ventArea, &QDoubleSpinBox::editingFinished, this, lit);
       // One row per opening: its size and fitting, its mark, then where it sits.
       auto* cell = new QWidget;
       auto* lines = new QVBoxLayout(cell);
@@ -1541,6 +1622,7 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       lines->addWidget(sizesRow);
       lines->addWidget(typeRow);
       lines->addWidget(tag);
+      lines->addWidget(light);
       lines->addWidget(place);
       // docs/147: a canopy over it.
       if (focusOpening_ > 0) {
