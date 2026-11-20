@@ -2326,19 +2326,20 @@ TEST_F(Schedules, ASetCanCarryItsTablesOnThePlan) {
   const auto set = sbr::doc::drawingSet(modeler.document(), spec);
   ASSERT_TRUE(set) << set.error();
   // Three table sheets fewer (openings, rooms, areas).
+  // docs/209: the sheet list, then the outline of the project, then the plan with its tables.
   EXPECT_EQ(set->sheets.size() + 3, apart->sheets.size());
   const std::string name = "1FL 平面図・建具表・室の表・面積の表";
-  ASSERT_EQ(set->names[1], name);
+  ASSERT_EQ(set->names[2], name);
   for (const std::string& n : set->names) EXPECT_EQ(n.find("表") == 0, false) << n;  // no sheet of a table alone
   // On that sheet: each table's title once, the drawing's own caption, the sheet's name and number in the title block.
   std::map<std::string, int> texts;
-  for (const auto& item : set->sheets[1].items)
+  for (const auto& item : set->sheets[2].items)
     if (item.kind == sbr::draw::Item::Kind::Text) ++texts[item.text];
   EXPECT_EQ(texts["建具表"], 1);
   EXPECT_EQ(texts["室の表"], 1);
   EXPECT_EQ(texts["面積の表"], 1);
   EXPECT_EQ(texts[name], 1);
-  EXPECT_EQ(texts["A-02"], 1);
+  EXPECT_EQ(texts["A-03"], 1);
   bool caption = false;
   for (const auto& [text, n] : texts) caption |= text.rfind("1FL 平面図  S=1:", 0) == 0;
   EXPECT_TRUE(caption);
@@ -2346,7 +2347,7 @@ TEST_F(Schedules, ASetCanCarryItsTablesOnThePlan) {
   bool listed = false;
   for (const auto& item : set->sheets.front().items) listed |= item.kind == sbr::draw::Item::Kind::Text && item.text == name;
   EXPECT_TRUE(listed);
-  EXPECT_NE(set->sheets[1].paper, "A4");
+  EXPECT_NE(set->sheets[2].paper, "A4");
   // By the API.
   const auto dir = std::filesystem::temp_directory_path() / "sbr_drawing_set_tables";
   std::filesystem::remove_all(dir);
@@ -2808,4 +2809,33 @@ TEST_F(Schedules, DaylightTableListsTheRoomsGivenAKind) {
   ok("export_schedule", {{"path", path}, {"table", "daylight"}});
   EXPECT_TRUE(std::filesystem::exists(path));
   EXPECT_NE(sbr::doc::tableCsv(table).find("採光補正係数"), std::string::npos);
+}
+
+// docs/209: the outline of the project, read from the model's data, first in the drawing set.
+TEST_F(Schedules, ProjectOutlineReadsTheSiteAndTheAreas) {
+  const auto rowOf = [](const sbr::draw::Table& t, const std::string& item) {
+    for (const auto& r : t.rows)
+      if (r[0] == item) return r;
+    ADD_FAILURE() << "no row " << item;
+    return std::vector<std::string>(3);
+  };
+  auto outline = sbr::doc::scheduleTable(modeler.document(), 10);
+  EXPECT_EQ(outline.title, "計画概要");
+  EXPECT_EQ(rowOf(outline, "敷地面積")[1], "未入力");
+  EXPECT_EQ(rowOf(outline, "階数")[1], "地上 1");
+  EXPECT_EQ(rowOf(outline, "延べ面積")[1].substr(0, 5), "48.00");  // the slab of the 8000 x 6000 storey
+  const std::string site = ok("create_polygon", {{"points", {{-2000, -2000, 0}, {14000, -2000, 0}, {14000, 10000, 0}, {-2000, 10000, 0}}}})["id"];
+  ok("set_site_boundary", {{"outline", site}, {"source", "架空の測量図"}});
+  ok("set_site_zone", {{"zone", "residential"}, {"source", "架空の都市計画図"}});
+  outline = sbr::doc::scheduleTable(modeler.document(), 10);
+  EXPECT_EQ(rowOf(outline, "敷地面積")[1].substr(0, 6), "192.00");  // 16 m x 12 m
+  EXPECT_EQ(rowOf(outline, "用途地域の区分")[1], "住居系");
+  EXPECT_EQ(rowOf(outline, "建蔽率（参考）")[1], "25.00 %");  // 48 / 192
+  sbr::doc::DrawingSetSpec spec;
+  spec.title.project = "架空の家";
+  const auto set = sbr::doc::drawingSet(modeler.document(), spec);
+  ASSERT_TRUE(set) << set.error();
+  ASSERT_GE(set->names.size(), 3u);
+  EXPECT_EQ(set->names[0], "図面リスト");
+  EXPECT_EQ(set->names[1], "計画概要");
 }

@@ -92,6 +92,10 @@ struct ViewSpec {
   bool includeHidden = false;
   bool memberLabels = false;
   std::string framingPreset;     // named framing plan, empty for ordinary views
+  // docs/208: a plan of the bracing walls of this storey of the wall calculation (its floor id):
+  // the walls counted, thick, with their mark, ratio and effective length, and the side parts of
+  // the quarter division, dashed, with what they need and have. Empty: none.
+  std::string bracingFloor;
   // Plans (docs/132): where sections are cut, drawn as a cut line across the drawing with arrows
   // the way the section looks and its label and sheet number at both ends.
   struct CutMark {

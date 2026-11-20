@@ -354,7 +354,8 @@ TEST(Drawing, SitePlanUsesTheLiveBoundaryAndBuildingProjection) {
 
   const auto group = doc::drawingSet(m.document(), {});
   ASSERT_TRUE(group);
-  EXPECT_EQ(group->names.at(1), site.title);
+  // docs/209: the sheet list, the outline of the project, then the site plan.
+  EXPECT_EQ(group->names.at(2), site.title);
   const std::string path = ::testing::TempDir() + "site-plan.sbr";
   ASSERT_TRUE(m.save(path));
   doc::Modeler loaded;
@@ -468,8 +469,9 @@ TEST(Drawing, SiteGroundWeightsTheMeasuredPerimeterAndDetectsStalePoints) {
   EXPECT_TRUE(std::any_of(sheet->items.begin(), sheet->items.end(),
       [](const Item& item) { return item.text.find("0.075 m") != std::string::npos; }));
   const auto drawingSet = doc::drawingSet(m.document(), {});
+  // (docs/209: the third sheet, after the list and the outline of the project.)
   ASSERT_TRUE(drawingSet);
-  EXPECT_TRUE(std::any_of(drawingSet->sheets.at(1).items.begin(), drawingSet->sheets.at(1).items.end(),
+  EXPECT_TRUE(std::any_of(drawingSet->sheets.at(2).items.begin(), drawingSet->sheets.at(2).items.end(),
       [](const Item& item) { return item.text.find("0.075 m") != std::string::npos; }));
 
   const auto path = ::testing::TempDir() + "site-ground.sbr";

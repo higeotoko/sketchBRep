@@ -4153,7 +4153,9 @@ const std::vector<CommandDef>& commands() {
                "hidden": {"type": "boolean"}, "fill": {"type": "boolean"}, "grid": {"type": "boolean"},
                "levels": {"type": "boolean"}, "annotations": {"type": "boolean"}, "preset":{"type":"string"},"within":{"type":"string"},
                "tags":{"type":"array","items":{"type":"string"}},"include_hidden":{"type":"boolean"},"member_labels":{"type":"boolean"},
-               "tables": {"type": "array", "items": {"enum": ["openings", "rooms", "areas", "finishes", "types", "layers"]}}}, "required": ["path", "kind"]}),
+               "tables": {"type": "array", "items": {"enum": ["openings", "rooms", "areas", "finishes", "types", "layers", "daylight",
+                                                               "wall_quantity", "bracing_walls", "quarters", "summary"]}},
+               "bracing_floor": {"type": "string"}}, "required": ["path", "kind"]}),
        [](doc::Modeler& m, const json& a) {
          const std::string kind = text(a, "kind");
          draw::ViewSpec spec;
@@ -4180,6 +4182,7 @@ const std::vector<CommandDef>& commands() {
          spec.grid = a.value("grid", spec.grid);
          spec.levels = a.value("levels", spec.levels);
          spec.annotations = a.value("annotations", spec.annotations);
+         spec.bracingFloor = textOr(a, "bracing_floor", "");  // docs/208: a plan of that storey's bracing walls
          if (a.value("hatch", true)) spec.hatchScale = numberOr(a, "scale", 100.0);  // docs/173
          const draw::View view = must(draw::makeView(m.document(), spec));
          draw::SheetSpec sheetSpec;
@@ -4194,8 +4197,8 @@ const std::vector<CommandDef>& commands() {
            if (!a.at("tables").is_array()) throw ApiError("'tables': a list of openings, rooms, areas, finishes");
            for (const json& t : a.at("tables")) {
              const std::string which = t.is_string() ? t.get<std::string>() : std::string();
-             const int index = which == "openings" ? 0 : which == "rooms" ? 1 : which == "areas" ? 2 : which == "finishes" ? 3 : which == "types" ? 4 : which == "layers" ? 5 : which == "daylight" ? 6 : which == "wall_quantity" ? 7 : which == "bracing_walls" ? 8 : which == "quarters" ? 9 : -1;
-             if (index < 0) throw ApiError("'tables': openings, rooms, areas, finishes, types, layers, daylight, wall_quantity, bracing_walls or quarters");
+             const int index = which == "openings" ? 0 : which == "rooms" ? 1 : which == "areas" ? 2 : which == "finishes" ? 3 : which == "types" ? 4 : which == "layers" ? 5 : which == "daylight" ? 6 : which == "wall_quantity" ? 7 : which == "bracing_walls" ? 8 : which == "quarters" ? 9 : which == "summary" ? 10 : -1;
+             if (index < 0) throw ApiError("'tables': openings, rooms, areas, finishes, types, layers, daylight, wall_quantity, bracing_walls, quarters or summary");
              draw::Table table = doc::scheduleTable(m.document(), index);
              if (!doc::tableHasContent(table, index)) leftOut.push_back(which);
              else tables.push_back(std::move(table));
@@ -4218,17 +4221,17 @@ const std::vector<CommandDef>& commands() {
       {"export_schedule",
        "A table on a sheet of its own as DXF or JWW (by the path's extension): 'table' openings (建具表, one "
        "line per mark), rooms (室の表), areas (面積の表), finishes (仕上げ表, set_room_finish) or types (種類の表 of floors and roofs, "
-       "set_type_name), layers (層の数量), daylight (採光・換気計算表, docs/207), wall_quantity (壁量計算表), bracing_walls (耐力壁の一覧) or quarters (四分割, docs/208), read from the model as it is (as opening_schedule / "
+       "set_type_name), layers (層の数量), daylight (採光・換気計算表, docs/207), wall_quantity (壁量計算表), bracing_walls (耐力壁の一覧) quarters (四分割, docs/208) or summary (計画概要, docs/209), read from the model as it is (as opening_schedule / "
        "room_schedule / area_table). 'paper' (auto, A4-A1), 'frame' (default true), 'project', 'number', "
        "'author', 'date' for the title block.",
-       SCHEMA({"type": "object", "properties": {"path": {"type": "string"}, "table": {"enum": ["openings", "rooms", "areas", "finishes", "types", "layers", "daylight", "wall_quantity", "bracing_walls", "quarters"]},
+       SCHEMA({"type": "object", "properties": {"path": {"type": "string"}, "table": {"enum": ["openings", "rooms", "areas", "finishes", "types", "layers", "daylight", "wall_quantity", "bracing_walls", "quarters", "summary"]},
                "paper": {"type": "string"}, "frame": {"type": "boolean"}, "project": {"type": "string"},
                "number": {"type": "string"}, "author": {"type": "string"}, "date": {"type": "string"}},
                "required": ["path", "table"]}),
        [](doc::Modeler& m, const json& a) {
          const std::string which = text(a, "table");
-         const int index = which == "openings" ? 0 : which == "rooms" ? 1 : which == "areas" ? 2 : which == "finishes" ? 3 : which == "types" ? 4 : which == "layers" ? 5 : which == "daylight" ? 6 : which == "wall_quantity" ? 7 : which == "bracing_walls" ? 8 : which == "quarters" ? 9 : -1;
-         if (index < 0) throw ApiError("'table': openings, rooms, areas, finishes, types, layers, daylight, wall_quantity, bracing_walls or quarters");
+         const int index = which == "openings" ? 0 : which == "rooms" ? 1 : which == "areas" ? 2 : which == "finishes" ? 3 : which == "types" ? 4 : which == "layers" ? 5 : which == "daylight" ? 6 : which == "wall_quantity" ? 7 : which == "bracing_walls" ? 8 : which == "quarters" ? 9 : which == "summary" ? 10 : -1;
+         if (index < 0) throw ApiError("'table': openings, rooms, areas, finishes, types, layers, daylight, wall_quantity, bracing_walls, quarters or summary");
          const draw::Table table = doc::scheduleTable(m.document(), index);
          draw::SheetSpec sheetSpec;
          sheetSpec.paper = textOr(a, "paper", "auto");

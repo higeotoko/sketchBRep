@@ -1938,6 +1938,66 @@ draw::Table scheduleTable(const Document& document, int which) {
                         r.counted ? "閉じている" : !r.closed ? "閉じていない" : "ほかの室と同じ場所"});
     t.rows.push_back({"合計（閉じている室だけ）", "", number(s.centreTotal / 1e6, 2), s.innerMissing == 0 ? number(s.innerTotal / 1e6, 2) : "未評価", "", ""});
     t.notes = {"壁芯＝壁を描いた線の内側、内法＝壁の面の内側。法の床面積（算入・不算入の決まり）ではありません。"};
+  } else if (which == 10) {
+    // docs/209: the outline of the project for the cover, read from the model's data.
+    t.title = "計画概要";
+    t.headers = {"項目", "内容", "根拠・注"};
+    const auto& settings = document.settings();
+    const auto& site = settings.siteBoundary;
+    const auto geometry = site ? document.siteBoundaryGeometry(site->outline) : Result<SiteBoundaryGeometry>::failure("");
+    const AreaTable areas = areaTable(document);
+    const std::string missing = "未入力";
+    t.rows.push_back({"物件名", missing, "図面一式の物件名（表題欄）"});
+    t.rows.push_back({"主要用途", missing, "モデルにはまだ入れる所がありません"});
+    if (geometry) {
+      t.rows.push_back({"敷地面積", m2(geometry->areaMm2), "指定した敷地境界の輪郭の面積。確認資料 " + site->source});
+    } else {
+      t.rows.push_back({"敷地面積", missing, "敷地境界を登録します"});
+    }
+    std::string zone, zoneSource;
+    if (site)
+      if (const Object* outline = document.find(site->outline)) {
+        zone = attribute(*outline, "use_zone");
+        zoneSource = attribute(*outline, "use_zone_source");
+      }
+    t.rows.push_back({"用途地域の区分", zone.empty() ? missing : zone == "residential" ? "住居系" : zone == "industrial" ? "工業系" : "商業系・指定なし",
+                      zone.empty() ? "どの地域かは申請先で確認" : "確認資料 " + zoneSource});
+    if (site && site->road) {
+      const auto& road = *site->road;
+      t.rows.push_back({"道路", (road.kind.empty() ? missing : road.kind) + "　幅員 " + (road.widthMm > 0 ? number(road.widthMm / 1000, 2) + " m" : missing) +
+                                    "　接道長 " + (road.frontageMm > 0 ? number(road.frontageMm / 1000, 2) + " m" : missing),
+                        "確認資料 " + road.source + "。法上の道路・接道は未評価"});
+    } else {
+      t.rows.push_back({"道路", missing, "配置図の道路・接道情報"});
+    }
+    t.rows.push_back({"真北", settings.siteNorth ? "モデルの +Y から時計回り " + number(settings.siteNorth->angle, 1) + "°" : missing,
+                      settings.siteNorth ? "確認資料 " + settings.siteNorth->source : ""});
+    if (areas.buildingKnown) {
+      t.rows.push_back({"建築面積", m2(areas.buildingArea), "面積の表（令 2 条 1 項 2 号、docs/141）"});
+      if (geometry && geometry->areaMm2 > 0)
+        t.rows.push_back({"建蔽率（参考）", number(areas.buildingArea / geometry->areaMm2 * 100, 2) + " %", "建築面積÷敷地面積。上限との比較はしていません"});
+    } else {
+      t.rows.push_back({"建築面積", "未評価", "面積の表で出せません"});
+    }
+    t.rows.push_back({"延べ面積", m2(areas.legalTotal), "面積の表（令 2 条 1 項 4 号）"});
+    if (areas.ratioKnown) {
+      t.rows.push_back({"容積率の算定の延べ面積", m2(areas.ratioTotal), "面積の表（docs/162）"});
+      if (geometry && geometry->areaMm2 > 0)
+        t.rows.push_back({"容積率（参考）", number(areas.ratioTotal / geometry->areaMm2 * 100, 2) + " %", "÷敷地面積。上限との比較はしていません"});
+    }
+    int storeys = 0, basements = 0;
+    for (const AreaRow& row : areas.rows) {
+      if (!row.enclosedKnown || row.regions == 0) continue;
+      ++storeys;
+      if (row.basement) ++basements;
+    }
+    t.rows.push_back({"階数", storeys > 0 ? "地上 " + std::to_string(storeys - basements) + (basements > 0 ? "　地下 " + std::to_string(basements) : std::string()) : missing,
+                      "壁で閉じた範囲のある階を数えた（法の階数の数え方ではありません）"});
+    for (const PermitCheck& c : permitElevationChecks(document))
+      if (c.item == "いちばん高い所（参考）") t.rows.push_back({"最も高い所（参考）", c.details.substr(0, c.details.find("（")), "法の建築物の高さ・軒の高さではありません"});
+    t.rows.push_back({"構造", settings.wallCalculation != "{}" ? "木造（在来軸組、壁量の計算の入力から）" : missing, "構造の種別"});
+    t.notes = {"モデルから読んだ今の値です。法の制限（建蔽率・容積率の上限、高さの制限など）との比較はしていません。",
+               "申請書の様式（第二面〜）の項目と照らして、足りない項目を足します。"};
   } else if (which == 7 || which == 8 || which == 9) {
     // docs/208: the wall quantity forms, from the same calculation as check_wall_quantity.
     const auto made = construction::checkWallQuantity(document);
@@ -2276,9 +2336,41 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& sp
       planned.push_back({table.title, std::nullopt, table, {}});
     }
   }
+  // docs/208: a plan of the bracing walls for each storey of the wall calculation (its n-th storey
+  // on the model's n-th floor level, or the ground when there are fewer levels).
+  if (document.settings().wallCalculation != "{}") {
+    std::vector<double> floors;
+    for (const FloorLevel& l : levels)
+      if (isFloor(l) && (floors.empty() || std::abs(floors.back() - l.elevation) > 1e-6)) floors.push_back(l.elevation);
+    const auto made = construction::checkWallQuantity(document);
+    const nlohmann::json report = made ? nlohmann::json::parse(*made, nullptr, false) : nlohmann::json();
+    const nlohmann::json inputs = report.is_object() ? report.value("inputs", nlohmann::json::object()) : nlohmann::json::object();
+    std::size_t n = 0;
+    for (const auto& f : inputs.value("floors", nlohmann::json::array())) {
+      if (!f.is_object() || !f.contains("id")) continue;
+      const std::string id = f.at("id").is_string() ? f.at("id").get<std::string>() : f.at("id").dump();
+      draw::ViewSpec view = draw::planView((n < floors.size() ? floors[n] : 0.0) + 1100.0);
+      view.depth = 1100.0 + 400.0;
+      view.bracingFloor = id;
+      view.title = "耐力壁配置図（" + f.value("name", id) + "）";
+      planned.push_back({view.title, view, std::nullopt, {}});
+      ++n;
+    }
+  }
   if (document.settings().siteBoundary) {
     const auto site = draw::sitePlanView();
     planned.insert(planned.begin(), {site.title, site, std::nullopt, {}});
+  }
+  {
+    // docs/209: the outline of the project first, after the sheet list (its name from the title block).
+    draw::Table summary = scheduleTable(document, 10);
+    if (!spec.title.project.empty())
+      for (auto& row : summary.rows)
+        if (row[0] == "物件名") {
+          row[1] = spec.title.project;
+          row[2] = "図面一式の物件名（表題欄）";
+        }
+    planned.insert(planned.begin(), {summary.title, std::nullopt, summary, {}});
   }
   DrawingSet out;
   std::vector<draw::Sheet> sheets;

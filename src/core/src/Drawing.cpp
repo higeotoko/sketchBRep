@@ -656,6 +656,11 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
   for (const doc::Object& o : document.objects()) {
     if (!o.shape.IsNull() && selected(document, o, spec)) all.Add(document.worldBounds(o));
   }
+  if (all.IsVoid() && spec.kind == ViewKind::Plan && !spec.bracingFloor.empty() && document.settings().wallCalculation != "{}") {
+    // docs/208: the bracing walls of the calculation alone (a model with no geometry yet).
+    all.Add(gp_Pnt(0, 0, 0));
+    all.Add(gp_Pnt(1000, 1000, 1000));
+  }
   if (all.IsVoid()) return R::failure("Nothing to draw: the model is empty or hidden");
   const double diag = std::sqrt(all.SquareExtent());
   const double deflection = std::max(0.05, diag * 1e-5);
@@ -1063,6 +1068,69 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     }
   }
   for (Item& c : cut) view.items.push_back(std::move(c));
+
+  // docs/208: the bracing walls of one storey of the wall calculation and its quarter division.
+  if (spec.kind == ViewKind::Plan && !spec.bracingFloor.empty()) {
+    const auto made = construction::checkWallQuantity(document);
+    const nlohmann::json report = made ? nlohmann::json::parse(*made, nullptr, false) : nlohmann::json();
+    const double z = spec.frame.Location().Z();
+    const auto at = [&](const nlohmann::json& xy) {
+      return proj.uv(gp_Pnt(xy.at(0).get<double>(), xy.at(1).get<double>(), z));
+    };
+    const auto text = [&](const gp_Pnt2d& p, const std::string& t, double height, int hAlign) {
+      Item label;
+      label.kind = Item::Kind::Text;
+      label.pen = Pen::Visible;
+      label.points = {p};
+      label.text = t;
+      label.height = height;
+      label.hAlign = hAlign;
+      label.vAlign = 1;
+      view.items.push_back(label);
+    };
+    int walls = 0;
+    if (report.is_object()) {
+      for (const auto& w : report.value("walls", nlohmann::json::array())) {
+        if (w.value("floor", std::string()) != spec.bracingFloor || !w.contains("start") || !w.contains("end")) continue;
+        const gp_Pnt2d a = at(w.at("start")), b = at(w.at("end"));
+        Item line;
+        line.kind = Item::Kind::Line;
+        line.pen = w.value("status", std::string()) == "evaluated" ? Pen::Cut : Pen::Hidden;
+        line.points = {a, b};
+        view.items.push_back(line);
+        const std::string id = w.contains("id") && w.at("id").is_string() ? w.at("id").get<std::string>() : std::string();
+        std::string label = id + " " + w.value("direction", std::string());
+        if (w.contains("ratio") && w.at("ratio").is_number()) label += " 倍率" + std::to_string(w.at("ratio").get<double>()).substr(0, 3);
+        if (w.contains("effective_m") && w.at("effective_m").is_number()) {
+          char buf[32];
+          std::snprintf(buf, sizeof buf, " %.2fm", w.at("effective_m").get<double>());
+          label += buf;
+        }
+        text(gp_Pnt2d((a.X() + b.X()) / 2, (a.Y() + b.Y()) / 2), label, 2.5, 1);
+        ++walls;
+      }
+      for (const auto& row : report.value("quarter_balance", nlohmann::json::array())) {
+        if (row.value("floor", std::string()) != spec.bracingFloor) continue;
+        for (const auto& strip : row.value("strips", nlohmann::json::array())) {
+          if (!strip.contains("rect")) continue;
+          const auto& r = strip.at("rect");
+          const double x0 = r.at(0).at(0).get<double>(), y0 = r.at(0).at(1).get<double>(), x1 = r.at(1).at(0).get<double>(), y1 = r.at(1).at(1).get<double>();
+          Item box;
+          box.kind = Item::Kind::Polyline;
+          box.pen = Pen::Hidden;
+          box.closed = true;
+          box.points = {proj.uv(gp_Pnt(x0, y0, z)), proj.uv(gp_Pnt(x1, y0, z)), proj.uv(gp_Pnt(x1, y1, z)), proj.uv(gp_Pnt(x0, y1, z))};
+          view.items.push_back(box);
+          char buf[96];
+          std::snprintf(buf, sizeof buf, "%s 側端 必要%.2fm 存在%.2fm", row.value("direction", std::string()).c_str(),
+                        strip.value("required_m", 0.0), strip.value("existing_m", 0.0));
+          text(proj.uv(gp_Pnt((x0 + x1) / 2, (y0 + y1) / 2, z)), buf, 2.0, 1);
+        }
+      }
+    }
+    view.calculationNotes.push_back(walls > 0 ? "太線：壁量に入れた耐力壁（符号・方向・倍率・有効長さ）　破線：入れていない壁、四分割の側端部分"
+                                              : "この階の耐力壁は、壁量の計算の入力にありません");
+  }
 
   // The extent of the model's lines (annotations are placed around it).
   bool first = true;

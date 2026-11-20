@@ -5550,7 +5550,8 @@ void MainWindow::showSchedulesDialog() {
   // docs/208: the wall quantity forms (tabs 7-9 = tables 7-9 for the CSV).
   for (const auto& [which, name, label] : {std::tuple<int, const char*, QString>{7, "wallQuantityTable", tr("壁量計算表")},
                                          std::tuple<int, const char*, QString>{8, "bracingWallTable", tr("耐力壁")},
-                                         std::tuple<int, const char*, QString>{9, "quarterTable", tr("四分割")}}) {
+                                         std::tuple<int, const char*, QString>{9, "quarterTable", tr("四分割")},
+                                         std::tuple<int, const char*, QString>{10, "summaryTable", tr("計画概要")}}) {
     const draw::Table form = doc::scheduleTable(document, which);
     auto* page = new QWidget;
     auto* box = new QVBoxLayout(page);

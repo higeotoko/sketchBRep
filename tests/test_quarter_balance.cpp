@@ -230,3 +230,46 @@ TEST(WallQuantityForms, TablesFollowTheCalculation) {
     EXPECT_TRUE(r.value("ok", false)) << r.dump();
   }
 }
+
+// docs/208: the plan of the bracing walls of a storey: the walls counted (thick, with their mark)
+// and the side parts (dashed, with what they need and have); a sheet of the drawing set.
+#include "sbr/draw/Drawing.h"
+TEST(WallQuantityForms, BracingPlanShowsTheWallsAndTheSideParts) {
+  Modeler m;
+  api::CommandApi api(m);
+  const json saved = json::parse(api.execute(json{{"command", "set_wall_calculation"},
+      {"args", {{"inputs", inputs({wall("a", "X", {0, 0}, {2000, 0}), wall("b", "X", {0, 4000}, {500, 4000}),
+                                   wall("c", "Y", {0, 0}, {0, 4000}), wall("d", "Y", {10000, 0}, {10000, 4000})})}}}}.dump()));
+  ASSERT_TRUE(saved.value("ok", false)) << saved.dump();
+  draw::ViewSpec spec = draw::planView(1100.0);
+  spec.bracingFloor = "1";
+  const auto view = draw::makeView(m.document(), spec);
+  ASSERT_TRUE(view) << view.error();
+  int thick = 0, dashedBoxes = 0, labels = 0;
+  bool markA = false, side = false;
+  for (const auto& i : view->items) {
+    if (i.kind == draw::Item::Kind::Line && i.pen == draw::Pen::Cut) ++thick;
+    if (i.kind == draw::Item::Kind::Polyline && i.pen == draw::Pen::Hidden && i.closed) ++dashedBoxes;
+    if (i.kind == draw::Item::Kind::Text) {
+      ++labels;
+      markA = markA || i.text.rfind("a X 倍率2.0 4.00m", 0) == 0;
+      side = side || i.text.find("側端 必要2.00m 存在4.00m") != std::string::npos;
+    }
+  }
+  EXPECT_EQ(thick, 4);
+  EXPECT_EQ(dashedBoxes, 4);  // X and Y, two side parts each
+  EXPECT_EQ(labels, 8);
+  EXPECT_TRUE(markA);
+  EXPECT_TRUE(side);
+  bool legend = false;
+  for (const auto& n : view->calculationNotes) legend = legend || n.find("太線") != std::string::npos;
+  EXPECT_TRUE(legend);
+  // Through the command, and in the drawing set.
+  const auto path = (std::filesystem::temp_directory_path() / "bracing-plan.dxf").string();
+  const json r = json::parse(api.execute(json{{"command", "export_drawing"},
+      {"args", {{"path", path}, {"kind", "plan"}, {"bracing_floor", "1"}}}}.dump()));
+  EXPECT_TRUE(r.value("ok", false)) << r.dump();
+  const auto set = doc::drawingSet(m.document(), doc::DrawingSetSpec{});
+  ASSERT_TRUE(set) << set.error();
+  EXPECT_NE(std::find(set->names.begin(), set->names.end(), "耐力壁配置図（1階）"), set->names.end());
+}

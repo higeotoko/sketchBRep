@@ -255,7 +255,9 @@ std::string roomTagText(const RoomRow& room);
 // floors and roofs (docs/136: one line per type name and part, its count and sizes), 5 the
 // quantities of the layers (docs/172), 6 daylight and ventilation of the rooms given a kind
 // (docs/207), 7 the wall quantity table, 8 the list of bracing walls, 9 the quarter-division side
-// parts (docs/208, from check_wall_quantity); the same values and notes as the CSV.
+// parts (docs/208, from check_wall_quantity), 10 the outline of the project (docs/209: site, zone,
+// road, areas and ratios for reference, storeys, highest point, structure); the same values and
+// notes as the CSV.
 draw::Table scheduleTable(const Document& document, int which);
 
 // The quantities of the layers of walls, floors and roofs (docs/172): per part and layer name,
