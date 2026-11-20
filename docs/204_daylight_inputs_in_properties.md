@@ -29,7 +29,7 @@ AI 連携の通り道（ローカルソケット）の名前は、Windows のユ
 
 **計算テスト済み**
 - Windows ローカル：コア全件 768件成功・8件スキップ・失敗0。
-- Linux CI：CI_RESULT
+- [Linux CI（`72374a5`）](https://github.com/higeotoko/sketchBRep/actions/runs/44681139502)：CTest 789件、失敗0（`aiRequestsTakeTurnsWithTheWindow` を含む）。
 
 **GUI 自動確認済み**
 - `schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan` を広げた：室のプロパティで「住宅の居住のための居室」を選ぶと `room_daylight` が入り、Undo が1段増え、ステータスに「居室の区分」と出る。換気を「換気設備」にすると入る。壁のプロパティで1つ目の開口に採光係数 1.5・根拠・換気 0.9 ㎡を入れると、建具表の行に 1.5・根拠・0.9 が出る。Undo で消える。
