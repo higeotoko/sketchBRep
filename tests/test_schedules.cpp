@@ -2517,7 +2517,7 @@ TEST_F(Schedules, PermitChecksReadGridAndPlanStages) {
   EXPECT_EQ(rowOf(2, "通り芯")["state"], "未入力");
   EXPECT_EQ(rowOf(2, "壁と階")["state"], "入力済み");  // drawn at 1FL
   EXPECT_EQ(rowOf(2, "壁と通り芯")["state"], "通り芯待ち");
-  EXPECT_FALSE(call("permit_checks", {{"stage", 4}}).value("ok", true));
+  EXPECT_FALSE(call("permit_checks", {{"stage", 13}}).value("ok", true));  // 1-12 (docs/212)
   EXPECT_EQ(modeler.history().undoCount(), steps);  // reading only
 
   // A grid on the wall lines: the walls are not on it until pinned; a column off the lines stays off.
@@ -2947,4 +2947,66 @@ TEST(DaylightFactors, AVerandaTakesSevenTenths) {
   EXPECT_NEAR(rows[0]["factor"].get<double>(), (941.0 / 3550.0 * 6 - 1.4) * 0.7, 1e-9);
   EXPECT_NE(rows[0]["basis"].get<std::string>().find("×0.7"), std::string::npos);
   EXPECT_TRUE(ok("room_opening_inputs")["unmatched_openings"][0]["veranda"].get<bool>());
+}
+
+// docs/212: a person's mark on a permit workflow stage goes back to 要再確認 when the model changes
+// the stage's rows, and comes back when the change is undone; saved with the file; never a pass.
+TEST_F(Schedules, APermitStageMarkGoesBackToRecheckWhenTheModelChanges) {
+  const auto mark = [&](int stage) { return ok("permit_checks", {{"stage", stage}})["confirmation"]; };
+  EXPECT_EQ(mark(3)["state"], "未確認");
+  EXPECT_EQ(ok("confirm_permit_stage", {{"stage", 3}, {"by", "オーナー"}, {"note", "目で見た"}, {"on", "2026-11-21"}})["state"],
+            "確認済み");
+  json m = mark(3);
+  EXPECT_EQ(m["state"], "確認済み");
+  EXPECT_EQ(m["on"], "2026-11-21");
+  EXPECT_EQ(m["by"], "オーナー");
+  EXPECT_EQ(m["note"], "目で見た");
+  EXPECT_EQ(mark(2)["state"], "未確認");  // other stages keep their own
+  // A room in the east half changes the plan rows.
+  ok("create_room", {{"at", {6000, 3000}}, {"name", "洋室"}});
+  m = mark(3);
+  EXPECT_EQ(m["state"], "要再確認");
+  EXPECT_FALSE(m["changed"].empty()) << m.dump();
+  ok("undo");
+  EXPECT_EQ(mark(3)["state"], "確認済み");
+  ok("create_room", {{"at", {6000, 3000}}, {"name", "洋室"}});
+  EXPECT_EQ(mark(3)["state"], "要再確認");
+  ok("confirm_permit_stage", {{"stage", 3}});
+  m = mark(3);
+  EXPECT_EQ(m["state"], "確認済み");
+  EXPECT_EQ(m["on"].get<std::string>().size(), 10u);  // today, YYYY-MM-DD
+  EXPECT_FALSE(m.contains("by"));
+  // Saved and read back.
+  sbr::doc::Document copy;
+  ASSERT_TRUE(sbr::doc::deserializeDocument(sbr::doc::serializeDocument(modeler.document()), copy));
+  EXPECT_EQ(sbr::doc::permitConfirmation(copy, 3).state, "確認済み");
+  // Stage 12 counts the marks of 1-11.
+  json rows = ok("permit_checks", {{"stage", 12}})["rows"];
+  bool counted = false;
+  for (const json& r : rows)
+    if (r["item"] == "人の確認") {
+      counted = true;
+      EXPECT_EQ(r["state"], "未確認");
+      EXPECT_NE(r["details"].get<std::string>().find("印のある工程 1。"), std::string::npos) << r.dump();
+      EXPECT_NE(r["details"].get<std::string>().find("未確認：1・2・4・5"), std::string::npos) << r.dump();
+    }
+  EXPECT_TRUE(counted);
+  // Taken away, and back with undo.
+  ok("confirm_permit_stage", {{"stage", 3}, {"confirmed", false}});
+  EXPECT_EQ(mark(3)["state"], "未確認");
+  ok("undo");
+  EXPECT_EQ(mark(3)["state"], "確認済み");
+  // Wrong input changes nothing.
+  EXPECT_FALSE(call("confirm_permit_stage", {{"stage", 13}}).value("ok", true));
+  EXPECT_FALSE(call("confirm_permit_stage", {{"stage", 2}, {"on", "21/11/2026"}}).value("ok", true));
+  EXPECT_EQ(mark(2)["state"], "未確認");
+  // Stages 1 and 4 are read in the core too.
+  rows = ok("permit_checks", {{"stage", 1}})["rows"];
+  ASSERT_FALSE(rows.empty());
+  EXPECT_EQ(rows[0]["item"], "敷地境界");
+  EXPECT_EQ(rows[0]["state"], "未入力");
+  rows = ok("permit_checks", {{"stage", 4}})["rows"];
+  bool living = false;
+  for (const json& r : rows) living = living || r["item"].get<std::string>().rfind("居間", 0) == 0;
+  EXPECT_TRUE(living) << rows.dump();
 }

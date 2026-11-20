@@ -35,7 +35,8 @@ PermitWorkflowPanel::PermitWorkflowPanel(doc::Document& document, std::function<
                                          QWidget* parent)
     : QWidget(parent), document_(document), phases_(new QListWidget(this)), next_(new QLabel(this)),
       checks_(new QTreeWidget(this)), details_(new QLabel(this)), edit_(new QPushButton(this)),
-      preview_(new QPushButton(translated("検討用の配置図"), this)), refreshTimer_(new QTimer(this)) {
+      preview_(new QPushButton(translated("検討用の配置図"), this)), confirmation_(new QLabel(this)),
+      confirm_(new QPushButton(this)), refreshTimer_(new QTimer(this)) {
   setMinimumHeight(350);
   const QStringList names{translated("敷地・配置図"), translated("通り芯"), translated("平面"),
       translated("居室・採光・換気"), translated("階段"), translated("屋根・庇・バルコニー"),
@@ -69,12 +70,18 @@ PermitWorkflowPanel::PermitWorkflowPanel(doc::Document& document, std::function<
   checks_->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
   edit_->setObjectName(QStringLiteral("permitWorkflowEdit"));
   preview_->setObjectName(QStringLiteral("permitWorkflowPreview"));
+  confirmation_->setObjectName(QStringLiteral("permitWorkflowConfirmation"));
+  confirmation_->setWordWrap(true);
+  confirmation_->setTextFormat(Qt::PlainText);
+  confirm_->setObjectName(QStringLiteral("permitWorkflowConfirm"));
 
   auto* right = new QVBoxLayout;
   right->addWidget(next_);
   right->addWidget(checks_);
   right->addWidget(details_);
   right->addWidget(edit_, 0, Qt::AlignLeft);
+  right->addWidget(confirmation_);
+  right->addWidget(confirm_, 0, Qt::AlignLeft);
   right->addStretch(1);
   right->addWidget(preview_, 0, Qt::AlignLeft);
   auto* gate = new QLabel(translated("申請用出力は保留。申請先・適用法令・必要図書の確認が残っています。"), this);
@@ -91,6 +98,10 @@ PermitWorkflowPanel::PermitWorkflowPanel(doc::Document& document, std::function<
   connect(edit_, &QPushButton::clicked, this, [this, open] {
     const int index = checks_->indexOfTopLevelItem(checks_->currentItem());
     if (index >= 0 && rows_[index].action != Action::None) open(rows_[index].action, rows_[index].target);
+  });
+  connect(confirm_, &QPushButton::clicked, this, [this, open] {
+    const int phase = phases_->currentRow();
+    if (phase >= 0) open(confirmed_ ? Action::ClearConfirmation : Action::ConfirmStage, QString::number(phase + 1));
   });
   connect(preview_, &QPushButton::clicked, this, [open = std::move(open)] { open(Action::Preview, {}); });
   refreshTimer_->setSingleShot(true);
@@ -389,7 +400,43 @@ void PermitWorkflowPanel::refresh() {
   checks_->setCurrentItem(checks_->topLevelItem(selected >= 0 ? selected : defaultRow));
   preview_->setVisible(phase == 0);
   preview_->setEnabled(canPreview_);
+  showConfirmations(phase);
   showSelectedCheck();
+}
+
+// docs/212: the person's marks. The list shows ✓ / 要再確認 after a stage; the current stage's mark
+// with what changed, and the button to give, renew or take it away.
+void PermitWorkflowPanel::showConfirmations(int phase) {
+  const QSignalBlocker block(phases_);
+  for (int i = 0; i < phases_->count(); ++i) {
+    auto* item = phases_->item(i);
+    QString text = item->text();
+    const int cut = text.indexOf(QStringLiteral("　"));
+    if (cut > 0) text.truncate(cut);
+    const auto mark = doc::permitConfirmation(document_, i + 1);
+    if (mark.state == "確認済み") text += QStringLiteral("　✓");
+    else if (mark.state == "要再確認") text += QStringLiteral("　") + translated("要再確認");
+    item->setText(text);
+  }
+  const auto mark = doc::permitConfirmation(document_, phase + 1);
+  confirmed_ = mark.state == "確認済み";
+  QString text;
+  if (mark.state == "確認済み") {
+    text = translated("人の確認：確認済み（%1%2）").arg(QString::fromStdString(mark.on),
+        mark.by.empty() ? QString() : QStringLiteral("　") + QString::fromStdString(mark.by));
+    confirm_->setText(translated("確認の印を外す"));
+  } else if (mark.state == "要再確認") {
+    QStringList changed;
+    for (const auto& c : mark.changed) changed << QString::fromStdString(c);
+    text = translated("人の確認：要再確認（%1 に確認した後、モデルが変わりました）\n変わった行：%2")
+               .arg(QString::fromStdString(mark.on), changed.isEmpty() ? translated("（記録なし）") : changed.join(QStringLiteral("、")));
+    confirm_->setText(translated("見直したので確認し直す"));
+  } else {
+    text = translated("人の確認：未確認");
+    confirm_->setText(translated("この工程を確認した"));
+  }
+  if (!mark.note.empty()) text += translated("\nメモ：") + QString::fromStdString(mark.note);
+  confirmation_->setText(text);
 }
 
 void PermitWorkflowPanel::showSelectedCheck() {

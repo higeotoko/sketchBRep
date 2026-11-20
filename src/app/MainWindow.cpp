@@ -7139,6 +7139,16 @@ void MainWindow::showPermitWorkflow() {
         refreshPanels();
         break;
       }
+      case Action::ConfirmStage:
+      case Action::ClearConfirmation: {  // docs/212
+        const bool confirm = action == Action::ConfirmStage;
+        const auto done = modeler_.setPermitConfirmation(target.toInt(), confirm);
+        if (!done) reportError(tr("工程の確認を記録できません: %1").arg(userMessage(QString::fromStdString(done.message()))));
+        else setStatus(confirm ? tr("工程 %1 に確認の印を付けました（モデルが変わると「要再確認」に戻ります。Ctrl+Z で戻せます）").arg(target)
+                               : tr("工程 %1 の確認の印を外しました").arg(target));
+        refreshPanels();
+        break;
+      }
       case Action::SelectObjects: {
         std::vector<doc::ObjectId> ids;
         for (const QString& id : target.split(QLatin1Char('\n'), Qt::SkipEmptyParts)) ids.push_back(id.toStdString());

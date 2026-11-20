@@ -1147,6 +1147,7 @@ std::string serializeDocument(const Document& document) {
       {"constructionOverrides", s.constructionOverrides},
       {"wallCalculation", s.wallCalculation},
       {"elementTypes", s.elementTypes},
+      {"permitConfirmations", s.permitConfirmations},
       {"sun",
        {{"month", s.sun.month},
         {"day", s.sun.day},
@@ -1302,6 +1303,11 @@ Status deserializeDocument(const std::string& text, Document& document,
       const auto value = root.at("elementTypes").get<std::string>();
       if (!json::parse(value, nullptr, false).is_object()) throw std::runtime_error("elementTypes: not an object");
       s.elementTypes = value;
+    }
+    if (root.contains("permitConfirmations")) {  // docs/212
+      const auto value = root.at("permitConfirmations").get<std::string>();
+      if (!json::parse(value, nullptr, false).is_object()) throw std::runtime_error("permitConfirmations: not an object");
+      s.permitConfirmations = value;
     }
     if (root.contains("constructionOverrides")) {
       s.constructionOverrides = root.at("constructionOverrides").get<std::map<std::string, std::string>>();

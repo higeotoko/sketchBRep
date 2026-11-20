@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <map>
 #include <optional>
@@ -1324,6 +1325,206 @@ std::vector<PermitCheck> permitOutputChecks(const Document& document) {
                  "出力に未評価・要再照合の注が付く所があります。",
                  {}});
   out.push_back({"申請先で確かめる事", "未評価", "申請先（確認検査機関・特定行政庁）、申請の区分と適用法令、必要な図書と様式、提出の方法。", {}});
+  // docs/212: the stages a person marked as looked at (1-11; this stage's own mark is not counted).
+  {
+    std::vector<std::string> unchecked, again;
+    for (int stage = 1; stage <= 11; ++stage) {
+      const auto mark = permitConfirmation(document, stage);
+      if (mark.state == "要再確認") again.push_back(std::to_string(stage));
+      else if (mark.state != "確認済み") unchecked.push_back(std::to_string(stage));
+    }
+    const auto join = [](const std::vector<std::string>& list) {
+      std::string text;
+      for (const auto& s : list) text += (text.empty() ? "" : "・") + s;
+      return text;
+    };
+    const int confirmed = 11 - static_cast<int>(unchecked.size() + again.size());
+    std::string details = "工程 1〜11 のうち、人が確認した印のある工程 " + std::to_string(confirmed) + "。";
+    if (!again.empty()) details += "\n要再確認（確認の後にモデルが変わった）：" + join(again);
+    if (!unchecked.empty()) details += "\n未確認：" + join(unchecked);
+    details += "\n印は人が見たという記録で、合格ではありません。";
+    out.push_back({"人の確認", !again.empty() ? "要再確認" : confirmed == 11 ? "確認済み" : "未確認", details, {},
+                   confirmed != 11});
+  }
+  return out;
+}
+
+std::vector<PermitCheck> permitSiteChecks(const Document& document) {
+  std::vector<PermitCheck> out;
+  const auto& settings = document.settings();
+  const auto& site = settings.siteBoundary;
+  const auto metres = [](double mm) { return number(mm / 1000.0, 3) + " m"; };
+  std::optional<SiteBoundaryGeometry> geometry;
+  if (!site) {
+    out.push_back({"敷地境界", "未入力", "敷地の閉じた折れ線か水平面を登録します。", {}, true});
+  } else if (auto g = document.siteBoundaryGeometry(site->outline); !g) {
+    out.push_back({"敷地境界", "要再照合", g.error(), {site->outline}, true});
+  } else {
+    geometry = *g;
+    std::string points;
+    for (const gp_Pnt& p : geometry->vertices) points += " (" + number(p.X(), 1) + ", " + number(p.Y(), 1) + ")";
+    out.push_back({"敷地境界", "入力済み",
+                   "指定輪郭 " + number(geometry->areaMm2 / 1e6, 3) + " m²\n確認資料 " + site->source + "\n頂点" + points,
+                   {site->outline}});
+  }
+  if (const auto& north = settings.siteNorth)
+    out.push_back({"真北", "入力済み",
+                   "モデルの +Y から時計回り " + number(north->angle, 6) + "°\n確認資料 " + north->source + "\n確認日 " +
+                       north->checkedOn,
+                   {}});
+  else
+    out.push_back({"真北", "未入力", "真北の角度と確認資料・日付を入力します。", {}, true});
+  if (!geometry) {
+    for (const char* item : {"道路・接道", "接地外周・高さ", "用途地域の区分"})
+      out.push_back({item, "敷地境界待ち", "敷地境界を登録すると入力できます。", {}});
+    return out;
+  }
+  if (!site->road) {
+    out.push_back({"道路・接道", "未入力", "道路側の辺と確認資料・寸法を入力します。", {}, true});
+  } else if (!document.siteRoadEdge(*geometry)) {
+    out.push_back({"道路・接道", "要再照合", "道路側の辺が変わりました。", {}, true});
+  } else {
+    const auto& road = *site->road;
+    const bool partial = road.kind.empty() || road.widthMm <= 0 || road.frontageMm <= 0;
+    out.push_back({"道路・接道", partial ? "入力不足" : "入力済み",
+                   "種別 " + (road.kind.empty() ? std::string("未入力") : road.kind) + "\n幅員 " +
+                       (road.widthMm > 0 ? metres(road.widthMm) : std::string("未入力")) + "　接道長 " +
+                       (road.frontageMm > 0 ? metres(road.frontageMm) : std::string("未入力")) + "\n確認資料 " + road.source,
+                   {}, partial});
+  }
+  if (!site->ground) {
+    out.push_back({"接地外周・高さ", "未入力", "建物の接地外周を選び、基準点と測点の高さを入力します。", {}, true});
+  } else {
+    const auto& ground = *site->ground;
+    const auto placement = document.checkSiteGroundPlacement(ground);
+    const auto report = document.siteGroundReport(ground);
+    if (!placement || !report) {
+      out.push_back({"接地外周・高さ", "要再照合", !placement ? placement.message() : report.error(), {ground.outline}, true});
+    } else {
+      const bool linked = ground.placement.has_value();
+      out.push_back({"接地外周・高さ", linked ? "参考値あり" : "建物未関連",
+                     "参考平均 " + metres(report->averageMm()) + "（基準点 " + ground.datum + "）\n確認資料 " + ground.source,
+                     {ground.outline}, !linked});
+    }
+  }
+  const Object* outline = document.find(site->outline);
+  const auto value = [&](const char* key) {
+    if (!outline) return std::string();
+    const auto it = outline->attributes.find(key);
+    return it == outline->attributes.end() ? std::string() : it->second;
+  };
+  const std::string zone = value("use_zone");
+  if (zone.empty()) {
+    out.push_back({"用途地域の区分", "未入力", "住居系・工業系・商業系（指定なしを含む）のどれかと確認資料を入れます。", {}, true});
+  } else {
+    const std::string name = zone == "residential" ? "住居系" : zone == "industrial" ? "工業系" : "商業系・指定なし";
+    out.push_back({"用途地域の区分", "入力済み", name + "\n確認資料 " + value("use_zone_source"), {}});
+  }
+  return out;
+}
+
+std::vector<PermitCheck> permitRoomChecks(const Document& document) {
+  std::vector<PermitCheck> out;
+  const auto data = roomOpeningInputs(document);
+  const auto settled = [](const std::string& state) {
+    return state == "参考値内" || state == "対象外" || state == "換気設備";
+  };
+  for (const auto& entry : data.rooms) {
+    const RoomDaylightCheck check = roomDaylightCheck(entry);
+    const std::string name = entry.room.name + (entry.room.level.empty() ? std::string() : "（" + entry.room.level + "）");
+    out.push_back({name, check.daylightState,
+                   "採光：" + check.daylightText + "\n換気：" + check.ventilationState + "　" + check.ventilationText +
+                       "\n機械換気：" + check.mechanicalState + "　" + check.mechanicalText,
+                   {entry.room.id}, !settled(check.daylightState) || !settled(check.ventilationState)});
+  }
+  if (data.rooms.empty()) out.push_back({"居室", "未入力", "室がありません。", {}, true});
+  if (!data.unmatched.empty())
+    out.push_back({"室に入らない開口", "要確認", std::to_string(data.unmatched.size()) + " 個の開口が、どの室にも入りません。", {}, true});
+  return out;
+}
+
+std::vector<PermitCheck> permitChecks(const Document& document, int stage) {
+  switch (stage) {
+    case 1: return permitSiteChecks(document);
+    case 2: return permitGridChecks(document);
+    case 3: return permitPlanChecks(document);
+    case 4: return permitRoomChecks(document);
+    case 5: return permitStairChecks(document);
+    case 6: return permitRoofChecks(document);
+    case 7: return permitBraceChecks(document);
+    case 8: return permitFoundationChecks(document);
+    case 9: return permitEnergyChecks(document);
+    case 10: return permitElevationChecks(document);
+    case 11: return permitSetChecks(document);
+    case 12: return permitOutputChecks(document);
+    default: return {};
+  }
+}
+
+namespace {
+std::string fnv(const std::string& text) {
+  std::uint64_t h = 1469598103934665603ULL;
+  for (unsigned char c : text) {
+    h ^= c;
+    h *= 1099511628211ULL;
+  }
+  char buffer[17];
+  std::snprintf(buffer, sizeof buffer, "%016llx", static_cast<unsigned long long>(h));
+  return buffer;
+}
+std::string rowText(const PermitCheck& c) {
+  std::string text = c.item + '\x1f' + c.state + '\x1f' + c.details + '\x1f';
+  for (const auto& id : c.targets) text += id + ',';
+  return text;
+}
+}  // namespace
+
+std::string permitStageFingerprint(const std::vector<PermitCheck>& rows) {
+  std::string text = "permit-v1";
+  for (const PermitCheck& c : rows) text += '\x1e' + rowText(c);
+  return fnv(text);
+}
+
+std::map<std::string, std::string> permitRowFingerprints(const std::vector<PermitCheck>& rows) {
+  std::map<std::string, std::string> out;
+  std::map<std::string, int> seen;
+  for (const PermitCheck& c : rows) {
+    const int n = ++seen[c.item];
+    out[n == 1 ? c.item : c.item + "#" + std::to_string(n)] = fnv(rowText(c));
+  }
+  return out;
+}
+
+PermitConfirmation permitConfirmation(const Document& document, int stage) {
+  PermitConfirmation out;
+  out.stage = stage;
+  out.state = "未確認";
+  const nlohmann::json all = nlohmann::json::parse(document.settings().permitConfirmations, nullptr, false);
+  if (!all.is_object()) return out;
+  const auto it = all.find(std::to_string(stage));
+  if (it == all.end() || !it->is_object()) return out;
+  const nlohmann::json record = *it;
+  out.on = record.value("on", std::string());
+  out.by = record.value("by", std::string());
+  out.note = record.value("note", std::string());
+  const auto rows = permitChecks(document, stage);
+  if (permitStageFingerprint(rows) == record.value("fingerprint", std::string())) {
+    out.state = "確認済み";
+    return out;
+  }
+  out.state = "要再確認";
+  const auto now = permitRowFingerprints(rows);
+  std::map<std::string, std::string> then;
+  if (record.contains("rows") && record.at("rows").is_object())
+    for (const auto& [item, print] : record.at("rows").items())
+      if (print.is_string()) then[item] = print.get<std::string>();
+  for (const auto& [item, print] : now) {
+    const auto old = then.find(item);
+    if (old == then.end()) out.changed.push_back(item + "（増えた）");
+    else if (old->second != print) out.changed.push_back(item);
+  }
+  for (const auto& [item, print] : then)
+    if (!now.count(item)) out.changed.push_back(item + "（無くなった）");
   return out;
 }
 

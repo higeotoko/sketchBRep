@@ -220,6 +220,12 @@ class Modeler {
   // residential / industrial / commercial ("" takes it away), with the document it was read from,
   // as attributes "use_zone" / "use_zone_source" on the site outline. One undo step.
   Status setSiteZone(const std::string& zone, const std::string& source);
+  // docs/212: a person's mark that a permit workflow stage (1-12) was looked at, with the
+  // fingerprint of its rows now (doc::permitConfirmation tells when the model has changed them
+  // since); who, a note, and the date (YYYY-MM-DD, empty: today). confirmed false takes the mark
+  // away. One undo step. A record, never a pass.
+  Status setPermitConfirmation(int stage, bool confirmed, const std::string& by = {}, const std::string& note = {},
+                               const std::string& on = {});
   // docs/210: energy inputs. The route the energy documents follow (spec: 仕様基準 / performance:
   // 性能基準 / other / "" takes it away), the region (1-8; 0: not given) and the source, as
   // attributes on the site outline ("energy_route", "energy_region", "energy_source").

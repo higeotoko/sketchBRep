@@ -157,6 +157,9 @@ struct DocumentSettings {
   std::string elementTypes = "{}";
   std::optional<SiteNorth> siteNorth;
   std::optional<SiteBoundary> siteBoundary;
+  // docs/212: stages of the permit workflow a person marked as looked at, with the fingerprint of
+  // the rows they saw: {"3": {"fingerprint": "...", "on": "2026-11-21", "by": "...", "note": "..."}}.
+  std::string permitConfirmations = "{}";
 };
 
 // The part of the settings that belongs to the model's state (saved, undone
@@ -173,10 +176,11 @@ struct PersistentSettings {
   std::string elementTypes = "{}";
   std::optional<SiteNorth> siteNorth;
   std::optional<SiteBoundary> siteBoundary;
+  std::string permitConfirmations = "{}";
 
   static PersistentSettings of(const DocumentSettings& s) {
     return {s.scenes,         s.sections, s.sectionDisplay, s.hiddenTags, s.levels, s.constructionOverrides,
-            s.wallCalculation, s.sun,     s.elementTypes, s.siteNorth, s.siteBoundary};
+            s.wallCalculation, s.sun,     s.elementTypes, s.siteNorth, s.siteBoundary, s.permitConfirmations};
   }
   void applyTo(DocumentSettings& s) const {
     s.scenes = scenes;
@@ -190,13 +194,14 @@ struct PersistentSettings {
     s.elementTypes = elementTypes;
     s.siteNorth = siteNorth;
     s.siteBoundary = siteBoundary;
+    s.permitConfirmations = permitConfirmations;
   }
   bool operator==(const PersistentSettings& o) const {
     return scenes == o.scenes && sections == o.sections && sectionDisplay == o.sectionDisplay &&
            hiddenTags == o.hiddenTags && levels == o.levels &&
            constructionOverrides == o.constructionOverrides && wallCalculation == o.wallCalculation &&
            sun == o.sun && elementTypes == o.elementTypes && siteNorth == o.siteNorth &&
-           siteBoundary == o.siteBoundary;
+           siteBoundary == o.siteBoundary && permitConfirmations == o.permitConfirmations;
   }
   bool operator!=(const PersistentSettings& o) const { return !(*this == o); }
 };

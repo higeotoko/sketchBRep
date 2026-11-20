@@ -197,6 +197,26 @@ std::vector<PermitCheck> permitSetChecks(const Document& document);
 // Stage 12 (申請用出力, docs/202): the permit output stays on hold (with the stages left); study
 // drawings can always be made.
 std::vector<PermitCheck> permitOutputChecks(const Document& document);
+// docs/212: stage 1 (敷地・配置図: boundary, north, road, ground, zone) and stage 4 (居室: per room
+// the daylight, ventilation and mechanical comparison, openings matched to no room) in short
+// form, and every stage 1-12 through one door.
+std::vector<PermitCheck> permitSiteChecks(const Document& document);
+std::vector<PermitCheck> permitRoomChecks(const Document& document);
+std::vector<PermitCheck> permitChecks(const Document& document, int stage);
+// docs/212: what a person's mark on a stage means now. The mark keeps a fingerprint of the rows
+// they saw (item, state, details, targets); when the rows read from the model differ, the stage
+// goes back to 要再確認 with the rows that changed. state: 未確認 / 確認済み / 要再確認. A record
+// that a person looked, never a pass.
+struct PermitConfirmation {
+  int stage = 0;
+  std::string state;
+  std::string on, by, note;          // as recorded
+  std::vector<std::string> changed;  // 要再確認: items whose rows changed, came or went
+};
+std::string permitStageFingerprint(const std::vector<PermitCheck>& rows);
+// item -> fingerprint of that row (repeated items get "#2", "#3" ...), to tell what changed.
+std::map<std::string, std::string> permitRowFingerprints(const std::vector<PermitCheck>& rows);
+PermitConfirmation permitConfirmation(const Document& document, int stage);
 
 // One storey.
 struct AreaRow {

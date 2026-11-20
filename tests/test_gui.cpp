@@ -249,6 +249,7 @@ class GuiPhase1 : public QObject {
   void permitWorkflowShowsRoomAndOpeningInputs();
   void permitWorkflowShowsGridAndPlanChecks();
   void permitWorkflowAppliesDaylightFactors();
+  void permitWorkflowMarksStagesAndAsksAgain();
   void proposalShowsRotationAndHide();
   void benchViewportSync();
   void benchEnterManyCopies();
@@ -890,6 +891,50 @@ void GuiPhase1::permitWorkflowAppliesDaylightFactors() {
   QCOMPARE(rows.size(), std::size_t(1));
   QVERIFY(std::abs(rows[0].daylightFactor - (941.0 / 3550.0 * 6 - 1.4)) < 1e-9);
   QVERIFY(rows[0].daylightBasis.find("令 20 条") != std::string::npos);
+}
+
+// docs/212: a person marks a stage as looked at; when the model changes its rows, the list and the
+// panel say 要再確認 with the rows that changed; the mark is renewed or taken away with the button.
+void GuiPhase1::permitWorkflowMarksStagesAndAsksAgain() {
+  Fixture f;
+  QVERIFY(f.setUp(4000, 3000));
+  auto& modeler = f.window.modeler();
+  using Json = nlohmann::json;
+  api::CommandApi api(modeler);
+  const auto call = [&](const char* command, Json args) {
+    return Json::parse(api.execute(Json{{"command", command}, {"args", std::move(args)}}.dump()));
+  };
+  QVERIFY(modeler.setLevels({{"", "1FL", 0}, {"", "2FL", 3000}}));
+  QVERIFY(call("create_wall", {{"points", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}, {0, 0}}},
+                               {"thickness", 200}, {"height", 3000}})["ok"].get<bool>());
+  f.window.findChild<QAction*>(QStringLiteral("permitWorkflowAction"))->trigger();
+  auto* dock = f.window.findChild<QDockWidget*>(QStringLiteral("permitWorkflowDock"));
+  QVERIFY(dock);
+  auto* phases = dock->findChild<QListWidget*>(QStringLiteral("permitWorkflowPhases"));
+  auto* label = dock->findChild<QLabel*>(QStringLiteral("permitWorkflowConfirmation"));
+  auto* confirm = dock->findChild<QPushButton*>(QStringLiteral("permitWorkflowConfirm"));
+  QVERIFY(phases && label && confirm);
+  phases->setCurrentRow(1);  // 2 通り芯
+  QVERIFY2(label->text().contains(QStringLiteral("未確認")), qPrintable(label->text()));
+  QCOMPARE(confirm->text(), QStringLiteral("この工程を確認した"));
+  const auto steps = modeler.history().undoCount();
+  confirm->click();
+  QTRY_VERIFY(phases->item(1)->text().endsWith(QStringLiteral("　✓")));
+  QCOMPARE(modeler.history().undoCount(), steps + 1);
+  QVERIFY2(label->text().contains(QStringLiteral("確認済み")), qPrintable(label->text()));
+  QCOMPARE(confirm->text(), QStringLiteral("確認の印を外す"));
+  QVERIFY(!phases->item(0)->text().contains(QStringLiteral("　")));  // only the stage marked
+  // The model changes the stage's rows.
+  QVERIFY(call("create_grid", {{"x_spacings", {8000}}, {"y_spacings", {6000}}})["ok"].get<bool>());
+  QTRY_VERIFY2(phases->item(1)->text().endsWith(QStringLiteral("　要再確認")), qPrintable(phases->item(1)->text()));
+  QTRY_VERIFY2(label->text().contains(QStringLiteral("変わった行：")), qPrintable(label->text()));
+  QVERIFY2(label->text().contains(QStringLiteral("通り芯")), qPrintable(label->text()));
+  QCOMPARE(confirm->text(), QStringLiteral("見直したので確認し直す"));
+  confirm->click();
+  QTRY_VERIFY(phases->item(1)->text().endsWith(QStringLiteral("　✓")));
+  confirm->click();  // take it away
+  QTRY_COMPARE(phases->item(1)->text(), QStringLiteral("2  通り芯"));
+  QCOMPARE(doc::permitConfirmation(modeler.document(), 2).state, std::string("未確認"));
 }
 
 // docs/194: stages 2 (通り芯) and 3 (平面) list what the model has and what is missing; a row's

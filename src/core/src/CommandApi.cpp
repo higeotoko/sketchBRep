@@ -3202,29 +3202,39 @@ const std::vector<CommandDef>& commands() {
        "docs/201: wall build-ups and insulation layers, typed floors and roofs, what is not in the model yet) or 10 "
        "(立面・断面, docs/201: GL, the highest point above it, section cuts, the elevations' orientation), 11 (一式の突合せ, "
        "docs/202: rows left per stage, unlike openings under one hand-given mark, rooms sharing a name) or 12 (申請用出力, "
-       "docs/202: the permit output on hold and why). Each row: "
+       "docs/202: the permit output on hold and why, and the stages a person marked), 1 (敷地: boundary, north, road, "
+       "ground, zone) or 4 (居室: per room the daylight, ventilation and mechanical comparison; docs/212). Each row: "
        "item, state (未入力 / 入力済み / 要確認 / 要修正 / 階待ち / 通り芯待ち), details, targets (object ids), "
-       "attention. What is found or missing only; never a legal judgement.",
-       SCHEMA({"type": "object", "properties": {"stage": {"type": "integer", "enum": [2, 3, 5, 6, 7, 8, 9, 10, 11, 12]}}, "required": ["stage"]}),
+       "attention. 'confirmation' (docs/212): a person's mark on the stage, state 未確認 / 確認済み / 要再確認 (the "
+       "rows changed since; 'changed' names them), on, by, note. What is found or missing only; never a legal judgement.",
+       SCHEMA({"type": "object", "properties": {"stage": {"type": "integer", "minimum": 1, "maximum": 12}}, "required": ["stage"]}),
        [](doc::Modeler& m, const json& a) {
          const int stage = a.at("stage").get<int>();
-         if (stage != 2 && stage != 3 && (stage < 5 || stage > 12))
-           throw std::runtime_error("stage must be 2, 3 or 5 to 12");
-         const auto checks = stage == 2   ? doc::permitGridChecks(m.document())
-                             : stage == 3 ? doc::permitPlanChecks(m.document())
-                             : stage == 5 ? doc::permitStairChecks(m.document())
-                             : stage == 6 ? doc::permitRoofChecks(m.document())
-                             : stage == 7 ? doc::permitBraceChecks(m.document())
-                             : stage == 8 ? doc::permitFoundationChecks(m.document())
-                             : stage == 9 ? doc::permitEnergyChecks(m.document())
-                             : stage == 10 ? doc::permitElevationChecks(m.document())
-                             : stage == 11 ? doc::permitSetChecks(m.document())
-                                           : doc::permitOutputChecks(m.document());
+         if (stage < 1 || stage > 12) throw std::runtime_error("stage must be 1 to 12");
          json rows = json::array();
-         for (const auto& c : checks)
+         for (const auto& c : doc::permitChecks(m.document(), stage))
            rows.push_back({{"item", c.item}, {"state", c.state}, {"details", c.details}, {"targets", c.targets},
                            {"attention", c.attention}});
-         return json{{"stage", stage}, {"rows", std::move(rows)}};
+         const auto mark = doc::permitConfirmation(m.document(), stage);
+         json confirmation = {{"state", mark.state}, {"changed", mark.changed}};
+         if (!mark.on.empty()) confirmation["on"] = mark.on;
+         if (!mark.by.empty()) confirmation["by"] = mark.by;
+         if (!mark.note.empty()) confirmation["note"] = mark.note;
+         return json{{"stage", stage}, {"rows", std::move(rows)}, {"confirmation", std::move(confirmation)}};
+       }},
+      {"confirm_permit_stage",
+       "docs/212: a person's mark that a permit workflow stage (1-12) was looked at. It keeps a fingerprint of the "
+       "stage's rows now; when the model changes them, permit_checks shows the stage as 要再確認 with the rows that "
+       "changed. 'confirmed' false takes the mark away. 'by' (who), 'note', 'on' (YYYY-MM-DD, default today). Only "
+       "on the person's word: never mark a stage yourself. A record that a person looked, never a pass. One undo step.",
+       SCHEMA({"type": "object", "properties": {"stage": {"type": "integer", "minimum": 1, "maximum": 12},
+               "confirmed": {"type": "boolean"}, "by": {"type": "string"}, "note": {"type": "string"},
+               "on": {"type": "string"}}, "required": ["stage"]}),
+       [](doc::Modeler& m, const json& a) {
+         const int stage = a.at("stage").get<int>();
+         must(m.setPermitConfirmation(stage, a.value("confirmed", true), textOr(a, "by", ""), textOr(a, "note", ""),
+                                      textOr(a, "on", "")));
+         return json{{"stage", stage}, {"state", doc::permitConfirmation(m.document(), stage).state}};
        }},
       {"area_table",
        "Areas by storey measured from the model (m2): per level 'enclosed' (everything the walls standing on it "

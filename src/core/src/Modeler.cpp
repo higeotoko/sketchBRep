@@ -15,6 +15,7 @@
 #include <unordered_set>
 #include <deque>
 #include <cmath>
+#include <ctime>
 #include <limits>
 #include <map>
 #include <set>
@@ -4084,6 +4085,45 @@ Status Modeler::setSiteZone(const std::string& zone, const std::string& source) 
   ChangeSet changes(document_);
   changes.modify(object);
   history_.execute(changes.build("Site Zone"));
+  return Status::success();
+}
+
+Status Modeler::setPermitConfirmation(int stage, bool confirmed, const std::string& by, const std::string& note,
+                                      const std::string& on) {
+  if (stage < 1 || stage > 12) return Status::failure("工程は 1〜12 です");
+  nlohmann::json all = nlohmann::json::parse(document_.settings().permitConfirmations, nullptr, false);
+  if (!all.is_object()) all = nlohmann::json::object();
+  const std::string key = std::to_string(stage);
+  if (!confirmed) {
+    if (!all.contains(key)) return Status::success();
+    all.erase(key);
+  } else {
+    if (!oneLine(by, 100) || !oneLine(note, 600)) return Status::failure("確認した人・メモは1行です");
+    std::string date = on;
+    if (date.empty()) {
+      const std::time_t now = std::time(nullptr);
+      std::tm local{};
+#ifdef _WIN32
+      localtime_s(&local, &now);
+#else
+      localtime_r(&now, &local);
+#endif
+      char buffer[16];
+      std::strftime(buffer, sizeof buffer, "%Y-%m-%d", &local);
+      date = buffer;
+    }
+    if (date.size() != 10 || date[4] != '-' || date[7] != '-') return Status::failure("確認日は YYYY-MM-DD で入れます");
+    const auto rows = permitChecks(document_, stage);
+    nlohmann::json printed = nlohmann::json::object();
+    for (const auto& [item, print] : permitRowFingerprints(rows)) printed[item] = print;
+    nlohmann::json record = {{"fingerprint", permitStageFingerprint(rows)}, {"rows", printed}, {"on", date}};
+    if (!by.empty()) record["by"] = by;
+    if (!note.empty()) record["note"] = note;
+    all[key] = record;
+  }
+  const std::string text = all.dump();
+  editSettings(document_, history_, confirmed ? "Confirm Permit Stage" : "Clear Permit Confirmation",
+               [&](PersistentSettings& s) { s.permitConfirmations = text; });
   return Status::success();
 }
 
