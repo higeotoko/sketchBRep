@@ -462,6 +462,74 @@ std::vector<PermitCheck> permitPlanChecks(const Document& document) {
   return out;
 }
 
+std::vector<PermitCheck> permitStairChecks(const Document& document) {
+  std::vector<PermitCheck> out;
+  const auto label = [](const std::string& item) -> std::string {
+    if (item == "riser") return "蹴上げ";
+    if (item == "going") return "踏面";
+    if (item == "winder_going") return "回り段の踏面";
+    if (item == "width") return "幅";
+    if (item == "landing") return "踊場";
+    if (item == "handrail") return "手すり";
+    return item;
+  };
+  // How a line reads: the value against the limit (mm), or what the comparison found.
+  const auto line = [&](const geom::StairCheck& c) {
+    const std::string state = c.state == "ok" ? "参考値内" : c.state == "ng" ? "参考値を外れる" : "未評価";
+    std::string limit;
+    if (c.item == "riser") limit = "230 以下";
+    else if (c.item == "going" || c.item == "winder_going") limit = "150 以上";
+    else if (c.item == "width") limit = "750 以上";
+    else if (c.item == "landing") limit = "高さ 4000 以内ごと";
+    else if (c.item == "handrail") limit = "設ける";
+    std::string value;
+    if (c.item == "landing" || c.item == "handrail") value = "";
+    else if (c.value > 0) value = number(c.value, 1) + " mm　";
+    return label(c.item) + "　" + value + "（" + limit + "）　" + state;
+  };
+  int stairs = 0;
+  for (const Object& o : document.objects()) {
+    if (attribute(o, "kind") != "stair") continue;
+    ++stairs;
+    std::string name = o.name;
+    if (const std::string level = levelName(document, attribute(o, "base_level")); !level.empty()) name = level + "　" + name;
+    const auto spec = stairInWorld(document, o);
+    if (!spec) {
+      out.push_back({name, "未評価", "形を直接変えた階段は、寸法を読めません。階段ツールで作り直すと照らせます。", {o.id}, true});
+      continue;
+    }
+    const auto shape = geom::makeStair(*spec);
+    if (!shape) {
+      out.push_back({name, "未評価", "寸法を読めません：" + shape.error(), {o.id}, true});
+      continue;
+    }
+    bool off = false, open = false;
+    std::string details = std::to_string(shape->risers) + " 段　上がる高さ " + number(spec->rise, 0) + " mm";
+    for (const auto& c : shape->checks) {
+      details += "\n" + line(c);
+      off = off || c.state == "ng";
+      open = open || (c.state != "ok" && c.state != "ng");
+    }
+    out.push_back({name, off ? "要確認" : open ? "未評価あり" : "参考値内", details, {o.id}, off || open});
+  }
+  if (stairs == 0) {
+    out.push_back({"階段", "未入力", "2 階以上の建物は、階段ツールで階段を置くと、段・幅・踊場・手すりを照らせます。", {}, true});
+    return out;
+  }
+  out.push_back({"照らした値", "参考",
+                 "住宅の階段（共同住宅の共用の階段を除く）として照らした参考値。合否の判定ではありません。\n"
+                 "蹴上げ・踏面：建築基準法施行令 第 23 条第 1 項ただし書き。幅：同項の表（四）。回り段の踏面は狭い方の端から "
+                 "30 cm の位置（同条第 2 項。ここでは段の角度の弦で測る）。踊場：第 24 条第 1 項。手すり：第 25 条第 1 項（高さ "
+                 "1 m 以下の部分は除く、同条第 4 項）。\n確認：e-Gov 法令検索（令和8年11月1日施行版）、2026-11-20。",
+                 {}});
+  out.push_back({"まだ照らしていない事", "未評価",
+                 "表の（一）〜（三）に当たる階段か（直上階の居室の床面積の合計が 200 m² を超える時など）。幅は、高さ 50 cm "
+                 "以下の手すり等を 10 cm まで無いものとして測る（第 23 条第 3 項）。直階段の踊場の踏幅 1.2 m 以上（第 24 条第 2 項）。"
+                 "両側の側壁またはこれに代わるもの（第 25 条第 2 項）。国土交通大臣が定めた構造方法の階段（第 23 条第 4 項）。",
+                 {}});
+  return out;
+}
+
 namespace {
 // docs/141: areas in plan as 1 mm thick slices (z 0 to 1), so that unions and overlaps are solids
 // and their volume is the area (mm2).

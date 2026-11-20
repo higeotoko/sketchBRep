@@ -106,6 +106,10 @@ std::vector<PermitCheck> permitGridChecks(const Document& document);
 // Stage 3 (平面): per storey the enclosed regions and rooms, rooms that do not close or share,
 // walls reshaped by hand, openings without a fitting.
 std::vector<PermitCheck> permitPlanChecks(const Document& document);
+// Stage 5 (階段, docs/197): each stair made by the stair tool compared with the sizes for a
+// house's own stair (令 23-25, read on e-Gov 2026-11-20: 令和8年11月1日施行版), the basis, and
+// what is not compared. A comparison, never a pass.
+std::vector<PermitCheck> permitStairChecks(const Document& document);
 
 // One storey.
 struct AreaRow {

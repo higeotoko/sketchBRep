@@ -2551,3 +2551,35 @@ TEST_F(Schedules, PermitChecksReadGridAndPlanStages) {
   EXPECT_EQ(closing["state"], "要修正");
   ASSERT_EQ(closing["targets"].size(), 1u);
 }
+
+// docs/197: the permit workflow's stage 5 (階段): each stair against the sizes for a house's own
+// stair, the basis (read on e-Gov) and what is not compared; never a pass.
+TEST_F(Schedules, PermitChecksReadTheStairStage) {
+  const auto rows = [&] { return ok("permit_checks", {{"stage", 5}})["rows"]; };
+  json none = rows();
+  ASSERT_EQ(none.size(), 1u);
+  EXPECT_EQ(none[0]["item"], "階段");
+  EXPECT_EQ(none[0]["state"], "未入力");
+  // A straight stair 800 wide, risers within 200 (the default limit), with handrails.
+  const std::string stair = ok("create_stair", {{"path", {{7000, 500}, {7000, 4000}}}, {"rise", 3000}, {"width", 800},
+                                                {"handrail", "both"}})["id"];
+  json all = rows();
+  ASSERT_GE(all.size(), 3u);
+  EXPECT_EQ(all[0]["targets"][0], stair);
+  EXPECT_EQ(all[0]["state"], "参考値内") << all[0].dump();
+  const std::string details = all[0]["details"];
+  EXPECT_NE(details.find("蹴上げ"), std::string::npos);
+  EXPECT_NE(details.find("（230 以下）　参考値内"), std::string::npos) << details;
+  EXPECT_EQ(all[1]["item"], "照らした値");
+  EXPECT_NE(all[1]["details"].get<std::string>().find("e-Gov"), std::string::npos);
+  EXPECT_EQ(all[2]["state"], "未評価");
+  // Fewer, taller risers (250): the line says so and the stair is to be looked at.
+  ok("change_stair", {{"id", stair}, {"risers", 12}});
+  all = rows();
+  EXPECT_EQ(all[0]["state"], "要確認");
+  EXPECT_TRUE(all[0]["attention"].get<bool>());
+  EXPECT_NE(all[0]["details"].get<std::string>().find("参考値を外れる"), std::string::npos);
+  // No handrail: not measured here, never a pass.
+  ok("change_stair", {{"id", stair}, {"risers", 0}, {"handrail", "none"}});
+  EXPECT_EQ(rows()[0]["state"], "未評価あり");
+}

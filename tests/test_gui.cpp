@@ -884,6 +884,18 @@ void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
   QVERIFY(modeler.createRoom(gp_Pnt(4000, 3000, 0), "居間"));
   QTRY_COMPARE(rowOf(QStringLiteral("1FL の平面"))->text(1), QStringLiteral("入力済み"));
   QVERIFY(rowOf(QStringLiteral("面積の根拠")));
+
+  // docs/197: stage 5 (階段): none yet, then the stair against the sizes, selectable.
+  phases->setCurrentRow(4);
+  QCOMPARE(rowOf(QStringLiteral("階段"))->text(1), QStringLiteral("未入力"));
+  const auto stair=call("create_stair",{{"path",{{1000,1000},{1000,4500}}},{"rise",3000},{"width",800},{"handrail","both"}});
+  QVERIFY(stair["ok"].get<bool>());
+  QTRY_VERIFY(rowOf(QStringLiteral("照らした値")));
+  checks->setCurrentItem(checks->topLevelItem(0));
+  QCOMPARE(checks->topLevelItem(0)->text(1), QStringLiteral("参考値内"));
+  QVERIFY(details->text().contains(QStringLiteral("蹴上げ")));
+  edit->click();
+  QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{stair["result"]["id"].get<std::string>()});
 }
 
 // Request "線の移動コピー・等間隔配列・等分割": a selected line copied with
