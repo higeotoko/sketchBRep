@@ -822,6 +822,13 @@ void GuiPhase1::permitWorkflowShowsRoomAndOpeningInputs() {
   QVERIFY(modeler.setOpeningSize(south, {1}, 1700, 1200));
   QTRY_VERIFY(details->text().contains(QStringLiteral("1700 × 1200 mm")));
   QVERIFY(details->text().contains(QStringLiteral("2.400 m")));
+  // docs/203: a dwelling room with a factor and an area given for its window: the room's lines and
+  // the summary rows follow.
+  QVERIFY(call("set_room_daylight", {{"id", *room}, {"kind", "dwelling"}})["ok"].get<bool>());
+  QVERIFY(call("set_opening_daylight", {{"host", south}, {"factor", 1.0}, {"ventilation_m2", 0.1}})["ok"].get<bool>());
+  QTRY_VERIFY(details->text().contains(QStringLiteral("採光：参考値を外れる")));
+  QVERIFY(details->text().contains(QStringLiteral("換気：参考値を外れる")));
+  QCOMPARE(checks->topLevelItem(2)->text(1), QStringLiteral("要確認"));
   const auto capture = qEnvironmentVariable("SBR_ROOM_OPENING_INPUT_CAPTURE");
   if (!capture.isEmpty()) QVERIFY(dock->grab().save(capture));
 }

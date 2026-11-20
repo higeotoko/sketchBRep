@@ -34,6 +34,10 @@ struct OpeningRow {
   double bottom = 0.0;    // world z of its lowest edge
   gp_Dir normal;          // of that face
   double depth = 0.0;     // through the wall
+  // docs/203: given by a person (Modeler::setOpeningDaylight); below 0: not given.
+  double daylightFactor = -1.0;  // 採光補正係数 (令 20 条)
+  std::string daylightBasis;
+  double ventilationM2 = -1.0;   // area open for ventilation (法 28 条 2 項), m2
 };
 
 // One line of the door and window schedule: a mark and how many there are.
@@ -71,6 +75,8 @@ struct RoomRow {
   std::string use, floor, wall, ceiling;  // docs/115: as given on the room
   double ceilingHeight = 0.0;              // 0: not given
   std::string ratioPart;                   // docs/162: a code of floorRatioParts(), or empty
+  std::string daylightKind;  // docs/203: dwelling / other / none / empty (Modeler::setRoomDaylight)
+  std::string ventilation;   // window / equipment / empty
 };
 
 struct RoomSchedule {
@@ -84,6 +90,11 @@ RoomSchedule roomSchedule(const Document& document);
 struct RoomOpeningInput {
   RoomRow room;
   std::vector<std::size_t> openingIndices;  // in RoomOpeningInputs::openings; provisional geometry match
+  // docs/203: from the candidates and what was given for them. Areas in mm2.
+  double daylightArea = 0.0;      // Σ width × height × daylight factor
+  int factorsMissing = 0;         // candidates with no daylight factor given
+  double ventilationArea = 0.0;   // Σ areas open for ventilation
+  int ventilationMissing = 0;     // candidates with no such area given
 };
 
 struct RoomOpeningInputs {
@@ -92,6 +103,16 @@ struct RoomOpeningInputs {
   std::vector<std::size_t> unmatched;
 };
 RoomOpeningInputs roomOpeningInputs(const Document& document);
+
+// docs/203: a room's daylight and ventilation against 法 28 条 1・2 項 and 令 19 条 3 項 (住宅の居住
+// のための居室 1/7; ventilation 1/20), read on e-Gov 2026-11-20, from the factors and areas a person
+// gave for its candidate openings. state: 参考値内 / 参考値を外れる / 未評価 / 未入力 / 対象外 /
+// 換気設備. A comparison, never a pass; the floor area is the room's within the wall lines (壁芯).
+struct RoomDaylightCheck {
+  std::string daylightState, daylightText;
+  std::string ventilationState, ventilationText;
+};
+RoomDaylightCheck roomDaylightCheck(const RoomOpeningInput& input);
 
 // docs/194: rows of the permit workflow (申請図の工程) read from the model as it is. A row says what
 // was found and what is missing; never a legal judgement. state: 未入力 / 入力済み / 要確認 / 要修正 /

@@ -2674,3 +2674,47 @@ TEST_F(Schedules, PermitChecksSumUpTheStagesAndHoldTheOutput) {
   EXPECT_EQ(rowOf(12, "検討用の出力")["state"], "出せます");
   EXPECT_FALSE(call("permit_checks", {{"stage", 13}}).value("ok", true));
 }
+
+// docs/203: daylight and ventilation of a room from what was given for its candidate openings
+// (法 28 条 1・2 項, 令 19 条 3 項 表（三） 1/7, 令 20 条), never a pass.
+TEST_F(Schedules, RoomDaylightComesFromTheGivenFactorsAndAreas) {
+  const auto west = [&] {
+    const json inputs = ok("room_opening_inputs");
+    for (const json& r : inputs["rooms"])
+      if (r["id"] == room) return r;
+    ADD_FAILURE() << inputs.dump();
+    return json();
+  };
+  EXPECT_EQ(west()["daylight_comparison"]["state"], "未入力");
+  ok("set_room_daylight", {{"id", room}, {"kind", "dwelling"}});
+  json r = west();
+  ASSERT_FALSE(r["opening_candidates"].empty());
+  EXPECT_EQ(r["daylight_comparison"]["state"], "未評価");  // no factors given yet
+  EXPECT_EQ(r["ventilation_comparison"]["state"], "未評価");
+  // Factors of 3 (the upper limit) on every opening: the room's window area x 3 is well over 24 m2 / 7.
+  ok("set_opening_daylight", {{"host", south}, {"factor", 3.0}, {"basis", "架空の値"}, {"ventilation_m2", 1.0}});
+  ok("set_opening_daylight", {{"host", north}, {"factor", 3.0}, {"basis", "架空の値"}, {"ventilation_m2", 1.0}});
+  ok("set_opening_daylight", {{"host", east}, {"factor", 3.0}, {"ventilation_m2", 1.0}});
+  r = west();
+  EXPECT_EQ(r["daylight_comparison"]["state"], "参考値内") << r.dump();
+  EXPECT_NE(r["daylight_comparison"]["text"].get<std::string>().find("1/7"), std::string::npos);
+  EXPECT_EQ(r["opening_candidates"][0]["daylight_factor"], 3.0);
+  EXPECT_EQ(r["opening_candidates"][0]["daylight_basis"], "架空の値");
+  // Factor 0 (an opening facing a wall close by): no daylight at all.
+  ok("set_opening_daylight", {{"host", south}, {"factor", 0.0}});
+  ok("set_opening_daylight", {{"host", north}, {"factor", 0.0}});
+  EXPECT_EQ(west()["daylight_comparison"]["state"], "参考値を外れる");
+  // Ventilation: the room's candidates open 1 m2 each; 24 m2 / 20 = 1.2.
+  const std::size_t n = west()["opening_candidates"].size();
+  EXPECT_EQ(west()["ventilation_comparison"]["state"], n * 1.0 >= 1.2 ? "参考値内" : "参考値を外れる");
+  ok("set_room_daylight", {{"id", room}, {"kind", "dwelling"}, {"ventilation", "equipment"}});
+  EXPECT_EQ(west()["ventilation_comparison"]["state"], "換気設備");
+  ok("set_room_daylight", {{"id", room}, {"kind", "none"}});
+  EXPECT_EQ(west()["daylight_comparison"]["state"], "対象外");
+  // Refused: a factor over 3, a kind that is not one of the listed.
+  EXPECT_FALSE(call("set_opening_daylight", {{"host", south}, {"factor", 3.5}}).value("ok", true));
+  EXPECT_FALSE(call("set_room_daylight", {{"id", room}, {"kind", "shop"}}).value("ok", true));
+  const auto steps = modeler.history().undoCount();
+  ASSERT_TRUE(modeler.undo());
+  EXPECT_EQ(modeler.history().undoCount(), steps - 1);
+}

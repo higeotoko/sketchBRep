@@ -6426,6 +6426,82 @@ Result<int> Modeler::matchOpeningType(const ObjectId& host, std::size_t index) {
   return others;
 }
 
+namespace {
+bool isRoomMarker(const Object& o);  // with the rooms below
+}  // namespace
+
+Status Modeler::setOpeningDaylight(const ObjectId& hostId, const std::vector<std::size_t>& indices, double factor,
+                                   const std::string& basis, double ventilationM2) {
+  const Object* host = document_.find(hostId);
+  if (!host) return Status::failure("Object not found");
+  if (host->locked) return Status::failure("The object is locked");
+  const auto list = openings(hostId);
+  if (!list) return list.status();
+  if (list->empty()) return Status::failure("This object has no openings");
+  // NaN: not given (what is stored stays); below 0: taken away.
+  if (std::isinf(factor) || factor > 3.0) return Status::failure("A daylight factor is 0 to 3 (令 20 条 2 項: at most 3.0)");
+  if (std::isinf(ventilationM2) || ventilationM2 > 100.0) return Status::failure("An area open for ventilation is 0 to 100 m2");
+  if (basis.size() > 300 || basis.find_first_of("\r\n") != std::string::npos)
+    return Status::failure("A basis is one line of at most 100 characters");
+  Object object = *host;
+  ensureOpeningIds(object);
+  nlohmann::json all = nlohmann::json::object();
+  if (const auto stored = object.attributes.find("opening_daylight"); stored != object.attributes.end()) {
+    const nlohmann::json parsed = nlohmann::json::parse(stored->second, nullptr, false);
+    if (parsed.is_object()) all = parsed;
+  }
+  std::vector<std::size_t> targets = indices;
+  if (targets.empty())
+    for (const auto& o : *list) targets.push_back(o.index);
+  const std::vector<OpeningRef> refs = rectangularOpenings(object);
+  for (const std::size_t index : targets) {
+    const auto it = std::find_if(refs.begin(), refs.end(), [&](const OpeningRef& o) { return o.index == index; });
+    if (it == refs.end()) return Status::failure("No opening " + std::to_string(index));
+    nlohmann::json one = all.contains(openingKey(*it)) && all.at(openingKey(*it)).is_object() ? all.at(openingKey(*it))
+                                                                                              : nlohmann::json::object();
+    if (factor >= 0.0) {
+      one["factor"] = factor;
+      if (!basis.empty()) one["basis"] = basis;
+    } else if (factor < 0.0) {
+      one.erase("factor");
+      one.erase("basis");
+    }
+    if (ventilationM2 >= 0.0) one["ventilation_m2"] = ventilationM2;
+    else if (ventilationM2 < 0.0) one.erase("ventilation_m2");
+    if (one.empty()) all.erase(openingKey(*it));
+    else all[openingKey(*it)] = one;
+  }
+  if (all.empty()) object.attributes.erase("opening_daylight");
+  else object.attributes["opening_daylight"] = all.dump();
+  ChangeSet changes(document_);
+  changes.modify(object);
+  history_.execute(changes.build("Set Opening Daylight"));
+  return Status::success();
+}
+
+Status Modeler::setRoomDaylight(const ObjectId& room, const std::string& kind, const std::string& ventilation) {
+  const Object* marker = document_.find(room);
+  if (!marker || !isRoomMarker(*marker)) return Status::failure("Not a room made by the room tool");
+  if (marker->locked) return Status::failure("The object is locked");
+  if (!kind.empty() && kind != "dwelling" && kind != "other" && kind != "none")
+    return Status::failure("A room's kind for daylight is dwelling, other or none");
+  if (!ventilation.empty() && ventilation != "window" && ventilation != "equipment")
+    return Status::failure("A room is ventilated by window or equipment");
+  Object object = *marker;
+  if (kind.empty() && ventilation.empty()) {
+    object.attributes.erase("room_daylight");
+  } else {
+    nlohmann::json j = nlohmann::json::object();
+    if (!kind.empty()) j["kind"] = kind;
+    if (!ventilation.empty()) j["ventilation"] = ventilation;
+    object.attributes["room_daylight"] = j.dump();
+  }
+  ChangeSet changes(document_);
+  changes.modify(object);
+  history_.execute(changes.build("Set Room Daylight"));
+  return Status::success();
+}
+
 Status Modeler::setOpeningMarks(const ObjectId& hostId, const std::vector<std::size_t>& indices, const std::string& mark,
                                 const std::string& product) {
   const Object* host = document_.find(hostId);

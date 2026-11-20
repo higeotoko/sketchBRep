@@ -12,6 +12,7 @@
 #include "sbr/KernelError.h"
 #include "sbr/draw/Drawing.h"
 #include "sbr/geom/Surfaces.h"
+#include <limits>
 #include <TopExp_Explorer.hxx>
 
 #include <algorithm>
@@ -2674,6 +2675,33 @@ const std::vector<CommandDef>& commands() {
          must(m.setOpeningMarks(text(a, "host"), which, textOr(a, "mark", ""), textOr(a, "product", "")));
          return json::object();
        }},
+      {"set_opening_daylight",
+       "docs/203: what you worked out for openings of 'host' ('openings': ids or indices, all when omitted): 'factor' "
+       "the daylight factor (採光補正係数, 令 20 条, 0 to 3) with 'basis' (one line: how it was worked out), and / or "
+       "'ventilation_m2' the area that opens for ventilation (法 28 条 2 項). Keys not given stay; a value below 0 "
+       "takes it away. Used by "
+       "room_opening_inputs and the permit workflow's stage 4. One undo step.",
+       SCHEMA({"type": "object", "properties": {"host": {"type": "string"},
+               "openings": {"type": "array", "items": {"type": ["string", "integer"]}}, "factor": {"type": "number"},
+               "basis": {"type": "string"}, "ventilation_m2": {"type": "number"}}, "required": ["host"]}),
+       [](doc::Modeler& m, const json& a) {
+         const std::vector<std::size_t> which = openingNumbers(m, a);
+         const double keep = std::numeric_limits<double>::quiet_NaN();  // not given: stays
+         must(m.setOpeningDaylight(text(a, "host"), which, numberOr(a, "factor", keep), textOr(a, "basis", ""),
+                                   numberOr(a, "ventilation_m2", keep)));
+         return json::object();
+       }},
+      {"set_room_daylight",
+       "docs/203: a room's ('id', from create_room) 'kind' for daylight: dwelling (住宅の居住のための居室), other "
+       "(another kind of 居室), none (not a 居室) or \"\" (not given); and 'ventilation': window or equipment "
+       "(換気設備, 法 28 条 2 項ただし書き) or \"\". One undo step.",
+       SCHEMA({"type": "object", "properties": {"id": {"type": "string"},
+               "kind": {"enum": ["dwelling", "other", "none", ""]}, "ventilation": {"enum": ["window", "equipment", ""]}},
+               "required": ["id"]}),
+       [](doc::Modeler& m, const json& a) {
+         must(m.setRoomDaylight(text(a, "id"), textOr(a, "kind", ""), textOr(a, "ventilation", "")));
+         return json::object();
+       }},
       {"set_type_name",
        "Name the type of slabs and roofs (docs/134): 'ids', 'name' (e.g. \"F1\", \"R1\"; empty: no type). Those of one "
        "name are one type: change_type changes them all. Other objects are refused. One undo step.",
@@ -3021,18 +3049,25 @@ const std::vector<CommandDef>& commands() {
          const auto openingJson = [](const doc::OpeningRow& o) {
            return json{{"id", o.openingId}, {"host", o.host}, {"mark", o.mark}, {"kind", o.kind},
                        {"fitting", o.fitting}, {"wall_tagged_inner", o.inner}, {"width_mm", o.width},
-                       {"height_mm", o.height}, {"sill_mm", o.sill}};
+                       {"height_mm", o.height}, {"sill_mm", o.sill},
+                       {"daylight_factor", o.daylightFactor >= 0 ? json(o.daylightFactor) : json(nullptr)},
+                       {"daylight_basis", o.daylightBasis},
+                       {"ventilation_m2", o.ventilationM2 >= 0 ? json(o.ventilationM2) : json(nullptr)}};
          };
          json rooms = json::array(), unmatched = json::array();
          for (const auto& entry : data.rooms) {
            const auto& room = entry.room;
+           const doc::RoomDaylightCheck check = doc::roomDaylightCheck(entry);
            json candidates = json::array();
            for (std::size_t index : entry.openingIndices) candidates.push_back(openingJson(data.openings[index]));
            rooms.push_back({{"id", room.id}, {"name", room.name}, {"level", room.level}, {"use", room.use},
                {"closed", room.closed}, {"problem", room.problem},
                {"inner_area_m2", room.counted && room.innerKnown ? json(room.innerArea / 1e6) : json(nullptr)},
                {"ceiling_height_mm", room.ceilingHeight > 0 ? json(room.ceilingHeight) : json(nullptr)},
-               {"opening_candidates", std::move(candidates)}});
+               {"opening_candidates", std::move(candidates)},
+               {"daylight_kind", room.daylightKind}, {"ventilation", room.ventilation},
+               {"daylight_comparison", {{"state", check.daylightState}, {"text", check.daylightText}}},
+               {"ventilation_comparison", {{"state", check.ventilationState}, {"text", check.ventilationText}}}});
          }
          for (std::size_t index : data.unmatched) unmatched.push_back(openingJson(data.openings[index]));
          return json{{"rooms", std::move(rooms)}, {"unmatched_openings", std::move(unmatched)},

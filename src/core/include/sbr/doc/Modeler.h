@@ -640,6 +640,16 @@ class Modeler {
   // mark. Applies to `indices` (1-based, all when empty). One undo step.
   Status setOpeningMarks(const ObjectId& host, const std::vector<std::size_t>& indices, const std::string& mark,
                          const std::string& product);
+  // docs/203: what a person worked out for daylight and ventilation of openings (法 28 条, 令 20 条):
+  // the daylight factor (採光補正係数, 0 to 3) with its basis, and the area open for ventilation
+  // (m²). Kept by opening id as attribute "opening_daylight" on the host; NaN leaves what is
+  // stored, a value below 0 takes it away (both away: none). Applies to `indices` (1-based, all when empty). One undo step.
+  Status setOpeningDaylight(const ObjectId& host, const std::vector<std::size_t>& indices, double factor,
+                            const std::string& basis, double ventilationM2);
+  // docs/203: a room's kind for daylight (dwelling: 住宅の居住のための居室 / other: another kind of
+  // 居室 / none: not a 居室 / empty: not given) and how it is ventilated (window / equipment /
+  // empty), as attribute "room_daylight" on its marker. One undo step.
+  Status setRoomDaylight(const ObjectId& room, const std::string& kind, const std::string& ventilation);
   // Kinds of floors and roofs (docs/97 N-08, docs/134): slabs and roofs given one type name
   // (attribute type_name, e.g. "F1", "R1") are one type. setTypeName names them (empty: no type;
   // other objects refused); one undo step. changeElementType changes every one of that name:

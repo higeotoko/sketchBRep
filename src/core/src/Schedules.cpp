@@ -107,6 +107,11 @@ OpeningSchedule openingSchedule(const Document& document) {
       const nlohmann::json parsed = nlohmann::json::parse(stored, nullptr, false);
       if (parsed.is_object()) own = parsed;
     }
+    nlohmann::json daylight = nlohmann::json::object();  // docs/203
+    if (const std::string stored = attribute(o, "opening_daylight"); !stored.empty()) {
+      const nlohmann::json parsed = nlohmann::json::parse(stored, nullptr, false);
+      if (parsed.is_object()) daylight = parsed;
+    }
     for (const Modeler::OpeningInfo& op : *openings) {
       if (std::abs(op.normal.Z()) > 1e-6 || op.depth < 1.0) continue;
       OpeningRow row;
@@ -122,6 +127,11 @@ OpeningSchedule openingSchedule(const Document& document) {
         row.mark = given->value("mark", std::string());
         row.ownMark = !row.mark.empty();
         row.product = given->value("product", std::string());
+      }
+      if (const auto given = daylight.find(op.id); given != daylight.end() && given->is_object()) {
+        row.daylightFactor = given->value("factor", -1.0);
+        row.daylightBasis = given->value("basis", std::string());
+        row.ventilationM2 = given->value("ventilation_m2", -1.0);
       }
       row.width = op.width;
       row.height = op.height;
@@ -232,6 +242,11 @@ RoomRow makeRoomRow(const Document& document, const RoomInfo& r) {
     row.ceiling = finish.ceiling;
     row.ceilingHeight = finish.ceilingHeight;
     row.ratioPart = finish.ratioPart;
+    const nlohmann::json daylight = nlohmann::json::parse(attribute(*marker, "room_daylight"), nullptr, false);
+    if (daylight.is_object()) {
+      row.daylightKind = daylight.value("kind", std::string());
+      row.ventilation = daylight.value("ventilation", std::string());
+    }
   }
   return row;
 }
@@ -303,11 +318,70 @@ RoomOpeningInputs roomOpeningInputs(const Document& document) {
       }
       std::sort(row.openingIndices.begin(), row.openingIndices.end());
       row.openingIndices.erase(std::unique(row.openingIndices.begin(), row.openingIndices.end()), row.openingIndices.end());
+      for (std::size_t i : row.openingIndices) {
+        const OpeningRow& o = out.openings[i];
+        if (o.daylightFactor >= 0.0) row.daylightArea += o.width * o.height * o.daylightFactor;
+        else ++row.factorsMissing;
+        if (o.ventilationM2 >= 0.0) row.ventilationArea += o.ventilationM2 * 1e6;
+        else ++row.ventilationMissing;
+      }
     }
     out.rooms.push_back(std::move(row));
   }
   for (std::size_t i = 0; i < matched.size(); ++i)
     if (!matched[i]) out.unmatched.push_back(i);
+  return out;
+}
+
+RoomDaylightCheck roomDaylightCheck(const RoomOpeningInput& input) {
+  RoomDaylightCheck out;
+  const RoomRow& room = input.room;
+  const auto m2 = [](double mm2) { return number(mm2 / 1e6, 2) + " m²"; };
+  if (!room.counted) {
+    out.daylightState = out.ventilationState = "未評価";
+    out.daylightText = out.ventilationText = "室の範囲（床面積）を読めません。";
+    return out;
+  }
+  const double floor = room.centreArea;
+  const std::string candidates = "開口候補 " + std::to_string(input.openingIndices.size());
+  if (room.daylightKind.empty()) {
+    out.daylightState = out.ventilationState = "未入力";
+    out.daylightText = out.ventilationText = "居室の区分（住宅の居住のための居室／その他の居室／居室でない）を入れます。";
+    return out;
+  }
+  if (room.daylightKind == "none") {
+    out.daylightState = out.ventilationState = "対象外";
+    out.daylightText = out.ventilationText = "居室でない室として入力されています（法 28 条の対象外として扱う）。";
+    return out;
+  }
+  // Daylight.
+  if (room.daylightKind == "other") {
+    out.daylightState = "未評価";
+    out.daylightText = "住宅の居住のための居室以外の居室は、令 19 条 3 項の表の種類で割合が違います（1/5〜1/10）。ここでは照らしていません。";
+  } else if (input.factorsMissing > 0) {
+    out.daylightState = "未評価";
+    out.daylightText = candidates + " のうち、採光補正係数が無い開口 " + std::to_string(input.factorsMissing) +
+                       "。開口ごとに、隣地境界線などまでの距離から求めた係数（令 20 条）と根拠を入れます。";
+  } else {
+    const double required = floor / 7.0;
+    out.daylightState = input.daylightArea + 1e-6 >= required ? "参考値内" : "参考値を外れる";
+    out.daylightText = "採光に有効な面積 " + m2(input.daylightArea) + "／床面積 " + m2(floor) + " の 1/7 = " + m2(required) +
+                       "（" + candidates + "、令 19 条 3 項 表（三）。大臣の定める措置による 1/10 までの緩和は見ていない）";
+  }
+  // Ventilation.
+  if (room.ventilation == "equipment") {
+    out.ventilationState = "換気設備";
+    out.ventilationText = "換気設備を設ける室として入力されています（法 28 条 2 項ただし書き）。設備の技術的基準と機器の能力は未評価です。";
+  } else if (input.ventilationMissing > 0) {
+    out.ventilationState = "未評価";
+    out.ventilationText = candidates + " のうち、換気に有効な面積が無い開口 " + std::to_string(input.ventilationMissing) +
+                          "。開けられる部分の面積（引違いなら片側分など）を入れます。";
+  } else {
+    const double required = floor / 20.0;
+    out.ventilationState = input.ventilationArea + 1e-6 >= required ? "参考値内" : "参考値を外れる";
+    out.ventilationText = "換気に有効な面積 " + m2(input.ventilationArea) + "／床面積 " + m2(floor) + " の 1/20 = " + m2(required) +
+                          "（法 28 条 2 項）";
+  }
   return out;
 }
 

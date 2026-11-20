@@ -199,6 +199,7 @@ void PermitWorkflowPanel::readRoomOpeningChecks() {
   const auto data = doc::roomOpeningInputs(document_);
   const auto missing = translated("未入力");
   const auto unevaluated = translated("未評価");
+  int daylightOff = 0, daylightOpen = 0, ventilationOff = 0, ventilationOpen = 0;  // docs/203
   if (data.rooms.empty()) {
     rows_.push_back({translated("室"), missing, translated("平面で閉じた壁の内側に室を置き、用途・天井高を設定します。"),
                      translated("室の一覧を開く"), Action::Rooms, true});
@@ -222,6 +223,14 @@ void PermitWorkflowPanel::readRoomOpeningChecks() {
                QString::number(opening.height, 'g', 8));
     }
     if (entry.openingIndices.size() > 3) details += translated("\n残り %1件").arg(entry.openingIndices.size() - 3);
+    // docs/203: daylight and ventilation from the factors and areas given for the candidates.
+    const doc::RoomDaylightCheck check = doc::roomDaylightCheck(entry);
+    details += translated("\n採光：%1　%2").arg(QString::fromStdString(check.daylightState), QString::fromStdString(check.daylightText));
+    details += translated("\n換気：%1　%2").arg(QString::fromStdString(check.ventilationState), QString::fromStdString(check.ventilationText));
+    if (check.daylightState == "参考値を外れる") ++daylightOff;
+    else if (check.daylightState != "参考値内" && check.daylightState != "対象外") ++daylightOpen;
+    if (check.ventilationState == "参考値を外れる") ++ventilationOff;
+    else if (check.ventilationState != "参考値内" && check.ventilationState != "対象外") ++ventilationOpen;
     QString name = QString::fromStdString(room.name);
     if (!room.level.empty()) name = QString::fromStdString(room.level) + QStringLiteral("　") + name;
     const bool incomplete = !room.counted || !room.innerKnown || room.use.empty() || room.ceilingHeight <= 0;
@@ -232,10 +241,19 @@ void PermitWorkflowPanel::readRoomOpeningChecks() {
       translated("壁の開口 %1件。室の壁区間に対応しなかった開口 %2件。候補の外部への面し方と建具の開き方を照合します。")
           .arg(data.openings.size()).arg(data.unmatched.size()),
       translated("建具表を開く"), Action::Openings, true});
-  rows_.push_back({translated("採光"), unevaluated,
-      translated("居室の対象区分、境界や突出部との位置関係、開口の有効面積と補正の根拠を確認します。"), {}});
-  rows_.push_back({translated("自然換気"), unevaluated,
-      translated("建具の開き方と有効開放面積の根拠を確認します。"), {}});
+  // docs/203: the rooms' comparisons summed up; the factors and areas are given per opening.
+  const auto summary = [&](int off, int open) {
+    return off > 0 ? translated("要確認") : open > 0 ? unevaluated : data.rooms.empty() ? missing : translated("参考値内");
+  };
+  const auto basis = translated("\n開口ごとの採光補正係数・換気に有効な面積は AI の set_opening_daylight、室の区分は set_room_daylight で入れます。"
+                                "\n根拠：建築基準法 第 28 条 1・2・4 項、施行令 第 19 条 3 項（表（三）住宅の居住のための居室 1/7）・第 20 条"
+                                "（e-Gov、2026-11-20 確認）。合否の判定ではありません。");
+  rows_.push_back({translated("採光"), summary(daylightOff, daylightOpen),
+      translated("参考値を外れる室 %1、未入力・未評価の室 %2。採光補正係数そのもの（隣地境界線などまでの距離÷高さ）は、まだモデルから求めていません。")
+              .arg(daylightOff).arg(daylightOpen) + basis, {}, Action::None, daylightOff + daylightOpen > 0});
+  rows_.push_back({translated("自然換気"), summary(ventilationOff, ventilationOpen),
+      translated("参考値を外れる室 %1、未入力・未評価の室 %2。ふすま・障子などで仕切った二室を一室とみなす扱い（法 28 条 4 項）は、まだ見ていません。")
+              .arg(ventilationOff).arg(ventilationOpen) + basis, {}, Action::None, ventilationOff + ventilationOpen > 0});
   rows_.push_back({translated("機械換気"), unevaluated,
       translated("対象室、給排気経路、換気機器の能力と根拠資料を確認します。"), {}});
 }
