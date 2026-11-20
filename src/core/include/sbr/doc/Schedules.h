@@ -114,6 +114,10 @@ std::vector<PermitCheck> permitStairChecks(const Document& document);
 // to it; canopies and balconies and how they count; the building area as worked out (docs/141),
 // and what is not looked at.
 std::vector<PermitCheck> permitRoofChecks(const Document& document);
+// Stage 7 (耐力壁, docs/199): the timber wall-quantity comparison and quarter-division balance per
+// storey and direction as construction::checkWallQuantity works them out (its pinned table and
+// date), the walls counted, and what it does not assess. A comparison, never a pass.
+std::vector<PermitCheck> permitBraceChecks(const Document& document);
 
 // One storey.
 struct AreaRow {

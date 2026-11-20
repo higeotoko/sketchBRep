@@ -151,3 +151,33 @@ TEST_F(QuarterBalance, BlockersOfTheWholeCalculationAlsoHoldForTheSideParts) {
   in["frame"] = "no-such-group";
   EXPECT_EQ(row(in, "1", "X")["status"], "not_evaluated");
 }
+
+// docs/199: the permit workflow's stage 7 (耐力壁) reads the same calculation: per storey and
+// direction the wall quantity and the quarter-division balance, the basis, and what is not assessed.
+#include "sbr/api/CommandApi.h"
+#include "sbr/doc/Schedules.h"
+TEST(PermitBraceStage, RowsFollowTheWallQuantityCalculation) {
+  Modeler m;
+  auto rowOf = [&](const std::string& item) {
+    for (const auto& c : doc::permitBraceChecks(m.document()))
+      if (c.item == item) return c;
+    ADD_FAILURE() << "no row " << item;
+    return doc::PermitCheck{};
+  };
+  EXPECT_EQ(rowOf("壁量の入力").state, "未入力");
+  api::CommandApi api(m);
+  const json saved = json::parse(api.execute(json{{"command", "set_wall_calculation"},
+      {"args", {{"inputs", inputs({wall("a", "X", {0, 0}, {2000, 0}), wall("b", "X", {0, 4000}, {500, 4000}),
+                                   wall("c", "Y", {0, 0}, {0, 4000}), wall("d", "Y", {10000, 0}, {10000, 4000})})}}}}.dump()));
+  ASSERT_TRUE(saved.value("ok", false)) << saved.dump();
+  const auto x = rowOf("1階 X 方向の四分割");
+  EXPECT_EQ(x.state, "要確認");  // wall ratio 0.25 (see SidePartsRequiredAndExistingMatchHandCalculation)
+  EXPECT_NE(x.details.find("壁率比 0.25"), std::string::npos) << x.details;
+  EXPECT_TRUE(x.attention);
+  EXPECT_TRUE(x.targets.empty());  // the walls of this calculation are not objects of the model
+  const auto quantity = rowOf("1階 X 方向の壁量");
+  EXPECT_NE(quantity.details.find("存在壁量"), std::string::npos);
+  EXPECT_NE(quantity.state, "");
+  EXPECT_NE(rowOf("照らした値").details.find("告示1100号"), std::string::npos);
+  EXPECT_NE(rowOf("まだ確かめていない事").details.find("N値"), std::string::npos);
+}

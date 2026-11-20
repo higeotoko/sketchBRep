@@ -20,6 +20,7 @@
 #include <gp_Trsf.hxx>
 #include <nlohmann/json.hpp>
 
+#include "sbr/ConstructionWall.h"
 #include "sbr/OpeningSymbols.h"
 #include "sbr/doc/Modeler.h"
 #include "sbr/geom/Measure.h"
@@ -557,6 +558,82 @@ std::vector<PermitCheck> permitRoofChecks(const Document& document) {
   out.push_back({"まだ確かめていない事", "未評価",
                  "屋根の構造・材料（防火の区域による屋根の性能）、高さの制限（斜線など）、採光に効く軒・庇の出（第 4 工程の採光）、"
                  "屋根の排水。申請先と申請時点の法令で確かめます。",
+                 {}});
+  return out;
+}
+
+std::vector<PermitCheck> permitBraceChecks(const Document& document) {
+  std::vector<PermitCheck> out;
+  const auto made = construction::checkWallQuantity(document);
+  if (!made) {
+    out.push_back({"壁量", "未評価", "壁量の比較を出せません：" + made.error(), {}, true});
+    return out;
+  }
+  const nlohmann::json report = nlohmann::json::parse(*made, nullptr, false);
+  if (!report.is_object()) {
+    out.push_back({"壁量", "未評価", "壁量の比較を読めません。", {}, true});
+    return out;
+  }
+  const auto stateOf = [](const std::string& status) -> std::string {
+    return status == "pass" ? "参考値内" : status == "fail" ? "要確認" : "未評価";
+  };
+  const auto metres = [](const nlohmann::json& v) { return v.is_number() ? number(v.get<double>(), 2) + " m" : std::string("—"); };
+  const auto directionName = [](const std::string& d) { return d.empty() ? std::string() : d + " 方向"; };
+  // The walls counted for a storey and direction (to select them).
+  const auto wallsOf = [&](const std::string& floor, const std::string& direction) {
+    std::vector<ObjectId> ids;
+    for (const auto& w : report.value("walls", nlohmann::json::array()))
+      if (w.value("floor", std::string()) == floor && w.value("direction", std::string()) == direction && w.contains("id") &&
+          w.at("id").is_string() && document.find(w.at("id").get<std::string>()))  // walls of the model only
+        ids.push_back(w.at("id").get<std::string>());
+    return ids;
+  };
+  const auto reasons = [](const nlohmann::json& row) {
+    std::string text;
+    for (const auto& r : row.value("reasons", nlohmann::json::array()))
+      if (r.is_string()) text += "\n" + r.get<std::string>();
+    return text;
+  };
+  for (const auto& row : report.value("rows", nlohmann::json::array())) {
+    const std::string floor = row.value("floor", std::string()), direction = row.value("direction", std::string());
+    const std::string status = row.value("status", std::string("not_evaluated"));
+    if (floor.empty()) {
+      out.push_back({"壁量の入力", "未入力",
+                     "壁量の計算に使う階・荷重・耐力壁の仕様がまだありません（AI の set_wall_calculation、構造の入力）。" + reasons(row),
+                     {}, true});
+      continue;
+    }
+    const std::string details = "存在壁量 " + metres(row.value("existing_m", nlohmann::json())) + "　必要壁量 " +
+                                metres(row.value("required_m", nlohmann::json())) + reasons(row);
+    const std::string name = row.value("name", floor);  // the storey's name for people (floor: its id)
+    out.push_back({name + " " + directionName(direction) + "の壁量", stateOf(status), details, wallsOf(floor, direction),
+                   status != "pass"});
+  }
+  for (const auto& row : report.value("quarter_balance", nlohmann::json::array())) {
+    const std::string floor = row.value("floor", std::string()), direction = row.value("direction", std::string());
+    const std::string status = row.value("status", std::string("not_evaluated"));
+    std::string details;
+    if (row.contains("wall_ratio") && row.at("wall_ratio").is_number())
+      details = "壁率比 " + number(row.at("wall_ratio").get<double>(), 2);
+    if (row.contains("basis") && row.at("basis").is_string()) details += (details.empty() ? "" : "　") + row.at("basis").get<std::string>();
+    for (const auto& s : row.value("strips", nlohmann::json::array()))
+      if (s.contains("ratio") && s.at("ratio").is_number())
+        details += "\n側端部分　存在 " + metres(s.value("existing_m", nlohmann::json())) + "／必要 " +
+                   metres(s.value("required_m", nlohmann::json())) + "　充足率 " + number(s.at("ratio").get<double>(), 2);
+    details += reasons(row);
+    const std::string name = row.value("name", floor);
+    out.push_back({name + " " + directionName(direction) + "の四分割", stateOf(status), details.empty() ? "—" : details,
+                   wallsOf(floor, direction), status != "pass"});
+  }
+  if (report.value("stale_table", false))
+    out.push_back({"係数表", "要確認", "保存した係数表が、今の版と違います。表を確かめて入れ直します。", {}, true});
+  out.push_back({"照らした値", "参考", report.value("notice", std::string()), {}});
+  std::string open;
+  for (const auto& u : report.value("unassessed", nlohmann::json::array()))
+    if (u.is_string()) open += (open.empty() ? "" : "、") + u.get<std::string>();
+  out.push_back({"まだ確かめていない事", "未評価",
+                 (open.empty() ? std::string() : open + "。") +
+                     "耐力壁の配置図・壁量計算表・側端の図の書式は、申請先の様式で確かめます。",
                  {}});
   return out;
 }

@@ -904,6 +904,13 @@ void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
   QVERIFY(call("create_roof",{{"outline",{{0,0},{8000,0},{8000,6000},{0,6000}}},{"height",3000}})["ok"].get<bool>());
   QTRY_VERIFY(!rowOf(QStringLiteral("屋根")));
   QVERIFY(next->text().contains(QStringLiteral("Roof")));
+
+  // docs/199: stage 7 (耐力壁): no wall calculation yet; the basis and what is not assessed.
+  phases->setCurrentRow(6);
+  QCOMPARE(rowOf(QStringLiteral("壁量の入力"))->text(1), QStringLiteral("未入力"));
+  QVERIFY(rowOf(QStringLiteral("照らした値")));
+  checks->setCurrentItem(rowOf(QStringLiteral("まだ確かめていない事")));
+  QVERIFY(details->text().contains(QStringLiteral("N値")));
 }
 
 // Request "線の移動コピー・等間隔配列・等分割": a selected line copied with
