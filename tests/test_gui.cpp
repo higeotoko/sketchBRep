@@ -248,6 +248,7 @@ class GuiPhase1 : public QObject {
   void permitWorkflowTracksSiteInputsAndStaleGround();
   void permitWorkflowShowsRoomAndOpeningInputs();
   void permitWorkflowShowsGridAndPlanChecks();
+  void permitWorkflowAppliesDaylightFactors();
   void proposalShowsRotationAndHide();
   void benchViewportSync();
   void benchEnterManyCopies();
@@ -806,7 +807,7 @@ void GuiPhase1::permitWorkflowShowsRoomAndOpeningInputs() {
   auto* edit = dock->findChild<QPushButton*>(QStringLiteral("permitWorkflowEdit"));
   QVERIFY(phases && checks && details && edit);
   phases->setCurrentRow(3);
-  QCOMPARE(checks->topLevelItemCount(), 5);
+  QCOMPARE(checks->topLevelItemCount(), 6);  // docs/205: and the daylight factors worked out
   QCOMPARE(checks->topLevelItem(0)->text(1), QStringLiteral("入力不足"));
   QVERIFY(details->text().contains(QStringLiteral("開口候補 1件")));
   QVERIFY(details->text().contains(QStringLiteral("1600 × 1200 mm")));
@@ -832,6 +833,53 @@ void GuiPhase1::permitWorkflowShowsRoomAndOpeningInputs() {
   QCOMPARE(checks->topLevelItem(2)->text(1), QStringLiteral("要確認"));
   const auto capture = qEnvironmentVariable("SBR_ROOM_OPENING_INPUT_CAPTURE");
   if (!capture.isEmpty()) QVERIFY(dock->grab().save(capture));
+}
+
+// docs/205: stage 4 shows the daylight factors worked out from the site and the building; its
+// button gives them to the openings in one undo step.
+void GuiPhase1::permitWorkflowAppliesDaylightFactors() {
+  Fixture f;
+  QVERIFY(f.setUp(4000, 3000));
+  auto& modeler = f.window.modeler();
+  using Json = nlohmann::json;
+  api::CommandApi api(modeler);
+  const auto call = [&](const char* command, Json args) {
+    return Json::parse(api.execute(Json{{"command", command}, {"args", std::move(args)}}.dump()));
+  };
+  const auto walls = call("create_wall", {{"points", {{0, 0}, {8000, 0}, {8000, 5000}, {0, 5000}, {0, 0}}},
+                                           {"thickness", 120}, {"height", 5000}});
+  QVERIFY(walls["ok"].get<bool>());
+  const auto south = walls["result"]["ids"][0].get<std::string>();
+  QVERIFY(call("place_openings", {{"host", south}, {"face_normal", {0, -1, 0}}, {"count", 1}, {"width", 1600},
+                                  {"height", 1100}, {"sill", 900}})["ok"].get<bool>());
+  const auto outline = call("create_polygon", {{"points", {{-5000, -1000, 0}, {13000, -1000, 0}, {13000, 10000, 0}, {-5000, 10000, 0}}}});
+  QVERIFY(call("set_site_boundary", {{"outline", outline["result"]["id"]}, {"source", "架空"}})["ok"].get<bool>());
+  QVERIFY(call("set_site_zone", {{"zone", "residential"}, {"source", "架空"}})["ok"].get<bool>());
+
+  f.window.findChild<QAction*>(QStringLiteral("permitWorkflowAction"))->trigger();
+  auto* dock = f.window.findChild<QDockWidget*>(QStringLiteral("permitWorkflowDock"));
+  QVERIFY(dock);
+  auto* phases = dock->findChild<QListWidget*>(QStringLiteral("permitWorkflowPhases"));
+  auto* checks = dock->findChild<QTreeWidget*>(QStringLiteral("permitWorkflowChecks"));
+  auto* details = dock->findChild<QLabel*>(QStringLiteral("permitWorkflowDetails"));
+  auto* edit = dock->findChild<QPushButton*>(QStringLiteral("permitWorkflowEdit"));
+  QVERIFY(phases && checks && details && edit);
+  phases->setCurrentRow(3);
+  QTreeWidgetItem* row = nullptr;
+  for (int i = 0; i < checks->topLevelItemCount(); ++i)
+    if (checks->topLevelItem(i)->text(0) == QStringLiteral("採光補正係数（モデルから）")) row = checks->topLevelItem(i);
+  QVERIFY(row);
+  QCOMPARE(row->text(1), QStringLiteral("計算値あり"));
+  checks->setCurrentItem(row);
+  QVERIFY2(details->text().contains(QStringLiteral("D/H = 941/3550")), qPrintable(details->text()));
+  QVERIFY(edit->isVisible());
+  const auto steps = modeler.history().undoCount();
+  edit->click();
+  QTRY_COMPARE(modeler.history().undoCount(), steps + 1);
+  const auto rows = doc::openingSchedule(modeler.document()).rows;
+  QCOMPARE(rows.size(), std::size_t(1));
+  QVERIFY(std::abs(rows[0].daylightFactor - (941.0 / 3550.0 * 6 - 1.4)) < 1e-9);
+  QVERIFY(rows[0].daylightBasis.find("令 20 条") != std::string::npos);
 }
 
 // docs/194: stages 2 (通り芯) and 3 (平面) list what the model has and what is missing; a row's

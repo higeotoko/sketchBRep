@@ -4000,6 +4000,31 @@ Status Modeler::setSiteNorthFromPoints(const gp_Pnt& tail, const gp_Pnt& tip, co
   return setSiteNorth({std::atan2(x, y) * 180.0 / std::acos(-1.0), source, checkedOn});
 }
 
+Status Modeler::setSiteZone(const std::string& zone, const std::string& source) {
+  const auto& site = document_.settings().siteBoundary;
+  if (!site) return Status::failure("敷地境界を先に登録してください");
+  if (!zone.empty() && zone != "residential" && zone != "industrial" && zone != "commercial")
+    return Status::failure("用途地域の区分は residential / industrial / commercial のどれかです");
+  if (!zone.empty() && source.empty()) return Status::failure("用途地域の確認資料を入力してください");
+  if (source.size() > 300 || source.find_first_of("\r\n") != std::string::npos)
+    return Status::failure("確認資料は1行、100 字までです");
+  const Object* outline = document_.find(site->outline);
+  if (!outline) return Status::failure("敷地境界の輪郭が見つかりません");
+  if (outline->locked) return Status::failure("The object is locked");
+  Object object = *outline;
+  if (zone.empty()) {
+    object.attributes.erase("use_zone");
+    object.attributes.erase("use_zone_source");
+  } else {
+    object.attributes["use_zone"] = zone;
+    object.attributes["use_zone_source"] = source;
+  }
+  ChangeSet changes(document_);
+  changes.modify(object);
+  history_.execute(changes.build("Site Zone"));
+  return Status::success();
+}
+
 Status Modeler::setSiteBoundary(const std::optional<SiteBoundary>& boundary) {
   if (boundary) {
     if (boundary->source.empty()) return Status::failure("敷地境界の確認資料を入力してください");

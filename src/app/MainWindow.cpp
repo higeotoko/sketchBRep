@@ -7057,6 +7057,13 @@ void MainWindow::showPermitWorkflow() {
       case Action::Rooms: showRoomsDialog(); break;
       case Action::Openings: showSchedulesDialog(); break;
       case Action::SelectRoom: setSelection({target.toStdString()}); break;
+      case Action::ApplyDaylightFactors: {  // docs/205
+        const auto given = doc::applyDaylightFactors(modeler_, {});
+        if (!given) reportError(tr("採光補正係数を入れられません: %1").arg(userMessage(QString::fromStdString(given.error()))));
+        else setStatus(tr("%1 個の開口に、モデルから求めた採光補正係数を入れました（Ctrl+Z で戻せます）").arg(*given));
+        refreshPanels();
+        break;
+      }
       case Action::SelectObjects: {
         std::vector<doc::ObjectId> ids;
         for (const QString& id : target.split(QLatin1Char('\n'), Qt::SkipEmptyParts)) ids.push_back(id.toStdString());

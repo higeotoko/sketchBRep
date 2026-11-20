@@ -2718,3 +2718,63 @@ TEST_F(Schedules, RoomDaylightComesFromTheGivenFactorsAndAreas) {
   ASSERT_TRUE(modeler.undo());
   EXPECT_EQ(modeler.history().undoCount(), steps - 1);
 }
+
+// docs/205: the daylight factor of each wall opening worked out from the model (令 20 条 2 項).
+// A box of walls 8000 x 5000, 120 thick, 5000 tall, on a site whose boundary is 1000 south of the
+// wall line and 5000 north of it; one window in the south wall and one in the north wall, their
+// centres 1450 up (sill 900, height 1100).
+TEST(DaylightFactors, WorkedOutFromTheSiteAndTheBuilding) {
+  sbr::doc::Modeler modeler;
+  CommandApi api{modeler};
+  const auto call = [&](const std::string& command, json args = json::object()) {
+    return json::parse(api.execute(json{{"command", command}, {"args", args}}.dump()));
+  };
+  const auto ok = [&](const std::string& command, json args = json::object()) {
+    const json r = call(command, args);
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  const json walls = ok("create_wall", {{"points", {{0, 0}, {8000, 0}, {8000, 5000}, {0, 5000}, {0, 0}}}, {"thickness", 120}, {"height", 5000}})["ids"];
+  const std::string south = walls[0], north = walls[2];
+  ok("place_openings", {{"host", south}, {"face_normal", {0, -1, 0}}, {"count", 1}, {"width", 1600}, {"height", 1100}, {"sill", 900}});
+  ok("place_openings", {{"host", north}, {"face_normal", {0, 1, 0}}, {"count", 1}, {"width", 1600}, {"height", 1100}, {"sill", 900}});
+  const auto estimates = [&] {
+    std::map<std::string, json> byHost;
+    const json rows = ok("daylight_factor_estimates")["openings"];
+    for (const json& row : rows) byHost[row["host"].get<std::string>()] = row;
+    return byHost;
+  };
+  EXPECT_NE(estimates()[south]["problem"].get<std::string>().find("敷地境界"), std::string::npos);
+  const std::string outline = ok("create_polygon", {{"points", {{-5000, -1000, 0}, {13000, -1000, 0}, {13000, 10000, 0}, {-5000, 10000, 0}}}})["id"];
+  ok("set_site_boundary", {{"outline", outline}, {"source", "架空の測量図"}});
+  EXPECT_NE(estimates()[south]["problem"].get<std::string>().find("用途地域"), std::string::npos);
+  EXPECT_FALSE(call("set_site_zone", {{"zone", "residential"}}).value("ok", true));  // needs its source
+  ok("set_site_zone", {{"zone", "residential"}, {"source", "架空の都市計画図"}});
+  // South: the wall's top over the opening, 940 + 1 from the boundary, 5000 - 1450 above its centre:
+  // 941 / 3550 x 6 - 1.4 = 0.1904 (under 7 m, not negative).
+  json s = estimates()[south];
+  ASSERT_TRUE(s.contains("factor")) << s.dump();
+  EXPECT_NEAR(s["horizontal_mm"].get<double>(), 941.0, 1e-6);
+  EXPECT_NEAR(s["vertical_mm"].get<double>(), 3550.0, 1e-6);
+  EXPECT_NEAR(s["factor"].get<double>(), 941.0 / 3550.0 * 6 - 1.4, 1e-9);
+  EXPECT_FALSE(s["faces_road"].get<bool>());
+  EXPECT_NE(s["basis"].get<std::string>().find("令 20 条 2 項 1 号"), std::string::npos);
+  // North: 4940 + 1 / 3550 x 6 - 1.4 = 6.95: at most 3.0.
+  EXPECT_NEAR(estimates()[north]["factor"].get<double>(), 3.0, 1e-12);
+  // The south edge is a road 4 m wide: measured to its far side, 4941 / 3550 -> 3.0.
+  ok("set_site_road", {{"start", {-5000, -1000, 0}}, {"end", {13000, -1000, 0}}, {"source", "架空"}, {"width_m", 4.0}});
+  s = estimates()[south];
+  EXPECT_TRUE(s["faces_road"].get<bool>());
+  EXPECT_NEAR(s["horizontal_mm"].get<double>(), 4941.0, 1e-6);
+  EXPECT_NEAR(s["factor"].get<double>(), 3.0, 1e-12);
+  // Given to the openings in one step; the room check reads them.
+  const auto steps = modeler.history().undoCount();
+  const json applied = ok("apply_daylight_factors");
+  EXPECT_EQ(applied["given"], 2);
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  int withFactor = 0;
+  for (const auto& row : sbr::doc::openingSchedule(modeler.document()).rows) withFactor += row.daylightFactor >= 0 && !row.daylightBasis.empty();
+  EXPECT_EQ(withFactor, 2);
+  ASSERT_TRUE(modeler.undo());
+  for (const auto& row : sbr::doc::openingSchedule(modeler.document()).rows) EXPECT_LT(row.daylightFactor, 0.0);
+}

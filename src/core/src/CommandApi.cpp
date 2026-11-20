@@ -2691,6 +2691,58 @@ const std::vector<CommandDef>& commands() {
                                    numberOr(a, "ventilation_m2", keep)));
          return json::object();
        }},
+      {"set_site_zone",
+       "docs/205: the group of use zones the site is in, for the daylight factor (令 20 条 2 項): 'zone' residential "
+       "(第一種・第二種低層住居専用, 第一種・第二種中高層住居専用, 第一種・第二種住居, 準住居, 田園住居), industrial "
+       "(準工業, 工業, 工業専用) or commercial (近隣商業, 商業, 用途地域の指定のない区域); \"\" takes it away. 'source': "
+       "the document it was read from (required with a zone). Needs the site boundary. One undo step.",
+       SCHEMA({"type": "object", "properties": {"zone": {"enum": ["residential", "industrial", "commercial", ""]},
+               "source": {"type": "string"}}, "required": ["zone"]}),
+       [](doc::Modeler& m, const json& a) {
+         must(m.setSiteZone(text(a, "zone"), textOr(a, "source", "")));
+         return json::object();
+       }},
+      {"daylight_factor_estimates",
+       "docs/205: each wall opening's daylight factor (採光補正係数, 令 20 条 2 項) worked out from the model: "
+       "horizontal and vertical distances (mm) of the part of the building over it that sets the smallest ratio, "
+       "whether it faces the road, the factor and how it was worked out ('basis'), or 'problem' when it cannot be "
+       "(no site boundary, no zone, an inner wall...). Read only; apply_daylight_factors gives them to the openings.",
+       SCHEMA({"type": "object", "properties": {}}),
+       [](doc::Modeler& m, const json&) {
+         json rows = json::array();
+         for (const auto& e : doc::daylightFactorEstimates(m.document())) {
+           json row{{"host", e.host}, {"opening", e.openingId}, {"index", e.index}, {"mark", e.mark}};
+           if (e.factor >= 0) {
+             row["factor"] = e.factor;
+             row["ratio"] = e.ratio;
+             row["horizontal_mm"] = e.horizontal;
+             row["vertical_mm"] = e.vertical;
+             row["faces_road"] = e.facesRoad;
+             row["over"] = e.over;
+             row["basis"] = e.basis;
+           } else {
+             row["problem"] = e.problem;
+           }
+           rows.push_back(std::move(row));
+         }
+         return json{{"openings", std::move(rows)}};
+       }},
+      {"apply_daylight_factors",
+       "docs/205: give the openings the daylight factors daylight_factor_estimates works out, with their basis "
+       "('openings': opening ids, all that can be worked out when omitted). Their areas for ventilation stay. One "
+       "undo step. Returns how many were given and the ids that could not be.",
+       SCHEMA({"type": "object", "properties": {"openings": {"type": "array", "items": {"type": "string"}}}}),
+       [](doc::Modeler& m, const json& a) {
+         std::vector<std::string> wanted;
+         if (a.contains("openings"))
+           for (const json& id : a.at("openings")) wanted.push_back(id.get<std::string>());
+         json skipped = json::array();
+         for (const auto& e : doc::daylightFactorEstimates(m.document()))
+           if (e.factor < 0 && (wanted.empty() || std::find(wanted.begin(), wanted.end(), e.openingId) != wanted.end()))
+             skipped.push_back({{"opening", e.openingId}, {"problem", e.problem}});
+         const int given = must(doc::applyDaylightFactors(m, wanted));
+         return json{{"given", given}, {"skipped", std::move(skipped)}};
+       }},
       {"set_room_daylight",
        "docs/203: a room's ('id', from create_room) 'kind' for daylight: dwelling (住宅の居住のための居室), other "
        "(another kind of 居室), none (not a 居室) or \"\" (not given); and 'ventilation': window or equipment "
@@ -4336,7 +4388,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
       name == "preview" || name == "query_objects" || name == "aggregate" || name == "get_changes" ||
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
       name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" ||
-      name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" || name == "permit_checks" ||
+      name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" || name == "permit_checks" || name == "daylight_factor_estimates" ||
         name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
     return E::Read;
   }

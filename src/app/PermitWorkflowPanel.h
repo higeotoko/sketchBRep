@@ -22,7 +22,7 @@ class PermitWorkflowPanel : public QWidget {
  public:
   // SelectObjects: `target` holds the ids separated by '\n' (docs/194).
   enum class Action { None, Boundary, North, Road, SavedRoad, Ground, SavedGround, Preview, Rooms, Openings, SelectRoom,
-                      SelectObjects };
+                      SelectObjects, ApplyDaylightFactors };
   PermitWorkflowPanel(doc::Document& document, std::function<void(Action, const QString&)> open,
                       QWidget* parent = nullptr);
 

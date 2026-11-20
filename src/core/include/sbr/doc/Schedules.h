@@ -114,6 +114,31 @@ struct RoomDaylightCheck {
 };
 RoomDaylightCheck roomDaylightCheck(const RoomOpeningInput& input);
 
+// docs/205: the daylight factor (採光補正係数, 令 20 条 2 項 1-3 号) of each wall opening worked out
+// from the model: outwards is the side where a level ray from its centre meets no other wall; the
+// horizontal distance runs from each part of the building over the opening to the site boundary it
+// faces (across the road to its far side); the vertical one from that part's top to the opening's
+// centre; the smallest ratio is used, and the zone's formula with its floors and cap. Skylights,
+// verandas, parks and rivers, and canopies that do not hinder daylight are not looked at. A value
+// to check and give (set_opening_daylight), not a pass. factor below 0: see problem.
+struct DaylightFactorEstimate {
+  ObjectId host;
+  std::string openingId, mark;
+  std::size_t index = 0;
+  double horizontal = 0.0, vertical = 0.0, ratio = 0.0;  // mm, mm
+  double factor = -1.0;
+  bool facesRoad = false;
+  std::string over;   // the part of the building that sets the ratio
+  std::string basis;  // how it was worked out, for set_opening_daylight's basis
+  std::string problem;
+};
+std::vector<DaylightFactorEstimate> daylightFactorEstimates(const Document& document);
+class Modeler;
+// Gives the openings (`openings`: opening ids, all that can be worked out when empty) the factors
+// worked out, with their basis, in one undo step; their areas for ventilation stay. Returns how
+// many were given (0: nothing changed).
+Result<int> applyDaylightFactors(Modeler& modeler, const std::vector<std::string>& openings);
+
 // docs/194: rows of the permit workflow (申請図の工程) read from the model as it is. A row says what
 // was found and what is missing; never a legal judgement. state: 未入力 / 入力済み / 要確認 / 要修正 /
 // 階待ち / 通り芯待ち. `targets`: the objects the row is about (to select them).

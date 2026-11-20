@@ -216,6 +216,10 @@ class Modeler {
                                 const std::string& checkedOn);
   Status setSiteBoundary(const std::optional<SiteBoundary>& boundary);
   Status setSiteRoad(const std::array<gp_Pnt, 2>& edge, SiteRoad road);
+  // docs/205: the group of use zones the site is in, for the daylight factor (令 20 条 2 項 1-3 号):
+  // residential / industrial / commercial ("" takes it away), with the document it was read from,
+  // as attributes "use_zone" / "use_zone_source" on the site outline. One undo step.
+  Status setSiteZone(const std::string& zone, const std::string& source);
   void clearSiteRoad();
   Status setSiteGround(SiteGround ground, ObjectId building = {}, bool confirmedPlacement = false);
   void clearSiteGround();

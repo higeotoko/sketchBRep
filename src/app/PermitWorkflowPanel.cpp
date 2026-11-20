@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <set>
 #include <utility>
 
 #include <QCoreApplication>
@@ -254,6 +255,36 @@ void PermitWorkflowPanel::readRoomOpeningChecks() {
   rows_.push_back({translated("自然換気"), summary(ventilationOff, ventilationOpen),
       translated("参考値を外れる室 %1、未入力・未評価の室 %2。ふすま・障子などで仕切った二室を一室とみなす扱い（法 28 条 4 項）は、まだ見ていません。")
               .arg(ventilationOff).arg(ventilationOpen) + basis, {}, Action::None, ventilationOff + ventilationOpen > 0});
+  {
+    // docs/205: the daylight factors worked out from the site and the building (令 20 条 2 項).
+    const auto estimates = doc::daylightFactorEstimates(document_);
+    int worked = 0;
+    QString lines;
+    std::set<std::string> problems;
+    for (const auto& e : estimates) {
+      if (e.factor >= 0) {
+        ++worked;
+        if (worked <= 5)
+          lines += translated("\n%1（%2）　係数 %3　D/H = %4/%5%6")
+                       .arg(QString::fromStdString(e.mark), QString::fromStdString(e.over))
+                       .arg(e.factor, 0, 'f', 2)
+                       .arg(e.horizontal, 0, 'f', 0)
+                       .arg(e.vertical, 0, 'f', 0)
+                       .arg(e.facesRoad ? translated("（道の反対側まで）") : QString());
+      } else {
+        problems.insert(e.problem);
+      }
+    }
+    QString details = estimates.empty() ? translated("壁の開口がありません。")
+                                        : translated("求められた開口 %1／%2。").arg(worked).arg(estimates.size()) + lines;
+    for (const auto& p : problems) details += translated("\n求められない理由：%1").arg(QString::fromStdString(p));
+    details += translated("\n敷地境界・道路と建物の形から、開口の上にある部分ごとに 水平距離÷垂直距離 の最小を採光関係比率にして、"
+                          "用途地域の区分の式で求めます。天窓・縁側・公園や川に面する場合、採光上支障のない庇は見ていません。"
+                          "ボタンで開口の「採光係数」に入れます（根拠つき、Ctrl+Z 1 回で戻せます）。");
+    rows_.push_back({translated("採光補正係数（モデルから）"), worked > 0 ? translated("計算値あり") : unevaluated, details,
+                     worked > 0 ? translated("計算した係数を開口に入れる") : QString(),
+                     worked > 0 ? Action::ApplyDaylightFactors : Action::None, worked == 0 && !estimates.empty()});
+  }
   rows_.push_back({translated("機械換気"), unevaluated,
       translated("対象室、給排気経路、換気機器の能力と根拠資料を確認します。"), {}});
 }

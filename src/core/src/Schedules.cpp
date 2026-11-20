@@ -16,6 +16,8 @@
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <Bnd_Box.hxx>
+#include <gp_Lin.hxx>
+#include <IntCurvesFace_ShapeIntersector.hxx>
 #include <TopExp_Explorer.hxx>
 #include <gp_Trsf.hxx>
 #include <nlohmann/json.hpp>
@@ -383,6 +385,231 @@ RoomDaylightCheck roomDaylightCheck(const RoomOpeningInput& input) {
                           "（法 28 条 2 項）";
   }
   return out;
+}
+
+// --- docs/205: the daylight factor (採光補正係数) worked out from the model ---------------------
+namespace {
+// Where a horizontal ray from `from` along `dir` (plan) first meets the outline: its distance and
+// the edge (index of its first point); none when it does not leave through an edge.
+std::optional<std::pair<double, std::size_t>> rayToOutline(const gp_Pnt& from, const gp_Dir& dir,
+                                                           const std::vector<gp_Pnt>& outline) {
+  std::optional<std::pair<double, std::size_t>> best;
+  const std::size_t n = outline.size();
+  for (std::size_t i = 0; i < n; ++i) {
+    const gp_Pnt& a = outline[i];
+    const gp_Pnt& b = outline[(i + 1) % n];
+    const double ex = b.X() - a.X(), ey = b.Y() - a.Y();
+    const double den = dir.X() * ey - dir.Y() * ex;
+    if (std::abs(den) < 1e-12) continue;
+    const double wx = a.X() - from.X(), wy = a.Y() - from.Y();
+    const double t = (wx * ey - wy * ex) / den;              // along the ray
+    const double s = (wx * dir.Y() - wy * dir.X()) / den;    // along the edge
+    if (t <= 1e-6 || s < -1e-9 || s > 1 + 1e-9) continue;
+    if (!best || t < best->first) best = std::make_pair(t, i);
+  }
+  return best;
+}
+
+// The objects that make up the building (what can stand over an opening).
+bool buildingPart(const Object& o) {
+  const std::string k = attribute(o, "kind");
+  return k == "wall" || k == "roof" || k == "slab" || k == "balcony" || k == "canopy" || k == "stair" ||
+         k == "column" || k == "beam" || k == "ceiling";
+}
+
+struct PartShape {
+  const Object* object = nullptr;
+  TopoDS_Shape shape;
+  Bnd_Box box;
+};
+
+// The highest point of the building over plan point (x, y) above `zMin`, and what it is.
+std::optional<std::pair<double, const Object*>> highestOver(const std::vector<PartShape>& parts, double x, double y,
+                                                            double zMin) {
+  std::optional<std::pair<double, const Object*>> top;
+  for (const PartShape& p : parts) {
+    double x0, y0, z0, x1, y1, z1;
+    p.box.Get(x0, y0, z0, x1, y1, z1);
+    if (x < x0 || x > x1 || y < y0 || y > y1 || z1 <= zMin) continue;
+    if (top && z1 <= top->first) continue;
+    IntCurvesFace_ShapeIntersector cut;
+    cut.Load(p.shape, 1e-4);
+    cut.Perform(gp_Lin(gp_Pnt(x, y, zMin), gp::DZ()), 0.0, z1 - zMin + 1.0);
+    if (!cut.IsDone()) continue;
+    for (int i = 1; i <= cut.NbPnt(); ++i) {
+      const double z = cut.Pnt(i).Z();
+      if (z > zMin + 1e-6 && (!top || z > top->first)) top = std::make_pair(z, p.object);
+    }
+  }
+  return top;
+}
+
+// Does a horizontal ray from `from` along `dir` meet any wall but `host` (within `reach`)?
+bool meetsAnotherWall(const std::vector<PartShape>& parts, const ObjectId& host, const gp_Pnt& from, const gp_Dir& dir,
+                      double reach) {
+  for (const PartShape& p : parts) {
+    if (p.object->id == host || attribute(*p.object, "kind") != "wall") continue;
+    IntCurvesFace_ShapeIntersector cut;
+    cut.Load(p.shape, 1e-4);
+    cut.Perform(gp_Lin(from, dir), 1.0, reach);
+    if (cut.IsDone() && cut.NbPnt() > 0) return true;
+  }
+  return false;
+}
+}  // namespace
+
+std::vector<DaylightFactorEstimate> daylightFactorEstimates(const Document& document) {
+  std::vector<DaylightFactorEstimate> out;
+  const auto& site = document.settings().siteBoundary;
+  std::string zone;
+  if (site)
+    if (const Object* outlineObject = document.find(site->outline)) zone = attribute(*outlineObject, "use_zone");
+  const auto geometry = site ? document.siteBoundaryGeometry(site->outline) : Result<SiteBoundaryGeometry>::failure("");
+  std::optional<std::array<gp_Pnt, 2>> road;
+  if (geometry && site->road) road = document.siteRoadEdge(*geometry);
+  std::vector<PartShape> parts;
+  for (const Object& o : document.objects()) {
+    if (o.shape.IsNull() || !buildingPart(o) || !document.isVisible(o.id)) continue;
+    PartShape p{&o, document.worldShape(o), document.worldBounds(o)};
+    if (!p.box.IsVoid()) parts.push_back(std::move(p));
+  }
+  for (const OpeningRow& row : openingSchedule(document).rows) {
+    DaylightFactorEstimate e;
+    e.host = row.host;
+    e.openingId = row.openingId;
+    e.index = row.index;
+    e.mark = row.mark;
+    if (!site || !geometry) {
+      e.problem = "敷地境界がありません（配置図の敷地境界を登録します）";
+      out.push_back(e);
+      continue;
+    }
+    if (zone.empty()) {
+      e.problem = "用途地域の区分が未入力です（set_site_zone）";
+      out.push_back(e);
+      continue;
+    }
+    // Outwards: the side where a level ray from the opening's centre meets no other wall.
+    const gp_Pnt centre = row.center;
+    const gp_Dir n = row.normal;
+    // (At the centre's height, and near the host's foot and top: a ray through another opening
+    // straight across would meet nothing at one height only.)
+    const Object* hostObject = document.find(row.host);
+    const Bnd_Box hostBox = hostObject ? document.worldBounds(*hostObject) : Bnd_Box();
+    std::vector<double> heights{centre.Z()};
+    if (!hostBox.IsVoid()) {
+      heights.push_back(hostBox.CornerMin().Z() + 50.0);
+      heights.push_back(hostBox.CornerMax().Z() - 50.0);
+    }
+    const auto clear = [&](const gp_Dir& dir) {
+      for (const double z : heights)
+        if (meetsAnotherWall(parts, row.host, gp_Pnt(centre.X(), centre.Y(), z), dir, 1e6)) return false;
+      return true;
+    };
+    const bool plus = clear(n);
+    const bool minus = clear(n.Reversed());
+    if (plus == minus) {
+      e.problem = plus ? "外側を決められません（両側にほかの壁がありません）" : "内壁の開口です（両側にほかの壁があります）";
+      out.push_back(e);
+      continue;
+    }
+    const gp_Dir outward = plus ? n : n.Reversed();
+    // The outer face of the wall at the opening (the centre is on the face it was cut from).
+    const gp_Pnt face = plus ? centre : centre.Translated(gp_Vec(outward) * row.depth);
+    const auto hit = rayToOutline(gp_Pnt(face.X(), face.Y(), 0), gp_Dir(outward.X(), outward.Y(), 0), geometry->vertices);
+    if (!hit) {
+      e.problem = "開口から外へ伸ばした線が敷地境界に当たりません（建物が敷地の外にある、など）";
+      out.push_back(e);
+      continue;
+    }
+    double reach = hit->first;
+    if (road) {
+      const gp_Pnt& a = geometry->vertices[hit->second];
+      const gp_Pnt& b = geometry->vertices[(hit->second + 1) % geometry->vertices.size()];
+      const auto same = [](const gp_Pnt& p, const gp_Pnt& q) { return std::hypot(p.X() - q.X(), p.Y() - q.Y()) < 1.0; };
+      e.facesRoad = (same(a, (*road)[0]) && same(b, (*road)[1])) || (same(a, (*road)[1]) && same(b, (*road)[0]));
+    }
+    if (e.facesRoad) {
+      if (site->road->widthMm <= 0) {
+        e.problem = "道路に面しますが、道路の幅員が未入力です（反対側の境界線まで測れません）";
+        out.push_back(e);
+        continue;
+      }
+      reach += site->road->widthMm;  // to the far side of the road (令 20 条 2 項 1 号)
+    }
+    // Over the opening's width (its ends and middle), every 100 from the face out: the part of the
+    // building highest above the opening's centre, and the smallest horizontal / vertical.
+    const gp_Vec along(gp_Vec(0, 0, 1).Crossed(gp_Vec(outward)));
+    const double half = std::max(0.0, row.width / 2 - 1.0);
+    bool found = false;
+    for (double s : {-half, 0.0, half}) {
+      for (double d = -1.0; d < std::min(reach, 6000.0); d += 100.0) {  // -1: the host wall itself
+        const gp_Pnt p = face.Translated(gp_Vec(outward) * d + along * s);
+        const auto top = highestOver(parts, p.X(), p.Y(), centre.Z());
+        if (!top) continue;
+        const double horizontal = reach - d, vertical = top->first - centre.Z();
+        if (vertical <= 1.0) continue;
+        const double ratio = horizontal / vertical;
+        if (!found || ratio < e.ratio) {
+          found = true;
+          e.ratio = ratio;
+          e.horizontal = horizontal;
+          e.vertical = vertical;
+          e.over = top->second->name;
+        }
+      }
+    }
+    if (!found) {
+      e.problem = "開口の上に建物の部分が見つかりません（採光関係比率を出せません）";
+      out.push_back(e);
+      continue;
+    }
+    // 令 20 条 2 項 1-3 号.
+    const double a = zone == "residential" ? 6.0 : zone == "industrial" ? 8.0 : 10.0;
+    const double b = zone == "residential" ? 1.4 : 1.0;
+    const double far = zone == "residential" ? 7000.0 : zone == "industrial" ? 5000.0 : 4000.0;
+    const std::string item = zone == "residential" ? "1 号" : zone == "industrial" ? "2 号" : "3 号";
+    double f = e.ratio * a - b;
+    std::string rule = "採光関係比率 " + number(e.horizontal, 0) + "÷" + number(e.vertical, 0) + "＝" + number(e.ratio, 3) +
+                       "（" + e.over + "）×" + number(a, 0) + "−" + number(b, 1) + "＝" + number(f, 3);
+    if (e.facesRoad && f < 1.0) {
+      f = 1.0;
+      rule += "、道に面するので 1.0（イ）";
+    } else if (!e.facesRoad && e.horizontal >= far && f < 1.0) {
+      f = 1.0;
+      rule += "、水平距離 " + number(far / 1000, 0) + " m 以上なので 1.0（ロ）";
+    } else if (!e.facesRoad && e.horizontal < far && f < 0.0) {
+      f = 0.0;
+      rule += "、負なので 0（ハ）";
+    }
+    if (f > 3.0) {
+      f = 3.0;
+      rule += "、上限 3.0";
+    }
+    e.factor = f;
+    e.basis = "令 20 条 2 項 " + item + "：" + rule + (e.facesRoad ? "。道の反対側の境界線まで" : "") +
+              "。天窓・縁側・公園や川に面する場合は見ていない";
+    out.push_back(e);
+  }
+  return out;
+}
+
+Result<int> applyDaylightFactors(Modeler& modeler, const std::vector<std::string>& openings) {
+  const auto estimates = daylightFactorEstimates(modeler.document());
+  int given = 0;
+  modeler.history().beginGroup("Daylight Factors");
+  for (const auto& e : estimates) {
+    if (!openings.empty() && std::find(openings.begin(), openings.end(), e.openingId) == openings.end()) continue;
+    if (e.factor < 0) continue;
+    if (const Status s = modeler.setOpeningDaylight(e.host, {e.index}, e.factor, e.basis, std::nan("")); !s) {
+      modeler.history().abortGroup();
+      return Result<int>::failure(s.message());
+    }
+    ++given;
+  }
+  if (given == 0) modeler.history().abortGroup();
+  else modeler.history().endGroup();
+  return given;
 }
 
 // --- docs/194: permit workflow stages 2 and 3 ------------------------------------------------
