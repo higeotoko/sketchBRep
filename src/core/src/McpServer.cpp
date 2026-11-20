@@ -157,6 +157,10 @@ std::optional<std::string> McpServer::handle(const std::string& message) {
 }
 
 std::string bridgeServerName() {
+  // docs/204: a name of its own (the GUI tests set one per run), so that a test never reaches the
+  // app a person has open with AI access on: on Windows a second server of the same pipe name is
+  // allowed, and a client may be connected to either.
+  if (const char* own = std::getenv("SBR_AI_BRIDGE_NAME"); own && *own) return own;
   // MCP clients may start sbr_mcp with a reduced environment, so ask the OS
   // for the account name where possible.
 #ifdef _WIN32
