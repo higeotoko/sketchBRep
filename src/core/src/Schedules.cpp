@@ -1222,7 +1222,26 @@ draw::Table openingSpecTable(const Document& document) {
              "基準値(参考)：仕様基準（平成28年国土交通省告示第266号、最終改正 令和6年告示第975号）1(3) の開口部の熱貫流率と"
              "日射遮蔽（5〜8 地域）の値。告示の本文から取った（2026-11-21）。ドアは熱貫流率だけ（日射遮蔽は透明な開口部が対象）。",
              "日射遮蔽は、窓の η のほか、ガラスの η（5〜7 地域 0.73 以下・8 地域 0.66 以下）・付属部材・ひさしや軒でも満たせる"
-             "（「η 他の方法で」）。床面積の 2％・4％以下の窓の除外は見ていない。合否の判定ではありません。"};
+             "（「η 他の方法で」）。合否の判定ではありません。"};
+  // docs/237: 告示 1(3)イ・ロ: windows whose total area is at most 2 % of the floor area may be left out
+  // of the heat transmittance rule, and openings (not skylights) at most 4 % of the solar-gain rule.
+  // Windows here: the outer walls' windows and plain openings (no skylights are modelled).
+  double windows = 0.0;
+  for (const OpeningRow& o : openingSchedule(document).rows)
+    if (!o.inner && o.kind != "door") windows += o.width * o.height;
+  const AreaTable areas = areaTable(document);
+  const double floor = areas.legalTotal > 0.0 ? areas.legalTotal : areas.enclosedTotal;
+  if (floor <= 0.0) {
+    t.notes.push_back("小さい窓の除外（床面積の 2％・4％以下）：床面積が出ないので見ていません。");
+  } else {
+    const double share = windows / floor * 100.0;
+    t.notes.push_back("窓の面積の合計 " + number(windows / 1e6, 2) + " m2（床面積 " + number(floor / 1e6, 2) + " m2 の " +
+                      number(share, 1) + "％）：" +
+                      (share <= 2.0 ? "2％以下なので、熱貫流率の基準から除くことができます（告示 1(3)イ）。"
+                                    : "2％を超えるので、熱貫流率の基準から除くことはできません。") +
+                      (share <= 4.0 ? "4％以下なので、日射遮蔽の基準から除くことができます（同ロ、天窓を除く）。"
+                                    : "4％を超えるので、日射遮蔽の基準から除くことはできません。"));
+  }
   return t;
 }
 

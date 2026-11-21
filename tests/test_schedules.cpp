@@ -3965,3 +3965,26 @@ TEST_F(Schedules, CeilingInsulation) {
   EXPECT_NE(std::find(texts.begin(), texts.end(), "R≧4.0"), texts.end());
   EXPECT_NE(std::find(texts.begin(), texts.end(), "満たす"), texts.end());
 }
+
+// docs/237: the opening specification table says whether the windows are few enough to be left out
+// (告示 1(3)イ・ロ: at most 2 % / 4 % of the floor area): the outer walls' windows and plain openings
+// counted, doors not.
+TEST_F(Schedules, SmallWindowsExemption) {
+  ok("set_insulation", {{"ids", {south}}, {"material", "グラスウール 16K"}, {"thickness_mm", 100}, {"source", "架空のカタログ"}});
+  ok("set_opening_performance", {{"host", south}, {"u_value", 2.33}, {"source", "架空のカタログ"}});
+  double windows = 0.0;
+  for (const auto& r : sbr::doc::openingSchedule(modeler.document()).rows)
+    if (!r.inner && r.kind != "door") windows += r.width * r.height;
+  EXPECT_NEAR(windows / 1e6, 2 * 1.6 * 1.2 + 1.6 * 1.2 + 0.8 * 2.0, 1e-6);  // south x 2, north window, north plain opening
+  const auto set = sbr::doc::drawingSet(modeler.document(), {});
+  ASSERT_TRUE(set);
+  std::string note;
+  for (std::size_t i = 0; i < set->names.size(); ++i)
+    if (set->names[i] == "断熱範囲図（1FL）")
+      for (const auto& item : set->sheets[i].items)
+        if (item.kind == sbr::draw::Item::Kind::Text && item.text.find("窓の面積の合計") != std::string::npos) note = item.text;
+  ASSERT_FALSE(note.empty());
+  EXPECT_NE(note.find("7.36 m2"), std::string::npos) << note;
+  EXPECT_NE(note.find("2％を超えるので"), std::string::npos) << note;
+  EXPECT_NE(note.find("4％を超えるので"), std::string::npos) << note;
+}
