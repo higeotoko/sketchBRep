@@ -53,6 +53,18 @@ docs/228・229 の「オーナーに確かめてほしいこと」のうち、�
 - `Schedules.OpeningsComparedWithTheSpecificationValues` を直した：6 地域で東のドア（U 2.9）は「U≦4.7」「U 満たす」（η は見ない）。3 地域は「U≦2.3」、4 地域は「U≦3.5」で η の基準は出ない。
 - 断熱材のテスト（docs/228）は値が同じなのでそのまま成功。Windows ローカル：コア全件 791 件成功・8 件スキップ。
 
+**CI**：run 44883447484（push）成功。Linux 812 件すべて成功。
+
+**配布**
+
+| 項目 | 内容 |
+|---|---|
+| コード | `3335c94` |
+| ZIP | `SketchBRep-windows-x64-3335c94-local.zip`（Codex のチャットフォルダの `outputs\`） |
+| サイズ | 82,769,205 bytes |
+| SHA256 | `4a7fa752fa7a88264b1e99d1d763648815190a7add75b56da2a749f90cfe524d` |
+| ZIP の検証 | `docs/validation/2026-11-21-portable-3335c94.json`・`-mat.json`（GUI 18 + 4 条件、失敗 0） |
+
 **Windows 実機確認（人の操作）**：まだ。docs/105 の 14-38・14-39。
 
 ## オーナーに残る事（調べても決まらない、決め事）
