@@ -873,6 +873,16 @@ class Modeler {
     std::string text;
   };
   static std::vector<InsulationRun> insulationRuns(const Document& document, double z);
+  // docs/217: where a section draws the insulation mark of a wall, slab or roof with insulation
+  // given: a wall's middle plane (a point on it and its normal, across the wall) and thickness; a
+  // slab's height or a roof's thickness across its slope as made (no plane: the mark runs under its
+  // upper faces at half that depth). Nothing without insulation or a known band.
+  struct InsulationBand {
+    std::optional<std::pair<gp_Pnt, gp_Dir>> middle;
+    double thickness = 0.0;
+    std::string text;
+  };
+  static std::optional<InsulationBand> insulationBand(const Document& document, const Object& object);
   // The insulation of a wall, slab or roof as text, or "" when it has none.
   static std::string insulationText(const Object& object);
   // The layers of a wall, floor or roof as they are now (docs/170): names and thicknesses in

@@ -935,6 +935,30 @@ void GuiPhase1::insulationPlanIsDrawnOnItsSheet() {
   QVERIFY(dark > 500);
   const QByteArray where = qgetenv("SBR_SHEET_PNG");
   if (!where.isEmpty()) QVERIFY(image.save(QString::fromLocal8Bit(where)));
+  // docs/217: with a floor over the walls and a gable roof, both given insulation, the section
+  // across the ridge carries its insulation sheet. SBR_SECTION_PNG: where to save its picture.
+  const auto slab = call("create_slab", {{"outline", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}}}, {"top", 3200}, {"thickness", 200}});
+  QVERIFY(slab["ok"].get<bool>());
+  const auto roof = call("create_roof", {{"outline", {{-450, -450}, {8450, -450}, {8450, 6450}, {-450, 6450}}}, {"kind", "gable"}, {"height", 6000}});
+  QVERIFY(roof["ok"].get<bool>());
+  QVERIFY(call("set_insulation", {{"ids", {slab["result"]["id"]}}, {"material", "押出法ポリスチレンフォーム"}, {"thickness_mm", 50},
+                                  {"source", "架空のカタログ"}})["ok"].get<bool>());
+  QVERIFY(call("set_insulation", {{"ids", {roof["result"]["id"]}}, {"material", "フェノールフォーム"}, {"thickness_mm", 60},
+                                  {"placement", "outside"}, {"source", "架空のカタログ"}})["ok"].get<bool>());
+  const auto withSections = doc::drawingSet(modeler.document(), {});
+  QVERIFY(withSections.ok());
+  const auto section = std::find(withSections->names.begin(), withSections->names.end(), std::string("断熱範囲図（B-B 断面）"));
+  QVERIFY(section != withSections->names.end());
+  QImage sectionImage(1680, 1188, QImage::Format_RGB32);
+  sectionImage.fill(Qt::white);
+  {
+    QPainter painter(&sectionImage);
+    painter.setRenderHint(QPainter::Antialiasing);
+    app::renderSheet(painter, withSections->sheets[static_cast<std::size_t>(section - withSections->names.begin())],
+                     QRectF(0, 0, sectionImage.width(), sectionImage.height()));
+  }
+  const QByteArray sectionWhere = qgetenv("SBR_SECTION_PNG");
+  if (!sectionWhere.isEmpty()) QVERIFY(sectionImage.save(QString::fromLocal8Bit(sectionWhere)));
 }
 
 // docs/215: the energy route, the insulation of selected walls and an opening's performance given

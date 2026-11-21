@@ -2829,7 +2829,8 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
       ++n;
     }
   }
-  // docs/216: a plan of the insulation for each storey whose walls have some given.
+  // docs/216: a plan of the insulation for each storey whose walls have some given; docs/217: a
+  // section of it for each cut.
   {
     std::vector<Planned> insulated;
     for (const Planned& p : planned) {
@@ -2845,6 +2846,32 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
       insulated.push_back({view.title, view, std::nullopt, {}});
     }
     for (auto& p : insulated) planned.push_back(std::move(p));
+    // docs/217: and of each section that cuts a wall, floor or roof with insulation given.
+    for (const Cut& c : cuts) {
+      bool crosses = false;
+      for (const Object& o : document.objects()) {
+        if (crosses || o.shape.IsNull() || !document.isVisible(o.id)) continue;
+        if (!Modeler::insulationBand(document, o)) continue;
+        const Bnd_Box b = document.worldBounds(o);
+        if (b.IsVoid()) continue;
+        double x0, y0, z0, x1, y1, z1;
+        b.Get(x0, y0, z0, x1, y1, z1);
+        bool below = false, above = false;
+        for (const double x : {x0, x1})
+          for (const double y : {y0, y1}) {
+            const double d = gp_Vec(c.point, gp_Pnt(x, y, c.point.Z())).Dot(gp_Vec(c.toward));
+            below = below || d < -1e-3;
+            above = above || d > 1e-3;
+          }
+        crosses = below && above;
+      }
+      if (!crosses) continue;
+      draw::ViewSpec view = draw::sectionView(c.point, c.toward);
+      view.insulation = true;
+      view.fill = false;
+      view.title = "断熱範囲図（" + c.label + "-" + c.label + " 断面）";
+      planned.push_back({view.title, view, std::nullopt, {}});
+    }
   }
   if (document.settings().siteBoundary) {
     const auto site = draw::sitePlanView();

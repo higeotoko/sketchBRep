@@ -195,6 +195,26 @@ Item line(Pen pen, const gp_Pnt2d& a, const gp_Pnt2d& b) {
   return i;
 }
 
+// The insulation mark (docs/216, docs/217): a zigzag from a to b (on the sheet, model mm) in a band
+// `thickness` wide: swinging 30 % of it (10 at least), a peak every 50 % (20 at least). Nothing
+// when shorter than 1.
+std::optional<Item> insulationZigzag(const gp_Pnt2d& a, const gp_Pnt2d& b, double thickness) {
+  const gp_Vec2d along(a, b);
+  const double length = along.Magnitude();
+  if (length < 1.0) return std::nullopt;
+  const gp_Vec2d unit = along / length, across(-unit.Y(), unit.X());
+  const double amplitude = std::max(10.0, thickness * 0.3), pitch = std::max(20.0, thickness * 0.5);
+  const int steps = std::max(2, static_cast<int>(std::ceil(length / pitch)));
+  Item zigzag;
+  zigzag.kind = Item::Kind::Polyline;
+  zigzag.pen = Pen::Visible;
+  for (int i = 0; i <= steps; ++i) {
+    const double side = i == 0 || i == steps ? 0.0 : (i % 2 == 1 ? amplitude : -amplitude);
+    zigzag.points.push_back(a.Translated(unit * (length * i / steps) + across * side));
+  }
+  return zigzag;
+}
+
 // An edge (already in local coordinates: x, y on the sheet) as items: lines
 // and arcs exactly, other curves as polylines within `deflection`.
 void addLocalEdge(const TopoDS_Edge& edge, Pen pen, double deflection, std::vector<Item>& out) {
@@ -682,6 +702,10 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
   bool anySeen = false;
   std::vector<Item> cut, fills, loose, layerLines, hatches;
   std::set<doc::ObjectId> drawn, gridIds;
+  // docs/217: sections with insulation marks: what was marked, by part ("壁" / "床" / "屋根") and
+  // insulation, and what has insulation given but could not be marked.
+  std::map<std::string, std::map<std::string, std::set<doc::ObjectId>>> insulationMarked;
+  std::set<std::string> insulationNotMarked;
   // docs/165: in plans, the cut lines of each wall of a build-up (its layers as the key), so
   // that where two walls of one build-up touch, the line between them can be left out.
   struct WallCut {
@@ -790,6 +814,41 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
               const gp_Pnt e0 = curve.Value(curve.FirstParameter()), e1 = curve.Value(curve.LastParameter());
               if (e0.Distance(e1) > 1e-6) layerLines.push_back(line(Pen::Visible, proj.uv(e0), proj.uv(e1)));
             }
+          }
+        }
+        // docs/217: the insulation mark in the cut: up a wall's middle (broken at its openings, as
+        // the layer lines), along a floor or roof at half its depth under its upper faces.
+        if (spec.insulation && spec.kind == ViewKind::Section) {
+          if (const auto band = doc::Modeler::insulationBand(document, o)) {
+            const std::string part = band->middle ? "壁" : o.attributes.at("kind") == "slab" ? "床" : "屋根";
+            std::size_t before = layerLines.size();
+            auto mark = [&](const gp_Pnt& a, const gp_Pnt& b) {
+              if (auto z = insulationZigzag(proj.uv(a), proj.uv(b), band->thickness)) layerLines.push_back(std::move(*z));
+            };
+            if (band->middle) {
+              const auto& [p, m] = *band->middle;
+              const gp_Pnt c = plane.Location();
+              const double a1 = n.X(), b1 = n.Y(), c1 = a1 * c.X() + b1 * c.Y();
+              const double a2 = m.X(), b2 = m.Y(), c2 = a2 * p.X() + b2 * p.Y();
+              const double det = a1 * b2 - a2 * b1;
+              if (std::abs(det) > 1e-9) {  // not when the cut runs along the wall
+                const double x = (c1 * b2 - c2 * b1) / det, y = (a1 * c2 - a2 * c1) / det;
+                const Bnd_Box box = geom::exactBounds(world);
+                BRepBuilderAPI_MakeEdge upright(gp_Pnt(x, y, box.CornerMin().Z() - 1), gp_Pnt(x, y, box.CornerMax().Z() + 1));
+                if (upright.IsDone()) {
+                  BRepAlgoAPI_Common inside(upright.Edge(), world);
+                  if (inside.IsDone())
+                    for (TopExp_Explorer e(inside.Shape(), TopAbs_EDGE); e.More(); e.Next()) {
+                      BRepAdaptor_Curve curve(TopoDS::Edge(e.Current()));
+                      mark(curve.Value(curve.FirstParameter()), curve.Value(curve.LastParameter()));
+                    }
+                }
+              }
+            } else {
+              layerLinesUnderTops(world, plane, {band->thickness / 2}, mark);
+            }
+            if (layerLines.size() > before) insulationMarked[part][band->text].insert(o.id);
+            else insulationNotMarked.insert(part + "：" + band->text);
           }
         }
       }
@@ -1138,22 +1197,9 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     const double z = spec.frame.Location().Z();
     std::map<std::string, std::set<doc::ObjectId>> walls;
     for (const auto& run : doc::Modeler::insulationRuns(document, z)) {
-      const gp_Vec along(run.a, run.b);
-      const double length = along.Magnitude();
-      if (length < 1.0) continue;
-      const gp_Vec unit = along / length;
-      const gp_Vec across(-unit.Y(), unit.X(), 0.0);
-      const double amplitude = std::max(10.0, run.thickness * 0.3), pitch = std::max(20.0, run.thickness * 0.5);
-      const int steps = std::max(2, static_cast<int>(std::ceil(length / pitch)));
-      Item zigzag;
-      zigzag.kind = Item::Kind::Polyline;
-      zigzag.pen = Pen::Visible;
-      for (int i = 0; i <= steps; ++i) {
-        const double t = length * i / steps;
-        const double side = i == 0 || i == steps ? 0.0 : (i % 2 == 1 ? amplitude : -amplitude);
-        zigzag.points.push_back(proj.uv(run.a.Translated(unit * t + across * side)));
-      }
-      view.items.push_back(std::move(zigzag));
+      auto zigzag = insulationZigzag(proj.uv(run.a), proj.uv(run.b), run.thickness);
+      if (!zigzag) continue;
+      view.items.push_back(std::move(*zigzag));
       walls[run.text].insert(run.wall);
     }
     std::map<std::string, int> others;
@@ -1169,6 +1215,19 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     for (const auto& [text, count] : others)
       view.calculationNotes.push_back(text + "（" + std::to_string(count) + " 個、平面には描きません）");
     view.calculationNotes.push_back("断熱の位置は壁の厚さの中ほどに描いた印です（層の位置ではありません）。基準の値との比較はしていません");
+  }
+  // docs/217: the legend of a section's insulation marks.
+  if (spec.kind == ViewKind::Section && spec.insulation) {
+    if (insulationMarked.empty()) view.calculationNotes.push_back("この断面で切る壁・床・屋根に、断熱の入力はありません");
+    for (const char* part : {"壁", "床", "屋根"}) {
+      const auto it = insulationMarked.find(part);
+      if (it == insulationMarked.end()) continue;
+      for (const auto& [text, ids] : it->second)
+        view.calculationNotes.push_back(std::string("波線：") + part + "の断熱　" + text + "（" + std::to_string(ids.size()) + " 個）");
+    }
+    for (const std::string& t : insulationNotMarked)
+      view.calculationNotes.push_back(t + "：この断面では印を描けませんでした（壁に沿って切っている等）");
+    view.calculationNotes.push_back("断熱の位置は厚さの中ほどに描いた印です（層の位置ではありません）。基準の値との比較はしていません");
   }
 
   // The extent of the model's lines (annotations are placed around it).

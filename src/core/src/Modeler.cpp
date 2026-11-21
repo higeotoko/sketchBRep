@@ -7750,6 +7750,33 @@ std::vector<Modeler::InsulationRun> Modeler::insulationRuns(const Document& docu
   return out;
 }
 
+std::optional<Modeler::InsulationBand> Modeler::insulationBand(const Document& document, const Object& object) {
+  InsulationBand band;
+  band.text = insulationText(object);
+  if (band.text.empty()) return std::nullopt;
+  const std::string kind = attributeOf(object, "kind");
+  if (kind == "wall") {
+    const auto w = wallBand(document, object);
+    if (!w) return std::nullopt;
+    band.middle = std::make_pair(w->start.Translated(gp_Vec(w->left) * ((w->leftExt - w->right) / 2)), w->left);
+    band.thickness = w->right + w->leftExt;
+  } else if (kind == "roof") {
+    const nlohmann::json spec = nlohmann::json::parse(attributeOf(object, "roof_spec"), nullptr, false);
+    if (!spec.is_object()) return std::nullopt;
+    band.thickness = spec.value("thickness", 0.0);
+  } else if (kind == "slab") {
+    const TopoDS_Shape shape = document.worldShape(object);
+    if (shape.IsNull()) return std::nullopt;
+    const Bnd_Box b = geom::exactBounds(shape);
+    if (b.IsVoid()) return std::nullopt;
+    band.thickness = b.CornerMax().Z() - b.CornerMin().Z();
+  } else {
+    return std::nullopt;
+  }
+  if (band.thickness < 1.0) return std::nullopt;
+  return band;
+}
+
 std::vector<std::pair<gp_Pnt, gp_Pnt>> Modeler::wallLayerLines(const Document& document, double z,
                                                                const std::set<ObjectId>& only) {
   std::vector<std::pair<gp_Pnt, gp_Pnt>> out;

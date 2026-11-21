@@ -4267,7 +4267,8 @@ const std::vector<CommandDef>& commands() {
        "right, or under it when that takes a smaller paper; empty tables are left out). "
        "'bracing_floor' (docs/208): a plan of that storey's bracing walls. 'insulation' true (docs/216): a plan with "
        "the walls' insulation marked (a zigzag along each wall given insulation, broken at openings) and a legend "
-       "(best with 'fill' and 'hatch' false). "
+       "(best with 'fill' and 'hatch' false); with kind section (docs/217): the walls', floors' and roofs' insulation "
+       "marked in the cut (up a wall's middle, along a floor or roof at half its depth). "
        "Returns the paper chosen and notes (what did not fit or was left out).",
        SCHEMA({"type": "object", "properties": {"path": {"type": "string"}, "kind": {"type": "string"},
                "cut_z": {"type": "number"}, "point": {"type": "array"}, "look": {"type": "array"}, "hatch": {"type": "boolean"},

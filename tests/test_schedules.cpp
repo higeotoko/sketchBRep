@@ -3173,3 +3173,74 @@ TEST_F(Schedules, InsulationPlansMarkTheWallsWithInsulation) {
   EXPECT_TRUE(has(list, "断熱範囲図（1FL）"));
   EXPECT_FALSE(has(list, "断熱範囲図（2FL）"));
 }
+
+// docs/217: sections with the insulation of the walls, floors and roofs they cut marked: up a wall's
+// middle (broken at its openings), along a floor at half its depth; a sheet per section in the set.
+TEST_F(Schedules, InsulationSectionsMarkWallsAndFloors) {
+  const auto has = [](const std::vector<std::string>& list, const std::string& name) {
+    return std::find(list.begin(), list.end(), name) != list.end();
+  };
+  const auto polylines = [](const sbr::draw::View& v) {
+    return std::count_if(v.items.begin(), v.items.end(), [](const sbr::draw::Item& i) { return i.kind == sbr::draw::Item::Kind::Polyline; });
+  };
+  // Marks added by `insulation` on a section through x, looking west.
+  const auto marks = [&](double x, std::vector<std::string>* notes = nullptr) {
+    sbr::draw::ViewSpec plain = sbr::draw::sectionView(gp_Pnt(x, 3000, 0), gp_Dir(-1, 0, 0));
+    sbr::draw::ViewSpec marked = plain;
+    marked.insulation = true;
+    const auto before = sbr::draw::makeView(modeler.document(), plain);
+    const auto after = sbr::draw::makeView(modeler.document(), marked);
+    EXPECT_TRUE(before && after);
+    if (!before || !after) return -1L;
+    if (notes) *notes = after->calculationNotes;
+    return static_cast<long>(polylines(*after) - polylines(*before));
+  };
+  std::vector<std::string> notes;
+  EXPECT_EQ(marks(1000, &notes), 0);
+  EXPECT_TRUE(has(notes, "この断面で切る壁・床・屋根に、断熱の入力はありません"));
+  ok("set_insulation", {{"ids", {south}}, {"material", "グラスウール 16K"}, {"thickness_mm", 100}, {"placement", "fill"},
+                        {"source", "架空のカタログ"}});
+  const auto band = sbr::doc::Modeler::insulationBand(modeler.document(), *modeler.document().find(south));
+  ASSERT_TRUE(band && band->middle);
+  EXPECT_NEAR(band->thickness, 200.0, 1e-6);
+  EXPECT_NEAR(std::abs(band->middle->second.Y()), 1.0, 1e-9);  // across the south wall
+  // Clear of the windows: one mark up the whole wall.
+  double windowX = -1;
+  for (const auto& r : sbr::doc::openingSchedule(modeler.document()).rows)
+    if (r.host == south && (windowX < 0 || r.center.X() < windowX)) windowX = r.center.X();
+  ASSERT_GT(windowX, 1000.0 + 800.0);  // x = 1000 is clear of the first window (1600 wide)
+  EXPECT_EQ(marks(1000, &notes), 1);
+  EXPECT_TRUE(has(notes, "波線：壁の断熱　グラスウール 16K 100 mm（充填）（1 個）"));
+  // Through a window: under its sill and over its head.
+  EXPECT_EQ(marks(windowX), 2);
+  // The floor: along it at half its depth.
+  std::string slab;
+  for (const auto& o : modeler.document().objects())
+    if (o.attributes.count("kind") && o.attributes.at("kind") == "slab") slab = o.id;
+  ASSERT_FALSE(slab.empty());
+  ok("set_insulation", {{"ids", {slab}}, {"material", "押出法ポリスチレンフォーム"}, {"thickness_mm", 50}, {"source", "架空のカタログ"}});
+  EXPECT_EQ(marks(1000, &notes), 2);
+  EXPECT_TRUE(has(notes, "波線：床の断熱　押出法ポリスチレンフォーム 50 mm（1 個）"));
+  {
+    sbr::draw::ViewSpec spec = sbr::draw::sectionView(gp_Pnt(1000, 3000, 0), gp_Dir(-1, 0, 0));
+    spec.insulation = true;
+    const auto view = sbr::draw::makeView(modeler.document(), spec);
+    ASSERT_TRUE(view);
+    // The floor's mark lies at its middle height (top 0, 200 thick: -100), within its swing.
+    bool atMiddle = false;
+    for (const auto& i : view->items) {
+      if (i.kind != sbr::draw::Item::Kind::Polyline || i.points.size() < 3) continue;
+      const bool flat = std::abs(i.points.front().Y() - i.points.back().Y()) < 1e-6;
+      if (flat && std::abs(i.points.front().Y() + 100.0) < 1e-6) atMiddle = true;
+    }
+    EXPECT_TRUE(atMiddle);
+  }
+  // The drawing set: an insulation section for each section that cuts something insulated.
+  const auto set = sbr::doc::drawingSet(modeler.document(), {});
+  ASSERT_TRUE(set);
+  for (const char* label : {"A", "B"}) {
+    const std::string l(label);
+    if (has(set->names, l + "-" + l + " 断面図")) EXPECT_TRUE(has(set->names, "断熱範囲図（" + l + "-" + l + " 断面）")) << l;
+  }
+  EXPECT_TRUE(has(set->names, "断熱範囲図（B-B 断面）"));  // across x = 4000: the south wall and the floor
+}
