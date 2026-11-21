@@ -63,6 +63,18 @@ docs/209・214・231・232 の「まだ」の「付近見取図（地図の背�
 | SHA256 | `7aa13575fb72036745632321ee5e22204b977f3b867c05dabb5bf35e059be45f` |
 | ZIP の検証 | `docs/validation/2026-11-21-portable-a0d88c9.json`・`-mat.json`（GUI 18 + 4 条件、失敗 0） |
 
+**CI（TLS の直し）**：run 44900100138（push）成功。Linux 815 件すべて成功。
+
+**配布（TLS の直し入り。実機確認はこれで）**
+
+| 項目 | 内容 |
+|---|---|
+| コード | `cc0dcee` |
+| ZIP | `SketchBRep-windows-x64-cc0dcee-local.zip`（Codex のチャットフォルダの `outputs\`）。`tls/qschannelbackend.dll` 入り |
+| サイズ | 82,939,152 bytes |
+| SHA256 | `0a2986553ab29ddb7f4f295f6091c8e17d8e00550c1079686bcee3b41b745656` |
+| ZIP の検証 | `docs/validation/2026-11-21-portable-cc0dcee.json`・`-mat.json`（GUI 18 + 4 条件、失敗 0。依存の確認 110 件） |
+
 **Windows 実機確認（人の操作）**：まだ。docs/105 の 14-42。
 
 ## 追記：ZIP に Qt の TLS 部品を入れた（2026-11-21）

@@ -1,7 +1,7 @@
 # Windows 実機確認のチェック表（人の操作、2026-11-14）
 
 docs/95〜104 で「Windows 実機確認：まだ」になっている物を、1 枚にまとめた。
-使う ZIP：**`SketchBRep-windows-x64-23f7e66-local.zip`**（14-41 まで入った最新は `SketchBRep-windows-x64-3730690-local.zip`。コード `23f7e66`、2026-11-19。14-7 まで全部入り。14-8・14-9 と 2-5・2-8 の直し（docs/194〜196）は `SketchBRep-windows-x64-abcedab-local.zip`。SketchUp SDK の DLL 同梱）。その前は `8f70653`（12-52・2-11・13-3 まで）。初めは `7d7a3dc` で作った表。
+使う ZIP：**`SketchBRep-windows-x64-23f7e66-local.zip`**（14-42 まで入った最新は `SketchBRep-windows-x64-cc0dcee-local.zip`（付近見取図の地図タイルを取る TLS の部品入り）。コード `23f7e66`、2026-11-19。14-7 まで全部入り。14-8・14-9 と 2-5・2-8 の直し（docs/194〜196）は `SketchBRep-windows-x64-abcedab-local.zip`。SketchUp SDK の DLL 同梱）。その前は `8f70653`（12-52・2-11・13-3 まで）。初めは `7d7a3dc` で作った表。
 オーナーの指示：2026-11-14（「別途実機確認が必要なものがあれば書き出して。こちらでやる」）。
 
 - ここに書いたのは、**人がさわらないと分からない所**だけ（マウスの感触、見え方、字の大きさ、ほかのソフト）。
