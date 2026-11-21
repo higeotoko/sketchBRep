@@ -4088,6 +4088,25 @@ Status Modeler::setSiteZone(const std::string& zone, const std::string& source) 
   return Status::success();
 }
 
+Status Modeler::setProjectOutline(const std::map<std::string, std::string>& items) {
+  nlohmann::json all = nlohmann::json::parse(document_.settings().projectOutline, nullptr, false);
+  if (!all.is_object()) all = nlohmann::json::object();
+  for (const auto& [key, value] : items) {
+    const auto& fields = projectOutlineFields();
+    const auto field = std::find_if(fields.begin(), fields.end(), [&](const ProjectOutlineField& f) { return f.key == key; });
+    if (field == fields.end()) return Status::failure("計画概要の項目に " + key + " はありません");
+    if (!oneLine(value, 300)) return Status::failure(field->label + " は1行、100 字までです");
+    if (!value.empty() && !field->choices.empty() &&
+        std::none_of(field->choices.begin(), field->choices.end(), [&](const auto& c) { return c.first == value; }))
+      return Status::failure(field->label + " は決まった値から選びます");
+    if (value.empty()) all.erase(key);
+    else all[key] = value;
+  }
+  const std::string text = all.dump();
+  editSettings(document_, history_, "Project Outline", [&](PersistentSettings& s) { s.projectOutline = text; });
+  return Status::success();
+}
+
 Status Modeler::setPermitConfirmation(int stage, bool confirmed, const std::string& by, const std::string& note,
                                       const std::string& on) {
   if (stage < 1 || stage > 12) return Status::failure("工程は 1〜12 です");

@@ -1234,6 +1234,9 @@ void MainWindow::buildMenus() {
     if (report(modeler_.setSiteZone(zone.toStdString(), source.toStdString())))
       setStatus(zone.isEmpty() ? tr("用途地域の区分を未入力にしました") : tr("用途地域の区分を決めました（Ctrl+Z で戻せます）"));
   })->setObjectName(QStringLiteral("siteZoneAction"));
+  // docs/214: the project's items that are not in the model, for the project outline.
+  site->addAction(tr("計画概要の項目..."), this, &MainWindow::showProjectOutlineDialog)
+      ->setObjectName(QStringLiteral("projectOutlineAction"));
   site->addAction(tr("道路情報の指定を解除"), this, [this] {
     modeler_.clearSiteRoad();
     setStatus(tr("道路情報の指定を解除しました"));
@@ -7167,6 +7170,7 @@ void MainWindow::showPermitWorkflow() {
       case Action::Boundary: trigger("setSiteBoundaryAction"); break;
       case Action::North: trigger("siteNorthByAngleAction"); break;
       case Action::Zone: trigger("siteZoneAction"); break;  // docs/206
+      case Action::Outline: trigger("projectOutlineAction"); break;  // docs/214
       case Action::SavedRoad:
         setSelection({});
         [[fallthrough]];
@@ -7212,6 +7216,60 @@ void MainWindow::showPermitWorkflow() {
   resizeDocks({dock}, {560}, Qt::Horizontal);
   resizeDocks({dock}, {420}, Qt::Vertical);
   dock->show();
+}
+
+// docs/214: one line per item of the project outline; fixed lists as choices. OK gives what changed
+// as one undo step.
+void MainWindow::showProjectOutlineDialog() {
+  QDialog dialog(this);
+  dialog.setObjectName(QStringLiteral("projectOutlineDialog"));
+  dialog.setWindowTitle(tr("計画概要の項目"));
+  auto* layout = new QVBoxLayout(&dialog);
+  auto* note = new QLabel(tr("モデルに無い項目を入れます。計画概要の表と、申請図の工程の「1 敷地・配置図」に出ます。"
+                             "項目は確認申請書の第二面・第三面から選んでいます。様式と照らすのは申請先で。"));
+  note->setWordWrap(true);
+  layout->addWidget(note);
+  auto* form = new QFormLayout;
+  layout->addLayout(form);
+  const auto given = doc::projectOutline(modeler_.document());
+  std::vector<std::pair<std::string, QWidget*>> editors;
+  for (const doc::ProjectOutlineField& f : doc::projectOutlineFields()) {
+    const auto it = given.find(f.key);
+    const QString now = it == given.end() ? QString() : QString::fromStdString(it->second);
+    QWidget* editor = nullptr;
+    if (!f.choices.empty()) {
+      auto* box = new QComboBox;
+      box->addItem(tr("未入力"), QString());
+      for (const auto& [code, label] : f.choices) box->addItem(QString::fromStdString(label), QString::fromStdString(code));
+      box->setCurrentIndex(std::max(0, box->findData(now)));
+      editor = box;
+    } else {
+      auto* line = new QLineEdit(now);
+      line->setMaxLength(100);
+      line->setPlaceholderText(QString::fromStdString(f.hint));
+      editor = line;
+    }
+    editor->setObjectName(QStringLiteral("projectOutline_") + QString::fromStdString(f.key));
+    if (!f.hint.empty()) editor->setToolTip(QString::fromStdString(f.hint));
+    form->addRow(QString::fromStdString(f.label), editor);
+    editors.emplace_back(f.key, editor);
+  }
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+  layout->addWidget(buttons);
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  if (dialog.exec() != QDialog::Accepted) return;
+  std::map<std::string, std::string> changed;
+  for (const auto& [key, editor] : editors) {
+    const QString value = qobject_cast<QComboBox*>(editor) ? qobject_cast<QComboBox*>(editor)->currentData().toString()
+                                                          : qobject_cast<QLineEdit*>(editor)->text().trimmed();
+    const auto it = given.find(key);
+    if (value.toStdString() != (it == given.end() ? std::string() : it->second)) changed[key] = value.toStdString();
+  }
+  if (changed.empty()) return;
+  if (report(modeler_.setProjectOutline(changed)))
+    setStatus(tr("計画概要の項目を %1 個決めました（Ctrl+Z で戻せます）").arg(changed.size()));
+  refreshPanels();
 }
 
 void MainWindow::showDrawingDialog() {

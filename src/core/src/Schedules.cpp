@@ -1391,6 +1391,62 @@ std::vector<PermitCheck> permitOutputChecks(const Document& document) {
   return out;
 }
 
+const std::vector<ProjectOutlineField>& projectOutlineFields() {
+  static const std::vector<ProjectOutlineField> fields = {
+      {"project_name", "物件名", "図面の表題欄の工事名にも使います（図面一式の設定で別に入れた時はそちら）", {}},
+      {"client", "建築主", "氏名・名称", {}},
+      {"designer", "設計者", "建築士の資格・氏名・事務所", {}},
+      {"address", "地名地番", "登記上の地名地番", {}},
+      {"residence", "住居表示", "", {}},
+      {"city_planning", "都市計画区域等", "例：都市計画区域内（市街化区域）", {}},
+      {"fire_zone", "防火地域等", "",
+       {{"fire", "防火地域"}, {"quasi_fire", "準防火地域"}, {"article22", "法 22 条区域"}, {"none", "指定なし"}}},
+      {"main_use", "主要用途", "例：一戸建ての住宅", {}},
+      {"work_kind", "工事種別", "",
+       {{"new", "新築"}, {"extension", "増築"}, {"rebuild", "改築"}, {"relocation", "移転"}, {"use_change", "用途変更"},
+        {"major_repair", "大規模の修繕"}, {"major_remodel", "大規模の模様替"}}},
+      {"start_date", "工事着手予定", "例：2027-04", {}},
+      {"finish_date", "工事完了予定", "例：2027-10", {}},
+      {"source", "確認資料", "項目を確かめた資料（登記事項証明書・都市計画図など）", {}},
+  };
+  return fields;
+}
+
+std::map<std::string, std::string> projectOutline(const Document& document) {
+  std::map<std::string, std::string> out;
+  const nlohmann::json j = nlohmann::json::parse(document.settings().projectOutline, nullptr, false);
+  if (!j.is_object()) return out;
+  for (const ProjectOutlineField& f : projectOutlineFields())
+    if (j.contains(f.key) && j.at(f.key).is_string() && !j.at(f.key).get<std::string>().empty())
+      out[f.key] = j.at(f.key).get<std::string>();
+  return out;
+}
+
+std::string projectOutlineText(const std::string& key, const std::string& value) {
+  for (const ProjectOutlineField& f : projectOutlineFields())
+    if (f.key == key)
+      for (const auto& [code, label] : f.choices)
+        if (code == value) return label;
+  return value;
+}
+
+namespace {
+// docs/214: the project outline items as a stage 1 row.
+PermitCheck projectOutlineCheck(const Document& document) {
+  const auto given = projectOutline(document);
+  std::string missing, done;
+  for (const ProjectOutlineField& f : projectOutlineFields()) {
+    const auto it = given.find(f.key);
+    if (it == given.end()) missing += (missing.empty() ? "" : "、") + f.label;
+    else done += "\n" + f.label + "：" + projectOutlineText(f.key, it->second);
+  }
+  if (given.empty())
+    return {"計画概要の項目", "未入力", "建築主・地名地番・主要用途・工事種別など、モデルに無い項目を入れます。計画概要の表に出ます。", {}, true};
+  return {"計画概要の項目", missing.empty() ? "入力済み" : "入力不足",
+          (missing.empty() ? std::string("全部入っています。") : "未入力：" + missing) + done, {}, !missing.empty()};
+}
+}  // namespace
+
 std::vector<PermitCheck> permitSiteChecks(const Document& document) {
   std::vector<PermitCheck> out;
   const auto& settings = document.settings();
@@ -1419,6 +1475,7 @@ std::vector<PermitCheck> permitSiteChecks(const Document& document) {
   if (!geometry) {
     for (const char* item : {"道路・接道", "接地外周・高さ", "用途地域の区分"})
       out.push_back({item, "敷地境界待ち", "敷地境界を登録すると入力できます。", {}});
+    out.push_back(projectOutlineCheck(document));  // the last row, as below (the panel reads it)
     return out;
   }
   if (!site->road) {
@@ -1462,6 +1519,7 @@ std::vector<PermitCheck> permitSiteChecks(const Document& document) {
     const std::string name = zone == "residential" ? "住居系" : zone == "industrial" ? "工業系" : "商業系・指定なし";
     out.push_back({"用途地域の区分", "入力済み", name + "\n確認資料 " + value("use_zone_source"), {}});
   }
+  out.push_back(projectOutlineCheck(document));
   return out;
 }
 
@@ -2337,8 +2395,24 @@ draw::Table scheduleTable(const Document& document, int which) {
     const auto geometry = site ? document.siteBoundaryGeometry(site->outline) : Result<SiteBoundaryGeometry>::failure("");
     const AreaTable areas = areaTable(document);
     const std::string missing = "未入力";
-    t.rows.push_back({"物件名", missing, "図面一式の物件名（表題欄）"});
-    t.rows.push_back({"主要用途", missing, "モデルにはまだ入れる所がありません"});
+    // docs/214: the items given for the project (not in the model).
+    const auto given = projectOutline(document);
+    const auto item = [&](const char* key, const std::string& label, const std::string& note) {
+      const auto it = given.find(key);
+      t.rows.push_back({label, it == given.end() ? missing : projectOutlineText(key, it->second), note});
+    };
+    const std::string source = given.count("source") ? "入力した項目。確認資料 " + given.at("source") : "入力した項目";
+    item("project_name", "物件名", given.count("project_name") ? source : "計画概要の項目（図面一式の物件名）");
+    item("client", "建築主", source);
+    item("designer", "設計者", source);
+    item("address", "地名地番", source);
+    item("residence", "住居表示", source);
+    item("city_planning", "都市計画区域等", source + "。法の区域の確認は申請先で");
+    item("fire_zone", "防火地域等", source + "。防火の規定との照合はしていません");
+    item("main_use", "主要用途", source);
+    item("work_kind", "工事種別", source);
+    item("start_date", "工事着手予定", source);
+    item("finish_date", "工事完了予定", source);
     if (geometry) {
       t.rows.push_back({"敷地面積", m2(geometry->areaMm2), "指定した敷地境界の輪郭の面積。確認資料 " + site->source});
     } else {
@@ -2387,7 +2461,7 @@ draw::Table scheduleTable(const Document& document, int which) {
       if (c.item == "いちばん高い所（参考）") t.rows.push_back({"最も高い所（参考）", c.details.substr(0, c.details.find("（")), "法の建築物の高さ・軒の高さではありません"});
     t.rows.push_back({"構造", settings.wallCalculation != "{}" ? "木造（在来軸組、壁量の計算の入力から）" : missing, "構造の種別"});
     t.notes = {"モデルから読んだ今の値です。法の制限（建蔽率・容積率の上限、高さの制限など）との比較はしていません。",
-               "申請書の様式（第二面〜）の項目と照らして、足りない項目を足します。"};
+               "モデルに無い項目は「計画概要の項目」で入れた値です（申請書 第二面・第三面の項目から。様式の原文・申請先の様式と照らすのは申請時）。"};
   } else if (which == 7 || which == 8 || which == 9) {
     // docs/208: the wall quantity forms, from the same calculation as check_wall_quantity.
     const auto made = construction::checkWallQuantity(document);
@@ -2650,7 +2724,13 @@ draw::Table scheduleTable(const Document& document, int which) {
   return t;
 }
 
-Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& spec) {
+Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& given) {
+  // docs/214: the project's name from its outline when the title block has none.
+  DrawingSetSpec spec = given;
+  if (spec.title.project.empty()) {
+    const auto outline = projectOutline(document);
+    if (const auto it = outline.find("project_name"); it != outline.end()) spec.title.project = it->second;
+  }
   using R = Result<DrawingSet>;
   struct Planned {
     std::string name;

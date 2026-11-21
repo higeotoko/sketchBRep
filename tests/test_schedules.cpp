@@ -3063,3 +3063,63 @@ TEST_F(Schedules, OneVentilationUnitForTwoRoomsTakesTheSum) {
   EXPECT_NE(r["mechanical_comparison"]["text"].get<std::string>().find("洋室 の必要有効換気量を出せません"), std::string::npos);
   EXPECT_FALSE(call("set_room_ventilation", {{"id", room}, {"fan_unit", std::string(200, 'x')}}).value("ok", true));
 }
+
+// docs/214: the project's items that are not in the model, given by the person: in the outline
+// table, in stage 1, and the name in the title block; saved and undone with the model.
+TEST_F(Schedules, ProjectOutlineItemsGivenByThePerson) {
+  const auto rowOf = [&](const std::string& item) {
+    const auto table = sbr::doc::scheduleTable(modeler.document(), 10);
+    for (const auto& row : table.rows)
+      if (row[0] == item) return row;
+    ADD_FAILURE() << item;
+    return std::vector<std::string>(3);
+  };
+  EXPECT_EQ(rowOf("建築主")[1], "未入力");
+  EXPECT_EQ(rowOf("工事種別")[1], "未入力");
+  json stage1 = ok("permit_checks", {{"stage", 1}})["rows"];
+  EXPECT_EQ(stage1.back()["item"], "計画概要の項目");
+  EXPECT_EQ(stage1.back()["state"], "未入力");
+  const auto steps = modeler.history().undoCount();
+  json given = ok("set_project_outline", {{"items", {{"project_name", "架空邸"}, {"client", "架空 太郎"}, {"work_kind", "new"},
+                                                     {"fire_zone", "article22"}, {"main_use", "一戸建ての住宅"}, {"source", "架空の資料"}}}});
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  EXPECT_EQ(given["items"]["client"], "架空 太郎");
+  EXPECT_EQ(rowOf("建築主")[1], "架空 太郎");
+  EXPECT_EQ(rowOf("工事種別")[1], "新築");
+  EXPECT_EQ(rowOf("防火地域等")[1], "法 22 条区域");
+  EXPECT_EQ(rowOf("主要用途")[1], "一戸建ての住宅");
+  EXPECT_NE(rowOf("主要用途")[2].find("架空の資料"), std::string::npos);
+  stage1 = ok("permit_checks", {{"stage", 1}})["rows"];
+  EXPECT_EQ(stage1.back()["state"], "入力不足");
+  EXPECT_NE(stage1.back()["details"].get<std::string>().find("地名地番"), std::string::npos);
+  // The name goes to the title block when the set has none.
+  const auto set = sbr::doc::drawingSet(modeler.document(), {});
+  ASSERT_TRUE(set);
+  bool named = false;
+  for (const auto& item : set->sheets.front().items) named = named || item.text == "架空邸";
+  EXPECT_TRUE(named);
+  // Read back with labels; one item taken away, the others stay.
+  json read = ok("project_outline");
+  bool kind = false;
+  for (const json& f : read["fields"])
+    if (f["key"] == "work_kind") {
+      kind = true;
+      EXPECT_EQ(f["text"], "新築");
+      EXPECT_EQ(f["choices"]["major_remodel"], "大規模の模様替");
+    }
+  EXPECT_TRUE(kind);
+  ok("set_project_outline", {{"items", {{"client", ""}}}});
+  EXPECT_EQ(rowOf("建築主")[1], "未入力");
+  EXPECT_EQ(rowOf("物件名")[1], "架空邸");
+  // Wrong keys and values change nothing.
+  EXPECT_FALSE(call("set_project_outline", {{"items", {{"owner", "x"}}}}).value("ok", true));
+  EXPECT_FALSE(call("set_project_outline", {{"items", {{"work_kind", "build"}}}}).value("ok", true));
+  EXPECT_FALSE(call("set_project_outline", {{"items", {{"address", "a\nb"}}}}).value("ok", true));
+  // Saved and read back; undone.
+  sbr::doc::Document copy;
+  ASSERT_TRUE(sbr::doc::deserializeDocument(sbr::doc::serializeDocument(modeler.document()), copy));
+  EXPECT_EQ(sbr::doc::projectOutline(copy).at("main_use"), "一戸建ての住宅");
+  ok("undo");
+  ok("undo");
+  EXPECT_TRUE(sbr::doc::projectOutline(modeler.document()).empty());
+}

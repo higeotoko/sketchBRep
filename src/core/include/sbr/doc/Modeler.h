@@ -224,6 +224,9 @@ class Modeler {
   // fingerprint of its rows now (doc::permitConfirmation tells when the model has changed them
   // since); who, a note, and the date (YYYY-MM-DD, empty: today). confirmed false takes the mark
   // away. One undo step. A record, never a pass.
+  // docs/214: items of the project outline (keys of doc::projectOutlineFields(); "" takes one
+  // away; others stay). One line each; a field with choices takes one of its values. One undo step.
+  Status setProjectOutline(const std::map<std::string, std::string>& items);
   Status setPermitConfirmation(int stage, bool confirmed, const std::string& by = {}, const std::string& note = {},
                                const std::string& on = {});
   // docs/210: energy inputs. The route the energy documents follow (spec: 仕様基準 / performance:

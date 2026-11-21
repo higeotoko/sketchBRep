@@ -229,6 +229,14 @@ void PermitWorkflowPanel::readSiteChecks() {
     }
   }
 
+  // docs/214: the project's items that are not in the model.
+  {
+    const auto checks = doc::permitSiteChecks(document_);
+    const auto& c = checks.back();
+    rows_.push_back({QString::fromStdString(c.item), QString::fromStdString(c.state), QString::fromStdString(c.details),
+                     translated("計画概要の項目を入力"), Action::Outline, c.attention});
+  }
+
   rows_.push_back({translated("申請条件"), translated("未評価"),
       translated("申請先・適用ルートと最新の法令を確認します。道路・接道、法令上の地盤面、高低差による区分の確認が残っています。"), {}});
 }

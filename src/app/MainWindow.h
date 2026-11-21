@@ -90,6 +90,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   HelpWindow* helpWindow() const { return help_; }
   // File > 2D drawings: plans, sections, elevations as PDF / DXF / JWW (docs/50).
   void showDrawingDialog();
+  void showProjectOutlineDialog();
   void showSiteRoadDialog();
   void showSiteGroundDialog();
   void showPermitWorkflow();

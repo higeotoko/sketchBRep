@@ -230,6 +230,19 @@ std::string permitStageFingerprint(const std::vector<PermitCheck>& rows);
 std::map<std::string, std::string> permitRowFingerprints(const std::vector<PermitCheck>& rows);
 PermitConfirmation permitConfirmation(const Document& document, int stage);
 
+// docs/214: the items of the project outline that are not in the model, after the application
+// form (施行規則 第二号様式 第二面・第三面; the form itself is to be checked with the authority).
+// choices: value -> label for a fixed list (empty: free text).
+struct ProjectOutlineField {
+  std::string key, label, hint;
+  std::vector<std::pair<std::string, std::string>> choices;
+};
+const std::vector<ProjectOutlineField>& projectOutlineFields();
+// key -> value as given (only keys of projectOutlineFields()).
+std::map<std::string, std::string> projectOutline(const Document& document);
+// The label of a value of a field with choices (the value itself otherwise).
+std::string projectOutlineText(const std::string& key, const std::string& value);
+
 // One storey.
 struct AreaRow {
   std::string level;  // name; empty: rooms whose marker is at no level's height

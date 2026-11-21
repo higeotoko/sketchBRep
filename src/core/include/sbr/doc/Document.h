@@ -160,6 +160,9 @@ struct DocumentSettings {
   // docs/212: stages of the permit workflow a person marked as looked at, with the fingerprint of
   // the rows they saw: {"3": {"fingerprint": "...", "on": "2026-11-21", "by": "...", "note": "..."}}.
   std::string permitConfirmations = "{}";
+  // docs/214: the project's items that are not in the model (client, address, main use, kind of
+  // work ...), as given: {"client": "...", "work_kind": "new", ...}.
+  std::string projectOutline = "{}";
 };
 
 // The part of the settings that belongs to the model's state (saved, undone
@@ -177,10 +180,12 @@ struct PersistentSettings {
   std::optional<SiteNorth> siteNorth;
   std::optional<SiteBoundary> siteBoundary;
   std::string permitConfirmations = "{}";
+  std::string projectOutline = "{}";
 
   static PersistentSettings of(const DocumentSettings& s) {
     return {s.scenes,         s.sections, s.sectionDisplay, s.hiddenTags, s.levels, s.constructionOverrides,
-            s.wallCalculation, s.sun,     s.elementTypes, s.siteNorth, s.siteBoundary, s.permitConfirmations};
+            s.wallCalculation, s.sun,     s.elementTypes, s.siteNorth, s.siteBoundary, s.permitConfirmations,
+            s.projectOutline};
   }
   void applyTo(DocumentSettings& s) const {
     s.scenes = scenes;
@@ -195,13 +200,15 @@ struct PersistentSettings {
     s.siteNorth = siteNorth;
     s.siteBoundary = siteBoundary;
     s.permitConfirmations = permitConfirmations;
+    s.projectOutline = projectOutline;
   }
   bool operator==(const PersistentSettings& o) const {
     return scenes == o.scenes && sections == o.sections && sectionDisplay == o.sectionDisplay &&
            hiddenTags == o.hiddenTags && levels == o.levels &&
            constructionOverrides == o.constructionOverrides && wallCalculation == o.wallCalculation &&
            sun == o.sun && elementTypes == o.elementTypes && siteNorth == o.siteNorth &&
-           siteBoundary == o.siteBoundary && permitConfirmations == o.permitConfirmations;
+           siteBoundary == o.siteBoundary && permitConfirmations == o.permitConfirmations &&
+           projectOutline == o.projectOutline;
   }
   bool operator!=(const PersistentSettings& o) const { return !(*this == o); }
 };

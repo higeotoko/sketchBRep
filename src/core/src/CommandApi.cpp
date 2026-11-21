@@ -3227,6 +3227,47 @@ const std::vector<CommandDef>& commands() {
          if (!mark.note.empty()) confirmation["note"] = mark.note;
          return json{{"stage", stage}, {"rows", std::move(rows)}, {"confirmation", std::move(confirmation)}};
        }},
+      {"set_project_outline",
+       "docs/214: items of the project outline that are not in the model, as the person gives them: 'items' "
+       "{key: text}; keys project_name (物件名, also the title block's 工事名 when the drawing set has none), client "
+       "(建築主), designer (設計者), address (地名地番), residence (住居表示), city_planning (都市計画区域等), fire_zone "
+       "(fire / quasi_fire / article22 / none), main_use (主要用途), work_kind (new / extension / rebuild / relocation / "
+       "use_change / major_repair / major_remodel), start_date, finish_date, source (確認資料). \"\" takes one away; "
+       "keys not given stay. Only what the person said: never guess a client or an address. One undo step. "
+       "project_outline reads them.",
+       SCHEMA({"type": "object", "properties": {"items": {"type": "object", "additionalProperties": {"type": "string"}}},
+               "required": ["items"]}),
+       [](doc::Modeler& m, const json& a) {
+         std::map<std::string, std::string> items;
+         for (const auto& [key, value] : a.at("items").items()) {
+           if (!value.is_string()) throw std::runtime_error("items." + key + " must be a string");
+           items[key] = value.get<std::string>();
+         }
+         must(m.setProjectOutline(items));
+         json out = json::object();
+         for (const auto& [key, value] : doc::projectOutline(m.document())) out[key] = value;
+         return json{{"items", std::move(out)}};
+       }},
+      {"project_outline",
+       "docs/214: the project outline items given (set_project_outline) with their labels, and the fields with their "
+       "choices. Read only.",
+       SCHEMA({"type": "object", "properties": {}}),
+       [](doc::Modeler& m, const json&) {
+         const auto given = doc::projectOutline(m.document());
+         json fields = json::array();
+         for (const auto& f : doc::projectOutlineFields()) {
+           json field = {{"key", f.key}, {"label", f.label}};
+           if (const auto it = given.find(f.key); it != given.end())
+             field["value"] = it->second, field["text"] = doc::projectOutlineText(f.key, it->second);
+           if (!f.choices.empty()) {
+             json choices = json::object();
+             for (const auto& [code, label] : f.choices) choices[code] = label;
+             field["choices"] = std::move(choices);
+           }
+           fields.push_back(std::move(field));
+         }
+         return json{{"fields", std::move(fields)}};
+       }},
       {"confirm_permit_stage",
        "docs/212: a person's mark that a permit workflow stage (1-12) was looked at. It keeps a fingerprint of the "
        "stage's rows now; when the model changes them, permit_checks shows the stage as 要再確認 with the rows that "
@@ -4471,7 +4512,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
       name == "preview" || name == "query_objects" || name == "aggregate" || name == "get_changes" ||
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
       name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" ||
-      name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" || name == "permit_checks" || name == "daylight_factor_estimates" ||
+      name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" || name == "permit_checks" || name == "project_outline" || name == "daylight_factor_estimates" ||
         name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
     return E::Read;
   }

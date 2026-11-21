@@ -250,6 +250,7 @@ class GuiPhase1 : public QObject {
   void permitWorkflowShowsGridAndPlanChecks();
   void permitWorkflowAppliesDaylightFactors();
   void permitWorkflowMarksStagesAndAsksAgain();
+  void projectOutlineDialogGivesTheItems();
   void proposalShowsRotationAndHide();
   void benchViewportSync();
   void benchEnterManyCopies();
@@ -891,6 +892,62 @@ void GuiPhase1::permitWorkflowAppliesDaylightFactors() {
   QCOMPARE(rows.size(), std::size_t(1));
   QVERIFY(std::abs(rows[0].daylightFactor - (941.0 / 3550.0 * 6 - 1.4)) < 1e-9);
   QVERIFY(rows[0].daylightBasis.find("令 20 条") != std::string::npos);
+}
+
+// docs/214: the project outline items given in their dialog; stage 1 shows them and opens it.
+void GuiPhase1::projectOutlineDialogGivesTheItems() {
+  Fixture f;
+  QVERIFY(f.setUp(4000, 3000));
+  auto& modeler = f.window.modeler();
+  auto* action = f.window.findChild<QAction*>(QStringLiteral("projectOutlineAction"));
+  QVERIFY(action);
+  bool seen = false;
+  QTimer::singleShot(0, &f.window, [&seen] {
+    auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+    if (!dialog) return;
+    seen = dialog->objectName() == QStringLiteral("projectOutlineDialog");
+    auto* client = dialog->findChild<QLineEdit*>(QStringLiteral("projectOutline_client"));
+    auto* kind = dialog->findChild<QComboBox*>(QStringLiteral("projectOutline_work_kind"));
+    if (!client || !kind) return dialog->reject();
+    client->setText(QStringLiteral("架空 太郎"));
+    kind->setCurrentIndex(kind->findData(QStringLiteral("extension")));
+    dialog->accept();
+  });
+  const auto steps = modeler.history().undoCount();
+  action->trigger();
+  QVERIFY(seen);
+  QCOMPARE(modeler.history().undoCount(), steps + 1);
+  const auto given = doc::projectOutline(modeler.document());
+  QCOMPARE(given.size(), std::size_t(2));
+  QCOMPARE(QString::fromStdString(given.at("client")), QStringLiteral("架空 太郎"));
+  QCOMPARE(QString::fromStdString(given.at("work_kind")), QStringLiteral("extension"));
+  f.window.findChild<QAction*>(QStringLiteral("permitWorkflowAction"))->trigger();
+  auto* dock = f.window.findChild<QDockWidget*>(QStringLiteral("permitWorkflowDock"));
+  QVERIFY(dock);
+  auto* phases = dock->findChild<QListWidget*>(QStringLiteral("permitWorkflowPhases"));
+  auto* checks = dock->findChild<QTreeWidget*>(QStringLiteral("permitWorkflowChecks"));
+  auto* details = dock->findChild<QLabel*>(QStringLiteral("permitWorkflowDetails"));
+  auto* edit = dock->findChild<QPushButton*>(QStringLiteral("permitWorkflowEdit"));
+  QVERIFY(phases && checks && details && edit);
+  phases->setCurrentRow(0);
+  QTreeWidgetItem* row = nullptr;
+  for (int i = 0; i < checks->topLevelItemCount(); ++i)
+    if (checks->topLevelItem(i)->text(0) == QStringLiteral("計画概要の項目")) row = checks->topLevelItem(i);
+  QVERIFY(row);
+  QCOMPARE(row->text(1), QStringLiteral("入力不足"));
+  checks->setCurrentItem(row);
+  QVERIFY2(details->text().contains(QStringLiteral("工事種別：増築")), qPrintable(details->text()));
+  QVERIFY(edit->isVisible());
+  bool opened = false;
+  QTimer::singleShot(0, &f.window, [&opened] {
+    if (auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget())) {
+      opened = dialog->objectName() == QStringLiteral("projectOutlineDialog");
+      dialog->reject();
+    }
+  });
+  edit->click();
+  QTRY_VERIFY(opened);
+  QCOMPARE(modeler.history().undoCount(), steps + 1);  // cancelled: nothing changed
 }
 
 // docs/212: a person marks a stage as looked at; when the model changes its rows, the list and the
