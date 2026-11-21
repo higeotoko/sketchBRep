@@ -37,6 +37,18 @@ docs/214 の「まだ」：様式（第二号様式 第二面・第三面）の�
 **GUI 自動確認済み**
 - 計画概要・工程パネルまわりの GUI テストが成功（`--match` で一緒に選ばれた 175% 表示の既知の画素テスト 1 件だけ落ちた）。
 
+**CI**：run 44886336738（push）成功。Linux 813 件すべて成功。
+
+**配布**
+
+| 項目 | 内容 |
+|---|---|
+| コード | `5a315c1` |
+| ZIP | `SketchBRep-windows-x64-5a315c1-local.zip`（Codex のチャットフォルダの `outputs\`） |
+| サイズ | 82,780,240 bytes |
+| SHA256 | `b3efcb2d5bc431fdccd86c720953e61e621a0d19418b6e7451174ede96590c34` |
+| ZIP の検証 | `docs/validation/2026-11-21-portable-5a315c1.json`・`-mat.json`（GUI 18 + 4 条件、失敗 0） |
+
 **Windows 実機確認（人の操作）**：まだ。docs/105 の 14-40。
 
 ## まだ
