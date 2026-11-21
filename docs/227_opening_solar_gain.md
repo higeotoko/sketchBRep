@@ -23,6 +23,18 @@ docs/225 の「まだ」：日射熱取得率 η を入れる所と、その列�
 **GUI 自動確認済み**
 - `energyInputsInTheirDialogs` を広げた：開口の性能のダイアログで η に 0.51 を入れると、開口の表の行に 0.51 が入る。
 
+**CI**：run 44878510828（push）成功。Linux 810 件すべて成功。
+
+**配布**
+
+| 項目 | 内容 |
+|---|---|
+| コード | `1c3f91a` |
+| ZIP | `SketchBRep-windows-x64-1c3f91a-local.zip`（Codex のチャットフォルダの `outputs\`） |
+| サイズ | 82,747,858 bytes |
+| SHA256 | `aca9f80fb3298eb13c6f3926bfd813d03f99035f8f42a30a17e45ab0a615a507` |
+| ZIP の検証 | `docs/validation/2026-11-21-portable-1c3f91a.json`・`-mat.json`（GUI 18 + 4 条件、失敗 0） |
+
 **Windows 実機確認（人の操作）**：まだ。docs/105 の 14-37。
 
 ## まだ
