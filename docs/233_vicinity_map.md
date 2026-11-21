@@ -51,7 +51,25 @@ docs/209・214・231・232 の「まだ」の「付近見取図（地図の背�
 - GUI 全件（ローカル）：246 件成功・8 件失敗（175% 表示の画素 6 件とクリップボード 2 件、docs/226 と同じ既知の物）・7 件スキップ。
 - **本物の国土地理院のタイルはテストでは取っていない**（CI は通信しない）。手で 1 枚ずつ確かめた（東京駅あたりの見本の位置：`pale/16/58211/25806.png` は 200・image/png、`seamlessphoto/16/58211/25806.jpg` は 200・image/jpeg）。
 
+**CI**：run 44898867674（push）成功。Linux 815 件すべて成功。
+
+**配布**
+
+| 項目 | 内容 |
+|---|---|
+| コード | `a0d88c9` |
+| ZIP | `SketchBRep-windows-x64-a0d88c9-local.zip`（Codex のチャットフォルダの `outputs\`）。**TLS の部品が入っていないので、実機で地図タイルは取れない**（下の追記で直した ZIP を使う） |
+| サイズ | 82,836,946 bytes |
+| SHA256 | `7aa13575fb72036745632321ee5e22204b977f3b867c05dabb5bf35e059be45f` |
+| ZIP の検証 | `docs/validation/2026-11-21-portable-a0d88c9.json`・`-mat.json`（GUI 18 + 4 条件、失敗 0） |
+
 **Windows 実機確認（人の操作）**：まだ。docs/105 の 14-42。
+
+## 追記：ZIP に Qt の TLS 部品を入れた（2026-11-21）
+
+- `a0d88c9` の ZIP を見ると、`Qt6Network.dll` はあるが **TLS の部品（`tls/qschannelbackend.dll` など）が無かった**。これでは実機で HTTPS の地図タイルが取れず、地図は灰色になる（開発用のビルドは Qt の置き場の部品を使うので、テストでは気づかない）。
+- ZIP を作る時（`tools/package_windows_local.py` の `--qt-plugin`、`sbr.py package` がビルドの Qt から渡す）に、`tls/qschannelbackend.dll`（Windows の Schannel を使う。OpenSSL は要らない）を足すようにした。承認済みのランタイムのフォルダは変えていない。Qt の一部なので、ライセンスは今ある Qt の物。BUILD_INFO.json の `qt_plugins` に書く。
+- 本物のタイルを取る GUI テスト `vicinityMapFetchedOnline` を足した（`SBR_TILES_ONLINE` を付けた時だけ動く。CI では飛ばす）。ローカルで動かし、北緯 35.681236・東経 139.767125（東京駅あたりの見本）・淡色地図の 9 枚を HTTPS で取れた（取得 9）。2 回目はキャッシュ 9。
 
 ## オーナーに確かめてほしいこと
 
