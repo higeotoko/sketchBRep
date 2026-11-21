@@ -1305,6 +1305,19 @@ draw::Table equipmentTable(const Document& document) {
       spec.push_back("給湯：石油給湯機 モード熱効率 77.8％以上、ガス給湯機 78.2％以上、");
       spec.push_back("　又は CO2 冷媒の電気ヒートポンプ給湯機");
     }
+    // docs/239: 告示 2 ただし書き: with no 浴室等, 台所 and 洗面所, (5) does not apply. Only noted when
+    // there are rooms and none of them is named (or used) as one of these; the designer decides.
+    const auto rooms = roomSchedule(document).rows;
+    static const char* kWet[] = {"浴室", "風呂", "バス", "シャワー", "台所", "キッチン", "洗面"};
+    const bool wet = std::any_of(rooms.begin(), rooms.end(), [](const RoomRow& r) {
+      return std::any_of(std::begin(kWet), std::end(kWet), [&](const char* w) {
+        return r.name.find(w) != std::string::npos || r.use.find(w) != std::string::npos;
+      });
+    });
+    if (!rooms.empty() && !wet) {
+      spec.push_back("　室の名前に浴室・台所・洗面所が見当たりません。どれも無い住戸には、");
+      spec.push_back("　給湯の基準は適用しません（告示第266号 2 ただし書き）。");
+    }
   }
   if (!spec.empty()) {
     t.notes.push_back(std::string("仕様基準（告示第266号 2") + (region ? "、" + std::to_string(region) + " 地域" : std::string()) +

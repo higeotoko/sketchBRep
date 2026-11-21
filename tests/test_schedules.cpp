@@ -4034,3 +4034,24 @@ TEST_F(Schedules, EquipmentSpecificationNotes) {
   EXPECT_EQ(light.find("給湯："), std::string::npos) << light;
   EXPECT_EQ(light.find("換気："), std::string::npos) << light;
 }
+
+// docs/239: no 浴室・台所・洗面所 among the rooms: the 機器表 notes that the hot-water rule does not apply.
+TEST_F(Schedules, HotWaterRuleWithoutWetRooms) {
+  ok("set_equipment", {{"items", {{{"kind", "hot_water"}, {"name", "電気ヒートポンプ給湯機"}}}}});
+  const auto notes = [&]() {
+    std::string all;
+    const auto set = sbr::doc::drawingSet(modeler.document(), {});
+    if (!set) return all;
+    for (std::size_t i = 0; i < set->names.size(); ++i)
+      if (set->names[i].find("機器表") == 0)
+        for (const auto& item : set->sheets[i].items)
+          if (item.kind == sbr::draw::Item::Kind::Text) all += item.text + "\n";
+    return all;
+  };
+  const std::string living = notes();  // only 居間
+  EXPECT_NE(living.find("浴室・台所・洗面所が見当たりません"), std::string::npos) << living;
+  EXPECT_NE(living.find("2 ただし書き"), std::string::npos) << living;
+  ok("create_room", {{"at", {6000, 3000}}, {"name", "キッチン"}});
+  const std::string kitchen = notes();
+  EXPECT_EQ(kitchen.find("見当たりません"), std::string::npos) << kitchen;
+}
