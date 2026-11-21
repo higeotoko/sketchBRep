@@ -899,6 +899,7 @@ class Modeler {
     std::string part;  // "床", "上階床", "屋根"
     std::string text;
     TopoDS_Shape outline;
+    TopoDS_Shape region;  // docs/222: the range as planar faces (world), for the cross over it
   };
   static std::vector<InsulationArea> insulationAreas(const Document& document, double z);
   // The insulation of a wall, slab or roof as text, or "" when it has none.

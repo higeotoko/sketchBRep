@@ -8427,33 +8427,59 @@ std::vector<Modeler::InsulationArea> insulationAreasOf(const Document& document,
     if (kind != "slab" && kind != "roof") continue;
     const std::string text = Modeler::insulationText(o);
     if (text.empty()) continue;
-    Modeler::InsulationArea area{o.id, "", text, TopoDS_Shape()};
+    Modeler::InsulationArea area{o.id, "", text, TopoDS_Shape(), TopoDS_Shape()};
     if (kind == "slab") {
       const TopoDS_Shape world = document.worldShape(o);
       const Bnd_Box b = geom::exactBounds(world);
       if (b.IsVoid()) continue;
       const double top = b.CornerMax().Z(), bottom = b.CornerMin().Z();
+      // docs/222: each floor on its own storey's plan only (as the examples of how insulation is
+      // shown for 省エネ: a floor over outside air is marked on the plan of the storey it carries).
       if (here ? std::abs(top - *here) <= kNear && top <= z : top <= z && top >= z - 2000.0) area.part = "床";
-      else if (above && std::abs(top - *above) <= kNear) area.part = "上階床";
       else continue;
       BRepAlgoAPI_Section cut(world, gp_Pln(gp_Pnt(0, 0, (top + bottom) / 2), gp::DZ()), Standard_False);
       cut.SetNonDestructive(Standard_True);
       cut.Build();
       if (!cut.IsDone() || cut.Shape().IsNull()) continue;
       area.outline = cut.Shape();
+      // docs/222: the range itself, for the cross drawn over it: the slab where a plane at half its
+      // height passes through it.
+      BRepBuilderAPI_MakeFace sheet(gp_Pln(gp_Pnt(0, 0, (top + bottom) / 2), gp::DZ()), b.CornerMin().X() - 1.0,
+                                    b.CornerMax().X() + 1.0, b.CornerMin().Y() - 1.0, b.CornerMax().Y() + 1.0);
+      if (sheet.IsDone()) {
+        BRepAlgoAPI_Common inside(world, sheet.Face());
+        if (inside.IsDone()) area.region = inside.Shape();
+      }
     } else {
       const auto roof = storedRoofOf(document, &o);
       if (!roof || roof->first.outline.size() < 3) continue;
-      // Over this storey: bearing above the cut, with no level between (a roof bearing at the
-      // next level up, as a top plate level named RFL, still counts).
+      // docs/222: where the roof is seen from above, as in the examples: a lower roof (下屋) under a
+      // storey whose walls stand on a level at or above where it bears, on that storey's plan; the
+      // roof over the top storey on the plan of the highest storey below it.
       const double bears = gp_Pnt(0, 0, roof->first.height).Transformed(roof->second).Z();
-      if (bears <= z || (above && bears > *above + kNear)) continue;
+      std::optional<double> seenFrom;  // the level of the storey above it, if a storey stands there
+      for (const double e : levels) {
+        if (e < bears - kNear) continue;
+        bool walls = false;
+        for (const Object& w : document.objects()) {
+          if (walls || attributeOf(w, "kind") != "wall" || w.shape.IsNull() || !document.isVisible(w.id)) continue;
+          const Bnd_Box wb = document.worldBounds(w);
+          walls = !wb.IsVoid() && wb.CornerMin().Z() >= e - kNear && wb.CornerMin().Z() <= e + kNear;
+        }
+        if (walls) {
+          seenFrom = e;
+          break;
+        }
+      }
+      if (seenFrom ? !(here && std::abs(*here - *seenFrom) < 1e-6) : (bears <= z || (above && bears > *above + kNear))) continue;
       BRepBuilderAPI_MakePolygon polygon;
       for (const gp_Pnt& p : roof->first.outline) polygon.Add(gp_Pnt(p.X(), p.Y(), roof->first.height).Transformed(roof->second));
       polygon.Close();
       if (!polygon.IsDone()) continue;
       area.part = "屋根";
       area.outline = polygon.Wire();
+      BRepBuilderAPI_MakeFace face(polygon.Wire(), Standard_True);  // docs/222
+      if (face.IsDone()) area.region = face.Face();
     }
     out.push_back(std::move(area));
   }

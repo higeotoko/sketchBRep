@@ -3167,21 +3167,23 @@ TEST_F(Schedules, InsulationPlansMarkTheWallsWithInsulation) {
     EXPECT_TRUE(has(list, "断熱範囲図（1FL）"));
     EXPECT_FALSE(has(list, "断熱範囲図（2FL）"));
   }
-  // docs/221: the floor of the storey above, with insulation, drawn as a range on 1FL's plan; 2FL's
-  // plan now has its own floor's insulation, so it gets a sheet too.
+  // docs/221, docs/222: the floor of the storey above, with insulation, is drawn on 2FL's plan (its
+  // own storey), not on 1FL's; 2FL gets an insulation sheet for it.
   const std::string slab = ok("create_slab", {{"outline", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}}}, {"top", 3000}, {"thickness", 200}})["id"];
   ok("set_insulation", {{"ids", {slab}}, {"material", "押出法ポリスチレンフォーム"}, {"thickness_mm", 50}, {"resistance", 1.8},
                         {"source", "架空のカタログ"}});
   const auto again = sbr::draw::makeView(modeler.document(), marked);
   ASSERT_TRUE(again);
-  EXPECT_TRUE(has(again->calculationNotes, "破線：上の階の床の断熱の範囲　押出法ポリスチレンフォーム 50 mm（1 個）"));
+  for (const std::string& note : again->calculationNotes) EXPECT_EQ(note.find("押出法"), std::string::npos) << note;
   const auto list = names();
   EXPECT_TRUE(has(list, "断熱範囲図（1FL）"));
   EXPECT_TRUE(has(list, "断熱範囲図（2FL）"));
 }
 
-// docs/221: floors and roofs with insulation as ranges on the insulation plans: this storey's floor
-// ("床"), the floor above ("上階床"), the roof over the top storey ("屋根"), each dashed with a label.
+// docs/221, docs/222: floors and roofs with insulation as ranges on the insulation plans, as the
+// examples for 省エネ drawings: each floor on its own storey's plan ("床"), the roof over the top
+// storey on its plan and a lower roof (下屋) on the plan of the storey above it ("屋根"); the outline
+// and a cross, with the part and the insulation written inside.
 TEST_F(Schedules, InsulationAreasOnPlans) {
   const auto has = [](const std::vector<std::string>& list, const std::string& name) {
     return std::find(list.begin(), list.end(), name) != list.end();
@@ -3203,11 +3205,10 @@ TEST_F(Schedules, InsulationAreasOnPlans) {
     }
     return out;
   };
-  // 1FL (cut 1100): its floor and the floor above; the roof bears above 2FL: not this storey's.
+  // 1FL (cut 1100): its floor only; the roof bears above 2FL: not this storey's.
   const auto first = parts(1100);
-  EXPECT_EQ(first.size(), 2u);
+  EXPECT_EQ(first.size(), 1u);
   EXPECT_EQ(first.count("床") ? first.at("床") : "", ground);
-  EXPECT_EQ(first.count("上階床") ? first.at("上階床") : "", upper);
   // 2FL (cut 4100): its floor and the roof (no level above).
   const auto second = parts(4100);
   EXPECT_EQ(second.size(), 2u);
@@ -3219,17 +3220,30 @@ TEST_F(Schedules, InsulationAreasOnPlans) {
   spec.insulation = true;
   const auto view = sbr::draw::makeView(modeler.document(), spec);
   ASSERT_TRUE(view);
-  int dashed = 0;
   std::set<std::string> labels;
+  int diagonals = 0;
   for (const auto& i : view->items) {
-    if (i.pen == sbr::draw::Pen::Hidden) ++dashed;
     if (i.kind == sbr::draw::Item::Kind::Text) labels.insert(i.text);
+    // The crosses: lines corner to corner of the 8000 x 6000 rectangles (10000 long).
+    if (i.kind == sbr::draw::Item::Kind::Line && std::abs(i.points[0].Distance(i.points[1]) - 10000.0) < 1.0) ++diagonals;
   }
-  EXPECT_GE(dashed, 8);  // two rectangles
-  EXPECT_TRUE(labels.count("床断熱"));
-  EXPECT_TRUE(labels.count("屋根断熱"));
-  EXPECT_TRUE(has(view->calculationNotes, "破線：この階の床の断熱の範囲　押出法ポリスチレンフォーム 50 mm（1 個）"));
-  EXPECT_TRUE(has(view->calculationNotes, "破線：屋根の断熱の範囲　フェノールフォーム 60 mm（外張り）（1 個）"));
+  EXPECT_EQ(diagonals, 4);  // the floor's and the roof's
+  EXPECT_TRUE(labels.count("床断熱　押出法ポリスチレンフォーム 50 mm"));
+  EXPECT_TRUE(labels.count("屋根断熱　フェノールフォーム 60 mm（外張り）"));
+  EXPECT_TRUE(has(view->calculationNotes, "×印の範囲：この階の床の断熱　押出法ポリスチレンフォーム 50 mm（1 個）"));
+  EXPECT_TRUE(has(view->calculationNotes, "×印の範囲：屋根の断熱　フェノールフォーム 60 mm（外張り）（1 個）"));
+  // A lower roof (下屋) bearing at 2800 north of the house, under a storey whose walls stand on 2FL:
+  // on 2FL's plan (seen from above), not on 1FL's.
+  ok("create_wall", {{"points", {{0, 6000}, {8000, 6000}}}, {"thickness", 120}, {"height", 2700}, {"base", 3000}});
+  const std::string lower = ok("create_roof", {{"outline", {{0, 6000}, {8000, 6000}, {8000, 8000}, {0, 8000}}}, {"kind", "shed"}, {"height", 2800}})["id"];
+  ok("set_insulation", {{"ids", {lower}}, {"material", "フェノールフォーム"}, {"thickness_mm", 60}, {"placement", "outside"}, {"source", "架空のカタログ"}});
+  std::set<std::string> roofsOnFirst, roofsOnSecond;
+  for (const auto& a : sbr::doc::Modeler::insulationAreas(modeler.document(), 1100))
+    if (a.part == "屋根") roofsOnFirst.insert(a.id);
+  for (const auto& a : sbr::doc::Modeler::insulationAreas(modeler.document(), 4100))
+    if (a.part == "屋根") roofsOnSecond.insert(a.id);
+  EXPECT_TRUE(roofsOnFirst.empty());
+  EXPECT_EQ(roofsOnSecond, (std::set<std::string>{roof, lower}));
 }
 
 // docs/217: sections with the insulation of the walls, floors and roofs they cut marked: up a wall's

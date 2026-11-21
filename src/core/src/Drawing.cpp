@@ -1217,13 +1217,13 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
       walls[run.text].insert(run.wall);
       places.insert(run.place);
     }
-    // docs/221: the insulated floor of this storey, the floor of the one above and the roof over it,
-    // as ranges: their outlines dashed, with a label inside (the floor's in the middle, the floor
-    // above's and the roof's a little below and above it).
+    // docs/221, docs/222: the insulated floor of this storey and the roof seen from it, as ranges the
+    // way the examples for 省エネ drawings show them: the outline and a cross (×) over it, thin, with
+    // the part and the insulation written inside (the roof's a little above the middle).
     std::map<std::string, std::map<std::string, int>> areas;  // part -> insulation -> count
     for (const auto& area : doc::Modeler::insulationAreas(document, z)) {
       const std::size_t from = view.items.size();
-      addLocalEdges(area.outline.Moved(TopLoc_Location(proj.toLocal)), Pen::Hidden, deflection, view.items);
+      addLocalEdges(area.outline.Moved(TopLoc_Location(proj.toLocal)), Pen::Visible, deflection, view.items);
       if (view.items.size() == from) continue;
       double u0 = 1e300, v0 = 1e300, u1 = -1e300, v1 = -1e300;
       for (std::size_t k = from; k < view.items.size(); ++k)
@@ -1234,12 +1234,29 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
           v1 = std::max(v1, p.Y());
         }
       if (u0 > u1) continue;
-      const double shift = area.part == "床" ? 0.0 : (area.part == "上階床" ? -0.12 : 0.12) * (v1 - v0);
+      // The cross: the diagonals of the range's box, kept where they lie in the range.
+      if (!area.region.IsNull()) {
+        const Bnd_Box box = geom::exactBounds(area.region);
+        if (!box.IsVoid()) {
+          const gp_Pnt lo = box.CornerMin(), hi = box.CornerMax();
+          const double zm = (lo.Z() + hi.Z()) / 2;
+          const gp_Pnt corners[2][2] = {{gp_Pnt(lo.X(), lo.Y(), zm), gp_Pnt(hi.X(), hi.Y(), zm)},
+                                        {gp_Pnt(lo.X(), hi.Y(), zm), gp_Pnt(hi.X(), lo.Y(), zm)}};
+          for (const auto& d : corners) {
+            if (d[0].Distance(d[1]) < 1.0) continue;
+            BRepBuilderAPI_MakeEdge diagonal(d[0], d[1]);
+            if (!diagonal.IsDone()) continue;
+            BRepAlgoAPI_Common inside(diagonal.Edge(), area.region);
+            if (inside.IsDone()) addLocalEdges(inside.Shape().Moved(TopLoc_Location(proj.toLocal)), Pen::Visible, deflection, view.items);
+          }
+        }
+      }
+      const double shift = area.part == "屋根" ? 0.15 * (v1 - v0) : 0.0;
       Item label;
       label.kind = Item::Kind::Text;
       label.pen = Pen::Text;
       label.points = {gp_Pnt2d((u0 + u1) / 2, (v0 + v1) / 2 + shift)};
-      label.text = area.part + "断熱";
+      label.text = area.part + "断熱　" + area.text;
       label.height = 2.5;
       label.hAlign = 1;
       label.vAlign = 1;
@@ -1249,12 +1266,12 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     if (walls.empty()) view.calculationNotes.push_back("この階で切る壁に、断熱の入力はありません");
     for (const auto& [text, ids] : walls)
       view.calculationNotes.push_back("波線：壁の断熱　" + text + "（" + std::to_string(ids.size()) + " 枚）");
-    for (const char* part : {"床", "上階床", "屋根"}) {
+    for (const char* part : {"床", "屋根"}) {
       const auto it = areas.find(part);
       if (it == areas.end()) continue;
-      const std::string name = std::string(part) == "床" ? "この階の床" : std::string(part) == "上階床" ? "上の階の床" : "屋根";
+      const std::string name = std::string(part) == "床" ? "この階の床" : "屋根";
       for (const auto& [text, count] : it->second)
-        view.calculationNotes.push_back("破線：" + name + "の断熱の範囲　" + text + "（" + std::to_string(count) + " 個）");
+        view.calculationNotes.push_back("×印の範囲：" + name + "の断熱　" + text + "（" + std::to_string(count) + " 個）");
     }
     for (std::string& note : insulationPlaceNotes(places)) view.calculationNotes.push_back(std::move(note));
   }
