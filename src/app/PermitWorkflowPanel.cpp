@@ -362,6 +362,11 @@ void PermitWorkflowPanel::readModelChecks(int stage) {
                        translated("適用ルート・地域を入力"), Action::EnergyRoute, c.attention});
       continue;
     }
+    if (stage == 9 && c.item == "設備") {  // docs/226: opens the equipment dialog
+      rows_.push_back({QString::fromStdString(c.item), QString::fromStdString(c.state), QString::fromStdString(c.details),
+                       translated("設備の機器を入力"), Action::Equipment, c.attention});
+      continue;
+    }
     rows_.push_back({QString::fromStdString(c.item), QString::fromStdString(c.state), QString::fromStdString(c.details),
                      select ? translated("モデルで %1 個を選択").arg(ids.size()) : QString(),
                      select ? Action::SelectObjects : Action::None, c.attention, ids.join(QLatin1Char('\n'))});

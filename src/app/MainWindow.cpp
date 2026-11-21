@@ -1246,6 +1246,9 @@ void MainWindow::buildMenus() {
   // docs/215: the energy route and region (docs/210).
   site->addAction(tr("省エネの適用ルート・地域..."), this, &MainWindow::showEnergyRouteDialog)
       ->setObjectName(QStringLiteral("energyRouteAction"));
+  // docs/226: the equipment for the energy documents (docs/224).
+  site->addAction(tr("設備の機器..."), this, &MainWindow::showEquipmentDialog)
+      ->setObjectName(QStringLiteral("equipmentAction"));
   site->addAction(tr("道路情報の指定を解除"), this, [this] {
     modeler_.clearSiteRoad();
     setStatus(tr("道路情報の指定を解除しました"));
@@ -7183,6 +7186,7 @@ void MainWindow::showPermitWorkflow() {
       case Action::Zone: trigger("siteZoneAction"); break;  // docs/206
       case Action::Outline: trigger("projectOutlineAction"); break;  // docs/214
       case Action::EnergyRoute: trigger("energyRouteAction"); break;  // docs/215
+      case Action::Equipment: trigger("equipmentAction"); break;      // docs/226
       case Action::SavedRoad:
         setSelection({});
         [[fallthrough]];
@@ -7333,6 +7337,92 @@ void MainWindow::showEnergyRouteDialog() {
   if (report(modeler_.setEnergyRoute(route->currentData().toString().toStdString(), region->value(),
                                      source->text().trimmed().toStdString())))
     setStatus(tr("省エネの適用ルート・地域を決めました（Ctrl+Z で戻せます）"));
+  refreshPanels();
+}
+
+// docs/226: the equipment list (docs/224) as a table: kind, name, model, 性能値, count, source; rows
+// added and taken away; OK replaces the whole list in one undo step. Rows without a name are left out.
+void MainWindow::showEquipmentDialog() {
+  QDialog dialog(this);
+  dialog.setObjectName(QStringLiteral("equipmentDialog"));
+  dialog.setWindowTitle(tr("設備の機器"));
+  auto* layout = new QVBoxLayout(&dialog);
+  auto* note = new QLabel(tr("機器表（断熱範囲図の紙）と、申請図の工程 9 に出ます。性能値はカタログの書き方のまま 1 行で。"
+                             "基準値との照合・一次エネルギー消費量の計算はしていません。名前の無い行は入れません。"));
+  note->setWordWrap(true);
+  layout->addWidget(note);
+  auto* table = new QTableWidget(0, 6);
+  table->setObjectName(QStringLiteral("equipmentTable"));
+  table->setHorizontalHeaderLabels({tr("種類"), tr("名前"), tr("型番"), tr("性能値"), tr("台数"), tr("資料")});
+  table->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
+  table->horizontalHeader()->setStretchLastSection(true);
+  const auto addRow = [table](const doc::Modeler::EquipmentItem& e) {
+    const int row = table->rowCount();
+    table->insertRow(row);
+    auto* kind = new QComboBox;
+    for (const auto& [key, label] : doc::Modeler::equipmentKinds())
+      kind->addItem(QString::fromStdString(label), QString::fromStdString(key));
+    kind->setCurrentIndex(std::max(0, kind->findData(QString::fromStdString(e.kind))));
+    table->setCellWidget(row, 0, kind);
+    table->setItem(row, 1, new QTableWidgetItem(QString::fromStdString(e.name)));
+    table->setItem(row, 2, new QTableWidgetItem(QString::fromStdString(e.model)));
+    table->setItem(row, 3, new QTableWidgetItem(QString::fromStdString(e.value)));
+    auto* count = new QSpinBox;
+    count->setRange(1, 999);
+    count->setValue(e.count);
+    table->setCellWidget(row, 4, count);
+    table->setItem(row, 5, new QTableWidgetItem(QString::fromStdString(e.source)));
+  };
+  for (const auto& e : doc::Modeler::equipmentOf(modeler_.document())) addRow(e);
+  if (table->rowCount() == 0)  // the four kinds the energy documents ask for, to fill in
+    for (const char* kind : {"heating_cooling", "ventilation", "hot_water", "lighting"}) {
+      doc::Modeler::EquipmentItem e;
+      e.kind = kind;
+      addRow(e);
+    }
+  table->resizeColumnsToContents();
+  layout->addWidget(table);
+  auto* rowButtons = new QHBoxLayout;
+  auto* add = new QPushButton(tr("行を足す"));
+  add->setObjectName(QStringLiteral("equipmentAddRow"));
+  auto* remove = new QPushButton(tr("選んだ行を消す"));
+  remove->setObjectName(QStringLiteral("equipmentRemoveRow"));
+  rowButtons->addWidget(add);
+  rowButtons->addWidget(remove);
+  rowButtons->addStretch();
+  layout->addLayout(rowButtons);
+  connect(add, &QPushButton::clicked, table, [addRow] {
+    doc::Modeler::EquipmentItem e;
+    e.kind = "other";
+    addRow(e);
+  });
+  connect(remove, &QPushButton::clicked, table, [table] {
+    if (table->currentRow() >= 0) table->removeRow(table->currentRow());
+  });
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+  layout->addWidget(buttons);
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  dialog.resize(820, 360);
+  if (dialog.exec() != QDialog::Accepted) return;
+  std::vector<doc::Modeler::EquipmentItem> items;
+  const auto text = [table](int row, int column) {
+    const auto* item = table->item(row, column);
+    return item ? item->text().trimmed().toStdString() : std::string();
+  };
+  for (int row = 0; row < table->rowCount(); ++row) {
+    doc::Modeler::EquipmentItem e;
+    e.name = text(row, 1);
+    if (e.name.empty()) continue;
+    if (const auto* kind = qobject_cast<QComboBox*>(table->cellWidget(row, 0))) e.kind = kind->currentData().toString().toStdString();
+    e.model = text(row, 2);
+    e.value = text(row, 3);
+    if (const auto* count = qobject_cast<QSpinBox*>(table->cellWidget(row, 4))) e.count = count->value();
+    e.source = text(row, 5);
+    items.push_back(std::move(e));
+  }
+  if (report(modeler_.setEquipment(items)))
+    setStatus(tr("設備の機器を %1 つにしました（Ctrl+Z で戻せます）").arg(items.size()));
   refreshPanels();
 }
 

@@ -252,6 +252,7 @@ class GuiPhase1 : public QObject {
   void permitWorkflowMarksStagesAndAsksAgain();
   void projectOutlineDialogGivesTheItems();
   void energyInputsInTheirDialogs();
+  void equipmentInItsDialog();
   void insulationPlanIsDrawnOnItsSheet();
   void proposalShowsRotationAndHide();
   void benchViewportSync();
@@ -1024,6 +1025,55 @@ void GuiPhase1::insulationPlanIsDrawnOnItsSheet() {
 
 // docs/215: the energy route, the insulation of selected walls and an opening's performance given
 // in their dialogs; stage 9's route row opens its dialog.
+// docs/226: the equipment dialog: starts with the four kinds to fill in, rows without a name left
+// out, OK replaces the list in one undo step; it opens again with what was given.
+void GuiPhase1::equipmentInItsDialog() {
+  Fixture f;
+  QVERIFY(f.setUp(4000, 3000));
+  auto& modeler = f.window.modeler();
+  QTimer::singleShot(0, &f.window, [] {
+    auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+    if (!dialog) return;
+    auto* table = dialog->findChild<QTableWidget*>(QStringLiteral("equipmentTable"));
+    if (!table || table->rowCount() != 4) return dialog->reject();
+    table->item(0, 1)->setText(QStringLiteral("ルームエアコン"));
+    table->item(0, 2)->setText(QStringLiteral("AC-28xxx"));
+    table->item(0, 3)->setText(QStringLiteral("エネルギー消費効率区分（い）"));
+    qobject_cast<QSpinBox*>(table->cellWidget(0, 4))->setValue(3);
+    table->item(2, 1)->setText(QStringLiteral("電気ヒートポンプ給湯機"));  // 換気 (row 1) and 照明 (row 3) left empty
+    dialog->findChild<QPushButton*>(QStringLiteral("equipmentAddRow"))->click();
+    table->item(4, 1)->setText(QStringLiteral("太陽光パネル"));
+    auto* kind = qobject_cast<QComboBox*>(table->cellWidget(4, 0));
+    kind->setCurrentIndex(kind->findData(QStringLiteral("solar")));
+    dialog->accept();
+  });
+  const auto steps = modeler.history().undoCount();
+  f.window.findChild<QAction*>(QStringLiteral("equipmentAction"))->trigger();
+  QCOMPARE(modeler.history().undoCount(), steps + 1);
+  const auto items = doc::Modeler::equipmentOf(modeler.document());
+  QCOMPARE(items.size(), std::size_t(3));
+  QCOMPARE(QString::fromStdString(items[0].kind), QStringLiteral("heating_cooling"));
+  QCOMPARE(items[0].count, 3);
+  QCOMPARE(QString::fromStdString(items[0].value), QStringLiteral("エネルギー消費効率区分（い）"));
+  QCOMPARE(QString::fromStdString(items[1].kind), QStringLiteral("hot_water"));
+  QCOMPARE(QString::fromStdString(items[2].kind), QStringLiteral("solar"));
+  // Opened again: the three rows as given; one taken away.
+  int rows = -1;
+  QTimer::singleShot(0, &f.window, [&rows] {
+    auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+    if (!dialog) return;
+    auto* table = dialog->findChild<QTableWidget*>(QStringLiteral("equipmentTable"));
+    if (!table) return dialog->reject();
+    rows = table->rowCount();
+    table->setCurrentCell(2, 1);
+    dialog->findChild<QPushButton*>(QStringLiteral("equipmentRemoveRow"))->click();
+    dialog->accept();
+  });
+  f.window.findChild<QAction*>(QStringLiteral("equipmentAction"))->trigger();
+  QCOMPARE(rows, 3);
+  QCOMPARE(doc::Modeler::equipmentOf(modeler.document()).size(), std::size_t(2));
+}
+
 void GuiPhase1::energyInputsInTheirDialogs() {
   Fixture f;
   QVERIFY(f.setUp(4000, 3000));
