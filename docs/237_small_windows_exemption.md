@@ -21,6 +21,18 @@ docs/229 の「まだ」：床面積の 2％・4％以下の窓の除外。
 - `Schedules.SmallWindowsExemption`：外壁の窓・開口の面積の合計 7.36 m2（南の窓 2 つ・北の窓・北の建具の無い開口。東のドアは入らない）。断熱範囲図（1FL）の開口部仕様表の注に「7.36 m2」「2％を超えるので」「4％を超えるので」。
 - 開口部まわりのテスト 5 件が成功。Windows ローカル：コア全件 798 件成功・8 件スキップ。
 
+**CI**：run 44909083528（push）成功。Linux 819 件すべて成功。
+
+**配布**
+
+| 項目 | 内容 |
+|---|---|
+| コード | `ac2ffa5` |
+| ZIP | `SketchBRep-windows-x64-ac2ffa5-local.zip`（Codex のチャットフォルダの `outputs\`。TLS の部品入り） |
+| サイズ | 82,974,769 bytes |
+| SHA256 | `7b62169dd99e74f834c49a78ce717400e9bf23ced3f4cb0d1040a5d7d3db528c` |
+| ZIP の検証 | `docs/validation/2026-11-21-portable-ac2ffa5.json`・`-mat.json`（GUI 18 + 4 条件、失敗 0） |
+
 **Windows 実機確認（人の操作）**：まだ（14-35・14-39 と一緒に）。
 
 ## まだ
