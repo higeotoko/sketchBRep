@@ -3227,6 +3227,46 @@ const std::vector<CommandDef>& commands() {
          if (!mark.note.empty()) confirmation["note"] = mark.note;
          return json{{"stage", stage}, {"rows", std::move(rows)}, {"confirmation", std::move(confirmation)}};
        }},
+      {"set_equipment",
+       "docs/224: the building's equipment for the energy documents, as the person gives it (the whole list "
+       "replaced; [] takes all away): 'items' [{kind: heating_cooling | ventilation | hot_water | lighting | solar | "
+       "other, name (required), model, value (性能値 as the catalogue writes it, e.g. \"エネルギー消費効率区分（い）\", "
+       "\"JIS効率 3.8\"), count (default 1), source}]. Only what the person said: never guess a maker, model or value. "
+       "One undo step. list_equipment reads them; drawn as the 機器表 on the insulation sheets.",
+       SCHEMA({"type": "object", "properties": {"items": {"type": "array", "items": {"type": "object", "properties": {
+                   "kind": {"enum": ["heating_cooling", "ventilation", "hot_water", "lighting", "solar", "other"]},
+                   "name": {"type": "string"}, "model": {"type": "string"}, "value": {"type": "string"},
+                   "count": {"type": "integer"}, "source": {"type": "string"}}, "required": ["kind", "name"]}}},
+               "required": ["items"]}),
+       [](doc::Modeler& m, const json& a) {
+         std::vector<doc::Modeler::EquipmentItem> items;
+         for (const auto& j : a.at("items")) {
+           doc::Modeler::EquipmentItem e;
+           e.kind = j.at("kind").get<std::string>();
+           e.name = j.at("name").get<std::string>();
+           e.model = j.value("model", std::string());
+           e.value = j.value("value", std::string());
+           e.source = j.value("source", std::string());
+           e.count = j.value("count", 1);
+           items.push_back(std::move(e));
+         }
+         must(m.setEquipment(items));
+         return json{{"count", items.size()}};
+       }},
+      {"list_equipment",
+       "docs/224: the equipment given with set_equipment, in order, with each kind's label.",
+       SCHEMA({"type": "object", "properties": {}}),
+       [](doc::Modeler& m, const json&) {
+         json out = json::array();
+         for (const auto& e : doc::Modeler::equipmentOf(m.document())) {
+           std::string label = e.kind;
+           for (const auto& [key, text] : doc::Modeler::equipmentKinds())
+             if (key == e.kind) label = text;
+           out.push_back({{"kind", e.kind}, {"label", label}, {"name", e.name}, {"model", e.model}, {"value", e.value},
+                          {"count", e.count}, {"source", e.source}});
+         }
+         return json{{"items", std::move(out)}};
+       }},
       {"set_project_outline",
        "docs/214: items of the project outline that are not in the model, as the person gives them: 'items' "
        "{key: text}; keys project_name (物件名, also the title block's 工事名 when the drawing set has none), client "

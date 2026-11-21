@@ -4109,6 +4109,54 @@ Status Modeler::setProjectOutline(const std::map<std::string, std::string>& item
   return Status::success();
 }
 
+const std::vector<std::pair<std::string, std::string>>& Modeler::equipmentKinds() {
+  static const std::vector<std::pair<std::string, std::string>> kinds = {
+      {"heating_cooling", "暖冷房設備"}, {"ventilation", "換気設備"}, {"hot_water", "給湯設備"},
+      {"lighting", "照明設備"},          {"solar", "太陽光発電設備"}, {"other", "その他の設備"}};
+  return kinds;
+}
+
+std::vector<Modeler::EquipmentItem> Modeler::equipmentOf(const Document& document) {
+  std::vector<EquipmentItem> out;
+  const nlohmann::json all = nlohmann::json::parse(document.settings().equipment, nullptr, false);
+  if (!all.is_array()) return out;
+  for (const auto& j : all) {
+    if (!j.is_object()) continue;
+    EquipmentItem e;
+    e.kind = j.value("kind", std::string());
+    e.name = j.value("name", std::string());
+    e.model = j.value("model", std::string());
+    e.value = j.value("value", std::string());
+    e.source = j.value("source", std::string());
+    e.count = j.value("count", 1);
+    out.push_back(std::move(e));
+  }
+  return out;
+}
+
+Status Modeler::setEquipment(const std::vector<EquipmentItem>& items) {
+  nlohmann::json all = nlohmann::json::array();
+  const auto& kinds = equipmentKinds();
+  for (std::size_t i = 0; i < items.size(); ++i) {
+    const EquipmentItem& e = items[i];
+    const std::string where = "設備 " + std::to_string(i + 1) + ": ";
+    if (std::none_of(kinds.begin(), kinds.end(), [&](const auto& k) { return k.first == e.kind; }))
+      return Status::failure(where + "種類は heating_cooling・ventilation・hot_water・lighting・solar・other のどれかです");
+    if (e.name.empty()) return Status::failure(where + "名前が要ります");
+    for (const std::string* text : {&e.name, &e.model, &e.value, &e.source})
+      if (!oneLine(*text, 300)) return Status::failure(where + "名前・型番・性能値・資料は1行、100 字までです");
+    if (e.count < 1 || e.count > 999) return Status::failure(where + "台数は 1〜999 です");
+    nlohmann::json j{{"kind", e.kind}, {"name", e.name}, {"count", e.count}};
+    if (!e.model.empty()) j["model"] = e.model;
+    if (!e.value.empty()) j["value"] = e.value;
+    if (!e.source.empty()) j["source"] = e.source;
+    all.push_back(std::move(j));
+  }
+  const std::string text = all.dump();
+  editSettings(document_, history_, "Equipment", [&](PersistentSettings& s) { s.equipment = text; });
+  return Status::success();
+}
+
 Status Modeler::setPermitConfirmation(int stage, bool confirmed, const std::string& by, const std::string& note,
                                       const std::string& on) {
   if (stage < 1 || stage > 12) return Status::failure("工程は 1〜12 です");

@@ -3439,3 +3439,101 @@ TEST_F(Schedules, InsulationMarksMeetAtCorners) {
   // as before (past the east wall's core middle).
   EXPECT_GT(southEast, eastOuter - in);
 }
+
+// docs/223: the insulation sheets carry the insulation specification table (部位・仕様又は使用材料等・
+// 厚さ・性能値・数) beside the drawing, as the examples of 省エネ drawings do.
+TEST_F(Schedules, InsulationSheetsCarryTheSpecificationTable) {
+  ok("set_insulation", {{"ids", {south, east}}, {"material", "グラスウール 16K"}, {"thickness_mm", 100}, {"conductivity", 0.038},
+                        {"placement", "fill"}, {"source", "架空のカタログ"}});
+  std::string ground;
+  for (const auto& o : modeler.document().objects())
+    if (o.attributes.count("kind") && o.attributes.at("kind") == "slab") ground = o.id;
+  ok("set_insulation", {{"ids", {ground}}, {"material", "押出法ポリスチレンフォーム"}, {"thickness_mm", 50}, {"resistance", 1.8},
+                        {"source", "架空のカタログ"}});
+  const auto set = sbr::doc::drawingSet(modeler.document(), {});
+  ASSERT_TRUE(set);
+  const auto texts = [&](const std::string& name) {
+    std::set<std::string> out;
+    for (std::size_t i = 0; i < set->names.size(); ++i)
+      if (set->names[i].find(name) == 0)
+        for (const auto& item : set->sheets[i].items)
+          if (item.kind == sbr::draw::Item::Kind::Text) out.insert(item.text);
+    return out;
+  };
+  const auto plan = texts("断熱範囲図（1FL）");
+  ASSERT_FALSE(plan.empty());
+  EXPECT_TRUE(plan.count("断熱仕様表"));
+  EXPECT_TRUE(plan.count("グラスウール 16K（充填）"));
+  EXPECT_TRUE(plan.count("R=2.63"));  // 100 mm / 0.038
+  EXPECT_TRUE(plan.count("押出法ポリスチレンフォーム"));
+  EXPECT_TRUE(plan.count("R=1.80"));
+  // An ordinary plan has no such table.
+  EXPECT_FALSE(texts("1FL 平面図").count("断熱仕様表"));
+}
+
+// docs/224: the building's equipment given as a list (set_equipment / list_equipment), saved with the
+// model and undone in one step; stage 9's 設備 row and the 機器表 on the insulation sheets.
+TEST_F(Schedules, EquipmentForTheEnergyDocuments) {
+  const auto row9 = [&](const std::string& item) {
+    const json all = ok("permit_checks", {{"stage", 9}})["rows"];  // not a range over a temporary's member
+    for (const json& row : all)
+      if (row["item"] == item) return row;
+    ADD_FAILURE() << "no row " << item;
+    return json();
+  };
+  EXPECT_EQ(row9("設備")["state"], "未入力");
+  const auto steps = modeler.history().undoCount();
+  ok("set_equipment", {{"items", {{{"kind", "heating_cooling"}, {"name", "ルームエアコン"}, {"model", "AC-28xxx"},
+                                   {"value", "エネルギー消費効率区分（い）"}, {"count", 2}, {"source", "架空のカタログ"}},
+                                  {{"kind", "ventilation"}, {"name", "壁付式第三種換気設備"}, {"value", "比消費電力 0.3"}}}}});
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  const json listed = ok("list_equipment")["items"];
+  ASSERT_EQ(listed.size(), 2u);
+  EXPECT_EQ(listed[0]["label"], "暖冷房設備");
+  EXPECT_EQ(listed[0]["count"], 2);
+  EXPECT_EQ(listed[1]["count"], 1);
+  // Two of the four kinds: still 未入力, naming what is missing.
+  const json partial = row9("設備");
+  EXPECT_EQ(partial["state"], "未入力");
+  EXPECT_NE(partial["details"].get<std::string>().find("給湯設備・照明設備"), std::string::npos);
+  // Wrong input changes nothing.
+  EXPECT_FALSE(call("set_equipment", {{"items", {{{"kind", "boiler"}, {"name", "x"}}}}}).value("ok", true));
+  EXPECT_FALSE(call("set_equipment", {{"items", {{{"kind", "lighting"}, {"name", ""}}}}}).value("ok", true));
+  EXPECT_FALSE(call("set_equipment", {{"items", {{{"kind", "lighting"}, {"name", "a\nb"}}}}}).value("ok", true));
+  EXPECT_FALSE(call("set_equipment", {{"items", {{{"kind", "lighting"}, {"name", "LED"}, {"count", 0}}}}}).value("ok", true));
+  EXPECT_EQ(ok("list_equipment")["items"].size(), 2u);
+  // All four kinds: 入力済み.
+  ok("set_equipment", {{"items", {{{"kind", "heating_cooling"}, {"name", "ルームエアコン"}},
+                                  {{"kind", "ventilation"}, {"name", "壁付式第三種換気設備"}},
+                                  {{"kind", "hot_water"}, {"name", "電気ヒートポンプ給湯機"}, {"value", "JIS効率 3.8"}},
+                                  {{"kind", "lighting"}, {"name", "LED ダウンライト"}}}}});
+  EXPECT_EQ(row9("設備")["state"], "入力済み");
+  // Saved and read back.
+  sbr::doc::Document copy;
+  ASSERT_TRUE(sbr::doc::deserializeDocument(sbr::doc::serializeDocument(modeler.document()), copy));
+  const auto read = sbr::doc::Modeler::equipmentOf(copy);
+  ASSERT_EQ(read.size(), 4u);
+  EXPECT_EQ(read[2].value, "JIS効率 3.8");
+  // No insulation: the 機器表 is a sheet of its own; with insulation it goes on the insulation sheets.
+  const auto sheetTexts = [&](const std::string& name) {
+    const auto set = sbr::doc::drawingSet(modeler.document(), {});
+    std::set<std::string> out;
+    if (!set) return out;
+    for (std::size_t i = 0; i < set->names.size(); ++i)
+      if (set->names[i].find(name) == 0)
+        for (const auto& item : set->sheets[i].items)
+          if (item.kind == sbr::draw::Item::Kind::Text) out.insert(item.text);
+    return out;
+  };
+  EXPECT_TRUE(sheetTexts("機器表").count("電気ヒートポンプ給湯機"));
+  ok("set_insulation", {{"ids", {south}}, {"material", "グラスウール 16K"}, {"thickness_mm", 100}, {"source", "架空のカタログ"}});
+  const auto onPlan = sheetTexts("断熱範囲図（1FL）");
+  EXPECT_TRUE(onPlan.count("機器表"));
+  EXPECT_TRUE(onPlan.count("JIS効率 3.8"));
+  EXPECT_TRUE(sheetTexts("機器表").empty());  // no sheet of its own any more
+  // Undone back to none.
+  ok("undo");
+  ok("undo");
+  ok("undo");
+  EXPECT_TRUE(sbr::doc::Modeler::equipmentOf(modeler.document()).empty());
+}

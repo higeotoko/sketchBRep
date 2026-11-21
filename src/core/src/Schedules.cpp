@@ -1142,6 +1142,61 @@ std::string insulationText(const Object& o) {
             number(j.value("thickness_mm", 0.0) / 1000 / j.at("conductivity").get<double>(), 2) + "）";
   return text;
 }
+
+// docs/224: the equipment table (機器表) as the examples of 省エネ drawings carry it: 部位 (kind),
+// 仕様又は使用材料等 (name, model), 性能値, 数, 資料.
+draw::Table equipmentTable(const Document& document) {
+  draw::Table t;
+  t.title = "機器表";
+  t.headers = {"部位", "仕様又は使用材料等", "性能値", "数", "資料"};
+  const auto& kinds = Modeler::equipmentKinds();
+  const auto items = Modeler::equipmentOf(document);
+  for (const auto& [key, label] : kinds)
+    for (const auto& e : items)
+      if (e.kind == key)
+        t.rows.push_back({label, e.name + (e.model.empty() ? "" : "　型番：" + e.model), e.value.empty() ? "未入力" : e.value,
+                          std::to_string(e.count), e.source});
+  t.notes = {"入れた機器と資料の一覧です。基準値との照合・一次エネルギー消費量の計算はしていません。"};
+  return t;
+}
+
+// docs/223: the insulation specification table put beside the insulation drawings, as the examples
+// of 省エネ drawings carry one on the same sheet (部位・仕様又は使用材料等・厚さ・性能値): one row per
+// part and insulation, with how many walls / floors / roofs have it.
+draw::Table insulationSpecTable(const Document& document) {
+  draw::Table t;
+  t.title = "断熱仕様表";
+  t.headers = {"部位", "仕様又は使用材料等", "厚さ(mm)", "性能値", "数"};
+  struct Row {
+    std::string material, thickness, value;
+    int count = 0;
+  };
+  std::map<std::pair<int, std::string>, Row> rows;  // (part order, key) -> row
+  for (const Object& o : document.objects()) {
+    const std::string kind = attribute(o, "kind");
+    const int order = kind == "roof" ? 0 : kind == "wall" ? 1 : kind == "slab" ? 2 : -1;
+    if (order < 0) continue;
+    const nlohmann::json j = nlohmann::json::parse(attribute(o, "insulation"), nullptr, false);
+    if (!j.is_object() || j.value("material", std::string()).empty()) continue;
+    const std::string placement = j.value("placement", std::string());
+    Row row;
+    row.material = j.value("material", std::string()) +
+                   (placement == "fill" ? "（充填）" : placement == "outside" ? "（外張り）" : placement == "inside" ? "（内張り）" : "");
+    row.thickness = number(j.value("thickness_mm", 0.0), 0);
+    if (j.contains("resistance") && j.at("resistance").get<double>() > 0) row.value = "R=" + number(j.at("resistance").get<double>(), 2);
+    else if (j.contains("conductivity") && j.at("conductivity").get<double>() > 0)
+      row.value = "R=" + number(j.value("thickness_mm", 0.0) / 1000 / j.at("conductivity").get<double>(), 2);
+    else row.value = "未入力";
+    Row& r = rows[{order, row.material + "｜" + row.thickness + "｜" + row.value}];
+    if (r.count == 0) r = row;
+    ++r.count;
+  }
+  const char* parts[] = {"屋根", "壁", "床"};
+  for (const auto& [key, r] : rows) t.rows.push_back({parts[key.first], r.material, r.thickness, r.value, std::to_string(r.count)});
+  t.notes = {"性能値は、入れた熱抵抗 R、または厚さ÷熱伝導率（m2K/W）。",
+             "基準値（地域ごとに要る熱抵抗）との照合はしていません。申請先と申請時点の告示で確かめます。"};
+  return t;
+}
 }  // namespace
 
 std::vector<PermitCheck> permitEnergyChecks(const Document& document) {
@@ -1229,7 +1284,26 @@ std::vector<PermitCheck> permitEnergyChecks(const Document& document) {
                    "開口 " + std::to_string(openings.size()) + " 件のうち、熱貫流率を入れた物 " + std::to_string(rated) +
                        "（AI の set_opening_performance）。",
                    hosts, rated != static_cast<int>(openings.size())});
-  out.push_back({"設備", "未入力", "換気・冷暖房・給湯・照明などの機器は、まだモデルにありません。機器の資料を別に添付します。", {}, true});
+  {
+    // docs/224: the equipment given (set_equipment): the four kinds the energy documents ask for.
+    const auto items = Modeler::equipmentOf(document);
+    std::vector<std::string> missing;
+    for (const char* kind : {"heating_cooling", "ventilation", "hot_water", "lighting"})
+      if (std::none_of(items.begin(), items.end(), [&](const Modeler::EquipmentItem& e) { return e.kind == kind; }))
+        for (const auto& [key, label] : Modeler::equipmentKinds())
+          if (key == kind) missing.push_back(label);
+    std::string listed;
+    for (const auto& e : items) listed += (listed.empty() ? "" : "、") + e.name;
+    if (items.empty())
+      out.push_back({"設備", "未入力", "暖冷房・換気・給湯・照明の機器を入れます（AI の set_equipment）。機器表になり、断熱範囲図の紙に載ります。", {}, true});
+    else if (!missing.empty()) {
+      std::string text = "入れた機器：" + listed + "\n入っていない種類：";
+      for (std::size_t i = 0; i < missing.size(); ++i) text += (i ? "・" : "") + missing[i];
+      out.push_back({"設備", "未入力", text, {}, true});
+    } else {
+      out.push_back({"設備", "入力済み", "入れた機器：" + listed + "\n性能値と基準値の照合・一次エネルギー消費量の計算はしていません。", {}, false});
+    }
+  }
   out.push_back({"まだ確かめていない事", "未評価",
                  "仕様基準の値（地域ごとの断熱材の熱抵抗・開口部の熱貫流率など）との比較、外皮の性能・一次エネルギー消費量の計算、"
                  "省エネ基準への適合。告示の原文を確かめてから照らします。",
@@ -2874,6 +2948,19 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
       view.title = "断熱範囲図（" + c.label + "-" + c.label + " 断面）";
       planned.push_back({view.title, view, std::nullopt, {}});
     }
+    // docs/223: the insulation specification table on each insulation sheet.
+    const draw::Table specTable = insulationSpecTable(document);
+    const draw::Table equipment = equipmentTable(document);  // docs/224
+    std::vector<draw::Table> tables;
+    if (!specTable.rows.empty()) tables.push_back(specTable);
+    if (!equipment.rows.empty()) tables.push_back(equipment);
+    bool onSheet = false;
+    for (Planned& p : planned)
+      if (p.view && p.view->insulation) {
+        p.beside = tables;
+        onSheet = true;
+      }
+    if (!onSheet && !equipment.rows.empty()) planned.push_back({equipment.title, std::nullopt, equipment, {}});  // docs/224
   }
   if (document.settings().siteBoundary) {
     const auto site = draw::sitePlanView();

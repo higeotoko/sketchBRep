@@ -163,6 +163,9 @@ struct DocumentSettings {
   // docs/214: the project's items that are not in the model (client, address, main use, kind of
   // work ...), as given: {"client": "...", "work_kind": "new", ...}.
   std::string projectOutline = "{}";
+  // docs/224: the building's equipment for the energy documents (heating / cooling, ventilation,
+  // hot water, lighting ...), as given: [{"kind": "ventilation", "name": "...", ...}, ...].
+  std::string equipment = "[]";
 };
 
 // The part of the settings that belongs to the model's state (saved, undone
@@ -181,11 +184,12 @@ struct PersistentSettings {
   std::optional<SiteBoundary> siteBoundary;
   std::string permitConfirmations = "{}";
   std::string projectOutline = "{}";
+  std::string equipment = "[]";
 
   static PersistentSettings of(const DocumentSettings& s) {
     return {s.scenes,         s.sections, s.sectionDisplay, s.hiddenTags, s.levels, s.constructionOverrides,
             s.wallCalculation, s.sun,     s.elementTypes, s.siteNorth, s.siteBoundary, s.permitConfirmations,
-            s.projectOutline};
+            s.projectOutline, s.equipment};
   }
   void applyTo(DocumentSettings& s) const {
     s.scenes = scenes;
@@ -201,6 +205,7 @@ struct PersistentSettings {
     s.siteBoundary = siteBoundary;
     s.permitConfirmations = permitConfirmations;
     s.projectOutline = projectOutline;
+    s.equipment = equipment;
   }
   bool operator==(const PersistentSettings& o) const {
     return scenes == o.scenes && sections == o.sections && sectionDisplay == o.sectionDisplay &&
@@ -208,7 +213,7 @@ struct PersistentSettings {
            constructionOverrides == o.constructionOverrides && wallCalculation == o.wallCalculation &&
            sun == o.sun && elementTypes == o.elementTypes && siteNorth == o.siteNorth &&
            siteBoundary == o.siteBoundary && permitConfirmations == o.permitConfirmations &&
-           projectOutline == o.projectOutline;
+           projectOutline == o.projectOutline && equipment == o.equipment;
   }
   bool operator!=(const PersistentSettings& o) const { return !(*this == o); }
 };

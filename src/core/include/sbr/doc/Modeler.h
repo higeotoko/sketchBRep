@@ -227,6 +227,17 @@ class Modeler {
   // docs/214: items of the project outline (keys of doc::projectOutlineFields(); "" takes one
   // away; others stay). One line each; a field with choices takes one of its values. One undo step.
   Status setProjectOutline(const std::map<std::string, std::string>& items);
+  // docs/224: the building's equipment for the energy documents, as given (the whole list replaced;
+  // empty: none). `kind`: heating_cooling (暖冷房), ventilation (換気), hot_water (給湯), lighting
+  // (照明), solar (太陽光発電), other; name (required), model, value (性能値 as written in the
+  // catalogue, e.g. "JIS効率 3.8"), count (1 or more), source: one line each. One undo step.
+  struct EquipmentItem {
+    std::string kind, name, model, value, source;
+    int count = 1;
+  };
+  static const std::vector<std::pair<std::string, std::string>>& equipmentKinds();  // key, label
+  static std::vector<EquipmentItem> equipmentOf(const Document& document);
+  Status setEquipment(const std::vector<EquipmentItem>& items);
   Status setPermitConfirmation(int stage, bool confirmed, const std::string& by = {}, const std::string& note = {},
                                const std::string& on = {});
   // docs/210: energy inputs. The route the energy documents follow (spec: 仕様基準 / performance:
