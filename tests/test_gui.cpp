@@ -1024,6 +1024,21 @@ void GuiPhase1::insulationPlanIsDrawnOnItsSheet() {
   }
   const QByteArray tablesWhere = qgetenv("SBR_TABLES_PNG");
   if (!tablesWhere.isEmpty()) QVERIFY(tablesImage.save(QString::fromLocal8Bit(tablesWhere)));
+  // docs/240: SBR_SET_DIR: every sheet of the set saved there as <n>.png, for looking them over.
+  const QByteArray setDir = qgetenv("SBR_SET_DIR");
+  if (!setDir.isEmpty())
+    for (std::size_t i = 0; i < withTables->sheets.size(); ++i) {
+      QImage image(2376, 1680, QImage::Format_RGB32);
+      image.fill(Qt::white);
+      {
+        QPainter painter(&image);
+        painter.setRenderHint(QPainter::Antialiasing);
+        app::renderSheet(painter, withTables->sheets[i], QRectF(0, 0, image.width(), image.height()));
+      }
+      QVERIFY(image.save(QString::fromLocal8Bit(setDir) + QString("/%1.png").arg(i + 1, 2, 10, QChar('0'))));
+      for (const auto& note : withTables->sheets[i].notes)
+        qInfo("%02d %s: %s", int(i + 1), withTables->names[i].c_str(), note.c_str());
+    }
 }
 
 // docs/215: the energy route, the insulation of selected walls and an opening's performance given
