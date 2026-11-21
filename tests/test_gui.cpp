@@ -93,6 +93,7 @@
 #include "ToolPalette.h"
 #include "DrawingExport.h"
 #include "MainWindow.h"
+#include "VicinityMapFetcher.h"
 #include "MaterialEditor.h"
 #include "MaterialsPanel.h"
 #include "PropertiesPanel.h"
@@ -253,6 +254,7 @@ class GuiPhase1 : public QObject {
   void projectOutlineDialogGivesTheItems();
   void energyInputsInTheirDialogs();
   void equipmentInItsDialog();
+  void vicinityMapFromCachedTiles();
   void insulationPlanIsDrawnOnItsSheet();
   void proposalShowsRotationAndHide();
   void benchViewportSync();
@@ -1027,6 +1029,91 @@ void GuiPhase1::insulationPlanIsDrawnOnItsSheet() {
 // in their dialogs; stage 9's route row opens its dialog.
 // docs/226: the equipment dialog: starts with the four kinds to fill in, rows without a name left
 // out, OK replaces the list in one undo step; it opens again with what was given.
+// docs/233: the vicinity map's position from its dialog; its picture from tiles in the cache (no
+// network: SBR_TILES_OFFLINE); a missing tile left grey; the sheet drawn with the picture.
+// SBR_VICINITY_PNG: where to save the sheet's picture.
+void GuiPhase1::vicinityMapFromCachedTiles() {
+  Fixture f;
+  QVERIFY(f.setUp(4000, 3000));
+  auto& modeler = f.window.modeler();
+  QTemporaryDir cache;
+  QVERIFY(cache.isValid());
+  qputenv("SBR_TILE_CACHE", cache.path().toLocal8Bit());
+  qputenv("SBR_TILES_OFFLINE", "1");
+  QTimer::singleShot(0, &f.window, [] {
+    auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+    if (!dialog) return;
+    auto* lat = dialog->findChild<QDoubleSpinBox*>(QStringLiteral("vicinityLat"));
+    auto* lon = dialog->findChild<QDoubleSpinBox*>(QStringLiteral("vicinityLon"));
+    auto* layer = dialog->findChild<QComboBox*>(QStringLiteral("vicinityLayer"));
+    if (!lat || !lon || !layer) return dialog->reject();
+    lat->setValue(35.0);
+    lon->setValue(135.0);
+    layer->setCurrentIndex(layer->findData(QStringLiteral("pale")));
+    dialog->accept();
+  });
+  const auto steps = modeler.history().undoCount();
+  f.window.findChild<QAction*>(QStringLiteral("vicinityMapAction"))->trigger();
+  QCOMPARE(modeler.history().undoCount(), steps + 1);
+  const auto map = doc::vicinityMapOf(modeler.document());
+  QVERIFY(map);
+  QCOMPARE(QString::fromStdString(map->layer), QStringLiteral("pale"));
+  QVERIFY(std::abs(map->lat - 35.0) < 1e-9);
+  // Tiles in the cache: each a plain colour, the middle one red.
+  const auto tiles = doc::vicinityTiles(*map);
+  for (std::size_t k = 0; k < tiles.tiles.size(); ++k) {
+    const auto& t = tiles.tiles[k];
+    const QString dir = QStringLiteral("%1/pale/%2/%3").arg(cache.path()).arg(t.z).arg(t.x);
+    QVERIFY(QDir().mkpath(dir));
+    QImage tile(256, 256, QImage::Format_RGB32);
+    tile.fill(k == 4 ? QColor(230, 30, 30) : QColor(30, 30, 200));
+    QVERIFY(tile.save(QStringLiteral("%1/%2.png").arg(dir).arg(t.y)));
+  }
+  QString message;
+  auto picture = app::fetchVicinityPicture(*map, &message);
+  QVERIFY(picture);
+  QCOMPARE(picture->width, 768);
+  QCOMPARE(picture->missingTiles, 0);
+  QVERIFY2(message.contains(QStringLiteral("キャッシュ 9")), qPrintable(message));
+  const auto pixel = [&](int x, int y) {
+    const auto* p = picture->rgba->data() + (static_cast<std::size_t>(y) * picture->width + x) * 4;
+    return QColor(p[0], p[1], p[2]);
+  };
+  QCOMPARE(pixel(384, 384).red(), 230);   // the middle tile
+  QCOMPARE(pixel(10, 10).blue(), 200);    // the north-west one
+  // One tile gone: grey there, counted.
+  const auto& gone = tiles.tiles[0];
+  QVERIFY(QFile::remove(QStringLiteral("%1/pale/%2/%3/%4.png").arg(cache.path()).arg(gone.z).arg(gone.x).arg(gone.y)));
+  picture = app::fetchVicinityPicture(*map, &message);
+  QVERIFY(picture);
+  QCOMPARE(picture->missingTiles, 1);
+  QCOMPARE(pixel(10, 10).red(), 220);
+  // The sheet with the picture.
+  doc::DrawingSetSpec spec;
+  spec.vicinity = picture;
+  const auto set = doc::drawingSet(modeler.document(), spec);
+  QVERIFY(set.ok());
+  const auto at = std::find(set->names.begin(), set->names.end(), std::string("付近見取図"));
+  QVERIFY(at != set->names.end());
+  QImage image(1680, 1188, QImage::Format_RGB32);
+  image.fill(Qt::white);
+  {
+    QPainter painter(&image);
+    app::renderSheet(painter, set->sheets[static_cast<std::size_t>(at - set->names.begin())], QRectF(0, 0, image.width(), image.height()));
+  }
+  int red = 0;
+  for (int y = 0; y < image.height(); y += 3)
+    for (int x = 0; x < image.width(); x += 3) {
+      const QColor c = image.pixelColor(x, y);
+      if (c.red() > 200 && c.green() < 80 && c.blue() < 80) ++red;
+    }
+  QVERIFY2(red > 500, qPrintable(QString::number(red)));
+  const QByteArray where = qgetenv("SBR_VICINITY_PNG");
+  if (!where.isEmpty()) QVERIFY(image.save(QString::fromLocal8Bit(where)));
+  qunsetenv("SBR_TILE_CACHE");
+  qunsetenv("SBR_TILES_OFFLINE");
+}
+
 void GuiPhase1::equipmentInItsDialog() {
   Fixture f;
   QVERIFY(f.setUp(4000, 3000));

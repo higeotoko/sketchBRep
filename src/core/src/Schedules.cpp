@@ -2969,6 +2969,94 @@ draw::Table scheduleTable(const Document& document, int which) {
   return t;
 }
 
+// docs/233: the vicinity map as a drawing: the picture of the tiles with the site in the middle
+// (view mm = ground mm, north up), the site marked, at the smallest usual scale at which the picture
+// is at most 200 x 140 mm on paper; the 出典 lines as its notes. Without a picture: an empty frame of
+// that size saying where the map goes.
+static draw::View vicinityView(const VicinityMap& map, const std::optional<VicinityPicture>& picture, double& scale) {
+  draw::View view;
+  view.spec.kind = draw::ViewKind::Plan;  // north mark up (the map's north is true north)
+  view.spec.title = "付近見取図";
+  view.spec.grid = false;
+  double mpp = 0.0, width = 0.0, height = 0.0, siteX = 0.0, siteY = 0.0;
+  if (picture && picture->width > 0 && picture->height > 0 && picture->rgba) {
+    mpp = picture->metresPerPixel;
+    width = picture->width;
+    height = picture->height;
+    siteX = picture->siteX;
+    siteY = picture->siteY;
+  } else {
+    const VicinityTiles tiles = vicinityTiles(map);
+    mpp = tiles.metresPerPixel;
+    width = tiles.cols * 256.0;
+    height = tiles.rows * 256.0;
+    siteX = tiles.siteX;
+    siteY = tiles.siteY;
+  }
+  const double unit = mpp * 1000.0;  // view mm per pixel
+  const double x0 = -siteX * unit, x1 = (width - siteX) * unit, y1 = siteY * unit, y0 = -(height - siteY) * unit;
+  scale = 25000.0;
+  for (const double s : {1000.0, 1500.0, 2000.0, 2500.0, 3000.0, 5000.0, 7500.0, 10000.0, 15000.0, 20000.0, 25000.0})
+    if ((x1 - x0) / s <= 200.0 && (y1 - y0) / s <= 140.0) {
+      scale = s;
+      break;
+    }
+  draw::Item frame;
+  frame.kind = draw::Item::Kind::Polyline;
+  frame.pen = draw::Pen::Visible;
+  frame.closed = true;
+  frame.points = {gp_Pnt2d(x0, y0), gp_Pnt2d(x1, y0), gp_Pnt2d(x1, y1), gp_Pnt2d(x0, y1)};
+  if (picture && picture->rgba) {
+    draw::Item image;
+    image.kind = draw::Item::Kind::Image;
+    image.points = {gp_Pnt2d(x0, y0), gp_Pnt2d(x1, y1)};
+    image.imageWidth = picture->width;
+    image.imageHeight = picture->height;
+    image.rgba = picture->rgba;
+    view.items.push_back(std::move(image));
+  } else {
+    draw::Item note;
+    note.kind = draw::Item::Kind::Text;
+    note.pen = draw::Pen::Text;
+    note.points = {gp_Pnt2d((x0 + x1) / 2, (y0 + y1) / 2 - 8 * scale)};
+    note.text = "地図は、画面の「図面一式を書き出す」で国土地理院の地図タイルから入ります";
+    note.height = 3.0;
+    note.hAlign = 1;
+    note.vAlign = 1;
+    view.items.push_back(std::move(note));
+  }
+  view.items.push_back(frame);
+  // The site: a ring 4 mm on paper and its name beside it.
+  draw::Item ring;
+  ring.kind = draw::Item::Kind::Arc;
+  ring.pen = draw::Pen::Cut;
+  ring.centre = gp_Pnt2d(0, 0);
+  ring.radius = 4.0 * scale;
+  ring.sweep = 2 * 3.14159265358979323846;
+  view.items.push_back(ring);
+  draw::Item label;
+  label.kind = draw::Item::Kind::Text;
+  label.pen = draw::Pen::Text;
+  label.points = {gp_Pnt2d(5.5 * scale, 0)};
+  label.text = "敷地";
+  label.height = 3.5;
+  label.vAlign = 1;
+  view.items.push_back(label);
+  view.minU = x0;
+  view.maxU = x1;
+  view.minV = y0;
+  view.maxV = y1;
+  view.objects = 1;
+  view.trueNorth = gp_Dir2d(0, 1);  // the map's up is true north (no 「仮」 on the north mark)
+  view.calculationNotes = vicinityAttribution(map.layer);
+  char where[96];
+  std::snprintf(where, sizeof where, "中心：北緯 %.6f 度・東経 %.6f 度（ズーム %d）", map.lat, map.lon, map.zoom);
+  view.calculationNotes.push_back(where);
+  if (picture && picture->missingTiles > 0)
+    view.calculationNotes.push_back("取れなかった地図タイル " + std::to_string(picture->missingTiles) + " 枚は灰色です");
+  return view;
+}
+
 Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& given) {
   // docs/214: the project's name from its outline when the title block has none.
   DrawingSetSpec spec = given;
@@ -2982,6 +3070,8 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
     std::optional<draw::ViewSpec> view;
     std::optional<draw::Table> table;
     std::vector<draw::Table> beside;  // tables on the same sheet (docs/131)
+    std::optional<draw::View> made;   // docs/233: a drawing made here (the vicinity map), at its own scale
+    double scale = 0.0;
   };
   std::vector<Planned> planned;
   // Plans: one per storey (levels at one height are one storey: the "...FL" one).
@@ -3150,6 +3240,13 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
         }
     planned.insert(planned.begin(), {summary.title, std::nullopt, summary, {}});
   }
+  // docs/233: the vicinity map after the outline, when its position is given.
+  if (const auto map = vicinityMapOf(document)) {
+    double scale = 0.0;
+    draw::View view = vicinityView(*map, spec.vicinity, scale);
+    Planned p{view.spec.title, std::nullopt, std::nullopt, {}, std::move(view), scale};
+    planned.insert(planned.begin() + 1, std::move(p));
+  }
   DrawingSet out;
   std::vector<draw::Sheet> sheets;
   std::vector<std::string> names;
@@ -3160,7 +3257,16 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
     sheetSpec.paper = spec.paper;
     sheetSpec.title = spec.title;
     sheetSpec.title.drawing = p.name;
-    if (p.view) {
+    if (p.made) {  // docs/233
+      sheetSpec.scale = p.scale;
+      sheetSpec.paper = "auto";
+      auto laid = draw::layoutSheetWithTables(*p.made, {}, sheetSpec);
+      if (!laid) {
+        out.notes.push_back(p.name + ": " + laid.error());
+        continue;
+      }
+      sheets.push_back(std::move(*laid));
+    } else if (p.view) {
       draw::ViewSpec hatched = *p.view;
       hatched.hatchScale = hatched.insulation ? 0.0 : spec.scale;  // docs/173 (docs/216: not under the insulation marks)
       hatched.paperScale = spec.scale;  // docs/219
@@ -3189,7 +3295,7 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
     }
     for (const std::string& n : sheets.back().notes) out.notes.push_back(p.name + ": " + n);
     names.push_back(p.name);
-    tableOnly.push_back(!p.view);
+    tableOnly.push_back(!p.view && !p.made);
   }
   if (sheets.empty()) return R::failure("Nothing to draw: the model is empty");
   // Numbers: the list is 01, the drawings 02, 03, ...
@@ -3230,7 +3336,11 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
     sheetSpec.title.drawing = names[i];
     sheetSpec.title.number = number(i + 2);
     Result<draw::Sheet> laid = Result<draw::Sheet>::failure("");
-    if (p && p->view) {
+    if (p && p->made) {  // docs/233
+      sheetSpec.scale = p->scale;
+      sheetSpec.paper = "auto";
+      laid = draw::layoutSheetWithTables(*p->made, {}, sheetSpec);
+    } else if (p && p->view) {
       draw::ViewSpec viewSpec = *p->view;
       viewSpec.hatchScale = viewSpec.insulation ? 0.0 : spec.scale;  // docs/173 (docs/216: not under the insulation marks)
       viewSpec.paperScale = spec.scale;  // docs/219

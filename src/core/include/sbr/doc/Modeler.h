@@ -238,6 +238,10 @@ class Modeler {
   static const std::vector<std::pair<std::string, std::string>>& equipmentKinds();  // key, label
   static std::vector<EquipmentItem> equipmentOf(const Document& document);
   Status setEquipment(const std::vector<EquipmentItem>& items);
+  // docs/233: where the vicinity map (付近見取図) is centred: latitude, longitude (WGS84 degrees), tile zoom
+  // 14-18 and the layer (std / pale / seamlessphoto); clear: none. One undo step.
+  Status setVicinityMap(double lat, double lon, int zoom, const std::string& layer);
+  Status clearVicinityMap();
   Status setPermitConfirmation(int stage, bool confirmed, const std::string& by = {}, const std::string& note = {},
                                const std::string& on = {});
   // docs/210: energy inputs. The route the energy documents follow (spec: 仕様基準 / performance:

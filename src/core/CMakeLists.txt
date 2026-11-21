@@ -15,6 +15,7 @@ add_library(sbr_core STATIC
   src/RoofSkeleton.cpp
   src/Stair.cpp
   src/Schedules.cpp
+  src/VicinityMap.cpp
   src/IfcExport.cpp
   src/WallTypes.cpp
   src/ConstructionQuantity.cpp

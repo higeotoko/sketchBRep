@@ -333,6 +333,7 @@ Status writeJww(const Sheet& sheet, const std::string& path) {
         elements.push_back(e);
         break;
       }
+      case Item::Kind::Image: break;  // docs/233: pictures are not written to JWW
       case Item::Kind::Fill:
         for (const auto& t : detail::triangulate(i)) {
           elements.push_back({Element::Solid, i.pen, P(t[0]), P(t[2]), P(t[1]), P(t[2])});

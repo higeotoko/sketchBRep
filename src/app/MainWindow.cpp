@@ -12,6 +12,7 @@
 #include "sbr/doc/Schedules.h"
 #include "sbr/KernelError.h"
 #include "DrawingExport.h"
+#include "VicinityMapFetcher.h"
 #include "PermitWorkflowPanel.h"
 #include "CrashLog.h"
 #include "HelpWindow.h"
@@ -1249,6 +1250,9 @@ void MainWindow::buildMenus() {
   // docs/226: the equipment for the energy documents (docs/224).
   site->addAction(tr("設備の機器..."), this, &MainWindow::showEquipmentDialog)
       ->setObjectName(QStringLiteral("equipmentAction"));
+  // docs/233: where the vicinity map is centred (国土地理院 tiles when the drawing set is written).
+  site->addAction(tr("付近見取図の位置..."), this, &MainWindow::showVicinityMapDialog)
+      ->setObjectName(QStringLiteral("vicinityMapAction"));
   site->addAction(tr("道路情報の指定を解除"), this, [this] {
     modeler_.clearSiteRoad();
     setStatus(tr("道路情報の指定を解除しました"));
@@ -5350,6 +5354,13 @@ int MainWindow::saveDrawingSet(const QString& path, bool tablesWithPlan) {
   spec.title.project = QSettings().value(QStringLiteral("drawing/project")).toString().toStdString();
   spec.title.author = QSettings().value(QStringLiteral("drawing/author")).toString().toStdString();
   spec.title.date = QDate::currentDate().toString(QStringLiteral("yyyy-MM-dd")).toStdString();
+  // docs/233: the vicinity map's picture from 国土地理院's tiles (cache, else fetched).
+  QString tilesMessage;
+  if (const auto map = doc::vicinityMapOf(modeler_.document())) {
+    setStatus(tr("付近見取図の地図タイルを国土地理院から取っています..."));
+    QApplication::processEvents();
+    spec.vicinity = fetchVicinityPicture(*map, &tilesMessage);
+  }
   const auto set = doc::drawingSet(modeler_.document(), spec);
   if (!set) {
     reportError(tr("図面一式を作れませんでした: %1").arg(userMessage(QString::fromStdString(set.error()))));
@@ -5365,6 +5376,7 @@ int MainWindow::saveDrawingSet(const QString& path, bool tablesWithPlan) {
                      .arg(QString::fromStdString(set->numbers.front()), QString::fromStdString(set->numbers.back()),
                           QDir::toNativeSeparators(path));
   if (!set->notes.empty()) text += tr("（注意 %1 件。図面リストに出ていない図面があります）").arg(set->notes.size());
+  if (!tilesMessage.isEmpty()) text += QStringLiteral("　") + tilesMessage;  // docs/233
   setStatus(text);
   return static_cast<int>(set->sheets.size());
 }
@@ -7342,6 +7354,64 @@ void MainWindow::showEnergyRouteDialog() {
 
 // docs/226: the equipment list (docs/224) as a table: kind, name, model, 性能値, count, source; rows
 // added and taken away; OK replaces the whole list in one undo step. Rows without a name are left out.
+// docs/233: where the vicinity map is centred: latitude / longitude (the person reads them off a map:
+// no lookup from the address), the tile zoom and the map. The tiles are fetched from 国土地理院 when
+// the drawing set is written. 「付近見取図を作らない」 takes it away.
+void MainWindow::showVicinityMapDialog() {
+  QDialog dialog(this);
+  dialog.setObjectName(QStringLiteral("vicinityMapDialog"));
+  dialog.setWindowTitle(tr("付近見取図の位置"));
+  auto* layout = new QVBoxLayout(&dialog);
+  auto* note = new QLabel(tr("図面一式を書き出す時に、この位置の国土地理院の地図タイル（地理院タイル）を取って付近見取図にします。"
+                             "敷地の位置が国土地理院のサーバーに送られます。取ったタイルはこの PC に残します。\n"
+                             "標準地図・淡色地図は基本測量成果です。図面として使う時の申請の要否は、国土地理院「地図の利用手続」で確かめてください。"));
+  note->setWordWrap(true);
+  layout->addWidget(note);
+  const auto current = doc::vicinityMapOf(modeler_.document());
+  auto* form = new QFormLayout;
+  layout->addLayout(form);
+  auto* lat = new QDoubleSpinBox;
+  lat->setObjectName(QStringLiteral("vicinityLat"));
+  lat->setRange(20.0, 46.0);
+  lat->setDecimals(6);
+  lat->setValue(current ? current->lat : 35.681236);
+  auto* lon = new QDoubleSpinBox;
+  lon->setObjectName(QStringLiteral("vicinityLon"));
+  lon->setRange(122.0, 154.0);
+  lon->setDecimals(6);
+  lon->setValue(current ? current->lon : 139.767125);
+  auto* zoom = new QSpinBox;
+  zoom->setObjectName(QStringLiteral("vicinityZoom"));
+  zoom->setRange(14, 18);
+  zoom->setValue(current ? current->zoom : 16);
+  auto* layer = new QComboBox;
+  layer->setObjectName(QStringLiteral("vicinityLayer"));
+  for (const auto& l : doc::vicinityLayers()) layer->addItem(QString::fromStdString(l.name), QString::fromStdString(l.key));
+  layer->setCurrentIndex(std::max(0, layer->findData(QString::fromStdString(current ? current->layer : std::string("std")))));
+  form->addRow(tr("緯度（北緯、度）"), lat);
+  form->addRow(tr("経度（東経、度）"), lon);
+  form->addRow(tr("ズーム（14〜18。16 で 1:15000 ほど）"), zoom);
+  form->addRow(tr("地図"), layer);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+  auto* none = buttons->addButton(tr("付近見取図を作らない"), QDialogButtonBox::DestructiveRole);
+  none->setObjectName(QStringLiteral("vicinityClear"));
+  layout->addWidget(buttons);
+  bool clear = false;
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  connect(none, &QPushButton::clicked, &dialog, [&] {
+    clear = true;
+    dialog.accept();
+  });
+  if (dialog.exec() != QDialog::Accepted) return;
+  if (clear) {
+    if (report(modeler_.clearVicinityMap())) setStatus(tr("付近見取図を作らないようにしました（Ctrl+Z で戻せます）"));
+  } else if (report(modeler_.setVicinityMap(lat->value(), lon->value(), zoom->value(), layer->currentData().toString().toStdString()))) {
+    setStatus(tr("付近見取図の位置を決めました。図面一式を書き出す時に地図を取ります（Ctrl+Z で戻せます）"));
+  }
+  refreshPanels();
+}
+
 void MainWindow::showEquipmentDialog() {
   QDialog dialog(this);
   dialog.setObjectName(QStringLiteral("equipmentDialog"));

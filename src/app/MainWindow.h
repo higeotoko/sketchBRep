@@ -93,6 +93,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   void showProjectOutlineDialog();
   void showEnergyRouteDialog();
   void showEquipmentDialog();  // docs/226
+  void showVicinityMapDialog();  // docs/233
   void showInsulationDialog();
   void showOpeningPerformanceDialog(const doc::ObjectId& host, int index);
   void showSiteRoadDialog();

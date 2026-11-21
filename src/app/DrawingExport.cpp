@@ -80,6 +80,15 @@ void renderSheet(QPainter& p, const draw::Sheet& sheet, const QRectF& target) {
   p.save();
   p.setRenderHint(QPainter::Antialiasing);
   p.fillRect(QRectF(ox, oy, sheet.paperWidth * k, sheet.paperHeight * k), Qt::white);
+  // docs/233: pictures (the vicinity map) under everything.
+  for (const draw::Item& i : sheet.items) {
+    if (i.kind != draw::Item::Kind::Image || !i.rgba || i.points.size() < 2 || i.imageWidth <= 0 || i.imageHeight <= 0) continue;
+    if (i.rgba->size() < static_cast<std::size_t>(i.imageWidth) * i.imageHeight * 4) continue;
+    const QImage picture(i.rgba->data(), i.imageWidth, i.imageHeight, i.imageWidth * 4, QImage::Format_RGBA8888);
+    const QPointF a = map(i.points[0]), b = map(i.points[1]);
+    p.drawImage(QRectF(QPointF(std::min(a.x(), b.x()), std::min(a.y(), b.y())), QPointF(std::max(a.x(), b.x()), std::max(a.y(), b.y()))),
+                picture);
+  }
   // Fills first (lines over them).
   for (int pass = 0; pass < 2; ++pass) {
     for (const draw::Item& i : sheet.items) {
@@ -147,6 +156,7 @@ void renderSheet(QPainter& p, const draw::Sheet& sheet, const QRectF& target) {
           break;
         }
         case draw::Item::Kind::Fill: break;
+        case draw::Item::Kind::Image: break;  // docs/233: drawn first, above
       }
     }
   }

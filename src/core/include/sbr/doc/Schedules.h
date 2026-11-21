@@ -3,6 +3,7 @@
 // always gives the same table, and the marks drawn on plans come from the same function.
 #pragma once
 
+#include "sbr/doc/VicinityMap.h"
 #include <map>
 #include <optional>
 #include <string>
@@ -369,6 +370,9 @@ struct DrawingSetSpec {
   // B-B cut north-south and seen from the east). The plans show where they are cut, with the
   // sections' sheet numbers.
   bool sections = true;
+  // docs/233: the vicinity map's picture, made by the app from vicinityTiles() (VicinityMap.h). With a
+  // map position given and no picture (the command line, AI), the sheet says where the map goes.
+  std::optional<VicinityPicture> vicinity;
 };
 struct DrawingSet {
   std::vector<draw::Sheet> sheets;

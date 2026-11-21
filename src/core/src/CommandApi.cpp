@@ -3256,6 +3256,27 @@ const std::vector<CommandDef>& commands() {
          must(m.setEquipment(items));
          return json{{"count", items.size()}};
        }},
+      {"set_vicinity_map",
+       "docs/233: where the vicinity map (付近見取図) of the drawing set is centred: 'lat', 'lon' (WGS84 degrees, the site; "
+       "Japan only), 'zoom' (tile zoom 14-18, default 16), 'layer' (std 標準地図 / pale 淡色地図 / seamlessphoto 写真, default "
+       "std); 'clear' true takes it away. Only a position the person gave: never look one up from an address. The app "
+       "fetches 国土地理院's tiles when it writes the drawing set (the position is sent to 国土地理院); 標準地図・淡色地図 are "
+       "基本測量成果: whether an application is needed is the person's to check. One undo step.",
+       SCHEMA({"type": "object", "properties": {"lat": {"type": "number"}, "lon": {"type": "number"},
+               "zoom": {"type": "integer"}, "layer": {"enum": ["std", "pale", "seamlessphoto"]}, "clear": {"type": "boolean"}}}),
+       [](doc::Modeler& m, const json& a) {
+         if (a.value("clear", false)) {
+           must(m.clearVicinityMap());
+           return json{{"cleared", true}};
+         }
+         must(m.setVicinityMap(number(a, "lat"), number(a, "lon"), a.value("zoom", 16), textOr(a, "layer", "std")));
+         const auto map = doc::vicinityMapOf(m.document());
+         const auto tiles = doc::vicinityTiles(*map);
+         json urls = json::array();
+         for (const auto& t : tiles.tiles) urls.push_back(t.url);
+         return json{{"tiles", std::move(urls)}, {"metres_per_pixel", tiles.metresPerPixel},
+                     {"attribution", doc::vicinityAttribution(map->layer)}};
+       }},
       {"list_equipment",
        "docs/224: the equipment given with set_equipment, in order, with each kind's label.",
        SCHEMA({"type": "object", "properties": {}}),

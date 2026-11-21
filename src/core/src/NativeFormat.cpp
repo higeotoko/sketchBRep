@@ -1150,6 +1150,7 @@ std::string serializeDocument(const Document& document) {
       {"permitConfirmations", s.permitConfirmations},
       {"projectOutline", s.projectOutline},
       {"equipment", s.equipment},  // docs/224
+      {"vicinityMap", s.vicinityMap},  // docs/233
       {"sun",
        {{"month", s.sun.month},
         {"day", s.sun.day},
@@ -1320,6 +1321,11 @@ Status deserializeDocument(const std::string& text, Document& document,
       const auto value = root.at("equipment").get<std::string>();
       if (!json::parse(value, nullptr, false).is_array()) throw std::runtime_error("equipment: not an array");
       s.equipment = value;
+    }
+    if (root.contains("vicinityMap")) {  // docs/233
+      const auto value = root.at("vicinityMap").get<std::string>();
+      if (!json::parse(value, nullptr, false).is_object()) throw std::runtime_error("vicinityMap: not an object");
+      s.vicinityMap = value;
     }
     if (root.contains("constructionOverrides")) {
       s.constructionOverrides = root.at("constructionOverrides").get<std::map<std::string, std::string>>();

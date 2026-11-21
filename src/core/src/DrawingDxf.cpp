@@ -199,6 +199,7 @@ Status writeDxf(const Sheet& sheet, const std::string& path) {
         }
         break;
       }
+      case Item::Kind::Image: break;  // docs/233: pictures are not written to DXF
       case Item::Kind::Fill:
         for (const auto& t : detail::triangulate(i)) {
           o.code(0, "SOLID");

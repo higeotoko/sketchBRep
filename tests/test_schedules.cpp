@@ -3750,3 +3750,93 @@ TEST_F(Schedules, ProjectOutlineFollowsTheApplicationForm) {
   for (const auto& r : again.rows) agent = agent || (r[0] == "代理者" && r[1] == "一級建築士 架空 三郎");
   EXPECT_TRUE(agent);
 }
+
+// docs/233: the vicinity map: its position as a setting (one undo step, saved), the tiles around it
+// (国土地理院's URLs, the site's pixel in their picture), and the sheet after the outline: the picture
+// given by the app (or a frame saying where the map goes), the site's ring, the 出典 lines.
+TEST_F(Schedules, VicinityMapSheet) {
+  EXPECT_FALSE(call("set_vicinity_map", {{"lat", 10.0}, {"lon", 139.7}}).value("ok", true));   // not Japan
+  EXPECT_FALSE(call("set_vicinity_map", {{"lat", 35.68}, {"lon", 139.77}, {"zoom", 20}}).value("ok", true));
+  EXPECT_FALSE(call("set_vicinity_map", {{"lat", 35.68}, {"lon", 139.77}, {"layer", "osm"}}).value("ok", true));
+  const auto steps = modeler.history().undoCount();
+  const json made = ok("set_vicinity_map", {{"lat", 35.681236}, {"lon", 139.767125}, {"zoom", 16}, {"layer", "pale"}});
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  ASSERT_EQ(made["tiles"].size(), 9u);
+  // Web Mercator: x = floor((lon + 180) / 360 * 2^16) = floor(58211.8) = 58211, the middle of the 3 x 3.
+  EXPECT_EQ(made["tiles"][4].get<std::string>(), "https://cyberjapandata.gsi.go.jp/xyz/pale/16/58211/25806.png");
+  const auto map = sbr::doc::vicinityMapOf(modeler.document());
+  ASSERT_TRUE(map);
+  const auto tiles = sbr::doc::vicinityTiles(*map);
+  EXPECT_GE(tiles.siteX, 256.0);  // in the middle tile
+  EXPECT_LT(tiles.siteX, 512.0);
+  EXPECT_GE(tiles.siteY, 256.0);
+  EXPECT_LT(tiles.siteY, 512.0);
+  EXPECT_NEAR(tiles.metresPerPixel, 1.94, 0.02);  // 2.39 m x cos(35.68 deg) at zoom 16
+  // Saved and read back.
+  sbr::doc::Document copy;
+  ASSERT_TRUE(sbr::doc::deserializeDocument(sbr::doc::serializeDocument(modeler.document()), copy));
+  ASSERT_TRUE(sbr::doc::vicinityMapOf(copy));
+  EXPECT_EQ(sbr::doc::vicinityMapOf(copy)->layer, "pale");
+  const auto texts = [](const sbr::draw::Sheet& sheet) {
+    std::vector<std::string> out;
+    for (const auto& item : sheet.items)
+      if (item.kind == sbr::draw::Item::Kind::Text) out.push_back(item.text);
+    return out;
+  };
+  const auto contains = [](const std::vector<std::string>& list, const std::string& part) {
+    return std::any_of(list.begin(), list.end(), [&](const std::string& t) { return t.find(part) != std::string::npos; });
+  };
+  // No picture (as from the command line): the sheet says where the map goes.
+  {
+    const auto set = sbr::doc::drawingSet(modeler.document(), {});
+    ASSERT_TRUE(set);
+    ASSERT_GE(set->names.size(), 3u);
+    EXPECT_EQ(set->names[2], "付近見取図");  // after the list and the outline
+    const auto t = texts(set->sheets[2]);
+    EXPECT_TRUE(contains(t, "地図は、画面の「図面一式を書き出す」で"));
+    EXPECT_TRUE(contains(t, "出典：国土地理院「地理院タイル」（淡色地図）"));
+    EXPECT_TRUE(contains(t, "基本測量成果"));
+  }
+  // A picture given: an image item over the picture's ground size; the scale fits it.
+  sbr::doc::DrawingSetSpec spec;
+  sbr::doc::VicinityPicture picture;
+  picture.width = 768;
+  picture.height = 768;
+  picture.rgba = std::make_shared<const std::vector<unsigned char>>(768 * 768 * 4, static_cast<unsigned char>(200));
+  picture.siteX = tiles.siteX;
+  picture.siteY = tiles.siteY;
+  picture.metresPerPixel = tiles.metresPerPixel;
+  picture.missingTiles = 1;
+  spec.vicinity = picture;
+  const auto set = sbr::doc::drawingSet(modeler.document(), spec);
+  ASSERT_TRUE(set);
+  const auto& sheet = set->sheets[2];
+  const auto image = std::find_if(sheet.items.begin(), sheet.items.end(),
+                                  [](const sbr::draw::Item& i) { return i.kind == sbr::draw::Item::Kind::Image; });
+  ASSERT_NE(image, sheet.items.end());
+  EXPECT_EQ(image->imageWidth, 768);
+  // 768 px x 1.94 m = 1.49 km each way: 149 mm at 1:10000 is over 140 mm high, so 1:15000 (99 mm).
+  EXPECT_EQ(sheet.scale, 15000.0);
+  const double paperWidth = (image->points[1].X() - image->points[0].X()) / sheet.scale;
+  EXPECT_NEAR(paperWidth, 768 * tiles.metresPerPixel * 1000 / 15000, 0.5);
+  const auto t = texts(sheet);
+  EXPECT_FALSE(contains(t, "地図は、画面の"));
+  EXPECT_TRUE(contains(t, "取れなかった地図タイル 1 枚"));
+  EXPECT_TRUE(contains(t, "敷地"));
+  // Taken away: no sheet.
+  ok("set_vicinity_map", {{"clear", true}});
+  const auto without = sbr::doc::drawingSet(modeler.document(), {});
+  ASSERT_TRUE(without);
+  EXPECT_EQ(std::count(without->names.begin(), without->names.end(), "付近見取図"), 0);
+}
+
+// docs/233: the vicinity map's north mark is true north (no 「仮」).
+TEST_F(Schedules, VicinityMapNorthIsTrueNorth) {
+  ok("set_vicinity_map", {{"lat", 35.0}, {"lon", 135.0}});
+  const auto set = sbr::doc::drawingSet(modeler.document(), {});
+  ASSERT_TRUE(set);
+  const auto at = std::find(set->names.begin(), set->names.end(), "付近見取図");
+  ASSERT_NE(at, set->names.end());
+  for (const auto& item : set->sheets[static_cast<std::size_t>(at - set->names.begin())].items)
+    EXPECT_NE(item.text, "仮");
+}

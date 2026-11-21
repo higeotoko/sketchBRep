@@ -291,6 +291,7 @@ Status writeLayout(const std::vector<Sheet>& sheets, const std::vector<std::stri
       switch (item.kind) {
         case Item::Kind::Line:
         case Item::Kind::Polyline:
+        case Item::Kind::Image: break;  // docs/233: pictures are not written to LayOut
         case Item::Kind::Fill: {
           if (item.points.size() < 2) break;
           const LOPoint2D a = at(item.points[0]), b = at(item.points[1]);

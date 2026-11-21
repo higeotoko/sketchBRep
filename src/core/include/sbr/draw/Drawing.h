@@ -15,6 +15,7 @@
 // (0, 0) and its upper right at paper size x scale; text heights are on
 // paper (mm), as drawings and Jw_cad count them.
 
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -50,7 +51,7 @@ constexpr int kPenCount = 11;
 const char* penLayerName(Pen pen);  // layer names in DXF ("CUT", ...)
 
 struct Item {
-  enum class Kind { Line, Arc, Polyline, Text, Fill };
+  enum class Kind { Line, Arc, Polyline, Text, Fill, Image };
   Kind kind = Kind::Line;
   Pen pen = Pen::Visible;
   // Line: 2 points. Polyline: the points (closed: back to the first).
@@ -68,6 +69,11 @@ struct Item {
   double height = 3.5;
   double angle = 0.0;
   int hAlign = 0, vAlign = 0;
+  // docs/233: Image: pixels (RGBA, 4 bytes each, rows from the top) stretched over the rectangle from
+  // points[0] (lower left) to points[1] (upper right). Drawn on screen and in PDF; DXF / JWW / LayOut
+  // leave it out.
+  int imageWidth = 0, imageHeight = 0;
+  std::shared_ptr<const std::vector<unsigned char>> rgba;
 };
 
 enum class ViewKind { Plan, Section, Elevation, SitePlan };

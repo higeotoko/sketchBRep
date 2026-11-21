@@ -4157,6 +4157,20 @@ Status Modeler::setEquipment(const std::vector<EquipmentItem>& items) {
   return Status::success();
 }
 
+Status Modeler::setVicinityMap(double lat, double lon, int zoom, const std::string& layer) {
+  const VicinityMap map{lat, lon, zoom, layer};
+  if (Status ok = checkVicinityMap(map); !ok) return ok;
+  const std::string text = nlohmann::json{{"lat", lat}, {"lon", lon}, {"zoom", zoom}, {"layer", layer}}.dump();
+  editSettings(document_, history_, "Vicinity Map", [&](PersistentSettings& s) { s.vicinityMap = text; });
+  return Status::success();
+}
+
+Status Modeler::clearVicinityMap() {
+  if (document_.settings().vicinityMap == "{}") return Status::success();
+  editSettings(document_, history_, "Vicinity Map", [&](PersistentSettings& s) { s.vicinityMap = "{}"; });
+  return Status::success();
+}
+
 Status Modeler::setPermitConfirmation(int stage, bool confirmed, const std::string& by, const std::string& note,
                                       const std::string& on) {
   if (stage < 1 || stage > 12) return Status::failure("工程は 1〜12 です");
