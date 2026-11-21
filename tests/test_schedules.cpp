@@ -3840,3 +3840,46 @@ TEST_F(Schedules, VicinityMapNorthIsTrueNorth) {
   for (const auto& item : set->sheets[static_cast<std::size_t>(at - set->names.begin())].items)
     EXPECT_NE(item.text, "仮");
 }
+
+// docs/234: with a site boundary and a true north, the vicinity map shows the boundary turned to north
+// (its centre on the map's) when it is 5 mm or more across on paper; else the ring and a note.
+TEST_F(Schedules, VicinityMapShowsTheSiteOutline) {
+  const std::string site = ok("create_polygon", {{"points", {{0, 0, 0}, {20000, 0, 0}, {20000, 15000, 0}, {0, 15000, 0}}}})["id"];
+  ok("set_site_boundary", {{"outline", site}, {"source", "架空の測量図"}});
+  const auto sheetOf = [&]() {
+    const auto set = sbr::doc::drawingSet(modeler.document(), {});
+    EXPECT_TRUE(set);
+    const auto at = std::find(set->names.begin(), set->names.end(), "付近見取図");
+    EXPECT_NE(at, set->names.end());
+    return set->sheets[static_cast<std::size_t>(at - set->names.begin())];
+  };
+  const auto noteHas = [](const sbr::draw::Sheet& sheet, const std::string& part) {
+    return std::any_of(sheet.items.begin(), sheet.items.end(), [&](const sbr::draw::Item& i) {
+      return i.kind == sbr::draw::Item::Kind::Text && i.text.find(part) != std::string::npos;
+    });
+  };
+  // No true north: the ring and a note.
+  ok("set_vicinity_map", {{"lat", 35.0}, {"lon", 135.0}, {"zoom", 18}});
+  EXPECT_TRUE(noteHas(sheetOf(), "真北が入っていないので"));
+  // True north along model +X (90 degrees clockwise from +Y): 20 m north-south, 15 m east-west.
+  ASSERT_TRUE(modeler.setSiteNorth({90.0, "架空の測量図", "2026-11-21"}));
+  auto sheet = sheetOf();
+  EXPECT_EQ(sheet.scale, 3000.0);  // zoom 18: 768 px x 0.49 m = 375 m, 125 mm at 1:3000
+  EXPECT_TRUE(noteHas(sheet, "太線：敷地境界"));
+  const auto outline = std::find_if(sheet.items.begin(), sheet.items.end(), [](const sbr::draw::Item& i) {
+    return i.kind == sbr::draw::Item::Kind::Polyline && i.pen == sbr::draw::Pen::Cut && i.closed && i.points.size() == 4;
+  });
+  ASSERT_NE(outline, sheet.items.end());
+  double u0 = 1e300, u1 = -1e300, v0 = 1e300, v1 = -1e300;
+  for (const auto& p : outline->points) {
+    u0 = std::min(u0, p.X());
+    u1 = std::max(u1, p.X());
+    v0 = std::min(v0, p.Y());
+    v1 = std::max(v1, p.Y());
+  }
+  EXPECT_NEAR((u1 - u0) / sheet.scale, 15000.0 / 3000.0, 0.01);  // east-west 15 m: 5 mm
+  EXPECT_NEAR((v1 - v0) / sheet.scale, 20000.0 / 3000.0, 0.01);  // north-south 20 m: 6.7 mm
+  // Zoom 16 (1:15000): too small on paper, the ring.
+  ok("set_vicinity_map", {{"lat", 35.0}, {"lon", 135.0}, {"zoom", 16}});
+  EXPECT_TRUE(noteHas(sheetOf(), "5 mm に満たない"));
+}

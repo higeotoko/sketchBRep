@@ -2973,7 +2973,8 @@ draw::Table scheduleTable(const Document& document, int which) {
 // (view mm = ground mm, north up), the site marked, at the smallest usual scale at which the picture
 // is at most 200 x 140 mm on paper; the 出典 lines as its notes. Without a picture: an empty frame of
 // that size saying where the map goes.
-static draw::View vicinityView(const VicinityMap& map, const std::optional<VicinityPicture>& picture, double& scale) {
+static draw::View vicinityView(const Document& document, const VicinityMap& map, const std::optional<VicinityPicture>& picture,
+                                double& scale) {
   draw::View view;
   view.spec.kind = draw::ViewKind::Plan;  // north mark up (the map's north is true north)
   view.spec.title = "付近見取図";
@@ -3026,14 +3027,55 @@ static draw::View vicinityView(const VicinityMap& map, const std::optional<Vicin
     view.items.push_back(std::move(note));
   }
   view.items.push_back(frame);
-  // The site: a ring 4 mm on paper and its name beside it.
+  // docs/234: the site's boundary turned to true north, its centre on the map's (the position given),
+  // when there are a boundary and a true north and it is 5 mm or more across on paper.
+  std::string siteNote;
+  bool outlined = false;
+  const auto& settings = document.settings();
+  if (settings.siteBoundary && settings.siteNorth) {
+    if (const auto g = document.siteBoundaryGeometry(settings.siteBoundary->outline); g && g->vertices.size() >= 3) {
+      const double a = std::remainder(settings.siteNorth->angle, 360.0) * 3.14159265358979323846 / 180.0;
+      const gp_Vec2d north(std::sin(a), std::cos(a)), east(std::cos(a), -std::sin(a));
+      double cx = 0.0, cy = 0.0;
+      for (const gp_Pnt& v : g->vertices) {
+        cx += v.X();
+        cy += v.Y();
+      }
+      cx /= g->vertices.size();
+      cy /= g->vertices.size();
+      draw::Item outline;
+      outline.kind = draw::Item::Kind::Polyline;
+      outline.pen = draw::Pen::Cut;
+      outline.closed = true;
+      double e0 = 1e300, e1 = -1e300, n0 = 1e300, n1 = -1e300;
+      for (const gp_Pnt& v : g->vertices) {
+        const gp_Vec2d d(v.X() - cx, v.Y() - cy);
+        const double e = d.Dot(east), n = d.Dot(north);
+        outline.points.push_back(gp_Pnt2d(e, n));
+        e0 = std::min(e0, e);
+        e1 = std::max(e1, e);
+        n0 = std::min(n0, n);
+        n1 = std::max(n1, n);
+      }
+      if (std::max(e1 - e0, n1 - n0) / scale >= 5.0) {
+        view.items.push_back(std::move(outline));
+        outlined = true;
+        siteNote = "太線：敷地境界（真北に合わせて回し、重心を入れた緯度・経度に置いた。位置は入れた値のとおりで、地図とは照合していない）";
+      } else {
+        siteNote = "敷地は紙の上で 5 mm に満たないので、丸で示した（ズームを上げると敷地境界の形が出る）";
+      }
+    }
+  } else if (settings.siteBoundary) {
+    siteNote = "真北が入っていないので、敷地境界の形は描いていない（丸で示した）";
+  }
+  // The site: a ring 4 mm on paper and its name beside it (docs/234: or its outline, above).
   draw::Item ring;
   ring.kind = draw::Item::Kind::Arc;
   ring.pen = draw::Pen::Cut;
   ring.centre = gp_Pnt2d(0, 0);
   ring.radius = 4.0 * scale;
   ring.sweep = 2 * 3.14159265358979323846;
-  view.items.push_back(ring);
+  if (!outlined) view.items.push_back(ring);
   draw::Item label;
   label.kind = draw::Item::Kind::Text;
   label.pen = draw::Pen::Text;
@@ -3054,6 +3096,7 @@ static draw::View vicinityView(const VicinityMap& map, const std::optional<Vicin
   view.calculationNotes.push_back(where);
   if (picture && picture->missingTiles > 0)
     view.calculationNotes.push_back("取れなかった地図タイル " + std::to_string(picture->missingTiles) + " 枚は灰色です");
+  if (!siteNote.empty()) view.calculationNotes.push_back(siteNote);
   return view;
 }
 
@@ -3243,7 +3286,7 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
   // docs/233: the vicinity map after the outline, when its position is given.
   if (const auto map = vicinityMapOf(document)) {
     double scale = 0.0;
-    draw::View view = vicinityView(*map, spec.vicinity, scale);
+    draw::View view = vicinityView(document, *map, spec.vicinity, scale);
     Planned p{view.spec.title, std::nullopt, std::nullopt, {}, std::move(view), scale};
     planned.insert(planned.begin() + 1, std::move(p));
   }
