@@ -43,6 +43,18 @@ docs/210・215 の「まだ」の「設備（換気・冷暖房・給湯・照�
   - Undo で元の何も無い状態に戻る。
 - 工程・計画概要・断熱まわりのテスト 14 件もそのまま成功。Windows ローカル：コア全件 787 件成功・8 件スキップ。図面・表・工程パネル・省エネまわりの GUI 15 件が成功。
 
+**CI**：run 44874035714（push）成功。Linux 808 件すべて成功（docs/223・224 は同じコミット `cf8b23f`）。
+
+**配布**
+
+| 項目 | 内容 |
+|---|---|
+| コード | `cf8b23f` |
+| ZIP | `SketchBRep-windows-x64-cf8b23f-local.zip`（Codex のチャットフォルダの `outputs\`） |
+| サイズ | 82,714,490 bytes |
+| SHA256 | `2bae0fef27bdf3c59729b4cb9e68c9812ae735600867988c2ddfa14c66f021fb` |
+| ZIP の検証 | `docs/validation/2026-11-21-portable-cf8b23f.json`・`-mat.json`（GUI 18 + 4 条件、失敗 0） |
+
 **Windows 実機確認（人の操作）**：まだ。docs/105 の 14-34。
 
 ## まだ
