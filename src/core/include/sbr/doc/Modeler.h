@@ -889,6 +889,18 @@ class Modeler {
     std::string place = "middle";
   };
   static std::optional<InsulationBand> insulationBand(const Document& document, const Object& object);
+  // docs/221: the floors and roofs with insulation given that a plan cut at `z` shows as ranges:
+  // the floor of this storey (a slab whose top is near the level at or below z: "床"), the floor of
+  // the storey above (a slab whose top is near the next level up: "上階床"), and roofs bearing
+  // below the level after that, or anywhere above when there is none ("屋根"). `outline`: world
+  // edges of its plan outline (a slab's cut at half its height, a roof's outline as made).
+  struct InsulationArea {
+    ObjectId id;
+    std::string part;  // "床", "上階床", "屋根"
+    std::string text;
+    TopoDS_Shape outline;
+  };
+  static std::vector<InsulationArea> insulationAreas(const Document& document, double z);
   // The insulation of a wall, slab or roof as text, or "" when it has none.
   static std::string insulationText(const Object& object);
   // The layers of a wall, floor or roof as they are now (docs/170): names and thicknesses in

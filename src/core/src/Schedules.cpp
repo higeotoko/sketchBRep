@@ -2837,7 +2837,9 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
       if (!p.view || p.view->kind != draw::ViewKind::Plan || !p.view->bracingFloor.empty() ||
           p.name.find("平面図") == std::string::npos)
         continue;
-      if (Modeler::insulationRuns(document, p.view->frame.Location().Z()).empty()) continue;
+      if (Modeler::insulationRuns(document, p.view->frame.Location().Z()).empty() &&
+          Modeler::insulationAreas(document, p.view->frame.Location().Z()).empty())  // docs/221
+        continue;
       draw::ViewSpec view = *p.view;
       view.insulation = true;
       view.fill = false;  // the walls' outlines, the marks inside

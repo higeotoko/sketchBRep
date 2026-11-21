@@ -33,6 +33,8 @@
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRepAlgoAPI_Section.hxx>
+#include <gp_Pln.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <GCPnts_AbscissaPoint.hxx>
@@ -7750,12 +7752,32 @@ std::string Modeler::insulationText(const Object& object) {
 
 std::vector<Modeler::InsulationRun> Modeler::insulationRuns(const Document& document, double z) {
   std::vector<InsulationRun> out;
-  for (const WallBand& w : allWallBands(document)) {
+  const std::vector<WallBand> walls = allWallBands(document);
+  const auto ends = wallEnds(walls);
+  for (std::size_t wi = 0; wi < walls.size(); ++wi) {
+    const WallBand& w = walls[wi];
     if (z < w.z0 || z > w.z1) continue;
     const std::string text = insulationText(*w.object);
     if (text.empty()) continue;
     const InsulationPlace place = wallInsulationPlace(w);  // docs/218
     const double middle = (place.from + place.to) / 2;
+    // docs/220: at a corner with a wall that has insulation too, the mark ends where it meets that
+    // wall's mark (as the layer lines' mitres), so the two meet and neither runs through the
+    // other's outer layers; otherwise at this wall's end.
+    double startAt = 0.0, endAt = w.length;
+    for (int end = 0; end < 2; ++end) {
+      const double s = end == 0 ? 0.0 : w.length;
+      for (const std::size_t j : cornerPartners(walls, ends, wi, end)) {
+        const WallBand& o = walls[j];
+        if (insulationText(*o.object).empty()) continue;
+        const InsulationPlace theirs = wallInsulationPlace(o);
+        const auto m = meet(w.start.Translated(gp_Vec(w.left) * middle), w.dir,
+                            o.start.Translated(gp_Vec(o.left) * ((theirs.from + theirs.to) / 2)), o.dir);
+        if (!m || std::abs(m->first - s) > w.right + w.leftExt + o.right + o.leftExt) continue;
+        (end == 0 ? startAt : endAt) = m->first;
+        break;
+      }
+    }
     // Broken where the plan passes through an opening, as the layer lines.
     std::vector<std::pair<double, double>> gaps;
     if (const auto openings = openingsIn(document, w.object->id))
@@ -7765,7 +7787,7 @@ std::vector<Modeler::InsulationRun> Modeler::insulationRuns(const Document& docu
         gaps.emplace_back(c - o.along / 2, c + o.along / 2);
       }
     std::sort(gaps.begin(), gaps.end());
-    double from = 0.0;
+    double from = startAt;
     const auto add = [&](double s0, double s1) {
       if (s1 - s0 < 1.0) return;
       gp_Pnt a = w.start.Translated(gp_Vec(w.left) * middle + gp_Vec(w.dir) * s0);
@@ -7775,10 +7797,10 @@ std::vector<Modeler::InsulationRun> Modeler::insulationRuns(const Document& docu
       out.push_back({w.object->id, a, b, place.to - place.from, text, place.place});
     };
     for (const auto& [g0, g1] : gaps) {
-      add(from, std::min(g0, w.length));
+      add(from, std::min(g0, endAt));
       from = std::max(from, g1);
     }
-    add(from, w.length);
+    add(from, endAt);
   }
   return out;
 }
@@ -8384,6 +8406,58 @@ Result<std::pair<geom::RoofSpec, gp_Trsf>> storedRoofOf(const Document& document
 
 Result<std::pair<geom::RoofSpec, gp_Trsf>> storedRoof(const Document& document, const ObjectId& id) {
   return storedRoofOf(document, document.find(id));
+}
+
+std::vector<Modeler::InsulationArea> insulationAreasOf(const Document& document, double z) {  // docs/221: Modeler::insulationAreas
+  std::vector<Modeler::InsulationArea> out;
+  // This storey's level (the highest at or below z) and the next two up.
+  std::vector<double> levels;
+  for (const FloorLevel& l : document.settings().levels) levels.push_back(l.elevation);
+  std::sort(levels.begin(), levels.end());
+  levels.erase(std::unique(levels.begin(), levels.end(), [](double a, double b) { return std::abs(a - b) < 1e-6; }), levels.end());
+  std::optional<double> here, above;
+  for (const double e : levels) {
+    if (e <= z + 1e-6) here = e;
+    else if (!above) above = e;
+  }
+  constexpr double kNear = 600.0;  // a floor's top this near a level stands on it
+  for (const Object& o : document.objects()) {
+    if (!document.isVisible(o.id) || o.shape.IsNull()) continue;
+    const std::string kind = attributeOf(o, "kind");
+    if (kind != "slab" && kind != "roof") continue;
+    const std::string text = Modeler::insulationText(o);
+    if (text.empty()) continue;
+    Modeler::InsulationArea area{o.id, "", text, TopoDS_Shape()};
+    if (kind == "slab") {
+      const TopoDS_Shape world = document.worldShape(o);
+      const Bnd_Box b = geom::exactBounds(world);
+      if (b.IsVoid()) continue;
+      const double top = b.CornerMax().Z(), bottom = b.CornerMin().Z();
+      if (here ? std::abs(top - *here) <= kNear && top <= z : top <= z && top >= z - 2000.0) area.part = "床";
+      else if (above && std::abs(top - *above) <= kNear) area.part = "上階床";
+      else continue;
+      BRepAlgoAPI_Section cut(world, gp_Pln(gp_Pnt(0, 0, (top + bottom) / 2), gp::DZ()), Standard_False);
+      cut.SetNonDestructive(Standard_True);
+      cut.Build();
+      if (!cut.IsDone() || cut.Shape().IsNull()) continue;
+      area.outline = cut.Shape();
+    } else {
+      const auto roof = storedRoofOf(document, &o);
+      if (!roof || roof->first.outline.size() < 3) continue;
+      // Over this storey: bearing above the cut, with no level between (a roof bearing at the
+      // next level up, as a top plate level named RFL, still counts).
+      const double bears = gp_Pnt(0, 0, roof->first.height).Transformed(roof->second).Z();
+      if (bears <= z || (above && bears > *above + kNear)) continue;
+      BRepBuilderAPI_MakePolygon polygon;
+      for (const gp_Pnt& p : roof->first.outline) polygon.Add(gp_Pnt(p.X(), p.Y(), roof->first.height).Transformed(roof->second));
+      polygon.Close();
+      if (!polygon.IsDone()) continue;
+      area.part = "屋根";
+      area.outline = polygon.Wire();
+    }
+    out.push_back(std::move(area));
+  }
+  return out;
 }
 
 geom::RoofSpec roofInFrame(geom::RoofSpec s, const gp_Trsf& t);
@@ -13443,6 +13517,10 @@ Status Modeler::setActiveGroup(const ObjectId& groupId) {
   if (!group || group->kind() != ObjectKind::Group) return Status::failure("Not a group");
   activeGroup_ = groupId;
   return Status::success();
+}
+
+std::vector<Modeler::InsulationArea> Modeler::insulationAreas(const Document& document, double z) {
+  return insulationAreasOf(document, z);  // docs/221
 }
 
 }  // namespace sbr::doc

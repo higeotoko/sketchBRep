@@ -3161,17 +3161,75 @@ TEST_F(Schedules, InsulationPlansMarkTheWallsWithInsulation) {
   EXPECT_EQ(polylines(*after), polylines(*before) + 5);
   const auto& notes = after->calculationNotes;
   EXPECT_TRUE(has(notes, "波線：壁の断熱　グラスウール 16K 100 mm（充填）（2 枚）"));
-  // A floor's insulation is listed, not drawn.
+  // The drawing set: one insulation plan for 1FL only (2FL has no walls with insulation).
+  {
+    const auto list = names();
+    EXPECT_TRUE(has(list, "断熱範囲図（1FL）"));
+    EXPECT_FALSE(has(list, "断熱範囲図（2FL）"));
+  }
+  // docs/221: the floor of the storey above, with insulation, drawn as a range on 1FL's plan; 2FL's
+  // plan now has its own floor's insulation, so it gets a sheet too.
   const std::string slab = ok("create_slab", {{"outline", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}}}, {"top", 3000}, {"thickness", 200}})["id"];
   ok("set_insulation", {{"ids", {slab}}, {"material", "押出法ポリスチレンフォーム"}, {"thickness_mm", 50}, {"resistance", 1.8},
                         {"source", "架空のカタログ"}});
   const auto again = sbr::draw::makeView(modeler.document(), marked);
   ASSERT_TRUE(again);
-  EXPECT_TRUE(has(again->calculationNotes, "床：押出法ポリスチレンフォーム 50 mm（1 個、平面には描きません）"));
-  // The drawing set: one insulation plan for 1FL only (2FL has no walls with insulation).
+  EXPECT_TRUE(has(again->calculationNotes, "破線：上の階の床の断熱の範囲　押出法ポリスチレンフォーム 50 mm（1 個）"));
   const auto list = names();
   EXPECT_TRUE(has(list, "断熱範囲図（1FL）"));
-  EXPECT_FALSE(has(list, "断熱範囲図（2FL）"));
+  EXPECT_TRUE(has(list, "断熱範囲図（2FL）"));
+}
+
+// docs/221: floors and roofs with insulation as ranges on the insulation plans: this storey's floor
+// ("床"), the floor above ("上階床"), the roof over the top storey ("屋根"), each dashed with a label.
+TEST_F(Schedules, InsulationAreasOnPlans) {
+  const auto has = [](const std::vector<std::string>& list, const std::string& name) {
+    return std::find(list.begin(), list.end(), name) != list.end();
+  };
+  std::string ground;
+  for (const auto& o : modeler.document().objects())
+    if (o.attributes.count("kind") && o.attributes.at("kind") == "slab") ground = o.id;  // top 0
+  ASSERT_FALSE(ground.empty());
+  const std::string upper = ok("create_slab", {{"outline", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}}}, {"top", 3000}, {"thickness", 200}})["id"];
+  const std::string roof = ok("create_roof", {{"outline", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}}}, {"kind", "gable"}, {"height", 5800}})["id"];
+  EXPECT_TRUE(sbr::doc::Modeler::insulationAreas(modeler.document(), 1100).empty());  // nothing given yet
+  ok("set_insulation", {{"ids", {ground, upper}}, {"material", "押出法ポリスチレンフォーム"}, {"thickness_mm", 50}, {"source", "架空のカタログ"}});
+  ok("set_insulation", {{"ids", {roof}}, {"material", "フェノールフォーム"}, {"thickness_mm", 60}, {"placement", "outside"}, {"source", "架空のカタログ"}});
+  const auto parts = [&](double z) {
+    std::map<std::string, std::string> out;
+    for (const auto& a : sbr::doc::Modeler::insulationAreas(modeler.document(), z)) {
+      EXPECT_FALSE(a.outline.IsNull());
+      out[a.part] = a.id;
+    }
+    return out;
+  };
+  // 1FL (cut 1100): its floor and the floor above; the roof bears above 2FL: not this storey's.
+  const auto first = parts(1100);
+  EXPECT_EQ(first.size(), 2u);
+  EXPECT_EQ(first.count("床") ? first.at("床") : "", ground);
+  EXPECT_EQ(first.count("上階床") ? first.at("上階床") : "", upper);
+  // 2FL (cut 4100): its floor and the roof (no level above).
+  const auto second = parts(4100);
+  EXPECT_EQ(second.size(), 2u);
+  EXPECT_EQ(second.count("床") ? second.at("床") : "", upper);
+  EXPECT_EQ(second.count("屋根") ? second.at("屋根") : "", roof);
+  // The plan: dashed outlines and labels, and the legend.
+  sbr::draw::ViewSpec spec = sbr::draw::planView(4100.0);
+  spec.depth = 1500.0;
+  spec.insulation = true;
+  const auto view = sbr::draw::makeView(modeler.document(), spec);
+  ASSERT_TRUE(view);
+  int dashed = 0;
+  std::set<std::string> labels;
+  for (const auto& i : view->items) {
+    if (i.pen == sbr::draw::Pen::Hidden) ++dashed;
+    if (i.kind == sbr::draw::Item::Kind::Text) labels.insert(i.text);
+  }
+  EXPECT_GE(dashed, 8);  // two rectangles
+  EXPECT_TRUE(labels.count("床断熱"));
+  EXPECT_TRUE(labels.count("屋根断熱"));
+  EXPECT_TRUE(has(view->calculationNotes, "破線：この階の床の断熱の範囲　押出法ポリスチレンフォーム 50 mm（1 個）"));
+  EXPECT_TRUE(has(view->calculationNotes, "破線：屋根の断熱の範囲　フェノールフォーム 60 mm（外張り）（1 個）"));
 }
 
 // docs/217: sections with the insulation of the walls, floors and roofs they cut marked: up a wall's
@@ -3339,4 +3397,31 @@ TEST_F(Schedules, InsulationZigzagsFollowTheScale) {
   EXPECT_NEAR(at20, screen, 1e-9);  // 1.2 mm at 1:20 is 24: the band's 100 rules
   EXPECT_LE(at100, 120.0 + 1e-6);
   EXPECT_GT(at100, 110.0);
+}
+
+// docs/220: at a corner of two walls with insulation, the marks end where they meet (in the cores
+// of a build-up), not at the walls' ends running through the outer layers.
+TEST_F(Schedules, InsulationMarksMeetAtCorners) {
+  ok("set_wall_type", {{"ids", {south, east, north, west}}, {"type", "exterior_siding"}});
+  ok("set_insulation", {{"ids", {south, west}}, {"material", "グラスウール 16K"}, {"thickness_mm", 100}, {"placement", "fill"},
+                        {"source", "架空のカタログ"}});
+  const auto& d = modeler.document();
+  const double southOuter = d.worldBounds(*d.find(south)).CornerMin().Y();
+  const double westOuter = d.worldBounds(*d.find(west)).CornerMin().X();
+  const double eastOuter = d.worldBounds(*d.find(east)).CornerMax().X();
+  const double in = 16 + 18 + 9 + 105.0 / 2;  // the core's middle from the outer face
+  double southWest = 1e9, southEast = -1e9, westSouth = 1e9;
+  for (const auto& run : sbr::doc::Modeler::insulationRuns(d, 1100)) {
+    if (run.wall == south) {
+      southWest = std::min({southWest, run.a.X(), run.b.X()});
+      southEast = std::max({southEast, run.a.X(), run.b.X()});
+    }
+    if (run.wall == west) westSouth = std::min({westSouth, run.a.Y(), run.b.Y()});
+  }
+  // The south-west corner: both marks end at the meeting of the two cores' middles.
+  EXPECT_NEAR(southWest, westOuter + in, 1e-6);
+  EXPECT_NEAR(westSouth, southOuter + in, 1e-6);
+  // The south-east corner: the east wall has no insulation, so the south mark goes to its end
+  // as before (past the east wall's core middle).
+  EXPECT_GT(southEast, eastOuter - in);
 }

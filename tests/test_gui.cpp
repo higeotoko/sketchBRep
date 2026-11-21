@@ -959,6 +959,20 @@ void GuiPhase1::insulationPlanIsDrawnOnItsSheet() {
   }
   const QByteArray sectionWhere = qgetenv("SBR_SECTION_PNG");
   if (!sectionWhere.isEmpty()) QVERIFY(sectionImage.save(QString::fromLocal8Bit(sectionWhere)));
+  // docs/221: 2FL's insulation plan: its floor and the roof over it as dashed ranges with labels.
+  // SBR_UPPER_PNG: where to save its picture.
+  const auto upper = std::find(withSections->names.begin(), withSections->names.end(), std::string("断熱範囲図（2FL）"));
+  QVERIFY(upper != withSections->names.end());
+  QImage upperImage(1680, 1188, QImage::Format_RGB32);
+  upperImage.fill(Qt::white);
+  {
+    QPainter painter(&upperImage);
+    painter.setRenderHint(QPainter::Antialiasing);
+    app::renderSheet(painter, withSections->sheets[static_cast<std::size_t>(upper - withSections->names.begin())],
+                     QRectF(0, 0, upperImage.width(), upperImage.height()));
+  }
+  const QByteArray upperWhere = qgetenv("SBR_UPPER_PNG");
+  if (!upperWhere.isEmpty()) QVERIFY(upperImage.save(QString::fromLocal8Bit(upperWhere)));
   // docs/218: walls of a build-up: the marks in the core (充填), drawn at 1:20 to see the layers.
   // SBR_LAYERED_PNG: where to save its picture.
   QVERIFY(call("set_wall_type", {{"ids", walls["result"]["ids"]}, {"type", "exterior_siding"}})["ok"].get<bool>());

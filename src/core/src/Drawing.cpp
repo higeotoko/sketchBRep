@@ -1217,18 +1217,45 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
       walls[run.text].insert(run.wall);
       places.insert(run.place);
     }
-    std::map<std::string, int> others;
-    for (const doc::Object& o : document.objects()) {
-      const auto kind = o.attributes.find("kind");
-      if (kind == o.attributes.end() || (kind->second != "slab" && kind->second != "roof")) continue;
-      const std::string text = doc::Modeler::insulationText(o);
-      if (!text.empty()) ++others[(kind->second == "slab" ? "床：" : "屋根：") + text];
+    // docs/221: the insulated floor of this storey, the floor of the one above and the roof over it,
+    // as ranges: their outlines dashed, with a label inside (the floor's in the middle, the floor
+    // above's and the roof's a little below and above it).
+    std::map<std::string, std::map<std::string, int>> areas;  // part -> insulation -> count
+    for (const auto& area : doc::Modeler::insulationAreas(document, z)) {
+      const std::size_t from = view.items.size();
+      addLocalEdges(area.outline.Moved(TopLoc_Location(proj.toLocal)), Pen::Hidden, deflection, view.items);
+      if (view.items.size() == from) continue;
+      double u0 = 1e300, v0 = 1e300, u1 = -1e300, v1 = -1e300;
+      for (std::size_t k = from; k < view.items.size(); ++k)
+        for (const gp_Pnt2d& p : view.items[k].points) {
+          u0 = std::min(u0, p.X());
+          v0 = std::min(v0, p.Y());
+          u1 = std::max(u1, p.X());
+          v1 = std::max(v1, p.Y());
+        }
+      if (u0 > u1) continue;
+      const double shift = area.part == "床" ? 0.0 : (area.part == "上階床" ? -0.12 : 0.12) * (v1 - v0);
+      Item label;
+      label.kind = Item::Kind::Text;
+      label.pen = Pen::Text;
+      label.points = {gp_Pnt2d((u0 + u1) / 2, (v0 + v1) / 2 + shift)};
+      label.text = area.part + "断熱";
+      label.height = 2.5;
+      label.hAlign = 1;
+      label.vAlign = 1;
+      view.items.push_back(label);
+      ++areas[area.part][area.text];
     }
     if (walls.empty()) view.calculationNotes.push_back("この階で切る壁に、断熱の入力はありません");
     for (const auto& [text, ids] : walls)
       view.calculationNotes.push_back("波線：壁の断熱　" + text + "（" + std::to_string(ids.size()) + " 枚）");
-    for (const auto& [text, count] : others)
-      view.calculationNotes.push_back(text + "（" + std::to_string(count) + " 個、平面には描きません）");
+    for (const char* part : {"床", "上階床", "屋根"}) {
+      const auto it = areas.find(part);
+      if (it == areas.end()) continue;
+      const std::string name = std::string(part) == "床" ? "この階の床" : std::string(part) == "上階床" ? "上の階の床" : "屋根";
+      for (const auto& [text, count] : it->second)
+        view.calculationNotes.push_back("破線：" + name + "の断熱の範囲　" + text + "（" + std::to_string(count) + " 個）");
+    }
     for (std::string& note : insulationPlaceNotes(places)) view.calculationNotes.push_back(std::move(note));
   }
   // docs/217: the legend of a section's insulation marks.
