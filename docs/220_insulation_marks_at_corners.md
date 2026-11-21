@@ -21,6 +21,18 @@ docs/218 の「まだ」：「角で波線を、相手の壁の柱・間柱の�
 - `insulationPlanIsDrawnOnItsSheet` の 1:20 の平面（外周 4 枚に充填）を画像に描いて、目で見た。
   - 4 つの角で、2 本の波線が柱・間柱の層の中で出会っている。外側の層・石膏ボードを横切る線は無くなった（前の絵では、西の壁の最後の 1 山が外の角まで斜めに出ていた）。
 
+**CI**：run 44869456716（push）成功。Linux 806 件すべて成功（docs/220・221 は同じコミット `7ca41fa`）。
+
+**配布**
+
+| 項目 | 内容 |
+|---|---|
+| コード | `7ca41fa` |
+| ZIP | `SketchBRep-windows-x64-7ca41fa-local.zip`（Codex のチャットフォルダの `outputs\`） |
+| サイズ | 82,653,203 bytes |
+| SHA256 | `1a3f69620189dbc54fe6a3c602d4226cab2ebd9947cca3d61316421ae41af61a` |
+| ZIP の検証 | `docs/validation/2026-11-21-portable-7ca41fa.json`・`-mat.json`（GUI 18 + 4 条件、失敗 0） |
+
 **Windows 実機確認（人の操作）**：まだ。docs/105 の 14-31。
 
 ## まだ
