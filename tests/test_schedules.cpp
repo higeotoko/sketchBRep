@@ -3667,7 +3667,8 @@ TEST_F(Schedules, OpeningsComparedWithTheSpecificationValues) {
   auto now = texts();
   EXPECT_TRUE(has(now, "U≦4.7　η≦0.59"));
   EXPECT_TRUE(has(now, "U 満たす・η 未入力"));
-  EXPECT_TRUE(has(now, "見ていない"));  // the east door
+  EXPECT_TRUE(has(now, "U≦4.7"));     // docs/230: the east door, by its U only
+  EXPECT_TRUE(has(now, "U 満たす"));  // 2.9
   ok("set_opening_performance", {{"host", south}, {"u_value", 2.33}, {"solar_gain", 0.51}, {"source", "架空のカタログ"}});
   EXPECT_TRUE(has(texts(), "U 満たす・η 満たす"));
   ok("set_opening_performance", {{"host", south}, {"u_value", 2.33}, {"solar_gain", 0.7}, {"source", "架空のカタログ"}});
@@ -3677,6 +3678,13 @@ TEST_F(Schedules, OpeningsComparedWithTheSpecificationValues) {
   now = texts();
   EXPECT_TRUE(has(now, "U≦2.3"));
   EXPECT_TRUE(has(now, "U 不足"));
+  // docs/230 (告示第266号 1(3)イ itself): region 3 is with 1-2 (2.3), region 4 is 3.5.
+  ok("set_energy_route", {{"route", "spec"}, {"region", 3}, {"source", "架空の案内"}});
+  EXPECT_TRUE(has(texts(), "U≦2.3"));
+  ok("set_energy_route", {{"route", "spec"}, {"region", 4}, {"source", "架空の案内"}});
+  now = texts();
+  EXPECT_TRUE(has(now, "U≦3.5"));
+  EXPECT_FALSE(has(now, "η≦0.59"));  // no solar gain asked in region 4
   // Region 8: no U, η at most 0.53.
   ok("set_energy_route", {{"route", "spec"}, {"region", 8}, {"source", "架空の案内"}});
   now = texts();

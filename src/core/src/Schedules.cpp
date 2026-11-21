@@ -1154,11 +1154,12 @@ int energyRegionOf(const Document& document) {
   return 0;
 }
 
-// docs/229: the 仕様基準's values for windows (告示第266号, 省エネ基準 columns), as tabulated by 国土交通省
-// 「住宅の仕様基準・誘導仕様基準について」 p.14 (read 2026-11-21): the heat transmittance at most 2.3
-// (regions 1-2), 3.5 (3), 4.7 (4-7), none (8); against the sun in regions 5-7 a window's solar gain
-// at most 0.59 and in 8 at most 0.53 (or glass 0.73 / 0.66, fittings outside, eaves: not modelled).
-double windowSpecU(int region) { return region <= 2 ? 2.3 : region == 3 ? 3.5 : region <= 7 ? 4.7 : -1; }
+// docs/229, docs/230: the 仕様基準's values for openings, as 告示第266号 1(3) itself gives them (最終改正
+// 令和6年告示第975号, read 2026-11-21): イ the heat transmittance of 開口部 (doors too) at most 2.3
+// (regions 1-3), 3.5 (4), 4.7 (5-7), none (8); ロ for openings mostly of transparent material, in a
+// detached house, in regions 5-7 an opening's solar gain at most 0.59 and in 8 at most 0.53 (or glass
+// 0.73 / 0.66, fittings outside, eaves: not modelled).
+double windowSpecU(int region) { return region <= 3 ? 2.3 : region == 4 ? 3.5 : region <= 7 ? 4.7 : -1; }
 double windowSpecEta(int region) { return region >= 5 && region <= 7 ? 0.59 : region == 8 ? 0.53 : -1; }
 
 draw::Table openingSpecTable(const Document& document) {
@@ -1182,16 +1183,14 @@ draw::Table openingSpecTable(const Document& document) {
     anyRated = anyRated || o.uValue >= 0;
     const std::string part = o.kind == "door" ? "ドア" : o.kind == "window" ? "窓" : "開口（建具なし）";
     Row& r = rows[(o.kind == "door" ? "1" : o.kind == "window" ? "0" : "2") + o.mark + "｜" + spec + "｜" + value];
-    // docs/229: the reference values and how they compare (windows and plain openings; doors not looked at).
+    // docs/229: the reference values and how they compare. docs/230: doors by their U only (the solar
+    // gain is for openings mostly of transparent material).
     std::string need, verdict;
-    if (o.kind == "door") {
-      need = "見ていない";
-      verdict = "未評価";
-    } else if (region < 1 || region > 8) {
+    if (region < 1 || region > 8) {
       need = "地域未入力";
       verdict = "未評価";
     } else {
-      const double u = windowSpecU(region), eta = windowSpecEta(region);
+      const double u = windowSpecU(region), eta = o.kind == "door" ? -1.0 : windowSpecEta(region);
       std::vector<std::string> needs, verdicts;
       if (u > 0) {
         needs.push_back("U≦" + number(u, 1));
@@ -1220,10 +1219,10 @@ draw::Table openingSpecTable(const Document& document) {
     t.rows.push_back(r.cells);
   }
   t.notes = {"外壁の窓・ドア・開口です。性能値は入れた熱貫流率 U（W/(m2K)）と日射熱取得率 η（入れた物）。",
-             "基準値(参考)：仕様基準（告示第266号）の窓の熱貫流率と日射遮蔽（5〜8 地域）の値。国土交通省「住宅の仕様基準・"
-             "誘導仕様基準について」p.14 の表から取った（2026-11-21）。告示の本文とは未照合。",
+             "基準値(参考)：仕様基準（平成28年国土交通省告示第266号、最終改正 令和6年告示第975号）1(3) の開口部の熱貫流率と"
+             "日射遮蔽（5〜8 地域）の値。告示の本文から取った（2026-11-21）。ドアは熱貫流率だけ（日射遮蔽は透明な開口部が対象）。",
              "日射遮蔽は、窓の η のほか、ガラスの η（5〜7 地域 0.73 以下・8 地域 0.66 以下）・付属部材・ひさしや軒でも満たせる"
-             "（「η 他の方法で」）。床面積の 2％・4％以下の窓の除外、ドアは見ていない。合否の判定ではありません。"};
+             "（「η 他の方法で」）。床面積の 2％・4％以下の窓の除外は見ていない。合否の判定ではありません。"};
   return t;
 }
 
@@ -1248,9 +1247,10 @@ draw::Table equipmentTable(const Document& document) {
 // of 省エネ drawings carry one on the same sheet (部位・仕様又は使用材料等・厚さ・性能値): one row per
 // part and insulation, with how many walls / floors / roofs have it.
 // docs/228: the thermal resistance the 仕様基準 asks of insulation in a timber house (木造軸組), by
-// part, method and region, as tabulated by 国土交通省「住宅の仕様基準・誘導仕様基準について」 pp.9-10
-// (the explanation of 告示第266号; 省エネ基準 columns; read 2026-11-21). Regions 1-2, 3, 4-7, 8; below
-// 0: no value for that region. Floors: その他の部分 (whether a floor faces outside air is not known).
+// part, method and region: 告示第266号 1(2)ロ(イ)'s table for a detached house (最終改正 令和6年告示第
+// 975号), checked against the notice's own text 2026-11-21 (docs/230; regions 4 and 5-7 have the same
+// values for timber). Columns 1-2, 3, 4-7, 8; below 0: no value for that region. Floors: その他の部分
+// (whether a floor faces outside air is not known).
 struct SpecR {
   double fill[4], outside[4];
 };
@@ -1312,8 +1312,8 @@ draw::Table insulationSpecTable(const Document& document) {
   for (const auto& [key, r] : rows)
     t.rows.push_back({parts[key.first], r.material, r.thickness, r.value, std::to_string(r.count), r.need, r.verdict});
   t.notes = {"性能値は、入れた熱抵抗 R、または厚さ÷熱伝導率（m2K/W）。",
-             "基準値(参考)：仕様基準（平成28年国土交通省告示第266号）の断熱材の熱抵抗の基準、木造軸組・省エネ基準の値。"
-             "国土交通省「住宅の仕様基準・誘導仕様基準について」の表（p.9・10）から取った（2026-11-21）。告示の本文とは未照合。",
+             "基準値(参考)：仕様基準（平成28年国土交通省告示第266号、最終改正 令和6年告示第975号）1(2)ロ の断熱材の熱抵抗の"
+             "基準値、一戸建て・木造軸組構法の値。告示の本文と照らした（2026-11-21）。",
              "床は「その他の部分」の値（外気に接する床は、充填 5.2・5.2・3.3、外張 3.8・3.8・2.5）。天井断熱・基礎・枠組壁工法・"
              "熱貫流率 U による確かめ方は見ていない。合否の判定ではありません。申請先と申請時点の告示で確かめます。"};
   return t;
