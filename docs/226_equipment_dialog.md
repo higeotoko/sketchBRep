@@ -24,6 +24,18 @@ docs/224 の「まだ」：画面から機器を入れるダイアログ（今�
   - もう一度開くと 3 行。3 行目を選んで消して OK すると 2 つになる。
 - メニュー・工程パネル・省エネ・断熱・図面まわりの GUI 23 件が成功。GUI 全件（ローカル）：245 件成功・8 件失敗・7 件スキップ。失敗 8 件は、表示倍率 175% で画素・クリック位置を読む既知の 6 件（docs/192 の一覧の物）と、クリップボードを使う 2 件（`helpWindowAndCrashLog`・`chatGptConnectionDialogControlsBridge`、ほかのアプリがクリップボードを使っていると落ちる）。今回の変更とは関係しない。
 
+**CI**：run 44877137307（push）成功。Linux 809 件すべて成功。
+
+**配布**
+
+| 項目 | 内容 |
+|---|---|
+| コード | `c2915c6` |
+| ZIP | `SketchBRep-windows-x64-c2915c6-local.zip`（Codex のチャットフォルダの `outputs\`） |
+| サイズ | 82,741,113 bytes |
+| SHA256 | `e5edc0afb90cf00dcd3c21cca9fd8b00a47b7a96c289be358e3fd22f3df233bd` |
+| ZIP の検証 | `docs/validation/2026-11-21-portable-c2915c6.json`・`-mat.json`（GUI 18 + 4 条件、失敗 0） |
+
 **Windows 実機確認（人の操作）**：まだ。docs/105 の 14-36。
 
 ## まだ
