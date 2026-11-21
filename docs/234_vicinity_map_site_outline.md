@@ -20,6 +20,18 @@ docs/233 の「まだ」：敷地の形を地図に重ねること（今は丸�
   - ズーム 16：「5 mm に満たない」の注。
 - docs/233 のテストもそのまま成功。Windows ローカル：コア全件 795 件成功・8 件スキップ。
 
+**CI**：run 44904671724（push）成功。Linux 816 件すべて成功。
+
+**配布**
+
+| 項目 | 内容 |
+|---|---|
+| コード | `beb0b15` |
+| ZIP | `SketchBRep-windows-x64-beb0b15-local.zip`（Codex のチャットフォルダの `outputs\`。TLS の部品入り） |
+| サイズ | 82,947,005 bytes |
+| SHA256 | `4d8526137b85f44c00a63bc32b44706b906f2530d72c323ee411ac0833a14a5b` |
+| ZIP の検証 | `docs/validation/2026-11-21-portable-beb0b15.json`・`-mat.json`（GUI 18 + 4 条件、失敗 0） |
+
 **Windows 実機確認（人の操作）**：まだ。docs/105 の 14-43。
 
 ## まだ
