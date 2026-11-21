@@ -3537,3 +3537,30 @@ TEST_F(Schedules, EquipmentForTheEnergyDocuments) {
   ok("undo");
   EXPECT_TRUE(sbr::doc::Modeler::equipmentOf(modeler.document()).empty());
 }
+
+// docs/225: with performance given to the outer openings, the insulation sheets carry 開口部仕様表
+// (部位・符号・仕様・性能値 U・数・資料); without any, no such table.
+TEST_F(Schedules, OpeningSpecificationTableOnTheInsulationSheets) {
+  ok("set_insulation", {{"ids", {south}}, {"material", "グラスウール 16K"}, {"thickness_mm", 100}, {"source", "架空のカタログ"}});
+  const auto texts = [&]() {
+    const auto set = sbr::doc::drawingSet(modeler.document(), {});
+    std::vector<std::string> out;
+    if (!set) return out;
+    for (std::size_t i = 0; i < set->names.size(); ++i)
+      if (set->names[i] == "断熱範囲図（1FL）")
+        for (const auto& item : set->sheets[i].items)
+          if (item.kind == sbr::draw::Item::Kind::Text) out.push_back(item.text);
+    return out;
+  };
+  const auto count = [](const std::vector<std::string>& list, const std::string& text) {
+    return std::count(list.begin(), list.end(), text);
+  };
+  EXPECT_EQ(count(texts(), "開口部仕様表"), 0);
+  ok("set_opening_performance", {{"host", south}, {"u_value", 2.33}, {"glass", "Low-E 複層"}, {"source", "架空のカタログ"}});
+  const auto after = texts();
+  EXPECT_EQ(count(after, "開口部仕様表"), 1);
+  EXPECT_EQ(count(after, "U=2.33"), 1);  // the two south windows share a mark: one row
+  EXPECT_EQ(count(after, "2"), 1);
+  EXPECT_GE(count(after, "未入力"), 1);  // the north window and the east door have none
+  EXPECT_GE(count(after, "ドア"), 1);
+}

@@ -1143,6 +1143,40 @@ std::string insulationText(const Object& o) {
   return text;
 }
 
+// docs/225: the openings of the outer walls (外皮) as the examples' 仕様表 (外皮基準 開口部): 部位
+// (窓 / ドア / 開口（建具なし）), 符号, 仕様 (fitting, product number, glass), 性能値 (heat transmittance U), 数, 資料.
+draw::Table openingSpecTable(const Document& document) {
+  draw::Table t;
+  t.title = "開口部仕様表";
+  t.headers = {"部位", "符号", "仕様又は使用材料等", "性能値", "数", "資料"};
+  struct Row {
+    std::vector<std::string> cells;
+    int count = 0;
+  };
+  std::map<std::string, Row> rows;
+  bool anyRated = false;
+  for (const OpeningRow& o : openingSchedule(document).rows) {
+    if (o.inner) continue;  // the envelope only
+    std::string spec = o.fitting;
+    if (!o.product.empty()) spec += (spec.empty() ? "" : "　") + std::string("品番 ") + o.product;
+    if (!o.glass.empty()) spec += (spec.empty() ? "" : "　") + o.glass;
+    const std::string value = o.uValue < 0 ? "未入力" : "U=" + number(o.uValue, 2);
+    anyRated = anyRated || o.uValue >= 0;
+    const std::string part = o.kind == "door" ? "ドア" : o.kind == "window" ? "窓" : "開口（建具なし）";
+    Row& r = rows[(o.kind == "door" ? "1" : o.kind == "window" ? "0" : "2") + o.mark + "｜" + spec + "｜" + value];
+    if (r.count == 0) r.cells = {part, o.mark, spec, value, "", o.performanceSource};
+    ++r.count;
+  }
+  if (!anyRated) return t;  // no performance given: nothing to show yet (the door and window schedule has the rest)
+  for (auto& [key, r] : rows) {
+    r.cells[4] = std::to_string(r.count);
+    t.rows.push_back(r.cells);
+  }
+  t.notes = {"外壁の窓・ドア・開口です。性能値は入れた熱貫流率 U（W/(m2K)）。日射熱取得率 η は、まだ入れる所がありません。",
+             "基準値との照合はしていません。"};
+  return t;
+}
+
 // docs/224: the equipment table (機器表) as the examples of 省エネ drawings carry it: 部位 (kind),
 // 仕様又は使用材料等 (name, model), 性能値, 数, 資料.
 draw::Table equipmentTable(const Document& document) {
@@ -2951,8 +2985,10 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
     // docs/223: the insulation specification table on each insulation sheet.
     const draw::Table specTable = insulationSpecTable(document);
     const draw::Table equipment = equipmentTable(document);  // docs/224
+    const draw::Table openingSpec = openingSpecTable(document);  // docs/225
     std::vector<draw::Table> tables;
     if (!specTable.rows.empty()) tables.push_back(specTable);
+    if (!openingSpec.rows.empty()) tables.push_back(openingSpec);
     if (!equipment.rows.empty()) tables.push_back(equipment);
     bool onSheet = false;
     for (Planned& p : planned)

@@ -999,6 +999,27 @@ void GuiPhase1::insulationPlanIsDrawnOnItsSheet() {
   }
   const QByteArray layeredWhere = qgetenv("SBR_LAYERED_PNG");
   if (!layeredWhere.isEmpty()) QVERIFY(layeredImage.save(QString::fromLocal8Bit(layeredWhere)));
+  // docs/223-225: the 1FL insulation sheet with the insulation, opening and equipment tables.
+  // SBR_TABLES_PNG: where to save its picture.
+  QVERIFY(call("set_opening_performance", {{"host", walls["result"]["ids"][0]}, {"u_value", 2.33}, {"glass", "Low-E 複層"},
+                                           {"source", "架空のカタログ"}})["ok"].get<bool>());
+  QVERIFY(call("set_equipment", {{"items", {{{"kind", "heating_cooling"}, {"name", "ルームエアコン"}, {"model", "AC-28xxx"},
+                                             {"value", "エネルギー消費効率区分（い）"}, {"count", 2}},
+                                            {{"kind", "hot_water"}, {"name", "電気ヒートポンプ給湯機"}, {"value", "JIS効率 3.8"}}}}})["ok"].get<bool>());
+  const auto withTables = doc::drawingSet(modeler.document(), {});
+  QVERIFY(withTables.ok());
+  const auto first = std::find(withTables->names.begin(), withTables->names.end(), std::string("断熱範囲図（1FL）"));
+  QVERIFY(first != withTables->names.end());
+  QImage tablesImage(2376, 1680, QImage::Format_RGB32);
+  tablesImage.fill(Qt::white);
+  {
+    QPainter painter(&tablesImage);
+    painter.setRenderHint(QPainter::Antialiasing);
+    app::renderSheet(painter, withTables->sheets[static_cast<std::size_t>(first - withTables->names.begin())],
+                     QRectF(0, 0, tablesImage.width(), tablesImage.height()));
+  }
+  const QByteArray tablesWhere = qgetenv("SBR_TABLES_PNG");
+  if (!tablesWhere.isEmpty()) QVERIFY(tablesImage.save(QString::fromLocal8Bit(tablesWhere)));
 }
 
 // docs/215: the energy route, the insulation of selected walls and an opening's performance given
