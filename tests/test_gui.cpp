@@ -13069,6 +13069,25 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
     vent->setCurrentIndex(vent->findData(QStringLiteral("equipment")));
     emit vent->activated(vent->currentIndex());
     QTRY_VERIFY(m.document().find(room)->attributes.at("room_daylight").find("equipment")!=std::string::npos);
+    // docs/213: the ventilation unit's name and its airflow; the kind and ventilation stay.
+    f.window.setSelection({room});
+    QApplication::processEvents();
+    QVERIFY(f.window.findChild<QComboBox*>(QStringLiteral("roomJoinedWith")));
+    auto* unit=f.window.findChild<QLineEdit*>(QStringLiteral("roomFanUnit"));QVERIFY(unit);
+    unit->setText(QStringLiteral("第3種換気 1"));
+    emit unit->editingFinished();
+    QTRY_VERIFY(m.document().find(room)->attributes.at("room_daylight").find("第3種換気 1")!=std::string::npos);
+    f.window.setSelection({room});
+    QApplication::processEvents();
+    auto* fan=f.window.findChild<QDoubleSpinBox*>(QStringLiteral("roomFanAirflow"));QVERIFY(fan);
+    QCOMPARE(fan->text(),fan->specialValueText());
+    const auto fanSteps=m.history().undoCount();
+    fan->setValue(60.0);
+    emit fan->editingFinished();
+    QTRY_VERIFY(m.document().find(room)->attributes.at("room_daylight").find("\"fan_m3h\":60")!=std::string::npos);
+    QCOMPARE(m.history().undoCount(),fanSteps+1);
+    const std::string stored=m.document().find(room)->attributes.at("room_daylight");
+    QVERIFY2(stored.find("equipment")!=std::string::npos&&stored.find("第3種換気 1")!=std::string::npos,stored.c_str());
   }
   // docs/109: a mark and a product number typed in the wall's properties.
   f.window.setSelection({south});
@@ -13125,6 +13144,20 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
     QCOMPARE(first->ventilationM2,0.9);
     QVERIFY(m.undo());
     QVERIFY(!m.document().find(south)->attributes.count("opening_daylight"));
+  }
+  // docs/213: a veranda outside the first south window.
+  {
+    f.window.setSelection({});QApplication::processEvents();
+    f.window.setSelection({south});QApplication::processEvents();
+    auto* veranda=f.window.findChild<QCheckBox*>(QStringLiteral("openingVeranda1"));QVERIFY(veranda);
+    QVERIFY(!veranda->isChecked());
+    veranda->click();
+    QTRY_VERIFY(m.document().find(south)->attributes.count("opening_daylight"));
+    const doc::OpeningSchedule rows=doc::openingSchedule(m.document());
+    const auto first=std::find_if(rows.rows.begin(),rows.rows.end(),[&](const doc::OpeningRow& r){return r.host==south&&r.index==1;});
+    QVERIFY(first!=rows.rows.end()&&first->veranda);
+    QVERIFY2(f.window.statusText().contains(QStringLiteral("縁側")),qPrintable(f.window.statusText()));
+    QVERIFY(m.undo());
   }
   // docs/133: both south windows AW-1; the first made smaller by hand; picked by its hole, the
   // button makes the other one like it.

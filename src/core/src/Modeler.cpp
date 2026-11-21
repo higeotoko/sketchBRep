@@ -6677,11 +6677,14 @@ Status Modeler::setOpeningDaylight(const ObjectId& hostId, const std::vector<std
   return Status::success();
 }
 
-Status Modeler::setRoomVentilation(const ObjectId& room, const std::string& joinedWith, double fanM3h) {
+Status Modeler::setRoomVentilation(const ObjectId& room, const std::string& joinedWith, double fanM3h,
+                                   const std::optional<std::string>& fanUnit) {
   const Object* marker = document_.find(room);
   if (!marker || !isRoomMarker(*marker)) return Status::failure("Not a room made by the room tool");
   if (marker->locked) return Status::failure("The object is locked");
   if (std::isinf(fanM3h) || fanM3h > 100000) return Status::failure("有効換気量は 0〜100000 m³/h です");
+  if (fanUnit && (fanUnit->size() > 120 || fanUnit->find_first_of("\r\n") != std::string::npos))
+    return Status::failure("換気設備の名前は1行、40 字までです");
   const auto stored = [](const Object& o) {
     const auto it = o.attributes.find("room_daylight");
     const nlohmann::json j = it == o.attributes.end() ? nlohmann::json() : nlohmann::json::parse(it->second, nullptr, false);
@@ -6717,12 +6720,31 @@ Status Modeler::setRoomVentilation(const ObjectId& room, const std::string& join
     if (joinedWith.empty()) mine.erase("joined_with");
     else mine["joined_with"] = joinedWith;
   }
+  if (fanUnit) {
+    if (fanUnit->empty()) mine.erase("fan_unit");
+    else mine["fan_unit"] = *fanUnit;
+  }
   if (!std::isnan(fanM3h)) {
     if (fanM3h > 0) mine["fan_m3h"] = fanM3h;
     else mine.erase("fan_m3h");
   }
   put(object, mine);
   changes.modify(object);
+  // docs/213: the airflow of a unit goes to every room it serves.
+  const std::string unit = mine.value("fan_unit", std::string());
+  if (!unit.empty() && !std::isnan(fanM3h)) {
+    for (const Object& listed : document_.objects()) {
+      if (listed.id == room || !isRoomMarker(listed) || listed.locked) continue;
+      const Object* pending = changes.pending(listed.id);  // a partner changed above
+      Object copy = pending ? *pending : listed;
+      nlohmann::json theirs = stored(copy);
+      if (theirs.value("fan_unit", std::string()) != unit) continue;
+      if (fanM3h > 0) theirs["fan_m3h"] = fanM3h;
+      else theirs.erase("fan_m3h");
+      put(copy, theirs);
+      changes.modify(copy);
+    }
+  }
   history_.execute(changes.build("Room Ventilation"));
   return Status::success();
 }

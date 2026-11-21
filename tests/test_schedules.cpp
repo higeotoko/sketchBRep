@@ -3010,3 +3010,56 @@ TEST_F(Schedules, APermitStageMarkGoesBackToRecheckWhenTheModelChanges) {
   for (const json& r : rows) living = living || r["item"].get<std::string>().rfind("居間", 0) == 0;
   EXPECT_TRUE(living) << rows.dump();
 }
+
+// docs/213: one ventilation unit serving two rooms is compared with the sum of their required
+// airflows (令 20 条の 8 第 1 項第 1 号イ（2））; an airflow given goes to every room of the unit.
+TEST_F(Schedules, OneVentilationUnitForTwoRoomsTakesTheSum) {
+  const std::string east = ok("create_room", {{"at", {6000, 3000}}, {"name", "洋室"}})["id"];
+  const auto byName = [&](const std::string& name) {
+    const json inputs = ok("room_opening_inputs");
+    for (const json& r : inputs["rooms"])
+      if (r["name"] == name) return r;
+    ADD_FAILURE() << name;
+    return json();
+  };
+  for (const std::string& id : {room, east}) {
+    ok("set_room_daylight", {{"id", id}, {"kind", "dwelling"}, {"ventilation", "equipment"}});
+    ok("set_room_finish", {{"id", id}, {"ceiling_height", 2400}});
+  }
+  ok("set_room_ventilation", {{"id", room}, {"fan_unit", "第3種換気 1"}});
+  // One room of the name: compared on its own.
+  json r = byName("居間");
+  EXPECT_EQ(r["fan_unit"], "第3種換気 1");
+  EXPECT_EQ(r["mechanical_comparison"]["state"], "未入力");
+  EXPECT_EQ(r["mechanical_comparison"]["text"].get<std::string>().find("換気設備「"), std::string::npos);
+  ok("set_room_ventilation", {{"id", east}, {"fan_unit", "第3種換気 1"}});
+  r = byName("居間");
+  const std::string text = r["mechanical_comparison"]["text"];
+  EXPECT_EQ(r["mechanical_comparison"]["state"], "未入力");
+  EXPECT_NE(text.find("換気設備「第3種換気 1」（居間・洋室）"), std::string::npos) << text;
+  EXPECT_NE(text.find("合計 57.6 m³/h"), std::string::npos) << text;
+  // The airflow given on one room goes to both, as one undo step.
+  const auto steps = modeler.history().undoCount();
+  ok("set_room_ventilation", {{"id", room}, {"fan_m3h", 60}});
+  EXPECT_EQ(modeler.history().undoCount(), steps + 1);
+  EXPECT_EQ(byName("洋室")["fan_m3h"], 60.0);
+  EXPECT_EQ(byName("居間")["mechanical_comparison"]["state"], "参考値内");
+  EXPECT_EQ(byName("洋室")["mechanical_comparison"]["state"], "参考値内");
+  EXPECT_NE(byName("洋室")["mechanical_comparison"]["text"].get<std::string>().find("イ（2）"), std::string::npos);
+  ok("set_room_ventilation", {{"id", east}, {"fan_m3h", 50}});
+  EXPECT_EQ(byName("居間")["fan_m3h"], 50.0);
+  EXPECT_EQ(byName("居間")["mechanical_comparison"]["state"], "参考値を外れる");  // 50 < 57.6
+  // Different airflows on rooms of one unit: to look at.
+  ok("set_room_ventilation", {{"id", east}, {"fan_unit", ""}});
+  ok("set_room_ventilation", {{"id", east}, {"fan_m3h", 30}});
+  EXPECT_EQ(byName("居間")["fan_m3h"], 50.0);  // not of the unit any more
+  ok("set_room_ventilation", {{"id", east}, {"fan_unit", "第3種換気 1"}});
+  EXPECT_EQ(byName("居間")["mechanical_comparison"]["state"], "要確認");
+  // A room of the unit without a ceiling height: the sum cannot be worked out.
+  ok("set_room_ventilation", {{"id", east}, {"fan_m3h", 50}});
+  ok("set_room_finish", {{"id", east}, {"ceiling_height", 0}});
+  r = byName("居間");
+  EXPECT_EQ(r["mechanical_comparison"]["state"], "未評価");
+  EXPECT_NE(r["mechanical_comparison"]["text"].get<std::string>().find("洋室 の必要有効換気量を出せません"), std::string::npos);
+  EXPECT_FALSE(call("set_room_ventilation", {{"id", room}, {"fan_unit", std::string(200, 'x')}}).value("ok", true));
+}

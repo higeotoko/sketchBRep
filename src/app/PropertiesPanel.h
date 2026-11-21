@@ -74,6 +74,13 @@ class PropertiesPanel : public QWidget {
   // docs/204: an opening's daylight factor with its basis and its area open for ventilation (m2);
   // below 0: taken away.
   void openingDaylightEdited(const doc::ObjectId& id, int index, double factor, const QString& basis, double ventilationM2);
+  // docs/213: the room it is one with (法 28 条 4 項; empty: none) and the airflow of its mechanical
+  // ventilation (m3/h; 0: not given). NaN: that value is left as it is.
+  void roomVentilationEdited(const doc::ObjectId& id, const QString& joinedWith, double fanM3h, bool joinChanged);
+  // docs/213: a veranda 90 cm wide or more outside the opening (令 20 条 2 項).
+  void openingVerandaEdited(const doc::ObjectId& id, int index, bool veranda);
+  // docs/213: the name of the ventilation unit serving the room (empty: none).
+  void roomFanUnitEdited(const doc::ObjectId& id, const QString& unit);
   // The room's ceiling board made (again) at its ceiling height (docs/123).
   void roomCeilingRequested(const doc::ObjectId& id);
   // One opening put at `offset` from the wall's left end (seen from the side it was cut from)

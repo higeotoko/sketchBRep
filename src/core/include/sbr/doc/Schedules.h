@@ -4,6 +4,7 @@
 #pragma once
 
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -84,6 +85,7 @@ struct RoomRow {
   std::string ventilation;   // window / equipment / empty
   ObjectId joinedWith;       // docs/211: the room it is one with (法 28 条 4 項), or empty
   double fanM3h = 0.0;       // docs/211: effective airflow of its mechanical ventilation (m3/h), 0: not given
+  std::string fanUnit;       // docs/213: the name of the ventilation unit serving it; rooms of one name share it
 };
 
 struct RoomSchedule {
@@ -108,6 +110,13 @@ struct RoomOpeningInput {
   double pairedFloor = 0.0, pairedDaylight = 0.0, pairedVentilation = 0.0;
   int pairedFactorsMissing = 0, pairedVentilationMissing = 0;
   bool pairedCounted = true;
+  // docs/213: one unit serving this room and others (令 20 条の 8 第 1 項第 1 号イ（2）): the other
+  // rooms of its name, the sum of the required airflows of all of them (m3/h), why that sum cannot
+  // be worked out, the unit's airflow (0: not given; below 0: the rooms were given different ones).
+  std::vector<std::string> fanUnitOthers;
+  double fanUnitRequired = 0.0;
+  std::string fanUnitProblem;
+  double fanUnitAirflow = 0.0;
 };
 
 struct RoomOpeningInputs {
@@ -130,6 +139,9 @@ struct RoomDaylightCheck {
   std::string mechanicalState, mechanicalText;
 };
 RoomDaylightCheck roomDaylightCheck(const RoomOpeningInput& input);
+// docs/213: Vr = n A h (m3/h, 令 20 条の 8) of a 居室, or nothing when its kind, extent or ceiling
+// height is missing (or it is not a 居室).
+std::optional<double> requiredAirflow(const RoomRow& room);
 
 // docs/205: the daylight factor (採光補正係数, 令 20 条 2 項 1-3 号) of each wall opening worked out
 // from the model: outwards is the side where a level ray from its centre meets no other wall; the

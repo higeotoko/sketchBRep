@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <map>
 
 #include <QColorDialog>
@@ -918,6 +919,55 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
           connect(vent, qOverload<int>(&QComboBox::activated), this, changed);
           form_->addRow(tr("居室の区分"), kind);
           form_->addRow(tr("換気"), vent);
+          // docs/213: the room it is one with (docs/211) and the airflow of its mechanical ventilation.
+          const QString joined0 = QString::fromStdString(daylight.is_object() ? daylight.value("joined_with", std::string()) : std::string());
+          const double fan0 = daylight.is_object() && daylight.contains("fan_m3h") && daylight.at("fan_m3h").is_number()
+                                  ? daylight.at("fan_m3h").get<double>() : 0.0;
+          auto* joined = new QComboBox;
+          joined->setObjectName(QStringLiteral("roomJoinedWith"));
+          joined->addItem(tr("なし"), QString());
+          for (const doc::RoomRow& r : doc::roomSchedule(modeler.document()).rows) {
+            if (r.id == id) continue;
+            joined->addItem(r.level.empty() ? QString::fromStdString(r.name)
+                                            : QStringLiteral("%1（%2）").arg(QString::fromStdString(r.name), QString::fromStdString(r.level)),
+                            QString::fromStdString(r.id));
+          }
+          joined->setCurrentIndex(std::max(0, joined->findData(joined0)));
+          joined->setToolTip(tr("ふすま・障子など、随時開けられるもので仕切られた相手の室（建築基準法 第 28 条 4 項）。"
+                                "2 室を一室として、床面積と採光・換気の面積を合わせて照らします。相手の室にも入ります"));
+          auto* fan = new QDoubleSpinBox;
+          fan->setObjectName(QStringLiteral("roomFanAirflow"));
+          fan->setRange(0.0, 100000.0);
+          fan->setDecimals(1);
+          fan->setSingleStep(10.0);
+          fan->setSpecialValueText(tr("未入力"));
+          fan->setSuffix(QStringLiteral(" m³/h"));
+          fan->setValue(fan0);
+          fan->setToolTip(tr("この室をまかなう機械換気設備の有効換気量。必要有効換気量 Vr＝n×床面積×天井高"
+                             "（施行令 第 20 条の 8、住宅等の居室 n＝0.5）と比べます。0 で消します"));
+          joined->setEnabled(!o->locked);
+          fan->setEnabled(!o->locked);
+          connect(joined, qOverload<int>(&QComboBox::activated), this, [this, id, joined, joined0](int) {
+            const QString j = joined->currentData().toString();
+            if (j != joined0) emit roomVentilationEdited(id, j, std::numeric_limits<double>::quiet_NaN(), true);
+          });
+          connect(fan, &QDoubleSpinBox::editingFinished, this, [this, id, fan, fan0] {
+            if (std::abs(fan->value() - fan0) > 1e-9) emit roomVentilationEdited(id, QString(), fan->value(), false);
+          });
+          const QString unit0 = QString::fromStdString(daylight.is_object() ? daylight.value("fan_unit", std::string()) : std::string());
+          auto* unit = new QLineEdit(unit0);
+          unit->setObjectName(QStringLiteral("roomFanUnit"));
+          unit->setMaxLength(40);
+          unit->setPlaceholderText(tr("例：第3種換気 1"));
+          unit->setToolTip(tr("この室をまかなう換気設備の名前。同じ名前の室は1台でまかなうとして、各室の必要有効換気量の合計と"
+                              "比べます（施行令 第 20 条の 8 第 1 項第 1 号イ（2））。量は同じ名前の室すべてに入ります"));
+          unit->setEnabled(!o->locked);
+          connect(unit, &QLineEdit::editingFinished, this, [this, id, unit, unit0] {
+            if (unit->text().trimmed() != unit0) emit roomFanUnitEdited(id, unit->text().trimmed());
+          });
+          form_->addRow(tr("一続きの室"), joined);
+          form_->addRow(tr("換気設備"), unit);
+          form_->addRow(tr("機械換気の量"), fan);
         }
         word(tr("床"), "floor", finish.floor, tr("例：フローリング t15"));
         word(tr("壁"), "wall", finish.wall, tr("例：PB t12.5 クロス貼り"));
@@ -1603,6 +1653,15 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
       lh->addWidget(factor, 1);
       lh->addWidget(basis, 2);
       lh->addWidget(ventArea, 1);
+      // docs/213: a veranda 90 cm wide or more outside it (令 20 条 2 項: the worked-out factor x 0.7).
+      auto* veranda = new QCheckBox(tr("縁側"));
+      veranda->setObjectName(QStringLiteral("openingVeranda%1").arg(index));
+      veranda->setChecked(scheduled && scheduled->veranda);
+      veranda->setEnabled(markEdit->isEnabled());
+      veranda->setToolTip(tr("外側に幅 90 cm 以上の縁側（ぬれ縁を除く）があります。モデルから求める採光補正係数に ×0.7 をかけます"
+                             "（施行令 第 20 条 2 項）"));
+      connect(veranda, &QCheckBox::clicked, this, [this, id, index](bool on) { emit openingVerandaEdited(id, index, on); });
+      lh->addWidget(veranda);
       light->setObjectName(QStringLiteral("openingDaylight%1").arg(index));
       const auto lit = [this, id, index, factor, basis, ventArea, f0, b0, v0] {
         const double f = factor->value() < 0 ? -1.0 : factor->value(), v = ventArea->value() < 0 ? -1.0 : ventArea->value();

@@ -679,7 +679,10 @@ class Modeler {
   // daylight and ventilation; "" takes it away; kept on both rooms) and the effective airflow of
   // the mechanical ventilation serving it (m³/h, 令 20 条の 8; 0 or below takes it away; NaN leaves
   // it). In "room_daylight". One undo step.
-  Status setRoomVentilation(const ObjectId& room, const std::string& joinedWith, double fanM3h);
+  // docs/213: fanUnit names the ventilation unit serving it (rooms of one name share one unit, and
+  // an airflow given goes to all of them; "" takes it away; nullopt leaves it).
+  Status setRoomVentilation(const ObjectId& room, const std::string& joinedWith, double fanM3h,
+                            const std::optional<std::string>& fanUnit = std::nullopt);
   // docs/211: openings with a veranda 90 cm wide or more outside them (令 20 条 2 項: the daylight
   // factor worked out x 0.7), by opening id in "opening_daylight". One undo step.
   Status setOpeningVeranda(const ObjectId& host, const std::vector<std::size_t>& indices, bool veranda);

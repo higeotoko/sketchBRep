@@ -90,6 +90,7 @@
 #include <BRepAdaptor_Curve.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
+#include <limits>
 #include <nlohmann/json.hpp>
 
 #include "AiBridge.h"
@@ -1050,6 +1051,53 @@ void MainWindow::buildUi() {
               refreshPanels();
             });
           });
+  connect(panel_, &PropertiesPanel::roomVentilationEdited, this,
+          [this](const doc::ObjectId& id, const QString& joinedWith, double fan, bool joinChanged) {
+            QTimer::singleShot(0, this, [this, id, joinedWith, fan, joinChanged] {
+              // docs/213: the partner is kept unless it was changed (Modeler: NaN keeps the airflow).
+              std::string partner = joinedWith.toStdString();
+              if (!joinChanged) {
+                if (const doc::Object* o = modeler_.document().find(id)) {
+                  const auto it = o->attributes.find("room_daylight");
+                  if (it != o->attributes.end()) {
+                    const auto j = nlohmann::json::parse(it->second, nullptr, false);
+                    if (j.is_object()) partner = j.value("joined_with", std::string());
+                  }
+                }
+              }
+              const Status s = modeler_.setRoomVentilation(id, partner, fan);
+              if (!s) reportError(tr("一続きの室・機械換気を変えられません: %1").arg(userMessage(QString::fromStdString(s.message()))));
+              else setStatus(joinChanged ? tr("一続きの室を決めました（相手の室にも入ります。Ctrl+Z で戻せます）")
+                                         : tr("機械換気の量を決めました（Ctrl+Z で戻せます）"));
+              refreshPanels();
+            });
+          });
+  connect(panel_, &PropertiesPanel::roomFanUnitEdited, this, [this](const doc::ObjectId& id, const QString& unit) {
+    QTimer::singleShot(0, this, [this, id, unit] {
+      std::string partner;
+      if (const doc::Object* o = modeler_.document().find(id)) {
+        const auto it = o->attributes.find("room_daylight");
+        if (it != o->attributes.end()) {
+          const auto j = nlohmann::json::parse(it->second, nullptr, false);
+          if (j.is_object()) partner = j.value("joined_with", std::string());
+        }
+      }
+      const Status s = modeler_.setRoomVentilation(id, partner, std::numeric_limits<double>::quiet_NaN(), unit.toStdString());
+      if (!s) reportError(tr("換気設備の名前を変えられません: %1").arg(userMessage(QString::fromStdString(s.message()))));
+      else setStatus(tr("換気設備の名前を決めました（同じ名前の室は1台として合計で比べます。Ctrl+Z で戻せます）"));
+      refreshPanels();
+    });
+  });
+  connect(panel_, &PropertiesPanel::openingVerandaEdited, this, [this](const doc::ObjectId& id, int index, bool veranda) {
+    QTimer::singleShot(0, this, [this, id, index, veranda] {
+      if (index < 1) return;
+      const Status s = modeler_.setOpeningVeranda(id, {static_cast<std::size_t>(index)}, veranda);
+      if (!s) reportError(tr("縁側を変えられません: %1").arg(userMessage(QString::fromStdString(s.message()))));
+      else setStatus(veranda ? tr("開口 %1 の外に縁側あり（採光補正係数は ×0.7。Ctrl+Z で戻せます）").arg(index)
+                             : tr("開口 %1 の縁側を外しました").arg(index));
+      refreshPanels();
+    });
+  });
   connect(panel_, &PropertiesPanel::roomFinishEdited, this,
           [this](const doc::ObjectId& id, const QString& key, const QString& text, double value) {
             QTimer::singleShot(0, this, [this, id, key, text, value] {

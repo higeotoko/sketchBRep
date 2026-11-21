@@ -262,6 +262,7 @@ RoomRow makeRoomRow(const Document& document, const RoomInfo& r) {
       row.ventilation = daylight.value("ventilation", std::string());
       row.joinedWith = daylight.value("joined_with", std::string());
       row.fanM3h = daylight.value("fan_m3h", 0.0);
+      row.fanUnit = daylight.value("fan_unit", std::string());
     }
   }
   return row;
@@ -360,7 +361,28 @@ RoomOpeningInputs roomOpeningInputs(const Document& document) {
       a.pairedVentilationMissing = b.ventilationMissing;
     }
   }
+  // docs/213: rooms served by one ventilation unit (令 20 条の 8 第 1 項第 1 号イ（2））.
+  for (RoomOpeningInput& a : out.rooms) {
+    if (a.room.fanUnit.empty()) continue;
+    std::set<double> airflows;
+    for (const RoomOpeningInput& b : out.rooms) {
+      if (b.room.fanUnit != a.room.fanUnit) continue;
+      if (b.room.id != a.room.id) a.fanUnitOthers.push_back(b.room.name);
+      if (b.room.fanM3h > 0) airflows.insert(b.room.fanM3h);
+      if (b.room.daylightKind == "none") continue;
+      const auto required = requiredAirflow(b.room);
+      if (required) a.fanUnitRequired += *required;
+      else if (a.fanUnitProblem.empty()) a.fanUnitProblem = b.room.name + " の必要有効換気量を出せません（居室の区分・天井高・室の範囲）";
+    }
+    a.fanUnitAirflow = airflows.empty() ? 0.0 : airflows.size() > 1 ? -1.0 : *airflows.begin();
+  }
   return out;
+}
+
+std::optional<double> requiredAirflow(const RoomRow& room) {
+  if (room.daylightKind.empty() || room.daylightKind == "none" || !room.counted || room.ceilingHeight <= 0) return std::nullopt;
+  const double n = room.daylightKind == "dwelling" ? 0.5 : 0.3;
+  return n * room.centreArea / 1e6 * room.ceilingHeight / 1000;
 }
 
 RoomDaylightCheck roomDaylightCheck(const RoomOpeningInput& input) {
@@ -387,9 +409,29 @@ RoomDaylightCheck roomDaylightCheck(const RoomOpeningInput& input) {
       const std::string need = "必要有効換気量 " + number(n, 1) + "×" + number(room.centreArea / 1e6, 2) + "×" +
                                number(room.ceilingHeight / 1000, 2) + " = " + number(required, 1) + " m³/h（令 20 条の 8 第 1 項第 1 号イ（1）、" +
                                (room.daylightKind == "dwelling" ? "住宅等の居室 0.5" : "その他の居室 0.3") + "。床面積は壁芯）";
-      if (room.fanM3h <= 0) {
+      if (!input.fanUnitOthers.empty()) {
+        // docs/213: one unit for several rooms: its airflow against the sum of theirs.
+        std::string rooms = room.name;
+        for (const auto& other : input.fanUnitOthers) rooms += "・" + other;
+        const std::string unit = "換気設備「" + room.fanUnit + "」（" + rooms + "）";
+        if (!input.fanUnitProblem.empty()) {
+          out.mechanicalState = "未評価";
+          out.mechanicalText = need + "。" + unit + "：" + input.fanUnitProblem + "。";
+        } else if (input.fanUnitAirflow < 0) {
+          out.mechanicalState = "要確認";
+          out.mechanicalText = need + "。" + unit + "：室ごとに違う有効換気量が入っています。1台の量にそろえます。";
+        } else if (input.fanUnitAirflow == 0) {
+          out.mechanicalState = "未入力";
+          out.mechanicalText = need + "。" + unit + "の必要有効換気量の合計 " + number(input.fanUnitRequired, 1) +
+                               " m³/h。設備の有効換気量を入れます。";
+        } else {
+          out.mechanicalState = input.fanUnitAirflow + 1e-9 >= input.fanUnitRequired ? "参考値内" : "参考値を外れる";
+          out.mechanicalText = "有効換気量 " + number(input.fanUnitAirflow, 1) + " m³/h／" + unit + "の必要有効換気量の合計 " +
+                               number(input.fanUnitRequired, 1) + " m³/h（令 20 条の 8 第 1 項第 1 号イ（2））。この室の" + need;
+        }
+      } else if (room.fanM3h <= 0) {
         out.mechanicalState = "未入力";
-        out.mechanicalText = need + "。換気設備の有効換気量を入れます（1台で複数の室をまかなう時は、その合計と比べるのは見ていません）。";
+        out.mechanicalText = need + "。換気設備の有効換気量を入れます（1台で複数の室をまかなう時は、室に同じ換気設備の名前を入れると合計と比べます）。";
       } else {
         out.mechanicalState = room.fanM3h + 1e-9 >= required ? "参考値内" : "参考値を外れる";
         out.mechanicalText = "有効換気量 " + number(room.fanM3h, 1) + " m³/h／" + need;

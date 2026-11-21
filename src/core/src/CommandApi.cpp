@@ -2778,9 +2778,12 @@ const std::vector<CommandDef>& commands() {
       {"set_room_ventilation",
        "docs/211: for a room ('id'): 'joined_with' the room it is one with through fusuma / shoji and the like (法 28 条 "
        "4 項; kept on both; empty string takes it away) and / or 'fan_m3h' the effective airflow of the mechanical "
-       "ventilation serving it (令 20 条の 8; 0 takes it away). Keys not given stay. One undo step.",
+       "ventilation serving it (令 20 条の 8; 0 takes it away) and / or 'fan_unit' the name of that unit (docs/213: "
+       "rooms of one name share one unit, compared as the sum of their required airflows, 令 20 条の 8 第 1 項第 1 号イ"
+       "（2）; an airflow given then goes to every room of the name; empty string takes it away). Keys not given stay. "
+       "One undo step.",
        SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "joined_with": {"type": "string"},
-               "fan_m3h": {"type": "number"}}, "required": ["id"]}),
+               "fan_m3h": {"type": "number"}, "fan_unit": {"type": "string"}}, "required": ["id"]}),
        [](doc::Modeler& m, const json& a) {
          std::string joined;
          if (a.contains("joined_with")) {
@@ -2790,7 +2793,8 @@ const std::vector<CommandDef>& commands() {
            const json stored = it == marker->attributes.end() ? json() : json::parse(it->second, nullptr, false);
            if (stored.is_object()) joined = stored.value("joined_with", std::string());
          }
-         must(m.setRoomVentilation(text(a, "id"), joined, numberOr(a, "fan_m3h", std::numeric_limits<double>::quiet_NaN())));
+         must(m.setRoomVentilation(text(a, "id"), joined, numberOr(a, "fan_m3h", std::numeric_limits<double>::quiet_NaN()),
+                                   a.contains("fan_unit") ? std::optional<std::string>(text(a, "fan_unit")) : std::nullopt));
          return json::object();
        }},
       {"set_opening_veranda",
@@ -3184,7 +3188,8 @@ const std::vector<CommandDef>& commands() {
                {"daylight_comparison", {{"state", check.daylightState}, {"text", check.daylightText}}},
                {"ventilation_comparison", {{"state", check.ventilationState}, {"text", check.ventilationText}}},
                {"mechanical_comparison", {{"state", check.mechanicalState}, {"text", check.mechanicalText}}},
-               {"joined_with", room.joinedWith}, {"fan_m3h", room.fanM3h > 0 ? json(room.fanM3h) : json(nullptr)}});
+               {"joined_with", room.joinedWith}, {"fan_m3h", room.fanM3h > 0 ? json(room.fanM3h) : json(nullptr)},
+               {"fan_unit", room.fanUnit}});
          }
          for (std::size_t index : data.unmatched) unmatched.push_back(openingJson(data.openings[index]));
          return json{{"rooms", std::move(rooms)}, {"unmatched_openings", std::move(unmatched)},
