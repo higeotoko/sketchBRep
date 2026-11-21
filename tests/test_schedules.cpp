@@ -3591,3 +3591,52 @@ TEST_F(Schedules, OpeningSolarGainBesideItsU) {
   for (const auto& r : sbr::doc::openingSchedule(modeler.document()).rows)
     if (r.host == south) EXPECT_LT(r.solarGain, 0.0);
 }
+
+// docs/228: the insulation specification table compares each insulation with the 仕様基準's thermal
+// resistance for its part, method and region (木造軸組, 省エネ基準, for reference): 地域未入力 /
+// 工法未入力 / 満たす / 不足 / 基準なし.
+TEST_F(Schedules, InsulationComparedWithTheSpecificationValues) {
+  const auto texts = [&]() {
+    const auto set = sbr::doc::drawingSet(modeler.document(), {});
+    std::vector<std::string> out;
+    if (!set) return out;
+    for (std::size_t i = 0; i < set->names.size(); ++i)
+      if (set->names[i] == "断熱範囲図（1FL）")
+        for (const auto& item : set->sheets[i].items)
+          if (item.kind == sbr::draw::Item::Kind::Text) out.push_back(item.text);
+    return out;
+  };
+  const auto has = [](const std::vector<std::string>& list, const std::string& text) {
+    return std::find(list.begin(), list.end(), text) != list.end();
+  };
+  // Walls: glass wool 100 mm, λ 0.038 (R 2.63), filled. The ground floor: R 1.8, filled.
+  ok("set_insulation", {{"ids", {south}}, {"material", "グラスウール 16K"}, {"thickness_mm", 100}, {"conductivity", 0.038},
+                        {"placement", "fill"}, {"source", "架空のカタログ"}});
+  std::string ground;
+  for (const auto& o : modeler.document().objects())
+    if (o.attributes.count("kind") && o.attributes.at("kind") == "slab") ground = o.id;
+  ok("set_insulation", {{"ids", {ground}}, {"material", "押出法ポリスチレンフォーム"}, {"thickness_mm", 50}, {"resistance", 1.8},
+                        {"placement", "fill"}, {"source", "架空のカタログ"}});
+  EXPECT_TRUE(has(texts(), "地域未入力"));
+  const std::string site = ok("create_polygon", {{"points", {{-2000, -2000, 0}, {14000, -2000, 0}, {14000, 10000, 0}, {-2000, 10000, 0}}}})["id"];
+  ok("set_site_boundary", {{"outline", site}, {"source", "架空の測量図"}});
+  ok("set_energy_route", {{"route", "spec"}, {"region", 6}, {"source", "架空の案内"}});
+  auto now = texts();
+  EXPECT_TRUE(has(now, "R≧2.2"));   // walls, regions 4-7, filled
+  EXPECT_TRUE(has(now, "満たす"));  // 2.63
+  EXPECT_TRUE(has(now, "不足"));    // the floor's 1.8 < 2.2
+  // Region 2: walls need 3.3 (not met), the floor 3.3.
+  ok("set_energy_route", {{"route", "spec"}, {"region", 2}, {"source", "架空の案内"}});
+  now = texts();
+  EXPECT_TRUE(has(now, "R≧3.3"));
+  EXPECT_FALSE(has(now, "満たす"));
+  // Region 8: walls and floors have no value.
+  ok("set_energy_route", {{"route", "spec"}, {"region", 8}, {"source", "架空の案内"}});
+  now = texts();
+  EXPECT_TRUE(has(now, "基準なし"));
+  EXPECT_TRUE(has(now, "対象外"));
+  // A method not given: not compared.
+  ok("set_insulation", {{"ids", {south}}, {"material", "グラスウール 16K"}, {"thickness_mm", 100}, {"conductivity", 0.038},
+                        {"source", "架空のカタログ"}});
+  EXPECT_TRUE(has(texts(), "工法未入力"));
+}

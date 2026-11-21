@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <map>
 #include <optional>
 #include <set>
@@ -1199,12 +1200,28 @@ draw::Table equipmentTable(const Document& document) {
 // docs/223: the insulation specification table put beside the insulation drawings, as the examples
 // of 省エネ drawings carry one on the same sheet (部位・仕様又は使用材料等・厚さ・性能値): one row per
 // part and insulation, with how many walls / floors / roofs have it.
+// docs/228: the thermal resistance the 仕様基準 asks of insulation in a timber house (木造軸組), by
+// part, method and region, as tabulated by 国土交通省「住宅の仕様基準・誘導仕様基準について」 pp.9-10
+// (the explanation of 告示第266号; 省エネ基準 columns; read 2026-11-21). Regions 1-2, 3, 4-7, 8; below
+// 0: no value for that region. Floors: その他の部分 (whether a floor faces outside air is not known).
+struct SpecR {
+  double fill[4], outside[4];
+};
+const SpecR kSpecRoof{{6.6, 4.6, 4.6, 0.96}, {5.7, 4.0, 4.0, 0.78}};
+const SpecR kSpecWall{{3.3, 2.2, 2.2, -1}, {2.9, 1.7, 1.7, -1}};
+const SpecR kSpecFloorOther{{3.3, 3.3, 2.2, -1}, {-1, -1, -1, -1}};
+const SpecR kSpecFloorOutside{{5.2, 5.2, 3.3, -1}, {3.8, 3.8, 2.5, -1}};
+int specColumn(int region) { return region <= 2 ? 0 : region == 3 ? 1 : region <= 7 ? 2 : 3; }
+
 draw::Table insulationSpecTable(const Document& document) {
   draw::Table t;
   t.title = "断熱仕様表";
-  t.headers = {"部位", "仕様又は使用材料等", "厚さ(mm)", "性能値", "数"};
+  t.headers = {"部位", "仕様又は使用材料等", "厚さ(mm)", "性能値", "数", "基準値(参考)", "照合(参考)"};
+  int region = 0;
+  if (const auto& site = document.settings().siteBoundary)
+    if (const Object* outline = document.find(site->outline)) region = std::atoi(attribute(*outline, "energy_region").c_str());
   struct Row {
-    std::string material, thickness, value;
+    std::string material, thickness, value, need, verdict;
     int count = 0;
   };
   std::map<std::pair<int, std::string>, Row> rows;  // (part order, key) -> row
@@ -1219,18 +1236,41 @@ draw::Table insulationSpecTable(const Document& document) {
     row.material = j.value("material", std::string()) +
                    (placement == "fill" ? "（充填）" : placement == "outside" ? "（外張り）" : placement == "inside" ? "（内張り）" : "");
     row.thickness = number(j.value("thickness_mm", 0.0), 0);
-    if (j.contains("resistance") && j.at("resistance").get<double>() > 0) row.value = "R=" + number(j.at("resistance").get<double>(), 2);
+    double r = -1;
+    if (j.contains("resistance") && j.at("resistance").get<double>() > 0) r = j.at("resistance").get<double>();
     else if (j.contains("conductivity") && j.at("conductivity").get<double>() > 0)
-      row.value = "R=" + number(j.value("thickness_mm", 0.0) / 1000 / j.at("conductivity").get<double>(), 2);
-    else row.value = "未入力";
-    Row& r = rows[{order, row.material + "｜" + row.thickness + "｜" + row.value}];
-    if (r.count == 0) r = row;
-    ++r.count;
+      r = j.value("thickness_mm", 0.0) / 1000 / j.at("conductivity").get<double>();
+    row.value = r > 0 ? "R=" + number(r, 2) : "未入力";
+    // docs/228: the reference value and how it compares.
+    const SpecR& spec = order == 0 ? kSpecRoof : order == 1 ? kSpecWall : kSpecFloorOther;
+    if (region < 1 || region > 8) {
+      row.need = "地域未入力";
+      row.verdict = "未評価";
+    } else if (placement.empty()) {
+      row.need = "工法未入力";
+      row.verdict = "未評価";
+    } else {
+      const double need = (placement == "fill" ? spec.fill : spec.outside)[specColumn(region)];
+      if (need < 0) {
+        row.need = "基準なし";
+        row.verdict = "対象外";
+      } else {
+        row.need = "R≧" + number(need, need < 1 ? 2 : 1);
+        row.verdict = r <= 0 ? "未評価" : r + 1e-9 >= need ? "満たす" : "不足";
+      }
+    }
+    Row& slot = rows[{order, row.material + "｜" + row.thickness + "｜" + row.value}];
+    if (slot.count == 0) slot = row;
+    ++slot.count;
   }
   const char* parts[] = {"屋根", "壁", "床"};
-  for (const auto& [key, r] : rows) t.rows.push_back({parts[key.first], r.material, r.thickness, r.value, std::to_string(r.count)});
+  for (const auto& [key, r] : rows)
+    t.rows.push_back({parts[key.first], r.material, r.thickness, r.value, std::to_string(r.count), r.need, r.verdict});
   t.notes = {"性能値は、入れた熱抵抗 R、または厚さ÷熱伝導率（m2K/W）。",
-             "基準値（地域ごとに要る熱抵抗）との照合はしていません。申請先と申請時点の告示で確かめます。"};
+             "基準値(参考)：仕様基準（平成28年国土交通省告示第266号）の断熱材の熱抵抗の基準、木造軸組・省エネ基準の値。"
+             "国土交通省「住宅の仕様基準・誘導仕様基準について」の表（p.9・10）から取った（2026-11-21）。告示の本文とは未照合。",
+             "床は「その他の部分」の値（外気に接する床は、充填 5.2・5.2・3.3、外張 3.8・3.8・2.5）。天井断熱・基礎・枠組壁工法・"
+             "熱貫流率 U による確かめ方は見ていない。合否の判定ではありません。申請先と申請時点の告示で確かめます。"};
   return t;
 }
 }  // namespace
