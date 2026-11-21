@@ -23,6 +23,18 @@ docs/233・234 の「まだ」：目標物（駅・道路名など）の書き�
 **GUI 自動確認済み**
 - `vicinityMapFromCachedTiles` を広げた：ダイアログの目標物の欄に「架空駅, 35.001, 135.0」を書くと、目標物 1 個（名前「架空駅」）が入る。
 
+**CI**：run 44906383380（push）成功。Linux 817 件すべて成功。
+
+**配布**
+
+| 項目 | 内容 |
+|---|---|
+| コード | `20cd3d3` |
+| ZIP | `SketchBRep-windows-x64-20cd3d3-local.zip`（Codex のチャットフォルダの `outputs\`。TLS の部品入り） |
+| サイズ | 82,965,347 bytes |
+| SHA256 | `93c49cb3577043adac3a0b9126bd2f4b8fc42cb06ac831245abbb9e72dc9de8c` |
+| ZIP の検証 | `docs/validation/2026-11-21-portable-20cd3d3.json`・`-mat.json`（GUI 18 + 4 条件、失敗 0） |
+
 **Windows 実機確認（人の操作）**：まだ。docs/105 の 14-44。
 
 ## まだ
