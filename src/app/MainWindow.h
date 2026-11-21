@@ -91,6 +91,9 @@ class MainWindow : public QMainWindow, public ToolHost {
   // File > 2D drawings: plans, sections, elevations as PDF / DXF / JWW (docs/50).
   void showDrawingDialog();
   void showProjectOutlineDialog();
+  void showEnergyRouteDialog();
+  void showInsulationDialog();
+  void showOpeningPerformanceDialog(const doc::ObjectId& host, int index);
   void showSiteRoadDialog();
   void showSiteGroundDialog();
   void showPermitWorkflow();

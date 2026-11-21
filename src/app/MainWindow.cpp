@@ -1088,6 +1088,12 @@ void MainWindow::buildUi() {
       refreshPanels();
     });
   });
+  connect(panel_, &PropertiesPanel::insulationRequested, this, [this] {
+    QTimer::singleShot(0, this, [this] { showInsulationDialog(); });
+  });
+  connect(panel_, &PropertiesPanel::openingPerformanceRequested, this, [this](const doc::ObjectId& id, int index) {
+    QTimer::singleShot(0, this, [this, id, index] { showOpeningPerformanceDialog(id, index); });
+  });
   connect(panel_, &PropertiesPanel::openingVerandaEdited, this, [this](const doc::ObjectId& id, int index, bool veranda) {
     QTimer::singleShot(0, this, [this, id, index, veranda] {
       if (index < 1) return;
@@ -1237,6 +1243,9 @@ void MainWindow::buildMenus() {
   // docs/214: the project's items that are not in the model, for the project outline.
   site->addAction(tr("計画概要の項目..."), this, &MainWindow::showProjectOutlineDialog)
       ->setObjectName(QStringLiteral("projectOutlineAction"));
+  // docs/215: the energy route and region (docs/210).
+  site->addAction(tr("省エネの適用ルート・地域..."), this, &MainWindow::showEnergyRouteDialog)
+      ->setObjectName(QStringLiteral("energyRouteAction"));
   site->addAction(tr("道路情報の指定を解除"), this, [this] {
     modeler_.clearSiteRoad();
     setStatus(tr("道路情報の指定を解除しました"));
@@ -1859,6 +1868,8 @@ void MainWindow::buildMenus() {
   settingsMenu->addAction(tr("開口の設定..."), this, &MainWindow::showOpeningSettingsDialog);
   settingsMenu->addAction(tr("床・屋根の種類（登録・層）..."), this, &MainWindow::showElementTypesDialog)
       ->setObjectName(QStringLiteral("elementTypesAction"));
+  settingsMenu->addAction(tr("選んだ壁・床・屋根の断熱..."), this, &MainWindow::showInsulationDialog)
+      ->setObjectName(QStringLiteral("insulationAction"));  // docs/215
   QMenu* alignMenu = tools->addMenu(tr("整列（最初に選んだ物に揃える）"));
   const char* axisNames[] = {"X", "Y", "Z"};
   for (int axis = 0; axis < 3; ++axis) {
@@ -7171,6 +7182,7 @@ void MainWindow::showPermitWorkflow() {
       case Action::North: trigger("siteNorthByAngleAction"); break;
       case Action::Zone: trigger("siteZoneAction"); break;  // docs/206
       case Action::Outline: trigger("projectOutlineAction"); break;  // docs/214
+      case Action::EnergyRoute: trigger("energyRouteAction"); break;  // docs/215
       case Action::SavedRoad:
         setSelection({});
         [[fallthrough]];
@@ -7269,6 +7281,189 @@ void MainWindow::showProjectOutlineDialog() {
   if (changed.empty()) return;
   if (report(modeler_.setProjectOutline(changed)))
     setStatus(tr("計画概要の項目を %1 個決めました（Ctrl+Z で戻せます）").arg(changed.size()));
+  refreshPanels();
+}
+
+// docs/215: the route the energy documents follow, the region and the source (docs/210).
+void MainWindow::showEnergyRouteDialog() {
+  const auto& boundary = modeler_.document().settings().siteBoundary;
+  if (!boundary) {
+    reportError(tr("先に敷地境界を指定してください（地域の区分は敷地に持たせます）"));
+    return;
+  }
+  const doc::Object* outline = modeler_.document().find(boundary->outline);
+  const auto attribute = [&](const char* key) {
+    if (!outline) return QString();
+    const auto it = outline->attributes.find(key);
+    return it == outline->attributes.end() ? QString() : QString::fromStdString(it->second);
+  };
+  QDialog dialog(this);
+  dialog.setObjectName(QStringLiteral("energyRouteDialog"));
+  dialog.setWindowTitle(tr("省エネの適用ルート・地域"));
+  auto* layout = new QVBoxLayout(&dialog);
+  auto* note = new QLabel(tr("省エネの説明図・仕様の表に出ます。基準の値との照合はしていません。"));
+  note->setWordWrap(true);
+  layout->addWidget(note);
+  auto* form = new QFormLayout;
+  layout->addLayout(form);
+  auto* route = new QComboBox;
+  route->setObjectName(QStringLiteral("energyRoute"));
+  route->addItem(tr("未入力"), QString());
+  route->addItem(tr("仕様基準"), QStringLiteral("spec"));
+  route->addItem(tr("性能基準"), QStringLiteral("performance"));
+  route->addItem(tr("その他"), QStringLiteral("other"));
+  route->setCurrentIndex(std::max(0, route->findData(attribute("energy_route"))));
+  auto* region = new QSpinBox;
+  region->setObjectName(QStringLiteral("energyRegion"));
+  region->setRange(0, 8);
+  region->setSpecialValueText(tr("未入力"));
+  region->setValue(attribute("energy_region").toInt());
+  auto* source = new QLineEdit(attribute("energy_source"));
+  source->setObjectName(QStringLiteral("energySource"));
+  source->setMaxLength(100);
+  source->setPlaceholderText(tr("確かめた資料（地域の区分の告示・申請先の案内など）"));
+  form->addRow(tr("適用ルート"), route);
+  form->addRow(tr("地域の区分"), region);
+  form->addRow(tr("確認資料"), source);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+  layout->addWidget(buttons);
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  if (dialog.exec() != QDialog::Accepted) return;
+  if (report(modeler_.setEnergyRoute(route->currentData().toString().toStdString(), region->value(),
+                                     source->text().trimmed().toStdString())))
+    setStatus(tr("省エネの適用ルート・地域を決めました（Ctrl+Z で戻せます）"));
+  refreshPanels();
+}
+
+// docs/215: one insulation for the selected walls, slabs and roofs (docs/210); the first one's as
+// it is now. Material emptied: taken away.
+void MainWindow::showInsulationDialog() {
+  std::vector<doc::ObjectId> ids;
+  for (const auto& id : selection_) {
+    const doc::Object* o = modeler_.document().find(id);
+    if (!o) continue;
+    const auto kind = o->attributes.find("kind");
+    if (kind != o->attributes.end() && (kind->second == "wall" || kind->second == "slab" || kind->second == "roof"))
+      ids.push_back(id);
+  }
+  if (ids.empty()) {
+    reportError(tr("断熱を入れる壁・床・屋根を選んでください"));
+    return;
+  }
+  nlohmann::json now = nlohmann::json::object();
+  if (const doc::Object* first = modeler_.document().find(ids.front()))
+    if (const auto it = first->attributes.find("insulation"); it != first->attributes.end()) {
+      now = nlohmann::json::parse(it->second, nullptr, false);
+      if (!now.is_object()) now = nlohmann::json::object();
+    }
+  QDialog dialog(this);
+  dialog.setObjectName(QStringLiteral("insulationDialog"));
+  dialog.setWindowTitle(tr("断熱（%1 個）").arg(ids.size()));
+  auto* layout = new QVBoxLayout(&dialog);
+  auto* note = new QLabel(tr("選んだ壁・床・屋根 %1 個に同じ断熱を入れます。材料を空にすると消します。"
+                             "熱伝導率か熱抵抗のどちらかと、資料（カタログ・仕様書）を入れます。").arg(ids.size()));
+  note->setWordWrap(true);
+  layout->addWidget(note);
+  auto* form = new QFormLayout;
+  layout->addLayout(form);
+  auto* material = new QLineEdit(QString::fromStdString(now.value("material", std::string())));
+  material->setObjectName(QStringLiteral("insulationMaterial"));
+  material->setMaxLength(60);
+  material->setPlaceholderText(tr("例：グラスウール 16K"));
+  auto* thickness = new QDoubleSpinBox;
+  thickness->setObjectName(QStringLiteral("insulationThickness"));
+  thickness->setRange(0.0, 1000.0);
+  thickness->setDecimals(1);
+  thickness->setSuffix(QStringLiteral(" mm"));
+  thickness->setValue(now.value("thickness_mm", 0.0));
+  auto* conductivity = new QDoubleSpinBox;
+  conductivity->setObjectName(QStringLiteral("insulationConductivity"));
+  conductivity->setRange(0.0, 10.0);
+  conductivity->setDecimals(3);
+  conductivity->setSingleStep(0.001);
+  conductivity->setSpecialValueText(tr("未入力"));
+  conductivity->setSuffix(QStringLiteral(" W/(m·K)"));
+  conductivity->setValue(now.value("conductivity", 0.0));
+  auto* resistance = new QDoubleSpinBox;
+  resistance->setObjectName(QStringLiteral("insulationResistance"));
+  resistance->setRange(0.0, 100.0);
+  resistance->setDecimals(2);
+  resistance->setSpecialValueText(tr("未入力（厚さ÷熱伝導率）"));
+  resistance->setSuffix(QStringLiteral(" m²·K/W"));
+  resistance->setValue(now.value("resistance", 0.0));
+  auto* placement = new QComboBox;
+  placement->setObjectName(QStringLiteral("insulationPlacement"));
+  placement->addItem(tr("未入力"), QString());
+  placement->addItem(tr("充填"), QStringLiteral("fill"));
+  placement->addItem(tr("外張り"), QStringLiteral("outside"));
+  placement->addItem(tr("内張り"), QStringLiteral("inside"));
+  placement->setCurrentIndex(std::max(0, placement->findData(QString::fromStdString(now.value("placement", std::string())))));
+  auto* source = new QLineEdit(QString::fromStdString(now.value("source", std::string())));
+  source->setObjectName(QStringLiteral("insulationSource"));
+  source->setMaxLength(100);
+  source->setPlaceholderText(tr("カタログ・仕様書など"));
+  form->addRow(tr("材料"), material);
+  form->addRow(tr("厚さ"), thickness);
+  form->addRow(tr("熱伝導率 λ"), conductivity);
+  form->addRow(tr("熱抵抗 R"), resistance);
+  form->addRow(tr("入れ方"), placement);
+  form->addRow(tr("資料"), source);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+  layout->addWidget(buttons);
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  if (dialog.exec() != QDialog::Accepted) return;
+  const std::string name = material->text().trimmed().toStdString();
+  if (report(modeler_.setInsulation(ids, name, thickness->value(), conductivity->value(), resistance->value(),
+                                    placement->currentData().toString().toStdString(), source->text().trimmed().toStdString())))
+    setStatus(name.empty() ? tr("%1 個の断熱を消しました").arg(ids.size())
+                           : tr("%1 個に断熱を入れました（Ctrl+Z で戻せます）").arg(ids.size()));
+  refreshPanels();
+}
+
+// docs/215: one opening's heat transmittance, glass and source (docs/210).
+void MainWindow::showOpeningPerformanceDialog(const doc::ObjectId& host, int index) {
+  if (index < 1) return;
+  const doc::OpeningRow* row = nullptr;
+  const doc::OpeningSchedule schedule = doc::openingSchedule(modeler_.document());
+  for (const auto& r : schedule.rows)
+    if (r.host == host && static_cast<int>(r.index) == index) row = &r;
+  QDialog dialog(this);
+  dialog.setObjectName(QStringLiteral("openingPerformanceDialog"));
+  dialog.setWindowTitle(tr("建具の性能（開口 %1）").arg(index));
+  auto* layout = new QVBoxLayout(&dialog);
+  auto* form = new QFormLayout;
+  layout->addLayout(form);
+  auto* u = new QDoubleSpinBox;
+  u->setObjectName(QStringLiteral("openingUValue"));
+  u->setRange(-0.01, 10.0);
+  u->setDecimals(2);
+  u->setSingleStep(0.01);
+  u->setSpecialValueText(tr("未入力（消す）"));
+  u->setSuffix(QStringLiteral(" W/(m²·K)"));
+  u->setValue(row && row->uValue >= 0 ? row->uValue : -0.01);
+  auto* glass = new QLineEdit(row ? QString::fromStdString(row->glass) : QString());
+  glass->setObjectName(QStringLiteral("openingGlass"));
+  glass->setMaxLength(60);
+  glass->setPlaceholderText(tr("例：Low-E 複層ガラス"));
+  auto* source = new QLineEdit(row ? QString::fromStdString(row->performanceSource) : QString());
+  source->setObjectName(QStringLiteral("openingPerformanceSource"));
+  source->setMaxLength(100);
+  source->setPlaceholderText(tr("カタログ・性能表示など"));
+  form->addRow(tr("熱貫流率 U"), u);
+  form->addRow(tr("ガラス"), glass);
+  form->addRow(tr("資料"), source);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+  layout->addWidget(buttons);
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  if (dialog.exec() != QDialog::Accepted) return;
+  const double value = u->value() < 0 ? -1.0 : u->value();
+  if (report(modeler_.setOpeningPerformance(host, {static_cast<std::size_t>(index)}, value, glass->text().trimmed().toStdString(),
+                                            source->text().trimmed().toStdString())))
+    setStatus(value < 0 ? tr("開口 %1 の性能を消しました").arg(index)
+                        : tr("開口 %1 の性能を決めました（Ctrl+Z で戻せます）").arg(index));
   refreshPanels();
 }
 

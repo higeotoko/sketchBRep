@@ -1201,6 +1201,34 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
   });
   form_->addRow(tr("名前"), name);
   if (!elementSummary.isEmpty()) form_->addRow(tr("選択"), new QLabel(elementSummary));
+  // docs/215: the insulation of a wall, slab or roof (docs/210), shown and given in its dialog.
+  if (const auto kind = o->attributes.find("kind");
+      kind != o->attributes.end() && (kind->second == "wall" || kind->second == "slab" || kind->second == "roof")) {
+    QString text = tr("未入力");
+    if (const auto it = o->attributes.find("insulation"); it != o->attributes.end()) {
+      const auto j = nlohmann::json::parse(it->second, nullptr, false);
+      if (j.is_object()) {
+        text = QStringLiteral("%1 %2 mm").arg(QString::fromStdString(j.value("material", std::string())))
+                   .arg(j.value("thickness_mm", 0.0), 0, 'g', 6);
+        const std::string placement = j.value("placement", std::string());
+        if (!placement.empty())
+          text += placement == "fill" ? tr("（充填）") : placement == "outside" ? tr("（外張り）") : tr("（内張り）");
+      }
+    }
+    auto* row = new QWidget;
+    auto* h = new QHBoxLayout(row);
+    h->setContentsMargins(0, 0, 0, 0);
+    auto* label = new QLabel(text);
+    label->setObjectName(QStringLiteral("insulationSummary"));
+    label->setWordWrap(true);
+    auto* button = new QPushButton(tr("断熱を入れる..."));
+    button->setObjectName(QStringLiteral("insulationButton"));
+    button->setEnabled(!o->locked);
+    connect(button, &QPushButton::clicked, this, [this] { emit insulationRequested(); });
+    h->addWidget(label, 1);
+    h->addWidget(button);
+    form_->addRow(tr("断熱"), row);
+  }
   if (o->kind() == doc::ObjectKind::Shell) {
     auto* hint = new QLabel(tr("開いた形状です（面を消した状態）。描く・塗る・面を消すはそのまま続けられます。"
                                "押し出し・ブール演算は「編集 > 穴をふさぐ」でソリッドに戻してから"));
@@ -1662,6 +1690,15 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
                              "（施行令 第 20 条 2 項）"));
       connect(veranda, &QCheckBox::clicked, this, [this, id, index](bool on) { emit openingVerandaEdited(id, index, on); });
       lh->addWidget(veranda);
+      // docs/215: its heat transmittance, glass and source (docs/210), in a dialog.
+      auto* performance = new QPushButton(scheduled && scheduled->uValue >= 0
+                                              ? QStringLiteral("U %1").arg(scheduled->uValue, 0, 'f', 2)
+                                              : tr("性能..."));
+      performance->setObjectName(QStringLiteral("openingPerformance%1").arg(index));
+      performance->setEnabled(markEdit->isEnabled());
+      performance->setToolTip(tr("建具の熱貫流率・ガラス・資料（省エネの仕様の表に出ます）"));
+      connect(performance, &QPushButton::clicked, this, [this, id, index] { emit openingPerformanceRequested(id, index); });
+      lh->addWidget(performance);
       light->setObjectName(QStringLiteral("openingDaylight%1").arg(index));
       const auto lit = [this, id, index, factor, basis, ventArea, f0, b0, v0] {
         const double f = factor->value() < 0 ? -1.0 : factor->value(), v = ventArea->value() < 0 ? -1.0 : ventArea->value();

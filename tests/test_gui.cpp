@@ -251,6 +251,7 @@ class GuiPhase1 : public QObject {
   void permitWorkflowAppliesDaylightFactors();
   void permitWorkflowMarksStagesAndAsksAgain();
   void projectOutlineDialogGivesTheItems();
+  void energyInputsInTheirDialogs();
   void proposalShowsRotationAndHide();
   void benchViewportSync();
   void benchEnterManyCopies();
@@ -892,6 +893,137 @@ void GuiPhase1::permitWorkflowAppliesDaylightFactors() {
   QCOMPARE(rows.size(), std::size_t(1));
   QVERIFY(std::abs(rows[0].daylightFactor - (941.0 / 3550.0 * 6 - 1.4)) < 1e-9);
   QVERIFY(rows[0].daylightBasis.find("令 20 条") != std::string::npos);
+}
+
+// docs/215: the energy route, the insulation of selected walls and an opening's performance given
+// in their dialogs; stage 9's route row opens its dialog.
+void GuiPhase1::energyInputsInTheirDialogs() {
+  Fixture f;
+  QVERIFY(f.setUp(4000, 3000));
+  auto& modeler = f.window.modeler();
+  using Json = nlohmann::json;
+  api::CommandApi api(modeler);
+  const auto call = [&](const char* command, Json args) {
+    return Json::parse(api.execute(Json{{"command", command}, {"args", std::move(args)}}.dump()));
+  };
+  QVERIFY(modeler.setLevels({{"", "1FL", 0}, {"", "2FL", 3000}}));
+  const auto walls = call("create_wall", {{"points", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}, {0, 0}}},
+                                           {"thickness", 200}, {"height", 3000}});
+  QVERIFY(walls["ok"].get<bool>());
+  const auto south = walls["result"]["ids"][0].get<std::string>();
+  const auto east = walls["result"]["ids"][1].get<std::string>();
+  QVERIFY(call("place_openings", {{"host", south}, {"face_normal", {0, -1, 0}}, {"count", 1}, {"width", 1600},
+                                  {"height", 1100}, {"sill", 900}})["ok"].get<bool>());
+  const auto outline = call("create_polygon", {{"points", {{-5000, -1000, 0}, {13000, -1000, 0}, {13000, 10000, 0}, {-5000, 10000, 0}}}});
+  QVERIFY(call("set_site_boundary", {{"outline", outline["result"]["id"]}, {"source", "架空"}})["ok"].get<bool>());
+
+  // The route and region.
+  QTimer::singleShot(0, &f.window, [] {
+    auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+    if (!dialog) return;
+    auto* route = dialog->findChild<QComboBox*>(QStringLiteral("energyRoute"));
+    auto* region = dialog->findChild<QSpinBox*>(QStringLiteral("energyRegion"));
+    auto* source = dialog->findChild<QLineEdit*>(QStringLiteral("energySource"));
+    if (!route || !region || !source) return dialog->reject();
+    route->setCurrentIndex(route->findData(QStringLiteral("spec")));
+    region->setValue(6);
+    source->setText(QStringLiteral("架空の案内"));
+    dialog->accept();
+  });
+  auto steps = modeler.history().undoCount();
+  f.window.findChild<QAction*>(QStringLiteral("energyRouteAction"))->trigger();
+  QCOMPARE(modeler.history().undoCount(), steps + 1);
+  const doc::Object* site = modeler.document().find(modeler.document().settings().siteBoundary->outline);
+  QVERIFY(site);
+  QCOMPARE(QString::fromStdString(site->attributes.at("energy_route")), QStringLiteral("spec"));
+  QCOMPARE(QString::fromStdString(site->attributes.at("energy_region")), QStringLiteral("6"));
+
+  // The insulation of two selected walls; the button in the properties shows it.
+  f.window.setSelection({south});
+  QApplication::processEvents();
+  QVERIFY(f.window.findChild<QPushButton*>(QStringLiteral("insulationButton")));
+  QCOMPARE(f.window.findChild<QLabel*>(QStringLiteral("insulationSummary"))->text(), QStringLiteral("未入力"));
+  f.window.setSelection({south, east});
+  QApplication::processEvents();
+  QTimer::singleShot(0, &f.window, [] {
+    auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+    if (!dialog) return;
+    auto* material = dialog->findChild<QLineEdit*>(QStringLiteral("insulationMaterial"));
+    auto* thickness = dialog->findChild<QDoubleSpinBox*>(QStringLiteral("insulationThickness"));
+    auto* conductivity = dialog->findChild<QDoubleSpinBox*>(QStringLiteral("insulationConductivity"));
+    auto* placement = dialog->findChild<QComboBox*>(QStringLiteral("insulationPlacement"));
+    auto* source = dialog->findChild<QLineEdit*>(QStringLiteral("insulationSource"));
+    if (!material || !thickness || !conductivity || !placement || !source) return dialog->reject();
+    material->setText(QStringLiteral("グラスウール 16K"));
+    thickness->setValue(100);
+    conductivity->setValue(0.038);
+    placement->setCurrentIndex(placement->findData(QStringLiteral("fill")));
+    source->setText(QStringLiteral("架空のカタログ"));
+    dialog->accept();
+  });
+  steps = modeler.history().undoCount();
+  f.window.findChild<QAction*>(QStringLiteral("insulationAction"))->trigger();
+  QCOMPARE(modeler.history().undoCount(), steps + 1);
+  for (const auto& id : {south, east})
+    QVERIFY(modeler.document().find(id)->attributes.at("insulation").find("グラスウール 16K") != std::string::npos);
+  f.window.setSelection({south});
+  QApplication::processEvents();
+  const QString summary = f.window.findChild<QLabel*>(QStringLiteral("insulationSummary"))->text();
+  QVERIFY2(summary.contains(QStringLiteral("100 mm（充填）")), qPrintable(summary));
+
+  // The window's performance from its row.
+  auto* performance = f.window.findChild<QPushButton*>(QStringLiteral("openingPerformance1"));
+  QVERIFY(performance);
+  steps = modeler.history().undoCount();
+  performance->click();  // the dialog opens on the next turn of the event loop: answered after it
+  QTimer::singleShot(0, &f.window, [] {
+    auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+    if (!dialog) return;
+    auto* u = dialog->findChild<QDoubleSpinBox*>(QStringLiteral("openingUValue"));
+    auto* glass = dialog->findChild<QLineEdit*>(QStringLiteral("openingGlass"));
+    auto* source = dialog->findChild<QLineEdit*>(QStringLiteral("openingPerformanceSource"));
+    if (!u || !glass || !source) return dialog->reject();
+    u->setValue(2.33);
+    glass->setText(QStringLiteral("Low-E 複層"));
+    source->setText(QStringLiteral("架空のカタログ"));
+    dialog->accept();
+  });
+  QTRY_COMPARE(modeler.history().undoCount(), steps + 1);
+  const auto rows = doc::openingSchedule(modeler.document()).rows;
+  QCOMPARE(rows.size(), std::size_t(1));
+  QVERIFY(std::abs(rows[0].uValue - 2.33) < 1e-9);
+  QCOMPARE(QString::fromStdString(rows[0].glass), QStringLiteral("Low-E 複層"));
+  f.window.setSelection({});
+  QApplication::processEvents();
+  f.window.setSelection({south});
+  QApplication::processEvents();
+  QTRY_COMPARE(f.window.findChild<QPushButton*>(QStringLiteral("openingPerformance1"))->text(), QStringLiteral("U 2.33"));
+
+  // Stage 9: the route row opens its dialog.
+  f.window.findChild<QAction*>(QStringLiteral("permitWorkflowAction"))->trigger();
+  auto* dock = f.window.findChild<QDockWidget*>(QStringLiteral("permitWorkflowDock"));
+  QVERIFY(dock);
+  auto* phases = dock->findChild<QListWidget*>(QStringLiteral("permitWorkflowPhases"));
+  auto* checks = dock->findChild<QTreeWidget*>(QStringLiteral("permitWorkflowChecks"));
+  auto* edit = dock->findChild<QPushButton*>(QStringLiteral("permitWorkflowEdit"));
+  QVERIFY(phases && checks && edit);
+  phases->setCurrentRow(8);
+  QTreeWidgetItem* row = nullptr;
+  for (int i = 0; i < checks->topLevelItemCount(); ++i)
+    if (checks->topLevelItem(i)->text(0) == QStringLiteral("適用ルート・地域")) row = checks->topLevelItem(i);
+  QVERIFY(row);
+  QCOMPARE(row->text(1), QStringLiteral("入力済み"));
+  checks->setCurrentItem(row);
+  QVERIFY(edit->isVisible());
+  bool opened = false;
+  QTimer::singleShot(0, &f.window, [&opened] {
+    if (auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget())) {
+      opened = dialog->objectName() == QStringLiteral("energyRouteDialog");
+      dialog->reject();
+    }
+  });
+  edit->click();
+  QTRY_VERIFY(opened);
 }
 
 // docs/214: the project outline items given in their dialog; stage 1 shows them and opens it.

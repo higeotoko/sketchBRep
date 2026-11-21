@@ -357,6 +357,11 @@ void PermitWorkflowPanel::readModelChecks(int stage) {
     QStringList ids;
     for (const auto& id : c.targets) ids << QString::fromStdString(id);
     const bool select = !ids.isEmpty();
+    if (stage == 9 && c.item == "適用ルート・地域") {  // docs/215: opens its dialog
+      rows_.push_back({QString::fromStdString(c.item), QString::fromStdString(c.state), QString::fromStdString(c.details),
+                       translated("適用ルート・地域を入力"), Action::EnergyRoute, c.attention});
+      continue;
+    }
     rows_.push_back({QString::fromStdString(c.item), QString::fromStdString(c.state), QString::fromStdString(c.details),
                      select ? translated("モデルで %1 個を選択").arg(ids.size()) : QString(),
                      select ? Action::SelectObjects : Action::None, c.attention, ids.join(QLatin1Char('\n'))});

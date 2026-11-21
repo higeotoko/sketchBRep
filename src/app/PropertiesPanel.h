@@ -81,6 +81,10 @@ class PropertiesPanel : public QWidget {
   void openingVerandaEdited(const doc::ObjectId& id, int index, bool veranda);
   // docs/213: the name of the ventilation unit serving the room (empty: none).
   void roomFanUnitEdited(const doc::ObjectId& id, const QString& unit);
+  // docs/215: the insulation of the selected walls / slabs / roofs, and an opening's performance,
+  // asked for in their dialogs.
+  void insulationRequested();
+  void openingPerformanceRequested(const doc::ObjectId& id, int index);
   // The room's ceiling board made (again) at its ceiling height (docs/123).
   void roomCeilingRequested(const doc::ObjectId& id);
   // One opening put at `offset` from the wall's left end (seen from the side it was cut from)

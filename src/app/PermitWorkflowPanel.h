@@ -22,7 +22,8 @@ class PermitWorkflowPanel : public QWidget {
  public:
   // SelectObjects: `target` holds the ids separated by '\n' (docs/194).
   enum class Action { None, Boundary, North, Road, SavedRoad, Ground, SavedGround, Preview, Rooms, Openings, SelectRoom,
-                      SelectObjects, ApplyDaylightFactors, Zone, ConfirmStage, ClearConfirmation, Outline };
+                      SelectObjects, ApplyDaylightFactors, Zone, ConfirmStage, ClearConfirmation, Outline,
+                      EnergyRoute };
   // ConfirmStage / ClearConfirmation (docs/212): `target` holds the stage number 1-12.
   PermitWorkflowPanel(doc::Document& document, std::function<void(Action, const QString&)> open,
                       QWidget* parent = nullptr);
