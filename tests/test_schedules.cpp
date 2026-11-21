@@ -3988,3 +3988,49 @@ TEST_F(Schedules, SmallWindowsExemption) {
   EXPECT_NE(note.find("2％を超えるので"), std::string::npos) << note;
   EXPECT_NE(note.find("4％を超えるので"), std::string::npos) << note;
 }
+
+// docs/238: the 仕様基準's values for equipment (告示第266号 2) under the 機器表, by the site's region.
+TEST_F(Schedules, EquipmentSpecificationNotes) {
+  ok("set_equipment", {{"items", {{{"kind", "heating_cooling"}, {"name", "ルームエアコン"}},
+                                  {{"kind", "ventilation"}, {"name", "壁付式第三種換気設備"}},
+                                  {{"kind", "hot_water"}, {"name", "電気ヒートポンプ給湯機"}},
+                                  {{"kind", "lighting"}, {"name", "LED ダウンライト"}}}}});
+  const auto notes = [&]() {
+    std::string all;
+    const auto set = sbr::doc::drawingSet(modeler.document(), {});
+    if (!set) return all;
+    for (std::size_t i = 0; i < set->names.size(); ++i)
+      if (set->names[i].find("機器表") == 0)
+        for (const auto& item : set->sheets[i].items)
+          if (item.kind == sbr::draw::Item::Kind::Text) all += item.text + "\n";
+    return all;
+  };
+  // No region yet: the regional values are not given, the others are.
+  const std::string none = notes();
+  EXPECT_NE(none.find("暖房：地域の区分が未入力"), std::string::npos) << none;
+  EXPECT_NE(none.find("−0.504×冷房能力(kW)＋5.88"), std::string::npos) << none;
+  EXPECT_NE(none.find("比消費電力 0.3"), std::string::npos) << none;
+  EXPECT_NE(none.find("非居室に白熱灯"), std::string::npos) << none;
+  const std::string site = ok("create_polygon", {{"points", {{-2000, -2000, 0}, {14000, -2000, 0}, {14000, 10000, 0}, {-2000, 10000, 0}}}})["id"];
+  ok("set_site_boundary", {{"outline", site}, {"source", "架空の測量図"}});
+  ok("set_energy_route", {{"route", "spec"}, {"region", 3}, {"source", "架空の案内"}});
+  const std::string three = notes();
+  EXPECT_NE(three.find("告示第266号 2、3 地域"), std::string::npos) << three;
+  EXPECT_NE(three.find("熱効率 83.0％以上"), std::string::npos) << three;
+  EXPECT_NE(three.find("密閉式石油ストーブ"), std::string::npos) << three;
+  EXPECT_NE(three.find("年間給湯効率 3.0 以上"), std::string::npos) << three;
+  EXPECT_NE(three.find("モード熱効率 81.3％以上"), std::string::npos) << three;
+  ok("set_energy_route", {{"route", "spec"}, {"region", 6}, {"source", "架空の案内"}});
+  const std::string six = notes();
+  EXPECT_NE(six.find("熱効率 87.8％以上"), std::string::npos) << six;
+  EXPECT_EQ(six.find("密閉式石油ストーブ"), std::string::npos) << six;
+  EXPECT_NE(six.find("モード熱効率 77.8％以上"), std::string::npos) << six;
+  ok("set_energy_route", {{"route", "spec"}, {"region", 8}, {"source", "架空の案内"}});
+  EXPECT_NE(notes().find("8 地域は基準がありません"), std::string::npos);
+  // Only the kinds in the table.
+  ok("set_equipment", {{"items", {{{"kind", "lighting"}, {"name", "LED ダウンライト"}}}}});
+  const std::string light = notes();
+  EXPECT_NE(light.find("非居室に白熱灯"), std::string::npos) << light;
+  EXPECT_EQ(light.find("給湯："), std::string::npos) << light;
+  EXPECT_EQ(light.find("換気："), std::string::npos) << light;
+}

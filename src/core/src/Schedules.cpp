@@ -1259,6 +1259,58 @@ draw::Table equipmentTable(const Document& document) {
         t.rows.push_back({label, e.name + (e.model.empty() ? "" : "　型番：" + e.model), e.value.empty() ? "未入力" : e.value,
                           std::to_string(e.count), e.source});
   t.notes = {"入れた機器と資料の一覧です。基準値との照合・一次エネルギー消費量の計算はしていません。"};
+  // docs/238: what the 仕様基準 asks of each kind of equipment in the table, as 告示第266号 2 gives it
+  // (最終改正 令和6年告示第975号, read 2026-11-21), for the site's region. Only for reference: the kind of
+  // machine (room air conditioner, gas boiler...) is not known, so nothing is judged.
+  const int region = energyRegionOf(document);
+  const auto has = [&](const std::string& kind) {
+    return std::any_of(items.begin(), items.end(), [&](const Modeler::EquipmentItem& e) { return e.kind == kind; });
+  };
+  std::vector<std::string> spec;
+  if (has("heating_cooling")) {
+    if (region == 0) {
+      spec.push_back("暖房：地域の区分が未入力なので出していません。");
+    } else if (region == 8) {
+      spec.push_back("暖房：8 地域は基準がありません。");
+    } else {
+      spec.push_back("暖房（全体）：ダクト式セントラル空調機（ヒートポンプ熱源）");
+      if (region <= 4) {
+        spec.push_back("暖房（居室のみ）：温水パネルラジエーター（石油熱源機 熱効率 83.0％以上、");
+        spec.push_back("　ガス熱源機 78.9％以上、電気ヒートポンプ熱源機。配管に断熱被覆）、");
+        spec.push_back("　強制対流式の密閉式石油ストーブ（熱効率 86.0％以上）、又はルームエアコン");
+      } else {
+        spec.push_back("暖房（居室のみ）：温水パネルラジエーター（石油熱源機 熱効率 87.8％以上、");
+        spec.push_back("　ガス熱源機 82.5％以上、電気ヒートポンプ熱源機。配管に断熱被覆）、又はルームエアコン");
+      }
+      spec.push_back("　（暖房能力÷消費電力 ≧ −0.321×暖房能力(kW)＋6.16）");
+    }
+    spec.push_back("冷房（全体）：ダクト式セントラル空調機（ヒートポンプ熱源）");
+    spec.push_back("冷房（居室のみ）：ルームエアコン（冷房能力÷消費電力 ≧ −0.504×冷房能力(kW)＋5.88）");
+  }
+  if (has("ventilation")) {
+    spec.push_back("換気：比消費電力 0.3 W/(m3/h) 以下（熱交換型は有効換気量率で除した値）、");
+    spec.push_back("　内径 75 mm 以上のダクトと直流電動機のダクト式第一種（熱交換なし）、");
+    spec.push_back("　内径 75 mm 以上のダクト式第二種・第三種、又は壁付式第二種・第三種");
+  }
+  if (has("lighting")) spec.push_back("照明：非居室に白熱灯又はこれと同等以下の性能の照明を使わない");
+  if (has("hot_water")) {
+    if (region == 0) {
+      spec.push_back("給湯：地域の区分が未入力なので出していません。");
+    } else if (region <= 4) {
+      static const char* kHeatPump[] = {"", "3.5", "3.2", "3.0", "2.9"};
+      spec.push_back("給湯：石油給湯機 モード熱効率 81.3％以上、ガス給湯機 83.7％以上、");
+      spec.push_back(std::string("　又は CO2 冷媒の電気ヒートポンプ給湯機（年間給湯保温効率又は年間給湯効率 ") + kHeatPump[region] +
+                     " 以上）");
+    } else {
+      spec.push_back("給湯：石油給湯機 モード熱効率 77.8％以上、ガス給湯機 78.2％以上、");
+      spec.push_back("　又は CO2 冷媒の電気ヒートポンプ給湯機");
+    }
+  }
+  if (!spec.empty()) {
+    t.notes.push_back(std::string("仕様基準（告示第266号 2") + (region ? "、" + std::to_string(region) + " 地域" : std::string()) +
+                      "）の参考。どれかに当たるか、計算で同等以上：");
+    t.notes.insert(t.notes.end(), spec.begin(), spec.end());
+  }
   return t;
 }
 
