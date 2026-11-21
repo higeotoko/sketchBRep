@@ -4157,10 +4157,16 @@ Status Modeler::setEquipment(const std::vector<EquipmentItem>& items) {
   return Status::success();
 }
 
-Status Modeler::setVicinityMap(double lat, double lon, int zoom, const std::string& layer) {
-  const VicinityMap map{lat, lon, zoom, layer};
+Status Modeler::setVicinityMap(double lat, double lon, int zoom, const std::string& layer,
+                               const std::vector<VicinityMark>& marks) {
+  const VicinityMap map{lat, lon, zoom, layer, marks};
   if (Status ok = checkVicinityMap(map); !ok) return ok;
-  const std::string text = nlohmann::json{{"lat", lat}, {"lon", lon}, {"zoom", zoom}, {"layer", layer}}.dump();
+  nlohmann::json j{{"lat", lat}, {"lon", lon}, {"zoom", zoom}, {"layer", layer}};
+  if (!marks.empty()) {
+    j["marks"] = nlohmann::json::array();
+    for (const VicinityMark& m : marks) j["marks"].push_back({{"name", m.name}, {"lat", m.lat}, {"lon", m.lon}});
+  }
+  const std::string text = j.dump();
   editSettings(document_, history_, "Vicinity Map", [&](PersistentSettings& s) { s.vicinityMap = text; });
   return Status::success();
 }

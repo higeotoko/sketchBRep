@@ -3883,3 +3883,36 @@ TEST_F(Schedules, VicinityMapShowsTheSiteOutline) {
   ok("set_vicinity_map", {{"lat", 35.0}, {"lon", 135.0}, {"zoom", 16}});
   EXPECT_TRUE(noteHas(sheetOf(), "5 mm に満たない"));
 }
+
+// docs/235: landmarks on the vicinity map: placed at their latitude / longitude from the site (0.001
+// degree north is about 111 m), drawn with their name; those off the map counted in the notes; bad
+// ones refused.
+TEST_F(Schedules, VicinityMapLandmarks) {
+  EXPECT_FALSE(call("set_vicinity_map", {{"lat", 35.0}, {"lon", 135.0}, {"marks", {{{"name", ""}, {"lat", 35.0}, {"lon", 135.0}}}}})
+                   .value("ok", true));
+  EXPECT_FALSE(call("set_vicinity_map", {{"lat", 35.0}, {"lon", 135.0}, {"marks", {{{"name", "x"}, {"lat", 5.0}, {"lon", 135.0}}}}})
+                   .value("ok", true));
+  ok("set_vicinity_map", {{"lat", 35.0}, {"lon", 135.0}, {"zoom", 16},
+                          {"marks", {{{"name", "架空駅"}, {"lat", 35.001}, {"lon", 135.0}}, {{"name", "遠い所"}, {"lat", 35.2}, {"lon", 135.2}}}}});
+  const auto map = sbr::doc::vicinityMapOf(modeler.document());
+  ASSERT_TRUE(map);
+  ASSERT_EQ(map->marks.size(), 2u);
+  const auto [e, n] = sbr::doc::vicinityOffset(*map, 35.001, 135.0);
+  EXPECT_NEAR(e, 0.0, 1.0);
+  EXPECT_NEAR(n, 111000.0, 1500.0);
+  const auto set = sbr::doc::drawingSet(modeler.document(), {});
+  ASSERT_TRUE(set);
+  const auto at = std::find(set->names.begin(), set->names.end(), "付近見取図");
+  ASSERT_NE(at, set->names.end());
+  const auto& sheet = set->sheets[static_cast<std::size_t>(at - set->names.begin())];
+  bool name = false, far = false, note = false;
+  for (const auto& item : sheet.items) {
+    if (item.kind != sbr::draw::Item::Kind::Text) continue;
+    name = name || item.text == "架空駅";
+    far = far || item.text == "遠い所";
+    note = note || item.text.find("地図の外の 1 個") != std::string::npos;
+  }
+  EXPECT_TRUE(name);
+  EXPECT_FALSE(far);
+  EXPECT_TRUE(note);
+}

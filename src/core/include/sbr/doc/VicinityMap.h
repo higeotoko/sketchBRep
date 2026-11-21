@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "sbr/Types.h"
@@ -17,10 +18,16 @@ namespace sbr::doc {
 
 class Document;
 
+// docs/235: a landmark written on the map (a station, a road ...): its name and where it is.
+struct VicinityMark {
+  std::string name;
+  double lat = 0.0, lon = 0.0;
+};
 struct VicinityMap {
   double lat = 0.0, lon = 0.0;  // degrees (WGS84), the site
   int zoom = 16;                // tile zoom, 14..18
   std::string layer = "std";    // std 標準地図 / pale 淡色地図 / seamlessphoto 写真
+  std::vector<VicinityMark> marks;  // docs/235: up to 20
 };
 // The layers offered: key, name, file extension.
 struct VicinityLayer {
@@ -30,8 +37,12 @@ const std::vector<VicinityLayer>& vicinityLayers();
 // As given (Modeler::setVicinityMap), or nothing.
 std::optional<VicinityMap> vicinityMapOf(const Document& document);
 // Checks the values (Japan and around it: latitude 20..46, longitude 122..154; zoom 14..18; a layer
-// of vicinityLayers()).
+// of vicinityLayers(); docs/235: at most 20 marks, each named in one line of up to 40 characters, in
+// the same latitude / longitude range).
 Status checkVicinityMap(const VicinityMap& map);
+// docs/235: where (lat, lon) is from the site on the ground, east and north in mm (Web Mercator at the
+// map's zoom, as the tiles are drawn: right within the few km of a vicinity map).
+std::pair<double, double> vicinityOffset(const VicinityMap& map, double lat, double lon);
 
 struct VicinityTile {
   int z = 0, x = 0, y = 0;

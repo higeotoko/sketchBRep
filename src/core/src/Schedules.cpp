@@ -3084,6 +3084,31 @@ static draw::View vicinityView(const Document& document, const VicinityMap& map,
   label.height = 3.5;
   label.vAlign = 1;
   view.items.push_back(label);
+  // docs/235: the landmarks given, on the map: a small ring and the name beside it; those off the map
+  // are counted in the notes.
+  int offMap = 0;
+  for (const VicinityMark& m : map.marks) {
+    const auto [e, n] = vicinityOffset(map, m.lat, m.lon);
+    if (e < x0 || e > x1 || n < y0 || n > y1) {
+      ++offMap;
+      continue;
+    }
+    draw::Item dot;
+    dot.kind = draw::Item::Kind::Arc;
+    dot.pen = draw::Pen::Visible;
+    dot.centre = gp_Pnt2d(e, n);
+    dot.radius = 1.2 * scale;
+    dot.sweep = 2 * 3.14159265358979323846;
+    view.items.push_back(dot);
+    draw::Item name;
+    name.kind = draw::Item::Kind::Text;
+    name.pen = draw::Pen::Text;
+    name.points = {gp_Pnt2d(e + 2.5 * scale, n)};
+    name.text = m.name;
+    name.height = 2.5;
+    name.vAlign = 1;
+    view.items.push_back(name);
+  }
   view.minU = x0;
   view.maxU = x1;
   view.minV = y0;
@@ -3097,6 +3122,9 @@ static draw::View vicinityView(const Document& document, const VicinityMap& map,
   if (picture && picture->missingTiles > 0)
     view.calculationNotes.push_back("取れなかった地図タイル " + std::to_string(picture->missingTiles) + " 枚は灰色です");
   if (!siteNote.empty()) view.calculationNotes.push_back(siteNote);
+  if (!map.marks.empty())  // docs/235
+    view.calculationNotes.push_back("○：目標物（入れた緯度・経度に描いた）" +
+                                    (offMap > 0 ? "。地図の外の " + std::to_string(offMap) + " 個は描いていない" : std::string()));
   return view;
 }
 

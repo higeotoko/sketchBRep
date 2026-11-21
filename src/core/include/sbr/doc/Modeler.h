@@ -16,6 +16,7 @@
 
 #include "sbr/doc/CommandStack.h"
 #include "sbr/doc/Document.h"
+#include "sbr/doc/VicinityMap.h"
 #include "sbr/geom/Roof.h"
 #include "sbr/geom/Stair.h"
 #include "sbr/geom/Rhino3dm.h"
@@ -240,7 +241,8 @@ class Modeler {
   Status setEquipment(const std::vector<EquipmentItem>& items);
   // docs/233: where the vicinity map (付近見取図) is centred: latitude, longitude (WGS84 degrees), tile zoom
   // 14-18 and the layer (std / pale / seamlessphoto); clear: none. One undo step.
-  Status setVicinityMap(double lat, double lon, int zoom, const std::string& layer);
+  Status setVicinityMap(double lat, double lon, int zoom, const std::string& layer,
+                        const std::vector<VicinityMark>& marks = {});  // docs/235: landmarks
   Status clearVicinityMap();
   Status setPermitConfirmation(int stage, bool confirmed, const std::string& by = {}, const std::string& note = {},
                                const std::string& on = {});

@@ -3259,17 +3259,23 @@ const std::vector<CommandDef>& commands() {
       {"set_vicinity_map",
        "docs/233: where the vicinity map (付近見取図) of the drawing set is centred: 'lat', 'lon' (WGS84 degrees, the site; "
        "Japan only), 'zoom' (tile zoom 14-18, default 16), 'layer' (std 標準地図 / pale 淡色地図 / seamlessphoto 写真, default "
-       "std); 'clear' true takes it away. Only a position the person gave: never look one up from an address. The app "
+       "std); 'marks' (docs/235): landmarks [{name, lat, lon}] up to 20, written on the map; 'clear' true takes it away. "
+       "Only positions the person gave: never look one up from an address or a name. The app "
        "fetches 国土地理院's tiles when it writes the drawing set (the position is sent to 国土地理院); 標準地図・淡色地図 are "
        "基本測量成果: whether an application is needed is the person's to check. One undo step.",
        SCHEMA({"type": "object", "properties": {"lat": {"type": "number"}, "lon": {"type": "number"},
-               "zoom": {"type": "integer"}, "layer": {"enum": ["std", "pale", "seamlessphoto"]}, "clear": {"type": "boolean"}}}),
+               "zoom": {"type": "integer"}, "layer": {"enum": ["std", "pale", "seamlessphoto"]}, "clear": {"type": "boolean"},
+               "marks": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"},
+                         "lat": {"type": "number"}, "lon": {"type": "number"}}, "required": ["name", "lat", "lon"]}}}}),
        [](doc::Modeler& m, const json& a) {
          if (a.value("clear", false)) {
            must(m.clearVicinityMap());
            return json{{"cleared", true}};
          }
-         must(m.setVicinityMap(number(a, "lat"), number(a, "lon"), a.value("zoom", 16), textOr(a, "layer", "std")));
+         std::vector<doc::VicinityMark> marks;
+         for (const auto& j : a.value("marks", json::array()))
+           marks.push_back({j.at("name").get<std::string>(), j.at("lat").get<double>(), j.at("lon").get<double>()});
+         must(m.setVicinityMap(number(a, "lat"), number(a, "lon"), a.value("zoom", 16), textOr(a, "layer", "std"), marks));
          const auto map = doc::vicinityMapOf(m.document());
          const auto tiles = doc::vicinityTiles(*map);
          json urls = json::array();

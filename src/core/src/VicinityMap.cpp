@@ -27,6 +27,9 @@ std::optional<VicinityMap> vicinityMapOf(const Document& document) {
   map.lon = j.value("lon", 0.0);
   map.zoom = j.value("zoom", 16);
   map.layer = j.value("layer", std::string("std"));
+  if (j.contains("marks") && j.at("marks").is_array())  // docs/235
+    for (const auto& m : j.at("marks"))
+      if (m.is_object()) map.marks.push_back({m.value("name", std::string()), m.value("lat", 0.0), m.value("lon", 0.0)});
   if (!checkVicinityMap(map)) return std::nullopt;
   return map;
 }
@@ -35,6 +38,13 @@ Status checkVicinityMap(const VicinityMap& map) {
   if (!std::isfinite(map.lat) || !std::isfinite(map.lon) || map.lat < 20 || map.lat > 46 || map.lon < 122 || map.lon > 154)
     return Status::failure("付近見取図の位置は、日本の緯度 20〜46 度・経度 122〜154 度の中で入れます");
   if (map.zoom < 14 || map.zoom > 18) return Status::failure("地図の拡大率（ズーム）は 14〜18 です");
+  if (map.marks.size() > 20) return Status::failure("目標物は 20 個までです");
+  for (const VicinityMark& m : map.marks) {
+    if (m.name.empty() || m.name.size() > 120 || m.name.find_first_of("\r\n") != std::string::npos)
+      return Status::failure("目標物の名前は 1 行・40 字までです");
+    if (!std::isfinite(m.lat) || !std::isfinite(m.lon) || m.lat < 20 || m.lat > 46 || m.lon < 122 || m.lon > 154)
+      return Status::failure("目標物「" + m.name + "」の位置は、日本の緯度 20〜46 度・経度 122〜154 度の中で入れます");
+  }
   for (const VicinityLayer& l : vicinityLayers())
     if (l.key == map.layer) return Status::success();
   return Status::failure("地図の種類は std（標準地図）・pale（淡色地図）・seamlessphoto（写真）のどれかです");
@@ -65,6 +75,18 @@ VicinityTiles vicinityTiles(const VicinityMap& map, int cols, int rows) {
   out.siteY = (ty - y0) * 256.0;
   out.metresPerPixel = 2 * kPi * 6378137.0 * std::cos(lat) / (256.0 * n);
   return out;
+}
+
+std::pair<double, double> vicinityOffset(const VicinityMap& map, double lat, double lon) {
+  const double n = std::pow(2.0, map.zoom);
+  const auto tile = [&](double la, double lo) {
+    const double r = la * kPi / 180.0;
+    return std::make_pair((lo + 180.0) / 360.0 * n, (1.0 - std::asinh(std::tan(r)) / kPi) / 2.0 * n);
+  };
+  const auto [sx, sy] = tile(map.lat, map.lon);
+  const auto [px, py] = tile(lat, lon);
+  const double mpp = 2 * kPi * 6378137.0 * std::cos(map.lat * kPi / 180.0) / (256.0 * n);
+  return {(px - sx) * 256.0 * mpp * 1000.0, -(py - sy) * 256.0 * mpp * 1000.0};
 }
 
 std::vector<std::string> vicinityAttribution(const std::string& layer) {

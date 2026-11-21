@@ -7392,6 +7392,15 @@ void MainWindow::showVicinityMapDialog() {
   form->addRow(tr("経度（東経、度）"), lon);
   form->addRow(tr("ズーム（14〜18。16 で 1:15000 ほど）"), zoom);
   form->addRow(tr("地図"), layer);
+  // docs/235: landmarks, one a line: name, latitude, longitude.
+  auto* marks = new QPlainTextEdit;
+  marks->setObjectName(QStringLiteral("vicinityMarks"));
+  marks->setPlaceholderText(tr("目標物を 1 行に 1 つ：名前, 緯度, 経度（例：○○駅, 35.6812, 139.7671）"));
+  if (current)
+    for (const auto& m : current->marks)
+      marks->appendPlainText(QStringLiteral("%1, %2, %3").arg(QString::fromStdString(m.name)).arg(m.lat, 0, 'f', 6).arg(m.lon, 0, 'f', 6));
+  marks->setMaximumHeight(110);
+  form->addRow(tr("目標物"), marks);
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
   auto* none = buttons->addButton(tr("付近見取図を作らない"), QDialogButtonBox::DestructiveRole);
   none->setObjectName(QStringLiteral("vicinityClear"));
@@ -7406,8 +7415,25 @@ void MainWindow::showVicinityMapDialog() {
   if (dialog.exec() != QDialog::Accepted) return;
   if (clear) {
     if (report(modeler_.clearVicinityMap())) setStatus(tr("付近見取図を作らないようにしました（Ctrl+Z で戻せます）"));
-  } else if (report(modeler_.setVicinityMap(lat->value(), lon->value(), zoom->value(), layer->currentData().toString().toStdString()))) {
-    setStatus(tr("付近見取図の位置を決めました。図面一式を書き出す時に地図を取ります（Ctrl+Z で戻せます）"));
+  } else {
+    std::vector<doc::VicinityMark> given;
+    for (const QString& line : marks->toPlainText().split(QLatin1Char('\n'), Qt::SkipEmptyParts)) {
+      const QStringList parts = line.split(QRegularExpression(QStringLiteral("[,、，]")));
+      bool okLat = false, okLon = false;
+      if (parts.size() < 3) {
+        reportError(tr("目標物は「名前, 緯度, 経度」で書きます：%1").arg(line));
+        return;
+      }
+      const double la = parts.at(parts.size() - 2).trimmed().toDouble(&okLat), lo = parts.last().trimmed().toDouble(&okLon);
+      const QString name = parts.mid(0, parts.size() - 2).join(QLatin1Char(',')).trimmed();
+      if (!okLat || !okLon || name.isEmpty()) {
+        reportError(tr("目標物は「名前, 緯度, 経度」で書きます：%1").arg(line));
+        return;
+      }
+      given.push_back({name.toStdString(), la, lo});
+    }
+    if (report(modeler_.setVicinityMap(lat->value(), lon->value(), zoom->value(), layer->currentData().toString().toStdString(), given)))
+      setStatus(tr("付近見取図の位置を決めました。図面一式を書き出す時に地図を取ります（Ctrl+Z で戻せます）"));
   }
   refreshPanels();
 }

@@ -1051,6 +1051,8 @@ void GuiPhase1::vicinityMapFromCachedTiles() {
     lat->setValue(35.0);
     lon->setValue(135.0);
     layer->setCurrentIndex(layer->findData(QStringLiteral("pale")));
+    if (auto* marks = dialog->findChild<QPlainTextEdit*>(QStringLiteral("vicinityMarks")))  // docs/235
+      marks->setPlainText(QStringLiteral("架空駅, 35.001, 135.0\n"));
     dialog->accept();
   });
   const auto steps = modeler.history().undoCount();
@@ -1060,6 +1062,8 @@ void GuiPhase1::vicinityMapFromCachedTiles() {
   QVERIFY(map);
   QCOMPARE(QString::fromStdString(map->layer), QStringLiteral("pale"));
   QVERIFY(std::abs(map->lat - 35.0) < 1e-9);
+  QCOMPARE(map->marks.size(), std::size_t(1));  // docs/235
+  QCOMPARE(QString::fromStdString(map->marks[0].name), QStringLiteral("架空駅"));
   // Tiles in the cache: each a plain colour, the middle one red.
   const auto tiles = doc::vicinityTiles(*map);
   for (std::size_t k = 0; k < tiles.tiles.size(); ++k) {
