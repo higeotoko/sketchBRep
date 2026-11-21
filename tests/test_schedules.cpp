@@ -3564,3 +3564,30 @@ TEST_F(Schedules, OpeningSpecificationTableOnTheInsulationSheets) {
   EXPECT_GE(count(after, "未入力"), 1);  // the north window and the east door have none
   EXPECT_GE(count(after, "ドア"), 1);
 }
+
+// docs/227: an opening's 日射熱取得率 η given with its U: in the opening specification table and the
+// energy specification; out of 0-1 refused; left out, as before.
+TEST_F(Schedules, OpeningSolarGainBesideItsU) {
+  ok("set_insulation", {{"ids", {south}}, {"material", "グラスウール 16K"}, {"thickness_mm", 100}, {"source", "架空のカタログ"}});
+  EXPECT_FALSE(call("set_opening_performance", {{"host", south}, {"u_value", 2.33}, {"solar_gain", 1.5}, {"source", "架空"}}).value("ok", true));
+  ok("set_opening_performance", {{"host", south}, {"u_value", 2.33}, {"solar_gain", 0.51}, {"glass", "Low-E 複層"}, {"source", "架空のカタログ"}});
+  for (const auto& r : sbr::doc::openingSchedule(modeler.document()).rows)
+    if (r.host == south) EXPECT_NEAR(r.solarGain, 0.51, 1e-9);
+  const auto set = sbr::doc::drawingSet(modeler.document(), {});
+  ASSERT_TRUE(set);
+  bool inTable = false;
+  for (std::size_t i = 0; i < set->names.size(); ++i)
+    if (set->names[i] == "断熱範囲図（1FL）")
+      for (const auto& item : set->sheets[i].items)
+        if (item.kind == sbr::draw::Item::Kind::Text && item.text == "U=2.33　η=0.51") inTable = true;
+  EXPECT_TRUE(inTable);
+  const auto energy = sbr::doc::scheduleTable(modeler.document(), 11);
+  bool inEnergy = false;
+  for (const auto& row : energy.rows)
+    for (const auto& cell : row) inEnergy = inEnergy || cell.find("日射熱取得率 0.51") != std::string::npos;
+  EXPECT_TRUE(inEnergy);
+  // Given again without η: it is gone.
+  ok("set_opening_performance", {{"host", south}, {"u_value", 2.33}, {"source", "架空のカタログ"}});
+  for (const auto& r : sbr::doc::openingSchedule(modeler.document()).rows)
+    if (r.host == south) EXPECT_LT(r.solarGain, 0.0);
+}

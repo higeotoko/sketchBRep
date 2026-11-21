@@ -6627,7 +6627,7 @@ bool isRoomMarker(const Object& o);  // with the rooms below
 }  // namespace
 
 Status Modeler::setOpeningPerformance(const ObjectId& hostId, const std::vector<std::size_t>& indices, double uValue,
-                                      const std::string& glass, const std::string& source) {
+                                      const std::string& glass, const std::string& source, double solarGain) {
   const Object* host = document_.find(hostId);
   if (!host) return Status::failure("Object not found");
   if (host->locked) return Status::failure("The object is locked");
@@ -6635,6 +6635,7 @@ Status Modeler::setOpeningPerformance(const ObjectId& hostId, const std::vector<
   if (!list) return list.status();
   if (list->empty()) return Status::failure("This object has no openings");
   if (!std::isfinite(uValue) || uValue > 10) return Status::failure("熱貫流率は 0〜10 W/(m²·K) です");
+  if (!std::isfinite(solarGain) || solarGain > 1) return Status::failure("日射熱取得率 η は 0〜1 です");  // docs/227
   if (!oneLine(glass, 180) || !oneLine(source, 300)) return Status::failure("ガラス・資料は1行です");
   if (uValue >= 0 && source.empty()) return Status::failure("建具の性能の資料（カタログなど）を入力してください");
   Object object = *host;
@@ -6652,7 +6653,10 @@ Status Modeler::setOpeningPerformance(const ObjectId& hostId, const std::vector<
     const auto it = std::find_if(refs.begin(), refs.end(), [&](const OpeningRef& o) { return o.index == index; });
     if (it == refs.end()) return Status::failure("No opening " + std::to_string(index));
     if (uValue < 0) all.erase(openingKey(*it));
-    else all[openingKey(*it)] = {{"u", uValue}, {"glass", glass}, {"source", source}};
+    else {
+      all[openingKey(*it)] = {{"u", uValue}, {"glass", glass}, {"source", source}};
+      if (solarGain >= 0) all[openingKey(*it)]["eta"] = solarGain;  // docs/227
+    }
   }
   if (all.empty()) object.attributes.erase("opening_performance");
   else object.attributes["opening_performance"] = all.dump();

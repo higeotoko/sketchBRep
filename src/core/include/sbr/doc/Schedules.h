@@ -43,6 +43,7 @@ struct OpeningRow {
   bool veranda = false;          // docs/211: a veranda 90 cm wide or more outside it (令 20 条 2 項: x 0.7)
   // docs/210: its performance as given (Modeler::setOpeningPerformance); below 0: not given.
   double uValue = -1.0;  // W/(m2 K)
+  double solarGain = -1.0;  // docs/227: 日射熱取得率 η
   std::string glass, performanceSource;
 };
 

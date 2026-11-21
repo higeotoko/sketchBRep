@@ -138,6 +138,7 @@ OpeningSchedule openingSchedule(const Document& document) {
       }
       if (const auto given = performance.find(op.id); given != performance.end() && given->is_object()) {
         row.uValue = given->value("u", -1.0);
+        row.solarGain = given->value("eta", -1.0);  // docs/227
         row.glass = given->value("glass", std::string());
         row.performanceSource = given->value("source", std::string());
       }
@@ -1160,7 +1161,8 @@ draw::Table openingSpecTable(const Document& document) {
     std::string spec = o.fitting;
     if (!o.product.empty()) spec += (spec.empty() ? "" : "　") + std::string("品番 ") + o.product;
     if (!o.glass.empty()) spec += (spec.empty() ? "" : "　") + o.glass;
-    const std::string value = o.uValue < 0 ? "未入力" : "U=" + number(o.uValue, 2);
+    const std::string value = o.uValue < 0 ? "未入力"
+                              : "U=" + number(o.uValue, 2) + (o.solarGain >= 0 ? "　η=" + number(o.solarGain, 2) : std::string());
     anyRated = anyRated || o.uValue >= 0;
     const std::string part = o.kind == "door" ? "ドア" : o.kind == "window" ? "窓" : "開口（建具なし）";
     Row& r = rows[(o.kind == "door" ? "1" : o.kind == "window" ? "0" : "2") + o.mark + "｜" + spec + "｜" + value];
@@ -1172,7 +1174,7 @@ draw::Table openingSpecTable(const Document& document) {
     r.cells[4] = std::to_string(r.count);
     t.rows.push_back(r.cells);
   }
-  t.notes = {"外壁の窓・ドア・開口です。性能値は入れた熱貫流率 U（W/(m2K)）。日射熱取得率 η は、まだ入れる所がありません。",
+  t.notes = {"外壁の窓・ドア・開口です。性能値は入れた熱貫流率 U（W/(m2K)）と日射熱取得率 η（入れた物）。",
              "基準値との照合はしていません。"};
   return t;
 }
@@ -2485,9 +2487,12 @@ draw::Table scheduleTable(const Document& document, int which) {
     std::map<std::string, std::pair<int, std::pair<std::string, std::string>>> rated;
     for (const OpeningRow& o : openingSchedule(document).rows) {
       if (o.uValue < 0) continue;
-      auto& entry = rated[o.mark + "｜" + number(o.uValue, 2) + "｜" + o.glass];
+      auto& entry = rated[o.mark + "｜" + number(o.uValue, 2) + "｜" + number(o.solarGain, 2) + "｜" + o.glass];
       ++entry.first;
-      entry.second = {"熱貫流率 " + number(o.uValue, 2) + " W/(m2K)" + (o.glass.empty() ? std::string() : "　" + o.glass), o.performanceSource};
+      entry.second = {"熱貫流率 " + number(o.uValue, 2) + " W/(m2K)" +
+                          (o.solarGain >= 0 ? "　日射熱取得率 " + number(o.solarGain, 2) : std::string()) +  // docs/227
+                          (o.glass.empty() ? std::string() : "　" + o.glass),
+                      o.performanceSource};
     }
     for (const auto& [key, value] : rated)
       t.rows.push_back({"開口部", key.substr(0, key.find("｜")), std::to_string(value.first), value.second.first, value.second.second});

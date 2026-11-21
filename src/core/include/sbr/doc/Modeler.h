@@ -252,9 +252,9 @@ class Modeler {
                        double conductivity, double resistance, const std::string& placement, const std::string& source);
   // An opening's performance: heat transmittance U (W/(m²·K), below 0 takes the whole away), glass
   // and source, by opening id as attribute "opening_performance" on the host. `indices` 1-based,
-  // all when empty. One undo step.
+  // all when empty. One undo step. docs/227: `solarGain` 日射熱取得率 η (0-1; below 0: not given).
   Status setOpeningPerformance(const ObjectId& host, const std::vector<std::size_t>& indices, double uValue,
-                               const std::string& glass, const std::string& source);
+                               const std::string& glass, const std::string& source, double solarGain = -1.0);
   void clearSiteRoad();
   Status setSiteGround(SiteGround ground, ObjectId building = {}, bool confirmedPlacement = false);
   void clearSiteGround();

@@ -7533,6 +7533,13 @@ void MainWindow::showOpeningPerformanceDialog(const doc::ObjectId& host, int ind
   u->setSpecialValueText(tr("未入力（消す）"));
   u->setSuffix(QStringLiteral(" W/(m²·K)"));
   u->setValue(row && row->uValue >= 0 ? row->uValue : -0.01);
+  auto* eta = new QDoubleSpinBox;  // docs/227
+  eta->setObjectName(QStringLiteral("openingSolarGain"));
+  eta->setRange(-0.01, 1.0);
+  eta->setDecimals(2);
+  eta->setSingleStep(0.01);
+  eta->setSpecialValueText(tr("未入力"));
+  eta->setValue(row && row->solarGain >= 0 ? row->solarGain : -0.01);
   auto* glass = new QLineEdit(row ? QString::fromStdString(row->glass) : QString());
   glass->setObjectName(QStringLiteral("openingGlass"));
   glass->setMaxLength(60);
@@ -7542,6 +7549,7 @@ void MainWindow::showOpeningPerformanceDialog(const doc::ObjectId& host, int ind
   source->setMaxLength(100);
   source->setPlaceholderText(tr("カタログ・性能表示など"));
   form->addRow(tr("熱貫流率 U"), u);
+  form->addRow(tr("日射熱取得率 η"), eta);
   form->addRow(tr("ガラス"), glass);
   form->addRow(tr("資料"), source);
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
@@ -7551,7 +7559,7 @@ void MainWindow::showOpeningPerformanceDialog(const doc::ObjectId& host, int ind
   if (dialog.exec() != QDialog::Accepted) return;
   const double value = u->value() < 0 ? -1.0 : u->value();
   if (report(modeler_.setOpeningPerformance(host, {static_cast<std::size_t>(index)}, value, glass->text().trimmed().toStdString(),
-                                            source->text().trimmed().toStdString())))
+                                            source->text().trimmed().toStdString(), eta->value() < 0 ? -1.0 : eta->value())))
     setStatus(value < 0 ? tr("開口 %1 の性能を消しました").arg(index)
                         : tr("開口 %1 の性能を決めました（Ctrl+Z で戻せます）").arg(index));
   refreshPanels();

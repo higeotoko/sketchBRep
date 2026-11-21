@@ -2714,13 +2714,16 @@ const std::vector<CommandDef>& commands() {
        }},
       {"set_opening_performance",
        "docs/210: the performance of openings of 'host' ('openings': ids or indices, all when omitted): 'u_value' heat "
-       "transmittance (W/(m²·K); below 0 takes it away), 'glass', 'source'. One undo step. Not compared with any standard.",
+       "transmittance (W/(m²·K); below 0 takes it away), 'glass', 'source', 'solar_gain' 日射熱取得率 η (0-1, docs/227; "
+       "omitted: not given). One undo step. Not compared with any standard.",
        SCHEMA({"type": "object", "properties": {"host": {"type": "string"},
                "openings": {"type": "array", "items": {"type": ["string", "integer"]}}, "u_value": {"type": "number"},
-               "glass": {"type": "string"}, "source": {"type": "string"}}, "required": ["host", "u_value"]}),
+               "glass": {"type": "string"}, "source": {"type": "string"}, "solar_gain": {"type": "number"}},
+               "required": ["host", "u_value"]}),
        [](doc::Modeler& m, const json& a) {
          const std::vector<std::size_t> which = openingNumbers(m, a);
-         must(m.setOpeningPerformance(text(a, "host"), which, number(a, "u_value"), textOr(a, "glass", ""), textOr(a, "source", "")));
+         must(m.setOpeningPerformance(text(a, "host"), which, number(a, "u_value"), textOr(a, "glass", ""), textOr(a, "source", ""),
+                                      numberOr(a, "solar_gain", -1.0)));
          return json::object();
        }},
       {"set_site_zone",

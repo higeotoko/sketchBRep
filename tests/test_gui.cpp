@@ -1159,8 +1159,10 @@ void GuiPhase1::energyInputsInTheirDialogs() {
     auto* u = dialog->findChild<QDoubleSpinBox*>(QStringLiteral("openingUValue"));
     auto* glass = dialog->findChild<QLineEdit*>(QStringLiteral("openingGlass"));
     auto* source = dialog->findChild<QLineEdit*>(QStringLiteral("openingPerformanceSource"));
-    if (!u || !glass || !source) return dialog->reject();
+    auto* eta = dialog->findChild<QDoubleSpinBox*>(QStringLiteral("openingSolarGain"));  // docs/227
+    if (!u || !glass || !source || !eta) return dialog->reject();
     u->setValue(2.33);
+    eta->setValue(0.51);
     glass->setText(QStringLiteral("Low-E 複層"));
     source->setText(QStringLiteral("架空のカタログ"));
     dialog->accept();
@@ -1170,6 +1172,7 @@ void GuiPhase1::energyInputsInTheirDialogs() {
   QCOMPARE(rows.size(), std::size_t(1));
   QVERIFY(std::abs(rows[0].uValue - 2.33) < 1e-9);
   QCOMPARE(QString::fromStdString(rows[0].glass), QStringLiteral("Low-E 複層"));
+  QVERIFY(std::abs(rows[0].solarGain - 0.51) < 1e-9);  // docs/227
   f.window.setSelection({});
   QApplication::processEvents();
   f.window.setSelection({south});
