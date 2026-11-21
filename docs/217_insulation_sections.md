@@ -38,6 +38,18 @@ docs/216 の「まだ」の 1 つ目、「断面図に断熱の範囲を描く�
   - 1:100 だと、壁・屋根の波線は細かくて網目のように見える（平面の docs/216 と同じ細かさ）。
 - 図面・表・工程パネル・省エネまわりの GUI 15 件が成功。
 
+**CI**：run 44863115149（push）成功。Linux 802 件すべて成功。
+
+**配布**
+
+| 項目 | 内容 |
+|---|---|
+| コード | `444ad645dfed5c0fff2cf0cf0bd4d6fd84ab3556` |
+| ZIP | `SketchBRep-windows-x64-444ad64-local.zip`（Codex のチャットフォルダの `outputs\`） |
+| サイズ | 82,622,200 bytes |
+| SHA256 | `b95fbac9bc3d5d8712568c8ca7be23044303ec36ae12f5dc988f894928a83300` |
+| ZIP の検証 | `docs/validation/2026-11-21-portable-444ad64.json`・`-mat.json`（GUI 18 + 4 条件、失敗 0） |
+
 **Windows 実機確認（人の操作）**：まだ。docs/105 の 14-30。
 
 ## まだ
