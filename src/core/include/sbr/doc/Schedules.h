@@ -237,6 +237,7 @@ PermitConfirmation permitConfirmation(const Document& document, int stage);
 struct ProjectOutlineField {
   std::string key, label, hint;
   std::vector<std::pair<std::string, std::string>> choices;
+  bool optional = false;  // docs/231: not every project has one (代理者, 許可・認定等 ...): not counted missing
 };
 const std::vector<ProjectOutlineField>& projectOutlineFields();
 // key -> value as given (only keys of projectOutlineFields()).

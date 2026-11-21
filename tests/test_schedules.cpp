@@ -3086,7 +3086,7 @@ TEST_F(Schedules, ProjectOutlineItemsGivenByThePerson) {
   EXPECT_EQ(given["items"]["client"], "架空 太郎");
   EXPECT_EQ(rowOf("建築主")[1], "架空 太郎");
   EXPECT_EQ(rowOf("工事種別")[1], "新築");
-  EXPECT_EQ(rowOf("防火地域等")[1], "法 22 条区域");
+  EXPECT_EQ(rowOf("防火地域")[1], "指定なし（法 22 条区域）");  // docs/231: the form's 防火地域 has no 法 22 条区域
   EXPECT_EQ(rowOf("主要用途")[1], "一戸建ての住宅");
   EXPECT_NE(rowOf("主要用途")[2].find("架空の資料"), std::string::npos);
   stage1 = ok("permit_checks", {{"stage", 1}})["rows"];
@@ -3690,4 +3690,42 @@ TEST_F(Schedules, OpeningsComparedWithTheSpecificationValues) {
   now = texts();
   EXPECT_TRUE(has(now, "η≦0.53"));
   EXPECT_TRUE(has(now, "η 他の方法で"));
+}
+
+// docs/231: the outline items follow the application form (第二号様式 第二面・第三面): 工事監理者, 構造,
+// 都市計画区域 as the form's choices; optional items (代理者・工事施工者・住居表示・その他の区域・用途の区分・
+// 許可等) are not counted missing.
+TEST_F(Schedules, ProjectOutlineFollowsTheApplicationForm) {
+  const auto stage1 = [&]() {
+    const json rows = ok("permit_checks", {{"stage", 1}})["rows"];
+    return rows.back();
+  };
+  EXPECT_FALSE(call("set_project_outline", {{"items", {{"city_planning", "市街化区域"}}}}).value("ok", true));  // not a choice
+  ok("set_project_outline", {{"items", {{"project_name", "架空邸"}, {"client", "架空 太郎"}, {"designer", "一級建築士 架空 次郎"},
+                                        {"address", "架空市 1-2"}, {"city_planning", "urbanization"}, {"fire_zone", "quasi_fire"},
+                                        {"main_use", "一戸建ての住宅"}, {"work_kind", "new"}, {"start_date", "2027-04-01"},
+                                        {"finish_date", "2027-10-31"}, {"source", "架空の資料"}}}});
+  json row = stage1();
+  EXPECT_EQ(row["state"], "入力不足");
+  const std::string details = row["details"];
+  EXPECT_NE(details.find("工事監理者"), std::string::npos);
+  EXPECT_NE(details.find("構造"), std::string::npos);
+  EXPECT_EQ(details.find("代理者、"), std::string::npos);  // optional: not listed as missing
+  ok("set_project_outline", {{"items", {{"supervisor", "未定"}, {"structure", "木造"}}}});
+  EXPECT_EQ(stage1()["state"], "入力済み");
+  // The outline table: the form's labels and the choice's text.
+  const auto outline = sbr::doc::scheduleTable(modeler.document(), 10);
+  std::map<std::string, std::string> cells;
+  for (const auto& r : outline.rows) cells[r[0]] = r[1];
+  EXPECT_EQ(cells["都市計画区域等"], "都市計画区域内（市街化区域）");
+  EXPECT_EQ(cells["防火地域"], "準防火地域");
+  EXPECT_EQ(cells["工事監理者"], "未定");
+  EXPECT_EQ(cells["構造"], "木造");
+  EXPECT_EQ(cells["工事施工者"], "未入力");
+  EXPECT_EQ(cells.count("代理者"), 0u);  // only when there is one
+  ok("set_project_outline", {{"items", {{"agent", "一級建築士 架空 三郎"}}}});
+  const auto again = sbr::doc::scheduleTable(modeler.document(), 10);
+  bool agent = false;
+  for (const auto& r : again.rows) agent = agent || (r[0] == "代理者" && r[1] == "一級建築士 架空 三郎");
+  EXPECT_TRUE(agent);
 }

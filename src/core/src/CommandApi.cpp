@@ -3272,10 +3272,13 @@ const std::vector<CommandDef>& commands() {
        }},
       {"set_project_outline",
        "docs/214: items of the project outline that are not in the model, as the person gives them: 'items' "
-       "{key: text}; keys project_name (物件名, also the title block's 工事名 when the drawing set has none), client "
-       "(建築主), designer (設計者), address (地名地番), residence (住居表示), city_planning (都市計画区域等), fire_zone "
-       "(fire / quasi_fire / article22 / none), main_use (主要用途), work_kind (new / extension / rebuild / relocation / "
-       "use_change / major_repair / major_remodel), start_date, finish_date, source (確認資料). \"\" takes one away; "
+       "{key: text}; keys (docs/231: as the application form 第二号様式 第二面・第三面) project_name (物件名, also the "
+       "title block's 工事名 when the drawing set has none), client (建築主), agent (代理者), designer (設計者), "
+       "supervisor (工事監理者), contractor (工事施工者), address (地名地番), residence (住居表示), city_planning "
+       "(urbanization / control / non_divided / quasi / outside), fire_zone (fire / quasi_fire / none; article22 = "
+       "指定なし（法 22 条区域）), other_zones (その他の区域、地域、地区又は街区), main_use (主要用途), use_code (主要用途の区分), "
+       "work_kind (new / extension / rebuild / relocation / use_change / major_repair / major_remodel), structure (構造), "
+       "permissions (許可・認定等), start_date, finish_date, source (確認資料). \"\" takes one away; "
        "keys not given stay. Only what the person said: never guess a client or an address. One undo step. "
        "project_outline reads them.",
        SCHEMA({"type": "object", "properties": {"items": {"type": "object", "additionalProperties": {"type": "string"}}},

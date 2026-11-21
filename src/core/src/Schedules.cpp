@@ -1588,20 +1588,32 @@ std::vector<PermitCheck> permitOutputChecks(const Document& document) {
 
 const std::vector<ProjectOutlineField>& projectOutlineFields() {
   static const std::vector<ProjectOutlineField> fields = {
+      // docs/231: in the order and with the choices of the application form (建築基準法施行規則 第二号様式
+      // 第二面・第三面, as published 2026-04-01 by 長野県, read 2026-11-21).
       {"project_name", "物件名", "図面の表題欄の工事名にも使います（図面一式の設定で別に入れた時はそちら）", {}},
-      {"client", "建築主", "氏名・名称", {}},
-      {"designer", "設計者", "建築士の資格・氏名・事務所", {}},
-      {"address", "地名地番", "登記上の地名地番", {}},
-      {"residence", "住居表示", "", {}},
-      {"city_planning", "都市計画区域等", "例：都市計画区域内（市街化区域）", {}},
-      {"fire_zone", "防火地域等", "",
-       {{"fire", "防火地域"}, {"quasi_fire", "準防火地域"}, {"article22", "法 22 条区域"}, {"none", "指定なし"}}},
-      {"main_use", "主要用途", "例：一戸建ての住宅", {}},
-      {"work_kind", "工事種別", "",
+      {"client", "建築主", "氏名・名称（第二面 1）", {}},
+      {"agent", "代理者", "建築士の資格・氏名・事務所（第二面 2。いない時は空のまま）", {}, true},
+      {"designer", "設計者", "建築士の資格・氏名・事務所（第二面 3）", {}},
+      {"supervisor", "工事監理者", "建築士の資格・氏名・事務所（第二面 5。未定なら「未定」）", {}},
+      {"contractor", "工事施工者", "氏名・営業所・建設業の許可（第二面 6。未定なら空のまま）", {}, true},
+      {"address", "地名地番", "登記上の地名地番（第三面 1）", {}},
+      {"residence", "住居表示", "（第三面 2）", {}, true},
+      {"city_planning", "都市計画区域等", "（第三面 3）",
+       {{"urbanization", "都市計画区域内（市街化区域）"}, {"control", "都市計画区域内（市街化調整区域）"},
+        {"non_divided", "都市計画区域内（区域区分非設定）"}, {"quasi", "準都市計画区域内"},
+        {"outside", "都市計画区域及び準都市計画区域外"}}},
+      {"fire_zone", "防火地域", "（第三面 4。法 22 条区域は「その他の区域」に書く）",
+       {{"fire", "防火地域"}, {"quasi_fire", "準防火地域"}, {"none", "指定なし"}, {"article22", "指定なし（法 22 条区域）"}}},
+      {"other_zones", "その他の区域、地域、地区又は街区", "例：法 22 条区域、景観地区（第三面 5）", {}, true},
+      {"main_use", "主要用途", "例：一戸建ての住宅（第三面 8）", {}},
+      {"use_code", "主要用途の区分", "様式の別紙の区分の番号（第三面 8）", {}, true},
+      {"work_kind", "工事種別", "（第三面 9）",
        {{"new", "新築"}, {"extension", "増築"}, {"rebuild", "改築"}, {"relocation", "移転"}, {"use_change", "用途変更"},
         {"major_repair", "大規模の修繕"}, {"major_remodel", "大規模の模様替"}}},
-      {"start_date", "工事着手予定", "例：2027-04", {}},
-      {"finish_date", "工事完了予定", "例：2027-10", {}},
+      {"structure", "構造", "例：木造、一部鉄骨造（第三面 13 ハ）", {}},
+      {"permissions", "許可・認定等", "（第三面 14。無い時は空のまま）", {}, true},
+      {"start_date", "工事着手予定年月日", "例：2027-04-01（第三面 15）", {}},
+      {"finish_date", "工事完了予定年月日", "例：2027-10-31（第三面 16）", {}},
       {"source", "確認資料", "項目を確かめた資料（登記事項証明書・都市計画図など）", {}},
   };
   return fields;
@@ -1632,13 +1644,17 @@ PermitCheck projectOutlineCheck(const Document& document) {
   std::string missing, done;
   for (const ProjectOutlineField& f : projectOutlineFields()) {
     const auto it = given.find(f.key);
-    if (it == given.end()) missing += (missing.empty() ? "" : "、") + f.label;
-    else done += "\n" + f.label + "：" + projectOutlineText(f.key, it->second);
+    if (it == given.end()) {
+      if (!f.optional) missing += (missing.empty() ? "" : "、") + f.label;  // docs/231: optional ones not counted
+    } else {
+      done += "\n" + f.label + "：" + projectOutlineText(f.key, it->second);
+    }
   }
   if (given.empty())
     return {"計画概要の項目", "未入力", "建築主・地名地番・主要用途・工事種別など、モデルに無い項目を入れます。計画概要の表に出ます。", {}, true};
   return {"計画概要の項目", missing.empty() ? "入力済み" : "入力不足",
-          (missing.empty() ? std::string("全部入っています。") : "未入力：" + missing) + done, {}, !missing.empty()};
+          (missing.empty() ? std::string("要る項目は全部入っています（代理者・工事施工者・住居表示・その他の区域・用途の区分・許可等は無い時は空のまま）。")
+                           : "未入力：" + missing) + done, {}, !missing.empty()};
 }
 }  // namespace
 
@@ -2602,15 +2618,20 @@ draw::Table scheduleTable(const Document& document, int which) {
     const std::string source = given.count("source") ? "入力した項目。確認資料 " + given.at("source") : "入力した項目";
     item("project_name", "物件名", given.count("project_name") ? source : "計画概要の項目（図面一式の物件名）");
     item("client", "建築主", source);
+    if (given.count("agent")) item("agent", "代理者", source);  // docs/231: only when there is one
     item("designer", "設計者", source);
+    item("supervisor", "工事監理者", source);
+    item("contractor", "工事施工者", source);
     item("address", "地名地番", source);
     item("residence", "住居表示", source);
     item("city_planning", "都市計画区域等", source + "。法の区域の確認は申請先で");
-    item("fire_zone", "防火地域等", source + "。防火の規定との照合はしていません");
-    item("main_use", "主要用途", source);
+    item("fire_zone", "防火地域", source + "。防火の規定との照合はしていません");
+    item("other_zones", "その他の区域、地域、地区又は街区", source);
+    item("main_use", "主要用途", source + (given.count("use_code") ? "。区分 " + given.at("use_code") : std::string()));
     item("work_kind", "工事種別", source);
-    item("start_date", "工事着手予定", source);
-    item("finish_date", "工事完了予定", source);
+    if (given.count("permissions")) item("permissions", "許可・認定等", source);
+    item("start_date", "工事着手予定年月日", source);
+    item("finish_date", "工事完了予定年月日", source);
     if (geometry) {
       t.rows.push_back({"敷地面積", m2(geometry->areaMm2), "指定した敷地境界の輪郭の面積。確認資料 " + site->source});
     } else {
@@ -2657,7 +2678,10 @@ draw::Table scheduleTable(const Document& document, int which) {
                       "壁で閉じた範囲のある階を数えた（法の階数の数え方ではありません）"});
     for (const PermitCheck& c : permitElevationChecks(document))
       if (c.item == "いちばん高い所（参考）") t.rows.push_back({"最も高い所（参考）", c.details.substr(0, c.details.find("（")), "法の建築物の高さ・軒の高さではありません"});
-    t.rows.push_back({"構造", settings.wallCalculation != "{}" ? "木造（在来軸組、壁量の計算の入力から）" : missing, "構造の種別"});
+    if (given.count("structure"))  // docs/231: as given (第三面 13 ハ)
+      t.rows.push_back({"構造", given.at("structure"), source});
+    else
+      t.rows.push_back({"構造", settings.wallCalculation != "{}" ? "木造（在来軸組、壁量の計算の入力から）" : missing, "構造の種別"});
     t.notes = {"モデルから読んだ今の値です。法の制限（建蔽率・容積率の上限、高さの制限など）との比較はしていません。",
                "モデルに無い項目は「計画概要の項目」で入れた値です（申請書 第二面・第三面の項目から。様式の原文・申請先の様式と照らすのは申請時）。"};
   } else if (which == 7 || which == 8 || which == 9) {
