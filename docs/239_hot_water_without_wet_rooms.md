@@ -19,6 +19,18 @@ docs/238 の「まだ」：告示第266号 2 のただし書き。
 - `Schedules.HotWaterRuleWithoutWetRooms`：給湯設備だけを入れる。室が居間だけの時、機器表の注に「浴室・台所・洗面所が見当たりません」「2 ただし書き」。「キッチン」の室を作ると出ない。
 - docs/238 のテスト・機器表のテストも成功。Windows ローカル：コア全件 800 件成功・8 件スキップ。
 
+**CI**：run 44912988620（push）成功。Linux 821 件すべて成功。
+
+**配布**
+
+| 項目 | 内容 |
+|---|---|
+| コード | `cf814c6` |
+| ZIP | `SketchBRep-windows-x64-cf814c6-local.zip`（Codex のチャットフォルダの `outputs\`。TLS の部品入り） |
+| サイズ | 82,990,051 bytes |
+| SHA256 | `997b6d3939125cb57bbcd35586008aba917f63d78a1fccdaa16fec35e2547b48` |
+| ZIP の検証 | `docs/validation/2026-11-22-portable-cf814c6.json`・`-mat.json`（GUI 18 + 4 条件、失敗 0） |
+
 **Windows 実機確認（人の操作）**：まだ。docs/105 の 14-47。
 
 ## まだ
