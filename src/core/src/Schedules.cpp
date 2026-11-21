@@ -1147,10 +1147,25 @@ std::string insulationText(const Object& o) {
 
 // docs/225: the openings of the outer walls (外皮) as the examples' 仕様表 (外皮基準 開口部): 部位
 // (窓 / ドア / 開口（建具なし）), 符号, 仕様 (fitting, product number, glass), 性能値 (heat transmittance U), 数, 資料.
+// The region given for the energy documents (敷地 > 省エネの適用ルート・地域, docs/210); 0: none.
+int energyRegionOf(const Document& document) {
+  if (const auto& site = document.settings().siteBoundary)
+    if (const Object* outline = document.find(site->outline)) return std::atoi(attribute(*outline, "energy_region").c_str());
+  return 0;
+}
+
+// docs/229: the 仕様基準's values for windows (告示第266号, 省エネ基準 columns), as tabulated by 国土交通省
+// 「住宅の仕様基準・誘導仕様基準について」 p.14 (read 2026-11-21): the heat transmittance at most 2.3
+// (regions 1-2), 3.5 (3), 4.7 (4-7), none (8); against the sun in regions 5-7 a window's solar gain
+// at most 0.59 and in 8 at most 0.53 (or glass 0.73 / 0.66, fittings outside, eaves: not modelled).
+double windowSpecU(int region) { return region <= 2 ? 2.3 : region == 3 ? 3.5 : region <= 7 ? 4.7 : -1; }
+double windowSpecEta(int region) { return region >= 5 && region <= 7 ? 0.59 : region == 8 ? 0.53 : -1; }
+
 draw::Table openingSpecTable(const Document& document) {
   draw::Table t;
   t.title = "開口部仕様表";
-  t.headers = {"部位", "符号", "仕様又は使用材料等", "性能値", "数", "資料"};
+  t.headers = {"部位", "符号", "仕様又は使用材料等", "性能値", "数", "資料", "基準値(参考)", "照合(参考)"};
+  const int region = energyRegionOf(document);
   struct Row {
     std::vector<std::string> cells;
     int count = 0;
@@ -1167,7 +1182,36 @@ draw::Table openingSpecTable(const Document& document) {
     anyRated = anyRated || o.uValue >= 0;
     const std::string part = o.kind == "door" ? "ドア" : o.kind == "window" ? "窓" : "開口（建具なし）";
     Row& r = rows[(o.kind == "door" ? "1" : o.kind == "window" ? "0" : "2") + o.mark + "｜" + spec + "｜" + value];
-    if (r.count == 0) r.cells = {part, o.mark, spec, value, "", o.performanceSource};
+    // docs/229: the reference values and how they compare (windows and plain openings; doors not looked at).
+    std::string need, verdict;
+    if (o.kind == "door") {
+      need = "見ていない";
+      verdict = "未評価";
+    } else if (region < 1 || region > 8) {
+      need = "地域未入力";
+      verdict = "未評価";
+    } else {
+      const double u = windowSpecU(region), eta = windowSpecEta(region);
+      std::vector<std::string> needs, verdicts;
+      if (u > 0) {
+        needs.push_back("U≦" + number(u, 1));
+        verdicts.push_back(o.uValue < 0 ? "U 未評価" : o.uValue <= u + 1e-9 ? "U 満たす" : "U 不足");
+      }
+      if (eta > 0) {
+        needs.push_back("η≦" + number(eta, 2));
+        verdicts.push_back(o.solarGain < 0 ? "η 未入力" : o.solarGain <= eta + 1e-9 ? "η 満たす" : "η 他の方法で");
+      }
+      if (needs.empty()) {
+        need = "基準なし";
+        verdict = "対象外";
+      } else {
+        for (std::size_t i = 0; i < needs.size(); ++i) {
+          need += (i ? "　" : "") + needs[i];
+          verdict += (i ? "・" : "") + verdicts[i];
+        }
+      }
+    }
+    if (r.count == 0) r.cells = {part, o.mark, spec, value, "", o.performanceSource, need, verdict};
     ++r.count;
   }
   if (!anyRated) return t;  // no performance given: nothing to show yet (the door and window schedule has the rest)
@@ -1176,7 +1220,10 @@ draw::Table openingSpecTable(const Document& document) {
     t.rows.push_back(r.cells);
   }
   t.notes = {"外壁の窓・ドア・開口です。性能値は入れた熱貫流率 U（W/(m2K)）と日射熱取得率 η（入れた物）。",
-             "基準値との照合はしていません。"};
+             "基準値(参考)：仕様基準（告示第266号）の窓の熱貫流率と日射遮蔽（5〜8 地域）の値。国土交通省「住宅の仕様基準・"
+             "誘導仕様基準について」p.14 の表から取った（2026-11-21）。告示の本文とは未照合。",
+             "日射遮蔽は、窓の η のほか、ガラスの η（5〜7 地域 0.73 以下・8 地域 0.66 以下）・付属部材・ひさしや軒でも満たせる"
+             "（「η 他の方法で」）。床面積の 2％・4％以下の窓の除外、ドアは見ていない。合否の判定ではありません。"};
   return t;
 }
 
@@ -1217,9 +1264,7 @@ draw::Table insulationSpecTable(const Document& document) {
   draw::Table t;
   t.title = "断熱仕様表";
   t.headers = {"部位", "仕様又は使用材料等", "厚さ(mm)", "性能値", "数", "基準値(参考)", "照合(参考)"};
-  int region = 0;
-  if (const auto& site = document.settings().siteBoundary)
-    if (const Object* outline = document.find(site->outline)) region = std::atoi(attribute(*outline, "energy_region").c_str());
+  const int region = energyRegionOf(document);
   struct Row {
     std::string material, thickness, value, need, verdict;
     int count = 0;

@@ -3640,3 +3640,46 @@ TEST_F(Schedules, InsulationComparedWithTheSpecificationValues) {
                         {"source", "架空のカタログ"}});
   EXPECT_TRUE(has(texts(), "工法未入力"));
 }
+
+// docs/229: the opening specification table compares windows with the 仕様基準's heat transmittance
+// and (regions 5-8) solar gain, for reference; doors are not looked at.
+TEST_F(Schedules, OpeningsComparedWithTheSpecificationValues) {
+  const auto texts = [&]() {
+    const auto set = sbr::doc::drawingSet(modeler.document(), {});
+    std::vector<std::string> out;
+    if (!set) return out;
+    for (std::size_t i = 0; i < set->names.size(); ++i)
+      if (set->names[i] == "断熱範囲図（1FL）")
+        for (const auto& item : set->sheets[i].items)
+          if (item.kind == sbr::draw::Item::Kind::Text) out.push_back(item.text);
+    return out;
+  };
+  const auto has = [](const std::vector<std::string>& list, const std::string& text) {
+    return std::find(list.begin(), list.end(), text) != list.end();
+  };
+  ok("set_insulation", {{"ids", {south}}, {"material", "グラスウール 16K"}, {"thickness_mm", 100}, {"source", "架空のカタログ"}});
+  ok("set_opening_performance", {{"host", south}, {"u_value", 2.33}, {"source", "架空のカタログ"}});
+  ok("set_opening_performance", {{"host", east}, {"u_value", 2.9}, {"source", "架空のカタログ"}});
+  EXPECT_TRUE(has(texts(), "地域未入力"));
+  const std::string site = ok("create_polygon", {{"points", {{-2000, -2000, 0}, {14000, -2000, 0}, {14000, 10000, 0}, {-2000, 10000, 0}}}})["id"];
+  ok("set_site_boundary", {{"outline", site}, {"source", "架空の測量図"}});
+  ok("set_energy_route", {{"route", "spec"}, {"region", 6}, {"source", "架空の案内"}});
+  auto now = texts();
+  EXPECT_TRUE(has(now, "U≦4.7　η≦0.59"));
+  EXPECT_TRUE(has(now, "U 満たす・η 未入力"));
+  EXPECT_TRUE(has(now, "見ていない"));  // the east door
+  ok("set_opening_performance", {{"host", south}, {"u_value", 2.33}, {"solar_gain", 0.51}, {"source", "架空のカタログ"}});
+  EXPECT_TRUE(has(texts(), "U 満たす・η 満たす"));
+  ok("set_opening_performance", {{"host", south}, {"u_value", 2.33}, {"solar_gain", 0.7}, {"source", "架空のカタログ"}});
+  EXPECT_TRUE(has(texts(), "U 満たす・η 他の方法で"));
+  // Region 2: U at most 2.3 (2.33 does not meet it); no solar gain asked.
+  ok("set_energy_route", {{"route", "spec"}, {"region", 2}, {"source", "架空の案内"}});
+  now = texts();
+  EXPECT_TRUE(has(now, "U≦2.3"));
+  EXPECT_TRUE(has(now, "U 不足"));
+  // Region 8: no U, η at most 0.53.
+  ok("set_energy_route", {{"route", "spec"}, {"region", 8}, {"source", "架空の案内"}});
+  now = texts();
+  EXPECT_TRUE(has(now, "η≦0.53"));
+  EXPECT_TRUE(has(now, "η 他の方法で"));
+}
