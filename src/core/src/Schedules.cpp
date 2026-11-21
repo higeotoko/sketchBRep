@@ -1406,6 +1406,18 @@ std::vector<PermitCheck> permitEnergyChecks(const Document& document) {
                        "（AI の set_opening_performance）。",
                    hosts, rated != static_cast<int>(openings.size())});
   {
+    // docs/232: whether the energy plan (建築物エネルギー消費性能確保計画) is submitted, as given in the
+    // project outline (第二面 8); the person's call.
+    const auto outline = projectOutline(document);
+    const auto plan = outline.find("energy_plan");
+    if (plan == outline.end())
+      out.push_back({"省エネ適判（確保計画の提出）", "未入力",
+                     "確認申請書 第二面 8 の「提出済・未提出・提出不要」を、計画概要の項目で選びます（判断は申請先の案内で）。", {}, true});
+    else
+      out.push_back({"省エネ適判（確保計画の提出）", "入力済み", projectOutlineText("energy_plan", plan->second) + "（計画概要の項目から）",
+                     {}, plan->second == "not_yet"});
+  }
+  {
     // docs/224: the equipment given (set_equipment): the four kinds the energy documents ask for.
     const auto items = Modeler::equipmentOf(document);
     std::vector<std::string> missing;
@@ -1596,6 +1608,11 @@ const std::vector<ProjectOutlineField>& projectOutlineFields() {
       {"designer", "設計者", "建築士の資格・氏名・事務所（第二面 3）", {}},
       {"supervisor", "工事監理者", "建築士の資格・氏名・事務所（第二面 5。未定なら「未定」）", {}},
       {"contractor", "工事施工者", "氏名・営業所・建設業の許可（第二面 6。未定なら空のまま）", {}, true},
+      // docs/232: 第二面 7・8 (which applies is the person's call: not worked out from the model).
+      {"structural_review", "構造計算適合性判定の申請", "（第二面 7）",
+       {{"submitted", "申請済"}, {"not_yet", "未申請"}, {"not_required", "申請不要"}}},
+      {"energy_plan", "建築物エネルギー消費性能確保計画の提出", "（第二面 8）",
+       {{"submitted", "提出済"}, {"not_yet", "未提出"}, {"not_required", "提出不要"}}},
       {"address", "地名地番", "登記上の地名地番（第三面 1）", {}},
       {"residence", "住居表示", "（第三面 2）", {}, true},
       {"city_planning", "都市計画区域等", "（第三面 3）",
@@ -1614,6 +1631,8 @@ const std::vector<ProjectOutlineField>& projectOutlineFields() {
       {"permissions", "許可・認定等", "（第三面 14。無い時は空のまま）", {}, true},
       {"start_date", "工事着手予定年月日", "例：2027-04-01（第三面 15）", {}},
       {"finish_date", "工事完了予定年月日", "例：2027-10-31（第三面 16）", {}},
+      {"specific_process", "特定工程", "特定工程工事終了予定年月日と工程（第三面 17。無い時は空のまま）", {}, true},
+      {"other_matters", "その他必要な事項", "（第三面 18。無い時は空のまま）", {}, true},
       {"source", "確認資料", "項目を確かめた資料（登記事項証明書・都市計画図など）", {}},
   };
   return fields;
@@ -2622,6 +2641,8 @@ draw::Table scheduleTable(const Document& document, int which) {
     item("designer", "設計者", source);
     item("supervisor", "工事監理者", source);
     item("contractor", "工事施工者", source);
+    item("structural_review", "構造計算適合性判定の申請", source);                  // docs/232
+    item("energy_plan", "建築物エネルギー消費性能確保計画の提出", source);       // docs/232
     item("address", "地名地番", source);
     item("residence", "住居表示", source);
     item("city_planning", "都市計画区域等", source + "。法の区域の確認は申請先で");
@@ -2632,6 +2653,8 @@ draw::Table scheduleTable(const Document& document, int which) {
     if (given.count("permissions")) item("permissions", "許可・認定等", source);
     item("start_date", "工事着手予定年月日", source);
     item("finish_date", "工事完了予定年月日", source);
+    if (given.count("specific_process")) item("specific_process", "特定工程", source);  // docs/232
+    if (given.count("other_matters")) item("other_matters", "その他必要な事項", source);
     if (geometry) {
       t.rows.push_back({"敷地面積", m2(geometry->areaMm2), "指定した敷地境界の輪郭の面積。確認資料 " + site->source});
     } else {

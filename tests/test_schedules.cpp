@@ -3712,7 +3712,25 @@ TEST_F(Schedules, ProjectOutlineFollowsTheApplicationForm) {
   EXPECT_NE(details.find("構造"), std::string::npos);
   EXPECT_EQ(details.find("代理者、"), std::string::npos);  // optional: not listed as missing
   ok("set_project_outline", {{"items", {{"supervisor", "未定"}, {"structure", "木造"}}}});
+  EXPECT_EQ(stage1()["state"], "入力不足");  // docs/232: 第二面 7・8 still to choose
+  EXPECT_NE(stage1()["details"].get<std::string>().find("構造計算適合性判定の申請"), std::string::npos);
+  ok("set_project_outline", {{"items", {{"structural_review", "not_required"}, {"energy_plan", "not_yet"}}}});
   EXPECT_EQ(stage1()["state"], "入力済み");
+  // docs/232: stage 9 shows the energy plan's state; 未提出 asks for attention.
+  {
+    const json rows = ok("permit_checks", {{"stage", 9}})["rows"];
+    bool found = false;
+    for (const json& r : rows)
+      if (r["item"] == "省エネ適判（確保計画の提出）") {
+        found = true;
+        EXPECT_EQ(r["state"], "入力済み");
+        EXPECT_NE(r["details"].get<std::string>().find("未提出"), std::string::npos);
+        EXPECT_TRUE(r["attention"].get<bool>());
+      }
+    EXPECT_TRUE(found);
+  }
+  EXPECT_FALSE(call("set_project_outline", {{"items", {{"energy_plan", "maybe"}}}}).value("ok", true));
+  ok("set_project_outline", {{"items", {{"specific_process", "（第1回）2027-06-30 屋根工事"}}}});
   // The outline table: the form's labels and the choice's text.
   const auto outline = sbr::doc::scheduleTable(modeler.document(), 10);
   std::map<std::string, std::string> cells;
@@ -3721,6 +3739,9 @@ TEST_F(Schedules, ProjectOutlineFollowsTheApplicationForm) {
   EXPECT_EQ(cells["防火地域"], "準防火地域");
   EXPECT_EQ(cells["工事監理者"], "未定");
   EXPECT_EQ(cells["構造"], "木造");
+  EXPECT_EQ(cells["構造計算適合性判定の申請"], "申請不要");  // docs/232
+  EXPECT_EQ(cells["建築物エネルギー消費性能確保計画の提出"], "未提出");
+  EXPECT_EQ(cells["特定工程"], "（第1回）2027-06-30 屋根工事");
   EXPECT_EQ(cells["工事施工者"], "未入力");
   EXPECT_EQ(cells.count("代理者"), 0u);  // only when there is one
   ok("set_project_outline", {{"items", {{"agent", "一級建築士 架空 三郎"}}}});
