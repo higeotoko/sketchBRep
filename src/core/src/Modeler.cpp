@@ -4046,8 +4046,9 @@ Status Modeler::setInsulation(const std::vector<ObjectId>& ids, const std::strin
     const Object* o = document_.find(id);
     if (!o) return Status::failure("Object not found");
     const auto kind = o->attributes.find("kind");
-    if (kind == o->attributes.end() || (kind->second != "wall" && kind->second != "slab" && kind->second != "roof"))
-      return Status::failure("断熱は壁・床・屋根に入れます（" + o->name + " はどれでもありません）");
+    if (kind == o->attributes.end() ||
+        (kind->second != "wall" && kind->second != "slab" && kind->second != "roof" && kind->second != "ceiling"))  // docs/236
+      return Status::failure("断熱は壁・床・屋根・天井に入れます（" + o->name + " はどれでもありません）");
     if (o->locked) return Status::failure("The object is locked");
     Object object = *o;
     if (material.empty()) {
@@ -7893,7 +7894,7 @@ std::optional<Modeler::InsulationBand> Modeler::insulationBand(const Document& d
     const nlohmann::json spec = nlohmann::json::parse(attributeOf(object, "roof_spec"), nullptr, false);
     if (!spec.is_object()) return std::nullopt;
     band.thickness = spec.value("thickness", 0.0);
-  } else if (kind == "slab") {
+  } else if (kind == "slab" || kind == "ceiling") {  // docs/236: a ceiling as a floor
     const TopoDS_Shape shape = document.worldShape(object);
     if (shape.IsNull()) return std::nullopt;
     const Bnd_Box b = geom::exactBounds(shape);
@@ -8496,10 +8497,33 @@ std::vector<Modeler::InsulationArea> insulationAreasOf(const Document& document,
   for (const Object& o : document.objects()) {
     if (!document.isVisible(o.id) || o.shape.IsNull()) continue;
     const std::string kind = attributeOf(o, "kind");
-    if (kind != "slab" && kind != "roof") continue;
+    if (kind != "slab" && kind != "roof" && kind != "ceiling") continue;  // docs/236: ceilings too
     const std::string text = Modeler::insulationText(o);
     if (text.empty()) continue;
     Modeler::InsulationArea area{o.id, "", text, TopoDS_Shape(), TopoDS_Shape()};
+    if (kind == "ceiling") {
+      // docs/236: a ceiling with insulation (天井断熱) on the plan of the storey it is in: above the cut,
+      // below the next level up (or anywhere above when there is none). Its range as a slab's.
+      const TopoDS_Shape world = document.worldShape(o);
+      const Bnd_Box b = geom::exactBounds(world);
+      if (b.IsVoid()) continue;
+      const double top = b.CornerMax().Z(), bottom = b.CornerMin().Z();
+      if (bottom <= z || (above && bottom > *above + kNear)) continue;
+      area.part = "天井";
+      BRepAlgoAPI_Section cut(world, gp_Pln(gp_Pnt(0, 0, (top + bottom) / 2), gp::DZ()), Standard_False);
+      cut.SetNonDestructive(Standard_True);
+      cut.Build();
+      if (!cut.IsDone() || cut.Shape().IsNull()) continue;
+      area.outline = cut.Shape();
+      BRepBuilderAPI_MakeFace sheet(gp_Pln(gp_Pnt(0, 0, (top + bottom) / 2), gp::DZ()), b.CornerMin().X() - 1.0,
+                                    b.CornerMax().X() + 1.0, b.CornerMin().Y() - 1.0, b.CornerMax().Y() + 1.0);
+      if (sheet.IsDone()) {
+        BRepAlgoAPI_Common inside(world, sheet.Face());
+        if (inside.IsDone()) area.region = inside.Shape();
+      }
+      out.push_back(std::move(area));
+      continue;
+    }
     if (kind == "slab") {
       const TopoDS_Shape world = document.worldShape(o);
       const Bnd_Box b = geom::exactBounds(world);

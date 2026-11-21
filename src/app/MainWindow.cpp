@@ -7530,11 +7530,12 @@ void MainWindow::showInsulationDialog() {
     const doc::Object* o = modeler_.document().find(id);
     if (!o) continue;
     const auto kind = o->attributes.find("kind");
-    if (kind != o->attributes.end() && (kind->second == "wall" || kind->second == "slab" || kind->second == "roof"))
+    if (kind != o->attributes.end() &&
+        (kind->second == "wall" || kind->second == "slab" || kind->second == "roof" || kind->second == "ceiling"))  // docs/236
       ids.push_back(id);
   }
   if (ids.empty()) {
-    reportError(tr("断熱を入れる壁・床・屋根を選んでください"));
+    reportError(tr("断熱を入れる壁・床・屋根・天井を選んでください"));
     return;
   }
   nlohmann::json now = nlohmann::json::object();

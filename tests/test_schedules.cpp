@@ -3916,3 +3916,52 @@ TEST_F(Schedules, VicinityMapLandmarks) {
   EXPECT_FALSE(far);
   EXPECT_TRUE(note);
 }
+
+// docs/236: insulation in a ceiling (天井断熱): given like the others; a range on its storey's insulation
+// plan, a mark in sections, a 天井 row in the insulation table compared with the 天井 value (告示 1(2)ロ:
+// 充填 5.7 / 4.0 / 4.0 / 4.0 / 0.78).
+TEST_F(Schedules, CeilingInsulation) {
+  ok("set_room_finish", {{"id", room}, {"ceiling_height", 2400}});
+  const json made = ok("make_ceilings", json::object());
+  ASSERT_FALSE(made["ids"].empty());
+  const std::string ceiling = made["ids"][0];
+  ok("set_insulation", {{"ids", {ceiling}}, {"material", "グラスウール 16K"}, {"thickness_mm", 155}, {"conductivity", 0.038},
+                        {"placement", "fill"}, {"source", "架空のカタログ"}});
+  // On 1FL's plan (cut 1100, the ceiling at 2400 under 2FL), not on 2FL's.
+  bool onFirst = false, onSecond = false;
+  for (const auto& a : sbr::doc::Modeler::insulationAreas(modeler.document(), 1100)) onFirst = onFirst || (a.part == "天井" && a.id == ceiling);
+  for (const auto& a : sbr::doc::Modeler::insulationAreas(modeler.document(), 4100)) onSecond = onSecond || a.part == "天井";
+  EXPECT_TRUE(onFirst);
+  EXPECT_FALSE(onSecond);
+  sbr::draw::ViewSpec plan = sbr::draw::planView(1100.0);
+  plan.depth = 1500.0;
+  plan.insulation = true;
+  const auto view = sbr::draw::makeView(modeler.document(), plan);
+  ASSERT_TRUE(view);
+  const auto& notes = view->calculationNotes;
+  EXPECT_NE(std::find(notes.begin(), notes.end(), "×印の範囲：この階の天井の断熱　グラスウール 16K 155 mm（充填）（1 個）"),
+            notes.end())
+      << (notes.empty() ? "" : notes.front());
+  // A section through it.
+  sbr::draw::ViewSpec section = sbr::draw::sectionView(gp_Pnt(1000, 3000, 0), gp_Dir(-1, 0, 0));
+  section.insulation = true;
+  const auto cut = sbr::draw::makeView(modeler.document(), section);
+  ASSERT_TRUE(cut);
+  bool marked = false;
+  for (const auto& n : cut->calculationNotes) marked = marked || n.find("波線：天井の断熱") != std::string::npos;
+  EXPECT_TRUE(marked);
+  // The insulation table: 天井, R 4.08 against 4.0 in region 6.
+  const std::string site = ok("create_polygon", {{"points", {{-2000, -2000, 0}, {14000, -2000, 0}, {14000, 10000, 0}, {-2000, 10000, 0}}}})["id"];
+  ok("set_site_boundary", {{"outline", site}, {"source", "架空の測量図"}});
+  ok("set_energy_route", {{"route", "spec"}, {"region", 6}, {"source", "架空の案内"}});
+  const auto set = sbr::doc::drawingSet(modeler.document(), {});
+  ASSERT_TRUE(set);
+  std::vector<std::string> texts;
+  for (std::size_t i = 0; i < set->names.size(); ++i)
+    if (set->names[i] == "断熱範囲図（1FL）")
+      for (const auto& item : set->sheets[i].items)
+        if (item.kind == sbr::draw::Item::Kind::Text) texts.push_back(item.text);
+  EXPECT_NE(std::find(texts.begin(), texts.end(), "天井"), texts.end());
+  EXPECT_NE(std::find(texts.begin(), texts.end(), "R≧4.0"), texts.end());
+  EXPECT_NE(std::find(texts.begin(), texts.end(), "満たす"), texts.end());
+}

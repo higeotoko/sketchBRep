@@ -913,7 +913,7 @@ class Modeler {
   // edges of its plan outline (a slab's cut at half its height, a roof's outline as made).
   struct InsulationArea {
     ObjectId id;
-    std::string part;  // "床", "上階床", "屋根"
+    std::string part;  // "床", "屋根", "天井" (docs/236)
     std::string text;
     TopoDS_Shape outline;
     TopoDS_Shape region;  // docs/222: the range as planar faces (world), for the cross over it

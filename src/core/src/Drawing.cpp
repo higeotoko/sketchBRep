@@ -832,7 +832,8 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
         // the layer lines), along a floor or roof at half its depth under its upper faces.
         if (spec.insulation && spec.kind == ViewKind::Section) {
           if (const auto band = doc::Modeler::insulationBand(document, o)) {
-            const std::string part = band->middle ? "壁" : o.attributes.at("kind") == "slab" ? "床" : "屋根";
+            const std::string kindName = o.attributes.at("kind");
+            const std::string part = band->middle ? "壁" : kindName == "slab" ? "床" : kindName == "ceiling" ? "天井" : "屋根";
             std::size_t before = layerLines.size();
             auto mark = [&](const gp_Pnt& a, const gp_Pnt& b) {
               if (auto z = insulationZigzag(proj.uv(a), proj.uv(b), band->thickness, spec.paperScale)) layerLines.push_back(std::move(*z));
@@ -1251,7 +1252,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
           }
         }
       }
-      const double shift = area.part == "屋根" ? 0.15 * (v1 - v0) : 0.0;
+      const double shift = area.part == "屋根" ? 0.15 * (v1 - v0) : area.part == "天井" ? -0.15 * (v1 - v0) : 0.0;
       Item label;
       label.kind = Item::Kind::Text;
       label.pen = Pen::Text;
@@ -1266,10 +1267,10 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     if (walls.empty()) view.calculationNotes.push_back("この階で切る壁に、断熱の入力はありません");
     for (const auto& [text, ids] : walls)
       view.calculationNotes.push_back("波線：壁の断熱　" + text + "（" + std::to_string(ids.size()) + " 枚）");
-    for (const char* part : {"床", "屋根"}) {
+    for (const char* part : {"床", "天井", "屋根"}) {  // docs/236: ceilings
       const auto it = areas.find(part);
       if (it == areas.end()) continue;
-      const std::string name = std::string(part) == "床" ? "この階の床" : "屋根";
+      const std::string name = std::string(part) == "床" ? "この階の床" : std::string(part) == "天井" ? "この階の天井" : "屋根";
       for (const auto& [text, count] : it->second)
         view.calculationNotes.push_back("×印の範囲：" + name + "の断熱　" + text + "（" + std::to_string(count) + " 個）");
     }
@@ -1278,7 +1279,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
   // docs/217: the legend of a section's insulation marks.
   if (spec.kind == ViewKind::Section && spec.insulation) {
     if (insulationMarked.empty()) view.calculationNotes.push_back("この断面で切る壁・床・屋根に、断熱の入力はありません");
-    for (const char* part : {"壁", "床", "屋根"}) {
+    for (const char* part : {"壁", "床", "天井", "屋根"}) {
       const auto it = insulationMarked.find(part);
       if (it == insulationMarked.end()) continue;
       for (const auto& [text, ids] : it->second)

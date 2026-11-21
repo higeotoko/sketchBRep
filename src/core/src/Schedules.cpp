@@ -1255,6 +1255,7 @@ struct SpecR {
   double fill[4], outside[4];
 };
 const SpecR kSpecRoof{{6.6, 4.6, 4.6, 0.96}, {5.7, 4.0, 4.0, 0.78}};
+const SpecR kSpecCeiling{{5.7, 4.0, 4.0, 0.78}, {5.7, 4.0, 4.0, 0.78}};  // docs/236: 天井 (屋根又は天井 for 外張)
 const SpecR kSpecWall{{3.3, 2.2, 2.2, -1}, {2.9, 1.7, 1.7, -1}};
 const SpecR kSpecFloorOther{{3.3, 3.3, 2.2, -1}, {-1, -1, -1, -1}};
 const SpecR kSpecFloorOutside{{5.2, 5.2, 3.3, -1}, {3.8, 3.8, 2.5, -1}};
@@ -1272,7 +1273,7 @@ draw::Table insulationSpecTable(const Document& document) {
   std::map<std::pair<int, std::string>, Row> rows;  // (part order, key) -> row
   for (const Object& o : document.objects()) {
     const std::string kind = attribute(o, "kind");
-    const int order = kind == "roof" ? 0 : kind == "wall" ? 1 : kind == "slab" ? 2 : -1;
+    const int order = kind == "roof" ? 0 : kind == "ceiling" ? 1 : kind == "wall" ? 2 : kind == "slab" ? 3 : -1;  // docs/236
     if (order < 0) continue;
     const nlohmann::json j = nlohmann::json::parse(attribute(o, "insulation"), nullptr, false);
     if (!j.is_object() || j.value("material", std::string()).empty()) continue;
@@ -1287,7 +1288,7 @@ draw::Table insulationSpecTable(const Document& document) {
       r = j.value("thickness_mm", 0.0) / 1000 / j.at("conductivity").get<double>();
     row.value = r > 0 ? "R=" + number(r, 2) : "未入力";
     // docs/228: the reference value and how it compares.
-    const SpecR& spec = order == 0 ? kSpecRoof : order == 1 ? kSpecWall : kSpecFloorOther;
+    const SpecR& spec = order == 0 ? kSpecRoof : order == 1 ? kSpecCeiling : order == 2 ? kSpecWall : kSpecFloorOther;
     if (region < 1 || region > 8) {
       row.need = "地域未入力";
       row.verdict = "未評価";
@@ -1308,7 +1309,7 @@ draw::Table insulationSpecTable(const Document& document) {
     if (slot.count == 0) slot = row;
     ++slot.count;
   }
-  const char* parts[] = {"屋根", "壁", "床"};
+  const char* parts[] = {"屋根", "天井", "壁", "床"};
   for (const auto& [key, r] : rows)
     t.rows.push_back({parts[key.first], r.material, r.thickness, r.value, std::to_string(r.count), r.need, r.verdict});
   t.notes = {"性能値は、入れた熱抵抗 R、または厚さ÷熱伝導率（m2K/W）。",
@@ -2591,10 +2592,10 @@ draw::Table scheduleTable(const Document& document, int which) {
     std::map<std::pair<std::string, std::string>, std::pair<int, std::pair<std::string, std::string>>> parts;
     for (const Object& o : document.objects()) {
       const std::string kind = attribute(o, "kind");
-      if (kind != "wall" && kind != "slab" && kind != "roof") continue;
+      if (kind != "wall" && kind != "slab" && kind != "roof" && kind != "ceiling") continue;  // docs/236
       const std::string text = insulationText(o);
       if (text.empty()) continue;
-      const std::string part = kind == "wall" ? "外皮：壁" : kind == "slab" ? "外皮：床" : "外皮：屋根";
+      const std::string part = kind == "wall" ? "外皮：壁" : kind == "slab" ? "外皮：床" : kind == "ceiling" ? "外皮：天井" : "外皮：屋根";
       std::string name = kind == "wall" ? attribute(o, "wall_type_name") : attribute(o, "type_name");
       if (name.empty()) name = kind == "wall" ? "（仕様なし）" : o.name;
       const nlohmann::json j = nlohmann::json::parse(attribute(o, "insulation"), nullptr, false);

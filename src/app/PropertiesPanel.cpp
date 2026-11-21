@@ -1203,7 +1203,8 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
   if (!elementSummary.isEmpty()) form_->addRow(tr("選択"), new QLabel(elementSummary));
   // docs/215: the insulation of a wall, slab or roof (docs/210), shown and given in its dialog.
   if (const auto kind = o->attributes.find("kind");
-      kind != o->attributes.end() && (kind->second == "wall" || kind->second == "slab" || kind->second == "roof")) {
+      kind != o->attributes.end() &&
+      (kind->second == "wall" || kind->second == "slab" || kind->second == "roof" || kind->second == "ceiling")) {  // docs/236
     QString text = tr("未入力");
     if (const auto it = o->attributes.find("insulation"); it != o->attributes.end()) {
       const auto j = nlohmann::json::parse(it->second, nullptr, false);
