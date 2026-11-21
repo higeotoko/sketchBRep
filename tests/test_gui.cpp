@@ -255,6 +255,7 @@ class GuiPhase1 : public QObject {
   void energyInputsInTheirDialogs();
   void equipmentInItsDialog();
   void vicinityMapFromCachedTiles();
+  void vicinityMapFetchedOnline();
   void insulationPlanIsDrawnOnItsSheet();
   void proposalShowsRotationAndHide();
   void benchViewportSync();
@@ -1112,6 +1113,26 @@ void GuiPhase1::vicinityMapFromCachedTiles() {
   if (!where.isEmpty()) QVERIFY(image.save(QString::fromLocal8Bit(where)));
   qunsetenv("SBR_TILE_CACHE");
   qunsetenv("SBR_TILES_OFFLINE");
+}
+
+// docs/233: the real tiles over HTTPS (only with SBR_TILES_ONLINE set: CI has no network). A sample
+// position (Tokyo Station), a fresh cache: all 9 fetched, then all 9 from the cache.
+void GuiPhase1::vicinityMapFetchedOnline() {
+  if (qgetenv("SBR_TILES_ONLINE").isEmpty()) QSKIP("set SBR_TILES_ONLINE to fetch 国土地理院's tiles");
+  QTemporaryDir cache;
+  QVERIFY(cache.isValid());
+  qputenv("SBR_TILE_CACHE", cache.path().toLocal8Bit());
+  qunsetenv("SBR_TILES_OFFLINE");
+  const doc::VicinityMap map{35.681236, 139.767125, 16, "pale"};
+  QString message;
+  const auto picture = app::fetchVicinityPicture(map, &message);
+  QVERIFY2(picture, qPrintable(message));
+  QCOMPARE(picture->missingTiles, 0);
+  QVERIFY2(message.contains(QStringLiteral("取得 9")), qPrintable(message));
+  const auto again = app::fetchVicinityPicture(map, &message);
+  QVERIFY(again);
+  QVERIFY2(message.contains(QStringLiteral("キャッシュ 9")), qPrintable(message));
+  qunsetenv("SBR_TILE_CACHE");
 }
 
 void GuiPhase1::equipmentInItsDialog() {

@@ -65,6 +65,17 @@ def package(args):
             "https://www.trimble.com/legal/developer-terms\n\n"
             "SketchUp is a trademark of Trimble Inc. SketchBRep is not made or endorsed by Trimble.\n",
             encoding="utf-8")
+    # docs/233: the Qt TLS plugin (Windows Schannel; no OpenSSL) so the app can fetch 国土地理院's map
+    # tiles over HTTPS. Part of Qt (its license is shipped with the runtime).
+    qt_plugins = []
+    for name in args.qt_plugin or []:
+        source = Path(name)
+        if not source.is_file():
+            raise ValueError(f"Qt plugin missing: {source}")
+        target = stage / source.parent.name / source.name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        qt_plugins.append({"file": f"{source.parent.name}/{source.name}", "sha256": sha256(target)})
     binaries = {}
     for name, folder in {"SketchBRep.exe": "src/app", "sbr_cli.exe": "tools/cli",
                          "sbr_mcp.exe": "tools/mcp", "sbr_phase0.exe": "tools/phase0"}.items():
@@ -106,7 +117,7 @@ def package(args):
             if not bundled and (runtime_dll or not system):
                 raise ValueError(f"Unresolved dependency: {binary.name} -> {dep}")
     record = {"code_commit": commit, "kind": "local-windows-portable",
-              "runtime_dlls_verified": len(manifest), "binary_dependencies_checked": checked, "sketchup_sdk": sketchup,
+              "runtime_dlls_verified": len(manifest), "binary_dependencies_checked": checked, "sketchup_sdk": sketchup, "qt_plugins": qt_plugins,
               "executables_sha256": binaries, "ci_verified": False, "human_windows_verified": False}
     (stage / "BUILD_INFO.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -131,4 +142,5 @@ if __name__ == "__main__":
     parser.add_argument("--dumpbin", type=Path, required=True)
     parser.add_argument("--sketchup-sdk", type=Path, help="SketchUp SDK folder: its DLLs go into the ZIP (docs/182)")
     parser.add_argument("--vc-extra", nargs="*", help="VC runtime DLLs the SDK's DLLs need, when the runtime lacks them")
+    parser.add_argument("--qt-plugin", nargs="*", help="Qt plugin DLLs to add in their folder (docs/233: tls/qschannelbackend.dll)")
     package(parser.parse_args())

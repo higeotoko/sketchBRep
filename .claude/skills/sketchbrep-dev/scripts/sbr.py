@@ -168,6 +168,16 @@ def package() -> int:
                 sdk = line.split("=", 1)[1].strip()
     if sdk:
         cmd += ["--sketchup-sdk", sdk, "--vc-extra", str(CONFIG["dll_paths"][1] / "msvcp140_codecvt_ids.dll")]
+    # docs/233: the Qt TLS plugin (HTTPS for 国土地理院's map tiles) from the build's Qt.
+    qt_dir = ""
+    if cache.is_file():
+        for line in cache.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.startswith("Qt6_DIR:"):
+                qt_dir = line.split("=", 1)[1].strip()
+    if qt_dir:
+        tls = Path(qt_dir).parents[1] / "qt6" / "plugins" / "tls" / "qschannelbackend.dll"
+        if tls.is_file():
+            cmd += ["--qt-plugin", str(tls)]
     code, text = run(cmd, LOGS / "package.log", cwd=CONFIG["repo"])
     if code:
         print(f"package FAILED; log: {LOGS / 'package.log'}")
@@ -175,6 +185,8 @@ def package() -> int:
     info = json.loads([l for l in text.splitlines() if l.startswith("{")][-1])
     print(f"ZIP {info['zip']}  {info['bytes']:,} bytes  sha256 {info['sha256']}")
     print(f"  dlls {info['runtime_dlls_verified']} / deps {info['binary_dependencies_checked']}  -> {zip_path}")
+    if info.get("qt_plugins"):
+        print("  Qt plugins: " + ", ".join(row["file"] for row in info["qt_plugins"]))
     if info.get("sketchup_sdk"):
         print("  SketchUp SDK: " + ", ".join(row["file"] for row in info["sketchup_sdk"]))
     return 0
