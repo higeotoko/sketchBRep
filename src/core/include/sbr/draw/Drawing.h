@@ -99,6 +99,9 @@ struct ViewSpec {
   // docs/216: plans: the walls with insulation given drawn with the insulation mark (a zigzag along
   // the middle of the wall), and a legend of the insulations and of the floors' and roofs'.
   bool insulation = false;
+  // docs/219: the scale the view is laid out at (1:paperScale); the insulation zigzags are made no
+  // finer than a peak every 1.2 mm on paper. 0: not known (the screen): by the band's width only.
+  double paperScale = 0.0;
   // Plans (docs/132): where sections are cut, drawn as a cut line across the drawing with arrows
   // the way the section looks and its label and sheet number at both ends.
   struct CutMark {

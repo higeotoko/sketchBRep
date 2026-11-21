@@ -2901,6 +2901,7 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
     if (p.view) {
       draw::ViewSpec hatched = *p.view;
       hatched.hatchScale = hatched.insulation ? 0.0 : spec.scale;  // docs/173 (docs/216: not under the insulation marks)
+      hatched.paperScale = spec.scale;  // docs/219
       const auto view = draw::makeView(document, hatched);
       if (!view) {
         out.notes.push_back(p.name + ": " + view.error());
@@ -2970,6 +2971,7 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
     if (p && p->view) {
       draw::ViewSpec viewSpec = *p->view;
       viewSpec.hatchScale = viewSpec.insulation ? 0.0 : spec.scale;  // docs/173 (docs/216: not under the insulation marks)
+      viewSpec.paperScale = spec.scale;  // docs/219
       // Plans: where the sections are cut, with their sheet numbers.
       if (viewSpec.kind == draw::ViewKind::Plan)
         for (const Cut& c : cuts)

@@ -4310,6 +4310,7 @@ const std::vector<CommandDef>& commands() {
          spec.bracingFloor = textOr(a, "bracing_floor", "");  // docs/208: a plan of that storey's bracing walls
          spec.insulation = a.value("insulation", false);        // docs/216: the insulation marks and legend
          if (a.value("hatch", true)) spec.hatchScale = numberOr(a, "scale", 100.0);  // docs/173
+         spec.paperScale = numberOr(a, "scale", 100.0);  // docs/219: the insulation marks for this scale
          const draw::View view = must(draw::makeView(m.document(), spec));
          draw::SheetSpec sheetSpec;
          sheetSpec.scale = numberOr(a, "scale", 100.0);

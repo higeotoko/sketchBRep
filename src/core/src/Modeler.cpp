@@ -7599,6 +7599,38 @@ std::optional<LayerEdges> layerEdges(const WallBand& w) {
   return out;
 }
 
+// docs/218: where a wall's insulation mark goes across it (its left coordinate, from..to): a layer
+// of its build-up named as insulation (断熱, or the material given), else for 充填 (fill) its core
+// (柱・間柱), else the whole wall. `place`: "layer", "core" or "middle".
+struct InsulationPlace {
+  double from = 0.0, to = 0.0;
+  std::string place = "middle";
+};
+InsulationPlace wallInsulationPlace(const WallBand& w) {
+  InsulationPlace out{-w.right, w.leftExt, "middle"};
+  const nlohmann::json given = nlohmann::json::parse(attributeOf(*w.object, "insulation"), nullptr, false);
+  const auto edges = layerEdges(w);
+  if (!edges || !given.is_object()) return out;
+  const nlohmann::json layers = nlohmann::json::parse(attributeOf(*w.object, "wall_layers"), nullptr, false);
+  const std::string material = given.value("material", std::string());
+  for (std::size_t k = 0; k < layers.size() && k + 1 < edges->edges.size(); ++k) {
+    const std::string name = layers[k].value("name", std::string());
+    if (name.find("断熱") != std::string::npos || (!material.empty() && name.find(material) != std::string::npos)) {
+      out.from = std::min(edges->edges[k], edges->edges[k + 1]);
+      out.to = std::max(edges->edges[k], edges->edges[k + 1]);
+      out.place = "layer";
+      return out;
+    }
+  }
+  if (given.value("placement", std::string()) == "fill") {
+    const std::size_t k = edges->core;
+    out.from = std::min(edges->edges[k], edges->edges[k + 1]);
+    out.to = std::max(edges->edges[k], edges->edges[k + 1]);
+    out.place = "core";
+  }
+  return out;
+}
+
 // A partition `p` whose end `end` meets wall `e` at a T (docs/177): p's core goes on through e's
 // layers on that side up to e's core, and e gives those layers up over p's core, so that the
 // boards turn the corner. In plan (world).
@@ -7722,7 +7754,8 @@ std::vector<Modeler::InsulationRun> Modeler::insulationRuns(const Document& docu
     if (z < w.z0 || z > w.z1) continue;
     const std::string text = insulationText(*w.object);
     if (text.empty()) continue;
-    const double middle = (w.leftExt - w.right) / 2;
+    const InsulationPlace place = wallInsulationPlace(w);  // docs/218
+    const double middle = (place.from + place.to) / 2;
     // Broken where the plan passes through an opening, as the layer lines.
     std::vector<std::pair<double, double>> gaps;
     if (const auto openings = openingsIn(document, w.object->id))
@@ -7739,7 +7772,7 @@ std::vector<Modeler::InsulationRun> Modeler::insulationRuns(const Document& docu
       gp_Pnt b = w.start.Translated(gp_Vec(w.left) * middle + gp_Vec(w.dir) * s1);
       a.SetZ(z);
       b.SetZ(z);
-      out.push_back({w.object->id, a, b, w.right + w.leftExt, text});
+      out.push_back({w.object->id, a, b, place.to - place.from, text, place.place});
     };
     for (const auto& [g0, g1] : gaps) {
       add(from, std::min(g0, w.length));
@@ -7758,8 +7791,10 @@ std::optional<Modeler::InsulationBand> Modeler::insulationBand(const Document& d
   if (kind == "wall") {
     const auto w = wallBand(document, object);
     if (!w) return std::nullopt;
-    band.middle = std::make_pair(w->start.Translated(gp_Vec(w->left) * ((w->leftExt - w->right) / 2)), w->left);
-    band.thickness = w->right + w->leftExt;
+    const InsulationPlace place = wallInsulationPlace(*w);  // docs/218
+    band.middle = std::make_pair(w->start.Translated(gp_Vec(w->left) * ((place.from + place.to) / 2)), w->left);
+    band.thickness = place.to - place.from;
+    band.place = place.place;
   } else if (kind == "roof") {
     const nlohmann::json spec = nlohmann::json::parse(attributeOf(object, "roof_spec"), nullptr, false);
     if (!spec.is_object()) return std::nullopt;
@@ -7774,6 +7809,24 @@ std::optional<Modeler::InsulationBand> Modeler::insulationBand(const Document& d
     return std::nullopt;
   }
   if (band.thickness < 1.0) return std::nullopt;
+  band.depth = band.thickness / 2;
+  // docs/218: a floor or roof of a type with a layer named as insulation: at that layer.
+  if (!band.middle && !typeLayerDepths(document, object).empty()) {
+    if (const auto usage = layerUsage(document, object)) {
+      const nlohmann::json given = nlohmann::json::parse(attributeOf(object, "insulation"), nullptr, false);
+      const std::string material = given.is_object() ? given.value("material", std::string()) : std::string();
+      double d = 0.0;
+      for (const auto& l : usage->layers) {
+        if (l.name.find("断熱") != std::string::npos || (!material.empty() && l.name.find(material) != std::string::npos)) {
+          band.depth = d + l.thickness / 2;
+          band.thickness = l.thickness;
+          band.place = "layer";
+          break;
+        }
+        d += l.thickness;
+      }
+    }
+  }
   return band;
 }
 

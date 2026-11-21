@@ -196,14 +196,16 @@ Item line(Pen pen, const gp_Pnt2d& a, const gp_Pnt2d& b) {
 }
 
 // The insulation mark (docs/216, docs/217): a zigzag from a to b (on the sheet, model mm) in a band
-// `thickness` wide: swinging 30 % of it (10 at least), a peak every 50 % (20 at least). Nothing
-// when shorter than 1.
-std::optional<Item> insulationZigzag(const gp_Pnt2d& a, const gp_Pnt2d& b, double thickness) {
+// `thickness` wide: swinging 30 % of it (10 at least), a peak every 50 % (20 at least; docs/219:
+// and 1.2 mm on paper at 1:scale when the scale is known). Nothing when shorter than 1.
+constexpr double kZigzagPaperPitch = 1.2;  // mm on paper
+std::optional<Item> insulationZigzag(const gp_Pnt2d& a, const gp_Pnt2d& b, double thickness, double scale) {
   const gp_Vec2d along(a, b);
   const double length = along.Magnitude();
   if (length < 1.0) return std::nullopt;
   const gp_Vec2d unit = along / length, across(-unit.Y(), unit.X());
-  const double amplitude = std::max(10.0, thickness * 0.3), pitch = std::max(20.0, thickness * 0.5);
+  const double amplitude = std::max(10.0, thickness * 0.3),
+               pitch = std::max({20.0, thickness * 0.5, scale > 0.0 ? kZigzagPaperPitch * scale : 0.0});
   const int steps = std::max(2, static_cast<int>(std::ceil(length / pitch)));
   Item zigzag;
   zigzag.kind = Item::Kind::Polyline;
@@ -213,6 +215,16 @@ std::optional<Item> insulationZigzag(const gp_Pnt2d& a, const gp_Pnt2d& b, doubl
     zigzag.points.push_back(a.Translated(unit * (length * i / steps) + across * side));
   }
   return zigzag;
+}
+
+// docs/218: where the insulation marks were put ("layer", "core", "middle"), for the legend.
+std::vector<std::string> insulationPlaceNotes(const std::set<std::string>& places) {
+  std::vector<std::string> out;
+  if (places.count("layer")) out.push_back("仕様（層）に断熱の層がある物は、その層の中に描いています");
+  if (places.count("core")) out.push_back("充填の断熱は、仕様（層）の柱・間柱の層の中に描いています");
+  if (places.count("middle")) out.push_back("仕様（層）で位置の分からない断熱は、厚さの中ほどに描いた印です（層の位置ではありません）");
+  out.push_back("基準の値との比較はしていません");
+  return out;
 }
 
 // An edge (already in local coordinates: x, y on the sheet) as items: lines
@@ -705,7 +717,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
   // docs/217: sections with insulation marks: what was marked, by part ("壁" / "床" / "屋根") and
   // insulation, and what has insulation given but could not be marked.
   std::map<std::string, std::map<std::string, std::set<doc::ObjectId>>> insulationMarked;
-  std::set<std::string> insulationNotMarked;
+  std::set<std::string> insulationNotMarked, insulationPlaces;
   // docs/165: in plans, the cut lines of each wall of a build-up (its layers as the key), so
   // that where two walls of one build-up touch, the line between them can be left out.
   struct WallCut {
@@ -823,7 +835,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
             const std::string part = band->middle ? "壁" : o.attributes.at("kind") == "slab" ? "床" : "屋根";
             std::size_t before = layerLines.size();
             auto mark = [&](const gp_Pnt& a, const gp_Pnt& b) {
-              if (auto z = insulationZigzag(proj.uv(a), proj.uv(b), band->thickness)) layerLines.push_back(std::move(*z));
+              if (auto z = insulationZigzag(proj.uv(a), proj.uv(b), band->thickness, spec.paperScale)) layerLines.push_back(std::move(*z));
             };
             if (band->middle) {
               const auto& [p, m] = *band->middle;
@@ -845,8 +857,9 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
                 }
               }
             } else {
-              layerLinesUnderTops(world, plane, {band->thickness / 2}, mark);
+              layerLinesUnderTops(world, plane, {band->depth}, mark);
             }
+            insulationPlaces.insert(band->place);
             if (layerLines.size() > before) insulationMarked[part][band->text].insert(o.id);
             else insulationNotMarked.insert(part + "：" + band->text);
           }
@@ -1196,11 +1209,13 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
   if (spec.kind == ViewKind::Plan && spec.insulation) {
     const double z = spec.frame.Location().Z();
     std::map<std::string, std::set<doc::ObjectId>> walls;
+    std::set<std::string> places;
     for (const auto& run : doc::Modeler::insulationRuns(document, z)) {
-      auto zigzag = insulationZigzag(proj.uv(run.a), proj.uv(run.b), run.thickness);
+      auto zigzag = insulationZigzag(proj.uv(run.a), proj.uv(run.b), run.thickness, spec.paperScale);
       if (!zigzag) continue;
       view.items.push_back(std::move(*zigzag));
       walls[run.text].insert(run.wall);
+      places.insert(run.place);
     }
     std::map<std::string, int> others;
     for (const doc::Object& o : document.objects()) {
@@ -1214,7 +1229,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
       view.calculationNotes.push_back("波線：壁の断熱　" + text + "（" + std::to_string(ids.size()) + " 枚）");
     for (const auto& [text, count] : others)
       view.calculationNotes.push_back(text + "（" + std::to_string(count) + " 個、平面には描きません）");
-    view.calculationNotes.push_back("断熱の位置は壁の厚さの中ほどに描いた印です（層の位置ではありません）。基準の値との比較はしていません");
+    for (std::string& note : insulationPlaceNotes(places)) view.calculationNotes.push_back(std::move(note));
   }
   // docs/217: the legend of a section's insulation marks.
   if (spec.kind == ViewKind::Section && spec.insulation) {
@@ -1227,7 +1242,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     }
     for (const std::string& t : insulationNotMarked)
       view.calculationNotes.push_back(t + "：この断面では印を描けませんでした（壁に沿って切っている等）");
-    view.calculationNotes.push_back("断熱の位置は厚さの中ほどに描いた印です（層の位置ではありません）。基準の値との比較はしていません");
+    for (std::string& note : insulationPlaceNotes(insulationPlaces)) view.calculationNotes.push_back(std::move(note));
   }
 
   // The extent of the model's lines (annotations are placed around it).

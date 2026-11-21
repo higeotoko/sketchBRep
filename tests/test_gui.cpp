@@ -959,6 +959,32 @@ void GuiPhase1::insulationPlanIsDrawnOnItsSheet() {
   }
   const QByteArray sectionWhere = qgetenv("SBR_SECTION_PNG");
   if (!sectionWhere.isEmpty()) QVERIFY(sectionImage.save(QString::fromLocal8Bit(sectionWhere)));
+  // docs/218: walls of a build-up: the marks in the core (充填), drawn at 1:20 to see the layers.
+  // SBR_LAYERED_PNG: where to save its picture.
+  QVERIFY(call("set_wall_type", {{"ids", walls["result"]["ids"]}, {"type", "exterior_siding"}})["ok"].get<bool>());
+  QVERIFY(call("set_insulation", {{"ids", walls["result"]["ids"]}, {"material", "グラスウール 16K"}, {"thickness_mm", 100},
+                                  {"placement", "fill"}, {"source", "架空のカタログ"}})["ok"].get<bool>());
+  for (const auto& run : doc::Modeler::insulationRuns(modeler.document(), 1100.0)) QCOMPARE(run.place, std::string("core"));
+  draw::ViewSpec layered = draw::planView(1100.0);
+  layered.insulation = true;
+  layered.fill = false;
+  layered.paperScale = 20.0;  // docs/219
+  const auto layeredView = draw::makeView(modeler.document(), layered);
+  QVERIFY(layeredView.ok());
+  draw::SheetSpec layeredSheet;
+  layeredSheet.scale = 20.0;
+  layeredSheet.paper = "A1";
+  const auto layeredLaid = draw::layoutSheet(*layeredView, layeredSheet);
+  QVERIFY(layeredLaid.ok());
+  QImage layeredImage(3360, 2376, QImage::Format_RGB32);
+  layeredImage.fill(Qt::white);
+  {
+    QPainter painter(&layeredImage);
+    painter.setRenderHint(QPainter::Antialiasing);
+    app::renderSheet(painter, *layeredLaid, QRectF(0, 0, layeredImage.width(), layeredImage.height()));
+  }
+  const QByteArray layeredWhere = qgetenv("SBR_LAYERED_PNG");
+  if (!layeredWhere.isEmpty()) QVERIFY(layeredImage.save(QString::fromLocal8Bit(layeredWhere)));
 }
 
 // docs/215: the energy route, the insulation of selected walls and an opening's performance given

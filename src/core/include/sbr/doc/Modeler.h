@@ -863,24 +863,30 @@ class Modeler {
   // (across the wall). Empty as for wallLayerLines. Sections draw where they cross the cut.
   static std::vector<std::pair<gp_Pnt, gp_Dir>> wallLayerPlanes(const Document& document, const Object& wall);
   // docs/216: walls made by the wall tool with insulation given (docs/210) that a plan at height
-  // `z` cuts: the middle of the wall's band, broken at the openings the plan passes through (world,
-  // at z; one run per piece), its thickness and the
-  // insulation as text ("グラスウール 16K 100 mm（充填）").
+  // `z` cuts: the middle of the band the mark goes in, broken at the openings the plan passes
+  // through (world, at z; one run per piece), that band's width and the insulation as text
+  // ("グラスウール 16K 100 mm（充填）"). docs/218: the band is the layer of the wall's build-up named
+  // as insulation (断熱 or the material), else for 充填 its core, else the whole wall (`place`:
+  // "layer", "core", "middle").
   struct InsulationRun {
     ObjectId wall;
     gp_Pnt a, b;
     double thickness = 0.0;
     std::string text;
+    std::string place = "middle";
   };
   static std::vector<InsulationRun> insulationRuns(const Document& document, double z);
   // docs/217: where a section draws the insulation mark of a wall, slab or roof with insulation
-  // given: a wall's middle plane (a point on it and its normal, across the wall) and thickness; a
-  // slab's height or a roof's thickness across its slope as made (no plane: the mark runs under its
-  // upper faces at half that depth). Nothing without insulation or a known band.
+  // given: a wall's mark plane (a point on it and its normal, across the wall) and band width (as
+  // insulationRuns); a slab's height or a roof's thickness across its slope as made (no plane: the
+  // mark runs under its upper faces at `depth`, half the thickness; docs/218: a floor or roof type's
+  // layer named as insulation gives its depth and thickness). Nothing without insulation or a band.
   struct InsulationBand {
     std::optional<std::pair<gp_Pnt, gp_Dir>> middle;
     double thickness = 0.0;
+    double depth = 0.0;
     std::string text;
+    std::string place = "middle";
   };
   static std::optional<InsulationBand> insulationBand(const Document& document, const Object& object);
   // The insulation of a wall, slab or roof as text, or "" when it has none.

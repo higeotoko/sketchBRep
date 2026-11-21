@@ -559,6 +559,7 @@ std::optional<draw::ViewSpec> DrawingDialog::viewSpec(QString* why) const {
   spec.includeHidden = includeHidden_->isChecked();
   spec.memberLabels = memberLabels_->isChecked();
   spec.hatchScale = scale_->currentData().toDouble();  // docs/173: the layers hatched for this scale
+  spec.paperScale = spec.hatchScale;  // docs/219: the insulation marks for this scale
   if (k >= 3 && !site) {
     static const char* presets[] = {"foundation", "first_floor", "second_floor", "roof"};
     const auto framing =

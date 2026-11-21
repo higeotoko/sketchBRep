@@ -3244,3 +3244,99 @@ TEST_F(Schedules, InsulationSectionsMarkWallsAndFloors) {
   }
   EXPECT_TRUE(has(set->names, "断熱範囲図（B-B 断面）"));  // across x = 4000: the south wall and the floor
 }
+
+// docs/218: with a build-up, the insulation mark goes in the layer: a layer named as insulation,
+// else for 充填 the core (柱・間柱); a floor type's layer named 断熱 likewise. Without one: the middle.
+TEST_F(Schedules, InsulationMarksSitInTheirLayer) {
+  const auto has = [](const std::vector<std::string>& list, const std::string& name) {
+    return std::find(list.begin(), list.end(), name) != list.end();
+  };
+  ok("set_wall_type", {{"ids", {south}}, {"type", "exterior_siding"}});
+  ok("set_insulation", {{"ids", {south}}, {"material", "グラスウール 16K"}, {"thickness_mm", 100}, {"placement", "fill"},
+                        {"source", "架空のカタログ"}});
+  const double outer = modeler.document().worldBounds(*modeler.document().find(south)).CornerMin().Y();
+  const auto runs = sbr::doc::Modeler::insulationRuns(modeler.document(), 1100);
+  ASSERT_FALSE(runs.empty());
+  for (const auto& run : runs) {
+    EXPECT_EQ(run.place, "core");
+    EXPECT_NEAR(run.thickness, 105.0, 1e-6);
+    // Siding 16, battens 18, plywood 9 from the outer face, then the core: its middle 95.5 in.
+    EXPECT_NEAR(run.a.Y() - outer, 16 + 18 + 9 + 105.0 / 2, 1e-6);
+  }
+  const auto wallBand = sbr::doc::Modeler::insulationBand(modeler.document(), *modeler.document().find(south));
+  ASSERT_TRUE(wallBand && wallBand->middle);
+  EXPECT_EQ(wallBand->place, "core");
+  EXPECT_NEAR(wallBand->middle->first.Y() - outer, 95.5, 1e-6);
+  // 外張り with no insulation layer in the build-up: the middle of the whole wall.
+  ok("set_insulation", {{"ids", {south}}, {"material", "フェノールフォーム"}, {"thickness_mm", 25}, {"placement", "outside"},
+                        {"source", "架空のカタログ"}});
+  const auto outside = sbr::doc::Modeler::insulationRuns(modeler.document(), 1100);
+  ASSERT_FALSE(outside.empty());
+  EXPECT_EQ(outside.front().place, "middle");
+  EXPECT_NEAR(outside.front().thickness, 160.5, 1e-6);
+  // A floor type with a layer named 断熱: the mark at that layer's middle depth.
+  std::string slab;
+  for (const auto& o : modeler.document().objects())
+    if (o.attributes.count("kind") && o.attributes.at("kind") == "slab") slab = o.id;
+  ASSERT_FALSE(slab.empty());
+  ok("define_type", {{"name", "F1"}, {"part", "floor"},
+                     {"layers", {{{"name", "フローリング"}, {"thickness", 15}}, {{"name", "合板"}, {"thickness", 24}},
+                                 {{"name", "断熱材"}, {"thickness", 50}}}}});
+  ok("set_type_name", {{"ids", {slab}}, {"name", "F1"}});
+  ok("set_insulation", {{"ids", {slab}}, {"material", "押出法ポリスチレンフォーム"}, {"thickness_mm", 50}, {"source", "架空のカタログ"}});
+  const auto floorBand = sbr::doc::Modeler::insulationBand(modeler.document(), *modeler.document().find(slab));
+  ASSERT_TRUE(floorBand);
+  EXPECT_FALSE(floorBand->middle);
+  EXPECT_EQ(floorBand->place, "layer");
+  EXPECT_NEAR(floorBand->depth, 15 + 24 + 25.0, 1e-6);
+  EXPECT_NEAR(floorBand->thickness, 50.0, 1e-6);
+  // The section: the floor's mark at -64 (its top at 0), and the legend says where the marks are.
+  sbr::draw::ViewSpec spec = sbr::draw::sectionView(gp_Pnt(1000, 3000, 0), gp_Dir(-1, 0, 0));
+  spec.insulation = true;
+  const auto view = sbr::draw::makeView(modeler.document(), spec);
+  ASSERT_TRUE(view);
+  bool atLayer = false;
+  for (const auto& i : view->items) {
+    if (i.kind != sbr::draw::Item::Kind::Polyline || i.points.size() < 3) continue;
+    if (std::abs(i.points.front().Y() - i.points.back().Y()) < 1e-6 && std::abs(i.points.front().Y() + 64.0) < 1e-6) atLayer = true;
+  }
+  EXPECT_TRUE(atLayer);
+  EXPECT_TRUE(has(view->calculationNotes, "仕様（層）に断熱の層がある物は、その層の中に描いています"));
+  EXPECT_TRUE(has(view->calculationNotes, "仕様（層）で位置の分からない断熱は、厚さの中ほどに描いた印です（層の位置ではありません）"));
+  EXPECT_TRUE(has(view->calculationNotes, "基準の値との比較はしていません"));
+}
+
+// docs/219: the insulation zigzags follow the scale they are laid out at: a peak every 1.2 mm on
+// paper at least (1:100: 120), else by the band (200 thick: 100), as on the screen.
+TEST_F(Schedules, InsulationZigzagsFollowTheScale) {
+  ok("set_insulation", {{"ids", {south}}, {"material", "グラスウール 16K"}, {"thickness_mm", 100}, {"placement", "fill"},
+                        {"source", "架空のカタログ"}});
+  // The smallest step along the longest zigzag of the plan (each step goes half a peak along).
+  const auto step = [&](double scale) {
+    sbr::draw::ViewSpec spec = sbr::draw::planView(1100.0);
+    spec.depth = 1500.0;
+    spec.insulation = true;
+    spec.paperScale = scale;
+    const auto view = sbr::draw::makeView(modeler.document(), spec);
+    EXPECT_TRUE(view);
+    if (!view) return 0.0;
+    const sbr::draw::Item* longest = nullptr;
+    double best = 0.0;
+    for (const auto& i : view->items) {
+      if (i.kind != sbr::draw::Item::Kind::Polyline || i.points.size() < 3) continue;
+      const double d = i.points.front().Distance(i.points.back());
+      if (d > best) {
+        best = d;
+        longest = &i;
+      }
+    }
+    if (!longest) return 0.0;
+    return best / static_cast<double>(longest->points.size() - 1);
+  };
+  const double screen = step(0.0), at20 = step(20.0), at100 = step(100.0);
+  EXPECT_LE(screen, 100.0 + 1e-6);
+  EXPECT_GT(screen, 90.0);
+  EXPECT_NEAR(at20, screen, 1e-9);  // 1.2 mm at 1:20 is 24: the band's 100 rules
+  EXPECT_LE(at100, 120.0 + 1e-6);
+  EXPECT_GT(at100, 110.0);
+}
