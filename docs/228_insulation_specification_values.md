@@ -49,6 +49,18 @@ docs/223 の「まだ」：基準値の列（地域ごとに要る熱抵抗）�
 **GUI 自動確認済み**
 - `insulationPlanIsDrawnOnItsSheet` の「断熱範囲図（1FL）」を画像に描いて見た：断熱仕様表に「基準値(参考)」「照合(参考)」の列（この模型は地域なしで「地域未入力」「未評価」）と、注 3 行。
 
+**CI**：run 44880318853（push）成功。Linux 811 件すべて成功。
+
+**配布**
+
+| 項目 | 内容 |
+|---|---|
+| コード | `a6983a2` |
+| ZIP | `SketchBRep-windows-x64-a6983a2-local.zip`（Codex のチャットフォルダの `outputs\`） |
+| サイズ | 82,756,736 bytes |
+| SHA256 | `acc68fc7e3037d5ffda70a4a787d4f8f4f5bb8b68f7e6af07d658cf8ae2fbd02` |
+| ZIP の検証 | `docs/validation/2026-11-21-portable-a6983a2.json`・`-mat.json`（GUI 18 + 4 条件、失敗 0） |
+
 **Windows 実機確認（人の操作）**：まだ。docs/105 の 14-38。
 
 ## オーナーに確かめてほしいこと
