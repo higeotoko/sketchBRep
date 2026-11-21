@@ -1132,6 +1132,45 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
                                               : "この階の耐力壁は、壁量の計算の入力にありません");
   }
 
+  // docs/216: the insulation of the walls the plan cuts (a zigzag along the middle of each), with a
+  // legend; the floors' and roofs' insulation listed (not drawn on a plan).
+  if (spec.kind == ViewKind::Plan && spec.insulation) {
+    const double z = spec.frame.Location().Z();
+    std::map<std::string, std::set<doc::ObjectId>> walls;
+    for (const auto& run : doc::Modeler::insulationRuns(document, z)) {
+      const gp_Vec along(run.a, run.b);
+      const double length = along.Magnitude();
+      if (length < 1.0) continue;
+      const gp_Vec unit = along / length;
+      const gp_Vec across(-unit.Y(), unit.X(), 0.0);
+      const double amplitude = std::max(10.0, run.thickness * 0.3), pitch = std::max(20.0, run.thickness * 0.5);
+      const int steps = std::max(2, static_cast<int>(std::ceil(length / pitch)));
+      Item zigzag;
+      zigzag.kind = Item::Kind::Polyline;
+      zigzag.pen = Pen::Visible;
+      for (int i = 0; i <= steps; ++i) {
+        const double t = length * i / steps;
+        const double side = i == 0 || i == steps ? 0.0 : (i % 2 == 1 ? amplitude : -amplitude);
+        zigzag.points.push_back(proj.uv(run.a.Translated(unit * t + across * side)));
+      }
+      view.items.push_back(std::move(zigzag));
+      walls[run.text].insert(run.wall);
+    }
+    std::map<std::string, int> others;
+    for (const doc::Object& o : document.objects()) {
+      const auto kind = o.attributes.find("kind");
+      if (kind == o.attributes.end() || (kind->second != "slab" && kind->second != "roof")) continue;
+      const std::string text = doc::Modeler::insulationText(o);
+      if (!text.empty()) ++others[(kind->second == "slab" ? "床：" : "屋根：") + text];
+    }
+    if (walls.empty()) view.calculationNotes.push_back("この階で切る壁に、断熱の入力はありません");
+    for (const auto& [text, ids] : walls)
+      view.calculationNotes.push_back("波線：壁の断熱　" + text + "（" + std::to_string(ids.size()) + " 枚）");
+    for (const auto& [text, count] : others)
+      view.calculationNotes.push_back(text + "（" + std::to_string(count) + " 個、平面には描きません）");
+    view.calculationNotes.push_back("断熱の位置は壁の厚さの中ほどに描いた印です（層の位置ではありません）。基準の値との比較はしていません");
+  }
+
   // The extent of the model's lines (annotations are placed around it).
   bool first = true;
   auto extend = [&](const gp_Pnt2d& p) {

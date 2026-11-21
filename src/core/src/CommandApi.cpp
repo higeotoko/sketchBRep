@@ -4265,6 +4265,9 @@ const std::vector<CommandDef>& commands() {
        "within scopes a group; tags filters leaf tags, include_hidden includes hidden objects, member_labels adds section marks. "
        "'tables' (docs/130): any of openings, rooms, areas, finishes, types, layers, daylight (docs/207), wall_quantity, bracing_walls, quarters (docs/208), put beside the drawing on the same sheet (to its "
        "right, or under it when that takes a smaller paper; empty tables are left out). "
+       "'bracing_floor' (docs/208): a plan of that storey's bracing walls. 'insulation' true (docs/216): a plan with "
+       "the walls' insulation marked (a zigzag along each wall given insulation, broken at openings) and a legend "
+       "(best with 'fill' and 'hatch' false). "
        "Returns the paper chosen and notes (what did not fit or was left out).",
        SCHEMA({"type": "object", "properties": {"path": {"type": "string"}, "kind": {"type": "string"},
                "cut_z": {"type": "number"}, "point": {"type": "array"}, "look": {"type": "array"}, "hatch": {"type": "boolean"},
@@ -4276,7 +4279,7 @@ const std::vector<CommandDef>& commands() {
                "tags":{"type":"array","items":{"type":"string"}},"include_hidden":{"type":"boolean"},"member_labels":{"type":"boolean"},
                "tables": {"type": "array", "items": {"enum": ["openings", "rooms", "areas", "finishes", "types", "layers", "daylight",
                                                                "wall_quantity", "bracing_walls", "quarters", "summary", "energy"]}},
-               "bracing_floor": {"type": "string"}}, "required": ["path", "kind"]}),
+               "bracing_floor": {"type": "string"}, "insulation": {"type": "boolean"}}, "required": ["path", "kind"]}),
        [](doc::Modeler& m, const json& a) {
          const std::string kind = text(a, "kind");
          draw::ViewSpec spec;
@@ -4304,6 +4307,7 @@ const std::vector<CommandDef>& commands() {
          spec.levels = a.value("levels", spec.levels);
          spec.annotations = a.value("annotations", spec.annotations);
          spec.bracingFloor = textOr(a, "bracing_floor", "");  // docs/208: a plan of that storey's bracing walls
+         spec.insulation = a.value("insulation", false);        // docs/216: the insulation marks and legend
          if (a.value("hatch", true)) spec.hatchScale = numberOr(a, "scale", 100.0);  // docs/173
          const draw::View view = must(draw::makeView(m.document(), spec));
          draw::SheetSpec sheetSpec;

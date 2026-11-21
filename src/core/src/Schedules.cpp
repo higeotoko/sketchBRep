@@ -2829,6 +2829,23 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
       ++n;
     }
   }
+  // docs/216: a plan of the insulation for each storey whose walls have some given.
+  {
+    std::vector<Planned> insulated;
+    for (const Planned& p : planned) {
+      if (!p.view || p.view->kind != draw::ViewKind::Plan || !p.view->bracingFloor.empty() ||
+          p.name.find("平面図") == std::string::npos)
+        continue;
+      if (Modeler::insulationRuns(document, p.view->frame.Location().Z()).empty()) continue;
+      draw::ViewSpec view = *p.view;
+      view.insulation = true;
+      view.fill = false;  // the walls' outlines, the marks inside
+      const std::string level = p.name.substr(0, p.name.find(" 平面図"));
+      view.title = "断熱範囲図" + (level.empty() || level == "平面図" ? std::string() : "（" + level + "）");
+      insulated.push_back({view.title, view, std::nullopt, {}});
+    }
+    for (auto& p : insulated) planned.push_back(std::move(p));
+  }
   if (document.settings().siteBoundary) {
     const auto site = draw::sitePlanView();
     planned.insert(planned.begin(), {site.title, site, std::nullopt, {}});
@@ -2856,7 +2873,7 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
     sheetSpec.title.drawing = p.name;
     if (p.view) {
       draw::ViewSpec hatched = *p.view;
-      hatched.hatchScale = spec.scale;  // docs/173
+      hatched.hatchScale = hatched.insulation ? 0.0 : spec.scale;  // docs/173 (docs/216: not under the insulation marks)
       const auto view = draw::makeView(document, hatched);
       if (!view) {
         out.notes.push_back(p.name + ": " + view.error());
@@ -2925,7 +2942,7 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
     Result<draw::Sheet> laid = Result<draw::Sheet>::failure("");
     if (p && p->view) {
       draw::ViewSpec viewSpec = *p->view;
-      viewSpec.hatchScale = spec.scale;  // docs/173
+      viewSpec.hatchScale = viewSpec.insulation ? 0.0 : spec.scale;  // docs/173 (docs/216: not under the insulation marks)
       // Plans: where the sections are cut, with their sheet numbers.
       if (viewSpec.kind == draw::ViewKind::Plan)
         for (const Cut& c : cuts)

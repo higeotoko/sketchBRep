@@ -862,6 +862,19 @@ class Modeler {
   // The upright planes where a wall's layers meet (docs/156): a point on each and its normal
   // (across the wall). Empty as for wallLayerLines. Sections draw where they cross the cut.
   static std::vector<std::pair<gp_Pnt, gp_Dir>> wallLayerPlanes(const Document& document, const Object& wall);
+  // docs/216: walls made by the wall tool with insulation given (docs/210) that a plan at height
+  // `z` cuts: the middle of the wall's band, broken at the openings the plan passes through (world,
+  // at z; one run per piece), its thickness and the
+  // insulation as text ("グラスウール 16K 100 mm（充填）").
+  struct InsulationRun {
+    ObjectId wall;
+    gp_Pnt a, b;
+    double thickness = 0.0;
+    std::string text;
+  };
+  static std::vector<InsulationRun> insulationRuns(const Document& document, double z);
+  // The insulation of a wall, slab or roof as text, or "" when it has none.
+  static std::string insulationText(const Object& object);
   // The layers of a wall, floor or roof as they are now (docs/170): names and thicknesses in
   // order (a wall from its outer face in, a floor / roof from its top down), the set's name, and
   // for a wall where the first layer starts from its drawn line (`offset`, mm to its left) and

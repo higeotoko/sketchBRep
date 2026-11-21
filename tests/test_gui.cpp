@@ -252,6 +252,7 @@ class GuiPhase1 : public QObject {
   void permitWorkflowMarksStagesAndAsksAgain();
   void projectOutlineDialogGivesTheItems();
   void energyInputsInTheirDialogs();
+  void insulationPlanIsDrawnOnItsSheet();
   void proposalShowsRotationAndHide();
   void benchViewportSync();
   void benchEnterManyCopies();
@@ -893,6 +894,47 @@ void GuiPhase1::permitWorkflowAppliesDaylightFactors() {
   QCOMPARE(rows.size(), std::size_t(1));
   QVERIFY(std::abs(rows[0].daylightFactor - (941.0 / 3550.0 * 6 - 1.4)) < 1e-9);
   QVERIFY(rows[0].daylightBasis.find("令 20 条") != std::string::npos);
+}
+
+// docs/216: the drawing set carries an insulation plan when walls have insulation; drawn on paper it
+// shows the zigzags. SBR_SHEET_PNG: where to save the picture (to look at it).
+void GuiPhase1::insulationPlanIsDrawnOnItsSheet() {
+  Fixture f;
+  QVERIFY(f.setUp(4000, 3000));
+  auto& modeler = f.window.modeler();
+  using Json = nlohmann::json;
+  api::CommandApi api(modeler);
+  const auto call = [&](const char* command, Json args) {
+    return Json::parse(api.execute(Json{{"command", command}, {"args", std::move(args)}}.dump()));
+  };
+  QVERIFY(modeler.setLevels({{"", "1FL", 0}, {"", "2FL", 3000}}));
+  const auto walls = call("create_wall", {{"points", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}, {0, 0}}},
+                                           {"thickness", 150}, {"height", 3000}});
+  QVERIFY(walls["ok"].get<bool>());
+  QVERIFY(call("create_wall", {{"points", {{4000, 0}, {4000, 6000}}}, {"thickness", 120}, {"height", 3000}})["ok"].get<bool>());
+  QVERIFY(call("place_openings", {{"host", walls["result"]["ids"][0]}, {"face_normal", {0, -1, 0}}, {"count", 2}, {"width", 1600},
+                                  {"height", 1100}, {"sill", 900}})["ok"].get<bool>());
+  QVERIFY(call("set_insulation", {{"ids", walls["result"]["ids"]}, {"material", "グラスウール 16K"}, {"thickness_mm", 100},
+                                  {"conductivity", 0.038}, {"placement", "fill"}, {"source", "架空のカタログ"}})["ok"].get<bool>());
+  const auto set = doc::drawingSet(modeler.document(), {});
+  QVERIFY(set.ok());
+  const auto at = std::find(set->names.begin(), set->names.end(), std::string("断熱範囲図（1FL）"));
+  QVERIFY(at != set->names.end());
+  const auto& sheet = set->sheets[static_cast<std::size_t>(at - set->names.begin())];
+  QImage image(1680, 1188, QImage::Format_RGB32);
+  image.fill(Qt::white);
+  {
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing);
+    app::renderSheet(painter, sheet, QRectF(0, 0, image.width(), image.height()));
+  }
+  int dark = 0;
+  for (int y = 0; y < image.height(); y += 2)
+    for (int x = 0; x < image.width(); x += 2)
+      if (qGray(image.pixel(x, y)) < 128) ++dark;
+  QVERIFY(dark > 500);
+  const QByteArray where = qgetenv("SBR_SHEET_PNG");
+  if (!where.isEmpty()) QVERIFY(image.save(QString::fromLocal8Bit(where)));
 }
 
 // docs/215: the energy route, the insulation of selected walls and an opening's performance given

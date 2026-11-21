@@ -7704,6 +7704,52 @@ std::vector<std::pair<gp_Pnt, gp_Dir>> Modeler::wallLayerPlanes(const Document& 
   return out;
 }
 
+std::string Modeler::insulationText(const Object& object) {
+  const auto it = object.attributes.find("insulation");
+  if (it == object.attributes.end()) return {};
+  const nlohmann::json j = nlohmann::json::parse(it->second, nullptr, false);
+  if (!j.is_object() || j.value("material", std::string()).empty()) return {};
+  char thickness[32];
+  std::snprintf(thickness, sizeof thickness, "%g", j.value("thickness_mm", 0.0));
+  const std::string placement = j.value("placement", std::string());
+  return j.value("material", std::string()) + " " + thickness + " mm" +
+         (placement == "fill" ? "（充填）" : placement == "outside" ? "（外張り）" : placement == "inside" ? "（内張り）" : "");
+}
+
+std::vector<Modeler::InsulationRun> Modeler::insulationRuns(const Document& document, double z) {
+  std::vector<InsulationRun> out;
+  for (const WallBand& w : allWallBands(document)) {
+    if (z < w.z0 || z > w.z1) continue;
+    const std::string text = insulationText(*w.object);
+    if (text.empty()) continue;
+    const double middle = (w.leftExt - w.right) / 2;
+    // Broken where the plan passes through an opening, as the layer lines.
+    std::vector<std::pair<double, double>> gaps;
+    if (const auto openings = openingsIn(document, w.object->id))
+      for (const OpeningInfo& o : *openings) {
+        if (std::abs(o.normal.Z()) > 1e-6 || z < o.bottom || z > o.bottom + o.height) continue;
+        const double c = gp_Vec(w.start, gp_Pnt(o.center.X(), o.center.Y(), w.start.Z())).Dot(gp_Vec(w.dir));
+        gaps.emplace_back(c - o.along / 2, c + o.along / 2);
+      }
+    std::sort(gaps.begin(), gaps.end());
+    double from = 0.0;
+    const auto add = [&](double s0, double s1) {
+      if (s1 - s0 < 1.0) return;
+      gp_Pnt a = w.start.Translated(gp_Vec(w.left) * middle + gp_Vec(w.dir) * s0);
+      gp_Pnt b = w.start.Translated(gp_Vec(w.left) * middle + gp_Vec(w.dir) * s1);
+      a.SetZ(z);
+      b.SetZ(z);
+      out.push_back({w.object->id, a, b, w.right + w.leftExt, text});
+    };
+    for (const auto& [g0, g1] : gaps) {
+      add(from, std::min(g0, w.length));
+      from = std::max(from, g1);
+    }
+    add(from, w.length);
+  }
+  return out;
+}
+
 std::vector<std::pair<gp_Pnt, gp_Pnt>> Modeler::wallLayerLines(const Document& document, double z,
                                                                const std::set<ObjectId>& only) {
   std::vector<std::pair<gp_Pnt, gp_Pnt>> out;

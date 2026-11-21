@@ -3123,3 +3123,53 @@ TEST_F(Schedules, ProjectOutlineItemsGivenByThePerson) {
   ok("undo");
   EXPECT_TRUE(sbr::doc::projectOutline(modeler.document()).empty());
 }
+
+// docs/216: the insulation of the walls a plan cuts drawn as a zigzag along each, with a legend;
+// a plan of it per storey in the drawing set when there is some.
+TEST_F(Schedules, InsulationPlansMarkTheWallsWithInsulation) {
+  auto names = [&] {
+    const auto set = sbr::doc::drawingSet(modeler.document(), {});
+    EXPECT_TRUE(set);
+    return set ? set->names : std::vector<std::string>{};
+  };
+  const auto has = [](const std::vector<std::string>& list, const std::string& name) {
+    return std::find(list.begin(), list.end(), name) != list.end();
+  };
+  EXPECT_FALSE(has(names(), "断熱範囲図（1FL）"));
+  EXPECT_TRUE(sbr::doc::Modeler::insulationRuns(modeler.document(), 1100).empty());
+  ok("set_insulation", {{"ids", {south, east}}, {"material", "グラスウール 16K"}, {"thickness_mm", 100}, {"conductivity", 0.038},
+                        {"placement", "fill"}, {"source", "架空のカタログ"}});
+  const auto runs = sbr::doc::Modeler::insulationRuns(modeler.document(), 1100);
+  ASSERT_EQ(runs.size(), 5u);  // broken at the south windows (2) and the east door, which the plan passes through
+  for (const auto& run : runs) {
+    EXPECT_EQ(run.text, "グラスウール 16K 100 mm（充填）");
+    EXPECT_NEAR(run.thickness, 200.0, 1e-6);
+    EXPECT_NEAR(run.a.Z(), 1100.0, 1e-6);
+  }
+  EXPECT_TRUE(sbr::doc::Modeler::insulationRuns(modeler.document(), 4100).empty());  // above the walls
+  // The plan: zigzags along the two walls and the legend.
+  sbr::draw::ViewSpec plain = sbr::draw::planView(1100.0);
+  plain.depth = 1500.0;
+  sbr::draw::ViewSpec marked = plain;
+  marked.insulation = true;
+  const auto before = sbr::draw::makeView(modeler.document(), plain);
+  const auto after = sbr::draw::makeView(modeler.document(), marked);
+  ASSERT_TRUE(before && after);
+  const auto polylines = [](const sbr::draw::View& v) {
+    return std::count_if(v.items.begin(), v.items.end(), [](const sbr::draw::Item& i) { return i.kind == sbr::draw::Item::Kind::Polyline; });
+  };
+  EXPECT_EQ(polylines(*after), polylines(*before) + 5);
+  const auto& notes = after->calculationNotes;
+  EXPECT_TRUE(has(notes, "波線：壁の断熱　グラスウール 16K 100 mm（充填）（2 枚）"));
+  // A floor's insulation is listed, not drawn.
+  const std::string slab = ok("create_slab", {{"outline", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}}}, {"top", 3000}, {"thickness", 200}})["id"];
+  ok("set_insulation", {{"ids", {slab}}, {"material", "押出法ポリスチレンフォーム"}, {"thickness_mm", 50}, {"resistance", 1.8},
+                        {"source", "架空のカタログ"}});
+  const auto again = sbr::draw::makeView(modeler.document(), marked);
+  ASSERT_TRUE(again);
+  EXPECT_TRUE(has(again->calculationNotes, "床：押出法ポリスチレンフォーム 50 mm（1 個、平面には描きません）"));
+  // The drawing set: one insulation plan for 1FL only (2FL has no walls with insulation).
+  const auto list = names();
+  EXPECT_TRUE(has(list, "断熱範囲図（1FL）"));
+  EXPECT_FALSE(has(list, "断熱範囲図（2FL）"));
+}

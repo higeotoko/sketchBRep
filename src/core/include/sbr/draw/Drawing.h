@@ -96,6 +96,9 @@ struct ViewSpec {
   // the walls counted, thick, with their mark, ratio and effective length, and the side parts of
   // the quarter division, dashed, with what they need and have. Empty: none.
   std::string bracingFloor;
+  // docs/216: plans: the walls with insulation given drawn with the insulation mark (a zigzag along
+  // the middle of the wall), and a legend of the insulations and of the floors' and roofs'.
+  bool insulation = false;
   // Plans (docs/132): where sections are cut, drawn as a cut line across the drawing with arrows
   // the way the section looks and its label and sheet number at both ends.
   struct CutMark {
