@@ -6525,6 +6525,837 @@
           }
         }
       ]
+    },
+    {
+      "id": "2-8",
+      "title": "壁ツールで外壁の内側の面に間仕切りを付けて動かす",
+      "docs": "docs/177",
+      "look": "1:20 の前後で外壁の内側の線が間仕切りの柱の幅で切れ、石膏ボードが角を回るか。3D の T 字の納まり。",
+      "base": [],
+      "steps": [
+        {
+          "tool": "set_levels",
+          "args": {
+            "levels": [
+              {
+                "name": "1FL",
+                "elevation": 0
+              },
+              {
+                "name": "2FL",
+                "elevation": 3000
+              }
+            ]
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "top"
+          }
+        },
+        {
+          "tool": "create_line",
+          "args": {
+            "points": [
+              [
+                -1000,
+                -1000,
+                0
+              ],
+              [
+                9000,
+                7000,
+                0
+              ]
+            ]
+          },
+          "save": "guide"
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "delete",
+          "args": {
+            "ids": [
+              "$guide.id"
+            ]
+          }
+        },
+        {
+          "tool": "ui_trigger",
+          "args": {
+            "action": "ツール/設定（壁・部材・スラブ・開口）/壁の設定"
+          },
+          "ui": true
+        },
+        {
+          "tool": "ui_set",
+          "args": {
+            "window": "modal",
+            "widget": "#4",
+            "value": "exterior_siding"
+          }
+        },
+        {
+          "tool": "ui_set",
+          "args": {
+            "window": "modal",
+            "widget": "#5",
+            "value": "105"
+          }
+        },
+        {
+          "tool": "ui_set",
+          "args": {
+            "window": "modal",
+            "widget": "wallSettingsMitre",
+            "value": true
+          }
+        },
+        {
+          "tool": "ui_click",
+          "args": {
+            "window": "modal",
+            "widget": "OK"
+          },
+          "ui": true
+        },
+        {
+          "tool": "ui_tool",
+          "args": {
+            "tool": "wall"
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              8000,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              8000,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              8000,
+              6000,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              8000,
+              6000,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              0,
+              6000,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              0,
+              6000,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_type",
+          "args": {
+            "text": "",
+            "enter": true
+          }
+        },
+        {
+          "tool": "query_objects",
+          "args": {
+            "attributes": {
+              "wall_type": "exterior_siding"
+            },
+            "fields": [
+              "id",
+              "bounds",
+              "volume"
+            ]
+          },
+          "expect": {
+            "contains": [
+              "\"total\":4"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "ui_trigger",
+          "args": {
+            "action": "ツール/設定（壁・部材・スラブ・開口）/壁の設定"
+          },
+          "ui": true
+        },
+        {
+          "tool": "ui_set",
+          "args": {
+            "window": "modal",
+            "widget": "#4",
+            "value": "interior_board"
+          }
+        },
+        {
+          "tool": "ui_set",
+          "args": {
+            "window": "modal",
+            "widget": "#5",
+            "value": "105"
+          }
+        },
+        {
+          "tool": "ui_set",
+          "args": {
+            "window": "modal",
+            "widget": "wallSettingsMitre",
+            "value": true
+          }
+        },
+        {
+          "tool": "ui_click",
+          "args": {
+            "window": "modal",
+            "widget": "OK"
+          },
+          "ui": true
+        },
+        {
+          "tool": "ui_tool",
+          "args": {
+            "tool": "wall"
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              3000,
+              65,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              3000,
+              5935,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              3000,
+              5935,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_type",
+          "args": {
+            "text": "",
+            "enter": true
+          }
+        },
+        {
+          "tool": "query_objects",
+          "args": {
+            "attributes": {
+              "wall_type": "interior_board"
+            },
+            "fields": [
+              "id",
+              "bounds",
+              "volume"
+            ],
+            "region": {
+              "min": [
+                2950,
+                54,
+                0
+              ],
+              "max": [
+                3060,
+                56,
+                3000
+              ]
+            }
+          },
+          "save": "partition",
+          "expect": {
+            "contains": [
+              "\"total\":1"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "1FL 平面図",
+            "scale": 20
+          },
+          "picture": "1:20（移動前）"
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "3D（移動前）"
+        },
+        {
+          "tool": "move",
+          "args": {
+            "ids": [
+              "$partition.objects.0.id"
+            ],
+            "vector": [
+              455,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "query_objects",
+          "args": {
+            "attributes": {
+              "wall_type": "interior_board"
+            },
+            "fields": [
+              "id",
+              "bounds",
+              "volume"
+            ],
+            "region": {
+              "min": [
+                3400,
+                54,
+                0
+              ],
+              "max": [
+                3510,
+                56,
+                3000
+              ]
+            },
+            "ids": [
+              "$partition.objects.0.id"
+            ]
+          },
+          "expect": {
+            "contains": [
+              "\"total\":1"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "1FL 平面図",
+            "scale": 20
+          },
+          "picture": "1:20（間仕切りを455 mm移動した後）"
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "3D（移動後）"
+        }
+      ]
+    },
+    {
+      "id": "2-10",
+      "title": "壁ツールで間仕切りを外壁の芯から芯まで描く",
+      "docs": "docs/179",
+      "look": "1:20 で外壁の面の線が間仕切りを横切らず、間仕切りの柱が外壁の柱まで届くか。",
+      "base": [],
+      "steps": [
+        {
+          "tool": "set_levels",
+          "args": {
+            "levels": [
+              {
+                "name": "1FL",
+                "elevation": 0
+              },
+              {
+                "name": "2FL",
+                "elevation": 3000
+              }
+            ]
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "top"
+          }
+        },
+        {
+          "tool": "create_line",
+          "args": {
+            "points": [
+              [
+                -1000,
+                -1000,
+                0
+              ],
+              [
+                9000,
+                7000,
+                0
+              ]
+            ]
+          },
+          "save": "guide"
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "delete",
+          "args": {
+            "ids": [
+              "$guide.id"
+            ]
+          }
+        },
+        {
+          "tool": "ui_trigger",
+          "args": {
+            "action": "ツール/設定（壁・部材・スラブ・開口）/壁の設定"
+          },
+          "ui": true
+        },
+        {
+          "tool": "ui_set",
+          "args": {
+            "window": "modal",
+            "widget": "#4",
+            "value": "exterior_siding"
+          }
+        },
+        {
+          "tool": "ui_set",
+          "args": {
+            "window": "modal",
+            "widget": "#5",
+            "value": "105"
+          }
+        },
+        {
+          "tool": "ui_set",
+          "args": {
+            "window": "modal",
+            "widget": "wallSettingsMitre",
+            "value": true
+          }
+        },
+        {
+          "tool": "ui_click",
+          "args": {
+            "window": "modal",
+            "widget": "OK"
+          },
+          "ui": true
+        },
+        {
+          "tool": "ui_tool",
+          "args": {
+            "tool": "wall"
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              8000,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              8000,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              8000,
+              6000,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              8000,
+              6000,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              0,
+              6000,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              0,
+              6000,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_type",
+          "args": {
+            "text": "",
+            "enter": true
+          }
+        },
+        {
+          "tool": "query_objects",
+          "args": {
+            "attributes": {
+              "wall_type": "exterior_siding"
+            },
+            "fields": [
+              "id",
+              "bounds",
+              "volume"
+            ]
+          },
+          "expect": {
+            "contains": [
+              "\"total\":4"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "ui_trigger",
+          "args": {
+            "action": "ツール/設定（壁・部材・スラブ・開口）/壁の設定"
+          },
+          "ui": true
+        },
+        {
+          "tool": "ui_set",
+          "args": {
+            "window": "modal",
+            "widget": "#4",
+            "value": "interior_board"
+          }
+        },
+        {
+          "tool": "ui_set",
+          "args": {
+            "window": "modal",
+            "widget": "#5",
+            "value": "105"
+          }
+        },
+        {
+          "tool": "ui_set",
+          "args": {
+            "window": "modal",
+            "widget": "wallSettingsMitre",
+            "value": true
+          }
+        },
+        {
+          "tool": "ui_click",
+          "args": {
+            "window": "modal",
+            "widget": "OK"
+          },
+          "ui": true
+        },
+        {
+          "tool": "ui_tool",
+          "args": {
+            "tool": "wall"
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              3000,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              3000,
+              6000,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              3000,
+              6000,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_type",
+          "args": {
+            "text": "",
+            "enter": true
+          }
+        },
+        {
+          "tool": "query_objects",
+          "args": {
+            "attributes": {
+              "wall_type": "interior_board"
+            },
+            "fields": [
+              "id",
+              "bounds",
+              "volume"
+            ],
+            "region": {
+              "min": [
+                2950,
+                54,
+                0
+              ],
+              "max": [
+                3060,
+                56,
+                3000
+              ]
+            }
+          },
+          "save": "partition",
+          "expect": {
+            "contains": [
+              "\"total\":1"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "1FL 平面図",
+            "scale": 20
+          },
+          "picture": "1:20（芯から芯に描いた T 字）"
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "3D（芯から芯に描いた壁）"
+        }
+      ]
+    },
+    {
+      "id": "3-3",
+      "title": "室を選んだプロパティと室の一覧・面積",
+      "docs": "docs/105 §3",
+      "look": "Windows の表示倍率 175% でプロパティと室の一覧が読み取れるか。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "select",
+          "args": {
+            "ids": [
+              "$bedroom.id"
+            ]
+          }
+        },
+        {
+          "tool": "ui_list",
+          "args": {
+            "window": "main",
+            "filter": "roomAreaCentre"
+          },
+          "expect": {
+            "contains": [
+              "roomAreaCentre",
+              "㎡"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "ui_capture",
+          "args": {
+            "window": "main"
+          },
+          "picture": "室を選んだプロパティ"
+        },
+        {
+          "tool": "capture_window",
+          "args": {
+            "window": "rooms"
+          },
+          "picture": "室の一覧と面積"
+        }
+      ]
     }
   ]
 }

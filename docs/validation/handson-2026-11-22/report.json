@@ -18905,5 +18905,1396 @@
   ],
   "failed": [],
   "findings": []
+ },
+ {
+  "id": "2-8",
+  "title": "壁ツールで外壁の内側の面に間仕切りを付けて動かす",
+  "look": "1:20 の前後で外壁の内側の線が間仕切りの柱の幅で切れ、石膏ボードが角を回るか。3D の T 字の納まり。",
+  "docs": "docs/177",
+  "steps": [
+   {
+    "n": 1,
+    "tool": "set_levels",
+    "args": {
+     "levels": [
+      {
+       "name": "1FL",
+       "elevation": 0
+      },
+      {
+       "name": "2FL",
+       "elevation": 3000
+      }
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 2,
+    "tool": "set_view",
+    "args": {
+     "view": "top"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 3,
+    "tool": "create_line",
+    "args": {
+     "points": [
+      [
+       -1000,
+       -1000,
+       0
+      ],
+      [
+       9000,
+       7000,
+       0
+      ]
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 4,
+    "tool": "set_view",
+    "args": {
+     "view": "fit"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 5,
+    "tool": "delete",
+    "args": {
+     "ids": [
+      "52403ec6-39fd-45f8-8271-906f645b2c29"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 6,
+    "tool": "ui_trigger",
+    "args": {
+     "action": "ツール/設定（壁・部材・スラブ・開口）/壁の設定"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 7,
+    "tool": "ui_set",
+    "args": {
+     "window": "modal",
+     "widget": "#4",
+     "value": "exterior_siding"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 8,
+    "tool": "ui_set",
+    "args": {
+     "window": "modal",
+     "widget": "#5",
+     "value": "105"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 9,
+    "tool": "ui_set",
+    "args": {
+     "window": "modal",
+     "widget": "wallSettingsMitre",
+     "value": true
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 10,
+    "tool": "ui_click",
+    "args": {
+     "window": "modal",
+     "widget": "OK"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 11,
+    "tool": "ui_tool",
+    "args": {
+     "tool": "wall"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 12,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      0,
+      0,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 13,
+    "tool": "ui_view_hover",
+    "args": {
+     "at": [
+      8000,
+      0,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 14,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      8000,
+      0,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 15,
+    "tool": "ui_view_hover",
+    "args": {
+     "at": [
+      8000,
+      6000,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 16,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      8000,
+      6000,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 17,
+    "tool": "ui_view_hover",
+    "args": {
+     "at": [
+      0,
+      6000,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 18,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      0,
+      6000,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 19,
+    "tool": "ui_view_hover",
+    "args": {
+     "at": [
+      0,
+      0,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 20,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      0,
+      0,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 21,
+    "tool": "ui_type",
+    "args": {
+     "text": "",
+     "enter": true
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 22,
+    "tool": "query_objects",
+    "args": {
+     "attributes": {
+      "wall_type": "exterior_siding"
+     },
+     "fields": [
+      "id",
+      "bounds",
+      "volume"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"objects\":[{\"bounds\":{\"max\":[65.00000000000003,6092.6440958896865,3000.0],\"min\":[-95.50000000000045,-95.5,0.0]},\"id\":\"655d9832-0377-453b-8833-66d9a412f362\",\"volume\":2902310632.170884},{\"bounds\":{\"max\":[8100.496003295159,6092.644095889686,3000.0],\"min\":[-95.5,5932.144095889686,0.0]},\"id\":\"53dfde66-2ad1-4073-ae70-1e7f18558560\",\"volume\":3869091325.5866146},{\"bounds\":{\"max\":[8100.496003295159,6092.644095889686,3000.0],\"min\":[7939.9960032951585,-95.50000000000091,0.0]},\"id\":\"fa3e9916-2313-4ad4-909d-acf16ca181e8\",\"volume\":2902310632.170885},{\"bounds\":{\"max\":[8100.4960032951585,65.00000000000009,3000.0],\"min\":[-95.50000000000136,-95.50000000000045,0.0]},\"id\":\"dd76e6b3-117e-428f-b123-ea58c1ba0f00\",\"volume\":3869091325.5866194}],\"sequence\":3243,\"total\":4}"
+   },
+   {
+    "n": 23,
+    "tool": "ui_trigger",
+    "args": {
+     "action": "ツール/設定（壁・部材・スラブ・開口）/壁の設定"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 24,
+    "tool": "ui_set",
+    "args": {
+     "window": "modal",
+     "widget": "#4",
+     "value": "interior_board"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 25,
+    "tool": "ui_set",
+    "args": {
+     "window": "modal",
+     "widget": "#5",
+     "value": "105"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 26,
+    "tool": "ui_set",
+    "args": {
+     "window": "modal",
+     "widget": "wallSettingsMitre",
+     "value": true
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 27,
+    "tool": "ui_click",
+    "args": {
+     "window": "modal",
+     "widget": "OK"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 28,
+    "tool": "ui_tool",
+    "args": {
+     "tool": "wall"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 29,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      3000,
+      65,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 30,
+    "tool": "ui_view_hover",
+    "args": {
+     "at": [
+      3000,
+      5935,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 31,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      3000,
+      5935,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 32,
+    "tool": "ui_type",
+    "args": {
+     "text": "",
+     "enter": true
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 33,
+    "tool": "query_objects",
+    "args": {
+     "attributes": {
+      "wall_type": "interior_board"
+     },
+     "fields": [
+      "id",
+      "bounds",
+      "volume"
+     ],
+     "region": {
+      "min": [
+       2950,
+       54,
+       0
+      ],
+      "max": [
+       3060,
+       56,
+       3000
+      ]
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"objects\":[{\"bounds\":{\"max\":[3070.2701831889426,5944.644095889686,3000.0],\"min\":[2940.218973079658,52.5,0.0]},\"id\":\"9edfe77d-3d41-4f2b-9c9f-df4245547e0d\",\"volume\":2296061197.484443}],\"sequence\":3257,\"total\":1}"
+   },
+   {
+    "n": 34,
+    "tool": "render_drawing_set",
+    "args": {
+     "sheet": "1FL 平面図",
+     "scale": 20
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 35,
+    "tool": "set_view",
+    "args": {
+     "view": "iso"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 36,
+    "tool": "set_view",
+    "args": {
+     "view": "fit"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 37,
+    "tool": "capture_view",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 38,
+    "tool": "move",
+    "args": {
+     "ids": [
+      "9edfe77d-3d41-4f2b-9c9f-df4245547e0d"
+     ],
+     "vector": [
+      455,
+      0,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 39,
+    "tool": "query_objects",
+    "args": {
+     "attributes": {
+      "wall_type": "interior_board"
+     },
+     "fields": [
+      "id",
+      "bounds",
+      "volume"
+     ],
+     "region": {
+      "min": [
+       3400,
+       54,
+       0
+      ],
+      "max": [
+       3510,
+       56,
+       3000
+      ]
+     },
+     "ids": [
+      "9edfe77d-3d41-4f2b-9c9f-df4245547e0d"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"objects\":[{\"bounds\":{\"max\":[3525.2701831889426,5944.644095889686,3000.0],\"min\":[3395.218973079658,52.5,0.0]},\"id\":\"9edfe77d-3d41-4f2b-9c9f-df4245547e0d\",\"volume\":2296061197.484443}],\"sequence\":3260,\"total\":1}"
+   },
+   {
+    "n": 40,
+    "tool": "render_drawing_set",
+    "args": {
+     "sheet": "1FL 平面図",
+     "scale": 20
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 41,
+    "tool": "capture_view",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   }
+  ],
+  "pictures": [
+   {
+    "file": "2-8-34-0.png",
+    "caption": "1:20（移動前）"
+   },
+   {
+    "file": "2-8-37-0.png",
+    "caption": "3D（移動前）"
+   },
+   {
+    "file": "2-8-40-0.png",
+    "caption": "1:20（間仕切りを455 mm移動した後）"
+   },
+   {
+    "file": "2-8-41-0.png",
+    "caption": "3D（移動後）"
+   }
+  ],
+  "failed": [],
+  "findings": []
+ },
+ {
+  "id": "2-10",
+  "title": "壁ツールで間仕切りを外壁の芯から芯まで描く",
+  "look": "1:20 で外壁の面の線が間仕切りを横切らず、間仕切りの柱が外壁の柱まで届くか。",
+  "docs": "docs/179",
+  "steps": [
+   {
+    "n": 1,
+    "tool": "set_levels",
+    "args": {
+     "levels": [
+      {
+       "name": "1FL",
+       "elevation": 0
+      },
+      {
+       "name": "2FL",
+       "elevation": 3000
+      }
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 2,
+    "tool": "set_view",
+    "args": {
+     "view": "top"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 3,
+    "tool": "create_line",
+    "args": {
+     "points": [
+      [
+       -1000,
+       -1000,
+       0
+      ],
+      [
+       9000,
+       7000,
+       0
+      ]
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 4,
+    "tool": "set_view",
+    "args": {
+     "view": "fit"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 5,
+    "tool": "delete",
+    "args": {
+     "ids": [
+      "82614342-4a6a-4e30-b2a3-7cb412a76234"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 6,
+    "tool": "ui_trigger",
+    "args": {
+     "action": "ツール/設定（壁・部材・スラブ・開口）/壁の設定"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 7,
+    "tool": "ui_set",
+    "args": {
+     "window": "modal",
+     "widget": "#4",
+     "value": "exterior_siding"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 8,
+    "tool": "ui_set",
+    "args": {
+     "window": "modal",
+     "widget": "#5",
+     "value": "105"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 9,
+    "tool": "ui_set",
+    "args": {
+     "window": "modal",
+     "widget": "wallSettingsMitre",
+     "value": true
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 10,
+    "tool": "ui_click",
+    "args": {
+     "window": "modal",
+     "widget": "OK"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 11,
+    "tool": "ui_tool",
+    "args": {
+     "tool": "wall"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 12,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      0,
+      0,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 13,
+    "tool": "ui_view_hover",
+    "args": {
+     "at": [
+      8000,
+      0,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 14,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      8000,
+      0,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 15,
+    "tool": "ui_view_hover",
+    "args": {
+     "at": [
+      8000,
+      6000,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 16,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      8000,
+      6000,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 17,
+    "tool": "ui_view_hover",
+    "args": {
+     "at": [
+      0,
+      6000,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 18,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      0,
+      6000,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 19,
+    "tool": "ui_view_hover",
+    "args": {
+     "at": [
+      0,
+      0,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 20,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      0,
+      0,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 21,
+    "tool": "ui_type",
+    "args": {
+     "text": "",
+     "enter": true
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 22,
+    "tool": "query_objects",
+    "args": {
+     "attributes": {
+      "wall_type": "exterior_siding"
+     },
+     "fields": [
+      "id",
+      "bounds",
+      "volume"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"objects\":[{\"bounds\":{\"max\":[65.00000000000003,6092.6440958896865,3000.0],\"min\":[-95.50000000000045,-95.5,0.0]},\"id\":\"370b3e86-87bb-4c8d-834f-114290e15f71\",\"volume\":2902310632.170884},{\"bounds\":{\"max\":[8100.496003295159,6092.644095889686,3000.0],\"min\":[-95.5,5932.144095889686,0.0]},\"id\":\"dde78481-012d-45e3-b448-4e6ead2ee59f\",\"volume\":3869091325.5866146},{\"bounds\":{\"max\":[8100.496003295159,6092.644095889686,3000.0],\"min\":[7939.9960032951585,-95.50000000000091,0.0]},\"id\":\"a7f64412-67bb-42ff-b7f8-aefe0ee4d56e\",\"volume\":2902310632.170885},{\"bounds\":{\"max\":[8100.4960032951585,65.00000000000009,3000.0],\"min\":[-95.50000000000136,-95.50000000000045,0.0]},\"id\":\"e4cc6ec0-25f7-40fe-a5eb-4ea66db19c4e\",\"volume\":3869091325.5866194}],\"sequence\":3312,\"total\":4}"
+   },
+   {
+    "n": 23,
+    "tool": "ui_trigger",
+    "args": {
+     "action": "ツール/設定（壁・部材・スラブ・開口）/壁の設定"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 24,
+    "tool": "ui_set",
+    "args": {
+     "window": "modal",
+     "widget": "#4",
+     "value": "interior_board"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 25,
+    "tool": "ui_set",
+    "args": {
+     "window": "modal",
+     "widget": "#5",
+     "value": "105"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 26,
+    "tool": "ui_set",
+    "args": {
+     "window": "modal",
+     "widget": "wallSettingsMitre",
+     "value": true
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 27,
+    "tool": "ui_click",
+    "args": {
+     "window": "modal",
+     "widget": "OK"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 28,
+    "tool": "ui_tool",
+    "args": {
+     "tool": "wall"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 29,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      3000,
+      0,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 30,
+    "tool": "ui_view_hover",
+    "args": {
+     "at": [
+      3000,
+      6000,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 31,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      3000,
+      6000,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 32,
+    "tool": "ui_type",
+    "args": {
+     "text": "",
+     "enter": true
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 33,
+    "tool": "query_objects",
+    "args": {
+     "attributes": {
+      "wall_type": "interior_board"
+     },
+     "fields": [
+      "id",
+      "bounds",
+      "volume"
+     ],
+     "region": {
+      "min": [
+       2950,
+       54,
+       0
+      ],
+      "max": [
+       3060,
+       56,
+       3000
+      ]
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"objects\":[{\"bounds\":{\"max\":[3071.451295339238,5944.644095889686,3000.0],\"min\":[2941.3990801888563,52.5,0.0]},\"id\":\"abdf1ab3-7af6-4d40-94ad-58a217fc3bfe\",\"volume\":2296061197.487906}],\"sequence\":3326,\"total\":1}"
+   },
+   {
+    "n": 34,
+    "tool": "render_drawing_set",
+    "args": {
+     "sheet": "1FL 平面図",
+     "scale": 20
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 35,
+    "tool": "set_view",
+    "args": {
+     "view": "iso"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 36,
+    "tool": "set_view",
+    "args": {
+     "view": "fit"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 37,
+    "tool": "capture_view",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   }
+  ],
+  "pictures": [
+   {
+    "file": "2-10-34-0.png",
+    "caption": "1:20（芯から芯に描いた T 字）"
+   },
+   {
+    "file": "2-10-37-0.png",
+    "caption": "3D（芯から芯に描いた壁）"
+   }
+  ],
+  "failed": [],
+  "findings": []
+ },
+ {
+  "id": "3-3",
+  "title": "室を選んだプロパティと室の一覧・面積",
+  "look": "Windows の表示倍率 175% でプロパティと室の一覧が読み取れるか。",
+  "docs": "docs/105 §3",
+  "steps": [
+   {
+    "n": 1,
+    "tool": "set_levels",
+    "args": {
+     "levels": [
+      {
+       "name": "1FL",
+       "elevation": 0
+      },
+      {
+       "name": "2FL",
+       "elevation": 3000
+      }
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 2,
+    "tool": "create_wall",
+    "args": {
+     "points": [
+      [
+       0,
+       0
+      ],
+      [
+       8000,
+       0
+      ],
+      [
+       8000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ],
+      [
+       0,
+       0
+      ]
+     ],
+     "thickness": 200,
+     "height": 3000
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 3,
+    "tool": "create_wall",
+    "args": {
+     "points": [
+      [
+       4000,
+       0
+      ],
+      [
+       4000,
+       6000
+      ]
+     ],
+     "thickness": 100,
+     "height": 3000
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 4,
+    "tool": "place_openings",
+    "args": {
+     "host": "671f5dc3-6460-4f5f-b274-045cefe957d0",
+     "face_normal": [
+      0,
+      -1,
+      0
+     ],
+     "count": 2,
+     "width": 1600,
+     "height": 1200,
+     "sill": 900
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 5,
+    "tool": "set_opening_fittings",
+    "args": {
+     "host": "671f5dc3-6460-4f5f-b274-045cefe957d0",
+     "fitting": {
+      "type": "sliding_double"
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 6,
+    "tool": "place_openings",
+    "args": {
+     "host": "83ce00ec-5a05-4440-8e95-ac368d081b64",
+     "face_normal": [
+      1,
+      0,
+      0
+     ],
+     "count": 1,
+     "width": 900,
+     "height": 2100,
+     "sill": 0
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 7,
+    "tool": "set_opening_fittings",
+    "args": {
+     "host": "83ce00ec-5a05-4440-8e95-ac368d081b64",
+     "fitting": {
+      "type": "swing_single",
+      "hinge": "left",
+      "swing": "in"
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 8,
+    "tool": "create_slab",
+    "args": {
+     "outline": [
+      [
+       0,
+       0
+      ],
+      [
+       8000,
+       0
+      ],
+      [
+       8000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ]
+     ],
+     "top": 0,
+     "thickness": 200
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 9,
+    "tool": "create_room",
+    "args": {
+     "at": [
+      2000,
+      3000
+     ],
+     "name": "居間"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 10,
+    "tool": "create_room",
+    "args": {
+     "at": [
+      6000,
+      3000
+     ],
+     "name": "洋室"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 11,
+    "tool": "create_polygon",
+    "args": {
+     "points": [
+      [
+       -2000,
+       -2000,
+       0
+      ],
+      [
+       14000,
+       -2000,
+       0
+      ],
+      [
+       14000,
+       10000,
+       0
+      ],
+      [
+       -2000,
+       10000,
+       0
+      ]
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 12,
+    "tool": "set_site_boundary",
+    "args": {
+     "outline": "c29f66b4-ae5a-4d92-a8cd-9243c6f8b00a",
+     "source": "確認用の架空の測量図"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 13,
+    "tool": "set_energy_route",
+    "args": {
+     "route": "spec",
+     "region": 6,
+     "source": "確認用"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 14,
+    "tool": "select",
+    "args": {
+     "ids": [
+      "470ba4e1-e463-4123-b33b-8ff5d357e033"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 15,
+    "tool": "ui_list",
+    "args": {
+     "window": "main",
+     "filter": "roomAreaCentre"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"title\":\"無題[*] - SketchBRep\",\"widget_count\":100,\"widgets\":[{\"enabled\":true,\"kind\":\"label\",\"ref\":\"roomAreaCentre\",\"text\":\"24.00 ㎡\",\"tooltip\":\"壁を描いた線（木造の壁は柱心）の内側。壁を動かすと変わります\"}]}"
+   },
+   {
+    "n": 16,
+    "tool": "ui_capture",
+    "args": {
+     "window": "main"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 17,
+    "tool": "capture_window",
+    "args": {
+     "window": "rooms"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   }
+  ],
+  "pictures": [
+   {
+    "file": "3-3-16-0.png",
+    "caption": "室を選んだプロパティ"
+   },
+   {
+    "file": "3-3-17-0.png",
+    "caption": "室の一覧と面積"
+   }
+  ],
+  "failed": [],
+  "findings": []
  }
 ]
