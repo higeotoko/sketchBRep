@@ -19,7 +19,8 @@ constexpr double kSmallestTextMm = 1.8;
 struct SheetFinding {
   // text_on_text (words on other words), line_through_text (a line through the words; `other`
   // names the kind of line), off_paper (words beyond the paper), tiny_text (smaller than
-  // kSmallestTextMm).
+  // kSmallestTextMm), off_frame (words beyond the sheet's frame, docs/257), does_not_fit (the
+  // sheet's own note that the drawing does not fit its paper, docs/257).
   std::string kind;
   std::string text, other;
   gp_Pnt2d at;          // the words' anchor on paper (mm from the lower left)

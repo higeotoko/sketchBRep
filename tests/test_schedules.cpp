@@ -4179,3 +4179,17 @@ TEST_F(Schedules, CutMarksClearOfGridBubbles) {
         EXPECT_NE(f["other"].get<std::string>(), bubble) << f.dump();
       }
 }
+
+// docs/257: a drawing too big for its paper: the sheet check says so, and finds the words left
+// beyond the frame.
+TEST_F(Schedules, SheetCheckFindsADrawingTooBigForItsPaper) {
+  const std::string site = ok("create_polygon", {{"points", {{-2000, -2000, 0}, {14000, -2000, 0}, {14000, 10000, 0}, {-2000, 10000, 0}}}})["id"];
+  ok("set_site_boundary", {{"outline", site}, {"source", "架空の測量図"}});
+  const json at20 = ok("check_drawing_set", {{"sheet", "1FL 平面図"}, {"scale", 20}});
+  const auto& counts = at20["sheets"][0]["counts"];
+  EXPECT_EQ(counts.value("does_not_fit", 0), 1) << at20.dump();
+  EXPECT_GE(counts.value("off_frame", 0), 1) << at20.dump();
+  const json at100 = ok("check_drawing_set", {{"sheet", "1FL 平面図"}});
+  EXPECT_EQ(at100["sheets"][0]["counts"].value("does_not_fit", 0), 0);
+  EXPECT_EQ(at100["sheets"][0]["counts"].value("off_frame", 0), 0) << at100.dump();
+}

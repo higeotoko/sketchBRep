@@ -2437,6 +2437,450 @@
           "picture": "屋根ができた 3D（室名は屋根に隠れる）"
         }
       ]
+    },
+    {
+      "id": "5-2・5-4",
+      "title": "L 字の回り段の階段と、階高を変えた時の段数",
+      "docs": "docs/103・112",
+      "look": "回り段の見え方（3D・平面の絵）。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "create_slab",
+          "args": {
+            "outline": [
+              [
+                0,
+                0
+              ],
+              [
+                8000,
+                0
+              ],
+              [
+                8000,
+                6000
+              ],
+              [
+                0,
+                6000
+              ]
+            ],
+            "top": 3000,
+            "thickness": 200
+          }
+        },
+        {
+          "tool": "create_stair",
+          "args": {
+            "path": [
+              [
+                3400,
+                600
+              ],
+              [
+                3400,
+                4400
+              ],
+              [
+                1400,
+                4400
+              ]
+            ],
+            "base": 0,
+            "rise": 3000,
+            "width": 780,
+            "turns": 3,
+            "handrail": "right"
+          },
+          "save": "stair",
+          "show": true
+        },
+        {
+          "tool": "stair_info",
+          "args": {
+            "id": "$stair.id"
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "\"winders\":3"
+            ]
+          }
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "1FL 平面図",
+            "texts": true
+          },
+          "picture": "1FL 平面図（回り段）"
+        },
+        {
+          "tool": "set_levels",
+          "args": {
+            "levels": [
+              {
+                "name": "1FL",
+                "elevation": 0
+              },
+              {
+                "name": "2FL",
+                "elevation": 2800
+              }
+            ]
+          }
+        },
+        {
+          "tool": "stair_info",
+          "args": {
+            "id": "$stair.id"
+          },
+          "show": true
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "3D（回り段）"
+        }
+      ]
+    },
+    {
+      "id": "8-1・8-2",
+      "title": "斜めの外壁がある間取りと寄棟屋根",
+      "docs": "docs/107・108",
+      "look": "斜めの角の見え方、寄棟の形（3D・平面の絵）。",
+      "base": [],
+      "steps": [
+        {
+          "tool": "set_levels",
+          "args": {
+            "levels": [
+              {
+                "name": "1FL",
+                "elevation": 0
+              },
+              {
+                "name": "2FL",
+                "elevation": 3000
+              }
+            ]
+          }
+        },
+        {
+          "tool": "create_wall",
+          "args": {
+            "points": [
+              [
+                0,
+                0
+              ],
+              [
+                8000,
+                0
+              ],
+              [
+                9500,
+                6000
+              ],
+              [
+                0,
+                6000
+              ],
+              [
+                0,
+                0
+              ]
+            ],
+            "thickness": 200,
+            "height": 3000
+          },
+          "save": "walls"
+        },
+        {
+          "tool": "create_slab",
+          "args": {
+            "outline": [
+              [
+                0,
+                0
+              ],
+              [
+                8000,
+                0
+              ],
+              [
+                9500,
+                6000
+              ],
+              [
+                0,
+                6000
+              ]
+            ],
+            "top": 0,
+            "thickness": 200
+          }
+        },
+        {
+          "tool": "create_room",
+          "args": {
+            "at": [
+              4000,
+              3000
+            ],
+            "name": "広間"
+          },
+          "save": "room"
+        },
+        {
+          "tool": "room_schedule",
+          "args": {},
+          "show": true,
+          "expect": {
+            "contains": [
+              "\"closed\":true",
+              "\"area_centre\":52.5"
+            ]
+          }
+        },
+        {
+          "tool": "create_roof",
+          "args": {
+            "outline": [
+              [
+                -100,
+                -100
+              ],
+              [
+                8100,
+                -100
+              ],
+              [
+                9600,
+                6100
+              ],
+              [
+                -100,
+                6100
+              ]
+            ],
+            "kind": "hip",
+            "height": 3000,
+            "pitch": 4,
+            "eave": 450
+          },
+          "save": "roof",
+          "show": true
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "1FL 平面図",
+            "texts": true
+          },
+          "picture": "1FL 平面図（斜めの壁）"
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "3D（寄棟）"
+        }
+      ]
+    },
+    {
+      "id": "8-3",
+      "title": "窓に自分で符号と品番を付ける",
+      "docs": "docs/109",
+      "look": "建具表・平面の札の書き方（絵）。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "set_opening_mark",
+          "args": {
+            "host": "$walls.ids.0",
+            "openings": [
+              1
+            ],
+            "mark": "AW-1",
+            "product": "YKK-123"
+          }
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "建具表",
+            "texts": true
+          },
+          "picture": "建具表（手で付けた符号）",
+          "expect": {
+            "contains": [
+              "AW-1",
+              "YKK-123"
+            ]
+          }
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "1FL 平面図",
+            "texts": true
+          },
+          "expect": {
+            "contains": [
+              "AW-1"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "12-7・12-38・12-42・12-50",
+      "title": "外壁サイディング・内壁石膏ボードの層を 1:50・1:20 で",
+      "docs": "docs/170・173・177",
+      "look": "層の境目・ハッチ、T 字の回り込み、1:20 の角の見え方（絵）。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "set_wall_type",
+          "args": {
+            "ids": "$walls.ids",
+            "type": "exterior_siding"
+          }
+        },
+        {
+          "tool": "set_wall_type",
+          "args": {
+            "ids": "$partition.ids",
+            "type": "interior_board"
+          }
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "1FL 平面図",
+            "texts": true,
+            "scale": 50
+          },
+          "picture": "1FL 平面図 1:50"
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "1FL 平面図",
+            "texts": true,
+            "scale": 20
+          },
+          "picture": "1FL 平面図 1:20"
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "A-A 断面図",
+            "texts": true,
+            "scale": 50
+          },
+          "picture": "A-A 断面図 1:50（窓を通る）"
+        }
+      ]
+    },
+    {
+      "id": "12-40",
+      "title": "車庫を容積率の算定から外す",
+      "docs": "docs/162",
+      "look": "面積の表の注の書き方（絵）。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "rename",
+          "args": {
+            "id": "$bedroom.id",
+            "name": "車庫"
+          }
+        },
+        {
+          "tool": "set_room_finish",
+          "args": {
+            "id": "$bedroom.id",
+            "ratio_part": "garage"
+          }
+        },
+        {
+          "tool": "area_table",
+          "args": {},
+          "show": true,
+          "expect": {
+            "contains": [
+              "容積率"
+            ]
+          }
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "面積の表",
+            "texts": true
+          },
+          "picture": "面積の表（車庫）",
+          "expect": {
+            "contains": [
+              "容積率の算定の延べ面積"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "12-14",
+      "title": "図面一式（表は 1 階の平面図に並べる）",
+      "docs": "docs/131",
+      "look": "1 階の平面図の横に表が並んだ紙の読みやすさ（絵）。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "tables_with_plan": true
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "1FL 平面図・建具表"
+            ]
+          }
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "tables_with_plan": true,
+            "sheet": 4,
+            "texts": true
+          },
+          "picture": "表を並べた 1FL 平面図"
+        }
+      ]
     }
   ]
 }

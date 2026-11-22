@@ -229,7 +229,12 @@ def run_scenario(mcp: Mcp, sc: dict, bases: dict, out: Path) -> dict:
             record["failed"] += [f"step {n} 保存して開き直す: {d}" for d in diffs]
             continue
         tool = step["tool"]
-        args = substitute(step.get("args", {}), saved)
+        try:
+            args = substitute(step.get("args", {}), saved)
+        except (KeyError, IndexError, TypeError) as e:
+            # An earlier step that was to give this value failed: the rest of this item cannot run.
+            record["failed"].append(f"step {n} {tool}: a value from an earlier step is missing ({e}); the item stops here")
+            break
         r = mcp.call(tool, args)
         text = r["text"]
         if tool == "render_drawing_set" and isinstance(r["result"], dict):

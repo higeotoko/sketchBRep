@@ -127,6 +127,20 @@ std::vector<SheetFinding> checkSheet(const Sheet& sheet, std::size_t limit) {
     if (out.size() < limit) out.push_back(std::move(f));
   };
   const double paperW = sheet.paperWidth * scale, paperH = sheet.paperHeight * scale;
+  // docs/257: the sheet's own word that the drawing does not fit its paper; and the frame (the
+  // thick border) the words should stay inside.
+  for (const std::string& note : sheet.notes)
+    if (note.find("does not fit") != std::string::npos) add({"does_not_fit", note, {}, {}, 0.0});
+  double fx0 = 1e300, fy0 = 1e300, fx1 = -1e300, fy1 = -1e300;
+  for (const Item& item : sheet.items)
+    if (item.pen == Pen::Frame)
+      for (const gp_Pnt2d& p : item.points) {
+        fx0 = std::min(fx0, p.X());
+        fy0 = std::min(fy0, p.Y());
+        fx1 = std::max(fx1, p.X());
+        fy1 = std::max(fy1, p.Y());
+      }
+  const bool framed = fx0 < fx1 && fy0 < fy1;
   for (const TextBox& t : texts) {
     if (t.paperHeight < kSmallestTextMm)
       add({"tiny_text", t.item->text, {}, onPaper(t.origin, scale), t.paperHeight});
@@ -134,6 +148,12 @@ std::vector<SheetFinding> checkSheet(const Sheet& sheet, std::size_t limit) {
     for (const gp_Pnt2d& p : {t.toSheet(t.x0, t.y0), t.toSheet(t.x1, t.y0), t.toSheet(t.x1, t.y1), t.toSheet(t.x0, t.y1)})
       off = off || p.X() < 0 || p.Y() < 0 || p.X() > paperW || p.Y() > paperH;
     if (off) add({"off_paper", t.item->text, {}, onPaper(t.origin, scale), t.paperHeight});
+    else if (framed && t.item->pen != Pen::Frame) {
+      bool outside = false;
+      for (const gp_Pnt2d& p : {t.toSheet(t.x0, t.y0), t.toSheet(t.x1, t.y0), t.toSheet(t.x1, t.y1), t.toSheet(t.x0, t.y1)})
+        outside = outside || p.X() < fx0 || p.Y() < fy0 || p.X() > fx1 || p.Y() > fy1;
+      if (outside) add({"off_frame", t.item->text, {}, onPaper(t.origin, scale), t.paperHeight});
+    }
   }
   for (std::size_t i = 0; i < texts.size(); ++i)
     for (std::size_t j = i + 1; j < texts.size(); ++j)
