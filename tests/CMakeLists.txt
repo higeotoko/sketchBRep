@@ -68,8 +68,9 @@ add_executable(sbr_core_tests
   test_ux_gate1.cpp
   test_rhino3dm.cpp
   test_scenarios.cpp
+  test_golden_sheets.cpp
 )
-set_source_files_properties(test_dxf.cpp PROPERTIES
+set_source_files_properties(test_dxf.cpp test_golden_sheets.cpp PROPERTIES
   COMPILE_DEFINITIONS SBR_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 target_link_libraries(sbr_core_tests PRIVATE sbr::core nlohmann_json::nlohmann_json GTest::gtest_main)
 if(SBR_WITH_OPENNURBS)
