@@ -1,0 +1,15 @@
+# 268. 例題AのIFCを外部ソフトで確認（2026-11-23）
+
+[7-1の書き出しで作った例題AのIFC4](267_ifc_export_menu_check.md)を IfcOpenShell 0.9.0.post1 で開き、世界座標で取り出した形状を Blender 5.3.0 で表示した。確認用の表示では庇を橙色にし、1階の画像では上階・屋根・天井を隠した。[IfcOpenShellの形状処理](https://docs.ifcopenshell.org/ifcopenshell-python/geometry_processing.html)
+
+## 7-2 階・部品・建具符号・室の仕上げ
+
+- 1FL（0 mm）と2FL（2,800 mm）を読み取れた。壁12、開口14、床2、屋根1、階段1、室6、天井6の形状が得られた。全景と1階の画像で屋根、外壁・間仕切り、床、開口と階段の位置を確認した。室6つはそれぞれ所属階の高さから始まっていた。
+- 窓8・扉6の名前は `AW1`、`AW-1`、`AD1`、`WD1` などの符号で、14件とも壁の開口に対応し、配置点と高さが開口の位置・高さと合っていた。現行のIFCには窓・扉自体の形状がなく、画像では壁の穴として見える。[IFCの窓・扉の書き方](101_ifc_export.md)
+- 室の仕上げは `Pset_SpaceCoveringRequirements` で取得できた。和室の床・壁・天井は「畳 t55」「じゅらく」「杉板」だった。仕上げの確認はプロパティ値まで。
+
+## 7-3 庇と外壁の接続
+
+- 庇1つを `IfcSlab` として読み取れた。IFC4の `PredefinedType` は `USERDEFINED`、`ObjectType` は `CANOPY`。ホストの外壁とは `IfcRelConnectsElements` で関連付けられ、庇の取付側と壁の外面が世界座標 Y = 7.3755 m で一致した。拡大画像でも開口の上で庇が外壁に接していた。[IFC4のIfcSlabの型](https://standards.buildingsmart.org/IFC/RELEASE/IFC4/FINAL/HTML/schema/ifcsharedbldgelements/lexical/ifcslabtypeenum.htm)
+
+確認データは配布フォルダの `outputs/ifc-external-review/`。内容は `ifc-review.json` と全景・1階・庇拡大のPNG。今回は外部ソフトを使ったAI確認で、人による画面操作と別のBIMビューアでの表示比較は未実施。
