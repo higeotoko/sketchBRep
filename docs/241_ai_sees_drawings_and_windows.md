@@ -30,6 +30,18 @@ docs/105 の人の確認のうち、AI が MCP で起動中のアプリを動か
 - `McpServer.AppCommandSpecsAreValidSchemas`：アプリのコマンドが 11 個、どれも型が object。
 - Windows ローカル：コア全件成功（8 件スキップ）。AI・図面・機器・付近見取図・断熱まわりの GUI 26 件成功。落ちた `paintedFaceFollowsItsMaterial` は表示倍率 175% でローカルだけ落ちる既知の 8 件（docs/192）。
 
+**CI**：run 44969479102（push）成功。Linux 821 件すべて成功。
+
+**配布**
+
+| 項目 | 内容 |
+|---|---|
+| コード | `de01f12` |
+| ZIP | `SketchBRep-windows-x64-de01f12-local.zip`（Codex のチャットフォルダの `outputs\`。TLS の部品入り） |
+| サイズ | 83,009,606 bytes |
+| SHA256 | `e9d66c5ec417058dc1d0d9eec55d5248e43b694ce0950a05da2e1ac870dc5dd5` |
+| ZIP の検証 | `docs/validation/2026-11-22-portable-de01f12.json`・`-mat.json`（GUI 18 + 4 条件、失敗 0） |
+
 **Windows 実機確認（人の操作）**：アプリを入れ替えたら、AI に `render_drawing_set` と `capture_window` を使わせて確かめる（AI がやる）。
 
 ## まだ
