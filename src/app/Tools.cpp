@@ -2453,10 +2453,33 @@ QString RoofTool::startText() const {
 
 QString RoofTool::finishedText(std::size_t) const { return QObject::tr("屋根を作成しました（Ctrl+Z で戻せます。勾配などはプロパティで直せます）"); }
 
+namespace {
+// docs/256 (owner 2026-11-22 "直して"): an outline drawn on the screen, its sides within half a
+// degree of the red or green axis put exactly on it. Clicked on the mitred tops of walls (seen in
+// perspective from above), the corners landed a few mm apart along the mitre lines and a gable was
+// refused ("この外周には向かい合う平行な辺がありません").
+std::vector<gp_Pnt> squaredOutline(std::vector<gp_Pnt> p) {
+  const std::size_t n = p.size();
+  if (n < 3) return p;
+  const double tol = std::tan(0.5 * M_PI / 180.0);
+  const auto square = [&](const gp_Pnt& from, gp_Pnt& to) {
+    const double dx = to.X() - from.X(), dy = to.Y() - from.Y();
+    if (std::abs(dy) <= tol * std::abs(dx)) to.SetY(from.Y());
+    else if (std::abs(dx) <= tol * std::abs(dy)) to.SetX(from.X());
+  };
+  for (std::size_t i = 0; i + 1 < n; ++i) square(p[i], p[i + 1]);
+  // The last side back to the start: its end is the start, so the last point gives way.
+  const double dx = p.front().X() - p.back().X(), dy = p.front().Y() - p.back().Y();
+  if (std::abs(dy) <= tol * std::abs(dx)) p.back().SetY(p.front().Y());
+  else if (std::abs(dx) <= tol * std::abs(dy)) p.back().SetX(p.front().X());
+  return p;
+}
+}  // namespace
+
 geom::RoofSpec RoofTool::spec(const std::vector<gp_Pnt>& points) const {
   geom::RoofSpec s;
   s.kind = settings_.kind;
-  s.outline = points;
+  s.outline = squaredOutline(points);
   s.height = points.empty() ? 0.0 : points.front().Z();
   s.pitch = settings_.pitch;
   s.eave = settings_.eave;

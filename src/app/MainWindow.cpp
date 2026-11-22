@@ -2787,7 +2787,7 @@ void MainWindow::buildAiBridge() {
           break;
         }
     }
-    if (!captured) throw std::runtime_error("no window opened (the status bar says: " + statusBar()->currentMessage().toStdString() + ")");
+    if (!captured) throw std::runtime_error("no window opened (the status bar says: " + statusText().toStdString() + ")");
     return json{{"window", target}, {"title", title}, {"image_path", QDir::toNativeSeparators(path).toStdString()}}.dump();
   };
 
@@ -2805,7 +2805,10 @@ void MainWindow::buildAiBridge() {
     return w;
   };
   const auto state = [this] {
-    json out = {{"windows", ui::windows(this)}, {"status", statusBar()->currentMessage().toStdString()}};
+    // docs/256: the tool's own words (the status label), and the measurement box.
+    json out = {{"windows", ui::windows(this)}, {"status", statusText().toStdString()}, {"measurement", measurement_->text().toStdString()}};
+    if (const snap::SnapResult& s = viewport_->shownSnap(); s.valid())
+      out["snap"] = {{"kind", static_cast<int>(s.kind)}, {"point", {s.point.X(), s.point.Y(), s.point.Z()}}};
     return out;
   };
   handlers["ui_windows"] = [debugOnly, state](const std::string&) {

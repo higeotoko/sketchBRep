@@ -236,6 +236,8 @@ class Viewport : public QWidget {
   // The marker, guide lines and a small label next to the cursor naming
   // what the point snapped to (SketchUp's ScreenTip), all from `result`.
   void showSnap(const snap::SnapResult& result, std::optional<gp_Pnt> anchor);
+  // docs/256: the point the cursor is held to now (what the marker shows), for the AI.
+  const snap::SnapResult& shownSnap() const { return shownSnap_; }
   void hideSnap();
   // Scale grips: small cubes along `frame`, the same size on screen at any
   // zoom, the `hot` one (index, -1 = none) marked; `outline` the box.
@@ -430,6 +432,7 @@ class Viewport : public QWidget {
   std::array<double, 3> workOffsets_{};
   std::array<QString, 3> workNames_;
   bool projectSnaps_ = true;
+  snap::SnapResult shownSnap_;
   // Elevation datums (docs/45).
   bool hiddenInView(const doc::Object& o) const;
   void viewLockSwitched();

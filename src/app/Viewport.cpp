@@ -1161,7 +1161,12 @@ void Viewport::syncLabel(const doc::ObjectId& id) {
   // A room's tag (name and area, docs/104) once it has been read; its name until then.
   const auto roomTag = roomTags_.find(id);
   text->SetText(TCollection_ExtendedString((roomTag != roomTags_.end() ? roomTag->second : label->text).c_str(), Standard_True));  // UTF-8
-  text->SetPosition(label->position.Transformed(modeler_.document().worldTransform(*o)));
+  const auto kindOf = o->attributes.find("kind");
+  const bool room = kindOf != o->attributes.end() && kindOf->second == "room";
+  gp_Pnt at = label->position.Transformed(modeler_.document().worldTransform(*o));
+  // docs/256: a room's tag a little above its floor, so the floor does not cover it where it lies.
+  if (room) at.SetZ(at.Z() + 100.0);
+  text->SetPosition(at);
   // A grid line's name (X1, Y2): larger, bold, in a white box over the
   // line's end, so it reads at any zoom (as the bubbles of a drawing).
   const auto part = o->attributes.find("grid_part");
@@ -1175,7 +1180,9 @@ void Viewport::syncLabel(const doc::ObjectId& id) {
     text->Attributes()->TextAspect()->Aspect()->SetDisplayType(Aspect_TODT_SUBTITLE);
     text->Attributes()->TextAspect()->Aspect()->SetColorSubTitle(Quantity_NOC_WHITE);
   }
-  text->SetZLayer(Graphic3d_ZLayerId_TopOSD);
+  // docs/256 (owner 2026-11-22 "隠れるようにして"): a room's tag is hidden behind what stands in
+  // front of it (roofs, walls), like the model; other notes stay on top as before.
+  text->SetZLayer(room ? Graphic3d_ZLayerId_Default : Graphic3d_ZLayerId_TopOSD);
   // Selection mode -1: labels are not pickable; their lines are.
   context_->Display(text, 0, -1, Standard_False);
   labels_.emplace(o->id, text);
@@ -2485,6 +2492,7 @@ void Viewport::setGhost(const std::vector<doc::ObjectId>& ids, const gp_Trsf& de
 }
 
 void Viewport::showSnap(const snap::SnapResult& result, std::optional<gp_Pnt> anchor) {
+  shownSnap_ = result;
   if (view_.IsNull()) return;
   if (!snapMarker_.IsNull()) context_->Remove(snapMarker_, Standard_False);
   if (!inferenceLine_.IsNull()) context_->Remove(inferenceLine_, Standard_False);
