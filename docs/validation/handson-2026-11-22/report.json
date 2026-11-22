@@ -82,7 +82,7 @@
     "n": 4,
     "tool": "place_openings",
     "args": {
-     "host": "7746060c-a274-4164-a122-df705eb34ae0",
+     "host": "913ff090-5213-4674-a5c9-9314ba8781eb",
      "face_normal": [
       0,
       -1,
@@ -101,7 +101,7 @@
     "n": 5,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "7746060c-a274-4164-a122-df705eb34ae0",
+     "host": "913ff090-5213-4674-a5c9-9314ba8781eb",
      "fitting": {
       "type": "sliding_double"
      }
@@ -114,7 +114,7 @@
     "n": 6,
     "tool": "place_openings",
     "args": {
-     "host": "02cd6178-d93f-447a-a57b-8a04a5778f7d",
+     "host": "27b6879b-8727-4496-88c5-48c7321d707e",
      "face_normal": [
       1,
       0,
@@ -133,7 +133,7 @@
     "n": 7,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "02cd6178-d93f-447a-a57b-8a04a5778f7d",
+     "host": "27b6879b-8727-4496-88c5-48c7321d707e",
      "fitting": {
       "type": "swing_single",
       "hinge": "left",
@@ -236,7 +236,7 @@
     "n": 12,
     "tool": "set_site_boundary",
     "args": {
-     "outline": "1729405f-38cb-4fd7-848a-5bf11d86f2d2",
+     "outline": "0c2b9bbd-c4b2-46fe-a3c0-2addb836189c",
      "source": "確認用の架空の測量図"
     },
     "ok": true,
@@ -260,10 +260,10 @@
     "tool": "set_insulation",
     "args": {
      "ids": [
-      "7746060c-a274-4164-a122-df705eb34ae0",
-      "02cd6178-d93f-447a-a57b-8a04a5778f7d",
-      "1579ff79-3b47-4e97-9e1c-d374449feb4c",
-      "2a3846c1-7c4d-4606-9aa8-c83dd2b84511"
+      "913ff090-5213-4674-a5c9-9314ba8781eb",
+      "27b6879b-8727-4496-88c5-48c7321d707e",
+      "bcc4afb4-d271-4390-9eb6-9a4fc112cb50",
+      "04252b60-04d8-4683-afc6-5173cbff523b"
      ],
      "material": "グラスウール 16K",
      "thickness_mm": 105,
@@ -280,7 +280,7 @@
     "tool": "set_insulation",
     "args": {
      "ids": [
-      "cfb76943-3194-47ef-a2de-5984e90c3471"
+      "ea418f93-1653-4364-8240-f4ff82fb6fc5"
      ],
      "material": "押出法ポリスチレンフォーム 3種",
      "thickness_mm": 90,
@@ -296,7 +296,7 @@
     "n": 16,
     "tool": "set_opening_performance",
     "args": {
-     "host": "7746060c-a274-4164-a122-df705eb34ae0",
+     "host": "913ff090-5213-4674-a5c9-9314ba8781eb",
      "u_value": 2.33,
      "glass": "Low-E 複層",
      "solar_gain": 0.51,
@@ -339,7 +339,11 @@
     "caption": "断熱範囲図（A-A 断面）"
    }
   ],
-  "failed": []
+  "failed": [],
+  "findings": [
+   "断熱範囲図（1FL）：line_through_text「洋室  24.00 m²」見えがかり線 ほか 1",
+   "断熱範囲図（1FL）：line_through_text「B」通り芯 ほか 1"
+  ]
  },
  {
   "id": "14-34・46・47",
@@ -424,7 +428,7 @@
     "n": 4,
     "tool": "place_openings",
     "args": {
-     "host": "0713d9d0-a8ba-43cc-81aa-c955abd93cc1",
+     "host": "1f03c92a-2ce5-4c7c-b19c-5648b903eb26",
      "face_normal": [
       0,
       -1,
@@ -443,7 +447,7 @@
     "n": 5,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "0713d9d0-a8ba-43cc-81aa-c955abd93cc1",
+     "host": "1f03c92a-2ce5-4c7c-b19c-5648b903eb26",
      "fitting": {
       "type": "sliding_double"
      }
@@ -456,7 +460,7 @@
     "n": 6,
     "tool": "place_openings",
     "args": {
-     "host": "55f70341-4411-4dc5-bf5f-bc1f9de7ba71",
+     "host": "c5d0f18f-c8d2-463b-a6e0-9724d7aee7ef",
      "face_normal": [
       1,
       0,
@@ -475,7 +479,7 @@
     "n": 7,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "55f70341-4411-4dc5-bf5f-bc1f9de7ba71",
+     "host": "c5d0f18f-c8d2-463b-a6e0-9724d7aee7ef",
      "fitting": {
       "type": "swing_single",
       "hinge": "left",
@@ -578,7 +582,7 @@
     "n": 12,
     "tool": "set_site_boundary",
     "args": {
-     "outline": "b19c2ace-3006-487e-bae8-ea859bafc24b",
+     "outline": "faf7c796-f4fc-4527-974c-410f45029f97",
      "source": "確認用の架空の測量図"
     },
     "ok": true,
@@ -645,7 +649,7 @@
     "n": 16,
     "tool": "rename",
     "args": {
-     "id": "d6593e0e-49e3-47b4-9d95-a26648fc12b8",
+     "id": "d1ed486e-502e-4431-98d9-d612288d7942",
      "name": "キッチン"
     },
     "ok": true,
@@ -680,7 +684,8 @@
     "caption": "機器表（6 地域、浴室・台所・洗面所なし）"
    }
   ],
-  "failed": []
+  "failed": [],
+  "findings": []
  },
  {
   "id": "14-36",
@@ -790,7 +795,8 @@
     "caption": "設備の機器の窓（入れたところ）"
    }
   ],
-  "failed": []
+  "failed": [],
+  "findings": []
  },
  {
   "id": "14-27・40・41",
@@ -875,7 +881,7 @@
     "n": 4,
     "tool": "place_openings",
     "args": {
-     "host": "d4592876-6b39-4f70-83a5-b26e619a37c4",
+     "host": "1b535f37-feca-4d6d-ad99-86b5409dc8b2",
      "face_normal": [
       0,
       -1,
@@ -894,7 +900,7 @@
     "n": 5,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "d4592876-6b39-4f70-83a5-b26e619a37c4",
+     "host": "1b535f37-feca-4d6d-ad99-86b5409dc8b2",
      "fitting": {
       "type": "sliding_double"
      }
@@ -907,7 +913,7 @@
     "n": 6,
     "tool": "place_openings",
     "args": {
-     "host": "be77da44-606f-4300-aedf-13df1552f4f4",
+     "host": "cce5229c-a340-49b4-a56e-d145e2b47f5e",
      "face_normal": [
       1,
       0,
@@ -926,7 +932,7 @@
     "n": 7,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "be77da44-606f-4300-aedf-13df1552f4f4",
+     "host": "cce5229c-a340-49b4-a56e-d145e2b47f5e",
      "fitting": {
       "type": "swing_single",
       "hinge": "left",
@@ -1029,7 +1035,7 @@
     "n": 12,
     "tool": "set_site_boundary",
     "args": {
-     "outline": "e0edd7d6-c2eb-4a7f-8eaa-076fb8f80bba",
+     "outline": "b12bc222-4ba9-483a-a1d3-cb9abd6906c0",
      "source": "確認用の架空の測量図"
     },
     "ok": true,
@@ -1093,7 +1099,7 @@
     },
     "ok": true,
     "failed": [],
-    "answer": "{\"confirmation\":{\"changed\":[],\"state\":\"未確認\"},\"rows\":[{\"attention\":false,\"details\":\"仕様基準　6 地域\\n確認資料 確認用\\n基準の値との比較はしていません。\",\"item\":\"適用ルート・地域\",\"state\":\"入力済み\",\"targets\":[]},{\"attention\":true,\"details\":\"厚さだけで断熱も無い壁 5 枚。仕様（層）か断熱を入れます。\",\"item\":\"仕様の無い壁\",\"state\":\"未入力\",\"targets\":[\"d4592876-6b39-4f70-83a5-b26e619a37c4\",\"be77da44-606f-4300-aedf-13df1552f4f4\",\"15d22b3e-e9bb-43ef-ae52-6e8d5ba66544\",\"ba84d4ec-56db-40cc-8048-bc711b29d061\",\"0d9cdf06-060e-43dc-8588-e82ee4cd2dfb\"]},{\"attention\":true,\"details\":\"床・屋根 1 のうち、断熱を入れた物 0。\",\"item\":\"床・屋根の断熱\",\"state\":\"未入力\",\"targets\":[\"db168dbd-450a-4ad2-9830-96caf963bb68\""
+    "answer": "{\"confirmation\":{\"changed\":[],\"state\":\"未確認\"},\"rows\":[{\"attention\":false,\"details\":\"仕様基準　6 地域\\n確認資料 確認用\\n基準の値との比較はしていません。\",\"item\":\"適用ルート・地域\",\"state\":\"入力済み\",\"targets\":[]},{\"attention\":true,\"details\":\"厚さだけで断熱も無い壁 5 枚。仕様（層）か断熱を入れます。\",\"item\":\"仕様の無い壁\",\"state\":\"未入力\",\"targets\":[\"1b535f37-feca-4d6d-ad99-86b5409dc8b2\",\"cce5229c-a340-49b4-a56e-d145e2b47f5e\",\"78148112-832d-4968-bbd0-b1d7603496b7\",\"bb47a85f-d6b9-4818-9574-fcf67bee7568\",\"55a8360d-2e0d-4bd3-907d-e40466ef32b8\"]},{\"attention\":true,\"details\":\"床・屋根 1 のうち、断熱を入れた物 0。\",\"item\":\"床・屋根の断熱\",\"state\":\"未入力\",\"targets\":[\"3377cabc-1bcc-41a0-a009-0f25792d33c4\""
    }
   ],
   "pictures": [
@@ -1106,7 +1112,8 @@
     "caption": "計画概要"
    }
   ],
-  "failed": []
+  "failed": [],
+  "findings": []
  },
  {
   "id": "14-28",
@@ -1191,7 +1198,7 @@
     "n": 4,
     "tool": "place_openings",
     "args": {
-     "host": "a594fa0c-8ccc-4edb-959a-c6e5b34a1f9c",
+     "host": "f549a205-771c-40b9-90fc-8d8ea28ad6c1",
      "face_normal": [
       0,
       -1,
@@ -1210,7 +1217,7 @@
     "n": 5,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "a594fa0c-8ccc-4edb-959a-c6e5b34a1f9c",
+     "host": "f549a205-771c-40b9-90fc-8d8ea28ad6c1",
      "fitting": {
       "type": "sliding_double"
      }
@@ -1223,7 +1230,7 @@
     "n": 6,
     "tool": "place_openings",
     "args": {
-     "host": "83fe3794-95be-42e7-b768-108d1d0be742",
+     "host": "0cc6ecd0-326d-4c40-bf98-7b3604a19a1d",
      "face_normal": [
       1,
       0,
@@ -1242,7 +1249,7 @@
     "n": 7,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "83fe3794-95be-42e7-b768-108d1d0be742",
+     "host": "0cc6ecd0-326d-4c40-bf98-7b3604a19a1d",
      "fitting": {
       "type": "swing_single",
       "hinge": "left",
@@ -1345,7 +1352,7 @@
     "n": 12,
     "tool": "set_site_boundary",
     "args": {
-     "outline": "5095b337-b9fb-4cb4-a051-dc6dd8f50d9e",
+     "outline": "c6fb7e08-2256-4bf3-8dfa-81565a095f09",
      "source": "確認用の架空の測量図"
     },
     "ok": true,
@@ -1379,10 +1386,10 @@
     "tool": "select",
     "args": {
      "ids": [
-      "a594fa0c-8ccc-4edb-959a-c6e5b34a1f9c",
-      "83fe3794-95be-42e7-b768-108d1d0be742",
-      "a241c1fb-4006-4dc3-ac97-ecd6f1d471e8",
-      "40c8570e-6f45-4765-97fa-142f93f59b52"
+      "f549a205-771c-40b9-90fc-8d8ea28ad6c1",
+      "0cc6ecd0-326d-4c40-bf98-7b3604a19a1d",
+      "4d58da6f-d6ab-4eea-9b7b-fe0976b431b0",
+      "ed726519-9ca4-473c-85f3-1966435266b7"
      ]
     },
     "ok": true,
@@ -1410,7 +1417,8 @@
     "caption": "断熱を入れる窓（外壁 4 枚を選んで）"
    }
   ],
-  "failed": []
+  "failed": [],
+  "findings": []
  },
  {
   "id": "14-42・43・44",
@@ -1495,7 +1503,7 @@
     "n": 4,
     "tool": "place_openings",
     "args": {
-     "host": "167e01c5-aa28-4676-85d9-6be514a1fbca",
+     "host": "3bbc204e-35b3-4ad8-ba9d-f362b4f5d1e8",
      "face_normal": [
       0,
       -1,
@@ -1514,7 +1522,7 @@
     "n": 5,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "167e01c5-aa28-4676-85d9-6be514a1fbca",
+     "host": "3bbc204e-35b3-4ad8-ba9d-f362b4f5d1e8",
      "fitting": {
       "type": "sliding_double"
      }
@@ -1527,7 +1535,7 @@
     "n": 6,
     "tool": "place_openings",
     "args": {
-     "host": "e0054d5f-d09b-448b-a84b-d6cb64f8a486",
+     "host": "f842fdbb-e4e1-4d84-9587-b9ba7f9b646a",
      "face_normal": [
       1,
       0,
@@ -1546,7 +1554,7 @@
     "n": 7,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "e0054d5f-d09b-448b-a84b-d6cb64f8a486",
+     "host": "f842fdbb-e4e1-4d84-9587-b9ba7f9b646a",
      "fitting": {
       "type": "swing_single",
       "hinge": "left",
@@ -1649,7 +1657,7 @@
     "n": 12,
     "tool": "set_site_boundary",
     "args": {
-     "outline": "e973541d-f751-41c6-a37e-56ddeffd4e82",
+     "outline": "d96ddbb8-cc7c-4835-b44b-4ebbae8a041e",
      "source": "確認用の架空の測量図"
     },
     "ok": true,
@@ -1720,7 +1728,10 @@
     "caption": "付近見取図（見本の座標）"
    }
   ],
-  "failed": []
+  "failed": [],
+  "findings": [
+   "付近見取図：line_through_text「地図は、画面の「図面一式を書き出す」で国土地理院の地図タイルから入ります」見えがかり線 ほか 1"
+  ]
  },
  {
   "id": "14-45",
@@ -1805,7 +1816,7 @@
     "n": 4,
     "tool": "place_openings",
     "args": {
-     "host": "6b7063d8-a1e1-4705-b156-6ff0495602f5",
+     "host": "8ce137a2-1a8f-4074-b3f1-e0a895199598",
      "face_normal": [
       0,
       -1,
@@ -1824,7 +1835,7 @@
     "n": 5,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "6b7063d8-a1e1-4705-b156-6ff0495602f5",
+     "host": "8ce137a2-1a8f-4074-b3f1-e0a895199598",
      "fitting": {
       "type": "sliding_double"
      }
@@ -1837,7 +1848,7 @@
     "n": 6,
     "tool": "place_openings",
     "args": {
-     "host": "7bfa214d-ab96-43ea-bc1d-d998480eccb8",
+     "host": "a4d32635-82dc-4c58-9878-28ae01e5f866",
      "face_normal": [
       1,
       0,
@@ -1856,7 +1867,7 @@
     "n": 7,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "7bfa214d-ab96-43ea-bc1d-d998480eccb8",
+     "host": "a4d32635-82dc-4c58-9878-28ae01e5f866",
      "fitting": {
       "type": "swing_single",
       "hinge": "left",
@@ -1959,7 +1970,7 @@
     "n": 12,
     "tool": "set_site_boundary",
     "args": {
-     "outline": "f835468a-dae9-4f2f-bc26-fdda4e939a3f",
+     "outline": "3739326e-8a1b-4e31-86a9-3c40f573f9e3",
      "source": "確認用の架空の測量図"
     },
     "ok": true,
@@ -1982,7 +1993,7 @@
     "n": 14,
     "tool": "set_room_finish",
     "args": {
-     "id": "e9433fbe-0ff2-4cda-a03b-b0726f386bab",
+     "id": "41f858d1-c7ca-44f0-863f-60f38c83e11c",
      "ceiling_height": 2400
     },
     "ok": true,
@@ -1994,7 +2005,7 @@
     "tool": "make_ceilings",
     "args": {
      "rooms": [
-      "e9433fbe-0ff2-4cda-a03b-b0726f386bab"
+      "41f858d1-c7ca-44f0-863f-60f38c83e11c"
      ]
     },
     "ok": true,
@@ -2006,7 +2017,7 @@
     "tool": "select",
     "args": {
      "ids": [
-      "7f290bf8-2ea1-440c-a63e-f42f525f945d"
+      "56d52aca-178f-41a5-aa18-8773377dda90"
      ]
     },
     "ok": true,
@@ -2028,7 +2039,7 @@
     "tool": "set_insulation",
     "args": {
      "ids": [
-      "7f290bf8-2ea1-440c-a63e-f42f525f945d"
+      "56d52aca-178f-41a5-aa18-8773377dda90"
      ],
      "material": "グラスウール 16K",
      "thickness_mm": 155,
@@ -2077,6 +2088,10 @@
     "caption": "断熱範囲図（A-A 断面）天井断熱"
    }
   ],
-  "failed": []
+  "failed": [],
+  "findings": [
+   "断熱範囲図（1FL）：line_through_text「洋室  24.00 m²」見えがかり線 ほか 1",
+   "断熱範囲図（1FL）：line_through_text「B」通り芯 ほか 1"
+  ]
  }
 ]

@@ -53,6 +53,7 @@ add_library(sbr_core STATIC
   src/DrawingLayout.cpp
   src/Drawing.cpp
   src/DrawingSheet.cpp
+  src/SheetCheck.cpp
   src/DrawingDxf.cpp
   src/DrawingJww.cpp
   src/DrawingInternal.cpp

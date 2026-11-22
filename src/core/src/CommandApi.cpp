@@ -11,6 +11,7 @@
 #include "sbr/ConstructionGuide.h"
 #include "sbr/KernelError.h"
 #include "sbr/draw/Drawing.h"
+#include "sbr/draw/SheetCheck.h"
 #include "sbr/geom/Surfaces.h"
 #include <limits>
 #include <TopExp_Explorer.hxx>
@@ -4458,6 +4459,36 @@ const std::vector<CommandDef>& commands() {
          else throw ApiError("The path must end in .dxf or .jww (PDF: from the tables window in the app)");
          return json{{"paper", sheet.paper}, {"rows", table.rows.size()}, {"notes", sheet.notes}};
        }},
+      {"check_drawing_set",
+       "docs/247: the drawing set looked over for what makes it hard to read, per sheet (number, name): words on "
+       "words (text_on_text), a line through words (line_through_text; 'other' is the kind of line), words beyond "
+       "the paper (off_paper), words under 1.8 mm (tiny_text); each with the words and where on the paper (mm from "
+       "the lower left). Estimates to look at, not a judgement. 'sheet': only that one (number such as A-15, "
+       "1-based index, or name); 'limit' per sheet (default 50). The vicinity map's picture is not fetched here.",
+       SCHEMA({"type": "object", "properties": {"sheet": {"type": ["string", "integer"]}, "limit": {"type": "integer"}}}),
+       [](doc::Modeler& m, const json& a) {
+         const auto set = doc::drawingSet(m.document(), doc::DrawingSetSpec{});
+         if (!set) throw ApiError(set.error());
+         std::string wanted;
+         if (a.contains("sheet")) wanted = a["sheet"].is_number() ? std::to_string(a["sheet"].get<int>()) : a["sheet"].get<std::string>();
+         const std::size_t limit = static_cast<std::size_t>(std::max(1, a.value("limit", 50)));
+         json sheets = json::array();
+         std::size_t total = 0;
+         for (std::size_t i = 0; i < set->sheets.size(); ++i) {
+           if (!wanted.empty() && wanted != set->numbers[i] && wanted != std::to_string(i + 1) && wanted != set->names[i]) continue;
+           json findings = json::array(), counts = json::object();
+           for (const draw::SheetFinding& f : draw::checkSheet(set->sheets[i], limit)) {
+             findings.push_back({{"kind", f.kind}, {"text", f.text}, {"other", f.other},
+                                 {"at", {std::round(f.at.X()), std::round(f.at.Y())}}, {"height", f.height}});
+             counts[f.kind] = counts.value(f.kind, 0) + 1;
+             ++total;
+           }
+           sheets.push_back({{"index", i + 1}, {"number", set->numbers[i]}, {"name", set->names[i]}, {"counts", counts},
+                             {"findings", findings}});
+         }
+         if (!wanted.empty() && sheets.empty()) throw ApiError("no sheet '" + wanted + "' in the set");
+         return json{{"sheets", sheets}, {"total", total}};
+       }},
       {"export_drawing_set",
        "A set of drawings with sheet numbers (docs/125) as DXF or JWW files in 'folder' (which must exist): a "
        "sheet list (01), a plan per storey, the four elevations and the tables, numbered 'prefix' (default A-) "
@@ -4603,7 +4634,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
       name == "preview" || name == "query_objects" || name == "aggregate" || name == "get_changes" ||
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
       name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" ||
-      name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" || name == "permit_checks" || name == "project_outline" || name == "daylight_factor_estimates" ||
+      name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" || name == "permit_checks" || name == "check_drawing_set" || name == "project_outline" || name == "daylight_factor_estimates" ||
         name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
     return E::Read;
   }

@@ -10,6 +10,8 @@
 #include "sbr/api/CommandApi.h"
 #include "sbr/doc/Modeler.h"
 #include "sbr/doc/NativeFormat.h"
+#include "sbr/draw/SheetCheck.h"
+#include <iostream>
 #include "sbr/doc/Schedules.h"
 #include "sbr/OpeningSymbols.h"
 #include "sbr/draw/Drawing.h"
@@ -3228,8 +3230,8 @@ TEST_F(Schedules, InsulationAreasOnPlans) {
     if (i.kind == sbr::draw::Item::Kind::Line && std::abs(i.points[0].Distance(i.points[1]) - 10000.0) < 1.0) ++diagonals;
   }
   EXPECT_EQ(diagonals, 4);  // the floor's and the roof's
-  EXPECT_TRUE(labels.count("床断熱　押出法ポリスチレンフォーム 50 mm"));
-  EXPECT_TRUE(labels.count("屋根断熱　フェノールフォーム 60 mm（外張り）"));
+  EXPECT_TRUE(labels.count("床断熱"));  // docs/247: the part only; the insulation is in the legend
+  EXPECT_TRUE(labels.count("屋根断熱"));
   EXPECT_TRUE(has(view->calculationNotes, "×印の範囲：この階の床の断熱　押出法ポリスチレンフォーム 50 mm（1 個）"));
   EXPECT_TRUE(has(view->calculationNotes, "×印の範囲：屋根の断熱　フェノールフォーム 60 mm（外張り）（1 個）"));
   // A lower roof (下屋) bearing at 2800 north of the house, under a storey whose walls stand on 2FL:
@@ -4065,4 +4067,85 @@ TEST_F(Schedules, RenamingARoom) {
   EXPECT_FALSE(call("rename", {{"id", room}, {"name", ""}}).value("ok", true));
   ok("rename", {{"id", south}, {"name", "南の壁"}});  // other objects as before
   EXPECT_EQ(modeler.document().find(south)->name, "南の壁");
+}
+
+// docs/247: what makes a sheet hard to read, found: words on words, a line through words, words off
+// the paper, words too small; and nothing where there is none.
+TEST(SheetCheck, FindsWhatMakesASheetHardToRead) {
+  using sbr::draw::Item;
+  sbr::draw::Sheet sheet;
+  sheet.scale = 100;
+  sheet.paperWidth = 420;
+  sheet.paperHeight = 297;
+  const auto text = [&](const std::string& s, double x, double y, double h) {
+    Item t;
+    t.kind = Item::Kind::Text;
+    t.pen = sbr::draw::Pen::Text;
+    t.text = s;
+    t.points = {gp_Pnt2d(x * 100, y * 100)};
+    t.height = h;
+    sheet.items.push_back(t);
+  };
+  const auto line = [&](double x0, double y0, double x1, double y1, sbr::draw::Pen pen) {
+    Item l;
+    l.kind = Item::Kind::Line;
+    l.pen = pen;
+    l.points = {gp_Pnt2d(x0 * 100, y0 * 100), gp_Pnt2d(x1 * 100, y1 * 100)};
+    sheet.items.push_back(l);
+  };
+  text("離れた字", 20, 250, 3.5);           // nothing near
+  line(20, 245, 60, 245, sbr::draw::Pen::Visible);  // just under it: not through
+  text("床断熱　押出法", 100, 100, 3.5);
+  line(95, 101.5, 140, 101.5, sbr::draw::Pen::Grid);  // through its middle
+  text("重なる一", 200, 150, 3.5);
+  text("重なる二", 203, 150.5, 3.5);       // on the first
+  text("はみ出す字", 410, 20, 3.5);         // past the right edge
+  text("小さい字", 300, 250, 1.2);
+  const auto found = sbr::draw::checkSheet(sheet);
+  const auto has = [&](const std::string& kind, const std::string& words) {
+    return std::any_of(found.begin(), found.end(), [&](const auto& f) { return f.kind == kind && f.text == words; });
+  };
+  EXPECT_TRUE(has("line_through_text", "床断熱　押出法"));
+  EXPECT_TRUE(has("text_on_text", "重なる一"));
+  EXPECT_TRUE(has("off_paper", "はみ出す字"));
+  EXPECT_TRUE(has("tiny_text", "小さい字"));
+  for (const auto& f : found) EXPECT_NE(f.text, "離れた字") << f.kind;
+  EXPECT_EQ(found.size(), 4u);
+  for (const auto& f : found)
+    if (f.kind == "line_through_text") EXPECT_EQ(f.other, "通り芯");
+}
+
+// docs/247: the command over the whole drawing set (the counts are printed for a look).
+TEST_F(Schedules, CheckDrawingSet) {
+  ok("set_insulation", {{"ids", {south, east, north, west}}, {"material", "グラスウール 16K"}, {"thickness_mm", 105}, {"source", "架空"}});
+  const json r = ok("check_drawing_set");
+  ASSERT_TRUE(r["sheets"].is_array());
+  ASSERT_GE(r["sheets"].size(), 5u);
+  for (const auto& s : r["sheets"]) {
+    std::cout << s["number"].get<std::string>() << " " << s["name"].get<std::string>() << " " << s["counts"].dump() << "\n";
+    for (const auto& f : s["findings"])
+      std::cout << "    " << f["kind"].get<std::string>() << " [" << f["text"].get<std::string>() << "] " << f["other"].get<std::string>() << "\n";
+  }
+  const json one = ok("check_drawing_set", {{"sheet", "断熱範囲図（1FL）"}});
+  EXPECT_EQ(one["sheets"].size(), 1u);
+  EXPECT_FALSE(call("check_drawing_set", {{"sheet", "無い図面"}}).value("ok", true));
+}
+
+// docs/247: a line kept clear of words: cut in two around them; untouched when it misses them.
+TEST(SheetCheck, LinesKeptClearOfWords) {
+  sbr::draw::Item words;
+  words.kind = sbr::draw::Item::Kind::Text;
+  words.text = "居間  24.00 m²";
+  words.points = {gp_Pnt2d(2000, 3000)};
+  words.height = 3.5;
+  words.hAlign = 1;
+  words.vAlign = 1;
+  const auto pieces = sbr::draw::clearOfText(gp_Pnt2d(0, 0), gp_Pnt2d(4000, 6000), {&words}, 100, 0.8);
+  ASSERT_EQ(pieces.size(), 2u);
+  EXPECT_LT(pieces[0].second.Distance(gp_Pnt2d(2000, 3000)), 2000.0);
+  EXPECT_GT(pieces[0].second.Distance(gp_Pnt2d(2000, 3000)), 100.0);  // stops short of the words
+  const auto missed = sbr::draw::clearOfText(gp_Pnt2d(0, 5000), gp_Pnt2d(4000, 5000), {&words}, 100, 0.8);
+  ASSERT_EQ(missed.size(), 1u);
+  EXPECT_NEAR(missed[0].first.Distance(gp_Pnt2d(0, 5000)), 0.0, 1e-9);
+  EXPECT_NEAR(missed[0].second.Distance(gp_Pnt2d(4000, 5000)), 0.0, 1e-9);
 }

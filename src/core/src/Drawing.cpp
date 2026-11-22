@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 #include <set>
 #include "sbr/draw/Drawing.h"
+#include "sbr/draw/SheetCheck.h"
 #include <map>
 #include <functional>
 #include <optional>
@@ -1205,6 +1206,13 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
                                               : "この階の耐力壁は、壁量の計算の入力にありません");
   }
 
+  // docs/247: the words in the insulation ranges, placed after the room tags (so they keep clear of them).
+  struct RangeLabel {
+    double u0, v0, u1, v1;
+    std::string text;
+  };
+  std::vector<RangeLabel> rangeLabels;
+  std::vector<Item> crossLines;  // the ranges' crosses, drawn after the words (kept clear of them)
   // docs/216: the insulation of the walls the plan cuts (a zigzag along the middle of each), with a
   // legend; the floors' and roofs' insulation listed (not drawn on a plan).
   if (spec.kind == ViewKind::Plan && spec.insulation) {
@@ -1248,20 +1256,13 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
             BRepBuilderAPI_MakeEdge diagonal(d[0], d[1]);
             if (!diagonal.IsDone()) continue;
             BRepAlgoAPI_Common inside(diagonal.Edge(), area.region);
-            if (inside.IsDone()) addLocalEdges(inside.Shape().Moved(TopLoc_Location(proj.toLocal)), Pen::Visible, deflection, view.items);
+            if (inside.IsDone()) addLocalEdges(inside.Shape().Moved(TopLoc_Location(proj.toLocal)), Pen::Visible, deflection, crossLines);
           }
         }
       }
-      const double shift = area.part == "屋根" ? 0.15 * (v1 - v0) : area.part == "天井" ? -0.15 * (v1 - v0) : 0.0;
-      Item label;
-      label.kind = Item::Kind::Text;
-      label.pen = Pen::Text;
-      label.points = {gp_Pnt2d((u0 + u1) / 2, (v0 + v1) / 2 + shift)};
-      label.text = area.part + "断熱　" + area.text;
-      label.height = 2.5;
-      label.hAlign = 1;
-      label.vAlign = 1;
-      view.items.push_back(label);
+      // docs/247: the part only ("床断熱"): the insulation is in the legend. The whole text was wider
+      // than a house at 1:100 and lay on the room tags and the cross (the sheet check found it).
+      rangeLabels.push_back({u0, v0, u1, v1, area.part + "断熱"});
       ++areas[area.part][area.text];
     }
     if (walls.empty()) view.calculationNotes.push_back("この階で切る壁に、断熱の入力はありません");
@@ -1398,6 +1399,11 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
         text.text = t->text;
         // A room's tag: its name and its area as the walls are now (docs/104).
         if (const auto kind = o.attributes.find("kind"); kind != o.attributes.end() && kind->second == "room") {
+          // docs/247: a plan's only (the sheet check found the tags on the floor line of elevations and
+          // sections), and centred on the marker (written to its right, it ran over walls and doors).
+          if (spec.kind != ViewKind::Plan) continue;
+          text.hAlign = 1;
+          text.vAlign = 1;
           if (!roomTags) {
             roomTags.emplace();
             for (const doc::RoomRow& r : doc::roomSchedule(document).rows) (*roomTags)[r.id] = doc::roomTagText(r);
@@ -1409,6 +1415,66 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
         if (t->target) view.items.push_back(line(Pen::Text, proj.uv(t->target->Transformed(w)), proj.uv(p)));
       }
     }
+  }
+  // docs/247: each range's words where no line runs through them and no other words lie: tried along
+  // the top of the range first (the cross's diagonals are near the corners there), then lower; the
+  // first place the sheet check finds clear. The ranges' words one under another when they share it.
+  if (!rangeLabels.empty()) {
+    const double scale = spec.paperScale > 0 ? spec.paperScale : 100.0;
+    Sheet probe;
+    probe.scale = scale;
+    probe.paperWidth = probe.paperHeight = 1e12;
+    probe.items = view.items;
+    probe.items.insert(probe.items.end(), crossLines.begin(), crossLines.end());  // the crosses avoided too
+    for (const RangeLabel& r : rangeLabels) {
+      Item label;
+      label.kind = Item::Kind::Text;
+      label.pen = Pen::Text;
+      label.text = r.text;
+      label.height = 2.5;
+      label.hAlign = 1;
+      label.vAlign = 1;
+      const double w = r.u1 - r.u0, d = r.v1 - r.v0;
+      std::optional<gp_Pnt2d> chosen;
+      for (const double fv : {0.12, 0.2, 0.3, 0.4, 0.6, 0.7, 0.8, 0.88}) {
+        for (const double fu : {0.5, 0.35, 0.65, 0.25, 0.75, 0.15, 0.85}) {
+          label.points = {gp_Pnt2d(r.u0 + fu * w, r.v1 - fv * d)};
+          probe.items.push_back(label);
+          bool clear = true;
+          for (const SheetFinding& f : checkSheet(probe, 100000))
+            if ((f.kind == "line_through_text" || f.kind == "text_on_text") && (f.text == r.text || f.other == r.text)) clear = false;
+          probe.items.pop_back();
+          if (clear) {
+            chosen = label.points[0];
+            break;
+          }
+        }
+        if (chosen) break;
+      }
+      label.points = {chosen ? *chosen : gp_Pnt2d((r.u0 + r.u1) / 2, r.v1 - 0.12 * d)};
+      probe.items.push_back(label);
+      view.items.push_back(label);
+    }
+  }
+  // docs/247: the crosses stop short of the words they would run through (room tags, the ranges' words).
+  if (!crossLines.empty()) {
+    const double scale = spec.paperScale > 0 ? spec.paperScale : 100.0;
+    std::vector<const Item*> words;
+    for (const Item& i : view.items)
+      if (i.kind == Item::Kind::Text) words.push_back(&i);
+    std::vector<Item> kept;
+    for (const Item& c : crossLines) {
+      if (c.kind != Item::Kind::Line || c.points.size() != 2) {
+        kept.push_back(c);
+        continue;
+      }
+      for (const auto& [p, q] : clearOfText(c.points[0], c.points[1], words, scale, 0.8)) {
+        Item piece = c;
+        piece.points = {p, q};
+        kept.push_back(piece);
+      }
+    }
+    view.items.insert(view.items.end(), kept.begin(), kept.end());
   }
   if (spec.memberLabels) {
     const auto quantities = construction::takeOff(

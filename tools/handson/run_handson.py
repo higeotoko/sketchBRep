@@ -155,7 +155,7 @@ def check(expect: dict, step_text: str, ok: bool) -> list[str]:
 def run_scenario(mcp: Mcp, sc: dict, bases: dict, out: Path) -> dict:
     saved: dict = {}
     record = {"id": sc["id"], "title": sc["title"], "look": sc.get("look", ""), "docs": sc.get("docs", ""),
-              "steps": [], "pictures": [], "failed": []}
+              "steps": [], "pictures": [], "failed": [], "findings": []}
     why = new_document(mcp, may_discard=True)
     if why:
         record["failed"].append("new document: " + why)
@@ -175,6 +175,13 @@ def run_scenario(mcp: Mcp, sc: dict, bases: dict, out: Path) -> dict:
         if tool == "render_drawing_set" and isinstance(r["result"], dict):
             sheet = r["result"].get("sheet") or {}
             text += "\n" + "\n".join(sheet.get("texts", []))
+            # docs/247: what the sheet check points at on this sheet (to look at; not a failure).
+            if sheet.get("name"):
+                found = mcp.call("check_drawing_set", {"sheet": sheet["name"]})
+                if found["ok"] and isinstance(found["result"], dict):
+                    for s in found["result"].get("sheets", []):
+                        for f in s.get("findings", []):
+                            record["findings"].append(f'{s["name"]}：{f["kind"]}「{f["text"]}」{f.get("other", "")}')
         if "save" in step and isinstance(r["result"], dict):
             saved[step["save"]] = r["result"]
         failed = check(step.get("expect", {}), text, r["ok"])
@@ -215,6 +222,10 @@ def write_report(records: list[dict], out: Path, started: str, mcp_exe: str) -> 
             f'alt="{html.escape(p["caption"])}"><figcaption>{html.escape(p["caption"])}</figcaption></figure>'
             for p in r["pictures"])
         fails = "".join(f"<li>{html.escape(f)}</li>" for f in r["failed"])
+        finds = ""
+        if r.get("findings"):
+            finds = ("<div class='finds'><b>図面の点検の指摘（docs/247。読みにくいかもしれない所）</b><ul>"
+                     + "".join(f"<li>{html.escape(x)}</li>" for x in sorted(set(r["findings"]))) + "</ul></div>")
         steps = "".join(
             f'<tr class="{"ng" if s["failed"] or not s["ok"] else ""}"><td>{s["n"]}</td><td>{html.escape(s["tool"])}</td>'
             f'<td>{"OK" if s["ok"] else "失敗"}</td><td>{html.escape("; ".join(s["failed"]))}'
@@ -226,6 +237,7 @@ def write_report(records: list[dict], out: Path, started: str, mcp_exe: str) -> 
   <p class="state">{state}　<span class="docs">{html.escape(r['docs'])}</span></p>
   {"<ul class='fails'>" + fails + "</ul>" if fails else ""}
   <div class="look"><b>オーナーが見る所（AI では決められない事）</b><br>{html.escape(r['look'])}</div>
+  {finds}
   <div class="pics">{pics}</div>
   <details><summary>AI がした操作（{len(r['steps'])} 手）</summary><table>{steps}</table></details>
 </section>""")
@@ -237,7 +249,7 @@ def write_report(records: list[dict], out: Path, started: str, mcp_exe: str) -> 
 body{{background:var(--bg);color:var(--fg);font-family:system-ui,"Yu Gothic UI",sans-serif;margin:0 auto;max-width:1100px;padding:16px;line-height:1.6}}
 h1{{font-size:1.4rem}} h2{{font-size:1.1rem;margin:0}} .item{{border:1px solid var(--line);border-radius:8px;padding:12px 16px;margin:16px 0}}
 .pass .state{{color:var(--ok)}} .fail .state{{color:var(--ng)}} .fails{{color:var(--ng)}} .docs{{color:var(--muted);font-size:.9em}}
-.look{{background:var(--box);padding:8px 12px;border-radius:6px;margin:8px 0}} figure{{margin:8px 0}} img{{max-width:100%;border:1px solid var(--line)}}
+.finds{{color:var(--muted);font-size:.9em}} .look{{background:var(--box);padding:8px 12px;border-radius:6px;margin:8px 0}} figure{{margin:8px 0}} img{{max-width:100%;border:1px solid var(--line)}}
 figcaption{{color:var(--muted);font-size:.9em}} table{{border-collapse:collapse;width:100%;font-size:.85em}} td{{border-top:1px solid var(--line);padding:4px;vertical-align:top}}
 tr.ng td{{color:var(--ng)}} pre{{white-space:pre-wrap;margin:4px 0;font-size:.85em}}
 </style></head><body>
