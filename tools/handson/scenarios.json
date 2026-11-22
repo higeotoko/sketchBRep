@@ -263,6 +263,75 @@
           "view": "fit"
         }
       }
+    ],
+    "exD": [
+      {
+        "tool": "open",
+        "args": {
+          "path": "{examples}/例題D_敷地と二室.sbr"
+        }
+      },
+      {
+        "tool": "room_schedule",
+        "args": {},
+        "save": "rs"
+      },
+      {
+        "tool": "query_objects",
+        "args": {
+          "fields": [
+            "id",
+            "name"
+          ]
+        },
+        "save": "q"
+      },
+      {
+        "tool": "list_openings",
+        "args": {},
+        "save": "lo"
+      }
+    ],
+    "exA": [
+      {
+        "tool": "open",
+        "args": {
+          "path": "{examples}/例題A_2階建ての家.sbr"
+        }
+      },
+      {
+        "tool": "room_schedule",
+        "args": {},
+        "save": "rs"
+      },
+      {
+        "tool": "query_objects",
+        "args": {
+          "fields": [
+            "id",
+            "name"
+          ]
+        },
+        "save": "q"
+      }
+    ],
+    "exC": [
+      {
+        "tool": "open",
+        "args": {
+          "path": "{examples}/例題C_階段いろいろ.sbr"
+        }
+      },
+      {
+        "tool": "query_objects",
+        "args": {
+          "fields": [
+            "id",
+            "name"
+          ]
+        },
+        "save": "q"
+      }
     ]
   },
   "scenarios": [
@@ -2879,6 +2948,774 @@
             "texts": true
           },
           "picture": "表を並べた 1FL 平面図"
+        }
+      ]
+    },
+    {
+      "id": "14-2",
+      "title": "道路・接道を直して配置図を見る（例題 D）",
+      "docs": "docs/189",
+      "look": "道路の窓の辺の選び方、配置図の寸法の読みやすさ（絵）。",
+      "base": [
+        "exD"
+      ],
+      "steps": [
+        {
+          "tool": "capture_window",
+          "args": {
+            "window": "site_road"
+          },
+          "picture": "道路・接道の窓"
+        },
+        {
+          "tool": "set_site_road",
+          "args": {
+            "width_m": 6,
+            "frontage_m": 20,
+            "kind": "市道",
+            "source": "確認用",
+            "start": [
+              -5000,
+              -5000,
+              0
+            ],
+            "end": [
+              15000,
+              -5000,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "permit_checks",
+          "args": {
+            "stage": 1
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "幅員 6.000 m"
+            ]
+          }
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "配置図（検討用）",
+            "texts": true
+          },
+          "picture": "配置図"
+        }
+      ]
+    },
+    {
+      "id": "14-3・14-4・14-5",
+      "title": "接地外周・高さと、建物を動かすと保留になる（例題 D）",
+      "docs": "docs/190〜192",
+      "look": "接地外周の窓と工程パネルの言葉（絵）。",
+      "base": [
+        "exD"
+      ],
+      "steps": [
+        {
+          "tool": "capture_window",
+          "args": {
+            "window": "site_ground"
+          },
+          "picture": "建物の接地外周・高さの窓"
+        },
+        {
+          "tool": "ui_trigger",
+          "args": {
+            "action": "申請図の工程..."
+          },
+          "ui": true
+        },
+        {
+          "tool": "ui_set",
+          "args": {
+            "window": "main",
+            "widget": "permitWorkflowPhases",
+            "row": 0,
+            "value": 0
+          }
+        },
+        {
+          "tool": "ui_capture",
+          "args": {
+            "window": "main"
+          },
+          "picture": "工程 1 敷地・配置図"
+        },
+        {
+          "tool": "move",
+          "args": {
+            "ids": [
+              "$q.objects.8.id"
+            ],
+            "vector": [
+              500,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "permit_checks",
+          "args": {
+            "stage": 1
+          },
+          "show": true,
+          "expect": {
+            "not_contains": [
+              "参考平均 0.175 m（基準点"
+            ]
+          }
+        },
+        {
+          "tool": "undo",
+          "args": {}
+        },
+        {
+          "tool": "permit_checks",
+          "args": {
+            "stage": 1
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "参考平均 0.175 m"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "14-6・14-16・14-17",
+      "title": "居室・採光・換気（例題 D）：住宅の居室・採光補正係数・換気の面積",
+      "docs": "docs/203・204",
+      "look": "工程 4 の説明の言葉（答え）。",
+      "base": [
+        "exD"
+      ],
+      "steps": [
+        {
+          "tool": "permit_checks",
+          "args": {
+            "stage": 4
+          },
+          "show": true
+        },
+        {
+          "tool": "set_room_daylight",
+          "args": {
+            "id": "$rs.rooms.0.id",
+            "kind": "dwelling",
+            "ventilation": "window"
+          }
+        },
+        {
+          "tool": "set_opening_daylight",
+          "args": {
+            "host": "$lo.hosts.0.host",
+            "openings": [
+              1
+            ],
+            "factor": 1.0,
+            "basis": "確認用",
+            "ventilation_m2": 0.8
+          }
+        },
+        {
+          "tool": "permit_checks",
+          "args": {
+            "stage": 4
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "洋室1",
+              "1/7"
+            ]
+          }
+        },
+        {
+          "tool": "undo",
+          "args": {}
+        },
+        {
+          "tool": "permit_checks",
+          "args": {
+            "stage": 4
+          },
+          "show": true
+        }
+      ]
+    },
+    {
+      "id": "14-7",
+      "title": "地面の大きな面の上に壁ツールで部屋を描き、室ツールで閉じる（docs/193 の不具合の確かめ）",
+      "docs": "docs/193",
+      "look": "（AI だけで決まる）",
+      "base": [],
+      "steps": [
+        {
+          "tool": "set_levels",
+          "args": {
+            "levels": [
+              {
+                "name": "1FL",
+                "elevation": 0
+              },
+              {
+                "name": "2FL",
+                "elevation": 3000
+              }
+            ]
+          }
+        },
+        {
+          "tool": "create_rectangle",
+          "args": {
+            "origin": [
+              -3000,
+              -3000,
+              0
+            ],
+            "width": 14000,
+            "height": 12000
+          },
+          "show": true
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "top"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "ui_tool",
+          "args": {
+            "tool": "wall"
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              3000,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_type",
+          "args": {
+            "text": "8000"
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              8000,
+              3000,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_type",
+          "args": {
+            "text": "6000"
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              5000,
+              6000,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_type",
+          "args": {
+            "text": "8000"
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_key",
+          "args": {
+            "window": "main",
+            "key": "Escape"
+          }
+        },
+        {
+          "tool": "ui_tool",
+          "args": {
+            "tool": "room"
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              3000,
+              3000,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "room_schedule",
+          "args": {},
+          "show": true,
+          "expect": {
+            "contains": [
+              "\"closed\":true",
+              "\"area_centre\":48.0"
+            ]
+          }
+        },
+        {
+          "tool": "ui_capture",
+          "args": {
+            "window": "main"
+          },
+          "picture": "地面の面の上に描いた部屋"
+        }
+      ]
+    },
+    {
+      "id": "14-8",
+      "title": "工程 2 通り芯・3 平面（例題 A）",
+      "docs": "docs/194",
+      "look": "行の言葉（答え）。",
+      "base": [
+        "exA"
+      ],
+      "steps": [
+        {
+          "tool": "permit_checks",
+          "args": {
+            "stage": 2
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "入力済み"
+            ]
+          }
+        },
+        {
+          "tool": "permit_checks",
+          "args": {
+            "stage": 3
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "室 3（壁芯 66.25 m²",
+              "どれも建具が決まっています"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "14-10",
+      "title": "工程 5 階段：段数を減らすと要確認（例題 C）",
+      "docs": "docs/197",
+      "look": "照合の言い方（答え）。",
+      "base": [
+        "exC"
+      ],
+      "steps": [
+        {
+          "tool": "permit_checks",
+          "args": {
+            "stage": 5
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "参考値内"
+            ]
+          }
+        },
+        {
+          "tool": "change_stair",
+          "args": {
+            "id": "$q.objects.1.id",
+            "risers": 10
+          },
+          "show": true
+        },
+        {
+          "tool": "permit_checks",
+          "args": {
+            "stage": 5
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "要確認"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "14-11",
+      "title": "工程 6 屋根・庇・バルコニー（例題 A）",
+      "docs": "docs/198",
+      "look": "行の言葉（答え）。",
+      "base": [
+        "exA"
+      ],
+      "steps": [
+        {
+          "tool": "permit_checks",
+          "args": {
+            "stage": 6
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "建築面積"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "14-14",
+      "title": "工程 9 省エネ・10 立面・断面、GL を足す（例題 A）",
+      "docs": "docs/201",
+      "look": "足りない物の言い方（答え）。",
+      "base": [
+        "exA"
+      ],
+      "steps": [
+        {
+          "tool": "permit_checks",
+          "args": {
+            "stage": 9
+          },
+          "show": true
+        },
+        {
+          "tool": "permit_checks",
+          "args": {
+            "stage": 10
+          },
+          "show": true
+        },
+        {
+          "tool": "get_levels",
+          "args": {},
+          "save": "lv",
+          "show": true
+        },
+        {
+          "tool": "set_levels",
+          "args": {
+            "levels": [
+              {
+                "id": "$lv.levels.0.id",
+                "name": "$lv.levels.0.name",
+                "elevation": "$lv.levels.0.elevation"
+              },
+              {
+                "id": "$lv.levels.1.id",
+                "name": "$lv.levels.1.name",
+                "elevation": "$lv.levels.1.elevation"
+              },
+              {
+                "name": "GL",
+                "elevation": -450
+              }
+            ]
+          }
+        },
+        {
+          "tool": "permit_checks",
+          "args": {
+            "stage": 10
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "GL"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "14-15",
+      "title": "工程 11 一式の突合せ・12 申請用出力（例題 A）",
+      "docs": "docs/202",
+      "look": "残りの数の言い方（答え）。",
+      "base": [
+        "exA"
+      ],
+      "steps": [
+        {
+          "tool": "permit_checks",
+          "args": {
+            "stage": 11
+          },
+          "show": true
+        },
+        {
+          "tool": "permit_checks",
+          "args": {
+            "stage": 12
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "保留"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "14-18・14-19",
+      "title": "用途地域の区分と、採光補正係数をモデルから（例題 D）",
+      "docs": "docs/205・206",
+      "look": "係数の出し方の言葉（答え）。",
+      "base": [
+        "exD"
+      ],
+      "steps": [
+        {
+          "tool": "set_site_zone",
+          "args": {
+            "zone": "residential",
+            "source": "確認用"
+          }
+        },
+        {
+          "tool": "permit_checks",
+          "args": {
+            "stage": 1
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "住居系"
+            ]
+          }
+        },
+        {
+          "tool": "daylight_factor_estimates",
+          "args": {},
+          "show": true
+        },
+        {
+          "tool": "apply_daylight_factors",
+          "args": {},
+          "show": true
+        },
+        {
+          "tool": "permit_checks",
+          "args": {
+            "stage": 4
+          },
+          "show": true
+        }
+      ]
+    },
+    {
+      "id": "14-20・14-22",
+      "title": "採光・換気計算表と計画概要の紙（例題 D）",
+      "docs": "docs/207・209",
+      "look": "表の列と言葉、紙への収まり（絵）。",
+      "base": [
+        "exD"
+      ],
+      "steps": [
+        {
+          "tool": "set_room_daylight",
+          "args": {
+            "id": "$rs.rooms.0.id",
+            "kind": "dwelling",
+            "ventilation": "window"
+          }
+        },
+        {
+          "tool": "set_room_daylight",
+          "args": {
+            "id": "$rs.rooms.1.id",
+            "kind": "dwelling",
+            "ventilation": "window"
+          }
+        },
+        {
+          "tool": "set_site_zone",
+          "args": {
+            "zone": "residential",
+            "source": "確認用"
+          }
+        },
+        {
+          "tool": "apply_daylight_factors",
+          "args": {}
+        },
+        {
+          "tool": "set_project_outline",
+          "args": {
+            "items": {
+              "project_name": "例題Dの家"
+            }
+          }
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {},
+          "show": true
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "採光・換気計算表",
+            "texts": true
+          },
+          "picture": "採光・換気計算表",
+          "expect": {
+            "contains": [
+              "1/7"
+            ]
+          }
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "計画概要",
+            "texts": true
+          },
+          "picture": "計画概要",
+          "expect": {
+            "contains": [
+              "例題Dの家",
+              "建蔽率"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "14-23",
+      "title": "省エネの入力と工程 9（例題 A）",
+      "docs": "docs/210",
+      "look": "行の言い方（答え）。",
+      "base": [
+        "exA"
+      ],
+      "steps": [
+        {
+          "tool": "create_polygon",
+          "args": {
+            "points": [
+              [
+                -3000,
+                -3000,
+                0
+              ],
+              [
+                13000,
+                -3000,
+                0
+              ],
+              [
+                13000,
+                11000,
+                0
+              ],
+              [
+                -3000,
+                11000,
+                0
+              ]
+            ]
+          },
+          "save": "site"
+        },
+        {
+          "tool": "set_site_boundary",
+          "args": {
+            "outline": "$site.id",
+            "source": "確認用"
+          }
+        },
+        {
+          "tool": "set_energy_route",
+          "args": {
+            "route": "spec",
+            "region": 6,
+            "source": "確認用"
+          }
+        },
+        {
+          "tool": "set_insulation",
+          "args": {
+            "ids": [
+              "$q.objects.0.id",
+              "$q.objects.1.id",
+              "$q.objects.2.id",
+              "$q.objects.3.id"
+            ],
+            "material": "グラスウール 16K",
+            "thickness_mm": 100,
+            "conductivity": 0.038,
+            "placement": "fill",
+            "source": "確認用"
+          }
+        },
+        {
+          "tool": "permit_checks",
+          "args": {
+            "stage": 9
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "入力済み"
+            ]
+          }
         }
       ]
     }

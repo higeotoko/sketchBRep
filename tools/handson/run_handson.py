@@ -21,6 +21,7 @@ import datetime as dt
 import html
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -88,7 +89,7 @@ def lookup(saved: dict, path: str):
     return value
 
 
-FILES = {"dir": ""}  # docs/255: the run's own folder for files the scenarios write ({tmp} in a string)
+FILES = {"dir": "", "examples": ""}  # docs/255: the run's own folder for files ({tmp}); docs/258: copies of the example models ({examples})
 
 
 def substitute(value, saved: dict):
@@ -96,8 +97,8 @@ def substitute(value, saved: dict):
     string: the run's own folder for files (export_*, save, open)."""
     if isinstance(value, str) and value.startswith("$"):
         return lookup(saved, value[1:])
-    if isinstance(value, str) and "{tmp}" in value:
-        return value.replace("{tmp}", FILES["dir"])
+    if isinstance(value, str) and ("{tmp}" in value or "{examples}" in value):
+        return value.replace("{tmp}", FILES["dir"]).replace("{examples}", FILES["examples"])
     if isinstance(value, list):
         return [substitute(v, saved) for v in value]
     if isinstance(value, dict):
@@ -251,7 +252,7 @@ def run_scenario(mcp: Mcp, sc: dict, bases: dict, out: Path) -> dict:
             saved[step["save"]] = r["result"]
         failed = check(step.get("expect", {}), text, r["ok"])
         entry = {"n": n, "tool": tool, "args": args, "ok": r["ok"], "failed": failed,
-                 "answer": text[:600] if (failed or step.get("show")) else ""}
+                 "answer": text[:3000] if (failed or step.get("show")) else ""}
         for i, img in enumerate(r["images"]):
             if step.get("picture"):
                 name = f"{sc['id']}-{n}-{i}.png"
@@ -335,6 +336,7 @@ def main() -> int:
     ap.add_argument("--only", default="")
     ap.add_argument("--out", default="")
     ap.add_argument("--scenarios", default=str(HERE / "scenarios.json"))
+    ap.add_argument("--examples", default=r"C:\Users\enomo\Documents\Codex\2026-11-04\files-pasted-by-the-user-codex\outputs\check-models")
     a = ap.parse_args()
     try:
         sys.stdout.reconfigure(encoding="utf-8")  # the JSON line has Japanese (a cp932 console cannot print it)
@@ -348,6 +350,13 @@ def main() -> int:
     out.mkdir(parents=True, exist_ok=True)
     (out / "files").mkdir(exist_ok=True)
     FILES["dir"] = str((out / "files").resolve())
+    # docs/258: the example models (docs/105), copied so the run never touches the owner's files.
+    if a.examples and Path(a.examples).is_dir():
+        copies = out / "files" / "examples"
+        copies.mkdir(exist_ok=True)
+        for f in Path(a.examples).glob("*.sbr"):
+            shutil.copy2(f, copies / f.name)
+        FILES["examples"] = str(copies.resolve())
     mcp = Mcp(a.mcp)
     try:
         # The app's own work first: never thrown away.
