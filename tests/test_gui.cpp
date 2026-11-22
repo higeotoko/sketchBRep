@@ -257,6 +257,7 @@ class GuiPhase1 : public QObject {
   void vicinityMapFromCachedTiles();
   void aiPicturesOfDrawingsAndWindows();
   void aiWorksTheWindowsAndFiles();
+  void aiReadsPreserveToolStatus();
   void aiDrawsInTheView();
   void vicinityMapFetchedOnline();
   void insulationPlanIsDrawnOnItsSheet();
@@ -1272,6 +1273,27 @@ void GuiPhase1::aiWorksTheWindowsAndFiles() {
   QVERIFY(!run({{"command", "save"}, {"args", {{"path", "x.sbr"}}}})["ok"].get<bool>());
   QFile::remove(path);
   QFile::remove(QDir(QDir::tempPath()).filePath(QStringLiteral("sbr_ai_files_test2.sbr")));
+}
+
+void GuiPhase1::aiReadsPreserveToolStatus() {
+  Fixture f;
+  QVERIFY(f.setUp());
+  AiBridge* bridge = f.window.aiBridge();
+  const auto run = [&](const char* request) { return nlohmann::json::parse(bridge->execute(request)); };
+
+  f.window.activateTool(MainWindow::ToolId::Line);
+  const QString prompt = f.window.statusText();
+  QVERIFY(!prompt.isEmpty());
+  QVERIFY(run(R"({"command":"list_openings"})")["ok"].get<bool>());
+  QCOMPARE(f.window.statusText(), prompt);
+  const auto batch = run(R"({"command":"batch","args":{"commands":[{"command":"list_openings"},{"command":"query_objects"}]}})");
+  QVERIFY2(batch["ok"].get<bool>(), batch.dump().c_str());
+  QCOMPARE(f.window.statusText(), prompt);
+
+  QVERIFY(!run(R"({"command":"get_object","args":{"id":"missing"}})")["ok"].get<bool>());
+  QVERIFY(f.window.statusText().startsWith(QStringLiteral("AI: get_object")));
+  QVERIFY(run(R"({"command":"create_line","args":{"points":[[0,0,0],[1000,0,0]]}})")["ok"].get<bool>());
+  QCOMPARE(f.window.statusText(), QStringLiteral("AI: create_line"));
 }
 
 // docs/252: the AI draws in the 3D view as a person does: a tool, clicks at model points, a length typed.

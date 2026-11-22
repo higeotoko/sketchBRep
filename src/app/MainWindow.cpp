@@ -3235,14 +3235,11 @@ void MainWindow::buildAiBridge() {
   aiBridge_->setHooks([this] { if (active_) active_->cancel(); },
                       [this] { if (active_) active_->activate(); });
   connect(aiBridge_.get(), &AiBridge::commandExecuted, this,
-          [this](const QString& command, bool ok, const QString& error) {
+          [this](const QString& command, bool ok, const QString& error, api::CommandApi::Effect effect) {
             if (ok) {
               // docs/254: a person's actions done by the AI (ui_*) and reads leave the tool's own words
               // in the status bar (they were covered by "AI: ui_type" and the like).
-              static const QStringList quiet = {QStringLiteral("ui_windows"), QStringLiteral("ui_list"), QStringLiteral("ui_capture"),
-                                                QStringLiteral("capture_window"), QStringLiteral("render_drawing_set"),
-                                                QStringLiteral("check_drawing_set"), QStringLiteral("capture_view")};
-              if (command.startsWith(QStringLiteral("ui_")) || quiet.contains(command)) return;
+              if (effect == api::CommandApi::Effect::Read || command.startsWith(QStringLiteral("ui_"))) return;
               setStatus(tr("AI: %1").arg(command));
             } else {
               setStatus(tr("AI: %1 は失敗しました（%2）").arg(command, error));

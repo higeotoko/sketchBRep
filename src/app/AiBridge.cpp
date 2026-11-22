@@ -158,7 +158,7 @@ std::string AiBridge::execute(const std::string& requestJson) {
     const std::string busy = nlohmann::json{
         {"ok", false},
         {"error", "The model is busy with a long operation; send the request again when it is over"}}.dump();
-    emit commandExecuted(QString(), false, QStringLiteral("busy"));
+    emit commandExecuted(QString(), false, QStringLiteral("busy"), effect);
     return busy;
   }
   if (interrupts && before_) before_();
@@ -171,7 +171,7 @@ std::string AiBridge::execute(const std::string& requestJson) {
   const bool ok = result.is_object() && result.value("ok", false);
   const QString error = ok || !result.is_object() ? QString()
                                                   : QString::fromStdString(result.value("error", std::string()));
-  emit commandExecuted(command, ok, error);
+  emit commandExecuted(command, ok, error, effect);
   return response;
 }
 

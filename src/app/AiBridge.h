@@ -57,7 +57,7 @@ class AiBridge : public QObject {
   std::string execute(const std::string& requestJson);
 
  signals:
-  void commandExecuted(const QString& command, bool ok, const QString& error);
+  void commandExecuted(const QString& command, bool ok, const QString& error, api::CommandApi::Effect effect);
   void clientCountChanged(int count);
 
  private:
