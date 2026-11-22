@@ -7356,6 +7356,3740 @@
           "picture": "室の一覧と面積"
         }
       ]
+    },
+    {
+      "id": "5-1・5-3",
+      "title": "階段ツールでL字と折り返しを描く・上階の床に開口",
+      "docs": "docs/103・119",
+      "look": "プレビューで歩く線が分かるか。上階開口の輪郭と最初の段の上に残る床。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "create_slab",
+          "args": {
+            "outline": [
+              [
+                0,
+                0
+              ],
+              [
+                8000,
+                0
+              ],
+              [
+                8000,
+                6000
+              ],
+              [
+                0,
+                6000
+              ]
+            ],
+            "top": 3000,
+            "thickness": 200
+          },
+          "save": "upper"
+        },
+        {
+          "tool": "ui_trigger",
+          "args": {
+            "action": "stairSettingsAction"
+          },
+          "ui": true
+        },
+        {
+          "tool": "ui_set",
+          "args": {
+            "window": "modal",
+            "widget": "stairToolShape",
+            "value": 0
+          }
+        },
+        {
+          "tool": "ui_set",
+          "args": {
+            "window": "modal",
+            "widget": "stairToolWidth",
+            "value": "780"
+          }
+        },
+        {
+          "tool": "ui_set",
+          "args": {
+            "window": "modal",
+            "widget": "stairToolRise",
+            "value": "0"
+          }
+        },
+        {
+          "tool": "ui_set",
+          "args": {
+            "window": "modal",
+            "widget": "stairToolTurn",
+            "value": "3"
+          }
+        },
+        {
+          "tool": "ui_set",
+          "args": {
+            "window": "modal",
+            "widget": "stairToolOpenFloor",
+            "value": true
+          }
+        },
+        {
+          "tool": "ui_click",
+          "args": {
+            "window": "modal",
+            "widget": "OK"
+          },
+          "ui": true
+        },
+        {
+          "tool": "ui_plan",
+          "args": {
+            "level": "1FL"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "ui_tool",
+          "args": {
+            "tool": "stair"
+          }
+        },
+        {
+          "tool": "ui_windows",
+          "args": {},
+          "expect": {
+            "contains": [
+              "幅の真ん中"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              3400,
+              600,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              3400,
+              4400,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              3400,
+              4400,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              1400,
+              4400,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_capture",
+          "args": {
+            "window": "main"
+          },
+          "picture": "L字の確定前"
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              1400,
+              4400,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_type",
+          "args": {
+            "text": "",
+            "enter": true
+          }
+        },
+        {
+          "tool": "ui_windows",
+          "args": {},
+          "expect": {
+            "contains": [
+              "上の床 1 枚に開口をあけました"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "query_objects",
+          "args": {
+            "attributes": {
+              "kind": "stair"
+            },
+            "fields": [
+              "id",
+              "name"
+            ]
+          },
+          "save": "stairs",
+          "expect": {
+            "contains": [
+              "\"total\":1"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "stair_info",
+          "args": {
+            "id": "$stairs.objects.0.id"
+          },
+          "expect": {
+            "contains": [
+              "\"flights\":2",
+              "\"opened_slabs\":[\""
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "ui_plan",
+          "args": {
+            "off": true
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "上階の床開口と階段"
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "2FL 平面図"
+          },
+          "picture": "上階床の開口の平面図",
+          "expect": {
+            "contains": []
+          },
+          "show": true
+        },
+        {
+          "tool": "undo",
+          "args": {}
+        },
+        {
+          "tool": "query_objects",
+          "args": {
+            "attributes": {
+              "kind": "stair"
+            }
+          },
+          "expect": {
+            "contains": [
+              "\"total\":0"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "ui_plan",
+          "args": {
+            "level": "1FL"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "ui_tool",
+          "args": {
+            "tool": "stair"
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              900,
+              850,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              900,
+              4700,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              900,
+              4700,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              2500,
+              4700,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              2500,
+              4700,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              2500,
+              850,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_capture",
+          "args": {
+            "window": "main"
+          },
+          "picture": "折り返しの確定前"
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              2500,
+              850,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_type",
+          "args": {
+            "text": "",
+            "enter": true
+          }
+        },
+        {
+          "tool": "ui_windows",
+          "args": {},
+          "expect": {
+            "contains": [
+              "階段を作成しました"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "query_objects",
+          "args": {
+            "attributes": {
+              "kind": "stair"
+            },
+            "fields": [
+              "id",
+              "name"
+            ]
+          },
+          "save": "stairs",
+          "expect": {
+            "contains": [
+              "\"total\":1"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "stair_info",
+          "args": {
+            "id": "$stairs.objects.0.id"
+          },
+          "expect": {
+            "contains": [
+              "\"flights\":3"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "ui_plan",
+          "args": {
+            "off": true
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "折り返し階段"
+        }
+      ]
+    },
+    {
+      "id": "5-5・11-1・12-1",
+      "title": "折り返し階段の寸法照合・両側手すり・各曲がり角",
+      "docs": "docs/103・116・119",
+      "look": "寸法照合の表示とスクロール。手すりが角で立ち上がる部分。各角の形の変化。",
+      "base": [
+        "empty_top"
+      ],
+      "steps": [
+        {
+          "tool": "create_stair",
+          "args": {
+            "path": [
+              [
+                900,
+                850
+              ],
+              [
+                900,
+                4700
+              ],
+              [
+                2500,
+                4700
+              ],
+              [
+                2500,
+                850
+              ]
+            ],
+            "base": 0,
+            "rise": 3000,
+            "width": 780,
+            "turns": [
+              3,
+              3
+            ],
+            "handrail": "right"
+          },
+          "save": "stair"
+        },
+        {
+          "tool": "select",
+          "args": {
+            "ids": [
+              "$stair.id"
+            ]
+          }
+        },
+        {
+          "tool": "ui_list",
+          "args": {
+            "window": "main",
+            "filter": "stairChecks"
+          },
+          "expect": {
+            "contains": [
+              "stairChecks",
+              "蹴上",
+              "踏面",
+              "幅"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "ui_capture",
+          "args": {
+            "window": "main"
+          },
+          "picture": "階段のプロパティ"
+        },
+        {
+          "tool": "ui_key",
+          "args": {
+            "window": "main",
+            "widget": "stairHandrail",
+            "key": "Down"
+          },
+          "ui": true
+        },
+        {
+          "tool": "stair_info",
+          "args": {
+            "id": "$stair.id"
+          },
+          "expect": {
+            "contains": [
+              "\"handrail\":\"both\""
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "ui_key",
+          "args": {
+            "window": "main",
+            "widget": "stairTurn",
+            "key": "Down"
+          },
+          "ui": true
+        },
+        {
+          "tool": "stair_info",
+          "args": {
+            "id": "$stair.id"
+          },
+          "expect": {
+            "contains": [
+              "\"turns\":[4,3]"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "ui_key",
+          "args": {
+            "window": "main",
+            "widget": "stairTurn2",
+            "key": "Up"
+          },
+          "ui": true
+        },
+        {
+          "tool": "stair_info",
+          "args": {
+            "id": "$stair.id"
+          },
+          "expect": {
+            "contains": [
+              "\"turns\":[4,2]"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit",
+            "ids": [
+              "$stair.id"
+            ]
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "両側の手すりと異なる回り段"
+        }
+      ]
+    },
+    {
+      "id": "12-26",
+      "title": "らせん階段を中心と上がり始めから描く",
+      "docs": "docs/143",
+      "look": "回転設定の分かりやすさと、確定前・確定後の形。",
+      "base": [
+        "empty_top"
+      ],
+      "steps": [
+        {
+          "tool": "ui_trigger",
+          "args": {
+            "action": "stairSettingsAction"
+          },
+          "ui": true
+        },
+        {
+          "tool": "ui_set",
+          "args": {
+            "window": "modal",
+            "widget": "stairToolShape",
+            "value": 1
+          }
+        },
+        {
+          "tool": "ui_set",
+          "args": {
+            "window": "modal",
+            "widget": "stairToolWidth",
+            "value": "780"
+          }
+        },
+        {
+          "tool": "ui_set",
+          "args": {
+            "window": "modal",
+            "widget": "stairToolSweep",
+            "value": 360
+          }
+        },
+        {
+          "tool": "ui_set",
+          "args": {
+            "window": "modal",
+            "widget": "stairToolOpenFloor",
+            "value": false
+          }
+        },
+        {
+          "tool": "ui_click",
+          "args": {
+            "window": "modal",
+            "widget": "OK"
+          },
+          "ui": true
+        },
+        {
+          "tool": "ui_tool",
+          "args": {
+            "tool": "stair"
+          }
+        },
+        {
+          "tool": "ui_windows",
+          "args": {},
+          "expect": {
+            "contains": [
+              "中心をクリック"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              2800,
+              3000,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              4300,
+              3000,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_capture",
+          "args": {
+            "window": "main"
+          },
+          "picture": "らせんの確定前"
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              4300,
+              3000,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_type",
+          "args": {
+            "text": "",
+            "enter": true
+          }
+        },
+        {
+          "tool": "ui_windows",
+          "args": {},
+          "expect": {
+            "contains": [
+              "階段を作成しました"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "query_objects",
+          "args": {
+            "attributes": {
+              "kind": "stair"
+            },
+            "fields": [
+              "id",
+              "name"
+            ]
+          },
+          "save": "stairs",
+          "expect": {
+            "contains": [
+              "\"total\":1"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "stair_info",
+          "args": {
+            "id": "$stairs.objects.0.id"
+          },
+          "expect": {
+            "contains": [
+              "\"shape\":\"spiral\"",
+              "\"sweep\":360"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit",
+            "ids": [
+              "$stairs.objects.0.id"
+            ]
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "確定後のらせん階段"
+        }
+      ]
+    },
+    {
+      "id": "6-3・6-4",
+      "title": "平面の開口符号と室名をPDF・DXF・JWWへ",
+      "docs": "docs/104・141",
+      "look": "平面モードと書き出した図面での文字の大きさ、位置、重なり。JWWはJw_cadで確認。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "ui_plan",
+          "args": {
+            "level": "1FL"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "平面モードの開口符号"
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "1FL 平面図",
+            "texts": true,
+            "pdf": true
+          },
+          "picture": "1FL 平面図の符号と室名",
+          "expect": {
+            "contains": [
+              "AW1",
+              "AD1",
+              "居間",
+              "洋室",
+              "drawing-set.pdf"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "export_drawing",
+          "args": {
+            "kind": "plan",
+            "cut_z": 1100,
+            "path": "{tmp}/1階平面図.dxf"
+          },
+          "expect": {
+            "contains": [
+              "\"objects\":"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "export_drawing",
+          "args": {
+            "kind": "plan",
+            "cut_z": 1100,
+            "path": "{tmp}/1階平面図.jww"
+          },
+          "expect": {
+            "contains": [
+              "\"objects\":"
+            ]
+          },
+          "show": true
+        }
+      ]
+    },
+    {
+      "id": "12-13",
+      "title": "建具表と室の表を平面図と並べてPDFにする",
+      "docs": "docs/130",
+      "look": "表が図の右か下に収まり、重なりや用紙からのはみ出しがないか。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "1FL 平面図・建具表・室の表・面積の表",
+            "tables_with_plan": true,
+            "texts": true,
+            "pdf": true
+          },
+          "picture": "平面図と表を一緒にした用紙",
+          "expect": {
+            "contains": [
+              "AW1",
+              "AD1",
+              "居間",
+              "洋室",
+              "drawing-set.pdf"
+            ]
+          },
+          "show": true
+        }
+      ]
+    },
+    {
+      "id": "12-25",
+      "title": "部屋の天井が壁に追随し、手で下げた天井は位置を保つ",
+      "docs": "docs/123",
+      "look": "天井の形と高さ。壁・天井の一括取り消し。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "set_room_finish",
+          "args": {
+            "id": "$living.id",
+            "ceiling_height": 2400
+          }
+        },
+        {
+          "tool": "set_room_finish",
+          "args": {
+            "id": "$bedroom.id",
+            "ceiling_height": 2550
+          }
+        },
+        {
+          "tool": "select",
+          "args": {
+            "ids": [
+              "$living.id"
+            ]
+          }
+        },
+        {
+          "tool": "ui_click",
+          "args": {
+            "window": "main",
+            "widget": "roomMakeCeiling"
+          },
+          "ui": true
+        },
+        {
+          "tool": "select",
+          "args": {
+            "ids": [
+              "$bedroom.id"
+            ]
+          }
+        },
+        {
+          "tool": "ui_click",
+          "args": {
+            "window": "main",
+            "widget": "roomMakeCeiling"
+          },
+          "ui": true
+        },
+        {
+          "tool": "query_objects",
+          "args": {
+            "attributes": {
+              "kind": "ceiling",
+              "room": "$living.id"
+            },
+            "fields": [
+              "id",
+              "bounds",
+              "volume"
+            ]
+          },
+          "save": "livingCeiling",
+          "expect": {
+            "contains": [
+              "\"total\":1",
+              "2400.0"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "query_objects",
+          "args": {
+            "attributes": {
+              "kind": "ceiling",
+              "room": "$bedroom.id"
+            },
+            "fields": [
+              "id",
+              "bounds",
+              "volume"
+            ]
+          },
+          "save": "bedroomCeiling",
+          "expect": {
+            "contains": [
+              "\"total\":1",
+              "2550.0"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "move",
+          "args": {
+            "ids": [
+              "$bedroomCeiling.objects.0.id"
+            ],
+            "vector": [
+              0,
+              0,
+              -150
+            ]
+          }
+        },
+        {
+          "tool": "move",
+          "args": {
+            "ids": [
+              "$partition.ids.0"
+            ],
+            "vector": [
+              500,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "query_objects",
+          "args": {
+            "attributes": {
+              "kind": "ceiling",
+              "room": "$living.id"
+            },
+            "fields": [
+              "id",
+              "bounds",
+              "volume"
+            ]
+          },
+          "save": "livingMoved",
+          "expect": {
+            "contains": [
+              "\"total\":1",
+              "4450.0"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "query_objects",
+          "args": {
+            "attributes": {
+              "kind": "ceiling",
+              "room": "$bedroom.id"
+            },
+            "fields": [
+              "id",
+              "bounds",
+              "volume"
+            ]
+          },
+          "save": "bedroomMoved",
+          "expect": {
+            "contains": [
+              "\"total\":1",
+              "4050.0",
+              "2400.0"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "壁を動かした後の天井"
+        },
+        {
+          "tool": "undo",
+          "args": {}
+        },
+        {
+          "tool": "query_objects",
+          "args": {
+            "attributes": {
+              "kind": "ceiling",
+              "room": "$living.id"
+            },
+            "fields": [
+              "id",
+              "bounds",
+              "volume"
+            ]
+          },
+          "save": "livingUndo",
+          "expect": {
+            "contains": [
+              "\"total\":1",
+              "3950.0"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "query_objects",
+          "args": {
+            "attributes": {
+              "kind": "ceiling",
+              "room": "$bedroom.id"
+            },
+            "fields": [
+              "id",
+              "bounds",
+              "volume"
+            ]
+          },
+          "save": "bedroomUndo",
+          "expect": {
+            "contains": [
+              "4050.0",
+              "2400.0"
+            ]
+          },
+          "show": true
+        }
+      ]
+    },
+    {
+      "id": "14-1",
+      "title": "画面で真北を2点指定して配置図と平面図に反映",
+      "docs": "docs/188",
+      "look": "配置図と平面図の北矢印の向きがそろうか。使用資料はテスト用。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "top"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "ui_trigger",
+          "args": {
+            "action": "siteNorthByPointsAction"
+          },
+          "ui": true
+        },
+        {
+          "tool": "ui_list",
+          "args": {
+            "window": "modal"
+          },
+          "expect": {
+            "contains": [
+              "確認に使った資料"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "ui_set",
+          "args": {
+            "window": "modal",
+            "widget": "#2",
+            "value": "確認用の架空の測量図"
+          }
+        },
+        {
+          "tool": "ui_click",
+          "args": {
+            "window": "modal",
+            "widget": "OK"
+          },
+          "ui": true
+        },
+        {
+          "tool": "ui_windows",
+          "args": {},
+          "expect": {
+            "contains": [
+              "根元をクリック"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              1600,
+              2000,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              3200,
+              2000,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              3200,
+              2000,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_windows",
+          "args": {},
+          "expect": {
+            "contains": [
+              "敷地の真北を設定しました"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "get_sun",
+          "args": {},
+          "expect": {
+            "contains": [
+              "\"north_angle\":90"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "ui_type",
+          "args": {
+            "keys": [
+              "Escape"
+            ]
+          }
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "配置図（検討用）"
+          },
+          "picture": "配置図の北矢印"
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "1FL 平面図",
+            "texts": true
+          },
+          "picture": "平面図の北矢印"
+        },
+        {
+          "tool": "export_drawing",
+          "args": {
+            "kind": "plan",
+            "path": "{tmp}/真北確認.dxf"
+          }
+        }
+      ]
+    },
+    {
+      "id": "14-13",
+      "title": "基礎の入力と土台を動かした後の要確認",
+      "docs": "docs/200",
+      "look": "第8工程の量、土台・柱の支えの行と「作り直す」の表示。",
+      "base": [],
+      "steps": [
+        {
+          "tool": "create_member",
+          "args": {
+            "start": [
+              0,
+              0,
+              540
+            ],
+            "end": [
+              3000,
+              0,
+              540
+            ],
+            "role": "sill",
+            "material_class": "timber",
+            "section": {
+              "kind": "rectangle",
+              "width": 120,
+              "depth": 120
+            },
+            "anchor": {
+              "up": "top"
+            }
+          },
+          "save": "sill0"
+        },
+        {
+          "tool": "create_member",
+          "args": {
+            "start": [
+              3000,
+              0,
+              540
+            ],
+            "end": [
+              3000,
+              2000,
+              540
+            ],
+            "role": "sill",
+            "material_class": "timber",
+            "section": {
+              "kind": "rectangle",
+              "width": 120,
+              "depth": 120
+            },
+            "anchor": {
+              "up": "top"
+            }
+          },
+          "save": "sill1"
+        },
+        {
+          "tool": "create_member",
+          "args": {
+            "start": [
+              3000,
+              2000,
+              540
+            ],
+            "end": [
+              0,
+              2000,
+              540
+            ],
+            "role": "sill",
+            "material_class": "timber",
+            "section": {
+              "kind": "rectangle",
+              "width": 120,
+              "depth": 120
+            },
+            "anchor": {
+              "up": "top"
+            }
+          },
+          "save": "sill2"
+        },
+        {
+          "tool": "create_member",
+          "args": {
+            "start": [
+              0,
+              2000,
+              540
+            ],
+            "end": [
+              0,
+              0,
+              540
+            ],
+            "role": "sill",
+            "material_class": "timber",
+            "section": {
+              "kind": "rectangle",
+              "width": 120,
+              "depth": 120
+            },
+            "anchor": {
+              "up": "top"
+            }
+          },
+          "save": "sill3"
+        },
+        {
+          "tool": "generate_foundation",
+          "args": {
+            "inputs": {
+              "sources": [
+                "$sill0.id",
+                "$sill1.id",
+                "$sill2.id",
+                "$sill3.id"
+              ]
+            }
+          },
+          "save": "preview"
+        },
+        {
+          "tool": "generate_foundation",
+          "args": {
+            "inputs": {
+              "sources": [
+                "$sill0.id",
+                "$sill1.id",
+                "$sill2.id",
+                "$sill3.id"
+              ]
+            },
+            "preview": false,
+            "expected_revision": "$preview.revision"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "ui_trigger",
+          "args": {
+            "action": "permitWorkflowAction"
+          },
+          "ui": true
+        },
+        {
+          "tool": "ui_set",
+          "args": {
+            "window": "main",
+            "widget": "permitWorkflowPhases",
+            "row": 7,
+            "value": 0
+          }
+        },
+        {
+          "tool": "permit_checks",
+          "args": {
+            "stage": 8
+          },
+          "expect": {
+            "contains": [
+              "入力済み",
+              "立上り",
+              "形の上で支えあり"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "ui_capture",
+          "args": {
+            "window": "main"
+          },
+          "picture": "第8工程・土台に合う基礎"
+        },
+        {
+          "tool": "move",
+          "args": {
+            "ids": [
+              "$sill0.id"
+            ],
+            "vector": [
+              0,
+              -100,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "permit_checks",
+          "args": {
+            "stage": 8
+          },
+          "expect": {
+            "contains": [
+              "要確認",
+              "作り直します"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "ui_capture",
+          "args": {
+            "window": "main"
+          },
+          "picture": "第8工程・土台を動かした後"
+        }
+      ]
+    },
+    {
+      "id": "12-43",
+      "title": "GLで地階を判定し、面積表の算入と控除を照合",
+      "docs": "docs/166",
+      "look": "面積の表で地階の注が読み取れるか。モデルは確認用の架空の建物。",
+      "base": [],
+      "steps": [
+        {
+          "tool": "set_levels",
+          "args": {
+            "levels": [
+              {
+                "name": "B1FL",
+                "elevation": -2500
+              },
+              {
+                "name": "1FL",
+                "elevation": 500
+              }
+            ]
+          }
+        },
+        {
+          "tool": "create_wall",
+          "args": {
+            "points": [
+              [
+                0,
+                0
+              ],
+              [
+                8000,
+                0
+              ],
+              [
+                8000,
+                6000
+              ],
+              [
+                0,
+                6000
+              ],
+              [
+                0,
+                0
+              ]
+            ],
+            "thickness": 200,
+            "height": 3000,
+            "base": -2500
+          }
+        },
+        {
+          "tool": "create_slab",
+          "args": {
+            "outline": [
+              [
+                0,
+                0
+              ],
+              [
+                8000,
+                0
+              ],
+              [
+                8000,
+                6000
+              ],
+              [
+                0,
+                6000
+              ]
+            ],
+            "top": -2500,
+            "thickness": 200
+          },
+          "save": "lower"
+        },
+        {
+          "tool": "create_wall",
+          "args": {
+            "points": [
+              [
+                0,
+                0
+              ],
+              [
+                6000,
+                0
+              ],
+              [
+                6000,
+                6000
+              ],
+              [
+                0,
+                6000
+              ],
+              [
+                0,
+                0
+              ]
+            ],
+            "thickness": 200,
+            "height": 3000,
+            "base": 500
+          }
+        },
+        {
+          "tool": "create_slab",
+          "args": {
+            "outline": [
+              [
+                0,
+                0
+              ],
+              [
+                6000,
+                0
+              ],
+              [
+                6000,
+                6000
+              ],
+              [
+                0,
+                6000
+              ]
+            ],
+            "top": 500,
+            "thickness": 200
+          },
+          "save": "upper"
+        },
+        {
+          "tool": "create_room",
+          "args": {
+            "at": [
+              2500,
+              2500
+            ],
+            "base": -2500,
+            "name": "地階の住宅"
+          },
+          "save": "basement"
+        },
+        {
+          "tool": "area_table",
+          "args": {},
+          "expect": {
+            "contains": [
+              "\"ground\":\"not_evaluated\""
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "get_levels",
+          "args": {},
+          "save": "levels"
+        },
+        {
+          "tool": "set_levels",
+          "args": {
+            "levels": [
+              {
+                "id": "$levels.levels.0.id",
+                "name": "B1FL",
+                "elevation": -2500
+              },
+              {
+                "name": "GL",
+                "elevation": 0
+              },
+              {
+                "id": "$levels.levels.1.id",
+                "name": "1FL",
+                "elevation": 500
+              }
+            ]
+          }
+        },
+        {
+          "tool": "set_room_finish",
+          "args": {
+            "id": "$basement.id",
+            "ceiling_height": 2400,
+            "ratio_part": "basement_dwelling"
+          }
+        },
+        {
+          "tool": "area_table",
+          "args": {},
+          "expect": {
+            "contains": [
+              "\"basement\":true",
+              "\"total_legal_floor\":84.0",
+              "\"excluded\":28.0",
+              "\"ratio_floor_area\":56.0"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "面積の表",
+            "texts": true
+          },
+          "picture": "地階の注と面積",
+          "expect": {
+            "contains": [
+              "B1FL",
+              "56.00",
+              "建築面積",
+              "36.00"
+            ]
+          },
+          "show": true
+        }
+      ]
+    },
+    {
+      "id": "12-21",
+      "title": "斜めの辺がある屋根3種と、妻の辺の変更",
+      "docs": "docs/138",
+      "look": "自動の妻と指定した妻の違い。片流れのけらば、寄棟の谷。屋根生成はMCP、妻の指定はプロパティ。",
+      "base": [],
+      "steps": [
+        {
+          "tool": "create_roof",
+          "args": {
+            "kind": "gable",
+            "outline": [
+              [
+                0,
+                0
+              ],
+              [
+                6000,
+                0
+              ],
+              [
+                8000,
+                2000
+              ],
+              [
+                8000,
+                6000
+              ],
+              [
+                0,
+                6000
+              ]
+            ],
+            "height": 3000,
+            "pitch": 0.4,
+            "eave": 600,
+            "gable_eave": 300,
+            "thickness": 100
+          },
+          "save": "gable"
+        },
+        {
+          "tool": "roof_info",
+          "args": {
+            "id": "$gable.id"
+          },
+          "expect": {
+            "contains": [
+              "\"kind\":\"gable\""
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit",
+            "ids": [
+              "$gable.id"
+            ]
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "自動の妻の切妻"
+        },
+        {
+          "tool": "select",
+          "args": {
+            "ids": [
+              "$gable.id"
+            ]
+          }
+        },
+        {
+          "tool": "ui_set",
+          "args": {
+            "window": "main",
+            "widget": "roofGableSides",
+            "value": "1,4"
+          }
+        },
+        {
+          "tool": "roof_info",
+          "args": {
+            "id": "$gable.id"
+          },
+          "expect": {
+            "contains": [
+              "\"kind\":\"gable\"",
+              "\"gable_sides\":[0,3]"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "妻の辺1と4に変更"
+        },
+        {
+          "tool": "delete",
+          "args": {
+            "ids": [
+              "$gable.id"
+            ]
+          }
+        },
+        {
+          "tool": "create_roof",
+          "args": {
+            "kind": "shed",
+            "outline": [
+              [
+                0,
+                0
+              ],
+              [
+                6000,
+                0
+              ],
+              [
+                8000,
+                2000
+              ],
+              [
+                8000,
+                6000
+              ],
+              [
+                0,
+                6000
+              ]
+            ],
+            "height": 3000,
+            "pitch": 0.4,
+            "eave": 600,
+            "gable_eave": 300,
+            "thickness": 100
+          },
+          "save": "shed"
+        },
+        {
+          "tool": "roof_info",
+          "args": {
+            "id": "$shed.id"
+          },
+          "expect": {
+            "contains": [
+              "\"kind\":\"shed\""
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit",
+            "ids": [
+              "$shed.id"
+            ]
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "斜めのけらばがある片流れ"
+        },
+        {
+          "tool": "delete",
+          "args": {
+            "ids": [
+              "$shed.id"
+            ]
+          }
+        },
+        {
+          "tool": "create_roof",
+          "args": {
+            "kind": "hip",
+            "outline": [
+              [
+                0,
+                0
+              ],
+              [
+                8000,
+                0
+              ],
+              [
+                8000,
+                4000
+              ],
+              [
+                5000,
+                4000
+              ],
+              [
+                3000,
+                8000
+              ],
+              [
+                0,
+                8000
+              ]
+            ],
+            "height": 3000,
+            "pitch": 0.4,
+            "eave": 600,
+            "gable_eave": 300,
+            "thickness": 100
+          },
+          "save": "hip"
+        },
+        {
+          "tool": "roof_info",
+          "args": {
+            "id": "$hip.id"
+          },
+          "expect": {
+            "contains": [
+              "\"kind\":\"hip\""
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit",
+            "ids": [
+              "$hip.id"
+            ]
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "斜めの辺と入隅がある寄棟"
+        }
+      ]
+    },
+    {
+      "id": "12-2",
+      "title": "平面で開口を別の壁にCtrlコピー",
+      "docs": "docs/120",
+      "look": "コピー先の壁面と窓の内外。形・腰高・符号を元と照合。",
+      "base": [],
+      "steps": [
+        {
+          "tool": "create_wall",
+          "args": {
+            "points": [
+              [
+                0,
+                0
+              ],
+              [
+                12000,
+                0
+              ]
+            ],
+            "height": 3000,
+            "thickness": 200
+          },
+          "save": "source"
+        },
+        {
+          "tool": "create_wall",
+          "args": {
+            "points": [
+              [
+                0,
+                3000
+              ],
+              [
+                12000,
+                3000
+              ]
+            ],
+            "height": 3000,
+            "thickness": 200
+          },
+          "save": "target"
+        },
+        {
+          "tool": "place_openings",
+          "args": {
+            "host": "$source.ids.0",
+            "face_normal": [
+              0,
+              -1,
+              0
+            ],
+            "count": 1,
+            "width": 1000,
+            "height": 1200,
+            "sill": 900
+          }
+        },
+        {
+          "tool": "set_opening_fittings",
+          "args": {
+            "host": "$source.ids.0",
+            "fitting": {
+              "type": "sliding_double",
+              "frame": 48
+            }
+          }
+        },
+        {
+          "tool": "ui_plan",
+          "args": {}
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "ui_tool",
+          "args": {
+            "tool": "move"
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              6000,
+              -150,
+              1200
+            ]
+          }
+        },
+        {
+          "tool": "ui_type",
+          "args": {
+            "keys": [
+              "Ctrl"
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              3800,
+              3080,
+              1200
+            ]
+          }
+        },
+        {
+          "tool": "ui_windows",
+          "args": {},
+          "expect": {
+            "contains": [
+              "へコピー"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              3800,
+              3080,
+              1200
+            ]
+          }
+        },
+        {
+          "tool": "list_openings",
+          "args": {
+            "ids": [
+              "$target.ids.0"
+            ]
+          },
+          "expect": {
+            "contains": [
+              "\"width\":1000",
+              "\"height\":1200",
+              "\"sill\":900",
+              "\"type\":\"sliding_double\"",
+              "\"frame\":48"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "list_openings",
+          "args": {
+            "ids": [
+              "$source.ids.0"
+            ]
+          },
+          "expect": {
+            "contains": [
+              "\"width\":1000",
+              "\"height\":1200",
+              "\"sill\":900",
+              "\"type\":\"sliding_double\"",
+              "\"frame\":48"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "opening_schedule",
+          "args": {},
+          "expect": {
+            "contains": [
+              "\"count\":2",
+              "\"mark\":\"AW1\"",
+              "\"mixed\":false"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "平面で別の壁にコピー"
+        }
+      ]
+    },
+    {
+      "id": "12-48",
+      "title": "建具の型の登録・適用・更新を別の壁で確認",
+      "docs": "docs/171",
+      "look": "建具プロパティで型を選ぶ操作と、窓枠・建具の見え方。型の更新と吊元はMCPで照合。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "place_openings",
+          "args": {
+            "host": "$walls.ids.2",
+            "face_normal": [
+              0,
+              1,
+              0
+            ],
+            "count": 1,
+            "width": 1600,
+            "height": 1200,
+            "sill": 900
+          }
+        },
+        {
+          "tool": "define_fitting_type",
+          "args": {
+            "name": "確認用AW",
+            "fitting": {
+              "type": "sliding_double",
+              "frame": 30,
+              "glass": 5
+            }
+          },
+          "expect": {
+            "contains": [
+              "\"changed\":0"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "set_opening_fittings",
+          "args": {
+            "host": "$walls.ids.0",
+            "fitting": {
+              "type_name": "確認用AW"
+            },
+            "openings": [
+              1
+            ]
+          }
+        },
+        {
+          "tool": "set_opening_fittings",
+          "args": {
+            "host": "$walls.ids.2",
+            "fitting": {
+              "type_name": "確認用AW"
+            },
+            "openings": [
+              1
+            ]
+          }
+        },
+        {
+          "tool": "define_fitting_type",
+          "args": {
+            "name": "確認用AW",
+            "fitting": {
+              "type": "sliding_double",
+              "frame": 50,
+              "glass": 8
+            }
+          },
+          "expect": {
+            "contains": [
+              "\"changed\":2"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "list_openings",
+          "args": {
+            "ids": [
+              "$walls.ids.0"
+            ]
+          },
+          "expect": {
+            "contains": [
+              "\"frame\":50",
+              "\"glass\":8"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "list_openings",
+          "args": {
+            "ids": [
+              "$walls.ids.2"
+            ]
+          },
+          "expect": {
+            "contains": [
+              "\"frame\":50",
+              "\"glass\":8"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "define_fitting_type",
+          "args": {
+            "name": "確認用AD",
+            "fitting": {
+              "type": "swing_single",
+              "hinge": "right",
+              "leaf": 30
+            }
+          },
+          "expect": {
+            "contains": []
+          },
+          "show": true
+        },
+        {
+          "tool": "set_opening_fittings",
+          "args": {
+            "host": "$walls.ids.1",
+            "fitting": {
+              "type_name": "確認用AD",
+              "hinge": "left",
+              "swing": "in"
+            },
+            "openings": [
+              1
+            ]
+          }
+        },
+        {
+          "tool": "define_fitting_type",
+          "args": {
+            "name": "確認用AD",
+            "fitting": {
+              "type": "swing_single",
+              "hinge": "right",
+              "leaf": 35
+            }
+          },
+          "expect": {
+            "contains": [
+              "\"changed\":1"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "list_openings",
+          "args": {
+            "ids": [
+              "$walls.ids.1"
+            ]
+          },
+          "expect": {
+            "contains": [
+              "\"hinge\":\"left\"",
+              "\"leaf\":35"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "建具表",
+            "texts": true
+          },
+          "picture": "更新後の建具表"
+        }
+      ]
+    },
+    {
+      "id": "12-8",
+      "title": "ファイルメニューで図面一式PDF、日本語名でDXF・JWW",
+      "docs": "docs/121・141",
+      "look": "図番と図面リスト。DXF・JWWは日本語名で出力し、保存ダイアログの既定名とJw_cadでの表示は目視。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "ui_trigger",
+          "args": {
+            "action": "exportDrawingSetAction"
+          },
+          "ui": true
+        },
+        {
+          "tool": "ui_list",
+          "args": {
+            "window": "modal",
+            "filter": "fileNameEdit"
+          },
+          "expect": {
+            "contains": [
+              "図面一式.pdf"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "ui_set",
+          "args": {
+            "window": "modal",
+            "widget": "fileNameEdit",
+            "value": "{tmp}/図面一式.pdf"
+          }
+        },
+        {
+          "tool": "ui_key",
+          "args": {
+            "window": "modal",
+            "widget": "fileNameEdit",
+            "key": "Return"
+          },
+          "ui": true
+        },
+        {
+          "tool": "ui_windows",
+          "args": {},
+          "expect": {
+            "contains": [
+              "を保存しました",
+              "図面一式.pdf",
+              "A-01"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "図面リスト",
+            "texts": true
+          },
+          "picture": "図番つき図面リスト",
+          "expect": {
+            "contains": [
+              "A-01",
+              "1FL 平面図",
+              "建具表",
+              "室の表",
+              "面積の表"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "export_drawing",
+          "args": {
+            "kind": "plan",
+            "path": "{tmp}/1FL 平面図.dxf"
+          },
+          "expect": {
+            "contains": [
+              "\"objects\":"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "export_drawing",
+          "args": {
+            "kind": "plan",
+            "path": "{tmp}/1FL 平面図.jww"
+          },
+          "expect": {
+            "contains": [
+              "\"objects\":"
+            ]
+          },
+          "show": true
+        }
+      ]
+    },
+    {
+      "id": "12-9",
+      "title": "窓台から開口をコピーし、別壁・同じ壁へ貼る",
+      "docs": "docs/126",
+      "look": "窓台を選んでコピーしてから元に建具を設定し、別の壁と同じ壁へ貼る。案内と、貼った窓の形。",
+      "base": [],
+      "steps": [
+        {
+          "tool": "create_wall",
+          "args": {
+            "points": [
+              [
+                0,
+                0
+              ],
+              [
+                12000,
+                0
+              ]
+            ],
+            "height": 3000,
+            "thickness": 200
+          },
+          "save": "source"
+        },
+        {
+          "tool": "place_openings",
+          "args": {
+            "host": "$source.ids.0",
+            "face_normal": [
+              0,
+              -1,
+              0
+            ],
+            "count": 1,
+            "width": 1000,
+            "height": 1200,
+            "sill": 900
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "ui_tool",
+          "args": {
+            "tool": "select"
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              6000,
+              0,
+              900
+            ]
+          }
+        },
+        {
+          "tool": "ui_list",
+          "args": {
+            "window": "main",
+            "filter": "開口"
+          },
+          "expect": {
+            "contains": [
+              "を選んでいます"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "ui_trigger",
+          "args": {
+            "action": "編集/コピー"
+          },
+          "ui": true
+        },
+        {
+          "tool": "ui_windows",
+          "args": {},
+          "expect": {
+            "contains": [
+              "開口 1 をコピーしました"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "set_opening_fittings",
+          "args": {
+            "host": "$source.ids.0",
+            "fitting": {
+              "type": "sliding_double",
+              "frame": 48
+            }
+          }
+        },
+        {
+          "tool": "create_wall",
+          "args": {
+            "points": [
+              [
+                0,
+                3000
+              ],
+              [
+                12000,
+                3000
+              ]
+            ],
+            "height": 3000,
+            "thickness": 200
+          },
+          "save": "target"
+        },
+        {
+          "tool": "ui_plan",
+          "args": {}
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "ui_trigger",
+          "args": {
+            "action": "編集/貼り付け"
+          },
+          "ui": true
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              4200,
+              3080,
+              1200
+            ]
+          }
+        },
+        {
+          "tool": "ui_windows",
+          "args": {},
+          "expect": {
+            "contains": [
+              "へ貼る"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              4200,
+              3080,
+              1200
+            ]
+          }
+        },
+        {
+          "tool": "list_openings",
+          "args": {
+            "ids": [
+              "$target.ids.0"
+            ]
+          },
+          "expect": {
+            "contains": [
+              "\"width\":1000",
+              "\"height\":1200",
+              "\"sill\":900",
+              "\"type\":\"sliding_double\"",
+              "\"frame\":48"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "ui_trigger",
+          "args": {
+            "action": "編集/貼り付け"
+          },
+          "ui": true
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              8700,
+              -80,
+              1200
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              8700,
+              -80,
+              1200
+            ]
+          }
+        },
+        {
+          "tool": "list_openings",
+          "args": {
+            "ids": [
+              "$source.ids.0"
+            ]
+          },
+          "expect": {
+            "contains": [
+              "\"index\":2",
+              "\"width\":1000",
+              "\"height\":1200",
+              "\"sill\":900",
+              "\"type\":\"sliding_double\"",
+              "\"frame\":48"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "別の壁と元の壁に貼った窓"
+        },
+        {
+          "tool": "opening_schedule",
+          "args": {},
+          "expect": {
+            "contains": [
+              "\"count\":3",
+              "\"mark\":\"AW1\"",
+              "\"mixed\":false"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "undo",
+          "args": {}
+        },
+        {
+          "tool": "list_openings",
+          "args": {
+            "ids": [
+              "$source.ids.0"
+            ]
+          },
+          "expect": {
+            "contains": [
+              "\"width\":1000",
+              "\"height\":1200",
+              "\"sill\":900",
+              "\"type\":\"sliding_double\"",
+              "\"frame\":48"
+            ],
+            "not_contains": [
+              "\"index\":2"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "list_openings",
+          "args": {
+            "ids": [
+              "$target.ids.0"
+            ]
+          },
+          "expect": {
+            "contains": [
+              "\"width\":1000",
+              "\"height\":1200",
+              "\"sill\":900",
+              "\"type\":\"sliding_double\"",
+              "\"frame\":48"
+            ]
+          },
+          "show": true
+        }
+      ]
+    },
+    {
+      "id": "12-3",
+      "title": "3Dで1階だけ表示して全階に戻す",
+      "docs": "docs/120",
+      "look": "下の壁・柱・階段と上階の床・屋根を、3枚の3D画像で照合。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "create_slab",
+          "args": {
+            "outline": [
+              [
+                0,
+                0
+              ],
+              [
+                8000,
+                0
+              ],
+              [
+                8000,
+                6000
+              ],
+              [
+                0,
+                6000
+              ]
+            ],
+            "top": 3000,
+            "thickness": 200
+          }
+        },
+        {
+          "tool": "create_roof",
+          "args": {
+            "outline": [
+              [
+                0,
+                0
+              ],
+              [
+                8000,
+                0
+              ],
+              [
+                8000,
+                6000
+              ],
+              [
+                0,
+                6000
+              ]
+            ],
+            "kind": "gable",
+            "height": 5200
+          }
+        },
+        {
+          "tool": "create_member",
+          "args": {
+            "start": [
+              1000,
+              500,
+              0
+            ],
+            "end": [
+              1000,
+              500,
+              2600
+            ],
+            "section": {
+              "kind": "rectangle",
+              "width": 105,
+              "depth": 105
+            },
+            "role": "column"
+          }
+        },
+        {
+          "tool": "create_stair",
+          "args": {
+            "path": [
+              [
+                900,
+                900
+              ],
+              [
+                900,
+                4600
+              ],
+              [
+                2800,
+                4600
+              ]
+            ],
+            "base": 0,
+            "rise": 3000,
+            "width": 780
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "全階を表示"
+        },
+        {
+          "tool": "ui_click",
+          "args": {
+            "window": "main",
+            "widget": "architecturePlanLevel"
+          },
+          "ui": true
+        },
+        {
+          "tool": "ui_trigger",
+          "args": {
+            "action": "1FL"
+          },
+          "ui": true
+        },
+        {
+          "tool": "ui_windows",
+          "args": {},
+          "expect": {
+            "contains": [
+              "3D で 1FL だけを見せています"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "1FLだけを表示"
+        },
+        {
+          "tool": "ui_click",
+          "args": {
+            "window": "main",
+            "widget": "architecturePlanLevel"
+          },
+          "ui": true
+        },
+        {
+          "tool": "ui_trigger",
+          "args": {
+            "action": "architectureShowAllStoreys"
+          },
+          "ui": true
+        },
+        {
+          "tool": "ui_windows",
+          "args": {},
+          "expect": {
+            "contains": [
+              "全部の階を見せています"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "全階の表示に戻す"
+        }
+      ]
+    },
+    {
+      "id": "12-5",
+      "title": "通り芯に付けた柱・梁と、交点外に残る柱",
+      "docs": "docs/122",
+      "look": "階のメニューから通り芯に付け、通り芯を動かした時の柱・梁の追随と交点にない柱の名前を確認。",
+      "base": [],
+      "steps": [
+        {
+          "tool": "create_grid",
+          "args": {
+            "x_spacings": [
+              3000
+            ],
+            "y_spacings": [
+              4000
+            ]
+          },
+          "save": "grid"
+        },
+        {
+          "tool": "create_member",
+          "args": {
+            "start": [
+              3000,
+              0,
+              0
+            ],
+            "end": [
+              3000,
+              0,
+              3000
+            ],
+            "role": "column",
+            "name": "交点の柱",
+            "section": {
+              "kind": "rectangle",
+              "width": 105,
+              "depth": 105
+            },
+            "material_class": "timber"
+          },
+          "save": "column"
+        },
+        {
+          "tool": "create_member",
+          "args": {
+            "start": [
+              0,
+              0,
+              3000
+            ],
+            "end": [
+              3000,
+              0,
+              3000
+            ],
+            "role": "beam",
+            "name": "交点を結ぶ梁",
+            "section": {
+              "kind": "rectangle",
+              "width": 105,
+              "depth": 105
+            },
+            "material_class": "timber"
+          },
+          "save": "beam"
+        },
+        {
+          "tool": "create_member",
+          "args": {
+            "start": [
+              1700,
+              1000,
+              0
+            ],
+            "end": [
+              1700,
+              1000,
+              3000
+            ],
+            "role": "column",
+            "name": "交点外の柱",
+            "section": {
+              "kind": "rectangle",
+              "width": 105,
+              "depth": 105
+            },
+            "material_class": "timber"
+          },
+          "save": "loose"
+        },
+        {
+          "tool": "ui_click",
+          "args": {
+            "window": "main",
+            "widget": "architecturePlanLevel"
+          },
+          "ui": true
+        },
+        {
+          "tool": "ui_trigger",
+          "args": {
+            "action": "architecturePinToGrid"
+          },
+          "ui": true
+        },
+        {
+          "tool": "ui_windows",
+          "args": {},
+          "expect": {
+            "contains": [
+              "2 つを通り芯に付けました",
+              "交点外の柱"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "get_object",
+          "args": {
+            "id": "$grid.grid"
+          },
+          "save": "before"
+        },
+        {
+          "tool": "set_grid",
+          "args": {
+            "grid": "$grid.grid",
+            "x": [
+              {
+                "id": "$before.grid.x.0.id",
+                "position": 0
+              },
+              {
+                "id": "$before.grid.x.1.id",
+                "position": 3600
+              }
+            ]
+          }
+        },
+        {
+          "tool": "query_objects",
+          "args": {
+            "ids": [
+              "$column.id"
+            ],
+            "fields": [
+              "bounds"
+            ]
+          },
+          "expect": {
+            "contains": [
+              "\"min\":[3547.5,-52.5,0.0]"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "query_objects",
+          "args": {
+            "ids": [
+              "$beam.id"
+            ],
+            "fields": [
+              "bounds"
+            ]
+          },
+          "expect": {
+            "contains": [
+              "\"max\":[3600.0,52.5,3052.5]"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "query_objects",
+          "args": {
+            "ids": [
+              "$loose.id"
+            ],
+            "fields": [
+              "bounds"
+            ]
+          },
+          "expect": {
+            "contains": [
+              "\"min\":[1647.5,947.5,0.0]"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "柱と梁が追随した通り芯"
+        }
+      ]
+    },
+    {
+      "id": "12-23・14-9",
+      "title": "仕様付き外壁の留め、着色床と間仕切りのT字",
+      "docs": "docs/177・196",
+      "look": "外壁の四隅で層が留めになるか。平面表示で床色が壁に透けず、T字で石膏ボードの線だけが回るか。",
+      "base": [
+        "empty_top"
+      ],
+      "steps": [
+        {
+          "tool": "delete",
+          "args": {
+            "ids": [
+              "$site.id"
+            ]
+          }
+        },
+        {
+          "tool": "create_wall",
+          "args": {
+            "points": [
+              [
+                0,
+                0
+              ],
+              [
+                8000,
+                0
+              ],
+              [
+                8000,
+                6000
+              ],
+              [
+                0,
+                6000
+              ],
+              [
+                0,
+                0
+              ]
+            ],
+            "thickness": 200,
+            "height": 3000,
+            "type": "exterior_siding",
+            "mitre": true
+          }
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "1FL 平面図",
+            "texts": true,
+            "scale": 20
+          },
+          "picture": "四隅の層の留め（1:20）",
+          "expect": {
+            "contains": []
+          },
+          "show": true
+        },
+        {
+          "tool": "create_wall",
+          "args": {
+            "points": [
+              [
+                3000,
+                0
+              ],
+              [
+                3000,
+                6000
+              ]
+            ],
+            "thickness": 200,
+            "height": 3000,
+            "type": "interior_board",
+            "mitre": true
+          }
+        },
+        {
+          "tool": "create_slab",
+          "args": {
+            "outline": [
+              [
+                0,
+                0
+              ],
+              [
+                8000,
+                0
+              ],
+              [
+                8000,
+                6000
+              ],
+              [
+                0,
+                6000
+              ]
+            ],
+            "top": 0.5,
+            "thickness": 200
+          },
+          "save": "slab"
+        },
+        {
+          "tool": "paint",
+          "args": {
+            "ids": [
+              "$slab.id"
+            ],
+            "color": "#8a5a2b"
+          }
+        },
+        {
+          "tool": "set_display",
+          "args": {},
+          "save": "display"
+        },
+        {
+          "tool": "set_display",
+          "args": {
+            "realistic": true,
+            "shadows_on_ground": false
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "木色を付けた床（3D）"
+        },
+        {
+          "tool": "ui_plan",
+          "args": {
+            "level": "1FL"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "着色床・外壁の四隅・間仕切りのT字"
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "1FL 平面図",
+            "texts": true,
+            "scale": 20
+          },
+          "picture": "T字の層の線（1:20）",
+          "expect": {
+            "contains": []
+          },
+          "show": true
+        },
+        {
+          "tool": "set_display",
+          "args": {
+            "realistic": "$display.realistic",
+            "shadows_on_ground": "$display.shadows_on_ground"
+          }
+        }
+      ]
+    },
+    {
+      "id": "14-12・14-21",
+      "title": "壁量・四分割の計算と第7工程、表3種と耐力壁配置図",
+      "docs": "docs/199・208",
+      "look": "第7工程と一覧の数値・文言、配置図の太線と札、破線の側端。仮想入力で確認。部屋・壁・側端の札が重なる箇所あり。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "set_wall_calculation",
+          "args": {
+            "inputs": {
+              "height_m": 6,
+              "co_designated": false,
+              "wind_coefficient_cm_m2": 50,
+              "input_basis": "台本の仮想入力（計算テストの例）",
+              "floors": [
+                {
+                  "id": "1",
+                  "name": "1階",
+                  "area_m2": 50,
+                  "weight_kn": 98,
+                  "wind_x_m2": 30,
+                  "wind_y_m2": 6,
+                  "walls_complete": true,
+                  "plan": {
+                    "x": [
+                      0,
+                      10000
+                    ],
+                    "y": [
+                      0,
+                      4000
+                    ]
+                  }
+                }
+              ],
+              "walls": [
+                {
+                  "id": "a",
+                  "floor": "1",
+                  "direction": "X",
+                  "start": [
+                    0,
+                    0
+                  ],
+                  "end": [
+                    2000,
+                    0
+                  ],
+                  "spec": "brace_45x90",
+                  "height_mm": 3000,
+                  "verified": true
+                },
+                {
+                  "id": "b",
+                  "floor": "1",
+                  "direction": "X",
+                  "start": [
+                    0,
+                    4000
+                  ],
+                  "end": [
+                    500,
+                    4000
+                  ],
+                  "spec": "brace_45x90",
+                  "height_mm": 3000,
+                  "verified": true
+                },
+                {
+                  "id": "c",
+                  "floor": "1",
+                  "direction": "Y",
+                  "start": [
+                    0,
+                    0
+                  ],
+                  "end": [
+                    0,
+                    4000
+                  ],
+                  "spec": "brace_45x90",
+                  "height_mm": 3000,
+                  "verified": true
+                },
+                {
+                  "id": "d",
+                  "floor": "1",
+                  "direction": "Y",
+                  "start": [
+                    10000,
+                    0
+                  ],
+                  "end": [
+                    10000,
+                    4000
+                  ],
+                  "spec": "brace_45x90",
+                  "height_mm": 3000,
+                  "verified": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "tool": "check_wall_quantity",
+          "args": {},
+          "expect": {
+            "contains": [
+              "\"existing_m\":5.0",
+              "\"required_m\":15.0",
+              "\"wall_ratio\":0.25"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "ui_trigger",
+          "args": {
+            "action": "permitWorkflowAction"
+          },
+          "ui": true
+        },
+        {
+          "tool": "ui_set",
+          "args": {
+            "window": "main",
+            "widget": "permitWorkflowPhases",
+            "row": 6,
+            "value": 0
+          }
+        },
+        {
+          "tool": "permit_checks",
+          "args": {
+            "stage": 7
+          },
+          "expect": {
+            "contains": [
+              "存在壁量",
+              "必要壁量",
+              "壁率比 0.25",
+              "要確認"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "ui_capture",
+          "args": {
+            "window": "main"
+          },
+          "picture": "申請図の工程7・耐力壁"
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "壁量計算表",
+            "texts": true
+          },
+          "picture": "壁量計算表",
+          "expect": {
+            "contains": [
+              "5.00",
+              "15.00",
+              "参考値内"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "耐力壁の一覧",
+            "texts": true
+          },
+          "picture": "耐力壁の一覧",
+          "expect": {
+            "contains": [
+              "4.00",
+              "45"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "四分割（側端部分）",
+            "texts": true
+          },
+          "picture": "四分割（側端部分）",
+          "expect": {
+            "contains": [
+              "0.25",
+              "要確認"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "耐力壁配置図（1階）",
+            "texts": true
+          },
+          "picture": "耐力壁配置図（1階）",
+          "expect": {
+            "contains": [
+              "a X",
+              "側端"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "pdf": true
+          },
+          "expect": {
+            "contains": [
+              "drawing-set.pdf",
+              "壁量計算表",
+              "耐力壁の一覧",
+              "四分割",
+              "耐力壁配置図（1階）"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "create_wall",
+          "args": {
+            "points": [
+              [
+                0,
+                0
+              ],
+              [
+                2000,
+                0
+              ]
+            ],
+            "height": 3000,
+            "thickness": 120
+          },
+          "save": "countedX0"
+        },
+        {
+          "tool": "create_wall",
+          "args": {
+            "points": [
+              [
+                0,
+                4000
+              ],
+              [
+                500,
+                4000
+              ]
+            ],
+            "height": 3000,
+            "thickness": 120
+          },
+          "save": "countedX1"
+        },
+        {
+          "tool": "set_wall_calculation",
+          "args": {
+            "inputs": {
+              "height_m": 6,
+              "co_designated": false,
+              "wind_coefficient_cm_m2": 50,
+              "input_basis": "台本の仮想入力（計算テストの例）",
+              "floors": [
+                {
+                  "id": "1",
+                  "name": "1階",
+                  "area_m2": 50,
+                  "weight_kn": 98,
+                  "wind_x_m2": 30,
+                  "wind_y_m2": 6,
+                  "walls_complete": true,
+                  "plan": {
+                    "x": [
+                      0,
+                      10000
+                    ],
+                    "y": [
+                      0,
+                      4000
+                    ]
+                  }
+                }
+              ],
+              "walls": [
+                {
+                  "id": "$countedX0.ids.0",
+                  "floor": "1",
+                  "direction": "X",
+                  "start": [
+                    0,
+                    0
+                  ],
+                  "end": [
+                    2000,
+                    0
+                  ],
+                  "spec": "brace_45x90",
+                  "height_mm": 3000,
+                  "verified": true
+                },
+                {
+                  "id": "$countedX1.ids.0",
+                  "floor": "1",
+                  "direction": "X",
+                  "start": [
+                    0,
+                    4000
+                  ],
+                  "end": [
+                    500,
+                    4000
+                  ],
+                  "spec": "brace_45x90",
+                  "height_mm": 3000,
+                  "verified": true
+                },
+                {
+                  "id": "c",
+                  "floor": "1",
+                  "direction": "Y",
+                  "start": [
+                    0,
+                    0
+                  ],
+                  "end": [
+                    0,
+                    4000
+                  ],
+                  "spec": "brace_45x90",
+                  "height_mm": 3000,
+                  "verified": true
+                },
+                {
+                  "id": "d",
+                  "floor": "1",
+                  "direction": "Y",
+                  "start": [
+                    10000,
+                    0
+                  ],
+                  "end": [
+                    10000,
+                    4000
+                  ],
+                  "spec": "brace_45x90",
+                  "height_mm": 3000,
+                  "verified": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "tool": "ui_list",
+          "args": {
+            "window": "main",
+            "filter": "permitWorkflowEdit"
+          },
+          "expect": {
+            "contains": [
+              "モデルで 2 個を選択"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "ui_click",
+          "args": {
+            "window": "main",
+            "widget": "permitWorkflowEdit"
+          },
+          "ui": true
+        },
+        {
+          "tool": "get_selection",
+          "args": {},
+          "expect": {
+            "contains": [
+              "\"ids\":[\""
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "ui_capture",
+          "args": {
+            "window": "main"
+          },
+          "picture": "第7工程から計算対象の壁を選択"
+        }
+      ]
     }
   ]
 }

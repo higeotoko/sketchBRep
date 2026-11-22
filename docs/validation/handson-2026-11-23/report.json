@@ -1,0 +1,6922 @@
+[
+ {
+  "id": "5-1・5-3",
+  "title": "階段ツールでL字と折り返しを描く・上階の床に開口",
+  "look": "プレビューで歩く線が分かるか。上階開口の輪郭と最初の段の上に残る床。",
+  "docs": "docs/103・119",
+  "steps": [
+   {
+    "n": 1,
+    "tool": "set_levels",
+    "args": {
+     "levels": [
+      {
+       "name": "1FL",
+       "elevation": 0
+      },
+      {
+       "name": "2FL",
+       "elevation": 3000
+      }
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 2,
+    "tool": "create_wall",
+    "args": {
+     "points": [
+      [
+       0,
+       0
+      ],
+      [
+       8000,
+       0
+      ],
+      [
+       8000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ],
+      [
+       0,
+       0
+      ]
+     ],
+     "thickness": 200,
+     "height": 3000
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 3,
+    "tool": "create_wall",
+    "args": {
+     "points": [
+      [
+       4000,
+       0
+      ],
+      [
+       4000,
+       6000
+      ]
+     ],
+     "thickness": 100,
+     "height": 3000
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 4,
+    "tool": "place_openings",
+    "args": {
+     "host": "b772f140-10ad-4856-827c-5431702f706f",
+     "face_normal": [
+      0,
+      -1,
+      0
+     ],
+     "count": 2,
+     "width": 1600,
+     "height": 1200,
+     "sill": 900
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 5,
+    "tool": "set_opening_fittings",
+    "args": {
+     "host": "b772f140-10ad-4856-827c-5431702f706f",
+     "fitting": {
+      "type": "sliding_double"
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 6,
+    "tool": "place_openings",
+    "args": {
+     "host": "1d8e5dc4-b829-4ea7-995b-7106872949f7",
+     "face_normal": [
+      1,
+      0,
+      0
+     ],
+     "count": 1,
+     "width": 900,
+     "height": 2100,
+     "sill": 0
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 7,
+    "tool": "set_opening_fittings",
+    "args": {
+     "host": "1d8e5dc4-b829-4ea7-995b-7106872949f7",
+     "fitting": {
+      "type": "swing_single",
+      "hinge": "left",
+      "swing": "in"
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 8,
+    "tool": "create_slab",
+    "args": {
+     "outline": [
+      [
+       0,
+       0
+      ],
+      [
+       8000,
+       0
+      ],
+      [
+       8000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ]
+     ],
+     "top": 0,
+     "thickness": 200
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 9,
+    "tool": "create_room",
+    "args": {
+     "at": [
+      2000,
+      3000
+     ],
+     "name": "居間"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 10,
+    "tool": "create_room",
+    "args": {
+     "at": [
+      6000,
+      3000
+     ],
+     "name": "洋室"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 11,
+    "tool": "create_polygon",
+    "args": {
+     "points": [
+      [
+       -2000,
+       -2000,
+       0
+      ],
+      [
+       14000,
+       -2000,
+       0
+      ],
+      [
+       14000,
+       10000,
+       0
+      ],
+      [
+       -2000,
+       10000,
+       0
+      ]
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 12,
+    "tool": "set_site_boundary",
+    "args": {
+     "outline": "c6c17cba-a002-4b1c-836e-cc567f8176e7",
+     "source": "確認用の架空の測量図"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 13,
+    "tool": "set_energy_route",
+    "args": {
+     "route": "spec",
+     "region": 6,
+     "source": "確認用"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 14,
+    "tool": "create_slab",
+    "args": {
+     "outline": [
+      [
+       0,
+       0
+      ],
+      [
+       8000,
+       0
+      ],
+      [
+       8000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ]
+     ],
+     "top": 3000,
+     "thickness": 200
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 15,
+    "tool": "ui_trigger",
+    "args": {
+     "action": "stairSettingsAction"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 16,
+    "tool": "ui_set",
+    "args": {
+     "window": "modal",
+     "widget": "stairToolShape",
+     "value": 0
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 17,
+    "tool": "ui_set",
+    "args": {
+     "window": "modal",
+     "widget": "stairToolWidth",
+     "value": "780"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 18,
+    "tool": "ui_set",
+    "args": {
+     "window": "modal",
+     "widget": "stairToolRise",
+     "value": "0"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 19,
+    "tool": "ui_set",
+    "args": {
+     "window": "modal",
+     "widget": "stairToolTurn",
+     "value": "3"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 20,
+    "tool": "ui_set",
+    "args": {
+     "window": "modal",
+     "widget": "stairToolOpenFloor",
+     "value": true
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 21,
+    "tool": "ui_click",
+    "args": {
+     "window": "modal",
+     "widget": "OK"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 22,
+    "tool": "ui_plan",
+    "args": {
+     "level": "1FL"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 23,
+    "tool": "set_view",
+    "args": {
+     "view": "fit"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 24,
+    "tool": "ui_tool",
+    "args": {
+     "tool": "stair"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 25,
+    "tool": "ui_windows",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": "{\"measurement\":\"\",\"status\":\"階段の歩く線（幅の真ん中）を、上がり始めから上の階の床の端まで順にクリック（曲がり角は直角。Enter で確定）: 幅 780.0・曲がり角 3 段回り（30°）・段数 自動（蹴上 200.0 以下）・段々の塊（幅 780.0・曲がり角 3 段回り（30°）・段数 自動（蹴上 200.0 以下）・段々の塊）\",\"windows\":[{\"class\":\"sbr::app::MainWindow\",\"main\":true,\"modal\":false,\"object_name\":\"\",\"title\":\"無題[*] - SketchBRep\"},{\"class\":\"sbr::app::ToolPaletteDock\",\"main\":false,\"modal\":false,\"object_name\":\"toolsPalette\",\"title\":\"ツール\"}]}"
+   },
+   {
+    "n": 26,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      3400,
+      600,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 27,
+    "tool": "ui_view_hover",
+    "args": {
+     "at": [
+      3400,
+      4400,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 28,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      3400,
+      4400,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 29,
+    "tool": "ui_view_hover",
+    "args": {
+     "at": [
+      1400,
+      4400,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 30,
+    "tool": "ui_capture",
+    "args": {
+     "window": "main"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 31,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      1400,
+      4400,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 32,
+    "tool": "ui_type",
+    "args": {
+     "text": "",
+     "enter": true
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 33,
+    "tool": "ui_windows",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": "{\"measurement\":\"\",\"snap\":{\"kind\":6,\"point\":[1407.21649484536,4400.8247422680415,0.0]},\"status\":\"階段を作成しました（蹴上 200.0 × 15 段・踏面 399.4〜488.3・回り段の踏面 155.3（狭い端から 300 の位置））。上の床 1 枚に開口をあけました（Ctrl+Z で戻せます。段数などはプロパティで直せます）\",\"windows\":[{\"class\":\"sbr::app::MainWindow\",\"main\":true,\"modal\":false,\"object_name\":\"\",\"title\":\"無題[*] - SketchBRep\"},{\"class\":\"sbr::app::ToolPaletteDock\",\"main\":false,\"modal\":false,\"object_name\":\"toolsPalette\",\"title\":\"ツール\"},{\"class\":\"QLabel\",\"main\":false,\"modal\":false,\"object_name\":\"\",\"title\":\"\"}]}"
+   },
+   {
+    "n": 34,
+    "tool": "query_objects",
+    "args": {
+     "attributes": {
+      "kind": "stair"
+     },
+     "fields": [
+      "id",
+      "name"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"objects\":[{\"id\":\"48a827fc-e8fd-436b-9a54-91d6d9f9fe65\",\"name\":\"Stair 1\"}],\"sequence\":53,\"total\":1}"
+   },
+   {
+    "n": 35,
+    "tool": "stair_info",
+    "args": {
+     "id": "48a827fc-e8fd-436b-9a54-91d6d9f9fe65"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"base\":0.0,\"base_level\":\"L1\",\"checks\":[{\"item\":\"riser\",\"limit\":230.0,\"state\":\"ok\",\"value\":200.0},{\"item\":\"going\",\"limit\":150.0,\"state\":\"ok\",\"value\":399.35567010309285},{\"item\":\"winder_going\",\"limit\":150.0,\"state\":\"ok\",\"value\":155.29142706151245},{\"item\":\"width\",\"limit\":750.0,\"state\":\"ok\",\"value\":780.0},{\"item\":\"landing\",\"limit\":4000.0,\"state\":\"ok\",\"value\":3000.0},{\"item\":\"handrail\",\"limit\":1.0,\"state\":\"not_evaluated\",\"value\":0.0}],\"checks_all_ok\":false,\"checks_basis\":\"Sizes for a house's own stair (not a shared stair of flats), Building Standards Act Enforcement Order arts. 23-25 as recorded in docs/103: riser <= 230, going >= 150 (winders: measured 300 from the narrow end, here as the chord of the tread's angle), width >= 750, a landing within every 4000 of height, a handrail on at least one side (none made here: not_evaluated, it may be made otherwise). not_evaluated = not measured here (clear width between finishes, landings of taller stairs): never a pass. Other uses of building have other sizes.\",\"flights\":2,\"going_max\":488.2621502209132,\"going_min\":399.35567010309285,\"handrail\":\"none\",\"handrail_height\":850.0,\"id\":\"48a827fc-e8fd-436b-9a54-91d6d9f9fe65\",\"landings\":0,\"newel_size\":105.0,\"newels\":false,\"nosing\":0.0,\"opened_slabs\":[\"f87bc2ee-40e9-4161-82ec-54b7e050e781\"],\"path\":[[3394.6391752577315,592.9896907216489],[3394.6391752577315,4400.8247422680415],[1407.21649484536,4400.8247422680415]],\"rise\":3000.0,\"riser\":200.0,\"riser_boards\":false,\"riser_limit\":200.0,\"riser_thickness\":15.0,\"risers\":15,\"risers_automatic\":true,\"shape\":\"line\",\"stringer\":\"none\",\"stringer_style\":\"side\",\"stringer_thickness\":36.0,\"style\":\"block\",\"sweep\":270.0,\"thickness\":30.0,\"top_level\":\"L2\",\"treads\":14,\"turns\":[3],\"walk_length\":5795.2577319587635,\"width\":780.0,\"winder_going\":155.29142706151245,\"winders\":3}"
+   },
+   {
+    "n": 36,
+    "tool": "ui_plan",
+    "args": {
+     "off": true
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 37,
+    "tool": "set_view",
+    "args": {
+     "view": "iso"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 38,
+    "tool": "set_view",
+    "args": {
+     "view": "fit"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 39,
+    "tool": "capture_view",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 40,
+    "tool": "render_drawing_set",
+    "args": {
+     "sheet": "2FL 平面図"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"image_path\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\05.png\",\"notes\":[],\"sheet\":{\"name\":\"2FL 平面図\",\"number\":\"A-05\"},\"sheets\":[{\"index\":1,\"name\":\"図面リスト\",\"notes\":[],\"number\":\"A-01\",\"paper\":\"A4\"},{\"index\":2,\"name\":\"計画概要\",\"notes\":[],\"number\":\"A-02\",\"paper\":\"A3\"},{\"index\":3,\"name\":\"配置図（検討用）\",\"notes\":[],\"number\":\"A-03\",\"paper\":\"A3\"},{\"index\":4,\"name\":\"1FL 平面図\",\"notes\":[],\"number\":\"A-04\",\"paper\":\"A3\"},{\"index\":5,\"name\":\"2FL 平面図\",\"notes\":[],\"number\":\"A-05\",\"paper\":\"A4\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\05.png\"},{\"index\":6,\"name\":\"A-A 断面図\",\"notes\":[],\"number\":\"A-06\",\"paper\":\"A4\"},{\"index\":7,\"name\":\"B-B 断面図\",\"notes\":[],\"number\":\"A-07\",\"paper\":\"A4\"},{\"index\":8,\"name\":\"南立面図\",\"notes\":[],\"number\":\"A-08\",\"paper\":\"A4\"},{\"index\":9,\"name\":\"東立面図\",\"notes\":[],\"number\":\"A-09\",\"paper\":\"A4\"},{\"index\":10,\"name\":\"北立面図\",\"notes\":[],\"number\":\"A-10\",\"paper\":\"A4\"},{\"index\":11,\"name\":\"西立面図\",\"notes\":[],\"number\":\"A-11\",\"paper\":\"A4\"},{\"index\":12,\"name\":\"建具表\",\"notes\":[],\"number\":\"A-12\",\"paper\":\"A4\"},{\"index\":13,\"name\":\"室の表\",\"notes\":[],\"number\":\"A-13\",\"paper\":\"A4\"},{\"index\":14,\"name\":\"面積の表\",\"notes\":[],\"number\":\"A-14\",\"paper\":\"A4\"}]}\n"
+   },
+   {
+    "n": 41,
+    "tool": "undo",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 42,
+    "tool": "query_objects",
+    "args": {
+     "attributes": {
+      "kind": "stair"
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"objects\":[],\"sequence\":55,\"total\":0}"
+   },
+   {
+    "n": 43,
+    "tool": "ui_plan",
+    "args": {
+     "level": "1FL"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 44,
+    "tool": "set_view",
+    "args": {
+     "view": "fit"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 45,
+    "tool": "ui_tool",
+    "args": {
+     "tool": "stair"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 46,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      900,
+      850,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 47,
+    "tool": "ui_view_hover",
+    "args": {
+     "at": [
+      900,
+      4700,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 48,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      900,
+      4700,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 49,
+    "tool": "ui_view_hover",
+    "args": {
+     "at": [
+      2500,
+      4700,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 50,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      2500,
+      4700,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 51,
+    "tool": "ui_view_hover",
+    "args": {
+     "at": [
+      2500,
+      850,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 52,
+    "tool": "ui_capture",
+    "args": {
+     "window": "main"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 53,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      2500,
+      850,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 54,
+    "tool": "ui_type",
+    "args": {
+     "text": "",
+     "enter": true
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 55,
+    "tool": "ui_windows",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": "{\"measurement\":\"\",\"snap\":{\"kind\":7,\"point\":[2492.783505154638,843.5051546391742,0.0]},\"status\":\"階段を作成しました（蹴上 200.0 × 15 段・踏面 806.6〜1156.0・回り段の踏面 155.3（狭い端から 300 の位置））。上の床 1 枚に開口をあけました（Ctrl+Z で戻せます。段数などはプロパティで直せます）\",\"windows\":[{\"class\":\"sbr::app::MainWindow\",\"main\":true,\"modal\":false,\"object_name\":\"\",\"title\":\"無題[*] - SketchBRep\"},{\"class\":\"sbr::app::ToolPaletteDock\",\"main\":false,\"modal\":false,\"object_name\":\"toolsPalette\",\"title\":\"ツール\"},{\"class\":\"QLabel\",\"main\":false,\"modal\":false,\"object_name\":\"\",\"title\":\"\"}]}"
+   },
+   {
+    "n": 56,
+    "tool": "query_objects",
+    "args": {
+     "attributes": {
+      "kind": "stair"
+     },
+     "fields": [
+      "id",
+      "name"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"objects\":[{\"id\":\"c86c5da1-997c-4117-8eb0-07c8c1aa76e5\",\"name\":\"Stair 1\"}],\"sequence\":58,\"total\":1}"
+   },
+   {
+    "n": 57,
+    "tool": "stair_info",
+    "args": {
+     "id": "c86c5da1-997c-4117-8eb0-07c8c1aa76e5"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"base\":0.0,\"base_level\":\"L1\",\"checks\":[{\"item\":\"riser\",\"limit\":230.0,\"state\":\"ok\",\"value\":200.0},{\"item\":\"going\",\"limit\":150.0,\"state\":\"ok\",\"value\":806.5979381443312},{\"item\":\"winder_going\",\"limit\":150.0,\"state\":\"ok\",\"value\":155.29142706151245},{\"item\":\"width\",\"limit\":750.0,\"state\":\"ok\",\"value\":780.0},{\"item\":\"landing\",\"limit\":4000.0,\"state\":\"ok\",\"value\":3000.0},{\"item\":\"handrail\",\"limit\":1.0,\"state\":\"not_evaluated\",\"value\":0.0}],\"checks_all_ok\":false,\"checks_basis\":\"Sizes for a house's own stair (not a shared stair of flats), Building Standards Act Enforcement Order arts. 23-25 as recorded in docs/103: riser <= 230, going >= 150 (winders: measured 300 from the narrow end, here as the chord of the tread's angle), width >= 750, a landing within every 4000 of height, a handrail on at least one side (none made here: not_evaluated, it may be made otherwise). not_evaluated = not measured here (clear width between finishes, landings of taller stairs): never a pass. Other uses of building have other sizes.\",\"flights\":3,\"going_max\":1155.9793814432994,\"going_min\":806.5979381443312,\"handrail\":\"none\",\"handrail_height\":850.0,\"id\":\"c86c5da1-997c-4117-8eb0-07c8c1aa76e5\",\"landings\":0,\"newel_size\":105.0,\"newels\":false,\"nosing\":0.0,\"opened_slabs\":[\"f87bc2ee-40e9-4161-82ec-54b7e050e781\"],\"path\":[[906.1855670103068,843.5051546391742],[906.1855670103068,4701.443298969072],[2492.783505154638,4701.443298969072],[2492.783505154638,843.5051546391742]],\"rise\":3000.0,\"riser\":200.0,\"riser_boards\":false,\"riser_limit\":200.0,\"riser_thickness\":15.0,\"risers\":15,\"risers_automatic\":true,\"shape\":\"line\",\"stringer\":\"none\",\"stringer_style\":\"side\",\"stringer_thickness\":36.0,\"style\":\"block\",\"sweep\":270.0,\"thickness\":30.0,\"top_level\":\"L2\",\"treads\":14,\"turns\":[3],\"walk_length\":9302.474226804126,\"width\":780.0,\"winder_going\":155.29142706151245,\"winders\":6}"
+   },
+   {
+    "n": 58,
+    "tool": "ui_plan",
+    "args": {
+     "off": true
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 59,
+    "tool": "set_view",
+    "args": {
+     "view": "iso"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 60,
+    "tool": "set_view",
+    "args": {
+     "view": "fit"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 61,
+    "tool": "capture_view",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   }
+  ],
+  "pictures": [
+   {
+    "file": "5-1・5-3-30-0.png",
+    "caption": "L字の確定前"
+   },
+   {
+    "file": "5-1・5-3-39-0.png",
+    "caption": "上階の床開口と階段"
+   },
+   {
+    "file": "5-1・5-3-40-0.png",
+    "caption": "上階床の開口の平面図"
+   },
+   {
+    "file": "5-1・5-3-52-0.png",
+    "caption": "折り返しの確定前"
+   },
+   {
+    "file": "5-1・5-3-61-0.png",
+    "caption": "折り返し階段"
+   }
+  ],
+  "failed": [],
+  "findings": []
+ },
+ {
+  "id": "5-5・11-1・12-1",
+  "title": "折り返し階段の寸法照合・両側手すり・各曲がり角",
+  "look": "寸法照合の表示とスクロール。手すりが角で立ち上がる部分。各角の形の変化。",
+  "docs": "docs/103・116・119",
+  "steps": [
+   {
+    "n": 1,
+    "tool": "set_levels",
+    "args": {
+     "levels": [
+      {
+       "name": "1FL",
+       "elevation": 0
+      },
+      {
+       "name": "2FL",
+       "elevation": 3000
+      }
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 2,
+    "tool": "create_polygon",
+    "args": {
+     "points": [
+      [
+       -2000,
+       -2000,
+       0
+      ],
+      [
+       10000,
+       -2000,
+       0
+      ],
+      [
+       10000,
+       8000,
+       0
+      ],
+      [
+       -2000,
+       8000,
+       0
+      ]
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 3,
+    "tool": "set_view",
+    "args": {
+     "view": "top"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 4,
+    "tool": "set_view",
+    "args": {
+     "view": "fit"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 5,
+    "tool": "create_stair",
+    "args": {
+     "path": [
+      [
+       900,
+       850
+      ],
+      [
+       900,
+       4700
+      ],
+      [
+       2500,
+       4700
+      ],
+      [
+       2500,
+       850
+      ]
+     ],
+     "base": 0,
+     "rise": 3000,
+     "width": 780,
+     "turns": [
+      3,
+      3
+     ],
+     "handrail": "right"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 6,
+    "tool": "select",
+    "args": {
+     "ids": [
+      "e1b079a5-3d1e-4f84-a7c6-d6653b1a700b"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 7,
+    "tool": "ui_list",
+    "args": {
+     "window": "main",
+     "filter": "stairChecks"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"title\":\"無題[*] - SketchBRep\",\"widget_count\":95,\"widgets\":[{\"enabled\":true,\"kind\":\"label\",\"ref\":\"stairChecks\",\"text\":\"蹴上 200.0（230 以下）：範囲内\\n踏面 820.0（150 以上）：範囲内\\n回り段の踏面 155.3（150 以上）：範囲内\\n幅 780.0（750 以上）：範囲内\\n踊場（高さ 4 m ごと） 3000.0（4000 以下）：範囲内\\n手すり 1.0（1 以上）：範囲内\",\"tooltip\":\"住宅の階段（共同住宅の共用階段を除く）の寸法との照合です（建築基準法施行令 第 23〜25 条。根拠と確認日は docs/103）。幅は立体の幅で、手すり・仕上げを引いた有効幅ではありません。未評価は、ここでは測っていない項目です。合否の判定ではありません\"}]}"
+   },
+   {
+    "n": 8,
+    "tool": "ui_capture",
+    "args": {
+     "window": "main"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 9,
+    "tool": "ui_key",
+    "args": {
+     "window": "main",
+     "widget": "stairHandrail",
+     "key": "Down"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 10,
+    "tool": "stair_info",
+    "args": {
+     "id": "e1b079a5-3d1e-4f84-a7c6-d6653b1a700b"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"base\":0.0,\"base_level\":\"L1\",\"checks\":[{\"item\":\"riser\",\"limit\":230.0,\"state\":\"ok\",\"value\":200.0},{\"item\":\"going\",\"limit\":150.0,\"state\":\"ok\",\"value\":820.0},{\"item\":\"winder_going\",\"limit\":150.0,\"state\":\"ok\",\"value\":155.29142706151245},{\"item\":\"width\",\"limit\":750.0,\"state\":\"ok\",\"value\":780.0},{\"item\":\"landing\",\"limit\":4000.0,\"state\":\"ok\",\"value\":3000.0},{\"item\":\"handrail\",\"limit\":1.0,\"state\":\"ok\",\"value\":2.0}],\"checks_all_ok\":true,\"checks_basis\":\"Sizes for a house's own stair (not a shared stair of flats), Building Standards Act Enforcement Order arts. 23-25 as recorded in docs/103: riser <= 230, going >= 150 (winders: measured 300 from the narrow end, here as the chord of the tread's angle), width >= 750, a landing within every 4000 of height, a handrail on at least one side (none made here: not_evaluated, it may be made otherwise). not_evaluated = not measured here (clear width between finishes, landings of taller stairs): never a pass. Other uses of building have other sizes.\",\"flights\":3,\"going_max\":1153.3333333333333,\"going_min\":820.0,\"handrail\":\"both\",\"handrail_height\":850.0,\"id\":\"e1b079a5-3d1e-4f84-a7c6-d6653b1a700b\",\"landings\":0,\"newel_size\":105.0,\"newels\":false,\"nosing\":0.0,\"opened_slabs\":[],\"path\":[[900.0,850.0],[900.0,4700.0],[2500.0,4700.0],[2500.0,850.0]],\"rise\":3000.0,\"riser\":200.0,\"riser_boards\":false,\"riser_limit\":200.0,\"riser_thickness\":15.0,\"risers\":15,\"risers_automatic\":true,\"shape\":\"line\",\"stringer\":\"none\",\"stringer_style\":\"side\",\"stringer_thickness\":36.0,\"style\":\"block\",\"sweep\":270.0,\"thickness\":30.0,\"top_level\":\"L2\",\"treads\":14,\"turns\":[3,3],\"walk_length\":9300.0,\"width\":780.0,\"winder_going\":155.29142706151245,\"winders\":6}"
+   },
+   {
+    "n": 11,
+    "tool": "ui_key",
+    "args": {
+     "window": "main",
+     "widget": "stairTurn",
+     "key": "Down"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 12,
+    "tool": "stair_info",
+    "args": {
+     "id": "e1b079a5-3d1e-4f84-a7c6-d6653b1a700b"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"base\":0.0,\"base_level\":\"L1\",\"checks\":[{\"item\":\"riser\",\"limit\":230.0,\"state\":\"ok\",\"value\":200.0},{\"item\":\"going\",\"limit\":150.0,\"state\":\"ok\",\"value\":820.0},{\"item\":\"winder_going\",\"limit\":150.0,\"state\":\"ng\",\"value\":117.05419320967695},{\"item\":\"width\",\"limit\":750.0,\"state\":\"ok\",\"value\":780.0},{\"item\":\"landing\",\"limit\":4000.0,\"state\":\"ok\",\"value\":3000.0},{\"item\":\"handrail\",\"limit\":1.0,\"state\":\"ok\",\"value\":2.0}],\"checks_all_ok\":false,\"checks_basis\":\"Sizes for a house's own stair (not a shared stair of flats), Building Standards Act Enforcement Order arts. 23-25 as recorded in docs/103: riser <= 230, going >= 150 (winders: measured 300 from the narrow end, here as the chord of the tread's angle), width >= 750, a landing within every 4000 of height, a handrail on at least one side (none made here: not_evaluated, it may be made otherwise). not_evaluated = not measured here (clear width between finishes, landings of taller stairs): never a pass. Other uses of building have other sizes.\",\"flights\":3,\"going_max\":1153.3333333333333,\"going_min\":820.0,\"handrail\":\"both\",\"handrail_height\":850.0,\"id\":\"e1b079a5-3d1e-4f84-a7c6-d6653b1a700b\",\"landings\":0,\"newel_size\":105.0,\"newels\":false,\"nosing\":0.0,\"opened_slabs\":[],\"path\":[[900.0,850.0],[900.0,4700.0],[2500.0,4700.0],[2500.0,850.0]],\"rise\":3000.0,\"riser\":200.0,\"riser_boards\":false,\"riser_limit\":200.0,\"riser_thickness\":15.0,\"risers\":15,\"risers_automatic\":true,\"shape\":\"line\",\"stringer\":\"none\",\"stringer_style\":\"side\",\"stringer_thickness\":36.0,\"style\":\"block\",\"sweep\":270.0,\"thickness\":30.0,\"top_level\":\"L2\",\"treads\":14,\"turns\":[4,3],\"walk_length\":9300.0,\"width\":780.0,\"winder_going\":117.05419320967695,\"winders\":7}"
+   },
+   {
+    "n": 13,
+    "tool": "ui_key",
+    "args": {
+     "window": "main",
+     "widget": "stairTurn2",
+     "key": "Up"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 14,
+    "tool": "stair_info",
+    "args": {
+     "id": "e1b079a5-3d1e-4f84-a7c6-d6653b1a700b"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"base\":0.0,\"base_level\":\"L1\",\"checks\":[{\"item\":\"riser\",\"limit\":230.0,\"state\":\"ok\",\"value\":200.0},{\"item\":\"going\",\"limit\":150.0,\"state\":\"ok\",\"value\":820.0},{\"item\":\"winder_going\",\"limit\":150.0,\"state\":\"ng\",\"value\":117.05419320967695},{\"item\":\"width\",\"limit\":750.0,\"state\":\"ok\",\"value\":780.0},{\"item\":\"landing\",\"limit\":4000.0,\"state\":\"ok\",\"value\":3000.0},{\"item\":\"handrail\",\"limit\":1.0,\"state\":\"ok\",\"value\":2.0}],\"checks_all_ok\":false,\"checks_basis\":\"Sizes for a house's own stair (not a shared stair of flats), Building Standards Act Enforcement Order arts. 23-25 as recorded in docs/103: riser <= 230, going >= 150 (winders: measured 300 from the narrow end, here as the chord of the tread's angle), width >= 750, a landing within every 4000 of height, a handrail on at least one side (none made here: not_evaluated, it may be made otherwise). not_evaluated = not measured here (clear width between finishes, landings of taller stairs): never a pass. Other uses of building have other sizes.\",\"flights\":3,\"going_max\":1153.3333333333333,\"going_min\":820.0,\"handrail\":\"both\",\"handrail_height\":850.0,\"id\":\"e1b079a5-3d1e-4f84-a7c6-d6653b1a700b\",\"landings\":0,\"newel_size\":105.0,\"newels\":false,\"nosing\":0.0,\"opened_slabs\":[],\"path\":[[900.0,850.0],[900.0,4700.0],[2500.0,4700.0],[2500.0,850.0]],\"rise\":3000.0,\"riser\":200.0,\"riser_boards\":false,\"riser_limit\":200.0,\"riser_thickness\":15.0,\"risers\":15,\"risers_automatic\":true,\"shape\":\"line\",\"stringer\":\"none\",\"stringer_style\":\"side\",\"stringer_thickness\":36.0,\"style\":\"block\",\"sweep\":270.0,\"thickness\":30.0,\"top_level\":\"L2\",\"treads\":14,\"turns\":[4,2],\"walk_length\":9300.0,\"width\":780.0,\"winder_going\":117.05419320967695,\"winders\":6}"
+   },
+   {
+    "n": 15,
+    "tool": "set_view",
+    "args": {
+     "view": "iso"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 16,
+    "tool": "set_view",
+    "args": {
+     "view": "fit",
+     "ids": [
+      "e1b079a5-3d1e-4f84-a7c6-d6653b1a700b"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 17,
+    "tool": "capture_view",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   }
+  ],
+  "pictures": [
+   {
+    "file": "5-5・11-1・12-1-8-0.png",
+    "caption": "階段のプロパティ"
+   },
+   {
+    "file": "5-5・11-1・12-1-17-0.png",
+    "caption": "両側の手すりと異なる回り段"
+   }
+  ],
+  "failed": [],
+  "findings": []
+ },
+ {
+  "id": "12-26",
+  "title": "らせん階段を中心と上がり始めから描く",
+  "look": "回転設定の分かりやすさと、確定前・確定後の形。",
+  "docs": "docs/143",
+  "steps": [
+   {
+    "n": 1,
+    "tool": "set_levels",
+    "args": {
+     "levels": [
+      {
+       "name": "1FL",
+       "elevation": 0
+      },
+      {
+       "name": "2FL",
+       "elevation": 3000
+      }
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 2,
+    "tool": "create_polygon",
+    "args": {
+     "points": [
+      [
+       -2000,
+       -2000,
+       0
+      ],
+      [
+       10000,
+       -2000,
+       0
+      ],
+      [
+       10000,
+       8000,
+       0
+      ],
+      [
+       -2000,
+       8000,
+       0
+      ]
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 3,
+    "tool": "set_view",
+    "args": {
+     "view": "top"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 4,
+    "tool": "set_view",
+    "args": {
+     "view": "fit"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 5,
+    "tool": "ui_trigger",
+    "args": {
+     "action": "stairSettingsAction"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 6,
+    "tool": "ui_set",
+    "args": {
+     "window": "modal",
+     "widget": "stairToolShape",
+     "value": 1
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 7,
+    "tool": "ui_set",
+    "args": {
+     "window": "modal",
+     "widget": "stairToolWidth",
+     "value": "780"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 8,
+    "tool": "ui_set",
+    "args": {
+     "window": "modal",
+     "widget": "stairToolSweep",
+     "value": 360
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 9,
+    "tool": "ui_set",
+    "args": {
+     "window": "modal",
+     "widget": "stairToolOpenFloor",
+     "value": false
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 10,
+    "tool": "ui_click",
+    "args": {
+     "window": "modal",
+     "widget": "OK"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 11,
+    "tool": "ui_tool",
+    "args": {
+     "tool": "stair"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 12,
+    "tool": "ui_windows",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": "{\"measurement\":\"\",\"status\":\"らせん階段：中心をクリック、次に歩く線の上がり始め（中心からの距離が歩く線の半径）をクリックして Enter: らせん・幅 780.0・回る角度 360°・段数 自動（蹴上 200.0 以下）・段々の塊（らせん・幅 780.0・回る角度 360°・段数 自動（蹴上 200.0 以下）・段々の塊）\",\"windows\":[{\"class\":\"sbr::app::MainWindow\",\"main\":true,\"modal\":false,\"object_name\":\"\",\"title\":\"無題[*] - SketchBRep\"},{\"class\":\"sbr::app::ToolPaletteDock\",\"main\":false,\"modal\":false,\"object_name\":\"toolsPalette\",\"title\":\"ツール\"}]}"
+   },
+   {
+    "n": 13,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      2800,
+      3000,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 14,
+    "tool": "ui_view_hover",
+    "args": {
+     "at": [
+      4300,
+      3000,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 15,
+    "tool": "ui_capture",
+    "args": {
+     "window": "main"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 16,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      4300,
+      3000,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 17,
+    "tool": "ui_type",
+    "args": {
+     "text": "",
+     "enter": true
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 18,
+    "tool": "ui_windows",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": "{\"measurement\":\"\",\"snap\":{\"kind\":6,\"point\":[4306.185567010309,3000.0,0.0]},\"status\":\"階段を作成しました（蹴上 200.0 × 15 段・回り段の踏面 628.9（狭い端から 300 の位置））（Ctrl+Z で戻せます。段数などはプロパティで直せます）\",\"windows\":[{\"class\":\"sbr::app::MainWindow\",\"main\":true,\"modal\":false,\"object_name\":\"\",\"title\":\"無題[*] - SketchBRep\"},{\"class\":\"sbr::app::ToolPaletteDock\",\"main\":false,\"modal\":false,\"object_name\":\"toolsPalette\",\"title\":\"ツール\"},{\"class\":\"QLabel\",\"main\":false,\"modal\":false,\"object_name\":\"\",\"title\":\"\"}]}"
+   },
+   {
+    "n": 19,
+    "tool": "query_objects",
+    "args": {
+     "attributes": {
+      "kind": "stair"
+     },
+     "fields": [
+      "id",
+      "name"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"objects\":[{\"id\":\"020600bc-bf47-46cd-9541-efc4d1b2420a\",\"name\":\"Stair 1\"}],\"sequence\":69,\"total\":1}"
+   },
+   {
+    "n": 20,
+    "tool": "stair_info",
+    "args": {
+     "id": "020600bc-bf47-46cd-9541-efc4d1b2420a"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"base\":0.0,\"base_level\":\"L1\",\"checks\":[{\"item\":\"riser\",\"limit\":230.0,\"state\":\"ok\",\"value\":200.0},{\"item\":\"winder_going\",\"limit\":150.0,\"state\":\"ok\",\"value\":628.8854519049896},{\"item\":\"width\",\"limit\":750.0,\"state\":\"ok\",\"value\":780.0},{\"item\":\"landing\",\"limit\":4000.0,\"state\":\"ok\",\"value\":3000.0},{\"item\":\"handrail\",\"limit\":1.0,\"state\":\"not_evaluated\",\"value\":0.0}],\"checks_all_ok\":false,\"checks_basis\":\"Sizes for a house's own stair (not a shared stair of flats), Building Standards Act Enforcement Order arts. 23-25 as recorded in docs/103: riser <= 230, going >= 150 (winders: measured 300 from the narrow end, here as the chord of the tread's angle), width >= 750, a landing within every 4000 of height, a handrail on at least one side (none made here: not_evaluated, it may be made otherwise). not_evaluated = not measured here (clear width between finishes, landings of taller stairs): never a pass. Other uses of building have other sizes.\",\"flights\":1,\"going_max\":0.0,\"going_min\":0.0,\"handrail\":\"none\",\"handrail_height\":850.0,\"id\":\"020600bc-bf47-46cd-9541-efc4d1b2420a\",\"landings\":0,\"newel_size\":105.0,\"newels\":false,\"nosing\":0.0,\"opened_slabs\":[],\"path\":[[2803.092783505155,3000.0],[4306.185567010309,3000.0]],\"rise\":3000.0,\"riser\":200.0,\"riser_boards\":false,\"riser_limit\":200.0,\"riser_thickness\":15.0,\"risers\":15,\"risers_automatic\":true,\"shape\":\"spiral\",\"stringer\":\"none\",\"stringer_style\":\"side\",\"stringer_thickness\":36.0,\"style\":\"block\",\"sweep\":360.0,\"thickness\":30.0,\"top_level\":\"L2\",\"treads\":14,\"turns\":[3],\"walk_length\":9444.21049264725,\"width\":780.0,\"winder_going\":628.8854519049896,\"winders\":14}"
+   },
+   {
+    "n": 21,
+    "tool": "set_view",
+    "args": {
+     "view": "iso"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 22,
+    "tool": "set_view",
+    "args": {
+     "view": "fit",
+     "ids": [
+      "020600bc-bf47-46cd-9541-efc4d1b2420a"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 23,
+    "tool": "capture_view",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   }
+  ],
+  "pictures": [
+   {
+    "file": "12-26-15-0.png",
+    "caption": "らせんの確定前"
+   },
+   {
+    "file": "12-26-23-0.png",
+    "caption": "確定後のらせん階段"
+   }
+  ],
+  "failed": [],
+  "findings": []
+ },
+ {
+  "id": "6-3・6-4",
+  "title": "平面の開口符号と室名をPDF・DXF・JWWへ",
+  "look": "平面モードと書き出した図面での文字の大きさ、位置、重なり。JWWはJw_cadで確認。",
+  "docs": "docs/104・141",
+  "steps": [
+   {
+    "n": 1,
+    "tool": "set_levels",
+    "args": {
+     "levels": [
+      {
+       "name": "1FL",
+       "elevation": 0
+      },
+      {
+       "name": "2FL",
+       "elevation": 3000
+      }
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 2,
+    "tool": "create_wall",
+    "args": {
+     "points": [
+      [
+       0,
+       0
+      ],
+      [
+       8000,
+       0
+      ],
+      [
+       8000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ],
+      [
+       0,
+       0
+      ]
+     ],
+     "thickness": 200,
+     "height": 3000
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 3,
+    "tool": "create_wall",
+    "args": {
+     "points": [
+      [
+       4000,
+       0
+      ],
+      [
+       4000,
+       6000
+      ]
+     ],
+     "thickness": 100,
+     "height": 3000
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 4,
+    "tool": "place_openings",
+    "args": {
+     "host": "8fdd83ff-e7b6-4ca9-975b-87fab2a7e214",
+     "face_normal": [
+      0,
+      -1,
+      0
+     ],
+     "count": 2,
+     "width": 1600,
+     "height": 1200,
+     "sill": 900
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 5,
+    "tool": "set_opening_fittings",
+    "args": {
+     "host": "8fdd83ff-e7b6-4ca9-975b-87fab2a7e214",
+     "fitting": {
+      "type": "sliding_double"
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 6,
+    "tool": "place_openings",
+    "args": {
+     "host": "1cecd3cc-3b0c-4db4-9540-07f574dbf10d",
+     "face_normal": [
+      1,
+      0,
+      0
+     ],
+     "count": 1,
+     "width": 900,
+     "height": 2100,
+     "sill": 0
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 7,
+    "tool": "set_opening_fittings",
+    "args": {
+     "host": "1cecd3cc-3b0c-4db4-9540-07f574dbf10d",
+     "fitting": {
+      "type": "swing_single",
+      "hinge": "left",
+      "swing": "in"
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 8,
+    "tool": "create_slab",
+    "args": {
+     "outline": [
+      [
+       0,
+       0
+      ],
+      [
+       8000,
+       0
+      ],
+      [
+       8000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ]
+     ],
+     "top": 0,
+     "thickness": 200
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 9,
+    "tool": "create_room",
+    "args": {
+     "at": [
+      2000,
+      3000
+     ],
+     "name": "居間"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 10,
+    "tool": "create_room",
+    "args": {
+     "at": [
+      6000,
+      3000
+     ],
+     "name": "洋室"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 11,
+    "tool": "create_polygon",
+    "args": {
+     "points": [
+      [
+       -2000,
+       -2000,
+       0
+      ],
+      [
+       14000,
+       -2000,
+       0
+      ],
+      [
+       14000,
+       10000,
+       0
+      ],
+      [
+       -2000,
+       10000,
+       0
+      ]
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 12,
+    "tool": "set_site_boundary",
+    "args": {
+     "outline": "cbd3c1ad-db43-4c5a-8473-70cf5ce98943",
+     "source": "確認用の架空の測量図"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 13,
+    "tool": "set_energy_route",
+    "args": {
+     "route": "spec",
+     "region": 6,
+     "source": "確認用"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 14,
+    "tool": "ui_plan",
+    "args": {
+     "level": "1FL"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 15,
+    "tool": "set_view",
+    "args": {
+     "view": "fit"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 16,
+    "tool": "capture_view",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 17,
+    "tool": "render_drawing_set",
+    "args": {
+     "sheet": "1FL 平面図",
+     "texts": true,
+     "pdf": true
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"image_path\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\04.png\",\"notes\":[],\"pdf\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\drawing-set.pdf\",\"sheet\":{\"name\":\"1FL 平面図\",\"number\":\"A-04\",\"texts\":[\"AW1\",\"AW1\",\"AD1\",\"居間  24.00 m²\",\"洋室  24.00 m²\",\"A\",\"A-06\",\"A\",\"A-06\",\"B\",\"A-07\",\"B\",\"A-07\",\"1FL 平面図  S=1:100\",\"N\",\"仮\",\"工事名\",\"図面名\",\"1FL 平面図\",\"縮尺\",\"1:100 (A3)\",\"日付\",\"2026-11-23\",\"図番\",\"A-04\",\"作成者\"]},\"sheets\":[{\"index\":1,\"name\":\"図面リスト\",\"notes\":[],\"number\":\"A-01\",\"paper\":\"A4\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\01.png\"},{\"index\":2,\"name\":\"計画概要\",\"notes\":[],\"number\":\"A-02\",\"paper\":\"A3\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\02.png\"},{\"index\":3,\"name\":\"配置図（検討用）\",\"notes\":[],\"number\":\"A-03\",\"paper\":\"A3\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\03.png\"},{\"index\":4,\"name\":\"1FL 平面図\",\"notes\":[],\"number\":\"A-04\",\"paper\":\"A3\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\04.png\"},{\"index\":5,\"name\":\"2FL 平面図\",\"notes\":[],\"number\":\"A-05\",\"paper\":\"A4\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\05.png\"},{\"index\":6,\"name\":\"A-A 断面図\",\"notes\":[],\"number\":\"A-06\",\"paper\":\"A4\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\06.png\"},{\"index\":7,\"name\":\"B-B 断面図\",\"notes\":[],\"number\":\"A-07\",\"paper\":\"A4\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\07.png\"},{\"index\":8,\"name\":\"南立面図\",\"notes\":[],\"number\":\"A-08\",\"paper\":\"A4\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\08.png\"},{\"index\":9,\"name\":\"東立面図\",\"notes\":[],\"number\":\"A-09\",\"paper\":\"A4\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\09.png\"},{\"index\":10,\"name\":\"北立面図\",\"notes\":[],\"number\":\"A-10\",\"paper\":\"A4\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\10.png\"},{\"index\":11,\"name\":\"西立面図\",\"notes\":[],\"number\":\"A-11\",\"paper\":\"A4\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\11.png\"},{\"index\":12,\"name\":\"建具表\",\"notes\":[],\"number\":\"A-12\",\"paper\":\"A4\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\12.png\"},{\"index\":13,\"name\":\"室の表\",\"notes\":[],\"number\":\"A-13\",\"paper\":\"A4\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\13.png\"},{\"index\":14,\"name\":\"面積の表\",\"notes\":[],\"number\":\"A-14\",\"paper\":\"A4\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\14.png\"}]}\nAW1\nAW1\nAD1\n居間  24.00 m²\n洋室  24.00 m²\nA\nA-06\nA\nA-06\nB\nA-07\nB\nA-07\n1FL 平面図  S=1:100\nN\n仮\n工事名\n図面名\n1FL 平面図\n縮尺\n1:100 (A3)\n日付\n2026-11-23\n図番\nA-04\n作成者"
+   },
+   {
+    "n": 18,
+    "tool": "export_drawing",
+    "args": {
+     "kind": "plan",
+     "cut_z": 1100,
+     "path": "C:\\Users\\enomo\\Documents\\Codex\\2026-11-04\\files-pasted-by-the-user-codex\\outputs\\handson-remaining\\trial-a\\files/1階平面図.dxf"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"notes\":[],\"objects\":7,\"paper\":\"A4\",\"scale\":100.0,\"tables\":0}"
+   },
+   {
+    "n": 19,
+    "tool": "export_drawing",
+    "args": {
+     "kind": "plan",
+     "cut_z": 1100,
+     "path": "C:\\Users\\enomo\\Documents\\Codex\\2026-11-04\\files-pasted-by-the-user-codex\\outputs\\handson-remaining\\trial-a\\files/1階平面図.jww"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"notes\":[],\"objects\":7,\"paper\":\"A4\",\"scale\":100.0,\"tables\":0}"
+   }
+  ],
+  "pictures": [
+   {
+    "file": "6-3・6-4-16-0.png",
+    "caption": "平面モードの開口符号"
+   },
+   {
+    "file": "6-3・6-4-17-0.png",
+    "caption": "1FL 平面図の符号と室名"
+   }
+  ],
+  "failed": [],
+  "findings": [
+   "1FL 平面図：line_through_text「洋室  24.00 m²」見えがかり線"
+  ]
+ },
+ {
+  "id": "12-13",
+  "title": "建具表と室の表を平面図と並べてPDFにする",
+  "look": "表が図の右か下に収まり、重なりや用紙からのはみ出しがないか。",
+  "docs": "docs/130",
+  "steps": [
+   {
+    "n": 1,
+    "tool": "set_levels",
+    "args": {
+     "levels": [
+      {
+       "name": "1FL",
+       "elevation": 0
+      },
+      {
+       "name": "2FL",
+       "elevation": 3000
+      }
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 2,
+    "tool": "create_wall",
+    "args": {
+     "points": [
+      [
+       0,
+       0
+      ],
+      [
+       8000,
+       0
+      ],
+      [
+       8000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ],
+      [
+       0,
+       0
+      ]
+     ],
+     "thickness": 200,
+     "height": 3000
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 3,
+    "tool": "create_wall",
+    "args": {
+     "points": [
+      [
+       4000,
+       0
+      ],
+      [
+       4000,
+       6000
+      ]
+     ],
+     "thickness": 100,
+     "height": 3000
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 4,
+    "tool": "place_openings",
+    "args": {
+     "host": "1ab542b6-1395-48ab-8e2a-6cfedccc508b",
+     "face_normal": [
+      0,
+      -1,
+      0
+     ],
+     "count": 2,
+     "width": 1600,
+     "height": 1200,
+     "sill": 900
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 5,
+    "tool": "set_opening_fittings",
+    "args": {
+     "host": "1ab542b6-1395-48ab-8e2a-6cfedccc508b",
+     "fitting": {
+      "type": "sliding_double"
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 6,
+    "tool": "place_openings",
+    "args": {
+     "host": "4a309e66-812c-49bd-8bb3-67f8b3d460ea",
+     "face_normal": [
+      1,
+      0,
+      0
+     ],
+     "count": 1,
+     "width": 900,
+     "height": 2100,
+     "sill": 0
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 7,
+    "tool": "set_opening_fittings",
+    "args": {
+     "host": "4a309e66-812c-49bd-8bb3-67f8b3d460ea",
+     "fitting": {
+      "type": "swing_single",
+      "hinge": "left",
+      "swing": "in"
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 8,
+    "tool": "create_slab",
+    "args": {
+     "outline": [
+      [
+       0,
+       0
+      ],
+      [
+       8000,
+       0
+      ],
+      [
+       8000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ]
+     ],
+     "top": 0,
+     "thickness": 200
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 9,
+    "tool": "create_room",
+    "args": {
+     "at": [
+      2000,
+      3000
+     ],
+     "name": "居間"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 10,
+    "tool": "create_room",
+    "args": {
+     "at": [
+      6000,
+      3000
+     ],
+     "name": "洋室"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 11,
+    "tool": "create_polygon",
+    "args": {
+     "points": [
+      [
+       -2000,
+       -2000,
+       0
+      ],
+      [
+       14000,
+       -2000,
+       0
+      ],
+      [
+       14000,
+       10000,
+       0
+      ],
+      [
+       -2000,
+       10000,
+       0
+      ]
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 12,
+    "tool": "set_site_boundary",
+    "args": {
+     "outline": "bf94537b-f3d0-42fc-8c8f-6b8dc2bdf705",
+     "source": "確認用の架空の測量図"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 13,
+    "tool": "set_energy_route",
+    "args": {
+     "route": "spec",
+     "region": 6,
+     "source": "確認用"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 14,
+    "tool": "render_drawing_set",
+    "args": {
+     "sheet": "1FL 平面図・建具表・室の表・面積の表",
+     "tables_with_plan": true,
+     "texts": true,
+     "pdf": true
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"image_path\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\04.png\",\"notes\":[],\"pdf\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\drawing-set.pdf\",\"sheet\":{\"name\":\"1FL 平面図・建具表・室の表・面積の表\",\"number\":\"A-04\",\"texts\":[\"AW1\",\"AW1\",\"AD1\",\"居間  24.00 m²\",\"洋室  24.00 m²\",\"A\",\"A-06\",\"A\",\"A-06\",\"B\",\"A-07\",\"B\",\"A-07\",\"1FL 平面図  S=1:100\",\"N\",\"仮\",\"建具表\",\"符号\",\"種類\",\"建具\",\"幅\",\"高さ\",\"数\",\"腰高\",\"品番\",\"注\",\"AW1\",\"窓\",\"引違い\",\"1600\",\"1200\",\"2\",\"900\",\"AD1\",\"扉\",\"片開き 左吊元・内開き\",\"900\",\"2100\",\"1\",\"0\",\"合計\",\"3\",\"寸法は mm。符号は、手で決めたものはそのまま、ほかは種類・建具・幅・高さが同じ開口に同じものを付けています。\",\"平面図の開口の横の符号と同じです。モデルから読んだ今の値です。\",\"室の表\",\"室名\",\"階\",\"壁芯 (m2)\",\"内法 (m2)\",\"内法の周長 (m)\",\"状態\",\"居間\",\"1FL\",\"24.00\",\"22.33\",\"19.30\",\"閉じている\",\"洋室\",\"1FL\",\"24.00\",\"22.33\",\"19.30\",\"閉じている\",\"合計（閉じている室だけ）\",\"48.00\",\"44.66\",\"壁芯＝壁を描いた線の内側、内法＝壁の面の内側。法の床面積（算入・不算入の決まり）ではありません。\",\"面積の表\",\"階\",\"壁で囲まれた面積・壁芯 (m2)\",\"室の数\",\"室のない閉じた所\",\"室の合計・壁芯 (m2)\",\"室の合計・内法 (m2)\",\"床スラブ (m2)\",\"法の床面積\",\"1FL\",\"48.00\",\"2\",\"0\",\"48.00\",\"44.66\",\"48.00\",\"48.00\",\"合計（延べ面積）\",\"48.00\",\"48.00\",\"48.00\",\"48.00\",\"容積率の算定の延べ面積\",\"48.00\",\"建築面積\",\"48.00\",\"モデルから測った面積です。法の床面積・延べ面積・建築面積は、下の決まりで出しました（確認申請に使う時は、特定行政庁・確認検査機関の取扱いを確かめてください）。\",\"根拠：建築基準法施行令 第 2 条 第 1 項 第 2 号（建築面積）・第 3 号（床面積）・第 4 号（延べ面積）、\",\"　e-Gov 法令検索で 2026-11-16 に読んだ版（令和 8 年 11 月 1 日施行）。\",\"床面積：壁（壁ツールの壁）の中心線で囲まれた所のうち、床（その階のスラブ）のある所。吹抜けは入れない。階段は、着く上の階でも入れた（一般的な扱い。特定行政庁の取扱いを確かめてください）。\",\"未評価：壁で囲まれていない所（バルコニー・ポーチ・ピロティなど、開放性による扱い）、柱だけで囲まれた部分、特例軒等、高い開放性の指定（同 2 号ただし書）。\",\"延べ面積は各階の床面積の合計。容積率の算定の延べ面積は、そこから「容積率の区分」を付けた室の面積（壁芯）を引いた値（区分ごとに、延べ面積に割合を掛けた面積まで）。\",\"　根拠：施行令 第 2 条 第 1 項 第 4 号ただし書・第 3 項、建築基準法 第 52 条 第 6 項 第 1 号・第 2 号、施行令 第 135 条の 16、\",\"　e-Gov 法令検索で 2026-11-17 に読んだ版（令：令和 8 年 11 月 1 日施行、法：令和 8 年 5 月 27 日施行）。\",\"容積率の区分を付けた室が無いので、容積率の算定の延べ面積は延べ面積と同じ（車庫・備蓄倉庫・昇降路・共用廊下などがあれば、室のプロパティで区分を付けてください）。\",\"未評価：特定行政庁が認める機械室等（同 第 6 項 第 3 号）、同じ敷地のほかの建築物の床面積、容積率の最低限度の算定。\",\"地盤面：「GL」という名前のレベルが無いので、地階かどうかは見ていない（未評価。地階の建築面積・法 52 条 3 項）。\",\"工事名\",\"図面名\",\"1FL 平面図・建具表・室の表・面積の表\",\"縮尺\",\"1:100 (A2)\",\"日付\",\"2026-11-23\",\"図番\",\"A-04\",\"作成者\"]},\"sheets\":[{\"index\":1,\"name\":\"図面リスト\",\"notes\":[],\"number\":\"A-01\",\"paper\":\"A4\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\01.png\"},{\"index\":2,\"name\":\"計画概要\",\"notes\":[],\"number\":\"A-02\",\"paper\":\"A3\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\02.png\"},{\"index\":3,\"name\":\"配置図（検討用）\",\"notes\":[],\"number\":\"A-03\",\"paper\":\"A3\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\03.png\"},{\"index\":4,\"name\":\"1FL 平面図・建具表・室の表・面積の表\",\"notes\":[],\"number\":\"A-04\",\"paper\":\"A2\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\04.png\"},{\"index\":5,\"name\":\"2FL 平面図\",\"notes\":[],\"number\":\"A-05\",\"paper\":\"A4\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\05.png\"},{\"index\":6,\"name\":\"A-A 断面図\",\"notes\":[],\"number\":\"A-06\",\"paper\":\"A4\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\06.png\"},{\"index\":7,\"name\":\"B-B 断面図\",\"notes\":[],\"number\":\"A-07\",\"paper\":\"A4\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketch"
+   }
+  ],
+  "pictures": [
+   {
+    "file": "12-13-14-0.png",
+    "caption": "平面図と表を一緒にした用紙"
+   }
+  ],
+  "failed": [],
+  "findings": []
+ },
+ {
+  "id": "12-25",
+  "title": "部屋の天井が壁に追随し、手で下げた天井は位置を保つ",
+  "look": "天井の形と高さ。壁・天井の一括取り消し。",
+  "docs": "docs/123",
+  "steps": [
+   {
+    "n": 1,
+    "tool": "set_levels",
+    "args": {
+     "levels": [
+      {
+       "name": "1FL",
+       "elevation": 0
+      },
+      {
+       "name": "2FL",
+       "elevation": 3000
+      }
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 2,
+    "tool": "create_wall",
+    "args": {
+     "points": [
+      [
+       0,
+       0
+      ],
+      [
+       8000,
+       0
+      ],
+      [
+       8000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ],
+      [
+       0,
+       0
+      ]
+     ],
+     "thickness": 200,
+     "height": 3000
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 3,
+    "tool": "create_wall",
+    "args": {
+     "points": [
+      [
+       4000,
+       0
+      ],
+      [
+       4000,
+       6000
+      ]
+     ],
+     "thickness": 100,
+     "height": 3000
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 4,
+    "tool": "place_openings",
+    "args": {
+     "host": "4f5ec706-7973-488b-a52c-5eaa57f2328e",
+     "face_normal": [
+      0,
+      -1,
+      0
+     ],
+     "count": 2,
+     "width": 1600,
+     "height": 1200,
+     "sill": 900
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 5,
+    "tool": "set_opening_fittings",
+    "args": {
+     "host": "4f5ec706-7973-488b-a52c-5eaa57f2328e",
+     "fitting": {
+      "type": "sliding_double"
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 6,
+    "tool": "place_openings",
+    "args": {
+     "host": "972d149b-cd19-458d-8c6b-6d2278efa7a8",
+     "face_normal": [
+      1,
+      0,
+      0
+     ],
+     "count": 1,
+     "width": 900,
+     "height": 2100,
+     "sill": 0
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 7,
+    "tool": "set_opening_fittings",
+    "args": {
+     "host": "972d149b-cd19-458d-8c6b-6d2278efa7a8",
+     "fitting": {
+      "type": "swing_single",
+      "hinge": "left",
+      "swing": "in"
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 8,
+    "tool": "create_slab",
+    "args": {
+     "outline": [
+      [
+       0,
+       0
+      ],
+      [
+       8000,
+       0
+      ],
+      [
+       8000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ]
+     ],
+     "top": 0,
+     "thickness": 200
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 9,
+    "tool": "create_room",
+    "args": {
+     "at": [
+      2000,
+      3000
+     ],
+     "name": "居間"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 10,
+    "tool": "create_room",
+    "args": {
+     "at": [
+      6000,
+      3000
+     ],
+     "name": "洋室"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 11,
+    "tool": "create_polygon",
+    "args": {
+     "points": [
+      [
+       -2000,
+       -2000,
+       0
+      ],
+      [
+       14000,
+       -2000,
+       0
+      ],
+      [
+       14000,
+       10000,
+       0
+      ],
+      [
+       -2000,
+       10000,
+       0
+      ]
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 12,
+    "tool": "set_site_boundary",
+    "args": {
+     "outline": "2bd1c100-98a1-4fb5-94fc-559b013b5caf",
+     "source": "確認用の架空の測量図"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 13,
+    "tool": "set_energy_route",
+    "args": {
+     "route": "spec",
+     "region": 6,
+     "source": "確認用"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 14,
+    "tool": "set_room_finish",
+    "args": {
+     "id": "9a379934-0aa8-4959-a831-414e57c25bc2",
+     "ceiling_height": 2400
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 15,
+    "tool": "set_room_finish",
+    "args": {
+     "id": "d277645f-9160-448b-93c5-8594eddc3510",
+     "ceiling_height": 2550
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 16,
+    "tool": "select",
+    "args": {
+     "ids": [
+      "9a379934-0aa8-4959-a831-414e57c25bc2"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 17,
+    "tool": "ui_click",
+    "args": {
+     "window": "main",
+     "widget": "roomMakeCeiling"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 18,
+    "tool": "select",
+    "args": {
+     "ids": [
+      "d277645f-9160-448b-93c5-8594eddc3510"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 19,
+    "tool": "ui_click",
+    "args": {
+     "window": "main",
+     "widget": "roomMakeCeiling"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 20,
+    "tool": "query_objects",
+    "args": {
+     "attributes": {
+      "kind": "ceiling",
+      "room": "9a379934-0aa8-4959-a831-414e57c25bc2"
+     },
+     "fields": [
+      "id",
+      "bounds",
+      "volume"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"objects\":[{\"bounds\":{\"max\":[3950.0,5900.0,2410.0],\"min\":[100.0,100.0,2400.0]},\"id\":\"c2e9d59e-5a8a-492e-b06d-3a21919bfed8\",\"volume\":223299999.99999994}],\"sequence\":287,\"total\":1}"
+   },
+   {
+    "n": 21,
+    "tool": "query_objects",
+    "args": {
+     "attributes": {
+      "kind": "ceiling",
+      "room": "d277645f-9160-448b-93c5-8594eddc3510"
+     },
+     "fields": [
+      "id",
+      "bounds",
+      "volume"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"objects\":[{\"bounds\":{\"max\":[7900.0,5900.0,2560.0],\"min\":[4050.0,100.0,2550.0]},\"id\":\"af985dce-e1eb-4053-864c-b6980c72c1bc\",\"volume\":223299999.99999994}],\"sequence\":287,\"total\":1}"
+   },
+   {
+    "n": 22,
+    "tool": "move",
+    "args": {
+     "ids": [
+      "af985dce-e1eb-4053-864c-b6980c72c1bc"
+     ],
+     "vector": [
+      0,
+      0,
+      -150
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 23,
+    "tool": "move",
+    "args": {
+     "ids": [
+      "262a0484-4cfc-44b3-813f-a3fcf0e9fec4"
+     ],
+     "vector": [
+      500,
+      0,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 24,
+    "tool": "query_objects",
+    "args": {
+     "attributes": {
+      "kind": "ceiling",
+      "room": "9a379934-0aa8-4959-a831-414e57c25bc2"
+     },
+     "fields": [
+      "id",
+      "bounds",
+      "volume"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"objects\":[{\"bounds\":{\"max\":[4450.0,5900.0,2410.0],\"min\":[100.0,100.0,2400.0]},\"id\":\"c2fd9332-ea6f-45f7-b650-1808d4e4af58\",\"volume\":252300000.0}],\"sequence\":294,\"total\":1}"
+   },
+   {
+    "n": 25,
+    "tool": "query_objects",
+    "args": {
+     "attributes": {
+      "kind": "ceiling",
+      "room": "d277645f-9160-448b-93c5-8594eddc3510"
+     },
+     "fields": [
+      "id",
+      "bounds",
+      "volume"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"objects\":[{\"bounds\":{\"max\":[7900.0,5900.0,2410.0],\"min\":[4050.0,100.0,2400.0]},\"id\":\"af985dce-e1eb-4053-864c-b6980c72c1bc\",\"volume\":223299999.99999994}],\"sequence\":294,\"total\":1}"
+   },
+   {
+    "n": 26,
+    "tool": "set_view",
+    "args": {
+     "view": "iso"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 27,
+    "tool": "set_view",
+    "args": {
+     "view": "fit"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 28,
+    "tool": "capture_view",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 29,
+    "tool": "undo",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 30,
+    "tool": "query_objects",
+    "args": {
+     "attributes": {
+      "kind": "ceiling",
+      "room": "9a379934-0aa8-4959-a831-414e57c25bc2"
+     },
+     "fields": [
+      "id",
+      "bounds",
+      "volume"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"objects\":[{\"bounds\":{\"max\":[3950.0,5900.0,2410.0],\"min\":[100.0,100.0,2400.0]},\"id\":\"c2e9d59e-5a8a-492e-b06d-3a21919bfed8\",\"volume\":223299999.99999994}],\"sequence\":297,\"total\":1}"
+   },
+   {
+    "n": 31,
+    "tool": "query_objects",
+    "args": {
+     "attributes": {
+      "kind": "ceiling",
+      "room": "d277645f-9160-448b-93c5-8594eddc3510"
+     },
+     "fields": [
+      "id",
+      "bounds",
+      "volume"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"objects\":[{\"bounds\":{\"max\":[7900.0,5900.0,2410.0],\"min\":[4050.0,100.0,2400.0]},\"id\":\"af985dce-e1eb-4053-864c-b6980c72c1bc\",\"volume\":223299999.99999994}],\"sequence\":297,\"total\":1}"
+   }
+  ],
+  "pictures": [
+   {
+    "file": "12-25-28-0.png",
+    "caption": "壁を動かした後の天井"
+   }
+  ],
+  "failed": [],
+  "findings": []
+ },
+ {
+  "id": "14-1",
+  "title": "画面で真北を2点指定して配置図と平面図に反映",
+  "look": "配置図と平面図の北矢印の向きがそろうか。使用資料はテスト用。",
+  "docs": "docs/188",
+  "steps": [
+   {
+    "n": 1,
+    "tool": "set_levels",
+    "args": {
+     "levels": [
+      {
+       "name": "1FL",
+       "elevation": 0
+      },
+      {
+       "name": "2FL",
+       "elevation": 3000
+      }
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 2,
+    "tool": "create_wall",
+    "args": {
+     "points": [
+      [
+       0,
+       0
+      ],
+      [
+       8000,
+       0
+      ],
+      [
+       8000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ],
+      [
+       0,
+       0
+      ]
+     ],
+     "thickness": 200,
+     "height": 3000
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 3,
+    "tool": "create_wall",
+    "args": {
+     "points": [
+      [
+       4000,
+       0
+      ],
+      [
+       4000,
+       6000
+      ]
+     ],
+     "thickness": 100,
+     "height": 3000
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 4,
+    "tool": "place_openings",
+    "args": {
+     "host": "92036f69-88ff-410c-b7d8-29c98254468f",
+     "face_normal": [
+      0,
+      -1,
+      0
+     ],
+     "count": 2,
+     "width": 1600,
+     "height": 1200,
+     "sill": 900
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 5,
+    "tool": "set_opening_fittings",
+    "args": {
+     "host": "92036f69-88ff-410c-b7d8-29c98254468f",
+     "fitting": {
+      "type": "sliding_double"
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 6,
+    "tool": "place_openings",
+    "args": {
+     "host": "4976a224-6e8d-4693-b671-c7a048d2795b",
+     "face_normal": [
+      1,
+      0,
+      0
+     ],
+     "count": 1,
+     "width": 900,
+     "height": 2100,
+     "sill": 0
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 7,
+    "tool": "set_opening_fittings",
+    "args": {
+     "host": "4976a224-6e8d-4693-b671-c7a048d2795b",
+     "fitting": {
+      "type": "swing_single",
+      "hinge": "left",
+      "swing": "in"
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 8,
+    "tool": "create_slab",
+    "args": {
+     "outline": [
+      [
+       0,
+       0
+      ],
+      [
+       8000,
+       0
+      ],
+      [
+       8000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ]
+     ],
+     "top": 0,
+     "thickness": 200
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 9,
+    "tool": "create_room",
+    "args": {
+     "at": [
+      2000,
+      3000
+     ],
+     "name": "居間"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 10,
+    "tool": "create_room",
+    "args": {
+     "at": [
+      6000,
+      3000
+     ],
+     "name": "洋室"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 11,
+    "tool": "create_polygon",
+    "args": {
+     "points": [
+      [
+       -2000,
+       -2000,
+       0
+      ],
+      [
+       14000,
+       -2000,
+       0
+      ],
+      [
+       14000,
+       10000,
+       0
+      ],
+      [
+       -2000,
+       10000,
+       0
+      ]
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 12,
+    "tool": "set_site_boundary",
+    "args": {
+     "outline": "fc69b996-24b7-4d2b-a555-bbfe9678922e",
+     "source": "確認用の架空の測量図"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 13,
+    "tool": "set_energy_route",
+    "args": {
+     "route": "spec",
+     "region": 6,
+     "source": "確認用"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 14,
+    "tool": "set_view",
+    "args": {
+     "view": "top"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 15,
+    "tool": "set_view",
+    "args": {
+     "view": "fit"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 16,
+    "tool": "ui_trigger",
+    "args": {
+     "action": "siteNorthByPointsAction"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 17,
+    "tool": "ui_list",
+    "args": {
+     "window": "modal"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"title\":\"敷地の真北\",\"widget_count\":4,\"widgets\":[{\"enabled\":true,\"kind\":\"label\",\"ref\":\"#1\",\"text\":\"確認に使った資料（測量図など）\"},{\"enabled\":true,\"kind\":\"line_edit\",\"read_only\":false,\"ref\":\"#2\",\"text\":\"\"},{\"enabled\":true,\"kind\":\"button\",\"ref\":\"#3\",\"text\":\"OK\"},{\"enabled\":true,\"kind\":\"button\",\"ref\":\"#4\",\"text\":\"Cancel\"}]}"
+   },
+   {
+    "n": 18,
+    "tool": "ui_set",
+    "args": {
+     "window": "modal",
+     "widget": "#2",
+     "value": "確認用の架空の測量図"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 19,
+    "tool": "ui_click",
+    "args": {
+     "window": "modal",
+     "widget": "OK"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 20,
+    "tool": "ui_windows",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": "{\"measurement\":\"\",\"status\":\"真北を示す矢印の根元をクリック\",\"windows\":[{\"class\":\"sbr::app::MainWindow\",\"main\":true,\"modal\":false,\"object_name\":\"\",\"title\":\"無題[*] - SketchBRep\"},{\"class\":\"sbr::app::ToolPaletteDock\",\"main\":false,\"modal\":false,\"object_name\":\"toolsPalette\",\"title\":\"ツール\"}]}"
+   },
+   {
+    "n": 21,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      1600,
+      2000,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 22,
+    "tool": "ui_view_hover",
+    "args": {
+     "at": [
+      3200,
+      2000,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 23,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      3200,
+      2000,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 24,
+    "tool": "ui_windows",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": "{\"measurement\":\"90.00°\",\"status\":\"敷地の真北を設定しました。Escで終了\",\"windows\":[{\"class\":\"sbr::app::MainWindow\",\"main\":true,\"modal\":false,\"object_name\":\"\",\"title\":\"無題[*] - SketchBRep\"},{\"class\":\"sbr::app::ToolPaletteDock\",\"main\":false,\"modal\":false,\"object_name\":\"toolsPalette\",\"title\":\"ツール\"}]}"
+   },
+   {
+    "n": 25,
+    "tool": "get_sun",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": "{\"altitude\":49.07119859176813,\"azimuth\":238.82921153292727,\"day\":15,\"hour\":14.0,\"latitude\":35.68,\"longitude\":139.69,\"month\":4,\"north_angle\":90.0,\"time_zone\":9.0,\"toward_sun\":[-0.3390844680943535,0.5605397690848783,0.755524248963222],\"up\":true}"
+   },
+   {
+    "n": 26,
+    "tool": "ui_type",
+    "args": {
+     "keys": [
+      "Escape"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 27,
+    "tool": "render_drawing_set",
+    "args": {
+     "sheet": "配置図（検討用）"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 28,
+    "tool": "render_drawing_set",
+    "args": {
+     "sheet": "1FL 平面図",
+     "texts": true
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 29,
+    "tool": "export_drawing",
+    "args": {
+     "kind": "plan",
+     "path": "C:\\Users\\enomo\\Documents\\Codex\\2026-11-04\\files-pasted-by-the-user-codex\\outputs\\handson-remaining\\trial-b\\files/真北確認.dxf"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   }
+  ],
+  "pictures": [
+   {
+    "file": "14-1-27-0.png",
+    "caption": "配置図の北矢印"
+   },
+   {
+    "file": "14-1-28-0.png",
+    "caption": "平面図の北矢印"
+   }
+  ],
+  "failed": [],
+  "findings": [
+   "1FL 平面図：line_through_text「洋室  24.00 m²」見えがかり線"
+  ]
+ },
+ {
+  "id": "14-13",
+  "title": "基礎の入力と土台を動かした後の要確認",
+  "look": "第8工程の量、土台・柱の支えの行と「作り直す」の表示。",
+  "docs": "docs/200",
+  "steps": [
+   {
+    "n": 1,
+    "tool": "create_member",
+    "args": {
+     "start": [
+      0,
+      0,
+      540
+     ],
+     "end": [
+      3000,
+      0,
+      540
+     ],
+     "role": "sill",
+     "material_class": "timber",
+     "section": {
+      "kind": "rectangle",
+      "width": 120,
+      "depth": 120
+     },
+     "anchor": {
+      "up": "top"
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 2,
+    "tool": "create_member",
+    "args": {
+     "start": [
+      3000,
+      0,
+      540
+     ],
+     "end": [
+      3000,
+      2000,
+      540
+     ],
+     "role": "sill",
+     "material_class": "timber",
+     "section": {
+      "kind": "rectangle",
+      "width": 120,
+      "depth": 120
+     },
+     "anchor": {
+      "up": "top"
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 3,
+    "tool": "create_member",
+    "args": {
+     "start": [
+      3000,
+      2000,
+      540
+     ],
+     "end": [
+      0,
+      2000,
+      540
+     ],
+     "role": "sill",
+     "material_class": "timber",
+     "section": {
+      "kind": "rectangle",
+      "width": 120,
+      "depth": 120
+     },
+     "anchor": {
+      "up": "top"
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 4,
+    "tool": "create_member",
+    "args": {
+     "start": [
+      0,
+      2000,
+      540
+     ],
+     "end": [
+      0,
+      0,
+      540
+     ],
+     "role": "sill",
+     "material_class": "timber",
+     "section": {
+      "kind": "rectangle",
+      "width": 120,
+      "depth": 120
+     },
+     "anchor": {
+      "up": "top"
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 5,
+    "tool": "generate_foundation",
+    "args": {
+     "inputs": {
+      "sources": [
+       "94acf01d-9c94-44bf-977b-7647270fe86d",
+       "87d24666-b5c0-4655-879f-5fb037a7286a",
+       "994adc44-f388-4e3a-aab9-edbead027831",
+       "15e0e632-4a02-460f-85c3-7486794154eb"
+      ]
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 6,
+    "tool": "generate_foundation",
+    "args": {
+     "inputs": {
+      "sources": [
+       "94acf01d-9c94-44bf-977b-7647270fe86d",
+       "87d24666-b5c0-4655-879f-5fb037a7286a",
+       "994adc44-f388-4e3a-aab9-edbead027831",
+       "15e0e632-4a02-460f-85c3-7486794154eb"
+      ]
+     },
+     "preview": false,
+     "expected_revision": 124
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 7,
+    "tool": "set_view",
+    "args": {
+     "view": "iso"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 8,
+    "tool": "set_view",
+    "args": {
+     "view": "fit"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 9,
+    "tool": "ui_trigger",
+    "args": {
+     "action": "permitWorkflowAction"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 10,
+    "tool": "ui_set",
+    "args": {
+     "window": "main",
+     "widget": "permitWorkflowPhases",
+     "row": 7,
+     "value": 0
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 11,
+    "tool": "permit_checks",
+    "args": {
+     "stage": 8
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"confirmation\":{\"changed\":[],\"state\":\"未確認\"},\"rows\":[{\"attention\":false,\"details\":\"土台から作った基礎で、今の土台と合っています。\\nフーチング　0.675 m³\\n立上り　0.900 m³\",\"item\":\"布基礎計画\",\"state\":\"入力済み\",\"targets\":[\"997f2b04-abae-4db0-89d9-e7d72be22f26\"]},{\"attention\":false,\"details\":\"照らした土台・柱 4：下の面が支えに乗る 4、それ以外 0\",\"item\":\"土台・柱の支え\",\"state\":\"形の上で支えあり\",\"targets\":[]},{\"attention\":false,\"details\":\"実形状の下面と支持面の重なり・高さの診断です。接合・アンカー・パッキン実体・支持耐力・地盤は未照査です。部分支持を合算して全面支持とは扱いません。\",\"item\":\"照らした事\",\"state\":\"参考\",\"targets\":[]},{\"attention\":false,\"details\":\"地盤・支持力・沈下、基礎断面の構造計算、配筋・かぶり・定着、耐力壁と柱の荷重伝達、凍結深度・地形、人通口・配管・換気。地盤の資料（地盤調査）と基礎伏図・配筋・人通口の記載、または外部の詳細図への参照を、申請先の様式で確かめます。\",\"item\":\"まだ確かめていない事\",\"state\":\"未評価\",\"targets\":[]}],\"stage\":8}"
+   },
+   {
+    "n": 12,
+    "tool": "ui_capture",
+    "args": {
+     "window": "main"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 13,
+    "tool": "move",
+    "args": {
+     "ids": [
+      "94acf01d-9c94-44bf-977b-7647270fe86d"
+     ],
+     "vector": [
+      0,
+      -100,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 14,
+    "tool": "permit_checks",
+    "args": {
+     "stage": 8
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"confirmation\":{\"changed\":[],\"state\":\"未確認\"},\"rows\":[{\"attention\":true,\"details\":\"土台が変わりました。基礎を作り直します。\\n参照土台が変更されています。基礎を作り直してください\\nフーチング　0.675 m³\\n立上り　0.900 m³\",\"item\":\"布基礎計画\",\"state\":\"要確認\",\"targets\":[\"997f2b04-abae-4db0-89d9-e7d72be22f26\"]},{\"attention\":true,\"details\":\"照らした土台・柱 4：下の面が支えに乗る 3、それ以外 1\\nMember 1　一部だけ支えに乗る\",\"item\":\"土台・柱の支え\",\"state\":\"要確認\",\"targets\":[\"94acf01d-9c94-44bf-977b-7647270fe86d\"]},{\"attention\":false,\"details\":\"実形状の下面と支持面の重なり・高さの診断です。接合・アンカー・パッキン実体・支持耐力・地盤は未照査です。部分支持を合算して全面支持とは扱いません。\",\"item\":\"照らした事\",\"state\":\"参考\",\"targets\":[]},{\"attention\":false,\"details\":\"地盤・支持力・沈下、基礎断面の構造計算、配筋・かぶり・定着、耐力壁と柱の荷重伝達、凍結深度・地形、人通口・配管・換気。地盤の資料（地盤調査）と基礎伏図・配筋・人通口の記載、または外部の詳細図への参照を、申請先の様式で確かめます。\",\"item\":\"まだ確かめていない事\",\"state\":\"未評価\",\"targets\":[]}],\"stage\":8}"
+   },
+   {
+    "n": 15,
+    "tool": "ui_capture",
+    "args": {
+     "window": "main"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   }
+  ],
+  "pictures": [
+   {
+    "file": "14-13-12-0.png",
+    "caption": "第8工程・土台に合う基礎"
+   },
+   {
+    "file": "14-13-15-0.png",
+    "caption": "第8工程・土台を動かした後"
+   }
+  ],
+  "failed": [],
+  "findings": []
+ },
+ {
+  "id": "12-43",
+  "title": "GLで地階を判定し、面積表の算入と控除を照合",
+  "look": "面積の表で地階の注が読み取れるか。モデルは確認用の架空の建物。",
+  "docs": "docs/166",
+  "steps": [
+   {
+    "n": 1,
+    "tool": "set_levels",
+    "args": {
+     "levels": [
+      {
+       "name": "B1FL",
+       "elevation": -2500
+      },
+      {
+       "name": "1FL",
+       "elevation": 500
+      }
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 2,
+    "tool": "create_wall",
+    "args": {
+     "points": [
+      [
+       0,
+       0
+      ],
+      [
+       8000,
+       0
+      ],
+      [
+       8000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ],
+      [
+       0,
+       0
+      ]
+     ],
+     "thickness": 200,
+     "height": 3000,
+     "base": -2500
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 3,
+    "tool": "create_slab",
+    "args": {
+     "outline": [
+      [
+       0,
+       0
+      ],
+      [
+       8000,
+       0
+      ],
+      [
+       8000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ]
+     ],
+     "top": -2500,
+     "thickness": 200
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 4,
+    "tool": "create_wall",
+    "args": {
+     "points": [
+      [
+       0,
+       0
+      ],
+      [
+       6000,
+       0
+      ],
+      [
+       6000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ],
+      [
+       0,
+       0
+      ]
+     ],
+     "thickness": 200,
+     "height": 3000,
+     "base": 500
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 5,
+    "tool": "create_slab",
+    "args": {
+     "outline": [
+      [
+       0,
+       0
+      ],
+      [
+       6000,
+       0
+      ],
+      [
+       6000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ]
+     ],
+     "top": 500,
+     "thickness": 200
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 6,
+    "tool": "create_room",
+    "args": {
+     "at": [
+      2500,
+      2500
+     ],
+     "base": -2500,
+     "name": "地階の住宅"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 7,
+    "tool": "area_table",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": "{\"building_area\":48.0,\"ground\":\"not_evaluated\",\"legal_notes\":[\"根拠：建築基準法施行令 第 2 条 第 1 項 第 2 号（建築面積）・第 3 号（床面積）・第 4 号（延べ面積）、e-Gov 法令検索で 2026-11-16 に読んだ版（令和 8 年 11 月 1 日施行）。\",\"床面積：壁（壁ツールの壁）の中心線で囲まれた所のうち、床（その階のスラブ）のある所。吹抜けは入れない。階段は、着く上の階でも入れた（一般的な扱い。特定行政庁の取扱いを確かめてください）。\",\"未評価：壁で囲まれていない所（バルコニー・ポーチ・ピロティなど、開放性による扱い）、柱だけで囲まれた部分、特例軒等、高い開放性の指定（同 2 号ただし書）。\",\"延べ面積は各階の床面積の合計。容積率の算定の延べ面積は、そこから「容積率の区分」を付けた室の面積（壁芯）を引いた値（区分ごとに、延べ面積に割合を掛けた面積まで）。根拠：施行令 第 2 条 第 1 項 第 4 号ただし書・第 3 項、建築基準法 第 52 条 第 6 項 第 1 号・第 2 号、施行令 第 135 条の 16、e-Gov 法令検索で 2026-11-17 に読んだ版（令：令和 8 年 11 月 1 日施行、法：令和 8 年 5 月 27 日施行）。\",\"容積率の区分を付けた室が無いので、容積率の算定の延べ面積は延べ面積と同じ（車庫・備蓄倉庫・昇降路・共用廊下などがあれば、室のプロパティで区分を付けてください）。\",\"未評価：特定行政庁が認める機械室等（同 第 6 項 第 3 号）、同じ敷地のほかの建築物の床面積、容積率の最低限度の算定。\",\"地盤面：「GL」という名前のレベルが無いので、地階かどうかは見ていない（未評価。地階の建築面積・法 52 条 3 項）。\"],\"levels\":[{\"basement\":false,\"ceiling\":3000.0,\"elevation\":-2500.0,\"enclosed\":48.0,\"legal_floor\":48.0,\"level\":\"B1FL\",\"regions\":1,\"regions_without_room\":0,\"room_centre\":48.0,\"room_inner\":45.24,\"rooms\":1,\"slab\":47.99999999999999,\"slabs\":1,\"unreadable_walls\":0},{\"basement\":false,\"ceiling\":null,\"elevation\":500.0,\"enclosed\":36.0,\"legal_floor\":35.99999999999999,\"level\":\"1FL\",\"regions\":1,\"regions_without_room\":1,\"room_centre\":0.0,\"room_inner\":0.0,\"rooms\":0,\"slab\":35.99999999999999,\"slabs\":1,\"unreadable_walls\":0}],\"ratio_floor_area\":84.0,\"ratio_parts\":[],\"total_enclosed\":84.0,\"total_legal_floor\":84.0,\"total_room_centre\":48.0,\"total_slab\":83.99999999999999}"
+   },
+   {
+    "n": 8,
+    "tool": "get_levels",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 9,
+    "tool": "set_levels",
+    "args": {
+     "levels": [
+      {
+       "id": "L1",
+       "name": "B1FL",
+       "elevation": -2500
+      },
+      {
+       "name": "GL",
+       "elevation": 0
+      },
+      {
+       "id": "L2",
+       "name": "1FL",
+       "elevation": 500
+      }
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 10,
+    "tool": "set_room_finish",
+    "args": {
+     "id": "d4725c5d-37a3-4573-922c-d823ff6e1c95",
+     "ceiling_height": 2400,
+     "ratio_part": "basement_dwelling"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 11,
+    "tool": "area_table",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": "{\"building_area\":35.99999999999999,\"ground\":0.0,\"legal_notes\":[\"根拠：建築基準法施行令 第 2 条 第 1 項 第 2 号（建築面積）・第 3 号（床面積）・第 4 号（延べ面積）、e-Gov 法令検索で 2026-11-16 に読んだ版（令和 8 年 11 月 1 日施行）。\",\"床面積：壁（壁ツールの壁）の中心線で囲まれた所のうち、床（その階のスラブ）のある所。吹抜けは入れない。階段は、着く上の階でも入れた（一般的な扱い。特定行政庁の取扱いを確かめてください）。\",\"未評価：壁で囲まれていない所（バルコニー・ポーチ・ピロティなど、開放性による扱い）、柱だけで囲まれた部分、特例軒等、高い開放性の指定（同 2 号ただし書）。\",\"延べ面積は各階の床面積の合計。容積率の算定の延べ面積は、そこから「容積率の区分」を付けた室の面積（壁芯）を引いた値（区分ごとに、延べ面積に割合を掛けた面積まで）。根拠：施行令 第 2 条 第 1 項 第 4 号ただし書・第 3 項、建築基準法 第 52 条 第 6 項 第 1 号・第 2 号、施行令 第 135 条の 16、e-Gov 法令検索で 2026-11-17 に読んだ版（令：令和 8 年 11 月 1 日施行、法：令和 8 年 5 月 27 日施行）。\",\"容積率の算定で入れない部分：地階の住宅・老人ホーム等の部分 1 室 48.00 ㎡、限度 28.00 ㎡ → 28.00 ㎡ を引いた（法 52 条 3 項）。\",\"区分を付けた室は、室の面積（壁芯）をそのまま引いた（室の中に床の無い所があれば、その分多く引いている）。その部分が条文の用途に当たるか（専ら駐車のため、専ら防災のため、床に据え付ける蓄電池、など）は見ていない。\",\"地階の住宅等の限度は、建物全体を住宅等として延べ面積の 1/3 にした（住宅等でない部分があれば、限度はその分小さい）。天井の高さは室の天井高、無ければ次のレベルまでの高さ。\",\"未評価：特定行政庁が認める機械室等（同 第 6 項 第 3 号）、同じ敷地のほかの建築物の床面積、容積率の最低限度の算定。\",\"地盤面：レベル「GL」の高さ 0 とした（建物が周りの地面と接する位置の平均の高さ、令 2 条 2 項。高低差が 3 m を超える時の扱いは見ていない）。地階は令 1 条 2 号（床が地盤面下で、床から地盤面までが天井の高さの 1/3 以上）、e-Gov 法令検索で 2026-11-17 に読んだ版。\",\"B1FL：地階（床から地盤面まで 2500、天井の高さ 2400（室の天井高の平均））。\",\"建築面積：地階で地盤面上 1 m 以下の B1FL は入れていない（上の階で覆われている所は、上の階として入る）。\"],\"levels\":[{\"basement\":true,\"ceiling\":2400.0,\"elevation\":-2500.0,\"enclosed\":48.0,\"legal_floor\":48.0,\"level\":\"B1FL\",\"regions\":1,\"regions_without_room\":0,\"room_centre\":48.0,\"room_inner\":45.24,\"rooms\":1,\"slab\":47.99999999999999,\"slabs\":1,\"unreadable_walls\":0},{\"basement\":false,\"ceiling\":null,\"elevation\":500.0,\"enclosed\":36.0,\"legal_floor\":35.99999999999999,\"level\":\"1FL\",\"regions\":1,\"regions_without_room\":1,\"room_centre\":0.0,\"room_inner\":0.0,\"rooms\":0,\"slab\":35.99999999999999,\"slabs\":1,\"unreadable_walls\":0}],\"ratio_floor_area\":56.0,\"ratio_parts\":[{\"area\":48.0,\"basis\":\"法 52 条 3 項\",\"excluded\":28.0,\"label\":\"地階の住宅・老人ホーム等の部分\",\"limit\":28.0,\"part\":\"basement_dwelling\",\"rooms\":1}],\"total_enclosed\":84.0,\"total_legal_floor\":84.0,\"total_room_centre\":48.0,\"total_slab\":83.99999999999999}"
+   },
+   {
+    "n": 12,
+    "tool": "render_drawing_set",
+    "args": {
+     "sheet": "面積の表",
+     "texts": true
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"image_path\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\13.png\",\"notes\":[],\"sheet\":{\"name\":\"面積の表\",\"number\":\"A-13\",\"texts\":[\"面積の表\",\"階\",\"壁で囲まれた面積・壁芯 (m2)\",\"室の数\",\"室のない閉じた所\",\"室の合計・壁芯 (m2)\",\"室の合計・内法 (m2)\",\"床スラブ (m2)\",\"法の床面積\",\"B1FL\",\"48.00\",\"1\",\"0\",\"48.00\",\"45.24\",\"48.00\",\"48.00\",\"1FL\",\"36.00\",\"0\",\"1\",\"0.00\",\"0.00\",\"36.00\",\"36.00\",\"合計（延べ面積）\",\"84.00\",\"48.00\",\"84.00\",\"84.00\",\"容積率の算定の延べ面積\",\"56.00\",\"建築面積\",\"36.00\",\"モデルから測った面積です。法の床面積・延べ面積・建築面積は、下の決まりで出しました（確認申請に使う時は、特定行政庁・確認検査機関の取扱いを確かめてください）。\",\"根拠：建築基準法施行令 第 2 条 第 1 項 第 2 号（建築面積）・第 3 号（床面積）・第 4 号（延べ面積）、\",\"　e-Gov 法令検索で 2026-11-16 に読んだ版（令和 8 年 11 月 1 日施行）。\",\"床面積：壁（壁ツールの壁）の中心線で囲まれた所のうち、床（その階のスラブ）のある所。吹抜けは入れない。階段は、着く上の階でも入れた（一般的な扱い。特定行政庁の取扱いを確かめてください）。\",\"未評価：壁で囲まれていない所（バルコニー・ポーチ・ピロティなど、開放性による扱い）、柱だけで囲まれた部分、特例軒等、高い開放性の指定（同 2 号ただし書）。\",\"延べ面積は各階の床面積の合計。容積率の算定の延べ面積は、そこから「容積率の区分」を付けた室の面積（壁芯）を引いた値（区分ごとに、延べ面積に割合を掛けた面積まで）。\",\"　根拠：施行令 第 2 条 第 1 項 第 4 号ただし書・第 3 項、建築基準法 第 52 条 第 6 項 第 1 号・第 2 号、施行令 第 135 条の 16、\",\"　e-Gov 法令検索で 2026-11-17 に読んだ版（令：令和 8 年 11 月 1 日施行、法：令和 8 年 5 月 27 日施行）。\",\"容積率の算定で入れない部分：地階の住宅・老人ホーム等の部分 1 室 48.00 ㎡、限度 28.00 ㎡ → 28.00 ㎡ を引いた（法 52 条 3 項）。\",\"区分を付けた室は、室の面積（壁芯）をそのまま引いた（室の中に床の無い所があれば、その分多く引いている）。その部分が条文の用途に当たるか（専ら駐車のため、専ら防災のため、床に据え付ける蓄電池、\",\"　など）は見ていない。\",\"地階の住宅等の限度は、建物全体を住宅等として延べ面積の 1/3 にした（住宅等でない部分があれば、限度はその分小さい）。天井の高さは室の天井高、無ければ次のレベルまでの高さ。\",\"未評価：特定行政庁が認める機械室等（同 第 6 項 第 3 号）、同じ敷地のほかの建築物の床面積、容積率の最低限度の算定。\",\"地盤面：レベル「GL」の高さ 0 とした（建物が周りの地面と接する位置の平均の高さ、令 2 条 2 項。高低差が 3 m を超える時の扱いは見ていない）。地階は令 1 条 2 号（床が地盤面下で、\",\"　床から地盤面までが天井の高さの 1/3 以上）、e-Gov 法令検索で 2026-11-17 に読んだ版。\",\"B1FL：地階（床から地盤面まで 2500、天井の高さ 2400（室の天井高の平均））。\",\"建築面積：地階で地盤面上 1 m 以下の B1FL は入れていない（上の階で覆われている所は、上の階として入る）。\",\"工事名\",\"図面名\",\"面積の表\",\"縮尺\",\"1:100 (A4)\",\"日付\",\"2026-11-23\",\"図番\",\"A-13\",\"作成者\"]},\"sheets\":[{\"index\":1,\"name\":\"図面リスト\",\"notes\":[],\"number\":\"A-01\",\"paper\":\"A4\"},{\"index\":2,\"name\":\"計画概要\",\"notes\":[],\"number\":\"A-02\",\"paper\":\"A3\"},{\"index\":3,\"name\":\"B1FL 平面図\",\"notes\":[],\"number\":\"A-03\",\"paper\":\"A4\"},{\"index\":4,\"name\":\"GL 平面図\",\"notes\":[],\"number\":\"A-04\",\"paper\":\"A4\"},{\"index\":5,\"name\":\"1FL 平面図\",\"notes\":[],\"number\":\"A-05\",\"paper\":\"A4\"},{\"index\":6,\"name\":\"A-A 断面図\",\"notes\":[],\"number\":\"A-06\",\"paper\":\"A4\"},{\"index\":7,\"name\":\"B-B 断面図\",\"notes\":[],\"number\":\"A-07\",\"paper\":\"A4\"},{\"index\":8,\"name\":\"南立面図\",\"notes\":[],\"number\":\"A-08\",\"paper\":\"A4\"},{\"index\":9,\"name\":\"東立面図\",\"notes\":[],\"number\":\"A-09\",\"paper\":\"A4\"},{\"index\":10,\"name\":\"北立面図\",\"notes\":[],\"number\":\"A-10\",\"paper\":\"A4\"},{\"index\":11,\"name\":\"西立面図\",\"notes\":[],\"number\":\"A-11\",\"paper\":\"A4\"},{\"index\":12,\"name\":\"室の表\",\"notes\":[],\"number\":\"A-12\",\"paper\":\"A4\"},{\"index\":13,\"name\":\"面積の表\",\"notes\":[],\"number\":\"A-13\",\"paper\":\"A4\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\13.png\"},{\"index\":14,\"name\":\"仕上げ表\",\"notes\":[],\"number\":\"A-14\",\"paper\":\"A4\"}]}\n面積の表\n階\n壁で囲まれた面積・壁芯 (m2)\n室の数\n室のない閉じた所\n室の合計・壁芯 (m2)\n室の合計・内法 (m2)\n床スラブ (m2)\n法の床面積\nB1FL\n48.00\n1\n0\n48.00\n45.24\n48.00\n48.00\n1FL\n36.00\n0\n1\n0.00\n0.00\n36.00\n36.00\n合計（延べ面積）\n84.00\n48.00\n84.00\n84.00\n容積率の算定の延べ面積\n56.00\n建築面積\n36.00\nモデルから測った面積です。"
+   }
+  ],
+  "pictures": [
+   {
+    "file": "12-43-12-0.png",
+    "caption": "地階の注と面積"
+   }
+  ],
+  "failed": [],
+  "findings": []
+ },
+ {
+  "id": "12-21",
+  "title": "斜めの辺がある屋根3種と、妻の辺の変更",
+  "look": "自動の妻と指定した妻の違い。片流れのけらば、寄棟の谷。屋根生成はMCP、妻の指定はプロパティ。",
+  "docs": "docs/138",
+  "steps": [
+   {
+    "n": 1,
+    "tool": "create_roof",
+    "args": {
+     "kind": "gable",
+     "outline": [
+      [
+       0,
+       0
+      ],
+      [
+       6000,
+       0
+      ],
+      [
+       8000,
+       2000
+      ],
+      [
+       8000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ]
+     ],
+     "height": 3000,
+     "pitch": 0.4,
+     "eave": 600,
+     "gable_eave": 300,
+     "thickness": 100
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 2,
+    "tool": "roof_info",
+    "args": {
+     "id": "46f01be1-957d-443b-96c7-7deb0ffde1e6"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"eave\":600.0,\"eave_height\":2975.9999999999995,\"fall\":[0.0,-1.0],\"gable_eave\":300.0,\"gable_sides\":[],\"height\":3000.0,\"id\":\"46f01be1-957d-443b-96c7-7deb0ffde1e6\",\"kind\":\"gable\",\"level\":\"\",\"outline\":[[0.0,0.0],[6000.0,0.0],[8000.0,2000.0],[8000.0,6000.0],[0.0,6000.0]],\"parts\":1,\"pitch\":0.4,\"plan_area\":59.81573159853146,\"ridge\":\"long\",\"ridge_height\":3220.079968025634,\"sides\":[],\"slope_area\":59.8635650580737,\"thickness\":100.0,\"wall_sides\":[]}"
+   },
+   {
+    "n": 3,
+    "tool": "set_view",
+    "args": {
+     "view": "iso"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 4,
+    "tool": "set_view",
+    "args": {
+     "view": "fit",
+     "ids": [
+      "46f01be1-957d-443b-96c7-7deb0ffde1e6"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 5,
+    "tool": "capture_view",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 6,
+    "tool": "select",
+    "args": {
+     "ids": [
+      "46f01be1-957d-443b-96c7-7deb0ffde1e6"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 7,
+    "tool": "ui_set",
+    "args": {
+     "window": "main",
+     "widget": "roofGableSides",
+     "value": "1,4"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 8,
+    "tool": "roof_info",
+    "args": {
+     "id": "46f01be1-957d-443b-96c7-7deb0ffde1e6"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"eave\":600.0,\"eave_height\":2975.9999999999995,\"fall\":[0.0,-1.0],\"gable_eave\":300.0,\"gable_sides\":[0,3],\"height\":3000.0,\"id\":\"46f01be1-957d-443b-96c7-7deb0ffde1e6\",\"kind\":\"gable\",\"level\":\"\",\"outline\":[[0.0,0.0],[6000.0,0.0],[8000.0,2000.0],[8000.0,6000.0],[0.0,6000.0]],\"parts\":1,\"pitch\":0.4,\"plan_area\":58.615731598531966,\"ridge\":\"long\",\"ridge_height\":3260.079968025666,\"sides\":[],\"slope_area\":58.662605441767326,\"thickness\":100.0,\"wall_sides\":[]}"
+   },
+   {
+    "n": 9,
+    "tool": "capture_view",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 10,
+    "tool": "delete",
+    "args": {
+     "ids": [
+      "46f01be1-957d-443b-96c7-7deb0ffde1e6"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 11,
+    "tool": "create_roof",
+    "args": {
+     "kind": "shed",
+     "outline": [
+      [
+       0,
+       0
+      ],
+      [
+       6000,
+       0
+      ],
+      [
+       8000,
+       2000
+      ],
+      [
+       8000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ]
+     ],
+     "height": 3000,
+     "pitch": 0.4,
+     "eave": 600,
+     "gable_eave": 300,
+     "thickness": 100
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 12,
+    "tool": "roof_info",
+    "args": {
+     "id": "7b9e0f98-c621-4a05-99ae-3fc792f666ea"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"eave\":600.0,\"eave_height\":2976.0,\"fall\":[0.0,-1.0],\"gable_eave\":300.0,\"gable_sides\":[],\"height\":3000.0,\"id\":\"7b9e0f98-c621-4a05-99ae-3fc792f666ea\",\"kind\":\"shed\",\"level\":\"\",\"outline\":[[0.0,0.0],[6000.0,0.0],[8000.0,2000.0],[8000.0,6000.0],[0.0,6000.0]],\"parts\":1,\"pitch\":0.4,\"plan_area\":59.81573159852914,\"ridge\":\"long\",\"ridge_height\":3364.079968025575,\"sides\":[],\"slope_area\":59.86356505807139,\"thickness\":100.0,\"wall_sides\":[]}"
+   },
+   {
+    "n": 13,
+    "tool": "set_view",
+    "args": {
+     "view": "iso"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 14,
+    "tool": "set_view",
+    "args": {
+     "view": "fit",
+     "ids": [
+      "7b9e0f98-c621-4a05-99ae-3fc792f666ea"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 15,
+    "tool": "capture_view",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 16,
+    "tool": "delete",
+    "args": {
+     "ids": [
+      "7b9e0f98-c621-4a05-99ae-3fc792f666ea"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 17,
+    "tool": "create_roof",
+    "args": {
+     "kind": "hip",
+     "outline": [
+      [
+       0,
+       0
+      ],
+      [
+       8000,
+       0
+      ],
+      [
+       8000,
+       4000
+      ],
+      [
+       5000,
+       4000
+      ],
+      [
+       3000,
+       8000
+      ],
+      [
+       0,
+       8000
+      ]
+     ],
+     "height": 3000,
+     "pitch": 0.4,
+     "eave": 600,
+     "gable_eave": 300,
+     "thickness": 100
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 18,
+    "tool": "roof_info",
+    "args": {
+     "id": "237e4aac-a58f-4425-ae1b-ab91701dd6d2"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"eave\":600.0,\"eave_height\":2975.9999999999995,\"fall\":[0.0,-1.0],\"gable_eave\":300.0,\"gable_sides\":[],\"height\":3000.0,\"id\":\"237e4aac-a58f-4425-ae1b-ab91701dd6d2\",\"kind\":\"hip\",\"level\":\"\",\"outline\":[[0.0,0.0],[8000.0,0.0],[8000.0,4000.0],[5000.0,4000.0],[3000.0,8000.0],[0.0,8000.0]],\"parts\":6,\"pitch\":0.4,\"plan_area\":67.72328157299967,\"ridge\":\"long\",\"ridge_height\":3207.0304511756563,\"sides\":[],\"slope_area\":67.77743854412782,\"thickness\":100.0,\"wall_sides\":[]}"
+   },
+   {
+    "n": 19,
+    "tool": "set_view",
+    "args": {
+     "view": "iso"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 20,
+    "tool": "set_view",
+    "args": {
+     "view": "fit",
+     "ids": [
+      "237e4aac-a58f-4425-ae1b-ab91701dd6d2"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 21,
+    "tool": "capture_view",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   }
+  ],
+  "pictures": [
+   {
+    "file": "12-21-5-0.png",
+    "caption": "自動の妻の切妻"
+   },
+   {
+    "file": "12-21-9-0.png",
+    "caption": "妻の辺1と4に変更"
+   },
+   {
+    "file": "12-21-15-0.png",
+    "caption": "斜めのけらばがある片流れ"
+   },
+   {
+    "file": "12-21-21-0.png",
+    "caption": "斜めの辺と入隅がある寄棟"
+   }
+  ],
+  "failed": [],
+  "findings": []
+ },
+ {
+  "id": "12-2",
+  "title": "平面で開口を別の壁にCtrlコピー",
+  "look": "コピー先の壁面と窓の内外。形・腰高・符号を元と照合。",
+  "docs": "docs/120",
+  "steps": [
+   {
+    "n": 1,
+    "tool": "create_wall",
+    "args": {
+     "points": [
+      [
+       0,
+       0
+      ],
+      [
+       12000,
+       0
+      ]
+     ],
+     "height": 3000,
+     "thickness": 200
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 2,
+    "tool": "create_wall",
+    "args": {
+     "points": [
+      [
+       0,
+       3000
+      ],
+      [
+       12000,
+       3000
+      ]
+     ],
+     "height": 3000,
+     "thickness": 200
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 3,
+    "tool": "place_openings",
+    "args": {
+     "host": "66a7ad82-353b-4108-b9df-e4d2cf073ce9",
+     "face_normal": [
+      0,
+      -1,
+      0
+     ],
+     "count": 1,
+     "width": 1000,
+     "height": 1200,
+     "sill": 900
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 4,
+    "tool": "set_opening_fittings",
+    "args": {
+     "host": "66a7ad82-353b-4108-b9df-e4d2cf073ce9",
+     "fitting": {
+      "type": "sliding_double",
+      "frame": 48
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 5,
+    "tool": "ui_plan",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 6,
+    "tool": "set_view",
+    "args": {
+     "view": "fit"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 7,
+    "tool": "ui_tool",
+    "args": {
+     "tool": "move"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 8,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      6000,
+      -150,
+      1200
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 9,
+    "tool": "ui_type",
+    "args": {
+     "keys": [
+      "Ctrl"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 10,
+    "tool": "ui_view_hover",
+    "args": {
+     "at": [
+      3800,
+      3080,
+      1200
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 11,
+    "tool": "ui_windows",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": "{\"measurement\":\"2201.3\",\"snap\":{\"kind\":9,\"point\":[3798.66028708134,-100.0,0.0]},\"status\":\"開口 1 を Wall 2 へコピー［コピー］: クリックで、この位置を真ん中にあけます（同じ腰高）（壁沿いに固定中。↑で上下、↓で面内を自由に）\",\"windows\":[{\"class\":\"sbr::app::MainWindow\",\"main\":true,\"modal\":false,\"object_name\":\"\",\"title\":\"無題[*] - SketchBRep\"},{\"class\":\"sbr::app::ToolPaletteDock\",\"main\":false,\"modal\":false,\"object_name\":\"toolsPalette\",\"title\":\"ツール\"},{\"class\":\"QLabel\",\"main\":false,\"modal\":false,\"object_name\":\"\",\"title\":\"\"}]}"
+   },
+   {
+    "n": 12,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      3800,
+      3080,
+      1200
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 13,
+    "tool": "list_openings",
+    "args": {
+     "ids": [
+      "ee9c563b-451f-4fd4-9cb6-f0a6485662f2"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"hosts\":[{\"host\":\"ee9c563b-451f-4fd4-9cb6-f0a6485662f2\",\"name\":\"Wall 2\",\"openings\":[{\"center\":[3798.66028708134,2900.0,1500.0],\"depth\":200.0,\"fitting\":{\"frame\":48.0,\"type\":\"sliding_double\"},\"height\":1200.0,\"id\":\"opening-08c1d770-7bed-4585-a9f1-f8ef1cc9545c\",\"index\":1,\"name\":\"Opening 1\",\"normal\":[-0.0,-1.0,-0.0],\"offset\":3298.66028708134,\"sill\":900.0,\"sill_height\":900.0,\"width\":1000.0}]}]}"
+   },
+   {
+    "n": 14,
+    "tool": "list_openings",
+    "args": {
+     "ids": [
+      "66a7ad82-353b-4108-b9df-e4d2cf073ce9"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"hosts\":[{\"host\":\"66a7ad82-353b-4108-b9df-e4d2cf073ce9\",\"name\":\"Wall 1\",\"openings\":[{\"center\":[6000.0,-100.0,1500.0],\"depth\":200.0,\"fitting\":{\"frame\":48.0,\"type\":\"sliding_double\"},\"height\":1200.0,\"id\":\"opening-693c6fe1-18bb-4596-b5a5-18f442f25504\",\"index\":1,\"name\":\"Opening 1\",\"normal\":[0.0,-1.0,0.0],\"offset\":5500.0,\"sill\":900.0,\"sill_height\":900.0,\"width\":1000.0}]}]}"
+   },
+   {
+    "n": 15,
+    "tool": "opening_schedule",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": "{\"count\":2,\"openings\":[{\"center\":[6000.0,-100.0,1500.0],\"fitting\":\"引違い\",\"height\":1200.0,\"host\":\"66a7ad82-353b-4108-b9df-e4d2cf073ce9\",\"host_name\":\"Wall 1\",\"id\":\"opening-693c6fe1-18bb-4596-b5a5-18f442f25504\",\"index\":1,\"kind\":\"window\",\"level\":\"\",\"mark\":\"AW1\",\"own_mark\":false,\"product\":\"\",\"sill\":900.0,\"width\":1000.0},{\"center\":[3798.66028708134,2900.0,1500.0],\"fitting\":\"引違い\",\"height\":1200.0,\"host\":\"ee9c563b-451f-4fd4-9cb6-f0a6485662f2\",\"host_name\":\"Wall 2\",\"id\":\"opening-08c1d770-7bed-4585-a9f1-f8ef1cc9545c\",\"index\":1,\"kind\":\"window\",\"level\":\"\",\"mark\":\"AW1\",\"own_mark\":false,\"product\":\"\",\"sill\":900.0,\"width\":1000.0}],\"types\":[{\"count\":2,\"fitting\":\"引違い\",\"height\":1200.0,\"kind\":\"window\",\"mark\":\"AW1\",\"mixed\":false,\"own_mark\":false,\"product\":\"\",\"sills\":[900.0],\"width\":1000.0}]}"
+   },
+   {
+    "n": 16,
+    "tool": "capture_view",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   }
+  ],
+  "pictures": [
+   {
+    "file": "12-2-16-0.png",
+    "caption": "平面で別の壁にコピー"
+   }
+  ],
+  "failed": [],
+  "findings": []
+ },
+ {
+  "id": "12-48",
+  "title": "建具の型の登録・適用・更新を別の壁で確認",
+  "look": "建具プロパティで型を選ぶ操作と、窓枠・建具の見え方。型の更新と吊元はMCPで照合。",
+  "docs": "docs/171",
+  "steps": [
+   {
+    "n": 1,
+    "tool": "set_levels",
+    "args": {
+     "levels": [
+      {
+       "name": "1FL",
+       "elevation": 0
+      },
+      {
+       "name": "2FL",
+       "elevation": 3000
+      }
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 2,
+    "tool": "create_wall",
+    "args": {
+     "points": [
+      [
+       0,
+       0
+      ],
+      [
+       8000,
+       0
+      ],
+      [
+       8000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ],
+      [
+       0,
+       0
+      ]
+     ],
+     "thickness": 200,
+     "height": 3000
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 3,
+    "tool": "create_wall",
+    "args": {
+     "points": [
+      [
+       4000,
+       0
+      ],
+      [
+       4000,
+       6000
+      ]
+     ],
+     "thickness": 100,
+     "height": 3000
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 4,
+    "tool": "place_openings",
+    "args": {
+     "host": "ca0b652e-39eb-4196-8bbf-8df48e69ef55",
+     "face_normal": [
+      0,
+      -1,
+      0
+     ],
+     "count": 2,
+     "width": 1600,
+     "height": 1200,
+     "sill": 900
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 5,
+    "tool": "set_opening_fittings",
+    "args": {
+     "host": "ca0b652e-39eb-4196-8bbf-8df48e69ef55",
+     "fitting": {
+      "type": "sliding_double"
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 6,
+    "tool": "place_openings",
+    "args": {
+     "host": "1def3ae0-25ba-46b1-aab9-289e4716bb39",
+     "face_normal": [
+      1,
+      0,
+      0
+     ],
+     "count": 1,
+     "width": 900,
+     "height": 2100,
+     "sill": 0
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 7,
+    "tool": "set_opening_fittings",
+    "args": {
+     "host": "1def3ae0-25ba-46b1-aab9-289e4716bb39",
+     "fitting": {
+      "type": "swing_single",
+      "hinge": "left",
+      "swing": "in"
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 8,
+    "tool": "create_slab",
+    "args": {
+     "outline": [
+      [
+       0,
+       0
+      ],
+      [
+       8000,
+       0
+      ],
+      [
+       8000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ]
+     ],
+     "top": 0,
+     "thickness": 200
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 9,
+    "tool": "create_room",
+    "args": {
+     "at": [
+      2000,
+      3000
+     ],
+     "name": "居間"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 10,
+    "tool": "create_room",
+    "args": {
+     "at": [
+      6000,
+      3000
+     ],
+     "name": "洋室"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 11,
+    "tool": "create_polygon",
+    "args": {
+     "points": [
+      [
+       -2000,
+       -2000,
+       0
+      ],
+      [
+       14000,
+       -2000,
+       0
+      ],
+      [
+       14000,
+       10000,
+       0
+      ],
+      [
+       -2000,
+       10000,
+       0
+      ]
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 12,
+    "tool": "set_site_boundary",
+    "args": {
+     "outline": "b02859ea-8805-4dca-a2dc-a13bf8eb3706",
+     "source": "確認用の架空の測量図"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 13,
+    "tool": "set_energy_route",
+    "args": {
+     "route": "spec",
+     "region": 6,
+     "source": "確認用"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 14,
+    "tool": "place_openings",
+    "args": {
+     "host": "3089f0d0-32eb-49d3-ac9f-cfce201a9988",
+     "face_normal": [
+      0,
+      1,
+      0
+     ],
+     "count": 1,
+     "width": 1600,
+     "height": 1200,
+     "sill": 900
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 15,
+    "tool": "define_fitting_type",
+    "args": {
+     "name": "確認用AW",
+     "fitting": {
+      "type": "sliding_double",
+      "frame": 30,
+      "glass": 5
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"changed\":0,\"name\":\"確認用AW\"}"
+   },
+   {
+    "n": 16,
+    "tool": "set_opening_fittings",
+    "args": {
+     "host": "ca0b652e-39eb-4196-8bbf-8df48e69ef55",
+     "fitting": {
+      "type_name": "確認用AW"
+     },
+     "openings": [
+      1
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 17,
+    "tool": "set_opening_fittings",
+    "args": {
+     "host": "3089f0d0-32eb-49d3-ac9f-cfce201a9988",
+     "fitting": {
+      "type_name": "確認用AW"
+     },
+     "openings": [
+      1
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 18,
+    "tool": "define_fitting_type",
+    "args": {
+     "name": "確認用AW",
+     "fitting": {
+      "type": "sliding_double",
+      "frame": 50,
+      "glass": 8
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"changed\":2,\"name\":\"確認用AW\"}"
+   },
+   {
+    "n": 19,
+    "tool": "list_openings",
+    "args": {
+     "ids": [
+      "ca0b652e-39eb-4196-8bbf-8df48e69ef55"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"hosts\":[{\"host\":\"ca0b652e-39eb-4196-8bbf-8df48e69ef55\",\"name\":\"Wall 1\",\"openings\":[{\"center\":[2500.0,-100.0,1500.0],\"depth\":200.0,\"fitting\":{\"frame\":50.0,\"glass\":8.0,\"type\":\"sliding_double\",\"type_name\":\"確認用AW\"},\"height\":1200.0,\"id\":\"opening-bf1c2096-49b1-43dc-9bd1-61c6d5eeaf9c\",\"index\":1,\"name\":\"Opening 1\",\"normal\":[0.0,-1.0,0.0],\"offset\":1600.0,\"sill\":900.0,\"sill_height\":900.0,\"width\":1600.0},{\"center\":[5700.0,-100.0,1500.0],\"depth\":200.0,\"fitting\":{\"type\":\"sliding_double\"},\"height\":1200.0,\"id\":\"opening-151fe61a-03a2-49b7-925d-96ca5d4623b3\",\"index\":2,\"name\":\"Opening 1\",\"normal\":[0.0,-1.0,0.0],\"offset\":4800.0,\"sill\":900.0,\"sill_height\":900.0,\"width\":1600.0}]}]}"
+   },
+   {
+    "n": 20,
+    "tool": "list_openings",
+    "args": {
+     "ids": [
+      "3089f0d0-32eb-49d3-ac9f-cfce201a9988"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"hosts\":[{\"host\":\"3089f0d0-32eb-49d3-ac9f-cfce201a9988\",\"name\":\"Wall 3\",\"openings\":[{\"center\":[3900.0,6100.0,1500.0],\"depth\":200.0,\"fitting\":{\"frame\":50.0,\"glass\":8.0,\"type\":\"sliding_double\",\"type_name\":\"確認用AW\"},\"height\":1200.0,\"id\":\"opening-4d4a184b-53d1-435c-8b9a-f857eff8846d\",\"index\":1,\"name\":\"Opening 1\",\"normal\":[0.0,1.0,0.0],\"offset\":3200.0,\"sill\":900.0,\"sill_height\":900.0,\"width\":1600.0}]}]}"
+   },
+   {
+    "n": 21,
+    "tool": "define_fitting_type",
+    "args": {
+     "name": "確認用AD",
+     "fitting": {
+      "type": "swing_single",
+      "hinge": "right",
+      "leaf": 30
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"changed\":0,\"name\":\"確認用AD\"}"
+   },
+   {
+    "n": 22,
+    "tool": "set_opening_fittings",
+    "args": {
+     "host": "1def3ae0-25ba-46b1-aab9-289e4716bb39",
+     "fitting": {
+      "type_name": "確認用AD",
+      "hinge": "left",
+      "swing": "in"
+     },
+     "openings": [
+      1
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 23,
+    "tool": "define_fitting_type",
+    "args": {
+     "name": "確認用AD",
+     "fitting": {
+      "type": "swing_single",
+      "hinge": "right",
+      "leaf": 35
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"changed\":1,\"name\":\"確認用AD\"}"
+   },
+   {
+    "n": 24,
+    "tool": "list_openings",
+    "args": {
+     "ids": [
+      "1def3ae0-25ba-46b1-aab9-289e4716bb39"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"hosts\":[{\"host\":\"1def3ae0-25ba-46b1-aab9-289e4716bb39\",\"name\":\"Wall 2\",\"openings\":[{\"center\":[8100.0,3100.0,1050.0],\"depth\":200.0,\"fitting\":{\"hinge\":\"left\",\"leaf\":35.0,\"swing\":\"in\",\"type\":\"swing_single\",\"type_name\":\"確認用AD\"},\"height\":2100.0,\"id\":\"opening-56a526eb-b21b-41e5-be56-0f6b4cec0650\",\"index\":1,\"name\":\"Opening 1\",\"normal\":[1.0,0.0,0.0],\"offset\":2550.0,\"sill\":0.0,\"sill_height\":0.0,\"width\":900.0}]}]}"
+   },
+   {
+    "n": 25,
+    "tool": "render_drawing_set",
+    "args": {
+     "sheet": "建具表",
+     "texts": true
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   }
+  ],
+  "pictures": [
+   {
+    "file": "12-48-25-0.png",
+    "caption": "更新後の建具表"
+   }
+  ],
+  "failed": [],
+  "findings": []
+ },
+ {
+  "id": "12-8",
+  "title": "ファイルメニューで図面一式PDF、日本語名でDXF・JWW",
+  "look": "図番と図面リスト。DXF・JWWは日本語名で出力し、保存ダイアログの既定名とJw_cadでの表示は目視。",
+  "docs": "docs/121・141",
+  "steps": [
+   {
+    "n": 1,
+    "tool": "set_levels",
+    "args": {
+     "levels": [
+      {
+       "name": "1FL",
+       "elevation": 0
+      },
+      {
+       "name": "2FL",
+       "elevation": 3000
+      }
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 2,
+    "tool": "create_wall",
+    "args": {
+     "points": [
+      [
+       0,
+       0
+      ],
+      [
+       8000,
+       0
+      ],
+      [
+       8000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ],
+      [
+       0,
+       0
+      ]
+     ],
+     "thickness": 200,
+     "height": 3000
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 3,
+    "tool": "create_wall",
+    "args": {
+     "points": [
+      [
+       4000,
+       0
+      ],
+      [
+       4000,
+       6000
+      ]
+     ],
+     "thickness": 100,
+     "height": 3000
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 4,
+    "tool": "place_openings",
+    "args": {
+     "host": "9eae20ad-ea87-467c-9c06-df0f30bd1a7f",
+     "face_normal": [
+      0,
+      -1,
+      0
+     ],
+     "count": 2,
+     "width": 1600,
+     "height": 1200,
+     "sill": 900
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 5,
+    "tool": "set_opening_fittings",
+    "args": {
+     "host": "9eae20ad-ea87-467c-9c06-df0f30bd1a7f",
+     "fitting": {
+      "type": "sliding_double"
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 6,
+    "tool": "place_openings",
+    "args": {
+     "host": "0d803ef6-e55c-4c90-b137-bb8aa0e06655",
+     "face_normal": [
+      1,
+      0,
+      0
+     ],
+     "count": 1,
+     "width": 900,
+     "height": 2100,
+     "sill": 0
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 7,
+    "tool": "set_opening_fittings",
+    "args": {
+     "host": "0d803ef6-e55c-4c90-b137-bb8aa0e06655",
+     "fitting": {
+      "type": "swing_single",
+      "hinge": "left",
+      "swing": "in"
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 8,
+    "tool": "create_slab",
+    "args": {
+     "outline": [
+      [
+       0,
+       0
+      ],
+      [
+       8000,
+       0
+      ],
+      [
+       8000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ]
+     ],
+     "top": 0,
+     "thickness": 200
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 9,
+    "tool": "create_room",
+    "args": {
+     "at": [
+      2000,
+      3000
+     ],
+     "name": "居間"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 10,
+    "tool": "create_room",
+    "args": {
+     "at": [
+      6000,
+      3000
+     ],
+     "name": "洋室"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 11,
+    "tool": "create_polygon",
+    "args": {
+     "points": [
+      [
+       -2000,
+       -2000,
+       0
+      ],
+      [
+       14000,
+       -2000,
+       0
+      ],
+      [
+       14000,
+       10000,
+       0
+      ],
+      [
+       -2000,
+       10000,
+       0
+      ]
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 12,
+    "tool": "set_site_boundary",
+    "args": {
+     "outline": "f848002f-1a0d-4e06-86cb-742e41ff0f47",
+     "source": "確認用の架空の測量図"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 13,
+    "tool": "set_energy_route",
+    "args": {
+     "route": "spec",
+     "region": 6,
+     "source": "確認用"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 14,
+    "tool": "ui_trigger",
+    "args": {
+     "action": "exportDrawingSetAction"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 15,
+    "tool": "ui_list",
+    "args": {
+     "window": "modal",
+     "filter": "fileNameEdit"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"title\":\"図面一式を書き出す\",\"widget_count\":14,\"widgets\":[{\"enabled\":true,\"kind\":\"line_edit\",\"read_only\":false,\"ref\":\"fileNameEdit\",\"text\":\"図面一式.pdf\"}]}"
+   },
+   {
+    "n": 16,
+    "tool": "ui_set",
+    "args": {
+     "window": "modal",
+     "widget": "fileNameEdit",
+     "value": "C:\\Users\\enomo\\Documents\\Codex\\2026-11-04\\files-pasted-by-the-user-codex\\outputs\\handson-remaining\\trial-d\\files/図面一式.pdf"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 17,
+    "tool": "ui_key",
+    "args": {
+     "window": "modal",
+     "widget": "fileNameEdit",
+     "key": "Return"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 18,
+    "tool": "ui_windows",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": "{\"measurement\":\"\",\"status\":\"図面一式（14 枚、A-01〜A-14）を保存しました: C:\\\\Users\\\\enomo\\\\Documents\\\\Codex\\\\2026-11-04\\\\files-pasted-by-the-user-codex\\\\outputs\\\\handson-remaining\\\\trial-d\\\\files\\\\図面一式.pdf\",\"windows\":[{\"class\":\"sbr::app::MainWindow\",\"main\":true,\"modal\":false,\"object_name\":\"\",\"title\":\"無題[*] - SketchBRep\"},{\"class\":\"sbr::app::ToolPaletteDock\",\"main\":false,\"modal\":false,\"object_name\":\"toolsPalette\",\"title\":\"ツール\"}]}"
+   },
+   {
+    "n": 19,
+    "tool": "render_drawing_set",
+    "args": {
+     "sheet": "図面リスト",
+     "texts": true
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"image_path\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\01.png\",\"notes\":[],\"sheet\":{\"name\":\"図面リスト\",\"number\":\"A-01\",\"texts\":[\"図面リスト\",\"図番\",\"図面名\",\"縮尺\",\"用紙\",\"A-01\",\"図面リスト\",\"A-02\",\"計画概要\",\"A3\",\"A-03\",\"配置図（検討用）\",\"1:100\",\"A3\",\"A-04\",\"1FL 平面図\",\"1:100\",\"A4\",\"A-05\",\"2FL 平面図\",\"1:100\",\"A4\",\"A-06\",\"A-A 断面図\",\"1:100\",\"A4\",\"A-07\",\"B-B 断面図\",\"1:100\",\"A4\",\"A-08\",\"南立面図\",\"1:100\",\"A4\",\"A-09\",\"東立面図\",\"1:100\",\"A4\",\"A-10\",\"北立面図\",\"1:100\",\"A4\",\"A-11\",\"西立面図\",\"1:100\",\"A4\",\"A-12\",\"建具表\",\"A4\",\"A-13\",\"室の表\",\"A4\",\"A-14\",\"面積の表\",\"A4\",\"モデルから作った図面です。図面を変えた時は、もう一度書き出してください。\",\"工事名\",\"図面名\",\"図面リスト\",\"縮尺\",\"1:100 (A4)\",\"日付\",\"2026-11-23\",\"図番\",\"A-01\",\"作成者\"]},\"sheets\":[{\"index\":1,\"name\":\"図面リスト\",\"notes\":[],\"number\":\"A-01\",\"paper\":\"A4\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\01.png\"},{\"index\":2,\"name\":\"計画概要\",\"notes\":[],\"number\":\"A-02\",\"paper\":\"A3\"},{\"index\":3,\"name\":\"配置図（検討用）\",\"notes\":[],\"number\":\"A-03\",\"paper\":\"A3\"},{\"index\":4,\"name\":\"1FL 平面図\",\"notes\":[],\"number\":\"A-04\",\"paper\":\"A3\"},{\"index\":5,\"name\":\"2FL 平面図\",\"notes\":[],\"number\":\"A-05\",\"paper\":\"A4\"},{\"index\":6,\"name\":\"A-A 断面図\",\"notes\":[],\"number\":\"A-06\",\"paper\":\"A4\"},{\"index\":7,\"name\":\"B-B 断面図\",\"notes\":[],\"number\":\"A-07\",\"paper\":\"A4\"},{\"index\":8,\"name\":\"南立面図\",\"notes\":[],\"number\":\"A-08\",\"paper\":\"A4\"},{\"index\":9,\"name\":\"東立面図\",\"notes\":[],\"number\":\"A-09\",\"paper\":\"A4\"},{\"index\":10,\"name\":\"北立面図\",\"notes\":[],\"number\":\"A-10\",\"paper\":\"A4\"},{\"index\":11,\"name\":\"西立面図\",\"notes\":[],\"number\":\"A-11\",\"paper\":\"A4\"},{\"index\":12,\"name\":\"建具表\",\"notes\":[],\"number\":\"A-12\",\"paper\":\"A4\"},{\"index\":13,\"name\":\"室の表\",\"notes\":[],\"number\":\"A-13\",\"paper\":\"A4\"},{\"index\":14,\"name\":\"面積の表\",\"notes\":[],\"number\":\"A-14\",\"paper\":\"A4\"}]}\n図面リスト\n図番\n図面名\n縮尺\n用紙\nA-01\n図面リスト\nA-02\n計画概要\nA3\nA-03\n配置図（検討用）\n1:100\nA3\nA-04\n1FL 平面図\n1:100\nA4\nA-05\n2FL 平面図\n1:100\nA4\nA-06\nA-A 断面図\n1:100\nA4\nA-07\nB-B 断面図\n1:100\nA4\nA-08\n南立面図\n1:100\nA4\nA-09\n東立面図\n1:100\nA4\nA-10\n北立面図\n1:100\nA4\nA-11\n西立面図\n1:100\nA4\nA-12\n建具表\nA4\nA-13\n室の表\nA4\nA-14\n面積の表\nA4\nモデルから作った図面です。図面を変えた時は、もう一度書き出してください。\n工事名\n図面名\n図面リスト\n縮尺\n1:100 (A4)\n日付\n2026-11-23\n図番\nA-01\n作成者"
+   },
+   {
+    "n": 20,
+    "tool": "export_drawing",
+    "args": {
+     "kind": "plan",
+     "path": "C:\\Users\\enomo\\Documents\\Codex\\2026-11-04\\files-pasted-by-the-user-codex\\outputs\\handson-remaining\\trial-d\\files/1FL 平面図.dxf"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"notes\":[],\"objects\":7,\"paper\":\"A4\",\"scale\":100.0,\"tables\":0}"
+   },
+   {
+    "n": 21,
+    "tool": "export_drawing",
+    "args": {
+     "kind": "plan",
+     "path": "C:\\Users\\enomo\\Documents\\Codex\\2026-11-04\\files-pasted-by-the-user-codex\\outputs\\handson-remaining\\trial-d\\files/1FL 平面図.jww"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"notes\":[],\"objects\":7,\"paper\":\"A4\",\"scale\":100.0,\"tables\":0}"
+   }
+  ],
+  "pictures": [
+   {
+    "file": "12-8-19-0.png",
+    "caption": "図番つき図面リスト"
+   }
+  ],
+  "failed": [],
+  "findings": []
+ },
+ {
+  "id": "12-9",
+  "title": "窓台から開口をコピーし、別壁・同じ壁へ貼る",
+  "look": "窓台を選んでコピーしてから元に建具を設定し、別の壁と同じ壁へ貼る。案内と、貼った窓の形。",
+  "docs": "docs/126",
+  "steps": [
+   {
+    "n": 1,
+    "tool": "create_wall",
+    "args": {
+     "points": [
+      [
+       0,
+       0
+      ],
+      [
+       12000,
+       0
+      ]
+     ],
+     "height": 3000,
+     "thickness": 200
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 2,
+    "tool": "place_openings",
+    "args": {
+     "host": "04d89769-d6b3-4259-9eb7-b67000b482c7",
+     "face_normal": [
+      0,
+      -1,
+      0
+     ],
+     "count": 1,
+     "width": 1000,
+     "height": 1200,
+     "sill": 900
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 3,
+    "tool": "set_view",
+    "args": {
+     "view": "iso"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 4,
+    "tool": "set_view",
+    "args": {
+     "view": "fit"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 5,
+    "tool": "ui_tool",
+    "args": {
+     "tool": "select"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 6,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      6000,
+      0,
+      900
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 7,
+    "tool": "ui_list",
+    "args": {
+     "window": "main",
+     "filter": "開口"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"title\":\"無題[*] - SketchBRep\",\"widget_count\":105,\"widgets\":[{\"data\":\"\",\"enabled\":true,\"items\":[\"厚さ指定（仕様なし）\",\"外壁 窯業系サイディング（通気）\",\"外壁 金属サイディング（通気）\",\"外壁 ラスモルタル（通気）\",\"外壁 ラスモルタル（直張り）\",\"内壁 石膏ボード両面\"],\"kind\":\"combo_box\",\"ref\":\"wallType\",\"text\":\"厚さ指定（仕様なし）\",\"tooltip\":\"描いた線（柱心）はそのままで、外側・内側の仕上げの厚みが付きます。何枚もまとめて変える時は、壁を選んで建築ツールバーの仕様から。角・T字の取り合いと開口も合わせて直します\"},{\"enabled\":true,\"kind\":\"spin_box\",\"ref\":\"partSize_length\",\"text\":\"12000.000 mm\",\"tooltip\":\"開口はそのままの位置に残ります。開口が壁からはみ出す寸法にはできません\"},{\"enabled\":false,\"kind\":\"spin_box\",\"ref\":\"partSize_thickness\",\"text\":\"200.000 mm\",\"tooltip\":\"開口のある壁の厚さは、上の「種類」（壁の仕様）で変えます。開口も合わせて直ります\"},{\"enabled\":true,\"kind\":\"spin_box\",\"ref\":\"partSize_height\",\"text\":\"3000.000 mm\",\"tooltip\":\"開口はそのままの位置に残ります。開口が壁からはみ出す寸法にはできません\"},{\"enabled\":true,\"kind\":\"label\",\"ref\":\"#25\",\"text\":\"開口 1（O1  1000 × 1200）\"},{\"enabled\":true,\"kind\":\"label\",\"ref\":\"openingFocus\",\"text\":\"<b>開口 1 を選んでいます</b>\"},{\"enabled\":true,\"kind\":\"label\",\"ref\":\"#35\",\"text\":\"開口 1\"},{\"data\":\"{\\\"type\\\":\\\"none\\\"}\",\"enabled\":true,\"items\":[\"なし（開口だけ）\",\"窓\",\"片開き\",\"両開き\",\"親子開き\",\"折れ戸\",\"片引き\",\"引違い\",\"両引き\"],\"kind\":\"combo_box\",\"ref\":\"openingFitting1\",\"text\":\"なし（開口だけ）\",\"tooltip\":\"建具の形式。平面（切断）と平面図に記号を描きます。開き方は右の欄か「平面で」\"},{\"enabled\":false,\"kind\":\"spin_box\",\"ref\":\"opening_frame_1\",\"text\":\"枠 30.000 mm\",\"tooltip\":\"枠の見付（開口の内側に出る幅）。3D・立面の建具の形\"},{\"data\":\"\",\"enabled\":false,\"items\":[\"型なし\"],\"kind\":\"combo_box\",\"ref\":\"openingFittingType1\",\"text\":\"型なし\",\"tooltip\":\"登録した建具の型。選ぶと、その型の種類と寸法（枠・扉・ガラス）になります。吊元・開き勝手は、この開口のまま。型を登録し直すと、その型の建具が全部の壁で直ります。種類や寸法を手で変えると、型から外れます\"},{\"enabled\":false,\"kind\":\"button\",\"ref\":\"openingRegisterFittingType1\",\"text\":\"型として登録\",\"tooltip\":\"この建具の種類と寸法、および開口の幅・高さ・腰高を型として登録します（同じ名前なら上書き）\"},{\"enabled\":true,\"kind\":\"line_edit\",\"placeholder\":\"符号 O1（自動）\",\"read_only\":false,\"ref\":\"openingMark1\",\"text\":\"\",\"tooltip\":\"建具表と平面の札に出る符号。入れると、開口を足したり大きさを変えたりしても変わりません。空にすると、種類・建具・大きさから自動で付けます\"},{\"enabled\":true,\"kind\":\"spin_box\",\"ref\":\"openingSill1\",\"text\":\"腰高 900.000 mm\",\"tooltip\":\"壁の下端から開口の下の縁まで（腰高）\"},{\"enabled\":true,\"kind\":\"spin_box\",\"ref\":\"openingOffset1\",\"text\":\"左端から 5500.000 mm\",\"tooltip\":\"壁の左端から開口の左の縁まで（開口をあけた面の側から見て）\"},{\"enabled\":true,\"kind\":\"button\",\"ref\":\"openingRemove1\",\"text\":\"削除\",\"tooltip\":\"この開口をふさぎます。ほかの開口の建具・寸法は変わりません\"},{\"enabled\":true,\"kind\":\"button\",\"ref\":\"openingCanopy\",\"text\":\"この開口に庇を付ける（出 600）\",\"tooltip\":\"開口をあけた面の側に、出 600・厚さ 60・両側に 150 長い庇を、開口の上端より 100 上に付けます。大きさは庇を選んで変えられます（AI からは make_canopy）\"},{\"checked\":false,\"enabled\":true,\"kind\":\"button\",\"ref\":\"architectureOpening\",\"text\":\"開口\",\"tooltip\":\"開口: 平面の壁、または3D・立面の壁面をクリック。右の矢印から幅・高さ・腰高を設定\"},{\"data\":\"\",\"enabled\":true,\"items\":[\"建具を選ぶ…\",\"片開きドア 800×2000\",\"親子ドア 1200×2000\",\"両開きドア 1600×2000\",\"片引き戸 1600×2000\",\"引違い戸 1690×2000\",\"折れ戸 1200×2000\",\"引違い窓 1690×1170・腰 900\",\"掃き出し窓 1690×2000\",\"はめ殺し窓 600×600・腰 1200\",\"開口だけ 900×2100\"],\"kind\":\"combo_box\",\"ref\":\"architectureOpeningFitting\",\"text\":\"建具を選ぶ…\",\"tooltip\":\"建具の形式と開口寸法を設定します。開口寸法が未登録の型は、今の開口寸法で使います。壁をクリックして配置し、開き方のある扉はマウスを動かしてもう一度クリック\"}]}"
+   },
+   {
+    "n": 8,
+    "tool": "ui_trigger",
+    "args": {
+     "action": "編集/コピー"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 9,
+    "tool": "ui_windows",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": "{\"measurement\":\"\",\"status\":\"開口 1 をコピーしました（Ctrl+V で、貼る壁の位置をクリック）\",\"windows\":[{\"class\":\"sbr::app::MainWindow\",\"main\":true,\"modal\":false,\"object_name\":\"\",\"title\":\"無題[*] - SketchBRep\"},{\"class\":\"sbr::app::ToolPaletteDock\",\"main\":false,\"modal\":false,\"object_name\":\"toolsPalette\",\"title\":\"ツール\"}]}"
+   },
+   {
+    "n": 10,
+    "tool": "set_opening_fittings",
+    "args": {
+     "host": "04d89769-d6b3-4259-9eb7-b67000b482c7",
+     "fitting": {
+      "type": "sliding_double",
+      "frame": 48
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 11,
+    "tool": "create_wall",
+    "args": {
+     "points": [
+      [
+       0,
+       3000
+      ],
+      [
+       12000,
+       3000
+      ]
+     ],
+     "height": 3000,
+     "thickness": 200
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 12,
+    "tool": "ui_plan",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 13,
+    "tool": "set_view",
+    "args": {
+     "view": "fit"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 14,
+    "tool": "ui_trigger",
+    "args": {
+     "action": "編集/貼り付け"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 15,
+    "tool": "ui_view_hover",
+    "args": {
+     "at": [
+      4200,
+      3080,
+      1200
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 16,
+    "tool": "ui_windows",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": "{\"measurement\":\"\",\"status\":\"ここでクリック: 開口 1 を Wall 2 へ貼る\",\"windows\":[{\"class\":\"sbr::app::MainWindow\",\"main\":true,\"modal\":false,\"object_name\":\"\",\"title\":\"無題[*] - SketchBRep\"},{\"class\":\"sbr::app::ToolPaletteDock\",\"main\":false,\"modal\":false,\"object_name\":\"toolsPalette\",\"title\":\"ツール\"}]}"
+   },
+   {
+    "n": 17,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      4200,
+      3080,
+      1200
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 18,
+    "tool": "list_openings",
+    "args": {
+     "ids": [
+      "465b01cf-eb01-4ffc-8be8-46104a617e6f"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"hosts\":[{\"host\":\"465b01cf-eb01-4ffc-8be8-46104a617e6f\",\"name\":\"Wall 2\",\"openings\":[{\"center\":[4201.722488038277,2900.0,1500.0],\"depth\":200.0,\"fitting\":{\"frame\":48.0,\"type\":\"sliding_double\"},\"height\":1200.0,\"id\":\"opening-180598a8-2330-4242-bdaa-b4f4a2654517\",\"index\":1,\"name\":\"Opening 1\",\"normal\":[-0.0,-1.0,-0.0],\"offset\":3701.7224880382773,\"sill\":900.0,\"sill_height\":900.0,\"width\":1000.0}]}]}"
+   },
+   {
+    "n": 19,
+    "tool": "ui_trigger",
+    "args": {
+     "action": "編集/貼り付け"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 20,
+    "tool": "ui_view_hover",
+    "args": {
+     "at": [
+      8700,
+      -80,
+      1200
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 21,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      8700,
+      -80,
+      1200
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 22,
+    "tool": "list_openings",
+    "args": {
+     "ids": [
+      "04d89769-d6b3-4259-9eb7-b67000b482c7"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"hosts\":[{\"host\":\"04d89769-d6b3-4259-9eb7-b67000b482c7\",\"name\":\"Wall 1\",\"openings\":[{\"center\":[6000.0,-100.0,1500.0],\"depth\":200.0,\"fitting\":{\"frame\":48.0,\"type\":\"sliding_double\"},\"height\":1200.0,\"id\":\"opening-bb8afed8-5b6c-468e-bde4-0977b8b20387\",\"index\":1,\"name\":\"Opening 1\",\"normal\":[0.0,-1.0,0.0],\"offset\":5500.0,\"sill\":900.0,\"sill_height\":900.0,\"width\":1000.0},{\"center\":[8697.416267942584,-100.0,1500.0],\"depth\":200.0,\"fitting\":{\"frame\":48.0,\"type\":\"sliding_double\"},\"height\":1200.0,\"id\":\"opening-8eb3d67f-3297-4268-a283-694e290b2cfc\",\"index\":2,\"name\":\"Opening 1\",\"normal\":[0.0,-1.0,0.0],\"offset\":8197.416267942584,\"sill\":900.0,\"sill_height\":900.0,\"width\":1000.0}]}]}"
+   },
+   {
+    "n": 23,
+    "tool": "capture_view",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 24,
+    "tool": "opening_schedule",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": "{\"count\":3,\"openings\":[{\"center\":[6000.0,-100.0,1500.0],\"fitting\":\"引違い\",\"height\":1200.0,\"host\":\"04d89769-d6b3-4259-9eb7-b67000b482c7\",\"host_name\":\"Wall 1\",\"id\":\"opening-bb8afed8-5b6c-468e-bde4-0977b8b20387\",\"index\":1,\"kind\":\"window\",\"level\":\"\",\"mark\":\"AW1\",\"own_mark\":false,\"product\":\"\",\"sill\":900.0,\"width\":1000.0},{\"center\":[8697.416267942584,-100.0,1500.0],\"fitting\":\"引違い\",\"height\":1200.0,\"host\":\"04d89769-d6b3-4259-9eb7-b67000b482c7\",\"host_name\":\"Wall 1\",\"id\":\"opening-8eb3d67f-3297-4268-a283-694e290b2cfc\",\"index\":2,\"kind\":\"window\",\"level\":\"\",\"mark\":\"AW1\",\"own_mark\":false,\"product\":\"\",\"sill\":900.0,\"width\":1000.0},{\"center\":[4201.722488038277,2900.0,1500.0],\"fitting\":\"引違い\",\"height\":1200.0,\"host\":\"465b01cf-eb01-4ffc-8be8-46104a617e6f\",\"host_name\":\"Wall 2\",\"id\":\"opening-180598a8-2330-4242-bdaa-b4f4a2654517\",\"index\":1,\"kind\":\"window\",\"level\":\"\",\"mark\":\"AW1\",\"own_mark\":false,\"product\":\"\",\"sill\":900.0,\"width\":1000.0}],\"types\":[{\"count\":3,\"fitting\":\"引違い\",\"height\":1200.0,\"kind\":\"window\",\"mark\":\"AW1\",\"mixed\":false,\"own_mark\":false,\"product\":\"\",\"sills\":[900.0],\"width\":1000.0}]}"
+   },
+   {
+    "n": 25,
+    "tool": "undo",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 26,
+    "tool": "list_openings",
+    "args": {
+     "ids": [
+      "04d89769-d6b3-4259-9eb7-b67000b482c7"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"hosts\":[{\"host\":\"04d89769-d6b3-4259-9eb7-b67000b482c7\",\"name\":\"Wall 1\",\"openings\":[{\"center\":[6000.0,-100.0,1500.0],\"depth\":200.0,\"fitting\":{\"frame\":48.0,\"type\":\"sliding_double\"},\"height\":1200.0,\"id\":\"opening-bb8afed8-5b6c-468e-bde4-0977b8b20387\",\"index\":1,\"name\":\"Opening 1\",\"normal\":[0.0,-1.0,0.0],\"offset\":5500.0,\"sill\":900.0,\"sill_height\":900.0,\"width\":1000.0}]}]}"
+   },
+   {
+    "n": 27,
+    "tool": "list_openings",
+    "args": {
+     "ids": [
+      "465b01cf-eb01-4ffc-8be8-46104a617e6f"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"hosts\":[{\"host\":\"465b01cf-eb01-4ffc-8be8-46104a617e6f\",\"name\":\"Wall 2\",\"openings\":[{\"center\":[4201.722488038277,2900.0,1500.0],\"depth\":200.0,\"fitting\":{\"frame\":48.0,\"type\":\"sliding_double\"},\"height\":1200.0,\"id\":\"opening-180598a8-2330-4242-bdaa-b4f4a2654517\",\"index\":1,\"name\":\"Opening 1\",\"normal\":[-0.0,-1.0,-0.0],\"offset\":3701.7224880382773,\"sill\":900.0,\"sill_height\":900.0,\"width\":1000.0}]}]}"
+   }
+  ],
+  "pictures": [
+   {
+    "file": "12-9-23-0.png",
+    "caption": "別の壁と元の壁に貼った窓"
+   }
+  ],
+  "failed": [],
+  "findings": []
+ },
+ {
+  "id": "12-3",
+  "title": "3Dで1階だけ表示して全階に戻す",
+  "look": "下の壁・柱・階段と上階の床・屋根を、3枚の3D画像で照合。",
+  "docs": "docs/120",
+  "steps": [
+   {
+    "n": 1,
+    "tool": "set_levels",
+    "args": {
+     "levels": [
+      {
+       "name": "1FL",
+       "elevation": 0
+      },
+      {
+       "name": "2FL",
+       "elevation": 3000
+      }
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 2,
+    "tool": "create_wall",
+    "args": {
+     "points": [
+      [
+       0,
+       0
+      ],
+      [
+       8000,
+       0
+      ],
+      [
+       8000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ],
+      [
+       0,
+       0
+      ]
+     ],
+     "thickness": 200,
+     "height": 3000
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 3,
+    "tool": "create_wall",
+    "args": {
+     "points": [
+      [
+       4000,
+       0
+      ],
+      [
+       4000,
+       6000
+      ]
+     ],
+     "thickness": 100,
+     "height": 3000
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 4,
+    "tool": "place_openings",
+    "args": {
+     "host": "8b7dcaef-8b38-4aa6-a34f-63e17fd916bc",
+     "face_normal": [
+      0,
+      -1,
+      0
+     ],
+     "count": 2,
+     "width": 1600,
+     "height": 1200,
+     "sill": 900
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 5,
+    "tool": "set_opening_fittings",
+    "args": {
+     "host": "8b7dcaef-8b38-4aa6-a34f-63e17fd916bc",
+     "fitting": {
+      "type": "sliding_double"
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 6,
+    "tool": "place_openings",
+    "args": {
+     "host": "1b6544d9-39bb-455a-975b-e11769939f50",
+     "face_normal": [
+      1,
+      0,
+      0
+     ],
+     "count": 1,
+     "width": 900,
+     "height": 2100,
+     "sill": 0
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 7,
+    "tool": "set_opening_fittings",
+    "args": {
+     "host": "1b6544d9-39bb-455a-975b-e11769939f50",
+     "fitting": {
+      "type": "swing_single",
+      "hinge": "left",
+      "swing": "in"
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 8,
+    "tool": "create_slab",
+    "args": {
+     "outline": [
+      [
+       0,
+       0
+      ],
+      [
+       8000,
+       0
+      ],
+      [
+       8000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ]
+     ],
+     "top": 0,
+     "thickness": 200
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 9,
+    "tool": "create_room",
+    "args": {
+     "at": [
+      2000,
+      3000
+     ],
+     "name": "居間"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 10,
+    "tool": "create_room",
+    "args": {
+     "at": [
+      6000,
+      3000
+     ],
+     "name": "洋室"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 11,
+    "tool": "create_polygon",
+    "args": {
+     "points": [
+      [
+       -2000,
+       -2000,
+       0
+      ],
+      [
+       14000,
+       -2000,
+       0
+      ],
+      [
+       14000,
+       10000,
+       0
+      ],
+      [
+       -2000,
+       10000,
+       0
+      ]
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 12,
+    "tool": "set_site_boundary",
+    "args": {
+     "outline": "b33ca6ed-2a6c-475c-b241-f263f8a8a7e7",
+     "source": "確認用の架空の測量図"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 13,
+    "tool": "set_energy_route",
+    "args": {
+     "route": "spec",
+     "region": 6,
+     "source": "確認用"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 14,
+    "tool": "create_slab",
+    "args": {
+     "outline": [
+      [
+       0,
+       0
+      ],
+      [
+       8000,
+       0
+      ],
+      [
+       8000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ]
+     ],
+     "top": 3000,
+     "thickness": 200
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 15,
+    "tool": "create_roof",
+    "args": {
+     "outline": [
+      [
+       0,
+       0
+      ],
+      [
+       8000,
+       0
+      ],
+      [
+       8000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ]
+     ],
+     "kind": "gable",
+     "height": 5200
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 16,
+    "tool": "create_member",
+    "args": {
+     "start": [
+      1000,
+      500,
+      0
+     ],
+     "end": [
+      1000,
+      500,
+      2600
+     ],
+     "section": {
+      "kind": "rectangle",
+      "width": 105,
+      "depth": 105
+     },
+     "role": "column"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 17,
+    "tool": "create_stair",
+    "args": {
+     "path": [
+      [
+       900,
+       900
+      ],
+      [
+       900,
+       4600
+      ],
+      [
+       2800,
+       4600
+      ]
+     ],
+     "base": 0,
+     "rise": 3000,
+     "width": 780
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 18,
+    "tool": "set_view",
+    "args": {
+     "view": "iso"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 19,
+    "tool": "set_view",
+    "args": {
+     "view": "fit"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 20,
+    "tool": "capture_view",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 21,
+    "tool": "ui_click",
+    "args": {
+     "window": "main",
+     "widget": "architecturePlanLevel"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 22,
+    "tool": "ui_trigger",
+    "args": {
+     "action": "1FL"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 23,
+    "tool": "ui_windows",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": "{\"measurement\":\"\",\"status\":\"3D で 1FL だけを見せています（ほかの階は隠しています。モデルは変わりません）。全部に戻すのは同じメニューから\",\"windows\":[{\"class\":\"sbr::app::MainWindow\",\"main\":true,\"modal\":false,\"object_name\":\"\",\"title\":\"無題[*] - SketchBRep\"},{\"class\":\"sbr::app::ToolPaletteDock\",\"main\":false,\"modal\":false,\"object_name\":\"toolsPalette\",\"title\":\"ツール\"}]}"
+   },
+   {
+    "n": 24,
+    "tool": "capture_view",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 25,
+    "tool": "ui_click",
+    "args": {
+     "window": "main",
+     "widget": "architecturePlanLevel"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 26,
+    "tool": "ui_trigger",
+    "args": {
+     "action": "architectureShowAllStoreys"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 27,
+    "tool": "ui_windows",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": "{\"measurement\":\"\",\"status\":\"全部の階を見せています\",\"windows\":[{\"class\":\"sbr::app::MainWindow\",\"main\":true,\"modal\":false,\"object_name\":\"\",\"title\":\"無題[*] - SketchBRep\"},{\"class\":\"sbr::app::ToolPaletteDock\",\"main\":false,\"modal\":false,\"object_name\":\"toolsPalette\",\"title\":\"ツール\"}]}"
+   },
+   {
+    "n": 28,
+    "tool": "capture_view",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   }
+  ],
+  "pictures": [
+   {
+    "file": "12-3-20-0.png",
+    "caption": "全階を表示"
+   },
+   {
+    "file": "12-3-24-0.png",
+    "caption": "1FLだけを表示"
+   },
+   {
+    "file": "12-3-28-0.png",
+    "caption": "全階の表示に戻す"
+   }
+  ],
+  "failed": [],
+  "findings": []
+ },
+ {
+  "id": "12-5",
+  "title": "通り芯に付けた柱・梁と、交点外に残る柱",
+  "look": "階のメニューから通り芯に付け、通り芯を動かした時の柱・梁の追随と交点にない柱の名前を確認。",
+  "docs": "docs/122",
+  "steps": [
+   {
+    "n": 1,
+    "tool": "create_grid",
+    "args": {
+     "x_spacings": [
+      3000
+     ],
+     "y_spacings": [
+      4000
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 2,
+    "tool": "create_member",
+    "args": {
+     "start": [
+      3000,
+      0,
+      0
+     ],
+     "end": [
+      3000,
+      0,
+      3000
+     ],
+     "role": "column",
+     "name": "交点の柱",
+     "section": {
+      "kind": "rectangle",
+      "width": 105,
+      "depth": 105
+     },
+     "material_class": "timber"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 3,
+    "tool": "create_member",
+    "args": {
+     "start": [
+      0,
+      0,
+      3000
+     ],
+     "end": [
+      3000,
+      0,
+      3000
+     ],
+     "role": "beam",
+     "name": "交点を結ぶ梁",
+     "section": {
+      "kind": "rectangle",
+      "width": 105,
+      "depth": 105
+     },
+     "material_class": "timber"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 4,
+    "tool": "create_member",
+    "args": {
+     "start": [
+      1700,
+      1000,
+      0
+     ],
+     "end": [
+      1700,
+      1000,
+      3000
+     ],
+     "role": "column",
+     "name": "交点外の柱",
+     "section": {
+      "kind": "rectangle",
+      "width": 105,
+      "depth": 105
+     },
+     "material_class": "timber"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 5,
+    "tool": "ui_click",
+    "args": {
+     "window": "main",
+     "widget": "architecturePlanLevel"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 6,
+    "tool": "ui_trigger",
+    "args": {
+     "action": "architecturePinToGrid"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 7,
+    "tool": "ui_windows",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": "{\"measurement\":\"\",\"status\":\"2 つを通り芯に付けました（うち壁 0。通り芯・レベルを動かすと付いてきます。Ctrl+Z で戻せます）。付けなかった物（両端が交点に無い・柱梁壁でない）：交点外の柱\",\"windows\":[{\"class\":\"sbr::app::MainWindow\",\"main\":true,\"modal\":false,\"object_name\":\"\",\"title\":\"無題[*] - SketchBRep\"},{\"class\":\"sbr::app::ToolPaletteDock\",\"main\":false,\"modal\":false,\"object_name\":\"toolsPalette\",\"title\":\"ツール\"}]}"
+   },
+   {
+    "n": 8,
+    "tool": "get_object",
+    "args": {
+     "id": "42b87094-8d33-470b-8f5f-c73607597b53"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 9,
+    "tool": "set_grid",
+    "args": {
+     "grid": "42b87094-8d33-470b-8f5f-c73607597b53",
+     "x": [
+      {
+       "id": "a1",
+       "position": 0
+      },
+      {
+       "id": "a2",
+       "position": 3600
+      }
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 10,
+    "tool": "query_objects",
+    "args": {
+     "ids": [
+      "c0afc734-7697-40d9-8d24-701351c96529"
+     ],
+     "fields": [
+      "bounds"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"objects\":[{\"bounds\":{\"max\":[3652.5,52.5,3000.0],\"min\":[3547.5,-52.5,0.0]}}],\"sequence\":1120,\"total\":1}"
+   },
+   {
+    "n": 11,
+    "tool": "query_objects",
+    "args": {
+     "ids": [
+      "8a44b6b9-1869-475c-9b42-faa5a7f87c61"
+     ],
+     "fields": [
+      "bounds"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"objects\":[{\"bounds\":{\"max\":[3600.0,52.5,3052.5],\"min\":[0.0,-52.5,2947.5]}}],\"sequence\":1120,\"total\":1}"
+   },
+   {
+    "n": 12,
+    "tool": "query_objects",
+    "args": {
+     "ids": [
+      "a68fc77d-2038-44ac-b7d4-b1fe32db7aed"
+     ],
+     "fields": [
+      "bounds"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"objects\":[{\"bounds\":{\"max\":[1752.5,1052.5,3000.0],\"min\":[1647.5,947.5,0.0]}}],\"sequence\":1120,\"total\":1}"
+   },
+   {
+    "n": 13,
+    "tool": "set_view",
+    "args": {
+     "view": "iso"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 14,
+    "tool": "set_view",
+    "args": {
+     "view": "fit"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 15,
+    "tool": "capture_view",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   }
+  ],
+  "pictures": [
+   {
+    "file": "12-5-15-0.png",
+    "caption": "柱と梁が追随した通り芯"
+   }
+  ],
+  "failed": [],
+  "findings": []
+ },
+ {
+  "id": "12-23・14-9",
+  "title": "仕様付き外壁の留め、着色床と間仕切りのT字",
+  "look": "外壁の四隅で層が留めになるか。平面表示で床色が壁に透けず、T字で石膏ボードの線だけが回るか。",
+  "docs": "docs/177・196",
+  "steps": [
+   {
+    "n": 1,
+    "tool": "set_levels",
+    "args": {
+     "levels": [
+      {
+       "name": "1FL",
+       "elevation": 0
+      },
+      {
+       "name": "2FL",
+       "elevation": 3000
+      }
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 2,
+    "tool": "create_polygon",
+    "args": {
+     "points": [
+      [
+       -2000,
+       -2000,
+       0
+      ],
+      [
+       10000,
+       -2000,
+       0
+      ],
+      [
+       10000,
+       8000,
+       0
+      ],
+      [
+       -2000,
+       8000,
+       0
+      ]
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 3,
+    "tool": "set_view",
+    "args": {
+     "view": "top"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 4,
+    "tool": "set_view",
+    "args": {
+     "view": "fit"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 5,
+    "tool": "delete",
+    "args": {
+     "ids": [
+      "a5d69041-3f1c-4e2d-9079-6664a12bd903"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 6,
+    "tool": "create_wall",
+    "args": {
+     "points": [
+      [
+       0,
+       0
+      ],
+      [
+       8000,
+       0
+      ],
+      [
+       8000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ],
+      [
+       0,
+       0
+      ]
+     ],
+     "thickness": 200,
+     "height": 3000,
+     "type": "exterior_siding",
+     "mitre": true
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 7,
+    "tool": "render_drawing_set",
+    "args": {
+     "sheet": "1FL 平面図",
+     "texts": true,
+     "scale": 20
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"image_path\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\03.png\",\"notes\":[],\"sheet\":{\"name\":\"1FL 平面図\",\"number\":\"A-03\",\"texts\":[\"A\",\"A-05\",\"A\",\"A-05\",\"B\",\"A-06\",\"B\",\"A-06\",\"1FL 平面図  S=1:20\",\"N\",\"仮\",\"工事名\",\"図面名\",\"1FL 平面図\",\"縮尺\",\"1:20 (A2)\",\"日付\",\"2026-11-23\",\"図番\",\"A-03\",\"作成者\"]},\"sheets\":[{\"index\":1,\"name\":\"図面リスト\",\"notes\":[],\"number\":\"A-01\",\"paper\":\"A4\"},{\"index\":2,\"name\":\"計画概要\",\"notes\":[],\"number\":\"A-02\",\"paper\":\"A3\"},{\"index\":3,\"name\":\"1FL 平面図\",\"notes\":[],\"number\":\"A-03\",\"paper\":\"A2\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\03.png\"},{\"index\":4,\"name\":\"2FL 平面図\",\"notes\":[],\"number\":\"A-04\",\"paper\":\"A2\"},{\"index\":5,\"name\":\"A-A 断面図\",\"notes\":[],\"number\":\"A-05\",\"paper\":\"A2\"},{\"index\":6,\"name\":\"B-B 断面図\",\"notes\":[],\"number\":\"A-06\",\"paper\":\"A3\"},{\"index\":7,\"name\":\"南立面図\",\"notes\":[],\"number\":\"A-07\",\"paper\":\"A2\"},{\"index\":8,\"name\":\"東立面図\",\"notes\":[],\"number\":\"A-08\",\"paper\":\"A3\"},{\"index\":9,\"name\":\"北立面図\",\"notes\":[],\"number\":\"A-09\",\"paper\":\"A2\"},{\"index\":10,\"name\":\"西立面図\",\"notes\":[],\"number\":\"A-10\",\"paper\":\"A3\"},{\"index\":11,\"name\":\"室の表\",\"notes\":[],\"number\":\"A-11\",\"paper\":\"A4\"},{\"index\":12,\"name\":\"面積の表\",\"notes\":[],\"number\":\"A-12\",\"paper\":\"A4\"}]}\nA\nA-05\nA\nA-05\nB\nA-06\nB\nA-06\n1FL 平面図  S=1:20\nN\n仮\n工事名\n図面名\n1FL 平面図\n縮尺\n1:20 (A2)\n日付\n2026-11-23\n図番\nA-03\n作成者"
+   },
+   {
+    "n": 8,
+    "tool": "create_wall",
+    "args": {
+     "points": [
+      [
+       3000,
+       0
+      ],
+      [
+       3000,
+       6000
+      ]
+     ],
+     "thickness": 200,
+     "height": 3000,
+     "type": "interior_board",
+     "mitre": true
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 9,
+    "tool": "create_slab",
+    "args": {
+     "outline": [
+      [
+       0,
+       0
+      ],
+      [
+       8000,
+       0
+      ],
+      [
+       8000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ]
+     ],
+     "top": 0.5,
+     "thickness": 200
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 10,
+    "tool": "paint",
+    "args": {
+     "ids": [
+      "daaca30e-19b4-4205-ba65-9cae677eac24"
+     ],
+     "color": "#8a5a2b"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 11,
+    "tool": "set_display",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 12,
+    "tool": "set_display",
+    "args": {
+     "realistic": true,
+     "shadows_on_ground": false
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 13,
+    "tool": "set_view",
+    "args": {
+     "view": "iso"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 14,
+    "tool": "set_view",
+    "args": {
+     "view": "fit"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 15,
+    "tool": "capture_view",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 16,
+    "tool": "ui_plan",
+    "args": {
+     "level": "1FL"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 17,
+    "tool": "set_view",
+    "args": {
+     "view": "fit"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 18,
+    "tool": "capture_view",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 19,
+    "tool": "render_drawing_set",
+    "args": {
+     "sheet": "1FL 平面図",
+     "texts": true,
+     "scale": 20
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"image_path\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\03.png\",\"notes\":[],\"sheet\":{\"name\":\"1FL 平面図\",\"number\":\"A-03\",\"texts\":[\"A\",\"A-05\",\"A\",\"A-05\",\"B\",\"A-06\",\"B\",\"A-06\",\"1FL 平面図  S=1:20\",\"N\",\"仮\",\"工事名\",\"図面名\",\"1FL 平面図\",\"縮尺\",\"1:20 (A2)\",\"日付\",\"2026-11-23\",\"図番\",\"A-03\",\"作成者\"]},\"sheets\":[{\"index\":1,\"name\":\"図面リスト\",\"notes\":[],\"number\":\"A-01\",\"paper\":\"A4\"},{\"index\":2,\"name\":\"計画概要\",\"notes\":[],\"number\":\"A-02\",\"paper\":\"A3\"},{\"index\":3,\"name\":\"1FL 平面図\",\"notes\":[],\"number\":\"A-03\",\"paper\":\"A2\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\03.png\"},{\"index\":4,\"name\":\"2FL 平面図\",\"notes\":[],\"number\":\"A-04\",\"paper\":\"A2\"},{\"index\":5,\"name\":\"A-A 断面図\",\"notes\":[],\"number\":\"A-05\",\"paper\":\"A2\"},{\"index\":6,\"name\":\"B-B 断面図\",\"notes\":[],\"number\":\"A-06\",\"paper\":\"A3\"},{\"index\":7,\"name\":\"南立面図\",\"notes\":[],\"number\":\"A-07\",\"paper\":\"A2\"},{\"index\":8,\"name\":\"東立面図\",\"notes\":[],\"number\":\"A-08\",\"paper\":\"A3\"},{\"index\":9,\"name\":\"北立面図\",\"notes\":[],\"number\":\"A-09\",\"paper\":\"A2\"},{\"index\":10,\"name\":\"西立面図\",\"notes\":[],\"number\":\"A-10\",\"paper\":\"A3\"},{\"index\":11,\"name\":\"室の表\",\"notes\":[],\"number\":\"A-11\",\"paper\":\"A4\"},{\"index\":12,\"name\":\"面積の表\",\"notes\":[],\"number\":\"A-12\",\"paper\":\"A4\"}]}\nA\nA-05\nA\nA-05\nB\nA-06\nB\nA-06\n1FL 平面図  S=1:20\nN\n仮\n工事名\n図面名\n1FL 平面図\n縮尺\n1:20 (A2)\n日付\n2026-11-23\n図番\nA-03\n作成者"
+   },
+   {
+    "n": 20,
+    "tool": "set_display",
+    "args": {
+     "realistic": false,
+     "shadows_on_ground": true
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   }
+  ],
+  "pictures": [
+   {
+    "file": "12-23・14-9-7-0.png",
+    "caption": "四隅の層の留め（1:20）"
+   },
+   {
+    "file": "12-23・14-9-15-0.png",
+    "caption": "木色を付けた床（3D）"
+   },
+   {
+    "file": "12-23・14-9-18-0.png",
+    "caption": "着色床・外壁の四隅・間仕切りのT字"
+   },
+   {
+    "file": "12-23・14-9-19-0.png",
+    "caption": "T字の層の線（1:20）"
+   }
+  ],
+  "failed": [],
+  "findings": []
+ },
+ {
+  "id": "14-12・14-21",
+  "title": "壁量・四分割の計算と第7工程、表3種と耐力壁配置図",
+  "look": "第7工程と一覧の数値・文言、配置図の太線と札、破線の側端。仮想入力で確認。部屋・壁・側端の札が重なる箇所あり。",
+  "docs": "docs/199・208",
+  "steps": [
+   {
+    "n": 1,
+    "tool": "set_levels",
+    "args": {
+     "levels": [
+      {
+       "name": "1FL",
+       "elevation": 0
+      },
+      {
+       "name": "2FL",
+       "elevation": 3000
+      }
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 2,
+    "tool": "create_wall",
+    "args": {
+     "points": [
+      [
+       0,
+       0
+      ],
+      [
+       8000,
+       0
+      ],
+      [
+       8000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ],
+      [
+       0,
+       0
+      ]
+     ],
+     "thickness": 200,
+     "height": 3000
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 3,
+    "tool": "create_wall",
+    "args": {
+     "points": [
+      [
+       4000,
+       0
+      ],
+      [
+       4000,
+       6000
+      ]
+     ],
+     "thickness": 100,
+     "height": 3000
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 4,
+    "tool": "place_openings",
+    "args": {
+     "host": "88769cfe-3a61-42f5-8dfa-649ca21e51fa",
+     "face_normal": [
+      0,
+      -1,
+      0
+     ],
+     "count": 2,
+     "width": 1600,
+     "height": 1200,
+     "sill": 900
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 5,
+    "tool": "set_opening_fittings",
+    "args": {
+     "host": "88769cfe-3a61-42f5-8dfa-649ca21e51fa",
+     "fitting": {
+      "type": "sliding_double"
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 6,
+    "tool": "place_openings",
+    "args": {
+     "host": "a3b34cd5-cbda-4b76-861c-ef69ed04e54f",
+     "face_normal": [
+      1,
+      0,
+      0
+     ],
+     "count": 1,
+     "width": 900,
+     "height": 2100,
+     "sill": 0
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 7,
+    "tool": "set_opening_fittings",
+    "args": {
+     "host": "a3b34cd5-cbda-4b76-861c-ef69ed04e54f",
+     "fitting": {
+      "type": "swing_single",
+      "hinge": "left",
+      "swing": "in"
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 8,
+    "tool": "create_slab",
+    "args": {
+     "outline": [
+      [
+       0,
+       0
+      ],
+      [
+       8000,
+       0
+      ],
+      [
+       8000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ]
+     ],
+     "top": 0,
+     "thickness": 200
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 9,
+    "tool": "create_room",
+    "args": {
+     "at": [
+      2000,
+      3000
+     ],
+     "name": "居間"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 10,
+    "tool": "create_room",
+    "args": {
+     "at": [
+      6000,
+      3000
+     ],
+     "name": "洋室"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 11,
+    "tool": "create_polygon",
+    "args": {
+     "points": [
+      [
+       -2000,
+       -2000,
+       0
+      ],
+      [
+       14000,
+       -2000,
+       0
+      ],
+      [
+       14000,
+       10000,
+       0
+      ],
+      [
+       -2000,
+       10000,
+       0
+      ]
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 12,
+    "tool": "set_site_boundary",
+    "args": {
+     "outline": "be362d92-a4b4-4511-a72f-3997db74ce5b",
+     "source": "確認用の架空の測量図"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 13,
+    "tool": "set_energy_route",
+    "args": {
+     "route": "spec",
+     "region": 6,
+     "source": "確認用"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 14,
+    "tool": "set_wall_calculation",
+    "args": {
+     "inputs": {
+      "height_m": 6,
+      "co_designated": false,
+      "wind_coefficient_cm_m2": 50,
+      "input_basis": "台本の仮想入力（計算テストの例）",
+      "floors": [
+       {
+        "id": "1",
+        "name": "1階",
+        "area_m2": 50,
+        "weight_kn": 98,
+        "wind_x_m2": 30,
+        "wind_y_m2": 6,
+        "walls_complete": true,
+        "plan": {
+         "x": [
+          0,
+          10000
+         ],
+         "y": [
+          0,
+          4000
+         ]
+        }
+       }
+      ],
+      "walls": [
+       {
+        "id": "a",
+        "floor": "1",
+        "direction": "X",
+        "start": [
+         0,
+         0
+        ],
+        "end": [
+         2000,
+         0
+        ],
+        "spec": "brace_45x90",
+        "height_mm": 3000,
+        "verified": true
+       },
+       {
+        "id": "b",
+        "floor": "1",
+        "direction": "X",
+        "start": [
+         0,
+         4000
+        ],
+        "end": [
+         500,
+         4000
+        ],
+        "spec": "brace_45x90",
+        "height_mm": 3000,
+        "verified": true
+       },
+       {
+        "id": "c",
+        "floor": "1",
+        "direction": "Y",
+        "start": [
+         0,
+         0
+        ],
+        "end": [
+         0,
+         4000
+        ],
+        "spec": "brace_45x90",
+        "height_mm": 3000,
+        "verified": true
+       },
+       {
+        "id": "d",
+        "floor": "1",
+        "direction": "Y",
+        "start": [
+         10000,
+         0
+        ],
+        "end": [
+         10000,
+         4000
+        ],
+        "spec": "brace_45x90",
+        "height_mm": 3000,
+        "verified": true
+       }
+      ]
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 15,
+    "tool": "check_wall_quantity",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": "{\"as_of\":\"2026-11-22\",\"checker_version\":\"wall-quantity-1\",\"comparison_tolerance_m\":1e-10,\"complete\":true,\"inputs\":{\"co_designated\":false,\"floors\":[{\"area_m2\":50,\"id\":\"1\",\"name\":\"1階\",\"plan\":{\"x\":[0,10000],\"y\":[0,4000]},\"walls_complete\":true,\"weight_kn\":98,\"wind_x_m2\":30,\"wind_y_m2\":6}],\"height_m\":6,\"input_basis\":\"台本の仮想入力（計算テストの例）\",\"schema_version\":1,\"table_snapshot\":{\"basis\":\"昭和56年建設省告示1100号（令和6年国土交通省告示447号改正）第三・第四、別表第一・第二\",\"checked_on\":\"2026-11-04\",\"earthquake\":{\"co_designated\":0.3,\"co_normal\":0.2,\"denominator_cm\":0.0196,\"period_per_height_m\":0.03},\"effective_from\":\"2025-04-01\",\"entries\":{\"brace_30x90\":{\"brace\":true,\"conditions\":\"告示1100号別表第一(三)。両端を柱と横架材の仕口に接近させ金物で緊結。施工・断面・接合仕様を確認する。\",\"name\":\"木製筋かい30×90以上・片掛け\",\"ratio\":1.5},\"brace_45x90\":{\"brace\":true,\"conditions\":\"告示1100号別表第一(四)。両端を柱と横架材の仕口に接近させ金物で緊結。施工・断面・接合仕様を確認する。\",\"name\":\"木製筋かい45×90以上・片掛け\",\"ratio\":2.0},\"brace_90x90\":{\"brace\":true,\"conditions\":\"告示1100号別表第一(五)。両端を柱と横架材の仕口に接近させ金物で緊結。施工・断面・接合仕様を確認する。\",\"name\":\"木製筋かい90角以上・片掛け\",\"ratio\":3.0},\"brace_cross_45x90\":{\"brace\":true,\"conditions\":\"告示1100号別表第一(四)(六)。両筋かいの断面・施工・端部金物を確認する。\",\"name\":\"木製筋かい45×90以上・たすき掛け\",\"ratio\":4.0},\"plywood_n50_150\":{\"brace\":false,\"conditions\":\"告示1100号別表第二(三)。JAS構造用合板等、厚5mm以上（屋外等7.5mm以上、原典の耐候措置例外あり）。全周を柱・間柱・横架材に直接くぎ打ち。くぎ種類N50/NZ50、間隔150mm以下。樹種・等級・耐候性・施工を原典で確認する。\",\"name\":\"構造用合板・N50/NZ50・150mm以下\",\"ratio\":2.5}},\"errata\":\"掲載の告示・補足資料を照合。地域指定、個別認定、施工仕様は利用者による確認が必要。\",\"method\":\"jp_post_beam_2025\",\"normative\":\"law\",\"notes\":[\"在来軸組・1〜2階の入力による壁量の比較。住宅性能表示の等級判定ではなく、地震地域係数Zを乗じない算定式。\",\"Σwiはその階が負担する上階を含む累積荷重kN。太陽光・積載・多雪区域の積雪等を含めて別途算定する。形状から推定しない。\",\"床面積は算定用面積m2。物置等の小屋裏面積の加算を別途確認する。\",\"風の見付面積は各階から上の鉛直投影から当該階床上1.35m以下を除いた面積。X/Yは抵抗する水平力の方向。\",\"準耐力壁・垂れ壁・腰壁、斜め壁、組合せ壁、四分割法、N値、柱頭柱脚・基礎・断面照査は未評価。\",\"筋かいは横架材上端間の高さ3200mm超で min(1,3.5×柱間距離/高さ) を乗じる。柱間距離は壁ごとのbay_mmで入力し、未入力なら未評価（区間長で代用しない）。必要な接合仕様の確認を含め利用者が仕様確認済みにする。\",\"耐力壁の入力は設計上の指定。形や筋かいが見えるだけでは自動的に算入しない。操作を止めない。\"],\"references\":[{\"pages\":\"9:必要壁量、10:風、12-13:筋かいと高さ補正、15:合板\",\"url\":\"https://www.mlit.go.jp/common/001746169.pdf\"},{\"pages\":\"3:Ai・T・C0、6:準耐力壁等、11:性能表示との違い\",\"url\":\"https://www.mlit.go.jp/jutakukentiku/build/content/001753667.pdf\"}],\"source\":{\"date\":\"2026-11-04\",\"name\":\"国土交通省：令和6年告示447号・壁量基準等の補足資料\",\"url\":\"https://www.mlit.go.jp/jutakukentiku/build/jutakukentiku_house_tk_000166.html\",\"version\":\"令和7年4月1日施行\"},\"version\":\"jp-post-beam-2025-04-01-v1\",\"wind\":{\"normal_cm_m2\":50,\"special_max_cm_m2\":75}},\"walls\":[{\"direction\":\"X\",\"end\":[2000,0],\"floor\":\"1\",\"height_mm\":3000,\"id\":\"a\",\"spec\":\"brace_45x90\",\"start\":[0,0],\"verified\":true},{\"direction\":\"X\",\"end\":[500,4000],\"floor\":\"1\",\"height_mm\":3000,\"id\":\"b\",\"spec\":\"brace_45x90\",\"start\":[0,4000],\"verified\":true},{\"direction\":\"Y\",\"end\":[0,4000],\"floor\":\"1\",\"height_mm\":3000,\"id\":\"c\",\"spec\":\"brace_45x90\",\"start\":[0,0],\"verified\":true},{\"direction\":\"Y\",\"end\":[10000,4000],\"floor\":\"1\",\"height_mm\":3000,\"id\":\"d\",\"spec\":\"brace_45x90\",\"start\":[10000,0],\"verified\":true}],\"wind_coefficient_cm_m2\":50},\"notice\":\"意匠・概略の検討用。入力した耐力壁と荷重による壁量比較で、建物全体の安全・法適合の判定ではありません。壁量の根拠: 昭和56年建設省告示1100号（令和6"
+   },
+   {
+    "n": 16,
+    "tool": "ui_trigger",
+    "args": {
+     "action": "permitWorkflowAction"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 17,
+    "tool": "ui_set",
+    "args": {
+     "window": "main",
+     "widget": "permitWorkflowPhases",
+     "row": 6,
+     "value": 0
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 18,
+    "tool": "permit_checks",
+    "args": {
+     "stage": 7
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"confirmation\":{\"changed\":[],\"state\":\"未確認\"},\"rows\":[{\"attention\":true,\"details\":\"存在壁量 5.00 m　必要壁量 15.00 m\",\"item\":\"1階 X 方向の壁量\",\"state\":\"要確認\",\"targets\":[]},{\"attention\":false,\"details\":\"存在壁量 16.00 m　必要壁量 10.00 m\",\"item\":\"1階 Y 方向の壁量\",\"state\":\"参考値内\",\"targets\":[]},{\"attention\":true,\"details\":\"壁率比 0.25　壁率比が0.5以上か\\n側端部分　存在 4.00 m／必要 2.00 m　充足率 2.00\\n側端部分　存在 1.00 m／必要 2.00 m　充足率 0.50\",\"item\":\"1階 X 方向の四分割\",\"state\":\"要確認\",\"targets\":[]},{\"attention\":false,\"details\":\"壁率比 1.00　両側端の壁量充足率が1を超える\\n側端部分　存在 8.00 m／必要 2.00 m　充足率 4.00\\n側端部分　存在 8.00 m／必要 2.00 m　充足率 4.00\",\"item\":\"1階 Y 方向の四分割\",\"state\":\"参考値内\",\"targets\":[]},{\"attention\":false,\"details\":\"意匠・概略の検討用。入力した耐力壁と荷重による壁量比較で、建物全体の安全・法適合の判定ではありません。壁量の根拠: 昭和56年建設省告示1100号（令和6年国土交通省告示447号改正）第三・第四、別表第一・第二／施行 2025-04-01／表の確認日 2026-11-04／版 jp-post-beam-2025-04-01-v1。最新の基準を確認してください。四分割法は平成12年告示1352号（2025年4月から告示1100号第四）の考え方で別欄に計算。N値・柱頭柱脚・準耐力壁等は未評価。\",\"item\":\"照らした値\",\"state\":\"参考\",\"targets\":[]},{\"attention\":false,\"details\":\"N値、柱頭柱脚、準耐力壁等、四分割法の下屋・一部だけ上階がある側端部分、断面、基礎。耐力壁の配置図・壁量計算表・側端の図の書式は、申請先の様式で確かめます。\",\"item\":\"まだ確かめていない事\",\"state\":\"未評価\",\"targets\":[]}],\"stage\":7}"
+   },
+   {
+    "n": 19,
+    "tool": "ui_capture",
+    "args": {
+     "window": "main"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 20,
+    "tool": "render_drawing_set",
+    "args": {
+     "sheet": "壁量計算表",
+     "texts": true
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"image_path\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\15.png\",\"notes\":[],\"sheet\":{\"name\":\"壁量計算表\",\"number\":\"A-15\",\"texts\":[\"壁量計算表\",\"階\",\"方向\",\"床面積 (m2)\",\"地震 係数 (cm/m2)\",\"地震 必要 (m)\",\"見付面積 (m2)\",\"風 係数 (cm/m2)\",\"風 必要 (m)\",\"必要壁量 (m)\",\"存在壁量 (m)\",\"照合\",\"理由\",\"1階\",\"X\",\"50.00\",\"20.0\",\"10.00\",\"30.00\",\"50\",\"15.00\",\"15.00\",\"5.00\",\"要確認\",\"1階\",\"Y\",\"50.00\",\"20.0\",\"10.00\",\"6.00\",\"50\",\"3.00\",\"10.00\",\"16.00\",\"参考値内\",\"意匠・概略の検討用。入力した耐力壁と荷重による壁量比較で、建物全体の安全・法適合の判定ではありません。壁量の根拠: 昭和56年建設省告示1100号（令和6年国土交通省告示447号改正）第三・第四、別表第一・第二／施行 2025-04-01／表の確認日 2026-11-04／版 jp-post-beam-2025-04-01-v1。最新の基準を確認してください。四分割法は平成12年告示1352号（2025年4月から告示1100号第四）の考え方で別欄に計算。N値・柱頭柱脚・準耐力壁等は未評価。\",\"建物全体の安全・法適合の判定ではありません。入力は壁量の計算の入力（set_wall_calculation）のとおりです。\",\"工事名\",\"図面名\",\"壁量計算表\",\"縮尺\",\"1:100 (A2)\",\"日付\",\"2026-11-23\",\"図番\",\"A-15\",\"作成者\"]},\"sheets\":[{\"index\":1,\"name\":\"図面リスト\",\"notes\":[],\"number\":\"A-01\",\"paper\":\"A3\"},{\"index\":2,\"name\":\"計画概要\",\"notes\":[],\"number\":\"A-02\",\"paper\":\"A3\"},{\"index\":3,\"name\":\"配置図（検討用）\",\"notes\":[],\"number\":\"A-03\",\"paper\":\"A3\"},{\"index\":4,\"name\":\"1FL 平面図\",\"notes\":[],\"number\":\"A-04\",\"paper\":\"A3\"},{\"index\":5,\"name\":\"2FL 平面図\",\"notes\":[],\"number\":\"A-05\",\"paper\":\"A4\"},{\"index\":6,\"name\":\"A-A 断面図\",\"notes\":[],\"number\":\"A-06\",\"paper\":\"A4\"},{\"index\":7,\"name\":\"B-B 断面図\",\"notes\":[],\"number\":\"A-07\",\"paper\":\"A4\"},{\"index\":8,\"name\":\"南立面図\",\"notes\":[],\"number\":\"A-08\",\"paper\":\"A4\"},{\"index\":9,\"name\":\"東立面図\",\"notes\":[],\"number\":\"A-09\",\"paper\":\"A4\"},{\"index\":10,\"name\":\"北立面図\",\"notes\":[],\"number\":\"A-10\",\"paper\":\"A4\"},{\"index\":11,\"name\":\"西立面図\",\"notes\":[],\"number\":\"A-11\",\"paper\":\"A4\"},{\"index\":12,\"name\":\"建具表\",\"notes\":[],\"number\":\"A-12\",\"paper\":\"A4\"},{\"index\":13,\"name\":\"室の表\",\"notes\":[],\"number\":\"A-13\",\"paper\":\"A4\"},{\"index\":14,\"name\":\"面積の表\",\"notes\":[],\"number\":\"A-14\",\"paper\":\"A4\"},{\"index\":15,\"name\":\"壁量計算表\",\"notes\":[],\"number\":\"A-15\",\"paper\":\"A2\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\15.png\"},{\"index\":16,\"name\":\"耐力壁の一覧\",\"notes\":[],\"number\":\"A-16\",\"paper\":\"A2\"},{\"index\":17,\"name\":\"四分割（側端部分）\",\"notes\":[],\"number\":\"A-17\",\"paper\":\"A2\"},{\"index\":18,\"name\":\"耐力壁配置図（1階）\",\"notes\":[],\"number\":\"A-18\",\"paper\":\"A3\"}]}\n壁量計算表\n階\n方向\n床面積 (m2)\n地震 係数 (cm/m2)\n地震 必要 (m)\n見付面積 (m2)\n風 係数 (cm/m2)\n風 必要 (m)\n必要壁量 (m)\n存在壁量 (m)\n照合\n理由\n1階\nX\n50.00\n20.0\n10.00\n30.00\n50\n15.00\n15.00\n5.00\n要確認\n1階\nY\n50.00\n20.0\n10.00\n6.00\n50\n3.00\n10.00\n16.00\n参考値内\n意匠・概略の検討用。入力した耐力壁と荷重による壁量比較で、建物全体の安全・法適合の判定ではありません。壁量の根拠: 昭和56年建設省告示1100号（令和6年国土交通省告示447号改正）第三・第四、別表第一・第二／施行 2025-04-01／表の確認日 2026-11-04／版 jp-post-beam-2025-04-01-v1。最新の基準を確認してください。四分割法は平成12年告示1352号（2025年4月から告示1100号第四）の考え方で別欄に計算。N値・柱頭柱脚・準耐力壁等は未評価。\n建物全体の安全・法適合の判定ではありません。入力は壁量の計算の入力（set_wall_calculation）のとおりです。\n工事名\n図面名\n壁量計算表\n縮尺\n1:100 (A2)\n日付\n2026-11-23\n図番\nA-15\n作成者"
+   },
+   {
+    "n": 21,
+    "tool": "render_drawing_set",
+    "args": {
+     "sheet": "耐力壁の一覧",
+     "texts": true
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"image_path\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\16.png\",\"notes\":[],\"sheet\":{\"name\":\"耐力壁の一覧\",\"number\":\"A-16\",\"texts\":[\"耐力壁の一覧\",\"階\",\"方向\",\"符号\",\"仕様\",\"長さ (m)\",\"倍率\",\"高さの係数\",\"有効長さ (m)\",\"状態\",\"条件・理由\",\"1階\",\"X\",\"a\",\"木製筋かい45×90以上・片掛け\",\"2.00\",\"2.0\",\"1.00\",\"4.00\",\"計算に入れた\",\"告示1100号別表第一(四)。両端を柱と横架材の仕口に接近させ金物で緊結。施工・断面・接合仕様を確認する。\",\"1階\",\"X\",\"b\",\"木製筋かい45×90以上・片掛け\",\"0.50\",\"2.0\",\"1.00\",\"1.00\",\"計算に入れた\",\"告示1100号別表第一(四)。両端を柱と横架材の仕口に接近させ金物で緊結。施工・断面・接合仕様を確認する。\",\"1階\",\"Y\",\"c\",\"木製筋かい45×90以上・片掛け\",\"4.00\",\"2.0\",\"1.00\",\"8.00\",\"計算に入れた\",\"告示1100号別表第一(四)。両端を柱と横架材の仕口に接近させ金物で緊結。施工・断面・接合仕様を確認する。\",\"1階\",\"Y\",\"d\",\"木製筋かい45×90以上・片掛け\",\"4.00\",\"2.0\",\"1.00\",\"8.00\",\"計算に入れた\",\"告示1100号別表第一(四)。両端を柱と横架材の仕口に接近させ金物で緊結。施工・断面・接合仕様を確認する。\",\"意匠・概略の検討用。入力した耐力壁と荷重による壁量比較で、建物全体の安全・法適合の判定ではありません。壁量の根拠: 昭和56年建設省告示1100号（令和6年国土交通省告示447号改正）第三・第四、別表第一・第二／施行 2025-04-01／表の確認日 2026-11-04／版 jp-post-beam-2025-04-01-v1。最新の基準を確認してください。四分割法は平成12年告示1352号（2025年4月から告示1100号第四）の考え方で別欄に計算。N値・柱頭柱脚・準耐力壁等は未評価。\",\"建物全体の安全・法適合の判定ではありません。入力は壁量の計算の入力（set_wall_calculation）のとおりです。\",\"工事名\",\"図面名\",\"耐力壁の一覧\",\"縮尺\",\"1:100 (A2)\",\"日付\",\"2026-11-23\",\"図番\",\"A-16\",\"作成者\"]},\"sheets\":[{\"index\":1,\"name\":\"図面リスト\",\"notes\":[],\"number\":\"A-01\",\"paper\":\"A3\"},{\"index\":2,\"name\":\"計画概要\",\"notes\":[],\"number\":\"A-02\",\"paper\":\"A3\"},{\"index\":3,\"name\":\"配置図（検討用）\",\"notes\":[],\"number\":\"A-03\",\"paper\":\"A3\"},{\"index\":4,\"name\":\"1FL 平面図\",\"notes\":[],\"number\":\"A-04\",\"paper\":\"A3\"},{\"index\":5,\"name\":\"2FL 平面図\",\"notes\":[],\"number\":\"A-05\",\"paper\":\"A4\"},{\"index\":6,\"name\":\"A-A 断面図\",\"notes\":[],\"number\":\"A-06\",\"paper\":\"A4\"},{\"index\":7,\"name\":\"B-B 断面図\",\"notes\":[],\"number\":\"A-07\",\"paper\":\"A4\"},{\"index\":8,\"name\":\"南立面図\",\"notes\":[],\"number\":\"A-08\",\"paper\":\"A4\"},{\"index\":9,\"name\":\"東立面図\",\"notes\":[],\"number\":\"A-09\",\"paper\":\"A4\"},{\"index\":10,\"name\":\"北立面図\",\"notes\":[],\"number\":\"A-10\",\"paper\":\"A4\"},{\"index\":11,\"name\":\"西立面図\",\"notes\":[],\"number\":\"A-11\",\"paper\":\"A4\"},{\"index\":12,\"name\":\"建具表\",\"notes\":[],\"number\":\"A-12\",\"paper\":\"A4\"},{\"index\":13,\"name\":\"室の表\",\"notes\":[],\"number\":\"A-13\",\"paper\":\"A4\"},{\"index\":14,\"name\":\"面積の表\",\"notes\":[],\"number\":\"A-14\",\"paper\":\"A4\"},{\"index\":15,\"name\":\"壁量計算表\",\"notes\":[],\"number\":\"A-15\",\"paper\":\"A2\"},{\"index\":16,\"name\":\"耐力壁の一覧\",\"notes\":[],\"number\":\"A-16\",\"paper\":\"A2\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\16.png\"},{\"index\":17,\"name\":\"四分割（側端部分）\",\"notes\":[],\"number\":\"A-17\",\"paper\":\"A2\"},{\"index\":18,\"name\":\"耐力壁配置図（1階）\",\"notes\":[],\"number\":\"A-18\",\"paper\":\"A3\"}]}\n耐力壁の一覧\n階\n方向\n符号\n仕様\n長さ (m)\n倍率\n高さの係数\n有効長さ (m)\n状態\n条件・理由\n1階\nX\na\n木製筋かい45×90以上・片掛け\n2.00\n2.0\n1.00\n4.00\n計算に入れた\n告示1100号別表第一(四)。両端を柱と横架材の仕口に接近させ金物で緊結。施工・断面・接合仕様を確認する。\n1階\nX\nb\n木製筋かい45×90以上・片掛け\n0.50\n2.0\n1.00\n1.00\n計算に入れた\n告示1100号別表第一(四)。両端を柱と横架材の仕口に接近させ金物で緊結。施工・断面・接合仕様を確認する。\n1階\nY\nc\n木製筋かい45×90以上・片掛け\n4.00\n2.0\n1.00\n8.00\n計算に入れた\n告示1100号別表第一(四)。両端を柱と横架材の仕口に接近させ金物で緊結。施工・断面・接合仕様を確認する。\n1階\nY\nd\n木製筋かい45×90以上・片掛け\n4.00\n2.0\n1.00\n8.00\n計算に入れた\n告示1100号別表第一(四)。両端を柱と横架材の仕口に接近させ金物で緊結。施工・断面・接合仕様を確認する。\n意匠・概略の検討用。入力した耐力壁と荷重による壁量比較で、建物全体の安全・法適合の判定ではありません。壁量の根拠: 昭和56年建設省告示1100号（令和6年国土交通省告示447号改正）第三・第四、別表第一・第二"
+   },
+   {
+    "n": 22,
+    "tool": "render_drawing_set",
+    "args": {
+     "sheet": "四分割（側端部分）",
+     "texts": true
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"image_path\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\17.png\",\"notes\":[],\"sheet\":{\"name\":\"四分割（側端部分）\",\"number\":\"A-17\",\"texts\":[\"四分割（側端部分）\",\"階\",\"方向\",\"側端\",\"面積 (m2)\",\"必要 (m)\",\"存在 (m)\",\"充足率\",\"壁率比\",\"照合\",\"見た決まり・理由\",\"1階\",\"X\",\"下側（小さい座標）\",\"10.00\",\"2.00\",\"4.00\",\"2.00\",\"0.25\",\"要確認\",\"壁率比が0.5以上か\",\"上側（大きい座標）\",\"10.00\",\"2.00\",\"1.00\",\"0.50\",\"1階\",\"Y\",\"下側（小さい座標）\",\"10.00\",\"2.00\",\"8.00\",\"4.00\",\"1.00\",\"参考値内\",\"両側端の壁量充足率が1を超える\",\"上側（大きい座標）\",\"10.00\",\"2.00\",\"8.00\",\"4.00\",\"意匠・概略の検討用。入力した耐力壁と荷重による壁量比較で、建物全体の安全・法適合の判定ではありません。壁量の根拠: 昭和56年建設省告示1100号（令和6年国土交通省告示447号改正）第三・第四、別表第一・第二／施行 2025-04-01／表の確認日 2026-11-04／版 jp-post-beam-2025-04-01-v1。最新の基準を確認してください。四分割法は平成12年告示1352号（2025年4月から告示1100号第四）の考え方で別欄に計算。N値・柱頭柱脚・準耐力壁等は未評価。\",\"建物全体の安全・法適合の判定ではありません。入力は壁量の計算の入力（set_wall_calculation）のとおりです。\",\"工事名\",\"図面名\",\"四分割（側端部分）\",\"縮尺\",\"1:100 (A2)\",\"日付\",\"2026-11-23\",\"図番\",\"A-17\",\"作成者\"]},\"sheets\":[{\"index\":1,\"name\":\"図面リスト\",\"notes\":[],\"number\":\"A-01\",\"paper\":\"A3\"},{\"index\":2,\"name\":\"計画概要\",\"notes\":[],\"number\":\"A-02\",\"paper\":\"A3\"},{\"index\":3,\"name\":\"配置図（検討用）\",\"notes\":[],\"number\":\"A-03\",\"paper\":\"A3\"},{\"index\":4,\"name\":\"1FL 平面図\",\"notes\":[],\"number\":\"A-04\",\"paper\":\"A3\"},{\"index\":5,\"name\":\"2FL 平面図\",\"notes\":[],\"number\":\"A-05\",\"paper\":\"A4\"},{\"index\":6,\"name\":\"A-A 断面図\",\"notes\":[],\"number\":\"A-06\",\"paper\":\"A4\"},{\"index\":7,\"name\":\"B-B 断面図\",\"notes\":[],\"number\":\"A-07\",\"paper\":\"A4\"},{\"index\":8,\"name\":\"南立面図\",\"notes\":[],\"number\":\"A-08\",\"paper\":\"A4\"},{\"index\":9,\"name\":\"東立面図\",\"notes\":[],\"number\":\"A-09\",\"paper\":\"A4\"},{\"index\":10,\"name\":\"北立面図\",\"notes\":[],\"number\":\"A-10\",\"paper\":\"A4\"},{\"index\":11,\"name\":\"西立面図\",\"notes\":[],\"number\":\"A-11\",\"paper\":\"A4\"},{\"index\":12,\"name\":\"建具表\",\"notes\":[],\"number\":\"A-12\",\"paper\":\"A4\"},{\"index\":13,\"name\":\"室の表\",\"notes\":[],\"number\":\"A-13\",\"paper\":\"A4\"},{\"index\":14,\"name\":\"面積の表\",\"notes\":[],\"number\":\"A-14\",\"paper\":\"A4\"},{\"index\":15,\"name\":\"壁量計算表\",\"notes\":[],\"number\":\"A-15\",\"paper\":\"A2\"},{\"index\":16,\"name\":\"耐力壁の一覧\",\"notes\":[],\"number\":\"A-16\",\"paper\":\"A2\"},{\"index\":17,\"name\":\"四分割（側端部分）\",\"notes\":[],\"number\":\"A-17\",\"paper\":\"A2\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\17.png\"},{\"index\":18,\"name\":\"耐力壁配置図（1階）\",\"notes\":[],\"number\":\"A-18\",\"paper\":\"A3\"}]}\n四分割（側端部分）\n階\n方向\n側端\n面積 (m2)\n必要 (m)\n存在 (m)\n充足率\n壁率比\n照合\n見た決まり・理由\n1階\nX\n下側（小さい座標）\n10.00\n2.00\n4.00\n2.00\n0.25\n要確認\n壁率比が0.5以上か\n上側（大きい座標）\n10.00\n2.00\n1.00\n0.50\n1階\nY\n下側（小さい座標）\n10.00\n2.00\n8.00\n4.00\n1.00\n参考値内\n両側端の壁量充足率が1を超える\n上側（大きい座標）\n10.00\n2.00\n8.00\n4.00\n意匠・概略の検討用。入力した耐力壁と荷重による壁量比較で、建物全体の安全・法適合の判定ではありません。壁量の根拠: 昭和56年建設省告示1100号（令和6年国土交通省告示447号改正）第三・第四、別表第一・第二／施行 2025-04-01／表の確認日 2026-11-04／版 jp-post-beam-2025-04-01-v1。最新の基準を確認してください。四分割法は平成12年告示1352号（2025年4月から告示1100号第四）の考え方で別欄に計算。N値・柱頭柱脚・準耐力壁等は未評価。\n建物全体の安全・法適合の判定ではありません。入力は壁量の計算の入力（set_wall_calculation）のとおりです。\n工事名\n図面名\n四分割（側端部分）\n縮尺\n1:100 (A2)\n日付\n2026-11-23\n図番\nA-17\n作成者"
+   },
+   {
+    "n": 23,
+    "tool": "render_drawing_set",
+    "args": {
+     "sheet": "耐力壁配置図（1階）",
+     "texts": true
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"image_path\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\18.png\",\"notes\":[],\"sheet\":{\"name\":\"耐力壁配置図（1階）\",\"number\":\"A-18\",\"texts\":[\"AW1\",\"AW1\",\"AD1\",\"a X 倍率2.0 4.00m\",\"b X 倍率2.0 1.00m\",\"c Y 倍率2.0 8.00m\",\"d Y 倍率2.0 8.00m\",\"X 側端 必要2.00m 存在4.00m\",\"X 側端 必要2.00m 存在1.00m\",\"Y 側端 必要2.00m 存在8.00m\",\"Y 側端 必要2.00m 存在8.00m\",\"居間  24.00 m²\",\"洋室  24.00 m²\",\"A\",\"A-06\",\"A\",\"A-06\",\"B\",\"A-07\",\"B\",\"A-07\",\"耐力壁配置図（1階）  S=1:100\",\"太線：壁量に入れた耐力壁（符号・方向・倍率・有効長さ）　破線：入れていない壁、四分割の側端部分\",\"意匠・概略の検討用。入力した耐力壁と荷重による壁量比較で、建物全体の安全・法適合の判定ではありません。壁量の根拠: 昭和56年建設省告示1100号（令和6年国土交通省告示447号改\",\"正）第三・第四、別表第一・第二／施行 2025-04-01／表の確認日 2026-11-04／版 jp-post-beam-2025-04-01-v1。最新の基準を確認してください\",\"。四分割法は平成12年告示1352号（2025年4月から告示1100号第四）の考え方で別欄に計算。N値・柱頭柱脚・準耐力壁等は未評価。\",\"壁量の結果・入力範囲は別の壁量表を参照。図面のタグや表示範囲と計算範囲は同一とは限りません。\",\"N\",\"仮\",\"工事名\",\"図面名\",\"耐力壁配置図（1階）\",\"縮尺\",\"1:100 (A3)\",\"日付\",\"2026-11-23\",\"図番\",\"A-18\",\"作成者\"]},\"sheets\":[{\"index\":1,\"name\":\"図面リスト\",\"notes\":[],\"number\":\"A-01\",\"paper\":\"A3\"},{\"index\":2,\"name\":\"計画概要\",\"notes\":[],\"number\":\"A-02\",\"paper\":\"A3\"},{\"index\":3,\"name\":\"配置図（検討用）\",\"notes\":[],\"number\":\"A-03\",\"paper\":\"A3\"},{\"index\":4,\"name\":\"1FL 平面図\",\"notes\":[],\"number\":\"A-04\",\"paper\":\"A3\"},{\"index\":5,\"name\":\"2FL 平面図\",\"notes\":[],\"number\":\"A-05\",\"paper\":\"A4\"},{\"index\":6,\"name\":\"A-A 断面図\",\"notes\":[],\"number\":\"A-06\",\"paper\":\"A4\"},{\"index\":7,\"name\":\"B-B 断面図\",\"notes\":[],\"number\":\"A-07\",\"paper\":\"A4\"},{\"index\":8,\"name\":\"南立面図\",\"notes\":[],\"number\":\"A-08\",\"paper\":\"A4\"},{\"index\":9,\"name\":\"東立面図\",\"notes\":[],\"number\":\"A-09\",\"paper\":\"A4\"},{\"index\":10,\"name\":\"北立面図\",\"notes\":[],\"number\":\"A-10\",\"paper\":\"A4\"},{\"index\":11,\"name\":\"西立面図\",\"notes\":[],\"number\":\"A-11\",\"paper\":\"A4\"},{\"index\":12,\"name\":\"建具表\",\"notes\":[],\"number\":\"A-12\",\"paper\":\"A4\"},{\"index\":13,\"name\":\"室の表\",\"notes\":[],\"number\":\"A-13\",\"paper\":\"A4\"},{\"index\":14,\"name\":\"面積の表\",\"notes\":[],\"number\":\"A-14\",\"paper\":\"A4\"},{\"index\":15,\"name\":\"壁量計算表\",\"notes\":[],\"number\":\"A-15\",\"paper\":\"A2\"},{\"index\":16,\"name\":\"耐力壁の一覧\",\"notes\":[],\"number\":\"A-16\",\"paper\":\"A2\"},{\"index\":17,\"name\":\"四分割（側端部分）\",\"notes\":[],\"number\":\"A-17\",\"paper\":\"A2\"},{\"index\":18,\"name\":\"耐力壁配置図（1階）\",\"notes\":[],\"number\":\"A-18\",\"paper\":\"A3\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\18.png\"}]}\nAW1\nAW1\nAD1\na X 倍率2.0 4.00m\nb X 倍率2.0 1.00m\nc Y 倍率2.0 8.00m\nd Y 倍率2.0 8.00m\nX 側端 必要2.00m 存在4.00m\nX 側端 必要2.00m 存在1.00m\nY 側端 必要2.00m 存在8.00m\nY 側端 必要2.00m 存在8.00m\n居間  24.00 m²\n洋室  24.00 m²\nA\nA-06\nA\nA-06\nB\nA-07\nB\nA-07\n耐力壁配置図（1階）  S=1:100\n太線：壁量に入れた耐力壁（符号・方向・倍率・有効長さ）　破線：入れていない壁、四分割の側端部分\n意匠・概略の検討用。入力した耐力壁と荷重による壁量比較で、建物全体の安全・法適合の判定ではありません。壁量の根拠: 昭和56年建設省告示1100号（令和6年国土交通省告示447号改\n正）第三・第四、別表第一・第二／施行 2025-04-01／表の確認日 2026-11-04／版 jp-post-beam-2025-04-01-v1。最新の基準を確認してください\n。四分割法は平成12年告示1352号（2025年4月から告示1100号第四）の考え方で別欄に計算。N値・柱頭柱脚・準耐力壁等は未評価。\n壁量の結果・入力範囲は別の壁量表を参照。図面のタグや表示範囲と計算範囲は同一とは限りません。\nN\n仮\n工事名\n図面名\n耐力壁配置図（1階）\n縮尺\n1:100 (A3)\n日付\n2026-11-23\n図番\nA-18\n作成者"
+   },
+   {
+    "n": 24,
+    "tool": "render_drawing_set",
+    "args": {
+     "pdf": true
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"notes\":[],\"pdf\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\drawing-set.pdf\",\"sheets\":[{\"index\":1,\"name\":\"図面リスト\",\"notes\":[],\"number\":\"A-01\",\"paper\":\"A3\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\01.png\"},{\"index\":2,\"name\":\"計画概要\",\"notes\":[],\"number\":\"A-02\",\"paper\":\"A3\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\02.png\"},{\"index\":3,\"name\":\"配置図（検討用）\",\"notes\":[],\"number\":\"A-03\",\"paper\":\"A3\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\03.png\"},{\"index\":4,\"name\":\"1FL 平面図\",\"notes\":[],\"number\":\"A-04\",\"paper\":\"A3\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\04.png\"},{\"index\":5,\"name\":\"2FL 平面図\",\"notes\":[],\"number\":\"A-05\",\"paper\":\"A4\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\05.png\"},{\"index\":6,\"name\":\"A-A 断面図\",\"notes\":[],\"number\":\"A-06\",\"paper\":\"A4\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\06.png\"},{\"index\":7,\"name\":\"B-B 断面図\",\"notes\":[],\"number\":\"A-07\",\"paper\":\"A4\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\07.png\"},{\"index\":8,\"name\":\"南立面図\",\"notes\":[],\"number\":\"A-08\",\"paper\":\"A4\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\08.png\"},{\"index\":9,\"name\":\"東立面図\",\"notes\":[],\"number\":\"A-09\",\"paper\":\"A4\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\09.png\"},{\"index\":10,\"name\":\"北立面図\",\"notes\":[],\"number\":\"A-10\",\"paper\":\"A4\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\10.png\"},{\"index\":11,\"name\":\"西立面図\",\"notes\":[],\"number\":\"A-11\",\"paper\":\"A4\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\11.png\"},{\"index\":12,\"name\":\"建具表\",\"notes\":[],\"number\":\"A-12\",\"paper\":\"A4\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\12.png\"},{\"index\":13,\"name\":\"室の表\",\"notes\":[],\"number\":\"A-13\",\"paper\":\"A4\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\13.png\"},{\"index\":14,\"name\":\"面積の表\",\"notes\":[],\"number\":\"A-14\",\"paper\":\"A4\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\14.png\"},{\"index\":15,\"name\":\"壁量計算表\",\"notes\":[],\"number\":\"A-15\",\"paper\":\"A2\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\15.png\"},{\"index\":16,\"name\":\"耐力壁の一覧\",\"notes\":[],\"number\":\"A-16\",\"paper\":\"A2\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\16.png\"},{\"index\":17,\"name\":\"四分割（側端部分）\",\"notes\":[],\"number\":\"A-17\",\"paper\":\"A2\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\17.png\"},{\"index\":18,\"name\":\"耐力壁配置図（1階）\",\"notes\":[],\"number\":\"A-18\",\"paper\":\"A3\",\"png\":\"C:\\\\Users\\\\enomo\\\\AppData\\\\Local\\\\Temp\\\\sketchbrep-drawing-set\\\\18.png\"}]}\n"
+   },
+   {
+    "n": 25,
+    "tool": "create_wall",
+    "args": {
+     "points": [
+      [
+       0,
+       0
+      ],
+      [
+       2000,
+       0
+      ]
+     ],
+     "height": 3000,
+     "thickness": 120
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 26,
+    "tool": "create_wall",
+    "args": {
+     "points": [
+      [
+       0,
+       4000
+      ],
+      [
+       500,
+       4000
+      ]
+     ],
+     "height": 3000,
+     "thickness": 120
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 27,
+    "tool": "set_wall_calculation",
+    "args": {
+     "inputs": {
+      "height_m": 6,
+      "co_designated": false,
+      "wind_coefficient_cm_m2": 50,
+      "input_basis": "台本の仮想入力（計算テストの例）",
+      "floors": [
+       {
+        "id": "1",
+        "name": "1階",
+        "area_m2": 50,
+        "weight_kn": 98,
+        "wind_x_m2": 30,
+        "wind_y_m2": 6,
+        "walls_complete": true,
+        "plan": {
+         "x": [
+          0,
+          10000
+         ],
+         "y": [
+          0,
+          4000
+         ]
+        }
+       }
+      ],
+      "walls": [
+       {
+        "id": "a3b61bf2-e480-470d-b87a-c9aa33b38717",
+        "floor": "1",
+        "direction": "X",
+        "start": [
+         0,
+         0
+        ],
+        "end": [
+         2000,
+         0
+        ],
+        "spec": "brace_45x90",
+        "height_mm": 3000,
+        "verified": true
+       },
+       {
+        "id": "b8fc244d-dc21-497f-aed2-061ffaa0ac84",
+        "floor": "1",
+        "direction": "X",
+        "start": [
+         0,
+         4000
+        ],
+        "end": [
+         500,
+         4000
+        ],
+        "spec": "brace_45x90",
+        "height_mm": 3000,
+        "verified": true
+       },
+       {
+        "id": "c",
+        "floor": "1",
+        "direction": "Y",
+        "start": [
+         0,
+         0
+        ],
+        "end": [
+         0,
+         4000
+        ],
+        "spec": "brace_45x90",
+        "height_mm": 3000,
+        "verified": true
+       },
+       {
+        "id": "d",
+        "floor": "1",
+        "direction": "Y",
+        "start": [
+         10000,
+         0
+        ],
+        "end": [
+         10000,
+         4000
+        ],
+        "spec": "brace_45x90",
+        "height_mm": 3000,
+        "verified": true
+       }
+      ]
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 28,
+    "tool": "ui_list",
+    "args": {
+     "window": "main",
+     "filter": "permitWorkflowEdit"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"title\":\"無題[*] - SketchBRep\",\"widget_count\":57,\"widgets\":[{\"enabled\":true,\"kind\":\"button\",\"ref\":\"permitWorkflowEdit\",\"text\":\"モデルで 2 個を選択\"}]}"
+   },
+   {
+    "n": 29,
+    "tool": "ui_click",
+    "args": {
+     "window": "main",
+     "widget": "permitWorkflowEdit"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 30,
+    "tool": "get_selection",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": "{\"editing_group\":\"\",\"elements\":[],\"ids\":[\"a3b61bf2-e480-470d-b87a-c9aa33b38717\",\"b8fc244d-dc21-497f-aed2-061ffaa0ac84\"]}"
+   },
+   {
+    "n": 31,
+    "tool": "ui_capture",
+    "args": {
+     "window": "main"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   }
+  ],
+  "pictures": [
+   {
+    "file": "14-12・14-21-19-0.png",
+    "caption": "申請図の工程7・耐力壁"
+   },
+   {
+    "file": "14-12・14-21-20-0.png",
+    "caption": "壁量計算表"
+   },
+   {
+    "file": "14-12・14-21-21-0.png",
+    "caption": "耐力壁の一覧"
+   },
+   {
+    "file": "14-12・14-21-22-0.png",
+    "caption": "四分割（側端部分）"
+   },
+   {
+    "file": "14-12・14-21-23-0.png",
+    "caption": "耐力壁配置図（1階）"
+   },
+   {
+    "file": "14-12・14-21-31-0.png",
+    "caption": "第7工程から計算対象の壁を選択"
+   }
+  ],
+  "failed": [],
+  "findings": [
+   "耐力壁配置図（1階）：text_on_text「c Y 倍率2.0 8.00m」Y 側端 必要2.00m 存在8.00m",
+   "耐力壁配置図（1階）：text_on_text「d Y 倍率2.0 8.00m」Y 側端 必要2.00m 存在8.00m",
+   "耐力壁配置図（1階）：line_through_text「a X 倍率2.0 4.00m」見えがかり線 ほか 13",
+   "耐力壁配置図（1階）：line_through_text「b X 倍率2.0 1.00m」切断線 ほか 5",
+   "耐力壁配置図（1階）：line_through_text「c Y 倍率2.0 8.00m」切断線 ほか 3",
+   "耐力壁配置図（1階）：line_through_text「d Y 倍率2.0 8.00m」切断線 ほか 1",
+   "耐力壁配置図（1階）：line_through_text「X 側端 必要2.00m 存在4.00m」切断線 ほか 1",
+   "耐力壁配置図（1階）：line_through_text「X 側端 必要2.00m 存在1.00m」切断線 ほか 1",
+   "耐力壁配置図（1階）：line_through_text「Y 側端 必要2.00m 存在8.00m」切断線 ほか 3",
+   "耐力壁配置図（1階）：line_through_text「Y 側端 必要2.00m 存在8.00m」切断線 ほか 3",
+   "耐力壁配置図（1階）：line_through_text「居間  24.00 m²」隠れ線 ほか 1",
+   "耐力壁配置図（1階）：line_through_text「洋室  24.00 m²」見えがかり線 ほか 1"
+  ]
+ }
+]
