@@ -336,13 +336,13 @@
    "arc/text": 1,
    "fill/text": 5,
    "line/cut": 4,
-   "line/grid": 3,
+   "line/grid": 2,
    "line/text": 1,
    "line/title_block": 6,
    "line/visible": 20,
    "polyline/frame": 1,
    "polyline/title_block": 1,
-   "text/text": 13,
+   "text/text": 11,
    "text/title_block": 10
   },
   "extent": [
@@ -374,10 +374,8 @@
    "作成者",
    "図番",
    "図面名",
-   "居間  24.00 m²",
    "工事名",
    "日付",
-   "洋室  24.00 m²",
    "確認用の家",
    "縮尺"
   ]

@@ -1382,6 +1382,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
         // Only dimensions lying in the view's plane direction.
         if (std::abs(gp_Vec(a, b).Dot(gp_Vec(n))) > 1e-6 || std::abs(off.Dot(gp_Vec(n))) > 1e-6) continue;
         if (cutting && proj.local(a).Z() > kOnPlane) continue;
+        if (cutting && spec.kind == ViewKind::Plan && spec.depth > 0 && proj.local(a).Z() < -spec.depth) continue;  // docs/251
         DimensionMark m;
         m.a = proj.uv(a);
         m.b = proj.uv(b);
@@ -1392,6 +1393,9 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
       } else if (const auto* t = std::get_if<doc::TextNote>(&o.recipe.base)) {
         const gp_Pnt p = t->position.Transformed(w);
         if (cutting && proj.local(p).Z() > kOnPlane) continue;
+        // docs/251: as deep as the plan looks and no deeper: the rooms of the storey below were
+        // written on the upper plan through its floor (the AI's look at the hands-on pictures).
+        if (cutting && spec.kind == ViewKind::Plan && spec.depth > 0 && proj.local(p).Z() < -spec.depth) continue;
         Item text;
         text.kind = Item::Kind::Text;
         text.pen = Pen::Text;

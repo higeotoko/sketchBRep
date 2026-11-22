@@ -4149,3 +4149,21 @@ TEST(SheetCheck, LinesKeptClearOfWords) {
   EXPECT_NEAR(missed[0].first.Distance(gp_Pnt2d(0, 5000)), 0.0, 1e-9);
   EXPECT_NEAR(missed[0].second.Distance(gp_Pnt2d(4000, 5000)), 0.0, 1e-9);
 }
+
+// docs/251: an upper storey's plan does not carry the rooms of the storey below (seen through its floor).
+TEST_F(Schedules, UpperPlanLeavesTheRoomsBelow) {
+  ok("create_wall", {{"points", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}, {0, 0}}}, {"thickness", 200}, {"height", 2700}, {"base", 3000}});
+  ok("create_slab", {{"outline", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}}}, {"top", 3000}, {"thickness", 200}});
+  const auto set = sbr::doc::drawingSet(modeler.document(), {});
+  ASSERT_TRUE(set);
+  const auto words = [&](const std::string& name) {
+    std::string all;
+    for (std::size_t i = 0; i < set->names.size(); ++i)
+      if (set->names[i] == name)
+        for (const auto& item : set->sheets[i].items)
+          if (item.kind == sbr::draw::Item::Kind::Text) all += item.text + "\n";
+    return all;
+  };
+  EXPECT_NE(words("1FL 平面図").find("居間"), std::string::npos);
+  EXPECT_EQ(words("2FL 平面図").find("居間"), std::string::npos) << words("2FL 平面図");
+}
