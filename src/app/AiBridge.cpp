@@ -59,7 +59,7 @@ namespace {
 // Whether the request (or a step of its batch) names a ui_* command.
 bool namesUiCommand(const nlohmann::json& request) {
   if (!request.is_object()) return false;
-  if (request.value("command", std::string()).rfind("ui_", 0) == 0) return true;
+  if (request.value("command", std::string()).rfind("ui_", 0) == 0) return true;  // docs/252: ui_view_* and ui_type too
   const auto args = request.value("args", nlohmann::json::object());
   if (args.is_object() && args.contains("commands") && args["commands"].is_array())
     for (const auto& step : args["commands"])

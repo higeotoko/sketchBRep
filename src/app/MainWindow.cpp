@@ -2877,6 +2877,179 @@ void MainWindow::buildAiBridge() {
     return state().dump();
   };
 
+  // docs/252: the 3D view worked with the mouse and the keyboard as a person would: a tool chosen,
+  // clicks and drags at model points (put on the screen the way the view shows them now), keys typed
+  // into the measurement box. Like ui_click, it happens just after the answer.
+  const auto viewPoint = [this](const json& p) {
+    if (!p.is_array() || p.size() < 2) throw std::runtime_error("a point is [x, y] or [x, y, z] (mm)");
+    const gp_Pnt at(p[0].get<double>(), p[1].get<double>(), p.size() > 2 ? p[2].get<double>() : 0.0);
+    const QPoint pos = viewport_->toWidget(at);
+    if (!viewport_->rect().contains(pos))
+      throw std::runtime_error("the point is outside the view (" + std::to_string(pos.x()) + ", " + std::to_string(pos.y()) +
+                               "): use set_view (e.g. fit or top) first");
+    return pos;
+  };
+  const auto modifiersOf = [](const json& a) {
+    Qt::KeyboardModifiers m;
+    for (const auto& k : a.value("modifiers", json::array())) {
+      const std::string key = k.get<std::string>();
+      if (key == "ctrl") m |= Qt::ControlModifier;
+      else if (key == "shift") m |= Qt::ShiftModifier;
+      else if (key == "alt") m |= Qt::AltModifier;
+      else throw std::runtime_error("'modifiers': ctrl, shift, alt");
+    }
+    return m;
+  };
+  const auto buttonOf = [](const json& a) {
+    const std::string b = a.value("button", std::string("left"));
+    if (b == "left") return Qt::LeftButton;
+    if (b == "right") return Qt::RightButton;
+    if (b == "middle") return Qt::MiddleButton;
+    throw std::runtime_error("'button': left, right or middle");
+  };
+  const auto sendMouse = [](QWidget* w, QEvent::Type type, const QPoint& pos, Qt::MouseButton button, Qt::MouseButtons buttons,
+                            Qt::KeyboardModifiers mods) {
+    QMouseEvent event(type, QPointF(pos), QPointF(w->mapToGlobal(pos)), button, buttons, mods);
+    QApplication::sendEvent(w, &event);
+  };
+  handlers["ui_tool"] = [this, debugOnly, state](const std::string& args) {
+    debugOnly();
+    const json a = json::parse(args);
+    static const std::map<std::string, ToolId> tools = {
+        {"select", ToolId::Select}, {"line", ToolId::Line}, {"rectangle", ToolId::Rectangle}, {"push_pull", ToolId::PushPull},
+        {"move", ToolId::Move}, {"rotate", ToolId::Rotate}, {"offset", ToolId::Offset}, {"measure", ToolId::Measure},
+        {"circle", ToolId::Circle}, {"paint", ToolId::Paint}, {"eraser", ToolId::Eraser}, {"arc", ToolId::Arc},
+        {"dimension", ToolId::Dimension}, {"text", ToolId::Text}, {"section", ToolId::Section}, {"polygon", ToolId::Polygon},
+        {"scale", ToolId::Scale}, {"wall", ToolId::Wall}, {"slab", ToolId::Slab}, {"opening", ToolId::Opening},
+        {"member", ToolId::Member}, {"room", ToolId::Room}, {"roof", ToolId::Roof}, {"stair", ToolId::Stair},
+        {"door_swing", ToolId::DoorSwing}, {"site_north", ToolId::SiteNorth}};
+    const std::string name = a.value("tool", std::string());
+    const auto it = tools.find(name);
+    if (it == tools.end()) {
+      std::string names;
+      for (const auto& t : tools) names += (names.empty() ? "" : ", ") + t.first;
+      throw std::runtime_error("'tool': one of " + names);
+    }
+    activateTool(it->second);
+    json out = state();
+    out["tool"] = name;
+    return out.dump();
+  };
+  handlers["ui_view_click"] = [this, debugOnly, state, viewPoint, modifiersOf, buttonOf, sendMouse](const std::string& args) {
+    debugOnly();
+    const json a = json::parse(args);
+    std::vector<QPoint> points;
+    if (a.contains("points"))
+      for (const auto& p : a["points"]) points.push_back(viewPoint(p));
+    else
+      points.push_back(viewPoint(a.value("at", json())));
+    const Qt::KeyboardModifiers mods = modifiersOf(a);
+    const Qt::MouseButton button = buttonOf(a);
+    const bool twice = a.value("double", false);
+    QPointer<QWidget> view(viewport_);
+    const auto clicks = [view, points, mods, button, twice, sendMouse] {
+      // A person's pace: the mouse comes to the point, the view works out what is under it (snaps),
+      // then the button.
+      const auto settle = [] {
+        QElapsedTimer t;
+        t.start();
+        while (t.elapsed() < 40) QApplication::processEvents();
+      };
+      for (const QPoint& pos : points) {
+        if (!view) return;
+        sendMouse(view, QEvent::MouseMove, pos, Qt::NoButton, Qt::NoButton, mods);
+        settle();
+        if (!view) return;
+        sendMouse(view, QEvent::MouseButtonPress, pos, button, button, mods);
+        sendMouse(view, QEvent::MouseButtonRelease, pos, button, Qt::NoButton, mods);
+        if (twice && view) {
+          sendMouse(view, QEvent::MouseButtonDblClick, pos, button, button, mods);
+          sendMouse(view, QEvent::MouseButtonRelease, pos, button, Qt::NoButton, mods);
+        }
+        settle();
+      }
+    };
+    // Done before the answer (the next request must not come in between the clicks); 'async' (a click
+    // that opens a window waiting for an answer) just after it instead.
+    const bool async = a.value("async", false);
+    if (async) QTimer::singleShot(0, viewport_, clicks);
+    else clicks();
+    json at = json::array();
+    for (const QPoint& p : points) at.push_back({p.x(), p.y()});
+    json out = state();
+    out["screen"] = at;
+    if (async) out["next"] = "the clicks happen just after this answer: read the model or ui_windows to see what they did";
+    return out.dump();
+  };
+  handlers["ui_view_drag"] = [this, debugOnly, state, viewPoint, modifiersOf, buttonOf, sendMouse](const std::string& args) {
+    debugOnly();
+    const json a = json::parse(args);
+    const QPoint from = viewPoint(a.value("from", json())), to = viewPoint(a.value("to", json()));
+    const Qt::KeyboardModifiers mods = modifiersOf(a);
+    const Qt::MouseButton button = buttonOf(a);
+    QPointer<QWidget> view(viewport_);
+    const auto drag = [view, from, to, mods, button, sendMouse] {
+      if (!view) return;
+      sendMouse(view, QEvent::MouseMove, from, Qt::NoButton, Qt::NoButton, mods);
+      sendMouse(view, QEvent::MouseButtonPress, from, button, button, mods);
+      for (int i = 1; i <= 10 && view; ++i) {
+        const QPoint p = from + (to - from) * i / 10;
+        sendMouse(view, QEvent::MouseMove, p, Qt::NoButton, button, mods);
+        QApplication::processEvents();
+      }
+      if (view) sendMouse(view, QEvent::MouseButtonRelease, to, button, Qt::NoButton, mods);
+      QApplication::processEvents();
+    };
+    if (a.value("async", false)) QTimer::singleShot(0, viewport_, drag);
+    else drag();
+    json out = state();
+    out["screen"] = {{from.x(), from.y()}, {to.x(), to.y()}};
+    return out.dump();
+  };
+  handlers["ui_view_hover"] = [this, debugOnly, state, viewPoint](const std::string& args) {
+    debugOnly();
+    const json a = json::parse(args);
+    const QPoint pos = viewPoint(a.value("at", json()));
+    QMouseEvent event(QEvent::MouseMove, QPointF(pos), QPointF(viewport_->mapToGlobal(pos)), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(viewport_, &event);
+    QElapsedTimer settled;
+    settled.start();
+    while (settled.elapsed() < 40) QApplication::processEvents();
+    json out = state();
+    out["screen"] = {pos.x(), pos.y()};
+    return out.dump();
+  };
+  handlers["ui_type"] = [this, debugOnly, state](const std::string& args) {
+    debugOnly();
+    const json a = json::parse(args);
+    const QString text = QString::fromStdString(a.value("text", std::string()));
+    const bool enter = a.value("enter", true);
+    QPointer<QWidget> target(viewport_);  // typed in the view, as a person types a length: it goes to the measurement box
+    const auto typing = [target, text, enter] {
+      for (const QChar c : text) {
+        if (!target) return;
+        // The key as well as the character (ASCII keys are their upper-case code, as QTest sends them).
+        const int key = c.unicode() < 128 ? c.toUpper().unicode() : 0;
+        QKeyEvent press(QEvent::KeyPress, key, Qt::NoModifier, QString(c));
+        QApplication::sendEvent(target, &press);
+        QKeyEvent release(QEvent::KeyRelease, key, Qt::NoModifier, QString(c));
+        QApplication::sendEvent(target, &release);
+      }
+      if (enter && target) {
+        QKeyEvent press(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"));
+        QApplication::sendEvent(target, &press);
+        QKeyEvent release(QEvent::KeyRelease, Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"));
+        QApplication::sendEvent(target, &release);
+      }
+      QApplication::processEvents();
+    };
+    if (a.value("async", false)) QTimer::singleShot(0, viewport_, typing);
+    else typing();
+    json out = state();
+    out["typed"] = text.toStdString();
+    return out.dump();
+  };
+
   handlers["list_scenes"] = [this](const std::string&) {
     json list = json::array();
     for (const doc::Scene& s : modeler_.document().settings().scenes) list.push_back(s.name);

@@ -257,6 +257,7 @@ class GuiPhase1 : public QObject {
   void vicinityMapFromCachedTiles();
   void aiPicturesOfDrawingsAndWindows();
   void aiWorksTheWindowsAndFiles();
+  void aiDrawsInTheView();
   void vicinityMapFetchedOnline();
   void insulationPlanIsDrawnOnItsSheet();
   void proposalShowsRotationAndHide();
@@ -1270,6 +1271,46 @@ void GuiPhase1::aiWorksTheWindowsAndFiles() {
   QVERIFY(!run({{"command", "save"}, {"args", {{"path", "x.sbr"}}}})["ok"].get<bool>());
   QFile::remove(path);
   QFile::remove(QDir(QDir::tempPath()).filePath(QStringLiteral("sbr_ai_files_test2.sbr")));
+}
+
+// docs/252: the AI draws in the 3D view as a person does: a tool, clicks at model points, a length typed.
+void GuiPhase1::aiDrawsInTheView() {
+  Fixture f;
+  QVERIFY(f.setUp(1000, 0));
+  auto& modeler = f.window.modeler();
+  AiBridge* bridge = f.window.aiBridge();
+  bridge->setDebugMode(true);
+  const auto run = [&](const nlohmann::json& request) { return nlohmann::json::parse(bridge->execute(request.dump())); };
+  QVERIFY(run({{"command", "set_view"}, {"args", {{"view", "top"}}}})["ok"].get<bool>());
+  QVERIFY(run({{"command", "ui_tool"}, {"args", {{"tool", "rectangle"}}}})["ok"].get<bool>());
+  const auto before = modeler.document().objects().size();
+  const auto clicked = run({{"command", "ui_view_click"}, {"args", {{"points", {{0, 0, 0}, {600, 400, 0}}}}}});
+  QVERIFY2(clicked["ok"].get<bool>(), clicked.dump().c_str());
+  QTRY_VERIFY_WITH_TIMEOUT(modeler.document().objects().size() == before + 1, 3000);
+  const auto& face = modeler.document().objects().back();
+  const Bnd_Box box = geom::exactBounds(face.shape);
+  QVERIFY(std::abs(box.CornerMax().X() - box.CornerMin().X() - 600) < 20);
+  QVERIFY(std::abs(box.CornerMax().Y() - box.CornerMin().Y() - 400) < 20);
+  // A line: one click, the direction shown by the mouse, the length typed.
+  QVERIFY(run({{"command", "ui_tool"}, {"args", {{"tool", "line"}}}})["ok"].get<bool>());
+  const auto lineStart = run({{"command", "ui_view_click"}, {"args", {{"at", {-500, -500, 0}}}}});
+  QVERIFY2(lineStart["ok"].get<bool>(), lineStart.dump().c_str());
+  QVERIFY2(!f.window.statusText().startsWith(QStringLiteral("始点をクリック")), qPrintable(f.window.statusText()));  // the start is set
+  QVERIFY(run({{"command", "ui_view_hover"}, {"args", {{"at", {-100, -500, 0}}}}})["ok"].get<bool>());
+  const auto lineObjects = modeler.document().objects().size();
+  QVERIFY(run({{"command", "ui_type"}, {"args", {{"text", "250"}}}})["ok"].get<bool>());
+  // A line in the open is kept when the run ends (Esc), as a person ends it.
+  QVERIFY(run({{"command", "ui_key"}, {"args", {{"window", "main"}, {"key", "Escape"}}}})["ok"].get<bool>());
+  QTRY_VERIFY2_WITH_TIMEOUT(modeler.document().objects().size() == lineObjects + 1, qPrintable(f.window.statusText()), 3000);
+  const Bnd_Box l = geom::exactBounds(modeler.document().objects().back().shape);
+  QVERIFY2(std::abs(l.CornerMax().X() - l.CornerMin().X() - 250) < 1e-3,
+           qPrintable(QString::number(l.CornerMax().X() - l.CornerMin().X())));
+  // A point off the screen is refused, with what to do.
+  const auto off = run({{"command", "ui_view_click"}, {"args", {{"at", {1e7, 1e7, 0}}}}});
+  QVERIFY(!off["ok"].get<bool>());
+  QVERIFY(off["error"].get<std::string>().find("set_view") != std::string::npos);
+  // Not through the ChatGPT connection.
+  QVERIFY(!nlohmann::json::parse(bridge->executeRemote(R"({"command": "ui_view_click", "args": {"at": [0, 0, 0]}})"))["ok"].get<bool>());
 }
 
 void GuiPhase1::equipmentInItsDialog() {

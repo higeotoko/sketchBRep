@@ -5145,19 +5145,51 @@ std::vector<CommandApi::Extension> CommandApi::appCommandSpecs() {
        "キャンセル). The press happens just after the answer; then ui_windows / ui_list show what it did.",
        R"({"type": "object", "properties": {"window": {"type": "string"}, "widget": {"type": "string"}},
            "required": ["widget"]})",
-       nullptr, Effect::ModelWrite},
+       nullptr, Effect::ViewWrite},
       {"ui_trigger",
        "docs/242: choose a menu item ('action': object name, its text, or its menus' path "
        "such as ファイル/図面一式を書き出す; ui_list with menus: true lists them). It runs just after the answer; "
        "a window it opens is then 'top' for the ui_* commands.",
        R"({"type": "object", "properties": {"action": {"type": "string"}}, "required": ["action"]})",
-       nullptr, Effect::ModelWrite},
+       nullptr, Effect::ViewWrite},
       {"ui_key",
        "docs/242: press a key ('key': Escape, Return, Delete, Ctrl+Z...) in a widget "
        "('widget', else the window's focus). 'window' as in ui_list.",
        R"({"type": "object", "properties": {"window": {"type": "string"}, "widget": {"type": "string"},
            "key": {"type": "string"}}, "required": ["key"]})",
-       nullptr, Effect::ModelWrite},
+       nullptr, Effect::ViewWrite},
+      // docs/252: the ui_* commands are ViewWrite (though a press may change the model, as a person's does):
+      // a ModelWrite runs the bridge's hooks, which cancel the drawing tool before and start it again
+      // after the request, and that undid the clicks the request had just set going.
+      {"ui_tool",
+       "docs/252, the AI on this PC only: choose a drawing tool as a person would ('tool': select, line, rectangle, "
+       "push_pull, move, rotate, offset, measure, circle, paint, eraser, arc, dimension, text, section, polygon, scale, "
+       "wall, slab, opening, member, room, roof, stair, door_swing, site_north).",
+       R"({"type": "object", "properties": {"tool": {"type": "string"}}, "required": ["tool"]})", nullptr, Effect::ViewWrite},
+      {"ui_view_click",
+       "docs/252, the AI on this PC only: click in the 3D view at model points as the view shows them now ('at' "
+       "[x, y, z] mm, or 'points' for several clicks in turn; 'button' left / right / middle; 'modifiers' [ctrl, shift, "
+       "alt]; 'double'). Set the view first (set_view top / fit) so the points are on the screen. The clicks are done "
+       "before the answer; 'async': true sends them just after it instead (a click that opens a window waiting for an "
+       "answer; then ui_windows / ui_list).",
+       R"({"type": "object", "properties": {"at": {"type": "array"}, "points": {"type": "array"}, "button": {"type": "string"},
+           "modifiers": {"type": "array", "items": {"type": "string"}}, "double": {"type": "boolean"}, "async": {"type": "boolean"}}})",
+       nullptr, Effect::ViewWrite},
+      {"ui_view_drag",
+       "docs/252, the AI on this PC only: press at model point 'from', move to 'to' and let go, in the 3D view "
+       "('button', 'modifiers', 'async' as ui_view_click).",
+       R"({"type": "object", "properties": {"from": {"type": "array"}, "to": {"type": "array"}, "button": {"type": "string"},
+           "modifiers": {"type": "array", "items": {"type": "string"}}, "async": {"type": "boolean"}}, "required": ["from", "to"]})",
+       nullptr, Effect::ViewWrite},
+      {"ui_view_hover",
+       "docs/252, the AI on this PC only: move the mouse over model point 'at' in the 3D view (a tool's preview, snaps).",
+       R"({"type": "object", "properties": {"at": {"type": "array"}}, "required": ["at"]})", nullptr, Effect::ViewWrite},
+      {"ui_type",
+       "docs/252, the AI on this PC only: type 'text' in the 3D view as a person types a length or a count while a tool "
+       "is working (it goes to the measurement box), then Return unless 'enter' is false ('async' as ui_view_click).",
+       R"({"type": "object", "properties": {"text": {"type": "string"}, "enter": {"type": "boolean"}, "async": {"type": "boolean"}},
+           "required": ["text"]})",
+       nullptr, Effect::ViewWrite},
       {"list_scenes", "List the saved views (scenes) of the model.", R"({"type": "object", "properties": {}})",
        nullptr, Effect::Read},
       {"propose",
