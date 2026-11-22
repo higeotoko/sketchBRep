@@ -4527,7 +4527,12 @@ void MoveTool::applyMeasurement(const QString& text) {
       host_.reportError(QObject::tr("マウスで方向を示してから距離を入力してください"));
       return;
     }
-    current_ = base_.Translated(gp_Vec(gp_Dir(gp_Vec(base_, current_))) * *length);
+    // docs/254: a direction within half a degree of an axis is that axis (the mouse's point carries
+    // the pixel's rounding: a move typed along the red axis went 0.05 mm up as well).
+    gp_Dir along(gp_Vec(base_, current_));
+    for (const gp_Dir& axis : {gp::DX(), gp::DY(), gp::DZ()})
+      if (std::abs(along.Dot(axis)) > std::cos(0.5 * M_PI / 180.0)) along = along.Dot(axis) > 0 ? axis : axis.Reversed();
+    current_ = base_.Translated(gp_Vec(along) * *length);
     typedSign_ = *length < 0 ? -1.0 : 1.0;
     finish();
     typedSign_ = 1.0;

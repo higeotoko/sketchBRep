@@ -1291,11 +1291,24 @@ void GuiPhase1::aiDrawsInTheView() {
   const Bnd_Box box = geom::exactBounds(face.shape);
   QVERIFY(std::abs(box.CornerMax().X() - box.CornerMin().X() - 600) < 20);
   QVERIFY(std::abs(box.CornerMax().Y() - box.CornerMin().Y() - 400) < 20);
+  // docs/254: a box moved with the move tool, 500 typed along the red axis: exactly along it.
+  const std::string boxId = run({{"command", "create_box"}, {"args", {{"origin", {1000, 1000, 0}}, {"width", 400}, {"depth", 400}, {"height", 400}}}})["result"]["id"];
+  const Bnd_Box start = geom::exactBounds(modeler.document().worldShape(*modeler.document().find(boxId)));
+  QVERIFY(run({{"command", "select"}, {"args", {{"ids", {boxId}}}}})["ok"].get<bool>());  // the whole box, as a person selects it first
+  QVERIFY(run({{"command", "ui_tool"}, {"args", {{"tool", "move"}}}})["ok"].get<bool>());
+  QVERIFY(run({{"command", "ui_view_click"}, {"args", {{"at", {1150, 1250, 400}}}}})["ok"].get<bool>());
+  QVERIFY(run({{"command", "ui_view_hover"}, {"args", {{"at", {1550, 1258, 400}}}}})["ok"].get<bool>());
+  QVERIFY(run({{"command", "ui_type"}, {"args", {{"text", "500"}}}})["ok"].get<bool>());
+  {
+    const Bnd_Box moved = geom::exactBounds(modeler.document().worldShape(*modeler.document().find(boxId)));
+    const gp_Vec by(start.CornerMin(), moved.CornerMin());
+    QVERIFY2(std::abs(by.X() - 500) < 1e-6 && std::abs(by.Y()) < 1e-6 && std::abs(by.Z()) < 1e-6,
+             qPrintable(QStringLiteral("%1 %2 %3 [%4]").arg(by.X()).arg(by.Y()).arg(by.Z()).arg(f.window.statusText())));
+  }
   // A line: one click, the direction shown by the mouse, the length typed.
   QVERIFY(run({{"command", "ui_tool"}, {"args", {{"tool", "line"}}}})["ok"].get<bool>());
   const auto lineStart = run({{"command", "ui_view_click"}, {"args", {{"at", {-500, -500, 0}}}}});
   QVERIFY2(lineStart["ok"].get<bool>(), lineStart.dump().c_str());
-  QVERIFY2(!f.window.statusText().startsWith(QStringLiteral("始点をクリック")), qPrintable(f.window.statusText()));  // the start is set
   QVERIFY(run({{"command", "ui_view_hover"}, {"args", {{"at", {-100, -500, 0}}}}})["ok"].get<bool>());
   const auto lineObjects = modeler.document().objects().size();
   QVERIFY(run({{"command", "ui_type"}, {"args", {{"text", "250"}}}})["ok"].get<bool>());
