@@ -30,3 +30,13 @@ docs/256 の続き。オーナー「続けて」。
 ## 確認
 
 - 台本の 6 項目は AI の確認で合格（台本 32 項目）。コア全件成功。
+
+## 配布と、入れたアプリでの通し（c02666b）
+
+| 項目 | 内容 |
+|---|---|
+| CI | run 45008587418（push）成功。Linux 829 件すべて成功 |
+| ZIP | `SketchBRep-windows-x64-c02666b-local.zip`（83,168,275 bytes、SHA256 `b3e65e8bd3395d0ab3deeaaa165978c500d423c1459f3a5a13495df2219e7aae`） |
+| ZIP の検証 | `docs/validation/2026-11-22-portable-c02666b.json`・`-mat.json`（GUI 18 + 4 条件、失敗 0） |
+| `C:\Apps\SketchBrep` へ | `sbr.py install`（古いのは `C:\Apps\SketchBrep.old-20261122-184329`） |
+| 台本の通し | 入れたアプリで 32 項目すべて AI の確認で合格、510 秒 |
