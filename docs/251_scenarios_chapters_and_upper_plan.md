@@ -28,3 +28,13 @@ docs/250 の続き。オーナー「続けて」。
 - `Schedules.UpperPlanLeavesTheRoomsBelow`：2 階の壁と床を足すと、1FL 平面図に「居間」、2FL 平面図には無い。
 - コア全件成功（806 件・8 件スキップ、基準を書き直した後）。
 - 台本 18 項目：直す前のアプリで、足した 6 項目すべて AI の確認で合格（仕上げ表は台本を直して合格）。
+
+## 配布と、入れたアプリでの通し（4f4dabf）
+
+| 項目 | 内容 |
+|---|---|
+| CI | run 44989785738（push）成功。Linux 827 件すべて成功 |
+| ZIP | `SketchBRep-windows-x64-4f4dabf-local.zip`（83,118,965 bytes、SHA256 `3f3758f3666f3e57db22b8581165c022ea6f4670414c2f164f36b6a1fa082136`） |
+| ZIP の検証 | `docs/validation/2026-11-22-portable-4f4dabf.json`・`-mat.json`（GUI 18 + 4 条件、失敗 0） |
+| `C:\Apps\SketchBrep` へ | `sbr.py install`（古いのは `C:\Apps\SketchBrep.old-20261122-143548`）。新しい sbr_mcp：ツール 209、create_box 成功 |
+| 台本の通し | 入れた `C:\Apps\SketchBrep` のアプリで 18 項目すべて AI の確認で合格、389 秒（`docs/validation/handson-2026-11-22/report.json`） |
