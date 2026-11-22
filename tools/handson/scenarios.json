@@ -1982,6 +1982,93 @@
           "picture": "屋根ツールで作った屋根（3D）"
         }
       ]
+    },
+    {
+      "id": "1-1",
+      "title": "移動ツールで窓のふちを押して、窓だけを壁の中で動かす（人と同じ手）",
+      "docs": "docs/95・254",
+      "look": "窓のふちをつかむ手順で迷わないか、動かしている時の見え方（画面の絵）。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "ui_trigger",
+          "args": {
+            "action": "透視投影"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "front"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "ui_tool",
+          "args": {
+            "tool": "move"
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              1700,
+              -100,
+              1500
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              2300,
+              -100,
+              1510
+            ]
+          }
+        },
+        {
+          "tool": "ui_capture",
+          "args": {
+            "window": "main"
+          },
+          "picture": "窓のふちをつかんで動かしているところ"
+        },
+        {
+          "tool": "ui_type",
+          "args": {
+            "text": "300"
+          }
+        },
+        {
+          "tool": "list_openings",
+          "args": {
+            "host": "$walls.ids.0"
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "\"center\":[2800.0,-100.0,1500.0]",
+              "\"sill\":900.0"
+            ]
+          }
+        },
+        {
+          "tool": "ui_trigger",
+          "args": {
+            "action": "透視投影"
+          }
+        }
+      ]
     }
   ]
 }
