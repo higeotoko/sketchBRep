@@ -10892,14 +10892,59 @@
             "sheet": "耐力壁配置図（1階）",
             "texts": true
           },
-          "picture": "耐力壁配置図（1階）",
+          "picture": "耐力壁配置図（1:100）",
           "expect": {
             "contains": [
               "a X",
-              "側端"
+              "側端",
+              "居間",
+              "洋室"
             ]
           },
           "show": true
+        },
+        {
+          "tool": "check_drawing_set",
+          "args": {
+            "sheet": "耐力壁配置図（1階）",
+            "scale": 100
+          },
+          "expect": {
+            "contains": [
+              "\"total\":0"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "check_drawing_set",
+          "args": {
+            "sheet": "耐力壁配置図（1階）",
+            "scale": 50
+          },
+          "expect": {
+            "contains": [
+              "\"total\":0"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "耐力壁配置図（1階）",
+            "scale": 50,
+            "texts": true
+          },
+          "picture": "耐力壁配置図（1:50）",
+          "expect": {
+            "contains": [
+              "a X",
+              "側端",
+              "居間",
+              "洋室"
+            ]
+          }
         },
         {
           "tool": "render_drawing_set",

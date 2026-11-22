@@ -33,6 +33,7 @@ const char* penName(Pen pen);
 
 // Whether a proposed text item has 'gap' of paper space around it, clear of text and lines.
 bool textIsClear(const Item& label, const std::vector<Item>& items, double scale, double gap);
+bool textFitsInside(const Item& label, const std::vector<gp_Pnt2d>& outline, double scale, double gap);
 
 // The pieces of the line a-b left when it is kept `gap` (paper mm) clear of the words of `texts`
 // (Text items; heights on paper, the sheet at 1:`scale`). Empty when nothing is left.

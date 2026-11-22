@@ -1368,6 +1368,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
   }
   if (spec.annotations) {
     std::optional<std::map<doc::ObjectId, std::string>> roomTags;
+    std::map<doc::ObjectId, std::vector<gp_Pnt2d>> roomOutlines;
     for (const doc::Object& o : document.objects()) {
       if (!selected(document, o, spec) || o.attributes.count("grid_part")) continue;
       const gp_Trsf w = document.worldTransform(o);
@@ -1406,8 +1407,18 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
           if (!roomTags) {
             roomTags.emplace();
             for (const doc::RoomRow& r : doc::roomSchedule(document).rows) (*roomTags)[r.id] = doc::roomTagText(r);
+            if (!spec.bracingFloor.empty()) {
+              for (const doc::RoomInfo& room : doc::Modeler::roomsIn(document)) {
+                if (!room.closed || !room.problem.empty()) continue;
+                auto& outline = roomOutlines[room.id];
+                for (const gp_Pnt& corner : room.innerKnown ? room.inner : room.centre) outline.push_back(proj.uv(corner));
+              }
+            }
           }
           if (const auto tag = roomTags->find(o.id); tag != roomTags->end()) text.text = tag->second;
+          const auto outline = roomOutlines.find(o.id);
+          if (!t->target && outline != roomOutlines.end())
+            view.roomTags.push_back({view.items.size(), std::move(outline->second)});
         }
         text.height = 3.5;
         view.items.push_back(text);

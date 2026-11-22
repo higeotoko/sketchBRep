@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <map>
+#include <utility>
 
 #include "sbr/draw/Drawing.h"
 #include "sbr/draw/SheetCheck.h"
@@ -151,32 +152,54 @@ void dimension(std::vector<Item>& out, const gp_Pnt2d& a, const gp_Pnt2d& b, con
   out.push_back(text(Pen::Dimension, mid, value, 2.5, 1, 0, angle));
 }
 
+constexpr double kLabelGap = 0.8;  // paper mm
+
+template <typename IsClear>
+bool findNearbyPosition(Item& label, double scale, int maxSteps, IsClear isClear) {
+  const gp_Pnt2d original = label.points.front();
+  constexpr double step = 3.5;  // paper mm
+  // Try positions along the axes, diagonals and the spaces between them.
+  for (int ring = 1; ring <= maxSteps; ++ring) {
+    for (int x = 0; x <= ring; ++x) {
+      const int y = ring - x;
+      const std::array<gp_Vec2d, 4> offsets{
+          gp_Vec2d(x, y), gp_Vec2d(x, -y), gp_Vec2d(-x, y), gp_Vec2d(-x, -y)};
+      for (const gp_Vec2d& offset : offsets) {
+        label.points.front() = original.Translated(offset.Multiplied(step * scale));
+        if (isClear(label)) return true;
+      }
+    }
+  }
+  label.points.front() = original;
+  return false;
+}
+
+void placeRoomTags(std::vector<Item>& items, const std::vector<View::RoomTag>& tags, double scale) {
+  for (const auto& tag : tags) {
+    Item& slot = items[tag.item];
+    Item label = std::exchange(slot, Item{});
+    if (!textIsClear(label, items, scale, kLabelGap)) {
+      findNearbyPosition(label, scale, 6, [&](const Item& candidate) {
+        return textFitsInside(candidate, tag.outline, scale, kLabelGap) &&
+               textIsClear(candidate, items, scale, kLabelGap);
+      });
+    }
+    slot = std::move(label);
+  }
+}
+
 void placeBracingMarks(std::vector<Item>& items, const std::vector<View::BracingMark>& marks, double scale) {
   if (marks.empty()) return;
-  constexpr double gap = 0.8;  // paper mm
-  constexpr double step = 3.5;  // paper mm
   Box occupied;
   for (const Item& item : items) extentOf(item, scale, occupied);
   std::vector<std::pair<gp_Pnt2d, gp_Pnt2d>> leaders;
   for (const View::BracingMark& mark : marks) {
     Item label = text(Pen::Visible, mark.at, mark.text, mark.height, 1, 1);
-    bool clear = textIsClear(label, items, scale, gap);
-    // Try nearby positions first, including spaces between the diagonal and axial offsets.
-    for (int ring = 1; !clear && ring <= 12; ++ring) {
-      for (int x = 0; !clear && x <= ring; ++x) {
-        const int y = ring - x;
-        const std::array<gp_Vec2d, 4> offsets{
-            gp_Vec2d(x, y), gp_Vec2d(x, -y), gp_Vec2d(-x, y), gp_Vec2d(-x, -y)};
-        for (const gp_Vec2d& offset : offsets) {
-          label.points.front() = mark.at.Translated(offset.Multiplied(step * scale));
-          clear = textIsClear(label, items, scale, gap);
-          if (clear) break;
-        }
-      }
-    }
+    const auto isClear = [&](const Item& candidate) { return textIsClear(candidate, items, scale, kLabelGap); };
+    const bool clear = isClear(label) || findNearbyPosition(label, scale, 12, isClear);
     // When the plan is dense, reserve another line above the drawing. The paper-fit calculation
     // below includes it, just like the other annotations.
-    if (!clear) label.points.front().SetY(occupied.y1 + (mark.height / 2 + 2 * gap) * scale);
+    if (!clear) label.points.front().SetY(occupied.y1 + (mark.height / 2 + 2 * kLabelGap) * scale);
     if (!mark.at.IsEqual(label.points.front(), 1e-9)) leaders.emplace_back(mark.at, label.points.front());
     extentOf(label, scale, occupied);
     items.push_back(std::move(label));
@@ -186,7 +209,7 @@ void placeBracingMarks(std::vector<Item>& items, const std::vector<View::Bracing
     if (item.kind == Item::Kind::Text) words.push_back(&item);
   std::vector<Item> leaderItems;
   for (const auto& [a, b] : leaders)
-    for (const auto& [p, q] : clearOfText(a, b, words, scale, gap))
+    for (const auto& [p, q] : clearOfText(a, b, words, scale, kLabelGap))
       leaderItems.push_back(line(Pen::Text, p, q));
   items.insert(items.end(), leaderItems.begin(), leaderItems.end());
 }
@@ -291,6 +314,7 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
       }
     }
   }
+  placeRoomTags(items, view.roomTags, s);
   // Section cuts (docs/132): a line across the drawing, at each end an arrow the way the section
   // looks, the label and (under it) the sheet it is on.
   for (const View::CutLine& c : view.cuts) {

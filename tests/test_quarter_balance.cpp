@@ -273,19 +273,25 @@ TEST(WallQuantityForms, BracingPlanShowsTheWallsAndTheSideParts) {
   ASSERT_TRUE(set) << set.error();
   EXPECT_NE(std::find(set->names.begin(), set->names.end(), "耐力壁配置図（1階）"), set->names.end());
 
-  // Add actual walls, a room tag and a section line to the same calculation-only example.
+  // The room marker is on both the Y side part's boundary (x=2500) and the section line.
   ASSERT_TRUE(m.createWalls({{0,0,0}, {8000,0,0}, {8000,6000,0}, {0,6000,0}, {0,0,0}}, 200, 3000));
-  const auto room = json::parse(api.execute(R"({"command":"create_room","args":{"at":[1250,2000],"name":"居間"}})"));
+  const auto room = json::parse(api.execute(R"({"command":"create_room","args":{"at":[2500,2000],"name":"居間"}})"));
   ASSERT_TRUE(room.value("ok", false)) << room.dump();
-  spec.cutMarks.push_back({gp_Pnt(1250, 2000, 0), gp_Dir(0, 1, 0), "A", "A-06"});
+  spec.cutMarks.push_back({gp_Pnt(2500, 2000, 0), gp_Dir(0, 1, 0), "A", "A-06"});
   const auto furnished = draw::makeView(m.document(), spec);
   ASSERT_TRUE(furnished) << furnished.error();
+  ASSERT_EQ(furnished->roomTags.size(), 1u);
+  const auto& roomTag = furnished->items[furnished->roomTags.front().item];
   for (const double scale : {50.0, 100.0}) {
     SCOPED_TRACE(scale);
+    EXPECT_FALSE(draw::textIsClear(roomTag, view->items, scale, 0.8));
     draw::SheetSpec layout;
     layout.scale = scale;
     const auto sheet = draw::layoutSheet(*furnished, layout);
     ASSERT_TRUE(sheet) << sheet.error();
+    EXPECT_TRUE(std::any_of(sheet->items.begin(), sheet->items.end(), [&](const draw::Item& i) {
+      return i.kind == draw::Item::Kind::Text && i.text == roomTag.text;
+    }));
     for (const auto& mark : furnished->bracingMarks) {
       EXPECT_TRUE(std::any_of(sheet->items.begin(), sheet->items.end(), [&](const draw::Item& i) {
         return i.kind == draw::Item::Kind::Text && i.text == mark.text;
@@ -297,6 +303,8 @@ TEST(WallQuantityForms, BracingPlanShowsTheWallsAndTheSideParts) {
                                            return finding.text == mark.text || finding.other == mark.text;
                                          });
       EXPECT_FALSE(structural) << finding.kind << " " << finding.text << " " << finding.other;
+      EXPECT_NE(finding.text, roomTag.text) << finding.kind << " " << finding.other;
+      EXPECT_NE(finding.other, roomTag.text) << finding.kind << " " << finding.text;
     }
   }
 }

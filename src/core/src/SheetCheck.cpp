@@ -54,6 +54,16 @@ TextBox boxOf(const Item& item, double scale, bool inside = true) {
   return b;
 }
 
+TextBox boxWithGap(const Item& item, double scale, double gap) {
+  TextBox box = boxOf(item, scale, false);
+  const double margin = gap * scale;
+  box.x0 -= margin;
+  box.x1 += margin;
+  box.y0 -= margin;
+  box.y1 += margin;
+  return box;
+}
+
 // Whether the segment passes through the box's inside (Liang-Barsky in the text's frame).
 bool through(const TextBox& b, const gp_Pnt2d& p, const gp_Pnt2d& q) {
   if (b.x1 <= b.x0 || b.y1 <= b.y0) return false;
@@ -118,12 +128,7 @@ gp_Pnt2d onPaper(const gp_Pnt2d& p, double scale) { return {p.X() / scale, p.Y()
 }  // namespace
 
 bool textIsClear(const Item& label, const std::vector<Item>& items, double scale, double gap) {
-  TextBox area = boxOf(label, scale, false);
-  const double margin = gap * scale;
-  area.x0 -= margin;
-  area.x1 += margin;
-  area.y0 -= margin;
-  area.y1 += margin;
+  const TextBox area = boxWithGap(label, scale, gap);
   for (const Item& item : items) {
     if (item.kind == Item::Kind::Text && !item.text.empty() && !item.points.empty() &&
         overlap(area, boxOf(item, scale, false)))
@@ -132,6 +137,25 @@ bool textIsClear(const Item& label, const std::vector<Item>& items, double scale
       if (through(area, a, b)) return false;
   }
   return true;
+}
+
+bool textFitsInside(const Item& label, const std::vector<gp_Pnt2d>& outline, double scale, double gap) {
+  if (outline.size() < 3) return false;
+  const TextBox box = boxWithGap(label, scale, gap);
+  const gp_Pnt2d centre = box.toSheet((box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2);
+  bool inside = false;
+  const gp_Pnt2d* previous = &outline.back();
+  for (const gp_Pnt2d& point : outline) {
+    // The box must avoid every boundary edge, including around a concave corner.
+    if (through(box, *previous, point)) return false;
+    if ((previous->Y() > centre.Y()) != (point.Y() > centre.Y())) {
+      const double x = previous->X() + (centre.Y() - previous->Y()) * (point.X() - previous->X()) /
+                                          (point.Y() - previous->Y());
+      if (x > centre.X()) inside = !inside;
+    }
+    previous = &point;
+  }
+  return inside;
 }
 
 std::vector<SheetFinding> checkSheet(const Sheet& sheet, std::size_t limit) {
@@ -199,12 +223,7 @@ std::vector<std::pair<gp_Pnt2d, gp_Pnt2d>> clearOfText(const gp_Pnt2d& a, const 
   std::vector<std::pair<double, double>> under;
   for (const Item* item : texts) {
     if (!item || item->kind != Item::Kind::Text || item->points.empty() || item->text.empty()) continue;
-    TextBox t = boxOf(*item, scale, false);
-    const double g = gap * scale;
-    t.x0 -= g;
-    t.x1 += g;
-    t.y0 -= g;
-    t.y1 += g;
+    const TextBox t = boxWithGap(*item, scale, gap);
     const gp_Pnt2d p = t.toLocal(a), q = t.toLocal(b);
     double t0 = 0, t1 = 1;
     const double dx = q.X() - p.X(), dy = q.Y() - p.Y();
