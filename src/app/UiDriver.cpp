@@ -19,6 +19,7 @@
 #include <QMenuBar>
 #include <QPlainTextEdit>
 #include <QRadioButton>
+#include <QRegularExpression>
 #include <QSpinBox>
 #include <QTabWidget>
 #include <QTableWidget>
@@ -149,6 +150,9 @@ std::vector<std::pair<QWidget*, std::string>> listed(QWidget* window) {
 }
 
 std::string bare(QString text) {
+  // "新規(&N)": the access key in brackets goes; then any other "&".
+  static const QRegularExpression accessKey(QStringLiteral("\\(&[^)]\\)"));
+  text.remove(accessKey);
   text.remove(QLatin1Char('&'));
   text = text.trimmed();
   while (text.endsWith(QLatin1Char('.')) || text.endsWith(QChar(0x2026))) text.chop(1);

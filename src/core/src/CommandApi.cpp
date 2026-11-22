@@ -1881,10 +1881,19 @@ const std::vector<CommandDef>& commands() {
          must(m.setComponentOrigin(text(a, "id"), point(a, "origin"), red));
          return idResult(text(a, "id"));
        }},
-      {"rename", "Rename an object.",
+      {"rename", "Rename an object. A room (create_room): its room name, as on plans and in the tables (docs/246).",
        SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "name": {"type": "string"}},
                "required": ["id", "name"]}),
        [](doc::Modeler& m, const json& a) {
+         // docs/246: a room's name is the text of its marker; renaming the object alone left the room as it was.
+         if (const doc::Object* o = m.document().find(text(a, "id"))) {
+           const auto kind = o->attributes.find("kind");
+           if (kind != o->attributes.end() && kind->second == "room" && std::holds_alternative<doc::TextNote>(o->recipe.base)) {
+             if (text(a, "name").empty()) throw ApiError("Name must not be empty");
+             must(m.setAnnotationText(text(a, "id"), text(a, "name")));
+             return json{{"id", text(a, "id")}, {"room_name", text(a, "name")}};
+           }
+         }
          must(m.rename(text(a, "id"), text(a, "name")));
          return idResult(text(a, "id"));
        }},
@@ -5057,11 +5066,12 @@ std::vector<CommandApi::Extension> CommandApi::appCommandSpecs() {
       {"render_drawing_set",
        "docs/241: the drawing set as the app's File menu writes it: one PDF and a PNG per sheet, in a folder of the "
        "app's own under the temporary folder (emptied each time). Returns the paths, each sheet's number, name, "
-       "paper and notes (e.g. does not fit), and the set's notes. 'sheet' (a number such as A-15, or the 1-based "
-       "index) also returns that sheet's picture. 'tables_with_plan' as in export_drawing_set. With a vicinity "
+       "paper and notes (e.g. does not fit), and the set's notes. 'sheet' (a number such as A-15, the 1-based "
+       "index, or the drawing's name such as 断熱範囲図（1FL）) also returns that sheet's picture; with 'texts': true, "
+       "also every text on it (docs/246), to check what it says. 'tables_with_plan' as in export_drawing_set. With a vicinity "
        "map set, its tiles come from 国土地理院 (cache, else fetched), as the File menu does.",
        R"({"type": "object", "properties": {"sheet": {"type": ["string", "integer"]},
-           "tables_with_plan": {"type": "boolean"}}})",
+           "texts": {"type": "boolean"}, "tables_with_plan": {"type": "boolean"}}})",
        nullptr, Effect::Read},
       {"capture_window",
        "docs/241: a picture of the app as the user sees it. 'window': main (default: the whole main window with "

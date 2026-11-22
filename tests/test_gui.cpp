@@ -1177,6 +1177,13 @@ void GuiPhase1::aiPicturesOfDrawingsAndWindows() {
   bool equipmentSheet = false;
   for (const auto& sheet : result["sheets"]) equipmentSheet = equipmentSheet || sheet["name"] == "機器表";
   QVERIFY(equipmentSheet);
+  // docs/246: a sheet by its name, with its texts.
+  const auto named = run(R"({"command": "render_drawing_set", "args": {"sheet": "機器表", "texts": true}})");
+  QVERIFY2(named["ok"].get<bool>(), named.dump().c_str());
+  QCOMPARE(named["result"]["sheet"]["name"].get<std::string>(), std::string("機器表"));
+  bool written = false;
+  for (const auto& text : named["result"]["sheet"]["texts"]) written = written || text == "電気ヒートポンプ給湯機";
+  QVERIFY2(written, named.dump().c_str());
   QVERIFY(!run(R"({"command": "render_drawing_set", "args": {"sheet": "Z-99"}})")["ok"].get<bool>());
   // The equipment window pictured and closed: nothing changed.
   const auto window = run(R"({"command": "capture_window", "args": {"window": "equipment"}})");

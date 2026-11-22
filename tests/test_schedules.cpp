@@ -4055,3 +4055,14 @@ TEST_F(Schedules, HotWaterRuleWithoutWetRooms) {
   const std::string kitchen = notes();
   EXPECT_EQ(kitchen.find("見当たりません"), std::string::npos) << kitchen;
 }
+
+// docs/246: renaming a room renames it in the tables (its marker's text).
+TEST_F(Schedules, RenamingARoom) {
+  ok("rename", {{"id", room}, {"name", "キッチン"}});
+  bool renamed = false;
+  for (const auto& r : sbr::doc::roomSchedule(modeler.document()).rows) renamed = renamed || (r.id == room && r.name == "キッチン");
+  EXPECT_TRUE(renamed);
+  EXPECT_FALSE(call("rename", {{"id", room}, {"name", ""}}).value("ok", true));
+  ok("rename", {{"id", south}, {"name", "南の壁"}});  // other objects as before
+  EXPECT_EQ(modeler.document().find(south)->name, "南の壁");
+}

@@ -2647,6 +2647,7 @@ void MainWindow::buildAiBridge() {
     if (a.contains("sheet")) wanted = a["sheet"].is_number() ? std::to_string(a["sheet"].get<int>()) : a["sheet"].get<std::string>();
     json sheets = json::array();
     std::string picked;
+    std::size_t pickedIndex = 0;
     for (std::size_t i = 0; i < set->sheets.size(); ++i) {
       const draw::Sheet& sheet = set->sheets[i];
       const double w = std::max(sheet.paperWidth, 1.0), h = std::max(sheet.paperHeight, 1.0);
@@ -2663,12 +2664,27 @@ void MainWindow::buildAiBridge() {
       const std::string native = QDir::toNativeSeparators(png).toStdString();
       sheets.push_back({{"index", i + 1}, {"number", set->numbers[i]}, {"name", set->names[i]}, {"paper", sheet.paper},
                         {"notes", sheet.notes}, {"png", native}});
-      if (!wanted.empty() && (wanted == set->numbers[i] || wanted == std::to_string(i + 1))) picked = native;
+      if (!wanted.empty() && picked.empty() &&
+          (wanted == set->numbers[i] || wanted == std::to_string(i + 1) || wanted == set->names[i])) {
+        picked = native;
+        pickedIndex = i;
+      }
     }
     if (!wanted.empty() && picked.empty()) throw std::runtime_error("no sheet '" + wanted + "' in the set");
     json out = {{"pdf", QDir::toNativeSeparators(pdf).toStdString()}, {"sheets", sheets}, {"notes", set->notes}};
     if (!tilesMessage.isEmpty()) out["tiles"] = tilesMessage.toStdString();
-    if (!picked.empty()) out["image_path"] = picked;
+    if (!picked.empty()) {
+      out["image_path"] = picked;
+      // docs/246: 'texts': the words on that sheet, for the AI to check against what it expects.
+      json sheet = {{"number", set->numbers[pickedIndex]}, {"name", set->names[pickedIndex]}};
+      if (a.value("texts", false)) {
+        json texts = json::array();
+        for (const auto& item : set->sheets[pickedIndex].items)
+          if (item.kind == draw::Item::Kind::Text && !item.text.empty()) texts.push_back(item.text);
+        sheet["texts"] = texts;
+      }
+      out["sheet"] = sheet;
+    }
     return out.dump();
   };
   // docs/241: a picture of the main window or of one of its windows as the user sees it (the
@@ -7729,6 +7745,12 @@ void MainWindow::showEquipmentDialog() {
       addRow(e);
     }
   table->resizeColumnsToContents();
+  // docs/246: the name, model and value columns wide enough to read (empty rows made them a few
+  // pixels wide: the AI's look at the window found "ル..."); by the font, so it holds at 175 %.
+  const int zenkaku = table->fontMetrics().horizontalAdvance(QChar(0x3042));
+  const int least[] = {0, 12, 8, 12, 0};
+  for (int column = 1; column <= 3; ++column)
+    table->setColumnWidth(column, std::max(table->columnWidth(column), least[column] * zenkaku));
   layout->addWidget(table);
   auto* rowButtons = new QHBoxLayout;
   auto* add = new QPushButton(tr("行を足す"));
@@ -7751,7 +7773,7 @@ void MainWindow::showEquipmentDialog() {
   layout->addWidget(buttons);
   connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
   connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-  dialog.resize(820, 360);
+  dialog.resize(std::max(820, 62 * zenkaku), 360);
   if (dialog.exec() != QDialog::Accepted) return;
   std::vector<doc::Modeler::EquipmentItem> items;
   const auto text = [table](int row, int column) {
