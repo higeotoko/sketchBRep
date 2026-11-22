@@ -4,6 +4,7 @@
 #include <QByteArray>
 #include <QStandardPaths>
 #include <QStringList>
+#include <QSettings>
 #include <QTimer>
 
 #include <functional>
@@ -81,7 +82,16 @@ int main(int argc, char** argv) {
   window.resize(1400, 900);
   window.show();
 
-  const QStringList args = QApplication::arguments();
+  QStringList args = QApplication::arguments();
+  // docs/244: --ai: AI access on from the start (sbr_mcp starts the app this way when an AI asks for
+  // it and the app is not running).
+  // For this start only: the owner's own setting (whether the app starts with AI access) is kept.
+  if (args.removeAll(QStringLiteral("--ai")) > 0) {
+    const QVariant saved = QSettings().value(QStringLiteral("ai/bridgeEnabled"));
+    window.setAiAccess(true);
+    if (saved.isValid()) QSettings().setValue(QStringLiteral("ai/bridgeEnabled"), saved);
+    else QSettings().remove(QStringLiteral("ai/bridgeEnabled"));
+  }
   if (args.size() > 1) {
     window.openFile(args.at(1));
   } else {
