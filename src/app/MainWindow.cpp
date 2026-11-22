@@ -2635,21 +2635,34 @@ void MainWindow::buildAiBridge() {
   handlers["render_drawing_set"] = [this](const std::string& args) {
     const json a = args.empty() ? json::object() : json::parse(args);
     QString tilesMessage;
-    const doc::DrawingSetSpec spec = drawingSetSpecFor(modeler_.document(), a.value("tables_with_plan", false), &tilesMessage);
+    doc::DrawingSetSpec spec = drawingSetSpecFor(modeler_.document(), a.value("tables_with_plan", false), &tilesMessage);
+    if (a.contains("scale")) spec.scale = a["scale"].get<double>();  // docs/250: e.g. 20 to look at corners
     const auto set = doc::drawingSet(modeler_.document(), spec);
     if (!set) throw std::runtime_error(set.error());
     QDir dir(QDir(QDir::tempPath()).filePath(QStringLiteral("sketchbrep-drawing-set")));
     if (dir.exists()) dir.removeRecursively();
     if (!QDir().mkpath(dir.path())) throw std::runtime_error("the folder for the drawings could not be made");
-    const QString pdf = dir.filePath(QStringLiteral("drawing-set.pdf"));
-    if (const Status s = writePdfPages(set->sheets, pdf); !s) throw std::runtime_error(s.message());
     std::string wanted;
     if (a.contains("sheet")) wanted = a["sheet"].is_number() ? std::to_string(a["sheet"].get<int>()) : a["sheet"].get<std::string>();
+    const auto isWanted = [&](std::size_t i) {
+      return wanted == set->numbers[i] || wanted == std::to_string(i + 1) || wanted == set->names[i];
+    };
+    // docs/250: with 'sheet', only that sheet is pictured (and no PDF unless 'pdf': true): a whole set
+    // for every sheet looked at made the hands-on runs slow.
+    const bool all = wanted.empty() || a.value("pdf", false);
+    const QString pdf = dir.filePath(QStringLiteral("drawing-set.pdf"));
+    if (all)
+      if (const Status s = writePdfPages(set->sheets, pdf); !s) throw std::runtime_error(s.message());
     json sheets = json::array();
     std::string picked;
     std::size_t pickedIndex = 0;
     for (std::size_t i = 0; i < set->sheets.size(); ++i) {
       const draw::Sheet& sheet = set->sheets[i];
+      if (!wanted.empty() && !a.value("pdf", false) && !(picked.empty() && isWanted(i))) {
+        sheets.push_back({{"index", i + 1}, {"number", set->numbers[i]}, {"name", set->names[i]}, {"paper", sheet.paper},
+                          {"notes", sheet.notes}});
+        continue;
+      }
       const double w = std::max(sheet.paperWidth, 1.0), h = std::max(sheet.paperHeight, 1.0);
       const int width = 2400, height = static_cast<int>(std::lround(width * h / w));
       QImage image(width, height, QImage::Format_RGB32);
@@ -2664,14 +2677,14 @@ void MainWindow::buildAiBridge() {
       const std::string native = QDir::toNativeSeparators(png).toStdString();
       sheets.push_back({{"index", i + 1}, {"number", set->numbers[i]}, {"name", set->names[i]}, {"paper", sheet.paper},
                         {"notes", sheet.notes}, {"png", native}});
-      if (!wanted.empty() && picked.empty() &&
-          (wanted == set->numbers[i] || wanted == std::to_string(i + 1) || wanted == set->names[i])) {
+      if (!wanted.empty() && picked.empty() && isWanted(i)) {
         picked = native;
         pickedIndex = i;
       }
     }
     if (!wanted.empty() && picked.empty()) throw std::runtime_error("no sheet '" + wanted + "' in the set");
-    json out = {{"pdf", QDir::toNativeSeparators(pdf).toStdString()}, {"sheets", sheets}, {"notes", set->notes}};
+    json out = {{"sheets", sheets}, {"notes", set->notes}};
+    if (all) out["pdf"] = QDir::toNativeSeparators(pdf).toStdString();
     if (!tilesMessage.isEmpty()) out["tiles"] = tilesMessage.toStdString();
     if (!picked.empty()) {
       out["image_path"] = picked;

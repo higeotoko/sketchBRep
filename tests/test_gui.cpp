@@ -1167,7 +1167,7 @@ void GuiPhase1::aiPicturesOfDrawingsAndWindows() {
   };
   QVERIFY(run(R"({"command": "set_equipment", "args": {"items": [{"kind": "hot_water", "name": "電気ヒートポンプ給湯機"}]}})")["ok"].get<bool>());
   const auto steps = modeler.history().undoCount();
-  const auto set = run(R"({"command": "render_drawing_set", "args": {"sheet": 1}})");
+  const auto set = run(R"({"command": "render_drawing_set", "args": {"sheet": 1, "pdf": true}})");
   QVERIFY2(set["ok"].get<bool>(), set.dump().c_str());
   const auto& result = set["result"];
   QVERIFY(QFileInfo::exists(QString::fromStdString(result["pdf"].get<std::string>())));
@@ -1177,6 +1177,12 @@ void GuiPhase1::aiPicturesOfDrawingsAndWindows() {
   bool equipmentSheet = false;
   for (const auto& sheet : result["sheets"]) equipmentSheet = equipmentSheet || sheet["name"] == "機器表";
   QVERIFY(equipmentSheet);
+  // docs/250: one sheet only: its picture, no PDF, the others listed without pictures.
+  const auto one = run(R"({"command": "render_drawing_set", "args": {"sheet": 2}})");
+  QVERIFY2(one["ok"].get<bool>(), one.dump().c_str());
+  QVERIFY(!one["result"].contains("pdf"));
+  QVERIFY(!one["result"]["sheets"][0].contains("png"));
+  QCOMPARE(one["result"]["image_path"], one["result"]["sheets"][1]["png"]);
   // docs/246: a sheet by its name, with its texts.
   const auto named = run(R"({"command": "render_drawing_set", "args": {"sheet": "機器表", "texts": true}})");
   QVERIFY2(named["ok"].get<bool>(), named.dump().c_str());

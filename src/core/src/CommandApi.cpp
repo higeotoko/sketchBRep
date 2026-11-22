@@ -4465,9 +4465,12 @@ const std::vector<CommandDef>& commands() {
        "the paper (off_paper), words under 1.8 mm (tiny_text); each with the words and where on the paper (mm from "
        "the lower left). Estimates to look at, not a judgement. 'sheet': only that one (number such as A-15, "
        "1-based index, or name); 'limit' per sheet (default 50). The vicinity map's picture is not fetched here.",
-       SCHEMA({"type": "object", "properties": {"sheet": {"type": ["string", "integer"]}, "limit": {"type": "integer"}}}),
+       SCHEMA({"type": "object", "properties": {"sheet": {"type": ["string", "integer"]}, "limit": {"type": "integer"},
+               "scale": {"type": "number"}}}),
        [](doc::Modeler& m, const json& a) {
-         const auto set = doc::drawingSet(m.document(), doc::DrawingSetSpec{});
+         doc::DrawingSetSpec setSpec;
+         setSpec.scale = numberOr(a, "scale", 100.0);  // docs/250
+         const auto set = doc::drawingSet(m.document(), setSpec);
          if (!set) throw ApiError(set.error());
          std::string wanted;
          if (a.contains("sheet")) wanted = a["sheet"].is_number() ? std::to_string(a["sheet"].get<int>()) : a["sheet"].get<std::string>();
@@ -5099,10 +5102,11 @@ std::vector<CommandApi::Extension> CommandApi::appCommandSpecs() {
        "app's own under the temporary folder (emptied each time). Returns the paths, each sheet's number, name, "
        "paper and notes (e.g. does not fit), and the set's notes. 'sheet' (a number such as A-15, the 1-based "
        "index, or the drawing's name such as 断熱範囲図（1FL）) also returns that sheet's picture; with 'texts': true, "
-       "also every text on it (docs/246), to check what it says. 'tables_with_plan' as in export_drawing_set. With a vicinity "
+       "also every text on it (docs/246), to check what it says. 'scale' (default 100, docs/250): e.g. 20. With 'sheet', only that sheet is pictured and no PDF is written unless 'pdf': true. 'tables_with_plan' as in export_drawing_set. With a vicinity "
        "map set, its tiles come from 国土地理院 (cache, else fetched), as the File menu does.",
        R"({"type": "object", "properties": {"sheet": {"type": ["string", "integer"]},
-           "texts": {"type": "boolean"}, "tables_with_plan": {"type": "boolean"}}})",
+           "texts": {"type": "boolean"}, "tables_with_plan": {"type": "boolean"}, "scale": {"type": "number"},
+           "pdf": {"type": "boolean"}}})",
        nullptr, Effect::Read},
       {"capture_window",
        "docs/241: a picture of the app as the user sees it. 'window': main (default: the whole main window with "

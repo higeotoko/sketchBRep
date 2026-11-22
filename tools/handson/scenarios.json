@@ -786,6 +786,412 @@
           "roundtrip": true
         }
       ]
+    },
+    {
+      "id": "14-24・26",
+      "title": "一続きの室・機械換気・縁側（居室・採光・換気）",
+      "docs": "docs/211・213",
+      "look": "プロパティの欄（絵）が分かりやすいか。一続きの室・換気設備の名前・機械換気の量の入れ方で迷わないか。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "set_room_daylight",
+          "args": {
+            "id": "$living.id",
+            "kind": "dwelling",
+            "ventilation": "window"
+          }
+        },
+        {
+          "tool": "set_room_daylight",
+          "args": {
+            "id": "$bedroom.id",
+            "kind": "dwelling",
+            "ventilation": "window"
+          }
+        },
+        {
+          "tool": "set_room_finish",
+          "args": {
+            "id": "$living.id",
+            "ceiling_height": 2400
+          }
+        },
+        {
+          "tool": "set_room_finish",
+          "args": {
+            "id": "$bedroom.id",
+            "ceiling_height": 2400
+          }
+        },
+        {
+          "tool": "set_room_ventilation",
+          "args": {
+            "id": "$living.id",
+            "joined_with": "$bedroom.id",
+            "fan_m3h": 30,
+            "fan_unit": "第3種換気 1"
+          }
+        },
+        {
+          "tool": "set_room_ventilation",
+          "args": {
+            "id": "$bedroom.id",
+            "fan_unit": "第3種換気 1"
+          }
+        },
+        {
+          "tool": "set_opening_veranda",
+          "args": {
+            "host": "$walls.ids.0",
+            "veranda": true
+          }
+        },
+        {
+          "tool": "permit_checks",
+          "args": {
+            "stage": 4
+          },
+          "expect": {
+            "contains": [
+              "一続きの室",
+              "第3種換気 1",
+              "0.5×24.00×2.40 = 28.8",
+              "住宅等の居室 0.5"
+            ],
+            "not_contains": [
+              "機械換気：未評価"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "select",
+          "args": {
+            "ids": [
+              "$living.id"
+            ]
+          }
+        },
+        {
+          "tool": "ui_capture",
+          "args": {
+            "window": "main"
+          },
+          "picture": "居間を選んだ時のメイン画面（プロパティ）"
+        }
+      ]
+    },
+    {
+      "id": "14-25",
+      "title": "申請図の工程の「この工程を確認した」と要再確認",
+      "docs": "docs/212",
+      "look": "工程パネルの印（✓・要再確認）と、変わった行の名前が分かりやすいか（絵）。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "ui_trigger",
+          "args": {
+            "action": "申請図の工程..."
+          },
+          "ui": true
+        },
+        {
+          "tool": "ui_set",
+          "args": {
+            "window": "main",
+            "widget": "permitWorkflowPhases",
+            "row": 1,
+            "value": 1
+          }
+        },
+        {
+          "tool": "permit_checks",
+          "args": {
+            "stage": 2
+          },
+          "expect": {
+            "contains": [
+              "未確認"
+            ]
+          }
+        },
+        {
+          "tool": "ui_click",
+          "args": {
+            "window": "main",
+            "widget": "permitWorkflowConfirm"
+          },
+          "ui": true
+        },
+        {
+          "tool": "permit_checks",
+          "args": {
+            "stage": 2
+          },
+          "expect": {
+            "not_contains": [
+              "未確認",
+              "要再確認"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "ui_capture",
+          "args": {
+            "window": "main"
+          },
+          "picture": "確認の印を付けた後"
+        },
+        {
+          "tool": "set_levels",
+          "args": {
+            "levels": [
+              {
+                "name": "1FL",
+                "elevation": 0
+              },
+              {
+                "name": "2FL",
+                "elevation": 2900
+              }
+            ]
+          }
+        },
+        {
+          "tool": "permit_checks",
+          "args": {
+            "stage": 2
+          },
+          "expect": {
+            "contains": [
+              "要再確認"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "ui_capture",
+          "args": {
+            "window": "main"
+          },
+          "picture": "壁を動かした後（要再確認）"
+        },
+        {
+          "roundtrip": true
+        },
+        {
+          "tool": "permit_checks",
+          "args": {
+            "stage": 2
+          },
+          "expect": {
+            "contains": [
+              "要再確認"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "14-31",
+      "title": "窯業系サイディングの外壁の充填断熱（1:20 の平面）",
+      "docs": "docs/218・220",
+      "look": "1:20 の平面で、波線が柱・間柱の層の中にあり、角で 2 本の波線が出会う形に違和感が無いか（絵）。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "set_wall_type",
+          "args": {
+            "ids": "$walls.ids",
+            "type": "exterior_siding"
+          }
+        },
+        {
+          "tool": "set_insulation",
+          "args": {
+            "ids": "$walls.ids",
+            "material": "グラスウール 16K",
+            "thickness_mm": 105,
+            "conductivity": 0.038,
+            "placement": "fill",
+            "source": "確認用カタログ"
+          }
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "断熱範囲図（1FL）",
+            "texts": true,
+            "scale": 20
+          },
+          "picture": "断熱範囲図（1FL）1:20",
+          "expect": {
+            "contains": [
+              "波線：壁の断熱"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "14-32",
+      "title": "2 階建ての床・屋根の断熱範囲（1FL・2FL）",
+      "docs": "docs/221・222",
+      "look": "1FL に 1 階の床、2FL に 2 階の床と屋根の範囲が、輪郭と×と字で読めるか（絵）。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "create_wall",
+          "args": {
+            "points": [
+              [
+                0,
+                0
+              ],
+              [
+                8000,
+                0
+              ],
+              [
+                8000,
+                6000
+              ],
+              [
+                0,
+                6000
+              ],
+              [
+                0,
+                0
+              ]
+            ],
+            "thickness": 200,
+            "height": 2700,
+            "base": 3000
+          },
+          "save": "upper_walls"
+        },
+        {
+          "tool": "create_slab",
+          "args": {
+            "outline": [
+              [
+                0,
+                0
+              ],
+              [
+                8000,
+                0
+              ],
+              [
+                8000,
+                6000
+              ],
+              [
+                0,
+                6000
+              ]
+            ],
+            "top": 3000,
+            "thickness": 200
+          },
+          "save": "upper"
+        },
+        {
+          "tool": "create_roof",
+          "args": {
+            "outline": [
+              [
+                0,
+                0
+              ],
+              [
+                8000,
+                0
+              ],
+              [
+                8000,
+                6000
+              ],
+              [
+                0,
+                6000
+              ]
+            ],
+            "kind": "gable",
+            "height": 5800
+          },
+          "save": "roof"
+        },
+        {
+          "tool": "set_insulation",
+          "args": {
+            "ids": [
+              "$slab.id",
+              "$upper.id"
+            ],
+            "material": "押出法ポリスチレンフォーム 3種",
+            "thickness_mm": 90,
+            "conductivity": 0.028,
+            "placement": "fill",
+            "source": "確認用カタログ"
+          }
+        },
+        {
+          "tool": "set_insulation",
+          "args": {
+            "ids": [
+              "$roof.id"
+            ],
+            "material": "フェノールフォーム",
+            "thickness_mm": 60,
+            "placement": "outside",
+            "source": "確認用カタログ"
+          }
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "断熱範囲図（1FL）",
+            "texts": true
+          },
+          "picture": "断熱範囲図（1FL）",
+          "expect": {
+            "contains": [
+              "床断熱",
+              "×印の範囲：この階の床の断熱"
+            ],
+            "not_contains": [
+              "屋根断熱"
+            ]
+          }
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "断熱範囲図（2FL）",
+            "texts": true
+          },
+          "picture": "断熱範囲図（2FL）",
+          "expect": {
+            "contains": [
+              "床断熱",
+              "屋根断熱",
+              "×印の範囲：屋根の断熱"
+            ]
+          }
+        }
+      ]
     }
   ]
 }

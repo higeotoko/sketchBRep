@@ -7,6 +7,7 @@
 #include <map>
 
 #include "sbr/draw/Drawing.h"
+#include "sbr/draw/SheetCheck.h"
 
 namespace sbr::draw {
 namespace {
@@ -261,11 +262,25 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
       t1 = std::max(t1, t);
     }
     const gp_Pnt2d e0(c.point.XY() + d.XY() * (t0 - margin)), e1(c.point.XY() + d.XY() * (t1 + margin));
-    items.push_back(line(Pen::Grid, e0, e1));
+    // docs/250: the label below an end is written up from its baseline 4 mm beyond the end, so it
+    // reaches 1 mm back over the end: there the line stops 1.5 mm short (the sheet check found the
+    // line through the lower "B"). The labels stay where they were (the paper does not grow).
+    const double shortBy = 1.5 * s * std::abs(d.Y());
+    const gp_Pnt2d l0(d.Y() > 0 ? gp_Pnt2d(e0.XY() + d.XY() * shortBy) : e0);
+    const gp_Pnt2d l1(d.Y() < 0 ? gp_Pnt2d(e1.XY() - d.XY() * shortBy) : e1);
+    {
+      // docs/250: the line stops short of the words it would run through (room tags on the cut).
+      std::vector<const Item*> words;
+      for (const Item& i : items)
+        if (i.kind == Item::Kind::Text) words.push_back(&i);
+      const auto pieces = clearOfText(l0, l1, words, s, 0.8);
+      for (const auto& [p, q] : pieces) items.push_back(line(Pen::Grid, p, q));
+    }
     for (const gp_Pnt2d& e : {e0, e1}) {
       // A thick stub at the end, then the arrow.
-      const gp_Pnt2d tip(e.XY() + look.XY() * (6.0 * s));
-      items.push_back(line(Pen::Cut, e, tip));
+      const gp_Pnt2d stub = e.IsEqual(e0, 1e-9) ? l0 : l1;
+      const gp_Pnt2d tip(stub.XY() + look.XY() * (6.0 * s));
+      items.push_back(line(Pen::Cut, stub, tip));
       Item arrow;
       arrow.kind = Item::Kind::Fill;
       arrow.pen = Pen::Text;

@@ -325,6 +325,10 @@ def main() -> int:
     ap.add_argument("--out", default="")
     ap.add_argument("--scenarios", default=str(HERE / "scenarios.json"))
     a = ap.parse_args()
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")  # the JSON line has Japanese (a cp932 console cannot print it)
+    except (AttributeError, ValueError):
+        pass
     data = json.loads(Path(a.scenarios).read_text(encoding="utf-8"))
     only = {s.strip() for s in a.only.split(",") if s.strip()}
     scenarios = [s for s in data["scenarios"] if not only or s["id"] in only]
