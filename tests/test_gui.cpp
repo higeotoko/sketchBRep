@@ -344,6 +344,7 @@ class GuiPhase1 : public QObject {
   void verifyGroup02InsideLeavesOutsideAlone();
   void drawingDialogPlanSectionElevationAndExport();
   void recentFilesReopen();
+  void aiSaveCopyIsOnByDefault();
   void helpWindowAndCrashLog();
   void realisticDisplay();
   void timberFramePreviewApplyLevelsAndUndo();
@@ -10981,6 +10982,28 @@ void GuiPhase1::drawingDialogPlanSectionElevationAndExport() {
     QCOMPARE(titles(QStringLiteral("建具表")), 1);
     QCOMPARE(titles(QStringLiteral("仕上げ表")), 0);
   }
+}
+
+// docs/261 (checklist 9-3): with nothing saved yet, AI 連携 > AI に別名保存を許可 starts ON and
+// the bridge allows save_copy; turning it off is remembered.
+void GuiPhase1::aiSaveCopyIsOnByDefault() {
+  QSettings().remove("ai/allowSaveCopy");
+  {
+    Fixture f;
+    QVERIFY(f.setUp(500, 500));
+    auto* action = f.window.findChild<QAction*>(QStringLiteral("aiSaveCopyAction"));
+    QVERIFY(action);
+    QVERIFY(action->isCheckable());
+    QVERIFY(action->isChecked());
+    action->setChecked(false);
+  }
+  QCOMPARE(QSettings().value("ai/allowSaveCopy", true).toBool(), false);
+  {
+    Fixture f;
+    QVERIFY(f.setUp(500, 500));
+    QVERIFY(!f.window.findChild<QAction*>(QStringLiteral("aiSaveCopyAction"))->isChecked());
+  }
+  QSettings().remove("ai/allowSaveCopy");
 }
 
 // File > recent files: saved and opened files, newest first; one click

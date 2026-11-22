@@ -332,6 +332,27 @@
         },
         "save": "q"
       }
+    ],
+    "exB": [
+      {
+        "tool": "open",
+        "args": {
+          "path": "{examples}/例題B_斜めの壁と屋根.sbr"
+        }
+      },
+      {
+        "tool": "query_objects",
+        "args": {
+          "fields": [
+            "id",
+            "name",
+            "kind",
+            "bounds"
+          ]
+        },
+        "save": "q",
+        "show": true
+      }
     ]
   },
   "scenarios": [
@@ -4604,6 +4625,1345 @@
           "tool": "capture_view",
           "args": {},
           "picture": "屋根ができた 3D（室名は屋根に隠れる）"
+        }
+      ]
+    },
+    {
+      "id": "2-5",
+      "title": "例題 A の壁の角を留めにして、動かす・戻す・外す",
+      "docs": "docs/159",
+      "look": "角の面の継ぎ目の線が無いか（3D の絵）。",
+      "base": [
+        "exA"
+      ],
+      "steps": [
+        {
+          "tool": "mitre_wall_corners",
+          "args": {},
+          "show": true,
+          "save": "m",
+          "expect": {
+            "contains": [
+              "\"corners\":"
+            ],
+            "not_contains": [
+              "\"corners\":0"
+            ]
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "3D（角を留めにした）"
+        },
+        {
+          "tool": "move",
+          "args": {
+            "ids": [
+              "$q.objects.0.id"
+            ],
+            "vector": [
+              0,
+              -300,
+              0
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "3D（壁を動かした後も留め）"
+        },
+        {
+          "tool": "undo",
+          "args": {}
+        },
+        {
+          "tool": "mitre_wall_corners",
+          "args": {
+            "on": false
+          },
+          "show": true
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "3D（留めを外した）"
+        }
+      ]
+    },
+    {
+      "id": "2-6",
+      "title": "例題 B の斜めの壁を外へ動かす",
+      "docs": "docs/159",
+      "look": "斜めの壁が角から突き出ないか（平面・3D の絵）。",
+      "base": [
+        "exB"
+      ],
+      "steps": [
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "top"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "上から（動かす前）"
+        },
+        {
+          "tool": "move",
+          "args": {
+            "ids": [
+              "$q.objects.3.id"
+            ],
+            "vector": [
+              300,
+              -300,
+              0
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "query_objects",
+          "args": {
+            "name": "Wall",
+            "fields": [
+              "name",
+              "bounds"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "上から（斜めの壁を外へ 300 動かした）"
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "3D（斜めの壁の角）"
+        }
+      ]
+    },
+    {
+      "id": "2-9・2-11",
+      "title": "壁ツールで L 字を描いて止め、端から続けて部屋を閉じる（留め・室・Ctrl+Z）",
+      "docs": "docs/178・180",
+      "look": "続けた所の角（3D の絵）、プロパティの「角を留めにする」。",
+      "base": [],
+      "steps": [
+        {
+          "tool": "set_levels",
+          "args": {
+            "levels": [
+              {
+                "name": "1FL",
+                "elevation": 0
+              },
+              {
+                "name": "2FL",
+                "elevation": 3000
+              }
+            ]
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "top"
+          }
+        },
+        {
+          "tool": "create_line",
+          "args": {
+            "points": [
+              [
+                -1000,
+                -1000,
+                0
+              ],
+              [
+                9000,
+                7000,
+                0
+              ]
+            ]
+          },
+          "save": "guide"
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "delete",
+          "args": {
+            "ids": [
+              "$guide.id"
+            ]
+          }
+        },
+        {
+          "tool": "ui_tool",
+          "args": {
+            "tool": "wall"
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              4000.0,
+              0.0,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              8000,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              8000,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              8000.0,
+              3000.0,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              8000,
+              6000,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              8000,
+              6000,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_type",
+          "args": {
+            "text": "",
+            "enter": true
+          }
+        },
+        {
+          "tool": "query_objects",
+          "args": {
+            "fields": [
+              "name",
+              "bounds"
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "ui_tool",
+          "args": {
+            "tool": "wall"
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              8000,
+              6000,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              4000.0,
+              6000.0,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              0,
+              6000,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              0,
+              6000,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              0.0,
+              3000.0,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_type",
+          "args": {
+            "text": "",
+            "enter": true
+          }
+        },
+        {
+          "tool": "query_objects",
+          "args": {
+            "fields": [
+              "name",
+              "bounds"
+            ]
+          },
+          "save": "w",
+          "show": true
+        },
+        {
+          "tool": "ui_tool",
+          "args": {
+            "tool": "room"
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              4000,
+              3000,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "room_schedule",
+          "args": {},
+          "show": true,
+          "expect": {
+            "contains": [
+              "\"closed\":true"
+            ]
+          }
+        },
+        {
+          "tool": "undo",
+          "args": {}
+        },
+        {
+          "tool": "undo",
+          "args": {}
+        },
+        {
+          "tool": "query_objects",
+          "args": {
+            "name": "Wall",
+            "fields": [
+              "name",
+              "bounds"
+            ]
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "\"total\":2"
+            ]
+          }
+        },
+        {
+          "tool": "redo",
+          "args": {}
+        },
+        {
+          "tool": "redo",
+          "args": {}
+        },
+        {
+          "tool": "room_schedule",
+          "args": {},
+          "expect": {
+            "contains": [
+              "\"closed\":true"
+            ]
+          }
+        },
+        {
+          "tool": "ui_tool",
+          "args": {
+            "tool": "select"
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              4000,
+              0,
+              3000
+            ]
+          }
+        },
+        {
+          "tool": "ui_list",
+          "args": {
+            "window": "main",
+            "filter": "角を留めにする"
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "\"checked\":true"
+            ]
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "3D（続けて描いた所の角）"
+        }
+      ]
+    },
+    {
+      "id": "4-2",
+      "title": "L 字の外周に寄棟・切妻（谷ができる）",
+      "docs": "docs/108",
+      "look": "谷の形（3D の絵）。",
+      "base": [],
+      "steps": [
+        {
+          "tool": "create_roof",
+          "args": {
+            "outline": [
+              [
+                0,
+                0
+              ],
+              [
+                8000,
+                0
+              ],
+              [
+                8000,
+                4000
+              ],
+              [
+                4000,
+                4000
+              ],
+              [
+                4000,
+                7000
+              ],
+              [
+                0,
+                7000
+              ]
+            ],
+            "kind": "hip",
+            "height": 3000
+          },
+          "save": "r",
+          "show": true
+        },
+        {
+          "tool": "roof_info",
+          "args": {
+            "id": "$r.id"
+          },
+          "show": true
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "L 字の寄棟"
+        },
+        {
+          "tool": "change_roof",
+          "args": {
+            "id": "$r.id",
+            "kind": "gable"
+          },
+          "show": true
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "L 字の切妻"
+        }
+      ]
+    },
+    {
+      "id": "4-5",
+      "title": "切妻の辺ごとの勾配（招き屋根）と辺ごとの出",
+      "docs": "docs/160",
+      "look": "棟が片側へ寄るか、その辺の出だけ変わるか（3D の絵）。",
+      "base": [],
+      "steps": [
+        {
+          "tool": "create_roof",
+          "args": {
+            "outline": [
+              [
+                0,
+                0
+              ],
+              [
+                8000,
+                0
+              ],
+              [
+                8000,
+                6000
+              ],
+              [
+                0,
+                6000
+              ]
+            ],
+            "kind": "gable",
+            "height": 3000
+          },
+          "save": "r"
+        },
+        {
+          "tool": "roof_info",
+          "args": {
+            "id": "$r.id"
+          },
+          "save": "before",
+          "show": true
+        },
+        {
+          "tool": "change_roof",
+          "args": {
+            "id": "$r.id",
+            "sides": [
+              {
+                "side": 0,
+                "pitch": 8
+              },
+              {
+                "side": 2,
+                "eave": 300
+              }
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "roof_info",
+          "args": {
+            "id": "$r.id"
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "\"pitch\":8.0"
+            ]
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "招き屋根"
+        }
+      ]
+    },
+    {
+      "id": "4-6",
+      "title": "翼が斜めの L 字に切妻と片流れ",
+      "docs": "docs/160",
+      "look": "翼の先が妻、外の角が隅棟、内の角が谷か（3D の絵）。",
+      "base": [],
+      "steps": [
+        {
+          "tool": "create_roof",
+          "args": {
+            "outline": [
+              [
+                0,
+                0
+              ],
+              [
+                8000,
+                0
+              ],
+              [
+                8000,
+                4000
+              ],
+              [
+                5000,
+                4000
+              ],
+              [
+                2500,
+                8000
+              ],
+              [
+                -1500,
+                8000
+              ]
+            ],
+            "kind": "gable",
+            "height": 3000
+          },
+          "save": "r",
+          "show": true
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "斜めの L 字の切妻"
+        },
+        {
+          "tool": "change_roof",
+          "args": {
+            "id": "$r.id",
+            "kind": "shed"
+          },
+          "show": true
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "斜めの L 字の片流れ"
+        }
+      ]
+    },
+    {
+      "id": "4-8",
+      "title": "幅の違う翼の L・T・Z 字に寄棟（1 辺の出を同じ値で入れる）",
+      "docs": "docs/164",
+      "look": "細い翼の棟が谷の所で終わるか（3D の絵）。",
+      "base": [],
+      "steps": [
+        {
+          "tool": "create_roof",
+          "args": {
+            "outline": [
+              [
+                0,
+                0
+              ],
+              [
+                9000,
+                0
+              ],
+              [
+                9000,
+                3000
+              ],
+              [
+                3000,
+                3000
+              ],
+              [
+                3000,
+                8000
+              ],
+              [
+                0,
+                8000
+              ]
+            ],
+            "kind": "hip",
+            "height": 3000,
+            "sides": [
+              {
+                "side": 0,
+                "eave": 600
+              }
+            ]
+          },
+          "save": "l",
+          "show": true
+        },
+        {
+          "tool": "create_roof",
+          "args": {
+            "outline": [
+              [
+                12000,
+                0
+              ],
+              [
+                20000,
+                0
+              ],
+              [
+                20000,
+                3000
+              ],
+              [
+                17000,
+                3000
+              ],
+              [
+                17000,
+                8000
+              ],
+              [
+                15000,
+                8000
+              ],
+              [
+                15000,
+                3000
+              ],
+              [
+                12000,
+                3000
+              ]
+            ],
+            "kind": "hip",
+            "height": 3000,
+            "sides": [
+              {
+                "side": 1,
+                "eave": 600
+              }
+            ]
+          },
+          "save": "t",
+          "show": true
+        },
+        {
+          "tool": "create_roof",
+          "args": {
+            "outline": [
+              [
+                24000,
+                0
+              ],
+              [
+                30000,
+                0
+              ],
+              [
+                30000,
+                5000
+              ],
+              [
+                34000,
+                5000
+              ],
+              [
+                34000,
+                8000
+              ],
+              [
+                27000,
+                8000
+              ],
+              [
+                27000,
+                3000
+              ],
+              [
+                24000,
+                3000
+              ]
+            ],
+            "kind": "hip",
+            "height": 3000,
+            "sides": [
+              {
+                "side": 0,
+                "eave": 600,
+                "pitch": 5
+              }
+            ]
+          },
+          "save": "z",
+          "show": true
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "L・T・Z の寄棟"
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "top"
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "上から（棟と谷）"
+        }
+      ]
+    },
+    {
+      "id": "4-4",
+      "title": "例題 A の屋根の「下の壁」を外す・合わせる",
+      "docs": "docs/158",
+      "look": "（AI だけで決まる）2 階の壁だけ屋根まで伸びるか（3D の絵）。",
+      "base": [
+        "exA"
+      ],
+      "steps": [
+        {
+          "tool": "query_objects",
+          "args": {
+            "name": "Roof"
+          },
+          "save": "roof",
+          "show": true
+        },
+        {
+          "tool": "release_walls_from_roof",
+          "args": {
+            "roof": "$roof.objects.0.id"
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "\"walls\""
+            ]
+          }
+        },
+        {
+          "tool": "query_objects",
+          "args": {
+            "name": "Wall",
+            "region": {
+              "min": [
+                -100000,
+                -100000,
+                0
+              ],
+              "max": [
+                100000,
+                100000,
+                100
+              ]
+            },
+            "fields": [
+              "name",
+              "bounds"
+            ]
+          },
+          "show": true,
+          "expect": {
+            "not_contains": [
+              "7056",
+              "5626"
+            ]
+          }
+        },
+        {
+          "tool": "fit_walls_to_roof",
+          "args": {
+            "roof": "$roof.objects.0.id"
+          },
+          "show": true
+        },
+        {
+          "tool": "query_objects",
+          "args": {
+            "name": "Wall",
+            "region": {
+              "min": [
+                -100000,
+                -100000,
+                0
+              ],
+              "max": [
+                100000,
+                100000,
+                100
+              ]
+            },
+            "fields": [
+              "name",
+              "bounds"
+            ]
+          },
+          "show": true,
+          "expect": {
+            "not_contains": [
+              "7056",
+              "5626"
+            ]
+          }
+        },
+        {
+          "tool": "query_objects",
+          "args": {
+            "name": "Wall",
+            "region": {
+              "min": [
+                -100000,
+                -100000,
+                2900
+              ],
+              "max": [
+                100000,
+                100000,
+                3000
+              ]
+            },
+            "fields": [
+              "name",
+              "bounds"
+            ]
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "7056"
+            ]
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "3D（2 階の壁だけ屋根まで）"
+        }
+      ]
+    },
+    {
+      "id": "9-3・9-4",
+      "title": "「AI に別名保存を許可」の表示、別名保存しても未保存の表示が変わらない・同じ名前には書かない",
+      "docs": "docs/—",
+      "look": "（AI だけで決まる）初めから ON かは GUI テスト aiSaveCopyIsOnByDefault で確かめる（この PC は保存した設定で OFF）。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "ui_list",
+          "args": {
+            "window": "main",
+            "filter": "別名保存",
+            "menus": true
+          },
+          "show": true
+        },
+        {
+          "tool": "ui_windows",
+          "args": {},
+          "save": "w0",
+          "show": true
+        },
+        {
+          "tool": "save_copy",
+          "args": {
+            "path": "{tmp}/copy.sbr"
+          },
+          "show": true
+        },
+        {
+          "tool": "ui_windows",
+          "args": {},
+          "show": true,
+          "expect": {
+            "contains": [
+              "無題[*]"
+            ]
+          }
+        },
+        {
+          "tool": "save_copy",
+          "args": {
+            "path": "{tmp}/copy.sbr"
+          },
+          "expect": {
+            "fails": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "4-7",
+      "title": "2 階の壁の線まで描いた下屋が、2 階の壁で止まる（壁に付く辺を見つける）",
+      "docs": "docs/161",
+      "look": "軒が 2 階の中へ入らないか（3D の絵）。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "create_slab",
+          "args": {
+            "outline": [
+              [
+                0,
+                0
+              ],
+              [
+                4000,
+                0
+              ],
+              [
+                4000,
+                6000
+              ],
+              [
+                0,
+                6000
+              ]
+            ],
+            "top": 3000,
+            "thickness": 200
+          }
+        },
+        {
+          "tool": "create_wall",
+          "args": {
+            "points": [
+              [
+                0,
+                0
+              ],
+              [
+                4000,
+                0
+              ],
+              [
+                4000,
+                6000
+              ],
+              [
+                0,
+                6000
+              ],
+              [
+                0,
+                0
+              ]
+            ],
+            "thickness": 200,
+            "height": 2700,
+            "base": 3000
+          },
+          "save": "upper"
+        },
+        {
+          "tool": "create_roof",
+          "args": {
+            "outline": [
+              [
+                4000,
+                0
+              ],
+              [
+                8000,
+                0
+              ],
+              [
+                8000,
+                6000
+              ],
+              [
+                4000,
+                6000
+              ]
+            ],
+            "kind": "shed",
+            "height": 3000,
+            "wall_sides": "auto"
+          },
+          "save": "r",
+          "show": true
+        },
+        {
+          "tool": "roof_info",
+          "args": {
+            "id": "$r.id"
+          },
+          "show": true,
+          "expect": {
+            "not_contains": [
+              "\"wall_sides\":[]"
+            ]
+          }
+        },
+        {
+          "tool": "query_objects",
+          "args": {
+            "ids": [
+              "$r.id"
+            ],
+            "fields": [
+              "name",
+              "bounds"
+            ]
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "\"min\":[4000.0"
+            ]
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "下屋が 2 階の壁で止まる"
+        }
+      ]
+    },
+    {
+      "id": "10-1",
+      "title": "階段のある階の平面図（歩く線・矢印・破断線）を絵と PDF・JWW に（例題 C）",
+      "docs": "docs/—",
+      "look": "歩く線・矢印・破断線の見やすさ、「上」の大きさと位置（絵）。JWW を Jw_cad で開くのはオーナー。",
+      "base": [
+        "exC"
+      ],
+      "steps": [
+        {
+          "tool": "render_drawing_set",
+          "args": {},
+          "show": true
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "1FL 平面図",
+            "texts": true
+          },
+          "picture": "1FL 平面図（階段）",
+          "expect": {
+            "contains": [
+              "上"
+            ]
+          }
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "1FL 平面図",
+            "pdf": true
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "drawing-set.pdf"
+            ]
+          }
+        },
+        {
+          "tool": "export_drawing",
+          "args": {
+            "path": "{tmp}/stairs-plan.jww",
+            "kind": "plan"
+          },
+          "show": true
+        },
+        {
+          "tool": "export_drawing",
+          "args": {
+            "path": "{tmp}/stairs-plan.dxf",
+            "kind": "plan"
+          },
+          "show": true
+        }
+      ]
+    },
+    {
+      "id": "10-2",
+      "title": "表を図面に保存（JWW・DXF）と、表の紙の絵（例題 A）",
+      "docs": "docs/—",
+      "look": "表の紙の見え方（絵）。Jw_cad で文字が化けないかはオーナー。",
+      "base": [
+        "exA"
+      ],
+      "steps": [
+        {
+          "tool": "export_schedule",
+          "args": {
+            "path": "{tmp}/openings.jww",
+            "table": "openings"
+          },
+          "show": true
+        },
+        {
+          "tool": "export_schedule",
+          "args": {
+            "path": "{tmp}/rooms.dxf",
+            "table": "rooms"
+          },
+          "show": true
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "建具表",
+            "texts": true
+          },
+          "picture": "建具表"
         }
       ]
     }
