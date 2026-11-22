@@ -38,6 +38,14 @@ class AiBridge : public QObject {
   // Whether an agent may save a copy of the model as a new file (docs/111).
   void setAllowSaveCopy(bool allow) { api_.setAllowSaveCopy(allow); }
   bool allowsSaveCopy() const { return api_.allowsSaveCopy(); }
+  // docs/242: everything for the agent on this PC (the owner's principle: MCP as thick as it can
+  // be): the file commands (save, open, export to any path) and the app's windows (ui_*). On by
+  // default; the owner can turn it off. Not for the ChatGPT connection (executeRemote).
+  void setDebugMode(bool on);
+  bool debugMode() const { return debug_; }
+  // A request from the ChatGPT connection (from the cloud through the owner's tunnel): as
+  // execute, but no file commands and no ui_* commands (also not inside a batch).
+  std::string executeRemote(const std::string& requestJson);
   bool isEnabled() const;
   QString serverName() const;
   QString lastError() const { return lastError_; }
@@ -64,6 +72,7 @@ class AiBridge : public QObject {
   QSet<QLocalSocket*> retryPending_;  // sockets waiting for a long operation
   int clients_ = 0;
   QString lastError_;
+  bool debug_ = false;
 };
 
 }  // namespace sbr::app

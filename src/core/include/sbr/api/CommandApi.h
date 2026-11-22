@@ -55,6 +55,8 @@ class CommandApi {
 
   void addExtension(Extension extension) { extensions_.push_back(std::move(extension)); }
   void setAllowSaveCopy(bool allow) { options_.allowSaveCopy = allow; }
+  // docs/242: the verification mode lets the in-app bridge's agent use the file commands too.
+  void setAllowFileCommands(bool allow) { options_.allowFileCommands = allow; }
   bool allowsSaveCopy() const { return options_.allowFileCommands || options_.allowSaveCopy; }
 
   // Executes one request (or a "batch"). Never throws.

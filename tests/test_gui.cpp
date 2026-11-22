@@ -256,6 +256,7 @@ class GuiPhase1 : public QObject {
   void equipmentInItsDialog();
   void vicinityMapFromCachedTiles();
   void aiPicturesOfDrawingsAndWindows();
+  void aiWorksTheWindowsAndFiles();
   void vicinityMapFetchedOnline();
   void insulationPlanIsDrawnOnItsSheet();
   void proposalShowsRotationAndHide();
@@ -1192,6 +1193,70 @@ void GuiPhase1::aiPicturesOfDrawingsAndWindows() {
   QVERIFY2(none["error"].get<std::string>().find("no window opened") != std::string::npos, none.dump().c_str());
   QVERIFY(!run(R"({"command": "capture_window", "args": {"window": "nothing"}})")["ok"].get<bool>());
   QCOMPARE(modeler.history().undoCount(), steps);
+}
+
+// docs/242: the AI on this PC works the app's windows as a person would (a menu item, a table in
+// the window, OK) and uses the file commands; the ChatGPT connection may do neither; turned off,
+// the AI on this PC may not either.
+void GuiPhase1::aiWorksTheWindowsAndFiles() {
+  Fixture f;
+  QVERIFY(f.setUp(4000, 3000));
+  auto& modeler = f.window.modeler();
+  AiBridge* bridge = f.window.aiBridge();
+  bridge->setDebugMode(true);
+  const auto run = [&](const nlohmann::json& request) { return nlohmann::json::parse(bridge->execute(request.dump())); };
+  // The menu items are listed, by their menus' path.
+  const auto menus = run({{"command", "ui_list"}, {"args", {{"window", "main"}, {"menus", true}, {"filter", "設備"}}}});
+  QVERIFY2(menus["ok"].get<bool>(), menus.dump().c_str());
+  bool listed = false;
+  for (const auto& item : menus["result"]["menu_items"])
+    listed = listed || item.value("object_name", std::string()) == "equipmentAction";
+  QVERIFY2(listed, menus.dump().c_str());
+  // The window opened from its menu item, its table filled, a picture, OK: as a person would.
+  nlohmann::json opened, table, picture, pressed;
+  QTimer::singleShot(600, &f.window, [&] {
+    opened = run({{"command", "ui_windows"}});
+    table = run({{"command", "ui_list"}, {"args", {{"filter", "equipmentTable"}}}});
+    run({{"command", "ui_set"}, {"args", {{"widget", "equipmentTable"}, {"row", 0}, {"column", 1}, {"value", "ルームエアコン"}}}});
+    run({{"command", "ui_set"}, {"args", {{"widget", "equipmentTable"}, {"row", 0}, {"column", 4}, {"value", 2}}}});
+    picture = run({{"command", "ui_capture"}});
+    pressed = run({{"command", "ui_click"}, {"args", {{"widget", "OK"}}}});
+  });
+  const auto steps = modeler.history().undoCount();
+  const auto trigger = run({{"command", "ui_trigger"}, {"args", {{"action", "equipmentAction"}}}});
+  QVERIFY2(trigger["ok"].get<bool>(), trigger.dump().c_str());
+  QTRY_VERIFY_WITH_TIMEOUT(!pressed.is_null() && !QApplication::activeModalWidget(), 10000);
+  bool modal = false;
+  for (const auto& w : opened["result"]["windows"]) modal = modal || (w["modal"].get<bool>() && w["title"] == "設備の機器");
+  QVERIFY2(modal, opened.dump().c_str());
+  QVERIFY2(table["ok"].get<bool>() && table["result"]["widgets"][0]["row_count"] == 4, table.dump().c_str());
+  QVERIFY2(picture["ok"].get<bool>(), picture.dump().c_str());
+  QVERIFY2(pressed["ok"].get<bool>(), pressed.dump().c_str());
+  QCOMPARE(modeler.history().undoCount(), steps + 1);
+  const auto items = doc::Modeler::equipmentOf(modeler.document());
+  QCOMPARE(items.size(), std::size_t(1));
+  QCOMPARE(QString::fromStdString(items[0].name), QStringLiteral("ルームエアコン"));
+  QCOMPARE(items[0].count, 2);
+  // A file command: a copy saved where the AI says.
+  const QString path = QDir(QDir::tempPath()).filePath(QStringLiteral("sbr_ai_files_test.sbr"));
+  QFile::remove(path);
+  const auto saved = run({{"command", "save_copy"}, {"args", {{"path", path.toStdString()}}}});
+  QVERIFY2(saved["ok"].get<bool>(), saved.dump().c_str());
+  QVERIFY(QFileInfo::exists(path));
+  const auto exported = run({{"command", "save"}, {"args", {{"path", QDir(QDir::tempPath()).filePath(QStringLiteral("sbr_ai_files_test2.sbr")).toStdString()}}}});
+  QVERIFY2(exported["ok"].get<bool>(), exported.dump().c_str());
+  // The ChatGPT connection: the model yes, files and windows no (not inside a batch either).
+  const auto remote = [&](const nlohmann::json& request) { return nlohmann::json::parse(bridge->executeRemote(request.dump())); };
+  QVERIFY(remote({{"command", "list_objects"}})["ok"].get<bool>());
+  QVERIFY(!remote({{"command", "ui_windows"}})["ok"].get<bool>());
+  QVERIFY(!remote({{"command", "save"}, {"args", {{"path", "x.sbr"}}}})["ok"].get<bool>());
+  QVERIFY(!remote({{"command", "batch"}, {"args", {{"commands", {{{"command", "ui_windows"}}}}}}})["ok"].get<bool>());
+  // Turned off: the AI on this PC may not either.
+  bridge->setDebugMode(false);
+  QVERIFY(!run({{"command", "ui_windows"}})["ok"].get<bool>());
+  QVERIFY(!run({{"command", "save"}, {"args", {{"path", "x.sbr"}}}})["ok"].get<bool>());
+  QFile::remove(path);
+  QFile::remove(QDir(QDir::tempPath()).filePath(QStringLiteral("sbr_ai_files_test2.sbr")));
 }
 
 void GuiPhase1::equipmentInItsDialog() {
@@ -5577,9 +5642,20 @@ void GuiPhase1::aiBridgeOverLocalSocket() {
   QVERIFY(r.value("ok").toBool());
   QVERIFY(QFileInfo(r.value("result").toObject().value("image_path").toString()).size() > 0);
 
-  // File commands are not available to the agent; the user's Ctrl+Z undoes AI edits.
+  // docs/242: the file commands are the AI's on this PC by default (the owner's principle); turned
+  // off in the AI menu, they are not. The user's Ctrl+Z undoes AI edits.
+  const QString copy = QDir(QDir::tempPath()).filePath(QStringLiteral("sbr_bridge_save_test.sbr"));
+  QFile::remove(copy);
+  r = request(QByteArray(R"({"command": "save_copy", "args": {"path": ")") + QDir::fromNativeSeparators(copy).toUtf8() + R"("}})");
+  QVERIFY2(r.value("ok").toBool(), qPrintable(QJsonDocument(r).toJson()));
+  QVERIFY(QFileInfo::exists(copy));
+  QFile::remove(copy);
+  auto* debug = f.window.findChild<QAction*>(QStringLiteral("aiDebugAction"));
+  QVERIFY(debug && debug->isChecked());
+  debug->setChecked(false);
   r = request(R"({"command": "save", "args": {"path": "x.sbr"}})");
   QVERIFY(!r.value("ok").toBool());
+  debug->setChecked(true);
   QVERIFY(m.undo());
   QVERIFY(!m.document().find(id));
 

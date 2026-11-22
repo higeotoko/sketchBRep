@@ -234,7 +234,7 @@ TEST(McpServer, InitializeListAndCallTools) {
 
 TEST(McpServer, AppCommandSpecsAreValidSchemas) {
   const auto specs = CommandApi::appCommandSpecs();
-  EXPECT_EQ(specs.size(), 11u);  // docs/241: render_drawing_set, capture_window
+  EXPECT_EQ(specs.size(), 18u);  // docs/241: render_drawing_set, capture_window; docs/242: ui_* (7)
   for (const auto& s : specs) {
     EXPECT_EQ(json::parse(s.inputSchema)["type"], "object") << s.name;
     EXPECT_FALSE(s.description.empty());

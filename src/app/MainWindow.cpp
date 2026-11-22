@@ -12,6 +12,7 @@
 #include "sbr/doc/Schedules.h"
 #include "sbr/KernelError.h"
 #include "DrawingExport.h"
+#include "UiDriver.h"
 #include "VicinityMapFetcher.h"
 #include "PermitWorkflowPanel.h"
 #include "CrashLog.h"
@@ -76,6 +77,8 @@
 #include <QToolButton>
 #include <QTimer>
 #include <QKeyEvent>
+#include <QKeySequence>
+#include <QAbstractButton>
 #include <QToolBar>
 #include <QPainter>
 #include <QScrollArea>
@@ -1912,6 +1915,23 @@ void MainWindow::buildMenus() {
       setStatus(on ? tr("AI の別名保存を許可しました（上書きはしません）") : tr("AI の別名保存を止めました"));
     });
   }
+  {
+    // docs/242: everything for the AI on this PC (on by default; not for the ChatGPT connection).
+    auto* debug = ai->addAction(tr("この PC の AI にファイル操作と画面操作を許す"));
+    debug->setObjectName(QStringLiteral("aiDebugAction"));
+    debug->setCheckable(true);
+    debug->setToolTip(tr("この PC の MCP（Claude など）が、好きな場所へのファイルの保存・開く・書き出しと、"
+                         "メニュー・窓の操作（入力・ボタン）をできます。ChatGPT の接続（クラウドからトンネル経由）には許しません"));
+    const bool on = QSettings().value(QStringLiteral("ai/debugMode"), true).toBool();
+    debug->setChecked(on);
+    aiBridge_->setDebugMode(on);
+    connect(debug, &QAction::toggled, this, [this](bool checked) {
+      aiBridge_->setDebugMode(checked);
+      QSettings().setValue(QStringLiteral("ai/debugMode"), checked);
+      setStatus(checked ? tr("この PC の AI に、ファイル操作と画面操作を許しました")
+                        : tr("この PC の AI のファイル操作と画面操作を止めました"));
+    });
+  }
   ai->addAction(tr("MCP 接続設定をコピー"), this, [this] {
     QString exe = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("sbr_mcp"));
 #ifdef Q_OS_WIN
@@ -2724,6 +2744,108 @@ void MainWindow::buildAiBridge() {
     }
     if (!captured) throw std::runtime_error("no window opened (the status bar says: " + statusBar()->currentMessage().toStdString() + ")");
     return json{{"window", target}, {"title", title}, {"image_path", QDir::toNativeSeparators(path).toStdString()}}.dump();
+  };
+
+  // docs/242: the verification mode's commands: the app's windows read and worked as a person
+  // would. A press of a button or menu item happens just after the answer (a window it opens waits
+  // for its own answer, and the next commands work in it).
+  const auto debugOnly = [this] {
+    if (!aiBridge_ || !aiBridge_->debugMode())
+      throw std::runtime_error("the owner has turned off 'この PC の AI にファイル操作と画面操作を許す' in the AI menu");
+  };
+  const auto windowOf = [this](const json& a) {
+    const std::string which = a.value("window", std::string("top"));
+    QWidget* w = ui::window(this, which);
+    if (!w) throw std::runtime_error("no window '" + which + "' (ui_windows lists them)");
+    return w;
+  };
+  const auto state = [this] {
+    json out = {{"windows", ui::windows(this)}, {"status", statusBar()->currentMessage().toStdString()}};
+    return out;
+  };
+  handlers["ui_windows"] = [debugOnly, state](const std::string&) {
+    debugOnly();
+    return state().dump();
+  };
+  handlers["ui_list"] = [debugOnly, windowOf](const std::string& args) {
+    debugOnly();
+    const json a = args.empty() ? json::object() : json::parse(args);
+    QWidget* w = windowOf(a);
+    return ui::list(w, a.value("filter", std::string()), a.value("menus", false), a.value("limit", 300)).dump();
+  };
+  handlers["ui_capture"] = [debugOnly, windowOf](const std::string& args) {
+    debugOnly();
+    const json a = args.empty() ? json::object() : json::parse(args);
+    QWidget* w = windowOf(a);
+    const QString path = QDir(QDir::tempPath()).filePath(QStringLiteral("sketchbrep-ui.png"));
+    if (!w->grab().save(path)) throw std::runtime_error("the window could not be captured");
+    return json{{"title", w->windowTitle().toStdString()}, {"image_path", QDir::toNativeSeparators(path).toStdString()}}.dump();
+  };
+  handlers["ui_set"] = [debugOnly, windowOf, state](const std::string& args) {
+    debugOnly();
+    const json a = json::parse(args);
+    QWidget* w = windowOf(a);
+    QWidget* target = ui::find(w, a.value("widget", std::string()));
+    if (!target) throw std::runtime_error("no widget '" + a.value("widget", std::string()) + "' (ui_list gives the refs)");
+    if (!a.contains("value")) throw std::runtime_error("'value' is required");
+    ui::set(target, a["value"], a.value("row", -1), a.value("column", -1));
+    return state().dump();
+  };
+  handlers["ui_click"] = [debugOnly, windowOf, state](const std::string& args) {
+    debugOnly();
+    const json a = json::parse(args);
+    QWidget* w = windowOf(a);
+    auto* button = qobject_cast<QAbstractButton*>(ui::find(w, a.value("widget", std::string())));
+    if (!button) throw std::runtime_error("no button '" + a.value("widget", std::string()) + "' (ui_list gives the refs)");
+    if (!button->isEnabled()) throw std::runtime_error("the button is greyed out (disabled)");
+    QTimer::singleShot(0, button, [button] {
+      // A file window it opens is the app's own (an AI can fill it), not Windows'.
+      QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, true);
+      button->click();
+      QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, false);
+    });
+    json out = state();
+    out["pressed"] = button->text().toStdString();
+    out["next"] = "the press happens just after this answer: call ui_windows / ui_list to see what it did";
+    return out.dump();
+  };
+  handlers["ui_trigger"] = [this, debugOnly, state](const std::string& args) {
+    debugOnly();
+    const json a = json::parse(args);
+    QAction* item = ui::action(this, a.value("action", std::string()));
+    if (!item) throw std::runtime_error("no menu item '" + a.value("action", std::string()) + "' (ui_list with menus: true lists them)");
+    if (!item->isEnabled()) throw std::runtime_error("the menu item is greyed out (disabled)");
+    QPointer<QAction> guard(item);
+    QTimer::singleShot(0, this, [guard] {
+      if (!guard) return;
+      QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, true);  // the app's own file window
+      guard->trigger();
+      QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, false);
+    });
+    json out = state();
+    out["triggered"] = item->text().toStdString();
+    out["next"] = "the menu item runs just after this answer: call ui_windows / ui_list to see what it did";
+    return out.dump();
+  };
+  handlers["ui_key"] = [debugOnly, windowOf, state](const std::string& args) {
+    debugOnly();
+    const json a = json::parse(args);
+    QWidget* w = windowOf(a);
+    QWidget* target = a.contains("widget") ? ui::find(w, a["widget"].get<std::string>()) : (w->focusWidget() ? w->focusWidget() : w);
+    if (!target) throw std::runtime_error("no widget '" + a.value("widget", std::string()) + "'");
+    const QKeySequence keys(QString::fromStdString(a.value("key", std::string())));
+    if (keys.isEmpty()) throw std::runtime_error("'key': e.g. Escape, Return, Delete, Ctrl+Z");
+    const QKeyCombination combo = keys[0];
+    QPointer<QWidget> guard(target);
+    QTimer::singleShot(0, target, [guard, combo] {
+      if (!guard) return;
+      QKeyEvent press(QEvent::KeyPress, combo.key(), combo.keyboardModifiers());
+      QApplication::sendEvent(guard, &press);
+      if (!guard) return;
+      QKeyEvent release(QEvent::KeyRelease, combo.key(), combo.keyboardModifiers());
+      QApplication::sendEvent(guard, &release);
+    });
+    return state().dump();
   };
 
   handlers["list_scenes"] = [this](const std::string&) {

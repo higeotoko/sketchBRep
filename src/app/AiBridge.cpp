@@ -50,9 +50,36 @@ bool AiBridge::setEnabled(bool enabled) {
   return true;
 }
 
+void AiBridge::setDebugMode(bool on) {
+  debug_ = on;
+  api_.setAllowFileCommands(on);
+}
+
+namespace {
+// Whether the request (or a step of its batch) names a ui_* command.
+bool namesUiCommand(const nlohmann::json& request) {
+  if (!request.is_object()) return false;
+  if (request.value("command", std::string()).rfind("ui_", 0) == 0) return true;
+  const auto args = request.value("args", nlohmann::json::object());
+  if (args.is_object() && args.contains("commands") && args["commands"].is_array())
+    for (const auto& step : args["commands"])
+      if (namesUiCommand(step)) return true;
+  return false;
+}
+}  // namespace
+
+std::string AiBridge::executeRemote(const std::string& requestJson) {
+  const auto request = nlohmann::json::parse(requestJson, nullptr, false);
+  if (api_.effectOf(requestJson) == api::CommandApi::Effect::ExternalIo || namesUiCommand(request))
+    return nlohmann::json{{"ok", false},
+                          {"error", "Files and the app's windows are for the AI on this PC only, not through the ChatGPT connection"}}
+        .dump();
+  return execute(requestJson);
+}
+
 bool AiBridge::startChatGpt() {
   if(!isEnabled()){lastError_=QStringLiteral("Enable AI access first");return false;}
-  if(!http_)http_=std::make_unique<McpHttpServer>([this](const std::string& request){return execute(request);});
+  if(!http_)http_=std::make_unique<McpHttpServer>([this](const std::string& request){return executeRemote(request);});
   if(!http_->start()){lastError_=http_->errorString();return false;}
   return true;
 }

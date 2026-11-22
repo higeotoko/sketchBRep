@@ -6,6 +6,7 @@ set(CMAKE_AUTOMOC ON)
 add_library(sbr_ui STATIC
   MainWindow.cpp MainWindow.h
   VicinityMapFetcher.cpp VicinityMapFetcher.h
+  UiDriver.cpp UiDriver.h
   TimberFrameDialog.cpp
   FoundationDialog.cpp
   FoundationSupportsDialog.cpp FoundationSupportsDialog.h

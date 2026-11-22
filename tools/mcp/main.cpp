@@ -140,7 +140,7 @@ int main(int argc, char** argv) {
     // app runs: answer "describe" from the shared schema in that case.
     static sbr::doc::Modeler schemaModel;
     static sbr::api::CommandApi offline = [] {
-      sbr::api::CommandApi a(schemaModel, sbr::api::CommandApi::Options{false});
+      sbr::api::CommandApi a(schemaModel);  // docs/242: the app allows the file commands to the AI
       for (auto& e : sbr::api::CommandApi::appCommandSpecs()) {
         e.run = [](const std::string&) -> std::string { throw std::runtime_error("SketchBRep is not running"); };
         a.addExtension(std::move(e));

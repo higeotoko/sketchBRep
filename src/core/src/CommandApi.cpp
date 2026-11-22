@@ -5072,6 +5072,47 @@ std::vector<CommandApi::Extension> CommandApi::appCommandSpecs() {
        R"({"type": "object", "properties": {"window": {"type": "string"}, "host": {"type": "string"},
            "index": {"type": "integer"}}})",
        nullptr, Effect::Read},
+      {"ui_windows",
+       "docs/242, the AI on this PC only: the app's visible windows (title, object name, which is "
+       "waiting for an answer) and the status bar's message. Use after ui_click / ui_trigger / ui_key.",
+       R"({"type": "object", "properties": {}})", nullptr, Effect::Read},
+      {"ui_list",
+       "docs/242: a window's widgets as a person reads them (buttons, fields, check "
+       "boxes, lists, tables with their cells, labels, panels), each with 'ref' (object name, else #n). 'window': "
+       "top (default: the window waiting for an answer, else the main window), main, modal, or a window's title. "
+       "'filter' keeps the widgets whose ref, kind or text holds it; 'menus': true adds the main window's menu "
+       "items (path, object name, enabled, checked); 'limit' (300).",
+       R"({"type": "object", "properties": {"window": {"type": "string"}, "filter": {"type": "string"},
+           "menus": {"type": "boolean"}, "limit": {"type": "integer"}}})",
+       nullptr, Effect::Read},
+      {"ui_capture",
+       "docs/242: a picture of a window as it is now (not closed). 'window' as in ui_list.",
+       R"({"type": "object", "properties": {"window": {"type": "string"}}})", nullptr, Effect::Read},
+      {"ui_set",
+       "docs/242: set a widget as a person would: 'widget' (ref from ui_list), 'value' "
+       "(text, number, true / false, a list's item text or data, a tab's name). A table cell: 'row' and 'column' "
+       "(0-based) with the cell's text or the value of the list / number / check box in it. 'window' as in ui_list.",
+       R"({"type": "object", "properties": {"window": {"type": "string"}, "widget": {"type": "string"},
+           "value": {}, "row": {"type": "integer"}, "column": {"type": "integer"}}, "required": ["widget", "value"]})",
+       nullptr, Effect::ViewWrite},
+      {"ui_click",
+       "docs/242: press a button ('widget': ref from ui_list or the button's text, e.g. OK, "
+       "キャンセル). The press happens just after the answer; then ui_windows / ui_list show what it did.",
+       R"({"type": "object", "properties": {"window": {"type": "string"}, "widget": {"type": "string"}},
+           "required": ["widget"]})",
+       nullptr, Effect::ModelWrite},
+      {"ui_trigger",
+       "docs/242: choose a menu item ('action': object name, its text, or its menus' path "
+       "such as ファイル/図面一式を書き出す; ui_list with menus: true lists them). It runs just after the answer; "
+       "a window it opens is then 'top' for the ui_* commands.",
+       R"({"type": "object", "properties": {"action": {"type": "string"}}, "required": ["action"]})",
+       nullptr, Effect::ModelWrite},
+      {"ui_key",
+       "docs/242: press a key ('key': Escape, Return, Delete, Ctrl+Z...) in a widget "
+       "('widget', else the window's focus). 'window' as in ui_list.",
+       R"({"type": "object", "properties": {"window": {"type": "string"}, "widget": {"type": "string"},
+           "key": {"type": "string"}}, "required": ["key"]})",
+       nullptr, Effect::ModelWrite},
       {"list_scenes", "List the saved views (scenes) of the model.", R"({"type": "object", "properties": {}})",
        nullptr, Effect::Read},
       {"propose",
