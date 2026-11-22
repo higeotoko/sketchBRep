@@ -1,4 +1,5 @@
 #include <QtTest/QtTest>
+#include <algorithm>
 #include <cmath>
 #include <QAction>
 #include <QFileDialog>
@@ -84,6 +85,45 @@ class GeometryExchangeGui:public QObject {
    }
    QVERIFY(std::abs(volume-6000)<1e-3);
    QCOMPARE(w.modeler().history().undoCount(),history+1);QVERIFY(w.modeler().history().undo());QCOMPARE(w.modeler().listObjects().size(),std::size_t(2));
+ }
+ void ifcExportFromMenuShowsWhatWasAssumed(){
+   QTemporaryDir dir;
+   QVERIFY(dir.isValid());
+   app::MainWindow window;
+   window.show();
+   QVERIFY(QTest::qWaitForWindowExposed(&window));
+   QVERIFY(window.modeler().createWalls({gp_Pnt(0,0,0),gp_Pnt(4000,0,0)},200,3000,0));
+   auto* output=action(window,QStringLiteral("エクスポート..."));
+   QVERIFY(output);
+   bool offered=false;
+   QString noticeTitle,notice;
+   QTimer timer;
+   connect(&timer,&QTimer::timeout,[&]{
+     if(auto* dialog=qobject_cast<QFileDialog*>(QApplication::activeModalWidget())){
+       const auto filters=dialog->nameFilters();
+       offered=std::any_of(filters.begin(),filters.end(),[](const QString& filter){
+         return filter.startsWith(QStringLiteral("IFC"))&&filter.endsWith(QStringLiteral("(*.ifc)"));
+       });
+       if(offered)choose(dialog,dir.path(),QStringLiteral("家"),QStringLiteral("IFC"));
+       else dialog->reject();
+     } else if(auto* message=qobject_cast<QMessageBox*>(QApplication::activeModalWidget())){
+       noticeTitle=message->windowTitle();
+       notice=message->text();
+       message->accept();
+     }
+   });
+   timer.start(10);
+   output->trigger();
+   timer.stop();
+   QVERIFY(offered);
+   QVERIFY2(window.lastError().isEmpty(),qPrintable(window.lastError()));
+   QCOMPARE(noticeTitle,QStringLiteral("IFC の書き出し"));
+   QVERIFY2(notice.contains(QStringLiteral("書き出しました"))&&notice.contains(QStringLiteral("壁 1"))&&
+                notice.contains(QStringLiteral("レベルが無い")),qPrintable(notice));
+   QFile file(dir.filePath(QStringLiteral("家.ifc")));
+   QVERIFY(file.open(QIODevice::ReadOnly));
+   const auto contents=file.readAll();
+   QVERIFY(contents.contains("FILE_SCHEMA(('IFC4'));")&&contents.contains("IFCWALL("));
  }
  void invalidFileAndImportCancellationLeaveModelAlone_data(){exportAndImportFromMenus_data();}
  void invalidFileAndImportCancellationLeaveModelAlone(){
