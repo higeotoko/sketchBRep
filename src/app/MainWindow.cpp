@@ -2559,6 +2559,22 @@ void MainWindow::setAiAccess(bool enabled) {
 
 namespace {
 doc::DrawingSetSpec drawingSetSpecFor(const doc::Document& document, bool tablesWithPlan, QString* tilesMessage);
+
+// docs/252: a window's picture with the 3D view in it (the view is drawn by OpenGL, which a widget's
+// grab leaves black): the view's own picture laid over its place.
+QPixmap grabWithView(QWidget* window, Viewport* view) {
+  QPixmap picture = window->grab();
+  if (!view || !view->isVisible() || view->window() != window) return picture;
+  view->syncNow();
+  const QString file = QDir(QDir::tempPath()).filePath(QStringLiteral("sketchbrep-view-for-window.png"));
+  if (!view->dumpImage(file)) return picture;
+  const QImage shown(file);
+  QFile::remove(file);
+  if (shown.isNull()) return picture;
+  QPainter painter(&picture);
+  painter.drawImage(QRect(view->mapTo(window, QPoint(0, 0)), view->size()), shown);
+  return picture;
+}
 }  // namespace
 
 void MainWindow::buildAiBridge() {
@@ -2709,7 +2725,7 @@ void MainWindow::buildAiBridge() {
     QFile::remove(path);
     if (target == "main") {
       QApplication::processEvents();
-      if (!grab().save(path)) throw std::runtime_error("the window could not be captured");
+      if (!grabWithView(this, viewport_).save(path)) throw std::runtime_error("the window could not be captured");
       return json{{"window", target}, {"title", windowTitle().toStdString()}, {"image_path", QDir::toNativeSeparators(path).toStdString()}}.dump();
     }
     const std::map<std::string, std::function<void()>> windows = {
@@ -2802,12 +2818,12 @@ void MainWindow::buildAiBridge() {
     QWidget* w = windowOf(a);
     return ui::list(w, a.value("filter", std::string()), a.value("menus", false), a.value("limit", 300)).dump();
   };
-  handlers["ui_capture"] = [debugOnly, windowOf](const std::string& args) {
+  handlers["ui_capture"] = [this, debugOnly, windowOf](const std::string& args) {
     debugOnly();
     const json a = args.empty() ? json::object() : json::parse(args);
     QWidget* w = windowOf(a);
     const QString path = QDir(QDir::tempPath()).filePath(QStringLiteral("sketchbrep-ui.png"));
-    if (!w->grab().save(path)) throw std::runtime_error("the window could not be captured");
+    if (!grabWithView(w, viewport_).save(path)) throw std::runtime_error("the window could not be captured");
     return json{{"title", w->windowTitle().toStdString()}, {"image_path", QDir::toNativeSeparators(path).toStdString()}}.dump();
   };
   handlers["ui_set"] = [debugOnly, windowOf, state](const std::string& args) {

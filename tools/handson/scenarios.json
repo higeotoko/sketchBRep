@@ -206,6 +206,63 @@
           "source": "確認用"
         }
       }
+    ],
+    "empty_top": [
+      {
+        "tool": "set_levels",
+        "args": {
+          "levels": [
+            {
+              "name": "1FL",
+              "elevation": 0
+            },
+            {
+              "name": "2FL",
+              "elevation": 3000
+            }
+          ]
+        }
+      },
+      {
+        "tool": "create_polygon",
+        "args": {
+          "points": [
+            [
+              -2000,
+              -2000,
+              0
+            ],
+            [
+              10000,
+              -2000,
+              0
+            ],
+            [
+              10000,
+              8000,
+              0
+            ],
+            [
+              -2000,
+              8000,
+              0
+            ]
+          ]
+        },
+        "save": "site"
+      },
+      {
+        "tool": "set_view",
+        "args": {
+          "view": "top"
+        }
+      },
+      {
+        "tool": "set_view",
+        "args": {
+          "view": "fit"
+        }
+      }
     ]
   },
   "scenarios": [
@@ -1662,6 +1719,267 @@
           "tool": "capture_view",
           "args": {},
           "picture": "3D"
+        }
+      ]
+    },
+    {
+      "id": "2-7・3-1",
+      "title": "壁ツールで長さを打ち込んで部屋を描き、室ツールで室にする（人と同じ手）",
+      "docs": "docs/97・98・252",
+      "look": "壁ツール・室ツールの手順で迷う所が無いか（画面の絵）。",
+      "base": [
+        "empty_top"
+      ],
+      "steps": [
+        {
+          "tool": "ui_tool",
+          "args": {
+            "tool": "wall"
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              3000,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_type",
+          "args": {
+            "text": "8000"
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              8000,
+              3000,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_type",
+          "args": {
+            "text": "6000"
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              5000,
+              6000,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_type",
+          "args": {
+            "text": "8000"
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "ui_key",
+          "args": {
+            "window": "main",
+            "key": "Escape"
+          }
+        },
+        {
+          "tool": "ui_capture",
+          "args": {
+            "window": "main"
+          },
+          "picture": "壁ツールで描いた部屋"
+        },
+        {
+          "tool": "ui_tool",
+          "args": {
+            "tool": "room"
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              3000,
+              3000,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "room_schedule",
+          "args": {},
+          "show": true,
+          "expect": {
+            "contains": [
+              "\"area_centre\":48.0",
+              "\"closed\":true"
+            ]
+          }
+        },
+        {
+          "tool": "ui_capture",
+          "args": {
+            "window": "main"
+          },
+          "picture": "室ツールでクリックした後"
+        }
+      ]
+    },
+    {
+      "id": "4-1",
+      "title": "屋根ツールで外周を描く（人と同じ手）",
+      "docs": "docs/99・252",
+      "look": "屋根ツールで外周を描く手順と、先に見える形が分かりやすいか（画面の絵）。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "ui_list",
+          "args": {
+            "window": "main",
+            "menus": true,
+            "filter": "透視投影"
+          },
+          "show": true,
+          "save": "persp"
+        },
+        {
+          "tool": "ui_trigger",
+          "args": {
+            "action": "透視投影"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "top"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "ui_tool",
+          "args": {
+            "tool": "roof"
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "points": [
+              [
+                -100,
+                -100,
+                3000
+              ],
+              [
+                8100,
+                -100,
+                3000
+              ],
+              [
+                8100,
+                6100,
+                3000
+              ],
+              [
+                -100,
+                6100,
+                3000
+              ]
+            ]
+          }
+        },
+        {
+          "tool": "ui_windows",
+          "args": {},
+          "show": true
+        },
+        {
+          "tool": "ui_capture",
+          "args": {
+            "window": "main"
+          },
+          "picture": "外周の 4 点を押したところ"
+        },
+        {
+          "tool": "ui_type",
+          "args": {
+            "text": "",
+            "enter": true
+          }
+        },
+        {
+          "tool": "ui_windows",
+          "args": {},
+          "show": true
+        },
+        {
+          "tool": "query_objects",
+          "args": {
+            "fields": [
+              "id",
+              "name"
+            ]
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "Roof"
+            ]
+          }
+        },
+        {
+          "tool": "ui_trigger",
+          "args": {
+            "action": "透視投影"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "屋根ツールで作った屋根（3D）"
         }
       ]
     }
