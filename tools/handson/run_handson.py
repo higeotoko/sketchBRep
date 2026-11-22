@@ -152,6 +152,54 @@ def check(expect: dict, step_text: str, ok: bool) -> list[str]:
     return failed
 
 
+def snapshot(mcp: Mcp) -> dict:
+    """docs/248: what the model gives, as the AI reads it: the tables, the stages, every sheet's words."""
+    snap: dict = {}
+    for tool, args in [("room_schedule", {}), ("opening_schedule", {}), ("area_table", {}), ("list_equipment", {}),
+                       ("project_outline", {}), ("permit_checks", {"stage": 9}), ("permit_checks", {"stage": 1})]:
+        r = mcp.call(tool, args)
+        snap[f"{tool} {json.dumps(args, ensure_ascii=False)}"] = r["text"] if r["ok"] else "（失敗）" + r["text"]
+    listing = mcp.call("render_drawing_set", {})
+    sheets = listing["result"].get("sheets", []) if isinstance(listing["result"], dict) else []
+    snap["sheets"] = [f'{s["number"]} {s["name"]}' for s in sheets]
+    for s in sheets:
+        r = mcp.call("render_drawing_set", {"sheet": s["index"], "texts": True})
+        texts = (r["result"].get("sheet") or {}).get("texts", []) if isinstance(r["result"], dict) else []
+        # The date in the title block is the day's: not the model.
+        snap[f'sheet {s["name"]}'] = sorted(t for t in texts if not (len(t) == 10 and t[4] == "-" and t[7] == "-"))
+    return snap
+
+
+def roundtrip(mcp: Mcp, path: Path) -> list[str]:
+    """Saved as a copy, opened again: the same tables, stages and words on every sheet."""
+    before = snapshot(mcp)
+    if path.exists():
+        path.unlink()
+    saved = mcp.call("save_copy", {"path": str(path)})
+    if not saved["ok"]:
+        return ["保存できない: " + saved["text"][:200]]
+    opened = mcp.call("open", {"path": str(path)})
+    if not opened["ok"]:
+        return ["開けない: " + opened["text"][:200]]
+    after = snapshot(mcp)
+    try:
+        path.unlink()
+    except OSError:
+        pass
+    diffs = []
+    for key in sorted(set(before) | set(after)):
+        a, b = before.get(key), after.get(key)
+        if a == b:
+            continue
+        if isinstance(a, list) and isinstance(b, list):
+            gone = [x for x in a if x not in b][:5]
+            new = [x for x in b if x not in a][:5]
+            diffs.append(f"{key}：消えた {gone}　増えた {new}")
+        else:
+            diffs.append(f"{key}：前 {str(a)[:150]}　後 {str(b)[:150]}")
+    return diffs
+
+
 def run_scenario(mcp: Mcp, sc: dict, bases: dict, out: Path) -> dict:
     saved: dict = {}
     record = {"id": sc["id"], "title": sc["title"], "look": sc.get("look", ""), "docs": sc.get("docs", ""),
@@ -167,6 +215,12 @@ def run_scenario(mcp: Mcp, sc: dict, bases: dict, out: Path) -> dict:
     for n, step in enumerate(steps, 1):
         if "wait" in step:
             time.sleep(step["wait"])
+            continue
+        if step.get("roundtrip"):
+            diffs = roundtrip(mcp, Path(tempfile.gettempdir()) / f"sbr-handson-{os.getpid()}.sbr")
+            record["steps"].append({"n": n, "tool": "save_copy → open（保存して開き直す）", "args": {}, "ok": not diffs,
+                                    "failed": diffs, "answer": ""})
+            record["failed"] += [f"step {n} 保存して開き直す: {d}" for d in diffs]
             continue
         tool = step["tool"]
         args = substitute(step.get("args", {}), saved)
