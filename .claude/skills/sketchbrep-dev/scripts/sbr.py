@@ -1,4 +1,4 @@
-"""SketchBRep development helper: build / test / package / verify / ci / record, with short output.
+"""SketchBRep development helper: build / test / package / verify / ci / record / install, with short output.
 
 Run from anywhere with the bundled Python, e.g.
   python -I .claude/skills/sketchbrep-dev/scripts/sbr.py test core --filter 'FoundationMat.*'
@@ -34,6 +34,8 @@ CONFIG = {
     "dumpbin": Path(r"C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64\dumpbin.exe"),
     "github": "higeotoko/sketchBRep",
     "branch": "claude/sketchbrep-modeler-spec-4wnp0b",
+    # docs/245: where the MCP client starts the app from (the owner's choice B, 2026-11-22).
+    "install_dest": Path(os.environ.get("SBR_INSTALL_DEST", r"C:\Apps\SketchBrep")),
 }
 DEFAULT_TARGETS = ["sbr_core_tests", "sbr_cli", "sbr_gui_tests", "SketchBRep", "sbr_mcp", "sbr_phase0"]
 LOGS = Path(tempfile.gettempdir()) / "sbr-logs"
@@ -263,6 +265,20 @@ def ci(wait: bool) -> int:
     return 0 if r.get("conclusion") == "success" else 1
 
 
+# --- install (docs/245) ------------------------------------------------------------------
+def install(close_app: bool) -> int:
+    """The ZIP of HEAD (sbr.py package) into the folder the MCP client starts the app from."""
+    zip_path = CONFIG["delivery"] / "outputs" / f"SketchBRep-windows-x64-{head()}-local.zip"
+    if not zip_path.exists():
+        print(f"no {zip_path.name} (run package first)")
+        return 1
+    cmd = [sys.executable, "-I", str(CONFIG["repo"] / "tools" / "install_windows_local.py"),
+           "--zip", str(zip_path), "--dest", str(CONFIG["install_dest"])] + (["--close-app"] if close_app else [])
+    proc = subprocess.run(cmd, capture_output=True)
+    print(decode(proc.stdout).strip() or decode(proc.stderr).strip())
+    return proc.returncode
+
+
 def main() -> int:
     p = argparse.ArgumentParser(prog="sbr")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -271,9 +287,12 @@ def main() -> int:
     t.add_argument("--filter"); t.add_argument("--match"); t.add_argument("--scale1x", action="store_true")
     sub.add_parser("package"); sub.add_parser("verify"); sub.add_parser("record")
     c = sub.add_parser("ci"); c.add_argument("--wait", action="store_true")
+    i = sub.add_parser("install"); i.add_argument("--close-app", action="store_true")
     a = p.parse_args()
     if a.cmd == "build":
         return build(a.targets)
+    if a.cmd == "install":
+        return install(a.close_app)
     if a.cmd == "test":
         return test_core(a.filter) if a.kind == "core" else test_gui(a.names, a.match, a.scale1x)
     return {"package": package, "verify": verify, "record": record}[a.cmd]() if a.cmd != "ci" else ci(a.wait)

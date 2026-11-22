@@ -30,6 +30,7 @@ S=.claude/skills/sketchbrep-dev/scripts/sbr.py   # リポジトリ直下から
 "$PY" -I $S verify                     # 展開した ZIP で従来＋べた基礎等の検証
 "$PY" -I $S ci                         # HEAD の CI の状態（--wait で終わるまで待つ）
 "$PY" -I $S record                     # 検証 JSON を docs/validation/ へ。ZIP のサイズ・SHA256 を表示
+"$PY" -I $S install [--close-app]     # HEAD の ZIP を C:\Apps\SketchBrep へ（docs/245。残った sbr_mcp を止め、古いのは .old-日時 に退避）
 ```
 
 時間がかかるもの（`test core` 約1分、`build` 数分、`package`+`verify` 約10分、`ci --wait` 約25分）は
