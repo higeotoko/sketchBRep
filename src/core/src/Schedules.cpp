@@ -3265,15 +3265,42 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
       cuts.push_back({label, label + "-" + label + " 断面図", gp_Pnt(sp.origin[0], sp.origin[1], sp.origin[2]), gp_Dir(n)});
     }
     if (cuts.empty()) {
-      Bnd_Box all;
-      for (const Object& o : document.objects())
-        if (!o.shape.IsNull() && document.isVisible(o.id)) all.Add(document.worldBounds(o));
-      if (!all.IsVoid()) {
+      // docs/255: through the middle of the building (walls, floors, roofs), not of everything shown:
+      // the site's outline and a grid moved the cuts onto the outer walls' lines. A cut that would run
+      // along a wall's line (within 300) goes to 3/8, 5/8, 1/4 or 3/4 of the building instead.
+      Bnd_Box building, all;
+      struct Line { double at; bool alongX; };
+      std::vector<Line> wallLines;
+      for (const Object& o : document.objects()) {
+        if (o.shape.IsNull() || !document.isVisible(o.id)) continue;
+        const Bnd_Box b = document.worldBounds(o);
+        all.Add(b);
+        const auto kind = o.attributes.find("kind");
+        if (kind == o.attributes.end()) continue;
+        if (kind->second == "wall" || kind->second == "slab" || kind->second == "roof") building.Add(b);
+        if (kind->second == "wall" && !b.IsVoid()) {
+          double a0, b0, c0, a1, b1, c1;
+          b.Get(a0, b0, c0, a1, b1, c1);
+          if (b1 - b0 < 0.5 * (a1 - a0)) wallLines.push_back({(b0 + b1) / 2, true});   // runs east-west
+          if (a1 - a0 < 0.5 * (b1 - b0)) wallLines.push_back({(a0 + a1) / 2, false});  // runs north-south
+        }
+      }
+      const Bnd_Box& box = building.IsVoid() ? all : building;
+      if (!box.IsVoid()) {
         double x0, y0, z0, x1, y1, z1;
-        all.Get(x0, y0, z0, x1, y1, z1);
-        const gp_Pnt c((x0 + x1) / 2, (y0 + y1) / 2, 0);
-        cuts.push_back({"A", "A-A 断面図", c, gp_Dir(0, -1, 0)});
-        cuts.push_back({"B", "B-B 断面図", c, gp_Dir(1, 0, 0)});
+        box.Get(x0, y0, z0, x1, y1, z1);
+        const auto clearOfWalls = [&](double lo, double hi, bool alongX) {
+          for (const double f : {0.5, 0.375, 0.625, 0.25, 0.75}) {
+            const double at = lo + (hi - lo) * f;
+            if (std::none_of(wallLines.begin(), wallLines.end(),
+                             [&](const Line& l) { return l.alongX == alongX && std::abs(l.at - at) < 300.0; }))
+              return at;
+          }
+          return (lo + hi) / 2;
+        };
+        const double cy = clearOfWalls(y0, y1, true), cx = clearOfWalls(x0, x1, false);
+        cuts.push_back({"A", "A-A 断面図", gp_Pnt(cx, cy, 0), gp_Dir(0, -1, 0)});
+        cuts.push_back({"B", "B-B 断面図", gp_Pnt(cx, cy, 0), gp_Dir(1, 0, 0)});
       }
     }
   }

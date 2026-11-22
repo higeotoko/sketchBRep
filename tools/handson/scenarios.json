@@ -2069,6 +2069,276 @@
           }
         }
       ]
+    },
+    {
+      "id": "12-4",
+      "title": "1 階を 2 階へ写す",
+      "docs": "docs/121",
+      "look": "2 階の壁・開口・室が写った見え方（3D・平面の絵）。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "copy_storey",
+          "args": {
+            "from": "1FL",
+            "to": "2FL"
+          },
+          "show": true
+        },
+        {
+          "tool": "room_schedule",
+          "args": {},
+          "show": true,
+          "expect": {
+            "contains": [
+              "\"level\":\"2FL\""
+            ]
+          }
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "2FL 平面図",
+            "texts": true
+          },
+          "picture": "2FL 平面図（写した後）",
+          "expect": {
+            "contains": [
+              "居間  24.00 m²",
+              "AW1"
+            ]
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "3D"
+        }
+      ]
+    },
+    {
+      "id": "12-12・12-27",
+      "title": "壁を通り芯に付けて間隔を変える、外してから変える",
+      "docs": "docs/129・144",
+      "look": "通り芯の間隔を変えた時の壁の付いてき方（平面の絵）。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "create_grid",
+          "args": {
+            "origin": [
+              0,
+              0,
+              0
+            ],
+            "x_spacings": [
+              4000,
+              4000
+            ],
+            "y_spacings": [
+              6000
+            ]
+          },
+          "save": "grid"
+        },
+        {
+          "tool": "pin_to_grid",
+          "args": {
+            "grid": "$grid.grid",
+            "ids": "$walls.ids"
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "\"walls\":4"
+            ]
+          }
+        },
+        {
+          "tool": "get_object",
+          "args": {
+            "id": "$grid.grid"
+          },
+          "save": "g"
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "1FL 平面図",
+            "texts": true
+          },
+          "picture": "通り芯に付けた平面"
+        },
+        {
+          "tool": "set_grid",
+          "args": {
+            "grid": "$grid.grid",
+            "x": [
+              {
+                "id": "$g.grid.x.0.id",
+                "position": 0
+              },
+              {
+                "id": "$g.grid.x.1.id",
+                "position": 4000
+              },
+              {
+                "id": "$g.grid.x.2.id",
+                "position": 9000
+              }
+            ],
+            "y": [
+              {
+                "id": "$g.grid.y.0.id",
+                "position": 0
+              },
+              {
+                "id": "$g.grid.y.1.id",
+                "position": 6000
+              }
+            ]
+          }
+        },
+        {
+          "tool": "room_schedule",
+          "args": {},
+          "show": true,
+          "expect": {
+            "contains": [
+              "洋室  30.00 m²"
+            ]
+          }
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "1FL 平面図",
+            "texts": true
+          },
+          "picture": "X3 を 9000 にした後（東の壁が付いてくる）"
+        },
+        {
+          "tool": "unpin_from_grid",
+          "args": {},
+          "show": true
+        },
+        {
+          "tool": "set_grid",
+          "args": {
+            "grid": "$grid.grid",
+            "x": [
+              {
+                "id": "$g.grid.x.0.id",
+                "position": 0
+              },
+              {
+                "id": "$g.grid.x.1.id",
+                "position": 4000
+              },
+              {
+                "id": "$g.grid.x.2.id",
+                "position": 8000
+              }
+            ],
+            "y": [
+              {
+                "id": "$g.grid.y.0.id",
+                "position": 0
+              },
+              {
+                "id": "$g.grid.y.1.id",
+                "position": 6000
+              }
+            ]
+          }
+        },
+        {
+          "tool": "room_schedule",
+          "args": {},
+          "expect": {
+            "contains": [
+              "洋室  30.00 m²"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "13-1・13-2",
+      "title": "SketchUp（.skp）に書き出して、読み込み直す",
+      "docs": "docs/181",
+      "look": "SketchUp で開いた時のグループ・タグ（SketchUp はオーナーの PC で）。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "export_skp",
+          "args": {
+            "path": "{tmp}/house.skp"
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "sdk_dll"
+            ]
+          }
+        },
+        {
+          "tool": "import_skp",
+          "args": {
+            "path": "{tmp}/house.skp"
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "\"faces\":49",
+              "\"groups\":7"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "13-5・7",
+      "title": "LayOut の図面一式と IFC を書き出す",
+      "docs": "docs/185・101",
+      "look": "LayOut・ほかの BIM ソフトで開いた時の見え方（オーナーの PC で）。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "export_drawing_set",
+          "args": {
+            "folder": "{tmp}",
+            "format": "layout"
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "layout"
+            ]
+          }
+        },
+        {
+          "tool": "export_ifc",
+          "args": {
+            "path": "{tmp}/house.ifc"
+          },
+          "show": true
+        }
+      ]
     }
   ]
 }

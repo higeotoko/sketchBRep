@@ -88,10 +88,16 @@ def lookup(saved: dict, path: str):
     return value
 
 
+FILES = {"dir": ""}  # docs/255: the run's own folder for files the scenarios write ({tmp} in a string)
+
+
 def substitute(value, saved: dict):
-    """"$name.field.0" anywhere in the arguments: a value saved from an earlier step."""
+    """"$name.field.0" anywhere in the arguments: a value saved from an earlier step; "{tmp}" in a
+    string: the run's own folder for files (export_*, save, open)."""
     if isinstance(value, str) and value.startswith("$"):
         return lookup(saved, value[1:])
+    if isinstance(value, str) and "{tmp}" in value:
+        return value.replace("{tmp}", FILES["dir"])
     if isinstance(value, list):
         return [substitute(v, saved) for v in value]
     if isinstance(value, dict):
@@ -335,6 +341,8 @@ def main() -> int:
     started = dt.datetime.now().strftime("%Y-%m-%d %H:%M")
     out = Path(a.out) if a.out else Path(tempfile.gettempdir()) / "sbr-handson" / dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     out.mkdir(parents=True, exist_ok=True)
+    (out / "files").mkdir(exist_ok=True)
+    FILES["dir"] = str((out / "files").resolve())
     mcp = Mcp(a.mcp)
     try:
         # The app's own work first: never thrown away.

@@ -261,7 +261,10 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
       t0 = std::min(t0, t);
       t1 = std::max(t1, t);
     }
-    const gp_Pnt2d e0(c.point.XY() + d.XY() * (t0 - margin)), e1(c.point.XY() + d.XY() * (t1 + margin));
+    // docs/255: with grids, the cut's ends go beyond the grid bubbles (a cut on a grid line put its
+    // "A" / "B" on the bubble of Y1 / X1: the hands-on run's sheet check).
+    const double cutMargin = view.grids.empty() ? margin : margin + 2.0 * bubble + 3.0 * s;
+    const gp_Pnt2d e0(c.point.XY() + d.XY() * (t0 - cutMargin)), e1(c.point.XY() + d.XY() * (t1 + cutMargin));
     // docs/250: the label below an end is written up from its baseline 4 mm beyond the end, so it
     // reaches 1 mm back over the end: there the line stops 1.5 mm short (the sheet check found the
     // line through the lower "B"). The labels stay where they were (the paper does not grow).

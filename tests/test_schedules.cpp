@@ -4167,3 +4167,15 @@ TEST_F(Schedules, UpperPlanLeavesTheRoomsBelow) {
   EXPECT_NE(words("1FL 平面図").find("居間"), std::string::npos);
   EXPECT_EQ(words("2FL 平面図").find("居間"), std::string::npos) << words("2FL 平面図");
 }
+
+// docs/255: with a grid whose lines the cuts lie on, the cuts' marks stay clear of the grid bubbles.
+TEST_F(Schedules, CutMarksClearOfGridBubbles) {
+  ok("create_grid", {{"origin", {0, 0, 0}}, {"x_spacings", {4000, 4000}}, {"y_spacings", {6000}}});
+  const json r = ok("check_drawing_set", {{"sheet", "1FL 平面図"}});
+  for (const auto& f : r["sheets"][0]["findings"])
+    if (f["kind"] == "text_on_text")
+      for (const char* bubble : {"X1", "X2", "X3", "Y1", "Y2"}) {
+        EXPECT_NE(f["text"].get<std::string>(), bubble) << f.dump();
+        EXPECT_NE(f["other"].get<std::string>(), bubble) << f.dump();
+      }
+}
