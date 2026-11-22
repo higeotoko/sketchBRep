@@ -22,4 +22,15 @@
 - 空の所へ de01f12 の ZIP を入れる：SHA256 一致、MCP の答え 3 つ、ツール 208、create_box 成功。
 - 直す前の sbr_mcp（docs/243 の前の物）を、そのフォルダから「入力の終わりが来ない」形で動かしたまま入れる：その sbr_mcp を止め（`ended: sbr_mcp.exe <番号>`）、古いのを `SketchBrep.old-20261122-120349` に移し、新しいのが答えた。
 
-**Windows 実機確認**：最新の ZIP を作った後、`C:\Apps\SketchBrep` へ実際に入れる（AI がやり、結果を報告する）。
+**CI**：run（d2c112b、push）成功。Linux 821 件すべて成功。
+
+**配布と実際の入れ替え（2026-11-22）**
+
+| 項目 | 内容 |
+|---|---|
+| コード | `d2c112b` |
+| ZIP | `SketchBRep-windows-x64-d2c112b-local.zip`（Codex のチャットフォルダの `outputs\`） |
+| サイズ | 83,050,793 bytes |
+| SHA256 | `a200a5597d9c3126f0a7b84d5468e1caa429bdfce5a5ba7060259ea1b0f2bf63` |
+| ZIP の検証 | `docs/validation/2026-11-22-portable-d2c112b.json`・`-mat.json`（GUI 18 + 4 条件、失敗 0） |
+| `C:\Apps\SketchBrep` へ | `sbr.py install` で入れた。止めたプロセス無し、古い（空の）フォルダは `C:\Apps\SketchBrep.old-20261122-120843`、新しい sbr_mcp が答えた（ツール 208、create_box 成功） |
