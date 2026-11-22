@@ -1993,21 +1993,7 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
   showPlane();
   connect(menu, &QMenu::aboutToShow, this, [this, menu] {
     menu->clear();
-    auto choose = [this](double elevation, const QString& name) {
-      viewport_->lockView(Viewport::StandardView::Top);
-      viewport_->setProjectSnaps(true);
-      // Show this level as a floor plan: cut 1100 mm above the floor (a drawing convention),
-      // set before the work plane so the toolbar label already names the cut.
-      viewport_->setPlanCut(elevation + 1100);
-      // The storeys below are left out too (docs/90 G-03), unless switched off in this menu.
-      viewport_->setPlanFloor(hideBelowPlan_ ? std::optional<double>(elevation) : std::nullopt);
-      viewport_->setWorkOffset(elevation, name);
-      viewport_->setFocus();
-      setStatus((hideBelowPlan_
-                     ? tr("%1 の高さ %2 で描きます（FL+1100 より上と、下の階は隠しています。「3D」で戻ります）。壁・スラブ・柱・土台を選んで配置できます")
-                     : tr("%1 の高さ %2 で描きます（FL+1100 より上は隠しています。「3D」で戻ります）。壁・スラブ・柱・土台を選んで配置できます"))
-                    .arg(name, QString::fromStdString(units::formatLength(elevation, 0))));
-    };
+    auto choose = [this](double elevation, const QString& name) { showPlanAt(elevation, name); };
     menu->addAction(tr("地面（Z=0）"), this, [choose] { choose(0, tr("地面")); })
         ->setObjectName(QStringLiteral("architectureGround"));
     for (const auto& l : modeler_.levels()) {
@@ -2577,6 +2563,24 @@ QPixmap grabWithView(QWidget* window, Viewport* view) {
 }
 }  // namespace
 
+// The plan of one level (the toolbar menu 平面で描く, docs/262 ui_plan): the view locked from above,
+// cut 1100 above the floor, the storeys below left out unless switched off.
+void MainWindow::showPlanAt(double elevation, const QString& name) {
+  viewport_->lockView(Viewport::StandardView::Top);
+  viewport_->setProjectSnaps(true);
+  // Show this level as a floor plan: cut 1100 mm above the floor (a drawing convention),
+  // set before the work plane so the toolbar label already names the cut.
+  viewport_->setPlanCut(elevation + 1100);
+  // The storeys below are left out too (docs/90 G-03), unless switched off in this menu.
+  viewport_->setPlanFloor(hideBelowPlan_ ? std::optional<double>(elevation) : std::nullopt);
+  viewport_->setWorkOffset(elevation, name);
+  viewport_->setFocus();
+  setStatus((hideBelowPlan_
+                 ? tr("%1 の高さ %2 で描きます（FL+1100 より上と、下の階は隠しています。「3D」で戻ります）。壁・スラブ・柱・土台を選んで配置できます")
+                 : tr("%1 の高さ %2 で描きます（FL+1100 より上は隠しています。「3D」で戻ります）。壁・スラブ・柱・土台を選んで配置できます"))
+                  .arg(name, QString::fromStdString(units::formatLength(elevation, 0))));
+}
+
 void MainWindow::buildAiBridge() {
   using nlohmann::json;
   using Extension = api::CommandApi::Extension;
@@ -2809,6 +2813,8 @@ void MainWindow::buildAiBridge() {
     json out = {{"windows", ui::windows(this)}, {"status", statusText().toStdString()}, {"measurement", measurement_->text().toStdString()}};
     if (const snap::SnapResult& s = viewport_->shownSnap(); s.valid())
       out["snap"] = {{"kind", static_cast<int>(s.kind)}, {"point", {s.point.X(), s.point.Y(), s.point.Z()}}};
+    // docs/262: what a tool could not do (reportError's words, shown for a few seconds in the status bar).
+    if (const QString message = statusBar()->currentMessage(); !message.isEmpty()) out["message"] = message.toStdString();
     return out;
   };
   handlers["ui_windows"] = [debugOnly, state](const std::string&) {
@@ -3038,13 +3044,63 @@ void MainWindow::buildAiBridge() {
     out["screen"] = {pos.x(), pos.y()};
     return out.dump();
   };
+  // docs/262: the plan of a level as the toolbar's 平面で描く menu shows it (cut at FL+1100), or 'off' back to 3D.
+  handlers["ui_plan"] = [this, debugOnly, state](const std::string& args) {
+    debugOnly();
+    const json a = args.empty() ? json::object() : json::parse(args);
+    if (a.value("off", false)) {
+      viewport_->unlockView();
+    } else {
+      const std::string wanted = a.value("level", std::string());
+      double elevation = 0.0;
+      QString name = tr("地面");
+      if (!wanted.empty()) {
+        bool found = false;
+        for (const auto& l : modeler_.levels())
+          if (l.name == wanted || l.id == wanted) {
+            elevation = l.elevation;
+            name = QString::fromStdString(l.name);
+            found = true;
+          }
+        if (!found) throw std::runtime_error("no level '" + wanted + "' (get_levels lists them)");
+      }
+      showPlanAt(elevation, name);
+    }
+    json out = state();
+    out["plan_cut"] = viewport_->planCut() ? json(*viewport_->planCut()) : json(nullptr);
+    return out.dump();
+  };
   handlers["ui_type"] = [this, debugOnly, state](const std::string& args) {
     debugOnly();
     const json a = json::parse(args);
     const QString text = QString::fromStdString(a.value("text", std::string()));
-    const bool enter = a.value("enter", true);
+    const bool enter = a.value("enter", !a.contains("keys") || !text.isEmpty());
+    // docs/262: keys pressed in the view before the text (Ctrl alone: the move tool's copy).
+    std::vector<int> keys;
+    for (const auto& k : a.value("keys", json::array())) {
+      const QString name = QString::fromStdString(k.get<std::string>());
+      static const std::map<QString, int> modifierKeys = {{QStringLiteral("ctrl"), Qt::Key_Control},
+                                                         {QStringLiteral("shift"), Qt::Key_Shift},
+                                                         {QStringLiteral("alt"), Qt::Key_Alt}};
+      if (const auto m = modifierKeys.find(name.toLower()); m != modifierKeys.end()) {
+        keys.push_back(m->second);
+        continue;
+      }
+      const QKeySequence seq(name);
+      if (seq.isEmpty()) throw std::runtime_error("'keys': key names such as Ctrl, Delete, Up, Escape");
+      keys.push_back(seq[0].key());
+    }
     QPointer<QWidget> target(viewport_);  // typed in the view, as a person types a length: it goes to the measurement box
-    const auto typing = [target, text, enter] {
+    const auto typing = [target, text, enter, keys] {
+      for (const int key : keys) {
+        if (!target) return;
+        QKeyEvent press(QEvent::KeyPress, key, Qt::NoModifier);
+        QApplication::sendEvent(target, &press);
+        if (!target) return;
+        QKeyEvent release(QEvent::KeyRelease, key, Qt::NoModifier);
+        QApplication::sendEvent(target, &release);
+        QApplication::processEvents();
+      }
       for (const QChar c : text) {
         if (!target) return;
         // The key as well as the character (ASCII keys are their upper-case code, as QTest sends them).

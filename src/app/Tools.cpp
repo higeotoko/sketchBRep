@@ -4582,14 +4582,25 @@ void MoveTool::applyMeasurement(const QString& text) {
         host_.reportError(QObject::tr("コピーの数は 1〜100 です"));
         return;
       }
+      // docs/262: the copies as one undo step, so that typing another count takes them all back.
+      int failedAt = 0;
       const Status s = recent_.replace(m, [&]() -> Status {
+        m.history().beginGroup("Copy Opening");
         for (int k = 1; k <= count; ++k) {
           const auto made = m.copyOpening(last.host, last.index, gp_Vec(last.direction) * (spacing * k));
-          if (!made) return Status::failure(made.error());
+          if (!made) {
+            m.history().abortGroup();
+            failedAt = k;
+            return Status::failure(made.error());
+          }
         }
+        m.history().endGroup();
         return Status::success();
       });
-      if (!s) host_.reportError(QObject::tr("開口をコピーできませんでした: %1").arg(userMessage(QString::fromStdString(s.message()))));
+      if (!s && failedAt > 1)
+        host_.reportError(QObject::tr("%1 つ目のコピーが入りません（この間隔で入るのは %2 つまで）: %3")
+                              .arg(failedAt).arg(failedAt - 1).arg(userMessage(QString::fromStdString(s.message()))));
+      else if (!s) host_.reportError(QObject::tr("開口をコピーできませんでした: %1").arg(userMessage(QString::fromStdString(s.message()))));
       else host_.setStatus(QObject::tr("開口 %1 を %2 つコピーしました（間隔 %3）").arg(last.index).arg(count).arg(mm(spacing)));
       return;
     }

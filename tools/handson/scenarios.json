@@ -5966,6 +5966,565 @@
           "picture": "建具表"
         }
       ]
+    },
+    {
+      "id": "9-1",
+      "title": "選択ツールで窓の穴の内側の面（窓台）をクリックし、Delete でふさぐ",
+      "docs": "docs/110",
+      "look": "プロパティの「開口 n を選んでいます」の出方（絵）。",
+      "base": [],
+      "steps": [
+        {
+          "tool": "create_wall",
+          "args": {
+            "points": [
+              [
+                0,
+                0
+              ],
+              [
+                12000,
+                0
+              ]
+            ],
+            "thickness": 200,
+            "height": 3000
+          },
+          "save": "w"
+        },
+        {
+          "tool": "place_openings",
+          "args": {
+            "host": "$w.ids.0",
+            "face_normal": [
+              0,
+              -1,
+              0
+            ],
+            "count": 1,
+            "width": 1000,
+            "height": 1200,
+            "sill": 900
+          }
+        },
+        {
+          "tool": "list_openings",
+          "args": {},
+          "save": "lo",
+          "show": true
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "ui_tool",
+          "args": {
+            "tool": "select"
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              6000,
+              0,
+              900
+            ]
+          }
+        },
+        {
+          "tool": "ui_list",
+          "args": {
+            "window": "main",
+            "filter": "開口"
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "を選んでいます"
+            ]
+          }
+        },
+        {
+          "tool": "ui_capture",
+          "args": {
+            "window": "main"
+          },
+          "picture": "窓の穴を選んだところ"
+        },
+        {
+          "tool": "ui_trigger",
+          "args": {
+            "action": "編集/削除"
+          },
+          "ui": true
+        },
+        {
+          "tool": "list_openings",
+          "args": {},
+          "show": true,
+          "expect": {
+            "contains": [
+              "\"hosts\":[]"
+            ]
+          }
+        },
+        {
+          "tool": "query_objects",
+          "args": {
+            "fields": [
+              "name"
+            ]
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "Wall 1"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "9-2",
+      "title": "移動ツールで穴をつかみ、Ctrl でコピーにして置く。続けて「*3」、打ち直して「*2」、入らない数「*20」",
+      "docs": "docs/110",
+      "look": "コピーになったと分かる言葉、入らない時の言い方（絵・状態の文）。",
+      "base": [],
+      "steps": [
+        {
+          "tool": "create_wall",
+          "args": {
+            "points": [
+              [
+                0,
+                0
+              ],
+              [
+                12000,
+                0
+              ]
+            ],
+            "thickness": 200,
+            "height": 3000
+          },
+          "save": "w"
+        },
+        {
+          "tool": "place_openings",
+          "args": {
+            "host": "$w.ids.0",
+            "face_normal": [
+              0,
+              -1,
+              0
+            ],
+            "count": 1,
+            "width": 1000,
+            "height": 1200,
+            "sill": 900
+          }
+        },
+        {
+          "tool": "list_openings",
+          "args": {},
+          "save": "lo",
+          "show": true
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "ui_tool",
+          "args": {
+            "tool": "move"
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              6000,
+              0,
+              900
+            ]
+          }
+        },
+        {
+          "tool": "ui_type",
+          "args": {
+            "text": "",
+            "keys": [
+              "Ctrl"
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              5000,
+              0,
+              900
+            ]
+          }
+        },
+        {
+          "tool": "ui_windows",
+          "args": {},
+          "show": true,
+          "expect": {
+            "contains": [
+              "コピー"
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              4500,
+              0,
+              900
+            ]
+          }
+        },
+        {
+          "tool": "ui_type",
+          "args": {
+            "text": "*3"
+          }
+        },
+        {
+          "tool": "ui_windows",
+          "args": {},
+          "show": true,
+          "expect": {
+            "contains": [
+              "3 つコピーしました"
+            ]
+          }
+        },
+        {
+          "tool": "list_openings",
+          "args": {},
+          "expect": {
+            "contains": [
+              "\"index\":4"
+            ],
+            "not_contains": [
+              "\"index\":5"
+            ]
+          }
+        },
+        {
+          "tool": "ui_capture",
+          "args": {
+            "window": "main"
+          },
+          "picture": "コピーを 3 つ"
+        },
+        {
+          "tool": "ui_type",
+          "args": {
+            "text": "*2"
+          }
+        },
+        {
+          "tool": "ui_windows",
+          "args": {},
+          "show": true,
+          "expect": {
+            "contains": [
+              "2 つコピーしました"
+            ],
+            "not_contains": [
+              "\"message\""
+            ]
+          }
+        },
+        {
+          "tool": "list_openings",
+          "args": {},
+          "show": true,
+          "expect": {
+            "contains": [
+              "\"index\":3"
+            ],
+            "not_contains": [
+              "\"index\":4"
+            ]
+          }
+        },
+        {
+          "tool": "ui_type",
+          "args": {
+            "text": "*20"
+          }
+        },
+        {
+          "tool": "ui_windows",
+          "args": {},
+          "show": true,
+          "expect": {
+            "contains": [
+              "つ目のコピーが入りません"
+            ],
+            "not_contains": [
+              "The opening"
+            ]
+          }
+        },
+        {
+          "tool": "ui_capture",
+          "args": {
+            "window": "main"
+          },
+          "picture": "入らない数を打った時"
+        },
+        {
+          "tool": "list_openings",
+          "args": {},
+          "show": true,
+          "expect": {
+            "contains": [
+              "\"index\":3"
+            ],
+            "not_contains": [
+              "\"index\":4"
+            ]
+          }
+        },
+        {
+          "tool": "undo",
+          "args": {}
+        },
+        {
+          "tool": "list_openings",
+          "args": {},
+          "show": true,
+          "expect": {
+            "not_contains": [
+              "\"index\":2"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "10-3",
+      "title": "平面モードで、移動ツールで建具の記号の所をクリックして開口を動かす。壁の所では壁をつかむ",
+      "docs": "docs/119",
+      "look": "（AI だけで決まる）",
+      "base": [],
+      "steps": [
+        {
+          "tool": "create_wall",
+          "args": {
+            "points": [
+              [
+                0,
+                0
+              ],
+              [
+                12000,
+                0
+              ]
+            ],
+            "thickness": 200,
+            "height": 3000
+          },
+          "save": "w"
+        },
+        {
+          "tool": "place_openings",
+          "args": {
+            "host": "$w.ids.0",
+            "face_normal": [
+              0,
+              -1,
+              0
+            ],
+            "count": 1,
+            "width": 1000,
+            "height": 1200,
+            "sill": 900
+          }
+        },
+        {
+          "tool": "list_openings",
+          "args": {},
+          "save": "lo",
+          "show": true
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "ui_plan",
+          "args": {},
+          "show": true,
+          "expect": {
+            "contains": [
+              "\"plan_cut\":1100"
+            ]
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "ui_tool",
+          "args": {
+            "tool": "move"
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              6000,
+              -150,
+              1200
+            ]
+          }
+        },
+        {
+          "tool": "ui_windows",
+          "args": {},
+          "show": true
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              7000,
+              -150,
+              1200
+            ]
+          }
+        },
+        {
+          "tool": "ui_windows",
+          "args": {},
+          "show": true
+        },
+        {
+          "tool": "ui_type",
+          "args": {
+            "text": "500"
+          }
+        },
+        {
+          "tool": "list_openings",
+          "args": {},
+          "show": true,
+          "expect": {
+            "contains": [
+              "\"center\":[6500.0"
+            ]
+          }
+        },
+        {
+          "tool": "query_objects",
+          "args": {
+            "fields": [
+              "name",
+              "bounds"
+            ]
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "\"min\":[0.0,-100.0"
+            ]
+          }
+        },
+        {
+          "tool": "ui_tool",
+          "args": {
+            "tool": "move"
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "at": [
+              1500,
+              0,
+              1200
+            ]
+          }
+        },
+        {
+          "tool": "ui_view_hover",
+          "args": {
+            "at": [
+              1500,
+              -1000,
+              1200
+            ]
+          }
+        },
+        {
+          "tool": "ui_type",
+          "args": {
+            "text": "300"
+          }
+        },
+        {
+          "tool": "query_objects",
+          "args": {
+            "fields": [
+              "name",
+              "bounds"
+            ]
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "\"min\":[0.0,-400.0"
+            ]
+          }
+        },
+        {
+          "tool": "ui_capture",
+          "args": {
+            "window": "main"
+          },
+          "picture": "平面モードで動かした後"
+        },
+        {
+          "tool": "ui_plan",
+          "args": {
+            "off": true
+          }
+        }
+      ]
     }
   ]
 }

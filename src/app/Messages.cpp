@@ -293,7 +293,14 @@ bool hasJapanese(const QString& s) {
 QString userMessage(const QString& text) {
   QString out = text;
   bool known = false;
+  // docs/262: which opening it runs into, in Japanese as a whole ("The opening would overlap opening 2").
+  static const QRegularExpression overlap(QStringLiteral("The opening would overlap opening (\\d+)"));
+  if (out.contains(overlap)) {
+    out.replace(overlap, QObject::tr("開口 \\1 と重なります。位置か大きさを変えてください（穴がつながって 1 つになるのを防いでいます）"));
+    known = true;
+  }
   for (const Entry& e : kEntries) {
+    if (known) break;
     const QString core = QString::fromUtf8(e.core);
     if (out.contains(core)) {
       out.replace(core, QObject::tr(e.user));

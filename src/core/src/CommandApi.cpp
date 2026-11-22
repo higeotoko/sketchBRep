@@ -5184,11 +5184,19 @@ std::vector<CommandApi::Extension> CommandApi::appCommandSpecs() {
       {"ui_view_hover",
        "docs/252, the AI on this PC only: move the mouse over model point 'at' in the 3D view (a tool's preview, snaps).",
        R"({"type": "object", "properties": {"at": {"type": "array"}}, "required": ["at"]})", nullptr, Effect::ViewWrite},
+      {"ui_plan",
+       "docs/262, the AI on this PC only: the plan mode of a level as the toolbar's 平面で描く menu shows it "
+       "(seen from above, cut 1100 above the floor; openings can be grabbed at their symbols): 'level' (name or "
+       "id from get_levels; omitted: the ground, Z=0), or 'off': true back to the 3D view.",
+       R"({"type": "object", "properties": {"level": {"type": "string"}, "off": {"type": "boolean"}}})",
+       nullptr, Effect::ViewWrite},
       {"ui_type",
        "docs/252, the AI on this PC only: type 'text' in the 3D view as a person types a length or a count while a tool "
-       "is working (it goes to the measurement box), then Return unless 'enter' is false ('async' as ui_view_click).",
-       R"({"type": "object", "properties": {"text": {"type": "string"}, "enter": {"type": "boolean"}, "async": {"type": "boolean"}},
-           "required": ["text"]})",
+       "is working (it goes to the measurement box), then Return unless 'enter' is false ('async' as ui_view_click). "
+       "docs/262: 'keys' (sent to the view first, each pressed and let go): key names such as Ctrl (the move tool's "
+       "copy), Shift, Alt, Up, Down, Left, Right, Delete, Escape, Return, Tab.",
+       R"({"type": "object", "properties": {"text": {"type": "string"}, "enter": {"type": "boolean"}, "async": {"type": "boolean"},
+           "keys": {"type": "array", "items": {"type": "string"}}}})",
        nullptr, Effect::ViewWrite},
       {"list_scenes", "List the saved views (scenes) of the model.", R"({"type": "object", "properties": {}})",
        nullptr, Effect::Read},

@@ -234,6 +234,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   bool alignSelection(int axis, int edge);
   // In a plan of a level, the storeys below are left out (docs/90 G-03); a view preference.
   bool hideBelowPlan_ = true;
+  void showPlanAt(double elevation, const QString& name);
   // Opening `index` (1, 2, ... as in Modeler::openings) of a host.
   bool resizeOpening(const doc::ObjectId& host, int index, double width, double height);
   // One opening to `offset` from the wall's left end and `sill` above its bottom; removing one.
