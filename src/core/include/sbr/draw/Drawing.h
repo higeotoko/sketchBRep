@@ -176,6 +176,8 @@ struct View {
   std::vector<DimensionMark> dimensions;
   struct MemberMark { gp_Pnt2d at; std::string text; };
   std::vector<MemberMark> members;
+  struct BracingMark { gp_Pnt2d at; std::string text; double height; };
+  std::vector<BracingMark> bracingMarks;
   double minU = 0, minV = 0, maxU = 0, maxV = 0;  // extent of the model's lines
   ViewSpec spec;
   int objects = 0;            // objects drawn

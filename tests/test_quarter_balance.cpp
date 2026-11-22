@@ -234,6 +234,7 @@ TEST(WallQuantityForms, TablesFollowTheCalculation) {
 // docs/208: the plan of the bracing walls of a storey: the walls counted (thick, with their mark)
 // and the side parts (dashed, with what they need and have); a sheet of the drawing set.
 #include "sbr/draw/Drawing.h"
+#include "sbr/draw/SheetCheck.h"
 TEST(WallQuantityForms, BracingPlanShowsTheWallsAndTheSideParts) {
   Modeler m;
   api::CommandApi api(m);
@@ -245,20 +246,19 @@ TEST(WallQuantityForms, BracingPlanShowsTheWallsAndTheSideParts) {
   spec.bracingFloor = "1";
   const auto view = draw::makeView(m.document(), spec);
   ASSERT_TRUE(view) << view.error();
-  int thick = 0, dashedBoxes = 0, labels = 0;
+  int thick = 0, dashedBoxes = 0;
   bool markA = false, side = false;
   for (const auto& i : view->items) {
     if (i.kind == draw::Item::Kind::Line && i.pen == draw::Pen::Cut) ++thick;
     if (i.kind == draw::Item::Kind::Polyline && i.pen == draw::Pen::Hidden && i.closed) ++dashedBoxes;
-    if (i.kind == draw::Item::Kind::Text) {
-      ++labels;
-      markA = markA || i.text.rfind("a X 倍率2.0 4.00m", 0) == 0;
-      side = side || i.text.find("側端 必要2.00m 存在4.00m") != std::string::npos;
-    }
+  }
+  for (const auto& mark : view->bracingMarks) {
+    markA = markA || mark.text.rfind("a X 倍率2.0 4.00m", 0) == 0;
+    side = side || mark.text.find("側端 必要2.00m 存在4.00m") != std::string::npos;
   }
   EXPECT_EQ(thick, 4);
   EXPECT_EQ(dashedBoxes, 4);  // X and Y, two side parts each
-  EXPECT_EQ(labels, 8);
+  EXPECT_EQ(view->bracingMarks.size(), 8u);
   EXPECT_TRUE(markA);
   EXPECT_TRUE(side);
   bool legend = false;
@@ -272,4 +272,31 @@ TEST(WallQuantityForms, BracingPlanShowsTheWallsAndTheSideParts) {
   const auto set = doc::drawingSet(m.document(), doc::DrawingSetSpec{});
   ASSERT_TRUE(set) << set.error();
   EXPECT_NE(std::find(set->names.begin(), set->names.end(), "耐力壁配置図（1階）"), set->names.end());
+
+  // Add actual walls, a room tag and a section line to the same calculation-only example.
+  ASSERT_TRUE(m.createWalls({{0,0,0}, {8000,0,0}, {8000,6000,0}, {0,6000,0}, {0,0,0}}, 200, 3000));
+  const auto room = json::parse(api.execute(R"({"command":"create_room","args":{"at":[1250,2000],"name":"居間"}})"));
+  ASSERT_TRUE(room.value("ok", false)) << room.dump();
+  spec.cutMarks.push_back({gp_Pnt(1250, 2000, 0), gp_Dir(0, 1, 0), "A", "A-06"});
+  const auto furnished = draw::makeView(m.document(), spec);
+  ASSERT_TRUE(furnished) << furnished.error();
+  for (const double scale : {50.0, 100.0}) {
+    SCOPED_TRACE(scale);
+    draw::SheetSpec layout;
+    layout.scale = scale;
+    const auto sheet = draw::layoutSheet(*furnished, layout);
+    ASSERT_TRUE(sheet) << sheet.error();
+    for (const auto& mark : furnished->bracingMarks) {
+      EXPECT_TRUE(std::any_of(sheet->items.begin(), sheet->items.end(), [&](const draw::Item& i) {
+        return i.kind == draw::Item::Kind::Text && i.text == mark.text;
+      })) << mark.text;
+    }
+    for (const auto& finding : draw::checkSheet(*sheet)) {
+      const bool structural = std::any_of(furnished->bracingMarks.begin(), furnished->bracingMarks.end(),
+                                         [&](const auto& mark) {
+                                           return finding.text == mark.text || finding.other == mark.text;
+                                         });
+      EXPECT_FALSE(structural) << finding.kind << " " << finding.text << " " << finding.other;
+    }
+  }
 }

@@ -2,6 +2,7 @@
 // paper chosen, the view centred in the frame, the title block filled in.
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <map>
@@ -148,6 +149,46 @@ void dimension(std::vector<Item>& out, const gp_Pnt2d& a, const gp_Pnt2d& b, con
   const gp_Vec2d up(-std::sin(angle), std::cos(angle));
   const gp_Pnt2d mid((da.XY() + db.XY()) / 2 + up.XY() * (1.0 * s));
   out.push_back(text(Pen::Dimension, mid, value, 2.5, 1, 0, angle));
+}
+
+void placeBracingMarks(std::vector<Item>& items, const std::vector<View::BracingMark>& marks, double scale) {
+  if (marks.empty()) return;
+  constexpr double gap = 0.8;  // paper mm
+  constexpr double step = 3.5;  // paper mm
+  Box occupied;
+  for (const Item& item : items) extentOf(item, scale, occupied);
+  std::vector<std::pair<gp_Pnt2d, gp_Pnt2d>> leaders;
+  for (const View::BracingMark& mark : marks) {
+    Item label = text(Pen::Visible, mark.at, mark.text, mark.height, 1, 1);
+    bool clear = textIsClear(label, items, scale, gap);
+    // Try nearby positions first, including spaces between the diagonal and axial offsets.
+    for (int ring = 1; !clear && ring <= 12; ++ring) {
+      for (int x = 0; !clear && x <= ring; ++x) {
+        const int y = ring - x;
+        const std::array<gp_Vec2d, 4> offsets{
+            gp_Vec2d(x, y), gp_Vec2d(x, -y), gp_Vec2d(-x, y), gp_Vec2d(-x, -y)};
+        for (const gp_Vec2d& offset : offsets) {
+          label.points.front() = mark.at.Translated(offset.Multiplied(step * scale));
+          clear = textIsClear(label, items, scale, gap);
+          if (clear) break;
+        }
+      }
+    }
+    // When the plan is dense, reserve another line above the drawing. The paper-fit calculation
+    // below includes it, just like the other annotations.
+    if (!clear) label.points.front().SetY(occupied.y1 + (mark.height / 2 + 2 * gap) * scale);
+    if (!mark.at.IsEqual(label.points.front(), 1e-9)) leaders.emplace_back(mark.at, label.points.front());
+    extentOf(label, scale, occupied);
+    items.push_back(std::move(label));
+  }
+  std::vector<const Item*> words;
+  for (const Item& item : items)
+    if (item.kind == Item::Kind::Text) words.push_back(&item);
+  std::vector<Item> leaderItems;
+  for (const auto& [a, b] : leaders)
+    for (const auto& [p, q] : clearOfText(a, b, words, scale, gap))
+      leaderItems.push_back(line(Pen::Text, p, q));
+  items.insert(items.end(), leaderItems.begin(), leaderItems.end());
 }
 
 }  // namespace
@@ -340,6 +381,7 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
     items.push_back(line(Pen::Text, mark.at, at));
     items.push_back(text(Pen::Text, at, mark.text, height, 0, 0));
   }
+  placeBracingMarks(items, view.bracingMarks, s);
   Box all;
   for (const Item& i : items) extentOf(i, s, all);
   // The drawing's caption below it.

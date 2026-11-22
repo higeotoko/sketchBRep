@@ -35,7 +35,7 @@ double widthOf(const std::string& text, double height) {
   return n * height;
 }
 
-TextBox boxOf(const Item& item, double scale) {
+TextBox boxOf(const Item& item, double scale, bool inside = true) {
   TextBox b;
   b.item = &item;
   b.origin = item.points.empty() ? gp_Pnt2d() : item.points[0];
@@ -46,7 +46,7 @@ TextBox boxOf(const Item& item, double scale) {
   const double left = item.hAlign == 0 ? 0.0 : item.hAlign == 1 ? -w / 2 : -w;
   const double bottom = item.vAlign == 0 ? 0.0 : item.vAlign == 1 ? -h / 2 : -h;
   // The inside: words have air around them; a line touching the box's edge is not through them.
-  const double mx = 0.12 * h, my = 0.18 * h;
+  const double mx = inside ? 0.12 * h : 0.0, my = inside ? 0.18 * h : 0.0;
   b.x0 = left + mx;
   b.x1 = left + w - mx;
   b.y0 = bottom + my;
@@ -117,6 +117,23 @@ gp_Pnt2d onPaper(const gp_Pnt2d& p, double scale) { return {p.X() / scale, p.Y()
 
 }  // namespace
 
+bool textIsClear(const Item& label, const std::vector<Item>& items, double scale, double gap) {
+  TextBox area = boxOf(label, scale, false);
+  const double margin = gap * scale;
+  area.x0 -= margin;
+  area.x1 += margin;
+  area.y0 -= margin;
+  area.y1 += margin;
+  for (const Item& item : items) {
+    if (item.kind == Item::Kind::Text && !item.text.empty() && !item.points.empty() &&
+        overlap(area, boxOf(item, scale, false)))
+      return false;
+    for (const auto& [a, b] : segmentsOf(item))
+      if (through(area, a, b)) return false;
+  }
+  return true;
+}
+
 std::vector<SheetFinding> checkSheet(const Sheet& sheet, std::size_t limit) {
   std::vector<SheetFinding> out;
   const double scale = sheet.scale > 0 ? sheet.scale : 1.0;
@@ -182,13 +199,12 @@ std::vector<std::pair<gp_Pnt2d, gp_Pnt2d>> clearOfText(const gp_Pnt2d& a, const 
   std::vector<std::pair<double, double>> under;
   for (const Item* item : texts) {
     if (!item || item->kind != Item::Kind::Text || item->points.empty() || item->text.empty()) continue;
-    TextBox t = boxOf(*item, scale);
-    // The whole box (not its inside) and the gap around it.
-    const double h = item->height * scale, g = gap * scale;
-    t.x0 -= 0.12 * h + g;
-    t.x1 += 0.12 * h + g;
-    t.y0 -= 0.18 * h + g;
-    t.y1 += 0.18 * h + g;
+    TextBox t = boxOf(*item, scale, false);
+    const double g = gap * scale;
+    t.x0 -= g;
+    t.x1 += g;
+    t.y0 -= g;
+    t.y1 += g;
     const gp_Pnt2d p = t.toLocal(a), q = t.toLocal(b);
     double t0 = 0, t1 = 1;
     const double dx = q.X() - p.X(), dy = q.Y() - p.Y();

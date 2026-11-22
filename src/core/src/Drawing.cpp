@@ -1157,17 +1157,6 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     const auto at = [&](const nlohmann::json& xy) {
       return proj.uv(gp_Pnt(xy.at(0).get<double>(), xy.at(1).get<double>(), z));
     };
-    const auto text = [&](const gp_Pnt2d& p, const std::string& t, double height, int hAlign) {
-      Item label;
-      label.kind = Item::Kind::Text;
-      label.pen = Pen::Visible;
-      label.points = {p};
-      label.text = t;
-      label.height = height;
-      label.hAlign = hAlign;
-      label.vAlign = 1;
-      view.items.push_back(label);
-    };
     int walls = 0;
     if (report.is_object()) {
       for (const auto& w : report.value("walls", nlohmann::json::array())) {
@@ -1186,7 +1175,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
           std::snprintf(buf, sizeof buf, " %.2fm", w.at("effective_m").get<double>());
           label += buf;
         }
-        text(gp_Pnt2d((a.X() + b.X()) / 2, (a.Y() + b.Y()) / 2), label, 2.5, 1);
+        view.bracingMarks.push_back({{(a.X() + b.X()) / 2, (a.Y() + b.Y()) / 2}, std::move(label), 2.5});
         ++walls;
       }
       for (const auto& row : report.value("quarter_balance", nlohmann::json::array())) {
@@ -1204,7 +1193,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
           char buf[96];
           std::snprintf(buf, sizeof buf, "%s 側端 必要%.2fm 存在%.2fm", row.value("direction", std::string()).c_str(),
                         strip.value("required_m", 0.0), strip.value("existing_m", 0.0));
-          text(proj.uv(gp_Pnt((x0 + x1) / 2, (y0 + y1) / 2, z)), buf, 2.0, 1);
+          view.bracingMarks.push_back({proj.uv(gp_Pnt((x0 + x1) / 2, (y0 + y1) / 2, z)), buf, 2.0});
         }
       }
     }
