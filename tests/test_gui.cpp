@@ -255,6 +255,7 @@ class GuiPhase1 : public QObject {
   void energyInputsInTheirDialogs();
   void equipmentInItsDialog();
   void vicinityMapFromCachedTiles();
+  void aiPicturesOfDrawingsAndWindows();
   void vicinityMapFetchedOnline();
   void insulationPlanIsDrawnOnItsSheet();
   void proposalShowsRotationAndHide();
@@ -1152,6 +1153,45 @@ void GuiPhase1::vicinityMapFetchedOnline() {
   QVERIFY(again);
   QVERIFY2(message.contains(QStringLiteral("キャッシュ 9")), qPrintable(message));
   qunsetenv("SBR_TILE_CACHE");
+}
+
+// docs/241: the AI sees the drawing set (PDF and a PNG per sheet) and the app's windows as the user
+// does, without changing anything.
+void GuiPhase1::aiPicturesOfDrawingsAndWindows() {
+  Fixture f;
+  QVERIFY(f.setUp(4000, 3000));
+  auto& modeler = f.window.modeler();
+  const auto run = [&](const char* request) {
+    return nlohmann::json::parse(f.window.aiBridge()->execute(request));
+  };
+  QVERIFY(run(R"({"command": "set_equipment", "args": {"items": [{"kind": "hot_water", "name": "電気ヒートポンプ給湯機"}]}})")["ok"].get<bool>());
+  const auto steps = modeler.history().undoCount();
+  const auto set = run(R"({"command": "render_drawing_set", "args": {"sheet": 1}})");
+  QVERIFY2(set["ok"].get<bool>(), set.dump().c_str());
+  const auto& result = set["result"];
+  QVERIFY(QFileInfo::exists(QString::fromStdString(result["pdf"].get<std::string>())));
+  QVERIFY(result["sheets"].size() >= 2);
+  for (const auto& sheet : result["sheets"]) QVERIFY(QFileInfo::exists(QString::fromStdString(sheet["png"].get<std::string>())));
+  QCOMPARE(result["image_path"], result["sheets"][0]["png"]);
+  bool equipmentSheet = false;
+  for (const auto& sheet : result["sheets"]) equipmentSheet = equipmentSheet || sheet["name"] == "機器表";
+  QVERIFY(equipmentSheet);
+  QVERIFY(!run(R"({"command": "render_drawing_set", "args": {"sheet": "Z-99"}})")["ok"].get<bool>());
+  // The equipment window pictured and closed: nothing changed.
+  const auto window = run(R"({"command": "capture_window", "args": {"window": "equipment"}})");
+  QVERIFY2(window["ok"].get<bool>(), window.dump().c_str());
+  QCOMPARE(window["result"]["title"].get<std::string>(), std::string("設備の機器"));
+  QVERIFY(QImage(QString::fromStdString(window["result"]["image_path"].get<std::string>())).width() > 100);
+  QVERIFY(!QApplication::activeModalWidget());
+  QCOMPARE(doc::Modeler::equipmentOf(modeler.document()).size(), std::size_t(1));
+  const auto main = run(R"({"command": "capture_window", "args": {}})");
+  QVERIFY2(main["ok"].get<bool>(), main.dump().c_str());
+  // Nothing selected: the insulation window does not open; the status bar says why.
+  const auto none = run(R"({"command": "capture_window", "args": {"window": "insulation"}})");
+  QVERIFY(!none["ok"].get<bool>());
+  QVERIFY2(none["error"].get<std::string>().find("no window opened") != std::string::npos, none.dump().c_str());
+  QVERIFY(!run(R"({"command": "capture_window", "args": {"window": "nothing"}})")["ok"].get<bool>());
+  QCOMPARE(modeler.history().undoCount(), steps);
 }
 
 void GuiPhase1::equipmentInItsDialog() {

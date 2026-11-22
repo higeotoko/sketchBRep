@@ -70,7 +70,7 @@ ChatGPTの経路は `ChatGPT → 利用者のHTTPSトンネル → McpHttpServer
 - 履歴・ファイル: `undo`, `redo`, `save`, `open`, `export_step`（**アプリ経由では無効**）
 - STL: `export_stl {path, ids?, linear_deflection_mm?}`（バイナリSTL・mm、近似精度の既定0.1 mm／最小0.001 mm）。ファイル系のためアプリ経由・preview・原子的batchでは実行しない。表示中の面／立体のみが対象で、線・マテリアルは含めない
 - BREP / IGES: `import_brep {path}` / `import_iges {path}` / `export_brep {path, ids?}` / `export_iges {path, ids?}`。曲線・面・立体の形状のみ、mm基準。4つともファイルI/Oのためアプリ経由・preview・原子的batchでは実行しない。詳細は [形式追加の説明](30_geometry_exchange_formats.md)。
-- アプリ起動中のみ: `get_selection`（ユーザーが選んだ物・面）, `select`, `set_view`, `capture_view`（ビューの PNG を AI に画像で返す）, `list_scenes`, `go_to_scene`（保存ビューの表示・保存）
+- アプリ起動中のみ: `get_selection`（ユーザーが選んだ物・面）, `select`, `set_view`, `capture_view`（ビューの PNG を AI に画像で返す）, `list_scenes`, `go_to_scene`（保存ビューの表示・保存）, `render_drawing_set`（図面一式をファイルメニューと同じ PDF と、シートごとの PNG に。docs/241）, `capture_window`（メイン画面や各窓を、利用者が見る姿のまま PNG に。窓は開いて撮ってキャンセルで閉じる。docs/241）
 - 意味の属性: `set_attribute`（`kind=wall`、`level=2F` などのキーと値。複数対象を Undo 1 回で）。`query_objects` / `edit_each` の `attributes` 条件（`"*"` はキーがあれば何でも）と、`aggregate` の `group_by: "attribute:level"` で使える。形状には影響せず、名前や AI の推測を事実扱いしないための「明示的な意味」
 - 消しゴム: `erase_edge {id, edge: 番号 か {near: [x,y,z]}}`（split_face や線で分けた面の境の線を消して一枚に戻す。形は変わらない。角の辺は拒否）
 - 開いた形状: `delete_faces {id, faces}`（面だけ消す → kind Shell）, `fill_holes {ids}`（平らな穴をふさいでソリッドに）, `reverse_faces {ids}`（開いた形状・単独の面の表裏）

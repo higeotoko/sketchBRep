@@ -70,6 +70,7 @@
 #include <QPointer>
 #include <QPushButton>
 #include <QMenu>
+#include <QSet>
 #include <QStatusBar>
 #include <QTabBar>
 #include <QToolButton>
@@ -2536,6 +2537,10 @@ void MainWindow::setAiAccess(bool enabled) {
                     : tr("AI 連携を停止しました"));
 }
 
+namespace {
+doc::DrawingSetSpec drawingSetSpecFor(const doc::Document& document, bool tablesWithPlan, QString* tilesMessage);
+}  // namespace
+
 void MainWindow::buildAiBridge() {
   using nlohmann::json;
   using Extension = api::CommandApi::Extension;
@@ -2602,6 +2607,123 @@ void MainWindow::buildAiBridge() {
     const QString path = QDir(QDir::tempPath()).filePath(QStringLiteral("sketchbrep-view.png"));
     if (!viewport_->dumpImage(path)) throw std::runtime_error("the view could not be captured");
     return json{{"image_path", QDir::toNativeSeparators(path).toStdString()}}.dump();
+  };
+
+  // docs/241: the drawing set as the File menu writes it (PDF), and each sheet as a PNG, into a
+  // folder of the app's own under the temporary folder (no path from the AI); 'sheet' (number such
+  // as "A-15", or 1-based index) also returns that sheet's picture.
+  handlers["render_drawing_set"] = [this](const std::string& args) {
+    const json a = args.empty() ? json::object() : json::parse(args);
+    QString tilesMessage;
+    const doc::DrawingSetSpec spec = drawingSetSpecFor(modeler_.document(), a.value("tables_with_plan", false), &tilesMessage);
+    const auto set = doc::drawingSet(modeler_.document(), spec);
+    if (!set) throw std::runtime_error(set.error());
+    QDir dir(QDir(QDir::tempPath()).filePath(QStringLiteral("sketchbrep-drawing-set")));
+    if (dir.exists()) dir.removeRecursively();
+    if (!QDir().mkpath(dir.path())) throw std::runtime_error("the folder for the drawings could not be made");
+    const QString pdf = dir.filePath(QStringLiteral("drawing-set.pdf"));
+    if (const Status s = writePdfPages(set->sheets, pdf); !s) throw std::runtime_error(s.message());
+    std::string wanted;
+    if (a.contains("sheet")) wanted = a["sheet"].is_number() ? std::to_string(a["sheet"].get<int>()) : a["sheet"].get<std::string>();
+    json sheets = json::array();
+    std::string picked;
+    for (std::size_t i = 0; i < set->sheets.size(); ++i) {
+      const draw::Sheet& sheet = set->sheets[i];
+      const double w = std::max(sheet.paperWidth, 1.0), h = std::max(sheet.paperHeight, 1.0);
+      const int width = 2400, height = static_cast<int>(std::lround(width * h / w));
+      QImage image(width, height, QImage::Format_RGB32);
+      image.fill(Qt::white);
+      {
+        QPainter painter(&image);
+        painter.setRenderHint(QPainter::Antialiasing);
+        renderSheet(painter, sheet, QRectF(0, 0, width, height));
+      }
+      const QString png = dir.filePath(QStringLiteral("%1.png").arg(i + 1, 2, 10, QChar('0')));
+      if (!image.save(png)) throw std::runtime_error("a sheet's picture could not be written");
+      const std::string native = QDir::toNativeSeparators(png).toStdString();
+      sheets.push_back({{"index", i + 1}, {"number", set->numbers[i]}, {"name", set->names[i]}, {"paper", sheet.paper},
+                        {"notes", sheet.notes}, {"png", native}});
+      if (!wanted.empty() && (wanted == set->numbers[i] || wanted == std::to_string(i + 1))) picked = native;
+    }
+    if (!wanted.empty() && picked.empty()) throw std::runtime_error("no sheet '" + wanted + "' in the set");
+    json out = {{"pdf", QDir::toNativeSeparators(pdf).toStdString()}, {"sheets", sheets}, {"notes", set->notes}};
+    if (!tilesMessage.isEmpty()) out["tiles"] = tilesMessage.toStdString();
+    if (!picked.empty()) out["image_path"] = picked;
+    return out.dump();
+  };
+  // docs/241: a picture of the main window or of one of its windows as the user sees it (the
+  // window opened, pictured and closed with Cancel: nothing changes).
+  handlers["capture_window"] = [this](const std::string& args) {
+    const json a = args.empty() ? json::object() : json::parse(args);
+    const std::string target = a.value("window", std::string("main"));
+    const QString path = QDir(QDir::tempPath()).filePath(QStringLiteral("sketchbrep-window.png"));
+    QFile::remove(path);
+    if (target == "main") {
+      QApplication::processEvents();
+      if (!grab().save(path)) throw std::runtime_error("the window could not be captured");
+      return json{{"window", target}, {"title", windowTitle().toStdString()}, {"image_path", QDir::toNativeSeparators(path).toStdString()}}.dump();
+    }
+    const std::map<std::string, std::function<void()>> windows = {
+        {"project_outline", [this] { showProjectOutlineDialog(); }},
+        {"energy_route", [this] { showEnergyRouteDialog(); }},
+        {"vicinity_map", [this] { showVicinityMapDialog(); }},
+        {"equipment", [this] { showEquipmentDialog(); }},
+        {"insulation", [this] { showInsulationDialog(); }},
+        {"schedules", [this] { showSchedulesDialog(); }},
+        {"rooms", [this] { showRoomsDialog(); }},
+        {"levels", [this] { showLevelsDialog(); }},
+        {"site_road", [this] { showSiteRoadDialog(); }},
+        {"site_ground", [this] { showSiteGroundDialog(); }},
+        {"opening_performance", [this, a] {
+           showOpeningPerformanceDialog(a.value("host", std::string()), a.value("index", 1));
+         }},
+    };
+    const auto it = windows.find(target);
+    if (it == windows.end()) {
+      std::string names = "main";
+      for (const auto& entry : windows) names += ", " + entry.first;
+      throw std::runtime_error("'window': one of " + names);
+    }
+    // Which windows are up before, so a window that opens without blocking is found too.
+    QSet<QWidget*> before;
+    for (QWidget* w : QApplication::topLevelWidgets())
+      if (w->isVisible()) before.insert(w);
+    std::string title;
+    bool captured = false;
+    int ticks = 0, seen = 0;
+    QTimer timer;
+    timer.setInterval(100);
+    connect(&timer, &QTimer::timeout, this, [&] {
+      ++ticks;
+      QWidget* w = QApplication::activeModalWidget();
+      if (!w) {
+        if (ticks > 100) timer.stop();
+        return;
+      }
+      if (++seen < 4) return;  // laid out and painted
+      captured = w->grab().save(path);
+      title = w->windowTitle().toStdString();
+      timer.stop();
+      if (auto* d = qobject_cast<QDialog*>(w)) d->reject();
+      else w->close();
+    });
+    timer.start();
+    it->second();
+    timer.stop();
+    if (!captured) {
+      QElapsedTimer wait;
+      wait.start();
+      while (wait.elapsed() < 400) QApplication::processEvents();
+      for (QWidget* w : QApplication::topLevelWidgets())
+        if (w->isVisible() && !before.contains(w) && w != this) {
+          captured = w->grab().save(path);
+          title = w->windowTitle().toStdString();
+          w->close();
+          break;
+        }
+    }
+    if (!captured) throw std::runtime_error("no window opened (the status bar says: " + statusBar()->currentMessage().toStdString() + ")");
+    return json{{"window", target}, {"title", title}, {"image_path", QDir::toNativeSeparators(path).toStdString()}}.dump();
   };
 
   handlers["list_scenes"] = [this](const std::string&) {
@@ -5348,19 +5470,27 @@ bool MainWindow::matchOpeningType(const doc::ObjectId& host, int index) {
   return true;
 }
 
-int MainWindow::saveDrawingSet(const QString& path, bool tablesWithPlan) {
+namespace {
+// The drawing set's settings as the File menu uses them; docs/233: the vicinity map's picture from
+// 国土地理院's tiles (cache, else fetched).
+doc::DrawingSetSpec drawingSetSpecFor(const doc::Document& document, bool tablesWithPlan, QString* tilesMessage) {
   doc::DrawingSetSpec spec;
   spec.tablesWithPlan = tablesWithPlan;
   spec.title.project = QSettings().value(QStringLiteral("drawing/project")).toString().toStdString();
   spec.title.author = QSettings().value(QStringLiteral("drawing/author")).toString().toStdString();
   spec.title.date = QDate::currentDate().toString(QStringLiteral("yyyy-MM-dd")).toStdString();
-  // docs/233: the vicinity map's picture from 国土地理院's tiles (cache, else fetched).
+  if (const auto map = doc::vicinityMapOf(document)) spec.vicinity = fetchVicinityPicture(*map, tilesMessage);
+  return spec;
+}
+}  // namespace
+
+int MainWindow::saveDrawingSet(const QString& path, bool tablesWithPlan) {
   QString tilesMessage;
-  if (const auto map = doc::vicinityMapOf(modeler_.document())) {
+  if (doc::vicinityMapOf(modeler_.document())) {
     setStatus(tr("付近見取図の地図タイルを国土地理院から取っています..."));
     QApplication::processEvents();
-    spec.vicinity = fetchVicinityPicture(*map, &tilesMessage);
   }
+  const doc::DrawingSetSpec spec = drawingSetSpecFor(modeler_.document(), tablesWithPlan, &tilesMessage);
   const auto set = doc::drawingSet(modeler_.document(), spec);
   if (!set) {
     reportError(tr("図面一式を作れませんでした: %1").arg(userMessage(QString::fromStdString(set.error()))));
