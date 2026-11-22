@@ -10,9 +10,17 @@
 #include <stdexcept>
 #include <string>
 
+#include <chrono>
+#include <cstdlib>
+#include <thread>
+
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
+#include <windows.h>
+#include <tlhelp32.h>
+#else
+#include <unistd.h>
 #endif
 
 #include <QCoreApplication>
@@ -25,6 +33,37 @@
 #include "sbr/doc/Modeler.h"
 
 namespace {
+
+// docs/243: the server ends when the client that started it ends, even when the end of its input
+// never arrives (on Windows a handle to the pipe can stay open in another process, and the server
+// then held its files: the folder could not be updated until it was killed by hand).
+void endWithParent() {
+#ifdef _WIN32
+  DWORD parent = 0;
+  const DWORD self = GetCurrentProcessId();
+  HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if (snapshot == INVALID_HANDLE_VALUE) return;
+  PROCESSENTRY32W entry{};
+  entry.dwSize = sizeof(entry);
+  for (BOOL more = Process32FirstW(snapshot, &entry); more; more = Process32NextW(snapshot, &entry))
+    if (entry.th32ProcessID == self) parent = entry.th32ParentProcessID;
+  CloseHandle(snapshot);
+  if (parent == 0) return;
+  HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, parent);
+  if (!process) return;  // already gone, or not ours to watch: the end of the input still ends us
+  std::thread([process] {
+    WaitForSingleObject(process, INFINITE);
+    std::_Exit(0);
+  }).detach();
+#else
+  const pid_t parent = getppid();
+  if (parent <= 1) return;
+  std::thread([parent] {
+    while (getppid() == parent) std::this_thread::sleep_for(std::chrono::seconds(2));
+    std::_Exit(0);
+  }).detach();
+#endif
+}
 
 std::string failure(const std::string& message) {
   return nlohmann::json{{"ok", false}, {"error", message}}.dump();
@@ -66,6 +105,7 @@ int main(int argc, char** argv) {
   _setmode(_fileno(stdout), _O_BINARY);
 #endif
   QCoreApplication app(argc, argv);
+  endWithParent();
   bool headless = false;
   std::string openPath;
   for (int i = 1; i < argc; ++i) {
