@@ -358,3 +358,18 @@ TEST(Inference, InteriorFaceQueriesIgnoreGeometryBehindTheEye) {
   engine.setSeeThrough(true);
   EXPECT_FALSE(engine.isVisible(gp_Pnt(500, 1000, 250), query.ray));
 }
+
+// docs/260: no midpoint for an edge shorter on the screen than three times the snap distance; the
+// point under the cursor (on the edge) is taken instead. Long edges keep their midpoints.
+TEST(Inference, NoMidpointOnEdgesShortOnTheScreen) {
+  InferenceEngine engine;
+  auto face = geom::makeRectangleFace(geom::SketchPlane::ground(), 200, 1000);  // a 200 mm side: 20 px
+  engine.setShapes({face.value()});
+  TopView view;
+  const SnapResult shortSide = engine.snap(view.query(11, 0));  // 1 px from the short side's middle
+  EXPECT_NE(shortSide.kind, SnapKind::Midpoint);
+  EXPECT_NEAR(shortSide.point.X(), 110, 10.0);
+  const SnapResult longSide = engine.snap(view.query(1, -51));  // 1 px from the long side's middle
+  EXPECT_EQ(longSide.kind, SnapKind::Midpoint);
+  EXPECT_NEAR(longSide.point.Y(), 500, 1e-6);
+}

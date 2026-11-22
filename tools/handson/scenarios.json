@@ -4508,6 +4508,104 @@
           }
         }
       ]
+    },
+    {
+      "id": "4-1c",
+      "title": "遠近法のまま真上から、屋根ツールで壁の芯の角を押す（docs/260 の吸い付きの直しの確かめ）",
+      "docs": "docs/260",
+      "look": "（AI だけで決まる）屋根ができ、3D で室名が屋根に隠れているか（絵）。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "top"
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "fit"
+          }
+        },
+        {
+          "tool": "ui_tool",
+          "args": {
+            "tool": "roof"
+          }
+        },
+        {
+          "tool": "ui_view_click",
+          "args": {
+            "points": [
+              [
+                0,
+                0,
+                3000
+              ],
+              [
+                8000,
+                0,
+                3000
+              ],
+              [
+                8000,
+                6000,
+                3000
+              ],
+              [
+                0,
+                6000,
+                3000
+              ]
+            ]
+          }
+        },
+        {
+          "tool": "ui_type",
+          "args": {
+            "text": "",
+            "enter": true
+          }
+        },
+        {
+          "tool": "ui_windows",
+          "args": {},
+          "show": true,
+          "expect": {
+            "not_contains": [
+              "平行な辺がありません"
+            ]
+          }
+        },
+        {
+          "tool": "query_objects",
+          "args": {
+            "fields": [
+              "id",
+              "name"
+            ]
+          },
+          "expect": {
+            "contains": [
+              "Roof"
+            ]
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "屋根ができた 3D（室名は屋根に隠れる）"
+        }
+      ]
     }
   ]
 }

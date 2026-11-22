@@ -71,6 +71,8 @@ struct InferenceEngine::Slot {
     gp_Pnt point;
     SnapKind kind;
     int shapeIndex;
+    // docs/260: a midpoint's edge ends (to leave out the midpoints of edges short on the screen).
+    gp_Pnt a, b;
   };
   bool alive = false;
   int shapeIndex = -1;
@@ -253,7 +255,7 @@ void indexPointsAndEdges(const Slot& slot) {
     BRepAdaptor_Curve curve(edge);
     const double f = curve.FirstParameter();
     const double l = curve.LastParameter();
-    slot.points.push_back({curve.Value(0.5 * (f + l)), SnapKind::Midpoint, shapeIndex});
+    slot.points.push_back({curve.Value(0.5 * (f + l)), SnapKind::Midpoint, shapeIndex, curve.Value(f), curve.Value(l)});
     typename decltype(slot.edges)::value_type entry;
     entry.shapeIndex = shapeIndex;
     entry.edge = edge;
@@ -468,6 +470,14 @@ SnapResult InferenceEngine::snap(const SnapQuery& q) const {
         r.shapeIndex = entry.shapeIndex;
         candidates.emplace_back(-1.0, r);  // keeps first place
         continue;
+      }
+      // docs/260 (owner 2026-11-22, "おすすめで"): no midpoint for an edge shorter on the screen than
+      // three times the snap distance: its middle is too near its ends (and what lies beside it) to
+      // be aimed at, and it took the cursor away from the point right under it (clicked on the
+      // centre-line corner of two walls, the midpoints of the walls' 200 mm end edges were taken).
+      if (entry.kind == SnapKind::Midpoint) {
+        const ScreenPoint ea = q.project(entry.a), eb = q.project(entry.b);
+        if (std::hypot(ea.x - eb.x, ea.y - eb.y) < 3.0 * tol) continue;
       }
       // Endpoints win over midpoints at equal distance.
       const double bias = entry.kind == SnapKind::Endpoint ? 0.0 : 0.5;

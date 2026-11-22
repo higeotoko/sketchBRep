@@ -97,6 +97,24 @@ std::string kindName(const std::string& kind) { return kind == "window" ? "窓" 
 
 OpeningSchedule openingSchedule(const Document& document) {
   OpeningSchedule out;
+  // docs/260 (owner 2026-11-22 "wd にして"): a wall without a build-up with a closed room on both
+  // sides of an opening is an inner wall (WD / WW). The rooms read once, when such a wall is met.
+  std::optional<std::vector<RoomInfo>> rooms;
+  const auto inRoom = [&](const gp_Pnt& p) {
+    if (!rooms) rooms = Modeler::roomsIn(document);
+    for (const RoomInfo& r : *rooms) {
+      if (!r.closed || r.centre.size() < 3) continue;
+      if (r.at.Z() > p.Z() + 1.0 || p.Z() - r.at.Z() > 4000.0) continue;  // the storey the opening is in
+      bool inside = false;
+      for (std::size_t i = 0, j = r.centre.size() - 1; i < r.centre.size(); j = i++) {
+        const gp_Pnt& a = r.centre[i];
+        const gp_Pnt& b = r.centre[j];
+        if ((a.Y() > p.Y()) != (b.Y() > p.Y()) && p.X() < (b.X() - a.X()) * (p.Y() - a.Y()) / (b.Y() - a.Y()) + a.X()) inside = !inside;
+      }
+      if (inside) return true;
+    }
+    return false;
+  };
   for (const Object& o : document.objects()) {
     if (attribute(o, "kind") != "wall" || o.shape.IsNull()) continue;
     const auto openings = Modeler::openingsIn(document, o.id);
@@ -152,8 +170,13 @@ OpeningSchedule openingSchedule(const Document& document) {
       row.width = op.width;
       row.height = op.height;
       row.sill = op.sill;
-      // docs/176: inner walls (an inner build-up) give WD / WW; outer ones and walls without one AD / AW.
+      // docs/176: inner walls (an inner build-up) give WD / WW; outer ones AD / AW; docs/260: a wall
+      // without a build-up by the rooms on its two sides.
       row.inner = attribute(o, "wall_type").rfind("interior", 0) == 0;
+      if (attribute(o, "wall_type").empty()) {
+        const gp_Vec away = gp_Vec(op.normal) * (op.depth / 2 + 200.0);
+        row.inner = inRoom(op.center.Translated(away)) && inRoom(op.center.Translated(-away));
+      }
       row.host = o.id;
       row.hostName = o.name;
       row.openingId = op.id;

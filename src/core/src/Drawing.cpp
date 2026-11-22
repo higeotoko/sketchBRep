@@ -165,6 +165,12 @@ constexpr double kOnPlane = 1e-4;  // mm: an edge / face on the cut plane
 bool selected(const doc::Document& d, const doc::Object& o, const ViewSpec& spec) {
   if (!spec.includeHidden && !d.isVisible(o.id)) return false;
   if (!spec.within.empty() && o.id != spec.within && !d.isAncestor(spec.within, o.id)) return false;
+  // docs/260 (owner 2026-11-22 "書かないようにする"): a plan at 1:50 or larger (1:20...) leaves out
+  // the site's outline: drawn, it took the paper (at 1:20 the drawing did not fit A1).
+  if (spec.kind == ViewKind::Plan && spec.paperScale > 0 && spec.paperScale <= 50) {
+    const auto& boundary = d.settings().siteBoundary;
+    if (boundary && (o.id == boundary->outline || (boundary->ground && o.id == boundary->ground->outline))) return false;
+  }
   if (spec.kind == ViewKind::SitePlan) {
     const auto& boundary = d.settings().siteBoundary;
     if (boundary && (o.id == boundary->outline || (boundary->ground && o.id == boundary->ground->outline)))

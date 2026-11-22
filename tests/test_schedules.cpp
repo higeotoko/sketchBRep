@@ -4185,11 +4185,32 @@ TEST_F(Schedules, CutMarksClearOfGridBubbles) {
 TEST_F(Schedules, SheetCheckFindsADrawingTooBigForItsPaper) {
   const std::string site = ok("create_polygon", {{"points", {{-2000, -2000, 0}, {14000, -2000, 0}, {14000, 10000, 0}, {-2000, 10000, 0}}}})["id"];
   ok("set_site_boundary", {{"outline", site}, {"source", "架空の測量図"}});
+  // 1:5: even the house alone is bigger than A1.
+  const json at5 = ok("check_drawing_set", {{"sheet", "1FL 平面図"}, {"scale", 5}});
+  const auto& counts = at5["sheets"][0]["counts"];
+  EXPECT_EQ(counts.value("does_not_fit", 0), 1) << at5.dump();
+  EXPECT_GE(counts.value("off_frame", 0) + counts.value("off_paper", 0), 1) << at5.dump();
+  // docs/260: 1:20 leaves out the site's outline, and the plan fits.
   const json at20 = ok("check_drawing_set", {{"sheet", "1FL 平面図"}, {"scale", 20}});
-  const auto& counts = at20["sheets"][0]["counts"];
-  EXPECT_EQ(counts.value("does_not_fit", 0), 1) << at20.dump();
-  EXPECT_GE(counts.value("off_frame", 0), 1) << at20.dump();
+  EXPECT_EQ(at20["sheets"][0]["counts"].value("does_not_fit", 0), 0) << at20.dump();
+  EXPECT_EQ(at20["sheets"][0]["counts"].value("off_frame", 0), 0) << at20.dump();
   const json at100 = ok("check_drawing_set", {{"sheet", "1FL 平面図"}});
   EXPECT_EQ(at100["sheets"][0]["counts"].value("does_not_fit", 0), 0);
   EXPECT_EQ(at100["sheets"][0]["counts"].value("off_frame", 0), 0) << at100.dump();
+}
+
+// docs/260: a wall without a build-up with rooms on both sides is an inner wall (WD); with a room on
+// one side only it stays outer (AD), as do the outer walls' windows (AW).
+TEST_F(Schedules, UntypedWallBetweenRoomsIsInner) {
+  ok("place_openings", {{"host", partition}, {"face_normal", {1, 0, 0}}, {"count", 1}, {"width", 800}, {"height", 2000}, {"sill", 0}});
+  ok("set_opening_fittings", {{"host", partition}, {"fitting", {{"type", "swing_single"}, {"hinge", "left"}, {"swing", "in"}}}});
+  const auto markOf = [&](const std::string& host) {
+    for (const auto& r : sbr::doc::openingSchedule(modeler.document()).rows)
+      if (r.host == host) return r.mark;
+    return std::string();
+  };
+  EXPECT_EQ(markOf(partition).substr(0, 2), "AD");  // a room on the west side only
+  ok("create_room", {{"at", {6000, 3000}}, {"name", "洋室"}});
+  EXPECT_EQ(markOf(partition), "WD1");
+  EXPECT_EQ(markOf(south).substr(0, 2), "AW");
 }
