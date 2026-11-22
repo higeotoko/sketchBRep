@@ -3718,6 +3718,796 @@
           }
         }
       ]
+    },
+    {
+      "id": "12-6・12-10・12-28",
+      "title": "天井を作って断面図・IFC、断面図の見出し",
+      "docs": "docs/123・132",
+      "look": "断面の天井板の見え方（絵）。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "set_room_finish",
+          "args": {
+            "id": "$living.id",
+            "ceiling_height": 2400
+          }
+        },
+        {
+          "tool": "make_ceilings",
+          "args": {
+            "rooms": [
+              "$living.id"
+            ]
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "\"ids\""
+            ]
+          }
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "A-A 断面図",
+            "texts": true
+          },
+          "picture": "A-A 断面図（天井）",
+          "expect": {
+            "contains": [
+              "切る位置："
+            ]
+          }
+        },
+        {
+          "tool": "export_ifc",
+          "args": {
+            "path": "{tmp}/ceiling.ifc"
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "\"ceilings\":1"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "12-11・12-18・12-20",
+      "title": "階段の側板（ささら桁）・親柱・蹴込み板・段鼻の出",
+      "docs": "docs/135・137",
+      "look": "段の両わき・板の見え方（3D の絵）。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "create_slab",
+          "args": {
+            "outline": [
+              [
+                0,
+                0
+              ],
+              [
+                8000,
+                0
+              ],
+              [
+                8000,
+                6000
+              ],
+              [
+                0,
+                6000
+              ]
+            ],
+            "top": 3000,
+            "thickness": 200
+          }
+        },
+        {
+          "tool": "create_stair",
+          "args": {
+            "path": [
+              [
+                3400,
+                600
+              ],
+              [
+                3400,
+                4400
+              ],
+              [
+                1400,
+                4400
+              ]
+            ],
+            "base": 0,
+            "rise": 3000,
+            "width": 780,
+            "style": "boards"
+          },
+          "save": "stair"
+        },
+        {
+          "tool": "change_stair",
+          "args": {
+            "id": "$stair.id",
+            "stringer": "both",
+            "stringer_style": "cut",
+            "newels": true,
+            "riser_boards": true,
+            "nosing": 20
+          },
+          "save": "stair2",
+          "show": true
+        },
+        {
+          "tool": "stair_info",
+          "args": {
+            "id": "$stair2.id"
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "\"winders\":3"
+            ]
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "3D（側板・親柱・蹴込み板）"
+        }
+      ]
+    },
+    {
+      "id": "12-15",
+      "title": "断面ツールで切る所を決めた時の図面一式",
+      "docs": "docs/132",
+      "look": "決めた所の断面図の見え方（絵）。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "set_section",
+          "args": {
+            "origin": [
+              2000,
+              0,
+              0
+            ],
+            "normal": [
+              1,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {},
+          "show": true,
+          "expect": {
+            "contains": [
+              "A-A 断面図"
+            ],
+            "not_contains": [
+              "B-B 断面図"
+            ]
+          }
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "A-A 断面図",
+            "texts": true
+          },
+          "picture": "決めた所の A-A 断面図"
+        },
+        {
+          "tool": "set_section",
+          "args": {}
+        }
+      ]
+    },
+    {
+      "id": "12-16・12-52",
+      "title": "同じ符号の窓を一度に変える、外壁・内壁の符号",
+      "docs": "docs/133・176",
+      "look": "建具表・平面の札（絵）。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "change_opening_type",
+          "args": {
+            "mark": "AW1",
+            "width": 1800
+          },
+          "show": true
+        },
+        {
+          "tool": "list_openings",
+          "args": {
+            "host": "$walls.ids.0"
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "\"width\":1800.0"
+            ]
+          }
+        },
+        {
+          "tool": "set_wall_type",
+          "args": {
+            "ids": "$walls.ids",
+            "type": "exterior_siding"
+          }
+        },
+        {
+          "tool": "set_wall_type",
+          "args": {
+            "ids": "$partition.ids",
+            "type": "interior_board"
+          }
+        },
+        {
+          "tool": "place_openings",
+          "args": {
+            "host": "$partition.ids.0",
+            "face_normal": [
+              1,
+              0,
+              0
+            ],
+            "count": 1,
+            "width": 800,
+            "height": 2000,
+            "sill": 0
+          }
+        },
+        {
+          "tool": "set_opening_fittings",
+          "args": {
+            "host": "$partition.ids.0",
+            "fitting": {
+              "type": "swing_single",
+              "hinge": "left",
+              "swing": "in"
+            }
+          }
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "建具表",
+            "texts": true
+          },
+          "picture": "建具表（外壁 AW・AD、内壁 WD）",
+          "expect": {
+            "contains": [
+              "AW1",
+              "AD1",
+              "WD1"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "12-17・12-19・12-32・12-33・12-34・12-35・12-36",
+      "title": "床・屋根の種類（種類名・登録・層）",
+      "docs": "docs/134・149・151",
+      "look": "種類の表・断面の層（絵）。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "create_roof",
+          "args": {
+            "outline": [
+              [
+                -100,
+                -100
+              ],
+              [
+                8100,
+                -100
+              ],
+              [
+                8100,
+                6100
+              ],
+              [
+                -100,
+                6100
+              ]
+            ],
+            "kind": "gable",
+            "height": 3000
+          },
+          "save": "roof"
+        },
+        {
+          "tool": "define_type",
+          "args": {
+            "name": "F1",
+            "part": "floor",
+            "layers": [
+              {
+                "name": "フローリング",
+                "thickness": 15
+              },
+              {
+                "name": "合板",
+                "thickness": 24
+              },
+              {
+                "name": "床梁",
+                "thickness": 105
+              }
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "define_type",
+          "args": {
+            "name": "R1",
+            "part": "roof",
+            "pitch": 4,
+            "layers": [
+              {
+                "name": "ガルバリウム",
+                "thickness": 20
+              },
+              {
+                "name": "野地板",
+                "thickness": 12
+              },
+              {
+                "name": "垂木",
+                "thickness": 88
+              }
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "set_type_name",
+          "args": {
+            "ids": [
+              "$slab.id"
+            ],
+            "name": "F1"
+          }
+        },
+        {
+          "tool": "set_type_name",
+          "args": {
+            "ids": [
+              "$roof.id"
+            ],
+            "name": "R1"
+          }
+        },
+        {
+          "tool": "list_types",
+          "args": {},
+          "show": true,
+          "expect": {
+            "contains": [
+              "F1",
+              "R1"
+            ]
+          }
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "A-A 断面図",
+            "texts": true,
+            "scale": 50
+          },
+          "picture": "A-A 断面図 1:50（床と屋根の層）"
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {},
+          "show": true
+        }
+      ]
+    },
+    {
+      "id": "12-22",
+      "title": "らせん階段",
+      "docs": "docs/139",
+      "look": "らせんの見え方（3D・平面の絵）。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "create_slab",
+          "args": {
+            "outline": [
+              [
+                0,
+                0
+              ],
+              [
+                8000,
+                0
+              ],
+              [
+                8000,
+                6000
+              ],
+              [
+                0,
+                6000
+              ]
+            ],
+            "top": 3000,
+            "thickness": 200
+          }
+        },
+        {
+          "tool": "create_stair",
+          "args": {
+            "shape": "spiral",
+            "path": [
+              [
+                2000,
+                3000
+              ],
+              [
+                2000,
+                2000
+              ]
+            ],
+            "sweep": 270,
+            "base": 0,
+            "rise": 3000,
+            "width": 800
+          },
+          "save": "stair",
+          "show": true
+        },
+        {
+          "tool": "change_stair",
+          "args": {
+            "id": "$stair.id",
+            "sweep": 360
+          },
+          "show": true
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "1FL 平面図",
+            "texts": true
+          },
+          "picture": "1FL 平面図（らせん）"
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "3D（らせん）"
+        }
+      ]
+    },
+    {
+      "id": "12-29・12-39・12-51",
+      "title": "窓・扉の枠・ガラス・扉を 3D と立面図で",
+      "docs": "docs/145・174",
+      "look": "枠・ガラス・扉・取っ手・框の見え方（3D・立面の絵）。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "set_opening_fittings",
+          "args": {
+            "host": "$walls.ids.1",
+            "fitting": {
+              "type": "swing_double",
+              "swing": "in"
+            }
+          }
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "南立面図",
+            "texts": true
+          },
+          "picture": "南立面図（引違い）"
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "東立面図",
+            "texts": true
+          },
+          "picture": "東立面図（両開き）"
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "3D"
+        }
+      ]
+    },
+    {
+      "id": "12-31・12-37",
+      "title": "庇が開口についてくる、庇の大きさを変える",
+      "docs": "docs/147・154",
+      "look": "（AI だけで決まる）",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "make_canopy",
+          "args": {
+            "host": "$walls.ids.0",
+            "opening": 1,
+            "depth": 900
+          },
+          "save": "canopy"
+        },
+        {
+          "tool": "change_canopy",
+          "args": {
+            "id": "$canopy.id",
+            "depth": 1500
+          },
+          "show": true
+        },
+        {
+          "tool": "area_table",
+          "args": {},
+          "show": true,
+          "expect": {
+            "contains": [
+              "\"building_area\":48.9"
+            ]
+          }
+        },
+        {
+          "tool": "move_opening",
+          "args": {
+            "host": "$walls.ids.0",
+            "opening": 1,
+            "by": [
+              -500,
+              0,
+              0
+            ]
+          },
+          "show": true
+        },
+        {
+          "tool": "query_objects",
+          "args": {
+            "fields": [
+              "name",
+              "bounds"
+            ]
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "\"min\":[1050.0,-1600.0"
+            ]
+          }
+        },
+        {
+          "tool": "render_drawing_set",
+          "args": {
+            "sheet": "南立面図",
+            "texts": true
+          },
+          "picture": "南立面図（動かした窓と庇）"
+        }
+      ]
+    },
+    {
+      "id": "12-44・12-45",
+      "title": "2 階のバルコニーの柱と、角を回るバルコニー",
+      "docs": "docs/167・168",
+      "look": "柱・角を回る形の見え方（3D の絵）。",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "create_wall",
+          "args": {
+            "points": [
+              [
+                0,
+                0
+              ],
+              [
+                8000,
+                0
+              ],
+              [
+                8000,
+                6000
+              ],
+              [
+                0,
+                6000
+              ],
+              [
+                0,
+                0
+              ]
+            ],
+            "thickness": 200,
+            "height": 2700,
+            "base": 3000
+          },
+          "save": "upper"
+        },
+        {
+          "tool": "create_slab",
+          "args": {
+            "outline": [
+              [
+                0,
+                0
+              ],
+              [
+                8000,
+                0
+              ],
+              [
+                8000,
+                6000
+              ],
+              [
+                0,
+                6000
+              ]
+            ],
+            "top": 3000,
+            "thickness": 200
+          }
+        },
+        {
+          "tool": "create_balcony",
+          "args": {
+            "host": "$upper.ids.0",
+            "at": [
+              6000,
+              -500
+            ],
+            "width": 2700,
+            "depth": 900,
+            "posts": 2,
+            "wrap": "end",
+            "wrap_length": 1820
+          },
+          "save": "b",
+          "show": true
+        },
+        {
+          "tool": "change_balcony",
+          "args": {
+            "id": "$b.id",
+            "posts": 3
+          },
+          "show": true
+        },
+        {
+          "tool": "export_ifc",
+          "args": {
+            "path": "{tmp}/balcony.ifc"
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "\"balconies\":1"
+            ]
+          }
+        },
+        {
+          "tool": "set_view",
+          "args": {
+            "view": "iso"
+          }
+        },
+        {
+          "tool": "capture_view",
+          "args": {},
+          "picture": "3D（角を回るバルコニー・柱 3 本）"
+        }
+      ]
+    },
+    {
+      "id": "12-46",
+      "title": "壁の中の柱・壁の上の梁が、壁を外へ動かすとついてくる",
+      "docs": "docs/169",
+      "look": "（AI だけで決まる）",
+      "base": [
+        "house"
+      ],
+      "steps": [
+        {
+          "tool": "create_member",
+          "args": {
+            "section": {
+              "kind": "rectangle",
+              "width": 105,
+              "depth": 105
+            },
+            "start": [
+              8000,
+              3000,
+              0
+            ],
+            "end": [
+              8000,
+              3000,
+              3000
+            ],
+            "role": "column"
+          },
+          "save": "col",
+          "show": true
+        },
+        {
+          "tool": "move",
+          "args": {
+            "ids": [
+              "$walls.ids.1"
+            ],
+            "vector": [
+              500,
+              0,
+              0
+            ]
+          },
+          "show": true,
+          "expect": {
+            "contains": [
+              "\"members\":1"
+            ]
+          }
+        }
+      ]
     }
   ]
 }
