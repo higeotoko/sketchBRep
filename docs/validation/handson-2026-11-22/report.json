@@ -82,7 +82,7 @@
     "n": 4,
     "tool": "place_openings",
     "args": {
-     "host": "00126b0b-4f72-4e41-bf8e-725f22ec49d4",
+     "host": "d445e7a3-3e04-4ba7-a338-8bf1a8a997e0",
      "face_normal": [
       0,
       -1,
@@ -101,7 +101,7 @@
     "n": 5,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "00126b0b-4f72-4e41-bf8e-725f22ec49d4",
+     "host": "d445e7a3-3e04-4ba7-a338-8bf1a8a997e0",
      "fitting": {
       "type": "sliding_double"
      }
@@ -114,7 +114,7 @@
     "n": 6,
     "tool": "place_openings",
     "args": {
-     "host": "e4506a59-1135-44ab-b255-a6624414f5da",
+     "host": "22a953e7-ac5c-4d9b-aab4-2f1d0b8feeb9",
      "face_normal": [
       1,
       0,
@@ -133,7 +133,7 @@
     "n": 7,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "e4506a59-1135-44ab-b255-a6624414f5da",
+     "host": "22a953e7-ac5c-4d9b-aab4-2f1d0b8feeb9",
      "fitting": {
       "type": "swing_single",
       "hinge": "left",
@@ -236,7 +236,7 @@
     "n": 12,
     "tool": "set_site_boundary",
     "args": {
-     "outline": "1a2be716-0dbf-466c-93c9-e1a026906e36",
+     "outline": "2ef302f7-d4a8-45a5-a3c2-95f09384552c",
      "source": "確認用の架空の測量図"
     },
     "ok": true,
@@ -260,10 +260,10 @@
     "tool": "set_insulation",
     "args": {
      "ids": [
-      "00126b0b-4f72-4e41-bf8e-725f22ec49d4",
-      "e4506a59-1135-44ab-b255-a6624414f5da",
-      "c6197f9d-7dee-40e2-bd32-c2867e0d5a19",
-      "d1ae48ed-2810-4a2a-b517-f74d8b4456cb"
+      "d445e7a3-3e04-4ba7-a338-8bf1a8a997e0",
+      "22a953e7-ac5c-4d9b-aab4-2f1d0b8feeb9",
+      "5423d446-063f-495f-b584-f87a1c18d0ae",
+      "9c9d6e31-7f4a-4634-983d-c18f5bf09f61"
      ],
      "material": "グラスウール 16K",
      "thickness_mm": 105,
@@ -280,7 +280,7 @@
     "tool": "set_insulation",
     "args": {
      "ids": [
-      "d6b2b8eb-0d0a-4fdf-840e-279828e513e7"
+      "bccda2a2-f483-471c-8a12-f643ab36b22a"
      ],
      "material": "押出法ポリスチレンフォーム 3種",
      "thickness_mm": 90,
@@ -296,7 +296,7 @@
     "n": 16,
     "tool": "set_opening_performance",
     "args": {
-     "host": "00126b0b-4f72-4e41-bf8e-725f22ec49d4",
+     "host": "d445e7a3-3e04-4ba7-a338-8bf1a8a997e0",
      "u_value": 2.33,
      "glass": "Low-E 複層",
      "solar_gain": 0.51,
@@ -427,7 +427,7 @@
     "n": 4,
     "tool": "place_openings",
     "args": {
-     "host": "b25d3f35-a377-4942-b423-5304dc30dbd4",
+     "host": "db1a6f94-99c4-4042-bbff-23c541b62b92",
      "face_normal": [
       0,
       -1,
@@ -446,7 +446,7 @@
     "n": 5,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "b25d3f35-a377-4942-b423-5304dc30dbd4",
+     "host": "db1a6f94-99c4-4042-bbff-23c541b62b92",
      "fitting": {
       "type": "sliding_double"
      }
@@ -459,7 +459,7 @@
     "n": 6,
     "tool": "place_openings",
     "args": {
-     "host": "b3be9de5-7a58-44c1-94ef-0361e4f63130",
+     "host": "717706c3-5da7-40cf-9035-027fb0d6ecb5",
      "face_normal": [
       1,
       0,
@@ -478,7 +478,7 @@
     "n": 7,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "b3be9de5-7a58-44c1-94ef-0361e4f63130",
+     "host": "717706c3-5da7-40cf-9035-027fb0d6ecb5",
      "fitting": {
       "type": "swing_single",
       "hinge": "left",
@@ -581,7 +581,7 @@
     "n": 12,
     "tool": "set_site_boundary",
     "args": {
-     "outline": "44383635-0549-4217-baf1-5a948fb2fa04",
+     "outline": "f360446d-4075-44ab-acba-e96f4307c21d",
      "source": "確認用の架空の測量図"
     },
     "ok": true,
@@ -648,7 +648,7 @@
     "n": 16,
     "tool": "rename",
     "args": {
-     "id": "5b7314fd-cc29-4420-ae25-2bebbffc47f4",
+     "id": "bfdcdc78-9073-4551-811e-8c9f1755b96c",
      "name": "キッチン"
     },
     "ok": true,
@@ -880,7 +880,7 @@
     "n": 4,
     "tool": "place_openings",
     "args": {
-     "host": "abfd0de7-224f-4c57-8662-50b7d49081b0",
+     "host": "dc57d4dc-bd7c-4461-b4f3-10abd54d13c2",
      "face_normal": [
       0,
       -1,
@@ -899,7 +899,7 @@
     "n": 5,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "abfd0de7-224f-4c57-8662-50b7d49081b0",
+     "host": "dc57d4dc-bd7c-4461-b4f3-10abd54d13c2",
      "fitting": {
       "type": "sliding_double"
      }
@@ -912,7 +912,7 @@
     "n": 6,
     "tool": "place_openings",
     "args": {
-     "host": "cd95cbd6-ac5f-45e3-851f-67bcfef784e4",
+     "host": "4b006872-aa30-4d7f-b685-326ff96e5e7e",
      "face_normal": [
       1,
       0,
@@ -931,7 +931,7 @@
     "n": 7,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "cd95cbd6-ac5f-45e3-851f-67bcfef784e4",
+     "host": "4b006872-aa30-4d7f-b685-326ff96e5e7e",
      "fitting": {
       "type": "swing_single",
       "hinge": "left",
@@ -1034,7 +1034,7 @@
     "n": 12,
     "tool": "set_site_boundary",
     "args": {
-     "outline": "7517973f-1e33-4b0a-b8ab-4bdefd347f1d",
+     "outline": "c495a485-babf-4688-948f-6ad7bfe79569",
      "source": "確認用の架空の測量図"
     },
     "ok": true,
@@ -1098,7 +1098,7 @@
     },
     "ok": true,
     "failed": [],
-    "answer": "{\"confirmation\":{\"changed\":[],\"state\":\"未確認\"},\"rows\":[{\"attention\":false,\"details\":\"仕様基準　6 地域\\n確認資料 確認用\\n基準の値との比較はしていません。\",\"item\":\"適用ルート・地域\",\"state\":\"入力済み\",\"targets\":[]},{\"attention\":true,\"details\":\"厚さだけで断熱も無い壁 5 枚。仕様（層）か断熱を入れます。\",\"item\":\"仕様の無い壁\",\"state\":\"未入力\",\"targets\":[\"abfd0de7-224f-4c57-8662-50b7d49081b0\",\"cd95cbd6-ac5f-45e3-851f-67bcfef784e4\",\"6409f83e-1f2f-4ec5-9431-ad6d76b2cd4a\",\"fa51035c-6628-4a69-9031-9cc3356f4344\",\"0c7521b2-e5e3-471e-a7f3-f88a5dae3594\"]},{\"attention\":true,\"details\":\"床・屋根 1 のうち、断熱を入れた物 0。\",\"item\":\"床・屋根の断熱\",\"state\":\"未入力\",\"targets\":[\"2c961c00-5360-4863-a521-fedc25f4a322\""
+    "answer": "{\"confirmation\":{\"changed\":[],\"state\":\"未確認\"},\"rows\":[{\"attention\":false,\"details\":\"仕様基準　6 地域\\n確認資料 確認用\\n基準の値との比較はしていません。\",\"item\":\"適用ルート・地域\",\"state\":\"入力済み\",\"targets\":[]},{\"attention\":true,\"details\":\"厚さだけで断熱も無い壁 5 枚。仕様（層）か断熱を入れます。\",\"item\":\"仕様の無い壁\",\"state\":\"未入力\",\"targets\":[\"dc57d4dc-bd7c-4461-b4f3-10abd54d13c2\",\"4b006872-aa30-4d7f-b685-326ff96e5e7e\",\"8e72db96-0055-46df-a807-6847b367dac9\",\"758c7528-b9f1-4ad2-a856-f6199776ea33\",\"faaf8651-7619-4b42-9307-213082306baa\"]},{\"attention\":true,\"details\":\"床・屋根 1 のうち、断熱を入れた物 0。\",\"item\":\"床・屋根の断熱\",\"state\":\"未入力\",\"targets\":[\"26808412-2d65-4b73-b285-21a734073385\""
    }
   ],
   "pictures": [
@@ -1197,7 +1197,7 @@
     "n": 4,
     "tool": "place_openings",
     "args": {
-     "host": "db8e88ac-75ee-4876-9478-43e6a4a0804b",
+     "host": "2f6cecf1-4d9e-4b49-a440-198823833a75",
      "face_normal": [
       0,
       -1,
@@ -1216,7 +1216,7 @@
     "n": 5,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "db8e88ac-75ee-4876-9478-43e6a4a0804b",
+     "host": "2f6cecf1-4d9e-4b49-a440-198823833a75",
      "fitting": {
       "type": "sliding_double"
      }
@@ -1229,7 +1229,7 @@
     "n": 6,
     "tool": "place_openings",
     "args": {
-     "host": "387f5f2e-523a-4bbc-825d-3950a8812369",
+     "host": "b04b7af8-5a13-4c21-9721-3ff233dd9a5a",
      "face_normal": [
       1,
       0,
@@ -1248,7 +1248,7 @@
     "n": 7,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "387f5f2e-523a-4bbc-825d-3950a8812369",
+     "host": "b04b7af8-5a13-4c21-9721-3ff233dd9a5a",
      "fitting": {
       "type": "swing_single",
       "hinge": "left",
@@ -1351,7 +1351,7 @@
     "n": 12,
     "tool": "set_site_boundary",
     "args": {
-     "outline": "bd577768-e4de-4f9f-9422-c6c954375167",
+     "outline": "d92fa885-4443-40c5-8315-32a4dee36ca0",
      "source": "確認用の架空の測量図"
     },
     "ok": true,
@@ -1385,10 +1385,10 @@
     "tool": "select",
     "args": {
      "ids": [
-      "db8e88ac-75ee-4876-9478-43e6a4a0804b",
-      "387f5f2e-523a-4bbc-825d-3950a8812369",
-      "cfc7ee9f-e630-4017-82e0-c3391cdfb948",
-      "34d1d2fc-0425-4bb6-af4d-6fad674a7295"
+      "2f6cecf1-4d9e-4b49-a440-198823833a75",
+      "b04b7af8-5a13-4c21-9721-3ff233dd9a5a",
+      "67925a16-ee13-4b6b-aede-f798c37a950d",
+      "c674cfa4-19a4-4e9d-a541-d0b33f5b7c3c"
      ]
     },
     "ok": true,
@@ -1502,7 +1502,7 @@
     "n": 4,
     "tool": "place_openings",
     "args": {
-     "host": "0557c773-eb96-4bb0-be4e-79522f3dcd44",
+     "host": "814601f1-2984-42ea-8d48-9a102c3ad4c5",
      "face_normal": [
       0,
       -1,
@@ -1521,7 +1521,7 @@
     "n": 5,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "0557c773-eb96-4bb0-be4e-79522f3dcd44",
+     "host": "814601f1-2984-42ea-8d48-9a102c3ad4c5",
      "fitting": {
       "type": "sliding_double"
      }
@@ -1534,7 +1534,7 @@
     "n": 6,
     "tool": "place_openings",
     "args": {
-     "host": "4d185dc5-6b8d-4aec-860d-7c67b24b880f",
+     "host": "cea9de1f-c549-4505-a70c-dc53b14fa604",
      "face_normal": [
       1,
       0,
@@ -1553,7 +1553,7 @@
     "n": 7,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "4d185dc5-6b8d-4aec-860d-7c67b24b880f",
+     "host": "cea9de1f-c549-4505-a70c-dc53b14fa604",
      "fitting": {
       "type": "swing_single",
       "hinge": "left",
@@ -1656,7 +1656,7 @@
     "n": 12,
     "tool": "set_site_boundary",
     "args": {
-     "outline": "6be43c36-36b9-45d6-a22b-188462534b62",
+     "outline": "9a67259e-7a1c-462f-a6fc-092d139cd93e",
      "source": "確認用の架空の測量図"
     },
     "ok": true,
@@ -1815,7 +1815,7 @@
     "n": 4,
     "tool": "place_openings",
     "args": {
-     "host": "e6da8859-048e-425f-9336-a9d7af299c1f",
+     "host": "b9114a8d-629e-4fa8-bfa9-5792ab9e90cc",
      "face_normal": [
       0,
       -1,
@@ -1834,7 +1834,7 @@
     "n": 5,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "e6da8859-048e-425f-9336-a9d7af299c1f",
+     "host": "b9114a8d-629e-4fa8-bfa9-5792ab9e90cc",
      "fitting": {
       "type": "sliding_double"
      }
@@ -1847,7 +1847,7 @@
     "n": 6,
     "tool": "place_openings",
     "args": {
-     "host": "331a0427-4ab1-44c5-8c89-2682e580e0fb",
+     "host": "86a86e7a-eeac-4ebc-bba1-1388b3430a5e",
      "face_normal": [
       1,
       0,
@@ -1866,7 +1866,7 @@
     "n": 7,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "331a0427-4ab1-44c5-8c89-2682e580e0fb",
+     "host": "86a86e7a-eeac-4ebc-bba1-1388b3430a5e",
      "fitting": {
       "type": "swing_single",
       "hinge": "left",
@@ -1969,7 +1969,7 @@
     "n": 12,
     "tool": "set_site_boundary",
     "args": {
-     "outline": "9b5071a7-a343-4041-aa28-04922ab4950b",
+     "outline": "2eca0674-faaf-46e9-a46e-f1c8af7cefb3",
      "source": "確認用の架空の測量図"
     },
     "ok": true,
@@ -1992,7 +1992,7 @@
     "n": 14,
     "tool": "set_room_finish",
     "args": {
-     "id": "1675a7bd-5286-4e3f-aa74-daca172067eb",
+     "id": "79681fac-e72e-418a-bb0b-a3a8d8302127",
      "ceiling_height": 2400
     },
     "ok": true,
@@ -2004,7 +2004,7 @@
     "tool": "make_ceilings",
     "args": {
      "rooms": [
-      "1675a7bd-5286-4e3f-aa74-daca172067eb"
+      "79681fac-e72e-418a-bb0b-a3a8d8302127"
      ]
     },
     "ok": true,
@@ -2016,7 +2016,7 @@
     "tool": "select",
     "args": {
      "ids": [
-      "b0442594-c41c-45c6-b58a-c6f8cc501cfd"
+      "201d7f8b-35cb-479f-9a35-7ec2fa868ae9"
      ]
     },
     "ok": true,
@@ -2038,7 +2038,7 @@
     "tool": "set_insulation",
     "args": {
      "ids": [
-      "b0442594-c41c-45c6-b58a-c6f8cc501cfd"
+      "201d7f8b-35cb-479f-9a35-7ec2fa868ae9"
      ],
      "material": "グラスウール 16K",
      "thickness_mm": 155,
@@ -2175,7 +2175,7 @@
     "n": 4,
     "tool": "place_openings",
     "args": {
-     "host": "8afe5349-4bdb-405f-bcc9-6d3fa6df7791",
+     "host": "bcc81726-6724-44dd-bf01-21bbd49665f3",
      "face_normal": [
       0,
       -1,
@@ -2194,7 +2194,7 @@
     "n": 5,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "8afe5349-4bdb-405f-bcc9-6d3fa6df7791",
+     "host": "bcc81726-6724-44dd-bf01-21bbd49665f3",
      "fitting": {
       "type": "sliding_double"
      }
@@ -2207,7 +2207,7 @@
     "n": 6,
     "tool": "place_openings",
     "args": {
-     "host": "fb76a1ae-070d-44b2-b332-177c12060585",
+     "host": "6b667a21-dba3-420f-9171-057293751d79",
      "face_normal": [
       1,
       0,
@@ -2226,7 +2226,7 @@
     "n": 7,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "fb76a1ae-070d-44b2-b332-177c12060585",
+     "host": "6b667a21-dba3-420f-9171-057293751d79",
      "fitting": {
       "type": "swing_single",
       "hinge": "left",
@@ -2329,7 +2329,7 @@
     "n": 12,
     "tool": "set_site_boundary",
     "args": {
-     "outline": "207c0079-4874-4d18-89b0-7b311d44d0ce",
+     "outline": "ebcb35b1-5303-499b-be6a-5496be1d94f4",
      "source": "確認用の架空の測量図"
     },
     "ok": true,
@@ -2353,10 +2353,10 @@
     "tool": "set_insulation",
     "args": {
      "ids": [
-      "8afe5349-4bdb-405f-bcc9-6d3fa6df7791",
-      "fb76a1ae-070d-44b2-b332-177c12060585",
-      "b79c9a81-52fd-414b-8197-682e58b92310",
-      "32f27ab0-0572-4031-8fad-405e98b798fc"
+      "bcc81726-6724-44dd-bf01-21bbd49665f3",
+      "6b667a21-dba3-420f-9171-057293751d79",
+      "6bafe189-47c1-4dcd-8001-2b3c2a2ff71a",
+      "80577550-1462-40a2-857b-610b3b378760"
      ],
      "material": "グラスウール 16K",
      "thickness_mm": 105,
@@ -2373,7 +2373,7 @@
     "tool": "set_insulation",
     "args": {
      "ids": [
-      "521c4fa5-b30c-4c5d-8454-cf54819cb8b8"
+      "4b6ca1b6-2f08-4325-9bb4-87e392c6a8ca"
      ],
      "material": "押出法ポリスチレンフォーム 3種",
      "thickness_mm": 90,
@@ -2389,7 +2389,7 @@
     "n": 16,
     "tool": "set_opening_performance",
     "args": {
-     "host": "8afe5349-4bdb-405f-bcc9-6d3fa6df7791",
+     "host": "bcc81726-6724-44dd-bf01-21bbd49665f3",
      "u_value": 2.33,
      "glass": "Low-E 複層",
      "solar_gain": 0.51,
@@ -2438,7 +2438,7 @@
     "n": 19,
     "tool": "set_room_finish",
     "args": {
-     "id": "b018c4cf-2d7e-4f17-b173-d3213766a9ef",
+     "id": "36850442-778f-4db1-a2a5-9c067d187c10",
      "ceiling_height": 2400
     },
     "ok": true,
@@ -2450,7 +2450,7 @@
     "tool": "make_ceilings",
     "args": {
      "rooms": [
-      "b018c4cf-2d7e-4f17-b173-d3213766a9ef"
+      "36850442-778f-4db1-a2a5-9c067d187c10"
      ]
     },
     "ok": true,
@@ -2462,7 +2462,7 @@
     "tool": "set_insulation",
     "args": {
      "ids": [
-      "f6ace35d-8c04-443f-915b-577582e8c90a"
+      "dc24ee36-20bd-4825-b4b3-ea12f383c1f2"
      ],
      "material": "グラスウール 16K",
      "thickness_mm": 155,
@@ -2589,7 +2589,7 @@
     "n": 4,
     "tool": "place_openings",
     "args": {
-     "host": "9b6413c7-3d66-410a-adac-d9c2aab56fb2",
+     "host": "e3539fde-79af-4a5e-a4d9-a7a88fed4ccd",
      "face_normal": [
       0,
       -1,
@@ -2608,7 +2608,7 @@
     "n": 5,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "9b6413c7-3d66-410a-adac-d9c2aab56fb2",
+     "host": "e3539fde-79af-4a5e-a4d9-a7a88fed4ccd",
      "fitting": {
       "type": "sliding_double"
      }
@@ -2621,7 +2621,7 @@
     "n": 6,
     "tool": "place_openings",
     "args": {
-     "host": "ec239c15-5c36-442e-9ab2-79efb1290a1b",
+     "host": "dc1911f1-e54a-4406-845b-6b2a62b8e8a3",
      "face_normal": [
       1,
       0,
@@ -2640,7 +2640,7 @@
     "n": 7,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "ec239c15-5c36-442e-9ab2-79efb1290a1b",
+     "host": "dc1911f1-e54a-4406-845b-6b2a62b8e8a3",
      "fitting": {
       "type": "swing_single",
       "hinge": "left",
@@ -2743,7 +2743,7 @@
     "n": 12,
     "tool": "set_site_boundary",
     "args": {
-     "outline": "c92ac40a-3eb2-4d16-8994-38ef490110ba",
+     "outline": "109f2d7a-d9b1-4b57-953f-f9c6d130da48",
      "source": "確認用の架空の測量図"
     },
     "ok": true,
@@ -2766,7 +2766,7 @@
     "n": 14,
     "tool": "set_room_daylight",
     "args": {
-     "id": "6f37afe8-74c5-42b3-9cbb-a0f740800d1d",
+     "id": "bad14b4d-83da-48c6-9dc2-9703880fe133",
      "kind": "dwelling",
      "ventilation": "window"
     },
@@ -2778,7 +2778,7 @@
     "n": 15,
     "tool": "set_room_daylight",
     "args": {
-     "id": "2670e82e-6c51-4707-9603-bfaa6db3f81c",
+     "id": "f97038d1-8ab3-487a-bd18-7d7fad4cb906",
      "kind": "dwelling",
      "ventilation": "window"
     },
@@ -2790,7 +2790,7 @@
     "n": 16,
     "tool": "set_room_finish",
     "args": {
-     "id": "6f37afe8-74c5-42b3-9cbb-a0f740800d1d",
+     "id": "bad14b4d-83da-48c6-9dc2-9703880fe133",
      "ceiling_height": 2400
     },
     "ok": true,
@@ -2801,7 +2801,7 @@
     "n": 17,
     "tool": "set_room_finish",
     "args": {
-     "id": "2670e82e-6c51-4707-9603-bfaa6db3f81c",
+     "id": "f97038d1-8ab3-487a-bd18-7d7fad4cb906",
      "ceiling_height": 2400
     },
     "ok": true,
@@ -2812,8 +2812,8 @@
     "n": 18,
     "tool": "set_room_ventilation",
     "args": {
-     "id": "6f37afe8-74c5-42b3-9cbb-a0f740800d1d",
-     "joined_with": "2670e82e-6c51-4707-9603-bfaa6db3f81c",
+     "id": "bad14b4d-83da-48c6-9dc2-9703880fe133",
+     "joined_with": "f97038d1-8ab3-487a-bd18-7d7fad4cb906",
      "fan_m3h": 30,
      "fan_unit": "第3種換気 1"
     },
@@ -2825,7 +2825,7 @@
     "n": 19,
     "tool": "set_room_ventilation",
     "args": {
-     "id": "2670e82e-6c51-4707-9603-bfaa6db3f81c",
+     "id": "f97038d1-8ab3-487a-bd18-7d7fad4cb906",
      "fan_unit": "第3種換気 1"
     },
     "ok": true,
@@ -2836,7 +2836,7 @@
     "n": 20,
     "tool": "set_opening_veranda",
     "args": {
-     "host": "9b6413c7-3d66-410a-adac-d9c2aab56fb2",
+     "host": "e3539fde-79af-4a5e-a4d9-a7a88fed4ccd",
      "veranda": true
     },
     "ok": true,
@@ -2851,14 +2851,14 @@
     },
     "ok": true,
     "failed": [],
-    "answer": "{\"confirmation\":{\"changed\":[],\"state\":\"未確認\"},\"rows\":[{\"attention\":true,\"details\":\"採光：開口候補 1＋一続きの室の候補 のうち、採光補正係数が無い開口 3。開口ごとに、隣地境界線などまでの距離から求めた係数（令 20 条）と根拠を入れます。\\n換気：未評価　開口候補 1＋一続きの室の候補 のうち、換気に有効な面積が無い開口 3。開けられる部分の面積（引違いなら片側分など）を入れます。\\n機械換気：参考値を外れる　有効換気量 30.0 m³/h／換気設備「第3種換気 1」（居間・洋室）の必要有効換気量の合計 57.6 m³/h（令 20 条の 8 第 1 項第 1 号イ（2））。この室の必要有効換気量 0.5×24.00×2.40 = 28.8 m³/h（令 20 条の 8 第 1 項第 1 号イ（1）、住宅等の居室 0.5。床面積は壁芯）\",\"item\":\"居間（1FL）\",\"state\":\"未評価\",\"targets\":[\"6f37afe8-74c5-42b3-9cbb-a0f740800d1d\"]},{\"attention\":true,\"details\":\"採光：開口候補 2＋一続きの室の候補 のうち、採光補正係数が無い開口 3。開口ごとに、隣地境界線などまでの距離から求めた係数（令 20 条）と"
+    "answer": "{\"confirmation\":{\"changed\":[],\"state\":\"未確認\"},\"rows\":[{\"attention\":true,\"details\":\"採光：開口候補 1＋一続きの室の候補 のうち、採光補正係数が無い開口 3。開口ごとに、隣地境界線などまでの距離から求めた係数（令 20 条）と根拠を入れます。\\n換気：未評価　開口候補 1＋一続きの室の候補 のうち、換気に有効な面積が無い開口 3。開けられる部分の面積（引違いなら片側分など）を入れます。\\n機械換気：参考値を外れる　有効換気量 30.0 m³/h／換気設備「第3種換気 1」（居間・洋室）の必要有効換気量の合計 57.6 m³/h（令 20 条の 8 第 1 項第 1 号イ（2））。この室の必要有効換気量 0.5×24.00×2.40 = 28.8 m³/h（令 20 条の 8 第 1 項第 1 号イ（1）、住宅等の居室 0.5。床面積は壁芯）\",\"item\":\"居間（1FL）\",\"state\":\"未評価\",\"targets\":[\"bad14b4d-83da-48c6-9dc2-9703880fe133\"]},{\"attention\":true,\"details\":\"採光：開口候補 2＋一続きの室の候補 のうち、採光補正係数が無い開口 3。開口ごとに、隣地境界線などまでの距離から求めた係数（令 20 条）と"
    },
    {
     "n": 22,
     "tool": "select",
     "args": {
      "ids": [
-      "6f37afe8-74c5-42b3-9cbb-a0f740800d1d"
+      "bad14b4d-83da-48c6-9dc2-9703880fe133"
      ]
     },
     "ok": true,
@@ -2968,7 +2968,7 @@
     "n": 4,
     "tool": "place_openings",
     "args": {
-     "host": "c50019f6-d6ab-435d-bf54-aafaa9923312",
+     "host": "31e128c6-3590-4282-b187-ae8ab78f336e",
      "face_normal": [
       0,
       -1,
@@ -2987,7 +2987,7 @@
     "n": 5,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "c50019f6-d6ab-435d-bf54-aafaa9923312",
+     "host": "31e128c6-3590-4282-b187-ae8ab78f336e",
      "fitting": {
       "type": "sliding_double"
      }
@@ -3000,7 +3000,7 @@
     "n": 6,
     "tool": "place_openings",
     "args": {
-     "host": "5f4977e3-b3b2-4f4b-a9e7-e90e72d49d1c",
+     "host": "fa6ca6c7-dcc5-4d9a-982c-86456155faef",
      "face_normal": [
       1,
       0,
@@ -3019,7 +3019,7 @@
     "n": 7,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "5f4977e3-b3b2-4f4b-a9e7-e90e72d49d1c",
+     "host": "fa6ca6c7-dcc5-4d9a-982c-86456155faef",
      "fitting": {
       "type": "swing_single",
       "hinge": "left",
@@ -3122,7 +3122,7 @@
     "n": 12,
     "tool": "set_site_boundary",
     "args": {
-     "outline": "ac890497-c1dc-4804-96eb-1581db3f68e3",
+     "outline": "9976d35e-fd70-49cc-9b35-90c49d15519a",
      "source": "確認用の架空の測量図"
     },
     "ok": true,
@@ -3359,7 +3359,7 @@
     "n": 4,
     "tool": "place_openings",
     "args": {
-     "host": "9910850c-9b08-4999-966b-d28e435026c3",
+     "host": "6984a7e2-c850-4a2b-b2ea-adb163e1bc78",
      "face_normal": [
       0,
       -1,
@@ -3378,7 +3378,7 @@
     "n": 5,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "9910850c-9b08-4999-966b-d28e435026c3",
+     "host": "6984a7e2-c850-4a2b-b2ea-adb163e1bc78",
      "fitting": {
       "type": "sliding_double"
      }
@@ -3391,7 +3391,7 @@
     "n": 6,
     "tool": "place_openings",
     "args": {
-     "host": "75b35902-9375-4562-876d-900b8bd87b7f",
+     "host": "608bf9ef-516b-4d01-a87c-1579ecc9818b",
      "face_normal": [
       1,
       0,
@@ -3410,7 +3410,7 @@
     "n": 7,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "75b35902-9375-4562-876d-900b8bd87b7f",
+     "host": "608bf9ef-516b-4d01-a87c-1579ecc9818b",
      "fitting": {
       "type": "swing_single",
       "hinge": "left",
@@ -3513,7 +3513,7 @@
     "n": 12,
     "tool": "set_site_boundary",
     "args": {
-     "outline": "1682aa89-0aba-446d-9923-7887cd9db84e",
+     "outline": "37e6094d-47ca-463d-8c72-a0512330793e",
      "source": "確認用の架空の測量図"
     },
     "ok": true,
@@ -3537,10 +3537,10 @@
     "tool": "set_wall_type",
     "args": {
      "ids": [
-      "9910850c-9b08-4999-966b-d28e435026c3",
-      "75b35902-9375-4562-876d-900b8bd87b7f",
-      "bea61b56-2663-45a9-84f3-af7e848d2a63",
-      "57a1862e-bd92-4cf1-968b-deee13621452"
+      "6984a7e2-c850-4a2b-b2ea-adb163e1bc78",
+      "608bf9ef-516b-4d01-a87c-1579ecc9818b",
+      "4407abe9-b9f7-4464-a5b6-659e80b25086",
+      "94983546-59e5-497f-9842-0af317a6a1e3"
      ],
      "type": "exterior_siding"
     },
@@ -3553,10 +3553,10 @@
     "tool": "set_insulation",
     "args": {
      "ids": [
-      "9910850c-9b08-4999-966b-d28e435026c3",
-      "75b35902-9375-4562-876d-900b8bd87b7f",
-      "bea61b56-2663-45a9-84f3-af7e848d2a63",
-      "57a1862e-bd92-4cf1-968b-deee13621452"
+      "6984a7e2-c850-4a2b-b2ea-adb163e1bc78",
+      "608bf9ef-516b-4d01-a87c-1579ecc9818b",
+      "4407abe9-b9f7-4464-a5b6-659e80b25086",
+      "94983546-59e5-497f-9842-0af317a6a1e3"
      ],
      "material": "グラスウール 16K",
      "thickness_mm": 105,
@@ -3675,7 +3675,7 @@
     "n": 4,
     "tool": "place_openings",
     "args": {
-     "host": "88e90679-7b4d-4f26-8e07-fea916661a89",
+     "host": "515cc38b-1add-42b2-935a-b34e70134233",
      "face_normal": [
       0,
       -1,
@@ -3694,7 +3694,7 @@
     "n": 5,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "88e90679-7b4d-4f26-8e07-fea916661a89",
+     "host": "515cc38b-1add-42b2-935a-b34e70134233",
      "fitting": {
       "type": "sliding_double"
      }
@@ -3707,7 +3707,7 @@
     "n": 6,
     "tool": "place_openings",
     "args": {
-     "host": "c2611e0b-1ab0-42f5-97dc-4b89b60c3ecc",
+     "host": "212ad605-dddc-45c5-95d5-ce5e45f7ef62",
      "face_normal": [
       1,
       0,
@@ -3726,7 +3726,7 @@
     "n": 7,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "c2611e0b-1ab0-42f5-97dc-4b89b60c3ecc",
+     "host": "212ad605-dddc-45c5-95d5-ce5e45f7ef62",
      "fitting": {
       "type": "swing_single",
       "hinge": "left",
@@ -3829,7 +3829,7 @@
     "n": 12,
     "tool": "set_site_boundary",
     "args": {
-     "outline": "2c7ab98b-6315-4068-b27e-3b755ec7ecca",
+     "outline": "762c913a-1072-4be3-81ca-2ae44228f153",
      "source": "確認用の架空の測量図"
     },
     "ok": true,
@@ -3945,8 +3945,8 @@
     "tool": "set_insulation",
     "args": {
      "ids": [
-      "a9d3c8bf-dc6d-4b3c-b6aa-d96351fb3915",
-      "f873beb5-0837-4879-872c-d660d94b49ac"
+      "697e828a-c9aa-4529-8c99-a3d8d32b6542",
+      "f1cc7c05-2bcf-40ed-bf64-c16ae16e110d"
      ],
      "material": "押出法ポリスチレンフォーム 3種",
      "thickness_mm": 90,
@@ -3963,7 +3963,7 @@
     "tool": "set_insulation",
     "args": {
      "ids": [
-      "d81a7865-f45c-4670-a14e-497e29844dd5"
+      "bf69a21a-19e4-49ba-b199-9ea7ff3c2f8e"
      ],
      "material": "フェノールフォーム",
      "thickness_mm": 60,
@@ -4095,7 +4095,7 @@
     "n": 4,
     "tool": "place_openings",
     "args": {
-     "host": "b8b1b409-2645-4a08-9a60-187863949b6a",
+     "host": "ab35ef6a-b4f2-42c8-bee3-4c2a5cddcc0d",
      "face_normal": [
       0,
       -1,
@@ -4114,7 +4114,7 @@
     "n": 5,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "b8b1b409-2645-4a08-9a60-187863949b6a",
+     "host": "ab35ef6a-b4f2-42c8-bee3-4c2a5cddcc0d",
      "fitting": {
       "type": "sliding_double"
      }
@@ -4127,7 +4127,7 @@
     "n": 6,
     "tool": "place_openings",
     "args": {
-     "host": "a0a98470-092b-4988-835b-81b93033c21d",
+     "host": "874c4878-9160-4305-b20e-1fc6981dbf82",
      "face_normal": [
       1,
       0,
@@ -4146,7 +4146,7 @@
     "n": 7,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "a0a98470-092b-4988-835b-81b93033c21d",
+     "host": "874c4878-9160-4305-b20e-1fc6981dbf82",
      "fitting": {
       "type": "swing_single",
       "hinge": "left",
@@ -4249,7 +4249,7 @@
     "n": 12,
     "tool": "set_site_boundary",
     "args": {
-     "outline": "d9f3d8b4-a3c2-4012-8139-5ee7a7fe92cf",
+     "outline": "7a40dab8-c32d-4e57-910d-5b26b10ce385",
      "source": "確認用の架空の測量図"
     },
     "ok": true,
@@ -4284,7 +4284,7 @@
     "tool": "move",
     "args": {
      "ids": [
-      "c8950778-349c-493c-83f5-89f10c255904"
+      "2e16ea58-5422-491a-972c-574421fa8d10"
      ],
      "vector": [
       -455,
@@ -4294,7 +4294,7 @@
     },
     "ok": true,
     "failed": [],
-    "answer": "{\"ids\":[\"c8950778-349c-493c-83f5-89f10c255904\"],\"joined_walls\":{\"carried\":0,\"followed\":2,\"left\":[],\"members\":0,\"roofs\":0,\"slabs\":1}}"
+    "answer": "{\"ids\":[\"2e16ea58-5422-491a-972c-574421fa8d10\"],\"joined_walls\":{\"carried\":0,\"followed\":2,\"left\":[],\"members\":0,\"roofs\":0,\"slabs\":1}}"
    },
    {
     "n": 16,
@@ -4302,7 +4302,7 @@
     "args": {},
     "ok": true,
     "failed": [],
-    "answer": "{\"inner_not_evaluated\":0,\"not_counted\":0,\"rooms\":[{\"area_centre\":26.73,\"area_inner\":24.969,\"ceiling\":\"\",\"ceiling_height\":0.0,\"closed\":true,\"counted\":true,\"floor\":\"\",\"id\":\"4535cf99-57bc-4550-a28c-76d41f8707f9\",\"inner_perimeter\":20210.0,\"level\":\"1FL\",\"name\":\"居間\",\"problem\":\"\",\"tag\":\"居間  26.73 m²\",\"use\":\"\",\"wall\":\"\"},{\"area_centre\":24.0,\"area_inner\":22.33,\"ceiling\":\"\",\"ceiling_height\":0.0,\"closed\":true,\"counted\":true,\"floor\":\"\",\"id\":\"7837a25a-eaa9-4b4e-8dab-02a8f8bcd30e\",\"inner_perimeter\":19300.0,\"level\":\"1FL\",\"name\":\"洋室\",\"problem\":\"\",\"tag\":\"洋室  24.00 m²\",\"use\":\"\",\"wall\":\"\"}],\"total_area_centre\":5"
+    "answer": "{\"inner_not_evaluated\":0,\"not_counted\":0,\"rooms\":[{\"area_centre\":26.73,\"area_inner\":24.969,\"ceiling\":\"\",\"ceiling_height\":0.0,\"closed\":true,\"counted\":true,\"floor\":\"\",\"id\":\"822c24c7-bf63-416c-a77e-4e20292f40b7\",\"inner_perimeter\":20210.0,\"level\":\"1FL\",\"name\":\"居間\",\"problem\":\"\",\"tag\":\"居間  26.73 m²\",\"use\":\"\",\"wall\":\"\"},{\"area_centre\":24.0,\"area_inner\":22.33,\"ceiling\":\"\",\"ceiling_height\":0.0,\"closed\":true,\"counted\":true,\"floor\":\"\",\"id\":\"248e5412-698d-4f0e-b00c-e790312bb03b\",\"inner_perimeter\":19300.0,\"level\":\"1FL\",\"name\":\"洋室\",\"problem\":\"\",\"tag\":\"洋室  24.00 m²\",\"use\":\"\",\"wall\":\"\"}],\"total_area_centre\":5"
    },
    {
     "n": 17,
@@ -4411,7 +4411,7 @@
     "n": 4,
     "tool": "place_openings",
     "args": {
-     "host": "93cdc68d-400a-4519-af6c-10e15250d113",
+     "host": "82ba1d5f-1384-4a76-80b9-da04ded20e73",
      "face_normal": [
       0,
       -1,
@@ -4430,7 +4430,7 @@
     "n": 5,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "93cdc68d-400a-4519-af6c-10e15250d113",
+     "host": "82ba1d5f-1384-4a76-80b9-da04ded20e73",
      "fitting": {
       "type": "sliding_double"
      }
@@ -4443,7 +4443,7 @@
     "n": 6,
     "tool": "place_openings",
     "args": {
-     "host": "ec71ec98-8afa-4bef-90d4-b84967ded54a",
+     "host": "0c46b118-7143-43be-961f-b62b19dee847",
      "face_normal": [
       1,
       0,
@@ -4462,7 +4462,7 @@
     "n": 7,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "ec71ec98-8afa-4bef-90d4-b84967ded54a",
+     "host": "0c46b118-7143-43be-961f-b62b19dee847",
      "fitting": {
       "type": "swing_single",
       "hinge": "left",
@@ -4565,7 +4565,7 @@
     "n": 12,
     "tool": "set_site_boundary",
     "args": {
-     "outline": "24b9899c-4cd3-434c-98cf-4e620c92d8ca",
+     "outline": "02fa56f7-d481-49a1-8d99-beb5abfbcc6d",
      "source": "確認用の架空の測量図"
     },
     "ok": true,
@@ -4619,11 +4619,11 @@
     "n": 15,
     "tool": "fit_walls_to_roof",
     "args": {
-     "roof": "10c49f3a-edd4-4c9f-91f8-c7755a4eccc2"
+     "roof": "7b566771-edcd-4cff-b262-e5ec55a50176"
     },
     "ok": true,
     "failed": [],
-    "answer": "{\"roof\":\"10c49f3a-edd4-4c9f-91f8-c7755a4eccc2\",\"walls\":[\"93cdc68d-400a-4519-af6c-10e15250d113\",\"ec71ec98-8afa-4bef-90d4-b84967ded54a\",\"20848a99-bec1-4a2c-ad35-9c246b0d83bc\",\"14c1b757-745e-45bb-acef-c12e17fa3cbe\",\"43942090-92c2-476f-a9f7-749d7f7dc4e1\"]}"
+    "answer": "{\"roof\":\"7b566771-edcd-4cff-b262-e5ec55a50176\",\"walls\":[\"82ba1d5f-1384-4a76-80b9-da04ded20e73\",\"0c46b118-7143-43be-961f-b62b19dee847\",\"95f68ae5-ba64-4b7c-baaa-5fb550ff6237\",\"ae7e6680-304b-4471-a178-67d3bc1455a6\",\"b6d0ce6e-ed1c-417f-ac94-5e3b33ae3f99\"]}"
    },
    {
     "n": 16,
@@ -4766,7 +4766,7 @@
     "n": 4,
     "tool": "place_openings",
     "args": {
-     "host": "a51d2232-9452-4a81-ad87-522ff37b1dce",
+     "host": "a4352619-6ee1-4f53-8bd7-dfb958f3bd22",
      "face_normal": [
       0,
       -1,
@@ -4785,7 +4785,7 @@
     "n": 5,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "a51d2232-9452-4a81-ad87-522ff37b1dce",
+     "host": "a4352619-6ee1-4f53-8bd7-dfb958f3bd22",
      "fitting": {
       "type": "sliding_double"
      }
@@ -4798,7 +4798,7 @@
     "n": 6,
     "tool": "place_openings",
     "args": {
-     "host": "2c574bda-e254-441b-a1a6-a651bad6ca68",
+     "host": "3604cc26-f4fc-4e03-a4fa-816aacf60733",
      "face_normal": [
       1,
       0,
@@ -4817,7 +4817,7 @@
     "n": 7,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "2c574bda-e254-441b-a1a6-a651bad6ca68",
+     "host": "3604cc26-f4fc-4e03-a4fa-816aacf60733",
      "fitting": {
       "type": "swing_single",
       "hinge": "left",
@@ -4920,7 +4920,7 @@
     "n": 12,
     "tool": "set_site_boundary",
     "args": {
-     "outline": "1f31a8cf-0f94-4fe0-8572-1b6d2cfe70ca",
+     "outline": "b8ab98b7-f577-488b-a625-836fece278e5",
      "source": "確認用の架空の測量図"
     },
     "ok": true,
@@ -4995,7 +4995,7 @@
     "n": 16,
     "tool": "stair_info",
     "args": {
-     "id": "11cd5a67-fe58-4e2d-9fa1-e2ef8c749750"
+     "id": "91d8bb32-65e1-4415-8591-c0e9371422ac"
     },
     "ok": true,
     "failed": [],
@@ -5009,7 +5009,7 @@
     },
     "ok": true,
     "failed": [],
-    "answer": "{\"confirmation\":{\"changed\":[],\"state\":\"未確認\"},\"rows\":[{\"attention\":false,\"details\":\"15 段　上がる高さ 3000 mm\\n蹴上げ　200.0 mm　（230 以下）　参考値内\\n踏面　314.3 mm　（150 以上）　参考値内\\n幅　780.0 mm　（750 以上）　参考値内\\n踊場　（高さ 4000 以内ごと）　参考値内\\n手すり　（設ける）　参考値内\",\"item\":\"1FL　Stair 1\",\"state\":\"参考値内\",\"targets\":[\"11cd5a67-fe58-4e2d-9fa1-e2ef8c749750\"]},{\"attention\":false,\"details\":\"住宅の階段（共同住宅の共用の階段を除く）として照らした参考値。合否の判定ではありません。\\n蹴上げ・踏面：建築基準法施行令 第 23 条第 1 項ただし書き。幅：同項の表（四）。回り段の踏面は狭い方の端から 30 cm の位置（同条第 2 項。ここでは段の角度の弦で測る）。踊場：第 24 条第 1 項。手すり：第 25 条第 1 項（高さ 1 m 以下の部分は除く、同条第 4 項）。\\n確認：e-Gov 法令検索（令和8年11月1日施行版）、2026-11-20。\",\"item\":\"照らした値\",\"state\""
+    "answer": "{\"confirmation\":{\"changed\":[],\"state\":\"未確認\"},\"rows\":[{\"attention\":false,\"details\":\"15 段　上がる高さ 3000 mm\\n蹴上げ　200.0 mm　（230 以下）　参考値内\\n踏面　314.3 mm　（150 以上）　参考値内\\n幅　780.0 mm　（750 以上）　参考値内\\n踊場　（高さ 4000 以内ごと）　参考値内\\n手すり　（設ける）　参考値内\",\"item\":\"1FL　Stair 1\",\"state\":\"参考値内\",\"targets\":[\"91d8bb32-65e1-4415-8591-c0e9371422ac\"]},{\"attention\":false,\"details\":\"住宅の階段（共同住宅の共用の階段を除く）として照らした参考値。合否の判定ではありません。\\n蹴上げ・踏面：建築基準法施行令 第 23 条第 1 項ただし書き。幅：同項の表（四）。回り段の踏面は狭い方の端から 30 cm の位置（同条第 2 項。ここでは段の角度の弦で測る）。踊場：第 24 条第 1 項。手すり：第 25 条第 1 項（高さ 1 m 以下の部分は除く、同条第 4 項）。\\n確認：e-Gov 法令検索（令和8年11月1日施行版）、2026-11-20。\",\"item\":\"照らした値\",\"state\""
    },
    {
     "n": 18,
@@ -5132,7 +5132,7 @@
     "n": 4,
     "tool": "place_openings",
     "args": {
-     "host": "cc7d8716-4515-4ade-9d8a-dcc5ed2f2d63",
+     "host": "db66a0c9-5b35-43c9-b7b0-76a62a44858f",
      "face_normal": [
       0,
       -1,
@@ -5151,7 +5151,7 @@
     "n": 5,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "cc7d8716-4515-4ade-9d8a-dcc5ed2f2d63",
+     "host": "db66a0c9-5b35-43c9-b7b0-76a62a44858f",
      "fitting": {
       "type": "sliding_double"
      }
@@ -5164,7 +5164,7 @@
     "n": 6,
     "tool": "place_openings",
     "args": {
-     "host": "fb64b05c-e2d4-4355-ae9a-b3dd02d1890d",
+     "host": "91f495c8-6bde-4e96-a975-44549b5307b9",
      "face_normal": [
       1,
       0,
@@ -5183,7 +5183,7 @@
     "n": 7,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "fb64b05c-e2d4-4355-ae9a-b3dd02d1890d",
+     "host": "91f495c8-6bde-4e96-a975-44549b5307b9",
      "fitting": {
       "type": "swing_single",
       "hinge": "left",
@@ -5286,7 +5286,7 @@
     "n": 12,
     "tool": "set_site_boundary",
     "args": {
-     "outline": "4d93b739-a4da-4cdf-bdd0-949774bbf303",
+     "outline": "acbbe474-7c57-4a4b-9171-0865d4b95ab7",
      "source": "確認用の架空の測量図"
     },
     "ok": true,
@@ -5309,7 +5309,7 @@
     "n": 14,
     "tool": "set_room_finish",
     "args": {
-     "id": "dc6c6fd3-002b-4eab-8e14-54610088517d",
+     "id": "28a9df47-d232-4853-814b-f5e7cd9cdd88",
      "use": "居間",
      "floor": "フローリング t15",
      "wall": "PB t12.5 クロス",
@@ -5469,7 +5469,7 @@
     "n": 4,
     "tool": "place_openings",
     "args": {
-     "host": "30c82527-e143-4562-b2c2-6f2e68070ba6",
+     "host": "3c2976fb-e3d0-4a9e-8fdb-5ebd478c1c56",
      "face_normal": [
       0,
       -1,
@@ -5488,7 +5488,7 @@
     "n": 5,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "30c82527-e143-4562-b2c2-6f2e68070ba6",
+     "host": "3c2976fb-e3d0-4a9e-8fdb-5ebd478c1c56",
      "fitting": {
       "type": "sliding_double"
      }
@@ -5501,7 +5501,7 @@
     "n": 6,
     "tool": "place_openings",
     "args": {
-     "host": "0ae94889-8fc5-4572-a1de-8cb12a896a35",
+     "host": "045683ec-33f1-47d2-9e23-44148fb75c9a",
      "face_normal": [
       1,
       0,
@@ -5520,7 +5520,7 @@
     "n": 7,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "0ae94889-8fc5-4572-a1de-8cb12a896a35",
+     "host": "045683ec-33f1-47d2-9e23-44148fb75c9a",
      "fitting": {
       "type": "swing_single",
       "hinge": "left",
@@ -5623,7 +5623,7 @@
     "n": 12,
     "tool": "set_site_boundary",
     "args": {
-     "outline": "a60127ee-d7a9-4ef4-a457-d0b38956d355",
+     "outline": "3bbc8826-9e9d-48c0-915d-58cc3cefcd55",
      "source": "確認用の架空の測量図"
     },
     "ok": true,
@@ -5646,7 +5646,7 @@
     "n": 14,
     "tool": "make_canopy",
     "args": {
-     "host": "30c82527-e143-4562-b2c2-6f2e68070ba6",
+     "host": "3c2976fb-e3d0-4a9e-8fdb-5ebd478c1c56",
      "opening": 1,
      "depth": 1500
     },
@@ -5781,7 +5781,7 @@
     "n": 4,
     "tool": "place_openings",
     "args": {
-     "host": "b5375de2-8d42-41f8-b177-8bd32eb45e1d",
+     "host": "087a9722-8a9a-4d9e-9398-7d4f2bc3ec1e",
      "face_normal": [
       0,
       -1,
@@ -5800,7 +5800,7 @@
     "n": 5,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "b5375de2-8d42-41f8-b177-8bd32eb45e1d",
+     "host": "087a9722-8a9a-4d9e-9398-7d4f2bc3ec1e",
      "fitting": {
       "type": "sliding_double"
      }
@@ -5813,7 +5813,7 @@
     "n": 6,
     "tool": "place_openings",
     "args": {
-     "host": "5a789312-e44c-4b90-a68a-cdabe83b54ce",
+     "host": "78ba9e38-5155-4619-b275-97a0e6782395",
      "face_normal": [
       1,
       0,
@@ -5832,7 +5832,7 @@
     "n": 7,
     "tool": "set_opening_fittings",
     "args": {
-     "host": "5a789312-e44c-4b90-a68a-cdabe83b54ce",
+     "host": "78ba9e38-5155-4619-b275-97a0e6782395",
      "fitting": {
       "type": "swing_single",
       "hinge": "left",
@@ -5935,7 +5935,7 @@
     "n": 12,
     "tool": "set_site_boundary",
     "args": {
-     "outline": "d6bf18da-0b5b-4aca-9d55-64b15764ef8f",
+     "outline": "0e6da1c5-bf35-435d-bd80-115a6f54575c",
      "source": "確認用の架空の測量図"
     },
     "ok": true,
@@ -6021,7 +6021,7 @@
     "n": 16,
     "tool": "create_balcony",
     "args": {
-     "host": "26ae68f5-9f01-4857-9562-1556223b01e8",
+     "host": "6e56d15b-dbe5-4407-9ccf-63301b343dd0",
      "at": [
       4000,
       -500
@@ -6031,7 +6031,7 @@
     },
     "ok": true,
     "failed": [],
-    "answer": "{\"along\":3900.0,\"depth\":900.0,\"floor_area\":\"\",\"host\":\"26ae68f5-9f01-4857-9562-1556223b01e8\",\"id\":\"13616865-14b0-48f3-a37b-f272a82e77b2\",\"post_size\":105.0,\"posts\":0,\"rail\":\"wall\",\"rail_height\":1100.0,\"side\":-1,\"thickness\":150.0,\"top\":2999.9999999,\"width\":3000.0,\"wrap\":\"\",\"wrap_length\":1820.0}"
+    "answer": "{\"along\":3900.0,\"depth\":900.0,\"floor_area\":\"\",\"host\":\"6e56d15b-dbe5-4407-9ccf-63301b343dd0\",\"id\":\"524eb492-58de-4997-934f-e2a915e6aadd\",\"post_size\":105.0,\"posts\":0,\"rail\":\"wall\",\"rail_height\":1100.0,\"side\":-1,\"thickness\":150.0,\"top\":2999.9999999,\"width\":3000.0,\"wrap\":\"\",\"wrap_length\":1820.0}"
    },
    {
     "n": 17,
@@ -6086,6 +6086,700 @@
    {
     "file": "12-41-20-0.png",
     "caption": "3D"
+   }
+  ],
+  "failed": [],
+  "findings": []
+ },
+ {
+  "id": "2-7・3-1",
+  "title": "壁ツールで長さを打ち込んで部屋を描き、室ツールで室にする（人と同じ手）",
+  "look": "壁ツール・室ツールの手順で迷う所が無いか（画面の絵）。",
+  "docs": "docs/97・98・252",
+  "steps": [
+   {
+    "n": 1,
+    "tool": "set_levels",
+    "args": {
+     "levels": [
+      {
+       "name": "1FL",
+       "elevation": 0
+      },
+      {
+       "name": "2FL",
+       "elevation": 3000
+      }
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 2,
+    "tool": "create_polygon",
+    "args": {
+     "points": [
+      [
+       -2000,
+       -2000,
+       0
+      ],
+      [
+       10000,
+       -2000,
+       0
+      ],
+      [
+       10000,
+       8000,
+       0
+      ],
+      [
+       -2000,
+       8000,
+       0
+      ]
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 3,
+    "tool": "set_view",
+    "args": {
+     "view": "top"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 4,
+    "tool": "set_view",
+    "args": {
+     "view": "fit"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 5,
+    "tool": "ui_tool",
+    "args": {
+     "tool": "wall"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 6,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      0,
+      0,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 7,
+    "tool": "ui_view_hover",
+    "args": {
+     "at": [
+      3000,
+      0,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 8,
+    "tool": "ui_type",
+    "args": {
+     "text": "8000"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 9,
+    "tool": "ui_view_hover",
+    "args": {
+     "at": [
+      8000,
+      3000,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 10,
+    "tool": "ui_type",
+    "args": {
+     "text": "6000"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 11,
+    "tool": "ui_view_hover",
+    "args": {
+     "at": [
+      5000,
+      6000,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 12,
+    "tool": "ui_type",
+    "args": {
+     "text": "8000"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 13,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      0,
+      0,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 14,
+    "tool": "ui_key",
+    "args": {
+     "window": "main",
+     "key": "Escape"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 15,
+    "tool": "ui_capture",
+    "args": {
+     "window": "main"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 16,
+    "tool": "ui_tool",
+    "args": {
+     "tool": "room"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 17,
+    "tool": "ui_view_click",
+    "args": {
+     "at": [
+      3000,
+      3000,
+      0
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 18,
+    "tool": "room_schedule",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": "{\"inner_not_evaluated\":0,\"not_counted\":0,\"rooms\":[{\"area_centre\":48.0,\"area_inner\":45.24,\"ceiling\":\"\",\"ceiling_height\":0.0,\"closed\":true,\"counted\":true,\"floor\":\"\",\"id\":\"359720bb-e36e-498a-86c1-144fff62f4e9\",\"inner_perimeter\":27200.0,\"level\":\"1FL\",\"name\":\"室1\",\"problem\":\"\",\"tag\":\"室1  48.00 m²\",\"use\":\"\",\"wall\":\"\"}],\"total_area_centre\":48.0,\"total_area_inner\":45.24}"
+   },
+   {
+    "n": 19,
+    "tool": "ui_capture",
+    "args": {
+     "window": "main"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   }
+  ],
+  "pictures": [
+   {
+    "file": "2-7・3-1-15-0.png",
+    "caption": "壁ツールで描いた部屋"
+   },
+   {
+    "file": "2-7・3-1-19-0.png",
+    "caption": "室ツールでクリックした後"
+   }
+  ],
+  "failed": [],
+  "findings": []
+ },
+ {
+  "id": "4-1",
+  "title": "屋根ツールで外周を描く（人と同じ手）",
+  "look": "屋根ツールで外周を描く手順と、先に見える形が分かりやすいか（画面の絵）。",
+  "docs": "docs/99・252",
+  "steps": [
+   {
+    "n": 1,
+    "tool": "set_levels",
+    "args": {
+     "levels": [
+      {
+       "name": "1FL",
+       "elevation": 0
+      },
+      {
+       "name": "2FL",
+       "elevation": 3000
+      }
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 2,
+    "tool": "create_wall",
+    "args": {
+     "points": [
+      [
+       0,
+       0
+      ],
+      [
+       8000,
+       0
+      ],
+      [
+       8000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ],
+      [
+       0,
+       0
+      ]
+     ],
+     "thickness": 200,
+     "height": 3000
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 3,
+    "tool": "create_wall",
+    "args": {
+     "points": [
+      [
+       4000,
+       0
+      ],
+      [
+       4000,
+       6000
+      ]
+     ],
+     "thickness": 100,
+     "height": 3000
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 4,
+    "tool": "place_openings",
+    "args": {
+     "host": "f5085e46-d250-4990-b09f-62821f28f7a9",
+     "face_normal": [
+      0,
+      -1,
+      0
+     ],
+     "count": 2,
+     "width": 1600,
+     "height": 1200,
+     "sill": 900
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 5,
+    "tool": "set_opening_fittings",
+    "args": {
+     "host": "f5085e46-d250-4990-b09f-62821f28f7a9",
+     "fitting": {
+      "type": "sliding_double"
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 6,
+    "tool": "place_openings",
+    "args": {
+     "host": "4da76945-a4d3-4860-93f2-f52cda92f64c",
+     "face_normal": [
+      1,
+      0,
+      0
+     ],
+     "count": 1,
+     "width": 900,
+     "height": 2100,
+     "sill": 0
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 7,
+    "tool": "set_opening_fittings",
+    "args": {
+     "host": "4da76945-a4d3-4860-93f2-f52cda92f64c",
+     "fitting": {
+      "type": "swing_single",
+      "hinge": "left",
+      "swing": "in"
+     }
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 8,
+    "tool": "create_slab",
+    "args": {
+     "outline": [
+      [
+       0,
+       0
+      ],
+      [
+       8000,
+       0
+      ],
+      [
+       8000,
+       6000
+      ],
+      [
+       0,
+       6000
+      ]
+     ],
+     "top": 0,
+     "thickness": 200
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 9,
+    "tool": "create_room",
+    "args": {
+     "at": [
+      2000,
+      3000
+     ],
+     "name": "居間"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 10,
+    "tool": "create_room",
+    "args": {
+     "at": [
+      6000,
+      3000
+     ],
+     "name": "洋室"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 11,
+    "tool": "create_polygon",
+    "args": {
+     "points": [
+      [
+       -2000,
+       -2000,
+       0
+      ],
+      [
+       14000,
+       -2000,
+       0
+      ],
+      [
+       14000,
+       10000,
+       0
+      ],
+      [
+       -2000,
+       10000,
+       0
+      ]
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 12,
+    "tool": "set_site_boundary",
+    "args": {
+     "outline": "4f533362-089e-47d9-bd6a-7d7bf9bc4a73",
+     "source": "確認用の架空の測量図"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 13,
+    "tool": "set_energy_route",
+    "args": {
+     "route": "spec",
+     "region": 6,
+     "source": "確認用"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 14,
+    "tool": "ui_list",
+    "args": {
+     "window": "main",
+     "menus": true,
+     "filter": "透視投影"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"menu_items\":[{\"checked\":true,\"enabled\":true,\"path\":\"表示/透視投影\"}],\"title\":\"無題[*] - SketchBRep\",\"widget_count\":56,\"widgets\":[]}"
+   },
+   {
+    "n": 15,
+    "tool": "ui_trigger",
+    "args": {
+     "action": "透視投影"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 16,
+    "tool": "set_view",
+    "args": {
+     "view": "top"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 17,
+    "tool": "set_view",
+    "args": {
+     "view": "fit"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 18,
+    "tool": "ui_tool",
+    "args": {
+     "tool": "roof"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 19,
+    "tool": "ui_view_click",
+    "args": {
+     "points": [
+      [
+       -100,
+       -100,
+       3000
+      ],
+      [
+       8100,
+       -100,
+       3000
+      ],
+      [
+       8100,
+       6100,
+       3000
+      ],
+      [
+       -100,
+       6100,
+       3000
+      ]
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 20,
+    "tool": "ui_windows",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": "{\"status\":\"\",\"windows\":[{\"class\":\"sbr::app::ToolPaletteDock\",\"main\":false,\"modal\":false,\"object_name\":\"toolsPalette\",\"title\":\"ツール\"},{\"class\":\"sbr::app::MainWindow\",\"main\":true,\"modal\":false,\"object_name\":\"\",\"title\":\"無題[*] - SketchBRep\"},{\"class\":\"QLabel\",\"main\":false,\"modal\":false,\"object_name\":\"\",\"title\":\"\"}]}"
+   },
+   {
+    "n": 21,
+    "tool": "ui_capture",
+    "args": {
+     "window": "main"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 22,
+    "tool": "ui_type",
+    "args": {
+     "text": "",
+     "enter": true
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 23,
+    "tool": "ui_windows",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": "{\"status\":\"\",\"windows\":[{\"class\":\"sbr::app::ToolPaletteDock\",\"main\":false,\"modal\":false,\"object_name\":\"toolsPalette\",\"title\":\"ツール\"},{\"class\":\"sbr::app::MainWindow\",\"main\":true,\"modal\":false,\"object_name\":\"\",\"title\":\"無題[*] - SketchBRep\"},{\"class\":\"QLabel\",\"main\":false,\"modal\":false,\"object_name\":\"\",\"title\":\"\"}]}"
+   },
+   {
+    "n": 24,
+    "tool": "query_objects",
+    "args": {
+     "fields": [
+      "id",
+      "name"
+     ]
+    },
+    "ok": true,
+    "failed": [],
+    "answer": "{\"objects\":[{\"id\":\"f5085e46-d250-4990-b09f-62821f28f7a9\",\"name\":\"Wall 1\"},{\"id\":\"4da76945-a4d3-4860-93f2-f52cda92f64c\",\"name\":\"Wall 2\"},{\"id\":\"2eadadde-1cca-425a-a79d-a0187e116733\",\"name\":\"Wall 3\"},{\"id\":\"e5c1a52d-5337-4290-b57b-092650e385cd\",\"name\":\"Wall 4\"},{\"id\":\"14a53c73-3b2b-4661-acd0-9f4b5cddeb36\",\"name\":\"Wall 5\"},{\"id\":\"cc2ed178-b035-42e2-a531-3443e31d06a4\",\"name\":\"Slab 1\"},{\"id\":\"6e1a7f4b-3a71-4be2-a59c-48d136c08c39\",\"name\":\"Room 1\"},{\"id\":\"06737838-3031-44a1-bb9c-59e41a6655b9\",\"name\":\"Room 2\"},{\"id\":\"4f533362-089e-47d9-bd6a-7d7bf9bc4a73\",\"name\":\"Face 1\"},{\"id\":\"0d86f0e4-ff63-470f-8b00"
+   },
+   {
+    "n": 25,
+    "tool": "ui_trigger",
+    "args": {
+     "action": "透視投影"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 26,
+    "tool": "set_view",
+    "args": {
+     "view": "iso"
+    },
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   },
+   {
+    "n": 27,
+    "tool": "capture_view",
+    "args": {},
+    "ok": true,
+    "failed": [],
+    "answer": ""
+   }
+  ],
+  "pictures": [
+   {
+    "file": "4-1-21-0.png",
+    "caption": "外周の 4 点を押したところ"
+   },
+   {
+    "file": "4-1-27-0.png",
+    "caption": "屋根ツールで作った屋根（3D）"
    }
   ],
   "failed": [],

@@ -23,3 +23,13 @@ docs/252 の続き。AI が人と同じ手（道具・クリック・長さの�
 ## 確認
 
 - 台本の 2 項目は、新しいアプリで AI の確認で合格。メイン画面の絵に 3D が写っている。
+
+## 配布と、入れたアプリでの通し（fc80210）
+
+| 項目 | 内容 |
+|---|---|
+| CI | run 44994039920（push）成功。Linux 827 件すべて成功 |
+| ZIP | `SketchBRep-windows-x64-fc80210-local.zip`（83,141,913 bytes、SHA256 `e8cd01e701c72b7a50994faa9564678e609417a63434e8c1490fac5d8ae63ebd`） |
+| ZIP の検証 | `docs/validation/2026-11-22-portable-fc80210.json`・`-mat.json`（GUI 18 + 4 条件、失敗 0） |
+| `C:\Apps\SketchBrep` へ | `sbr.py install`（古いのは `C:\Apps\SketchBrep.old-20261122-153450`、いちばん古い `.old-20261122-120843` は消した。3 つ残す決まり） |
+| 台本の通し | 入れたアプリで 20 項目すべて AI の確認で合格、412 秒 |
