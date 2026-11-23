@@ -8,7 +8,17 @@
 
 コアテスト `Skp.ChangesInSketchUpComeBack` が成功した。壁を455 mm動かすと壁の種類を保って隣の壁が伸び、編集・削除された箱は検出される。置き換え・削除の指定で結果が変わり、動かした壁と箱は取り消し1回で元に戻る。別のSKPからの追加も確認している。例題Aでは2026-11-18にSketchUp本体で作った移動・形状変更・削除・追加を戻した記録がある。 [以前の本体確認](186_sketchup_round_trip.md)
 
-今回のSketchUp本体は起動時にサインインを要求した。13-4のSketchUp上の表示、13-6の本体での編集とSketchBRepの戻し込みダイアログは今回の確認に含まれていない。 [SketchUpのRuby起動機能](https://github.com/SketchUp/sketchup-extension-vscode-project/blob/main/CLAUDE.md)
+今回のSketchUp本体は起動時にサインインを要求した。13-4のSketchUp上の表示と、13-6のSketchUp本体での編集は今回未確認。 [SketchUpのRuby起動機能](https://github.com/SketchUp/sketchup-extension-vscode-project/blob/main/CLAUDE.md)
+
+配布版 `2eb59bb` の「ファイル > SketchUp で直した物を戻す...」をMCPで操作した。例題Aのコピーから、同梱SDKで西壁を−1,000 mm動かし、箱1つを削除し、別の箱の高さを500 mmから700 mmに拡大し、机を追加したSKPを用意した。ダイアログには移動・追加・形状変更・削除が各1件と表示された。
+
+| 選択 | 結果 |
+|---|---|
+| Cancel | 元の51オブジェクトのID・種類・外形・体積・属性が一致した |
+| いいえ（動かす・足すだけ） | 西壁は壁のまま−1,000 mm動き、つながる壁の西端も追従。机（600 × 600 × 700 mm）が加わり、両方の箱が元の形で残った |
+| はい（置き換え・消す） | 西壁とつながる壁の移動、机の追加に加え、削除した箱が消え、もう一方の箱は高さ700 mmになった |
+
+「はい」と「いいえ」の各操作後に編集メニューの「元に戻す」を1回選び、元の51オブジェクトに戻ったことをキャンセル時と同じ項目で照合した。確認画像と数値は配布フォルダの `outputs/skp-sync-gui-check/confirmation.png` と `result.json`。
 
 ## 13-8 平面で片開きドアを配置
 
