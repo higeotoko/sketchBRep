@@ -20,6 +20,27 @@
 
 「はい」と「いいえ」の各操作後に編集メニューの「元に戻す」を1回選び、元の51オブジェクトに戻ったことをキャンセル時と同じ項目で照合した。確認画像と数値は配布フォルダの `outputs/skp-sync-gui-check/confirmation.png` と `result.json`。
 
+### キャンセル時の履歴
+
+B-08（編集を壊さない）の確認。配布版 `4dbf133` と同じ処理で2件を再現した。SKP側に削除しかないと確認画面を出す前に直前の編集が取り消され、移動もあると既存の「やり直し」が仮適用の操作に置き換わった。
+
+修正後は、移動・追加の仮適用を確認前に履歴へ登録しない。確認が必要なら仮適用を破棄し、画面を出す。キャンセルのGUIテスト2件は直前の編集とやり直しの履歴を照合し、やり直しで元の編集を復元できることを確認する。確認データは配布フォルダの `outputs/skp-sync-history-check/before.xml` と `after.xml`。
+
+### 履歴修正の配布版
+
+展開したZIPの実際の画面で、例題Aの戻し込みを再確認した。キャンセルで元の51オブジェクトを保ち、「はい」と「いいえ」はそれぞれ選んだ内容を適用して取り消し1回で元に戻った。SKPに壁の移動しかない場合は確認画面を出さずに反映し、1回の取り消しで天井などの追従も含めて元に戻った。結果は配布フォルダの `outputs/skp-sync-history-check/result.json`。SketchUp本体での再編集はサインイン待ち。
+
+- Windowsコアは810件成功・8件スキップ。ファイル交換GUIは回帰2条件を含む13条件成功。
+- ZIPは通常18条件・べた基礎4条件・キャンセルの回帰2条件が成功。回帰結果は配布フォルダの `outputs/skp-sync-history-check/portable.xml`。 [通常のZIP検証](validation/2026-11-23-portable-dc5da59.json)・[べた基礎のZIP検証](validation/2026-11-23-portable-dc5da59-mat.json)
+- Linux CIは831件すべて成功。 [run 45138480699](https://github.com/higeotoko/sketchBRep/actions/runs/45138480699)
+
+| 項目 | 値 |
+|---|---|
+| コード | `dc5da59` |
+| ZIP | `SketchBRep-windows-x64-dc5da59-local.zip` |
+| サイズ | 83,317,945 bytes |
+| SHA256 | `d96bfddb09b5dd16ad7024fd759e65f861e93a6b3bbe372109b0d415cdad45db` |
+
 ## 13-8 平面で片開きドアを配置
 
 展開したWindows ZIPのGUIテスト3件が成功。建具一覧から片開きドアを選び、壁をクリックすると開口ができた。マウス位置に応じて開き方の記号が出て、反対側を選べば開く方向も変わった。取り消し1回で開口と建具が戻った。 [建具の配置](189_place_a_fitting_in_plan.md)
