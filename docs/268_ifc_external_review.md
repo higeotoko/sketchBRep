@@ -13,3 +13,9 @@
 - 庇1つを `IfcSlab` として読み取れた。IFC4の `PredefinedType` は `USERDEFINED`、`ObjectType` は `CANOPY`。ホストの外壁とは `IfcRelConnectsElements` で関連付けられ、庇の取付側と壁の外面が世界座標 Y = 7.3755 m で一致した。拡大画像でも開口の上で庇が外壁に接していた。[IFC4のIfcSlabの型](https://standards.buildingsmart.org/IFC/RELEASE/IFC4/FINAL/HTML/schema/ifcsharedbldgelements/lexical/ifcslabtypeenum.htm)
 
 確認データは配布フォルダの `outputs/ifc-external-review/`。内容は `ifc-review.json` と全景・1階・庇拡大のPNG。今回は外部ソフトを使ったAI確認で、人による画面操作と別のBIMビューアでの表示比較は未実施。
+
+## 建具形状の追加確認
+
+B-07（他のBIMへ渡せること）の確認。窓と扉の `Body` に、SketchBRepの3D表示と同じ建具形状を出力するようにした。枠・ガラス・扉などは開口IDでまとめ、従来の符号・配置と `IfcRelFillsElement` の関係を保つ。
+
+IfcOpenShell 0.9.0.post1で例題Aを再度開き、窓8件・扉6件の形状を取り出せた。各建具の符号と世界座標の配置は以前のIFCと一致し、各建具は対応する開口と幅・高さが一致した。検証したIFCと数値は配布フォルダの `outputs/ifc-axis-and-fitting-check/`。
