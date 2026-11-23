@@ -11,4 +11,10 @@
 
 別の試験モデルでは、長さ6 m・高さ2.8 mのサイディング壁から幅1.2 m・高さ1 mの開口を引いて15.60 m²。床は6 m × 4 mで24.00 m²。外壁5層・床3層の各面積と、面積×層の厚さで求めた体積がすべて一致した。
 
-Excelへの読み込みはAIが自動で確認した。アプリの保存ダイアログからの操作と、人によるファイルの見え方の確認は未実施。確認データは配布フォルダの `outputs/schedule-csv-review/` のCSV2本、`excel-import-check.json`、`quantity-check.json`。
+## 保存ボタンからの再確認
+
+配布版 `2eb59bb` の「表」ダイアログで、建具表と層の数量のタブを選び、それぞれ「この表を CSV に保存…」を押した。既定名は「建具表.csv」「層の数量.csv」。保存した2本は上記のCLI出力とバイト単位で一致した。
+
+保存ボタンから作ったCSVもWindows版Excel 16.0で読み取り専用として開いた。建具表の集計9列と層の数量6列を確認し、日本語の見出しと材料名が読め、幅780 mm・面積180.46 m²が数値として入った。
+
+保存とExcelの確認はAIによる自動操作。人による操作・見え方の確認は未実施。保存ボタンの結果は配布フォルダの `outputs/schedule-button-check/` のCSV2本、`save-button-check.json`、`excel-import-check.json`。面積の照合は `outputs/schedule-csv-review/quantity-check.json`。
