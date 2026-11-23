@@ -12923,8 +12923,11 @@ Result<Modeler::SkpSync> Modeler::syncSkp(const std::string& path, bool replaceE
     if (group == moves.end()) moves.emplace_back(delta, std::vector<ObjectId>{o->id});
     else group->second.push_back(o->id);
   }
-  for (const std::string& id : out.report.exportedIds)
-    if (!seen.count(id) && document_.find(id)) out.missing.push_back(id);
+  for (const std::string& id : out.report.exportedIds) {
+    if (seen.count(id)) continue;
+    if (const Object* object = document_.find(id))
+      (object->locked ? out.locked : out.missing).push_back(id);
+  }
 
   history_.beginGroup("Update from SketchUp");
   for (const auto& [delta, ids] : moves) {

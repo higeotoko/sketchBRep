@@ -465,6 +465,23 @@ TEST(Skp, ChangesInSketchUpComeBack) {
   ASSERT_TRUE(m.undo());
   EXPECT_NEAR(box(moved).CornerMin().Y(), 0, 1e-6);
   EXPECT_NEAR(box(south).CornerMin().Y(), -100, 1e-6);
+  // A locked object absent from the SKP is preserved while other changes still apply.
+  ASSERT_TRUE(m.setLocked({erased}, true));
+  const auto lockedSteps = m.history().undoCount();
+  const json locked = ok("sync_skp", {{"path", path}, {"remove_missing", true}, {"replace_edited", true}});
+  EXPECT_EQ(locked["locked"], json::array({erased}));
+  EXPECT_TRUE(locked["removed"].empty());
+  EXPECT_TRUE(locked["missing"].empty());
+  EXPECT_EQ(locked["replaced"], json::array({resized}));
+  EXPECT_EQ(locked["moved"].size(), 2u);
+  ASSERT_TRUE(m.document().find(erased));
+  EXPECT_TRUE(m.document().find(erased)->locked);
+  EXPECT_EQ(m.history().undoCount(), lockedSteps + 1);
+  ASSERT_TRUE(m.undo());
+  EXPECT_NEAR(box(moved).CornerMin().Y(), 0, 1e-6);
+  EXPECT_NEAR(box(resized).CornerMax().Z(), 800, 1e-6);
+  EXPECT_TRUE(m.document().find(erased)->locked);
+  ASSERT_TRUE(m.undo());
   // Again, removing what was erased and taking the edited shape from SketchUp.
   const json t = ok("sync_skp", {{"path", path}, {"remove_missing", true}, {"replace_edited", true}});
   EXPECT_EQ(t["removed"], json::array({erased})) << t.dump();
