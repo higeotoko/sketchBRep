@@ -4,6 +4,8 @@
 
 配布版 `2eb59bb` で例題Aのコピーの1階西壁に「1F 外壁」のタグを付け、SKPに書き出した。同梱SDKで読み戻した壁のタグは「1F 外壁」。`SketchBRep` 辞書に由来する `skp_attributes` に `kind=wall`、`wall_type=exterior_siding`、サイディングから石膏ボードまでの5層を確認した。コアテスト `Skp.TagsAndInformationGoAndComeBack` も成功。
 
+配布版 `92763c0` で対象を例題Aの壁12枚に広げた。各階の外壁4枚と間仕切り2枚に「1FL 外壁」「1FL 間仕切り」「2FL 外壁」「2FL 間仕切り」を付け、壁だけを日本語名のSKPへ出力した。同梱のSketchUp SDKのC APIでSKPのタグと `SketchBRep` 属性辞書を直接読み、SketchBRepに読み戻したソリッド12個とも照合した。元のID・基準階・壁の種類・仕様名・材料層の名前と厚さが一致した。外壁は5層、間仕切りは3層。配布フォルダの `outputs/skp-wall-tag-matrix/` に検証用SKPと部材別の結果 `result.json` がある。
+
 ## 13-6 編集の戻し込み
 
 コアテスト `Skp.ChangesInSketchUpComeBack` が成功した。壁を455 mm動かすと壁の種類を保って隣の壁が伸び、編集・削除された箱は検出される。置き換え・削除の指定で結果が変わり、動かした壁と箱は取り消し1回で元に戻る。別のSKPからの追加も確認している。例題Aでは2026-11-18にSketchUp本体で作った移動・形状変更・削除・追加を戻した記録がある。 [以前の本体確認](186_sketchup_round_trip.md)
