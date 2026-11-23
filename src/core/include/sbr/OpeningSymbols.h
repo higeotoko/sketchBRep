@@ -61,6 +61,7 @@ struct FittingSolid {
   TopoDS_Shape shape;
   std::string part;  // frame | glass | leaf
   doc::ObjectId host;
+  std::string openingId;
 };
 std::vector<FittingSolid> fittingSolids(const doc::Document& document, const std::set<std::string>* only = nullptr);
 }  // namespace sbr::draw

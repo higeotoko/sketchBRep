@@ -310,7 +310,7 @@ std::vector<FittingSolid> fittingSolids(const doc::Document& d, const std::set<s
         return prism.IsDone() ? prism.Shape() : TopoDS_Shape();
       };
       auto add = [&](const TopoDS_Shape& shape, const char* part) {
-        if (!shape.IsNull()) out.push_back({shape, part, host.id});
+        if (!shape.IsNull()) out.push_back({shape, part, host.id, o.id});
       };
       // The frame: the opening's lining, less what is inside it.
       const double iw = w - 2 * kFrame, bottom = door ? 0.0 : kFrame, ih = h - kFrame - bottom;

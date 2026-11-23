@@ -9812,9 +9812,9 @@
     },
     {
       "id": "12-9",
-      "title": "窓台から開口をコピーし、別壁・同じ壁へ貼る",
+      "title": "建具付きの窓台から開口をコピーし、別壁・同じ壁へ貼る",
       "docs": "docs/126",
-      "look": "窓台を選んでコピーしてから元に建具を設定し、別の壁と同じ壁へ貼る。案内と、貼った窓の形。",
+      "look": "建具付きの窓台を選んでコピーし、別の壁と同じ壁へ貼る。案内と、貼った窓の形。",
       "base": [],
       "steps": [
         {
@@ -9848,6 +9848,16 @@
             "width": 1000,
             "height": 1200,
             "sill": 900
+          }
+        },
+        {
+          "tool": "set_opening_fittings",
+          "args": {
+            "host": "$source.ids.0",
+            "fitting": {
+              "type": "sliding_double",
+              "frame": 48
+            }
           }
         },
         {
@@ -9907,16 +9917,6 @@
             ]
           },
           "show": true
-        },
-        {
-          "tool": "set_opening_fittings",
-          "args": {
-            "host": "$source.ids.0",
-            "fitting": {
-              "type": "sliding_double",
-              "frame": 48
-            }
-          }
         },
         {
           "tool": "create_wall",

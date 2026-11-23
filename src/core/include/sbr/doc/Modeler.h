@@ -933,6 +933,8 @@ class Modeler {
     bool towardsLeft = false;
   };
   static std::optional<LayerUsage> layerUsage(const Document& document, const Object& element);
+  // World-space endpoints of the wall's drawn line, including its reference offset.
+  static std::optional<std::pair<gp_Pnt, gp_Pnt>> wallReferenceLine(const Document& document, const Object& wall);
   // Removes openings: the wall is whole again there. Their fittings go with them; the other
   // openings keep their ids, sizes and fittings. One undo step.
   Status removeOpenings(const ObjectId& host, const std::vector<std::size_t>& indices);

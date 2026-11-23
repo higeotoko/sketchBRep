@@ -7803,6 +7803,12 @@ std::optional<Modeler::LayerUsage> Modeler::layerUsage(const Document& document,
   return usage;
 }
 
+std::optional<std::pair<gp_Pnt, gp_Pnt>> Modeler::wallReferenceLine(const Document& document, const Object& wall) {
+  const auto band = wallBand(document, wall);
+  if (!band) return std::nullopt;
+  return std::pair{band->start, band->start.Translated(gp_Vec(band->dir) * band->length)};
+}
+
 std::vector<std::pair<gp_Pnt, gp_Dir>> Modeler::wallLayerPlanes(const Document& document, const Object& wall) {
   std::vector<std::pair<gp_Pnt, gp_Dir>> out;
   const auto w = wallBand(document, wall);

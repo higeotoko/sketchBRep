@@ -223,6 +223,11 @@ TEST_F(IfcExport, AHouseIsWrittenWithItsStoreysPartsAndRelations) {
   EXPECT_EQ(ifc.of("IFCOPENINGELEMENT").size(), 3u);
   EXPECT_EQ(ifc.of("IFCRELVOIDSELEMENT").size(), 3u);
   EXPECT_EQ(ifc.of("IFCRELFILLSELEMENT").size(), 2u);
+  for (const int relation : ifc.of("IFCRELFILLSELEMENT")) {
+    const int fitting = refsIn(ifc.at(relation).args[5]).front();
+    ASSERT_NE(ifc.at(fitting).args[6], "$");
+    EXPECT_GT(ifc.volume(fitting), 0.0);
+  }
   EXPECT_EQ(ifc.of("IFCBUILDINGSTOREY").size(), 2u);
   EXPECT_EQ(ifc.of("IFCPROJECT").size(), 1u);
 
@@ -445,7 +450,7 @@ TEST_F(IfcExport, ABalconyIsASlabARailingAndPosts) {
 TEST_F(IfcExport, LayersAreMaterialLayerSets) {
   ASSERT_TRUE(modeler.setLevels({{"", "1FL", 0}}));
   ok("create_wall", {{"points", {{0, 0}, {6000, 0}, {6000, 4000}, {0, 4000}, {0, 0}}}, {"type", "exterior_siding"}, {"height", 2800}});
-  ok("create_wall", {{"points", {{3000, 65}, {3000, 3935}}}, {"type", "interior_board"}, {"height", 2800}});
+  const json partition = ok("create_wall", {{"points", {{3000, 65}, {3000, 3935}}}, {"type", "interior_board"}, {"height", 2800}})["ids"][0];
   ok("create_wall", {{"points", {{0, -3000}, {4000, -3000}}}, {"thickness", 150}, {"height", 2800}});  // no layers
   ok("define_type", {{"name", "F1"}, {"part", "floor"}, {"layers", {{{"name", "flooring"}, {"thickness", 15}}, {{"name", "ply"}, {"thickness", 24}}, {{"name", "joist"}, {"thickness", 105}}}}});
   ok("batch", {{"commands", {{{"command", "create_slab"}, {"args", {{"outline", {{0, 0}, {6000, 0}, {6000, 4000}, {0, 4000}}}, {"top", 0}, {"thickness", 144}}}},
@@ -478,4 +483,25 @@ TEST_F(IfcExport, LayersAreMaterialLayerSets) {
   EXPECT_TRUE(floorSet);
   EXPECT_NE(text->find(".AXIS3.,.NEGATIVE."), std::string::npos);
   EXPECT_NE(text->find(".AXIS2."), std::string::npos);
+
+  int partitionEntity = 0;
+  for (int wall : ifc.of("IFCWALL"))
+    if (ifc.at(wall).args[7] == "'" + partition.get<std::string>() + "'") partitionEntity = wall;
+  ASSERT_NE(partitionEntity, 0);
+  const auto& wall = ifc.at(partitionEntity).args;
+  const int placement = refsIn(wall[5]).front();
+  const int frame = refsIn(ifc.at(placement).args[1]).front();
+  EXPECT_EQ(ifc.point(refsIn(ifc.at(frame).args[0]).front()), (std::vector<double>{3000, 65, 0}));
+  EXPECT_EQ(ifc.point(refsIn(ifc.at(frame).args[2]).front()), (std::vector<double>{0, 1, 0}));
+  const auto reps = refsIn(ifc.at(refsIn(wall[6]).front()).args[2]);
+  ASSERT_EQ(reps.size(), 2u);
+  const auto& axis = ifc.at(reps[1]).args;
+  EXPECT_EQ(axis[1], "'Axis'");
+  EXPECT_EQ(axis[2], "'Curve2D'");
+  const int axisLine = refsIn(axis[3]).front();
+  const auto points = refsIn(ifc.at(axisLine).args[0]);
+  ASSERT_EQ(points.size(), 2u);
+  EXPECT_EQ(ifc.point(points[0]), (std::vector<double>{0, 0}));
+  EXPECT_EQ(ifc.point(points[1]), (std::vector<double>{3870, 0}));
+  EXPECT_NEAR(ifc.volume(partitionEntity), volume(partition.get<std::string>()), 1.0);
 }

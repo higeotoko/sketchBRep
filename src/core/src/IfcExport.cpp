@@ -18,12 +18,17 @@
 #include <BRepTools.hxx>
 #include <BRepTools_WireExplorer.hxx>
 #include <BRep_Tool.hxx>
+#include <BRep_Builder.hxx>
 #include <Poly_Triangulation.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
+#include <TopoDS_Compound.hxx>
+#include <gp_Ax3.hxx>
 #include <gp_Pln.hxx>
 #include <nlohmann/json.hpp>
 
+#include "sbr/OpeningSymbols.h"
 #include "sbr/doc/Modeler.h"
 #include "sbr/doc/Schedules.h"
 #include "sbr/geom/Measure.h"
@@ -152,9 +157,10 @@ struct File {
     if (it != directions.end()) return it->second;
     return directions[key] = add("IFCDIRECTION((" + key + "))");
   }
-  // A placement `at` relative to `relTo` (0: the world), axes as the world's.
-  int placement(int relTo, double x, double y, double z) {
-    const int axis = add("IFCAXIS2PLACEMENT3D(" + ref(point(x, y, z)) + "," + ref(direction(0, 0, 1)) + "," + ref(direction(1, 0, 0)) + ")");
+  // A placement relative to `relTo` (0: the world), with a horizontal X axis.
+  int placement(int relTo, double x, double y, double z, const gp_Dir& along = gp::DX()) {
+    const int axis = add("IFCAXIS2PLACEMENT3D(" + ref(point(x, y, z)) + "," + ref(direction(0, 0, 1)) + "," +
+                         ref(direction(along.X(), along.Y(), 0)) + ")");
     return add("IFCLOCALPLACEMENT(" + (relTo ? ref(relTo) : std::string("$")) + "," + ref(axis) + ")");
   }
 };
@@ -272,6 +278,7 @@ Result<std::string> ifcText(const Modeler& modeler, const std::string& fileName,
   const int origin = f.add("IFCAXIS2PLACEMENT3D(" + ref(f.point(0, 0, 0)) + "," + ref(f.direction(0, 0, 1)) + "," + ref(f.direction(1, 0, 0)) + ")");
   const int context = f.add("IFCGEOMETRICREPRESENTATIONCONTEXT($,'Model',3,1.E-5," + ref(origin) + ",$)");
   const int body = f.add("IFCGEOMETRICREPRESENTATIONSUBCONTEXT('Body','Model',*,*,*,*," + ref(context) + ",$,.MODEL_VIEW.,$)");
+  const int axisContext = f.add("IFCGEOMETRICREPRESENTATIONSUBCONTEXT('Axis','Model',*,*,*,*," + ref(context) + ",$,.GRAPH_VIEW.,$)");
   const int mm = f.add("IFCSIUNIT(*,.LENGTHUNIT.,.MILLI.,.METRE.)");
   const int m2 = f.add("IFCSIUNIT(*,.AREAUNIT.,$,.SQUARE_METRE.)");
   const int m3 = f.add("IFCSIUNIT(*,.VOLUMEUNIT.,$,.CUBIC_METRE.)");
@@ -332,16 +339,23 @@ Result<std::string> ifcText(const Modeler& modeler, const std::string& fileName,
   std::map<std::string, const OpeningRow*> marks;
   const OpeningSchedule schedule = openingSchedule(document);
   for (const OpeningRow& r : schedule.rows) marks[r.host + ":" + r.openingId] = &r;
+  std::map<std::pair<std::string, std::string>, TopoDS_Compound> fittingBodies;
+  BRep_Builder builder;
+  for (const draw::FittingSolid& part : draw::fittingSolids(document)) {
+    auto& compound = fittingBodies[{part.host, part.openingId}];
+    if (compound.IsNull()) builder.MakeCompound(compound);
+    builder.Add(compound, part.shape);
+  }
 
   // --- elements ---
   bool meshedAny = false;
-  auto shapeOf = [&](const TopoDS_Shape& world, double dz) {
+  auto shapeOf = [&](const TopoDS_Shape& world, double dz, int axisRep = 0) {
     std::vector<int> items;
     for (TopExp_Explorer e(world, TopAbs_SOLID); e.More(); e.Next())
       if (const int item = brep(f, e.Current(), dz, meshedAny)) items.push_back(item);
     if (items.empty()) return 0;
     const int rep = f.add("IFCSHAPEREPRESENTATION(" + ref(body) + ",'Body','Brep'," + refs(items) + ")");
-    return f.add("IFCPRODUCTDEFINITIONSHAPE($,$," + refs({rep}) + ")");
+    return f.add("IFCPRODUCTDEFINITIONSHAPE($,$," + refs(axisRep ? std::vector{rep, axisRep} : std::vector{rep}) + ")");
   };
   std::set<std::string> columnRoles = {"column", "through_column", "roof_post", "floor_post"};
   std::set<std::string> beamRoles = {"beam", "girder", "floor_beam", "rim_beam", "eave_beam", "roof_beam", "sill",
@@ -366,8 +380,25 @@ Result<std::string> ifcText(const Modeler& modeler, const std::string& fileName,
     Storey& storey = kind == "wall"                     ? storeyOf(attribute(o, "base_level"), z0)
                      : (kind == "slab" || kind == "roof") ? storeyOf(attribute(o, "top_level"), kind == "slab" ? z1 : z0)
                                                           : storeyAt(z0);
-    const int placement = f.placement(storey.placement, 0, 0, 0);
-    const int shape = shapeOf(world, storey.elevation);
+    int placement = 0;
+    int axisRep = 0;
+    double bodyElevation = storey.elevation;
+    TopLoc_Location wallLocal;
+    if (const auto line = Modeler::wallReferenceLine(document, o)) {
+      const auto& [start, end] = *line;
+      const gp_Vec run(start, end);
+      const gp_Dir along(run.X(), run.Y(), 0);
+      placement = f.placement(storey.placement, start.X(), start.Y(), start.Z() - storey.elevation, along);
+      gp_Trsf toLocal;
+      toLocal.SetTransformation(gp_Ax3(start, gp::DZ(), along));
+      wallLocal = TopLoc_Location(toLocal);
+      bodyElevation = 0;
+      const int axis = f.add("IFCPOLYLINE(" + refs({f.point2(0, 0), f.point2(std::hypot(run.X(), run.Y()), 0)}) + ")");
+      axisRep = f.add("IFCSHAPEREPRESENTATION(" + ref(axisContext) + ",'Axis','Curve2D'," + refs({axis}) + ")");
+    } else {
+      placement = f.placement(storey.placement, 0, 0, 0);
+    }
+    const int shape = shapeOf(world.Moved(wallLocal), bodyElevation, axisRep);
     if (!shape) {
       ++summary.skipped;
       continue;
@@ -415,7 +446,7 @@ Result<std::string> ifcText(const Modeler& modeler, const std::string& fileName,
           if (!outline) continue;
           BRepPrimAPI_MakePrism hole(outline.value(), gp_Vec(op.normal) * -op.depth);
           if (!hole.IsDone()) continue;
-          const int holeShape = shapeOf(hole.Shape(), storey.elevation);
+          const int holeShape = shapeOf(hole.Shape().Moved(wallLocal), bodyElevation);
           if (!holeShape) continue;
           const std::string key = "opening:" + o.id + ":" + op.id;
           const int holePlacement = f.placement(placement, 0, 0, 0);
@@ -430,12 +461,18 @@ Result<std::string> ifcText(const Modeler& modeler, const std::string& fileName,
           const bool door = type != "window" && op.sill < 1.0;
           const gp_Pnt at(op.center.X(), op.center.Y(), op.bottom - storey.elevation);
           const int fillPlacement = f.placement(storey.placement, at.X(), at.Y(), at.Z());
+          int fillShape = 0;
+          if (const auto part = fittingBodies.find({o.id, op.id}); part != fittingBodies.end()) {
+            gp_Trsf toLocal;
+            toLocal.SetTranslation(gp_Vec(-at.X(), -at.Y(), -op.bottom));
+            fillShape = shapeOf(part->second.Moved(TopLoc_Location(toLocal)), 0);
+          }
           // Name: its mark (AW1, WD2, AW-1, ...); Description: its product number when given (docs/117).
           const auto marked = marks.find(o.id + ":" + op.id);
           const std::string name = marked != marks.end() && !marked->second->mark.empty() ? marked->second->mark : (door ? "Door" : "Window");
           const std::string product = marked != marks.end() ? marked->second->product : std::string();
           const std::string common = guid("fitting:" + key) + ",$," + text(name) + "," + (product.empty() ? std::string("$") : text(product)) + "," + text(type) + "," +
-                                     ref(fillPlacement) + ",$," + text(op.id) + "," + real(op.height) + "," + real(op.width);
+                                     ref(fillPlacement) + "," + (fillShape ? ref(fillShape) : "$") + "," + text(op.id) + "," + real(op.height) + "," + real(op.width);
           int fill = 0;
           if (door) {
             const std::string hinge = fitting->value("hinge", std::string("left")), slide = fitting->value("slide", std::string("left"));
