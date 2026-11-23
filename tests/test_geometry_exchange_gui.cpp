@@ -1,6 +1,7 @@
 #include <QtTest/QtTest>
 #include <algorithm>
 #include <cmath>
+#include <QAbstractButton>
 #include <QAction>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -184,6 +185,67 @@ class GeometryExchangeGui:public QObject {
    const auto bounds = geom::exactBounds(shape);
    QVERIFY(bounds.CornerMin().Distance(gp_Pnt(0, 0, 0)) < 1e-6);
    QVERIFY(bounds.CornerMax().Distance(gp_Pnt(1000, 800, 700)) < 1e-6);
+ }
+ void cancellingSketchUpSyncPreservesHistory_data() {
+   QTest::addColumn<bool>("moveSurvivor");
+   QTest::newRow("deletion-only") << false;
+   QTest::newRow("move-and-deletion") << true;
+ }
+ void cancellingSketchUpSyncPreservesHistory() {
+   QFETCH(bool, moveSurvivor);
+   std::string reason;
+   if (!geom::skpAvailable(&reason)) QSKIP(reason.c_str());
+   QTemporaryDir dir;
+   QVERIFY(dir.isValid());
+   const auto path = dir.filePath(QStringLiteral("sync.skp")).toUtf8().toStdString();
+   app::MainWindow window;
+   window.show();
+   QVERIFY(QTest::qWaitForWindowExposed(&window));
+   auto& modeler = window.modeler();
+   const auto first = modeler.importShape(BRepPrimAPI_MakeBox(100, 100, 100).Shape(), "First", "test");
+   const auto second = modeler.importShape(BRepPrimAPI_MakeBox(gp_Pnt(300, 0, 0), 100, 100, 100).Shape(), "Second", "test");
+   QVERIFY(first && second);
+   QVERIFY(modeler.exportSkp(path));
+   QVERIFY(geom::skpEditGroup(path, *second, nullptr, true));
+   if (moveSurvivor) {
+     gp_Trsf shift;
+     shift.SetTranslation(gp_Vec(0, 500, 0));
+     QVERIFY(geom::skpEditGroup(path, *first, &shift, false));
+   }
+   const auto redoObject = modeler.importShape(BRepPrimAPI_MakeBox(30, 40, 50).Shape(), "Redo", "test");
+   QVERIFY(redoObject);
+   auto& history = modeler.history();
+   QVERIFY(history.undo());
+   const auto revision = history.revision();
+   const auto steps = history.undoCount();
+   const auto redo = history.redoName();
+   auto* sync = action(window, QStringLiteral("SketchUp で直した物を戻す..."));
+   QVERIFY(sync);
+   bool confirmed = false;
+   QTimer timer;
+   connect(&timer, &QTimer::timeout, [&] {
+     if (auto* file = qobject_cast<QFileDialog*>(QApplication::activeModalWidget())) {
+       choose(file, dir.path(), QStringLiteral("sync.skp"));
+     } else if (auto* question = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+       if (auto* cancel = question->button(QMessageBox::Cancel)) {
+         confirmed = true;
+         cancel->click();
+       } else {
+         question->reject();
+       }
+     }
+   });
+   timer.start(10);
+   sync->trigger();
+   timer.stop();
+   QVERIFY(confirmed);
+   QCOMPARE(history.revision(), revision);
+   QCOMPARE(history.undoCount(), steps);
+   QCOMPARE(history.redoName(), redo);
+   QVERIFY(modeler.document().find(*first));
+   QVERIFY(modeler.document().find(*second));
+   QVERIFY(history.redo());
+   QVERIFY(modeler.document().find(*redoObject));
  }
  void invalidFileAndImportCancellationLeaveModelAlone_data(){exportAndImportFromMenus_data();}
  void invalidFileAndImportCancellationLeaveModelAlone(){

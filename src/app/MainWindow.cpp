@@ -7327,15 +7327,18 @@ void MainWindow::syncSkpFile() {
   const QString path = QFileDialog::getOpenFileName(this, tr("SketchUp で直した物を戻す"), QSettings().value("files/importDirectory").toString(),
                                                     tr("SketchUp (*.skp)"));
   if (path.isEmpty()) return;
-  // First look: what changed (nothing is changed by looking, and the look is undone at once).
+  // Keep the initial changes unrecorded until we know whether confirmation is needed.
+  auto& history = modeler_.history();
+  history.beginGroup("Update from SketchUp");
   const auto look = modeler_.syncSkp(utf8(path), false, false);
   if (!look) {
+    history.abortGroup();
     reportError(tr("SketchUp のファイルを読めませんでした: %1").arg(QString::fromStdString(look.error())));
     return;
   }
   bool replace = false, remove = false;
   if (!look->edited.empty() || !look->missing.empty()) {
-    modeler_.undo();  // the look made the moves and additions: ask first, then do it all once
+    history.abortGroup();  // Restore the model before asking, without touching undo or redo.
     QMessageBox box(this);
     box.setWindowTitle(tr("SketchUp で直した物を戻す"));
     box.setText(tr("動かした物 %1 個、新しい物 %2 個を戻します。").arg(look->moved.size()).arg(look->added.size()));
@@ -7357,6 +7360,7 @@ void MainWindow::syncSkpFile() {
     setStatus(tr("SketchUp から戻しました：動かした %1・足した %2・置き換えた %3・消した %4（Ctrl+Z で戻せます）")
                   .arg(done->moved.size()).arg(done->added.size()).arg(done->replaced.size()).arg(done->removed.size()));
   } else {
+    history.endGroup();
     setStatus(tr("SketchUp から戻しました：動かした %1・足した %2・変わらない %3（Ctrl+Z で戻せます）")
                   .arg(look->moved.size()).arg(look->added.size()).arg(look->unchanged.size()));
   }
