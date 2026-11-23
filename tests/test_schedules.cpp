@@ -2423,6 +2423,37 @@ TEST_F(Schedules, TheSetHasSectionsMarkedOnThePlans) {
   std::filesystem::remove_all(dir);
 }
 
+TEST_F(Schedules, DrawingIndexUsesPaperAfterAddingSectionMarks) {
+  ok("delete_openings", {{"host", north}, {"openings", {1, 2}}});
+  ok("create_room", {{"at", {6000, 3000}}, {"name", "洋室"}});
+  const json outline = ok("create_polygon", {{"points", {{-2000, -2000, 0}, {14000, -2000, 0}, {14000, 10000, 0}, {-2000, 10000, 0}}}});
+  ok("set_site_boundary", {{"outline", outline["id"]}, {"source", "Test"}});
+  const auto plan = [](const auto& set) {
+    return std::find(set.names.begin(), set.names.end(), "1FL 平面図") - set.names.begin();
+  };
+  sbr::doc::DrawingSetSpec spec;
+  spec.sections = false;
+  const auto without = sbr::doc::drawingSet(modeler.document(), spec);
+  ASSERT_TRUE(without);
+  ASSERT_LT(plan(*without), static_cast<std::ptrdiff_t>(without->sheets.size()));
+  EXPECT_EQ(without->sheets[plan(*without)].paper, "A4");
+  spec.sections = true;
+  const auto with = sbr::doc::drawingSet(modeler.document(), spec);
+  ASSERT_TRUE(with);
+  const auto index = plan(*with);
+  ASSERT_LT(index, static_cast<std::ptrdiff_t>(with->sheets.size()));
+  ASSERT_EQ(with->sheets[index].paper, "A3");
+  const auto& items = with->sheets.front().items;
+  const auto row = std::find_if(items.begin(), items.end(), [&](const auto& item) {
+    return item.kind == sbr::draw::Item::Kind::Text && item.text == with->numbers[index];
+  });
+  ASSERT_NE(row, items.end());
+  EXPECT_TRUE(std::any_of(items.begin(), items.end(), [&](const auto& item) {
+    return item.kind == sbr::draw::Item::Kind::Text && item.text == with->sheets[index].paper &&
+           std::abs(item.points.front().Y() - row->points.front().Y()) < 1e-6;
+  }));
+}
+
 // docs/125: drawings written under Japanese names (the app suggests the drawing's name).
 TEST_F(Schedules, DrawingsAreWrittenUnderJapaneseNames) {
   const auto dir = std::filesystem::temp_directory_path() / std::filesystem::u8path(u8"図面テスト");

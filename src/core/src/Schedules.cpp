@@ -3510,26 +3510,7 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
     std::snprintf(text, sizeof text, "%02zu", k);
     return spec.prefix + text;
   };
-  draw::Table list;
-  list.title = "図面リスト";
-  list.headers = {"図番", "図面名", "縮尺", "用紙"};
-  list.rows.push_back({number(1), "図面リスト", "", ""});
-  for (std::size_t i = 0; i < sheets.size(); ++i) {
-    char scale[32];
-    std::snprintf(scale, sizeof scale, "1:%g", sheets[i].scale);
-    list.rows.push_back({number(i + 2), names[i], tableOnly[i] ? "" : scale, sheets[i].paper});
-  }
-  list.notes = {"モデルから作った図面です。図面を変えた時は、もう一度書き出してください。"};
-  draw::SheetSpec listSpec;
-  listSpec.title = spec.title;
-  listSpec.title.drawing = list.title;
-  listSpec.title.number = number(1);
-  const auto listSheet = draw::tableSheet(list, listSpec);
-  if (!listSheet) return R::failure(listSheet.error());
-  out.sheets.push_back(*listSheet);
-  out.numbers.push_back(number(1));
-  out.names.push_back(list.title);
-  // The drawings again with their numbers in the title block.
+  // The drawings again with their numbers in the title block and with the cut marks.
   for (std::size_t i = 0; i < sheets.size(); ++i) {
     // Lay out again with the number (the title block is drawn in the layout).
     const Planned* p = nullptr;
@@ -3579,6 +3560,27 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
     out.numbers.push_back(number(i + 2));
     out.names.push_back(names[i]);
   }
+  // Cut marks and their sheet numbers can change which paper a plan needs.
+  // Build the index from the final layouts.
+  draw::Table list;
+  list.title = "図面リスト";
+  list.headers = {"図番", "図面名", "縮尺", "用紙"};
+  list.rows.push_back({number(1), list.title, "", ""});
+  for (std::size_t i = 0; i < out.sheets.size(); ++i) {
+    char scale[32];
+    std::snprintf(scale, sizeof scale, "1:%g", out.sheets[i].scale);
+    list.rows.push_back({out.numbers[i], out.names[i], tableOnly[i] ? "" : scale, out.sheets[i].paper});
+  }
+  list.notes = {"モデルから作った図面です。図面を変えた時は、もう一度書き出してください。"};
+  draw::SheetSpec listSpec;
+  listSpec.title = spec.title;
+  listSpec.title.drawing = list.title;
+  listSpec.title.number = number(1);
+  auto listSheet = draw::tableSheet(list, listSpec);
+  if (!listSheet) return R::failure(listSheet.error());
+  out.sheets.insert(out.sheets.begin(), std::move(*listSheet));
+  out.numbers.insert(out.numbers.begin(), number(1));
+  out.names.insert(out.names.begin(), list.title);
   return out;
 }
 

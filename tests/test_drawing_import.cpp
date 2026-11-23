@@ -12,6 +12,7 @@
 #include <QInputDialog>
 #include <QMessageBox>
 #include <QAbstractButton>
+#include <QPushButton>
 #include <QCheckBox>
 #include <QElapsedTimer>
 #include <QMenu>
@@ -93,6 +94,73 @@ class DrawingImport : public QObject {
     QVERIFY(data.startsWith("AC1032"));
     QVERIFY(data.contains("AC1009") && data.contains("CUT"));  // our DXF went in
     QSettings().setValue("import/odaConverter", QString());
+  }
+  void drawingSavesWithItsJapaneseDefaultName_data() {
+    QTest::addColumn<QString>("suffix");
+    QTest::newRow("dxf") << QStringLiteral("dxf");
+    QTest::newRow("jww") << QStringLiteral("jww");
+  }
+  void drawingSavesWithItsJapaneseDefaultName() {
+    QFETCH(QString, suffix);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QSettings().setValue("drawing/dir", dir.path());
+    QSettings().setValue("drawing/format", QStringLiteral("pdf"));
+    QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
+    app::MainWindow window;
+    auto& modeler = window.modeler();
+    QVERIFY(modeler.setLevels({{"", "1FL", 0}}));
+    QVERIFY(modeler.createWalls({gp_Pnt(0, 0, 0), gp_Pnt(4000, 0, 0)}, 200, 3000, 0));
+    app::DrawingDialog drawing(modeler.document(), &window);
+    drawing.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&drawing));
+    drawing.refreshNow();
+    QVERIFY2(drawing.sheet().has_value(), qPrintable(drawing.lastError()));
+    auto* save = drawing.findChild<QPushButton*>(QStringLiteral("drawingExportButton"));
+    QVERIFY(save);
+
+    const QString expectedName = QStringLiteral("1FL 平面図");
+    QString defaultName, nameAfterSelection;
+    QTimer timer;
+    connect(&timer, &QTimer::timeout, [&] {
+      auto* file = qobject_cast<QFileDialog*>(QApplication::activeModalWidget());
+      if (!file) return;
+      timer.stop();
+      auto* name = file->findChild<QLineEdit*>(QStringLiteral("fileNameEdit"));
+      const auto filters = file->nameFilters();
+      const QString pattern = QStringLiteral("(*.") + suffix + QLatin1Char(')');
+      const auto chosen = std::find_if(filters.begin(), filters.end(), [&](const QString& candidate) {
+        return candidate.endsWith(pattern);
+      });
+      if (!name || chosen == filters.end()) {
+        file->reject();
+        return;
+      }
+      defaultName = name->text();
+      file->selectNameFilter(*chosen);
+      nameAfterSelection = name->text();
+      QMetaObject::invokeMethod(file, "accept", Qt::QueuedConnection);
+    });
+    QTimer watchdog;
+    watchdog.setSingleShot(true);
+    bool timedOut = false;
+    connect(&watchdog, &QTimer::timeout, [&] {
+      timedOut = true;
+      if (auto* modal = qobject_cast<QDialog*>(QApplication::activeModalWidget())) modal->reject();
+    });
+    watchdog.start(10000);
+    timer.start(10);
+    save->click();
+    timer.stop();
+    watchdog.stop();
+    QVERIFY(!timedOut);
+    QCOMPARE(defaultName, expectedName);
+    QCOMPARE(nameAfterSelection, expectedName);
+    QFile output(dir.filePath(expectedName + QLatin1Char('.') + suffix));
+    QVERIFY2(output.open(QIODevice::ReadOnly), qPrintable(output.fileName()));
+    const QByteArray data = output.readAll();
+    QVERIFY(data.size() > 100);
+    QVERIFY(suffix == QStringLiteral("jww") ? data.startsWith("JwwData.") : data.contains("ENTITIES"));
   }
   void conversionAndGuiImport() {
     QTemporaryDir dir;
