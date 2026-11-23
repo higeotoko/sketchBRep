@@ -41,6 +41,24 @@ B-08（編集を壊さない）の確認。配布版 `4dbf133` と同じ処理�
 | サイズ | 83,317,945 bytes |
 | SHA256 | `d96bfddb09b5dd16ad7024fd759e65f861e93a6b3bbe372109b0d415cdad45db` |
 
+### 鍵付き部材がSKP側で削除された場合
+
+B-08（編集を壊さない）の確認。配布版 `dc5da59` で、例題AのSKP側から削除した箱にSketchBRepで鍵を掛けて戻し込むと、鍵付き削除でエラーになり、同じSKPの壁の移動・別の箱の形状変更・机の追加も反映されなかった。
+
+修正後は、SKPに含まれなくなった鍵付き部材を削除候補から外し、`sync_skp` の `locked` で返す。回帰テスト `Skp.ChangesInSketchUpComeBack` では、鍵付きの箱を残し、ほかの移動・置き換えを反映し、取り消し1回で戻ることを照合する。
+
+配布版 `92763c0` のCLIとGUIで同じ例題Aを再確認した。削除された鍵付きの箱は `locked` で返り、確認画面の削除候補から外れた。「はい」を選ぶと、西壁とつながる壁の西端が1,000 mm動き、別の箱は高さ700 mmになり、机が追加された。取り消し1回で戻った。配布フォルダの `outputs/skp-sync-locked-check/` にCLIの修正前後とGUIの結果がある。SketchUp本体での再編集はサインイン待ち。
+
+- Windowsコアは810件成功・8件スキップ。ZIPは通常18条件・べた基礎4条件が成功。 [通常のZIP検証](validation/2026-11-23-portable-92763c0.json)・[べた基礎のZIP検証](validation/2026-11-23-portable-92763c0-mat.json)
+
+| 項目 | 値 |
+|---|---|
+| コード | `92763c0` |
+| Linux CI | 831件すべて成功。[run 45141973094](https://github.com/higeotoko/sketchBRep/actions/runs/45141973094) |
+| ZIP | `SketchBRep-windows-x64-92763c0-local.zip` |
+| サイズ | 83,320,678 bytes |
+| SHA256 | `91d1f547fae28f75d51a0bf44bbeb868a62467aa24f3098505a96cd91d3f97af` |
+
 ## 13-8 平面で片開きドアを配置
 
 展開したWindows ZIPのGUIテスト3件が成功。建具一覧から片開きドアを選び、壁をクリックすると開口ができた。マウス位置に応じて開き方の記号が出て、反対側を選べば開く方向も変わった。取り消し1回で開口と建具が戻った。 [建具の配置](189_place_a_fitting_in_plan.md)
