@@ -14,6 +14,6 @@
 
 配布版の実行フォルダとWindowsのフォルダだけをプロセスのPATHに入れ、SDKの環境変数を外した。CLIで1,000 × 800 × 700 mmの箱をSKPに書き出して新規モデルに読み戻し、6面の立体1個と同じ外形寸法を確認した。読み書きとも、実際に選ばれた `SketchUpAPI.dll` はZIPの展開先にあるファイルだった。
 
-SDKの入っていない別PCでの書き出し一覧と読み書きは未実施。13-3は一部確認とした。 [同梱DLLの探索順](182_sketchup_dlls_in_the_zip.md)
+同じ条件で配布版の画面も起動し、「ファイル」のエクスポート・インポート両方のダイアログに「SketchUp (*.skp)」が出ることを確認した。ダイアログは一覧を確認して閉じ、箱の保存と読み戻しはCLIで行った。SDKの入っていない別PCでの確認は未実施。13-3は一部確認とした。 [同梱DLLの探索順](182_sketchup_dlls_in_the_zip.md)
 
-確認データは配布フォルダの `outputs/window-edge-review/portable-skp-check.json` と `portable-test.skp`。
+確認データは配布フォルダの `outputs/portable-skp-menu-check/menus-and-roundtrip.json` と `検証用の箱.skp`。
