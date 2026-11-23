@@ -17,3 +17,9 @@
 同じ条件で配布版の画面も起動し、「ファイル」のエクスポート・インポート両方のダイアログに「SketchUp (*.skp)」が出ることを確認した。ダイアログは一覧を確認して閉じ、箱の保存と読み戻しはCLIで行った。SDKの入っていない別PCでの確認は未実施。13-3は一部確認とした。 [同梱DLLの探索順](182_sketchup_dlls_in_the_zip.md)
 
 確認データは配布フォルダの `outputs/portable-skp-menu-check/menus-and-roundtrip.json` と `検証用の箱.skp`。
+
+### 保存と読み込みのGUI確認
+
+配布版 `4dbf133` の展開先で、製品と同じMainWindowを使うGUIテスト `sketchUpBoxRoundTripFromMenus` を実行した。Qtの設定は一時フォルダに分離した。プロセスのPATHは展開先とWindowsのフォルダに限り、SDKの環境変数を外した。
+
+エクスポート画面で `SketchUp (*.skp)` を選び、拡張子なしで「検証用の箱」と入力すると `検証用の箱.skp` ができた。空の画面のインポートからこのファイルを開くと、6面のソリッド1個が元の位置と外形1,000 × 800 × 700 mmで戻った。実際に読み込んだDLLのパスは展開先の `SketchUpAPI.dll`。同じ展開先のファイル交換GUIテストは11条件成功。結果は配布フォルダの `outputs/portable-skp-gui-roundtrip/roundtrip.xml` と `geometry-exchange.xml`。SDK未導入の別PCでは未確認。

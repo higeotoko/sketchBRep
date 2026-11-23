@@ -18,7 +18,10 @@
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepGProp.hxx>
 #include <GProp_GProps.hxx>
+#include <TopExp_Explorer.hxx>
 #include "MainWindow.h"
+#include "sbr/geom/Measure.h"
+#include "sbr/geom/Skp.h"
 using namespace sbr;
 class GeometryExchangeGui:public QObject {
  Q_OBJECT
@@ -124,6 +127,63 @@ class GeometryExchangeGui:public QObject {
    QVERIFY(file.open(QIODevice::ReadOnly));
    const auto contents=file.readAll();
    QVERIFY(contents.contains("FILE_SCHEMA(('IFC4'));")&&contents.contains("IFCWALL("));
+ }
+ void sketchUpBoxRoundTripFromMenus() {
+   std::string reason;
+   if (!geom::skpAvailable(&reason)) QSKIP(reason.c_str());
+   qInfo().noquote() << "SketchUp SDK:" << QString::fromStdString(geom::skpLibrary());
+   QTemporaryDir dir;
+   QVERIFY(dir.isValid());
+   const QString name = QStringLiteral("検証用の箱");
+   const QString path = dir.filePath(name + QStringLiteral(".skp"));
+
+   auto runDialog = [&](QAction* entry, const QString& filename) {
+     bool offered = false;
+     QTimer timer;
+     connect(&timer, &QTimer::timeout, [&] {
+       if (auto* file = qobject_cast<QFileDialog*>(QApplication::activeModalWidget())) {
+         const auto filters = file->nameFilters();
+         offered = filters.contains(QStringLiteral("SketchUp (*.skp)"));
+         if (offered) choose(file, dir.path(), filename, QStringLiteral("SketchUp"));
+         else file->reject();
+       } else if (auto* error = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+         error->reject();
+       }
+     });
+     timer.start(10);
+     entry->trigger();
+     return offered;
+   };
+   {
+     app::MainWindow source;
+     source.show();
+     QVERIFY(QTest::qWaitForWindowExposed(&source));
+     QVERIFY(source.modeler().importShape(BRepPrimAPI_MakeBox(1000, 800, 700).Shape(), "Box", "test"));
+     auto* output = action(source, QStringLiteral("エクスポート..."));
+     QVERIFY(output);
+     QVERIFY(runDialog(output, name));
+     QVERIFY2(source.lastError().isEmpty(), qPrintable(source.lastError()));
+     QVERIFY(QFileInfo(path).size() > 0);
+   }
+   app::MainWindow destination;
+   destination.show();
+   QVERIFY(QTest::qWaitForWindowExposed(&destination));
+   auto* input = action(destination, QStringLiteral("インポート..."));
+   QVERIFY(input);
+   QVERIFY(runDialog(input, QFileInfo(path).fileName()));
+   QVERIFY2(destination.lastError().isEmpty(), qPrintable(destination.lastError()));
+   QCOMPARE(destination.selection().size(), std::size_t(1));
+   const auto& document = destination.modeler().document();
+   const auto* object = document.find(destination.selection().front());
+   QVERIFY(object);
+   QCOMPARE(object->kind(), doc::ObjectKind::Solid);
+   const auto shape = document.worldShape(*object);
+   int faces = 0;
+   for (TopExp_Explorer face(shape, TopAbs_FACE); face.More(); face.Next()) ++faces;
+   QCOMPARE(faces, 6);
+   const auto bounds = geom::exactBounds(shape);
+   QVERIFY(bounds.CornerMin().Distance(gp_Pnt(0, 0, 0)) < 1e-6);
+   QVERIFY(bounds.CornerMax().Distance(gp_Pnt(1000, 800, 700)) < 1e-6);
  }
  void invalidFileAndImportCancellationLeaveModelAlone_data(){exportAndImportFromMenus_data();}
  void invalidFileAndImportCancellationLeaveModelAlone(){
