@@ -1592,6 +1592,33 @@ SiteHeightConditions siteHeightConditions(const Document& document) {
   return {read("zone"), read("district"), read("source")};
 }
 
+Result<RoadHeightTableValues> roadHeightTableValues(const std::string& zone, double floorAreaLimitPercent) {
+  using R = Result<RoadHeightTableValues>;
+  if (zone.empty()) return R::failure("先に敷地の「高さ制限の条件」で用途地域を登録してください");
+  if (!std::isfinite(floorAreaLimitPercent) || floorAreaLimitPercent <= 0)
+    return R::failure("法第52条による容積率の限度を0より大きい数値で入力してください");
+
+  // Building Standards Act, Appendix 3 (items 1 through 3). The upper bounds are inclusive.
+  if (zone == "neighborhood_commercial" || zone == "commercial") {
+    constexpr double upperBounds[] = {400, 600, 800, 1000, 1100, 1200};
+    const auto* band = std::lower_bound(std::begin(upperBounds), std::end(upperBounds), floorAreaLimitPercent);
+    return RoadHeightTableValues{2, 1.5, 20000.0 + 5000.0 * (band - std::begin(upperBounds)), false};
+  }
+
+  constexpr double upperBounds[] = {200, 300, 400};
+  const auto* band = std::lower_bound(std::begin(upperBounds), std::end(upperBounds), floorAreaLimitPercent);
+  const double distance = 20000.0 + 5000.0 * (band - std::begin(upperBounds));
+  if (zone == "quasi_industrial" || zone == "industrial" || zone == "exclusive_industrial")
+    return RoadHeightTableValues{3, 1.5, distance, false};
+  if (zone == "low_1" || zone == "low_2" || zone == "rural_residential")
+    return RoadHeightTableValues{1, 1.25, distance, false};
+  if (zone == "mid_high_1" || zone == "mid_high_2" || zone == "residential_1" || zone == "residential_2" ||
+      zone == "quasi_residential")
+    return RoadHeightTableValues{1, 1.25, distance, true};
+
+  return R::failure("この用途地域には別表第三の一〜三の標準値を当てはめられません");
+}
+
 namespace {
 
 struct RoadHeightReference {

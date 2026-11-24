@@ -2701,6 +2701,48 @@ TEST_F(Schedules, PermitChecksReadTheEnergyAndElevationStages) {
   EXPECT_NE(rowOf(10, "いちばん高い所（参考）")["details"].get<std::string>().find("GLから 3500 mm"), std::string::npos);
 }
 
+TEST_F(Schedules, RoadHeightPlaneReadsTheAppendix3PercentBands) {
+  struct Band { double percent; double distanceMm; };
+  for (const auto& band : {Band{200, 20000}, Band{200.01, 25000}, Band{300, 25000}, Band{300.01, 30000},
+                           Band{400, 30000}, Band{400.01, 35000}}) {
+    const auto residential = sbr::doc::roadHeightTableValues("residential_1", band.percent);
+    ASSERT_TRUE(residential);
+    EXPECT_EQ(residential->applicationDistanceMm, band.distanceMm);
+    EXPECT_EQ(residential->slope, 1.25);
+    EXPECT_TRUE(residential->hasWideRoadRule);
+    const auto industrial = sbr::doc::roadHeightTableValues("exclusive_industrial", band.percent);
+    ASSERT_TRUE(industrial);
+    EXPECT_EQ(industrial->applicationDistanceMm, band.distanceMm);
+    EXPECT_EQ(industrial->item, 3);
+    EXPECT_EQ(industrial->slope, 1.5);
+    EXPECT_FALSE(industrial->hasWideRoadRule);
+  }
+  for (const auto& band : {Band{400, 20000}, Band{400.01, 25000}, Band{600, 25000}, Band{600.01, 30000},
+                           Band{800, 30000}, Band{800.01, 35000}, Band{1000, 35000}, Band{1000.01, 40000},
+                           Band{1100, 40000}, Band{1100.01, 45000}, Band{1200, 45000}, Band{1200.01, 50000}}) {
+    const auto commercial = sbr::doc::roadHeightTableValues("commercial", band.percent);
+    ASSERT_TRUE(commercial);
+    EXPECT_EQ(commercial->applicationDistanceMm, band.distanceMm);
+    EXPECT_EQ(commercial->item, 2);
+    EXPECT_EQ(commercial->slope, 1.5);
+  }
+  EXPECT_FALSE(sbr::doc::roadHeightTableValues("none", 100));
+  EXPECT_FALSE(sbr::doc::roadHeightTableValues("low_1", 0));
+
+  const auto args = json{{"floor_area_limit_percent", 200}};
+  EXPECT_EQ(call("road_height_table_values", args)["ok"], false);
+  const auto boundary = ok("create_polygon", {{"points", {{0,0,0},{8000,0,0},{8000,10000,0},{0,10000,0}}}})["id"];
+  ok("set_site_boundary", {{"outline", boundary}, {"source", "架空の測量図"}});
+  ok("set_site_height_conditions", {{"zone", "low_1"}, {"district", "none"}, {"source", "架空の都市計画図"}});
+  const auto row = ok("road_height_table_values", args);
+  EXPECT_EQ(row["zone"], "low_1");
+  EXPECT_EQ(row["table_item"], 1);
+  EXPECT_EQ(row["slope"], 1.25);
+  EXPECT_EQ(row["application_distance_mm"], 20000);
+  EXPECT_EQ(row["wide_road_rule"], false);
+  EXPECT_EQ(row["source"], sbr::doc::kRoadHeightTableSource);
+}
+
 TEST_F(Schedules, RoadHeightPlaneMeasuresSetbackAcrossARotatedRoad) {
   const auto boundary = ok("create_polygon", {{"points", {{0,0,0},{8000,8000,0},{0,16000,0},{-8000,8000,0}}}})["id"];
   ok("set_site_boundary", {{"outline", boundary}, {"source", "架空の測量図"}});

@@ -7936,7 +7936,14 @@ void MainWindow::showRoadHeightPlaneDialog() {
   height->setPlaceholderText(tr("モデルZの値"));
   form->addRow(tr("敷地内へ上がる勾配"), slope);
   form->addRow(tr("採用する道路幅員（m）"), roadWidth);
-  form->addRow(tr("適用距離（m）"), applicationDistance);
+  auto* distanceFields = new QWidget;
+  auto* distanceLayout = new QHBoxLayout(distanceFields);
+  distanceLayout->setContentsMargins(0, 0, 0, 0);
+  distanceLayout->addWidget(applicationDistance, 1);
+  auto* tableValues = new QPushButton(tr("別表第三を参照"));
+  tableValues->setObjectName(QStringLiteral("roadHeightTableButton"));
+  distanceLayout->addWidget(tableValues);
+  form->addRow(tr("適用距離（m）"), distanceFields);
   auto* setbackFields = new QWidget;
   auto* setbackLayout = new QHBoxLayout(setbackFields);
   setbackLayout->setContentsMargins(0, 0, 0, 0);
@@ -7971,6 +7978,9 @@ void MainWindow::showRoadHeightPlaneDialog() {
   TopoDS_Shape displayPlane;
   bool displayIncludesSetback = false;
   std::optional<std::uint64_t> measuredAt;
+  std::optional<doc::RoadHeightTableValues> adoptedTableValues;
+  std::string adoptedZone;
+  double adoptedFloorAreaLimit = 0;
   std::uint64_t comparedAt = 0;
   const auto invalidate = [&] {
     table->setRowCount(0);
@@ -7979,9 +7989,86 @@ void MainWindow::showRoadHeightPlaneDialog() {
     displayPlane.Nullify();
   };
   connect(height, &QLineEdit::textChanged, &dialog, invalidate);
-  connect(slope, &QLineEdit::textChanged, &dialog, invalidate);
+  const auto tableInputChanged = [&] {
+    adoptedTableValues.reset();
+    invalidate();
+  };
+  connect(slope, &QLineEdit::textChanged, &dialog, tableInputChanged);
   connect(roadWidth, &QLineEdit::textChanged, &dialog, invalidate);
-  connect(applicationDistance, &QLineEdit::textChanged, &dialog, invalidate);
+  connect(applicationDistance, &QLineEdit::textChanged, &dialog, tableInputChanged);
+  connect(tableValues, &QPushButton::clicked, &dialog, [&] {
+    const auto zone = doc::siteHeightConditions(modeler_.document()).zone;
+    const auto& zones = doc::heightZoneChoices();
+    const auto zoneEntry = std::find_if(zones.begin(), zones.end(), [&](const auto& entry) { return entry.first == zone; });
+    if (zoneEntry == zones.end() || zone == "none") {
+      const auto unavailable = doc::roadHeightTableValues(zone, 100);
+      QMessageBox::information(&dialog, tr("別表第三を参照"), QString::fromStdString(unavailable.error()));
+      return;
+    }
+
+    QDialog lookup(&dialog);
+    lookup.setObjectName(QStringLiteral("roadHeightTableDialog"));
+    lookup.setWindowTitle(tr("建築基準法 別表第三"));
+    auto* lookupLayout = new QVBoxLayout(&lookup);
+    auto* lookupForm = new QFormLayout;
+    lookupLayout->addLayout(lookupForm);
+    auto* zoning = new QLabel(QString::fromStdString(zoneEntry->second));
+    lookupForm->addRow(tr("敷地に登録した用途地域"), zoning);
+    auto* floorAreaLimit = new QLineEdit;
+    floorAreaLimit->setObjectName(QStringLiteral("roadHeightFloorAreaLimit"));
+    floorAreaLimit->setPlaceholderText(tr("前面道路幅員による制限等を反映した値"));
+    lookupForm->addRow(tr("法第52条による容積率の限度（%）"), floorAreaLimit);
+    auto* values = new QLabel;
+    values->setObjectName(QStringLiteral("roadHeightTableResult"));
+    values->setWordWrap(true);
+    lookupLayout->addWidget(values);
+    auto* scope = new QLabel(tr("一つの用途地域内に収まる敷地の標準値です。指定区域、高層住居誘導地区、複数の用途地域にまたがる場合は個別に確認してください。"));
+    scope->setWordWrap(true);
+    lookupLayout->addWidget(scope);
+    auto* source = new QLabel(tr("出典　<a href='%1'>建築基準法 別表第三</a>（%2 照合）")
+                                  .arg(QString::fromLatin1(doc::kRoadHeightTableSource),
+                                       QString::fromLatin1(doc::kRoadHeightTableCheckedOn)));
+    source->setOpenExternalLinks(true);
+    lookupLayout->addWidget(source);
+    auto* lookupButtons = new QDialogButtonBox(QDialogButtonBox::Cancel);
+    lookupButtons->button(QDialogButtonBox::Cancel)->setText(tr("戻る"));
+    auto* use = lookupButtons->addButton(tr("勾配と適用距離に入力"), QDialogButtonBox::AcceptRole);
+    lookupLayout->addWidget(lookupButtons);
+    std::optional<doc::RoadHeightTableValues> candidate;
+    const auto update = [&] {
+      candidate.reset();
+      bool ok = false;
+      const double limit = floorAreaLimit->text().toDouble(&ok);
+      const auto row = doc::roadHeightTableValues(zone, limit);
+      QString description = tr("容積率の限度を入力すると、参照値を表示します。");
+      if (ok && row) {
+        candidate = *row;
+        description = tr("第%1項　勾配 %2　適用距離 %3 m")
+                          .arg(row->item).arg(row->slope).arg(row->applicationDistanceMm / 1000);
+        if (row->hasWideRoadRule) description += tr("\n幅員12 m以上では第56条第3・4項を別に確認してください。");
+      } else if (!floorAreaLimit->text().trimmed().isEmpty()) {
+        description = QString::fromStdString(row.error());
+      }
+      values->setText(description);
+      use->setEnabled(candidate.has_value());
+    };
+    connect(floorAreaLimit, &QLineEdit::textChanged, &lookup, update);
+    connect(lookupButtons, &QDialogButtonBox::accepted, &lookup, &QDialog::accept);
+    connect(lookupButtons, &QDialogButtonBox::rejected, &lookup, &QDialog::reject);
+    update();
+    lookup.resize(550, 240);
+    if (lookup.exec() != QDialog::Accepted || !candidate) return;
+    if (doc::siteHeightConditions(modeler_.document()).zone != zone) {
+      result->setText(tr("用途地域が変わりました。別表第三を参照し直してください。"));
+      return;
+    }
+    slope->setText(QString::number(candidate->slope));
+    applicationDistance->setText(QString::number(candidate->applicationDistanceMm / 1000));
+    adoptedTableValues = candidate;
+    adoptedZone = zone;
+    adoptedFloorAreaLimit = floorAreaLimit->text().toDouble();
+    invalidate();
+  });
   connect(setback, &QLineEdit::textChanged, &dialog, [&] {
     measuredAt.reset();
     invalidate();
@@ -8034,6 +8121,14 @@ void MainWindow::showRoadHeightPlaneDialog() {
         result->setText(tr("採用する道路幅員と適用距離を両方入力してください。"));
         return;
       }
+      if (adoptedTableValues && adoptedTableValues->hasWideRoadRule && widthM >= 12) {
+        result->setText(tr("道路幅員12 m以上では第56条第3・4項の確認が必要です。この参照値での試算はできません。"));
+        return;
+      }
+      if (adoptedTableValues && doc::siteHeightConditions(modeler_.document()).zone != adoptedZone) {
+        result->setText(tr("用途地域が変わりました。別表第三を参照し直してください。"));
+        return;
+      }
       bool setbackOk = !hasSetback;
       const double setbackM = hasSetback ? setback->text().toDouble(&setbackOk) : 0;
       if (!setbackOk) {
@@ -8082,6 +8177,9 @@ void MainWindow::showRoadHeightPlaneDialog() {
       else
         summary += tr("\n適用端は道路内または道路境界上です。敷地内に表示する面がありません。");
     }
+    if (adoptedTableValues)
+      summary = tr("別表第三 第%1項の標準値（容積率の限度 %2%）\n%3")
+                    .arg(adoptedTableValues->item).arg(adoptedFloorAreaLimit).arg(summary);
     result->setText(summary);
     table->selectRow(0);
     locate->setEnabled(!displayPlane.IsNull());

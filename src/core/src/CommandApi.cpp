@@ -2765,6 +2765,21 @@ const std::vector<CommandDef>& commands() {
          return json{{"zone", conditions.zone}, {"district", conditions.district}, {"source", conditions.source},
                      {"zones", doc::heightZoneChoices()}, {"districts", doc::heightDistrictChoices()}};
        }},
+      {"road_height_table_values",
+       "Read the standard numbers in Building Standards Act Appendix 3 items 1–3 for the site's saved zoning. "
+       "Enter the confirmed Article 52 floor area ratio limit as a percentage, after applicable width restrictions. "
+       "For a site wholly in one zone. Special designations, high-rise residential promotion districts and "
+       "multi-zone sites need a separate assessment. If wide_road_rule is true, Article 56(3)–(4) can apply "
+       "when the road is at least 12 m wide. Does not determine legal compliance.",
+       SCHEMA({"type": "object", "properties": {"floor_area_limit_percent": {"type": "number", "exclusiveMinimum": 0}},
+               "required": ["floor_area_limit_percent"]}),
+       [](doc::Modeler& m, const json& a) {
+         const auto zone = doc::siteHeightConditions(m.document()).zone;
+         const auto row = must(doc::roadHeightTableValues(zone, number(a, "floor_area_limit_percent")));
+         return json{{"zone", zone}, {"table_item", row.item}, {"slope", row.slope},
+                     {"application_distance_mm", row.applicationDistanceMm}, {"wide_road_rule", row.hasWideRoadRule},
+                     {"source", doc::kRoadHeightTableSource}, {"checked_on", doc::kRoadHeightTableCheckedOn}};
+       }},
       {"measure_road_building_setback",
        "Measure the minimum perpendicular horizontal distance inward from the saved straight site-side road boundary "
        "to the selected world-space B-rep parts. At or beyond the line the measurement is zero. Returns the "
@@ -4691,7 +4706,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
       name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" ||
       name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" || name == "permit_checks" || name == "check_drawing_set" || name == "project_outline" || name == "daylight_factor_estimates" ||
-      name == "site_height_conditions" || name == "measure_road_building_setback" || name == "compare_road_height_plane" || name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
+      name == "site_height_conditions" || name == "road_height_table_values" || name == "measure_road_building_setback" || name == "compare_road_height_plane" || name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
     return E::Read;
   }
   if (isFileCommand(name)) return E::ExternalIo;

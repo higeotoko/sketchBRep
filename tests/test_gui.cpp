@@ -1750,7 +1750,7 @@ void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
       dialog->reject();
       return;
     }
-    zone->setCurrentIndex(zone->findData(QStringLiteral("low_1")));
+    zone->setCurrentIndex(zone->findData(QStringLiteral("mid_high_1")));
     district->setCurrentIndex(district->findData(QStringLiteral("yokohama_2")));
     source->setText(QStringLiteral("架空の都市計画図"));
     if (!reviewDir.isEmpty()) dialog->grab().save(QDir(reviewDir).filePath(QStringLiteral("height-conditions-dialog.png")));
@@ -1787,15 +1787,41 @@ void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
     auto* slope = dialog->findChild<QLineEdit*>(QStringLiteral("roadPlaneSlope"));
     auto* width = dialog->findChild<QLineEdit*>(QStringLiteral("roadPlaneWidth"));
     auto* distance = dialog->findChild<QLineEdit*>(QStringLiteral("roadPlaneApplicationDistance"));
+    auto* lookup = dialog->findChild<QPushButton*>(QStringLiteral("roadHeightTableButton"));
     auto* setback = dialog->findChild<QLineEdit*>(QStringLiteral("roadPlaneBuildingSetback"));
     auto* measure = dialog->findChild<QPushButton*>(QStringLiteral("measureRoadSetbackButton"));
     auto* status = dialog->findChild<QLabel*>(QStringLiteral("roadPlaneStatus"));
     auto* table = dialog->findChild<QTableWidget*>(QStringLiteral("roadPlaneResults"));
-    if (edgeHeight && slope && width && distance && setback && measure && status && table) {
+    if (edgeHeight && slope && width && distance && lookup && setback && measure && status && table) {
+      bool reviewedTable = false;
+      QTimer::singleShot(0, dialog, [&] {
+        auto* reference = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (!reference || reference == dialog) return;
+        auto* limit = reference->findChild<QLineEdit*>(QStringLiteral("roadHeightFloorAreaLimit"));
+        auto* values = reference->findChild<QLabel*>(QStringLiteral("roadHeightTableResult"));
+        if (limit && values) {
+          for (auto* button : reference->findChildren<QPushButton*>()) {
+            if (button->text() != QStringLiteral("勾配と適用距離に入力")) continue;
+            const bool disabledForEmpty = !button->isEnabled();
+            limit->setText(QStringLiteral("200"));
+            reviewedTable = disabledForEmpty && button->isEnabled() &&
+                            values->text().contains(QStringLiteral("第1項")) &&
+                            values->text().contains(QStringLiteral("適用距離 20 m"));
+            if (!reviewDir.isEmpty())
+              reference->grab().save(QDir(reviewDir).filePath(QStringLiteral("road-height-table.png")));
+            if (reviewedTable) {
+              button->click();
+              return;
+            }
+          }
+        }
+        reference->reject();
+      });
+      lookup->click();
+      reviewedTable = reviewedTable && slope->text() == QStringLiteral("1.25") &&
+                      distance->text() == QStringLiteral("20");
       edgeHeight->setText(QStringLiteral("3000"));
-      slope->setText(QStringLiteral("1.25"));
-      width->setText(QStringLiteral("6"));
-      distance->setText(QStringLiteral("9.25"));
+      width->setText(QStringLiteral("12"));
       QPushButton* calculate = nullptr;
       QPushButton* locate = nullptr;
       for (auto* button : dialog->findChildren<QPushButton*>()) {
@@ -1807,7 +1833,16 @@ void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
         return;
       }
       calculate->click();
-      compared = table->rowCount() == 3 && table->item(0, 1)->text() == QStringLiteral("超過 500.0 mm") &&
+      const bool wideRoadBlocked = table->rowCount() == 0 && !locate->isEnabled() &&
+                                   status->text().contains(QStringLiteral("道路幅員12 m以上"));
+      width->setText(QStringLiteral("6"));
+      calculate->click();
+      const bool referenceApplied = table->rowCount() == 3 && locate->isEnabled() &&
+                                    status->text().contains(QStringLiteral("起点から 20 m まで")) &&
+                                    status->text().contains(QStringLiteral("限度 200%"));
+      distance->setText(QStringLiteral("9.25"));
+      calculate->click();
+      compared = reviewedTable && wideRoadBlocked && referenceApplied && table->rowCount() == 3 && table->item(0, 1)->text() == QStringLiteral("超過 500.0 mm") &&
                  table->item(1, 1)->text() == QStringLiteral("余裕 750.0 mm") &&
                  table->item(2, 1)->text() == QStringLiteral("適用範囲外");
       const auto reviewSetback = [&](bool accept) {

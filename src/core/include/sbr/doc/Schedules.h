@@ -208,6 +208,15 @@ struct SiteHeightConditions {
 const std::vector<std::pair<std::string, std::string>>& heightZoneChoices();
 const std::vector<std::pair<std::string, std::string>>& heightDistrictChoices();
 SiteHeightConditions siteHeightConditions(const Document& document);
+struct RoadHeightTableValues {
+  int item;
+  double slope;
+  double applicationDistanceMm;
+  bool hasWideRoadRule;
+};
+inline constexpr char kRoadHeightTableSource[] = "https://laws.e-gov.go.jp/law/325AC0000000201";
+inline constexpr char kRoadHeightTableCheckedOn[] = "2026-11-24";
+Result<RoadHeightTableValues> roadHeightTableValues(const std::string& zone, double floorAreaLimitPercent);
 struct RoadBuildingSetback {
   ObjectId id;
   std::string name;
