@@ -34,6 +34,27 @@
 
 断熱範囲図では、平面・断面ごとに断熱する場所と記号を読めるようにする。共通の断熱仕様表・開口部仕様表・機器表は一か所にまとめ、各図では表の図番と対応する記号を示す方針とする。表は部位・符号・仕様・性能から該当行を引けるようにし、横浜向けの図書を揃える際に図と表の対応を確認する。
 
+## 高さ制限の条件を入力する
+
+工程10「立面・断面」の先頭に「高さ制限の条件」を置いた。選ぶと用途地域・高度地区・確認資料を見られる。敷地境界がなければ「敷地境界を登録」、登録後は「高さ制限の条件を編集」から進む。敷地メニューからも同じ入力画面を開ける。
+
+入力画面は用途地域、高度地区、資料名と確認日の3欄。用途地域は正式名称、高度地区は横浜市の第1〜7種を選べる。「未入力」と「指定なし」を別にした。確認資料が足りないときは入力画面内に理由を表示する。 [横浜市の用途地域の解説](https://www.city.yokohama.lg.jp/business/bunyabetsu/kenchiku/annai/20140401121655.files/0139_20250328.pdf)・[最高限高度地区](https://www.city.yokohama.lg.jp/business/bunyabetsu/kenchiku/annai/20140401121655.files/0162_20260331.pdf)
+
+条件は敷地境界の輪郭に保存する。別の輪郭を敷地境界にすると、その輪郭に登録した条件を読む。保存・取り消しは1回の操作。B-09に沿い、画面とMCPの両方で同じ条件を読み書きできる。読み取りは `site_height_conditions`、書き込みは `set_site_height_conditions`。
+
+工程10の「入力済み」は用途地域・高度地区・資料が入った状態を指す。道路斜線・隣地斜線・北側斜線・高度地区の計算は、この版では「未評価」。
+
+CLIで条件を入れたSBRを保存し、配布ZIPで開き直して3欄を照合した。空白だけの資料は入力エラーになり、「指定なし」は入力済み、欄を空に戻すと入力不足になった。GUIテストでは工程10から入力し、保存後に用途地域・高度地区・確認資料と未評価表示が並ぶことを画面でも確認した。入力画面と工程10の画像は配布フォルダの `outputs/site-height-conditions-2026-11-24/` にある。
+
+| 項目 | 結果 |
+|---|---|
+| 実装 | `e39b941` |
+| Linux CI | [run 45363763835](https://github.com/higeotoko/sketchBRep/actions/runs/45363763835) で832件成功 |
+| Windows ローカル | コア811件成功・8件スキップ、工程10のGUIテスト成功 |
+| Windows ZIP | `SketchBRep-windows-x64-e39b941-local.zip`（83,347,820 bytes） |
+| SHA256 | `de5601f5c035fa09fa3ecfb3331433dca607af506fa565c5f852518bed95628a` |
+| ZIP の検証 | [標準検証18条件](validation/2026-11-24-portable-e39b941.json)・[べた基礎4条件](validation/2026-11-24-portable-e39b941-mat.json) 成功。展開先のDLLを使った工程10のGUIテストも成功 |
+
 ## 参照した資料
 
 - 横浜市の受付チェックシートの組み合わせと、受付時の提出物。 [建築確認申請・検査手続き](https://www.city.yokohama.lg.jp/business/bunyabetsu/kenchiku/tetsuduki/kakunin/tetsuzuki.html)・[建築関係書式](https://www.city.yokohama.lg.jp/business/bunyabetsu/kenchiku/tetsuduki/kakunin/dl/dl.html)

@@ -85,6 +85,7 @@ docs/07 の上に積むもので、docs/07 を変えない。ぶつかる時は 
 | B-07 IFC | △ IFC4書き出しあり。IfcOpenShellで例題Aを開き、階・壁・開口の位置、窓・扉の形、外壁の材料層の方向を確認。読み込みは未実装 | [書き出し](101_ifc_export.md)・[建具](268_ifc_external_review.md)・[材料層](269_ifc_material_layers_external_review.md) |
 | B-08 変わった時に言う | △ 「付け替えられない壁」は理由を出す。SketchUpから戻す形状変更・削除は確認し、キャンセルで履歴を保つ。SketchUp側で削除された鍵付き部材は `locked` に出し、ほかの変更は反映する。直接編集で壁でなくなった瞬間には言わない | docs/79・[SketchUpの戻し込み](186_sketchup_round_trip.md) |
 | B-09 AI | ○ ほぼ全部にコマンドがある | docs/06 |
+| B-09 高さ制限の条件 | ○ 用途地域・高度地区・確認資料を工程10の画面とMCPから同じ敷地に入力できる | [横浜市を基準にした申請図書](273_yokohama_permit_baseline.md#高さ制限の条件を入力する) |
 
 ## 4. 足りないもの・直すもの（優先順）
 
