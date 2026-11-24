@@ -1767,7 +1767,7 @@ void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
   if (!reviewDir.isEmpty()) QVERIFY(dock->grab().save(QDir(reviewDir).filePath(QStringLiteral("height-conditions-stage.png"))));
 
   QVERIFY(call("set_site_road", {{"start", {-2000,-2000,0}}, {"end", {10000,-2000,0}}, {"source", "架空の道路"}})["ok"].get<bool>());
-  const auto part = call("create_box", {{"origin", {0,0,0}}, {"width",500}, {"depth",500}, {"height",6000}, {"name", "道路寄りの試算部材"}});
+  const auto part = call("create_box", {{"origin", {0,-1800,0}}, {"width",500}, {"depth",500}, {"height",3750}, {"name", "道路寄りの試算部材"}});
   const auto farther = call("create_box", {{"origin", {0,1000,0}}, {"width",500}, {"depth",500}, {"height",6000}, {"name", "敷地奥の試算部材"}});
   const auto outside = call("create_box", {{"origin", {500,2500,0}}, {"width",500}, {"depth",500}, {"height",6000}, {"name", "適用端より奥の部材"}});
   QVERIFY(part["ok"].get<bool>());
@@ -1788,9 +1788,10 @@ void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
     auto* width = dialog->findChild<QLineEdit*>(QStringLiteral("roadPlaneWidth"));
     auto* distance = dialog->findChild<QLineEdit*>(QStringLiteral("roadPlaneApplicationDistance"));
     auto* setback = dialog->findChild<QLineEdit*>(QStringLiteral("roadPlaneBuildingSetback"));
+    auto* measure = dialog->findChild<QPushButton*>(QStringLiteral("measureRoadSetbackButton"));
     auto* status = dialog->findChild<QLabel*>(QStringLiteral("roadPlaneStatus"));
     auto* table = dialog->findChild<QTableWidget*>(QStringLiteral("roadPlaneResults"));
-    if (edgeHeight && slope && width && distance && setback && status && table) {
+    if (edgeHeight && slope && width && distance && setback && measure && status && table) {
       edgeHeight->setText(QStringLiteral("3000"));
       slope->setText(QStringLiteral("1.25"));
       width->setText(QStringLiteral("6"));
@@ -1809,8 +1810,32 @@ void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
       compared = table->rowCount() == 3 && table->item(0, 1)->text() == QStringLiteral("超過 500.0 mm") &&
                  table->item(1, 1)->text() == QStringLiteral("余裕 750.0 mm") &&
                  table->item(2, 1)->text() == QStringLiteral("適用範囲外");
-      setback->setText(QStringLiteral("0.2"));
-      compared = compared && !locate->isEnabled() && table->rowCount() == 0;
+      const auto reviewSetback = [&](bool accept) {
+        bool reviewed = false;
+        QTimer::singleShot(0, dialog, [&] {
+          auto* candidate = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+          if (!candidate) return;
+          reviewed = candidate->objectName() == QStringLiteral("roadSetbackCandidateDialog") &&
+                     candidate->text().contains(QStringLiteral("0.2 m")) &&
+                     candidate->text().contains(QStringLiteral("道路寄りの試算部材"));
+          for (auto* button : candidate->buttons()) {
+            if (candidate->buttonRole(button) != (accept ? QMessageBox::AcceptRole : QMessageBox::RejectRole))
+              continue;
+            if (accept && !reviewDir.isEmpty())
+              candidate->grab().save(QDir(reviewDir).filePath(QStringLiteral("road-building-setback-candidate.png")));
+            button->click();
+            return;
+          }
+          candidate->reject();
+        });
+        measure->click();
+        return reviewed;
+      };
+      const bool declined = reviewSetback(false) && setback->text().isEmpty() &&
+                            locate->isEnabled() && table->rowCount() == 3;
+      const bool adopted = reviewSetback(true) && setback->text() == QStringLiteral("0.2") &&
+                           !locate->isEnabled() && table->rowCount() == 0;
+      compared = compared && declined && adopted;
       calculate->click();
       compared = compared && table->rowCount() == 3 && table->item(0, 1)->text() == QStringLiteral("超過 250.0 mm") &&
                  table->item(1, 1)->text() == QStringLiteral("余裕 1000.0 mm") &&

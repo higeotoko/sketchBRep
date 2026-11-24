@@ -2701,6 +2701,30 @@ TEST_F(Schedules, PermitChecksReadTheEnergyAndElevationStages) {
   EXPECT_NE(rowOf(10, "いちばん高い所（参考）")["details"].get<std::string>().find("GLから 3500 mm"), std::string::npos);
 }
 
+TEST_F(Schedules, RoadHeightPlaneMeasuresSetbackAcrossARotatedRoad) {
+  const auto boundary = ok("create_polygon", {{"points", {{0,0,0},{8000,8000,0},{0,16000,0},{-8000,8000,0}}}})["id"];
+  ok("set_site_boundary", {{"outline", boundary}, {"source", "架空の測量図"}});
+  const auto eave = ok("create_polygon", {{"points", {{1000,2000,3000},{2000,3000,3000},
+                                                    {1500,3500,3000},{500,2500,3000}}}, {"name", "軒先"}})["id"];
+  const auto wall = ok("create_box", {{"origin", {3000,5300,0}}, {"width",500}, {"depth",500}, {"height",2500}})["id"];
+  const auto options = json{{"ids", {wall, eave, eave}}};
+  EXPECT_EQ(call("measure_road_building_setback", options)["ok"], false);
+  ok("set_site_road", {{"start", {8000,8000,0}}, {"end", {0,0,0}}, {"source", "架空の道路"}});
+  EXPECT_EQ(call("measure_road_building_setback", {{"ids", {boundary}}})["ok"], false);
+  const auto sequence = modeler.document().sequence();
+  const auto measured = ok("measure_road_building_setback", options);
+  EXPECT_EQ(measured["id"], eave);
+  EXPECT_EQ(measured["name"], "軒先");
+  EXPECT_NEAR(measured["distance_mm"].get<double>(), 1000 / std::sqrt(2.0), 0.001);
+  EXPECT_EQ(modeler.document().sequence(), sequence);
+  ok("move", {{"ids", {eave}}, {"vector", {-500,500,0}}});
+  const auto moved = ok("measure_road_building_setback", options);
+  EXPECT_EQ(moved["id"], wall);
+  EXPECT_NEAR(moved["distance_mm"].get<double>(), 1800 / std::sqrt(2.0), 0.001);
+  ok("move", {{"ids", {wall}}, {"vector", {2000,0,0}}});
+  EXPECT_EQ(ok("measure_road_building_setback", options)["distance_mm"], 0);
+}
+
 TEST_F(Schedules, RoadHeightPlaneUsesTheShapeAtItsWorldPlacement) {
   const auto boundary = ok("create_polygon", {{"points", {{-1000,0,0},{10000,0,0},{10000,10000,0},{-1000,10000,0}}}})["id"];
   ok("set_site_boundary", {{"outline", boundary}, {"source", "架空の測量図"}});

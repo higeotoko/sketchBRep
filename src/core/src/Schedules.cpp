@@ -1594,6 +1594,43 @@ SiteHeightConditions siteHeightConditions(const Document& document) {
 
 namespace {
 
+struct RoadHeightReference {
+  ObjectId outline;
+  std::vector<gp_Pnt> vertices;
+  gp_Pnt origin;
+  gp_Dir inward;
+  gp_Trsf frame;
+};
+Result<RoadHeightReference> roadHeightReference(const Document& document) {
+  using R = Result<RoadHeightReference>;
+  const auto& site = document.settings().siteBoundary;
+  if (!site || !site->road) return R::failure("敷地境界と前面道路を登録してください");
+  auto geometry = document.siteBoundaryGeometry(site->outline);
+  if (!geometry) return R::failure(geometry.error());
+  const auto road = document.siteRoadEdge(*geometry);
+  if (!road) return R::failure("道路が接する敷地辺を登録し直してください");
+  const gp_Pnt& from = (*road)[0];
+  const gp_Pnt& to = (*road)[1];
+  const gp_Dir along(to.X() - from.X(), to.Y() - from.Y(), 0);
+  gp_Dir inward(-along.Y(), along.X(), 0);
+  double low = 0, high = 0;
+  for (const gp_Pnt& point : geometry->vertices) {
+    const double d = gp_Vec(from, point).Dot(gp_Vec(inward));
+    low = std::min(low, d);
+    high = std::max(high, d);
+  }
+  constexpr double sideTolerance = 0.01;  // mm
+  if (low < -sideTolerance && high > sideTolerance)
+    return R::failure("敷地が道路境界線の両側にあるため、この斜線では試算できません");
+  const bool flip = low < -sideTolerance;
+  const double depth = flip ? -low : high;
+  if (depth <= sideTolerance) return R::failure("敷地の奥行きを測れません");
+  if (flip) inward.Reverse();
+  gp_Trsf roadFrame;
+  roadFrame.SetTransformation(gp_Ax3(from, gp::DZ(), inward));
+  return RoadHeightReference{site->outline, std::move(geometry->vertices), from, inward, roadFrame};
+}
+
 // In this frame X is distance inward from the site-side road edge.
 Result<TopoDS_Shape> clipRoadHeightRange(const TopoDS_Shape& world, const gp_Trsf& roadFrame,
                                        double lowerX, double upperX, bool includeBoundaryContacts = true) {
@@ -1641,6 +1678,29 @@ Result<TopoDS_Shape> clipRoadHeightRange(const TopoDS_Shape& world, const gp_Trs
 
 }  // namespace
 
+Result<RoadBuildingSetback> measureRoadBuildingSetback(
+    const Document& document, const std::vector<ObjectId>& ids) {
+  using R = Result<RoadBuildingSetback>;
+  if (ids.empty()) return R::failure("後退距離の算定に含める部材を選択してください");
+  const auto road = roadHeightReference(document);
+  if (!road) return R::failure(road.error());
+  const TopLoc_Location toRoad(road->frame);
+  std::optional<RoadBuildingSetback> nearest;
+  for (const auto& id : std::set<ObjectId>(ids.begin(), ids.end())) {
+    const auto* object = document.find(id);
+    if (!object || id == road->outline) return R::failure("敷地境界以外の部材を選択してください");
+    const TopoDS_Shape shape = document.worldShape(*object);
+    if (shape.IsNull() || !TopExp_Explorer(shape, TopAbs_FACE).More())
+      return R::failure("面を持つ部材を選択してください（" + object->name + "）");
+    const Bnd_Box bounds = geom::exactBounds(shape.Moved(toRoad));
+    if (bounds.IsVoid() || bounds.IsOpenXmin())
+      return R::failure("道路までの距離を測れません（" + object->name + "）");
+    const double distance = std::max(0.0, bounds.CornerMin().X());
+    if (!nearest || distance < nearest->distanceMm) nearest = RoadBuildingSetback{id, object->name, distance};
+  }
+  return *nearest;
+}
+
 Result<RoadHeightPlaneComparison> compareRoadHeightPlane(
     const Document& document, const std::vector<ObjectId>& ids, double edgeHeightMm, double slope,
     std::optional<RoadHeightPlaneRange> range) {
@@ -1659,31 +1719,11 @@ Result<RoadHeightPlaneComparison> compareRoadHeightPlane(
   if (setback < 0 || !std::isfinite(adjustedHeight) || !std::isfinite(lowerX) ||
       (range && upperX <= lowerX))
     return R::failure("建物の後退距離は0以上の有効な値を入力してください");
-  const auto& site = document.settings().siteBoundary;
-  if (!site || !site->road) return R::failure("敷地境界と前面道路を登録してください");
-  const auto geometry = document.siteBoundaryGeometry(site->outline);
-  if (!geometry) return R::failure(geometry.error());
-  const auto road = document.siteRoadEdge(*geometry);
-  if (!road) return R::failure("道路が接する敷地辺を登録し直してください");
-  const gp_Pnt& from = (*road)[0];
-  const gp_Pnt& to = (*road)[1];
-  const gp_Dir along(to.X() - from.X(), to.Y() - from.Y(), 0);
-  gp_Dir inward(-along.Y(), along.X(), 0);
-  double low = 0, high = 0;
-  for (const gp_Pnt& point : geometry->vertices) {
-    const double d = gp_Vec(from, point).Dot(gp_Vec(inward));
-    low = std::min(low, d);
-    high = std::max(high, d);
-  }
-  constexpr double sideTolerance = 0.01;  // mm
-  if (low < -sideTolerance && high > sideTolerance)
-    return R::failure("敷地が道路境界線の両側にあるため、この斜線では試算できません");
-  const bool flip = low < -sideTolerance;
-  const double depth = flip ? -low : high;
-  if (depth <= sideTolerance) return R::failure("敷地の奥行きを測れません");
-  if (flip) inward.Reverse();
-  gp_Trsf roadFrame;
-  roadFrame.SetTransformation(gp_Ax3(from, gp::DZ(), inward));
+  const auto road = roadHeightReference(document);
+  if (!road) return R::failure(road.error());
+  const auto& from = road->origin;
+  const auto& inward = road->inward;
+  const auto& roadFrame = road->frame;
 
   gp_Trsf local;
   // In this frame +Z is normal to the plane. Convert the maximum normal distance
@@ -1694,7 +1734,7 @@ Result<RoadHeightPlaneComparison> compareRoadHeightPlane(
   std::vector<RoadHeightPlaneRow> rows;
   for (const ObjectId& id : std::set<ObjectId>(ids.begin(), ids.end())) {
     const Object* object = document.find(id);
-    if (!object || id == site->outline) return R::failure("敷地境界以外の部材を選択してください");
+    if (!object || id == road->outline) return R::failure("敷地境界以外の部材を選択してください");
     const TopoDS_Shape shape = document.worldShape(*object);
     if (shape.IsNull() || !TopExp_Explorer(shape, TopAbs_FACE).More())
       return R::failure("面を持つ部材を選択してください（" + object->name + "）");
@@ -1716,7 +1756,7 @@ Result<RoadHeightPlaneComparison> compareRoadHeightPlane(
   const auto applicationEnd = range ? std::optional<double>(upperX) : std::nullopt;
   if (range && upperX <= 0) return RoadHeightPlaneComparison{std::move(rows), {}, applicationEnd, rise};
   BRepBuilderAPI_MakePolygon outline;
-  for (const gp_Pnt& point : geometry->vertices) {
+  for (const gp_Pnt& point : road->vertices) {
     const double distance = gp_Vec(from, point).Dot(gp_Vec(inward));
     outline.Add(gp_Pnt(point.X(), point.Y(), adjustedHeight + slope * distance));
   }

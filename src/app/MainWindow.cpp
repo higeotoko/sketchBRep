@@ -7910,9 +7910,10 @@ void MainWindow::showRoadHeightPlaneDialog() {
   QDialog dialog(this);
   dialog.setObjectName(QStringLiteral("roadHeightPlaneDialog"));
   dialog.setWindowTitle(tr("道路側の斜線試算"));
+  const auto selectedIds = selection_;
   auto* layout = new QVBoxLayout(&dialog);
   auto* note = new QLabel(tr("選択した%1部材を、入力した斜線と比較します。法令上の適否は未評価です。")
-                              .arg(selection_.size()));
+                              .arg(selectedIds.size()));
   note->setWordWrap(true);
   layout->addWidget(note);
   auto* form = new QFormLayout;
@@ -7936,7 +7937,14 @@ void MainWindow::showRoadHeightPlaneDialog() {
   form->addRow(tr("敷地内へ上がる勾配"), slope);
   form->addRow(tr("採用する道路幅員（m）"), roadWidth);
   form->addRow(tr("適用距離（m）"), applicationDistance);
-  form->addRow(tr("建物の後退距離（m）"), setback);
+  auto* setbackFields = new QWidget;
+  auto* setbackLayout = new QHBoxLayout(setbackFields);
+  setbackLayout->setContentsMargins(0, 0, 0, 0);
+  setbackLayout->addWidget(setback, 1);
+  auto* measureSetback = new QPushButton(tr("選択部材から採寸"));
+  measureSetback->setObjectName(QStringLiteral("measureRoadSetbackButton"));
+  setbackLayout->addWidget(measureSetback);
+  form->addRow(tr("建物の後退距離（m）"), setbackFields);
   auto* result = new QLabel;
   result->setObjectName(QStringLiteral("roadPlaneStatus"));
   result->setTextFormat(Qt::PlainText);
@@ -7962,6 +7970,8 @@ void MainWindow::showRoadHeightPlaneDialog() {
   layout->addWidget(buttons);
   TopoDS_Shape displayPlane;
   bool displayIncludesSetback = false;
+  std::optional<std::uint64_t> measuredAt;
+  std::uint64_t comparedAt = 0;
   const auto invalidate = [&] {
     table->setRowCount(0);
     result->clear();
@@ -7972,7 +7982,39 @@ void MainWindow::showRoadHeightPlaneDialog() {
   connect(slope, &QLineEdit::textChanged, &dialog, invalidate);
   connect(roadWidth, &QLineEdit::textChanged, &dialog, invalidate);
   connect(applicationDistance, &QLineEdit::textChanged, &dialog, invalidate);
-  connect(setback, &QLineEdit::textChanged, &dialog, invalidate);
+  connect(setback, &QLineEdit::textChanged, &dialog, [&] {
+    measuredAt.reset();
+    invalidate();
+  });
+  connect(measureSetback, &QPushButton::clicked, &dialog, [&] {
+    const auto& document = modeler_.document();
+    const auto sequence = document.sequence();
+    const auto measured = doc::measureRoadBuildingSetback(document, selectedIds);
+    if (!measured) {
+      QMessageBox::information(&dialog, tr("後退距離の採寸"), QString::fromStdString(measured.error()));
+      return;
+    }
+    const QString metres = QString::number(measured->distanceMm / 1000, 'g', 12);
+    QMessageBox candidate(QMessageBox::NoIcon, tr("後退距離の採寸"),
+                          tr("最短距離は %1 m です。\n最短の部材　%2")
+                              .arg(metres, QString::fromStdString(measured->name)),
+                          QMessageBox::NoButton, &dialog);
+    candidate.setObjectName(QStringLiteral("roadSetbackCandidateDialog"));
+    candidate.setTextFormat(Qt::PlainText);
+    candidate.setInformativeText(tr("選択した部材の形状をすべて測りました。地下部分など、算定から除く部分が選択に含まれていないか確認してください。"));
+    auto* use = candidate.addButton(tr("この値を使う"), QMessageBox::AcceptRole);
+    auto* cancel = candidate.addButton(tr("戻る"), QMessageBox::RejectRole);
+    candidate.setDefaultButton(cancel);
+    candidate.exec();
+    if (candidate.clickedButton() != use) return;
+    if (modeler_.document().sequence() != sequence) {
+      invalidate();
+      result->setText(tr("モデルが変わりました。後退距離を採寸し直してください。"));
+      return;
+    }
+    setback->setText(metres);
+    measuredAt = sequence;
+  });
   connect(calculate, &QPushButton::clicked, &dialog, [&] {
     invalidate();
     bool heightOk = false, slopeOk = false;
@@ -8000,11 +8042,16 @@ void MainWindow::showRoadHeightPlaneDialog() {
       }
       range = doc::RoadHeightPlaneRange{widthM * 1000, distanceM * 1000, setbackM * 1000};
     }
-    const auto comparison = doc::compareRoadHeightPlane(modeler_.document(), selection_, edgeHeight, gradient, range);
+    if (measuredAt && *measuredAt != modeler_.document().sequence()) {
+      result->setText(tr("モデルが変わりました。後退距離を採寸し直してください。"));
+      return;
+    }
+    const auto comparison = doc::compareRoadHeightPlane(modeler_.document(), selectedIds, edgeHeight, gradient, range);
     if (!comparison) {
       result->setText(QString::fromStdString(comparison.error()));
       return;
     }
+    comparedAt = modeler_.document().sequence();
     displayPlane = comparison->plane;
     displayIncludesSetback = comparison->edgeHeightRiseMm > 0;
     table->setRowCount(static_cast<int>(comparison->rows.size()));
@@ -8040,6 +8087,11 @@ void MainWindow::showRoadHeightPlaneDialog() {
     locate->setEnabled(!displayPlane.IsNull());
   });
   connect(locate, &QPushButton::clicked, &dialog, [&] {
+    if (comparedAt != modeler_.document().sequence()) {
+      invalidate();
+      result->setText(tr("モデルが変わりました。もう一度試算してください。"));
+      return;
+    }
     if (const auto* item = table->item(table->currentRow(), 0)) {
       setSelection({item->data(Qt::UserRole).toString().toStdString()});
       viewport_->unlockView();

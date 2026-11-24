@@ -208,6 +208,13 @@ struct SiteHeightConditions {
 const std::vector<std::pair<std::string, std::string>>& heightZoneChoices();
 const std::vector<std::pair<std::string, std::string>>& heightDistrictChoices();
 SiteHeightConditions siteHeightConditions(const Document& document);
+struct RoadBuildingSetback {
+  ObjectId id;
+  std::string name;
+  double distanceMm;  // Minimum inward distance to the selected B-reps.
+};
+Result<RoadBuildingSetback> measureRoadBuildingSetback(
+    const Document& document, const std::vector<ObjectId>& ids);
 struct RoadHeightPlaneRow {
   ObjectId id;
   std::string name;

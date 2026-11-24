@@ -2765,6 +2765,17 @@ const std::vector<CommandDef>& commands() {
          return json{{"zone", conditions.zone}, {"district", conditions.district}, {"source", conditions.source},
                      {"zones", doc::heightZoneChoices()}, {"districts", doc::heightDistrictChoices()}};
        }},
+      {"measure_road_building_setback",
+       "Measure the minimum perpendicular horizontal distance inward from the saved straight site-side road boundary "
+       "to the selected world-space B-rep parts. At or beyond the line the measurement is zero. Returns the "
+       "closest part id and name with distance_mm. Choose the parts to include; legal exceptions are not assessed.",
+       SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}}},
+               "required": ["ids"]}),
+       [](doc::Modeler& m, const json& a) {
+         const auto measured = must(doc::measureRoadBuildingSetback(m.document(),
+                                                                   a.at("ids").get<std::vector<doc::ObjectId>>()));
+         return json{{"id", measured.id}, {"name", measured.name}, {"distance_mm", measured.distanceMm}};
+       }},
       {"compare_road_height_plane",
        "Compare selected B-rep shapes against a single user-supplied inclined plane. Edge height is model Z "
        "at the saved site-side road boundary before setback, in mm. Slope is rise/run inward. Returns signed vertical excess "
@@ -4680,7 +4691,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
       name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" ||
       name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" || name == "permit_checks" || name == "check_drawing_set" || name == "project_outline" || name == "daylight_factor_estimates" ||
-      name == "site_height_conditions" || name == "compare_road_height_plane" || name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
+      name == "site_height_conditions" || name == "measure_road_building_setback" || name == "compare_road_height_plane" || name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
     return E::Read;
   }
   if (isFileCommand(name)) return E::ExternalIo;
