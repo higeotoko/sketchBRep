@@ -48,3 +48,26 @@
 | サイズ | 71,916,452 bytes |
 | SHA256 | `e874f44346db5b27d6a1297332b307e1167fa6d8399fb607f98b60f1dbfe4d5b` |
 | ZIP の検証 | `verify_portable_pads.py`・`verify_portable_mat.py` とも成功（docs/validation/2026-11-15-portable-a850c22*.json） |
+
+## 12-3 通し検証で見つかったメニューの状態（2026-11-24）
+
+B-06（階で考えられる）とB-09（人とAIが同じ操作を使える）の確認。AIが建築ツールバーのメニューを開き、1FLだけを表示すると「全部の階を見せる」が無効のまま残った。AIのメニュー操作は項目を実行してもメニューを閉じないため、開き直した時の作り直しまで無効だった。階表示を切り替えた時点で、そのメニュー内の「全部の階を見せる」の有効・無効も更新するようにした。
+
+GUIテスト `oneStoreyShownIn3d` はメニューを開き直さず、1階・2階・全階の順に切り替え、壁と床の表示および「全部の階を見せる」の有効・無効を確認する。修正後のMCP台本12-3では、1FLだけを表示し、続けて全階に戻せた。
+
+この再検証では、9-1と12-9も窓台中央の指定で壁面が選ばれた。台本のクリック位置を窓台の奥側へ60 mmずらし、開口の削除と、建具付き開口の別壁・同じ壁へのコピーと取り消しを確認した。開口を選ぶ処理自体は変更していない。
+
+修正前の通し実行（88/91本）は配布フォルダの `outputs/handson-ce7fbae-2026-11-24/report.html`、修正後の3本の再確認は同フォルダの `fixed/report.html`。
+
+1FL表示では屋根と上階の床が消え、壁と階段が残った。全階に戻した3D画像は切り替え前と画素単位で一致した。比較画像は同フォルダの `fixed/storey-review.png`。
+
+| 項目 | 結果 |
+|---|---|
+| 修正コミット | `fb38d4d` |
+| Linux CI | [run 45355556101](https://github.com/higeotoko/sketchBRep/actions/runs/45355556101) で832件成功 |
+| Windows ローカル | コア811件成功・8件スキップ、階表示GUIテスト成功 |
+| Windows ZIP | `outputs/SketchBRep-windows-x64-fb38d4d-local.zip`（83,319,916 bytes） |
+| SHA256 | `f1179f6070e971ad2a7987948cf8baa95732a6111643af0cd9a2402339ac5a1a` |
+| ZIP の検証 | [GUI 18条件](validation/2026-11-24-portable-fb38d4d.json)・[マット基礎4条件](validation/2026-11-24-portable-fb38d4d-mat.json) 成功。展開したZIPのDLLだけを使った階表示GUIテストも成功。 |
+
+修正後の通し実行は91本中90本合格。残った9-2も窓台中央で壁面を拾っていたため、同じ奥側の位置に台本を調整した。9-2を含む関連4本の再実行は全件合格し、91本すべてで合格を確認した。通し実行は `outputs/handson-ce7fbae-2026-11-24/final/report.html`、関連4本は同フォルダの `opening-recheck/report.html`。
