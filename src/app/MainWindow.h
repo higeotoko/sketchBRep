@@ -97,6 +97,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   void showInsulationDialog();
   void showOpeningPerformanceDialog(const doc::ObjectId& host, int index);
   void showSiteRoadDialog();
+  void showSiteHeightConditionsDialog();
   void showSiteGroundDialog();
   void showPermitWorkflow();
   // File > recent files (newest first, those still there; up to 10).

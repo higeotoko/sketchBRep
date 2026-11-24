@@ -2747,6 +2747,24 @@ const std::vector<CommandDef>& commands() {
          must(m.setSiteZone(text(a, "zone"), textOr(a, "source", "")));
          return json::object();
        }},
+      {"set_site_height_conditions",
+       "Set the confirmed zoning district, height district and supporting source on the selected site boundary. "
+       "Use site_height_conditions for the accepted codes. Empty choices clear their fields; both empty clear the record. "
+       "This does not assess building height.",
+       SCHEMA({"type": "object", "properties": {"zone": {"type": "string"}, "district": {"type": "string"},
+               "source": {"type": "string"}}, "required": ["zone", "district"]}),
+       [](doc::Modeler& m, const json& a) {
+         must(m.setSiteHeightConditions(text(a, "zone"), text(a, "district"), textOr(a, "source", "")));
+         return json::object();
+       }},
+      {"site_height_conditions",
+       "Read the saved site height conditions and the available zoning and height district codes.",
+       SCHEMA({"type": "object", "properties": {}}),
+       [](doc::Modeler& m, const json&) {
+         const auto conditions = doc::siteHeightConditions(m.document());
+         return json{{"zone", conditions.zone}, {"district", conditions.district}, {"source", conditions.source},
+                     {"zones", doc::heightZoneChoices()}, {"districts", doc::heightDistrictChoices()}};
+       }},
       {"daylight_factor_estimates",
        "docs/205: each wall opening's daylight factor (採光補正係数, 令 20 条 2 項) worked out from the model: "
        "horizontal and vertical distances (mm) of the part of the building over it that sets the smallest ratio, "
@@ -4638,7 +4656,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
       name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" ||
       name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" || name == "permit_checks" || name == "check_drawing_set" || name == "project_outline" || name == "daylight_factor_estimates" ||
-        name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
+      name == "site_height_conditions" || name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
     return E::Read;
   }
   if (isFileCommand(name)) return E::ExternalIo;

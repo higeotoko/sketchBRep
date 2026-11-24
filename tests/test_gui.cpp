@@ -1728,6 +1728,43 @@ void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
   QCOMPARE(rowOf(QStringLiteral("地盤（GL）"))->text(1), QStringLiteral("未入力"));
   QVERIFY(rowOf(QStringLiteral("いちばん高い所（参考）")));
   QVERIFY(rowOf(QStringLiteral("断面の切る位置")));
+  auto* height = rowOf(QStringLiteral("高さ制限の条件"));
+  QVERIFY(height);
+  QCOMPARE(height->text(1), QStringLiteral("敷地境界待ち"));
+  const auto outline = call("create_polygon", {{"points", {{-2000,-2000,0},{10000,-2000,0},{10000,8000,0},{-2000,8000,0}}}});
+  QVERIFY(outline["ok"].get<bool>());
+  QVERIFY(call("set_site_boundary", {{"outline", outline["result"]["id"]}, {"source", "架空の測量図"}})["ok"].get<bool>());
+  QTRY_COMPARE(rowOf(QStringLiteral("高さ制限の条件"))->text(1), QStringLiteral("入力不足"));
+  checks->setCurrentItem(rowOf(QStringLiteral("高さ制限の条件")));
+  QCOMPARE(edit->text(), QStringLiteral("高さ制限の条件を編集"));
+  const QString reviewDir = qEnvironmentVariable("SBR_HEIGHT_REVIEW_DIR");
+  bool saved = false;
+  QTimer::singleShot(0, [&] {
+    auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+    if (!dialog) return;
+    auto* zone = dialog->findChild<QComboBox*>(QStringLiteral("siteHeightZone"));
+    auto* district = dialog->findChild<QComboBox*>(QStringLiteral("siteHeightDistrict"));
+    auto* source = dialog->findChild<QLineEdit*>(QStringLiteral("siteHeightSource"));
+    auto* buttons = dialog->findChild<QDialogButtonBox*>();
+    if (dialog->objectName() != QStringLiteral("siteHeightConditionsDialog") || !zone || !district || !source || !buttons) {
+      dialog->reject();
+      return;
+    }
+    zone->setCurrentIndex(zone->findData(QStringLiteral("low_1")));
+    district->setCurrentIndex(district->findData(QStringLiteral("yokohama_2")));
+    source->setText(QStringLiteral("架空の都市計画図"));
+    if (!reviewDir.isEmpty()) dialog->grab().save(QDir(reviewDir).filePath(QStringLiteral("height-conditions-dialog.png")));
+    buttons->button(QDialogButtonBox::Save)->click();
+    saved = dialog->result() == QDialog::Accepted;
+    if (!saved) dialog->reject();
+  });
+  edit->click();
+  QVERIFY(saved);
+  QTRY_COMPARE(rowOf(QStringLiteral("高さ制限の条件"))->text(1), QStringLiteral("入力済み"));
+  checks->setCurrentItem(rowOf(QStringLiteral("高さ制限の条件")));
+  QVERIFY(details->text().contains(QStringLiteral("横浜市 第2種高度地区")));
+  QCOMPARE(rowOf(QStringLiteral("まだ確かめていない事"))->text(1), QStringLiteral("未評価"));
+  if (!reviewDir.isEmpty()) QVERIFY(dock->grab().save(QDir(reviewDir).filePath(QStringLiteral("height-conditions-stage.png"))));
 
   // docs/202: stages 11 (一式の突合せ) and 12 (申請用出力, on hold).
   phases->setCurrentRow(10);

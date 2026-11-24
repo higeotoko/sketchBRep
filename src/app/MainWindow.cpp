@@ -1245,6 +1245,8 @@ void MainWindow::buildMenus() {
     if (report(modeler_.setSiteZone(zone.toStdString(), source.toStdString())))
       setStatus(zone.isEmpty() ? tr("用途地域の区分を未入力にしました") : tr("用途地域の区分を決めました（Ctrl+Z で戻せます）"));
   })->setObjectName(QStringLiteral("siteZoneAction"));
+  site->addAction(tr("高さ制限の条件..."), this, &MainWindow::showSiteHeightConditionsDialog)
+      ->setObjectName(QStringLiteral("siteHeightConditionsAction"));
   // docs/214: the project's items that are not in the model, for the project outline.
   site->addAction(tr("計画概要の項目..."), this, &MainWindow::showProjectOutlineDialog)
       ->setObjectName(QStringLiteral("projectOutlineAction"));
@@ -2745,6 +2747,7 @@ void MainWindow::buildAiBridge() {
         {"rooms", [this] { showRoomsDialog(); }},
         {"levels", [this] { showLevelsDialog(); }},
         {"site_road", [this] { showSiteRoadDialog(); }},
+        {"site_height_conditions", [this] { showSiteHeightConditionsDialog(); }},
         {"site_ground", [this] { showSiteGroundDialog(); }},
         {"opening_performance", [this, a] {
            showOpeningPerformanceDialog(a.value("host", std::string()), a.value("index", 1));
@@ -7737,6 +7740,7 @@ void MainWindow::showPermitWorkflow() {
       case Action::Zone: trigger("siteZoneAction"); break;  // docs/206
       case Action::Outline: trigger("projectOutlineAction"); break;  // docs/214
       case Action::EnergyRoute: trigger("energyRouteAction"); break;  // docs/215
+      case Action::HeightConditions: showSiteHeightConditionsDialog(); break;
       case Action::Equipment: trigger("equipmentAction"); break;      // docs/226
       case Action::SavedRoad:
         setSelection({});
@@ -7836,6 +7840,64 @@ void MainWindow::showProjectOutlineDialog() {
   if (changed.empty()) return;
   if (report(modeler_.setProjectOutline(changed)))
     setStatus(tr("計画概要の項目を %1 個決めました（Ctrl+Z で戻せます）").arg(changed.size()));
+  refreshPanels();
+}
+
+void MainWindow::showSiteHeightConditionsDialog() {
+  if (!modeler_.document().settings().siteBoundary) {
+    reportError(tr("先に敷地境界を指定してください"));
+    return;
+  }
+  const auto current = doc::siteHeightConditions(modeler_.document());
+  QDialog dialog(this);
+  dialog.setObjectName(QStringLiteral("siteHeightConditionsDialog"));
+  dialog.setWindowTitle(tr("高さ制限の条件"));
+  auto* layout = new QVBoxLayout(&dialog);
+  auto* note = new QLabel(tr("都市計画図で確認した条件を入力します。\n高さの照合は未評価です。"));
+  note->setWordWrap(true);
+  layout->addWidget(note);
+  auto* form = new QFormLayout;
+  layout->addLayout(form);
+  const auto combo = [&](const auto& choices, const std::string& selected, const QString& objectName) {
+    auto* box = new QComboBox;
+    box->setObjectName(objectName);
+    box->addItem(tr("未入力"), QString());
+    for (const auto& [code, label] : choices) box->addItem(QString::fromStdString(label), QString::fromStdString(code));
+    box->setCurrentIndex(std::max(0, box->findData(QString::fromStdString(selected))));
+    return box;
+  };
+  auto* zone = combo(doc::heightZoneChoices(), current.zone, QStringLiteral("siteHeightZone"));
+  auto* district = combo(doc::heightDistrictChoices(), current.district, QStringLiteral("siteHeightDistrict"));
+  auto* source = new QLineEdit(QString::fromStdString(current.source));
+  source->setObjectName(QStringLiteral("siteHeightSource"));
+  source->setMaxLength(100);
+  source->setPlaceholderText(tr("資料名・確認日"));
+  form->addRow(tr("用途地域"), zone);
+  form->addRow(tr("高度地区"), district);
+  form->addRow(tr("確認資料"), source);
+  auto* error = new QLabel;
+  error->setTextFormat(Qt::PlainText);
+  error->setWordWrap(true);
+  error->hide();
+  layout->addWidget(error);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
+  buttons->button(QDialogButtonBox::Save)->setText(tr("保存"));
+  buttons->button(QDialogButtonBox::Cancel)->setText(tr("キャンセル"));
+  layout->addWidget(buttons);
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
+    const auto status = modeler_.setSiteHeightConditions(zone->currentData().toString().toStdString(),
+                                                          district->currentData().toString().toStdString(),
+                                                          source->text().trimmed().toStdString());
+    if (status) {
+      dialog.accept();
+    } else {
+      error->setText(userMessage(QString::fromStdString(status.message())));
+      error->show();
+    }
+  });
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  if (dialog.exec() != QDialog::Accepted) return;
+  setStatus(tr("高さ制限の条件を保存しました"));
   refreshPanels();
 }
 

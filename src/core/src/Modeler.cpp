@@ -4091,6 +4091,35 @@ Status Modeler::setSiteZone(const std::string& zone, const std::string& source) 
   return Status::success();
 }
 
+Status Modeler::setSiteHeightConditions(const std::string& zone, const std::string& district, const std::string& source) {
+  const auto& site = document_.settings().siteBoundary;
+  if (!site) return Status::failure("敷地境界を先に登録してください");
+  const auto validChoice = [](const auto& choices, const std::string& code) {
+    return code.empty() || std::any_of(choices.begin(), choices.end(), [&](const auto& choice) { return choice.first == code; });
+  };
+  if (!validChoice(heightZoneChoices(), zone) || !validChoice(heightDistrictChoices(), district))
+    return Status::failure("用途地域と高度地区は決まった値から選びます");
+  if (!oneLine(source, 300) ||
+      ((!zone.empty() || !district.empty()) && source.find_first_not_of(" \t") == std::string::npos))
+    return Status::failure("確認資料を1行、100 字までで入力してください");
+  const Object* outline = document_.find(site->outline);
+  if (!outline) return Status::failure("敷地境界の輪郭が見つかりません");
+  if (outline->locked) return Status::failure("The object is locked");
+  const auto current = siteHeightConditions(document_);
+  const std::string savedSource = zone.empty() && district.empty() ? std::string() : source;
+  if (current.zone == zone && current.district == district && current.source == savedSource) return Status::success();
+  Object object = *outline;
+  if (zone.empty() && district.empty()) {
+    object.attributes.erase("height_conditions");
+  } else {
+    object.attributes["height_conditions"] = nlohmann::json{{"zone", zone}, {"district", district}, {"source", savedSource}}.dump();
+  }
+  ChangeSet changes(document_);
+  changes.modify(object);
+  history_.execute(changes.build("Site Height Conditions"));
+  return Status::success();
+}
+
 Status Modeler::setProjectOutline(const std::map<std::string, std::string>& items) {
   nlohmann::json all = nlohmann::json::parse(document_.settings().projectOutline, nullptr, false);
   if (!all.is_object()) all = nlohmann::json::object();

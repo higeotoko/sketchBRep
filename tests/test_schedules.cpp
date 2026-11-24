@@ -2673,6 +2673,25 @@ TEST_F(Schedules, PermitChecksReadTheEnergyAndElevationStages) {
   EXPECT_EQ(siding["state"], "未入力");  // the presets have no insulation (docs/210: none given)
   EXPECT_NE(siding["details"].get<std::string>().find("断熱の入っていない壁 1 枚"), std::string::npos) << siding.dump();
   // 10: no GL yet; the walls' tops (3000) are the highest point; no sections cut by hand; no true north.
+  EXPECT_EQ(rowOf(10, "高さ制限の条件")["state"], "敷地境界待ち");
+  const auto site = ok("create_polygon", {{"points", {{-1000,-1000,0},{13000,-1000,0},{13000,10000,0},{-1000,10000,0}}}})["id"];
+  ok("set_site_boundary", {{"outline", site}, {"source", "架空の測量図"}});
+  EXPECT_EQ(rowOf(10, "高さ制限の条件")["state"], "入力不足");
+  EXPECT_FALSE(modeler.setSiteHeightConditions("residential", "yokohama_2", "確認用"));
+  EXPECT_FALSE(modeler.setSiteHeightConditions("low_1", "yokohama_2", ""));
+  ok("set_site_height_conditions", {{"zone", "low_1"}, {"district", "yokohama_2"}, {"source", "架空の都市計画図"}});
+  const auto conditions = rowOf(10, "高さ制限の条件");
+  EXPECT_EQ(conditions["state"], "入力済み");
+  EXPECT_NE(conditions["details"].get<std::string>().find("横浜市 第2種高度地区"), std::string::npos);
+  EXPECT_EQ(rowOf(10, "まだ確かめていない事")["state"], "未評価");
+  EXPECT_EQ(ok("site_height_conditions", json::object())["zone"], "low_1");
+  ASSERT_TRUE(modeler.undo());
+  EXPECT_EQ(rowOf(10, "高さ制限の条件")["state"], "入力不足");
+  ASSERT_TRUE(modeler.redo());
+  EXPECT_EQ(rowOf(10, "高さ制限の条件")["state"], "入力済み");
+  const auto otherSite = ok("create_polygon", {{"points", {{20000,0,0},{24000,0,0},{24000,4000,0},{20000,4000,0}}}})["id"];
+  ok("set_site_boundary", {{"outline", otherSite}, {"source", "別の敷地"}});
+  EXPECT_EQ(rowOf(10, "高さ制限の条件")["state"], "入力不足");
   EXPECT_EQ(rowOf(10, "地盤（GL）")["state"], "未入力");
   EXPECT_NE(rowOf(10, "いちばん高い所（参考）")["details"].get<std::string>().find("z = 0 から 3000 mm"), std::string::npos);
   EXPECT_NE(rowOf(10, "断面の切る位置")["details"].get<std::string>().find("2 つの断面"), std::string::npos);

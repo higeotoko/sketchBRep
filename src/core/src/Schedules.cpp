@@ -1552,9 +1552,58 @@ std::vector<PermitCheck> permitEnergyChecks(const Document& document) {
   return out;
 }
 
+const std::vector<std::pair<std::string, std::string>>& heightZoneChoices() {
+  static const std::vector<std::pair<std::string, std::string>> choices = {
+      {"low_1", "第一種低層住居専用地域"}, {"low_2", "第二種低層住居専用地域"},
+      {"mid_high_1", "第一種中高層住居専用地域"}, {"mid_high_2", "第二種中高層住居専用地域"},
+      {"residential_1", "第一種住居地域"}, {"residential_2", "第二種住居地域"},
+      {"quasi_residential", "準住居地域"}, {"rural_residential", "田園住居地域"},
+      {"neighborhood_commercial", "近隣商業地域"}, {"commercial", "商業地域"},
+      {"quasi_industrial", "準工業地域"}, {"industrial", "工業地域"},
+      {"exclusive_industrial", "工業専用地域"}, {"none", "用途地域の指定なし"}};
+  return choices;
+}
+
+const std::vector<std::pair<std::string, std::string>>& heightDistrictChoices() {
+  static const std::vector<std::pair<std::string, std::string>> choices = {
+      {"yokohama_1", "横浜市 第1種高度地区"}, {"yokohama_2", "横浜市 第2種高度地区"},
+      {"yokohama_3", "横浜市 第3種高度地区"}, {"yokohama_4", "横浜市 第4種高度地区"},
+      {"yokohama_5", "横浜市 第5種高度地区"}, {"yokohama_6", "横浜市 第6種高度地区"},
+      {"yokohama_7", "横浜市 第7種高度地区"}, {"none", "高度地区の指定なし"}, {"other", "その他の高度地区"}};
+  return choices;
+}
+
+SiteHeightConditions siteHeightConditions(const Document& document) {
+  const auto& site = document.settings().siteBoundary;
+  const auto* outline = site ? document.find(site->outline) : nullptr;
+  if (!outline) return {};
+  const auto data = nlohmann::json::parse(attribute(*outline, "height_conditions"), nullptr, false);
+  if (!data.is_object()) return {};
+  const auto read = [&](const char* key) {
+    const auto it = data.find(key);
+    return it != data.end() && it->is_string() ? it->get<std::string>() : std::string();
+  };
+  return {read("zone"), read("district"), read("source")};
+}
+
 std::vector<PermitCheck> permitElevationChecks(const Document& document) {
   std::vector<PermitCheck> out;
   const auto& settings = document.settings();
+  if (!settings.siteBoundary) {
+    out.push_back({"高さ制限の条件", "敷地境界待ち", "敷地境界を登録すると、用途地域と高度地区を入力できます。", {}, true});
+  } else {
+    const auto conditions = siteHeightConditions(document);
+    const auto label = [](const auto& choices, const std::string& code) {
+      const auto it = std::find_if(choices.begin(), choices.end(), [&](const auto& choice) { return choice.first == code; });
+      return it == choices.end() ? std::string("未入力") : it->second;
+    };
+    const std::string zone = label(heightZoneChoices(), conditions.zone);
+    const std::string district = label(heightDistrictChoices(), conditions.district);
+    const bool missing = zone == "未入力" || district == "未入力" || conditions.source.empty();
+    out.push_back({"高さ制限の条件", missing ? "入力不足" : "入力済み",
+                   "用途地域　" + zone + "\n高度地区　" + district + "\n確認資料　" +
+                       (conditions.source.empty() ? "未入力" : conditions.source) + "\n高さの照合　未評価", {}, missing});
+  }
   const FloorLevel* gl = nullptr;
   for (const FloorLevel& l : settings.levels)
     if (l.name == "GL") gl = &l;
@@ -1597,7 +1646,7 @@ std::vector<PermitCheck> permitElevationChecks(const Document& document) {
   else
     out.push_back({"立面の向き", "要確認", "真北が未入力です。立面図の名前（南・東・北・西）はモデルの軸に沿った向きで出ます。", {}, true});
   out.push_back({"まだ確かめていない事", "未評価",
-                 "道路斜線・隣地斜線・北側斜線などの高さの制限、法の高さ・軒の高さ、平面・立面・断面の寸法の突合せ。申請先と申請時点の法令で確かめます。",
+                 "道路斜線・隣地斜線・北側斜線と高度地区の制限、法の高さ・軒の高さ、平面・立面・断面の寸法の突合せ。申請先と申請時点の法令で確かめます。",
                  {}});
   return out;
 }

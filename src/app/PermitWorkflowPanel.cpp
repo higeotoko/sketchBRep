@@ -357,6 +357,13 @@ void PermitWorkflowPanel::readModelChecks(int stage) {
     QStringList ids;
     for (const auto& id : c.targets) ids << QString::fromStdString(id);
     const bool select = !ids.isEmpty();
+    if (stage == 10 && c.item == "高さ制限の条件") {
+      const bool hasBoundary = document_.settings().siteBoundary.has_value();
+      rows_.push_back({QString::fromStdString(c.item), QString::fromStdString(c.state), QString::fromStdString(c.details),
+                       hasBoundary ? translated("高さ制限の条件を編集") : translated("敷地境界を登録"),
+                       hasBoundary ? Action::HeightConditions : Action::Boundary, c.attention});
+      continue;
+    }
     if (stage == 9 && c.item == "適用ルート・地域") {  // docs/215: opens its dialog
       rows_.push_back({QString::fromStdString(c.item), QString::fromStdString(c.state), QString::fromStdString(c.details),
                        translated("適用ルート・地域を入力"), Action::EnergyRoute, c.attention});

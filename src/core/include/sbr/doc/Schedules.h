@@ -202,6 +202,12 @@ std::vector<PermitCheck> permitFoundationChecks(const Document& document);
 // one of their layers is insulation, typed floors and roofs, openings) and what it does not have
 // yet (the route and region, performance values, equipment): mostly 未入力, never a pass.
 std::vector<PermitCheck> permitEnergyChecks(const Document& document);
+struct SiteHeightConditions {
+  std::string zone, district, source;
+};
+const std::vector<std::pair<std::string, std::string>>& heightZoneChoices();
+const std::vector<std::pair<std::string, std::string>>& heightDistrictChoices();
+SiteHeightConditions siteHeightConditions(const Document& document);
 // Stage 10 (立面・断面, docs/201): the level GL, the model's highest point above it (not the legal
 // height), where sections are cut, the elevations' orientation, and what is not checked.
 std::vector<PermitCheck> permitElevationChecks(const Document& document);
