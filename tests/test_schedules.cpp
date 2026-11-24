@@ -2721,6 +2721,33 @@ TEST_F(Schedules, RoadHeightPlaneUsesTheShapeAtItsWorldPlacement) {
   EXPECT_NEAR(moved[1]["excess_mm"].get<double>(), -750, 0.001);
 }
 
+TEST_F(Schedules, RoadHeightPlaneClipsPartsAtTheDistanceFromTheOppositeEdge) {
+  const auto boundary = ok("create_polygon", {{"points", {{0,0,0},{8000,0,0},{8000,10000,0},{0,10000,0}}}})["id"];
+  ok("set_site_boundary", {{"outline", boundary}, {"source", "架空の測量図"}});
+  ok("set_site_road", {{"start", {0,0,0}}, {"end", {8000,0,0}}, {"source", "架空の道路"}});
+  const auto across = ok("create_polygon", {{"points", {{0,1000,4000},{500,1000,4000},{500,5000,12000},{0,5000,12000}}}})["id"];
+  const auto touches = ok("create_box", {{"origin", {1000,3000,0}}, {"width",500}, {"depth",500}, {"height",6000}})["id"];
+  const auto outside = ok("create_box", {{"origin", {2000,3100,0}}, {"width",500}, {"depth",500}, {"height",12000}})["id"];
+  json options{{"ids", {across, touches, outside}}, {"edge_height_mm", 3000}, {"slope", 1.25}};
+  EXPECT_NEAR(ok("compare_road_height_plane", options)["rows"][1]["excess_mm"].get<double>(), 2750, 0.001);
+  options["road_width_mm"] = 6000;
+  EXPECT_EQ(call("compare_road_height_plane", options)["ok"], false);
+  options["application_distance_mm"] = 9000;
+  const auto rows = ok("compare_road_height_plane", options)["rows"];
+  ASSERT_EQ(rows.size(), 3u);
+  EXPECT_EQ(rows[0]["id"], across);
+  EXPECT_NEAR(rows[0]["excess_mm"].get<double>(), 1250, 0.001);
+  EXPECT_EQ(rows[1]["id"], touches);
+  ASSERT_TRUE(rows[1]["excess_mm"].is_number());
+  EXPECT_NEAR(rows[1]["excess_mm"].get<double>(), -750, 0.001);
+  EXPECT_EQ(rows[2]["id"], outside);
+  EXPECT_TRUE(rows[2]["excess_mm"].is_null());
+  const auto preview = sbr::doc::compareRoadHeightPlane(modeler.document(), {across.get<std::string>()},
+                                                       3000, 1.25, sbr::doc::RoadHeightPlaneRange{6000, 9000});
+  ASSERT_TRUE(preview);
+  EXPECT_NEAR(sbr::geom::exactBounds(preview->plane).CornerMax().Y(), 3000, 0.001);
+}
+
 // docs/202: the permit workflow's stages 11 (一式の突合せ) and 12 (申請用出力).
 TEST_F(Schedules, PermitChecksSumUpTheStagesAndHoldTheOutput) {
   const auto rowOf = [&](int stage, const std::string& item) {

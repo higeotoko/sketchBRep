@@ -1769,11 +1769,13 @@ void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
   QVERIFY(call("set_site_road", {{"start", {-2000,-2000,0}}, {"end", {10000,-2000,0}}, {"source", "架空の道路"}})["ok"].get<bool>());
   const auto part = call("create_box", {{"origin", {0,0,0}}, {"width",500}, {"depth",500}, {"height",6000}, {"name", "道路寄りの試算部材"}});
   const auto farther = call("create_box", {{"origin", {0,1000,0}}, {"width",500}, {"depth",500}, {"height",6000}, {"name", "敷地奥の試算部材"}});
+  const auto outside = call("create_box", {{"origin", {500,2500,0}}, {"width",500}, {"depth",500}, {"height",6000}, {"name", "適用端より奥の部材"}});
   QVERIFY(part["ok"].get<bool>());
   QVERIFY(farther["ok"].get<bool>());
+  QVERIFY(outside["ok"].get<bool>());
   const auto partId = part["result"]["id"].get<std::string>();
   const auto fartherId = farther["result"]["id"].get<std::string>();
-  f.window.setSelection({fartherId, partId});
+  f.window.setSelection({fartherId, partId, outside["result"]["id"].get<std::string>()});
   auto* roadPlane = rowOf(QStringLiteral("道路側の斜線試算"));
   QVERIFY(roadPlane);
   checks->setCurrentItem(roadPlane);
@@ -1783,15 +1785,20 @@ void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
     if (!dialog) return;
     auto* edgeHeight = dialog->findChild<QLineEdit*>(QStringLiteral("roadPlaneEdgeHeight"));
     auto* slope = dialog->findChild<QLineEdit*>(QStringLiteral("roadPlaneSlope"));
+    auto* width = dialog->findChild<QLineEdit*>(QStringLiteral("roadPlaneWidth"));
+    auto* distance = dialog->findChild<QLineEdit*>(QStringLiteral("roadPlaneApplicationDistance"));
     auto* table = dialog->findChild<QTableWidget*>(QStringLiteral("roadPlaneResults"));
-    if (edgeHeight && slope && table) {
+    if (edgeHeight && slope && width && distance && table) {
       edgeHeight->setText(QStringLiteral("3000"));
       slope->setText(QStringLiteral("1.25"));
+      width->setText(QStringLiteral("6"));
+      distance->setText(QStringLiteral("9.25"));
       const auto buttons = dialog->findChildren<QPushButton*>();
       for (auto* button : buttons)
         if (button->text() == QStringLiteral("試算")) button->click();
-      compared = table->rowCount() == 2 && table->item(0, 1)->text() == QStringLiteral("超過 500.0 mm") &&
-                 table->item(1, 1)->text() == QStringLiteral("余裕 750.0 mm");
+      compared = table->rowCount() == 3 && table->item(0, 1)->text() == QStringLiteral("超過 500.0 mm") &&
+                 table->item(1, 1)->text() == QStringLiteral("余裕 750.0 mm") &&
+                 table->item(2, 1)->text() == QStringLiteral("適用範囲外");
       if (!reviewDir.isEmpty()) dialog->grab().save(QDir(reviewDir).filePath(QStringLiteral("road-height-plane.png")));
       if (compared) table->selectRow(1);
       for (auto* button : buttons)
@@ -1804,6 +1811,7 @@ void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
   QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{fartherId});
   const TopoDS_Shape plane = f.vp->roadHeightPlaneShape();
   QVERIFY(!plane.IsNull());
+  QVERIFY(std::abs(geom::exactBounds(plane).CornerMax().Y() - 1250) < 0.001);
   if (!reviewDir.isEmpty()) QVERIFY(f.vp->dumpImage(QDir(reviewDir).filePath(QStringLiteral("road-height-plane-3d.png"))));
   auto* hidePlane = f.window.findChild<QAction*>(QStringLiteral("hideRoadHeightPlaneAction"));
   QVERIFY(hidePlane && hidePlane->isEnabled());

@@ -7922,8 +7922,16 @@ void MainWindow::showRoadHeightPlaneDialog() {
   auto* slope = new QLineEdit;
   slope->setObjectName(QStringLiteral("roadPlaneSlope"));
   slope->setPlaceholderText(tr("水平1に対して上がる高さ"));
+  auto* roadWidth = new QLineEdit;
+  roadWidth->setObjectName(QStringLiteral("roadPlaneWidth"));
+  roadWidth->setPlaceholderText(tr("適用距離と一緒に入力"));
+  auto* applicationDistance = new QLineEdit;
+  applicationDistance->setObjectName(QStringLiteral("roadPlaneApplicationDistance"));
+  applicationDistance->setPlaceholderText(tr("道路の反対側の境界から"));
   form->addRow(tr("敷地側の道路境界での高さ（モデルZ・mm）"), height);
   form->addRow(tr("敷地内へ上がる勾配"), slope);
+  form->addRow(tr("採用する道路幅員（m）"), roadWidth);
+  form->addRow(tr("適用距離（m）"), applicationDistance);
   auto* result = new QLabel;
   result->setObjectName(QStringLiteral("roadPlaneStatus"));
   result->setTextFormat(Qt::PlainText);
@@ -7954,6 +7962,8 @@ void MainWindow::showRoadHeightPlaneDialog() {
   };
   connect(height, &QLineEdit::textChanged, &dialog, invalidate);
   connect(slope, &QLineEdit::textChanged, &dialog, invalidate);
+  connect(roadWidth, &QLineEdit::textChanged, &dialog, invalidate);
+  connect(applicationDistance, &QLineEdit::textChanged, &dialog, invalidate);
   connect(calculate, &QPushButton::clicked, &dialog, [&] {
     invalidate();
     bool heightOk = false, slopeOk = false;
@@ -7963,7 +7973,18 @@ void MainWindow::showRoadHeightPlaneDialog() {
       result->setText(tr("高さと勾配を数値で入力してください。"));
       return;
     }
-    const auto comparison = doc::compareRoadHeightPlane(modeler_.document(), selection_, edgeHeight, gradient);
+    std::optional<doc::RoadHeightPlaneRange> range;
+    if (!roadWidth->text().trimmed().isEmpty() || !applicationDistance->text().trimmed().isEmpty()) {
+      bool widthOk = false, distanceOk = false;
+      const double widthM = roadWidth->text().toDouble(&widthOk);
+      const double distanceM = applicationDistance->text().toDouble(&distanceOk);
+      if (!widthOk || !distanceOk) {
+        result->setText(tr("採用する道路幅員と適用距離を両方入力してください。"));
+        return;
+      }
+      range = doc::RoadHeightPlaneRange{widthM * 1000, distanceM * 1000};
+    }
+    const auto comparison = doc::compareRoadHeightPlane(modeler_.document(), selection_, edgeHeight, gradient, range);
     if (!comparison) {
       result->setText(QString::fromStdString(comparison.error()));
       return;
@@ -7975,13 +7996,19 @@ void MainWindow::showRoadHeightPlaneDialog() {
       auto* name = new QTableWidgetItem(QString::fromStdString(row.name));
       name->setData(Qt::UserRole, QString::fromStdString(row.id));
       table->setItem(i, 0, name);
-      const double rounded = std::round(row.excessMm * 10) / 10;
-      const QString distance = QString::number(std::abs(rounded), 'f', 1);
-      const QString difference = rounded > 0 ? tr("超過 %1 mm").arg(distance) :
-          rounded < 0 ? tr("余裕 %1 mm").arg(distance) : tr("差 0.0 mm");
+      QString difference = tr("適用範囲外");
+      if (row.excessMm) {
+        const double rounded = std::round(*row.excessMm * 10) / 10;
+        const QString distance = QString::number(std::abs(rounded), 'f', 1);
+        difference = rounded > 0 ? tr("超過 %1 mm").arg(distance) :
+            rounded < 0 ? tr("余裕 %1 mm").arg(distance) : tr("差 0.0 mm");
+      }
       table->setItem(i, 1, new QTableWidgetItem(difference));
     }
-    result->setText(tr("斜線に対して条件の厳しい順"));
+    result->setText(range
+        ? tr("反対側の道路境界から %1 m まで（敷地側の境界から %2 m）")
+              .arg(range->applicationDistanceMm / 1000).arg((range->applicationDistanceMm - range->roadWidthMm) / 1000)
+        : tr("距離を区切らない試算"));
     table->selectRow(0);
     locate->setEnabled(true);
   });
@@ -7992,7 +8019,7 @@ void MainWindow::showRoadHeightPlaneDialog() {
       viewport_->showStorey(std::nullopt);
       viewport_->setRoadHeightPlane(displayPlane);
       viewport_->setStandardView(Viewport::StandardView::Iso);
-      setStatus(tr("青い面は試算した斜線です。表示メニューから消せます。"));
+      setStatus(tr("青い面は試算した斜線の表示範囲です。表示メニューから消せます。"));
       dialog.accept();
     }
   });

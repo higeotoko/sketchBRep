@@ -2768,15 +2768,22 @@ const std::vector<CommandDef>& commands() {
       {"compare_road_height_plane",
        "Compare selected B-rep shapes against a single user-supplied inclined plane. Edge height is model Z "
        "at the saved site-side road boundary, in mm. Slope is rise/run inward. Returns signed vertical excess "
-       "by object (positive is above). This is a geometric comparison, not a legal road-height assessment.",
+       "by object (positive is above). To limit the comparison, give both road_width_mm (adopted width) "
+       "and application_distance_mm (from the opposite road boundary). Outside rows have excess_mm=null. "
+       "This is a geometric comparison, not a legal road-height assessment.",
        SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}},
-               "edge_height_mm": {"type": "number"}, "slope": {"type": "number"}},
+               "edge_height_mm": {"type": "number"}, "slope": {"type": "number"},
+               "road_width_mm": {"type": "number"}, "application_distance_mm": {"type": "number"}},
                "required": ["ids", "edge_height_mm", "slope"]}),
        [](doc::Modeler& m, const json& a) {
+         std::optional<doc::RoadHeightPlaneRange> range;
+         if (a.contains("road_width_mm") || a.contains("application_distance_mm"))
+           range = doc::RoadHeightPlaneRange{number(a, "road_width_mm"), number(a, "application_distance_mm")};
          const auto comparison = must(doc::compareRoadHeightPlane(m.document(), a.at("ids").get<std::vector<doc::ObjectId>>(),
-                                                                  number(a, "edge_height_mm"), number(a, "slope")));
+                                                                  number(a, "edge_height_mm"), number(a, "slope"), range));
          json result = json::array();
-         for (const auto& r : comparison.rows) result.push_back({{"id", r.id}, {"name", r.name}, {"excess_mm", r.excessMm}});
+         for (const auto& r : comparison.rows)
+           result.push_back({{"id", r.id}, {"name", r.name}, {"excess_mm", r.excessMm ? json(*r.excessMm) : json(nullptr)}});
          return json{{"rows", result}};
        }},
       {"daylight_factor_estimates",

@@ -12,6 +12,8 @@
 #include <tuple>
 
 #include <BRepAlgoAPI_Common.hxx>
+#include <BRepAlgoAPI_Section.hxx>
+#include <BRep_Builder.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
@@ -20,8 +22,11 @@
 #include <Bnd_Box.hxx>
 #include <gp_Lin.hxx>
 #include <gp_Ax3.hxx>
+#include <gp_Pln.hxx>
 #include <IntCurvesFace_ShapeIntersector.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopTools_ListOfShape.hxx>
+#include <TopoDS_Compound.hxx>
 #include <gp_Trsf.hxx>
 #include <nlohmann/json.hpp>
 
@@ -1587,12 +1592,65 @@ SiteHeightConditions siteHeightConditions(const Document& document) {
   return {read("zone"), read("district"), read("source")};
 }
 
+namespace {
+
+// In this frame X is distance inward from the site-side road edge.
+Result<TopoDS_Shape> clipRoadHeightRange(const TopoDS_Shape& world, const gp_Trsf& roadFrame,
+                                       double lowerX, double upperX, bool includeBoundaryContacts = true) {
+  using R = Result<TopoDS_Shape>;
+  const TopoDS_Shape local = world.Moved(TopLoc_Location(roadFrame));
+  const Bnd_Box box = geom::exactBounds(local);
+  if (box.IsVoid() || box.IsOpen()) return R::failure("形状の範囲を測れません");
+  const gp_Pnt lo = box.CornerMin(), hi = box.CornerMax();
+  // Leave near-tangencies to OCCT's intersection tolerance.
+  constexpr double toleranceMm = 1e-6;
+  if (hi.X() < lowerX - toleranceMm || lo.X() > upperX + toleranceMm) return TopoDS_Shape();
+  if (lo.X() >= lowerX && hi.X() <= upperX) return world;
+  const TopoDS_Shape band = BRepPrimAPI_MakeBox(
+      gp_Pnt(lowerX, lo.Y() - 1, lo.Z() - 1), gp_Pnt(upperX, hi.Y() + 1, hi.Z() + 1)).Shape();
+  BRepAlgoAPI_Common common;
+  TopTools_ListOfShape arguments, tools;
+  arguments.Append(local);
+  tools.Append(band);
+  common.SetArguments(arguments);
+  common.SetTools(tools);
+  common.SetNonDestructive(true);
+  common.Build();
+  if (!common.IsDone() || common.HasErrors()) return R::failure("適用範囲で形状を切れません");
+  const auto backToWorld = TopLoc_Location(roadFrame.Inverted());
+  const bool hasCommon = !geom::exactBounds(common.Shape()).IsVoid();
+  if (!includeBoundaryContacts) return hasCommon ? common.Shape().Moved(backToWorld) : TopoDS_Shape();
+
+  // An exact point, edge or face contact at the inclusive distance boundary
+  // may be absent from the volume common. Check both delimiting planes.
+  BRep_Builder builder;
+  TopoDS_Compound clipped;
+  builder.MakeCompound(clipped);
+  if (hasCommon) builder.Add(clipped, common.Shape());
+  for (const double x : {lowerX, upperX}) {
+    if (x < lo.X() - toleranceMm || x > hi.X() + toleranceMm) continue;
+    BRepAlgoAPI_Section section(local, gp_Pln(gp_Pnt(x, 0, 0), gp::DX()), false);
+    section.SetNonDestructive(true);
+    section.Build();
+    if (!section.IsDone() || section.HasErrors()) return R::failure("適用距離の境界で交わりを測れません");
+    if (!geom::exactBounds(section.Shape()).IsVoid()) builder.Add(clipped, section.Shape());
+  }
+  if (geom::exactBounds(clipped).IsVoid()) return TopoDS_Shape();
+  return clipped.Moved(backToWorld);
+}
+
+}  // namespace
+
 Result<RoadHeightPlaneComparison> compareRoadHeightPlane(
-    const Document& document, const std::vector<ObjectId>& ids, double edgeHeightMm, double slope) {
+    const Document& document, const std::vector<ObjectId>& ids, double edgeHeightMm, double slope,
+    std::optional<RoadHeightPlaneRange> range) {
   using R = Result<RoadHeightPlaneComparison>;
   if (ids.empty()) return R::failure("照合する部材を選択してください");
   if (!std::isfinite(edgeHeightMm) || !std::isfinite(slope) || slope <= 0 || slope > 1000)
     return R::failure("有効な基準高さと、0より大きく1000以下の勾配を入力してください");
+  if (range && (!std::isfinite(range->roadWidthMm) || !std::isfinite(range->applicationDistanceMm) ||
+                range->roadWidthMm <= 0 || range->applicationDistanceMm <= range->roadWidthMm))
+    return R::failure("道路幅員は正の値、適用距離は道路幅員より大きい値を入力してください");
   const auto& site = document.settings().siteBoundary;
   if (!site || !site->road) return R::failure("敷地境界と前面道路を登録してください");
   const auto geometry = document.siteBoundaryGeometry(site->outline);
@@ -1616,6 +1674,10 @@ Result<RoadHeightPlaneComparison> compareRoadHeightPlane(
   const double depth = flip ? -low : high;
   if (depth <= sideTolerance) return R::failure("敷地の奥行きを測れません");
   if (flip) inward.Reverse();
+  gp_Trsf roadFrame;
+  roadFrame.SetTransformation(gp_Ax3(from, gp::DZ(), inward));
+  const double lowerX = range ? -range->roadWidthMm : 0;
+  const double upperX = range ? range->applicationDistanceMm - range->roadWidthMm : 0;
 
   gp_Trsf local;
   // In this frame +Z is normal to the plane. Convert the maximum normal distance
@@ -1630,7 +1692,17 @@ Result<RoadHeightPlaneComparison> compareRoadHeightPlane(
     const TopoDS_Shape shape = document.worldShape(*object);
     if (shape.IsNull() || !TopExp_Explorer(shape, TopAbs_FACE).More())
       return R::failure("面を持つ部材を選択してください（" + object->name + "）");
-    const Bnd_Box bounds = geom::exactBounds(shape.Moved(TopLoc_Location(local)));
+    TopoDS_Shape compared = shape;
+    if (range) {
+      const auto clipped = clipRoadHeightRange(shape, roadFrame, lowerX, upperX);
+      if (!clipped) return R::failure(clipped.error() + "（" + object->name + "）");
+      compared = *clipped;
+      if (compared.IsNull()) {
+        rows.push_back({id, object->name, std::nullopt});
+        continue;
+      }
+    }
+    const Bnd_Box bounds = geom::exactBounds(compared.Moved(TopLoc_Location(local)));
     if (bounds.IsVoid() || bounds.IsOpenZmax()) return R::failure("形状の高さを測れません（" + object->name + "）");
     rows.push_back({id, object->name, bounds.CornerMax().Z() * verticalScale});
   }
@@ -1644,7 +1716,13 @@ Result<RoadHeightPlaneComparison> compareRoadHeightPlane(
   if (!outline.IsDone()) return R::failure("斜線の表示範囲を作れません");
   BRepBuilderAPI_MakeFace face(outline.Wire(), Standard_True);
   if (!face.IsDone()) return R::failure("斜線の表示面を作れません");
-  return RoadHeightPlaneComparison{std::move(rows), face.Face()};
+  TopoDS_Shape preview = face.Face();
+  if (range) {
+    const auto clipped = clipRoadHeightRange(preview, roadFrame, lowerX, upperX, false);
+    if (!clipped) return R::failure(clipped.error());
+    preview = *clipped;
+  }
+  return RoadHeightPlaneComparison{std::move(rows), preview};
 }
 
 std::vector<PermitCheck> permitElevationChecks(const Document& document) {
