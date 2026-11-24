@@ -1825,6 +1825,18 @@ Result<RoadHeightPlaneComparison> compareRoadHeightPlane(
 
 namespace {
 
+Result<TopoDS_Face> heightSiteFootprint(const SiteBoundaryGeometry& geometry) {
+  using R = Result<TopoDS_Face>;
+  const double z = geometry.vertices.front().Z();
+  BRepBuilderAPI_MakePolygon outline;
+  for (const auto& p : geometry.vertices) outline.Add(gp_Pnt(p.X(), p.Y(), z));
+  outline.Close();
+  if (!outline.IsDone()) return R::failure("敷地輪郭から照合範囲を作れません");
+  BRepBuilderAPI_MakeFace face(outline.Wire(), true);
+  if (!face.IsDone()) return R::failure("敷地輪郭から照合範囲を作れません");
+  return face.Face();
+}
+
 struct NeighborHeightField {
   TopoDS_Face footprint;
   std::vector<gp_Pnt> outline;
@@ -1879,15 +1891,10 @@ Result<NeighborHeightField> neighborHeightField(
     boundaries.push_back(*matched);
   }
 
+  const auto face = heightSiteFootprint(*geometry);
+  if (!face) return R::failure(face.error());
   const double outlineZ = geometry->vertices.front().Z();
-  BRepBuilderAPI_MakePolygon outline;
-  for (const auto& point : geometry->vertices) outline.Add(gp_Pnt(point.X(), point.Y(), outlineZ));
-  outline.Close();
-  if (!outline.IsDone()) return R::failure("敷地輪郭から照合範囲を作れません");
-  BRepBuilderAPI_MakeFace face(outline.Wire(), true);
-  if (!face.IsDone()) return R::failure("敷地輪郭から照合範囲を作れません");
-
-  return NeighborHeightField{face.Face(), std::move(geometry->vertices), outlineZ, std::move(boundaries), baseZ, slope};
+  return NeighborHeightField{*face, std::move(geometry->vertices), outlineZ, std::move(boundaries), baseZ, slope};
 }
 
 }  // namespace
@@ -2089,6 +2096,163 @@ Result<NeighborHeightPreview> neighborHeightPreview(
   } catch (const Standard_Failure&) {
     return R::failure("隣地斜線の表示面を作れません");
   }
+}
+
+namespace {
+
+enum class NorthBoundaryKind { Unconfirmed, Neighbor, Road };
+
+struct NorthRayHit {
+  double station;
+  std::size_t edge;
+};
+
+NorthHeightSample northHeightSample(const SiteBoundaryGeometry& geometry, const TopoDS_Face& footprint,
+                                   const std::vector<NorthBoundaryKind>& kinds, const gp_Pnt& start,
+                                   const gp_Vec& north, double width, double baseZ) {
+  const auto startState = BRepClass_FaceClassifier(footprint, start, tolerance::kLinear).State();
+  if (startState == TopAbs_OUT) return NorthHeightSample{"outside_site"};
+  if (startState != TopAbs_IN && startState != TopAbs_ON) return NorthHeightSample{"calculation_review"};
+
+  std::vector<NorthRayHit> hits;
+  const auto& vertices = geometry.vertices;
+  const auto cross = [&](const gp_Vec& v) { return north.X() * v.Y() - north.Y() * v.X(); };
+  const auto addHit = [&](double t, std::size_t edge) {
+    if (t >= -tolerance::kLinear) hits.push_back({std::max(t, 0.0), edge});
+  };
+  for (std::size_t i = 0; i < vertices.size(); ++i) {
+    const gp_Vec a(start, vertices[i]), b(start, vertices[(i + 1) % vertices.size()]);
+    const double sideA = cross(a), sideB = cross(b);
+    const bool onA = std::abs(sideA) <= tolerance::kLinear;
+    const bool onB = std::abs(sideB) <= tolerance::kLinear;
+    if (onA) addHit(a.Dot(north), i);
+    if (onB) addHit(b.Dot(north), i);
+    if (!onA && !onB && (sideA > 0) != (sideB > 0)) {
+      const double fraction = sideA / (sideA - sideB);
+      addHit((a + (b - a) * fraction).Dot(north), i);
+    }
+    // Starting on a collinear edge also creates an event at the start of the ray.
+    if (onA && onB && (a.Dot(north) < 0) != (b.Dot(north) < 0)) addHit(0, i);
+  }
+  std::sort(hits.begin(), hits.end(), [](const auto& a, const auto& b) { return a.station < b.station; });
+
+  for (std::size_t begin = 0; begin < hits.size();) {
+    std::size_t end = begin + 1;
+    while (end < hits.size() && hits[end].station - hits[begin].station <= tolerance::kLinear) ++end;
+    const double exitDistance = hits[begin].station;
+    const auto exit = start.Translated(north * exitDistance);
+    const auto after = end == hits.size() ? TopAbs_OUT :
+        BRepClass_FaceClassifier(footprint, start.Translated(north * ((hits[end - 1].station + hits[end].station) / 2)),
+                                 tolerance::kLinear).State();
+    if (after == TopAbs_IN) {
+      begin = end;  // A tangency does not leave the site.
+      continue;
+    }
+    NorthHeightSample sample;
+    sample.exitPoint = exit;
+    if (after != TopAbs_OUT) {
+      sample.status = "parallel_review";
+      return sample;
+    }
+    auto distance = std::numeric_limits<double>::infinity();
+    bool hasRoad = false, hasNeighbor = false;
+    for (std::size_t j = begin; j < end; ++j) {
+      const auto i = hits[j].edge;
+      const std::array<gp_Pnt, 2> edge{vertices[i], vertices[(i + 1) % vertices.size()]};
+      const auto kind = kinds[i];
+      if (kind == NorthBoundaryKind::Unconfirmed) {
+        sample.status = "boundary_unconfirmed";
+        sample.exitBoundary = edge;
+        return sample;
+      }
+      double candidate = exitDistance;
+      if (kind == NorthBoundaryKind::Road) {
+        hasRoad = true;
+        const gp_Vec tangent(edge[0], edge[1]);
+        const double cosine = std::abs(cross(tangent)) / std::hypot(tangent.X(), tangent.Y());
+        if (cosine <= 1e-8) {
+          sample.status = "parallel_review";
+          sample.exitBoundary = edge;
+          sample.road = true;
+          return sample;
+        }
+        if (!(width > 0) || !std::isfinite(width)) {
+          sample.status = "road_width_missing";
+          sample.exitBoundary = edge;
+          sample.road = true;
+          return sample;
+        }
+        candidate += width / cosine;
+      } else {
+        hasNeighbor = true;
+      }
+      if (candidate < distance) {
+        distance = candidate;
+        sample.exitBoundary = edge;
+        sample.road = kind == NorthBoundaryKind::Road;
+      }
+    }
+    const double limit = baseZ + 1.25 * distance;
+    if (!std::isfinite(limit)) return NorthHeightSample{"calculation_review"};
+    sample.status = hasRoad && hasNeighbor ? "vertex_review" : "calculated";
+    sample.distanceMm = distance;
+    sample.referencePoint = start.Translated(north * distance);
+    sample.limitZMm = limit;
+    return sample;
+  }
+  return NorthHeightSample{"calculation_review"};
+}
+
+}  // namespace
+
+Result<std::vector<NorthHeightSample>> northHeightAt(
+    const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedNeighbors,
+    const std::vector<gp_Pnt>& points, double groundZMm, double baseHeightMm) {
+  using R = Result<std::vector<NorthHeightSample>>;
+  if (points.empty()) return R::failure("照合する点を指定してください");
+  const double baseZ = groundZMm + baseHeightMm;
+  if (!std::isfinite(baseZ) || (baseHeightMm != 5000 && baseHeightMm != 10000))
+    return R::failure("地盤面と、法第56条で確認した立上り5 mまたは10 mを入力してください");
+  const auto& settings = document.settings();
+  if (!settings.siteNorth) return R::failure("先に敷地の真北を登録してください");
+  if (!settings.siteBoundary) return R::failure("先に敷地境界を登録してください");
+  const auto geometry = document.siteBoundaryGeometry(settings.siteBoundary->outline);
+  if (!geometry) return R::failure(geometry.error());
+  const auto road = document.siteRoadEdge(*geometry);
+  if (settings.siteBoundary->road && !road) return R::failure("道路が接する敷地辺を登録し直してください");
+  const auto footprint = heightSiteFootprint(*geometry);
+  if (!footprint) return R::failure(footprint.error());
+
+  const auto& vertices = geometry->vertices;
+  const auto setKind = [&](const std::array<gp_Pnt, 2>& edge, auto& kinds, NorthBoundaryKind value) {
+    for (std::size_t i = 0; i < vertices.size(); ++i) {
+      if (edge[0].Distance(vertices[i]) <= tolerance::kLinear &&
+          edge[1].Distance(vertices[(i + 1) % vertices.size()]) <= tolerance::kLinear) {
+        if (kinds[i] == NorthBoundaryKind::Road && value == NorthBoundaryKind::Neighbor) return false;
+        kinds[i] = value;
+        return true;
+      }
+    }
+    return false;
+  };
+  std::vector<NorthBoundaryKind> kinds(vertices.size(), NorthBoundaryKind::Unconfirmed);
+  if (road) setKind(*road, kinds, NorthBoundaryKind::Road);
+  for (const auto& edge : confirmedNeighbors) {
+    const auto matched = geometry->matchEdge(edge[0], edge[1]);
+    if (!matched || !setKind(*matched, kinds, NorthBoundaryKind::Neighbor))
+      return R::failure("確認した隣地境界には、前面道路以外の敷地輪郭の辺を指定してください");
+  }
+  const double angle = std::remainder(settings.siteNorth->angle, 360.0) * std::acos(-1.0) / 180.0;
+  const gp_Vec north(std::sin(angle), std::cos(angle), 0);
+  const double width = road ? settings.siteBoundary->road->widthMm : 0;
+  const double outlineZ = vertices.front().Z();
+  std::vector<NorthHeightSample> rows;
+  rows.reserve(points.size());
+  for (const auto& point : points) {
+    if (!std::isfinite(point.X()) || !std::isfinite(point.Y())) return R::failure("点のXY座標を確認してください");
+    rows.push_back(northHeightSample(*geometry, *footprint, kinds, gp_Pnt(point.X(), point.Y(), outlineZ), north, width, baseZ));
+  }
+  return rows;
 }
 
 std::vector<PermitCheck> permitElevationChecks(const Document& document) {

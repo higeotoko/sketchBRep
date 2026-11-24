@@ -2804,6 +2804,37 @@ const std::vector<CommandDef>& commands() {
          }
          return json{{"samples", std::move(rows)}, {"legal_status", "未評価"}};
        }},
+      {"north_height_at",
+       "Study Building Standards Act Art. 56(1)(iii) at XY points using the site's saved true north. "
+       "Supply confirmed neighbor edges as {start,end} world points. The registered road width is used for "
+       "an exit over the site's road edge. Heights are in mm, rise must be 5000 or 10000, slope is 1.25. "
+       "Unconfirmed exits and boundary coincidences report a review status. Read only; no applicability or local district assessment.",
+       SCHEMA({"type": "object", "properties": {
+                   "boundaries": {"type": "array", "items": {"type": "object", "properties": {
+                      "start": {"type": "array"}, "end": {"type": "array"}}, "required": ["start", "end"]}},
+                   "points": {"type": "array", "items": {"type": "array"}}, "ground_z_mm": {"type": "number"},
+                   "base_height_mm": {"type": "number", "enum": [5000,10000]}},
+               "required": ["boundaries", "points", "ground_z_mm", "base_height_mm"]}),
+       [](doc::Modeler& m, const json& a) {
+         const auto positions = points(a, "points");
+         const auto samples = must(doc::northHeightAt(m.document(), confirmedNeighborEdges(a), positions,
+                                                      number(a, "ground_z_mm"), number(a, "base_height_mm")));
+         auto rows = json::array();
+         for (std::size_t i = 0; i < samples.size(); ++i) {
+           const auto& sample = samples[i];
+           json row{{"point", toJson(positions[i])}, {"status", sample.status},
+                    {"limit_z_mm", sample.limitZMm ? json(*sample.limitZMm) : json(nullptr)}};
+           if (sample.exitPoint) row["exit_point"] = toJson(*sample.exitPoint);
+           if (sample.exitBoundary) {
+             row["exit_boundary"] = {{"start", toJson((*sample.exitBoundary)[0])}, {"end", toJson((*sample.exitBoundary)[1])}};
+             row["road"] = sample.road;
+           }
+           if (sample.referencePoint) row["reference_point"] = toJson(*sample.referencePoint);
+           if (sample.distanceMm) row["distance_mm"] = *sample.distanceMm;
+           rows.push_back(std::move(row));
+         }
+         return json{{"samples", std::move(rows)}, {"legal_status", "未評価"}};
+       }},
       {"compare_neighbor_height",
        "Compare selected world-space B-reps with a neighbor-height study using confirmed site edges. "
        "The maximum signed excess is between lower_excess_mm (null if no lower bound was found) and upper_excess_mm. "
@@ -4782,7 +4813,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
       name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" ||
       name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" || name == "permit_checks" || name == "check_drawing_set" || name == "project_outline" || name == "daylight_factor_estimates" ||
-      name == "site_height_conditions" || name == "neighbor_height_at" || name == "compare_neighbor_height" || name == "road_height_datum" || name == "road_height_table_values" || name == "measure_road_building_setback" || name == "compare_road_height_plane" || name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
+      name == "site_height_conditions" || name == "neighbor_height_at" || name == "north_height_at" || name == "compare_neighbor_height" || name == "road_height_datum" || name == "road_height_table_values" || name == "measure_road_building_setback" || name == "compare_road_height_plane" || name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
     return E::Read;
   }
   if (isFileCommand(name)) return E::ExternalIo;

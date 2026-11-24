@@ -279,6 +279,18 @@ struct NeighborHeightPreview {
 Result<NeighborHeightPreview> neighborHeightPreview(
     const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedEdges,
     double groundZMm, double baseHeightMm, double slope);
+struct NorthHeightSample {
+  std::string status;
+  std::optional<std::array<gp_Pnt, 2>> exitBoundary = std::nullopt;
+  std::optional<gp_Pnt> exitPoint = std::nullopt;
+  std::optional<gp_Pnt> referencePoint = std::nullopt;
+  bool road = false;
+  std::optional<double> distanceMm = std::nullopt;
+  std::optional<double> limitZMm = std::nullopt;
+};
+Result<std::vector<NorthHeightSample>> northHeightAt(
+    const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedNeighbors,
+    const std::vector<gp_Pnt>& points, double groundZMm, double baseHeightMm);
 // Stage 10 (立面・断面, docs/201): the level GL, the model's highest point above it (not the legal
 // height), where sections are cut, the elevations' orientation, and what is not checked.
 std::vector<PermitCheck> permitElevationChecks(const Document& document);

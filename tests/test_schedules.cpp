@@ -2705,6 +2705,66 @@ TEST_F(Schedules, PermitChecksReadTheEnergyAndElevationStages) {
   EXPECT_NE(rowOf(10, "いちばん高い所（参考）")["details"].get<std::string>().find("GLから 3500 mm"), std::string::npos);
 }
 
+TEST_F(Schedules, NorthHeightCrossesTheRoadInTrueNorthDirection) {
+  const auto site = ok("create_polygon", {{"points", {{0,0,0},{20000,0,0},{20000,30000,0},{0,30000,0}}}})["id"];
+  ok("set_site_boundary", {{"outline", site}, {"source", "架空の測量図"}});
+  const json east = {{"start", {20000,0,0}}, {"end", {20000,30000,0}}};
+  const json road = {{"start", {20000,30000,0}}, {"end", {0,30000,0}}, {"source", "架空の道路"}};
+  ok("set_site_road", road);
+  json args{{"boundaries", json::array({east})}, {"points", {{10000,26000,200}}}, {"ground_z_mm", 0}, {"base_height_mm", 5000}};
+  EXPECT_EQ(call("north_height_at", args)["ok"], false);
+  ASSERT_TRUE(modeler.setSiteNorth({0, "架空の測量図", "2026-11-25"}));
+  const auto missing = ok("north_height_at", args)["samples"][0];
+  EXPECT_EQ(missing["status"], "road_width_missing");
+  EXPECT_TRUE(missing["limit_z_mm"].is_null());
+
+  auto measured = road;
+  measured["width_m"] = 6;
+  ok("set_site_road", measured);
+  const auto straight = ok("north_height_at", args)["samples"][0];
+  EXPECT_EQ(straight["status"], "calculated");
+  EXPECT_EQ(straight["exit_point"], json::array({10000,30000,0}));
+  EXPECT_EQ(straight["reference_point"], json::array({10000,36000,0}));
+  EXPECT_EQ(straight["limit_z_mm"], 17500);
+  ASSERT_TRUE(modeler.setSiteNorth({15, "架空の測量図", "2026-11-25"}));
+  const auto oblique = ok("north_height_at", args)["samples"][0];
+  EXPECT_NEAR(oblique["distance_mm"].get<double>(), 10000 / std::cos(std::acos(-1.0)/12), 0.001);
+  EXPECT_NEAR(oblique["reference_point"][1].get<double>(), 36000, 0.001);
+
+  ASSERT_TRUE(modeler.setSiteNorth({45, "架空の測量図", "2026-11-25"}));
+  args["points"] = json::array({{10000,20000,0}});
+  const auto corner = ok("north_height_at", args)["samples"][0];
+  EXPECT_EQ(corner["status"], "vertex_review");
+  EXPECT_NEAR(corner["limit_z_mm"].get<double>(), 5000 + 12500 * std::sqrt(2.0), 0.001);
+}
+
+TEST_F(Schedules, NorthHeightStopsAtTheFirstExitFromAConcaveSite) {
+  const auto site = ok("create_polygon", {{"points", {{0,0,0},{12000,0,0},{12000,3000,0},
+                                                     {3000,3000,0},{3000,9000,0},{12000,9000,0},
+                                                     {12000,12000,0},{0,12000,0}}}})["id"];
+  ok("set_site_boundary", {{"outline", site}, {"source", "架空の測量図"}});
+  ASSERT_TRUE(modeler.setSiteNorth({0, "架空の測量図", "2026-11-25"}));
+  const json lower = {{"start", {12000,3000,0}}, {"end", {3000,3000,0}}};
+  const json upper = {{"start", {12000,12000,0}}, {"end", {0,12000,0}}};
+  json args{{"boundaries", {lower, upper}}, {"points", {{5000,1000,0},{5000,10000,0},{5000,5000,0},{3000,1000,0}}},
+            {"ground_z_mm", 0}, {"base_height_mm", 5000}};
+  const auto sequence = modeler.document().sequence();
+  const auto samples = ok("north_height_at", args)["samples"];
+  EXPECT_EQ(samples[0]["exit_point"], json::array({5000,3000,0}));
+  EXPECT_EQ(samples[0]["limit_z_mm"], 7500);
+  EXPECT_EQ(samples[1]["exit_point"], json::array({5000,12000,0}));
+  EXPECT_EQ(samples[1]["limit_z_mm"], 7500);
+  EXPECT_EQ(samples[2]["status"], "outside_site");
+  EXPECT_TRUE(samples[2]["limit_z_mm"].is_null());
+  EXPECT_EQ(samples[3]["status"], "parallel_review");
+  EXPECT_TRUE(samples[3]["limit_z_mm"].is_null());
+  args["boundaries"] = json::array({upper});
+  const auto unconfirmed = ok("north_height_at", args)["samples"][0];
+  EXPECT_EQ(unconfirmed["status"], "boundary_unconfirmed");
+  EXPECT_TRUE(unconfirmed["limit_z_mm"].is_null());
+  EXPECT_EQ(modeler.document().sequence(), sequence);
+}
+
 TEST_F(Schedules, NeighborHeightMatchesTheRectangularReferenceAndRejectsRoads) {
   const auto boundary = ok("create_polygon", {{"points", {{0,0,0},{20000,0,0},{20000,30000,0},{0,30000,0}}}})["id"];
   ok("set_site_boundary", {{"outline", boundary}, {"source", "架空の測量図"}});
