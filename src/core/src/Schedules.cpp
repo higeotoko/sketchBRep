@@ -31,6 +31,7 @@
 #include <Poly_Triangulation.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopTools_ListOfShape.hxx>
+#include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
 #include <gp_Trsf.hxx>
 #include <nlohmann/json.hpp>
@@ -1826,6 +1827,7 @@ namespace {
 
 struct NeighborHeightField {
   TopoDS_Face footprint;
+  std::vector<gp_Pnt> outline;
   double outlineZ;
   std::vector<std::array<gp_Pnt, 2>> boundaries;
   double baseZ;
@@ -1860,7 +1862,7 @@ Result<NeighborHeightField> neighborHeightField(
   if (confirmedEdges.empty()) return R::failure("確認した隣地の境界辺を指定してください");
   const auto& site = document.settings().siteBoundary;
   if (!site) return R::failure("先に敷地境界を登録してください");
-  const auto geometry = document.siteBoundaryGeometry(site->outline);
+  auto geometry = document.siteBoundaryGeometry(site->outline);
   if (!geometry) return R::failure(geometry.error());
   const auto road = document.siteRoadEdge(*geometry);
   if (site->road && !road) return R::failure("道路が接する敷地辺を登録し直してください");
@@ -1885,7 +1887,7 @@ Result<NeighborHeightField> neighborHeightField(
   BRepBuilderAPI_MakeFace face(outline.Wire(), true);
   if (!face.IsDone()) return R::failure("敷地輪郭から照合範囲を作れません");
 
-  return NeighborHeightField{face.Face(), outlineZ, std::move(boundaries), baseZ, slope};
+  return NeighborHeightField{face.Face(), std::move(geometry->vertices), outlineZ, std::move(boundaries), baseZ, slope};
 }
 
 }  // namespace
@@ -1912,6 +1914,108 @@ Result<std::vector<std::optional<NeighborHeightSample>>> neighborHeightAt(
     samples.push_back(nearest);
   }
   return samples;
+}
+
+namespace {
+
+bool planBoundsInsideSite(const NeighborHeightField& field, const std::array<gp_Pnt, 4>& corners) {
+  for (const auto& p : corners)
+    if (BRepClass_FaceClassifier(field.footprint, p, tolerance::kLinear).State() != TopAbs_IN) return false;
+  // A re-entrant boundary may cross between the corners. Require the whole box to miss every edge.
+  for (std::size_t i = 0; i < field.outline.size(); ++i) {
+    const auto& a = field.outline[i];
+    const auto& b = field.outline[(i + 1) % field.outline.size()];
+    double first = 0, last = 1;
+    const auto overlaps = [&](double origin, double delta, double low, double high) {
+      if (delta == 0) return origin >= low && origin <= high;
+      const double p = (low - origin) / delta, q = (high - origin) / delta;
+      first = std::max(first, std::min(p, q));
+      last = std::min(last, std::max(p, q));
+      return first <= last;
+    };
+    if (overlaps(a.X(), b.X() - a.X(), corners[0].X(), corners[2].X()) &&
+        overlaps(a.Y(), b.Y() - a.Y(), corners[0].Y(), corners[2].Y())) return false;
+  }
+  return true;
+}
+
+}  // namespace
+
+Result<std::vector<NeighborHeightPartRow>> compareNeighborHeight(
+    const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedEdges,
+    const std::vector<ObjectId>& ids, double groundZMm, double baseHeightMm, double slope) {
+  using R = Result<std::vector<NeighborHeightPartRow>>;
+  if (ids.empty()) return R::failure("モデルで照合する部材を選択してください");
+  const auto field = neighborHeightField(document, confirmedEdges, groundZMm, baseHeightMm, slope);
+  if (!field) return R::failure(field.error());
+  const auto& site = document.settings().siteBoundary;
+  std::vector<NeighborHeightPartRow> rows;
+  constexpr double agreementMm = 0.01;
+  for (const auto& id : std::set<ObjectId>(ids.begin(), ids.end())) {
+    const auto* object = document.find(id);
+    if (!object || id == site->outline) return R::failure("敷地境界以外の部材を選択してください");
+    const auto shape = document.worldShape(*object);
+    if (shape.IsNull() || !TopExp_Explorer(shape, TopAbs_FACE).More())
+      return R::failure("面を持つ部材を選択してください（" + object->name + "）");
+    const Bnd_Box bounds = geom::exactBounds(shape);
+    if (bounds.IsVoid() || bounds.IsOpen())
+      return R::failure("部材の範囲を測れません（" + object->name + "）");
+    const auto lo = bounds.CornerMin(), hi = bounds.CornerMax();
+    const auto z = field->outlineZ;
+    const std::array<gp_Pnt, 4> corners{gp_Pnt(lo.X(), lo.Y(), z), gp_Pnt(hi.X(), lo.Y(), z),
+                                        gp_Pnt(hi.X(), hi.Y(), z), gp_Pnt(lo.X(), hi.Y(), z)};
+    const bool whollyInSite = planBoundsInsideSite(*field, corners);
+    std::optional<double> lower;
+    const auto addLower = [&](double v) { if (!lower || v > *lower) lower = v; };
+    // A real B-rep vertex provides a lower bound, never a claim about intervening faces.
+    for (TopExp_Explorer vertex(shape, TopAbs_VERTEX); vertex.More(); vertex.Next()) {
+      const auto p = BRep_Tool::Pnt(TopoDS::Vertex(vertex.Current()));
+      const gp_Pnt xy(p.X(), p.Y(), z);
+      const auto state = BRepClass_FaceClassifier(field->footprint, xy, tolerance::kLinear).State();
+      if (state == TopAbs_ON || state == TopAbs_IN) addLower(p.Z() - field->sample(xy).limitZMm);
+    }
+
+    double upper = -std::numeric_limits<double>::infinity();
+    for (const auto& edge : field->boundaries) {
+      const auto& a = edge[0];
+      const gp_Vec along(edge[1].X() - a.X(), edge[1].Y() - a.Y(), 0);
+      const double length = along.Magnitude();
+      const gp_Vec axis = along / length;
+      const gp_Pnt centre((lo.X() + hi.X()) / 2, (lo.Y() + hi.Y()) / 2, z);
+      const gp_Pnt origin(a.X(), a.Y(), z);
+      const gp_Vec offset(origin, centre);
+      const double station = std::clamp(offset.Dot(axis), 0.0, length);
+      const gp_Vec away = offset - axis * station;
+      const gp_Dir direction(away.Magnitude() > tolerance::kLinear ? away : gp_Vec(-axis.Y(), axis.X(), 0));
+      const gp_Pnt anchor = direction.Dot(gp_Dir(axis)) > 0 ? origin.Translated(along) : origin;
+      // A supporting line gives a lower bound on distance to the finite segment.
+      // Hence the true signed excess is at most the excess above that affine slope.
+      gp_Trsf local;
+      local.SetTransformation(gp_Ax3(gp_Pnt(anchor.X(), anchor.Y(), field->baseZ),
+                                    gp_Dir(-slope * direction.X(), -slope * direction.Y(), 1)));
+      const auto localBounds = geom::exactBounds(shape.Moved(TopLoc_Location(local)));
+      if (localBounds.IsVoid() || localBounds.IsOpenZmax())
+        return R::failure("部材の高さを測れません（" + object->name + "）");
+      const double cap = localBounds.CornerMax().Z() * std::hypot(1.0, slope);
+      upper = std::max(upper, cap);
+      const bool perpendicular = std::abs(direction.X() * axis.X() + direction.Y() * axis.Y()) <= 1e-12;
+      if (whollyInSite && perpendicular && std::all_of(corners.begin(), corners.end(), [&](const gp_Pnt& p) {
+            const gp_Vec v(origin, p);
+            const double t = v.Dot(axis);
+            return t >= 0 && t <= length && v.Dot(gp_Vec(direction)) >= 0;
+          })) addLower(cap);
+    }
+    if (!std::isfinite(upper) || (lower && !std::isfinite(*lower)))
+      return R::failure("部材と斜線の差を測れません（" + object->name + "）");
+    if (lower) upper = std::max(upper, *lower);
+    const bool exact = lower && upper - *lower <= agreementMm;
+    std::string state = "要確認";
+    if (lower && *lower > agreementMm) state = "超過";
+    else if (lower && upper < -agreementMm) state = "余裕";
+    else if (exact && upper <= agreementMm && *lower >= -agreementMm) state = "接触相当";
+    rows.push_back({id, object->name, std::move(state), lower, upper, exact});
+  }
+  return rows;
 }
 
 Result<NeighborHeightPreview> neighborHeightPreview(

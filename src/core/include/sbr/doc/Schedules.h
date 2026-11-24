@@ -261,6 +261,17 @@ struct NeighborHeightSample {
 Result<std::vector<std::optional<NeighborHeightSample>>> neighborHeightAt(
     const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedEdges,
     const std::vector<gp_Pnt>& points, double groundZMm, double baseHeightMm, double slope);
+struct NeighborHeightPartRow {
+  ObjectId id;
+  std::string name;
+  std::string state;
+  std::optional<double> lowerExcessMm;
+  double upperExcessMm;
+  bool exact;
+};
+Result<std::vector<NeighborHeightPartRow>> compareNeighborHeight(
+    const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedEdges,
+    const std::vector<ObjectId>& ids, double groundZMm, double baseHeightMm, double slope);
 struct NeighborHeightPreview {
   TopoDS_Shape surface;
   TopoDS_Shape boundaryLines;

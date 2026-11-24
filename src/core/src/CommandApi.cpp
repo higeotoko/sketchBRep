@@ -330,6 +330,13 @@ gp_Dir direction(const json& args, const char* key, const gp_Dir& fallback) {
   return gp_Dir(v);
 }
 
+std::vector<std::array<gp_Pnt, 2>> confirmedNeighborEdges(const json& args) {
+  if (!args.at("boundaries").is_array()) throw ApiError("boundaries must be an array");
+  std::vector<std::array<gp_Pnt, 2>> edges;
+  for (const auto& edge : args.at("boundaries")) edges.push_back({point(edge, "start"), point(edge, "end")});
+  return edges;
+}
+
 std::vector<gp_Pnt> points(const json& args, const char* key) {
   const json& v = arg(args, key);
   if (!v.is_array()) throw ApiError(std::string("'") + key + "' must be an array of points");
@@ -2779,9 +2786,7 @@ const std::vector<CommandDef>& commands() {
                    "base_height_mm": {"type": "number"}, "slope": {"type": "number"}},
                "required": ["boundaries", "points", "ground_z_mm", "base_height_mm", "slope"]}),
        [](doc::Modeler& m, const json& a) {
-         if (!a.at("boundaries").is_array()) throw ApiError("boundaries must be an array");
-         std::vector<std::array<gp_Pnt, 2>> confirmedEdges;
-         for (const auto& edge : a.at("boundaries")) confirmedEdges.push_back({point(edge, "start"), point(edge, "end")});
+         const auto confirmedEdges = confirmedNeighborEdges(a);
          const auto positions = points(a, "points");
          const auto samples = must(doc::neighborHeightAt(m.document(), confirmedEdges, positions,
                                                         number(a, "ground_z_mm"), number(a, "base_height_mm"), number(a, "slope")));
@@ -2798,6 +2803,27 @@ const std::vector<CommandDef>& commands() {
            rows.push_back(std::move(row));
          }
          return json{{"samples", std::move(rows)}, {"legal_status", "未評価"}};
+       }},
+      {"compare_neighbor_height",
+       "Compare selected world-space B-reps with a neighbor-height study using confirmed site edges. "
+       "The maximum signed excess is between lower_excess_mm (null if no lower bound was found) and upper_excess_mm. "
+       "exact means the bounds agree to 0.01 mm. Results are geometric and do not establish legal compliance. Read only.",
+       SCHEMA({"type": "object", "properties": {
+                   "boundaries": {"type": "array", "items": {"type": "object", "properties": {
+                      "start": {"type": "array"}, "end": {"type": "array"}}, "required": ["start", "end"]}},
+                   "ids": {"type": "array", "items": {"type": "string"}}, "ground_z_mm": {"type": "number"},
+                   "base_height_mm": {"type": "number"}, "slope": {"type": "number"}},
+               "required": ["boundaries", "ids", "ground_z_mm", "base_height_mm", "slope"]}),
+       [](doc::Modeler& m, const json& a) {
+         const auto parts = must(doc::compareNeighborHeight(m.document(), confirmedNeighborEdges(a),
+             a.at("ids").get<std::vector<doc::ObjectId>>(), number(a, "ground_z_mm"), number(a, "base_height_mm"),
+             number(a, "slope")));
+         auto rows = json::array();
+         for (const auto& part : parts)
+           rows.push_back({{"id", part.id}, {"name", part.name}, {"state", part.state}, {"exact", part.exact},
+                           {"lower_excess_mm", part.lowerExcessMm ? json(*part.lowerExcessMm) : json(nullptr)},
+                           {"upper_excess_mm", part.upperExcessMm}});
+         return json{{"rows", std::move(rows)}, {"legal_status", "未評価"}};
        }},
       {"road_height_datum",
        "Calculate the site-side edge_height_mm for one level road and a confirmed site ground plane, before building "
@@ -4756,7 +4782,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
       name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" ||
       name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" || name == "permit_checks" || name == "check_drawing_set" || name == "project_outline" || name == "daylight_factor_estimates" ||
-      name == "site_height_conditions" || name == "neighbor_height_at" || name == "road_height_datum" || name == "road_height_table_values" || name == "measure_road_building_setback" || name == "compare_road_height_plane" || name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
+      name == "site_height_conditions" || name == "neighbor_height_at" || name == "compare_neighbor_height" || name == "road_height_datum" || name == "road_height_table_values" || name == "measure_road_building_setback" || name == "compare_road_height_plane" || name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
     return E::Read;
   }
   if (isFileCommand(name)) return E::ExternalIo;

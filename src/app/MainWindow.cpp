@@ -8313,6 +8313,7 @@ void MainWindow::showNeighborHeightDialog() {
   const auto sequence = document.sequence();
   QDialog dialog(this);
   dialog.setObjectName(QStringLiteral("neighborHeightDialog"));
+  const auto selectedIds = selection_;
   dialog.setWindowTitle(tr("隣地斜線"));
   auto* layout = new QVBoxLayout(&dialog);
   auto* instructions = new QLabel(tr("確認した隣地の境界辺を選び、地盤面・立上り・勾配を入力します。"));
@@ -8398,13 +8399,40 @@ void MainWindow::showNeighborHeightDialog() {
   auto* error = new QLabel;
   error->setWordWrap(true);
   layout->addWidget(error);
+  auto* table = new QTableWidget(0, 3);
+  table->setObjectName(QStringLiteral("neighborHeightParts"));
+  table->setHorizontalHeaderLabels({tr("部材"), tr("照合結果"), tr("最大鉛直差（mm）")});
+  table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+  table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+  table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+  table->verticalHeader()->hide();
+  table->setSelectionBehavior(QAbstractItemView::SelectRows);
+  table->setSelectionMode(QAbstractItemView::SingleSelection);
+  table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+  table->setMinimumHeight(120);
+  layout->addWidget(table);
+  table->hide();
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close);
   buttons->button(QDialogButtonBox::Close)->setText(tr("閉じる"));
+  auto* compare = buttons->addButton(tr("選択部材を照合"), QDialogButtonBox::ActionRole);
+  compare->setObjectName(QStringLiteral("compareNeighborHeightParts"));
+  compare->setEnabled(!selectedIds.empty());
+  if (selectedIds.empty()) compare->setToolTip(tr("モデルで部材を選んでから、この画面を開いてください。"));
   auto* show = buttons->addButton(tr("3Dで見る"), QDialogButtonBox::ActionRole);
   show->setObjectName(QStringLiteral("showNeighborHeight"));
   layout->addWidget(buttons);
   connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-  connect(show, &QPushButton::clicked, &dialog, [&] {
+  const auto invalidate = [&] {
+    table->setRowCount(0);
+    table->hide();
+    error->clear();
+  };
+  connect(edges, &QListWidget::itemChanged, &dialog, invalidate);
+  connect(ground, &QLineEdit::textChanged, &dialog, invalidate);
+  connect(base, &QLineEdit::textChanged, &dialog, invalidate);
+  connect(slope, &QLineEdit::textChanged, &dialog, invalidate);
+  const auto runStudy = [&](bool preview3d) {
+    error->clear();
     if (document.sequence() != sequence) {
       error->setText(tr("モデルが変わりました。画面を開き直してください。"));
       return;
@@ -8420,6 +8448,31 @@ void MainWindow::showNeighborHeightDialog() {
     std::vector<std::array<gp_Pnt, 2>> selectedEdges;
     for (int i = 0; i < edges->count(); ++i)
       if (edges->item(i)->checkState() == Qt::Checked) selectedEdges.push_back(endpoints(static_cast<std::size_t>(i)));
+    if (!preview3d) {
+      const auto rows = doc::compareNeighborHeight(document, selectedEdges, selectedIds, groundZ, baseM * 1000, gradient);
+      if (!rows) {
+        error->setText(QString::fromStdString(rows.error()));
+        return;
+      }
+      table->setRowCount(static_cast<int>(rows->size()));
+      const auto signedMm = [](double value) {
+        return (value > 0 ? QStringLiteral("+") : QString()) + QString::number(value, 'f', 2);
+      };
+      for (int i = 0; i < table->rowCount(); ++i) {
+        const auto& row = (*rows)[static_cast<std::size_t>(i)];
+        auto* name = new QTableWidgetItem(QString::fromStdString(row.name));
+        name->setData(Qt::UserRole, QString::fromStdString(row.id));
+        table->setItem(i, 0, name);
+        table->setItem(i, 1, new QTableWidgetItem(QString::fromStdString(row.state)));
+        QString difference = tr("%1 以下").arg(signedMm(row.upperExcessMm));
+        if (row.exact) difference = signedMm(*row.lowerExcessMm);
+        else if (row.lowerExcessMm) difference = tr("%1 〜 %2").arg(signedMm(*row.lowerExcessMm), signedMm(row.upperExcessMm));
+        table->setItem(i, 2, new QTableWidgetItem(difference));
+      }
+      table->selectRow(0);
+      table->show();
+      return;
+    }
     const auto preview = doc::neighborHeightPreview(document, selectedEdges, groundZ, baseM * 1000, gradient);
     if (!preview) {
       error->setText(QString::fromStdString(preview.error()));
@@ -8427,11 +8480,15 @@ void MainWindow::showNeighborHeightDialog() {
     }
     viewport_->unlockView();
     viewport_->showStorey(std::nullopt);
+    if (const auto* row = table->item(table->currentRow(), 0))
+      setSelection({row->data(Qt::UserRole).toString().toStdString()});
     viewport_->setNeighborHeightSurface(preview->surface, preview->boundaryLines);
     viewport_->setStandardView(Viewport::StandardView::Iso);
     setStatus(tr("紫の面は隣地斜線の試算、紫の線は採用した隣地辺です。"));
     dialog.accept();
-  });
+  };
+  connect(compare, &QPushButton::clicked, &dialog, [&] { runStudy(false); });
+  connect(show, &QPushButton::clicked, &dialog, [&] { runStudy(true); });
   dialog.resize(610, 425);
   dialog.exec();
 }

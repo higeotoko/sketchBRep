@@ -1948,6 +1948,7 @@ void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
   auto* neighborRow = rowOf(QStringLiteral("隣地斜線"));
   QVERIFY(neighborRow);
   checks->setCurrentItem(neighborRow);
+  f.window.setSelection({partId, fartherId});
   bool neighborAccepted = false;
   QString neighborFailure;
   QTimer::singleShot(0, [&] {
@@ -1958,8 +1959,10 @@ void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
     auto* base = dialog->findChild<QLineEdit*>(QStringLiteral("neighborHeightBase"));
     auto* slope = dialog->findChild<QLineEdit*>(QStringLiteral("neighborHeightSlope"));
     auto* show = dialog->findChild<QPushButton*>(QStringLiteral("showNeighborHeight"));
+    auto* compare = dialog->findChild<QPushButton*>(QStringLiteral("compareNeighborHeightParts"));
+    auto* results = dialog->findChild<QTableWidget*>(QStringLiteral("neighborHeightParts"));
     neighborFailure = QStringLiteral("dialog=%1, edge count=%2").arg(dialog->objectName()).arg(edges ? edges->count() : -1);
-    if (edges && edges->count() == 6 && ground && base && slope && show) {
+    if (edges && edges->count() == 6 && ground && base && slope && show && compare && results) {
       int excludedRoads = 0;
       for (int i = 0; i < edges->count(); ++i) {
         auto* item = edges->item(i);
@@ -1971,7 +1974,18 @@ void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
       slope->setText(QStringLiteral("0.6"));
       if (!reviewDir.isEmpty()) dialog->grab().save(QDir(reviewDir).filePath(QStringLiteral("neighbor-height-edges.png")));
       neighborFailure += QStringLiteral(", excluded roads=%1").arg(excludedRoads);
-      if (excludedRoads == 1) show->click();
+      if (excludedRoads == 1) {
+        compare->click();
+        for (int row = 0; row < results->rowCount(); ++row) {
+          if (results->item(row, 0)->data(Qt::UserRole).toString().toStdString() != fartherId) continue;
+          results->selectRow(row);
+          if (!reviewDir.isEmpty())
+            dialog->grab().save(QDir(reviewDir).filePath(QStringLiteral("neighbor-height-parts.png")));
+          if (results->isVisible() && results->item(row, 1) && results->item(row, 2) && results->rowCount() == 2)
+            show->click();
+          break;
+        }
+      }
       neighborAccepted = dialog->result() == QDialog::Accepted;
       if (!neighborAccepted)
         for (auto* label : dialog->findChildren<QLabel*>()) neighborFailure += QStringLiteral(" | ") + label->text();
@@ -1980,6 +1994,7 @@ void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
   });
   edit->click();
   QVERIFY2(neighborAccepted, qPrintable(neighborFailure));
+  QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{fartherId});
   QVERIFY(!f.vp->roadHeightPlaneShape().IsNull());
   QVERIFY(!f.vp->neighborHeightBoundaryShape().IsNull());
   if (!reviewDir.isEmpty()) QVERIFY(f.vp->dumpImage(QDir(reviewDir).filePath(QStringLiteral("neighbor-height-3d.png"))));

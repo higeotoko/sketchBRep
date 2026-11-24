@@ -2752,6 +2752,46 @@ TEST_F(Schedules, NeighborHeightUsesFiniteEdgesAndTheConcaveOutline) {
   EXPECT_EQ(call("neighbor_height_at", args)["ok"], false);
 }
 
+TEST_F(Schedules, NeighborHeightPartComparisonBoundsTheMaximumExcess) {
+  const auto site = ok("create_polygon", {{"points", {{0,0,0},{12000,0,0},{12000,6000,0},
+                                                     {8000,6000,0},{8000,10000,0},{0,10000,0}}}})["id"];
+  ok("set_site_boundary", {{"outline", site}, {"source", "架空の測量図"}});
+  const auto part = [&](double y, double height) {
+    return ok("create_box", {{"origin", {4000,y,0}}, {"width",500}, {"depth",500}, {"height",height}})["id"];
+  };
+  const auto over = part(1000, 27000), touch = part(2000, 25000), below = part(3000, 24000);
+  const auto spanning = ok("create_polygon", {{"points", {{-1000,5000,30000},{13000,5000,30000},
+                                                          {13000,5200,30000},{-1000,5200,30000}}}})["id"];
+  const auto endpoint = ok("create_box", {{"origin", {5500,4000,0}}, {"width",500},
+                                          {"depth",500}, {"height",23500}})["id"];
+  const json west = {{"start", {0,0,0}}, {"end", {0,10000,0}}};
+  const json reentrant = {{"start", {8000,6000,0}}, {"end", {8000,10000,0}}};
+  json args{{"boundaries", {west}}, {"ids", {over, touch, below, spanning}},
+            {"ground_z_mm", 0}, {"base_height_mm", 20000}, {"slope", 1.25}};
+  const auto rows = ok("compare_neighbor_height", args)["rows"];
+  const auto rowFor = [](const json& found, const json& id) -> json {
+    for (const auto& row : found) if (row["id"] == id) return row;
+    return {};
+  };
+  struct Expected { json id; const char* state; double excess; };
+  for (const auto& expected : {Expected{over, "超過", 2000}, Expected{touch, "接触相当", 0}, Expected{below, "余裕", -1000}}) {
+    const auto row = rowFor(rows, expected.id);
+    ASSERT_TRUE(row.is_object());
+    EXPECT_EQ(row["state"], expected.state);
+    EXPECT_EQ(row["exact"], true);
+    EXPECT_NEAR(row["lower_excess_mm"].get<double>(), expected.excess, 0.001);
+    EXPECT_NEAR(row["upper_excess_mm"].get<double>(), expected.excess, 0.001);
+  }
+  EXPECT_EQ(rowFor(rows, spanning)["state"], "要確認");
+  EXPECT_TRUE(rowFor(rows, spanning)["lower_excess_mm"].is_null());
+  args["boundaries"] = {west, reentrant};
+  args["ids"] = json::array({endpoint});
+  const auto corner = ok("compare_neighbor_height", args)["rows"][0];
+  EXPECT_EQ(corner["state"], "超過");
+  EXPECT_NEAR(corner["lower_excess_mm"].get<double>(), 375, 0.001);
+  EXPECT_GE(corner["upper_excess_mm"].get<double>(), 375);
+}
+
 TEST_F(Schedules, NeighborHeightPreviewPreservesTheConcaveFootprint) {
   const auto site = ok("create_polygon", {{"points", {{0,0,0},{12000,0,0},{12000,6000,0},
                                                      {8000,6000,0},{8000,10000,0},{0,10000,0}}}})["id"];
