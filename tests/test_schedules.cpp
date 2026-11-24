@@ -2701,6 +2701,53 @@ TEST_F(Schedules, PermitChecksReadTheEnergyAndElevationStages) {
   EXPECT_NE(rowOf(10, "いちばん高い所（参考）")["details"].get<std::string>().find("GLから 3500 mm"), std::string::npos);
 }
 
+TEST_F(Schedules, NeighborHeightMatchesTheRectangularReferenceAndRejectsRoads) {
+  const auto boundary = ok("create_polygon", {{"points", {{0,0,0},{20000,0,0},{20000,30000,0},{0,30000,0}}}})["id"];
+  ok("set_site_boundary", {{"outline", boundary}, {"source", "架空の測量図"}});
+  const json road = {{"start", {0,0,0}}, {"end", {20000,0,0}}};
+  auto roadArgs = road;
+  roadArgs["source"] = "架空の道路";
+  ok("set_site_road", roadArgs);
+  const json left = {{"start", {0,30000,0}}, {"end", {0,0,0}}};
+  const json opposite = {{"start", {20000,30000,0}}, {"end", {0,30000,0}}};
+  const json right = {{"start", {20000,0,0}}, {"end", {20000,30000,0}}};
+  json args{{"boundaries", {right, opposite, left}}, {"points", {{4000,15000,8000},{0,15000,0}}},
+            {"ground_z_mm", 0}, {"base_height_mm", 20000}, {"slope", 1.25}};
+  const auto sequence = modeler.document().sequence();
+  const auto study = ok("neighbor_height_at", args);
+  EXPECT_EQ(study["legal_status"], "未評価");
+  const auto samples = study["samples"];
+  ASSERT_EQ(samples.size(), 2u);
+  EXPECT_EQ(samples[0]["in_site"], true);
+  EXPECT_EQ(samples[0]["boundary"], left);
+  EXPECT_EQ(samples[0]["closest_boundary_point"], json::array({0,15000,0}));
+  EXPECT_NEAR(samples[0]["distance_mm"].get<double>(), 4000, 0.001);
+  EXPECT_NEAR(samples[0]["limit_z_mm"].get<double>(), 25000, 0.001);
+  EXPECT_EQ(samples[1]["in_site"], true);
+  EXPECT_EQ(samples[1]["limit_z_mm"], 20000);
+  args["boundaries"].push_back(road);
+  EXPECT_EQ(call("neighbor_height_at", args)["ok"], false);
+  EXPECT_EQ(modeler.document().sequence(), sequence);
+}
+
+TEST_F(Schedules, NeighborHeightUsesFiniteEdgesAndTheConcaveOutline) {
+  const json neighbor = {{"start", {8000,6000,0}}, {"end", {8000,10000,0}}};
+  const auto concave = ok("create_polygon", {{"points", {{0,0,0},{12000,0,0},{12000,6000,0},
+                                                        {8000,6000,0},{8000,10000,0},{0,10000,0}}}})["id"];
+  ok("set_site_boundary", {{"outline", concave}, {"source", "架空の測量図"}});
+  json args{{"boundaries", {neighbor}}, {"points", {{6000,4500,0},{9000,8000,0}}},
+            {"ground_z_mm", 0}, {"base_height_mm", 20000}, {"slope", 1.25}};
+  const auto samples = ok("neighbor_height_at", args)["samples"];
+  ASSERT_EQ(samples.size(), 2u);
+  EXPECT_EQ(samples[0]["closest_boundary_point"], json::array({8000,6000,0}));
+  EXPECT_NEAR(samples[0]["distance_mm"].get<double>(), 2500, 0.001);
+  EXPECT_NEAR(samples[0]["limit_z_mm"].get<double>(), 23125, 0.001);
+  EXPECT_EQ(samples[1]["in_site"], false);
+  EXPECT_TRUE(samples[1]["limit_z_mm"].is_null());
+  args["boundaries"][0]["end"] = {8000,9000,0};
+  EXPECT_EQ(call("neighbor_height_at", args)["ok"], false);
+}
+
 TEST_F(Schedules, RoadHeightPlaneCalculatesTheRoadLevelAndSiteEdgeHeight) {
   json args{{"road_center_z_mm", -5000}, {"site_ground_z_mm", -3000}, {"road_width_mm", 6000}, {"slope", 1.25}};
   const auto sequence = modeler.document().sequence();

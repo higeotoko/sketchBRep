@@ -252,6 +252,15 @@ struct RoadHeightPlaneComparison {
 Result<RoadHeightPlaneComparison> compareRoadHeightPlane(
     const Document& document, const std::vector<ObjectId>& ids, double edgeHeightMm, double slope,
     std::optional<RoadHeightPlaneRange> range = std::nullopt);
+struct NeighborHeightSample {
+  std::array<gp_Pnt, 2> boundary;
+  gp_Pnt closestBoundaryPoint;
+  double distanceMm;
+  double limitZMm;
+};
+Result<std::vector<std::optional<NeighborHeightSample>>> neighborHeightAt(
+    const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedEdges,
+    const std::vector<gp_Pnt>& points, double groundZMm, double baseHeightMm, double slope);
 // Stage 10 (立面・断面, docs/201): the level GL, the model's highest point above it (not the legal
 // height), where sections are cut, the elevations' orientation, and what is not checked.
 std::vector<PermitCheck> permitElevationChecks(const Document& document);

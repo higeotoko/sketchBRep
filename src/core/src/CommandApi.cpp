@@ -2765,6 +2765,40 @@ const std::vector<CommandDef>& commands() {
          return json{{"zone", conditions.zone}, {"district", conditions.district}, {"source", conditions.source},
                      {"zones", doc::heightZoneChoices()}, {"districts", doc::heightDistrictChoices()}};
        }},
+      {"neighbor_height_at",
+       "Evaluate a neighbor-slant study at XY points in the saved site (Z of each point is ignored). "
+       "Supply explicitly confirmed straight outline edges as {start, end} world points in mm. "
+       "Returns the closest finite edge and its closest point, horizontal distance and limit Z. "
+       "For a point outside the site the result has null height. A registered road edge cannot be selected. "
+       "Ground Z, base height and slope are supplied study conditions. Does not decide applicability, "
+       "setback or other relief. Read only.",
+       SCHEMA({"type": "object", "properties": {
+                   "boundaries": {"type": "array", "items": {"type": "object", "properties": {
+                       "start": {"type": "array"}, "end": {"type": "array"}}, "required": ["start", "end"]}},
+                   "points": {"type": "array", "items": {"type": "array"}}, "ground_z_mm": {"type": "number"},
+                   "base_height_mm": {"type": "number"}, "slope": {"type": "number"}},
+               "required": ["boundaries", "points", "ground_z_mm", "base_height_mm", "slope"]}),
+       [](doc::Modeler& m, const json& a) {
+         if (!a.at("boundaries").is_array()) throw ApiError("boundaries must be an array");
+         std::vector<std::array<gp_Pnt, 2>> confirmedEdges;
+         for (const auto& edge : a.at("boundaries")) confirmedEdges.push_back({point(edge, "start"), point(edge, "end")});
+         const auto positions = points(a, "points");
+         const auto samples = must(doc::neighborHeightAt(m.document(), confirmedEdges, positions,
+                                                        number(a, "ground_z_mm"), number(a, "base_height_mm"), number(a, "slope")));
+         auto rows = json::array();
+         for (std::size_t i = 0; i < samples.size(); ++i) {
+           const auto& sample = samples[i];
+           json row{{"point", toJson(positions[i])}, {"in_site", sample.has_value()}, {"limit_z_mm", nullptr}};
+           if (sample) {
+             row["boundary"] = {{"start", toJson(sample->boundary[0])}, {"end", toJson(sample->boundary[1])}};
+             row["closest_boundary_point"] = toJson(sample->closestBoundaryPoint);
+             row["distance_mm"] = sample->distanceMm;
+             row["limit_z_mm"] = sample->limitZMm;
+           }
+           rows.push_back(std::move(row));
+         }
+         return json{{"samples", std::move(rows)}, {"legal_status", "未評価"}};
+       }},
       {"road_height_datum",
        "Calculate the site-side edge_height_mm for one level road and a confirmed site ground plane, before building "
        "setback. Give road-centre and site-ground heights on the same model Z datum. Applies the ordinary rule in "
@@ -4722,7 +4756,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
       name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" ||
       name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" || name == "permit_checks" || name == "check_drawing_set" || name == "project_outline" || name == "daylight_factor_estimates" ||
-      name == "site_height_conditions" || name == "road_height_datum" || name == "road_height_table_values" || name == "measure_road_building_setback" || name == "compare_road_height_plane" || name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
+      name == "site_height_conditions" || name == "neighbor_height_at" || name == "road_height_datum" || name == "road_height_table_values" || name == "measure_road_building_setback" || name == "compare_road_height_plane" || name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
     return E::Read;
   }
   if (isFileCommand(name)) return E::ExternalIo;

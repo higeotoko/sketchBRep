@@ -14,6 +14,7 @@
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Section.hxx>
 #include <BRep_Builder.hxx>
+#include <BRepClass_FaceClassifier.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
@@ -1815,6 +1816,72 @@ Result<RoadHeightPlaneComparison> compareRoadHeightPlane(
     preview = *clipped;
   }
   return RoadHeightPlaneComparison{std::move(rows), preview, applicationEnd, rise};
+}
+
+Result<std::vector<std::optional<NeighborHeightSample>>> neighborHeightAt(
+    const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedEdges,
+    const std::vector<gp_Pnt>& points, double groundZMm, double baseHeightMm, double slope) {
+  using R = Result<std::vector<std::optional<NeighborHeightSample>>>;
+  const double baseZ = groundZMm + baseHeightMm;
+  if (!std::isfinite(baseZ) || baseHeightMm < 0 || !std::isfinite(slope) || slope <= 0 || slope > 1000)
+    return R::failure("地盤面と立上りの高さ、および0より大きく1000以下の勾配を入力してください");
+  if (points.empty() || confirmedEdges.empty())
+    return R::failure("確認した隣地の境界辺と照合する点を指定してください");
+  const auto& site = document.settings().siteBoundary;
+  if (!site) return R::failure("先に敷地境界を登録してください");
+  const auto geometry = document.siteBoundaryGeometry(site->outline);
+  if (!geometry) return R::failure(geometry.error());
+  const auto road = document.siteRoadEdge(*geometry);
+  if (site->road && !road) return R::failure("道路が接する敷地辺を登録し直してください");
+
+  std::vector<std::array<gp_Pnt, 2>> boundaries;
+  boundaries.reserve(confirmedEdges.size());
+  for (const auto& edge : confirmedEdges) {
+    const auto matched = geometry->matchEdge(edge[0], edge[1]);
+    if (!matched) return R::failure("採用する隣地境界は、登録した敷地輪郭の辺を指定してください");
+    // matchEdge returns both matches in the outline's order.
+    if (road && (*matched)[0].Distance((*road)[0]) <= tolerance::kLinear &&
+        (*matched)[1].Distance((*road)[1]) <= tolerance::kLinear)
+      return R::failure("前面道路として登録した辺は隣地境界に指定できません");
+    boundaries.push_back(*matched);
+  }
+
+  const double outlineZ = geometry->vertices.front().Z();
+  BRepBuilderAPI_MakePolygon outline;
+  for (const auto& point : geometry->vertices) outline.Add(gp_Pnt(point.X(), point.Y(), outlineZ));
+  outline.Close();
+  if (!outline.IsDone()) return R::failure("敷地輪郭から照合範囲を作れません");
+  BRepBuilderAPI_MakeFace face(outline.Wire(), true);
+  if (!face.IsDone()) return R::failure("敷地輪郭から照合範囲を作れません");
+
+  std::vector<std::optional<NeighborHeightSample>> samples;
+  samples.reserve(points.size());
+  for (const auto& point : points) {
+    if (!std::isfinite(point.X()) || !std::isfinite(point.Y())) return R::failure("点のXY座標を確認してください");
+    const gp_Pnt xy(point.X(), point.Y(), outlineZ);
+    const auto inside = BRepClass_FaceClassifier(face.Face(), xy, tolerance::kLinear).State();
+    if (inside != TopAbs_IN && inside != TopAbs_ON) {
+      samples.emplace_back();
+      continue;
+    }
+    std::optional<NeighborHeightSample> nearest;
+    for (const auto& boundary : boundaries) {
+      const auto& from = boundary[0];
+      const gp_Vec along(boundary[1].X() - from.X(), boundary[1].Y() - from.Y(), 0);
+      const double length = along.Magnitude();
+      // A registered nondegenerate straight edge has a positive horizontal length.
+      const gp_Vec axis = along / length;
+      const gp_Vec offset(xy.X() - from.X(), xy.Y() - from.Y(), 0);
+      const double station = std::clamp(offset.Dot(axis), 0.0, length);
+      const gp_Pnt closest(from.X() + station * axis.X(), from.Y() + station * axis.Y(), outlineZ);
+      const double distance = xy.Distance(closest);
+      if (!nearest || distance < nearest->distanceMm)
+        nearest = NeighborHeightSample{boundary, closest, distance, baseZ + slope * distance};
+    }
+    if (!std::isfinite(nearest->limitZMm)) return R::failure("この座標では隣地斜線の高さを測れません");
+    samples.push_back(*nearest);
+  }
+  return samples;
 }
 
 std::vector<PermitCheck> permitElevationChecks(const Document& document) {
