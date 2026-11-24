@@ -2701,6 +2701,28 @@ TEST_F(Schedules, PermitChecksReadTheEnergyAndElevationStages) {
   EXPECT_NE(rowOf(10, "いちばん高い所（参考）")["details"].get<std::string>().find("GLから 3500 mm"), std::string::npos);
 }
 
+TEST_F(Schedules, RoadHeightPlaneCalculatesTheRoadLevelAndSiteEdgeHeight) {
+  json args{{"road_center_z_mm", -5000}, {"site_ground_z_mm", -3000}, {"road_width_mm", 6000}, {"slope", 1.25}};
+  const auto sequence = modeler.document().sequence();
+  const auto high = ok("road_height_datum", args);
+  EXPECT_EQ(high["ground_difference_mm"], 2000);
+  EXPECT_EQ(high["road_rise_mm"], 500);
+  EXPECT_EQ(high["adopted_road_z_mm"], -4500);
+  EXPECT_EQ(high["edge_height_mm"], 3000);
+  EXPECT_EQ(high["checked_on"], sbr::doc::kRoadHeightDatumCheckedOn);
+  for (const double ground : {-5200.0, -4000.01, -4000.0}) {
+    args["site_ground_z_mm"] = ground;
+    const auto unadjusted = ok("road_height_datum", args);
+    EXPECT_EQ(unadjusted["road_rise_mm"], 0);
+    EXPECT_EQ(unadjusted["edge_height_mm"], 2500);
+  }
+  args["site_ground_z_mm"] = -3999;
+  EXPECT_EQ(ok("road_height_datum", args)["road_rise_mm"], 0.5);
+  args["road_width_mm"] = 0;
+  EXPECT_EQ(call("road_height_datum", args)["ok"], false);
+  EXPECT_EQ(modeler.document().sequence(), sequence);
+}
+
 TEST_F(Schedules, RoadHeightPlaneReadsTheAppendix3PercentBands) {
   struct Band { double percent; double distanceMm; };
   for (const auto& band : {Band{200, 20000}, Band{200.01, 25000}, Band{300, 25000}, Band{300.01, 30000},

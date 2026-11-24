@@ -7932,7 +7932,14 @@ void MainWindow::showRoadHeightPlaneDialog() {
   auto* setback = new QLineEdit;
   setback->setObjectName(QStringLiteral("roadPlaneBuildingSetback"));
   setback->setPlaceholderText(tr("確認済みの最小距離。空欄なら0"));
-  form->addRow(tr("敷地側の道路境界での高さ（後退前・mm）"), height);
+  auto* heightFields = new QWidget;
+  auto* heightLayout = new QHBoxLayout(heightFields);
+  heightLayout->setContentsMargins(0, 0, 0, 0);
+  heightLayout->addWidget(height, 1);
+  auto* datumButton = new QPushButton(tr("路面と地盤から算定"));
+  datumButton->setObjectName(QStringLiteral("roadHeightDatumButton"));
+  heightLayout->addWidget(datumButton);
+  form->addRow(tr("敷地側の道路境界での高さ（後退前・mm）"), heightFields);
   height->setPlaceholderText(tr("モデルZの値"));
   form->addRow(tr("敷地内へ上がる勾配"), slope);
   form->addRow(tr("採用する道路幅員（m）"), roadWidth);
@@ -7979,6 +7986,7 @@ void MainWindow::showRoadHeightPlaneDialog() {
   bool displayIncludesSetback = false;
   std::optional<std::uint64_t> measuredAt;
   std::optional<doc::RoadHeightTableValues> adoptedTableValues;
+  std::optional<std::pair<double, double>> datumWidthAndSlope;
   std::string adoptedZone;
   double adoptedFloorAreaLimit = 0;
   std::uint64_t comparedAt = 0;
@@ -7988,7 +7996,82 @@ void MainWindow::showRoadHeightPlaneDialog() {
     locate->setEnabled(false);
     displayPlane.Nullify();
   };
-  connect(height, &QLineEdit::textChanged, &dialog, invalidate);
+  connect(height, &QLineEdit::textChanged, &dialog, [&] {
+    datumWidthAndSlope.reset();
+    invalidate();
+  });
+  connect(datumButton, &QPushButton::clicked, &dialog, [&] {
+    bool widthOk = false, slopeOk = false;
+    const double widthM = roadWidth->text().toDouble(&widthOk);
+    const double gradient = slope->text().toDouble(&slopeOk);
+    if (!widthOk || !slopeOk || !doc::roadHeightDatum(0, 0, widthM * 1000, gradient)) {
+      QMessageBox::information(&dialog, tr("路面と地盤から算定"), tr("先に有効な道路幅員と勾配を入力してください。"));
+      return;
+    }
+
+    QDialog datumDialog(&dialog);
+    datumDialog.setObjectName(QStringLiteral("roadHeightDatumDialog"));
+    datumDialog.setWindowTitle(tr("路面と地盤から算定"));
+    auto* datumLayout = new QVBoxLayout(&datumDialog);
+    auto* basis = new QLabel(tr("幅員 %1 m・勾配 %2。高さはモデルと同じ基準のZ座標を入力します。").arg(widthM).arg(gradient));
+    basis->setWordWrap(true);
+    datumLayout->addWidget(basis);
+    auto* datumForm = new QFormLayout;
+    datumLayout->addLayout(datumForm);
+    auto* roadZ = new QLineEdit;
+    roadZ->setObjectName(QStringLiteral("roadHeightRoadCenterZ"));
+    auto* groundZ = new QLineEdit;
+    groundZ->setObjectName(QStringLiteral("roadHeightSiteGroundZ"));
+    datumForm->addRow(tr("道路の路面中心（モデルZ・mm）"), roadZ);
+    datumForm->addRow(tr("確認した敷地地盤面（モデルZ・mm）"), groundZ);
+    auto* datumResult = new QLabel;
+    datumResult->setObjectName(QStringLiteral("roadHeightDatumResult"));
+    datumResult->setWordWrap(true);
+    datumResult->setMinimumHeight(3 * datumResult->fontMetrics().lineSpacing());
+    datumLayout->addWidget(datumResult);
+    auto* scope = new QLabel(tr("直線で幅と高さが一定の道路1本、地盤面の高さが一つの場合の標準算定です。地形による特例は別途確認してください。"));
+    scope->setWordWrap(true);
+    datumLayout->addWidget(scope);
+    auto* source = new QLabel(tr("出典　<a href='%1'>建築基準法施行令 第2条・第135条の2</a>（%2 照合）")
+                                  .arg(QString::fromLatin1(doc::kRoadHeightDatumSource),
+                                       QString::fromLatin1(doc::kRoadHeightDatumCheckedOn)));
+    source->setOpenExternalLinks(true);
+    datumLayout->addWidget(source);
+    auto* datumButtons = new QDialogButtonBox(QDialogButtonBox::Cancel);
+    datumButtons->button(QDialogButtonBox::Cancel)->setText(tr("戻る"));
+    auto* use = datumButtons->addButton(tr("この高さを使う"), QDialogButtonBox::AcceptRole);
+    datumLayout->addWidget(datumButtons);
+    std::optional<doc::RoadHeightDatum> candidate;
+    const auto update = [&] {
+      candidate.reset();
+      bool roadOk = false, groundOk = false;
+      const double road = roadZ->text().toDouble(&roadOk);
+      const double ground = groundZ->text().toDouble(&groundOk);
+      const auto datum = doc::roadHeightDatum(road, ground, widthM * 1000, gradient);
+      QString description = tr("道路と地盤の高さを入力してください。");
+      if (roadOk && groundOk && datum) {
+        candidate = *datum;
+        description = tr("地盤面 − 路面中心　%1 mm\n路面の補正　+%2 mm（採用する路面 Z %3 mm）"
+                         "\n敷地側の道路境界での斜線高さ　Z %4 mm")
+                          .arg(datum->groundDifferenceMm, 0, 'g', 12).arg(datum->roadRiseMm, 0, 'g', 12)
+                          .arg(datum->adoptedRoadZMm, 0, 'g', 12).arg(datum->edgeHeightMm, 0, 'g', 12);
+      } else if (roadOk && groundOk) {
+        description = QString::fromStdString(datum.error());
+      }
+      datumResult->setText(description);
+      use->setEnabled(candidate.has_value());
+    };
+    connect(roadZ, &QLineEdit::textChanged, &datumDialog, update);
+    connect(groundZ, &QLineEdit::textChanged, &datumDialog, update);
+    connect(datumButtons, &QDialogButtonBox::accepted, &datumDialog, &QDialog::accept);
+    connect(datumButtons, &QDialogButtonBox::rejected, &datumDialog, &QDialog::reject);
+    update();
+    datumDialog.resize(550, 310);
+    if (datumDialog.exec() != QDialog::Accepted || !candidate) return;
+    height->setText(QString::number(candidate->edgeHeightMm, 'g', 12));
+    datumWidthAndSlope = std::pair{widthM, gradient};
+    invalidate();
+  });
   const auto tableInputChanged = [&] {
     adoptedTableValues.reset();
     invalidate();
@@ -8111,6 +8194,14 @@ void MainWindow::showRoadHeightPlaneDialog() {
       result->setText(tr("高さと勾配を数値で入力してください。"));
       return;
     }
+    if (datumWidthAndSlope) {
+      bool widthOk = false;
+      const double widthM = roadWidth->text().toDouble(&widthOk);
+      if (!widthOk || widthM != datumWidthAndSlope->first || gradient != datumWidthAndSlope->second) {
+        result->setText(tr("道路幅員または勾配が変わりました。「路面と地盤から算定」で高さを見直してください。"));
+        return;
+      }
+    }
     std::optional<doc::RoadHeightPlaneRange> range;
     const bool hasSetback = !setback->text().trimmed().isEmpty();
     if (!roadWidth->text().trimmed().isEmpty() || !applicationDistance->text().trimmed().isEmpty() || hasSetback) {
@@ -8177,6 +8268,8 @@ void MainWindow::showRoadHeightPlaneDialog() {
       else
         summary += tr("\n適用端は道路内または道路境界上です。敷地内に表示する面がありません。");
     }
+    if (datumWidthAndSlope)
+      summary += tr("\n路面と敷地地盤から算定した高さ　Z %1 mm（後退前）").arg(edgeHeight, 0, 'g', 12);
     if (adoptedTableValues)
       summary = tr("別表第三 第%1項の標準値（容積率の限度 %2%）\n%3")
                     .arg(adoptedTableValues->item).arg(adoptedFloorAreaLimit).arg(summary);

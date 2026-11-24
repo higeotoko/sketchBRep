@@ -1784,6 +1784,7 @@ void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
     auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
     if (!dialog) return;
     auto* edgeHeight = dialog->findChild<QLineEdit*>(QStringLiteral("roadPlaneEdgeHeight"));
+    auto* datumButton = dialog->findChild<QPushButton*>(QStringLiteral("roadHeightDatumButton"));
     auto* slope = dialog->findChild<QLineEdit*>(QStringLiteral("roadPlaneSlope"));
     auto* width = dialog->findChild<QLineEdit*>(QStringLiteral("roadPlaneWidth"));
     auto* distance = dialog->findChild<QLineEdit*>(QStringLiteral("roadPlaneApplicationDistance"));
@@ -1792,7 +1793,7 @@ void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
     auto* measure = dialog->findChild<QPushButton*>(QStringLiteral("measureRoadSetbackButton"));
     auto* status = dialog->findChild<QLabel*>(QStringLiteral("roadPlaneStatus"));
     auto* table = dialog->findChild<QTableWidget*>(QStringLiteral("roadPlaneResults"));
-    if (edgeHeight && slope && width && distance && lookup && setback && measure && status && table) {
+    if (edgeHeight && datumButton && slope && width && distance && lookup && setback && measure && status && table) {
       bool reviewedTable = false;
       QTimer::singleShot(0, dialog, [&] {
         auto* reference = qobject_cast<QDialog*>(QApplication::activeModalWidget());
@@ -1836,13 +1837,47 @@ void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
       const bool wideRoadBlocked = table->rowCount() == 0 && !locate->isEnabled() &&
                                    status->text().contains(QStringLiteral("道路幅員12 m以上"));
       width->setText(QStringLiteral("6"));
+      bool reviewedDatum = false;
+      QTimer::singleShot(0, dialog, [&] {
+        auto* datum = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (!datum || datum == dialog) return;
+        auto* road = datum->findChild<QLineEdit*>(QStringLiteral("roadHeightRoadCenterZ"));
+        auto* ground = datum->findChild<QLineEdit*>(QStringLiteral("roadHeightSiteGroundZ"));
+        auto* values = datum->findChild<QLabel*>(QStringLiteral("roadHeightDatumResult"));
+        if (road && ground && values) {
+          for (auto* button : datum->findChildren<QPushButton*>()) {
+            if (button->text() != QStringLiteral("この高さを使う")) continue;
+            road->setText(QStringLiteral("-5000"));
+            const bool disabledUntilGroundEntered = !button->isEnabled();
+            ground->setText(QStringLiteral("-3000"));
+            reviewedDatum = disabledUntilGroundEntered && button->isEnabled() &&
+                            values->text().contains(QStringLiteral("+500 mm")) &&
+                            values->text().contains(QStringLiteral("Z 3000 mm"));
+            if (!reviewDir.isEmpty())
+              datum->grab().save(QDir(reviewDir).filePath(QStringLiteral("road-height-datum.png")));
+            if (reviewedDatum) {
+              button->click();
+              return;
+            }
+          }
+        }
+        datum->reject();
+      });
+      datumButton->click();
+      reviewedDatum = reviewedDatum && edgeHeight->text() == QStringLiteral("3000");
+      width->setText(QStringLiteral("5.9"));
+      calculate->click();
+      const bool staleDatumBlocked = table->rowCount() == 0 && !locate->isEnabled() &&
+                                     status->text().contains(QStringLiteral("道路幅員または勾配が変わりました"));
+      width->setText(QStringLiteral("6"));
       calculate->click();
       const bool referenceApplied = table->rowCount() == 3 && locate->isEnabled() &&
                                     status->text().contains(QStringLiteral("起点から 20 m まで")) &&
                                     status->text().contains(QStringLiteral("限度 200%"));
       distance->setText(QStringLiteral("9.25"));
       calculate->click();
-      compared = reviewedTable && wideRoadBlocked && referenceApplied && table->rowCount() == 3 && table->item(0, 1)->text() == QStringLiteral("超過 500.0 mm") &&
+      compared = reviewedTable && wideRoadBlocked && reviewedDatum && staleDatumBlocked && referenceApplied &&
+                 table->rowCount() == 3 && table->item(0, 1)->text() == QStringLiteral("超過 500.0 mm") &&
                  table->item(1, 1)->text() == QStringLiteral("余裕 750.0 mm") &&
                  table->item(2, 1)->text() == QStringLiteral("適用範囲外");
       const auto reviewSetback = [&](bool accept) {

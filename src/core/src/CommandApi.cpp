@@ -2765,6 +2765,22 @@ const std::vector<CommandDef>& commands() {
          return json{{"zone", conditions.zone}, {"district", conditions.district}, {"source", conditions.source},
                      {"zones", doc::heightZoneChoices()}, {"districts", doc::heightDistrictChoices()}};
        }},
+      {"road_height_datum",
+       "Calculate the site-side edge_height_mm for one level road and a confirmed site ground plane, before building "
+       "setback. Give road-centre and site-ground heights on the same model Z datum. Applies the ordinary rule in "
+       "Building Standards Act Enforcement Order Art. 2(1)(vi)(a) and Art. 135-2(1). Municipal exceptions and "
+       "the choice of inputs require separate confirmation. Read only.",
+       SCHEMA({"type": "object",
+               "properties": {"road_center_z_mm": {"type": "number"}, "site_ground_z_mm": {"type": "number"},
+                              "road_width_mm": {"type": "number"}, "slope": {"type": "number"}},
+               "required": ["road_center_z_mm", "site_ground_z_mm", "road_width_mm", "slope"]}),
+       [](doc::Modeler&, const json& a) {
+         const auto datum = must(doc::roadHeightDatum(number(a, "road_center_z_mm"), number(a, "site_ground_z_mm"),
+                                                      number(a, "road_width_mm"), number(a, "slope")));
+         return json{{"ground_difference_mm", datum.groundDifferenceMm}, {"road_rise_mm", datum.roadRiseMm},
+                     {"adopted_road_z_mm", datum.adoptedRoadZMm}, {"edge_height_mm", datum.edgeHeightMm},
+                     {"source", doc::kRoadHeightDatumSource}, {"checked_on", doc::kRoadHeightDatumCheckedOn}};
+       }},
       {"road_height_table_values",
        "Read the standard numbers in Building Standards Act Appendix 3 items 1–3 for the site's saved zoning. "
        "Enter the confirmed Article 52 floor area ratio limit as a percentage, after applicable width restrictions. "
@@ -4706,7 +4722,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
       name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" ||
       name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" || name == "permit_checks" || name == "check_drawing_set" || name == "project_outline" || name == "daylight_factor_estimates" ||
-      name == "site_height_conditions" || name == "road_height_table_values" || name == "measure_road_building_setback" || name == "compare_road_height_plane" || name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
+      name == "site_height_conditions" || name == "road_height_datum" || name == "road_height_table_values" || name == "measure_road_building_setback" || name == "compare_road_height_plane" || name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
     return E::Read;
   }
   if (isFileCommand(name)) return E::ExternalIo;

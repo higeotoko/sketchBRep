@@ -1592,6 +1592,23 @@ SiteHeightConditions siteHeightConditions(const Document& document) {
   return {read("zone"), read("district"), read("source")};
 }
 
+Result<RoadHeightDatum> roadHeightDatum(double roadCenterZMm, double siteGroundZMm, double roadWidthMm, double slope) {
+  using R = Result<RoadHeightDatum>;
+  if (!std::isfinite(roadCenterZMm) || !std::isfinite(siteGroundZMm))
+    return R::failure("路面中心と敷地地盤面の高さを、同じモデルZの基準で入力してください");
+  if (!std::isfinite(roadWidthMm) || roadWidthMm <= 0 || !std::isfinite(slope) || slope <= 0 || slope > 1000)
+    return R::failure("正の道路幅員と、0より大きく1000以下の勾配を入力してください");
+
+  // Order Art. 2(1)(vi)(a) and Art. 135-2(1): only a higher site can raise the road datum.
+  const double difference = siteGroundZMm - roadCenterZMm;
+  const double rise = std::max(0.0, (difference - 1000) / 2);
+  const double adopted = roadCenterZMm + rise;
+  const double edgeHeight = adopted + roadWidthMm * slope;
+  if (!std::isfinite(difference) || !std::isfinite(edgeHeight))
+    return R::failure("高さの差または斜線の高さを測れる範囲を超えています");
+  return RoadHeightDatum{difference, rise, adopted, edgeHeight};
+}
+
 Result<RoadHeightTableValues> roadHeightTableValues(const std::string& zone, double floorAreaLimitPercent) {
   using R = Result<RoadHeightTableValues>;
   if (zone.empty()) return R::failure("先に敷地の「高さ制限の条件」で用途地域を登録してください");
