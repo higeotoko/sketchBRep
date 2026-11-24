@@ -13,7 +13,7 @@
 
 斜線は登録辺に平行で、敷地へ向かって上がる1枚の平面。選択した各部材で、部材の高さから同じ水平位置での斜線高さを引き、その最大値を求める。正の差なら超過、負の差なら余裕。画面には0.1 mm単位で表示する。B-repを斜線に合わせた座標に移して計測するので、屋根の高い端と道路に近い端が別の点でも、同じ位置どうしの鉛直差を求められる。
 
-高さの起点と勾配は入力した値を使う。道路面との高低差、法令上の幅員・適用距離の決定、建物の後退距離の採否は未評価。適用範囲を調べる出発点は横浜市の案内とする。 [横浜市の高さ制限の案内](https://www.city.yokohama.lg.jp/business/bunyabetsu/kenchiku/annai/20140401121655.files/0139_20250328.pdf)
+高さの起点と勾配は入力した値を使う。法令上の幅員・適用距離の決定、地形による特例、建物の後退距離の採否は未評価。適用範囲を調べる出発点は横浜市の案内とする。 [横浜市の高さ制限の案内](https://www.city.yokohama.lg.jp/business/bunyabetsu/kenchiku/annai/20140401121655.files/0139_20250328.pdf)
 
 MCPの `compare_road_height_plane` は `ids`、`edge_height_mm`、`slope` を受け取り、部材名と鉛直差 `excess_mm` を返す。操作と試算はSBRに保存されない。登録した道路辺と選択した部材は、計算する時点の配置を読む。
 
@@ -36,6 +36,18 @@ MCPの `compare_road_height_plane` は `ids`、`edge_height_mm`、`slope` を受
 幅員12 m以上で法第56条第3・4項の検討が必要な用途地域では、参照値による試算を止める。個別確認が必要な条件には、備考三の特定行政庁による指定、高層住居誘導地区、複数用途地域、用途地域の指定がない区域がある。法令上の適否は未評価。 [横浜市の建築基準法取扱基準集](https://www.city.yokohama.lg.jp/business/bunyabetsu/kenchiku/tetsuduki/kisoku/toriatsukai.files/00_zenpen.pdf)
 
 B-05とB-09に沿い、MCPの `road_height_table_values` も保存済みの用途地域と `floor_area_limit_percent` から、同じ標準値を返す。`wide_road_rule` は、幅員12 m以上で法第56条第3・4項の検討が必要な用途地域かどうかを示す。
+
+## 路面と敷地地盤から斜線の高さを入れる
+
+1. 「採用する道路幅員」と勾配を入力し、高さ欄の「路面と地盤から算定」を押す。
+2. 道路の路面中心と、確認した敷地の地盤面を、ともにモデルと同じZ座標で入力する。単位はmm。
+3. 採用する路面の高さと、敷地側の道路境界での斜線高さを確認し、「この高さを使う」を押す。幅員や勾配を変えたときは高さを算定し直す。
+
+2026-11-25に建築基準法施行令第2条第1項第6号イと第135条の2を照合した。直線で幅と高さが一定の道路1本と、単一の敷地地盤面を扱う。敷地地盤面が道路より1 m以上高いときは、差から1 mを引いた値の半分を路面中心のZに加える。そこから道路幅員×勾配だけ上げた値が、敷地側の道路境界での斜線高さになる。建物の後退を入力した場合は、斜線試算の段階で反映する。 [建築基準法施行令](https://laws.e-gov.go.jp/law/325CO0000000338)
+
+例として、路面中心がZ −5,000 mm、地盤面がZ −3,000 mm、幅員6 m、勾配1.25なら、路面を補正する高さは500 mm。採用する路面はZ −4,500 mm、敷地側の道路境界での斜線高さはZ 3,000 mmになる。敷地の地盤面の選定、道路勾配がある場合、地形による特例は個別確認が必要。
+
+B-05とB-09に沿い、MCPの `road_height_datum` も同じ算定をする。`road_center_z_mm`、`site_ground_z_mm`、`road_width_mm`、`slope` を指定する。返る `edge_height_mm` は建物の後退を反映する前の高さで、そのまま `compare_road_height_plane` に渡せる。
 
 ## 建物の後退を入れた試算
 
@@ -124,3 +136,17 @@ B-05とB-09に沿い、MCPの `measure_road_building_setback` も同じ形状か
 | Windows ZIP | `SketchBRep-windows-x64-a7a3878-local.zip`（83,426,031 bytes） |
 | SHA256 | `c4f24e7b350da10cef94af798df8442cce482e8d5a01f0e571a70def453979dd` |
 | ZIPの検証 | [標準検証18条件](validation/2026-11-24-portable-a7a3878.json)・[べた基礎4条件](validation/2026-11-24-portable-a7a3878-mat.json)成功。展開先のDLLを使った工程10のGUIテストも成功 |
+
+## 路面と地盤からの算定の確認と配布（2026-11-25）
+
+- 計算テストで、地盤面が道路より2 m高ければ500 mmの補正、1 mちょうどおよびそれ未満では補正なし、1 mより1 mm高ければ0.5 mmの補正となることを確認した。
+- 工程10のGUIテストで、採用する路面と斜線の高さを表示し、確認した値で試算表と3Dを更新できることを確認した。幅員を変更した後は古い算定値での試算を止める。画面の画像は配布フォルダの `outputs/road-height-datum-2026-11-25/` にある。
+
+| 項目 | 結果 |
+|---|---|
+| 実装 | `1d941e5` |
+| Linux CI | [run 45422382339](https://github.com/higeotoko/sketchBRep/actions/runs/45422382339) で837件成功 |
+| Windows ローカル | コア816件成功・8件スキップ、工程10のGUIテスト成功 |
+| Windows ZIP | `SketchBRep-windows-x64-1d941e5-local.zip`（83,438,757 bytes） |
+| SHA256 | `565f3d7f99cc07ef92a06f3e059289c3165abf499714cdada4088930fdd4aa81` |
+| ZIPの検証 | [標準検証18条件](validation/2026-11-25-portable-1d941e5.json)・[べた基礎4条件](validation/2026-11-25-portable-1d941e5-mat.json)成功。展開先のDLLを使った工程10のGUIテストも成功 |
