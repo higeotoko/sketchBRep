@@ -37,7 +37,13 @@ jp_volume_studyの開発仕様書 §10.3・§10.4・§10.6、§13、§21.2、ISS
 
 ## 点の試算の操作
 
-MCPの `neighbor_height_at` に、採用する `boundaries` の両端（`start` と `end`）、`points`、`ground_z_mm`、`base_height_mm`、`slope` を渡す。モデル座標はmm。点の高さにはXYだけを使う。敷地内または境界上では、決め手となった隣地辺、水平距離、制限高さを返す。敷地外は `in_site: false` とし、制限高さは空欄。保存状態やモデルは変えない。工程10の画面、3D表示、部材全体の判定は次の段階でこの点の試算を使う。
+MCPの `neighbor_height_at` に、採用する `boundaries` の両端（`start` と `end`）、`points`、`ground_z_mm`、`base_height_mm`、`slope` を渡す。モデル座標はmm。点の高さにはXYだけを使う。敷地内または境界上では、決め手となった隣地辺、水平距離、制限高さを返す。敷地外は `in_site: false` とし、制限高さは空欄。保存状態やモデルは変えない。工程10の3D表示は同じ点の試算を使う。部材全体の超過判定は未評価。
+
+## 工程10で隣地斜線を表示する
+
+工程10「立面・断面」の「隣地斜線」を開く。平面の番号と一覧を見比べて、確認した辺だけを選ぶ。登録した道路辺は青で表示し、選択できない。敷地の地盤面（モデルZ・mm）、立上り（m）、勾配を入力し、「3Dで見る」を押す。紫の線は採用辺、紫の半透明面は隣地斜線の試算面。「表示 → 斜線の試算面を消す」で解除でき、モデルを編集した場合も表示は解除される。
+
+表示面は登録敷地を三角形に分け、各頂点の高さを点の試算で求めてつなぐ。頂点間の高さは表示用の近似。分割は三角形の辺が約1 m以下を目安とし、描画する面は4,096枚以下。凹敷地の外に面を張らない。適用条件と部材全体の適否は未評価。
 
 ## 確認と配布
 
@@ -52,3 +58,17 @@ MCPの `neighbor_height_at` に、採用する `boundaries` の両端（`start` 
 | Windows ZIP | `SketchBRep-windows-x64-288db44-local.zip`（83,466,753 bytes） |
 | SHA256 | `9ad03bc4aeae4688c67e9d0ac5f84313166f32e40d7f38e5abbb13c3a814e762` |
 | ZIPの検証 | [標準検証18条件](validation/2026-11-25-portable-288db44.json)・[べた基礎4条件](validation/2026-11-25-portable-288db44-mat.json)成功。展開先のCLIによる隣地斜線も確認 |
+
+## 工程10と3D表示の確認と配布（2026-11-25）
+
+- 凹敷地の表示面の投影面積が、敷地と同じ104 m²になることを確認した。採用辺上の高さは入力した立上りに一致し、欠けた部分には三角形が入らない。
+- 工程10のGUI自動テストで、道路辺の除外、隣地2辺の選択、3Dの面と採用辺の線、表示メニューからの解除を確認した。画像は配布フォルダの `outputs/neighbor-height-3d-2026-11-25/` にある。
+
+| 項目 | 結果 |
+|---|---|
+| 実装 | `1ecb57a` |
+| Linux CI | [run 45495662561](https://github.com/higeotoko/sketchBRep/actions/runs/45495662561) で840件成功 |
+| Windows ローカル | コア819件成功・8件スキップ、工程10のGUIテスト成功 |
+| Windows ZIP | `SketchBRep-windows-x64-1ecb57a-local.zip`（83,477,992 bytes） |
+| SHA256 | `b2527e9da5f08095b8b8c12d0517c0a87cd9de3b33a2fd0274b1cd4e54d25ef1` |
+| ZIPの検証 | [標準検証18条件](validation/2026-11-25-portable-1ecb57a.json)・[べた基礎4条件](validation/2026-11-25-portable-1ecb57a-mat.json)成功。展開先のDLLを使った工程10のGUIテストも成功 |
