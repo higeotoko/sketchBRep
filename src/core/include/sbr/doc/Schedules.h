@@ -215,11 +215,14 @@ struct RoadHeightPlaneRow {
 };
 struct RoadHeightPlaneRange {
   double roadWidthMm;
-  double applicationDistanceMm;  // From the opposite road boundary.
+  double applicationDistanceMm;  // From the opposite boundary shifted by the setback.
+  double buildingSetbackMm = 0;  // Adopted minimum setback, measured from the site-side road boundary.
 };
 struct RoadHeightPlaneComparison {
   std::vector<RoadHeightPlaneRow> rows;
   TopoDS_Shape plane;
+  std::optional<double> siteApplicationEndMm;  // Signed distance inward from the site-side road boundary.
+  double edgeHeightRiseMm;
 };
 Result<RoadHeightPlaneComparison> compareRoadHeightPlane(
     const Document& document, const std::vector<ObjectId>& ids, double edgeHeightMm, double slope,

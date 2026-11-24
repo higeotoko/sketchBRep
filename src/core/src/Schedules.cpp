@@ -1651,6 +1651,14 @@ Result<RoadHeightPlaneComparison> compareRoadHeightPlane(
   if (range && (!std::isfinite(range->roadWidthMm) || !std::isfinite(range->applicationDistanceMm) ||
                 range->roadWidthMm <= 0 || range->applicationDistanceMm <= range->roadWidthMm))
     return R::failure("道路幅員は正の値、適用距離は道路幅員より大きい値を入力してください");
+  const double setback = range ? range->buildingSetbackMm : 0;
+  const double rise = slope * setback;
+  const double adjustedHeight = edgeHeightMm + rise;
+  const double lowerX = range ? -(range->roadWidthMm + setback) : 0;
+  const double upperX = range ? range->applicationDistanceMm + lowerX : 0;
+  if (setback < 0 || !std::isfinite(adjustedHeight) || !std::isfinite(lowerX) ||
+      (range && upperX <= lowerX))
+    return R::failure("建物の後退距離は0以上の有効な値を入力してください");
   const auto& site = document.settings().siteBoundary;
   if (!site || !site->road) return R::failure("敷地境界と前面道路を登録してください");
   const auto geometry = document.siteBoundaryGeometry(site->outline);
@@ -1676,13 +1684,11 @@ Result<RoadHeightPlaneComparison> compareRoadHeightPlane(
   if (flip) inward.Reverse();
   gp_Trsf roadFrame;
   roadFrame.SetTransformation(gp_Ax3(from, gp::DZ(), inward));
-  const double lowerX = range ? -range->roadWidthMm : 0;
-  const double upperX = range ? range->applicationDistanceMm - range->roadWidthMm : 0;
 
   gp_Trsf local;
   // In this frame +Z is normal to the plane. Convert the maximum normal distance
-  // back to the vertical excess z - edgeHeight - slope * inwardDistance.
-  local.SetTransformation(gp_Ax3(gp_Pnt(from.X(), from.Y(), edgeHeightMm),
+  // back to the vertical excess z - adjustedHeight - slope * inwardDistance.
+  local.SetTransformation(gp_Ax3(gp_Pnt(from.X(), from.Y(), adjustedHeight),
                                 gp_Dir(-slope * inward.X(), -slope * inward.Y(), 1)));
   const double verticalScale = std::hypot(1.0, slope);
   std::vector<RoadHeightPlaneRow> rows;
@@ -1707,10 +1713,12 @@ Result<RoadHeightPlaneComparison> compareRoadHeightPlane(
     rows.push_back({id, object->name, bounds.CornerMax().Z() * verticalScale});
   }
   std::stable_sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) { return a.excessMm > b.excessMm; });
+  const auto applicationEnd = range ? std::optional<double>(upperX) : std::nullopt;
+  if (range && upperX <= 0) return RoadHeightPlaneComparison{std::move(rows), {}, applicationEnd, rise};
   BRepBuilderAPI_MakePolygon outline;
   for (const gp_Pnt& point : geometry->vertices) {
     const double distance = gp_Vec(from, point).Dot(gp_Vec(inward));
-    outline.Add(gp_Pnt(point.X(), point.Y(), edgeHeightMm + slope * distance));
+    outline.Add(gp_Pnt(point.X(), point.Y(), adjustedHeight + slope * distance));
   }
   outline.Close();
   if (!outline.IsDone()) return R::failure("斜線の表示範囲を作れません");
@@ -1722,7 +1730,7 @@ Result<RoadHeightPlaneComparison> compareRoadHeightPlane(
     if (!clipped) return R::failure(clipped.error());
     preview = *clipped;
   }
-  return RoadHeightPlaneComparison{std::move(rows), preview};
+  return RoadHeightPlaneComparison{std::move(rows), preview, applicationEnd, rise};
 }
 
 std::vector<PermitCheck> permitElevationChecks(const Document& document) {

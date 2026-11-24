@@ -2746,6 +2746,33 @@ TEST_F(Schedules, RoadHeightPlaneClipsPartsAtTheDistanceFromTheOppositeEdge) {
                                                        3000, 1.25, sbr::doc::RoadHeightPlaneRange{6000, 9000});
   ASSERT_TRUE(preview);
   EXPECT_NEAR(sbr::geom::exactBounds(preview->plane).CornerMax().Y(), 3000, 0.001);
+
+  options["building_setback_mm"] = -1;
+  EXPECT_EQ(call("compare_road_height_plane", options)["ok"], false);
+  options["building_setback_mm"] = 1000;
+  const auto shiftedRows = ok("compare_road_height_plane", options)["rows"];
+  ASSERT_EQ(shiftedRows.size(), 3u);
+  EXPECT_EQ(shiftedRows[0]["id"], across);
+  EXPECT_NEAR(shiftedRows[0]["excess_mm"].get<double>(), -750, 0.001);
+  EXPECT_TRUE(shiftedRows[1]["excess_mm"].is_null());
+  EXPECT_TRUE(shiftedRows[2]["excess_mm"].is_null());
+  const auto shifted = sbr::doc::compareRoadHeightPlane(modeler.document(), {across.get<std::string>()},
+                                                       3000, 1.25, sbr::doc::RoadHeightPlaneRange{6000, 9000, 1000});
+  ASSERT_TRUE(shifted);
+  ASSERT_TRUE(shifted->siteApplicationEndMm.has_value());
+  EXPECT_NEAR(*shifted->siteApplicationEndMm, 2000, 0.001);
+  EXPECT_NEAR(shifted->edgeHeightRiseMm, 1250, 0.001);
+  const auto shiftedBounds = sbr::geom::exactBounds(shifted->plane);
+  ASSERT_FALSE(shiftedBounds.IsVoid());
+  EXPECT_NEAR(shiftedBounds.CornerMax().Y(), 2000, 0.001);
+  EXPECT_NEAR(shiftedBounds.CornerMin().Z(), 4250, 0.001);
+
+  const auto atBoundary = sbr::doc::compareRoadHeightPlane(modeler.document(), {across.get<std::string>()},
+                                                          3000, 1.25, sbr::doc::RoadHeightPlaneRange{6000, 9000, 3000});
+  ASSERT_TRUE(atBoundary);
+  EXPECT_TRUE(atBoundary->plane.IsNull());
+  ASSERT_EQ(atBoundary->rows.size(), 1u);
+  EXPECT_FALSE(atBoundary->rows[0].excessMm.has_value());
 }
 
 // docs/202: the permit workflow's stages 11 (一式の突合せ) and 12 (申請用出力).

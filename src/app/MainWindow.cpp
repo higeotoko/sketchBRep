@@ -7927,15 +7927,22 @@ void MainWindow::showRoadHeightPlaneDialog() {
   roadWidth->setPlaceholderText(tr("適用距離と一緒に入力"));
   auto* applicationDistance = new QLineEdit;
   applicationDistance->setObjectName(QStringLiteral("roadPlaneApplicationDistance"));
-  applicationDistance->setPlaceholderText(tr("道路の反対側の境界から"));
-  form->addRow(tr("敷地側の道路境界での高さ（モデルZ・mm）"), height);
+  applicationDistance->setPlaceholderText(tr("後退を反映した起点から"));
+  auto* setback = new QLineEdit;
+  setback->setObjectName(QStringLiteral("roadPlaneBuildingSetback"));
+  setback->setPlaceholderText(tr("確認済みの最小距離。空欄なら0"));
+  form->addRow(tr("敷地側の道路境界での高さ（後退前・mm）"), height);
+  height->setPlaceholderText(tr("モデルZの値"));
   form->addRow(tr("敷地内へ上がる勾配"), slope);
   form->addRow(tr("採用する道路幅員（m）"), roadWidth);
   form->addRow(tr("適用距離（m）"), applicationDistance);
+  form->addRow(tr("建物の後退距離（m）"), setback);
   auto* result = new QLabel;
   result->setObjectName(QStringLiteral("roadPlaneStatus"));
   result->setTextFormat(Qt::PlainText);
   result->setWordWrap(true);
+  result->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
+  result->setMinimumHeight(2 * result->fontMetrics().lineSpacing());
   layout->addWidget(result);
   auto* table = new QTableWidget(0, 2);
   table->setObjectName(QStringLiteral("roadPlaneResults"));
@@ -7954,6 +7961,7 @@ void MainWindow::showRoadHeightPlaneDialog() {
   locate->setEnabled(false);
   layout->addWidget(buttons);
   TopoDS_Shape displayPlane;
+  bool displayIncludesSetback = false;
   const auto invalidate = [&] {
     table->setRowCount(0);
     result->clear();
@@ -7964,6 +7972,7 @@ void MainWindow::showRoadHeightPlaneDialog() {
   connect(slope, &QLineEdit::textChanged, &dialog, invalidate);
   connect(roadWidth, &QLineEdit::textChanged, &dialog, invalidate);
   connect(applicationDistance, &QLineEdit::textChanged, &dialog, invalidate);
+  connect(setback, &QLineEdit::textChanged, &dialog, invalidate);
   connect(calculate, &QPushButton::clicked, &dialog, [&] {
     invalidate();
     bool heightOk = false, slopeOk = false;
@@ -7974,7 +7983,8 @@ void MainWindow::showRoadHeightPlaneDialog() {
       return;
     }
     std::optional<doc::RoadHeightPlaneRange> range;
-    if (!roadWidth->text().trimmed().isEmpty() || !applicationDistance->text().trimmed().isEmpty()) {
+    const bool hasSetback = !setback->text().trimmed().isEmpty();
+    if (!roadWidth->text().trimmed().isEmpty() || !applicationDistance->text().trimmed().isEmpty() || hasSetback) {
       bool widthOk = false, distanceOk = false;
       const double widthM = roadWidth->text().toDouble(&widthOk);
       const double distanceM = applicationDistance->text().toDouble(&distanceOk);
@@ -7982,7 +7992,13 @@ void MainWindow::showRoadHeightPlaneDialog() {
         result->setText(tr("採用する道路幅員と適用距離を両方入力してください。"));
         return;
       }
-      range = doc::RoadHeightPlaneRange{widthM * 1000, distanceM * 1000};
+      bool setbackOk = !hasSetback;
+      const double setbackM = hasSetback ? setback->text().toDouble(&setbackOk) : 0;
+      if (!setbackOk) {
+        result->setText(tr("建物の後退距離を数値で入力してください。"));
+        return;
+      }
+      range = doc::RoadHeightPlaneRange{widthM * 1000, distanceM * 1000, setbackM * 1000};
     }
     const auto comparison = doc::compareRoadHeightPlane(modeler_.document(), selection_, edgeHeight, gradient, range);
     if (!comparison) {
@@ -7990,6 +8006,7 @@ void MainWindow::showRoadHeightPlaneDialog() {
       return;
     }
     displayPlane = comparison->plane;
+    displayIncludesSetback = comparison->edgeHeightRiseMm > 0;
     table->setRowCount(static_cast<int>(comparison->rows.size()));
     for (int i = 0; i < table->rowCount(); ++i) {
       const auto& row = comparison->rows[static_cast<std::size_t>(i)];
@@ -8005,12 +8022,22 @@ void MainWindow::showRoadHeightPlaneDialog() {
       }
       table->setItem(i, 1, new QTableWidgetItem(difference));
     }
-    result->setText(range
-        ? tr("反対側の道路境界から %1 m まで（敷地側の境界から %2 m）")
-              .arg(range->applicationDistanceMm / 1000).arg((range->applicationDistanceMm - range->roadWidthMm) / 1000)
-        : tr("距離を区切らない試算"));
+    QString summary = tr("距離を区切らない試算");
+    if (range) {
+      const double end = *comparison->siteApplicationEndMm / 1000;
+      summary = displayIncludesSetback
+          ? tr("起点は反対側の道路境界から %1 m 外側です。斜線は %2 m 上がります。")
+                .arg(range->buildingSetbackMm / 1000).arg(comparison->edgeHeightRiseMm / 1000)
+          : tr("起点は反対側の道路境界です。");
+      if (end > 0)
+        summary += tr("\n起点から %1 m まで（敷地側の道路境界から %2 m）")
+                       .arg(range->applicationDistanceMm / 1000).arg(end);
+      else
+        summary += tr("\n適用端は道路内または道路境界上です。敷地内に表示する面がありません。");
+    }
+    result->setText(summary);
     table->selectRow(0);
-    locate->setEnabled(true);
+    locate->setEnabled(!displayPlane.IsNull());
   });
   connect(locate, &QPushButton::clicked, &dialog, [&] {
     if (const auto* item = table->item(table->currentRow(), 0)) {
@@ -8019,12 +8046,13 @@ void MainWindow::showRoadHeightPlaneDialog() {
       viewport_->showStorey(std::nullopt);
       viewport_->setRoadHeightPlane(displayPlane);
       viewport_->setStandardView(Viewport::StandardView::Iso);
-      setStatus(tr("青い面は試算した斜線の表示範囲です。表示メニューから消せます。"));
+      setStatus(displayIncludesSetback ? tr("青い面は建物の後退を反映した斜線です。表示メニューから消せます。")
+                                      : tr("青い面は試算した斜線の表示範囲です。表示メニューから消せます。"));
       dialog.accept();
     }
   });
   connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-  dialog.resize(540, 360);
+  dialog.resize(610, 435);
   dialog.exec();
 }
 

@@ -1787,22 +1787,41 @@ void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
     auto* slope = dialog->findChild<QLineEdit*>(QStringLiteral("roadPlaneSlope"));
     auto* width = dialog->findChild<QLineEdit*>(QStringLiteral("roadPlaneWidth"));
     auto* distance = dialog->findChild<QLineEdit*>(QStringLiteral("roadPlaneApplicationDistance"));
+    auto* setback = dialog->findChild<QLineEdit*>(QStringLiteral("roadPlaneBuildingSetback"));
+    auto* status = dialog->findChild<QLabel*>(QStringLiteral("roadPlaneStatus"));
     auto* table = dialog->findChild<QTableWidget*>(QStringLiteral("roadPlaneResults"));
-    if (edgeHeight && slope && width && distance && table) {
+    if (edgeHeight && slope && width && distance && setback && status && table) {
       edgeHeight->setText(QStringLiteral("3000"));
       slope->setText(QStringLiteral("1.25"));
       width->setText(QStringLiteral("6"));
       distance->setText(QStringLiteral("9.25"));
-      const auto buttons = dialog->findChildren<QPushButton*>();
-      for (auto* button : buttons)
-        if (button->text() == QStringLiteral("試算")) button->click();
+      QPushButton* calculate = nullptr;
+      QPushButton* locate = nullptr;
+      for (auto* button : dialog->findChildren<QPushButton*>()) {
+        if (button->text() == QStringLiteral("試算")) calculate = button;
+        if (button->text() == QStringLiteral("3Dで見る")) locate = button;
+      }
+      if (!calculate || !locate) {
+        dialog->reject();
+        return;
+      }
+      calculate->click();
       compared = table->rowCount() == 3 && table->item(0, 1)->text() == QStringLiteral("超過 500.0 mm") &&
                  table->item(1, 1)->text() == QStringLiteral("余裕 750.0 mm") &&
                  table->item(2, 1)->text() == QStringLiteral("適用範囲外");
+      setback->setText(QStringLiteral("0.2"));
+      compared = compared && !locate->isEnabled() && table->rowCount() == 0;
+      calculate->click();
+      compared = compared && table->rowCount() == 3 && table->item(0, 1)->text() == QStringLiteral("超過 250.0 mm") &&
+                 table->item(1, 1)->text() == QStringLiteral("余裕 1000.0 mm") &&
+                 table->item(2, 1)->text() == QStringLiteral("適用範囲外") &&
+                 status->text().contains(QStringLiteral("斜線は 0.25 m 上がります")) &&
+                 status->text().contains(QStringLiteral("敷地側の道路境界から 3.05 m"));
       if (!reviewDir.isEmpty()) dialog->grab().save(QDir(reviewDir).filePath(QStringLiteral("road-height-plane.png")));
-      if (compared) table->selectRow(1);
-      for (auto* button : buttons)
-        if (button->text() == QStringLiteral("3Dで見る") && button->isEnabled()) button->click();
+      if (compared && locate->isEnabled()) {
+        table->selectRow(1);
+        locate->click();
+      }
     }
     if (dialog->result() != QDialog::Accepted) dialog->reject();
   });
@@ -1811,7 +1830,9 @@ void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
   QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{fartherId});
   const TopoDS_Shape plane = f.vp->roadHeightPlaneShape();
   QVERIFY(!plane.IsNull());
-  QVERIFY(std::abs(geom::exactBounds(plane).CornerMax().Y() - 1250) < 0.001);
+  const auto planeBounds = geom::exactBounds(plane);
+  QVERIFY(std::abs(planeBounds.CornerMax().Y() - 1050) < 0.001);
+  QVERIFY(std::abs(planeBounds.CornerMin().Z() - 3250) < 0.001);
   if (!reviewDir.isEmpty()) QVERIFY(f.vp->dumpImage(QDir(reviewDir).filePath(QStringLiteral("road-height-plane-3d.png"))));
   auto* hidePlane = f.window.findChild<QAction*>(QStringLiteral("hideRoadHeightPlaneAction"));
   QVERIFY(hidePlane && hidePlane->isEnabled());

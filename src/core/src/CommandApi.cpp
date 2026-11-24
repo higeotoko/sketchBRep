@@ -2767,18 +2767,21 @@ const std::vector<CommandDef>& commands() {
        }},
       {"compare_road_height_plane",
        "Compare selected B-rep shapes against a single user-supplied inclined plane. Edge height is model Z "
-       "at the saved site-side road boundary, in mm. Slope is rise/run inward. Returns signed vertical excess "
+       "at the saved site-side road boundary before setback, in mm. Slope is rise/run inward. Returns signed vertical excess "
        "by object (positive is above). To limit the comparison, give both road_width_mm (adopted width) "
-       "and application_distance_mm (from the opposite road boundary). Outside rows have excess_mm=null. "
+       "and application_distance_mm. With these two values, optional building_setback_mm shifts the opposite "
+       "boundary outward for both height and application distance. Outside rows have excess_mm=null. "
        "This is a geometric comparison, not a legal road-height assessment.",
        SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}},
                "edge_height_mm": {"type": "number"}, "slope": {"type": "number"},
-               "road_width_mm": {"type": "number"}, "application_distance_mm": {"type": "number"}},
+               "road_width_mm": {"type": "number"}, "application_distance_mm": {"type": "number"},
+               "building_setback_mm": {"type": "number", "minimum": 0}},
                "required": ["ids", "edge_height_mm", "slope"]}),
        [](doc::Modeler& m, const json& a) {
          std::optional<doc::RoadHeightPlaneRange> range;
-         if (a.contains("road_width_mm") || a.contains("application_distance_mm"))
-           range = doc::RoadHeightPlaneRange{number(a, "road_width_mm"), number(a, "application_distance_mm")};
+         if (a.contains("road_width_mm") || a.contains("application_distance_mm") || a.contains("building_setback_mm"))
+           range = doc::RoadHeightPlaneRange{number(a, "road_width_mm"), number(a, "application_distance_mm"),
+                                            a.contains("building_setback_mm") ? number(a, "building_setback_mm") : 0};
          const auto comparison = must(doc::compareRoadHeightPlane(m.document(), a.at("ids").get<std::vector<doc::ObjectId>>(),
                                                                   number(a, "edge_height_mm"), number(a, "slope"), range));
          json result = json::array();
