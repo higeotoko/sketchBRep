@@ -1938,6 +1938,56 @@ void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
   f.vp->syncNow();
   QVERIFY(f.vp->roadHeightPlaneShape().IsNull());
 
+  const auto concave = call("create_polygon", {{"points", {{-3000,-3400,-1000},{11000,-3400,-1000},{11000,4100,-1000},
+                                                            {6100,4100,-1000},{6100,8300,-1000},{-3000,8300,-1000}}}});
+  QVERIFY(concave["ok"].get<bool>());
+  QVERIFY(call("set_site_boundary", {{"outline", concave["result"]["id"]}, {"source", "架空の敷地"}})["ok"].get<bool>());
+  const auto registeredRoad = call("set_site_road", {{"start", {-3000,-3400,-1000}}, {"end", {11000,-3400,-1000}}, {"source", "架空の道路"}});
+  QVERIFY2(registeredRoad["ok"].get<bool>(), registeredRoad.dump().c_str());
+  f.vp->syncNow();
+  auto* neighborRow = rowOf(QStringLiteral("隣地斜線"));
+  QVERIFY(neighborRow);
+  checks->setCurrentItem(neighborRow);
+  bool neighborAccepted = false;
+  QString neighborFailure;
+  QTimer::singleShot(0, [&] {
+    auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+    if (!dialog) return;
+    auto* edges = dialog->findChild<QListWidget*>(QStringLiteral("neighborHeightEdges"));
+    auto* ground = dialog->findChild<QLineEdit*>(QStringLiteral("neighborHeightGround"));
+    auto* base = dialog->findChild<QLineEdit*>(QStringLiteral("neighborHeightBase"));
+    auto* slope = dialog->findChild<QLineEdit*>(QStringLiteral("neighborHeightSlope"));
+    auto* show = dialog->findChild<QPushButton*>(QStringLiteral("showNeighborHeight"));
+    neighborFailure = QStringLiteral("dialog=%1, edge count=%2").arg(dialog->objectName()).arg(edges ? edges->count() : -1);
+    if (edges && edges->count() == 6 && ground && base && slope && show) {
+      int excludedRoads = 0;
+      for (int i = 0; i < edges->count(); ++i) {
+        auto* item = edges->item(i);
+        if (!(item->flags() & Qt::ItemIsEnabled)) ++excludedRoads;
+        else if (i == 2 || i == 3) item->setCheckState(Qt::Checked);
+      }
+      ground->setText(QStringLiteral("0"));
+      base->setText(QStringLiteral("3"));
+      slope->setText(QStringLiteral("0.6"));
+      if (!reviewDir.isEmpty()) dialog->grab().save(QDir(reviewDir).filePath(QStringLiteral("neighbor-height-edges.png")));
+      neighborFailure += QStringLiteral(", excluded roads=%1").arg(excludedRoads);
+      if (excludedRoads == 1) show->click();
+      neighborAccepted = dialog->result() == QDialog::Accepted;
+      if (!neighborAccepted)
+        for (auto* label : dialog->findChildren<QLabel*>()) neighborFailure += QStringLiteral(" | ") + label->text();
+    }
+    if (!neighborAccepted) dialog->reject();
+  });
+  edit->click();
+  QVERIFY2(neighborAccepted, qPrintable(neighborFailure));
+  QVERIFY(!f.vp->roadHeightPlaneShape().IsNull());
+  QVERIFY(!f.vp->neighborHeightBoundaryShape().IsNull());
+  if (!reviewDir.isEmpty()) QVERIFY(f.vp->dumpImage(QDir(reviewDir).filePath(QStringLiteral("neighbor-height-3d.png"))));
+  QVERIFY(hidePlane->isEnabled());
+  hidePlane->trigger();
+  QVERIFY(f.vp->roadHeightPlaneShape().IsNull());
+  QVERIFY(f.vp->neighborHeightBoundaryShape().IsNull());
+
   // docs/202: stages 11 (一式の突合せ) and 12 (申請用出力, on hold).
   phases->setCurrentRow(10);
   QVERIFY(rowOf(QStringLiteral("2 通り芯")));

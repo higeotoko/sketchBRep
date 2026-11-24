@@ -14,10 +14,13 @@
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Section.hxx>
 #include <BRep_Builder.hxx>
+#include <BRep_Tool.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepClass_FaceClassifier.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
+#include <BRepMesh_IncrementalMesh.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <Bnd_Box.hxx>
@@ -25,6 +28,7 @@
 #include <gp_Ax3.hxx>
 #include <gp_Pln.hxx>
 #include <IntCurvesFace_ShapeIntersector.hxx>
+#include <Poly_Triangulation.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopTools_ListOfShape.hxx>
 #include <TopoDS_Compound.hxx>
@@ -1818,15 +1822,42 @@ Result<RoadHeightPlaneComparison> compareRoadHeightPlane(
   return RoadHeightPlaneComparison{std::move(rows), preview, applicationEnd, rise};
 }
 
-Result<std::vector<std::optional<NeighborHeightSample>>> neighborHeightAt(
+namespace {
+
+struct NeighborHeightField {
+  TopoDS_Face footprint;
+  double outlineZ;
+  std::vector<std::array<gp_Pnt, 2>> boundaries;
+  double baseZ;
+  double slope;
+
+  NeighborHeightSample sample(const gp_Pnt& xy) const {
+    std::optional<NeighborHeightSample> nearest;
+    for (const auto& boundary : boundaries) {
+      const auto& from = boundary[0];
+      const gp_Vec along(boundary[1].X() - from.X(), boundary[1].Y() - from.Y(), 0);
+      const double length = along.Magnitude();
+      // A registered nondegenerate straight edge has a positive horizontal length.
+      const gp_Vec axis = along / length;
+      const gp_Vec offset(xy.X() - from.X(), xy.Y() - from.Y(), 0);
+      const double station = std::clamp(offset.Dot(axis), 0.0, length);
+      const gp_Pnt closest(from.X() + station * axis.X(), from.Y() + station * axis.Y(), outlineZ);
+      const double distance = xy.Distance(closest);
+      if (!nearest || distance < nearest->distanceMm)
+        nearest = NeighborHeightSample{boundary, closest, distance, baseZ + slope * distance};
+    }
+    return *nearest;
+  }
+};
+
+Result<NeighborHeightField> neighborHeightField(
     const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedEdges,
-    const std::vector<gp_Pnt>& points, double groundZMm, double baseHeightMm, double slope) {
-  using R = Result<std::vector<std::optional<NeighborHeightSample>>>;
+    double groundZMm, double baseHeightMm, double slope) {
+  using R = Result<NeighborHeightField>;
   const double baseZ = groundZMm + baseHeightMm;
   if (!std::isfinite(baseZ) || baseHeightMm < 0 || !std::isfinite(slope) || slope <= 0 || slope > 1000)
     return R::failure("地盤面と立上りの高さ、および0より大きく1000以下の勾配を入力してください");
-  if (points.empty() || confirmedEdges.empty())
-    return R::failure("確認した隣地の境界辺と照合する点を指定してください");
+  if (confirmedEdges.empty()) return R::failure("確認した隣地の境界辺を指定してください");
   const auto& site = document.settings().siteBoundary;
   if (!site) return R::failure("先に敷地境界を登録してください");
   const auto geometry = document.siteBoundaryGeometry(site->outline);
@@ -1854,34 +1885,106 @@ Result<std::vector<std::optional<NeighborHeightSample>>> neighborHeightAt(
   BRepBuilderAPI_MakeFace face(outline.Wire(), true);
   if (!face.IsDone()) return R::failure("敷地輪郭から照合範囲を作れません");
 
+  return NeighborHeightField{face.Face(), outlineZ, std::move(boundaries), baseZ, slope};
+}
+
+}  // namespace
+
+Result<std::vector<std::optional<NeighborHeightSample>>> neighborHeightAt(
+    const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedEdges,
+    const std::vector<gp_Pnt>& points, double groundZMm, double baseHeightMm, double slope) {
+  using R = Result<std::vector<std::optional<NeighborHeightSample>>>;
+  if (points.empty()) return R::failure("照合する点を指定してください");
+  const auto field = neighborHeightField(document, confirmedEdges, groundZMm, baseHeightMm, slope);
+  if (!field) return R::failure(field.error());
   std::vector<std::optional<NeighborHeightSample>> samples;
   samples.reserve(points.size());
   for (const auto& point : points) {
     if (!std::isfinite(point.X()) || !std::isfinite(point.Y())) return R::failure("点のXY座標を確認してください");
-    const gp_Pnt xy(point.X(), point.Y(), outlineZ);
-    const auto inside = BRepClass_FaceClassifier(face.Face(), xy, tolerance::kLinear).State();
+    const gp_Pnt xy(point.X(), point.Y(), field->outlineZ);
+    const auto inside = BRepClass_FaceClassifier(field->footprint, xy, tolerance::kLinear).State();
     if (inside != TopAbs_IN && inside != TopAbs_ON) {
       samples.emplace_back();
       continue;
     }
-    std::optional<NeighborHeightSample> nearest;
-    for (const auto& boundary : boundaries) {
-      const auto& from = boundary[0];
-      const gp_Vec along(boundary[1].X() - from.X(), boundary[1].Y() - from.Y(), 0);
-      const double length = along.Magnitude();
-      // A registered nondegenerate straight edge has a positive horizontal length.
-      const gp_Vec axis = along / length;
-      const gp_Vec offset(xy.X() - from.X(), xy.Y() - from.Y(), 0);
-      const double station = std::clamp(offset.Dot(axis), 0.0, length);
-      const gp_Pnt closest(from.X() + station * axis.X(), from.Y() + station * axis.Y(), outlineZ);
-      const double distance = xy.Distance(closest);
-      if (!nearest || distance < nearest->distanceMm)
-        nearest = NeighborHeightSample{boundary, closest, distance, baseZ + slope * distance};
-    }
-    if (!std::isfinite(nearest->limitZMm)) return R::failure("この座標では隣地斜線の高さを測れません");
-    samples.push_back(*nearest);
+    const auto nearest = field->sample(xy);
+    if (!std::isfinite(nearest.limitZMm)) return R::failure("この座標では隣地斜線の高さを測れません");
+    samples.push_back(nearest);
   }
   return samples;
+}
+
+Result<NeighborHeightPreview> neighborHeightPreview(
+    const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedEdges,
+    double groundZMm, double baseHeightMm, double slope) {
+  using R = Result<NeighborHeightPreview>;
+  const auto field = neighborHeightField(document, confirmedEdges, groundZMm, baseHeightMm, slope);
+  if (!field) return R::failure(field.error());
+  try {
+    BRepMesh_IncrementalMesh mesh(field->footprint, 1.0);
+    TopLoc_Location location;
+    const auto triangulation = BRep_Tool::Triangulation(field->footprint, location);
+    if (!mesh.IsDone() || triangulation.IsNull() || triangulation->NbTriangles() == 0)
+      return R::failure("敷地輪郭を表示用の面に分けられません");
+
+    using Triangle = std::array<gp_Pnt, 3>;
+    std::vector<Triangle> triangles;
+    double maxSide = 0;
+    constexpr std::size_t maxTriangles = 4096;
+    if (static_cast<std::size_t>(triangulation->NbTriangles()) > maxTriangles)
+      return R::failure("敷地輪郭の辺が多く、表示用の面を作れません");
+    for (int t = 1; t <= triangulation->NbTriangles(); ++t) {
+      int a, b, c;
+      triangulation->Triangle(t).Get(a, b, c);
+      const auto node = [&](int i) { return triangulation->Node(i).Transformed(location.Transformation()); };
+      const Triangle triangle{node(a), node(b), node(c)};
+      maxSide = std::max({maxSide, triangle[0].Distance(triangle[1]), triangle[1].Distance(triangle[2]),
+                          triangle[2].Distance(triangle[0])});
+      triangles.push_back(triangle);
+    }
+    // Subdivide all triangles by the same number of levels, so shared edges have identical samples.
+    const auto midpoint = [](const gp_Pnt& a, const gp_Pnt& b) {
+      return gp_Pnt((a.X() + b.X()) / 2, (a.Y() + b.Y()) / 2, a.Z());
+    };
+    while (maxSide > 1000 && triangles.size() <= maxTriangles / 4) {
+      std::vector<Triangle> refined;
+      refined.reserve(triangles.size() * 4);
+      for (const auto& t : triangles) {
+        const auto ab = midpoint(t[0], t[1]), bc = midpoint(t[1], t[2]), ca = midpoint(t[2], t[0]);
+        refined.insert(refined.end(), {{t[0], ab, ca}, {ab, t[1], bc}, {ca, bc, t[2]}, {ab, bc, ca}});
+      }
+      triangles = std::move(refined);
+      maxSide /= 2;
+    }
+
+    BRep_Builder builder;
+    TopoDS_Compound surface, boundaries;
+    builder.MakeCompound(surface);
+    builder.MakeCompound(boundaries);
+    for (auto& triangle : triangles) {
+      BRepBuilderAPI_MakePolygon wire;
+      for (auto& p : triangle) {
+        const double z = field->sample(p).limitZMm;
+        if (!std::isfinite(z)) return R::failure("制限面の高さを測れません");
+        p.SetZ(z);
+        wire.Add(p);
+      }
+      wire.Close();
+      if (!wire.IsDone()) return R::failure("隣地斜線の表示面を作れません");
+      BRepBuilderAPI_MakeFace face(wire.Wire(), true);
+      if (!face.IsDone()) return R::failure("隣地斜線の表示面を作れません");
+      builder.Add(surface, face.Face());
+    }
+    for (const auto& edge : field->boundaries) {
+      const gp_Vec lift(0, 0, 1);
+      BRepBuilderAPI_MakeEdge line(edge[0].Translated(lift), edge[1].Translated(lift));
+      if (!line.IsDone()) return R::failure("隣地境界を表示できません");
+      builder.Add(boundaries, line.Edge());
+    }
+    return NeighborHeightPreview{surface, boundaries};
+  } catch (const Standard_Failure&) {
+    return R::failure("隣地斜線の表示面を作れません");
+  }
 }
 
 std::vector<PermitCheck> permitElevationChecks(const Document& document) {

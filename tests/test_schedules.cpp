@@ -4,6 +4,10 @@
 #include <map>
 #include <set>
 #include <gtest/gtest.h>
+#include <BRep_Tool.hxx>
+#include <BRepTools.hxx>
+#include <BRepTools_WireExplorer.hxx>
+#include <TopoDS.hxx>
 #include <TopExp_Explorer.hxx>
 #include <nlohmann/json.hpp>
 
@@ -2746,6 +2750,34 @@ TEST_F(Schedules, NeighborHeightUsesFiniteEdgesAndTheConcaveOutline) {
   EXPECT_TRUE(samples[1]["limit_z_mm"].is_null());
   args["boundaries"][0]["end"] = {8000,9000,0};
   EXPECT_EQ(call("neighbor_height_at", args)["ok"], false);
+}
+
+TEST_F(Schedules, NeighborHeightPreviewPreservesTheConcaveFootprint) {
+  const auto site = ok("create_polygon", {{"points", {{0,0,0},{12000,0,0},{12000,6000,0},
+                                                     {8000,6000,0},{8000,10000,0},{0,10000,0}}}})["id"];
+  ok("set_site_boundary", {{"outline", site}, {"source", "架空の測量図"}});
+  const std::vector<std::array<gp_Pnt, 2>> edges{{gp_Pnt(8000,6000,0), gp_Pnt(8000,10000,0)}};
+  const auto sequence = modeler.document().sequence();
+  const auto result = sbr::doc::neighborHeightPreview(modeler.document(), edges, 0, 20000, 1.25);
+  ASSERT_TRUE(result);
+  double planArea = 0;
+  int triangles = 0;
+  for (TopExp_Explorer faces(result->surface, TopAbs_FACE); faces.More(); faces.Next()) {
+    std::vector<gp_Pnt> points;
+    for (BRepTools_WireExplorer wire(BRepTools::OuterWire(TopoDS::Face(faces.Current()))); wire.More(); wire.Next())
+      points.push_back(BRep_Tool::Pnt(wire.CurrentVertex()));
+    ASSERT_EQ(points.size(), 3u);
+    const gp_Pnt centre((points[0].X() + points[1].X() + points[2].X()) / 3,
+                        (points[0].Y() + points[1].Y() + points[2].Y()) / 3, 0);
+    EXPECT_FALSE(centre.X() > 8000 && centre.Y() > 6000);
+    planArea += std::abs(gp_Vec(points[0], points[1]).Crossed(gp_Vec(points[0], points[2])).Z()) / 2;
+    ++triangles;
+  }
+  EXPECT_GT(triangles, 4);
+  EXPECT_LE(triangles, 4096);
+  EXPECT_NEAR(planArea, 104000000, 0.01);
+  EXPECT_NEAR(sbr::geom::exactBounds(result->surface).CornerMin().Z(), 20000, 0.01);
+  EXPECT_EQ(modeler.document().sequence(), sequence);
 }
 
 TEST_F(Schedules, RoadHeightPlaneCalculatesTheRoadLevelAndSiteEdgeHeight) {

@@ -365,6 +365,10 @@ void PermitWorkflowPanel::readModelChecks(int stage) {
       rows_.push_back({translated("道路側の斜線試算"), translated("参考"),
                        translated("部材を選び、道路に接する敷地辺での高さと勾配を入力すると、斜線からの余裕・超過が分かります。"),
                        translated("斜線を試算"), Action::RoadHeightPlane});
+      rows_.push_back({translated("隣地斜線"), translated("参考"),
+                       translated("確認した隣地辺を選び、敷地内の制限面を3Dで見られます。"),
+                       hasBoundary ? translated("隣地斜線を表示") : translated("敷地境界を登録"),
+                       hasBoundary ? Action::NeighborHeight : Action::Boundary});
       continue;
     }
     if (stage == 9 && c.item == "適用ルート・地域") {  // docs/215: opens its dialog

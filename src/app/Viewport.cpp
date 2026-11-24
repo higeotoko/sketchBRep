@@ -2414,18 +2414,35 @@ void Viewport::setPreview(const TopoDS_Shape& shape, bool solid, bool unclipped)
 
 void Viewport::clearPreview() { setPreview(TopoDS_Shape()); }
 
-void Viewport::setRoadHeightPlane(const TopoDS_Shape& shape) {
+void Viewport::setRoadHeightPlane(const TopoDS_Shape& shape) { setHeightStudy(shape, {}); }
+
+void Viewport::setNeighborHeightSurface(const TopoDS_Shape& shape, const TopoDS_Shape& boundaryLines) {
+  setHeightStudy(shape, boundaryLines);
+}
+
+void Viewport::setHeightStudy(const TopoDS_Shape& shape, const TopoDS_Shape& boundaryLines) {
   if (view_.IsNull()) return;
   if (!roadHeightPlane_.IsNull()) context_->Remove(roadHeightPlane_, Standard_False);
+  if (!neighborHeightEdges_.IsNull()) context_->Remove(neighborHeightEdges_, Standard_False);
   roadHeightPlane_.Nullify();
+  neighborHeightEdges_.Nullify();
+  const bool neighbor = !boundaryLines.IsNull();
   if (!shape.IsNull()) {
     roadHeightPlane_ = new AIS_Shape(display::makeDisplayCopy(shape));
-    roadHeightPlane_->SetColor(rgb(0.10, 0.53, 0.86));
+    roadHeightPlane_->SetColor(neighbor ? rgb(0.51, 0.23, 0.78) : rgb(0.10, 0.53, 0.86));
     roadHeightPlane_->SetTransparency(0.65);
-    roadHeightPlane_->Attributes()->SetFaceBoundaryDraw(true);
+    roadHeightPlane_->Attributes()->SetFaceBoundaryDraw(!neighbor);
     context_->Display(roadHeightPlane_, AIS_Shaded, -1, Standard_False);
     context_->Deactivate(roadHeightPlane_);
     roadHeightPlaneSequence_ = modeler_.document().sequence();
+    if (neighbor) {
+      neighborHeightEdges_ = new AIS_Shape(display::makeDisplayCopy(boundaryLines));
+      neighborHeightEdges_->SetColor(rgb(0.47, 0.18, 0.73));
+      neighborHeightEdges_->SetWidth(4.0);
+      neighborHeightEdges_->SetZLayer(Graphic3d_ZLayerId_Topmost);
+      context_->Display(neighborHeightEdges_, AIS_WireFrame, -1, Standard_False);
+      context_->Deactivate(neighborHeightEdges_);
+    }
   }
   emit roadHeightPlaneChanged(!roadHeightPlane_.IsNull());
   redraw();

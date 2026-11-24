@@ -7746,6 +7746,7 @@ void MainWindow::showPermitWorkflow() {
       case Action::EnergyRoute: trigger("energyRouteAction"); break;  // docs/215
       case Action::HeightConditions: showSiteHeightConditionsDialog(); break;
       case Action::RoadHeightPlane: showRoadHeightPlaneDialog(); break;
+      case Action::NeighborHeight: showNeighborHeightDialog(); break;
       case Action::Equipment: trigger("equipmentAction"); break;      // docs/226
       case Action::SavedRoad:
         setSelection({});
@@ -8296,6 +8297,142 @@ void MainWindow::showRoadHeightPlaneDialog() {
   });
   connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
   dialog.resize(610, 435);
+  dialog.exec();
+}
+
+void MainWindow::showNeighborHeightDialog() {
+  const auto& document = modeler_.document();
+  const auto& site = document.settings().siteBoundary;
+  if (!site) return;
+  const auto geometry = document.siteBoundaryGeometry(site->outline);
+  if (!geometry) {
+    reportError(QString::fromStdString(geometry.error()));
+    return;
+  }
+  const auto road = document.siteRoadEdge(*geometry);
+  const auto sequence = document.sequence();
+  QDialog dialog(this);
+  dialog.setObjectName(QStringLiteral("neighborHeightDialog"));
+  dialog.setWindowTitle(tr("隣地斜線"));
+  auto* layout = new QVBoxLayout(&dialog);
+  auto* instructions = new QLabel(tr("確認した隣地の境界辺を選び、地盤面・立上り・勾配を入力します。"));
+  instructions->setWordWrap(true);
+  layout->addWidget(instructions);
+  auto* edgesLayout = new QHBoxLayout;
+  layout->addLayout(edgesLayout);
+  auto* diagram = new QLabel;
+  diagram->setFixedSize(280, 205);
+  edgesLayout->addWidget(diagram);
+  auto* edges = new QListWidget;
+  edges->setObjectName(QStringLiteral("neighborHeightEdges"));
+  edges->setMinimumHeight(diagram->height());
+  edgesLayout->addWidget(edges, 1);
+  const auto& vertices = geometry->vertices;
+  const auto endpoints = [&](std::size_t i) {
+    return std::array<gp_Pnt, 2>{vertices[i], vertices[(i + 1) % vertices.size()]};
+  };
+  Bnd_Box limits;
+  for (const auto& vertex : vertices) limits.Add(vertex);
+  const auto lo = limits.CornerMin(), hi = limits.CornerMax();
+  const double scale = std::min((diagram->width() - 58) / (hi.X() - lo.X()), (diagram->height() - 54) / (hi.Y() - lo.Y()));
+  QPolygonF outline;
+  for (std::size_t i = 0; i < vertices.size(); ++i) {
+    const auto& p = vertices[i];
+    outline << QPointF(diagram->width() / 2.0 + ((p.X() - lo.X()) - (hi.X() - lo.X()) / 2) * scale,
+                       diagram->height() / 2.0 - ((p.Y() - lo.Y()) - (hi.Y() - lo.Y()) / 2) * scale);
+    const auto edge = endpoints(i);
+    const bool isRoad = road && edge[0].Distance((*road)[0]) <= sbr::tolerance::kLinear &&
+                                edge[1].Distance((*road)[1]) <= sbr::tolerance::kLinear;
+    const double length = std::hypot(edge[1].X() - edge[0].X(), edge[1].Y() - edge[0].Y());
+    auto* item = new QListWidgetItem(isRoad ? tr("辺 %1　道路").arg(i + 1)
+                                            : tr("辺 %1　%2 m").arg(i + 1).arg(length / 1000, 0, 'g', 5), edges);
+    if (isRoad) item->setFlags(item->flags() & ~Qt::ItemIsEnabled);
+    else item->setCheckState(Qt::Unchecked);
+  }
+  const auto redrawDiagram = [&] {
+    const auto palette = diagram->palette();
+    const auto base = palette.color(QPalette::Base);
+    const auto ink = palette.color(QPalette::Text);
+    const auto purple = base.lightness() < 128 ? QColor(190, 139, 245) : QColor(112, 46, 174);
+    const auto blue = base.lightness() < 128 ? QColor(95, 172, 242) : QColor(27, 95, 171);
+    QPixmap pixmap(diagram->size());
+    pixmap.fill(base);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(QPen(ink, 1));
+    painter.setBrush(palette.color(QPalette::AlternateBase));
+    painter.drawPolygon(outline);
+    for (int i = 0; i < edges->count(); ++i) {
+      const auto a = outline[i], b = outline[(i + 1) % edges->count()];
+      const bool isRoad = !(edges->item(i)->flags() & Qt::ItemIsEnabled);
+      const bool chosen = edges->item(i)->checkState() == Qt::Checked;
+      const auto color = isRoad ? blue : chosen ? purple : ink;
+      painter.setPen(QPen(color, isRoad || chosen ? 3 : 1));
+      painter.drawLine(a, b);
+      const auto centre = (a + b) / 2;
+      const QRectF label(centre.x() - 10, centre.y() - 9, 20, 18);
+      painter.fillRect(label, base);
+      painter.setPen(color);
+      painter.drawText(label, Qt::AlignCenter, QString::number(i + 1));
+    }
+    painter.end();
+    diagram->setPixmap(pixmap);
+  };
+  connect(edges, &QListWidget::itemChanged, &dialog, redrawDiagram);
+  redrawDiagram();
+
+  auto* form = new QFormLayout;
+  layout->addLayout(form);
+  auto* ground = new QLineEdit;
+  ground->setObjectName(QStringLiteral("neighborHeightGround"));
+  auto* base = new QLineEdit;
+  base->setObjectName(QStringLiteral("neighborHeightBase"));
+  auto* slope = new QLineEdit;
+  slope->setObjectName(QStringLiteral("neighborHeightSlope"));
+  form->addRow(tr("敷地の地盤面（モデルZ・mm）"), ground);
+  form->addRow(tr("地盤面からの立上り（m）"), base);
+  form->addRow(tr("勾配（水平1に対して）"), slope);
+  auto* note = new QLabel(tr("紫の線は選んだ隣地辺です。表示は試算用の近似面で、適否は未評価です。"));
+  note->setWordWrap(true);
+  layout->addWidget(note);
+  auto* error = new QLabel;
+  error->setWordWrap(true);
+  layout->addWidget(error);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close);
+  buttons->button(QDialogButtonBox::Close)->setText(tr("閉じる"));
+  auto* show = buttons->addButton(tr("3Dで見る"), QDialogButtonBox::ActionRole);
+  show->setObjectName(QStringLiteral("showNeighborHeight"));
+  layout->addWidget(buttons);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  connect(show, &QPushButton::clicked, &dialog, [&] {
+    if (document.sequence() != sequence) {
+      error->setText(tr("モデルが変わりました。画面を開き直してください。"));
+      return;
+    }
+    bool groundOk = false, baseOk = false, slopeOk = false;
+    const double groundZ = ground->text().toDouble(&groundOk);
+    const double baseM = base->text().toDouble(&baseOk);
+    const double gradient = slope->text().toDouble(&slopeOk);
+    if (!groundOk || !baseOk || !slopeOk) {
+      error->setText(tr("地盤面・立上り・勾配を数値で入力してください。"));
+      return;
+    }
+    std::vector<std::array<gp_Pnt, 2>> selectedEdges;
+    for (int i = 0; i < edges->count(); ++i)
+      if (edges->item(i)->checkState() == Qt::Checked) selectedEdges.push_back(endpoints(static_cast<std::size_t>(i)));
+    const auto preview = doc::neighborHeightPreview(document, selectedEdges, groundZ, baseM * 1000, gradient);
+    if (!preview) {
+      error->setText(QString::fromStdString(preview.error()));
+      return;
+    }
+    viewport_->unlockView();
+    viewport_->showStorey(std::nullopt);
+    viewport_->setNeighborHeightSurface(preview->surface, preview->boundaryLines);
+    viewport_->setStandardView(Viewport::StandardView::Iso);
+    setStatus(tr("紫の面は隣地斜線の試算、紫の線は採用した隣地辺です。"));
+    dialog.accept();
+  });
+  dialog.resize(610, 425);
   dialog.exec();
 }
 

@@ -175,6 +175,10 @@ class Viewport : public QWidget {
   void setGhost(const std::vector<doc::ObjectId>& ids, const gp_Trsf& delta);
   void clearPreview();
   void setRoadHeightPlane(const TopoDS_Shape& shape);
+  void setNeighborHeightSurface(const TopoDS_Shape& shape, const TopoDS_Shape& boundaryLines);
+  TopoDS_Shape neighborHeightBoundaryShape() const {
+    return neighborHeightEdges_.IsNull() ? TopoDS_Shape() : neighborHeightEdges_->Shape();
+  }
   TopoDS_Shape roadHeightPlaneShape() const { return roadHeightPlane_.IsNull() ? TopoDS_Shape() : roadHeightPlane_->Shape(); }
   // Read-only diagnostics highlight, independent of an active drawing tool.
   void setInspectionMarker(const TopoDS_Shape& shape);
@@ -422,6 +426,7 @@ class Viewport : public QWidget {
   void syncLabel(const doc::ObjectId& id);
   void syncSection();
   void syncOpenEnds();
+  void setHeightStudy(const TopoDS_Shape& shape, const TopoDS_Shape& boundaryLines);
   // Editing inside a group or component: a dotted box around it (SketchUp).
   void syncEditBox();
   Handle(AIS_Shape) makeDisplay(const doc::Object& object, Entry& entry);
@@ -543,6 +548,7 @@ class Viewport : public QWidget {
 
   Handle(AIS_Shape) preview_;
   Handle(AIS_Shape) roadHeightPlane_;
+  Handle(AIS_Shape) neighborHeightEdges_;
   std::uint64_t roadHeightPlaneSequence_ = 0;
   Handle(AIS_Shape) inspectionMarker_;
   std::vector<Handle(AIS_Shape)> roles_;
