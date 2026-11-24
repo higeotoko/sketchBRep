@@ -2028,6 +2028,9 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
     for (QMenu* old : menu->findChildren<QMenu*>(QStringLiteral("architectureShowStorey"), Qt::FindDirectChildrenOnly)) delete old;
     auto* storeys = menu->addMenu(tr("3D で 1 つの階だけ見せる"));
     storeys->setObjectName(QStringLiteral("architectureShowStorey"));
+    auto* all = new QAction(tr("全部の階を見せる"), storeys);
+    all->setObjectName(QStringLiteral("architectureShowAllStoreys"));
+    all->setEnabled(viewport_->shownStorey().has_value());
     std::vector<doc::FloorLevel> sorted = modeler_.levels();
     std::stable_sort(sorted.begin(), sorted.end(), [](const doc::FloorLevel& a, const doc::FloorLevel& b) { return a.elevation < b.elevation; });
     for (std::size_t i = 0; i < sorted.size(); ++i) {
@@ -2040,9 +2043,10 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
       only->setObjectName(QStringLiteral("architectureShowStorey_") + QString::fromStdString(sorted[i].id));
       const double floor = sorted[i].elevation;
       const QString name = QString::fromStdString(sorted[i].name);
-      connect(only, &QAction::triggered, this, [this, floor, ceiling, name] {
+      connect(only, &QAction::triggered, this, [this, floor, ceiling, name, all] {
         viewport_->unlockView();
         viewport_->showStorey(Viewport::StoreyShown{floor, ceiling});
+        all->setEnabled(true);
         setStatus(tr("3D で %1 だけを見せています（ほかの階は隠しています。モデルは変わりません）。全部に戻すのは同じメニューから").arg(name));
       });
     }
@@ -2072,11 +2076,10 @@ void MainWindow::buildArchitectureToolbar(QMenu* viewMenu) {
     }
     if (copyMenu->isEmpty()) copyMenu->setEnabled(false);
     storeys->addSeparator();
-    auto* all = storeys->addAction(tr("全部の階を見せる"));
-    all->setObjectName(QStringLiteral("architectureShowAllStoreys"));
-    all->setEnabled(viewport_->shownStorey().has_value());
-    connect(all, &QAction::triggered, this, [this] {
+    storeys->addAction(all);
+    connect(all, &QAction::triggered, this, [this, all] {
       viewport_->showStorey(std::nullopt);
+      all->setEnabled(false);
       setStatus(tr("全部の階を見せています"));
     });
     menu->addSeparator();

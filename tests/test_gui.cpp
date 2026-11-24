@@ -14017,21 +14017,21 @@ void GuiPhase1::oneStoreyShownIn3d() {
   auto* button=f.window.findChild<QToolButton*>(QStringLiteral("architecturePlanLevel"));QVERIFY(button);
   emit button->menu()->aboutToShow();
   auto* first=f.window.findChild<QAction*>(QStringLiteral("architectureShowStorey_")+QString::fromStdString(m.levels().front().id));QVERIFY(first);
+  auto* all=f.window.findChild<QAction*>(QStringLiteral("architectureShowAllStoreys"));QVERIFY(all);
+  QVERIFY(!all->isEnabled());
   first->trigger();
   QVERIFY(shown(down->front()));
   QVERIFY(!shown(*slab));          // the floor above starts 200 under 2FL
   QVERIFY(!shown(upper->front()));
   QVERIFY(f.window.statusText().contains(QStringLiteral("1FL")));
   QCOMPARE(m.document().objects().size(),std::size_t(3));  // nothing changed
-  emit button->menu()->aboutToShow();
+  QVERIFY(all->isEnabled());  // the local AI can activate actions without closing the menu
   auto* second=f.window.findChild<QAction*>(QStringLiteral("architectureShowStorey_")+QString::fromStdString(m.levels().back().id));QVERIFY(second);
   second->trigger();
   QVERIFY(!shown(down->front()));
   QVERIFY(shown(*slab)&&shown(upper->front()));
-  emit button->menu()->aboutToShow();
-  auto* all=f.window.findChild<QAction*>(QStringLiteral("architectureShowAllStoreys"));QVERIFY(all);
-  QVERIFY(all->isEnabled());
   all->trigger();
+  QVERIFY(!all->isEnabled());
   QVERIFY(shown(down->front())&&shown(*slab)&&shown(upper->front()));
   // docs/121: 1FL copied to 2FL from the same menu: refused while 2FL has walls, then made.
   auto copyUp=[&]{
