@@ -2765,6 +2765,20 @@ const std::vector<CommandDef>& commands() {
          return json{{"zone", conditions.zone}, {"district", conditions.district}, {"source", conditions.source},
                      {"zones", doc::heightZoneChoices()}, {"districts", doc::heightDistrictChoices()}};
        }},
+      {"compare_road_height_plane",
+       "Compare selected B-rep shapes against a single user-supplied inclined plane. Edge height is model Z "
+       "at the saved site-side road boundary, in mm. Slope is rise/run inward. Returns signed vertical excess "
+       "by object (positive is above). This is a geometric comparison, not a legal road-height assessment.",
+       SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}},
+               "edge_height_mm": {"type": "number"}, "slope": {"type": "number"}},
+               "required": ["ids", "edge_height_mm", "slope"]}),
+       [](doc::Modeler& m, const json& a) {
+         const auto comparison = must(doc::compareRoadHeightPlane(m.document(), a.at("ids").get<std::vector<doc::ObjectId>>(),
+                                                                  number(a, "edge_height_mm"), number(a, "slope")));
+         json result = json::array();
+         for (const auto& r : comparison.rows) result.push_back({{"id", r.id}, {"name", r.name}, {"excess_mm", r.excessMm}});
+         return json{{"rows", result}};
+       }},
       {"daylight_factor_estimates",
        "docs/205: each wall opening's daylight factor (採光補正係数, 令 20 条 2 項) worked out from the model: "
        "horizontal and vertical distances (mm) of the part of the building over it that sets the smallest ratio, "
@@ -4656,7 +4670,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
       name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" ||
       name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" || name == "permit_checks" || name == "check_drawing_set" || name == "project_outline" || name == "daylight_factor_estimates" ||
-      name == "site_height_conditions" || name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
+      name == "site_height_conditions" || name == "compare_road_height_plane" || name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
     return E::Read;
   }
   if (isFileCommand(name)) return E::ExternalIo;

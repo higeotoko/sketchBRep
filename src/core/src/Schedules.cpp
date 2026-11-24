@@ -19,6 +19,7 @@
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <Bnd_Box.hxx>
 #include <gp_Lin.hxx>
+#include <gp_Ax3.hxx>
 #include <IntCurvesFace_ShapeIntersector.hxx>
 #include <TopExp_Explorer.hxx>
 #include <gp_Trsf.hxx>
@@ -1584,6 +1585,66 @@ SiteHeightConditions siteHeightConditions(const Document& document) {
     return it != data.end() && it->is_string() ? it->get<std::string>() : std::string();
   };
   return {read("zone"), read("district"), read("source")};
+}
+
+Result<RoadHeightPlaneComparison> compareRoadHeightPlane(
+    const Document& document, const std::vector<ObjectId>& ids, double edgeHeightMm, double slope) {
+  using R = Result<RoadHeightPlaneComparison>;
+  if (ids.empty()) return R::failure("照合する部材を選択してください");
+  if (!std::isfinite(edgeHeightMm) || !std::isfinite(slope) || slope <= 0 || slope > 1000)
+    return R::failure("有効な基準高さと、0より大きく1000以下の勾配を入力してください");
+  const auto& site = document.settings().siteBoundary;
+  if (!site || !site->road) return R::failure("敷地境界と前面道路を登録してください");
+  const auto geometry = document.siteBoundaryGeometry(site->outline);
+  if (!geometry) return R::failure(geometry.error());
+  const auto road = document.siteRoadEdge(*geometry);
+  if (!road) return R::failure("道路が接する敷地辺を登録し直してください");
+  const gp_Pnt& from = (*road)[0];
+  const gp_Pnt& to = (*road)[1];
+  const gp_Dir along(to.X() - from.X(), to.Y() - from.Y(), 0);
+  gp_Dir inward(-along.Y(), along.X(), 0);
+  double low = 0, high = 0;
+  for (const gp_Pnt& point : geometry->vertices) {
+    const double d = gp_Vec(from, point).Dot(gp_Vec(inward));
+    low = std::min(low, d);
+    high = std::max(high, d);
+  }
+  constexpr double sideTolerance = 0.01;  // mm
+  if (low < -sideTolerance && high > sideTolerance)
+    return R::failure("敷地が道路境界線の両側にあるため、この斜線では試算できません");
+  const bool flip = low < -sideTolerance;
+  const double depth = flip ? -low : high;
+  if (depth <= sideTolerance) return R::failure("敷地の奥行きを測れません");
+  if (flip) inward.Reverse();
+
+  gp_Trsf local;
+  // In this frame +Z is normal to the plane. Convert the maximum normal distance
+  // back to the vertical excess z - edgeHeight - slope * inwardDistance.
+  local.SetTransformation(gp_Ax3(gp_Pnt(from.X(), from.Y(), edgeHeightMm),
+                                gp_Dir(-slope * inward.X(), -slope * inward.Y(), 1)));
+  const double verticalScale = std::hypot(1.0, slope);
+  std::vector<RoadHeightPlaneRow> rows;
+  for (const ObjectId& id : std::set<ObjectId>(ids.begin(), ids.end())) {
+    const Object* object = document.find(id);
+    if (!object || id == site->outline) return R::failure("敷地境界以外の部材を選択してください");
+    const TopoDS_Shape shape = document.worldShape(*object);
+    if (shape.IsNull() || !TopExp_Explorer(shape, TopAbs_FACE).More())
+      return R::failure("面を持つ部材を選択してください（" + object->name + "）");
+    const Bnd_Box bounds = geom::exactBounds(shape.Moved(TopLoc_Location(local)));
+    if (bounds.IsVoid() || bounds.IsOpenZmax()) return R::failure("形状の高さを測れません（" + object->name + "）");
+    rows.push_back({id, object->name, bounds.CornerMax().Z() * verticalScale});
+  }
+  std::stable_sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) { return a.excessMm > b.excessMm; });
+  BRepBuilderAPI_MakePolygon outline;
+  for (const gp_Pnt& point : geometry->vertices) {
+    const double distance = gp_Vec(from, point).Dot(gp_Vec(inward));
+    outline.Add(gp_Pnt(point.X(), point.Y(), edgeHeightMm + slope * distance));
+  }
+  outline.Close();
+  if (!outline.IsDone()) return R::failure("斜線の表示範囲を作れません");
+  BRepBuilderAPI_MakeFace face(outline.Wire(), Standard_True);
+  if (!face.IsDone()) return R::failure("斜線の表示面を作れません");
+  return RoadHeightPlaneComparison{std::move(rows), face.Face()};
 }
 
 std::vector<PermitCheck> permitElevationChecks(const Document& document) {

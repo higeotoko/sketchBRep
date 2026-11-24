@@ -174,6 +174,8 @@ class Viewport : public QWidget {
   // in world space. Built from display copies, never from canonical shapes.
   void setGhost(const std::vector<doc::ObjectId>& ids, const gp_Trsf& delta);
   void clearPreview();
+  void setRoadHeightPlane(const TopoDS_Shape& shape);
+  TopoDS_Shape roadHeightPlaneShape() const { return roadHeightPlane_.IsNull() ? TopoDS_Shape() : roadHeightPlane_->Shape(); }
   // Read-only diagnostics highlight, independent of an active drawing tool.
   void setInspectionMarker(const TopoDS_Shape& shape);
   TopoDS_Shape inspectionMarkerShape() const { return inspectionMarker_.IsNull() ? TopoDS_Shape() : inspectionMarker_->Shape(); }
@@ -340,6 +342,7 @@ class Viewport : public QWidget {
   void contextMenuRequested(const QPoint& pos);
   // The plan / elevation mode started, switched or ended.
   void viewLockChanged();
+  void roadHeightPlaneChanged(bool visible);
   // The fixed view's work plane moved (setWorkOffset).
   void workPlaneChanged();
 
@@ -539,6 +542,8 @@ class Viewport : public QWidget {
   PickMode pickMode_ = PickMode::None;
 
   Handle(AIS_Shape) preview_;
+  Handle(AIS_Shape) roadHeightPlane_;
+  std::uint64_t roadHeightPlaneSequence_ = 0;
   Handle(AIS_Shape) inspectionMarker_;
   std::vector<Handle(AIS_Shape)> roles_;
   std::vector<Handle(AIS_Shape)> diagnostics_;

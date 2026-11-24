@@ -1766,6 +1766,54 @@ void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
   QCOMPARE(rowOf(QStringLiteral("まだ確かめていない事"))->text(1), QStringLiteral("未評価"));
   if (!reviewDir.isEmpty()) QVERIFY(dock->grab().save(QDir(reviewDir).filePath(QStringLiteral("height-conditions-stage.png"))));
 
+  QVERIFY(call("set_site_road", {{"start", {-2000,-2000,0}}, {"end", {10000,-2000,0}}, {"source", "架空の道路"}})["ok"].get<bool>());
+  const auto part = call("create_box", {{"origin", {0,0,0}}, {"width",500}, {"depth",500}, {"height",6000}, {"name", "道路寄りの試算部材"}});
+  const auto farther = call("create_box", {{"origin", {0,1000,0}}, {"width",500}, {"depth",500}, {"height",6000}, {"name", "敷地奥の試算部材"}});
+  QVERIFY(part["ok"].get<bool>());
+  QVERIFY(farther["ok"].get<bool>());
+  const auto partId = part["result"]["id"].get<std::string>();
+  const auto fartherId = farther["result"]["id"].get<std::string>();
+  f.window.setSelection({fartherId, partId});
+  auto* roadPlane = rowOf(QStringLiteral("道路側の斜線試算"));
+  QVERIFY(roadPlane);
+  checks->setCurrentItem(roadPlane);
+  bool compared = false;
+  QTimer::singleShot(0, [&] {
+    auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+    if (!dialog) return;
+    auto* edgeHeight = dialog->findChild<QLineEdit*>(QStringLiteral("roadPlaneEdgeHeight"));
+    auto* slope = dialog->findChild<QLineEdit*>(QStringLiteral("roadPlaneSlope"));
+    auto* table = dialog->findChild<QTableWidget*>(QStringLiteral("roadPlaneResults"));
+    if (edgeHeight && slope && table) {
+      edgeHeight->setText(QStringLiteral("3000"));
+      slope->setText(QStringLiteral("1.25"));
+      const auto buttons = dialog->findChildren<QPushButton*>();
+      for (auto* button : buttons)
+        if (button->text() == QStringLiteral("試算")) button->click();
+      compared = table->rowCount() == 2 && table->item(0, 1)->text() == QStringLiteral("超過 500.0 mm") &&
+                 table->item(1, 1)->text() == QStringLiteral("余裕 750.0 mm");
+      if (!reviewDir.isEmpty()) dialog->grab().save(QDir(reviewDir).filePath(QStringLiteral("road-height-plane.png")));
+      if (compared) table->selectRow(1);
+      for (auto* button : buttons)
+        if (button->text() == QStringLiteral("3Dで見る") && button->isEnabled()) button->click();
+    }
+    if (dialog->result() != QDialog::Accepted) dialog->reject();
+  });
+  edit->click();
+  QVERIFY(compared);
+  QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{fartherId});
+  const TopoDS_Shape plane = f.vp->roadHeightPlaneShape();
+  QVERIFY(!plane.IsNull());
+  if (!reviewDir.isEmpty()) QVERIFY(f.vp->dumpImage(QDir(reviewDir).filePath(QStringLiteral("road-height-plane-3d.png"))));
+  auto* hidePlane = f.window.findChild<QAction*>(QStringLiteral("hideRoadHeightPlaneAction"));
+  QVERIFY(hidePlane && hidePlane->isEnabled());
+  hidePlane->trigger();
+  QVERIFY(f.vp->roadHeightPlaneShape().IsNull());
+  f.vp->setRoadHeightPlane(plane);
+  QVERIFY(modeler.move({fartherId}, gp_Vec(0,500,0)));
+  f.vp->syncNow();
+  QVERIFY(f.vp->roadHeightPlaneShape().IsNull());
+
   // docs/202: stages 11 (一式の突合せ) and 12 (申請用出力, on hold).
   phases->setCurrentRow(10);
   QVERIFY(rowOf(QStringLiteral("2 通り芯")));

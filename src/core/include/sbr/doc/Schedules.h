@@ -208,6 +208,17 @@ struct SiteHeightConditions {
 const std::vector<std::pair<std::string, std::string>>& heightZoneChoices();
 const std::vector<std::pair<std::string, std::string>>& heightDistrictChoices();
 SiteHeightConditions siteHeightConditions(const Document& document);
+struct RoadHeightPlaneRow {
+  ObjectId id;
+  std::string name;
+  double excessMm;  // Positive is above the plane. This is a vertical distance.
+};
+struct RoadHeightPlaneComparison {
+  std::vector<RoadHeightPlaneRow> rows;
+  TopoDS_Shape plane;
+};
+Result<RoadHeightPlaneComparison> compareRoadHeightPlane(
+    const Document& document, const std::vector<ObjectId>& ids, double edgeHeightMm, double slope);
 // Stage 10 (立面・断面, docs/201): the level GL, the model's highest point above it (not the legal
 // height), where sections are cut, the elevations' orientation, and what is not checked.
 std::vector<PermitCheck> permitElevationChecks(const Document& document);

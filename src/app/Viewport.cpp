@@ -1657,6 +1657,7 @@ void Viewport::syncSome(std::optional<double> budgetMs) {
   // they inherit), or everything.
   std::optional<std::vector<doc::ObjectId>> changed;
   if (!fullSync_) changed = document.changedSince(syncedSequence_);
+  if (!roadHeightPlane_.IsNull() && roadHeightPlaneSequence_ != document.sequence()) setRoadHeightPlane({});
   syncedSequence_ = document.sequence();
   std::vector<doc::ObjectId> queue = std::move(pendingSync_);
   pendingSync_.clear();
@@ -2412,6 +2413,23 @@ void Viewport::setPreview(const TopoDS_Shape& shape, bool solid, bool unclipped)
 }
 
 void Viewport::clearPreview() { setPreview(TopoDS_Shape()); }
+
+void Viewport::setRoadHeightPlane(const TopoDS_Shape& shape) {
+  if (view_.IsNull()) return;
+  if (!roadHeightPlane_.IsNull()) context_->Remove(roadHeightPlane_, Standard_False);
+  roadHeightPlane_.Nullify();
+  if (!shape.IsNull()) {
+    roadHeightPlane_ = new AIS_Shape(display::makeDisplayCopy(shape));
+    roadHeightPlane_->SetColor(rgb(0.10, 0.53, 0.86));
+    roadHeightPlane_->SetTransparency(0.65);
+    roadHeightPlane_->Attributes()->SetFaceBoundaryDraw(true);
+    context_->Display(roadHeightPlane_, AIS_Shaded, -1, Standard_False);
+    context_->Deactivate(roadHeightPlane_);
+    roadHeightPlaneSequence_ = modeler_.document().sequence();
+  }
+  emit roadHeightPlaneChanged(!roadHeightPlane_.IsNull());
+  redraw();
+}
 
 void Viewport::setInspectionMarker(const TopoDS_Shape& shape) {
   if (view_.IsNull()) return;
@@ -3479,8 +3497,7 @@ bool Viewport::isPerspective() const {
 
 void Viewport::fitAll() {
   if (view_.IsNull()) return;
-  // Fit to the model only: V3d's own FitAll() would include the long axis
-  // lines and transient previews.
+  // V3d's own FitAll() would also include long axes and drawing previews.
   Bnd_Box box;
   for (const auto& [id, entry] : entries_) {
     // Guides are 200 m long: they would zoom far out.
@@ -3488,6 +3505,7 @@ void Viewport::fitAll() {
     if (o && o->kind() == doc::ObjectKind::Guide) continue;
     box.Add(geom::exactBounds(entry.canonicalWorld));
   }
+  if (!roadHeightPlane_.IsNull()) box.Add(geom::exactBounds(roadHeightPlane_->Shape()));
   if (box.IsVoid()) {
     box.Add(gp_Pnt(-2000, -2000, 0));
     box.Add(gp_Pnt(8000, 8000, 3000));

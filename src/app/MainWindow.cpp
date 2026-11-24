@@ -1576,6 +1576,10 @@ void MainWindow::buildMenus() {
   fixedViews->addAction(tr("3D に戻る"), QKeySequence(QStringLiteral("Alt+0")), this, [this] { viewport_->unlockView(); })
       ->setObjectName(QStringLiteral("unlockViewAction"));
   view->addAction(tr("全体表示"), QKeySequence(tr("Shift+Z")), this, [this] { viewport_->fitAll(); });
+  auto* hideRoadPlane = view->addAction(tr("斜線の試算面を消す"), this, [this] { viewport_->setRoadHeightPlane({}); });
+  hideRoadPlane->setObjectName(QStringLiteral("hideRoadHeightPlaneAction"));
+  hideRoadPlane->setEnabled(false);
+  connect(viewport_, &Viewport::roadHeightPlaneChanged, hideRoadPlane, &QAction::setEnabled);
   view->addSeparator();
   perspectiveAction_ = view->addAction(tr("透視投影"));
   perspectiveAction_->setCheckable(true);
@@ -7741,6 +7745,7 @@ void MainWindow::showPermitWorkflow() {
       case Action::Outline: trigger("projectOutlineAction"); break;  // docs/214
       case Action::EnergyRoute: trigger("energyRouteAction"); break;  // docs/215
       case Action::HeightConditions: showSiteHeightConditionsDialog(); break;
+      case Action::RoadHeightPlane: showRoadHeightPlaneDialog(); break;
       case Action::Equipment: trigger("equipmentAction"); break;      // docs/226
       case Action::SavedRoad:
         setSelection({});
@@ -7899,6 +7904,101 @@ void MainWindow::showSiteHeightConditionsDialog() {
   if (dialog.exec() != QDialog::Accepted) return;
   setStatus(tr("高さ制限の条件を保存しました"));
   refreshPanels();
+}
+
+void MainWindow::showRoadHeightPlaneDialog() {
+  QDialog dialog(this);
+  dialog.setObjectName(QStringLiteral("roadHeightPlaneDialog"));
+  dialog.setWindowTitle(tr("道路側の斜線試算"));
+  auto* layout = new QVBoxLayout(&dialog);
+  auto* note = new QLabel(tr("選択した%1部材を、入力した斜線と比較します。法令上の適否は未評価です。")
+                              .arg(selection_.size()));
+  note->setWordWrap(true);
+  layout->addWidget(note);
+  auto* form = new QFormLayout;
+  layout->addLayout(form);
+  auto* height = new QLineEdit;
+  height->setObjectName(QStringLiteral("roadPlaneEdgeHeight"));
+  auto* slope = new QLineEdit;
+  slope->setObjectName(QStringLiteral("roadPlaneSlope"));
+  slope->setPlaceholderText(tr("水平1に対して上がる高さ"));
+  form->addRow(tr("敷地側の道路境界での高さ（モデルZ・mm）"), height);
+  form->addRow(tr("敷地内へ上がる勾配"), slope);
+  auto* result = new QLabel;
+  result->setObjectName(QStringLiteral("roadPlaneStatus"));
+  result->setTextFormat(Qt::PlainText);
+  result->setWordWrap(true);
+  layout->addWidget(result);
+  auto* table = new QTableWidget(0, 2);
+  table->setObjectName(QStringLiteral("roadPlaneResults"));
+  table->setHorizontalHeaderLabels({tr("選択した部材"), tr("斜線との鉛直差")});
+  table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+  table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+  table->verticalHeader()->hide();
+  table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+  table->setSelectionBehavior(QAbstractItemView::SelectRows);
+  table->setSelectionMode(QAbstractItemView::SingleSelection);
+  layout->addWidget(table);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close);
+  buttons->button(QDialogButtonBox::Close)->setText(tr("閉じる"));
+  auto* calculate = buttons->addButton(tr("試算"), QDialogButtonBox::ActionRole);
+  auto* locate = buttons->addButton(tr("3Dで見る"), QDialogButtonBox::ActionRole);
+  locate->setEnabled(false);
+  layout->addWidget(buttons);
+  TopoDS_Shape displayPlane;
+  const auto invalidate = [&] {
+    table->setRowCount(0);
+    result->clear();
+    locate->setEnabled(false);
+    displayPlane.Nullify();
+  };
+  connect(height, &QLineEdit::textChanged, &dialog, invalidate);
+  connect(slope, &QLineEdit::textChanged, &dialog, invalidate);
+  connect(calculate, &QPushButton::clicked, &dialog, [&] {
+    invalidate();
+    bool heightOk = false, slopeOk = false;
+    const double edgeHeight = height->text().toDouble(&heightOk);
+    const double gradient = slope->text().toDouble(&slopeOk);
+    if (!heightOk || !slopeOk) {
+      result->setText(tr("高さと勾配を数値で入力してください。"));
+      return;
+    }
+    const auto comparison = doc::compareRoadHeightPlane(modeler_.document(), selection_, edgeHeight, gradient);
+    if (!comparison) {
+      result->setText(QString::fromStdString(comparison.error()));
+      return;
+    }
+    displayPlane = comparison->plane;
+    table->setRowCount(static_cast<int>(comparison->rows.size()));
+    for (int i = 0; i < table->rowCount(); ++i) {
+      const auto& row = comparison->rows[static_cast<std::size_t>(i)];
+      auto* name = new QTableWidgetItem(QString::fromStdString(row.name));
+      name->setData(Qt::UserRole, QString::fromStdString(row.id));
+      table->setItem(i, 0, name);
+      const double rounded = std::round(row.excessMm * 10) / 10;
+      const QString distance = QString::number(std::abs(rounded), 'f', 1);
+      const QString difference = rounded > 0 ? tr("超過 %1 mm").arg(distance) :
+          rounded < 0 ? tr("余裕 %1 mm").arg(distance) : tr("差 0.0 mm");
+      table->setItem(i, 1, new QTableWidgetItem(difference));
+    }
+    result->setText(tr("斜線に対して条件の厳しい順"));
+    table->selectRow(0);
+    locate->setEnabled(true);
+  });
+  connect(locate, &QPushButton::clicked, &dialog, [&] {
+    if (const auto* item = table->item(table->currentRow(), 0)) {
+      setSelection({item->data(Qt::UserRole).toString().toStdString()});
+      viewport_->unlockView();
+      viewport_->showStorey(std::nullopt);
+      viewport_->setRoadHeightPlane(displayPlane);
+      viewport_->setStandardView(Viewport::StandardView::Iso);
+      setStatus(tr("青い面は試算した斜線です。表示メニューから消せます。"));
+      dialog.accept();
+    }
+  });
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  dialog.resize(540, 360);
+  dialog.exec();
 }
 
 // docs/215: the route the energy documents follow, the region and the source (docs/210).

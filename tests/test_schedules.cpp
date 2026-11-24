@@ -2701,6 +2701,26 @@ TEST_F(Schedules, PermitChecksReadTheEnergyAndElevationStages) {
   EXPECT_NE(rowOf(10, "いちばん高い所（参考）")["details"].get<std::string>().find("GLから 3500 mm"), std::string::npos);
 }
 
+TEST_F(Schedules, RoadHeightPlaneUsesTheShapeAtItsWorldPlacement) {
+  const auto boundary = ok("create_polygon", {{"points", {{-1000,0,0},{10000,0,0},{10000,10000,0},{-1000,10000,0}}}})["id"];
+  ok("set_site_boundary", {{"outline", boundary}, {"source", "架空の測量図"}});
+  const auto box = ok("create_box", {{"origin", {0,2000,0}}, {"width",500}, {"depth",500}, {"height",6000}})["id"];
+  const auto roof = ok("create_polygon", {{"points", {{0,2000,5500},{500,2000,5500},{500,4000,8000},{0,4000,8000}}}})["id"];
+  const auto options = json{{"ids", {roof, box}}, {"edge_height_mm", 3000}, {"slope", 1.25}};
+  EXPECT_EQ(call("compare_road_height_plane", options)["ok"], false);
+  ok("set_site_road", {{"start", {10000,0,0}}, {"end", {-1000,0,0}}, {"source", "架空の道路"}});
+  const auto rows = ok("compare_road_height_plane", options)["rows"];
+  ASSERT_EQ(rows.size(), 2u);
+  EXPECT_EQ(rows[0]["id"], box);
+  EXPECT_NEAR(rows[0]["excess_mm"].get<double>(), 500, 0.001);
+  EXPECT_EQ(rows[1]["id"], roof);
+  EXPECT_NEAR(rows[1]["excess_mm"].get<double>(), 0, 0.001);
+  ok("move", {{"ids", {box}}, {"vector", {0,1000,0}}});
+  const auto moved = ok("compare_road_height_plane", options)["rows"];
+  EXPECT_EQ(moved[1]["id"], box);
+  EXPECT_NEAR(moved[1]["excess_mm"].get<double>(), -750, 0.001);
+}
+
 // docs/202: the permit workflow's stages 11 (一式の突合せ) and 12 (申請用出力).
 TEST_F(Schedules, PermitChecksSumUpTheStagesAndHoldTheOutput) {
   const auto rowOf = [&](int stage, const std::string& item) {

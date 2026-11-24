@@ -362,6 +362,9 @@ void PermitWorkflowPanel::readModelChecks(int stage) {
       rows_.push_back({QString::fromStdString(c.item), QString::fromStdString(c.state), QString::fromStdString(c.details),
                        hasBoundary ? translated("高さ制限の条件を編集") : translated("敷地境界を登録"),
                        hasBoundary ? Action::HeightConditions : Action::Boundary, c.attention});
+      rows_.push_back({translated("道路側の斜線試算"), translated("参考"),
+                       translated("部材を選び、道路に接する敷地辺での高さと勾配を入力すると、斜線からの余裕・超過が分かります。"),
+                       translated("斜線を試算"), Action::RoadHeightPlane});
       continue;
     }
     if (stage == 9 && c.item == "適用ルート・地域") {  // docs/215: opens its dialog
