@@ -46,3 +46,22 @@
 | サイズ | 72,026,369 bytes |
 | SHA256 | `196e104bff667a147c05aafbad0fb4cd8b2cb456cd5cacb8f7021fc5f092954c` |
 | ZIP の検証 | `verify_portable_pads.py`・`verify_portable_mat.py` とも成功（docs/validation/2026-11-15-portable-ce070ab*.json） |
+
+## 12-8 日本語の既定名と図面リストの用紙欄（2026-11-23）
+
+B-05（図面と一覧の内容が一致すること）の確認。保存画面でDXFとJw_cadを順に選び、ファイル名欄の既定名「1FL 平面図」のまま保存して、対応する拡張子のファイルができることを確認した。Qtの設定は一時フォルダに分離した。
+
+初回の14ページPDFでは、図面リストのA-04がA4で、表題欄とPDFの実寸はA3だった。断面位置記号を入れた後の平面図はA3に変わるが、図面リストは記号を入れる前のA4を参照していた。リストを最終レイアウトから作るよう修正した。
+
+同じ検証用のモデルからPDFを再生成した。図番A-01〜A-14と図面名が各ページの表題欄に対応し、用紙欄がある13行でPDFの寸法と表題欄が一致した。A-04は3か所ともA3。図面リストと全14ページの表題欄をレンダリングして確認した。検証用PDFと照合結果は配布フォルダの `outputs/drawing-default-save-check/`。
+
+| 項目 | 結果 |
+|---|---|
+| 修正コミット | `ce7fbae` |
+| Linux CI | [run 45149878365](https://github.com/higeotoko/sketchBRep/actions/runs/45149878365) で832件成功 |
+| Windows ローカル | コア811件成功・8件スキップ、図面の入出力GUI 20条件成功 |
+| Windows ZIP | `outputs/SketchBRep-windows-x64-ce7fbae-local.zip`（83,318,029 bytes） |
+| SHA256 | `b04aae860f46d665c69b45b06871d31600989b2646e926be4e23495be032cc82` |
+| ZIP の検証 | [GUI 18条件](validation/2026-11-23-portable-ce7fbae.json)・[マット基礎4条件](validation/2026-11-23-portable-ce7fbae-mat.json) 成功。展開したZIPから図面一式をDXF出力し、図面リストの用紙欄13行と表題欄が一致した。 |
+
+Jw_cad本体で開いたときの表示は未確認。
