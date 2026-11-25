@@ -29,6 +29,8 @@
 
 namespace sbr::doc {
 
+struct FireSpreadConditions;
+
 struct ObjectSummary {
   ObjectId id;
   ObjectId parent;
@@ -221,6 +223,8 @@ class Modeler {
   // residential / industrial / commercial ("" takes it away), with the document it was read from,
   // as attributes "use_zone" / "use_zone_source" on the site outline. One undo step.
   Status setSiteZone(const std::string& zone, const std::string& source);
+  Status setFireSpreadConditions(const FireSpreadConditions& conditions);
+  static std::optional<gp_Dir> exteriorWallNormal(const Document& document, const Object& wall);
   Status setSiteHeightConditions(const std::string& zone, const std::string& district, const std::string& source);
   // docs/212: a person's mark that a permit workflow stage (1-12) was looked at, with the
   // fingerprint of its rows now (doc::permitConfirmation tells when the model has changed them

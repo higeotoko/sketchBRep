@@ -98,6 +98,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   void showOpeningPerformanceDialog(const doc::ObjectId& host, int index);
   void showSiteRoadDialog();
   void showSiteHeightConditionsDialog();
+  void showFireSpreadReview();
+  void editFireSpreadConditions();
   void showRoadHeightPlaneDialog();
   enum class BoundaryHeightStudy { Neighbor, North, District };
   void showBoundaryHeightDialog(BoundaryHeightStudy study);
@@ -273,6 +275,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   std::map<doc::ObjectId, std::string> elementBases_;  // per object of elements_, when selected
   void buildUi();
   void buildMenus();
+  Q_SIGNAL void fireSpreadModelChanged();
   void onDocumentChanged();
   void refreshPanels();
   void updateTitle();

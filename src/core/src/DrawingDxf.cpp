@@ -31,6 +31,8 @@ int penColor(Pen pen) {
     case Pen::TitleBlock: return 7;
     case Pen::HeightLimit: return 5;
     case Pen::HeightReview: return 30;
+    case Pen::FireLimit3: return 30;
+    case Pen::FireLimit5: return 200;
   }
   return 7;
 }
@@ -38,7 +40,9 @@ int penColor(Pen pen) {
 const char* lineType(Pen pen) {
   switch (pen) {
     case Pen::Hidden:
-    case Pen::HeightReview: return "HIDDEN";
+    case Pen::HeightReview:
+    case Pen::FireLimit3: return "HIDDEN";
+    case Pen::FireLimit5: return "DASHDOT";
     case Pen::Grid:
     case Pen::Level: return "DASHDOT";
     default: return "CONTINUOUS";

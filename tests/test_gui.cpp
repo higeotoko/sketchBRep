@@ -253,6 +253,7 @@ class GuiPhase1 : public QObject {
   void permitWorkflowShowsGridAndPlanChecks();
   void heightDistrictShowsControllingSurfaces();
   void combinedHeightShowsLowestSurface();
+  void fireSpreadReviewShowsTheOpeningAndInvalidatesChangedBasis();
   void permitWorkflowAppliesDaylightFactors();
   void permitWorkflowMarksStagesAndAsksAgain();
   void projectOutlineDialogGivesTheItems();
@@ -1634,6 +1635,84 @@ void GuiPhase1::permitWorkflowMarksStagesAndAsksAgain() {
 
 // docs/194: stages 2 (通り芯) and 3 (平面) list what the model has and what is missing; a row's
 // button selects the objects it is about, and the rows follow the model.
+void GuiPhase1::fireSpreadReviewShowsTheOpeningAndInvalidatesChangedBasis() {
+  Fixture f;
+  QVERIFY(f.setUp());
+  auto& modeler = f.window.modeler();
+  api::CommandApi api(modeler);
+  using Json = nlohmann::json;
+  const auto call = [&](const char* command, Json args) {
+    return Json::parse(api.execute(Json{{"command", command}, {"args", std::move(args)}}.dump()));
+  };
+  QVERIFY(modeler.setLevels({{"", "1FL", 0}, {"", "2FL", 3000}}));
+  QVERIFY(modeler.setProjectOutline({{"fire_zone", "quasi_fire"}}));
+  const auto site = call("create_polygon", {{"points", {{0,0,0},{12000,0,0},{12000,10000,0},{0,10000,0}}}});
+  QVERIFY(site["ok"].get<bool>());
+  QVERIFY(call("set_site_boundary", {{"outline", site["result"]["id"]}, {"source", "test survey"}})["ok"].get<bool>());
+  const auto road = [&](double width) {
+    return call("set_site_road", {{"start", {0,0,0}}, {"end", {12000,0,0}},
+        {"width_m", width}, {"source", "test road"}})["ok"].get<bool>();
+  };
+  QVERIFY(road(3));
+  const auto wall = call("create_wall", {{"points", {{2000,1000},{8000,1000}}}, {"height", 2700},
+                                          {"type", "exterior_siding"}, {"outside", "right"}});
+  QVERIFY2(wall["ok"].get<bool>(), wall.dump().c_str());
+  const auto host = wall["result"]["ids"][0].get<std::string>();
+  QVERIFY(call("place_openings", {{"host", host}, {"face_normal", {0,-1,0}}, {"count", 1}, {"width", 1000},
+                                   {"height", 1200}, {"sill", 800}})["ok"].get<bool>());
+  QVERIFY(call("set_opening_fittings", {{"host", host}, {"fitting", {{"type", "window"}}}})["ok"].get<bool>());
+  f.vp->syncNow();
+  auto* action = f.window.findChild<QAction*>(QStringLiteral("fireSpreadReviewAction"));
+  QVERIFY(action);
+  action->trigger();
+  auto* dock = f.window.findChild<QDockWidget*>(QStringLiteral("fireSpreadDock"));
+  QVERIFY(dock);
+  auto* edit = dock->findChild<QPushButton*>(QStringLiteral("editFireSpreadConditions"));
+  auto* table = dock->findChild<QTableWidget*>(QStringLiteral("fireSpreadOpenings"));
+  auto* display = dock->findChild<QCheckBox*>(QStringLiteral("showFireSpreadOverlay"));
+  QVERIFY(edit && table && display);
+  bool saved = false;
+  const auto reviewDir = qEnvironmentVariable("SBR_FIRE_REVIEW_DIR");
+  QTimer::singleShot(0, [&] {
+    auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+    if (!dialog) return;
+    auto* source = dialog->findChild<QLineEdit*>(QStringLiteral("fireSpreadSource"));
+    auto* parallel = dialog->findChild<QCheckBox*>(QStringLiteral("fireSpreadParallelRoad"));
+    auto* buttons = dialog->findChild<QDialogButtonBox*>();
+    if (source && parallel && parallel->isEnabled() && buttons) {
+      source->setText(QStringLiteral("確定測量図・道路台帳"));
+      parallel->setChecked(true);
+      if (!reviewDir.isEmpty()) dialog->grab().save(QDir(reviewDir).filePath(QStringLiteral("fire-spread-conditions.png")));
+      buttons->button(QDialogButtonBox::Save)->click();
+      saved = dialog->result() == QDialog::Accepted;
+    }
+    if (!saved) dialog->reject();
+  });
+  edit->click();
+  QVERIFY(saved);
+  QTRY_COMPARE(table->rowCount(), 1);
+  QCOMPARE(table->item(0, 0)->text(), QStringLiteral("AW1"));
+  QCOMPARE(table->item(0, 3)->text(), QStringLiteral("防火設備を照合"));
+  QTRY_VERIFY(f.vp->fireSpreadShapeCount() >= 4);
+  table->setCurrentCell(0, 0);
+  QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{host});
+  auto* detail = dock->findChild<QLabel*>(QStringLiteral("fireSpreadDetail"));
+  QVERIFY(detail && detail->text().contains(QStringLiteral("道路中心線")));
+  if (!reviewDir.isEmpty()) {
+    QCoreApplication::processEvents();
+    QVERIFY(dock->grab().save(QDir(reviewDir).filePath(QStringLiteral("fire-spread-panel.png"))));
+    f.vp->fitAll();
+    QVERIFY(f.vp->dumpImage(QDir(reviewDir).filePath(QStringLiteral("fire-spread-model.png"))));
+  }
+  display->setChecked(false);
+  QCOMPARE(f.vp->fireSpreadShapeCount(), std::size_t(0));
+  display->setChecked(true);
+  QTRY_VERIFY(f.vp->fireSpreadShapeCount() >= 4);
+  QVERIFY(road(4));
+  QTRY_COMPARE(table->item(0, 3)->text(), QStringLiteral("要確認"));
+  QCOMPARE(f.vp->fireSpreadShapeCount(), std::size_t(0));
+}
+
 void GuiPhase1::combinedHeightShowsLowestSurface() {
   Fixture f;
   QVERIFY(f.setUp());

@@ -1,4 +1,5 @@
 #include "sbr/doc/Schedules.h"
+#include "sbr/doc/FireSpread.h"
 #include "sbr/ConstructionQuantity.h"
 #include "sbr/ConstructionWall.h"
 #include "sbr/ConstructionFoundation.h"
@@ -2754,6 +2755,52 @@ const std::vector<CommandDef>& commands() {
          must(m.setSiteZone(text(a, "zone"), textOr(a, "source", "")));
          return json::object();
        }},
+      {"set_fire_spread_conditions",
+       "Register survey-confirmed ordinary neighbor boundary edges ({start,end}, in world mm) for the exterior fire spread study. "
+       "Use parallel_road_confirmed only when the registered width is verified and the straight road center is parallel "
+       "to the site/road boundary at half that width. Source required. Empty boundaries with false clears the record.",
+       SCHEMA({"type": "object", "properties": {
+         "boundaries": {"type": "array", "items": {"type": "object", "properties": {
+           "start": {"type": "array"}, "end": {"type": "array"}}, "required": ["start", "end"]}},
+         "parallel_road_confirmed": {"type": "boolean"}, "source": {"type": "string"}}, "required": ["boundaries"]}),
+       [](doc::Modeler& m, const json& a) {
+         const auto& document = m.document();
+         const auto& site = document.settings().siteBoundary;
+         if (!site) throw ApiError("Register the site boundary first");
+         const auto geometry = must(document.siteBoundaryGeometry(site->outline));
+         doc::FireSpreadConditions conditions;
+         conditions.parallelRoad = a.value("parallel_road_confirmed", false);
+         conditions.source = textOr(a, "source", "");
+         for (const auto& edge : confirmedNeighborEdges(a)) {
+           const auto match = geometry.matchEdge(edge[0], edge[1]);
+           if (!match) throw ApiError("Each neighbor edge must match one entire site boundary edge");
+           const auto start = std::find_if(geometry.vertices.begin(), geometry.vertices.end(), [&](const gp_Pnt& p) {
+             return p.Distance((*match)[0]) <= tolerance::kLinear;
+           });
+           if (start == geometry.vertices.end()) throw ApiError("Could not locate the neighbor edge");
+           conditions.neighbors.push_back(static_cast<std::size_t>(start - geometry.vertices.begin()));
+         }
+         must(m.setFireSpreadConditions(conditions));
+         return json::object();
+       }},
+      {"fire_spread_review",
+       "Read the model's configured exterior fire spread study and opening review. Distances are horizontal millimetres "
+       "from an opening edge to a studied line. Equipment review is a candidate under the recorded conditions.",
+       SCHEMA({"type": "object", "properties": {}}),
+       [](doc::Modeler& m, const json&) {
+         const auto study = doc::fireSpreadStudy(m.document(), false);
+         auto bases = json::array(), openings = json::array();
+         for (const auto& b : study.bases)
+           bases.push_back({{"kind", b.road ? "road_center" : "neighbor"}, {"start", toJson(b.visibleLine[0])},
+                            {"end", toJson(b.visibleLine[1])}});
+         for (const auto& r : study.openings)
+           openings.push_back({{"host", r.row.host}, {"opening_id", r.row.openingId}, {"mark", r.row.mark},
+               {"level", r.row.level}, {"product", r.row.product}, {"status", doc::fireSpreadStatus(r.status)},
+               {"distance_mm", r.distance ? json(*r.distance) : json(nullptr)}, {"basis", r.basis}, {"note", r.note}});
+         return json{{"configured", study.configured}, {"basis_changed", study.changed}, {"issue", study.issue},
+                     {"source", study.conditions.source}, {"bases", bases}, {"openings", openings},
+                     {"law", doc::kFireSpreadLaw}, {"yokohama", doc::kFireSpreadYokohama}};
+       }},
       {"set_site_height_conditions",
        "Set the confirmed zoning district, height district and supporting source on the selected site boundary. "
        "Use site_height_conditions for the accepted codes. Empty choices clear their fields; both empty clear the record. "
@@ -4886,7 +4933,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
       name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" ||
       name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" || name == "permit_checks" || name == "check_drawing_set" || name == "project_outline" || name == "daylight_factor_estimates" ||
-      name == "site_height_conditions" || name == "yokohama_height_district_at" || name == "compare_yokohama_height_district" ||
+      name == "fire_spread_review" || name == "site_height_conditions" || name == "yokohama_height_district_at" || name == "compare_yokohama_height_district" ||
       name == "neighbor_height_at" || name == "north_height_at" || name == "compare_north_height" || name == "compare_neighbor_height" || name == "road_height_datum" || name == "road_height_table_values" || name == "measure_road_building_setback" || name == "compare_road_height_plane" || name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
     return E::Read;
   }

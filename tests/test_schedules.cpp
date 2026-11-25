@@ -19,6 +19,7 @@
 #include "sbr/draw/SheetCheck.h"
 #include <iostream>
 #include "sbr/doc/Schedules.h"
+#include "sbr/doc/FireSpread.h"
 #include "sbr/OpeningSymbols.h"
 #include "sbr/draw/Drawing.h"
 #include "sbr/geom/Measure.h"
@@ -3235,6 +3236,105 @@ TEST_F(Schedules, NeighborHeightPreviewPreservesTheConcaveFootprint) {
   EXPECT_NEAR(planArea, 104000000, 0.01);
   EXPECT_NEAR(sbr::geom::exactBounds(result->surface).CornerMin().Z(), 20000, 0.01);
   EXPECT_EQ(modeler.document().sequence(), sequence);
+}
+
+TEST_F(Schedules, FireSpreadUsesTheRoadCenterAndExteriorFaceWithDifferentDistancesByFloor) {
+  using sbr::doc::FireSpreadStudy;
+  const std::string site = ok("create_polygon", {{"points", {{-3000, -500, 0}, {11000, -500, 0},
+                                                            {11000, 12000, 0}, {-3000, 12000, 0}}}})["id"];
+  ok("set_site_boundary", {{"outline", site}, {"source", "測量図"}});
+  const auto setRoad = [&](double width) {
+    ok("set_site_road", {{"start", {-3000, -500, 0}}, {"end", {11000, -500, 0}},
+                         {"source", "道路台帳"}, {"width_m", width}});
+  };
+  setRoad(4);
+  ASSERT_TRUE(modeler.setProjectOutline({{"fire_zone", "quasi_fire"}}));
+  ASSERT_FALSE(sbr::doc::fireSpreadStudy(modeler.document()).configured);
+  const auto makeWall = [&](double z) {
+    const std::string wall = ok("create_wall", {{"points", {{1000, 1800}, {4100, 1800}}}, {"base", z},
+        {"height", 2800}, {"type", "exterior_siding"}, {"outside", "right"}})["ids"][0];
+    // Cut from the inside. The review must measure from the outer face.
+    ok("place_openings", {{"host", wall}, {"face_normal", {0, 1, 0}}, {"count", 1},
+                           {"width", 1200}, {"height", 1200}, {"sill", 800}});
+    ok("set_opening_fittings", {{"host", wall}, {"fitting", {{"type", "window"}}}});
+    return wall;
+  };
+  const auto lower = makeWall(0), upper = makeWall(3000);
+  const auto& document = modeler.document();
+  const auto geometry = document.siteBoundaryGeometry(site);
+  ASSERT_TRUE(geometry);
+  std::size_t north = 0, southEdge = 0;
+  for (std::size_t i = 0; i < geometry->vertices.size(); ++i) {
+    const double a = geometry->vertices[i].Y(), b = geometry->vertices[(i + 1) % geometry->vertices.size()].Y();
+    if (a == 12000 && b == 12000) north = i;
+    if (a == -500 && b == -500) southEdge = i;
+  }
+  EXPECT_FALSE(modeler.setFireSpreadConditions({{southEdge}, true, "調査票"}));
+  const auto& a = geometry->vertices[north];
+  const auto& b = geometry->vertices[(north + 1) % geometry->vertices.size()];
+  const auto set = ok("set_fire_spread_conditions", {{"boundaries", {{{"start", {b.X(), b.Y(), b.Z()}},
+                                                                       {"end", {a.X(), a.Y(), a.Z()}}}}},
+       {"parallel_road_confirmed", true}, {"source", "調査票"}});
+  EXPECT_TRUE(set.is_object());
+  EXPECT_EQ(ok("fire_spread_review")["bases"].size(), 2u);
+  const auto study = sbr::doc::fireSpreadStudy(document);
+  EXPECT_TRUE(study.configured);
+  EXPECT_FALSE(study.changed);
+  EXPECT_TRUE(study.issue.empty()) << study.issue;
+  ASSERT_EQ(study.bases.size(), 2u);
+  EXPECT_TRUE(study.bases.back().road);
+  EXPECT_NEAR(study.bases.back().line[0].Y(), -2500, 1e-7);
+  EXPECT_FALSE(study.band3.IsNull());
+  EXPECT_FALSE(study.band5.IsNull());
+  EXPECT_FALSE(study.limits3.IsNull());
+  EXPECT_FALSE(study.limits5.IsNull());
+  const auto at = [&](const std::string& host) {
+    return std::find_if(study.openings.begin(), study.openings.end(), [&](const auto& opening) {
+      return opening.row.host == host;
+    });
+  };
+  ASSERT_NE(at(lower), study.openings.end());
+  ASSERT_NE(at(upper), study.openings.end());
+  EXPECT_EQ(at(lower)->status, FireSpreadStudy::Status::BeyondStudiedLines) << at(lower)->note;
+  EXPECT_EQ(at(upper)->status, FireSpreadStudy::Status::EquipmentReview) << at(upper)->note;
+  ASSERT_TRUE(at(upper)->distance.has_value());
+  const auto& row = at(upper)->row;
+  EXPECT_NEAR(*at(upper)->distance, row.center.Y() - row.depth + 2500, 1e-6);
+  EXPECT_EQ(at(upper)->basis, "道路中心線");
+  ASSERT_NE(at(south), study.openings.end());
+  EXPECT_EQ(at(south)->status, FireSpreadStudy::Status::Unchecked);
+  const auto hasPen = [](const sbr::draw::View& view, sbr::draw::Pen pen) {
+    return std::any_of(view.items.begin(), view.items.end(), [&](const auto& item) {
+      return item.kind != sbr::draw::Item::Kind::Text && item.pen == pen;
+    });
+  };
+  const auto siteView = sbr::draw::makeView(document, sbr::draw::sitePlanView());
+  const auto upstairs = sbr::draw::makeView(document, sbr::draw::planView(4100));
+  ASSERT_TRUE(siteView);
+  ASSERT_TRUE(upstairs);
+  EXPECT_TRUE(hasPen(*siteView, sbr::draw::Pen::FireLimit3));
+  EXPECT_TRUE(hasPen(*siteView, sbr::draw::Pen::FireLimit5));
+  EXPECT_FALSE(hasPen(*upstairs, sbr::draw::Pen::FireLimit3));
+  EXPECT_TRUE(hasPen(*upstairs, sbr::draw::Pen::FireLimit5));
+  setRoad(5);
+  const auto stale = sbr::doc::fireSpreadStudy(document);
+  EXPECT_TRUE(stale.changed);
+  EXPECT_TRUE(stale.limits3.IsNull());
+  EXPECT_TRUE(std::none_of(stale.openings.begin(), stale.openings.end(), [](const auto& r) { return r.distance.has_value(); }));
+  modeler.history().undo();
+  EXPECT_FALSE(sbr::doc::fireSpreadStudy(document, false, false).changed);
+  const double widthAtLimit = 4.0 + (5000 - *at(upper)->distance) * 2 / 1000;
+  for (const auto delta : {0.0, 0.002}) {
+    setRoad(widthAtLimit + delta);
+    ASSERT_TRUE(modeler.setFireSpreadConditions({{north}, true, "調査票"}));
+    const auto boundaryStudy = sbr::doc::fireSpreadStudy(document, false);
+    const auto entry = std::find_if(boundaryStudy.openings.begin(), boundaryStudy.openings.end(),
+                                    [&](const auto& item) { return item.row.host == upper; });
+    ASSERT_NE(entry, boundaryStudy.openings.end());
+    ASSERT_TRUE(entry->distance.has_value());
+    EXPECT_NEAR(*entry->distance, 5000 + delta * 500, 1e-6);
+    EXPECT_EQ(entry->status, delta == 0 ? FireSpreadStudy::Status::EquipmentReview : FireSpreadStudy::Status::BeyondStudiedLines);
+  }
 }
 
 TEST_F(Schedules, RoadHeightPlaneCalculatesTheRoadLevelAndSiteEdgeHeight) {

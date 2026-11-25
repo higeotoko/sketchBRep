@@ -7806,6 +7806,15 @@ std::vector<Tee> teeJoins(const std::vector<WallBand>& walls, const std::vector<
 }
 }  // namespace
 
+std::optional<gp_Dir> Modeler::exteriorWallNormal(const Document& document, const Object& wall) {
+  const auto type = construction::wallType(attributeOf(wall, "wall_type"));
+  const auto side = attributeOf(wall, "wall_outside");
+  if (!type || !type->exterior || (side != "left" && side != "right")) return std::nullopt;
+  const auto band = wallBand(document, wall);
+  if (!band) return std::nullopt;
+  return side == "left" ? band->left : band->left.Reversed();
+}
+
 std::optional<Modeler::LayerUsage> Modeler::layerUsage(const Document& document, const Object& element) {
   const std::string kind = attributeOf(element, "kind");
   LayerUsage usage;

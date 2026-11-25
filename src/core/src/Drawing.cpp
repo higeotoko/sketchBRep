@@ -12,6 +12,7 @@
 
 #include "sbr/OpeningSymbols.h"
 #include "sbr/doc/Schedules.h"
+#include "sbr/doc/FireSpread.h"
 #include "sbr/doc/Modeler.h"
 #include "sbr/geom/Measure.h"
 #include "sbr/geom/Stair.h"
@@ -67,6 +68,8 @@ const char* penLayerName(Pen pen) {
     case Pen::TitleBlock: return "TITLE";
     case Pen::HeightLimit: return "HEIGHT_LIMIT";
     case Pen::HeightReview: return "HEIGHT_REVIEW";
+    case Pen::FireLimit3: return "FIRE_LIMIT_3M";
+    case Pen::FireLimit5: return "FIRE_LIMIT_5M";
   }
   return "0";
 }
@@ -86,6 +89,8 @@ double penWidth(Pen pen) {
     case Pen::TitleBlock: return 0.25;
     case Pen::HeightLimit: return 0.35;
     case Pen::HeightReview: return 0.25;
+    case Pen::FireLimit3:
+    case Pen::FireLimit5: return 0.25;
   }
   return 0.18;
 }
@@ -94,6 +99,8 @@ std::vector<double> penDashes(Pen pen) {
   switch (pen) {
     case Pen::Hidden: return {1.5, 0.75};
     case Pen::HeightReview: return {2.0, 1.0};
+    case Pen::FireLimit3: return {5.0, 1.2};
+    case Pen::FireLimit5: return {5.0, 1.2, 0.5, 1.2};
     case Pen::Grid:
     case Pen::Level: return {8.0, 1.0, 0.5, 1.0};  // dash-dot
     default: return {};
@@ -1151,6 +1158,75 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
         view.items.push_back(mark);
       }
     }
+  }
+  if (sitePlan || (spec.kind == ViewKind::Plan && spec.framingPreset.empty() &&
+                   !spec.memberLabels && spec.bracingFloor.empty() && !spec.insulation && spec.within.empty())) {
+    const auto fire = doc::fireSpreadStudy(document, true, false);
+    if (fire.configured && !fire.issue.empty()) view.calculationNotes.push_back(fire.issue);
+    if (!fire.conditions.source.empty()) {
+      view.calculationNotes.push_back("延焼ラインの基準線資料　" + fire.conditions.source);
+      view.calculationNotes.push_back("延焼ラインは登録した基準線からの範囲。例外と防火設備は別途照合。");
+    }
+    int threshold = 0;
+    if (!sitePlan) {
+      for (const auto& floor : fire.floors) {
+        if (floor.z >= spec.frame.Location().Z()) break;
+        threshold = floor.metres;
+      }
+    }
+    const auto addContour = [&](const TopoDS_Shape& shape, Pen pen, const char* label) {
+      if (shape.IsNull()) return;
+      const auto start = view.items.size();
+      addLocalEdges(shape.Moved(TopLoc_Location(proj.toLocal)), pen, deflection, view.items);
+      if (start == view.items.size() || !spec.annotations) return;
+      const Item* longest = nullptr;
+      double length = 0;
+      for (std::size_t i = start; i < view.items.size(); ++i) {
+        const auto& item = view.items[i];
+        if (item.kind != Item::Kind::Line || item.points.size() != 2) continue;
+        const double current = item.points[0].Distance(item.points[1]);
+        if (current > length) { length = current; longest = &item; }
+      }
+      gp_Pnt2d at;
+      if (longest) {
+        const auto& a = longest->points[0];
+        const auto& b = longest->points[1];
+        at.SetCoord((a.X() + b.X()) / 2, (a.Y() + b.Y()) / 2);
+      } else {
+        const auto& item = view.items[start];
+        if (!item.points.empty()) at = item.points.front();
+        else if (item.kind == Item::Kind::Arc) {
+          const double angle = item.start + item.sweep / 2;
+          at = item.centre.Translated(gp_Vec2d(std::cos(angle), std::sin(angle)) * item.radius);
+        } else return;
+      }
+      Item text;
+      text.kind = Item::Kind::Text;
+      text.pen = pen;
+      text.points = {at};
+      text.text = label;
+      text.height = 2.5;
+      text.hAlign = 1;
+      view.items.push_back(std::move(text));
+    };
+    if (sitePlan) {
+      for (const auto& basis : fire.bases) {
+        if (!basis.road) continue;
+        const auto a = proj.uv(basis.visibleLine[0]), b = proj.uv(basis.visibleLine[1]);
+        view.items.push_back(line(Pen::Level, a, b));
+        if (!spec.annotations) continue;
+        Item text;
+        text.kind = Item::Kind::Text;
+        text.pen = Pen::Level;
+        text.points = {gp_Pnt2d((a.X() + b.X()) / 2, (a.Y() + b.Y()) / 2)};
+        text.text = "道路中心線（延焼の基準）";
+        text.height = 2.5;
+        text.hAlign = 1;
+        view.items.push_back(std::move(text));
+      }
+    }
+    if (sitePlan || threshold == 3) addContour(fire.limits3, Pen::FireLimit3, "延焼ライン 1階 3 m");
+    if (sitePlan || threshold == 5) addContour(fire.limits5, Pen::FireLimit5, "延焼ライン 2階以上 5 m");
   }
   for (Item& c : cut) view.items.push_back(std::move(c));
 

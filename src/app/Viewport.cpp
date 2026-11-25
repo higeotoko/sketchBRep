@@ -2535,6 +2535,25 @@ void Viewport::setRoleShapes(const std::vector<std::pair<TopoDS_Shape, Quantity_
   redraw();
 }
 
+void Viewport::setFireSpreadShapes(const std::vector<std::pair<TopoDS_Shape, Quantity_Color>>& shapes) {
+  if (view_.IsNull()) return;
+  for (const auto& existing : fireSpread_) context_->Remove(existing, false);
+  fireSpread_.clear();
+  for (const auto& [shape, color] : shapes) {
+    if (shape.IsNull()) continue;
+    Handle(AIS_Shape) item = new AIS_Shape(shape);
+    item->SetColor(color);
+    item->SetWidth(3.0);
+    const bool band = TopExp_Explorer(shape, TopAbs_FACE).More();
+    if (band) item->SetTransparency(0.82);
+    else item->SetZLayer(Graphic3d_ZLayerId_Topmost);
+    context_->Display(item, band ? AIS_Shaded : AIS_WireFrame, -1, false);
+    context_->Deactivate(item);
+    fireSpread_.push_back(item);
+  }
+  redraw();
+}
+
 void Viewport::setDiagnosticShapes(const std::vector<std::pair<TopoDS_Shape, Quantity_Color>>& shapes) {
   if (view_.IsNull()) return;
   for (const Handle(AIS_Shape)& d : diagnostics_) context_->Remove(d, Standard_False);

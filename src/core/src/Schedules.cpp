@@ -1,4 +1,5 @@
 #include "sbr/doc/Schedules.h"
+#include "sbr/doc/FireSpread.h"
 
 #include <algorithm>
 #include <cmath>
@@ -3544,6 +3545,17 @@ std::vector<PermitCheck> permitElevationChecks(const Document& document) {
                    {}});
   else
     out.push_back({"立面の向き", "要確認", "真北が未入力です。立面図の名前（南・東・北・西）はモデルの軸に沿った向きで出ます。", {}, true});
+  const auto fire = fireSpreadStudy(document, false);
+  if (fire.configured) {
+    std::string details = fire.changed ? fire.issue : "基準線 " + std::to_string(fire.bases.size()) + " 本　" + fire.conditions.source;
+    std::vector<ObjectId> targets;
+    for (const auto& opening : fire.openings) {
+      details += "\n" + opening.row.mark + "　" + opening.row.level + "　" + fireSpreadStatus(opening.status);
+      if (opening.distance) details += "　" + number(*opening.distance / 1000, 3) + " m";
+      targets.push_back(opening.row.host);
+    }
+    out.push_back({"延焼ライン・外壁開口部", fire.changed ? "条件変更" : "照合資料あり", std::move(details), std::move(targets), true});
+  }
   out.push_back({"まだ確かめていない事", "未評価",
                  "道路斜線・隣地斜線・北側斜線と高度地区の制限、法の高さ・軒の高さ、平面・立面・断面の寸法の突合せ。申請先と申請時点の法令で確かめます。",
                  {}});
@@ -5296,6 +5308,11 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
     } else {
       planned.push_back({table.title, std::nullopt, table, {}});
     }
+  }
+  const auto fire = fireSpreadStudy(document, false, true);
+  if (fire.configured) {
+    auto table = fireSpreadTable(fire);
+    planned.push_back({table.title, std::nullopt, std::move(table), {}});
   }
   // docs/208: a plan of the bracing walls for each storey of the wall calculation (its n-th storey
   // on the model's n-th floor level, or the ground when there are fewer levels).

@@ -10,6 +10,7 @@
 #include "sbr/OpeningSymbols.h"
 #include <QTabWidget>
 #include "sbr/doc/Schedules.h"
+#include "sbr/doc/FireSpread.h"
 #include "sbr/KernelError.h"
 #include "DrawingExport.h"
 #include "UiDriver.h"
@@ -1267,6 +1268,8 @@ void MainWindow::buildMenus() {
     if (report(modeler_.setSiteZone(zone.toStdString(), source.toStdString())))
       setStatus(zone.isEmpty() ? tr("用途地域の区分を未入力にしました") : tr("用途地域の区分を決めました（Ctrl+Z で戻せます）"));
   })->setObjectName(QStringLiteral("siteZoneAction"));
+  site->addAction(tr("延焼ライン・防火設備の確認..."), this, &MainWindow::showFireSpreadReview)
+      ->setObjectName(QStringLiteral("fireSpreadReviewAction"));
   site->addAction(tr("高さ制限の条件..."), this, &MainWindow::showSiteHeightConditionsDialog)
       ->setObjectName(QStringLiteral("siteHeightConditionsAction"));
   // docs/214: the project's items that are not in the model, for the project outline.
@@ -3750,6 +3753,7 @@ void MainWindow::onDocumentChanged() {
     }
     viewport_->setSelection(wholeSelection());
     refreshPanels();
+    emit fireSpreadModelChanged();
     updateTitle();
   });
 }
@@ -7778,6 +7782,7 @@ void MainWindow::showPermitWorkflow() {
       case Action::NorthHeight: showBoundaryHeightDialog(BoundaryHeightStudy::North); break;
       case Action::HeightDistrict: showBoundaryHeightDialog(BoundaryHeightStudy::District); break;
       case Action::CombinedHeight: showCombinedHeightDialog(); break;
+      case Action::FireSpread: showFireSpreadReview(); break;
       case Action::Equipment: trigger("equipmentAction"); break;      // docs/226
       case Action::SavedRoad:
         setSelection({});
@@ -8488,6 +8493,199 @@ std::vector<std::array<gp_Pnt, 2>> checkedHeightBoundaries(const doc::SiteBounda
 }
 
 }  // namespace
+
+void MainWindow::editFireSpreadConditions() {
+  const auto& document = modeler_.document();
+  const auto& site = document.settings().siteBoundary;
+  if (!site) {
+    reportError(tr("先に敷地境界を登録してください。"));
+    return;
+  }
+  const auto geometry = document.siteBoundaryGeometry(site->outline);
+  if (!geometry) {
+    reportError(QString::fromStdString(geometry.error()));
+    return;
+  }
+  const auto roadEdge = document.siteRoadEdge(*geometry);
+  const auto saved = doc::fireSpreadStudy(document, false, false);
+  const auto sequence = document.sequence();
+  QDialog dialog(this);
+  dialog.setObjectName(QStringLiteral("fireSpreadConditionsDialog"));
+  dialog.setWindowTitle(tr("延焼の基準線"));
+  auto* layout = new QVBoxLayout(&dialog);
+  auto* prompt = new QLabel(tr("測量図等に基づき、通常の隣地境界線を図または一覧で選びます。"
+                               "水路等の取扱い・敷地内の別棟・角度による除外がある場合は個別に確認します。"));
+  prompt->setWordWrap(true);
+  layout->addWidget(prompt);
+  const auto picker = addHeightBoundaryPicker(layout, *geometry, roadEdge, false, 0);
+  picker.list->setObjectName(QStringLiteral("fireSpreadNeighbors"));
+  for (auto i : saved.conditions.neighbors) picker.list->item(static_cast<int>(i))->setCheckState(Qt::Checked);
+  auto* parallelRoad = new QCheckBox(tr("道路の中心線が道路境界と平行で、登録幅員の中央にあることを確認した"));
+  parallelRoad->setObjectName(QStringLiteral("fireSpreadParallelRoad"));
+  parallelRoad->setEnabled(roadEdge && site->road && site->road->widthMm > 0);
+  parallelRoad->setChecked(saved.conditions.parallelRoad && parallelRoad->isEnabled());
+  layout->addWidget(parallelRoad);
+  auto* form = new QFormLayout;
+  auto* source = new QLineEdit(QString::fromStdString(saved.conditions.source));
+  source->setObjectName(QStringLiteral("fireSpreadSource"));
+  source->setPlaceholderText(tr("例　確定測量図 2026-11-20、道路台帳平面図"));
+  form->addRow(tr("基準線の確認資料"), source);
+  layout->addLayout(form);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
+  auto* clear = buttons->addButton(tr("登録を解除"), QDialogButtonBox::ResetRole);
+  clear->setEnabled(saved.configured);
+  layout->addWidget(buttons);
+  auto* error = new QLabel;
+  error->setWordWrap(true);
+  layout->addWidget(error);
+  const auto save = [&](bool reset) {
+    if (sequence != document.sequence()) {
+      error->setText(tr("モデルが変わりました。この画面を開き直してください。"));
+      return;
+    }
+    doc::FireSpreadConditions conditions;
+    if (!reset) {
+      for (int i = 0; i < picker.list->count(); ++i)
+        if (picker.list->item(i)->checkState() == Qt::Checked) conditions.neighbors.push_back(static_cast<std::size_t>(i));
+      conditions.parallelRoad = parallelRoad->isChecked();
+      conditions.source = source->text().trimmed().toStdString();
+      if (conditions.neighbors.empty() && !conditions.parallelRoad) {
+        error->setText(tr("延焼距離を測る基準線を選んでください。"));
+        return;
+      }
+    }
+    const auto result = modeler_.setFireSpreadConditions(conditions);
+    if (!result) error->setText(QString::fromStdString(result.message()));
+    else dialog.accept();
+  };
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, [save] { save(false); });
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  connect(clear, &QPushButton::clicked, &dialog, [save] { save(true); });
+  dialog.exec();
+}
+
+void MainWindow::showFireSpreadReview() {
+  const auto name = QStringLiteral("fireSpreadDock");
+  if (auto* existing = findChild<QDockWidget*>(name)) {
+    existing->show();
+    existing->raise();
+    return;
+  }
+  auto* dock = new PanelDock(tr("延焼ライン・防火設備"), this);
+  dock->setObjectName(name);
+  auto* panel = new QWidget(dock);
+  auto* layout = new QVBoxLayout(panel);
+  auto* controls = new QHBoxLayout;
+  auto* edit = new QPushButton(tr("基準線を設定…"));
+  edit->setObjectName(QStringLiteral("editFireSpreadConditions"));
+  auto* display = new QCheckBox(tr("3Dに表示"));
+  display->setObjectName(QStringLiteral("showFireSpreadOverlay"));
+  display->setChecked(true);
+  controls->addWidget(edit);
+  controls->addWidget(display);
+  controls->addStretch(1);
+  layout->addLayout(controls);
+  auto* legend = new QLabel;
+  legend->setWordWrap(true);
+  layout->addWidget(legend);
+  auto* table = new QTableWidget(0, 4, panel);
+  table->setObjectName(QStringLiteral("fireSpreadOpenings"));
+  table->setHorizontalHeaderLabels({tr("符号"), tr("階"), tr("距離"), tr("状態")});
+  table->horizontalHeader()->setStretchLastSection(true);
+  table->verticalHeader()->hide();
+  table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+  table->setSelectionBehavior(QAbstractItemView::SelectRows);
+  table->setSelectionMode(QAbstractItemView::SingleSelection);
+  table->setAlternatingRowColors(true);
+  layout->addWidget(table, 1);
+  auto* detail = new QLabel;
+  detail->setObjectName(QStringLiteral("fireSpreadDetail"));
+  detail->setWordWrap(true);
+  detail->setTextFormat(Qt::PlainText);
+  detail->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+  detail->setMinimumHeight(detail->fontMetrics().lineSpacing() * 3);
+  layout->addWidget(detail);
+  auto* sources = new QLabel(tr("<a href=\"%1\">建築基準法 第2条・第61条</a>　<a href=\"%2\">横浜市の取扱い</a>")
+      .arg(QString::fromLatin1(doc::kFireSpreadLaw), QString::fromLatin1(doc::kFireSpreadYokohama)));
+  sources->setTextFormat(Qt::RichText);
+  sources->setOpenExternalLinks(true);
+  layout->addWidget(sources);
+  auto study = std::make_shared<doc::FireSpreadStudy>();
+  const Quantity_Color orange(.87, .38, .11, Quantity_TOC_RGB);
+  const Quantity_Color violet(.67, .40, .87, Quantity_TOC_RGB);
+  const Quantity_Color openingColor(.91, .22, .12, Quantity_TOC_RGB);
+  const auto overlay = [this, dock, display, table, detail, study, orange, violet, openingColor] {
+    std::vector<std::pair<TopoDS_Shape, Quantity_Color>> shapes;
+    if (dock->isVisible() && display->isChecked()) {
+      for (const auto& floor : study->floors) {
+        const auto& line = floor.metres == 3 ? study->limits3 : study->limits5;
+        const auto& band = floor.metres == 3 ? study->band3 : study->band5;
+        const auto& color = floor.metres == 3 ? orange : violet;
+        gp_Trsf shift;
+        shift.SetTranslation(gp_Vec(0, 0, floor.z + 10));
+        if (!band.IsNull()) shapes.emplace_back(band.Moved(TopLoc_Location(shift)), color);
+        shift.SetTranslation(gp_Vec(0, 0, floor.z + 12));
+        if (!line.IsNull()) shapes.emplace_back(line.Moved(TopLoc_Location(shift)), color);
+      }
+      BRep_Builder builder;
+      TopoDS_Compound highlighted;
+      builder.MakeCompound(highlighted);
+      for (const auto& entry : study->openings)
+        if (entry.status == doc::FireSpreadStudy::Status::EquipmentReview && !entry.marker.IsNull())
+          builder.Add(highlighted, entry.marker);
+      if (highlighted.NbChildren() > 0) shapes.emplace_back(highlighted, openingColor);
+    }
+    const int row = table->currentRow();
+    if (row >= 0 && row < static_cast<int>(study->openings.size())) {
+      const auto& entry = study->openings[static_cast<std::size_t>(row)];
+      detail->setText(tr("%1　%2\n%3").arg(QString::fromStdString(entry.row.hostName),
+           QString::fromStdString(entry.basis), QString::fromStdString(entry.note)));
+      if (dock->isVisible() && display->isChecked() && !entry.marker.IsNull())
+        shapes.emplace_back(entry.marker, Quantity_Color(.98, .74, .13, Quantity_TOC_RGB));
+    } else {
+      detail->setText(tr("行を選ぶと、モデル上の窓・扉の位置と確認事項が分かります。"));
+    }
+    viewport_->setFireSpreadShapes(shapes);
+  };
+  const auto refresh = [this, dock, legend, table, display, study, overlay] {
+    if (!dock->isVisible()) { viewport_->setFireSpreadShapes({}); return; }
+    *study = doc::fireSpreadStudy(modeler_.document(), display->isChecked());
+    const auto columns = doc::fireSpreadTable(*study);
+    const QString basics = tr("橙  1階 3 m　　紫  2階以上 5 m　　赤  防火設備を照合");
+    const QString state = !study->configured ? tr("敷地のどの線から距離を測るかを設定します。")
+                          : !study->issue.empty() ? QString::fromStdString(study->issue)
+                          : tr("登録した %1 本の基準線を使用　%2").arg(study->bases.size()).arg(QString::fromStdString(study->conditions.source));
+    legend->setTextFormat(Qt::PlainText);
+    legend->setText(basics + QLatin1Char('\n') + state);
+    const QSignalBlocker block(table);
+    table->setRowCount(0);
+    table->setRowCount(static_cast<int>(columns.rows.size()));
+    for (std::size_t i = 0; i < columns.rows.size(); ++i) {
+      const auto& cells = columns.rows[i];
+      const int row = static_cast<int>(i);
+      table->setItem(row, 0, new QTableWidgetItem(QString::fromStdString(cells[0])));
+      table->setItem(row, 1, new QTableWidgetItem(QString::fromStdString(cells[1])));
+      table->setItem(row, 2, new QTableWidgetItem(cells[4].empty() ? QStringLiteral("—") : QString::fromStdString(cells[4]) + tr(" m")));
+      table->setItem(row, 3, new QTableWidgetItem(QString::fromStdString(cells[6])));
+    }
+    table->resizeColumnsToContents();
+    overlay();
+  };
+  connect(edit, &QPushButton::clicked, this, &MainWindow::editFireSpreadConditions);
+  connect(display, &QCheckBox::toggled, panel, refresh);
+  connect(dock, &QDockWidget::visibilityChanged, panel, refresh);
+  connect(this, &MainWindow::fireSpreadModelChanged, panel, refresh);
+  connect(table, &QTableWidget::currentCellChanged, panel, [this, table, study, overlay] {
+    const int row = table->currentRow();
+    if (row >= 0 && row < static_cast<int>(study->openings.size())) setSelection({study->openings[static_cast<std::size_t>(row)].row.host});
+    overlay();
+  });
+  dock->setWidget(panel);
+  addDockWidget(Qt::RightDockWidgetArea, dock);
+  dock->show();
+  dock->raise();
+  refresh();
+}
 
 void MainWindow::showBoundaryHeightDialog(BoundaryHeightStudy study) {
   const auto& document = modeler_.document();

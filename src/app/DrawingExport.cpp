@@ -61,6 +61,8 @@ QColor penColor(draw::Pen pen) {
     case draw::Pen::Level: return QColor(30, 60, 160);
     case draw::Pen::HeightLimit: return QColor(26, 84, 170);
     case draw::Pen::HeightReview: return QColor(171, 85, 22);
+    case draw::Pen::FireLimit3: return QColor(161, 63, 10);
+    case draw::Pen::FireLimit5: return QColor(114, 58, 145);
     default: return Qt::black;
   }
 }
