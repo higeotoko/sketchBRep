@@ -1657,7 +1657,8 @@ void Viewport::syncSome(std::optional<double> budgetMs) {
   // they inherit), or everything.
   std::optional<std::vector<doc::ObjectId>> changed;
   if (!fullSync_) changed = document.changedSince(syncedSequence_);
-  if (!roadHeightPlane_.IsNull() && roadHeightPlaneSequence_ != document.sequence()) setRoadHeightPlane({});
+  if ((!roadHeightPlane_.IsNull() || heightDistrictVisible_) && roadHeightPlaneSequence_ != document.sequence())
+    setRoadHeightPlane({});
   syncedSequence_ = document.sequence();
   std::vector<doc::ObjectId> queue = std::move(pendingSync_);
   pendingSync_.clear();
@@ -2414,37 +2415,55 @@ void Viewport::setPreview(const TopoDS_Shape& shape, bool solid, bool unclipped)
 
 void Viewport::clearPreview() { setPreview(TopoDS_Shape()); }
 
-void Viewport::setRoadHeightPlane(const TopoDS_Shape& shape) { setHeightStudy(shape, {}); }
+void Viewport::setRoadHeightPlane(const TopoDS_Shape& shape) { setHeightStudy(shape, {}, HeightStudyKind::Road); }
 
 void Viewport::setBoundaryHeightSurface(const TopoDS_Shape& shape, const TopoDS_Shape& boundaryLines, bool north) {
-  setHeightStudy(shape, boundaryLines, north);
+  setHeightStudy(shape, boundaryLines, north ? HeightStudyKind::North : HeightStudyKind::Neighbor);
 }
 
-void Viewport::setHeightStudy(const TopoDS_Shape& shape, const TopoDS_Shape& boundaryLines, bool north) {
+void Viewport::setHeightDistrictSurface(const TopoDS_Shape& slant, const TopoDS_Shape& cap,
+                                        const TopoDS_Shape& unconfirmed) {
+  setHeightStudy(slant, unconfirmed, HeightStudyKind::District, cap);
+}
+
+void Viewport::setHeightStudy(const TopoDS_Shape& shape, const TopoDS_Shape& lines, HeightStudyKind kind,
+                              const TopoDS_Shape& cap) {
   if (view_.IsNull()) return;
-  if (!roadHeightPlane_.IsNull()) context_->Remove(roadHeightPlane_, Standard_False);
-  if (!neighborHeightEdges_.IsNull()) context_->Remove(neighborHeightEdges_, Standard_False);
-  roadHeightPlane_.Nullify();
-  neighborHeightEdges_.Nullify();
-  const bool hasBoundaryLines = !boundaryLines.IsNull();
-  if (!shape.IsNull()) {
-    roadHeightPlane_ = new AIS_Shape(display::makeDisplayCopy(shape));
-    roadHeightPlane_->SetColor(north ? rgb(0.02, 0.60, 0.49) : hasBoundaryLines ? rgb(0.51, 0.23, 0.78) : rgb(0.10, 0.53, 0.86));
-    roadHeightPlane_->SetTransparency(0.65);
-    roadHeightPlane_->Attributes()->SetFaceBoundaryDraw(north || !hasBoundaryLines);
-    context_->Display(roadHeightPlane_, AIS_Shaded, -1, Standard_False);
-    context_->Deactivate(roadHeightPlane_);
-    roadHeightPlaneSequence_ = modeler_.document().sequence();
-    if (hasBoundaryLines) {
-      neighborHeightEdges_ = new AIS_Shape(display::makeDisplayCopy(boundaryLines));
-      neighborHeightEdges_->SetColor(north ? rgb(0.01, 0.43, 0.35) : rgb(0.47, 0.18, 0.73));
-      neighborHeightEdges_->SetWidth(4.0);
-      neighborHeightEdges_->SetZLayer(Graphic3d_ZLayerId_Topmost);
-      context_->Display(neighborHeightEdges_, AIS_WireFrame, -1, Standard_False);
-      context_->Deactivate(neighborHeightEdges_);
-    }
+  for (auto* overlay : {&roadHeightPlane_, &neighborHeightEdges_, &heightDistrictCap_}) {
+    if (!overlay->IsNull()) context_->Remove(*overlay, Standard_False);
+    overlay->Nullify();
   }
-  emit roadHeightPlaneChanged(!roadHeightPlane_.IsNull());
+  const bool district = kind == HeightStudyKind::District;
+  const bool north = kind == HeightStudyKind::North;
+  const auto addFace = [&](const TopoDS_Shape& face, const Quantity_Color& color, bool outline, auto& overlay) {
+    if (face.IsNull()) return;
+    overlay = new AIS_Shape(display::makeDisplayCopy(face));
+    overlay->SetColor(color);
+    overlay->SetTransparency(district ? 0.56 : 0.65);
+    overlay->Attributes()->SetFaceBoundaryDraw(outline);
+    if (district)
+      overlay->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(color, Aspect_TOL_SOLID, 1.6));
+    context_->Display(overlay, AIS_Shaded, -1, Standard_False);
+    context_->Deactivate(overlay);
+  };
+  const auto slantColor = north || district ? rgb(0.02, 0.60, 0.49)
+      : kind == HeightStudyKind::Neighbor ? rgb(0.51, 0.23, 0.78) : rgb(0.10, 0.53, 0.86);
+  addFace(shape, slantColor, north || district || lines.IsNull(), roadHeightPlane_);
+  addFace(cap, rgb(0.24, 0.46, 0.88), true, heightDistrictCap_);
+  if (!lines.IsNull()) {
+    neighborHeightEdges_ = new AIS_Shape(display::makeDisplayCopy(lines));
+    const auto lineColor = district ? rgb(0.87, 0.42, 0.07)
+        : north ? rgb(0.01, 0.43, 0.35) : rgb(0.47, 0.18, 0.73);
+    neighborHeightEdges_->SetColor(lineColor);
+    neighborHeightEdges_->SetWidth(district ? 3.0 : 4.0);
+    if (!district) neighborHeightEdges_->SetZLayer(Graphic3d_ZLayerId_Topmost);
+    context_->Display(neighborHeightEdges_, AIS_WireFrame, -1, Standard_False);
+    context_->Deactivate(neighborHeightEdges_);
+  }
+  const bool visible = !shape.IsNull() || !lines.IsNull() || !cap.IsNull();
+  heightDistrictVisible_ = district && visible;
+  roadHeightPlaneSequence_ = modeler_.document().sequence();
+  emit roadHeightPlaneChanged(visible);
   redraw();
 }
 
@@ -3524,6 +3543,7 @@ void Viewport::fitAll() {
   }
   if (!roadHeightPlane_.IsNull()) box.Add(geom::exactBounds(roadHeightPlane_->Shape()));
   if (!neighborHeightEdges_.IsNull()) box.Add(geom::exactBounds(neighborHeightEdges_->Shape()));
+  if (!heightDistrictCap_.IsNull()) box.Add(geom::exactBounds(heightDistrictCap_->Shape()));
   if (box.IsVoid()) {
     box.Add(gp_Pnt(-2000, -2000, 0));
     box.Add(gp_Pnt(8000, 8000, 3000));

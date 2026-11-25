@@ -2767,6 +2767,74 @@ TEST_F(Schedules, YokohamaHeightDistrictReferenceValues) {
   EXPECT_FALSE(sbr::doc::yokohamaHeightDistrictRule("other"));
 }
 
+TEST_F(Schedules, YokohamaHeightDistrictPreviewAndPartComparisonShareTheLimit) {
+  const auto site = ok("create_polygon", {{"points", {{0,0,0},{20000,0,0},{20000,30000,0},{0,30000,0}}}})["id"];
+  ok("set_site_boundary", {{"outline", site}, {"source", "架空の測量図"}});
+  ok("set_site_height_conditions", {{"zone", "mid_high_1"}, {"district", "yokohama_4"}, {"source", "架空の計画図"}});
+  ASSERT_TRUE(modeler.setSiteNorth({0, "架空の測量図", "2026-11-25"}));
+  const json edge{{"start", {20000,30000,0}}, {"end", {0,30000,0}}};
+  const std::vector<std::array<gp_Pnt, 2>> confirmed{{gp_Pnt(20000,30000,0), gp_Pnt(0,30000,0)}};
+  const auto nearPart = ok("create_box", {{"origin", {10000,26000,0}}, {"width",1000}, {"depth",1000}, {"height",9000}})["id"];
+  const auto tallPart = ok("create_box", {{"origin", {10000,2000,0}}, {"width",1000}, {"depth",1000}, {"height",20000}})["id"];
+  const auto roof = ok("create_polygon", {{"points", {{10000,8000,19500},{11000,8000,19500},
+                                                       {11000,10000,19500},{10000,10000,19500}}}})["id"];
+  const auto sequence = modeler.document().sequence();
+  const auto preview = sbr::doc::yokohamaHeightDistrictPreview(modeler.document(), confirmed, -500, false);
+  ASSERT_TRUE(preview);
+  EXPECT_TRUE(preview->unconfirmedOutline.IsNull());
+  const auto flat = sbr::geom::exactBounds(preview->cap);
+  const auto slope = sbr::geom::exactBounds(preview->slant);
+  EXPECT_NEAR(flat.CornerMax().Y(), 30000 - 12500 / 0.6, 0.01);
+  EXPECT_NEAR(flat.CornerMax().Y(), slope.CornerMin().Y(), 0.01);
+  EXPECT_NEAR(flat.CornerMin().Z(), 19500, 0.01);
+  EXPECT_NEAR(slope.CornerMax().Z(), 19500, 0.01);
+  json args{{"boundaries", json::array({edge})}, {"ids", {nearPart,tallPart,roof}}, {"ground_z_mm", -500}};
+  const auto rows = ok("compare_yokohama_height_district", args)["rows"];
+  for (const auto& row : rows) {
+    const bool cap = row["id"] == tallPart;
+    const double excess = cap ? 500 : row["id"] == nearPart ? 200 : 500;
+    EXPECT_EQ(row["state"], "超過");
+    EXPECT_EQ(row["controlling_surface"], cap ? "height_cap" : "north_slant");
+    EXPECT_NEAR(row["excess_mm"].get<double>(), excess, 0.01);
+  }
+  EXPECT_EQ(modeler.document().sequence(), sequence);
+
+  auto road = edge;
+  road["width_m"] = 6;
+  road["source"] = "架空の道路";
+  ok("set_site_road", road);
+  const auto unconfirmed = sbr::doc::yokohamaHeightDistrictPreview(modeler.document(), {}, -500, false);
+  ASSERT_TRUE(unconfirmed);
+  EXPECT_TRUE(unconfirmed->cap.IsNull());
+  EXPECT_TRUE(unconfirmed->slant.IsNull());
+  EXPECT_FALSE(unconfirmed->unconfirmedOutline.IsNull());
+  EXPECT_NEAR(unconfirmed->unconfirmedAreaMm2, 600e6, 0.01);
+  args["boundaries"] = json::array();
+  args["ids"] = json::array({nearPart});
+  EXPECT_EQ(ok("compare_yokohama_height_district", args)["rows"][0]["state"], "要確認");
+  args["single_north_road_confirmed"] = true;
+  const auto roadResult = ok("compare_yokohama_height_district", args)["rows"][0];
+  EXPECT_EQ(roadResult["state"], "余裕");
+  EXPECT_NEAR(roadResult["excess_mm"].get<double>(), -1600, 0.01);
+}
+
+TEST_F(Schedules, YokohamaHeightDistrictHorizontalCapExcludesConcaveGap) {
+  const auto site = ok("create_polygon", {{"points", {{0,0,0},{12000,0,0},{12000,3000,0},{3000,3000,0},
+                                                     {3000,9000,0},{12000,9000,0},{12000,12000,0},{0,12000,0}}}})["id"];
+  ok("set_site_boundary", {{"outline", site}, {"source", "架空の測量図"}});
+  ok("set_site_height_conditions", {{"zone", "mid_high_1"}, {"district", "yokohama_7"}, {"source", "架空の計画図"}});
+  const auto gap = ok("create_box", {{"origin", {4000,4500,0}}, {"width",500}, {"depth",500}, {"height",32000}})["id"];
+  const auto preview = sbr::doc::yokohamaHeightDistrictPreview(modeler.document(), {}, 0, false);
+  ASSERT_TRUE(preview);
+  EXPECT_FALSE(preview->cap.IsNull());
+  EXPECT_TRUE(preview->slant.IsNull());
+  EXPECT_TRUE(preview->unconfirmedOutline.IsNull());
+  const auto result = ok("compare_yokohama_height_district",
+      {{"boundaries", json::array()}, {"ids", json::array({gap})}, {"ground_z_mm", 0}})["rows"][0];
+  EXPECT_EQ(result["state"], "敷地外");
+  EXPECT_TRUE(result["excess_mm"].is_null());
+}
+
 TEST_F(Schedules, NorthHeightCrossesTheRoadInTrueNorthDirection) {
   const auto site = ok("create_polygon", {{"points", {{0,0,0},{20000,0,0},{20000,30000,0},{0,30000,0}}}})["id"];
   ok("set_site_boundary", {{"outline", site}, {"source", "架空の測量図"}});

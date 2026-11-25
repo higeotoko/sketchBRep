@@ -2348,15 +2348,58 @@ struct NorthHeightPatch {
   TopoDS_Face surface;  // Null for an unconfirmed region.
   TopoDS_Shape reference;
   double areaMm2;
+  bool heightCap = false;
+  bool convexFootprint = true;
 };
 
-Result<std::vector<NorthHeightPatch>> northHeightPatches(
+using HeightPatches = Result<std::vector<NorthHeightPatch>>;
+
+TopoDS_Face planarHeightFace(const std::vector<gp_Pnt>& points) {
+  BRepBuilderAPI_MakePolygon wire;
+  for (const auto& point : points) wire.Add(point);
+  wire.Close();
+  if (!wire.IsDone()) return {};
+  BRepBuilderAPI_MakeFace face(wire.Wire(), true);
+  return face.IsDone() ? face.Face() : TopoDS_Face();
+}
+
+// Cut a convex patch on the line where the slant reaches the horizontal cap.
+bool appendCappedHeightPatches(const std::vector<gp_Pnt>& slant, double capZ, double outlineZ,
+                               std::vector<NorthHeightPatch>& patches) {
+  for (const bool cap : {false, true}) {
+    std::vector<gp_Pnt> surface;
+    const auto append = [&](gp_Pnt p) {
+      if (cap) p.SetZ(capZ);
+      if (surface.empty() || p.Distance(surface.back()) > tolerance::kLinear) surface.push_back(p);
+    };
+    const auto inside = [&](const gp_Pnt& p) { return cap ? p.Z() >= capZ : p.Z() <= capZ; };
+    for (std::size_t i = 0; i < slant.size(); ++i) {
+      const auto& a = slant[i];
+      const auto& b = slant[(i + 1) % slant.size()];
+      if (inside(a)) append(a);
+      if (inside(a) != inside(b)) {
+        const double t = (capZ - a.Z()) / (b.Z() - a.Z());
+        auto crossing = a.Translated(gp_Vec(a, b) * t);
+        crossing.SetZ(capZ);
+        append(crossing);
+      }
+    }
+    if (surface.size() > 1 && surface.front().Distance(surface.back()) <= tolerance::kLinear) surface.pop_back();
+    if (surface.size() < 3) continue;
+    auto plan = surface;
+    for (auto& p : plan) p.SetZ(outlineZ);
+    const auto footprint = planarHeightFace(plan);
+    const auto face = planarHeightFace(surface);
+    if (footprint.IsNull() || face.IsNull()) return false;
+    patches.push_back({footprint, face, {}, 0, cap});
+  }
+  return true;
+}
+
+HeightPatches northHeightPatches(
     const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedNeighbors,
-    double groundZMm, double baseHeightMm) {
-  using R = Result<std::vector<NorthHeightPatch>>;
-  const double baseZ = groundZMm + baseHeightMm;
-  if (!std::isfinite(baseZ) || (baseHeightMm != 5000 && baseHeightMm != 10000))
-    return R::failure("地盤面と、法第56条で確認した立上り5 mまたは10 mを入力してください");
+    double baseZ, double slope, double roadFraction, std::optional<double> capZ = std::nullopt) {
+  using R = HeightPatches;
   const auto field = northHeightField(document, confirmedNeighbors, baseZ);
   if (!field) return R::failure(field.error());
   const auto& vertices = field->geometry.vertices;
@@ -2400,27 +2443,29 @@ Result<std::vector<NorthHeightPatch>> northHeightPatches(
         const double v = (south.station + exit.station) / 2;
         const double sl = northAt(south.edge, left), sr = northAt(south.edge, right);
         const double nl = northAt(exit.edge, left), nr = northAt(exit.edge, right);
-        const auto makeFace = [&](double southLeftZ, double southRightZ, double exitZ) {
-          BRepBuilderAPI_MakePolygon wire;
-          wire.Add(world(left, sl, southLeftZ));
-          wire.Add(world(right, sr, southRightZ));
-          if (nr - sr > tolerance::kLinear) wire.Add(world(right, nr, exitZ));
-          if (nl - sl > tolerance::kLinear) wire.Add(world(left, nl, exitZ));
-          wire.Close();
-          if (!wire.IsDone()) return TopoDS_Face();
-          BRepBuilderAPI_MakeFace face(wire.Wire(), true);
-          return face.IsDone() ? face.Face() : TopoDS_Face();
+        const auto corners = [&](double southLeftZ, double southRightZ, double exitZ) {
+          std::vector<gp_Pnt> points{world(left, sl, southLeftZ), world(right, sr, southRightZ)};
+          if (nr - sr > tolerance::kLinear) points.push_back(world(right, nr, exitZ));
+          if (nl - sl > tolerance::kLinear) points.push_back(world(left, nl, exitZ));
+          return points;
         };
-        NorthHeightPatch patch{makeFace(origin.Z(), origin.Z(), origin.Z()), {}, {},
+        NorthHeightPatch patch{planarHeightFace(corners(origin.Z(), origin.Z(), origin.Z())), {}, {},
                                (right - left) * (exit.station - south.station)};
         if (patch.footprint.IsNull()) return R::failure("北側斜線の範囲を作れません");
         const auto sample = northHeightSample(field->geometry, field->footprint, field->kinds,
-                                              world(mid, v, origin.Z()), field->north, field->width, field->baseZ);
-        if (sample.distanceMm) {
+                                              world(mid, v, origin.Z()), field->north, field->width * roadFraction,
+                                              field->baseZ, slope);
+        if (sample.distanceMm && (!capZ || sample.status == "calculated")) {
           const double advance = *sample.distanceMm - (exit.station - v);
-          const double zNearExit = field->baseZ + 1.25 * advance;
+          const double zNearExit = field->baseZ + slope * advance;
           // Keep the two sides of a change in exit as separate faces.
-          patch.surface = makeFace(zNearExit + 1.25 * (nl - sl), zNearExit + 1.25 * (nr - sr), zNearExit);
+          const auto slant = corners(zNearExit + slope * (nl - sl), zNearExit + slope * (nr - sr), zNearExit);
+          if (capZ) {
+            if (!appendCappedHeightPatches(slant, *capZ, origin.Z(), patches))
+              return R::failure("高度地区の水平面と斜線を分けられません");
+            continue;
+          }
+          patch.surface = planarHeightFace(slant);
           if (patch.surface.IsNull()) return R::failure("北側斜線の表示面を作れません");
           BRepBuilderAPI_MakeEdge line(world(left, nl + advance, origin.Z() + 1),
                                        world(right, nr + advance, origin.Z() + 1));
@@ -2433,6 +2478,38 @@ Result<std::vector<NorthHeightPatch>> northHeightPatches(
   } catch (const Standard_Failure&) {
     return R::failure("北側斜線の表示面を作れません");
   }
+}
+
+HeightPatches statutoryNorthHeightPatches(const Document& document,
+                                            const std::vector<std::array<gp_Pnt, 2>>& confirmedNeighbors,
+                                            double groundZMm, double baseHeightMm) {
+  const double baseZ = groundZMm + baseHeightMm;
+  if (!std::isfinite(baseZ) || (baseHeightMm != 5000 && baseHeightMm != 10000))
+    return HeightPatches::failure("地盤面と、法第56条で確認した立上り5 mまたは10 mを入力してください");
+  return northHeightPatches(document, confirmedNeighbors, baseZ, 1.25, 1);
+}
+
+HeightPatches yokohamaHeightDistrictPatches(const Document& document,
+                                           const std::vector<std::array<gp_Pnt, 2>>& confirmedNeighbors,
+                                           double groundZMm, bool singleNorthRoadConfirmed) {
+  const auto rule = yokohamaHeightDistrictRule(siteHeightConditions(document).district);
+  if (!rule) return HeightPatches::failure("横浜市の最高限第1種〜第7種のいずれかを登録してください");
+  const double capZ = groundZMm + rule->heightCapMm;
+  if (!std::isfinite(capZ)) return HeightPatches::failure("地盤面の高さを確認してください");
+  if (rule->northRiseMm)
+    return northHeightPatches(document, confirmedNeighbors, groundZMm + *rule->northRiseMm,
+                              kYokohamaHeightDistrictSlope, singleNorthRoadConfirmed ? 0.5 : 0, capZ);
+
+  const auto& site = document.settings().siteBoundary;
+  if (!site) return HeightPatches::failure("先に敷地境界を登録してください");
+  const auto geometry = document.siteBoundaryGeometry(site->outline);
+  if (!geometry) return HeightPatches::failure(geometry.error());
+  const auto footprint = heightSiteFootprint(*geometry);
+  if (!footprint) return HeightPatches::failure(footprint.error());
+  gp_Trsf translation;
+  translation.SetTranslation(gp_Vec(0, 0, capZ - geometry->vertices.front().Z()));
+  return std::vector<NorthHeightPatch>{{*footprint, TopoDS::Face(footprint->Moved(TopLoc_Location(translation))),
+                                       {}, 0, true, false}};
 }
 
 Result<TopoDS_Shape> clipPartToNorthPatch(const TopoDS_Shape& part, const Bnd_Box& bounds,
@@ -2472,7 +2549,7 @@ Result<NorthHeightPreview> northHeightPreview(
     const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedNeighbors,
     double groundZMm, double baseHeightMm) {
   using R = Result<NorthHeightPreview>;
-  const auto patches = northHeightPatches(document, confirmedNeighbors, groundZMm, baseHeightMm);
+  const auto patches = statutoryNorthHeightPatches(document, confirmedNeighbors, groundZMm, baseHeightMm);
   if (!patches) return R::failure(patches.error());
   BRep_Builder builder;
   TopoDS_Compound surface, references;
@@ -2493,12 +2570,40 @@ Result<NorthHeightPreview> northHeightPreview(
   return NorthHeightPreview{surface, references, omitted};
 }
 
-Result<std::vector<NorthHeightPartRow>> compareNorthHeight(
+Result<YokohamaHeightDistrictPreview> yokohamaHeightDistrictPreview(
     const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedNeighbors,
-    const std::vector<ObjectId>& ids, double groundZMm, double baseHeightMm) {
+    double groundZMm, bool singleNorthRoadConfirmed) {
+  using R = Result<YokohamaHeightDistrictPreview>;
+  const auto patches = yokohamaHeightDistrictPatches(document, confirmedNeighbors, groundZMm, singleNorthRoadConfirmed);
+  if (!patches) return R::failure(patches.error());
+  BRep_Builder builder;
+  TopoDS_Compound cap, slant, outline;
+  builder.MakeCompound(cap);
+  builder.MakeCompound(slant);
+  builder.MakeCompound(outline);
+  gp_Trsf outlineOffset;
+  outlineOffset.SetTranslation(gp_Vec(0, 0, 2));
+  double unconfirmed = 0;
+  for (const auto& patch : *patches) {
+    if (patch.surface.IsNull()) {
+      unconfirmed += patch.areaMm2;
+      for (TopExp_Explorer edges(patch.footprint, TopAbs_EDGE); edges.More(); edges.Next())
+        builder.Add(outline, edges.Current().Moved(TopLoc_Location(outlineOffset)));
+    } else {
+      builder.Add(patch.heightCap ? cap : slant, patch.surface);
+    }
+  }
+  return YokohamaHeightDistrictPreview{cap.NbChildren() ? cap : TopoDS_Compound(),
+                                       slant.NbChildren() ? slant : TopoDS_Compound(),
+                                       outline.NbChildren() ? outline : TopoDS_Compound(), unconfirmed};
+}
+
+namespace {
+
+Result<std::vector<NorthHeightPartRow>> compareHeightPatches(
+    const Document& document, const std::vector<ObjectId>& ids, const HeightPatches& patches) {
   using R = Result<std::vector<NorthHeightPartRow>>;
   if (ids.empty()) return R::failure("モデルで照合する部材を選択してください");
-  const auto patches = northHeightPatches(document, confirmedNeighbors, groundZMm, baseHeightMm);
   if (!patches) return R::failure(patches.error());
 
   struct Region {
@@ -2525,16 +2630,17 @@ Result<std::vector<NorthHeightPartRow>> compareNorthHeight(
       if (bounds.IsVoid() || bounds.IsOpen()) return R::failure("部材の範囲を測れません（" + object->name + "）");
       const auto lo = bounds.CornerMin(), hi = bounds.CornerMax();
       std::optional<double> maximum;
-      bool unknown = false;
+      bool unknown = false, heightCap = false;
       for (std::size_t i = 0; i < regions.size(); ++i) {
         const auto& region = regions[i];
         if (hi.X() < region.lo.X() - tolerance::kLinear || lo.X() > region.hi.X() + tolerance::kLinear ||
             hi.Y() < region.lo.Y() - tolerance::kLinear || lo.Y() > region.hi.Y() + tolerance::kLinear) continue;
-        const auto& footprint = (*patches)[i].footprint;
+        const auto& patch = (*patches)[i];
+        const auto& footprint = patch.footprint;
         const double z = region.lo.Z();
         const std::array<gp_Pnt, 4> corners{gp_Pnt(lo.X(), lo.Y(), z), gp_Pnt(hi.X(), lo.Y(), z),
                                             gp_Pnt(hi.X(), hi.Y(), z), gp_Pnt(lo.X(), hi.Y(), z)};
-        const bool whollyInside = std::all_of(corners.begin(), corners.end(), [&](const auto& p) {
+        const bool whollyInside = patch.convexFootprint && std::all_of(corners.begin(), corners.end(), [&](const auto& p) {
           const auto state = BRepClass_FaceClassifier(footprint, p, tolerance::kLinear).State();
           return state == TopAbs_IN || state == TopAbs_ON;
         });
@@ -2557,19 +2663,37 @@ Result<std::vector<NorthHeightPartRow>> compareNorthHeight(
         if (measured.IsVoid() || measured.IsOpenZmax() || normal.Z() <= 0)
           return R::failure("部材の鉛直差を測れません（" + object->name + "）");
         const double excess = measured.CornerMax().Z() / normal.Z();
-        if (!maximum || excess > *maximum) maximum = excess;
+        if (!maximum || excess > *maximum) {
+          maximum = excess;
+          heightCap = patch.heightCap;
+        }
       }
       constexpr double agreementMm = 0.01;
       std::string state = "敷地外";
       if (maximum && *maximum > agreementMm) state = unknown ? "超過・要確認" : "超過";
       else if (unknown) state = "要確認";
       else if (maximum) state = *maximum < -agreementMm ? "余裕" : "接触相当";
-      rows.push_back({id, object->name, std::move(state), maximum, unknown});
+      rows.push_back({id, object->name, std::move(state), maximum, unknown, heightCap});
     }
   } catch (const Standard_Failure&) {
-    return R::failure("北側斜線と部材を照合できません");
+    return R::failure("高さの制限面と部材を照合できません");
   }
   return rows;
+}
+
+}  // namespace
+
+Result<std::vector<NorthHeightPartRow>> compareNorthHeight(
+    const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedNeighbors,
+    const std::vector<ObjectId>& ids, double groundZMm, double baseHeightMm) {
+  return compareHeightPatches(document, ids, statutoryNorthHeightPatches(document, confirmedNeighbors, groundZMm, baseHeightMm));
+}
+
+Result<std::vector<NorthHeightPartRow>> compareYokohamaHeightDistrict(
+    const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedNeighbors,
+    const std::vector<ObjectId>& ids, double groundZMm, bool singleNorthRoadConfirmed) {
+  return compareHeightPatches(document, ids,
+      yokohamaHeightDistrictPatches(document, confirmedNeighbors, groundZMm, singleNorthRoadConfirmed));
 }
 
 std::vector<PermitCheck> permitElevationChecks(const Document& document) {

@@ -60,6 +60,7 @@
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QLabel>
+#include <QMouseEvent>
 #include <QLineEdit>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -7746,8 +7747,9 @@ void MainWindow::showPermitWorkflow() {
       case Action::EnergyRoute: trigger("energyRouteAction"); break;  // docs/215
       case Action::HeightConditions: showSiteHeightConditionsDialog(); break;
       case Action::RoadHeightPlane: showRoadHeightPlaneDialog(); break;
-      case Action::NeighborHeight: showBoundaryHeightDialog(false); break;
-      case Action::NorthHeight: showBoundaryHeightDialog(true); break;
+      case Action::NeighborHeight: showBoundaryHeightDialog(BoundaryHeightStudy::Neighbor); break;
+      case Action::NorthHeight: showBoundaryHeightDialog(BoundaryHeightStudy::North); break;
+      case Action::HeightDistrict: showBoundaryHeightDialog(BoundaryHeightStudy::District); break;
       case Action::Equipment: trigger("equipmentAction"); break;      // docs/226
       case Action::SavedRoad:
         setSelection({});
@@ -8301,8 +8303,39 @@ void MainWindow::showRoadHeightPlaneDialog() {
   dialog.exec();
 }
 
-void MainWindow::showBoundaryHeightDialog(bool north) {
+void MainWindow::showHeightDistrictLegend() {
+  if (findChild<QToolBar*>(QStringLiteral("heightDistrictLegend"))) return;
+  auto* bar = new QToolBar(tr("高度地区の試算"), this);
+  bar->setObjectName(QStringLiteral("heightDistrictLegend"));
+  bar->setMovable(false);
+  bar->setFloatable(false);
+  const auto key = [&](const QString& color, const QString& symbol, const QString& text) {
+    auto* label = new QLabel(QStringLiteral(" <span style='color:%1'>%2</span> %3  ").arg(color, symbol, text), bar);
+    return bar->addWidget(label);
+  };
+  auto* cap = key(QStringLiteral("#4d79e2"), QStringLiteral("■"), tr("最高高さ"));
+  auto* slant = key(QStringLiteral("#159b7c"), QStringLiteral("■"), tr("北側斜線"));
+  auto* unconfirmed = key(QStringLiteral("#e68124"), QStringLiteral("□"), tr("未確認の範囲"));
+  bar->addSeparator();
+  bar->addAction(tr("表示を消す"), this, [this] { viewport_->setRoadHeightPlane({}); });
+  addToolBar(Qt::BottomToolBarArea, bar);
+  bar->hide();
+  connect(viewport_, &Viewport::roadHeightPlaneChanged, bar, [this, bar, cap, slant, unconfirmed] {
+    bar->setVisible(viewport_->heightDistrictVisible());
+    cap->setVisible(!viewport_->heightDistrictCapShape().IsNull());
+    slant->setVisible(!viewport_->roadHeightPlaneShape().IsNull());
+    unconfirmed->setVisible(!viewport_->neighborHeightBoundaryShape().IsNull());
+  });
+}
+
+void MainWindow::showBoundaryHeightDialog(BoundaryHeightStudy study) {
   const auto& document = modeler_.document();
+  const bool district = study == BoundaryHeightStudy::District;
+  const auto districtCode = district ? doc::siteHeightConditions(document).district : std::string();
+  const auto rule = doc::yokohamaHeightDistrictRule(districtCode);
+  if (district && !rule) return;
+  const bool north = study == BoundaryHeightStudy::North || (rule && rule->northRiseMm);
+  const bool hasSlant = !district || north;
   const auto& site = document.settings().siteBoundary;
   if (!site) return;
   const auto geometry = document.siteBoundaryGeometry(site->outline);
@@ -8313,20 +8346,46 @@ void MainWindow::showBoundaryHeightDialog(bool north) {
   const auto road = document.siteRoadEdge(*geometry);
   const auto sequence = document.sequence();
   QDialog dialog(this);
-  dialog.setObjectName(north ? QStringLiteral("northHeightDialog") : QStringLiteral("neighborHeightDialog"));
+  dialog.setObjectName(district ? QStringLiteral("heightDistrictDialog")
+                                : north ? QStringLiteral("northHeightDialog") : QStringLiteral("neighborHeightDialog"));
   const auto selectedIds = selection_;
-  dialog.setWindowTitle(north ? tr("北側斜線") : tr("隣地斜線"));
+  dialog.setWindowTitle(district ? tr("横浜市の最高限高度地区") : north ? tr("北側斜線") : tr("隣地斜線"));
   auto* layout = new QVBoxLayout(&dialog);
   const auto& savedNorth = document.settings().siteNorth;
   const double angle = savedNorth ? savedNorth->angle : 0;
-  auto* instructions = new QLabel(north
-      ? tr("確認した隣地辺を選び、地盤面と立上りを入力します。真北はモデルの +Y から時計回り %1°。").arg(angle)
-      : tr("確認した隣地の境界辺を選び、地盤面・立上り・勾配を入力します。"));
+  auto* instructions = new QLabel;
+  if (district) {
+    QString text = tr("第%1種　最高高さ %2 m").arg(QString::fromStdString(districtCode.substr(districtCode.size() - 1)))
+        .arg(rule->heightCapMm / 1000);
+    if (rule->northRiseMm)
+      text += tr("　北側斜線 %1 m ＋ 真北方向の距離 × 0.6\n確認した隣地辺を図か一覧で選びます。真北は +Y から時計回り %2°。")
+          .arg(*rule->northRiseMm / 1000).arg(angle);
+    instructions->setText(text);
+  } else {
+    instructions->setText(north
+        ? tr("確認した隣地辺を選び、地盤面と立上りを入力します。真北はモデルの +Y から時計回り %1°。").arg(angle)
+        : tr("確認した隣地の境界辺を選び、地盤面・立上り・勾配を入力します。"));
+  }
   instructions->setWordWrap(true);
   layout->addWidget(instructions);
   auto* edgesLayout = new QHBoxLayout;
   layout->addLayout(edgesLayout);
-  auto* diagram = new QLabel;
+  class BoundaryDiagram : public QLabel {
+   public:
+    std::function<void(const QPointF&)> pickBoundary;
+
+   protected:
+    void mouseReleaseEvent(QMouseEvent* event) override {
+      if (event->button() == Qt::LeftButton && pickBoundary) {
+        pickBoundary(event->position());
+        event->accept();
+        return;
+      }
+      QLabel::mouseReleaseEvent(event);
+    }
+  };
+  auto* diagram = new BoundaryDiagram;
+  diagram->setObjectName(QStringLiteral("heightBoundaryDiagram"));
   diagram->setFixedSize(280, 205);
   edgesLayout->addWidget(diagram);
   auto* edges = new QListWidget;
@@ -8355,6 +8414,26 @@ void MainWindow::showBoundaryHeightDialog(bool north) {
     if (isRoad) item->setFlags(item->flags() & ~Qt::ItemIsEnabled);
     else item->setCheckState(Qt::Unchecked);
   }
+  diagram->pickBoundary = [&](const QPointF& point) {
+    int closest = -1;
+    double distanceSquared = 12 * 12;
+    for (int i = 0; i < edges->count(); ++i) {
+      const QPointF a = outline[i], direction = outline[(i + 1) % edges->count()] - a;
+      const double lengthSquared = QPointF::dotProduct(direction, direction);
+      if (lengthSquared <= 0) continue;
+      const double t = std::clamp(QPointF::dotProduct(point - a, direction) / lengthSquared, 0.0, 1.0);
+      const auto delta = point - (a + t * direction);
+      const double distance = QPointF::dotProduct(delta, delta);
+      if (distance >= distanceSquared) continue;
+      closest = i;
+      distanceSquared = distance;
+    }
+    if (closest < 0) return;
+    auto* item = edges->item(closest);
+    if (!(item->flags() & Qt::ItemIsEnabled)) return;
+    edges->setCurrentItem(item);
+    item->setCheckState(item->checkState() == Qt::Checked ? Qt::Unchecked : Qt::Checked);
+  };
   const auto redrawDiagram = [&] {
     const auto palette = diagram->palette();
     const auto base = palette.color(QPalette::Base);
@@ -8397,32 +8476,55 @@ void MainWindow::showBoundaryHeightDialog(bool north) {
   };
   connect(edges, &QListWidget::itemChanged, &dialog, redrawDiagram);
   redrawDiagram();
+  diagram->setVisible(hasSlant);
+  edges->setVisible(hasSlant);
 
   auto* form = new QFormLayout;
   layout->addLayout(form);
   auto* ground = new QLineEdit;
   ground->setObjectName(QStringLiteral("neighborHeightGround"));
-  auto* base = new QLineEdit;
+  auto* base = new QLineEdit(&dialog);
   base->setObjectName(QStringLiteral("neighborHeightBase"));
-  auto* slope = new QLineEdit;
+  auto* slope = new QLineEdit(&dialog);
   slope->setObjectName(QStringLiteral("neighborHeightSlope"));
   form->addRow(tr("敷地の地盤面（モデルZ・mm）"), ground);
-  form->addRow(north ? tr("確認した立上り（5 m または10 m）") : tr("地盤面からの立上り（m）"), base);
-  if (north) {
-    slope->setText(QStringLiteral("1.25"));
-    slope->setReadOnly(true);
+  if (!district) {
+    form->addRow(north ? tr("確認した立上り（5 m または10 m）") : tr("地盤面からの立上り（m）"), base);
+    if (north) {
+      slope->setText(QStringLiteral("1.25"));
+      slope->setReadOnly(true);
+    }
+    form->addRow(tr("勾配（水平1に対して）"), slope);
+  } else {
+    base->hide();
+    slope->hide();
+    for (const auto& level : document.settings().levels)
+      if (level.name == "GL") ground->setText(QString::number(level.elevation, 'g', 15));
   }
-  form->addRow(tr("勾配（水平1に対して）"), slope);
-  auto* note = new QLabel(north ? tr("法第56条の試算です。出口の辺や道路幅員が未確認の範囲は面を表示しません。")
-                               : tr("紫の線は選んだ隣地辺です。表示は試算用の近似面で、適否は未評価です。"));
+  auto* roadConfirmed = new QCheckBox(tr("登録道路の幅員と、単独で両側が平行な道路であることを確認した"), &dialog);
+  roadConfirmed->setObjectName(QStringLiteral("heightDistrictRoadConfirmed"));
+  if (district && north && road && site->road->widthMm > 0) {
+    roadConfirmed->setText(tr("登録道路（幅 %1 m）が単独で、両側が平行と確認した").arg(site->road->widthMm / 1000));
+    roadConfirmed->setToolTip(tr("北側の出口がこの道路に面する範囲で、真北方向に測った道路幅の半分を使います。"));
+    layout->addWidget(roadConfirmed);
+  } else {
+    roadConfirmed->hide();
+  }
+  auto* note = new QLabel(district
+      ? tr("単一の高度地区として試算します。適用除外・高低差の緩和は個別確認。法規の適合は未評価です。")
+      : north ? tr("法第56条の試算です。出口の辺や道路幅員が未確認の範囲は面を表示しません。")
+              : tr("紫の線は選んだ隣地辺です。表示は試算用の近似面で、適否は未評価です。"));
   note->setWordWrap(true);
   layout->addWidget(note);
   auto* error = new QLabel;
   error->setWordWrap(true);
   layout->addWidget(error);
-  auto* table = new QTableWidget(0, 3);
+  auto* table = new QTableWidget(0, district ? 4 : 3);
   table->setObjectName(QStringLiteral("neighborHeightParts"));
-  table->setHorizontalHeaderLabels({tr("部材"), tr("照合結果"), tr("最大鉛直差（mm）")});
+  QStringList headers{tr("部材"), tr("照合結果"), tr("最大鉛直差（mm）")};
+  if (district) headers << tr("上限を決めた面");
+  table->setHorizontalHeaderLabels(headers);
+  if (district) table->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
   table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
   table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
   table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
@@ -8436,7 +8538,8 @@ void MainWindow::showBoundaryHeightDialog(bool north) {
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close);
   buttons->button(QDialogButtonBox::Close)->setText(tr("閉じる"));
   auto* compare = buttons->addButton(tr("選択部材を照合"), QDialogButtonBox::ActionRole);
-  compare->setObjectName(north ? QStringLiteral("compareNorthHeightParts") : QStringLiteral("compareNeighborHeightParts"));
+  compare->setObjectName(district ? QStringLiteral("compareHeightDistrictParts")
+                                 : north ? QStringLiteral("compareNorthHeightParts") : QStringLiteral("compareNeighborHeightParts"));
   compare->setEnabled(!selectedIds.empty());
   if (selectedIds.empty()) compare->setToolTip(tr("モデルで部材を選んでから、この画面を開いてください。"));
   auto* show = buttons->addButton(tr("3Dで見る"), QDialogButtonBox::ActionRole);
@@ -8452,6 +8555,7 @@ void MainWindow::showBoundaryHeightDialog(bool north) {
   connect(ground, &QLineEdit::textChanged, &dialog, invalidate);
   connect(base, &QLineEdit::textChanged, &dialog, invalidate);
   connect(slope, &QLineEdit::textChanged, &dialog, invalidate);
+  connect(roadConfirmed, &QCheckBox::toggled, &dialog, invalidate);
   const auto runStudy = [&](bool preview3d) {
     error->clear();
     if (document.sequence() != sequence) {
@@ -8462,8 +8566,9 @@ void MainWindow::showBoundaryHeightDialog(bool north) {
     const double groundZ = ground->text().toDouble(&groundOk);
     const double baseM = base->text().toDouble(&baseOk);
     const double gradient = slope->text().toDouble(&slopeOk);
-    if (!groundOk || !baseOk || !slopeOk) {
-      error->setText(tr("地盤面・立上り・勾配を数値で入力してください。"));
+    if (!groundOk || (!district && (!baseOk || !slopeOk))) {
+      error->setText(district ? tr("地盤面のモデルZを mm で入力してください。")
+                              : tr("地盤面・立上り・勾配を数値で入力してください。"));
       return;
     }
     std::vector<std::array<gp_Pnt, 2>> selectedEdges;
@@ -8480,8 +8585,10 @@ void MainWindow::showBoundaryHeightDialog(bool north) {
         table->setItem(i, 1, new QTableWidgetItem(QString::fromStdString(row.state)));
         table->setItem(i, 2, new QTableWidgetItem(difference));
       };
-      if (north) {
-        const auto rows = doc::compareNorthHeight(document, selectedEdges, selectedIds, groundZ, baseM * 1000);
+      if (north || district) {
+        const auto rows = district
+            ? doc::compareYokohamaHeightDistrict(document, selectedEdges, selectedIds, groundZ, roadConfirmed->isChecked())
+            : doc::compareNorthHeight(document, selectedEdges, selectedIds, groundZ, baseM * 1000);
         if (!rows) {
           error->setText(QString::fromStdString(rows.error()));
           return;
@@ -8493,6 +8600,16 @@ void MainWindow::showBoundaryHeightDialog(bool north) {
           if (row.excessMm)
             difference = row.needsReview ? tr("%1（確認済み範囲）").arg(signedMm(*row.excessMm)) : signedMm(*row.excessMm);
           addRow(i, row, difference);
+          if (district) {
+            table->item(i, 2)->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+            auto* surface = new QTableWidgetItem(row.excessMm ? (row.heightCap ? tr("最高高さ") : tr("北側斜線")) : tr("—"));
+            if (row.excessMm) {
+              QPixmap swatch(10, 10);
+              swatch.fill(row.heightCap ? QColor(QStringLiteral("#4d79e2")) : QColor(QStringLiteral("#159b7c")));
+              surface->setIcon(QIcon(swatch));
+            }
+            table->setItem(i, 3, surface);
+          }
         }
         table->selectRow(0);
         table->show();
@@ -8513,6 +8630,26 @@ void MainWindow::showBoundaryHeightDialog(bool north) {
       }
       table->selectRow(0);
       table->show();
+      return;
+    }
+    if (district) {
+      const auto preview = doc::yokohamaHeightDistrictPreview(document, selectedEdges, groundZ, roadConfirmed->isChecked());
+      if (!preview) {
+        error->setText(QString::fromStdString(preview.error()));
+        return;
+      }
+      viewport_->unlockView();
+      viewport_->showStorey(std::nullopt);
+      if (const auto* row = table->item(table->currentRow(), 0))
+        setSelection({row->data(Qt::UserRole).toString().toStdString()});
+      showHeightDistrictLegend();
+      viewport_->setHeightDistrictSurface(preview->slant, preview->cap, preview->unconfirmedOutline);
+      viewport_->setStandardView(Viewport::StandardView::Iso);
+      if (preview->unconfirmedAreaMm2 > 0)
+        setStatus(tr("未確認の範囲 %1 m²").arg(preview->unconfirmedAreaMm2 / 1e6, 0, 'f', 2));
+      else
+        setStatus(tr("第%1種高度地区の制限面を表示中").arg(QString::fromStdString(districtCode.substr(districtCode.size() - 1))));
+      dialog.accept();
       return;
     }
     if (north) {
@@ -8549,7 +8686,7 @@ void MainWindow::showBoundaryHeightDialog(bool north) {
   };
   connect(compare, &QPushButton::clicked, &dialog, [&] { runStudy(false); });
   connect(show, &QPushButton::clicked, &dialog, [&] { runStudy(true); });
-  dialog.resize(610, 425);
+  dialog.resize(610, district && !hasSlant ? 205 : 425);
   dialog.exec();
 }
 

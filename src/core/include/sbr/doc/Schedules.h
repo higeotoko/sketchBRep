@@ -322,7 +322,18 @@ struct NorthHeightPartRow {
   std::string state;
   std::optional<double> excessMm;  // Maximum over the confirmed portions.
   bool needsReview;
+  bool heightCap;  // The highest excess was measured against the horizontal cap.
 };
+struct YokohamaHeightDistrictPreview {
+  TopoDS_Shape cap, slant, unconfirmedOutline;
+  double unconfirmedAreaMm2;
+};
+Result<YokohamaHeightDistrictPreview> yokohamaHeightDistrictPreview(
+    const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedNeighbors,
+    double groundZMm, bool singleNorthRoadConfirmed);
+Result<std::vector<NorthHeightPartRow>> compareYokohamaHeightDistrict(
+    const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedNeighbors,
+    const std::vector<ObjectId>& ids, double groundZMm, bool singleNorthRoadConfirmed);
 Result<std::vector<NorthHeightPartRow>> compareNorthHeight(
     const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedNeighbors,
     const std::vector<ObjectId>& ids, double groundZMm, double baseHeightMm);

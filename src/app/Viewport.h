@@ -176,6 +176,11 @@ class Viewport : public QWidget {
   void clearPreview();
   void setRoadHeightPlane(const TopoDS_Shape& shape);
   void setBoundaryHeightSurface(const TopoDS_Shape& shape, const TopoDS_Shape& boundaryLines, bool north = false);
+  void setHeightDistrictSurface(const TopoDS_Shape& slant, const TopoDS_Shape& cap, const TopoDS_Shape& unconfirmed);
+  TopoDS_Shape heightDistrictCapShape() const {
+    return heightDistrictCap_.IsNull() ? TopoDS_Shape() : heightDistrictCap_->Shape();
+  }
+  bool heightDistrictVisible() const { return heightDistrictVisible_; }
   TopoDS_Shape neighborHeightBoundaryShape() const {
     return neighborHeightEdges_.IsNull() ? TopoDS_Shape() : neighborHeightEdges_->Shape();
   }
@@ -426,7 +431,9 @@ class Viewport : public QWidget {
   void syncLabel(const doc::ObjectId& id);
   void syncSection();
   void syncOpenEnds();
-  void setHeightStudy(const TopoDS_Shape& shape, const TopoDS_Shape& boundaryLines, bool north = false);
+  enum class HeightStudyKind { Road, Neighbor, North, District };
+  void setHeightStudy(const TopoDS_Shape& shape, const TopoDS_Shape& lines, HeightStudyKind kind,
+                      const TopoDS_Shape& cap = {});
   // Editing inside a group or component: a dotted box around it (SketchUp).
   void syncEditBox();
   Handle(AIS_Shape) makeDisplay(const doc::Object& object, Entry& entry);
@@ -549,6 +556,8 @@ class Viewport : public QWidget {
   Handle(AIS_Shape) preview_;
   Handle(AIS_Shape) roadHeightPlane_;
   Handle(AIS_Shape) neighborHeightEdges_;
+  Handle(AIS_Shape) heightDistrictCap_;
+  bool heightDistrictVisible_ = false;
   std::uint64_t roadHeightPlaneSequence_ = 0;
   Handle(AIS_Shape) inspectionMarker_;
   std::vector<Handle(AIS_Shape)> roles_;

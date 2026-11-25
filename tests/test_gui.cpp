@@ -249,6 +249,7 @@ class GuiPhase1 : public QObject {
   void permitWorkflowTracksSiteInputsAndStaleGround();
   void permitWorkflowShowsRoomAndOpeningInputs();
   void permitWorkflowShowsGridAndPlanChecks();
+  void heightDistrictShowsControllingSurfaces();
   void permitWorkflowAppliesDaylightFactors();
   void permitWorkflowMarksStagesAndAsksAgain();
   void projectOutlineDialogGivesTheItems();
@@ -1630,6 +1631,109 @@ void GuiPhase1::permitWorkflowMarksStagesAndAsksAgain() {
 
 // docs/194: stages 2 (通り芯) and 3 (平面) list what the model has and what is missing; a row's
 // button selects the objects it is about, and the rows follow the model.
+void GuiPhase1::heightDistrictShowsControllingSurfaces() {
+  Fixture f;
+  QVERIFY(f.setUp());
+  auto& modeler = f.window.modeler();
+  api::CommandApi api(modeler);
+  using Json = nlohmann::json;
+  const auto call = [&](const char* command, Json args) {
+    return Json::parse(api.execute(Json{{"command", command}, {"args", std::move(args)}}.dump()));
+  };
+  const auto site = call("create_polygon", {{"points", {{0,0,0},{20000,0,0},{20000,30000,0},
+                                                        {12000,30000,0},{12000,18000,0},{0,18000,0}}}});
+  QVERIFY(site["ok"].get<bool>());
+  QVERIFY(call("set_site_boundary", {{"outline", site["result"]["id"]}, {"source", "架空の測量図"}})["ok"].get<bool>());
+  QVERIFY(call("set_site_height_conditions", {{"zone", "mid_high_1"}, {"district", "yokohama_2"},
+                                              {"source", "架空の計画図"}})["ok"].get<bool>());
+  QVERIFY(modeler.setSiteNorth({0, "架空の測量図", "2026-11-25"}));
+  QVERIFY(modeler.setLevels({{"", "GL", -500}, {"", "1FL", 0}}));
+  const auto north = call("create_box", {{"origin", {13500,23500,0}}, {"width",5000}, {"depth",2500},
+                                       {"height",8000}, {"name", "北側の試算部材"}});
+  const auto south = call("create_box", {{"origin", {13500,4200,0}}, {"width",4000}, {"depth",4200},
+                                       {"height",12500}, {"name", "南側の試算部材"}});
+  QVERIFY(north["ok"].get<bool>());
+  QVERIFY(south["ok"].get<bool>());
+  const auto northId = north["result"]["id"].get<std::string>();
+  const auto southId = south["result"]["id"].get<std::string>();
+  f.window.setSelection({northId, southId});
+  f.vp->syncNow();
+  auto* open = f.window.findChild<QAction*>(QStringLiteral("permitWorkflowAction"));
+  QVERIFY(open);
+  open->trigger();
+  auto* dock = f.window.findChild<QDockWidget*>(QStringLiteral("permitWorkflowDock"));
+  QVERIFY(dock);
+  auto* phases = dock->findChild<QListWidget*>(QStringLiteral("permitWorkflowPhases"));
+  auto* checks = dock->findChild<QTreeWidget*>(QStringLiteral("permitWorkflowChecks"));
+  auto* edit = dock->findChild<QPushButton*>(QStringLiteral("permitWorkflowEdit"));
+  QVERIFY(phases && checks && edit);
+  phases->setCurrentRow(9);
+  const auto districtRows = checks->findItems(QStringLiteral("横浜市の最高限高度地区"), Qt::MatchExactly);
+  QCOMPARE(districtRows.size(), 1);
+  checks->setCurrentItem(districtRows.front());
+  QCOMPARE(edit->text(), QStringLiteral("高度地区の制限面を表示"));
+
+  const QString reviewDir = qEnvironmentVariable("SBR_HEIGHT_DISTRICT_REVIEW_DIR");
+  bool accepted = false;
+  QString failure;
+  const auto sequence = modeler.document().sequence();
+  QTimer::singleShot(0, [&] {
+    auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+    if (!dialog) return;
+    auto* edges = dialog->findChild<QListWidget*>(QStringLiteral("neighborHeightEdges"));
+    auto* ground = dialog->findChild<QLineEdit*>(QStringLiteral("neighborHeightGround"));
+    auto* compare = dialog->findChild<QPushButton*>(QStringLiteral("compareHeightDistrictParts"));
+    auto* show = dialog->findChild<QPushButton*>(QStringLiteral("showNeighborHeight"));
+    auto* results = dialog->findChild<QTableWidget*>(QStringLiteral("neighborHeightParts"));
+    auto* diagram = dialog->findChild<QLabel*>(QStringLiteral("heightBoundaryDiagram"));
+    if (dialog->objectName() == QStringLiteral("heightDistrictDialog") && edges && edges->count() == 6 &&
+        ground && ground->text() == QStringLiteral("-500") && compare && show && results && diagram) {
+      QTest::mouseClick(diagram, Qt::LeftButton, Qt::NoModifier, QPoint(170, 27));
+      if (edges->item(2)->checkState() == Qt::Checked) compare->click();
+      int northRow = -1;
+      bool southCap = false;
+      for (int row = 0; row < results->rowCount(); ++row) {
+        const auto id = results->item(row, 0)->data(Qt::UserRole).toString().toStdString();
+        const auto surface = results->item(row, 3)->text();
+        if (id == northId && surface == QStringLiteral("北側斜線") && results->item(row, 2)->text() == QStringLiteral("+1100.00"))
+          northRow = row;
+        if (id == southId && surface == QStringLiteral("最高高さ")) southCap = true;
+      }
+      if (northRow >= 0 && southCap) {
+        results->selectRow(northRow);
+        if (!reviewDir.isEmpty()) dialog->grab().save(QDir(reviewDir).filePath(QStringLiteral("height-district-comparison.png")));
+        show->click();
+      }
+    }
+    accepted = dialog->result() == QDialog::Accepted;
+    if (!accepted) {
+      for (auto* label : dialog->findChildren<QLabel*>()) failure += QStringLiteral(" | ") + label->text();
+      dialog->reject();
+    }
+  });
+  edit->click();
+  QVERIFY2(accepted, qPrintable(failure));
+  QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{northId});
+  QCOMPARE(modeler.document().sequence(), sequence);
+  QVERIFY(f.vp->heightDistrictVisible());
+  QVERIFY(!f.vp->heightDistrictCapShape().IsNull());
+  QVERIFY(!f.vp->roadHeightPlaneShape().IsNull());
+  QVERIFY(!f.vp->neighborHeightBoundaryShape().IsNull());
+  auto* legend = f.window.findChild<QToolBar*>(QStringLiteral("heightDistrictLegend"));
+  QVERIFY(legend && legend->isVisible());
+  if (!reviewDir.isEmpty()) {
+    const QDir dir(reviewDir);
+    QVERIFY(legend->grab().save(dir.filePath(QStringLiteral("height-district-legend.png"))));
+    QVERIFY(f.vp->dumpImage(dir.filePath(QStringLiteral("height-district-3d.png"))));
+  }
+  legend->actions().back()->trigger();
+  QVERIFY(!legend->isVisible());
+  QVERIFY(!f.vp->heightDistrictVisible());
+  QVERIFY(f.vp->heightDistrictCapShape().IsNull());
+  QVERIFY(f.vp->roadHeightPlaneShape().IsNull());
+  QVERIFY(f.vp->neighborHeightBoundaryShape().IsNull());
+}
+
 void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
   Fixture f;
   QVERIFY(f.setUp(4000, 3000));

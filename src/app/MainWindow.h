@@ -99,7 +99,9 @@ class MainWindow : public QMainWindow, public ToolHost {
   void showSiteRoadDialog();
   void showSiteHeightConditionsDialog();
   void showRoadHeightPlaneDialog();
-  void showBoundaryHeightDialog(bool north);
+  enum class BoundaryHeightStudy { Neighbor, North, District };
+  void showBoundaryHeightDialog(BoundaryHeightStudy study);
+  void showHeightDistrictLegend();
   void showSiteGroundDialog();
   void showPermitWorkflow();
   // File > recent files (newest first, those still there; up to 10).

@@ -376,6 +376,14 @@ void PermitWorkflowPanel::readModelChecks(int stage) {
                        !hasBoundary ? Action::Boundary : !hasNorth ? Action::North : Action::NorthHeight});
       continue;
     }
+    if (stage == 10 && c.item == "横浜市の最高限高度地区") {
+      const auto rule = doc::yokohamaHeightDistrictRule(doc::siteHeightConditions(document_).district);
+      const bool needsNorth = rule && rule->northRiseMm && !document_.settings().siteNorth;
+      rows_.push_back({QString::fromStdString(c.item), QString::fromStdString(c.state), QString::fromStdString(c.details),
+                       needsNorth ? translated("真北を登録") : translated("高度地区の制限面を表示"),
+                       needsNorth ? Action::North : Action::HeightDistrict});
+      continue;
+    }
     if (stage == 9 && c.item == "適用ルート・地域") {  // docs/215: opens its dialog
       rows_.push_back({QString::fromStdString(c.item), QString::fromStdString(c.state), QString::fromStdString(c.details),
                        translated("適用ルート・地域を入力"), Action::EnergyRoute, c.attention});
