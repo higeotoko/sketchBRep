@@ -45,9 +45,11 @@ enum class Pen {
   Dimension,  // dimensions and their values
   Text,       // text notes
   Frame,      // the sheet's frame (thick)
-  TitleBlock  // the title block's lines and text
+  TitleBlock,  // the title block's lines and text
+  HeightLimit,  // section of the governing height envelope
+  HeightReview  // unconfirmed height envelope in a section
 };
-constexpr int kPenCount = 11;
+constexpr int kPenCount = 13;
 const char* penLayerName(Pen pen);  // layer names in DXF ("CUT", ...)
 
 struct Item {

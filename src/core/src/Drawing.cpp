@@ -65,6 +65,8 @@ const char* penLayerName(Pen pen) {
     case Pen::Text: return "TEXT";
     case Pen::Frame: return "FRAME";
     case Pen::TitleBlock: return "TITLE";
+    case Pen::HeightLimit: return "HEIGHT_LIMIT";
+    case Pen::HeightReview: return "HEIGHT_REVIEW";
   }
   return "0";
 }
@@ -82,6 +84,8 @@ double penWidth(Pen pen) {
     case Pen::Text: return 0.18;
     case Pen::Frame: return 0.7;
     case Pen::TitleBlock: return 0.25;
+    case Pen::HeightLimit: return 0.35;
+    case Pen::HeightReview: return 0.25;
   }
   return 0.18;
 }
@@ -89,6 +93,7 @@ double penWidth(Pen pen) {
 std::vector<double> penDashes(Pen pen) {
   switch (pen) {
     case Pen::Hidden: return {1.5, 0.75};
+    case Pen::HeightReview: return {2.0, 1.0};
     case Pen::Grid:
     case Pen::Level: return {8.0, 1.0, 0.5, 1.0};  // dash-dot
     default: return {};

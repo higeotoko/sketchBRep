@@ -166,6 +166,7 @@ struct MainWindow::CombinedHeightDraft {
   SiteContext context;
   doc::HeightLimitStudy study;
   std::uint64_t sequence;
+  std::optional<doc::HeightLimitEvidence> evidence = std::nullopt;
 };
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
@@ -2686,6 +2687,8 @@ void MainWindow::buildAiBridge() {
     const json a = args.empty() ? json::object() : json::parse(args);
     QString tilesMessage;
     doc::DrawingSetSpec spec = drawingSetSpecFor(modeler_.document(), a.value("tables_with_plan", false), &tilesMessage);
+    if (combinedHeightDraft_ && combinedHeightDraft_->sequence == modeler_.document().sequence() && combinedHeightDraft_->evidence)
+      spec.heightEvidence = &*combinedHeightDraft_->evidence;
     if (a.contains("scale")) spec.scale = a["scale"].get<double>();  // docs/250: e.g. 20 to look at corners
     const auto set = doc::drawingSet(modeler_.document(), spec);
     if (!set) throw std::runtime_error(set.error());
@@ -5923,7 +5926,9 @@ int MainWindow::saveDrawingSet(const QString& path, bool tablesWithPlan) {
     setStatus(tr("付近見取図の地図タイルを国土地理院から取っています..."));
     QApplication::processEvents();
   }
-  const doc::DrawingSetSpec spec = drawingSetSpecFor(modeler_.document(), tablesWithPlan, &tilesMessage);
+  doc::DrawingSetSpec spec = drawingSetSpecFor(modeler_.document(), tablesWithPlan, &tilesMessage);
+  if (combinedHeightDraft_ && combinedHeightDraft_->sequence == modeler_.document().sequence() && combinedHeightDraft_->evidence)
+    spec.heightEvidence = &*combinedHeightDraft_->evidence;
   const auto set = doc::drawingSet(modeler_.document(), spec);
   if (!set) {
     reportError(tr("図面一式を作れませんでした: %1").arg(userMessage(QString::fromStdString(set.error()))));
@@ -9078,6 +9083,113 @@ void MainWindow::showCombinedHeightDialog() {
         return;
       }
       savedStatus->setText(tr("照合結果と採用条件をCSVに保存しました。"));
+    });
+    auto* evidence = resultButtons->addButton(tr("根拠図・計算表…"), QDialogButtonBox::ActionRole);
+    evidence->setObjectName(QStringLiteral("showCombinedHeightEvidence"));
+    auto* fromSection = new QCheckBox(tr("有効な鉛直断面を使う"));
+    const auto& sections = document.settings().sections;
+    fromSection->setEnabled(std::any_of(sections.begin(), sections.end(), [](const auto& plane) {
+      return plane.active && std::hypot(plane.normal[0], plane.normal[1]) > 1e-8 && std::abs(plane.normal[2]) <= 1e-8;
+    }));
+    resultLayout->addWidget(fromSection);
+    connect(evidence, &QPushButton::clicked, &results, [&] {
+      if (table->currentRow() < 0 || document.sequence() != sequence) {
+        savedStatus->setText(tr("モデルが変わりました。再試算してください。"));
+        return;
+      }
+      auto report = doc::heightLimitEvidence(document, *study, *measured,
+          rows[static_cast<std::size_t>(table->currentRow())].id, fromSection->isChecked());
+      if (!report) {
+        savedStatus->setText(QString::fromStdString(report.error()));
+        return;
+      }
+
+      draw::SheetSpec sheetSpec;
+      sheetSpec.scale = report->scale;
+      sheetSpec.title.project = QSettings().value(QStringLiteral("drawing/project")).toString().toStdString();
+      if (sheetSpec.title.project.empty()) {
+        const auto outline = doc::projectOutline(document);
+        if (const auto it = outline.find("project_name"); it != outline.end()) sheetSpec.title.project = it->second;
+      }
+      sheetSpec.title.author = QSettings().value(QStringLiteral("drawing/author")).toString().toStdString();
+      sheetSpec.title.date = QDate::currentDate().toString(QStringLiteral("yyyy-MM-dd")).toStdString();
+      sheetSpec.title.drawing = report->section.spec.title;
+      auto sectionSheet = draw::layoutSheet(report->section, sheetSpec);
+      if (!sectionSheet) {
+        savedStatus->setText(QString::fromStdString(sectionSheet.error()));
+        return;
+      }
+      std::vector<draw::Sheet> pages{std::move(sectionSheet.value())};
+      for (const auto& page : report->tables) {
+        sheetSpec.title.drawing = page.title;
+        auto sheet = draw::tableSheet(page, sheetSpec);
+        if (!sheet) {
+          savedStatus->setText(QString::fromStdString(sheet.error()));
+          return;
+        }
+        pages.push_back(std::move(sheet.value()));
+      }
+      QDialog sheets(&results);
+      sheets.setObjectName(QStringLiteral("combinedHeightEvidenceDialog"));
+      sheets.setWindowTitle(tr("高さ制限の根拠図・計算表"));
+      auto* sheetLayout = new QVBoxLayout(&sheets);
+      auto* tabs = new QTabWidget;
+      tabs->setObjectName(QStringLiteral("combinedHeightEvidenceTabs"));
+      sheetLayout->addWidget(tabs, 1);
+      for (std::size_t i = 0; i < pages.size(); ++i) {
+        const QString caption = QString::fromStdString(pages[i].title);
+        auto* preview = new QLabel;
+        preview->setAlignment(Qt::AlignCenter);
+        const int index = tabs->addTab(preview, i == 0 ? tr("断面図") : QString::number(i + 1) + QStringLiteral("  ") +
+            (caption.startsWith(QStringLiteral("H-H")) ? tr("計算表") :
+             caption.contains(QStringLiteral("部材")) ? tr("部材照合") : tr("採用条件")));
+        tabs->setTabToolTip(index, caption);
+      }
+      const auto drawPage = [&](int index) {
+        if (index < 0) return;
+        auto* preview = qobject_cast<QLabel*>(tabs->widget(index));
+        QImage image(738, 460, QImage::Format_RGB32);
+        image.fill(QColor(112, 116, 122));
+        QPainter painter(&image);
+        renderSheet(painter, pages[static_cast<std::size_t>(index)], QRectF(0, 0, image.width(), image.height()));
+        painter.end();
+        preview->setPixmap(QPixmap::fromImage(image));
+      };
+      connect(tabs, &QTabWidget::currentChanged, &sheets, drawPage);
+      drawPage(0);
+      auto* sheetStatus = new QLabel;
+      sheetStatus->setWordWrap(true);
+      if (std::any_of(pages.begin(), pages.end(), [](const auto& page) { return !page.notes.empty(); }))
+        sheetStatus->setText(tr("図面の注意があります。用紙内の表示をご確認ください。"));
+      sheetLayout->addWidget(sheetStatus);
+      auto* actions = new QDialogButtonBox(QDialogButtonBox::Close);
+      auto* pdf = actions->addButton(tr("PDFに保存…"), QDialogButtonBox::ActionRole);
+      pdf->setObjectName(QStringLiteral("saveHeightEvidencePdf"));
+      auto* attach = actions->addButton(tr("図面一式に入れる"), QDialogButtonBox::ActionRole);
+      attach->setObjectName(QStringLiteral("attachHeightEvidence"));
+      sheetLayout->addWidget(actions);
+      connect(actions, &QDialogButtonBox::rejected, &sheets, &QDialog::reject);
+      connect(pdf, &QPushButton::clicked, &sheets, [&] {
+        QFileDialog destination(&sheets, tr("高さ制限の根拠図をPDFに保存"), QString(), tr("PDF (*.pdf)"));
+        destination.setObjectName(QStringLiteral("heightEvidencePdfDestination"));
+        destination.setAcceptMode(QFileDialog::AcceptSave);
+        destination.setDefaultSuffix(QStringLiteral("pdf"));
+        destination.selectFile(tr("高さ制限の根拠図.pdf"));
+        if (destination.exec() != QDialog::Accepted || destination.selectedFiles().isEmpty()) return;
+        const auto saved = writePdfPages(pages, destination.selectedFiles().front());
+        sheetStatus->setText(saved ? tr("断面図と計算表をPDFに保存しました。") : QString::fromStdString(saved.message()));
+      });
+      connect(attach, &QPushButton::clicked, &sheets, [&] {
+        if (!combinedHeightDraft_ || document.sequence() != sequence) {
+          sheetStatus->setText(tr("モデルが変わりました。再試算してください。"));
+          return;
+        }
+        combinedHeightDraft_->evidence = report.value();
+        sheetStatus->setText(tr("次の図面一式に断面図と計算表を追加します。"));
+        savedStatus->setText(sheetStatus->text());
+      });
+      sheets.resize(780, 555);
+      sheets.exec();
     });
     auto* back = resultButtons->addButton(tr("条件に戻る"), QDialogButtonBox::RejectRole);
     auto* locate = resultButtons->addButton(tr("選んだ部材を3Dで見る"), QDialogButtonBox::ActionRole);

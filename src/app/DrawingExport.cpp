@@ -59,6 +59,8 @@ QColor penColor(draw::Pen pen) {
     case draw::Pen::Grid:
     case draw::Pen::GridLabel: return QColor(160, 30, 30);
     case draw::Pen::Level: return QColor(30, 60, 160);
+    case draw::Pen::HeightLimit: return QColor(26, 84, 170);
+    case draw::Pen::HeightReview: return QColor(171, 85, 22);
     default: return Qt::black;
   }
 }

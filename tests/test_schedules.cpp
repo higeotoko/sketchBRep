@@ -2871,6 +2871,42 @@ TEST_F(Schedules, CombinedHeightComparisonMeasuresTheApplicablePartAndReportsOpe
   EXPECT_EQ(modeler.document().sequence(), sequence);
 }
 
+TEST_F(Schedules, CombinedHeightEvidenceKeepsSectionStationsAndDrawingSetInSync) {
+  const auto site = ok("create_polygon", {{"points", {{0,0,0},{20000,0,0},{20000,30000,0},{0,30000,0}}}})["id"];
+  ok("set_site_boundary", {{"outline", site}, {"source", "test site"}});
+  ok("set_site_road", {{"start", {0,0,0}}, {"end", {20000,0,0}}, {"source", "test road"}, {"width_m", 6}});
+  const auto part = ok("create_box", {{"origin", {10000,4500,0}}, {"width",1000}, {"depth",1000},
+                                     {"height",12000}, {"name", "検算屋根"}})["id"].get<std::string>();
+  sbr::doc::HeightLimitStudy study;
+  study.road = sbr::doc::HeightLimitStudy::Road{6000, 1, {6000, 14000}};
+  const auto comparison = sbr::doc::compareCombinedHeight(modeler.document(), study, {part});
+  ASSERT_TRUE(comparison) << comparison.error();
+  const auto evidence = sbr::doc::heightLimitEvidence(modeler.document(), study, *comparison, part, false);
+  ASSERT_TRUE(evidence) << evidence.error();
+  ASSERT_EQ(evidence->tables.size(), 3);
+  ASSERT_EQ(evidence->tables[0].rows.size(), 1);
+  EXPECT_EQ(evidence->tables[0].rows[0], (std::vector<std::string>{"P1", "5.000", "道路斜線", "11.000", "12.000", "1000.0"}));
+  ASSERT_EQ(evidence->tables[1].rows.size(), 1);
+  EXPECT_EQ(evidence->tables[1].rows[0][2], "1500.00");
+  EXPECT_TRUE(std::any_of(evidence->section.items.begin(), evidence->section.items.end(), [](const auto& item) {
+    return item.pen == sbr::draw::Pen::HeightLimit && item.points.size() == 2;
+  }));
+  EXPECT_FALSE(sbr::doc::heightLimitEvidence(modeler.document(), study, *comparison, part, true));
+
+  sbr::doc::DrawingSetSpec spec;
+  const auto standard = sbr::doc::drawingSet(modeler.document(), spec);
+  ASSERT_TRUE(standard) << standard.error();
+  spec.heightEvidence = &*evidence;
+  const auto included = sbr::doc::drawingSet(modeler.document(), spec);
+  ASSERT_TRUE(included) << included.error();
+  ASSERT_EQ(included->sheets.size(), standard->sheets.size() + 4);
+  EXPECT_EQ(included->names[included->names.size() - 4], "H-H 高さ制限断面図");
+  EXPECT_EQ(included->names.back(), "高さ制限 採用条件");
+  EXPECT_TRUE(std::any_of(included->sheets.front().items.begin(), included->sheets.front().items.end(), [](const auto& item) {
+    return item.text == "H-H 高さ制限計算表";
+  }));
+}
+
 TEST_F(Schedules, YokohamaHeightDistrictPreviewAndPartComparisonShareTheLimit) {
   const auto site = ok("create_polygon", {{"points", {{0,0,0},{20000,0,0},{20000,30000,0},{0,30000,0}}}})["id"];
   ok("set_site_boundary", {{"outline", site}, {"source", "架空の測量図"}});

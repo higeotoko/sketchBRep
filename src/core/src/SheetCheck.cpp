@@ -267,6 +267,8 @@ const char* penName(Pen pen) {
     case Pen::Text: return "注記";
     case Pen::Frame: return "枠";
     case Pen::TitleBlock: return "表題欄";
+    case Pen::HeightLimit: return "高さ制限線";
+    case Pen::HeightReview: return "高さ未確認";
   }
   return "";
 }

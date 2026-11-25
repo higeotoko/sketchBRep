@@ -382,6 +382,15 @@ Result<CombinedHeightComparison> compareCombinedHeight(
     const Document& document, const HeightLimitStudy& study, const std::vector<ObjectId>& ids);
 std::string combinedHeightCsv(const Document& document, const HeightLimitStudy& study,
                               const CombinedHeightComparison& comparison);
+
+struct HeightLimitEvidence {
+  draw::View section;
+  std::vector<draw::Table> tables;
+  double scale = 100.0;
+};
+Result<HeightLimitEvidence> heightLimitEvidence(
+    const Document& document, const HeightLimitStudy& study, const CombinedHeightComparison& comparison,
+    const ObjectId& selected, bool useActiveSection);
 std::vector<PermitCheck> permitElevationChecks(const Document& document);
 // Stage 11 (一式の突合せ, docs/202): per stage read from the model (2, 3, 5-10) how many rows are
 // left to look at, marks given by hand to unlike openings, rooms of a storey with one name.
@@ -551,6 +560,7 @@ struct DrawingSetSpec {
   // docs/233: the vicinity map's picture, made by the app from vicinityTiles() (VicinityMap.h). With a
   // map position given and no picture (the command line, AI), the sheet says where the map goes.
   std::optional<VicinityPicture> vicinity;
+  const HeightLimitEvidence* heightEvidence = nullptr;  // optional evidence for this export
 };
 struct DrawingSet {
   std::vector<draw::Sheet> sheets;

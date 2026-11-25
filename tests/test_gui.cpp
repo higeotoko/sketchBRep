@@ -1681,7 +1681,9 @@ void GuiPhase1::combinedHeightShowsLowestSurface() {
   QTemporaryDir csvDir;
   QVERIFY(csvDir.isValid());
   const QString csvPath = csvDir.filePath(QStringLiteral("combined-height.csv"));
-  bool accepted = false, verifiedRows = false;
+  const QString standalone = csvDir.filePath(QStringLiteral("height-evidence.pdf"));
+  const QString included = csvDir.filePath(QStringLiteral("drawing-set-with-height-evidence.pdf"));
+  bool accepted = false, verifiedRows = false, evidenceShown = false;
   QString failure;
   QTimer::singleShot(0, [&] {
     auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
@@ -1717,7 +1719,8 @@ void GuiPhase1::combinedHeightShowsLowestSurface() {
           auto* table = result->findChild<QTableWidget*>(QStringLiteral("combinedHeightParts"));
           auto* locate = result->findChild<QPushButton*>(QStringLiteral("showCombinedHeightPart"));
           auto* save = result->findChild<QPushButton*>(QStringLiteral("saveCombinedHeightCsv"));
-          if (table && locate && save && table->rowCount() == 2 &&
+          auto* evidence = result->findChild<QPushButton*>(QStringLiteral("showCombinedHeightEvidence"));
+          if (table && locate && save && evidence && table->rowCount() == 2 &&
               table->item(0, 2)->text() == QStringLiteral("+120.00") &&
               table->item(0, 3)->text() == QStringLiteral("道路斜線") &&
               table->item(1, 2)->text() == QStringLiteral("-80.00") &&
@@ -1735,6 +1738,28 @@ void GuiPhase1::combinedHeightShowsLowestSurface() {
             QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs, nativeDisabled);
             if (!reviewDir.isEmpty()) result->grab().save(QDir(reviewDir).filePath(QStringLiteral("combined-height-parts.png")));
             table->selectRow(1);
+            QTimer::singleShot(0, result, [&, result] {
+              auto* pages = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+              if (!pages || pages == result) return;
+              auto* tabs = pages->findChild<QTabWidget*>(QStringLiteral("combinedHeightEvidenceTabs"));
+              auto* pdf = pages->findChild<QPushButton*>(QStringLiteral("saveHeightEvidencePdf"));
+              auto* attach = pages->findChild<QPushButton*>(QStringLiteral("attachHeightEvidence"));
+              evidenceShown = tabs && tabs->count() == 4 && pdf && attach;
+              if (evidenceShown) {
+                QTimer::singleShot(0, pages, [&, pages] {
+                  auto* destination = pages->findChild<QFileDialog*>(QStringLiteral("heightEvidencePdfDestination"));
+                  if (!destination) return;
+                  destination->selectFile(standalone);
+                  QMetaObject::invokeMethod(destination, "accept", Qt::QueuedConnection);
+                });
+                QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
+                pdf->click();
+                QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs, nativeDisabled);
+                attach->click();
+              }
+              pages->reject();
+            });
+            evidence->click();
             locate->click();
           } else {
             result->reject();
@@ -1752,6 +1777,16 @@ void GuiPhase1::combinedHeightShowsLowestSurface() {
   edit->click();
   QVERIFY2(accepted, qPrintable(failure));
   QVERIFY(verifiedRows);
+  QVERIFY(evidenceShown);
+  QVERIFY(QFileInfo(standalone).size() > 1000);
+  const int integratedPages = f.window.saveDrawingSet(included);
+  QVERIFY(integratedPages > 4);
+  QVERIFY(QFileInfo(included).size() > QFileInfo(standalone).size());
+  if (!reviewDir.isEmpty()) {
+    const QDir dir(reviewDir);
+    QVERIFY(QFile::copy(standalone, dir.filePath(QStringLiteral("height-evidence.pdf"))));
+    QVERIFY(QFile::copy(included, dir.filePath(QStringLiteral("drawing-set-with-height-evidence.pdf"))));
+  }
   QFile csv(csvPath);
   QVERIFY(csv.open(QIODevice::ReadOnly));
   const auto csvText = QString::fromUtf8(csv.readAll());
@@ -1779,6 +1814,7 @@ void GuiPhase1::combinedHeightShowsLowestSurface() {
 
   QVERIFY(call("create_box", {{"origin", {1000,1000,0}}, {"width",500}, {"depth",500}, {"height",500}})["ok"].get<bool>());
   f.vp->syncNow();
+  QCOMPARE(f.window.saveDrawingSet(csvDir.filePath(QStringLiteral("drawing-set-after-edit.pdf"))), integratedPages - 4);
   const auto afterEdit = checks->findItems(QStringLiteral("高さ制限の合成"), Qt::MatchExactly);
   QCOMPARE(afterEdit.size(), 1);
   checks->setCurrentItem(afterEdit.front());

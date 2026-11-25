@@ -110,11 +110,13 @@ JwPen jwPen(Pen pen) {
     case Pen::Text: return {2, 1, 8};
     case Pen::Frame: return {6, 1, 9};
     case Pen::TitleBlock: return {3, 1, 10};
+    case Pen::HeightLimit: return {4, 1, 11};
+    case Pen::HeightReview: return {3, 2, 12};
   }
   return {2, 1, 1};
 }
 const char* const kLayerNames[] = {"断面", "見え掛かり", "隠れ線", "断面塗り", "通り芯", "通り芯符号",
-                                   "レベル", "寸法", "文字", "図面枠", "表題欄"};
+                                   "レベル", "寸法", "文字", "図面枠", "表題欄", "高さ制限", "高さ未確認"};
 
 int paperCode(const std::string& name) {
   if (name == "A0") return 0;
@@ -150,7 +152,7 @@ void header(Archive& a, const Sheet& sheet) {
   a.u32(0);            // print rotation / reference point
   a.u32(0); a.f64(15.0); a.f64(5.0); a.f64(5.0); a.f64(0); a.f64(0);  // scale marks (off)
   for (int g = 0; g < 16; ++g) {
-    for (int l = 0; l < 16; ++l) a.str(g == 0 && l < 11 ? kLayerNames[l] : "");
+    for (int l = 0; l < 16; ++l) a.str(g == 0 && l < kPenCount ? kLayerNames[l] : "");
   }
   for (int g = 0; g < 16; ++g) a.str(g == 0 ? sheet.title : "");
   a.f64(0); a.f64(36.0); a.u32(0); a.f64(0);  // shadow: height, latitude, 9-15h, wall

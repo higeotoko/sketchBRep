@@ -3073,15 +3073,25 @@ Result<CombinedHeightComparison> compareCombinedHeight(
   }
 }
 
-std::string combinedHeightCsv(const Document& document, const HeightLimitStudy& study,
-                              const CombinedHeightComparison& comparison) {
-  const auto value = [](double n) { return number(n, 6); };
-  std::string basis;
-  if (study.neighbor || study.northRiseMm || study.district) basis = "地盤Z " + value(study.groundZMm) + " mm";
-  const auto append = [&](const std::string& entry) {
-    if (!basis.empty()) basis += " ／ ";
-    basis += entry;
+namespace {
+
+const char* heightLimitSourceName(HeightLimitSource source) {
+  static const std::array<const char*, 4> names{"道路斜線", "隣地斜線", "北側斜線", "高度地区"};
+  return names[static_cast<std::size_t>(source)];
+}
+
+std::vector<std::string> combinedHeightBasis(const Document& document, const HeightLimitStudy& study, bool compact = false) {
+  const auto value = [compact](double n) {
+    auto text = number(n, 6);
+    if (compact && text.find('.') != std::string::npos) {
+      text.erase(text.find_last_not_of('0') + 1);
+      if (text.back() == '.') text.pop_back();
+    }
+    return text;
   };
+  std::vector<std::string> basis;
+  if (study.neighbor || study.northRiseMm || study.district) basis.push_back("地盤Z " + value(study.groundZMm) + " mm");
+  const auto append = [&](std::string entry) { basis.push_back(std::move(entry)); };
   if (study.road) {
     const auto& road = *study.road;
     append("道路斜線　境界Z " + value(road.edgeHeightMm) + " mm、勾配 " + value(road.slope) +
@@ -3091,7 +3101,13 @@ std::string combinedHeightCsv(const Document& document, const HeightLimitStudy& 
   if (study.neighbor)
     append("隣地斜線　立上り " + value(study.neighbor->riseMm) + " mm、勾配 " + value(study.neighbor->slope));
   if (study.northRiseMm) append("北側斜線　立上り " + value(*study.northRiseMm) + " mm");
-  if (study.district) append("高度地区 " + siteHeightConditions(document).district);
+  if (study.district) {
+    const auto districtCode = siteHeightConditions(document).district;
+    const auto& districts = heightDistrictChoices();
+    const auto label = std::find_if(districts.begin(), districts.end(),
+                                  [&](const auto& entry) { return entry.first == districtCode; });
+    append("高度地区　" + (compact && label != districts.end() ? label->second : districtCode));
+  }
   const auto& settings = document.settings();
   const auto district = study.district ? yokohamaHeightDistrictRule(siteHeightConditions(document).district) : std::nullopt;
   if (study.northRiseMm || (district && district->northRiseMm)) {
@@ -3106,7 +3122,16 @@ std::string combinedHeightCsv(const Document& document, const HeightLimitStudy& 
     append("確認済みの隣地辺 XY " + xy(edge[0]) + "–" + xy(edge[1]) + " mm");
   }
 
-  static const std::array<const char*, 4> names{"道路斜線", "隣地斜線", "北側斜線", "高度地区"};
+  return basis;
+}
+
+}  // namespace
+
+std::string combinedHeightCsv(const Document& document, const HeightLimitStudy& study,
+                              const CombinedHeightComparison& comparison) {
+  std::string basis;
+  for (const auto& entry : combinedHeightBasis(document, study))
+    basis += (basis.empty() ? "" : " ／ ") + entry;
   Csv csv;
   csv.line({"部材", "部材ID", "照合結果", "最大鉛直差（mm）", "差を決めた制限", "確認範囲",
             "照合面", "法規適合", "採用条件"});
@@ -3116,12 +3141,312 @@ std::string combinedHeightCsv(const Document& document, const HeightLimitStudy& 
     const auto first = name.find_first_not_of(" \t\r\n");
     if (first != std::string::npos && std::string_view("=+-@").find(name[first]) != std::string_view::npos)
       name.insert(0, "'");
-    csv.line({name, row.id, row.state, row.excessMm ? value(*row.excessMm) : "",
-              row.controllingSource ? names[static_cast<std::size_t>(*row.controllingSource)] : "",
+    csv.line({name, row.id, row.state, row.excessMm ? number(*row.excessMm, 6) : "",
+              row.controllingSource ? heightLimitSourceName(*row.controllingSource) : "",
               row.needsReview ? "未確認の範囲あり" : "選んだ条件",
               comparison.approximate ? "隣地斜線を含む近似面" : "合成面", "未評価", basis});
   }
   return csv.out.str();
+}
+
+namespace {
+
+// Intersect a polygon boundary with the vertical section plane and project into section U, Z.
+std::vector<gp_Pnt2d> heightCutPoints(const std::vector<gp_Pnt>& ring, const gp_Trsf& toSection) {
+  std::vector<gp_Pnt2d> points;
+  const auto add = [&](const gp_Pnt& p) {
+    const gp_Pnt2d point(p.X(), p.Y());
+    if (std::none_of(points.begin(), points.end(), [&](const auto& other) {
+          return other.Distance(point) <= tolerance::kLinear;
+        })) points.push_back(point);
+  };
+  for (std::size_t i = 0; i < ring.size(); ++i) {
+    const gp_Pnt a = ring[i].Transformed(toSection);
+    const gp_Pnt b = ring[(i + 1) % ring.size()].Transformed(toSection);
+    if (std::abs(a.Z()) <= tolerance::kLinear) add(a);
+    if ((a.Z() < -tolerance::kLinear && b.Z() > tolerance::kLinear) ||
+        (b.Z() < -tolerance::kLinear && a.Z() > tolerance::kLinear))
+      add(a.Translated(gp_Vec(a, b) * (a.Z() / (a.Z() - b.Z()))));
+  }
+  std::sort(points.begin(), points.end(), [](const auto& a, const auto& b) { return a.X() < b.X(); });
+  return points;
+}
+
+struct HeightCutSpan {
+  gp_Pnt2d a, b;
+  std::optional<HeightLimitSource> source;
+  double at(double u) const { return a.Y() + (b.Y() - a.Y()) * (u - a.X()) / (b.X() - a.X()); }
+};
+
+}  // namespace
+
+Result<HeightLimitEvidence> heightLimitEvidence(
+    const Document& document, const HeightLimitStudy& study, const CombinedHeightComparison& comparison,
+    const ObjectId& selected, bool useActiveSection) {
+  using R = Result<HeightLimitEvidence>;
+  const auto& site = document.settings().siteBoundary;
+  const auto* target = document.find(selected);
+  if (!site || !target) return R::failure("敷地と断面を通す部材を指定してください");
+  const auto info = document.siteBoundaryGeometry(site->outline);
+  if (!info) return R::failure(info.error());
+  const auto footprint = heightSiteFootprint(*info);
+  if (!footprint) return R::failure(footprint.error());
+  const auto bounds = document.worldBounds(*target);
+  if (bounds.IsVoid() || bounds.IsOpen()) return R::failure("断面を通す部材の位置を測れません");
+  const auto centre = bounds.CornerMin().XYZ().Added(bounds.CornerMax().XYZ()).Divided(2);
+  gp_Pnt origin(centre.X(), centre.Y(), 0);
+  const auto road = roadHeightReference(document);
+  gp_Dir toward(1, 0, 0);
+  if (road) toward = road->inward.Crossed(gp::DZ());
+  if (useActiveSection) {
+    const auto& sections = document.settings().sections;
+    const auto active = std::find_if(sections.rbegin(), sections.rend(), [](const auto& section) {
+      return section.active && std::hypot(section.normal[0], section.normal[1]) > 1e-8 &&
+             std::abs(section.normal[2]) <= 1e-8;
+    });
+    if (active == sections.rend()) return R::failure("有効な鉛直断面がありません");
+    origin = gp_Pnt(active->origin[0], active->origin[1], 0);
+    toward = gp_Dir(active->normal[0], active->normal[1], 0);
+  }
+  auto spec = draw::sectionView(origin, toward);
+  spec.grid = false;
+  spec.levels = false;
+  spec.title = "H-H 高さ制限断面図";
+  gp_Trsf toSection;
+  toSection.SetTransformation(spec.frame);
+  const auto fromSection = toSection.Inverted();
+  const auto world = [&](double u, double z) { return gp_Pnt(u, z, 0).Transformed(fromSection); };
+  const auto siteCuts = heightCutPoints(info->vertices, toSection);
+  std::vector<std::pair<double, double>> siteSpans;
+  for (std::size_t i = 1; i < siteCuts.size(); ++i) {
+    const double a = siteCuts[i - 1].X(), b = siteCuts[i].X();
+    if (b - a <= tolerance::kLinear) continue;
+    auto point = world((a + b) / 2, 0);
+    point.SetZ(info->vertices.front().Z());
+    const auto state = BRepClass_FaceClassifier(*footprint, point, tolerance::kLinear).State();
+    if (state == TopAbs_IN || state == TopAbs_ON) siteSpans.emplace_back(a, b);
+  }
+  if (siteSpans.empty()) return R::failure("敷地を横切る断面を選んでください");
+
+  try {
+    auto made = draw::makeView(document, spec);
+    if (!made) return R::failure(made.error());
+    HeightLimitEvidence evidence{std::move(made.value()), {}};
+    auto& section = evidence.section;
+    const auto line = [&](draw::Pen pen, double u0, double z0, double u1, double z1) {
+      draw::Item item;
+      item.pen = pen;
+      item.points = {gp_Pnt2d(u0, z0), gp_Pnt2d(u1, z1)};
+      section.items.push_back(std::move(item));
+      section.minU = std::min({section.minU, u0, u1});
+      section.maxU = std::max({section.maxU, u0, u1});
+      section.minV = std::min({section.minV, z0, z1});
+      section.maxV = std::max({section.maxV, z0, z1});
+    };
+    const auto label = [&](double u, double z, std::string text, int align = 1) {
+      draw::Item item;
+      item.kind = draw::Item::Kind::Text;
+      item.pen = draw::Pen::Text;
+      item.points = {gp_Pnt2d(u, z)};
+      item.text = std::move(text);
+      item.height = 2.6;
+      item.hAlign = align;
+      section.items.push_back(std::move(item));
+      section.minV = std::min(section.minV, z);
+      section.maxV = std::max(section.maxV, z);
+    };
+
+    std::optional<double> ground;
+    if (study.neighbor || study.northRiseMm || study.district) ground = study.groundZMm;
+    else for (const auto& level : document.settings().levels) if (level.name == "GL") ground = level.elevation;
+    const double datum = ground.value_or(info->vertices.front().Z());
+    const auto zText = [](double z) { return number(z / 1000, 3); };
+    for (const auto& [a, b] : siteSpans) {
+      line(draw::Pen::Level, a, datum, b, datum);
+      for (const double u : {a, b}) {
+        line(draw::Pen::Dimension, u, datum - 600, u, datum + 900);
+        label(u, datum + 1000, "敷地境界");
+      }
+    }
+    label(siteSpans.back().second, datum - 850, (ground ? "地盤Z " : "敷地輪郭Z ") + zText(datum) + " m", 2);
+
+    std::optional<double> roadU;
+    if (road) {
+      const auto edge = document.siteRoadEdge(*info);
+      const auto crossing = heightCutPoints({(*edge)[0], (*edge)[1]}, toSection);
+      const double slope = gp_Vec(road->inward).Dot(gp_Vec(spec.frame.XDirection()));
+      const double width = study.road ? study.road->range.roadWidthMm : site->road->widthMm;
+      if (crossing.size() == 1 && std::abs(slope) >= 0.01) {
+        roadU = crossing.front().X();
+        if (width > 0) {
+          const double far = *roadU - width / slope;
+          const double roadLineZ = datum - 1650;
+          line(draw::Pen::Dimension, far, roadLineZ, *roadU, roadLineZ);
+          line(draw::Pen::Dimension, far, roadLineZ - 220, far, roadLineZ + 220);
+          line(draw::Pen::Dimension, *roadU, roadLineZ - 220, *roadU, roadLineZ + 220);
+          label((far + *roadU) / 2, roadLineZ + 240, "道路（幅員 " + zText(width) + " m）");
+        }
+      }
+    }
+
+    std::vector<HeightCutSpan> spans;
+    const auto intersect = [&](const TopoDS_Shape& shape, std::optional<HeightLimitSource> source) {
+      for (TopExp_Explorer faces(shape, TopAbs_FACE); faces.More(); faces.Next()) {
+        const auto face = TopoDS::Face(faces.Current());
+        std::vector<gp_Pnt> ring;
+        for (BRepTools_WireExplorer edge(BRepTools::OuterWire(face), face); edge.More(); edge.Next())
+          ring.push_back(BRep_Tool::Pnt(edge.CurrentVertex()));
+        const auto cut = heightCutPoints(ring, toSection);
+        if (cut.size() > 1 && cut.back().X() - cut.front().X() > tolerance::kLinear)
+          spans.push_back({cut.front(), cut.back(), source});
+      }
+    };
+    for (std::size_t i = 0; i < comparison.preview.surfaces.size(); ++i)
+      intersect(comparison.preview.surfaces[i], static_cast<HeightLimitSource>(i));
+    intersect(comparison.preview.unconfirmed, std::nullopt);
+
+    std::vector<double> breaks;
+    for (const auto& span : spans) {
+      breaks.push_back(span.a.X());
+      breaks.push_back(span.b.X());
+    }
+    for (std::size_t i = 0; i < spans.size(); ++i) {
+      const auto& a = spans[i];
+      if (!a.source) continue;
+      for (std::size_t j = i + 1; j < spans.size(); ++j) {
+        const auto& b = spans[j];
+        if (!b.source) continue;
+        const double left = std::max(a.a.X(), b.a.X()), right = std::min(a.b.X(), b.b.X());
+        if (right - left <= tolerance::kLinear) continue;
+        const double d0 = a.at(left) - b.at(left), d1 = a.at(right) - b.at(right);
+        if ((d0 < -tolerance::kLinear && d1 > tolerance::kLinear) ||
+            (d1 < -tolerance::kLinear && d0 > tolerance::kLinear))
+          breaks.push_back(left + (right - left) * d0 / (d0 - d1));
+      }
+    }
+    std::sort(breaks.begin(), breaks.end());
+    std::vector<HeightCutSpan> outline;
+    for (std::size_t i = 1; i < breaks.size(); ++i) {
+      const double left = breaks[i - 1], right = breaks[i];
+      if (right - left <= tolerance::kLinear) continue;
+      const double mid = (left + right) / 2;
+      const HeightCutSpan* lowest = nullptr;
+      for (const auto& span : spans) {
+        if (mid < span.a.X() || mid > span.b.X()) continue;
+        if (!span.source) { lowest = &span; break; }
+        if (!lowest || span.at(mid) < lowest->at(mid)) lowest = &span;
+      }
+      if (!lowest) continue;
+      const auto z = [&](double u) { return lowest->source ? lowest->at(u) : datum - 900; };
+      outline.push_back({gp_Pnt2d(left, z(left)), gp_Pnt2d(right, z(right)), lowest->source});
+    }
+    for (const auto& span : outline)
+      line(span.source ? draw::Pen::HeightLimit : draw::Pen::HeightReview,
+           span.a.X(), span.a.Y(), span.b.X(), span.b.Y());
+
+    std::vector<PartShape> parts;
+    for (const auto& row : comparison.rows)
+      if (const auto* object = document.find(row.id)) {
+        const auto shape = document.worldShape(*object);
+        const auto box = geom::exactBounds(shape);
+        if (!shape.IsNull() && !box.IsVoid() && !box.IsOpen()) parts.push_back({object, shape, box});
+      }
+    double rayLow = datum - 1;
+    for (const auto& part : parts) rayLow = std::min(rayLow, part.box.CornerMin().Z() - 1);
+    draw::Table stations;
+    stations.title = "H-H 高さ制限計算表";
+    stations.headers = {"測点", "断面距離 (m)", "制限・状態", "制限Z (m)", "部材Z (m)", "鉛直差 (mm)"};
+    const double distanceOrigin = roadU.value_or(siteSpans.front().first);
+    const double anchorU = gp_Pnt(centre).Transformed(toSection).X();
+    const double spacing = std::max(600.0, (section.maxU - section.minU) / 30);
+    const auto topAt = [&](double u) {
+      const auto point = world(u, 0);
+      return highestOver(parts, point.X(), point.Y(), rayLow);
+    };
+    double previous = -std::numeric_limits<double>::infinity();
+    for (std::size_t i = 0; i < outline.size() && stations.rows.size() < 16;) {
+      std::size_t end = i + 1;
+      while (end < outline.size() && outline[end].source == outline[i].source &&
+             outline[end - 1].b.Distance(outline[end].a) <= tolerance::kLinear) ++end;
+      const double l = outline[i].a.X(), r = outline[end - 1].b.X();
+      double u = l < anchorU && anchorU < r ? anchorU : (l + r) / 2;
+      auto top = topAt(u);
+      if (!top) {
+        for (const auto& part : parts) {
+          const auto mid = part.box.CornerMin().XYZ().Added(part.box.CornerMax().XYZ()).Divided(2);
+          const double candidate = gp_Pnt(mid).Transformed(toSection).X();
+          if (candidate <= l || candidate >= r || candidate - previous < spacing) continue;
+          const auto hit = topAt(candidate);
+          if (!hit) continue;
+          u = candidate;
+          top = hit;
+          break;
+        }
+      }
+      const auto sample = std::find_if(outline.begin() + i, outline.begin() + end,
+                                       [&](const auto& run) { return u >= run.a.X() && u <= run.b.X(); });
+      i = end;
+      if (sample == outline.end() || u - previous < spacing) continue;
+      previous = u;
+      const auto id = "P" + std::to_string(stations.rows.size() + 1);
+      const double limitZ = sample->at(u);
+      line(draw::Pen::Dimension, u, datum - 280, u, datum + 130);
+      label(u, datum - 850, id);
+      stations.rows.push_back({id, zText(u - distanceOrigin),
+          sample->source ? heightLimitSourceName(*sample->source) : "要確認",
+          sample->source ? zText(limitZ) : "—", top ? zText(top->first) : "—",
+          sample->source && top ? number(top->first - limitZ, 1) : "—"});
+    }
+    if (stations.rows.empty()) stations.rows.push_back({"—", "—", "断面内に試算面なし", "—", "—", "—"});
+    stations.notes = {roadU ? "断面距離の原点は道路側の敷地境界。右向きを正とする。"
+                            : "断面距離の原点は左側の敷地境界。右向きを正とする。",
+                      "部材Zは測点直上で照合対象部材の形状に当たる最高点。正の差は超過。法規適合は未評価。"};
+    if (comparison.approximate) stations.notes.push_back("隣地斜線を含む近似面で算定。");
+    section.calculationNotes = {"青実線：合成した制限線　橙破線：未確認範囲　測点Pの高さ・差はH-H 高さ制限計算表",
+                                "地盤は採用した参照高さ。道路は幅員の断面投影を示す。法規適合は未評価。"};
+    evidence.tables.push_back(std::move(stations));
+
+    constexpr std::size_t rowsPerSheet = 22;
+    for (std::size_t start = 0; start < comparison.rows.size(); start += rowsPerSheet) {
+      draw::Table partsTable;
+      partsTable.title = "高さ制限 部材照合表";
+      if (comparison.rows.size() > rowsPerSheet) partsTable.title += " " + std::to_string(1 + start / rowsPerSheet);
+      partsTable.headers = {"部材", "結果", "最大鉛直差 (mm)", "差を決めた制限", "確認範囲"};
+      for (std::size_t i = start; i < std::min(start + rowsPerSheet, comparison.rows.size()); ++i) {
+        const auto& row = comparison.rows[i];
+        partsTable.rows.push_back({row.name, row.state, row.excessMm ? number(*row.excessMm, 2) : "—",
+            row.controllingSource ? heightLimitSourceName(*row.controllingSource) : "—",
+            row.needsReview ? "確認済み範囲の値" : "選択した条件"});
+      }
+      partsTable.notes = {"部材表の値は部材全体の照合。H-H断面の測点の差は高さ制限計算表。法規適合は未評価。"};
+      if (comparison.approximate) partsTable.notes.push_back("隣地斜線を含む近似面で算定。");
+      evidence.tables.push_back(std::move(partsTable));
+    }
+    const auto basis = combinedHeightBasis(document, study, true);
+    for (std::size_t start = 0; start < basis.size(); start += rowsPerSheet) {
+      draw::Table conditionTable;
+      conditionTable.title = "高さ制限 採用条件";
+      if (basis.size() > rowsPerSheet) conditionTable.title += " " + std::to_string(1 + start / rowsPerSheet);
+      conditionTable.headers = {"項目", "採用値"};
+      for (std::size_t i = start; i < std::min(start + rowsPerSheet, basis.size()); ++i) {
+        const auto split = basis[i].find("　");
+        const auto space = basis[i].find(' ');
+        const auto cut = std::min(split, space);
+        conditionTable.rows.push_back({basis[i].substr(0, cut),
+            cut == std::string::npos ? "—" : basis[i].substr(cut + (cut == split ? 3 : 1))});
+      }
+      conditionTable.notes = {"入力条件に基づく試算。法規適合は未評価。"};
+      evidence.tables.push_back(std::move(conditionTable));
+    }
+    const double requiredScale = std::max((section.maxU - section.minU) / 360, (section.maxV - section.minV) / 185);
+    for (const double scale : {100.0, 200.0, 300.0, 500.0, 1000.0}) {
+      evidence.scale = scale;
+      if (scale >= requiredScale) break;
+    }
+    return evidence;
+  } catch (const Standard_Failure&) {
+    return R::failure("高さ制限の根拠図を作れません");
+  }
 }
 
 std::vector<PermitCheck> permitElevationChecks(const Document& document) {
@@ -5047,6 +5372,13 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
     Planned p{view.spec.title, std::nullopt, std::nullopt, {}, std::move(view), scale};
     planned.insert(planned.begin() + 1, std::move(p));
   }
+  if (spec.heightEvidence) {
+    const auto& evidence = *spec.heightEvidence;
+    planned.push_back({evidence.section.spec.title, std::nullopt, std::nullopt, {},
+                       evidence.section, std::max(spec.scale, evidence.scale)});
+    for (const auto& table : evidence.tables)
+      planned.push_back({table.title, std::nullopt, table, {}});
+  }
   DrawingSet out;
   std::vector<draw::Sheet> sheets;
   std::vector<std::string> names;
@@ -5126,10 +5458,17 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
       viewSpec.hatchScale = viewSpec.insulation ? 0.0 : spec.scale;  // docs/173 (docs/216: not under the insulation marks)
       viewSpec.paperScale = spec.scale;  // docs/219
       // Plans: where the sections are cut, with their sheet numbers.
-      if (viewSpec.kind == draw::ViewKind::Plan)
+      if (viewSpec.kind == draw::ViewKind::Plan) {
         for (const Cut& c : cuts)
           for (std::size_t k = 0; k < names.size(); ++k)
             if (names[k] == c.name) viewSpec.cutMarks.push_back({c.point, c.toward, c.label, number(k + 2)});
+        if (spec.heightEvidence) {
+          const auto& section = spec.heightEvidence->section.spec;
+          for (std::size_t k = 0; k < names.size(); ++k)
+            if (names[k] == section.title)
+              viewSpec.cutMarks.push_back({section.frame.Location(), section.frame.Direction(), "H", number(k + 2)});
+        }
+      }
       const auto view = draw::makeView(document, viewSpec);
       if (view) {
         draw::View named = *view;
