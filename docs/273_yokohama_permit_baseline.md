@@ -46,6 +46,8 @@
 
 工程10の「入力済み」は用途地域・高度地区・資料が入った状態を指す。道路斜線・隣地斜線・北側斜線・高度地区の計算は、この版では「未評価」。
 
+現在の進捗は [道路側の斜線](274_road_height_plane_preview.md)、[隣地斜線](275_neighbor_height_study.md)、[北側斜線](276_north_height_study.md)、[横浜市の最高限高度地区](277_yokohama_height_district_study.md) に記す。
+
 後続の版で、道路が接する敷地辺を基準に、入力した斜線と選択した部材の鉛直差を試算できるようにした。 [道路側の斜線試算](274_road_height_plane_preview.md)
 
 隣地斜線は、確認した隣地辺までの距離と照合点での高さを求める計算から始めた。 [隣地斜線の試算と3D表示の設計](275_neighbor_height_study.md)
