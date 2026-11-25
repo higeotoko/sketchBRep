@@ -1279,7 +1279,7 @@ void MainWindow::buildMenus() {
       ->setObjectName(QStringLiteral("siteHeightConditionsAction"));
   // docs/214: the project's items that are not in the model, for the project outline.
   site->addAction(tr("確認申請のWord様式..."), this, [this] {
-    showPermitForms(modeler_.document(), this);
+    showPermitForms(modeler_.document(), this, [this] { showProjectOutlineDialog(); });
   })->setObjectName(QStringLiteral("permitWordForms"));
   site->addAction(tr("計画概要の項目..."), this, &MainWindow::showProjectOutlineDialog)
       ->setObjectName(QStringLiteral("projectOutlineAction"));
@@ -7929,12 +7929,26 @@ void MainWindow::showProjectOutlineDialog() {
   dialog.setObjectName(QStringLiteral("projectOutlineDialog"));
   dialog.setWindowTitle(tr("計画概要の項目"));
   auto* layout = new QVBoxLayout(&dialog);
-  auto* note = new QLabel(tr("モデルに無い項目を入れます。計画概要の表と、申請図の工程の「1 敷地・配置図」に出ます。"
-                             "項目は確認申請書の第二面・第三面から選んでいます。様式と照らすのは申請先で。"));
+  dialog.resize(850, 620);
+  auto* note = new QLabel(tr("申請書に転記する計画の条件と連絡先を登録します。既存の担当者メモも参照できます。"));
   note->setWordWrap(true);
   layout->addWidget(note);
-  auto* form = new QFormLayout;
-  layout->addLayout(form);
+  auto* tabs = new QTabWidget;
+  tabs->setObjectName(QStringLiteral("projectOutlineTabs"));
+  layout->addWidget(tabs);
+  QFormLayout* sections[7];
+  const QString names[] = {tr("計画"), tr("建築主"), tr("代理者"), tr("設計者"), tr("工事監理者"), tr("工事施工者"), tr("建築物")};
+  const std::string prefixes[] = {"form_client_", "form_agent_", "form_designer_", "form_supervisor_", "form_contractor_", "form_building_"};
+  for (int i = 0; i < 7; ++i) {
+    auto* scroll = new QScrollArea;
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    auto* page = new QWidget;
+    sections[i] = new QFormLayout(page);
+    sections[i]->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    scroll->setWidget(page);
+    tabs->addTab(scroll, names[i]);
+  }
   const auto given = doc::projectOutline(modeler_.document());
   std::vector<std::pair<std::string, QWidget*>> editors;
   for (const doc::ProjectOutlineField& f : doc::projectOutlineFields()) {
@@ -7955,7 +7969,11 @@ void MainWindow::showProjectOutlineDialog() {
     }
     editor->setObjectName(QStringLiteral("projectOutline_") + QString::fromStdString(f.key));
     if (!f.hint.empty()) editor->setToolTip(QString::fromStdString(f.hint));
-    form->addRow(QString::fromStdString(f.label), editor);
+    int section = f.key == "client" ? 1 : f.key == "agent" ? 2 : f.key == "designer" ? 3 :
+        f.key == "supervisor" ? 4 : f.key == "contractor" ? 5 : 0;
+    for (int i = 0; i < 6; ++i)
+      if (f.key.compare(0, prefixes[i].size(), prefixes[i]) == 0) section = i + 1;
+    sections[section]->addRow(QString::fromStdString(f.label), editor);
     editors.emplace_back(f.key, editor);
   }
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);

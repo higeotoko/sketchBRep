@@ -3716,6 +3716,53 @@ const std::vector<ProjectOutlineField>& projectOutlineFields() {
       {"specific_process", "特定工程", "特定工程工事終了予定年月日と工程（第三面 17。無い時は空のまま）", {}, true},
       {"other_matters", "その他必要な事項", "（第三面 18。無い時は空のまま）", {}, true},
       {"source", "確認資料", "項目を確かめた資料（登記事項証明書・都市計画図など）", {}},
+      {"form_client_kana", "フリガナ", "建築主氏名のフリガナ", {}, true},
+      {"form_client_postcode", "郵便番号", "例：231-0005", {}, true},
+      {"form_client_address", "住所", "建築主の住所", {}, true},
+      {"form_client_phone", "電話番号", "確認申請書に記載", {}, true},
+      {"form_agent_name", "氏名", "代理者の氏名", {}, true},
+      {"form_agent_grade", "建築士の資格", "資格証の区分", {{"first", "一級"}, {"second", "二級"}, {"wood", "木造"}}, true},
+      {"form_agent_authority", "建築士の登録先", "様式の括弧に入る登録先", {}, true},
+      {"form_agent_number", "建築士の登録番号", "「第」「号」を除く番号", {}, true},
+      {"form_agent_office", "建築士事務所名", "登録された事務所名", {}, true},
+      {"form_agent_office_grade", "事務所の区分", "事務所登録の区分", {{"first", "一級"}, {"second", "二級"}, {"wood", "木造"}}, true},
+      {"form_agent_office_prefecture", "事務所登録の都道府県", "例：神奈川県", {}, true},
+      {"form_agent_office_number", "事務所登録番号", "「第」「号」を除く番号", {}, true},
+      {"form_agent_postcode", "郵便番号", "例：231-0005", {}, true},
+      {"form_agent_address", "所在地", "事務所に属していないときは本人の住所", {}, true},
+      {"form_agent_phone", "電話番号", "様式に記載する連絡先", {}, true},
+      {"form_designer_name", "氏名", "代表設計者の氏名", {}, true},
+      {"form_designer_grade", "建築士の資格", "資格証の区分", {{"first", "一級"}, {"second", "二級"}, {"wood", "木造"}}, true},
+      {"form_designer_authority", "建築士の登録先", "様式の括弧に入る登録先", {}, true},
+      {"form_designer_number", "建築士の登録番号", "「第」「号」を除く番号", {}, true},
+      {"form_designer_office", "建築士事務所名", "登録された事務所名", {}, true},
+      {"form_designer_office_grade", "事務所の区分", "事務所登録の区分", {{"first", "一級"}, {"second", "二級"}, {"wood", "木造"}}, true},
+      {"form_designer_office_prefecture", "事務所登録の都道府県", "例：神奈川県", {}, true},
+      {"form_designer_office_number", "事務所登録番号", "「第」「号」を除く番号", {}, true},
+      {"form_designer_postcode", "郵便番号", "例：231-0005", {}, true},
+      {"form_designer_address", "所在地", "事務所に属していないときは本人の住所", {}, true},
+      {"form_designer_phone", "電話番号", "様式に記載する連絡先", {}, true},
+      {"form_supervisor_name", "氏名", "代表工事監理者の氏名", {}, true},
+      {"form_supervisor_grade", "建築士の資格", "資格証の区分", {{"first", "一級"}, {"second", "二級"}, {"wood", "木造"}}, true},
+      {"form_supervisor_authority", "建築士の登録先", "様式の括弧に入る登録先", {}, true},
+      {"form_supervisor_number", "建築士の登録番号", "「第」「号」を除く番号", {}, true},
+      {"form_supervisor_office", "建築士事務所名", "登録された事務所名", {}, true},
+      {"form_supervisor_office_grade", "事務所の区分", "事務所登録の区分", {{"first", "一級"}, {"second", "二級"}, {"wood", "木造"}}, true},
+      {"form_supervisor_office_prefecture", "事務所登録の都道府県", "例：神奈川県", {}, true},
+      {"form_supervisor_office_number", "事務所登録番号", "「第」「号」を除く番号", {}, true},
+      {"form_supervisor_postcode", "郵便番号", "例：231-0005", {}, true},
+      {"form_supervisor_address", "所在地", "事務所に属していないときは本人の住所", {}, true},
+      {"form_supervisor_phone", "電話番号", "様式に記載する連絡先", {}, true},
+      {"form_contractor_name", "氏名・名称", "代表工事施工者の氏名・名称", {}, true},
+      {"form_contractor_office", "営業所名", "代表工事施工者の営業所", {}, true},
+      {"form_contractor_postcode", "郵便番号", "例：231-0005", {}, true},
+      {"form_contractor_address", "所在地", "営業所の所在地", {}, true},
+      {"form_contractor_phone", "電話番号", "営業所の連絡先", {}, true},
+      {"form_building_above", "地上階数", "確認済みの階数（整数）", {}, true},
+      {"form_building_below", "地下階数", "地下なしは 0", {}, true},
+      {"form_building_other", "同一敷地の他の建築物の数", "他の建築物なしは 0", {}, true},
+      {"form_building_height", "建築物の最高の高さ（m）", "地盤面と算定対象を確認した値", {}, true},
+      {"form_building_eaves", "最高の軒の高さ（m）", "地盤面と算定対象を確認した値", {}, true},
   };
   return fields;
 }
@@ -3744,11 +3791,14 @@ PermitCheck projectOutlineCheck(const Document& document) {
   const auto given = projectOutline(document);
   std::string missing, done;
   for (const ProjectOutlineField& f : projectOutlineFields()) {
-    const auto it = given.find(f.key);
+    // Form contacts and confirmed building dimensions are shown in the Word transfer review.
+    if (f.key.compare(0, 5, "form_") == 0) continue;
+    const auto explicitName = given.find("form_" + f.key + "_name");
+    const auto it = explicitName == given.end() ? given.find(f.key) : explicitName;
     if (it == given.end()) {
       if (!f.optional) missing += (missing.empty() ? "" : "、") + f.label;  // docs/231: optional ones not counted
     } else {
-      done += "\n" + f.label + "：" + projectOutlineText(f.key, it->second);
+      done += "\n" + f.label + "：" + projectOutlineText(it->first, it->second);
     }
   }
   if (given.empty())
@@ -4766,10 +4816,12 @@ draw::Table scheduleTable(const Document& document, int which) {
     const std::string source = given.count("source") ? "入力した項目。確認資料 " + given.at("source") : "入力した項目";
     item("project_name", "物件名", given.count("project_name") ? source : "計画概要の項目（図面一式の物件名）");
     item("client", "建築主", source);
-    if (given.count("agent")) item("agent", "代理者", source);  // docs/231: only when there is one
-    item("designer", "設計者", source);
-    item("supervisor", "工事監理者", source);
-    item("contractor", "工事施工者", source);
+    for (const auto& [key, label] : {std::pair{"agent", "代理者"}, {"designer", "設計者"},
+                                     {"supervisor", "工事監理者"}, {"contractor", "工事施工者"}}) {
+      const std::string explicitName = std::string("form_") + key + "_name";
+      if (given.count(explicitName)) item(explicitName.c_str(), label, source);
+      else if (std::string(key) != "agent" || given.count(key)) item(key, label, source);
+    }
     item("structural_review", "構造計算適合性判定の申請", source);                  // docs/232
     item("energy_plan", "建築物エネルギー消費性能確保計画の提出", source);       // docs/232
     item("address", "地名地番", source);

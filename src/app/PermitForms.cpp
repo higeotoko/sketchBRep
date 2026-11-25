@@ -134,7 +134,7 @@ QString mergeFields(const QString& original, const QMap<QString, QString>& value
       filled += value.isEmpty() ? QStringLiteral("□") : QStringLiteral("☑");
     } else if (key.startsWith("date_")) {
       filled += value.isEmpty() ? QStringLiteral("　　　　年    月    日") : value;
-    } else if (key == "structure") {
+    } else if (key == "structure" || key == "detail_structure") {
       filled += value.isEmpty() ? QStringLiteral("            ") : QStringLiteral("　") + value.toHtmlEscaped();
     } else if (!value.isEmpty()) {
       filled += QStringLiteral("　") + value.toHtmlEscaped();
@@ -276,11 +276,32 @@ Transfer collect(const doc::Document& document, bool applyArea) {
   };
 
   field("client", tr("建築主氏名"), get("client"), outlineSource);
-  row(tr("建築主のフリガナ・住所"), {}, {}, tr("様式に記入"));
-  row(tr("建築主の電話番号"), {}, {}, tr("様式に記入"), true);
-  for (const auto& [key, label] : {std::pair{"agent", tr("代理者")}, {"designer", tr("設計者")},
-                                   {"supervisor", tr("工事監理者")}, {"contractor", tr("工事施工者")}})
-    row(label, get(key), outlineSource, tr("様式の氏名・資格などに記入"));
+  field("client_kana", tr("建築主のフリガナ"), get("form_client_kana"), outlineSource);
+  field("client_postcode", tr("建築主の郵便番号"), get("form_client_postcode"), outlineSource);
+  field("client_address", tr("建築主の住所"), get("form_client_address"), outlineSource);
+  const auto clientPhone = get("form_client_phone");
+  if (!clientPhone.isEmpty()) result.values.insert("client_phone", clientPhone);
+  row(tr("建築主の電話番号"), clientPhone, outlineSource, clientPhone.isEmpty() ? tr("要記入") : tr("転記"), true);
+  for (const auto& [role, label] : {std::pair{"agent", tr("代理者")}, {"designer", tr("代表設計者")},
+                                   {"supervisor", tr("代表工事監理者")}, {"contractor", tr("代表工事施工者")}}) {
+    const std::string prefix = std::string("form_") + role + "_";
+    const auto name = get(prefix + "name");
+    const auto memo = get(role);
+    if (!name.isEmpty()) result.values.insert(QString::fromLatin1(role) + "_name", name);
+    row(label, name.isEmpty() ? memo : name, outlineSource,
+        !name.isEmpty() ? tr("転記") : (!memo.isEmpty() ? tr("従来のメモ・氏名欄を入力") : tr("該当時に記入")));
+    if (name.isEmpty()) continue;
+    for (const auto& contact : doc::projectOutlineFields()) {
+      if (contact.key.compare(0, prefix.size(), prefix) != 0 || contact.key == prefix + "name") continue;
+      const auto raw = get(contact.key);
+      const auto key = QString::fromStdString(contact.key.substr(5));
+      field(key, label + tr("・") + QString::fromStdString(contact.label),
+          QString::fromStdString(doc::projectOutlineText(contact.key, raw.toStdString())), outlineSource, true);
+    }
+  }
+  const auto projectName = get("project_name");
+  if (!projectName.isEmpty()) result.values.insert("project_name", projectName);
+  row(tr("建築物の名称・工事名"), projectName, outlineSource, projectName.isEmpty() ? tr("該当時に記入") : tr("転記"), true);
   choice("structural_review", "struct_", tr("構造計算適合性判定"), true);
   choice("energy_plan", "energy_", tr("省エネ適判の計画提出"), true);
   field("address", tr("地名地番"), get("address"), outlineSource);
@@ -349,9 +370,45 @@ Transfer collect(const doc::Document& document, bool applyArea) {
   }
   row(tr("特定工程"), get("specific_process"), outlineSource, tr("該当する場合は様式に記入"));
   field("other_matters", tr("その他必要な事項"), get("other_matters"), outlineSource, true);
-  row(tr("申請日・宛先・設計者氏名"), {}, {}, tr("確認申請書の第一面に記入"), true);
-  row(tr("建築物別・階別の情報"), {}, {}, tr("確認申請書の第四面以降に記入"), true);
-  row(tr("建蔽率・容積率、高さ・階数・棟数"), {}, {}, tr("根拠と照合して様式に記入"));
+  const auto integer = [&](const char* key, int minimum) {
+    static const QRegularExpression format(QStringLiteral("^[0-9]{1,4}$"));
+    const auto value = get(key);
+    return format.match(value).hasMatch() && value.toInt() >= minimum ? QString::number(value.toInt()) : QString{};
+  };
+  const auto height = [&](const char* key) {
+    static const QRegularExpression format(QStringLiteral("^[0-9]{1,4}(\\.[0-9]{1,3})?$"));
+    const auto value = get(key);
+    return format.match(value).hasMatch() && value.toDouble() > 0.0 ? value : QString{};
+  };
+  const auto checked = tr("確認済みの建築物情報");
+  const auto verified = [&](const char* formKey, const QString& label, const QString& value) {
+    const auto entered = get(std::string("form_") + formKey);
+    if (value.isEmpty() && !entered.isEmpty()) row(label, entered, checked, tr("入力値を確認"));
+    else candidate(QString::fromLatin1(formKey), label, value, checked);
+  };
+  const auto buildingHeight = height("form_building_height");
+  auto eaves = height("form_building_eaves");
+  if (!buildingHeight.isEmpty() && eaves.toDouble() > buildingHeight.toDouble()) eaves.clear();
+  candidate("building_count", tr("申請に係る建築物の数"), result.newBuilding ? QStringLiteral("1") : QString{},
+            tr("単一棟の新築"));
+  verified("building_other", tr("同一敷地の他の建築物の数"), integer("form_building_other", 0));
+  verified("building_above", tr("地上階数"), integer("form_building_above", 1));
+  verified("building_below", tr("地下階数"), integer("form_building_below", 0));
+  verified("building_height", tr("最高の高さ"), buildingHeight.isEmpty() ? QString{} : buildingHeight + " m");
+  if (applyArea && result.newBuilding) {
+    if (!eaves.isEmpty()) result.values.insert("building_eaves", eaves + " m");
+    result.values.insert("detail_main_use", get("main_use"));
+    result.values.insert("detail_use_code", get("use_code"));
+    result.values.insert("check_detail_work_new", QStringLiteral("1"));
+    if (structureMatch.hasMatch()) result.values.insert("detail_structure", structureMatch.captured(1));
+  }
+  const auto eavesInput = get("form_building_eaves");
+  row(tr("最高の軒の高さ"), eaves.isEmpty() ? eavesInput : eaves + " m", checked,
+      eaves.isEmpty() ? (eavesInput.isEmpty() ? tr("要記入") : tr("入力値を確認"))
+                      : applyArea && result.newBuilding ? tr("転記") : tr("候補"), true);
+  row(tr("申請日・宛先"), {}, {}, tr("確認申請書の第一面に記入"), true);
+  row(tr("主要構造部・階別情報"), {}, {}, tr("確認申請書の第四面以降に記入"), true);
+  row(tr("建蔽率・容積率"), {}, {}, tr("根拠と照合して様式に記入"));
   return result;
 }
 
@@ -393,7 +450,7 @@ PermitFormDraft buildPermitForm(const doc::Document& document, const PermitFormO
   return {documentBytes(options.summary, values, images), !images.site.isEmpty(), !images.map.isEmpty()};
 }
 
-void showPermitForms(const doc::Document& document, QWidget* parent) {
+void showPermitForms(const doc::Document& document, QWidget* parent, const std::function<void()>& editOutline) {
   QDialog dialog(parent);
   dialog.setWindowTitle(tr("確認申請のWord様式"));
   dialog.resize(890, 620);
@@ -411,7 +468,7 @@ void showPermitForms(const doc::Document& document, QWidget* parent) {
   selection->addWidget(formLabel);
   selection->addWidget(form, 1);
   layout->addLayout(selection);
-  auto* quantities = new QCheckBox(tr("単一棟の新築・用途地域の区分なしとして、候補の面積・用途地域も転記する"));
+  auto* quantities = new QCheckBox(tr("単一棟の新築・用途地域の区分なしとして、面積と棟別の項目も転記する"));
   Transfer transfer = collect(document, false);
   quantities->setEnabled(transfer.newBuilding);
   layout->addWidget(quantities);
@@ -474,6 +531,15 @@ void showPermitForms(const doc::Document& document, QWidget* parent) {
     refresh();
   });
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Close);
+  auto* edit = buttons->addButton(tr("転記元の項目を編集…"), QDialogButtonBox::ActionRole);
+  edit->setObjectName(QStringLiteral("permitWordEditOutline"));
+  QObject::connect(edit, &QPushButton::clicked, &dialog, [&] {
+    editOutline();
+    transfer = collect(document, quantities->isChecked());
+    quantities->setEnabled(transfer.newBuilding);
+    if (!transfer.newBuilding) quantities->setChecked(false);
+    refresh();
+  });
   buttons->button(QDialogButtonBox::Save)->setText(tr("Wordで書き出す…"));
   buttons->button(QDialogButtonBox::Close)->setText(tr("閉じる"));
   layout->addWidget(buttons);

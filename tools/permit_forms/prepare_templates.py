@@ -59,6 +59,37 @@ def patch_document(xml, third):
         edit(index, lambda text: re.sub(r"([ 　]+年[ 　]+月[ 　]+日)$",
                                       lambda m: mark("date_" + key), text, count=1))
 
+    def registration(index, keys):
+        def insert(text):
+            spaces = list(re.finditer(r"(?<=[（(])[ 　]+(?=[）)])|(?<=登録第)[ 　]+(?=号)", text))
+            assert len(spaces) == len(keys), (index, text)
+            for region, key in reversed(list(zip(spaces, keys, strict=True))):
+                width = sum(2 if char == "　" else 1 for char in region[0])
+                text = text[:region.start()] + mark(f"slot_{key}__{width}") + text[region.end():]
+            return text
+        edit(index, insert)
+
+    contacts = {}
+    client_start = 4 if third else 57
+    for delta, label, key in [(0, "】", "kana"), (2, "郵便番号】", "postcode"), (3, "住所】", "address")]:
+        after(client_start + delta, label, "client_" + key)
+    if not third:
+        after(61, "電話番号】", "client_phone")
+        after(22, "設計者氏名　", "designer_name")
+        contacts[214] = "project_name"
+    for role, index in zip(("agent", "designer", "supervisor"), (10, 19, 110) if third else (63, 72, 163)):
+        registration(index, [role + "_grade", role + "_authority", role + "_number"])
+        after(index + 1, "氏名】", role + "_name")
+        registration(index + 2, [role + "_office_grade", role + "_office_prefecture", role + "_office_number"])
+        contacts[index + 3] = role + "_office"
+        for delta, label, key in [(4, "郵便番号】", "postcode"), (5, "所在地】", "address"), (6, "電話番号】", "phone")]:
+            after(index + delta, label, role + "_" + key)
+    contractor = 146 if third else 199
+    after(contractor, "氏名】", "contractor_name")
+    contacts[contractor + 2] = "contractor_office"
+    for delta, label, key in [(3, "郵便番号】", "postcode"), (4, "所在地】", "address"), (5, "電話番号】", "phone")]:
+        after(contractor + delta, label, "contractor_" + key)
+
     if third:
         after(5, "氏名】", "client")
     else:
@@ -94,9 +125,31 @@ def patch_document(xml, third):
     date(286 - (61 if third else 0), "start_date")
     date(287 - (61 if third else 0), "finish_date")
 
+    for index, label, key in [
+        (273, "建築物の数】", "building_count"), (274, "建築物の数】", "building_other"),
+    ]:
+        after(index - (61 if third else 0), label, key)
+    for index, key in [(276, "building_height"), (277, "building_above"), (278, "building_below")]:
+        slots(index - (61 if third else 0), [key])
+
+    if not third:
+        after(299, "番号】", "building_count")
+        after(300, "(区分", "detail_use_code")
+        after(300, ")", "detail_main_use")
+        boxes(306, ["detail_work_" + kind for kind in (
+            "new", "extension", "rebuild", "relocation", "use_change", "major_repair", "major_remodel")])
+        edit(307, lambda text: re.sub(r" +造", mark("detail_structure") + "造", text, count=1))
+        for index, label, key in [
+            (331, "階数】", "building_above"), (332, "階数】", "building_below"),
+            (336, "高さ】", "building_height"), (337, "高さ】", "building_eaves"),
+        ]:
+            after(index, label, key)
+
     insertions = {
-        (223 if third else 284): '<w:r><w:t xml:space="preserve">' + mark("permissions") + '</w:t></w:r>',
-        (236 if third else 293): '<w:r><w:t xml:space="preserve">' + mark("other_matters") + '</w:t></w:r>',
+        index: '<w:r><w:t xml:space="preserve">' + mark(key) + '</w:t></w:r>'
+        for index, key in {
+            **contacts, (223 if third else 284): "permissions", (236 if third else 293): "other_matters",
+        }.items()
     }
     if third:
         insertions.update({242: "<!--SBR_IMAGE_MAP-->", 261: "<!--SBR_IMAGE_SITE-->"})

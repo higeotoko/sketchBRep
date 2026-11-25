@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QByteArray>
+#include <functional>
 
 class QWidget;
 
@@ -23,6 +24,6 @@ struct PermitFormDraft {
 };
 
 PermitFormDraft buildPermitForm(const doc::Document& document, const PermitFormOptions& options);
-void showPermitForms(const doc::Document& document, QWidget* parent);
+void showPermitForms(const doc::Document& document, QWidget* parent, const std::function<void()>& editOutline);
 
 }  // namespace sbr::app

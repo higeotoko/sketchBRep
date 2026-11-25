@@ -1649,7 +1649,15 @@ void GuiPhase1::permitWordFormsTransferAndEmbedDrawings() {
       {"main_use", "一戸建ての住宅"}, {"use_code", "08010"}, {"work_kind", "new"},
       {"city_planning", "urbanization"}, {"fire_zone", "article22"}, {"structural_review", "not_required"},
       {"energy_plan", "submitted"}, {"start_date", "2027-04-01"},
-      {"designer", "一級建築士 試験設計事務所"}, {"finish_date", "要調整"}}));
+      {"designer", "一級建築士 旧メモ"}, {"finish_date", "要調整"}, {"project_name", "架空住宅新築工事"},
+      {"form_client_kana", "シケン ケンチクヌシ"}, {"form_client_postcode", "231-0005"},
+      {"form_client_address", "横浜市中区架空通2番"}, {"form_client_phone", "045-000-0102"},
+      {"form_designer_name", "試験 設計子"}, {"form_designer_grade", "first"},
+      {"form_designer_authority", "国土交通大臣"}, {"form_designer_number", "123456"},
+      {"form_designer_office", "試験設計事務所"}, {"form_designer_office_grade", "first"},
+      {"form_designer_office_prefecture", "神奈川県"}, {"form_designer_office_number", "12345"},
+      {"form_contractor_name", "試験工務店"}, {"form_building_above", "2"}, {"form_building_below", "0"},
+      {"form_building_other", "0"}, {"form_building_height", "8.120"}, {"form_building_eaves", "6.580"}}));
   const auto site = modeler.createPolyline({gp_Pnt(0, 0, 0), gp_Pnt(10000, 0, 0), gp_Pnt(10000, 12000, 0),
       gp_Pnt(0, 12000, 0), gp_Pnt(0, 0, 0)});
   QVERIFY(site);
@@ -1709,6 +1717,7 @@ void GuiPhase1::permitWordFormsTransferAndEmbedDrawings() {
   };
   const auto application = app::buildPermitForm(modeler.document(), {});
   const auto summary = app::buildPermitForm(modeler.document(), {true, true, true, true});
+  const auto detailed = app::buildPermitForm(modeler.document(), {false, true});
   QVERIFY(!application.hasSitePlan && !application.hasVicinityMap);
   QVERIFY(summary.hasSitePlan && summary.hasVicinityMap);
   const auto a = unpack(application.docx), b = unpack(summary.docx);
@@ -1733,10 +1742,24 @@ void GuiPhase1::permitWordFormsTransferAndEmbedDrawings() {
     QVERIFY(content.contains(QStringLiteral("5.200 m")));
     QVERIFY(content.contains(QStringLiteral("2027年4月1日")));
     QVERIFY(!content.contains(QStringLiteral("要調整")));
-    QVERIFY(!content.contains(QStringLiteral("試験設計事務所")));
+    QVERIFY(!content.contains(QStringLiteral("旧メモ")));
+    QVERIFY(content.contains(QStringLiteral("試験設計事務所")));
+    QVERIFY(content.contains(QStringLiteral("試験 設計子")));
+    QVERIFY(content.contains(QStringLiteral("横浜市中区架空通2番")));
+    QVERIFY(content.contains(QStringLiteral("神奈川県")));
+    QVERIFY(content.contains(QStringLiteral("123456")));
     QVERIFY(!content.contains(QStringLiteral("@@SBR_")));
   }
   QVERIFY(cover.contains(QStringLiteral("☑申請不要")));
+  QVERIFY(cover.contains(QStringLiteral("045-000-0102")));
+  QVERIFY(!publicPage.contains(QStringLiteral("045-000-0102")));
+  QVERIFY(!cover.contains(QStringLiteral("8.120 m")));
+  QVERIFY(publicPage.contains(QStringLiteral("8.120 m")));
+  const auto building = text(unpack(detailed.docx).value(documentXml));
+  QVERIFY(building.count(QStringLiteral("8.120 m")) == 2);
+  QVERIFY(building.contains(QStringLiteral("6.580 m")));
+  QVERIFY(building.count(QStringLiteral("一戸建ての住宅")) == 2);
+  QVERIFY(building.contains(QStringLiteral("架空住宅新築工事")));
   QVERIFY(cover.contains(QStringLiteral("☑提出済")));
   QVERIFY(!cover.contains(QStringLiteral("120.00 ㎡")));
   QVERIFY(publicPage.contains(QStringLiteral("120.00 ㎡")));
@@ -1757,7 +1780,7 @@ void GuiPhase1::permitWordFormsTransferAndEmbedDrawings() {
   QVERIFY(action);
   const QString reviewDir = qEnvironmentVariable("SBR_PERMIT_WORD_REVIEW_DIR");
   if (!reviewDir.isEmpty()) {
-    for (const auto& [name, bytes] : {std::pair{QStringLiteral("application.docx"), application.docx},
+    for (const auto& [name, bytes] : {std::pair{QStringLiteral("application.docx"), detailed.docx},
                                     {QStringLiteral("summary.docx"), summary.docx}}) {
       QFile output(QDir(reviewDir).filePath(name));
       QVERIFY(output.open(QIODevice::WriteOnly));
@@ -1770,10 +1793,23 @@ void GuiPhase1::permitWordFormsTransferAndEmbedDrawings() {
     if (!dialog) return;
     auto* type = dialog->findChild<QComboBox*>(QStringLiteral("permitWordFormType"));
     auto* table = dialog->findChild<QTableWidget*>(QStringLiteral("permitWordTransfer"));
-    if (type && table && type->count() == 2) {
+    auto* edit = dialog->findChild<QPushButton*>(QStringLiteral("permitWordEditOutline"));
+    if (type && table && edit && type->count() == 2) {
+      QTimer::singleShot(0, [] {
+        auto* outline = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (!outline) return;
+        auto* tabs = outline->findChild<QTabWidget*>(QStringLiteral("projectOutlineTabs"));
+        auto* designer = outline->findChild<QLineEdit*>(QStringLiteral("projectOutline_form_designer_name"));
+        if (!tabs || tabs->count() != 7 || !designer) return outline->reject();
+        tabs->setCurrentIndex(3);
+        designer->setText(QStringLiteral("検証後の設計者"));
+        outline->accept();
+      });
+      edit->click();
+      const bool edited = !table->findItems(QStringLiteral("検証後の設計者"), Qt::MatchExactly).isEmpty();
       const bool applicationRows = !table->findItems(QStringLiteral("構造計算適合性判定"), Qt::MatchExactly).isEmpty();
       type->setCurrentIndex(1);
-      previewed = applicationRows && table->findItems(QStringLiteral("構造計算適合性判定"), Qt::MatchExactly).isEmpty() &&
+      previewed = edited && applicationRows && table->findItems(QStringLiteral("構造計算適合性判定"), Qt::MatchExactly).isEmpty() &&
                   !table->findItems(QStringLiteral("付近見取図"), Qt::MatchExactly).isEmpty();
       if (!reviewDir.isEmpty()) dialog->grab().save(QDir(reviewDir).filePath(QStringLiteral("word-transfer-preview.png")));
     }
