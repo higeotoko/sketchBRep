@@ -1174,11 +1174,22 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
         threshold = floor.metres;
       }
     }
+    const auto addFireLabel = [&](gp_Pnt2d at, Pen pen, const char* label) {
+      Item text;
+      text.kind = Item::Kind::Text;
+      text.pen = pen;
+      at.SetY(at.Y() + 0.9 * (spec.paperScale > 0 ? spec.paperScale : 100.0));
+      text.points = {at};
+      text.text = label;
+      text.height = 2.5;
+      text.hAlign = 1;
+      view.items.push_back(std::move(text));
+    };
     const auto addContour = [&](const TopoDS_Shape& shape, Pen pen, const char* label) {
       if (shape.IsNull()) return;
       const auto start = view.items.size();
       addLocalEdges(shape.Moved(TopLoc_Location(proj.toLocal)), pen, deflection, view.items);
-      if (start == view.items.size() || !spec.annotations) return;
+      if (start == view.items.size() || (!sitePlan && !spec.annotations)) return;
       const Item* longest = nullptr;
       double length = 0;
       for (std::size_t i = start; i < view.items.size(); ++i) {
@@ -1200,29 +1211,14 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
           at = item.centre.Translated(gp_Vec2d(std::cos(angle), std::sin(angle)) * item.radius);
         } else return;
       }
-      Item text;
-      text.kind = Item::Kind::Text;
-      text.pen = pen;
-      text.points = {at};
-      text.text = label;
-      text.height = 2.5;
-      text.hAlign = 1;
-      view.items.push_back(std::move(text));
+      addFireLabel(at, pen, label);
     };
     if (sitePlan) {
       for (const auto& basis : fire.bases) {
         if (!basis.road) continue;
         const auto a = proj.uv(basis.visibleLine[0]), b = proj.uv(basis.visibleLine[1]);
         view.items.push_back(line(Pen::Level, a, b));
-        if (!spec.annotations) continue;
-        Item text;
-        text.kind = Item::Kind::Text;
-        text.pen = Pen::Level;
-        text.points = {gp_Pnt2d((a.X() + b.X()) / 2, (a.Y() + b.Y()) / 2)};
-        text.text = "道路中心線（延焼の基準）";
-        text.height = 2.5;
-        text.hAlign = 1;
-        view.items.push_back(std::move(text));
+        addFireLabel(gp_Pnt2d((a.X() + b.X()) / 2, (a.Y() + b.Y()) / 2), Pen::Level, "道路中心線（延焼の基準）");
       }
     }
     if (sitePlan || threshold == 3) addContour(fire.limits3, Pen::FireLimit3, "延焼ライン 1階 3 m");

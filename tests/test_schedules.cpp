@@ -3314,6 +3314,11 @@ TEST_F(Schedules, FireSpreadUsesTheRoadCenterAndExteriorFaceWithDifferentDistanc
   ASSERT_TRUE(upstairs);
   EXPECT_TRUE(hasPen(*siteView, sbr::draw::Pen::FireLimit3));
   EXPECT_TRUE(hasPen(*siteView, sbr::draw::Pen::FireLimit5));
+  for (const auto* label : {"延焼ライン 1階 3 m", "延焼ライン 2階以上 5 m", "道路中心線（延焼の基準）"}) {
+    EXPECT_TRUE(std::any_of(siteView->items.begin(), siteView->items.end(), [&](const auto& item) {
+      return item.kind == sbr::draw::Item::Kind::Text && item.text == label;
+    })) << label;
+  }
   EXPECT_FALSE(hasPen(*upstairs, sbr::draw::Pen::FireLimit3));
   EXPECT_TRUE(hasPen(*upstairs, sbr::draw::Pen::FireLimit5));
   setRoad(5);
