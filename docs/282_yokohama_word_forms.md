@@ -10,3 +10,16 @@
 ## 様式の版
 
 2026-11-24に掲載された第二号様式と、2026-04-16版の第三号様式を使用する。配布用の様式は原本のページ構成を保持し、転記箇所と図の挿入位置を指定して同梱する。アプリで書き出す際にWordのインストールは不要。様式の改定時は原本を取り直し、`tools/permit_forms/prepare_templates.py` の原本ハッシュと対応箇所を確認して再生成する。 [横浜市の法定様式](https://www.city.yokohama.lg.jp/business/bunyabetsu/kenchiku/tetsuduki/kakunin/dl/dl-hotei.html) · [建築基準法施行規則](https://laws.e-gov.go.jp/document?lawid=325M50004000040_20260401_506M60000800068)
+
+## 検証と配布
+
+- Windowsのコアテストは833件成功、8件スキップ。Windows GUIの3件が成功。二つの様式の切り替え、転記する選択肢・単位・氏名、面積の転記条件、図の埋め込みと欠損した地図タイルの扱いを確認した。求積図と既存の付近見取図も確認した。転記と図の組み込みのGUIテストは、配布ZIPの展開先のDLL・プラグインでも成功した。画面の記録は配布フォルダの `outputs/word-forms-2026-11-25/` にある。
+- WindowsのWordで出力を開いてPDFにし、原本と同じA4・同じページ数（第二号16、第三号6）を確認した。転記箇所以外のページは画像が一致した。第三号様式は長い用途地域名と面積が一行に収まり、第三面で仮の地図タイルとモデルの配置図が別々の枠に収まった。人によるアプリ操作検証は未実施。
+
+| 項目 | 結果 |
+|---|---|
+| コード | `578d522` |
+| Linux CI | [実行ログ](https://github.com/higeotoko/sketchBRep/actions/runs/45628528729) |
+| Windows ZIP | `SketchBRep-windows-x64-578d522-local.zip`（84,125,294 bytes） |
+| SHA256 | `a5667470842d10561bab68c1ce2d89ac62c83667bbb20ddf9853f9b3800f3971` |
+| ZIPの検証 | [標準18条件](validation/2026-11-25-portable-578d522.json)・[べた基礎4条件](validation/2026-11-25-portable-578d522-mat.json)成功 |
