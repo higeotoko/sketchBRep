@@ -9,6 +9,7 @@
 #include <optional>
 #include <set>
 #include <sstream>
+#include <string_view>
 #include <tuple>
 
 #include <BRepAlgoAPI_Common.hxx>
@@ -1599,6 +1600,16 @@ SiteHeightConditions siteHeightConditions(const Document& document) {
   return {read("zone"), read("district"), read("source")};
 }
 
+std::optional<YokohamaHeightDistrictRule> yokohamaHeightDistrictRule(const std::string& district) {
+  static const std::pair<std::string_view, YokohamaHeightDistrictRule> rules[] = {
+      {"yokohama_1", {10000, 5000}}, {"yokohama_2", {12000, 5000}}, {"yokohama_3", {15000, 7000}},
+      {"yokohama_4", {20000, 7500}}, {"yokohama_5", {20000, 10000}},
+      {"yokohama_6", {20000, std::nullopt}}, {"yokohama_7", {31000, std::nullopt}}};
+  for (const auto& [code, rule] : rules)
+    if (district == code) return rule;
+  return std::nullopt;
+}
+
 Result<RoadHeightDatum> roadHeightDatum(double roadCenterZMm, double siteGroundZMm, double roadWidthMm, double slope) {
   using R = Result<RoadHeightDatum>;
   if (!std::isfinite(roadCenterZMm) || !std::isfinite(siteGroundZMm))
@@ -2110,7 +2121,7 @@ struct NorthRayHit {
 
 NorthHeightSample northHeightSample(const SiteBoundaryGeometry& geometry, const TopoDS_Face& footprint,
                                    const std::vector<NorthBoundaryKind>& kinds, const gp_Pnt& start,
-                                   const gp_Vec& north, double width, double baseZ) {
+                                   const gp_Vec& north, double width, double baseZ, double slope = 1.25) {
   const auto startState = BRepClass_FaceClassifier(footprint, start, tolerance::kLinear).State();
   if (startState == TopAbs_OUT) return NorthHeightSample{"outside_site"};
   if (startState != TopAbs_IN && startState != TopAbs_ON) return NorthHeightSample{"calculation_review"};
@@ -2193,7 +2204,7 @@ NorthHeightSample northHeightSample(const SiteBoundaryGeometry& geometry, const 
         sample.road = kind == NorthBoundaryKind::Road;
       }
     }
-    const double limit = baseZ + 1.25 * distance;
+    const double limit = baseZ + slope * distance;
     if (!std::isfinite(limit)) return NorthHeightSample{"calculation_review"};
     sample.status = hasRoad && hasNeighbor ? "vertex_review" : "calculated";
     sample.distanceMm = distance;
@@ -2215,11 +2226,8 @@ struct NorthHeightField {
 
 Result<NorthHeightField> northHeightField(
     const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedNeighbors,
-    double groundZMm, double baseHeightMm) {
+    double baseZ) {
   using R = Result<NorthHeightField>;
-  const double baseZ = groundZMm + baseHeightMm;
-  if (!std::isfinite(baseZ) || (baseHeightMm != 5000 && baseHeightMm != 10000))
-    return R::failure("地盤面と、法第56条で確認した立上り5 mまたは10 mを入力してください");
   const auto& settings = document.settings();
   if (!settings.siteNorth) return R::failure("先に敷地の真北を登録してください");
   if (!settings.siteBoundary) return R::failure("先に敷地境界を登録してください");
@@ -2262,7 +2270,10 @@ Result<std::vector<NorthHeightSample>> northHeightAt(
     const std::vector<gp_Pnt>& points, double groundZMm, double baseHeightMm) {
   using R = Result<std::vector<NorthHeightSample>>;
   if (points.empty()) return R::failure("照合する点を指定してください");
-  const auto field = northHeightField(document, confirmedNeighbors, groundZMm, baseHeightMm);
+  const double baseZ = groundZMm + baseHeightMm;
+  if (!std::isfinite(baseZ) || (baseHeightMm != 5000 && baseHeightMm != 10000))
+    return R::failure("地盤面と、法第56条で確認した立上り5 mまたは10 mを入力してください");
+  const auto field = northHeightField(document, confirmedNeighbors, baseZ);
   if (!field) return R::failure(field.error());
   const double outlineZ = field->geometry.vertices.front().Z();
   std::vector<NorthHeightSample> rows;
@@ -2271,6 +2282,61 @@ Result<std::vector<NorthHeightSample>> northHeightAt(
     if (!std::isfinite(point.X()) || !std::isfinite(point.Y())) return R::failure("点のXY座標を確認してください");
     rows.push_back(northHeightSample(field->geometry, field->footprint, field->kinds,
                                     gp_Pnt(point.X(), point.Y(), outlineZ), field->north, field->width, field->baseZ));
+  }
+  return rows;
+}
+
+Result<std::vector<YokohamaHeightDistrictSample>> yokohamaHeightDistrictAt(
+    const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedNeighbors,
+    const std::vector<gp_Pnt>& points, double groundZMm, bool singleNorthRoadConfirmed) {
+  using R = Result<std::vector<YokohamaHeightDistrictSample>>;
+  const auto rule = yokohamaHeightDistrictRule(siteHeightConditions(document).district);
+  if (!rule) return R::failure("横浜市の最高限第1種〜第7種のいずれかを登録してください");
+  if (points.empty()) return R::failure("照合する点を指定してください");
+  const double capZ = groundZMm + rule->heightCapMm;
+  if (!std::isfinite(capZ)) return R::failure("地盤面の高さを確認してください");
+
+  TopoDS_Face footprint;
+  double outlineZ = 0;
+  std::optional<NorthHeightField> field;
+  if (rule->northRiseMm) {
+    auto north = northHeightField(document, confirmedNeighbors, groundZMm + *rule->northRiseMm);
+    if (!north) return R::failure(north.error());
+    field.emplace(std::move(*north));
+    footprint = field->footprint;
+    outlineZ = field->geometry.vertices.front().Z();
+  } else {
+    const auto& site = document.settings().siteBoundary;
+    if (!site) return R::failure("先に敷地境界を登録してください");
+    const auto geometry = document.siteBoundaryGeometry(site->outline);
+    if (!geometry) return R::failure(geometry.error());
+    const auto face = heightSiteFootprint(*geometry);
+    if (!face) return R::failure(face.error());
+    footprint = *face;
+    outlineZ = geometry->vertices.front().Z();
+  }
+
+  std::vector<YokohamaHeightDistrictSample> rows;
+  rows.reserve(points.size());
+  for (const auto& point : points) {
+    if (!std::isfinite(point.X()) || !std::isfinite(point.Y())) return R::failure("点のXY座標を確認してください");
+    const gp_Pnt position(point.X(), point.Y(), outlineZ);
+    if (!field) {
+      const auto state = BRepClass_FaceClassifier(footprint, position, tolerance::kLinear).State();
+      if (state == TopAbs_IN || state == TopAbs_ON) rows.push_back({"height_cap", std::nullopt, capZ});
+      else rows.push_back({state == TopAbs_OUT ? "outside_site" : "calculation_review"});
+      continue;
+    }
+    const auto sample = northHeightSample(field->geometry, footprint, field->kinds, position, field->north,
+                                          singleNorthRoadConfirmed ? field->width / 2 : 0, field->baseZ,
+                                          kYokohamaHeightDistrictSlope);
+    if (sample.status != "calculated") {
+      rows.push_back({sample.status == "road_width_missing" && !singleNorthRoadConfirmed
+                          ? "north_road_unconfirmed" : sample.status});
+      continue;
+    }
+    const double slantZ = *sample.limitZMm;
+    rows.push_back({capZ <= slantZ ? "height_cap" : "north_slant", slantZ, std::min(capZ, slantZ)});
   }
   return rows;
 }
@@ -2288,7 +2354,10 @@ Result<std::vector<NorthHeightPatch>> northHeightPatches(
     const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedNeighbors,
     double groundZMm, double baseHeightMm) {
   using R = Result<std::vector<NorthHeightPatch>>;
-  const auto field = northHeightField(document, confirmedNeighbors, groundZMm, baseHeightMm);
+  const double baseZ = groundZMm + baseHeightMm;
+  if (!std::isfinite(baseZ) || (baseHeightMm != 5000 && baseHeightMm != 10000))
+    return R::failure("地盤面と、法第56条で確認した立上り5 mまたは10 mを入力してください");
+  const auto field = northHeightField(document, confirmedNeighbors, baseZ);
   if (!field) return R::failure(field.error());
   const auto& vertices = field->geometry.vertices;
   const gp_Pnt origin = vertices.front();
@@ -2520,6 +2589,13 @@ std::vector<PermitCheck> permitElevationChecks(const Document& document) {
     out.push_back({"高さ制限の条件", missing ? "入力不足" : "入力済み",
                    "用途地域　" + zone + "\n高度地区　" + district + "\n確認資料　" +
                        (conditions.source.empty() ? "未入力" : conditions.source) + "\n高さの照合　未評価", {}, missing});
+    if (const auto rule = yokohamaHeightDistrictRule(conditions.district)) {
+      std::string details = district + "\n最高高さ　" + number(rule->heightCapMm / 1000, 0) + " m";
+      if (rule->northRiseMm)
+        details += "\n北側斜線　立上り " + number(*rule->northRiseMm / 1000, 1) + " m・勾配 0.6";
+      details += "\n出典　横浜市「最高限高度地区の概要と取扱い」令和8年4月版";
+      out.push_back({"横浜市の最高限高度地区", "基準値", std::move(details), {}});
+    }
   }
   const FloorLevel* gl = nullptr;
   for (const FloorLevel& l : settings.levels)

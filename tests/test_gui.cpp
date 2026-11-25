@@ -1763,6 +1763,12 @@ void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
   QTRY_COMPARE(rowOf(QStringLiteral("高さ制限の条件"))->text(1), QStringLiteral("入力済み"));
   checks->setCurrentItem(rowOf(QStringLiteral("高さ制限の条件")));
   QVERIFY(details->text().contains(QStringLiteral("横浜市 第2種高度地区")));
+  auto* districtReference = rowOf(QStringLiteral("横浜市の最高限高度地区"));
+  QVERIFY(districtReference);
+  QCOMPARE(districtReference->text(1), QStringLiteral("基準値"));
+  checks->setCurrentItem(districtReference);
+  QVERIFY(details->text().contains(QStringLiteral("最高高さ　12 m")));
+  QVERIFY(details->text().contains(QStringLiteral("勾配 0.6")));
   QCOMPARE(rowOf(QStringLiteral("まだ確かめていない事"))->text(1), QStringLiteral("未評価"));
   if (!reviewDir.isEmpty()) QVERIFY(dock->grab().save(QDir(reviewDir).filePath(QStringLiteral("height-conditions-stage.png"))));
 

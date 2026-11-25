@@ -208,6 +208,15 @@ struct SiteHeightConditions {
 const std::vector<std::pair<std::string, std::string>>& heightZoneChoices();
 const std::vector<std::pair<std::string, std::string>>& heightDistrictChoices();
 SiteHeightConditions siteHeightConditions(const Document& document);
+struct YokohamaHeightDistrictRule {
+  double heightCapMm;
+  std::optional<double> northRiseMm;
+};
+inline constexpr double kYokohamaHeightDistrictSlope = 0.6;
+inline constexpr char kYokohamaHeightDistrictSource[] =
+    "https://www.city.yokohama.lg.jp/business/bunyabetsu/kenchiku/annai/20140401121655.files/0162_20260331.pdf";
+inline constexpr char kYokohamaHeightDistrictCheckedOn[] = "2026-11-25";
+std::optional<YokohamaHeightDistrictRule> yokohamaHeightDistrictRule(const std::string& district);
 struct RoadHeightDatum {
   double groundDifferenceMm;  // Site ground minus road centre.
   double roadRiseMm;
@@ -291,6 +300,14 @@ struct NorthHeightSample {
 Result<std::vector<NorthHeightSample>> northHeightAt(
     const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedNeighbors,
     const std::vector<gp_Pnt>& points, double groundZMm, double baseHeightMm);
+struct YokohamaHeightDistrictSample {
+  std::string status;
+  std::optional<double> slantLimitZMm = std::nullopt;
+  std::optional<double> limitZMm = std::nullopt;
+};
+Result<std::vector<YokohamaHeightDistrictSample>> yokohamaHeightDistrictAt(
+    const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedNeighbors,
+    const std::vector<gp_Pnt>& points, double groundZMm, bool singleNorthRoadConfirmed);
 struct NorthHeightPreview {
   TopoDS_Shape surface;
   TopoDS_Shape referenceLines;

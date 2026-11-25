@@ -2705,6 +2705,68 @@ TEST_F(Schedules, PermitChecksReadTheEnergyAndElevationStages) {
   EXPECT_NE(rowOf(10, "いちばん高い所（参考）")["details"].get<std::string>().find("GLから 3500 mm"), std::string::npos);
 }
 
+TEST_F(Schedules, YokohamaHeightDistrictChoosesTheLowerLimit) {
+  const auto site = ok("create_polygon", {{"points", {{0,0,0},{20000,0,0},{20000,30000,0},{0,30000,0}}}})["id"];
+  ok("set_site_boundary", {{"outline", site}, {"source", "架空の測量図"}});
+  const json north = {{"start", {20000,30000,0}}, {"end", {0,30000,0}}};
+  json args{{"boundaries", json::array({north})}, {"points", {{10000,27000,200},{10000,0,0},{-10,0,0}}},
+            {"ground_z_mm", -500}};
+  EXPECT_EQ(call("yokohama_height_district_at", args)["ok"], false);
+  const auto setDistrict = [&](const std::string& district) {
+    ok("set_site_height_conditions", {{"zone", "mid_high_1"}, {"district", district}, {"source", "架空の計画図"}});
+  };
+  setDistrict("yokohama_7");
+  const auto flat = ok("yokohama_height_district_at", args);
+  EXPECT_EQ(flat["samples"][0]["status"], "height_cap");
+  EXPECT_EQ(flat["samples"][0]["limit_z_mm"], 30500);
+  EXPECT_TRUE(flat["north_slope"].is_null());
+  EXPECT_TRUE(flat["samples"][2]["limit_z_mm"].is_null());
+
+  setDistrict("yokohama_4");
+  EXPECT_EQ(call("yokohama_height_district_at", args)["ok"], false);
+  ASSERT_TRUE(modeler.setSiteNorth({0, "架空の測量図", "2026-11-25"}));
+  const auto slope = ok("yokohama_height_district_at", args);
+  EXPECT_EQ(slope["height_cap_mm"], 20000);
+  EXPECT_EQ(slope["north_rise_mm"], 7500);
+  EXPECT_EQ(slope["north_slope"], 0.6);
+  EXPECT_EQ(slope["samples"][0]["status"], "north_slant");
+  EXPECT_EQ(slope["samples"][0]["limit_z_mm"], 8800);
+  EXPECT_EQ(slope["samples"][1]["status"], "height_cap");
+  EXPECT_EQ(slope["samples"][1]["slant_limit_z_mm"], 25000);
+  EXPECT_EQ(slope["samples"][1]["limit_z_mm"], 19500);
+  EXPECT_EQ(slope["samples"][2]["status"], "outside_site");
+  EXPECT_EQ(slope["legal_status"], "未評価");
+
+  args["boundaries"] = json::array();
+  auto unconfirmed = ok("yokohama_height_district_at", args)["samples"][0];
+  EXPECT_EQ(unconfirmed["status"], "boundary_unconfirmed");
+  EXPECT_TRUE(unconfirmed["limit_z_mm"].is_null());
+  auto road = north;
+  road["width_m"] = 6;
+  road["source"] = "架空の道路";
+  ok("set_site_road", road);
+  unconfirmed = ok("yokohama_height_district_at", args)["samples"][0];
+  EXPECT_EQ(unconfirmed["status"], "north_road_unconfirmed");
+  EXPECT_TRUE(unconfirmed["limit_z_mm"].is_null());
+  args["single_north_road_confirmed"] = true;
+  const auto halfRoad = ok("yokohama_height_district_at", args)["samples"][0];
+  EXPECT_EQ(halfRoad["status"], "north_slant");
+  EXPECT_EQ(halfRoad["limit_z_mm"], 10600);
+}
+
+TEST_F(Schedules, YokohamaHeightDistrictReferenceValues) {
+  const std::array<double, 7> caps{10000, 12000, 15000, 20000, 20000, 20000, 31000};
+  const std::array<std::optional<double>, 7> rises{5000, 5000, 7000, 7500, 10000, std::nullopt, std::nullopt};
+  for (std::size_t i = 0; i < caps.size(); ++i) {
+    const auto rule = sbr::doc::yokohamaHeightDistrictRule("yokohama_" + std::to_string(i + 1));
+    ASSERT_TRUE(rule);
+    EXPECT_EQ(rule->heightCapMm, caps[i]);
+    EXPECT_EQ(rule->northRiseMm, rises[i]);
+  }
+  EXPECT_FALSE(sbr::doc::yokohamaHeightDistrictRule("none"));
+  EXPECT_FALSE(sbr::doc::yokohamaHeightDistrictRule("other"));
+}
+
 TEST_F(Schedules, NorthHeightCrossesTheRoadInTrueNorthDirection) {
   const auto site = ok("create_polygon", {{"points", {{0,0,0},{20000,0,0},{20000,30000,0},{0,30000,0}}}})["id"];
   ok("set_site_boundary", {{"outline", site}, {"source", "架空の測量図"}});

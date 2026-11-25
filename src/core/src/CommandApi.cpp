@@ -2772,6 +2772,39 @@ const std::vector<CommandDef>& commands() {
          return json{{"zone", conditions.zone}, {"district", conditions.district}, {"source", conditions.source},
                      {"zones", doc::heightZoneChoices()}, {"districts", doc::heightDistrictChoices()}};
        }},
+      {"yokohama_height_district_at",
+       "Calculate a single Yokohama maximum height district's standard limits at site XY points (mm). "
+       "Uses the saved district and the supplied common ground Z. For types 1–5, supply confirmed ordinary neighbor "
+       "edges as {start,end} and use the site's saved true north. Set single_north_road_confirmed only when the saved "
+       "road is a single qualifying parallel strip with confirmed width and no other adjoining open space. "
+       "Sites spanning districts, ground difference relief and exceptions require separate review. Read only.",
+       SCHEMA({"type": "object", "properties": {
+                   "boundaries": {"type": "array", "items": {"type": "object", "properties": {
+                       "start": {"type": "array"}, "end": {"type": "array"}}, "required": ["start", "end"]}},
+                   "points": {"type": "array", "items": {"type": "array"}},
+                   "ground_z_mm": {"type": "number"}, "single_north_road_confirmed": {"type": "boolean"}},
+               "required": ["boundaries", "points", "ground_z_mm"]}),
+       [](doc::Modeler& m, const json& a) {
+         const auto& document = m.document();
+         const auto district = doc::siteHeightConditions(document).district;
+         const auto positions = points(a, "points");
+         const double groundZ = number(a, "ground_z_mm");
+         const auto samples = must(doc::yokohamaHeightDistrictAt(
+             document, confirmedNeighborEdges(a), positions, groundZ, a.value("single_north_road_confirmed", false)));
+         const auto rule = doc::yokohamaHeightDistrictRule(district);
+         auto rows = json::array();
+         for (std::size_t i = 0; i < samples.size(); ++i) {
+           const auto& sample = samples[i];
+           rows.push_back({{"point", toJson(positions[i])}, {"status", sample.status},
+                           {"slant_limit_z_mm", sample.slantLimitZMm ? json(*sample.slantLimitZMm) : json(nullptr)},
+                           {"limit_z_mm", sample.limitZMm ? json(*sample.limitZMm) : json(nullptr)}});
+         }
+         return json{{"district", district}, {"height_cap_mm", rule->heightCapMm}, {"height_cap_z_mm", groundZ + rule->heightCapMm},
+                     {"north_rise_mm", rule->northRiseMm ? json(*rule->northRiseMm) : json(nullptr)},
+                     {"north_slope", rule->northRiseMm ? json(doc::kYokohamaHeightDistrictSlope) : json(nullptr)},
+                     {"samples", std::move(rows)}, {"source", doc::kYokohamaHeightDistrictSource},
+                     {"checked_on", doc::kYokohamaHeightDistrictCheckedOn}, {"legal_status", "未評価"}};
+       }},
       {"neighbor_height_at",
        "Evaluate a neighbor-slant study at XY points in the saved site (Z of each point is ignored). "
        "Supply explicitly confirmed straight outline edges as {start, end} world points in mm. "
@@ -4832,7 +4865,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
       name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" ||
       name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" || name == "permit_checks" || name == "check_drawing_set" || name == "project_outline" || name == "daylight_factor_estimates" ||
-      name == "site_height_conditions" || name == "neighbor_height_at" || name == "north_height_at" || name == "compare_north_height" || name == "compare_neighbor_height" || name == "road_height_datum" || name == "road_height_table_values" || name == "measure_road_building_setback" || name == "compare_road_height_plane" || name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
+      name == "site_height_conditions" || name == "yokohama_height_district_at" || name == "neighbor_height_at" || name == "north_height_at" || name == "compare_north_height" || name == "compare_neighbor_height" || name == "road_height_datum" || name == "road_height_table_values" || name == "measure_road_building_setback" || name == "compare_road_height_plane" || name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
     return E::Read;
   }
   if (isFileCommand(name)) return E::ExternalIo;
