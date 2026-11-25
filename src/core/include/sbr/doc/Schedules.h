@@ -390,7 +390,7 @@ struct HeightLimitEvidence {
 };
 Result<HeightLimitEvidence> heightLimitEvidence(
     const Document& document, const HeightLimitStudy& study, const CombinedHeightComparison& comparison,
-    const ObjectId& selected, bool useActiveSection);
+    const ObjectId& selected, bool useActiveSection, std::optional<double> roadSurfaceZ = std::nullopt);
 std::vector<PermitCheck> permitElevationChecks(const Document& document);
 // Stage 11 (一式の突合せ, docs/202): per stage read from the model (2, 3, 5-10) how many rows are
 // left to look at, marks given by hand to unlike openings, rooms of a storey with one name.

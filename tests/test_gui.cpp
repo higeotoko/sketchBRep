@@ -1720,7 +1720,8 @@ void GuiPhase1::combinedHeightShowsLowestSurface() {
           auto* locate = result->findChild<QPushButton*>(QStringLiteral("showCombinedHeightPart"));
           auto* save = result->findChild<QPushButton*>(QStringLiteral("saveCombinedHeightCsv"));
           auto* evidence = result->findChild<QPushButton*>(QStringLiteral("showCombinedHeightEvidence"));
-          if (table && locate && save && evidence && table->rowCount() == 2 &&
+          auto* roadDisplay = result->findChild<QLineEdit*>(QStringLiteral("heightEvidenceRoadSurface"));
+          if (table && locate && save && evidence && roadDisplay && roadDisplay->isEnabled() && table->rowCount() == 2 &&
               table->item(0, 2)->text() == QStringLiteral("+120.00") &&
               table->item(0, 3)->text() == QStringLiteral("道路斜線") &&
               table->item(1, 2)->text() == QStringLiteral("-80.00") &&
@@ -1759,6 +1760,7 @@ void GuiPhase1::combinedHeightShowsLowestSurface() {
               }
               pages->reject();
             });
+            roadDisplay->setText(QStringLiteral("-300"));
             evidence->click();
             locate->click();
           } else {

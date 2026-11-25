@@ -9092,13 +9092,29 @@ void MainWindow::showCombinedHeightDialog() {
       return plane.active && std::hypot(plane.normal[0], plane.normal[1]) > 1e-8 && std::abs(plane.normal[2]) <= 1e-8;
     }));
     resultLayout->addWidget(fromSection);
+    auto* roadDisplay = new QLineEdit;
+    roadDisplay->setObjectName(QStringLiteral("heightEvidenceRoadSurface"));
+    roadDisplay->setPlaceholderText(tr("未入力"));
+    roadDisplay->setEnabled(road.has_value());
+    auto* drawingInputs = new QFormLayout;
+    drawingInputs->addRow(tr("断面に示す路面Z（mm・任意）"), roadDisplay);
+    resultLayout->addLayout(drawingInputs);
     connect(evidence, &QPushButton::clicked, &results, [&] {
       if (table->currentRow() < 0 || document.sequence() != sequence) {
         savedStatus->setText(tr("モデルが変わりました。再試算してください。"));
         return;
       }
+      std::optional<double> roadSurface;
+      if (roadDisplay->isEnabled() && !roadDisplay->text().trimmed().isEmpty()) {
+        bool valid = false;
+        roadSurface = roadDisplay->text().toDouble(&valid);
+        if (!valid || !std::isfinite(*roadSurface)) {
+          savedStatus->setText(tr("断面に示す路面Zを確認してください。"));
+          return;
+        }
+      }
       auto report = doc::heightLimitEvidence(document, *study, *measured,
-          rows[static_cast<std::size_t>(table->currentRow())].id, fromSection->isChecked());
+          rows[static_cast<std::size_t>(table->currentRow())].id, fromSection->isChecked(), roadSurface);
       if (!report) {
         savedStatus->setText(QString::fromStdString(report.error()));
         return;

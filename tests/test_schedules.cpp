@@ -2875,6 +2875,7 @@ TEST_F(Schedules, CombinedHeightEvidenceKeepsSectionStationsAndDrawingSetInSync)
   const auto site = ok("create_polygon", {{"points", {{0,0,0},{20000,0,0},{20000,30000,0},{0,30000,0}}}})["id"];
   ok("set_site_boundary", {{"outline", site}, {"source", "test site"}});
   ok("set_site_road", {{"start", {0,0,0}}, {"end", {20000,0,0}}, {"source", "test road"}, {"width_m", 6}});
+  ASSERT_TRUE(modeler.setLevels({{"", "GL", 0}, {"", "1FL", 450}}));
   const auto part = ok("create_box", {{"origin", {10000,4500,0}}, {"width",1000}, {"depth",1000},
                                      {"height",12000}, {"name", "検算屋根"}})["id"].get<std::string>();
   sbr::doc::HeightLimitStudy study;
@@ -2885,13 +2886,30 @@ TEST_F(Schedules, CombinedHeightEvidenceKeepsSectionStationsAndDrawingSetInSync)
   ASSERT_TRUE(evidence) << evidence.error();
   ASSERT_EQ(evidence->tables.size(), 3);
   ASSERT_EQ(evidence->tables[0].rows.size(), 1);
-  EXPECT_EQ(evidence->tables[0].rows[0], (std::vector<std::string>{"P1", "5.000", "道路斜線", "11.000", "12.000", "1000.0"}));
+  EXPECT_EQ(evidence->tables[0].rows[0], (std::vector<std::string>{"5.000", "道路斜線", "11.000", "12.000", "1000.0"}));
   ASSERT_EQ(evidence->tables[1].rows.size(), 1);
   EXPECT_EQ(evidence->tables[1].rows[0][2], "1500.00");
   EXPECT_TRUE(std::any_of(evidence->section.items.begin(), evidence->section.items.end(), [](const auto& item) {
     return item.pen == sbr::draw::Pen::HeightLimit && item.points.size() == 2;
   }));
   EXPECT_FALSE(sbr::doc::heightLimitEvidence(modeler.document(), study, *comparison, part, true));
+  EXPECT_TRUE(std::any_of(evidence->section.items.begin(), evidence->section.items.end(), [](const auto& item) {
+    return item.text == "前面道路（路面高未入力）";
+  }));
+  EXPECT_FALSE(std::any_of(evidence->section.items.begin(), evidence->section.items.end(), [](const auto& item) {
+    return item.text == "P1";
+  }));
+  ASSERT_EQ(evidence->section.dimensions.size(), 1);
+  EXPECT_NEAR(evidence->section.dimensions.front().a.Distance(evidence->section.dimensions.front().b), 6000, 0.01);
+  const auto withRoadZ = sbr::doc::heightLimitEvidence(modeler.document(), study, *comparison, part, false, -300);
+  ASSERT_TRUE(withRoadZ) << withRoadZ.error();
+  EXPECT_TRUE(std::any_of(withRoadZ->section.items.begin(), withRoadZ->section.items.end(), [](const auto& item) {
+    return item.text == "路面 Z -0.300 m";
+  }));
+  EXPECT_TRUE(std::any_of(withRoadZ->section.items.begin(), withRoadZ->section.items.end(), [](const auto& item) {
+    return item.pen == sbr::draw::Pen::Visible && item.points.size() == 2 &&
+           std::abs(item.points[0].Y()) < 0.001 && std::abs(item.points[1].Y() + 250) < 0.001;
+  }));
 
   sbr::doc::DrawingSetSpec spec;
   const auto standard = sbr::doc::drawingSet(modeler.document(), spec);

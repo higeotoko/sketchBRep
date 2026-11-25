@@ -3182,11 +3182,12 @@ struct HeightCutSpan {
 
 Result<HeightLimitEvidence> heightLimitEvidence(
     const Document& document, const HeightLimitStudy& study, const CombinedHeightComparison& comparison,
-    const ObjectId& selected, bool useActiveSection) {
+    const ObjectId& selected, bool useActiveSection, std::optional<double> roadSurfaceZ) {
   using R = Result<HeightLimitEvidence>;
   const auto& site = document.settings().siteBoundary;
   const auto* target = document.find(selected);
   if (!site || !target) return R::failure("敷地と断面を通す部材を指定してください");
+  if (roadSurfaceZ && !std::isfinite(*roadSurfaceZ)) return R::failure("路面高さを確認してください");
   const auto info = document.siteBoundaryGeometry(site->outline);
   if (!info) return R::failure(info.error());
   const auto footprint = heightSiteFootprint(*info);
@@ -3210,7 +3211,6 @@ Result<HeightLimitEvidence> heightLimitEvidence(
   }
   auto spec = draw::sectionView(origin, toward);
   spec.grid = false;
-  spec.levels = false;
   spec.title = "H-H 高さ制限断面図";
   gp_Trsf toSection;
   toSection.SetTransformation(spec.frame);
@@ -3260,32 +3260,61 @@ Result<HeightLimitEvidence> heightLimitEvidence(
     if (study.neighbor || study.northRiseMm || study.district) ground = study.groundZMm;
     else for (const auto& level : document.settings().levels) if (level.name == "GL") ground = level.elevation;
     const double datum = ground.value_or(info->vertices.front().Z());
+    section.levels.erase(std::remove_if(section.levels.begin(), section.levels.end(),
+        [&](const auto& mark) { return mark.name == "GL" || std::abs(mark.elevation - datum) < 20; }), section.levels.end());
     const auto zText = [](double z) { return number(z / 1000, 3); };
-    for (const auto& [a, b] : siteSpans) {
-      line(draw::Pen::Level, a, datum, b, datum);
-      for (const double u : {a, b}) {
-        line(draw::Pen::Dimension, u, datum - 600, u, datum + 900);
-        label(u, datum + 1000, "敷地境界");
-      }
-    }
-    label(siteSpans.back().second, datum - 850, (ground ? "地盤Z " : "敷地輪郭Z ") + zText(datum) + " m", 2);
-
-    std::optional<double> roadU;
+    std::optional<double> roadU, roadFar;
+    double roadWidth = 0;
     if (road) {
       const auto edge = document.siteRoadEdge(*info);
       const auto crossing = heightCutPoints({(*edge)[0], (*edge)[1]}, toSection);
-      const double slope = gp_Vec(road->inward).Dot(gp_Vec(spec.frame.XDirection()));
-      const double width = study.road ? study.road->range.roadWidthMm : site->road->widthMm;
-      if (crossing.size() == 1 && std::abs(slope) >= 0.01) {
+      const double across = gp_Vec(road->inward).Dot(gp_Vec(spec.frame.XDirection()));
+      if (crossing.size() == 1 && std::abs(across) >= 0.01) {
         roadU = crossing.front().X();
-        if (width > 0) {
-          const double far = *roadU - width / slope;
-          const double roadLineZ = datum - 1650;
-          line(draw::Pen::Dimension, far, roadLineZ, *roadU, roadLineZ);
-          line(draw::Pen::Dimension, far, roadLineZ - 220, far, roadLineZ + 220);
-          line(draw::Pen::Dimension, *roadU, roadLineZ - 220, *roadU, roadLineZ + 220);
-          label((far + *roadU) / 2, roadLineZ + 240, "道路（幅員 " + zText(width) + " m）");
-        }
+        roadWidth = study.road ? study.road->range.roadWidthMm : site->road->widthMm;
+        if (roadWidth > 0) roadFar = *roadU - roadWidth / across;
+      }
+    }
+    const std::size_t buildingItems = section.items.size();
+    for (const auto& [a, b] : siteSpans) {
+      line(ground ? draw::Pen::Visible : draw::Pen::Level, a, datum, b, datum);
+      if (ground) {
+        const double spacing = std::max(480.0, (b - a) / 85);
+        for (double u = a; u + 250 <= b; u += spacing)
+          line(draw::Pen::Visible, u, datum, u + 250, datum - 250);
+      }
+      for (const double u : {a, b}) {
+        if (roadU && std::abs(u - *roadU) <= tolerance::kLinear) continue;
+        line(draw::Pen::Hidden, u, datum - 450, u, datum + 1800);
+        label(u, datum + 1950, "敷地境界線");
+      }
+    }
+    // The ground symbol belongs underneath the building cut.
+    std::rotate(section.items.begin(), section.items.begin() + buildingItems, section.items.end());
+    label(siteSpans.back().second - 300, datum - 1000,
+          (ground ? "算定用地盤面 Z " : "敷地輪郭 Z ") + zText(datum) + " m", 2);
+
+    if (roadU) {
+      const double roadZ = roadSurfaceZ.value_or(datum);
+      const double dimensionZ = std::min(roadZ, datum) - 1650;
+      const double boundaryLabelZ = std::max(roadZ, datum) + 2000;
+      line(draw::Pen::Hidden, *roadU, dimensionZ, *roadU, boundaryLabelZ - 150);
+      label(*roadU, boundaryLabelZ, "道路境界線");
+      if (roadFar) {
+        line(draw::Pen::Hidden, *roadFar, dimensionZ, *roadFar, boundaryLabelZ - 150);
+        label(*roadFar, boundaryLabelZ, "道路境界線");
+        if (roadSurfaceZ) line(draw::Pen::Visible, *roadFar, roadZ, *roadU, roadZ);
+        const double middle = (*roadFar + *roadU) / 2;
+        label(middle, roadZ + 470, roadSurfaceZ ? "前面道路" : "前面道路（路面高未入力）");
+        const double dimension = std::abs(*roadFar - *roadU);
+        const auto text = std::abs(dimension - roadWidth) <= 0.5 ? "幅員 " + zText(roadWidth) + " m" :
+            "断面 " + zText(dimension) + " m（幅員 " + zText(roadWidth) + " m）";
+        const gp_Pnt2d left(std::min(*roadU, *roadFar), roadZ), right(std::max(*roadU, *roadFar), roadZ);
+        section.dimensions.push_back({left, right, gp_Vec2d(0, dimensionZ - roadZ), text});
+        section.minV = std::min(section.minV, dimensionZ);
+        if (roadSurfaceZ) label(middle, roadZ - 770, "路面 Z " + zText(roadZ) + " m");
+      } else {
+        label(*roadU, dimensionZ, "前面道路（幅員未入力）");
       }
     }
 
@@ -3355,7 +3384,7 @@ Result<HeightLimitEvidence> heightLimitEvidence(
     for (const auto& part : parts) rayLow = std::min(rayLow, part.box.CornerMin().Z() - 1);
     draw::Table stations;
     stations.title = "H-H 高さ制限計算表";
-    stations.headers = {"測点", "断面距離 (m)", "制限・状態", "制限Z (m)", "部材Z (m)", "鉛直差 (mm)"};
+    stations.headers = {"断面距離 (m)", "制限・状態", "制限Z (m)", "部材Z (m)", "鉛直差 (mm)"};
     const double distanceOrigin = roadU.value_or(siteSpans.front().first);
     const double anchorU = gp_Pnt(centre).Transformed(toSection).X();
     const double spacing = std::max(600.0, (section.maxU - section.minU) / 30);
@@ -3388,22 +3417,19 @@ Result<HeightLimitEvidence> heightLimitEvidence(
       i = end;
       if (sample == outline.end() || u - previous < spacing) continue;
       previous = u;
-      const auto id = "P" + std::to_string(stations.rows.size() + 1);
       const double limitZ = sample->at(u);
-      line(draw::Pen::Dimension, u, datum - 280, u, datum + 130);
-      label(u, datum - 850, id);
-      stations.rows.push_back({id, zText(u - distanceOrigin),
+      stations.rows.push_back({zText(u - distanceOrigin),
           sample->source ? heightLimitSourceName(*sample->source) : "要確認",
           sample->source ? zText(limitZ) : "—", top ? zText(top->first) : "—",
           sample->source && top ? number(top->first - limitZ, 1) : "—"});
     }
-    if (stations.rows.empty()) stations.rows.push_back({"—", "—", "断面内に試算面なし", "—", "—", "—"});
+    if (stations.rows.empty()) stations.rows.push_back({"—", "断面内に試算面なし", "—", "—", "—"});
     stations.notes = {roadU ? "断面距離の原点は道路側の敷地境界。右向きを正とする。"
                             : "断面距離の原点は左側の敷地境界。右向きを正とする。",
                       "部材Zは測点直上で照合対象部材の形状に当たる最高点。正の差は超過。法規適合は未評価。"};
     if (comparison.approximate) stations.notes.push_back("隣地斜線を含む近似面で算定。");
-    section.calculationNotes = {"青実線：合成した制限線　橙破線：未確認範囲　測点Pの高さ・差はH-H 高さ制限計算表",
-                                "地盤は採用した参照高さ。道路は幅員の断面投影を示す。法規適合は未評価。"};
+    section.calculationNotes = {"青実線：合成制限線　橙破線：未確認範囲。高さと差はH-H 高さ制限計算表。",
+                                "地盤は算定に採用した高さ。法規適合は未評価。"};
     evidence.tables.push_back(std::move(stations));
 
     constexpr std::size_t rowsPerSheet = 22;
@@ -3422,7 +3448,10 @@ Result<HeightLimitEvidence> heightLimitEvidence(
       if (comparison.approximate) partsTable.notes.push_back("隣地斜線を含む近似面で算定。");
       evidence.tables.push_back(std::move(partsTable));
     }
-    const auto basis = combinedHeightBasis(document, study, true);
+    auto basis = combinedHeightBasis(document, study, true);
+    if (roadU)
+      basis.push_back(roadSurfaceZ && roadFar ? "断面の路面Z　" + zText(*roadSurfaceZ) + " m（図示用）" :
+                                              "断面の路面Z　未入力");
     for (std::size_t start = 0; start < basis.size(); start += rowsPerSheet) {
       draw::Table conditionTable;
       conditionTable.title = "高さ制限 採用条件";
