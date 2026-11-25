@@ -2835,6 +2835,25 @@ const std::vector<CommandDef>& commands() {
          }
          return json{{"samples", std::move(rows)}, {"legal_status", "未評価"}};
        }},
+      {"compare_north_height",
+       "Compare selected world-space B-reps with the north height study. Uses saved true north and road, "
+       "with confirmed neighbor edges as {start,end}. Measures the maximum vertical excess over confirmed regions. "
+       "Unconfirmed regions touching the part require review. This geometric study does not establish legal compliance.",
+       SCHEMA({"type": "object", "properties": {
+                   "boundaries": {"type": "array", "items": {"type": "object", "properties": {
+                      "start": {"type": "array"}, "end": {"type": "array"}}, "required": ["start", "end"]}},
+                   "ids": {"type": "array", "items": {"type": "string"}}, "ground_z_mm": {"type": "number"},
+                   "base_height_mm": {"type": "number", "enum": [5000,10000]}},
+               "required": ["boundaries", "ids", "ground_z_mm", "base_height_mm"]}),
+       [](doc::Modeler& m, const json& a) {
+         const auto parts = must(doc::compareNorthHeight(m.document(), confirmedNeighborEdges(a),
+             a.at("ids").get<std::vector<doc::ObjectId>>(), number(a, "ground_z_mm"), number(a, "base_height_mm")));
+         auto rows = json::array();
+         for (const auto& part : parts)
+           rows.push_back({{"id", part.id}, {"name", part.name}, {"state", part.state}, {"needs_review", part.needsReview},
+                           {"excess_mm", part.excessMm ? json(*part.excessMm) : json(nullptr)}});
+         return json{{"rows", std::move(rows)}, {"legal_status", "未評価"}};
+       }},
       {"compare_neighbor_height",
        "Compare selected world-space B-reps with a neighbor-height study using confirmed site edges. "
        "The maximum signed excess is between lower_excess_mm (null if no lower bound was found) and upper_excess_mm. "
@@ -4813,7 +4832,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
       name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" ||
       name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" || name == "permit_checks" || name == "check_drawing_set" || name == "project_outline" || name == "daylight_factor_estimates" ||
-      name == "site_height_conditions" || name == "neighbor_height_at" || name == "north_height_at" || name == "compare_neighbor_height" || name == "road_height_datum" || name == "road_height_table_values" || name == "measure_road_building_setback" || name == "compare_road_height_plane" || name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
+      name == "site_height_conditions" || name == "neighbor_height_at" || name == "north_height_at" || name == "compare_north_height" || name == "compare_neighbor_height" || name == "road_height_datum" || name == "road_height_table_values" || name == "measure_road_building_setback" || name == "compare_road_height_plane" || name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
     return E::Read;
   }
   if (isFileCommand(name)) return E::ExternalIo;

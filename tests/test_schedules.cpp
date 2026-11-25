@@ -2738,6 +2738,43 @@ TEST_F(Schedules, NorthHeightCrossesTheRoadInTrueNorthDirection) {
   EXPECT_NEAR(corner["limit_z_mm"].get<double>(), 5000 + 12500 * std::sqrt(2.0), 0.001);
 }
 
+TEST_F(Schedules, NorthHeightComparisonClipsAcrossADiscontinuousLimit) {
+  const auto site = ok("create_polygon", {{"points", {{0,0,0},{12000,0,0},{12000,3000,0},
+                                                     {3000,3000,0},{3000,9000,0},{12000,9000,0},
+                                                     {12000,12000,0},{0,12000,0}}}})["id"];
+  ok("set_site_boundary", {{"outline", site}, {"source", "架空の測量図"}});
+  ok("set_site_road", {{"start", {12000,12000,0}}, {"end", {0,12000,0}}, {"source", "架空の道路"}, {"width_m", 6}});
+  ASSERT_TRUE(modeler.setSiteNorth({0, "架空の測量図", "2026-11-25"}));
+  const json edge = {{"start", {12000,3000,0}}, {"end", {3000,3000,0}}};
+  const auto solid = ok("create_box", {{"origin", {2500,1000,0}}, {"width",1000}, {"depth",500}, {"height",8000}})["id"];
+  const auto roof = ok("create_polygon", {{"points", {{2500,1000,8000},{3500,1000,8000},
+                                                       {3500,1600,8000},{2500,1600,8000}}}})["id"];
+  const auto gap = ok("create_box", {{"origin", {4000,4500,0}}, {"width",500}, {"depth",500}, {"height",12000}})["id"];
+  const auto unknown = ok("create_box", {{"origin", {4200,1500,0}}, {"width",300}, {"depth",300}, {"height",6500}})["id"];
+  json args{{"boundaries", json::array({edge})}, {"ids", {solid, roof, gap}}, {"ground_z_mm", 0}, {"base_height_mm", 5000}};
+  const auto sequence = modeler.document().sequence();
+  const auto rows = ok("compare_north_height", args)["rows"];
+  for (const auto& row : rows) {
+    if (row["id"] == gap) {
+      EXPECT_EQ(row["state"], "敷地外");
+      EXPECT_TRUE(row["excess_mm"].is_null());
+    } else {
+      EXPECT_EQ(row["state"], "超過");
+      EXPECT_NEAR(row["excess_mm"].get<double>(), row["id"] == solid ? 1125 : 1250, 0.01);
+    }
+  }
+  args["boundaries"] = json::array();
+  args["ids"] = {solid, unknown};
+  const auto partial = ok("compare_north_height", args)["rows"];
+  for (const auto& row : partial) {
+    EXPECT_EQ(row["state"], "要確認");
+    EXPECT_EQ(row["needs_review"], true);
+    if (row["id"] == unknown) EXPECT_TRUE(row["excess_mm"].is_null());
+    else EXPECT_LT(row["excess_mm"].get<double>(), 0);
+  }
+  EXPECT_EQ(modeler.document().sequence(), sequence);
+}
+
 TEST_F(Schedules, NorthHeightPreviewKeepsTheRoadAndNeighborFacesSeparate) {
   const auto site = ok("create_polygon", {{"points", {{0,0,0},{12000,0,0},{12000,3000,0},
                                                      {3000,3000,0},{3000,9000,0},{12000,9000,0},

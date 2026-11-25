@@ -2014,6 +2014,7 @@ void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
   QVERIFY(northRow);
   checks->setCurrentItem(northRow);
   QCOMPARE(edit->text(), QStringLiteral("北側斜線を表示"));
+  f.window.setSelection({partId, fartherId});
   bool northAccepted = false;
   QString northFailure;
   QTimer::singleShot(0, [&] {
@@ -2024,14 +2025,25 @@ void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
     auto* base = dialog->findChild<QLineEdit*>(QStringLiteral("neighborHeightBase"));
     auto* slope = dialog->findChild<QLineEdit*>(QStringLiteral("neighborHeightSlope"));
     auto* show = dialog->findChild<QPushButton*>(QStringLiteral("showNeighborHeight"));
+    auto* compare = dialog->findChild<QPushButton*>(QStringLiteral("compareNorthHeightParts"));
+    auto* results = dialog->findChild<QTableWidget*>(QStringLiteral("neighborHeightParts"));
     northFailure = QStringLiteral("dialog=%1, edges=%2").arg(dialog->objectName()).arg(edges ? edges->count() : -1);
     if (dialog->objectName() == QStringLiteral("northHeightDialog") && edges && edges->count() == 6 &&
-        ground && base && slope && slope->isReadOnly() && slope->text() == QStringLiteral("1.25") && show) {
+        ground && base && slope && slope->isReadOnly() && slope->text() == QStringLiteral("1.25") && show && compare && results) {
       edges->item(3)->setCheckState(Qt::Checked);
       ground->setText(QStringLiteral("-3000"));
       base->setText(QStringLiteral("5"));
-      if (!reviewDir.isEmpty()) dialog->grab().save(QDir(reviewDir).filePath(QStringLiteral("north-height-edges.png")));
-      show->click();
+      compare->click();
+      if (results->isVisible() && results->rowCount() == 2) {
+        for (int row = 0; row < results->rowCount(); ++row) {
+          if (results->item(row, 0)->data(Qt::UserRole).toString().toStdString() != partId) continue;
+          results->selectRow(row);
+          if (!reviewDir.isEmpty())
+            dialog->grab().save(QDir(reviewDir).filePath(QStringLiteral("north-height-parts.png")));
+          show->click();
+          break;
+        }
+      }
       northAccepted = dialog->result() == QDialog::Accepted;
     }
     if (!northAccepted) {
@@ -2041,6 +2053,7 @@ void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
   });
   edit->click();
   QVERIFY2(northAccepted, qPrintable(northFailure));
+  QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{partId});
   QVERIFY(!f.vp->roadHeightPlaneShape().IsNull());
   const auto northLine = f.vp->neighborHeightBoundaryShape();
   QVERIFY(!northLine.IsNull());

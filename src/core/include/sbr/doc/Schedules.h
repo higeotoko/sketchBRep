@@ -299,6 +299,16 @@ struct NorthHeightPreview {
 Result<NorthHeightPreview> northHeightPreview(
     const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedNeighbors,
     double groundZMm, double baseHeightMm);
+struct NorthHeightPartRow {
+  ObjectId id;
+  std::string name;
+  std::string state;
+  std::optional<double> excessMm;  // Maximum over the confirmed portions.
+  bool needsReview;
+};
+Result<std::vector<NorthHeightPartRow>> compareNorthHeight(
+    const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedNeighbors,
+    const std::vector<ObjectId>& ids, double groundZMm, double baseHeightMm);
 // Stage 10 (立面・断面, docs/201): the level GL, the model's highest point above it (not the legal
 // height), where sections are cut, the elevations' orientation, and what is not checked.
 std::vector<PermitCheck> permitElevationChecks(const Document& document);

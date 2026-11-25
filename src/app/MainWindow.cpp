@@ -8436,9 +8436,8 @@ void MainWindow::showBoundaryHeightDialog(bool north) {
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close);
   buttons->button(QDialogButtonBox::Close)->setText(tr("閉じる"));
   auto* compare = buttons->addButton(tr("選択部材を照合"), QDialogButtonBox::ActionRole);
-  compare->setObjectName(QStringLiteral("compareNeighborHeightParts"));
-  compare->setEnabled(!selectedIds.empty() && !north);
-  compare->setVisible(!north);
+  compare->setObjectName(north ? QStringLiteral("compareNorthHeightParts") : QStringLiteral("compareNeighborHeightParts"));
+  compare->setEnabled(!selectedIds.empty());
   if (selectedIds.empty()) compare->setToolTip(tr("モデルで部材を選んでから、この画面を開いてください。"));
   auto* show = buttons->addButton(tr("3Dで見る"), QDialogButtonBox::ActionRole);
   show->setObjectName(QStringLiteral("showNeighborHeight"));
@@ -8471,25 +8470,46 @@ void MainWindow::showBoundaryHeightDialog(bool north) {
     for (int i = 0; i < edges->count(); ++i)
       if (edges->item(i)->checkState() == Qt::Checked) selectedEdges.push_back(endpoints(static_cast<std::size_t>(i)));
     if (!preview3d) {
+      const auto signedMm = [](double value) {
+        return (value > 0 ? QStringLiteral("+") : QString()) + QString::number(value, 'f', 2);
+      };
+      const auto addRow = [&](int i, const auto& row, const QString& difference) {
+        auto* name = new QTableWidgetItem(QString::fromStdString(row.name));
+        name->setData(Qt::UserRole, QString::fromStdString(row.id));
+        table->setItem(i, 0, name);
+        table->setItem(i, 1, new QTableWidgetItem(QString::fromStdString(row.state)));
+        table->setItem(i, 2, new QTableWidgetItem(difference));
+      };
+      if (north) {
+        const auto rows = doc::compareNorthHeight(document, selectedEdges, selectedIds, groundZ, baseM * 1000);
+        if (!rows) {
+          error->setText(QString::fromStdString(rows.error()));
+          return;
+        }
+        table->setRowCount(static_cast<int>(rows->size()));
+        for (int i = 0; i < table->rowCount(); ++i) {
+          const auto& row = (*rows)[static_cast<std::size_t>(i)];
+          QString difference = tr("—");
+          if (row.excessMm)
+            difference = row.needsReview ? tr("%1（確認済み範囲）").arg(signedMm(*row.excessMm)) : signedMm(*row.excessMm);
+          addRow(i, row, difference);
+        }
+        table->selectRow(0);
+        table->show();
+        return;
+      }
       const auto rows = doc::compareNeighborHeight(document, selectedEdges, selectedIds, groundZ, baseM * 1000, gradient);
       if (!rows) {
         error->setText(QString::fromStdString(rows.error()));
         return;
       }
       table->setRowCount(static_cast<int>(rows->size()));
-      const auto signedMm = [](double value) {
-        return (value > 0 ? QStringLiteral("+") : QString()) + QString::number(value, 'f', 2);
-      };
       for (int i = 0; i < table->rowCount(); ++i) {
         const auto& row = (*rows)[static_cast<std::size_t>(i)];
-        auto* name = new QTableWidgetItem(QString::fromStdString(row.name));
-        name->setData(Qt::UserRole, QString::fromStdString(row.id));
-        table->setItem(i, 0, name);
-        table->setItem(i, 1, new QTableWidgetItem(QString::fromStdString(row.state)));
         QString difference = tr("%1 以下").arg(signedMm(row.upperExcessMm));
         if (row.exact) difference = signedMm(*row.lowerExcessMm);
         else if (row.lowerExcessMm) difference = tr("%1 〜 %2").arg(signedMm(*row.lowerExcessMm), signedMm(row.upperExcessMm));
-        table->setItem(i, 2, new QTableWidgetItem(difference));
+        addRow(i, row, difference);
       }
       table->selectRow(0);
       table->show();
@@ -8503,6 +8523,8 @@ void MainWindow::showBoundaryHeightDialog(bool north) {
       }
       viewport_->unlockView();
       viewport_->showStorey(std::nullopt);
+      if (const auto* row = table->item(table->currentRow(), 0))
+        setSelection({row->data(Qt::UserRole).toString().toStdString()});
       viewport_->setBoundaryHeightSurface(preview->surface, preview->referenceLines, true);
       viewport_->setStandardView(Viewport::StandardView::Iso);
       setStatus(preview->omittedAreaMm2 > 0

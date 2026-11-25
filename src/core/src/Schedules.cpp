@@ -13,6 +13,7 @@
 
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Section.hxx>
+#include <BRepAdaptor_Surface.hxx>
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
@@ -2274,10 +2275,19 @@ Result<std::vector<NorthHeightSample>> northHeightAt(
   return rows;
 }
 
-Result<NorthHeightPreview> northHeightPreview(
+namespace {
+
+struct NorthHeightPatch {
+  TopoDS_Face footprint;
+  TopoDS_Face surface;  // Null for an unconfirmed region.
+  TopoDS_Shape reference;
+  double areaMm2;
+};
+
+Result<std::vector<NorthHeightPatch>> northHeightPatches(
     const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedNeighbors,
     double groundZMm, double baseHeightMm) {
-  using R = Result<NorthHeightPreview>;
+  using R = Result<std::vector<NorthHeightPatch>>;
   const auto field = northHeightField(document, confirmedNeighbors, groundZMm, baseHeightMm);
   if (!field) return R::failure(field.error());
   const auto& vertices = field->geometry.vertices;
@@ -2302,12 +2312,7 @@ Result<NorthHeightPreview> northHeightPreview(
   };
 
   try {
-    BRep_Builder builder;
-    TopoDS_Compound surface, references;
-    builder.MakeCompound(surface);
-    builder.MakeCompound(references);
-    double omitted = 0;
-    std::size_t count = 0, regions = 0;
+    std::vector<NorthHeightPatch> patches;
     for (std::size_t column = 1; column < cuts.size(); ++column) {
       const double left = cuts[column - 1], right = cuts[column];
       if (right - left <= tolerance::kLinear) continue;
@@ -2320,43 +2325,182 @@ Result<NorthHeightPreview> northHeightPreview(
       std::sort(crossings.begin(), crossings.end(), [](const auto& a, const auto& b) { return a.station < b.station; });
       if (crossings.size() % 2 != 0) return R::failure("真北方向で敷地の表示範囲を分けられません");
       for (std::size_t i = 1; i < crossings.size(); i += 2) {
-        if (++regions > 4096) return R::failure("敷地の分割が多く、北側斜線を表示できません");
+        if (patches.size() >= 4096) return R::failure("敷地の分割が多く、北側斜線を表示できません");
         const auto& south = crossings[i - 1];
         const auto& exit = crossings[i];
         const double v = (south.station + exit.station) / 2;
         const double sl = northAt(south.edge, left), sr = northAt(south.edge, right);
         const double nl = northAt(exit.edge, left), nr = northAt(exit.edge, right);
+        const auto makeFace = [&](double southLeftZ, double southRightZ, double exitZ) {
+          BRepBuilderAPI_MakePolygon wire;
+          wire.Add(world(left, sl, southLeftZ));
+          wire.Add(world(right, sr, southRightZ));
+          if (nr - sr > tolerance::kLinear) wire.Add(world(right, nr, exitZ));
+          if (nl - sl > tolerance::kLinear) wire.Add(world(left, nl, exitZ));
+          wire.Close();
+          if (!wire.IsDone()) return TopoDS_Face();
+          BRepBuilderAPI_MakeFace face(wire.Wire(), true);
+          return face.IsDone() ? face.Face() : TopoDS_Face();
+        };
+        NorthHeightPatch patch{makeFace(origin.Z(), origin.Z(), origin.Z()), {}, {},
+                               (right - left) * (exit.station - south.station)};
+        if (patch.footprint.IsNull()) return R::failure("北側斜線の範囲を作れません");
         const auto sample = northHeightSample(field->geometry, field->footprint, field->kinds,
                                               world(mid, v, origin.Z()), field->north, field->width, field->baseZ);
-        if (!sample.distanceMm) {
-          omitted += (right - left) * (exit.station - south.station);
-          continue;
+        if (sample.distanceMm) {
+          const double advance = *sample.distanceMm - (exit.station - v);
+          const double zNearExit = field->baseZ + 1.25 * advance;
+          // Keep the two sides of a change in exit as separate faces.
+          patch.surface = makeFace(zNearExit + 1.25 * (nl - sl), zNearExit + 1.25 * (nr - sr), zNearExit);
+          if (patch.surface.IsNull()) return R::failure("北側斜線の表示面を作れません");
+          BRepBuilderAPI_MakeEdge line(world(left, nl + advance, origin.Z() + 1),
+                                       world(right, nr + advance, origin.Z() + 1));
+          if (line.IsDone()) patch.reference = line.Edge();
         }
-        ++count;
-        const double advance = *sample.distanceMm - (exit.station - v);
-        const double zNearExit = field->baseZ + 1.25 * advance;
-        // Over an open strip the exit edge and road offset are constant.
-        // Keep the two sides of a change in exit as separate faces.
-        BRepBuilderAPI_MakePolygon wire;
-        wire.Add(world(left, sl, zNearExit + 1.25 * (nl - sl)));
-        wire.Add(world(right, sr, zNearExit + 1.25 * (nr - sr)));
-        if (nr - sr > tolerance::kLinear) wire.Add(world(right, nr, zNearExit));
-        if (nl - sl > tolerance::kLinear) wire.Add(world(left, nl, zNearExit));
-        wire.Close();
-        if (!wire.IsDone()) return R::failure("北側斜線の表示範囲を作れません");
-        BRepBuilderAPI_MakeFace face(wire.Wire(), true);
-        if (!face.IsDone()) return R::failure("北側斜線の表示面を作れません");
-        builder.Add(surface, face.Face());
-        BRepBuilderAPI_MakeEdge line(world(left, nl + advance, origin.Z() + 1),
-                                     world(right, nr + advance, origin.Z() + 1));
-        if (line.IsDone()) builder.Add(references, line.Edge());
+        patches.push_back(std::move(patch));
       }
     }
-    if (count == 0) return R::failure("表示できる範囲がありません。出口の隣地辺または道路幅員を確認してください");
-    return NorthHeightPreview{surface, references, omitted};
+    return patches;
   } catch (const Standard_Failure&) {
     return R::failure("北側斜線の表示面を作れません");
   }
+}
+
+Result<TopoDS_Shape> clipPartToNorthPatch(const TopoDS_Shape& part, const Bnd_Box& bounds,
+                                             const TopoDS_Face& footprint, double footprintZ) {
+  using R = Result<TopoDS_Shape>;
+  const auto lo = bounds.CornerMin(), hi = bounds.CornerMax();
+  gp_Trsf down;
+  down.SetTranslation(gp_Vec(0, 0, lo.Z() - 1 - footprintZ));
+  BRepPrimAPI_MakePrism prism(footprint.Moved(TopLoc_Location(down)), gp_Vec(0, 0, hi.Z() - lo.Z() + 2));
+  const auto solid = prism.Shape();
+  if (!prism.IsDone() || solid.IsNull()) return R::failure("敷地内の照合範囲を作れません");
+
+  TopTools_ListOfShape parts, tools;
+  parts.Append(part);
+  tools.Append(solid);
+  BRepAlgoAPI_Common common;
+  common.SetArguments(parts);
+  common.SetTools(tools);
+  common.SetNonDestructive(true);
+  common.Build();
+  if (!common.IsDone() || common.HasErrors()) return R::failure("斜線の範囲で部材を切れません");
+  BRepAlgoAPI_Section contacts(part, solid, false);
+  contacts.SetNonDestructive(true);
+  contacts.Build();
+  if (!contacts.IsDone() || contacts.HasErrors()) return R::failure("斜線の範囲端で部材を測れません");
+  BRep_Builder builder;
+  TopoDS_Compound clipped;
+  builder.MakeCompound(clipped);
+  if (!common.Shape().IsNull()) builder.Add(clipped, common.Shape());
+  if (!contacts.Shape().IsNull()) builder.Add(clipped, contacts.Shape());
+  return clipped;
+}
+
+}  // namespace
+
+Result<NorthHeightPreview> northHeightPreview(
+    const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedNeighbors,
+    double groundZMm, double baseHeightMm) {
+  using R = Result<NorthHeightPreview>;
+  const auto patches = northHeightPatches(document, confirmedNeighbors, groundZMm, baseHeightMm);
+  if (!patches) return R::failure(patches.error());
+  BRep_Builder builder;
+  TopoDS_Compound surface, references;
+  builder.MakeCompound(surface);
+  builder.MakeCompound(references);
+  double omitted = 0;
+  bool visible = false;
+  for (const auto& patch : *patches) {
+    if (patch.surface.IsNull()) {
+      omitted += patch.areaMm2;
+      continue;
+    }
+    visible = true;
+    builder.Add(surface, patch.surface);
+    if (!patch.reference.IsNull()) builder.Add(references, patch.reference);
+  }
+  if (!visible) return R::failure("表示できる範囲がありません。出口の隣地辺または道路幅員を確認してください");
+  return NorthHeightPreview{surface, references, omitted};
+}
+
+Result<std::vector<NorthHeightPartRow>> compareNorthHeight(
+    const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedNeighbors,
+    const std::vector<ObjectId>& ids, double groundZMm, double baseHeightMm) {
+  using R = Result<std::vector<NorthHeightPartRow>>;
+  if (ids.empty()) return R::failure("モデルで照合する部材を選択してください");
+  const auto patches = northHeightPatches(document, confirmedNeighbors, groundZMm, baseHeightMm);
+  if (!patches) return R::failure(patches.error());
+
+  struct Region {
+    gp_Pnt lo, hi;
+    std::optional<gp_Pln> plane;
+  };
+  std::vector<Region> regions;
+  for (const auto& patch : *patches) {
+    const auto box = geom::exactBounds(patch.footprint);
+    std::optional<gp_Pln> plane;
+    if (!patch.surface.IsNull()) plane = BRepAdaptor_Surface(patch.surface).Plane();
+    regions.push_back({box.CornerMin(), box.CornerMax(), plane});
+  }
+  std::vector<NorthHeightPartRow> rows;
+  try {
+    for (const auto& id : std::set<ObjectId>(ids.begin(), ids.end())) {
+      const auto* object = document.find(id);
+      if (!object || id == document.settings().siteBoundary->outline)
+        return R::failure("敷地境界以外の部材を選択してください");
+      const auto part = document.worldShape(*object);
+      if (part.IsNull() || !TopExp_Explorer(part, TopAbs_FACE).More())
+        return R::failure("面を持つ部材を選択してください（" + object->name + "）");
+      const auto bounds = geom::exactBounds(part);
+      if (bounds.IsVoid() || bounds.IsOpen()) return R::failure("部材の範囲を測れません（" + object->name + "）");
+      const auto lo = bounds.CornerMin(), hi = bounds.CornerMax();
+      std::optional<double> maximum;
+      bool unknown = false;
+      for (std::size_t i = 0; i < regions.size(); ++i) {
+        const auto& region = regions[i];
+        if (hi.X() < region.lo.X() - tolerance::kLinear || lo.X() > region.hi.X() + tolerance::kLinear ||
+            hi.Y() < region.lo.Y() - tolerance::kLinear || lo.Y() > region.hi.Y() + tolerance::kLinear) continue;
+        const auto& footprint = (*patches)[i].footprint;
+        const double z = region.lo.Z();
+        const std::array<gp_Pnt, 4> corners{gp_Pnt(lo.X(), lo.Y(), z), gp_Pnt(hi.X(), lo.Y(), z),
+                                            gp_Pnt(hi.X(), hi.Y(), z), gp_Pnt(lo.X(), hi.Y(), z)};
+        const bool whollyInside = std::all_of(corners.begin(), corners.end(), [&](const auto& p) {
+          const auto state = BRepClass_FaceClassifier(footprint, p, tolerance::kLinear).State();
+          return state == TopAbs_IN || state == TopAbs_ON;
+        });
+        TopoDS_Shape relevant = part;
+        if (!whollyInside) {
+          const auto clipped = clipPartToNorthPatch(part, bounds, footprint, z);
+          if (!clipped) return R::failure(clipped.error() + "（" + object->name + "）");
+          relevant = *clipped;
+          if (geom::exactBounds(relevant).IsVoid()) continue;
+        }
+        if (!region.plane) {
+          unknown = true;
+          continue;
+        }
+        auto normal = region.plane->Axis().Direction();
+        if (normal.Z() < 0) normal.Reverse();
+        gp_Trsf frame;
+        frame.SetTransformation(gp_Ax3(region.plane->Location(), normal));
+        const auto measured = geom::exactBounds(relevant.Moved(TopLoc_Location(frame)));
+        if (measured.IsVoid() || measured.IsOpenZmax() || normal.Z() <= 0)
+          return R::failure("部材の鉛直差を測れません（" + object->name + "）");
+        const double excess = measured.CornerMax().Z() / normal.Z();
+        if (!maximum || excess > *maximum) maximum = excess;
+      }
+      constexpr double agreementMm = 0.01;
+      std::string state = "敷地外";
+      if (maximum && *maximum > agreementMm) state = unknown ? "超過・要確認" : "超過";
+      else if (unknown) state = "要確認";
+      else if (maximum) state = *maximum < -agreementMm ? "余裕" : "接触相当";
+      rows.push_back({id, object->name, std::move(state), maximum, unknown});
+    }
+  } catch (const Standard_Failure&) {
+    return R::failure("北側斜線と部材を照合できません");
+  }
+  return rows;
 }
 
 std::vector<PermitCheck> permitElevationChecks(const Document& document) {
