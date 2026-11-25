@@ -408,12 +408,29 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
   placeBracingMarks(items, view.bracingMarks, s);
   Box all;
   for (const Item& i : items) extentOf(i, s, all);
+  if (spec.compactDiagram && spec.north && (view.spec.kind == ViewKind::Plan || view.spec.kind == ViewKind::SitePlan)) {
+    appendNorthMark(items, gp_Pnt2d(all.x1 + 10 * s, all.y1 - 8 * s), s, view.trueNorth);
+    // A scale bar remains correct when the diagram is resized in another document.
+    const double metres = 0.025 * s;
+    const double decade = std::pow(10.0, std::floor(std::log10(metres)));
+    const double normalized = metres / decade;
+    const double nice = decade * (normalized >= 5.0 ? 5.0 : normalized >= 2.0 ? 2.0 : 1.0);
+    const double x = all.x0, y = all.y0 - 6 * s, end = x + nice * 1000.0;
+    items.push_back(line(Pen::Visible, gp_Pnt2d(x, y), gp_Pnt2d(end, y)));
+    for (double at : {x, (x + end) / 2.0, end})
+      items.push_back(line(Pen::Visible, gp_Pnt2d(at, y - s), gp_Pnt2d(at, y + s)));
+    char metresText[32];
+    std::snprintf(metresText, sizeof metresText, "%g m", nice);
+    items.push_back(text(Pen::Text, gp_Pnt2d(end + 2 * s, y), metresText, 2.7, 0, 1));
+    for (const Item& i : items) extentOf(i, s, all);
+  }
   // The drawing's caption below it.
   const std::string title = view.spec.title.empty() ? spec.title.drawing : view.spec.title;
   char scaleText[32];
   std::snprintf(scaleText, sizeof scaleText, "S=1:%g", s);
   const double captionGap = 9.0 * s;
-  const std::string caption = title.empty() ? std::string(scaleText) : title + "  " + scaleText;
+  const std::string caption = spec.compactDiagram ? title
+      : title.empty() ? std::string(scaleText) : title + "  " + scaleText;
   const double captionW = textWidth(caption, 5.0) * s;
   const double width = std::max(all.x1 - all.x0, captionW);
   const double height = all.y1 - all.y0 + captionGap;
@@ -476,9 +493,12 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
 
   auto P = [&](double x, double y) { return gp_Pnt2d(x * s, y * s); };  // paper mm -> sheet
   for (std::size_t i = 0; i < calculationLines.size(); ++i)
-    items.push_back(text(Pen::Text, P(kLeftMargin + 2, paper->h - kMargin - 3 - i * 4.0), calculationLines[i],
-                         2.2, 0, 0));
-  if (spec.north && (view.spec.kind == ViewKind::Plan || view.spec.kind == ViewKind::SitePlan)) {
+    items.push_back(text(Pen::Text,
+                         spec.compactDiagram
+                             ? gp_Pnt2d(std::min(kLeftMargin * s + 6 * s, all.x0 + dx), all.y1 + dy + (calculationLines.size() - i + 1) * 4.0 * s)
+                             : P(kLeftMargin + 2, paper->h - kMargin - 3 - i * 4.0),
+                         calculationLines[i], spec.compactDiagram ? 2.8 : 2.2, 0, 0));
+  if (!spec.compactDiagram && spec.north && (view.spec.kind == ViewKind::Plan || view.spec.kind == ViewKind::SitePlan)) {
     appendNorthMark(items, P(ax1 - 15, ay1 - 16), s, view.trueNorth);
   }
   if (frame) frameAndTitle(items, paper, spec, title, s);

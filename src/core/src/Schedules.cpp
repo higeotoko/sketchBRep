@@ -5102,7 +5102,7 @@ draw::Table scheduleTable(const Document& document, int which) {
 // (view mm = ground mm, north up), the site marked, at the smallest usual scale at which the picture
 // is at most 200 x 140 mm on paper; the 出典 lines as its notes. Without a picture: an empty frame of
 // that size saying where the map goes.
-static draw::View vicinityView(const Document& document, const VicinityMap& map, const std::optional<VicinityPicture>& picture,
+draw::View vicinityView(const Document& document, const VicinityMap& map, const std::optional<VicinityPicture>& picture,
                                 double& scale) {
   draw::View view;
   view.spec.kind = draw::ViewKind::Plan;  // north mark up (the map's north is true north)

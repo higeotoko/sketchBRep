@@ -569,6 +569,9 @@ struct DrawingSet {
   std::vector<std::string> notes;
 };
 Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& spec);
+// Shared by the drawing set and the official form's vicinity drawing.
+draw::View vicinityView(const Document& document, const VicinityMap& map,
+                        const std::optional<VicinityPicture>& picture, double& scale);
 
 // Any of the tables as CSV, in the same form (docs/115: the finish schedule).
 std::string tableCsv(const draw::Table& table);

@@ -16,6 +16,7 @@
 #include "UiDriver.h"
 #include "VicinityMapFetcher.h"
 #include "PermitWorkflowPanel.h"
+#include "PermitForms.h"
 #include "CrashLog.h"
 #include "HelpWindow.h"
 #include "SunDialog.h"
@@ -1277,6 +1278,9 @@ void MainWindow::buildMenus() {
   site->addAction(tr("高さ制限の条件..."), this, &MainWindow::showSiteHeightConditionsDialog)
       ->setObjectName(QStringLiteral("siteHeightConditionsAction"));
   // docs/214: the project's items that are not in the model, for the project outline.
+  site->addAction(tr("確認申請のWord様式..."), this, [this] {
+    showPermitForms(modeler_.document(), this);
+  })->setObjectName(QStringLiteral("permitWordForms"));
   site->addAction(tr("計画概要の項目..."), this, &MainWindow::showProjectOutlineDialog)
       ->setObjectName(QStringLiteral("projectOutlineAction"));
   // docs/215: the energy route and region (docs/210).
@@ -7859,6 +7863,7 @@ void MainWindow::showPermitWorkflow() {
       case Action::North: trigger("siteNorthByAngleAction"); break;
       case Action::Zone: trigger("siteZoneAction"); break;  // docs/206
       case Action::Outline: trigger("projectOutlineAction"); break;  // docs/214
+      case Action::WordForms: trigger("permitWordForms"); break;
       case Action::EnergyRoute: trigger("energyRouteAction"); break;  // docs/215
       case Action::HeightConditions: showSiteHeightConditionsDialog(); break;
       case Action::RoadHeightPlane: showRoadHeightPlaneDialog(); break;

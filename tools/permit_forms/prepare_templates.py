@@ -1,0 +1,180 @@
+"""Prepare the exact Yokohama Word forms supported by SketchBRep (standard library only)."""
+
+import argparse
+import hashlib
+import io
+from pathlib import Path
+from difflib import SequenceMatcher
+import re
+import struct
+import xml.etree.ElementTree as ET
+from xml.sax.saxutils import escape, unescape
+import zipfile
+
+
+SECOND = "3f19f0666d8234d41f4cf7740c207d8a567316a019000340298ff95b8a40c7c5"
+THIRD = "6cd92ac9e8236af3e3ac13c8d89ef88cc6e1691232724df56e8a2d5a5f6f1b00"
+W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+
+def mark(key):
+    return "@@SBR_" + key + "@@"
+
+
+def patch_document(xml, third):
+    # Keep the source XML outside the targeted runs byte-for-byte, including compatibility
+    # namespaces. The known templates do not nest paragraphs before the last targeted index.
+    spans = list(re.finditer(r"<w:p(?:\s[^>]*)?>(?:(?!<w:p(?:\s|>)).)*?</w:p>", xml, re.S))
+    edits = {}
+
+    def edit(index, transform):
+        edits.setdefault(index, []).append(transform)
+
+    def after(index, label, key):
+        def add(text):
+            start = text.index(label) + len(label)
+            return text[:start] + mark(key) + text[start:]
+        edit(index, add)
+
+    def boxes(index, keys):
+        def select(text):
+            keys_iter = iter(keys)
+            result, count = re.subn("□", lambda _: mark("check_" + next(keys_iter)), text)
+            assert count == len(keys)
+            return result
+        edit(index, select)
+
+    def slots(index, keys):
+        def insert(text):
+            positions = list(re.finditer(r"\( +\)", text))
+            for position, key in reversed(list(zip(positions, keys, strict=False))):
+                if key:
+                    start, end = position.start() + 1, position.end() - 1
+                    text = text[:start] + mark(f"slot_{key}__{end - start}") + text[end:]
+            assert len(positions) >= len(keys)
+            return text
+        edit(index, insert)
+
+    def date(index, key):
+        edit(index, lambda text: re.sub(r"([ 　]+年[ 　]+月[ 　]+日)$",
+                                      lambda m: mark("date_" + key), text, count=1))
+
+    if third:
+        after(5, "氏名】", "client")
+    else:
+        after(18, "申請者氏名　", "client")
+        after(58, "氏名】", "client")
+        for index, key in zip(range(206, 213), (
+                "struct_submitted", "struct_not_yet", "struct_not_required", None,
+                "energy_submitted", "energy_not_yet", "energy_not_required")):
+            if key:
+                boxes(index, [key])
+
+    offset = 60 if third else 0
+    for index, label, key in (
+        (217, "地名地番】", "address"), (218, "住居表示】", "residence"),
+        (223, "地区又は街区】", "other_zones"),
+        (225, "幅員】", "road_width"), (226, "部分の長さ】", "frontage"),
+        (235, "(1)", "site_area"),
+    ):
+        after(index - offset, label, key)
+
+    boxes(220 - offset, ["city_inside", "city_urbanization", "city_control", "city_non_divided"])
+    boxes(221 - offset, ["city_quasi", "city_outside"])
+    boxes(222 - offset, ["fire_fire", "fire_quasi_fire", "fire_none"])
+    slots(228 - offset, ["site_area"])
+    slots(230 - offset, ["zone", "zone_reserve", "zone_reserve"])
+    after(240 - offset, "(区分", "use_code")
+    after(240 - offset, ")", "main_use")
+    boxes(242 - offset, ["work_" + kind for kind in (
+        "new", "extension", "rebuild", "relocation", "use_change", "major_repair", "major_remodel")])
+    slots(244 - offset, ["building_area", None, "building_area"])
+    slots(249 - offset, ["floor_area", None, "floor_area"])
+    edit(279 - (61 if third else 0), lambda text: re.sub(r" +造", mark("structure") + "造", text, count=1))
+    date(286 - (61 if third else 0), "start_date")
+    date(287 - (61 if third else 0), "finish_date")
+
+    insertions = {
+        (223 if third else 284): '<w:r><w:t xml:space="preserve">' + mark("permissions") + '</w:t></w:r>',
+        (236 if third else 293): '<w:r><w:t xml:space="preserve">' + mark("other_matters") + '</w:t></w:r>',
+    }
+    if third:
+        insertions.update({242: "<!--SBR_IMAGE_MAP-->", 261: "<!--SBR_IMAGE_SITE-->"})
+
+    paragraphs = list(ET.fromstring(xml).iter(W + "p"))
+    for index in sorted(edits.keys() | insertions.keys(), reverse=True):
+        span = spans[index]
+        fragment = span.group()
+        runs = list(re.finditer(r"(<w:t(?:\s[^>]*)?>)([^<]*)</w:t>", fragment))
+        pieces = [unescape(run[2]) for run in runs]
+        original = "".join(pieces)
+        assert original == "".join(t.text or "" for t in paragraphs[index].iter(W + "t")), index
+        changed = original
+        for transform in edits.get(index, []):
+            changed = transform(changed)
+        if index in edits:
+            assert changed != original, index
+        # Keep typography of unaffected text by moving only changed characters between runs.
+        starts = [0]
+        for piece in pieces:
+            starts.append(starts[-1] + len(piece))
+        for op, a, b, c, d in reversed(SequenceMatcher(None, original, changed, autojunk=False).get_opcodes()):
+            if op == "equal":
+                continue
+            for j in reversed(range(len(pieces))):
+                lo, hi = starts[j:j+2]
+                if a < hi and lo < b:
+                    pieces[j] = pieces[j][:max(0, a - lo)] + pieces[j][min(hi, b) - lo:]
+            if c < d:
+                j = next(j for j in range(len(pieces)) if a <= starts[j+1])
+                pos = a - starts[j]
+                pieces[j] = pieces[j][:pos] + changed[c:d] + pieces[j][pos:]
+        # Markers must be wholly in one run for replacement in the app.
+        assert "".join(pieces) == changed, index
+        assert sum(len(re.findall(r"@@SBR_\w+@@", p)) for p in pieces) == changed.count("@@SBR_"), index
+        for run, piece in reversed(list(zip(runs, pieces, strict=True))):
+            start, end = run.span(2)
+            fragment = fragment[:start] + escape(piece) + fragment[end:]
+        if index in insertions:
+            fragment = fragment[:-6] + insertions[index] + fragment[-6:]
+        xml = xml[:span.start()] + fragment + xml[span.end():]
+    ET.fromstring(xml)
+    return xml
+
+
+def prepare(source, target, third):
+    original = source.read_bytes()
+    assert hashlib.sha256(original).hexdigest() == (THIRD if third else SECOND), source
+    with zipfile.ZipFile(io.BytesIO(original)) as archive:
+        entries = {}
+        for name in archive.namelist():
+            data = archive.read(name)
+            if name == "word/document.xml":
+                data = patch_document(data.decode("utf-8"), third).encode("utf-8")
+            if third and name == "word/_rels/document.xml.rels":
+                data = data.replace(b"</Relationships>", b"<!--SBR_RELS--></Relationships>")
+            if third and name == "[Content_Types].xml":
+                data = data.replace(b"</Types>", b'<Default Extension="png" ContentType="image/png"/></Types>')
+            entries[name.encode("ascii")] = data
+    # Simple embedded container: entry count, then lengths, name and original contents.
+    with target.open("wb") as out:
+        out.write(struct.pack("<I", len(entries)))
+        for name, data in entries.items():
+            out.write(struct.pack("<HI", len(name), len(data)))
+            out.write(name)
+            out.write(data)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("second", type=Path)
+    parser.add_argument("third", type=Path)
+    parser.add_argument("output", type=Path)
+    args = parser.parse_args()
+    args.output.mkdir(parents=True, exist_ok=True)
+    prepare(args.second, args.output / "second.sbrform", False)
+    prepare(args.third, args.output / "third.sbrform", True)
+
+
+if __name__ == "__main__":
+    main()

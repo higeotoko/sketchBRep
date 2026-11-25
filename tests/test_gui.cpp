@@ -94,6 +94,9 @@
 #include "WheelZoom.h"
 #include "ToolPalette.h"
 #include "DrawingExport.h"
+#include "PermitForms.h"
+#include <QDataStream>
+#include <QXmlStreamReader>
 #include "MainWindow.h"
 #include "VicinityMapFetcher.h"
 #include "MaterialEditor.h"
@@ -256,6 +259,7 @@ class GuiPhase1 : public QObject {
   void fireSpreadReviewShowsTheOpeningAndInvalidatesChangedBasis();
   void fireCompartmentReviewAssociatesTheDoorAndEquipment();
   void areaEvidenceShowsFloorAndBuildingSheets();
+  void permitWordFormsTransferAndEmbedDrawings();
   void permitWorkflowAppliesDaylightFactors();
   void permitWorkflowMarksStagesAndAsksAgain();
   void projectOutlineDialogGivesTheItems();
@@ -1637,6 +1641,148 @@ void GuiPhase1::permitWorkflowMarksStagesAndAsksAgain() {
 
 // docs/194: stages 2 (通り芯) and 3 (平面) list what the model has and what is missing; a row's
 // button selects the objects it is about, and the rows follow the model.
+void GuiPhase1::permitWordFormsTransferAndEmbedDrawings() {
+  Fixture f;
+  QVERIFY(f.setUp());
+  auto& modeler = f.window.modeler();
+  QVERIFY(modeler.setProjectOutline({{"client", "試験 <建築主> & Co."}, {"address", "横浜市中区仮町1番"},
+      {"main_use", "一戸建ての住宅"}, {"use_code", "08010"}, {"work_kind", "new"},
+      {"city_planning", "urbanization"}, {"fire_zone", "article22"}, {"structural_review", "not_required"},
+      {"energy_plan", "submitted"}, {"start_date", "2027-04-01"},
+      {"designer", "一級建築士 試験設計事務所"}, {"finish_date", "要調整"}}));
+  const auto site = modeler.createPolyline({gp_Pnt(0, 0, 0), gp_Pnt(10000, 0, 0), gp_Pnt(10000, 12000, 0),
+      gp_Pnt(0, 12000, 0), gp_Pnt(0, 0, 0)});
+  QVERIFY(site);
+  QVERIFY(modeler.setSiteBoundary(doc::SiteBoundary{*site, "架空の測量図"}));
+  QVERIFY(modeler.setSiteNorth({0, "架空の測量図", "2026-11-25"}));
+  doc::SiteRoad road;
+  road.kind = "検討用道路";
+  road.widthMm = 5200;
+  road.frontageMm = 9400;
+  road.source = "架空の道路台帳";
+  QVERIFY(modeler.setSiteRoad({gp_Pnt(0, 0, 0), gp_Pnt(10000, 0, 0)}, road));
+  QVERIFY(modeler.setLevels({{"", "1FL", 0}}));
+  api::CommandApi api(modeler);
+  const auto wall = nlohmann::json::parse(api.execute(R"({"command":"create_wall","args":{"points":[
+    [2000,2000],[8000,2000],[8000,9000],[2000,9000],[2000,2000]],"base":0,"height":2800,"thickness":160}})"));
+  QVERIFY(wall["ok"].get<bool>());
+  QVERIFY(modeler.setSiteHeightConditions("mid_high_1", "", "架空の都市計画図"));
+  QVERIFY(modeler.setVicinityMap(35.444, 139.638, 16, "pale"));
+  QTemporaryDir cache;
+  QVERIFY(cache.isValid());
+  const auto oldCache = qgetenv("SBR_TILE_CACHE"), oldOffline = qgetenv("SBR_TILES_OFFLINE");
+  qputenv("SBR_TILE_CACHE", cache.path().toUtf8());
+  qputenv("SBR_TILES_OFFLINE", "1");
+  const auto restore = qScopeGuard([&] {
+    if (oldCache.isNull()) qunsetenv("SBR_TILE_CACHE"); else qputenv("SBR_TILE_CACHE", oldCache);
+    if (oldOffline.isNull()) qunsetenv("SBR_TILES_OFFLINE"); else qputenv("SBR_TILES_OFFLINE", oldOffline);
+  });
+  const auto map = doc::vicinityMapOf(modeler.document());
+  QVERIFY(map);
+  const auto tiles = doc::vicinityTiles(*map);
+  for (const auto& tile : tiles.tiles) {
+    const auto dir = QStringLiteral("%1/pale/%2/%3").arg(cache.path()).arg(tile.z).arg(tile.x);
+    QVERIFY(QDir().mkpath(dir));
+    QImage image(256, 256, QImage::Format_RGB32);
+    image.fill(QColor(223, 237, 229));
+    QVERIFY(image.save(QStringLiteral("%1/%2.png").arg(dir).arg(tile.y)));
+  }
+
+  const auto unpack = [](const QByteArray& bytes) {
+    QMap<QByteArray, QByteArray> entries;
+    QDataStream in(bytes);
+    in.setByteOrder(QDataStream::LittleEndian);
+    quint32 signature = 0;
+    while ((in >> signature).status() == QDataStream::Ok && signature == 0x04034b50) {
+      quint16 nameSize = 0, extraSize = 0;
+      quint32 size = 0, uncompressedSize = 0;
+      in.skipRawData(14);
+      in >> size >> uncompressedSize >> nameSize >> extraSize;
+      if (size != uncompressedSize || size > static_cast<quint32>(bytes.size())) return decltype(entries){};
+      QByteArray name(nameSize, Qt::Uninitialized), content(size, Qt::Uninitialized);
+      if (in.readRawData(name.data(), nameSize) != nameSize) return decltype(entries){};
+      in.skipRawData(extraSize);
+      if (in.readRawData(content.data(), size) != static_cast<int>(size)) return decltype(entries){};
+      entries.insert(name, content);
+    }
+    return entries;
+  };
+  const auto application = app::buildPermitForm(modeler.document(), {});
+  const auto summary = app::buildPermitForm(modeler.document(), {true, true, true, true});
+  QVERIFY(!application.hasSitePlan && !application.hasVicinityMap);
+  QVERIFY(summary.hasSitePlan && summary.hasVicinityMap);
+  const auto a = unpack(application.docx), b = unpack(summary.docx);
+  const auto documentXml = QByteArray("word/document.xml");
+  QVERIFY(a.contains(documentXml) && b.contains(documentXml));
+  const auto text = [](const QByteArray& xml) {
+    QString result;
+    QXmlStreamReader reader(xml);
+    while (!reader.atEnd()) {
+      if (reader.readNext() == QXmlStreamReader::Characters) result += reader.text();
+    }
+    return reader.hasError() ? QString{} : result;
+  };
+  const auto cover = text(a.value(documentXml)), publicPage = text(b.value(documentXml));
+  for (const auto& content : {cover, publicPage}) {
+    QVERIFY(content.contains(QStringLiteral("試験 <建築主> & Co.")));
+    QVERIFY(content.contains(QStringLiteral("横浜市中区仮町1番")));
+    QVERIFY(content.contains(QStringLiteral("法第22条区域")));
+    QVERIFY(content.contains(QStringLiteral("☑都市計画区域内（☑市街化区域")));
+    QVERIFY(content.contains(QStringLiteral("☑指定なし")));
+    QVERIFY(content.contains(QStringLiteral("☑新築")));
+    QVERIFY(content.contains(QStringLiteral("5.200 m")));
+    QVERIFY(content.contains(QStringLiteral("2027年4月1日")));
+    QVERIFY(!content.contains(QStringLiteral("要調整")));
+    QVERIFY(!content.contains(QStringLiteral("試験設計事務所")));
+    QVERIFY(!content.contains(QStringLiteral("@@SBR_")));
+  }
+  QVERIFY(cover.contains(QStringLiteral("☑申請不要")));
+  QVERIFY(cover.contains(QStringLiteral("☑提出済")));
+  QVERIFY(!cover.contains(QStringLiteral("120.00 ㎡")));
+  QVERIFY(publicPage.contains(QStringLiteral("120.00 ㎡")));
+  QVERIFY(publicPage.contains(QStringLiteral("第一種中高層住居専用地域")));
+  QVERIFY(publicPage.contains(QStringLiteral("42.00 ㎡")));
+  for (const auto& id : {QByteArray("rIdSbrMap"), QByteArray("rIdSbrSite")}) {
+    QVERIFY(b.value(documentXml).contains("r:embed=\"" + id + '"'));
+    QVERIFY(b.value("word/_rels/document.xml.rels").contains("Id=\"" + id + '"'));
+    QVERIFY(!QImage::fromData(b.value("word/media/" + id + ".png"), "PNG").isNull());
+  }
+  const auto& firstTile = tiles.tiles.front();
+  QVERIFY(QFile::remove(QStringLiteral("%1/pale/%2/%3/%4.png").arg(cache.path()).arg(firstTile.z).arg(firstTile.x).arg(firstTile.y)));
+  const auto incomplete = app::buildPermitForm(modeler.document(), {true, false, false, true});
+  QVERIFY(!incomplete.hasVicinityMap);
+  QVERIFY(!incomplete.docx.contains("rIdSbrMap"));
+
+  auto* action = f.window.findChild<QAction*>(QStringLiteral("permitWordForms"));
+  QVERIFY(action);
+  const QString reviewDir = qEnvironmentVariable("SBR_PERMIT_WORD_REVIEW_DIR");
+  if (!reviewDir.isEmpty()) {
+    for (const auto& [name, bytes] : {std::pair{QStringLiteral("application.docx"), application.docx},
+                                    {QStringLiteral("summary.docx"), summary.docx}}) {
+      QFile output(QDir(reviewDir).filePath(name));
+      QVERIFY(output.open(QIODevice::WriteOnly));
+      QCOMPARE(output.write(bytes), bytes.size());
+    }
+  }
+  bool previewed = false;
+  QTimer::singleShot(0, [&] {
+    auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+    if (!dialog) return;
+    auto* type = dialog->findChild<QComboBox*>(QStringLiteral("permitWordFormType"));
+    auto* table = dialog->findChild<QTableWidget*>(QStringLiteral("permitWordTransfer"));
+    if (type && table && type->count() == 2) {
+      const bool applicationRows = !table->findItems(QStringLiteral("構造計算適合性判定"), Qt::MatchExactly).isEmpty();
+      type->setCurrentIndex(1);
+      previewed = applicationRows && table->findItems(QStringLiteral("構造計算適合性判定"), Qt::MatchExactly).isEmpty() &&
+                  !table->findItems(QStringLiteral("付近見取図"), Qt::MatchExactly).isEmpty();
+      if (!reviewDir.isEmpty()) dialog->grab().save(QDir(reviewDir).filePath(QStringLiteral("word-transfer-preview.png")));
+    }
+    dialog->reject();
+  });
+  action->trigger();
+  QVERIFY(previewed);
+}
+
 void GuiPhase1::areaEvidenceShowsFloorAndBuildingSheets() {
   Fixture f;
   QVERIFY(f.setUp());

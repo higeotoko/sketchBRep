@@ -237,6 +237,10 @@ void PermitWorkflowPanel::readSiteChecks() {
                      translated("計画概要の項目を入力"), Action::Outline, c.attention});
   }
 
+  rows_.push_back({translated("確認申請のWord様式"), translated("下書き"),
+      translated("横浜市の確認申請書・建築計画概要書に転記します。転記元と記入が残る欄を確認できます。"),
+      translated("Word様式を開く"), Action::WordForms});
+
   rows_.push_back({translated("申請条件"), translated("未評価"),
       translated("申請先・適用ルートと最新の法令を確認します。道路・接道、法令上の地盤面、高低差による区分の確認が残っています。"), {}});
 }

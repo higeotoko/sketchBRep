@@ -212,6 +212,7 @@ struct SheetSpec {
   bool frame = true;          // frame and title block
   TitleBlock title;
   bool north = true;          // north mark on plans
+  bool compactDiagram = false;  // embedded plan: north beside the drawing and a graphic scale
 };
 
 struct Sheet {
