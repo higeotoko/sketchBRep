@@ -364,6 +364,24 @@ struct HeightLimitPreview {
   double noLimitAreaMm2 = 0;
 };
 Result<HeightLimitPreview> heightLimitPreview(const Document& document, const HeightLimitStudy& study);
+
+struct CombinedHeightPartRow {
+  ObjectId id;
+  std::string name;
+  std::string state;
+  std::optional<double> excessMm;
+  std::optional<HeightLimitSource> controllingSource;
+  bool needsReview;
+};
+struct CombinedHeightComparison {
+  HeightLimitPreview preview;
+  std::vector<CombinedHeightPartRow> rows;
+  bool approximate;
+};
+Result<CombinedHeightComparison> compareCombinedHeight(
+    const Document& document, const HeightLimitStudy& study, const std::vector<ObjectId>& ids);
+std::string combinedHeightCsv(const Document& document, const HeightLimitStudy& study,
+                              const CombinedHeightComparison& comparison);
 std::vector<PermitCheck> permitElevationChecks(const Document& document);
 // Stage 11 (一式の突合せ, docs/202): per stage read from the model (2, 3, 5-10) how many rows are
 // left to look at, marks given by hand to unlike openings, rooms of a storey with one name.

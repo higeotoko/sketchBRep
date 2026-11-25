@@ -2828,6 +2828,49 @@ TEST_F(Schedules, CombinedHeightLimitChangesSourceAndStopsAtTheRoadRange) {
   EXPECT_EQ(modeler.document().sequence(), sequence);
 }
 
+TEST_F(Schedules, CombinedHeightComparisonMeasuresTheApplicablePartAndReportsOpenConditions) {
+  using sbr::doc::HeightLimitSource;
+  using sbr::doc::HeightLimitStudy;
+  const auto site = ok("create_polygon", {{"points", {{0,0,0},{20000,0,0},{20000,30000,0},{0,30000,0}}}})["id"];
+  ok("set_site_boundary", {{"outline", site}, {"source", "test site"}});
+  ok("set_site_road", {{"start", {0,0,0}}, {"end", {20000,0,0}}, {"source", "test road"}, {"width_m", 6}});
+  ASSERT_TRUE(modeler.setSiteNorth({0, "test survey", "2026-11-25"}));
+  const auto crossing = ok("create_polygon", {{"points", {{13000,7990,14050},{15000,7990,14050},
+                                                          {15000,8010,14250},{13000,8010,14250}}}})["id"].get<std::string>();
+  const auto beyond = ok("create_box", {{"origin", {10000,9000,0}}, {"width",1000}, {"depth",1000}, {"height",5000}})["id"].get<std::string>();
+  const auto outside = ok("create_box", {{"origin", {-2000,9000,0}}, {"width",1000}, {"depth",1000}, {"height",5000}})["id"].get<std::string>();
+  HeightLimitStudy study;
+  study.road = HeightLimitStudy::Road{6000, 1, {6000, 14000}};
+  const auto sequence = modeler.document().sequence();
+  const auto road = sbr::doc::compareCombinedHeight(modeler.document(), study, {crossing, beyond, outside});
+  ASSERT_TRUE(road) << road.error();
+  EXPECT_FALSE(road->approximate);
+  const auto csv = sbr::doc::combinedHeightCsv(modeler.document(), study, *road);
+  EXPECT_EQ(csv.compare(0, 3, "\xef\xbb\xbf"), 0);
+  EXPECT_NE(csv.find("150.000000,道路斜線"), std::string::npos);
+  EXPECT_NE(csv.find("適用距離 14000.000000 mm"), std::string::npos);
+  EXPECT_NE(csv.find("法規適合,採用条件"), std::string::npos);
+  for (const auto& row : road->rows) {
+    if (row.id == crossing) {
+      EXPECT_EQ(row.state, "超過");
+      ASSERT_TRUE(row.excessMm);
+      EXPECT_NEAR(*row.excessMm, 150, 0.01);
+      EXPECT_EQ(row.controllingSource, HeightLimitSource::Road);
+    } else {
+      EXPECT_EQ(row.state, row.id == beyond ? "適用面なし" : "敷地外");
+      EXPECT_FALSE(row.excessMm);
+      EXPECT_FALSE(row.controllingSource);
+    }
+  }
+  study.northRiseMm = 5000;
+  const auto uncertain = sbr::doc::compareCombinedHeight(modeler.document(), study, {crossing});
+  ASSERT_TRUE(uncertain) << uncertain.error();
+  EXPECT_EQ(uncertain->rows[0].state, "要確認");
+  EXPECT_TRUE(uncertain->rows[0].needsReview);
+  EXPECT_FALSE(uncertain->rows[0].excessMm);
+  EXPECT_EQ(modeler.document().sequence(), sequence);
+}
+
 TEST_F(Schedules, YokohamaHeightDistrictPreviewAndPartComparisonShareTheLimit) {
   const auto site = ok("create_polygon", {{"points", {{0,0,0},{20000,0,0},{20000,30000,0},{0,30000,0}}}})["id"];
   ok("set_site_boundary", {{"outline", site}, {"source", "架空の測量図"}});

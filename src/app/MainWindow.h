@@ -367,6 +367,8 @@ class MainWindow : public QMainWindow, public ToolHost {
   void refreshTags();
   void sceneMenu(int index, const QPoint& globalPos);
 
+  struct CombinedHeightDraft;
+  std::unique_ptr<CombinedHeightDraft> combinedHeightDraft_;
   doc::Modeler modeler_;
   Viewport* viewport_ = nullptr;
   PropertiesPanel* panel_ = nullptr;

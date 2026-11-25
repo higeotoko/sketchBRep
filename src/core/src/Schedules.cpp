@@ -2376,16 +2376,17 @@ Result<std::vector<YokohamaHeightDistrictSample>> yokohamaHeightDistrictAt(
 
 namespace {
 
-struct NorthHeightPatch {
+struct HeightPatch {
   TopoDS_Face footprint;
   TopoDS_Face surface;  // Null for an unconfirmed region.
   TopoDS_Shape reference;
   double areaMm2;
   bool heightCap = false;
   bool convexFootprint = true;
+  std::optional<HeightLimitSource> source = std::nullopt;
 };
 
-using HeightPatches = Result<std::vector<NorthHeightPatch>>;
+using HeightPatches = Result<std::vector<HeightPatch>>;
 
 TopoDS_Face planarHeightFace(const std::vector<gp_Pnt>& points) {
   BRepBuilderAPI_MakePolygon wire;
@@ -2398,7 +2399,7 @@ TopoDS_Face planarHeightFace(const std::vector<gp_Pnt>& points) {
 
 // Cut a convex patch on the line where the slant reaches the horizontal cap.
 bool appendCappedHeightPatches(const std::vector<gp_Pnt>& slant, double capZ, double outlineZ,
-                               std::vector<NorthHeightPatch>& patches) {
+                               std::vector<HeightPatch>& patches) {
   for (const bool cap : {false, true}) {
     std::vector<gp_Pnt> surface;
     const auto append = [&](gp_Pnt p) {
@@ -2457,7 +2458,7 @@ HeightPatches northHeightPatches(
   };
 
   try {
-    std::vector<NorthHeightPatch> patches;
+    std::vector<HeightPatch> patches;
     for (std::size_t column = 1; column < cuts.size(); ++column) {
       const double left = cuts[column - 1], right = cuts[column];
       if (right - left <= tolerance::kLinear) continue;
@@ -2482,7 +2483,7 @@ HeightPatches northHeightPatches(
           if (nl - sl > tolerance::kLinear) points.push_back(world(left, nl, exitZ));
           return points;
         };
-        NorthHeightPatch patch{planarHeightFace(corners(origin.Z(), origin.Z(), origin.Z())), {}, {},
+        HeightPatch patch{planarHeightFace(corners(origin.Z(), origin.Z(), origin.Z())), {}, {},
                                (right - left) * (exit.station - south.station)};
         if (patch.footprint.IsNull()) return R::failure("北側斜線の範囲を作れません");
         const auto sample = northHeightSample(field->geometry, field->footprint, field->kinds,
@@ -2513,7 +2514,7 @@ HeightPatches northHeightPatches(
   }
 }
 
-HeightPatches statutoryNorthHeightPatches(const Document& document,
+HeightPatches statutoryHeightPatches(const Document& document,
                                             const std::vector<std::array<gp_Pnt, 2>>& confirmedNeighbors,
                                             double groundZMm, double baseHeightMm) {
   const double baseZ = groundZMm + baseHeightMm;
@@ -2541,11 +2542,11 @@ HeightPatches yokohamaHeightDistrictPatches(const Document& document,
   if (!footprint) return HeightPatches::failure(footprint.error());
   gp_Trsf translation;
   translation.SetTranslation(gp_Vec(0, 0, capZ - geometry->vertices.front().Z()));
-  return std::vector<NorthHeightPatch>{{*footprint, TopoDS::Face(footprint->Moved(TopLoc_Location(translation))),
+  return std::vector<HeightPatch>{{*footprint, TopoDS::Face(footprint->Moved(TopLoc_Location(translation))),
                                        {}, 0, true, false}};
 }
 
-Result<TopoDS_Shape> clipPartToNorthPatch(const TopoDS_Shape& part, const Bnd_Box& bounds,
+Result<TopoDS_Shape> clipPartToHeightPatch(const TopoDS_Shape& part, const Bnd_Box& bounds,
                                              const TopoDS_Face& footprint, double footprintZ) {
   using R = Result<TopoDS_Shape>;
   const auto lo = bounds.CornerMin(), hi = bounds.CornerMax();
@@ -2582,7 +2583,7 @@ Result<NorthHeightPreview> northHeightPreview(
     const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedNeighbors,
     double groundZMm, double baseHeightMm) {
   using R = Result<NorthHeightPreview>;
-  const auto patches = statutoryNorthHeightPatches(document, confirmedNeighbors, groundZMm, baseHeightMm);
+  const auto patches = statutoryHeightPatches(document, confirmedNeighbors, groundZMm, baseHeightMm);
   if (!patches) return R::failure(patches.error());
   BRep_Builder builder;
   TopoDS_Compound surface, references;
@@ -2633,24 +2634,33 @@ Result<YokohamaHeightDistrictPreview> yokohamaHeightDistrictPreview(
 
 namespace {
 
-Result<std::vector<NorthHeightPartRow>> compareHeightPatches(
-    const Document& document, const std::vector<ObjectId>& ids, const HeightPatches& patches) {
-  using R = Result<std::vector<NorthHeightPartRow>>;
+struct HeightMeasurement {
+  ObjectId id;
+  std::string name;
+  std::optional<double> excess;
+  std::optional<std::size_t> patch;
+  bool unknown;
+  bool inSiteWithoutLimit;
+};
+
+Result<std::vector<HeightMeasurement>> measureHeightParts(
+    const Document& document, const std::vector<ObjectId>& ids, const std::vector<HeightPatch>& patches,
+    const TopoDS_Face& siteFootprint = {}) {
+  using R = Result<std::vector<HeightMeasurement>>;
   if (ids.empty()) return R::failure("モデルで照合する部材を選択してください");
-  if (!patches) return R::failure(patches.error());
 
   struct Region {
     gp_Pnt lo, hi;
     std::optional<gp_Pln> plane;
   };
   std::vector<Region> regions;
-  for (const auto& patch : *patches) {
+  for (const auto& patch : patches) {
     const auto box = geom::exactBounds(patch.footprint);
     std::optional<gp_Pln> plane;
     if (!patch.surface.IsNull()) plane = BRepAdaptor_Surface(patch.surface).Plane();
     regions.push_back({box.CornerMin(), box.CornerMax(), plane});
   }
-  std::vector<NorthHeightPartRow> rows;
+  std::vector<HeightMeasurement> rows;
   try {
     for (const auto& id : std::set<ObjectId>(ids.begin(), ids.end())) {
       const auto* object = document.find(id);
@@ -2663,12 +2673,24 @@ Result<std::vector<NorthHeightPartRow>> compareHeightPatches(
       if (bounds.IsVoid() || bounds.IsOpen()) return R::failure("部材の範囲を測れません（" + object->name + "）");
       const auto lo = bounds.CornerMin(), hi = bounds.CornerMax();
       std::optional<double> maximum;
-      bool unknown = false, heightCap = false;
+      bool unknown = false;
+      std::optional<std::size_t> controlling;
       for (std::size_t i = 0; i < regions.size(); ++i) {
         const auto& region = regions[i];
         if (hi.X() < region.lo.X() - tolerance::kLinear || lo.X() > region.hi.X() + tolerance::kLinear ||
             hi.Y() < region.lo.Y() - tolerance::kLinear || lo.Y() > region.hi.Y() + tolerance::kLinear) continue;
-        const auto& patch = (*patches)[i];
+        if (!region.plane && unknown) continue;
+        if (maximum && region.plane) {
+          // The highest point of the part over this XY box is a conservative upper bound.
+          const auto normal = region.plane->Axis().Direction();
+          const auto& origin = region.plane->Location();
+          const double dx = normal.X() / normal.Z(), dy = normal.Y() / normal.Z();
+          const double x = dx >= 0 ? std::min(hi.X(), region.hi.X()) : std::max(lo.X(), region.lo.X());
+          const double y = dy >= 0 ? std::min(hi.Y(), region.hi.Y()) : std::max(lo.Y(), region.lo.Y());
+          const double upper = hi.Z() - origin.Z() + dx * (x - origin.X()) + dy * (y - origin.Y());
+          if (upper < *maximum - tolerance::kLinear) continue;
+        }
+        const auto& patch = patches[i];
         const auto& footprint = patch.footprint;
         const double z = region.lo.Z();
         const std::array<gp_Pnt, 4> corners{gp_Pnt(lo.X(), lo.Y(), z), gp_Pnt(hi.X(), lo.Y(), z),
@@ -2679,7 +2701,7 @@ Result<std::vector<NorthHeightPartRow>> compareHeightPatches(
         });
         TopoDS_Shape relevant = part;
         if (!whollyInside) {
-          const auto clipped = clipPartToNorthPatch(part, bounds, footprint, z);
+          const auto clipped = clipPartToHeightPatch(part, bounds, footprint, z);
           if (!clipped) return R::failure(clipped.error() + "（" + object->name + "）");
           relevant = *clipped;
           if (geom::exactBounds(relevant).IsVoid()) continue;
@@ -2698,19 +2720,42 @@ Result<std::vector<NorthHeightPartRow>> compareHeightPatches(
         const double excess = measured.CornerMax().Z() / normal.Z();
         if (!maximum || excess > *maximum) {
           maximum = excess;
-          heightCap = patch.heightCap;
+          controlling = i;
         }
       }
-      constexpr double agreementMm = 0.01;
-      std::string state = "敷地外";
-      if (maximum && *maximum > agreementMm) state = unknown ? "超過・要確認" : "超過";
-      else if (unknown) state = "要確認";
-      else if (maximum) state = *maximum < -agreementMm ? "余裕" : "接触相当";
-      rows.push_back({id, object->name, std::move(state), maximum, unknown, heightCap});
+      bool inSiteWithoutLimit = false;
+      if (!maximum && !unknown && !siteFootprint.IsNull()) {
+        const auto clipped = clipPartToHeightPatch(part, bounds, siteFootprint,
+                                                   geom::exactBounds(siteFootprint).CornerMin().Z());
+        if (!clipped) return R::failure(clipped.error() + "（" + object->name + "）");
+        inSiteWithoutLimit = !geom::exactBounds(*clipped).IsVoid();
+      }
+      rows.push_back({id, object->name, maximum, controlling, unknown, inSiteWithoutLimit});
     }
   } catch (const Standard_Failure&) {
     return R::failure("高さの制限面と部材を照合できません");
   }
+  return rows;
+}
+
+std::string heightMeasurementState(const HeightMeasurement& row) {
+  constexpr double agreementMm = 0.01;
+  if (row.excess && *row.excess > agreementMm) return row.unknown ? "超過・要確認" : "超過";
+  if (row.unknown) return "要確認";
+  if (row.excess) return *row.excess < -agreementMm ? "余裕" : "接触相当";
+  return row.inSiteWithoutLimit ? "適用面なし" : "敷地外";
+}
+
+Result<std::vector<NorthHeightPartRow>> compareHeightPatches(
+    const Document& document, const std::vector<ObjectId>& ids, const HeightPatches& patches) {
+  using R = Result<std::vector<NorthHeightPartRow>>;
+  if (!patches) return R::failure(patches.error());
+  const auto measurements = measureHeightParts(document, ids, *patches);
+  if (!measurements) return R::failure(measurements.error());
+  std::vector<NorthHeightPartRow> rows;
+  for (const auto& row : *measurements)
+    rows.push_back({row.id, row.name, heightMeasurementState(row), row.excess, row.unknown,
+                    row.patch && (*patches)[*row.patch].heightCap});
   return rows;
 }
 
@@ -2719,7 +2764,7 @@ Result<std::vector<NorthHeightPartRow>> compareHeightPatches(
 Result<std::vector<NorthHeightPartRow>> compareNorthHeight(
     const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedNeighbors,
     const std::vector<ObjectId>& ids, double groundZMm, double baseHeightMm) {
-  return compareHeightPatches(document, ids, statutoryNorthHeightPatches(document, confirmedNeighbors, groundZMm, baseHeightMm));
+  return compareHeightPatches(document, ids, statutoryHeightPatches(document, confirmedNeighbors, groundZMm, baseHeightMm));
 }
 
 Result<std::vector<NorthHeightPartRow>> compareYokohamaHeightDistrict(
@@ -2811,7 +2856,7 @@ std::array<double, 4> heightPlanBounds(const HeightPolygon& plan) {
 
 constexpr std::size_t kHeightCellBudget = 32768;
 
-bool overlayHeightPartition(std::vector<HeightCell>& cells, const std::vector<NorthHeightPatch>& patches,
+bool overlayHeightPartition(std::vector<HeightCell>& cells, const std::vector<HeightPatch>& patches,
                             HeightLimitSource source) {
   if (patches.size() == 1 && !patches.front().convexFootprint) {
     std::vector<HeightCell> result;
@@ -2940,7 +2985,7 @@ Result<HeightLimitPreview> heightLimitPreview(const Document& document, const He
       return Status::success();
     };
     if (study.northRiseMm) {
-      const auto added = addPartition(statutoryNorthHeightPatches(document, study.boundaries, study.groundZMm,
+      const auto added = addPartition(statutoryHeightPatches(document, study.boundaries, study.groundZMm,
                                                                   *study.northRiseMm), HeightLimitSource::North);
       if (!added) return R::failure(added.message());
     }
@@ -2980,6 +3025,103 @@ Result<HeightLimitPreview> heightLimitPreview(const Document& document, const He
   } catch (const Standard_Failure&) {
     return R::failure("斜線と高度地区の合成面を作れません");
   }
+}
+
+Result<CombinedHeightComparison> compareCombinedHeight(
+    const Document& document, const HeightLimitStudy& study, const std::vector<ObjectId>& ids) {
+  using R = Result<CombinedHeightComparison>;
+  if (ids.empty()) return R::failure("モデルで照合する部材を選択してください");
+  auto preview = heightLimitPreview(document, study);
+  if (!preview) return R::failure(preview.error());
+  const auto& site = *document.settings().siteBoundary;
+  const auto geometry = document.siteBoundaryGeometry(site.outline);
+  if (!geometry) return R::failure(geometry.error());
+  const auto footprint = heightSiteFootprint(*geometry);
+  if (!footprint) return R::failure(footprint.error());
+  try {
+    std::vector<HeightPatch> patches;
+    const double planZ = geometry->vertices.front().Z();
+    const auto collect = [&](const TopoDS_Shape& shape, std::optional<HeightLimitSource> source) {
+      for (TopExp_Explorer entry(shape, TopAbs_FACE); entry.More(); entry.Next()) {
+        const auto face = TopoDS::Face(entry.Current());
+        HeightPolygon plan;
+        for (BRepTools_WireExplorer edge(BRepTools::OuterWire(face), face); edge.More(); edge.Next()) {
+          auto point = BRep_Tool::Pnt(edge.CurrentVertex());
+          point.SetZ(planZ);
+          plan.push_back(point);
+        }
+        const auto area = planarHeightFace(plan);
+        if (area.IsNull()) return false;
+        patches.push_back({area, source ? face : TopoDS_Face(), {}, 0, false, true, source});
+      }
+      return true;
+    };
+    for (std::size_t i = 0; i < preview->surfaces.size(); ++i)
+      if (!collect(preview->surfaces[i], static_cast<HeightLimitSource>(i)))
+        return R::failure("合成面の照合範囲を作れません");
+    if (!collect(preview->unconfirmed, std::nullopt)) return R::failure("未確認の範囲を作れません");
+
+    const auto measurements = measureHeightParts(document, ids, patches, *footprint);
+    if (!measurements) return R::failure(measurements.error());
+    CombinedHeightComparison result{*preview, {}, study.neighbor.has_value()};
+    for (const auto& row : *measurements)
+      result.rows.push_back({row.id, row.name, heightMeasurementState(row), row.excess,
+                             row.patch ? patches[*row.patch].source : std::nullopt, row.unknown});
+    return result;
+  } catch (const Standard_Failure&) {
+    return R::failure("合成面と部材を照合できません");
+  }
+}
+
+std::string combinedHeightCsv(const Document& document, const HeightLimitStudy& study,
+                              const CombinedHeightComparison& comparison) {
+  const auto value = [](double n) { return number(n, 6); };
+  std::string basis;
+  if (study.neighbor || study.northRiseMm || study.district) basis = "地盤Z " + value(study.groundZMm) + " mm";
+  const auto append = [&](const std::string& entry) {
+    if (!basis.empty()) basis += " ／ ";
+    basis += entry;
+  };
+  if (study.road) {
+    const auto& road = *study.road;
+    append("道路斜線　境界Z " + value(road.edgeHeightMm) + " mm、勾配 " + value(road.slope) +
+           "、幅員 " + value(road.range.roadWidthMm) + " mm、適用距離 " + value(road.range.applicationDistanceMm) +
+           " mm、後退 " + value(road.range.buildingSetbackMm) + " mm");
+  }
+  if (study.neighbor)
+    append("隣地斜線　立上り " + value(study.neighbor->riseMm) + " mm、勾配 " + value(study.neighbor->slope));
+  if (study.northRiseMm) append("北側斜線　立上り " + value(*study.northRiseMm) + " mm");
+  if (study.district) append("高度地区 " + siteHeightConditions(document).district);
+  const auto& settings = document.settings();
+  const auto district = study.district ? yokohamaHeightDistrictRule(siteHeightConditions(document).district) : std::nullopt;
+  if (study.northRiseMm || (district && district->northRiseMm)) {
+    if (settings.siteNorth) append("真北 +Y 時計回り " + value(settings.siteNorth->angle) + " 度");
+    if (settings.siteBoundary && settings.siteBoundary->road)
+      append("北側の算定に用いる登録幅員 " + value(settings.siteBoundary->road->widthMm) + " mm");
+  }
+  if (district && district->northRiseMm)
+    append(study.singleNorthRoadConfirmed ? "高度地区　北側の単独平行道路を確認済み" : "高度地区　北側の単独平行道路の確認なし");
+  for (const auto& edge : study.boundaries) {
+    const auto xy = [&](const auto& p) { return "(" + value(p.X()) + " " + value(p.Y()) + ")"; };
+    append("確認済みの隣地辺 XY " + xy(edge[0]) + "–" + xy(edge[1]) + " mm");
+  }
+
+  static const std::array<const char*, 4> names{"道路斜線", "隣地斜線", "北側斜線", "高度地区"};
+  Csv csv;
+  csv.line({"部材", "部材ID", "照合結果", "最大鉛直差（mm）", "差を決めた制限", "確認範囲",
+            "照合面", "法規適合", "採用条件"});
+  for (const auto& row : comparison.rows) {
+    auto name = row.name;
+    // Spreadsheet applications may evaluate a text field beginning with a formula prefix.
+    const auto first = name.find_first_not_of(" \t\r\n");
+    if (first != std::string::npos && std::string_view("=+-@").find(name[first]) != std::string_view::npos)
+      name.insert(0, "'");
+    csv.line({name, row.id, row.state, row.excessMm ? value(*row.excessMm) : "",
+              row.controllingSource ? names[static_cast<std::size_t>(*row.controllingSource)] : "",
+              row.needsReview ? "未確認の範囲あり" : "選んだ条件",
+              comparison.approximate ? "隣地斜線を含む近似面" : "合成面", "未評価", basis});
+  }
+  return csv.out.str();
 }
 
 std::vector<PermitCheck> permitElevationChecks(const Document& document) {

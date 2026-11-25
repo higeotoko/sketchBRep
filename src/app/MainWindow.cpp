@@ -43,6 +43,7 @@
 
 #include <Standard_Version.hxx>
 #include <QFile>
+#include <QSaveFile>
 #include <QLocale>
 #include <QStandardPaths>
 #include <QUuid>
@@ -148,6 +149,24 @@ std::vector<ExchangeFormat> exchangeFormats(bool importing) {
 }
 
 }  // namespace
+
+struct MainWindow::CombinedHeightDraft {
+  struct SiteContext {
+    doc::SiteBoundary site;
+    std::vector<std::array<double, 3>> vertices;
+    std::optional<doc::SiteNorth> north;
+    std::optional<double> groundZ;
+    std::string zone, district, source;
+    bool operator==(const SiteContext& other) const {
+      return site == other.site && vertices == other.vertices && north == other.north &&
+             groundZ == other.groundZ && zone == other.zone && district == other.district && source == other.source;
+    }
+  };
+
+  SiteContext context;
+  doc::HeightLimitStudy study;
+  std::uint64_t sequence;
+};
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   selectTool_ = std::make_unique<SelectTool>(*this);
@@ -6801,6 +6820,7 @@ void MainWindow::newDocument() {
   if (active_) active_->cancel();
   exitGroup();
   modeler_.newDocument();
+  combinedHeightDraft_.reset();
   currentPath_.clear();
   clearRecovery();
   setSelection({});
@@ -6822,6 +6842,7 @@ bool MainWindow::openFile(const QString& path) {
     return false;
   }
   startRecipeVerification();
+  combinedHeightDraft_.reset();
   currentPath_ = path;
   rememberRecentFile(path);
   setSelection({});
@@ -8750,10 +8771,18 @@ void MainWindow::showCombinedHeightDialog() {
     return;
   }
   const auto road = document.siteRoadEdge(*geometry);
-  const auto districtCode = doc::siteHeightConditions(document).district;
+  const auto heightConditions = doc::siteHeightConditions(document);
+  const auto& districtCode = heightConditions.district;
   const auto districtRule = doc::yokohamaHeightDistrictRule(districtCode);
   const auto& trueNorth = document.settings().siteNorth;
   const auto sequence = document.sequence();
+  CombinedHeightDraft::SiteContext context{*site, {}, trueNorth, std::nullopt,
+      heightConditions.zone, districtCode, heightConditions.source};
+  for (const auto& point : geometry->vertices) context.vertices.push_back({point.X(), point.Y(), point.Z()});
+  for (const auto& level : document.settings().levels)
+    if (level.name == "GL") context.groundZ = level.elevation;
+  const auto* draft = combinedHeightDraft_ && combinedHeightDraft_->context == context
+      ? combinedHeightDraft_.get() : nullptr;
 
   QDialog dialog(this);
   dialog.setObjectName(QStringLiteral("combinedHeightDialog"));
@@ -8766,8 +8795,7 @@ void MainWindow::showCombinedHeightDialog() {
   layout->addLayout(datum);
   auto* ground = new QLineEdit;
   ground->setObjectName(QStringLiteral("combinedHeightGround"));
-  for (const auto& level : document.settings().levels)
-    if (level.name == "GL") ground->setText(QString::number(level.elevation, 'g', 15));
+  if (context.groundZ) ground->setText(QString::number(*context.groundZ, 'g', 15));
   datum->addRow(tr("地盤面（モデルZ・mm）"), ground);
 
   auto* rules = new QGridLayout;
@@ -8841,6 +8869,41 @@ void MainWindow::showCombinedHeightDialog() {
   };
   for (auto* box : {neighborBox, northBox, districtBox})
     connect(box, &QGroupBox::toggled, &dialog, updateBoundaries);
+  if (draft) {
+    const auto& saved = draft->study;
+    const auto display = [](QLineEdit* input, double value) { input->setText(QString::number(value, 'g', 15)); };
+    if (saved.road) {
+      roadBox->setChecked(true);
+      display(roadZ, saved.road->edgeHeightMm);
+      display(roadSlope, saved.road->slope);
+      display(roadWidth, saved.road->range.roadWidthMm / 1000);
+      display(roadDistance, saved.road->range.applicationDistanceMm / 1000);
+      display(roadSetback, saved.road->range.buildingSetbackMm / 1000);
+    }
+    if (saved.neighbor) {
+      neighborBox->setChecked(true);
+      display(neighborRise, saved.neighbor->riseMm / 1000);
+      display(neighborSlope, saved.neighbor->slope);
+    }
+    if (saved.northRiseMm) {
+      northBox->setChecked(true);
+      northRise->setCurrentIndex(*saved.northRiseMm == 5000 ? 1 : 2);
+    }
+    districtBox->setChecked(saved.district);
+    districtRoad->setChecked(saved.singleNorthRoadConfirmed);
+    if (saved.neighbor || saved.northRiseMm || saved.district) display(ground, saved.groundZMm);
+    const auto& vertices = geometry->vertices;
+    for (int i = 0; i < picker.list->count(); ++i) {
+      const auto& a = vertices[i];
+      const auto& b = vertices[(i + 1) % vertices.size()];
+      if (std::any_of(saved.boundaries.begin(), saved.boundaries.end(), [&](const auto& edge) {
+            return edge[0].IsEqual(a, tolerance::kLinear) && edge[1].IsEqual(b, tolerance::kLinear);
+          })) picker.list->item(i)->setCheckState(Qt::Checked);
+    }
+    intro->setText(draft->sequence == sequence
+        ? tr("前回の入力を表示しています。確認した条件で再試算できます。")
+        : tr("前回の入力を表示しています。建物の後退距離などを確認してから再試算してください。"));
+  }
   updateBoundaries();
 
   auto* note = new QLabel(tr("選んだ制限だけの試算です。隣地斜線は近似表示。法規の適合は未評価です。"));
@@ -8853,12 +8916,18 @@ void MainWindow::showCombinedHeightDialog() {
   buttons->button(QDialogButtonBox::Close)->setText(tr("閉じる"));
   auto* show = buttons->addButton(tr("合成面を3Dで見る"), QDialogButtonBox::ActionRole);
   show->setObjectName(QStringLiteral("showCombinedHeight"));
+  auto* compare = buttons->addButton(tr("選択部材を照合"), QDialogButtonBox::ActionRole);
+  compare->setObjectName(QStringLiteral("compareCombinedHeight"));
+  const auto selectedIds = selection_;
+  compare->setEnabled(!selectedIds.empty());
+  if (selectedIds.empty()) compare->setToolTip(tr("先にモデルで屋根や壁などを選択してください。"));
   layout->addWidget(buttons);
   connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-  connect(show, &QPushButton::clicked, &dialog, [&] {
+  const auto readStudy = [&]() -> std::optional<doc::HeightLimitStudy> {
+    feedback->clear();
     if (document.sequence() != sequence) {
       feedback->setText(tr("モデルが変わりました。画面を開き直してください。"));
-      return;
+      return std::nullopt;
     }
     doc::HeightLimitStudy study;
     bool numeric = true;
@@ -8876,19 +8945,38 @@ void MainWindow::showCombinedHeightDialog() {
       study.neighbor = doc::HeightLimitStudy::Neighbor{number(neighborRise) * 1000, number(neighborSlope)};
     if (!numeric) {
       feedback->setText(tr("チェックした制限の空欄に数値を入れてください。"));
-      return;
+      return std::nullopt;
     }
     if (northBox->isChecked()) {
       if (northRise->currentIndex() == 0) {
         feedback->setText(tr("北側斜線の立上りを選んでください。"));
-        return;
+        return std::nullopt;
       }
       study.northRiseMm = northRise->currentData().toDouble();
     }
     study.district = districtBox->isChecked();
     study.singleNorthRoadConfirmed = districtRoad->isChecked();
     study.boundaries = checkedHeightBoundaries(*geometry, picker.list);
-    const auto preview = doc::heightLimitPreview(document, study);
+    return study;
+  };
+  const auto showPreview = [&](const doc::HeightLimitPreview& preview) {
+    viewport_->unlockView();
+    viewport_->showStorey(std::nullopt);
+    showCombinedHeightLegend();
+    viewport_->setCombinedHeightSurface(preview);
+    viewport_->setStandardView(Viewport::StandardView::Iso);
+    QString summary = tr("高さ制限の合成試算");
+    if (preview.unconfirmedAreaMm2 > 0)
+      summary += tr("　未確認 %1 m²").arg(preview.unconfirmedAreaMm2 / 1e6, 0, 'f', 2);
+    if (preview.noLimitAreaMm2 > 0)
+      summary += tr("　今回の条件で適用される制限面なし %1 m²").arg(preview.noLimitAreaMm2 / 1e6, 0, 'f', 2);
+    setStatus(summary);
+    dialog.accept();
+  };
+  connect(show, &QPushButton::clicked, &dialog, [&] {
+    const auto study = readStudy();
+    if (!study) return;
+    const auto preview = doc::heightLimitPreview(document, *study);
     if (!preview) {
       feedback->setText(QString::fromStdString(preview.error()));
       return;
@@ -8899,18 +8987,113 @@ void MainWindow::showCombinedHeightDialog() {
       feedback->setText(tr("選んだ制限の適用範囲が敷地内にありません。"));
       return;
     }
-    viewport_->unlockView();
-    viewport_->showStorey(std::nullopt);
-    showCombinedHeightLegend();
-    viewport_->setCombinedHeightSurface(*preview);
-    viewport_->setStandardView(Viewport::StandardView::Iso);
-    QString summary = tr("高さ制限の合成試算");
-    if (preview->unconfirmedAreaMm2 > 0)
-      summary += tr("　未確認 %1 m²").arg(preview->unconfirmedAreaMm2 / 1e6, 0, 'f', 2);
-    if (preview->noLimitAreaMm2 > 0)
-      summary += tr("　今回の条件で適用される制限面なし %1 m²").arg(preview->noLimitAreaMm2 / 1e6, 0, 'f', 2);
-    setStatus(summary);
-    dialog.accept();
+    combinedHeightDraft_ = std::make_unique<CombinedHeightDraft>(CombinedHeightDraft{context, *study, sequence});
+    showPreview(*preview);
+  });
+  connect(compare, &QPushButton::clicked, &dialog, [&] {
+    const auto study = readStudy();
+    if (!study) return;
+    auto measured = doc::compareCombinedHeight(document, *study, selectedIds);
+    if (!measured) {
+      feedback->setText(QString::fromStdString(measured.error()));
+      return;
+    }
+    combinedHeightDraft_ = std::make_unique<CombinedHeightDraft>(CombinedHeightDraft{context, *study, sequence});
+    auto& rows = measured.value().rows;
+    std::stable_sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) {
+      const auto priority = [](const auto& row) {
+        if (row.excessMm && *row.excessMm > 0.01) return 0;
+        if (row.needsReview) return 1;
+        return row.excessMm ? 2 : 3;
+      };
+      if (priority(a) != priority(b)) return priority(a) < priority(b);
+      return a.excessMm > b.excessMm;
+    });
+    QDialog results(&dialog);
+    results.setWindowTitle(tr("合成面と部材の照合"));
+    auto* resultLayout = new QVBoxLayout(&results);
+    auto* details = new QLabel(measured->approximate
+        ? tr("隣地斜線を含む近似面との鉛直差です。適合は未評価です。")
+        : tr("正の差は超過、負の差は余裕です。適合は未評価です。"));
+    details->setWordWrap(true);
+    resultLayout->addWidget(details);
+    auto* table = new QTableWidget(static_cast<int>(rows.size()), 4);
+    table->setObjectName(QStringLiteral("combinedHeightParts"));
+    table->setHorizontalHeaderLabels({tr("部材"), tr("照合結果"), tr("最大鉛直差（mm）"), tr("差を決めた制限")});
+    table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+    for (int i = 1; i < table->columnCount(); ++i)
+      table->horizontalHeader()->setSectionResizeMode(i, QHeaderView::ResizeToContents);
+    table->verticalHeader()->hide();
+    table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    table->setSelectionMode(QAbstractItemView::SingleSelection);
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    const std::array<QString, 4> names{tr("道路斜線"), tr("隣地斜線"), tr("北側斜線"), tr("高度地区")};
+    for (int i = 0; i < table->rowCount(); ++i) {
+      const auto& row = rows[static_cast<std::size_t>(i)];
+      table->setItem(i, 0, new QTableWidgetItem(QString::fromStdString(row.name)));
+      table->setItem(i, 1, new QTableWidgetItem(QString::fromStdString(row.state)));
+      QString difference = tr("—");
+      if (row.excessMm) {
+        const double value = std::abs(*row.excessMm) <= 0.01 ? 0 : *row.excessMm;
+        difference = (value > 0 ? QStringLiteral("+") : QString()) + QString::number(value, 'f', 2);
+        if (row.needsReview) difference = tr("%1（確認済み範囲）").arg(difference);
+      }
+      auto* differenceItem = new QTableWidgetItem(difference);
+      differenceItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+      table->setItem(i, 2, differenceItem);
+      auto* source = new QTableWidgetItem(tr("—"));
+      if (row.controllingSource) {
+        const auto index = static_cast<std::size_t>(*row.controllingSource);
+        QPixmap swatch(10, 10);
+        swatch.fill(Viewport::combinedHeightColor(index));
+        source->setIcon(QIcon(swatch));
+        source->setText(names[index]);
+      }
+      table->setItem(i, 3, source);
+    }
+    table->selectRow(0);
+    resultLayout->addWidget(table);
+    auto* savedStatus = new QLabel;
+    savedStatus->setWordWrap(true);
+    resultLayout->addWidget(savedStatus);
+    auto* resultButtons = new QDialogButtonBox;
+    auto* saveCsv = resultButtons->addButton(tr("CSVに保存…"), QDialogButtonBox::ActionRole);
+    saveCsv->setObjectName(QStringLiteral("saveCombinedHeightCsv"));
+    connect(saveCsv, &QPushButton::clicked, &results, [&] {
+      QFileDialog destination(&results, tr("照合結果をCSVに保存"), QString(), tr("CSV (*.csv)"));
+      destination.setObjectName(QStringLiteral("combinedHeightCsvDestination"));
+      destination.setAcceptMode(QFileDialog::AcceptSave);
+      destination.setDefaultSuffix(QStringLiteral("csv"));
+      destination.selectFile(tr("高さ制限の照合.csv"));
+      if (destination.exec() != QDialog::Accepted || destination.selectedFiles().isEmpty()) return;
+      const QString path = destination.selectedFiles().front();
+      if (document.sequence() != sequence) {
+        savedStatus->setText(tr("モデルが変わりました。再試算してください。"));
+        return;
+      }
+      QSaveFile output(path);
+      const auto csv = QByteArray::fromStdString(doc::combinedHeightCsv(document, *study, *measured));
+      if (!output.open(QIODevice::WriteOnly) || output.write(csv) != csv.size() || !output.commit()) {
+        savedStatus->setText(tr("CSVを保存できませんでした。"));
+        return;
+      }
+      savedStatus->setText(tr("照合結果と採用条件をCSVに保存しました。"));
+    });
+    auto* back = resultButtons->addButton(tr("条件に戻る"), QDialogButtonBox::RejectRole);
+    auto* locate = resultButtons->addButton(tr("選んだ部材を3Dで見る"), QDialogButtonBox::ActionRole);
+    locate->setObjectName(QStringLiteral("showCombinedHeightPart"));
+    resultLayout->addWidget(resultButtons);
+    connect(back, &QPushButton::clicked, &results, &QDialog::reject);
+    connect(locate, &QPushButton::clicked, &results, &QDialog::accept);
+    connect(table, &QTableWidget::cellDoubleClicked, &results, [&] { results.accept(); });
+    results.resize(640, 275);
+    if (results.exec() != QDialog::Accepted || table->currentRow() < 0) return;
+    if (document.sequence() != sequence) {
+      feedback->setText(tr("モデルが変わりました。画面を開き直してください。"));
+      return;
+    }
+    setSelection({rows[static_cast<std::size_t>(table->currentRow())].id});
+    showPreview(measured->preview);
   });
   dialog.resize(660, 570);
   dialog.exec();

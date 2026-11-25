@@ -56,6 +56,7 @@
 #include <QCheckBox>
 #include <QTabBar>
 #include <QTemporaryDir>
+#include <QFileDialog>
 #include <QStandardPaths>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -1651,6 +1652,14 @@ void GuiPhase1::combinedHeightShowsLowestSurface() {
                                              {"source", "test map"}})["ok"].get<bool>());
   QVERIFY(modeler.setSiteNorth({0, "test survey", "2026-11-25"}));
   QVERIFY(modeler.setLevels({{"", "GL", 0}, {"", "1FL", 1}}));
+  const auto roof = call("create_box", {{"origin", {14000,25000,0}}, {"width",500}, {"depth",1000},
+                                        {"height",9920}, {"name", "北側の検算部材"}});
+  const auto eave = call("create_box", {{"origin", {14000,2000,0}}, {"width",500}, {"depth",1000},
+                                        {"height",8120}, {"name", "道路側の検算部材"}});
+  QVERIFY(roof["ok"].get<bool>());
+  QVERIFY(eave["ok"].get<bool>());
+  const auto roofId = roof["result"]["id"].get<std::string>(), eaveId = eave["result"]["id"].get<std::string>();
+  f.window.setSelection({roofId, eaveId});
   f.vp->syncNow();
 
   auto* open = f.window.findChild<QAction*>(QStringLiteral("permitWorkflowAction"));
@@ -1669,7 +1678,10 @@ void GuiPhase1::combinedHeightShowsLowestSurface() {
 
   const QString reviewDir = qEnvironmentVariable("SBR_COMBINED_HEIGHT_REVIEW_DIR");
   const auto sequence = modeler.document().sequence();
-  bool accepted = false;
+  QTemporaryDir csvDir;
+  QVERIFY(csvDir.isValid());
+  const QString csvPath = csvDir.filePath(QStringLiteral("combined-height.csv"));
+  bool accepted = false, verifiedRows = false;
   QString failure;
   QTimer::singleShot(0, [&] {
     auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
@@ -1678,7 +1690,8 @@ void GuiPhase1::combinedHeightShowsLowestSurface() {
     auto* edges = dialog->findChild<QListWidget*>(QStringLiteral("neighborHeightEdges"));
     auto* diagram = dialog->findChild<QLabel*>(QStringLiteral("heightBoundaryDiagram"));
     auto* rise = dialog->findChild<QComboBox*>(QStringLiteral("combinedNorthRise"));
-    bool ready = show && edges && edges->count() == 4 && diagram && rise;
+    auto* compare = dialog->findChild<QPushButton*>(QStringLiteral("compareCombinedHeight"));
+    bool ready = compare && compare->isEnabled() && show && edges && edges->count() == 4 && diagram && rise;
     for (const auto* name : {"combinedRoadRule", "combinedNeighborRule", "combinedNorthRule", "combinedDistrictRule"}) {
       auto* box = dialog->findChild<QGroupBox*>(QString::fromLatin1(name));
       if (box) box->setChecked(true);
@@ -1697,7 +1710,38 @@ void GuiPhase1::combinedHeightShowsLowestSurface() {
       QTest::mouseClick(diagram, Qt::LeftButton, Qt::NoModifier, QPoint(140, 27));
       edges->item(3)->setCheckState(Qt::Checked);
       if (!reviewDir.isEmpty()) dialog->grab().save(QDir(reviewDir).filePath(QStringLiteral("combined-height-settings.png")));
-      if (edges->item(2)->checkState() == Qt::Checked) show->click();
+      if (edges->item(2)->checkState() == Qt::Checked) {
+        QTimer::singleShot(0, dialog, [&, dialog] {
+          auto* result = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+          if (!result || result == dialog) return;
+          auto* table = result->findChild<QTableWidget*>(QStringLiteral("combinedHeightParts"));
+          auto* locate = result->findChild<QPushButton*>(QStringLiteral("showCombinedHeightPart"));
+          auto* save = result->findChild<QPushButton*>(QStringLiteral("saveCombinedHeightCsv"));
+          if (table && locate && save && table->rowCount() == 2 &&
+              table->item(0, 2)->text() == QStringLiteral("+120.00") &&
+              table->item(0, 3)->text() == QStringLiteral("道路斜線") &&
+              table->item(1, 2)->text() == QStringLiteral("-80.00") &&
+              table->item(1, 3)->text() == QStringLiteral("北側斜線")) {
+            verifiedRows = true;
+            const bool nativeDisabled = QCoreApplication::testAttribute(Qt::AA_DontUseNativeDialogs);
+            QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
+            QTimer::singleShot(0, result, [&, result] {
+              auto* destination = result->findChild<QFileDialog*>(QStringLiteral("combinedHeightCsvDestination"));
+              if (!destination) return;
+              destination->selectFile(csvPath);
+              QMetaObject::invokeMethod(destination, "accept", Qt::QueuedConnection);
+            });
+            save->click();
+            QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs, nativeDisabled);
+            if (!reviewDir.isEmpty()) result->grab().save(QDir(reviewDir).filePath(QStringLiteral("combined-height-parts.png")));
+            table->selectRow(1);
+            locate->click();
+          } else {
+            result->reject();
+          }
+        });
+        compare->click();
+      }
     }
     accepted = dialog->result() == QDialog::Accepted;
     if (!accepted) {
@@ -1707,6 +1751,13 @@ void GuiPhase1::combinedHeightShowsLowestSurface() {
   });
   edit->click();
   QVERIFY2(accepted, qPrintable(failure));
+  QVERIFY(verifiedRows);
+  QFile csv(csvPath);
+  QVERIFY(csv.open(QIODevice::ReadOnly));
+  const auto csvText = QString::fromUtf8(csv.readAll());
+  QVERIFY(csvText.contains(QStringLiteral("120.000000,道路斜線")));
+  QVERIFY(csvText.contains(QStringLiteral("適用距離 14000.000000 mm")));
+  QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{roofId});
   QCOMPARE(modeler.document().sequence(), sequence);
   for (std::size_t i = 0; i < 4; ++i) QVERIFY(f.vp->combinedHeightLayerVisible(i));
   QVERIFY(!f.vp->combinedHeightLayerVisible(4));
@@ -1725,6 +1776,25 @@ void GuiPhase1::combinedHeightShowsLowestSurface() {
   legend->actions().back()->trigger();
   QVERIFY(!legend->isVisible());
   QVERIFY(!f.vp->combinedHeightVisible());
+
+  QVERIFY(call("create_box", {{"origin", {1000,1000,0}}, {"width",500}, {"depth",500}, {"height",500}})["ok"].get<bool>());
+  f.vp->syncNow();
+  const auto afterEdit = checks->findItems(QStringLiteral("高さ制限の合成"), Qt::MatchExactly);
+  QCOMPARE(afterEdit.size(), 1);
+  checks->setCurrentItem(afterEdit.front());
+  bool restored = false;
+  QTimer::singleShot(0, [&] {
+    auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+    if (!dialog) return;
+    auto* roadBox = dialog->findChild<QGroupBox*>(QStringLiteral("combinedRoadRule"));
+    auto* distance = dialog->findChild<QLineEdit*>(QStringLiteral("combinedRoadDistance"));
+    auto* edges = dialog->findChild<QListWidget*>(QStringLiteral("neighborHeightEdges"));
+    restored = roadBox && roadBox->isChecked() && distance && distance->text() == QStringLiteral("14") &&
+        edges && edges->count() == 4 && edges->item(2)->checkState() == Qt::Checked;
+    dialog->reject();
+  });
+  edit->click();
+  QVERIFY(restored);
 }
 
 void GuiPhase1::heightDistrictShowsControllingSurfaces() {
