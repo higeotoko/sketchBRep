@@ -49,9 +49,10 @@ enum class Pen {
   HeightLimit,  // section of the governing height envelope
   HeightReview, // unconfirmed height envelope in a section
   FireLimit3,
-  FireLimit5
+  FireLimit5,
+  FireCompartment
 };
-constexpr int kPenCount = 15;
+constexpr int kPenCount = 16;
 const char* penLayerName(Pen pen);  // layer names in DXF ("CUT", ...)
 
 struct Item {

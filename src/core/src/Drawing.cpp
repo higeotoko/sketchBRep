@@ -13,6 +13,7 @@
 #include "sbr/OpeningSymbols.h"
 #include "sbr/doc/Schedules.h"
 #include "sbr/doc/FireSpread.h"
+#include "sbr/doc/FireCompartments.h"
 #include "sbr/doc/Modeler.h"
 #include "sbr/geom/Measure.h"
 #include "sbr/geom/Stair.h"
@@ -70,6 +71,7 @@ const char* penLayerName(Pen pen) {
     case Pen::HeightReview: return "HEIGHT_REVIEW";
     case Pen::FireLimit3: return "FIRE_LIMIT_3M";
     case Pen::FireLimit5: return "FIRE_LIMIT_5M";
+    case Pen::FireCompartment: return "FIRE_COMPARTMENT";
   }
   return "0";
 }
@@ -91,6 +93,7 @@ double penWidth(Pen pen) {
     case Pen::HeightReview: return 0.25;
     case Pen::FireLimit3:
     case Pen::FireLimit5: return 0.25;
+    case Pen::FireCompartment: return 0.38;
   }
   return 0.18;
 }
@@ -101,6 +104,7 @@ std::vector<double> penDashes(Pen pen) {
     case Pen::HeightReview: return {2.0, 1.0};
     case Pen::FireLimit3: return {5.0, 1.2};
     case Pen::FireLimit5: return {5.0, 1.2, 0.5, 1.2};
+    case Pen::FireCompartment: return {6.0, 1.0, 0.45, 1.0, 0.45, 1.0};
     case Pen::Grid:
     case Pen::Level: return {8.0, 1.0, 0.5, 1.0};  // dash-dot
     default: return {};
@@ -731,7 +735,23 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
   TopoDS_Compound seen;
   builder.MakeCompound(seen);
   bool anySeen = false;
-  std::vector<Item> cut, fills, loose, layerLines, hatches;
+  std::vector<Item> cut, fills, loose, layerLines, hatches, compartmentLines;
+  const bool compartmentView = (spec.kind == ViewKind::Plan || spec.kind == ViewKind::Section) &&
+      spec.within.empty() && spec.framingPreset.empty() && !spec.insulation && spec.bracingFloor.empty() && !spec.memberLabels;
+  const auto compartmentLabel = [&](gp_Pnt2d at, const std::string& label, bool beside = false) {
+    if (!spec.annotations) return;
+    const double scale = spec.paperScale > 0 ? spec.paperScale : 100;
+    if (beside) at.SetX(at.X() + 2.4 * scale);
+    else at.SetY(at.Y() + 1.4 * scale);
+    Item text;
+    text.kind = Item::Kind::Text;
+    text.pen = Pen::FireCompartment;
+    text.points = {at};
+    text.text = label;
+    text.height = 2.5;
+    text.hAlign = beside ? 0 : 1;
+    compartmentLines.push_back(std::move(text));
+  };
   std::set<doc::ObjectId> drawn, gridIds;
   // docs/217: sections with insulation marks: what was marked, by part ("壁" / "床" / "屋根") and
   // insulation, and what has insulation given but could not be marked.
@@ -811,6 +831,33 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
       section.Build();
       const std::size_t cutFrom = cut.size();
       if (section.IsDone()) addLocalEdges(section.Shape().Moved(TopLoc_Location(proj.toLocal)), Pen::Cut, deflection, cut);
+      if (compartmentView && cut.size() > cutFrom) {
+        const auto record = doc::fireCompartmentBoundary(o);
+        if (record) {
+          std::optional<gp_Pnt2d> anchor;
+          double length = 0;
+          bool upright = false;
+          for (std::size_t i = cutFrom; i < cut.size(); ++i) {
+            const auto& item = cut[i];
+            if (item.kind == Item::Kind::Line && item.points.size() == 2) {
+              const auto& a = item.points[0];
+              const auto& b = item.points[1];
+              const double span = a.Distance(b);
+              const gp_Pnt2d mid((a.X() + b.X()) / 2, (a.Y() + b.Y()) / 2);
+              const bool vertical = std::abs(a.Y() - b.Y()) > std::abs(a.X() - b.X());
+              if (span > length + kOnPlane || (anchor && std::abs(span - length) <= kOnPlane &&
+                  (vertical ? mid.X() > anchor->X() : mid.Y() > anchor->Y()))) {
+                anchor = mid;
+                length = span;
+                upright = vertical;
+              }
+            }
+            compartmentLines.push_back(item);
+            compartmentLines.back().pen = Pen::FireCompartment;
+          }
+          if (anchor) compartmentLabel(*anchor, record->mark, upright);
+        }
+      }
       if (spec.kind == ViewKind::Plan && std::abs(n.Z()) > 1 - 1e-9) {
         const auto kindAttr = o.attributes.find("kind"), layersAttr = o.attributes.find("wall_layers");
         if (kindAttr != o.attributes.end() && kindAttr->second == "wall" && layersAttr != o.attributes.end() && !layersAttr->second.empty())
@@ -1225,6 +1272,37 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     if (sitePlan || threshold == 5) addContour(fire.limits5, Pen::FireLimit5, "延焼ライン 2階以上 5 m");
   }
   for (Item& c : cut) view.items.push_back(std::move(c));
+  if (compartmentView && spec.kind == ViewKind::Plan && std::abs(n.Z()) > 1 - 1e-9) {
+    const double z = spec.frame.Location().Z();
+    for (const auto& entry : doc::fireCompartmentReview(document, true)) {
+      if (!drawn.count(entry.host)) continue;
+      if (entry.part == doc::FireCompartmentRow::Part::FloorOpening && !entry.marker.IsNull()) {
+        Bnd_Box hole;
+        BRepBndLib::Add(entry.marker, hole);
+        if (hole.IsVoid()) continue;
+        const auto hi = hole.CornerMax();
+        if (hi.Z() > z + kOnPlane || hi.Z() < z - (spec.depth > 0 ? spec.depth : 1500.0)) continue;
+        addLocalEdges(entry.marker.Moved(TopLoc_Location(proj.toLocal)), Pen::FireCompartment, deflection, compartmentLines);
+        Bnd_Box projected;
+        BRepBndLib::Add(entry.marker.Moved(TopLoc_Location(proj.toLocal)), projected);
+        const auto topRight = projected.CornerMax();
+        const auto left = projected.CornerMin();
+        compartmentLabel(gp_Pnt2d((left.X() + topRight.X()) / 2, topRight.Y()), entry.boundary.mark + " / 床開口");
+        continue;
+      }
+      if (!entry.wallOpening) continue;
+      const auto& op = *entry.wallOpening;
+      if (z < op.bottom || z >= op.bottom + op.height) continue;
+      const gp_Vec across(-op.normal.Y() * op.width / 2, op.normal.X() * op.width / 2, 0);
+      const gp_Pnt center = gp_Pnt(op.center.X(), op.center.Y(), z).Translated(gp_Vec(op.normal) * (-op.depth / 2));
+      compartmentLines.push_back(line(Pen::FireCompartment, proj.uv(center.Translated(-across)), proj.uv(center.Translated(across))));
+      compartmentLabel(proj.uv(center), entry.boundary.mark + " / " + entry.openingMark);
+    }
+  }
+  if (!compartmentLines.empty()) {
+    view.calculationNotes.push_back("二点鎖線（青緑） 防火区画の登録部材と開口部。仕様は防火区画・開口部確認表を参照。");
+    for (auto& item : compartmentLines) view.items.push_back(std::move(item));
+  }
 
   // docs/208: the bracing walls of one storey of the wall calculation and its quarter division.
   if (spec.kind == ViewKind::Plan && !spec.bracingFloor.empty()) {

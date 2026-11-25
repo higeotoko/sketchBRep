@@ -202,6 +202,7 @@ class Viewport : public QWidget {
   // Read-only structural diagnostics drawn on their own layer (never picked, never
   // part of the model); empty clears. Independent of tools' role shapes.
   void setFireSpreadShapes(const std::vector<std::pair<TopoDS_Shape, Quantity_Color>>& shapes);
+  void setFireCompartmentShapes(const std::vector<std::pair<TopoDS_Shape, Quantity_Color>>& shapes);
   void setDiagnosticShapes(const std::vector<std::pair<TopoDS_Shape, Quantity_Color>>& shapes);
   // A plan of one level: hide everything above `z` (world mm), like a floor plan's cut, without
   // touching the model. Picking and snapping skip the hidden part. nullopt removes it; leaving the
@@ -243,6 +244,7 @@ class Viewport : public QWidget {
   TopoDS_Shape wallOutlineShape() const { return wallOutlines_.IsNull() ? TopoDS_Shape() : wallOutlines_->Shape(); }
   std::size_t diagnosticShapeCount() const { return diagnostics_.size(); }
   std::size_t fireSpreadShapeCount() const { return fireSpread_.size(); }
+  std::size_t fireCompartmentShapeCount() const { return fireCompartments_.size(); }
   std::size_t roleShapeCount() const { return roles_.size(); }
   // What the tool preview shows now (null: nothing) - for checks.
   TopoDS_Shape sectionMarkerShape() const {
@@ -573,7 +575,9 @@ class Viewport : public QWidget {
   Handle(AIS_Shape) inspectionMarker_;
   std::vector<Handle(AIS_Shape)> roles_;
   std::vector<Handle(AIS_Shape)> diagnostics_;
-  std::vector<Handle(AIS_Shape)> fireSpread_;
+  void setFireReviewShapes(const std::vector<std::pair<TopoDS_Shape, Quantity_Color>>& shapes,
+                           std::vector<Handle(AIS_Shape)>& display);
+  std::vector<Handle(AIS_Shape)> fireSpread_, fireCompartments_;
   Handle(AIS_Shape) openingSymbols_;
   std::size_t openingSymbolEdges_ = 0;
   std::vector<Handle(AIS_Shape)> fittings_;  // frame, glass, leaf (docs/146)

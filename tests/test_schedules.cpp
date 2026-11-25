@@ -20,6 +20,7 @@
 #include <iostream>
 #include "sbr/doc/Schedules.h"
 #include "sbr/doc/FireSpread.h"
+#include "sbr/doc/FireCompartments.h"
 #include "sbr/OpeningSymbols.h"
 #include "sbr/draw/Drawing.h"
 #include "sbr/geom/Measure.h"
@@ -3236,6 +3237,75 @@ TEST_F(Schedules, NeighborHeightPreviewPreservesTheConcaveFootprint) {
   EXPECT_NEAR(planArea, 104000000, 0.01);
   EXPECT_NEAR(sbr::geom::exactBounds(result->surface).CornerMin().Z(), 20000, 0.01);
   EXPECT_EQ(modeler.document().sequence(), sequence);
+}
+
+TEST_F(Schedules, FireCompartmentTracksWallSpecificationsAndFloorHolesIndependently) {
+  using Part = sbr::doc::FireCompartmentRow::Part;
+  const std::string wall = ok("create_wall", {{"points", {{1000, 1600}, {7000, 1600}}},
+                                             {"thickness", 200}, {"height", 3000}})["ids"][0];
+  ok("place_openings", {{"host", wall}, {"face_normal", {0, -1, 0}}, {"count", 2},
+                         {"width", 900}, {"height", 2050}, {"sill", 0}});
+  ok("set_opening_fittings", {{"host", wall}, {"fitting", {{"type", "swing_single"}, {"hinge", "left"}, {"swing", "in"}}}});
+  const std::string slab = ok("create_slab", {{"outline", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}}},
+                                              {"top", 3000}, {"thickness", 200}})["id"];
+  const auto stairsMade = ok("create_stair", {{"path", {{1300, 3100}, {5500, 3100}}}, {"rise", 3000}, {"width", 900}});
+  const std::string stair = stairsMade["id"];
+  ok("open_floor_for_stair", {{"stair", stair}, {"slabs", {slab}}, {"headroom", 2100}});
+  const auto args = [&](std::vector<std::string> ids, const std::string& requirement) {
+    return json{{"ids", ids}, {"mark", "FC-1"}, {"kind", "shaft"}, {"requirement", requirement}, {"source", "区画設計図・令第112条"}};
+  };
+  EXPECT_FALSE(call("set_fire_compartment_boundary", args({wall, room}, "specific"))["ok"].get<bool>());
+  EXPECT_FALSE(sbr::doc::fireCompartmentBoundary(*modeler.document().find(wall)));
+  ok("set_fire_compartment_boundary", args({wall, slab}, "specific"));
+  const auto& document = modeler.document();
+  const auto initial = sbr::doc::fireCompartmentReview(document, true);
+  ASSERT_EQ(std::count_if(initial.begin(), initial.end(), [](const auto& r) { return r.part == Part::WallOpening; }), 2);
+  EXPECT_EQ(std::count_if(initial.begin(), initial.end(), [](const auto& r) { return r.part == Part::FloorOpening && !r.marker.IsNull(); }), 1);
+  auto opening = std::find_if(initial.begin(), initial.end(), [](const auto& r) { return r.part == Part::WallOpening; });
+  ASSERT_NE(opening, initial.end());
+  EXPECT_FALSE(opening->marker.IsNull());
+  const std::string stable = opening->openingId;
+  const std::string other = std::next(opening)->openingId;
+  const auto reported = [&] {
+    for (const auto& r : ok("fire_compartment_review")["rows"].get<std::vector<json>>())
+      if (r["opening_id"] == stable) return r;
+    return json();
+  };
+  const auto record = [&](const std::string& kind) {
+    return json{{"host", wall}, {"opening_id", stable}, {"kind", kind}, {"reference", "検証用製品仕様 A-10"}};
+  };
+  EXPECT_EQ(reported()["status"], "設備の仕様・根拠を入力");
+  ok("set_fire_compartment_equipment", record("fire"));
+  EXPECT_EQ(reported()["status"], "必要種別と登録種別を照合");
+  ok("set_fire_compartment_equipment", record("specific"));
+  EXPECT_EQ(reported()["status"], "仕様記録あり");
+  ok("set_opening_size", {{"host", wall}, {"openings", {stable}}, {"width", 1000}});
+  EXPECT_EQ(reported()["status"], "開口寸法・建具の変更を照合");
+  ASSERT_TRUE(modeler.undo());
+  EXPECT_EQ(reported()["status"], "仕様記録あり");
+  ok("delete_openings", {{"host", wall}, {"openings", {other}}});
+  EXPECT_EQ(reported()["status"], "仕様記録あり");
+  ok("set_fire_compartment_boundary", args({wall}, "no_openings"));
+  EXPECT_EQ(reported()["status"], "開口なしの指定を確認");
+  ASSERT_TRUE(modeler.undo());
+  const auto plan = sbr::draw::makeView(document, sbr::draw::planView(1100));
+  const auto upstairs = sbr::draw::makeView(document, sbr::draw::planView(4100));
+  const auto section = sbr::draw::makeView(document, sbr::draw::sectionView(gp_Pnt(4250, 0, 0), gp_Dir(1, 0, 0)));
+  ASSERT_TRUE(plan);
+  ASSERT_TRUE(upstairs);
+  ASSERT_TRUE(section);
+  const auto hasMark = [](const auto& view, const char* label) {
+    return std::any_of(view.items.begin(), view.items.end(), [&](const auto& item) {
+      return item.pen == sbr::draw::Pen::FireCompartment && item.kind == sbr::draw::Item::Kind::Text &&
+             item.text.find(label) != std::string::npos;
+    });
+  };
+  EXPECT_TRUE(hasMark(*plan, "FC-1 /"));
+  EXPECT_TRUE(hasMark(*upstairs, "FC-1 / 床開口"));
+  EXPECT_TRUE(hasMark(*section, "FC-1"));
+  const auto sheets = sbr::doc::drawingSet(document, {});
+  ASSERT_TRUE(sheets);
+  EXPECT_NE(std::find(sheets->names.begin(), sheets->names.end(), "防火区画・開口部確認表"), sheets->names.end());
 }
 
 TEST_F(Schedules, FireSpreadUsesTheRoadCenterAndExteriorFaceWithDifferentDistancesByFloor) {

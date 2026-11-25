@@ -5,6 +5,7 @@ set(CMAKE_AUTOMOC ON)
 # UI code as a library so the GUI tests can drive the real main window.
 add_library(sbr_ui STATIC
   MainWindow.cpp MainWindow.h
+  FireCompartmentReview.cpp
   VicinityMapFetcher.cpp VicinityMapFetcher.h
   UiDriver.cpp UiDriver.h
   TimberFrameDialog.cpp

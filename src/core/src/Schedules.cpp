@@ -1,5 +1,6 @@
 #include "sbr/doc/Schedules.h"
 #include "sbr/doc/FireSpread.h"
+#include "sbr/doc/FireCompartments.h"
 
 #include <algorithm>
 #include <cmath>
@@ -3545,6 +3546,18 @@ std::vector<PermitCheck> permitElevationChecks(const Document& document) {
                    {}});
   else
     out.push_back({"立面の向き", "要確認", "真北が未入力です。立面図の名前（南・東・北・西）はモデルの軸に沿った向きで出ます。", {}, true});
+  const auto compartments = fireCompartmentReview(document);
+  if (!compartments.empty()) {
+    std::string details;
+    std::vector<ObjectId> targets;
+    for (const auto& row : compartments) {
+      if (!details.empty()) details += "\n";
+      details += row.boundary.mark + "　" + row.hostName + "　" + row.openingMark + "　" + row.status + "　";
+      details += fireCompartmentRequirementName(row.boundary.requirement) + "　" + row.boundary.source + "　" + row.equipment.reference;
+      targets.push_back(row.host);
+    }
+    out.push_back({"防火区画・開口部", "照合資料あり", std::move(details), std::move(targets), true});
+  }
   const auto fire = fireSpreadStudy(document, false);
   if (fire.configured) {
     std::string details = fire.changed ? fire.issue : "基準線 " + std::to_string(fire.bases.size()) + " 本　" + fire.conditions.source;
@@ -5308,6 +5321,11 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
     } else {
       planned.push_back({table.title, std::nullopt, table, {}});
     }
+  }
+  const auto compartments = fireCompartmentReview(document);
+  if (!compartments.empty()) {
+    auto table = fireCompartmentTable(compartments);
+    planned.push_back({table.title, std::nullopt, std::move(table), {}});
   }
   const auto fire = fireSpreadStudy(document, false, true);
   if (fire.configured) {

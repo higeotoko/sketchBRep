@@ -254,6 +254,7 @@ class GuiPhase1 : public QObject {
   void heightDistrictShowsControllingSurfaces();
   void combinedHeightShowsLowestSurface();
   void fireSpreadReviewShowsTheOpeningAndInvalidatesChangedBasis();
+  void fireCompartmentReviewAssociatesTheDoorAndEquipment();
   void permitWorkflowAppliesDaylightFactors();
   void permitWorkflowMarksStagesAndAsksAgain();
   void projectOutlineDialogGivesTheItems();
@@ -1635,6 +1636,94 @@ void GuiPhase1::permitWorkflowMarksStagesAndAsksAgain() {
 
 // docs/194: stages 2 (通り芯) and 3 (平面) list what the model has and what is missing; a row's
 // button selects the objects it is about, and the rows follow the model.
+void GuiPhase1::fireCompartmentReviewAssociatesTheDoorAndEquipment() {
+  Fixture f;
+  QVERIFY(f.setUp());
+  auto& modeler = f.window.modeler();
+  api::CommandApi api(modeler);
+  using Json = nlohmann::json;
+  const auto call = [&](const char* command, Json args) {
+    return Json::parse(api.execute(Json{{"command", command}, {"args", std::move(args)}}.dump()));
+  };
+  QVERIFY(modeler.setLevels({{"", "1FL", 0}, {"", "2FL", 3000}}));
+  const auto wall = call("create_wall", {{"points", {{1000,1600},{6500,1600}}}, {"height", 2900},
+                                         {"thickness", 180}} );
+  QVERIFY(wall["ok"].get<bool>());
+  const auto host = wall["result"]["ids"][0].get<std::string>();
+  QVERIFY(call("place_openings", {{"host", host}, {"face_normal", {0,-1,0}}, {"count", 1}, {"width", 900},
+                                   {"height", 2050}, {"sill", 0}})["ok"].get<bool>());
+  QVERIFY(call("set_opening_fittings", {{"host", host}, {"fitting", {{"type", "swing_single"}, {"hinge", "left"},
+                                                                      {"swing", "in"}}}})["ok"].get<bool>());
+  f.vp->syncNow();
+  f.window.setSelection({host});
+  auto* action = f.window.findChild<QAction*>(QStringLiteral("fireCompartmentReviewAction"));
+  QVERIFY(action);
+  action->trigger();
+  auto* dock = f.window.findChild<QDockWidget*>(QStringLiteral("fireCompartmentDock"));
+  QVERIFY(dock);
+  auto* edit = dock->findChild<QPushButton*>(QStringLiteral("editFireCompartment"));
+  auto* table = dock->findChild<QTableWidget*>(QStringLiteral("fireCompartmentRows"));
+  auto* equipment = dock->findChild<QPushButton*>(QStringLiteral("editFireCompartmentEquipment"));
+  auto* display = dock->findChild<QCheckBox*>(QStringLiteral("showFireCompartmentOverlay"));
+  QVERIFY(edit && table && equipment && display);
+  const QString directory = qEnvironmentVariable("SBR_COMPARTMENT_REVIEW_DIR");
+  bool saved = false;
+  QTimer::singleShot(0, [&] {
+    auto* form = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+    if (!form) return;
+    auto* mark = form->findChild<QLineEdit*>(QStringLiteral("fireCompartmentMark"));
+    auto* source = form->findChild<QLineEdit*>(QStringLiteral("fireCompartmentSource"));
+    auto* required = form->findChild<QComboBox*>(QStringLiteral("fireCompartmentRequired"));
+    auto* buttons = form->findChild<QDialogButtonBox*>();
+    if (mark && source && required && buttons) {
+      mark->setText(QStringLiteral("区画A"));
+      source->setText(QStringLiteral("区画設計図・令第112条"));
+      required->setCurrentIndex(required->findData(QStringLiteral("specific")));
+      if (!directory.isEmpty()) form->grab().save(QDir(directory).filePath(QStringLiteral("fire-compartment-registration.png")));
+      buttons->button(QDialogButtonBox::Save)->click();
+      saved = form->result() == QDialog::Accepted;
+    }
+    if (!saved) form->reject();
+  });
+  edit->click();
+  QVERIFY(saved);
+  QTRY_COMPARE(table->rowCount(), 2);
+  QCOMPARE(table->item(1, 3)->text(), QStringLiteral("設備の仕様・根拠を入力"));
+  table->setCurrentCell(1, 2);
+  QVERIFY(equipment->isEnabled());
+  QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{host});
+  QCOMPARE(f.vp->fireCompartmentShapeCount(), std::size_t(3));
+  saved = false;
+  QTimer::singleShot(0, [&] {
+    auto* form = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+    if (!form) return;
+    auto* kind = form->findChild<QComboBox*>(QStringLiteral("fireCompartmentEquipmentKind"));
+    auto* reference = form->findChild<QLineEdit*>(QStringLiteral("fireCompartmentEquipmentReference"));
+    auto* buttons = form->findChild<QDialogButtonBox*>();
+    if (kind && reference && buttons) {
+      kind->setCurrentIndex(kind->findData(QStringLiteral("specific")));
+      reference->setText(QStringLiteral("検証用仕様 A-10"));
+      buttons->button(QDialogButtonBox::Save)->click();
+      saved = form->result() == QDialog::Accepted;
+    }
+    if (!saved) form->reject();
+  });
+  equipment->click();
+  QVERIFY(saved);
+  QTRY_COMPARE(table->item(1, 3)->text(), QStringLiteral("仕様記録あり"));
+  QCOMPARE(table->currentRow(), 1);
+  if (!directory.isEmpty()) {
+    QCoreApplication::processEvents();
+    QVERIFY(dock->grab().save(QDir(directory).filePath(QStringLiteral("fire-compartment-panel.png"))));
+    f.vp->fitAll();
+    QVERIFY(f.vp->dumpImage(QDir(directory).filePath(QStringLiteral("fire-compartment-3d.png"))));
+  }
+  display->setChecked(false);
+  QCOMPARE(f.vp->fireCompartmentShapeCount(), std::size_t(0));
+  QVERIFY(modeler.undo());
+  QTRY_COMPARE(table->item(1, 3)->text(), QStringLiteral("設備の仕様・根拠を入力"));
+}
+
 void GuiPhase1::fireSpreadReviewShowsTheOpeningAndInvalidatesChangedBasis() {
   Fixture f;
   QVERIFY(f.setUp());

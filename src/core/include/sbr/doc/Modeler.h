@@ -30,6 +30,8 @@
 namespace sbr::doc {
 
 struct FireSpreadConditions;
+struct FireCompartmentBoundary;
+struct FireCompartmentEquipment;
 
 struct ObjectSummary {
   ObjectId id;
@@ -223,6 +225,8 @@ class Modeler {
   // residential / industrial / commercial ("" takes it away), with the document it was read from,
   // as attributes "use_zone" / "use_zone_source" on the site outline. One undo step.
   Status setSiteZone(const std::string& zone, const std::string& source);
+  Status setFireCompartmentBoundary(const std::vector<ObjectId>& ids, const FireCompartmentBoundary& boundary);
+  Status setFireCompartmentEquipment(const ObjectId& host, const std::string& opening, const FireCompartmentEquipment&);
   Status setFireSpreadConditions(const FireSpreadConditions& conditions);
   static std::optional<gp_Dir> exteriorWallNormal(const Document& document, const Object& wall);
   Status setSiteHeightConditions(const std::string& zone, const std::string& district, const std::string& source);

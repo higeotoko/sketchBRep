@@ -2536,9 +2536,18 @@ void Viewport::setRoleShapes(const std::vector<std::pair<TopoDS_Shape, Quantity_
 }
 
 void Viewport::setFireSpreadShapes(const std::vector<std::pair<TopoDS_Shape, Quantity_Color>>& shapes) {
+  setFireReviewShapes(shapes, fireSpread_);
+}
+
+void Viewport::setFireCompartmentShapes(const std::vector<std::pair<TopoDS_Shape, Quantity_Color>>& shapes) {
+  setFireReviewShapes(shapes, fireCompartments_);
+}
+
+void Viewport::setFireReviewShapes(const std::vector<std::pair<TopoDS_Shape, Quantity_Color>>& shapes,
+                                   std::vector<Handle(AIS_Shape)>& display) {
   if (view_.IsNull()) return;
-  for (const auto& existing : fireSpread_) context_->Remove(existing, false);
-  fireSpread_.clear();
+  for (const auto& existing : display) context_->Remove(existing, false);
+  display.clear();
   for (const auto& [shape, color] : shapes) {
     if (shape.IsNull()) continue;
     Handle(AIS_Shape) item = new AIS_Shape(shape);
@@ -2549,7 +2558,7 @@ void Viewport::setFireSpreadShapes(const std::vector<std::pair<TopoDS_Shape, Qua
     else item->SetZLayer(Graphic3d_ZLayerId_Topmost);
     context_->Display(item, band ? AIS_Shaded : AIS_WireFrame, -1, false);
     context_->Deactivate(item);
-    fireSpread_.push_back(item);
+    display.push_back(item);
   }
   redraw();
 }

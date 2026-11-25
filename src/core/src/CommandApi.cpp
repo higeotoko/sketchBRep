@@ -1,5 +1,6 @@
 #include "sbr/doc/Schedules.h"
 #include "sbr/doc/FireSpread.h"
+#include "sbr/doc/FireCompartments.h"
 #include "sbr/ConstructionQuantity.h"
 #include "sbr/ConstructionWall.h"
 #include "sbr/ConstructionFoundation.h"
@@ -2755,6 +2756,48 @@ const std::vector<CommandDef>& commands() {
          must(m.setSiteZone(text(a, "zone"), textOr(a, "source", "")));
          return json::object();
        }},
+      {"set_fire_compartment_boundary",
+       "Register selected wall or slab ids as the design boundary of a fire compartment. Use a common 'mark' "
+       "for its parts and record the adopted provision and project evidence in 'source'. Use 'clear': true to remove the boundary record. "
+       "The required equipment category must be checked in the design documents.",
+       SCHEMA({"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}},
+         "mark": {"type": "string"}, "kind": {"enum": ["area", "shaft", "mixed_use", "other"]},
+         "requirement": {"enum": ["unknown", "fire", "specific", "no_openings"]}, "source": {"type": "string"},
+         "clear": {"type": "boolean"}}, "required": ["ids"]}),
+       [](doc::Modeler& m, const json& a) {
+         doc::FireCompartmentBoundary boundary;
+         if (!a.value("clear", false)) boundary = {text(a, "mark"), text(a, "kind"), text(a, "requirement"), text(a, "source")};
+         must(m.setFireCompartmentBoundary(ids(a, "ids"), boundary));
+         return json::object();
+       }},
+      {"set_fire_compartment_equipment",
+       "Record the installed or specified equipment for a wall opening using the stable opening_id from "
+       "fire_compartment_review. Add its recognition number or prescribed specification and source in 'reference'. "
+       "An empty kind with no reference clears the record.",
+       SCHEMA({"type": "object", "properties": {"host": {"type": "string"}, "opening_id": {"type": "string"},
+                   "kind": {"enum": ["", "fire", "specific"]}, "reference": {"type": "string"}},
+               "required": ["host", "opening_id", "kind"]}),
+       [](doc::Modeler& m, const json& a) {
+         must(m.setFireCompartmentEquipment(text(a, "host"), text(a, "opening_id"),
+                                            {text(a, "kind"), textOr(a, "reference", "")}));
+         return json::object();
+       }},
+      {"fire_compartment_review",
+       "Read registered fire-compartment walls and slabs, wall openings and closed holes in slab top faces. "
+       "Statuses compare records and indicate what to review. One row per boundary or opening.",
+       SCHEMA({"type": "object", "properties": {}}),
+       [](doc::Modeler& m, const json&) {
+         using Part = doc::FireCompartmentRow::Part;
+         auto rows = json::array();
+         for (const auto& r : doc::fireCompartmentReview(m.document())) {
+           const auto& b = r.boundary;
+           rows.push_back({{"part", r.part == Part::Boundary ? "boundary" : r.part == Part::WallOpening ? "wall_opening" : "floor_opening"},
+               {"host", r.host}, {"host_name", r.hostName}, {"level", r.level}, {"mark", b.mark}, {"kind", b.kind},
+               {"requirement", b.requirement}, {"source", b.source}, {"opening_id", r.openingId}, {"opening_mark", r.openingMark},
+               {"equipment", r.equipment.kind}, {"reference", r.equipment.reference}, {"status", r.status}, {"attention", r.attention}});
+         }
+         return json{{"rows", rows}, {"law", doc::kFireCompartmentLaw}, {"yokohama", doc::kFireCompartmentYokohama}};
+       }},
       {"set_fire_spread_conditions",
        "Register survey-confirmed ordinary neighbor boundary edges ({start,end}, in world mm) for the exterior fire spread study. "
        "Use parallel_road_confirmed only when the registered width is verified and the straight road center is parallel "
@@ -4933,7 +4976,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
       name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" ||
       name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" || name == "permit_checks" || name == "check_drawing_set" || name == "project_outline" || name == "daylight_factor_estimates" ||
-      name == "fire_spread_review" || name == "site_height_conditions" || name == "yokohama_height_district_at" || name == "compare_yokohama_height_district" ||
+      name == "fire_compartment_review" || name == "fire_spread_review" || name == "site_height_conditions" || name == "yokohama_height_district_at" || name == "compare_yokohama_height_district" ||
       name == "neighbor_height_at" || name == "north_height_at" || name == "compare_north_height" || name == "compare_neighbor_height" || name == "road_height_datum" || name == "road_height_table_values" || name == "measure_road_building_setback" || name == "compare_road_height_plane" || name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
     return E::Read;
   }

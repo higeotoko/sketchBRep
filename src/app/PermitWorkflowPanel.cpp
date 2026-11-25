@@ -357,6 +357,11 @@ void PermitWorkflowPanel::readModelChecks(int stage) {
     QStringList ids;
     for (const auto& id : c.targets) ids << QString::fromStdString(id);
     const bool select = !ids.isEmpty();
+    if (stage == 10 && c.item == "防火区画・開口部") {
+      rows_.push_back({QString::fromStdString(c.item), QString::fromStdString(c.state), QString::fromStdString(c.details),
+                       translated("防火区画を開く"), Action::FireCompartment, c.attention});
+      continue;
+    }
     if (stage == 10 && c.item == "延焼ライン・外壁開口部") {
       rows_.push_back({QString::fromStdString(c.item), QString::fromStdString(c.state), QString::fromStdString(c.details),
                        translated("延焼ラインを開く"), Action::FireSpread, c.attention});
@@ -411,6 +416,10 @@ void PermitWorkflowPanel::readModelChecks(int stage) {
     rows_.push_back({translated("延焼ライン・外壁開口部"), translated("確認"),
                      translated("配置図と階別のラインを確認し、建具符号から防火設備を照合する窓・扉を探します。"),
                      translated("延焼ラインを開く"), Action::FireSpread});
+  if (stage == 10 && std::none_of(checks.begin(), checks.end(), [](const auto& c) { return c.item == "防火区画・開口部"; }))
+    rows_.push_back({translated("防火区画・開口部"), translated("未登録"),
+                     translated("区画の壁・床を登録し、開口や防火設備を確認します。"), translated("防火区画を開く"),
+                     Action::FireCompartment});
   if (stage == 3)
     rows_.push_back({translated("面積の根拠"), translated("確認材料あり"),
                      translated("壁芯・内法の面積と法の床面積は、表の窓の「面積の表」で式と注を確かめます。"),

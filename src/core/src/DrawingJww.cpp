@@ -114,11 +114,12 @@ JwPen jwPen(Pen pen) {
     case Pen::HeightReview: return {3, 2, 12};
     case Pen::FireLimit3: return {3, 2, 13};
     case Pen::FireLimit5: return {4, 5, 14};
+    case Pen::FireCompartment: return {6, 7, 15};
   }
   return {2, 1, 1};
 }
 const char* const kLayerNames[] = {"断面", "見え掛かり", "隠れ線", "断面塗り", "通り芯", "通り芯符号",
-                                   "レベル", "寸法", "文字", "図面枠", "表題欄", "高さ制限", "高さ未確認", "延焼3m", "延焼5m"};
+                                   "レベル", "寸法", "文字", "図面枠", "表題欄", "高さ制限", "高さ未確認", "延焼3m", "延焼5m", "防火区画"};
 
 int paperCode(const std::string& name) {
   if (name == "A0") return 0;

@@ -271,6 +271,7 @@ const char* penName(Pen pen) {
     case Pen::HeightReview: return "高さ未確認";
     case Pen::FireLimit3: return "延焼3m";
     case Pen::FireLimit5: return "延焼5m";
+    case Pen::FireCompartment: return "防火区画";
   }
   return "";
 }

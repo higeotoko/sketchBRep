@@ -33,6 +33,7 @@ int penColor(Pen pen) {
     case Pen::HeightReview: return 30;
     case Pen::FireLimit3: return 30;
     case Pen::FireLimit5: return 200;
+    case Pen::FireCompartment: return 134;
   }
   return 7;
 }
@@ -43,6 +44,7 @@ const char* lineType(Pen pen) {
     case Pen::HeightReview:
     case Pen::FireLimit3: return "HIDDEN";
     case Pen::FireLimit5: return "DASHDOT";
+    case Pen::FireCompartment: return "DIVIDE";
     case Pen::Grid:
     case Pen::Level: return "DASHDOT";
     default: return "CONTINUOUS";
@@ -101,7 +103,7 @@ Status writeDxf(const Sheet& sheet, const std::string& path) {
   // Line types: dashes on paper, at the drawing's scale.
   o.code(0, "TABLE");
   o.code(2, "LTYPE");
-  o.code(70, 3);
+  o.code(70, 4);
   struct LT {
     const char* name;
     const char* text;
@@ -109,7 +111,8 @@ Status writeDxf(const Sheet& sheet, const std::string& path) {
   };
   const LT types[] = {{"CONTINUOUS", "Solid line", {}},
                       {"HIDDEN", "Hidden __ __ __", penDashes(Pen::Hidden)},
-                      {"DASHDOT", "Dash dot __ . __ .", penDashes(Pen::Grid)}};
+                      {"DASHDOT", "Dash dot __ . __ .", penDashes(Pen::Grid)},
+                      {"DIVIDE", "Dash dot dot __ . . __ . .", penDashes(Pen::FireCompartment)}};
   for (const LT& t : types) {
     o.code(0, "LTYPE");
     o.code(2, t.name);

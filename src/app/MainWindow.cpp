@@ -1268,6 +1268,8 @@ void MainWindow::buildMenus() {
     if (report(modeler_.setSiteZone(zone.toStdString(), source.toStdString())))
       setStatus(zone.isEmpty() ? tr("用途地域の区分を未入力にしました") : tr("用途地域の区分を決めました（Ctrl+Z で戻せます）"));
   })->setObjectName(QStringLiteral("siteZoneAction"));
+  site->addAction(tr("防火区画・開口部の確認..."), this, &MainWindow::showFireCompartmentReview)
+      ->setObjectName(QStringLiteral("fireCompartmentReviewAction"));
   site->addAction(tr("延焼ライン・防火設備の確認..."), this, &MainWindow::showFireSpreadReview)
       ->setObjectName(QStringLiteral("fireSpreadReviewAction"));
   site->addAction(tr("高さ制限の条件..."), this, &MainWindow::showSiteHeightConditionsDialog)
@@ -3753,7 +3755,7 @@ void MainWindow::onDocumentChanged() {
     }
     viewport_->setSelection(wholeSelection());
     refreshPanels();
-    emit fireSpreadModelChanged();
+    emit fireReviewModelChanged();
     updateTitle();
   });
 }
@@ -7783,6 +7785,7 @@ void MainWindow::showPermitWorkflow() {
       case Action::HeightDistrict: showBoundaryHeightDialog(BoundaryHeightStudy::District); break;
       case Action::CombinedHeight: showCombinedHeightDialog(); break;
       case Action::FireSpread: showFireSpreadReview(); break;
+      case Action::FireCompartment: showFireCompartmentReview(); break;
       case Action::Equipment: trigger("equipmentAction"); break;      // docs/226
       case Action::SavedRoad:
         setSelection({});
@@ -8674,7 +8677,7 @@ void MainWindow::showFireSpreadReview() {
   connect(edit, &QPushButton::clicked, this, &MainWindow::editFireSpreadConditions);
   connect(display, &QCheckBox::toggled, panel, refresh);
   connect(dock, &QDockWidget::visibilityChanged, panel, refresh);
-  connect(this, &MainWindow::fireSpreadModelChanged, panel, refresh);
+  connect(this, &MainWindow::fireReviewModelChanged, panel, refresh);
   connect(table, &QTableWidget::currentCellChanged, panel, [this, table, study, overlay] {
     const int row = table->currentRow();
     if (row >= 0 && row < static_cast<int>(study->openings.size())) setSelection({study->openings[static_cast<std::size_t>(row)].row.host});
