@@ -7746,7 +7746,8 @@ void MainWindow::showPermitWorkflow() {
       case Action::EnergyRoute: trigger("energyRouteAction"); break;  // docs/215
       case Action::HeightConditions: showSiteHeightConditionsDialog(); break;
       case Action::RoadHeightPlane: showRoadHeightPlaneDialog(); break;
-      case Action::NeighborHeight: showNeighborHeightDialog(); break;
+      case Action::NeighborHeight: showBoundaryHeightDialog(false); break;
+      case Action::NorthHeight: showBoundaryHeightDialog(true); break;
       case Action::Equipment: trigger("equipmentAction"); break;      // docs/226
       case Action::SavedRoad:
         setSelection({});
@@ -8300,7 +8301,7 @@ void MainWindow::showRoadHeightPlaneDialog() {
   dialog.exec();
 }
 
-void MainWindow::showNeighborHeightDialog() {
+void MainWindow::showBoundaryHeightDialog(bool north) {
   const auto& document = modeler_.document();
   const auto& site = document.settings().siteBoundary;
   if (!site) return;
@@ -8312,11 +8313,15 @@ void MainWindow::showNeighborHeightDialog() {
   const auto road = document.siteRoadEdge(*geometry);
   const auto sequence = document.sequence();
   QDialog dialog(this);
-  dialog.setObjectName(QStringLiteral("neighborHeightDialog"));
+  dialog.setObjectName(north ? QStringLiteral("northHeightDialog") : QStringLiteral("neighborHeightDialog"));
   const auto selectedIds = selection_;
-  dialog.setWindowTitle(tr("隣地斜線"));
+  dialog.setWindowTitle(north ? tr("北側斜線") : tr("隣地斜線"));
   auto* layout = new QVBoxLayout(&dialog);
-  auto* instructions = new QLabel(tr("確認した隣地の境界辺を選び、地盤面・立上り・勾配を入力します。"));
+  const auto& savedNorth = document.settings().siteNorth;
+  const double angle = savedNorth ? savedNorth->angle : 0;
+  auto* instructions = new QLabel(north
+      ? tr("確認した隣地辺を選び、地盤面と立上りを入力します。真北はモデルの +Y から時計回り %1°。").arg(angle)
+      : tr("確認した隣地の境界辺を選び、地盤面・立上り・勾配を入力します。"));
   instructions->setWordWrap(true);
   layout->addWidget(instructions);
   auto* edgesLayout = new QHBoxLayout;
@@ -8376,6 +8381,17 @@ void MainWindow::showNeighborHeightDialog() {
       painter.setPen(color);
       painter.drawText(label, Qt::AlignCenter, QString::number(i + 1));
     }
+    if (north) {
+      const double a = angle * std::acos(-1.0) / 180.0;
+      const QPointF direction(std::sin(a), -std::cos(a));
+      const QPointF centre(23, 27), tip = centre + 13 * direction;
+      const QPointF across(-direction.y(), direction.x());
+      painter.setPen(QPen(ink, 1.4));
+      painter.drawLine(centre - 9 * direction, tip);
+      painter.drawLine(tip, tip - 5 * direction + 3 * across);
+      painter.drawLine(tip, tip - 5 * direction - 3 * across);
+      painter.drawText(QRectF(2, 42, 43, 17), Qt::AlignCenter, tr("真北"));
+    }
     painter.end();
     diagram->setPixmap(pixmap);
   };
@@ -8391,9 +8407,14 @@ void MainWindow::showNeighborHeightDialog() {
   auto* slope = new QLineEdit;
   slope->setObjectName(QStringLiteral("neighborHeightSlope"));
   form->addRow(tr("敷地の地盤面（モデルZ・mm）"), ground);
-  form->addRow(tr("地盤面からの立上り（m）"), base);
+  form->addRow(north ? tr("確認した立上り（5 m または10 m）") : tr("地盤面からの立上り（m）"), base);
+  if (north) {
+    slope->setText(QStringLiteral("1.25"));
+    slope->setReadOnly(true);
+  }
   form->addRow(tr("勾配（水平1に対して）"), slope);
-  auto* note = new QLabel(tr("紫の線は選んだ隣地辺です。表示は試算用の近似面で、適否は未評価です。"));
+  auto* note = new QLabel(north ? tr("法第56条の試算です。出口の辺や道路幅員が未確認の範囲は面を表示しません。")
+                               : tr("紫の線は選んだ隣地辺です。表示は試算用の近似面で、適否は未評価です。"));
   note->setWordWrap(true);
   layout->addWidget(note);
   auto* error = new QLabel;
@@ -8416,7 +8437,8 @@ void MainWindow::showNeighborHeightDialog() {
   buttons->button(QDialogButtonBox::Close)->setText(tr("閉じる"));
   auto* compare = buttons->addButton(tr("選択部材を照合"), QDialogButtonBox::ActionRole);
   compare->setObjectName(QStringLiteral("compareNeighborHeightParts"));
-  compare->setEnabled(!selectedIds.empty());
+  compare->setEnabled(!selectedIds.empty() && !north);
+  compare->setVisible(!north);
   if (selectedIds.empty()) compare->setToolTip(tr("モデルで部材を選んでから、この画面を開いてください。"));
   auto* show = buttons->addButton(tr("3Dで見る"), QDialogButtonBox::ActionRole);
   show->setObjectName(QStringLiteral("showNeighborHeight"));
@@ -8473,6 +8495,22 @@ void MainWindow::showNeighborHeightDialog() {
       table->show();
       return;
     }
+    if (north) {
+      const auto preview = doc::northHeightPreview(document, selectedEdges, groundZ, baseM * 1000);
+      if (!preview) {
+        error->setText(QString::fromStdString(preview.error()));
+        return;
+      }
+      viewport_->unlockView();
+      viewport_->showStorey(std::nullopt);
+      viewport_->setBoundaryHeightSurface(preview->surface, preview->referenceLines, true);
+      viewport_->setStandardView(Viewport::StandardView::Iso);
+      setStatus(preview->omittedAreaMm2 > 0
+          ? tr("北側斜線の試算を表示。未確認の範囲 %1 m² は表示していません。").arg(preview->omittedAreaMm2 / 1e6, 0, 'f', 2)
+          : tr("緑の面は北側斜線の試算、緑の線は真北方向の距離を測る先です。"));
+      dialog.accept();
+      return;
+    }
     const auto preview = doc::neighborHeightPreview(document, selectedEdges, groundZ, baseM * 1000, gradient);
     if (!preview) {
       error->setText(QString::fromStdString(preview.error()));
@@ -8482,7 +8520,7 @@ void MainWindow::showNeighborHeightDialog() {
     viewport_->showStorey(std::nullopt);
     if (const auto* row = table->item(table->currentRow(), 0))
       setSelection({row->data(Qt::UserRole).toString().toStdString()});
-    viewport_->setNeighborHeightSurface(preview->surface, preview->boundaryLines);
+    viewport_->setBoundaryHeightSurface(preview->surface, preview->boundaryLines);
     viewport_->setStandardView(Viewport::StandardView::Iso);
     setStatus(tr("紫の面は隣地斜線の試算、紫の線は採用した隣地辺です。"));
     dialog.accept();

@@ -2203,20 +2203,26 @@ NorthHeightSample northHeightSample(const SiteBoundaryGeometry& geometry, const 
   return NorthHeightSample{"calculation_review"};
 }
 
-}  // namespace
+struct NorthHeightField {
+  SiteBoundaryGeometry geometry;
+  TopoDS_Face footprint;
+  std::vector<NorthBoundaryKind> kinds;
+  gp_Vec north;
+  double width;
+  double baseZ;
+};
 
-Result<std::vector<NorthHeightSample>> northHeightAt(
+Result<NorthHeightField> northHeightField(
     const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedNeighbors,
-    const std::vector<gp_Pnt>& points, double groundZMm, double baseHeightMm) {
-  using R = Result<std::vector<NorthHeightSample>>;
-  if (points.empty()) return R::failure("照合する点を指定してください");
+    double groundZMm, double baseHeightMm) {
+  using R = Result<NorthHeightField>;
   const double baseZ = groundZMm + baseHeightMm;
   if (!std::isfinite(baseZ) || (baseHeightMm != 5000 && baseHeightMm != 10000))
     return R::failure("地盤面と、法第56条で確認した立上り5 mまたは10 mを入力してください");
   const auto& settings = document.settings();
   if (!settings.siteNorth) return R::failure("先に敷地の真北を登録してください");
   if (!settings.siteBoundary) return R::failure("先に敷地境界を登録してください");
-  const auto geometry = document.siteBoundaryGeometry(settings.siteBoundary->outline);
+  auto geometry = document.siteBoundaryGeometry(settings.siteBoundary->outline);
   if (!geometry) return R::failure(geometry.error());
   const auto road = document.siteRoadEdge(*geometry);
   if (settings.siteBoundary->road && !road) return R::failure("道路が接する敷地辺を登録し直してください");
@@ -2245,14 +2251,112 @@ Result<std::vector<NorthHeightSample>> northHeightAt(
   const double angle = std::remainder(settings.siteNorth->angle, 360.0) * std::acos(-1.0) / 180.0;
   const gp_Vec north(std::sin(angle), std::cos(angle), 0);
   const double width = road ? settings.siteBoundary->road->widthMm : 0;
-  const double outlineZ = vertices.front().Z();
+  return NorthHeightField{std::move(*geometry), *footprint, std::move(kinds), north, width, baseZ};
+}
+
+}  // namespace
+
+Result<std::vector<NorthHeightSample>> northHeightAt(
+    const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedNeighbors,
+    const std::vector<gp_Pnt>& points, double groundZMm, double baseHeightMm) {
+  using R = Result<std::vector<NorthHeightSample>>;
+  if (points.empty()) return R::failure("照合する点を指定してください");
+  const auto field = northHeightField(document, confirmedNeighbors, groundZMm, baseHeightMm);
+  if (!field) return R::failure(field.error());
+  const double outlineZ = field->geometry.vertices.front().Z();
   std::vector<NorthHeightSample> rows;
   rows.reserve(points.size());
   for (const auto& point : points) {
     if (!std::isfinite(point.X()) || !std::isfinite(point.Y())) return R::failure("点のXY座標を確認してください");
-    rows.push_back(northHeightSample(*geometry, *footprint, kinds, gp_Pnt(point.X(), point.Y(), outlineZ), north, width, baseZ));
+    rows.push_back(northHeightSample(field->geometry, field->footprint, field->kinds,
+                                    gp_Pnt(point.X(), point.Y(), outlineZ), field->north, field->width, field->baseZ));
   }
   return rows;
+}
+
+Result<NorthHeightPreview> northHeightPreview(
+    const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedNeighbors,
+    double groundZMm, double baseHeightMm) {
+  using R = Result<NorthHeightPreview>;
+  const auto field = northHeightField(document, confirmedNeighbors, groundZMm, baseHeightMm);
+  if (!field) return R::failure(field.error());
+  const auto& vertices = field->geometry.vertices;
+  const gp_Pnt origin = vertices.front();
+  const gp_Vec east(field->north.Y(), -field->north.X(), 0);
+  std::vector<gp_Pnt2d> plan;
+  std::vector<double> cuts;
+  for (const auto& vertex : vertices) {
+    const gp_Vec offset(origin, vertex);
+    plan.emplace_back(offset.Dot(east), offset.Dot(field->north));
+    cuts.push_back(plan.back().X());
+  }
+  std::sort(cuts.begin(), cuts.end());
+  const auto world = [&](double u, double v, double z) {
+    const auto p = origin.Translated(east * u + field->north * v);
+    return gp_Pnt(p.X(), p.Y(), z);
+  };
+  const auto northAt = [&](std::size_t i, double u) {
+    const auto& a = plan[i];
+    const auto& b = plan[(i + 1) % plan.size()];
+    return a.Y() + (b.Y() - a.Y()) * ((u - a.X()) / (b.X() - a.X()));
+  };
+
+  try {
+    BRep_Builder builder;
+    TopoDS_Compound surface, references;
+    builder.MakeCompound(surface);
+    builder.MakeCompound(references);
+    double omitted = 0;
+    std::size_t count = 0, regions = 0;
+    for (std::size_t column = 1; column < cuts.size(); ++column) {
+      const double left = cuts[column - 1], right = cuts[column];
+      if (right - left <= tolerance::kLinear) continue;
+      const double mid = (left + right) / 2;
+      std::vector<NorthRayHit> crossings;
+      for (std::size_t i = 0; i < plan.size(); ++i) {
+        const double a = plan[i].X(), b = plan[(i + 1) % plan.size()].X();
+        if (mid > std::min(a, b) && mid < std::max(a, b)) crossings.push_back({northAt(i, mid), i});
+      }
+      std::sort(crossings.begin(), crossings.end(), [](const auto& a, const auto& b) { return a.station < b.station; });
+      if (crossings.size() % 2 != 0) return R::failure("真北方向で敷地の表示範囲を分けられません");
+      for (std::size_t i = 1; i < crossings.size(); i += 2) {
+        if (++regions > 4096) return R::failure("敷地の分割が多く、北側斜線を表示できません");
+        const auto& south = crossings[i - 1];
+        const auto& exit = crossings[i];
+        const double v = (south.station + exit.station) / 2;
+        const double sl = northAt(south.edge, left), sr = northAt(south.edge, right);
+        const double nl = northAt(exit.edge, left), nr = northAt(exit.edge, right);
+        const auto sample = northHeightSample(field->geometry, field->footprint, field->kinds,
+                                              world(mid, v, origin.Z()), field->north, field->width, field->baseZ);
+        if (!sample.distanceMm) {
+          omitted += (right - left) * (exit.station - south.station);
+          continue;
+        }
+        ++count;
+        const double advance = *sample.distanceMm - (exit.station - v);
+        const double zNearExit = field->baseZ + 1.25 * advance;
+        // Over an open strip the exit edge and road offset are constant.
+        // Keep the two sides of a change in exit as separate faces.
+        BRepBuilderAPI_MakePolygon wire;
+        wire.Add(world(left, sl, zNearExit + 1.25 * (nl - sl)));
+        wire.Add(world(right, sr, zNearExit + 1.25 * (nr - sr)));
+        if (nr - sr > tolerance::kLinear) wire.Add(world(right, nr, zNearExit));
+        if (nl - sl > tolerance::kLinear) wire.Add(world(left, nl, zNearExit));
+        wire.Close();
+        if (!wire.IsDone()) return R::failure("北側斜線の表示範囲を作れません");
+        BRepBuilderAPI_MakeFace face(wire.Wire(), true);
+        if (!face.IsDone()) return R::failure("北側斜線の表示面を作れません");
+        builder.Add(surface, face.Face());
+        BRepBuilderAPI_MakeEdge line(world(left, nl + advance, origin.Z() + 1),
+                                     world(right, nr + advance, origin.Z() + 1));
+        if (line.IsDone()) builder.Add(references, line.Edge());
+      }
+    }
+    if (count == 0) return R::failure("表示できる範囲がありません。出口の隣地辺または道路幅員を確認してください");
+    return NorthHeightPreview{surface, references, omitted};
+  } catch (const Standard_Failure&) {
+    return R::failure("北側斜線の表示面を作れません");
+  }
 }
 
 std::vector<PermitCheck> permitElevationChecks(const Document& document) {

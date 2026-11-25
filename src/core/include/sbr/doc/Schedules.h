@@ -291,6 +291,14 @@ struct NorthHeightSample {
 Result<std::vector<NorthHeightSample>> northHeightAt(
     const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedNeighbors,
     const std::vector<gp_Pnt>& points, double groundZMm, double baseHeightMm);
+struct NorthHeightPreview {
+  TopoDS_Shape surface;
+  TopoDS_Shape referenceLines;
+  double omittedAreaMm2;
+};
+Result<NorthHeightPreview> northHeightPreview(
+    const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedNeighbors,
+    double groundZMm, double baseHeightMm);
 // Stage 10 (立面・断面, docs/201): the level GL, the model's highest point above it (not the legal
 // height), where sections are cut, the elevations' orientation, and what is not checked.
 std::vector<PermitCheck> permitElevationChecks(const Document& document);

@@ -2416,28 +2416,28 @@ void Viewport::clearPreview() { setPreview(TopoDS_Shape()); }
 
 void Viewport::setRoadHeightPlane(const TopoDS_Shape& shape) { setHeightStudy(shape, {}); }
 
-void Viewport::setNeighborHeightSurface(const TopoDS_Shape& shape, const TopoDS_Shape& boundaryLines) {
-  setHeightStudy(shape, boundaryLines);
+void Viewport::setBoundaryHeightSurface(const TopoDS_Shape& shape, const TopoDS_Shape& boundaryLines, bool north) {
+  setHeightStudy(shape, boundaryLines, north);
 }
 
-void Viewport::setHeightStudy(const TopoDS_Shape& shape, const TopoDS_Shape& boundaryLines) {
+void Viewport::setHeightStudy(const TopoDS_Shape& shape, const TopoDS_Shape& boundaryLines, bool north) {
   if (view_.IsNull()) return;
   if (!roadHeightPlane_.IsNull()) context_->Remove(roadHeightPlane_, Standard_False);
   if (!neighborHeightEdges_.IsNull()) context_->Remove(neighborHeightEdges_, Standard_False);
   roadHeightPlane_.Nullify();
   neighborHeightEdges_.Nullify();
-  const bool neighbor = !boundaryLines.IsNull();
+  const bool hasBoundaryLines = !boundaryLines.IsNull();
   if (!shape.IsNull()) {
     roadHeightPlane_ = new AIS_Shape(display::makeDisplayCopy(shape));
-    roadHeightPlane_->SetColor(neighbor ? rgb(0.51, 0.23, 0.78) : rgb(0.10, 0.53, 0.86));
+    roadHeightPlane_->SetColor(north ? rgb(0.02, 0.60, 0.49) : hasBoundaryLines ? rgb(0.51, 0.23, 0.78) : rgb(0.10, 0.53, 0.86));
     roadHeightPlane_->SetTransparency(0.65);
-    roadHeightPlane_->Attributes()->SetFaceBoundaryDraw(!neighbor);
+    roadHeightPlane_->Attributes()->SetFaceBoundaryDraw(north || !hasBoundaryLines);
     context_->Display(roadHeightPlane_, AIS_Shaded, -1, Standard_False);
     context_->Deactivate(roadHeightPlane_);
     roadHeightPlaneSequence_ = modeler_.document().sequence();
-    if (neighbor) {
+    if (hasBoundaryLines) {
       neighborHeightEdges_ = new AIS_Shape(display::makeDisplayCopy(boundaryLines));
-      neighborHeightEdges_->SetColor(rgb(0.47, 0.18, 0.73));
+      neighborHeightEdges_->SetColor(north ? rgb(0.01, 0.43, 0.35) : rgb(0.47, 0.18, 0.73));
       neighborHeightEdges_->SetWidth(4.0);
       neighborHeightEdges_->SetZLayer(Graphic3d_ZLayerId_Topmost);
       context_->Display(neighborHeightEdges_, AIS_WireFrame, -1, Standard_False);
@@ -3523,6 +3523,7 @@ void Viewport::fitAll() {
     box.Add(geom::exactBounds(entry.canonicalWorld));
   }
   if (!roadHeightPlane_.IsNull()) box.Add(geom::exactBounds(roadHeightPlane_->Shape()));
+  if (!neighborHeightEdges_.IsNull()) box.Add(geom::exactBounds(neighborHeightEdges_->Shape()));
   if (box.IsVoid()) {
     box.Add(gp_Pnt(-2000, -2000, 0));
     box.Add(gp_Pnt(8000, 8000, 3000));

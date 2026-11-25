@@ -369,6 +369,11 @@ void PermitWorkflowPanel::readModelChecks(int stage) {
                        translated("確認した隣地辺を選び、敷地内の制限面を3Dで見られます。"),
                        hasBoundary ? translated("隣地斜線を表示") : translated("敷地境界を登録"),
                        hasBoundary ? Action::NeighborHeight : Action::Boundary});
+      const bool hasNorth = document_.settings().siteNorth.has_value();
+      rows_.push_back({translated("北側斜線"), translated("参考"),
+                       translated("真北方向の出口ごとに、敷地内の制限面を3Dで見られます。"),
+                       !hasBoundary ? translated("敷地境界を登録") : !hasNorth ? translated("真北を登録") : translated("北側斜線を表示"),
+                       !hasBoundary ? Action::Boundary : !hasNorth ? Action::North : Action::NorthHeight});
       continue;
     }
     if (stage == 9 && c.item == "適用ルート・地域") {  // docs/215: opens its dialog

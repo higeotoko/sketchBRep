@@ -2738,6 +2738,38 @@ TEST_F(Schedules, NorthHeightCrossesTheRoadInTrueNorthDirection) {
   EXPECT_NEAR(corner["limit_z_mm"].get<double>(), 5000 + 12500 * std::sqrt(2.0), 0.001);
 }
 
+TEST_F(Schedules, NorthHeightPreviewKeepsTheRoadAndNeighborFacesSeparate) {
+  const auto site = ok("create_polygon", {{"points", {{0,0,0},{12000,0,0},{12000,3000,0},
+                                                     {3000,3000,0},{3000,9000,0},{12000,9000,0},
+                                                     {12000,12000,0},{0,12000,0}}}})["id"];
+  ok("set_site_boundary", {{"outline", site}, {"source", "架空の測量図"}});
+  ok("set_site_road", {{"start", {12000,12000,0}}, {"end", {0,12000,0}}, {"source", "架空の道路"}, {"width_m", 6}});
+  ASSERT_TRUE(modeler.setSiteNorth({0, "架空の測量図", "2026-11-25"}));
+  const std::vector<std::array<gp_Pnt, 2>> confirmed{{gp_Pnt(12000,3000,0), gp_Pnt(3000,3000,0)}};
+  const auto sequence = modeler.document().sequence();
+  const auto preview = sbr::doc::northHeightPreview(modeler.document(), confirmed, 0, 5000);
+  ASSERT_TRUE(preview);
+  EXPECT_NEAR(preview->omittedAreaMm2, 0, 0.01);
+  double area = 0;
+  int roadFaces = 0, neighborFaces = 0;
+  for (TopExp_Explorer faces(preview->surface, TopAbs_FACE); faces.More(); faces.Next()) {
+    const auto bounds = sbr::geom::exactBounds(faces.Current());
+    const auto lo = bounds.CornerMin(), hi = bounds.CornerMax();
+    area += (hi.X() - lo.X()) * (hi.Y() - lo.Y());
+    if (std::abs(lo.Z() - 12500) < 0.01) ++roadFaces;
+    if (std::abs(lo.Z() - 5000) < 0.01) ++neighborFaces;
+    if (lo.X() >= 3000 - 0.01) EXPECT_TRUE(hi.Y() <= 3000 + 0.01 || lo.Y() >= 9000 - 0.01);
+  }
+  EXPECT_EQ(roadFaces, 2);
+  EXPECT_EQ(neighborFaces, 1);
+  EXPECT_NEAR(area, 90000000, 0.01);
+  EXPECT_NEAR(sbr::geom::exactBounds(preview->referenceLines).CornerMax().Y(), 18000, 0.01);
+  const auto partial = sbr::doc::northHeightPreview(modeler.document(), {}, 0, 5000);
+  ASSERT_TRUE(partial);
+  EXPECT_NEAR(partial->omittedAreaMm2, 27000000, 0.01);
+  EXPECT_EQ(modeler.document().sequence(), sequence);
+}
+
 TEST_F(Schedules, NorthHeightStopsAtTheFirstExitFromAConcaveSite) {
   const auto site = ok("create_polygon", {{"points", {{0,0,0},{12000,0,0},{12000,3000,0},
                                                      {3000,3000,0},{3000,9000,0},{12000,9000,0},

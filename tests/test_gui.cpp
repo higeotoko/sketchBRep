@@ -2003,6 +2003,52 @@ void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
   QVERIFY(f.vp->roadHeightPlaneShape().IsNull());
   QVERIFY(f.vp->neighborHeightBoundaryShape().IsNull());
 
+  const auto eastRoad = call("set_site_road", {{"start", {11000,-3400,-1000}}, {"end", {11000,4100,-1000}},
+                                               {"source", "架空の道路"}, {"width_m", 3}});
+  QVERIFY2(eastRoad["ok"].get<bool>(), eastRoad.dump().c_str());
+  QVERIFY(modeler.setSiteNorth({90, "架空の測量図", "2026-11-25"}));
+  f.vp->syncNow();
+  phases->setCurrentRow(8);
+  phases->setCurrentRow(9);
+  auto* northRow = rowOf(QStringLiteral("北側斜線"));
+  QVERIFY(northRow);
+  checks->setCurrentItem(northRow);
+  QCOMPARE(edit->text(), QStringLiteral("北側斜線を表示"));
+  bool northAccepted = false;
+  QString northFailure;
+  QTimer::singleShot(0, [&] {
+    auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+    if (!dialog) return;
+    auto* edges = dialog->findChild<QListWidget*>(QStringLiteral("neighborHeightEdges"));
+    auto* ground = dialog->findChild<QLineEdit*>(QStringLiteral("neighborHeightGround"));
+    auto* base = dialog->findChild<QLineEdit*>(QStringLiteral("neighborHeightBase"));
+    auto* slope = dialog->findChild<QLineEdit*>(QStringLiteral("neighborHeightSlope"));
+    auto* show = dialog->findChild<QPushButton*>(QStringLiteral("showNeighborHeight"));
+    northFailure = QStringLiteral("dialog=%1, edges=%2").arg(dialog->objectName()).arg(edges ? edges->count() : -1);
+    if (dialog->objectName() == QStringLiteral("northHeightDialog") && edges && edges->count() == 6 &&
+        ground && base && slope && slope->isReadOnly() && slope->text() == QStringLiteral("1.25") && show) {
+      edges->item(3)->setCheckState(Qt::Checked);
+      ground->setText(QStringLiteral("-3000"));
+      base->setText(QStringLiteral("5"));
+      if (!reviewDir.isEmpty()) dialog->grab().save(QDir(reviewDir).filePath(QStringLiteral("north-height-edges.png")));
+      show->click();
+      northAccepted = dialog->result() == QDialog::Accepted;
+    }
+    if (!northAccepted) {
+      for (auto* label : dialog->findChildren<QLabel*>()) northFailure += QStringLiteral(" | ") + label->text();
+      dialog->reject();
+    }
+  });
+  edit->click();
+  QVERIFY2(northAccepted, qPrintable(northFailure));
+  QVERIFY(!f.vp->roadHeightPlaneShape().IsNull());
+  const auto northLine = f.vp->neighborHeightBoundaryShape();
+  QVERIFY(!northLine.IsNull());
+  QVERIFY(std::abs(geom::exactBounds(northLine).CornerMax().X() - 14000) < 0.01);
+  if (!reviewDir.isEmpty()) QVERIFY(f.vp->dumpImage(QDir(reviewDir).filePath(QStringLiteral("north-height-3d.png"))));
+  hidePlane->trigger();
+  QVERIFY(f.vp->neighborHeightBoundaryShape().IsNull());
+
   // docs/202: stages 11 (一式の突合せ) and 12 (申請用出力, on hold).
   phases->setCurrentRow(10);
   QVERIFY(rowOf(QStringLiteral("2 通り芯")));
