@@ -19,7 +19,7 @@
 | 項目 | 結果 |
 |---|---|
 | コード | `578d522` |
-| Linux CI | [実行ログ](https://github.com/higeotoko/sketchBRep/actions/runs/45628528729) |
+| Linux CI | [run 45628528729](https://github.com/higeotoko/sketchBRep/actions/runs/45628528729) で854件成功 |
 | Windows ZIP | `SketchBRep-windows-x64-578d522-local.zip`（84,125,294 bytes） |
 | SHA256 | `a5667470842d10561bab68c1ce2d89ac62c83667bbb20ddf9853f9b3800f3971` |
 | ZIPの検証 | [標準18条件](validation/2026-11-25-portable-578d522.json)・[べた基礎4条件](validation/2026-11-25-portable-578d522-mat.json)成功 |
