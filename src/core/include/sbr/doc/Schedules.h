@@ -496,6 +496,7 @@ struct AreaTable {
 // Enforcement Order art. 2 (1) ii-iv as read on e-Gov (version in force 2026-11-01) — docs/141 for
 // what is and is not looked at.
 AreaTable areaTable(const Document& document);
+Result<std::vector<draw::Sheet>> areaEvidenceSheets(const Document& document, double scale = 100.0);
 
 // What a room's tag says on screen and on drawings: its name and its area within the wall
 // lines (壁芯) as the walls are now; a room no longer enclosed says so. The unit is written

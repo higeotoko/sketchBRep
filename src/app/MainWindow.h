@@ -308,6 +308,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   void showElementTypesDialog();  // registered floor / roof types and their layers (docs/153)
   void showStairSettingsDialog();
   void showSchedulesDialog();
+  void showAreaEvidence();
  public:
   // IFC for other BIM software (docs/90 G-13); what was written goes to the status bar.
   void exportIfcFile(const QString& path);

@@ -1,6 +1,7 @@
 #include "sbr/doc/Schedules.h"
 #include "sbr/doc/FireSpread.h"
 #include "sbr/doc/FireCompartments.h"
+#include "AreaEvidence.h"
 
 #include <algorithm>
 #include <cmath>
@@ -4078,7 +4079,7 @@ std::vector<gp_Pnt> grownOutline(std::vector<gp_Pnt> p, std::vector<double> offs
 }
 }  // namespace
 
-AreaTable areaTable(const Document& document) {
+static AreaTable measureAreas(const Document& document, detail::AreaGeometry* evidence = nullptr) {
   AreaTable out;
   const RoomSchedule rooms = roomSchedule(document);
   std::vector<FloorLevel> levels = document.settings().levels;
@@ -4222,10 +4223,18 @@ AreaTable areaTable(const Document& document) {
       row.legalKnown = true;
       if (row.slabs == 0) {
         row.legalFloor = areaOf(enclosedSlice);
+        if (evidence) {
+          auto& item = evidence->floors[level.name];
+          item.counted = *enclosedSlice;
+          item.assumedFloor = true;
+        }
         noSlab.push_back(level.name);
       } else if (const auto floor = joined(floorParts)) {
         const auto both = geom::booleanCombine(geom::BooleanOp::Intersect, {*enclosedSlice, *floor});
-        if (both) row.legalFloor = geom::volume(both.value());
+        if (both) {
+          row.legalFloor = geom::volume(both.value());
+          if (evidence) evidence->floors[level.name].counted = *both;
+        }
         else row.legalKnown = false;
         if (both && areaOf(enclosedSlice) - row.legalFloor > 1e4) voids.push_back(level.name);  // more than 0.01 m2 without floor
       }
@@ -4236,6 +4245,7 @@ AreaTable areaTable(const Document& document) {
       if (row.slabs > 0) noWalls.push_back(level.name);
     }
     if (row.unreadableWalls > 0) row.legalKnown = false;
+    if (evidence && enclosedSlice) evidence->floors[level.name].enclosed = *enclosedSlice;
     out.rows.push_back(std::move(row));
   }
   AreaRow loose;  // rooms whose marker is at no level's height
@@ -4287,6 +4297,7 @@ AreaTable areaTable(const Document& document) {
       continue;
     }
     storey->legalFloor += counted;
+    if (evidence) evidence->floors[storey->level].balconyMm2 += counted;
     out.balconyFloorArea += counted;
     ++out.balconiesCounted;
   }
@@ -4444,6 +4455,10 @@ AreaTable areaTable(const Document& document) {
   if (const auto all = joined(plan)) {
     out.buildingArea = areaOf(all);
     out.buildingKnown = !eavesUnknown;
+    if (evidence) {
+      evidence->building = *all;
+      if (const auto storeys = joined(storeyPlans)) evidence->storeys = *storeys;
+    }
   }
   // What was taken as given, and what was not looked at.
   out.legalNotes.push_back("根拠：建築基準法施行令 第 2 条 第 1 項 第 2 号（建築面積）・第 3 号（床面積）・第 4 号（延べ面積）、e-Gov 法令検索で 2026-11-16 に読んだ版（令和 8 年 11 月 1 日施行）。");
@@ -4574,6 +4589,39 @@ AreaTable areaTable(const Document& document) {
   if (!everyKnown) out.legalNotes.push_back("床面積を出せない階がある（形を直接変えて壁として読めない壁がある）：その階と延べ面積は未評価。");
   (void)stairsArriving;
   return out;
+}
+
+AreaTable areaTable(const Document& document) { return measureAreas(document); }
+
+Result<std::vector<draw::Sheet>> areaEvidenceSheets(const Document& document, double scale) {
+  using R = Result<std::vector<draw::Sheet>>;
+  if (!(scale > 0) || !std::isfinite(scale)) return R::failure("縮尺を指定してください");
+  detail::AreaGeometry geometry;
+  const auto areas = measureAreas(document, &geometry);
+  std::vector<draw::Sheet> sheets;
+  draw::SheetSpec spec;
+  spec.scale = scale;
+  const auto project = projectOutline(document);
+  if (const auto name = project.find("project_name"); name != project.end()) spec.title.project = name->second;
+  const auto advance = [&](const std::string& title) {
+    spec.title.drawing = title;
+    const auto number = sheets.size() + 1;
+    spec.title.number = std::string(number < 10 ? "A-0" : "A-") + std::to_string(number);
+  };
+  for (const auto& page : detail::areaEvidencePages(document, areas, geometry, scale)) {
+    advance(page.view.spec.title);
+    auto laid = draw::layoutSheetWithTables(page.view, page.tables, spec);
+    if (!laid) return R::failure(laid.error());
+    sheets.push_back(std::move(*laid));
+    for (const auto& table : page.continuation) {
+      advance(table.title);
+      auto continued = draw::tableSheet(table, spec);
+      if (!continued) return R::failure(continued.error());
+      sheets.push_back(std::move(*continued));
+    }
+  }
+  if (sheets.empty()) return R::failure("求積図の範囲がありません。階レベルと壁の囲いを確認してください。");
+  return sheets;
 }
 
 std::string roomTagText(const RoomRow& room) {
@@ -5436,6 +5484,13 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
     Planned p{view.spec.title, std::nullopt, std::nullopt, {}, std::move(view), scale};
     planned.insert(planned.begin() + 1, std::move(p));
   }
+  detail::AreaGeometry areaGeometry;
+  const auto areas = measureAreas(document, &areaGeometry);
+  for (auto& page : detail::areaEvidencePages(document, areas, areaGeometry, spec.scale)) {
+    const auto name = page.view.spec.title;
+    planned.push_back({name, std::nullopt, std::nullopt, std::move(page.tables), std::move(page.view), spec.scale});
+    for (auto& table : page.continuation) planned.push_back({table.title, std::nullopt, std::move(table), {}});
+  }
   if (spec.heightEvidence) {
     const auto& evidence = *spec.heightEvidence;
     planned.push_back({evidence.section.spec.title, std::nullopt, std::nullopt, {},
@@ -5456,7 +5511,7 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
     if (p.made) {  // docs/233
       sheetSpec.scale = p.scale;
       sheetSpec.paper = "auto";
-      auto laid = draw::layoutSheetWithTables(*p.made, {}, sheetSpec);
+      auto laid = draw::layoutSheetWithTables(*p.made, p.beside, sheetSpec);
       if (!laid) {
         out.notes.push_back(p.name + ": " + laid.error());
         continue;
@@ -5516,7 +5571,7 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
     if (p && p->made) {  // docs/233
       sheetSpec.scale = p->scale;
       sheetSpec.paper = "auto";
-      laid = draw::layoutSheetWithTables(*p->made, {}, sheetSpec);
+      laid = draw::layoutSheetWithTables(*p->made, p->beside, sheetSpec);
     } else if (p && p->view) {
       draw::ViewSpec viewSpec = *p->view;
       viewSpec.hatchScale = viewSpec.insulation ? 0.0 : spec.scale;  // docs/173 (docs/216: not under the insulation marks)

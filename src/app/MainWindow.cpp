@@ -1209,6 +1209,8 @@ void MainWindow::buildMenus() {
     sync->setToolTip(tr("SketchBRep から書き出した .skp を SketchUp で直した後に選ぶと、動かした物は同じだけ動かし（壁は壁のまま）、"
                         "新しく描いた物は足します。形を変えた物と消した物は、どうするか聞きます"));
   }
+  file->addAction(tr("床面積・建築面積の求積図…"), this, &MainWindow::showAreaEvidence)
+      ->setObjectName(QStringLiteral("areaEvidenceAction"));
   file->addAction(tr("図面を書き出す（平面・断面・立面・伏図）..."), this, &MainWindow::showDrawingDialog)
       ->setObjectName(QStringLiteral("exportDrawingAction"));
   auto* site = file->addMenu(tr("敷地・配置図"));
@@ -5979,6 +5981,80 @@ bool MainWindow::saveScheduleDrawing(int table, const QString& path) {
   return true;
 }
 
+void MainWindow::showAreaEvidence() {
+  auto made = doc::areaEvidenceSheets(modeler_.document());
+  if (!made) {
+    reportError(QString::fromStdString(made.error()));
+    return;
+  }
+  QDialog dialog(this);
+  dialog.setObjectName(QStringLiteral("areaEvidenceDialog"));
+  dialog.setWindowTitle(tr("床面積・建築面積の求積図"));
+  auto* layout = new QVBoxLayout(&dialog);
+  auto* controls = new QHBoxLayout;
+  auto* sheets = new QComboBox;
+  sheets->setObjectName(QStringLiteral("areaEvidencePages"));
+  for (const auto& sheet : *made) sheets->addItem(QString::fromStdString(sheet.title));
+  controls->addWidget(sheets, 1);
+  auto* scale = new QComboBox;
+  for (int denominator : {50, 100, 200, 300, 500}) scale->addItem(QStringLiteral("1:%1").arg(denominator), denominator);
+  scale->setCurrentIndex(1);
+  controls->addWidget(scale);
+  layout->addLayout(controls);
+  auto* preview = new QLabel;
+  preview->setObjectName(QStringLiteral("areaEvidencePreview"));
+  preview->setAlignment(Qt::AlignCenter);
+  preview->setMinimumSize(810, 515);
+  layout->addWidget(preview, 1);
+  auto* status = new QLabel;
+  status->setTextFormat(Qt::PlainText);
+  status->setWordWrap(true);
+  layout->addWidget(status);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close);
+  auto* save = buttons->addButton(tr("求積図をPDFに保存…"), QDialogButtonBox::ActionRole);
+  layout->addWidget(buttons);
+  const auto display = [&](int index) {
+    if (index < 0 || static_cast<std::size_t>(index) >= made->size()) return;
+    const auto& sheet = (*made)[static_cast<std::size_t>(index)];
+    QImage image(810, 515, QImage::Format_RGB32);
+    image.fill(QColor(109, 115, 123));
+    QPainter painter(&image);
+    renderSheet(painter, sheet, QRectF(0, 0, image.width(), image.height()));
+    painter.end();
+    preview->setPixmap(QPixmap::fromImage(image));
+    status->setText(sheet.notes.empty() ? QString() : QString::fromStdString(sheet.notes.front()));
+  };
+  connect(sheets, &QComboBox::currentIndexChanged, &dialog, display);
+  connect(scale, &QComboBox::currentIndexChanged, &dialog, [&](int) {
+    auto changed = doc::areaEvidenceSheets(modeler_.document(), scale->currentData().toDouble());
+    if (!changed) {
+      status->setText(QString::fromStdString(changed.error()));
+      return;
+    }
+    const auto chosen = sheets->currentText();
+    made = std::move(changed);
+    const QSignalBlocker block(sheets);
+    sheets->clear();
+    for (const auto& sheet : *made) sheets->addItem(QString::fromStdString(sheet.title));
+    sheets->setCurrentIndex(std::max(0, sheets->findText(chosen)));
+    display(sheets->currentIndex());
+  });
+  connect(save, &QPushButton::clicked, &dialog, [&] {
+    QFileDialog destination(&dialog, tr("求積図をPDFに保存"), QString(), tr("PDF (*.pdf)"));
+    destination.setObjectName(QStringLiteral("areaEvidencePdfDestination"));
+    destination.setAcceptMode(QFileDialog::AcceptSave);
+    destination.setDefaultSuffix(QStringLiteral("pdf"));
+    destination.selectFile(tr("求積図.pdf"));
+    if (destination.exec() != QDialog::Accepted || destination.selectedFiles().isEmpty()) return;
+    const auto saved = writePdfPages(*made, destination.selectedFiles().front());
+    status->setText(saved ? tr("求積図と求積表を保存しました。") : QString::fromStdString(saved.message()));
+  });
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  display(0);
+  dialog.resize(870, 650);
+  dialog.exec();
+}
+
 void MainWindow::showSchedulesDialog() {
   const doc::Document& document = modeler_.document();
   const doc::OpeningSchedule openings = doc::openingSchedule(document);
@@ -6110,6 +6186,9 @@ void MainWindow::showSchedulesDialog() {
     if (unreadable > 0) text += tr("\n形を直接変えた壁が %1 枚あり、壁として読んでいません（面積に入っていない所があるかもしれません）。").arg(unreadable);
     box->addWidget(table, 1);
     box->addWidget(note("areaTableNote", text));
+    auto* evidence = new QPushButton(tr("求積図を見る…"));
+    connect(evidence, &QPushButton::clicked, this, &MainWindow::showAreaEvidence);
+    box->addWidget(evidence, 0, Qt::AlignLeft);
     tabs->addTab(page, tr("面積の表"));
   }
   {
@@ -7798,6 +7877,7 @@ void MainWindow::showPermitWorkflow() {
       case Action::Ground: showSiteGroundDialog(); break;
       case Action::Preview: trigger("showSitePlanAction"); break;
       case Action::Rooms: showRoomsDialog(); break;
+      case Action::AreaEvidence: showAreaEvidence(); break;
       case Action::Openings: showSchedulesDialog(); break;
       case Action::SelectRoom: setSelection({target.toStdString()}); break;
       case Action::ApplyDaylightFactors: {  // docs/205

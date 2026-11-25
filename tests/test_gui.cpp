@@ -255,6 +255,7 @@ class GuiPhase1 : public QObject {
   void combinedHeightShowsLowestSurface();
   void fireSpreadReviewShowsTheOpeningAndInvalidatesChangedBasis();
   void fireCompartmentReviewAssociatesTheDoorAndEquipment();
+  void areaEvidenceShowsFloorAndBuildingSheets();
   void permitWorkflowAppliesDaylightFactors();
   void permitWorkflowMarksStagesAndAsksAgain();
   void projectOutlineDialogGivesTheItems();
@@ -1636,6 +1637,44 @@ void GuiPhase1::permitWorkflowMarksStagesAndAsksAgain() {
 
 // docs/194: stages 2 (通り芯) and 3 (平面) list what the model has and what is missing; a row's
 // button selects the objects it is about, and the rows follow the model.
+void GuiPhase1::areaEvidenceShowsFloorAndBuildingSheets() {
+  Fixture f;
+  QVERIFY(f.setUp());
+  auto& modeler = f.window.modeler();
+  api::CommandApi api(modeler);
+  using Json = nlohmann::json;
+  const auto call = [&](const char* command, Json arguments) {
+    return Json::parse(api.execute(Json{{"command", command}, {"args", std::move(arguments)}}.dump()));
+  };
+  QVERIFY(modeler.setLevels({{"", "1FL", 0}, {"", "2FL", 3000}}));
+  const Json exterior = {{0,0},{8000,0},{8000,6000},{0,6000},{0,0}};
+  for (double base : {0.0, 3000.0}) {
+    QVERIFY(call("create_wall", {{"points", exterior}, {"base", base},
+        {"height", 2900}, {"thickness", 160}})["ok"].get<bool>());
+  }
+  QVERIFY(call("create_slab", {{"outline", {{0,0},{6000,0},{6000,6000},{0,6000}}},
+                                {"top", 3000}, {"thickness", 180}})["ok"].get<bool>());
+  auto* action = f.window.findChild<QAction*>(QStringLiteral("areaEvidenceAction"));
+  QVERIFY(action);
+  bool shown = false;
+  const auto directory = qEnvironmentVariable("SBR_AREA_REVIEW_DIR");
+  QTimer::singleShot(0, [&] {
+    auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+    if (!dialog) return;
+    auto* pages = dialog->findChild<QComboBox*>(QStringLiteral("areaEvidencePages"));
+    auto* preview = dialog->findChild<QLabel*>(QStringLiteral("areaEvidencePreview"));
+    if (pages && preview && pages->count() == 3 && pages->itemText(1) == QStringLiteral("2FL 床面積求積図")
+        && pages->itemText(2) == QStringLiteral("建築面積求積図")) {
+      pages->setCurrentIndex(1);
+      shown = !preview->pixmap().isNull();
+      if (shown && !directory.isEmpty()) dialog->grab().save(QDir(directory).filePath(QStringLiteral("area-evidence-preview.png")));
+    }
+    dialog->reject();
+  });
+  action->trigger();
+  QVERIFY(shown);
+}
+
 void GuiPhase1::fireCompartmentReviewAssociatesTheDoorAndEquipment() {
   Fixture f;
   QVERIFY(f.setUp());

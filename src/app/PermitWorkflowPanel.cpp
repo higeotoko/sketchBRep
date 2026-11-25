@@ -422,8 +422,8 @@ void PermitWorkflowPanel::readModelChecks(int stage) {
                      Action::FireCompartment});
   if (stage == 3)
     rows_.push_back({translated("面積の根拠"), translated("確認材料あり"),
-                     translated("壁芯・内法の面積と法の床面積は、表の窓の「面積の表」で式と注を確かめます。"),
-                     translated("室の一覧を開く"), Action::Rooms});
+                     translated("床面積・建築面積の算入範囲と寸法・算式を求積図で確認します。"),
+                     translated("求積図を開く"), Action::AreaEvidence});
 }
 
 void PermitWorkflowPanel::refresh() {

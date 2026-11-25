@@ -1069,6 +1069,23 @@ TEST(LegalAreas, FloorAndBuildingAreasByTheOrder) {
   const std::string roof = ok("create_roof", {{"outline", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}}}, {"kind", "hip"}, {"height", 6000}, {"eave", 1200}})["id"];
   table = sbr::doc::areaTable(modeler.document());
   EXPECT_NEAR(table.buildingArea / 1e6, 8.4 * 6.4, 1e-6);
+  const auto evidence = sbr::doc::areaEvidenceSheets(modeler.document());
+  ASSERT_TRUE(evidence) << evidence.error();
+  ASSERT_EQ(evidence->size(), 3u);
+  const auto hasText = [](const auto& sheet, const std::string& part) {
+    return std::any_of(sheet.items.begin(), sheet.items.end(), [&](const auto& item) {
+      return item.kind == sbr::draw::Item::Kind::Text && item.text.find(part) != std::string::npos;
+    });
+  };
+  EXPECT_EQ((*evidence)[0].title, "1FL 床面積求積図");
+  EXPECT_EQ((*evidence)[1].title, "2FL 床面積求積図");
+  EXPECT_EQ((*evidence)[2].title, "建築面積求積図");
+  EXPECT_TRUE(hasText((*evidence)[0], "8000 × 6000"));
+  EXPECT_TRUE(hasText((*evidence)[1], "38.800"));
+  EXPECT_TRUE(hasText((*evidence)[1], "床なし・除外"));
+  EXPECT_TRUE(hasText((*evidence)[1], "X1"));
+  EXPECT_TRUE(hasText((*evidence)[2], "53.760"));
+  EXPECT_TRUE(hasText((*evidence)[2], "軒等の追加範囲"));
   // Gable over the rectangle (ridge along x): only the eaves (south, north) count; the gables (300) do not.
   ok("change_roof", {{"id", roof}, {"kind", "gable"}, {"gable_eave", 1100}});
   table = sbr::doc::areaTable(modeler.document());
