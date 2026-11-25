@@ -374,6 +374,10 @@ void PermitWorkflowPanel::readModelChecks(int stage) {
                        translated("真北方向の出口ごとに、敷地内の制限面を3Dで見られます。"),
                        !hasBoundary ? translated("敷地境界を登録") : !hasNorth ? translated("真北を登録") : translated("北側斜線を表示"),
                        !hasBoundary ? Action::Boundary : !hasNorth ? Action::North : Action::NorthHeight});
+      rows_.push_back({translated("高さ制限の合成"), translated("試算"),
+                       translated("道路・隣地・北側斜線と高度地区を重ね、敷地の各位置で最も低い制限面を3Dで表示します。"),
+                       hasBoundary ? translated("合成する条件を選ぶ") : translated("敷地境界を登録"),
+                       hasBoundary ? Action::CombinedHeight : Action::Boundary});
       continue;
     }
     if (stage == 10 && c.item == "横浜市の最高限高度地区") {

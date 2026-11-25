@@ -55,6 +55,7 @@
 #include <QFileDialog>
 #include <QDialog>
 #include <QCheckBox>
+#include <QGroupBox>
 #include <QElapsedTimer>
 #include <QDialogButtonBox>
 #include <QFileInfo>
@@ -1577,7 +1578,7 @@ void MainWindow::buildMenus() {
   fixedViews->addAction(tr("3D に戻る"), QKeySequence(QStringLiteral("Alt+0")), this, [this] { viewport_->unlockView(); })
       ->setObjectName(QStringLiteral("unlockViewAction"));
   view->addAction(tr("全体表示"), QKeySequence(tr("Shift+Z")), this, [this] { viewport_->fitAll(); });
-  auto* hideRoadPlane = view->addAction(tr("斜線の試算面を消す"), this, [this] { viewport_->setRoadHeightPlane({}); });
+  auto* hideRoadPlane = view->addAction(tr("高さ制限の試算表示を消す"), this, [this] { viewport_->setRoadHeightPlane({}); });
   hideRoadPlane->setObjectName(QStringLiteral("hideRoadHeightPlaneAction"));
   hideRoadPlane->setEnabled(false);
   connect(viewport_, &Viewport::roadHeightPlaneChanged, hideRoadPlane, &QAction::setEnabled);
@@ -7750,6 +7751,7 @@ void MainWindow::showPermitWorkflow() {
       case Action::NeighborHeight: showBoundaryHeightDialog(BoundaryHeightStudy::Neighbor); break;
       case Action::NorthHeight: showBoundaryHeightDialog(BoundaryHeightStudy::North); break;
       case Action::HeightDistrict: showBoundaryHeightDialog(BoundaryHeightStudy::District); break;
+      case Action::CombinedHeight: showCombinedHeightDialog(); break;
       case Action::Equipment: trigger("equipmentAction"); break;      // docs/226
       case Action::SavedRoad:
         setSelection({});
@@ -8328,6 +8330,139 @@ void MainWindow::showHeightDistrictLegend() {
   });
 }
 
+namespace {
+
+struct HeightBoundaryPicker {
+  QLabel* diagram;
+  QListWidget* list;
+};
+
+HeightBoundaryPicker addHeightBoundaryPicker(QVBoxLayout* layout, const doc::SiteBoundaryGeometry& geometry,
+                                             const std::optional<std::array<gp_Pnt, 2>>& road,
+                                             bool north, double angle) {
+  auto* edgesLayout = new QHBoxLayout;
+  layout->addLayout(edgesLayout);
+  class BoundaryDiagram : public QLabel {
+   public:
+    std::function<void(const QPointF&)> pickBoundary;
+
+   protected:
+    void mouseReleaseEvent(QMouseEvent* event) override {
+      if (event->button() == Qt::LeftButton && pickBoundary) {
+        pickBoundary(event->position());
+        event->accept();
+        return;
+      }
+      QLabel::mouseReleaseEvent(event);
+    }
+  };
+  auto* diagram = new BoundaryDiagram;
+  diagram->setObjectName(QStringLiteral("heightBoundaryDiagram"));
+  diagram->setFixedSize(280, 205);
+  edgesLayout->addWidget(diagram);
+  auto* edges = new QListWidget;
+  edges->setObjectName(QStringLiteral("neighborHeightEdges"));
+  edges->setMinimumHeight(diagram->height());
+  edgesLayout->addWidget(edges, 1);
+  const auto& vertices = geometry.vertices;
+  const auto endpoints = [&](std::size_t i) {
+    return std::array<gp_Pnt, 2>{vertices[i], vertices[(i + 1) % vertices.size()]};
+  };
+  Bnd_Box limits;
+  for (const auto& vertex : vertices) limits.Add(vertex);
+  const auto lo = limits.CornerMin(), hi = limits.CornerMax();
+  const double scale = std::min((diagram->width() - 58) / (hi.X() - lo.X()), (diagram->height() - 54) / (hi.Y() - lo.Y()));
+  QPolygonF outline;
+  for (std::size_t i = 0; i < vertices.size(); ++i) {
+    const auto& p = vertices[i];
+    outline << QPointF(diagram->width() / 2.0 + ((p.X() - lo.X()) - (hi.X() - lo.X()) / 2) * scale,
+                       diagram->height() / 2.0 - ((p.Y() - lo.Y()) - (hi.Y() - lo.Y()) / 2) * scale);
+    const auto edge = endpoints(i);
+    const bool isRoad = road && edge[0].Distance((*road)[0]) <= sbr::tolerance::kLinear &&
+                                edge[1].Distance((*road)[1]) <= sbr::tolerance::kLinear;
+    const double length = std::hypot(edge[1].X() - edge[0].X(), edge[1].Y() - edge[0].Y());
+    auto* item = new QListWidgetItem(isRoad ? MainWindow::tr("辺 %1　道路").arg(i + 1)
+                                            : MainWindow::tr("辺 %1　%2 m").arg(i + 1).arg(length / 1000, 0, 'g', 5), edges);
+    if (isRoad) item->setFlags(item->flags() & ~Qt::ItemIsEnabled);
+    else item->setCheckState(Qt::Unchecked);
+  }
+  diagram->pickBoundary = [outline, edges](const QPointF& point) {
+    int closest = -1;
+    double distanceSquared = 12 * 12;
+    for (int i = 0; i < edges->count(); ++i) {
+      const QPointF a = outline[i], direction = outline[(i + 1) % edges->count()] - a;
+      const double lengthSquared = QPointF::dotProduct(direction, direction);
+      if (lengthSquared <= 0) continue;
+      const double t = std::clamp(QPointF::dotProduct(point - a, direction) / lengthSquared, 0.0, 1.0);
+      const auto delta = point - (a + t * direction);
+      const double distance = QPointF::dotProduct(delta, delta);
+      if (distance >= distanceSquared) continue;
+      closest = i;
+      distanceSquared = distance;
+    }
+    if (closest < 0) return;
+    auto* item = edges->item(closest);
+    if (!(item->flags() & Qt::ItemIsEnabled)) return;
+    edges->setCurrentItem(item);
+    item->setCheckState(item->checkState() == Qt::Checked ? Qt::Unchecked : Qt::Checked);
+  };
+  const auto redrawDiagram = [diagram, edges, outline, north, angle] {
+    const auto palette = diagram->palette();
+    const auto base = palette.color(QPalette::Base);
+    const auto ink = palette.color(QPalette::Text);
+    const auto purple = base.lightness() < 128 ? QColor(190, 139, 245) : QColor(112, 46, 174);
+    const auto blue = base.lightness() < 128 ? QColor(95, 172, 242) : QColor(27, 95, 171);
+    QPixmap pixmap(diagram->size());
+    pixmap.fill(base);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(QPen(ink, 1));
+    painter.setBrush(palette.color(QPalette::AlternateBase));
+    painter.drawPolygon(outline);
+    for (int i = 0; i < edges->count(); ++i) {
+      const auto a = outline[i], b = outline[(i + 1) % edges->count()];
+      const bool isRoad = !(edges->item(i)->flags() & Qt::ItemIsEnabled);
+      const bool chosen = edges->item(i)->checkState() == Qt::Checked;
+      const auto color = isRoad ? blue : chosen ? purple : ink;
+      painter.setPen(QPen(color, isRoad || chosen ? 3 : 1));
+      painter.drawLine(a, b);
+      const auto centre = (a + b) / 2;
+      const QRectF label(centre.x() - 10, centre.y() - 9, 20, 18);
+      painter.fillRect(label, base);
+      painter.setPen(color);
+      painter.drawText(label, Qt::AlignCenter, QString::number(i + 1));
+    }
+    if (north) {
+      const double a = angle * std::acos(-1.0) / 180.0;
+      const QPointF direction(std::sin(a), -std::cos(a));
+      const QPointF centre(23, 27), tip = centre + 13 * direction;
+      const QPointF across(-direction.y(), direction.x());
+      painter.setPen(QPen(ink, 1.4));
+      painter.drawLine(centre - 9 * direction, tip);
+      painter.drawLine(tip, tip - 5 * direction + 3 * across);
+      painter.drawLine(tip, tip - 5 * direction - 3 * across);
+      painter.drawText(QRectF(2, 42, 43, 17), Qt::AlignCenter, MainWindow::tr("真北"));
+    }
+    painter.end();
+    diagram->setPixmap(pixmap);
+  };
+  QObject::connect(edges, &QListWidget::itemChanged, diagram, redrawDiagram);
+  redrawDiagram();
+  return {diagram, edges};
+}
+
+std::vector<std::array<gp_Pnt, 2>> checkedHeightBoundaries(const doc::SiteBoundaryGeometry& geometry,
+                                                        const QListWidget* list) {
+  const auto& vertices = geometry.vertices;
+  std::vector<std::array<gp_Pnt, 2>> result;
+  for (int i = 0; i < list->count(); ++i)
+    if (list->item(i)->checkState() == Qt::Checked)
+      result.push_back({vertices[i], vertices[(i + 1) % vertices.size()]});
+  return result;
+}
+
+}  // namespace
+
 void MainWindow::showBoundaryHeightDialog(BoundaryHeightStudy study) {
   const auto& document = modeler_.document();
   const bool district = study == BoundaryHeightStudy::District;
@@ -8368,115 +8503,9 @@ void MainWindow::showBoundaryHeightDialog(BoundaryHeightStudy study) {
   }
   instructions->setWordWrap(true);
   layout->addWidget(instructions);
-  auto* edgesLayout = new QHBoxLayout;
-  layout->addLayout(edgesLayout);
-  class BoundaryDiagram : public QLabel {
-   public:
-    std::function<void(const QPointF&)> pickBoundary;
-
-   protected:
-    void mouseReleaseEvent(QMouseEvent* event) override {
-      if (event->button() == Qt::LeftButton && pickBoundary) {
-        pickBoundary(event->position());
-        event->accept();
-        return;
-      }
-      QLabel::mouseReleaseEvent(event);
-    }
-  };
-  auto* diagram = new BoundaryDiagram;
-  diagram->setObjectName(QStringLiteral("heightBoundaryDiagram"));
-  diagram->setFixedSize(280, 205);
-  edgesLayout->addWidget(diagram);
-  auto* edges = new QListWidget;
-  edges->setObjectName(QStringLiteral("neighborHeightEdges"));
-  edges->setMinimumHeight(diagram->height());
-  edgesLayout->addWidget(edges, 1);
-  const auto& vertices = geometry->vertices;
-  const auto endpoints = [&](std::size_t i) {
-    return std::array<gp_Pnt, 2>{vertices[i], vertices[(i + 1) % vertices.size()]};
-  };
-  Bnd_Box limits;
-  for (const auto& vertex : vertices) limits.Add(vertex);
-  const auto lo = limits.CornerMin(), hi = limits.CornerMax();
-  const double scale = std::min((diagram->width() - 58) / (hi.X() - lo.X()), (diagram->height() - 54) / (hi.Y() - lo.Y()));
-  QPolygonF outline;
-  for (std::size_t i = 0; i < vertices.size(); ++i) {
-    const auto& p = vertices[i];
-    outline << QPointF(diagram->width() / 2.0 + ((p.X() - lo.X()) - (hi.X() - lo.X()) / 2) * scale,
-                       diagram->height() / 2.0 - ((p.Y() - lo.Y()) - (hi.Y() - lo.Y()) / 2) * scale);
-    const auto edge = endpoints(i);
-    const bool isRoad = road && edge[0].Distance((*road)[0]) <= sbr::tolerance::kLinear &&
-                                edge[1].Distance((*road)[1]) <= sbr::tolerance::kLinear;
-    const double length = std::hypot(edge[1].X() - edge[0].X(), edge[1].Y() - edge[0].Y());
-    auto* item = new QListWidgetItem(isRoad ? tr("辺 %1　道路").arg(i + 1)
-                                            : tr("辺 %1　%2 m").arg(i + 1).arg(length / 1000, 0, 'g', 5), edges);
-    if (isRoad) item->setFlags(item->flags() & ~Qt::ItemIsEnabled);
-    else item->setCheckState(Qt::Unchecked);
-  }
-  diagram->pickBoundary = [&](const QPointF& point) {
-    int closest = -1;
-    double distanceSquared = 12 * 12;
-    for (int i = 0; i < edges->count(); ++i) {
-      const QPointF a = outline[i], direction = outline[(i + 1) % edges->count()] - a;
-      const double lengthSquared = QPointF::dotProduct(direction, direction);
-      if (lengthSquared <= 0) continue;
-      const double t = std::clamp(QPointF::dotProduct(point - a, direction) / lengthSquared, 0.0, 1.0);
-      const auto delta = point - (a + t * direction);
-      const double distance = QPointF::dotProduct(delta, delta);
-      if (distance >= distanceSquared) continue;
-      closest = i;
-      distanceSquared = distance;
-    }
-    if (closest < 0) return;
-    auto* item = edges->item(closest);
-    if (!(item->flags() & Qt::ItemIsEnabled)) return;
-    edges->setCurrentItem(item);
-    item->setCheckState(item->checkState() == Qt::Checked ? Qt::Unchecked : Qt::Checked);
-  };
-  const auto redrawDiagram = [&] {
-    const auto palette = diagram->palette();
-    const auto base = palette.color(QPalette::Base);
-    const auto ink = palette.color(QPalette::Text);
-    const auto purple = base.lightness() < 128 ? QColor(190, 139, 245) : QColor(112, 46, 174);
-    const auto blue = base.lightness() < 128 ? QColor(95, 172, 242) : QColor(27, 95, 171);
-    QPixmap pixmap(diagram->size());
-    pixmap.fill(base);
-    QPainter painter(&pixmap);
-    painter.setRenderHint(QPainter::Antialiasing);
-    painter.setPen(QPen(ink, 1));
-    painter.setBrush(palette.color(QPalette::AlternateBase));
-    painter.drawPolygon(outline);
-    for (int i = 0; i < edges->count(); ++i) {
-      const auto a = outline[i], b = outline[(i + 1) % edges->count()];
-      const bool isRoad = !(edges->item(i)->flags() & Qt::ItemIsEnabled);
-      const bool chosen = edges->item(i)->checkState() == Qt::Checked;
-      const auto color = isRoad ? blue : chosen ? purple : ink;
-      painter.setPen(QPen(color, isRoad || chosen ? 3 : 1));
-      painter.drawLine(a, b);
-      const auto centre = (a + b) / 2;
-      const QRectF label(centre.x() - 10, centre.y() - 9, 20, 18);
-      painter.fillRect(label, base);
-      painter.setPen(color);
-      painter.drawText(label, Qt::AlignCenter, QString::number(i + 1));
-    }
-    if (north) {
-      const double a = angle * std::acos(-1.0) / 180.0;
-      const QPointF direction(std::sin(a), -std::cos(a));
-      const QPointF centre(23, 27), tip = centre + 13 * direction;
-      const QPointF across(-direction.y(), direction.x());
-      painter.setPen(QPen(ink, 1.4));
-      painter.drawLine(centre - 9 * direction, tip);
-      painter.drawLine(tip, tip - 5 * direction + 3 * across);
-      painter.drawLine(tip, tip - 5 * direction - 3 * across);
-      painter.drawText(QRectF(2, 42, 43, 17), Qt::AlignCenter, tr("真北"));
-    }
-    painter.end();
-    diagram->setPixmap(pixmap);
-  };
-  connect(edges, &QListWidget::itemChanged, &dialog, redrawDiagram);
-  redrawDiagram();
-  diagram->setVisible(hasSlant);
+  const auto picker = addHeightBoundaryPicker(layout, *geometry, road, north, angle);
+  auto* edges = picker.list;
+  picker.diagram->setVisible(hasSlant);
   edges->setVisible(hasSlant);
 
   auto* form = new QFormLayout;
@@ -8571,9 +8600,7 @@ void MainWindow::showBoundaryHeightDialog(BoundaryHeightStudy study) {
                               : tr("地盤面・立上り・勾配を数値で入力してください。"));
       return;
     }
-    std::vector<std::array<gp_Pnt, 2>> selectedEdges;
-    for (int i = 0; i < edges->count(); ++i)
-      if (edges->item(i)->checkState() == Qt::Checked) selectedEdges.push_back(endpoints(static_cast<std::size_t>(i)));
+    const auto selectedEdges = checkedHeightBoundaries(*geometry, edges);
     if (!preview3d) {
       const auto signedMm = [](double value) {
         return (value > 0 ? QStringLiteral("+") : QString()) + QString::number(value, 'f', 2);
@@ -8687,6 +8714,205 @@ void MainWindow::showBoundaryHeightDialog(BoundaryHeightStudy study) {
   connect(compare, &QPushButton::clicked, &dialog, [&] { runStudy(false); });
   connect(show, &QPushButton::clicked, &dialog, [&] { runStudy(true); });
   dialog.resize(610, district && !hasSlant ? 205 : 425);
+  dialog.exec();
+}
+
+void MainWindow::showCombinedHeightLegend() {
+  if (findChild<QToolBar*>(QStringLiteral("combinedHeightLegend"))) return;
+  auto* bar = new QToolBar(tr("高さ制限の合成"), this);
+  bar->setObjectName(QStringLiteral("combinedHeightLegend"));
+  bar->setMovable(false);
+  bar->setFloatable(false);
+  const std::array<QString, 5> names{tr("道路斜線"), tr("隣地斜線"), tr("北側斜線"), tr("高度地区"), tr("未確認")};
+  std::array<QAction*, 5> keys{};
+  for (std::size_t i = 0; i < names.size(); ++i) {
+    auto* label = new QLabel(QStringLiteral(" <span style='color:%1'>■</span> %2  ")
+                              .arg(Viewport::combinedHeightColor(i).name(), names[i]), bar);
+    keys[i] = bar->addWidget(label);
+  }
+  bar->addSeparator();
+  bar->addAction(tr("表示を消す"), this, [this] { viewport_->setRoadHeightPlane({}); });
+  addToolBar(Qt::BottomToolBarArea, bar);
+  bar->hide();
+  connect(viewport_, &Viewport::roadHeightPlaneChanged, bar, [this, bar, keys] {
+    for (std::size_t i = 0; i < keys.size(); ++i) keys[i]->setVisible(viewport_->combinedHeightLayerVisible(i));
+    bar->setVisible(viewport_->combinedHeightVisible());
+  });
+}
+
+void MainWindow::showCombinedHeightDialog() {
+  const auto& document = modeler_.document();
+  const auto& site = document.settings().siteBoundary;
+  if (!site) return;
+  const auto geometry = document.siteBoundaryGeometry(site->outline);
+  if (!geometry) {
+    reportError(QString::fromStdString(geometry.error()));
+    return;
+  }
+  const auto road = document.siteRoadEdge(*geometry);
+  const auto districtCode = doc::siteHeightConditions(document).district;
+  const auto districtRule = doc::yokohamaHeightDistrictRule(districtCode);
+  const auto& trueNorth = document.settings().siteNorth;
+  const auto sequence = document.sequence();
+
+  QDialog dialog(this);
+  dialog.setObjectName(QStringLiteral("combinedHeightDialog"));
+  dialog.setWindowTitle(tr("高さ制限の合成"));
+  auto* layout = new QVBoxLayout(&dialog);
+  auto* intro = new QLabel(tr("確認した制限にチェックを入れます。敷地の各位置で、最も低い制限面を表示します。"));
+  intro->setWordWrap(true);
+  layout->addWidget(intro);
+  auto* datum = new QFormLayout;
+  layout->addLayout(datum);
+  auto* ground = new QLineEdit;
+  ground->setObjectName(QStringLiteral("combinedHeightGround"));
+  for (const auto& level : document.settings().levels)
+    if (level.name == "GL") ground->setText(QString::number(level.elevation, 'g', 15));
+  datum->addRow(tr("地盤面（モデルZ・mm）"), ground);
+
+  auto* rules = new QGridLayout;
+  layout->addLayout(rules);
+  const auto group = [&](const QString& title, const QString& name, int row, int column) {
+    auto* box = new QGroupBox(title);
+    box->setObjectName(name);
+    box->setCheckable(true);
+    box->setChecked(false);
+    rules->addWidget(box, row, column);
+    return box;
+  };
+  const auto field = [](QFormLayout* form, const QString& caption, const QString& name) {
+    auto* input = new QLineEdit;
+    input->setObjectName(name);
+    form->addRow(caption, input);
+    return input;
+  };
+  auto* roadBox = group(tr("道路斜線"), QStringLiteral("combinedRoadRule"), 0, 0);
+  auto* roadForm = new QFormLayout(roadBox);
+  auto* roadZ = field(roadForm, tr("道路境界の高さZ（mm・後退前）"), QStringLiteral("combinedRoadZ"));
+  auto* roadSlope = field(roadForm, tr("勾配"), QStringLiteral("combinedRoadSlope"));
+  auto* roadWidth = field(roadForm, tr("幅員（m）"), QStringLiteral("combinedRoadWidth"));
+  auto* roadDistance = field(roadForm, tr("適用距離（m）"), QStringLiteral("combinedRoadDistance"));
+  auto* roadSetback = field(roadForm, tr("建物後退（m）"), QStringLiteral("combinedRoadSetback"));
+  roadSetback->setText(QStringLiteral("0"));
+  if (road && site->road->widthMm > 0) roadWidth->setText(QString::number(site->road->widthMm / 1000, 'g', 12));
+  if (!road) roadBox->setToolTip(tr("工程1で道路辺を登録してください。"));
+
+  auto* neighborBox = group(tr("隣地斜線"), QStringLiteral("combinedNeighborRule"), 0, 1);
+  auto* neighborForm = new QFormLayout(neighborBox);
+  auto* neighborRise = field(neighborForm, tr("立上り（m）"), QStringLiteral("combinedNeighborRise"));
+  auto* neighborSlope = field(neighborForm, tr("勾配"), QStringLiteral("combinedNeighborSlope"));
+  auto* neighborHint = new QLabel(tr("隣地として確認した辺を敷地図で選びます。"));
+  neighborHint->setWordWrap(true);
+  neighborForm->addRow(neighborHint);
+
+  auto* northBox = group(tr("北側斜線（法56条）"), QStringLiteral("combinedNorthRule"), 1, 0);
+  auto* northForm = new QFormLayout(northBox);
+  auto* northRise = new QComboBox;
+  northRise->setObjectName(QStringLiteral("combinedNorthRise"));
+  northRise->addItem(tr("立上りを選ぶ"));
+  northRise->addItem(tr("5 m"), 5000);
+  northRise->addItem(tr("10 m"), 10000);
+  northForm->addRow(tr("採用する立上り"), northRise);
+  northForm->addRow(new QLabel(trueNorth ? tr("登録真北 %1°").arg(trueNorth->angle) : tr("工程1で真北を登録してください。")));
+
+  auto* districtBox = group(tr("横浜市の高度地区"), QStringLiteral("combinedDistrictRule"), 1, 1);
+  auto* districtForm = new QFormLayout(districtBox);
+  auto* districtLabel = new QLabel(districtRule
+      ? tr("第%1種　最高高さ %2 m").arg(QString::fromStdString(districtCode.substr(districtCode.size() - 1)))
+                                   .arg(districtRule->heightCapMm / 1000)
+      : tr("「高さ制限の条件」で地区を登録してください。"));
+  districtLabel->setWordWrap(true);
+  districtForm->addRow(districtLabel);
+  auto* districtRoad = new QCheckBox(tr("登録道路は単独で両側が平行と確認済み"));
+  districtRoad->setToolTip(tr("高度地区の斜線に、真北方向へ測った道路幅の半分を用います。"));
+  if (districtRule && districtRule->northRiseMm && road && site->road->widthMm > 0) districtForm->addRow(districtRoad);
+  else { districtRoad->setParent(&dialog); districtRoad->hide(); }
+
+  auto* boundaries = new QWidget;
+  auto* boundaryLayout = new QVBoxLayout(boundaries);
+  boundaryLayout->setContentsMargins(0, 0, 0, 0);
+  boundaryLayout->addWidget(new QLabel(tr("確認済みの隣地辺をクリック")));
+  const auto picker = addHeightBoundaryPicker(boundaryLayout, *geometry, road, trueNorth.has_value(),
+                                             trueNorth ? trueNorth->angle : 0);
+  layout->addWidget(boundaries);
+  const auto updateBoundaries = [&] {
+    boundaries->setEnabled(neighborBox->isChecked() || northBox->isChecked() ||
+        (districtBox->isChecked() && districtRule && districtRule->northRiseMm));
+  };
+  for (auto* box : {neighborBox, northBox, districtBox})
+    connect(box, &QGroupBox::toggled, &dialog, updateBoundaries);
+  updateBoundaries();
+
+  auto* note = new QLabel(tr("選んだ制限だけの試算です。隣地斜線は近似表示。法規の適合は未評価です。"));
+  note->setWordWrap(true);
+  layout->addWidget(note);
+  auto* feedback = new QLabel;
+  feedback->setWordWrap(true);
+  layout->addWidget(feedback);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close);
+  buttons->button(QDialogButtonBox::Close)->setText(tr("閉じる"));
+  auto* show = buttons->addButton(tr("合成面を3Dで見る"), QDialogButtonBox::ActionRole);
+  show->setObjectName(QStringLiteral("showCombinedHeight"));
+  layout->addWidget(buttons);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  connect(show, &QPushButton::clicked, &dialog, [&] {
+    if (document.sequence() != sequence) {
+      feedback->setText(tr("モデルが変わりました。画面を開き直してください。"));
+      return;
+    }
+    doc::HeightLimitStudy study;
+    bool numeric = true;
+    const auto number = [&](QLineEdit* input) {
+      bool okay = false;
+      const double value = input->text().toDouble(&okay);
+      numeric = numeric && okay && std::isfinite(value);
+      return value;
+    };
+    if (neighborBox->isChecked() || northBox->isChecked() || districtBox->isChecked()) study.groundZMm = number(ground);
+    if (roadBox->isChecked())
+      study.road = doc::HeightLimitStudy::Road{number(roadZ), number(roadSlope),
+          {number(roadWidth) * 1000, number(roadDistance) * 1000, number(roadSetback) * 1000}};
+    if (neighborBox->isChecked())
+      study.neighbor = doc::HeightLimitStudy::Neighbor{number(neighborRise) * 1000, number(neighborSlope)};
+    if (!numeric) {
+      feedback->setText(tr("チェックした制限の空欄に数値を入れてください。"));
+      return;
+    }
+    if (northBox->isChecked()) {
+      if (northRise->currentIndex() == 0) {
+        feedback->setText(tr("北側斜線の立上りを選んでください。"));
+        return;
+      }
+      study.northRiseMm = northRise->currentData().toDouble();
+    }
+    study.district = districtBox->isChecked();
+    study.singleNorthRoadConfirmed = districtRoad->isChecked();
+    study.boundaries = checkedHeightBoundaries(*geometry, picker.list);
+    const auto preview = doc::heightLimitPreview(document, study);
+    if (!preview) {
+      feedback->setText(QString::fromStdString(preview.error()));
+      return;
+    }
+    const bool anyLimit = std::any_of(preview->surfaces.begin(), preview->surfaces.end(),
+                                     [](const auto& shape) { return !shape.IsNull(); });
+    if (!anyLimit && preview->unconfirmed.IsNull()) {
+      feedback->setText(tr("選んだ制限の適用範囲が敷地内にありません。"));
+      return;
+    }
+    viewport_->unlockView();
+    viewport_->showStorey(std::nullopt);
+    showCombinedHeightLegend();
+    viewport_->setCombinedHeightSurface(*preview);
+    viewport_->setStandardView(Viewport::StandardView::Iso);
+    QString summary = tr("高さ制限の合成試算");
+    if (preview->unconfirmedAreaMm2 > 0)
+      summary += tr("　未確認 %1 m²").arg(preview->unconfirmedAreaMm2 / 1e6, 0, 'f', 2);
+    if (preview->noLimitAreaMm2 > 0)
+      summary += tr("　今回の条件で適用される制限面なし %1 m²").arg(preview->noLimitAreaMm2 / 1e6, 0, 'f', 2);
+    setStatus(summary);
+    dialog.accept();
+  });
+  dialog.resize(660, 570);
   dialog.exec();
 }
 

@@ -42,6 +42,8 @@
 #include "sbr/doc/Modeler.h"
 #include "sbr/snap/Inference.h"
 
+namespace sbr::doc { struct HeightLimitPreview; }
+
 namespace sbr::app {
 
 class Tool;
@@ -181,6 +183,12 @@ class Viewport : public QWidget {
     return heightDistrictCap_.IsNull() ? TopoDS_Shape() : heightDistrictCap_->Shape();
   }
   bool heightDistrictVisible() const { return heightDistrictVisible_; }
+  void setCombinedHeightSurface(const doc::HeightLimitPreview& preview);
+  static QColor combinedHeightColor(std::size_t index);
+  bool combinedHeightVisible() const { return !combinedHeightOverlays_.empty(); }
+  bool combinedHeightLayerVisible(std::size_t index) const {
+    return index < combinedHeightOverlays_.size() && !combinedHeightOverlays_[index].IsNull();
+  }
   TopoDS_Shape neighborHeightBoundaryShape() const {
     return neighborHeightEdges_.IsNull() ? TopoDS_Shape() : neighborHeightEdges_->Shape();
   }
@@ -558,6 +566,7 @@ class Viewport : public QWidget {
   Handle(AIS_Shape) neighborHeightEdges_;
   Handle(AIS_Shape) heightDistrictCap_;
   bool heightDistrictVisible_ = false;
+  std::vector<Handle(AIS_Shape)> combinedHeightOverlays_;
   std::uint64_t roadHeightPlaneSequence_ = 0;
   Handle(AIS_Shape) inspectionMarker_;
   std::vector<Handle(AIS_Shape)> roles_;

@@ -17,6 +17,8 @@
 #include <BRepAdaptor_Surface.hxx>
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
+#include <BRepTools.hxx>
+#include <BRepTools_WireExplorer.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepClass_FaceClassifier.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
@@ -1763,11 +1765,15 @@ Result<RoadBuildingSetback> measureRoadBuildingSetback(
   return *nearest;
 }
 
-Result<RoadHeightPlaneComparison> compareRoadHeightPlane(
-    const Document& document, const std::vector<ObjectId>& ids, double edgeHeightMm, double slope,
-    std::optional<RoadHeightPlaneRange> range) {
-  using R = Result<RoadHeightPlaneComparison>;
-  if (ids.empty()) return R::failure("照合する部材を選択してください");
+namespace {
+
+struct RoadHeightParameters {
+  double adjustedHeight, lowerX, upperX, rise;
+};
+
+Result<RoadHeightParameters> roadHeightParameters(double edgeHeightMm, double slope,
+                                                   std::optional<RoadHeightPlaneRange> range) {
+  using R = Result<RoadHeightParameters>;
   if (!std::isfinite(edgeHeightMm) || !std::isfinite(slope) || slope <= 0 || slope > 1000)
     return R::failure("有効な基準高さと、0より大きく1000以下の勾配を入力してください");
   if (range && (!std::isfinite(range->roadWidthMm) || !std::isfinite(range->applicationDistanceMm) ||
@@ -1781,6 +1787,19 @@ Result<RoadHeightPlaneComparison> compareRoadHeightPlane(
   if (setback < 0 || !std::isfinite(adjustedHeight) || !std::isfinite(lowerX) ||
       (range && upperX <= lowerX))
     return R::failure("建物の後退距離は0以上の有効な値を入力してください");
+  return RoadHeightParameters{adjustedHeight, lowerX, upperX, rise};
+}
+
+}  // namespace
+
+Result<RoadHeightPlaneComparison> compareRoadHeightPlane(
+    const Document& document, const std::vector<ObjectId>& ids, double edgeHeightMm, double slope,
+    std::optional<RoadHeightPlaneRange> range) {
+  using R = Result<RoadHeightPlaneComparison>;
+  if (ids.empty()) return R::failure("照合する部材を選択してください");
+  const auto parameters = roadHeightParameters(edgeHeightMm, slope, range);
+  if (!parameters) return R::failure(parameters.error());
+  const auto [adjustedHeight, lowerX, upperX, rise] = *parameters;
   const auto road = roadHeightReference(document);
   if (!road) return R::failure(road.error());
   const auto& from = road->origin;
@@ -2037,6 +2056,52 @@ Result<std::vector<NeighborHeightPartRow>> compareNeighborHeight(
   return rows;
 }
 
+namespace {
+
+using HeightTriangle = std::array<gp_Pnt, 3>;
+
+Result<std::vector<HeightTriangle>> heightStudyTriangles(const TopoDS_Face& footprint, bool refine) {
+  using R = Result<std::vector<HeightTriangle>>;
+  BRepMesh_IncrementalMesh mesh(footprint, 1.0);
+  TopLoc_Location location;
+  const auto triangulation = BRep_Tool::Triangulation(footprint, location);
+  if (!mesh.IsDone() || triangulation.IsNull() || triangulation->NbTriangles() == 0)
+    return R::failure("敷地輪郭を表示用の面に分けられません");
+
+  std::vector<HeightTriangle> triangles;
+  double maxSide = 0;
+  constexpr std::size_t maxTriangles = 4096;
+  if (static_cast<std::size_t>(triangulation->NbTriangles()) > maxTriangles)
+    return R::failure("敷地輪郭の辺が多く、表示用の面を作れません");
+  for (int t = 1; t <= triangulation->NbTriangles(); ++t) {
+    int a, b, c;
+    triangulation->Triangle(t).Get(a, b, c);
+    const auto node = [&](int i) { return triangulation->Node(i).Transformed(location.Transformation()); };
+    const HeightTriangle triangle{node(a), node(b), node(c)};
+    maxSide = std::max({maxSide, triangle[0].Distance(triangle[1]), triangle[1].Distance(triangle[2]),
+                        triangle[2].Distance(triangle[0])});
+    triangles.push_back(triangle);
+  }
+  // Subdivide all triangles by the same number of levels, so shared edges have identical samples.
+  const auto midpoint = [](const gp_Pnt& a, const gp_Pnt& b) {
+    return gp_Pnt((a.X() + b.X()) / 2, (a.Y() + b.Y()) / 2, a.Z());
+  };
+  while (refine && maxSide > 1000 && triangles.size() <= maxTriangles / 4) {
+    std::vector<HeightTriangle> refined;
+    refined.reserve(triangles.size() * 4);
+    for (const auto& t : triangles) {
+      const auto ab = midpoint(t[0], t[1]), bc = midpoint(t[1], t[2]), ca = midpoint(t[2], t[0]);
+      refined.insert(refined.end(), {{t[0], ab, ca}, {ab, t[1], bc}, {ca, bc, t[2]}, {ab, bc, ca}});
+    }
+    triangles = std::move(refined);
+    maxSide /= 2;
+  }
+
+  return triangles;
+}
+
+}  // namespace
+
 Result<NeighborHeightPreview> neighborHeightPreview(
     const Document& document, const std::vector<std::array<gp_Pnt, 2>>& confirmedEdges,
     double groundZMm, double baseHeightMm, double slope) {
@@ -2044,41 +2109,9 @@ Result<NeighborHeightPreview> neighborHeightPreview(
   const auto field = neighborHeightField(document, confirmedEdges, groundZMm, baseHeightMm, slope);
   if (!field) return R::failure(field.error());
   try {
-    BRepMesh_IncrementalMesh mesh(field->footprint, 1.0);
-    TopLoc_Location location;
-    const auto triangulation = BRep_Tool::Triangulation(field->footprint, location);
-    if (!mesh.IsDone() || triangulation.IsNull() || triangulation->NbTriangles() == 0)
-      return R::failure("敷地輪郭を表示用の面に分けられません");
-
-    using Triangle = std::array<gp_Pnt, 3>;
-    std::vector<Triangle> triangles;
-    double maxSide = 0;
-    constexpr std::size_t maxTriangles = 4096;
-    if (static_cast<std::size_t>(triangulation->NbTriangles()) > maxTriangles)
-      return R::failure("敷地輪郭の辺が多く、表示用の面を作れません");
-    for (int t = 1; t <= triangulation->NbTriangles(); ++t) {
-      int a, b, c;
-      triangulation->Triangle(t).Get(a, b, c);
-      const auto node = [&](int i) { return triangulation->Node(i).Transformed(location.Transformation()); };
-      const Triangle triangle{node(a), node(b), node(c)};
-      maxSide = std::max({maxSide, triangle[0].Distance(triangle[1]), triangle[1].Distance(triangle[2]),
-                          triangle[2].Distance(triangle[0])});
-      triangles.push_back(triangle);
-    }
-    // Subdivide all triangles by the same number of levels, so shared edges have identical samples.
-    const auto midpoint = [](const gp_Pnt& a, const gp_Pnt& b) {
-      return gp_Pnt((a.X() + b.X()) / 2, (a.Y() + b.Y()) / 2, a.Z());
-    };
-    while (maxSide > 1000 && triangles.size() <= maxTriangles / 4) {
-      std::vector<Triangle> refined;
-      refined.reserve(triangles.size() * 4);
-      for (const auto& t : triangles) {
-        const auto ab = midpoint(t[0], t[1]), bc = midpoint(t[1], t[2]), ca = midpoint(t[2], t[0]);
-        refined.insert(refined.end(), {{t[0], ab, ca}, {ab, t[1], bc}, {ca, bc, t[2]}, {ab, bc, ca}});
-      }
-      triangles = std::move(refined);
-      maxSide /= 2;
-    }
+    const auto plan = heightStudyTriangles(field->footprint, true);
+    if (!plan) return R::failure(plan.error());
+    auto triangles = *plan;
 
     BRep_Builder builder;
     TopoDS_Compound surface, boundaries;
@@ -2694,6 +2727,259 @@ Result<std::vector<NorthHeightPartRow>> compareYokohamaHeightDistrict(
     const std::vector<ObjectId>& ids, double groundZMm, bool singleNorthRoadConfirmed) {
   return compareHeightPatches(document, ids,
       yokohamaHeightDistrictPatches(document, confirmedNeighbors, groundZMm, singleNorthRoadConfirmed));
+}
+
+namespace {
+
+using HeightPolygon = std::vector<gp_Pnt>;
+
+struct HeightConstraint {
+  HeightLimitSource source;
+  gp_Pln plane;
+
+  double at(const gp_Pnt& point) const {
+    const auto normal = plane.Axis().Direction();
+    const auto& origin = plane.Location();
+    return origin.Z() - (normal.X() * (point.X() - origin.X()) +
+                         normal.Y() * (point.Y() - origin.Y())) / normal.Z();
+  }
+};
+
+struct HeightCell {
+  HeightPolygon plan;
+  std::optional<HeightConstraint> limit;
+  bool unconfirmed = false;
+};
+
+double heightPlanArea(const HeightPolygon& polygon) {
+  double twice = 0;
+  for (std::size_t i = 2; i < polygon.size(); ++i) {
+    const gp_Vec a(polygon.front(), polygon[i - 1]), b(polygon.front(), polygon[i]);
+    twice += a.X() * b.Y() - a.Y() * b.X();
+  }
+  return twice / 2;
+}
+
+template <typename Side>
+HeightPolygon clipHeightPolygon(const HeightPolygon& plan, Side side) {
+  HeightPolygon result;
+  const auto append = [&](const gp_Pnt& point) {
+    if (result.empty() || result.back().Distance(point) > tolerance::kLinear) result.push_back(point);
+  };
+  for (std::size_t i = 0; i < plan.size(); ++i) {
+    const auto& a = plan[i];
+    const auto& b = plan[(i + 1) % plan.size()];
+    const double fa = side(a), fb = side(b);
+    if (fa >= 0) append(a);
+    if ((fa < 0) != (fb < 0)) append(a.Translated(gp_Vec(a, b) * (fa / (fa - fb))));
+  }
+  if (result.size() > 1 && result.front().Distance(result.back()) <= tolerance::kLinear) result.pop_back();
+  if (std::abs(heightPlanArea(result)) <= tolerance::kLinear * tolerance::kLinear) result.clear();
+  return result;
+}
+
+void applyHeightConstraint(HeightCell cell, const HeightConstraint& constraint, std::vector<HeightCell>& cells) {
+  if (cell.plan.empty()) return;
+  if (!cell.limit) {
+    cell.limit = constraint;
+    cells.push_back(std::move(cell));
+    return;
+  }
+  const auto difference = [&](const gp_Pnt& p) { return cell.limit->at(p) - constraint.at(p); };
+  const bool lowers = std::any_of(cell.plan.begin(), cell.plan.end(),
+                                  [&](const auto& p) { return difference(p) > tolerance::kLinear; });
+  if (!lowers) {
+    cells.push_back(std::move(cell));
+    return;
+  }
+  auto lower = clipHeightPolygon(cell.plan, difference);
+  auto unchanged = clipHeightPolygon(cell.plan, [&](const auto& p) { return -difference(p); });
+  if (!lower.empty()) cells.push_back({std::move(lower), constraint});
+  if (!unchanged.empty()) cells.push_back({std::move(unchanged), cell.limit});
+}
+
+std::array<double, 4> heightPlanBounds(const HeightPolygon& plan) {
+  std::array<double, 4> box{plan.front().X(), plan.front().Y(), plan.front().X(), plan.front().Y()};
+  for (const auto& p : plan) {
+    box[0] = std::min(box[0], p.X());
+    box[1] = std::min(box[1], p.Y());
+    box[2] = std::max(box[2], p.X());
+    box[3] = std::max(box[3], p.Y());
+  }
+  return box;
+}
+
+constexpr std::size_t kHeightCellBudget = 32768;
+
+bool overlayHeightPartition(std::vector<HeightCell>& cells, const std::vector<NorthHeightPatch>& patches,
+                            HeightLimitSource source) {
+  if (patches.size() == 1 && !patches.front().convexFootprint) {
+    std::vector<HeightCell> result;
+    const HeightConstraint constraint{source, BRepAdaptor_Surface(patches.front().surface).Plane()};
+    for (auto& cell : cells) {
+      if (cell.unconfirmed) result.push_back(std::move(cell));
+      else applyHeightConstraint(std::move(cell), constraint, result);
+    }
+    cells = std::move(result);
+    return cells.size() <= kHeightCellBudget;
+  }
+
+  struct Region {
+    HeightPolygon outline;
+    std::array<double, 4> bounds;
+    std::optional<HeightConstraint> constraint;
+  };
+  std::vector<Region> regions;
+  for (const auto& patch : patches) {
+    HeightPolygon outline;
+    const auto wire = BRepTools::OuterWire(patch.footprint);
+    for (BRepTools_WireExplorer edge(wire, patch.footprint); edge.More(); edge.Next())
+      outline.push_back(BRep_Tool::Pnt(edge.CurrentVertex()));
+    if (outline.size() < 3) return false;
+    if (heightPlanArea(outline) < 0) std::reverse(outline.begin(), outline.end());
+    const auto bounds = heightPlanBounds(outline);
+    std::optional<HeightConstraint> constraint;
+    if (!patch.surface.IsNull()) constraint = HeightConstraint{source, BRepAdaptor_Surface(patch.surface).Plane()};
+    regions.push_back({std::move(outline), bounds, constraint});
+  }
+
+  std::vector<HeightCell> result;
+  for (auto& cell : cells) {
+    if (cell.unconfirmed) {
+      result.push_back(std::move(cell));
+      continue;
+    }
+    const auto bounds = heightPlanBounds(cell.plan);
+    for (const auto& region : regions) {
+      if (bounds[2] <= region.bounds[0] || bounds[0] >= region.bounds[2] ||
+          bounds[3] <= region.bounds[1] || bounds[1] >= region.bounds[3]) continue;
+      auto intersection = cell.plan;
+      for (std::size_t i = 0; i < region.outline.size() && !intersection.empty(); ++i) {
+        const auto& a = region.outline[i];
+        const gp_Vec edge(a, region.outline[(i + 1) % region.outline.size()]);
+        intersection = clipHeightPolygon(intersection, [&](const auto& p) {
+          return edge.X() * (p.Y() - a.Y()) - edge.Y() * (p.X() - a.X());
+        });
+      }
+      if (intersection.empty()) continue;
+      if (region.constraint)
+        applyHeightConstraint({std::move(intersection), cell.limit}, *region.constraint, result);
+      else
+        result.push_back({std::move(intersection), std::nullopt, true});
+      if (result.size() > kHeightCellBudget) return false;
+    }
+  }
+  cells = std::move(result);
+  return true;
+}
+
+}  // namespace
+
+Result<HeightLimitPreview> heightLimitPreview(const Document& document, const HeightLimitStudy& study) {
+  using R = Result<HeightLimitPreview>;
+  const auto& site = document.settings().siteBoundary;
+  if (!site) return R::failure("先に敷地境界を登録してください");
+  if (!study.road && !study.neighbor && !study.northRiseMm && !study.district)
+    return R::failure("合成する制限を選んでください");
+  if (!std::isfinite(study.groundZMm)) return R::failure("地盤面の高さを確認してください");
+  const auto geometry = document.siteBoundaryGeometry(site->outline);
+  if (!geometry) return R::failure(geometry.error());
+  const auto footprint = heightSiteFootprint(*geometry);
+  if (!footprint) return R::failure(footprint.error());
+
+  try {
+    std::optional<NeighborHeightField> neighbor;
+    if (study.neighbor) {
+      const auto field = neighborHeightField(document, study.boundaries, study.groundZMm,
+                                            study.neighbor->riseMm, study.neighbor->slope);
+      if (!field) return R::failure(field.error());
+      neighbor = *field;
+    }
+    const auto triangles = heightStudyTriangles(*footprint, neighbor.has_value());
+    if (!triangles) return R::failure(triangles.error());
+    std::vector<HeightCell> cells;
+    for (const auto& triangle : *triangles) {
+      HeightCell cell{{triangle.begin(), triangle.end()}, std::nullopt};
+      if (neighbor) {
+        auto lifted = triangle;
+        for (auto& p : lifted) p.SetZ(neighbor->sample(p).limitZMm);
+        cell.limit = HeightConstraint{HeightLimitSource::Neighbor,
+            gp_Pln(lifted[0], gp_Dir(gp_Vec(lifted[0], lifted[1]).Crossed(gp_Vec(lifted[0], lifted[2]))))};
+      }
+      cells.push_back(std::move(cell));
+    }
+
+    if (study.road) {
+      const auto& rule = *study.road;
+      const auto parameters = roadHeightParameters(rule.edgeHeightMm, rule.slope, rule.range);
+      if (!parameters) return R::failure(parameters.error());
+      const auto road = roadHeightReference(document);
+      if (!road) return R::failure(road.error());
+      const auto& [height, start, end, rise] = *parameters;
+      const auto station = [&](const gp_Pnt& point) { return gp_Vec(road->origin, point).Dot(gp_Vec(road->inward)); };
+      const HeightConstraint constraint{HeightLimitSource::Road,
+          gp_Pln(gp_Pnt(road->origin.X(), road->origin.Y(), height),
+                 gp_Dir(-rule.slope * road->inward.X(), -rule.slope * road->inward.Y(), 1))};
+      std::vector<HeightCell> result;
+      for (const auto& cell : cells) {
+        const auto before = clipHeightPolygon(cell.plan, [&](const auto& p) { return start - station(p); });
+        const auto after = clipHeightPolygon(cell.plan, [&](const auto& p) { return station(p) - end; });
+        if (!before.empty()) result.push_back({before, cell.limit});
+        if (!after.empty()) result.push_back({after, cell.limit});
+        auto band = clipHeightPolygon(cell.plan, [&](const auto& p) { return station(p) - start; });
+        band = clipHeightPolygon(band, [&](const auto& p) { return end - station(p); });
+        applyHeightConstraint({std::move(band), cell.limit}, constraint, result);
+      }
+      cells = std::move(result);
+    }
+
+    const auto addPartition = [&](const HeightPatches& patches, HeightLimitSource source) -> Status {
+      if (!patches) return Status::failure(patches.error());
+      if (!overlayHeightPartition(cells, *patches, source))
+        return Status::failure("制限面の分割が複雑で、合成面を作れません");
+      return Status::success();
+    };
+    if (study.northRiseMm) {
+      const auto added = addPartition(statutoryNorthHeightPatches(document, study.boundaries, study.groundZMm,
+                                                                  *study.northRiseMm), HeightLimitSource::North);
+      if (!added) return R::failure(added.message());
+    }
+    if (study.district) {
+      const auto added = addPartition(yokohamaHeightDistrictPatches(document, study.boundaries, study.groundZMm,
+                                                                    study.singleNorthRoadConfirmed), HeightLimitSource::District);
+      if (!added) return R::failure(added.message());
+    }
+
+    HeightLimitPreview preview;
+    BRep_Builder builder;
+    std::array<TopoDS_Compound, static_cast<std::size_t>(HeightLimitSource::Count)> surfaces;
+    for (auto& surface : surfaces) builder.MakeCompound(surface);
+    TopoDS_Compound unconfirmed;
+    builder.MakeCompound(unconfirmed);
+    for (auto& cell : cells) {
+      const double area = std::abs(heightPlanArea(cell.plan));
+      if (cell.unconfirmed) {
+        preview.unconfirmedAreaMm2 += area;
+        // Lift the fill above the site face to avoid coincident depth samples.
+        for (auto& p : cell.plan) p.SetZ(p.Z() + 2);
+      } else if (cell.limit) {
+        for (auto& p : cell.plan) p.SetZ(cell.limit->at(p));
+      } else {
+        preview.noLimitAreaMm2 += area;
+        continue;
+      }
+      const auto face = planarHeightFace(cell.plan);
+      if (face.IsNull()) return R::failure("合成した制限面を作れません");
+      if (cell.unconfirmed) builder.Add(unconfirmed, face);
+      else builder.Add(surfaces[static_cast<std::size_t>(cell.limit->source)], face);
+    }
+    for (std::size_t i = 0; i < surfaces.size(); ++i)
+      if (surfaces[i].NbChildren()) preview.surfaces[i] = surfaces[i];
+    if (unconfirmed.NbChildren()) preview.unconfirmed = unconfirmed;
+    return preview;
+  } catch (const Standard_Failure&) {
+    return R::failure("斜線と高度地区の合成面を作れません");
+  }
 }
 
 std::vector<PermitCheck> permitElevationChecks(const Document& document) {

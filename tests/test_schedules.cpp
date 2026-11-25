@@ -5,6 +5,8 @@
 #include <set>
 #include <gtest/gtest.h>
 #include <BRep_Tool.hxx>
+#include <BRepAdaptor_Surface.hxx>
+#include <BRepClass_FaceClassifier.hxx>
 #include <BRepTools.hxx>
 #include <BRepTools_WireExplorer.hxx>
 #include <TopoDS.hxx>
@@ -2765,6 +2767,65 @@ TEST_F(Schedules, YokohamaHeightDistrictReferenceValues) {
   }
   EXPECT_FALSE(sbr::doc::yokohamaHeightDistrictRule("none"));
   EXPECT_FALSE(sbr::doc::yokohamaHeightDistrictRule("other"));
+}
+
+TEST_F(Schedules, CombinedHeightLimitChangesSourceAndStopsAtTheRoadRange) {
+  using sbr::doc::HeightLimitSource;
+  using sbr::doc::HeightLimitStudy;
+  const auto site = ok("create_polygon", {{"points", {{0,0,0},{20000,0,0},{20000,30000,0},{0,30000,0}}}})["id"];
+  ok("set_site_boundary", {{"outline", site}, {"source", "test site"}});
+  ok("set_site_road", {{"start", {0,0,0}}, {"end", {20000,0,0}}, {"source", "test road"}, {"width_m", 6}});
+  ok("set_site_height_conditions", {{"zone", "mid_high_1"}, {"district", "yokohama_6"}, {"source", "test map"}});
+  ASSERT_TRUE(modeler.setSiteNorth({0, "test survey", "2026-11-25"}));
+
+  HeightLimitStudy study;
+  study.road = HeightLimitStudy::Road{6000, 1, {6000, 14000}};
+  study.neighbor = HeightLimitStudy::Neighbor{12000, 1};
+  study.northRiseMm = 5000;
+  study.district = true;
+  study.boundaries = {{gp_Pnt(0,30000,0), gp_Pnt(0,0,0)}, {gp_Pnt(20000,30000,0), gp_Pnt(0,30000,0)}};
+  const auto sequence = modeler.document().sequence();
+  const auto preview = sbr::doc::heightLimitPreview(modeler.document(), study);
+  ASSERT_TRUE(preview) << preview.error();
+  EXPECT_TRUE(preview->unconfirmed.IsNull());
+  EXPECT_NEAR(preview->noLimitAreaMm2, 0, 0.01);
+  const auto check = [&](HeightLimitSource source, double x, double y, double z) {
+    for (std::size_t i = 0; i < preview->surfaces.size(); ++i) {
+      bool found = false;
+      for (TopExp_Explorer faces(preview->surfaces[i], TopAbs_FACE); faces.More(); faces.Next()) {
+        const auto face = TopoDS::Face(faces.Current());
+        const auto plane = BRepAdaptor_Surface(face).Plane();
+        const auto normal = plane.Axis().Direction();
+        const auto& origin = plane.Location();
+        const double height = origin.Z() - (normal.X() * (x - origin.X()) + normal.Y() * (y - origin.Y())) / normal.Z();
+        const auto state = BRepClass_FaceClassifier(face, gp_Pnt(x, y, height), 0.001).State();
+        if (state != TopAbs_IN && state != TopAbs_ON) continue;
+        found = true;
+        EXPECT_NEAR(height, z, 0.01);
+      }
+      EXPECT_EQ(found, i == static_cast<std::size_t>(source)) << "XY " << x << ", " << y << ", source " << i;
+    }
+  };
+  check(HeightLimitSource::Road, 14000, 2500, 8500);
+  check(HeightLimitSource::Neighbor, 2000, 12000, 14000);
+  check(HeightLimitSource::District, 14000, 12000, 20000);
+  check(HeightLimitSource::North, 14000, 26000, 10000);
+
+  study.neighbor.reset();
+  study.district = false;
+  study.boundaries.clear();
+  const auto unconfirmed = sbr::doc::heightLimitPreview(modeler.document(), study);
+  ASSERT_TRUE(unconfirmed) << unconfirmed.error();
+  EXPECT_NEAR(unconfirmed->unconfirmedAreaMm2, 600e6, 0.1);
+  EXPECT_FALSE(unconfirmed->unconfirmed.IsNull());
+  for (const auto& surface : unconfirmed->surfaces) EXPECT_TRUE(surface.IsNull());
+
+  study.northRiseMm.reset();
+  const auto roadOnly = sbr::doc::heightLimitPreview(modeler.document(), study);
+  ASSERT_TRUE(roadOnly) << roadOnly.error();
+  EXPECT_NEAR(roadOnly->noLimitAreaMm2, 440e6, 0.1);
+  EXPECT_NEAR(sbr::geom::exactBounds(roadOnly->surfaces[0]).CornerMax().Y(), 8000, 0.01);
+  EXPECT_EQ(modeler.document().sequence(), sequence);
 }
 
 TEST_F(Schedules, YokohamaHeightDistrictPreviewAndPartComparisonShareTheLimit) {

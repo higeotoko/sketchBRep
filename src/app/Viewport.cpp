@@ -1657,7 +1657,8 @@ void Viewport::syncSome(std::optional<double> budgetMs) {
   // they inherit), or everything.
   std::optional<std::vector<doc::ObjectId>> changed;
   if (!fullSync_) changed = document.changedSince(syncedSequence_);
-  if ((!roadHeightPlane_.IsNull() || heightDistrictVisible_) && roadHeightPlaneSequence_ != document.sequence())
+  if ((!roadHeightPlane_.IsNull() || heightDistrictVisible_ || combinedHeightVisible()) &&
+      roadHeightPlaneSequence_ != document.sequence())
     setRoadHeightPlane({});
   syncedSequence_ = document.sequence();
   std::vector<doc::ObjectId> queue = std::move(pendingSync_);
@@ -2426,9 +2427,42 @@ void Viewport::setHeightDistrictSurface(const TopoDS_Shape& slant, const TopoDS_
   setHeightStudy(slant, unconfirmed, HeightStudyKind::District, cap);
 }
 
+QColor Viewport::combinedHeightColor(std::size_t index) {
+  static const std::array<QRgb, 5> colors{0xff387bc8, 0xff9754ca, 0xff189873, 0xffc3558b, 0xffdb7925};
+  return QColor::fromRgb(colors.at(index));
+}
+
+void Viewport::setCombinedHeightSurface(const doc::HeightLimitPreview& preview) {
+  if (view_.IsNull()) return;
+  setRoadHeightPlane({});
+  const auto add = [&](const TopoDS_Shape& shape) {
+    const auto color = combinedHeightColor(combinedHeightOverlays_.size());
+    Handle(AIS_Shape) overlay;
+    if (!shape.IsNull()) {
+      overlay = new AIS_Shape(display::makeDisplayCopy(shape));
+      overlay->SetColor(Quantity_Color(color.redF(), color.greenF(), color.blueF(), Quantity_TOC_sRGB));
+      overlay->SetTransparency(0.39);
+      overlay->Attributes()->SetFaceBoundaryDraw(false);
+      context_->Display(overlay, AIS_Shaded, -1, Standard_False);
+      context_->Deactivate(overlay);
+    }
+    combinedHeightOverlays_.push_back(overlay);
+  };
+  for (const auto& surface : preview.surfaces) add(surface);
+  add(preview.unconfirmed);
+  if (std::none_of(combinedHeightOverlays_.begin(), combinedHeightOverlays_.end(),
+                   [](const auto& handle) { return !handle.IsNull(); })) combinedHeightOverlays_.clear();
+  roadHeightPlaneSequence_ = modeler_.document().sequence();
+  emit roadHeightPlaneChanged(combinedHeightVisible());
+  redraw();
+}
+
 void Viewport::setHeightStudy(const TopoDS_Shape& shape, const TopoDS_Shape& lines, HeightStudyKind kind,
                               const TopoDS_Shape& cap) {
   if (view_.IsNull()) return;
+  for (const auto& overlay : combinedHeightOverlays_)
+    if (!overlay.IsNull()) context_->Remove(overlay, Standard_False);
+  combinedHeightOverlays_.clear();
   for (auto* overlay : {&roadHeightPlane_, &neighborHeightEdges_, &heightDistrictCap_}) {
     if (!overlay->IsNull()) context_->Remove(*overlay, Standard_False);
     overlay->Nullify();
@@ -3544,6 +3578,8 @@ void Viewport::fitAll() {
   if (!roadHeightPlane_.IsNull()) box.Add(geom::exactBounds(roadHeightPlane_->Shape()));
   if (!neighborHeightEdges_.IsNull()) box.Add(geom::exactBounds(neighborHeightEdges_->Shape()));
   if (!heightDistrictCap_.IsNull()) box.Add(geom::exactBounds(heightDistrictCap_->Shape()));
+  for (const auto& overlay : combinedHeightOverlays_)
+    if (!overlay.IsNull()) box.Add(geom::exactBounds(overlay->Shape()));
   if (box.IsVoid()) {
     box.Add(gp_Pnt(-2000, -2000, 0));
     box.Add(gp_Pnt(8000, 8000, 3000));

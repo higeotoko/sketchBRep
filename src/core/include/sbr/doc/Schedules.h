@@ -339,6 +339,31 @@ Result<std::vector<NorthHeightPartRow>> compareNorthHeight(
     const std::vector<ObjectId>& ids, double groundZMm, double baseHeightMm);
 // Stage 10 (立面・断面, docs/201): the level GL, the model's highest point above it (not the legal
 // height), where sections are cut, the elevations' orientation, and what is not checked.
+struct HeightLimitStudy {
+  struct Road {
+    double edgeHeightMm, slope;
+    RoadHeightPlaneRange range;
+  };
+  struct Neighbor {
+    double riseMm, slope;
+  };
+  double groundZMm = 0;
+  std::vector<std::array<gp_Pnt, 2>> boundaries;
+  std::optional<Road> road;
+  std::optional<Neighbor> neighbor;
+  std::optional<double> northRiseMm;
+  bool district = false;
+  bool singleNorthRoadConfirmed = false;
+};
+
+enum class HeightLimitSource { Road, Neighbor, North, District, Count };
+struct HeightLimitPreview {
+  std::array<TopoDS_Shape, static_cast<std::size_t>(HeightLimitSource::Count)> surfaces;
+  TopoDS_Shape unconfirmed;
+  double unconfirmedAreaMm2 = 0;
+  double noLimitAreaMm2 = 0;
+};
+Result<HeightLimitPreview> heightLimitPreview(const Document& document, const HeightLimitStudy& study);
 std::vector<PermitCheck> permitElevationChecks(const Document& document);
 // Stage 11 (一式の突合せ, docs/202): per stage read from the model (2, 3, 5-10) how many rows are
 // left to look at, marks given by hand to unlike openings, rooms of a storey with one name.

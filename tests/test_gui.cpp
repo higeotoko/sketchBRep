@@ -67,6 +67,7 @@
 #include <QTreeWidget>
 #include <QToolButton>
 #include <QToolBar>
+#include <QGroupBox>
 #include <QScrollArea>
 #include <QLocalSocket>
 #include <QMouseEvent>
@@ -250,6 +251,7 @@ class GuiPhase1 : public QObject {
   void permitWorkflowShowsRoomAndOpeningInputs();
   void permitWorkflowShowsGridAndPlanChecks();
   void heightDistrictShowsControllingSurfaces();
+  void combinedHeightShowsLowestSurface();
   void permitWorkflowAppliesDaylightFactors();
   void permitWorkflowMarksStagesAndAsksAgain();
   void projectOutlineDialogGivesTheItems();
@@ -1631,6 +1633,100 @@ void GuiPhase1::permitWorkflowMarksStagesAndAsksAgain() {
 
 // docs/194: stages 2 (通り芯) and 3 (平面) list what the model has and what is missing; a row's
 // button selects the objects it is about, and the rows follow the model.
+void GuiPhase1::combinedHeightShowsLowestSurface() {
+  Fixture f;
+  QVERIFY(f.setUp());
+  auto& modeler = f.window.modeler();
+  api::CommandApi api(modeler);
+  using Json = nlohmann::json;
+  const auto call = [&](const char* command, Json args) {
+    return Json::parse(api.execute(Json{{"command", command}, {"args", std::move(args)}}.dump()));
+  };
+  const auto site = call("create_polygon", {{"points", {{0,0,0},{20000,0,0},{20000,30000,0},{0,30000,0}}}});
+  QVERIFY(site["ok"].get<bool>());
+  QVERIFY(call("set_site_boundary", {{"outline", site["result"]["id"]}, {"source", "test site"}})["ok"].get<bool>());
+  QVERIFY(call("set_site_road", {{"start", {0,0,0}}, {"end", {20000,0,0}}, {"width_m", 6},
+                                {"source", "test road"}})["ok"].get<bool>());
+  QVERIFY(call("set_site_height_conditions", {{"zone", "mid_high_1"}, {"district", "yokohama_6"},
+                                             {"source", "test map"}})["ok"].get<bool>());
+  QVERIFY(modeler.setSiteNorth({0, "test survey", "2026-11-25"}));
+  QVERIFY(modeler.setLevels({{"", "GL", 0}, {"", "1FL", 1}}));
+  f.vp->syncNow();
+
+  auto* open = f.window.findChild<QAction*>(QStringLiteral("permitWorkflowAction"));
+  QVERIFY(open);
+  open->trigger();
+  auto* dock = f.window.findChild<QDockWidget*>(QStringLiteral("permitWorkflowDock"));
+  QVERIFY(dock);
+  auto* phases = dock->findChild<QListWidget*>(QStringLiteral("permitWorkflowPhases"));
+  auto* checks = dock->findChild<QTreeWidget*>(QStringLiteral("permitWorkflowChecks"));
+  auto* edit = dock->findChild<QPushButton*>(QStringLiteral("permitWorkflowEdit"));
+  QVERIFY(phases && checks && edit);
+  phases->setCurrentRow(9);
+  const auto items = checks->findItems(QStringLiteral("高さ制限の合成"), Qt::MatchExactly);
+  QCOMPARE(items.size(), 1);
+  checks->setCurrentItem(items.front());
+
+  const QString reviewDir = qEnvironmentVariable("SBR_COMBINED_HEIGHT_REVIEW_DIR");
+  const auto sequence = modeler.document().sequence();
+  bool accepted = false;
+  QString failure;
+  QTimer::singleShot(0, [&] {
+    auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+    if (!dialog) return;
+    auto* show = dialog->findChild<QPushButton*>(QStringLiteral("showCombinedHeight"));
+    auto* edges = dialog->findChild<QListWidget*>(QStringLiteral("neighborHeightEdges"));
+    auto* diagram = dialog->findChild<QLabel*>(QStringLiteral("heightBoundaryDiagram"));
+    auto* rise = dialog->findChild<QComboBox*>(QStringLiteral("combinedNorthRise"));
+    bool ready = show && edges && edges->count() == 4 && diagram && rise;
+    for (const auto* name : {"combinedRoadRule", "combinedNeighborRule", "combinedNorthRule", "combinedDistrictRule"}) {
+      auto* box = dialog->findChild<QGroupBox*>(QString::fromLatin1(name));
+      if (box) box->setChecked(true);
+      else ready = false;
+    }
+    const std::array<std::pair<const char*, const char*>, 5> inputs{{
+        {"combinedRoadZ", "6000"}, {"combinedRoadSlope", "1"}, {"combinedRoadDistance", "14"},
+        {"combinedNeighborRise", "12"}, {"combinedNeighborSlope", "1"}}};
+    for (const auto& [name, value] : inputs) {
+      auto* field = dialog->findChild<QLineEdit*>(QString::fromLatin1(name));
+      if (field) field->setText(QString::fromLatin1(value));
+      else ready = false;
+    }
+    if (ready) {
+      rise->setCurrentIndex(1);
+      QTest::mouseClick(diagram, Qt::LeftButton, Qt::NoModifier, QPoint(140, 27));
+      edges->item(3)->setCheckState(Qt::Checked);
+      if (!reviewDir.isEmpty()) dialog->grab().save(QDir(reviewDir).filePath(QStringLiteral("combined-height-settings.png")));
+      if (edges->item(2)->checkState() == Qt::Checked) show->click();
+    }
+    accepted = dialog->result() == QDialog::Accepted;
+    if (!accepted) {
+      for (auto* label : dialog->findChildren<QLabel*>()) failure += QStringLiteral(" | ") + label->text();
+      dialog->reject();
+    }
+  });
+  edit->click();
+  QVERIFY2(accepted, qPrintable(failure));
+  QCOMPARE(modeler.document().sequence(), sequence);
+  for (std::size_t i = 0; i < 4; ++i) QVERIFY(f.vp->combinedHeightLayerVisible(i));
+  QVERIFY(!f.vp->combinedHeightLayerVisible(4));
+  auto* legend = f.window.findChild<QToolBar*>(QStringLiteral("combinedHeightLegend"));
+  QVERIFY(legend && legend->isVisible());
+  const auto visibleKeys = [&] {
+    const auto labels = legend->findChildren<QLabel*>();
+    return std::count_if(labels.begin(), labels.end(), [](const auto* label) { return label->isVisible(); });
+  };
+  QTRY_COMPARE(visibleKeys(), 4);
+  if (!reviewDir.isEmpty()) {
+    const QDir dir(reviewDir);
+    QVERIFY(legend->grab().save(dir.filePath(QStringLiteral("combined-height-legend.png"))));
+    QVERIFY(f.vp->dumpImage(dir.filePath(QStringLiteral("combined-height-3d.png"))));
+  }
+  legend->actions().back()->trigger();
+  QVERIFY(!legend->isVisible());
+  QVERIFY(!f.vp->combinedHeightVisible());
+}
+
 void GuiPhase1::heightDistrictShowsControllingSurfaces() {
   Fixture f;
   QVERIFY(f.setUp());
