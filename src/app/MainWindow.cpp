@@ -6012,14 +6012,17 @@ void MainWindow::showAreaEvidence() {
   layout->addWidget(status);
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close);
   auto* save = buttons->addButton(tr("求積図をPDFに保存…"), QDialogButtonBox::ActionRole);
+  buttons->button(QDialogButtonBox::Close)->setText(tr("閉じる"));
   layout->addWidget(buttons);
   const auto display = [&](int index) {
     if (index < 0 || static_cast<std::size_t>(index) >= made->size()) return;
     const auto& sheet = (*made)[static_cast<std::size_t>(index)];
-    QImage image(810, 515, QImage::Format_RGB32);
+    const qreal density = preview->devicePixelRatioF();
+    QImage image(qRound(810 * density), qRound(515 * density), QImage::Format_RGB32);
+    image.setDevicePixelRatio(density);
     image.fill(QColor(109, 115, 123));
     QPainter painter(&image);
-    renderSheet(painter, sheet, QRectF(0, 0, image.width(), image.height()));
+    renderSheet(painter, sheet, QRectF(0, 0, 810, 515));
     painter.end();
     preview->setPixmap(QPixmap::fromImage(image));
     status->setText(sheet.notes.empty() ? QString() : QString::fromStdString(sheet.notes.front()));
