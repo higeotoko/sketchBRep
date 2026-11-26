@@ -12437,6 +12437,22 @@ void GuiPhase1::timberStairwellRegenerationMatchesDialogAndExports() {
       painter.end();
       QVERIFY(image.save(imagePath));
     }
+    // docs/290: a frame elevation from the drawing set. SBR_FRAME_ELEVATION_PNG: where to save it.
+    const auto elevationPath = qEnvironmentVariable("SBR_FRAME_ELEVATION_PNG");
+    if (!elevationPath.isEmpty()) {
+      const auto set = doc::drawingSet(m.document(), {});
+      QVERIFY(set.ok());
+      std::size_t at = set->names.size();
+      for (std::size_t i = 0; i < set->names.size(); ++i)
+        if (set->names[i].find("通り軸組図") != std::string::npos) { at = i; break; }
+      QVERIFY(at < set->names.size());
+      QImage image(2400, 1697, QImage::Format_RGB32);
+      image.fill(Qt::white);
+      QPainter painter(&image);
+      renderSheet(painter, set->sheets[at], QRectF(0, 0, image.width(), image.height()));
+      painter.end();
+      QVERIFY(image.save(elevationPath));
+    }
     QVERIFY(m.undo());
     const auto old =
         json::parse(std::get<doc::GroupNode>(m.document().find(frame)->recipe.base).constructionFrame)

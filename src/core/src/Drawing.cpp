@@ -721,7 +721,9 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
   const double deflection = std::max(0.05, diag * 1e-5);
   const double big = diag * 4 + 10000;
   // The side kept: towards -n from the plane (plans: below the cut).
-  const double keepDepth = spec.kind == ViewKind::Plan && spec.depth > 0 ? spec.depth : big;
+  const double keepDepth = spec.kind == ViewKind::Plan && spec.depth > 0       ? spec.depth
+                         : spec.kind == ViewKind::Section && spec.sectionDepth > 0 ? spec.sectionDepth
+                                                                                   : big;
   const gp_Pnt boxOrigin = spec.frame.Location().Translated(gp_Vec(spec.frame.XDirection()) * -big +
                                                            gp_Vec(spec.frame.YDirection()) * -big + gp_Vec(n) * -keepDepth);
   TopoDS_Shape keepBox;

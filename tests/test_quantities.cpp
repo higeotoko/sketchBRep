@@ -291,4 +291,17 @@ TEST_F(Quantities, DrawingSetCarriesTheFramingPlans) {
   for (const auto& row : r["result"]["rows"])
     if (row["form"] == "様式1-2" && (row["kind"] == "基礎伏図" || row["kind"] == "各階床伏図" || row["kind"] == "小屋伏図"))
       EXPECT_EQ(row["state"], "図面あり") << row.dump();
+  // docs/290: frame elevations along the outer grid lines, each with member marks of its line only.
+  std::vector<std::size_t> elevations;
+  for (std::size_t i = 0; i < set->names.size(); ++i)
+    if (set->names[i].find("通り軸組図") != std::string::npos) elevations.push_back(i);
+  EXPECT_EQ(elevations.size(), 4u);
+  for (const auto& row : r["result"]["rows"])
+    if (row["form"] == "様式2" && row["kind"] == "2面以上の軸組図") EXPECT_EQ(row["state"], "図面あり") << row.dump();
+  for (std::size_t i : elevations) {
+    std::size_t texts = 0;
+    for (const auto& item : set->sheets[i].items)
+      if (item.kind == draw::Item::Kind::Text) ++texts;
+    EXPECT_GT(texts, 12u) << set->names[i];
+  }
 }

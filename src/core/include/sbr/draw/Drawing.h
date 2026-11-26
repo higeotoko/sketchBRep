@@ -98,6 +98,8 @@ struct ViewSpec {
   // Plans: where to look down from (the cut) and how far down to see (the
   // level below the next): 0 = everything below.
   double depth = 0.0;
+  // Sections: how far behind the cut to see (docs/290: a frame elevation along one grid line); 0 = all.
+  double sectionDepth = 0.0;
   std::vector<std::string> tags;  // empty: all leaf tags
   std::string within;            // optional ancestor group
   bool includeHidden = false;

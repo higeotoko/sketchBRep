@@ -5558,6 +5558,47 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
     const auto framing = draw::framingView(document, preset, "", false, {});
     if (framing) planned.push_back({framing->title, *framing, std::nullopt, {}});
   }
+  // docs/290: frame elevations (軸組図) along the outer grid lines of the frame's grid, each seeing only
+  // the members within 300 mm of its line (1:50), when the frame has wall-frame members.
+  if (draw::framingView(document, "foundation", "", false, {"1階軸組"})) {
+    const doc::Object* gridObject = nullptr;
+    for (const doc::Object& o : document.objects()) {
+      const auto* node = std::get_if<GroupNode>(&o.recipe.base);
+      if (node && node->grid && document.isVisible(o.id) && (node->grid->x.size() >= 2 || node->grid->y.size() >= 2)) {
+        gridObject = &o;
+        break;
+      }
+    }
+    if (gridObject) {
+      const auto& grid = *std::get<GroupNode>(gridObject->recipe.base).grid;
+      const gp_Trsf w = document.worldTransform(*gridObject);
+      constexpr double kHalf = 150.0;
+      const auto add = [&](const GridAxis& axis, int family, int outward) {
+        // family 0: an X line (along Y), seen from -X (first) or +X (last); family 1: a Y line.
+        const gp_Pnt on = (family == 0 ? gp_Pnt(axis.offset, 0, 0) : gp_Pnt(0, axis.offset, 0)).Transformed(w);
+        const gp_Dir viewer = (family == 0 ? gp_Dir(outward, 0, 0) : gp_Dir(0, outward, 0)).Transformed(w);
+        draw::ViewSpec s = draw::sectionView(on.Translated(gp_Vec(viewer) * kHalf), viewer);
+        s.sectionDepth = 2 * kHalf;
+        s.tags = {"基礎・土台", "1階床組", "1階軸組", "2階床組", "2階軸組", "小屋組"};
+        s.memberLabels = true;
+        s.fill = false;
+        s.title = axis.name + "通り軸組図";
+        // Made here at 1:50 (the member marks crowd at 1:100), outside the sections' cut marks.
+        if (const auto made = draw::makeView(document, s)) {
+          Planned p{s.title, std::nullopt, std::nullopt, {}, *made, std::min(spec.scale, 50.0)};
+          planned.push_back(std::move(p));
+        }
+      };
+      if (grid.x.size() >= 2) {
+        add(grid.x.front(), 0, -1);
+        add(grid.x.back(), 0, 1);
+      }
+      if (grid.y.size() >= 2) {
+        add(grid.y.front(), 1, -1);
+        add(grid.y.back(), 1, 1);
+      }
+    }
+  }
   detail::AreaGeometry areaGeometry;
   const auto areas = measureAreas(document, &areaGeometry);
   for (auto& page : detail::areaEvidencePages(document, areas, areaGeometry, spec.scale)) {
