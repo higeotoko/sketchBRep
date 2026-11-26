@@ -1321,6 +1321,11 @@ void MainWindow::buildMenus() {
     const QString path = QFileDialog::getSaveFileName(this, tr("図面一式を書き出す"), tr("図面一式.pdf"), tr("PDF (*.pdf)"));
     if (!path.isEmpty()) saveDrawingSet(path, true);
   })->setObjectName(QStringLiteral("exportDrawingSetWithTablesAction"));
+  // docs/306: the storeys' plans on one sheet, the elevations and sections on another.
+  file->addAction(tr("図面一式を書き出す（平面図・立面図と断面図をそれぞれ 1 枚にまとめる、1 つの PDF）..."), this, [this] {
+    const QString path = QFileDialog::getSaveFileName(this, tr("図面一式を書き出す"), tr("図面一式.pdf"), tr("PDF (*.pdf)"));
+    if (!path.isEmpty()) saveDrawingSet(path, false, true);
+  })->setObjectName(QStringLiteral("exportDrawingSetCombinedAction"));
   file->addAction(tr("DWG 変換ソフトの設定..."), this, &MainWindow::configureDwgConverter);
   file->addSeparator();
   file->addAction(tr("自動保存とバックアップの設定..."), this, &MainWindow::showAutosaveDialog);
@@ -5947,13 +5952,14 @@ void MainWindow::showPermitSubmission() {
   showPermitSubmissionReview(modeler_.document(), spec, this);
 }
 
-int MainWindow::saveDrawingSet(const QString& path, bool tablesWithPlan) {
+int MainWindow::saveDrawingSet(const QString& path, bool tablesWithPlan, bool combineViews) {
   QString tilesMessage;
   if (doc::vicinityMapOf(modeler_.document())) {
     setStatus(tr("付近見取図の地図タイルを国土地理院から取っています..."));
     QApplication::processEvents();
   }
   doc::DrawingSetSpec spec = drawingSetSpecFor(modeler_.document(), tablesWithPlan, &tilesMessage);
+  spec.combineViews = combineViews;
   if (combinedHeightDraft_ && combinedHeightDraft_->sequence == modeler_.document().sequence() && combinedHeightDraft_->evidence)
     spec.heightEvidence = &*combinedHeightDraft_->evidence;
   const auto set = doc::drawingSet(modeler_.document(), spec);

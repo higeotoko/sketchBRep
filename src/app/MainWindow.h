@@ -319,7 +319,7 @@ class MainWindow : public QMainWindow, public ToolHost {
   // The table on a sheet of its own, as PDF, DXF or JWW by the path's extension (docs/113).
   bool saveScheduleDrawing(int table, const QString& path);
   // Every drawing with sheet numbers in one PDF (docs/125); the sheets written, 0 when refused.
-  int saveDrawingSet(const QString& path, bool tablesWithPlan = false);
+  int saveDrawingSet(const QString& path, bool tablesWithPlan = false, bool combineViews = false);
   // docs/133: the other openings of this one's mark made like it.
   bool matchOpeningType(const doc::ObjectId& host, int index);
   QString lastIfcSummary() const { return lastIfcSummary_; }

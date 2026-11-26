@@ -15022,6 +15022,12 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
     const int fewer=f.window.saveDrawingSet(together,true);
     QVERIFY2(fewer>0&&fewer<sheets,qPrintable(QStringLiteral("%1 %2").arg(fewer).arg(sheets)));
     QVERIFY(QFileInfo(together).size()>10000);
+    // docs/306: the plans on one sheet and the elevations and sections on another.
+    QVERIFY(f.window.findChild<QAction*>(QStringLiteral("exportDrawingSetCombinedAction")));
+    const QString combined=dir.filePath(QStringLiteral("set_combined.pdf"));
+    const int merged=f.window.saveDrawingSet(combined,false,true);
+    QVERIFY2(merged>0&&merged<sheets,qPrintable(QStringLiteral("%1 %2").arg(merged).arg(sheets)));
+    QVERIFY(QFileInfo(combined).size()>10000);
   }
   // docs/115: a room's finish typed in its properties goes into the finish schedule.
   {
