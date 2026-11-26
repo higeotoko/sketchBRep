@@ -81,4 +81,48 @@ draw::Table columnTable(const std::vector<ColumnRow>& rows) {
   return t;
 }
 
+StructuralSpecs structuralSpecsOf(const Document& document) {
+  StructuralSpecs s;
+  const auto j = nlohmann::json::parse(document.settings().structuralSpecs, nullptr, false);
+  if (!j.is_object()) return s;
+  s.roofing = j.value("roofing", std::string());
+  s.frameMethod = j.value("frame_method", std::string());
+  s.joints = j.value("joints", std::string());
+  s.wallBase = j.value("wall_base", std::string());
+  s.decay = j.value("decay", std::string());
+  s.source = j.value("source", std::string());
+  return s;
+}
+
+draw::Table structuralSpecTable(const Document& document) {
+  const StructuralSpecs s = structuralSpecsOf(document);
+  draw::Table t;
+  t.title = "構造詳細図（仕様）";
+  t.headers = {"事項（規則第1条の3 表2）", "内容", "条文", "状態"};
+  const auto given = [&](const char* item, const std::string& value, const char* article) {
+    t.rows.push_back({item, value.empty() ? "未入力" : value, article, value.empty() ? "未入力" : "入力済み"});
+  };
+  given("屋根ふき材の種別", s.roofing, "令第39条");
+  const auto columns = columnRows(document);
+  if (columns.empty()) {
+    t.rows.push_back({"柱の有効細長比", "モデルに木造の柱がありません", "令第43条第6項", "未入力"});
+  } else {
+    double worst = 0;
+    for (const auto& c : columns) worst = std::max(worst, c.slenderness);
+    char text[96];
+    std::snprintf(text, sizeof text, "最大 %.1f（構造詳細図（柱の小径・有効細長比）による）", worst);
+    t.rows.push_back({"柱の有効細長比", text, "令第43条第6項（150以下）", worst <= 150.0 + 1e-9 ? "規定内" : "規定外"});
+  }
+  given("構造耐力上主要な部分である軸組等の構造方法", s.frameMethod, "令第46条");
+  given("構造耐力上主要な部分である継手又は仕口の構造方法", s.joints, "令第47条");
+  given("外壁のうち、軸組が腐りやすい構造である部分の下地", s.wallBase, "令第49条第1項");
+  given("地面から1m以内の部分の防腐又は防蟻措置", s.decay, "令第49条第2項");
+  t.notes = {
+      "規則第1条の3 表2（令第3章第3節が適用される建築物）が構造詳細図に求める事項です。モデルに無い事項は入力された内容です。",
+      std::string("資料：") + (s.source.empty() ? "未入力" : s.source),
+      std::string("条文：") + kColumnArticleSource + "（" + kColumnArticleCheckedOn + " 確認）",
+  };
+  return t;
+}
+
 }  // namespace sbr::doc

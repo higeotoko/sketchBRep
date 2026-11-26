@@ -25,6 +25,22 @@ struct ColumnRow {
 std::vector<ColumnRow> columnRows(const Document& document);
 draw::Table columnTable(const std::vector<ColumnRow>& rows);
 
+// docs/311: 構造詳細図（仕様）: what 規則第1条の3 表2 asks the 構造詳細図 of a timber building to show, as the
+// person gives it (each one line), with the article it answers; the columns' slenderness from columnRows.
+struct StructuralSpecs {
+  std::string roofing;     // 屋根ふき材の種別 (令39条)
+  std::string frameMethod; // 軸組等の構造方法 (令46条)
+  std::string joints;      // 継手又は仕口の構造方法 (令47条)
+  std::string wallBase;    // 外壁のうち軸組が腐りやすい構造である部分の下地 (令49条1項)
+  std::string decay;       // 地面から1m以内の防腐・防蟻措置 (令49条2項)
+  std::string source;
+  bool empty() const {
+    return roofing.empty() && frameMethod.empty() && joints.empty() && wallBase.empty() && decay.empty() && source.empty();
+  }
+};
+StructuralSpecs structuralSpecsOf(const Document& document);
+draw::Table structuralSpecTable(const Document& document);
+
 inline constexpr char kColumnArticleSource[] = "https://laws.e-gov.go.jp/law/325CO0000000338";
 inline constexpr char kColumnArticleCheckedOn[] = "2026-11-27";
 

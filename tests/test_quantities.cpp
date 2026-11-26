@@ -402,3 +402,35 @@ TEST_F(Quantities, ColumnTableGivesSlendernessOfTheFrameColumns) {
   one.role = "柱";
   EXPECT_EQ(doc::columnTable({one}).rows[0][5], "89.1");
 }
+
+// docs/311: the 構造詳細図's specifications: given items, the columns' slenderness, the source required.
+TEST_F(Quantities, StructuralSpecTableTakesTheGivenSpecifications) {
+  frame();
+  auto table = doc::structuralSpecTable(m.document());
+  ASSERT_EQ(table.rows.size(), 6u);
+  EXPECT_EQ(table.rows[0][3], "未入力");
+  EXPECT_EQ(table.rows[1][0], "柱の有効細長比");
+  EXPECT_TRUE(table.rows[1][3] == "規定内" || table.rows[1][3] == "規定外");
+  doc::StructuralSpecs s;
+  s.roofing = "ガルバリウム鋼板 立平葺き";
+  s.joints = "平成12年建設省告示第1460号による";
+  EXPECT_FALSE(m.setStructuralSpecs(s));  // the source is required
+  s.source = "架空の仕様書";
+  ASSERT_TRUE(m.setStructuralSpecs(s));
+  table = doc::structuralSpecTable(m.document());
+  EXPECT_EQ(table.rows[0][1], "ガルバリウム鋼板 立平葺き");
+  EXPECT_EQ(table.rows[0][3], "入力済み");
+  EXPECT_EQ(table.rows[3][3], "入力済み");
+  EXPECT_EQ(table.rows[4][3], "未入力");
+  Document restored;
+  ASSERT_TRUE(deserializeDocument(serializeDocument(m.document()), restored));
+  EXPECT_EQ(doc::structuralSpecsOf(restored).roofing, "ガルバリウム鋼板 立平葺き");
+  ASSERT_TRUE(m.undo());
+  EXPECT_TRUE(doc::structuralSpecsOf(m.document()).empty());
+  sbr::api::CommandApi api(m);
+  const auto set = json::parse(api.execute(R"({"command":"set_structural_specs","args":{"decay":"土台ひのき、柱・筋かいは防腐防蟻剤塗布","source":"架空の仕様書"}})"));
+  ASSERT_TRUE(set["ok"]) << set.dump();
+  const auto read = json::parse(api.execute(R"({"command":"structural_spec_table"})"));
+  ASSERT_TRUE(read["ok"]) << read.dump();
+  EXPECT_EQ(read["result"]["rows"][5][3], "入力済み");
+}

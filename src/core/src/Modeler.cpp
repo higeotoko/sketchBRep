@@ -4212,6 +4212,25 @@ Status Modeler::setFoundationGround(const FoundationGround& g) {
   return Status::success();
 }
 
+Status Modeler::setStructuralSpecs(const StructuralSpecs& s) {
+  for (const std::string* text : {&s.roofing, &s.frameMethod, &s.joints, &s.wallBase, &s.decay, &s.source})
+    if (!oneLine(*text, 300)) return Status::failure("仕様の欄は1行、100 字までです");
+  if (!s.empty() && s.source.empty()) return Status::failure("資料（仕様書・設計図書など）が要ります");
+  nlohmann::json j = nlohmann::json::object();
+  const auto put = [&](const char* key, const std::string& value) {
+    if (!value.empty()) j[key] = value;
+  };
+  put("roofing", s.roofing);
+  put("frame_method", s.frameMethod);
+  put("joints", s.joints);
+  put("wall_base", s.wallBase);
+  put("decay", s.decay);
+  put("source", s.source);
+  const std::string text = j.dump();
+  editSettings(document_, history_, "Structural specifications", [&](PersistentSettings& p) { p.structuralSpecs = text; });
+  return Status::success();
+}
+
 std::vector<Modeler::StructuralMaterial> Modeler::structuralMaterialsOf(const Document& document) {
   std::vector<StructuralMaterial> out;
   const nlohmann::json all = nlohmann::json::parse(document.settings().structuralMaterials, nullptr, false);

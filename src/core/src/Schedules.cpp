@@ -5679,6 +5679,11 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
     planned.push_back({name, std::nullopt, std::nullopt, {}, std::move(*detail), 20.0});
   }
   // docs/310: the columns' sizes and slenderness (構造詳細図) when the model has timber columns.
+  // docs/311: the 構造詳細図's specifications when the model has timber columns or any are given.
+  if (!columnRows(document).empty() || !structuralSpecsOf(document).empty()) {
+    const auto table = structuralSpecTable(document);
+    planned.push_back({table.title, std::nullopt, table, {}});
+  }
   if (const auto columns = columnRows(document); !columns.empty()) {
     const auto table = columnTable(columns);
     planned.push_back({table.title, std::nullopt, table, {}});

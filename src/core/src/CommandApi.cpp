@@ -3765,6 +3765,33 @@ const std::vector<CommandDef>& commands() {
          return json{{"headers", t.headers}, {"rows", t.rows}, {"notes", t.notes},
                      {"has_foundation", study.hasFoundation}, {"csv", doc::tableCsv(t)}};
        }},
+      {"set_structural_specs",
+       "docs/311: what the 構造詳細図 of a timber building must show (規則第1条の3 表2) that the model does not hold, as "
+       "the person gives it (all replaced; {} takes them away): roofing (屋根ふき材の種別, 令39条), frame_method (軸組等の"
+       "構造方法, 令46条), joints (継手・仕口の構造方法, 令47条), wall_base (腐りやすい外壁の下地, 令49条1項), decay (地面から"
+       "1m以内の防腐・防蟻, 令49条2項), source (required when anything is given). One line each. Never guess. One undo step.",
+       SCHEMA({"type": "object", "properties": {"roofing": {"type": "string"}, "frame_method": {"type": "string"},
+               "joints": {"type": "string"}, "wall_base": {"type": "string"}, "decay": {"type": "string"},
+               "source": {"type": "string"}}}),
+       [](doc::Modeler& m, const json& a) {
+         doc::StructuralSpecs s;
+         s.roofing = a.value("roofing", std::string());
+         s.frameMethod = a.value("frame_method", std::string());
+         s.joints = a.value("joints", std::string());
+         s.wallBase = a.value("wall_base", std::string());
+         s.decay = a.value("decay", std::string());
+         s.source = a.value("source", std::string());
+         if (const auto done = m.setStructuralSpecs(s); !done) throw ApiError(done.message());
+         return json{{"ok", true}};
+       }},
+      {"structural_spec_table",
+       "docs/311: 構造詳細図（仕様）: the items of 規則第1条の3 表2 for timber with what was given (set_structural_specs) "
+       "and the columns' largest slenderness against 令43条6項. Rows, notes and CSV. Read only.",
+       SCHEMA({"type": "object", "properties": {}}),
+       [](doc::Modeler& m, const json&) {
+         const auto t = doc::structuralSpecTable(m.document());
+         return json{{"headers", t.headers}, {"rows", t.rows}, {"notes", t.notes}, {"csv", doc::tableCsv(t)}};
+       }},
       {"column_table",
        "docs/310: 構造詳細図（柱の小径・有効細長比）: the timber columns (take_off column / through_column) grouped by "
        "section and the vertical distance between the horizontal members they meet, with smaller side / distance and the "
@@ -5189,7 +5216,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
       name == "preview" || name == "query_objects" || name == "aggregate" || name == "get_changes" ||
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
       name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" ||
-      name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" || name == "permit_checks" || name == "permit_intake_review" || name == "ground_level_table" || name == "structural_material_table" || name == "foundation_ground_table" || name == "column_table" || name == "interior_material_table" || name == "check_drawing_set" || name == "project_outline" || name == "daylight_factor_estimates" ||
+      name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" || name == "permit_checks" || name == "permit_intake_review" || name == "ground_level_table" || name == "structural_material_table" || name == "foundation_ground_table" || name == "column_table" || name == "structural_spec_table" || name == "interior_material_table" || name == "check_drawing_set" || name == "project_outline" || name == "daylight_factor_estimates" ||
       name == "fire_compartment_review" || name == "fire_spread_review" || name == "site_height_conditions" || name == "yokohama_height_district_at" || name == "compare_yokohama_height_district" ||
       name == "neighbor_height_at" || name == "north_height_at" || name == "compare_north_height" || name == "compare_neighbor_height" || name == "road_height_datum" || name == "road_height_table_values" || name == "measure_road_building_setback" || name == "compare_road_height_plane" || name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
     return E::Read;
