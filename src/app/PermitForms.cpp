@@ -320,9 +320,11 @@ Transfer collect(const doc::Document& document, bool applyArea) {
   field("other_zones", tr("その他の区域"), zones, outlineSource, true);
   const auto& boundary = document.settings().siteBoundary;
   QString width, frontage, siteArea, zone;
+  double measuredSiteMm2 = 0.0;
   if (boundary) {
     if (const auto geometry = document.siteBoundaryGeometry(boundary->outline)) {
-      siteArea = squareMetres(geometry->areaMm2);
+      measuredSiteMm2 = geometry->areaMm2;
+      siteArea = squareMetres(measuredSiteMm2);
       if (boundary->road && document.siteRoadEdge(*geometry)) {
         if (boundary->road->widthMm > 0) width = metres(boundary->road->widthMm);
         if (boundary->road->frontageMm > 0) frontage = metres(boundary->road->frontageMm);
@@ -389,26 +391,106 @@ Transfer collect(const doc::Document& document, bool applyArea) {
   const auto buildingHeight = height("form_building_height");
   auto eaves = height("form_building_eaves");
   if (!buildingHeight.isEmpty() && eaves.toDouble() > buildingHeight.toDouble()) eaves.clear();
-  candidate("building_count", tr("申請に係る建築物の数"), result.newBuilding ? QStringLiteral("1") : QString{},
-            tr("単一棟の新築"));
-  verified("building_other", tr("同一敷地の他の建築物の数"), integer("form_building_other", 0));
-  verified("building_above", tr("地上階数"), integer("form_building_above", 1));
-  verified("building_below", tr("地下階数"), integer("form_building_below", 0));
+  const auto otherBuildings = integer("form_building_other", 0);
+  const auto above = integer("form_building_above", 1);
+  const auto below = integer("form_building_below", 0);
+  const bool buildingDetail = result.newBuilding && knownFloor && area.legalTotal > 10'000'000.0;
+  candidate("building_count", tr("申請に係る建築物の数"), buildingDetail ? QStringLiteral("1") : QString{},
+            tr("単一棟の新築・延べ面積が10㎡超"));
+  verified("building_other", tr("同一敷地の他の建築物の数（10㎡超）"), otherBuildings);
+  verified("building_above", tr("地上階数"), above);
+  verified("building_below", tr("地下階数"), below);
   verified("building_height", tr("最高の高さ"), buildingHeight.isEmpty() ? QString{} : buildingHeight + " m");
-  if (applyArea && result.newBuilding) {
+
+  if (applyArea && buildingDetail) {
     if (!eaves.isEmpty()) result.values.insert("building_eaves", eaves + " m");
     result.values.insert("detail_main_use", get("main_use"));
     result.values.insert("detail_use_code", get("use_code"));
     result.values.insert("check_detail_work_new", QStringLiteral("1"));
     if (structureMatch.hasMatch()) result.values.insert("detail_structure", structureMatch.captured(1));
   }
+  const auto ratioSource = get("form_building_ratio_source");
+  const auto ratioArea = [&](const char* key) {
+    const auto entered = get(key);
+    static const QRegularExpression decimal(QStringLiteral("^[0-9]{1,9}(\\.[0-9]{1,4})?$"));
+    return decimal.match(entered).hasMatch() ? entered.toDouble() * 1e6 : -1.0;
+  };
+  const double confirmedSite = ratioArea("form_building_ratio_site");
+  const bool sameSite = confirmedSite > 0 && measuredSiteMm2 > 0 &&
+                        squareMetres(confirmedSite) == squareMetres(measuredSiteMm2);
+  const auto addRatio = [&](const char* key, const QString& label, const QString& areaKey,
+                            const QString& percentKey, double gross) {
+    const double numerator = ratioArea(key);
+    QString state;
+    if (ratioSource.isEmpty()) state = tr("確認資料を入力");
+    else if (!sameSite) state = tr("算定用敷地面積とモデルを照合");
+    else if (otherBuildings != "0") state = tr("同一敷地の既存棟・別棟を確認");
+    else if (numerator < 0.0 || gross <= 0.0 || numerator > gross + 5'000.0) state = tr("算定面積とモデルを照合");
+    if (!state.isEmpty()) {
+      row(label, get(key), ratioSource, state);
+      return;
+    }
+    const auto percentage = QString::number(100.0 * numerator / confirmedSite, 'f', 2) + " %";
+    const bool transfer = applyArea && result.newBuilding;
+    if (transfer) {
+      result.values.insert(areaKey, squareMetres(numerator));
+      result.values.insert(percentKey, percentage);
+    }
+    row(label, QStringLiteral("%1 ÷ %2 ＝ %3").arg(squareMetres(numerator), squareMetres(confirmedSite), percentage),
+        ratioSource, transfer ? tr("転記") : tr("候補"));
+  };
+  addRatio("form_building_ratio_coverage", tr("建蔽率"), "coverage_area", "coverage_percent",
+           area.buildingKnown ? area.buildingArea : 0.0);
+  addRatio("form_building_ratio_floor", tr("容積率"), "ratio_floor_area", "floor_percent",
+           knownFloor ? area.legalTotal : 0.0);
+
+  // The fourth face has six rows. Require a complete correspondence to the entered legal storey
+  // count; levels such as GL/RF or split levels cannot silently take a numbered storey's place.
+  QMap<int, double> floors;
+  const int aboveCount = above.toInt(), belowCount = below.toInt();
+  bool validFloors = buildingDetail && !above.isEmpty() && !below.isEmpty() && aboveCount + belowCount <= 6;
+  static const QRegularExpression levelName(QStringLiteral("^(B)?([1-6])(?:FL|F|階)?$"),
+                                             QRegularExpression::CaseInsensitiveOption);
+  double floorSum = 0.0;
+  for (const auto& floor : area.rows) {
+    if (!floor.legalKnown || floor.legalFloor <= 0.0) continue;
+    const auto match = levelName.match(QString::fromStdString(floor.level).trimmed());
+    const int number = match.captured(2).toInt();
+    const bool basement = !match.captured(1).isEmpty();
+    const int index = basement ? -number : number;
+    if (!match.hasMatch() || floor.unreadableWalls || number > (basement ? belowCount : aboveCount) ||
+        floors.contains(index)) {
+      validFloors = false;
+      continue;
+    }
+    floors.insert(index, floor.legalFloor);
+    floorSum += floor.legalFloor;
+  }
+  validFloors = validFloors && floors.size() == aboveCount + belowCount &&
+                std::abs(floorSum - area.legalTotal) <= 1.0;
+  if (!validFloors) {
+    row(tr("第四面の階別床面積"), {}, tr("面積の根拠図"), tr("階名・階数・面積を照合"), true);
+  } else {
+    auto it = floors.constEnd();
+    for (int i = 0; it != floors.constBegin(); ++i) {
+      --it;
+      const auto number = it.key() < 0 ? QStringLiteral("B%1").arg(-it.key()) : QString::number(it.key());
+      const auto key = QStringLiteral("detail_floor_%1").arg(i);
+      const auto value = squareMetres(it.value());
+      if (applyArea) {
+        result.values.insert(key, value);
+        result.values.insert(key + "_number", number);
+      }
+      row(tr("第四面・%1階の床面積").arg(number), value, tr("面積の根拠図"), applyArea ? tr("転記") : tr("候補"), true);
+    }
+    if (applyArea) result.values.insert("detail_floor_total", squareMetres(area.legalTotal));
+  }
   const auto eavesInput = get("form_building_eaves");
   row(tr("最高の軒の高さ"), eaves.isEmpty() ? eavesInput : eaves + " m", checked,
       eaves.isEmpty() ? (eavesInput.isEmpty() ? tr("要記入") : tr("入力値を確認"))
-                      : applyArea && result.newBuilding ? tr("転記") : tr("候補"), true);
+                      : applyArea && buildingDetail ? tr("転記") : tr("候補"), true);
   row(tr("申請日・宛先"), {}, {}, tr("確認申請書の第一面に記入"), true);
-  row(tr("主要構造部・階別情報"), {}, {}, tr("確認申請書の第四面以降に記入"), true);
-  row(tr("建蔽率・容積率"), {}, {}, tr("根拠と照合して様式に記入"));
+  row(tr("主要構造部・第五面の階別概要"), {}, {}, tr("確認申請書の第四面以降に記入"), true);
   return result;
 }
 

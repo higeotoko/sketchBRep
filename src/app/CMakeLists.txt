@@ -33,6 +33,7 @@ add_library(sbr_ui STATIC
   DrawingExport.cpp DrawingExport.h
   PermitWorkflowPanel.cpp PermitWorkflowPanel.h
   PermitForms.cpp PermitForms.h
+  PermitSubmission.cpp PermitSubmission.h
   CrashLog.cpp CrashLog.h
   HelpWindow.cpp HelpWindow.h
   SunDialog.cpp SunDialog.h

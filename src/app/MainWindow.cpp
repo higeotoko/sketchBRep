@@ -17,6 +17,7 @@
 #include "VicinityMapFetcher.h"
 #include "PermitWorkflowPanel.h"
 #include "PermitForms.h"
+#include "PermitSubmission.h"
 #include "CrashLog.h"
 #include "HelpWindow.h"
 #include "SunDialog.h"
@@ -1281,6 +1282,8 @@ void MainWindow::buildMenus() {
   site->addAction(tr("確認申請のWord様式..."), this, [this] {
     showPermitForms(modeler_.document(), this, [this] { showProjectOutlineDialog(); });
   })->setObjectName(QStringLiteral("permitWordForms"));
+  site->addAction(tr("横浜市の提出図書を照合..."), this, &MainWindow::showPermitSubmission)
+      ->setObjectName(QStringLiteral("permitSubmissionAction"));
   site->addAction(tr("計画概要の項目..."), this, &MainWindow::showProjectOutlineDialog)
       ->setObjectName(QStringLiteral("projectOutlineAction"));
   // docs/215: the energy route and region (docs/210).
@@ -5932,6 +5935,16 @@ doc::DrawingSetSpec drawingSetSpecFor(const doc::Document& document, bool tables
 }
 }  // namespace
 
+void MainWindow::showPermitSubmission() {
+  // The file list can be checked offline. A registered map is a drawing candidate until export.
+  doc::DrawingSetSpec spec;
+  std::optional<doc::HeightLimitEvidence> evidence;
+  if (combinedHeightDraft_ && combinedHeightDraft_->sequence == modeler_.document().sequence())
+    evidence = combinedHeightDraft_->evidence;
+  if (evidence) spec.heightEvidence = &*evidence;
+  showPermitSubmissionReview(modeler_.document(), spec, this);
+}
+
 int MainWindow::saveDrawingSet(const QString& path, bool tablesWithPlan) {
   QString tilesMessage;
   if (doc::vicinityMapOf(modeler_.document())) {
@@ -7864,6 +7877,7 @@ void MainWindow::showPermitWorkflow() {
       case Action::Zone: trigger("siteZoneAction"); break;  // docs/206
       case Action::Outline: trigger("projectOutlineAction"); break;  // docs/214
       case Action::WordForms: trigger("permitWordForms"); break;
+      case Action::Submission: trigger("permitSubmissionAction"); break;
       case Action::EnergyRoute: trigger("energyRouteAction"); break;  // docs/215
       case Action::HeightConditions: showSiteHeightConditionsDialog(); break;
       case Action::RoadHeightPlane: showRoadHeightPlaneDialog(); break;

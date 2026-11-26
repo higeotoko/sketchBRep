@@ -3763,6 +3763,10 @@ const std::vector<ProjectOutlineField>& projectOutlineFields() {
       {"form_building_other", "同一敷地の他の建築物の数", "他の建築物なしは 0", {}, true},
       {"form_building_height", "建築物の最高の高さ（m）", "地盤面と算定対象を確認した値", {}, true},
       {"form_building_eaves", "最高の軒の高さ（m）", "地盤面と算定対象を確認した値", {}, true},
+      {"form_building_ratio_site", "算定に使う敷地面積（㎡）", "法令上算入する敷地面積。両方の率で同じ面積を使う場合", {}, true},
+      {"form_building_ratio_coverage", "建蔽率の基礎となる建築面積（㎡）", "特例軒等の取扱いを確認した値", {}, true},
+      {"form_building_ratio_floor", "容積率の基礎となる延べ面積（㎡）", "不算入部分を控除した確認済みの値", {}, true},
+      {"form_building_ratio_source", "建蔽率・容積率の確認資料", "面積・控除を確認した図書名など", {}, true},
   };
   return fields;
 }

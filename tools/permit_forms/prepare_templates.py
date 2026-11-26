@@ -120,7 +120,12 @@ def patch_document(xml, third):
     boxes(242 - offset, ["work_" + kind for kind in (
         "new", "extension", "rebuild", "relocation", "use_change", "major_repair", "major_remodel")])
     slots(244 - offset, ["building_area", None, "building_area"])
+    slots(246 - offset, ["coverage_area", None, "coverage_area"])
+    after(247 - offset, "率】", "coverage_percent")
     slots(249 - offset, ["floor_area", None, "floor_area"])
+    ratio_offset = 61 if third else 0
+    after(270 - ratio_offset, "面積】", "ratio_floor_area")
+    after(271 - ratio_offset, "率】", "floor_percent")
     edit(279 - (61 if third else 0), lambda text: re.sub(r" +造", mark("structure") + "造", text, count=1))
     date(286 - (61 if third else 0), "start_date")
     date(287 - (61 if third else 0), "finish_date")
@@ -133,6 +138,11 @@ def patch_document(xml, third):
         slots(index - (61 if third else 0), [key])
 
     if not third:
+        for index in range(6):
+            key = f"detail_floor_{index}"
+            edit(358 + index, lambda text, name=key: text.replace("(    階)", "(" + mark("slot_" + name + "_number__4") + "階)", 1))
+            slots(358 + index, [key, None, key])
+        slots(364, ["detail_floor_total", None, "detail_floor_total"])
         after(299, "番号】", "building_count")
         after(300, "(区分", "detail_use_code")
         after(300, ")", "detail_main_use")

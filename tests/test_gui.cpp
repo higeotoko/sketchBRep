@@ -260,6 +260,7 @@ class GuiPhase1 : public QObject {
   void fireCompartmentReviewAssociatesTheDoorAndEquipment();
   void areaEvidenceShowsFloorAndBuildingSheets();
   void permitWordFormsTransferAndEmbedDrawings();
+  void permitSubmissionReviewFindsModelAndFileCandidates();
   void permitWorkflowAppliesDaylightFactors();
   void permitWorkflowMarksStagesAndAsksAgain();
   void projectOutlineDialogGivesTheItems();
@@ -1641,6 +1642,59 @@ void GuiPhase1::permitWorkflowMarksStagesAndAsksAgain() {
 
 // docs/194: stages 2 (通り芯) and 3 (平面) list what the model has and what is missing; a row's
 // button selects the objects it is about, and the rows follow the model.
+void GuiPhase1::permitSubmissionReviewFindsModelAndFileCandidates() {
+  Fixture f;
+  QVERIFY(f.setUp());
+  auto& modeler = f.window.modeler();
+  QVERIFY(modeler.setLevels({{"", "1FL", 0}}));
+  api::CommandApi api(modeler);
+  const auto wall = nlohmann::json::parse(api.execute(R"({"command":"create_wall","args":{"points":[
+    [0,0],[6000,0],[6000,4000],[0,4000],[0,0]],"height":2800,"thickness":160}})"));
+  QVERIFY(wall["ok"].get<bool>());
+  QTemporaryDir folder;
+  QVERIFY(folder.isValid());
+  for (const auto& name : {QStringLiteral("確認申請書.docx"), QStringLiteral("図面一式.pdf")}) {
+    QFile file(folder.filePath(name));
+    QVERIFY(file.open(QIODevice::WriteOnly));
+  }
+  auto* action = f.window.findChild<QAction*>(QStringLiteral("permitSubmissionAction"));
+  QVERIFY(action);
+  const bool previous = QApplication::testAttribute(Qt::AA_DontUseNativeDialogs);
+  QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
+  const auto restore = qScopeGuard([&] { QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, previous); });
+  bool checked = false;
+  QTimer::singleShot(0, [&] {
+    auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+    if (!dialog) return;
+    auto* table = dialog->findChild<QTableWidget*>(QStringLiteral("permitSubmissionTable"));
+    auto* scan = dialog->findChild<QPushButton*>(QStringLiteral("permitSubmissionFolder"));
+    auto* model = dialog->findChild<QPushButton*>(QStringLiteral("permitSubmissionModel"));
+    if (!table || !scan || !model) return dialog->reject();
+    QTimer::singleShot(0, [&] {
+      auto* picker = qobject_cast<QFileDialog*>(QApplication::activeModalWidget());
+      if (!picker) return;
+      picker->selectFile(folder.path());
+      QMetaObject::invokeMethod(picker, "accept", Qt::DirectConnection);
+    });
+    scan->click();
+    model->click();
+    const auto status = [&](const QString& label, int column) {
+      for (int i = 0; i < table->rowCount(); ++i)
+        if (table->item(i, 0)->text() == label) return table->item(i, column)->text();
+      return QString{};
+    };
+    checked = status(QStringLiteral("確認申請書"), 2) == QStringLiteral("1件の候補") &&
+              status(QStringLiteral("建築計画概要書"), 2) == QStringLiteral("候補ファイルなし") &&
+              status(QStringLiteral("各階平面図"), 1) == QStringLiteral("1枚の候補") &&
+              status(QStringLiteral("配置図"), 1) == QStringLiteral("該当図面なし");
+    const auto reviewDir = qEnvironmentVariable("SBR_PERMIT_WORD_REVIEW_DIR");
+    if (checked && !reviewDir.isEmpty()) dialog->grab().save(QDir(reviewDir).filePath(QStringLiteral("submission-preview.png")));
+    dialog->reject();
+  });
+  action->trigger();
+  QVERIFY(checked);
+}
+
 void GuiPhase1::permitWordFormsTransferAndEmbedDrawings() {
   Fixture f;
   QVERIFY(f.setUp());
@@ -1657,7 +1711,9 @@ void GuiPhase1::permitWordFormsTransferAndEmbedDrawings() {
       {"form_designer_office", "試験設計事務所"}, {"form_designer_office_grade", "first"},
       {"form_designer_office_prefecture", "神奈川県"}, {"form_designer_office_number", "12345"},
       {"form_contractor_name", "試験工務店"}, {"form_building_above", "2"}, {"form_building_below", "0"},
-      {"form_building_other", "0"}, {"form_building_height", "8.120"}, {"form_building_eaves", "6.580"}}));
+      {"form_building_other", "0"}, {"form_building_height", "8.120"}, {"form_building_eaves", "6.580"},
+      {"form_building_ratio_site", "120"}, {"form_building_ratio_coverage", "41.5"}, {"form_building_ratio_floor", "80"},
+      {"form_building_ratio_source", "確認済みの架空面積表"}}));
   const auto site = modeler.createPolyline({gp_Pnt(0, 0, 0), gp_Pnt(10000, 0, 0), gp_Pnt(10000, 12000, 0),
       gp_Pnt(0, 12000, 0), gp_Pnt(0, 0, 0)});
   QVERIFY(site);
@@ -1669,11 +1725,14 @@ void GuiPhase1::permitWordFormsTransferAndEmbedDrawings() {
   road.frontageMm = 9400;
   road.source = "架空の道路台帳";
   QVERIFY(modeler.setSiteRoad({gp_Pnt(0, 0, 0), gp_Pnt(10000, 0, 0)}, road));
-  QVERIFY(modeler.setLevels({{"", "1FL", 0}}));
+  QVERIFY(modeler.setLevels({{"", "1FL", 0}, {"", "2FL", 3000}}));
   api::CommandApi api(modeler);
-  const auto wall = nlohmann::json::parse(api.execute(R"({"command":"create_wall","args":{"points":[
-    [2000,2000],[8000,2000],[8000,9000],[2000,9000],[2000,2000]],"base":0,"height":2800,"thickness":160}})"));
-  QVERIFY(wall["ok"].get<bool>());
+  for (double base : {0.0, 3000.0}) {
+    const auto wall = nlohmann::json::parse(api.execute(nlohmann::json{
+        {"command", "create_wall"}, {"args", {{"points", {{2000,2000},{8000,2000},{8000,9000},{2000,9000},{2000,2000}}},
+                                             {"base", base}, {"height", 2800}, {"thickness", 160}}}}.dump()));
+    QVERIFY(wall["ok"].get<bool>());
+  }
   QVERIFY(modeler.setSiteHeightConditions("mid_high_1", "", "架空の都市計画図"));
   QVERIFY(modeler.setVicinityMap(35.444, 139.638, 16, "pale"));
   QTemporaryDir cache;
@@ -1758,6 +1817,14 @@ void GuiPhase1::permitWordFormsTransferAndEmbedDrawings() {
   const auto building = text(unpack(detailed.docx).value(documentXml));
   QVERIFY(building.count(QStringLiteral("8.120 m")) == 2);
   QVERIFY(building.contains(QStringLiteral("6.580 m")));
+  QVERIFY(building.contains(QStringLiteral("34.58 %")));
+  QVERIFY(building.contains(QStringLiteral("66.67 %")));
+  QVERIFY(publicPage.contains(QStringLiteral("66.67 %")));
+  QVERIFY(!cover.contains(QStringLiteral("66.67 %")));
+  const auto secondFloor = building.indexOf(QStringLiteral("( 2  階)"));
+  const auto firstFloor = building.indexOf(QStringLiteral("( 1  階)"));
+  QVERIFY(secondFloor >= 0 && firstFloor > secondFloor);
+  QVERIFY(building.contains(QStringLiteral("84.00 ㎡")));
   QVERIFY(building.count(QStringLiteral("一戸建ての住宅")) == 2);
   QVERIFY(building.contains(QStringLiteral("架空住宅新築工事")));
   QVERIFY(cover.contains(QStringLiteral("☑提出済")));
@@ -1775,6 +1842,11 @@ void GuiPhase1::permitWordFormsTransferAndEmbedDrawings() {
   const auto incomplete = app::buildPermitForm(modeler.document(), {true, false, false, true});
   QVERIFY(!incomplete.hasVicinityMap);
   QVERIFY(!incomplete.docx.contains("rIdSbrMap"));
+  QVERIFY(modeler.setProjectOutline({{"form_building_ratio_site", "118"}, {"form_building_above", "3"}}));
+  const auto mismatch = text(unpack(app::buildPermitForm(modeler.document(), {false, true}).docx).value(documentXml));
+  QVERIFY(!mismatch.contains(QStringLiteral("66.67 %")));
+  QVERIFY(!mismatch.contains(QStringLiteral("( 2  階)")));
+  QVERIFY(modeler.undo());
 
   auto* action = f.window.findChild<QAction*>(QStringLiteral("permitWordForms"));
   QVERIFY(action);
