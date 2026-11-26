@@ -101,6 +101,7 @@ struct ViewSpec {
   // Sections: how far behind the cut to see (docs/290: a frame elevation along one grid line); 0 = all.
   double sectionDepth = 0.0;
   std::vector<std::string> tags;  // empty: all leaf tags
+  std::vector<std::string> excludeTags;  // docs/295: tags left out (the drawing set's plans: floor and roof framing)
   std::string within;            // optional ancestor group
   bool includeHidden = false;
   bool memberLabels = false;

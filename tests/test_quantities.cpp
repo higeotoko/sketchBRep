@@ -348,3 +348,17 @@ TEST_F(Quantities, StructuralMaterialTableTakesTheGivenMaterials) {
   for (const auto& row : r["result"]["rows"])
     if (row["kind"] == "使用構造材料一覧表") EXPECT_EQ(row["state"], "図面あり") << row.dump();
 }
+
+// docs/295: the drawing set's plans leave out the frame's floor and roof framing (the columns stay).
+TEST_F(Quantities, SetPlansLeaveOutFloorFraming) {
+  frame();
+  draw::ViewSpec all = draw::planView(600 + 1100);
+  all.depth = 1500;
+  draw::ViewSpec plan = all;
+  plan.excludeTags = {"基礎・土台", "1階床組", "2階床組", "小屋組"};
+  const auto withFraming = draw::makeView(m.document(), all);
+  const auto without = draw::makeView(m.document(), plan);
+  ASSERT_TRUE(withFraming && without);
+  EXPECT_LT(without->items.size(), withFraming->items.size());
+  EXPECT_FALSE(without->items.empty());  // the 1st storey's columns, cut
+}

@@ -195,6 +195,7 @@ bool selected(const doc::Document& d, const doc::Object& o, const ViewSpec& spec
     if (kind != doc::ObjectKind::Solid && kind != doc::ObjectKind::Shell &&
         kind != doc::ObjectKind::Face && kind != doc::ObjectKind::Instance) return false;
   }
+  if (std::find(spec.excludeTags.begin(), spec.excludeTags.end(), o.layer) != spec.excludeTags.end()) return false;
   return spec.tags.empty() || std::find(spec.tags.begin(), spec.tags.end(), o.layer) != spec.tags.end();
 }
 

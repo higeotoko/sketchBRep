@@ -5394,6 +5394,8 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
     if (shadowed || !levelIsStorey(levels, levels[i])) continue;  // docs/295
     draw::ViewSpec view = draw::planView(levels[i].elevation + 1100.0);
     view.depth = 1100.0 + 400.0;  // down to 400 under its floor: the storeys below are left out
+    // docs/295: the timber frame's floor and roof framing are the framing plans' (伏図); the columns stay.
+    view.excludeTags = {"基礎・土台", "1階床組", "2階床組", "小屋組"};
     view.title = levels[i].name + " 平面図";
     planned.push_back({view.title, view, std::nullopt, {}});
   }
