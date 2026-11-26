@@ -946,6 +946,16 @@ TEST(Drawing, ElevationsMarkTheRoofPitch) {
   };
   // The ridge runs along x (the longer side): seen from the east the two slopes rise and fall.
   EXPECT_EQ(marks(1), std::make_pair(2, 2));
+  // docs/301: the overhangs from the walls' centre lines to the roof's ends, above the roof.
+  {
+    ViewSpec s = elevationView(m.document(), 1);
+    s.heightDims = true;
+    const auto view = makeView(m.document(), s);
+    ASSERT_TRUE(view);
+    int eaves = 0;
+    for (const auto& d : view->dimensions) eaves += d.text == "600";  // the default eave
+    EXPECT_EQ(eaves, 2);
+  }
   // From the south the slope faces the viewer: no pitch mark.
   EXPECT_EQ(marks(0), std::make_pair(0, 0));
 }

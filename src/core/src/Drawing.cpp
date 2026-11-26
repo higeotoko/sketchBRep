@@ -1633,6 +1633,46 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
         for (const auto& m : marks) near |= m.second == falls;
         if (!near) marks.push_back({at, falls});
       }
+      // docs/301: the overhangs (軒の出・けらばの出): from the lines the roof bears on (the walls' centre
+      // lines, the roof's outline) to the roof's ends, above the roof, as the submitted elevations give them.
+      if (const auto stored = o.attributes.find("roof_spec"); stored != o.attributes.end()) {
+        const auto j = nlohmann::json::parse(stored->second, nullptr, false);
+        if (j.is_object() && j.contains("outline") && j.at("outline").is_array()) {
+          double o0 = 1e300, o1 = -1e300;
+          const gp_Trsf w = document.worldTransform(o);
+          for (const auto& corner : j.at("outline")) {
+            if (!corner.is_array() || corner.size() < 2) continue;
+            const gp_Pnt p = gp_Pnt(corner[0].get<double>(), corner[1].get<double>(), 0).Transformed(w);
+            const double u = proj.uv(gp_Pnt(p.X(), p.Y(), 0)).X();
+            o0 = std::min(o0, u);
+            o1 = std::max(o1, u);
+          }
+          const Bnd_Box rb = document.worldBounds(o);
+          if (o1 > o0 && !rb.IsVoid()) {
+            double x0, y0, z0, x1, y1, z1;
+            rb.Get(x0, y0, z0, x1, y1, z1);
+            double r0 = 1e300, r1 = -1e300;
+            for (double x : {x0, x1})
+              for (double y : {y0, y1}) {
+                const double u = proj.uv(gp_Pnt(x, y, 0)).X();
+                r0 = std::min(r0, u);
+                r1 = std::max(r1, u);
+              }
+            const double v = proj.uv(gp_Pnt(spec.frame.Location().X(), spec.frame.Location().Y(), z1)).Y();
+            const auto grouped = [](double value) {
+              char buf[32];
+              std::snprintf(buf, sizeof buf, "%.0f", value);
+              std::string d = buf;
+              for (int i = static_cast<int>(d.size()) - 3; i > 0; i -= 3) d.insert(static_cast<std::size_t>(i), ",");
+              return d;
+            };
+            if (o0 - r0 > 1.0)
+              view.dimensions.push_back({gp_Pnt2d(r0, v), gp_Pnt2d(o0, v), gp_Vec2d(0, 5.0 * sp), grouped(o0 - r0)});
+            if (r1 - o1 > 1.0)
+              view.dimensions.push_back({gp_Pnt2d(o1, v), gp_Pnt2d(r1, v), gp_Vec2d(0, 5.0 * sp), grouped(r1 - o1)});
+          }
+        }
+      }
       const double leg = 6.0 * sp;
       for (const auto& [at, falls] : marks) {
         const gp_Pnt2d base(at.X() - falls * leg / 2, at.Y() + 7.0 * sp);  // above the slope
