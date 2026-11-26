@@ -389,12 +389,27 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
   for (const LevelMark& l : levels) {
     const double u0 = model.x0 - 3 * margin, u1 = model.x1 + margin;
     const std::string h = std::abs(l.elevation) < 0.5 ? "±0" : (l.elevation > 0 ? "+" : "") + mm(l.elevation);
-    const double width = std::max(textWidth(l.name, 3.5), textWidth(h, 2.5)) * s;
+    // docs/300: a level is marked with a triangle on its line (▽, the ground ▼) and its name beside it,
+    // as Japanese elevations and sections write heights (▽2FL); the height under the name.
+    const double mark = 2.5 * s;  // the triangle's width on paper
+    const double width = mark + 0.8 * s + std::max(textWidth(l.name, 3.5), textWidth(h, 2.5)) * s;
     double at = u0;
     if (l.v - previousV < 7.5 * s) at = std::min(u0, previousLeft - width - 2.0 * s);
     items.push_back(line(Pen::Level, gp_Pnt2d(at, l.v), gp_Pnt2d(u1, l.v)));
-    items.push_back(text(Pen::Level, gp_Pnt2d(at, l.v + 1.0 * s), l.name, 3.5, 0, 0));
-    items.push_back(text(Pen::Level, gp_Pnt2d(at, l.v - 1.0 * s), h, 2.5, 0, 2 /*top*/));
+    {
+      Item triangle;
+      triangle.pen = Pen::Level;
+      triangle.points = {gp_Pnt2d(at, l.v + 0.9 * mark), gp_Pnt2d(at + mark, l.v + 0.9 * mark),
+                         gp_Pnt2d(at + mark / 2, l.v)};
+      const bool ground = l.name == "GL" || l.name.find("地盤面") != std::string::npos ||
+                          (l.name.size() > 3 && l.name.compare(l.name.size() - 3, 3, " GL") == 0);
+      triangle.kind = ground ? Item::Kind::Fill : Item::Kind::Polyline;
+      triangle.closed = true;
+      items.push_back(std::move(triangle));
+    }
+    const double textAt = at + mark + 0.8 * s;
+    items.push_back(text(Pen::Level, gp_Pnt2d(textAt, l.v + 1.0 * s), l.name, 3.5, 0, 0));
+    items.push_back(text(Pen::Level, gp_Pnt2d(textAt, l.v - 1.0 * s), h, 2.5, 0, 2 /*top*/));
     previousV = l.v;
     previousLeft = at;
   }
