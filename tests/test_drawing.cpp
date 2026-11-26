@@ -867,6 +867,14 @@ TEST(Drawing, GroundLevelTableFollowsTheOrder) {
   EXPECT_TRUE(std::any_of(set->sheets[3].items.begin(), set->sheets[3].items.end(),
       [](const Item& item) { return item.text.find("令2条") != std::string::npos ||
                                     item.text.find("第2条第2項") != std::string::npos; }));
+  // docs/289: the site area sheet (10 m x 12 m).
+  const auto siteArea = std::find(set->names.begin(), set->names.end(), std::string("敷地面積求積図"));
+  ASSERT_NE(siteArea, set->names.end());
+  const auto& siteSheet = set->sheets[static_cast<std::size_t>(siteArea - set->names.begin())];
+  EXPECT_TRUE(std::any_of(siteSheet.items.begin(), siteSheet.items.end(),
+      [](const Item& item) { return item.text.find("120.000") != std::string::npos; }));
+  EXPECT_TRUE(std::any_of(siteSheet.items.begin(), siteSheet.items.end(),
+      [](const Item& item) { return item.text.find("10000 × 12000") != std::string::npos; }));
   // The API.
   api::CommandApi api(m);
   const auto r = nlohmann::json::parse(api.execute(R"({"command":"ground_level_table","args":{}})"));

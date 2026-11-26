@@ -12,6 +12,8 @@
 #include "sbr/api/CommandApi.h"
 #include "sbr/doc/Modeler.h"
 #include "sbr/doc/NativeFormat.h"
+#include "sbr/doc/Schedules.h"
+#include <algorithm>
 #include "sbr/draw/Drawing.h"
 #include "sbr/geom/Dxf.h"
 #include "sbr/geom/Jww.h"
@@ -274,4 +276,19 @@ TEST_F(Quantities, ManuallyCreatedComponentsKeepMaterialMeaningAndDoNotHideUnkno
       EXPECT_TRUE(row["net_volume_m3"].is_null());
     }
   EXPECT_TRUE(assembly);
+}
+
+// docs/289: the drawing set carries the framing plans of a generated frame.
+TEST_F(Quantities, DrawingSetCarriesTheFramingPlans) {
+  frame();
+  const auto set = doc::drawingSet(m.document(), {});
+  ASSERT_TRUE(set) << set.error();
+  for (const char* name : {"基礎・土台伏図", "1階床伏図", "2階床伏図", "小屋伏図"})
+    EXPECT_NE(std::find(set->names.begin(), set->names.end(), std::string(name)), set->names.end()) << name;
+  sbr::api::CommandApi api(m);
+  const auto r = json::parse(api.execute(R"({"command":"permit_intake_review","args":{}})"));
+  ASSERT_TRUE(r["ok"]);
+  for (const auto& row : r["result"]["rows"])
+    if (row["form"] == "様式1-2" && (row["kind"] == "基礎伏図" || row["kind"] == "各階床伏図" || row["kind"] == "小屋伏図"))
+      EXPECT_EQ(row["state"], "図面あり") << row.dump();
 }

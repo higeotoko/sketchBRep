@@ -5553,6 +5553,11 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
     Planned p{view.spec.title, std::nullopt, std::nullopt, {}, std::move(view), scale};
     planned.insert(planned.begin() + 1, std::move(p));
   }
+  // docs/289: the timber framing plans (伏図) when the frame has members under their tags.
+  for (const char* preset : {"foundation", "first_floor", "second_floor", "roof"}) {
+    const auto framing = draw::framingView(document, preset, "", false, {});
+    if (framing) planned.push_back({framing->title, *framing, std::nullopt, {}});
+  }
   detail::AreaGeometry areaGeometry;
   const auto areas = measureAreas(document, &areaGeometry);
   for (auto& page : detail::areaEvidencePages(document, areas, areaGeometry, spec.scale)) {

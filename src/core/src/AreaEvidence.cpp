@@ -8,6 +8,9 @@
 
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepTools.hxx>
 #include <BRepTools_WireExplorer.hxx>
 #include <GCPnts_QuasiUniformDeflection.hxx>
@@ -246,6 +249,34 @@ void paginate(AreaEvidencePage& page, std::vector<std::string> total) {
 std::vector<AreaEvidencePage> areaEvidencePages(const Document& document, const AreaTable& areas,
                                                  const AreaGeometry& geometry, double scale) {
   std::vector<AreaEvidencePage> result;
+  // docs/289: the site area (敷地面積求積図) from the registered site boundary, in the same way.
+  if (const auto& site = document.settings().siteBoundary) {
+    if (const auto boundary = document.siteBoundaryGeometry(site->outline); boundary && boundary->vertices.size() >= 3) {
+      BRepBuilderAPI_MakePolygon polygon;
+      for (const gp_Pnt& v : boundary->vertices) polygon.Add(gp_Pnt(v.X(), v.Y(), 0.0));
+      polygon.Close();
+      TopoDS_Shape face;
+      try {
+        if (polygon.IsDone()) {
+          BRepBuilderAPI_MakeFace make(polygon.Wire(), true);
+          // As the floors: a 1 mm prism, its volume the area and its top at Z 1.
+          if (make.IsDone()) {
+            BRepPrimAPI_MakePrism prism(make.Face(), gp_Vec(0, 0, 1));
+            if (prism.IsDone()) face = prism.Shape();
+          }
+        }
+      } catch (const Standard_Failure&) {}
+      if (!face.IsNull()) {
+        auto page = pageFor(document, "敷地面積求積図");
+        auto& table = page.tables.front();
+        areaParts(page.view, table, face, "S", "敷地", true, scale);
+        table.notes.push_back("登録した敷地境界の輪郭（確認資料：" + site->source + "）から求めた値。測量図の求積と照合する。");
+        table.notes.push_back("曲線の境界は頂点を結んだ折れ線として扱う。算式の寸法は mm、面積表示は丸めています。");
+        paginate(page, {"", "敷地面積 合計", "S の合計", sqm(boundary->areaMm2)});
+        if (!page.view.items.empty()) result.push_back(std::move(page));
+      }
+    }
+  }
   for (const auto& row : areas.rows) {
     const auto at = geometry.floors.find(row.level);
     if (!row.enclosedKnown || at == geometry.floors.end() || at->second.enclosed.IsNull()) continue;

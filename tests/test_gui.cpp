@@ -959,6 +959,19 @@ void GuiPhase1::groundLevelSheetIsDrawn() {
   QVERIFY(dark > 500);
   const QByteArray where = qgetenv("SBR_GROUND_PNG");
   if (!where.isEmpty()) QVERIFY(image.save(QString::fromLocal8Bit(where)));
+  // docs/289: the site area sheet. SBR_SITE_AREA_PNG: where to save it.
+  const auto siteArea = std::find(set->names.begin(), set->names.end(), std::string("敷地面積求積図"));
+  QVERIFY(siteArea != set->names.end());
+  QImage area(2400, 1697, QImage::Format_RGB32);
+  area.fill(Qt::white);
+  {
+    QPainter painter(&area);
+    painter.setRenderHint(QPainter::Antialiasing);
+    app::renderSheet(painter, set->sheets[static_cast<std::size_t>(siteArea - set->names.begin())],
+                     QRectF(0, 0, area.width(), area.height()));
+  }
+  const QByteArray areaPath = qgetenv("SBR_SITE_AREA_PNG");
+  if (!areaPath.isEmpty()) QVERIFY(area.save(QString::fromLocal8Bit(areaPath)));
 }
 
 // docs/216: the drawing set carries an insulation plan when walls have insulation; drawn on paper it
