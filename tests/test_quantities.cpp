@@ -305,3 +305,46 @@ TEST_F(Quantities, DrawingSetCarriesTheFramingPlans) {
     EXPECT_GT(texts, 12u) << set->names[i];
   }
 }
+
+// docs/291: the structural materials per role, given by the person, in the 使用構造材料一覧表.
+TEST_F(Quantities, StructuralMaterialTableTakesTheGivenMaterials) {
+  frame();
+  sbr::api::CommandApi api(m);
+  const auto call = [&](const std::string& command, const json& args) {
+    return json::parse(api.execute(json{{"command", command}, {"args", args}}.dump()));
+  };
+  auto table = call("structural_material_table", json::object());
+  ASSERT_TRUE(table["ok"]) << table.dump();
+  ASSERT_FALSE(table["result"]["rows"].empty());
+  for (const auto& row : table["result"]["rows"]) EXPECT_EQ(row[3], "未入力");
+  EXPECT_FALSE(call("set_structural_materials", {{"items", {{{"role", "nonsense"}, {"material", "すぎ"}}}}})["ok"]);
+  EXPECT_FALSE(call("set_structural_materials", {{"items", {{{"role", "column"}, {"material", ""}}}}})["ok"]);
+  const auto set = call("set_structural_materials", {{"items", {
+      {{"role", "through_column"}, {"material", "ひのき"}, {"grade", "E95 機械等級区分 JAS"}, {"source", "架空の仕様書"}},
+      {{"role", "default"}, {"material", "すぎ"}, {"grade", "E70"}}}}});
+  ASSERT_TRUE(set["ok"]) << set.dump();
+  table = call("structural_material_table", json::object());
+  bool column = false, other = false;
+  for (const auto& row : table["result"]["rows"]) {
+    if (row[0] == "通し柱") column = row[3] == "ひのき" && row[4] == "E95 機械等級区分 JAS";
+    else other |= row[3] == "すぎ";
+  }
+  EXPECT_TRUE(column) << table.dump();
+  EXPECT_TRUE(other);
+  EXPECT_EQ(table["result"]["given"].size(), 2u);
+  EXPECT_EQ(table["result"]["rows"][0][0], "土台");  // in the order of the roles
+  // Kept through save and reopen; one undo step.
+  Document restored;
+  ASSERT_TRUE(deserializeDocument(serializeDocument(m.document()), restored));
+  EXPECT_EQ(doc::Modeler::structuralMaterialsOf(restored).size(), 2u);
+  ASSERT_TRUE(m.undo());
+  EXPECT_TRUE(doc::Modeler::structuralMaterialsOf(m.document()).empty());
+  ASSERT_TRUE(m.redo());
+  // In the drawing set, found by the intake review.
+  const auto drawings = doc::drawingSet(m.document(), {});
+  ASSERT_TRUE(drawings) << drawings.error();
+  EXPECT_NE(std::find(drawings->names.begin(), drawings->names.end(), std::string("使用構造材料一覧表")), drawings->names.end());
+  const auto r = call("permit_intake_review", json::object());
+  for (const auto& row : r["result"]["rows"])
+    if (row["kind"] == "使用構造材料一覧表") EXPECT_EQ(row["state"], "図面あり") << row.dump();
+}

@@ -573,6 +573,16 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& sp
 draw::View vicinityView(const Document& document, const VicinityMap& map,
                         const std::optional<VicinityPicture>& picture, double& scale);
 
+// docs/291: 使用構造材料一覧表: the timber frame's members by role and section (from take_off), with the
+// material and grade the person gave per role (Modeler::setStructuralMaterials). Empty rows when the
+// model has no timber members.
+draw::Table structuralMaterialTable(const Document& document);
+
+// docs/292: 使用建築材料表: per 居室 (rooms not marked as not a 居室), the floor, wall and ceiling finishes with
+// the formaldehyde class given per material (Modeler::setInteriorMaterials) and what 令 20 条の 7 says of it.
+// Empty rows when no room has a finish.
+draw::Table interiorMaterialTable(const Document& document);
+
 // Any of the tables as CSV, in the same form (docs/115: the finish schedule).
 std::string tableCsv(const draw::Table& table);
 

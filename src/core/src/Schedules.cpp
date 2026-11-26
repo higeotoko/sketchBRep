@@ -46,6 +46,8 @@
 
 #include "sbr/ConstructionFoundation.h"
 #include "sbr/ConstructionWall.h"
+#include "sbr/ConstructionQuantity.h"
+#include "sbr/ConstructionGuide.h"
 #include "sbr/OpeningSymbols.h"
 #include "sbr/doc/Modeler.h"
 #include "sbr/geom/Measure.h"
@@ -1285,6 +1287,59 @@ draw::Table openingSpecTable(const Document& document) {
                       (share <= 4.0 ? "4％以下なので、日射遮蔽の基準から除くことができます（同ロ、天窓を除く）。"
                                     : "4％を超えるので、日射遮蔽の基準から除くことはできません。"));
   }
+  return t;
+}
+
+draw::Table materialTableOf(const Document& document) {
+  draw::Table t;
+  t.title = "使用構造材料一覧表";
+  t.headers = {"部位", "断面 (mm)", "数", "材料（樹種等）", "等級・規格", "資料"};
+  const auto made = construction::takeOff(document);
+  if (!made) return t;
+  const auto report = nlohmann::json::parse(*made, nullptr, false);
+  if (!report.is_object() || !report.contains("rows")) return t;
+  const auto given = Modeler::structuralMaterialsOf(document);
+  const auto lookup = [&](const std::string& role) -> const Modeler::StructuralMaterial* {
+    for (const auto& m : given)
+      if (m.role == role) return &m;
+    for (const auto& m : given)
+      if (m.role == "default") return &m;
+    return nullptr;
+  };
+  // Rows of the take-off grouped by role and section (the lengths are left to the take-off table).
+  std::vector<std::pair<std::string, std::string>> order;
+  std::map<std::pair<std::string, std::string>, std::pair<std::string, int>> grouped;  // -> (role name, count)
+  for (const auto& row : report.at("rows")) {
+    const std::string role = row.value("role", std::string());
+    if (role == "unclassified") continue;
+    const std::string section = row.value("section", std::string());
+    const auto key = std::make_pair(role, section);
+    auto [it, fresh] = grouped.try_emplace(key, row.value("role_name", role), 0);
+    if (fresh) order.push_back(key);
+    it->second.second += row.value("count", 0);
+  }
+  // In the order of the guide's roles (sill, floor girder ... rafter).
+  // (as roles.json lists them; the parsed object would sort the keys)
+  std::map<std::string, std::size_t> rank;
+  for (const char* role : {"sill", "floor_girder", "floor_post", "joist", "floor_sheathing", "through_column", "column",
+                           "stud", "rim_beam", "floor_beam", "eave_beam", "roof_beam", "horizontal_brace", "brace",
+                           "roof_post", "purlin", "ridge", "rafter", "lintel", "window_sill"})
+    rank.emplace(role, rank.size());
+  std::stable_sort(order.begin(), order.end(), [&](const auto& a, const auto& b) {
+    const auto ra = rank.count(a.first) ? rank.at(a.first) : rank.size();
+    const auto rb = rank.count(b.first) ? rank.at(b.first) : rank.size();
+    return ra < rb;
+  });
+  int missing = 0;
+  for (const auto& key : order) {
+    const auto& [name, count] = grouped.at(key);
+    const auto* m = lookup(key.first);
+    if (!m) ++missing;
+    t.rows.push_back({name, key.second, std::to_string(count), m ? m->material : "未入力", m ? (m->grade.empty() ? "未入力" : m->grade) : "未入力",
+                      m ? m->source : ""});
+  }
+  t.notes = {"部位・断面・数は木造架構の部材（拾い出し）から。材料・等級・規格は入力した値で、品質の確認はしていません。"};
+  if (missing > 0) t.notes.push_back("材料が未入力の部位が " + std::to_string(missing) + " 行あります（set_structural_materials）。");
   return t;
 }
 
@@ -5599,6 +5654,12 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
       }
     }
   }
+  // docs/292: the interior materials (使用建築材料表) when rooms have finishes.
+  if (const auto interior = interiorMaterialTable(document); !interior.rows.empty())
+    planned.push_back({interior.title, std::nullopt, interior, {}});
+  // docs/291: the structural materials of the timber frame.
+  if (const auto materials = structuralMaterialTable(document); !materials.rows.empty())
+    planned.push_back({materials.title, std::nullopt, materials, {}});
   detail::AreaGeometry areaGeometry;
   const auto areas = measureAreas(document, &areaGeometry);
   for (auto& page : detail::areaEvidencePages(document, areas, areaGeometry, spec.scale)) {
@@ -5749,6 +5810,50 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
   out.numbers.insert(out.numbers.begin(), number(1));
   out.names.insert(out.names.begin(), list.title);
   return out;
+}
+
+draw::Table structuralMaterialTable(const Document& document) { return materialTableOf(document); }
+
+draw::Table interiorMaterialTable(const Document& document) {
+  draw::Table t;
+  t.title = "使用建築材料表";
+  t.headers = {"室名", "階", "部位", "仕上げ", "ホルムアルデヒドの区分", "表示", "令20条の7", "資料"};
+  const auto given = Modeler::interiorMaterialsOf(document);
+  int missing = 0, forbidden = 0, limited = 0;
+  for (const RoomRow& r : roomSchedule(document).rows) {
+    if (r.daylightKind == "none") continue;
+    const std::pair<const char*, const std::string*> parts[] = {{"床", &r.floor}, {"壁", &r.wall}, {"天井", &r.ceiling}};
+    for (const auto& [part, finish] : parts) {
+      if (finish->empty()) continue;
+      const Modeler::InteriorMaterial* m = nullptr;
+      for (const auto& g : given)
+        if (g.name == *finish) m = &g;
+      std::string cls = "未入力", rule = "区分を入れて照合";
+      if (!m) {
+        ++missing;
+      } else if (m->cls == "first") {
+        cls = "第一種";
+        rule = "使用できない（第1項第1号）";
+        ++forbidden;
+      } else if (m->cls == "second" || m->cls == "third") {
+        cls = m->cls == "second" ? "第二種" : "第三種";
+        rule = "使用面積の制限（第1項第2号）。面積は未照合";
+        ++limited;
+      } else {
+        cls = "規制対象外";
+        rule = "制限なし";
+      }
+      t.rows.push_back({r.name, r.level, part, *finish, cls, m ? m->mark : "", rule, m ? m->source : ""});
+    }
+  }
+  if (t.rows.empty()) return t;
+  t.notes = {"居室（居室でないと入れた室を除く）の床・壁・天井の仕上げと、材料ごとに入れたホルムアルデヒドの区分です。",
+             "根拠：建築基準法施行令 第20条の7（e-Gov で 2026-11-26 に確認）。建具の室内側も内装に含まれるが、建具の材料は未入力。"};
+  if (missing > 0) t.notes.push_back("区分が未入力の行が " + std::to_string(missing) + " 行あります（set_interior_materials）。");
+  if (forbidden > 0) t.notes.push_back("第一種の材料を使う行が " + std::to_string(forbidden) + " 行あります。居室の内装には使えません。");
+  if (limited > 0)
+    t.notes.push_back("第二種・第三種の材料は、換気回数と住宅等の居室かどうかで決まる係数を掛けた面積が床面積以下である必要があります（未照合）。");
+  return t;
 }
 
 std::string tableCsv(const draw::Table& table) {

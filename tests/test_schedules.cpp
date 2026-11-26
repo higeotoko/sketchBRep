@@ -5245,3 +5245,53 @@ TEST(PermitIntake, KindsOfDocumentsAndTheFee) {
   r = ok("permit_intake_review", json::object());
   EXPECT_EQ(row("様式1-2", "消防定型同意依頼書（１部）")["need"], "該当しない（候補）");
 }
+
+// docs/292: the interior materials' formaldehyde class per finish, in the 使用建築材料表 (令 20 条の 7).
+TEST(PermitIntake, InteriorMaterialTableTakesTheGivenClasses) {
+  sbr::doc::Modeler modeler;
+  CommandApi api{modeler};
+  auto call = [&](const std::string& command, json args) {
+    return json::parse(api.execute(json{{"command", command}, {"args", args}}.dump()));
+  };
+  auto ok = [&](const std::string& command, json args) {
+    json r = call(command, args);
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  ASSERT_TRUE(modeler.setLevels({{"", "1FL", 0}}));
+  ok("create_wall", {{"points", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}, {0, 0}}}, {"thickness", 120}, {"height", 3000}});
+  ok("create_wall", {{"points", {{4000, 0}, {4000, 6000}}}, {"thickness", 120}, {"height", 3000}});
+  const std::string living = ok("create_room", {{"at", {2000, 3000}}, {"name", "居間"}})["id"];
+  const std::string store = ok("create_room", {{"at", {6000, 3000}}, {"name", "納戸"}})["id"];
+  EXPECT_TRUE(ok("interior_material_table", json::object())["rows"].empty());
+  ok("set_room_finish", {{"id", living}, {"floor", "フローリング"}, {"wall", "ビニルクロス"}, {"ceiling", "古い合板"}});
+  ok("set_room_finish", {{"id", store}, {"floor", "フローリング"}});
+  ok("set_room_daylight", {{"id", store}, {"kind", "none"}});
+  auto t = ok("interior_material_table", json::object());
+  ASSERT_EQ(t["rows"].size(), 3u);  // the store is not a 居室
+  for (const auto& row : t["rows"]) EXPECT_EQ(row[4], "未入力");
+  EXPECT_FALSE(call("set_interior_materials", {{"items", {{{"name", "x"}, {"class", "fourth"}}}}})["ok"]);
+  ok("set_interior_materials", {{"items", {{{"name", "フローリング"}, {"class", "exempt"}, {"mark", "F☆☆☆☆"}, {"source", "架空のカタログ"}},
+                                           {{"name", "ビニルクロス"}, {"class", "third"}},
+                                           {{"name", "古い合板"}, {"class", "first"}}}}});
+  t = ok("interior_material_table", json::object());
+  std::map<std::string, json> byPart;
+  for (const auto& row : t["rows"]) byPart[row[2].get<std::string>()] = row;
+  EXPECT_EQ(byPart["床"][4], "規制対象外");
+  EXPECT_EQ(byPart["床"][5], "F☆☆☆☆");
+  EXPECT_EQ(byPart["壁"][4], "第三種");
+  EXPECT_NE(byPart["壁"][6].get<std::string>().find("面積"), std::string::npos);
+  EXPECT_EQ(byPart["天井"][4], "第一種");
+  EXPECT_NE(byPart["天井"][6].get<std::string>().find("使用できない"), std::string::npos);
+  EXPECT_NE(t["notes"].dump().find("第20条の7"), std::string::npos);
+  // One undo step; in the drawing set; the intake review finds it.
+  ASSERT_TRUE(modeler.undo());
+  EXPECT_TRUE(sbr::doc::Modeler::interiorMaterialsOf(modeler.document()).empty());
+  ASSERT_TRUE(modeler.redo());
+  const auto set = sbr::doc::drawingSet(modeler.document(), {});
+  ASSERT_TRUE(set) << set.error();
+  EXPECT_NE(std::find(set->names.begin(), set->names.end(), std::string("使用建築材料表")), set->names.end());
+  const auto r = ok("permit_intake_review", json::object());
+  for (const auto& row : r["rows"])
+    if (row["kind"] == "使用建築材料表") EXPECT_EQ(row["state"], "図面あり") << row.dump();
+}

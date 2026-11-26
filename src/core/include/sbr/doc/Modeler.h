@@ -248,6 +248,23 @@ class Modeler {
   static const std::vector<std::pair<std::string, std::string>>& equipmentKinds();  // key, label
   static std::vector<EquipmentItem> equipmentOf(const Document& document);
   Status setEquipment(const std::vector<EquipmentItem>& items);
+  // docs/291: the structural timber's material (樹種等) and grade / standard (等級・規格) per member role
+  // (the timber roles of the construction guide, or "default" for every role not given), as the person
+  // gives them (the whole list replaced; empty: none). One line each. One undo step.
+  struct StructuralMaterial {
+    std::string role, material, grade, source;
+  };
+  static std::vector<StructuralMaterial> structuralMaterialsOf(const Document& document);
+  Status setStructuralMaterials(const std::vector<StructuralMaterial>& items);
+  // docs/292: the formaldehyde class of interior finish materials (令 20 条の 7), per material name as written
+  // on the rooms' finishes: class first / second / third (第一種〜第三種ホルムアルデヒド発散建築材料) or exempt
+  // (規制対象外: e.g. F☆☆☆☆ or not such a material); mark (表示, e.g. F☆☆☆☆), source. As the person gives them
+  // (the whole list replaced). One undo step.
+  struct InteriorMaterial {
+    std::string name, cls, mark, source;
+  };
+  static std::vector<InteriorMaterial> interiorMaterialsOf(const Document& document);
+  Status setInteriorMaterials(const std::vector<InteriorMaterial>& items);
   // docs/233: where the vicinity map (付近見取図) is centred: latitude, longitude (WGS84 degrees), tile zoom
   // 14-18 and the layer (std / pale / seamlessphoto); clear: none. One undo step.
   Status setVicinityMap(double lat, double lon, int zoom, const std::string& layer,

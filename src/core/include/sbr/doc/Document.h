@@ -166,6 +166,12 @@ struct DocumentSettings {
   // docs/224: the building's equipment for the energy documents (heating / cooling, ventilation,
   // hot water, lighting ...), as given: [{"kind": "ventilation", "name": "...", ...}, ...].
   std::string equipment = "[]";
+  // docs/291: the structural timber's material and grade per member role, as given:
+  // [{"role": "column", "material": "すぎ", "grade": "E70 機械等級区分", "source": "..."}, ...].
+  std::string structuralMaterials = "[]";
+  // docs/292: the interior finish materials' formaldehyde class (令 20 条の 7), per material name as written
+  // on the rooms: [{"name": "フローリング", "class": "exempt", "mark": "F☆☆☆☆", "source": "..."}, ...].
+  std::string interiorMaterials = "[]";
   // docs/233: where the vicinity map is centred and how: {"lat": .., "lon": .., "zoom": 16, "layer": "std"}.
   std::string vicinityMap = "{}";
 };
@@ -188,11 +194,13 @@ struct PersistentSettings {
   std::string projectOutline = "{}";
   std::string equipment = "[]";
   std::string vicinityMap = "{}";
+  std::string structuralMaterials = "[]";
+  std::string interiorMaterials = "[]";
 
   static PersistentSettings of(const DocumentSettings& s) {
     return {s.scenes,         s.sections, s.sectionDisplay, s.hiddenTags, s.levels, s.constructionOverrides,
             s.wallCalculation, s.sun,     s.elementTypes, s.siteNorth, s.siteBoundary, s.permitConfirmations,
-            s.projectOutline, s.equipment, s.vicinityMap};
+            s.projectOutline, s.equipment, s.vicinityMap, s.structuralMaterials, s.interiorMaterials};
   }
   void applyTo(DocumentSettings& s) const {
     s.scenes = scenes;
@@ -210,6 +218,8 @@ struct PersistentSettings {
     s.projectOutline = projectOutline;
     s.equipment = equipment;
     s.vicinityMap = vicinityMap;
+    s.structuralMaterials = structuralMaterials;
+    s.interiorMaterials = interiorMaterials;
   }
   bool operator==(const PersistentSettings& o) const {
     return scenes == o.scenes && sections == o.sections && sectionDisplay == o.sectionDisplay &&
@@ -217,7 +227,8 @@ struct PersistentSettings {
            constructionOverrides == o.constructionOverrides && wallCalculation == o.wallCalculation &&
            sun == o.sun && elementTypes == o.elementTypes && siteNorth == o.siteNorth &&
            siteBoundary == o.siteBoundary && permitConfirmations == o.permitConfirmations &&
-           projectOutline == o.projectOutline && equipment == o.equipment && vicinityMap == o.vicinityMap;
+           projectOutline == o.projectOutline && equipment == o.equipment && vicinityMap == o.vicinityMap &&
+           structuralMaterials == o.structuralMaterials && interiorMaterials == o.interiorMaterials;
   }
   bool operator!=(const PersistentSettings& o) const { return !(*this == o); }
 };

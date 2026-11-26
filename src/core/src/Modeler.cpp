@@ -4187,6 +4187,74 @@ Status Modeler::setEquipment(const std::vector<EquipmentItem>& items) {
   return Status::success();
 }
 
+std::vector<Modeler::StructuralMaterial> Modeler::structuralMaterialsOf(const Document& document) {
+  std::vector<StructuralMaterial> out;
+  const nlohmann::json all = nlohmann::json::parse(document.settings().structuralMaterials, nullptr, false);
+  if (!all.is_array()) return out;
+  for (const auto& j : all) {
+    if (!j.is_object()) continue;
+    out.push_back({j.value("role", std::string()), j.value("material", std::string()), j.value("grade", std::string()),
+                   j.value("source", std::string())});
+  }
+  return out;
+}
+
+Status Modeler::setStructuralMaterials(const std::vector<StructuralMaterial>& items) {
+  const auto roles = nlohmann::json::parse(construction::guideData("timber")).at("roles").at("entries");
+  nlohmann::json all = nlohmann::json::array();
+  std::set<std::string> seen;
+  for (std::size_t i = 0; i < items.size(); ++i) {
+    const StructuralMaterial& m = items[i];
+    const std::string where = "材料 " + std::to_string(i + 1) + ": ";
+    if (m.role != "default" && !roles.contains(m.role))
+      return Status::failure(where + "部位は木造の部材の役割（sill, column, beam など get_construction_guide の roles）か default です");
+    if (!seen.insert(m.role).second) return Status::failure(where + "同じ部位が2回あります: " + m.role);
+    if (m.material.empty()) return Status::failure(where + "材料（樹種等）が要ります");
+    for (const std::string* text : {&m.material, &m.grade, &m.source})
+      if (!oneLine(*text, 300)) return Status::failure(where + "材料・等級・資料は1行、100 字までです");
+    nlohmann::json j{{"role", m.role}, {"material", m.material}};
+    if (!m.grade.empty()) j["grade"] = m.grade;
+    if (!m.source.empty()) j["source"] = m.source;
+    all.push_back(std::move(j));
+  }
+  const std::string text = all.dump();
+  editSettings(document_, history_, "Structural materials", [&](PersistentSettings& s) { s.structuralMaterials = text; });
+  return Status::success();
+}
+
+std::vector<Modeler::InteriorMaterial> Modeler::interiorMaterialsOf(const Document& document) {
+  std::vector<InteriorMaterial> out;
+  const nlohmann::json all = nlohmann::json::parse(document.settings().interiorMaterials, nullptr, false);
+  if (!all.is_array()) return out;
+  for (const auto& j : all)
+    if (j.is_object())
+      out.push_back({j.value("name", std::string()), j.value("class", std::string()), j.value("mark", std::string()),
+                     j.value("source", std::string())});
+  return out;
+}
+
+Status Modeler::setInteriorMaterials(const std::vector<InteriorMaterial>& items) {
+  nlohmann::json all = nlohmann::json::array();
+  std::set<std::string> seen;
+  for (std::size_t i = 0; i < items.size(); ++i) {
+    const InteriorMaterial& m = items[i];
+    const std::string where = "内装材 " + std::to_string(i + 1) + ": ";
+    if (m.name.empty()) return Status::failure(where + "材料名（室の仕上げと同じ書き方）が要ります");
+    if (!seen.insert(m.name).second) return Status::failure(where + "同じ材料名が2回あります: " + m.name);
+    if (m.cls != "first" && m.cls != "second" && m.cls != "third" && m.cls != "exempt")
+      return Status::failure(where + "区分は first・second・third・exempt のどれかです");
+    for (const std::string* text : {&m.name, &m.mark, &m.source})
+      if (!oneLine(*text, 300)) return Status::failure(where + "材料名・表示・資料は1行、100 字までです");
+    nlohmann::json j{{"name", m.name}, {"class", m.cls}};
+    if (!m.mark.empty()) j["mark"] = m.mark;
+    if (!m.source.empty()) j["source"] = m.source;
+    all.push_back(std::move(j));
+  }
+  const std::string text = all.dump();
+  editSettings(document_, history_, "Interior materials", [&](PersistentSettings& s) { s.interiorMaterials = text; });
+  return Status::success();
+}
+
 Status Modeler::setVicinityMap(double lat, double lon, int zoom, const std::string& layer,
                                const std::vector<VicinityMark>& marks) {
   const VicinityMap map{lat, lon, zoom, layer, marks};

@@ -3708,6 +3708,62 @@ const std::vector<CommandDef>& commands() {
          }
          return json{{"items", std::move(out)}};
        }},
+      {"set_structural_materials",
+       "docs/291: the structural timber's material and grade per member role, as the person gives them (the whole "
+       "list replaced; [] takes all away): 'items' [{role (a timber role of get_construction_guide, e.g. sill, column, "
+       "stud, floor_beam, brace, rafter, or 'default' for every role not given), material (樹種等, required), grade "
+       "(等級・規格, e.g. \"E70 機械等級区分 JAS\"), source}]. Only what the person said: never guess a species or grade. "
+       "One undo step. structural_material_table reads the 使用構造材料一覧表 (also in the drawing set).",
+       SCHEMA({"type": "object", "properties": {"items": {"type": "array", "items": {"type": "object", "properties": {
+                   "role": {"type": "string"}, "material": {"type": "string"}, "grade": {"type": "string"},
+                   "source": {"type": "string"}}, "required": ["role", "material"]}}}, "required": ["items"]}),
+       [](doc::Modeler& m, const json& a) {
+         std::vector<doc::Modeler::StructuralMaterial> items;
+         for (const auto& j : a.at("items"))
+           items.push_back({j.at("role").get<std::string>(), j.at("material").get<std::string>(),
+                            j.value("grade", std::string()), j.value("source", std::string())});
+         if (const auto done = m.setStructuralMaterials(items); !done) throw ApiError(done.message());
+         return json{{"items", items.size()}};
+       }},
+      {"structural_material_table",
+       "docs/291: 使用構造材料一覧表: the timber members by role and section with their count (from take_off) and "
+       "the material and grade given per role (未入力 where not given). Rows, notes and CSV. Read only.",
+       SCHEMA({"type": "object", "properties": {}}),
+       [](doc::Modeler& m, const json&) {
+         const auto t = doc::structuralMaterialTable(m.document());
+         json given = json::array();
+         for (const auto& s : doc::Modeler::structuralMaterialsOf(m.document()))
+           given.push_back({{"role", s.role}, {"material", s.material}, {"grade", s.grade}, {"source", s.source}});
+         return json{{"headers", t.headers}, {"rows", t.rows}, {"notes", t.notes}, {"given", given},
+                     {"csv", doc::tableCsv(t)}};
+       }},
+      {"set_interior_materials",
+       "docs/292: the formaldehyde class (令 20 条の 7, read on e-Gov 2026-11-26) of the interior finish materials, per "
+       "material name written exactly as on the rooms' finishes (set_room_finish), as the person gives them (the whole "
+       "list replaced; [] takes all away): 'items' [{name (required), class: first (第一種, may not be used) / second "
+       "(第二種) / third (第三種) / exempt (規制対象外, e.g. F☆☆☆☆ or not such a material), mark (表示, e.g. F☆☆☆☆), "
+       "source}]. Never guess a class from a product name. One undo step. interior_material_table reads the 使用建築材料表.",
+       SCHEMA({"type": "object", "properties": {"items": {"type": "array", "items": {"type": "object", "properties": {
+                   "name": {"type": "string"}, "class": {"enum": ["first", "second", "third", "exempt"]},
+                   "mark": {"type": "string"}, "source": {"type": "string"}}, "required": ["name", "class"]}}},
+               "required": ["items"]}),
+       [](doc::Modeler& m, const json& a) {
+         std::vector<doc::Modeler::InteriorMaterial> items;
+         for (const auto& j : a.at("items"))
+           items.push_back({j.at("name").get<std::string>(), j.at("class").get<std::string>(), j.value("mark", std::string()),
+                            j.value("source", std::string())});
+         if (const auto done = m.setInteriorMaterials(items); !done) throw ApiError(done.message());
+         return json{{"items", items.size()}};
+       }},
+      {"interior_material_table",
+       "docs/292: 使用建築材料表: per 居室 the floor, wall and ceiling finishes with the class given per material and "
+       "what 令 20 条の 7 says (第一種: may not be used; 第二種・第三種: area limited, not compared; 規制対象外). Rows, "
+       "notes, CSV. Read only; never a legal judgement.",
+       SCHEMA({"type": "object", "properties": {}}),
+       [](doc::Modeler& m, const json&) {
+         const auto t = doc::interiorMaterialTable(m.document());
+         return json{{"headers", t.headers}, {"rows", t.rows}, {"notes", t.notes}, {"csv", doc::tableCsv(t)}};
+       }},
       {"set_project_outline",
        "docs/214: items of the project outline that are not in the model, as the person gives them: 'items' "
        "{key: text}; keys (docs/231: as the application form 第二号様式 第二面・第三面) project_name (物件名, also the "
@@ -5038,7 +5094,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
       name == "preview" || name == "query_objects" || name == "aggregate" || name == "get_changes" ||
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
       name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" ||
-      name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" || name == "permit_checks" || name == "permit_intake_review" || name == "ground_level_table" || name == "check_drawing_set" || name == "project_outline" || name == "daylight_factor_estimates" ||
+      name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" || name == "permit_checks" || name == "permit_intake_review" || name == "ground_level_table" || name == "structural_material_table" || name == "interior_material_table" || name == "check_drawing_set" || name == "project_outline" || name == "daylight_factor_estimates" ||
       name == "fire_compartment_review" || name == "fire_spread_review" || name == "site_height_conditions" || name == "yokohama_height_district_at" || name == "compare_yokohama_height_district" ||
       name == "neighbor_height_at" || name == "north_height_at" || name == "compare_north_height" || name == "compare_neighbor_height" || name == "road_height_datum" || name == "road_height_table_values" || name == "measure_road_building_setback" || name == "compare_road_height_plane" || name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
     return E::Read;
