@@ -2,6 +2,7 @@
 #include "sbr/doc/GroundLevel.h"
 #include "sbr/doc/FoundationGround.h"
 #include "sbr/doc/ColumnCheck.h"
+#include "sbr/doc/ArchitectCheck.h"
 #include "sbr/doc/FireSpread.h"
 #include "sbr/doc/FireCompartments.h"
 #include "AreaEvidence.h"
@@ -3714,6 +3715,40 @@ std::vector<PermitCheck> permitOutputChecks(const Document& document) {
                  "出力に未評価・要再照合の注が付く所があります。",
                  {}});
   out.push_back({"申請先で確かめる事", "未評価", "申請先（確認検査機関・特定行政庁）、申請の区分と適用法令、必要な図書と様式、提出の方法。", {}});
+  // docs/312: which 建築士 may design and supervise it, against the grades given in the outline.
+  {
+    const ArchitectCheck a = architectCheck(document);
+    const auto outline = projectOutline(document);
+    std::string details = a.basis;
+    std::string state;
+    bool attention = false;
+    if (a.required == "unknown") {
+      state = "未評価";
+      attention = true;
+      details += "\n" + a.problem;
+    } else {
+      details += "\n必要な資格：" + std::string(requiredLabel(a.required)) + "（" + a.article + "）";
+      bool short_ = false, missing = false;
+      for (const auto& [key, who] : {std::pair<const char*, const char*>{"form_designer_grade", "設計者"},
+                                     std::pair<const char*, const char*>{"form_supervisor_grade", "工事監理者"}}) {
+        const auto it = outline.find(key);
+        if (it == outline.end()) {
+          if (a.required != "none") missing = true;
+          details += std::string("\n") + who + "の資格：未入力";
+          continue;
+        }
+        const bool ok = gradeMeets(it->second, a.required);
+        short_ |= !ok;
+        details += std::string("\n") + who + "の資格：" + projectOutlineText(key, it->second) + "建築士 → " + (ok ? "足りる" : "足りない");
+      }
+      if (!a.problem.empty()) details += "\n" + a.problem;
+      state = short_ ? "要確認" : missing ? "未入力" : "入力済み";
+      attention = short_ || missing || !a.problem.empty();
+    }
+    details += std::string("\n第3条の2第3項により、都道府県の条例で木造以外の延べ面積が別に定められていることがあります。\n条文：") +
+               kArchitectActSource + "（" + kArchitectActCheckedOn + " 確認）";
+    out.push_back({"設計・工事監理ができる建築士（建築士法第3条）", state, details, {}, attention});
+  }
   // docs/212: the stages a person marked as looked at (1-11; this stage's own mark is not counted).
   {
     std::vector<std::string> unchecked, again;

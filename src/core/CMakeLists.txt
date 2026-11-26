@@ -20,6 +20,7 @@ add_library(sbr_core STATIC
   src/GroundLevel.cpp
   src/FoundationGround.cpp
   src/ColumnCheck.cpp
+  src/ArchitectCheck.cpp
   src/FireCompartments.cpp
   src/AreaEvidence.cpp
   src/VicinityMap.cpp

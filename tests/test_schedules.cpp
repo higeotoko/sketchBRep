@@ -22,6 +22,7 @@
 #include "sbr/doc/FireSpread.h"
 #include "sbr/doc/FireCompartments.h"
 #include "sbr/doc/PermitIntake.h"
+#include "sbr/doc/ArchitectCheck.h"
 #include "sbr/OpeningSymbols.h"
 #include "sbr/draw/Drawing.h"
 #include "sbr/geom/Measure.h"
@@ -5350,4 +5351,56 @@ TEST(PermitIntake, OnlyFloorLevelsAreStoreysAndNorthIsSetByTheApi) {
               45.0, 1e-9);
   ASSERT_TRUE(modeler.undo());
   EXPECT_NEAR(modeler.document().settings().siteNorth->angle, 15.0, 1e-9);
+}
+
+// docs/312: which 建築士 may design it (建築士法第3条〜第3条の3), from the model and the outline.
+TEST(PermitIntake, ArchitectGradeFollowsTheArchitectAct) {
+  sbr::doc::Modeler modeler;
+  CommandApi api{modeler};
+  auto ok = [&](const std::string& command, json args) {
+    json r = json::parse(api.execute(json{{"command", command}, {"args", args}}.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  ASSERT_TRUE(modeler.setLevels({{"", "GL", 0}, {"", "1FL", 600}, {"", "2FL", 3500}}));
+  const json rect = {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}, {0, 0}};
+  ok("create_wall", {{"points", rect}, {"thickness", 120}, {"height", 2900}, {"base", 600}});
+  ok("create_wall", {{"points", rect}, {"thickness", 120}, {"height", 2700}, {"base", 3500}});
+  // 96 m², 2 storeys, no structure given: not evaluated.
+  auto a = sbr::doc::architectCheck(modeler.document());
+  EXPECT_EQ(a.required, "unknown");
+  EXPECT_NE(a.problem.find("構造"), std::string::npos);
+  ok("set_project_outline", {{"items", {{"structure", "木造"}, {"main_use", "一戸建ての住宅"}, {"work_kind", "new"}}}});
+  a = sbr::doc::architectCheck(modeler.document());
+  EXPECT_EQ(a.required, "none");  // timber, 100 m² or less, under 3 storeys
+  // The same as steel: over 30 m² needs 一級 or 二級 (第3条の2第1項第1号).
+  ok("set_project_outline", {{"items", {{"structure", "鉄骨造"}}}});
+  a = sbr::doc::architectCheck(modeler.document());
+  EXPECT_EQ(a.required, "second");
+  EXPECT_EQ(a.article, "建築士法第3条の2第1項第1号");
+  // A third storey: timber over 3 storeys needs 一級 or 二級 (第3条の2第1項第2号).
+  ok("set_project_outline", {{"items", {{"structure", "木造"}}}});
+  ASSERT_TRUE(modeler.setLevels({{"", "GL", 0}, {"", "1FL", 600}, {"", "2FL", 3500}, {"", "3FL", 6200}}));
+  ok("create_wall", {{"points", rect}, {"thickness", 120}, {"height", 2700}, {"base", 6200}});
+  a = sbr::doc::architectCheck(modeler.document());
+  EXPECT_EQ(a.required, "second") << a.basis;
+  EXPECT_EQ(a.article, "建築士法第3条の2第1項第2号");
+  // Grades.
+  EXPECT_TRUE(sbr::doc::gradeMeets("first", "second"));
+  EXPECT_TRUE(sbr::doc::gradeMeets("second", "second"));
+  EXPECT_FALSE(sbr::doc::gradeMeets("wood", "second"));
+  EXPECT_TRUE(sbr::doc::gradeMeets("wood", "wood"));
+  EXPECT_FALSE(sbr::doc::gradeMeets("second", "first"));
+  // In stage 12: a 木造建築士 designer is short for this one.
+  ok("set_project_outline", {{"items", {{"form_designer_grade", "wood"}, {"form_supervisor_grade", "second"}}}});
+  bool found = false;
+  for (const auto& c : sbr::doc::permitChecks(modeler.document(), 12))
+    if (c.item == "設計・工事監理ができる建築士（建築士法第3条）") {
+      found = true;
+      EXPECT_EQ(c.state, "要確認");
+      EXPECT_TRUE(c.attention);
+      EXPECT_NE(c.details.find("設計者の資格：木造建築士 → 足りない"), std::string::npos) << c.details;
+      EXPECT_NE(c.details.find("工事監理者の資格：二級建築士 → 足りる"), std::string::npos) << c.details;
+    }
+  EXPECT_TRUE(found);
 }
