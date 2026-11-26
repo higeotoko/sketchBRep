@@ -724,6 +724,28 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
           name.vAlign = 1;
           name.points = {proj.uv(at(mid, road.widthMm * 0.75, (b.Distance(a)) / 4))};
           view.items.push_back(std::move(name));
+          // docs/304: a road under 4 m entered as a 法42条2項 road: the setback line (道路後退線), 2 m from
+          // the centre line on the site's side, in the boundary's pen (it becomes the road's boundary), with
+          // the 2,000 from the centre line. The one-sided case (a cliff or river opposite: 4 m from the far
+          // side) is not known from the input and is not drawn.
+          if (road.widthMm < 4000.0 && road.kind.find("2項") != std::string::npos) {
+            const double across = road.widthMm / 2 - 2000.0;  // negative: inside the site
+            view.items.push_back(line(Pen::Boundary, proj.uv(at(a, across, 0)), proj.uv(at(b, across, 0))));
+            DimensionMark fromCentre;
+            fromCentre.a = proj.uv(at(mid, road.widthMm / 2, b.Distance(a) / 8));
+            fromCentre.b = proj.uv(at(mid, across, b.Distance(a) / 8));
+            fromCentre.text = "2,000";
+            view.dimensions.push_back(fromCentre);
+            Item setback;
+            setback.kind = Item::Kind::Text;
+            setback.pen = Pen::Text;
+            setback.text = "道路後退線";
+            setback.height = 2.5;
+            setback.hAlign = 1;
+            setback.vAlign = 0;
+            setback.points = {proj.uv(at(mid, across, -b.Distance(a) / 4))};
+            view.items.push_back(std::move(setback));
+          }
         }
       }
     } else if (source->road) {

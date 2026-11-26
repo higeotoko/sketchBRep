@@ -1024,3 +1024,32 @@ TEST(Drawing, SheetsCarryALegendOfTheirLines) {
   EXPECT_EQ(ground, 1);
   EXPECT_EQ(boundary, 0);  // no boundary on this sheet: not in its legend
 }
+
+// docs/304: a 法42条2項 road under 4 m: the setback line 2 m from the centre line, inside the site.
+TEST(Drawing, SitePlanDrawsTheSetbackOfANarrowRoad) {
+  doc::Modeler m;
+  const auto outline = m.createRectangle(geom::SketchPlane::ground(), 10000, 12000);
+  ASSERT_TRUE(outline);
+  box(m, 1500, 2500, 5200, 6500, 3500);
+  ASSERT_TRUE(m.setSiteBoundary(doc::SiteBoundary{*outline, "Survey"}));
+  doc::SiteRoad road;
+  road.kind = "法42条2項道路";
+  road.source = "Synthetic road register";
+  road.widthMm = 3600;
+  ASSERT_TRUE(m.setSiteRoad({gp_Pnt(10000, 0, 0), gp_Pnt(0, 0, 0)}, road));
+  const auto plan = makeView(m.document(), sitePlanView());
+  ASSERT_TRUE(plan);
+  EXPECT_TRUE(std::any_of(plan->dimensions.begin(), plan->dimensions.end(), [](const auto& d) { return d.text == "2,000"; }));
+  int setbacks = 0;
+  for (const auto& item : plan->items)
+    if (item.kind == Item::Kind::Line && item.pen == Pen::Boundary && std::abs(item.points[0].Y() - 200.0) < 1e-6 &&
+        std::abs(item.points[1].Y() - 200.0) < 1e-6)
+      ++setbacks;
+  EXPECT_EQ(setbacks, 1);  // 2,000 - 3,600 / 2 = 200 inside the site
+  // A road of 4 m or more, or one not entered as 2項: no setback.
+  road.widthMm = 4000;
+  ASSERT_TRUE(m.setSiteRoad({gp_Pnt(10000, 0, 0), gp_Pnt(0, 0, 0)}, road));
+  const auto wide = makeView(m.document(), sitePlanView());
+  ASSERT_TRUE(wide);
+  EXPECT_FALSE(std::any_of(wide->dimensions.begin(), wide->dimensions.end(), [](const auto& d) { return d.text == "2,000"; }));
+}
