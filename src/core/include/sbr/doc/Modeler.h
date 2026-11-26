@@ -271,6 +271,8 @@ class Modeler {
   Status setFoundationGround(const FoundationGround& ground);
   // docs/311: the structural specifications for the 構造詳細図 (ColumnCheck.h); empty takes them away.
   Status setStructuralSpecs(const StructuralSpecs& specs);
+  // docs/318: the height study as stored text (doc::heightStudyText; "{}" takes it away). One undo step.
+  Status setHeightStudyText(const std::string& text);
   // docs/233: where the vicinity map (付近見取図) is centred: latitude, longitude (WGS84 degrees), tile zoom
   // 14-18 and the layer (std / pale / seamlessphoto); clear: none. One undo step.
   Status setVicinityMap(double lat, double lon, int zoom, const std::string& layer,

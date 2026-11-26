@@ -3802,6 +3802,56 @@ const std::vector<CommandDef>& commands() {
          const auto t = doc::interiorAreaTable(m.document());
          return json{{"headers", t.headers}, {"rows", t.rows}, {"notes", t.notes}, {"csv", doc::tableCsv(t)}};
        }},
+      {"set_height_study",
+       "docs/318: the height study (高さ制限の合成) as the person gives its figures, kept with the model for the current "
+       "site (used while the site's outline, zone and district stay the same): ground_z (mm, model Z), road {edge_z (the "
+       "slant's height at the site-side road boundary before setback, model Z), slope, width_m, distance_m (application "
+       "distance), setback_m}, neighbor {rise_m, slope}, north_rise_m (5 or 10), district (bool), single_north_road (bool), "
+       "boundaries [[[x,y,z],[x,y,z]], ...] (the confirmed neighbour edges). clear: true takes it away. Never guess a "
+       "figure: these are the person's. The drawing set draws the road slant from it. One undo step.",
+       SCHEMA({"type": "object", "properties": {"ground_z": {"type": "number"}, "road": {"type": "object"},
+               "neighbor": {"type": "object"}, "north_rise_m": {"type": "number"}, "district": {"type": "boolean"},
+               "single_north_road": {"type": "boolean"}, "boundaries": {"type": "array"}, "clear": {"type": "boolean"}}}),
+       [](doc::Modeler& m, const json& a) {
+         if (a.value("clear", false)) {
+           if (const auto done = m.setHeightStudyText("{}"); !done) throw ApiError(done.message());
+           return json{{"ok", true}};
+         }
+         if (!m.document().settings().siteBoundary) throw ApiError("先に敷地境界を指定してください");
+         doc::HeightLimitStudy s;
+         s.groundZMm = a.value("ground_z", 0.0);
+         if (a.contains("road")) {
+           const auto& r = a.at("road");
+           s.road = doc::HeightLimitStudy::Road{number(r, "edge_z"), number(r, "slope"),
+               doc::RoadHeightPlaneRange{number(r, "width_m") * 1000, number(r, "distance_m") * 1000,
+                                         numberOr(r, "setback_m", 0.0) * 1000}};
+           if (!(s.road->slope > 0) || !(s.road->range.roadWidthMm > 0) || !(s.road->range.applicationDistanceMm > 0))
+             throw ApiError("道路斜線の勾配・幅員・適用距離は 0 より大きい値です");
+         }
+         if (a.contains("neighbor"))
+           s.neighbor = doc::HeightLimitStudy::Neighbor{number(a.at("neighbor"), "rise_m") * 1000, number(a.at("neighbor"), "slope")};
+         if (a.contains("north_rise_m")) {
+           const double rise = number(a, "north_rise_m");
+           if (rise != 5 && rise != 10) throw ApiError("north_rise_m は 5 か 10 です");
+           s.northRiseMm = rise * 1000;
+         }
+         s.district = a.value("district", false);
+         s.singleNorthRoadConfirmed = a.value("single_north_road", false);
+         if (a.contains("boundaries"))
+           for (const auto& e : a.at("boundaries"))
+             s.boundaries.push_back({gp_Pnt(e.at(0).at(0).get<double>(), e.at(0).at(1).get<double>(), e.at(0).at(2).get<double>()),
+                                     gp_Pnt(e.at(1).at(0).get<double>(), e.at(1).at(1).get<double>(), e.at(1).at(2).get<double>())});
+         if (const auto done = m.setHeightStudyText(doc::heightStudyText(m.document(), s)); !done) throw ApiError(done.message());
+         return json{{"ok", true}};
+       }},
+      {"height_study",
+       "docs/318: the height study kept with the model: its figures and whether it is for the current site ('current': "
+       "false when the site's outline, zone or district changed since; it is then not used). Read only.",
+       SCHEMA({"type": "object", "properties": {}}),
+       [](doc::Modeler& m, const json&) {
+         const auto stored = json::parse(m.document().settings().heightStudy, nullptr, false);
+         return json{{"stored", stored}, {"current", doc::savedHeightStudy(m.document()).has_value()}};
+       }},
       {"column_table",
        "docs/310: 構造詳細図（柱の小径・有効細長比）: the timber columns (take_off column / through_column) grouped by "
        "section and the vertical distance between the horizontal members they meet, with smaller side / distance and the "
@@ -5226,7 +5276,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
       name == "preview" || name == "query_objects" || name == "aggregate" || name == "get_changes" ||
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
       name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" ||
-      name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" || name == "permit_checks" || name == "permit_intake_review" || name == "ground_level_table" || name == "structural_material_table" || name == "foundation_ground_table" || name == "column_table" || name == "interior_area_table" || name == "structural_spec_table" || name == "interior_material_table" || name == "check_drawing_set" || name == "project_outline" || name == "daylight_factor_estimates" ||
+      name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" || name == "permit_checks" || name == "permit_intake_review" || name == "ground_level_table" || name == "structural_material_table" || name == "foundation_ground_table" || name == "column_table" || name == "height_study" || name == "interior_area_table" || name == "structural_spec_table" || name == "interior_material_table" || name == "check_drawing_set" || name == "project_outline" || name == "daylight_factor_estimates" ||
       name == "fire_compartment_review" || name == "fire_spread_review" || name == "site_height_conditions" || name == "yokohama_height_district_at" || name == "compare_yokohama_height_district" ||
       name == "neighbor_height_at" || name == "north_height_at" || name == "compare_north_height" || name == "compare_neighbor_height" || name == "road_height_datum" || name == "road_height_table_values" || name == "measure_road_building_setback" || name == "compare_road_height_plane" || name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
     return E::Read;

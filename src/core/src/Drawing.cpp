@@ -1792,6 +1792,11 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
                 if (label.angle < -M_PI / 2) label.angle += M_PI;
                 label.points = {gp_Pnt2d((from.X() + to.X()) / 2, (from.Y() + to.Y()) / 2 + 1.0 * sp)};
                 view.items.push_back(std::move(label));
+                char note[160];
+                std::snprintf(note, sizeof note,
+                              "道路斜線：高さ制限の確認で入力した値（勾配 %g、適用距離 %.1f m、建物の後退 %.2f m）による。法規の適合は未評価。",
+                              s.slope, s.applicationMm / 1000.0, s.setbackMm / 1000.0);
+                view.calculationNotes.push_back(note);
                 u0 = std::min({u0, from.X(), to.X()});
                 u1 = std::max({u1, from.X(), to.X()});
               }

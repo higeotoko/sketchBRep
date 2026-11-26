@@ -4212,6 +4212,13 @@ Status Modeler::setFoundationGround(const FoundationGround& g) {
   return Status::success();
 }
 
+Status Modeler::setHeightStudyText(const std::string& text) {
+  if (!nlohmann::json::parse(text, nullptr, false).is_object()) return Status::failure("高さ制限の条件が読めません");
+  if (text == document_.settings().heightStudy) return Status::success();
+  editSettings(document_, history_, "Height study", [&](PersistentSettings& p) { p.heightStudy = text; });
+  return Status::success();
+}
+
 Status Modeler::setStructuralSpecs(const StructuralSpecs& s) {
   for (const std::string* text : {&s.roofing, &s.frameMethod, &s.joints, &s.wallBase, &s.decay, &s.source})
     if (!oneLine(*text, 300)) return Status::failure("仕様の欄は1行、100 字までです");

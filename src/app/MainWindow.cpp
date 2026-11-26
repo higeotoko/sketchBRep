@@ -9235,8 +9235,11 @@ void MainWindow::showCombinedHeightDialog() {
   };
   for (auto* box : {neighborBox, northBox, districtBox})
     connect(box, &QGroupBox::toggled, &dialog, updateBoundaries);
-  if (draft) {
-    const auto& saved = draft->study;
+  // docs/318: the study typed before: this session's, else the one kept with the model for this site.
+  const std::optional<doc::HeightLimitStudy> previous = draft ? std::optional<doc::HeightLimitStudy>(draft->study)
+                                                              : doc::savedHeightStudy(document);
+  if (previous) {
+    const auto& saved = *previous;
     const auto display = [](QLineEdit* input, double value) { input->setText(QString::number(value, 'g', 15)); };
     if (saved.road) {
       roadBox->setChecked(true);
@@ -9266,7 +9269,7 @@ void MainWindow::showCombinedHeightDialog() {
             return edge[0].IsEqual(a, tolerance::kLinear) && edge[1].IsEqual(b, tolerance::kLinear);
           })) picker.list->item(i)->setCheckState(Qt::Checked);
     }
-    intro->setText(draft->sequence == sequence
+    intro->setText(draft && draft->sequence == sequence
         ? tr("前回の入力を表示しています。確認した条件で再試算できます。")
         : tr("前回の入力を表示しています。建物の後退距離などを確認してから再試算してください。"));
   }
@@ -9586,6 +9589,13 @@ void MainWindow::showCombinedHeightDialog() {
   });
   dialog.resize(660, 570);
   dialog.exec();
+  // docs/318: the study tried here is kept with the model (for this site), so the drawing set has it after the
+  // file is opened again; only the settings change, so the draft stays current.
+  if (combinedHeightDraft_ && combinedHeightDraft_->context == context && combinedHeightDraft_->sequence == sequence &&
+      modeler_.document().sequence() == sequence) {
+    const auto text = doc::heightStudyText(modeler_.document(), combinedHeightDraft_->study);
+    if (modeler_.setHeightStudyText(text)) combinedHeightDraft_->sequence = modeler_.document().sequence();
+  }
 }
 
 // docs/215: the route the energy documents follow, the region and the source (docs/210).

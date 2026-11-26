@@ -2409,7 +2409,9 @@ void GuiPhase1::combinedHeightShowsLowestSurface() {
   QVERIFY(csvText.contains(QStringLiteral("120.000000,道路斜線")));
   QVERIFY(csvText.contains(QStringLiteral("適用距離 14000.000000 mm")));
   QCOMPARE(f.window.selection(), std::vector<doc::ObjectId>{roofId});
-  QCOMPARE(modeler.document().sequence(), sequence);
+  // docs/318: closing the dialog keeps the study with the model (one settings step, nothing else changed).
+  QCOMPARE(modeler.document().sequence(), sequence + 1);
+  QVERIFY(doc::savedHeightStudy(modeler.document()));
   for (std::size_t i = 0; i < 4; ++i) QVERIFY(f.vp->combinedHeightLayerVisible(i));
   QVERIFY(!f.vp->combinedHeightLayerVisible(4));
   auto* legend = f.window.findChild<QToolBar*>(QStringLiteral("combinedHeightLegend"));

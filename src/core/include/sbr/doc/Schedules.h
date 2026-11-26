@@ -366,6 +366,10 @@ struct HeightLimitPreview {
 Result<HeightLimitPreview> heightLimitPreview(const Document& document, const HeightLimitStudy& study);
 // docs/317: the study's road slant as the drawings take it (empty when the study has no road).
 std::optional<draw::ViewSpec::RoadSlant> roadSlantOf(const HeightLimitStudy& study);
+// docs/318: the study as stored in the model, with the site it is for (the outline's points, zone, district).
+std::string heightStudyText(const Document& document, const HeightLimitStudy& study);
+// The stored study while the site is still the one it was typed for; empty otherwise (or none stored).
+std::optional<HeightLimitStudy> savedHeightStudy(const Document& document);
 
 struct CombinedHeightPartRow {
   ObjectId id;

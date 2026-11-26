@@ -1674,6 +1674,65 @@ std::optional<YokohamaHeightDistrictRule> yokohamaHeightDistrictRule(const std::
   return std::nullopt;
 }
 
+namespace {
+nlohmann::json heightStudySite(const Document& document) {
+  nlohmann::json site = nlohmann::json::object();
+  const auto& boundary = document.settings().siteBoundary;
+  if (!boundary) return site;
+  const auto geometry = document.siteBoundaryGeometry(boundary->outline);
+  if (!geometry) return site;
+  nlohmann::json points = nlohmann::json::array();
+  for (const gp_Pnt& p : geometry->vertices) points.push_back({std::round(p.X()), std::round(p.Y()), std::round(p.Z())});
+  const auto conditions = siteHeightConditions(document);
+  site["points"] = points;
+  site["zone"] = conditions.zone;
+  site["district"] = conditions.district;
+  return site;
+}
+}  // namespace
+
+std::string heightStudyText(const Document& document, const HeightLimitStudy& study) {
+  nlohmann::json j = nlohmann::json::object();
+  j["site"] = heightStudySite(document);
+  j["ground_z"] = study.groundZMm;
+  if (study.road)
+    j["road"] = {{"edge_z", study.road->edgeHeightMm}, {"slope", study.road->slope},
+                 {"width", study.road->range.roadWidthMm}, {"distance", study.road->range.applicationDistanceMm},
+                 {"setback", study.road->range.buildingSetbackMm}};
+  if (study.neighbor) j["neighbor"] = {{"rise", study.neighbor->riseMm}, {"slope", study.neighbor->slope}};
+  if (study.northRiseMm) j["north_rise"] = *study.northRiseMm;
+  j["district"] = study.district;
+  j["single_north_road"] = study.singleNorthRoadConfirmed;
+  nlohmann::json edges = nlohmann::json::array();
+  for (const auto& e : study.boundaries)
+    edges.push_back({{e[0].X(), e[0].Y(), e[0].Z()}, {e[1].X(), e[1].Y(), e[1].Z()}});
+  j["boundaries"] = edges;
+  return j.dump();
+}
+
+std::optional<HeightLimitStudy> savedHeightStudy(const Document& document) {
+  const auto j = nlohmann::json::parse(document.settings().heightStudy, nullptr, false);
+  if (!j.is_object() || !j.contains("site") || j.at("site") != heightStudySite(document)) return std::nullopt;
+  HeightLimitStudy s;
+  s.groundZMm = j.value("ground_z", 0.0);
+  if (j.contains("road") && j.at("road").is_object()) {
+    const auto& r = j.at("road");
+    s.road = HeightLimitStudy::Road{r.value("edge_z", 0.0), r.value("slope", 0.0),
+                                    RoadHeightPlaneRange{r.value("width", 0.0), r.value("distance", 0.0), r.value("setback", 0.0)}};
+  }
+  if (j.contains("neighbor") && j.at("neighbor").is_object())
+    s.neighbor = HeightLimitStudy::Neighbor{j.at("neighbor").value("rise", 0.0), j.at("neighbor").value("slope", 0.0)};
+  if (j.contains("north_rise") && j.at("north_rise").is_number()) s.northRiseMm = j.at("north_rise").get<double>();
+  s.district = j.value("district", false);
+  s.singleNorthRoadConfirmed = j.value("single_north_road", false);
+  if (j.contains("boundaries") && j.at("boundaries").is_array())
+    for (const auto& e : j.at("boundaries"))
+      if (e.is_array() && e.size() == 2)
+        s.boundaries.push_back({gp_Pnt(e[0][0].get<double>(), e[0][1].get<double>(), e[0][2].get<double>()),
+                                gp_Pnt(e[1][0].get<double>(), e[1][1].get<double>(), e[1][2].get<double>())});
+  return s;
+}
+
 std::optional<draw::ViewSpec::RoadSlant> roadSlantOf(const HeightLimitStudy& study) {
   if (!study.road || !(study.road->slope > 0) || !(study.road->range.roadWidthMm > 0)) return std::nullopt;
   const auto& r = *study.road;
@@ -5509,11 +5568,15 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
       }
     }
   }
+  // docs/317/318: the road slant of the app's live study, else of the one stored with the model for this site.
+  std::optional<draw::ViewSpec::RoadSlant> roadSlant = spec.roadSlant;
+  if (!roadSlant)
+    if (const auto saved = savedHeightStudy(document)) roadSlant = roadSlantOf(*saved);
   for (const Cut& c : cuts) {
     draw::ViewSpec view = draw::sectionView(c.point, c.toward);
     view.title = c.name;
     view.heightDims = true;  // docs/296
-    view.roadSlant = spec.roadSlant;  // docs/317
+    view.roadSlant = roadSlant;  // docs/317
     planned.push_back({view.title, view, std::nullopt, {}});
   }
   const char* sides[4] = {"南立面図", "東立面図", "北立面図", "西立面図"};
@@ -5521,7 +5584,7 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
     draw::ViewSpec view = draw::elevationView(document, side);
     view.title = sides[side];
     view.heightDims = true;  // docs/296
-    view.roadSlant = spec.roadSlant;  // docs/317
+    view.roadSlant = roadSlant;  // docs/317
     planned.push_back({view.title, view, std::nullopt, {}});
   }
   // The first planned is the lowest storey's plan.

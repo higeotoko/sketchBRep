@@ -1185,3 +1185,58 @@ TEST(Drawing, ElevationsDrawTheRoadSlantOfAStudy) {
   EXPECT_LE(std::max(a.Y(), b.Y()), 20000.0 * 1.25 + 1e-6);
   EXPECT_TRUE(slants(0, slant).empty());  // from the south the road faces the viewer
 }
+
+// docs/318: the height study kept with the model for its site: through MCP, saved and reopened, used by the
+// drawing set for the road slant, and dropped when the site's outline changes.
+TEST(Drawing, HeightStudyIsKeptForItsSite) {
+  doc::Modeler m;
+  const auto outline = m.createRectangle(geom::SketchPlane::ground(), 10000, 12000);
+  ASSERT_TRUE(outline);
+  api::CommandApi api(m);
+  const auto run = [&](const nlohmann::json& c) {
+    const auto r = nlohmann::json::parse(api.execute(c.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << r.dump();
+    return r;
+  };
+  run({{"command", "create_wall"}, {"args", {{"points", {{1500, 2500}, {5200, 2500}, {5200, 6500}, {1500, 6500}, {1500, 2500}}},
+                                              {"thickness", 120}, {"height", 6000}}}});
+  ASSERT_TRUE(m.setSiteBoundary(doc::SiteBoundary{*outline, "Survey"}));
+  doc::SiteRoad road;
+  road.kind = "法42条1項1号道路";
+  road.source = "Synthetic road register";
+  road.widthMm = 4000;
+  ASSERT_TRUE(m.setSiteRoad({gp_Pnt(10000, 0, 0), gp_Pnt(0, 0, 0)}, road));
+  ASSERT_TRUE(m.setLevels({{"gl", "GL", 0.0}, {"1fl", "1FL", 500.0}}));
+  EXPECT_FALSE(doc::savedHeightStudy(m.document()));
+  run({{"command", "set_height_study"},
+       {"args", {{"road", {{"edge_z", 5000}, {"slope", 1.25}, {"width_m", 4}, {"distance_m", 20}, {"setback_m", 0.5}}}}}});
+  const auto read = run({{"command", "height_study"}});
+  EXPECT_TRUE(read["result"]["current"].get<bool>());
+  const auto saved = doc::savedHeightStudy(m.document());
+  ASSERT_TRUE(saved && saved->road);
+  EXPECT_DOUBLE_EQ(saved->road->range.buildingSetbackMm, 500.0);
+  // Saved and opened again.
+  const std::string path = ::testing::TempDir() + "height-study.sbr";
+  ASSERT_TRUE(m.save(path));
+  doc::Modeler loaded;
+  ASSERT_TRUE(loaded.load(path));
+  ASSERT_TRUE(doc::savedHeightStudy(loaded.document()));
+  // The drawing set draws its road slant (on the east and west elevations and the section across the road).
+  const auto set = doc::drawingSet(loaded.document(), {});
+  ASSERT_TRUE(set) << set.error();
+  int slanted = 0;
+  for (const auto& sheet : set->sheets)
+    slanted += std::any_of(sheet.items.begin(), sheet.items.end(),
+                           [](const Item& i) { return i.kind == Item::Kind::Line && i.pen == Pen::HeightLimit; });
+  EXPECT_GE(slanted, 2);
+  // Another site outline: the study is not used any more.
+  gp_Trsf move;
+  move.SetTranslation(gp_Vec(0, 300, 0));
+  ASSERT_TRUE(m.transform({*outline}, move));
+  EXPECT_FALSE(doc::savedHeightStudy(m.document()));
+  EXPECT_FALSE(run({{"command", "height_study"}})["result"]["current"].get<bool>());
+  ASSERT_TRUE(m.undo());
+  EXPECT_TRUE(doc::savedHeightStudy(m.document()));
+  run({{"command", "set_height_study"}, {"args", {{"clear", true}}}});
+  EXPECT_FALSE(doc::savedHeightStudy(m.document()));
+}

@@ -180,6 +180,9 @@ struct DocumentSettings {
   std::string foundationGround = "{}";
   // docs/311: the structural specifications for the 構造詳細図 (ColumnCheck.h StructuralSpecs), as given.
   std::string structuralSpecs = "{}";
+  // docs/318: the height study's figures as the person typed them (HeightLimitStudy) with the site they were
+  // typed for (its outline's points, zone and district): used only while the site is the same.
+  std::string heightStudy = "{}";
   // docs/233: where the vicinity map is centred and how: {"lat": .., "lon": .., "zoom": 16, "layer": "std"}.
   std::string vicinityMap = "{}";
 };
@@ -206,12 +209,13 @@ struct PersistentSettings {
   std::string interiorMaterials = "[]";
   std::string foundationGround = "{}";
   std::string structuralSpecs = "{}";
+  std::string heightStudy = "{}";
 
   static PersistentSettings of(const DocumentSettings& s) {
     return {s.scenes,         s.sections, s.sectionDisplay, s.hiddenTags, s.levels, s.constructionOverrides,
             s.wallCalculation, s.sun,     s.elementTypes, s.siteNorth, s.siteBoundary, s.permitConfirmations,
             s.projectOutline, s.equipment, s.vicinityMap, s.structuralMaterials, s.interiorMaterials,
-            s.foundationGround, s.structuralSpecs};
+            s.foundationGround, s.structuralSpecs, s.heightStudy};
   }
   void applyTo(DocumentSettings& s) const {
     s.scenes = scenes;
@@ -233,6 +237,7 @@ struct PersistentSettings {
     s.interiorMaterials = interiorMaterials;
     s.foundationGround = foundationGround;
     s.structuralSpecs = structuralSpecs;
+    s.heightStudy = heightStudy;
   }
   bool operator==(const PersistentSettings& o) const {
     return scenes == o.scenes && sections == o.sections && sectionDisplay == o.sectionDisplay &&
@@ -242,7 +247,8 @@ struct PersistentSettings {
            siteBoundary == o.siteBoundary && permitConfirmations == o.permitConfirmations &&
            projectOutline == o.projectOutline && equipment == o.equipment && vicinityMap == o.vicinityMap &&
            structuralMaterials == o.structuralMaterials && interiorMaterials == o.interiorMaterials &&
-           foundationGround == o.foundationGround && structuralSpecs == o.structuralSpecs;
+           foundationGround == o.foundationGround && structuralSpecs == o.structuralSpecs &&
+           heightStudy == o.heightStudy;
   }
   bool operator!=(const PersistentSettings& o) const { return !(*this == o); }
 };
