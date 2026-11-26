@@ -117,6 +117,7 @@ JwPen jwPen(Pen pen) {
     case Pen::FireLimit5: return {4, 5, 14};
     case Pen::FireCompartment: return {6, 7, 15};
     case Pen::Boundary: return {2, 5, 0, 1};
+    case Pen::Ground: return {5, 1, 1, 1};  // docs/303: group 1 layer 1
   }
   return {2, 1, 1};
 }
@@ -157,7 +158,7 @@ void header(Archive& a, const Sheet& sheet) {
   a.u32(0);            // print rotation / reference point
   a.u32(0); a.f64(15.0); a.f64(5.0); a.f64(5.0); a.f64(0); a.f64(0);  // scale marks (off)
   for (int g = 0; g < 16; ++g) {
-    for (int l = 0; l < 16; ++l) a.str(g == 0 ? kLayerNames[l] : g == 1 && l == 0 ? "敷地境界" : "");
+    for (int l = 0; l < 16; ++l) a.str(g == 0 ? kLayerNames[l] : g == 1 && l == 0 ? "敷地境界" : g == 1 && l == 1 ? "地盤" : "");
   }
   for (int g = 0; g < 16; ++g) a.str(g == 0 ? sheet.title : "");
   a.f64(0); a.f64(36.0); a.u32(0); a.f64(0);  // shadow: height, latitude, 9-15h, wall

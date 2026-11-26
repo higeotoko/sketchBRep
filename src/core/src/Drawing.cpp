@@ -76,6 +76,7 @@ const char* penLayerName(Pen pen) {
     case Pen::FireLimit5: return "FIRE_LIMIT_5M";
     case Pen::FireCompartment: return "FIRE_COMPARTMENT";
     case Pen::Boundary: return "BOUNDARY";
+    case Pen::Ground: return "GROUND";
   }
   return "0";
 }
@@ -103,6 +104,7 @@ double penWidth(Pen pen) {
     case Pen::FireLimit5: return 0.25;
     case Pen::FireCompartment: return 0.38;
     case Pen::Boundary: return 0.25;
+    case Pen::Ground: return 0.5;  // docs/303: the ground the building stands on, as heavy as the cut
   }
   return 0.18;
 }
@@ -1643,6 +1645,44 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
         m.name = "平均地盤面";
         m.elevation = *ground;
         view.levels.push_back(m);
+      }
+    }
+    // docs/303: the ground line (GL): the level named GL (or the study's GL), across the building and a
+    // little past it, extra thick, with the ground symbol (short thin slanted strokes) under it, as the
+    // submitted elevations and sections draw the ground. Not drawn without a GL: no ground is guessed.
+    {
+      std::optional<double> gl = study.glZ;
+      if (!gl)
+        for (const doc::FloorLevel& l : document.settings().levels)
+          if (doc::isGroundLevelName(l.name) && l.name.find("平均") == std::string::npos) gl = l.elevation;
+      double left = 1e300, rightmost = -1e300;
+      for (const doc::Object& o : document.objects()) {
+        if (o.shape.IsNull() || !document.isVisible(o.id)) continue;
+        const auto kind = o.attributes.find("kind");
+        if (kind == o.attributes.end()) continue;
+        const std::string& k = kind->second;
+        if (k != "wall" && k != "roof" && k != "slab" && k != "balcony" && k != "canopy" && k != "foundation") continue;
+        const Bnd_Box b = document.worldBounds(o);
+        if (b.IsVoid()) continue;
+        double x0, y0, z0, x1, y1, z1;
+        b.Get(x0, y0, z0, x1, y1, z1);
+        for (double x : {x0, x1})
+          for (double y : {y0, y1}) {
+            const double u = proj.uv(gp_Pnt(x, y, 0)).X();
+            left = std::min(left, u);
+            rightmost = std::max(rightmost, u);
+          }
+      }
+      if (gl && rightmost > left) {
+        const double sp = spec.paperScale > 0 ? spec.paperScale : 100.0;
+        const double v = proj.uv(gp_Pnt(spec.frame.Location().X(), spec.frame.Location().Y(), *gl)).Y();
+        const double u0 = left - 10.0 * sp, u1 = rightmost + 10.0 * sp;
+        view.items.push_back(line(Pen::Ground, gp_Pnt2d(u0, v), gp_Pnt2d(u1, v)));
+        const double step = 4.0 * sp, len = 2.0 * sp;
+        // The symbol only past the building's ends: under the building the span dimensions are read.
+        for (const auto& [from, to] : {std::make_pair(u0, left), std::make_pair(rightmost, u1)})
+          for (double u = from + step / 2; u + len <= to; u += step)
+            view.items.push_back(line(Pen::Visible, gp_Pnt2d(u + len, v), gp_Pnt2d(u, v - len)));
       }
     }
     {

@@ -52,9 +52,10 @@ enum class Pen {
   FireLimit3,
   FireLimit5,
   FireCompartment,
-  Boundary  // docs/297: the site's boundary (thick dash-dot: heavier than the reference lines, not a wall)
+  Boundary,  // docs/297: the site's boundary (thick dash-dot: heavier than the reference lines, not a wall)
+  Ground     // docs/303: the ground line (GL) in elevations and sections (extra thick, solid)
 };
-constexpr int kPenCount = 17;
+constexpr int kPenCount = 18;
 const char* penLayerName(Pen pen);  // layer names in DXF ("CUT", ...)
 
 struct Item {

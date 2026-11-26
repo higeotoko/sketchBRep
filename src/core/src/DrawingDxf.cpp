@@ -35,6 +35,7 @@ int penColor(Pen pen) {
     case Pen::FireLimit5: return 200;
     case Pen::FireCompartment: return 134;
     case Pen::Boundary: return 7;
+    case Pen::Ground: return 7;
   }
   return 7;
 }

@@ -24,7 +24,7 @@ namespace {
 const char* kKindNames[] = {"line", "arc", "polyline", "text", "fill", "image"};
 const char* kPenNames[] = {"cut", "visible", "hidden", "fill", "grid", "grid_label", "level", "dimension", "text", "frame",
                            "title_block", "height_limit", "height_review", "fire_limit_3", "fire_limit_5",
-                           "fire_compartment", "boundary"};
+                           "fire_compartment", "boundary", "ground"};
 // Every pen has a name here (docs/297: a pen added without one read past the end).
 static_assert(sizeof(kPenNames) / sizeof(kPenNames[0]) == sbr::draw::kPenCount);
 

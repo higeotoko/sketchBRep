@@ -966,3 +966,30 @@ TEST(Drawing, ElevationsMarkTheRoofPitch) {
   // From the south the slope faces the viewer: no pitch mark.
   EXPECT_EQ(marks(0), std::make_pair(0, 0));
 }
+
+// docs/303: the ground line (GL) under the elevations and sections: extra thick, only when a GL is given.
+TEST(Drawing, ElevationsDrawTheGroundLine) {
+  doc::Modeler m;
+  api::CommandApi api(m);
+  const auto run = [&](const nlohmann::json& c) {
+    const auto r = nlohmann::json::parse(api.execute(c.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << r.dump();
+  };
+  run({{"command", "create_wall"}, {"args", {{"points", {{0, 0}, {9100, 0}, {9100, 7280}, {0, 7280}, {0, 0}}},
+                                              {"thickness", 120}, {"height", 3000}}}});
+  const auto grounds = [&]() {
+    ViewSpec s = elevationView(m.document(), 0);
+    s.heightDims = true;
+    const auto view = makeView(m.document(), s);
+    EXPECT_TRUE(view) << view.error();
+    int n = 0;
+    if (view)
+      for (const auto& item : view->items) n += item.pen == Pen::Ground;
+    return n;
+  };
+  EXPECT_EQ(grounds(), 0);  // no GL: no ground is guessed
+  run({{"command", "set_levels"}, {"args", {{"levels", {{{"name", "GL"}, {"elevation", -500}}, {{"name", "1FL"}, {"elevation", 0}}}}}}});
+  EXPECT_EQ(grounds(), 1);
+  EXPECT_STREQ(penLayerName(Pen::Ground), "GROUND");
+  EXPECT_DOUBLE_EQ(penWidth(Pen::Ground), penWidth(Pen::Cut));
+}
