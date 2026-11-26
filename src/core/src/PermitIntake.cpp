@@ -271,7 +271,8 @@ IntakeReview yokohamaIntakeReview(const Document& document, const DrawingSet* se
   // 様式3: the fee for a single new building whose whole floor area is the application part.
   IntakeFee& fee = out.fee;
   fee.note = "様式3（2026-10-29 掲載）の面積区分の表から。法第6条の3第1項ただし書の審査の加算（②）は含めない。"
-             "手数料条例の本文とは照合していない";
+             "横浜市の手数料のページ（最終更新 2026-09-30、令和7年4月1日改正の表）と12区分すべて一致することを確かめた"
+             "（2026-11-27）。手数料条例の本文そのものとは照合していない";
   if (!wholeFloorForFee) {
     fee.state = "未選択";
   } else if (value("work_kind") != "new") {

@@ -5404,3 +5404,19 @@ TEST(PermitIntake, ArchitectGradeFollowsTheArchitectAct) {
     }
   EXPECT_TRUE(found);
 }
+
+// docs/313: the 12 brackets of Yokohama's confirmation fee as its fee page gives them (最終更新 2026-09-30,
+// 令和7年4月1日改正), at each upper bound and just over it.
+TEST(PermitIntake, ConfirmationFeeMatchesTheCityPage) {
+  const std::vector<std::pair<double, int>> page = {
+      {30, 15000},     {100, 28000},    {200, 43000},     {300, 48000},     {500, 55000},     {1000, 66000},
+      {2000, 93000},   {5000, 160000},  {10000, 280000},  {30000, 370000},  {50000, 460000}};
+  int previous = 0;
+  for (const auto& [upTo, fee] : page) {
+    EXPECT_EQ(sbr::doc::yokohamaConfirmationFee(upTo), fee) << upTo;
+    EXPECT_GT(fee, previous);
+    previous = fee;
+    EXPECT_NE(sbr::doc::yokohamaConfirmationFee(upTo + 0.01), fee) << upTo;
+  }
+  EXPECT_EQ(sbr::doc::yokohamaConfirmationFee(50000.01), 900000);
+}
