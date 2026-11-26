@@ -4214,12 +4214,7 @@ static AreaTable measureAreas(const Document& document, detail::AreaGeometry* ev
     return *chosen;
   };
   // docs/166: the ground (地盤面) is the level named GL; the top of a storey the next level up.
-  auto isGround = [](const FloorLevel& l) {
-    std::string name = l.name;
-    name.erase(std::remove(name.begin(), name.end(), ' '), name.end());
-    std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-    return name == "GL";
-  };
+  auto isGround = [](const FloorLevel& l) { return isGroundLevelName(l.name); };
   std::optional<double> ground;
   for (const FloorLevel& l : levels)
     if (isGround(l)) ground = l.elevation;
@@ -4237,6 +4232,7 @@ static AreaTable measureAreas(const Document& document, detail::AreaGeometry* ev
   bool stairsArriving = false;
   for (const FloorLevel& level : levels) {
     if (&storeyOf(level) != &level) continue;
+    if (!levelIsStorey(levels, level)) continue;  // docs/295: 基礎天端, 桁天端 ... are not storeys
     // The ground level alone at its height is not a floor (docs/166): a storey only where walls
     // stand on it or a slab's top lies on it.
     if (isGround(level)) {
@@ -5395,7 +5391,7 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
     for (std::size_t j = 0; j < levels.size(); ++j)
       if (j != i && std::abs(levels[j].elevation - levels[i].elevation) < 1e-6 && (isFloor(levels[j]) && !isFloor(levels[i]) || (isFloor(levels[j]) == isFloor(levels[i]) && j < i)))
         shadowed = true;
-    if (shadowed) continue;
+    if (shadowed || !levelIsStorey(levels, levels[i])) continue;  // docs/295
     draw::ViewSpec view = draw::planView(levels[i].elevation + 1100.0);
     view.depth = 1100.0 + 400.0;  // down to 400 under its floor: the storeys below are left out
     view.title = levels[i].name + " 平面図";
@@ -5611,7 +5607,12 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
   // docs/289: the timber framing plans (伏図) when the frame has members under their tags.
   for (const char* preset : {"foundation", "first_floor", "second_floor", "roof"}) {
     const auto framing = draw::framingView(document, preset, "", false, {});
-    if (framing) planned.push_back({framing->title, *framing, std::nullopt, {}});
+    if (!framing) continue;
+    // docs/295: at 1:50 (the member marks crowd at 1:100); not a plan the sections are marked on.
+    if (const auto made = draw::makeView(document, *framing)) {
+      Planned p{framing->title, std::nullopt, std::nullopt, {}, *made, std::min(spec.scale, 50.0)};
+      planned.push_back(std::move(p));
+    }
   }
   // docs/290: frame elevations (軸組図) along the outer grid lines of the frame's grid, each seeing only
   // the members within 300 mm of its line (1:50), when the frame has wall-frame members.
@@ -5813,6 +5814,22 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
 }
 
 draw::Table structuralMaterialTable(const Document& document) { return materialTableOf(document); }
+
+bool isFloorLevelName(const std::string& name) { return name.size() >= 2 && name.compare(name.size() - 2, 2, "FL") == 0; }
+
+bool isGroundLevelName(const std::string& name) {
+  std::string n = name;
+  n.erase(std::remove(n.begin(), n.end(), ' '), n.end());
+  std::transform(n.begin(), n.end(), n.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+  if (n == "GL") return true;
+  // a frame's own ground level ("木造架構 1 GL")
+  return name.size() > 3 && name.compare(name.size() - 3, 3, " GL") == 0;
+}
+
+bool levelIsStorey(const std::vector<FloorLevel>& levels, const FloorLevel& level) {
+  const bool anyFloor = std::any_of(levels.begin(), levels.end(), [](const FloorLevel& l) { return isFloorLevelName(l.name); });
+  return !anyFloor || isFloorLevelName(level.name);
+}
 
 draw::Table interiorMaterialTable(const Document& document) {
   draw::Table t;

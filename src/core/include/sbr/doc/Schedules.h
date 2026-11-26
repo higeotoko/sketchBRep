@@ -583,6 +583,13 @@ draw::Table structuralMaterialTable(const Document& document);
 // Empty rows when no room has a finish.
 draw::Table interiorMaterialTable(const Document& document);
 
+// docs/295: names of levels. A storey's level ends in "FL" (1FL, 2FL, RFL, "木造架構 1 2FL"); the ground is "GL"
+// (spaces and a frame's prefix such as "木造架構 1 " ignored). When any level of the model is a floor level,
+// the others (基礎天端, 土台天端, 桁天端 ...) are not storeys: no plan, no floor area.
+bool isFloorLevelName(const std::string& name);
+bool isGroundLevelName(const std::string& name);
+bool levelIsStorey(const std::vector<FloorLevel>& levels, const FloorLevel& level);
+
 // Any of the tables as CSV, in the same form (docs/115: the finish schedule).
 std::string tableCsv(const draw::Table& table);
 

@@ -481,7 +481,8 @@ Transfer collect(const doc::Document& document, bool applyArea) {
   QMap<int, double> floors;
   const int aboveCount = above.toInt(), belowCount = below.toInt();
   bool validFloors = buildingDetail && !above.isEmpty() && !below.isEmpty() && aboveCount + belowCount <= 6;
-  static const QRegularExpression levelName(QStringLiteral("^(B)?([1-6])(?:FL|F|階)?$"),
+  // docs/295: a frame's prefix ("木造架構 1 2FL") is allowed.
+  static const QRegularExpression levelName(QStringLiteral("^(?:.*\\s)?(B)?([1-6])(?:FL|F|階)?$"),
                                              QRegularExpression::CaseInsensitiveOption);
   double floorSum = 0.0;
   for (const auto& floor : area.rows) {

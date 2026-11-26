@@ -5295,3 +5295,46 @@ TEST(PermitIntake, InteriorMaterialTableTakesTheGivenClasses) {
   for (const auto& row : r["rows"])
     if (row["kind"] == "使用建築材料表") EXPECT_EQ(row["state"], "図面あり") << row.dump();
 }
+
+// docs/295: with floor levels named "...FL", the frame's other levels are not storeys; true north through the API.
+TEST(PermitIntake, OnlyFloorLevelsAreStoreysAndNorthIsSetByTheApi) {
+  EXPECT_TRUE(sbr::doc::isGroundLevelName("GL"));
+  EXPECT_TRUE(sbr::doc::isGroundLevelName("木造架構 1 GL"));
+  EXPECT_FALSE(sbr::doc::isGroundLevelName("1FL"));
+  EXPECT_TRUE(sbr::doc::isFloorLevelName("木造架構 1 2FL"));
+  sbr::doc::Modeler modeler;
+  CommandApi api{modeler};
+  auto call = [&](const std::string& command, json args) {
+    return json::parse(api.execute(json{{"command", command}, {"args", args}}.dump()));
+  };
+  auto ok = [&](const std::string& command, json args) {
+    json r = call(command, args);
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  ASSERT_TRUE(modeler.setLevels({{"", "GL", 0}, {"", "基礎天端", 400}, {"", "土台天端", 540}, {"", "1FL", 600},
+                                 {"", "2FL", 3500}, {"", "桁天端", 6200}}));
+  const json rect = {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}, {0, 0}};
+  ok("create_wall", {{"points", rect}, {"thickness", 120}, {"height", 2900}, {"base", 600}});
+  ok("create_wall", {{"points", rect}, {"thickness", 120}, {"height", 2700}, {"base", 3500}});
+  const auto areas = sbr::doc::areaTable(modeler.document());
+  std::vector<std::string> storeys;
+  for (const auto& row : areas.rows) storeys.push_back(row.level);
+  EXPECT_EQ(storeys, (std::vector<std::string>{"1FL", "2FL"}));
+  EXPECT_NEAR(areas.legalTotal / 1e6, 96.0, 1e-6);
+  const auto set = sbr::doc::drawingSet(modeler.document(), {});
+  ASSERT_TRUE(set) << set.error();
+  std::vector<std::string> plans;
+  for (const auto& name : set->names)
+    if (name.size() > 9 && name.compare(name.size() - 9, 9, "平面図") == 0) plans.push_back(name);
+  EXPECT_EQ(plans, (std::vector<std::string>{"1FL 平面図", "2FL 平面図"}));
+  // True north: an angle, or two points.
+  EXPECT_FALSE(call("set_site_north", {{"angle", 15.0}})["ok"].get<bool>());  // a source is required
+  EXPECT_NEAR(ok("set_site_north", {{"angle", 15.0}, {"source", "架空の測量図"}})["angle"].get<double>(), 15.0, 1e-9);
+  ASSERT_TRUE(modeler.document().settings().siteNorth);
+  EXPECT_EQ(modeler.document().settings().siteNorth->source, "架空の測量図");
+  EXPECT_NEAR(ok("set_site_north", {{"from", {0, 0}}, {"to", {1000, 1000}}, {"source", "架空の測量図"}})["angle"].get<double>(),
+              45.0, 1e-9);
+  ASSERT_TRUE(modeler.undo());
+  EXPECT_NEAR(modeler.document().settings().siteNorth->angle, 15.0, 1e-9);
+}

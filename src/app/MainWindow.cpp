@@ -8896,7 +8896,7 @@ void MainWindow::showBoundaryHeightDialog(BoundaryHeightStudy study) {
     base->hide();
     slope->hide();
     for (const auto& level : document.settings().levels)
-      if (level.name == "GL") ground->setText(QString::number(level.elevation, 'g', 15));
+      if (doc::isGroundLevelName(level.name)) ground->setText(QString::number(level.elevation, 'g', 15));
     // docs/293: the ground level of the 地盤面算出表 first, when it has a model height.
     if (const auto study = doc::groundLevelStudy(document); study.state == "算出" && study.levelZ) {
       ground->setText(QString::number(*study.levelZ, 'f', 0));
@@ -9132,7 +9132,7 @@ void MainWindow::showCombinedHeightDialog() {
       heightConditions.zone, districtCode, heightConditions.source};
   for (const auto& point : geometry->vertices) context.vertices.push_back({point.X(), point.Y(), point.Z()});
   for (const auto& level : document.settings().levels)
-    if (level.name == "GL") context.groundZ = level.elevation;
+    if (doc::isGroundLevelName(level.name)) context.groundZ = level.elevation;
   // docs/293: the ground level of the 地盤面算出表 first, when it has a model height.
   if (const auto study = doc::groundLevelStudy(document); study.state == "算出" && study.levelZ)
     context.groundZ = *study.levelZ;

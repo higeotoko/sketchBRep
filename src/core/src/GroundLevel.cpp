@@ -49,7 +49,7 @@ GroundLevelStudy groundLevelStudy(const Document& document) {
   out.state = out.rangeMm() > 3000.0 ? "区分が必要" : "算出";
   if (ground.datumZ) out.levelZ = *ground.datumZ + out.levelMm;
   for (const FloorLevel& l : document.settings().levels)
-    if (l.name == "GL") out.glZ = l.elevation;
+    if (isGroundLevelName(l.name)) out.glZ = l.elevation;
   if (out.state == "区分が必要")
     out.problem = "接地する位置の高低差が 3 m を超えます。3 m 以内ごとの区分（建物の部分の分け方）は設計者が決め、"
                   "区分ごとの地盤面はここでは算出していません";

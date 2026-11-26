@@ -1,3 +1,4 @@
+#include <ctime>
 #include "sbr/doc/Schedules.h"
 #include "sbr/doc/FireSpread.h"
 #include "sbr/doc/PermitIntake.h"
@@ -4282,6 +4283,44 @@ const std::vector<CommandDef>& commands() {
          spec.labelOffset = numberOr(a, "label_offset", spec.labelOffset);
          must(m.setGrid(id, spec));
          return json{{"grid", id}, {"lines", gridJson(*m.gridSpec(id))}};
+       }},
+      {"set_site_north",
+       "docs/295: the site's true north (真北) for the plans' north arrow, the site plan, the vicinity map and the "
+       "sun: 'angle' (degrees clockwise from the model's +Y, as seen from above) or 'from' and 'to' ([x, y] plan "
+       "points, the direction from 'from' towards 'to' is north); 'source' (the document it was read from, "
+       "required) and 'checked_on' (YYYY-MM-DD; default today, as the window does). Only what the person gave: never guess north from a "
+       "map. One undo step. Returns the angle.",
+       SCHEMA({"type": "object", "properties": {"angle": {"type": "number"}, "from": {"type": "array"},
+               "to": {"type": "array"}, "source": {"type": "string"}, "checked_on": {"type": "string"}},
+               "required": ["source"]}),
+       [](doc::Modeler& m, const json& a) {
+         const std::string source = text(a, "source");
+         std::string checkedOn = textOr(a, "checked_on", "");
+         if (checkedOn.empty()) {  // as the window does: the day it is set
+           const std::time_t now = std::time(nullptr);
+           std::tm local{};
+#ifdef _WIN32
+           localtime_s(&local, &now);
+#else
+           localtime_r(&now, &local);
+#endif
+           char day[16];
+           std::strftime(day, sizeof day, "%Y-%m-%d", &local);
+           checkedOn = day;
+         }
+         if (a.contains("from") || a.contains("to")) {
+           const auto point = [&](const char* key) {
+             const json& p = a.at(key);
+             if (!p.is_array() || p.size() < 2) throw ApiError(std::string("'") + key + "' is [x, y]");
+             return gp_Pnt(p[0].get<double>(), p[1].get<double>(), 0.0);
+           };
+           must(m.setSiteNorthFromPoints(point("from"), point("to"), source, checkedOn));
+         } else {
+           if (!a.contains("angle")) throw ApiError("give 'angle' or 'from' and 'to'");
+           must(m.setSiteNorth({number(a, "angle"), source, checkedOn}));
+         }
+         const auto& north = m.document().settings().siteNorth;
+         return json{{"angle", north ? json(north->angle) : json(nullptr)}, {"source", source}};
        }},
       {"set_site_boundary",
        "Assign a closed horizontal outline object to the draft site plan. Provide its source. "

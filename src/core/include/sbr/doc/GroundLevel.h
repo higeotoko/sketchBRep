@@ -6,6 +6,7 @@
 // contact perimeter (set_site_ground), each edge's height taken as a straight line between its points.
 
 #include "sbr/doc/Document.h"
+#include "sbr/doc/Schedules.h"
 #include "sbr/draw/Drawing.h"
 
 #include <optional>

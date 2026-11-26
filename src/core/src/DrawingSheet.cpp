@@ -370,12 +370,21 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
     if (same != levels.end()) same->name += "・" + l.name;
     else levels.push_back(l);
   }
+  // docs/295: levels closer than their labels' height (基礎天端・土台天端・1FL) step their labels to the
+  // left, each past the one before, with the level line drawn out to it.
+  std::sort(levels.begin(), levels.end(), [](const LevelMark& a, const LevelMark& b) { return a.v < b.v; });
+  double previousV = -1e300, previousLeft = 0.0;
   for (const LevelMark& l : levels) {
     const double u0 = model.x0 - 3 * margin, u1 = model.x1 + margin;
-    items.push_back(line(Pen::Level, gp_Pnt2d(u0, l.v), gp_Pnt2d(u1, l.v)));
-    items.push_back(text(Pen::Level, gp_Pnt2d(u0, l.v + 1.0 * s), l.name, 3.5, 0, 0));
     const std::string h = std::abs(l.elevation) < 0.5 ? "±0" : (l.elevation > 0 ? "+" : "") + mm(l.elevation);
-    items.push_back(text(Pen::Level, gp_Pnt2d(u0, l.v - 1.0 * s), h, 2.5, 0, 2 /*top*/));
+    const double width = std::max(textWidth(l.name, 3.5), textWidth(h, 2.5)) * s;
+    double at = u0;
+    if (l.v - previousV < 7.5 * s) at = std::min(u0, previousLeft - width - 2.0 * s);
+    items.push_back(line(Pen::Level, gp_Pnt2d(at, l.v), gp_Pnt2d(u1, l.v)));
+    items.push_back(text(Pen::Level, gp_Pnt2d(at, l.v + 1.0 * s), l.name, 3.5, 0, 0));
+    items.push_back(text(Pen::Level, gp_Pnt2d(at, l.v - 1.0 * s), h, 2.5, 0, 2 /*top*/));
+    previousV = l.v;
+    previousLeft = at;
   }
   for (const DimensionMark& d : view.dimensions) dimension(items, d.a, d.b, d.offset, d.text, s);
 
