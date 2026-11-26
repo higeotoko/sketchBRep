@@ -25,6 +25,8 @@
 #include <map>
 
 #include <BRepAdaptor_Curve.hxx>
+#include <GProp_GProps.hxx>
+#include <BRepGProp.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
@@ -1596,6 +1598,71 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
         m.elevation = *ground;
         view.levels.push_back(m);
       }
+    }
+    {
+      const double sp = spec.paperScale > 0 ? spec.paperScale : 100.0;
+    // docs/300: the roof's pitch (寸勾配) beside each slope seen sideways: a small right triangle with
+    // its long side along the slope, "10" under it and the rise beside it, as elevations write 4/10.
+    const gp_Dir viewer = spec.frame.Direction();
+    const gp_Dir rightward = spec.frame.XDirection();
+    for (const doc::Object& o : document.objects()) {
+      if (o.shape.IsNull() || !document.isVisible(o.id)) continue;
+      const auto kind = o.attributes.find("kind");
+      if (kind == o.attributes.end() || kind->second != "roof") continue;
+      double pitch = 4.0;
+      if (const auto stored = o.attributes.find("roof_spec"); stored != o.attributes.end()) {
+        const auto j = nlohmann::json::parse(stored->second, nullptr, false);
+        if (j.is_object() && j.contains("pitch") && j.at("pitch").is_number()) pitch = j.at("pitch").get<double>();
+      }
+      if (!(pitch > 0)) continue;
+      std::vector<std::pair<gp_Pnt2d, int>> marks;  // where, which way the slope falls (+1: to the right)
+      for (TopExp_Explorer f(document.worldShape(o), TopAbs_FACE); f.More(); f.Next()) {
+        const TopoDS_Face face = TopoDS::Face(f.Current());
+        BRepAdaptor_Surface surface(face);
+        if (surface.GetType() != GeomAbs_Plane) continue;
+        gp_Dir n = surface.Plane().Axis().Direction();
+        if (face.Orientation() == TopAbs_REVERSED) n.Reverse();
+        if (n.Z() < 0.1 || n.Z() > 0.99) continue;  // the upper slopes only
+        const gp_Vec h(n.X(), n.Y(), 0.0);
+        if (std::abs(h.Normalized().Dot(gp_Vec(viewer))) > 0.2) continue;  // not seen sideways here
+        GProp_GProps props;
+        BRepGProp::SurfaceProperties(face, props);
+        const gp_Pnt2d at = proj.uv(props.CentreOfMass());
+        const int falls = h.Dot(gp_Vec(rightward)) > 0 ? 1 : -1;
+        bool near = false;
+        for (const auto& m : marks) near |= m.second == falls;
+        if (!near) marks.push_back({at, falls});
+      }
+      const double leg = 6.0 * sp;
+      for (const auto& [at, falls] : marks) {
+        const gp_Pnt2d base(at.X() - falls * leg / 2, at.Y() + 7.0 * sp);  // above the slope
+        const gp_Pnt2d corner(base.X() + falls * leg, base.Y());
+        const gp_Pnt2d top(base.X(), base.Y() + leg * pitch / 10.0);
+        Item triangle;
+        triangle.kind = Item::Kind::Polyline;
+        triangle.pen = Pen::Dimension;
+        triangle.closed = true;
+        triangle.points = {top, base, corner};
+        view.items.push_back(std::move(triangle));
+        Item ten;
+        ten.kind = Item::Kind::Text;
+        ten.pen = Pen::Dimension;
+        ten.text = "10";
+        ten.height = 2.5;
+        ten.hAlign = 1;
+        ten.vAlign = 2;
+        ten.points = {gp_Pnt2d((base.X() + corner.X()) / 2, base.Y() - 0.6 * sp)};
+        view.items.push_back(ten);
+        Item rise = ten;
+        char value[16];
+        std::snprintf(value, sizeof value, "%g", pitch);
+        rise.text = value;
+        rise.hAlign = falls > 0 ? 2 : 0;
+        rise.vAlign = 1;
+        rise.points = {gp_Pnt2d(base.X() - falls * 0.8 * sp, (base.Y() + top.Y()) / 2)};
+        view.items.push_back(rise);
+      }
+    }
     }
   }
   if (spec.levels && spec.kind != ViewKind::Plan) {

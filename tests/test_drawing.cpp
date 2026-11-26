@@ -917,3 +917,35 @@ TEST(Drawing, GroundLevelTableFollowsTheOrder) {
   ASSERT_TRUE(m.setSiteGround(input));
   EXPECT_EQ(doc::groundLevelStudy(m.document()).state, "算出");
 }
+
+// docs/300: an elevation of the gable end marks the roof's pitch (4/10) beside each slope; the eaves side does not.
+TEST(Drawing, ElevationsMarkTheRoofPitch) {
+  doc::Modeler m;
+  api::CommandApi api(m);
+  const auto run = [&](const nlohmann::json& c) {
+    const auto r = nlohmann::json::parse(api.execute(c.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << r.dump();
+  };
+  run({{"command", "create_wall"}, {"args", {{"points", {{0, 0}, {9100, 0}, {9100, 7280}, {0, 7280}, {0, 0}}},
+                                              {"thickness", 120}, {"height", 3000}}}});
+  run({{"command", "create_roof"}, {"args", {{"outline", {{0, 0}, {9100, 0}, {9100, 7280}, {0, 7280}}},
+                                              {"kind", "gable"}, {"height", 3000}, {"pitch", 4}}}});
+  const auto marks = [&](int side) {
+    ViewSpec s = elevationView(m.document(), side);
+    s.heightDims = true;
+    const auto view = makeView(m.document(), s);
+    EXPECT_TRUE(view) << view.error();
+    int tens = 0, fours = 0;
+    if (view)
+      for (const auto& item : view->items) {
+        if (item.kind != Item::Kind::Text) continue;
+        tens += item.text == "10";
+        fours += item.text == "4";
+      }
+    return std::make_pair(tens, fours);
+  };
+  // The ridge runs along x (the longer side): seen from the east the two slopes rise and fall.
+  EXPECT_EQ(marks(1), std::make_pair(2, 2));
+  // From the south the slope faces the viewer: no pitch mark.
+  EXPECT_EQ(marks(0), std::make_pair(0, 0));
+}
