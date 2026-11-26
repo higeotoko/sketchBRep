@@ -2058,6 +2058,41 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     }
     if (!report.at("complete").get<bool>())
       view.notes.push_back("部材情報の不足・編集後の寸法など、拾い出しに未評価があります");
+    // docs/307: a row of the same member at an even pitch (joists, rafters, studs) is marked once, in
+    // the middle of the row, with its pitch ("J01 45×60 @455"), as framing plans write it; the members
+    // are all still drawn. Rows of 3 or more, side by side along one direction, the same distance apart.
+    std::vector<View::MemberMark> marks = std::move(view.members);
+    view.members.clear();
+    std::vector<bool> done(marks.size(), false);
+    for (const int axis : {0, 1}) {
+      const auto along = [&](std::size_t k) { return axis == 0 ? marks[k].at.X() : marks[k].at.Y(); };
+      const auto across = [&](std::size_t k) { return axis == 0 ? marks[k].at.Y() : marks[k].at.X(); };
+      std::map<std::pair<std::string, long long>, std::vector<std::size_t>> rows;
+      for (std::size_t k = 0; k < marks.size(); ++k)
+        if (!done[k]) rows[{marks[k].text, std::llround(across(k))}].push_back(k);
+      for (auto& [key, row] : rows) {
+        std::sort(row.begin(), row.end(), [&](std::size_t x, std::size_t y) { return along(x) < along(y); });
+        std::size_t start = 0;
+        while (start + 2 < row.size()) {
+          const double step = along(row[start + 1]) - along(row[start]);
+          std::size_t end = start + 1;
+          while (end + 1 < row.size() && std::abs(along(row[end + 1]) - along(row[end]) - step) < 1.0) ++end;
+          if (step > 1.0 && end - start >= 2) {
+            View::MemberMark one = marks[row[(start + end) / 2]];
+            char pitch[32];
+            std::snprintf(pitch, sizeof pitch, " @%.0f", step);
+            one.text += pitch;
+            view.members.push_back(one);
+            for (std::size_t k = start; k <= end; ++k) done[row[k]] = true;
+            start = end + 1;
+          } else {
+            ++start;
+          }
+        }
+      }
+    }
+    for (std::size_t k = 0; k < marks.size(); ++k)
+      if (!done[k]) view.members.push_back(marks[k]);
   }
   if (!sitePlan && document.settings().wallCalculation != "{}") {
     const auto wall = construction::checkWallQuantity(document);

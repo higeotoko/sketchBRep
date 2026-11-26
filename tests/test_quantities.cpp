@@ -191,7 +191,13 @@ TEST_F(Quantities, FramingPresetsFilterBodiesAndKeepMatchingMarksAndGrid) {
     const auto view = draw::makeView(m.document(), *spec);
     ASSERT_TRUE(view) << view.error();
     const auto quantities = report({{"within", made["frame"]}, {"tags", spec->tags}, {"visible_only", true}});
-    EXPECT_EQ(view->members.size(), quantities["parts"].size());
+    // docs/307: a row at an even pitch is marked once ("... @455"): no more marks than parts.
+    EXPECT_GE(view->members.size(), 1u);
+    EXPECT_LE(view->members.size(), quantities["parts"].size());
+    if (std::string(preset) == "first_floor" || std::string(preset) == "roof") {
+      const bool pitched = std::any_of(view->members.begin(), view->members.end(), [](const auto& mark) { return mark.text.find(" @") != std::string::npos; });
+      EXPECT_TRUE(pitched) << preset;  // the joists / rafters as one mark with their pitch
+    }
     EXPECT_EQ(view->grids.size(), 6u);
     for (const auto& mark : view->members) {
       bool found = false;

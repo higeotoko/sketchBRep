@@ -1136,3 +1136,4 @@ TEST(Drawing, DrawingSetCombinesViewsOnOneSheet) {
   for (const auto& item : together->sheets[plans].items) marked |= item.kind == Item::Kind::Text && item.text == together->numbers[views];
   EXPECT_TRUE(marked);
 }
+
