@@ -16,6 +16,7 @@ add_library(sbr_core STATIC
   src/Stair.cpp
   src/Schedules.cpp
   src/FireSpread.cpp
+  src/PermitIntake.cpp
   src/FireCompartments.cpp
   src/AreaEvidence.cpp
   src/VicinityMap.cpp

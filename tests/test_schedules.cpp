@@ -21,6 +21,7 @@
 #include "sbr/doc/Schedules.h"
 #include "sbr/doc/FireSpread.h"
 #include "sbr/doc/FireCompartments.h"
+#include "sbr/doc/PermitIntake.h"
 #include "sbr/OpeningSymbols.h"
 #include "sbr/draw/Drawing.h"
 #include "sbr/geom/Measure.h"
@@ -5153,4 +5154,72 @@ TEST_F(Schedules, UntypedWallBetweenRoomsIsInner) {
   ok("create_room", {{"at", {6000, 3000}}, {"name", "洋室"}});
   EXPECT_EQ(markOf(partition), "WD1");
   EXPECT_EQ(markOf(south).substr(0, 2), "AW");
+}
+
+// docs/286: the Yokohama intake check sheets' 図書の種類 against the drawing set, and the 様式3 fee.
+TEST(PermitIntake, KindsOfDocumentsAndTheFee) {
+  std::string bracket;
+  EXPECT_EQ(sbr::doc::yokohamaConfirmationFee(0.0), 0);
+  EXPECT_EQ(sbr::doc::yokohamaConfirmationFee(30.0, &bracket), 15000);
+  EXPECT_EQ(bracket, "30㎡以下");
+  EXPECT_EQ(sbr::doc::yokohamaConfirmationFee(30.01, &bracket), 28000);
+  EXPECT_EQ(sbr::doc::yokohamaConfirmationFee(100.0), 28000);
+  EXPECT_EQ(sbr::doc::yokohamaConfirmationFee(100.01), 43000);
+  EXPECT_EQ(sbr::doc::yokohamaConfirmationFee(1000.0), 66000);
+  EXPECT_EQ(sbr::doc::yokohamaConfirmationFee(60000.0, &bracket), 900000);
+  EXPECT_EQ(bracket, "50,000㎡を超えるもの");
+
+  sbr::doc::Modeler modeler;
+  CommandApi api{modeler};
+  auto ok = [&](const std::string& command, json args) {
+    json r = json::parse(api.execute(json{{"command", command}, {"args", args}}.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  ASSERT_TRUE(modeler.setLevels({{"", "1FL", 0}, {"", "2FL", 3000}}));
+  const json rect = {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}, {0, 0}};
+  ok("create_wall", {{"points", rect}, {"thickness", 120}, {"height", 3000}});
+  ok("create_wall", {{"points", rect}, {"thickness", 120}, {"height", 3000}, {"base", 3000}});
+  ok("create_slab", {{"outline", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}}}, {"top", 0}, {"thickness", 150}});
+  ok("create_slab", {{"outline", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}}}, {"top", 3000}, {"thickness", 150}});
+
+  json r = ok("permit_intake_review", json::object());
+  const auto row = [&](const std::string& form, const std::string& kind) {
+    for (const auto& x : r["rows"])
+      if (x["form"] == form && x["kind"] == kind) return x;
+    return json();
+  };
+  EXPECT_EQ(row("様式1-2", "各階平面図")["state"], "図面あり");
+  EXPECT_EQ(row("様式1-2", "各階平面図")["sheets"].size(), 2u);
+  EXPECT_EQ(row("様式1-2", "2面以上の立面図")["state"], "図面あり");
+  EXPECT_EQ(row("様式1-2", "2面以上の断面図")["state"], "図面あり");
+  EXPECT_EQ(row("様式1-2", "地盤面算出表")["state"], "図面一式にない");
+  EXPECT_EQ(row("様式1-2", "基礎伏図")["need"], "特定木造建築物を除き必要");
+  EXPECT_EQ(row("様式1-2", "日影に関する図書")["state"], "該当時に確認");
+  EXPECT_EQ(row("様式1-2", "電気設備関係図書")["state"], "該当時に確認");
+  ASSERT_EQ(row("様式1-2", "図面リスト")["sheets"].size(), 1u);
+  EXPECT_EQ(row("様式1-2", "図面リスト")["sheets"][0], "A-01 図面リスト");
+  EXPECT_EQ(row("様式2", "2面以上の軸組図")["state"], "図面一式にない");
+  EXPECT_FALSE(row("様式2", "各階平面図").is_null());
+  EXPECT_NE(r["source"].get<std::string>().find("2026-10-29"), std::string::npos);
+  // The fee: not asked for; then the work kind not given; then a new building of 96 ㎡.
+  EXPECT_EQ(r["fee"]["state"], "未選択");
+  EXPECT_FALSE(r["fee"].contains("fee_yen"));
+  r = ok("permit_intake_review", {{"whole_floor_for_fee", true}});
+  EXPECT_EQ(r["fee"]["state"], "工事種別を確認");
+  ASSERT_TRUE(modeler.setProjectOutline({{"work_kind", "new"}}));
+  r = ok("permit_intake_review", {{"whole_floor_for_fee", true}});
+  EXPECT_EQ(r["fee"]["state"], "候補");
+  EXPECT_NEAR(r["fee"]["area_m2"].get<double>(), 96.0, 1e-9);
+  EXPECT_EQ(r["fee"]["fee_yen"], 28000);
+  EXPECT_EQ(r["fee"]["bracket"], "30㎡を超え100㎡以下");
+  EXPECT_NE(r["fee"]["note"].get<std::string>().find("加算"), std::string::npos);
+  // With a site: the site plan is there but named for study use.
+  const auto site = modeler.createPolyline({gp_Pnt(-2000, -2000, 0), gp_Pnt(12000, -2000, 0), gp_Pnt(12000, 10000, 0),
+                                            gp_Pnt(-2000, 10000, 0), gp_Pnt(-2000, -2000, 0)});
+  ASSERT_TRUE(site);
+  ASSERT_TRUE(modeler.setSiteBoundary(sbr::doc::SiteBoundary{*site, "架空の測量図"}));
+  r = ok("permit_intake_review", json::object());
+  EXPECT_EQ(row("様式1-2", "配置図")["state"], "要確認");
+  EXPECT_NE(row("様式1-2", "配置図")["note"].get<std::string>().find("検討用"), std::string::npos);
 }

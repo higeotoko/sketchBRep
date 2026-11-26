@@ -51,6 +51,7 @@
 #include <QSettings>
 #include <QListWidget>
 #include <QPushButton>
+#include <QTabWidget>
 #include <QTableWidget>
 #include <QDialogButtonBox>
 #include <QCheckBox>
@@ -1687,13 +1688,28 @@ void GuiPhase1::permitSubmissionReviewFindsModelAndFileCandidates() {
     };
     const bool unconfirmed = status(QStringLiteral("確認申請手数料算定表"), 1) == QStringLiteral("単一棟の申請範囲を確認");
     feeScope->setChecked(true);
-    const bool feeCandidate = status(QStringLiteral("確認申請手数料算定表"), 1) == QStringLiteral("申請部分 24.00 ㎡（候補）");
+    const bool feeCandidate = status(QStringLiteral("確認申請手数料算定表"), 1) == QStringLiteral("申請部分 24.00 ㎡・手数料 15,000円（候補）");
     checked = unconfirmed && feeCandidate && status(QStringLiteral("確認申請書"), 2) == QStringLiteral("1件の候補") &&
               status(QStringLiteral("建築計画概要書"), 2) == QStringLiteral("候補ファイルなし") &&
               status(QStringLiteral("各階平面図"), 1) == QStringLiteral("1枚の候補") &&
               status(QStringLiteral("配置図"), 1) == QStringLiteral("該当図面なし");
+    // docs/286: the intake sheets' kinds of documents against the drawing set.
+    auto* intake = dialog->findChild<QTableWidget*>(QStringLiteral("permitIntakeTable"));
+    auto* tabs = dialog->findChild<QTabWidget*>(QStringLiteral("permitSubmissionTabs"));
+    bool planFound = false, groundMissing = false;
+    for (int i = 0; intake && i < intake->rowCount(); ++i) {
+      const auto kind = intake->item(i, 1)->text(), state = intake->item(i, 3)->text();
+      planFound |= intake->item(i, 0)->text().startsWith(QStringLiteral("様式1-2")) && kind == QStringLiteral("各階平面図") &&
+                   state == QStringLiteral("図面あり");
+      groundMissing |= kind == QStringLiteral("地盤面算出表") && state == QStringLiteral("図面一式にない");
+    }
+    checked = checked && tabs && planFound && groundMissing;
     const auto reviewDir = qEnvironmentVariable("SBR_PERMIT_WORD_REVIEW_DIR");
-    if (checked && !reviewDir.isEmpty()) dialog->grab().save(QDir(reviewDir).filePath(QStringLiteral("submission-preview.png")));
+    if (checked && !reviewDir.isEmpty()) {
+      dialog->grab().save(QDir(reviewDir).filePath(QStringLiteral("submission-preview.png")));
+      tabs->setCurrentIndex(1);
+      dialog->grab().save(QDir(reviewDir).filePath(QStringLiteral("submission-intake-preview.png")));
+    }
     dialog->reject();
   });
   action->trigger();

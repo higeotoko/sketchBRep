@@ -1,5 +1,6 @@
 #include "sbr/doc/Schedules.h"
 #include "sbr/doc/FireSpread.h"
+#include "sbr/doc/PermitIntake.h"
 #include "sbr/doc/FireCompartments.h"
 #include "sbr/ConstructionQuantity.h"
 #include "sbr/ConstructionWall.h"
@@ -3578,6 +3579,39 @@ const std::vector<CommandDef>& commands() {
          if (!mark.note.empty()) confirmation["note"] = mark.note;
          return json{{"stage", stage}, {"rows", std::move(rows)}, {"confirmation", std::move(confirmation)}};
        }},
+      {"permit_intake_review",
+       "docs/286: the Yokohama intake forms held up against the model. 'rows': each 図書の種類 of 様式1-2 "
+       "(意匠・設備受付チェックシート, section 4) and 様式2 (構造受付チェックシート, table 2/3) with form, group "
+       "(表1（い） ...), kind, need (必要 / 該当時 / 特定木造建築物を除き必要 / 構造の規定・ルートによる / 添付の協力依頼), "
+       "state (図面あり / 要確認 / 図面一式にない / 該当時に確認 / アプリ外 / 図面一式を確認できない), sheets "
+       "(\"A-04 1FL 平面図\" ... from the drawing set made now), note. 'fee' (様式3): with 'whole_floor_for_fee' true "
+       "(the person says a single new building's whole floor area is the application part, 第三面 11 欄イ) the "
+       "area (m2, 2 decimals), the bracket and the fee in yen (①, the route-2 addition ② not included), state 未選択 / "
+       "工事種別を確認 / 床面積を確認 / 候補 / 区分の境界を確認. Names matched, not contents: the sheets' boxes stay the "
+       "designer's; never a legal judgement. 'source' names the form versions.",
+       SCHEMA({"type": "object", "properties": {"whole_floor_for_fee": {"type": "boolean"}, "scale": {"type": "number"}}}),
+       [](doc::Modeler& m, const json& a) {
+         doc::DrawingSetSpec setSpec;
+         setSpec.scale = numberOr(a, "scale", 100.0);
+         const auto set = doc::drawingSet(m.document(), setSpec);
+         const auto review = doc::yokohamaIntakeReview(m.document(), set ? &*set : nullptr, set ? std::string() : set.error(),
+                                                       a.value("whole_floor_for_fee", false));
+         json rows = json::array();
+         for (const auto& r : review.rows)
+           rows.push_back({{"form", r.form}, {"group", r.group}, {"kind", r.kind}, {"need", r.need}, {"state", r.state},
+                           {"sheets", r.sheets}, {"note", r.note}});
+         const auto& f = review.fee;
+         json fee = {{"state", f.state}, {"note", f.note}};
+         if (f.known) {
+           fee["area_m2"] = f.area;
+           fee["bracket"] = f.bracket;
+           fee["fee_yen"] = f.fee;
+         }
+         json out = {{"rows", std::move(rows)}, {"fee", std::move(fee)}, {"source", review.source},
+                     {"forms_url", doc::kYokohamaIntakeForms}};
+         if (!review.drawingError.empty()) out["drawing_error"] = review.drawingError;
+         return out;
+       }},
       {"set_equipment",
        "docs/224: the building's equipment for the energy documents, as the person gives it (the whole list "
        "replaced; [] takes all away): 'items' [{kind: heating_cooling | ventilation | hot_water | lighting | solar | "
@@ -4975,7 +5009,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
       name == "preview" || name == "query_objects" || name == "aggregate" || name == "get_changes" ||
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
       name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" ||
-      name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" || name == "permit_checks" || name == "check_drawing_set" || name == "project_outline" || name == "daylight_factor_estimates" ||
+      name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" || name == "permit_checks" || name == "permit_intake_review" || name == "check_drawing_set" || name == "project_outline" || name == "daylight_factor_estimates" ||
       name == "fire_compartment_review" || name == "fire_spread_review" || name == "site_height_conditions" || name == "yokohama_height_district_at" || name == "compare_yokohama_height_district" ||
       name == "neighbor_height_at" || name == "north_height_at" || name == "compare_north_height" || name == "compare_neighbor_height" || name == "road_height_datum" || name == "road_height_table_values" || name == "measure_road_building_setback" || name == "compare_road_height_plane" || name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
     return E::Read;

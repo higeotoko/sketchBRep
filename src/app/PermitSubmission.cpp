@@ -1,6 +1,7 @@
 #include "PermitSubmission.h"
 #include "PermitApplicationArea.h"
 
+#include "sbr/doc/PermitIntake.h"
 #include "sbr/doc/Schedules.h"
 
 #include <QApplication>
@@ -13,7 +14,9 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QLocale>
 #include <QScopeGuard>
+#include <QTabWidget>
 #include <QTableWidget>
 #include <QVBoxLayout>
 
@@ -90,7 +93,24 @@ void showPermitSubmissionReview(const doc::Document& document, const doc::Drawin
   table->setColumnWidth(0, 240);
   table->setColumnWidth(1, 215);
   table->setColumnWidth(2, 175);
-  layout->addWidget(table);
+  // docs/286: each 図書の種類 of the intake check sheets against the drawing set.
+  auto* intake = new QTableWidget(0, 5);
+  intake->setObjectName(QStringLiteral("permitIntakeTable"));
+  intake->setHorizontalHeaderLabels({tr("様式・区分"), tr("図書の種類"), tr("要否"), tr("図面一式"), tr("該当図面・確認事項")});
+  intake->setEditTriggers(QAbstractItemView::NoEditTriggers);
+  intake->setSelectionBehavior(QAbstractItemView::SelectRows);
+  intake->setAlternatingRowColors(true);
+  intake->verticalHeader()->hide();
+  intake->horizontalHeader()->setStretchLastSection(true);
+  intake->setColumnWidth(0, 150);
+  intake->setColumnWidth(1, 260);
+  intake->setColumnWidth(2, 150);
+  intake->setColumnWidth(3, 120);
+  auto* tabs = new QTabWidget;
+  tabs->setObjectName(QStringLiteral("permitSubmissionTabs"));
+  tabs->addTab(table, tr("提出図書"));
+  tabs->addTab(intake, tr("受付チェックシートの図書の種類"));
+  layout->addWidget(tabs);
   auto* folderLabel = new QLabel(tr("提出フォルダ未選択"));
   folderLabel->setTextFormat(Qt::PlainText);
   layout->addWidget(folderLabel);
@@ -105,7 +125,7 @@ void showPermitSubmissionReview(const doc::Document& document, const doc::Drawin
   const auto items = requirements();
   const auto openedAt = document.sequence();
   table->setRowCount(items.size());
-  QString folder, feeArea;
+  QString folder, feeArea, feeYen, feeNote;
   const auto isNewBuilding = [&] {
     const auto outline = doc::projectOutline(document);
     const auto kind = outline.find("work_kind");
@@ -132,12 +152,14 @@ void showPermitSubmissionReview(const doc::Document& document, const doc::Drawin
       if (item.feeWorksheet) model = !feeScope->isEnabled() ? tr("工事種別・申請部分を確認")
           : !feeScope->isChecked() ? tr("単一棟の申請範囲を確認")
           : feeArea.isEmpty() ? tr("床面積の根拠を確認")
-                             : tr("申請部分 %1（候補）").arg(feeArea);
+                             : feeYen.isEmpty() ? tr("申請部分 %1（候補）").arg(feeArea)
+                                                : tr("申請部分 %1・手数料 %2円（候補）").arg(feeArea, feeYen);
       QString delivery = folder.isEmpty() ? tr("未照合") :
                          matchingFiles.isEmpty() ? (item.conditional ? tr("該当時に確認") : tr("候補ファイルなし"))
                                                  : tr("%1件の候補").arg(matchingFiles.size());
       const QString values[] = {item.name, model, delivery, item.notes};
-      const QString hints[] = {item.name, matchingDrawings.isEmpty() ? drawingError : matchingDrawings.join('\n'),
+      const QString hints[] = {item.name, item.feeWorksheet && !feeNote.isEmpty() ? feeNote
+                               : matchingDrawings.isEmpty() ? drawingError : matchingDrawings.join('\n'),
                                matchingFiles.join('\n'), item.notes};
       for (int c = 0; c < 4; ++c) {
         auto* cell = new QTableWidgetItem(values[c]);
@@ -149,9 +171,16 @@ void showPermitSubmissionReview(const doc::Document& document, const doc::Drawin
   const auto refreshFee = [&] {
     feeScope->setEnabled(isNewBuilding());
     feeArea.clear();
+    feeYen.clear();
+    feeNote.clear();
     if (feeScope->isEnabled() && feeScope->isChecked()) {
       const auto area = doc::areaTable(document);
       if (hasApplicationFloorArea(area)) feeArea = permitSquareMetres(area.legalTotal);
+      const auto fee = doc::yokohamaIntakeReview(document, nullptr, {}, true).fee;
+      if (fee.known && fee.state == "候補") feeYen = QLocale(QLocale::Japanese).toString(fee.fee);
+      if (fee.known)
+        feeNote = tr("%1（%2）。%3").arg(QString::fromStdString(fee.bracket), QString::fromStdString(fee.state),
+                                         QString::fromStdString(fee.note));
     }
     refresh();
   };
@@ -181,6 +210,21 @@ void showPermitSubmissionReview(const doc::Document& document, const doc::Drawin
       for (const auto& name : set->names) drawings.push_back(QString::fromStdString(name));
     } else {
       drawingError = QString::fromStdString(set.error());
+    }
+    const auto review = doc::yokohamaIntakeReview(document, set ? &*set : nullptr, set ? std::string() : set.error(), false);
+    intake->setRowCount(static_cast<int>(review.rows.size()));
+    for (int i = 0; i < static_cast<int>(review.rows.size()); ++i) {
+      const auto& r = review.rows[static_cast<std::size_t>(i)];
+      QStringList detail;
+      for (const auto& sheet : r.sheets) detail.push_back(QString::fromStdString(sheet));
+      if (!r.note.empty()) detail.push_back(QString::fromStdString(r.note));
+      const QString values[] = {QString::fromStdString(r.form + " " + r.group), QString::fromStdString(r.kind),
+                                QString::fromStdString(r.need), QString::fromStdString(r.state), detail.join(QStringLiteral("　"))};
+      for (int c = 0; c < 5; ++c) {
+        auto* cell = new QTableWidgetItem(values[c]);
+        cell->setToolTip(c == 4 ? detail.join(QLatin1Char('\n')) : values[c]);
+        intake->setItem(i, c, cell);
+      }
     }
     refreshFee();
   });
