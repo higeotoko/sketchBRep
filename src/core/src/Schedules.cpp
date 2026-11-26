@@ -5700,6 +5700,9 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
   // docs/292: the interior materials (使用建築材料表) when rooms have finishes.
   if (const auto interior = interiorMaterialTable(document); !interior.rows.empty())
     planned.push_back({interior.title, std::nullopt, interior, {}});
+  // docs/314: the 第二種・第三種 materials' areas against the rooms' floor areas.
+  if (const auto areas = interiorAreaTable(document); !areas.rows.empty())
+    planned.push_back({areas.title, std::nullopt, areas, {}});
   // docs/291: the structural materials of the timber frame.
   if (const auto materials = structuralMaterialTable(document); !materials.rows.empty())
     planned.push_back({materials.title, std::nullopt, materials, {}});
@@ -6000,7 +6003,7 @@ draw::Table interiorMaterialTable(const Document& document) {
         ++forbidden;
       } else if (m->cls == "second" || m->cls == "third") {
         cls = m->cls == "second" ? "第二種" : "第三種";
-        rule = "使用面積の制限（第1項第2号）。面積は未照合";
+        rule = "使用面積の制限（第1項第2号）。使用面積の表で照合";
         ++limited;
       } else {
         cls = "規制対象外";
@@ -6015,7 +6018,88 @@ draw::Table interiorMaterialTable(const Document& document) {
   if (missing > 0) t.notes.push_back("区分が未入力の行が " + std::to_string(missing) + " 行あります（set_interior_materials）。");
   if (forbidden > 0) t.notes.push_back("第一種の材料を使う行が " + std::to_string(forbidden) + " 行あります。居室の内装には使えません。");
   if (limited > 0)
-    t.notes.push_back("第二種・第三種の材料は、換気回数と住宅等の居室かどうかで決まる係数を掛けた面積が床面積以下である必要があります（未照合）。");
+    t.notes.push_back("第二種・第三種の材料の面積は「ホルムアルデヒド発散建築材料の使用面積」の表で照合します。");
+  return t;
+}
+
+// docs/314: 令第20条の7第1項第2号 per living room: the areas finished with 第二種 / 第三種 materials times the
+// table's figures (by 住宅等の居室 or not and the air changes n = V / (A h)) against the room's floor area.
+// Floor and ceiling: the inner floor area; walls: the inner perimeter times the ceiling height, openings not
+// taken off (on the safe side). Read on e-Gov 2026-11-27.
+draw::Table interiorAreaTable(const Document& document) {
+  draw::Table t;
+  t.title = "ホルムアルデヒド発散建築材料の使用面積";
+  t.headers = {"室名", "階", "居室の区分", "床面積 (m²)", "換気回数 (回/h)", "第二種の面積 (m²)", "第三種の面積 (m²)",
+               "N2·S2＋N3·S3 (m²)", "令20条の7第1項第2号"};
+  const auto given = Modeler::interiorMaterialsOf(document);
+  const auto classOf = [&](const std::string& finish) {
+    for (const auto& g : given)
+      if (g.name == finish) return g.cls;
+    return std::string();
+  };
+  const auto rooms = roomSchedule(document).rows;
+  // A shared ventilation unit: its airflow over the rooms it serves (Σ A h).
+  std::map<std::string, double> unitVolume;
+  for (const RoomRow& r : rooms)
+    if (!r.fanUnit.empty() && r.innerKnown && r.ceilingHeight > 0)
+      unitVolume[r.fanUnit] += r.innerArea / 1e6 * r.ceilingHeight / 1000.0;
+  int over = 0, open = 0;
+  for (const RoomRow& r : rooms) {
+    if (r.daylightKind == "none") continue;
+    const std::string f = classOf(r.floor), w = classOf(r.wall), c = classOf(r.ceiling);
+    const auto limited = [](const std::string& k) { return k == "second" || k == "third"; };
+    if (!limited(f) && !limited(w) && !limited(c)) continue;
+    const bool dwelling = r.daylightKind == "dwelling";
+    char a[32], nText[32], s2Text[32], s3Text[32], sum[32];
+    if (!r.innerKnown || !(r.ceilingHeight > 0)) {
+      ++open;
+      t.rows.push_back({r.name, r.level, dwelling ? "住宅等の居室" : "住宅等の居室以外", "", "", "", "", "",
+                        "未評価（内法の面積・天井高が要る）"});
+      continue;
+    }
+    const double area = r.innerArea / 1e6, h = r.ceilingHeight / 1000.0;
+    const double wallArea = r.innerPerimeter / 1000.0 * h;
+    double s2 = 0, s3 = 0;
+    for (const auto& [k, s] : {std::pair<std::string, double>{f, area}, {w, wallArea}, {c, area}}) {
+      if (k == "second") s2 += s;
+      if (k == "third") s3 += s;
+    }
+    std::optional<double> n;
+    if (r.fanM3h > 0) {
+      const double volume = !r.fanUnit.empty() && unitVolume.count(r.fanUnit) ? unitVolume.at(r.fanUnit) : area * h;
+      if (volume > 0) n = r.fanM3h / volume;
+    }
+    double n2, n3;
+    if (dwelling) {
+      const bool high = n && *n >= 0.7;
+      n2 = high ? 1.2 : 2.8;
+      n3 = high ? 0.20 : 0.50;
+    } else {
+      const bool high = n && *n >= 0.7, mid = n && *n >= 0.5 && *n < 0.7;
+      n2 = high ? 0.88 : mid ? 1.4 : 3.0;
+      n3 = high ? 0.15 : mid ? 0.25 : 0.50;
+    }
+    const double total = n2 * s2 + n3 * s3;
+    std::snprintf(a, sizeof a, "%.2f", area);
+    if (n) std::snprintf(nText, sizeof nText, "%.2f", *n);
+    else std::snprintf(nText, sizeof nText, "未入力（その他）");
+    std::snprintf(s2Text, sizeof s2Text, "%.2f", s2);
+    std::snprintf(s3Text, sizeof s3Text, "%.2f", s3);
+    std::snprintf(sum, sizeof sum, "%.2f×%.2f＋%.2f×%.2f＝%.2f", n2, s2, n3, s3, total);
+    const bool ok = total <= area + 1e-9;
+    over += !ok;
+    t.rows.push_back({r.name, r.level, dwelling ? "住宅等の居室" : "住宅等の居室以外", a, nText, s2Text, s3Text, sum,
+                      ok ? "規定内" : "規定外"});
+  }
+  if (t.rows.empty()) return t;
+  t.notes = {
+      "第二種・第三種の材料を使う居室ごとに、その面積に令第20条の7第1項第2号の表の数値を掛けた合計と床面積を比べました。",
+      "床・天井は内法の床面積、壁は内法の周長×天井高（開口部は差し引いていないので、大きめの値）。建具の室内側は未入力のため含みません。",
+      "換気回数は 機械換気の有効換気量 ÷（床面積×天井高）。同じ換気設備の室はまとめて計算。換気量が無い室は「その他の居室」の数値を使います。",
+      "根拠：建築基準法施行令 第20条の7（e-Gov で 2026-11-27 に確認）。",
+  };
+  if (over > 0) t.notes.push_back("床面積を超える居室が " + std::to_string(over) + " 室あります。");
+  if (open > 0) t.notes.push_back("内法の面積・天井高が無いため照合できない居室が " + std::to_string(open) + " 室あります。");
   return t;
 }
 

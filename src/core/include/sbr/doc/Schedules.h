@@ -585,6 +585,8 @@ draw::Table structuralMaterialTable(const Document& document);
 // the formaldehyde class given per material (Modeler::setInteriorMaterials) and what 令 20 条の 7 says of it.
 // Empty rows when no room has a finish.
 draw::Table interiorMaterialTable(const Document& document);
+// docs/314: 令第20条の7第1項第2号: per living room using 第二種 / 第三種 materials, N2·S2 + N3·S3 against its floor area.
+draw::Table interiorAreaTable(const Document& document);
 
 // docs/295: names of levels. A storey's level ends in "FL" (1FL, 2FL, RFL, "木造架構 1 2FL"); the ground is "GL"
 // (spaces and a frame's prefix such as "木造架構 1 " ignored). When any level of the model is a floor level,

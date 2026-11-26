@@ -5420,3 +5420,41 @@ TEST(PermitIntake, ConfirmationFeeMatchesTheCityPage) {
   }
   EXPECT_EQ(sbr::doc::yokohamaConfirmationFee(50000.01), 900000);
 }
+
+// docs/314: 令20条の7第1項第2号: a 第三種 wall in a dwelling room, against its floor area; the fan's air changes
+// pick the table's column.
+TEST(PermitIntake, InteriorAreasAreComparedWithTheFloorArea) {
+  sbr::doc::Modeler modeler;
+  CommandApi api{modeler};
+  auto ok = [&](const std::string& command, json args) {
+    json r = json::parse(api.execute(json{{"command", command}, {"args", args}}.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  ASSERT_TRUE(modeler.setLevels({{"", "1FL", 0}}));
+  ok("create_wall", {{"points", {{0, 0}, {4000, 0}, {4000, 6000}, {0, 6000}, {0, 0}}}, {"thickness", 120}, {"height", 3000}});
+  const std::string living = ok("create_room", {{"at", {2000, 3000}}, {"name", "居間"}})["id"];
+  ok("set_room_daylight", {{"id", living}, {"kind", "dwelling"}});
+  ok("set_room_finish", {{"id", living}, {"floor", "フローリング"}, {"wall", "クロス"}, {"ceiling_height", 2400}});
+  EXPECT_TRUE(ok("interior_area_table", json::object())["rows"].empty());  // no classes given
+  ok("set_interior_materials", {{"items", {{{"name", "フローリング"}, {"class", "exempt"}}, {{"name", "クロス"}, {"class", "third"}}}}});
+  const auto room = sbr::doc::roomSchedule(modeler.document()).rows.at(0);
+  const double area = room.innerArea / 1e6, walls = room.innerPerimeter / 1000.0 * 2.4;
+  // No fan: the "その他" column, 0.50 × walls.
+  auto t = ok("interior_area_table", json::object());
+  ASSERT_EQ(t["rows"].size(), 1u);
+  EXPECT_EQ(t["rows"][0][2], "住宅等の居室");
+  EXPECT_EQ(t["rows"][0][8], 0.5 * walls <= area ? "規定内" : "規定外");
+  EXPECT_EQ(t["rows"][0][8], "規定外");  // 0.5 × 46.8 > 22.8
+  // A fan of 0.7 air changes or more: 0.20 × walls.
+  ok("set_room_ventilation", {{"id", living}, {"fan_m3h", 0.75 * area * 2.4}});
+  t = ok("interior_area_table", json::object());
+  EXPECT_EQ(t["rows"][0][8], "規定内");
+  char expected[64];
+  std::snprintf(expected, sizeof expected, "%.2f", 0.2 * walls);
+  EXPECT_NE(t["rows"][0][7].get<std::string>().find(expected), std::string::npos) << t["rows"][0][7];
+  // In the drawing set.
+  const auto set = sbr::doc::drawingSet(modeler.document(), {});
+  ASSERT_TRUE(set) << set.error();
+  EXPECT_NE(std::find(set->names.begin(), set->names.end(), std::string("ホルムアルデヒド発散建築材料の使用面積")), set->names.end());
+}
