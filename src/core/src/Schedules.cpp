@@ -1674,6 +1674,19 @@ std::optional<YokohamaHeightDistrictRule> yokohamaHeightDistrictRule(const std::
   return std::nullopt;
 }
 
+std::optional<draw::ViewSpec::RoadSlant> roadSlantOf(const HeightLimitStudy& study) {
+  if (!study.road || !(study.road->slope > 0) || !(study.road->range.roadWidthMm > 0)) return std::nullopt;
+  const auto& r = *study.road;
+  draw::ViewSpec::RoadSlant s;
+  s.slope = r.slope;
+  s.roadWidthMm = r.range.roadWidthMm;
+  s.setbackMm = r.range.buildingSetbackMm;
+  s.applicationMm = r.range.applicationDistanceMm;
+  // edgeHeightMm is the slant at the site-side boundary before setback: adopted datum + width × slope.
+  s.datumZ = r.edgeHeightMm - r.range.roadWidthMm * r.slope;
+  return s;
+}
+
 Result<RoadHeightDatum> roadHeightDatum(double roadCenterZMm, double siteGroundZMm, double roadWidthMm, double slope) {
   using R = Result<RoadHeightDatum>;
   if (!std::isfinite(roadCenterZMm) || !std::isfinite(siteGroundZMm))
@@ -5500,6 +5513,7 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
     draw::ViewSpec view = draw::sectionView(c.point, c.toward);
     view.title = c.name;
     view.heightDims = true;  // docs/296
+    view.roadSlant = spec.roadSlant;  // docs/317
     planned.push_back({view.title, view, std::nullopt, {}});
   }
   const char* sides[4] = {"南立面図", "東立面図", "北立面図", "西立面図"};
@@ -5507,6 +5521,7 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
     draw::ViewSpec view = draw::elevationView(document, side);
     view.title = sides[side];
     view.heightDims = true;  // docs/296
+    view.roadSlant = spec.roadSlant;  // docs/317
     planned.push_back({view.title, view, std::nullopt, {}});
   }
   // The first planned is the lowest storey's plan.

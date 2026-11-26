@@ -1137,3 +1137,51 @@ TEST(Drawing, DrawingSetCombinesViewsOnOneSheet) {
   EXPECT_TRUE(marked);
 }
 
+
+// docs/317: the road slant of a height study on an elevation that sees the road across, at its slope, from the
+// far boundary moved out by the setback; none without a study.
+TEST(Drawing, ElevationsDrawTheRoadSlantOfAStudy) {
+  doc::Modeler m;
+  const auto outline = m.createRectangle(geom::SketchPlane::ground(), 10000, 12000);
+  ASSERT_TRUE(outline);
+  api::CommandApi api(m);
+  const auto r = nlohmann::json::parse(api.execute(nlohmann::json({{"command", "create_wall"}, {"args", {{"points", {{1500, 2500}, {5200, 2500}, {5200, 6500}, {1500, 6500}, {1500, 2500}}}, {"thickness", 120}, {"height", 6000}}}}).dump()));
+  ASSERT_TRUE(r.value("ok", false)) << r.dump();
+  ASSERT_TRUE(m.setSiteBoundary(doc::SiteBoundary{*outline, "Survey"}));
+  doc::SiteRoad road;
+  road.kind = "法42条1項1号道路";
+  road.source = "Synthetic road register";
+  road.widthMm = 4000;
+  ASSERT_TRUE(m.setSiteRoad({gp_Pnt(10000, 0, 0), gp_Pnt(0, 0, 0)}, road));
+  ASSERT_TRUE(m.setLevels({{"gl", "GL", 0.0}, {"1fl", "1FL", 500.0}}));
+  const auto slants = [&](int side, std::optional<ViewSpec::RoadSlant> slant) {
+    ViewSpec s = elevationView(m.document(), side);
+    s.heightDims = true;
+    s.roadSlant = slant;
+    const auto view = makeView(m.document(), s);
+    EXPECT_TRUE(view) << view.error();
+    std::vector<Item> lines;
+    if (view)
+      for (const auto& item : view->items)
+        if (item.pen == Pen::HeightLimit && item.kind == Item::Kind::Line) lines.push_back(item);
+    return lines;
+  };
+  EXPECT_TRUE(slants(1, std::nullopt).empty());  // no study: no slant
+  doc::HeightLimitStudy study;
+  study.road = doc::HeightLimitStudy::Road{4000 * 1.25, 1.25, doc::RoadHeightPlaneRange{4000, 20000, 500}};
+  const auto slant = doc::roadSlantOf(study);
+  ASSERT_TRUE(slant);
+  EXPECT_DOUBLE_EQ(slant->datumZ, 0.0);
+  EXPECT_DOUBLE_EQ(slant->setbackMm, 500.0);
+  const auto lines = slants(1, slant);
+  ASSERT_EQ(lines.size(), 1u);
+  const auto& a = lines[0].points[0];
+  const auto& b = lines[0].points[1];
+  EXPECT_NEAR(std::abs((b.Y() - a.Y()) / (b.X() - a.X())), 1.25, 1e-6);
+  EXPECT_NEAR(std::min(a.Y(), b.Y()), 0.0, 1e-6);           // starts at the datum
+  // From the far boundary moved out by the setback (4,000 + 500) to past the building's face on the road side
+  // (2,500 into the site) and 1 m more; never past the application distance.
+  EXPECT_NEAR(std::abs(b.X() - a.X()), 4500.0 + 2500.0 - 60.0 + 1000.0, 1.0);
+  EXPECT_LE(std::max(a.Y(), b.Y()), 20000.0 * 1.25 + 1e-6);
+  EXPECT_TRUE(slants(0, slant).empty());  // from the south the road faces the viewer
+}

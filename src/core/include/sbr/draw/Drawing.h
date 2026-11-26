@@ -111,6 +111,13 @@ struct ViewSpec {
   // docs/298: plans: walls whose top is at or below this height (the storey's floor) belong to the storey
   // below and are left out (with the floor framing left out, they showed through the floor). NaN: none.
   double wallsBelow = std::numeric_limits<double>::quiet_NaN();
+  // docs/317: the road slant (道路斜線) of a height study the person made (its figures, never guessed): from the
+  // road's far boundary moved out by the building's setback, at the adopted road datum (model Z), rising by
+  // `slope` towards the site over `applicationMm`. Drawn on elevations and sections that see the road across.
+  struct RoadSlant {
+    double datumZ = 0, slope = 0, roadWidthMm = 0, setbackMm = 0, applicationMm = 0;
+  };
+  std::optional<RoadSlant> roadSlant;
   std::string within;            // optional ancestor group
   bool includeHidden = false;
   bool memberLabels = false;

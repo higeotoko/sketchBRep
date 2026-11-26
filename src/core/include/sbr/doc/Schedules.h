@@ -364,6 +364,8 @@ struct HeightLimitPreview {
   double noLimitAreaMm2 = 0;
 };
 Result<HeightLimitPreview> heightLimitPreview(const Document& document, const HeightLimitStudy& study);
+// docs/317: the study's road slant as the drawings take it (empty when the study has no road).
+std::optional<draw::ViewSpec::RoadSlant> roadSlantOf(const HeightLimitStudy& study);
 
 struct CombinedHeightPartRow {
   ObjectId id;
@@ -565,6 +567,8 @@ struct DrawingSetSpec {
   // map position given and no picture (the command line, AI), the sheet says where the map goes.
   std::optional<VicinityPicture> vicinity;
   const HeightLimitEvidence* heightEvidence = nullptr;  // optional evidence for this export
+  // docs/317: the road slant of the person's height study, drawn on the elevations and sections.
+  std::optional<draw::ViewSpec::RoadSlant> roadSlant;
 };
 struct DrawingSet {
   std::vector<draw::Sheet> sheets;

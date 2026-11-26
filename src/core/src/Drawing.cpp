@@ -1757,6 +1757,45 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
               const double sa = uAt(road.widthMm / 2 - 2000.0), sb = uAt(road.widthMm / 2 + 2000.0);
               view.dimensions.push_back({gp_Pnt2d(std::min(sa, sb), v), gp_Pnt2d(std::max(sa, sb), v), gp_Vec2d(0, -14.0 * sp), "4,000"});
             }
+            // docs/317: the road slant of the person's height study, up to a little above the building.
+            if (spec.roadSlant && spec.roadSlant->slope > 0 && spec.roadSlant->applicationMm > 0) {
+              const auto& s = *spec.roadSlant;
+              const double start = road.widthMm + s.setbackMm;  // across, from the site-side boundary outwards
+              double run = s.applicationMm;
+              // Up to a little above the building, but at least past the building's face on the road side (where
+              // the slant is read against it), and never past the application distance.
+              const double cap = std::max(top, *gl) + 2000.0;
+              const double perAcross = uAt(1.0) - uAt(0.0);  // view u per mm across
+              double nearAcross = 0;
+              if (std::abs(perAcross) > 1e-9)
+                nearAcross = std::max((left - uAt(0.0)) / perAcross, (rightmost - uAt(0.0)) / perAcross);
+              nearAcross = std::min(nearAcross, 0.0);  // the building is on the site side (across <= 0)
+              const double toBuilding = start - nearAcross + 1000.0;
+              run = std::min(s.applicationMm, std::max(toBuilding, (cap - s.datumZ) / s.slope));
+              const auto vAt = [&](double z) {
+                return proj.uv(gp_Pnt(spec.frame.Location().X(), spec.frame.Location().Y(), z)).Y();
+              };
+              if (run > 0) {
+                const gp_Pnt2d from(uAt(start), vAt(s.datumZ)), to(uAt(start - run), vAt(s.datumZ + run * s.slope));
+                view.items.push_back(line(Pen::HeightLimit, from, to));
+                Item label;
+                label.kind = Item::Kind::Text;
+                label.pen = Pen::HeightLimit;
+                char text[96];
+                std::snprintf(text, sizeof text, "道路斜線（勾配 %g、適用距離 %.0f m）", s.slope, s.applicationMm / 1000.0);
+                label.text = text;
+                label.height = 2.5;
+                label.hAlign = 1;
+                label.vAlign = 0;
+                label.angle = std::atan2(to.Y() - from.Y(), to.X() - from.X());
+                if (label.angle > M_PI / 2) label.angle -= M_PI;
+                if (label.angle < -M_PI / 2) label.angle += M_PI;
+                label.points = {gp_Pnt2d((from.X() + to.X()) / 2, (from.Y() + to.Y()) / 2 + 1.0 * sp)};
+                view.items.push_back(std::move(label));
+                u0 = std::min({u0, from.X(), to.X()});
+                u1 = std::max({u1, from.X(), to.X()});
+              }
+            }
             Item name;
             name.kind = Item::Kind::Text;
             name.pen = Pen::Text;

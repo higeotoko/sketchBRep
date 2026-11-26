@@ -935,6 +935,10 @@ void GuiPhase1::reviewDrawingSetOfAModel() {
   QVERIFY(modeler.load(model.toStdString()));
   doc::DrawingSetSpec spec;
   spec.combineViews = qEnvironmentVariableIsSet("SBR_REVIEW_COMBINE");  // docs/306
+  // docs/317: SBR_REVIEW_SLANT "datumZ,slope,roadWidth,setback,application" (mm): a road slant to look at.
+  if (const auto slant = qEnvironmentVariable("SBR_REVIEW_SLANT").split(QLatin1Char(',')); slant.size() == 5)
+    spec.roadSlant = draw::ViewSpec::RoadSlant{slant[0].toDouble(), slant[1].toDouble(), slant[2].toDouble(),
+                                               slant[3].toDouble(), slant[4].toDouble()};
   const auto set = doc::drawingSet(modeler.document(), spec);
   QVERIFY2(set.ok(), set ? "" : set.error().c_str());
   QVERIFY(QDir().mkpath(out));
