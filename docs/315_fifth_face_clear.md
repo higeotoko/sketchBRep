@@ -18,3 +18,16 @@ docs/294 で確認申請書の第五面を階ごとに書き出したけど、�
   - 全部の高さで見ると、柱の表の最大の距離と同じになる。
   - 柱が無い高さでは空になる。
 - 申請書の GUI テスト（`permitWord…`）が今までどおり通る。そのテストのモデルには柱が無いので、欄は空のまま。
+
+## 検証と配布
+
+計算テストと、申請の関連GUIテストで確かめた。人による操作確認は未実施。
+
+| 項目 | 結果 |
+|---|---|
+| コード | `d2be825`（配布は記録のコミット `d41e2f1` から） |
+| Windows | コア854件成功・8件スキップ、関連GUIテスト成功 |
+| Linux CI | [run 45878263643](https://github.com/higeotoko/sketchBRep/actions/runs/45878263643)（`d41e2f1`、875件成功） |
+| Windows ZIP | `SketchBRep-windows-x64-d41e2f1-local.zip`（84719666 bytes） |
+| SHA256 | `93ec8748bc6350f4bfaf2ec4cca69e0bf545054dd41b2b677410ba5980ab439d` |
+| ZIPの検証 | [標準18条件](validation/2026-11-27-portable-d41e2f1.json)・[べた基礎4条件](validation/2026-11-27-portable-d41e2f1-mat.json)成功 |
