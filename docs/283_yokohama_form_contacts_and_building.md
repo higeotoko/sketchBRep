@@ -15,7 +15,7 @@
 | 項目 | 結果 |
 |---|---|
 | コード | `3eabeb8` |
-| Linux CI | [実行ログ](https://github.com/higeotoko/sketchBRep/actions/runs/45632456559) |
+| Linux CI | [run 45632456559](https://github.com/higeotoko/sketchBRep/actions/runs/45632456559) で854件成功 |
 | Windows ZIP | `SketchBRep-windows-x64-3eabeb8-local.zip`（84,147,556 bytes） |
 | SHA256 | `872f8633cee14401659b1857de6106b6b8532cc117b0dd43116b7726e428d0c0` |
 | ZIPの検証 | [標準18条件](validation/2026-11-25-portable-3eabeb8.json)・[べた基礎4条件](validation/2026-11-25-portable-3eabeb8-mat.json)成功 |
