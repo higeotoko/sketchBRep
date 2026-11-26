@@ -434,3 +434,16 @@ TEST_F(Quantities, StructuralSpecTableTakesTheGivenSpecifications) {
   ASSERT_TRUE(read["ok"]) << read.dump();
   EXPECT_EQ(read["result"]["rows"][5][3], "入力済み");
 }
+
+// docs/315: the columns' longest clear distance in a height range (第五面 ニ).
+TEST_F(Quantities, ClearDistanceOfTheColumnsInAStorey) {
+  frame();
+  const auto rows = doc::columnRows(m.document());
+  ASSERT_FALSE(rows.empty());
+  double longest = 0;
+  for (const auto& r : rows) longest = std::max(longest, r.distanceMm);
+  const auto all = doc::clearDistanceIn(m.document(), -1e9, 1e9);
+  ASSERT_TRUE(all);
+  EXPECT_DOUBLE_EQ(*all, longest);
+  EXPECT_FALSE(doc::clearDistanceIn(m.document(), 1e8, 1e9));  // no column up there
+}

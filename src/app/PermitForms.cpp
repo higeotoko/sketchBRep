@@ -5,6 +5,7 @@
 #include "VicinityMapFetcher.h"
 #include "sbr/doc/Schedules.h"
 #include "sbr/ConstructionQuantity.h"
+#include "sbr/doc/ColumnCheck.h"
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -557,6 +558,11 @@ Transfer collect(const doc::Document& document, bool applyArea) {
         if (z && floorRow->hasTop && floorRow->top > *z) {
           storey.insert("fifth_storey_height", metres(floorRow->top - *z));
           said.push_back(tr("階の高さ %1").arg(metres(floorRow->top - *z)));
+          // docs/315: ニ 横架材間の垂直距離: the longest of the columns standing in the storey (column_table).
+          if (const auto clear = doc::clearDistanceIn(document, *z - 1000.0, floorRow->top - 1.0)) {
+            storey.insert("fifth_clear", metres(*clear));
+            said.push_back(tr("横架材間の垂直距離 %1").arg(metres(*clear)));
+          }
         }
         double ceiling = 0.0;
         bool missing = false;
@@ -586,7 +592,7 @@ Transfer collect(const doc::Document& document, bool applyArea) {
       }
       if (applyArea) result.storeys.push_back(storey);
       row(tr("第五面・%1").arg(floorText), said.join(tr("、")), tr("モデル・木造架構"),
-          applyArea ? tr("転記（横架材間の垂直距離・特定天井は様式に記入）") : tr("候補"), true);
+          applyArea ? tr("転記（特定天井は様式に記入）") : tr("候補"), true);
     }
   }
   const auto eavesInput = get("form_building_eaves");

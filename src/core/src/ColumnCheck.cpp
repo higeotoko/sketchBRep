@@ -14,6 +14,52 @@
 
 namespace sbr::doc {
 
+namespace {
+// Each column part: role, sides, from and to (Z, mm); a through column split at the floor levels.
+struct ColumnPart {
+  std::string role;
+  double width, depth, from, to;
+};
+std::vector<ColumnPart> columnParts(const Document& document) {
+  std::vector<ColumnPart> out;
+  const auto made = construction::takeOff(document);
+  if (!made) return out;
+  const auto report = nlohmann::json::parse(*made, nullptr, false);
+  if (!report.is_object() || !report.contains("parts")) return out;
+  std::vector<double> floors;
+  for (const FloorLevel& l : document.settings().levels)
+    if (isFloorLevelName(l.name)) floors.push_back(l.elevation);
+  std::sort(floors.begin(), floors.end());
+  for (const auto& part : report.at("parts")) {
+    const std::string role = part.value("role", std::string());
+    if (role != "column" && role != "through_column") continue;
+    if (!part.at("length_mm").is_number() || !part.at("width_mm").is_number() || !part.at("depth_mm").is_number()) continue;
+    if (!part.contains("position") || !part.at("position").is_array()) continue;
+    const double length = part.at("length_mm").get<double>();
+    const double width = part.at("width_mm").get<double>(), depth = part.at("depth_mm").get<double>();
+    if (!(length > 0 && width > 0 && depth > 0)) continue;
+    const double mid = part.at("position")[2].get<double>();
+    std::vector<double> stops{mid - length / 2};
+    if (role == "through_column")
+      for (double f : floors)
+        if (f > mid - length / 2 + 1 && f < mid + length / 2 - 1) stops.push_back(f);
+    stops.push_back(mid + length / 2);
+    for (std::size_t i = 0; i + 1 < stops.size(); ++i) out.push_back({role, width, depth, stops[i], stops[i + 1]});
+  }
+  return out;
+}
+}  // namespace
+
+std::optional<double> clearDistanceIn(const Document& document, double z0, double z1) {
+  std::optional<double> out;
+  for (const ColumnPart& p : columnParts(document)) {
+    const double mid = (p.from + p.to) / 2;
+    if (mid < z0 || mid >= z1) continue;
+    out = std::max(out.value_or(0.0), p.to - p.from);
+  }
+  return out;
+}
+
 std::vector<ColumnRow> columnRows(const Document& document) {
   std::vector<ColumnRow> out;
   const auto made = construction::takeOff(document);

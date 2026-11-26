@@ -7,6 +7,7 @@
 // (座屈長さ / 最小二次率半径, the distance taken as the buckling length) against 令第43条第6項 (150 以下).
 // The ratio 令第43条第1項 asks for is set by a notice of the minister and is not compared here (未評価).
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -23,6 +24,10 @@ struct ColumnRow {
   double slenderness = 0;  // distance / (min side / sqrt 12)
 };
 std::vector<ColumnRow> columnRows(const Document& document);
+// docs/315: the longest vertical distance between horizontal members of the columns standing in [z0, z1)
+// (a column's part whose middle is in the range; through columns split at the storeys' floor levels), for
+// 第五面 ニ (横架材間の垂直距離). Empty when no column stands there.
+std::optional<double> clearDistanceIn(const Document& document, double z0, double z1);
 draw::Table columnTable(const std::vector<ColumnRow>& rows);
 
 // docs/311: 構造詳細図（仕様）: what 規則第1条の3 表2 asks the 構造詳細図 of a timber building to show, as the
