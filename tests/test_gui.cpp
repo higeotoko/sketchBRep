@@ -1869,12 +1869,35 @@ void GuiPhase1::permitWordFormsTransferAndEmbedDrawings() {
   QVERIFY(!mismatch.contains(QStringLiteral("( 2  階)")));
   QVERIFY(modeler.undo());
 
+  // docs/287: 建築協定等手続状況届出書, first face from the same model.
+  QStringList unfilled;
+  const auto agreementDocx = app::buildAgreementForm(modeler.document(), &unfilled);
+  const auto agreementEntries = unpack(agreementDocx);
+  QVERIFY(agreementEntries.contains(documentXml));
+  const auto agreementText = text(agreementEntries.value(documentXml));
+  QVERIFY(!agreementText.isEmpty());
+  QVERIFY2(!agreementText.contains(QStringLiteral("@@SBR_")), qPrintable(agreementText.left(400)));
+  QVERIFY(agreementText.contains(QRegularExpression(QStringLiteral("横浜市 中 *区"))));
+  QVERIFY(agreementText.contains(QStringLiteral("仮町1番")));
+  QVERIFY(agreementText.contains(QRegularExpression(QStringLiteral("☑第 一 *種中高層住居専用地域"))));
+  QVERIFY(agreementText.contains(QRegularExpression(QStringLiteral("□第 +種低層住居専用地域"))));
+  QVERIFY(agreementText.contains(QStringLiteral("120.00 平方メートル")));
+  QVERIFY(agreementText.contains(QStringLiteral("84.00 平方メートル")));
+  QVERIFY(agreementText.contains(QStringLiteral("8.120 メートル")));
+  QVERIFY(agreementText.contains(QRegularExpression(QStringLiteral("地上 2 *階、地下 0 *階"))));
+  QVERIFY(agreementText.contains(QStringLiteral("一戸建ての住宅")));
+  QVERIFY(agreementText.contains(QStringLiteral("☑新築")));
+  QVERIFY(agreementText.contains(QStringLiteral("☑横浜市")));
+  QVERIFY(agreementText.contains(QStringLiteral("□市街化調整区域")));
+  QVERIFY2(unfilled.isEmpty(), qPrintable(unfilled.join(',')));
+
   auto* action = f.window.findChild<QAction*>(QStringLiteral("permitWordForms"));
   QVERIFY(action);
   const QString reviewDir = qEnvironmentVariable("SBR_PERMIT_WORD_REVIEW_DIR");
   if (!reviewDir.isEmpty()) {
     for (const auto& [name, bytes] : {std::pair{QStringLiteral("application.docx"), detailed.docx},
-                                    {QStringLiteral("summary.docx"), summary.docx}}) {
+                                    {QStringLiteral("summary.docx"), summary.docx},
+                                    {QStringLiteral("agreement.docx"), agreementDocx}}) {
       QFile output(QDir(reviewDir).filePath(name));
       QVERIFY(output.open(QIODevice::WriteOnly));
       QCOMPARE(output.write(bytes), bytes.size());

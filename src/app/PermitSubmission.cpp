@@ -1,5 +1,6 @@
 #include "PermitSubmission.h"
 #include "PermitApplicationArea.h"
+#include "PermitForms.h"
 
 #include "sbr/doc/PermitIntake.h"
 #include "sbr/doc/Schedules.h"
@@ -13,6 +14,7 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QPushButton>
+#include <QSaveFile>
 #include <QRegularExpression>
 #include <QLocale>
 #include <QScopeGuard>
@@ -120,6 +122,14 @@ void showPermitSubmissionReview(const doc::Document& document, const doc::Drawin
   auto* inspect = buttons->addButton(tr("モデルの図面を確認"), QDialogButtonBox::ActionRole);
   scan->setObjectName(QStringLiteral("permitSubmissionFolder"));
   inspect->setObjectName(QStringLiteral("permitSubmissionModel"));
+  // docs/287: the drawing list in the form of 様式1-2's 別紙, after the model's drawings are checked.
+  auto* listCsv = buttons->addButton(tr("図面リストCSV…"), QDialogButtonBox::ActionRole);
+  listCsv->setObjectName(QStringLiteral("permitSubmissionListCsv"));
+  listCsv->setEnabled(false);
+  std::string listCsvText;
+  // docs/287: 建築協定等手続状況届出書 (第１号様式), first face from the model.
+  auto* agreement = buttons->addButton(tr("協定等届出書（Word）…"), QDialogButtonBox::ActionRole);
+  agreement->setObjectName(QStringLiteral("permitSubmissionAgreement"));
   layout->addWidget(buttons);
 
   const auto items = requirements();
@@ -212,6 +222,8 @@ void showPermitSubmissionReview(const doc::Document& document, const doc::Drawin
       drawingError = QString::fromStdString(set.error());
     }
     const auto review = doc::yokohamaIntakeReview(document, set ? &*set : nullptr, set ? std::string() : set.error(), false);
+    listCsvText = review.drawingList.empty() ? std::string() : doc::tableCsv(doc::intakeDrawingList(review));
+    listCsv->setEnabled(!listCsvText.empty());
     intake->setRowCount(static_cast<int>(review.rows.size()));
     for (int i = 0; i < static_cast<int>(review.rows.size()); ++i) {
       const auto& r = review.rows[static_cast<std::size_t>(i)];
@@ -227,6 +239,36 @@ void showPermitSubmissionReview(const doc::Document& document, const doc::Drawin
       }
     }
     refreshFee();
+  });
+  QObject::connect(listCsv, &QPushButton::clicked, &dialog, [&] {
+    const auto path = QFileDialog::getSaveFileName(&dialog, tr("図面リスト（図書の種類）"), QString(), tr("CSV (*.csv)"));
+    if (path.isEmpty()) return;
+    QSaveFile file(path);
+    const QByteArray bom = QByteArray::fromHex("EFBBBF");  // Excel reads UTF-8 with the mark
+    if (!file.open(QIODevice::WriteOnly) || file.write(bom + QByteArray::fromStdString(listCsvText)) < 0 || !file.commit())
+      folderLabel->setText(tr("図面リストを保存できません：%1").arg(QDir::toNativeSeparators(path)));
+    else
+      folderLabel->setText(tr("図面リストを保存しました：%1").arg(QDir::toNativeSeparators(path)));
+  });
+  QObject::connect(agreement, &QPushButton::clicked, &dialog, [&] {
+    QStringList unfilled;
+    const auto bytes = buildAgreementForm(document, &unfilled);
+    if (bytes.isEmpty()) {
+      folderLabel->setText(tr("協定等届出書の様式を読めません"));
+      return;
+    }
+    const auto path = QFileDialog::getSaveFileName(&dialog, tr("建築協定等手続状況届出書"),
+        tr("建築協定等手続状況届出書.docx"), tr("Word (*.docx)"));
+    if (path.isEmpty()) return;
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit()) {
+      folderLabel->setText(tr("保存できません：%1").arg(QDir::toNativeSeparators(path)));
+      return;
+    }
+    folderLabel->setText(unfilled.isEmpty()
+        ? tr("協定等届出書を保存しました：%1。建築主・代理者・日付と第二面は様式に記入").arg(QDir::toNativeSeparators(path))
+        : tr("協定等届出書を保存しました：%1。モデルから埋められなかった欄：%2。建築主・代理者・日付と第二面は様式に記入")
+              .arg(QDir::toNativeSeparators(path), unfilled.join(tr("、"))));
   });
   QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
   refresh();

@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <map>
 
 #include <QBuffer>
 #include <QCheckBox>
@@ -41,8 +42,8 @@ struct Entry {
   QByteArray data;
 };
 
-QList<Entry> readTemplate(bool summary) {
-  QFile file(summary ? ":/permit_forms/third.sbrform" : ":/permit_forms/second.sbrform");
+QList<Entry> readTemplate(const QString& path) {
+  QFile file(path);
   if (!file.open(QIODevice::ReadOnly)) return {};
   QDataStream in(&file);
   in.setByteOrder(QDataStream::LittleEndian);
@@ -201,7 +202,8 @@ struct Images {
 };
 
 QByteArray documentBytes(bool summary, const QMap<QString, QString>& values, const Images& images) {
-  auto entries = readTemplate(summary);
+  auto entries = readTemplate(summary ? QStringLiteral(":/permit_forms/third.sbrform")
+                                      : QStringLiteral(":/permit_forms/second.sbrform"));
   if (entries.isEmpty()) return {};
   QByteArray relationships;
   QList<Entry> media;
@@ -524,6 +526,61 @@ PermitFormDraft buildPermitForm(const doc::Document& document, const PermitFormO
   const auto values = collect(document, options.transferAreas).values;
   const auto images = options.summary ? prepareImages(document, options.includeSitePlan, options.includeVicinityMap) : Images{};
   return {documentBytes(options.summary, values, images), !images.site.isEmpty(), !images.map.isEmpty()};
+}
+
+QByteArray buildAgreementForm(const doc::Document& document, QStringList* unfilled) {
+  // docs/287: 横浜市 建築協定等手続状況届出書 第１号様式, first face (site and building). The same
+  // values as the application forms (areas only for a single new building whose areas are read).
+  auto values = collect(document, true).values;
+  QStringList missing;
+  const auto take = [&](const QString& from, const QString& to, const QString& unit, const QString& label) {
+    auto v = values.value(from);
+    if (v.endsWith(unit)) v.chop(unit.size());
+    v = v.trimmed();
+    if (v.isEmpty()) missing.push_back(label);
+    else values.insert(to, v + QLatin1Char(' '));
+  };
+  take(QStringLiteral("site_area"), QStringLiteral("agreement_site_area"), QStringLiteral("㎡"), tr("敷地面積"));
+  take(QStringLiteral("floor_area"), QStringLiteral("agreement_floor_area"), QStringLiteral("㎡"), tr("延べ面積"));
+  take(QStringLiteral("building_area"), QStringLiteral("agreement_building_area"), QStringLiteral("㎡"), tr("建築面積"));
+  take(QStringLiteral("building_height"), QStringLiteral("agreement_height"), QStringLiteral("m"), tr("最高の高さ"));
+  const auto use = values.value(QStringLiteral("main_use"));
+  if (use.isEmpty()) missing.push_back(tr("主要用途"));
+  else values.insert(QStringLiteral("agreement_main_use"), use);
+  // 地名地番: "横浜市" and "区" are printed; the ward goes between, the rest after 区.
+  auto address = values.value(QStringLiteral("address"));
+  if (address.isEmpty()) missing.push_back(tr("地名地番"));
+  static const QRegularExpression yokohama(QStringLiteral("^横浜市[ 　]*([^ 　区]{1,6})区[ 　]*(.*)$"));
+  if (const auto m = yokohama.match(address); m.hasMatch()) {
+    values.insert(QStringLiteral("agreement_ward"), m.captured(1));
+    if (!m.captured(2).isEmpty()) values.insert(QStringLiteral("agreement_address_rest"), m.captured(2));
+  } else if (!address.isEmpty()) {
+    values.insert(QStringLiteral("agreement_address_rest"), address);
+    missing.push_back(tr("地名地番の区"));
+  }
+  // 用途地域: the zone registered for the height limits.
+  const auto zone = doc::siteHeightConditions(document).zone;
+  const std::map<std::string, std::pair<const char*, const char*>> zones = {
+      {"low_1", {"low", "一"}}, {"low_2", {"low", "二"}}, {"residential_1", {"residential", "一"}},
+      {"residential_2", {"residential", "二"}}, {"mid_high_1", {"mid", "一"}}, {"mid_high_2", {"mid", "二"}},
+      {"neighborhood_commercial", {"neighborhood_commercial", ""}}, {"quasi_industrial", {"quasi_industrial", ""}},
+      {"exclusive_industrial", {"exclusive_industrial", ""}}, {"quasi_residential", {"quasi_residential", ""}},
+      {"commercial", {"commercial", ""}}, {"industrial", {"industrial", ""}}};
+  if (const auto it = zones.find(zone); it != zones.end()) {
+    const auto key = QStringLiteral("agreement_zone_") + QString::fromLatin1(it->second.first);
+    values.insert(QStringLiteral("check_") + key, QStringLiteral("1"));
+    if (*it->second.second) values.insert(key + QStringLiteral("_number"), QString::fromUtf8(it->second.second));
+  } else {
+    missing.push_back(tr("用途地域"));
+  }
+  if (values.value(QStringLiteral("building_above")).isEmpty()) missing.push_back(tr("階数"));
+  values.insert(QStringLiteral("check_agreement_yokohama"), QStringLiteral("1"));
+  if (unfilled) *unfilled = missing;
+  auto entries = readTemplate(QStringLiteral(":/permit_forms/agreement.sbrform"));
+  if (entries.isEmpty()) return {};
+  for (Entry& entry : entries)
+    if (entry.name == "word/document.xml") entry.data = mergeFields(QString::fromUtf8(entry.data), values).toUtf8();
+  return zip(entries);
 }
 
 void showPermitForms(const doc::Document& document, QWidget* parent, const std::function<void()>& editOutline) {

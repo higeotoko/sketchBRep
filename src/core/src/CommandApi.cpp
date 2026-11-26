@@ -3588,7 +3588,9 @@ const std::vector<CommandDef>& commands() {
        "(the person says a single new building's whole floor area is the application part, 第三面 11 欄イ) the "
        "area (m2, 2 decimals), the bracket and the fee in yen (①, the route-2 addition ② not included), state 未選択 / "
        "工事種別を確認 / 床面積を確認 / 候補 / 区分の境界を確認. Names matched, not contents: the sheets' boxes stay the "
-       "designer's; never a legal judgement. 'source' names the form versions.",
+       "designer's; never a legal judgement. 'source' names the form versions. Rows of 様式1-2 sections 1, 2, 5 and 6 "
+       "(概要書, 消防同意, 協定等届出, 委任状, 工事監理者, 構造適判, 省エネ適判) are read from the project outline as "
+       "candidates. 'drawing_list': each sheet with the 図書の種類 it stands for (様式1-2 別紙), also as CSV.",
        SCHEMA({"type": "object", "properties": {"whole_floor_for_fee": {"type": "boolean"}, "scale": {"type": "number"}}}),
        [](doc::Modeler& m, const json& a) {
          doc::DrawingSetSpec setSpec;
@@ -3607,7 +3609,10 @@ const std::vector<CommandDef>& commands() {
            fee["bracket"] = f.bracket;
            fee["fee_yen"] = f.fee;
          }
+         json list = json::array();
+         for (const auto& d : review.drawingList) list.push_back({{"number", d.number}, {"name", d.name}, {"kinds", d.kinds}});
          json out = {{"rows", std::move(rows)}, {"fee", std::move(fee)}, {"source", review.source},
+                     {"drawing_list", std::move(list)}, {"drawing_list_csv", doc::tableCsv(doc::intakeDrawingList(review))},
                      {"forms_url", doc::kYokohamaIntakeForms}};
          if (!review.drawingError.empty()) out["drawing_error"] = review.drawingError;
          return out;

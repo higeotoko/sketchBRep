@@ -14,6 +14,8 @@ import zipfile
 
 SECOND = "3f19f0666d8234d41f4cf7740c207d8a567316a019000340298ff95b8a40c7c5"
 THIRD = "6cd92ac9e8236af3e3ac13c8d89ef88cc6e1691232724df56e8a2d5a5f6f1b00"
+# 横浜市 建築協定等手続状況届出書 第１号様式 (0766_20240329.docx, taken 2026-11-26)
+AGREEMENT = "42fd2f928d26ab87e86ec7bf1bcf17e1446e56d1500e5b7e9cf8ac33fc4e816f"
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
@@ -164,6 +166,10 @@ def patch_document(xml, third):
     if third:
         insertions.update({242: "<!--SBR_IMAGE_MAP-->", 261: "<!--SBR_IMAGE_SITE-->"})
 
+    return apply_edits(xml, spans, edits, insertions)
+
+
+def apply_edits(xml, spans, edits, insertions):
     paragraphs = list(ET.fromstring(xml).iter(W + "p"))
     for index in sorted(edits.keys() | insertions.keys(), reverse=True):
         span = spans[index]
@@ -205,15 +211,101 @@ def patch_document(xml, third):
     return xml
 
 
-def prepare(source, target, third):
+def nested_spans(xml):
+    """Paragraph spans in document order (as ElementTree's iter), paragraphs in text boxes included."""
+    found, stack, order = {}, [], 0
+    for m in re.finditer(r"<w:p(?=[\s>/])[^>]*?(/?)>|</w:p>", xml):
+        if m.group(0).startswith("</"):
+            start, index = stack.pop()
+            found[index] = (start, m.end())
+        elif m.group(1) == "/":
+            found[order] = (m.start(), m.end())
+            order += 1
+        else:
+            stack.append((m.start(), order))
+            order += 1
+    return [_Span(xml, *found[i]) for i in range(order)]
+
+
+class _Span:
+    def __init__(self, xml, start, end):
+        self._text, self._start, self._end = xml[start:end], start, end
+
+    def group(self):
+        return self._text
+
+    def start(self):
+        return self._start
+
+    def end(self):
+        return self._end
+
+
+def patch_agreement(xml):
+    # 第１号様式 建築協定等手続状況届出書, first face: the site and building items. The applicant
+    # and agent blocks (text boxes laid out with spaces) and the second face stay for the person.
+    spans = nested_spans(xml)
+    edits = {}
+
+    def edit(index, transform):
+        edits.setdefault(index, []).append(transform)
+
+    def width(text):
+        return sum(2 if char == "　" else 1 for char in text)
+
+    def slot_spaces(index, keys):
+        def insert(text):
+            regions = list(re.finditer(r"　+", text))
+            for region, key in reversed(list(zip(regions, keys, strict=False))):
+                if key:
+                    text = text[:region.start()] + mark(f"slot_{key}__{width(region[0])}") + text[region.end():]
+            return text
+        edit(index, insert)
+
+    def boxes(index, keys):
+        def select(text):
+            keys_iter = iter(keys)
+            result, count = re.subn("□", lambda _: mark("check_" + next(keys_iter)), text)
+            assert count == len(keys)
+            return result
+        edit(index, select)
+
+    def before(index, label, key):
+        edit(index, lambda text: text.replace(label, mark(key) + label, 1))
+
+    slot_spaces(15, ["agreement_ward"])
+    edit(15, lambda text: text + mark("agreement_address_rest"))
+    for index, key in [(20, "low"), (21, "residential"), (25, "mid")]:
+        boxes(index, ["agreement_zone_" + key])
+        slot_spaces(index, ["agreement_zone_" + key + "_number"])
+    for index, key in [(22, "neighborhood_commercial"), (23, "quasi_industrial"), (24, "exclusive_industrial"),
+                       (26, "quasi_residential"), (27, "commercial"), (28, "industrial")]:
+        boxes(index, ["agreement_zone_" + key])
+    boxes(32, ["city_control"])
+    before(35, "平方メートル", "agreement_site_area")
+    boxes(40, ["work_new", "work_extension", "work_rebuild", "work_relocation", "work_use_change"])
+    boxes(41, ["work_major_repair", "work_major_remodel"])
+    before(44, "平方メートル", "agreement_floor_area")
+    before(46, "平方メートル", "agreement_building_area")
+    before(49, "メートル", "agreement_height")
+    slot_spaces(51, ["building_above", "building_below"])
+    boxes(54, ["agreement_yokohama"])
+    insertions = {
+        37: '<w:r><w:t xml:space="preserve">' + mark("agreement_main_use") + '</w:t></w:r>',
+    }
+    return apply_edits(xml, spans, edits, insertions)
+
+
+def prepare(source, target, third, agreement=False):
     original = source.read_bytes()
-    assert hashlib.sha256(original).hexdigest() == (THIRD if third else SECOND), source
+    assert hashlib.sha256(original).hexdigest() == (AGREEMENT if agreement else THIRD if third else SECOND), source
     with zipfile.ZipFile(io.BytesIO(original)) as archive:
         entries = {}
         for name in archive.namelist():
             data = archive.read(name)
             if name == "word/document.xml":
-                data = patch_document(data.decode("utf-8"), third).encode("utf-8")
+                xml = data.decode("utf-8")
+                data = (patch_agreement(xml) if agreement else patch_document(xml, third)).encode("utf-8")
             if third and name == "word/_rels/document.xml.rels":
                 data = data.replace(b"</Relationships>", b"<!--SBR_RELS--></Relationships>")
             if third and name == "[Content_Types].xml":
@@ -233,10 +325,13 @@ def main():
     parser.add_argument("second", type=Path)
     parser.add_argument("third", type=Path)
     parser.add_argument("output", type=Path)
+    parser.add_argument("--agreement", type=Path, help="0766_20240329.docx (建築協定等手続状況届出書)")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     prepare(args.second, args.output / "second.sbrform", False)
     prepare(args.third, args.output / "third.sbrform", True)
+    if args.agreement:
+        prepare(args.agreement, args.output / "agreement.sbrform", False, agreement=True)
 
 
 if __name__ == "__main__":

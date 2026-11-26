@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QByteArray>
+#include <QStringList>
 #include <functional>
 
 class QWidget;
@@ -23,6 +24,9 @@ struct PermitFormDraft {
   bool hasVicinityMap = false;
 };
 
+// docs/287: 横浜市 建築協定等手続状況届出書 (第１号様式), first face filled from the model; `unfilled`
+// names the items left for the person.
+QByteArray buildAgreementForm(const doc::Document& document, QStringList* unfilled = nullptr);
 PermitFormDraft buildPermitForm(const doc::Document& document, const PermitFormOptions& options);
 void showPermitForms(const doc::Document& document, QWidget* parent, const std::function<void()>& editOutline);
 

@@ -127,6 +127,18 @@ const Bracket kBrackets[] = {
 
 }  // namespace
 
+draw::Table intakeDrawingList(const IntakeReview& review) {
+  draw::Table t;
+  t.title = "図面リスト（図書の種類）";
+  t.headers = {"図面番号", "図面名", "規則第1条の3による「図書の種類」", "設計者"};
+  for (const auto& d : review.drawingList) {
+    std::string kinds;
+    for (const auto& k : d.kinds) kinds += (kinds.empty() ? "" : "・") + k;
+    t.rows.push_back({d.number, d.name, kinds, ""});
+  }
+  return t;
+}
+
 bool applicationFloorAreaKnown(const AreaTable& area) {
   return area.legalTotal > 0 && std::all_of(area.rows.begin(), area.rows.end(), [](const AreaRow& floor) {
            return floor.legalKnown && floor.unreadableWalls == 0;
@@ -147,6 +159,7 @@ IntakeReview yokohamaIntakeReview(const Document& document, const DrawingSet* se
                                   bool wholeFloorForFee) {
   IntakeReview out;
   if (!set) out.drawingError = setError.empty() ? "図面一式を作れません" : setError;
+  std::vector<std::vector<std::string>> kindsOf(set ? set->names.size() : 0);
   for (const Rule& r : rules()) {
     IntakeRow row;
     row.form = r.form;
@@ -159,7 +172,10 @@ IntakeReview yokohamaIntakeReview(const Document& document, const DrawingSet* se
         const std::string& name = set->names[i];
         const bool hit = std::any_of(r.any.begin(), r.any.end(), [&](const std::string& p) { return contains(name, p); });
         const bool skip = std::any_of(r.exclude.begin(), r.exclude.end(), [&](const std::string& p) { return contains(name, p); });
-        if (hit && !skip) row.sheets.push_back(set->numbers[i] + " " + name);
+        if (hit && !skip) {
+          row.sheets.push_back(set->numbers[i] + " " + name);
+          if (std::string(r.form) == "様式1-2") kindsOf[i].push_back(r.kind);
+        }
       }
     }
     const int found = static_cast<int>(row.sheets.size());
@@ -195,15 +211,69 @@ IntakeReview yokohamaIntakeReview(const Document& document, const DrawingSet* se
     out.rows.push_back(std::move(row));
   }
 
+  // 様式1-2 別紙「図面リストの記載例」: each sheet with the kinds of documents it stands for.
+  if (set)
+    for (std::size_t i = 0; i < set->names.size(); ++i)
+      out.drawingList.push_back({set->numbers[i], set->names[i], kindsOf[i]});
+
+  // 様式1-2 sections 1, 2, 5 and 6: what the project outline says, as candidates for the boxes.
+  const auto outlineValues = projectOutline(document);
+  const auto value = [&](const char* key) {
+    const auto it = outlineValues.find(key);
+    return it == outlineValues.end() ? std::string() : it->second;
+  };
+  const auto add = [&](const char* group, const char* kind, std::string need, std::string state, std::string note) {
+    out.rows.push_back({"様式1-2", group, kind, std::move(need), std::move(state), {}, std::move(note)});
+  };
+  add("１ 添付書類", "建築計画概要書（１部）", "必要", "アプリで出力", "確認申請のWord様式の第三号様式");
+  {
+    const std::string use = value("main_use"), zone = value("fire_zone");
+    const bool house = contains(use, "一戸建") || contains(use, "長屋");
+    if (use.empty() || zone.empty())
+      add("１ 添付書類", "消防定型同意依頼書（１部）", "該当時", "要確認",
+          "一戸建住宅（防火・準防火地域内にあるもの）、長屋の場合。主要用途・防火地域を計画概要に入れると候補を出す");
+    else if (house && (zone == "fire" || zone == "quasi_fire" || contains(use, "長屋")))
+      add("１ 添付書類", "消防定型同意依頼書（１部）", "必要（候補）", "アプリ外",
+          "主要用途「" + use + "」・" + (zone == "fire" ? "防火地域" : zone == "quasi_fire" ? "準防火地域" : "長屋"));
+    else
+      add("１ 添付書類", "消防定型同意依頼書（１部）", "該当しない（候補）", "該当時に確認",
+          "主要用途「" + use + "」と防火地域の指定から。様式の条件は一戸建住宅（防火・準防火地域内）・長屋");
+  }
+  add("１ 添付書類", "建築協定等手続状況届出書（１部）", "必要", "アプリで出力（第一面）",
+      "第二面の手続の要否・状況は資料に基づいて記入");
+  {
+    const std::string agent = value("agent");
+    if (agent.empty())
+      add("２ 設計者等", "委任状（正本のみ）", "該当時", "該当しない（候補）", "計画概要に代理者がない");
+    else
+      add("２ 設計者等", "委任状（正本のみ）", "必要（候補）", "アプリ外",
+          "代理者「" + agent + "」。委任状と申請書第２面の記載の整合を確認");
+    const std::string supervisor = value("supervisor");
+    add("２ 設計者等", "工事監理者の記載", "必要", supervisor.empty() ? "要確認" : "記載あり",
+        supervisor.empty() ? "計画概要に工事監理者がない（未定の場合は未定と記載）" : "工事監理者「" + supervisor + "」");
+  }
+  {
+    const std::string review = value("structural_review");
+    const char* text = review == "submitted" ? "申請済" : review == "not_yet" ? "未申請" : review == "not_required" ? "申請不要" : "";
+    add("５ 構造計算適用等", "構造計算適合性判定", "案件による", *text ? "記載あり" : "要確認",
+        *text ? std::string("計画概要：") + text + "。特定木造建築物（仕様規定ルート）・ルート2・特定天井・土砂災害特別警戒区域は設計者が記入"
+              : std::string("計画概要に構造計算適合性判定の申請の区分がない"));
+    const std::string energy = value("energy_plan");
+    add("６ 省エネ適判等", "省エネ適判", "案件による",
+        energy == "submitted" || energy == "not_required" ? "記載あり" : "要確認",
+        energy == "submitted" ? "計画概要：提出済。適合性判定通知書等の添付を確認"
+        : energy == "not_required" ? "計画概要：提出不要。様式の「省エネ適判無（仕様基準に適合、住宅のみ）」か他制度の活用かを確認"
+        : energy == "not_yet" ? "計画概要：未提出"
+                              : "計画概要に省エネ計画の提出の区分がない");
+  }
+
   // 様式3: the fee for a single new building whose whole floor area is the application part.
   IntakeFee& fee = out.fee;
   fee.note = "様式3（2026-10-29 掲載）の面積区分の表から。法第6条の3第1項ただし書の審査の加算（②）は含めない。"
              "手数料条例の本文とは照合していない";
-  const auto outline = projectOutline(document);
-  const auto kind = outline.find("work_kind");
   if (!wholeFloorForFee) {
     fee.state = "未選択";
-  } else if (kind == outline.end() || kind->second != "new") {
+  } else if (value("work_kind") != "new") {
     fee.state = "工事種別を確認";
   } else {
     const AreaTable area = areaTable(document);

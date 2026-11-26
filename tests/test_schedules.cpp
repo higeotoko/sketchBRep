@@ -5222,4 +5222,26 @@ TEST(PermitIntake, KindsOfDocumentsAndTheFee) {
   r = ok("permit_intake_review", json::object());
   EXPECT_EQ(row("様式1-2", "配置図")["state"], "要確認");
   EXPECT_NE(row("様式1-2", "配置図")["note"].get<std::string>().find("検討用"), std::string::npos);
+  // docs/287: the drawing list with the kinds of documents, and the outline's candidates.
+  bool plansListed = false;
+  for (const auto& d : r["drawing_list"])
+    if (d["name"] == "1FL 平面図") plansListed = d["kinds"] == json::array({"各階平面図"});
+  EXPECT_TRUE(plansListed);
+  EXPECT_NE(r["drawing_list_csv"].get<std::string>().find("図書の種類"), std::string::npos);
+  EXPECT_EQ(row("様式1-2", "消防定型同意依頼書（１部）")["state"], "要確認");
+  EXPECT_EQ(row("様式1-2", "委任状（正本のみ）")["state"], "該当しない（候補）");
+  EXPECT_EQ(row("様式1-2", "工事監理者の記載")["state"], "要確認");
+  EXPECT_EQ(row("様式1-2", "省エネ適判")["state"], "要確認");
+  ASSERT_TRUE(modeler.setProjectOutline({{"work_kind", "new"}, {"main_use", "一戸建ての住宅"}, {"fire_zone", "quasi_fire"},
+                                         {"agent", "架空代理者"}, {"supervisor", "架空監理者"},
+                                         {"structural_review", "not_required"}, {"energy_plan", "not_required"}}));
+  r = ok("permit_intake_review", json::object());
+  EXPECT_EQ(row("様式1-2", "消防定型同意依頼書（１部）")["need"], "必要（候補）");
+  EXPECT_EQ(row("様式1-2", "委任状（正本のみ）")["need"], "必要（候補）");
+  EXPECT_EQ(row("様式1-2", "工事監理者の記載")["state"], "記載あり");
+  EXPECT_EQ(row("様式1-2", "構造計算適合性判定")["state"], "記載あり");
+  EXPECT_NE(row("様式1-2", "省エネ適判")["note"].get<std::string>().find("仕様基準"), std::string::npos);
+  ASSERT_TRUE(modeler.setProjectOutline({{"work_kind", "new"}, {"main_use", "一戸建ての住宅"}, {"fire_zone", "none"}}));
+  r = ok("permit_intake_review", json::object());
+  EXPECT_EQ(row("様式1-2", "消防定型同意依頼書（１部）")["need"], "該当しない（候補）");
 }

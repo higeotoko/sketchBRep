@@ -39,8 +39,14 @@ struct IntakeFee {
   std::string note;
 };
 
+struct IntakeDrawing {
+  std::string number, name;
+  std::vector<std::string> kinds;  // 様式1-2 図書の種類 the sheet's name stands for
+};
+
 struct IntakeReview {
   std::vector<IntakeRow> rows;
+  std::vector<IntakeDrawing> drawingList;  // 様式1-2 別紙 図面リストの記載例
   IntakeFee fee;
   std::string drawingError;  // when the drawing set could not be made
   std::string source = kYokohamaIntakeVersion;
@@ -54,6 +60,9 @@ IntakeReview yokohamaIntakeReview(const Document& document, const DrawingSet* se
 
 // The fee for the application area on 様式3 (新築・増築・改築: the area itself). 0 when area <= 0.
 int yokohamaConfirmationFee(double squareMetres, std::string* bracket = nullptr);
+
+// The drawing list in the form of 様式1-2's 別紙 (図面番号, 図面名, 図書の種類, 設計者 left blank).
+draw::Table intakeDrawingList(const IntakeReview& review);
 
 // Whether the area table gives the application floor area (each storey read, no walls left unread).
 bool applicationFloorAreaKnown(const AreaTable& area);

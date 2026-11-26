@@ -48,7 +48,7 @@ file(GLOB SBR_HELP_FILES RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS 
 qt_add_resources(sbr_ui "help" PREFIX "/help" BASE help FILES ${SBR_HELP_FILES})
 set(SBR_PERMIT_FORMS ${PROJECT_SOURCE_DIR}/assets/permit_forms)
 qt_add_resources(sbr_ui "permit_forms" PREFIX "/permit_forms" BASE ${SBR_PERMIT_FORMS}
-  FILES ${SBR_PERMIT_FORMS}/second.sbrform ${SBR_PERMIT_FORMS}/third.sbrform)
+  FILES ${SBR_PERMIT_FORMS}/second.sbrform ${SBR_PERMIT_FORMS}/third.sbrform ${SBR_PERMIT_FORMS}/agreement.sbrform)
 
 # The logo (assets/branding): window icon and About box as Qt resources;
 # on Windows also the executable's own icon and version information.
