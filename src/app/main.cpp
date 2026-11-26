@@ -95,7 +95,10 @@ int main(int argc, char** argv) {
   if (args.size() > 1) {
     window.openFile(args.at(1));
   } else {
-    window.offerRecovery();  // work left by a session that did not end normally
+    // Work left by a session that did not end normally. Asked once the event loop runs (docs/316): asked
+    // before it, the window closed while the question was open (the AI's ファイル/終了) left a process with
+    // no window, as the loop then never saw the last window close.
+    QTimer::singleShot(0, &window, [&window] { window.offerRecovery(); });
   }
   // After a crash: where its report is, to send with a bug report.
   const QStringList crashes = sbr::app::takeNewCrashReports();

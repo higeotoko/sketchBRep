@@ -202,8 +202,22 @@ std::optional<draw::View> foundationDetailView(const Document& document) {
   const double packing = in.value("packing_mm", 20.0);
   // The sill on the stem: its section from the first source sill, else none drawn.
   double sillW = 0, sillD = 0;
+  const Object* source = nullptr;
   if (in.contains("sources") && in.at("sources").is_array() && !in.at("sources").empty() && in.at("sources")[0].is_string())
-    if (const Object* sill = document.find(in.at("sources")[0].get<std::string>())) {
+    source = document.find(in.at("sources")[0].get<std::string>());
+  // docs/316: a plan made from a frame: a sill of that frame.
+  if (!source && in.contains("frame") && in.at("frame").is_string()) {
+    const std::string frame = in.at("frame").get<std::string>();
+    for (const Object& o : document.objects()) {
+      const auto kind = o.attributes.find("kind");
+      if (kind != o.attributes.end() && kind->second == "sill" && document.isAncestor(frame, o.id)) {
+        source = &o;
+        break;
+      }
+    }
+  }
+  {
+    if (const Object* sill = source) {
       const Bnd_Box b = document.worldBounds(*sill);
       if (!b.IsVoid()) {
         double x0, y0, z0, x1, y1, z1;
@@ -212,6 +226,7 @@ std::optional<draw::View> foundationDetailView(const Document& document) {
         sillD = z1 - z0;
       }
     }
+  }
   std::optional<double> gl = groundLevelStudy(document).glZ;
   if (!gl)
     for (const FloorLevel& l : document.settings().levels)

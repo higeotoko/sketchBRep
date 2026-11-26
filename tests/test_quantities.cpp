@@ -14,6 +14,7 @@
 #include "sbr/doc/NativeFormat.h"
 #include "sbr/doc/Schedules.h"
 #include "sbr/doc/ColumnCheck.h"
+#include "sbr/doc/FoundationGround.h"
 #include <algorithm>
 #include "sbr/draw/Drawing.h"
 #include "sbr/geom/Dxf.h"
@@ -446,4 +447,16 @@ TEST_F(Quantities, ClearDistanceOfTheColumnsInAStorey) {
   ASSERT_TRUE(all);
   EXPECT_DOUBLE_EQ(*all, longest);
   EXPECT_FALSE(doc::clearDistanceIn(m.document(), 1e8, 1e9));  // no column up there
+}
+
+// docs/316: a foundation made from a frame draws that frame's sill in its section detail.
+TEST_F(Quantities, FoundationDetailFindsTheFrameSill) {
+  const auto made = frame();
+  const auto r = m.generateFoundation(json{{"inputs", {{"type", "mat"}, {"frame", made["frame"]}}}}.dump());
+  ASSERT_TRUE(r) << r.error();
+  const auto view = doc::foundationDetailView(m.document());
+  ASSERT_TRUE(view);
+  bool sill = false;
+  for (const auto& item : view->items) sill |= item.kind == draw::Item::Kind::Text && item.text.rfind("土台 ", 0) == 0;
+  EXPECT_TRUE(sill);
 }
