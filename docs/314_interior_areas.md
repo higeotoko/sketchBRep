@@ -39,3 +39,16 @@ docs/292 の使用建築材料表では、第二種・第三種の材料につ�
 - 換気量なし：0.50 × 約 46.8 m² が床面積を超えて、規定外。
 - 換気回数 0.75 回/h：0.20 × 壁の面積になって、規定内。
 - 図面一式に表が入る。
+
+## 検証と配布
+
+計算テストと、申請・図面の関連GUIテストで確かめた。人による操作確認は未実施。
+
+| 項目 | 結果 |
+|---|---|
+| コード | `d713d56`（配布は記録のコミット `5c60eda` から） |
+| Windows | コア853件成功・8件スキップ、関連GUIテスト成功 |
+| Linux CI | [run 45876048161](https://github.com/higeotoko/sketchBRep/actions/runs/45876048161)（`5c60eda`、874件成功） |
+| Windows ZIP | `SketchBRep-windows-x64-5c60eda-local.zip`（84716261 bytes） |
+| SHA256 | `4e3f681d5d629312a645b51d1a9185e104458f5a9d925e8fde7c04b9f1eafadd` |
+| ZIPの検証 | [標準18条件](validation/2026-11-27-portable-5c60eda.json)・[べた基礎4条件](validation/2026-11-27-portable-5c60eda-mat.json)成功 |
