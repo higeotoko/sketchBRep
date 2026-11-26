@@ -15,6 +15,12 @@
 - 「モデルの図面を確認」は、その場で標準の図面一式を作って図面名の候補を照合する。付近見取図は位置登録から得られる候補を示す。
 - 「提出フォルダを選ぶ」は選択した階層のファイル名から候補を探す。一式PDFのページ構成、記入内容、最新版と案件の適用条件は別途照合する。フォルダ内の書類は読み取りも保存も行わず、ファイル名だけを表示する。
 
+## 手数料算定表との照合
+
+提出図書の照合画面で、単一棟の新築の申請部分に全床面積を含めると選択すると、確認申請書第三面11欄イと同じ延べ面積を「確認申請手数料算定表」の行に候補表示する。延べ面積を確定できない場合は、確認が必要なことを表示する。金額、加算、様式3への記入は市の書式と手数料表で照合する。 [横浜市の受付書式](https://www.city.yokohama.lg.jp/business/bunyabetsu/kenchiku/tetsuduki/kakunin/dl/dl.html) · [横浜市の手数料表](https://www.city.yokohama.lg.jp/business/bunyabetsu/kenchiku/tetsuduki/kakunin/tesuryoudir/tesuryou.html)
+
+手数料欄追加のコードは `50bfcb0`。Windowsコア833件成功、8件スキップ。照合画面とWord転記のGUIテスト2件が成功。配布ZIP `SketchBRep-windows-x64-50bfcb0-local.zip` は84,172,897 bytes、SHA256 `9eb526217bca463abd129bf0690858a1bc0e8292a00e6f1baf20a059b249e0d8`。 [標準18条件](validation/2026-11-26-portable-50bfcb0.json)・[べた基礎4条件](validation/2026-11-26-portable-50bfcb0-mat.json)成功。 [Linux CI](https://github.com/higeotoko/sketchBRep/actions/runs/45730963017)
+
 ## 検証と配布
 
 - Windowsのコアは833件成功、8件スキップ。Windows GUIの3条件が成功。配布ZIPの展開先のDLL・プラグインでも同じ3条件が成功した。申請書2種への転記、敷地面積・階数の不一致で値を入れないこと、確認申請書と概要書を別々に探すこと、モデルで見つかる図面数を確認した。
@@ -23,7 +29,7 @@
 | 項目 | 結果 |
 |---|---|
 | コード | `b577fed` |
-| Linux CI | [実行ログ](https://github.com/higeotoko/sketchBRep/actions/runs/45729406704) |
+| Linux CI | [run 45729406704](https://github.com/higeotoko/sketchBRep/actions/runs/45729406704) で854件成功 |
 | Windows ZIP | `SketchBRep-windows-x64-b577fed-local.zip`（84,168,833 bytes） |
 | SHA256 | `a74dd4c1782195db0774cab09e6ea6dadc7300210c593d3ee72d75803dcd51dd` |
 | ZIPの検証 | [標準18条件](validation/2026-11-26-portable-b577fed.json)・[べた基礎4条件](validation/2026-11-26-portable-b577fed-mat.json)成功 |
