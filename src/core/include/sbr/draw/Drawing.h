@@ -15,6 +15,7 @@
 // (0, 0) and its upper right at paper size x scale; text heights are on
 // paper (mm), as drawings and Jw_cad count them.
 
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -106,6 +107,9 @@ struct ViewSpec {
   // docs/296: elevations and sections: the ground (平均地盤面 from the 地盤面算出表, else GL) and, on the
   // right, the storeys, the eaves and the highest point measured from it.
   bool heightDims = false;
+  // docs/298: plans: walls whose top is at or below this height (the storey's floor) belong to the storey
+  // below and are left out (with the floor framing left out, they showed through the floor). NaN: none.
+  double wallsBelow = std::numeric_limits<double>::quiet_NaN();
   std::string within;            // optional ancestor group
   bool includeHidden = false;
   bool memberLabels = false;

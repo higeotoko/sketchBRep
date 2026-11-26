@@ -204,6 +204,17 @@ bool selected(const doc::Document& d, const doc::Object& o, const ViewSpec& spec
         kind != doc::ObjectKind::Face && kind != doc::ObjectKind::Instance) return false;
   }
   if (std::find(spec.excludeTags.begin(), spec.excludeTags.end(), o.layer) != spec.excludeTags.end()) return false;
+  if (!std::isnan(spec.wallsBelow) && !o.shape.IsNull()) {  // docs/298
+    const auto kind = o.attributes.find("kind");
+    if (kind != o.attributes.end() && kind->second == "wall") {
+      const Bnd_Box b = d.worldBounds(o);
+      if (!b.IsVoid()) {
+        double x0, y0, z0, x1, y1, z1;
+        b.Get(x0, y0, z0, x1, y1, z1);
+        if (z1 <= spec.wallsBelow + 1.0) return false;
+      }
+    }
+  }
   return spec.tags.empty() || std::find(spec.tags.begin(), spec.tags.end(), o.layer) != spec.tags.end();
 }
 
@@ -1598,6 +1609,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
   }
   if (spec.annotations) {
     std::optional<std::map<doc::ObjectId, std::string>> roomTags;
+    std::map<doc::ObjectId, std::vector<std::string>> roomLines;  // docs/298
     std::map<doc::ObjectId, std::vector<gp_Pnt2d>> roomOutlines;
     for (const doc::Object& o : document.objects()) {
       if (!selected(document, o, spec) || o.attributes.count("grid_part")) continue;
@@ -1636,7 +1648,21 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
           text.vAlign = 1;
           if (!roomTags) {
             roomTags.emplace();
-            for (const doc::RoomRow& r : doc::roomSchedule(document).rows) (*roomTags)[r.id] = doc::roomTagText(r);
+            for (const doc::RoomRow& r : doc::roomSchedule(document).rows) {
+              (*roomTags)[r.id] = doc::roomTagText(r);
+              // docs/298: on a plan, the name with the area and the ceiling height under it, a line each,
+              // as the submitted plans write them (one line ran over the walls).
+              if (spec.bracingFloor.empty() && r.closed && r.counted) {
+                const auto fixed = [](double v, int places) {
+                  char buf[32];
+                  std::snprintf(buf, sizeof buf, "%.*f", places, v);
+                  return std::string(buf);
+                };
+                std::vector<std::string> lines{r.name, "(" + fixed(r.centreArea / 1e6, 2) + " m²)"};
+                if (r.ceilingHeight > 0) lines.push_back("(CH" + fixed(r.ceilingHeight, 0) + ")");
+                roomLines[r.id] = std::move(lines);
+              }
+            }
             if (!spec.bracingFloor.empty()) {
               for (const doc::RoomInfo& room : doc::Modeler::roomsIn(document)) {
                 if (!room.closed || !room.problem.empty()) continue;
@@ -1646,6 +1672,20 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
             }
           }
           if (const auto tag = roomTags->find(o.id); tag != roomTags->end()) text.text = tag->second;
+          if (const auto lines = roomLines.find(o.id); lines != roomLines.end() && !t->target) {
+            const double sp = spec.paperScale > 0 ? spec.paperScale : 100.0;
+            const double step = 3.2 * sp;  // paper mm between lines
+            const gp_Pnt2d at = text.points.front();
+            const double top = at.Y() + step * (static_cast<double>(lines->second.size()) - 1) / 2;
+            for (std::size_t k = 0; k < lines->second.size(); ++k) {
+              Item line = text;
+              line.text = lines->second[k];
+              line.height = k == 0 ? 3.0 : 2.5;
+              line.points = {gp_Pnt2d(at.X(), top - step * static_cast<double>(k))};
+              view.items.push_back(std::move(line));
+            }
+            continue;
+          }
           const auto outline = roomOutlines.find(o.id);
           if (!t->target && outline != roomOutlines.end())
             view.roomTags.push_back({view.items.size(), std::move(outline->second)});

@@ -208,19 +208,22 @@ TEST_F(Schedules, RoomsAndAreasAreReadAsTheWallsAreNow) {
   EXPECT_FALSE(areas["legal_notes"].empty());
   EXPECT_NE(areas["csv"].get<std::string>().find("1FL,0,48.00,2,1,1,24.00,22.33,48.00,1,0,48.00,"), std::string::npos) << areas["csv"];
 
-  // The room's tag on a plan drawing is its name and area.
+  // The room's tag on a plan drawing is its name and, under it, its area (docs/298: a line each).
   auto tagOnPlan = [&] {
     const auto view = sbr::draw::makeView(modeler.document(), sbr::draw::planView(1100));
-    std::string found;
+    std::string name, area;
     if (view)
-      for (const auto& item : view->items)
-        if (item.kind == sbr::draw::Item::Kind::Text && item.text.rfind("居間", 0) == 0) found = item.text;
-    return found;
+      for (const auto& item : view->items) {
+        if (item.kind != sbr::draw::Item::Kind::Text) continue;
+        if (item.text.rfind("居間", 0) == 0) name = item.text;  // the name (one line when not closed)
+        if (item.text.rfind("(", 0) == 0 && item.text.find("m²") != std::string::npos) area = item.text;
+      }
+    return area.empty() ? name : name + " " + area;
   };
-  EXPECT_EQ(tagOnPlan(), "居間  24.00 m²");
+  EXPECT_EQ(tagOnPlan(), "居間 (24.00 m²)");
   // The partition 1000 to the east: the room, its tag and the table follow.
   ok("move", {{"ids", {partition}}, {"vector", {1000, 0, 0}}});
-  EXPECT_EQ(tagOnPlan(), "居間  30.00 m²");
+  EXPECT_EQ(tagOnPlan(), "居間 (30.00 m²)");
   areas = ok("area_table");
   EXPECT_NEAR(areas["levels"][0]["enclosed"].get<double>(), 48.0, 1e-9);
   EXPECT_NEAR(areas["levels"][0]["room_centre"].get<double>(), 30.0, 1e-9);
