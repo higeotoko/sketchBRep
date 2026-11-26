@@ -4,6 +4,7 @@
 #include "sbr/api/CommandApi.h"
 #include "sbr/doc/Modeler.h"
 #include "sbr/doc/NativeFormat.h"
+#include "sbr/doc/FoundationGround.h"
 #include "sbr/geom/Measure.h"
 
 using namespace sbr;
@@ -218,4 +219,52 @@ TEST_F(FoundationMat, RingWithoutInteriorStemsHasNoGroundBeam) {
   ring();
   const auto r=generate({{"inputs",inputs({{"inner_depth",200}})}});
   EXPECT_FALSE(r["quantities"].contains("foundation_ground_beam"));
+}
+
+// docs/308: the 基礎・地盤説明書 sets the survey's results and the mat's figures beside 告示1347号.
+TEST_F(FoundationMat, FoundationGroundStatementComparesWithTheNotice) {
+  ring();
+  generate();
+  const auto resultOf = [&](const std::string& item) {
+    for (const auto& r : foundationGroundStudy(m.document()).rows)
+      if (r.item == item && r.part != "地盤") return r.result;
+    return std::string("(none)");
+  };
+  // Nothing given: the ground rows ask for input; the kind cannot be compared yet.
+  EXPECT_EQ(resultOf("種類"), "未入力");
+  EXPECT_EQ(resultOf("立上りの厚さ"), "規定内");   // 150 >= 120
+  EXPECT_EQ(resultOf("底盤の厚さ"), "規定内");     // 150 >= 120
+  EXPECT_EQ(resultOf("根入れの深さ"), "未入力");   // no GL
+  EXPECT_EQ(resultOf("配筋"), "未評価");
+  ASSERT_TRUE(m.setLevels({{"gl", "GL", 0.0}, {"1fl", "1FL", 540.0}}));
+  FoundationGround g;
+  g.surveyMethod = "スクリューウエイト貫入試験";
+  g.allowableKNm2 = 25;
+  g.frostDepthMm = 350;
+  EXPECT_FALSE(m.setFoundationGround(g));  // the survey report is required
+  g.source = "架空の地盤調査報告書";
+  ASSERT_TRUE(m.setFoundationGround(g));
+  EXPECT_EQ(resultOf("種類"), "規定内");                    // べた基礎 at 20 or more
+  EXPECT_EQ(resultOf("立上りの地上部分の高さ"), "規定内");  // 400 >= 300
+  EXPECT_EQ(resultOf("根入れの深さ"), "規定内");            // 300 >= 120
+  EXPECT_EQ(resultOf("凍結深度との比較"), "規定外");        // 300 < 350
+  g.allowableKNm2 = 15;
+  ASSERT_TRUE(m.setFoundationGround(g));
+  EXPECT_EQ(resultOf("種類"), "規定外");  // under 20: piles
+  // On one sheet of A3 or smaller.
+  const auto sheet = draw::tableSheet(foundationGroundTable(foundationGroundStudy(m.document())), draw::SheetSpec{});
+  ASSERT_TRUE(sheet) << sheet.error();
+  EXPECT_TRUE(sheet->paper == "A4" || sheet->paper == "A3") << sheet->paper;
+  EXPECT_TRUE(sheet->notes.empty());
+  // Through MCP, and saved with the model.
+  const auto table = json::parse(api.execute(R"({"command":"foundation_ground_table"})"));
+  ASSERT_TRUE(table.value("ok", false)) << table.dump();
+  EXPECT_TRUE(table["result"]["has_foundation"].get<bool>());
+  Modeler loaded;
+  const std::string path = ::testing::TempDir() + "foundation-ground.sbr";
+  ASSERT_TRUE(m.save(path));
+  ASSERT_TRUE(loaded.load(path));
+  EXPECT_EQ(foundationGroundOf(loaded.document()).allowableKNm2, 15.0);
+  ASSERT_TRUE(m.undo());
+  EXPECT_EQ(foundationGroundOf(m.document()).allowableKNm2, 25.0);
 }

@@ -3,6 +3,7 @@
 #include "sbr/doc/FireSpread.h"
 #include "sbr/doc/PermitIntake.h"
 #include "sbr/doc/GroundLevel.h"
+#include "sbr/doc/FoundationGround.h"
 #include "sbr/doc/FireCompartments.h"
 #include "sbr/ConstructionQuantity.h"
 #include "sbr/ConstructionWall.h"
@@ -3729,6 +3730,40 @@ const std::vector<CommandDef>& commands() {
          if (const auto done = m.setStructuralMaterials(items); !done) throw ApiError(done.message());
          return json{{"items", items.size()}};
        }},
+      {"set_foundation_ground",
+       "docs/308: the ground survey's results for the 基礎・地盤説明書, as the person gives them (all replaced; "
+       "{} takes them away): survey_method (e.g. スクリューウエイト貫入試験), survey_date, soil, allowable_kn_m2 (地盤の長期許容応力度, "
+       "after improvement when improved), basis (how it was found), improvement (なし or the method), frost_depth_mm, "
+       "source (the survey report, required when anything is given). Never guess a bearing value. One undo step. "
+       "foundation_ground_table reads the statement (also in the drawing set).",
+       SCHEMA({"type": "object", "properties": {"survey_method": {"type": "string"}, "survey_date": {"type": "string"},
+               "soil": {"type": "string"}, "allowable_kn_m2": {"type": "number"}, "basis": {"type": "string"},
+               "improvement": {"type": "string"}, "frost_depth_mm": {"type": "number"}, "source": {"type": "string"}}}),
+       [](doc::Modeler& m, const json& a) {
+         doc::FoundationGround g;
+         g.surveyMethod = a.value("survey_method", std::string());
+         g.surveyDate = a.value("survey_date", std::string());
+         g.soil = a.value("soil", std::string());
+         if (a.contains("allowable_kn_m2")) g.allowableKNm2 = number(a, "allowable_kn_m2");
+         g.basis = a.value("basis", std::string());
+         g.improvement = a.value("improvement", std::string());
+         if (a.contains("frost_depth_mm")) g.frostDepthMm = number(a, "frost_depth_mm");
+         g.source = a.value("source", std::string());
+         if (const auto done = m.setFoundationGround(g); !done) throw ApiError(done.message());
+         return json{{"ok", true}};
+       }},
+      {"foundation_ground_table",
+       "docs/308: 基礎・地盤説明書: the ground survey's results given with set_foundation_ground and the model's "
+       "foundation plans (kind, stem, slab or footing, depth under GL) beside the figures of 平成12年建設省告示第1347号, "
+       "each row 規定内 / 規定外 / 未入力 / 未評価. A comparison with the notice's figures only, not a structural check; "
+       "rebar is not in the model (未評価). Rows, notes and CSV. Read only.",
+       SCHEMA({"type": "object", "properties": {}}),
+       [](doc::Modeler& m, const json&) {
+         const auto study = doc::foundationGroundStudy(m.document());
+         const auto t = doc::foundationGroundTable(study);
+         return json{{"headers", t.headers}, {"rows", t.rows}, {"notes", t.notes},
+                     {"has_foundation", study.hasFoundation}, {"csv", doc::tableCsv(t)}};
+       }},
       {"structural_material_table",
        "docs/291: 使用構造材料一覧表: the timber members by role and section with their count (from take_off) and "
        "the material and grade given per role (未入力 where not given). Rows, notes and CSV. Read only.",
@@ -5143,7 +5178,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
       name == "preview" || name == "query_objects" || name == "aggregate" || name == "get_changes" ||
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
       name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" ||
-      name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" || name == "permit_checks" || name == "permit_intake_review" || name == "ground_level_table" || name == "structural_material_table" || name == "interior_material_table" || name == "check_drawing_set" || name == "project_outline" || name == "daylight_factor_estimates" ||
+      name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" || name == "permit_checks" || name == "permit_intake_review" || name == "ground_level_table" || name == "structural_material_table" || name == "foundation_ground_table" || name == "interior_material_table" || name == "check_drawing_set" || name == "project_outline" || name == "daylight_factor_estimates" ||
       name == "fire_compartment_review" || name == "fire_spread_review" || name == "site_height_conditions" || name == "yokohama_height_district_at" || name == "compare_yokohama_height_district" ||
       name == "neighbor_height_at" || name == "north_height_at" || name == "compare_north_height" || name == "compare_neighbor_height" || name == "road_height_datum" || name == "road_height_table_values" || name == "measure_road_building_setback" || name == "compare_road_height_plane" || name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
     return E::Read;

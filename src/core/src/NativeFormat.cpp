@@ -1152,6 +1152,7 @@ std::string serializeDocument(const Document& document) {
       {"equipment", s.equipment},  // docs/224
       {"structuralMaterials", s.structuralMaterials},  // docs/291
       {"interiorMaterials", s.interiorMaterials},  // docs/292
+      {"foundationGround", s.foundationGround},  // docs/308
       {"vicinityMap", s.vicinityMap},  // docs/233
       {"sun",
        {{"month", s.sun.month},
@@ -1324,6 +1325,11 @@ Status deserializeDocument(const std::string& text, Document& document,
       const auto value = root.at("projectOutline").get<std::string>();
       if (!json::parse(value, nullptr, false).is_object()) throw std::runtime_error("projectOutline: not an object");
       s.projectOutline = value;
+    }
+    if (root.contains("foundationGround")) {  // docs/308
+      const auto value = root.at("foundationGround").get<std::string>();
+      if (!json::parse(value, nullptr, false).is_object()) throw std::runtime_error("foundationGround: not an object");
+      s.foundationGround = value;
     }
     if (root.contains("interiorMaterials")) {  // docs/292
       const auto value = root.at("interiorMaterials").get<std::string>();

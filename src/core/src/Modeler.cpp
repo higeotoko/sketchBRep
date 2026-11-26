@@ -4187,6 +4187,31 @@ Status Modeler::setEquipment(const std::vector<EquipmentItem>& items) {
   return Status::success();
 }
 
+Status Modeler::setFoundationGround(const FoundationGround& g) {
+  for (const std::string* text : {&g.surveyMethod, &g.surveyDate, &g.soil, &g.basis, &g.improvement, &g.source})
+    if (!oneLine(*text, 300)) return Status::failure("地盤の欄は1行、100 字までです");
+  if (g.allowableKNm2 && !(*g.allowableKNm2 > 0 && *g.allowableKNm2 < 10000))
+    return Status::failure("長期許容応力度は 0 より大きい kN/m² で入れてください");
+  if (g.frostDepthMm && !(*g.frostDepthMm >= 0 && *g.frostDepthMm < 5000))
+    return Status::failure("凍結深度は 0 以上の mm で入れてください");
+  if (!g.empty() && g.source.empty()) return Status::failure("調査の資料（地盤調査報告書など）が要ります");
+  nlohmann::json j = nlohmann::json::object();
+  const auto put = [&](const char* key, const std::string& value) {
+    if (!value.empty()) j[key] = value;
+  };
+  put("survey_method", g.surveyMethod);
+  put("survey_date", g.surveyDate);
+  put("soil", g.soil);
+  if (g.allowableKNm2) j["allowable_kn_m2"] = *g.allowableKNm2;
+  put("basis", g.basis);
+  put("improvement", g.improvement);
+  if (g.frostDepthMm) j["frost_depth_mm"] = *g.frostDepthMm;
+  put("source", g.source);
+  const std::string text = j.dump();
+  editSettings(document_, history_, "Foundation ground", [&](PersistentSettings& s) { s.foundationGround = text; });
+  return Status::success();
+}
+
 std::vector<Modeler::StructuralMaterial> Modeler::structuralMaterialsOf(const Document& document) {
   std::vector<StructuralMaterial> out;
   const nlohmann::json all = nlohmann::json::parse(document.settings().structuralMaterials, nullptr, false);

@@ -175,6 +175,9 @@ struct DocumentSettings {
   // docs/292: the interior finish materials' formaldehyde class (令 20 条の 7), per material name as written
   // on the rooms: [{"name": "フローリング", "class": "exempt", "mark": "F☆☆☆☆", "source": "..."}, ...].
   std::string interiorMaterials = "[]";
+  // docs/308: the ground survey's results for the 基礎・地盤説明書, as given (FoundationGround.h):
+  // {"survey_method": "...", "allowable_kn_m2": 30, "frost_depth_mm": 0, "source": "...", ...}.
+  std::string foundationGround = "{}";
   // docs/233: where the vicinity map is centred and how: {"lat": .., "lon": .., "zoom": 16, "layer": "std"}.
   std::string vicinityMap = "{}";
 };
@@ -199,11 +202,13 @@ struct PersistentSettings {
   std::string vicinityMap = "{}";
   std::string structuralMaterials = "[]";
   std::string interiorMaterials = "[]";
+  std::string foundationGround = "{}";
 
   static PersistentSettings of(const DocumentSettings& s) {
     return {s.scenes,         s.sections, s.sectionDisplay, s.hiddenTags, s.levels, s.constructionOverrides,
             s.wallCalculation, s.sun,     s.elementTypes, s.siteNorth, s.siteBoundary, s.permitConfirmations,
-            s.projectOutline, s.equipment, s.vicinityMap, s.structuralMaterials, s.interiorMaterials};
+            s.projectOutline, s.equipment, s.vicinityMap, s.structuralMaterials, s.interiorMaterials,
+            s.foundationGround};
   }
   void applyTo(DocumentSettings& s) const {
     s.scenes = scenes;
@@ -223,6 +228,7 @@ struct PersistentSettings {
     s.vicinityMap = vicinityMap;
     s.structuralMaterials = structuralMaterials;
     s.interiorMaterials = interiorMaterials;
+    s.foundationGround = foundationGround;
   }
   bool operator==(const PersistentSettings& o) const {
     return scenes == o.scenes && sections == o.sections && sectionDisplay == o.sectionDisplay &&
@@ -231,7 +237,8 @@ struct PersistentSettings {
            sun == o.sun && elementTypes == o.elementTypes && siteNorth == o.siteNorth &&
            siteBoundary == o.siteBoundary && permitConfirmations == o.permitConfirmations &&
            projectOutline == o.projectOutline && equipment == o.equipment && vicinityMap == o.vicinityMap &&
-           structuralMaterials == o.structuralMaterials && interiorMaterials == o.interiorMaterials;
+           structuralMaterials == o.structuralMaterials && interiorMaterials == o.interiorMaterials &&
+           foundationGround == o.foundationGround;
   }
   bool operator!=(const PersistentSettings& o) const { return !(*this == o); }
 };

@@ -1,5 +1,6 @@
 #include "sbr/doc/Schedules.h"
 #include "sbr/doc/GroundLevel.h"
+#include "sbr/doc/FoundationGround.h"
 #include "sbr/doc/FireSpread.h"
 #include "sbr/doc/FireCompartments.h"
 #include "AreaEvidence.h"
@@ -5666,6 +5667,11 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
   // docs/291: the structural materials of the timber frame.
   if (const auto materials = structuralMaterialTable(document); !materials.rows.empty())
     planned.push_back({materials.title, std::nullopt, materials, {}});
+  // docs/308: the 基礎・地盤説明書 when the model has a foundation plan or the survey's results are given.
+  if (const auto study = foundationGroundStudy(document); study.hasFoundation || !study.ground.empty()) {
+    const auto table = foundationGroundTable(study);
+    planned.push_back({table.title, std::nullopt, table, {}});
+  }
   detail::AreaGeometry areaGeometry;
   const auto areas = measureAreas(document, &areaGeometry);
   for (auto& page : detail::areaEvidencePages(document, areas, areaGeometry, spec.scale)) {
