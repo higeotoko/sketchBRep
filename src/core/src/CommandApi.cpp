@@ -1,6 +1,7 @@
 #include "sbr/doc/Schedules.h"
 #include "sbr/doc/FireSpread.h"
 #include "sbr/doc/PermitIntake.h"
+#include "sbr/doc/GroundLevel.h"
 #include "sbr/doc/FireCompartments.h"
 #include "sbr/ConstructionQuantity.h"
 #include "sbr/ConstructionWall.h"
@@ -3579,6 +3580,29 @@ const std::vector<CommandDef>& commands() {
          if (!mark.note.empty()) confirmation["note"] = mark.note;
          return json{{"stage", stage}, {"rows", std::move(rows)}, {"confirmation", std::move(confirmation)}};
        }},
+      {"ground_level_table",
+       "docs/288: the ground level (地盤面, 建築基準法施行令 第2条第2項 read on e-Gov 2026-11-26) from the measured "
+       "contact perimeter (set_site_ground): per edge the horizontal length, the heights at its ends (from the datum), "
+       "their average and length x average; 'level_m' = sum(L x h) / sum(L). 'state' 未入力 / 要確認 (perimeter, points or "
+       "placement do not hold: 'problem') / 算出 / 区分が必要 (the heights differ by more than 3 m: the division into "
+       "parts within 3 m is the designer's; 'level_m' is then the whole average, for reference). Also as 'csv'; the "
+       "drawing set carries it as the sheet 地盤面算出表 after the site plan. Read only.",
+       SCHEMA({"type": "object", "properties": {}}),
+       [](doc::Modeler& m, const json&) {
+         const auto study = doc::groundLevelStudy(m.document());
+         const auto table = doc::groundLevelTable(study);
+         json out = {{"state", study.state}, {"problem", study.problem}, {"datum", study.datum}, {"source", study.source},
+                     {"rows", table.rows}, {"notes", table.notes}, {"csv", doc::tableCsv(table)},
+                     {"basis", doc::kGroundLevelLaw}};
+         if (study.report) {
+           out["level_m"] = study.levelMm / 1000.0;
+           out["low_m"] = study.lowMm / 1000.0;
+           out["high_m"] = study.highMm / 1000.0;
+           out["range_m"] = study.rangeMm() / 1000.0;
+           out["perimeter_m"] = study.report->lengthMm / 1000.0;
+         }
+         return out;
+       }},
       {"permit_intake_review",
        "docs/286: the Yokohama intake forms held up against the model. 'rows': each 図書の種類 of 様式1-2 "
        "(意匠・設備受付チェックシート, section 4) and 様式2 (構造受付チェックシート, table 2/3) with form, group "
@@ -5014,7 +5038,7 @@ CommandApi::Effect builtinEffect(const std::string& name) {
       name == "preview" || name == "query_objects" || name == "aggregate" || name == "get_changes" ||
       name == "list_openings" || name == "list_materials" || name == "material_at" ||
       name == "placement_parameters" || name == "list_sections" || name == "get_construction_guide" ||
-      name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" || name == "permit_checks" || name == "permit_intake_review" || name == "check_drawing_set" || name == "project_outline" || name == "daylight_factor_estimates" ||
+      name == "get_sun" || name == "get_site_ground_status" || name == "room_opening_inputs" || name == "permit_checks" || name == "permit_intake_review" || name == "ground_level_table" || name == "check_drawing_set" || name == "project_outline" || name == "daylight_factor_estimates" ||
       name == "fire_compartment_review" || name == "fire_spread_review" || name == "site_height_conditions" || name == "yokohama_height_district_at" || name == "compare_yokohama_height_district" ||
       name == "neighbor_height_at" || name == "north_height_at" || name == "compare_north_height" || name == "compare_neighbor_height" || name == "road_height_datum" || name == "road_height_table_values" || name == "measure_road_building_setback" || name == "compare_road_height_plane" || name == "check_frame" || name == "take_off" || name == "check_wall_quantity" || name == "list_wall_bays" || name == "check_foundation" || name == "check_foundation_supports" || name == "check_structure" || name == "structure_assist") {
     return E::Read;

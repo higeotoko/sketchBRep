@@ -245,7 +245,7 @@ void PermitWorkflowPanel::readSiteChecks() {
       translated("提出図書を照合"), Action::Submission});
 
   rows_.push_back({translated("申請条件"), translated("未評価"),
-      translated("申請先・適用ルートと最新の法令を確認します。道路・接道、法令上の地盤面、高低差による区分の確認が残っています。"), {}});
+      translated("申請先・適用ルートと最新の法令を確認します。道路・接道と、高低差が3mを超える時の地盤面の区分の確認が残っています（地盤面算出表は図面一式に入ります）。"), {}});
 }
 
 void PermitWorkflowPanel::readRoomOpeningChecks() {

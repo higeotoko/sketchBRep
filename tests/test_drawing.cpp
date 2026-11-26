@@ -18,6 +18,7 @@
 #include "sbr/api/CommandApi.h"
 #include "sbr/doc/Modeler.h"
 #include "sbr/doc/Schedules.h"
+#include "sbr/doc/GroundLevel.h"
 #include "sbr/draw/Drawing.h"
 #include "sbr/geom/Dxf.h"
 #include "sbr/geom/Jww.h"
@@ -833,4 +834,58 @@ TEST(Jww, ReadsJwCadDrawings) {
     ++files;
   }
   EXPECT_GT(files, 0);
+}
+
+// docs/288: the ground level by 令 2 条 2 項 from the measured contact perimeter, as its own sheet.
+TEST(Drawing, GroundLevelTableFollowsTheOrder) {
+  doc::Modeler m;
+  EXPECT_EQ(doc::groundLevelStudy(m.document()).state, "未入力");
+  const auto site = m.createRectangle(geom::SketchPlane::ground(), 10000, 12000);
+  ASSERT_TRUE(site);
+  ASSERT_TRUE(m.setSiteBoundary(doc::SiteBoundary{*site, "Survey"}));
+  const auto contact = m.createPolyline({gp_Pnt(1000, 1000, 0), gp_Pnt(3000, 1000, 0), gp_Pnt(5000, 1000, 0),
+      gp_Pnt(5000, 3000, 0), gp_Pnt(1000, 3000, 0), gp_Pnt(1000, 1000, 0)});
+  ASSERT_TRUE(contact);
+  doc::SiteGround input{*contact, "BM", "Synthetic survey", {
+      {5000, 1000, 0}, {3000, 1000, 600}, {1000, 1000, 0}, {1000, 3000, -100}, {5000, 3000, 0}}};
+  ASSERT_TRUE(m.setSiteGround(input));
+  auto study = doc::groundLevelStudy(m.document());
+  EXPECT_EQ(study.state, "算出");
+  EXPECT_NEAR(study.levelMm, 75.0, 1e-6);  // (2*0.3 + 2*0.3 + 2*-0.05 + 4*-0.05 + 2*0) / 12 = 0.9/12
+  EXPECT_NEAR(study.rangeMm(), 700.0, 1e-6);
+  auto table = doc::groundLevelTable(study);
+  ASSERT_EQ(table.rows.size(), 6u);
+  EXPECT_EQ(table.rows[0][4], "0.300");
+  EXPECT_EQ(table.rows.back()[5], "0.900");
+  EXPECT_NE(table.notes.front().find("+0.075 m"), std::string::npos);
+  EXPECT_NE(table.notes.front().find("地盤面"), std::string::npos);
+  // The drawing set: right after the site plan (list, outline, site plan, ground level).
+  const auto set = doc::drawingSet(m.document(), {});
+  ASSERT_TRUE(set) << set.error();
+  ASSERT_GE(set->names.size(), 4u);
+  EXPECT_EQ(set->names[3], "地盤面算出表");
+  EXPECT_TRUE(std::any_of(set->sheets[3].items.begin(), set->sheets[3].items.end(),
+      [](const Item& item) { return item.text.find("令2条") != std::string::npos ||
+                                    item.text.find("第2条第2項") != std::string::npos; }));
+  // The API.
+  api::CommandApi api(m);
+  const auto r = nlohmann::json::parse(api.execute(R"({"command":"ground_level_table","args":{}})"));
+  ASSERT_TRUE(r.value("ok", false)) << r.dump();
+  EXPECT_EQ(r["result"]["state"], "算出");
+  EXPECT_NEAR(r["result"]["level_m"].get<double>(), 0.075, 1e-9);
+  EXPECT_NE(r["result"]["csv"].get<std::string>().find("地盤面"), std::string::npos);
+  // More than 3 m between the lowest and highest point: the division is the designer's.
+  input.samples[1][2] = 3200;
+  ASSERT_TRUE(m.setSiteGround(input));
+  study = doc::groundLevelStudy(m.document());
+  EXPECT_EQ(study.state, "区分が必要");
+  EXPECT_NEAR(study.rangeMm(), 3300.0, 1e-6);
+  table = doc::groundLevelTable(study);
+  EXPECT_NE(table.notes.front().find("参考"), std::string::npos);
+  EXPECT_TRUE(std::any_of(table.notes.begin(), table.notes.end(),
+      [](const std::string& n) { return n.find("3 m を超える") != std::string::npos; }));
+  // Exactly 3 m: one level.
+  input.samples[1][2] = 2900;
+  ASSERT_TRUE(m.setSiteGround(input));
+  EXPECT_EQ(doc::groundLevelStudy(m.document()).state, "算出");
 }

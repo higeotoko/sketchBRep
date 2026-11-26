@@ -274,6 +274,7 @@ class GuiPhase1 : public QObject {
   void aiDrawsInTheView();
   void vicinityMapFetchedOnline();
   void insulationPlanIsDrawnOnItsSheet();
+  void groundLevelSheetIsDrawn();
   void proposalShowsRotationAndHide();
   void benchViewportSync();
   void benchEnterManyCopies();
@@ -916,6 +917,48 @@ void GuiPhase1::permitWorkflowAppliesDaylightFactors() {
   QCOMPARE(rows.size(), std::size_t(1));
   QVERIFY(std::abs(rows[0].daylightFactor - (941.0 / 3550.0 * 6 - 1.4)) < 1e-9);
   QVERIFY(rows[0].daylightBasis.find("令 20 条") != std::string::npos);
+}
+
+// docs/288: the ground level sheet (地盤面算出表) after the site plan. SBR_GROUND_PNG: where to save it.
+void GuiPhase1::groundLevelSheetIsDrawn() {
+  Fixture f;
+  QVERIFY(f.setUp(4000, 3000));
+  auto& modeler = f.window.modeler();
+  const auto site = modeler.createPolyline({gp_Pnt(0, 0, 0), gp_Pnt(10000, 0, 0), gp_Pnt(10000, 12000, 0),
+      gp_Pnt(0, 12000, 0), gp_Pnt(0, 0, 0)});
+  QVERIFY(site);
+  QVERIFY(modeler.setSiteBoundary(doc::SiteBoundary{*site, "架空の測量図"}));
+  const auto contact = modeler.createPolyline({gp_Pnt(2000, 2000, 0), gp_Pnt(8000, 2000, 0), gp_Pnt(8000, 9000, 0),
+      gp_Pnt(2000, 9000, 0), gp_Pnt(2000, 2000, 0)});
+  QVERIFY(contact);
+  QVERIFY(modeler.setSiteGround(doc::SiteGround{*contact, "KBM（架空）", "架空の測量図",
+      {{2000, 2000, 0}, {8000, 2000, 300}, {8000, 9000, 600}, {2000, 9000, 200}}}));
+  api::CommandApi api(modeler);
+  for (double base : {0.0, 3000.0}) {
+    const auto wall = nlohmann::json::parse(api.execute(nlohmann::json{
+        {"command", "create_wall"}, {"args", {{"points", {{2000,2000},{8000,2000},{8000,9000},{2000,9000},{2000,2000}}},
+                                             {"base", base}, {"height", 2800}, {"thickness", 160}}}}.dump()));
+    QVERIFY(wall["ok"].get<bool>());
+  }
+  const auto set = doc::drawingSet(modeler.document(), {});
+  QVERIFY(set.ok());
+  const auto at = std::find(set->names.begin(), set->names.end(), std::string("地盤面算出表"));
+  QVERIFY(at != set->names.end());
+  const auto& sheet = set->sheets[static_cast<std::size_t>(at - set->names.begin())];
+  QImage image(2400, 1697, QImage::Format_RGB32);
+  image.fill(Qt::white);
+  {
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing);
+    app::renderSheet(painter, sheet, QRectF(0, 0, image.width(), image.height()));
+  }
+  int dark = 0;
+  for (int y = 0; y < image.height(); y += 2)
+    for (int x = 0; x < image.width(); x += 2)
+      if (qGray(image.pixel(x, y)) < 128) ++dark;
+  QVERIFY(dark > 500);
+  const QByteArray where = qgetenv("SBR_GROUND_PNG");
+  if (!where.isEmpty()) QVERIFY(image.save(QString::fromLocal8Bit(where)));
 }
 
 // docs/216: the drawing set carries an insulation plan when walls have insulation; drawn on paper it

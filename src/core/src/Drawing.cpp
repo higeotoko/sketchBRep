@@ -700,7 +700,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
                           "合計・参考平均は表示丸め前の値で計算",
                           "基準点 " + ground.datum, "確認資料 " + ground.source};
         if (!ground.placement) evidence.notes.push_back("建物との関連付けは未設定");
-        evidence.notes.push_back("法令上の地盤面・高低差による区分は未評価");
+        evidence.notes.push_back("法令上の地盤面は地盤面算出表（令2条2項）で求める");
         view.siteGroundTable = std::move(evidence);
       }
     } else {
@@ -1112,7 +1112,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     } else if (roadEdge) {
       view.calculationNotes.push_back("道路側境界からの距離は未評価（建物投影を確認してください）");
     }
-    view.calculationNotes.push_back("法令上の道路・接道、地盤面、離隔・後退は未評価");
+    view.calculationNotes.push_back("法令上の道路・接道、離隔・後退は未評価（地盤面は地盤面算出表）");
   }
   // A seen line lying on a cut line is that cut line: drawn once, thick.
   const double same = std::max(1e-3, diag * 1e-7);

@@ -7820,7 +7820,7 @@ void MainWindow::showSiteGroundDialog() {
     connect(marker, &QToolButton::clicked, &dialog, paintDiagram);
   paintDiagram();
 
-  const QString legalStatus = tr("法令上の地盤面・高低差による区分は未評価です。");
+  const QString legalStatus = tr("法令上の地盤面（令2条2項）は、保存後に図面一式の地盤面算出表で確かめます。高低差が3mを超える時の区分は設計者が決めます。");
   auto* message = new QLabel(legalStatus);
   form->addRow(message);
   const auto clearValidation = [message, legalStatus] { message->setText(legalStatus); };

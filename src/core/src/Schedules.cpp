@@ -1,4 +1,5 @@
 #include "sbr/doc/Schedules.h"
+#include "sbr/doc/GroundLevel.h"
 #include "sbr/doc/FireSpread.h"
 #include "sbr/doc/FireCompartments.h"
 #include "AreaEvidence.h"
@@ -5521,6 +5522,18 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
   if (document.settings().siteBoundary) {
     const auto site = draw::sitePlanView();
     planned.insert(planned.begin(), {site.title, site, std::nullopt, {}});
+    // docs/288: the ground level (令 2 条 2 項) right after the site plan, on the contact perimeter's drawing.
+    const GroundLevelStudy ground = groundLevelStudy(document);
+    if (ground.report) {
+      auto spec2 = site;
+      spec2.title = "地盤面算出表";
+      if (const auto view = draw::makeView(document, spec2)) {
+        draw::View made = *view;
+        made.siteGroundTable = groundLevelTable(ground);
+        Planned p{spec2.title, std::nullopt, std::nullopt, {}, std::move(made), spec.scale};
+        planned.insert(planned.begin() + 1, std::move(p));
+      }
+    }
   }
   {
     // docs/209: the outline of the project first, after the sheet list (its name from the title block).
