@@ -383,27 +383,34 @@ TEST(Drawing, SiteRoadUsesTheSelectedEdgeAndSavedInput) {
   road.frontageMm = 8800;
   EXPECT_FALSE(m.setSiteRoad({gp_Pnt(0, 0, 0), gp_Pnt(4000, 0, 0)}, road));
   ASSERT_TRUE(m.setSiteRoad({gp_Pnt(10000, 0, 0), gp_Pnt(0, 0, 0)}, road));
+  // docs/302: the road's width is a dimension too; the clearance is the one in metres.
+  const auto clearanceOf = [](const auto& view) {
+    for (const auto& d : view->dimensions)
+      if (d.text.size() > 2 && d.text.compare(d.text.size() - 2, 2, " m") == 0) return d;
+    return DimensionMark{};
+  };
   const auto plan = makeView(m.document(), sitePlanView());
   ASSERT_TRUE(plan);
-  ASSERT_EQ(plan->dimensions.size(), 1u);
-  EXPECT_EQ(plan->dimensions[0].text, "2.500 m");
-  EXPECT_NEAR(plan->dimensions[0].a.Y(), 0.0, 1e-6);
-  EXPECT_NEAR(plan->dimensions[0].b.Y(), 2500.0, 1e-6);
+  ASSERT_EQ(plan->dimensions.size(), 2u);
+  EXPECT_EQ(clearanceOf(plan).text, "2.500 m");
+  EXPECT_NEAR(clearanceOf(plan).a.Y(), 0.0, 1e-6);
+  EXPECT_NEAR(clearanceOf(plan).b.Y(), 2500.0, 1e-6);
   EXPECT_NE(plan->calculationNotes[2].find("8.800 m"), std::string::npos);
+  EXPECT_TRUE(std::any_of(plan->dimensions.begin(), plan->dimensions.end(), [](const auto& d) { return d.text == "5,200"; }));
 
   gp_Trsf move;
   move.SetTranslation(gp_Vec(0, -500, 0));
   ASSERT_TRUE(m.transform({building}, move));
   const auto updated = makeView(m.document(), sitePlanView());
   ASSERT_TRUE(updated);
-  ASSERT_EQ(updated->dimensions.size(), 1u);
-  EXPECT_EQ(updated->dimensions[0].text, "2.000 m");
+  ASSERT_EQ(updated->dimensions.size(), 2u);
+  EXPECT_EQ(clearanceOf(updated).text, "2.000 m");
   move.SetTranslation(gp_Vec(0, 400, 0));
   ASSERT_TRUE(m.transform({*outline}, move));
   const auto movedSite = makeView(m.document(), sitePlanView());
   ASSERT_TRUE(movedSite);
-  ASSERT_EQ(movedSite->dimensions.size(), 1u);
-  EXPECT_EQ(movedSite->dimensions[0].text, "1.600 m");
+  ASSERT_EQ(movedSite->dimensions.size(), 2u);
+  EXPECT_EQ(clearanceOf(movedSite).text, "1.600 m");
 
   const std::string path = ::testing::TempDir() + "site-road.sbr";
   ASSERT_TRUE(m.save(path));

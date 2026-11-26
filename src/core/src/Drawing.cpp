@@ -678,6 +678,52 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
           (road.kind.empty() ? std::string("未入力") : road.kind) + "　幅員 " + entered(road.widthMm) +
           "　接道長（入力） " + entered(road.frontageMm));
       view.calculationNotes.push_back("道路情報の根拠：" + road.source);
+      // docs/302: the road itself when its width is given: its far side (thin), its centre line (dash-dot,
+      // the line road setbacks and slant planes are measured from) and its width, as site plans show
+      // the road in front; the lines run on past the site a little (the road goes on).
+      if (road.widthMm > 0) {
+        const gp_Pnt a = (*edge)[0], b = (*edge)[1];
+        gp_Vec along(a, b);
+        along.SetZ(0);
+        if (along.Magnitude() > 1.0) {
+          along.Normalize();
+          gp_Vec out(-along.Y(), along.X(), 0);
+          gp_XYZ centre(0, 0, 0);
+          for (const gp_Pnt& v : boundary->vertices) centre += v.XYZ();
+          centre /= static_cast<double>(boundary->vertices.size());
+          const gp_Pnt mid((a.XYZ() + b.XYZ()) / 2);
+          if (gp_Vec(gp_Pnt(centre), mid).Dot(out) < 0) out.Reverse();
+          const double run = 1500.0;
+          const auto at = [&](const gp_Pnt& p, double across, double past) {
+            return gp_Pnt(p.X() + out.X() * across + along.X() * past, p.Y() + out.Y() * across + along.Y() * past, p.Z());
+          };
+          const gp_Pnt farA = at(a, road.widthMm, -run), farB = at(b, road.widthMm, run);
+          const gp_Pnt midA = at(a, road.widthMm / 2, -run), midB = at(b, road.widthMm / 2, run);
+          for (const gp_Pnt& p : {farA, farB}) all.Add(p);
+          view.items.push_back(line(Pen::Visible, proj.uv(farA), proj.uv(farB)));
+          view.items.push_back(line(Pen::Visible, proj.uv(at(a, 0, -run)), proj.uv(a)));
+          view.items.push_back(line(Pen::Visible, proj.uv(b), proj.uv(at(b, 0, run))));
+          view.items.push_back(line(Pen::Grid, proj.uv(midA), proj.uv(midB)));
+          DimensionMark width;
+          width.a = proj.uv(at(mid, 0, 0));
+          width.b = proj.uv(at(mid, road.widthMm, 0));
+          char text[32];
+          std::snprintf(text, sizeof text, "%.0f", road.widthMm);
+          std::string grouped = text;
+          for (int i = static_cast<int>(grouped.size()) - 3; i > 0; i -= 3) grouped.insert(static_cast<std::size_t>(i), ",");
+          width.text = grouped;
+          view.dimensions.push_back(width);
+          Item name;
+          name.kind = Item::Kind::Text;
+          name.pen = Pen::Text;
+          name.text = "前面道路" + (road.kind.empty() ? std::string() : "（" + road.kind + "）");
+          name.height = 3.0;
+          name.hAlign = 1;
+          name.vAlign = 1;
+          name.points = {proj.uv(at(mid, road.widthMm * 0.75, (b.Distance(a)) / 4))};
+          view.items.push_back(std::move(name));
+        }
+      }
     } else if (source->road) {
       view.calculationNotes.push_back("道路側境界を再指定してください（境界の辺が変わりました）");
     } else {
