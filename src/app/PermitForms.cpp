@@ -4,6 +4,8 @@
 #include "DrawingExport.h"
 #include "VicinityMapFetcher.h"
 #include "sbr/doc/Schedules.h"
+#include "sbr/ConstructionQuantity.h"
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -201,7 +203,38 @@ struct Images {
   QByteArray map, site;
 };
 
-QByteArray documentBytes(bool summary, const QMap<QString, QString>& values, const Images& images) {
+// docs/294: the fifth face (建築物の階別概要) once per storey: the block between the SBR_FIFTH comments is
+// repeated for each set of fifth_* values (once, empty, when none), each copy filled on its own. Copies get
+// their own drawing ids and lose the paragraph ids Word would otherwise see twice.
+QString repeatFifthFace(const QString& xml, const QList<QMap<QString, QString>>& storeys) {
+  const QString begin = QStringLiteral("<!--SBR_FIFTH_BEGIN-->"), end = QStringLiteral("<!--SBR_FIFTH_END-->");
+  const auto from = xml.indexOf(begin), to = xml.indexOf(end);
+  if (from < 0 || to < from) return xml;
+  const QString block = xml.sliced(from + begin.size(), to - from - begin.size());
+  static const QRegularExpression paraIds(QStringLiteral(" w14:(?:paraId|textId)=\"[0-9A-F]+\""));
+  static const QRegularExpression drawingIds(QStringLiteral("(<wp:docPr\\s+id=\")(\\d+)"));
+  QString copies;
+  const auto list = storeys.isEmpty() ? QList<QMap<QString, QString>>{{}} : storeys;
+  for (int i = 0; i < list.size(); ++i) {
+    QString copy = mergeFields(block, list[i]);
+    if (i > 0) {
+      copy.remove(paraIds);
+      QString renumbered;
+      qsizetype at = 0;
+      for (const auto& m : drawingIds.globalMatch(copy)) {
+        renumbered += copy.sliced(at, m.capturedStart(2) - at);
+        renumbered += QString::number(m.captured(2).toLongLong() + 100000LL * i);
+        at = m.capturedEnd(2);
+      }
+      copy = renumbered + copy.sliced(at);
+    }
+    copies += copy;
+  }
+  return xml.left(from) + copies + xml.sliced(to + end.size());
+}
+
+QByteArray documentBytes(bool summary, const QMap<QString, QString>& values, const Images& images,
+                         const QList<QMap<QString, QString>>& storeys = {}) {
   auto entries = readTemplate(summary ? QStringLiteral(":/permit_forms/third.sbrform")
                                       : QStringLiteral(":/permit_forms/second.sbrform"));
   if (entries.isEmpty()) return {};
@@ -224,7 +257,9 @@ QByteArray documentBytes(bool summary, const QMap<QString, QString>& values, con
         entry.data.replace("<!--SBR_IMAGE_MAP-->", addImage(images.map, "rIdSbrMap", 9001));
         entry.data.replace("<!--SBR_IMAGE_SITE-->", addImage(images.site, "rIdSbrSite", 9002));
       }
-      entry.data = mergeFields(QString::fromUtf8(entry.data), values).toUtf8();
+      auto text = QString::fromUtf8(entry.data);
+      if (!summary) text = repeatFifthFace(text, storeys);  // docs/294
+      entry.data = mergeFields(text, values).toUtf8();
     }
   }
   for (Entry& entry : entries) {
@@ -243,6 +278,7 @@ struct Transfer {
   QMap<QString, QString> values;
   QList<TransferRow> rows;
   bool newBuilding = false;
+  QList<QMap<QString, QString>> storeys;  // docs/294: the fifth face's values, one map per storey
 };
 
 QString metres(double mm) { return QString::number(mm / 1000.0, 'f', 3).append(QStringLiteral(" m")); }
@@ -480,6 +516,77 @@ Transfer collect(const doc::Document& document, bool applyArea) {
       row(tr("第四面・%1階の床面積").arg(number), value, tr("面積の根拠図"), applyArea ? tr("転記") : tr("候補"), true);
     }
     if (applyArea) result.values.insert("detail_floor_total", permitSquareMetres(area.legalTotal));
+    // docs/294: the fifth face per storey, lowest first: the storey, its height to the next level, the lowest
+    // ceiling of its 居室, the use and floor area of a single-use building, the smallest column of its frame.
+    const auto& levels = document.settings().levels;
+    const auto rooms = doc::roomSchedule(document);
+    QList<std::pair<std::string, double>> columns;  // (tag, smaller side mm)
+    if (const auto made = construction::takeOff(document)) {
+      const auto report = nlohmann::json::parse(*made, nullptr, false);
+      if (report.is_object() && report.contains("rows"))
+        for (const auto& row : report.at("rows")) {
+          const auto role = row.value("role", std::string());
+          if (role != "column" && role != "through_column") continue;
+          if (!row.contains("width_mm") || !row.at("width_mm").is_number() || !row.contains("depth_mm") ||
+              !row.at("depth_mm").is_number()) continue;
+          const double side = std::min(row.at("width_mm").get<double>(), row.at("depth_mm").get<double>());
+          for (const auto& tag : row.value("tags", nlohmann::json::array()))
+            columns.push_back({role == "through_column" ? std::string() : tag.get<std::string>(), side});
+        }
+    }
+    const auto useCode = get("use_code"), mainUse = get("main_use");
+    int number = 0;
+    for (auto it = floors.constBegin(); it != floors.constEnd(); ++it) {
+      QMap<QString, QString> storey;
+      const int index = it.key();
+      const auto floorText = index < 0 ? QStringLiteral("地下%1階").arg(-index) : QStringLiteral("%1階").arg(index);
+      storey.insert("fifth_number", QString::number(++number));
+      storey.insert("fifth_floor", floorText);
+      const doc::AreaRow* floorRow = nullptr;
+      for (const auto& f : area.rows) {
+        const auto m = levelName.match(QString::fromStdString(f.level).trimmed());
+        if (m.hasMatch() && (m.captured(1).isEmpty() ? 1 : -1) * m.captured(2).toInt() == index && f.legalKnown && f.legalFloor > 0)
+          floorRow = &f;
+      }
+      QStringList said{floorText};
+      if (floorRow) {
+        std::optional<double> z;
+        for (const auto& l : levels)
+          if (l.name == floorRow->level) z = l.elevation;
+        if (z && floorRow->hasTop && floorRow->top > *z) {
+          storey.insert("fifth_storey_height", metres(floorRow->top - *z));
+          said.push_back(tr("階の高さ %1").arg(metres(floorRow->top - *z)));
+        }
+        double ceiling = 0.0;
+        bool missing = false;
+        for (const auto& r : rooms.rows) {
+          if (r.level != floorRow->level || r.daylightKind == "none") continue;
+          if (r.ceilingHeight <= 0) missing = true;
+          else if (ceiling <= 0 || r.ceilingHeight < ceiling) ceiling = r.ceilingHeight;
+        }
+        if (ceiling > 0 && !missing) {
+          storey.insert("fifth_ceiling", metres(ceiling));
+          said.push_back(tr("居室の天井高 %1").arg(metres(ceiling)));
+        }
+        if (!useCode.isEmpty() && !mainUse.isEmpty()) {
+          storey.insert("fifth_use_code", useCode);
+          storey.insert("fifth_use_name", mainUse);
+          storey.insert("fifth_use_area", permitSquareMetres(it.value()));
+          said.push_back(tr("%1 %2").arg(mainUse, permitSquareMetres(it.value())));
+        }
+      }
+      double column = 0.0;
+      const std::string frameTag = index > 0 ? std::to_string(index) + "階軸組" : std::string("-");
+      for (const auto& [tag, side] : columns)
+        if ((tag.empty() || tag == frameTag) && (column <= 0 || side < column)) column = side;
+      if (column > 0) {
+        storey.insert("fifth_column", QString::number(column, 'f', 0) + QStringLiteral(" mm"));
+        said.push_back(tr("柱の小径 %1 mm").arg(QString::number(column, 'f', 0)));
+      }
+      if (applyArea) result.storeys.push_back(storey);
+      row(tr("第五面・%1").arg(floorText), said.join(tr("、")), tr("モデル・木造架構"),
+          applyArea ? tr("転記（横架材間の垂直距離・特定天井は様式に記入）") : tr("候補"), true);
+    }
   }
   const auto eavesInput = get("form_building_eaves");
   row(tr("最高の軒の高さ"), eaves.isEmpty() ? eavesInput : eaves + " m", checked,
@@ -523,9 +630,10 @@ Images prepareImages(const doc::Document& document, bool siteChecked, bool mapCh
 }  // namespace
 
 PermitFormDraft buildPermitForm(const doc::Document& document, const PermitFormOptions& options) {
-  const auto values = collect(document, options.transferAreas).values;
+  const auto transfer = collect(document, options.transferAreas);
+  const auto& values = transfer.values;
   const auto images = options.summary ? prepareImages(document, options.includeSitePlan, options.includeVicinityMap) : Images{};
-  return {documentBytes(options.summary, values, images), !images.site.isEmpty(), !images.map.isEmpty()};
+  return {documentBytes(options.summary, values, images, transfer.storeys), !images.site.isEmpty(), !images.map.isEmpty()};
 }
 
 QByteArray buildAgreementForm(const doc::Document& document, QStringList* unfilled) {

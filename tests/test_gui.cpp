@@ -1907,7 +1907,7 @@ void GuiPhase1::permitWordFormsTransferAndEmbedDrawings() {
   const auto firstFloor = building.indexOf(QStringLiteral("( 1  階)"));
   QVERIFY(secondFloor >= 0 && firstFloor > secondFloor);
   QVERIFY(building.contains(QStringLiteral("84.00 ㎡")));
-  QVERIFY(building.count(QStringLiteral("一戸建ての住宅")) == 2);
+  QVERIFY(building.count(QStringLiteral("一戸建ての住宅")) == 4);  // + the fifth face of each storey (docs/294)
   QVERIFY(building.contains(QStringLiteral("架空住宅新築工事")));
   QVERIFY(cover.contains(QStringLiteral("☑提出済")));
   QVERIFY(!cover.contains(QStringLiteral("120.00 ㎡")));
@@ -1929,6 +1929,24 @@ void GuiPhase1::permitWordFormsTransferAndEmbedDrawings() {
   QVERIFY(!mismatch.contains(QStringLiteral("66.67 %")));
   QVERIFY(!mismatch.contains(QStringLiteral("( 2  階)")));
   QVERIFY(modeler.undo());
+
+  // docs/294: the fifth face once per storey, lowest first, in the application form with areas transferred.
+  {
+    const auto fifth = text(unpack(detailed.docx).value(documentXml));
+    QCOMPARE(fifth.count(QStringLiteral("（第五面）")), 2);
+    QCOMPARE(text(a.value(documentXml)).count(QStringLiteral("（第五面）")), 1);
+    const auto first = fifth.indexOf(QStringLiteral("（第五面）"));
+    const auto second = fifth.indexOf(QStringLiteral("（第五面）"), first + 1);
+    const auto sixth = fifth.indexOf(QStringLiteral("（第六面）"));
+    QVERIFY(first >= 0 && second > first && sixth > second);
+    const auto lower = fifth.sliced(first, second - first), upper = fifth.sliced(second, sixth - second);
+    QVERIFY2(lower.contains(QStringLiteral("【2.階】　1階")), qPrintable(lower.left(300)));
+    QVERIFY(upper.contains(QStringLiteral("【2.階】　2階")));
+    QVERIFY(lower.contains(QStringLiteral("【5.階の高さ】　3.000 m")));
+    QVERIFY(lower.contains(QStringLiteral("一戸建ての住宅")));
+    QVERIFY(lower.contains(QStringLiteral("08010")));
+    QVERIFY(!fifth.contains(QStringLiteral("@@SBR_")));
+  }
 
   // docs/287: 建築協定等手続状況届出書, first face from the same model.
   QStringList unfilled;

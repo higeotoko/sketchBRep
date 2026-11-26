@@ -146,6 +146,20 @@ def patch_document(xml, third):
             slots(358 + index, [key, None, key])
         slots(364, ["detail_floor_total", None, "detail_floor_total"])
         after(299, "番号】", "building_count")
+        # docs/294: the fifth face (建築物の階別概要), one per storey: the app repeats the block between the
+        # SBR_FIFTH comments for each storey and fills the fifth_* keys of each copy.
+        for index, label, key in [(378, "番号】", "fifth_number"), (380, "階】", "fifth_floor"),
+                                  (382, "小径】", "fifth_column"), (384, "垂直距離】", "fifth_clear"),
+                                  (386, "高さ】", "fifth_storey_height"), (389, "天井の高さ】", "fifth_ceiling")]:
+            after(index, label, key)
+
+        def use_slots(text):
+            keys = iter(["fifth_use_code", "fifth_use_name", "fifth_use_area"])
+            def slot(m):
+                width = 2 * len(m.group(1))
+                return "（" + mark(f"slot_{next(keys)}__{width}") + "）"
+            return re.sub("（(\u3000+)）", slot, text, count=3)
+        edit(394, use_slots)
         after(300, "(区分", "detail_use_code")
         after(300, ")", "detail_main_use")
         boxes(306, ["detail_work_" + kind for kind in (
@@ -296,6 +310,17 @@ def patch_agreement(xml):
     return apply_edits(xml, spans, edits, insertions)
 
 
+def wrap_fifth(xml):
+    """Comments around the fifth face (from its page break to before the sixth face)."""
+    spans = nested_spans(xml)
+    def text(span):
+        return "".join(unescape(t) for t in re.findall(r"<w:t(?:\s[^>]*)?>([^<]*)</w:t>", span.group()))
+    start = next(s for s in spans if text(s) == "（第五面）")
+    end = next(s for s in spans if text(s) == "（第六面）")
+    return (xml[:start.start()] + "<!--SBR_FIFTH_BEGIN-->" + xml[start.start():end.start()] +
+            "<!--SBR_FIFTH_END-->" + xml[end.start():])
+
+
 def prepare(source, target, third, agreement=False):
     original = source.read_bytes()
     assert hashlib.sha256(original).hexdigest() == (AGREEMENT if agreement else THIRD if third else SECOND), source
@@ -305,7 +330,10 @@ def prepare(source, target, third, agreement=False):
             data = archive.read(name)
             if name == "word/document.xml":
                 xml = data.decode("utf-8")
-                data = (patch_agreement(xml) if agreement else patch_document(xml, third)).encode("utf-8")
+                xml = patch_agreement(xml) if agreement else patch_document(xml, third)
+                if not agreement and not third:
+                    xml = wrap_fifth(xml)
+                data = xml.encode("utf-8")
             if third and name == "word/_rels/document.xml.rels":
                 data = data.replace(b"</Relationships>", b"<!--SBR_RELS--></Relationships>")
             if third and name == "[Content_Types].xml":
