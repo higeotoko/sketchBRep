@@ -5,6 +5,9 @@
 #include "sbr/doc/Modeler.h"
 #include "sbr/doc/NativeFormat.h"
 #include "sbr/doc/FoundationGround.h"
+#include "sbr/doc/Schedules.h"
+#include <set>
+#include <cstdlib>
 #include "sbr/geom/Measure.h"
 
 using namespace sbr;
@@ -267,4 +270,44 @@ TEST_F(FoundationMat, FoundationGroundStatementComparesWithTheNotice) {
   EXPECT_EQ(foundationGroundOf(loaded.document()).allowableKNm2, 15.0);
   ASSERT_TRUE(m.undo());
   EXPECT_EQ(foundationGroundOf(m.document()).allowableKNm2, 25.0);
+}
+
+// docs/309: the mat's section detail at 1:20, from the plan's figures, with GL and the depth under it.
+TEST_F(FoundationMat, SectionDetailIsDrawnFromThePlan) {
+  EXPECT_FALSE(foundationDetailView(m.document()));
+  ring();
+  generate();
+  ASSERT_TRUE(m.setLevels({{"gl", "GL", 0.0}, {"1fl", "1FL", 540.0}}));
+  const auto view = foundationDetailView(m.document());
+  ASSERT_TRUE(view);
+  EXPECT_EQ(view->spec.title, "べた基礎 断面詳細図");
+  std::set<std::string> dims;
+  for (const auto& d : view->dimensions) dims.insert(d.text);
+  for (const char* want : {"150", "400", "300"}) EXPECT_TRUE(dims.count(want)) << want;  // stem, rise, edge / depth
+  bool ground = false, sill = false;
+  for (const auto& item : view->items) {
+    ground |= item.pen == draw::Pen::Ground;
+    sill |= item.kind == draw::Item::Kind::Text && item.text == "土台 120×120";
+  }
+  EXPECT_TRUE(ground);
+  EXPECT_TRUE(sill);
+  // In the drawing set, after the statement, laid out at 1:20.
+  const auto set = drawingSet(m.document(), {});
+  ASSERT_TRUE(set) << set.error();
+  bool found = false;
+  for (std::size_t i = 0; i < set->names.size(); ++i)
+    if (set->names[i] == "べた基礎 断面詳細図") {
+      found = true;
+      EXPECT_DOUBLE_EQ(set->sheets[i].scale, 20.0);
+    }
+  EXPECT_TRUE(found);
+  // SBR_FOUNDATION_SBR: where to save this model, to look at its drawing set (reviewDrawingSetOfAModel).
+  if (const char* out = std::getenv("SBR_FOUNDATION_SBR")) {
+    FoundationGround g;
+    g.surveyMethod = "スクリューウエイト貫入試験";
+    g.allowableKNm2 = 30;
+    g.source = "架空の地盤調査報告書";
+    ASSERT_TRUE(m.setFoundationGround(g));
+    EXPECT_TRUE(m.save(out));
+  }
 }

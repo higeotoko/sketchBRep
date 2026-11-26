@@ -179,4 +179,150 @@ draw::Table foundationGroundTable(const FoundationGroundStudy& study) {
   return t;
 }
 
+std::optional<draw::View> foundationDetailView(const Document& document) {
+  using draw::Item;
+  using draw::Pen;
+  const json* chosen = nullptr;
+  json manifest;
+  for (const Object& root : document.objects()) {
+    const auto stored = root.attributes.find("foundation_plan");
+    if (stored == root.attributes.end()) continue;
+    manifest = json::parse(stored->second, nullptr, false);
+    if (!manifest.is_object() || !manifest.contains("inputs")) continue;
+    if (manifest.at("inputs").value("type", std::string("strip")) == "pads") continue;
+    chosen = &manifest;
+    break;
+  }
+  if (!chosen) return std::nullopt;
+  const json& in = manifest.at("inputs");
+  const bool mat = in.value("type", std::string("strip")) == "mat";
+  const double top = manifest.value("top_z", 0.0);
+  const double sw = in.value("stem_width", 150.0), sh = in.value("stem_height", mat ? 400.0 : 600.0);
+  const double base = top - sh;  // the stem's bottom: the slab's top (mat) or the footing's top (strip)
+  const double packing = in.value("packing_mm", 20.0);
+  // The sill on the stem: its section from the first source sill, else none drawn.
+  double sillW = 0, sillD = 0;
+  if (in.contains("sources") && in.at("sources").is_array() && !in.at("sources").empty() && in.at("sources")[0].is_string())
+    if (const Object* sill = document.find(in.at("sources")[0].get<std::string>())) {
+      const Bnd_Box b = document.worldBounds(*sill);
+      if (!b.IsVoid()) {
+        double x0, y0, z0, x1, y1, z1;
+        b.Get(x0, y0, z0, x1, y1, z1);
+        sillW = std::min(x1 - x0, y1 - y0);
+        sillD = z1 - z0;
+      }
+    }
+  std::optional<double> gl = groundLevelStudy(document).glZ;
+  if (!gl)
+    for (const FloorLevel& l : document.settings().levels)
+      if (isGroundLevelName(l.name) && l.name.find("平均") == std::string::npos) gl = l.elevation;
+
+  draw::View view;
+  view.spec.kind = draw::ViewKind::Section;
+  view.spec.title = std::string(mat ? "べた基礎" : "布基礎") + " 断面詳細図";
+  const auto P = [](double u, double v) { return gp_Pnt2d(u, v); };
+  const auto concrete = [&](std::vector<gp_Pnt2d> loop) {
+    Item fill;
+    fill.kind = Item::Kind::Fill;
+    fill.pen = Pen::Fill;
+    fill.points = loop;
+    view.items.push_back(fill);
+    Item outline;
+    outline.kind = Item::Kind::Polyline;
+    outline.pen = Pen::Cut;
+    outline.closed = true;
+    outline.points = std::move(loop);
+    view.items.push_back(std::move(outline));
+  };
+  const auto line = [&](Pen pen, gp_Pnt2d a, gp_Pnt2d b) {
+    Item l;
+    l.kind = Item::Kind::Line;
+    l.pen = pen;
+    l.points = {a, b};
+    view.items.push_back(std::move(l));
+  };
+  const auto note = [&](gp_Pnt2d at, const std::string& text, int hAlign = 0) {
+    Item t;
+    t.kind = Item::Kind::Text;
+    t.pen = Pen::Text;
+    t.text = text;
+    t.height = 2.5;
+    t.hAlign = hAlign;
+    t.vAlign = 1;
+    t.points = {at};
+    view.items.push_back(std::move(t));
+  };
+  const auto dim = [&](gp_Pnt2d a, gp_Pnt2d b, gp_Vec2d offset) {
+    char text[32];
+    std::snprintf(text, sizeof text, "%.0f", a.Distance(b));
+    view.dimensions.push_back({a, b, offset, text});
+  };
+  // The outer stem centred on u = 0; the inside (the slab, the floor) to the right; outside to the left.
+  const double inside = 900.0;  // how much of the slab / footing is shown inwards, ended with a break line
+  double bottom = base;
+  if (mat) {
+    const double slab = in.value("slab_thickness", 150.0);
+    const double ew = in.value("edge_width", 300.0), ed = in.value("edge_depth", 150.0);
+    std::vector<gp_Pnt2d> loop{P(-sw / 2, top), P(sw / 2, top), P(sw / 2, base), P(inside, base), P(inside, base - slab)};
+    if (ed > 0) {
+      loop.push_back(P(ew / 2, base - slab));
+      loop.push_back(P(ew / 2, base - slab - ed));
+      loop.push_back(P(-ew / 2, base - slab - ed));
+      loop.push_back(P(-ew / 2, base - slab));
+    }
+    loop.push_back(P(-sw / 2, base - slab));
+    concrete(loop);
+    bottom = base - slab - std::max(0.0, ed);
+    dim(P(inside, base), P(inside, base - slab), gp_Vec2d(250, 0));
+    if (ed > 0) {
+      dim(P(-ew / 2, bottom), P(ew / 2, bottom), gp_Vec2d(0, -250));
+      dim(P(-ew / 2, base - slab), P(-ew / 2, bottom), gp_Vec2d(-350, 0));
+    }
+    note(P(inside / 2 + sw / 4, base - slab / 2), "耐圧盤（鉄筋コンクリート造）", 1);
+  } else {
+    const double fw = in.value("footing_width", 450.0), ft = in.value("footing_thickness", 150.0);
+    concrete({P(-sw / 2, top), P(sw / 2, top), P(sw / 2, base), P(fw / 2, base), P(fw / 2, base - ft), P(-fw / 2, base - ft),
+              P(-fw / 2, base), P(-sw / 2, base)});
+    bottom = base - ft;
+    dim(P(-fw / 2, bottom), P(fw / 2, bottom), gp_Vec2d(0, -250));
+    dim(P(fw / 2, base), P(fw / 2, bottom), gp_Vec2d(250, 0));
+    note(P(fw / 2 + 80, base - ft / 2), "底盤（鉄筋コンクリート造）");
+  }
+  dim(P(-sw / 2, top), P(sw / 2, top), gp_Vec2d(0, 250));
+  dim(P(sw / 2, top), P(sw / 2, base), gp_Vec2d(mat ? 1200 : 700, 0));
+  note(P(sw / 2 + 80, (top + base) / 2), "立上り（鉄筋コンクリート造）");
+  // Packing and the sill above it.
+  if (packing > 0) {
+    concrete({P(-sw / 2 + 10, top), P(sw / 2 - 10, top), P(sw / 2 - 10, top + packing), P(-sw / 2 + 10, top + packing)});
+    // Above the sill, clear of the dimensions' extension lines at the stem's top.
+    note(P(-sw / 2 - 80, top + packing + std::max(sillD, 0.0) + 90), "基礎パッキン " + mm(packing), 2);
+  }
+  if (sillW > 0 && sillD > 0) {
+    Item sill;
+    sill.kind = Item::Kind::Polyline;
+    sill.pen = Pen::Cut;
+    sill.closed = true;
+    sill.points = {P(-sillW / 2, top + packing), P(sillW / 2, top + packing), P(sillW / 2, top + packing + sillD),
+                   P(-sillW / 2, top + packing + sillD)};
+    view.items.push_back(sill);
+    line(Pen::Visible, P(-sillW / 2, top + packing), P(sillW / 2, top + packing + sillD));  // 構造材の断面 (×)
+    line(Pen::Visible, P(sillW / 2, top + packing), P(-sillW / 2, top + packing + sillD));
+    char text[64];
+    std::snprintf(text, sizeof text, "土台 %.0f×%.0f", sillW, sillD);
+    note(P(-sillW / 2 - 80, top + packing + sillD + 200), text, 2);
+  }
+  // The ground line and the depths from it.
+  if (gl) {
+    const double u0 = -sw / 2 - 900, u1 = inside + 150;
+    line(Pen::Ground, P(u0, *gl), P(u1, *gl));
+    for (double u = u0 + 60; u + 80 < -sw / 2 - 100; u += 160) line(Pen::Visible, P(u + 80, *gl), P(u, *gl - 80));
+    note(P(u0, *gl + 60), "GL", 0);
+    dim(P(-sw / 2, *gl), P(-sw / 2, top), gp_Vec2d(-600, 0));       // 立上りの地上部分
+    dim(P(-sw / 2, *gl), P(-sw / 2, bottom), gp_Vec2d(-600, 0));    // 根入れ
+  }
+  view.calculationNotes.push_back("基礎計画（generate_foundation）の寸法から描いた断面です。配筋・かぶり・定着はモデルに無く、別途とします。");
+  view.calculationNotes.push_back("各寸法と平成12年建設省告示第1347号の数値との照合は、基礎・地盤説明書に示します。");
+  return view;
+}
+
 }  // namespace sbr::doc

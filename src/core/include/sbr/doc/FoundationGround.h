@@ -48,4 +48,10 @@ struct FoundationGroundStudy {
 FoundationGroundStudy foundationGroundStudy(const Document& document);
 draw::Table foundationGroundTable(const FoundationGroundStudy& study);
 
+// docs/309: 基礎断面詳細図: the section of the first strip or mat foundation plan at its outer stem, drawn from
+// the plan's own figures (stem, slab or footing, edge footing, packing, the sill above) with the ground line
+// (GL) and the dimensions the 基礎・地盤説明書 compares (height above ground, thicknesses, depth under GL).
+// Drawn to be laid out at 1:20. Empty when the model has no strip or mat foundation plan.
+std::optional<draw::View> foundationDetailView(const Document& document);
+
 }  // namespace sbr::doc

@@ -5672,6 +5672,11 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
     const auto table = foundationGroundTable(study);
     planned.push_back({table.title, std::nullopt, table, {}});
   }
+  // docs/309: the foundation's section detail at 1:20, from the plan's figures.
+  if (auto detail = foundationDetailView(document)) {
+    const std::string name = detail->spec.title;
+    planned.push_back({name, std::nullopt, std::nullopt, {}, std::move(*detail), 20.0});
+  }
   detail::AreaGeometry areaGeometry;
   const auto areas = measureAreas(document, &areaGeometry);
   for (auto& page : detail::areaEvidencePages(document, areas, areaGeometry, spec.scale)) {
