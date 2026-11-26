@@ -1088,3 +1088,51 @@ TEST(Drawing, ElevationsShowTheRoadInFront) {
   EXPECT_EQ(marks(1), std::make_tuple(2, 2, 2));
   EXPECT_EQ(marks(0), std::make_tuple(0, 0, 0));  // from the south it faces the viewer
 }
+
+// docs/306: combine_views puts the storeys' plans on one sheet and the elevations and sections on
+// another; the plans' cut marks name the shared sheet.
+TEST(Drawing, DrawingSetCombinesViewsOnOneSheet) {
+  doc::Modeler m;
+  api::CommandApi api(m);
+  const auto run = [&](const nlohmann::json& c) {
+    const auto r = nlohmann::json::parse(api.execute(c.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << r.dump();
+  };
+  run({{"command", "set_levels"}, {"args", {{"levels", {{{"name", "1FL"}, {"elevation", 0}}, {{"name", "2FL"}, {"elevation", 3000}}}}}}});
+  run({{"command", "create_wall"}, {"args", {{"points", {{0, 0}, {9100, 0}, {9100, 7280}, {0, 7280}, {0, 0}}},
+                                              {"thickness", 120}, {"height", 6000}}}});
+  doc::DrawingSetSpec spec;
+  const auto apart = doc::drawingSet(m.document(), spec);
+  ASSERT_TRUE(apart) << apart.error();
+  spec.combineViews = true;
+  const auto together = doc::drawingSet(m.document(), spec);
+  ASSERT_TRUE(together) << together.error();
+  EXPECT_LT(together->sheets.size(), apart->sheets.size());
+  const auto find = [&](const std::string& part) {
+    for (std::size_t i = 0; i < together->names.size(); ++i)
+      if (together->names[i].find(part) != std::string::npos) return i;
+    return together->names.size();
+  };
+  const std::size_t plans = find("2FL"), views = find("立面図・断面図");
+  ASSERT_LT(plans, together->names.size());
+  ASSERT_LT(views, together->names.size());
+  EXPECT_NE(together->names[plans].find("1FL"), std::string::npos);  // both storeys on one sheet
+  EXPECT_EQ(together->names[views], "立面図・断面図");  // elevations with the sections
+  int captions = 0, legends = 0;
+  for (const auto& item : together->sheets[views].items) {
+    captions += item.kind == Item::Kind::Text && item.text.find("立面図") != std::string::npos && item.height == 5.0;
+    legends += item.kind == Item::Kind::Text && item.text == "凡例";
+  }
+  EXPECT_EQ(captions, 4);
+  EXPECT_LE(legends, 1);
+  // The numbers run on without gaps.
+  for (std::size_t i = 0; i < together->numbers.size(); ++i) {
+    char want[16];
+    std::snprintf(want, sizeof want, "A-%02zu", i + 1);
+    EXPECT_EQ(together->numbers[i], want);
+  }
+  // A plan's cut mark names the sheet the sections are on.
+  bool marked = false;
+  for (const auto& item : together->sheets[plans].items) marked |= item.kind == Item::Kind::Text && item.text == together->numbers[views];
+  EXPECT_TRUE(marked);
+}

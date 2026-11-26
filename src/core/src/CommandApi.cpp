@@ -5001,7 +5001,8 @@ const std::vector<CommandDef>& commands() {
        "sheet list (01), a plan per storey, the four elevations and the tables, numbered 'prefix' (default A-) "
        "01, 02, ...; each file named by its number and drawing name. 'format' dxf (default) or jww; 'scale' "
        "(default 100), 'paper' (auto), 'project', 'author', 'date'. 'tables_with_plan' true (docs/131): the tables "
-       "go beside the lowest storey's plan on its sheet instead of sheets of their own. 'sections' (default true, docs/132): "
+       "go beside the lowest storey's plan on its sheet instead of sheets of their own. 'combine_views' true (docs/306): the "
+       "storeys' plans on one sheet and the elevations and sections on another, side by side. 'sections' (default true, docs/132): "
        "sections after the plans, one per active vertical section plane (set_section) or else A-A (cut east-west, seen "
        "from the south) and B-B (cut north-south, seen from the east) through the middle; the plans mark where they are "
        "cut, with the sections' sheet numbers. Files that are there are not replaced: "
@@ -5011,7 +5012,7 @@ const std::vector<CommandDef>& commands() {
        SCHEMA({"type": "object", "properties": {"folder": {"type": "string"}, "format": {"enum": ["dxf", "jww", "layout"]},
                "scale": {"type": "number"}, "paper": {"type": "string"}, "prefix": {"type": "string"},
                "project": {"type": "string"}, "author": {"type": "string"}, "date": {"type": "string"},
-               "tables_with_plan": {"type": "boolean"}, "sections": {"type": "boolean"}},
+               "tables_with_plan": {"type": "boolean"}, "combine_views": {"type": "boolean"}, "sections": {"type": "boolean"}},
                "required": ["folder"]}),
        [](doc::Modeler& m, const json& a) {
          doc::DrawingSetSpec spec;
@@ -5022,6 +5023,7 @@ const std::vector<CommandDef>& commands() {
          spec.title.author = textOr(a, "author", {});
          spec.title.date = textOr(a, "date", {});
          spec.tablesWithPlan = a.value("tables_with_plan", false);
+         spec.combineViews = a.value("combine_views", false);
          spec.sections = a.value("sections", true);
          const std::string format = textOr(a, "format", "dxf");
          if (format != "dxf" && format != "jww" && format != "layout") throw ApiError("'format': dxf, jww or layout");
@@ -5607,10 +5609,11 @@ std::vector<CommandApi::Extension> CommandApi::appCommandSpecs() {
        "app's own under the temporary folder (emptied each time). Returns the paths, each sheet's number, name, "
        "paper and notes (e.g. does not fit), and the set's notes. 'sheet' (a number such as A-15, the 1-based "
        "index, or the drawing's name such as 断熱範囲図（1FL）) also returns that sheet's picture; with 'texts': true, "
-       "also every text on it (docs/246), to check what it says. 'scale' (default 100, docs/250): e.g. 20. With 'sheet', only that sheet is pictured and no PDF is written unless 'pdf': true. 'tables_with_plan' as in export_drawing_set. With a vicinity "
+       "also every text on it (docs/246), to check what it says. 'scale' (default 100, docs/250): e.g. 20. With 'sheet', only that sheet is pictured and no PDF is written unless 'pdf': true. 'tables_with_plan' and 'combine_views' as in export_drawing_set. With a vicinity "
        "map set, its tiles come from 国土地理院 (cache, else fetched), as the File menu does.",
        R"({"type": "object", "properties": {"sheet": {"type": ["string", "integer"]},
-           "texts": {"type": "boolean"}, "tables_with_plan": {"type": "boolean"}, "scale": {"type": "number"},
+           "texts": {"type": "boolean"}, "tables_with_plan": {"type": "boolean"}, "combine_views": {"type": "boolean"},
+           "scale": {"type": "number"},
            "pdf": {"type": "boolean"}}})",
        nullptr, Effect::Read},
       {"capture_window",

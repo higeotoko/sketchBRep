@@ -558,6 +558,9 @@ struct DrawingSetSpec {
   // B-B cut north-south and seen from the east). The plans show where they are cut, with the
   // sections' sheet numbers.
   bool sections = true;
+  // docs/306: the storeys' plans on one sheet, and the elevations and sections on another, side by side
+  // (draw::combineSheets), as submitted sets often do; off: one drawing per sheet.
+  bool combineViews = false;
   // docs/233: the vicinity map's picture, made by the app from vicinityTiles() (VicinityMap.h). With a
   // map position given and no picture (the command line, AI), the sheet says where the map goes.
   std::optional<VicinityPicture> vicinity;

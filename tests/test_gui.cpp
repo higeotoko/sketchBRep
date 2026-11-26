@@ -927,12 +927,15 @@ void GuiPhase1::permitWorkflowAppliesDaylightFactors() {
 
 // docs/296: the drawing set of a model given by SBR_REVIEW_SBR, every sheet as a PNG into SBR_REVIEW_OUT
 // (to look at the drawings without making a portable ZIP). Skipped when they are not given.
+// SBR_REVIEW_COMBINE set: with combineViews (docs/306).
 void GuiPhase1::reviewDrawingSetOfAModel() {
   const auto model = qEnvironmentVariable("SBR_REVIEW_SBR"), out = qEnvironmentVariable("SBR_REVIEW_OUT");
   if (model.isEmpty() || out.isEmpty()) QSKIP("SBR_REVIEW_SBR / SBR_REVIEW_OUT not given");
   doc::Modeler modeler;
   QVERIFY(modeler.load(model.toStdString()));
-  const auto set = doc::drawingSet(modeler.document(), {});
+  doc::DrawingSetSpec spec;
+  spec.combineViews = qEnvironmentVariableIsSet("SBR_REVIEW_COMBINE");  // docs/306
+  const auto set = doc::drawingSet(modeler.document(), spec);
   QVERIFY2(set.ok(), set ? "" : set.error().c_str());
   QVERIFY(QDir().mkpath(out));
   for (std::size_t i = 0; i < set->sheets.size(); ++i) {

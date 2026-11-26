@@ -252,6 +252,15 @@ Result<Sheet> layoutSheet(const View& view, const SheetSpec& spec);
 // run off). No tables: as layoutSheet.
 Result<Sheet> layoutSheetWithTables(const View& view, const std::vector<Table>& tables, const SheetSpec& spec);
 
+// docs/306: several drawings on one sheet, as submitted sets put the storeys' plans, or the elevations
+// and sections, side by side. `drawings`: each laid out on its own without a frame (layoutSheet with
+// frame false: its caption, levels and grids), all at spec.scale. They go in rows, left to right, on the
+// smallest paper A4..A1 that holds them ("auto"; else the one asked for, with a note when they run off),
+// in the frame with the title block and the legend of the lines used.
+// spec.north: a north mark (trueNorth, else up) at the top right of the frame.
+Result<Sheet> combineSheets(const std::vector<Sheet>& drawings, const SheetSpec& spec,
+                            const std::optional<gp_Dir2d>& trueNorth = std::nullopt);
+
 // Writers. DXF: R12 (AC1009), real size, layers per pen, Japanese text in
 // Shift_JIS ($DWGCODEPAGE ANSI_932) as Jw_cad and AutoCAD read it. JWW:
 // Jw_cad's own format (version 6.00 data), real size with the scale on the

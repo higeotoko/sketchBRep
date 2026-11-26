@@ -5737,18 +5737,46 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
     std::snprintf(text, sizeof text, "%02zu", k);
     return spec.prefix + text;
   };
+  // docs/306: with combineViews, the storeys' plans on one sheet and the elevations and sections on
+  // another (when they are next to each other in the set and have no tables beside them): which sheet
+  // each drawing is on, numbered in order.
+  const auto plannedOf = [&](std::size_t i) -> const Planned* {
+    for (const Planned& q : planned)
+      if (q.name == names[i]) return &q;
+    return nullptr;
+  };
+  const auto groupOf = [&](std::size_t i) {
+    const Planned* p = plannedOf(i);
+    if (!spec.combineViews || !p || !p->view || p->made || !p->beside.empty()) return 0;
+    if (p->view->kind == draw::ViewKind::Plan && p->view->framingPreset.empty()) return 1;
+    if (p->view->kind == draw::ViewKind::Elevation || p->view->kind == draw::ViewKind::Section) return 2;
+    return 0;
+  };
+  std::vector<std::size_t> sheetOf(names.size());
+  for (std::size_t i = 0, n = 0; i < names.size(); ++i) {
+    if (i > 0 && groupOf(i) != 0 && groupOf(i) == groupOf(i - 1)) {
+      sheetOf[i] = sheetOf[i - 1];
+    } else {
+      sheetOf[i] = n++;
+    }
+  }
+  std::vector<std::optional<draw::Sheet>> bare(names.size());
+  std::vector<std::optional<gp_Dir2d>> northOf(names.size());
   // The drawings again with their numbers in the title block and with the cut marks.
   for (std::size_t i = 0; i < sheets.size(); ++i) {
     // Lay out again with the number (the title block is drawn in the layout).
-    const Planned* p = nullptr;
-    for (const Planned& q : planned)
-      if (q.name == names[i]) p = &q;
+    const Planned* p = plannedOf(i);
     draw::SheetSpec sheetSpec;
     sheetSpec.scale = spec.scale;
     sheetSpec.paper = p && p->table ? "auto" : spec.paper;
     sheetSpec.title = spec.title;
     sheetSpec.title.drawing = names[i];
-    sheetSpec.title.number = number(i + 2);
+    sheetSpec.title.number = number(sheetOf[i] + 2);
+    if (groupOf(i) != 0) {  // laid out without its frame here, put on the shared sheet below
+      sheetSpec.frame = false;
+      sheetSpec.north = false;
+      sheetSpec.paper = "auto";
+    }
     Result<draw::Sheet> laid = Result<draw::Sheet>::failure("");
     if (p && p->made) {  // docs/233
       sheetSpec.scale = p->scale;
@@ -5762,25 +5790,28 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
       if (viewSpec.kind == draw::ViewKind::Plan) {
         for (const Cut& c : cuts)
           for (std::size_t k = 0; k < names.size(); ++k)
-            if (names[k] == c.name) viewSpec.cutMarks.push_back({c.point, c.toward, c.label, number(k + 2)});
+            if (names[k] == c.name) viewSpec.cutMarks.push_back({c.point, c.toward, c.label, number(sheetOf[k] + 2)});
         if (spec.heightEvidence) {
           const auto& section = spec.heightEvidence->section.spec;
           for (std::size_t k = 0; k < names.size(); ++k)
             if (names[k] == section.title)
-              viewSpec.cutMarks.push_back({section.frame.Location(), section.frame.Direction(), "H", number(k + 2)});
+              viewSpec.cutMarks.push_back({section.frame.Location(), section.frame.Direction(), "H", number(sheetOf[k] + 2)});
         }
       }
       const auto view = draw::makeView(document, viewSpec);
       if (view) {
         draw::View named = *view;
         named.spec.title = p->view->title;
+        if (viewSpec.kind == draw::ViewKind::Plan) northOf[i] = view->trueNorth;
         // docs/145: a section names the plan sheets it is marked on (where it is cut).
         if (viewSpec.kind == draw::ViewKind::Section) {
           std::string plans;
           for (std::size_t k = 0; k < names.size(); ++k)
             for (const Planned& q : planned)
-              if (q.name == names[k] && q.view && q.view->kind == draw::ViewKind::Plan)
-                plans += (plans.empty() ? "" : "・") + number(k + 2);
+              if (q.name == names[k] && q.view && q.view->kind == draw::ViewKind::Plan) {
+                const std::string n = number(sheetOf[k] + 2);
+                if (plans.find(n) == std::string::npos) plans += (plans.empty() ? "" : "・") + n;
+              }
           if (!plans.empty()) named.spec.title += "（切る位置：" + plans + "）";
         }
         laid = draw::layoutSheetWithTables(named, p->beside, sheetSpec);
@@ -5790,9 +5821,62 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
     } else if (p) {
       laid = draw::tableSheet(*p->table, sheetSpec);
     }
+    if (groupOf(i) != 0) {
+      if (laid) bare[i] = std::move(*laid);
+      else out.notes.push_back(names[i] + ": " + laid.error());
+      continue;
+    }
     out.sheets.push_back(laid ? *laid : sheets[i]);
-    out.numbers.push_back(number(i + 2));
+    out.numbers.push_back(number(sheetOf[i] + 2));
     out.names.push_back(names[i]);
+  }
+  // docs/306: the shared sheets, in their place in the set.
+  if (spec.combineViews) {
+    DrawingSet merged;
+    merged.notes = out.notes;
+    std::size_t single = 0;
+    std::vector<bool> singleTable;
+    for (std::size_t i = 0; i < names.size();) {
+      if (groupOf(i) == 0) {
+        merged.sheets.push_back(out.sheets[single]);
+        merged.numbers.push_back(out.numbers[single]);
+        merged.names.push_back(out.names[single]);
+        singleTable.push_back(tableOnly[i]);
+        ++single;
+        ++i;
+        continue;
+      }
+      std::size_t j = i;
+      std::vector<draw::Sheet> drawings;
+      std::string name;
+      for (; j < names.size() && sheetOf[j] == sheetOf[i]; ++j) {
+        if (bare[j]) drawings.push_back(*bare[j]);
+        name += (name.empty() ? "" : "・") + names[j];
+      }
+      // The elevations and sections under one short name (each drawing keeps its own caption).
+      if (groupOf(i) == 2) name = "立面図・断面図";
+      draw::SheetSpec sheetSpec;
+      sheetSpec.scale = spec.scale;
+      sheetSpec.paper = spec.paper;
+      sheetSpec.title = spec.title;
+      sheetSpec.title.drawing = name;
+      sheetSpec.title.number = number(sheetOf[i] + 2);
+      sheetSpec.north = groupOf(i) == 1;
+      auto laid = drawings.empty() ? Result<draw::Sheet>::failure("No drawing")
+                                   : draw::combineSheets(drawings, sheetSpec, northOf[i]);
+      if (laid) {
+        for (const std::string& n : laid->notes) merged.notes.push_back(name + ": " + n);
+        merged.sheets.push_back(std::move(*laid));
+        merged.numbers.push_back(number(sheetOf[i] + 2));
+        merged.names.push_back(name);
+        singleTable.push_back(false);
+      } else {
+        merged.notes.push_back(name + ": " + laid.error());
+      }
+      i = j;
+    }
+    out = std::move(merged);
+    tableOnly = std::move(singleTable);
   }
   // Cut marks and their sheet numbers can change which paper a plan needs.
   // Build the index from the final layouts.

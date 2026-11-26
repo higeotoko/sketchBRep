@@ -692,6 +692,109 @@ Result<Sheet> layoutSheet(const View& view, const SheetSpec& spec) {
   return layoutSheetWithTables(view, {}, spec);
 }
 
+Result<Sheet> combineSheets(const std::vector<Sheet>& drawings, const SheetSpec& spec, const std::optional<gp_Dir2d>& trueNorth) {
+  using R = Result<Sheet>;
+  const double s = spec.scale;
+  if (!(s > 0) || !std::isfinite(s)) return R::failure("The scale must be positive");
+  if (drawings.empty()) return R::failure("No drawing to put on the sheet");
+  // Each drawing's extent (paper mm).
+  std::vector<Box> boxes;
+  for (const Sheet& d : drawings) {
+    Box box;
+    for (const Item& i : d.items) extentOf(i, s, box);
+    if (box.x1 < box.x0) box = Box{0, 0, 0, 0};
+    boxes.push_back(box);
+  }
+  constexpr double gap = 15.0;  // paper mm between drawings
+  // Rows within `width` (paper mm): where each drawing goes (its left, its row) and the rows' heights.
+  struct Placement {
+    std::vector<std::pair<double, int>> at;
+    std::vector<double> rowH;
+    double w = 0;
+  };
+  const auto arrange = [&](double width) {
+    Placement p;
+    double x = 0;
+    for (const Box& b : boxes) {
+      const double w = (b.x1 - b.x0) / s, h = (b.y1 - b.y0) / s;
+      if (p.rowH.empty() || (x > 0 && x + w > width)) {
+        p.rowH.push_back(0);
+        x = 0;
+      }
+      p.at.push_back({x, static_cast<int>(p.rowH.size()) - 1});
+      p.rowH.back() = std::max(p.rowH.back(), h);
+      x += w + gap;
+      p.w = std::max(p.w, x - gap);
+    }
+    return p;
+  };
+  const auto heightOf = [&](const Placement& p) {
+    double h = 0;
+    for (double r : p.rowH) h += r;
+    return h + gap * (p.rowH.size() - 1);
+  };
+  auto area = [&](const Paper& p, double& x0, double& y0, double& x1, double& y1) {
+    x0 = kLeftMargin;
+    x1 = p.w - kMargin;
+    y0 = kMargin + kTitleH + 4;
+    y1 = p.h - kMargin;
+  };
+  Sheet sheet;
+  sheet.scale = s;
+  for (const Sheet& d : drawings)
+    for (const std::string& n : d.notes) sheet.notes.push_back(n);
+  const Paper* paper = nullptr;
+  Placement placed;
+  for (const Paper& p : kPapers) {
+    if (spec.paper != "auto" && spec.paper != p.name) continue;
+    double x0, y0, x1, y1;
+    area(p, x0, y0, x1, y1);
+    const double w = x1 - x0 - 2 * kPad, h = y1 - y0 - 2 * kPad;
+    placed = arrange(w);
+    const bool fits = placed.w <= w && heightOf(placed) <= h;
+    if (spec.paper != "auto" || fits) {
+      paper = &p;
+      if (!fits) sheet.notes.push_back(std::string("The drawings do not fit on ") + p.name + ": they run off the frame");
+      break;
+    }
+  }
+  if (!paper) {
+    if (spec.paper != "auto") return R::failure("Unknown paper '" + spec.paper + "' (A4, A3, A2, A1 or auto)");
+    paper = &kPapers[3];
+    double x0, y0, x1, y1;
+    area(*paper, x0, y0, x1, y1);
+    placed = arrange(x1 - x0 - 2 * kPad);
+    sheet.notes.push_back("The drawings do not fit on A1 at this scale: choose a smaller scale");
+  }
+  sheet.paper = paper->name;
+  sheet.paperWidth = paper->w;
+  sheet.paperHeight = paper->h;
+  sheet.title = spec.title.drawing;
+  double ax0, ay0, ax1, ay1;
+  area(*paper, ax0, ay0, ax1, ay1);
+  // Centred in the area as a whole; each drawing at the top of its row.
+  const double totalH = heightOf(placed);
+  const double left = (ax0 + ax1) / 2 - placed.w / 2, top = (ay0 + ay1) / 2 + totalH / 2;
+  std::vector<double> rowTop{top};
+  for (std::size_t r = 1; r < placed.rowH.size(); ++r) rowTop.push_back(rowTop.back() - placed.rowH[r - 1] - gap);
+  std::vector<Item> items;
+  for (std::size_t k = 0; k < drawings.size(); ++k) {
+    const double dx = (left + placed.at[k].first) * s - boxes[k].x0;
+    const double dy = rowTop[static_cast<std::size_t>(placed.at[k].second)] * s - boxes[k].y1;
+    for (Item i : drawings[k].items) {
+      translate(i, dx, dy);
+      items.push_back(std::move(i));
+    }
+  }
+  if (spec.north) appendNorthMark(items, gp_Pnt2d((ax1 - 15) * s, (ay1 - 16) * s), s, trueNorth);
+  if (spec.frame) {
+    appendLegend(items, paper, s);
+    frameAndTitle(items, paper, spec, sheet.title, s);
+  }
+  sheet.items = std::move(items);
+  return sheet;
+}
+
 Result<Sheet> layoutSheetWithTables(const View& view, const std::vector<Table>& additionalTables, const SheetSpec& spec) {
   using R = Result<Sheet>;
   if (!view.siteGroundTable && additionalTables.empty()) return layoutViewOnly(view, spec);

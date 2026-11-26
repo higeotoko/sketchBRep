@@ -2705,6 +2705,7 @@ void MainWindow::buildAiBridge() {
     if (combinedHeightDraft_ && combinedHeightDraft_->sequence == modeler_.document().sequence() && combinedHeightDraft_->evidence)
       spec.heightEvidence = &*combinedHeightDraft_->evidence;
     if (a.contains("scale")) spec.scale = a["scale"].get<double>();  // docs/250: e.g. 20 to look at corners
+    spec.combineViews = a.value("combine_views", false);  // docs/306
     const auto set = doc::drawingSet(modeler_.document(), spec);
     if (!set) throw std::runtime_error(set.error());
     QDir dir(QDir(QDir::tempPath()).filePath(QStringLiteral("sketchbrep-drawing-set")));
