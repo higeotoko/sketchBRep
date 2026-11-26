@@ -21,3 +21,16 @@ docs/286 で様式3（2026-10-29 掲載）から入れた確認申請手数料�
 - 各区分の上限で、その区分の額になる。
 - 上限を少し超えると、次の区分に移る。
 - 50,000 m² 超は 900,000 円。
+
+## 検証と配布
+
+計算テストと、申請・図面の関連GUIテストで確かめた。人による操作確認は未実施。
+
+| 項目 | 結果 |
+|---|---|
+| コード | `c6687dc`（配布は記録のコミット `b260993` から） |
+| Windows | コア852件成功・8件スキップ、関連GUIテスト成功 |
+| Linux CI | [run 45874530340](https://github.com/higeotoko/sketchBRep/actions/runs/45874530340)（`b260993`、873件成功） |
+| Windows ZIP | `SketchBRep-windows-x64-b260993-local.zip`（84698223 bytes） |
+| SHA256 | `8e97a2cd5d80c9566717d5fc722680dae086fdd9a6566b699493fc7dc27cf66e` |
+| ZIPの検証 | [標準18条件](validation/2026-11-27-portable-b260993.json)・[べた基礎4条件](validation/2026-11-27-portable-b260993-mat.json)成功 |
