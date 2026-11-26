@@ -63,3 +63,7 @@ docs/296 と docs/297 はまとめて検証した。例題（docs/295）の図�
 | Windows ZIP | `SketchBRep-windows-x64-6b9f639-local.zip`（84453227 bytes） |
 | SHA256 | `7990cb71133c43946a35cc8afabf6537578bd58f38bcecfb28d20c3c4fd7b7b0` |
 | ZIPの検証 | [標準18条件](validation/2026-11-26-portable-6b9f639.json)・[べた基礎4条件](validation/2026-11-26-portable-6b9f639-mat.json)成功 |
+
+### 追記：CI（2026-11-26）
+
+`6b9f639` の Linux CI（run 45815564058）は861件中1件失敗した。図面一式の比較テストが、ペンの名前を自前の一覧（11本分）で持っていて、新しい敷地境界のペンが一覧の外を読み、計算機ごとに違う名前になったため（未定義動作）。全部のペンに名前を付け、ペンの数とずれたらビルドで止まるようにした（`fc39fb7`、[run 45820918757](https://github.com/higeotoko/sketchBRep/actions/runs/45820918757) で861件成功）。
