@@ -219,7 +219,8 @@ std::optional<draw::View> foundationDetailView(const Document& document) {
 
   draw::View view;
   view.spec.kind = draw::ViewKind::Section;
-  view.spec.title = std::string(mat ? "べた基礎" : "布基礎") + " 断面詳細図";
+  // 構造詳細図 by name: the intake check sheet (docs/286) looks for the drawing by it.
+  view.spec.title = std::string("構造詳細図（") + (mat ? "べた基礎" : "布基礎") + "の断面）";
   const auto P = [](double u, double v) { return gp_Pnt2d(u, v); };
   const auto concrete = [&](std::vector<gp_Pnt2d> loop) {
     Item fill;

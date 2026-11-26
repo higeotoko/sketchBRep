@@ -6,6 +6,7 @@
 #include "sbr/doc/NativeFormat.h"
 #include "sbr/doc/FoundationGround.h"
 #include "sbr/doc/Schedules.h"
+#include "sbr/doc/PermitIntake.h"
 #include <set>
 #include <cstdlib>
 #include "sbr/geom/Measure.h"
@@ -280,7 +281,7 @@ TEST_F(FoundationMat, SectionDetailIsDrawnFromThePlan) {
   ASSERT_TRUE(m.setLevels({{"gl", "GL", 0.0}, {"1fl", "1FL", 540.0}}));
   const auto view = foundationDetailView(m.document());
   ASSERT_TRUE(view);
-  EXPECT_EQ(view->spec.title, "べた基礎 断面詳細図");
+  EXPECT_EQ(view->spec.title, "構造詳細図（べた基礎の断面）");
   std::set<std::string> dims;
   for (const auto& d : view->dimensions) dims.insert(d.text);
   for (const char* want : {"150", "400", "300"}) EXPECT_TRUE(dims.count(want)) << want;  // stem, rise, edge / depth
@@ -296,11 +297,15 @@ TEST_F(FoundationMat, SectionDetailIsDrawnFromThePlan) {
   ASSERT_TRUE(set) << set.error();
   bool found = false;
   for (std::size_t i = 0; i < set->names.size(); ++i)
-    if (set->names[i] == "べた基礎 断面詳細図") {
+    if (set->names[i] == "構造詳細図（べた基礎の断面）") {
       found = true;
       EXPECT_DOUBLE_EQ(set->sheets[i].scale, 20.0);
     }
   EXPECT_TRUE(found);
+  // The intake check (docs/286) finds both the detail and the statement in the set.
+  const auto intake = yokohamaIntakeReview(m.document(), &*set, "", false);
+  for (const auto& row : intake.rows)
+    if (row.kind == "構造詳細図" || row.kind == "基礎・地盤説明書") EXPECT_EQ(row.state, "図面あり") << row.kind;
   // SBR_FOUNDATION_SBR: where to save this model, to look at its drawing set (reviewDrawingSetOfAModel).
   if (const char* out = std::getenv("SBR_FOUNDATION_SBR")) {
     FoundationGround g;

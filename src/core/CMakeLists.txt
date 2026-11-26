@@ -19,6 +19,7 @@ add_library(sbr_core STATIC
   src/PermitIntake.cpp
   src/GroundLevel.cpp
   src/FoundationGround.cpp
+  src/ColumnCheck.cpp
   src/FireCompartments.cpp
   src/AreaEvidence.cpp
   src/VicinityMap.cpp

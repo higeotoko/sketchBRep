@@ -1,6 +1,7 @@
 #include "sbr/doc/Schedules.h"
 #include "sbr/doc/GroundLevel.h"
 #include "sbr/doc/FoundationGround.h"
+#include "sbr/doc/ColumnCheck.h"
 #include "sbr/doc/FireSpread.h"
 #include "sbr/doc/FireCompartments.h"
 #include "AreaEvidence.h"
@@ -5676,6 +5677,11 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
   if (auto detail = foundationDetailView(document)) {
     const std::string name = detail->spec.title;
     planned.push_back({name, std::nullopt, std::nullopt, {}, std::move(*detail), 20.0});
+  }
+  // docs/310: the columns' sizes and slenderness (構造詳細図) when the model has timber columns.
+  if (const auto columns = columnRows(document); !columns.empty()) {
+    const auto table = columnTable(columns);
+    planned.push_back({table.title, std::nullopt, table, {}});
   }
   detail::AreaGeometry areaGeometry;
   const auto areas = measureAreas(document, &areaGeometry);

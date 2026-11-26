@@ -13,6 +13,7 @@
 #include "sbr/doc/Modeler.h"
 #include "sbr/doc/NativeFormat.h"
 #include "sbr/doc/Schedules.h"
+#include "sbr/doc/ColumnCheck.h"
 #include <algorithm>
 #include "sbr/draw/Drawing.h"
 #include "sbr/geom/Dxf.h"
@@ -367,4 +368,37 @@ TEST_F(Quantities, SetPlansLeaveOutFloorFraming) {
   ASSERT_TRUE(withFraming && without);
   EXPECT_LT(without->items.size(), withFraming->items.size());
   EXPECT_FALSE(without->items.empty());  // the 1st storey's columns, cut
+}
+
+// docs/310: the frame's columns by section and distance, with slenderness against 令43条6項; the ratio of
+// 令43条1項 is left to the notice (未評価).
+TEST_F(Quantities, ColumnTableGivesSlendernessOfTheFrameColumns) {
+  frame();
+  const auto rows = doc::columnRows(m.document());
+  ASSERT_FALSE(rows.empty());
+  int counted = 0;
+  for (const auto& r : rows) {
+    EXPECT_GT(r.distanceMm, 0);
+    EXPECT_NEAR(r.slenderness, r.distanceMm * std::sqrt(12.0) / std::min(r.widthMm, r.depthMm), 1e-9);
+    counted += r.count;
+  }
+  EXPECT_GT(counted, 0);
+  const auto table = doc::columnTable(rows);
+  EXPECT_EQ(table.title, "構造詳細図（柱の小径・有効細長比）");
+  for (const auto& row : table.rows) {
+    EXPECT_TRUE(row[6] == "規定内" || row[6] == "規定外");
+    EXPECT_EQ(row[7], "未評価");
+  }
+  sbr::api::CommandApi api(m);
+  const auto read = json::parse(api.execute(R"({"command":"column_table"})"));
+  ASSERT_TRUE(read["ok"]) << read.dump();
+  EXPECT_EQ(read["result"]["rows"].size(), table.rows.size());
+  // Hand check: a 105 column 2700 between members has λ = 2700 √12 / 105 = 89.1.
+  doc::ColumnRow one;
+  one.widthMm = one.depthMm = 105;
+  one.distanceMm = 2700;
+  one.slenderness = 2700 / (105 / std::sqrt(12.0));
+  one.count = 1;
+  one.role = "柱";
+  EXPECT_EQ(doc::columnTable({one}).rows[0][5], "89.1");
 }
