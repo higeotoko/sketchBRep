@@ -102,6 +102,9 @@ struct ViewSpec {
   double sectionDepth = 0.0;
   std::vector<std::string> tags;  // empty: all leaf tags
   std::vector<std::string> excludeTags;  // docs/295: tags left out (the drawing set's plans: floor and roof framing)
+  // docs/296: elevations and sections: the ground (平均地盤面 from the 地盤面算出表, else GL) and, on the
+  // right, the storeys, the eaves and the highest point measured from it.
+  bool heightDims = false;
   std::string within;            // optional ancestor group
   bool includeHidden = false;
   bool memberLabels = false;

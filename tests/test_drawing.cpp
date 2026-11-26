@@ -616,10 +616,10 @@ TEST(Drawing, GridLevelsSheetAndTitleBlock) {
   int bubbles = 0;
   bool x2 = false, span = false, project = false, number = false, caption = false;
   for (const Item& i : sheet->items) {
-    if (i.pen == Pen::GridLabel && i.kind == Item::Kind::Arc) bubbles += std::abs(i.radius - 500) < 1e-6;
+    if (i.pen == Pen::GridLabel && i.kind == Item::Kind::Arc) bubbles += std::abs(i.radius - 300) < 1e-6;  // docs/296: 6 mm across at 1:100
     if (i.kind != Item::Kind::Text) continue;
     x2 |= i.text == "X2";
-    span |= i.pen == Pen::Dimension && i.text == "6000";
+    span |= i.pen == Pen::Dimension && i.text == "6,000";  // docs/296: grouped digits
     project |= i.text == "テスト邸";
     number |= i.text == "A-01";
     caption |= i.text == "1階平面図  S=1:100";

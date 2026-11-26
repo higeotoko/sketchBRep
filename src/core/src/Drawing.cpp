@@ -11,6 +11,7 @@
 #include <optional>
 
 #include "sbr/OpeningSymbols.h"
+#include "sbr/doc/GroundLevel.h"
 #include "sbr/doc/Schedules.h"
 #include "sbr/doc/FireSpread.h"
 #include "sbr/doc/FireCompartments.h"
@@ -1512,6 +1513,70 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
           }
           view.grids.push_back(m);
         }
+      }
+    }
+  }
+  if (spec.heightDims && (spec.kind == ViewKind::Elevation || spec.kind == ViewKind::Section)) {
+    // docs/296: heights from the ground as the submitted elevations and sections give them.
+    std::optional<double> ground;
+    std::string groundName;
+    const auto study = doc::groundLevelStudy(document);
+    if (study.state == "算出" && study.levelZ) {
+      ground = *study.levelZ;
+      groundName = "平均地盤面";
+    } else {
+      for (const doc::FloorLevel& l : document.settings().levels)
+        if (doc::isGroundLevelName(l.name)) ground = l.elevation, groundName = l.name;
+    }
+    double top = -1e300, eave = -1e300, right = -1e300;
+    for (const doc::Object& o : document.objects()) {
+      if (o.shape.IsNull() || !document.isVisible(o.id)) continue;
+      const auto kind = o.attributes.find("kind");
+      if (kind == o.attributes.end()) continue;
+      const std::string& k = kind->second;
+      if (k != "wall" && k != "roof" && k != "slab" && k != "balcony" && k != "canopy") continue;
+      const Bnd_Box b = document.worldBounds(o);
+      if (b.IsVoid()) continue;
+      double x0, y0, z0, x1, y1, z1;
+      b.Get(x0, y0, z0, x1, y1, z1);
+      top = std::max(top, z1);
+      if (k == "wall") eave = std::max(eave, z1);
+      for (double x : {x0, x1})
+        for (double y : {y0, y1}) right = std::max(right, proj.uv(gp_Pnt(x, y, 0)).X());
+    }
+    if (ground && top > *ground && right > -1e299) {
+      const double sp = spec.paperScale > 0 ? spec.paperScale : 100.0;
+      const auto grouped = [](double v) {
+        char b[32];
+        std::snprintf(b, sizeof b, "%.0f", v);
+        std::string d = b;
+        for (int i = static_cast<int>(d.size()) - 3; i > 0; i -= 3) d.insert(static_cast<std::size_t>(i), ",");
+        return d;
+      };
+      const auto at = [&](double z) { return proj.uv(gp_Pnt(spec.frame.Location().X(), spec.frame.Location().Y(), z)).Y(); };
+      // The storeys (floor levels above the ground, up to the eaves).
+      std::vector<double> chain{*ground};
+      std::vector<doc::FloorLevel> floors;
+      for (const doc::FloorLevel& l : document.settings().levels)
+        if (doc::isFloorLevelName(l.name) && l.elevation > *ground + 1.0 && (eave < -1e299 || l.elevation < eave - 1.0))
+          floors.push_back(l);
+      std::sort(floors.begin(), floors.end(), [](const auto& a, const auto& b) { return a.elevation < b.elevation; });
+      for (const auto& l : floors) chain.push_back(l.elevation);
+      if (eave > -1e299 && eave > chain.back() + 1.0) chain.push_back(eave);
+      for (std::size_t i = 0; i + 1 < chain.size(); ++i)
+        view.dimensions.push_back({gp_Pnt2d(right, at(chain[i])), gp_Pnt2d(right, at(chain[i + 1])), gp_Vec2d(10.0 * sp, 0),
+                                   grouped(chain[i + 1] - chain[i])});
+      if (eave > *ground + 1.0)
+        view.dimensions.push_back({gp_Pnt2d(right, at(*ground)), gp_Pnt2d(right, at(eave)), gp_Vec2d(18.0 * sp, 0),
+                                   "軒の高さ " + grouped(eave - *ground)});
+      view.dimensions.push_back({gp_Pnt2d(right, at(*ground)), gp_Pnt2d(right, at(top)), gp_Vec2d(26.0 * sp, 0),
+                                 "最高の高さ " + grouped(top - *ground)});
+      if (groundName == "平均地盤面") {
+        LevelMark m;
+        m.v = at(*ground);
+        m.name = "平均地盤面";
+        m.elevation = *ground;
+        view.levels.push_back(m);
       }
     }
   }

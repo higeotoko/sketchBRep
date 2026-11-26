@@ -5461,12 +5461,14 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
   for (const Cut& c : cuts) {
     draw::ViewSpec view = draw::sectionView(c.point, c.toward);
     view.title = c.name;
+    view.heightDims = true;  // docs/296
     planned.push_back({view.title, view, std::nullopt, {}});
   }
   const char* sides[4] = {"南立面図", "東立面図", "北立面図", "西立面図"};
   for (int side = 0; side < 4; ++side) {
     draw::ViewSpec view = draw::elevationView(document, side);
     view.title = sides[side];
+    view.heightDims = true;  // docs/296
     planned.push_back({view.title, view, std::nullopt, {}});
   }
   // The first planned is the lowest storey's plan.

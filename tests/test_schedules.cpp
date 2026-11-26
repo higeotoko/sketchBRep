@@ -5328,6 +5328,16 @@ TEST(PermitIntake, OnlyFloorLevelsAreStoreysAndNorthIsSetByTheApi) {
   for (const auto& name : set->names)
     if (name.size() > 9 && name.compare(name.size() - 9, 9, "平面図") == 0) plans.push_back(name);
   EXPECT_EQ(plans, (std::vector<std::string>{"1FL 平面図", "2FL 平面図"}));
+  // docs/296: the elevations give the heights from the ground (GL here): the storeys, the eaves, the top.
+  const auto south = std::find(set->names.begin(), set->names.end(), std::string("南立面図"));
+  ASSERT_NE(south, set->names.end());
+  const auto& sheet = set->sheets[static_cast<std::size_t>(south - set->names.begin())];
+  const auto hasText = [&](const std::string& s) {
+    return std::any_of(sheet.items.begin(), sheet.items.end(), [&](const auto& i) { return i.text == s; });
+  };
+  EXPECT_TRUE(hasText("軒の高さ 6,200"));
+  EXPECT_TRUE(hasText("最高の高さ 6,200"));
+  EXPECT_TRUE(hasText("2,900"));  // 600 (1FL) to 3500 (2FL)
   // True north: an angle, or two points.
   EXPECT_FALSE(call("set_site_north", {{"angle", 15.0}})["ok"].get<bool>());  // a source is required
   EXPECT_NEAR(ok("set_site_north", {{"angle", 15.0}, {"source", "架空の測量図"}})["angle"].get<double>(), 15.0, 1e-9);

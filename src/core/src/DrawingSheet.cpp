@@ -72,6 +72,13 @@ std::string mm(double v) {
   return b;
 }
 
+// docs/296: dimension values as Japanese drawings write them: 7,280.
+std::string mmGrouped(double v) {
+  std::string digits = mm(std::abs(v));
+  for (int i = static_cast<int>(digits.size()) - 3; i > 0; i -= 3) digits.insert(static_cast<std::size_t>(i), ",");
+  return (v < -0.5 ? "-" : "") + digits;
+}
+
 void appendNorthMark(std::vector<Item>& items, const gp_Pnt2d& centre, double scale,
                      const std::optional<gp_Dir2d>& trueNorth) {
   const gp_Dir2d north = trueNorth.value_or(gp_Dir2d(0, 1));
@@ -273,7 +280,9 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
   if (model.empty()) return R::failure("Nothing to lay out");
 
   // Grids: lines over the model with a margin, bubbles beyond one end.
-  const double bubble = 5.0 * s, margin = 6.0 * s;
+  // docs/296: bubbles of 6 mm across, drawn thin (JIS A 0150 10.2: a circle in thin line at the end of a
+  // reference line); they were 10 mm, larger than the drawings submitted give them.
+  const double bubble = 3.0 * s, margin = 6.0 * s;
   std::map<int, std::vector<std::pair<double, std::string>>> spans;  // family -> (coordinate, name)
   double gridLow = model.y0, gridLeft = model.x0;
   for (const GridMark& g : view.grids) {
@@ -294,7 +303,7 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
     const gp_Vec2d away(e1, e0);
     const gp_Pnt2d c(e0.XY() + away.Normalized().XY() * bubble);
     items.push_back(circle(Pen::GridLabel, c, bubble));
-    items.push_back(text(Pen::GridLabel, c, g.name, 4.0, 1, 1));
+    items.push_back(text(Pen::GridLabel, c, g.name, 2.5, 1, 1));
     const double coord = byLeft ? g.point.Y() : g.point.X();
     spans[byLeft ? 1 : 0].push_back({coord, g.name});
     if (byLeft) gridLeft = std::min(gridLeft, e0.X());
@@ -302,17 +311,20 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
   }
   for (auto& [family, axes] : spans) {
     std::sort(axes.begin(), axes.end());
+    // The spans between the drawing and the bubbles; the whole length on the other side, as the submitted
+    // plans give both (docs/296). Neither lengthens the grid lines (the paper size stays).
+    const double near = family == 0 ? (model.y0 + gridLow) / 2 : (model.x0 + gridLeft) / 2;
+    const double far = family == 0 ? model.y1 + 3.5 * s : model.x1 + 3.5 * s;
+    const auto put = [&](double a, double b, double at) {
+      if (family == 0) dimension(items, gp_Pnt2d(a, at), gp_Pnt2d(b, at), gp_Vec2d(0, 0), mmGrouped(b - a), s);
+      else dimension(items, gp_Pnt2d(at, a), gp_Pnt2d(at, b), gp_Vec2d(0, 0), mmGrouped(b - a), s);
+    };
     for (std::size_t k = 0; k + 1 < axes.size(); ++k) {
       const double a = axes[k].first, b = axes[k + 1].first;
       if (b - a < 1e-6) continue;
-      if (family == 0) {
-        const double v = (model.y0 + gridLow) / 2;
-        dimension(items, gp_Pnt2d(a, v), gp_Pnt2d(b, v), gp_Vec2d(0, 0), mm(b - a), s);
-      } else {
-        const double u = (model.x0 + gridLeft) / 2;
-        dimension(items, gp_Pnt2d(u, a), gp_Pnt2d(u, b), gp_Vec2d(0, 0), mm(b - a), s);
-      }
+      put(a, b, near);
     }
+    if (axes.size() >= 3 && axes.back().first - axes.front().first > 1e-6) put(axes.front().first, axes.back().first, far);
   }
   placeRoomTags(items, view.roomTags, s);
   // Section cuts (docs/132): a line across the drawing, at each end an arrow the way the section

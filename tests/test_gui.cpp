@@ -275,6 +275,7 @@ class GuiPhase1 : public QObject {
   void vicinityMapFetchedOnline();
   void insulationPlanIsDrawnOnItsSheet();
   void groundLevelSheetIsDrawn();
+  void reviewDrawingSetOfAModel();
   void proposalShowsRotationAndHide();
   void benchViewportSync();
   void benchEnterManyCopies();
@@ -922,6 +923,28 @@ void GuiPhase1::permitWorkflowAppliesDaylightFactors() {
   QCOMPARE(rows.size(), std::size_t(1));
   QVERIFY(std::abs(rows[0].daylightFactor - (941.0 / 3550.0 * 6 - 1.4)) < 1e-9);
   QVERIFY(rows[0].daylightBasis.find("令 20 条") != std::string::npos);
+}
+
+// docs/296: the drawing set of a model given by SBR_REVIEW_SBR, every sheet as a PNG into SBR_REVIEW_OUT
+// (to look at the drawings without making a portable ZIP). Skipped when they are not given.
+void GuiPhase1::reviewDrawingSetOfAModel() {
+  const auto model = qEnvironmentVariable("SBR_REVIEW_SBR"), out = qEnvironmentVariable("SBR_REVIEW_OUT");
+  if (model.isEmpty() || out.isEmpty()) QSKIP("SBR_REVIEW_SBR / SBR_REVIEW_OUT not given");
+  doc::Modeler modeler;
+  QVERIFY(modeler.load(model.toStdString()));
+  const auto set = doc::drawingSet(modeler.document(), {});
+  QVERIFY2(set.ok(), set ? "" : set.error().c_str());
+  QVERIFY(QDir().mkpath(out));
+  for (std::size_t i = 0; i < set->sheets.size(); ++i) {
+    QImage image(2400, 1697, QImage::Format_RGB32);
+    image.fill(Qt::white);
+    {
+      QPainter painter(&image);
+      painter.setRenderHint(QPainter::Antialiasing);
+      app::renderSheet(painter, set->sheets[i], QRectF(0, 0, image.width(), image.height()));
+    }
+    QVERIFY(image.save(QDir(out).filePath(QStringLiteral("%1.png").arg(i + 1, 2, 10, QLatin1Char('0')))));
+  }
 }
 
 // docs/288: the ground level sheet (地盤面算出表) after the site plan. SBR_GROUND_PNG: where to save it.
