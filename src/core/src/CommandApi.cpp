@@ -3601,6 +3601,9 @@ const std::vector<CommandDef>& commands() {
            out["range_m"] = study.rangeMm() / 1000.0;
            out["perimeter_m"] = study.report->lengthMm / 1000.0;
          }
+         if (study.levelZ) out["level_z_mm"] = *study.levelZ;
+         if (study.glZ) out["gl_z_mm"] = *study.glZ;
+         if (study.levelZ && study.glZ) out["gl_minus_level_mm"] = *study.glZ - *study.levelZ;
          return out;
        }},
       {"permit_intake_review",
@@ -4320,17 +4323,21 @@ const std::vector<CommandDef>& commands() {
        "Samples are [world X, world Y, height from datum] in mm, in closed perimeter order without repeating "
        "the first point. Pass building (object id) to record its placement. Review the perimeter and measurements before "
        "passing confirm_building_placement:true when the saved association or placement changes. An omitted building keeps the "
-       "existing association. The average is for reference. Pass clear:true to remove the assignment.",
+       "existing association. Pass clear:true to remove the assignment. 'datum_z' (docs/293): the datum's height in "
+       "the model (Z, mm), so that ground_level_table gives the ground level's model height and its difference from "
+       "the level named GL; 'legal_status' is ground_level_table's state.",
        SCHEMA({"type": "object", "properties": {"outline": {"type": "string"}, "datum": {"type": "string"},
                "source": {"type": "string"}, "samples": {"type": "array", "items": {"type": "array",
                "minItems": 3, "maxItems": 3, "items": {"type": "number"}}}, "building": {"type": "string"},
-               "confirm_building_placement": {"type": "boolean"}, "clear": {"type": "boolean"}}}),
+               "confirm_building_placement": {"type": "boolean"}, "clear": {"type": "boolean"},
+               "datum_z": {"type": ["number", "null"]}}}),
        [](doc::Modeler& m, const json& a) {
          if (a.value("clear", false)) {
            m.clearSiteGround();
            return json::object();
          }
          doc::SiteGround ground{text(a, "outline"), text(a, "datum"), text(a, "source"), {}};
+         if (a.contains("datum_z") && !a.at("datum_z").is_null()) ground.datumZ = number(a, "datum_z");  // docs/293
          const auto& samples = a.at("samples");
          if (!samples.is_array()) throw std::runtime_error("samples must be an array");
          for (const auto& row : samples) {
@@ -4340,8 +4347,9 @@ const std::vector<CommandDef>& commands() {
          const auto report = must(m.document().siteGroundReport(ground));
          must(m.setSiteGround(std::move(ground), textOr(a, "building", {}),
                               a.value("confirm_building_placement", false)));
+         const auto study = doc::groundLevelStudy(m.document());
          return json{{"perimeter_mm", report.lengthMm}, {"reference_average_mm", report.averageMm()},
-                     {"legal_status", "未評価"}};
+                     {"legal_status", study.state}};
        }},
       {"get_site_ground_status",
        "Read the current contact perimeter status: unassigned, unlinked, needs_review, or ready. "

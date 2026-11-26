@@ -25,6 +25,9 @@ struct GroundLevelStudy {
   std::string datum, source;
   double lowMm = 0.0, highMm = 0.0;  // lowest and highest point, from the datum
   double levelMm = 0.0;              // the average (the 地盤面 when state is 算出; a reference otherwise)
+  // docs/293: in the model's heights, when the datum's Z is given; and the level named GL, when there is one.
+  std::optional<double> levelZ;
+  std::optional<double> glZ;
   double rangeMm() const { return highMm - lowMm; }
 };
 

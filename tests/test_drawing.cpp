@@ -19,6 +19,7 @@
 #include "sbr/doc/Modeler.h"
 #include "sbr/doc/Schedules.h"
 #include "sbr/doc/GroundLevel.h"
+#include "sbr/doc/NativeFormat.h"
 #include "sbr/draw/Drawing.h"
 #include "sbr/geom/Dxf.h"
 #include "sbr/geom/Jww.h"
@@ -882,6 +883,25 @@ TEST(Drawing, GroundLevelTableFollowsTheOrder) {
   EXPECT_EQ(r["result"]["state"], "算出");
   EXPECT_NEAR(r["result"]["level_m"].get<double>(), 0.075, 1e-9);
   EXPECT_NE(r["result"]["csv"].get<std::string>().find("地盤面"), std::string::npos);
+  // docs/293: the datum's model height gives the ground level a Z to hold against the level GL; kept on save.
+  ASSERT_TRUE(m.setLevels({{"", "GL", 0}, {"", "1FL", 500}}));
+  input.datumZ = -500.0;
+  ASSERT_TRUE(m.setSiteGround(input));
+  study = doc::groundLevelStudy(m.document());
+  ASSERT_TRUE(study.levelZ && study.glZ);
+  EXPECT_NEAR(*study.levelZ, -425.0, 1e-6);
+  EXPECT_NEAR(*study.glZ, 0.0, 1e-9);
+  table = doc::groundLevelTable(study);
+  EXPECT_TRUE(std::any_of(table.notes.begin(), table.notes.end(),
+      [](const std::string& n) { return n.find("Z -425") != std::string::npos && n.find("+425") != std::string::npos; }));
+  const auto withZ = nlohmann::json::parse(api.execute(R"({"command":"ground_level_table","args":{}})"));
+  EXPECT_NEAR(withZ["result"]["gl_minus_level_mm"].get<double>(), 425.0, 1e-6);
+  {
+    doc::Document restored;
+    ASSERT_TRUE(doc::deserializeDocument(doc::serializeDocument(m.document()), restored));
+    ASSERT_TRUE(restored.settings().siteBoundary && restored.settings().siteBoundary->ground);
+    EXPECT_EQ(restored.settings().siteBoundary->ground->datumZ, std::optional<double>(-500.0));
+  }
   // More than 3 m between the lowest and highest point: the division is the designer's.
   input.samples[1][2] = 3200;
   ASSERT_TRUE(m.setSiteGround(input));

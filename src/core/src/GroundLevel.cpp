@@ -47,6 +47,9 @@ GroundLevelStudy groundLevelStudy(const Document& document) {
   out.highMm = *high;
   out.levelMm = report->averageMm();
   out.state = out.rangeMm() > 3000.0 ? "区分が必要" : "算出";
+  if (ground.datumZ) out.levelZ = *ground.datumZ + out.levelMm;
+  for (const FloorLevel& l : document.settings().levels)
+    if (l.name == "GL") out.glZ = l.elevation;
   if (out.state == "区分が必要")
     out.problem = "接地する位置の高低差が 3 m を超えます。3 m 以内ごとの区分（建物の部分の分け方）は設計者が決め、"
                   "区分ごとの地盤面はここでは算出していません";
@@ -86,6 +89,20 @@ draw::Table groundLevelTable(const GroundLevelStudy& study) {
   }
   t.notes.push_back("高低差 ＝ 最高 " + signedMetres(study.highMm) + " − 最低 " + signedMetres(study.lowMm) + " ＝ " +
                     metres3(study.rangeMm()) + " m" + (study.rangeMm() > 3000.0 ? "（3 m を超える）" : "（3 m 以下）"));
+  if (study.levelZ) {
+    char z[160];
+    std::snprintf(z, sizeof z, "モデルの高さ：地盤面 Z %.0f mm（基準点 Z %.0f ＋ %.0f）", *study.levelZ, *study.levelZ - study.levelMm,
+                  study.levelMm);
+    std::string line = z;
+    if (study.glZ) {
+      char gl[96];
+      std::snprintf(gl, sizeof gl, "。レベル GL は Z %.0f mm（差 %+.0f mm）", *study.glZ, *study.glZ - *study.levelZ);
+      line += gl;
+    }
+    t.notes.push_back(line);
+  } else {
+    t.notes.push_back("基準点のモデルの高さ（Z）が未入力のため、GL・高さの検討との照合はしていません");
+  }
   t.notes.push_back("各辺は両端の測点の間を直線とみなし、平均高は両端の平均。合計と地盤面は表示を丸める前の値で計算");
   t.notes.push_back("基準点 " + study.datum + "　確認資料 " + study.source);
   t.notes.push_back(std::string("根拠：") + kGroundLevelLaw + "。建築物が周囲の地面と接する位置の平均の高さにおける水平面");

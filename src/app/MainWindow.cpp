@@ -5,6 +5,7 @@
 #include "FrameCheckPanel.h"
 #include "StructureDiagnosticsPanel.h"
 #include "MainWindow.h"
+#include "sbr/doc/GroundLevel.h"
 #include "sbr/doc/IfcExport.h"
 #include "sbr/WallTypes.h"
 #include "sbr/OpeningSymbols.h"
@@ -7673,6 +7674,11 @@ void MainWindow::showSiteGroundDialog() {
   auto* source = new QLineEdit(QString::fromStdString(input.source));
   source->setObjectName(QStringLiteral("siteGroundSource"));
   form->addRow(tr("高さの基準点"), datum);
+  // docs/293: the datum's height in the model (optional): the ground level then gets a model height.
+  auto* datumZ = new QLineEdit(input.datumZ ? QString::number(*input.datumZ, 'f', 0) : QString());
+  datumZ->setObjectName(QStringLiteral("siteGroundDatumZ"));
+  datumZ->setPlaceholderText(tr("未入力でもよい"));
+  form->addRow(tr("基準点のモデル高さ Z（mm）"), datumZ);
   form->addRow(tr("確認資料"), source);
 
   const doc::ObjectId linked = previous && previous->placement ? previous->placement->building : doc::ObjectId{};
@@ -7831,6 +7837,16 @@ void MainWindow::showSiteGroundDialog() {
   connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
     input.datum = datum->text().trimmed().toStdString();
     input.source = source->text().trimmed().toStdString();
+    input.datumZ.reset();
+    if (const auto zText = datumZ->text().trimmed(); !zText.isEmpty()) {
+      bool zOk = false;
+      const double z = zText.toDouble(&zOk);
+      if (!zOk || !std::isfinite(z)) {
+        message->setText(tr("基準点のモデル高さは数値（mm）で入力してください。"));
+        return;
+      }
+      input.datumZ = z;
+    }
     input.samples.clear();
     for (int i = 0; i < table->rowCount(); ++i) {
       bool ok = false;
@@ -8184,6 +8200,11 @@ void MainWindow::showRoadHeightPlaneDialog() {
     groundZ->setObjectName(QStringLiteral("roadHeightSiteGroundZ"));
     datumForm->addRow(tr("道路の路面中心（モデルZ・mm）"), roadZ);
     datumForm->addRow(tr("確認した敷地地盤面（モデルZ・mm）"), groundZ);
+    // docs/293: the ground level worked out by the 地盤面算出表 as the first value, when it has a model height.
+    if (const auto study = doc::groundLevelStudy(modeler_.document()); study.state == "算出" && study.levelZ) {
+      groundZ->setText(QString::number(*study.levelZ, 'f', 0));
+      groundZ->setToolTip(tr("地盤面算出表（令2条2項）の値。確認して必要なら書き換えてください。"));
+    }
     auto* datumResult = new QLabel;
     datumResult->setObjectName(QStringLiteral("roadHeightDatumResult"));
     datumResult->setWordWrap(true);
@@ -8876,6 +8897,11 @@ void MainWindow::showBoundaryHeightDialog(BoundaryHeightStudy study) {
     slope->hide();
     for (const auto& level : document.settings().levels)
       if (level.name == "GL") ground->setText(QString::number(level.elevation, 'g', 15));
+    // docs/293: the ground level of the 地盤面算出表 first, when it has a model height.
+    if (const auto study = doc::groundLevelStudy(document); study.state == "算出" && study.levelZ) {
+      ground->setText(QString::number(*study.levelZ, 'f', 0));
+      ground->setToolTip(tr("地盤面算出表（令2条2項）の値。確認して必要なら書き換えてください。"));
+    }
   }
   auto* roadConfirmed = new QCheckBox(tr("登録道路の幅員と、単独で両側が平行な道路であることを確認した"), &dialog);
   roadConfirmed->setObjectName(QStringLiteral("heightDistrictRoadConfirmed"));
@@ -9107,6 +9133,9 @@ void MainWindow::showCombinedHeightDialog() {
   for (const auto& point : geometry->vertices) context.vertices.push_back({point.X(), point.Y(), point.Z()});
   for (const auto& level : document.settings().levels)
     if (level.name == "GL") context.groundZ = level.elevation;
+  // docs/293: the ground level of the 地盤面算出表 first, when it has a model height.
+  if (const auto study = doc::groundLevelStudy(document); study.state == "算出" && study.levelZ)
+    context.groundZ = *study.levelZ;
   const auto* draft = combinedHeightDraft_ && combinedHeightDraft_->context == context
       ? combinedHeightDraft_.get() : nullptr;
 

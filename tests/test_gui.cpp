@@ -618,6 +618,10 @@ void GuiPhase1::sitePlanFromASelectedBoundary() {
     if (building->currentData().toString() != QString::fromStdString(house)) return dialog->reject();
     datum->setText(QStringLiteral("BM"));
     source->setText(QStringLiteral("架空の高さ測量"));
+    // docs/293: the datum's model height.
+    auto* datumZ = dialog->findChild<QLineEdit*>(QStringLiteral("siteGroundDatumZ"));
+    if (!datumZ) return dialog->reject();
+    datumZ->setText(QStringLiteral("-300"));
     buttons->button(QDialogButtonBox::Ok)->click();
     if (!dialog->isVisible()) return;
     const QStringList heights{QStringLiteral("-120"), QStringLiteral("0"), QStringLiteral("160"),
@@ -657,6 +661,7 @@ void GuiPhase1::sitePlanFromASelectedBoundary() {
   QCOMPARE(savedGround->samples.at(0)[2], -120.0);
   QCOMPARE(savedGround->samples.at(1)[2], 0.0);
   QCOMPARE(savedGround->samples.at(2)[2], 165.0);
+  QCOMPARE(savedGround->datumZ, std::optional<double>(-300.0));
 
   auto* preview = f.window.findChild<QAction*>(QStringLiteral("showSitePlanAction"));
   QVERIFY(preview);

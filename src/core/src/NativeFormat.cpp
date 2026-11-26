@@ -1181,6 +1181,7 @@ std::string serializeDocument(const Document& document) {
     if (const auto& ground = s.siteBoundary->ground) {
       root["siteBoundary"]["ground"] = {{"outline", ground->outline}, {"datum", ground->datum},
                                         {"source", ground->source}, {"samples", ground->samples}};
+      if (ground->datumZ) root["siteBoundary"]["ground"]["datumZ"] = *ground->datumZ;  // docs/293
       if (const auto& placement = ground->placement)
         root["siteBoundary"]["ground"]["placement"] = {
             {"building", placement->building}, {"worldTransform", placement->worldTransform}};
@@ -1280,6 +1281,11 @@ Status deserializeDocument(const std::string& text, Document& document,
         const auto& g = j.at("ground");
         SiteGround ground{g.at("outline").get<ObjectId>(), g.at("datum").get<std::string>(),
                           g.at("source").get<std::string>(), {}};
+        if (g.contains("datumZ")) {  // docs/293
+          const double z = g.at("datumZ").get<double>();
+          if (!std::isfinite(z)) throw std::runtime_error("Invalid site ground datum height");
+          ground.datumZ = z;
+        }
         for (const auto& row : g.at("samples")) {
           if (!row.is_array() || row.size() != 3) throw std::runtime_error("Invalid site ground sample");
           const auto sample = row.get<std::array<double, 3>>();

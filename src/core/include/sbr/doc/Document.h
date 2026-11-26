@@ -110,9 +110,12 @@ struct SiteGround {
   // Perimeter order, no repeated closing point. Each row is world X, world Y, and height from datum (mm).
   std::vector<std::array<double, 3>> samples;
   std::optional<SiteGroundPlacement> placement = std::nullopt;
+  // docs/293: the datum's height in the model (Z, mm), when the person gives it: the ground level then has a
+  // model height to compare with the level named GL and the height studies.
+  std::optional<double> datumZ = std::nullopt;
   bool operator==(const SiteGround& other) const {
     return outline == other.outline && datum == other.datum && source == other.source &&
-           samples == other.samples && placement == other.placement;
+           samples == other.samples && placement == other.placement && datumZ == other.datumZ;
   }
 };
 
