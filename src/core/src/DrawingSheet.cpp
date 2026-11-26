@@ -266,6 +266,38 @@ void frameAndTitle(std::vector<Item>& items, const Paper* paper, const SheetSpec
     }
   }
 
+// docs/303: the legend (凡例) of the lines whose meaning is not written beside them, from the pens the
+// sheet uses: a short sample in the pen itself (so it follows the pen table) and its name, in the
+// strip left of the title block (it takes no room from the drawing).
+void appendLegend(std::vector<Item>& items, const Paper* paper, double s) {
+  auto P = [&](double x, double y) { return gp_Pnt2d(x * s, y * s); };
+  static constexpr std::pair<Pen, const char*> kLegend[] = {
+      {Pen::Hidden, "隠れ線"},          {Pen::Grid, "通り芯・中心線"},   {Pen::Boundary, "敷地境界線"},
+      {Pen::Ground, "地盤線（GL）"},    {Pen::HeightLimit, "高さ制限"}, {Pen::HeightReview, "高さ制限（未確認）"},
+      {Pen::FireLimit3, "延焼のおそれのある部分（1階 3m）"}, {Pen::FireLimit5, "延焼のおそれのある部分（2階以上 5m）"},
+      {Pen::FireCompartment, "防火区画"}};
+  bool used[kPenCount] = {};
+  for (const Item& i : items)
+    if (i.kind == Item::Kind::Line || i.kind == Item::Kind::Polyline || i.kind == Item::Kind::Arc) used[static_cast<int>(i.pen)] = true;
+  std::vector<std::pair<Pen, const char*>> rows;
+  for (const auto& row : kLegend)
+    if (used[static_cast<int>(row.first)]) rows.push_back(row);
+  if (!rows.empty()) {
+    constexpr double rowH = 5.0, sample = 14.0, colW = 75.0;
+    const int perColumn = static_cast<int>((kTitleH - rowH) / rowH);
+    const double x0 = kLeftMargin + 4, top = kMargin + kTitleH - 2;
+    const double room = paper->w - kMargin - kTitleW - 4 - x0;
+    items.push_back(text(Pen::Text, P(x0, top - rowH / 2), "凡例", 3.0, 0, 1));
+    for (std::size_t k = 0; k < rows.size(); ++k) {
+      const int col = static_cast<int>(k) / perColumn, r = static_cast<int>(k) % perColumn;
+      const double x = x0 + col * colW, y = top - (r + 1.5) * rowH;
+      if (x + sample + 4 > x0 + room) break;  // no more room beside the title block
+      items.push_back(line(rows[k].first, P(x, y), P(x + sample, y)));
+      items.push_back(text(Pen::Text, P(x + sample + 2, y), rows[k].second, 2.5, 0, 1));
+    }
+  }
+}
+
 }  // namespace
 
 static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
@@ -537,6 +569,7 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
   if (!spec.compactDiagram && spec.north && (view.spec.kind == ViewKind::Plan || view.spec.kind == ViewKind::SitePlan)) {
     appendNorthMark(items, P(ax1 - 15, ay1 - 16), s, view.trueNorth);
   }
+  if (frame && !spec.compactDiagram && view.spec.framingPreset.empty()) appendLegend(items, paper, s);
   if (frame) frameAndTitle(items, paper, spec, title, s);
   if (!view.spec.framingPreset.empty()) {
     items.push_back(
@@ -741,6 +774,7 @@ Result<Sheet> layoutSheetWithTables(const View& view, const std::vector<Table>& 
     drawTable(tables[k], sizes[k], tx, ty, s, items);
     ty -= sizes[k].h + gap;
   }
+  if (spec.frame && view.spec.framingPreset.empty()) appendLegend(items, paper, s);
   if (spec.frame) frameAndTitle(items, paper, spec, sheetName, s);
   sheet.items = std::move(items);
   return sheet;

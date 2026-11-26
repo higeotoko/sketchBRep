@@ -993,3 +993,34 @@ TEST(Drawing, ElevationsDrawTheGroundLine) {
   EXPECT_STREQ(penLayerName(Pen::Ground), "GROUND");
   EXPECT_DOUBLE_EQ(penWidth(Pen::Ground), penWidth(Pen::Cut));
 }
+
+// docs/303: the legend beside the title block names the lines the sheet uses (and only those).
+TEST(Drawing, SheetsCarryALegendOfTheirLines) {
+  doc::Modeler m;
+  api::CommandApi api(m);
+  const auto run = [&](const nlohmann::json& c) {
+    const auto r = nlohmann::json::parse(api.execute(c.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << r.dump();
+  };
+  run({{"command", "create_wall"}, {"args", {{"points", {{0, 0}, {9100, 0}, {9100, 7280}, {0, 7280}, {0, 0}}},
+                                              {"thickness", 120}, {"height", 3000}}}});
+  run({{"command", "set_levels"}, {"args", {{"levels", {{{"name", "GL"}, {"elevation", -500}}, {{"name", "1FL"}, {"elevation", 0}}}}}}});
+  ViewSpec s = elevationView(m.document(), 0);
+  s.heightDims = true;
+  const auto view = makeView(m.document(), s);
+  ASSERT_TRUE(view) << view.error();
+  SheetSpec sheetSpec;
+  sheetSpec.scale = 100;
+  const auto sheet = layoutSheet(*view, sheetSpec);
+  ASSERT_TRUE(sheet) << sheet.error();
+  int legend = 0, ground = 0, boundary = 0;
+  for (const auto& item : sheet->items) {
+    if (item.kind != Item::Kind::Text) continue;
+    legend += item.text == "凡例";
+    ground += item.text == "地盤線（GL）";
+    boundary += item.text == "敷地境界線";
+  }
+  EXPECT_EQ(legend, 1);
+  EXPECT_EQ(ground, 1);
+  EXPECT_EQ(boundary, 0);  // no boundary on this sheet: not in its legend
+}

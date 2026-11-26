@@ -242,13 +242,14 @@
   "counts": {
    "arc/text": 1,
    "fill/text": 1,
+   "line/boundary": 1,
    "line/text": 1,
    "line/title_block": 6,
    "line/visible": 27,
    "polyline/boundary": 1,
    "polyline/frame": 1,
    "polyline/title_block": 1,
-   "text/text": 8,
+   "text/text": 10,
    "text/title_block": 10
   },
   "extent": [
@@ -269,10 +270,12 @@
    "一点鎖線：敷地境界　実線：建物の上面投影（参考）",
    "仮",
    "作成者",
+   "凡例",
    "図番",
    "図面名",
    "工事名",
    "接地外周・高さは未入力",
+   "敷地境界線",
    "敷地面積（指定輪郭） 192.000 m²",
    "日付",
    "法令上の道路・接道、離隔・後退は未評価（地盤面は地盤面算出表）",
@@ -290,13 +293,13 @@
    "fill/fill": 8,
    "fill/text": 5,
    "line/cut": 36,
-   "line/grid": 5,
+   "line/grid": 6,
    "line/text": 1,
    "line/title_block": 6,
    "line/visible": 38,
    "polyline/frame": 1,
    "polyline/title_block": 1,
-   "text/text": 19,
+   "text/text": 21,
    "text/title_block": 10
   },
   "extent": [
@@ -332,6 +335,7 @@
    "N",
    "仮",
    "作成者",
+   "凡例",
    "図番",
    "図面名",
    "居間",
@@ -339,7 +343,8 @@
    "日付",
    "洋室",
    "確認用の家",
-   "縮尺"
+   "縮尺",
+   "通り芯・中心線"
   ]
  },
  {
@@ -893,14 +898,14 @@
    "arc/visible": 1,
    "fill/text": 5,
    "line/cut": 39,
-   "line/grid": 6,
+   "line/grid": 7,
    "line/text": 1,
    "line/title_block": 6,
    "line/visible": 76,
    "polyline/frame": 1,
    "polyline/title_block": 1,
    "polyline/visible": 7,
-   "text/text": 103,
+   "text/text": 105,
    "text/title_block": 10
   },
   "extent": [
@@ -970,6 +975,7 @@
    "入れた機器と資料の一覧です。基準値との照合・一次エネルギー消費量の計算はしていません。",
    "冷房（全体）：ダクト式セントラル空調機（ヒートポンプ熱源）",
    "冷房（居室のみ）：ルームエアコン（冷房能力÷消費電力 ≧ −0.504×冷房能力(kW)＋5.88）",
+   "凡例",
    "厚さ(mm)",
    "図番",
    "図面名",
@@ -1023,6 +1029,7 @@
    "縮尺",
    "資料",
    "資料",
+   "通り芯・中心線",
    "部位",
    "部位",
    "部位",
