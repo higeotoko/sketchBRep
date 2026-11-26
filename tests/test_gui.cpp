@@ -1646,6 +1646,7 @@ void GuiPhase1::permitSubmissionReviewFindsModelAndFileCandidates() {
   Fixture f;
   QVERIFY(f.setUp());
   auto& modeler = f.window.modeler();
+  QVERIFY(modeler.setProjectOutline({{"work_kind", "new"}}));
   QVERIFY(modeler.setLevels({{"", "1FL", 0}}));
   api::CommandApi api(modeler);
   const auto wall = nlohmann::json::parse(api.execute(R"({"command":"create_wall","args":{"points":[
@@ -1669,7 +1670,8 @@ void GuiPhase1::permitSubmissionReviewFindsModelAndFileCandidates() {
     auto* table = dialog->findChild<QTableWidget*>(QStringLiteral("permitSubmissionTable"));
     auto* scan = dialog->findChild<QPushButton*>(QStringLiteral("permitSubmissionFolder"));
     auto* model = dialog->findChild<QPushButton*>(QStringLiteral("permitSubmissionModel"));
-    if (!table || !scan || !model) return dialog->reject();
+    auto* feeScope = dialog->findChild<QCheckBox*>(QStringLiteral("permitSubmissionFeeScope"));
+    if (!table || !scan || !model || !feeScope) return dialog->reject();
     QTimer::singleShot(0, [&] {
       auto* picker = qobject_cast<QFileDialog*>(QApplication::activeModalWidget());
       if (!picker) return;
@@ -1683,7 +1685,10 @@ void GuiPhase1::permitSubmissionReviewFindsModelAndFileCandidates() {
         if (table->item(i, 0)->text() == label) return table->item(i, column)->text();
       return QString{};
     };
-    checked = status(QStringLiteral("確認申請書"), 2) == QStringLiteral("1件の候補") &&
+    const bool unconfirmed = status(QStringLiteral("確認申請手数料算定表"), 1) == QStringLiteral("単一棟の申請範囲を確認");
+    feeScope->setChecked(true);
+    const bool feeCandidate = status(QStringLiteral("確認申請手数料算定表"), 1) == QStringLiteral("申請部分 24.00 ㎡（候補）");
+    checked = unconfirmed && feeCandidate && status(QStringLiteral("確認申請書"), 2) == QStringLiteral("1件の候補") &&
               status(QStringLiteral("建築計画概要書"), 2) == QStringLiteral("候補ファイルなし") &&
               status(QStringLiteral("各階平面図"), 1) == QStringLiteral("1枚の候補") &&
               status(QStringLiteral("配置図"), 1) == QStringLiteral("該当図面なし");

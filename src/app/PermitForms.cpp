@@ -1,4 +1,5 @@
 #include "PermitForms.h"
+#include "PermitApplicationArea.h"
 
 #include "DrawingExport.h"
 #include "VicinityMapFetcher.h"
@@ -243,10 +244,6 @@ struct Transfer {
 };
 
 QString metres(double mm) { return QString::number(mm / 1000.0, 'f', 3).append(QStringLiteral(" m")); }
-QString squareMetres(double mm2) {
-  return QString::number(mm2 / 1'000'000.0, 'f', 2).append(QStringLiteral(" ㎡"));
-}
-
 Transfer collect(const doc::Document& document, bool applyArea) {
   Transfer result;
   const auto outline = doc::projectOutline(document);
@@ -324,7 +321,7 @@ Transfer collect(const doc::Document& document, bool applyArea) {
   if (boundary) {
     if (const auto geometry = document.siteBoundaryGeometry(boundary->outline)) {
       measuredSiteMm2 = geometry->areaMm2;
-      siteArea = squareMetres(measuredSiteMm2);
+      siteArea = permitSquareMetres(measuredSiteMm2);
       if (boundary->road && document.siteRoadEdge(*geometry)) {
         if (boundary->road->widthMm > 0) width = metres(boundary->road->widthMm);
         if (boundary->road->frontageMm > 0) frontage = metres(boundary->road->frontageMm);
@@ -341,10 +338,7 @@ Transfer collect(const doc::Document& document, bool applyArea) {
   field("use_code", tr("主要用途の区分"), get("use_code"), outlineSource);
   result.newBuilding = choice("work_kind", "work_", tr("工事種別")) == "new";
   const auto area = doc::areaTable(document);
-  const bool knownFloor = area.legalTotal > 0 &&
-      std::all_of(area.rows.begin(), area.rows.end(), [](const doc::AreaRow& floor) {
-        return floor.legalKnown && floor.unreadableWalls == 0;
-      });
+  const bool knownFloor = hasApplicationFloorArea(area);
   const auto candidate = [&](const QString& key, const QString& label, const QString& value, const QString& source) {
     const bool use = applyArea && result.newBuilding && !value.isEmpty();
     if (use) result.values.insert(key, value);
@@ -352,8 +346,8 @@ Transfer collect(const doc::Document& document, bool applyArea) {
   };
   candidate("site_area", tr("敷地面積"), siteArea, tr("敷地境界"));
   candidate("zone", tr("用途地域"), zone, tr("高さの制限の設定"));
-  candidate("building_area", tr("建築面積"), area.buildingKnown && area.buildingArea > 0 ? squareMetres(area.buildingArea) : QString{}, tr("面積の根拠図"));
-  candidate("floor_area", tr("延べ面積"), knownFloor ? squareMetres(area.legalTotal) : QString{}, tr("面積の根拠図"));
+  candidate("building_area", tr("建築面積"), area.buildingKnown && area.buildingArea > 0 ? permitSquareMetres(area.buildingArea) : QString{}, tr("面積の根拠図"));
+  candidate("floor_area", tr("延べ面積"), knownFloor ? permitSquareMetres(area.legalTotal) : QString{}, tr("面積の根拠図"));
   const auto structure = get("structure");
   // The first slot ends in a printed 造. Mixed structures must be allocated to both slots.
   static const QRegularExpression single(QStringLiteral("^(木|鉄骨|軽量鉄骨|鉄筋コンクリート|鉄骨鉄筋コンクリート|組積|補強コンクリートブロック)造$"));
@@ -417,7 +411,7 @@ Transfer collect(const doc::Document& document, bool applyArea) {
   };
   const double confirmedSite = ratioArea("form_building_ratio_site");
   const bool sameSite = confirmedSite > 0 && measuredSiteMm2 > 0 &&
-                        squareMetres(confirmedSite) == squareMetres(measuredSiteMm2);
+                        permitSquareMetres(confirmedSite) == permitSquareMetres(measuredSiteMm2);
   const auto addRatio = [&](const char* key, const QString& label, const QString& areaKey,
                             const QString& percentKey, double gross) {
     const double numerator = ratioArea(key);
@@ -433,10 +427,10 @@ Transfer collect(const doc::Document& document, bool applyArea) {
     const auto percentage = QString::number(100.0 * numerator / confirmedSite, 'f', 2) + " %";
     const bool transfer = applyArea && result.newBuilding;
     if (transfer) {
-      result.values.insert(areaKey, squareMetres(numerator));
+      result.values.insert(areaKey, permitSquareMetres(numerator));
       result.values.insert(percentKey, percentage);
     }
-    row(label, QStringLiteral("%1 ÷ %2 ＝ %3").arg(squareMetres(numerator), squareMetres(confirmedSite), percentage),
+    row(label, QStringLiteral("%1 ÷ %2 ＝ %3").arg(permitSquareMetres(numerator), permitSquareMetres(confirmedSite), percentage),
         ratioSource, transfer ? tr("転記") : tr("候補"));
   };
   addRatio("form_building_ratio_coverage", tr("建蔽率"), "coverage_area", "coverage_percent",
@@ -476,14 +470,14 @@ Transfer collect(const doc::Document& document, bool applyArea) {
       --it;
       const auto number = it.key() < 0 ? QStringLiteral("B%1").arg(-it.key()) : QString::number(it.key());
       const auto key = QStringLiteral("detail_floor_%1").arg(i);
-      const auto value = squareMetres(it.value());
+      const auto value = permitSquareMetres(it.value());
       if (applyArea) {
         result.values.insert(key, value);
         result.values.insert(key + "_number", number);
       }
       row(tr("第四面・%1階の床面積").arg(number), value, tr("面積の根拠図"), applyArea ? tr("転記") : tr("候補"), true);
     }
-    if (applyArea) result.values.insert("detail_floor_total", squareMetres(area.legalTotal));
+    if (applyArea) result.values.insert("detail_floor_total", permitSquareMetres(area.legalTotal));
   }
   const auto eavesInput = get("form_building_eaves");
   row(tr("最高の軒の高さ"), eaves.isEmpty() ? eavesInput : eaves + " m", checked,

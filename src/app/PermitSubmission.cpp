@@ -1,8 +1,10 @@
 #include "PermitSubmission.h"
+#include "PermitApplicationArea.h"
 
 #include "sbr/doc/Schedules.h"
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -26,6 +28,7 @@ struct Requirement {
   QString drawings;
   QString notes;
   bool conditional = false;
+  bool feeWorksheet = false;
 };
 
 QList<Requirement> requirements() {
@@ -35,7 +38,8 @@ QList<Requirement> requirements() {
     {tr("意匠・設備受付チェックシート"), QStringLiteral("(意匠.*設備|設備.*意匠).*チェック"), {},
      tr("市の書式（三号物件以外）")},
     {tr("構造受付チェックシート"), QStringLiteral("構造.*チェック"), {}, tr("市の書式。構造の申請ルートを確認")},
-    {tr("確認申請手数料算定表"), QStringLiteral("手数料.*算定"), {}, tr("市の書式。算定対象と申請方法を確認")},
+    {tr("確認申請手数料算定表"), QStringLiteral("手数料.*算定"), {},
+     tr("確認申請書 第三面11欄イの申請部分と照合。金額・加算は市の手数料表で確認"), false, true},
     {tr("建築協定等手続状況届出書"), QStringLiteral("建築協定.*(届出|手続)"), {}, tr("市の書式。協定等の該当状況を記入")},
     {tr("図面一式"), QStringLiteral("図面一式|確認申請図"), {}, tr("一式のファイル候補。個別図の有無は内容と照合")},
     {tr("付近見取図"), QStringLiteral("付近見取図"), QStringLiteral("付近見取図"), tr("地図・敷地の位置を確認")},
@@ -66,10 +70,14 @@ void showPermitSubmissionReview(const doc::Document& document, const doc::Drawin
   intro->setWordWrap(true);
   layout->addWidget(intro);
   auto* links = new QLabel(tr("<a href=\"https://www.city.yokohama.lg.jp/business/bunyabetsu/kenchiku/tetsuduki/kakunin/dl/dl.html\">横浜市の受付書式</a>"
-                              "　<a href=\"https://www.city.yokohama.lg.jp/business/bunyabetsu/kenchiku/tetsuduki/kakunin/tetsuzuki.html\">確認申請の手続き</a>"));
+                              "　<a href=\"https://www.city.yokohama.lg.jp/business/bunyabetsu/kenchiku/tetsuduki/kakunin/tetsuzuki.html\">確認申請の手続き</a>"
+                              "　<a href=\"https://www.city.yokohama.lg.jp/business/bunyabetsu/kenchiku/tetsuduki/kakunin/tesuryoudir/tesuryou.html\">手数料表</a>"));
   links->setTextInteractionFlags(Qt::TextBrowserInteraction);
   links->setOpenExternalLinks(true);
   layout->addWidget(links);
+  auto* feeScope = new QCheckBox(tr("手数料確認用に、単一棟の新築の申請部分に全床面積を含める"));
+  feeScope->setObjectName(QStringLiteral("permitSubmissionFeeScope"));
+  layout->addWidget(feeScope);
   auto* table = new QTableWidget(0, 4);
   table->setObjectName(QStringLiteral("permitSubmissionTable"));
   table->setHorizontalHeaderLabels({tr("図書"), tr("モデル／図面一式"), tr("提出フォルダ"), tr("確認事項")});
@@ -87,6 +95,7 @@ void showPermitSubmissionReview(const doc::Document& document, const doc::Drawin
   folderLabel->setTextFormat(Qt::PlainText);
   layout->addWidget(folderLabel);
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close);
+  buttons->button(QDialogButtonBox::Close)->setText(tr("閉じる"));
   auto* scan = buttons->addButton(tr("提出フォルダを選ぶ…"), QDialogButtonBox::ActionRole);
   auto* inspect = buttons->addButton(tr("モデルの図面を確認"), QDialogButtonBox::ActionRole);
   scan->setObjectName(QStringLiteral("permitSubmissionFolder"));
@@ -96,7 +105,13 @@ void showPermitSubmissionReview(const doc::Document& document, const doc::Drawin
   const auto items = requirements();
   const auto openedAt = document.sequence();
   table->setRowCount(items.size());
-  QString folder;
+  QString folder, feeArea;
+  const auto isNewBuilding = [&] {
+    const auto outline = doc::projectOutline(document);
+    const auto kind = outline.find("work_kind");
+    return kind != outline.end() && kind->second == "new";
+  };
+  feeScope->setEnabled(isNewBuilding());
   QStringList files, drawings;
   bool checkedModel = false;
   QString drawingError;
@@ -114,6 +129,10 @@ void showPermitSubmissionReview(const doc::Document& document, const doc::Drawin
       else if (checkedModel)
         model = !drawingError.isEmpty() ? tr("図面一式を確認できません") :
                 matchingDrawings.isEmpty() ? tr("該当図面なし") : tr("%1枚の候補").arg(matchingDrawings.size());
+      if (item.feeWorksheet) model = !feeScope->isEnabled() ? tr("工事種別・申請部分を確認")
+          : !feeScope->isChecked() ? tr("単一棟の申請範囲を確認")
+          : feeArea.isEmpty() ? tr("床面積の根拠を確認")
+                             : tr("申請部分 %1（候補）").arg(feeArea);
       QString delivery = folder.isEmpty() ? tr("未照合") :
                          matchingFiles.isEmpty() ? (item.conditional ? tr("該当時に確認") : tr("候補ファイルなし"))
                                                  : tr("%1件の候補").arg(matchingFiles.size());
@@ -127,6 +146,16 @@ void showPermitSubmissionReview(const doc::Document& document, const doc::Drawin
       }
     }
   };
+  const auto refreshFee = [&] {
+    feeScope->setEnabled(isNewBuilding());
+    feeArea.clear();
+    if (feeScope->isEnabled() && feeScope->isChecked()) {
+      const auto area = doc::areaTable(document);
+      if (hasApplicationFloorArea(area)) feeArea = permitSquareMetres(area.legalTotal);
+    }
+    refresh();
+  };
+  QObject::connect(feeScope, &QCheckBox::toggled, &dialog, refreshFee);
   QObject::connect(scan, &QPushButton::clicked, &dialog, [&] {
     QFileDialog chooser(&dialog, tr("提出フォルダを選ぶ"), folder);
     chooser.setObjectName(QStringLiteral("permitSubmissionDirectoryChooser"));
@@ -153,7 +182,7 @@ void showPermitSubmissionReview(const doc::Document& document, const doc::Drawin
     } else {
       drawingError = QString::fromStdString(set.error());
     }
-    refresh();
+    refreshFee();
   });
   QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
   refresh();
