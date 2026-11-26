@@ -177,6 +177,7 @@ std::vector<TopoDS_Edge> openingSymbols(const doc::Document& d, const SymbolOpti
     if (!list) continue;
     for (const auto& o : *list) {
       if (!options.onlyOpening.empty() && o.id != options.onlyOpening) continue;
+      if (!options.skipOpening.empty() && o.id == options.skipOpening) continue;  // docs/299
       const auto stored = fittings.find(o.id);  // the opening's id (its number for walls from before ids)
       json overridden;
       if (!options.fittingOverride.empty()) overridden = json::parse(options.fittingOverride, nullptr, false);

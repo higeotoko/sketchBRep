@@ -49,6 +49,8 @@ struct SymbolOptions {
   // docs/188: only this opening (its id), drawn with this fitting instead of its own (a preview).
   std::string onlyOpening;
   std::string fittingOverride;
+  // docs/299: this opening (its id) is left out: the plan while a preview shows it another way.
+  std::string skipOpening;
 };
 // World edges (lines and arcs at height z) for every fitted opening the plane z passes through.
 std::vector<TopoDS_Edge> openingSymbols(const doc::Document& document, const SymbolOptions& options);

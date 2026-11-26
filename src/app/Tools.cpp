@@ -1182,6 +1182,7 @@ QCursor DoorSwingTool::cursor() const { return QCursor(Qt::PointingHandCursor); 
 
 void DoorSwingTool::activate() {
   hover_.reset();
+  host_.viewport().setOpeningSymbolHidden({});
   host_.viewport().clearPreview();
   host_.setStatus(QObject::tr("扉の横で、開く側・吊元にしたい半分にマウスを乗せると、その開き方を描きます。クリックで決めます"
                               "（扉の無い開口は、先にプロパティで扉の形式を選んでください）"));
@@ -1189,6 +1190,7 @@ void DoorSwingTool::activate() {
 
 void DoorSwingTool::cancel() {
   hover_.reset();
+  host_.viewport().setOpeningSymbolHidden({});
   host_.viewport().clearPreview();
 }
 
@@ -1232,10 +1234,13 @@ void DoorSwingTool::mouseMove(const ToolEvent& e) {
   hover_ = pickAt(e);
   Viewport& vp = host_.viewport();
   if (!hover_) {
+    vp.setOpeningSymbolHidden({});
     vp.clearPreview();
     host_.setStatus(QObject::tr("扉の横（開く側）にマウスを乗せてください"));
     return;
   }
+  // docs/299: the door as it is now is left out while the way it would be is shown.
+  vp.setOpeningSymbolHidden(hover_->opening);
   // The symbol as it would be.
   const std::set<std::string> only{hover_->host};
   const auto list = host_.modeler().openings(hover_->host);
@@ -1260,6 +1265,7 @@ void DoorSwingTool::mousePress(const ToolEvent& e) {
   hover_ = pickAt(e);
   if (!hover_) return;
   const Status s = host_.modeler().setOpeningFittings(hover_->host, {hover_->index}, hover_->fitting);
+  host_.viewport().setOpeningSymbolHidden({});
   host_.viewport().clearPreview();
   host_.setStatus(s ? QObject::tr("%1 にしました（Ctrl+Z で戻せます）").arg(fittingLabel(hover_->fitting))
                     : QObject::tr("開き勝手を変えられません: %1").arg(QString::fromStdString(s.message())));

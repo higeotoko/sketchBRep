@@ -8977,9 +8977,25 @@ void GuiPhase1::doorSwingToolPicksInPlan() {
   move(f.vp, f.vp->toWidget(gp_Pnt(2250, 600, 1000)));
   QVERIFY2(f.window.statusText().contains(QStringLiteral("片開き")), qPrintable(f.window.statusText()));
   QVERIFY(!f.vp->previewShape().IsNull());
+  // docs/299: while the preview shows the door another way, the door as it is is not drawn too
+  // (in plan view, where the symbols are drawn).
+  QVERIFY(!f.vp->hiddenOpeningSymbol().empty());
+  const auto edgeCount = [&] {
+    int n = 0;
+    for (TopExp_Explorer e(f.vp->openingSymbolShape(), TopAbs_EDGE); e.More(); e.Next()) ++n;
+    return n;
+  };
+  f.vp->setPlanCut(1000.0);
+  move(f.vp, f.vp->toWidget(gp_Pnt(2250, 600, 1000)));
+  QVERIFY(!f.vp->hiddenOpeningSymbol().empty());
+  QCOMPARE(edgeCount(), 0);  // the only door, left out while previewed
+  QVERIFY(!f.vp->previewShape().IsNull());
+  if (const auto shot = qEnvironmentVariable("SBR_DOOR_SWING_PNG"); !shot.isEmpty()) QVERIFY(f.vp->dumpImage(shot));
   const std::size_t steps = m.history().undoCount();
   click(f.vp, f.vp->toWidget(gp_Pnt(2250, 600, 1000)));
   QCOMPARE(m.history().undoCount(), steps + 1);
+  QVERIFY(f.vp->hiddenOpeningSymbol().empty());  // decided: drawn again (the new way)
+  QVERIFY(edgeCount() > 0);
   const nlohmann::json fittings = nlohmann::json::parse(m.document().find(host)->attributes.at("opening_fittings"));
   const nlohmann::json fit = fittings.begin().value();
   const std::string side = fit.value("swing", "");

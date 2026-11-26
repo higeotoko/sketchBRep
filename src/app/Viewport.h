@@ -176,6 +176,12 @@ class Viewport : public QWidget {
   // in world space. Built from display copies, never from canonical shapes.
   void setGhost(const std::vector<doc::ObjectId>& ids, const gp_Trsf& delta);
   void clearPreview();
+  // docs/299: while a tool previews an opening's fitting another way, its symbol on the plan is left
+  // out (it stayed and showed both ways at once). Empty: all drawn.
+  void setOpeningSymbolHidden(const std::string& openingId);
+  const std::string& hiddenOpeningSymbol() const { return hiddenOpeningSymbol_; }
+  // The plan's opening symbols as drawn (null when none): for tests.
+  TopoDS_Shape openingSymbolShape() const { return openingSymbols_.IsNull() ? TopoDS_Shape() : openingSymbols_->Shape(); }
   void setRoadHeightPlane(const TopoDS_Shape& shape);
   void setBoundaryHeightSurface(const TopoDS_Shape& shape, const TopoDS_Shape& boundaryLines, bool north = false);
   void setHeightDistrictSurface(const TopoDS_Shape& slant, const TopoDS_Shape& cap, const TopoDS_Shape& unconfirmed);
@@ -584,6 +590,7 @@ class Viewport : public QWidget {
   std::size_t fittingSolidCount_ = 0;
   void syncFittings();
   void syncOpeningSymbols();
+  std::string hiddenOpeningSymbol_;  // docs/299
   // Tags read from the model (docs/104): the marks of the openings a plan cuts through, and
   // each room's name with its area as the walls are now.
   std::vector<Handle(AIS_TextLabel)> openingTags_;

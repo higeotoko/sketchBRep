@@ -2416,6 +2416,13 @@ void Viewport::setPreview(const TopoDS_Shape& shape, bool solid, bool unclipped)
 
 void Viewport::clearPreview() { setPreview(TopoDS_Shape()); }
 
+void Viewport::setOpeningSymbolHidden(const std::string& openingId) {
+  if (openingId == hiddenOpeningSymbol_) return;
+  hiddenOpeningSymbol_ = openingId;
+  syncOpeningSymbols();
+  if (!view_.IsNull()) update();
+}
+
 void Viewport::setRoadHeightPlane(const TopoDS_Shape& shape) { setHeightStudy(shape, {}, HeightStudyKind::Road); }
 
 void Viewport::setBoundaryHeightSurface(const TopoDS_Shape& shape, const TopoDS_Shape& boundaryLines, bool north) {
@@ -3221,6 +3228,7 @@ void Viewport::syncOpeningSymbols() {
   // Just under the cut (it would clip lines lying on it), drawn over the caps.
   draw::SymbolOptions options;
   options.z = *planCutZ_ - 1.0;
+  options.skipOpening = hiddenOpeningSymbol_;  // docs/299
   auto edges = draw::openingSymbols(modeler_.document(), options);
   // Where the layers of walls of a build-up meet (docs/124).
   for (const auto& [a, b] : doc::Modeler::wallLayerLines(modeler_.document(), *planCutZ_ - 1.0)) {
