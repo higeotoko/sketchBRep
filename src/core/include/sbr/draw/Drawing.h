@@ -50,9 +50,10 @@ enum class Pen {
   HeightReview, // unconfirmed height envelope in a section
   FireLimit3,
   FireLimit5,
-  FireCompartment
+  FireCompartment,
+  Boundary  // docs/297: the site's boundary (thick dash-dot: heavier than the reference lines, not a wall)
 };
-constexpr int kPenCount = 16;
+constexpr int kPenCount = 17;
 const char* penLayerName(Pen pen);  // layer names in DXF ("CUT", ...)
 
 struct Item {

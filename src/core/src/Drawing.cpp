@@ -73,18 +73,23 @@ const char* penLayerName(Pen pen) {
     case Pen::FireLimit3: return "FIRE_LIMIT_3M";
     case Pen::FireLimit5: return "FIRE_LIMIT_5M";
     case Pen::FireCompartment: return "FIRE_COMPARTMENT";
+    case Pen::Boundary: return "BOUNDARY";
   }
   return "0";
 }
 
+// docs/297: the width of each role. JIS Z 8312 4.1 (widths 0.13, 0.18, 0.25, 0.35, 0.5 ...; extra thick,
+// thick and thin 4 : 2 : 1): what the plane cuts extra thick (0.5), what is seen beyond thick (0.25), the
+// reference and helping lines thin (0.13: grids and their bubbles - JIS A 0150 10.2 -, levels, dimensions,
+// hidden lines). The site's boundary thick dash-dot (0.25). The rest as before.
 double penWidth(Pen pen) {
   switch (pen) {
     case Pen::Cut: return 0.5;
-    case Pen::Visible: return 0.18;
+    case Pen::Visible: return 0.25;
     case Pen::Hidden: return 0.13;
     case Pen::Fill: return 0.0;
     case Pen::Grid: return 0.13;
-    case Pen::GridLabel: return 0.18;
+    case Pen::GridLabel: return 0.13;
     case Pen::Level: return 0.13;
     case Pen::Dimension: return 0.13;
     case Pen::Text: return 0.18;
@@ -95,6 +100,7 @@ double penWidth(Pen pen) {
     case Pen::FireLimit3:
     case Pen::FireLimit5: return 0.25;
     case Pen::FireCompartment: return 0.38;
+    case Pen::Boundary: return 0.25;
   }
   return 0.18;
 }
@@ -108,6 +114,7 @@ std::vector<double> penDashes(Pen pen) {
     case Pen::FireCompartment: return {6.0, 1.0, 0.45, 1.0, 0.45, 1.0};
     case Pen::Grid:
     case Pen::Level: return {8.0, 1.0, 0.5, 1.0};  // dash-dot
+    case Pen::Boundary: return {10.0, 1.2, 0.6, 1.2};  // dash-dot, longer (a thick line)
     default: return {};
   }
 }
@@ -638,7 +645,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     if (!boundary) return R::failure(boundary.error());
     Item outline;
     outline.kind = Item::Kind::Polyline;
-    outline.pen = Pen::Grid;
+    outline.pen = Pen::Boundary;  // docs/297
     outline.closed = true;
     for (const gp_Pnt& vertex : boundary->vertices) {
       all.Add(vertex);

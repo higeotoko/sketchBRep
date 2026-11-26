@@ -337,7 +337,7 @@ TEST(Drawing, SitePlanUsesTheLiveBoundaryAndBuildingProjection) {
   ASSERT_TRUE(vacant);
   ASSERT_EQ(vacant->items.size(), 1u);
   EXPECT_TRUE(vacant->items.front().closed);
-  EXPECT_EQ(vacant->items.front().pen, Pen::Grid);
+  EXPECT_EQ(vacant->items.front().pen, Pen::Boundary);
   EXPECT_FALSE(vacant->trueNorth);
 
   const auto building = box(m, 1500, 2500, 5200, 6500, 4000, 100000);

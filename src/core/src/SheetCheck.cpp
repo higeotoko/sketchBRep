@@ -272,6 +272,7 @@ const char* penName(Pen pen) {
     case Pen::FireLimit3: return "延焼3m";
     case Pen::FireLimit5: return "延焼5m";
     case Pen::FireCompartment: return "防火区画";
+    case Pen::Boundary: return "敷地境界線";
   }
   return "";
 }

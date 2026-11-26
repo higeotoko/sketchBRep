@@ -96,6 +96,7 @@ struct JwPen {
   std::uint16_t color;
   std::uint8_t type;
   std::uint16_t layer;
+  std::uint16_t group = 0;  // docs/297: group 0 is full (16 layers); the boundary is in group 1
 };
 JwPen jwPen(Pen pen) {
   switch (pen) {
@@ -115,6 +116,7 @@ JwPen jwPen(Pen pen) {
     case Pen::FireLimit3: return {3, 2, 13};
     case Pen::FireLimit5: return {4, 5, 14};
     case Pen::FireCompartment: return {6, 7, 15};
+    case Pen::Boundary: return {2, 5, 0, 1};
   }
   return {2, 1, 1};
 }
@@ -155,7 +157,7 @@ void header(Archive& a, const Sheet& sheet) {
   a.u32(0);            // print rotation / reference point
   a.u32(0); a.f64(15.0); a.f64(5.0); a.f64(5.0); a.f64(0); a.f64(0);  // scale marks (off)
   for (int g = 0; g < 16; ++g) {
-    for (int l = 0; l < 16; ++l) a.str(g == 0 && l < kPenCount ? kLayerNames[l] : "");
+    for (int l = 0; l < 16; ++l) a.str(g == 0 ? kLayerNames[l] : g == 1 && l == 0 ? "敷地境界" : "");
   }
   for (int g = 0; g < 16; ++g) a.str(g == 0 ? sheet.title : "");
   a.f64(0); a.f64(36.0); a.u32(0); a.f64(0);  // shadow: height, latitude, 9-15h, wall
@@ -280,13 +282,13 @@ void header(Archive& a, const Sheet& sheet) {
   for (double v : {-1.0, 0.0, 1.0}) a.f64(v);
 }
 
-void base(Archive& a, std::uint8_t type, std::uint16_t color, std::uint16_t layer) {
+void base(Archive& a, std::uint8_t type, std::uint16_t color, std::uint16_t layer, std::uint16_t group = 0) {
   a.u32(0);      // curve attribute
   a.u8(type);
   a.u16(color);
   a.u16(0);      // width: the colour's
   a.u16(layer);
-  a.u16(0);      // layer group 0
+  a.u16(group);  // layer group
   a.u16(0);      // flags
 }
 
@@ -354,12 +356,12 @@ Status writeJww(const Sheet& sheet, const std::string& path) {
     switch (e.kind) {
       case Element::Line:
         a.object("CDataSen");
-        base(a, pen.type, pen.color, pen.layer);
+        base(a, pen.type, pen.color, pen.layer, pen.group);
         a.f64(e.a.X()); a.f64(e.a.Y()); a.f64(e.b.X()); a.f64(e.b.Y());
         break;
       case Element::Arc: {
         a.object("CDataEnko");
-        base(a, pen.type, pen.color, pen.layer);
+        base(a, pen.type, pen.color, pen.layer, pen.group);
         const bool full = e.sweep >= 2 * M_PI - 1e-9;
         a.f64(e.a.X()); a.f64(e.a.Y());
         a.f64(e.radius);
@@ -372,7 +374,7 @@ Status writeJww(const Sheet& sheet, const std::string& path) {
       }
       case Element::Text:
         a.object("CDataMoji");
-        base(a, 1, pen.color, pen.layer);
+        base(a, 1, pen.color, pen.layer, pen.group);
         a.f64(e.a.X()); a.f64(e.a.Y()); a.f64(e.b.X()); a.f64(e.b.Y());
         a.u32(0);  // text kind: any size
         a.f64(e.size); a.f64(e.size); a.f64(0.0);
@@ -382,7 +384,7 @@ Status writeJww(const Sheet& sheet, const std::string& path) {
         break;
       case Element::Solid:
         a.object("CDataSolid");
-        base(a, 1, 10, pen.layer);  // colour 10: its own colour (grey)
+        base(a, 1, 10, pen.layer, pen.group);  // colour 10: its own colour (grey)
         // First, fourth, second and third points, then the colour (RGB).
         a.f64(e.a.X()); a.f64(e.a.Y()); a.f64(e.d.X()); a.f64(e.d.Y());
         a.f64(e.c.X()); a.f64(e.c.Y()); a.f64(e.b.X()); a.f64(e.b.Y());

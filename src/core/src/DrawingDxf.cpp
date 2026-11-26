@@ -34,6 +34,7 @@ int penColor(Pen pen) {
     case Pen::FireLimit3: return 30;
     case Pen::FireLimit5: return 200;
     case Pen::FireCompartment: return 134;
+    case Pen::Boundary: return 7;
   }
   return 7;
 }
@@ -46,7 +47,8 @@ const char* lineType(Pen pen) {
     case Pen::FireLimit5: return "DASHDOT";
     case Pen::FireCompartment: return "DIVIDE";
     case Pen::Grid:
-    case Pen::Level: return "DASHDOT";
+    case Pen::Level:
+    case Pen::Boundary: return "DASHDOT";
     default: return "CONTINUOUS";
   }
 }
