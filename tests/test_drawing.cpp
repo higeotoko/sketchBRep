@@ -1053,3 +1053,38 @@ TEST(Drawing, SitePlanDrawsTheSetbackOfANarrowRoad) {
   ASSERT_TRUE(wide);
   EXPECT_FALSE(std::any_of(wide->dimensions.begin(), wide->dimensions.end(), [](const auto& d) { return d.text == "2,000"; }));
 }
+
+// docs/305: an elevation that sees the road across draws its boundaries and width at the ground.
+TEST(Drawing, ElevationsShowTheRoadInFront) {
+  doc::Modeler m;
+  const auto outline = m.createRectangle(geom::SketchPlane::ground(), 10000, 12000);
+  ASSERT_TRUE(outline);
+  api::CommandApi api(m);
+  const auto r = nlohmann::json::parse(api.execute(nlohmann::json({{"command", "create_wall"}, {"args", {{"points", {{1500, 2500}, {5200, 2500}, {5200, 6500}, {1500, 6500}, {1500, 2500}}}, {"thickness", 120}, {"height", 3500}}}}).dump()));
+  ASSERT_TRUE(r.value("ok", false)) << r.dump();
+  ASSERT_TRUE(m.setSiteBoundary(doc::SiteBoundary{*outline, "Survey"}));
+  doc::SiteRoad road;
+  road.kind = "法42条2項道路";
+  road.source = "Synthetic road register";
+  road.widthMm = 3600;
+  ASSERT_TRUE(m.setSiteRoad({gp_Pnt(10000, 0, 0), gp_Pnt(0, 0, 0)}, road));
+  ASSERT_TRUE(m.setLevels({{"gl", "GL", 0.0}, {"1fl", "1FL", 500.0}}));
+  const auto marks = [&](int side) {
+    ViewSpec s = elevationView(m.document(), side);
+    s.heightDims = true;
+    const auto view = makeView(m.document(), s);
+    EXPECT_TRUE(view) << view.error();
+    int boundaries = 0, setbacks = 0, widths = 0;
+    if (view) {
+      for (const auto& item : view->items) {
+        boundaries += item.text == "道路境界線";
+        setbacks += item.text == "道路後退線";
+      }
+      for (const auto& d : view->dimensions) widths += d.text == "3,600" || d.text == "4,000";
+    }
+    return std::make_tuple(boundaries, setbacks, widths);
+  };
+  // From the east or west the road runs across the view.
+  EXPECT_EQ(marks(1), std::make_tuple(2, 2, 2));
+  EXPECT_EQ(marks(0), std::make_tuple(0, 0, 0));  // from the south it faces the viewer
+}

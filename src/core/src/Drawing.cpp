@@ -1698,7 +1698,76 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
       if (gl && rightmost > left) {
         const double sp = spec.paperScale > 0 ? spec.paperScale : 100.0;
         const double v = proj.uv(gp_Pnt(spec.frame.Location().X(), spec.frame.Location().Y(), *gl)).Y();
-        const double u0 = left - 10.0 * sp, u1 = rightmost + 10.0 * sp;
+        double u0 = left - 10.0 * sp, u1 = rightmost + 10.0 * sp;
+        // docs/305: the road in front, when this view sees it across (the road runs towards the viewer):
+        // its boundary, the far side and, for a narrow 2項 road, the setback lines, upright from the ground,
+        // with the road's width under the ground, as the submitted elevations show 前面道路.
+        if (const auto& site = document.settings().siteBoundary; site && site->road && site->road->widthMm > 0) {
+          const auto boundary = document.siteBoundaryGeometry(site->outline);
+          const auto edge = boundary ? document.siteRoadEdge(*boundary) : std::nullopt;
+          const gp_Vec along = edge ? gp_Vec((*edge)[0], (*edge)[1]) : gp_Vec();
+          if (edge && along.Magnitude() > 1.0 && std::abs(along.Normalized().Dot(gp_Vec(spec.frame.Direction()))) > 0.9) {
+            const doc::SiteRoad& road = *site->road;
+            gp_Vec out(-along.Y(), along.X(), 0);
+            out.Normalize();
+            gp_XYZ centre(0, 0, 0);
+            for (const gp_Pnt& p : boundary->vertices) centre += p.XYZ();
+            centre /= static_cast<double>(boundary->vertices.size());
+            const gp_Pnt mid(((*edge)[0].XYZ() + (*edge)[1].XYZ()) / 2);
+            if (gp_Vec(gp_Pnt(centre), mid).Dot(out) < 0) out.Reverse();
+            const auto uAt = [&](double across) {
+              return proj.uv(gp_Pnt(mid.X() + out.X() * across, mid.Y() + out.Y() * across, mid.Z())).X();
+            };
+            const double height = std::max(top - *gl, 3000.0) * 0.6;
+            const double vTop = proj.uv(gp_Pnt(spec.frame.Location().X(), spec.frame.Location().Y(), *gl + height)).Y();
+            const auto upright = [&](double across, Pen pen, const char* label) {
+              const double u = uAt(across);
+              view.items.push_back(line(pen, gp_Pnt2d(u, v), gp_Pnt2d(u, vTop)));
+              Item name;
+              name.kind = Item::Kind::Text;
+              name.pen = Pen::Text;
+              name.text = label;
+              name.height = 2.5;
+              name.angle = M_PI / 2;
+              name.hAlign = 2;
+              name.vAlign = 2;
+              name.points = {gp_Pnt2d(u + 0.6 * sp, vTop)};
+              view.items.push_back(std::move(name));
+              u0 = std::min(u0, u - 5.0 * sp);
+              u1 = std::max(u1, u + 5.0 * sp);
+            };
+            upright(0, Pen::Boundary, "道路境界線");
+            upright(road.widthMm, Pen::Boundary, "道路境界線");
+            const bool setback = road.widthMm < 4000.0 && road.kind.find("2項") != std::string::npos;
+            if (setback) {
+              upright(road.widthMm / 2 - 2000.0, Pen::Boundary, "道路後退線");
+              upright(road.widthMm / 2 + 2000.0, Pen::Boundary, "道路後退線");
+            }
+            const auto grouped = [](double value) {
+              char buf[32];
+              std::snprintf(buf, sizeof buf, "%.0f", value);
+              std::string d = buf;
+              for (int i = static_cast<int>(d.size()) - 3; i > 0; i -= 3) d.insert(static_cast<std::size_t>(i), ",");
+              return d;
+            };
+            const double ua = uAt(0), ub = uAt(road.widthMm);
+            view.dimensions.push_back({gp_Pnt2d(std::min(ua, ub), v), gp_Pnt2d(std::max(ua, ub), v), gp_Vec2d(0, -8.0 * sp),
+                                       grouped(road.widthMm)});
+            if (setback) {
+              const double sa = uAt(road.widthMm / 2 - 2000.0), sb = uAt(road.widthMm / 2 + 2000.0);
+              view.dimensions.push_back({gp_Pnt2d(std::min(sa, sb), v), gp_Pnt2d(std::max(sa, sb), v), gp_Vec2d(0, -14.0 * sp), "4,000"});
+            }
+            Item name;
+            name.kind = Item::Kind::Text;
+            name.pen = Pen::Text;
+            name.text = "前面道路" + (road.kind.empty() ? std::string() : "（" + road.kind + "）");
+            name.height = 3.0;
+            name.hAlign = 1;
+            name.vAlign = 0;
+            name.points = {gp_Pnt2d((ua + ub) / 2, v + 1.5 * sp)};
+            view.items.push_back(std::move(name));
+          }
+        }
         view.items.push_back(line(Pen::Ground, gp_Pnt2d(u0, v), gp_Pnt2d(u1, v)));
         const double step = 4.0 * sp, len = 2.0 * sp;
         // The symbol only past the building's ends: under the building the span dimensions are read.
