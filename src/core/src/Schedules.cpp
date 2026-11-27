@@ -977,6 +977,21 @@ std::vector<PermitCheck> permitPlanChecks(const Document& document) {
                      "給気口 " + std::to_string(supply) + " か所、排気（換気扇・レンジフード）" + std::to_string(exhaust) +
                          " か所を平面図に描きます。換気の経路と有効換気量は換気の表で確かめます。",
                      {}});
+    // docs/338: the air's way: a 居室 with no exhaust it reaches, or a kitchen without its exhaust.
+    if (supply + exhaust > 0) {
+      std::string names;
+      int open = 0;
+      for (const VentilationPathRow& r : ventilationPaths(document))
+        if (r.attention) {
+          ++open;
+          if (open <= 4) names += "\n・" + r.level + " " + r.name + "：" + r.note;
+        }
+      if (open > 4) names += "\n・ほか " + std::to_string(open - 4);
+      out.push_back({"換気経路", open == 0 ? "入力済み" : "要確認",
+                     open == 0 ? "どの居室からも、排気（換気扇・レンジフード）までアンダーカット等でつながっています（換気経路の表）。風量は別に確かめます。"
+                               : "換気経路の表で確かめる室 " + std::to_string(open) + " 室：" + names,
+                     {}, open > 0});
+    }
     // docs/337: the cooking appliances (令第20条の3: 火を使用する室). Their place, kind and heat output go on the plan; the
     // airflow the room needs (昭和45年建設省告示第1826号 第三) is not worked out here.
     if (cooking > 0)
@@ -4970,8 +4985,128 @@ LayerQuantities layerQuantities(const Document& document) {
   return out;
 }
 
+std::vector<VentilationPathRow> ventilationPaths(const Document& document) {
+  std::vector<VentilationPathRow> out;
+  const auto devices = Modeler::devicesIn(document);
+  if (devices.empty()) return out;
+  // The closed rooms, each with its floor height and the next floor level above it.
+  struct Room {
+    RoomInfo info;
+    double z0 = 0, z1 = 0;
+  };
+  std::vector<Room> rooms;
+  std::vector<double> floors;
+  for (const FloorLevel& l : document.settings().levels)
+    if (isFloorLevelName(l.name)) floors.push_back(l.elevation);
+  std::sort(floors.begin(), floors.end());
+  for (RoomInfo& r : Modeler::roomsIn(document)) {
+    if (!r.closed || r.centre.size() < 3) continue;
+    Room room;
+    room.z0 = r.at.Z() - 1.0;
+    room.z1 = r.at.Z() + 3000.0;
+    for (double f : floors)
+      if (f > r.at.Z() + 1.0) {
+        room.z1 = f;
+        break;
+      }
+    room.info = std::move(r);
+    rooms.push_back(std::move(room));
+  }
+  const auto inside = [](const std::vector<gp_Pnt>& outline, double x, double y) {
+    bool in = false;
+    for (std::size_t i = 0, j = outline.size() - 1; i < outline.size(); j = i++) {
+      const gp_Pnt& a = outline[i];
+      const gp_Pnt& b = outline[j];
+      if ((a.Y() > y) != (b.Y() > y) && x < (b.X() - a.X()) * (y - a.Y()) / (b.Y() - a.Y()) + a.X()) in = !in;
+    }
+    return in;
+  };
+  const auto roomOf = [&](const gp_Pnt& p) -> int {
+    for (std::size_t i = 0; i < rooms.size(); ++i)
+      if (p.Z() >= rooms[i].z0 && p.Z() < rooms[i].z1 && inside(rooms[i].info.centre, p.X(), p.Y())) return static_cast<int>(i);
+    return -1;
+  };
+  std::vector<int> supply(rooms.size(), 0), exhaust(rooms.size(), 0), cooking(rooms.size(), 0);
+  std::vector<std::set<int>> leadsTo(rooms.size());
+  for (const auto& d : devices) {
+    if (d.kind == "undercut") {
+      if (!d.airflow) continue;
+      const gp_Vec step = gp_Vec(*d.airflow) * 400.0;  // either side of the door
+      const int from = roomOf(d.position.Translated(-step)), to = roomOf(d.position.Translated(step));
+      if (from >= 0 && to >= 0 && from != to) leadsTo[static_cast<std::size_t>(from)].insert(to);
+      continue;
+    }
+    const int r = roomOf(d.position);
+    if (r < 0) continue;
+    supply[static_cast<std::size_t>(r)] += d.kind == "supply_vent";
+    exhaust[static_cast<std::size_t>(r)] += d.kind == "exhaust_fan" || d.kind == "range_hood";
+    cooking[static_cast<std::size_t>(r)] += d.kind == "cooking_appliance";
+  }
+  std::map<ObjectId, const RoomRow*> rowOf;
+  const RoomSchedule schedule = roomSchedule(document);
+  for (const RoomRow& r : schedule.rows) rowOf[r.id] = &r;
+  for (std::size_t i = 0; i < rooms.size(); ++i) {
+    VentilationPathRow row;
+    row.room = rooms[i].info.id;
+    row.name = rooms[i].info.name;
+    const RoomRow* given = rowOf.count(row.room) ? rowOf.at(row.room) : nullptr;
+    if (given) row.level = given->level;
+    row.habitable = given && (given->daylightKind == "dwelling" || given->daylightKind == "other");
+    row.cooking = cooking[i] > 0;
+    row.supply = supply[i];
+    row.exhaust = exhaust[i];
+    // The shortest chain of undercuts to a room with an exhaust (breadth first).
+    std::vector<int> before(rooms.size(), -2);
+    std::vector<int> queue{static_cast<int>(i)};
+    before[i] = -1;
+    int found = -1;
+    for (std::size_t q = 0; q < queue.size() && found < 0; ++q) {
+      const int at = queue[q];
+      if (exhaust[static_cast<std::size_t>(at)] > 0) {
+        found = at;
+        break;
+      }
+      for (const int next : leadsTo[static_cast<std::size_t>(at)])
+        if (before[static_cast<std::size_t>(next)] == -2) {
+          before[static_cast<std::size_t>(next)] = at;
+          queue.push_back(next);
+        }
+    }
+    for (int at = found; at >= 0; at = before[static_cast<std::size_t>(at)])
+      row.path.insert(row.path.begin(), rooms[static_cast<std::size_t>(at)].info.name);
+    const bool anything = row.supply + row.exhaust + static_cast<int>(row.cooking) > 0 || !leadsTo[i].empty();
+    if (!row.habitable && !anything) continue;  // a room the ventilation does not touch
+    if (row.cooking && row.exhaust == 0) {
+      row.attention = true;
+      row.note = "こんろ等があるのに、この室に換気扇・レンジフードがありません（令第20条の3）";
+    } else if (row.habitable && row.path.empty()) {
+      row.attention = true;
+      row.note = "排気（換気扇・レンジフード）まで、この室からアンダーカット等でつながっていません";
+    } else if (row.habitable && row.supply == 0 && row.exhaust == 0) {
+      row.attention = true;
+      row.note = "給気口がありません（排気のある室へ空気が流れるだけ）";
+    }
+    out.push_back(std::move(row));
+  }
+  return out;
+}
+
 draw::Table scheduleTable(const Document& document, int which) {
   draw::Table t;
+  if (which == 14) {
+    // docs/338: the air's way through the rooms.
+    t.title = "換気経路の表";
+    t.headers = {"階", "室", "居室", "給気口", "排気", "排気までの経路", "確認事項"};
+    for (const VentilationPathRow& r : ventilationPaths(document)) {
+      std::string path;
+      for (const std::string& p : r.path) path += (path.empty() ? "" : " → ") + p;
+      t.rows.push_back({r.level, r.name, r.habitable ? "居室" : "", std::to_string(r.supply), std::to_string(r.exhaust),
+                        r.path.empty() ? "なし" : path, r.note.empty() ? "経路あり" : "要確認：" + r.note});
+    }
+    t.notes = {"平面図に置いた給気口・換気扇・レンジフード・アンダーカット等（place_device）から読んだ経路です。室は壁芯の輪郭で、その階の床から上の階の床まで。",
+               "アンダーカット等は、その向きの手前の室から先の室への空気の道として数えています。風量（有効換気量・換気回数）はここでは計算していません。"};
+    return t;
+  }
   if (which == 0) {
     const OpeningSchedule s = openingSchedule(document);
     t.title = "建具表";
@@ -5739,7 +5874,7 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
     planned.push_back({view.title, view, std::nullopt, {}});
   }
   // The first planned is the lowest storey's plan.
-  for (int which : {0, 1, 2, 3, 4, 6, 7, 12, 13, 8, 9, 11}) {  // docs/332: 耐力壁仕様一覧 and 存在壁量の算定 after the wall quantity  // docs/210: and the energy specification when given  // docs/208: and the wall quantity forms when there is a calculation  // docs/207: and daylight / ventilation when rooms have a kind
+  for (int which : {0, 1, 2, 3, 4, 6, 14, 7, 12, 13, 8, 9, 11}) {  // docs/338: the ventilation paths after daylight / ventilation  // docs/332: 耐力壁仕様一覧 and 存在壁量の算定 after the wall quantity  // docs/210: and the energy specification when given  // docs/208: and the wall quantity forms when there is a calculation  // docs/207: and daylight / ventilation when rooms have a kind
     draw::Table table = scheduleTable(document, which);
     if (!tableHasContent(table, which)) continue;
     if (spec.tablesWithPlan) {

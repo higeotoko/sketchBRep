@@ -524,6 +524,22 @@ std::string roomTagText(const RoomRow& room);
 // specification as given (docs/210); the same values and
 // notes as the CSV.
 draw::Table scheduleTable(const Document& document, int which);
+// docs/338: the air's way through the rooms, from the devices placed (docs/334): the supply vents and exhausts
+// (fans, range hoods) in each closed room (its wall-line outline, from its floor up to the next floor level), and
+// the undercuts as ways from the room on one side of a door to the room on the other (along their airflow). A
+// 居室 (a room given a daylight kind of dwelling / other) reaches an exhaust when it has one or a chain of
+// undercuts leads to a room that has. A record and a consistency check: the airflow itself is not worked out.
+struct VentilationPathRow {
+  ObjectId room;
+  std::string level, name;
+  bool habitable = false;
+  bool cooking = false;   // a cooking appliance in it (令第20条の3)
+  int supply = 0, exhaust = 0;
+  std::vector<std::string> path;  // the rooms the air goes through to an exhaust (this one first); empty: none
+  bool attention = false;
+  std::string note;
+};
+std::vector<VentilationPathRow> ventilationPaths(const Document& document);
 
 // The quantities of the layers of walls, floors and roofs (docs/172): per part and layer name,
 // how many elements have it, its area (each element's volume over its thickness: openings out,

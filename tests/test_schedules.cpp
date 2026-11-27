@@ -5680,3 +5680,52 @@ TEST_F(Schedules, CookingAppliancesCarryKindAndHeatOutput) {
     named = named || (i.kind == sbr::draw::Item::Kind::Text && i.text == "こんろ等（火を使用する設備器具）　ガスこんろ 都市ガス 10.78kW");
   EXPECT_TRUE(named);
 }
+
+// docs/338: the air's way: a 居室 reaches an exhaust through the undercuts placed at doors; a kitchen's appliance
+// wants an exhaust in its own room; the plan stage and the table say which rooms to check.
+TEST_F(Schedules, VentilationPathsFollowTheUndercuts) {
+  EXPECT_TRUE(sbr::doc::ventilationPaths(modeler.document()).empty());  // no devices: no table
+  const std::string wash = ok("create_room", {{"at", {6000, 3000}}, {"name", "洗面"}})["id"];
+  ok("set_room_daylight", {{"id", room}, {"kind", "dwelling"}});
+  ok("place_device", {{"kind", "supply_vent"}, {"position", {200, 3000, 2100}}, {"airflow", {1, 0}}});
+  ok("place_device", {{"kind", "exhaust_fan"}, {"position", {7800, 3000, 2100}}, {"airflow", {1, 0}}});
+  const auto rowOf = [&](const std::string& name) {
+    for (const auto& r : sbr::doc::ventilationPaths(modeler.document()))
+      if (r.name == name) return r;
+    ADD_FAILURE() << "no row " << name;
+    return sbr::doc::VentilationPathRow{};
+  };
+  const auto planRow = [&] {
+    for (const auto& c : sbr::doc::permitPlanChecks(modeler.document()))
+      if (c.item == "換気経路") return c;
+    ADD_FAILURE() << "no 換気経路 row";
+    return sbr::doc::PermitCheck{};
+  };
+  // No undercut yet: the 居室 does not reach the exhaust next door.
+  EXPECT_TRUE(rowOf("居間").attention);
+  EXPECT_TRUE(rowOf("居間").path.empty());
+  EXPECT_EQ(rowOf("洗面").exhaust, 1);
+  EXPECT_EQ(planRow().state, "要確認");
+  // An undercut at the partition (x = 4000), the air going east: 居間 → 洗面.
+  const std::string cut = ok("place_device", {{"kind", "undercut"}, {"position", {4000, 3000, 300}}, {"airflow", {1, 0}}})["id"];
+  auto living = rowOf("居間");
+  EXPECT_FALSE(living.attention) << living.note;
+  ASSERT_EQ(living.path.size(), 2u);
+  EXPECT_EQ(living.path[0], "居間");
+  EXPECT_EQ(living.path[1], "洗面");
+  EXPECT_EQ(living.supply, 1);
+  EXPECT_EQ(planRow().state, "入力済み");
+  const auto table = sbr::doc::scheduleTable(modeler.document(), 14);
+  EXPECT_EQ(table.title, "換気経路の表");
+  bool shown = false;
+  for (const auto& r : table.rows) shown = shown || (r[1] == "居間" && r[5] == "居間 → 洗面");
+  EXPECT_TRUE(shown);
+  // The other way round, the air would not reach it.
+  ok("delete", {{"ids", {cut}}});
+  ok("place_device", {{"kind", "undercut"}, {"position", {4000, 3000, 300}}, {"airflow", {-1, 0}}});
+  EXPECT_TRUE(rowOf("居間").attention);
+  // A cooking appliance in the 居室 without an exhaust of its own.
+  ok("place_device", {{"kind", "cooking_appliance"}, {"position", {1000, 5000, 850}}, {"note", "IH 5.8kW"}});
+  EXPECT_NE(rowOf("居間").note.find("令第20条の3"), std::string::npos);
+  (void)wash;
+}
