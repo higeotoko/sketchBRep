@@ -231,6 +231,30 @@ json quarterBalance(const json& in, const json& rows, const std::vector<Wall>& w
 }
 }  // namespace
 
+std::map<std::string, std::string> wallSymbols(const std::string& report) {
+  std::map<std::string, std::string> out;
+  const json r = json::parse(report, nullptr, false);
+  if (!r.is_object()) return out;
+  const json entries = r.value("table_snapshot", json::object()).value("entries", json::object());
+  std::vector<std::pair<double, std::string>> used;
+  for (const auto& w : r.value("walls", json::array())) {
+    if (!w.is_object() || !w.contains("spec") || !w.at("spec").is_string()) continue;
+    const std::string spec = w.at("spec").get<std::string>();
+    if (std::any_of(used.begin(), used.end(), [&](const auto& u) { return u.second == spec; })) continue;
+    const double ratio = entries.contains(spec) && entries.at(spec).contains("ratio") && entries.at(spec).at("ratio").is_number()
+                             ? entries.at(spec).at("ratio").get<double>()
+                             : 0.0;
+    used.push_back({ratio, spec});
+  }
+  std::sort(used.begin(), used.end());
+  for (std::size_t i = 0; i < used.size(); ++i) {
+    std::string letter;
+    for (std::size_t n = i + 1; n > 0; n = (n - 1) / 26) letter.insert(letter.begin(), static_cast<char>('A' + (n - 1) % 26));
+    out[used[i].second] = letter;
+  }
+  return out;
+}
+
 std::string wallTables() {
   static const std::string value = [] {
     std::string out;

@@ -1,5 +1,7 @@
 #pragma once
 #include "sbr/doc/Document.h"
+#include <map>
+#include <string>
 
 namespace sbr::doc { class Modeler; }
 
@@ -15,4 +17,7 @@ std::string wallTables();
 std::string normalizeWallInputs(const std::string& inputs);
 Result<std::string> checkWallQuantity(const doc::Document& document, const std::string& options = "{}");
 std::string wallQuantityCsv(const std::string& report);
+// docs/332: the wall symbols (壁記号 A, B, ...) of the specifications the report's walls use, as the MLIT manual's
+// 耐力壁図 marks the walls and lists them in its 耐力壁仕様一覧: by wall ratio, lowest first (then the spec id).
+std::map<std::string, std::string> wallSymbols(const std::string& report);
 }  // namespace sbr::construction

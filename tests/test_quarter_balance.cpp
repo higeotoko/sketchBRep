@@ -200,22 +200,39 @@ TEST(WallQuantityForms, TablesFollowTheCalculation) {
   EXPECT_EQ(x[0], "1階");
   EXPECT_EQ(x[1], "X");
   EXPECT_EQ(x[2], "50.00");
-  EXPECT_EQ(x[4], "10.00");  // earthquake
+  EXPECT_EQ(x[4], "1000.00");  // earthquake, cm (docs/332)
   EXPECT_EQ(x[5], "30.00");
-  EXPECT_EQ(x[7], "15.00");  // wind
-  EXPECT_EQ(x[8], "15.00");
-  EXPECT_EQ(x[9], "5.00");
+  EXPECT_EQ(x[7], "1500.00");  // wind
+  EXPECT_EQ(x[8], "1500.00");
+  EXPECT_EQ(x[9], "500.00");
   EXPECT_EQ(x[10], "要確認");
-  EXPECT_EQ(quantity.rows[1][9], "16.00");
+  EXPECT_EQ(quantity.rows[1][9], "1600.00");
   EXPECT_EQ(quantity.rows[1][10], "参考値内");
   ASSERT_FALSE(quantity.notes.empty());
   EXPECT_NE(quantity.notes[0].find("告示1100号"), std::string::npos);
   const auto walls = doc::scheduleTable(m.document(), 8);
   ASSERT_EQ(walls.rows.size(), 4u);
   EXPECT_EQ(walls.rows[0][2], "a");
-  EXPECT_NE(walls.rows[0][3].find("45"), std::string::npos) << walls.rows[0][3];
-  EXPECT_EQ(walls.rows[0][4], "2.00");
-  EXPECT_EQ(walls.rows[0][7], "4.00");
+  EXPECT_EQ(walls.rows[0][3], "A");  // docs/332: the wall symbol
+  EXPECT_NE(walls.rows[0][4].find("45"), std::string::npos) << walls.rows[0][4];
+  EXPECT_EQ(walls.rows[0][5], "200.00");
+  EXPECT_EQ(walls.rows[0][8], "400.00");
+  // docs/332: the specification list and the existing wall quantity, as the MLIT manual's 耐力壁図 tables.
+  const auto specs = doc::scheduleTable(m.document(), 12);
+  EXPECT_EQ(specs.title, "耐力壁仕様一覧");
+  ASSERT_EQ(specs.rows.size(), 1u);
+  EXPECT_EQ(specs.rows[0][0], "耐力壁");
+  EXPECT_EQ(specs.rows[0][1], "A");
+  EXPECT_EQ(specs.rows[0][3], "2.00");
+  const auto existing = doc::scheduleTable(m.document(), 13);
+  EXPECT_EQ(existing.title, "存在壁量の算定");
+  ASSERT_EQ(existing.rows.size(), 2u);  // X and Y, one symbol each
+  EXPECT_EQ(existing.rows[0][0], "1階／X 方向");
+  EXPECT_EQ(existing.rows[0][1], "A");
+  EXPECT_EQ(existing.rows[0][3], "250.00");  // 2 m + 0.5 m
+  EXPECT_EQ(existing.rows[0][4], "500.00");
+  EXPECT_EQ(existing.rows[0][5], "500.00");
+  EXPECT_EQ(existing.rows[1][5], "1600.00");
   const auto quarters = doc::scheduleTable(m.document(), 9);
   ASSERT_GE(quarters.rows.size(), 4u);  // X and Y, two side parts each
   EXPECT_EQ(quarters.rows[0][0], "1階");
@@ -224,7 +241,7 @@ TEST(WallQuantityForms, TablesFollowTheCalculation) {
   EXPECT_EQ(quarters.rows[0][7], "0.25");
   EXPECT_EQ(quarters.rows[0][8], "要確認");
   // The same tables through the commands.
-  for (const char* name : {"wall_quantity", "bracing_walls", "quarters"}) {
+  for (const char* name : {"wall_quantity", "bracing_walls", "quarters", "bracing_specs", "existing_walls"}) {
     const auto path = (std::filesystem::temp_directory_path() / (std::string(name) + "-form.dxf")).string();
     const json r = json::parse(api.execute(json{{"command", "export_schedule"}, {"args", {{"path", path}, {"table", name}}}}.dump()));
     EXPECT_TRUE(r.value("ok", false)) << r.dump();
@@ -253,7 +270,7 @@ TEST(WallQuantityForms, BracingPlanShowsTheWallsAndTheSideParts) {
     if (i.kind == draw::Item::Kind::Polyline && i.pen == draw::Pen::Hidden && i.closed) ++dashedBoxes;
   }
   for (const auto& mark : view->bracingMarks) {
-    markA = markA || mark.text.rfind("a X 倍率2.0 4.00m", 0) == 0;
+    markA = markA || mark.text == "A";  // docs/332: the wall symbol only
     side = side || mark.text.find("側端 必要2.00m 存在4.00m") != std::string::npos;
   }
   EXPECT_EQ(thick, 4);

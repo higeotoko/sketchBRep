@@ -5063,7 +5063,7 @@ draw::Table scheduleTable(const Document& document, int which) {
       t.rows.push_back({"構造", settings.wallCalculation != "{}" ? "木造（在来軸組、壁量の計算の入力から）" : missing, "構造の種別"});
     t.notes = {"モデルから読んだ今の値です。法の制限（建蔽率・容積率の上限、高さの制限など）との比較はしていません。",
                "モデルに無い項目は「計画概要の項目」で入れた値です（申請書 第二面・第三面の項目から。様式の原文・申請先の様式と照らすのは申請時）。"};
-  } else if (which == 7 || which == 8 || which == 9) {
+  } else if (which == 7 || which == 8 || which == 9 || which == 12 || which == 13) {
     // docs/208: the wall quantity forms, from the same calculation as check_wall_quantity.
     const auto made = construction::checkWallQuantity(document);
     const nlohmann::json report = made ? nlohmann::json::parse(*made, nullptr, false) : nlohmann::json();
@@ -5085,22 +5085,80 @@ draw::Table scheduleTable(const Document& document, int which) {
     };
     const nlohmann::json entries = report.is_object() ? report.value("table_snapshot", nlohmann::json::object()).value("entries", nlohmann::json::object())
                                                       : nlohmann::json::object();
+    // docs/332: lengths of wall in cm, as 令第46条 gives the coefficients (cm/m2) and the MLIT manual's 壁量判定 writes them.
+    const auto cm = [](const nlohmann::json& j, const char* key) {
+      return j.is_object() && j.contains(key) && j.at(key).is_number() ? number(j.at(key).get<double>() * 100, 2) : std::string();
+    };
+    const auto symbols = made ? construction::wallSymbols(*made) : std::map<std::string, std::string>();
+    if (which == 12) {
+      // docs/332: 耐力壁仕様一覧 (the manual's 8-8): 種類, 壁記号, 材種名, 壁倍率.
+      t.title = "耐力壁仕様一覧";
+      t.headers = {"種類", "壁記号", "材種名", "壁倍率"};
+      std::vector<std::pair<std::string, std::string>> rows;
+      for (const auto& [spec, letter] : symbols) rows.push_back({letter, spec});
+      std::sort(rows.begin(), rows.end(), [](const auto& l, const auto& r) {
+        return l.first.size() != r.first.size() ? l.first.size() < r.first.size() : l.first < r.first;
+      });
+      for (const auto& [letter, spec] : rows) {
+        const nlohmann::json entry = entries.contains(spec) ? entries.at(spec) : nlohmann::json::object();
+        t.rows.push_back({"耐力壁", letter, entry.value("name", spec), num(entry, "ratio", 2)});
+      }
+      t.notes = {"壁記号は壁量の図（耐力壁図）で壁の脇に書いた英字。壁倍率の低い仕様から A、B…。"};
+      return t;
+    }
+    if (which == 13) {
+      // docs/332: 存在壁量の算定 (the manual's 8-7, 8-10): per storey and direction and wall symbol, the length and the
+      // wall quantity (length x ratio, with the height factor as the calculation applied it), and their sum.
+      t.title = "存在壁量の算定";
+      t.headers = {"階・方向", "壁記号", "壁倍率", "壁長 (cm)", "存在壁量 (cm)", "存在壁量 合計 (cm)"};
+      struct Sum {
+        double length = 0, quantity = 0, ratio = 0;
+      };
+      std::map<std::pair<std::string, std::string>, std::map<std::string, Sum>> sums;  // (floor, dir) -> symbol -> sum
+      std::vector<std::pair<std::string, std::string>> order;
+      for (const auto& w : report.value("walls", nlohmann::json::array())) {
+        if (w.value("status", std::string()) != "evaluated" || !w.contains("length_mm") || !w.at("length_mm").is_number() ||
+            !w.contains("effective_m") || !w.at("effective_m").is_number())
+          continue;
+        const std::pair<std::string, std::string> key{w.value("floor", std::string()), w.value("direction", std::string())};
+        if (!sums.count(key)) order.push_back(key);
+        const std::string spec = w.value("spec", std::string());
+        Sum& s = sums[key][symbols.count(spec) ? symbols.at(spec) : spec];
+        s.length += w.at("length_mm").get<double>() / 10;
+        s.quantity += w.at("effective_m").get<double>() * 100;
+        if (w.contains("ratio") && w.at("ratio").is_number()) s.ratio = w.at("ratio").get<double>();
+      }
+      for (const auto& key : order) {
+        const nlohmann::json floor = floors.count(key.first) ? floors.at(key.first) : nlohmann::json::object();
+        const std::string name = floor.value("name", key.first) + "／" + key.second + " 方向";
+        double total = 0;
+        for (const auto& [letter, s] : sums.at(key)) total += s.quantity;
+        bool first = true;
+        for (const auto& [letter, s] : sums.at(key)) {
+          t.rows.push_back({first ? name : std::string(), letter, number(s.ratio, 2), number(s.length, 2), number(s.quantity, 2),
+                            first ? number(total, 2) : std::string()});
+          first = false;
+        }
+      }
+      t.notes = {"壁量の計算に入れた耐力壁だけ。存在壁量は壁長×壁倍率（高さによる係数を掛けた壁は、その分を含む）。"};
+      return t;
+    }
     if (which == 7) {
       t.title = "壁量計算表";
-      t.headers = {"階", "方向", "床面積 (m2)", "地震 係数 (cm/m2)", "地震 必要 (m)", "見付面積 (m2)", "風 係数 (cm/m2)", "風 必要 (m)",
-                   "必要壁量 (m)", "存在壁量 (m)", "照合", "理由"};
+      t.headers = {"階", "方向", "床面積 (m2)", "地震 係数 (cm/m2)", "地震 必要 (cm)", "見付面積 (m2)", "風 係数 (cm/m2)", "風 必要 (cm)",
+                   "必要壁量 (cm)", "存在壁量 (cm)", "照合", "理由"};
       const std::string windCoefficient = num(inputs, "wind_coefficient_cm_m2", 0);
       for (const auto& row : report.value("rows", nlohmann::json::array())) {
         const std::string id = row.value("floor", std::string()), direction = row.value("direction", std::string());
         if (id.empty()) continue;
         const nlohmann::json floor = floors.count(id) ? floors.at(id) : nlohmann::json::object();
-        t.rows.push_back({row.value("name", id), direction, num(floor, "area_m2", 2), num(row, "earthquake_cm_m2", 1), num(row, "earthquake_m", 2),
-                          num(floor, direction == "X" ? "wind_x_m2" : "wind_y_m2", 2), windCoefficient, num(row, "wind_m", 2),
-                          num(row, "required_m", 2), num(row, "existing_m", 2), state(row.value("status", std::string())), reasons(row)});
+        t.rows.push_back({row.value("name", id), direction, num(floor, "area_m2", 2), num(row, "earthquake_cm_m2", 1), cm(row, "earthquake_m"),
+                          num(floor, direction == "X" ? "wind_x_m2" : "wind_y_m2", 2), windCoefficient, cm(row, "wind_m"),
+                          cm(row, "required_m"), cm(row, "existing_m"), state(row.value("status", std::string())), reasons(row)});
       }
     } else if (which == 8) {
       t.title = "耐力壁の一覧";
-      t.headers = {"階", "方向", "符号", "仕様", "長さ (m)", "倍率", "高さの係数", "有効長さ (m)", "状態", "条件・理由"};
+      t.headers = {"階", "方向", "符号", "壁記号", "仕様", "長さ (cm)", "倍率", "高さの係数", "存在壁量 (cm)", "状態", "条件・理由"};
       for (const auto& w : report.value("walls", nlohmann::json::array())) {
         const std::string id = w.value("floor", std::string());
         const nlohmann::json floor = floors.count(id) ? floors.at(id) : nlohmann::json::object();
@@ -5108,8 +5166,9 @@ draw::Table scheduleTable(const Document& document, int which) {
         const std::string specName = entries.contains(spec) ? entries.at(spec).value("name", spec) : spec;
         const std::string why = reasons(w);
         t.rows.push_back({floor.value("name", id), w.value("direction", std::string()), w.contains("id") && w.at("id").is_string() ? w.at("id").get<std::string>() : std::string(),
-                          specName, w.contains("length_mm") && w.at("length_mm").is_number() ? number(w.at("length_mm").get<double>() / 1000, 2) : std::string(),
-                          num(w, "ratio", 1), num(w, "height_factor", 2), num(w, "effective_m", 2),
+                          symbols.count(spec) ? symbols.at(spec) : std::string(),
+                          specName, w.contains("length_mm") && w.at("length_mm").is_number() ? number(w.at("length_mm").get<double>() / 10, 2) : std::string(),
+                          num(w, "ratio", 1), num(w, "height_factor", 2), cm(w, "effective_m"),
                           w.value("status", std::string()) == "evaluated" ? "計算に入れた" : "未評価",
                           why.empty() ? w.value("conditions", std::string()) : why});
       }
@@ -5617,7 +5676,7 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
     planned.push_back({view.title, view, std::nullopt, {}});
   }
   // The first planned is the lowest storey's plan.
-  for (int which : {0, 1, 2, 3, 4, 6, 7, 8, 9, 11}) {  // docs/210: and the energy specification when given  // docs/208: and the wall quantity forms when there is a calculation  // docs/207: and daylight / ventilation when rooms have a kind
+  for (int which : {0, 1, 2, 3, 4, 6, 7, 12, 13, 8, 9, 11}) {  // docs/332: 耐力壁仕様一覧 and 存在壁量の算定 after the wall quantity  // docs/210: and the energy specification when given  // docs/208: and the wall quantity forms when there is a calculation  // docs/207: and daylight / ventilation when rooms have a kind
     draw::Table table = scheduleTable(document, which);
     if (!tableHasContent(table, which)) continue;
     if (spec.tablesWithPlan) {

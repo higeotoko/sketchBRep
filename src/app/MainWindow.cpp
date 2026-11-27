@@ -6338,7 +6338,9 @@ void MainWindow::showSchedulesDialog() {
                                          std::tuple<int, const char*, QString>{8, "bracingWallTable", tr("耐力壁")},
                                          std::tuple<int, const char*, QString>{9, "quarterTable", tr("四分割")},
                                          std::tuple<int, const char*, QString>{10, "summaryTable", tr("計画概要")},
-                                         std::tuple<int, const char*, QString>{11, "energyTable", tr("省エネ仕様")}}) {
+                                         std::tuple<int, const char*, QString>{11, "energyTable", tr("省エネ仕様")},
+                                         std::tuple<int, const char*, QString>{12, "bracingSpecTable", tr("耐力壁仕様")},  // docs/332
+                                         std::tuple<int, const char*, QString>{13, "existingWallTable", tr("存在壁量")}}) {
     const draw::Table form = doc::scheduleTable(document, which);
     auto* page = new QWidget;
     auto* box = new QVBoxLayout(page);
@@ -6361,16 +6363,18 @@ void MainWindow::showSchedulesDialog() {
   auto* save = buttons->addButton(tr("この表を CSV に保存..."), QDialogButtonBox::ActionRole);
   save->setObjectName(QStringLiteral("scheduleSaveCsv"));
   connect(save, &QPushButton::clicked, &dialog, [this, tabs, &dialog] {
-    const QString names[] = {tr("建具表"), tr("室の表"), tr("面積の表"), tr("仕上げ表"), tr("種類の表"), tr("層の数量")};
-    const QString path = QFileDialog::getSaveFileName(&dialog, tr("表を CSV に保存"), names[tabs->currentIndex()] + QStringLiteral(".csv"),
+    // docs/332: the tab's own name (the list of six names ran out at the seventh tab).
+    const QString name = tabs->tabText(tabs->currentIndex()).remove(QLatin1Char('&'));
+    const QString path = QFileDialog::getSaveFileName(&dialog, tr("表を CSV に保存"), name + QStringLiteral(".csv"),
                                                       tr("CSV (*.csv)"));
     if (!path.isEmpty()) saveScheduleCsv(tabs->currentIndex(), path);
   });
   auto* drawing = buttons->addButton(tr("この表を図面に保存..."), QDialogButtonBox::ActionRole);
   drawing->setObjectName(QStringLiteral("scheduleSaveDrawing"));
   connect(drawing, &QPushButton::clicked, &dialog, [this, tabs, &dialog] {
-    const QString names[] = {tr("建具表"), tr("室の表"), tr("面積の表"), tr("仕上げ表"), tr("種類の表"), tr("層の数量")};
-    const QString path = QFileDialog::getSaveFileName(&dialog, tr("表を図面に保存"), names[tabs->currentIndex()] + QStringLiteral(".pdf"),
+    // docs/332: the tab's own name (the list of six names ran out at the seventh tab).
+    const QString name = tabs->tabText(tabs->currentIndex()).remove(QLatin1Char('&'));
+    const QString path = QFileDialog::getSaveFileName(&dialog, tr("表を図面に保存"), name + QStringLiteral(".pdf"),
                                                       tr("PDF (*.pdf);;DXF (*.dxf);;Jw_cad (*.jww)"));
     if (!path.isEmpty()) saveScheduleDrawing(tabs->currentIndex(), path);
   });

@@ -15004,7 +15004,7 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
     auto* save=dialog->findChild<QPushButton*>(QStringLiteral("scheduleSaveCsv"));
     if(!tabs||!types||!each||!rooms||!areas||!note||!save){why=QStringLiteral("a table is missing");dialog->reject();return;}
     // docs/136: the types of floors and roofs as the fifth tab.
-    shown=tabs->count()==12&&dialog->findChild<QTableWidget*>(QStringLiteral("energyTable"))&&dialog->findChild<QTableWidget*>(QStringLiteral("summaryTable"))&&dialog->findChild<QTableWidget*>(QStringLiteral("wallQuantityTable"))&&dialog->findChild<QTableWidget*>(QStringLiteral("daylightTable"))&&dialog->findChild<QTableWidget*>(QStringLiteral("layerQuantityTable"))&&dialog->findChild<QTableWidget*>(QStringLiteral("typeTable"))&&types->rowCount()==2&&types->item(0,0)->text()==QStringLiteral("AW1")&&
+    shown=tabs->count()==14&&dialog->findChild<QTableWidget*>(QStringLiteral("energyTable"))&&dialog->findChild<QTableWidget*>(QStringLiteral("summaryTable"))&&dialog->findChild<QTableWidget*>(QStringLiteral("wallQuantityTable"))&&dialog->findChild<QTableWidget*>(QStringLiteral("daylightTable"))&&dialog->findChild<QTableWidget*>(QStringLiteral("layerQuantityTable"))&&dialog->findChild<QTableWidget*>(QStringLiteral("typeTable"))&&types->rowCount()==2&&types->item(0,0)->text()==QStringLiteral("AW1")&&
           types->item(0,2)->text()==QStringLiteral("引違い")&&types->item(0,5)->text()==QStringLiteral("2")&&
           types->item(1,0)->text()==QStringLiteral("AD1")&&types->item(1,1)->text()==QStringLiteral("扉")&&
           each->rowCount()==3&&

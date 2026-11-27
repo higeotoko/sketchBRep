@@ -1409,6 +1409,8 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
       return proj.uv(gp_Pnt(xy.at(0).get<double>(), xy.at(1).get<double>(), z));
     };
     int walls = 0;
+    const auto symbols = made ? construction::wallSymbols(*made) : std::map<std::string, std::string>();
+    const double paperScale = spec.paperScale > 0 ? spec.paperScale : 100.0;
     if (report.is_object()) {
       for (const auto& w : report.value("walls", nlohmann::json::array())) {
         if (w.value("floor", std::string()) != spec.bracingFloor || !w.contains("start") || !w.contains("end")) continue;
@@ -1418,15 +1420,18 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
         line.pen = w.value("status", std::string()) == "evaluated" ? Pen::Cut : Pen::Hidden;
         line.points = {a, b};
         view.items.push_back(line);
-        const std::string id = w.contains("id") && w.at("id").is_string() ? w.at("id").get<std::string>() : std::string();
-        std::string label = id + " " + w.value("direction", std::string());
-        if (w.contains("ratio") && w.at("ratio").is_number()) label += " 倍率" + std::to_string(w.at("ratio").get<double>()).substr(0, 3);
-        if (w.contains("effective_m") && w.at("effective_m").is_number()) {
-          char buf[32];
-          std::snprintf(buf, sizeof buf, " %.2fm", w.at("effective_m").get<double>());
-          label += buf;
+        // docs/332: the wall symbol (壁記号) of its specification beside the wall, on the side away from the brace
+        // marks (docs/331); the specifications, ratios and lengths are in the tables 耐力壁仕様一覧 / 存在壁量の算定.
+        const std::string specId = w.value("spec", std::string());
+        const std::string label = symbols.count(specId) ? symbols.at(specId) : specId;
+        gp_Vec2d wallDir(a, b);
+        gp_Pnt2d at((a.X() + b.X()) / 2, (a.Y() + b.Y()) / 2);
+        if (wallDir.Magnitude() > 1.0) {
+          wallDir.Normalize();
+          if (wallDir.X() < -1e-9 || (std::abs(wallDir.X()) <= 1e-9 && wallDir.Y() < 0)) wallDir.Reverse();
+          at.Translate(gp_Vec2d(wallDir.Y(), -wallDir.X()) * (100.0 + 2.5 * paperScale));
         }
-        view.bracingMarks.push_back({{(a.X() + b.X()) / 2, (a.Y() + b.Y()) / 2}, std::move(label), 2.5});
+        view.bracingMarks.push_back({at, label, 2.5});
         ++walls;
       }
       for (const auto& row : report.value("quarter_balance", nlohmann::json::array())) {
@@ -1448,7 +1453,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
         }
       }
     }
-    view.calculationNotes.push_back(walls > 0 ? "太線：壁量に入れた耐力壁（符号・方向・倍率・有効長さ）　破線：入れていない壁、四分割の側端部分"
+    view.calculationNotes.push_back(walls > 0 ? "太線：壁量に入れた耐力壁（脇の英字は壁記号。仕様・倍率・長さは耐力壁仕様一覧と存在壁量の算定の表）　破線：入れていない壁、四分割の側端部分"
                                               : "この階の耐力壁は、壁量の計算の入力にありません");
   }
 
