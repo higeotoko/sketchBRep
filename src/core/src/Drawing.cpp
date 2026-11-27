@@ -2131,6 +2131,12 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     std::optional<std::map<doc::ObjectId, std::string>> roomTags;
     std::map<doc::ObjectId, std::vector<std::string>> roomLines;  // docs/298
     std::map<doc::ObjectId, std::vector<gp_Pnt2d>> roomOutlines;
+    // docs/334: the room tags' line blocks and the devices drawn, so a tag can step off a device.
+    struct TagBlock {
+      std::size_t first, count;
+    };
+    std::vector<TagBlock> tagBlocks;
+    std::vector<gp_Pnt2d> devicePoints;
     for (const doc::Object& o : document.objects()) {
       if (!selected(document, o, spec) || o.attributes.count("grid_part")) continue;
       const gp_Trsf w = document.worldTransform(o);
@@ -2172,6 +2178,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
           }
           const double unit = spec.paperScale > 0 ? spec.paperScale : 100.0;
           for (Item& item : deviceSymbol(device->second, proj.uv(p), airflow, unit)) view.items.push_back(std::move(item));
+          devicePoints.push_back(proj.uv(p));
           const auto note = o.attributes.find("device_note");
           view.symbols.insert("device:" + device->second + "|" + (note != o.attributes.end() ? note->second : std::string()));
           continue;
@@ -2229,6 +2236,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
             const double step = 3.2 * sp;  // paper mm between lines
             const gp_Pnt2d at = text.points.front();
             const double top = at.Y() + step * (static_cast<double>(lines->second.size()) - 1) / 2;
+            tagBlocks.push_back({view.items.size(), lines->second.size()});
             for (std::size_t k = 0; k < lines->second.size(); ++k) {
               Item line = text;
               line.text = lines->second[k];
@@ -2245,6 +2253,39 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
         text.height = 3.5;
         view.items.push_back(text);
         if (t->target) view.items.push_back(line(Pen::Text, proj.uv(t->target->Transformed(w)), proj.uv(p)));
+      }
+    }
+    // docs/334: a room's tag that would lie over a device (a detector in the middle of the room, as they often are)
+    // steps down below it, the device keeping its place (where it is, is what the plan shows).
+    if (!devicePoints.empty() && !tagBlocks.empty()) {
+      const double sp = spec.paperScale > 0 ? spec.paperScale : 100.0;
+      const auto widthOf = [](const Item& i) {  // paper mm: full-width characters a height wide, others 0.6
+        double w = 0;
+        for (std::size_t k = 0; k < i.text.size();) {
+          const unsigned char c = static_cast<unsigned char>(i.text[k]);
+          const std::size_t n = c < 0x80 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4;
+          w += (n >= 3 ? 1.0 : 0.6) * i.height;
+          k += n;
+        }
+        return w;
+      };
+      const double reach = 3.6 * sp;  // a device symbol's half size and a gap (paper mm)
+      for (const TagBlock& b : tagBlocks) {
+        double x0 = 1e300, x1 = -1e300, y0 = 1e300, y1 = -1e300;
+        for (std::size_t k = b.first; k < b.first + b.count; ++k) {
+          const Item& i = view.items[k];
+          const double half = widthOf(i) * sp / 2, h = i.height * sp / 2;
+          x0 = std::min(x0, i.points.front().X() - half);
+          x1 = std::max(x1, i.points.front().X() + half);
+          y0 = std::min(y0, i.points.front().Y() - h);
+          y1 = std::max(y1, i.points.front().Y() + h);
+        }
+        double drop = 0;
+        for (const gp_Pnt2d& d : devicePoints)
+          if (d.X() > x0 - reach && d.X() < x1 + reach && d.Y() > y0 - reach && d.Y() < y1 + reach)
+            drop = std::max(drop, y1 - (d.Y() - reach));
+        if (drop <= 0) continue;
+        for (std::size_t k = b.first; k < b.first + b.count; ++k) view.items[k].points.front().SetY(view.items[k].points.front().Y() - drop);
       }
     }
   }

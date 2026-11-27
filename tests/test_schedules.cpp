@@ -5553,7 +5553,7 @@ TEST_F(Schedules, DevicesAreDrawnOnTheirStoreysPlan) {
   };
   EXPECT_EQ(row("住宅用防災機器").state, "未入力");
   EXPECT_EQ(row("給気口・排気機の位置").state, "未入力");
-  ok("place_device", {{"kind", "smoke_detector"}, {"position", {2000, 2000, 2400}}});
+  ok("place_device", {{"kind", "smoke_detector"}, {"position", {2000, 3000, 2400}}});  // on the room's tag
   ok("place_device", {{"kind", "exhaust_fan"}, {"position", {1000, 100, 2100}}, {"airflow", {0, -1}}, {"note", "100φ・防火覆い付"}});
   ok("place_device", {{"kind", "supply_vent"}, {"position", {3000, 100, 2100}}, {"airflow", {0, 1}}});
   EXPECT_FALSE(call("place_device", {{"kind", "exhaust_fan"}, {"position", {0, 0, 2100}}}).value("ok", true));  // no airflow
@@ -5568,6 +5568,11 @@ TEST_F(Schedules, DevicesAreDrawnOnTheirStoreysPlan) {
   bool smoke = false;
   for (const auto& i : view->items) smoke = smoke || (i.kind == sbr::draw::Item::Kind::Text && i.text == "煙");
   EXPECT_TRUE(smoke);
+  // The room's tag stepped down off the detector (its name's line below the symbol's reach).
+  bool tagMoved = false;
+  for (const auto& i : view->items)
+    if (i.kind == sbr::draw::Item::Kind::Text && i.text == "居間") tagMoved = i.points.front().Y() + 150.0 < 3000.0 - 360.0 + 1e-6;
+  EXPECT_TRUE(tagMoved);
   EXPECT_TRUE(view->symbols.count("device:smoke_detector|"));
   EXPECT_TRUE(view->symbols.count("device:exhaust_fan|100φ・防火覆い付"));
   EXPECT_TRUE(view->symbols.count("device:supply_vent|"));
