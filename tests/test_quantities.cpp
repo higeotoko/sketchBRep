@@ -494,3 +494,27 @@ TEST_F(Quantities, ColumnTableComparesTheRequiredDiameter) {
   one.widthMm = one.depthMm = 120;
   EXPECT_EQ(doc::columnTable({one}).rows[0][10], "規定内");
 }
+
+// docs/327: a plan circles the through columns its cut passes, and says so for the legend.
+TEST_F(Quantities, PlansCircleTheThroughColumns) {
+  frame();
+  int through = 0;
+  for (const auto& o : m.document().objects())
+    if (const auto k = o.attributes.find("kind"); k != o.attributes.end() && k->second == "through_column") ++through;
+  ASSERT_GT(through, 0);
+  draw::ViewSpec spec = draw::planView(1000.0);
+  spec.paperScale = 100;
+  const auto view = draw::makeView(m.document(), spec);
+  ASSERT_TRUE(view) << view.error();
+  int rings = 0;
+  for (const auto& item : view->items)
+    rings += item.kind == draw::Item::Kind::Arc && item.pen == draw::Pen::Visible && item.radius >= 180.0 - 1e-9 &&
+             std::abs(item.sweep - 2 * M_PI) < 1e-9;
+  EXPECT_EQ(rings, through);
+  EXPECT_TRUE(view->symbols.count("through_column"));
+  // A framing plan (the members drawn as they are) does not ring them.
+  spec.framingPreset = "first_floor";
+  const auto framing = draw::makeView(m.document(), spec);
+  ASSERT_TRUE(framing);
+  EXPECT_FALSE(framing->symbols.count("through_column"));
+}

@@ -218,6 +218,7 @@ struct View {
   std::vector<std::string> notes;  // what was left out, with the reason
   std::vector<std::string> calculationNotes;  // provenance only; no wall-quantity verdict on a geometry sheet
   std::set<int> hatchPatterns;  // docs/326: the cut layers' hatching drawn (1 single lines: boards, 2 crossed: timber)
+  std::set<std::string> symbols;  // docs/327: marks drawn that the legend explains ("through_column")
   std::optional<gp_Dir2d> trueNorth;
   std::optional<Table> siteGroundTable;
 };
@@ -251,6 +252,7 @@ struct Sheet {
   std::string title;        // the drawing's name
   std::vector<std::string> notes;  // e.g. "does not fit A1 at 1:50"
   std::set<int> hatchPatterns;     // docs/326: as the view's, for the legend of a sheet the drawing is put on
+  std::set<std::string> symbols;   // docs/327: as the view's
 };
 
 // The table on the smallest paper A4..A1 that holds it (or the paper asked for), in the frame

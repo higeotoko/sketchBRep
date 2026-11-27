@@ -269,7 +269,8 @@ void frameAndTitle(std::vector<Item>& items, const Paper* paper, const SheetSpec
 // docs/303: the legend (凡例) of the lines whose meaning is not written beside them, from the pens the
 // sheet uses: a short sample in the pen itself (so it follows the pen table) and its name, in the
 // strip left of the title block (it takes no room from the drawing).
-void appendLegend(std::vector<Item>& items, const Paper* paper, double s, const std::set<int>& hatchPatterns = {}) {
+void appendLegend(std::vector<Item>& items, const Paper* paper, double s, const std::set<int>& hatchPatterns = {},
+                  const std::set<std::string>& symbols = {}) {
   auto P = [&](double x, double y) { return gp_Pnt2d(x * s, y * s); };
   static constexpr std::pair<Pen, const char*> kLegend[] = {
       {Pen::Hidden, "隠れ線"},          {Pen::Grid, "通り芯・中心線"},   {Pen::Boundary, "敷地境界線"},
@@ -286,6 +287,7 @@ void appendLegend(std::vector<Item>& items, const Paper* paper, double s, const 
   std::vector<std::pair<int, const char*>> hatches;
   if (hatchPatterns.count(2)) hatches.push_back({2, "構造用の木材の切り口（柱・間柱・土台など）"});
   if (hatchPatterns.count(1)) hatches.push_back({1, "合板・野地板の切り口"});
+  if (symbols.count("through_column")) hatches.push_back({3, "通し柱"});  // docs/327: a ringed column
   if (!rows.empty() || !hatches.empty()) {
     constexpr double rowH = 5.0, sample = 14.0, colW = 75.0;
     const int perColumn = static_cast<int>((kTitleH - rowH) / rowH);
@@ -305,6 +307,18 @@ void appendLegend(std::vector<Item>& items, const Paper* paper, double s, const 
       const double x = x0 + col * colW, y = top - (r + 1.5) * rowH;
       if (x + sample + 4 > x0 + room) break;
       const double y0 = y - 1.4, y1 = y + 1.4;
+      if (hatches[h].first == 3) {  // docs/327: the column's cut (a small square) in its ring
+        Item square;
+        square.kind = Item::Kind::Polyline;
+        square.pen = Pen::Cut;
+        square.closed = true;
+        const double cx = x + sample / 2, half = 0.6;
+        square.points = {P(cx - half, y - half), P(cx + half, y - half), P(cx + half, y + half), P(cx - half, y + half)};
+        items.push_back(square);
+        items.push_back(circle(Pen::Visible, P(cx, y), 1.8 * s));
+        items.push_back(text(Pen::Text, P(x + sample + 2, y), hatches[h].second, 2.5, 0, 1));
+        continue;
+      }
       Item box;
       box.kind = Item::Kind::Polyline;
       box.pen = Pen::Cut;
@@ -608,7 +622,9 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
     appendNorthMark(items, P(ax1 - 15, ay1 - 16), s, view.trueNorth);
   }
   sheet.hatchPatterns = view.hatchPatterns;  // docs/326
-  if (frame && !spec.compactDiagram && view.spec.framingPreset.empty()) appendLegend(items, paper, s, view.hatchPatterns);
+  sheet.symbols = view.symbols;              // docs/327
+  if (frame && !spec.compactDiagram && view.spec.framingPreset.empty())
+    appendLegend(items, paper, s, view.hatchPatterns, view.symbols);
   if (frame) frameAndTitle(items, paper, spec, title, s);
   if (!view.spec.framingPreset.empty()) {
     items.push_back(
@@ -826,9 +842,12 @@ Result<Sheet> combineSheets(const std::vector<Sheet>& drawings, const SheetSpec&
     }
   }
   if (spec.north) appendNorthMark(items, gp_Pnt2d((ax1 - 15) * s, (ay1 - 16) * s), s, trueNorth);
-  for (const Sheet& d : drawings) sheet.hatchPatterns.insert(d.hatchPatterns.begin(), d.hatchPatterns.end());
+  for (const Sheet& d : drawings) {
+    sheet.hatchPatterns.insert(d.hatchPatterns.begin(), d.hatchPatterns.end());
+    sheet.symbols.insert(d.symbols.begin(), d.symbols.end());
+  }
   if (spec.frame) {
-    appendLegend(items, paper, s, sheet.hatchPatterns);
+    appendLegend(items, paper, s, sheet.hatchPatterns, sheet.symbols);
     frameAndTitle(items, paper, spec, sheet.title, s);
   }
   sheet.items = std::move(items);
@@ -918,7 +937,8 @@ Result<Sheet> layoutSheetWithTables(const View& view, const std::vector<Table>& 
     ty -= sizes[k].h + gap;
   }
   sheet.hatchPatterns = view.hatchPatterns;  // docs/326
-  if (spec.frame && view.spec.framingPreset.empty()) appendLegend(items, paper, s, view.hatchPatterns);
+  sheet.symbols = view.symbols;              // docs/327
+  if (spec.frame && view.spec.framingPreset.empty()) appendLegend(items, paper, s, view.hatchPatterns, view.symbols);
   if (spec.frame) frameAndTitle(items, paper, spec, sheetName, s);
   sheet.items = std::move(items);
   return sheet;
