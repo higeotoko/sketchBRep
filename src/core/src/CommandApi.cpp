@@ -1272,6 +1272,27 @@ const std::vector<CommandDef>& commands() {
          if (a.contains("target")) target = point(a, "target");
          return idResult(must(m.createText(point(a, "position"), target, text(a, "text"))));
        }},
+      {"place_device",
+       "docs/334: Place a device the plan shows where it is (規則1条の3 表1: 給気口・排気機の位置、住宅用防災機器の位置及び種類): "
+       "kind smoke_detector / heat_detector / exhaust_fan / range_hood / supply_vent / water_heater / floor_hatch / undercut, "
+       "'position' [x,y,z] in mm (z its height, e.g. the storey's FL + 2100), 'airflow' [dx,dy] the way its air goes "
+       "(fans and range hoods: out; supply vents: in; undercuts: through the door) and an optional one-line 'note' for the "
+       "legend (\"100φ・防火覆い付 FL+2100\"). Drawn on the plan of its storey with the MLIT manual's symbols.",
+       SCHEMA({"type": "object", "properties": {
+         "kind": {"type": "string", "enum": ["smoke_detector", "heat_detector", "exhaust_fan", "range_hood", "supply_vent", "water_heater", "floor_hatch", "undercut"]},
+         "position": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+         "airflow": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+         "note": {"type": "string"}}, "required": ["kind", "position"]}),
+       [](doc::Modeler& m, const json& a) {
+         std::optional<gp_Dir> airflow;
+         if (a.contains("airflow")) {
+           const auto& v = a.at("airflow");
+           const double x = v.at(0).get<double>(), y = v.at(1).get<double>();
+           if (std::hypot(x, y) < 1e-9) throw ApiError("'airflow' must not be zero");
+           airflow = gp_Dir(x, y, 0);
+         }
+         return idResult(must(m.placeDevice(text(a, "kind"), point(a, "position"), airflow, textOr(a, "note", {}))));
+       }},
       {"set_text", "Change the text of a dimension (empty = measured value) or a text note.",
        SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "text": {"type": "string"}},
                "required": ["id", "text"]}),

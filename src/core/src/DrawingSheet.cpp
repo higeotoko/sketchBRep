@@ -10,6 +10,7 @@
 
 #include "sbr/draw/Drawing.h"
 #include "sbr/draw/SheetCheck.h"
+#include "sbr/doc/Modeler.h"
 
 namespace sbr::draw {
 namespace {
@@ -284,10 +285,19 @@ void appendLegend(std::vector<Item>& items, const Paper* paper, double s, const 
   for (const auto& row : kLegend)
     if (used[static_cast<int>(row.first)]) rows.push_back(row);
   // docs/326: the cut layers' hatching drawn on the sheet: a small cut box hatched the same way, after the lines.
-  std::vector<std::pair<int, const char*>> hatches;
+  std::vector<std::pair<int, std::string>> hatches;
   if (hatchPatterns.count(2)) hatches.push_back({2, "構造用の木材の切り口（柱・間柱・土台など）"});
   if (hatchPatterns.count(1)) hatches.push_back({1, "合板・野地板の切り口"});
   if (symbols.count("through_column")) hatches.push_back({3, "通し柱"});  // docs/327: a ringed column
+  // docs/334: the devices drawn, each kind (and note) a row: the symbol and the manual's words with the note.
+  std::vector<std::string> deviceKinds;
+  for (const auto& [key, label] : doc::Modeler::deviceKinds())
+    for (const std::string& symbol : symbols) {
+      if (symbol.rfind("device:" + key + "|", 0) != 0) continue;
+      const std::string note = symbol.substr(std::string("device:" + key + "|").size());
+      deviceKinds.push_back(key);
+      hatches.push_back({1000 + static_cast<int>(deviceKinds.size()) - 1, note.empty() ? label : label + "　" + note});
+    }
   // docs/333: the bracing plan's lines and columns, in the manual's legend words.
   if (symbols.count("wall_general")) hatches.push_back({6, "一般壁"});
   if (symbols.count("wall_opening")) hatches.push_back({7, "開口部"});
@@ -316,6 +326,12 @@ void appendLegend(std::vector<Item>& items, const Paper* paper, double s, const 
       const double x = x0 + col * colW, y = top - (r + 1.5) * rowH;
       if (x + sample + 4 > x0 + room) break;
       const double y0 = y - 1.4, y1 = y + 1.4;
+      if (hatches[h].first >= 1000) {  // docs/334: a device, its symbol as on the plan
+        const std::string& kind = deviceKinds[static_cast<std::size_t>(hatches[h].first - 1000)];
+        for (Item& item : deviceSymbol(kind, P(x + sample / 2, y), gp_Vec2d(1, 0), s)) items.push_back(std::move(item));
+        items.push_back(text(Pen::Text, P(x + sample + 2, y), hatches[h].second, 2.5, 0, 1));
+        continue;
+      }
       if (hatches[h].first >= 6 && hatches[h].first <= 10) {  // docs/333: as the bracing plan draws them
         const int code = hatches[h].first;
         const double cx = x + sample / 2;

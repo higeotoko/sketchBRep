@@ -255,6 +255,21 @@ class Modeler {
     int count = 1;
   };
   static const std::vector<std::pair<std::string, std::string>>& equipmentKinds();  // key, label
+  // docs/334: the devices a plan shows where they are (規則第1条の3 表1 の平面図: 給気機・給気口、排気機・排気口の
+  // 位置、住宅用防災機器の位置及び種類 (消防法第9条の2)), as the MLIT manual's plan legend draws them. A device is
+  // a point (world; z its height, e.g. FL+2100) with a kind, the way its air goes (exhaust / supply / undercut;
+  // others none) and a note for the legend ("100φ・防火覆い付"). Kinds: smoke_detector, heat_detector, exhaust_fan,
+  // range_hood, supply_vent, water_heater, floor_hatch, undercut. One undo step.
+  static const std::vector<std::pair<std::string, std::string>>& deviceKinds();  // key, legend label
+  Result<ObjectId> placeDevice(const std::string& kind, const gp_Pnt& position, const std::optional<gp_Dir>& airflow,
+                               const std::string& note);
+  struct DeviceInfo {
+    ObjectId id;
+    std::string kind, note;
+    gp_Pnt position;
+    std::optional<gp_Dir> airflow;
+  };
+  static std::vector<DeviceInfo> devicesIn(const Document& document);
   static std::vector<EquipmentItem> equipmentOf(const Document& document);
   Status setEquipment(const std::vector<EquipmentItem>& items);
   // docs/291: the structural timber's material (樹種等) and grade / standard (等級・規格) per member role

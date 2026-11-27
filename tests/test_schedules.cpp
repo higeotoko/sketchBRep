@@ -5540,3 +5540,49 @@ TEST_F(Schedules, BracingPlanDrawsWallsAsLinesAndOpeningsDoubled) {
   EXPECT_TRUE(view->symbols.count("wall_general"));
   EXPECT_TRUE(view->symbols.count("wall_opening"));
 }
+
+// docs/334: devices placed by point are drawn on the plan of their storey with the MLIT manual's symbols, named in
+// the legend with their notes, and counted in the plan stage's checks.
+TEST_F(Schedules, DevicesAreDrawnOnTheirStoreysPlan) {
+  const auto planChecks = [&] { return sbr::doc::permitPlanChecks(modeler.document()); };
+  const auto row = [&](const std::string& item) {
+    for (const auto& c : planChecks())
+      if (c.item == item) return c;
+    ADD_FAILURE() << "no row " << item;
+    return sbr::doc::PermitCheck{};
+  };
+  EXPECT_EQ(row("住宅用防災機器").state, "未入力");
+  EXPECT_EQ(row("給気口・排気機の位置").state, "未入力");
+  ok("place_device", {{"kind", "smoke_detector"}, {"position", {2000, 2000, 2400}}});
+  ok("place_device", {{"kind", "exhaust_fan"}, {"position", {1000, 100, 2100}}, {"airflow", {0, -1}}, {"note", "100φ・防火覆い付"}});
+  ok("place_device", {{"kind", "supply_vent"}, {"position", {3000, 100, 2100}}, {"airflow", {0, 1}}});
+  EXPECT_FALSE(call("place_device", {{"kind", "exhaust_fan"}, {"position", {0, 0, 2100}}}).value("ok", true));  // no airflow
+  EXPECT_FALSE(call("place_device", {{"kind", "toaster"}, {"position", {0, 0, 2100}}}).value("ok", true));
+  EXPECT_EQ(row("住宅用防災機器").state, "入力済み");
+  EXPECT_EQ(row("給気口・排気機の位置").state, "入力済み");
+  sbr::draw::ViewSpec spec = sbr::draw::planView(1100.0);
+  spec.depth = 1500.0;
+  spec.paperScale = 100;
+  const auto view = sbr::draw::makeView(modeler.document(), spec);
+  ASSERT_TRUE(view) << view.error();
+  bool smoke = false;
+  for (const auto& i : view->items) smoke = smoke || (i.kind == sbr::draw::Item::Kind::Text && i.text == "煙");
+  EXPECT_TRUE(smoke);
+  EXPECT_TRUE(view->symbols.count("device:smoke_detector|"));
+  EXPECT_TRUE(view->symbols.count("device:exhaust_fan|100φ・防火覆い付"));
+  EXPECT_TRUE(view->symbols.count("device:supply_vent|"));
+  // Not on the plan of the storey above (2FL), nor on a section.
+  sbr::draw::ViewSpec upper = sbr::draw::planView(4100.0);
+  upper.depth = 1500.0;
+  const auto above = sbr::draw::makeView(modeler.document(), upper);
+  ASSERT_TRUE(above);
+  for (const auto& s : above->symbols) EXPECT_NE(s.rfind("device:", 0), 0u) << s;
+  // The legend names them with the manual's words and the note.
+  sbr::draw::SheetSpec sheetSpec;
+  sheetSpec.frame = true;
+  const auto sheet = sbr::draw::layoutSheet(*view, sheetSpec);
+  ASSERT_TRUE(sheet) << sheet.error();
+  bool named = false;
+  for (const auto& i : sheet->items) named = named || (i.kind == sbr::draw::Item::Kind::Text && i.text == "換気扇（排気）　100φ・防火覆い付");
+  EXPECT_TRUE(named);
+}

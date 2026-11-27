@@ -4139,6 +4139,66 @@ Status Modeler::setProjectOutline(const std::map<std::string, std::string>& item
   return Status::success();
 }
 
+const std::vector<std::pair<std::string, std::string>>& Modeler::deviceKinds() {
+  static const std::vector<std::pair<std::string, std::string>> kinds = {
+      {"heat_detector", "住宅用防災機器（熱式感知器）"},
+      {"smoke_detector", "住宅用防災機器（煙式感知器）"},
+      {"range_hood", "レンジフード（排気）"},
+      {"exhaust_fan", "換気扇（排気）"},
+      {"supply_vent", "給気口"},
+      {"undercut", "ドアのアンダーカット等（通気措置）"},
+      {"water_heater", "給湯器"},
+      {"floor_hatch", "床下点検口"}};
+  return kinds;
+}
+
+Result<ObjectId> Modeler::placeDevice(const std::string& kind, const gp_Pnt& position, const std::optional<gp_Dir>& airflow,
+                                      const std::string& note) {
+  const auto& kinds = deviceKinds();
+  const auto found = std::find_if(kinds.begin(), kinds.end(), [&](const auto& k) { return k.first == kind; });
+  if (found == kinds.end())
+    return Result<ObjectId>::failure("device kind: smoke_detector, heat_detector, exhaust_fan, range_hood, supply_vent, water_heater, floor_hatch or undercut");
+  if (note.find_first_of("\r\n") != std::string::npos) return Result<ObjectId>::failure("The note is one line");
+  const bool flows = kind == "exhaust_fan" || kind == "range_hood" || kind == "supply_vent" || kind == "undercut";
+  if (flows && (!airflow || std::abs(airflow->Z()) > 1e-6))
+    return Result<ObjectId>::failure("A fan, a vent or an undercut needs 'airflow': the horizontal way its air goes");
+  Object o;
+  o.name = uniqueName(found->second);
+  o.layer = "Annotations";
+  o.recipe.base = TextNote{position, std::nullopt, found->second};
+  o.attributes["kind"] = "device";
+  o.attributes["device"] = kind;
+  if (!note.empty()) o.attributes["device_note"] = note;
+  if (flows) {
+    char buf[64];
+    std::snprintf(buf, sizeof buf, "%.6f %.6f", airflow->X(), airflow->Y());
+    o.attributes["device_airflow"] = buf;
+  }
+  return addObject(std::move(o), "Place device");
+}
+
+std::vector<Modeler::DeviceInfo> Modeler::devicesIn(const Document& document) {
+  std::vector<DeviceInfo> out;
+  for (const Object& o : document.objects()) {
+    const auto kind = o.attributes.find("kind");
+    const auto device = o.attributes.find("device");
+    const auto* note = std::get_if<TextNote>(&o.recipe.base);
+    if (kind == o.attributes.end() || kind->second != "device" || device == o.attributes.end() || !note) continue;
+    DeviceInfo d;
+    d.id = o.id;
+    d.kind = device->second;
+    if (const auto n = o.attributes.find("device_note"); n != o.attributes.end()) d.note = n->second;
+    d.position = note->position.Transformed(document.worldTransform(o));
+    if (const auto a = o.attributes.find("device_airflow"); a != o.attributes.end()) {
+      double x = 0, y = 0;
+      if (std::sscanf(a->second.c_str(), "%lf %lf", &x, &y) == 2 && std::hypot(x, y) > 1e-9)
+        d.airflow = gp_Dir(x, y, 0).Transformed(document.worldTransform(o));
+    }
+    out.push_back(std::move(d));
+  }
+  return out;
+}
+
 const std::vector<std::pair<std::string, std::string>>& Modeler::equipmentKinds() {
   static const std::vector<std::pair<std::string, std::string>> kinds = {
       {"heating_cooling", "暖冷房設備"}, {"ventilation", "換気設備"}, {"hot_water", "給湯設備"},

@@ -2150,6 +2150,32 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
         view.dimensions.push_back(m);
       } else if (const auto* t = std::get_if<doc::TextNote>(&o.recipe.base)) {
         const gp_Pnt p = t->position.Transformed(w);
+        // docs/334: a device, on the plan of its storey (from the floor the plan looks down to, up to the next floor
+        // level above the cut), drawn as its symbol; on no other view.
+        if (const auto kind = o.attributes.find("kind"); kind != o.attributes.end() && kind->second == "device") {
+          if (spec.kind != ViewKind::Plan || !spec.framingPreset.empty() || !spec.bracingFloor.empty() || spec.insulation) continue;
+          const double cutZ = spec.frame.Location().Z();
+          double nextFloor = cutZ + 3000.0;
+          for (const doc::FloorLevel& l : document.settings().levels)
+            if (doc::isFloorLevelName(l.name) && l.elevation > cutZ + 1.0) nextFloor = std::min(nextFloor, l.elevation);
+          const double lowest = cutZ - (spec.depth > 0 ? spec.depth : 1500.0);
+          if (p.Z() < lowest || p.Z() >= nextFloor) continue;
+          const auto device = o.attributes.find("device");
+          if (device == o.attributes.end()) continue;
+          gp_Vec2d airflow(1, 0);
+          if (const auto a = o.attributes.find("device_airflow"); a != o.attributes.end()) {
+            double x = 0, y = 0;
+            if (std::sscanf(a->second.c_str(), "%lf %lf", &x, &y) == 2 && std::hypot(x, y) > 1e-9) {
+              const gp_Dir d = proj.localDir(gp_Dir(x, y, 0).Transformed(w));
+              if (std::hypot(d.X(), d.Y()) > 1e-9) airflow = gp_Vec2d(d.X(), d.Y()).Normalized();
+            }
+          }
+          const double unit = spec.paperScale > 0 ? spec.paperScale : 100.0;
+          for (Item& item : deviceSymbol(device->second, proj.uv(p), airflow, unit)) view.items.push_back(std::move(item));
+          const auto note = o.attributes.find("device_note");
+          view.symbols.insert("device:" + device->second + "|" + (note != o.attributes.end() ? note->second : std::string()));
+          continue;
+        }
         if (cutting && proj.local(p).Z() > kOnPlane) continue;
         // docs/251: as deep as the plan looks and no deeper: the rooms of the storey below were
         // written on the upper plan through its floor (the AI's look at the hands-on pictures).
@@ -2450,6 +2476,85 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
                               : "Nothing to draw from this side");
   }
   return view;
+}
+
+std::vector<Item> deviceSymbol(const std::string& kind, const gp_Pnt2d& at, const gp_Vec2d& airflow, double unit) {
+  std::vector<Item> out;
+  const gp_Vec2d f = airflow.Magnitude() > 1e-12 ? airflow.Normalized() : gp_Vec2d(1, 0);
+  const gp_Vec2d s(-f.Y(), f.X());
+  const auto P = [&](double along, double across) { return at.Translated(f * (along * unit) + s * (across * unit)); };
+  const auto seg = [&](const gp_Pnt2d& a, const gp_Pnt2d& b) {
+    Item i;
+    i.kind = Item::Kind::Line;
+    i.pen = Pen::Visible;
+    i.points = {a, b};
+    out.push_back(i);
+  };
+  const auto ring = [&](const gp_Pnt2d& c, double r) {
+    Item i;
+    i.kind = Item::Kind::Arc;
+    i.pen = Pen::Visible;
+    i.centre = c;
+    i.radius = r * unit;
+    i.start = 0;
+    i.sweep = 2 * M_PI;
+    out.push_back(i);
+  };
+  const auto word = [&](const std::string& w, double height) {
+    Item i;
+    i.kind = Item::Kind::Text;
+    i.pen = Pen::Text;
+    i.points = {at};
+    i.text = w;
+    i.height = height;
+    i.hAlign = 1;
+    i.vAlign = 1;
+    out.push_back(i);
+  };
+  const auto box = [&](double halfAlong, double halfAcross) {
+    Item i;
+    i.kind = Item::Kind::Polyline;
+    i.pen = Pen::Visible;
+    i.closed = true;
+    i.points = {P(-halfAlong, -halfAcross), P(halfAlong, -halfAcross), P(halfAlong, halfAcross), P(-halfAlong, halfAcross)};
+    out.push_back(i);
+  };
+  const auto arrow = [&](double from, double to) {  // a line along the air's way with its head at `to`
+    seg(P(from, 0), P(to, 0));
+    seg(P(to, 0), P(to - 0.8, 0.45));
+    seg(P(to, 0), P(to - 0.8, -0.45));
+  };
+  if (kind == "smoke_detector" || kind == "heat_detector") {
+    ring(at, 1.7);
+    word(kind == "smoke_detector" ? "煙" : "熱", 2.0);
+  } else if (kind == "exhaust_fan") {
+    // ⊕ with the air leaving: a circle crossed, a line through it and the arrow beyond.
+    ring(at, 1.1);
+    seg(P(-0.78, -0.78), P(0.78, 0.78));
+    seg(P(-0.78, 0.78), P(0.78, -0.78));
+    seg(P(-2.2, 0), P(-1.1, 0));
+    arrow(1.1, 3.0);
+  } else if (kind == "range_hood") {
+    box(1.6, 1.0);
+    ring(P(-0.6, 0), 0.5);
+    ring(P(0.6, 0), 0.5);
+    arrow(1.6, 3.4);
+  } else if (kind == "supply_vent") {
+    // A line with two ticks across it and the arrow into the room.
+    arrow(-2.4, 2.4);
+    seg(P(-0.5, -0.7), P(-0.5, 0.7));
+    seg(P(0.3, -0.7), P(0.3, 0.7));
+  } else if (kind == "undercut") {
+    arrow(-2.5, 2.5);
+  } else if (kind == "water_heater") {
+    box(1.8, 1.0);
+    seg(P(-1.8, -1.0), P(1.8, 1.0));
+  } else if (kind == "floor_hatch") {
+    box(1.5, 1.5);
+    seg(P(-1.5, -1.5), P(1.5, 1.5));
+    seg(P(-1.5, 1.5), P(1.5, -1.5));
+  }
+  return out;
 }
 
 }  // namespace sbr::draw

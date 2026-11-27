@@ -229,6 +229,9 @@ struct View {
 // The view of the visible model. Heavy for large models (hidden lines):
 // call once and lay it out again for other scales or papers.
 Result<View> makeView(const doc::Document& document, const ViewSpec& spec);
+// docs/334: a device's symbol as the MLIT manual's plan legend draws it, centred at `at`, its air going along
+// `airflow` (unit; ignored by the kinds without), `unit` the length of 1 mm on paper in the coordinates of `at`.
+std::vector<Item> deviceSymbol(const std::string& kind, const gp_Pnt2d& at, const gp_Vec2d& airflow, double unit);
 
 struct TitleBlock {
   std::string project;  // 工事名

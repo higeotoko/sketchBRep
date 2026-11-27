@@ -926,6 +926,38 @@ std::vector<PermitCheck> permitPlanChecks(const Document& document) {
   } else {
     out.push_back({"開口", "入力済み", "開口 " + std::to_string(openings.size()) + " 件。どれも建具が決まっています。", {}});
   }
+  // docs/334: the devices the plan is to show where they are (規則第1条の3 表1 の平面図).
+  {
+    int smoke = 0, heat = 0, supply = 0, exhaust = 0;
+    std::vector<ObjectId> placed;
+    for (const auto& d : Modeler::devicesIn(document)) {
+      smoke += d.kind == "smoke_detector";
+      heat += d.kind == "heat_detector";
+      supply += d.kind == "supply_vent";
+      exhaust += d.kind == "exhaust_fan" || d.kind == "range_hood";
+      placed.push_back(d.id);
+    }
+    if (smoke + heat == 0)
+      out.push_back({"住宅用防災機器", "未入力",
+                     "住宅用防災機器（煙式・熱式の感知器）の位置がありません（place_device）。住宅では、平面図に位置及び種類を書きます"
+                     "（消防法第9条の2、規則第1条の3 表1）。どの室に要るかは市町村の火災予防条例で照合します。",
+                     {}, true});
+    else
+      out.push_back({"住宅用防災機器", "入力済み",
+                     "煙式 " + std::to_string(smoke) + " 個、熱式 " + std::to_string(heat) +
+                         " 個を平面図に描きます。要る室（寝室・階段など）に足りているかは、市町村の火災予防条例で照合します（ここでは見ていません）。",
+                     {}});
+    if (supply + exhaust == 0)
+      out.push_back({"給気口・排気機の位置", "未入力",
+                     "給気口・換気扇の位置がありません（place_device）。平面図に給気機又は給気口、排気機又は排気口の位置を書きます"
+                     "（法第28条の2・令第20条の8、規則第1条の3 表1）。",
+                     {}, true});
+    else
+      out.push_back({"給気口・排気機の位置", "入力済み",
+                     "給気口 " + std::to_string(supply) + " か所、排気（換気扇・レンジフード）" + std::to_string(exhaust) +
+                         " か所を平面図に描きます。換気の経路と有効換気量は換気の表で確かめます。",
+                     {}});
+  }
   return out;
 }
 
