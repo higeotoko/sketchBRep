@@ -2640,6 +2640,12 @@ std::vector<Item> deviceSymbol(const std::string& kind, const gp_Pnt2d& at, cons
   } else if (kind == "water_heater") {
     box(1.8, 1.0);
     seg(P(-1.8, -1.0), P(1.8, 1.0));
+  } else if (kind == "cooking_appliance") {
+    // docs/337: a cooktop: its outline and three burners.
+    box(1.8, 1.3);
+    ring(P(-0.8, -0.5), 0.45);
+    ring(P(0.8, -0.5), 0.45);
+    ring(P(0, 0.55), 0.45);
   } else if (kind == "floor_hatch") {
     box(1.5, 1.5);
     seg(P(-1.5, -1.5), P(1.5, 1.5));

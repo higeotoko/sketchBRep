@@ -947,13 +947,14 @@ std::vector<PermitCheck> permitPlanChecks(const Document& document) {
   }
   // docs/334: the devices the plan is to show where they are (規則第1条の3 表1 の平面図).
   {
-    int smoke = 0, heat = 0, supply = 0, exhaust = 0;
+    int smoke = 0, heat = 0, supply = 0, exhaust = 0, cooking = 0;
     std::vector<ObjectId> placed;
     for (const auto& d : Modeler::devicesIn(document)) {
       smoke += d.kind == "smoke_detector";
       heat += d.kind == "heat_detector";
       supply += d.kind == "supply_vent";
       exhaust += d.kind == "exhaust_fan" || d.kind == "range_hood";
+      cooking += d.kind == "cooking_appliance";
       placed.push_back(d.id);
     }
     if (smoke + heat == 0)
@@ -976,6 +977,14 @@ std::vector<PermitCheck> permitPlanChecks(const Document& document) {
                      "給気口 " + std::to_string(supply) + " か所、排気（換気扇・レンジフード）" + std::to_string(exhaust) +
                          " か所を平面図に描きます。換気の経路と有効換気量は換気の表で確かめます。",
                      {}});
+    // docs/337: the cooking appliances (令第20条の3: 火を使用する室). Their place, kind and heat output go on the plan; the
+    // airflow the room needs (昭和45年建設省告示第1826号 第三) is not worked out here.
+    if (cooking > 0)
+      out.push_back({"火を使用する設備器具", "要確認",
+                     "こんろ等 " + std::to_string(cooking) +
+                         " か所の位置・種別・発熱量を平面図に書きます。火を使用する室の換気設備の有効換気量（告示第1826号 第三）は、"
+                         "ここでは計算していません。器具の発熱量とフードの形から別に確かめます。",
+                     {}, true});
   }
   return out;
 }

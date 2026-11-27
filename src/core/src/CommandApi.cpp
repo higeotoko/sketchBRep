@@ -1274,12 +1274,13 @@ const std::vector<CommandDef>& commands() {
        }},
       {"place_device",
        "docs/334: Place a device the plan shows where it is (規則1条の3 表1: 給気口・排気機の位置、住宅用防災機器の位置及び種類): "
-       "kind smoke_detector / heat_detector / exhaust_fan / range_hood / supply_vent / water_heater / floor_hatch / undercut, "
+       "kind smoke_detector / heat_detector / exhaust_fan / range_hood / supply_vent / water_heater / floor_hatch / undercut / "
+       "cooking_appliance (docs/337: こんろ等; its 'note' required: 種別及び発熱量, e.g. \"ガスこんろ 都市ガス 10.78kW\"), "
        "'position' [x,y,z] in mm (z its height, e.g. the storey's FL + 2100), 'airflow' [dx,dy] the way its air goes "
        "(fans and range hoods: out; supply vents: in; undercuts: through the door) and an optional one-line 'note' for the "
        "legend (\"100φ・防火覆い付 FL+2100\"). Drawn on the plan of its storey with the MLIT manual's symbols.",
        SCHEMA({"type": "object", "properties": {
-         "kind": {"type": "string", "enum": ["smoke_detector", "heat_detector", "exhaust_fan", "range_hood", "supply_vent", "water_heater", "floor_hatch", "undercut"]},
+         "kind": {"type": "string", "enum": ["smoke_detector", "heat_detector", "exhaust_fan", "range_hood", "supply_vent", "water_heater", "floor_hatch", "undercut", "cooking_appliance"]},
          "position": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
          "airflow": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
          "note": {"type": "string"}}, "required": ["kind", "position"]}),

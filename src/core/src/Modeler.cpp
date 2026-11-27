@@ -4148,7 +4148,8 @@ const std::vector<std::pair<std::string, std::string>>& Modeler::deviceKinds() {
       {"supply_vent", "給気口"},
       {"undercut", "ドアのアンダーカット等（通気措置）"},
       {"water_heater", "給湯器"},
-      {"floor_hatch", "床下点検口"}};
+      {"floor_hatch", "床下点検口"},
+      {"cooking_appliance", "こんろ等（火を使用する設備器具）"}};
   return kinds;
 }
 
@@ -4157,7 +4158,11 @@ Result<ObjectId> Modeler::placeDevice(const std::string& kind, const gp_Pnt& pos
   const auto& kinds = deviceKinds();
   const auto found = std::find_if(kinds.begin(), kinds.end(), [&](const auto& k) { return k.first == kind; });
   if (found == kinds.end())
-    return Result<ObjectId>::failure("device kind: smoke_detector, heat_detector, exhaust_fan, range_hood, supply_vent, water_heater, floor_hatch or undercut");
+    return Result<ObjectId>::failure("device kind: smoke_detector, heat_detector, exhaust_fan, range_hood, supply_vent, water_heater, floor_hatch, undercut or cooking_appliance");
+  // docs/337: a cooking appliance is shown with its kind and heat output (規則第1条の3 表1: かまど、こんろその他設備器具の
+  // 位置、種別及び発熱量), which its note carries.
+  if (kind == "cooking_appliance" && note.empty())
+    return Result<ObjectId>::failure("こんろ等は note に種別と発熱量を書きます（例：「ガスこんろ 都市ガス 10.78kW」）");
   if (note.find_first_of("\r\n") != std::string::npos) return Result<ObjectId>::failure("The note is one line");
   const bool flows = kind == "exhaust_fan" || kind == "range_hood" || kind == "supply_vent" || kind == "undercut";
   if (flows && (!airflow || std::abs(airflow->Z()) > 1e-6))

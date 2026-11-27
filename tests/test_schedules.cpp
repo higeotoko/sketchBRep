@@ -5653,3 +5653,30 @@ TEST_F(Schedules, FireEquipmentOpeningsAreMarkedOnThePlan) {
   ok("set_opening_fire_equipment", {{"host", south}, {"spec", ""}});
   for (const auto& row : sbr::doc::openingSchedule(modeler.document()).rows) EXPECT_TRUE(row.fireSpec.empty());
 }
+
+// docs/337: a cooking appliance carries its kind and heat output in its note (required), is drawn on the plan and in
+// the legend, and the plan stage asks for its room's ventilation to be checked apart (not worked out here).
+TEST_F(Schedules, CookingAppliancesCarryKindAndHeatOutput) {
+  EXPECT_FALSE(call("place_device", {{"kind", "cooking_appliance"}, {"position", {1500, 3000, 850}}}).value("ok", true));
+  ok("place_device", {{"kind", "cooking_appliance"}, {"position", {1500, 3000, 850}}, {"note", "ガスこんろ 都市ガス 10.78kW"}});
+  bool row = false;
+  for (const auto& c : sbr::doc::permitPlanChecks(modeler.document()))
+    if (c.item == "火を使用する設備器具") {
+      row = true;
+      EXPECT_EQ(c.state, "要確認");
+      EXPECT_NE(c.details.find("告示第1826号"), std::string::npos);
+    }
+  EXPECT_TRUE(row);
+  sbr::draw::ViewSpec spec = sbr::draw::planView(1100.0);
+  spec.depth = 1500.0;
+  spec.paperScale = 100;
+  const auto view = sbr::draw::makeView(modeler.document(), spec);
+  ASSERT_TRUE(view) << view.error();
+  EXPECT_TRUE(view->symbols.count("device:cooking_appliance|ガスこんろ 都市ガス 10.78kW"));
+  const auto sheet = sbr::draw::layoutSheet(*view, sbr::draw::SheetSpec{});
+  ASSERT_TRUE(sheet);
+  bool named = false;
+  for (const auto& i : sheet->items)
+    named = named || (i.kind == sbr::draw::Item::Kind::Text && i.text == "こんろ等（火を使用する設備器具）　ガスこんろ 都市ガス 10.78kW");
+  EXPECT_TRUE(named);
+}
