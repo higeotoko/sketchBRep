@@ -1147,6 +1147,19 @@ void MainWindow::buildUi() {
               else if (key == QStringLiteral("wall")) finish.wall = word;
               else if (key == QStringLiteral("ceiling")) finish.ceiling = word;
               else if (key == QStringLiteral("ceiling_height")) finish.ceilingHeight = value;
+              else if (key == QStringLiteral("floor_offset")) {  // docs/321
+                if (word.empty()) finish.floorOffset.reset();
+                else {
+                  bool okay = false;
+                  const double offset = QString::fromStdString(word).toDouble(&okay);
+                  if (!okay) {
+                    reportError(tr("床の高さは数値（mm）で入れてください"));
+                    refreshPanels();
+                    return;
+                  }
+                  finish.floorOffset = offset;
+                }
+              }
               else if (key == QStringLiteral("ratio_part")) {
                 if (finish.ratioPart == word) return;
                 finish.ratioPart = word;

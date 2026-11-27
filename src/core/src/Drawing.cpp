@@ -2085,6 +2085,12 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
                 };
                 std::vector<std::string> lines{r.name, "(" + fixed(r.centreArea / 1e6, 2) + " m²)"};
                 if (r.ceilingHeight > 0) lines.push_back("(CH" + fixed(r.ceilingHeight, 0) + ")");
+                // docs/321: the room's floor from the storey's FL, when the person gave it (FL±0, FL-180).
+                if (r.floorOffset) {
+                  const long long f = std::llround(*r.floorOffset);
+                  lines.push_back(f == 0 ? std::string("(FL±0)")
+                                         : "(FL" + std::string(f > 0 ? "+" : "-") + std::to_string(std::llabs(f)) + ")");
+                }
                 roomLines[r.id] = std::move(lines);
               }
             }

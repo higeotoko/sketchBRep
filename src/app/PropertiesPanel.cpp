@@ -984,6 +984,17 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
           if (std::abs(height->value() - h0) > 1e-9) emit roomFinishEdited(id, QStringLiteral("ceiling_height"), QString(), height->value());
         });
         form_->addRow(tr("天井高"), height);
+        // docs/321: the room's floor from its storey's FL; empty: not given (no FL written on the plan).
+        auto* floorLevel = new QLineEdit(finish.floorOffset ? QString::number(*finish.floorOffset, 'g', 10) : QString());
+        floorLevel->setObjectName(QStringLiteral("roomFinish_floor_offset"));
+        floorLevel->setPlaceholderText(tr("未入力"));
+        floorLevel->setToolTip(tr("階の FL からこの室の床まで（mm、例：玄関 -180、同じ高さなら 0）。平面図の室名の下に (FL-180) と書きます。空欄で消します"));
+        floorLevel->setEnabled(!o->locked);
+        const QString f0 = floorLevel->text();
+        connect(floorLevel, &QLineEdit::editingFinished, this, [this, id, floorLevel, f0] {
+          if (floorLevel->text().trimmed() != f0) emit roomFinishEdited(id, QStringLiteral("floor_offset"), floorLevel->text().trimmed(), 0.0);
+        });
+        form_->addRow(tr("床の高さ（FL から）"), floorLevel);
         auto* ceiling = new QPushButton(tr("天井を作る（作り直す）"));
         ceiling->setObjectName(QStringLiteral("roomMakeCeiling"));
         ceiling->setToolTip(tr("天井高の所に、壁の面の内側の形で天井板（厚さ 10）を作ります。壁を動かした後・天井高を変えた後は、もう一度押すと作り直します"));

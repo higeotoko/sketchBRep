@@ -94,8 +94,12 @@ struct RoomFinish {
   // docs/162: the part of the building the room is, for the floor area the floor area ratio is
   // worked out from (a code of floorRatioParts(); empty: counted like any room).
   std::string ratioPart;
+  // docs/321: the room's floor from its storey's FL (mm; e.g. -180 for an entrance), as the person gives it;
+  // empty: not given (the plans then write no FL for the room).
+  std::optional<double> floorOffset;
   bool empty() const {
-    return use.empty() && floor.empty() && wall.empty() && ceiling.empty() && ceilingHeight <= 0.0 && ratioPart.empty();
+    return use.empty() && floor.empty() && wall.empty() && ceiling.empty() && ceilingHeight <= 0.0 && ratioPart.empty() &&
+           !floorOffset;
   }
 };
 // The parts of a building whose floor area is left out of the total the floor area ratio (容積率)

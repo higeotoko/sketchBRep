@@ -15053,6 +15053,13 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
     emit height->editingFinished();
     QTRY_VERIFY(f.window.scheduleCsv(3).contains(QStringLiteral("フローリング t15,,,2400")));
     QVERIFY2(f.window.statusText().contains(QStringLiteral("仕上げ")),qPrintable(f.window.statusText()));
+    // docs/321: the room's floor from the storey's FL, typed in its properties.
+    f.window.setSelection({room});
+    QApplication::processEvents();
+    auto* floorLevel=f.window.findChild<QLineEdit*>(QStringLiteral("roomFinish_floor_offset"));QVERIFY(floorLevel);
+    floorLevel->setText(QStringLiteral("-180"));
+    emit floorLevel->editingFinished();
+    QTRY_VERIFY(doc::roomFinishOf(*m.document().find(room)).floorOffset==std::optional<double>(-180.0));
     // docs/162: the room as a garage: left out of the floor area for the ratio up to 1/5 of the total.
     f.window.setSelection({room});
     QApplication::processEvents();

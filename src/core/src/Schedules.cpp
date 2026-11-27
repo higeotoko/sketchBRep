@@ -305,6 +305,7 @@ RoomRow makeRoomRow(const Document& document, const RoomInfo& r) {
     row.wall = finish.wall;
     row.ceiling = finish.ceiling;
     row.ceilingHeight = finish.ceilingHeight;
+    row.floorOffset = finish.floorOffset;
     row.ratioPart = finish.ratioPart;
     const nlohmann::json daylight = nlohmann::json::parse(attribute(*marker, "room_daylight"), nullptr, false);
     if (daylight.is_object()) {

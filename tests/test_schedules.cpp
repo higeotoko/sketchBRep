@@ -5458,3 +5458,43 @@ TEST(PermitIntake, InteriorAreasAreComparedWithTheFloorArea) {
   ASSERT_TRUE(set) << set.error();
   EXPECT_NE(std::find(set->names.begin(), set->names.end(), std::string("ホルムアルデヒド発散建築材料の使用面積")), set->names.end());
 }
+
+// docs/321: a room's floor from its storey's FL, given through MCP, written under its name on the plan; not
+// written when not given; taken away with null.
+TEST(PermitIntake, RoomFloorLevelIsWrittenUnderItsName) {
+  sbr::doc::Modeler modeler;
+  CommandApi api{modeler};
+  auto ok = [&](const std::string& command, json args) {
+    json r = json::parse(api.execute(json{{"command", command}, {"args", args}}.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  ASSERT_TRUE(modeler.setLevels({{"", "1FL", 0}}));
+  ok("create_wall", {{"points", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}, {0, 0}}}, {"thickness", 120}, {"height", 3000}});
+  ok("create_wall", {{"points", {{4000, 0}, {4000, 6000}}}, {"thickness", 120}, {"height", 3000}});
+  const std::string hall = ok("create_room", {{"at", {2000, 3000}}, {"name", "玄関"}})["id"];
+  const std::string living = ok("create_room", {{"at", {6000, 3000}}, {"name", "居間"}})["id"];
+  const auto texts = [&] {
+    const auto view = sbr::draw::makeView(modeler.document(), sbr::draw::planView(1000.0));
+    std::vector<std::string> out;
+    if (view)
+      for (const auto& item : view->items)
+        if (item.kind == sbr::draw::Item::Kind::Text) out.push_back(item.text);
+    return out;
+  };
+  const auto has = [](const std::vector<std::string>& all, const std::string& s) {
+    return std::find(all.begin(), all.end(), s) != all.end();
+  };
+  EXPECT_FALSE(has(texts(), "(FL±0)"));  // not given: not written
+  ok("set_room_finish", {{"id", hall}, {"floor_offset", -180}});
+  ok("set_room_finish", {{"id", living}, {"floor_offset", 0}});
+  auto all = texts();
+  EXPECT_TRUE(has(all, "(FL-180)"));
+  EXPECT_TRUE(has(all, "(FL±0)"));
+  EXPECT_FALSE(json::parse(api.execute(json{{"command", "set_room_finish"}, {"args", {{"id", hall}, {"floor_offset", 9000}}}}.dump()))
+                   .value("ok", false));
+  ok("set_room_finish", {{"id", hall}, {"floor_offset", nullptr}});
+  all = texts();
+  EXPECT_FALSE(has(all, "(FL-180)"));
+  EXPECT_TRUE(has(all, "(FL±0)"));
+}

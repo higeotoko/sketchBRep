@@ -10201,6 +10201,7 @@ RoomFinish roomFinishOf(const Object& marker) {
   out.ceiling = j.value("ceiling", std::string());
   out.ceilingHeight = j.value("ceiling_height", 0.0);
   out.ratioPart = j.value("ratio_part", std::string());
+  if (j.contains("floor_offset") && j.at("floor_offset").is_number()) out.floorOffset = j.at("floor_offset").get<double>();
   return out;
 }
 
@@ -10456,6 +10457,8 @@ Status Modeler::setRoomFinish(const ObjectId& room, const RoomFinish& finish) {
   if (!std::isfinite(finish.ceilingHeight) || finish.ceilingHeight < 0 ||
       (finish.ceilingHeight > 0 && (finish.ceilingHeight < 1000 || finish.ceilingHeight > 10000)))
     return Status::failure("A ceiling height is 1000 to 10000 (or 0: not given)");
+  if (finish.floorOffset && (!std::isfinite(*finish.floorOffset) || std::abs(*finish.floorOffset) > 5000))
+    return Status::failure("A room's floor is within 5000 mm of its storey's FL");
   if (!finish.ratioPart.empty()) {
     bool known = false;
     for (const FloorRatioPart& part : floorRatioParts()) known = known || finish.ratioPart == part.code;
@@ -10472,6 +10475,7 @@ Status Modeler::setRoomFinish(const ObjectId& room, const RoomFinish& finish) {
     if (!finish.ceiling.empty()) j["ceiling"] = finish.ceiling;
     if (finish.ceilingHeight > 0) j["ceiling_height"] = finish.ceilingHeight;
     if (!finish.ratioPart.empty()) j["ratio_part"] = finish.ratioPart;
+    if (finish.floorOffset) j["floor_offset"] = *finish.floorOffset;
     object.attributes["room_finish"] = j.dump();
   }
   ChangeSet changes(document_);

@@ -82,6 +82,7 @@ struct RoomRow {
   gp_Pnt at;
   std::string use, floor, wall, ceiling;  // docs/115: as given on the room
   double ceilingHeight = 0.0;              // 0: not given
+  std::optional<double> floorOffset;       // docs/321: from the storey's FL (mm), empty: not given
   std::string ratioPart;                   // docs/162: a code of floorRatioParts(), or empty
   std::string daylightKind;  // docs/203: dwelling / other / none / empty (Modeler::setRoomDaylight)
   std::string ventilation;   // window / equipment / empty
