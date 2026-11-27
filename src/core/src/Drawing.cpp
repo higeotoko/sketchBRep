@@ -2403,7 +2403,11 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
       if (std::hypot(local.X(), local.Y()) < 1e-9) continue;
       const gp_Vec2d out(local.X(), local.Y());
       const double half = 1.6 * sp;
-      const gp_Pnt2d c = proj.uv(face).Translated(out.Normalized() * (half + 1.0 * sp));
+      // Beside the opening's mark (AW1...), which sits outside at its middle: along the wall past the mark's half
+      // width (its characters 0.6 x 2.5 mm each) and the box's.
+      const gp_Vec2d along(-out.Normalized().Y(), out.Normalized().X());
+      const double markHalf = 0.6 * 2.5 * static_cast<double>(std::max<std::size_t>(row.mark.size(), 3)) / 2 * sp;
+      const gp_Pnt2d c = proj.uv(face).Translated(out.Normalized() * (half + 1.0 * sp) + along * (markHalf + half + 0.8 * sp));
       Item box;
       box.kind = Item::Kind::Polyline;
       box.pen = Pen::Visible;

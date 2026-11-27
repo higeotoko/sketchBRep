@@ -5618,6 +5618,12 @@ TEST_F(Schedules, FireEquipmentOpeningsAreMarkedOnThePlan) {
       EXPECT_LT(i.points.front().Y(), 0.0);  // outside the south wall
     }
   EXPECT_EQ(marks, 2);
+  // Clear of the openings' marks (AW1...), which also sit outside at the openings' middles.
+  for (const auto& f : view->items)
+    if (f.kind == sbr::draw::Item::Kind::Text && f.text == "防")
+      for (const auto& m : view->items)
+        if (m.kind == sbr::draw::Item::Kind::Text && m.text.rfind("AW", 0) == 0)
+          EXPECT_GT(f.points.front().Distance(m.points.front()), 300.0) << m.text;
   EXPECT_TRUE(view->symbols.count("fire_equipment|アルミサッシ＋網入りガラス"));
   sbr::draw::SheetSpec sheetSpec;
   const auto sheet = sbr::draw::layoutSheet(*view, sheetSpec);
