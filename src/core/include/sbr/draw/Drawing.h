@@ -219,6 +219,9 @@ struct View {
   std::vector<std::string> calculationNotes;  // provenance only; no wall-quantity verdict on a geometry sheet
   std::set<int> hatchPatterns;  // docs/326: the cut layers' hatching drawn (1 single lines: boards, 2 crossed: timber)
   std::set<std::string> symbols;  // docs/327: marks drawn that the legend explains ("through_column")
+  // docs/333: boxes (lower left, upper right; model units) kept clear of lines, as a mark drawn on white: the sheet
+  // breaks the lines (grids, walls, cut lines) that run into them (a column's numbered square on a bracing plan).
+  std::vector<std::pair<gp_Pnt2d, gp_Pnt2d>> blanks;
   std::optional<gp_Dir2d> trueNorth;
   std::optional<Table> siteGroundTable;
 };

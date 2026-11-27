@@ -1473,6 +1473,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
         square.points = {gp_Pnt2d(c.X() - half, c.Y() - h), gp_Pnt2d(c.X() + half, c.Y() - h), gp_Pnt2d(c.X() + half, c.Y() + h),
                          gp_Pnt2d(c.X() - half, c.Y() + h)};
         view.items.push_back(std::move(square));
+        view.blanks.push_back({gp_Pnt2d(c.X() - half, c.Y() - h), gp_Pnt2d(c.X() + half, c.Y() + h)});
         Item label;
         label.kind = Item::Kind::Text;
         label.pen = Pen::Text;

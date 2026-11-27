@@ -577,6 +577,57 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
     items.push_back(line(Pen::Text, mark.at, at));
     items.push_back(text(Pen::Text, at, mark.text, height, 0, 0));
   }
+  // docs/333: lines stop at the view's blank boxes (as if the marks there were drawn on white).
+  if (!view.blanks.empty()) {
+    std::vector<Item> kept;
+    kept.reserve(items.size());
+    for (Item& item : items) {
+      if (item.kind != Item::Kind::Line || item.points.size() != 2) {
+        kept.push_back(std::move(item));
+        continue;
+      }
+      const gp_Pnt2d a = item.points[0], b = item.points[1];
+      std::vector<std::pair<double, double>> inside;  // parts of the line (0..1) in a box
+      for (const auto& [lo, hi] : view.blanks) {
+        double t0 = 0.0, t1 = 1.0;
+        bool hit = true;
+        const double p[4] = {-(b.X() - a.X()), b.X() - a.X(), -(b.Y() - a.Y()), b.Y() - a.Y()};
+        const double q[4] = {a.X() - lo.X(), hi.X() - a.X(), a.Y() - lo.Y(), hi.Y() - a.Y()};
+        for (int k = 0; k < 4 && hit; ++k) {
+          if (std::abs(p[k]) < 1e-12) {
+            hit = q[k] >= 0;
+          } else {
+            const double r = q[k] / p[k];
+            if (p[k] < 0) t0 = std::max(t0, r);
+            else t1 = std::min(t1, r);
+            hit = t0 < t1;
+          }
+        }
+        if (hit) inside.push_back({t0, t1});
+      }
+      if (inside.empty()) {
+        kept.push_back(std::move(item));
+        continue;
+      }
+      std::sort(inside.begin(), inside.end());
+      double from = 0.0;
+      const auto at = [&](double t) { return gp_Pnt2d(a.X() + (b.X() - a.X()) * t, a.Y() + (b.Y() - a.Y()) * t); };
+      for (const auto& [i0, i1] : inside) {
+        if (i0 > from + 1e-9) {
+          Item piece = item;
+          piece.points = {at(from), at(i0)};
+          kept.push_back(std::move(piece));
+        }
+        from = std::max(from, i1);
+      }
+      if (from < 1.0 - 1e-9) {
+        Item piece = item;
+        piece.points = {at(from), at(1.0)};
+        kept.push_back(std::move(piece));
+      }
+    }
+    items = std::move(kept);
+  }
   placeBracingMarks(items, view.bracingMarks, s);
   Box all;
   for (const Item& i : items) extentOf(i, s, all);

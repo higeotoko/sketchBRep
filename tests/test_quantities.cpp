@@ -615,4 +615,35 @@ TEST_F(Quantities, BracingPlansNumberTheColumns) {
     if (std::abs(n.second.Y() - one->second.Y()) < 1.0) EXPECT_GE(n.second.X(), one->second.X() - 1e-6);
   }
   EXPECT_TRUE(view->symbols.count("through_column_box"));
+  // The squares are kept clear: on the sheet no line runs through a column's number (the columns stand on grid
+  // crossings, so without the blanks the grid lines and the walls run right through them).
+  ASSERT_EQ(view->blanks.size(), static_cast<std::size_t>(columns));
+  const auto crossings = [](const draw::Sheet& sheet) {
+    std::vector<gp_Pnt2d> numbers;
+    for (const auto& i : sheet.items)
+      if (i.kind == draw::Item::Kind::Text && !i.text.empty() && std::all_of(i.text.begin(), i.text.end(), ::isdigit) && i.height < 2.0)
+        numbers.push_back(i.points.front());
+    int n = 0;
+    for (const auto& i : sheet.items) {
+      if (i.kind != draw::Item::Kind::Line || i.points.size() != 2) continue;
+      const gp_Vec2d ab(i.points[0], i.points[1]);
+      const double len = ab.Magnitude();
+      if (len < 1e-9) continue;
+      for (const gp_Pnt2d& c : numbers) {
+        const gp_Vec2d ac(i.points[0], c);
+        const double t = ac.Dot(ab) / (len * len);
+        if (t > 0 && t < 1 && std::abs(ab.Crossed(ac)) / len < 1e-3) ++n;
+      }
+    }
+    return n;
+  };
+  draw::SheetSpec sheetSpec;
+  const auto sheet = draw::layoutSheet(*view, sheetSpec);
+  ASSERT_TRUE(sheet) << sheet.error();
+  EXPECT_EQ(crossings(*sheet), 0);
+  draw::View open = *view;
+  open.blanks.clear();
+  const auto unblanked = draw::layoutSheet(open, sheetSpec);
+  ASSERT_TRUE(unblanked);
+  EXPECT_GT(crossings(*unblanked), 0);  // the check itself sees lines through the numbers
 }
