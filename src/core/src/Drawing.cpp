@@ -862,6 +862,9 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     if (o.shape.IsNull() || !selected(document, o, spec)) continue;
     if (o.gridPin) gridIds.insert(o.gridPin->grid);
     if (o.attributes.count("grid_part")) continue;  // drawn from the grid itself
+    // docs/333: a bracing plan (耐力壁図) is the MLIT manual's diagram: the walls as lines, the columns as
+    // numbered squares, drawn below; the model's cut and seen geometry is left out.
+    if (spec.kind == ViewKind::Plan && !spec.bracingFloor.empty()) continue;
     const doc::ObjectKind kind = o.kind();
     const bool body = kind == doc::ObjectKind::Solid || kind == doc::ObjectKind::Shell ||
                       kind == doc::ObjectKind::Face || kind == doc::ObjectKind::Instance;
@@ -1411,6 +1414,89 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     int walls = 0;
     const auto symbols = made ? construction::wallSymbols(*made) : std::map<std::string, std::string>();
     const double paperScale = spec.paperScale > 0 ? spec.paperScale : 100.0;
+    // docs/333: the model's walls as the manual's 耐力壁図 draws them: 一般壁 a thin line along the middle of the wall,
+    // 開口部 a double line (0.5 mm apart on paper each side); the bearing walls of the calculation thick, below.
+    for (const auto& run : doc::Modeler::wallLines(document, z)) {
+      const doc::Object* wall = document.find(run.wall);
+      if (!wall || !document.isVisible(run.wall)) continue;
+      if (std::find(spec.excludeTags.begin(), spec.excludeTags.end(), wall->layer) != spec.excludeTags.end()) continue;
+      if (!spec.tags.empty() && std::find(spec.tags.begin(), spec.tags.end(), wall->layer) == spec.tags.end()) continue;
+      const gp_Pnt2d a = proj.uv(run.a), b = proj.uv(run.b);
+      if (a.Distance(b) < 1.0) continue;
+      if (!run.opening) {
+        view.items.push_back(line(Pen::Visible, a, b));
+        view.symbols.insert("wall_general");
+        continue;
+      }
+      gp_Vec2d across(a, b);
+      across.Normalize();
+      across = gp_Vec2d(-across.Y(), across.X()) * (0.5 * paperScale);
+      view.items.push_back(line(Pen::Visible, a.Translated(across), b.Translated(across)));
+      view.items.push_back(line(Pen::Visible, a.Translated(-across), b.Translated(-across)));
+      view.symbols.insert("wall_opening");
+    }
+    // docs/333: the columns standing at the cut as small squares with their numbers (from the top row down, left
+    // to right in each row), a through column's square ringed, as the manual's 耐力壁図 (柱 □n, 通し柱 ◎n).
+    {
+      struct Column {
+        gp_Pnt2d at;
+        bool through;
+      };
+      std::vector<Column> columns;
+      for (const doc::Object& o : document.objects()) {
+        const auto kind = o.attributes.find("kind");
+        if (kind == o.attributes.end() || (kind->second != "column" && kind->second != "through_column") || o.shape.IsNull() ||
+            !document.isVisible(o.id))
+          continue;
+        if (std::find(spec.excludeTags.begin(), spec.excludeTags.end(), o.layer) != spec.excludeTags.end()) continue;
+        if (!spec.tags.empty() && std::find(spec.tags.begin(), spec.tags.end(), o.layer) == spec.tags.end()) continue;
+        const Bnd_Box box = document.worldBounds(o);
+        if (box.IsVoid()) continue;
+        double x0, y0, z0, x1, y1, z1;
+        box.Get(x0, y0, z0, x1, y1, z1);
+        if (z < z0 || z > z1) continue;
+        columns.push_back({proj.uv(gp_Pnt((x0 + x1) / 2, (y0 + y1) / 2, z)), kind->second == "through_column"});
+      }
+      std::sort(columns.begin(), columns.end(), [](const Column& l, const Column& r) {
+        const long long ly = std::llround(l.at.Y()), ry = std::llround(r.at.Y());
+        return ly != ry ? ly > ry : l.at.X() < r.at.X();
+      });
+      for (std::size_t i = 0; i < columns.size(); ++i) {
+        const std::string number = std::to_string(i + 1);
+        const double half = std::max(1.2, 0.5 * static_cast<double>(number.size()) + 0.4) * paperScale;
+        const gp_Pnt2d& c = columns[i].at;
+        Item square;
+        square.kind = Item::Kind::Polyline;
+        square.pen = Pen::Visible;
+        square.closed = true;
+        const double h = 1.2 * paperScale;
+        square.points = {gp_Pnt2d(c.X() - half, c.Y() - h), gp_Pnt2d(c.X() + half, c.Y() - h), gp_Pnt2d(c.X() + half, c.Y() + h),
+                         gp_Pnt2d(c.X() - half, c.Y() + h)};
+        view.items.push_back(std::move(square));
+        Item label;
+        label.kind = Item::Kind::Text;
+        label.pen = Pen::Text;
+        label.points = {c};
+        label.text = number;
+        label.height = 1.8;
+        label.hAlign = 1;
+        label.vAlign = 1;
+        view.items.push_back(std::move(label));
+        if (columns[i].through) {
+          Item ring;
+          ring.kind = Item::Kind::Arc;
+          ring.pen = Pen::Visible;
+          ring.centre = c;
+          ring.radius = std::hypot(half, h) * 1.1;
+          ring.start = 0;
+          ring.sweep = 2 * M_PI;
+          view.items.push_back(std::move(ring));
+          view.symbols.insert("through_column_box");
+        } else {
+          view.symbols.insert("column_box");
+        }
+      }
+    }
     if (report.is_object()) {
       for (const auto& w : report.value("walls", nlohmann::json::array())) {
         if (w.value("floor", std::string()) != spec.bracingFloor || !w.contains("start") || !w.contains("end")) continue;
@@ -1432,6 +1518,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
           at.Translate(gp_Vec2d(wallDir.Y(), -wallDir.X()) * (100.0 + 2.5 * paperScale));
         }
         view.bracingMarks.push_back({at, label, 2.5});
+        if (line.pen == Pen::Cut) view.symbols.insert("bearing_wall");  // docs/333
         ++walls;
       }
       for (const auto& row : report.value("quarter_balance", nlohmann::json::array())) {
@@ -1453,7 +1540,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
         }
       }
     }
-    view.calculationNotes.push_back(walls > 0 ? "太線：壁量に入れた耐力壁（脇の英字は壁記号。仕様・倍率・長さは耐力壁仕様一覧と存在壁量の算定の表）　破線：入れていない壁、四分割の側端部分"
+    view.calculationNotes.push_back(walls > 0 ? "脇の英字は耐力壁の壁記号（仕様・倍率・長さは耐力壁仕様一覧と存在壁量の算定の表）　破線：壁量に入れていない壁、四分割の側端部分"
                                               : "この階の耐力壁は、壁量の計算の入力にありません");
   }
 

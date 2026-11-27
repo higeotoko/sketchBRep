@@ -279,7 +279,7 @@ TEST(WallQuantityForms, BracingPlanShowsTheWallsAndTheSideParts) {
   EXPECT_TRUE(markA);
   EXPECT_TRUE(side);
   bool legend = false;
-  for (const auto& n : view->calculationNotes) legend = legend || n.find("太線") != std::string::npos;
+  for (const auto& n : view->calculationNotes) legend = legend || n.find("壁記号") != std::string::npos;  // docs/333
   EXPECT_TRUE(legend);
   // Through the command, and in the drawing set.
   const auto path = (std::filesystem::temp_directory_path() / "bracing-plan.dxf").string();

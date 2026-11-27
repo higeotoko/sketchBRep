@@ -934,6 +934,15 @@ class Modeler {
     std::string place = "middle";
   };
   static std::vector<InsulationRun> insulationRuns(const Document& document, double z);
+  // docs/333: the walls standing at z as single lines along the middle of each (world, at z), broken into
+  // the stretches of wall and of its openings (doors and windows, whatever their height), as the MLIT
+  // manual's 耐力壁図 draws them (一般壁 a thin line, 開口部 a double line).
+  struct WallLine {
+    ObjectId wall;
+    gp_Pnt a, b;
+    bool opening = false;
+  };
+  static std::vector<WallLine> wallLines(const Document& document, double z);
   // docs/217: where a section draws the insulation mark of a wall, slab or roof with insulation
   // given: a wall's mark plane (a point on it and its normal, across the wall) and band width (as
   // insulationRuns); a slab's height or a roof's thickness across its slope as made (no plane: the

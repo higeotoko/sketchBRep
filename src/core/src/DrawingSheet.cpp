@@ -288,6 +288,12 @@ void appendLegend(std::vector<Item>& items, const Paper* paper, double s, const 
   if (hatchPatterns.count(2)) hatches.push_back({2, "構造用の木材の切り口（柱・間柱・土台など）"});
   if (hatchPatterns.count(1)) hatches.push_back({1, "合板・野地板の切り口"});
   if (symbols.count("through_column")) hatches.push_back({3, "通し柱"});  // docs/327: a ringed column
+  // docs/333: the bracing plan's lines and columns, in the manual's legend words.
+  if (symbols.count("wall_general")) hatches.push_back({6, "一般壁"});
+  if (symbols.count("wall_opening")) hatches.push_back({7, "開口部"});
+  if (symbols.count("bearing_wall")) hatches.push_back({8, "耐力壁"});
+  if (symbols.count("column_box")) hatches.push_back({9, "柱"});
+  if (symbols.count("through_column_box")) hatches.push_back({10, "通し柱"});
   // docs/331: the MLIT manual's legend words for the brace marks.
   if (symbols.count("brace_double")) hatches.push_back({5, "筋かいダブル"});
   if (symbols.count("brace")) hatches.push_back({4, "筋かいシングル"});
@@ -310,6 +316,28 @@ void appendLegend(std::vector<Item>& items, const Paper* paper, double s, const 
       const double x = x0 + col * colW, y = top - (r + 1.5) * rowH;
       if (x + sample + 4 > x0 + room) break;
       const double y0 = y - 1.4, y1 = y + 1.4;
+      if (hatches[h].first >= 6 && hatches[h].first <= 10) {  // docs/333: as the bracing plan draws them
+        const int code = hatches[h].first;
+        const double cx = x + sample / 2;
+        if (code == 6) items.push_back(line(Pen::Visible, P(x + 2, y), P(x + sample - 2, y)));
+        if (code == 7) {
+          items.push_back(line(Pen::Visible, P(x + 2, y - 0.5), P(x + sample - 2, y - 0.5)));
+          items.push_back(line(Pen::Visible, P(x + 2, y + 0.5), P(x + sample - 2, y + 0.5)));
+        }
+        if (code == 8) items.push_back(line(Pen::Cut, P(x + 2, y), P(x + sample - 2, y)));
+        if (code == 9 || code == 10) {
+          Item square;
+          square.kind = Item::Kind::Polyline;
+          square.pen = Pen::Visible;
+          square.closed = true;
+          square.points = {P(cx - 1.2, y - 1.2), P(cx + 1.2, y - 1.2), P(cx + 1.2, y + 1.2), P(cx - 1.2, y + 1.2)};
+          items.push_back(square);
+          items.push_back(text(Pen::Text, P(cx, y), "n", 1.8, 1, 1));
+          if (code == 10) items.push_back(circle(Pen::Visible, P(cx, y), 1.2 * std::sqrt(2.0) * 1.1 * s));
+        }
+        items.push_back(text(Pen::Text, P(x + sample + 2, y), hatches[h].second, 2.5, 0, 1));
+        continue;
+      }
       if (hatches[h].first == 4 || hatches[h].first == 5) {  // docs/331: the open triangles, as on the plans
         const double cx = x + sample / 2;
         Item edge;

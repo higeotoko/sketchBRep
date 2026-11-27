@@ -5515,3 +5515,28 @@ TEST(PermitIntake, RoomFloorLevelIsWrittenUnderItsName) {
   EXPECT_FALSE(has(all, "(FL-180)"));
   EXPECT_TRUE(has(all, "(FL±0)"));
 }
+
+// docs/333: the bracing plan is the MLIT manual's diagram: each wall a thin line along its middle, broken into a
+// double line at its openings (all of them, whatever their height), and none of the model's cut geometry.
+TEST_F(Schedules, BracingPlanDrawsWallsAsLinesAndOpeningsDoubled) {
+  const auto runs = sbr::doc::Modeler::wallLines(modeler.document(), 1100);
+  ASSERT_FALSE(runs.empty());
+  const auto openings = std::count_if(runs.begin(), runs.end(), [](const auto& r) { return r.opening; });
+  EXPECT_EQ(openings, 5);  // south 2 windows, north a window and an opening, east a door
+  for (const auto& r : runs) EXPECT_NEAR(r.a.Z(), 1100.0, 1e-6);
+  sbr::draw::ViewSpec spec = sbr::draw::planView(1100.0);
+  spec.depth = 1500.0;
+  spec.bracingFloor = "1";
+  spec.paperScale = 100;
+  const auto view = sbr::draw::makeView(modeler.document(), spec);
+  ASSERT_TRUE(view) << view.error();
+  long visibleLines = 0, fills = 0;
+  for (const auto& i : view->items) {
+    if (i.kind == sbr::draw::Item::Kind::Line && i.pen == sbr::draw::Pen::Visible) ++visibleLines;
+    if (i.kind == sbr::draw::Item::Kind::Fill) ++fills;
+  }
+  EXPECT_EQ(visibleLines, static_cast<long>(runs.size()) + openings);  // a double line is two
+  EXPECT_EQ(fills, 0);  // no cut walls poched
+  EXPECT_TRUE(view->symbols.count("wall_general"));
+  EXPECT_TRUE(view->symbols.count("wall_opening"));
+}

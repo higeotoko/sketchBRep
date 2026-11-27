@@ -579,3 +579,40 @@ TEST_F(Quantities, PlansMarkTheBraces) {
   ASSERT_TRUE(framing);
   EXPECT_FALSE(framing->symbols.count("brace"));
 }
+
+// docs/333: the bracing plan numbers the columns in squares (top row first, left to right) and rings the through ones.
+TEST_F(Quantities, BracingPlansNumberTheColumns) {
+  frame();
+  int columns = 0, through = 0;
+  for (const auto& o : m.document().objects()) {
+    const auto k = o.attributes.find("kind");
+    if (k == o.attributes.end()) continue;
+    if (k->second == "column" || k->second == "through_column") ++columns;
+    if (k->second == "through_column") ++through;
+  }
+  ASSERT_GT(columns, 0);
+  draw::ViewSpec spec = draw::planView(1000.0);
+  spec.paperScale = 100;
+  spec.bracingFloor = "1";
+  const auto view = draw::makeView(m.document(), spec);
+  ASSERT_TRUE(view) << view.error();
+  int squares = 0, rings = 0;
+  std::vector<std::pair<std::string, gp_Pnt2d>> numbers;
+  for (const auto& i : view->items) {
+    if (i.kind == draw::Item::Kind::Polyline && i.closed && i.points.size() == 4 && i.pen == draw::Pen::Visible) ++squares;
+    if (i.kind == draw::Item::Kind::Arc && std::abs(i.sweep - 2 * M_PI) < 1e-9) ++rings;
+    if (i.kind == draw::Item::Kind::Text && !i.text.empty() && std::all_of(i.text.begin(), i.text.end(), ::isdigit))
+      numbers.push_back({i.text, i.points.front()});
+  }
+  EXPECT_EQ(squares, columns);
+  EXPECT_EQ(rings, through);
+  ASSERT_GE(numbers.size(), 2u);
+  // "1" is at the top left: no column above it, none left of it in its row.
+  const auto one = std::find_if(numbers.begin(), numbers.end(), [](const auto& n) { return n.first == "1"; });
+  ASSERT_NE(one, numbers.end());
+  for (const auto& n : numbers) {
+    EXPECT_LE(n.second.Y(), one->second.Y() + 1e-6);
+    if (std::abs(n.second.Y() - one->second.Y()) < 1.0) EXPECT_GE(n.second.X(), one->second.X() - 1e-6);
+  }
+  EXPECT_TRUE(view->symbols.count("through_column_box"));
+}

@@ -8041,6 +8041,38 @@ std::vector<Modeler::InsulationRun> Modeler::insulationRuns(const Document& docu
   return out;
 }
 
+std::vector<Modeler::WallLine> Modeler::wallLines(const Document& document, double z) {
+  std::vector<WallLine> out;
+  for (const WallBand& w : allWallBands(document)) {
+    if (z < w.z0 || z > w.z1 || w.length < 1.0) continue;
+    const double middle = (w.leftExt - w.right) / 2;
+    std::vector<std::pair<double, double>> gaps;
+    if (const auto openings = openingsIn(document, w.object->id))
+      for (const OpeningInfo& o : *openings) {
+        if (std::abs(o.normal.Z()) > 1e-6) continue;
+        const double c = gp_Vec(w.start, gp_Pnt(o.center.X(), o.center.Y(), w.start.Z())).Dot(gp_Vec(w.dir));
+        const double g0 = std::max(0.0, c - o.along / 2), g1 = std::min(w.length, c + o.along / 2);
+        if (g1 - g0 >= 1.0) gaps.emplace_back(g0, g1);
+      }
+    std::sort(gaps.begin(), gaps.end());
+    const auto at = [&](double s) {
+      gp_Pnt p = w.start.Translated(gp_Vec(w.left) * middle + gp_Vec(w.dir) * s);
+      p.SetZ(z);
+      return p;
+    };
+    double from = 0.0;
+    for (const auto& [g0, g1] : gaps) {
+      if (g1 <= from) continue;
+      const double s0 = std::max(g0, from);
+      if (s0 - from >= 1.0) out.push_back({w.object->id, at(from), at(s0), false});
+      out.push_back({w.object->id, at(s0), at(g1), true});
+      from = g1;
+    }
+    if (w.length - from >= 1.0) out.push_back({w.object->id, at(from), at(w.length), false});
+  }
+  return out;
+}
+
 std::optional<Modeler::InsulationBand> Modeler::insulationBand(const Document& document, const Object& object) {
   InsulationBand band;
   band.text = insulationText(object);
