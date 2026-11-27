@@ -2288,6 +2288,23 @@ TEST(WallLayerLines, CutLayersAreHatchedAtAScale) {
   EXPECT_LT(coarse.size() * 2, plan.size());
   // Without a scale (the screen): none.
   EXPECT_TRUE(diagonals(sbr::draw::planView(1100), 0).empty());
+  // docs/326: the sheet's legend shows both hatchings drawn (timber crossed, plywood single).
+  {
+    sbr::draw::ViewSpec spec = sbr::draw::planView(1100);
+    spec.hatchScale = 20;
+    const auto view = sbr::draw::makeView(modeler.document(), spec);
+    ASSERT_TRUE(view);
+    EXPECT_EQ(view->hatchPatterns, (std::set<int>{1, 2}));
+    sbr::draw::SheetSpec sheetSpec;
+    sheetSpec.scale = 20;
+    const auto sheet = sbr::draw::layoutSheet(*view, sheetSpec);
+    ASSERT_TRUE(sheet);
+    int named = 0;
+    for (const auto& item : sheet->items)
+      named += item.kind == sbr::draw::Item::Kind::Text &&
+               (item.text.rfind("構造用の木材の切り口", 0) == 0 || item.text == "合板・野地板の切り口");
+    EXPECT_EQ(named, 2);
+  }
   // A section across the floor, looking east: the joists (z -144..-39) crossed, the plywood
   // (-39..-15) single lines, the flooring not.
   const auto section = diagonals(sbr::draw::sectionView(gp_Pnt(3000, 2000, 0), gp_Dir(1, 0, 0)), 20);

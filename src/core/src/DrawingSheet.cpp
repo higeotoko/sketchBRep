@@ -269,7 +269,7 @@ void frameAndTitle(std::vector<Item>& items, const Paper* paper, const SheetSpec
 // docs/303: the legend (凡例) of the lines whose meaning is not written beside them, from the pens the
 // sheet uses: a short sample in the pen itself (so it follows the pen table) and its name, in the
 // strip left of the title block (it takes no room from the drawing).
-void appendLegend(std::vector<Item>& items, const Paper* paper, double s) {
+void appendLegend(std::vector<Item>& items, const Paper* paper, double s, const std::set<int>& hatchPatterns = {}) {
   auto P = [&](double x, double y) { return gp_Pnt2d(x * s, y * s); };
   static constexpr std::pair<Pen, const char*> kLegend[] = {
       {Pen::Hidden, "隠れ線"},          {Pen::Grid, "通り芯・中心線"},   {Pen::Boundary, "敷地境界線"},
@@ -282,7 +282,11 @@ void appendLegend(std::vector<Item>& items, const Paper* paper, double s) {
   std::vector<std::pair<Pen, const char*>> rows;
   for (const auto& row : kLegend)
     if (used[static_cast<int>(row.first)]) rows.push_back(row);
-  if (!rows.empty()) {
+  // docs/326: the cut layers' hatching drawn on the sheet: a small cut box hatched the same way, after the lines.
+  std::vector<std::pair<int, const char*>> hatches;
+  if (hatchPatterns.count(2)) hatches.push_back({2, "構造用の木材の切り口（柱・間柱・土台など）"});
+  if (hatchPatterns.count(1)) hatches.push_back({1, "合板・野地板の切り口"});
+  if (!rows.empty() || !hatches.empty()) {
     constexpr double rowH = 5.0, sample = 14.0, colW = 75.0;
     const int perColumn = static_cast<int>((kTitleH - rowH) / rowH);
     const double x0 = kLeftMargin + 4, top = kMargin + kTitleH - 2;
@@ -294,6 +298,40 @@ void appendLegend(std::vector<Item>& items, const Paper* paper, double s) {
       if (x + sample + 4 > x0 + room) break;  // no more room beside the title block
       items.push_back(line(rows[k].first, P(x, y), P(x + sample, y)));
       items.push_back(text(Pen::Text, P(x + sample + 2, y), rows[k].second, 2.5, 0, 1));
+    }
+    for (std::size_t h = 0; h < hatches.size(); ++h) {
+      const std::size_t k = rows.size() + h;
+      const int col = static_cast<int>(k) / perColumn, r = static_cast<int>(k) % perColumn;
+      const double x = x0 + col * colW, y = top - (r + 1.5) * rowH;
+      if (x + sample + 4 > x0 + room) break;
+      const double y0 = y - 1.4, y1 = y + 1.4;
+      Item box;
+      box.kind = Item::Kind::Polyline;
+      box.pen = Pen::Cut;
+      box.closed = true;
+      box.points = {P(x, y0), P(x + sample, y0), P(x + sample, y1), P(x, y1)};
+      items.push_back(box);
+      // 45-degree strokes 1.5 mm apart (as the cut layers on the sheet), both ways for timber.
+      for (double u = x - 3.0; u < x + sample; u += 1.5) {
+        const auto clipped = [&](double ua, double va, double ub, double vb) {
+          // Clip the segment to the box (x..x+sample, y0..y1) along its own direction.
+          double t0 = 0, t1 = 1;
+          const double du = ub - ua, dv = vb - va;
+          for (const auto& [p, q] : {std::pair<double, double>{-du, ua - x}, {du, x + sample - ua}, {-dv, va - y0}, {dv, y1 - va}}) {
+            if (std::abs(p) < 1e-12) {
+              if (q < 0) return;
+              continue;
+            }
+            const double t = q / p;
+            if (p < 0) t0 = std::max(t0, t);
+            else t1 = std::min(t1, t);
+          }
+          if (t1 > t0) items.push_back(line(Pen::Visible, P(ua + du * t0, va + dv * t0), P(ua + du * t1, va + dv * t1)));
+        };
+        clipped(u, y0, u + (y1 - y0), y1);
+        if (hatches[h].first == 2) clipped(u, y1, u + (y1 - y0), y0);
+      }
+      items.push_back(text(Pen::Text, P(x + sample + 2, y), hatches[h].second, 2.5, 0, 1));
     }
   }
 }
@@ -569,7 +607,8 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
   if (!spec.compactDiagram && spec.north && (view.spec.kind == ViewKind::Plan || view.spec.kind == ViewKind::SitePlan)) {
     appendNorthMark(items, P(ax1 - 15, ay1 - 16), s, view.trueNorth);
   }
-  if (frame && !spec.compactDiagram && view.spec.framingPreset.empty()) appendLegend(items, paper, s);
+  sheet.hatchPatterns = view.hatchPatterns;  // docs/326
+  if (frame && !spec.compactDiagram && view.spec.framingPreset.empty()) appendLegend(items, paper, s, view.hatchPatterns);
   if (frame) frameAndTitle(items, paper, spec, title, s);
   if (!view.spec.framingPreset.empty()) {
     items.push_back(
@@ -787,8 +826,9 @@ Result<Sheet> combineSheets(const std::vector<Sheet>& drawings, const SheetSpec&
     }
   }
   if (spec.north) appendNorthMark(items, gp_Pnt2d((ax1 - 15) * s, (ay1 - 16) * s), s, trueNorth);
+  for (const Sheet& d : drawings) sheet.hatchPatterns.insert(d.hatchPatterns.begin(), d.hatchPatterns.end());
   if (spec.frame) {
-    appendLegend(items, paper, s);
+    appendLegend(items, paper, s, sheet.hatchPatterns);
     frameAndTitle(items, paper, spec, sheet.title, s);
   }
   sheet.items = std::move(items);
@@ -877,7 +917,8 @@ Result<Sheet> layoutSheetWithTables(const View& view, const std::vector<Table>& 
     drawTable(tables[k], sizes[k], tx, ty, s, items);
     ty -= sizes[k].h + gap;
   }
-  if (spec.frame && view.spec.framingPreset.empty()) appendLegend(items, paper, s);
+  sheet.hatchPatterns = view.hatchPatterns;  // docs/326
+  if (spec.frame && view.spec.framingPreset.empty()) appendLegend(items, paper, s, view.hatchPatterns);
   if (spec.frame) frameAndTitle(items, paper, spec, sheetName, s);
   sheet.items = std::move(items);
   return sheet;

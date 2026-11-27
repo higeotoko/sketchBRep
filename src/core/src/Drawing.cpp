@@ -1089,6 +1089,8 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
               const double cu = acrossOf(gp_Pnt(1, 0, 0).Transformed(toWorld)) - c0;
               const double cv = acrossOf(gp_Pnt(0, 1, 0).Transformed(toWorld)) - c0;
               hatchFace(faceFill.front(), c0, cu, cv, bands, 1.5 * spec.hatchScale, hatches);
+              for (const HatchBand& band : bands)
+                if (band.pattern != 0) view.hatchPatterns.insert(band.pattern);  // docs/326: for the legend
             }
             if (spec.fill)
               for (Item& f : faceFill) fills.push_back(std::move(f));
