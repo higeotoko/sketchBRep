@@ -508,7 +508,7 @@ TEST_F(Quantities, PlansCircleTheThroughColumns) {
   ASSERT_TRUE(view) << view.error();
   int rings = 0;
   for (const auto& item : view->items)
-    rings += item.kind == draw::Item::Kind::Arc && item.pen == draw::Pen::Visible && item.radius >= 180.0 - 1e-9 &&
+    rings += item.kind == draw::Item::Kind::Arc && item.pen == draw::Pen::Visible && item.radius > 0 && item.radius < 120.0 &&  // docs/328: round the column (about its half diagonal), not larger
              std::abs(item.sweep - 2 * M_PI) < 1e-9;
   EXPECT_EQ(rings, through);
   EXPECT_TRUE(view->symbols.count("through_column"));

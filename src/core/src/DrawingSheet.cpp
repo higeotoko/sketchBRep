@@ -312,10 +312,13 @@ void appendLegend(std::vector<Item>& items, const Paper* paper, double s, const 
         square.kind = Item::Kind::Polyline;
         square.pen = Pen::Cut;
         square.closed = true;
-        const double cx = x + sample / 2, half = 0.6;
+        const double cx = x + sample / 2, half = 0.9;
         square.points = {P(cx - half, y - half), P(cx + half, y - half), P(cx + half, y + half), P(cx - half, y + half)};
         items.push_back(square);
-        items.push_back(circle(Pen::Visible, P(cx, y), 1.8 * s));
+        // docs/328: the column's cut crossed (structural timber) and the circle just round it.
+        items.push_back(line(Pen::Visible, P(cx - half, y - half), P(cx + half, y + half)));
+        items.push_back(line(Pen::Visible, P(cx - half, y + half), P(cx + half, y - half)));
+        items.push_back(circle(Pen::Visible, P(cx, y), half * std::sqrt(2.0) * 1.08 * s));
         items.push_back(text(Pen::Text, P(x + sample + 2, y), hatches[h].second, 2.5, 0, 1));
         continue;
       }

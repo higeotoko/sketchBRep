@@ -2189,7 +2189,8 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     }
     view.items.insert(view.items.end(), kept.begin(), kept.end());
   }
-  // docs/327: a plan circles the through columns (通し柱) its cut passes, as submitted plans mark them.
+  // docs/327: a plan circles the through columns (通し柱) its cut passes, as submitted plans mark them: a circle
+  // round the column's square (docs/328: not larger; it was drawn at least 1.8 mm on paper, twice the column).
   if (spec.kind == ViewKind::Plan && spec.framingPreset.empty() && spec.bracingFloor.empty()) {
     const double cutZ = spec.frame.Location().Z();
     const double paper = spec.paperScale > 0 ? spec.paperScale : 100.0;
@@ -2207,7 +2208,9 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
       ring.kind = Item::Kind::Arc;
       ring.pen = Pen::Visible;
       ring.centre = proj.uv(gp_Pnt((x0 + x1) / 2, (y0 + y1) / 2, cutZ));
-      ring.radius = std::max(0.8 * std::max(x1 - x0, y1 - y0), 1.8 * paper);
+      // Round the column's cut, just outside its corners (as drawn by hand: the square in its circle).
+      ring.radius = 0.5 * std::hypot(x1 - x0, y1 - y0) * 1.08;
+      (void)paper;
       ring.start = 0;
       ring.sweep = 2 * M_PI;
       view.items.push_back(std::move(ring));
