@@ -2217,11 +2217,17 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
       view.symbols.insert("through_column");
     }
   }
-  // docs/330: a plan marks each brace (筋かい) its cut passes with a small right triangle on the wall, its upright
-  // side at the brace's upper end (◣), as submitted plans give the braces' places and directions.
-  if (spec.kind == ViewKind::Plan && spec.framingPreset.empty() && spec.bracingFloor.empty()) {
+  // docs/330, docs/331: the braces (筋かい) the cut passes, as the MLIT manual for timber houses' permit drawings
+  // (改正建築基準法 2階建ての木造一戸建て住宅等の確認申請・審査マニュアル, 耐力壁図 legend) draws them: beside the
+  // wall line, an open right triangle for a single brace, its upright side at the brace's head (柱頭), and an open
+  // isosceles triangle for crossed braces (ダブル). Plans and bracing plans; framing plans draw the members.
+  if (spec.kind == ViewKind::Plan && spec.framingPreset.empty()) {
     const double cutZ = spec.frame.Location().Z();
     const double paper = spec.paperScale > 0 ? spec.paperScale : 100.0;
+    struct BraceEnds {
+      gp_Pnt2d foot, head;
+    };
+    std::vector<BraceEnds> found;
     for (const doc::Object& o : document.objects()) {
       const auto kind = o.attributes.find("kind");
       if (kind == o.attributes.end() || kind->second != "brace" || o.shape.IsNull() || !document.isVisible(o.id)) continue;
@@ -2235,27 +2241,45 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
         if (!high || p.Z() > high->Z()) high = p;
       }
       if (!low || !high || cutZ < low->Z() || cutZ > high->Z()) continue;
-      const gp_Pnt2d a = proj.uv(*low), b = proj.uv(*high);
-      gp_Vec2d along(a, b);
-      if (along.Magnitude() < 1.0) continue;
-      along.Normalize();
-      const gp_Vec2d across(-along.Y(), along.X());
-      const gp_Pnt2d mid((a.X() + b.X()) / 2, (a.Y() + b.Y()) / 2);
-      const double base = 4.0 * paper, rise = 1.6 * paper;
-      const gp_Pnt2d foot = mid.Translated(-along * (base / 2)), corner = mid.Translated(along * (base / 2));
-      const gp_Pnt2d tip = corner.Translated(across * rise);
-      Item fill;
-      fill.kind = Item::Kind::Fill;
-      fill.pen = Pen::Fill;
-      fill.points = {foot, corner, tip};
-      view.items.push_back(fill);
+      const BraceEnds ends{proj.uv(*low), proj.uv(*high)};
+      if (ends.foot.Distance(ends.head) < 1.0) continue;
+      found.push_back(ends);
+    }
+    // Crossed braces: two braces over the same stretch of wall, their foot and head swapped (within 200 mm).
+    const double near = 200.0;
+    std::vector<bool> paired(found.size(), false);
+    const double base = 4.0 * paper, rise = 1.4 * paper, gap = 100.0 + 0.8 * paper;  // the wall's half (about) and a gap
+    const auto triangle = [&](const gp_Pnt2d& a, const gp_Pnt2d& b, const gp_Pnt2d& c) {
       Item outline;
       outline.kind = Item::Kind::Polyline;
       outline.pen = Pen::Visible;
       outline.closed = true;
-      outline.points = {foot, corner, tip};
+      outline.points = {a, b, c};
       view.items.push_back(std::move(outline));
-      view.symbols.insert("brace");
+    };
+    for (std::size_t i = 0; i < found.size(); ++i) {
+      if (paired[i]) continue;
+      bool crossed = false;
+      for (std::size_t j = i + 1; j < found.size() && !crossed; ++j)
+        if (!paired[j] && found[i].foot.Distance(found[j].head) < near && found[i].head.Distance(found[j].foot) < near)
+          crossed = paired[j] = true;
+      const gp_Pnt2d a = found[i].foot, b = found[i].head;
+      gp_Vec2d along(a, b);
+      along.Normalize();
+      // One side for every mark: the normal of the wall's direction taken along +u (or +v when the wall runs along v).
+      gp_Vec2d wall = along;
+      if (wall.X() < -1e-9 || (std::abs(wall.X()) <= 1e-9 && wall.Y() < 0)) wall.Reverse();
+      const gp_Vec2d side(-wall.Y(), wall.X());
+      const gp_Pnt2d mid((a.X() + b.X()) / 2, (a.Y() + b.Y()) / 2);
+      const gp_Pnt2d centre = mid.Translated(side * gap);
+      if (crossed) {
+        triangle(centre.Translated(-wall * (base / 2)), centre.Translated(wall * (base / 2)), centre.Translated(side * rise));
+        view.symbols.insert("brace_double");
+      } else {
+        const gp_Pnt2d footEnd = centre.Translated(-along * (base / 2)), headEnd = centre.Translated(along * (base / 2));
+        triangle(footEnd, headEnd, headEnd.Translated(side * rise));
+        view.symbols.insert("brace");
+      }
     }
   }
   if (spec.memberLabels) {

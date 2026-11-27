@@ -543,24 +543,37 @@ TEST_F(Quantities, CornerColumnsAreThroughColumns) {
   EXPECT_EQ(corners.through, 3);
 }
 
-// docs/330: a plan marks each brace its cut passes with a triangle, and the legend explains it; framing plans do not.
+// docs/330, docs/331: a plan marks each single brace with an open right triangle and a crossed pair with one open
+// isosceles triangle (the MLIT manual's legend); the legend names them; framing plans do not.
 TEST_F(Quantities, PlansMarkTheBraces) {
   const auto made = m.generateFrame(
-      R"({"inputs":{"x_bays":2,"y_bays":2,"braces":[{"storey":1,"from":[0,0],"to":[1,0]},{"storey":1,"from":[2,1],"to":[2,2]}]}})");
+      R"({"inputs":{"x_bays":2,"y_bays":2,"braces":[{"storey":1,"from":[0,0],"to":[1,0]},{"storey":1,"from":[2,1],"to":[2,2]},)"
+      R"({"storey":1,"from":[0,1],"to":[0,2]},{"storey":1,"from":[0,2],"to":[0,1]}]}})");
   ASSERT_TRUE(made) << made.error();
   int braces = 0;
   for (const auto& o : m.document().objects())
     if (const auto k = o.attributes.find("kind"); k != o.attributes.end() && k->second == "brace") ++braces;
-  ASSERT_GT(braces, 0);
+  ASSERT_EQ(braces, 4);
   draw::ViewSpec spec = draw::planView(1000.0);
   spec.paperScale = 100;
   const auto view = draw::makeView(m.document(), spec);
   ASSERT_TRUE(view) << view.error();
-  int marks = 0;
-  for (const auto& item : view->items)
-    marks += item.kind == draw::Item::Kind::Polyline && item.pen == draw::Pen::Visible && item.closed && item.points.size() == 3;
-  EXPECT_EQ(marks, braces);
+  int right = 0, isosceles = 0, filled = 0;
+  for (const auto& item : view->items) {
+    if (item.kind == draw::Item::Kind::Fill && item.points.size() == 3) ++filled;
+    if (item.kind != draw::Item::Kind::Polyline || item.pen != draw::Pen::Visible || !item.closed || item.points.size() != 3) continue;
+    const auto& p = item.points;
+    const double ab = p[0].Distance(p[1]), bc = p[1].Distance(p[2]), ca = p[2].Distance(p[0]);
+    if (std::abs(bc - ca) < 1e-6) ++isosceles;
+    else ++right;
+    // Beside the wall, not on it: the base is off the wall line by the gap.
+    EXPECT_NEAR(ab, 400.0, 1e-6);
+  }
+  EXPECT_EQ(right, 2);      // the two single braces
+  EXPECT_EQ(isosceles, 1);  // the crossed pair
+  EXPECT_EQ(filled, 0);     // open triangles
   EXPECT_TRUE(view->symbols.count("brace"));
+  EXPECT_TRUE(view->symbols.count("brace_double"));
   spec.framingPreset = "first_floor";
   const auto framing = draw::makeView(m.document(), spec);
   ASSERT_TRUE(framing);
