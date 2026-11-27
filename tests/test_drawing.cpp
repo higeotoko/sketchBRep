@@ -1240,3 +1240,47 @@ TEST(Drawing, HeightStudyIsKeptForItsSite) {
   run({{"command", "set_height_study"}, {"args", {{"clear", true}}}});
   EXPECT_FALSE(doc::savedHeightStudy(m.document()));
 }
+
+// docs/319: the drawing set's sections show the study's lowest limit along the cut, named by the governing limit,
+// instead of the separate road slant; the section that does not cross the road's slant has none.
+TEST(Drawing, SectionsShowTheStudysLowestLimit) {
+  doc::Modeler m;
+  const auto outline = m.createRectangle(geom::SketchPlane::ground(), 10000, 12000);
+  ASSERT_TRUE(outline);
+  api::CommandApi api(m);
+  const auto run = [&](const nlohmann::json& c) {
+    const auto r = nlohmann::json::parse(api.execute(c.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << r.dump();
+    return r;
+  };
+  run({{"command", "create_wall"}, {"args", {{"points", {{1500, 2500}, {5200, 2500}, {5200, 6500}, {1500, 6500}, {1500, 2500}}},
+                                              {"thickness", 120}, {"height", 6000}}}});
+  ASSERT_TRUE(m.setSiteBoundary(doc::SiteBoundary{*outline, "Survey"}));
+  doc::SiteRoad road;
+  road.kind = "法42条1項1号道路";
+  road.source = "Synthetic road register";
+  road.widthMm = 4000;
+  ASSERT_TRUE(m.setSiteRoad({gp_Pnt(10000, 0, 0), gp_Pnt(0, 0, 0)}, road));
+  ASSERT_TRUE(m.setLevels({{"gl", "GL", 0.0}, {"1fl", "1FL", 500.0}}));
+  run({{"command", "set_height_study"},
+       {"args", {{"road", {{"edge_z", 5000}, {"slope", 1.25}, {"width_m", 4}, {"distance_m", 20}, {"setback_m", 0}}}}}});
+  const auto set = doc::drawingSet(m.document(), {});
+  ASSERT_TRUE(set) << set.error();
+  int envelopes = 0;
+  for (std::size_t i = 0; i < set->names.size(); ++i) {
+    if (set->names[i].find("断面図") == std::string::npos) continue;
+    bool named = false, separate = false, limitLine = false;
+    for (const auto& item : set->sheets[i].items) {
+      named |= item.kind == Item::Kind::Text && item.text == "道路斜線";
+      separate |= item.kind == Item::Kind::Text && item.text.rfind("道路斜線（勾配", 0) == 0;
+      limitLine |= item.kind == Item::Kind::Line && item.pen == Pen::HeightLimit;
+    }
+    EXPECT_FALSE(separate) << set->names[i];  // not drawn twice
+    if (named) {
+      EXPECT_TRUE(limitLine);
+      ++envelopes;
+    }
+  }
+  EXPECT_GE(envelopes, 1);  // the section across the road
+  if (const char* out = std::getenv("SBR_ENVELOPE_SBR")) EXPECT_TRUE(m.save(out));  // to look at its drawing set
+}

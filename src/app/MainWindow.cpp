@@ -2709,8 +2709,10 @@ void MainWindow::buildAiBridge() {
     doc::DrawingSetSpec spec = drawingSetSpecFor(modeler_.document(), a.value("tables_with_plan", false), &tilesMessage);
     if (combinedHeightDraft_ && combinedHeightDraft_->sequence == modeler_.document().sequence() && combinedHeightDraft_->evidence)
       spec.heightEvidence = &*combinedHeightDraft_->evidence;
-    if (combinedHeightDraft_ && combinedHeightDraft_->sequence == modeler_.document().sequence())
+    if (combinedHeightDraft_ && combinedHeightDraft_->sequence == modeler_.document().sequence()) {
       spec.roadSlant = doc::roadSlantOf(combinedHeightDraft_->study);  // docs/317
+      spec.heightStudy = combinedHeightDraft_->study;                  // docs/319
+    }
     if (a.contains("scale")) spec.scale = a["scale"].get<double>();  // docs/250: e.g. 20 to look at corners
     spec.combineViews = a.value("combine_views", false);  // docs/306
     const auto set = doc::drawingSet(modeler_.document(), spec);
@@ -5964,8 +5966,10 @@ int MainWindow::saveDrawingSet(const QString& path, bool tablesWithPlan, bool co
   spec.combineViews = combineViews;
   if (combinedHeightDraft_ && combinedHeightDraft_->sequence == modeler_.document().sequence() && combinedHeightDraft_->evidence)
     spec.heightEvidence = &*combinedHeightDraft_->evidence;
-  if (combinedHeightDraft_ && combinedHeightDraft_->sequence == modeler_.document().sequence())
+  if (combinedHeightDraft_ && combinedHeightDraft_->sequence == modeler_.document().sequence()) {
     spec.roadSlant = doc::roadSlantOf(combinedHeightDraft_->study);  // docs/317
+    spec.heightStudy = combinedHeightDraft_->study;                  // docs/319
+  }
   const auto set = doc::drawingSet(modeler_.document(), spec);
   if (!set) {
     reportError(tr("図面一式を作れませんでした: %1").arg(userMessage(QString::fromStdString(set.error()))));

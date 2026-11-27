@@ -573,6 +573,8 @@ struct DrawingSetSpec {
   const HeightLimitEvidence* heightEvidence = nullptr;  // optional evidence for this export
   // docs/317: the road slant of the person's height study, drawn on the elevations and sections.
   std::optional<draw::ViewSpec::RoadSlant> roadSlant;
+  // docs/319: the app's live height study (else the one kept with the model) for the sections' limits.
+  std::optional<HeightLimitStudy> heightStudy;
 };
 struct DrawingSet {
   std::vector<draw::Sheet> sheets;

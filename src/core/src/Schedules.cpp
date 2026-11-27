@@ -3312,6 +3312,63 @@ struct HeightCutSpan {
   double at(double u) const { return a.Y() + (b.Y() - a.Y()) * (u - a.X()) / (b.X() - a.X()); }
 };
 
+// docs/319: the lowest of a height study's surfaces along a vertical section (section U, Z), span by span
+// (from the H-H evidence section, shared with the drawing set's sections). Unconfirmed parts at datum - 900.
+std::vector<HeightCutSpan> heightEnvelope(const HeightLimitPreview& preview, const gp_Trsf& toSection, double datum) {
+  std::vector<HeightCutSpan> spans;
+  const auto intersect = [&](const TopoDS_Shape& shape, std::optional<HeightLimitSource> source) {
+    for (TopExp_Explorer faces(shape, TopAbs_FACE); faces.More(); faces.Next()) {
+      const auto face = TopoDS::Face(faces.Current());
+      std::vector<gp_Pnt> ring;
+      for (BRepTools_WireExplorer edge(BRepTools::OuterWire(face), face); edge.More(); edge.Next())
+        ring.push_back(BRep_Tool::Pnt(edge.CurrentVertex()));
+      const auto cut = heightCutPoints(ring, toSection);
+      if (cut.size() > 1 && cut.back().X() - cut.front().X() > tolerance::kLinear)
+        spans.push_back({cut.front(), cut.back(), source});
+    }
+  };
+  for (std::size_t i = 0; i < preview.surfaces.size(); ++i)
+    intersect(preview.surfaces[i], static_cast<HeightLimitSource>(i));
+  intersect(preview.unconfirmed, std::nullopt);
+
+  std::vector<double> breaks;
+  for (const auto& span : spans) {
+    breaks.push_back(span.a.X());
+    breaks.push_back(span.b.X());
+  }
+  for (std::size_t i = 0; i < spans.size(); ++i) {
+    const auto& a = spans[i];
+    if (!a.source) continue;
+    for (std::size_t j = i + 1; j < spans.size(); ++j) {
+      const auto& b = spans[j];
+      if (!b.source) continue;
+      const double left = std::max(a.a.X(), b.a.X()), right = std::min(a.b.X(), b.b.X());
+      if (right - left <= tolerance::kLinear) continue;
+      const double d0 = a.at(left) - b.at(left), d1 = a.at(right) - b.at(right);
+      if ((d0 < -tolerance::kLinear && d1 > tolerance::kLinear) ||
+          (d1 < -tolerance::kLinear && d0 > tolerance::kLinear))
+        breaks.push_back(left + (right - left) * d0 / (d0 - d1));
+    }
+  }
+  std::sort(breaks.begin(), breaks.end());
+  std::vector<HeightCutSpan> outline;
+  for (std::size_t i = 1; i < breaks.size(); ++i) {
+    const double left = breaks[i - 1], right = breaks[i];
+    if (right - left <= tolerance::kLinear) continue;
+    const double mid = (left + right) / 2;
+    const HeightCutSpan* lowest = nullptr;
+    for (const auto& span : spans) {
+      if (mid < span.a.X() || mid > span.b.X()) continue;
+      if (!span.source) { lowest = &span; break; }
+      if (!lowest || span.at(mid) < lowest->at(mid)) lowest = &span;
+    }
+    if (!lowest) continue;
+    const auto z = [&](double u) { return lowest->source ? lowest->at(u) : datum - 900; };
+    outline.push_back({gp_Pnt2d(left, z(left)), gp_Pnt2d(right, z(right)), lowest->source});
+  }
+  return outline;
+}
+
 }  // namespace
 
 Result<HeightLimitEvidence> heightLimitEvidence(
@@ -3452,57 +3509,7 @@ Result<HeightLimitEvidence> heightLimitEvidence(
       }
     }
 
-    std::vector<HeightCutSpan> spans;
-    const auto intersect = [&](const TopoDS_Shape& shape, std::optional<HeightLimitSource> source) {
-      for (TopExp_Explorer faces(shape, TopAbs_FACE); faces.More(); faces.Next()) {
-        const auto face = TopoDS::Face(faces.Current());
-        std::vector<gp_Pnt> ring;
-        for (BRepTools_WireExplorer edge(BRepTools::OuterWire(face), face); edge.More(); edge.Next())
-          ring.push_back(BRep_Tool::Pnt(edge.CurrentVertex()));
-        const auto cut = heightCutPoints(ring, toSection);
-        if (cut.size() > 1 && cut.back().X() - cut.front().X() > tolerance::kLinear)
-          spans.push_back({cut.front(), cut.back(), source});
-      }
-    };
-    for (std::size_t i = 0; i < comparison.preview.surfaces.size(); ++i)
-      intersect(comparison.preview.surfaces[i], static_cast<HeightLimitSource>(i));
-    intersect(comparison.preview.unconfirmed, std::nullopt);
-
-    std::vector<double> breaks;
-    for (const auto& span : spans) {
-      breaks.push_back(span.a.X());
-      breaks.push_back(span.b.X());
-    }
-    for (std::size_t i = 0; i < spans.size(); ++i) {
-      const auto& a = spans[i];
-      if (!a.source) continue;
-      for (std::size_t j = i + 1; j < spans.size(); ++j) {
-        const auto& b = spans[j];
-        if (!b.source) continue;
-        const double left = std::max(a.a.X(), b.a.X()), right = std::min(a.b.X(), b.b.X());
-        if (right - left <= tolerance::kLinear) continue;
-        const double d0 = a.at(left) - b.at(left), d1 = a.at(right) - b.at(right);
-        if ((d0 < -tolerance::kLinear && d1 > tolerance::kLinear) ||
-            (d1 < -tolerance::kLinear && d0 > tolerance::kLinear))
-          breaks.push_back(left + (right - left) * d0 / (d0 - d1));
-      }
-    }
-    std::sort(breaks.begin(), breaks.end());
-    std::vector<HeightCutSpan> outline;
-    for (std::size_t i = 1; i < breaks.size(); ++i) {
-      const double left = breaks[i - 1], right = breaks[i];
-      if (right - left <= tolerance::kLinear) continue;
-      const double mid = (left + right) / 2;
-      const HeightCutSpan* lowest = nullptr;
-      for (const auto& span : spans) {
-        if (mid < span.a.X() || mid > span.b.X()) continue;
-        if (!span.source) { lowest = &span; break; }
-        if (!lowest || span.at(mid) < lowest->at(mid)) lowest = &span;
-      }
-      if (!lowest) continue;
-      const auto z = [&](double u) { return lowest->source ? lowest->at(u) : datum - 900; };
-      outline.push_back({gp_Pnt2d(left, z(left)), gp_Pnt2d(right, z(right)), lowest->source});
-    }
+    const auto outline = heightEnvelope(comparison.preview, toSection, datum);
     for (const auto& span : outline)
       line(span.source ? draw::Pen::HeightLimit : draw::Pen::HeightReview,
            span.a.X(), span.a.Y(), span.b.X(), span.b.Y());
@@ -5570,13 +5577,25 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
   }
   // docs/317/318: the road slant of the app's live study, else of the one stored with the model for this site.
   std::optional<draw::ViewSpec::RoadSlant> roadSlant = spec.roadSlant;
-  if (!roadSlant)
-    if (const auto saved = savedHeightStudy(document)) roadSlant = roadSlantOf(*saved);
+  const auto study = spec.heightStudy ? spec.heightStudy : savedHeightStudy(document);
+  if (!roadSlant && study) roadSlant = roadSlantOf(*study);
+  // docs/319: the study's combined limits, cut by each section.
+  std::optional<HeightLimitPreview> limits;
+  if (study)
+    if (auto made = heightLimitPreview(document, *study)) limits = std::move(made.value());
   for (const Cut& c : cuts) {
     draw::ViewSpec view = draw::sectionView(c.point, c.toward);
     view.title = c.name;
     view.heightDims = true;  // docs/296
     view.roadSlant = roadSlant;  // docs/317
+    if (limits) {
+      gp_Trsf toSection;
+      toSection.SetTransformation(view.frame);
+      static const char* const names[] = {"道路斜線", "隣地斜線", "北側斜線", "高度地区"};
+      for (const auto& span : heightEnvelope(*limits, toSection, study->groundZMm))
+        if (span.source) view.heightEnvelope.push_back({span.a, span.b, names[static_cast<int>(*span.source)]});
+      if (!view.heightEnvelope.empty()) view.roadSlant.reset();  // the envelope has the road slant in it
+    }
     planned.push_back({view.title, view, std::nullopt, {}});
   }
   const char* sides[4] = {"南立面図", "東立面図", "北立面図", "西立面図"};

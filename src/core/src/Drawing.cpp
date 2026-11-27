@@ -1669,6 +1669,41 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
         view.levels.push_back(m);
       }
     }
+    // docs/319: the height study's lowest limit along this section, with the governing limit's name per run.
+    if (!spec.heightEnvelope.empty()) {
+      const double sp = spec.paperScale > 0 ? spec.paperScale : 100.0;
+      const auto vOf = [&](double z) { return proj.uv(gp_Pnt(spec.frame.Location().X(), spec.frame.Location().Y(), z)).Y(); };
+      std::string previous;
+      // Up to 2 m above the building (as the elevations' road slant): above it the limit says nothing more here.
+      const double cap = (top > -1e299 ? top : 0.0) + 2000.0;
+      for (auto span : spec.heightEnvelope) {
+        if (span.a.Y() > cap && span.b.Y() > cap) continue;
+        const auto clip = [&](gp_Pnt2d& high, const gp_Pnt2d& low) {
+          if (high.Y() <= cap) return;
+          const double t = (cap - low.Y()) / (high.Y() - low.Y());
+          high = gp_Pnt2d(low.X() + (high.X() - low.X()) * t, cap);
+        };
+        clip(span.a, span.b);
+        clip(span.b, span.a);
+        const gp_Pnt2d a(span.a.X(), vOf(span.a.Y())), b(span.b.X(), vOf(span.b.Y()));
+        view.items.push_back(line(Pen::HeightLimit, a, b));
+        if (span.source == previous) continue;
+        previous = span.source;
+        Item label;
+        label.kind = Item::Kind::Text;
+        label.pen = Pen::HeightLimit;
+        label.text = span.source;
+        label.height = 2.5;
+        label.hAlign = 1;
+        label.vAlign = 0;
+        label.angle = std::atan2(b.Y() - a.Y(), b.X() - a.X());
+        label.points = {gp_Pnt2d((a.X() + b.X()) / 2, (a.Y() + b.Y()) / 2 + 1.0 * sp)};
+        view.items.push_back(std::move(label));
+      }
+      view.calculationNotes.push_back(
+          "高さ制限：高さ制限の確認で入力した値による、この断面での最も低い制限（道路・隣地・北側・高度地区）。"
+          "隣地斜線は近似。未確認の範囲は描いていない。法規の適合は未評価。");
+    }
     // docs/303: the ground line (GL): the level named GL (or the study's GL), across the building and a
     // little past it, extra thick, with the ground symbol (short thin slanted strokes) under it, as the
     // submitted elevations and sections draw the ground. Not drawn without a GL: no ground is guessed.
@@ -1792,7 +1827,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
                 if (label.angle < -M_PI / 2) label.angle += M_PI;
                 label.points = {gp_Pnt2d((from.X() + to.X()) / 2, (from.Y() + to.Y()) / 2 + 1.0 * sp)};
                 view.items.push_back(std::move(label));
-                char note[160];
+                char note[400];
                 std::snprintf(note, sizeof note,
                               "道路斜線：高さ制限の確認で入力した値（勾配 %g、適用距離 %.1f m、建物の後退 %.2f m）による。法規の適合は未評価。",
                               s.slope, s.applicationMm / 1000.0, s.setbackMm / 1000.0);

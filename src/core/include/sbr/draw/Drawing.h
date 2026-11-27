@@ -118,6 +118,13 @@ struct ViewSpec {
     double datumZ = 0, slope = 0, roadWidthMm = 0, setbackMm = 0, applicationMm = 0;
   };
   std::optional<RoadSlant> roadSlant;
+  // docs/319: sections: the lowest of the height study's limits along the cut (road, neighbour, north, district),
+  // span by span in the view's U and model Z, with the limit that governs each; drawn in the height-limit pen.
+  struct EnvelopeSpan {
+    gp_Pnt2d a, b;
+    std::string source;  // 道路斜線 / 隣地斜線 / 北側斜線 / 高度地区
+  };
+  std::vector<EnvelopeSpan> heightEnvelope;
   std::string within;            // optional ancestor group
   bool includeHidden = false;
   bool memberLabels = false;
