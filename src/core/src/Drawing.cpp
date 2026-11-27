@@ -1634,6 +1634,39 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
       for (double x : {x0, x1})
         for (double y : {y0, y1}) right = std::max(right, proj.uv(gp_Pnt(x, y, 0)).X());
     }
+    // docs/320: where this view meets the site's boundary (a section: where the cut crosses the outline; an
+    // elevation: the outline's ends), in view U.
+    const auto siteBoundaryUs = [&]() {
+      std::vector<double> us;
+      const auto& site = document.settings().siteBoundary;
+      if (!site) return us;
+      const auto outline = document.siteBoundaryGeometry(site->outline);
+      if (!outline) return us;
+      const auto& points = outline->vertices;
+      if (spec.kind == ViewKind::Section) {
+        for (std::size_t i = 0; i < points.size(); ++i) {
+          const gp_Pnt a = proj.local(points[i]), c = proj.local(points[(i + 1) % points.size()]);
+          if ((a.Z() > 0) == (c.Z() > 0)) continue;
+          const double t = a.Z() / (a.Z() - c.Z());
+          us.push_back(a.X() + (c.X() - a.X()) * t);
+        }
+      } else if (!points.empty()) {
+        double lo = 1e300, hi = -1e300;
+        for (const gp_Pnt& q : points) {
+          const double u = proj.uv(q).X();
+          lo = std::min(lo, u);
+          hi = std::max(hi, u);
+        }
+        us = {lo, hi};
+      }
+      return us;
+    };
+    // The height dimensions start past a site boundary close to the building's right (not on top of it).
+    if (right > -1e299) {
+      const double sp = spec.paperScale > 0 ? spec.paperScale : 100.0;
+      for (const double u : siteBoundaryUs())
+        if (u > right - 1.0 && u < right + 30.0 * sp) right = std::max(right, u);
+    }
     if (ground && top > *ground && right > -1e299) {
       const double sp = spec.paperScale > 0 ? spec.paperScale : 100.0;
       const auto grouped = [](double v) {
@@ -1734,6 +1767,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
         const double sp = spec.paperScale > 0 ? spec.paperScale : 100.0;
         const double v = proj.uv(gp_Pnt(spec.frame.Location().X(), spec.frame.Location().Y(), *gl)).Y();
         double u0 = left - 10.0 * sp, u1 = rightmost + 10.0 * sp;
+        std::vector<double> drawnBoundaries;  // docs/320: the uprights drawn (the road's), not drawn again
         // docs/305: the road in front, when this view sees it across (the road runs towards the viewer):
         // its boundary, the far side and, for a narrow 2項 road, the setback lines, upright from the ground,
         // with the road's width under the ground, as the submitted elevations show 前面道路.
@@ -1770,6 +1804,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
               view.items.push_back(std::move(name));
               u0 = std::min(u0, u - 5.0 * sp);
               u1 = std::max(u1, u + 5.0 * sp);
+              drawnBoundaries.push_back(u);
             };
             upright(0, Pen::Boundary, "道路境界線");
             upright(road.widthMm, Pen::Boundary, "道路境界線");
@@ -1845,6 +1880,33 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
             name.vAlign = 0;
             name.points = {gp_Pnt2d((ua + ub) / 2, v + 1.5 * sp)};
             view.items.push_back(std::move(name));
+          }
+        }
+        // docs/320: the site's boundary where this view meets it (a section: where the cut crosses the outline; an
+        // elevation: the outline's ends), upright from the ground with its name, as the height limits start there.
+        {
+          {
+            const std::vector<double> us = siteBoundaryUs();
+            const double h = std::max(top - *gl, 3000.0) * 0.5;
+            const double vTop = proj.uv(gp_Pnt(spec.frame.Location().X(), spec.frame.Location().Y(), *gl + h)).Y();
+            for (const double u : us) {
+              if (std::any_of(drawnBoundaries.begin(), drawnBoundaries.end(), [&](double d) { return std::abs(d - u) < 1.0; }))
+                continue;
+              drawnBoundaries.push_back(u);
+              view.items.push_back(line(Pen::Boundary, gp_Pnt2d(u, v), gp_Pnt2d(u, vTop)));
+              Item name;
+              name.kind = Item::Kind::Text;
+              name.pen = Pen::Text;
+              name.text = "敷地境界線";
+              name.height = 2.5;
+              name.angle = M_PI / 2;
+              name.hAlign = 2;
+              name.vAlign = 2;
+              name.points = {gp_Pnt2d(u + 0.6 * sp, vTop)};
+              view.items.push_back(std::move(name));
+              u0 = std::min(u0, u - 5.0 * sp);
+              u1 = std::max(u1, u + 5.0 * sp);
+            }
           }
         }
         view.items.push_back(line(Pen::Ground, gp_Pnt2d(u0, v), gp_Pnt2d(u1, v)));

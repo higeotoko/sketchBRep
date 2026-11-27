@@ -1284,3 +1284,55 @@ TEST(Drawing, SectionsShowTheStudysLowestLimit) {
   EXPECT_GE(envelopes, 1);  // the section across the road
   if (const char* out = std::getenv("SBR_ENVELOPE_SBR")) EXPECT_TRUE(m.save(out));  // to look at its drawing set
 }
+
+// docs/320: with the north boundary confirmed and a 5 m north rise, the section cut north-south names 北側斜線
+// where it governs (the road slant near the road).
+TEST(Drawing, SectionsShowTheNorthLimit) {
+  doc::Modeler m;
+  const auto outline = m.createRectangle(geom::SketchPlane::ground(), 10000, 12000);
+  ASSERT_TRUE(outline);
+  api::CommandApi api(m);
+  const auto run = [&](const nlohmann::json& c) {
+    const auto r = nlohmann::json::parse(api.execute(c.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << r.dump();
+    return r;
+  };
+  run({{"command", "create_wall"}, {"args", {{"points", {{1500, 2500}, {5200, 2500}, {5200, 9500}, {1500, 9500}, {1500, 2500}}},
+                                              {"thickness", 120}, {"height", 6000}}}});
+  ASSERT_TRUE(m.setSiteBoundary(doc::SiteBoundary{*outline, "Survey"}));
+  doc::SiteRoad road;
+  road.kind = "法42条1項1号道路";
+  road.source = "Synthetic road register";
+  road.widthMm = 4000;
+  ASSERT_TRUE(m.setSiteRoad({gp_Pnt(10000, 0, 0), gp_Pnt(0, 0, 0)}, road));
+  ASSERT_TRUE(m.setLevels({{"gl", "GL", 0.0}, {"1fl", "1FL", 500.0}}));
+  run({{"command", "set_site_north"}, {"args", {{"angle", 0}, {"source", "架空の測量図"}}}});
+  // The north edge of the site, as its outline runs.
+  const auto geometry = m.document().siteBoundaryGeometry(*outline);
+  ASSERT_TRUE(geometry);
+  nlohmann::json north = nlohmann::json::array();
+  const auto& v = geometry->vertices;
+  for (std::size_t i = 0; i < v.size(); ++i) {
+    const gp_Pnt& a = v[i];
+    const gp_Pnt& b = v[(i + 1) % v.size()];
+    if (std::abs(a.Y() - 12000) < 1 && std::abs(b.Y() - 12000) < 1)
+      north.push_back({{a.X(), a.Y(), a.Z()}, {b.X(), b.Y(), b.Z()}});
+  }
+  ASSERT_EQ(north.size(), 1u);
+  run({{"command", "set_height_study"},
+       {"args", {{"ground_z", 0}, {"north_rise_m", 5}, {"boundaries", north},
+                 {"road", {{"edge_z", 5000}, {"slope", 1.25}, {"width_m", 4}, {"distance_m", 20}, {"setback_m", 0}}}}}});
+  const auto set = doc::drawingSet(m.document(), {});
+  ASSERT_TRUE(set) << set.error();
+  bool northNamed = false;
+  for (std::size_t i = 0; i < set->names.size(); ++i)
+    for (const auto& item : set->sheets[i].items)
+      northNamed |= item.kind == Item::Kind::Text && item.text == "北側斜線";
+  EXPECT_TRUE(northNamed);
+  // docs/320: the site's boundary stands where the limits start, in the sections and the elevations.
+  int boundaries = 0;
+  for (const auto& sheet : set->sheets)
+    for (const auto& item : sheet.items) boundaries += item.kind == Item::Kind::Text && item.text == "敷地境界線";
+  EXPECT_GE(boundaries, 4);
+  if (const char* out = std::getenv("SBR_NORTH_SBR")) EXPECT_TRUE(m.save(out));  // to look at its drawing set
+}
