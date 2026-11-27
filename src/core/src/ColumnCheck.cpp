@@ -62,40 +62,42 @@ std::optional<double> clearDistanceIn(const Document& document, double z0, doubl
 
 std::vector<ColumnRow> columnRows(const Document& document) {
   std::vector<ColumnRow> out;
-  const auto made = construction::takeOff(document);
-  if (!made) return out;
-  const auto report = nlohmann::json::parse(*made, nullptr, false);
-  if (!report.is_object() || !report.contains("parts")) return out;
-  // The storeys' floor levels: a through column is held at each (its parts between them).
   std::vector<double> floors;
   for (const FloorLevel& l : document.settings().levels)
     if (isFloorLevelName(l.name)) floors.push_back(l.elevation);
   std::sort(floors.begin(), floors.end());
-  std::map<std::tuple<std::string, long long, long long, long long>, ColumnRow> groups;
-  for (const auto& part : report.at("parts")) {
-    const std::string role = part.value("role", std::string());
-    if (role != "column" && role != "through_column") continue;
-    if (!part.at("length_mm").is_number() || !part.at("width_mm").is_number() || !part.at("depth_mm").is_number()) continue;
-    const double length = part.at("length_mm").get<double>();
-    const double width = part.at("width_mm").get<double>(), depth = part.at("depth_mm").get<double>();
-    if (!(length > 0 && width > 0 && depth > 0)) continue;
-    double distance = length;
-    if (role == "through_column" && part.contains("position") && part.at("position").is_array()) {
-      const double mid = part.at("position")[2].get<double>();
-      std::vector<double> stops{mid - length / 2};
-      for (double f : floors)
-        if (f > mid - length / 2 + 1 && f < mid + length / 2 - 1) stops.push_back(f);
-      stops.push_back(mid + length / 2);
-      distance = 0;
-      for (std::size_t i = 0; i + 1 < stops.size(); ++i) distance = std::max(distance, stops[i + 1] - stops[i]);
+  floors.erase(std::unique(floors.begin(), floors.end(), [](double a, double b) { return std::abs(a - b) < 1.0; }), floors.end());
+  // docs/323: each storey's Wd (N/m²) from the wall calculation: its cumulative weight over its area.
+  std::vector<std::optional<double>> wd;
+  const auto wall = nlohmann::json::parse(document.settings().wallCalculation, nullptr, false);
+  if (wall.is_object() && wall.contains("floors") && wall.at("floors").is_array())
+    for (const auto& f : wall.at("floors")) {
+      std::optional<double> value;
+      if (f.contains("weight_kn") && f.at("weight_kn").is_number() && f.contains("area_m2") && f.at("area_m2").is_number() &&
+          f.at("area_m2").get<double>() > 0)
+        value = f.at("weight_kn").get<double>() * 1000.0 / f.at("area_m2").get<double>();
+      wd.push_back(value);
     }
-    const auto key = std::make_tuple(role, std::llround(width), std::llround(depth), std::llround(distance));
+  std::map<std::tuple<int, std::string, long long, long long, long long>, ColumnRow> groups;
+  for (const ColumnPart& p : columnParts(document)) {
+    const double distance = p.to - p.from, mid = (p.from + p.to) / 2;
+    int storey = 0;
+    for (double f : floors)
+      if (f <= mid) ++storey;
+    if (floors.empty()) storey = 0;
+    else storey = std::max(storey, 1);
+    const auto key = std::make_tuple(storey, p.role, std::llround(p.width), std::llround(p.depth), std::llround(distance));
     ColumnRow& row = groups[key];
-    row.role = role == "through_column" ? "通し柱" : "柱";
-    row.widthMm = width;
-    row.depthMm = depth;
+    row.storey = storey;
+    row.role = p.role == "through_column" ? "通し柱" : "柱";
+    row.widthMm = p.width;
+    row.depthMm = p.depth;
     row.distanceMm = distance;
-    row.slenderness = distance / (std::min(width, depth) / std::sqrt(12.0));
+    row.slenderness = distance / (std::min(p.width, p.depth) / std::sqrt(12.0));
+    if (storey >= 1 && static_cast<std::size_t>(storey) <= wd.size() && wd[storey - 1]) {
+      row.wdNm2 = wd[storey - 1];
+      row.requiredMm = 0.027 * distance + 22.5 * *row.wdNm2 / distance;
+    }
     ++row.count;
   }
   for (auto& [key, row] : groups) out.push_back(row);
@@ -106,22 +108,29 @@ std::vector<ColumnRow> columnRows(const Document& document) {
 draw::Table columnTable(const std::vector<ColumnRow>& rows) {
   draw::Table t;
   t.title = "構造詳細図（柱の小径・有効細長比）";
-  t.headers = {"部位", "断面 (mm)", "本数", "横架材間の垂直距離 (mm)", "小径／距離", "有効細長比", "令43条6項（150以下）",
-               "令43条1項（告示の割合）"};
+  t.headers = {"階", "部位", "断面 (mm)", "本数", "横架材間の垂直距離 (mm)", "小径／距離", "有効細長比", "令43条6項（150以下）",
+               "Wd (N/m²)", "必要な小径 (mm)", "令43条1項"};
   for (const ColumnRow& r : rows) {
-    char section[32], distance[32], ratio[32], lambda[32];
+    char section[32], distance[32], ratio[32], lambda[32], wd[32] = "", need[32] = "";
     std::snprintf(section, sizeof section, "%.0f×%.0f", r.widthMm, r.depthMm);
     std::snprintf(distance, sizeof distance, "%.0f", r.distanceMm);
     std::snprintf(ratio, sizeof ratio, "1/%.1f", r.distanceMm / std::min(r.widthMm, r.depthMm));
     std::snprintf(lambda, sizeof lambda, "%.1f", r.slenderness);
-    t.rows.push_back({r.role, section, std::to_string(r.count), distance, ratio, lambda,
-                      r.slenderness <= 150.0 + 1e-9 ? "規定内" : "規定外", "未評価"});
+    if (r.wdNm2) std::snprintf(wd, sizeof wd, "%.0f", *r.wdNm2);
+    if (r.requiredMm) std::snprintf(need, sizeof need, "%.1f", *r.requiredMm);
+    const std::string first = !r.requiredMm ? "未入力" : std::min(r.widthMm, r.depthMm) + 1e-9 >= *r.requiredMm ? "規定内" : "規定外";
+    t.rows.push_back({r.storey > 0 ? std::to_string(r.storey) + "階" : "", r.role, section, std::to_string(r.count), distance, ratio,
+                      lambda, r.slenderness <= 150.0 + 1e-9 ? "規定内" : "規定外", wd, need, first});
   }
   t.notes = {
       "木造架構の柱（take_off の column・through_column）を、断面と横架材間の垂直距離ごとにまとめました。",
       "横架材間の垂直距離は柱の長さ（通し柱は各階の床レベルの間の最も長い部分）とし、座屈長さに同じとしました。",
       "有効細長比は 座屈長さ ÷（小さい辺 ÷ √12）。令第43条第6項は 150 以下。",
-      "令第43条第1項の小径の割合は国土交通大臣が定める割合（告示）によるため、ここでは照合していません（未評価）。",
+      "令第43条第1項：平成12年建設省告示第1349号（令和7年4月施行の改正後）の de/l = 0.027 + 22.5·Wd/l²（積雪荷重は含まない）。"
+      "式は国住指第147号（令和6年6月27日）の記載による（告示の本文そのものは未確認）。",
+      "Wd は壁量計算の入力（その階が負担する重さ weight_kn ÷ その階の床面積 area_m2）から。入力が無い階は未入力。",
+      "座屈を止める壁が付く向き（面内方向）は確認不要とされるが、その壁の条件は示されていないため、ここでは小さい辺で照合しています。",
+      std::string("国住指第147号：") + kColumnNoticeSource,
       std::string("令第43条の本文：") + kColumnArticleSource + "（" + kColumnArticleCheckedOn + " 確認）",
   };
   return t;

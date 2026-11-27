@@ -387,8 +387,8 @@ TEST_F(Quantities, ColumnTableGivesSlendernessOfTheFrameColumns) {
   const auto table = doc::columnTable(rows);
   EXPECT_EQ(table.title, "構造詳細図（柱の小径・有効細長比）");
   for (const auto& row : table.rows) {
-    EXPECT_TRUE(row[6] == "規定内" || row[6] == "規定外");
-    EXPECT_EQ(row[7], "未評価");
+    EXPECT_TRUE(row[7] == "規定内" || row[7] == "規定外");
+    EXPECT_EQ(row[10], "未入力");  // docs/323: no wall calculation: no Wd
   }
   sbr::api::CommandApi api(m);
   const auto read = json::parse(api.execute(R"({"command":"column_table"})"));
@@ -401,7 +401,7 @@ TEST_F(Quantities, ColumnTableGivesSlendernessOfTheFrameColumns) {
   one.slenderness = 2700 / (105 / std::sqrt(12.0));
   one.count = 1;
   one.role = "柱";
-  EXPECT_EQ(doc::columnTable({one}).rows[0][5], "89.1");
+  EXPECT_EQ(doc::columnTable({one}).rows[0][6], "89.1");
 }
 
 // docs/311: the 構造詳細図's specifications: given items, the columns' slenderness, the source required.
@@ -459,4 +459,38 @@ TEST_F(Quantities, FoundationDetailFindsTheFrameSill) {
   bool sill = false;
   for (const auto& item : view->items) sill |= item.kind == draw::Item::Kind::Text && item.text.rfind("土台 ", 0) == 0;
   EXPECT_TRUE(sill);
+}
+
+// docs/323: 令43条1項 by de = 0.027 l + 22.5 Wd / l, Wd from the wall calculation's weight over area.
+TEST_F(Quantities, ColumnTableComparesTheRequiredDiameter) {
+  frame();
+  sbr::api::CommandApi api(m);
+  const auto set = json::parse(api.execute(json{{"command", "set_wall_calculation"}, {"args", {{"inputs", {{"height_m", 6.0},
+      {"floors", {{{"id", "f1"}, {"name", "1F"}, {"area_m2", 40.0}, {"weight_kn", 160.0}},
+                  {{"id", "f2"}, {"name", "2F"}, {"area_m2", 40.0}, {"weight_kn", 80.0}}}}}}}}}.dump()));
+  ASSERT_TRUE(set["ok"]) << set.dump();
+  const auto rows = doc::columnRows(m.document());
+  ASSERT_FALSE(rows.empty());
+  bool compared = false;
+  for (const auto& r : rows) {
+    if (!r.wdNm2) continue;
+    compared = true;
+    EXPECT_DOUBLE_EQ(*r.wdNm2, r.storey == 1 ? 4000.0 : 2000.0);
+    EXPECT_NEAR(*r.requiredMm, 0.027 * r.distanceMm + 22.5 * *r.wdNm2 / r.distanceMm, 1e-9);
+  }
+  EXPECT_TRUE(compared);
+  // Hand check: l 2,900, Wd 4,000: 78.3 + 31.0 = 109.3 mm, so a 105 column is short and a 120 one is not.
+  doc::ColumnRow one;
+  one.storey = 1;
+  one.role = "柱";
+  one.distanceMm = 2900;
+  one.count = 1;
+  one.wdNm2 = 4000;
+  one.requiredMm = 0.027 * 2900 + 22.5 * 4000 / 2900.0;
+  one.widthMm = one.depthMm = 105;
+  one.slenderness = 2900 / (105 / std::sqrt(12.0));
+  EXPECT_EQ(doc::columnTable({one}).rows[0][9], "109.3");
+  EXPECT_EQ(doc::columnTable({one}).rows[0][10], "規定外");
+  one.widthMm = one.depthMm = 120;
+  EXPECT_EQ(doc::columnTable({one}).rows[0][10], "規定内");
 }

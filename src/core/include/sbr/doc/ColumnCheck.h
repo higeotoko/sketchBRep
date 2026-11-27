@@ -5,7 +5,10 @@
 // (横架材の相互間の垂直距離: a column's length; a through column's longest part between two storeys' floor
 // levels), with the ratio of the smaller side to that distance and the effective slenderness ratio
 // (座屈長さ / 最小二次率半径, the distance taken as the buckling length) against 令第43条第6項 (150 以下).
-// The ratio 令第43条第1項 asks for is set by a notice of the minister and is not compared here (未評価).
+// docs/323: 令第43条第1項 by 平成12年建設省告示第1349号 as amended (令和7年4月施行), as 国住指第147号 gives it:
+// de / l = 0.027 + 22.5·Wd / l² (de the column's smaller side, l the distance, both mm; Wd the storey's burden of
+// fixed and live load per unit area, N/m², without snow), Wd from the wall calculation's inputs (each storey's
+// weight_kn, cumulative, over its area_m2) — the person's figures; 未入力 without them.
 
 #include <optional>
 #include <string>
@@ -17,11 +20,14 @@ namespace sbr::doc {
 class Document;
 
 struct ColumnRow {
+  int storey = 0;        // docs/323: 1 = the lowest storey (by the …FL levels); 0: not known
   std::string role;      // 柱 / 通し柱
   double widthMm = 0, depthMm = 0;
   double distanceMm = 0;  // 横架材間の垂直距離 (taken as the buckling length)
   int count = 0;
   double slenderness = 0;  // distance / (min side / sqrt 12)
+  std::optional<double> wdNm2;       // docs/323: the storey's Wd from the wall calculation
+  std::optional<double> requiredMm;  // 0.027 l + 22.5 Wd / l
 };
 std::vector<ColumnRow> columnRows(const Document& document);
 // docs/315: the longest vertical distance between horizontal members of the columns standing in [z0, z1)
@@ -48,5 +54,6 @@ draw::Table structuralSpecTable(const Document& document);
 
 inline constexpr char kColumnArticleSource[] = "https://laws.e-gov.go.jp/law/325CO0000000338";
 inline constexpr char kColumnArticleCheckedOn[] = "2026-11-27";
+inline constexpr char kColumnNoticeSource[] = "https://www.mlit.go.jp/common/001752270.pdf";
 
 }  // namespace sbr::doc
