@@ -4979,7 +4979,7 @@ draw::Table scheduleTable(const Document& document, int which) {
       total += r.count;
     }
     t.rows.push_back({"合計", "", "", "", "", std::to_string(total), "", "", "", ""});
-    t.notes = {"寸法は mm。符号は、手で決めたものはそのまま、ほかは種類・建具・幅・高さが同じ開口に同じものを付けています。",
+    t.notes = {"寸法は mm。符号は、手で決めたものはそのまま、ほかは種類・建具・幅・高さ・防火設備が同じ開口に同じものを付けています。",
                "平面図の開口の横の符号と同じです。モデルから読んだ今の値です。"};
   } else if (which == 1) {
     const RoomSchedule s = roomSchedule(document);
@@ -6354,7 +6354,7 @@ std::string openingScheduleCsv(const OpeningSchedule& schedule) {
     csv.line({r.mark, kindName(r.kind), r.fitting, number(r.width, 0), number(r.height, 0), number(r.sill, 0), r.level, r.hostName,
               std::to_string(r.index), r.product});
   csv.line({});
-  csv.line({"注", "符号は、手で決めたものはそのまま、ほかは種類・建具・幅・高さが同じ開口に同じものを付けています（モデルから毎回読み直します）。"});
+  csv.line({"注", "符号は、手で決めたものはそのまま、ほかは種類・建具・幅・高さ・防火設備が同じ開口に同じものを付けています（モデルから毎回読み直します）。"});
   return csv.out.str();
 }
 
