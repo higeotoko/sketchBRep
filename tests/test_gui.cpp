@@ -15060,6 +15060,7 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
     floorLevel->setText(QStringLiteral("-180"));
     emit floorLevel->editingFinished();
     QTRY_VERIFY(doc::roomFinishOf(*m.document().find(room)).floorOffset==std::optional<double>(-180.0));
+    QTRY_VERIFY(f.window.scheduleCsv(3).contains(QStringLiteral(",2400,-180")));  // docs/322: in the finish schedule
     // docs/162: the room as a garage: left out of the floor area for the ratio up to 1/5 of the total.
     f.window.setSelection({room});
     QApplication::processEvents();

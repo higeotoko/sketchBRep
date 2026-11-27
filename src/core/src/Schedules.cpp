@@ -5276,10 +5276,17 @@ draw::Table scheduleTable(const Document& document, int which) {
   } else if (which == 3) {
     const RoomSchedule s = roomSchedule(document);
     t.title = "仕上げ表";
-    t.headers = {"室名", "階", "用途", "床", "壁", "天井", "天井高"};
+    t.headers = {"室名", "階", "用途", "床", "壁", "天井", "天井高", "床高"};
+    // docs/322: the room's floor from its storey's FL (docs/321), when given.
+    const auto floorText = [](const std::optional<double>& offset) {
+      if (!offset) return std::string();
+      const long long f = std::llround(*offset);
+      return f == 0 ? std::string("±0") : std::string(f > 0 ? "+" : "-") + std::to_string(std::llabs(f));
+    };
     for (const RoomRow& r : s.rows)
-      t.rows.push_back({r.name, r.level, r.use, r.floor, r.wall, r.ceiling, r.ceilingHeight > 0 ? number(r.ceilingHeight, 0) : ""});
-    t.notes = {"室ごとに入れた用途・仕上げ・天井高です（空欄：まだ入れていない）。天井高は床から mm。"};
+      t.rows.push_back({r.name, r.level, r.use, r.floor, r.wall, r.ceiling, r.ceilingHeight > 0 ? number(r.ceilingHeight, 0) : "",
+                        floorText(r.floorOffset)});
+    t.notes = {"室ごとに入れた用途・仕上げ・天井高・床高です（空欄：まだ入れていない）。天井高は床から mm、床高は階の FL から mm。"};
   } else {
     const AreaTable a = areaTable(document);
     t.title = "面積の表";
