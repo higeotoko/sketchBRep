@@ -6895,6 +6895,42 @@ Status Modeler::setOpeningPerformance(const ObjectId& hostId, const std::vector<
   return Status::success();
 }
 
+Status Modeler::setOpeningFireEquipment(const ObjectId& hostId, const std::vector<std::size_t>& indices, const std::string& spec,
+                                        const std::string& certification, const std::string& source) {
+  const Object* host = document_.find(hostId);
+  if (!host) return Status::failure("Object not found");
+  if (host->locked) return Status::failure("The object is locked");
+  const auto list = openings(hostId);
+  if (!list) return list.status();
+  if (list->empty()) return Status::failure("This object has no openings");
+  if (!oneLine(spec, 180) || !oneLine(certification, 120) || !oneLine(source, 300))
+    return Status::failure("仕様・認定番号・資料は1行です");
+  if (!spec.empty() && source.empty()) return Status::failure("防火設備の資料（カタログ・認定書など）を入力してください");
+  Object object = *host;
+  ensureOpeningIds(object);
+  nlohmann::json all = nlohmann::json::object();
+  if (const auto stored = object.attributes.find("opening_fire"); stored != object.attributes.end()) {
+    const nlohmann::json parsed = nlohmann::json::parse(stored->second, nullptr, false);
+    if (parsed.is_object()) all = parsed;
+  }
+  std::vector<std::size_t> targets = indices;
+  if (targets.empty())
+    for (const auto& o : *list) targets.push_back(o.index);
+  const std::vector<OpeningRef> refs = rectangularOpenings(object);
+  for (const std::size_t index : targets) {
+    const auto it = std::find_if(refs.begin(), refs.end(), [&](const OpeningRef& o) { return o.index == index; });
+    if (it == refs.end()) return Status::failure("No opening " + std::to_string(index));
+    if (spec.empty()) all.erase(openingKey(*it));
+    else all[openingKey(*it)] = {{"spec", spec}, {"certification", certification}, {"source", source}};
+  }
+  if (all.empty()) object.attributes.erase("opening_fire");
+  else object.attributes["opening_fire"] = all.dump();
+  ChangeSet changes(document_);
+  changes.modify(object);
+  history_.execute(changes.build("Opening Fire Equipment"));
+  return Status::success();
+}
+
 Status Modeler::setOpeningVeranda(const ObjectId& hostId, const std::vector<std::size_t>& indices, bool veranda) {
   const Object* host = document_.find(hostId);
   if (!host) return Status::failure("Object not found");

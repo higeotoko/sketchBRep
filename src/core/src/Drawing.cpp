@@ -2377,6 +2377,52 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
       view.symbols.insert("through_column");
     }
   }
+  // docs/335: openings given as 防火設備: 防 in a small box just outside the wall by the opening, as the MLIT manual's
+  // plan marks them, on the plan of the storey whose walls the cut passes; the legend names their specification.
+  if (spec.kind == ViewKind::Plan && spec.framingPreset.empty() && spec.bracingFloor.empty() && !spec.insulation) {
+    const double cutZ = spec.frame.Location().Z();
+    const double sp = spec.paperScale > 0 ? spec.paperScale : 100.0;
+    for (const doc::OpeningRow& row : doc::openingSchedule(document).rows) {
+      if (row.fireSpec.empty()) continue;
+      const doc::Object* host = document.find(row.host);
+      if (!host || !document.isVisible(row.host)) continue;
+      if (std::find(spec.excludeTags.begin(), spec.excludeTags.end(), host->layer) != spec.excludeTags.end()) continue;
+      if (!spec.tags.empty() && std::find(spec.tags.begin(), spec.tags.end(), host->layer) == spec.tags.end()) continue;
+      const Bnd_Box b = document.worldBounds(*host);
+      if (b.IsVoid()) continue;
+      double x0, y0, z0, x1, y1, z1;
+      b.Get(x0, y0, z0, x1, y1, z1);
+      if (cutZ < z0 || cutZ > z1) continue;
+      gp_Dir outward = row.normal;
+      gp_Pnt face(row.center.X(), row.center.Y(), cutZ);
+      if (const auto exterior = doc::Modeler::exteriorWallNormal(document, *host)) {
+        if (exterior->Dot(row.normal) < 0) face.Translate(gp_Vec(*exterior) * row.depth);
+        outward = *exterior;
+      }
+      const gp_Dir local = proj.localDir(outward);
+      if (std::hypot(local.X(), local.Y()) < 1e-9) continue;
+      const gp_Vec2d out(local.X(), local.Y());
+      const double half = 1.6 * sp;
+      const gp_Pnt2d c = proj.uv(face).Translated(out.Normalized() * (half + 1.0 * sp));
+      Item box;
+      box.kind = Item::Kind::Polyline;
+      box.pen = Pen::Visible;
+      box.closed = true;
+      box.points = {gp_Pnt2d(c.X() - half, c.Y() - half), gp_Pnt2d(c.X() + half, c.Y() - half), gp_Pnt2d(c.X() + half, c.Y() + half),
+                    gp_Pnt2d(c.X() - half, c.Y() + half)};
+      view.items.push_back(std::move(box));
+      Item word;
+      word.kind = Item::Kind::Text;
+      word.pen = Pen::Text;
+      word.points = {c};
+      word.text = "防";
+      word.height = 2.4;
+      word.hAlign = 1;
+      word.vAlign = 1;
+      view.items.push_back(std::move(word));
+      view.symbols.insert("fire_equipment|" + row.fireSpec);
+    }
+  }
   // docs/330, docs/331: the braces (筋かい) the cut passes, as the MLIT manual for timber houses' permit drawings
   // (改正建築基準法 2階建ての木造一戸建て住宅等の確認申請・審査マニュアル, 耐力壁図 legend) draws them: beside the
   // wall line, an open right triangle for a single brace, its upright side at the brace's head (柱頭), and an open

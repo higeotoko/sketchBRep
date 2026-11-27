@@ -191,6 +191,12 @@ void reviewOpenings(const Document& document, FireSpreadStudy& study) {
         if (nearest <= floor->metres * 1000 + tolerance::kLinear) {
           result.status = applies ? State::EquipmentReview : State::InRange;
           result.note = applies ? "防火戸・防火サッシの仕様を照合" : "防火指定と開口部に適用する規定を確認";
+          // docs/335: the 防火設備 given for it, to be compared with the product's documents.
+          if (applies && !row.fireSpec.empty())
+            result.note = "防火設備として入力：" + row.fireSpec +
+                          (row.fireCertification.empty() ? std::string() : "（" + row.fireCertification + "）") + "。製品資料で照合";
+          else if (applies)
+            result.note = "防火設備が未入力（set_opening_fire_equipment）。防火戸・防火サッシの仕様を照合";
         } else {
           result.status = State::BeyondStudiedLines;
           result.note = "基準線の網羅と個別条件を確認";

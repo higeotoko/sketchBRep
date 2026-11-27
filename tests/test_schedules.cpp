@@ -5591,3 +5591,41 @@ TEST_F(Schedules, DevicesAreDrawnOnTheirStoreysPlan) {
   for (const auto& i : sheet->items) named = named || (i.kind == sbr::draw::Item::Kind::Text && i.text == "換気扇（排気）　100φ・防火覆い付");
   EXPECT_TRUE(named);
 }
+
+// docs/335: openings given as 防火設備 carry their spec, are marked 防 outside the wall on the plan, named in the
+// legend, and shown in the 延焼 check; without a source they are refused.
+TEST_F(Schedules, FireEquipmentOpeningsAreMarkedOnThePlan) {
+  EXPECT_FALSE(call("set_opening_fire_equipment", {{"host", south}, {"spec", "アルミサッシ＋網入りガラス"}}).value("ok", true));
+  ok("set_opening_fire_equipment", {{"host", south}, {"spec", "アルミサッシ＋網入りガラス"}, {"certification", "EB-9999"},
+                                    {"source", "架空のカタログ"}});
+  int given = 0;
+  for (const auto& row : sbr::doc::openingSchedule(modeler.document()).rows)
+    if (row.host == south) {
+      EXPECT_EQ(row.fireSpec, "アルミサッシ＋網入りガラス");
+      EXPECT_EQ(row.fireCertification, "EB-9999");
+      ++given;
+    }
+  EXPECT_EQ(given, 2);
+  sbr::draw::ViewSpec spec = sbr::draw::planView(1100.0);
+  spec.depth = 1500.0;
+  spec.paperScale = 100;
+  const auto view = sbr::draw::makeView(modeler.document(), spec);
+  ASSERT_TRUE(view) << view.error();
+  int marks = 0;
+  for (const auto& i : view->items)
+    if (i.kind == sbr::draw::Item::Kind::Text && i.text == "防") {
+      ++marks;
+      EXPECT_LT(i.points.front().Y(), 0.0);  // outside the south wall
+    }
+  EXPECT_EQ(marks, 2);
+  EXPECT_TRUE(view->symbols.count("fire_equipment|アルミサッシ＋網入りガラス"));
+  sbr::draw::SheetSpec sheetSpec;
+  const auto sheet = sbr::draw::layoutSheet(*view, sheetSpec);
+  ASSERT_TRUE(sheet);
+  bool named = false;
+  for (const auto& i : sheet->items) named = named || (i.kind == sbr::draw::Item::Kind::Text && i.text == "防火設備　アルミサッシ＋網入りガラス");
+  EXPECT_TRUE(named);
+  // Taken away with an empty spec.
+  ok("set_opening_fire_equipment", {{"host", south}, {"spec", ""}});
+  for (const auto& row : sbr::doc::openingSchedule(modeler.document()).rows) EXPECT_TRUE(row.fireSpec.empty());
+}

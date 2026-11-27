@@ -2771,6 +2771,20 @@ const std::vector<CommandDef>& commands() {
                                       numberOr(a, "solar_gain", -1.0)));
          return json::object();
        }},
+      {"set_opening_fire_equipment",
+       "docs/335: openings of 'host' ('openings': ids or indices, all when omitted) that are 防火設備: 'spec' as written "
+       "(\"アルミサッシ＋複層ガラス A12（網入厚6.8含）\"; empty takes it away), 'certification' (認定番号 or the 告示 it follows) "
+       "and 'source' (required with a spec). Drawn on plans as 防 by the opening, listed in the legend, and shown in the "
+       "延焼 check of openings. A record: whether it is needed, or the product certified, is not judged. One undo step.",
+       SCHEMA({"type": "object", "properties": {"host": {"type": "string"},
+               "openings": {"type": "array", "items": {"type": ["string", "integer"]}}, "spec": {"type": "string"},
+               "certification": {"type": "string"}, "source": {"type": "string"}},
+               "required": ["host", "spec"]}),
+       [](doc::Modeler& m, const json& a) {
+         const std::vector<std::size_t> which = openingNumbers(m, a);
+         must(m.setOpeningFireEquipment(text(a, "host"), which, text(a, "spec"), textOr(a, "certification", ""), textOr(a, "source", "")));
+         return json::object();
+       }},
       {"set_site_zone",
        "docs/205: the group of use zones the site is in, for the daylight factor (令 20 条 2 項): 'zone' residential "
        "(第一種・第二種低層住居専用, 第一種・第二種中高層住居専用, 第一種・第二種住居, 準住居, 田園住居), industrial "

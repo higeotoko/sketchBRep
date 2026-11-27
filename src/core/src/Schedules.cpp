@@ -159,6 +159,11 @@ OpeningSchedule openingSchedule(const Document& document) {
       const nlohmann::json parsed = nlohmann::json::parse(stored, nullptr, false);
       if (parsed.is_object()) performance = parsed;
     }
+    nlohmann::json fire = nlohmann::json::object();  // docs/335
+    if (const std::string stored = attribute(o, "opening_fire"); !stored.empty()) {
+      const nlohmann::json parsed = nlohmann::json::parse(stored, nullptr, false);
+      if (parsed.is_object()) fire = parsed;
+    }
     nlohmann::json daylight = nlohmann::json::object();  // docs/203
     if (const std::string stored = attribute(o, "opening_daylight"); !stored.empty()) {
       const nlohmann::json parsed = nlohmann::json::parse(stored, nullptr, false);
@@ -185,6 +190,11 @@ OpeningSchedule openingSchedule(const Document& document) {
         row.solarGain = given->value("eta", -1.0);  // docs/227
         row.glass = given->value("glass", std::string());
         row.performanceSource = given->value("source", std::string());
+      }
+      if (const auto given = fire.find(op.id); given != fire.end() && given->is_object()) {  // docs/335
+        row.fireSpec = given->value("spec", std::string());
+        row.fireCertification = given->value("certification", std::string());
+        row.fireSource = given->value("source", std::string());
       }
       if (const auto given = daylight.find(op.id); given != daylight.end() && given->is_object()) {
         row.daylightFactor = given->value("factor", -1.0);

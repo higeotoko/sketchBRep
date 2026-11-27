@@ -46,6 +46,8 @@ struct OpeningRow {
   double uValue = -1.0;  // W/(m2 K)
   double solarGain = -1.0;  // docs/227: 日射熱取得率 η
   std::string glass, performanceSource;
+  // docs/335: given as 防火設備 (Modeler::setOpeningFireEquipment); empty spec: not given.
+  std::string fireSpec, fireCertification, fireSource;
 };
 
 // One line of the door and window schedule: a mark and how many there are.

@@ -317,6 +317,12 @@ class Modeler {
   // all when empty. One undo step. docs/227: `solarGain` 日射熱取得率 η (0-1; below 0: not given).
   Status setOpeningPerformance(const ObjectId& host, const std::vector<std::size_t>& indices, double uValue,
                                const std::string& glass, const std::string& source, double solarGain = -1.0);
+  // docs/335: openings that are 防火設備 (法第2条第9号の2ロ, 第61条): their specification as the person gives it
+  // ("アルミサッシ＋複層ガラス A12（網入厚6.8含）"), the certification (認定番号, or the 告示 it follows) and the source.
+  // Kept by opening id as attribute "opening_fire" on the host; an empty spec takes it away. `indices` 1-based, all
+  // when empty. One undo step. A record: whether the opening needs one, or the product is certified, is not judged.
+  Status setOpeningFireEquipment(const ObjectId& host, const std::vector<std::size_t>& indices, const std::string& spec,
+                                 const std::string& certification, const std::string& source);
   void clearSiteRoad();
   Status setSiteGround(SiteGround ground, ObjectId building = {}, bool confirmedPlacement = false);
   void clearSiteGround();

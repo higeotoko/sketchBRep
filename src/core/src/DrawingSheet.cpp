@@ -298,6 +298,9 @@ void appendLegend(std::vector<Item>& items, const Paper* paper, double s, const 
       deviceKinds.push_back(key);
       hatches.push_back({1000 + static_cast<int>(deviceKinds.size()) - 1, note.empty() ? label : label + "　" + note});
     }
+  // docs/335: the 防火設備 drawn, a row per specification.
+  for (const std::string& symbol : symbols)
+    if (symbol.rfind("fire_equipment|", 0) == 0) hatches.push_back({12, "防火設備　" + symbol.substr(15)});
   // docs/333: the bracing plan's lines and columns, in the manual's legend words.
   if (symbols.count("wall_general")) hatches.push_back({6, "一般壁"});
   if (symbols.count("wall_opening")) hatches.push_back({7, "開口部"});
@@ -326,6 +329,18 @@ void appendLegend(std::vector<Item>& items, const Paper* paper, double s, const 
       const double x = x0 + col * colW, y = top - (r + 1.5) * rowH;
       if (x + sample + 4 > x0 + room) break;
       const double y0 = y - 1.4, y1 = y + 1.4;
+      if (hatches[h].first == 12) {  // docs/335: 防 in its box
+        const double cx = x + sample / 2;
+        Item square;
+        square.kind = Item::Kind::Polyline;
+        square.pen = Pen::Visible;
+        square.closed = true;
+        square.points = {P(cx - 1.6, y - 1.6), P(cx + 1.6, y - 1.6), P(cx + 1.6, y + 1.6), P(cx - 1.6, y + 1.6)};
+        items.push_back(square);
+        items.push_back(text(Pen::Text, P(cx, y), "防", 2.4, 1, 1));
+        items.push_back(text(Pen::Text, P(x + sample + 2, y), hatches[h].second, 2.5, 0, 1));
+        continue;
+      }
       if (hatches[h].first >= 1000) {  // docs/334: a device, its symbol as on the plan
         const std::string& kind = deviceKinds[static_cast<std::size_t>(hatches[h].first - 1000)];
         for (Item& item : deviceSymbol(kind, P(x + sample / 2, y), gp_Vec2d(1, 0), s)) items.push_back(std::move(item));
