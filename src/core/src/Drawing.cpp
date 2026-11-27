@@ -2241,7 +2241,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
       along.Normalize();
       const gp_Vec2d across(-along.Y(), along.X());
       const gp_Pnt2d mid((a.X() + b.X()) / 2, (a.Y() + b.Y()) / 2);
-      const double base = 2.5 * paper, rise = 1.2 * paper;
+      const double base = 4.0 * paper, rise = 1.6 * paper;
       const gp_Pnt2d foot = mid.Translated(-along * (base / 2)), corner = mid.Translated(along * (base / 2));
       const gp_Pnt2d tip = corner.Translated(across * rise);
       Item fill;

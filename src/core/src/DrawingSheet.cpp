@@ -310,11 +310,11 @@ void appendLegend(std::vector<Item>& items, const Paper* paper, double s, const 
       const double y0 = y - 1.4, y1 = y + 1.4;
       if (hatches[h].first == 4) {  // docs/330: the brace's triangle on a wall line
         const double cx = x + sample / 2;
-        items.push_back(line(Pen::Visible, P(x + 2, y - 0.6), P(x + sample - 2, y - 0.6)));
+        items.push_back(line(Pen::Visible, P(x + 1, y - 0.8), P(x + sample - 1, y - 0.8)));
         Item tri;
         tri.kind = Item::Kind::Fill;
         tri.pen = Pen::Fill;
-        tri.points = {P(cx - 1.25, y - 0.6), P(cx + 1.25, y - 0.6), P(cx + 1.25, y + 0.6)};
+        tri.points = {P(cx - 2.0, y - 0.8), P(cx + 2.0, y - 0.8), P(cx + 2.0, y + 0.8)};
         items.push_back(tri);
         Item edge = tri;
         edge.kind = Item::Kind::Polyline;
