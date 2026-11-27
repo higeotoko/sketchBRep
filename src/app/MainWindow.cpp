@@ -1147,6 +1147,13 @@ void MainWindow::buildUi() {
               else if (key == QStringLiteral("wall")) finish.wall = word;
               else if (key == QStringLiteral("ceiling")) finish.ceiling = word;
               else if (key == QStringLiteral("ceiling_height")) finish.ceilingHeight = value;
+              else if (key == QStringLiteral("use_class")) {  // docs/325: "08440 物品販売業を営む店舗", or empty
+                const QString all = QString::fromStdString(word);
+                static const QRegularExpression blank(QStringLiteral("[ \\t\\x{3000}]"));  // a space, also full-width
+                const auto space = all.indexOf(blank);
+                finish.useCode = (space < 0 ? all : all.left(space)).toStdString();
+                finish.useName = space < 0 ? std::string() : all.mid(space).trimmed().toStdString();
+              }
               else if (key == QStringLiteral("floor_offset")) {  // docs/321
                 if (word.empty()) finish.floorOffset.reset();
                 else {

@@ -995,6 +995,19 @@ void PropertiesPanel::rebuildForm(const doc::Modeler& modeler,
           if (floorLevel->text().trimmed() != f0) emit roomFinishEdited(id, QStringLiteral("floor_offset"), floorLevel->text().trimmed(), 0.0);
         });
         form_->addRow(tr("床の高さ（FL から）"), floorLevel);
+        // docs/325: the room's use for 第五面 7.用途別床面積 (a building of more than one use): the form's five-digit
+        // code and its name in one field, e.g. "08440 物品販売業を営む店舗"; empty: the outline's main use.
+        const QString use0 = finish.useCode.empty() ? QString()
+            : QString::fromStdString(finish.useCode) + QLatin1Char(' ') + QString::fromStdString(finish.useName);
+        auto* useClass = new QLineEdit(use0);
+        useClass->setObjectName(QStringLiteral("roomFinish_use_class"));
+        useClass->setPlaceholderText(tr("主要用途（例：08440 物品販売業を営む店舗）"));
+        useClass->setToolTip(tr("用途が混ざる建物で、この室の用途の区分（様式の5桁の番号）と具体的な用途の名称。確認申請書 第五面の用途別床面積に階ごとに足されます。空欄で主要用途に戻します"));
+        useClass->setEnabled(!o->locked);
+        connect(useClass, &QLineEdit::editingFinished, this, [this, id, useClass, use0] {
+          if (useClass->text().trimmed() != use0) emit roomFinishEdited(id, QStringLiteral("use_class"), useClass->text().trimmed(), 0.0);
+        });
+        form_->addRow(tr("用途の区分"), useClass);
         auto* ceiling = new QPushButton(tr("天井を作る（作り直す）"));
         ceiling->setObjectName(QStringLiteral("roomMakeCeiling"));
         ceiling->setToolTip(tr("天井高の所に、壁の面の内側の形で天井板（厚さ 10）を作ります。壁を動かした後・天井高を変えた後は、もう一度押すと作り直します"));

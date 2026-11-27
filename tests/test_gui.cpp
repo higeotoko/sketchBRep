@@ -15085,6 +15085,20 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
     emit floorLevel->editingFinished();
     QTRY_VERIFY(doc::roomFinishOf(*m.document().find(room)).floorOffset==std::optional<double>(-180.0));
     QTRY_VERIFY(f.window.scheduleCsv(3).contains(QStringLiteral(",2400,-180")));  // docs/322: in the finish schedule
+    // docs/325: the room's use (code and name in one field), and back to the main use when emptied.
+    f.window.setSelection({room});
+    QApplication::processEvents();
+    auto* useClass=f.window.findChild<QLineEdit*>(QStringLiteral("roomFinish_use_class"));QVERIFY(useClass);
+    useClass->setText(QStringLiteral("08440　物品販売業を営む店舗"));
+    emit useClass->editingFinished();
+    QTRY_VERIFY(doc::roomFinishOf(*m.document().find(room)).useCode=="08440");
+    QCOMPARE(QString::fromStdString(doc::roomFinishOf(*m.document().find(room)).useName),QStringLiteral("物品販売業を営む店舗"));
+    f.window.setSelection({room});
+    QApplication::processEvents();
+    useClass=f.window.findChild<QLineEdit*>(QStringLiteral("roomFinish_use_class"));QVERIFY(useClass);
+    useClass->setText(QString());
+    emit useClass->editingFinished();
+    QTRY_VERIFY(doc::roomFinishOf(*m.document().find(room)).useCode.empty());
     // docs/162: the room as a garage: left out of the floor area for the ratio up to 1/5 of the total.
     f.window.setSelection({room});
     QApplication::processEvents();
