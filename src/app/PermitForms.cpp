@@ -575,12 +575,33 @@ Transfer collect(const doc::Document& document, bool applyArea) {
           storey.insert("fifth_ceiling", metres(ceiling));
           said.push_back(tr("居室の天井高 %1").arg(metres(ceiling)));
         }
-        if (!useCode.isEmpty() && !mainUse.isEmpty()) {
-          storey.insert("fifth_use_code", useCode);
-          storey.insert("fifth_use_name", mainUse);
-          storey.insert("fifth_use_area", permitSquareMetres(it.value()));
-          said.push_back(tr("%1 %2").arg(mainUse, permitSquareMetres(it.value())));
+        // docs/324: 7.用途別床面積: the storey's rooms given a use, summed per use (壁芯), and the rest of the
+        // storey's floor area to the outline's main use; one row (the main use) when no room has a use.
+        QList<std::tuple<QString, QString, double>> uses;  // code, name, mm2
+        double given = 0.0;
+        for (const auto& r : rooms.rows) {
+          if (r.level != floorRow->level || !r.counted || r.useCode.empty()) continue;
+          const auto code = QString::fromStdString(r.useCode), name = QString::fromStdString(r.useName);
+          auto found = std::find_if(uses.begin(), uses.end(), [&](const auto& u) {
+            return std::get<0>(u) == code && std::get<1>(u) == name;
+          });
+          if (found == uses.end()) uses.push_back({code, name, r.centreArea});
+          else std::get<2>(*found) += r.centreArea;
+          given += r.centreArea;
         }
+        const double rest = it.value() - given;
+        if (!useCode.isEmpty() && !mainUse.isEmpty() && rest > 0.5e6) uses.push_front({useCode, mainUse, rest});
+        if (rest < -0.5e6) said.push_back(tr("用途を入れた室の面積が階の床面積を超えています（用途別床面積は要確認）"));
+        else if (uses.size() > 6) said.push_back(tr("用途が7つ以上あります（様式の6行に入りきりません）"));
+        else
+          for (int k = 0; k < uses.size(); ++k) {
+            const auto suffix = k == 0 ? QString() : QStringLiteral("_%1").arg(k);
+            const auto& [code, name, mm2] = uses[k];
+            storey.insert("fifth_use_code" + suffix, code);
+            storey.insert("fifth_use_name" + suffix, name);
+            storey.insert("fifth_use_area" + suffix, permitSquareMetres(mm2));
+            said.push_back(tr("%1 %2").arg(name, permitSquareMetres(mm2)));
+          }
       }
       double column = 0.0;
       const std::string frameTag = index > 0 ? std::to_string(index) + "階軸組" : std::string("-");

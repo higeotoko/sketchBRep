@@ -3458,10 +3458,14 @@ const std::vector<CommandDef>& commands() {
        "common_hall (共同住宅等の共用の廊下・階段, all), basement_dwelling (地階の住宅等, 1/3, only in a basement whose "
        "ceiling is 1 m or less above the level named GL; docs/166); empty: counted. Whether the room really is such a part is "
        "not checked. 'floor_offset' (docs/321): the room's floor from its storey's FL in mm (e.g. -180 for an entrance, 0 "
-       "for level; null takes it away); the plans then write (FL±0) / (FL-180) under the room's name. One undo step.",
+       "for level; null takes it away); the plans then write (FL±0) / (FL-180) under the room's name. 'use_code' and "
+       "'use_name' (docs/324): for a building of more than one use, the room's 用途の区分 (the form's five digits, e.g. "
+       "08010) and 具体的な用途の名称, both or neither (empty strings take them away); 第五面 7.用途別床面積 sums the rooms "
+       "per use and gives the rest of the storey to the outline's main use. One undo step.",
        SCHEMA({"type": "object", "properties": {"id": {"type": "string"}, "use": {"type": "string"}, "floor": {"type": "string"},
                "wall": {"type": "string"}, "ceiling": {"type": "string"}, "ceiling_height": {"type": "number"},
-               "ratio_part": {"type": "string"}, "floor_offset": {"type": ["number", "null"]}},
+               "ratio_part": {"type": "string"}, "floor_offset": {"type": ["number", "null"]},
+               "use_code": {"type": "string"}, "use_name": {"type": "string"}},
                "required": ["id"]}),
        [](doc::Modeler& m, const json& a) {
          const doc::Object* marker = m.document().find(text(a, "id"));
@@ -3473,6 +3477,8 @@ const std::vector<CommandDef>& commands() {
          if (a.contains("ceiling")) finish.ceiling = text(a, "ceiling");
          if (a.contains("ceiling_height")) finish.ceilingHeight = number(a, "ceiling_height");
          if (a.contains("ratio_part")) finish.ratioPart = text(a, "ratio_part");
+         if (a.contains("use_code")) finish.useCode = text(a, "use_code");  // docs/324
+         if (a.contains("use_name")) finish.useName = text(a, "use_name");
          if (a.contains("floor_offset")) {  // docs/321
            if (a.at("floor_offset").is_null()) finish.floorOffset.reset();
            else finish.floorOffset = number(a, "floor_offset");
@@ -3480,7 +3486,8 @@ const std::vector<CommandDef>& commands() {
          must(m.setRoomFinish(text(a, "id"), finish));
          return json{{"id", text(a, "id")}, {"use", finish.use}, {"floor", finish.floor}, {"wall", finish.wall},
                      {"ceiling", finish.ceiling}, {"ceiling_height", finish.ceilingHeight}, {"ratio_part", finish.ratioPart},
-                     {"floor_offset", finish.floorOffset ? json(*finish.floorOffset) : json()}};
+                     {"floor_offset", finish.floorOffset ? json(*finish.floorOffset) : json()},
+                     {"use_code", finish.useCode}, {"use_name", finish.useName}};
        }},
       {"make_ceilings",
        "Ceilings as boards (docs/123): for each room ('rooms': ids; default all) with a ceiling height "

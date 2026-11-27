@@ -10202,6 +10202,8 @@ RoomFinish roomFinishOf(const Object& marker) {
   out.ceilingHeight = j.value("ceiling_height", 0.0);
   out.ratioPart = j.value("ratio_part", std::string());
   if (j.contains("floor_offset") && j.at("floor_offset").is_number()) out.floorOffset = j.at("floor_offset").get<double>();
+  out.useCode = j.value("use_code", std::string());
+  out.useName = j.value("use_name", std::string());
   return out;
 }
 
@@ -10459,6 +10461,13 @@ Status Modeler::setRoomFinish(const ObjectId& room, const RoomFinish& finish) {
     return Status::failure("A ceiling height is 1000 to 10000 (or 0: not given)");
   if (finish.floorOffset && (!std::isfinite(*finish.floorOffset) || std::abs(*finish.floorOffset) > 5000))
     return Status::failure("A room's floor is within 5000 mm of its storey's FL");
+  if (!finish.useCode.empty() && (finish.useCode.size() != 5 ||
+                                  finish.useCode.find_first_not_of("0123456789") != std::string::npos))
+    return Status::failure("A room's use code is the form's five digits (e.g. 08010)");
+  if (finish.useName.size() > 120 || finish.useName.find_first_of("\r\n") != std::string::npos)
+    return Status::failure("A room's use name is one line of at most 40 characters");
+  if (finish.useCode.empty() != finish.useName.empty())
+    return Status::failure("A room's use needs both its code and its name");
   if (!finish.ratioPart.empty()) {
     bool known = false;
     for (const FloorRatioPart& part : floorRatioParts()) known = known || finish.ratioPart == part.code;
@@ -10476,6 +10485,8 @@ Status Modeler::setRoomFinish(const ObjectId& room, const RoomFinish& finish) {
     if (finish.ceilingHeight > 0) j["ceiling_height"] = finish.ceilingHeight;
     if (!finish.ratioPart.empty()) j["ratio_part"] = finish.ratioPart;
     if (finish.floorOffset) j["floor_offset"] = *finish.floorOffset;
+    if (!finish.useCode.empty()) j["use_code"] = finish.useCode;
+    if (!finish.useName.empty()) j["use_name"] = finish.useName;
     object.attributes["room_finish"] = j.dump();
   }
   ChangeSet changes(document_);

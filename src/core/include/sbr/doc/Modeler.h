@@ -97,9 +97,12 @@ struct RoomFinish {
   // docs/321: the room's floor from its storey's FL (mm; e.g. -180 for an entrance), as the person gives it;
   // empty: not given (the plans then write no FL for the room).
   std::optional<double> floorOffset;
+  // docs/324: the room's use for 第五面 7.用途別床面積 of a building of more than one use: the code of the
+  // form's 用途の区分 (e.g. 08010) and its 具体的な用途の名称; empty: the outline's main use.
+  std::string useCode, useName;
   bool empty() const {
     return use.empty() && floor.empty() && wall.empty() && ceiling.empty() && ceilingHeight <= 0.0 && ratioPart.empty() &&
-           !floorOffset;
+           !floorOffset && useCode.empty() && useName.empty();
   }
 };
 // The parts of a building whose floor area is left out of the total the floor area ratio (容積率)

@@ -1977,6 +1977,30 @@ void GuiPhase1::permitWordFormsTransferAndEmbedDrawings() {
     QVERIFY(lower.contains(QStringLiteral("08010")));
     QVERIFY(!fifth.contains(QStringLiteral("@@SBR_")));
   }
+  // docs/324: a shop on half of the first storey: 7.用途別床面積 gets the main use's rest and the shop.
+  {
+    const auto steps = modeler.history().undoCount();
+    const auto run = [&](const nlohmann::json& c) -> nlohmann::json { return nlohmann::json::parse(api.execute(c.dump())); };
+    const auto partition = run({{"command", "create_wall"}, {"args", {{"points", {{5000, 2000}, {5000, 9000}}}, {"base", 0.0}, {"height", 2800}, {"thickness", 120}}}});
+    QVERIFY2(partition.value("ok", false), partition.dump().c_str());
+    const auto room = run({{"command", "create_room"}, {"args", {{"at", {3500, 5500}}, {"name", "店舗"}}}});
+    QVERIFY2(room.value("ok", false), room.dump().c_str());
+    const std::string shop = room["result"]["id"].get<std::string>();
+    const auto use = run({{"command", "set_room_finish"}, {"args", {{"id", shop}, {"use_code", "08440"}, {"use_name", "物品販売業を営む店舗"}}}});
+    QVERIFY2(use.value("ok", false), use.dump().c_str());
+    QVERIFY(!nlohmann::json::parse(api.execute(nlohmann::json{{"command", "set_room_finish"},
+        {"args", {{"id", shop}, {"use_code", "8440"}}}}.dump())).value("ok", false));  // five digits
+    const auto mixed = text(unpack(app::buildPermitForm(modeler.document(), {false, true}).docx).value(documentXml));
+    const auto first = mixed.indexOf(QStringLiteral("（第五面）"));
+    const auto second = mixed.indexOf(QStringLiteral("（第五面）"), first + 1);
+    const auto lower = mixed.sliced(first, second - first);
+    QVERIFY2(lower.contains(QStringLiteral("物品販売業を営む店舗")), qPrintable(lower.right(600)));
+    QVERIFY(lower.contains(QStringLiteral("08440")));
+    QVERIFY(lower.contains(QStringLiteral("08010")));      // the rest: the main use
+    QVERIFY(lower.contains(QStringLiteral("21.00")));      // 3 m x 7 m each
+    QVERIFY(!mixed.contains(QStringLiteral("@@SBR_")));
+    while (modeler.history().undoCount() > steps) QVERIFY(modeler.undo());
+  }
 
   // docs/287: 建築協定等手続状況届出書, first face from the same model.
   QStringList unfilled;

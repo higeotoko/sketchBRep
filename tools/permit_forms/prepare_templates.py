@@ -153,13 +153,18 @@ def patch_document(xml, third):
                                   (386, "高さ】", "fifth_storey_height"), (389, "天井の高さ】", "fifth_ceiling")]:
             after(index, label, key)
 
-        def use_slots(text):
-            keys = iter(["fifth_use_code", "fifth_use_name", "fifth_use_area"])
-            def slot(m):
-                width = 2 * len(m.group(1))
-                return "（" + mark(f"slot_{next(keys)}__{width}") + "）"
-            return re.sub("（(\u3000+)）", slot, text, count=3)
-        edit(394, use_slots)
+        def use_slots(row):
+            # docs/324: the six rows of 7.用途別床面積 (ｲ..ﾍ); row ｲ keeps the keys it had (docs/294).
+            suffix = "" if row == 0 else f"_{row}"
+            def transform(text):
+                keys = iter([f"fifth_use_code{suffix}", f"fifth_use_name{suffix}", f"fifth_use_area{suffix}"])
+                def slot(m):
+                    width = 2 * len(m.group(1))
+                    return "（" + mark(f"slot_{next(keys)}__{width}") + "）"
+                return re.sub("（(\u3000+)）", slot, text, count=3)
+            return transform
+        for row in range(6):
+            edit(394 + row, use_slots(row))
         after(300, "(区分", "detail_use_code")
         after(300, ")", "detail_main_use")
         boxes(306, ["detail_work_" + kind for kind in (
