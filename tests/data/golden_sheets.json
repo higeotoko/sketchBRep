@@ -601,10 +601,10 @@
   "counts": {
    "line/cut": 1,
    "line/title_block": 6,
-   "line/visible": 14,
+   "line/visible": 15,
    "polyline/frame": 1,
    "polyline/title_block": 1,
-   "text/text": 28,
+   "text/text": 29,
    "text/title_block": 10
   },
   "extent": [
@@ -656,6 +656,7 @@
    "符号",
    "縮尺",
    "腰高",
+   "防火設備",
    "高さ"
   ]
  },

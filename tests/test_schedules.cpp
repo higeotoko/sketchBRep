@@ -101,7 +101,7 @@ TEST_F(Schedules, OpeningsOfOneKindSizeAndFittingShareAMark) {
   for (const json& t : s["types"]) EXPECT_EQ(counted[t["mark"].get<std::string>()], t["count"].get<int>());
   const std::string csv = s["csv"];
   EXPECT_EQ(csv.rfind("\xef\xbb\xbf", 0), 0u);
-  EXPECT_NE(csv.find("AW1,窓,引違い,1600,1200,2,900,,\r\n"), std::string::npos) << csv;
+  EXPECT_NE(csv.find("AW1,窓,引違い,1600,1200,2,900,,,\r\n"), std::string::npos) << csv;
   EXPECT_NE(csv.find("合計,,,,,5,,,"), std::string::npos);
   EXPECT_FALSE(ok("opening_schedule").contains("csv"));
 
@@ -296,7 +296,7 @@ TEST_F(Schedules, AMarkGivenByHandStaysAndWorkedOutNumbersSkipIt) {
   EXPECT_FALSE(byMark["AW-1"]["mixed"].get<bool>());
   EXPECT_EQ(byMark["AW1"]["fitting"], "窓");  // the one given by hand
   EXPECT_TRUE(byMark.count("AD1") && byMark.count("O1"));
-  EXPECT_NE(s["csv"].get<std::string>().find("AW-1,窓,引違い,1600,1200,2,900,APW330-16513,手で決めた符号\r\n"), std::string::npos) << s["csv"];
+  EXPECT_NE(s["csv"].get<std::string>().find("AW-1,窓,引違い,1600,1200,2,900,APW330-16513,,手で決めた符号\r\n"), std::string::npos) << s["csv"];
   // The plan carries them.
   const auto view = sbr::draw::makeView(modeler.document(), sbr::draw::planView(1100));
   ASSERT_TRUE(view);
@@ -5631,6 +5631,24 @@ TEST_F(Schedules, FireEquipmentOpeningsAreMarkedOnThePlan) {
   bool named = false;
   for (const auto& i : sheet->items) named = named || (i.kind == sbr::draw::Item::Kind::Text && i.text == "防火設備　アルミサッシ＋網入りガラス");
   EXPECT_TRUE(named);
+  // docs/336: the schedule gives them a line (and mark) of their own, with the 防火設備 column; the north windows of
+  // the same size and fitting are another line.
+  const auto table = sbr::doc::scheduleTable(modeler.document(), 0);
+  ASSERT_EQ(table.headers[8], "防火設備");
+  int fireLines = 0;
+  for (const auto& r : table.rows)
+    if (r[8] == "アルミサッシ＋網入りガラス（EB-9999）") {
+      ++fireLines;
+      EXPECT_EQ(r[5], "2");
+    }
+  EXPECT_EQ(fireLines, 1);
+  std::set<std::string> southMarks;
+  for (const auto& row : sbr::doc::openingSchedule(modeler.document()).rows)
+    if (row.host == south) southMarks.insert(row.mark);
+  ASSERT_EQ(southMarks.size(), 1u);
+  for (const auto& row : sbr::doc::openingSchedule(modeler.document()).rows)
+    if (row.host != south) EXPECT_NE(row.mark, *southMarks.begin());
+  EXPECT_NE(sbr::doc::openingScheduleCsv(sbr::doc::openingSchedule(modeler.document())).find("防火設備"), std::string::npos);
   // Taken away with an empty spec.
   ok("set_opening_fire_equipment", {{"host", south}, {"spec", ""}});
   for (const auto& row : sbr::doc::openingSchedule(modeler.document()).rows) EXPECT_TRUE(row.fireSpec.empty());

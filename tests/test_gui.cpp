@@ -15174,7 +15174,7 @@ void GuiPhase1::schedulesAreReadFromTheModelAndTheirMarksShowOnThePlan() {
   QCOMPARE(m.history().undoCount(),before+1);
   QVERIFY2(f.window.statusText().contains(QStringLiteral("符号・品番を決めました")),qPrintable(f.window.statusText()));
   const QString csv=f.window.scheduleCsv(0);
-  QVERIFY2(csv.contains(QStringLiteral("AW-1,窓,引違い,1600,1200,1,900,APW330,手で決めた符号")),qPrintable(csv));
+  QVERIFY2(csv.contains(QStringLiteral("AW-1,窓,引違い,1600,1200,1,900,APW330,,手で決めた符号")),qPrintable(csv));
   QVERIFY(csv.contains(QStringLiteral("AW1,窓,引違い,1600,1200,1,900,,")));  // the other one keeps the worked-out mark
   f.vp->setPlanCut(1100.0);
   QApplication::processEvents();

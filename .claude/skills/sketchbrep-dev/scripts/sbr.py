@@ -19,6 +19,14 @@ import tempfile
 import time
 from pathlib import Path
 
+# docs/336: a failure's details can hold characters the console's code page (cp932) has not (a test's own output read
+# as bytes); printing them must not stop the run before the result line.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 HERE = Path(__file__).resolve().parent
 CONFIG = {
     "repo": Path(os.environ.get("SBR_REPO", HERE.parents[3])),

@@ -233,7 +233,11 @@ OpeningSchedule openingSchedule(const Document& document) {
     if (r.kind == "door") return r.inner ? 3 : 2;
     return 4;
   };
-  auto keyOf = [&](const OpeningRow& r) { return Key{groupOf(r), tenths(r.width), tenths(r.height), r.fitting}; };
+  // docs/336: a 防火設備 is another product: openings given one get a line (and mark) of their own.
+  auto keyOf = [&](const OpeningRow& r) {
+    return Key{groupOf(r), tenths(r.width), tenths(r.height),
+               r.fireSpec.empty() ? r.fitting : r.fitting + "|防火設備|" + r.fireSpec + "|" + r.fireCertification};
+  };
   auto sill = [](OpeningTypeRow& t, double value) {
     if (std::none_of(t.sills.begin(), t.sills.end(), [&](double s) { return tenths(s) == tenths(value); })) t.sills.push_back(value);
   };
@@ -251,8 +255,11 @@ OpeningSchedule openingSchedule(const Document& document) {
       t.width = r.width;
       t.height = r.height;
       t.product = r.product;
+      t.fireSpec = r.fireSpec;
+      t.fireCertification = r.fireCertification;
     } else if (t.kind != r.kind || t.fitting != r.fitting || tenths(t.width) != tenths(r.width) ||
-               tenths(t.height) != tenths(r.height) || t.product != r.product) {
+               tenths(t.height) != tenths(r.height) || t.product != r.product || t.fireSpec != r.fireSpec ||
+               t.fireCertification != r.fireCertification) {
       t.mixed = true;
     }
     ++t.count;
@@ -268,6 +275,8 @@ OpeningSchedule openingSchedule(const Document& document) {
     t.fitting = r.fitting;
     t.width = r.width;
     t.height = r.height;
+    t.fireSpec = r.fireSpec;
+    t.fireCertification = r.fireCertification;
     ++t.count;
     sill(t, r.sill);
   }
@@ -4957,16 +4966,19 @@ draw::Table scheduleTable(const Document& document, int which) {
   if (which == 0) {
     const OpeningSchedule s = openingSchedule(document);
     t.title = "建具表";
-    t.headers = {"符号", "種類", "建具", "幅", "高さ", "数", "腰高", "品番", "注"};
+    t.headers = {"符号", "種類", "建具", "幅", "高さ", "数", "腰高", "品番", "防火設備", "注"};
     int total = 0;
     for (const OpeningTypeRow& r : s.types) {
       std::string sills;
       for (double v : r.sills) sills += (sills.empty() ? "" : " / ") + number(v, 0);
+      // docs/336: the 防火設備 as given (its specification and certification), as plans mark it 防.
+      const std::string fire = r.fireSpec.empty() ? std::string()
+                                                  : r.fireSpec + (r.fireCertification.empty() ? std::string() : "（" + r.fireCertification + "）");
       t.rows.push_back({r.mark, kindName(r.kind), r.fitting, number(r.width, 0), number(r.height, 0), std::to_string(r.count), sills,
-                        r.product, r.mixed ? "大きさ・建具・品番の違う開口が混ざっています" : ""});
+                        r.product, fire, r.mixed ? "大きさ・建具・品番・防火設備の違う開口が混ざっています" : ""});
       total += r.count;
     }
-    t.rows.push_back({"合計", "", "", "", "", std::to_string(total), "", "", ""});
+    t.rows.push_back({"合計", "", "", "", "", std::to_string(total), "", "", "", ""});
     t.notes = {"寸法は mm。符号は、手で決めたものはそのまま、ほかは種類・建具・幅・高さが同じ開口に同じものを付けています。",
                "平面図の開口の横の符号と同じです。モデルから読んだ今の値です。"};
   } else if (which == 1) {
@@ -6324,16 +6336,18 @@ std::string tableCsv(const draw::Table& table) {
 
 std::string openingScheduleCsv(const OpeningSchedule& schedule) {
   Csv csv;
-  csv.line({"符号", "種類", "建具", "幅(mm)", "高さ(mm)", "数", "腰高(mm)", "品番", "注"});
+  csv.line({"符号", "種類", "建具", "幅(mm)", "高さ(mm)", "数", "腰高(mm)", "品番", "防火設備", "注"});  // docs/336
   int total = 0;
   for (const OpeningTypeRow& t : schedule.types) {
     std::string sills;
     for (double s : t.sills) sills += (sills.empty() ? "" : " / ") + number(s, 0);
-    csv.line({t.mark, kindName(t.kind), t.fitting, number(t.width, 0), number(t.height, 0), std::to_string(t.count), sills, t.product,
-              t.mixed ? "同じ符号に、種類・建具・大きさ・品番の違う開口があります" : t.ownMark ? "手で決めた符号" : ""});
+    const std::string fire = t.fireSpec.empty() ? std::string()
+                                                : t.fireSpec + (t.fireCertification.empty() ? std::string() : "（" + t.fireCertification + "）");
+    csv.line({t.mark, kindName(t.kind), t.fitting, number(t.width, 0), number(t.height, 0), std::to_string(t.count), sills, t.product, fire,
+              t.mixed ? "同じ符号に、種類・建具・大きさ・品番・防火設備の違う開口があります" : t.ownMark ? "手で決めた符号" : ""});
     total += t.count;
   }
-  csv.line({"合計", "", "", "", "", std::to_string(total), "", "", ""});
+  csv.line({"合計", "", "", "", "", std::to_string(total), "", "", "", ""});
   csv.line({});
   csv.line({"符号", "種類", "建具", "幅(mm)", "高さ(mm)", "腰高(mm)", "階", "壁", "壁の中の番号", "品番"});
   for (const OpeningRow& r : schedule.rows)

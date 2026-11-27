@@ -62,6 +62,7 @@ struct OpeningTypeRow {
   // shows the first one's, and says so (nothing is made the same silently).
   bool mixed = false;
   std::vector<double> sills;  // the different sill heights among them, ascending
+  std::string fireSpec, fireCertification;  // docs/336: as given on its openings (Modeler::setOpeningFireEquipment)
 };
 
 struct OpeningSchedule {
