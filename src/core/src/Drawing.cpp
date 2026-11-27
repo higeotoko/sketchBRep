@@ -2217,6 +2217,47 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
       view.symbols.insert("through_column");
     }
   }
+  // docs/330: a plan marks each brace (筋かい) its cut passes with a small right triangle on the wall, its upright
+  // side at the brace's upper end (◣), as submitted plans give the braces' places and directions.
+  if (spec.kind == ViewKind::Plan && spec.framingPreset.empty() && spec.bracingFloor.empty()) {
+    const double cutZ = spec.frame.Location().Z();
+    const double paper = spec.paperScale > 0 ? spec.paperScale : 100.0;
+    for (const doc::Object& o : document.objects()) {
+      const auto kind = o.attributes.find("kind");
+      if (kind == o.attributes.end() || kind->second != "brace" || o.shape.IsNull() || !document.isVisible(o.id)) continue;
+      if (std::find(spec.excludeTags.begin(), spec.excludeTags.end(), o.layer) != spec.excludeTags.end()) continue;
+      if (!spec.tags.empty() && std::find(spec.tags.begin(), spec.tags.end(), o.layer) == spec.tags.end()) continue;
+      const TopoDS_Shape shape = document.worldShape(o);
+      std::optional<gp_Pnt> low, high;
+      for (TopExp_Explorer v(shape, TopAbs_VERTEX); v.More(); v.Next()) {
+        const gp_Pnt p = BRep_Tool::Pnt(TopoDS::Vertex(v.Current()));
+        if (!low || p.Z() < low->Z()) low = p;
+        if (!high || p.Z() > high->Z()) high = p;
+      }
+      if (!low || !high || cutZ < low->Z() || cutZ > high->Z()) continue;
+      const gp_Pnt2d a = proj.uv(*low), b = proj.uv(*high);
+      gp_Vec2d along(a, b);
+      if (along.Magnitude() < 1.0) continue;
+      along.Normalize();
+      const gp_Vec2d across(-along.Y(), along.X());
+      const gp_Pnt2d mid((a.X() + b.X()) / 2, (a.Y() + b.Y()) / 2);
+      const double base = 2.5 * paper, rise = 1.2 * paper;
+      const gp_Pnt2d foot = mid.Translated(-along * (base / 2)), corner = mid.Translated(along * (base / 2));
+      const gp_Pnt2d tip = corner.Translated(across * rise);
+      Item fill;
+      fill.kind = Item::Kind::Fill;
+      fill.pen = Pen::Fill;
+      fill.points = {foot, corner, tip};
+      view.items.push_back(fill);
+      Item outline;
+      outline.kind = Item::Kind::Polyline;
+      outline.pen = Pen::Visible;
+      outline.closed = true;
+      outline.points = {foot, corner, tip};
+      view.items.push_back(std::move(outline));
+      view.symbols.insert("brace");
+    }
+  }
   if (spec.memberLabels) {
     const auto quantities = construction::takeOff(
         document,

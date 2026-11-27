@@ -542,3 +542,27 @@ TEST_F(Quantities, CornerColumnsAreThroughColumns) {
   EXPECT_EQ(corners.corners, 4);
   EXPECT_EQ(corners.through, 3);
 }
+
+// docs/330: a plan marks each brace its cut passes with a triangle, and the legend explains it; framing plans do not.
+TEST_F(Quantities, PlansMarkTheBraces) {
+  const auto made = m.generateFrame(
+      R"({"inputs":{"x_bays":2,"y_bays":2,"braces":[{"storey":1,"from":[0,0],"to":[1,0]},{"storey":1,"from":[2,1],"to":[2,2]}]}})");
+  ASSERT_TRUE(made) << made.error();
+  int braces = 0;
+  for (const auto& o : m.document().objects())
+    if (const auto k = o.attributes.find("kind"); k != o.attributes.end() && k->second == "brace") ++braces;
+  ASSERT_GT(braces, 0);
+  draw::ViewSpec spec = draw::planView(1000.0);
+  spec.paperScale = 100;
+  const auto view = draw::makeView(m.document(), spec);
+  ASSERT_TRUE(view) << view.error();
+  int marks = 0;
+  for (const auto& item : view->items)
+    marks += item.kind == draw::Item::Kind::Polyline && item.pen == draw::Pen::Visible && item.closed && item.points.size() == 3;
+  EXPECT_EQ(marks, braces);
+  EXPECT_TRUE(view->symbols.count("brace"));
+  spec.framingPreset = "first_floor";
+  const auto framing = draw::makeView(m.document(), spec);
+  ASSERT_TRUE(framing);
+  EXPECT_FALSE(framing->symbols.count("brace"));
+}

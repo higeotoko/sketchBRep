@@ -288,6 +288,7 @@ void appendLegend(std::vector<Item>& items, const Paper* paper, double s, const 
   if (hatchPatterns.count(2)) hatches.push_back({2, "構造用の木材の切り口（柱・間柱・土台など）"});
   if (hatchPatterns.count(1)) hatches.push_back({1, "合板・野地板の切り口"});
   if (symbols.count("through_column")) hatches.push_back({3, "通し柱"});  // docs/327: a ringed column
+  if (symbols.count("brace")) hatches.push_back({4, "筋かい（三角の立った側が上端）"});  // docs/330
   if (!rows.empty() || !hatches.empty()) {
     constexpr double rowH = 5.0, sample = 14.0, colW = 75.0;
     const int perColumn = static_cast<int>((kTitleH - rowH) / rowH);
@@ -307,6 +308,22 @@ void appendLegend(std::vector<Item>& items, const Paper* paper, double s, const 
       const double x = x0 + col * colW, y = top - (r + 1.5) * rowH;
       if (x + sample + 4 > x0 + room) break;
       const double y0 = y - 1.4, y1 = y + 1.4;
+      if (hatches[h].first == 4) {  // docs/330: the brace's triangle on a wall line
+        const double cx = x + sample / 2;
+        items.push_back(line(Pen::Visible, P(x + 2, y - 0.6), P(x + sample - 2, y - 0.6)));
+        Item tri;
+        tri.kind = Item::Kind::Fill;
+        tri.pen = Pen::Fill;
+        tri.points = {P(cx - 1.25, y - 0.6), P(cx + 1.25, y - 0.6), P(cx + 1.25, y + 0.6)};
+        items.push_back(tri);
+        Item edge = tri;
+        edge.kind = Item::Kind::Polyline;
+        edge.pen = Pen::Visible;
+        edge.closed = true;
+        items.push_back(edge);
+        items.push_back(text(Pen::Text, P(x + sample + 2, y), hatches[h].second, 2.5, 0, 1));
+        continue;
+      }
       if (hatches[h].first == 3) {  // docs/327: the column's cut (a small square) in its ring
         Item square;
         square.kind = Item::Kind::Polyline;
