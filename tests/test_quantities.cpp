@@ -408,10 +408,12 @@ TEST_F(Quantities, ColumnTableGivesSlendernessOfTheFrameColumns) {
 TEST_F(Quantities, StructuralSpecTableTakesTheGivenSpecifications) {
   frame();
   auto table = doc::structuralSpecTable(m.document());
-  ASSERT_EQ(table.rows.size(), 6u);
+  ASSERT_EQ(table.rows.size(), 7u);  // docs/329: and the corner columns of a two-storey frame
   EXPECT_EQ(table.rows[0][3], "未入力");
   EXPECT_EQ(table.rows[1][0], "柱の有効細長比");
   EXPECT_TRUE(table.rows[1][3] == "規定内" || table.rows[1][3] == "規定外");
+  EXPECT_EQ(table.rows[2][0], "隅柱の通し柱");
+  EXPECT_EQ(table.rows[2][3], "規定内") << table.rows[2][1];  // the generated frame's corners are through columns
   doc::StructuralSpecs s;
   s.roofing = "ガルバリウム鋼板 立平葺き";
   s.joints = "平成12年建設省告示第1460号による";
@@ -421,8 +423,8 @@ TEST_F(Quantities, StructuralSpecTableTakesTheGivenSpecifications) {
   table = doc::structuralSpecTable(m.document());
   EXPECT_EQ(table.rows[0][1], "ガルバリウム鋼板 立平葺き");
   EXPECT_EQ(table.rows[0][3], "入力済み");
-  EXPECT_EQ(table.rows[3][3], "入力済み");
-  EXPECT_EQ(table.rows[4][3], "未入力");
+  EXPECT_EQ(table.rows[4][3], "入力済み");
+  EXPECT_EQ(table.rows[5][3], "未入力");
   Document restored;
   ASSERT_TRUE(deserializeDocument(serializeDocument(m.document()), restored));
   EXPECT_EQ(doc::structuralSpecsOf(restored).roofing, "ガルバリウム鋼板 立平葺き");
@@ -433,7 +435,7 @@ TEST_F(Quantities, StructuralSpecTableTakesTheGivenSpecifications) {
   ASSERT_TRUE(set["ok"]) << set.dump();
   const auto read = json::parse(api.execute(R"({"command":"structural_spec_table"})"));
   ASSERT_TRUE(read["ok"]) << read.dump();
-  EXPECT_EQ(read["result"]["rows"][5][3], "入力済み");
+  EXPECT_EQ(read["result"]["rows"][6][3], "入力済み");
 }
 
 // docs/315: the columns' longest clear distance in a height range (第五面 ニ).
@@ -517,4 +519,26 @@ TEST_F(Quantities, PlansCircleTheThroughColumns) {
   const auto framing = draw::makeView(m.document(), spec);
   ASSERT_TRUE(framing);
   EXPECT_FALSE(framing->symbols.count("through_column"));
+}
+
+// docs/329: the corners of the columns' plan positions; a corner without a through column is to be checked.
+TEST_F(Quantities, CornerColumnsAreThroughColumns) {
+  frame();
+  auto corners = doc::cornerColumns(m.document());
+  ASSERT_TRUE(corners.applies);
+  EXPECT_EQ(corners.corners, 4);
+  EXPECT_EQ(corners.through, 4);
+  // One corner's through column changed into a plain column: 3 of 4.
+  for (const auto& o : m.document().objects())
+    if (const auto k = o.attributes.find("kind"); k != o.attributes.end() && k->second == "through_column") {
+      const Bnd_Box b = m.document().worldBounds(o);
+      double x0, y0, z0, x1, y1, z1;
+      b.Get(x0, y0, z0, x1, y1, z1);
+      if (x0 > 100 || y0 > 100) continue;  // the corner at the origin
+      ASSERT_TRUE(m.setAttribute({o.id}, "kind", "column"));
+      break;
+    }
+  corners = doc::cornerColumns(m.document());
+  EXPECT_EQ(corners.corners, 4);
+  EXPECT_EQ(corners.through, 3);
 }

@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <map>
+#include <set>
 #include <tuple>
 
 #include <nlohmann/json.hpp>
@@ -19,6 +20,7 @@ namespace {
 struct ColumnPart {
   std::string role;
   double width, depth, from, to;
+  double x = 0, y = 0;  // docs/329: where it stands
 };
 std::vector<ColumnPart> columnParts(const Document& document) {
   std::vector<ColumnPart> out;
@@ -44,11 +46,53 @@ std::vector<ColumnPart> columnParts(const Document& document) {
       for (double f : floors)
         if (f > mid - length / 2 + 1 && f < mid + length / 2 - 1) stops.push_back(f);
     stops.push_back(mid + length / 2);
-    for (std::size_t i = 0; i + 1 < stops.size(); ++i) out.push_back({role, width, depth, stops[i], stops[i + 1]});
+    const double px = part.at("position")[0].get<double>(), py = part.at("position")[1].get<double>();
+    for (std::size_t i = 0; i + 1 < stops.size(); ++i) out.push_back({role, width, depth, stops[i], stops[i + 1], px, py});
   }
   return out;
 }
 }  // namespace
+
+CornerColumns cornerColumns(const Document& document) {
+  CornerColumns out;
+  std::set<long long> storeys;
+  for (const FloorLevel& l : document.settings().levels)
+    if (isFloorLevelName(l.name)) storeys.insert(std::llround(l.elevation));
+  const auto parts = columnParts(document);
+  if (storeys.size() < 2 || parts.empty()) return out;
+  out.applies = true;
+  // The distinct plan positions (to 1 mm) and whether a through column stands at each.
+  std::map<std::pair<long long, long long>, bool> at;
+  for (const ColumnPart& p : parts) {
+    auto& through = at[{std::llround(p.x), std::llround(p.y)}];
+    through = through || p.role == "through_column";
+  }
+  std::vector<std::pair<long long, long long>> points;
+  for (const auto& [xy, through] : at) points.push_back(xy);
+  // Andrew's monotone chain: the hull's corners (collinear points left out).
+  std::sort(points.begin(), points.end());
+  const auto cross = [](const auto& o, const auto& a, const auto& b) {
+    return static_cast<double>(a.first - o.first) * static_cast<double>(b.second - o.second) -
+           static_cast<double>(a.second - o.second) * static_cast<double>(b.first - o.first);
+  };
+  std::vector<std::pair<long long, long long>> hull;
+  if (points.size() < 3) {
+    hull = points;
+  } else {
+    for (int pass = 0; pass < 2; ++pass) {
+      const std::size_t start = hull.size();
+      for (const auto& p : points) {
+        while (hull.size() >= start + 2 && cross(hull[hull.size() - 2], hull.back(), p) <= 0) hull.pop_back();
+        hull.push_back(p);
+      }
+      hull.pop_back();
+      std::reverse(points.begin(), points.end());
+    }
+  }
+  out.corners = static_cast<int>(hull.size());
+  for (const auto& corner : hull) out.through += at[corner] ? 1 : 0;
+  return out;
+}
 
 std::optional<double> clearDistanceIn(const Document& document, double z0, double z1) {
   std::optional<double> out;
@@ -167,6 +211,13 @@ draw::Table structuralSpecTable(const Document& document) {
     char text[96];
     std::snprintf(text, sizeof text, "最大 %.1f（構造詳細図（柱の小径・有効細長比）による）", worst);
     t.rows.push_back({"柱の有効細長比", text, "令第43条第6項（150以下）", worst <= 150.0 + 1e-9 ? "規定内" : "規定外"});
+  }
+  // docs/329: the corner columns of a building of two storeys or more.
+  if (const auto corners = cornerColumns(document); corners.applies) {
+    const std::string text = "外側の隅 " + std::to_string(corners.corners) + " か所のうち通し柱 " + std::to_string(corners.through) +
+                             " か所（入隅などの「これに準ずる柱」は別途）";
+    t.rows.push_back({"隅柱の通し柱", text, "令第43条第5項（接合部を通し柱と同等以上に補強した場合を除く）",
+                      corners.through == corners.corners ? "規定内" : "要確認"});
   }
   given("構造耐力上主要な部分である軸組等の構造方法", s.frameMethod, "令第46条");
   given("構造耐力上主要な部分である継手又は仕口の構造方法", s.joints, "令第47条");

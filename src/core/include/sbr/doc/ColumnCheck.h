@@ -30,6 +30,15 @@ struct ColumnRow {
   std::optional<double> requiredMm;  // 0.027 l + 22.5 Wd / l
 };
 std::vector<ColumnRow> columnRows(const Document& document);
+// docs/329: 令第43条第5項: in a building of two storeys or more, the corner columns are through columns (or their
+// joints are made as strong). Corners: the columns at the outer corners of all the columns' plan positions (the
+// convex hull's corners); re-entrant corners and "columns like them" are left to the person.
+struct CornerColumns {
+  bool applies = false;     // two storeys or more and columns in the model
+  int corners = 0;          // corner positions found
+  int through = 0;          // of them with a through column
+};
+CornerColumns cornerColumns(const Document& document);
 // docs/315: the longest vertical distance between horizontal members of the columns standing in [z0, z1)
 // (a column's part whose middle is in the range; through columns split at the storeys' floor levels), for
 // 第五面 ニ (横架材間の垂直距離). Empty when no column stands there.
