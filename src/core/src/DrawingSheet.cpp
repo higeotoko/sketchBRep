@@ -577,25 +577,20 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
     items.push_back(line(Pen::Text, mark.at, at));
     items.push_back(text(Pen::Text, at, mark.text, height, 0, 0));
   }
-  // docs/333: lines stop at the view's blank boxes (as if the marks there were drawn on white).
+  // docs/333: lines stop at the view's blank boxes (as if the marks there were drawn on white). A polyline is
+  // broken into its sides; a side along a box's edge (the mark's own outline) is kept.
   if (!view.blanks.empty()) {
-    std::vector<Item> kept;
-    kept.reserve(items.size());
-    for (Item& item : items) {
-      if (item.kind != Item::Kind::Line || item.points.size() != 2) {
-        kept.push_back(std::move(item));
-        continue;
-      }
-      const gp_Pnt2d a = item.points[0], b = item.points[1];
-      std::vector<std::pair<double, double>> inside;  // parts of the line (0..1) in a box
+    const double eps = 1e-6;
+    const auto pieces = [&](const gp_Pnt2d& a, const gp_Pnt2d& b) {
+      std::vector<std::pair<double, double>> inside;  // parts of a..b (0..1) inside a box
       for (const auto& [lo, hi] : view.blanks) {
         double t0 = 0.0, t1 = 1.0;
         bool hit = true;
         const double p[4] = {-(b.X() - a.X()), b.X() - a.X(), -(b.Y() - a.Y()), b.Y() - a.Y()};
-        const double q[4] = {a.X() - lo.X(), hi.X() - a.X(), a.Y() - lo.Y(), hi.Y() - a.Y()};
+        const double q[4] = {a.X() - (lo.X() + eps), (hi.X() - eps) - a.X(), a.Y() - (lo.Y() + eps), (hi.Y() - eps) - a.Y()};
         for (int k = 0; k < 4 && hit; ++k) {
           if (std::abs(p[k]) < 1e-12) {
-            hit = q[k] >= 0;
+            hit = q[k] > 0;
           } else {
             const double r = q[k] / p[k];
             if (p[k] < 0) t0 = std::max(t0, r);
@@ -605,26 +600,50 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
         }
         if (hit) inside.push_back({t0, t1});
       }
-      if (inside.empty()) {
+      std::sort(inside.begin(), inside.end());
+      std::vector<std::pair<double, double>> out;
+      double from = 0.0;
+      for (const auto& [i0, i1] : inside) {
+        if (i0 > from + 1e-9) out.push_back({from, i0});
+        from = std::max(from, i1);
+      }
+      if (from < 1.0 - 1e-9) out.push_back({from, 1.0});
+      return std::make_pair(inside.empty(), out);
+    };
+    const auto at = [](const gp_Pnt2d& a, const gp_Pnt2d& b, double t) {
+      return gp_Pnt2d(a.X() + (b.X() - a.X()) * t, a.Y() + (b.Y() - a.Y()) * t);
+    };
+    std::vector<Item> kept;
+    kept.reserve(items.size());
+    for (Item& item : items) {
+      const bool isLine = item.kind == Item::Kind::Line && item.points.size() == 2;
+      const bool isPolyline = item.kind == Item::Kind::Polyline && item.points.size() >= 2;
+      if (!isLine && !isPolyline) {
         kept.push_back(std::move(item));
         continue;
       }
-      std::sort(inside.begin(), inside.end());
-      double from = 0.0;
-      const auto at = [&](double t) { return gp_Pnt2d(a.X() + (b.X() - a.X()) * t, a.Y() + (b.Y() - a.Y()) * t); };
-      for (const auto& [i0, i1] : inside) {
-        if (i0 > from + 1e-9) {
+      std::vector<std::pair<gp_Pnt2d, gp_Pnt2d>> sides;
+      for (std::size_t k = 0; k + 1 < item.points.size(); ++k) sides.push_back({item.points[k], item.points[k + 1]});
+      if (isPolyline && item.closed) sides.push_back({item.points.back(), item.points.front()});
+      bool clear = true;
+      std::vector<std::vector<std::pair<double, double>>> parts;
+      for (const auto& [a, b] : sides) {
+        auto [untouched, part] = pieces(a, b);
+        clear = clear && untouched;
+        parts.push_back(std::move(part));
+      }
+      if (clear) {
+        kept.push_back(std::move(item));
+        continue;
+      }
+      for (std::size_t k = 0; k < sides.size(); ++k)
+        for (const auto& [t0, t1] : parts[k]) {
           Item piece = item;
-          piece.points = {at(from), at(i0)};
+          piece.kind = Item::Kind::Line;
+          piece.closed = false;
+          piece.points = {at(sides[k].first, sides[k].second, t0), at(sides[k].first, sides[k].second, t1)};
           kept.push_back(std::move(piece));
         }
-        from = std::max(from, i1);
-      }
-      if (from < 1.0 - 1e-9) {
-        Item piece = item;
-        piece.points = {at(from), at(1.0)};
-        kept.push_back(std::move(piece));
-      }
     }
     items = std::move(kept);
   }

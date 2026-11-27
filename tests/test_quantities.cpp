@@ -624,15 +624,19 @@ TEST_F(Quantities, BracingPlansNumberTheColumns) {
       if (i.kind == draw::Item::Kind::Text && !i.text.empty() && std::all_of(i.text.begin(), i.text.end(), ::isdigit) && i.height < 2.0)
         numbers.push_back(i.points.front());
     int n = 0;
-    for (const auto& i : sheet.items) {
-      if (i.kind != draw::Item::Kind::Line || i.points.size() != 2) continue;
-      const gp_Vec2d ab(i.points[0], i.points[1]);
-      const double len = ab.Magnitude();
-      if (len < 1e-9) continue;
-      for (const gp_Pnt2d& c : numbers) {
-        const gp_Vec2d ac(i.points[0], c);
-        const double t = ac.Dot(ab) / (len * len);
-        if (t > 0 && t < 1 && std::abs(ab.Crossed(ac)) / len < 1e-3) ++n;
+    for (const auto& i : sheet.items) {  // lines and the sides of polylines (the side parts' dashed boxes)
+      if ((i.kind != draw::Item::Kind::Line && i.kind != draw::Item::Kind::Polyline) || i.points.size() < 2) continue;
+      for (std::size_t k = 0; k + 1 < i.points.size() + (i.closed ? 1 : 0); ++k) {
+        const gp_Pnt2d& a = i.points[k];
+        const gp_Pnt2d& b = i.points[(k + 1) % i.points.size()];
+        const gp_Vec2d ab(a, b);
+        const double len = ab.Magnitude();
+        if (len < 1e-9) continue;
+        for (const gp_Pnt2d& c : numbers) {
+          const gp_Vec2d ac(a, c);
+          const double t = ac.Dot(ab) / (len * len);
+          if (t > 0 && t < 1 && std::abs(ab.Crossed(ac)) / len < 1e-3) ++n;
+        }
       }
     }
     return n;
