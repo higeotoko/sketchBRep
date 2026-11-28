@@ -651,3 +651,47 @@ TEST_F(Quantities, BracingPlansNumberTheColumns) {
   ASSERT_TRUE(unblanked);
   EXPECT_GT(crossings(*unblanked), 0);  // the check itself sees lines through the numbers
 }
+
+// docs/340: on a plan, each column the cut passes is a crossed square (管柱; 通し柱 also ringed) and each stud one
+// diagonal (間柱), as the owner's sheet of symbols draws them; the legend names them.
+TEST_F(Quantities, PlansMarkColumnAndStudCuts) {
+  frame();
+  draw::ViewSpec spec = draw::planView(1000.0);
+  spec.paperScale = 100;
+  const auto view = draw::makeView(m.document(), spec);
+  ASSERT_TRUE(view) << view.error();
+  const auto has = [&](const gp_Pnt2d& a, const gp_Pnt2d& b) {
+    for (const auto& i : view->items)
+      if (i.kind == draw::Item::Kind::Line && i.pen == draw::Pen::Visible && i.points.size() == 2 &&
+          ((i.points[0].Distance(a) < 1e-6 && i.points[1].Distance(b) < 1e-6) ||
+           (i.points[0].Distance(b) < 1e-6 && i.points[1].Distance(a) < 1e-6)))
+        return true;
+    return false;
+  };
+  int columns = 0, studs = 0;
+  for (const auto& o : m.document().objects()) {
+    const auto k = o.attributes.find("kind");
+    if (k == o.attributes.end() || (k->second != "column" && k->second != "through_column" && k->second != "stud")) continue;
+    const Bnd_Box b = m.document().worldBounds(o);
+    double x0, y0, z0, x1, y1, z1;
+    b.Get(x0, y0, z0, x1, y1, z1);
+    if (1000.0 < z0 || 1000.0 > z1) continue;
+    const gp_Pnt2d a(x0, y0), c(x1, y1), d(x0, y1), e(x1, y0);
+    EXPECT_TRUE(has(a, c)) << k->second;
+    if (k->second == "stud") {
+      EXPECT_FALSE(has(d, e)) << "a stud has one diagonal";
+      ++studs;
+    } else {
+      EXPECT_TRUE(has(d, e)) << k->second;
+      ++columns;
+    }
+  }
+  EXPECT_GT(columns, 0);
+  EXPECT_GT(studs, 0);
+  EXPECT_TRUE(view->symbols.count("stud_cut"));
+  const auto sheet = draw::layoutSheet(*view, draw::SheetSpec{});
+  ASSERT_TRUE(sheet);
+  bool stud = false;
+  for (const auto& i : sheet->items) stud = stud || (i.kind == draw::Item::Kind::Text && i.text == "間柱");
+  EXPECT_TRUE(stud);
+}

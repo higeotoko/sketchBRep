@@ -289,6 +289,8 @@ void appendLegend(std::vector<Item>& items, const Paper* paper, double s, const 
   if (hatchPatterns.count(2)) hatches.push_back({2, "構造用の木材の切り口（柱・間柱・土台など）"});
   if (hatchPatterns.count(1)) hatches.push_back({1, "合板・野地板の切り口"});
   if (symbols.count("through_column")) hatches.push_back({3, "通し柱"});  // docs/327: a ringed column
+  if (symbols.count("column_cut")) hatches.push_back({13, "管柱"});         // docs/340: a crossed square
+  if (symbols.count("stud_cut")) hatches.push_back({14, "間柱"});           // docs/340: one diagonal
   // docs/334: the devices drawn, each kind (and note) a row: the symbol and the manual's words with the note.
   std::vector<std::string> deviceKinds;
   for (const auto& [key, label] : doc::Modeler::deviceKinds())
@@ -329,6 +331,20 @@ void appendLegend(std::vector<Item>& items, const Paper* paper, double s, const 
       const double x = x0 + col * colW, y = top - (r + 1.5) * rowH;
       if (x + sample + 4 > x0 + room) break;
       const double y0 = y - 1.4, y1 = y + 1.4;
+      if (hatches[h].first == 13 || hatches[h].first == 14) {  // docs/340: 管柱 ×, 間柱 ／ in their cut
+        const double cx = x + sample / 2;
+        const double hw = hatches[h].first == 13 ? 0.9 : 0.45, hh = 0.9;
+        Item box;
+        box.kind = Item::Kind::Polyline;
+        box.pen = Pen::Cut;
+        box.closed = true;
+        box.points = {P(cx - hw, y - hh), P(cx + hw, y - hh), P(cx + hw, y + hh), P(cx - hw, y + hh)};
+        items.push_back(box);
+        items.push_back(line(Pen::Visible, P(cx - hw, y - hh), P(cx + hw, y + hh)));
+        if (hatches[h].first == 13) items.push_back(line(Pen::Visible, P(cx - hw, y + hh), P(cx + hw, y - hh)));
+        items.push_back(text(Pen::Text, P(x + sample + 2, y), hatches[h].second, 2.5, 0, 1));
+        continue;
+      }
       if (hatches[h].first == 12) {  // docs/335: 防 in its box
         const double cx = x + sample / 2;
         Item square;

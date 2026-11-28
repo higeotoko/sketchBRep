@@ -2356,7 +2356,11 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     const double paper = spec.paperScale > 0 ? spec.paperScale : 100.0;
     for (const doc::Object& o : document.objects()) {
       const auto kind = o.attributes.find("kind");
-      if (kind == o.attributes.end() || kind->second != "through_column" || o.shape.IsNull() || !document.isVisible(o.id)) continue;
+      // docs/340: and every column and stud the cut passes gets the plan symbol of its cut, as the owner's sheet of
+      // symbols gives them: 管柱 (and 通し柱, in its ring) a crossed square, 間柱 one diagonal.
+      if (kind == o.attributes.end() || o.shape.IsNull() || !document.isVisible(o.id)) continue;
+      const bool through = kind->second == "through_column", column = kind->second == "column", stud = kind->second == "stud";
+      if (!through && !column && !stud) continue;
       if (std::find(spec.excludeTags.begin(), spec.excludeTags.end(), o.layer) != spec.excludeTags.end()) continue;
       if (!spec.tags.empty() && std::find(spec.tags.begin(), spec.tags.end(), o.layer) == spec.tags.end()) continue;
       const Bnd_Box b = document.worldBounds(o);
@@ -2364,6 +2368,18 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
       double x0, y0, z0, x1, y1, z1;
       b.Get(x0, y0, z0, x1, y1, z1);
       if (cutZ < z0 || cutZ > z1) continue;
+      const gp_Pnt2d c00 = proj.uv(gp_Pnt(x0, y0, cutZ)), c11 = proj.uv(gp_Pnt(x1, y1, cutZ)), c01 = proj.uv(gp_Pnt(x0, y1, cutZ)),
+                     c10 = proj.uv(gp_Pnt(x1, y0, cutZ));
+      view.items.push_back(line(Pen::Visible, c00, c11));
+      if (!stud) view.items.push_back(line(Pen::Visible, c01, c10));
+      if (stud) {
+        view.symbols.insert("stud_cut");
+        continue;
+      }
+      if (column) {
+        view.symbols.insert("column_cut");
+        continue;
+      }
       Item ring;
       ring.kind = Item::Kind::Arc;
       ring.pen = Pen::Visible;
