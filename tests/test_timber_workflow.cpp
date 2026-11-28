@@ -3,9 +3,11 @@
 #include <cmath>
 #include <set>
 #include "sbr/ConstructionFrame.h"
+#include "sbr/api/CommandApi.h"
 #include "sbr/ConstructionQuantity.h"
 #include "sbr/ConstructionCheck.h"
 #include "sbr/doc/Modeler.h"
+#include "sbr/doc/Schedules.h"
 #include "sbr/doc/NativeFormat.h"
 #include "sbr/draw/Drawing.h"
 
@@ -287,4 +289,26 @@ TEST_F(TimberWorkflow, ColumnNValuesFollowTheManualsFormula) {
       for (const auto& why : c["reasons"]) missing = missing || why.get<std::string>().find("架構の筋かいが見つかりません") != std::string::npos;
   EXPECT_TRUE(missing) << r2.dump();
   EXPECT_EQ(r2["status"], "partial");
+  // Stage 7 of the permit checks reads it in a row of its own.
+  sbr::api::CommandApi api(m);
+  const json stage = json::parse(api.execute(json{{"command", "permit_checks"}, {"args", {{"stage", 7}}}}.dump()));
+  ASSERT_TRUE(stage.value("ok", false)) << stage.dump();
+  bool row = false;
+  for (const auto& r : stage["result"]["rows"])
+    if (r["item"] == "柱頭・柱脚の接合（N値計算）") {
+      row = true;
+      EXPECT_EQ(r["state"], "要確認");
+      EXPECT_NE(r["details"].get<std::string>().find("(は)"), std::string::npos) << r.dump();
+    }
+  EXPECT_TRUE(row);
+  // The 柱頭柱脚金物算定表: a row per column and direction, in the drawing set after 存在壁量の算定.
+  ASSERT_TRUE(m.setWallCalculation(in.dump()));
+  const draw::Table table = doc::scheduleTable(m.document(), 15);
+  EXPECT_EQ(table.title, "柱頭柱脚金物算定表");
+  bool cornerRow = false;
+  for (const auto& r : table.rows) cornerRow = cornerRow || (r[0] == "2階" && r[2] == "0, 0" && r[17] == "(は)");
+  EXPECT_TRUE(cornerRow);
+  const auto set = doc::drawingSet(m.document(), {});
+  ASSERT_TRUE(set) << set.error();
+  EXPECT_NE(std::find(set->names.begin(), set->names.end(), std::string("柱頭柱脚金物算定表")), set->names.end());
 }

@@ -1253,7 +1253,8 @@ std::vector<PermitCheck> permitBraceChecks(const Document& document) {
     } else {
       details = "計算した柱 " + std::to_string(n.value("evaluated", 0)) + "、未評価の柱 " + std::to_string(n.value("not_evaluated", 0));
       std::string joints;
-      for (const auto& [mark, count] : n.value("joints", nlohmann::json::object()).items())
+      const nlohmann::json jointCounts = n.value("joints", nlohmann::json::object());  // kept: items() refers to it
+      for (const auto& [mark, count] : jointCounts.items())
         joints += (joints.empty() ? "" : "、") + mark + " " + std::to_string(count.get<int>()) + " 本";
       if (!joints.empty()) details += "\n告示1460号 表三の接合方法：" + joints;
       int shown = 0;
@@ -5285,6 +5286,40 @@ std::vector<VentilationPathRow> ventilationPaths(const Document& document) {
 
 draw::Table scheduleTable(const Document& document, int which) {
   draw::Table t;
+  if (which == 15) {
+    // docs/358: 柱頭柱脚金物算定表 (the MLIT manual's N値計算表, 10-1): a row per column and direction.
+    t.title = "柱頭柱脚金物算定表";
+    t.headers = {"階", "柱", "位置 (mm)", "出隅", "方向", "壁倍率 左／右", "筋かい 左／右", "補正値", "A1", "B1", "H1/2.7",
+                 "A2", "B2", "H2/2.7", "L", "N", "決定 N", "柱頭", "柱脚"};
+    const auto made = construction::columnNValues(document);
+    if (!made) return t;
+    const nlohmann::json n = nlohmann::json::parse(*made);
+    const nlohmann::json columns = n.value("columns", nlohmann::json::array());
+    const auto num = [](const nlohmann::json& d, const char* key, int places) {
+      return d.contains(key) && d.at(key).is_number() ? number(d.at(key).get<double>(), places) : std::string();
+    };
+    for (const auto& c : columns) {
+      const nlohmann::json dirs = c.value("directions", nlohmann::json::object());
+      const bool ok = c.value("status", std::string()) == "evaluated";
+      std::string why;
+      for (const auto& r : c.value("reasons", nlohmann::json::array())) why += (why.empty() ? "" : "／") + r.get<std::string>();
+      const std::string at = number(c.at("at").at(0).get<double>(), 0) + ", " + number(c.at("at").at(1).get<double>(), 0);
+      const std::string corner = c.contains("corner") && c.at("corner").is_boolean() ? (c.at("corner").get<bool>() ? "出隅" : "") : "?";
+      for (const auto& [dir, d] : dirs.items())
+        t.rows.push_back({c.value("floor", std::string()), c.value("column", std::string()), at, corner, dir,
+                          num(d, "wall_left", 1) + "／" + num(d, "wall_right", 1),
+                          d.value("brace_left", std::string()) + "／" + d.value("brace_right", std::string()),
+                          num(d, "correction", 1), num(d, "A1", 2), num(d, "B1", 1), num(d, "H1/2.7", 2), num(d, "A2", 2),
+                          num(d, "B2", 1), num(d, "H2/2.7", 2), num(d, "L", 1), num(d, "N", 2), ok ? num(c, "N", 2) : "",
+                          ok ? c.value("head", std::string()) : "未評価：" + why, ok ? c.value("foot", std::string()) : ""});
+    }
+    t.notes.push_back(n.value("basis", std::string()));
+    for (const auto& note : n.value("notes", nlohmann::json::array())) t.notes.push_back(note.get<std::string>());
+    for (const auto& why : n.value("reasons", nlohmann::json::array())) t.notes.push_back(why.get<std::string>());
+    t.notes.push_back("(い)短ほぞ差し・かすがい (ろ)長ほぞ込み栓・CP-L (は)VP・CP-T (に)羽子板ボルト等（釘なし） (ほ)同（スクリュー釘あり） "
+                      "(へ)10kN (と)15kN (ち)20kN (り)25kN 引き寄せ金物 (ぬ)15kN×2。いずれも同等以上の接合方法。");
+    return t;
+  }
   if (which == 14) {
     // docs/338: the air's way through the rooms.
     t.title = "換気経路の表";
@@ -6090,7 +6125,7 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
     planned.push_back({view.title, view, std::nullopt, {}});
   }
   // The first planned is the lowest storey's plan.
-  for (int which : {0, 1, 2, 3, 4, 6, 14, 7, 12, 13, 8, 9, 11}) {  // docs/338: the ventilation paths after daylight / ventilation  // docs/332: 耐力壁仕様一覧 and 存在壁量の算定 after the wall quantity  // docs/210: and the energy specification when given  // docs/208: and the wall quantity forms when there is a calculation  // docs/207: and daylight / ventilation when rooms have a kind
+  for (int which : {0, 1, 2, 3, 4, 6, 14, 7, 12, 13, 15, 8, 9, 11}) {  // docs/358: 柱頭柱脚金物算定表 after 存在壁量の算定  // docs/338: the ventilation paths after daylight / ventilation  // docs/332: 耐力壁仕様一覧 and 存在壁量の算定 after the wall quantity  // docs/210: and the energy specification when given  // docs/208: and the wall quantity forms when there is a calculation  // docs/207: and daylight / ventilation when rooms have a kind
     draw::Table table = scheduleTable(document, which);
     if (!tableHasContent(table, which)) continue;
     if (spec.tablesWithPlan) {
