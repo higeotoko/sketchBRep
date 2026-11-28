@@ -777,3 +777,31 @@ TEST_F(Stairs, AHandrailIsChangedOnTheStairAndKept) {
   EXPECT_EQ(fifth.stairInfo(id)->spec.shape, "line");
   EXPECT_FALSE(call("change_stair", {{"id", id}, {"handrail_height", 2000}}).value("ok", true));
 }
+
+// docs/351: under a slab too (open_floor_for_stair), the plan of the floor the stair comes up to shows it only through
+// the opening, with "下" and no "上".
+TEST_F(Stairs, UpperPlanShowsTheStairThroughTheSlabOpeningOnly) {
+  ok("create_stair", {{"path", {{1000, 1000}, {3730, 1000}}}, {"rise", 2800}, {"open_floor", true}});
+  sbr::draw::ViewSpec view = sbr::draw::planView(2800 + 1100);
+  view.depth = 4000;
+  const auto plan = sbr::draw::makeView(modeler.document(), view);
+  ASSERT_TRUE(plan) << plan.error();
+  int underSlab = 0, inOpening = 0;
+  bool down = false, up = false;
+  for (const auto& i : plan->items) {
+    down = down || (i.kind == sbr::draw::Item::Kind::Text && i.text == "下");
+    up = up || (i.kind == sbr::draw::Item::Kind::Text && i.text == "上");
+    if (i.kind != sbr::draw::Item::Kind::Line || i.points.size() != 2) continue;
+    const auto inside = [&](double x0, double x1) {
+      for (const auto& p : i.points)
+        if (!(p.X() > x0 && p.X() < x1 && p.Y() > 550 && p.Y() < 1450)) return false;
+      return true;
+    };
+    underSlab += inside(1050, 1580);  // treads 1-3: more than 2000 under the slab, left under it
+    inOpening += inside(2000, 3700);
+  }
+  EXPECT_EQ(underSlab, 0);
+  EXPECT_GT(inOpening, 0);
+  EXPECT_TRUE(down);
+  EXPECT_FALSE(up);
+}

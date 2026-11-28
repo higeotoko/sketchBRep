@@ -30,6 +30,10 @@
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepClass_FaceClassifier.hxx>
+#include <BRepPrimAPI_MakePrism.hxx>
+#include <gp_Pln.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <TopTools_ListOfShape.hxx>
@@ -125,30 +129,58 @@ std::vector<double> penDashes(Pen pen) {
 }
 
 namespace {
-// docs/351: the floor a stair comes up to, as the frame's floor boards (floor_sheathing, cut around the stairwell
-// by the frame's floor_openings): their plan rectangles (world x0, y0, x1, y1) and undersides, for boards whose
-// underside is within 400 of the stair's top and under the cut. What of the stair they cover is not seen in the plan
-// of that floor. Slabs are not read (their openings are not rectangles of their bounds).
+// docs/351: the floor a stair comes up to, as the horizontal faces of its underside: the frame's floor boards
+// (floor_sheathing, cut around the stairwell by the frame's floor_openings: their plan rectangles) and the slabs
+// (create_slab, with the stairwell opened by open_floor_for_stair: their downward faces, holes and all). Only floors
+// whose underside is within 400 of the stair's top and under the cut. What of the stair they cover is not seen in the
+// plan of that floor.
 struct FloorCover {
-  double x0, y0, x1, y1, underside;
+  TopoDS_Face face;  // horizontal, at the underside
+  double underside = 0;
 };
 std::vector<FloorCover> floorCover(const doc::Document& document, double stairTop, double cutZ) {
   std::vector<FloorCover> out;
   for (const doc::Object& b : document.objects()) {
     const auto k = b.attributes.find("kind");
-    if (k == b.attributes.end() || k->second != "floor_sheathing" || b.shape.IsNull()) continue;
+    if (k == b.attributes.end() || b.shape.IsNull()) continue;
+    const bool boards = k->second == "floor_sheathing", slab = k->second == "slab";
+    if (!boards && !slab) continue;
     const Bnd_Box box = document.worldBounds(b);
     if (box.IsVoid()) continue;
     double x0, y0, z0, x1, y1, z1;
     box.Get(x0, y0, z0, x1, y1, z1);
     if (z0 < stairTop - 400 || z0 > cutZ) continue;
-    out.push_back({x0, y0, x1, y1, z0});
+    try {
+      if (boards) {
+        if (x1 - x0 < 1.0 || y1 - y0 < 1.0) continue;
+        out.push_back({BRepBuilderAPI_MakeFace(gp_Pln(gp_Pnt(0, 0, z0), gp::DZ()), x0, x1, y0, y1).Face(), z0});
+        continue;
+      }
+      for (TopExp_Explorer e(document.worldShape(b), TopAbs_FACE); e.More(); e.Next()) {
+        const TopoDS_Face face = TopoDS::Face(e.Current());
+        BRepAdaptor_Surface surface(face);
+        if (surface.GetType() != GeomAbs_Plane) continue;
+        gp_Dir normal = surface.Plane().Axis().Direction();
+        if (face.Orientation() == TopAbs_REVERSED) normal.Reverse();
+        if (normal.Z() > -1 + 1e-6) continue;  // only the downward faces
+        Bnd_Box fb;
+        BRepBndLib::Add(face, fb);
+        double fx0, fy0, fz0, fx1, fy1, fz1;
+        fb.Get(fx0, fy0, fz0, fx1, fy1, fz1);
+        if (fz0 < stairTop - 400 || fz0 > cutZ) continue;
+        out.push_back({face, (fz0 + fz1) / 2});
+      }
+    } catch (const Standard_Failure&) {
+      continue;
+    }
   }
   return out;
 }
 bool coveredBy(const std::vector<FloorCover>& cover, double x, double y) {
-  for (const FloorCover& c : cover)
-    if (x > c.x0 + 1e-6 && x < c.x1 - 1e-6 && y > c.y0 + 1e-6 && y < c.y1 - 1e-6) return true;
+  for (const FloorCover& c : cover) {
+    BRepClass_FaceClassifier inside(c.face, gp_Pnt(x, y, c.underside), 1e-3);
+    if (inside.State() == TopAbs_IN) return true;
+  }
   return false;
 }
 
@@ -915,8 +947,8 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
             TopTools_ListOfShape tools;
             for (const FloorCover& c : floorCover(document, stair->base + stair->rise, cutZ)) {
               const double low = stair->base - 10.0;
-              if (c.underside - low < 1.0 || c.x1 - c.x0 < 1.0 || c.y1 - c.y0 < 1.0) continue;
-              tools.Append(BRepPrimAPI_MakeBox(gp_Pnt(c.x0, c.y0, low), gp_Pnt(c.x1, c.y1, c.underside)).Shape());
+              if (c.underside - low < 1.0) continue;
+              tools.Append(BRepPrimAPI_MakePrism(c.face, gp_Vec(0, 0, -(c.underside - low))).Shape());
             }
             if (!tools.IsEmpty()) {
               TopTools_ListOfShape arguments;
