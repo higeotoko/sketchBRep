@@ -115,6 +115,7 @@ struct Wall {
   std::string floor, direction;
   double a = 0, b = 0, line = 0;
   bool geometric = false;
+  bool semi = false;  // docs/339: 準耐力壁等 (昭和56年告示1100号 第一第十二号, 別表第十)
 };
 // 四分割法 (wall balance), after 平成12年建設省告示第1352号 (MLIT consolidated text, rev. 2007),
 // moved into 昭和56年建設省告示第1100号 第四 from 2025-04-01. Per storey and direction: the two side
@@ -197,9 +198,10 @@ json quarterBalance(const json& in, const json& rows, const std::vector<Wall>& w
             }
           }
           double existing = 0;
+          const bool semiChecked = in.value("semi_brittle_checked", false);
           for (const auto& w : walls)
             if (w.floor == f.at("id") && w.direction == direction && w.geometric && w.line >= a - 1 &&
-                w.line <= b + 1 && !w.result.at("effective_m").is_null())
+                w.line <= b + 1 && !w.result.at("effective_m").is_null() && (!w.semi || semiChecked))
               existing += w.result.at("effective_m").get<double>();
           s["existing_m"] = existing;
           if (lw > 0) {
@@ -236,15 +238,18 @@ std::map<std::string, std::string> wallSymbols(const std::string& report) {
   const json r = json::parse(report, nullptr, false);
   if (!r.is_object()) return out;
   const json entries = r.value("table_snapshot", json::object()).value("entries", json::object());
-  std::vector<std::pair<double, std::string>> used;
+  // docs/339: 耐力壁 first (by ratio), then the 準耐力壁等 (by their worked-out ratio).
+  std::vector<std::pair<std::pair<int, double>, std::string>> used;
   for (const auto& w : r.value("walls", json::array())) {
     if (!w.is_object() || !w.contains("spec") || !w.at("spec").is_string()) continue;
     const std::string spec = w.at("spec").get<std::string>();
     if (std::any_of(used.begin(), used.end(), [&](const auto& u) { return u.second == spec; })) continue;
-    const double ratio = entries.contains(spec) && entries.at(spec).contains("ratio") && entries.at(spec).at("ratio").is_number()
+    const bool semi = w.value("kind", std::string()) == "semi";
+    const double ratio = semi ? (w.contains("ratio") && w.at("ratio").is_number() ? w.at("ratio").get<double>() : 0.0)
+                         : entries.contains(spec) && entries.at(spec).contains("ratio") && entries.at(spec).at("ratio").is_number()
                              ? entries.at(spec).at("ratio").get<double>()
                              : 0.0;
-    used.push_back({ratio, spec});
+    used.push_back({{semi ? 1 : 0, ratio}, spec});
   }
   std::sort(used.begin(), used.end());
   for (std::size_t i = 0; i < used.size(); ++i) {
@@ -269,7 +274,15 @@ std::string wallTables() {
 std::string normalizeWallInputs(const std::string& input) {
   json in = json::parse(input);
   keys(in, {"schema_version", "frame", "height_m", "co_designated", "wind_coefficient_cm_m2", "input_basis",
-            "floors", "walls", "table_snapshot"});
+            "floors", "walls", "table_snapshot", "semi_brittle_checked", "semi_brittle_basis"});
+  // docs/339: 準耐力壁等 past half the required quantity need the brittle-failure check (告示1100号 第三第一号).
+  if (in.contains("semi_brittle_checked")) {
+    require(in.at("semi_brittle_checked").is_boolean(), "準耐力壁等の脆性的な破壊の確認は真偽値です");
+    if (in.at("semi_brittle_checked").get<bool>())
+      require(in.contains("semi_brittle_basis") && in.at("semi_brittle_basis").is_string() &&
+                  !in.at("semi_brittle_basis").get<std::string>().empty(),
+              "準耐力壁等の脆性的な破壊を確かめた根拠（semi_brittle_basis）が必要です");
+  }
   require(in.value("schema_version", 1) == 1, "未対応の入力版です");
   in["schema_version"] = 1;
   if (in.contains("frame")) require(in.at("frame").is_string(), "frameはグループIDです");
@@ -319,7 +332,38 @@ std::string normalizeWallInputs(const std::string& input) {
   require(in.at("walls").is_array() && in.at("walls").size() <= 2000, "耐力壁は2000区間以下です");
   for (const auto& w : in.at("walls")) {
     keys(w, {"id", "floor", "direction", "start", "end", "height_mm", "spec", "verified", "grid",
-             "start_axes", "end_axes", "bay_mm"});
+             "start_axes", "end_axes", "bay_mm", "semi"});
+    // docs/339: a 準耐力壁等 (告示1100号 別表第十): its boards / laths on one or both faces, the heights they are put to,
+    // the clear height between the horizontal members (横架材間内法寸法) and, for a 腰壁・垂れ壁, whether its two end
+    // posts each go on into a wall of the same material on the same side at least 8/10 of that height.
+    if (w.contains("semi")) {
+      const auto& s = w.at("semi");
+      require(s.is_object(), "semiは準耐力壁等の入力（オブジェクト）です");
+      keys(s, {"layers", "clear_height_mm", "ends_continue"});
+      number(s, "clear_height_mm");
+      require(s.contains("clear_height_mm") && s.at("clear_height_mm").is_number() && s.at("clear_height_mm").get<double>() > 0,
+              "準耐力壁等には横架材間内法寸法（clear_height_mm）が必要です");
+      if (s.contains("ends_continue")) require(s.at("ends_continue").is_boolean(), "ends_continueは真偽値です");
+      require(s.contains("layers") && s.at("layers").is_array() && !s.at("layers").empty() && s.at("layers").size() <= 4,
+              "準耐力壁等のlayersは1〜4件です");
+      for (const auto& l : s.at("layers")) {
+        keys(l, {"material", "base_ratio", "base_source", "faces", "heights_mm"});
+        require(l.contains("material") && (l.at("material") == "board" || l.at("material") == "lath"),
+                "準耐力壁等の材料はboard（面材）かlath（木ずり）です");
+        if (l.at("material") == "board") {
+          require(l.contains("base_ratio") && l.at("base_ratio").is_number() && l.at("base_ratio").get<double>() > 0 &&
+                      l.at("base_ratio").get<double>() <= 7,
+                  "面材の準耐力壁等には、その材料の別表第二(は)欄の数値（base_ratio）が必要です");
+          text(l, "base_source");
+        }
+        if (l.contains("faces"))
+          require(l.at("faces").is_number_integer() && (l.at("faces") == 1 || l.at("faces") == 2), "facesは1か2です");
+        require(l.contains("heights_mm") && l.at("heights_mm").is_array() && !l.at("heights_mm").empty() &&
+                    l.at("heights_mm").size() <= 4,
+                "heights_mmは打ち付けた高さ（上下に離した壁はそれぞれ）の配列です");
+        for (const auto& h : l.at("heights_mm")) require(h.is_number() && h.get<double>() > 0, "高さは正の数値です");
+      }
+    }
     for (const auto* k : {"id", "floor", "direction", "spec"}) text(w, k);
     require(walls.insert(w.at("id")).second, "壁IDが重複しています");
     require(floors.count(w.at("floor")) != 0, "壁の階IDが未登録です");
@@ -370,7 +414,8 @@ Result<std::string> checkWallQuantity(const doc::Document& d, const std::string&
       if (stale) notice += "表の確認から1年以上たっています。";
       if (future) notice += "表の施行日・確認日が計算日より後です。この日付では未評価です。";
     }
-    notice += "四分割法は平成12年告示1352号（2025年4月から告示1100号第四）の考え方で別欄に計算。N値・柱頭柱脚・準耐力壁等は未評価。";
+    notice += "四分割法は平成12年告示1352号（2025年4月から告示1100号第四）の考え方で別欄に計算。N値・柱頭柱脚は未評価。"
+              "準耐力壁等は告示1100号 別表第十の式で倍率を出し、存在壁量に入れる（耐力壁だけで必要壁量の1/2以上の確認つき。四分割法には、脆性的な破壊を確かめた場合だけ入れる）。";
     bool scoped = true;
     const std::string frame = in.value("frame", std::string());
     if (!frame.empty()) scoped = d.find(frame) && d.find(frame)->isContainer();
@@ -428,7 +473,43 @@ Result<std::string> checkWallQuantity(const doc::Document& d, const std::string&
         }
       }
       if (!w.value("verified", false)) reason("施工・断面・接合を含む壁仕様が未確認です");
-      if (table.is_null() || !table.at("entries").contains(w.at("spec").get<std::string>()))
+      if (w.contains("semi")) {
+        // docs/339: 告示1100号 別表第十: 面材 (一) 0.6 x 別表第二(は)欄の数値 x 壁の高さ / 横架材間内法寸法; 木ずり (二)
+        // 0.5 x 壁の高さ / 横架材間内法寸法; both faces (三) twice; boards and laths together (四) the sum. Walls put
+        // apart above and below count their heights together. Each wall 36 cm high at least; one under 8/10 of the
+        // clear height (a 腰壁・垂れ壁) only between posts 2 m apart at most, its end posts each going on into a wall
+        // of the same material on the same side at least 8/10 of the clear height.
+        wall.semi = true;
+        wall.result["kind"] = "semi";
+        const auto& s = w.at("semi");
+        const double clear = s.at("clear_height_mm").get<double>();
+        double ratio = 0, lowest = 1e300, coverage = 0;
+        for (const auto& l : s.at("layers")) {
+          double heights = 0;
+          for (const auto& h : l.at("heights_mm")) {
+            heights += h.get<double>();
+            lowest = std::min(lowest, h.get<double>());
+          }
+          coverage = std::max(coverage, heights);
+          const double faces = l.value("faces", 1);
+          const double one = l.at("material") == "board" ? 0.6 * l.at("base_ratio").get<double>() * heights / clear
+                                                         : 0.5 * heights / clear;
+          ratio += one * faces;
+        }
+        if (lowest < 360 - 1e-6) reason("準耐力壁等の高さは36cm以上です（告示1100号 別表第十）");
+        if (coverage > clear + 1e-6) reason("準耐力壁等の高さの合計が横架材間内法寸法を超えています");
+        const bool partial = coverage < 0.8 * clear - 1e-6;
+        wall.result["semi_part"] = partial ? "腰壁・垂れ壁" : "準耐力壁";
+        if (partial) {
+          if (wall.geometric && wall.b - wall.a > 2000 + 1e-6)
+            reason("腰壁・垂れ壁は両端の柱の距離が2m以下です（告示1100号 別表第十）");
+          if (!s.value("ends_continue", false))
+            reason("腰壁・垂れ壁は、両端の柱に同じ材料の準耐力壁（高さが内法の8/10以上）が連続していることの確認が必要です");
+        }
+        wall.result["height_factor"] = 1.0;
+        wall.result["ratio"] = ratio;
+        wall.result["conditions"] = "告示1100号 別表第十。柱及び間柱にくぎ打ち（入り隅は受材）。材料・くぎ・間隔は別表第二の該当項による。";
+      } else if (table.is_null() || !table.at("entries").contains(w.at("spec").get<std::string>()))
         reason("壁倍率の仕様表がありません");
       else {
         const auto& spec = table.at("entries").at(w.at("spec").get<std::string>());
@@ -490,15 +571,19 @@ Result<std::string> checkWallQuantity(const doc::Document& d, const std::string&
         auto reason = [&](const char* s) { row["reasons"].push_back(s); };
         bool knownWalls = f.value("walls_complete", false);
         if (!knownWalls) reason("耐力壁の入力完了が未確認です");
-        double existing = 0;
+        double existing = 0, bearing = 0, semi = 0;
         for (const auto& w : walls)
           if (w.floor == f.at("id") && w.direction == direction) {
             if (w.result.at("effective_m").is_null()) {
               knownWalls = false;
               reason("未評価の耐力壁があります（内訳参照）");
-            } else
+            } else {
               existing += w.result.at("effective_m").get<double>();
+              (w.semi ? semi : bearing) += w.result.at("effective_m").get<double>();
+            }
           }
+        row["bearing_m"] = bearing;  // docs/339
+        row["semi_m"] = semi;
         row["known_existing_m"] = existing;
         if (knownWalls) row["existing_m"] = existing;
         if (table.is_null())
@@ -550,8 +635,16 @@ Result<std::string> checkWallQuantity(const doc::Document& d, const std::string&
         if (in.value("input_basis", std::string()).empty()) reason("荷重・面積・区域の入力根拠が未記入です");
         if (!row["earthquake_m"].is_null() && !row["wind_m"].is_null())
           row["required_m"] = std::max(row["earthquake_m"].get<double>(), row["wind_m"].get<double>());
-        if (row["reasons"].empty() && !row["required_m"].is_null() && !row["existing_m"].is_null())
+        if (row["reasons"].empty() && !row["required_m"].is_null() && !row["existing_m"].is_null()) {
           row["status"] = existing + 1e-10 >= row["required_m"].get<double>() ? "pass" : "fail";
+          // docs/339: 告示1100号 第三第一号: the 耐力壁 other than 準耐力壁等 give half the required quantity at least,
+          // unless the 準耐力壁等 are confirmed not to fail brittle (柱の折損等).
+          if (semi > 0 && !in.value("semi_brittle_checked", false)) {
+            const bool half = bearing + 1e-10 >= row["required_m"].get<double>() / 2;
+            row["semi_rule"] = half ? "耐力壁だけで必要壁量の1/2以上" : "耐力壁だけでは必要壁量の1/2未満";
+            if (!half) row["status"] = "fail";
+          }
+        }
         row["notice"] = notice;
         rows.push_back(std::move(row));
       }
@@ -587,7 +680,7 @@ Result<std::string> checkWallQuantity(const doc::Document& d, const std::string&
                 {"stale_table", stale},
                 {"complete", complete},
                 {"comparison_tolerance_m", 1e-10},
-                {"unassessed", {"N値", "柱頭柱脚", "準耐力壁等", "四分割法の下屋・一部だけ上階がある側端部分", "断面", "基礎"}}};
+                {"unassessed", {"N値", "柱頭柱脚", "準耐力壁等の脆性的な破壊の確認（入力の確認のみ）", "四分割法の下屋・一部だけ上階がある側端部分", "断面", "基礎"}}};
     return out.dump();
   } catch (const std::exception& e) {
     return Result<std::string>::failure(e.what());

@@ -325,3 +325,109 @@ TEST(WallQuantityForms, BracingPlanShowsTheWallsAndTheSideParts) {
     }
   }
 }
+
+// docs/339: 準耐力壁等 (昭和56年告示1100号 別表第十). Board: 0.6 x 別表第二(は) x heights / clear height, twice on both
+// faces; lath: 0.5 x heights / clear height. 第三第一号: the 耐力壁 alone give half the required at least unless the
+// brittle check is confirmed; 第四: in the side parts only when confirmed. Y here needs 10 m (earthquake 50 m2 x 20).
+namespace {
+json semiWall(std::string id, std::string direction, json start, json end, json layers, double clear, bool endsContinue = false) {
+  json w = {{"id", id}, {"floor", "1"}, {"direction", direction}, {"spec", "準耐力壁（構造用合板）"},
+            {"start", start}, {"end", end}, {"verified", true},
+            {"semi", {{"layers", layers}, {"clear_height_mm", clear}, {"ends_continue", endsContinue}}}};
+  return w;
+}
+json board(double base, json heights, int faces = 1) {
+  return {{"material", "board"}, {"base_ratio", base}, {"base_source", "告示1100号 別表第二(四)項 (は)欄（試験の入力）"},
+          {"faces", faces}, {"heights_mm", heights}};
+}
+json yRow(const json& r) {
+  for (const auto& row : r.at("rows"))
+    if (row["floor"] == "1" && row["direction"] == "Y") return row;
+  return json();
+}
+}  // namespace
+TEST(SemiBearingWalls, RatiosFollowTheTableAndTheHalfRule) {
+  Modeler m;
+  // One face of board to 2100 of 2600: 0.6 x 2.5 x 2100 / 2600.
+  json in = inputs({wall("c", "Y", {0, 0}, {0, 2000}),
+                    semiWall("s", "Y", {10000, 0}, {10000, 2100}, json::array({board(2.5, {2100})}), 2600)});
+  auto r = json::parse(*construction::checkWallQuantity(m.document(), json{{"inputs", in}}.dump()));
+  json s;
+  for (const auto& w : r["walls"])
+    if (w["id"] == "s") s = w;
+  ASSERT_EQ(s["status"], "evaluated") << s.dump();
+  EXPECT_NEAR(s["ratio"].get<double>(), 0.6 * 2.5 * 2100 / 2600, 1e-12);
+  EXPECT_EQ(s["semi_part"], "準耐力壁");
+  // Both faces to the full clear height: 3.0, 2.1 m long -> 6.3 m; with the brace 2 m x 2 = 4 m: 10.3 m >= 10 m,
+  // but the 耐力壁 give 4 m < 5 m (half): it fails on 第三第一号.
+  in = inputs({wall("c", "Y", {0, 0}, {0, 2000}),
+               semiWall("s", "Y", {10000, 0}, {10000, 2100}, json::array({board(2.5, {2600}, 2)}), 2600)});
+  r = json::parse(*construction::checkWallQuantity(m.document(), json{{"inputs", in}}.dump()));
+  auto y = yRow(r);
+  EXPECT_NEAR(y["existing_m"].get<double>(), 10.3, 1e-9);
+  EXPECT_NEAR(y["bearing_m"].get<double>(), 4.0, 1e-9);
+  EXPECT_NEAR(y["semi_m"].get<double>(), 6.3, 1e-9);
+  EXPECT_EQ(y["semi_rule"], "耐力壁だけでは必要壁量の1/2未満");
+  EXPECT_EQ(y["status"], "fail");
+  // Confirmed not to fail brittle (with its basis): the rule does not apply, it passes.
+  in["semi_brittle_checked"] = true;
+  in["semi_brittle_basis"] = "試験の入力";
+  r = json::parse(*construction::checkWallQuantity(m.document(), json{{"inputs", in}}.dump()));
+  EXPECT_EQ(yRow(r)["status"], "pass");
+  EXPECT_FALSE(yRow(r).contains("semi_rule"));
+  // Without a basis the confirmation is refused.
+  json bad = in;
+  bad.erase("semi_brittle_basis");
+  EXPECT_THROW(construction::normalizeWallInputs(bad.dump()), std::exception);
+}
+TEST(SemiBearingWalls, WaistAndHangingWallsNeedTheirConditions) {
+  Modeler m;
+  const auto lath = [](json heights) { return json{{"material", "lath"}, {"heights_mm", heights}}; };
+  const auto statusOf = [&](const json& w) {
+    const auto r = json::parse(*construction::checkWallQuantity(m.document(), json{{"inputs", inputs(json::array({w}))}}.dump()));
+    return r["walls"][0];
+  };
+  // 腰壁 900 + 垂れ壁 400 of laths, clear 2600: 0.5 x 1300 / 2600 = 0.25, a 腰壁・垂れ壁 (under 8/10).
+  auto w = statusOf(semiWall("k", "X", {0, 0}, {1820, 0}, json::array({lath({900, 400})}), 2600, true));
+  EXPECT_EQ(w["status"], "evaluated") << w.dump();
+  EXPECT_NEAR(w["ratio"].get<double>(), 0.25, 1e-12);
+  EXPECT_EQ(w["semi_part"], "腰壁・垂れ壁");
+  // The end posts not confirmed to go on into 準耐力壁: not evaluated.
+  EXPECT_EQ(statusOf(semiWall("k", "X", {0, 0}, {1820, 0}, json::array({lath({900, 400})}), 2600, false))["status"], "not_evaluated");
+  // Posts more than 2 m apart: not evaluated.
+  EXPECT_EQ(statusOf(semiWall("k", "X", {0, 0}, {2730, 0}, json::array({lath({900, 400})}), 2600, true))["status"], "not_evaluated");
+  // A wall under 36 cm: not evaluated.
+  EXPECT_EQ(statusOf(semiWall("k", "X", {0, 0}, {1820, 0}, json::array({lath({900, 300})}), 2600, true))["status"], "not_evaluated");
+}
+TEST(SemiBearingWalls, SidePartsCountThemOnlyWhenConfirmed) {
+  Modeler m;
+  // A 準耐力壁 in the low-X side part of Y (x within 0..2500): left out of the side part's existing quantity unless confirmed.
+  json in = inputs({wall("c", "Y", {0, 0}, {0, 4000}), wall("d", "Y", {10000, 0}, {10000, 4000}),
+                    semiWall("s", "Y", {1000, 0}, {1000, 2000}, json::array({board(2.5, {2600})}), 2600)});
+  const auto lowY = [&](const json& input) {
+    const auto r = json::parse(*construction::checkWallQuantity(m.document(), json{{"inputs", input}}.dump()));
+    for (const auto& row : r["quarter_balance"])
+      if (row["floor"] == "1" && row["direction"] == "Y") return row["strips"][0]["existing_m"].get<double>();
+    return -1.0;
+  };
+  EXPECT_NEAR(lowY(in), 8.0, 1e-9);  // c only: 4 m x 2
+  in["semi_brittle_checked"] = true;
+  in["semi_brittle_basis"] = "試験の入力";
+  EXPECT_NEAR(lowY(in), 8.0 + 2.0 * 1.5, 1e-9);  // and s: 2 m x 1.5
+}
+// docs/339: the spec list names a 準耐力壁等 as such, after the 耐力壁, with its worked-out ratio.
+TEST(SemiBearingWalls, SpecListNamesThem) {
+  Modeler m;
+  api::CommandApi api(m);
+  const json saved = json::parse(api.execute(json{{"command", "set_wall_calculation"},
+      {"args", {{"inputs", inputs({wall("c", "Y", {0, 0}, {0, 2000}),
+                                   semiWall("s", "Y", {10000, 0}, {10000, 2100}, json::array({board(2.5, {2600})}), 2600)})}}}}.dump()));
+  ASSERT_TRUE(saved.value("ok", false)) << saved.dump();
+  const auto specs = doc::scheduleTable(m.document(), 12);
+  ASSERT_EQ(specs.rows.size(), 2u);
+  EXPECT_EQ(specs.rows[0][0], "耐力壁");
+  EXPECT_EQ(specs.rows[0][1], "A");
+  EXPECT_EQ(specs.rows[1][0], "準耐力壁等");
+  EXPECT_EQ(specs.rows[1][1], "B");
+  EXPECT_EQ(specs.rows[1][3], "1.50");  // 0.6 x 2.5 x 2600 / 2600
+}

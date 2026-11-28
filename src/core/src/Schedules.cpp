@@ -5299,9 +5299,21 @@ draw::Table scheduleTable(const Document& document, int which) {
       });
       for (const auto& [letter, spec] : rows) {
         const nlohmann::json entry = entries.contains(spec) ? entries.at(spec) : nlohmann::json::object();
-        t.rows.push_back({"耐力壁", letter, entry.value("name", spec), num(entry, "ratio", 2)});
+        // docs/339: a 準耐力壁等 has its ratio worked out per wall (告示1100号 別表第十): shown when its walls share one.
+        std::set<std::string> semiRatios;
+        bool semi = false;
+        for (const auto& w : report.value("walls", nlohmann::json::array()))
+          if (w.value("spec", std::string()) == spec && w.value("kind", std::string()) == "semi") {
+            semi = true;
+            semiRatios.insert(num(w, "ratio", 2));
+          }
+        if (semi)
+          t.rows.push_back({"準耐力壁等", letter, spec, semiRatios.size() == 1 ? *semiRatios.begin() : "壁ごと（存在壁量の算定）"});
+        else
+          t.rows.push_back({"耐力壁", letter, entry.value("name", spec), num(entry, "ratio", 2)});
       }
-      t.notes = {"壁記号は壁量の図（耐力壁図）で壁の脇に書いた英字。壁倍率の低い仕様から A、B…。"};
+      t.notes = {"壁記号は壁量の図（耐力壁図）で壁の脇に書いた英字。耐力壁を壁倍率の低い仕様から A、B…、その後に準耐力壁等。",
+                 "準耐力壁等の倍率は告示1100号 別表第十：面材 0.6×別表第二(は)欄の数値×壁の高さ÷横架材間内法寸法、木ずり 0.5×壁の高さ÷横架材間内法寸法（両面は2倍）。"};
       return t;
     }
     if (which == 13) {
