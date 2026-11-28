@@ -1421,3 +1421,47 @@ TEST(Drawing, HeightLimitLineIsBrokenAtAWord) {
   EXPECT_EQ(limits, 2);  // the two sides of the word
   EXPECT_EQ(walls, 1);   // other lines untouched
 }
+
+// docs/347: the permit stage 10 compares the building with the height study given: none given, it asks for it; a
+// slant well above the building, within; one far below it, over, with the parts named.
+TEST(Drawing, StageTenComparesTheBuildingWithTheHeightStudy) {
+  doc::Modeler m;
+  const auto outline = m.createRectangle(geom::SketchPlane::ground(), 10000, 12000);
+  ASSERT_TRUE(outline);
+  api::CommandApi api(m);
+  const auto run = [&](const nlohmann::json& c) {
+    const auto r = nlohmann::json::parse(api.execute(c.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << r.dump();
+    return r;
+  };
+  run({{"command", "create_wall"}, {"args", {{"points", {{1500, 2500}, {5200, 2500}, {5200, 6500}, {1500, 6500}, {1500, 2500}}},
+                                              {"thickness", 120}, {"height", 6000}}}});
+  ASSERT_TRUE(m.setSiteBoundary(doc::SiteBoundary{*outline, "Survey"}));
+  doc::SiteRoad road;
+  road.kind = "法42条1項1号道路";
+  road.source = "Synthetic road register";
+  road.widthMm = 4000;
+  ASSERT_TRUE(m.setSiteRoad({gp_Pnt(10000, 0, 0), gp_Pnt(0, 0, 0)}, road));
+  ASSERT_TRUE(m.setLevels({{"gl", "GL", 0.0}, {"1fl", "1FL", 500.0}}));
+  const auto row = [&]() {
+    for (const auto& c : doc::permitElevationChecks(m.document()))
+      if (c.item == "高さ制限との照合") return c;
+    ADD_FAILURE() << "no row";
+    return doc::PermitCheck{};
+  };
+  EXPECT_EQ(row().state, "未入力");
+  // A slant starting 50 m up: everything within.
+  run({{"command", "set_height_study"},
+       {"args", {{"road", {{"edge_z", 50000}, {"slope", 1.25}, {"width_m", 4}, {"distance_m", 20}, {"setback_m", 0}}}}}});
+  auto r = row();
+  EXPECT_EQ(r.state, "参考値内") << r.details;
+  EXPECT_NE(r.details.find("照らした部分"), std::string::npos);
+  EXPECT_TRUE(r.targets.empty());
+  // A slant from the ground, nearly flat: the walls go over it.
+  run({{"command", "set_height_study"},
+       {"args", {{"road", {{"edge_z", 0}, {"slope", 0.1}, {"width_m", 4}, {"distance_m", 20}, {"setback_m", 0}}}}}});
+  r = row();
+  EXPECT_EQ(r.state, "超過") << r.details;
+  EXPECT_FALSE(r.targets.empty());
+  EXPECT_NE(r.details.find("道路斜線を "), std::string::npos) << r.details;
+}

@@ -3786,7 +3786,7 @@ std::vector<PermitCheck> permitElevationChecks(const Document& document) {
     const bool missing = zone == "未入力" || district == "未入力" || conditions.source.empty();
     out.push_back({"高さ制限の条件", missing ? "入力不足" : "入力済み",
                    "用途地域　" + zone + "\n高度地区　" + district + "\n確認資料　" +
-                       (conditions.source.empty() ? "未入力" : conditions.source) + "\n高さの照合　未評価", {}, missing});
+                       (conditions.source.empty() ? "未入力" : conditions.source) + "\n高さの照合　下の「高さ制限との照合」", {}, missing});
     if (const auto rule = yokohamaHeightDistrictRule(conditions.district)) {
       std::string details = district + "\n最高高さ　" + number(rule->heightCapMm / 1000, 0) + " m";
       if (rule->northRiseMm)
@@ -3859,8 +3859,61 @@ std::vector<PermitCheck> permitElevationChecks(const Document& document) {
     }
     out.push_back({"延焼ライン・外壁開口部", fire.changed ? "条件変更" : "照合資料あり", std::move(details), std::move(targets), true});
   }
+  // docs/347: the building's parts against the height study the person gave (set_height_study): which part goes
+  // over which limit and by how much, read with the drawings' sections.
+  const auto study = settings.siteBoundary ? savedHeightStudy(document) : std::nullopt;
+  if (!study) {
+    out.push_back({"高さ制限との照合", "未入力",
+                   "高さの検討（道路斜線・隣地斜線・北側斜線・高度地区の値、set_height_study）を入れると、建物の部分ごとに制限と比べます。", {}, true});
+  } else {
+    std::vector<ObjectId> parts;
+    for (const Object& o : document.objects()) {
+      const std::string kind = attribute(o, "kind");
+      if ((kind == "wall" || kind == "roof" || kind == "balcony" || kind == "canopy") && !o.shape.IsNull() && document.isVisible(o.id))
+        parts.push_back(o.id);
+    }
+    const auto compared = parts.empty() ? Result<CombinedHeightComparison>::failure("壁・屋根がありません")
+                                        : compareCombinedHeight(document, *study, parts);
+    if (!compared) {
+      out.push_back({"高さ制限との照合", "未評価", "建物と高さ制限を比べられません：" + compared.error(), {}, true});
+    } else {
+      int over = 0, review = 0, clear = 0, none = 0;
+      std::string lines;
+      std::vector<ObjectId> targets;
+      double worst = -1e300;
+      std::string worstText;
+      for (const auto& r : compared->rows) {
+        const std::string source = r.controllingSource ? heightLimitSourceName(*r.controllingSource) : "";
+        if (r.state.rfind("超過", 0) == 0) {
+          ++over;
+          targets.push_back(r.id);
+          lines += "\n・" + r.name + "　" + source + "を " + (r.excessMm ? number(*r.excessMm, 0) : std::string("?")) + " mm 超える";
+        } else if (r.state == "要確認") {
+          ++review;
+          targets.push_back(r.id);
+          lines += "\n・" + r.name + "　要確認（未確認の範囲にかかる）";
+        } else if (r.state == "余裕" || r.state == "接触相当") {
+          ++clear;
+          if (r.excessMm && *r.excessMm > worst) {
+            worst = *r.excessMm;
+            worstText = r.name + "（" + source + "まで " + number(-*r.excessMm, 0) + " mm）";
+          }
+        } else {
+          ++none;
+        }
+      }
+      std::string details = "照らした部分 " + std::to_string(compared->rows.size()) + "：制限内 " + std::to_string(clear) + "、超過 " +
+                             std::to_string(over) + "、要確認 " + std::to_string(review) + "、制限の面なし・敷地外 " + std::to_string(none) + "。";
+      if (!worstText.empty()) details += "\nいちばん近い所：" + worstText;
+      details += lines;
+      details += "\n入力した値による合成" + std::string(compared->approximate ? "（隣地斜線は近似）" : "") +
+                 "。天空率・緩和・複数の道路などは見ていません。断面図の高さ制限の線と合わせて確かめます。";
+      out.push_back({"高さ制限との照合", over > 0 ? "超過" : review > 0 ? "要確認" : "参考値内", details, targets, over > 0 || review > 0});
+    }
+  }
   out.push_back({"まだ確かめていない事", "未評価",
-                 "道路斜線・隣地斜線・北側斜線と高度地区の制限、法の高さ・軒の高さ、平面・立面・断面の寸法の突合せ。申請先と申請時点の法令で確かめます。",
+                 study ? "高さの検討の外の条件（天空率、緩和、複数の道路・高低差）、法の高さ・軒の高さの測り方、平面・立面・断面の寸法の突合せ。申請先と申請時点の法令で確かめます。"
+                       : "道路斜線・隣地斜線・北側斜線と高度地区の制限、法の高さ・軒の高さ、平面・立面・断面の寸法の突合せ。申請先と申請時点の法令で確かめます。",
                  {}});
   return out;
 }
