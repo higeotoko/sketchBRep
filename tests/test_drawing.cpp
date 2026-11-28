@@ -1502,3 +1502,32 @@ TEST(Drawing, GridSpansKeepClearOfTheOutermostWords) {
   }
   EXPECT_GE(values, 2);
 }
+
+// docs/352: a member's label (部材記号) is not written over the lines beside it: put where it is clear, or, where the
+// members stand too close for that, the lines under it stop at its box (written on white).
+TEST(Drawing, MemberLabelsKeepClearOfTheLinesOrStopThem) {
+  View view;
+  for (int i = 0; i <= 40; ++i) {
+    Item stud;
+    stud.kind = Item::Kind::Line;
+    stud.pen = Pen::Visible;
+    stud.points = {gp_Pnt2d(i * 227.5, 0), gp_Pnt2d(i * 227.5, 6000)};  // studs 227.5 apart: 4.6 mm at 1:50
+    view.items.push_back(stud);
+  }
+  view.members.push_back({gp_Pnt2d(4550, 3000), "S02 30×105"});
+  view.members.push_back({gp_Pnt2d(6370, 2000), "D02 45×90"});
+  SheetSpec spec;
+  spec.scale = 50;
+  const auto sheet = layoutSheet(view, spec);
+  ASSERT_TRUE(sheet) << sheet.error();
+  std::vector<Item> lines;
+  for (const Item& i : sheet->items)
+    if (i.kind == Item::Kind::Line && i.pen == Pen::Visible) lines.push_back(i);
+  int labels = 0;
+  for (const Item& i : sheet->items) {
+    if (i.kind != Item::Kind::Text || (i.text != "S02 30×105" && i.text != "D02 45×90")) continue;
+    ++labels;
+    EXPECT_TRUE(textIsClear(i, lines, 50, 0.0)) << i.text;
+  }
+  EXPECT_EQ(labels, 2);
+}

@@ -633,36 +633,45 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
   // Keep labels legible in paper units. Try alternate leader positions
   // before accepting a crowded position; never move the model itself.
   std::vector<Box> labels;
+  std::vector<std::pair<gp_Pnt2d, gp_Pnt2d>> blanks = view.blanks;
   bool crowded = false;
   for (const auto& mark : view.members) {
     const double height = 2.5, width = textWidth(mark.text, height) * s;
     gp_Pnt2d at;
     Box box;
-    bool found = false;
-    for (int attempt = 0; attempt < 32; ++attempt) {
+    const auto place = [&](int attempt) {
       const int ring = attempt / 4;
       const double dy = (3 + ring * 4) * s;
       const bool right = attempt % 4 < 2, above = attempt % 2 == 0;
       at = gp_Pnt2d(mark.at.X() + (right ? 2 * s : -width - 2 * s),
                     mark.at.Y() + (above ? dy : -dy - height * s));
       box = {at.X() - s, at.Y() - s, at.X() + width + s, at.Y() + height * s + s};
-      found = std::none_of(labels.begin(), labels.end(), [&](const Box& b) {
+      return std::none_of(labels.begin(), labels.end(), [&](const Box& b) {
         return box.x0 < b.x1 && box.x1 > b.x0 && box.y0 < b.y1 && box.y1 > b.y0;
       });
-      if (found) break;
-    }
+    };
+    // docs/352: first a place near the member (the first three rings) clear of the other labels and of every line
+    // and word already drawn: framing plans and 軸組図 put "S02 30×105" over the studs and braces beside it.
+    bool found = false, clear = false;
+    for (int attempt = 0; attempt < 12 && !found; ++attempt)
+      found = clear = place(attempt) && textIsClear(text(Pen::Text, at, mark.text, height, 0, 0), items, s, kLabelGap);
+    // Where it is that crowded, as before (clear of the other labels only), and the lines under it stop at its
+    // box, as if it were written on white (docs/333's blanks).
+    for (int attempt = 0; attempt < 32 && !found; ++attempt) found = place(attempt);
     crowded |= !found;
     labels.push_back(box);
+    if (!clear) blanks.push_back({gp_Pnt2d(at.X() - 0.5 * s, at.Y() - 0.5 * s),
+                                  gp_Pnt2d(at.X() + width + 0.5 * s, at.Y() + (height + 0.5) * s)});
     items.push_back(line(Pen::Text, mark.at, at));
     items.push_back(text(Pen::Text, at, mark.text, height, 0, 0));
   }
   // docs/333: lines stop at the view's blank boxes (as if the marks there were drawn on white). A polyline is
   // broken into its sides; a side along a box's edge (the mark's own outline) is kept.
-  if (!view.blanks.empty()) {
+  if (!blanks.empty()) {
     const double eps = 1e-6;
     const auto pieces = [&](const gp_Pnt2d& a, const gp_Pnt2d& b) {
       std::vector<std::pair<double, double>> inside;  // parts of a..b (0..1) inside a box
-      for (const auto& [lo, hi] : view.blanks) {
+      for (const auto& [lo, hi] : blanks) {
         double t0 = 0.0, t1 = 1.0;
         bool hit = true;
         const double p[4] = {-(b.X() - a.X()), b.X() - a.X(), -(b.Y() - a.Y()), b.Y() - a.Y()};
