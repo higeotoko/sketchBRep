@@ -243,8 +243,8 @@ void placeBracingMarks(std::vector<Item>& items, const std::vector<View::Bracing
     const bool overGrid = mark.opening || mark.room;
     std::vector<Item> notGrid;
     if (overGrid)
-      for (const Item& i : items)
-        if (i.pen != Pen::Grid) notGrid.push_back(i);
+      for (const Item& i : items)  // docs/357: a room's name written outside does not step aside for dashed lines either
+        if (i.pen != Pen::Grid && !(mark.room && i.pen == Pen::Hidden)) notGrid.push_back(i);
     const auto isClear = [&](const Item& candidate) {
       return textIsClear(candidate, overGrid ? notGrid : items, scale, gap);
     };
@@ -811,6 +811,27 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
     std::vector<Item> kept;
     kept.reserve(items.size());
     for (Item& item : items) {
+      // docs/357: and the dashed lines (hidden lines, the side parts' boxes): their sides stop at the words too.
+      if (item.pen == Pen::Hidden && (item.kind == Item::Kind::Line || item.kind == Item::Kind::Polyline) &&
+          item.points.size() >= 2 && !words.empty()) {
+        std::vector<std::pair<gp_Pnt2d, gp_Pnt2d>> sides;
+        for (std::size_t k = 0; k + 1 < item.points.size(); ++k) sides.push_back({item.points[k], item.points[k + 1]});
+        if (item.kind == Item::Kind::Polyline && item.closed) sides.push_back({item.points.back(), item.points.front()});
+        bool crossed = false;
+        std::vector<std::vector<std::pair<gp_Pnt2d, gp_Pnt2d>>> pieces;
+        for (const auto& [a, c] : sides) {
+          pieces.push_back(clearOfText(a, c, words, s, 0.8));
+          crossed = crossed || pieces.back().size() != 1 || !pieces.back().front().first.IsEqual(a, 1e-9) ||
+                    !pieces.back().front().second.IsEqual(c, 1e-9);
+        }
+        if (!crossed) {
+          kept.push_back(std::move(item));
+          continue;
+        }
+        for (const auto& side : pieces)
+          for (const auto& [p, q] : side) kept.push_back(line(Pen::Hidden, p, q));
+        continue;
+      }
       // docs/356: and the leaders (notes' lines): one ran through another member's label on the framing elevations.
       if (item.kind != Item::Kind::Line || (item.pen != Pen::Grid && item.pen != Pen::Level && item.pen != Pen::Text) ||
           item.points.size() != 2 ||
