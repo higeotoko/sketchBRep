@@ -29,6 +29,7 @@
 #include <BRepGProp.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Common.hxx>
+#include <BRepAlgoAPI_Cut.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <TopTools_ListOfShape.hxx>
@@ -124,6 +125,33 @@ std::vector<double> penDashes(Pen pen) {
 }
 
 namespace {
+// docs/351: the floor a stair comes up to, as the frame's floor boards (floor_sheathing, cut around the stairwell
+// by the frame's floor_openings): their plan rectangles (world x0, y0, x1, y1) and undersides, for boards whose
+// underside is within 400 of the stair's top and under the cut. What of the stair they cover is not seen in the plan
+// of that floor. Slabs are not read (their openings are not rectangles of their bounds).
+struct FloorCover {
+  double x0, y0, x1, y1, underside;
+};
+std::vector<FloorCover> floorCover(const doc::Document& document, double stairTop, double cutZ) {
+  std::vector<FloorCover> out;
+  for (const doc::Object& b : document.objects()) {
+    const auto k = b.attributes.find("kind");
+    if (k == b.attributes.end() || k->second != "floor_sheathing" || b.shape.IsNull()) continue;
+    const Bnd_Box box = document.worldBounds(b);
+    if (box.IsVoid()) continue;
+    double x0, y0, z0, x1, y1, z1;
+    box.Get(x0, y0, z0, x1, y1, z1);
+    if (z0 < stairTop - 400 || z0 > cutZ) continue;
+    out.push_back({x0, y0, x1, y1, z0});
+  }
+  return out;
+}
+bool coveredBy(const std::vector<FloorCover>& cover, double x, double y) {
+  for (const FloorCover& c : cover)
+    if (x > c.x0 + 1e-6 && x < c.x1 - 1e-6 && y > c.y0 + 1e-6 && y < c.y1 - 1e-6) return true;
+  return false;
+}
+
 // Where the layers under the upper faces of `world` meet, cut by the upright `plane` (docs/151,
 // docs/152): each upper face's cut moved `depth` into the solid at right angles to the face;
 // those of two faces meeting at a point (a ridge, a hip) end where they cross.
@@ -877,6 +905,31 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     TopoDS_Shape world;
     try {
       world = BRepBuilderAPI_Copy(document.worldShape(o), true, false).Shape();
+      // docs/351: in the plan of the floor a stair comes up to, its part under that floor's boards is not seen.
+      if (spec.kind == ViewKind::Plan && std::abs(n.Z()) > 1 - 1e-9) {
+        const auto kindOf = o.attributes.find("kind");
+        if (kindOf != o.attributes.end() && kindOf->second == "stair") {
+          const auto stair = doc::stairInWorld(document, o);
+          const double cutZ = spec.frame.Location().Z();
+          if (stair && stair->base + stair->rise < cutZ) {
+            TopTools_ListOfShape tools;
+            for (const FloorCover& c : floorCover(document, stair->base + stair->rise, cutZ)) {
+              const double low = stair->base - 10.0;
+              if (c.underside - low < 1.0 || c.x1 - c.x0 < 1.0 || c.y1 - c.y0 < 1.0) continue;
+              tools.Append(BRepPrimAPI_MakeBox(gp_Pnt(c.x0, c.y0, low), gp_Pnt(c.x1, c.y1, c.underside)).Shape());
+            }
+            if (!tools.IsEmpty()) {
+              TopTools_ListOfShape arguments;
+              arguments.Append(world);
+              BRepAlgoAPI_Cut cut;
+              cut.SetArguments(arguments);
+              cut.SetTools(tools);
+              cut.Build();
+              if (cut.IsDone()) world = cut.Shape();
+            }
+          }
+        }
+      }
     } catch (const Standard_Failure& e) {
       view.notes.push_back(o.name + ": " + kernelMessage(e));
       continue;
@@ -1271,6 +1324,63 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
       const auto marks = geom::stairPlanMarks(*stair, symbols.z);
       if (!marks) continue;
       auto uv = [&](const gp_Pnt& p) { return proj.uv(gp_Pnt(p.X(), p.Y(), symbols.z)); };
+      // docs/351: a stair coming up to this floor (its top under the cut, the floor's boards round it): its walking
+      // line where the stairwell shows it, an arrow head at its lower end pointing down the stair, and "下" by the top,
+      // as plans of an upper floor mark the stair going down. The foot's "上" belongs to the floor below.
+      const std::vector<FloorCover> cover = stair->base + stair->rise < symbols.z
+                                                ? floorCover(document, stair->base + stair->rise, symbols.z)
+                                                : std::vector<FloorCover>{};
+      if (!cover.empty() && marks->walk.size() >= 2) {
+        std::vector<std::pair<gp_Pnt, gp_Pnt>> seen;  // from the foot up
+        for (std::size_t i = 1; i < marks->walk.size(); ++i) {
+          const gp_Pnt a = marks->walk[i - 1], b = marks->walk[i];
+          const int steps = std::max(1, static_cast<int>(a.Distance(b) / 20.0));
+          int from = -1;
+          for (int k = 0; k <= steps; ++k) {
+            const double t = static_cast<double>(k) / steps;
+            const gp_Pnt p(a.XYZ() + (b.XYZ() - a.XYZ()) * t);
+            const bool open = !coveredBy(cover, p.X(), p.Y());
+            if (open && from < 0) from = k;
+            if ((!open || k == steps) && from >= 0) {
+              const int to = open ? k : k - 1;
+              if (to > from)
+                seen.emplace_back(gp_Pnt(a.XYZ() + (b.XYZ() - a.XYZ()) * (static_cast<double>(from) / steps)),
+                                  gp_Pnt(a.XYZ() + (b.XYZ() - a.XYZ()) * (static_cast<double>(to) / steps)));
+              from = -1;
+            }
+          }
+        }
+        for (const auto& [a, b] : seen) view.items.push_back(line(Pen::Visible, uv(a), uv(b)));
+        if (!seen.empty()) {
+          const double paper = spec.paperScale > 0 ? spec.paperScale : 100.0;
+          const auto& [low, next] = seen.front();
+          gp_Vec2d down(uv(next), uv(low));
+          if (down.Magnitude() > 1e-9) {
+            down.Normalize();
+            const gp_Pnt2d tip = uv(low);
+            for (const double turn : {0.45, -0.45}) {
+              const gp_Vec2d back = down.Rotated(turn).Reversed() * (2.0 * paper);
+              view.items.push_back(line(Pen::Visible, tip, gp_Pnt2d(tip.XY() + back.XY())));
+            }
+          }
+          if (spec.annotations) {
+            const gp_Pnt top = seen.back().second, before = seen.back().first;
+            gp_Vec2d up(uv(before), uv(top));
+            Item word;
+            word.kind = Item::Kind::Text;
+            word.pen = Pen::Text;
+            const gp_Vec2d side = up.Magnitude() > 1e-9 ? gp_Vec2d(-up.Y(), up.X()).Normalized() : gp_Vec2d(1, 0);
+            const gp_Vec2d back = up.Magnitude() > 1e-9 ? up.Normalized().Reversed() : gp_Vec2d(0, 0);
+            word.points = {gp_Pnt2d(uv(top).XY() + back.XY() * (3.0 * paper) + side.XY() * (2.0 * paper))};
+            word.text = "下";
+            word.height = 2.5;
+            word.hAlign = 1;
+            word.vAlign = 1;
+            view.items.push_back(word);
+          }
+        }
+        continue;
+      }
       for (std::size_t i = 1; i < marks->walk.size(); ++i)
         view.items.push_back(line(Pen::Visible, uv(marks->walk[i - 1]), uv(marks->walk[i])));
       for (const auto& [a, b] : marks->arrow) view.items.push_back(line(Pen::Visible, uv(a), uv(b)));

@@ -186,3 +186,48 @@ TEST_F(TimberWorkflow, HouseWithLowerRoofWindowStairwellAndRemovedColumnSurvives
   }
   EXPECT_EQ(serializeDocument(m.document()), bytes);
 }
+
+// docs/351: the plan of the floor a stair comes up to shows it only where the stairwell is open (the floor's boards
+// hide the rest), with "下" and no "上".
+TEST_F(TimberWorkflow, UpperPlanShowsTheStairThroughTheStairwellOnly) {
+  make({{"x_bays", 6}, {"y_bays", 4}, {"floor_openings", json::array({aperture()})}});  // x 1820-3640, y 910-2730
+  double floor = -1;
+  for (const auto& o : m.document().objects()) {
+    if (!o.attributes.count("kind") || o.attributes.at("kind") != "floor_sheathing") continue;
+    const Bnd_Box b = m.document().worldBounds(o);
+    double x0, y0, z0, x1, y1, z1;
+    b.Get(x0, y0, z0, x1, y1, z1);
+    if (o.layer == "2階床組") floor = std::max(floor, z1);
+  }
+  ASSERT_GT(floor, 2900);
+  const double first = floor - 2900;  // the stair from 2.9 m below
+  geom::StairSpec spec;
+  spec.path = {gp_Pnt(2275, -400, 0), gp_Pnt(2275, 2730, 0)};
+  spec.base = first;
+  spec.rise = floor - first;
+  spec.width = 780;
+  const auto stair = m.createStair(spec);
+  ASSERT_TRUE(stair) << stair.error();
+  draw::ViewSpec view = draw::planView(floor + 1100);
+  view.depth = 4000;  // down to the floor below, as the drawing set's plans see a stairwell
+  const auto plan = draw::makeView(m.document(), view);
+  ASSERT_TRUE(plan) << plan.error();
+  int underFloor = 0, inWell = 0;
+  bool down = false, up = false;
+  for (const auto& i : plan->items) {
+    down = down || (i.kind == draw::Item::Kind::Text && i.text == "下");
+    up = up || (i.kind == draw::Item::Kind::Text && i.text == "上");
+    if (i.kind != draw::Item::Kind::Line || i.points.size() != 2) continue;
+    const auto inside = [&](double y0, double y1) {
+      for (const auto& p : i.points)
+        if (!(p.X() > 1850 && p.X() < 2700 && p.Y() > y0 && p.Y() < y1)) return false;  // the stair 1885-2665
+      return true;
+    };
+    underFloor += inside(100, 850);  // under the boards between the outer wall's studs and the stairwell
+    inWell += inside(1000, 2650);
+  }
+  EXPECT_EQ(underFloor, 0);
+  EXPECT_GT(inWell, 0);
+  EXPECT_TRUE(down);
+  EXPECT_FALSE(up);
+}
