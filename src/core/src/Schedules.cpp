@@ -6,6 +6,7 @@
 #include "sbr/doc/FireSpread.h"
 #include "sbr/doc/FireCompartments.h"
 #include "AreaEvidence.h"
+#include "sbr/WallTypes.h"
 
 #include <algorithm>
 #include <cmath>
@@ -1711,10 +1712,22 @@ std::vector<PermitCheck> permitEnergyChecks(const Document& document) {
     if (!given.empty() || layered) ++b.insulated;
     if (!given.empty() && b.insulation.find(given) == std::string::npos) b.insulation += (b.insulation.empty() ? "" : "、") + given;
   }
+  // docs/350: a build-up of an interior kind (its preset not exterior: 内壁 石膏ボード両面) is a partition between rooms,
+  // not part of the envelope: its walls need no insulation for the energy documents. Said so, not asked for.
+  const auto interiorKind = [](const std::string& type) {
+    const auto preset = construction::wallType(type);
+    return preset && !preset->exterior;
+  };
   for (const auto& [type, b] : buildUps) {
     const bool all = b.insulated == static_cast<int>(b.walls.size());
     std::string details = std::to_string(b.walls.size()) + " 枚" + (b.layers.empty() ? std::string() : "　外→内：" + b.layers);
     if (!b.insulation.empty()) details += "\n断熱：" + b.insulation;
+    if (interiorKind(type)) {
+      details += "\n室内の間仕切りの壁（壁の種類が内壁）。外皮でないので、断熱の有無は数えません。"
+                 "外気に通じる所（車庫・物置など）に面するときは、外壁の種類にします。";
+      out.push_back({"壁の仕様：" + b.name, "対象外", details, b.walls, false});
+      continue;
+    }
     if (!all) details += "\n断熱の入っていない壁 " + std::to_string(b.walls.size() - b.insulated) + " 枚（AI の set_insulation で入れます）";
     out.push_back({"壁の仕様：" + b.name, all ? "入力済み" : "未入力", details, b.walls, !all});
   }
@@ -1732,7 +1745,17 @@ std::vector<PermitCheck> permitEnergyChecks(const Document& document) {
     out.push_back({"床・屋根の断熱", bare.empty() ? "入力済み" : "未入力",
                    "床・屋根 " + std::to_string(parts) + " のうち、断熱を入れた物 " + std::to_string(parts - static_cast<int>(bare.size())) + "。",
                    bare, !bare.empty()});
-  const auto openings = openingSchedule(document).rows;
+  // docs/350: the openings of the envelope only; the doors in partitions (walls of an interior kind) are left out.
+  std::vector<OpeningRow> openings;
+  int inner = 0;
+  for (const OpeningRow& o : openingSchedule(document).rows) {
+    const Object* host = document.find(o.host);
+    if (host && interiorKind(attribute(*host, "wall_type"))) {
+      ++inner;
+      continue;
+    }
+    openings.push_back(o);
+  }
   int rated = 0;
   std::vector<ObjectId> hosts;
   for (const OpeningRow& o : openings) {
@@ -1741,8 +1764,10 @@ std::vector<PermitCheck> permitEnergyChecks(const Document& document) {
   }
   if (!openings.empty())
     out.push_back({"建具の性能", rated == static_cast<int>(openings.size()) ? "入力済み" : "未入力",
-                   "開口 " + std::to_string(openings.size()) + " 件のうち、熱貫流率を入れた物 " + std::to_string(rated) +
-                       "（AI の set_opening_performance）。",
+                   "外皮の開口 " + std::to_string(openings.size()) + " 件のうち、熱貫流率を入れた物 " + std::to_string(rated) +
+                       "（AI の set_opening_performance）。" +
+                       (inner > 0 ? "間仕切り（内壁）の開口 " + std::to_string(inner) + " 件は外皮でないので数えません。"
+                                  : std::string()),
                    hosts, rated != static_cast<int>(openings.size())});
   {
     // docs/232: whether the energy plan (建築物エネルギー消費性能確保計画) is submitted, as given in the

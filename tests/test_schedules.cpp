@@ -2719,6 +2719,17 @@ TEST_F(Schedules, PermitChecksReadTheEnergyAndElevationStages) {
   const json siding = rowOf(9, "壁の仕様：外壁 窯業系サイディング（通気）");
   EXPECT_EQ(siding["state"], "未入力");  // the presets have no insulation (docs/210: none given)
   EXPECT_NE(siding["details"].get<std::string>().find("断熱の入っていない壁 1 枚"), std::string::npos) << siding.dump();
+  // docs/350: a partition (an interior kind) is not part of the envelope: no insulation asked for, and its door is not
+  // counted among the openings whose performance the energy documents need.
+  const std::string partition =
+      ok("create_wall", {{"points", {{2000, 0}, {2000, 4000}}}, {"type", "interior_board"}, {"height", 3000}})["ids"][0];
+  const json inner = rowOf(9, "壁の仕様：内壁 石膏ボード両面");
+  EXPECT_EQ(inner["state"], "対象外") << inner.dump();
+  EXPECT_EQ(inner["details"].get<std::string>().find("断熱の入っていない壁"), std::string::npos) << inner.dump();
+  ok("place_openings", {{"host", partition}, {"face_normal", {-1, 0, 0}}, {"at", {1935, 2000, 1000}}, {"width", 780},
+                        {"height", 2000}, {"sill", 0}});
+  const json doors = rowOf(9, "建具の性能");
+  EXPECT_NE(doors["details"].get<std::string>().find("間仕切り（内壁）の開口 1 件"), std::string::npos) << doors.dump();
   // 10: no GL yet; the walls' tops (3000) are the highest point; no sections cut by hand; no true north.
   EXPECT_EQ(rowOf(10, "高さ制限の条件")["state"], "敷地境界待ち");
   const auto site = ok("create_polygon", {{"points", {{-1000,-1000,0},{13000,-1000,0},{13000,10000,0},{-1000,10000,0}}}})["id"];
