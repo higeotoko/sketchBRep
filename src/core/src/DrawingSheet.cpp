@@ -186,11 +186,15 @@ void placeRoomTags(std::vector<Item>& items, const std::vector<View::RoomTag>& t
   for (const auto& tag : tags) {
     Item& slot = items[tag.item];
     Item label = std::exchange(slot, Item{});
-    if (!textIsClear(label, items, scale, kLabelGap)) {
-      // docs/356: as far as 16 steps (the bracing plans' rooms have the side parts' dashed boxes and the walls across).
+    // docs/356: the grid lines are not in the way (they stop at the words afterwards, docs/353), and as far as 16
+    // steps (the bracing plans' rooms have the side parts' dashed boxes and the walls across).
+    std::vector<Item> notGrid;
+    for (const Item& i : items)
+      if (i.pen != Pen::Grid) notGrid.push_back(i);
+    if (!textIsClear(label, notGrid, scale, kLabelGap)) {
       findNearbyPosition(label, scale, 16, [&](const Item& candidate) {
         return textFitsInside(candidate, tag.outline, scale, kLabelGap) &&
-               textIsClear(candidate, items, scale, kLabelGap);
+               textIsClear(candidate, notGrid, scale, kLabelGap);
       });
     }
     slot = std::move(label);
@@ -654,10 +658,12 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
     const double height = 2.5, width = textWidth(mark.text, height) * s;
     gp_Pnt2d at;
     Box box;
+    bool right = true, above = true;
     const auto place = [&](int attempt) {
       const int ring = attempt / 4;
       const double dy = (3 + ring * 4) * s;
-      const bool right = attempt % 4 < 2, above = attempt % 2 == 0;
+      right = attempt % 4 < 2;
+      above = attempt % 2 == 0;
       at = gp_Pnt2d(mark.at.X() + (right ? 2 * s : -width - 2 * s),
                     mark.at.Y() + (above ? dy : -dy - height * s));
       box = {at.X() - s, at.Y() - s, at.X() + width + s, at.Y() + height * s + s};
@@ -677,7 +683,10 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
     labels.push_back(box);
     if (!clear) blanks.push_back({gp_Pnt2d(at.X() - 0.5 * s, at.Y() - 0.5 * s),
                                   gp_Pnt2d(at.X() + width + 0.5 * s, at.Y() + (height + 0.5) * s)});
-    items.push_back(line(Pen::Text, mark.at, at));
+    // docs/356: the leader to the label's corner nearest the member (to the left-hand label's right end, to a label
+    // below its top): to the far corner it ran along under the label's own words.
+    const gp_Pnt2d corner(right ? at.X() : at.X() + width, above ? at.Y() : at.Y() + height * s);
+    items.push_back(line(Pen::Text, mark.at, corner));
     items.push_back(text(Pen::Text, at, mark.text, height, 0, 0));
   }
   // docs/333: lines stop at the view's blank boxes (as if the marks there were drawn on white). A polyline is
