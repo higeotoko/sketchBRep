@@ -17,6 +17,7 @@
 #include "sbr/doc/FoundationGround.h"
 #include <algorithm>
 #include "sbr/draw/Drawing.h"
+#include "sbr/draw/SheetCheck.h"
 #include "sbr/geom/Dxf.h"
 #include "sbr/geom/Jww.h"
 
@@ -708,4 +709,30 @@ TEST_F(Quantities, PlansMarkColumnAndStudCuts) {
   bool stud = false;
   for (const auto& i : sheet->items) stud = stud || (i.kind == draw::Item::Kind::Text && i.text == "間柱");
   EXPECT_TRUE(stud);
+}
+
+// docs/356: the strip foundation's section detail writes its parts' names past the dimensions on the right, with
+// leaders: written beside the concrete they sat on the footing's thickness and the stem's height.
+TEST_F(Quantities, FoundationDetailNamesKeepOffTheDimensions) {
+  const auto made = frame();
+  const auto r = m.generateFoundation(json{{"inputs", {{"frame", made["frame"]}}}}.dump());
+  ASSERT_TRUE(r) << r.error();
+  const auto view = doc::foundationDetailView(m.document());
+  ASSERT_TRUE(view);
+  for (const double scale : {10.0, 20.0}) {
+    draw::SheetSpec spec;
+    spec.scale = scale;
+    const auto sheet = draw::layoutSheet(*view, spec);
+    ASSERT_TRUE(sheet) << sheet.error();
+    std::vector<draw::Item> values;
+    for (const auto& i : sheet->items)
+      if (i.kind == draw::Item::Kind::Text && i.pen == draw::Pen::Dimension) values.push_back(i);
+    int names = 0;
+    for (const auto& i : sheet->items) {
+      if (i.kind != draw::Item::Kind::Text || i.text.find("（鉄筋コンクリート造）") == std::string::npos) continue;
+      ++names;
+      EXPECT_TRUE(draw::textIsClear(i, values, scale, 0.0)) << i.text << " 1:" << scale;
+    }
+    EXPECT_EQ(names, 2);  // 底盤 and 立上り
+  }
 }

@@ -5817,12 +5817,16 @@ draw::View vicinityView(const Document& document, const VicinityMap& map, const 
     draw::Item note;
     note.kind = draw::Item::Kind::Text;
     note.pen = draw::Pen::Text;
-    // docs/356: near the frame's foot, away from the site's mark and name at the middle (it sat on "敷地").
-    note.points = {gp_Pnt2d((x0 + x1) / 2, y0 + 10 * scale)};
-    note.text = "地図は、画面の「図面一式を書き出す」で国土地理院の地図タイルから入ります";
-    note.height = 3.0;
+    // docs/356: near the frame's foot, away from the site's mark and name at the middle (it sat on "敷地"), in two
+    // lines of 2.5 mm: in one line of 3 mm it was wider than the frame of a small map.
+    note.height = 2.5;
     note.hAlign = 1;
     note.vAlign = 1;
+    note.points = {gp_Pnt2d((x0 + x1) / 2, y0 + 13 * scale)};
+    note.text = "地図は、画面の「図面一式を書き出す」で";
+    view.items.push_back(note);
+    note.points = {gp_Pnt2d((x0 + x1) / 2, y0 + 9 * scale)};
+    note.text = "国土地理院の地図タイルから入ります";
     view.items.push_back(std::move(note));
   }
   view.items.push_back(frame);

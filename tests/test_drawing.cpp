@@ -1646,3 +1646,33 @@ TEST(Drawing, OpeningMarksStepOffTheLinesTheyWouldSitOn) {
   EXPECT_GE(moved, 1);  // (in pieces where it passes a word)
   EXPECT_GT(std::abs(wd.Y() - swingAt.Y()), 100);
 }
+
+// docs/356: a member's label placed left of and below its member: its leader goes to the label's nearest corner (its
+// top right), not along under its own words to the far one.
+TEST(Drawing, MemberLeadersEndAtTheLabelsNearCorner) {
+  View view;
+  const auto add = [&](double x0, double y0, double x1, double y1) {
+    Item l;
+    l.kind = Item::Kind::Line;
+    l.pen = Pen::Visible;
+    l.points = {gp_Pnt2d(x0, y0), gp_Pnt2d(x1, y1)};
+    view.items.push_back(l);
+  };
+  // The member at (5000, 5000); lines filling the right (above and below) and the left above.
+  for (int k = -20; k <= 20; ++k) add(5050, 5000 + k * 60, 7500, 5000 + k * 60);
+  for (int k = 1; k <= 20; ++k) add(2500, 5000 + k * 60, 4950, 5000 + k * 60);
+  view.members.push_back({gp_Pnt2d(5000, 5000), "C04 90×90"});
+  SheetSpec spec;
+  spec.scale = 50;
+  const auto sheet = layoutSheet(view, spec);
+  ASSERT_TRUE(sheet) << sheet.error();
+  const Item* label = nullptr;
+  std::vector<Item> leaders;
+  for (const Item& i : sheet->items) {
+    if (i.kind == Item::Kind::Text && i.text == "C04 90×90") label = &i;
+    if (i.kind == Item::Kind::Line && i.pen == Pen::Text) leaders.push_back(i);
+  }
+  ASSERT_NE(label, nullptr);
+  ASSERT_FALSE(leaders.empty());
+  EXPECT_TRUE(textIsClear(*label, leaders, 50, 0.0));
+}
