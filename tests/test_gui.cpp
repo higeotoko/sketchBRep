@@ -2659,8 +2659,11 @@ void GuiPhase1::permitWorkflowShowsGridAndPlanChecks() {
   phases->setCurrentRow(6);
   QCOMPARE(rowOf(QStringLiteral("壁量の入力"))->text(1), QStringLiteral("未入力"));
   QVERIFY(rowOf(QStringLiteral("照らした値")));
-  checks->setCurrentItem(rowOf(QStringLiteral("まだ確かめていない事")));
-  QVERIFY(details->text().contains(QStringLiteral("N値")));
+  QVERIFY(rowOf(QStringLiteral("まだ確かめていない事")));
+  // docs/358: 柱頭・柱脚 by the N value method in a row of its own: no wall calculation yet, so not evaluated, saying why.
+  QCOMPARE(rowOf(QStringLiteral("柱頭・柱脚の接合（N値計算）"))->text(1), QStringLiteral("要確認"));
+  checks->setCurrentItem(rowOf(QStringLiteral("柱頭・柱脚の接合（N値計算）")));
+  QVERIFY(details->text().contains(QStringLiteral("壁量の計算の入力がありません")));
 
   // docs/200: stage 8 (基礎): no foundation yet; what is not assessed.
   phases->setCurrentRow(7);
