@@ -111,6 +111,7 @@ TEST_F(Schedules, OpeningsOfOneKindSizeAndFittingShareAMark) {
   std::map<std::string, int> drawn;
   for (const auto& item : view->items)
     if (item.kind == sbr::draw::Item::Kind::Text) ++drawn[item.text];
+  for (const auto& mark : view->bracingMarks) ++drawn[mark.text];  // docs/353: placed on the sheet
   EXPECT_EQ(drawn["AW1"], 2);
   EXPECT_EQ(drawn["AW2"], 1);
   EXPECT_EQ(drawn["AD1"], 1);
@@ -121,6 +122,7 @@ TEST_F(Schedules, OpeningsOfOneKindSizeAndFittingShareAMark) {
   drawn.clear();
   for (const auto& item : low->items)
     if (item.kind == sbr::draw::Item::Kind::Text) ++drawn[item.text];
+  for (const auto& mark : low->bracingMarks) ++drawn[mark.text];
   EXPECT_EQ(drawn["AW1"], 0);
   EXPECT_EQ(drawn["AD1"], 1);
   EXPECT_EQ(drawn["O1"], 0);
@@ -303,6 +305,7 @@ TEST_F(Schedules, AMarkGivenByHandStaysAndWorkedOutNumbersSkipIt) {
   int aw = 0;
   for (const auto& item : view->items)
     if (item.kind == sbr::draw::Item::Kind::Text && item.text == "AW-1") ++aw;
+  for (const auto& mark : view->bracingMarks) aw += mark.text == "AW-1";  // docs/353: placed on the sheet
   EXPECT_EQ(aw, 2);
 
   // Another window of a new size: it is AW2, not AW1 (taken by hand); AW-1 stays.

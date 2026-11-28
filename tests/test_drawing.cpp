@@ -1552,3 +1552,44 @@ TEST(Drawing, MemberLabelsKeepClearOfTheLinesOrStopThem) {
   }
   EXPECT_EQ(labels, 2);
 }
+
+// docs/353: an opening's mark stays where it is when that is clear, and moves close by (with a leader) off a line
+// it would sit on (a door's swing, an undercut's arrow).
+TEST(Drawing, OpeningMarksStepOffTheLinesTheyWouldSitOn) {
+  View view;
+  Item swing;
+  swing.kind = Item::Kind::Line;
+  swing.pen = Pen::Visible;
+  swing.points = {gp_Pnt2d(0, 1000), gp_Pnt2d(3000, 1000)};
+  view.items.push_back(swing);
+  Item wall = swing;
+  wall.points = {gp_Pnt2d(0, 0), gp_Pnt2d(3000, 0)};
+  view.items.push_back(wall);
+  view.bracingMarks.push_back({gp_Pnt2d(1500, 1000), "WD1", 2.5, true});  // on the line
+  view.bracingMarks.push_back({gp_Pnt2d(1500, 500), "AW1", 2.5, true});   // clear
+  SheetSpec spec;
+  spec.scale = 100;
+  const auto sheet = layoutSheet(view, spec);
+  ASSERT_TRUE(sheet) << sheet.error();
+  std::vector<Item> lines;
+  gp_Pnt2d wd, aw, swingAt;
+  for (const Item& i : sheet->items) {
+    if (i.kind == Item::Kind::Line && i.pen == Pen::Visible) lines.push_back(i);
+    if (i.kind == Item::Kind::Text && i.text == "WD1") wd = i.points.front();
+    if (i.kind == Item::Kind::Text && i.text == "AW1") aw = i.points.front();
+  }
+  int moved = 0;
+  for (const Item& i : sheet->items) {
+    if (i.kind != Item::Kind::Text || (i.text != "WD1" && i.text != "AW1")) continue;
+    EXPECT_TRUE(textIsClear(i, lines, 100, 0.0)) << i.text;
+  }
+  // The clear one kept its place: 500 below the line through WD1's place, as in the view.
+  for (const Item& l : lines)
+    if (std::abs(l.points[0].Y() - l.points[1].Y()) < 1e-6 && std::abs(l.points[0].X() - l.points[1].X()) > 2000) {
+      if (swingAt.Y() < l.points[0].Y()) swingAt = l.points[0];
+    }
+  EXPECT_NEAR(swingAt.Y() - aw.Y(), 500, 1e-6);
+  for (const Item& i : sheet->items) moved += i.kind == Item::Kind::Line && i.pen == Pen::Text;  // its leader
+  EXPECT_GE(moved, 1);  // (in pieces where it passes a word)
+  EXPECT_GT(std::abs(wd.Y() - swingAt.Y()), 100);
+}

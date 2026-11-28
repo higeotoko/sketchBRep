@@ -202,12 +202,20 @@ void placeBracingMarks(std::vector<Item>& items, const std::vector<View::Bracing
   for (const Item& item : items) extentOf(item, scale, occupied);
   std::vector<std::pair<gp_Pnt2d, gp_Pnt2d>> leaders;
   for (const View::BracingMark& mark : marks) {
-    Item label = text(Pen::Visible, mark.at, mark.text, mark.height, 1, 1);
-    const auto isClear = [&](const Item& candidate) { return textIsClear(candidate, items, scale, kLabelGap); };
-    const bool clear = isClear(label) || findNearbyPosition(label, scale, 12, isClear);
+    Item label = text(mark.opening ? Pen::Text : Pen::Visible, mark.at, mark.text, mark.height, 1, 1);
+    const double gap = mark.opening ? 0.2 : kLabelGap;
+    // An opening's mark does not step aside for a grid line: the grid lines stop at the words (docs/353).
+    std::vector<Item> notGrid;
+    if (mark.opening)
+      for (const Item& i : items)
+        if (i.pen != Pen::Grid) notGrid.push_back(i);
+    const auto isClear = [&](const Item& candidate) {
+      return textIsClear(candidate, mark.opening ? notGrid : items, scale, gap);
+    };
+    const bool clear = isClear(label) || findNearbyPosition(label, scale, mark.opening ? 4 : 12, isClear);
     // When the plan is dense, reserve another line above the drawing. The paper-fit calculation
-    // below includes it, just like the other annotations.
-    if (!clear) label.points.front().SetY(occupied.y1 + (mark.height / 2 + 2 * kLabelGap) * scale);
+    // below includes it, just like the other annotations. An opening's mark stays by its opening.
+    if (!clear && !mark.opening) label.points.front().SetY(occupied.y1 + (mark.height / 2 + 2 * kLabelGap) * scale);
     if (!mark.at.IsEqual(label.points.front(), 1e-9)) leaders.emplace_back(mark.at, label.points.front());
     extentOf(label, scale, occupied);
     items.push_back(std::move(label));
@@ -542,27 +550,6 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
     if (axes.size() >= 3 && axes.back().first - axes.front().first > 1e-6) put(axes.front().first, axes.back().first, far);
   }
   placeRoomTags(items, view.roomTags, s);
-  // docs/352, docs/353: the grid lines stop short of the words on the drawing (as the section cuts do, docs/250): with
-  // an even number of bays the middle grid line ran through the whole length's value ("9,100"); on plans they ran
-  // through the room names, the opening marks, the 防 of fire doors and the detectors' symbols. The bubbles' own
-  // names are inside their circles, clear of their line.
-  {
-    std::vector<Item> values;
-    for (const Item& i : items)
-      if (i.kind == Item::Kind::Text && i.pen != Pen::GridLabel && !i.text.empty()) values.push_back(i);
-    std::vector<const Item*> words;
-    for (const Item& i : values) words.push_back(&i);
-    std::vector<Item> kept;
-    kept.reserve(items.size());
-    for (Item& item : items) {
-      if (item.kind != Item::Kind::Line || item.pen != Pen::Grid || item.points.size() != 2 || words.empty()) {
-        kept.push_back(std::move(item));
-        continue;
-      }
-      for (const auto& [p, q] : clearOfText(item.points[0], item.points[1], words, s, 0.8)) kept.push_back(line(Pen::Grid, p, q));
-    }
-    items = std::move(kept);
-  }
   // Section cuts (docs/132): a line across the drawing, at each end an arrow the way the section
   // looks, the label and (under it) the sheet it is on.
   for (const View::CutLine& c : view.cuts) {
@@ -757,6 +744,28 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
     items = std::move(kept);
   }
   placeBracingMarks(items, view.bracingMarks, s);
+  // docs/352, docs/353: the grid lines stop short of the words on the drawing (as the section cuts do, docs/250): with
+  // an even number of bays the middle grid line ran through the whole length's value ("9,100"); on plans they ran
+  // through the room names, the opening marks, the 防 of fire doors and the detectors' symbols. The bubbles' own
+  // names are inside their circles, clear of their line. After the marks are placed: an opening's mark does not
+  // step aside for a grid line, the line stops at it.
+  {
+    std::vector<Item> values;
+    for (const Item& i : items)
+      if (i.kind == Item::Kind::Text && i.pen != Pen::GridLabel && !i.text.empty()) values.push_back(i);
+    std::vector<const Item*> words;
+    for (const Item& i : values) words.push_back(&i);
+    std::vector<Item> kept;
+    kept.reserve(items.size());
+    for (Item& item : items) {
+      if (item.kind != Item::Kind::Line || item.pen != Pen::Grid || item.points.size() != 2 || words.empty()) {
+        kept.push_back(std::move(item));
+        continue;
+      }
+      for (const auto& [p, q] : clearOfText(item.points[0], item.points[1], words, s, 0.8)) kept.push_back(line(Pen::Grid, p, q));
+    }
+    items = std::move(kept);
+  }
   // docs/341: the height limits' slant lines stop short of the words they would run through (the height dimensions'
   // values, the level names, the limits' own names), as the section cuts do (docs/250): a slant drawn through
   // "最高の高さ 7,764" made the figure hard to read.

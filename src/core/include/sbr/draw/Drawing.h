@@ -208,7 +208,9 @@ struct View {
   std::vector<DimensionMark> dimensions;
   struct MemberMark { gp_Pnt2d at; std::string text; };
   std::vector<MemberMark> members;
-  struct BracingMark { gp_Pnt2d at; std::string text; double height; };
+  // Words placed on the sheet where they are clear (a leader back to `at` when moved). `opening`: an opening's mark
+  // (docs/353): a smaller clearance, looked for close by only, and left where it is when nothing near is clear.
+  struct BracingMark { gp_Pnt2d at; std::string text; double height; bool opening = false; };
   std::vector<BracingMark> bracingMarks;
   struct RoomTag { std::size_t item; std::vector<gp_Pnt2d> outline; };
   std::vector<RoomTag> roomTags;  // room tags movable within their room on a bracing plan

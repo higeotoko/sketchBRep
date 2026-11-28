@@ -1443,7 +1443,9 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
         mark.height = 2.5;
         mark.hAlign = 1;
         mark.vAlign = 1;
-        view.items.push_back(mark);
+        // docs/353: placed on the sheet, where it is clear of the lines and words there (a door's swing, an
+        // undercut's arrow, a detector's symbol): an interior door's "WD1" sat on them.
+        view.bracingMarks.push_back({mark.points.front(), mark.text, mark.height, true});
       }
     }
   }
