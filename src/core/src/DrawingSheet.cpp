@@ -204,13 +204,15 @@ void placeBracingMarks(std::vector<Item>& items, const std::vector<View::Bracing
   for (const View::BracingMark& mark : marks) {
     Item label = text(mark.opening || mark.room ? Pen::Text : Pen::Visible, mark.at, mark.text, mark.height, 1, 1);
     const double gap = mark.opening ? 0.2 : kLabelGap;
-    // An opening's mark does not step aside for a grid line: the grid lines stop at the words (docs/353).
+    // An opening's mark or a room's tag does not step aside for a grid line: the grid lines stop at the words
+    // (docs/353, docs/354).
+    const bool overGrid = mark.opening || mark.room;
     std::vector<Item> notGrid;
-    if (mark.opening)
+    if (overGrid)
       for (const Item& i : items)
         if (i.pen != Pen::Grid) notGrid.push_back(i);
     const auto isClear = [&](const Item& candidate) {
-      return textIsClear(candidate, mark.opening ? notGrid : items, scale, gap);
+      return textIsClear(candidate, overGrid ? notGrid : items, scale, gap);
     };
     const bool clear = isClear(label) || findNearbyPosition(label, scale, mark.opening ? 4 : 12, isClear);
     // When the plan is dense, reserve another line above the drawing. The paper-fit calculation
