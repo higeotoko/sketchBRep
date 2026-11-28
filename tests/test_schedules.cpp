@@ -5898,3 +5898,23 @@ TEST_F(Schedules, RoomTagsTooBigForTheirRoomGoOutWithALeader) {
   for (const auto& i : sheet->items) written += i.kind == sbr::draw::Item::Kind::Text && i.text.rfind("WC (", 0) == 0;
   EXPECT_EQ(written, 1);
 }
+
+// docs/355: a road slant whose height at the site-side road boundary is given at or under the site's ground (the
+// road's level given instead of the slant's) is asked about at stage 10; the slant's height is not.
+TEST_F(Schedules, RoadSlantGivenAtTheRoadsLevelIsAskedAbout) {
+  const auto site = ok("create_polygon", {{"points", {{-1000, -1000, 0}, {13000, -1000, 0}, {13000, 10000, 0}, {-1000, 10000, 0}}}})["id"];
+  ok("set_site_boundary", {{"outline", site}, {"source", "架空の測量図"}});
+  const auto rows = [&] { return ok("permit_checks", {{"stage", 10}})["rows"]; };
+  const auto asked = [&] {
+    for (const json& row : rows())
+      if (row["item"] == "道路斜線の高さの入力") return row;
+    return json();
+  };
+  ok("set_height_study", {{"ground_z", 0}, {"road", {{"edge_z", 0}, {"slope", 1.25}, {"width_m", 6}, {"distance_m", 20}, {"setback_m", 0}}}});
+  const json row = asked();
+  ASSERT_FALSE(row.is_null());
+  EXPECT_EQ(row["state"], "要確認");
+  EXPECT_NE(row["details"].get<std::string>().find("路面の高さではなく"), std::string::npos) << row.dump();
+  ok("set_height_study", {{"ground_z", 0}, {"road", {{"edge_z", 7500}, {"slope", 1.25}, {"width_m", 6}, {"distance_m", 20}, {"setback_m", 0}}}});
+  EXPECT_TRUE(asked().is_null());
+}

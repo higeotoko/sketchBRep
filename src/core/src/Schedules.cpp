@@ -3889,6 +3889,19 @@ std::vector<PermitCheck> permitElevationChecks(const Document& document) {
   // docs/347: the building's parts against the height study the person gave (set_height_study): which part goes
   // over which limit and by how much, read with the drawings' sections.
   const auto study = settings.siteBoundary ? savedHeightStudy(document) : std::nullopt;
+  // docs/355: the road slant's edge_z is the slant's height at the site-side road boundary (the road's datum plus
+  // width x slope), not the road's own level. At or under the site's ground it is very likely the road's level given
+  // instead (the example set 0 for a level 6 m road: the slant then started 7.5 m too low, under the ground).
+  if (study && study->road && study->road->range.roadWidthMm > 0 &&
+      study->road->edgeHeightMm <= study->groundZMm + 1e-6) {
+    const auto& r = *study->road;
+    out.push_back({"道路斜線の高さの入力", "要確認",
+                   "道路斜線の敷地側の道路境界での高さ（edge_z）が " + number(r.edgeHeightMm, 0) + " mm で、敷地の地盤（" +
+                       number(study->groundZMm, 0) + " mm）以下です。edge_z は路面の高さではなく、道路斜線の高さ（路面の基準の高さ＋幅員 " +
+                       number(r.range.roadWidthMm / 1000, 1) + " m × 勾配 " + number(r.slope, 2) + "）です。"
+                       "道路が敷地よりそれだけ低いのでなければ、値を確かめます。",
+                   {}, true});
+  }
   if (!study) {
     out.push_back({"高さ制限との照合", "未入力",
                    "高さの検討（道路斜線・隣地斜線・北側斜線・高度地区の値、set_height_study）を入れると、建物の部分ごとに制限と比べます。", {}, true});
