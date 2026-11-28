@@ -272,6 +272,12 @@ TEST(WallQuantityForms, BracingPlanShowsTheWallsAndTheSideParts) {
   for (const auto& mark : view->bracingMarks) {
     markA = markA || mark.text == "A";  // docs/332: the wall symbol only
     side = side || mark.text.find("側端 必要2.00m 存在4.00m") != std::string::npos;
+    // docs/349: a side part's note points at its outer edge (the plan's side), not into the plan.
+    if (mark.text.find("側端") != std::string::npos) {
+      const double u = mark.at.X(), v = mark.at.Y();
+      const bool onSide = std::abs(u) < 1 || std::abs(u - 10000) < 1 || std::abs(v) < 1 || std::abs(v - 4000) < 1;
+      EXPECT_TRUE(onSide) << mark.text << " at " << u << "," << v;
+    }
   }
   EXPECT_EQ(thick, 4);
   EXPECT_EQ(dashedBoxes, 4);  // X and Y, two side parts each

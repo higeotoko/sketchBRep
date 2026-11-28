@@ -1524,10 +1524,27 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
       }
       for (const auto& row : report.value("quarter_balance", nlohmann::json::array())) {
         if (row.value("floor", std::string()) != spec.bracingFloor) continue;
+        // docs/349: the side parts of a row together span the plan; each note points at the middle of its part's
+        // outer edge (the building's side), not its centre, so its leader stays short and off the plan.
+        double bx0 = 1e300, by0 = 1e300, bx1 = -1e300, by1 = -1e300;
+        for (const auto& strip : row.value("strips", nlohmann::json::array())) {
+          if (!strip.contains("rect")) continue;
+          const auto& r = strip.at("rect");
+          bx0 = std::min(bx0, r.at(0).at(0).get<double>());
+          by0 = std::min(by0, r.at(0).at(1).get<double>());
+          bx1 = std::max(bx1, r.at(1).at(0).get<double>());
+          by1 = std::max(by1, r.at(1).at(1).get<double>());
+        }
         for (const auto& strip : row.value("strips", nlohmann::json::array())) {
           if (!strip.contains("rect")) continue;
           const auto& r = strip.at("rect");
           const double x0 = r.at(0).at(0).get<double>(), y0 = r.at(0).at(1).get<double>(), x1 = r.at(1).at(0).get<double>(), y1 = r.at(1).at(1).get<double>();
+          double ax = (x0 + x1) / 2, ay = (y0 + y1) / 2;
+          const auto near = [](double p, double q) { return std::abs(p - q) < 1.0; };
+          if (near(y0, by0) && !near(y1, by1)) ay = y0;
+          else if (near(y1, by1) && !near(y0, by0)) ay = y1;
+          else if (near(x0, bx0) && !near(x1, bx1)) ax = x0;
+          else if (near(x1, bx1) && !near(x0, bx0)) ax = x1;
           Item box;
           box.kind = Item::Kind::Polyline;
           box.pen = Pen::Hidden;
@@ -1537,7 +1554,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
           char buf[96];
           std::snprintf(buf, sizeof buf, "%s 側端 必要%.2fm 存在%.2fm", row.value("direction", std::string()).c_str(),
                         strip.value("required_m", 0.0), strip.value("existing_m", 0.0));
-          view.bracingMarks.push_back({proj.uv(gp_Pnt((x0 + x1) / 2, (y0 + y1) / 2, z)), buf, 2.0});
+          view.bracingMarks.push_back({proj.uv(gp_Pnt(ax, ay, z)), buf, 2.0});
         }
       }
     }

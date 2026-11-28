@@ -524,7 +524,11 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
     std::sort(axes.begin(), axes.end());
     // The spans between the drawing and the bubbles; the whole length on the other side, as the submitted
     // plans give both (docs/296). Neither lengthens the grid lines (the paper size stays).
-    const double near = family == 0 ? (model.y0 + gridLow) / 2 : (model.x0 + gridLeft) / 2;
+    // docs/349: under the drawing the values stand over their line, towards the drawing: the line goes 4 mm out
+    // (1 mm gap + 2.5 mm value + 0.5 mm), so the values stay clear of what is outermost (an opening's mark, a
+    // balcony); half way to the bubbles (3 mm) put "910" on the AD2 and the balcony's edge. On the left the values
+    // stand on the line's outer side, so half way stays.
+    const double near = family == 0 ? model.y0 - 4.0 * s : (model.x0 + gridLeft) / 2;
     const double far = family == 0 ? model.y1 + 3.5 * s : model.x1 + 3.5 * s;
     const auto put = [&](double a, double b, double at) {
       if (family == 0) dimension(items, gp_Pnt2d(a, at), gp_Pnt2d(b, at), gp_Vec2d(0, 0), mmGrouped(b - a), s);

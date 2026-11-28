@@ -1465,3 +1465,40 @@ TEST(Drawing, StageTenComparesTheBuildingWithTheHeightStudy) {
   EXPECT_FALSE(r.targets.empty());
   EXPECT_NE(r.details.find("道路斜線を "), std::string::npos) << r.details;
 }
+
+// docs/349: the grid spans under a plan keep their values clear of what is outermost in the drawing (an opening's
+// mark just outside the wall): half way to the bubbles put them on it.
+#include "sbr/draw/SheetCheck.h"
+TEST(Drawing, GridSpansKeepClearOfTheOutermostWords) {
+  doc::Modeler m;
+  ASSERT_TRUE(m.createGridLines(gp_Pnt(0, 0, 0), {6000, 6000}, {5000}));
+  box(m, -100, -100, 200, 200, 3000);
+  auto plan = makeView(m.document(), planView(1700));
+  ASSERT_TRUE(plan) << plan.error();
+  // A mark under the wall, the lowest thing in the drawing.
+  Item mark;
+  mark.kind = Item::Kind::Text;
+  mark.pen = Pen::Text;
+  mark.points = {gp_Pnt2d(3000, -560)};
+  mark.text = "AD2";
+  mark.height = 2.5;
+  mark.hAlign = 1;
+  mark.vAlign = 1;
+  View view = *plan;
+  view.items.push_back(mark);
+  SheetSpec spec;
+  spec.scale = 100;
+  const auto sheet = layoutSheet(view, spec);
+  ASSERT_TRUE(sheet) << sheet.error();
+  std::vector<Item> marks;
+  for (const Item& i : sheet->items)
+    if (i.kind == Item::Kind::Text && i.text == "AD2") marks.push_back(i);
+  ASSERT_EQ(marks.size(), 1u);
+  int values = 0;
+  for (const Item& i : sheet->items) {
+    if (i.kind != Item::Kind::Text || i.pen != Pen::Dimension || i.text != "6,000") continue;
+    ++values;
+    EXPECT_TRUE(textIsClear(i, marks, 100, 0.0)) << i.points.front().X() << "," << i.points.front().Y();
+  }
+  EXPECT_GE(values, 2);
+}
