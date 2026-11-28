@@ -183,7 +183,7 @@ bool findNearbyPosition(Item& label, double scale, int maxSteps, IsClear isClear
 }
 
 void placeRoomTags(std::vector<Item>& items, const std::vector<View::RoomTag>& tags, double scale,
-                   std::vector<std::pair<gp_Pnt2d, gp_Pnt2d>>& blanks) {
+                   std::vector<std::pair<gp_Pnt2d, gp_Pnt2d>>& blanks, std::vector<View::BracingMark>& outside) {
   for (const auto& tag : tags) {
     Item& slot = items[tag.item];
     Item label = std::exchange(slot, Item{});
@@ -218,6 +218,11 @@ void placeRoomTags(std::vector<Item>& items, const std::vector<View::RoomTag>& t
           const gp_Pnt2d c = label.points.front();
           blanks.push_back({gp_Pnt2d(c.X() - w / 2 - 0.5 * scale, c.Y() - h / 2 - 0.5 * scale),
                             gp_Pnt2d(c.X() + w / 2 + 0.5 * scale, c.Y() + h / 2 + 0.5 * scale)});
+        } else {
+          // docs/357: a room with no place for its name at all (a hall over its stair): written where the sheet is
+          // clear, with a leader to the room's marker, as the plans do (docs/354).
+          outside.push_back({label.points.front(), label.text, 2.5, false, true});
+          label.text.clear();
         }
       }
     }
@@ -581,7 +586,8 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
     if (axes.size() >= 3 && axes.back().first - axes.front().first > 1e-6) put(axes.front().first, axes.back().first, far);
   }
   std::vector<std::pair<gp_Pnt2d, gp_Pnt2d>> roomBlanks;  // docs/356
-  placeRoomTags(items, view.roomTags, s, roomBlanks);
+  std::vector<View::BracingMark> marks = view.bracingMarks;  // docs/357: and the room names written outside
+  placeRoomTags(items, view.roomTags, s, roomBlanks, marks);
   // Section cuts (docs/132): a line across the drawing, at each end an arrow the way the section
   // looks, the label and (under it) the sheet it is on.
   for (const View::CutLine& c : view.cuts) {
@@ -646,12 +652,15 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
     double leftmost = model.x0;
     for (const DimensionMark& d : view.dimensions)
       for (const gp_Pnt2d& p : {d.a, d.b}) leftmost = std::min(leftmost, p.X() + std::min(0.0, d.offset.X()) - 4.0 * s);
-    const double u0 = leftmost - 3 * margin, u1 = model.x1 + margin;
     const std::string h = std::abs(l.elevation) < 0.5 ? "±0" : (l.elevation > 0 ? "+" : "") + mm(l.elevation);
     // docs/300: a level is marked with a triangle on its line (▽, the ground ▼) and its name beside it,
     // as Japanese elevations and sections write heights (▽2FL); the height under the name.
     const double mark = 2.5 * s;  // the triangle's width on paper
     const double width = mark + 0.8 * s + std::max(textWidth(l.name, 3.5), textWidth(h, 2.5)) * s;
+    // docs/357: with dimensions on the left, the name ends short of them (it is written rightwards from `at`): a
+    // long one ("平均地盤面・GL") ran into the height dimensions' lines.
+    const double u0 = leftmost < model.x0 ? std::min(leftmost - 3 * margin, leftmost - width - 2.0 * s) : leftmost - 3 * margin;
+    const double u1 = model.x1 + margin;
     double at = u0;
     if (l.v - previousV < 7.5 * s) at = std::min(u0, previousLeft - width - 2.0 * s);
     items.push_back(line(Pen::Level, gp_Pnt2d(at, l.v), gp_Pnt2d(u1, l.v)));
@@ -785,7 +794,7 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
     }
     items = std::move(kept);
   }
-  placeBracingMarks(items, view.bracingMarks, s);
+  placeBracingMarks(items, marks, s);
   // docs/352, docs/353: the grid lines stop short of the words on the drawing (as the section cuts do, docs/250): with
   // an even number of bays the middle grid line ran through the whole length's value ("9,100"); on plans they ran
   // through the room names, the opening marks, the 防 of fire doors and the detectors' symbols. The bubbles' own
