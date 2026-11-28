@@ -1501,6 +1501,17 @@ TEST(Drawing, GridSpansKeepClearOfTheOutermostWords) {
     EXPECT_TRUE(textIsClear(i, marks, 100, 0.0)) << i.points.front().X() << "," << i.points.front().Y();
   }
   EXPECT_GE(values, 2);
+  // docs/352: the middle grid line (X2, at the middle of the whole length) stops short of "12,000".
+  std::vector<Item> gridLines;
+  for (const Item& i : sheet->items)
+    if (i.kind == Item::Kind::Line && i.pen == Pen::Grid) gridLines.push_back(i);
+  int whole = 0;
+  for (const Item& i : sheet->items) {
+    if (i.kind != Item::Kind::Text || i.pen != Pen::Dimension || i.text != "12,000") continue;
+    ++whole;
+    EXPECT_TRUE(textIsClear(i, gridLines, 100, 0.0));
+  }
+  EXPECT_EQ(whole, 1);
 }
 
 // docs/352: a member's label (部材記号) is not written over the lines beside it: put where it is clear, or, where the

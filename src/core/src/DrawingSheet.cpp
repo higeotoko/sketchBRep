@@ -541,6 +541,25 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
     }
     if (axes.size() >= 3 && axes.back().first - axes.front().first > 1e-6) put(axes.front().first, axes.back().first, far);
   }
+  // docs/352: the grid lines stop short of the spans' values: with an odd number of bays the middle grid line ran
+  // through the whole length's value ("9,100") over the drawing, on every plan and framing elevation.
+  {
+    std::vector<Item> values;
+    for (const Item& i : items)
+      if (i.kind == Item::Kind::Text && i.pen == Pen::Dimension) values.push_back(i);
+    std::vector<const Item*> words;
+    for (const Item& i : values) words.push_back(&i);
+    std::vector<Item> kept;
+    kept.reserve(items.size());
+    for (Item& item : items) {
+      if (item.kind != Item::Kind::Line || item.pen != Pen::Grid || item.points.size() != 2 || words.empty()) {
+        kept.push_back(std::move(item));
+        continue;
+      }
+      for (const auto& [p, q] : clearOfText(item.points[0], item.points[1], words, s, 0.8)) kept.push_back(line(Pen::Grid, p, q));
+    }
+    items = std::move(kept);
+  }
   placeRoomTags(items, view.roomTags, s);
   // Section cuts (docs/132): a line across the drawing, at each end an arrow the way the section
   // looks, the label and (under it) the sheet it is on.
