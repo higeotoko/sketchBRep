@@ -5766,3 +5766,47 @@ TEST_F(Schedules, MembersThroughOpeningsAreFound) {
                        {"material_class", "timber"}});
   EXPECT_EQ(rowOf().state, "要確認");
 }
+
+// docs/344: a long legend (every device, each with a note) stays beside the title block: its columns as wide as their
+// words, more rows when they do not fit; no legend word runs into the title block.
+TEST_F(Schedules, LongLegendsKeepClearOfTheTitleBlock) {
+  const std::string note = "100φ・防火覆い付 設置高さ FL+2100（架空のカタログ）";
+  const std::vector<std::pair<std::string, std::vector<double>>> kinds = {
+      {"smoke_detector", {}}, {"heat_detector", {}}, {"exhaust_fan", {1, 0}}, {"range_hood", {0, 1}}, {"supply_vent", {0, 1}},
+      {"water_heater", {}},   {"floor_hatch", {}},   {"undercut", {1, 0}},    {"cooking_appliance", {}}};
+  double x = 600;
+  for (const auto& [kind, air] : kinds) {
+    json args = {{"kind", kind}, {"position", {x, 3000, 1000}}, {"note", note + " " + kind}};
+    if (!air.empty()) args["airflow"] = air;
+    ok("place_device", args);
+    x += 350;
+  }
+  ok("set_opening_fire_equipment", {{"host", south}, {"spec", "アルミサッシ＋網入りガラス（架空の長い仕様の名前）"}, {"source", "架空"}});
+  sbr::draw::ViewSpec spec = sbr::draw::planView(1100.0);
+  spec.depth = 1500.0;
+  spec.paperScale = 100;
+  const auto view = sbr::draw::makeView(modeler.document(), spec);
+  ASSERT_TRUE(view) << view.error();
+  sbr::draw::SheetSpec sheetSpec;
+  sheetSpec.frame = true;
+  const auto sheet = sbr::draw::layoutSheet(*view, sheetSpec);
+  ASSERT_TRUE(sheet) << sheet.error();
+  const double s = sheet->scale;
+  const double titleLeft = (sheet->paperWidth - 10.0 - 130.0) * s, titleTop = (10.0 + 32.0) * s;  // kMargin, kTitleW, kTitleH (paper mm)
+  int legendWords = 0;
+  for (const auto& i : sheet->items) {
+    if (i.kind != sbr::draw::Item::Kind::Text || i.pen != sbr::draw::Pen::Text || i.hAlign != 0) continue;
+    if (i.text.find(note) == std::string::npos && i.text.rfind("防火設備", 0) != 0) continue;
+    ++legendWords;
+    double w = 0;
+    for (std::size_t k = 0; k < i.text.size();) {
+      const unsigned char c = static_cast<unsigned char>(i.text[k]);
+      const std::size_t n = c < 0x80 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4;
+      w += (n >= 3 ? 1.0 : 0.6) * i.height;
+      k += n;
+    }
+    const double right = i.points.front().X() + w * s, y = i.points.front().Y();
+    EXPECT_FALSE(right > titleLeft && y < titleTop) << i.text;
+  }
+  EXPECT_EQ(legendWords, 10);  // every device and the 防火設備: none dropped
+}

@@ -313,23 +313,51 @@ void appendLegend(std::vector<Item>& items, const Paper* paper, double s, const 
   if (symbols.count("brace_double")) hatches.push_back({5, "筋かいダブル"});
   if (symbols.count("brace")) hatches.push_back({4, "筋かいシングル"});
   if (!rows.empty() || !hatches.empty()) {
-    constexpr double rowH = 5.0, sample = 14.0, colW = 75.0;
-    const int perColumn = static_cast<int>((kTitleH - rowH) / rowH);
-    const double x0 = kLeftMargin + 4, top = kMargin + kTitleH - 2;
+    constexpr double rowH = 5.0, sample = 14.0;
+    const double x0 = kLeftMargin + 4;
     const double room = paper->w - kMargin - kTitleW - 4 - x0;
+    // docs/344: each column as wide as its longest words (they ran into the title block at 75 mm each); when the
+    // columns do not fit beside the title block, more rows, the legend growing up into the drawing's margin.
+    std::vector<std::string> words;
+    for (const auto& r : rows) words.push_back(r.second);
+    for (const auto& h : hatches) words.push_back(h.second);
+    const auto widthOf = [](const std::string& w) {  // paper mm at 2.5 mm high: full-width characters 2.5, others 1.5
+      double out = 0;
+      for (std::size_t k = 0; k < w.size();) {
+        const unsigned char c = static_cast<unsigned char>(w[k]);
+        const std::size_t n = c < 0x80 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4;
+        out += n >= 3 ? 2.5 : 1.5;
+        k += n;
+      }
+      return out;
+    };
+    const int basePerColumn = static_cast<int>((kTitleH - rowH) / rowH);
+    int perColumn = basePerColumn;
+    std::vector<double> columnX;
+    for (;; ++perColumn) {
+      columnX.clear();
+      double x = x0;
+      for (std::size_t k = 0; k < words.size(); k += static_cast<std::size_t>(perColumn)) {
+        columnX.push_back(x);
+        double widest = 0;
+        for (std::size_t j = k; j < std::min(words.size(), k + static_cast<std::size_t>(perColumn)); ++j) widest = std::max(widest, widthOf(words[j]));
+        x += sample + 2 + widest + 6;
+      }
+      if (x - 6 <= x0 + room || perColumn >= 40) break;
+    }
+    const double top = kMargin + kTitleH - 2 + (perColumn - basePerColumn) * rowH;
+    const auto at = [&](std::size_t k) {
+      return std::make_pair(columnX[k / static_cast<std::size_t>(perColumn)], top - (static_cast<double>(k % static_cast<std::size_t>(perColumn)) + 1.5) * rowH);
+    };
     items.push_back(text(Pen::Text, P(x0, top - rowH / 2), "凡例", 3.0, 0, 1));
     for (std::size_t k = 0; k < rows.size(); ++k) {
-      const int col = static_cast<int>(k) / perColumn, r = static_cast<int>(k) % perColumn;
-      const double x = x0 + col * colW, y = top - (r + 1.5) * rowH;
-      if (x + sample + 4 > x0 + room) break;  // no more room beside the title block
+      const auto [x, y] = at(k);
       items.push_back(line(rows[k].first, P(x, y), P(x + sample, y)));
       items.push_back(text(Pen::Text, P(x + sample + 2, y), rows[k].second, 2.5, 0, 1));
     }
     for (std::size_t h = 0; h < hatches.size(); ++h) {
       const std::size_t k = rows.size() + h;
-      const int col = static_cast<int>(k) / perColumn, r = static_cast<int>(k) % perColumn;
-      const double x = x0 + col * colW, y = top - (r + 1.5) * rowH;
-      if (x + sample + 4 > x0 + room) break;
+      const auto [x, y] = at(k);
       const double y0 = y - 1.4, y1 = y + 1.4;
       if (hatches[h].first == 13 || hatches[h].first == 14) {  // docs/340: 管柱 ×, 間柱 ／ in their cut
         const double cx = x + sample / 2;

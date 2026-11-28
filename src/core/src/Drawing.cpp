@@ -2562,7 +2562,9 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     for (std::size_t k = 0; k < marks.size(); ++k)
       if (!done[k]) view.members.push_back(marks[k]);
   }
-  if (!sitePlan && document.settings().wallCalculation != "{}") {
+  // docs/344: the wall quantity's notice on the drawings of the structure only (bracing plans, framing plans and
+  // elevations), not on every plan, section and elevation.
+  if (!sitePlan && document.settings().wallCalculation != "{}" && (!spec.bracingFloor.empty() || !spec.framingPreset.empty())) {
     const auto wall = construction::checkWallQuantity(document);
     if (wall) {
       const auto report = nlohmann::json::parse(*wall);

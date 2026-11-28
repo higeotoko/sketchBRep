@@ -358,16 +358,26 @@ TEST_F(WallQuantity, GeometrySheetsCarryBasisDatesButDoNotClaimWallVerdict) {
   ASSERT_TRUE(box);
   ASSERT_TRUE(m.extrude(*box, 3000));
   ASSERT_TRUE(m.setWallCalculation(sample().dump()));
-  const auto view = draw::makeView(m.document(), draw::planView(1500));
-  ASSERT_TRUE(view);
-  const auto page = draw::layoutSheet(*view, {});
-  ASSERT_TRUE(page);
-  std::string notes;
-  for (const auto& i : page->items)
-    if (i.pen == draw::Pen::Text) notes += i.text;
+  const auto notesOf = [&](const draw::ViewSpec& spec) {
+    const auto view = draw::makeView(m.document(), spec);
+    EXPECT_TRUE(view);
+    const auto page = view ? draw::layoutSheet(*view, {}) : Result<draw::Sheet>::failure("no view");
+    EXPECT_TRUE(page);
+    std::string notes;
+    if (page)
+      for (const auto& i : page->items)
+        if (i.pen == draw::Pen::Text) notes += i.text;
+    return notes;
+  };
+  // docs/344: the bracing plan carries the basis and its dates (the wall quantity's drawing) ...
+  draw::ViewSpec bracing = draw::planView(1500);
+  bracing.bracingFloor = sample()["floors"][0]["id"].get<std::string>();
+  const std::string notes = notesOf(bracing);
   EXPECT_NE(notes.find("2025-04-01"), std::string::npos);
   EXPECT_NE(notes.find("2026-11-04"), std::string::npos);
   EXPECT_NE(notes.find("壁量の結果"), std::string::npos);
+  // ... a plain plan does not (it is not about the wall quantity).
+  EXPECT_EQ(notesOf(draw::planView(1500)).find("壁量の結果"), std::string::npos);
 }
 TEST_F(WallQuantity, DeletedOrDifferentFrameCannotKeepGreen) {
   auto in = sample();
