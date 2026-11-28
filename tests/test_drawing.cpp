@@ -1336,3 +1336,88 @@ TEST(Drawing, SectionsShowTheNorthLimit) {
   EXPECT_GE(boundaries, 4);
   if (const char* out = std::getenv("SBR_NORTH_SBR")) EXPECT_TRUE(m.save(out));  // to look at its drawing set
 }
+
+// docs/341: on the drawing set's sections the height limit's slant runs through no word (the height dimensions'
+// values, the level names): it stops short of them, as the section cuts do.
+#include "sbr/draw/SheetCheck.h"
+TEST(Drawing, HeightLimitLinesStopShortOfWords) {
+  doc::Modeler m;
+  const auto outline = m.createRectangle(geom::SketchPlane::ground(), 10000, 12000);
+  ASSERT_TRUE(outline);
+  api::CommandApi api(m);
+  const auto run = [&](const nlohmann::json& c) {
+    const auto r = nlohmann::json::parse(api.execute(c.dump()));
+    EXPECT_TRUE(r.value("ok", false)) << r.dump();
+    return r;
+  };
+  run({{"command", "create_wall"}, {"args", {{"points", {{1500, 2500}, {5200, 2500}, {5200, 6500}, {1500, 6500}, {1500, 2500}}},
+                                              {"thickness", 120}, {"height", 6000}}}});
+  ASSERT_TRUE(m.setSiteBoundary(doc::SiteBoundary{*outline, "Survey"}));
+  doc::SiteRoad road;
+  road.kind = "法42条1項1号道路";
+  road.source = "Synthetic road register";
+  road.widthMm = 4000;
+  ASSERT_TRUE(m.setSiteRoad({gp_Pnt(10000, 0, 0), gp_Pnt(0, 0, 0)}, road));
+  ASSERT_TRUE(m.setLevels({{"gl", "GL", 0.0}, {"1fl", "1FL", 500.0}}));
+  run({{"command", "set_height_study"},
+       {"args", {{"road", {{"edge_z", 5000}, {"slope", 1.25}, {"width_m", 4}, {"distance_m", 20}, {"setback_m", 0}}}}}});
+  const auto set = doc::drawingSet(m.document(), {});
+  ASSERT_TRUE(set) << set.error();
+  int limitLines = 0;
+  for (std::size_t i = 0; i < set->names.size(); ++i) {
+    if (set->names[i].find("断面図") == std::string::npos) continue;
+    const auto& sheet = set->sheets[i];
+    for (const auto& line : sheet.items) {
+      if (line.kind != Item::Kind::Line || line.pen != Pen::HeightLimit || line.points.size() != 2) continue;
+      ++limitLines;
+      for (const auto& word : sheet.items) {
+        if (word.kind != Item::Kind::Text || word.pen == Pen::HeightLimit || word.text.empty()) continue;
+        const auto pieces = draw::clearOfText(line.points[0], line.points[1], {&word}, sheet.scale, 0.5);
+        ASSERT_EQ(pieces.size(), 1u) << set->names[i] << ": the limit runs through 「" << word.text << "」";
+        EXPECT_LT(pieces[0].first.Distance(line.points[0]) + pieces[0].second.Distance(line.points[1]), 1e-6)
+            << set->names[i] << ": the limit runs through 「" << word.text << "」";
+      }
+    }
+  }
+  EXPECT_GT(limitLines, 0);
+}
+// docs/341: the mechanism itself: a limit line drawn straight through a dimension's figure is broken there on the
+// sheet (the view's other lines are left whole).
+TEST(Drawing, HeightLimitLineIsBrokenAtAWord) {
+  draw::View view;
+  view.spec = draw::sectionView(gp_Pnt(0, 0, 0), gp_Dir(0, 1, 0));
+  Item word;
+  word.kind = Item::Kind::Text;
+  word.pen = Pen::Dimension;
+  word.points = {gp_Pnt2d(0, 0)};
+  word.text = "最高の高さ 7,764";
+  word.height = 2.5;
+  word.hAlign = 1;
+  word.vAlign = 1;
+  view.items.push_back(word);
+  Item limit;
+  limit.kind = Item::Kind::Line;
+  limit.pen = Pen::HeightLimit;
+  limit.points = {gp_Pnt2d(-5000, -100), gp_Pnt2d(5000, 100)};
+  view.items.push_back(limit);
+  Item wall = limit;
+  wall.pen = Pen::Cut;
+  view.items.push_back(wall);
+  draw::SheetSpec spec;
+  spec.frame = false;
+  const auto sheet = draw::layoutSheet(view, spec);
+  ASSERT_TRUE(sheet) << sheet.error();
+  int limits = 0, walls = 0;
+  for (const auto& i : sheet->items) {
+    if (i.kind != Item::Kind::Line) continue;
+    if (i.pen == Pen::HeightLimit) {
+      ++limits;
+      for (const auto& w : sheet->items)
+        if (w.kind == Item::Kind::Text && w.text == word.text)
+          EXPECT_EQ(draw::clearOfText(i.points[0], i.points[1], {&w}, sheet->scale, 0.5).size(), 1u);
+    }
+    if (i.pen == Pen::Cut) ++walls;
+  }
+  EXPECT_EQ(limits, 2);  // the two sides of the word
+  EXPECT_EQ(walls, 1);   // other lines untouched
+}

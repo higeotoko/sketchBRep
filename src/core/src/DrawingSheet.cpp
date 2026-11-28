@@ -695,6 +695,31 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
     items = std::move(kept);
   }
   placeBracingMarks(items, view.bracingMarks, s);
+  // docs/341: the height limits' slant lines stop short of the words they would run through (the height dimensions'
+  // values, the level names, the limits' own names), as the section cuts do (docs/250): a slant drawn through
+  // "最高の高さ 7,764" made the figure hard to read.
+  {
+    // Copies: the items are moved into `kept` below, which would empty the words the pointers see.
+    std::vector<Item> wordItems;
+    for (const Item& i : items)
+      if (i.kind == Item::Kind::Text && i.pen != Pen::HeightLimit && i.pen != Pen::HeightReview) wordItems.push_back(i);
+    std::vector<const Item*> words;
+    for (const Item& i : wordItems) words.push_back(&i);
+    std::vector<Item> kept;
+    kept.reserve(items.size());
+    for (Item& item : items) {
+      if (item.kind != Item::Kind::Line || item.points.size() != 2 || (item.pen != Pen::HeightLimit && item.pen != Pen::HeightReview)) {
+        kept.push_back(std::move(item));
+        continue;
+      }
+      for (const auto& [p, q] : clearOfText(item.points[0], item.points[1], words, s, 0.8)) {
+        Item piece = item;
+        piece.points = {p, q};
+        kept.push_back(std::move(piece));
+      }
+    }
+    items = std::move(kept);
+  }
   Box all;
   for (const Item& i : items) extentOf(i, s, all);
   if (spec.compactDiagram && spec.north && (view.spec.kind == ViewKind::Plan || view.spec.kind == ViewKind::SitePlan)) {
