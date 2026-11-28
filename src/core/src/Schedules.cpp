@@ -5913,6 +5913,13 @@ draw::View vicinityView(const Document& document, const VicinityMap& map, const 
   return view;
 }
 
+const std::vector<std::string>& planExcludedTags() {
+  // docs/353: the joints' and hardware's layers too: seen from above they put a dot on every grid crossing of a
+  // plan, over the room names.
+  static const std::vector<std::string> tags{"基礎・土台", "1階床組", "2階床組", "小屋組", "継手", "金物"};
+  return tags;
+}
+
 Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& given) {
   // docs/214: the project's name from its outline when the title block has none.
   DrawingSetSpec spec = given;
@@ -5943,7 +5950,7 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
     draw::ViewSpec view = draw::planView(levels[i].elevation + 1100.0);
     view.depth = 1100.0 + 400.0;  // down to 400 under its floor: the storeys below are left out
     // docs/295: the timber frame's floor and roof framing are the framing plans' (伏図); the columns stay.
-    view.excludeTags = {"基礎・土台", "1階床組", "2階床組", "小屋組"};
+    view.excludeTags = planExcludedTags();
     view.wallsBelow = levels[i].elevation;  // docs/298: the storey below's walls
     view.title = levels[i].name + " 平面図";
     planned.push_back({view.title, view, std::nullopt, {}});

@@ -603,6 +603,9 @@ struct DrawingSet {
   std::vector<std::string> notes;
 };
 Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& spec);
+// The tags the drawing set's floor plans leave out: the timber frame's floor and roof framing (docs/295) and its
+// joints and hardware (継手・金物, docs/353); the columns, studs and braces (軸組) stay.
+const std::vector<std::string>& planExcludedTags();
 // Shared by the drawing set and the official form's vicinity drawing.
 draw::View vicinityView(const Document& document, const VicinityMap& map,
                         const std::optional<VicinityPicture>& picture, double& scale);

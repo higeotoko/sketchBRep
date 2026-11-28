@@ -363,12 +363,18 @@ TEST_F(Quantities, SetPlansLeaveOutFloorFraming) {
   draw::ViewSpec all = draw::planView(600 + 1100);
   all.depth = 1500;
   draw::ViewSpec plan = all;
-  plan.excludeTags = {"基礎・土台", "1階床組", "2階床組", "小屋組"};
+  plan.excludeTags = doc::planExcludedTags();
   const auto withFraming = draw::makeView(m.document(), all);
   const auto without = draw::makeView(m.document(), plan);
   ASSERT_TRUE(withFraming && without);
   EXPECT_LT(without->items.size(), withFraming->items.size());
   EXPECT_FALSE(without->items.empty());  // the 1st storey's columns, cut
+  // docs/353: the joints and hardware are left out too (seen from above they put dots on the grid crossings).
+  draw::ViewSpec withHardware = plan;
+  withHardware.excludeTags.erase(std::remove_if(withHardware.excludeTags.begin(), withHardware.excludeTags.end(), [](const std::string& t) { return t == "継手" || t == "金物"; }), withHardware.excludeTags.end());
+  const auto dotted = draw::makeView(m.document(), withHardware);
+  ASSERT_TRUE(dotted);
+  EXPECT_LT(without->objects, dotted->objects);
 }
 
 // docs/310: the frame's columns by section and distance, with slenderness against 令43条6項; the ratio of
