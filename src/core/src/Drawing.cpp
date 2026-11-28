@@ -1944,10 +1944,17 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     const double outward = roadRight ? -1.0 : 1.0;
     if (right > -1e299) {
       const double sp = spec.paperScale > 0 ? spec.paperScale : 100.0;
+      // docs/355: as far out as the dimensions reach (the last at 26 mm, its value beside it), and past the
+      // boundary's name, which stands on the boundary's right (on the left side it faces the building).
+      bool moved = false;
       for (const double u : siteBoundaryUs()) {
         const double past = (u - side) * outward;
-        if (past > -1.0 && past < 30.0 * sp) side = roadRight ? std::min(side, u) : std::max(side, u);
+        if (past > -1.0 && past < 40.0 * sp) {
+          side = roadRight ? std::min(side, u) : std::max(side, u);
+          moved = true;
+        }
       }
+      if (moved && !roadRight) side += 4.0 * sp;
     }
     if (ground && top > *ground && right > -1e299) {
       const double sp = spec.paperScale > 0 ? spec.paperScale : 100.0;
