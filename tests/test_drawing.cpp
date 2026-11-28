@@ -664,6 +664,31 @@ TEST(Drawing, GridLevelsSheetAndTitleBlock) {
     return static_cast<int>(heights.size());
   };
   EXPECT_EQ(levelLines(*sectionSheet), 3);
+  // docs/355: a level's line stops short of a word on it.
+  {
+    View worded = *section;
+    Item word;
+    word.kind = Item::Kind::Text;
+    word.pen = Pen::Text;
+    word.points = {gp_Pnt2d(3000, 3500)};  // on 2FL
+    word.text = "敷地境界線";
+    word.height = 2.5;
+    word.hAlign = 1;
+    word.vAlign = 1;
+    worded.items.push_back(word);
+    const auto laid = layoutSheet(worded, spec);
+    ASSERT_TRUE(laid);
+    std::vector<Item> levelItems;
+    for (const Item& i : laid->items)
+      if (i.pen == Pen::Level && i.kind == Item::Kind::Line) levelItems.push_back(i);
+    int found = 0;
+    for (const Item& i : laid->items)
+      if (i.kind == Item::Kind::Text && i.text == "敷地境界線") {
+        ++found;
+        EXPECT_TRUE(textIsClear(i, levelItems, 100, 0.0));
+      }
+    EXPECT_EQ(found, 1);
+  }
   // Two levels at one height share a line and a name.
   ASSERT_TRUE(m.setLevels({{"", "GL", 0.0}, {"", "1FL", 0.0}, {"", "2FL", 3500.0}}));
   const auto shared = layoutSheet(*makeView(m.document(), sectionView(gp_Pnt(0, 2500, 0), gp_Dir(0, -1, 0))), spec);
@@ -1292,6 +1317,25 @@ TEST(Drawing, SectionsShowTheStudysLowestLimit) {
   }
   EXPECT_GE(envelopes, 1);  // the section across the road
   if (const char* out = std::getenv("SBR_ENVELOPE_SBR")) EXPECT_TRUE(m.save(out));  // to look at its drawing set
+  // docs/355: the elevations that see the road across put the height dimensions on the other side of the building:
+  // they go out (their offset) away from the road's name.
+  int across = 0;
+  for (int side = 0; side < 4; ++side) {
+    ViewSpec elevation = elevationView(m.document(), side);
+    elevation.heightDims = true;
+    const auto view = makeView(m.document(), elevation);
+    ASSERT_TRUE(view) << view.error();
+    const Item* roadName = nullptr;
+    for (const auto& item : view->items)
+      if (item.kind == Item::Kind::Text && item.text.rfind("前面道路", 0) == 0) roadName = &item;
+    const DimensionMark* highest = nullptr;
+    for (const auto& d : view->dimensions)
+      if (d.text.rfind("最高の高さ", 0) == 0) highest = &d;
+    if (!roadName || !highest) continue;
+    ++across;
+    EXPECT_LT((roadName->points.front().X() - highest->a.X()) * highest->offset.X(), 0.0) << side;
+  }
+  EXPECT_GE(across, 1);
 }
 
 // docs/320: with the north boundary confirmed and a 5 m north rise, the section cut north-south names 北側斜線

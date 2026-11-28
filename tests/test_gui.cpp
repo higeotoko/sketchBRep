@@ -12209,9 +12209,11 @@ void GuiPhase1::drawingDialogPlanSectionElevationAndExport() {
   dialog.refreshNow();
   QVERIFY2(dialog.sheet().has_value(), qPrintable(dialog.lastError()));
   QVERIFY(name->text().contains(QStringLiteral("断面図")));
-  int levelLines = 0;
-  for (const draw::Item& i : dialog.sheet()->items) levelLines += i.pen == draw::Pen::Level && i.kind == draw::Item::Kind::Line;
-  QCOMPARE(levelLines, 2);
+  // docs/355: a level's line may stop short of words it passes (in pieces): the levels counted by their heights.
+  std::set<long long> levelHeights;
+  for (const draw::Item& i : dialog.sheet()->items)
+    if (i.pen == draw::Pen::Level && i.kind == draw::Item::Kind::Line) levelHeights.insert(std::llround(i.points.front().Y()));
+  QCOMPARE(static_cast<int>(levelHeights.size()), 2);
   // An elevation, without the frame.
   kind->setCurrentIndex(2);
   dialog.findChild<QCheckBox*>(QStringLiteral("drawingFrame"))->setChecked(false);
