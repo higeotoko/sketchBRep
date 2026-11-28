@@ -1209,8 +1209,14 @@ struct Plan {
     if (!omitted.empty())
       pieces.erase(std::remove_if(pieces.begin(), pieces.end(),
                                   [&](const Piece& p) {
-                                    for (const auto& key : omitted)
+                                    for (const auto& key : omitted) {
                                       if (p.key == key || p.key.rfind(key + "/", 0) == 0) return true;
+                                      // A first-storey column "column/i/j/1" has its connections at "column/i/j/foot|head".
+                                      if (key.size() > 2 && key.compare(key.size() - 2, 2, "/1") == 0) {
+                                        const std::string base = key.substr(0, key.size() - 2);
+                                        if (p.key == base + "/foot" || p.key == base + "/head") return true;
+                                      }
+                                    }
                                     return false;
                                   }),
                    pieces.end());

@@ -431,5 +431,6 @@ TEST_F(Frames, ColumnsInOpeningsCanBeLeftOut) {
   int omittedWarnings = 0;
   for (const auto& w : made["warnings"]) omittedWarnings += w.get<std::string>().rfind("開口の中の柱を省きました", 0) == 0;
   EXPECT_EQ(omittedWarnings, 2);
-  EXPECT_EQ(connections % 2, 0);  // each column's foot and head together
+  EXPECT_EQ(made["counts"]["column_connection"], 16);  // 8 columns' feet and heads: the left-out ones' went with them
+  EXPECT_EQ(connections, 16);
 }
